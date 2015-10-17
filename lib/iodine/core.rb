@@ -100,6 +100,7 @@ module Iodine
 		threads.each {|t| t.join rescue true }
 	end
 
+	# performed once - the shutdown sequence.
 	def shutdown
 		return if @done
 		@stop = @done = true

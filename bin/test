@@ -9,7 +9,7 @@ require "iodine"
 require 'stringio'
 
 # ab -n 10000 -c 200 -k http://127.0.0.1:3000/
-# ab -n 10000 -c 200 -k http://localhost:3000/
+# ab -n 10000 -c 20 http://127.0.0.1:3000/
 # ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/
 
 
@@ -46,7 +46,4 @@ class MiniServer < Iodine::Protocol
 
 end
 
-Iodine.threads = 20
 Iodine.protocol = MiniServer
-
-

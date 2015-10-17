@@ -19,20 +19,19 @@ module Iodine
 				return unless @locker.try_lock
 				begin
 					@ssl_socket.accept_nonblock
-					@locker.unlock
 				rescue IO::WaitReadable, IO::WaitWritable
-					@locker.unlock
 					return
 				rescue OpenSSL::SSL::SSLError
 					@e = Exception.new "Self-signed Certificate?".freeze
-					@locker.unlock
+					close
 					return
 				rescue => e
 					Iodine.warn "SSL Handshake failed with: #{e.message}".freeze
 					@e = e
 					close
-					@locker.unlock
 					return
+				ensure
+					@locker.unlock
 				end
 				Iodine.protocol.new @ssl_socket
 			end

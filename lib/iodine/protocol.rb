@@ -106,9 +106,11 @@ module Iodine
 			@send_locker = Mutex.new
 			@locker = Mutex.new
 			@io = io
-			switch_protocol self
 			touch
-			on_open
+			@locker.synchronize do
+				switch_protocol self
+				on_open
+			end
 		end
 
 		# Called by Iodine whenever there is data in the IO's read buffer.
