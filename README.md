@@ -4,7 +4,7 @@ Iodine makes writing evented server applications easy to write.
 
 Iodine is intended to replace the use of a generic reacor, such as EventMachine or GReactor and it hides all the nasty details of creating the event loop.
 
-To use Iodine, you just set up your tasks - including a single server, if you want one. Iodine will start running once your application is finished and it won't stop runing until all the tasks have completed.
+To use Iodine, you just set up your tasks - including a single server, if you want one. Iodine will start running once your application is finished and it won't stop runing until all the scheduled tasks have completed.
 
 Iodine v. 0.0.1 isn't well tested just yet... but I'm releasing it anyway, to reserve the name and because initial testing shows that it works.
 
@@ -51,6 +51,10 @@ Iodine.threads = 5
 # Iodine will start executing tasks once your script is done.
 exit
 ```
+
+Iodine will continue running until all tasks have completed. If an Iodine server is setup, Iodine will run as long as the server is active and will attempt to complete all scheduled tasks within 20 seconds of the server's shutdown.
+
+Timed tasks only work while the server is running and only tasks already scheduled to execute (not future tasks) will be performed.
 
 ## Server Usage
 

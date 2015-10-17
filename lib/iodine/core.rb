@@ -92,10 +92,10 @@ module Iodine
 		@thread_count.times { threads << Thread.new {  cycle } }
 		unless @stop
 			catch(:stop) { sleep }
-			@logger << "\nShutting down Iodine. Setting shutdown timeout to 30 seconds.\n"
+			@logger << "\nShutting down Iodine. Setting shutdown timeout to 25 seconds.\n"
 			@stop = true
 			# setup exit timeout.
-			threads.each {|t| Thread.new {sleep 30; t.kill; t.kill } }
+			threads.each {|t| Thread.new {sleep 25; t.kill; t.kill } }
 		end
 		threads.each {|t| t.join rescue true }
 	end
