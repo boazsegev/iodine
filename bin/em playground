@@ -1,0 +1,56 @@
+#!/usr/bin/env ruby
+#encoding: UTF-8
+
+require 'eventmachine'
+require 'stringio'
+
+
+module MiniServer
+	def post_init
+	 comm_inactivity_timeout = 5
+	 @headers = {}
+	 # start_tls :private_key_file => 'server.key', :cert_chain_file => 'server.crt', :verify_peer => false
+	end
+
+	def receive_data data
+		# EventMachine.defer do 
+			data = ::StringIO.new data
+			l = nil
+			headers = @headers
+			while (l = data.gets)
+				unless l =~ /^[\r]?\n/
+					if l.include? ':'
+						l = l.strip.downcase.split(':', 2)
+						headers[l[0]] = l[1]
+					else
+						headers[:method], headers[:query], headers[:version] = l.split(/[\s]+/, 3)
+					end
+					next
+				end
+				if headers['connection'] =~ /keep/i || headers[:version] =~ /1\.1/
+					send_data "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 12\r\nConnection: keep-alive\r\nKeep-Alive: 5\r\n\r\nhello world\n"
+				else
+					send_data "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 12\r\nConnection: close\r\n\r\nhello world\n"
+					close_connection true
+				end
+				headers.clear
+			end
+			data.string.clear
+		# end
+	end
+
+	def unbind
+	end
+end
+
+# Note that this will block current thread.
+EventMachine.run {
+	trap("TERM") { EventMachine.stop_event_loop }
+	trap("INT")  { EventMachine.stop_event_loop }
+	EventMachine.start_server "127.0.0.1", 3000, MiniServer
+}
+
+
+# ab -n 10000 -c 200 -k http://127.0.0.1:3000/ctrl
+# ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/ctrl
+

@@ -1,0 +1,36 @@
+#!/usr/bin/env ruby
+
+require 'pathname'
+Root ||= Pathname.new(File.dirname(__FILE__)).expand_path
+Dir.chdir Root.join('..').to_s
+
+require "bundler/setup"
+require "iodine"
+require 'stringio'
+
+# ab -n 10000 -c 200 -k http://127.0.0.1:3000/ctrl
+# ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/ctrl
+
+
+
+class EchoServer < Iodine::Protocol
+	def on_message data
+		write("-- Closing connection, goodbye.\n") && close if data =~ /^(bye|close|exit|stop)/i
+		write(">> #{data.chomp}\n")
+	end
+
+	def ping
+		write "-- Are you still there?\n"
+	end
+
+	def on_close
+		Iodine.info "Closed connection."
+	end
+	def on_open
+		Iodine.info "Opened connection."
+		set_timeout 5
+	end
+end
+
+
+Iodine.protocol = EchoServer
