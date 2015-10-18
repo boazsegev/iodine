@@ -24,9 +24,11 @@ Or install it yourself as:
 
     $ gem install iodine
 
-## Simple Usage
+## Simple Usage: Running tasks and shutting down
 
-Iodine starts to work once you app is finished with setting all the tasks up (upon exit).
+This mode of operation is effective if you have a `cron`-job that periodically initiates an Iodine Ruby script. It allows the script to easily initiate a task's stack and perform the tasks concurrently.
+
+Iodine starts to work once you app is finished setting all the tasks up (upon exit).
 
 To see how that works, open your `irb` terminal an try this:
 
@@ -52,11 +54,36 @@ Iodine.threads = 5
 exit
 ```
 
-Iodine will continue running until all tasks have completed. If an Iodine server is setup, Iodine will run as long as the server is active and will attempt to complete all scheduled tasks within 20 seconds of the server's shutdown.
+In this mode, Iodine will continue running until all the tasks have completed and than it will quite. Timer based tasks will be ignored.
 
-Timed tasks only work while the server is running and only tasks already scheduled to execute (not future tasks) will be performed.
+## Simple Usage: Task polling
 
-## Server Usage
+This mode of operation is effective if want Iodine to periodically initiates new tasks, for instance if you cannot use `cron`.
+
+To initiate this mode, simply set: `Iodine.protocols = :timers`
+
+In example:
+
+```ruby
+require 'iodine'
+
+# set concurrency level (defaults to a single thread).
+Iodine.threads = 5
+
+# set Iodine to keep listening to TimedEvent(s).
+Iodine.protocols = :timers
+
+# perform a periodical task every ten seconds
+Iodine.run_every 10 do
+   Iodine.run { sleep 5; puts " * this could have been a long task..." }
+   puts "I could be polling a database to schedule more tasks..."
+end
+
+# Iodine will start running once your script is done and it will never stop unless stopped.
+exit
+```
+
+## Server Usage: Plug in your network protocol
 
 Iodine is designed to help write network services (Servers) where each script is intended to implement a single server.
 

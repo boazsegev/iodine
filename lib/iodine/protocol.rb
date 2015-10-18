@@ -53,6 +53,9 @@ module Iodine
 			false
 		end
 
+		#############
+		## functionality and helpers
+
 
 		# Closes the IO object.
 		# @return [nil]
@@ -84,21 +87,32 @@ module Iodine
 			end
 		end
 
-
-		# This method allows switiching the IO's protocol that will be used the NEXT time
-		# Iodine receives data using this protocol's IO.
+		# returns the connection's object unique local ID as a Hex string.
 		#
-		# Switing protocols bypasses the {#on_close} method. Override this method for any cleanup needed (if at any),
-		# but remember to call `super` for the actual protocol switching implementation.
-		def switch_protocol new_protocol
-			Iodine.switch_protocol @io, new_protocol
+		# This can be used locally but not across processes.
+		def id
+			@id ||= object_id.to_s(16).freeze
 		end
+
+		# returns an [Enumerable](http://ruby-doc.org/core-2.2.3/Enumerable.html) with all the active connections.
+		#
+		# if a block is passed, than this method exceutes the block.
+		def self.each
+			if block_given?
+				Iodine.to_a.each {|p| yield(p) if p.is_a?(self) }
+			else
+				( Iodine.to_a.select {|p| p.is_a?(self) } ).each
+			end
+		end
+
 
 		#################
 		## the following are Iodine's "system" methods, used internally. Don't override.
 
 
 		# This method is used by Iodine to initialized the Protocol.
+		#
+		# A new Protocol instance set itself up as the IO's protocol (replacing any previous protocol).
 		#
 		# Normally you won't need to override this method. Override {#on_open} instead.
 		def initialize io
@@ -108,7 +122,7 @@ module Iodine
 			@io = io
 			touch
 			@locker.synchronize do
-				switch_protocol self
+				Iodine.switch_protocol @io, self
 				on_open
 			end
 		end

@@ -1,5 +1,6 @@
-require "logger"
+require 'logger'
 require 'socket'
+# require 'securerandom'
 
 
 module Iodine

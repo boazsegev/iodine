@@ -15,6 +15,12 @@ module Iodine
 	# 
 	def switch_protocol *args
 		@io_in << args
+		args[1]
+	end
+
+	# returns an array with all the currently active connection's Protocol instances.
+	def to_a
+		@ios.values
 	end
 
 
@@ -92,19 +98,28 @@ module Iodine
 	## remember to set traps (once) when 'listen' is called.
 	run do
 		next unless @protocol
-
-		shut_down_proc = Proc.new {|protocol| protocol.on_shutdown ; protocol.close }
-		on_shutdown do
-			@logger << "Stopping to listen on port #{@port} and shutting down.\n"
-			@server.close unless @server.closed?
-			@ios.values.each {|p| queue shut_down_proc, p }
+		if @protocol.is_a? Protocol
+			shut_down_proc = Proc.new {|protocol| protocol.on_shutdown ; protocol.close }
+			on_shutdown do
+				@logger << "Stopping to listen on port #{@port} and shutting down.\n"
+				@server.close unless @server.closed?
+				@ios.values.each {|p| queue shut_down_proc, p }
+			end
+			@server = ::TCPServer.new(@bind, @port)
+			::Iodine::Base::Listener.accept(@server)
+			@logger << "Iodine #{VERSION} is listening on port #{@port}\n"
+			old_int_trap = trap('INT') { throw :stop; trap('INT', old_int_trap) if old_int_trap }
+			old_term_trap = trap('TERM') { throw :stop; trap('TERM', old_term_trap) if old_term_trap }
+			@logger << "Press ^C to stop the server.\n"
+		else
+			@logger << "Iodine #{VERSION} is running.\n"
+			on_shutdown do
+				@logger << "Iodine says goodbye.\n"
+			end
+			old_int_trap = trap('INT') { throw :stop; trap('INT', old_int_trap) if old_int_trap }
+			old_term_trap = trap('TERM') { throw :stop; trap('TERM', old_term_trap) if old_term_trap }
+			@logger << "Press ^C to stop the cycling.\n"			
 		end
-		@server = ::TCPServer.new(@bind, @port)
-		::Iodine::Base::Listener.accept(@server)
-		@logger << "Iodine #{VERSION} is listening on port #{@port}\n"
-		old_int_trap = trap('INT') { throw :stop; trap('INT', old_int_trap) if old_int_trap }
-		old_term_trap = trap('TERM') { throw :stop; trap('TERM', old_term_trap) if old_term_trap }
-		@logger << "Press ^C to stop the server.\n"
 		queue REACTOR
 	end
 end
