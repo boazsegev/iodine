@@ -91,6 +91,8 @@ Iodine is designed to help write network services (Servers) where each script is
 
 This is not a philosophy based on any idea or preferences, but rather a response to real-world design where each Ruby script is usually assigned a single port for network access (hence, a single server).
 
+To help you write your network service, Iodine starts you off with the `Iodine::Protocol` and `Iodine::SSLProtocol`.
+
 In this mode, Iodine will continue running until it receives a kill signal (i.e. `^C`). Once the kill signal had been received, Iodine will start shutting down, allowing up to ~20-25 seconds to complete any pending tasks (timeout).
 
 ## Development

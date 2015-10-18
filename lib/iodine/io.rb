@@ -98,7 +98,7 @@ module Iodine
 	## remember to set traps (once) when 'listen' is called.
 	run do
 		next unless @protocol
-		if @protocol.is_a? Protocol
+		if @protocol.ancestors.include? ::Iodine::Protocol
 			shut_down_proc = Proc.new {|protocol| protocol.on_shutdown ; protocol.close }
 			on_shutdown do
 				@logger << "Stopping to listen on port #{@port} and shutting down.\n"
