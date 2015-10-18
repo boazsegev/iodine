@@ -23,7 +23,9 @@ module Iodine
 		@bind = address
 	end
 
-	# Sets the Protocol the Iodine Server will use. Should be a child of Protocol or SSLProtocol. Defaults to nil (no server).
+	# Sets the Protocol the Iodine Server will use. Should be a child of {Iodine::Protocol}. Defaults to nil (no server).
+	#
+	# If the protocol passed does NOT inherit from {Iodine::Protocol}, Iodine will cycle without initiating a server until stopped (TimedEvent mode).
 	def protocol= protocol
 		@stop = protocol ? false : true
 		@protocol = protocol
@@ -33,13 +35,43 @@ module Iodine
 		@protocol
 	end
 
-	# Sets the SSL Context to be used when using an SSLProtocol. Defaults to a self signed certificate.
+	# Sets the SSL flag, so that Iodine will require that new connection be encrypted.
+	def ssl= required
+		@ssl = required && true
+	end
+	# Returns true if Iodine will require that new connection be encrypted.
+	def ssl
+		@ssl
+	end
+
+	# Sets the SSL Context to be used when using an encrypted connection. Defaults to a self signed certificate and no verification.
+	#
+	# Manually setting the context will automatically set the SSL flag,
+	# so that Iodine will require encryption for new incoming connections.
 	def ssl_context= context
+		@ssl = true
 		@ssl_context = context
 	end
-	# Gets the SSL Context to be used when using an SSLProtocol.
+
+	# Gets the SSL Context to be used when using an encrypted connection.
 	def ssl_context
 		@ssl_context ||= init_ssl_context
+	end
+
+	# Sets the an SSL Protocol Hash (`'name' => Protocol`), allowing dynamic Protocol Negotiation.
+	# At the moment only NPN is supported. ALPN support should be established in a future release.
+	#
+	# * please notice that using allowing dynamic Protocol Negotiation could cause unexpected protocol choices when attempting to implement Opportunistic Encryption with {Iodine::SSLConnector}.
+	def ssl_protocols= protocol_hash
+		raise TypeError, "Iodine.ssl_protocols should be a Hash with Strings for keys (protocol identifiers) and Classes as values (Protocol classes)."
+		@ssl = true
+		@ssl_context.npn_protocols = protocol_hash.keys
+		@ssl_protocols = protocol_hash
+	end
+
+	# Gets the SSL Protocol Hash used for 
+	def ssl_protocols
+		@ssl_protocols
 	end
 
 

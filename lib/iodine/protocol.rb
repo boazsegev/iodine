@@ -4,7 +4,7 @@ module Iodine
 	#
 	# A new protocol instance will be created for every network connection.
 	#
-	# The recommended use is to inherit this class (or {SSLProtocol}) and override any of the following:
+	# The recommended use is to inherit this class and override any of the following:
 	# on_open:: called whenever the Protocol is initialized. Override this to initialize the Protocol object.
 	# on_message(data):: called whenever data is received from the IO. Override this to implement the actual network protocol.
 	# on_close:: called AFTER the Protocol's IO is closed.
@@ -20,7 +20,9 @@ module Iodine
 	#
 	class Protocol
 
-		# returns the raw IO object. Using one of the Protocol methods {#write}, {#read}, {#close} is prefered over direct access.
+		# returns the IO object. If the connection uses SSL/TLS, this will return the SSLSocket (not a native IO object).
+		#
+		# Using one of the Protocol methods {#write}, {#read}, {#close} is prefered over direct access.
 		attr_reader :io
 
 		# Sets the timeout in seconds for IO activity (set timeout within {#on_open}).
@@ -57,6 +59,12 @@ module Iodine
 		## functionality and helpers
 
 
+		# returns true id the protocol is using an encrypted connection.
+		def ssl?
+			@io.is_a?(OpenSSL::SSL::SSLSocket)
+		end
+
+
 		# Closes the IO object.
 		# @return [nil]
 		def close
@@ -68,9 +76,15 @@ module Iodine
 		# reads from the IO up to the specified number of bytes (defaults to ~2Mb).
 		def read size = 2_097_152
 			touch
-			@io.recv_nonblock( size  )
-		rescue => e
+			ssl? ? read_ssl(size) : @io.recv_nonblock( size  )
+			# @io.read_nonblock( size  ) # this one is a bit slower...
+		rescue OpenSSL::SSL::SSLErrorWaitReadable, IO::WaitReadable, IO::WaitWritable
 			nil
+		rescue IOError, Errno::ECONNRESET
+			close
+		rescue => e
+			Iodine.warn "Protocol read error: #{e.class.name} #{e.message} (closing connection)"
+			close
 		end
 
 		# this method, writes data to the socket / io object.
@@ -87,11 +101,11 @@ module Iodine
 			end
 		end
 
-		# returns the connection's object unique local ID as a Hex string.
+		# returns the connection's unique local ID as a Hex string.
 		#
 		# This can be used locally but not across processes.
 		def id
-			@id ||= object_id.to_s(16).freeze
+			@id ||= @io.to_io.to_s(16).freeze
 		end
 
 		# returns an [Enumerable](http://ruby-doc.org/core-2.2.3/Enumerable.html) with all the active connections.
@@ -122,7 +136,7 @@ module Iodine
 			@io = io
 			touch
 			@locker.synchronize do
-				Iodine.switch_protocol @io, self
+				Iodine.switch_protocol @io.to_io, self
 				on_open
 			end
 		end
@@ -156,8 +170,8 @@ module Iodine
 		# This method is used by Iodine to create the IO handler whenever a new connection is established.
 		#
 		# Normally you won't need to override this method.
-		def self.accept io
-			self.new(io)
+		def self.accept io, ssl
+			ssl ? SSLConnector.new(io, self) :  self.new(io)
 		end
 
 		protected
@@ -166,6 +180,28 @@ module Iodine
 		def touch
 			@last_active = Iodine.time
 		end
+
+		# reads from the IO up to the specified number of bytes (defaults to ~1Mb).
+		def read_ssl size
+			@send_locker.synchronize do
+				data = ''
+				begin
+					 (data << @io.read_nonblock(size).to_s) until data.bytesize >= size
+				rescue OpenSSL::SSL::SSLErrorWaitReadable, IO::WaitReadable, IO::WaitWritable
+
+				rescue IOError
+					close
+				rescue => e
+					Iodine.warn "SSL Protocol read error: #{e.class.name} #{e.message} (closing connection)"
+					close
+				end
+				return false if data.to_s.empty?
+				touch
+				data
+			end
+		end
+
+
 	end
 
 end
