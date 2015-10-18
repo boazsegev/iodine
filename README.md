@@ -56,11 +56,11 @@ exit
 
 In this mode, Iodine will continue running until all the tasks have completed and than it will quite. Timer based tasks will be ignored.
 
-## Simple Usage: Task polling
+## Simple Usage: Task polling (unreleased version)
 
 This mode of operation is effective if want Iodine to periodically initiates new tasks, for instance if you cannot use `cron`.
 
-To initiate this mode, simply set: `Iodine.protocols = :timers`
+To initiate this mode, simply set: `Iodine.protocol = :timers`
 
 In example:
 
@@ -71,7 +71,7 @@ require 'iodine'
 Iodine.threads = 5
 
 # set Iodine to keep listening to TimedEvent(s).
-Iodine.protocols = :timers
+Iodine.protocol = :timers
 
 # perform a periodical task every ten seconds
 Iodine.run_every 10 do
@@ -83,11 +83,15 @@ end
 exit
 ```
 
+In this mode, Iodine will continue running until it receives a kill signal (i.e. `^C`). Once the kill signal had been received, Iodine will start shutting down, allowing up to ~20-25 seconds to complete any pending tasks (timeout).
+
 ## Server Usage: Plug in your network protocol
 
 Iodine is designed to help write network services (Servers) where each script is intended to implement a single server.
 
 This is not a philosophy based on any idea or preferences, but rather a response to real-world design where each Ruby script is usually assigned a single port for network access (hence, a single server).
+
+In this mode, Iodine will continue running until it receives a kill signal (i.e. `^C`). Once the kill signal had been received, Iodine will start shutting down, allowing up to ~20-25 seconds to complete any pending tasks (timeout).
 
 ## Development
 
