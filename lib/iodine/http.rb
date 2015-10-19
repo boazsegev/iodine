@@ -20,6 +20,8 @@ require 'iodine/http/http2'
 require 'iodine/http/websockets'
 # require 'iodine/http/websockets_handler'
 
+require 'iodine/http/rack_support'
+
 
 module Iodine
 

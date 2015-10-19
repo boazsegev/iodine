@@ -8,8 +8,9 @@ module Iodine
 				@app = app
 
 				Iodine.protocol ||= Iodine::HTTP
-				@pre_rack_handler = Iodine.protocol
-				Iodine.protocol.http_app = self
+				Iodine.threads = 18
+				@pre_rack_handler = Iodine.protocol.on_http
+				Iodine.protocol.on_http self
 				true
 			end
 			def call request, response
@@ -85,11 +86,11 @@ end
 # make Iodine the default fallback position for Rack.
 begin
 	require 'rack/handler'
-	Rack::Handler::WEBrick = Rack::Handler.get(:grhttp)
+	Rack::Handler::WEBrick = Rack::Handler.get(:iodine)
 rescue Exception => e
 
 end
-::Rack::Handler.register( 'grhttp', 'Iodine::Base::Rack') if defined?(::Rack)
+::Rack::Handler.register( 'iodine', 'Iodine::Base::Rack') if defined?(::Rack)
 
 ######
 ## example requests

@@ -99,13 +99,20 @@ module Iodine
 	run do
 		next unless @protocol
 		if @protocol.is_a?( ::Class ) && @protocol.ancestors.include?( ::Iodine::Protocol )
+			begin
+				@server = ::TCPServer.new(@bind, @port)
+			rescue => e
+				Iodine.fatal e.message
+				Iodine.fatal "Running existing tasks and exiting."
+				(@stop = true) && throw( :stop ) unless @stop
+				next
+			end
 			shut_down_proc = Proc.new {|protocol| protocol.on_shutdown ; protocol.close }
 			on_shutdown do
 				@logger << "Stopping to listen on port #{@port} and shutting down.\n"
 				@server.close unless @server.closed?
 				@ios.values.each {|p| run p, &shut_down_proc }
 			end
-			@server = ::TCPServer.new(@bind, @port)
 			::Iodine::Base::Listener.accept(@server, false)
 			@logger << "Iodine #{VERSION} is listening on port #{@port}#{ ' to SSL/TLS connections.' if @ssl}\n"
 			if @spawn_count && @spawn_count.to_i > 1 && Process.respond_to?(:fork)
