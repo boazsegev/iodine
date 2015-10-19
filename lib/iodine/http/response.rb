@@ -127,7 +127,7 @@ module Iodine
 				return @session if @session
 				id = request.cookies[::Iodine::Http.session_token.to_sym] || SecureRandom.uuid
 				set_cookie ::Iodine::Http.session_token, id, expires: (Time.now+86_400), secure:  @request.ssl?
-				@session = ::Iodine::Http::SessionManager.get id
+				@request[:session] = @session = ::Iodine::Http::SessionManager.get(id)
 			end
 
 			# Returns a writable combined hash of the request's cookies and the response cookie values.

@@ -108,10 +108,16 @@ module Iodine
 			end
 			alias :secure? :ssl?
 
-			# @return [BasicIO, SSLBasicIO] the io used for the request.
+			# @return [Iodine::Http, Iodine::Http2, Iodine::Websockets] the Protocol used for the request.
 			def io
-				self[:io]			
+				self[:io]
 			end
+
+			# @return [Hash like storage] Returns the session storage object IF a session was already initialized (use the response to initialize a session).
+			def session
+				self[:session]
+			end
+
 
 			# method recognition
 

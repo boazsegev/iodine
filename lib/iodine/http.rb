@@ -40,7 +40,6 @@ module Iodine
 	#          def initialize http_request, response
 	#              @request = http_request
 	#              @response = response
-	#              on_open
 	#          end
 	#          def on_open
 	#          end
