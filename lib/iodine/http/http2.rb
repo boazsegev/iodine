@@ -107,6 +107,21 @@ module Iodine
 				go_away NO_ERROR
 			end
 
+			# clear text handshake
+			def self.handshake request, io, data
+				return false unless request['upgrade'] =~ /h2c/ && request['http2-settings']
+				io.write "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n"
+				http_2 = self.new(io, request)
+				unless data.eof?
+					http_2.on_message data.read
+				end
+			end
+			# preknowledge handshake
+			def self.pre_handshake io, data
+				return false unless data[0..23] == "PRI * HTTP\/2.0\r\n\r\nSM\r\n\r\n".freeze
+				self.new(io).on_message data
+				true
+			end
 			protected
 
 			# logs the sent response.

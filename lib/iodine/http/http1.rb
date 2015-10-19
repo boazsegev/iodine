@@ -8,7 +8,7 @@ module Iodine
 		end
 		def on_message data
 				return if @refuse_requests
-				# @http2_pri_review ||= ( ::Iodine::Http::HTTP2.pre_handshake(@io, data) && (return true) ) || true
+				@http2_pri_review ||= ( ::Iodine::Http::Http2.pre_handshake(@io, data) && (return true) ) || true
 
 				data = ::StringIO.new data
 				until data.eof?
@@ -70,8 +70,7 @@ module Iodine
 							request[:body_complete] = true
 						end
 					end
-					# (@request = ::Iodine::Http::Request.new(self)) && ( ::Iodine::Http::HTTP2.handshake(request, self, data) || dispatch(request, data) ) if request.delete :body_complete
-					(@request = ::Iodine::Http::Request.new(self)) && ( dispatch(request, data) ) if request.delete :body_complete
+					(@request = ::Iodine::Http::Request.new(self)) && ( ::Iodine::Http::Http2.handshake(request, self, data) || dispatch(request, data) ) if request.delete :body_complete
 				end
 		end
 
