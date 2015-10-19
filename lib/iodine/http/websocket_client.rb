@@ -40,13 +40,9 @@ module Iodine
 			instance_exec( data, &@on_message) 
 		end
 
-		def on_open(protocol = nil, &block)
-			unless protocol
-				raise 'The on_open even is invalid at this point.' if block
-				# @on_open = block if block
-				return @on_open
-			end
-			@io = protocol
+		def on_open(&block)
+			raise 'The on_open even is invalid at this point.' if block
+			@io = @request[:io]
 			Iodine::Http::Request.parse @request
 			instance_exec(&@on_open) if @on_open
 		end

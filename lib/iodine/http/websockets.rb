@@ -13,7 +13,7 @@ module Iodine
 				set_timeout 45
 				@parser = {body: '', stage: 0, step: 0, mask_key: [], len_bytes: []}
 				set_timeout = self.class.default_timeout
-				@handler.on_open self if @handler.respond_to? :on_open
+				@handler.on_open if @handler.respond_to? :on_open
 			end
 			# parse and handle messages.
 			def on_message data

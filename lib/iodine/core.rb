@@ -25,6 +25,12 @@ module Iodine
 		self
 	end
 
+	# @return [nil] Signals Iodine to exit if it was running on Server or Timer mode. Tasks will rundown pending timeout.
+	def signal_exit
+		Process.kill("INT", 0) unless @stop
+		nil
+	end
+
 	protected
 
 	@queue = Queue.new

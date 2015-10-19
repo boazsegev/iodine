@@ -14,8 +14,6 @@ module Iodine
 			attr_reader :flash
 			# the response's body buffer container (an array). This object is removed once the headers are sent and all write operations hang after that point.
 			attr_accessor :body
-			# the io through which the response will be sent.
-			attr_reader :io
 			# the request.
 			attr_accessor :request
 			# Logs the number of bytes written.
@@ -43,6 +41,11 @@ module Iodine
 				request.cookies.each do |k,v|
 					@flash[k] = v if k.to_s.start_with? 'magic_flash_'
 				end
+			end
+
+			# returns the active protocol for the request.
+			def io
+				@request[:io]
 			end
 
 			# returns true if headers were already sent

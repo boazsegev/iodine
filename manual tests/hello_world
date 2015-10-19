@@ -20,28 +20,25 @@ require "iodine/http"
 Iodine.protocol.on_http { "Hello World!" }
 
 
-class WSChatServer
-	def initialize nickname
-		@nickname = nickname || "unknown"
-	end
-	def on_open protocol
-		@io = protocol
-		@io.broadcast "#{@nickname} has joined the chat!"
-		@io << "Welcome #{@nickname}, you have joined the chat!"
-	end
-	def on_message data
-		@io.broadcast "#{@nickname} >> #{data}"
-		@io << ">> #{data}"
-	end
-	def on_broadcast data
-		@io << data
-	end
-	def on_close
-		@io.broadcast "#{@nickname} has left the chat!"
-	end
+class WSChatServer < Iodine::Http::WebsocketHandler
+  def on_open
+     @nickname = request.params[:nickname] || "unknown"
+     broadcast "#{@nickname} has joined the chat!"
+     write "Welcome #{@nickname}, you have joined the chat!"
+  end
+  def on_message data
+     broadcast "#{@nickname} >> #{data}"
+     write ">> #{data}"
+  end
+  def on_broadcast data
+     write data
+  end
+  def on_close
+     broadcast "#{@nickname} has left the chat!"
+  end
 end
 
-Iodine::Http.on_websocket { |request, response| WSChatServer.new request.params[:name]}
+Iodine::Http.on_websocket WSChatServer
 
 Process.fork do
 

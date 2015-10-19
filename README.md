@@ -83,8 +83,44 @@ exit
 
 In this mode, Iodine will continue running until it receives a kill signal (i.e. `^C`). Once the kill signal had been received, Iodine will start shutting down, allowing up to ~20-25 seconds to complete any pending tasks (timeout).
 
-## Server Usage: an Http and Websocket (as well as Rack) server
+## Server Usage: an Http and Websocket server
 
+Using Iodine and leveraging Ruby's Object Oriented approach, is super fun to write our own network protocols and servers... This is Ioding itself includes an _optional_ Http and websocket server. Say "Hello World":
+
+```ruby
+# require the 'iodine/http' module if you want to use Iodine's Http server.
+require 'iodine/http'
+# returning a string will automatically append it to the response.
+Iodine::Http.on_http = { |request, response| "Hello World!" }
+```
+Iodine's Http server includes experimental support for Http/2 right out of the box as well as a Websocket server.
+
+Here's a quick chatroom server (use [www.websocket.org](http://www.websocket.org/echo.html) to check it out):
+
+```ruby
+# require the 'iodine/http' module if you want to use Iodine's Websocket server.
+require 'iodine/http'
+# create an object that will follow the Iodine Websocket API.
+class WSChatServer < Iodine::Http::WebsocketHandler
+  def on_open
+     @nickname = request.params[:nickname] || "unknown"
+     broadcast "#{@nickname} has joined the chat!"
+     write "Welcome #{@nickname}, you have joined the chat!"
+  end
+  def on_message data
+     broadcast "#{@nickname} >> #{data}"
+     write ">> #{data}"
+  end
+  def on_broadcast data
+     write data
+  end
+  def on_close
+     broadcast "#{@nickname} has left the chat!"
+  end
+end
+
+Iodine::Http.on_websocket WSChatServer
+```
 
 
 ## Server Usage: Plug in your network protocol

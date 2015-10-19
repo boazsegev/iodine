@@ -18,7 +18,7 @@ require 'iodine/http/hpack'
 require 'iodine/http/http2'
 
 require 'iodine/http/websockets'
-require 'iodine/http/websockets_handler'
+require 'iodine/http/websocket_handler'
 require 'iodine/http/websocket_client'
 
 require 'iodine/http/rack_support'
@@ -39,11 +39,14 @@ module Iodine
 	#
 	#       require 'iodine/http'
 	#       class WSChatServer
-	#          def initialize nickname
+	#          def initialize nickname, response
 	#              @nickname = nickname || "unknown"
+	#              @response = response
+	#              # @response.io # => Http Protocol
 	#          end
-	#          def on_open protocol
-	#              @io = protocol
+	#          def on_open
+	#              # only now is the response.io pointing at the Websocket Protocol
+	#              @io = @response.io
 	#              @io.broadcast "#{@nickname} has joined the chat!"
 	#              @io << "Welcome #{@nickname}, you have joined the chat!"
 	#          end
@@ -52,16 +55,17 @@ module Iodine
 	#              @io << ">> #{data}"
 	#          end
 	#          def on_broadcast data
-	#              @io << data
+	#              # the http response can also be used to send websocket data.
+	#              @response << data
 	#          end
 	#          def on_close
 	#              @io.broadcast "#{@nickname} has left the chat!"
 	#          end
 	#       end
 	#
-	#       Iodine::Http.on_websocket { |request, response| WSChatServer.new request.params[:name]}
+	#       Iodine::Http.on_websocket { |request, response| WSChatServer.new request.params[:name], response}
 	#
-	# See {Iodine::Http::WebsocketHnadler} for a good starting point or inherit {Iodine::Http::WebsocketHnadler} in your handler.
+	# See {Iodine::Http::WebsocketHandler} for a good starting point or inherit {Iodine::Http::WebsocketHandler} in your handler.
 	#
 	class Http < Iodine::Protocol
 		# Sets or gets the Http callback.
@@ -100,17 +104,23 @@ module Iodine
 		# i.e.:
 		#
 		#       require 'iodine/http'
+		#       # don't start the server
+		#       Iodine.protocol = :timer
 		#       options = {}
 		#       options[:on_open] = Proc.new { write "Hello there!"}
 		#       options[:on_message] = Proc.new do |data|
 		#           puts ">> #{data}";
 		#           write "Bye!";
 		#           # It's possible to update the callback midstream.
-		#           on_message {|data| puts "-- Goodbye message: #{data}"; close}
+		#           on_message {|data| puts "-- Goodbye message: #{data}"; close;}
 		#       end
-		#       options[:on_close] = Proc.new { puts "disconnected"}
+		#       # After closing we will call `Iodine.signal_exit` to signal Iodine to finish up.
+		#       options[:on_close] = Proc.new { puts "disconnected"; Iodine.signal_exit }
 		#       
 		#       Iodine::Http.ws_connect "ws://echo.websocket.org", options
+		#
+		#       #if running from irb:
+		#       exit
 		#     
 		def self.ws_connect url, options={}, &block
 			::Iodine.run { ::Iodine::Http::WebsocketClient.connect url, options, &block }
