@@ -104,7 +104,7 @@ module Iodine
 			rescue => e
 				Iodine.fatal e.message
 				Iodine.fatal "Running existing tasks and exiting."
-				(@stop = true) && throw( :stop ) unless @stop
+				@stop = true
 				next
 			end
 			shut_down_proc = Proc.new {|protocol| protocol.on_shutdown ; protocol.close }

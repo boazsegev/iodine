@@ -48,11 +48,10 @@ module Iodine
 		def on_shutdown
 		end
 
-		# This method is called whenever a timeout has occurred. Either implement a ping or return `false` to disconnect.
-		#
-		# A `false` or `nil` return value will cause disconnection
+		# This method is called whenever a timeout has occurred. Either implement a ping or close the connection.
+		# The default implementation closes the connection.
 		def ping
-			false
+			close
 		end
 
 		#############
@@ -161,20 +160,19 @@ module Iodine
 		#
 		# Normally you won't need to override this method. See {#ping}
 		def timeout? time
-			(ping || close) if @timeout && !@send_locker.locked? && ( (time - @last_active) > @timeout )
+			ping if @timeout && !@send_locker.locked? && ( (time - @last_active) > @timeout )
 		end
 
 
 
+
+		protected
 		# This method is used by Iodine to create the IO handler whenever a new connection is established.
 		#
 		# Normally you won't need to override this method.
 		def self.accept io, ssl
 			ssl ? SSLConnector.new(io, self) :  self.new(io)
 		end
-
-		protected
-
 		# This methos updates the timeout "watch", signifying the IO was active.
 		def touch
 			@last_active = Iodine.time

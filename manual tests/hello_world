@@ -18,6 +18,23 @@ require "iodine/http"
 # Iodine.processes = 4
 Iodine.protocol.on_http { "Hello World!" }
 
+class WSEcho
+	def on_open protocol
+		@io = protocol
+	end
+	def on_message data
+		write ">> #{data}"
+	end
+	def on_close
+	end
+	def write data
+		@io << data
+	end
+	alias :<< :write
+end
+
+Iodine.protocol.on_websocket { WSEcho.new }
+
 # Process.fork do
 
 # 	Iodine.ssl = true

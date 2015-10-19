@@ -1,12 +1,10 @@
 # Iodine
 
-Iodine makes writing evented server applications easy to write.
+Iodine makes writing Object Oriented evented server applications easy to write.
 
-Iodine is intended to replace the use of a generic reacor, such as EventMachine or GReactor and it hides all the nasty details of creating the event loop.
+In fact, it's so fun to write network protocols that mix and match together, that Iodine includes a built in Http, Http/2 (experimental) and Websocket server that act's a a great demonstration of the power behind Ruby and the Object Oriented approach.
 
 To use Iodine, you just set up your tasks - including a single server, if you want one. Iodine will start running once your application is finished and it won't stop runing until all the scheduled tasks have completed.
-
-Iodine v. 0.0.1 isn't well tested just yet... but I'm releasing it anyway, to reserve the name and because initial testing shows that it works.
 
 ## Installation
 
@@ -85,13 +83,56 @@ exit
 
 In this mode, Iodine will continue running until it receives a kill signal (i.e. `^C`). Once the kill signal had been received, Iodine will start shutting down, allowing up to ~20-25 seconds to complete any pending tasks (timeout).
 
+## Server Usage: an Http and Websocket (as well as Rack) server
+
+
+
 ## Server Usage: Plug in your network protocol
 
 Iodine is designed to help write network services (Servers) where each script is intended to implement a single server.
 
 This is not a philosophy based on any idea or preferences, but rather a response to real-world design where each Ruby script is usually assigned a single port for network access (hence, a single server).
 
-To help you write your network service, Iodine starts you off with the `Iodine::Protocol` and `Iodine::SSLProtocol`.
+To help you write your network service, Iodine starts you off with the `Iodine::Protocol`. All network protocols should inherit from this class (or implement it's essencial functionality).
+
+Here's a quick Echo server:
+
+```ruby
+require 'iodine'
+
+# inherit from ::Iodine::Protocol
+class EchoServer < Iodine::Protocol
+    # The protocol class will call this withing a Mutex,
+    # making sure the IO isn't accessed while being initialized.
+	def on_open
+		Iodine.info "Opened connection."
+		set_timeout 5
+	end
+    # The protocol class will call this withing a Mutex, after reading the data from the IO.
+    # This makes this thread-safe per connection.
+	def on_message data
+		write("-- Closing connection, goodbye.\n") && close if data =~ /^(bye|close|exit|stop)/i
+		write(">> #{data.chomp}\n")
+	end
+	# Iodine makes sure this is called only once.
+	def on_close
+		Iodine.info "Closed connection."
+	end
+	# The is called whenever timeout is reached.
+	# By default, ping will close the connection.
+	# but we can do better...
+	def ping
+	    # `write` will automatically close the connection if it fails.
+		write "-- Are you still there?\n"
+	end
+end
+
+
+Iodine.protocol = EchoServer
+
+# if running this code within irb:
+exit
+```
 
 In this mode, Iodine will continue running until it receives a kill signal (i.e. `^C`). Once the kill signal had been received, Iodine will start shutting down, allowing up to ~20-25 seconds to complete any pending tasks (timeout).
 

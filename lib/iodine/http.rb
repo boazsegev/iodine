@@ -19,6 +19,7 @@ require 'iodine/http/http2'
 
 require 'iodine/http/websockets'
 # require 'iodine/http/websockets_handler'
+require 'iodine/http/websocket_client'
 
 require 'iodine/http/rack_support'
 
@@ -31,19 +32,15 @@ module Iodine
 	# your Http callback. i.e.:
 	#
 	#       require 'iodine/http'
-	#       Iodine::Http.on_http { 'Hello World!' }
+	#       Iodine::Http.on_http { |request, response| 'Hello World!' }
 	#
 	# To start a Websocket server, require `iodine/http` (which isn't required by default), create a Websocket handling Class and set up
 	# your Websocket callback. i.e.:
 	#
 	#       require 'iodine/http'
 	#       class WSEcho
-	#          def initialize http_request
-	#              @request = http_request
-	#              # @io = http_request[:io] # this is still the Http Protocol object.
-	#          end
-	#          def on_open
-	#              @io = @request[:io] # this is the Websockets Protocol object.
+	#          def on_open protocol
+	#              @io = protocol
 	#          end
 	#          def on_message data
 	#              @io << ">> #{data}"
@@ -52,7 +49,7 @@ module Iodine
 	#          end
 	#       end
 	#
-	#       Iodine::Http.on_websocket { |request| WSEcho.new(request) }
+	#       Iodine::Http.on_websocket { |request, response| WSEcho.new }
 	#
 	class Http < Iodine::Protocol
 		# Sets or gets the Http callback.
@@ -84,10 +81,45 @@ module Iodine
 			@session_token
 		end
 
-		@websocket_app = @http_app = Proc.new { |i,o| false }
+		# Creates a websocket client within a new task (non-blocking).
+		# 
+		# Make sure to setup all the callbacks (as needed) prior to starting the connection. See {::Iodine::Http::WebsocketClient.connect}
+		#
+		# i.e.:
+		#
+		#       require 'iodine/http'
+		#       options = {}
+		#       options[:on_open] = Proc.new { write "Hello there!"}
+		#       options[:on_message] = Proc.new do |data|
+		#           puts ">> #{data}";
+		#           write "Bye!";
+		#           # It's possible to update the callback midstream.
+		#           on_message {|data| puts "-- Goodbye message: #{data}"; close}
+		#       end
+		#       options[:on_close] = Proc.new { puts "disconnected"}
+		#       
+		#       Iodine::Http.ws_connect "ws://echo.websocket.org", options
+		#     
+		def self.ws_connect url, options={}, &block
+			::Iodine.run { ::Iodine::Http::WebsocketClient.connect url, options, &block }
+		end
+
+		@websocket_app = @http_app = NOT_IMPLEMENTED = Proc.new { |i,o| false }
 		@session_token = "#{File.basename($0, '.*')}_uuid"
 	end
 
-	@queue.tap {|q| arr =[]; arr << q.pop until q.empty?; run { Iodine.ssl_protocols = { 'h2' => Iodine::Http::Http2, 'http/1.1' => Iodine::Http } if @ssl && @ssl_protocols.empty? } ; q << arr.shift until arr.empty? }
+	@queue.tap do |q|
+		arr =[];
+		arr << q.pop until q.empty?;
+		run { Iodine.ssl_protocols = { 'h2' => Iodine::Http::Http2, 'http/1.1' => Iodine::Http } if @ssl && @ssl_protocols.empty? }
+		run do
+			if Iodine.protocol == ::Iodine::Http && ::Iodine::Http.on_http == ::Iodine::Http::NOT_IMPLEMENTED && ::Iodine::Http.on_websocket == ::Iodine::Http::NOT_IMPLEMENTED
+				::Iodine.protocol = :http_not_initialized
+				q << arr.shift until arr.empty?
+				run { Process.kill("INT", 0) }
+			end
+		end
+		q << arr.shift until arr.empty?
+	end
 end
 Iodine.protocol = ::Iodine::Http
