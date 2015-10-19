@@ -8,7 +8,7 @@ module Iodine
 		end
 		def on_message data
 				return if @refuse_requests
-				@http2_pri_review ||= ( ::Iodine::Http::Http2.pre_handshake(@io, data) && (return true) ) || true
+				@http2_pri_review ||= ( ::Iodine::Http::Http2.pre_handshake(self, data) && (return true) ) || true
 
 				data = ::StringIO.new data
 				until data.eof?
