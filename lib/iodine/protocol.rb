@@ -104,7 +104,7 @@ module Iodine
 		#
 		# This can be used locally but not across processes.
 		def id
-			@id ||= @io.to_io.to_s(16).freeze
+			@id ||= @io.to_io.to_s(16)
 		end
 
 		# returns an [Enumerable](http://ruby-doc.org/core-2.2.3/Enumerable.html) with all the active connections.

@@ -6,8 +6,7 @@ require 'yaml'
 require 'uri'
 require 'tmpdir'
 require 'zlib'
-
-# require 'securerandom'
+require 'securerandom'
 
 require 'iodine/http/request'
 require 'iodine/http/response'
@@ -39,12 +38,13 @@ module Iodine
 	#       class WSEcho
 	#          def initialize http_request
 	#              @request = http_request
-	#              @io = http_request.io # this is the Websockets Protocol object.
+	#              # @io = http_request[:io] # this is still the Http Protocol object.
 	#          end
 	#          def on_open
+	#              @io = @request[:io] # this is the Websockets Protocol object.
 	#          end
 	#          def on_message data
-	#              @response << ">> #{data}"
+	#              @io << ">> #{data}"
 	#          end
 	#          def on_close
 	#          end
@@ -85,7 +85,7 @@ module Iodine
 		@websocket_app = @http_app = Proc.new { |i,o| false }
 		@session_token = "#{File.basename($0, '.*')}_uuid"
 	end
+
+	@queue.tap {|q| arr =[]; arr << q.pop until q.empty?; run { Iodine.ssl_protocols = { 'h2' => Iodine::Http::Http2, 'http/1.1' => Iodine::Http } if @ssl && @ssl_protocols.empty? } ; q << arr.shift until arr.empty? }
 end
 Iodine.protocol = ::Iodine::Http
-Iodine.run {Iodine.logger << "Iodine's Http server is setup to run.\n"}
-Iodine.ssl_protocols = { 'h2' => Iodine::Http::Http2, 'http/1.1' => Iodine::Http }

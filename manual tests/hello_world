@@ -7,7 +7,7 @@ Dir.chdir Root.join('..').to_s
 require "bundler/setup"
 require "iodine/http"
 
-Iodine.ssl = true
+# Iodine.ssl = true
 # Iodine.treads = 8
 # Iodine.protocol.on_http do |req, res|
 # 	res.session[:count] ||= 0

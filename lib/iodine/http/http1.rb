@@ -147,7 +147,7 @@ module Iodine
 			begin
 				if request.websocket?
 					@refuse_requests = true
-					::Iodine::Http::Websockets.http_handshake request, response, self.class.on_websocket.call(request, response)
+					::Iodine::Http::Websockets.handshake request, response, self.class.on_websocket.call(request, response)
 				else
 					ret = self.class.on_http.call(request, response)
 					if ret.is_a?(String)
