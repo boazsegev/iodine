@@ -56,4 +56,5 @@ require "iodine/timers"
 require "iodine/protocol"
 require "iodine/ssl_connector"
 require "iodine/io"
-require 'iodine/http'
+
+# require 'iodine/http'

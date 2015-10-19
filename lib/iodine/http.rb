@@ -37,9 +37,9 @@ module Iodine
 	#
 	#       require 'iodine/http'
 	#       class WSEcho
-	#          def initialize http_request, response
+	#          def initialize http_request
 	#              @request = http_request
-	#              @response = response
+	#              @io = http_request.io # this is the Websockets Protocol object.
 	#          end
 	#          def on_open
 	#          end
@@ -50,7 +50,7 @@ module Iodine
 	#          end
 	#       end
 	#
-	#       Iodine::Http.on_websocket { |request, response| WSEcho.new(request, response) }
+	#       Iodine::Http.on_websocket { |request| WSEcho.new(request) }
 	#
 	class Http < Iodine::Protocol
 		# Sets or gets the Http callback.
@@ -65,7 +65,7 @@ module Iodine
 		end
 		# Sets or gets the Websockets callback.
 		#
-		# A Websockets callback is a Proc like object that answers to `call(request, response)` and returns either:
+		# A Websockets callback is a Proc like object that answers to `call(request)` and returns either:
 		# `false`:: the request shouldn't be answered or resource not found (error 404 will be sent as a response).
 		# Websocket Handler:: a Websocket handler is an object that is expected to answer `on_message(data)` and `on_close`. See {} for more data.
 		def self.on_websocket handler = nil, &block
@@ -88,3 +88,4 @@ module Iodine
 end
 Iodine.protocol = ::Iodine::Http
 Iodine.run {Iodine.logger << "Iodine's Http server is setup to run.\n"}
+# Iodine.ssl_protocols = { 'h2' => Iodine::Http::Http2, 'http/1.1' => Iodine::Http }

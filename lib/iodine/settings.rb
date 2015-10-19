@@ -72,9 +72,9 @@ module Iodine
 	#
 	# * please notice that using allowing dynamic Protocol Negotiation could cause unexpected protocol choices when attempting to implement Opportunistic Encryption with {Iodine::SSLConnector}.
 	def ssl_protocols= protocol_hash
-		raise TypeError, "Iodine.ssl_protocols should be a Hash with Strings for keys (protocol identifiers) and Classes as values (Protocol classes)."
+		raise TypeError, "Iodine.ssl_protocols should be a Hash with Strings for keys (protocol identifiers) and Classes as values (Protocol classes)." unless protocol_hash.is_a?(Hash)
 		@ssl = true
-		@ssl_context.npn_protocols = protocol_hash.keys
+		ssl_context.npn_protocols = protocol_hash.keys
 		@ssl_protocols = protocol_hash
 	end
 
