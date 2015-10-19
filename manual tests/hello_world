@@ -15,7 +15,7 @@ require "iodine/http"
 # 	res << "Visits: #{res.session[:count]}\n\nRequest object:\n\n#{req.to_s}"
 # end
 
-Iodine.processes = 4
+# Iodine.processes = 4
 
 Iodine.protocol.on_http { "Hello World!" }
 
