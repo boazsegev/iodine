@@ -38,18 +38,28 @@ module Iodine
 	# your Websocket callback. i.e.:
 	#
 	#       require 'iodine/http'
-	#       class WSEcho
+	#       class WSChatServer
+	#          def initialize nickname
+	#              @nickname = nickname || "unknown"
+	#          end
 	#          def on_open protocol
 	#              @io = protocol
+	#              @io.broadcast "#{@nickname} has joined the chat!"
+	#              @io << "Welcome #{@nickname}, you have joined the chat!"
 	#          end
 	#          def on_message data
+	#              @io.broadcast "#{@nickname} >> #{data}"
 	#              @io << ">> #{data}"
 	#          end
+	#          def on_broadcast data
+	#              @io << data
+	#          end
 	#          def on_close
+	#              @io.broadcast "#{@nickname} has left the chat!"
 	#          end
 	#       end
-	#
-	#       Iodine::Http.on_websocket { |request, response| WSEcho.new }
+
+	#       Iodine::Http.on_websocket { |request, response| WSChatServer.new request.params[:name]}
 	#
 	class Http < Iodine::Protocol
 		# Sets or gets the Http callback.

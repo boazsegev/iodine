@@ -74,7 +74,6 @@ module Iodine
 				write PONG_FRAME
 			end
 
-
 			# Broadcasts data to ALL the websocket connections EXCEPT the once specified (if specified).
 			#
 			# Data broadcasted will be recived by the websocket handler it's #on_broadcast(ws) method (if exists).
@@ -87,11 +86,16 @@ module Iodine
 			def self.broadcast data, ignore_io = nil
 				if ignore_io
 					ig_id = ignore_io.object_id
-					each {|io| Iodine.run io, data, &on_broadcast unless io.object_id == ig_id}
+					each {|io| Iodine.run io, data, &broadcast_proc unless io.object_id == ig_id}
 				else
-					each {|io| Iodine.run io, data, &on_broadcast }
+					each {|io| Iodine.run io, data, &broadcast_proc }
 				end
 				true
+			end
+
+			# Broadcasts the data to all the listening websockets, except self. See {::Iodine::Http::Websockets.broadcast}
+			def broadcast data
+				self.class.broadcast data, self
 			end
 
 			# Unicast data to a specific websocket connection (ONLY the connection specified).
@@ -106,6 +110,10 @@ module Iodine
 				return false unless id && data
 				each {|io| next unless io.id == id; Iodine.run io, data, &broadcast_proc; return true}
 				false
+			end
+			# @return [true, false] Unicasts the data to the requested connection. returns `true` if the requested connection id was found on this server. See {::Iodine::Http::Websockets.unicast}
+			def unicast id, data
+				self.class.unicast id, data
 			end
 
 			def self.handshake request, response, handler
