@@ -150,7 +150,7 @@ module Iodine
 			#
 			# If the headers were already sent, this will also send the data and hang until the data was sent.
 			def << str
-				( @body ? @body.push(str) : ( (@body = str.dup) && @io.handler.stream_response(self) ) ) if str
+				( @body ? @body.push(str) : ( (@body = str.dup) && @io.stream_response(self) ) ) if str
 				self
 			end
 

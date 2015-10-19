@@ -88,4 +88,4 @@ module Iodine
 end
 Iodine.protocol = ::Iodine::Http
 Iodine.run {Iodine.logger << "Iodine's Http server is setup to run.\n"}
-# Iodine.ssl_protocols = { 'h2' => Iodine::Http::Http2, 'http/1.1' => Iodine::Http }
+Iodine.ssl_protocols = { 'h2' => Iodine::Http::Http2, 'http/1.1' => Iodine::Http }

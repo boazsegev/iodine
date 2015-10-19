@@ -197,8 +197,8 @@ module Iodine
 					# 	extract_params m[9].split(/[&;]/), request[:params]
 					# end
 				# end
-				return request if request[:original_path]
-				request[:client_ip] = request['x-forwarded-for'.freeze].to_s.split(/,[\s]?/)[0] || (request[:io].io.remote_address.ip_address) rescue 'unknown IP'.freeze
+				return request if request[:client_ip]
+				request[:client_ip] = request['x-forwarded-for'.freeze].to_s.split(/,[\s]?/)[0] || (request[:io].io.to_io.remote_address.ip_address) rescue 'unknown IP'.freeze
 				request[:version] ||= '1'
 
 				request[:scheme] ||= request['x-forwarded-proto'.freeze] ? request['x-forwarded-proto'.freeze].downcase : ( request[:io].ssl? ? 'https'.freeze : 'http'.freeze)
