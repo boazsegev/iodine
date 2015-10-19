@@ -32,7 +32,7 @@ module Iodine
 	@stop = true
 	@done = false
 	@logger = Logger.new(STDOUT)
-	@thread_count = 1
+	@spawn_count = @thread_count = 1
 	@ios = {}
 	@io_in = Queue.new
 	@io_out = Queue.new

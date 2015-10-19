@@ -104,7 +104,7 @@ module Iodine
 
 			# @return [true, false] returns true if the requested was an SSL protocol (true also if the connection is clear-text behind an SSL Proxy, such as with some PaaS providers).
 			def ssl?
-				io.ssl? || self[:scheme] == 'https'.freeze || self[:scheme] == 'wss'.freeze
+				self[:io].ssl? || self[:scheme] == 'https'.freeze || self[:scheme] == 'wss'.freeze
 			end
 			alias :secure? :ssl?
 

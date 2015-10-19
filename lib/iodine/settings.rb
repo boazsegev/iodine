@@ -14,6 +14,15 @@ module Iodine
 		@thread_count = count
 	end
 
+	# Sets the number of processes that should be spawned in Server mode. Defaults to 1 (no processes spawned).
+	#
+	# * Forking (spwaning processes) might NOT work on all systems. Also, please make sure your code is safe to spawn.
+	#
+	# * Forking might cause some tasks (such as time based tasks) to be performed twice (once for each process). To avoid double performance, use a task (delayed execution) to initialize any tasks.
+	def processes= count
+		@spawn_count = count
+	end
+
 	# Sets the server port. Defaults to the runtime `-p` argument, or the ENV['PORT'] or 3000 (in this order).
 	def port= port
 		@port = port

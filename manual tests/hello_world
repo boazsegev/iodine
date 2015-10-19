@@ -9,4 +9,23 @@ require "iodine/http"
 
 # Iodine.ssl = true
 # Iodine.treads = 8
+# Iodine.protocol.on_http do |req, res|
+# 	res.session[:count] ||= 0
+# 	res.session[:count] += 1
+# 	res << "Visits: #{res.session[:count]}\n\nRequest object:\n\n#{req.to_s}"
+# end
+
+Iodine.processes = 4
 Iodine.protocol.on_http { "Hello World!" }
+
+# Process.fork do
+
+# 	Iodine.ssl = true
+# 	Iodine.port = 3030
+# 	Iodine.protocol.on_http do |req, res|
+# 		res.session[:count] ||= 0
+# 		res.session[:count] += 1
+# 		res << "Visits: #{res.session[:count]}\n\nRequest object:\n\n#{req.to_s}"
+# 	end
+
+# end
