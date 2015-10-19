@@ -2,23 +2,23 @@ module Iodine
 
 	public
 
-	# Gets the last time at which the IO Reactor was last active (last "tick").
+	# @return [Time] Gets the last time at which the IO Reactor was last active (last "tick").
 	def time
 		@time
 	end
-
 	# Replaces (or creates) an IO's protocol object.
 	#
 	# Accepts 2 arguments, in the following order:
 	#
 	# io:: the raw IO object.
 	# protocol:: a protocol instance - should be an instance of a class inheriting from {Iodine::Protocol}. type will NOT be checked - but Iodine could break if there is a type mismatch.
+	# @return [Protocol]
 	def switch_protocol *args
 		@io_in << args
 		args[1]
 	end
 
-	# Returns an Array with all the currently active connection's Protocol instances.
+	# @return [Array] Returns an Array with all the currently active connection's Protocol instances.
 	def to_a
 		@ios.values
 	end
@@ -37,7 +37,7 @@ module Iodine
 	@timeout_proc = Proc.new {|prot| prot.timeout?(@time) }
 	@status_loop = Proc.new {|io|  @io_out << io if io.closed? || !(io.stat.readable? rescue false) }
 	@close_callback = Proc.new {|prot| prot.on_close if prot }
-	REACTOR = Proc.new do
+	REACTOR = [ (Proc.new do
 		if @queue.empty?
 			#clear any closed IO objects.
 			@time = Time.now
@@ -50,24 +50,24 @@ module Iodine
 			until @io_out.empty?
 				o_io = @io_out.pop
 				o_io.close unless o_io.closed?
-				queue @close_callback, @ios.delete(o_io)
+				run @ios.delete(o_io), &@close_callback
 			end
 			# react to IO events
 			begin
 				r = IO.select(@ios.keys, nil, nil, 0.15)
-				r[0].each {|io| queue @ios[io] } if r
+				r[0].each {|io| @queue << [@ios[io]] } if r
 			rescue => e
 				
 			end
 			unless @stop && @queue.empty?
 				# @ios.values.each &@timeout_loop
-				@check_timers && queue(@check_timers)
-				queue REACTOR
+				@check_timers && (@queue << @check_timers)
+				@queue << REACTOR
 			end
 		else
-			queue REACTOR
+			@queue << REACTOR
 		end
-	end
+	end )]
 	# internal helper methods and classes.
 	module Base
 		# the server listener Protocol.
@@ -103,7 +103,7 @@ module Iodine
 			on_shutdown do
 				@logger << "Stopping to listen on port #{@port} and shutting down.\n"
 				@server.close unless @server.closed?
-				@ios.values.each {|p| queue shut_down_proc, p }
+				@ios.values.each {|p| run p, &shut_down_proc }
 			end
 			@server = ::TCPServer.new(@bind, @port)
 			::Iodine::Base::Listener.accept(@server, false)
@@ -118,6 +118,6 @@ module Iodine
 		end
 		old_int_trap = trap('INT') { throw :stop; trap('INT', old_int_trap) if old_int_trap }
 		old_term_trap = trap('TERM') { throw :stop; trap('TERM', old_term_trap) if old_term_trap }
-		queue REACTOR
+		@queue << REACTOR
 	end
 end

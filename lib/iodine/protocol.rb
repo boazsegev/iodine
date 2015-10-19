@@ -9,7 +9,7 @@ module Iodine
 	# on_message(data):: called whenever data is received from the IO. Override this to implement the actual network protocol.
 	# on_close:: called AFTER the Protocol's IO is closed.
 	# on_shutdown:: called when the server's shutdown process had started and BEFORE the Protocol's IO is closed. It allows graceful shutdown for network protocols.
-	# ping::
+	# ping:: called when timeout was reached. see {#set_timeout}
 	#
 	# Once the network protocol class was created, remember to tell Iodine about it:
 	#       class MyProtocol << Iodine::Protocol
@@ -27,7 +27,7 @@ module Iodine
 
 		# Sets the timeout in seconds for IO activity (set timeout within {#on_open}).
 		#
-		# After timeout is reached, {#ping} will be closed. The connection will be closed if {#ping} returns `false` or `nil`.
+		# After timeout is reached, {#ping} will be called. The connection will be closed if {#ping} returns `false` or `nil`.
 		def set_timeout seconds
 			@timeout = seconds
 		end
@@ -59,9 +59,9 @@ module Iodine
 		## functionality and helpers
 
 
-		# returns true id the protocol is using an encrypted connection.
+		# returns true id the protocol is using an encrypted connection (the IO is an OpenSSL::SSL::SSLSocket).
 		def ssl?
-			@io.is_a?(OpenSSL::SSL::SSLSocket)
+			@io.is_a?(OpenSSL::SSL::SSLSocket) # io.npn_protocol
 		end
 
 
@@ -96,7 +96,6 @@ module Iodine
 					r
 				end
 			rescue => e
-				# GReactor.warn e
 				close
 			end
 		end

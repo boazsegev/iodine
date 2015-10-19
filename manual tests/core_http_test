@@ -47,7 +47,7 @@ class MiniServer < Iodine::Protocol
 end
 
 Iodine.threads = 1
-Iodine.ssl = 1
+# Iodine.ssl = 1
 Iodine.protocol = MiniServer
 
 

@@ -1,0 +1,12 @@
+#!/usr/bin/env ruby
+
+require 'pathname'
+Root ||= Pathname.new(File.dirname(__FILE__)).expand_path
+Dir.chdir Root.join('..').to_s
+
+require "bundler/setup"
+require "iodine/http"
+
+# Iodine.ssl = true
+# Iodine.treads = 8
+Iodine.protocol.on_http { "Hello World!" }

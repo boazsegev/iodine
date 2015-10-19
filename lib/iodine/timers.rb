@@ -24,7 +24,7 @@ module Iodine
 		end
 
 		# stops a timed event.
-		# @return [GReactor::TimedEvent] returns the TimedEvent object.
+		# @return [Iodine::TimedEvent] returns the TimedEvent object.
 		def stop!
 			@repeat_limit = 0
 			self
@@ -38,7 +38,7 @@ module Iodine
 			return false unless @next <= Iodine.time
 			return true if @repeat_limit == 0
 			@repeat_limit -= 1 if @repeat_limit.to_i > 0
-			Iodine.queue @job, @args
+			Iodine.run *@args, &@job
 			@next = Iodine.time + @interval
 			@repeat_limit == 0
 		end
@@ -59,28 +59,11 @@ module Iodine
 	#
 	# Timed event's time of execution is dependant on the workload and continuous uptime of the process (timed events AREN'T persistent).
 	#
-	# @return [GReactor::TimedEvent] returns the new TimedEvent object.
+	# @return [Iodine::TimedEvent] returns the new TimedEvent object.
 	def run_after seconds, *args, &block
 		timed_job seconds, 1, args, block
 	end
 
-	# pushes a timed event to the timers's stack
-	#
-	# accepts:
-	# time:: the time at which the job should be executed.
-	# *arg:: any arguments that will be passed to the handler's `call` method.
-	# &block:: the block to execute.
-	#
-	# A block is required.
-	#
-	# On top of the arguments passed to the `run_after` method, the timer object will be passed as the last agrument to the receiving block.
-	#
-	# Timed event's time of execution is dependant on the workload and continuous uptime of the process (timed events AREN'T persistent).
-	#
-	# @return [GReactor::TimedEvent] returns the new TimedEvent object.
-	def run_at run_time, *args, &block
-		timed_job( (@time - run_time), 1, args, block)
-	end
 	# pushes a repeated timed event to the timers's stack
 	#
 	# accepts:
@@ -95,7 +78,7 @@ module Iodine
 	#
 	# Timed event's time of execution is dependant on the workload and continuous uptime of the process (timed events AREN'T persistent unless you save and reload them yourself).
 	#
-	# @return [GReactor::TimedEvent] returns the new TimedEvent object.
+	# @return [Iodine::TimedEvent] returns the new TimedEvent object.
 	def run_every seconds, limit = -1, *args, &block
 		timed_job seconds, limit, args, block
 	end
@@ -112,5 +95,6 @@ module Iodine
 	@check_timers = Proc.new do
 		@timer_locker.synchronize { @timers.delete_if {|t| t.done? } }
 	end
+	@check_timers = [@check_timers]
 
 end
