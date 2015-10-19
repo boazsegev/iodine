@@ -18,7 +18,7 @@ require 'iodine/http/hpack'
 require 'iodine/http/http2'
 
 require 'iodine/http/websockets'
-# require 'iodine/http/websockets_handler'
+require 'iodine/http/websockets_handler'
 require 'iodine/http/websocket_client'
 
 require 'iodine/http/rack_support'
@@ -60,6 +60,8 @@ module Iodine
 	#       end
 	#
 	#       Iodine::Http.on_websocket { |request, response| WSChatServer.new request.params[:name]}
+	#
+	# See {Iodine::Http::WebsocketHnadler} for a good starting point or inherit {Iodine::Http::WebsocketHnadler} in your handler.
 	#
 	class Http < Iodine::Protocol
 		# Sets or gets the Http callback.

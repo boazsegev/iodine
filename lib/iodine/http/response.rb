@@ -34,7 +34,6 @@ module Iodine
 				@body = content || []
 				@request.cookies.set_response self
 				@cookies = {}
-				@io = request.io
 				@bytes_written = 0
 				@keep_alive = @http_sblocks_count = false
 				# propegate flash object
@@ -79,7 +78,7 @@ module Iodine
 				raise "Block required." unless block
 				start_streaming unless @http_sblocks_count
 				@http_sblocks_count += 1
-				@stream_proc ||= Proc.new { |block| raise "IO closed. Streaming failed." if io.io.closed?; block.call; @http_sblocks_count -= 1; finish_streaming }
+				@stream_proc ||= Proc.new { |block| raise "IO closed. Streaming failed." if request[:io].io.closed?; block.call; @http_sblocks_count -= 1; finish_streaming }
 				Iodine.run block, &@stream_proc
 			end
 
@@ -150,7 +149,7 @@ module Iodine
 			#
 			# If the headers were already sent, this will also send the data and hang until the data was sent.
 			def << str
-				( @body ? @body.push(str) : ( (@body = str.dup) && @io.stream_response(self) ) ) if str
+				( @body ? @body.push(str) : ( (@body = str.dup) && request[:io].stream_response(self) ) ) if str
 				self
 			end
 
@@ -234,12 +233,12 @@ module Iodine
 
 			# attempts to write a non-streaming response to the IO. This can be done only once and will quitely fail subsequently.
 			def finish
-				@io.send_response self
+				request[:io].send_response self
 			end
 
 			# Returns the connection's UUID.
 			def uuid
-				io.id
+				request[:io].id
 			end
 			
 			# response status codes, as defined.
@@ -338,7 +337,7 @@ module Iodine
 			def start_streaming
 				raise "Cannot start streaming after headers were sent!" if headers_sent?
 				@http_sblocks_count ||= 0
-				@io.stream_response self
+				request[:io].stream_response self
 			end
 
 			# Sends the complete response signal for a streaming response.
@@ -346,7 +345,7 @@ module Iodine
 			# Careful - sending the completed response signal more than once might case disruption to the HTTP connection.
 			def finish_streaming
 				return unless @http_sblocks_count == 0
-				@io.stream_response self, true
+				request[:io].stream_response self, true
 			end
 		end
 	end

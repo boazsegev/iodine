@@ -1,24 +1,29 @@
 module Iodine
 	class Http < Iodine::Protocol
 		class Websockets < ::Iodine::Protocol
+			# initialize the websocket protocol.
 			def initialize io, handler, request, ws_extentions = nil
 				@handler = handler
 				@ws_extentions = ws_extentions
 				request[:io] = self
 				super(io)
 			end
+			# continue to initialize the websocket protocol.
 			def on_open
 				set_timeout 45
 				@parser = {body: '', stage: 0, step: 0, mask_key: [], len_bytes: []}
 				set_timeout = self.class.default_timeout
 				@handler.on_open self if @handler.respond_to? :on_open
 			end
+			# parse and handle messages.
 			def on_message data
 				extract_message StringIO.new(data)
 			end
+			# handle broadcasts.
 			def on_broadcast data
 				@handler.on_broadcast(data) if @handler.respond_to? :on_broadcast
 			end
+			# cleanup after closing.
 			def on_close
 				@handler.on_close if @handler.respond_to? :on_close
 				if @ws_extentions
@@ -27,13 +32,28 @@ module Iodine
 				end
 			end
 
+			# a politer disconnection.
+			def go_away
+				write CLOSE_FRAME
+				close
+			end
+
+			# a politer disconnection during shutdown.
+			def on_shutdown
+				go_away
+			end
+
+			# allow Http responses to be used for sending Websocket data.
 			def send_response response, finish = false
 				body = response.extract_body
 				send_data body
 			end
 			alias :stream_response :send_response
 
-			# sends the data as one (or more) Websocket frames
+			# Sends the data as one (or more) Websocket frames.
+			#
+			# Use THIS method to send data using the Websocket protocol.
+			# Using {Iodine::Protocol#write} will bypass the Websocket data framing and send the raw data, breaking the connection.
 			def send_data data, op_code = nil, fin = true, ext = 0
 				return false if !data || data.empty?
 				return false if @io.closed?
