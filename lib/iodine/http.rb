@@ -58,7 +58,7 @@ module Iodine
 	#              @io.broadcast "#{@nickname} has left the chat!"
 	#          end
 	#       end
-
+	#
 	#       Iodine::Http.on_websocket { |request, response| WSChatServer.new request.params[:name]}
 	#
 	class Http < Iodine::Protocol

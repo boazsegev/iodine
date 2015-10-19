@@ -16,9 +16,9 @@ module Iodine
 
 	# Sets the number of processes that should be spawned in Server mode. Defaults to 1 (no processes spawned).
 	#
-	# * Forking (spwaning processes) might NOT work on all systems. Also, please make sure your code is safe to spawn.
-	#
-	# * Forking might cause some tasks (such as time based tasks) to be performed twice (once for each process). To avoid double performance, use a task (delayed execution) to initialize any tasks.
+	# * Forking (spwaning processes) might NOT work on all systems (forking is supported by Ruby on Unix systems).
+	# * Please make sure your code is safe to fork into different processes. For instance, Websocket broadcasting and unicasting won't work across different processes unless synced using an external Pub/Sub service/database such as Redis.
+	# * Forking might cause some tasks (such as time based tasks) to be performed twice (once for each process). This is a feature. To avoid duplicated task performance, use a task (delayed execution) to initialize any tasks you want to perform only once. While the initial time based tasks and the server are shared across processes, the initial task stack will only run on the main process.
 	def processes= count
 		@spawn_count = count
 	end
