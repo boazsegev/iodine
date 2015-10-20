@@ -1,4 +1,6 @@
 # Iodine
+[![Gem Version](https://badge.fury.io/rb/iodine.svg)](https://badge.fury.io/rb/iodine)
+[![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
 
 Iodine makes writing Object Oriented evented server applications easy to write.
 
