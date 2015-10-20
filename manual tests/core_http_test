@@ -12,8 +12,6 @@ require 'stringio'
 # ab -n 10000 -c 200 -k http://localhost:3000/
 # ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/
 
-
-
 class MiniServer < Iodine::Protocol
 	def on_open
 		@headers = {}
