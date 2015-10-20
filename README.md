@@ -30,6 +30,7 @@ Iodine starts to work once you app is finished setting all the tasks up (upon ex
 
 To see how that works, open your `irb` terminal an try this:
 
+
 ```ruby
 require 'iodine'
 
@@ -62,6 +63,7 @@ To initiate this mode, simply set: `Iodine.protocol = :timers`
 
 In example:
 
+
 ```ruby
 require 'iodine'
 
@@ -93,6 +95,7 @@ require 'iodine/http'
 # returning a string will automatically append it to the response.
 Iodine::Http.on_http = { |request, response| "Hello World!" }
 ```
+
 Iodine's Http server includes experimental support for Http/2 right out of the box as well as a Websocket server.
 
 Here's a quick chatroom server (use [www.websocket.org](http://www.websocket.org/echo.html) to check it out):
@@ -121,7 +124,6 @@ end
 
 Iodine::Http.on_websocket WSChatServer
 ```
-
 
 ## Server Usage: Plug in your network protocol
 

@@ -1,6 +1,6 @@
 module Iodine
 
-	module Base
+	class Http < ::Iodine::Protocol
 		# This (will be) a Rack handler for the Iodine HTTP server.
 		module Rack
 			module_function
@@ -90,7 +90,7 @@ begin
 rescue Exception => e
 
 end
-::Rack::Handler.register( 'iodine', 'Iodine::Base::Rack') if defined?(::Rack)
+::Rack::Handler.register( 'iodine', 'Iodine::Http::Rack') if defined?(::Rack)
 
 ######
 ## example requests
