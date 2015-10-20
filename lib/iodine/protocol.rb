@@ -71,6 +71,9 @@ module Iodine
 			nil
 		end
 		alias :disconnect :close
+		def closed?
+			@io.closed?
+		end
 
 		# reads from the IO up to the specified number of bytes (defaults to ~2Mb).
 		def read size = 2_097_152
@@ -103,7 +106,7 @@ module Iodine
 		#
 		# This can be used locally but not across processes.
 		def id
-			@id ||= @io.to_io.to_s(16)
+			@id ||= @io.to_io.object_id.to_s(16)
 		end
 
 		# returns an [Enumerable](http://ruby-doc.org/core-2.2.3/Enumerable.html) with all the active connections.
