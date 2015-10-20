@@ -332,7 +332,7 @@ module Iodine
 			# read the body's data and parse any incoming data.
 			def self.read_body request
 				# save body for Rack, if applicable
-				request[:rack_input] = StringIO.new(request[:body].dup.force_encoding(::Encoding::ASCII_8BIT)) if request[:io].params[:http_handler] == ::Iodine::Base::Rack
+				request[:rack_input] = StringIO.new(request[:body].dup.force_encoding(::Encoding::ASCII_8BIT)) if ::Iodine::Http.on_http == ::Iodine::Http::Rack
 				# parse content
 				case request['content-type'.freeze].to_s
 				when /x-www-form-urlencoded/
