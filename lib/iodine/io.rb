@@ -102,52 +102,37 @@ module Iodine
 			begin
 				@server = ::TCPServer.new(@bind, @port)
 			rescue => e
-				Iodine.fatal e.message
-				Iodine.fatal "Running existing tasks and exiting."
-				@stop = true
+				fatal e.message
+				fatal "Running existing tasks and exiting."
+				Process.kill("INT", 0)
 				next
 			end
 			shut_down_proc = Proc.new {|protocol| protocol.on_shutdown ; protocol.close }
 			on_shutdown do
-				@logger << "Stopping to listen on port #{@port} and shutting down.\n"
+				log "Stopping to listen on port #{@port} and shutting down.\n"
 				@server.close unless @server.closed?
 				@ios.values.each {|p| run p, &shut_down_proc }
 			end
 			::Iodine::Base::Listener.accept(@server, false)
-			@logger << "Iodine #{VERSION} is listening on port #{@port}#{ ' to SSL/TLS connections.' if @ssl}\n"
+			log "Iodine #{VERSION} is listening on port #{@port}#{ ' to SSL/TLS connections.' if @ssl}\n"
 			if @spawn_count && @spawn_count.to_i > 1 && Process.respond_to?(:fork)
-				@logger << "Server will run using #{@spawn_count.to_i} processes - Spawning #{@spawn_count.to_i - 1 } more processes.\n"
+				log "Server will run using #{@spawn_count.to_i} processes - Spawning #{@spawn_count.to_i - 1 } more processes.\n"
 				(@spawn_count.to_i - 1).times do
 					Process.fork do
-						@logger << "Spawned process: #{Process.pid}.\n"
-						on_shutdown { @logger << "Shutting down process #{Process.pid}.\n" }
-						threads = []
+						log "Spawned process: #{Process.pid}.\n"
+						on_shutdown { log "Shutting down process #{Process.pid}.\n" }
 						@queue.clear
 						@queue << REACTOR
-						@thread_count.times { threads << Thread.new {  cycle } }
-						unless @stop
-							old_int_trap = trap('INT') { throw :stop; trap('INT', old_int_trap) if old_int_trap }
-							old_term_trap = trap('TERM') { throw :stop; trap('TERM', old_term_trap) if old_term_trap }
-							catch(:stop) { sleep }
-							@stop = true
-							# setup exit timeout.
-							threads.each {|t| Thread.new {sleep 25; t.kill; t.kill } }
-						end
-						threads.each {|t| t.join rescue true }
+						startup false, true
 					end
 				end
 				
 			end
-			@logger << "Press ^C to stop the server.\n"
+			log "Press ^C to stop the server.\n"
 		else
-			@logger << "Iodine #{VERSION} is running.\n"
-			on_shutdown do
-				@logger << "Iodine says goodbye.\n"
-			end
-			@logger << "Press ^C to stop the cycling.\n"			
+			log "Iodine #{VERSION} is running.\n"
+			log "Press ^C to stop the cycling.\n"
 		end
-		old_int_trap = trap('INT') { throw :stop; trap('INT', old_int_trap) if old_int_trap }
-		old_term_trap = trap('TERM') { throw :stop; trap('TERM', old_term_trap) if old_term_trap }
 		@queue << REACTOR
 	end
 end

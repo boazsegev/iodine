@@ -31,6 +31,12 @@ module Iodine
 		nil
 	end
 
+	# forces Iodine to start prematurely and asyncronously. This might case Iodine to exit abruptly, depending how the hosting application behaves.
+	def force_start!
+		thread = Thread.new { startup true }
+		Kernel.at_exit {thread.raise("stop"); thread.join}
+	end
+
 	protected
 
 	@queue = Queue.new
@@ -64,17 +70,27 @@ module Iodine
 		end
 	end
 
-	Kernel.at_exit do
+	def startup use_rescue = false, hide_message = false
 		threads = []
 		@thread_count.times { threads << Thread.new {  cycle } }
 		unless @stop
-			catch(:stop) { sleep }
-			@logger << "\nShutting down Iodine. Setting shutdown timeout to 25 seconds.\n"
+			if use_rescue
+				sleep rescue true
+			else
+				old_int_trap = trap('INT') { throw :stop; trap('INT', old_int_trap) if old_int_trap }
+				old_term_trap = trap('TERM') { throw :stop; trap('TERM', old_term_trap) if old_term_trap }
+				catch(:stop) { sleep }
+			end
+			log "\nShutting down Iodine. Setting shutdown timeout to 25 seconds.\n" unless hide_message
 			@stop = true
 			# setup exit timeout.
 			threads.each {|t| Thread.new {sleep 25; t.kill; t.kill } }
 		end
 		threads.each {|t| t.join rescue true }
+	end
+
+	Kernel.at_exit do
+		startup
 	end
 
 	# performed once - the shutdown sequence.

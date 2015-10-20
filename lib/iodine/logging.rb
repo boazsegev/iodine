@@ -2,7 +2,7 @@ module Iodine
 	public
 
 	# Gets the logging object and allows you to call logging methods (i.e. `Iodine.log.info "Running"`).
-	def logger log = nil
+	def logger
 		@logger
 	end
 
@@ -35,6 +35,12 @@ module Iodine
 	def fatal data, &block
 		@logger.fatal data, &block if @logger
 		data
+	end
+	# logs a raw text
+	# @return [String] always returns the Object sent to the log.
+	def log raw_text
+		@logger << raw_text if @logger
+		raw_text
 	end
 
 

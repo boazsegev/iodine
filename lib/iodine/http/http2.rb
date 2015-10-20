@@ -122,6 +122,8 @@ module Iodine
 				self.new(io).on_message data
 				true
 			end
+
+			
 			protected
 
 			# logs the sent response.
@@ -129,7 +131,7 @@ module Iodine
 				request = response.request
 				return if Iodine.logger.nil? || request[:no_log]
 				t_n = Time.now
-				Iodine.logger << "#{request[:client_ip]} [#{t_n.utc}] #{request[:method]} #{request[:original_path]} #{request[:scheme]}\/2 #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n"
+				Iodine.log("#{request[:client_ip]} [#{t_n.utc}] #{request[:method]} #{request[:original_path]} #{request[:scheme]}\/2 #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n").clear
 			end
 
 			# Sends an HTTP frame with the requested payload
@@ -368,7 +370,7 @@ module Iodine
 				# Iodine.info "Should Process request #{request.select { |k,v| k != :io } }"
 				@last_stream = request[:sid] if request[:sid] > @last_stream
 				# emit_frame [HTTP_1_1_REQUIRED].pack('N'), request[:sid], 0x3, 0
-				Iodine.run request, &(::Iodine::Http::Http2.dispatch)
+				::Iodine.run request, &(::Iodine::Http::Http2.dispatch)
 
 			end
 
@@ -407,7 +409,7 @@ module Iodine
 			#
 			# @return [true, false, nil] returns true if connection handling can continue of false (or nil) for a fatal error.
 			def connection_error type
-				Iodine.warn "HTTP/2 error #{type}."
+				::Iodine.warn "HTTP/2 error #{type}."
 				go_away type
 				# case type
 				# when NO_ERROR

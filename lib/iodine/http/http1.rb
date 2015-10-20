@@ -121,11 +121,6 @@ module Iodine
 		HTTP_METHODS = %w{GET HEAD POST PUT DELETE TRACE OPTIONS CONNECT PATCH}
 		HTTP_METHODS_REGEXP = /\A#{HTTP_METHODS.join('|')}/i
 
-		def parse data
-			
-		end
-
-
 		def dispatch request, data
 			return data.string.clear if @io.closed? || @refuse_requests
 			::Iodine::Http::Request.parse request
@@ -209,7 +204,7 @@ module Iodine
 			request = response.request
 			return if Iodine.logger.nil? || request[:no_log]
 			t_n = Time.now
-			Iodine.logger << "#{request[:client_ip]} [#{t_n.utc}] \"#{request[:method]} #{request[:original_path]} #{request[:scheme]}\/#{request[:version]}\" #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n"
+			Iodine.log("#{request[:client_ip]} [#{t_n.utc}] \"#{request[:method]} #{request[:original_path]} #{request[:scheme]}\/#{request[:version]}\" #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n").clear
 		end
 	end
 end
