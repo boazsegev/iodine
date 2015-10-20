@@ -12,6 +12,8 @@ module Iodine
 		# Sets/gets how many times a timed event repeats.
 		# If set to false or -1, the timed event will repead until the application quits.
 		attr_accessor :repeat_limit
+		# Allows you to acess or change the timer's Proc object.
+		attr_accessor :job
 
 		# Initialize a timed event.
 		def initialize reactor, interval, repeat_limit = -1, args=[], job=nil
@@ -68,7 +70,6 @@ module Iodine
 	#
 	# accepts:
 	# seconds:: the minimal amount of seconds to wait before calling the handler's `call` method.
-	# limit:: the amount of times the event should repeat itself. The event will repeat every x amount of `seconds`. The event will repeat forever if limit is set to false.
 	# *arg:: any arguments that will be passed to the handler's `call` method.
 	# &block:: the block to execute.
 	#
@@ -79,8 +80,8 @@ module Iodine
 	# Timed event's time of execution is dependant on the workload and continuous uptime of the process (timed events AREN'T persistent unless you save and reload them yourself).
 	#
 	# @return [Iodine::TimedEvent] returns the new TimedEvent object.
-	def run_every seconds, limit = -1, *args, &block
-		timed_job seconds, limit, args, block
+	def run_every seconds, *args, &block
+		timed_job seconds, -1, args, block
 	end
 
 	protected
