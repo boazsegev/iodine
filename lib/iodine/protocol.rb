@@ -58,7 +58,7 @@ module Iodine
 		## functionality and helpers
 
 
-		# returns true id the protocol is using an encrypted connection (the IO is an OpenSSL::SSL::SSLSocket).
+		# returns true if the protocol is using an encrypted connection (the IO is an OpenSSL::SSL::SSLSocket).
 		def ssl?
 			@io.is_a?(OpenSSL::SSL::SSLSocket) # io.npn_protocol
 		end
@@ -109,7 +109,7 @@ module Iodine
 			@id ||= @io.to_io.object_id.to_s(16)
 		end
 
-		# returns an [Enumerable](http://ruby-doc.org/core-2.2.3/Enumerable.html) with all the active connections.
+		# @return [Enumerable] returns an Enumerable with all the active connections (instances of THIS Protocol or it's children).
 		#
 		# if a block is passed, than this method exceutes the block.
 		def self.each

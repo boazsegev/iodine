@@ -33,6 +33,7 @@ module Iodine
 	#
 	#       require 'iodine/http'
 	#       Iodine::Http.on_http { |request, response| 'Hello World!' }
+	#       exit # only if running from irb
 	#
 	# To start a Websocket server, require `iodine/http` (which isn't required by default), create a Websocket handling Class and set up
 	# your Websocket callback. i.e.:
