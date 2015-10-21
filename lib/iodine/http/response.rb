@@ -203,9 +203,12 @@ module Iodine
 				raise 'Cannot set cookies after the headers had been sent.' if headers_sent?
 				name = name.to_s
 				raise 'Illegal cookie name' if name =~ COOKIE_NAME_REGEXP
-				params[:expires] = (Time.now - 315360000) unless value
-				value ||= 'deleted'.freeze
-				params[:expires] ||= (Time.now + 315360000) unless params[:max_age]
+				if value.nil?
+					params[:expires] = (Time.now - 315360000)
+					value = 'deleted'.freeze					
+				else
+					params[:expires] ||= (Time.now + 315360000) unless params[:max_age]
+				end
 				params[:path] ||= '/'.freeze
 				value = Iodine::Http::Request.encode_url(value)
 				if params[:max_age]

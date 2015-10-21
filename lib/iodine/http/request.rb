@@ -28,7 +28,7 @@ module Iodine
 					elsif self.has_key?( key.to_s.to_sym)
 						key = key.to_s.to_sym
 					end
-					@response.set_cookie key, (val ? val.to_s.dup : nil)
+					@response.set_cookie key, (val.nil? ? nil : val.to_s.dup)
 					super
 				end
 			end
