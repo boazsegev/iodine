@@ -98,6 +98,15 @@ module Iodine
 			@session_token
 		end
 
+		# Sets whether Iodine will allow connections to the experiemntal Http2 protocol. Defaults to false unless the `http2` runtime flag is set.
+		def self.http2= allow
+			@http2 = allow && true
+		end
+		# Returns true if Iodine will require that new connection be encrypted.
+		def self.http2
+			@http2
+		end
+
 		# Creates a websocket client within a new task (non-blocking).
 		# 
 		# Make sure to setup all the callbacks (as needed) prior to starting the connection. See {::Iodine::Http::WebsocketClient.connect}
@@ -127,6 +136,8 @@ module Iodine
 			::Iodine.run { ::Iodine::Http::WebsocketClient.connect url, options, &block }
 		end
 
+		@http2 = (ARGV.index('http2') && true)
+
 		@websocket_app = @http_app = NOT_IMPLEMENTED = Proc.new { |i,o| false }
 		@session_token = "#{File.basename($0, '.*')}_uuid"
 	end
@@ -134,7 +145,7 @@ module Iodine
 	@queue.tap do |q|
 		arr =[];
 		arr << q.pop until q.empty?;
-		run { Iodine.ssl_protocols = { 'h2' => Iodine::Http::Http2, 'http/1.1' => Iodine::Http } if @ssl && @ssl_protocols.empty? }
+		run { Iodine.ssl_protocols = { 'h2' => Iodine::Http::Http2, 'http/1.1' => Iodine::Http } if @ssl && @ssl_protocols.empty? && ::Iodine::Http.http2 }
 		run do
 			if Iodine.protocol == ::Iodine::Http && ::Iodine::Http.on_http == ::Iodine::Http::NOT_IMPLEMENTED && ::Iodine::Http.on_websocket == ::Iodine::Http::NOT_IMPLEMENTED
 				::Iodine.protocol = :http_not_initialized
