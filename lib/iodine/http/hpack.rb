@@ -72,9 +72,9 @@ module Iodine
 					results
 				end
 				def encode headers = {}
-					buffer = ''
+					buffer = ''.force_encoding ::Encoding::ASCII_8BIT
 					headers.each {|k, v| buffer << encode_field( (k.is_a?(String) ? k : ":#{k.to_s}".freeze) ,v) if v}
-					buffer
+					buffer.force_encoding ::Encoding::ASCII_8BIT
 				end
 				def resize max
 					@decoding_list.resize max
@@ -122,24 +122,34 @@ module Iodine
 						return (value.map {|v| encode_field name, v} .join)
 					end
 					if name == 'set-cookie'
-						buffer = ''
-						buffer << pack_number( 55, 16, 4)
+						buffer = ''.force_encoding ::Encoding::ASCII_8BIT
+						buffer << pack_number( 55, 1, 4)
 						buffer << pack_string(value)
+						puts 'pack cookie'
 						return buffer
 					end
 					index = @encoding_list.find(name, value)
-					return pack_number( index, 1, 1) if index
+					return puts('pack index') || pack_number( index, 1, 1) if index
 					index = @encoding_list.find_name name
 					@encoding_list.insert name, value
-					buffer = ''
+					buffer = ''.force_encoding(::Encoding::ASCII_8BIT)
 					if index
-						buffer << pack_number( index, 64, 2)
+						puts 'pack index + value'
+						buffer << pack_number( index, 1, 2)
 					else
-						buffer << pack_number( 0, 64, 2)
+						puts 'pack name + value'
+						buffer << pack_number( 0, 1, 2)
 						buffer << pack_string(name.to_s)
 					end
 					buffer << pack_string(value)
 					buffer
+				rescue
+					puts "HPACK failure data dump:"
+					puts "buffer: #{buffer} - #{buffer.encoding}"
+					puts "value: #{value} - #{value.encoding}"
+					puts "packed #{pack_string(value)} - #{pack_string(value)}"
+					puts "packed #{pack_string(value)} - #{pack_string(value)}"
+					raise
 				end
 				def extract_number data, prefix, prefix_length
 					mask = 255 >> prefix_length
@@ -152,13 +162,11 @@ module Iodine
 						count += 1
 					end
 					prefix + mask
-				# rescue e =>
-				# 	raise "HPACK Error - number input invalid"
 				end
 				def pack_number number, prefix, prefix_length
 					n_length = 8-prefix_length
 					if (number + 1 ).bit_length <= n_length
-						return ((prefix << n_length) | number).chr
+						return ((prefix << n_length) | number).chr.force_encoding(::Encoding::ASCII_8BIT)
 					end
 					prefix = [(prefix << n_length) | (2**n_length - 1)]
 					number -= 2**n_length - 1
@@ -167,11 +175,10 @@ module Iodine
 						number = number >> 7
 						break if number == 0
 					end
-					(prefix << (prefix.pop & 127)).pack('C*'.freeze)
+					(prefix << (prefix.pop & 127)).pack('C*'.freeze).force_encoding(::Encoding::ASCII_8BIT)
 				end
-				def pack_string string, deflate = true
-					string = deflate(string) if deflate
-					(pack_number(string.bytesize, (deflate ? 1 : 0), 1) + string).force_encoding ::Encoding::ASCII_8BIT
+				def pack_string string, deflate = false
+					(pack_number(string.bytesize, (deflate ? 1 : 0), 1) + ( deflate ? deflate(string) : string.dup.force_encoding(::Encoding::ASCII_8BIT) ) ).force_encoding ::Encoding::ASCII_8BIT
 				end
 				def extract_string data
 					byte = data.getbyte
@@ -201,8 +208,8 @@ module Iodine
 					str
 				end
 				def deflate data
-					str = ''
-					buffer = ''
+					str = ''.force_encoding ::Encoding::ASCII_8BIT
+					buffer = ''.force_encoding ::Encoding::ASCII_8BIT
 					data.bytes.each do |i|
 						buffer << HUFFMAN.key(i)
 						if (buffer % 8) == 0
@@ -213,7 +220,7 @@ module Iodine
 					(8-(buffer.bytesize % 8)).times { buffer << '1'}
 					str << [buffer].pack('b*')
 					buffer.clear
-					str
+					str.force_encoding ::Encoding::ASCII_8BIT
 				end
 				STATIC_LIST = [ nil,
 					[":authority"],
