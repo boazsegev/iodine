@@ -8,24 +8,24 @@ class HPackTest < Minitest::Test
 	def test_that_it_decodes_numbers
 		# example from specs
 		data = StringIO.new("\x1F\x9A\n".force_encoding('binary'))
-		assert 1337 == (hpack { extract_number(data, data.getbyte, 3) } )
+		assert( 1337 == (hpack { extract_number(data, data.getbyte, 3) } ))
 		# example from specs
 		data = StringIO.new("\xaa".force_encoding('binary'))
-		assert 10 == (hpack { extract_number(data, data.getbyte, 3) } )
+		assert( 10 == (hpack { extract_number(data, data.getbyte, 3) } ))
 	end
 	def test_that_it_encodes_numbers
 		# reverse the examples above...
-		assert (hpack { pack_number(1337, 0, 3) } ) == "\x1F\x9A\n".force_encoding(::Encoding::ASCII_8BIT)
-		assert (hpack { pack_number(10, 5, 3) } ) == "\xaa".force_encoding(::Encoding::ASCII_8BIT)
+		assert( (hpack { pack_number(1337, 0, 3) } ) == "\x1F\x9A\n".force_encoding(::Encoding::ASCII_8BIT))
+		assert( (hpack { pack_number(10, 5, 3) } ) == "\xaa".force_encoding(::Encoding::ASCII_8BIT))
 	end
 	def test_that_it_unpacks_strings
 		data = StringIO.new "\ncustom-key\rcustom-header".force_encoding(::Encoding::ASCII_8BIT)
-		assert (hpack { extract_string data } ) == "custom-key".force_encoding(::Encoding::ASCII_8BIT)
-		assert (hpack { extract_string data } ) == "custom-header".force_encoding(::Encoding::ASCII_8BIT)
+		assert((hpack { extract_string data } ) == "custom-key".force_encoding(::Encoding::ASCII_8BIT))
+		assert( (hpack { extract_string data } ) == "custom-header".force_encoding(::Encoding::ASCII_8BIT))
 	end
 	def test_that_it_packs_strings
-		assert (hpack { pack_string("test", false) } ) == "\x04test".force_encoding(::Encoding::ASCII_8BIT)
-		assert (hpack { pack_string("custom-key", false) +  pack_string("custom-header", false)} ) == "\ncustom-key\rcustom-header".force_encoding(::Encoding::ASCII_8BIT)
+		assert((hpack { pack_string("test", false) } ) == "\x04test".force_encoding(::Encoding::ASCII_8BIT))
+		assert((hpack { pack_string("custom-key", false) +  pack_string("custom-header", false)} ) == "\ncustom-key\rcustom-header".force_encoding(::Encoding::ASCII_8BIT))
 	end
 	def test_that_it_decodes_strings
 		# write hoffman
@@ -33,15 +33,15 @@ class HPackTest < Minitest::Test
 	def test_that_it_encodes_strings
 		# write hoffman
 	end
+	def test_that_hoffman_encoding_is_symmetric
+		# write hoffman
+		data = "abcdefghijklmnopqrstuvwxyz01234567890-=\`\\][\t\b"
+		assert_equal data*2, (hpack { deflated_data = StringIO.new(pack_string(data,true) + pack_string(data,true)); extract_string(deflated_data) +  extract_string(deflated_data)})
+	end
 	def test_that_it_unpacks_headers
 		data ="@\ncustom-key\rcustom-header".force_encoding(::Encoding::ASCII_8BIT)
 		headers = hpack { decode(data) }
-		headers['custom-key'].must_equal 'custom-header'
-	end
-	def test_that_it_decodes_headers
-		data = "\x82\x86\x84A\x8C\xF1\xE3\xC2\xE5\xF2:k\xA0\xAB\x90\xF4\xFF".force_encoding(::Encoding::ASCII_8BIT)
-		headers = hpack { decode(data) }
-		assert headers == {method: 'GET', scheme: 'http', path: '/', authority: 'www.example.com'}
+		assert(headers['custom-key'] == 'custom-header')
 	end
 	def test_that_it_packs_headers
 		original_headers = {}
@@ -51,7 +51,12 @@ class HPackTest < Minitest::Test
 		original_headers['set-cookie'] = 'name=value;'
 		stream = hpack { encode(original_headers) }
 		headers = hpack { decode(stream) }
-		assert headers == original_headers
+		assert_equal headers, original_headers
+	end
+	def test_that_it_decodes_headers
+		data = "\x82\x86\x84A\x8C\xF1\xE3\xC2\xE5\xF2:k\xA0\xAB\x90\xF4\xFF".force_encoding(::Encoding::ASCII_8BIT)
+		headers = hpack { decode(data) }
+		assert(headers == {method: 'GET', scheme: 'http', path: '/', authority: 'www.example.com'})
 	end
 
   # def test_it_does_something_useful

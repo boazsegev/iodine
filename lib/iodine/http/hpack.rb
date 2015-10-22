@@ -138,7 +138,7 @@ module Iodine
 						buffer << pack_number( 0, 1, 4)
 						buffer << pack_string(name.to_s)
 					end
-					buffer << pack_string(value).tap {|s| p s}
+					buffer << pack_string(value)
 					buffer.force_encoding(::Encoding::ASCII_8BIT)
 				rescue
 					puts "HPACK failure data dump:"
@@ -174,8 +174,9 @@ module Iodine
 					end
 					(prefix << (prefix.pop & 127)).pack('C*'.freeze).force_encoding(::Encoding::ASCII_8BIT)
 				end
-				def pack_string string, deflate = false
-					(pack_number(string.bytesize, (deflate ? 1 : 0), 1) + ( deflate ? deflate(string) : string.dup.force_encoding(::Encoding::ASCII_8BIT) ) ).force_encoding ::Encoding::ASCII_8BIT
+				def pack_string string, deflate = true
+					string = deflate ? deflate(string) : string.dup.force_encoding(::Encoding::ASCII_8BIT)
+					(pack_number(string.bytesize, (deflate ? 1 : 0), 1) + string ).force_encoding ::Encoding::ASCII_8BIT
 				end
 				def extract_string data
 					byte = data.getbyte
@@ -209,14 +210,16 @@ module Iodine
 					buffer = ''.force_encoding ::Encoding::ASCII_8BIT
 					data.bytes.each do |i|
 						buffer << HUFFMAN.key(i)
-						if (buffer % 8) == 0
-							str << [buffer].pack('b*')
+						if (buffer.bytesize % 8) == 0
+							str << [buffer].pack('B*'.freeze)
 							buffer.clear
 						end
 					end
-					(8-(buffer.bytesize % 8)).times { buffer << '1'}
-					str << [buffer].pack('b*')
-					buffer.clear
+					unless buffer.empty?
+						(8-(buffer.bytesize % 8)).times { buffer << '1'} if (buffer.bytesize % 8)
+						str << [buffer].pack('B*'.freeze)
+						buffer.clear
+					end
 					str.force_encoding ::Encoding::ASCII_8BIT
 				end
 				STATIC_LIST = [ nil,

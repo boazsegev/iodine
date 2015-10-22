@@ -139,7 +139,7 @@ module Iodine
 			# @return [true, false] returns true if the frame was sent and false if the frame couldn't be sent (i.e. payload too big, connection closed etc').
 			def emit_frame payload, sid = 0, type = 0, flags = 0
 				# puts "Sent: #{[payload.bytesize, type, flags, sid, payload].pack('N C C N a*'.freeze)[1..-1].inspect}"
-				@io.write( ([payload.bytesize, type, flags, sid, payload].pack('N C C N a*'.freeze)[1..-1]).tap {|s| puts "Frame: #{s.class}"; p s} )
+				@io.write( [payload.bytesize, type, flags, sid, payload].pack('N C C N a*'.freeze)[1..-1].tap {|s| puts "Frame: #{s.class.name} - #{s.encoding}"; puts s.inspect } )
 			end
 
 			# Sends an HTTP frame group with the requested payload. This means the group will not be interrupted and will be sent as one unit.

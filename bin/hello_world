@@ -50,7 +50,7 @@ Process.fork do
 		res.session[:count] ||= 0
 		res.session[:count] += 1
     # res['content-type'] = 'text/plain'
-    res['x-bocode'] = 'me'
+    res['x-bocode'] = 'mycode'
 		res << "Visits: #{res.session[:count]}\n\nRequest object:\n\n#{req.to_s}"
     res.cookies['testing'] = !res.cookies['testing']
     # puts "Setting :testing cookie was #{ res.cookies[:testing] }, setting to: #{res.cookies[:testing] = !res.cookies[:testing]}"
