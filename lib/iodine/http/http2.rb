@@ -55,26 +55,17 @@ module Iodine
 			end
 
 			def send_response response
-				return false if response.headers.frozen?
-				
 				request = response.request
-				headers = response.headers
+				return false unless send_headers response, request
+				return nil if request.head?
 				body = response.extract_body
-				headers[:status] = response.status.to_s
-				emit_payload @hpack.encode(headers), request[:sid], 1, (request.head? ? 1 : 0)
-				headers.freeze
 				return (log_finished(response) && body.clear) if request.head?
 				(response.bytes_written += emit_payload(body, request[:sid], 0, 1) ) && (body.frozen? || body.clear) if body
 				log_finished response
 			end
 			def stream_response response, finish = false
 				request = response.request
-				headers = response.headers
-				unless response.headers.frozen? # send headers
-					headers[:status] = response.status.to_s
-					emit_payload @hpack.encode(headers), request[:sid], 1, (request.head? ? 1 : 0)
-					headers.freeze
-				end
+				send_headers response, request
 				return nil if request.head?
 				body = response.extract_body
 				# puts "should stream #{body}"
@@ -132,6 +123,33 @@ module Iodine
 				return if Iodine.logger.nil? || request[:no_log]
 				t_n = Time.now
 				Iodine.log("#{request[:client_ip]} [#{t_n.utc}] #{request[:method]} #{request[:original_path]} #{request[:scheme]}\/2 #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n").clear
+			end
+
+			def send_headers response, request
+				headers = response.headers
+				return false if headers.frozen?
+				headers[:status] = response.status.to_s
+
+				# remove old flash cookies
+				response.cookies.keys.each do |k|
+					if k.to_s.start_with? 'magic_flash_'.freeze
+						response.set_cookie k, nil
+						flash.delete k
+					end
+				end
+				#set new flash cookies
+				response.flash.each do |k,v|
+					response.set_cookie "magic_flash_#{k.to_s}", v
+				end
+				response.raw_cookies.freeze
+				# response.cookies.set_response nil
+				response.flash.freeze
+				unless response.raw_cookies.empty?
+					arr = headers['set-cookie'] = []
+					response.raw_cookies.each {|k, v| arr << "#{k.to_s}=#{v.to_s}"}
+				end
+				emit_payload @hpack.encode(headers), request[:sid], 1, (request.head? ? 1 : 0)
+				headers.freeze
 			end
 
 			# Sends an HTTP frame with the requested payload
@@ -340,10 +358,10 @@ module Iodine
 				return connection_error PROTOCOL_ERROR unless frame[:sid] == 0 && (frame[:body].bytesize % 6) == 0
 				settings = StringIO.new frame[:body]
 				until settings.eof?
-					key = settings.read(2).unpack('n')[0]
-					value = settings.read(4).unpack('N')[0]
+					key = settings.read(2).unpack('n'.freeze)[0]
+					value = settings.read(4).unpack('N'.freeze)[0]
 					Iodine.info "HTTP/2 set #{key}=>#{value} for SID #{frame[:sid]}"
-					case frame[:body][0..1].unpack('n')[0]
+					case frame[:body][0..1].unpack('n'.freeze)[0]
 					when SETTINGS_HEADER_TABLE_SIZE
 						return connection_error ENHANCE_YOUR_CALM if value > 4096
 						@hpack.resize(value)
@@ -441,7 +459,6 @@ module Iodine
 						response = ::Iodine::Http::Response.new request
 						response[:Allow] = 'GET,HEAD,POST,PUT,DELETE,OPTIONS'.freeze
 						response['access-control-allow-origin'.freeze] = '*'
-						response['content-length'.freeze] = 0
 						response.finish
 						return false
 					end
@@ -456,6 +473,7 @@ module Iodine
 						response.finish
 					rescue => e
 						::Iodine.error e
+						request[:io].emit_frame [INTERNAL_ERROR].pack('N'.freeze), request[:sid], 3
 						::Iodine::Http::Response.new(request, 500, {}).finish
 					end
 				end
