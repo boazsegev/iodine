@@ -1,5 +1,65 @@
 require 'test_helper'
 
+class HPackTest < Minitest::Test
+
+	def hpack &block
+		Iodine::Http::Http2::HPACK.new.instance_exec &block
+	end
+	def test_that_it_decodes_numbers
+		# example from specs
+		data = StringIO.new("\x1F\x9A\n".force_encoding('binary'))
+		assert 1337 == (hpack { extract_number(data, data.getbyte, 3) } )
+		# example from specs
+		data = StringIO.new("\xaa".force_encoding('binary'))
+		assert 10 == (hpack { extract_number(data, data.getbyte, 3) } )
+	end
+	def test_that_it_encodes_numbers
+		# reverse the examples above...
+		assert (hpack { pack_number(1337, 0, 3) } ) == "\x1F\x9A\n".force_encoding(::Encoding::ASCII_8BIT)
+		assert (hpack { pack_number(10, 5, 3) } ) == "\xaa".force_encoding(::Encoding::ASCII_8BIT)
+	end
+	def test_that_it_unpacks_strings
+		data = StringIO.new "\ncustom-key\rcustom-header".force_encoding(::Encoding::ASCII_8BIT)
+		assert (hpack { extract_string data } ) == "custom-key".force_encoding(::Encoding::ASCII_8BIT)
+		assert (hpack { extract_string data } ) == "custom-header".force_encoding(::Encoding::ASCII_8BIT)
+	end
+	def test_that_it_packs_strings
+		assert (hpack { pack_string("test", false) } ) == "\x04test".force_encoding(::Encoding::ASCII_8BIT)
+		assert (hpack { pack_string("custom-key", false) +  pack_string("custom-header", false)} ) == "\ncustom-key\rcustom-header".force_encoding(::Encoding::ASCII_8BIT)
+	end
+	def test_that_it_decodes_strings
+		# write hoffman
+	end
+	def test_that_it_encodes_strings
+		# write hoffman
+	end
+	def test_that_it_unpacks_headers
+		data ="@\ncustom-key\rcustom-header".force_encoding(::Encoding::ASCII_8BIT)
+		headers = hpack { decode(data) }
+		headers['custom-key'].must_equal 'custom-header'
+	end
+	def test_that_it_decodes_headers
+		data = "\x82\x86\x84A\x8C\xF1\xE3\xC2\xE5\xF2:k\xA0\xAB\x90\xF4\xFF".force_encoding(::Encoding::ASCII_8BIT)
+		headers = hpack { decode(data) }
+		assert headers == {method: 'GET', scheme: 'http', path: '/', authority: 'www.example.com'}
+	end
+	def test_that_it_packs_headers
+		original_headers = {}
+		original_headers['custom-key'] = 'custom-header'
+		original_headers[:path] = '/'
+		original_headers[:authority] = 'www.example.com'
+		original_headers['set-cookie'] = 'name=value;'
+		stream = hpack { encode(original_headers) }
+		headers = hpack { decode(stream) }
+		assert headers == original_headers
+	end
+
+  # def test_it_does_something_useful
+  #   assert false
+  # end
+end
+
+
 describe Iodine::Http::Http2::HPACK do
 	before do
 		@context = Iodine::Http::Http2::HPACK.new

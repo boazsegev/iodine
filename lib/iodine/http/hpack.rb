@@ -72,9 +72,9 @@ module Iodine
 					results
 				end
 				def encode headers = {}
-					buffer = ''.force_encoding ::Encoding::ASCII_8BIT
+					buffer = ''.force_encoding(::Encoding::ASCII_8BIT)
 					headers.each {|k, v| buffer << encode_field( (k.is_a?(String) ? k : ":#{k.to_s}".freeze) ,v) if v}
-					buffer.force_encoding(::Encoding::ASCII_8BIT).tap {|s| p s}
+					buffer.force_encoding(::Encoding::ASCII_8BIT)
 				end
 				def resize max
 					@decoding_list.resize max
@@ -122,27 +122,24 @@ module Iodine
 						return (value.map {|v| encode_field name, v} .join)
 					end
 					if name == 'set-cookie'
-						puts 'pack cookie'
 						buffer = ''.force_encoding ::Encoding::ASCII_8BIT
 						buffer << pack_number( 55, 1, 4)
-						buffer << pack_string(value).tap {|s| p s}
+						buffer << pack_string(value)
 						return buffer
 					end
 					index = @encoding_list.find(name, value)
-					return puts('pack index') || pack_number( index, 1, 1) if index
+					return pack_number( index, 1, 1) if index
 					index = @encoding_list.find_name name
 					@encoding_list.insert name, value
 					buffer = ''.force_encoding(::Encoding::ASCII_8BIT)
 					if index
-						puts 'pack index + value'
-						buffer << pack_number( index, 1, 2).tap {|s| p s}
+						buffer << pack_number( index, 1, 2)
 					else
-						puts 'pack name + value'
-						buffer << pack_number( 0, 1, 2).tap {|s| p s}
-						buffer << pack_string(name.to_s).tap {|s| p s}
+						buffer << pack_number( 0, 1, 4)
+						buffer << pack_string(name.to_s)
 					end
 					buffer << pack_string(value).tap {|s| p s}
-					buffer
+					buffer.force_encoding(::Encoding::ASCII_8BIT)
 				rescue
 					puts "HPACK failure data dump:"
 					puts "buffer: #{buffer} - #{buffer.encoding}"

@@ -60,7 +60,7 @@ module Iodine
 				return nil if request.head?
 				body = response.extract_body
 				return (log_finished(response) && body.clear) if request.head?
-				(response.bytes_written += emit_payload(body, request[:sid], 0, 1) ) && (body.frozen? || body.clear) if body
+				(response.bytes_written += emit_payload(body.to_s, request[:sid], 0, 1) ) && (body.frozen? || body.clear) if body
 				log_finished response
 			end
 			def stream_response response, finish = false
@@ -139,7 +139,7 @@ module Iodine
 			# @return [true, false] returns true if the frame was sent and false if the frame couldn't be sent (i.e. payload too big, connection closed etc').
 			def emit_frame payload, sid = 0, type = 0, flags = 0
 				# puts "Sent: #{[payload.bytesize, type, flags, sid, payload].pack('N C C N a*'.freeze)[1..-1].inspect}"
-				@io.write( [payload.bytesize, type, flags, sid, payload].pack('N C C N a*'.freeze)[1..-1] )
+				@io.write( ([payload.bytesize, type, flags, sid, payload].pack('N C C N a*'.freeze)[1..-1]).tap {|s| puts "Frame: #{s.class}"; p s} )
 			end
 
 			# Sends an HTTP frame group with the requested payload. This means the group will not be interrupted and will be sent as one unit.
@@ -148,10 +148,10 @@ module Iodine
 			def emit_payload payload, sid = 0, type = 0, flags = 0
 				max_frame_size = @settings[SETTINGS_MAX_FRAME_SIZE]
 				max_frame_size = 131_072 if max_frame_size > 131_072
-				return emit_frame(payload, sid, type, ( type == 0x1 ? (flags | 0x4) : flags ) ) if payload.bytesize <= max_frame_size
+				return emit_frame(payload, sid, type, ( (type == 0x1 || type == 0x5) ? (flags | 0x4) : flags ) ) if payload.bytesize <= max_frame_size
 				sent = 0
 				payload = StringIO.new payload
-				if type == 0x1
+				if type == 0x1 || type == 0x5
 					sent += emit_frame(payload.read(max_frame_size), sid, 0x1, flags & 254)
 					sent += emit_frame(payload.read(max_frame_size), sid, 0x9, 0) while payload.size - payload.pos > max_frame_size
 					sent += emit_frame(payload.read(max_frame_size), sid, 0x9, (0x4 | (flags & 0x1)) )
