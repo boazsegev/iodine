@@ -14,8 +14,8 @@ module Iodine
 					end
 					def [] index
 						raise "HPACK Error - invalid header index: 0" if index == 0
-						return STATIC_LIST[index] if index < STATIC_LENGTH
-						raise "HPACK Error - invalid header index: #{index}" if @list.count <= (index - STATIC_LENGTH)
+						return STATIC_LIST[index] if index <= STATIC_LENGTH
+						raise "HPACK Error - invalid header index: #{index}" if @list.count <= (index - STATIC_LENGTH + 1)
 						@list[index - STATIC_LENGTH]
 					end
 					alias :get_index :[]
@@ -121,6 +121,7 @@ module Iodine
 					if value.is_a?(Array)
 						return (value.map {|v| encode_field name, v} .join)
 					end
+					puts "Packing: #{name.inspect}: #{value.inspect}"
 					if name == 'set-cookie'
 						buffer = ''.force_encoding ::Encoding::ASCII_8BIT
 						buffer << pack_number( 55, 1, 4)
@@ -135,7 +136,7 @@ module Iodine
 					if index
 						buffer << pack_number( index, 1, 2)
 					else
-						buffer << pack_number( 0, 1, 4)
+						buffer << pack_number( 0, 1, 2)
 						buffer << pack_string(name.to_s)
 					end
 					buffer << pack_string(value)
