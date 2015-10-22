@@ -74,7 +74,7 @@ module Iodine
 				def encode headers = {}
 					buffer = ''.force_encoding ::Encoding::ASCII_8BIT
 					headers.each {|k, v| buffer << encode_field( (k.is_a?(String) ? k : ":#{k.to_s}".freeze) ,v) if v}
-					buffer.force_encoding ::Encoding::ASCII_8BIT
+					buffer.force_encoding(::Encoding::ASCII_8BIT).tap {|s| p s}
 				end
 				def resize max
 					@decoding_list.resize max
@@ -122,10 +122,10 @@ module Iodine
 						return (value.map {|v| encode_field name, v} .join)
 					end
 					if name == 'set-cookie'
+						puts 'pack cookie'
 						buffer = ''.force_encoding ::Encoding::ASCII_8BIT
 						buffer << pack_number( 55, 1, 4)
-						buffer << pack_string(value)
-						puts 'pack cookie'
+						buffer << pack_string(value).tap {|s| p s}
 						return buffer
 					end
 					index = @encoding_list.find(name, value)
@@ -135,13 +135,13 @@ module Iodine
 					buffer = ''.force_encoding(::Encoding::ASCII_8BIT)
 					if index
 						puts 'pack index + value'
-						buffer << pack_number( index, 1, 2)
+						buffer << pack_number( index, 1, 2).tap {|s| p s}
 					else
 						puts 'pack name + value'
-						buffer << pack_number( 0, 1, 2)
-						buffer << pack_string(name.to_s)
+						buffer << pack_number( 0, 1, 2).tap {|s| p s}
+						buffer << pack_string(name.to_s).tap {|s| p s}
 					end
-					buffer << pack_string(value)
+					buffer << pack_string(value).tap {|s| p s}
 					buffer
 				rescue
 					puts "HPACK failure data dump:"
