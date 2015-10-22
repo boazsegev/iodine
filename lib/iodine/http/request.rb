@@ -31,6 +31,15 @@ module Iodine
 					@response.set_cookie key, (val.nil? ? nil : val.to_s.dup)
 					super
 				end
+				# overrides th [] method to allow Symbols and Strings to mix and match
+				def [] key
+					if key.is_a?(Symbol) && self.has_key?( key.to_s)
+						key = key.to_s
+					elsif self.has_key?( key.to_s.to_sym)
+						key = key.to_s.to_sym
+					end
+					super
+				end
 			end
 
 			def initialize io = nil
