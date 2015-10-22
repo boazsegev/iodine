@@ -129,25 +129,7 @@ module Iodine
 				headers = response.headers
 				return false if headers.frozen?
 				headers[:status] = response.status.to_s
-
-				# remove old flash cookies
-				response.cookies.keys.each do |k|
-					if k.to_s.start_with? 'magic_flash_'.freeze
-						response.set_cookie k, nil
-						flash.delete k
-					end
-				end
-				#set new flash cookies
-				response.flash.each do |k,v|
-					response.set_cookie "magic_flash_#{k.to_s}", v
-				end
-				response.raw_cookies.freeze
-				# response.cookies.set_response nil
-				response.flash.freeze
-				unless response.raw_cookies.empty?
-					arr = headers['set-cookie'] = []
-					response.raw_cookies.each {|k, v| arr << "#{k.to_s}=#{v.to_s}"}
-				end
+				headers['set-cookie'] = response.extract_cookies
 				emit_payload @hpack.encode(headers), request[:sid], 1, (request.head? ? 1 : 0)
 				headers.freeze
 			end

@@ -331,6 +331,29 @@ module Iodine
 				end
 			end
 
+			# This will return an array of cookie settings to be appended to `set-cookie` headers.
+			def extract_cookies
+				unless @cookies.frozen?
+					# remove old flash cookies
+					@request.cookies.keys.each do |k|
+						if k.to_s.start_with? 'magic_flash_'.freeze
+							set_cookie k, nil
+							flash.delete k
+						end
+					end
+					#set new flash cookies
+					@flash.each do |k,v|
+						set_cookie "magic_flash_#{k.to_s}", v
+					end
+					@cookies.freeze
+					# response.cookies.set_response nil
+					@flash.freeze
+				end
+				[].tap do |arr|
+					@cookies.each {|k, v| arr << "#{k.to_s}=#{v.to_s}"}
+				end
+			end
+
 			protected
 
 			# Sets the http streaming flag and sends the responses headers, so that the response could be handled asynchronously.

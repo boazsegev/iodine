@@ -160,21 +160,6 @@ module Iodine
 
 		def send_headers response
 			return false if response.headers.frozen?
-			# remove old flash cookies
-			response.cookies.keys.each do |k|
-				if k.to_s.start_with? 'magic_flash_'.freeze
-					response.set_cookie k, nil
-					flash.delete k
-				end
-			end
-			#set new flash cookies
-			response.flash.each do |k,v|
-				response.set_cookie "magic_flash_#{k.to_s}", v
-			end
-			response.raw_cookies.freeze
-			# response.cookies.set_response nil
-			response.flash.freeze
-
 			request = response.request
 			headers = response.headers
 
@@ -187,7 +172,7 @@ module Iodine
 			# unless @headers['connection'] || (@request[:version].to_f <= 1 && (@request['connection'].nil? || !@request['connection'].match(/^k/i))) || (@request['connection'] && @request['connection'].match(/^c/i))
 			headers.each {|k,v| out << "#{k.to_s}: #{v}\r\n"}
 			out << "Cache-Control: max-age=0, no-cache\r\n".freeze unless headers['cache-control'.freeze]
-			response.raw_cookies.each {|k,v| out << "Set-Cookie: #{k.to_s}=#{v.to_s}\r\n"}
+			response.extract_cookies.each {|cookie| out << "Set-Cookie: #{cookie}\r\n"}
 			out << "\r\n"
 
 			response.bytes_written += (write(out) || 0)
