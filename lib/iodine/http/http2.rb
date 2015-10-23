@@ -129,6 +129,7 @@ module Iodine
 				headers = response.headers
 				return false if headers.frozen?
 				headers[:status] = response.status.to_s
+				# headers.each {|k, v| }
 				headers['set-cookie'] = response.extract_cookies
 				emit_payload @hpack.encode(headers), request[:sid], 1, (request.head? ? 1 : 0)
 				headers.freeze

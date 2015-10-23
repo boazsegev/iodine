@@ -95,7 +95,7 @@ Using Iodine and leveraging Ruby's Object Oriented approach, is super fun to wri
 # require the 'iodine/http' module if you want to use Iodine's Http server.
 require 'iodine/http'
 # returning a string will automatically append it to the response.
-Iodine::Http.on_http = { |request, response| "Hello World!" }
+Iodine::Http.on_http { |request, response| "Hello World!" }
 ```
 
 Iodine's Http server includes experimental support for Http/2 right out of the box as well as a Websocket server.
@@ -175,6 +175,61 @@ exit
 ```
 
 In this mode, Iodine will continue running until it receives a kill signal (i.e. `^C`). Once the kill signal had been received, Iodine will start shutting down, allowing up to ~20-25 seconds to complete any pending tasks (timeout).
+
+## Server Usage: IP address & port, SSL/TLS and other command line options
+
+Iodine automatically respects certain command line options that make it easier to use the same script over and over again with different results and making writing a `Procfile` (or similar setup files) a breeze.
+
+Let `./script.rb` be an Iodine ruby script, may an easy one such as our Hello World:
+
+```ruby
+#!/usr/bin/env ruby
+
+# script.rb
+require 'iodine/http'
+
+Iodine::Http.on_http do |request, response|
+  response << "Hello World!"
+end
+
+```
+
+Here are different command line options that Iodine recognizes automatically when running our script:
+
+| purpose                                         | flag   | example                                  |
+--------------------------------------------------|:------:|------------------------------------------|
+|  Set the server's port.                         | `-p`   | `ruby ./script.rb -p 4000`               |
+|  Limit the server's binding to a specific IP.   | `-ip`  | `ruby ./script.rb -p 4000 -ip 127.0.0.1` |
+|  Use SSL/TLS on a specific port.                | `ssl`  | `ruby ./script.rb -p 3030 ssl`           |
+|  Try out the experimental Http2 extention.      | `http2`|  `ruby ./script.rb -p 3030 ssl http2`    |
+
+## Server Usage: Running more than one server
+
+On some machines, Iodine will allow you to run more than a single server, by forking the main process while still running the script. This is more of a hack to be used in development environments, since runnig multiple instances of the script is the prefered way to run different servers.
+
+i.e.:
+
+```ruby
+require 'iodine/http'
+
+# We'll use a simple hello world with a slight "tweek" for this example.
+Iodine::Http.on_http do |request, response|
+  response << "Hello World!"
+  response << " We're on SSL/TLS!" if request.ssl?
+end
+
+Iodine.ssl = false
+
+Process.fork do
+   Iodine.ssl = true
+   Iodine.port = 3030
+   # # we can also change network behavior, so we could have used:
+   # Iodine::Http.on_http { "Hello World! We're on SSL/TLS! - no `if` required ;-)" } 
+end if Process.respond_to? :fork
+
+# if using irb
+exit
+```
 
 ## Development
 

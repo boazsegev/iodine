@@ -23,11 +23,11 @@ module Iodine
 		@spawn_count = count
 	end
 
-	# Sets the server port. Defaults to the runtime `-p` argument, or the ENV['PORT'] or 3000 (in this order).
+	# Sets the server port. Defaults to the command line `-p` argument, or the ENV['PORT'] or 3000 (in this order).
 	def port= port
 		@port = port
 	end
-	# Sets the IP binding address. Defaults to the runtime `-ip` argument, or the ENV['IP'] or 0.0.0.0 (in this order).
+	# Sets the IP binding address. Defaults to the command line `-ip` argument, or the ENV['IP'] or 0.0.0.0 (in this order).
 	def bind= address
 		@bind = address
 	end
@@ -45,6 +45,7 @@ module Iodine
 	end
 
 	# Sets the SSL flag, so that Iodine will require that new connection be encrypted.
+	# Defaults to false unless the `ssl` command line flag is present.
 	def ssl= required
 		@ssl = required && true
 	end

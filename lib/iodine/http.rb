@@ -98,7 +98,7 @@ module Iodine
 			@session_token
 		end
 
-		# Sets whether Iodine will allow connections to the experiemntal Http2 protocol. Defaults to false unless the `http2` runtime flag is set.
+		# Sets whether Iodine will allow connections to the experiemntal Http2 protocol. Defaults to false unless the `http2` command line flag is present.
 		def self.http2= allow
 			@http2 = allow && true
 		end
