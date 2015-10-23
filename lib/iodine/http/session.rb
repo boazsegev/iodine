@@ -1,5 +1,6 @@
 module Iodine
-	class Http < ::Iodine::Protocol
+	module Http
+		# session management for Iodine's Http Server
 		module SessionManager
 
 			module MemSessionStorage

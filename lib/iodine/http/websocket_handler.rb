@@ -1,6 +1,6 @@
 
 module Iodine
-	class Http < Iodine::Protocol
+	module Http
 
 		# This class is a good demonstration for creating a Websocket handler with the Iodine API.
 		#

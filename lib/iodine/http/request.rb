@@ -1,6 +1,6 @@
 module Iodine
 
-	class Http < ::Iodine::Protocol
+	module Http
 
 		# This class is the part of the Iodine server.
 		# The request object is a Hash and the Request provides

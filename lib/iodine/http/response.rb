@@ -1,7 +1,5 @@
 module Iodine
-
-	class Http < ::Iodine::Protocol
-
+	module Http
 		# this class handles Http responses.
 		#
 		# The response can be sent in stages but should complete within the scope of the connecton's message. Please notice that headers and status cannot be changed once the response started sending data.

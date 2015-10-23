@@ -75,13 +75,15 @@ module Iodine
 			def on_open
 				@protocol = Iodine.protocol
 				@ssl = Iodine.ssl
+				@accept_proc = @protocol.method(:accept)
 			end
 			def call
 				begin
 					n_io = nil
 					loop do
 						n_io = @io.accept_nonblock
-						@protocol.accept(n_io, @ssl)
+						# @protocol.accept(n_io, @ssl)
+						Iodine.run n_io, @ssl, &(@accept_proc)
 					end
 				rescue Errno::EWOULDBLOCK => e
 

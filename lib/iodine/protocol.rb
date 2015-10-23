@@ -175,6 +175,9 @@ module Iodine
 		# Normally you won't need to override this method.
 		def self.accept io, ssl
 			ssl ? SSLConnector.new(io, self) :  self.new(io)
+		rescue
+			io.close unless io.closed?
+			raise
 		end
 		# This methos updates the timeout "watch", signifying the IO was active.
 		def touch

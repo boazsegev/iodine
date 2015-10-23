@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 
 module Iodine
-	class Http < ::Iodine::Protocol
+	module Http
 		class Http2 < ::Iodine::Protocol
 			class HPACK
 				class IndexTable

@@ -1,5 +1,5 @@
 module Iodine
-	class Http < Iodine::Protocol
+	module Http
 		class Http2 < ::Iodine::Protocol
 			def initialize io, original_request = nil
 				super(io)

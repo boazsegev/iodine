@@ -1,6 +1,6 @@
 
 module Iodine
-	class Http < Iodine::Protocol
+	module Http
 		# Create a simple Websocket Client(!).
 		#
 		# This should be done from within an Iodine task, or the callbacks will not be called.

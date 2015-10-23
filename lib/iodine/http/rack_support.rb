@@ -1,6 +1,6 @@
 module Iodine
 
-	class Http < ::Iodine::Protocol
+	module Http
 		# This (will be) a Rack handler for the Iodine HTTP server.
 		module Rack
 			module_function
@@ -9,9 +9,9 @@ module Iodine
 
 				Iodine.threads = 18
 				Iodine.port = options[:Port]
-				Iodine.protocol ||= Iodine::HTTP
-				@pre_rack_handler = Iodine.protocol.on_http
-				Iodine.protocol.on_http self
+				Iodine.protocol ||= Iodine::Http::Http1
+				@pre_rack_handler = Iodine::Http.on_http
+				Iodine::Http.on_http self
 				true
 			end
 			def call request, response
@@ -27,7 +27,7 @@ module Iodine
 				res[1].each {|k, v| response.headers[k.to_s.downcase] = v }
 				response.body = res[2]
 				response.raw_cookies.clear
-				response.headers['set-cookie'] = response.headers.delete('set-cookie').split("\n").join("\r\nset-cookie: ") if request[:io].is_a?(Iodine::Http) && response.headers['set-cookie']
+				response.headers['set-cookie'] = response.headers.delete('set-cookie').split("\n").join("\r\nset-cookie: ") if request[:io].is_a?(Iodine::Http::Http1) && response.headers['set-cookie']
 				response.request[:no_log] = true
 				true
 			end

@@ -1,5 +1,5 @@
 module Iodine
-	class Http < Iodine::Protocol
+	module Http
 		class Websockets < ::Iodine::Protocol
 			# initialize the websocket protocol.
 			def initialize io, handler, request, ws_extentions = nil

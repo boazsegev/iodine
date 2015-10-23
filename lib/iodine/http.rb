@@ -68,14 +68,15 @@ module Iodine
 	#
 	# See {Iodine::Http::WebsocketHandler} for a good starting point or inherit {Iodine::Http::WebsocketHandler} in your handler.
 	#
-	class Http < Iodine::Protocol
+	module Http
+		public
 		# Sets or gets the Http callback.
 		#
 		# An Http callback is a Proc like object that answers to `call(request, response)` and returns either:
 		# `true`:: the response has been set by the callback and can be managed (including any streaming) by the server.
 		# `false`:: the request shouldn't be answered or resource not found (error 404 will be sent as a response).
 		# String:: the String will be appended to the response and the response sent.
-		def self.on_http handler = nil, &block
+		def on_http handler = nil, &block
 			@http_app = handler || block if handler || block
 			@http_app
 		end
@@ -84,28 +85,37 @@ module Iodine
 		# A Websockets callback is a Proc like object that answers to `call(request)` and returns either:
 		# `false`:: the request shouldn't be answered or resource not found (error 404 will be sent as a response).
 		# Websocket Handler:: a Websocket handler is an object that is expected to answer `on_message(data)` and `on_close`. See {} for more data.
-		def self.on_websocket handler = nil, &block
+		def on_websocket handler = nil, &block
 			@websocket_app = handler || block if handler || block
 			@websocket_app
 		end
 
 		# Sets the session token for the Http server (String). Defaults to the name of the script + '_id'.
-		def self.session_token= token
+		def session_token= token
 			@session_token = token
 		end
 		# Sets the session token for the Http server (String). Defaults to the name of the script.
-		def self.session_token
+		def session_token
 			@session_token
 		end
 
 		# Sets whether Iodine will allow connections to the experiemntal Http2 protocol. Defaults to false unless the `http2` command line flag is present.
-		def self.http2= allow
+		def http2= allow
 			@http2 = allow && true
 		end
 		# Returns true if Iodine will require that new connection be encrypted.
-		def self.http2
+		def http2
 			@http2
 		end
+
+		# # Sets whether Iodine will allow connections to the experiemntal Http2 protocol. Defaults to false unless the `http2` command line flag is present.
+		# def self.message_buffer_size= size
+		# 	@message_buffer_size = size
+		# end
+		# # Returns true if Iodine will require that new connection be encrypted.
+		# def self.message_buffer_size
+		# 	@message_buffer_size
+		# end
 
 		# Creates a websocket client within a new task (non-blocking).
 		# 
@@ -132,22 +142,25 @@ module Iodine
 		#       #if running from irb:
 		#       exit
 		#     
-		def self.ws_connect url, options={}, &block
+		def ws_connect url, options={}, &block
 			::Iodine.run { ::Iodine::Http::WebsocketClient.connect url, options, &block }
 		end
+
+		protected
 
 		@http2 = (ARGV.index('http2') && true)
 
 		@websocket_app = @http_app = NOT_IMPLEMENTED = Proc.new { |i,o| false }
 		@session_token = "#{File.basename($0, '.*')}_uuid"
+		extend self
 	end
 
 	@queue.tap do |q|
 		arr =[];
 		arr << q.pop until q.empty?;
-		run { Iodine.ssl_protocols = { 'h2' => Iodine::Http::Http2, 'http/1.1' => Iodine::Http } if @ssl && @ssl_protocols.empty? && ::Iodine::Http.http2 }
+		run { ::Iodine.ssl_protocols = { 'h2' => ::Iodine::Http::Http2, 'http/1.1' => ::Iodine::Http::Http1 } if @ssl && @ssl_protocols.empty? && ::Iodine::Http.http2 }
 		run do
-			if Iodine.protocol == ::Iodine::Http && ::Iodine::Http.on_http == ::Iodine::Http::NOT_IMPLEMENTED && ::Iodine::Http.on_websocket == ::Iodine::Http::NOT_IMPLEMENTED
+			if Iodine.protocol == ::Iodine::Http::Http1 && ::Iodine::Http.on_http == ::Iodine::Http::NOT_IMPLEMENTED && ::Iodine::Http.on_websocket == ::Iodine::Http::NOT_IMPLEMENTED
 				::Iodine.protocol = :http_not_initialized
 				q << arr.shift until arr.empty?
 				run { Process.kill("INT", 0) }
@@ -156,4 +169,4 @@ module Iodine
 		q << arr.shift until arr.empty?
 	end
 end
-Iodine.protocol = ::Iodine::Http
+Iodine.protocol = ::Iodine::Http::Http1
