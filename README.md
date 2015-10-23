@@ -98,7 +98,7 @@ require 'iodine/http'
 Iodine::Http.on_http { |request, response| "Hello World!" }
 ```
 
-Iodine's Http server includes experimental support for Http/2 right out of the box as well as a Websocket server.
+Iodine's Http server includes comes right out of the box with Websocket support as well as an experimental support for Http/2 (it's just a start, no `push` support just yet, but you can try it out).
 
 Here's a quick chatroom server (use [www.websocket.org](http://www.websocket.org/echo.html) to check it out):
 

@@ -127,7 +127,6 @@ module Iodine
 				self[:session]
 			end
 
-
 			# method recognition
 
 			HTTP_GET = 'GET'.freeze

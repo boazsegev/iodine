@@ -46,6 +46,8 @@ module Iodine
 				env['HTTP_VERSION'.freeze] = "HTTP/#{request[:version].to_s}"
 				env['QUERY_STRING'.freeze] ||= ''
 				env['rack.errors'.freeze] = StringIO.new('')
+				# should unchain cookies from Array to String
+				env['HTTP_COOKIE'] = env['HTTP_COOKIE'].join '; ' if env['HTTP_COOKIE'].is_a?(Array)
 				env
 			end
 

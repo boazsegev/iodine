@@ -14,8 +14,8 @@ module Iodine
 					end
 					def [] index
 						raise "HPACK Error - invalid header index: 0" if index == 0
-						return STATIC_LIST[index] if index <= STATIC_LENGTH
-						raise "HPACK Error - invalid header index: #{index}" if @list.count <= (index - STATIC_LENGTH + 1)
+						return STATIC_LIST[index] if index < STATIC_LENGTH
+						raise "HPACK Error - invalid header index: #{index}" if index >= ( @list.count + STATIC_LENGTH )
 						@list[index - STATIC_LENGTH]
 					end
 					alias :get_index :[]
@@ -121,7 +121,7 @@ module Iodine
 					if value.is_a?(Array)
 						return (value.map {|v| encode_field name, v} .join)
 					end
-					puts "Packing: #{name.inspect}: #{value.inspect}"
+					raise "Http/2 headers must be LOWERCASE Strings!" if name[0] =~ /[A-Z]/n
 					if name == 'set-cookie'
 						buffer = ''.force_encoding ::Encoding::ASCII_8BIT
 						buffer << pack_number( 55, 1, 4)
@@ -131,16 +131,18 @@ module Iodine
 					index = @encoding_list.find(name, value)
 					return pack_number( index, 1, 1) if index
 					index = @encoding_list.find_name name
-					@encoding_list.insert name, value
 					buffer = ''.force_encoding(::Encoding::ASCII_8BIT)
 					if index
+						puts "found #{index} looking for #{name}"
 						buffer << pack_number( index, 1, 2)
 					else
+						raise "Http/2 headers whould be Strings! or allowed Psedo-Header Symbol Only!" if name[0] == ':'
 						buffer << pack_number( 0, 1, 2)
-						buffer << pack_string(name.to_s)
+						buffer << pack_string(name)
 					end
 					buffer << pack_string(value)
-					buffer.force_encoding(::Encoding::ASCII_8BIT)
+					@encoding_list.insert name, value
+					buffer
 				rescue
 					puts "HPACK failure data dump:"
 					puts "buffer: #{buffer} - #{buffer.encoding}"

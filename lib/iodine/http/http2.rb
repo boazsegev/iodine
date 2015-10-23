@@ -4,14 +4,19 @@ module Iodine
 			def initialize io, original_request = nil
 				super(io)
 				return unless original_request
-				original_request[:stream_id] = 1
+				::Iodine.warn "Http/2: upgrade handshake settings not implemented. upgrade request:\n#{original_request}"
+				@last_stream = original_request[:stream_id] = 1
 				original_request[:io] = self
-				process_request original_request
+				# deal with the request['http2-settings'] - NO ACK
+				# HTTP2-Settings: <base64url encoding of HTTP/2 SETTINGS payload>
+
+				# dispatch the original request
+				::Iodine.run original_request, &(::Iodine::Http::Http2.dispatch)
 			end
 			def on_open
-				# do stuff, i.e. related to the header:
-				# HTTP2-Settings: <base64url encoding of HTTP/2 SETTINGS payload>
-				::Iodine.warn "HTTP/2 requested - support is still experimental."
+				# not fully fanctional.
+				::Iodine.warn "Http/2 requested - support is still experimental."
+
 				# update the timeout to 15 seconds (ping will be sent whenever timeout is reached).
 				set_timeout 15
 
@@ -129,11 +134,11 @@ module Iodine
 			def send_headers response, request
 				headers = response.headers
 				return false if headers.frozen?
-				headers[:status] = response.status.to_s
-				# headers.each {|k, v| }
+				# headers[:status] = response.status.to_s
 				headers['set-cookie'] = response.extract_cookies
-				emit_payload @hpack.encode(headers), request[:sid], 1, (request.head? ? 1 : 0)
 				headers.freeze
+				emit_payload (@hpack.encode(status: response.status.to_s) + @hpack.encode(headers)), request[:sid], 1, (request.head? ? 1 : 0)
+				return true
 			end
 
 			# Sends an HTTP frame with the requested payload
@@ -217,7 +222,7 @@ module Iodine
 			end
 
 			def process_frame frame
-				# puts "processing HTTP/2 frame: #{frame}"
+				puts "processing HTTP/2 frame: #{frame}"
 				(frame[:stream] = ( @open_streams[frame[:sid]] ||= ::Iodine::Http::Request.new(self) ) ) && (frame[:stream][:sid] ||= frame[:sid]) if frame[:sid] != 0
 				case frame[:type]
 				when 0 # DATA
@@ -234,8 +239,8 @@ module Iodine
 					process_ping frame
 				when 7 # GOAWAY
 					go_away NO_ERROR
+					Iodine.error "Http2 Disconnection with error (#{frame[:flags].to_s}): #{frame[:body].strip}" unless frame[:flags] == 0 && frame[:body] == ''
 				when 8 # WINDOW_UPDATE
-				when 9 # 
 				else # Error, frame not recognized
 				end
 
@@ -298,7 +303,9 @@ module Iodine
 				@header_buffer.clear
 				@header_end_stream = false
 				@header_sid = nil
-
+			rescue => e
+				connection_error 5
+				Iodine.warn e
 			end
 			def process_data frame
 				if frame[:flags][3] == 1 # padded
