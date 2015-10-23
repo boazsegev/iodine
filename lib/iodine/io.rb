@@ -26,7 +26,7 @@ module Iodine
 
 	protected
 
-	@port = (ARGV.index('-p') && ARGV[ARGV.index('-p') + 1]) || ENV['PORT'] || 3000
+	@port = ((ARGV.index('-p') && ARGV[ARGV.index('-p') + 1]) || ENV['PORT'] || 3000).to_i
 	@bind = (ARGV.index('-ip') && ARGV[ARGV.index('-ip') + 1]) || ENV['IP'] || "0.0.0.0"
 	@ssl = (ARGV.index('ssl') && true) || (@port == 443)
 	@protocol = nil

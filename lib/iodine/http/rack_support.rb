@@ -7,8 +7,9 @@ module Iodine
 			def run(app, options = {})
 				@app = app
 
-				Iodine.protocol ||= Iodine::HTTP
 				Iodine.threads = 18
+				Iodine.port = options[:Port]
+				Iodine.protocol ||= Iodine::HTTP
 				@pre_rack_handler = Iodine.protocol.on_http
 				Iodine.protocol.on_http self
 				true
@@ -23,10 +24,10 @@ module Iodine
 				raise "Rack app returned an unexpected value: #{res.to_s}" unless res && res.is_a?(Array)
 				response.status = res[0]
 				response.headers.clear
-				response.headers.update res[1]
+				res[1].each {|k, v| response.headers[k.to_s.downcase] = v }
 				response.body = res[2]
 				response.raw_cookies.clear
-				response.headers['Set-Cookie'] = response.headers.delete('Set-Cookie').split("\n").join("\r\nSet-Cookie: ") if response.headers['Set-Cookie']
+				response.headers['set-cookie'] = response.headers.delete('set-cookie').split("\n").join("\r\nset-cookie: ") if request[:io].is_a?(Iodine::Http) && response.headers['set-cookie']
 				response.request[:no_log] = true
 				true
 			end

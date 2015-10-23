@@ -145,10 +145,10 @@ module Iodine
 					buffer
 				rescue
 					puts "HPACK failure data dump:"
-					puts "buffer: #{buffer} - #{buffer.encoding}"
-					puts "value: #{value} - #{value.encoding}"
-					puts "packed #{pack_string(value)} - #{pack_string(value)}"
-					puts "packed #{pack_string(value)} - #{pack_string(value)}"
+					puts "buffer: #{buffer} - #{buffer.encoding}" if buffer
+					puts "name: #{name} - #{name.encoding}"  if name.is_a? String
+					puts "value: #{value} - #{value.encoding}"  if value.is_a? String
+					puts "packed #{pack_string(name)} - #{pack_string(value)}" if value
 					raise
 				end
 				def extract_number data, prefix, prefix_length
