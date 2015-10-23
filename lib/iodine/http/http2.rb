@@ -22,6 +22,7 @@ module Iodine
 				@header_buffer = ''
 				@header_end_stream = false
 				@header_sid = nil
+				@frame_locker = Mutex.new
 
 				# frame parser starting posotion
 				@frame = {}
@@ -74,7 +75,7 @@ module Iodine
 			end
 
 			def ping
-				emit_frame "pniodine", 0, 6
+				@frame_locker.synchronize { emit_frame "pniodine", 0, 6 }
 			end
 
 			def push request
@@ -88,7 +89,7 @@ module Iodine
 
 			def go_away error_code
 				return false if @io.closed?
-				emit_frame [@last_stream, error_code].pack('N*'), 0, 7
+				@frame_locker.synchronize { emit_frame [@last_stream, error_code].pack('N*'), 0, 7 }
 				close
 				# Iodine.info "HTTP/2 connection closed with code #{error_code}"
 			end
@@ -149,17 +150,19 @@ module Iodine
 			def emit_payload payload, sid = 0, type = 0, flags = 0
 				max_frame_size = @settings[SETTINGS_MAX_FRAME_SIZE]
 				max_frame_size = 131_072 if max_frame_size > 131_072
-				return emit_frame(payload, sid, type, ( (type == 0x1 || type == 0x5) ? (flags | 0x4) : flags ) ) if payload.bytesize <= max_frame_size
+				return @frame_locker.synchronize { emit_frame(payload, sid, type, ( (type == 0x1 || type == 0x5) ? (flags | 0x4) : flags ) ) } if payload.bytesize <= max_frame_size
 				sent = 0
 				payload = StringIO.new payload
 				if type == 0x1 || type == 0x5
-					sent += emit_frame(payload.read(max_frame_size), sid, 0x1, flags & 254)
-					sent += emit_frame(payload.read(max_frame_size), sid, 0x9, 0) while payload.size - payload.pos > max_frame_size
-					sent += emit_frame(payload.read(max_frame_size), sid, 0x9, (0x4 | (flags & 0x1)) )
+					@frame_locker.synchronize do
+						sent += emit_frame(payload.read(max_frame_size), sid, 0x1, flags & 254)
+						sent += emit_frame(payload.read(max_frame_size), sid, 0x9, 0) while payload.size - payload.pos > max_frame_size
+						sent += emit_frame(payload.read(max_frame_size), sid, 0x9, (0x4 | (flags & 0x1)) )
+					end
 					return sent
 				end
-				sent += emit_frame(payload.read(max_frame_size), sid, type, (flags & 254)) while payload.size - payload.pos > max_frame_size
-				sent += emit_frame(payload.read(max_frame_size), sid, type, flags)
+				sent += @frame_locker.synchronize { emit_frame(payload.read(max_frame_size), sid, type, (flags & 254)) } while payload.size - payload.pos > max_frame_size
+				sent += @frame_locker.synchronize { emit_frame(payload.read(max_frame_size), sid, type, flags) }
 			end
 
 			def parse_preface data
