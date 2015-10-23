@@ -205,7 +205,7 @@ Here are different command line options that Iodine recognizes automatically whe
 
 ## Server Usage: Running more than one server
 
-On some machines, Iodine will allow you to run more than a single server, by forking the main process while still running the script. This is more of a hack to be used in development environments, since runnig multiple instances of the script is the prefered way to run different servers.
+On some machines, Iodine will allow you to run more than a single server, by forking the main process while still running the script. This is more of a hack to be used in development environments, since runnig multiple instances of the script is the prefered way to use Iodine in production.
 
 i.e.:
 
