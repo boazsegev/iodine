@@ -159,7 +159,7 @@ module Iodine
 				else
 					ws_extentions = nil
 				end
-				response['Sec-WebSocket-Accept'.freeze] = Digest::SHA1.base64digest(request['sec-websocket-key'.freeze] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'.freeze)
+				response['sec-websocket-accept'.freeze] = Digest::SHA1.base64digest(request['sec-websocket-key'.freeze] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'.freeze)
 				response.session
 				# Iodine.log "#{@request[:client_ip]} [#{Time.now.utc}] - #{@connection.object_id} Upgraded HTTP to WebSockets.\n"
 				response.finish

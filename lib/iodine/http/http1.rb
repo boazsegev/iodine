@@ -86,7 +86,7 @@ module Iodine
 			keep_alive = response.keep_alive
 			if (request[:version].to_f > 1 && request['connection'.freeze].nil?) || request['connection'.freeze].to_s =~ /ke/i || (headers['connection'.freeze] && headers['connection'.freeze] =~ /^ke/i)
 				keep_alive = true
-				headers['connection'.freeze] ||= 'Keep-Alive'.freeze
+				headers['connection'.freeze] ||= 'keep-alive'.freeze
 				headers['keep-alive'.freeze] ||= "timeout=#{(@timeout ||= 3).to_s}"
 			else
 				headers['connection'.freeze] ||= 'close'.freeze
@@ -111,6 +111,7 @@ module Iodine
 			if finish
 				response.bytes_written += stream_data('') unless body.nil?
 				log_finished response
+				close unless response.keep_alive
 			end
 			(body.frozen? || body.clear) if body
 			true
@@ -171,8 +172,8 @@ module Iodine
 
 			# unless @headers['connection'] || (@request[:version].to_f <= 1 && (@request['connection'].nil? || !@request['connection'].match(/^k/i))) || (@request['connection'] && @request['connection'].match(/^c/i))
 			headers.each {|k,v| out << "#{k.to_s}: #{v}\r\n"}
-			out << "Cache-Control: max-age=0, no-cache\r\n".freeze unless headers['cache-control'.freeze]
-			response.extract_cookies.each {|cookie| out << "Set-Cookie: #{cookie}\r\n"}
+			out << "cache-control: max-age=0, no-cache\r\n".freeze unless headers['cache-control'.freeze]
+			response.extract_cookies.each {|cookie| out << "set-cookie: #{cookie}\r\n"}
 			out << "\r\n"
 
 			response.bytes_written += (write(out) || 0)
