@@ -122,6 +122,7 @@ module Iodine
 						return (value.map {|v| encode_field name, v} .join)
 					end
 					raise "Http/2 headers must be LOWERCASE Strings!" if name[0] =~ /[A-Z]/n
+					value = value.to_s
 					if name == 'set-cookie'
 						buffer = ''.force_encoding ::Encoding::ASCII_8BIT
 						buffer << pack_number( 55, 1, 4)
@@ -133,7 +134,6 @@ module Iodine
 					index = @encoding_list.find_name name
 					buffer = ''.force_encoding(::Encoding::ASCII_8BIT)
 					if index
-						puts "found #{index} looking for #{name}"
 						buffer << pack_number( index, 1, 2)
 					else
 						raise "Http/2 headers whould be Strings! or allowed Psedo-Header Symbol Only!" if name[0] == ':'
