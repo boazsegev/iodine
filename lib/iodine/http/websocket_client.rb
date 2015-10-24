@@ -8,17 +8,17 @@ module Iodine
 		# Use {Iodine::Http::WebsocketClient.connect} to initialize a client with all the callbacks needed.
 		class WebsocketClient
 		
-			attr_accessor :response, :request
+			attr_accessor :response, :request, :params
 
 			def initialize request
 				@response = nil
 				@request = request
-				params = request[:ws_client_params]
-				@on_message = params[:on_message]
+				@params = request[:ws_client_params]
+				@on_message = @params[:on_message]
 				raise "Websocket client must have an #on_message Proc or handler." unless @on_message && @on_message.respond_to?(:call)
-				@on_open = params[:on_open]
-				@on_close = params[:on_close]
-				@renew = params[:renew].to_i
+				@on_open = @params[:on_open]
+				@on_close = @params[:on_close]
+				@renew = @params[:renew].to_i
 			end
 
 			def on event_name, &block
@@ -47,9 +47,9 @@ module Iodine
 				@io = @request[:io]
 				Iodine::Http::Request.parse @request
 				instance_exec(&@on_open) if @on_open
-				if request[:ws_client_params][:every] && request[:ws_client_params][:send]
-					raise TypeError, "Websocket Client `:send` should be either a String or a Proc object." unless request[:ws_client_params][:send].is_a?(String) || request[:ws_client_params][:send].is_a?(Proc)
-					Iodine.run_every request[:ws_client_params][:every], self, request[:ws_client_params] do |ws, client_params, timer|
+				if request[:ws_client_params][:every] && @params[:send]
+					raise TypeError, "Websocket Client `:send` should be either a String or a Proc object." unless @params[:send].is_a?(String) || @params[:send].is_a?(Proc)
+					Iodine.run_every @params[:every], self, @params do |ws, client_params, timer|
 						if ws.closed?
 							timer.stop!
 							next
@@ -68,15 +68,15 @@ module Iodine
 				if @renew > 0
 					renew_proc = Proc.new do
 						begin
-							Iodine::Http::WebsocketClient.connect(request[:ws_client_params][:url], request[:ws_client_params])
+							Iodine::Http::WebsocketClient.connect(@params[:url], @params)
 						rescue
 							@renew -= 1
 							if @renew <= 0
-								Iodine.fatal "WebsocketClient renewal FAILED for #{request[:ws_client_params][:url]}"
+								Iodine.fatal "WebsocketClient renewal FAILED for #{@params[:url]}"
 								instance_exec(&@on_close) if @on_close
 							else
 								Iodine.run_after 2, &renew_proc
-								Iodine.warn "WebsocketClient renewal failed for #{request[:ws_client_params][:url]}, #{@renew} attempts left"
+								Iodine.warn "WebsocketClient renewal failed for #{@params[:url]}, #{@renew} attempts left"
 							end
 							false
 						end
