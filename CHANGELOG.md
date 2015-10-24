@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.2
+
+**Fix**: fixed an issue where the default implementation of `ping` didn not reset the timeout if the connection wasn't being closed (the default implementation checks if the Protocol is working on existing data and either resets the timer allowing the work to complete or closes the connection if no work is being done).
+
+***
+
 Change log v.0.1.1
 
 **Fix**: Fixed an issue where slow processing of Http/1 requests could cause timeout disconnections to occur while the request is being processed.
