@@ -7,6 +7,7 @@ require 'uri'
 require 'tmpdir'
 require 'zlib'
 require 'securerandom'
+require 'tempfile.rb'
 
 require 'iodine/http/request'
 require 'iodine/http/response'
@@ -94,9 +95,18 @@ module Iodine
 		def session_token= token
 			@session_token = token
 		end
-		# Sets the session token for the Http server (String). Defaults to the name of the script.
+		# Gets the session token for the Http server (String). Defaults to the name of the script.
 		def session_token
 			@session_token
+		end
+
+		# Sets the maximum bytes allowed for an HTTP's body request (file upload data). Defaults to the command line `-limit` argument, or ~0.25GB.
+		def max_http_buffer= size
+			@max_http_buffer = size
+		end
+		# Gets the maximum bytes allowed for an HTTP's body request (file upload data). Defaults to the command line `-limit` argument, or ~0.25GB.
+		def max_http_buffer
+			@max_http_buffer
 		end
 
 		# Sets whether Iodine will allow connections to the experiemntal Http2 protocol. Defaults to false unless the `http2` command line flag is present.
@@ -149,6 +159,7 @@ module Iodine
 		protected
 
 		@http2 = (ARGV.index('http2') && true)
+		@max_http_buffer = ((ARGV.index('-limit') && ARGV[ARGV.index('-limit') + 1]) || 268_435_456).to_i
 
 		@websocket_app = @http_app = NOT_IMPLEMENTED = Proc.new { |i,o| false }
 		@session_token = "#{File.basename($0, '.*')}_uuid"

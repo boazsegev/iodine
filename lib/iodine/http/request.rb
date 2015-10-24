@@ -206,6 +206,9 @@ module Iodine
 					# end
 				# end
 				return request if request[:client_ip]
+
+				request.delete :headers_size
+
 				request[:client_ip] = request['x-forwarded-for'.freeze].to_s.split(/,[\s]?/)[0] || (request[:io].io.to_io.remote_address.ip_address) rescue 'unknown IP'.freeze
 				request[:version] ||= '1'
 
@@ -340,20 +343,22 @@ module Iodine
 			# read the body's data and parse any incoming data.
 			def self.read_body request
 				# save body for Rack, if applicable
-				request[:rack_input] = StringIO.new(request[:body].dup.force_encoding(::Encoding::ASCII_8BIT)) if ::Iodine::Http.on_http == ::Iodine::Http::Rack
+				# request[:rack_input] = request[:body]  if ::Iodine::Http.on_http == ::Iodine::Http::Rack
 				# parse content
+				request[:body].rewind
 				case request['content-type'.freeze].to_s
 				when /x-www-form-urlencoded/
-					extract_params request.delete(:body).split(/[&;]/), request[:params] #, :form # :uri
+					extract_params request[:body].read.split(/[&;]/), request[:params] #, :form # :uri
 				when /multipart\/form-data/
-					read_multipart request, request, request.delete(:body)
+					read_multipart request, request, request[:body].read
 				when /text\/xml/
 					# to-do support xml?
-					make_utf8! request[:body]
+					# make_utf8! request[:body]
 					nil
 				when /application\/json/
-					JSON.parse(make_utf8! request[:body]).each {|k, v| add_param_to_hash k, v, request[:params]} rescue true
+					JSON.parse(make_utf8! request[:body].read).each {|k, v| add_param_to_hash k, v, request[:params]} rescue true
 				end
+				request[:body].rewind if request[:body]
 			end
 
 			# parse a mime/multipart body or part.

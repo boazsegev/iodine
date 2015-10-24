@@ -41,7 +41,7 @@ module Iodine
 				# env.each {|k, v| env[k] = @request[v] if v.is_a?(Symbol)}
 				RACK_ADDON.each {|k, v| env[k] = (request[v].is_a?(String) ? ( request[v].frozen? ? request[v].dup.force_encoding('ASCII-8BIT') : request[v].force_encoding('ASCII-8BIT') ): request[v])}
 				request.each {|k, v| env["HTTP_#{k.upcase.tr('-', '_')}"] = v if k.is_a?(String) }
-				env['rack.input'.freeze] ||= StringIO.new(''.force_encoding('ASCII-8BIT'.freeze))
+				env['rack.input'.freeze] ||= request[:body] || StringIO.new(''.force_encoding('ASCII-8BIT'.freeze))
 				env['CONTENT_LENGTH'.freeze] = env.delete 'HTTP_CONTENT_LENGTH'.freeze if env['HTTP_CONTENT_LENGTH'.freeze]
 				env['CONTENT_TYPE'.freeze] = env.delete 'HTTP_CONTENT_TYPE'.freeze if env['HTTP_CONTENT_TYPE'.freeze]
 				env['HTTP_VERSION'.freeze] = "HTTP/#{request[:version].to_s}"

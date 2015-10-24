@@ -290,9 +290,15 @@ module Iodine
 
 				@header_buffer << frame[:body]
 
+				frame[:stream][:headers_size] ||= 0
+				frame[:stream][:headers_size] += frame[:body].bytesize
+
+				return (Iodine.warn('Http2 header overloading, closing connection.') && connection_error( ENHANCE_YOUR_CALM ) ) if frame[:stream][:headers_size] >  262_144
+
 				return unless frame[:flags][2] == 1 # fin
 
 				frame[:stream].update @hpack.decode(@header_buffer) # this is where HPACK comes in
+				return (Iodine.warn('Http2 header overloading, closing connection.') && connection_error( ENHANCE_YOUR_CALM ) ) if frame[:stream].length > 2096
 				frame[:stream][:time_recieved] ||= Time.now
 				frame[:stream][:version] ||= '2'.freeze
 
@@ -312,7 +318,13 @@ module Iodine
 					frame[:body] = frame[:body][1...(0 - frame[:body][0].ord)]
 				end
 
-				frame[:stream][:body] ? (frame[:stream][:body] << frame[:body]) : (frame[:stream][:body] = frame[:body])
+				(frame[:stream][:body] ||= Tempfile.new('iodine'.freeze, :encoding => 'binary'.freeze) ) << frame[:body]
+
+				# check request size
+				if frame[:stream][:body].size > ::Iodine::Http.max_http_buffer
+					Iodine.warn("Http2 payload (message size) too big (Iodine::Http.max_http_buffer == #{::Iodine::Http.max_http_buffer} bytes) - #{frame[:stream][:body].size} bytes.")
+					return connection_error( ENHANCE_YOUR_CALM )
+				end
 
 				process_request(@open_streams.delete frame[:sid]) if frame[:flags][0] == 1
 			end

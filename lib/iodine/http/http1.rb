@@ -16,9 +16,13 @@ module Iodine
 						request = (@request ||= ::Iodine::Http::Request.new(self))
 						unless request[:method]
 							l = data.gets.strip
+							if l.bytesize > 16_384
+								write "HTTP/1.0 414 Request-URI Too Long\r\ncontent-length: 20\r\n\r\nRequest URI too Long"
+								return close
+							end
 							next if l.empty?
 							request[:method], request[:query], request[:version] = l.split(/[\s]+/, 3)
-							return (Iodine.warn('Protocol Error, closing connection.') && close) unless request[:method] =~ HTTP_METHODS_REGEXP
+							return (Iodine.warn('Htt1 Protocol Error, closing connection.') && close) unless request[:method] =~ HTTP_METHODS_REGEXP
 							request[:version] = (request[:version] || '1.1'.freeze).match(/[\d\.]+/)[0]
 							request[:time_recieved] = Time.now
 						end
@@ -27,6 +31,8 @@ module Iodine
 								# n = l.slice!(0, l.index(':')); l.slice! 0
 								# n.strip! ; n.downcase!; n.freeze
 								# request[n] ? (request[n].is_a?(Array) ? (request[n] << l) : request[n] = [request[n], l ]) : (request[n] = l)
+								request[:headers_size] ||= 0
+								request[:headers_size] += l.bytesize
 								l = l.strip.split(/:[\s]?/, 2)
 								l[0].strip! ; l[0].downcase!;
 								request[l[0]] ? (request[l[0]].is_a?(Array) ? (request[l[0]] << l[1]) : request[l[0]] = [request[l[0]], l[1] ]) : (request[l[0]] = l[1])
@@ -37,6 +43,7 @@ module Iodine
 								Iodine.warn 'Protocol Error, closing connection.'
 								return close
 							end
+							return (Iodine.warn('Http1 header overloading, closing connection.') && close) if request.length > 2096 || request[:headers_size] > 262_144
 						end
 						until request[:body_complete] && request[:headers_complete]
 							if request['transfer-coding'.freeze] == 'chunked'.freeze
@@ -48,7 +55,7 @@ module Iodine
 									return (Iodine.warn('Protocol Error, closing connection.') && close) unless @parser[:length]
 									request[:body_complete] = true && break if @parser[:length] == 0
 									@parser[:act_length] = 0
-									request[:body] ||= ''
+									request[:body] ||= Tempfile.new('iodine'.freeze, :encoding => 'binary'.freeze)
 								end
 								chunk = data.read(@parser[:length] - @parser[:act_length])
 								return false unless chunk
@@ -56,20 +63,26 @@ module Iodine
 								@parser[:act_length] += chunk.bytesize
 								(@parser[:act_length] = @parser[:length] = 0) && (data.gets) if @parser[:act_length] >= @parser[:length]
 							elsif request['content-length'.freeze] && request['content-length'.freeze].to_i != 0
-								request[:body] ||= ''
-								packet = data.read(request['content-length'.freeze].to_i - request[:body].bytesize)
+								request[:body] ||= Tempfile.new('iodine'.freeze, :encoding => 'binary'.freeze)
+								packet = data.read(request['content-length'.freeze].to_i - request[:body].size)
 								return false unless packet
 								request[:body] << packet
-								request[:body_complete] = true if request['content-length'.freeze].to_i - request[:body].bytesize <= 0
+								request[:body_complete] = true if request['content-length'.freeze].to_i - request[:body].size <= 0
 							elsif request['content-type'.freeze]
 								Iodine.warn 'Body type protocol error.' unless request[:body]
 								line = data.gets
 								return false unless line
-								(request[:body] ||= '') << line
+								(request[:body] ||= Tempfile.new('iodine'.freeze, :encoding => 'binary'.freeze) ) << line
 								request[:body_complete] = true if line =~ EOHEADERS
 							else
 								request[:body_complete] = true
 							end
+						end
+						if request[:body] && request[:body].size > ::Iodine::Http.max_http_buffer
+							Iodine.warn("Http1 message body too big, closing connection (Iodine::Http.max_http_buffer == #{::Iodine::Http.max_http_buffer} bytes) - #{request[:body].size} bytes.")
+							request.delete(:body).tap {|f| f.close unless f.closed? } rescue false
+							write "HTTP/1.0 413 Payload Too Large\r\ncontent-length: 17\r\n\r\nPayload Too Large"
+							return close
 						end
 						(@request = ::Iodine::Http::Request.new(self)) && ( (::Iodine::Http.http2 && ::Iodine::Http::Http2.handshake(request, self, data)) || dispatch(request, data) ) if request.delete :body_complete
 					end
