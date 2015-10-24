@@ -18,6 +18,7 @@ module Iodine
 							l = data.gets.strip
 							if l.bytesize > 16_384
 								write "HTTP/1.0 414 Request-URI Too Long\r\ncontent-length: 20\r\n\r\nRequest URI too Long"
+								Iodine.warn "Http/1 URI too long, closing connection."
 								return close
 							end
 							next if l.empty?
@@ -43,7 +44,10 @@ module Iodine
 								Iodine.warn 'Protocol Error, closing connection.'
 								return close
 							end
-							return (Iodine.warn('Http1 header overloading, closing connection.') && close) if request.length > 2096 || request[:headers_size] > 262_144
+							if request.length > 2096 || request[:headers_size] > 262_144
+								write "HTTP/1.0 431 Request Header Fields Too Large\r\ncontent-length: 31\r\n\r\nRequest Header Fields Too Large"
+								return (Iodine.warn('Http1 header overloading, closing connection.') && close)
+							end
 						end
 						until request[:body_complete] && request[:headers_complete]
 							if request['transfer-coding'.freeze] == 'chunked'.freeze

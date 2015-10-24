@@ -265,7 +265,7 @@ module Iodine
 			end
 
 			# Adds paramaters to a Hash object, according to the Iodine's server conventions.
-			def self.add_param_to_hash name, value, target
+			def self.add_param_to_hash name, value, target, &block
 				begin
 					c = target
 					val = rubyfy! value
@@ -287,6 +287,7 @@ module Iodine
 						else
 							c[n] = val
 						end
+						c.default_proc = block if block
 					else
 						if c[n]
 							c[n].is_a?(Array) ? (c[n] << val) : (c[n] = [c[n], val])
@@ -350,10 +351,10 @@ module Iodine
 				when /x-www-form-urlencoded/
 					extract_params request[:body].read.split(/[&;]/), request[:params] #, :form # :uri
 				when /multipart\/form-data/
-					read_multipart request, request, request[:body].read
+					read_multipart request, request
 				when /text\/xml/
 					# to-do support xml?
-					# make_utf8! request[:body]
+					# request[:xml] = make_utf8! request[:body].read
 					nil
 				when /application\/json/
 					JSON.parse(make_utf8! request[:body].read).each {|k, v| add_param_to_hash k, v, request[:params]} rescue true
@@ -362,63 +363,88 @@ module Iodine
 			end
 
 			# parse a mime/multipart body or part.
-			def self.read_multipart request, headers, part, name_prefix = ''
-				if headers['content-type'].to_s =~ /multipart/i
-					tmp = {}
-					extract_header headers['content-type'].split(/[;,][\s]?/), tmp
-					boundry = tmp[:boundary]
-					if tmp[:name]
-						if name_prefix.empty?
-							name_prefix << tmp[:name]
+			def self.read_multipart request, headers = {}, boundary = [], name_prefix = ''
+				body = request[:body]
+				return unless headers['content-type'].to_s =~ /multipart/i
+				part_headers = {}
+				extract_header headers['content-type'].split(/[;,][\s]?/), part_headers
+				boundary << part_headers[:boundary]
+				if part_headers[:name]
+					if name_prefix.empty?
+						name_prefix << part_headers[:name]
+					else
+						name_prefix << "[#{part_headers[:name]}]"
+					end
+				end
+				part_headers.delete :name
+				part_headers.clear
+				line = nil
+				boundary_length = nil
+				true until ( (line = body.gets) ) && line =~ /--(#{boundary.join '|'})(--)?[\r]?\n/
+				until body.eof?
+					return if line =~ /--[\r]?\n/
+					return boundary.pop if boundary.count > 1 && line.match(/--(#{boundary.join '|'})/)[1] != boundary.last
+					boundary_length = line.bytesize
+					line = body.gets until line.nil? || line =~ /\:/
+					until line.nil? || line =~ /^[\r]?\n/
+						tmp = line.strip.split ':', 2
+						return Iodine.error "Http multipart parsing error (multipart header data malformed): #{line}" unless tmp && tmp.count == 2
+						tmp[0].strip!; tmp[0].downcase!; tmp[1].strip!; 
+						part_headers[tmp[0]] = tmp[1]
+						line = body.gets
+					end
+					return if line.nil?
+					if !part_headers['content-disposition'.freeze]
+						Iodine.error "Wrong multipart format with headers: #{part_headers}"
+						return
+					end
+					extract_header part_headers['content-disposition'.freeze].split(/[;,][\s]?/), part_headers
+					if name_prefix.empty?
+						name = part_headers[:name][1..-2]
+					else
+						name = "#{name_prefix}[part_headers[:name][1..-2]}]"
+					end
+					part_headers.delete :name
+
+					start_part_pos = body.pos
+					tmp = /-(#{boundary.join '|'})(--)?[\r]?\n/
+					# true until body.eof? || (body.getc == '-' && ((line = body.gets) =~ /-(#{boundary.join '|'})(--)?[\r]?\n/) )
+					# body.pos = body.pos - (boundary_length * 2)
+					line.clear until body.eof? || ((line = body.gets) =~ tmp)
+					end_part_pos = (body.pos - line.bytesize) - 2
+					new_part_pos = body.pos 
+					body.pos = end_part_pos
+					end_part_pos += 1 unless body.getc == "\r"
+
+					if part_headers['content-type'.freeze]
+						if part_headers['content-type'.freeze] =~ /multipart/i
+							body.pos = start_part_pos
+							read_multipart request, part_headers, boundary, name_prefix
 						else
-							name_prefix << "[#{tmp[:name]}]"
-						end
-					end
-					part.split(/([\r]?\n)?--#{boundry}(--)?[\r]?\n/).each do |p|
-						unless p.strip.empty? || p=='--'.freeze
-							# read headers
-							h = {}
-							m = p.slice! /\A[^\r\n]*[\r]?\n/
-							while m
-								break if m =~ /\A[\r]?\n/
-								m = m.match(/^([^:]+):[\s]?([^\r\n]+)/)
-								h[m[1].downcase] = m[2] if m
-								m = p.slice! /\A[^\r\n]*[\r]?\n/
+							part_headers.delete 'content-disposition'.freeze
+							add_param_to_hash "#{name}[type]", make_utf8!(part_headers['content-type'.freeze]), request[:params]
+							part_headers.each {|k,v|  add_param_to_hash "#{name}[#{k.to_s}]", make_utf8!(v[0] == '"' ? v[1..-2].to_s : v), request[:params] if v}
+
+							tmp = Tempfile.new 'upload', encoding: 'binary'
+							body.pos = start_part_pos
+							((end_part_pos - start_part_pos)/32_768).to_i.times {tmp << body.read(32_768)}
+							tmp << body.read(end_part_pos - body.pos)
+							add_param_to_hash "#{name}[size]", tmp.size, request[:params]
+							add_param_to_hash "#{name}[file]", tmp, request[:params] do |hash, key|
+								if key == :data || key == "data" && hash.has_key?(:file) && hash[:file].is_a?(::Tempfile)
+									hash[:file].rewind
+									(hash[:data] = hash[:file].read)
+								end
 							end
-							# send headers and body to be read
-							read_multipart request, h, p, name_prefix
+							tmp.rewind
 						end
+					else
+						body.pos = start_part_pos
+						add_param_to_hash name, uri_decode!( body.read(end_part_pos - start_part_pos) ), request[:params] 
 					end
-					return
+					body.pos = new_part_pos
 				end
 
-				# require a part body to exist (data exists) for parsing
-				return true if part.to_s.empty?
-
-				# convert part to `charset` if charset is defined?
-
-				if !headers['content-disposition'.freeze]
-					Iodine.error "Wrong multipart format with headers: #{headers} and body: #{part}"
-					return
-				end
-
-				cd = {}
-
-				extract_header headers['content-disposition'.freeze].split(/[;,][\s]?/), cd
-
-				if name_prefix.empty?
-					name = cd[:name][1..-2]
-				else
-					name = "#{name_prefix}[cd[:name][1..-2]}]"
-				end
-				if headers['content-type'.freeze]
-					add_param_to_hash "#{name}[data]", part, request[:params]
-					add_param_to_hash "#{name}[type]", make_utf8!(headers['content-type'.freeze]), request[:params]
-					cd.each {|k,v|  add_param_to_hash "#{name}[#{k.to_s}]", make_utf8!(v[1..-2].to_s), request[:params] unless k == :name || !v}
-				else
-					add_param_to_hash name, uri_decode!(part), request[:params]
-				end
-				true
 			end
 
 		end
