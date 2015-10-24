@@ -64,7 +64,7 @@ module Iodine
 				# 'gr.cookies'		=> :cookies,
 				'REQUEST_METHOD'	=> :method,
 				'rack.url_scheme'	=> :scheme,
-				'rack.input'		=> :rack_input
+				'rack.input'		=> :body
 			}
 
 			RACK_DICTIONARY = {

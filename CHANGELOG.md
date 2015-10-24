@@ -10,9 +10,15 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Change log v.0.1.1
 
-**Change/Security**: Uploads now use temporary files. Aceessing the data for file uploads should be done throught the `:file` property of the params hash (i.e. `params[:upload_field_name][:file]`). Using the `:data` property (old API) would cause the file to be read to the memory and the file's content will be returned as a String.
+**Fix**: Fixed an issue where slow processing of Http/1 requests could cause timeout disconnections to occur while the request is being processed.
+
+**Change/Security**: Uploads now use temporary files. Aceessing the data for file uploads should be done throught the `:file` property of the params hash (i.e. `params[:upload_field_name][:file]`). Using the `:data` property (old API) would cause the whole file to be dumped to the memory and the file's content will be returned as a String.
+
+**Change/Security**: Http upload limits are now enforced. The current default limit is about ~0.5GB.
 
 **Feature**: WebsocketClient now supports both an auto-connection-renewal and a polling machanism built in to the `WebsocketClient.connect` API. The polling feature is mostly a handy helper for testing, as it is assumed that connection renewal and pub/sub offer a better design than polling.
+
+**Logging**: Better Http error logging and recognition.
 
 ***
 

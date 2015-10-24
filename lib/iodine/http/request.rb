@@ -380,7 +380,7 @@ module Iodine
 				part_headers.clear
 				line = nil
 				boundary_length = nil
-				true until ( (line = body.gets) ) && line =~ /--(#{boundary.join '|'})(--)?[\r]?\n/
+				true until ( (line = body.gets) ) && line =~ /\A--(#{boundary.join '|'})(--)?[\r]?\n/
 				until body.eof?
 					return if line =~ /--[\r]?\n/
 					return boundary.pop if boundary.count > 1 && line.match(/--(#{boundary.join '|'})/)[1] != boundary.last
@@ -407,10 +407,8 @@ module Iodine
 					part_headers.delete :name
 
 					start_part_pos = body.pos
-					tmp = /-(#{boundary.join '|'})(--)?[\r]?\n/
-					# true until body.eof? || (body.getc == '-' && ((line = body.gets) =~ /-(#{boundary.join '|'})(--)?[\r]?\n/) )
-					# body.pos = body.pos - (boundary_length * 2)
-					line.clear until body.eof? || ((line = body.gets) =~ tmp)
+					tmp = /\A--(#{boundary.join '|'})(--)?[\r]?\n/
+					line.clear until ( (line = body.gets) &&  line =~ tmp)
 					end_part_pos = (body.pos - line.bytesize) - 2
 					new_part_pos = body.pos 
 					body.pos = end_part_pos
@@ -427,7 +425,7 @@ module Iodine
 
 							tmp = Tempfile.new 'upload', encoding: 'binary'
 							body.pos = start_part_pos
-							((end_part_pos - start_part_pos)/32_768).to_i.times {tmp << body.read(32_768)}
+							((end_part_pos - start_part_pos)/65_536).to_i.times {tmp << body.read(65_536)} 
 							tmp << body.read(end_part_pos - body.pos)
 							add_param_to_hash "#{name}[size]", tmp.size, request[:params]
 							add_param_to_hash "#{name}[file]", tmp, request[:params] do |hash, key|

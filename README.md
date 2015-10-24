@@ -139,7 +139,7 @@ Having said that, Iodine is built with certain security measures in mind:
 
 - Iodine will limit the query length (Http/1), header count and header data size as well as well as react to header overloading by immediate disconnections. Iodine's limits are hardcoded to be slightly more than double those of the common Proxies, so this counter-measure will only take effect should an attacker manage to bypass the Proxy.
 
-- Iodine limits every Http request body-size (file upload data, form data, etc') to ~0.25GB. This setting can be changed using `Iodine::Http.max_http_buffer`. This safeguard is meant to prevent Ruby from crashing due to insufficient memory (an error Iodine cannot, and should not, recover from).
+- Iodine limits every Http request body-size (file upload data, form data, etc') to ~0.5GB. This setting can be changed using `Iodine::Http.max_http_buffer`. This safeguard is meant to prevent Ruby from crashing due to insufficient memory (an error Iodine cannot, and should not, recover from).
 
    It is recommended that this number will be lowered substantially whenever possible, by using `Iodine::Http.max_http_buffer = new_value`
 

@@ -348,9 +348,9 @@ module Iodine
 					# response.cookies.set_response nil
 					@flash.freeze
 				end
-				[].tap do |arr|
-					@cookies.each {|k, v| arr << "#{k.to_s}=#{v.to_s}"}
-				end
+				arr = []
+				@cookies.each {|k, v| arr << "#{k.to_s}=#{v.to_s}"}
+				arr
 			end
 
 			protected

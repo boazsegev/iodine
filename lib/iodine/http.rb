@@ -159,7 +159,7 @@ module Iodine
 		protected
 
 		@http2 = (ARGV.index('http2') && true)
-		@max_http_buffer = ((ARGV.index('-limit') && ARGV[ARGV.index('-limit') + 1]) || 268_435_456).to_i
+		@max_http_buffer = ((ARGV.index('-limit') && ARGV[ARGV.index('-limit') + 1]) || 536_870_912).to_i
 
 		@websocket_app = @http_app = NOT_IMPLEMENTED = Proc.new { |i,o| false }
 		@session_token = "#{File.basename($0, '.*')}_uuid"

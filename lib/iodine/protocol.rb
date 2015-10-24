@@ -49,9 +49,9 @@ module Iodine
 		end
 
 		# This method is called whenever a timeout has occurred. Either implement a ping or close the connection.
-		# The default implementation closes the connection.
+		# The default implementation closes the connection unless the protocol is still processing information received before timeout occurred.
 		def ping
-			close
+			close unless @locker.locked?
 		end
 
 		#############
@@ -98,6 +98,7 @@ module Iodine
 					r
 				end
 			rescue => e
+				# Iodine.info e.message
 				close
 			end
 		end
