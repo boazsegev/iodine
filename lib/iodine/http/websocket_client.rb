@@ -18,6 +18,7 @@ module Iodine
 				raise "Websocket client must have an #on_message Proc or handler." unless @on_message && @on_message.respond_to?(:call)
 				@on_open = params[:on_open]
 				@on_close = params[:on_close]
+				@renew = params[:renew].to_i
 			end
 
 			def on event_name, &block
@@ -41,16 +42,49 @@ module Iodine
 				instance_exec( data, &@on_message) 
 			end
 
-			def on_open(&block)
-				raise 'The on_open even is invalid at this point.' if block
+			def on_open
+				raise 'The on_open even is invalid at this point.' if block_given?
 				@io = @request[:io]
 				Iodine::Http::Request.parse @request
 				instance_exec(&@on_open) if @on_open
+				if request[:ws_client_params][:every] && request[:ws_client_params][:send]
+					raise TypeError, "Websocket Client `:send` should be either a String or a Proc object." unless request[:ws_client_params][:send].is_a?(String) || request[:ws_client_params][:send].is_a?(Proc)
+					Iodine.run_every request[:ws_client_params][:every], self, request[:ws_client_params] do |ws, client_params, timer|
+						if ws.closed?
+							timer.stop!
+							next
+						end
+						if client_params[:send].is_a?(String)
+							ws.write client_params[:send]
+						elsif client_params[:send].is_a?(Proc)
+							ws.instance_exec(&client_params[:send])
+						end
+					end
+				end
 			end
 
 			def on_close(&block)
-				@on_close = block if block
-				instance_exec(&@on_close) if @on_close
+				return @on_close = block if block
+				if @renew > 0
+					renew_proc = Proc.new do
+						begin
+							Iodine::Http::WebsocketClient.connect(request[:ws_client_params][:url], request[:ws_client_params])
+						rescue
+							@renew -= 1
+							if @renew <= 0
+								Iodine.fatal "WebsocketClient renewal FAILED for #{request[:ws_client_params][:url]}"
+								instance_exec(&@on_close) if @on_close
+							else
+								Iodine.run_after 2, &renew_proc
+								Iodine.warn "WebsocketClient renewal failed for #{request[:ws_client_params][:url]}, #{@renew} attempts left"
+							end
+							false
+						end
+					end
+					renew_proc.call
+				else
+					instance_exec(&@on_close) if @on_close
+				end
 			end
 
 			# Sends data through the socket. a shortcut for ws_client.response <<
@@ -96,12 +130,22 @@ module Iodine
 			# Acceptable options are:
 			# on_open:: the on_open callback. Must be an objects that answers `call(ws)`, usually a Proc.
 			# on_message:: the on_message callback. Must be an objects that answers `call(ws)`, usually a Proc.
-			# on_close:: the on_close callback. Must be an objects that answers `call(ws)`, usually a Proc.
+			# on_close:: the on_close callback - this will ONLY be called if the connection WASN'T renewed. Must be an objects that answers `call(ws)`, usually a Proc.
 			# headers:: a Hash of custom HTTP headers to be sent with the request. Header data, including cookie headers, should be correctly encoded.
 			# cookies:: a Hash of cookies to be sent with the request. cookie data will be encoded before being sent.
 			# timeout:: the number of seconds to wait before the connection is established. Defaults to 5 seconds.
+			# every:: this option, together with `:send` and `:renew`, implements a polling websocket. :every is the number of seconds between each polling event. without `:send`, this option will be ignored. defaults to nil.
+			# send:: a String to be sent or a Proc to be performed each polling interval. This option, together with `:every` and `:renew`, implements a polling websocket. without `:every`, this option will be ignored. defaults to nil. If `:send` is a Proc, it will be executed within the context of the websocket client object, with acess to the websocket client's instance variables and methods.
+			# renew:: the number of times to attempt to renew the connection if the connection is terminated by the remote server. Attempts are made in 2 seconds interval. The default for a polling websocket is 5 attempts to renew. For all other clients, the default is 0 (no renewal).
 			#
 			# The method will block until the connection is established or until 5 seconds have passed (the timeout). The method will either return a WebsocketClient instance object or raise an exception it the connection was unsuccessful.
+			#
+			# Use Iodine::Http.ws_connect for a non-blocking initialization.
+			#
+			# An #on_close callback will only be called if the connection isn't or cannot be renewed. If the connection is renewed,
+			# the #on_open callback will be called again for a new Websocket client instance - but the #on_close callback will NOT be called.
+			#
+			# Due to this design, the #on_open and #on_close methods should NOT be used for opening IO resources (i.e. file handles) nor for cleanup IF the `:renew` option is enabled.
 			#
 			# An on_message Proc must be defined, or the method will fail.
 			#
@@ -136,6 +180,8 @@ module Iodine
 				options[:on_message] ||= block
 				raise "No #on_message handler defined! please pass a block or define an #on_message handler!" unless options[:on_message]
 				url = URI.parse(url) unless url.is_a?(URI)
+				options[:url] = url
+				options[:renew] ||= 5 if options[:every] && options[:send]
 
 				ssl = url.scheme == "https" || url.scheme == "wss"
 
