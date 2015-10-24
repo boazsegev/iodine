@@ -10,6 +10,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Change log v.0.1.1
 
+**Change/Security**: Uploads now use temporary files. Aceessing the data for file uploads should be done throught the `:file` property of the params hash (i.e. `params[:upload_field_name][:file]`). Using the `:data` property (old API) would cause the file to be read to the memory and the file's content will be returned as a String.
+
 **Feature**: WebsocketClient now supports both an auto-connection-renewal and a polling machanism built in to the `WebsocketClient.connect` API. The polling feature is mostly a handy helper for testing, as it is assumed that connection renewal and pub/sub offer a better design than polling.
 
 ***

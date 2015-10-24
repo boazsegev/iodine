@@ -238,6 +238,7 @@ module Iodine
 			# attempts to write a non-streaming response to the IO. This can be done only once and will quitely fail subsequently.
 			def finish
 				request[:io].send_response self
+				request.delete(:body).tap {|f| f.close unless f.respond_to?(:close) && f.closed? rescue false } if request[:body] && @http_sblocks_count.to_i == 0
 			end
 
 			# Returns the connection's UUID.
@@ -373,6 +374,7 @@ module Iodine
 			def finish_streaming
 				return unless @http_sblocks_count == 0
 				request[:io].stream_response self, true
+				request.delete(:body).tap {|f| f.close unless f.respond_to?(:close) && f.closed? rescue false } if request[:body]
 			end
 		end
 	end

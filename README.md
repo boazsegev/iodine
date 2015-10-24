@@ -127,6 +127,24 @@ end
 Iodine::Http.on_websocket WSChatServer
 ```
 
+### Security and limits
+
+Nobody wants their server to crash... Security measures are a fact of life as an internet entety. It is not only the theoretical malicious attacker from which a server must protect itself, but also from the unaware user or client.
+
+Mostly, it is assumed that Iodine will run behind a proxy (i.e. within a Heroku Dyno or viaduct.io process), as such it is assumed that the proxy will protect the Iodine Http server from undue stress.
+
+Having said that, Iodine is built with certain security measures in mind:
+
+- Iodine will not accept IO data (neither from new connections nor form existing ones) while still answering existing requests and performing tasks. This safeguards against task overloading and DoS attacks causing a global crash, allowing the server to resume normal operation once a DoS attack had run it's course (and potentially allowing legitimate requests to be answered while the attack is still underway).
+
+- Iodine will limit the query length (Http/1), header count and header data size as well as well as react to header overloading by immediate disconnections. Iodine's limits are hardcoded to be slightly more than double those of the common Proxies, so this counter-measure will only take effect should an attacker manage to bypass the Proxy.
+
+- Iodine limits every Http request body-size (file upload data, form data, etc') to ~0.25GB. This setting can be changed using `Iodine::Http.max_http_buffer`. This safeguard is meant to prevent Ruby from crashing due to insufficient memory (an error Iodine cannot, and should not, recover from).
+
+   It is recommended that this number will be lowered substantially whenever possible, by using `Iodine::Http.max_http_buffer = new_value`
+
+   Do be aware that, at the moment, file uploads are passed through the memory when parsed. The parser's memory consumption will hopefully decrese in future releases, however, it is always recomended that large data be avoided when possible or handled using download/upload management protocols and services.
+
 ## Server Usage: Plug in your network protocol
 
 Iodine is designed to help write network services (Servers) where each script is intended to implement a single server.
