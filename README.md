@@ -143,7 +143,7 @@ Having said that, Iodine is built with certain security measures in mind:
 
    It is recommended that this number will be lowered substantially whenever possible, by using `Iodine::Http.max_http_buffer = new_value`
 
-   Do be aware that, at the moment, file uploads are passed through the memory when parsed. The parser's memory consumption will hopefully decrese in future releases, however, it is always recomended that large data be avoided when possible or handled using download/upload management protocols and services.
+   Do be aware that, at the moment, file upload data must passed through the memory on it's way to the temporary file. The parser's memory consumption will hopefully decrese in future releases, however, it is always recomended that large data be avoided when possible or handled using download/upload management protocols and services.
 
 ## Server Usage: Plug in your network protocol
 
