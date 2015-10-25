@@ -39,6 +39,7 @@ module Iodine
 
 			# a politer disconnection during shutdown.
 			def on_shutdown
+				@handler.on_shutdown if @handler.respond_to?(:on_shutdown)
 				go_away
 			end
 

@@ -109,11 +109,9 @@ module Iodine
 				Process.kill("INT", 0)
 				next
 			end
-			shut_down_proc = Proc.new {|protocol| protocol.on_shutdown ; protocol.close }
 			on_shutdown do
 				log "Stopping to listen on port #{@port} and shutting down.\n"
 				@server.close unless @server.closed?
-				@ios.values.each {|p| run p, &shut_down_proc }
 			end
 			::Iodine::Base::Listener.accept(@server, false)
 			log "Iodine #{VERSION} is listening on port #{@port}#{ ' to SSL/TLS connections.' if @ssl}\n"
@@ -134,6 +132,11 @@ module Iodine
 		else
 			log "Iodine #{VERSION} is running.\n"
 			log "Press ^C to stop the cycling.\n"
+		end
+		on_shutdown do
+			shut_down_proc = Proc.new {|prot| prot.on_shutdown ; prot.close }
+			@ios.values.each {|p| run p, &shut_down_proc }
+			@queue << REACTOR
 		end
 		@queue << REACTOR
 	end

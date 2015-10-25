@@ -8,6 +8,14 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.4
+
+**Fix**: fixed an issue with where the WebsocketClient#on_close wouldn't be called for a renewable Websocket connection during shutdown.
+
+**Fix**: fixed an issue where a protocol's #on_close callback wouldn't be called if the Iodine server receives a shutdown signal.
+
+***
+
 Change log v.0.1.3
 
 **Fix**: fixed an issue with the new form/multipart parser, where the '+' sign would be converted to spaces on form fields (not uploaded files), causing inadvert potential change to the original POSTed data.

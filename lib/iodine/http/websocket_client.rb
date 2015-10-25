@@ -87,6 +87,10 @@ module Iodine
 				end
 			end
 
+			def on_shutdown
+				@renew = 0
+			end
+
 			# Sends data through the socket. a shortcut for ws_client.response <<
 			#
 			# @return [true, false] Returns the true if the data was actually sent or nil if no data was sent.
