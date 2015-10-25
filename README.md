@@ -129,7 +129,7 @@ Iodine::Http.on_websocket WSChatServer
 
 ### Security and limits
 
-Nobody wants their server to crash... Security measures are a fact of life as an internet entety. It is not only the theoretical malicious attacker from which a server must protect itself, but also from the unaware user or client.
+Nobody wants their server to crash... Security measures are a fact of life as an internet entity. It is not only the theoretical malicious attacker from which a server must protect itself, but also from the unaware user or client.
 
 Mostly, it is assumed that Iodine will run behind a proxy (i.e. within a Heroku Dyno or viaduct.io process), as such it is assumed that the proxy will protect the Iodine Http server from undue stress.
 
