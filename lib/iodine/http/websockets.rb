@@ -1,15 +1,11 @@
 module Iodine
 	module Http
 		class Websockets < ::Iodine::Protocol
-			# initialize the websocket protocol.
-			def initialize io, handler, request, ws_extentions = nil
-				@handler = handler
-				@ws_extentions = ws_extentions
-				request[:io] = self
-				super(io)
-			end
 			# continue to initialize the websocket protocol.
 			def on_open
+				@handler = @options[:handler]
+				@ws_extentions = @options[:ext]
+				@options[:request][:io] = self
 				@parser = {body: '', stage: 0, step: 0, mask_key: [], len_bytes: []}
 				set_timeout = self.class.default_timeout
 				@handler.on_open if @handler.respond_to? :on_open
@@ -164,7 +160,7 @@ module Iodine
 				response.session
 				# Iodine.log "#{@request[:client_ip]} [#{Time.now.utc}] - #{@connection.object_id} Upgraded HTTP to WebSockets.\n"
 				response.finish
-				self.new(io.io, handler, request, ws_extentions)
+				self.new(io.io, handler: handler, request: request, ext: ws_extentions)
 				return true
 			end
 

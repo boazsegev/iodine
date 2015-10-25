@@ -1,18 +1,6 @@
 module Iodine
 	module Http
 		class Http2 < ::Iodine::Protocol
-			def initialize io, original_request = nil
-				super(io)
-				return unless original_request
-				::Iodine.warn "Http/2: upgrade handshake settings not implemented. upgrade request:\n#{original_request}"
-				@last_stream = original_request[:stream_id] = 1
-				original_request[:io] = self
-				# deal with the request['http2-settings'] - NO ACK
-				# HTTP2-Settings: <base64url encoding of HTTP/2 SETTINGS payload>
-
-				# dispatch the original request
-				::Iodine.run original_request, &(::Iodine::Http::Http2.dispatch)
-			end
 			def on_open
 				# not fully fanctional.
 				::Iodine.warn "Http/2 requested - support is still experimental."
@@ -52,6 +40,18 @@ module Iodine
 				# 0x505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
 				# == PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n
 				# + SETTINGS frame
+
+				# The @options variable contains the original Http1 request, if exists.
+				return unless @options
+				::Iodine.warn "Http/2: upgrade handshake settings not implemented. upgrade request:\n#{@options}"
+				@last_stream = @options[:stream_id] = 1
+				@options[:io] = self
+				# deal with the request['http2-settings'] - NO ACK
+				# HTTP2-Settings: <base64url encoding of HTTP/2 SETTINGS payload>
+
+				# dispatch the original request
+				::Iodine.run @options, &(::Iodine::Http::Http2.dispatch)
+				@options = nil
 			end
 			def on_message data
 				data = ::StringIO.new data

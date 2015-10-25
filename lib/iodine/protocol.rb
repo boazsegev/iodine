@@ -4,6 +4,26 @@ module Iodine
 	#
 	# A new protocol instance will be created for every network connection.
 	#
+	# A new protocol might be initialized also when switching between protocols. In this use-case, the
+	# protocol can be initialized with an optional second `options` parameter (the first parameter MUST be the IO object used),
+	# allowing this data to be accessed within the {#on_open} method using the `@options` instance variable or the `options` accessor.
+	#
+	# For example, when switching protocols midstream (i.e. for implementing an Http Upgrade to another protocol such as Websockets):
+	# 
+	#      class MyNextProtocol
+	#         def on_open
+	#            @secret = options[:secret]
+	#         end
+	#      end
+	#
+	#      # in the old protocol:
+	#
+	#      class MyOriginalProtocol
+	#         def switch_to_next_protocol
+	#            MyNextProtocol.new @io, secret: "my secret data"
+	#         end
+	#      end
+	#
 	# The recommended use is to inherit this class and override any of the following:
 	# on_open:: called whenever the Protocol is initialized. Override this to initialize the Protocol object.
 	# on_message(data):: called whenever data is received from the IO. Override this to implement the actual network protocol.
@@ -24,6 +44,9 @@ module Iodine
 		#
 		# Using one of the Protocol methods {#write}, {#read}, {#close} is prefered over direct access.
 		attr_reader :io
+		# the argument or options Hash passed to the initializer as a second argument (the first argument MUST be the IO object).
+		# the value is usually `nil` unless the protocol instance was created by a different protocol while "upgrading" from one protocol to the next.
+		attr_reader :options
 
 		# Sets the timeout in seconds for IO activity (set timeout within {#on_open}).
 		#
@@ -131,11 +154,12 @@ module Iodine
 		# A new Protocol instance set itself up as the IO's protocol (replacing any previous protocol).
 		#
 		# Normally you won't need to override this method. Override {#on_open} instead.
-		def initialize io
+		def initialize io, options = nil
 			@timeout ||= nil
 			@send_locker = Mutex.new
 			@locker = Mutex.new
 			@io = io
+			@options = options
 			touch
 			@locker.synchronize do
 				Iodine.switch_protocol @io.to_io, self

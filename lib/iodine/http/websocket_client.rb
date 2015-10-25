@@ -258,7 +258,7 @@ module Iodine
 
 				request[:ws_client_params] = options
 				client = self.new(request)
-				Iodine::Http::Websockets.new( ( ssl || socket), client, request )
+				Iodine::Http::Websockets.new( ( ssl || socket), handler: client, request: request )
 
 				return client	
 
