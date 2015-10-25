@@ -28,9 +28,16 @@ module Iodine
 			# cleanup, if needed, using this callback.
 			def on_close
 			end
+			# extra cleanup, if needed, when server is shutting down while the websocket is connected.
+			#
+			# You can use on_close unless some "going away" cleanup is required.
+			def on_shutdown
+			end
 
 			# This method allows the class itself to act as the Websocket handler, usable with:
-			#        Iodine::Http.on_websocket Iodine::Http::WebsocketEchoDemo
+			#
+			#           # Iodine::Http::WebsocketHandler's default implementation does nothing.
+			#           Iodine::Http.on_websocket Iodine::Http::WebsocketHandler
 			def self.call request, response
 				self.new request, response
 			end
@@ -43,7 +50,11 @@ module Iodine
 			def write data
 				# We leverage the fact that the Http response can be used to send Websocket data.
 				#
-				# you can also use Websocket#send_data or it's alias Websocket#<<
+				# you can also use Websocket#send_data or it's alias Websocket#<< for example:
+				#
+				#        # @request[:io] contains the Websockets Protocol instance
+				#        @request[:io] << data
+				#
 				# do NOT use Websocket#write (which writes the data directly, bypassing the protocol).
 				@response << data
 			end
@@ -53,18 +64,18 @@ module Iodine
 			# This implementation is limited to a single process on a single server.
 			# Consider using Redis for a scalable implementation.
 			def unicast id, data
-				# @request[:io] contains the Websocket Protocol
-				@request[:io].unicast id, data
+				::Iodine::Http::Websockets.unicast id, data
 			end
 			# Broadcast to all Websockets, except self.
 			#
 			# This implementation is limited to a single process on a single server.
 			# Consider using Redis for a scalable implementation.
 			def broadcast data
-				@request[:io].broadcast data
+				::Iodine::Http::Websockets.broadcast data, self
 			end
 			# Closes the connection
 			def close
+				# @request[:io] contains the Websockets Protocol instance
 				@request[:io].go_away
 			end
 		end
