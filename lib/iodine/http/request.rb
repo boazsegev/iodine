@@ -412,8 +412,8 @@ module Iodine
 					end_part_pos = (body.pos - line.bytesize) - 2
 					new_part_pos = body.pos 
 					body.pos = end_part_pos
-					end_part_pos += 1 unless body.getc == "\r"
-
+					end_part_pos += 1 unless body.getc =~ /[\r\n]/.freeze
+					end_part_pos += 1 unless body.getc =~ /[\r\n\-]/.freeze
 					if part_headers['content-type'.freeze]
 						if part_headers['content-type'.freeze] =~ /multipart/i
 							body.pos = start_part_pos
@@ -438,7 +438,7 @@ module Iodine
 						end
 					else
 						body.pos = start_part_pos
-						add_param_to_hash name, uri_decode!( body.read(end_part_pos - start_part_pos) ), request[:params] 
+						add_param_to_hash name, form_decode!( body.read(end_part_pos - start_part_pos) ), request[:params] 
 					end
 					body.pos = new_part_pos
 				end
