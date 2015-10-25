@@ -39,10 +39,19 @@ require 'openssl'
 #
 #       # setting up the server is as easy as plugging in your Protocol class:
 #       Iodine.protocol = MyProtocol
+#
+#       # setting up cuncurrency can be done with threads - the default is a single thread):
+#       Iodine.threads = 8
+#
+#       # setting up cuncurrency can also be done with processes (forking) - the default is a single process:
+#       Iodine.processes = 4
 #       
 #       # if you are excecuting this script from IRB, exit IRB to start Iodine.
 #       exit
 #
+# You can test the example using `telnet`
+#
+# Before you write your own protocol, make sure you learn more about the {Iodine::Protocol} and all it's got to offer.
 module Iodine
   extend self
 end
