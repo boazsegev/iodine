@@ -57,7 +57,7 @@ exit
 
 In this mode, Iodine will continue running until all the tasks have completed and than it will quite. Timer based tasks will be ignored.
 
-## Simple Usage: Task polling (unreleased version)
+## Simple Usage: Task polling
 
 This mode of operation is effective if want Iodine to periodically initiates new tasks, for instance if you cannot use `cron`.
 
