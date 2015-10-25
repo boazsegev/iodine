@@ -293,7 +293,7 @@ module Iodine
 				frame[:stream][:headers_size] ||= 0
 				frame[:stream][:headers_size] += frame[:body].bytesize
 
-				return (Iodine.warn('Http2 header overloading, closing connection.') && connection_error( ENHANCE_YOUR_CALM ) ) if frame[:stream][:headers_size] >  262_144
+				return (Iodine.warn('Http2 header overloading, closing connection.') && connection_error( ENHANCE_YOUR_CALM ) ) if frame[:stream][:headers_size] > 262_144
 
 				return unless frame[:flags][2] == 1 # fin
 

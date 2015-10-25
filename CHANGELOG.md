@@ -14,6 +14,8 @@ Change log v.0.1.4
 
 **Fix**: fixed an issue where a protocol's #on_close callback wouldn't be called if the Iodine server receives a shutdown signal.
 
+**Fix**: fixed an issue where Http2 header size limit condition was not recognized by the Ruby parser (a double space issue, might be an issue with the 2.2.3 Ruby parser).
+
 ***
 
 Change log v.0.1.3
