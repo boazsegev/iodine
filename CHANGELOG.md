@@ -8,6 +8,14 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.5
+
+**Feature**: The Response#body can now be set to a File object, allowing Iodine to preserve memory when serving large static files from disc. Limited Range requests are also supported - together, these changes allow Iodine to serve media files (such as movies) while suffering a smaller memory penalty and supporting a wider variaty of players (Safari requires Range request support for it's media player).
+
+**Fix**: Fixed an issue where Iodine might take a long time to shut down after a Fatal Error during the server initialization.
+
+***
+
 Change log v.0.1.4
 
 **Fix**: fixed an issue with where the WebsocketClient#on_close wouldn't be called for a renewable Websocket connection during shutdown.
