@@ -106,6 +106,7 @@ module Iodine
 			rescue => e
 				fatal e.message
 				fatal "Running existing tasks and exiting."
+				@queue << REACTOR
 				Process.kill("INT", 0)
 				next
 			end
