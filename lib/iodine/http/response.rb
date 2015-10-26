@@ -332,7 +332,7 @@ module Iodine
 				@body = nil
 				body_io.rewind
 
-				if !(@headers.frozen?) && @request['range'.freeze] && @request.get? && @status == 200
+				if !(@headers.frozen?) && @request['range'.freeze] && @request.get? && @status == 200 && @headers['content-length'.freeze].nil?
 					r = @request['range'.freeze].match(/^bytes=([\d]+)\-([\d]+)?$/i)
 					if r
 						old_size = body_io.size
