@@ -32,6 +32,7 @@ module Iodine
 					# Due to different considirations, all keys will be converted to strings, so that `"name" == :name` and `1234 == "1234"`.
 					# If you store two keys that evaluate as the same string, they WILL override each other.
 					def []= key, value
+						return delete key if value.nil?
 						key = key.to_s
 						load
 						@data[key] = value
@@ -46,10 +47,16 @@ module Iodine
 						@data.dup
 					end
 
+					# @return [String] returns the Session data in YAML format.
+					def to_s
+						load
+						@data.to_yaml
+					end
+
 					# Removes a key from the session's data store.
 					def delete key
 						load
-						ret = @data.delete key
+						ret = @data.delete key.to_s
 						save
 						ret
 					end
@@ -57,16 +64,19 @@ module Iodine
 					# Clears the session's data.
 					def clear
 						@data.clear
-						save
 						nil
 					end
 					protected
+					# def destroy
+					# 	# save data to tmp-file
+					# 	File.delete @filename if ::File.file?(@filename) # && !::File.directory?(@filename)
+					# end
 					def save
 						# save data to tmp-file
 						IO.write @filename, @data.to_yaml
 					end
 					def load
-						@data = YAML.load IO.read(@filename) if File.exists?(@filename)
+						@data = YAML.load IO.read(@filename) if ::File.file?(@filename)
 					end
 				end
 				def self.fetch key
