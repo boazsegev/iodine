@@ -8,6 +8,13 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.6
+
+**Fix**: fixed an issue where a session key-value pair might not get deleted when using `session.delete key` and the `key` is not a String object. Also, now setting a key's value to `nil` should delete the key-value pair.
+
+
+***
+
 Change log v.0.1.5
 
 **Feature**: The Response#body can now be set to a File object, allowing Iodine to preserve memory when serving large static files from disc. Limited Range requests are also supported - together, these changes allow Iodine to serve media files (such as movies) while suffering a smaller memory penalty and supporting a wider variaty of players (Safari requires Range request support for it's media player).
