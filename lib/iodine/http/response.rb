@@ -307,27 +307,54 @@ module Iodine
 				511=>"Network Authentication Required".freeze
 			}
 
-			# This will return the Body object as a String... And set the body to `nil` (seeing as it was extracted from the response).
+			# This will return the Body object as an IO like object, such as StringIO (or File)... And set the body to `nil` (seeing as it was extracted from the response).
+			#
+			# This method will also attempts to set headers and update the response status in relation to the body, if applicable. Call this BEFORE getting any final data about the response or sending the headers.
 			def extract_body
-				if @body.is_a?(Array)
+				body_io = if @body.is_a?(Array)
 					return (@body = nil) if body.empty?
-					@body = @body.join
-					extract_body
+					StringIO.new @body.join
 				elsif @body.is_a?(String)
 					return (@body = nil) if body.empty?
-					tmp = @body
-					@body = nil
-					tmp
+					StringIO.new @body
 				elsif body.nil?
 					nil
-				elsif body.respond_to? :each
+				elsif  @body.is_a?(File) || @body.is_a?(Tempfile) || @body.is_a?(StringIO)
+					@body
+				elsif @body.respond_to? :each
 					tmp = ''
-					body.each {|s| tmp << s}
-					body.close if body.respond_to? :close
+					@body.each {|s| tmp << s}
+					@body.close if @body.respond_to? :close
 					@body = nil
 					return nil if tmp.empty? 
-					tmp
+					StringIO.new tmp
 				end
+				@body = nil
+				body_io.rewind
+
+				if !(@headers.frozen?) && @request['range'.freeze] && @request.get? && @status == 200
+					r = @request['range'.freeze].match(/^bytes=([\d]+)\-([\d]+)?$/i)
+					if r
+						old_size = body_io.size
+						start_pos = r[1].to_i
+						end_pos = (r[2] || (old_size - 1)).to_i
+						read_length = end_pos-start_pos+ 1
+						@status = 206 unless old_size == read_length
+						body_io.pos = start_pos
+						unless end_pos == old_size-1
+							new_body = body_io.read(read_length)
+							body_io.close
+							body_io = StringIO.new new_body
+							body_io.rewind
+						end
+						@headers['content-range'.freeze] = "bytes #{start_pos}-#{end_pos}/#{old_size}"
+						@headers['accept-ranges'.freeze] ||= 'bytes'
+					else
+						@headers['accept-ranges'.freeze] ||= 'none'
+					end
+				end
+
+				body_io
 			end
 
 			# This will return an array of cookie settings to be appended to `set-cookie` headers.

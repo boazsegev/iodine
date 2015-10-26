@@ -42,7 +42,7 @@ module Iodine
 			# allow Http responses to be used for sending Websocket data.
 			def send_response response, finish = false
 				body = response.extract_body
-				send_data body
+				send_data body.read
 			end
 			alias :stream_response :send_response
 

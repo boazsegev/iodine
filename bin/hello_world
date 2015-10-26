@@ -7,6 +7,10 @@ Dir.chdir Root.join('..').to_s
 require "bundler/setup"
 require "iodine/http"
 
+
+# ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/
+
+
 # Iodine.ssl = true
 # Iodine.treads = 8
 # Iodine.protocol.on_http do |req, res|

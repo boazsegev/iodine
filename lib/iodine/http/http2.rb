@@ -61,21 +61,35 @@ module Iodine
 			end
 
 			def send_response response
-				request = response.request
-				return false unless send_headers response, request
-				return nil if request.head?
+				return false if response.headers.frozen?
 				body = response.extract_body
-				return (log_finished(response) && body.clear) if request.head?
-				(response.bytes_written += emit_payload(body.to_s, request[:sid], 0, 1) ) && (body.frozen? || body.clear) if body
+				request = response.request
+				return body && body.close unless send_headers response, request
+				return log_finished(response) && body && body.close if request.head?
+				if body
+					until body.eof?
+						response.bytes_written += emit_payload(body.read(@settings[SETTINGS_MAX_FRAME_SIZE]), request[:sid], 0, (body.eof? ? 1 : 0))
+					end
+					body.close
+				else
+					emit_payload('', request[:sid], 0, 1)
+				end
 				log_finished response
 			end
+
 			def stream_response response, finish = false
 				request = response.request
-				send_headers response, request
-				return nil if request.head?
 				body = response.extract_body
-				# puts "should stream #{body}"
-				(response.bytes_written += emit_payload body.to_s, request[:sid], 0, (finish ? 1 : 0) ) && (body && !body.frozen? && body.clear) if body || finish
+				send_headers response, request
+				return body && body.close if request.head?
+				if body
+					until body.eof?
+						response.bytes_written += emit_payload(body.read(@settings[SETTINGS_MAX_FRAME_SIZE]), request[:sid], 0, ((finish && body.eof?) ? 1 : 0))
+					end
+					body.close
+				elsif finish
+					emit_payload('', request[:sid], 0, 1)
+				end
 				log_finished response if finish
 			end
 
@@ -132,8 +146,8 @@ module Iodine
 			end
 
 			def send_headers response, request
+				return false if response.headers.frozen?
 				headers = response.headers
-				return false if headers.frozen?
 				# headers[:status] = response.status.to_s
 				headers['set-cookie'] = response.extract_cookies
 				headers.freeze

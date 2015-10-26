@@ -95,11 +95,11 @@ module Iodine
 			def send_response response
 				return false if response.headers.frozen?
 
+				body = response.extract_body
 				request = response.request
 				headers = response.headers
-				body = response.extract_body
 
-				headers['content-length'.freeze] ||= body.to_s.bytesize
+				headers['content-length'.freeze] ||= body.size if body
 
 				keep_alive = response.keep_alive
 				if (request[:version].to_f > 1 && request['connection'.freeze].nil?) || request['connection'.freeze].to_s =~ /ke/i || (headers['connection'.freeze] && headers['connection'.freeze] =~ /^ke/i)
@@ -111,13 +111,13 @@ module Iodine
 				end
 
 				send_headers response
-				return log_finished(response) if request.head?
-				if body
-					written = write(body)
-					return Iodine.warn "Http/1 couldn't send response because connection was lost." unless written
+				return log_finished(response) && (body && body.close) if request.head? || body.nil?
+				until body.eof?
+					written = write(body.read 65_536)
+					return Iodine.warn("Http/1 couldn't send response because connection was lost.") && body.close unless written
 					response.bytes_written += written
-					(body.frozen? || body.clear)
 				end
+				body.close
 				close unless keep_alive
 				log_finished response
 			end
@@ -130,17 +130,17 @@ module Iodine
 				end
 				return if response.request.head?
 				body = response.extract_body
-				if body
-					written = stream_data(body)
-					return Iodine.warn "Http/1 couldn't send response because connection was lost." unless written
+				until body.eof?
+					written = write(body.read 65_536)
+					return Iodine.warn("Http/1 couldn't send response because connection was lost.") && body.close unless written
 					response.bytes_written += written
-				end
+				end if body
 				if finish
 					response.bytes_written += stream_data('')
 					log_finished response
 					close unless response.keep_alive
 				end
-				(body.frozen? || body.clear) if body
+				body.close if body
 				true
 			end
 
