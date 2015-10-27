@@ -91,15 +91,6 @@ module Iodine
 				@renew = 0
 			end
 
-			# Sends data through the socket. a shortcut for ws_client.response <<
-			#
-			# @return [true, false] Returns the true if the data was actually sent or nil if no data was sent.
-			def << data
-				raise 'Cannot send data when the connection is closed.' if closed?
-				@io << data
-			end
-			alias :write :<<
-
 			# closes the connection, if open
 			def close
 				@io.close if @io
@@ -123,6 +114,44 @@ module Iodine
 			def cookies
 				@request.cookies
 			end
+
+			# Sends data through the websocket, after client side masking.
+			#
+			# @return [true, false] Returns the true if the data was actually sent or nil if no data was sent.
+			def write data, op_code = nil, fin = true, ext = 0
+				return false if !data || data.empty?
+				return false if @io.closed?
+				data = data.dup # needed?
+				unless op_code # apply extenetions to the message as a whole
+					op_code = (data.encoding == ::Encoding::UTF_8 ? 1 : 2) 
+					# @ws_extentions.each { |ex| ext |= ex.edit_message data } if @ws_extentions
+				end
+				byte_size = data.bytesize
+				if byte_size > (::Iodine::Http::Websockets::FRAME_SIZE_LIMIT+2)
+					sections = byte_size/FRAME_SIZE_LIMIT + (byte_size % ::Iodine::Http::Websockets::FRAME_SIZE_LIMIT ? 1 : 0)
+					send_data( data.slice!( 0...::Iodine::Http::Websockets::FRAME_SIZE_LIMIT ), op_code, data.empty?, ext) && (ext = op_code = 0) until data.empty?
+					return true # avoid sending an empty frame.
+				end
+				# @ws_extentions.each { |ex| ext |= ex.edit_frame data } if @ws_extentions
+				header = ( (fin ? 0b10000000 : 0) | (op_code & 0b00001111) | ext).chr.force_encoding(::Encoding::ASCII_8BIT)
+
+				if byte_size < 125
+					header << (byte_size | 128).chr
+				elsif byte_size.bit_length <= 16					
+					header << 254.chr
+					header << [byte_size].pack('S>'.freeze)
+				else
+					header << 255.chr
+					header << [byte_size].pack('Q>'.freeze)
+				end
+				@@make_mask_proc ||= Proc.new {Random.rand(251) + 1}
+				mask = Array.new(4, &(@@make_mask_proc))
+				header << mask.pack('C*'.freeze)
+				@io.write header
+				i = -1;
+				@io.write(data.bytes.map! {|b| (b ^ mask[i = (i + 1)%4]) } .pack('C*'.freeze)) && true
+			end
+			alias :<< :write
 
 			# Create a simple Websocket Client(!).
 			#
@@ -179,6 +208,7 @@ module Iodine
 			#
 			# @return [Iodine::Http::WebsocketClient] this method returns the connected {Iodine::Http::WebsocketClient} or raises an exception if something went wrong (such as a connection timeout).
 			def self.connect url, options={}, &block
+				@message ||= Iodine.warn("Deprecation Notice:\nIt is unlikely that Iodine 0.2.0 will support a blocking websocket client API.\nMake sure to use Iodine::Http.ws_connect and define an 'on_open' callback.") && true
 				socket = nil
 				options = options.dup
 				options[:on_message] ||= block

@@ -4,6 +4,10 @@
 
 Please notice that this change log contains changes for upcoming releases as well. Please refer to the current gem version to review the current release.
 
+**Deprecation Notice**:
+
+It is unlikely that Iodine 0.2.0 will support a blocking websocket client API.
+
 ## Changes:
 
 ***
@@ -12,6 +16,15 @@ Change log v.0.1.6
 
 **Fix**: fixed an issue where a session key-value pair might not get deleted when using `session.delete key` and the `key` is not a String object. Also, now setting a key's value to `nil` should delete the key-value pair.
 
+**Fix**: fixed an issue where WebsocketClient wouldn't mask outgoing data, causing some servers to respond badly.
+
+**Performance**: minor performance improvements to the websocket parser, for unmasking messages.
+
+**Deprecation notice**:
+
+Iodine will soon add a core client protocol API and the WebsocketClient will be adjusted to take advantage of that API.
+
+This will mean that WebsocketClient will no longer block when connecting directly using the `Iodine::Http::WebsocketClient.connect` method... make sure to use `Iodine::Http.ws_connect` and to define an `:on_open` callback.
 
 ***
 

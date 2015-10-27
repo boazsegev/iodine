@@ -262,7 +262,9 @@ module Iodine
 							parser[:body] << tmp
 						end
 						if parser[:body].bytesize >= parser[:len]
-							parser[:body].bytesize.times {|i| parser[:body][i] = (parser[:body][i].ord ^ parser[:mask_key][i % 4]).chr} if parser[:mask] == 1
+							tmp = -1
+							parser[:body] = parser[:body].bytes.map! {|b| (b ^ parser[:mask_key][tmp = (tmp + 1)%4]) } .pack('C*'.freeze) if parser[:mask] == 1
+							# parser[:body].bytesize.times {|i| parser[:body][i] = (parser[:body][i].ord ^ parser[:mask_key][i % 4]).chr} if parser[:mask] == 1
 							parser[:stage] = 99
 						end
 					end

@@ -180,4 +180,4 @@ module Iodine
 		q << arr.shift until arr.empty?
 	end
 end
-Iodine.protocol = ::Iodine::Http::Http1
+Iodine.protocol = ::Iodine::Http::Http1 unless Iodine.protocol

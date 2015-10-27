@@ -1,4 +1,4 @@
-require 'iodine/http'
+Iodine.protocol = :client if require('iodine/http') && Iodine.protocol == Iodine::Http::Http1
 
 module Iodine
 	# # Connect to a remote server or network socket
@@ -7,6 +7,4 @@ module Iodine
 		
 	# end
 end
-
-Iodine.protocol = :client
 
