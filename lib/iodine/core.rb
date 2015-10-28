@@ -35,6 +35,7 @@ module Iodine
 	def force_start!
 		thread = Thread.new { startup true }
 		Kernel.at_exit {thread.raise("stop"); thread.join}
+		self
 	end
 
 	protected

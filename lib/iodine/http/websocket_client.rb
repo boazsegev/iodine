@@ -208,7 +208,6 @@ module Iodine
 			#
 			# @return [Iodine::Http::WebsocketClient] this method returns the connected {Iodine::Http::WebsocketClient} or raises an exception if something went wrong (such as a connection timeout).
 			def self.connect url, options={}, &block
-				@message ||= Iodine.warn("Deprecation Notice:\nIt is unlikely that Iodine 0.2.0 will support a blocking websocket client API.\nMake sure to use Iodine::Http.ws_connect and define an 'on_open' callback.") && true
 				socket = nil
 				options = options.dup
 				options[:on_message] ||= block

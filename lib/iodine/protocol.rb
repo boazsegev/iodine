@@ -191,9 +191,6 @@ module Iodine
 			ping if @timeout && !@send_locker.locked? && ( (time - @last_active) > @timeout )
 		end
 
-
-
-
 		protected
 		# This method is used by Iodine to create the IO handler whenever a new connection is established.
 		#

@@ -4,11 +4,13 @@
 
 Please notice that this change log contains changes for upcoming releases as well. Please refer to the current gem version to review the current release.
 
-**Deprecation Notice**:
-
-It is unlikely that Iodine 0.2.0 will support a blocking websocket client API.
-
 ## Changes:
+
+***
+
+Change log v.0.1.7
+
+Removed a deprecation notice for blocking API. Client API will remain blocking due to use-case requirements.
 
 ***
 
@@ -22,9 +24,7 @@ Change log v.0.1.6
 
 **Deprecation notice**:
 
-Iodine will soon add a core client protocol API and the WebsocketClient will be adjusted to take advantage of that API.
-
-This will mean that WebsocketClient will no longer block when connecting directly using the `Iodine::Http::WebsocketClient.connect` method... make sure to use `Iodine::Http.ws_connect` and to define an `:on_open` callback.
+(removed after reviewing use-cases).
 
 ***
 
