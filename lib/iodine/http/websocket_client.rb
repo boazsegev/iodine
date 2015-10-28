@@ -96,9 +96,9 @@ module Iodine
 				@io.close if @io
 			end
 
-			# checks if the socket is open (if the websocket was terminated abnormally, this might returs true when it should be false).
+			# checks if the socket is open (if the websocket was terminated abnormally, this might return true for a while after it should be false).
 			def closed?
-				@io.io.closed? if @io && @io.io
+				(@io && @io.io) ? @io.io.closed? : true
 			end
 
 			# checks if this is an SSL websocket connection.
