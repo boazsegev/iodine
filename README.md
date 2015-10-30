@@ -250,6 +250,16 @@ end if Process.respond_to? :fork
 exit
 ```
 
+## Cuncurrency?
+
+Iodine maintains the idea of: "yes" to concurrency between objects but "no" to concurrency within objects.
+
+Iodine applies this concept when running in Task mode (or timer mode), by defaulting to single threaded mode, preventing multi-threading race conditions in an unknown environment. Also, each task runs in a single thread from the thread-pool, so unless it tries to set or manipulate global data, it's safe from race conditions.
+
+Iodine applies this concept when running in Server mode by locking the Protocol instance whenever Iodine calls for actions related to that Protocol.
+
+For instance, in Iodine's implementation for the Websocket protocol: Websocket messages to different connections can run concurrently, however multiple messages to the same connection are only executed one at a time, maintaining their order (lately a fix in version 0.1.8 made sure that also websocket broadcasting will be executed within the Protocol lock, preventing concurrency within the same connection).
+
 ## Development
 
 After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake test` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.

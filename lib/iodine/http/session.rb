@@ -4,9 +4,19 @@ module Iodine
 		module SessionManager
 
 			module MemSessionStorage
+				class SessionObject < Hash
+					def initialize id
+						super()
+						self[:__session_id] = id		
+					end
+					# returns the session id (the session cookie value).
+					def id
+						self[:__session_id]
+					end
+				end
 				@mem_storage = {}
 				def self.fetch key
-					@mem_storage[key] ||= {}
+					@mem_storage[key] ||= SessionObject.new(key)
 				end
 			end
 			module FileSessionStorage
@@ -15,6 +25,11 @@ module Iodine
 					def initialize id
 						@filename = File.join Dir.tmpdir, "iodine_#{Iodine::Http.session_token}_#{id}"
 						@data ||= {}
+						@id = id
+					end
+					# returns the session id (the session cookie value).
+					def id
+						@id
 					end
 					# Get a key from the session data store.
 					#
@@ -94,9 +109,8 @@ module Iodine
 			# A Session Storage system must answer only one methods:
 			# fetch(id):: returns a Hash like session object with all the session's data or a fresh session object if the session object did not exist before
 			#
-			# The Session Object should update itself in the storage whenever data is saved to the session Object.
-			# This is important also because websocket 'session' could exist simultaneously with other HTTP requests and the data should be kept updated at all times.
-			# If there are race conditions that apply for multi-threading / multi processing, the Session Object should manage them as well as possible.
+			# The Session Object should update the storage whenever data is saved to the session Object.
+			# This is important also because a websocket 'session' could exist simultaneously with other HTTP requests (multiple browser windows) and the data should be kept updated at all times.
 			def storage= session_storage = nil
 				case session_storage
 				when :file, nil
@@ -116,6 +130,9 @@ module Iodine
 	end
 end
 # A hash like interface for storing request session data.
-# The store must implement: store(key, value) (aliased as []=);
+# The store must implement:
+# store(key, value) (aliased as []=);
 # fetch(key, default = nil) (aliased as []);
-# delete(key); clear;
+# delete(key);
+# clear;
+# id(); (returns the session id)

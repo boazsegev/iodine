@@ -8,6 +8,22 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.8
+
+**Fix**: Websocket broadcasts are now correctly executed within the IO's mutex locker. This maintains the idea that only one thread at a time should be executing code on behald of any given Protocol object ("yes" to concurrency between objects but "no" to concurrency within objects).
+
+**Fix** fixed an issue where manually setting the number of threads for Rack applications (when using Iodine as a Rack server), the setting was mistakenly ignored.
+
+**Fix** fixed an issue where sometimes extractin the Http response's body would fail (if body is `nil`).
+
+**Feature**: session objects are now aware of the session id. The seesion id is available by calling `response.session.id`
+
+**Fix** fixed an issue where Http streaming wasn't chunk encoding after connection error handling update.
+
+**Fix** fixed an issue where Http streaming would disconnect while still processing. Streaming timeout now extended to 15 seconds between response writes.
+
+***
+
 Change log v.0.1.7
 
 Removed a deprecation notice for blocking API. Client API will remain blocking due to use-case requirements.

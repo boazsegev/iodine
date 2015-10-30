@@ -14,6 +14,11 @@ module Iodine
 		@thread_count = count
 	end
 
+	# Gets the number of threads in the thread pool used for executing the tasks. Returns `nil` unless previously set or Iodine is running.
+	def threads
+		@thread_count
+	end
+
 	# Sets the number of processes that should be spawned in Server mode. Defaults to 1 (no processes spawned).
 	#
 	# * Forking (spwaning processes) might NOT work on all systems (forking is supported by Ruby on Unix systems).

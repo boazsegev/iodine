@@ -45,7 +45,8 @@ module Iodine
 	@stop = true
 	@done = false
 	@logger = Logger.new(STDOUT)
-	@spawn_count = @thread_count = 1
+	@spawn_count = 1
+	@thread_count = nil
 	@ios = {}
 	@io_in = Queue.new
 	@io_out = Queue.new
@@ -73,7 +74,7 @@ module Iodine
 
 	def startup use_rescue = false, hide_message = false
 		threads = []
-		@thread_count.times { threads << Thread.new {  cycle } }
+		(@thread_count ||= 1).times { threads << Thread.new {  cycle } }
 		unless @stop
 			if use_rescue
 				sleep rescue true

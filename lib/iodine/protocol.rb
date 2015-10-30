@@ -47,6 +47,11 @@ module Iodine
 		# the argument or options Hash passed to the initializer as a second argument (the first argument MUST be the IO object).
 		# the value is usually `nil` unless the protocol instance was created by a different protocol while "upgrading" from one protocol to the next.
 		attr_reader :options
+		# The protocol's Mutex locker. It should be locked whenever your code is runing, unless you are
+		# writing asynchronouse code.
+		#
+		# Use with care (or, better yet, don't use).
+		attr_reader :locker
 
 		# Sets the timeout in seconds for IO activity (set timeout within {#on_open}).
 		#

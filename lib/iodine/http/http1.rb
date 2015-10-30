@@ -122,6 +122,7 @@ module Iodine
 				log_finished response
 			end
 			def stream_response response, finish = false
+				timeout = 15
 				unless response.headers.frozen?
 					response['transfer-encoding'.freeze] = 'chunked'
 					response.headers['connection'.freeze] = 'close'.freeze
@@ -131,7 +132,7 @@ module Iodine
 				return if response.request.head?
 				body = response.extract_body
 				until body.eof?
-					written = write(body.read 65_536)
+					written = stream_data(body.read 65_536)
 					return Iodine.warn("Http/1 couldn't send response because connection was lost.") && body.close unless written
 					response.bytes_written += written
 				end if body

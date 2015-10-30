@@ -317,7 +317,8 @@ module Iodine
 				elsif @body.is_a?(String)
 					return (@body = nil) if body.empty?
 					StringIO.new @body
-				elsif body.nil?
+				elsif @body.nil?
+					return nil
 					nil
 				elsif  @body.is_a?(File) || @body.is_a?(Tempfile) || @body.is_a?(StringIO)
 					@body

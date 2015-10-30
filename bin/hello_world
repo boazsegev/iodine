@@ -44,20 +44,28 @@ end
 
 Iodine::Http.on_websocket WSChatServer
 
-Iodine::Http.http2 = true
-
-Process.fork do
-
-  Iodine.ssl = true
-	Iodine.port = 3030
-	Iodine::Http.on_http do |req, res|
-		res.session[:count] ||= 0
-		res.session[:count] += 1
+# Iodine::Http.http2 = true
+  Iodine::Http.on_http do |req, res|
+    if req.path == '/stream'
+      res.stream_async { sleep 0.2; res << "I was sleeping..."}
+      next
+    end
+    if req.path == '/stream2'
+      res.stream_async { sleep 2; res << "I was sleeping..."}
+      next
+    end
+    res.session[:count] ||= 0
+    res.session[:count] += 1
     res['content-type'] = 'text/plain'
     res.cookies['testing'] = !res.cookies['testing']
     res << "Visits: #{res.session[:count]}\n\nRequest object:\n\n#{req.to_s}"
     # puts "Setting :testing cookie was #{ res.cookies[:testing] }, setting to: #{res.cookies[:testing] = !res.cookies[:testing]}"
     # puts "Setting 'testing' cookie was #{ res.cookies['testing'] }, setting to: #{res.cookies['testing'] = !res.cookies['testing']}"
-	end
+  end
+
+Process.fork do
+
+  Iodine.ssl = true
+	Iodine.port = 3030
 
 end
