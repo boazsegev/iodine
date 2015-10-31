@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.9
+
+**update**: repeatedly calling `Iodine.force_start!` will now be ignored, as might have been expected. Once Iodine had started, `force_start!` cannot be called until Iodine had finished (and even than, Iodine might never be as fresh nor as young as it was).
+
+***
+
 Change log v.0.1.8
 
 **Fix**: Websocket broadcasts are now correctly executed within the IO's mutex locker. This maintains the idea that only one thread at a time should be executing code on behald of any given Protocol object ("yes" to concurrency between objects but "no" to concurrency within objects).

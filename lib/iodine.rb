@@ -1,7 +1,17 @@
 require 'logger'
 require 'socket'
 require 'openssl'
-# require 'securerandom'
+
+require "iodine/version"
+require "iodine/settings"
+require "iodine/logging"
+require "iodine/core"
+require "iodine/timers"
+require "iodine/protocol"
+require "iodine/ssl_connector"
+require "iodine/io"
+require "iodine/core_init"
+
 
 
 # Iodine is an easy Object-Oriented library for writing network applications (servers) with your own
@@ -57,13 +67,5 @@ module Iodine
 end
 
 
-require "iodine/version"
-require "iodine/settings"
-require "iodine/logging"
-require "iodine/core"
-require "iodine/timers"
-require "iodine/protocol"
-require "iodine/ssl_connector"
-require "iodine/io"
 
 # require 'iodine/http'

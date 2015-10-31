@@ -31,28 +31,25 @@ module Iodine
 		nil
 	end
 
-	# forces Iodine to start prematurely and asyncronously. This might case Iodine to exit abruptly, depending how the hosting application behaves.
+	# forces Iodine to start prematurely and asyncronously. This might cause Iodine's exit sequence to end abruptly, depending how the hosting application behaves.
+	#
+	# calling this method repeatedly will be ignored unless Iodine's threads have all died.
+	#
+	# @return [Iodine] the method will allways return `self` (Iodine).
 	def force_start!
-		thread = Thread.new { startup true }
+		return self if @force_running
+		@force_running = true
+		thread = Thread.new do
+			startup true
+			@force_running = false
+			initialize_tasks
+			@stop = false if @protocol
+		end
 		Kernel.at_exit {thread.raise("stop"); thread.join}
 		self
 	end
 
 	protected
-
-	@queue = Queue.new
-	@shutdown_queue = Queue.new
-	@stop = true
-	@done = false
-	@logger = Logger.new(STDOUT)
-	@spawn_count = 1
-	@thread_count = nil
-	@ios = {}
-	@io_in = Queue.new
-	@io_out = Queue.new
-	@shutdown_mutex = Mutex.new
-	@servers = {}
-
 
 	def cycle
 		work until @stop && @queue.empty?
@@ -73,6 +70,7 @@ module Iodine
 	end
 
 	def startup use_rescue = false, hide_message = false
+		@force_running = true
 		threads = []
 		(@thread_count ||= 1).times { threads << Thread.new {  cycle } }
 		unless @stop
@@ -89,10 +87,6 @@ module Iodine
 			threads.each {|t| Thread.new {sleep 25; t.kill; t.kill } }
 		end
 		threads.each {|t| t.join rescue true }
-	end
-
-	Kernel.at_exit do
-		startup
 	end
 
 	# performed once - the shutdown sequence.
