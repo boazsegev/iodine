@@ -183,9 +183,9 @@ module Iodine
 			# &block:: an optional block that accepts one parameter (data) and will be used as the `#on_message(data)`
 			#
 			# Acceptable options are:
-			# on_open:: the on_open callback. Must be an objects that answers `call()`, usually a Proc.
-			# on_message:: the on_message callback. Must be an objects that answers `call(data)`, usually a Proc.
-			# on_close:: the on_close callback - this will ONLY be called if the connection WASN'T renewed. Must be an objects that answers `call()`, usually a Proc.
+			# on_open:: the on_open callback - Must be an objects that answers `call()`, usually a Proc.
+			# on_message:: the on_message callback - Must be an objects that answers `call(data)`, usually a Proc.
+			# on_close:: the on_close callback - Must be an objects that answers `call()`, usually a Proc. The method is called when the connection is closed and isn't renewed.
 			# on_error:: the on_error callback - Must be an objects that answers `call(err)`, usually a Proc. This is called whenever a connection fails to be established or an exception is raised by any of the callbacks. This is NOT the disconnection websocket message. dafaults to raising the error (error pass-through).
 			# headers:: a Hash of custom HTTP headers to be sent with the request. Header data, including cookie headers, should be correctly encoded.
 			# cookies:: a Hash of cookies to be sent with the request. cookie data will be encoded before being sent.
