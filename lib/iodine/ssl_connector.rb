@@ -3,8 +3,9 @@ module Iodine
 	# This is a mini-protocol used only to implement the SSL Handshake in a non-blocking manner,
 	# allowing for a hardcoded timeout (which you can monkey patch) of 3 seconds.
 	class SSLConnector < Protocol
-		def initialize io, protocol
+		def initialize io, protocol, options = nil
 			@protocol = protocol
+			@options = options
 			super(io)		
 		end
 		TIMEOUT = 3 # hardcoded SSL/TLS handshake timeout
@@ -34,7 +35,7 @@ module Iodine
 			ensure
 				@locker.unlock
 			end
-			( (@ssl_socket.npn_protocol && ::Iodine.ssl_protocols[@ssl_socket.npn_protocol]) || @protocol).new @ssl_socket
+			( (@ssl_socket.npn_protocol && ::Iodine.ssl_protocols[@ssl_socket.npn_protocol]) || @protocol).new @ssl_socket, @options
 		end
 		def on_close
 			# inform
