@@ -18,7 +18,9 @@ module Iodine
 				raise "Websocket client must have an #on_message Proc or handler." unless @on_message && @on_message.respond_to?(:call)
 				@on_open = @params[:on_open]
 				@on_close = @params[:on_close]
+				@on_error = @params[:on_error]
 				@renew = @params[:renew].to_i
+				raise TypeError, "Websocket Client `:send` should be either a String or a Proc object." if @params[:send] && !(@params[:send].is_a?(String) || @params[:send].is_a?(Proc))
 			end
 
 			def on event_name, &block
@@ -39,16 +41,23 @@ module Iodine
 					@on_message = block if block
 					return @on_message
 				end
-				instance_exec( data, &@on_message) 
+				begin
+					instance_exec( data, &@on_message) 
+				rescue => e
+					@on_error ? @on_error.call(e) : raise(e)
+				end
 			end
 
 			def on_open
 				raise 'The on_open even is invalid at this point.' if block_given?
 				@io = @request[:io]
 				Iodine::Http::Request.parse @request
-				instance_exec(&@on_open) if @on_open
+				begin
+					instance_exec(&@on_open) if @on_open
+				rescue => e
+					@on_error ? @on_error.call(e) : raise(e)
+				end
 				if request[:ws_client_params][:every] && @params[:send]
-					raise TypeError, "Websocket Client `:send` should be either a String or a Proc object." unless @params[:send].is_a?(String) || @params[:send].is_a?(Proc)
 					Iodine.run_every @params[:every], self, @params do |ws, client_params, timer|
 						if ws.closed?
 							timer.stop!
@@ -57,7 +66,11 @@ module Iodine
 						if client_params[:send].is_a?(String)
 							ws.write client_params[:send]
 						elsif client_params[:send].is_a?(Proc)
-							ws.instance_exec(&client_params[:send])
+							begin
+								ws.instance_exec(&client_params[:send])
+							rescue => e
+								@on_error ? @on_error.call(e) : raise(e)
+							end							
 						end
 					end
 				end
@@ -68,12 +81,12 @@ module Iodine
 				if @renew > 0
 					renew_proc = Proc.new do
 						begin
-							Iodine::Http::WebsocketClient.connect(@params[:url], @params)
+							raise unless Iodine::Http::WebsocketClient.connect(@params[:url], @params)
 						rescue
 							@renew -= 1
 							if @renew <= 0
 								Iodine.fatal "WebsocketClient renewal FAILED for #{@params[:url]}"
-								instance_exec(&@on_close) if @on_close
+								on_close
 							else
 								Iodine.run_after 2, &renew_proc
 								Iodine.warn "WebsocketClient renewal failed for #{@params[:url]}, #{@renew} attempts left"
@@ -83,8 +96,17 @@ module Iodine
 					end
 					renew_proc.call
 				else
-					instance_exec(&@on_close) if @on_close
+					begin
+						instance_exec(&@on_close) if @on_close
+					rescue => e
+						@on_error ? @on_error.call(e) : raise(e)
+					end
 				end
+			end
+			def on_error(error = nil, &block)
+				return @on_error = block if block
+				instance_exec(error, &@on_error) if @on_error
+				on_close unless @io # if the connection was initialized, :on_close will be called by Iodine
 			end
 
 			def on_shutdown
@@ -161,9 +183,10 @@ module Iodine
 			# &block:: an optional block that accepts one parameter (data) and will be used as the `#on_message(data)`
 			#
 			# Acceptable options are:
-			# on_open:: the on_open callback. Must be an objects that answers `call(ws)`, usually a Proc.
-			# on_message:: the on_message callback. Must be an objects that answers `call(ws)`, usually a Proc.
-			# on_close:: the on_close callback - this will ONLY be called if the connection WASN'T renewed. Must be an objects that answers `call(ws)`, usually a Proc.
+			# on_open:: the on_open callback. Must be an objects that answers `call()`, usually a Proc.
+			# on_message:: the on_message callback. Must be an objects that answers `call(data)`, usually a Proc.
+			# on_close:: the on_close callback - this will ONLY be called if the connection WASN'T renewed. Must be an objects that answers `call()`, usually a Proc.
+			# on_error:: the on_error callback - Must be an objects that answers `call(err)`, usually a Proc. This is called whenever a connection fails to be established or an exception is raised by any of the callbacks. This is NOT the disconnection websocket message. dafaults to raising the error (error pass-through).
 			# headers:: a Hash of custom HTTP headers to be sent with the request. Header data, including cookie headers, should be correctly encoded.
 			# cookies:: a Hash of cookies to be sent with the request. cookie data will be encoded before being sent.
 			# timeout:: the number of seconds to wait before the connection is established. Defaults to 5 seconds.
@@ -212,6 +235,7 @@ module Iodine
 				options = options.dup
 				options[:on_message] ||= block
 				raise "No #on_message handler defined! please pass a block or define an #on_message handler!" unless options[:on_message]
+				raise TypeError, "Websocket Client `:send` should be either a String or a Proc object." if options[:send] && !(options[:send].is_a?(String) || options[:send].is_a?(Proc))
 				url = URI.parse(url) unless url.is_a?(URI)
 				options[:url] = url
 				options[:renew] ||= 5 if options[:every] && options[:send]
@@ -293,6 +317,10 @@ module Iodine
 
 				rescue => e
 					(ssl || socket).tap {|io| next if io.nil?; io.close unless io.closed?}
+					if options[:on_error]
+						options[:on_error].call(e)
+						return false
+					end
 					raise e
 			end
 		end
