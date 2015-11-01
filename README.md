@@ -260,6 +260,8 @@ Iodine applies this concept when running in Server mode by locking the Protocol 
 
 For instance, in Iodine's implementation for the Websocket protocol: Websocket messages to different connections can run concurrently, however multiple messages to the same connection are only executed one at a time, maintaining their order (lately a fix in version 0.1.8 made sure that also websocket broadcasting will be executed within the Protocol lock, preventing concurrency within the same connection).
 
+The exception to the rule is the `ping` implementation. Your protocol's `ping` method will execute in parallel with other parts of your protocol's code. Pinging is a machanism that is often time sensitive and is required to maintain an open connection. For this reason, if your code is working hard on a long task, a ping will still occure automatically in the background and offset any connection timeout. 
+
 ## Development
 
 After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake test` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
