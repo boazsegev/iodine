@@ -119,6 +119,7 @@ module Iodine
 
 			# closes the connection, if open
 			def close
+				@renew = 0
 				@io.close if @io
 			end
 
