@@ -53,6 +53,7 @@ module Iodine
 			def on_open
 				raise 'The on_open even is invalid at this point.' if block_given?
 				@renew = @options[:renew].to_i
+				@io = @request[:io]
 				Iodine::Http::Request.parse @request
 				begin
 					instance_exec(&@on_open) if @on_open
@@ -220,7 +221,7 @@ module Iodine
 				until reply[-4..-1] == stop_reply
 					begin
 						reply << ( ssl ? ssl.read_nonblock(1) : socket.recv_nonblock(1) )
-					rescue Errno::EWOULDBLOCK => e
+					rescue Errno::EWOULDBLOCK, OpenSSL::SSL::SSLErrorWaitReadable => e
 						raise "Websocket client handshake timed out (HTTP reply not recieved)\n\n Got Only: #{reply}" if Time.now >= stop_time
 						IO.select [socket], nil, nil, (@options[:timeout] || 5)
 						retry
@@ -256,7 +257,7 @@ module Iodine
 				end
 				reply.string.clear
 
-				return (@io = Iodine::Http::Websockets.new( ( ssl || socket), handler: self, request: @request ))
+				return Iodine::Http::Websockets.new( ( ssl || socket), handler: self, request: @request )
 
 			rescue => e
 				(ssl || socket).tap {|io| next if io.nil?; io.close unless io.closed?}
