@@ -77,8 +77,8 @@ module Iodine
 			if use_rescue
 				sleep rescue true
 			else
-				old_int_trap = trap('INT') { throw :stop; old_int_trap.call if old_int_trap.respond_to?(:call) }
-				old_term_trap = trap('TERM') { throw :stop; old_term_trap.call if old_term_trap.respond_to?(:call) }
+				old_int_trap = trap('INT') { throw :stop; old_int_trap.respond_to?(:call) && old_int_trap.call }
+				old_term_trap = trap('TERM') { throw :stop; old_term_trap.respond_to?(:call) && old_term_trap.call }
 				catch(:stop) { sleep }
 			end
 			log "\nShutting down #{self == Iodine ? 'Iodine' : "#{self.name} (Iodine)"}. Setting shutdown timeout to 25 seconds.\n" unless hide_message
