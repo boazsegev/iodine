@@ -5,8 +5,10 @@ module Iodine
 		base.instance_exec do
 			initialize_core
 			initialize_io
+			initialize_timers
 			initialize_tasks
 		end
+		base.protocol = :cycle unless base == Iodine
 	end
 
 	def initialize_core
@@ -25,7 +27,14 @@ module Iodine
 		@shutdown_mutex = Mutex.new
 		@servers = {}
 		Kernel.at_exit do
-			startup
+			if self == Iodine
+				startup
+			else
+				next if @queue.empty? && @timers.empty?
+				Iodine.protocol ||= :cycle
+				thread = Thread.new { startup true }
+				Iodine.on_shutdown { thread.raise 'stop' ; thread.join }
+			end
 		end
 	end
 
@@ -43,7 +52,7 @@ module Iodine
 		@timeout_proc = Proc.new {|prot| prot.timeout?(@time) }
 		@status_loop = Proc.new {|io|  @io_out << io if io.closed? || !(io.stat.readable? rescue false) }
 		@close_callback = Proc.new {|prot| prot.on_close if prot }
-		self.const_set "REACTOR", [ (Proc.new do
+		@reactor = [ (Proc.new do
 			if @queue.empty?
 				#clear any closed IO objects.
 				@time = Time.now
@@ -68,12 +77,21 @@ module Iodine
 				unless @stop && @queue.empty?
 					# @ios.values.each &@timeout_loop
 					@check_timers && (@queue << @check_timers)
-					@queue << REACTOR
+					@queue << @reactor
 				end
 			else
-				@queue << REACTOR
+				@queue << @reactor
 			end
 		end )]
+	end
+
+	def initialize_timers
+		@timer_locker = Mutex.new
+		@timers = []
+		# cycles through timed jobs, executing and/or deleting them if their time has come.
+		@check_timers = [(Proc.new do
+			@timer_locker.synchronize { @timers.delete_if {|t| t.done? } }
+		end)]
 	end
 
 	def initialize_tasks
@@ -86,7 +104,7 @@ module Iodine
 				rescue => e
 					fatal e.message
 					fatal "Running existing tasks and exiting."
-					@queue << REACTOR
+					@queue << @reactor
 					Process.kill("INT", 0)
 					next
 				end
@@ -103,7 +121,7 @@ module Iodine
 							log "Spawned process: #{Process.pid}.\n"
 							on_shutdown { log "Shutting down process #{Process.pid}.\n" }
 							@queue.clear
-							@queue << REACTOR
+							@queue << @reactor
 							startup false, true
 						end
 					end
@@ -111,15 +129,15 @@ module Iodine
 				end
 				log "Press ^C to stop the server.\n"
 			else
-				log "Iodine #{VERSION} is running.\n"
+				log "#{self == Iodine ? 'Iodine' : "#{self.name} (Iodine)"} #{VERSION} is running.\n"
 				log "Press ^C to stop the cycling.\n"
 			end
 			on_shutdown do
 				shut_down_proc = Proc.new {|prot| prot.on_shutdown ; prot.close }
 				@ios.values.each {|p| run p, &shut_down_proc }
-				@queue << REACTOR
+				@queue << @reactor
 			end
-			@queue << REACTOR
+			@queue << @reactor
 		end
 	end
 end

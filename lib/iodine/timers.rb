@@ -17,10 +17,11 @@ module Iodine
 
 		# Initialize a timed event.
 		def initialize reactor, interval, repeat_limit = -1, args=[], job=nil
+			@reactor = reactor
 			@interval = interval
 			@repeat_limit = repeat_limit ? repeat_limit.to_i : -1
 			@job = job || (Proc.new { stop! })
-			@next = Iodine.time + interval
+			@next = @reactor.time + interval
 			args << self
 			@args = args
 		end
@@ -37,11 +38,11 @@ module Iodine
 		# If the timed event is due, this method will also add the event to the queue.
 		# @return [true, false]
 		def done?
-			return false unless @next <= Iodine.time
+			return false unless @next <= @reactor.time
 			return true if @repeat_limit == 0
 			@repeat_limit -= 1 if @repeat_limit.to_i > 0
-			Iodine.run *@args, &@job
-			@next = Iodine.time + @interval
+			@reactor.run *@args, &@job
+			@next = @reactor.time + @interval
 			@repeat_limit == 0
 		end
 	end
@@ -85,17 +86,9 @@ module Iodine
 	end
 
 	protected
-	@timer_locker = Mutex.new
-	@timers = []
 
 	# Creates a TimedEvent object and adds it to the Timers stack.
 	def timed_job seconds, limit = false, args = [], block = nil
 		@timer_locker.synchronize {@timers << TimedEvent.new(self, seconds, limit, args, block); @timers.last}
 	end
-	# cycles through timed jobs, executing and/or deleting them if their time has come.
-	@check_timers = Proc.new do
-		@timer_locker.synchronize { @timers.delete_if {|t| t.done? } }
-	end
-	@check_timers = [@check_timers]
-
 end

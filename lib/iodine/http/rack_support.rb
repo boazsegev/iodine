@@ -6,10 +6,7 @@ module Iodine
 			module_function
 			def run(app, options = {})
 				@app = app
-
-				puts "reading threads = #{Iodine.threads.to_s}"
-
-				Iodine.threads = 18 unless Iodine.threads
+				Iodine.threads ||= 18
 				Iodine.port = options[:Port]
 				Iodine.protocol ||= Iodine::Http::Http1
 				@pre_rack_handler = Iodine::Http.on_http unless Iodine::Http.on_http == Iodine::Http::NOT_IMPLEMENTED
