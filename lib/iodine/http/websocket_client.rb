@@ -10,17 +10,19 @@ module Iodine
 		
 			attr_accessor :response, :request, :params
 
-			def initialize request
+			def initialize options
 				@response = nil
-				@request = request
-				@params = request[:ws_client_params]
-				@on_message = @params[:on_message]
+				@options = options
+				@on_message = @options[:on_message]
 				raise "Websocket client must have an #on_message Proc or handler." unless @on_message && @on_message.respond_to?(:call)
-				@on_open = @params[:on_open]
-				@on_close = @params[:on_close]
-				@on_error = @params[:on_error]
-				@renew = @params[:renew].to_i
-				raise TypeError, "Websocket Client `:send` should be either a String or a Proc object." if @params[:send] && !(@params[:send].is_a?(String) || @params[:send].is_a?(Proc))
+				@on_open = @options[:on_open]
+				@on_close = @options[:on_close]
+				@on_error = @options[:on_error]
+				@renew = @options[:renew].to_i
+				@options[:url] = URI.parse(@options[:url]) unless @options[:url].is_a?(URI)
+				@connection_lock = Mutex.new
+				raise TypeError, "Websocket Client `:send` should be either a String or a Proc object." if @options[:send] && !(@options[:send].is_a?(String) || @options[:send].is_a?(Proc))
+				on_close && (@io || raise("Connection error, cannot create websocket client")) unless connect
 			end
 
 			def on event_name, &block
@@ -50,15 +52,15 @@ module Iodine
 
 			def on_open
 				raise 'The on_open even is invalid at this point.' if block_given?
-				@io = @request[:io]
+				@renew = @options[:renew].to_i
 				Iodine::Http::Request.parse @request
 				begin
 					instance_exec(&@on_open) if @on_open
 				rescue => e
 					@on_error ? @on_error.call(e) : raise(e)
 				end
-				if request[:ws_client_params][:every] && @params[:send]
-					Iodine.run_every @params[:every], self, @params do |ws, client_params, timer|
+				if @options[:every] && @options[:send]
+					Iodine.run_every @options[:every], self, @options do |ws, client_params, timer|
 						if ws.closed?
 							timer.stop!
 							next
@@ -80,21 +82,22 @@ module Iodine
 				return @on_close = block if block
 				if @renew > 0
 					renew_proc = Proc.new do
+						@io = nil
 						begin
-							raise unless Iodine::Http::WebsocketClient.connect(@params[:url], @params)
+							raise unless connect
 						rescue
 							@renew -= 1
 							if @renew <= 0
-								Iodine.fatal "WebsocketClient renewal FAILED for #{@params[:url]}"
+								Iodine.fatal "WebsocketClient renewal FAILED for #{@options[:url]}"
 								on_close
 							else
-								Iodine.run_after 2, &renew_proc
-								Iodine.warn "WebsocketClient renewal failed for #{@params[:url]}, #{@renew} attempts left"
+								Iodine.warn "WebsocketClient renewal failed for #{@options[:url]}, #{@renew} attempts left"
+								renew_proc.call
 							end
 							false
 						end
 					end
-					renew_proc.call
+					@connection_lock.synchronize { renew_proc.call }
 				else
 					begin
 						instance_exec(&@on_close) if @on_close
@@ -142,7 +145,6 @@ module Iodine
 			# @return [true, false] Returns the true if the data was actually sent or nil if no data was sent.
 			def write data, op_code = nil, fin = true, ext = 0
 				return false if !data || data.empty?
-				return false if @io.closed?
 				data = data.dup # needed?
 				unless op_code # apply extenetions to the message as a whole
 					op_code = (data.encoding == ::Encoding::UTF_8 ? 1 : 2) 
@@ -151,8 +153,8 @@ module Iodine
 				byte_size = data.bytesize
 				if byte_size > (::Iodine::Http::Websockets::FRAME_SIZE_LIMIT+2)
 					sections = byte_size/FRAME_SIZE_LIMIT + (byte_size % ::Iodine::Http::Websockets::FRAME_SIZE_LIMIT ? 1 : 0)
-					send_data( data.slice!( 0...::Iodine::Http::Websockets::FRAME_SIZE_LIMIT ), op_code, data.empty?, ext) && (ext = op_code = 0) until data.empty?
-					return true # avoid sending an empty frame.
+					ret = write( data.slice!( 0...::Iodine::Http::Websockets::FRAME_SIZE_LIMIT ), op_code, data.empty?, ext) && (ext = op_code = 0) until data.empty?
+					return ret # avoid sending an empty frame.
 				end
 				# @ws_extentions.each { |ex| ext |= ex.edit_frame data } if @ws_extentions
 				header = ( (fin ? 0b10000000 : 0) | (op_code & 0b00001111) | ext).chr.force_encoding(::Encoding::ASCII_8BIT)
@@ -169,11 +171,101 @@ module Iodine
 				@@make_mask_proc ||= Proc.new {Random.rand(251) + 1}
 				mask = Array.new(4, &(@@make_mask_proc))
 				header << mask.pack('C*'.freeze)
-				@io.write header
-				i = -1;
-				@io.write(data.bytes.map! {|b| (b ^ mask[i = (i + 1)%4]) } .pack('C*'.freeze)) && true
+				@connection_lock.synchronize do
+					return false if @io.nil? || @io.closed?
+					@io.write header
+					i = -1;
+					@io.write(data.bytes.map! {|b| (b ^ mask[i = (i + 1)%4]) } .pack('C*'.freeze)) && true
+				end
 			end
 			alias :<< :write
+
+			protected
+
+			def connect
+				return false if @io && !@io.closed?
+				socket = nil
+				url = @options[:url]
+				@options[:renew] ||= 5 if @options[:every] && @options[:send]
+
+				ssl = url.scheme == "https" || url.scheme == "wss"
+
+				url.port ||= ssl ? 443 : 80
+				url.path = '/' if url.path.to_s.empty?
+				socket = TCPSocket.new(url.host, url.port)
+				if ssl
+					context = OpenSSL::SSL::SSLContext.new
+					context.cert_store = OpenSSL::X509::Store.new
+					context.cert_store.set_default_paths
+					context.set_params verify_mode: (@options[:verify_mode] || OpenSSL::SSL::VERIFY_NONE) # OpenSSL::SSL::VERIFY_PEER #OpenSSL::SSL::VERIFY_NONE
+					ssl = OpenSSL::SSL::SSLSocket.new(socket, context)
+					ssl.sync_close = true
+					ssl.connect
+				end
+				# prep custom headers
+				custom_headers = ''
+				custom_headers = @options[:headers] if @options[:headers].is_a?(String)
+				@options[:headers].each {|k, v| custom_headers << "#{k.to_s}: #{v.to_s}\r\n"} if @options[:headers].is_a?(Hash)
+				@options[:cookies].each {|k, v| raise 'Illegal cookie name' if k.to_s.match(/[\x00-\x20\(\)<>@,;:\\\"\/\[\]\?\=\{\}\s]/); custom_headers << "Cookie: #{ k }=#{ Iodine::Http::Request.encode_url v }\r\n"} if @options[:cookies].is_a?(Hash)
+
+				# send protocol upgrade request
+				websocket_key = [(Array.new(16) {rand 255} .pack 'c*' )].pack('m0*')
+				(ssl || socket).write "GET #{url.path}#{url.query.to_s.empty? ? '' : ('?' + url.query)} HTTP/1.1\r\nHost: #{url.host}#{url.port ? (':'+url.port.to_s) : ''}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nOrigin: #{ssl ? 'https' : 'http'}://#{url.host}\r\nSec-WebSocket-Key: #{websocket_key}\r\nSec-WebSocket-Version: 13\r\n#{custom_headers}\r\n"
+				# wait for answer - make sure we don't over-read
+				# (a websocket message might be sent immidiately after connection is established)
+				reply = ''
+				reply.force_encoding(::Encoding::ASCII_8BIT)
+				stop_time = Time.now + (@options[:timeout] || 5)
+				stop_reply = "\r\n\r\n"
+				until reply[-4..-1] == stop_reply
+					begin
+						reply << ( ssl ? ssl.read_nonblock(1) : socket.recv_nonblock(1) )
+					rescue Errno::EWOULDBLOCK => e
+						raise "Websocket client handshake timed out (HTTP reply not recieved)\n\n Got Only: #{reply}" if Time.now >= stop_time
+						IO.select [socket], nil, nil, (@options[:timeout] || 5)
+						retry
+					end
+					raise "Connection failed" if socket.closed?
+				end
+				# review reply
+				raise "Connection Refused. Reply was:\r\n #{reply}" unless reply.lines[0].match(/^HTTP\/[\d\.]+ 101/i)
+				raise 'Websocket Key Authentication failed.' unless reply.match(/^Sec-WebSocket-Accept:[\s]*([^\s]*)/i) && reply.match(/^Sec-WebSocket-Accept:[\s]*([^\s]*)/i)[1] == Digest::SHA1.base64digest(websocket_key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+				# read the body's data and parse any incoming data.
+				@request = Iodine::Http::Request.new
+				@request[:method] = 'GET'
+				@request['host'] = "#{url.host}:#{url.port}"
+				@request[:query] = url.path
+				@request[:version] = '1.1'
+				reply = StringIO.new reply
+				reply.gets
+
+				until reply.eof?
+					until @request[:headers_complete] || (l = reply.gets).nil?
+						if l.include? ':'
+							l = l.strip.split(/:[\s]?/, 2)
+							l[0].strip! ; l[0].downcase!;
+							@request[l[0]] ? (@request[l[0]].is_a?(Array) ? (@request[l[0]] << l[1]) : @request[l[0]] = [@request[l[0]], l[1] ]) : (@request[l[0]] = l[1])
+						elsif l =~ /^[\r]?\n/
+							@request[:headers_complete] = true
+						else
+							#protocol error
+							raise 'Protocol Error, closing connection.'
+							return close
+						end
+					end
+				end
+				reply.string.clear
+
+				return (@io = Iodine::Http::Websockets.new( ( ssl || socket), handler: self, request: @request ))
+
+			rescue => e
+				(ssl || socket).tap {|io| next if io.nil?; io.close unless io.closed?}
+				if @options[:on_error]
+					@options[:on_error].call(e)
+					return false
+				end
+				raise e unless @io
+			end
 
 			# Create a simple Websocket Client(!).
 			#
@@ -231,97 +323,13 @@ module Iodine
 			#
 			# @return [Iodine::Http::WebsocketClient] this method returns the connected {Iodine::Http::WebsocketClient} or raises an exception if something went wrong (such as a connection timeout).
 			def self.connect url, options={}, &block
-				socket = nil
-				options = options.dup
-				options[:on_message] ||= block
-				raise "No #on_message handler defined! please pass a block or define an #on_message handler!" unless options[:on_message]
-				raise TypeError, "Websocket Client `:send` should be either a String or a Proc object." if options[:send] && !(options[:send].is_a?(String) || options[:send].is_a?(Proc))
-				url = URI.parse(url) unless url.is_a?(URI)
-				options[:url] = url
+				options = url if url.is_a?(Hash) && options.empty?
 				options[:renew] ||= 5 if options[:every] && options[:send]
-
-				ssl = url.scheme == "https" || url.scheme == "wss"
-
-				url.port ||= ssl ? 443 : 80
-				url.path = '/' if url.path.to_s.empty?
-				socket = TCPSocket.new(url.host, url.port)
-				if ssl
-					context = OpenSSL::SSL::SSLContext.new
-					context.cert_store = OpenSSL::X509::Store.new
-					context.cert_store.set_default_paths
-					context.set_params verify_mode: (options[:verify_mode] || OpenSSL::SSL::VERIFY_NONE) # OpenSSL::SSL::VERIFY_PEER #OpenSSL::SSL::VERIFY_NONE
-					ssl = OpenSSL::SSL::SSLSocket.new(socket, context)
-					ssl.sync_close = true
-					ssl.connect
-				end
-				# prep custom headers
-				custom_headers = ''
-				custom_headers = options[:headers] if options[:headers].is_a?(String)
-				options[:headers].each {|k, v| custom_headers << "#{k.to_s}: #{v.to_s}\r\n"} if options[:headers].is_a?(Hash)
-				options[:cookies].each {|k, v| raise 'Illegal cookie name' if k.to_s.match(/[\x00-\x20\(\)<>@,;:\\\"\/\[\]\?\=\{\}\s]/); custom_headers << "Cookie: #{ k }=#{ Iodine::Http::Request.encode_url v }\r\n"} if options[:cookies].is_a?(Hash)
-
-				# send protocol upgrade request
-				websocket_key = [(Array.new(16) {rand 255} .pack 'c*' )].pack('m0*')
-				(ssl || socket).write "GET #{url.path}#{url.query.to_s.empty? ? '' : ('?' + url.query)} HTTP/1.1\r\nHost: #{url.host}#{url.port ? (':'+url.port.to_s) : ''}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nOrigin: #{options[:ssl_client] ? 'https' : 'http'}://#{url.host}\r\nSec-WebSocket-Key: #{websocket_key}\r\nSec-WebSocket-Version: 13\r\n#{custom_headers}\r\n"
-				# wait for answer - make sure we don't over-read
-				# (a websocket message might be sent immidiately after connection is established)
-				reply = ''
-				reply.force_encoding(::Encoding::ASCII_8BIT)
-				stop_time = Time.now + (options[:timeout] || 5)
-				stop_reply = "\r\n\r\n"
-				sleep 0.2
-				until reply[-4..-1] == stop_reply
-					begin
-						reply << ( ssl ? ssl.read_nonblock(1) : socket.recv_nonblock(1) )
-					rescue Errno::EWOULDBLOCK => e
-						raise "Websocket client handshake timed out (HTTP reply not recieved)\n\n Got Only: #{reply}" if Time.now >= stop_time
-						IO.select [socket], nil, nil, (options[:timeout] || 5)
-						retry
-					end
-					raise "Connection failed" if socket.closed?
-				end
-				# review reply
-				raise "Connection Refused. Reply was:\r\n #{reply}" unless reply.lines[0].match(/^HTTP\/[\d\.]+ 101/i)
-				raise 'Websocket Key Authentication failed.' unless reply.match(/^Sec-WebSocket-Accept:[\s]*([^\s]*)/i) && reply.match(/^Sec-WebSocket-Accept:[\s]*([^\s]*)/i)[1] == Digest::SHA1.base64digest(websocket_key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
-				# read the body's data and parse any incoming data.
-				request = Iodine::Http::Request.new
-				request[:method] = 'GET'
-				request['host'] = "#{url.host}:#{url.port}"
-				request[:query] = url.path
-				request[:version] = '1.1'
-				reply = StringIO.new reply
-				reply.gets
-
-				until reply.eof?
-					until request[:headers_complete] || (l = reply.gets).nil?
-						if l.include? ':'
-							l = l.strip.split(/:[\s]?/, 2)
-							l[0].strip! ; l[0].downcase!;
-							request[l[0]] ? (request[l[0]].is_a?(Array) ? (request[l[0]] << l[1]) : request[l[0]] = [request[l[0]], l[1] ]) : (request[l[0]] = l[1])
-						elsif l =~ /^[\r]?\n/
-							request[:headers_complete] = true
-						else
-							#protocol error
-							raise 'Protocol Error, closing connection.'
-							return close
-						end
-					end
-				end
-				reply.string.clear
-
-				request[:ws_client_params] = options
-				client = self.new(request)
-				Iodine::Http::Websockets.new( ( ssl || socket), handler: client, request: request )
-
-				return client	
-
-				rescue => e
-					(ssl || socket).tap {|io| next if io.nil?; io.close unless io.closed?}
-					if options[:on_error]
-						options[:on_error].call(e)
-						return false
-					end
-					raise e
+				options[:url] ||= url
+				options[:on_message] ||= block
+				client = self.new(options)
+				return client unless client.closed?
+				false
 			end
 		end
 	end

@@ -10,7 +10,11 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Change log v.0.1.9
 
-**update**: repeatedly calling `Iodine.force_start!` will now be ignored, as might have been expected. Once Iodine had started, `force_start!` cannot be called until Iodine had finished (and even than, Iodine might never be as fresh nor as young as it was).
+**Fix**: WebsocketClient connection renewal will now keep the same WebsocketClient instance object.
+
+**Update** Creating a TimedEvent before Iodine starts running will automatically 'nudge' Iodine into "Task polling" mode, cycling until the user signals a stop.
+
+**Update**: repeatedly calling `Iodine.force_start!` will now be ignored, as might have been expected. Once Iodine had started, `force_start!` cannot be called until Iodine had finished (and even than, Iodine might never be as fresh nor as young as it was).
 
 ***
 

@@ -62,7 +62,7 @@ In this mode, Iodine will continue running until all the tasks have completed an
 
 This mode of operation is effective if want Iodine to periodically initiates new tasks, for instance if you cannot use `cron`.
 
-To initiate this mode, simply set: `Iodine.protocol = :timers`
+To initiate this mode, simply set: `Iodine.protocol = :timers` OR create a TimedEvent.
 
 In example:
 

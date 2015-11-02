@@ -30,8 +30,7 @@ module Iodine
 			if self == Iodine
 				startup
 			else
-				next if @queue.empty? && @timers.empty?
-				Iodine.protocol ||= :cycle
+				Iodine.protocol ||= :cycle if @timers.any? || @protocol
 				thread = Thread.new { startup true }
 				Iodine.on_shutdown { thread.raise 'stop' ; thread.join }
 			end
@@ -97,6 +96,7 @@ module Iodine
 	def initialize_tasks
 		# initializes actions to be taken when starting to run
 		run do
+			@protocol ||= :cycle if @timers.any?
 			next unless @protocol
 			if @protocol.is_a?( ::Class ) && @protocol.ancestors.include?( ::Iodine::Protocol )
 				begin
