@@ -12,8 +12,7 @@ Change log v.0.1.10
 
 **Fix**: make sure the WebsocketClient doesn't automatically renew the connection when the connection was manually closed by the client.
 
-**Performance**: faster TimedEvent clearing when manually stopped.
-
+**Performance**: faster TimedEvent clearing when manually stopped. Minor improvements to direct big-file sending (recycle buffer to avoid malloc).
 
 ***
 

@@ -112,12 +112,14 @@ module Iodine
 
 				send_headers response
 				return log_finished(response) && (body && body.close) if request.head? || body.nil?
+				buffer = String.new
 				until body.eof?
-					written = write(body.read 65_536)
+					written = write(body.read 65_536, buffer)
 					return Iodine.warn("Http/1 couldn't send response because connection was lost.") && body.close unless written
 					response.bytes_written += written
 				end
 				body.close
+				buffer.clear
 				close unless keep_alive
 				log_finished response
 			end
@@ -131,8 +133,9 @@ module Iodine
 				end
 				return if response.request.head?
 				body = response.extract_body
+				buffer = String.new
 				until body.eof?
-					written = stream_data(body.read 65_536)
+					written = stream_data(body.read 65_536, buffer)
 					return Iodine.warn("Http/1 couldn't send response because connection was lost.") && body.close unless written
 					response.bytes_written += written
 				end if body
@@ -141,6 +144,7 @@ module Iodine
 					log_finished response
 					close unless response.keep_alive
 				end
+				buffer.clear
 				body.close if body
 				true
 			end

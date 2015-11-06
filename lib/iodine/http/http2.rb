@@ -67,10 +67,12 @@ module Iodine
 				return body && body.close unless send_headers response, request
 				return log_finished(response) && body && body.close if request.head?
 				if body
+					buffer = String.new
 					until body.eof?
-						response.bytes_written += emit_payload(body.read(@settings[SETTINGS_MAX_FRAME_SIZE]), request[:sid], 0, (body.eof? ? 1 : 0))
+						response.bytes_written += emit_payload(body.read(@settings[SETTINGS_MAX_FRAME_SIZE], buffer), request[:sid], 0, (body.eof? ? 1 : 0))
 					end
 					body.close
+					buffer.clear
 				else
 					emit_payload('', request[:sid], 0, 1)
 				end
@@ -83,9 +85,11 @@ module Iodine
 				send_headers response, request
 				return body && body.close if request.head?
 				if body
+					buffer = String.new
 					until body.eof?
-						response.bytes_written += emit_payload(body.read(@settings[SETTINGS_MAX_FRAME_SIZE]), request[:sid], 0, ((finish && body.eof?) ? 1 : 0))
+						response.bytes_written += emit_payload(body.read(@settings[SETTINGS_MAX_FRAME_SIZE], buffer), request[:sid], 0, ((finish && body.eof?) ? 1 : 0))
 					end
+					buffer.clear
 					body.close
 				elsif finish
 					emit_payload('', request[:sid], 0, 1)
