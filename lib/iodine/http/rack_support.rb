@@ -8,6 +8,7 @@ module Iodine
 				@app = app
 				Iodine.threads ||= 18
 				Iodine.port = options[:Port]
+				RACK_DICTIONARY['rack.multiprocess'] = Iodine.processes.to_i > 1
 				Iodine.protocol ||= Iodine::Http::Http1
 				@pre_rack_handler = Iodine::Http.on_http unless Iodine::Http.on_http == Iodine::Http::NOT_IMPLEMENTED
 				Iodine::Http.on_http self

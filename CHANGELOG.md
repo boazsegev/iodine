@@ -12,6 +12,9 @@ Change log v.0.1.10
 
 **Fix**: make sure the WebsocketClient doesn't automatically renew the connection when the connection was manually closed by the client.
 
+**Performance**: faster TimedEvent clearing when manually stopped.
+
+
 ***
 
 Change log v.0.1.9

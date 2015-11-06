@@ -30,6 +30,7 @@ module Iodine
 		# @return [Iodine::TimedEvent] returns the TimedEvent object.
 		def stop!
 			@repeat_limit = 0
+			@next = @reactor.time
 			self
 		end
 
