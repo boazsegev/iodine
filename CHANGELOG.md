@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.11
+
+**Fix**: fixed the Rack server Handler, which was broken in version 0.1.10.
+
+***
+
 Change log v.0.1.10
 
 **Fix**: make sure the WebsocketClient doesn't automatically renew the connection when the connection was manually closed by the client.

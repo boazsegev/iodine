@@ -28,6 +28,11 @@ module Iodine
 		@spawn_count = count
 	end
 
+	# Gets the number of processes that should be spawned in Server mode. Defaults to 1 (no processes spawned). See {Iodine#processes=}.
+	def processes
+		@spawn_count
+	end
+
 	# Sets Iodine's server port. Defaults to the command line `-p` argument, or the ENV['PORT'] or 3000 (in this order).
 	def port= port
 		@port = port
