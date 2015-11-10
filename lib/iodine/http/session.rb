@@ -81,6 +81,11 @@ module Iodine
 						@data.clear
 						nil
 					end
+
+					# Forced the session's data to be reloaded
+					def refresh
+						load
+					end
 					protected
 					# def destroy
 					# 	# save data to tmp-file
