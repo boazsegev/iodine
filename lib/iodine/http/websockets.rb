@@ -7,7 +7,7 @@ module Iodine
 				@ws_extentions = @options[:ext]
 				@options[:request][:io] = self
 				@parser = {body: String.new, stage: 0, step: 0, mask_key: [], len_bytes: []}
-				set_timeout = self.class.default_timeout
+				set_timeout self.class.default_timeout
 				@handler.on_open if @handler.respond_to? :on_open
 			end
 			# parse and handle messages.
@@ -60,7 +60,7 @@ module Iodine
 				end
 				byte_size = data.bytesize
 				if byte_size > (FRAME_SIZE_LIMIT+2)
-					sections = byte_size/FRAME_SIZE_LIMIT + (byte_size%FRAME_SIZE_LIMIT ? 1 : 0)
+					# sections = byte_size/FRAME_SIZE_LIMIT + (byte_size%FRAME_SIZE_LIMIT ? 1 : 0)
 					send_data( data.slice!( 0...FRAME_SIZE_LIMIT ), op_code, data.empty?, ext) && (ext = op_code = 0) until data.empty?
 					return true # avoid sending an empty frame.
 				end

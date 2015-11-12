@@ -124,7 +124,7 @@ module Iodine
 			#
 			# @return [Hash like storage] creates and returns the session storage object with all the data from a previous connection.
 			def session
-				return @session if @session
+				return @session if instance_variable_defined?(:@session) && @session
 				id = request.cookies[::Iodine::Http.session_token.to_sym] || SecureRandom.uuid
 				set_cookie ::Iodine::Http.session_token, id, expires: (Time.now+86_400), secure: @request.ssl?, http_only: true
 				@request[:session] = @session = ::Iodine::Http::SessionManager.get(id)

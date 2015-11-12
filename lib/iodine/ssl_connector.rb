@@ -10,7 +10,7 @@ module Iodine
 		end
 		TIMEOUT = 3 # hardcoded SSL/TLS handshake timeout
 		def on_open
-			timeout = TIMEOUT
+			set_timeout TIMEOUT
 			@ssl_socket = ::OpenSSL::SSL::SSLSocket.new(@io, ::Iodine.ssl_context)
 			@ssl_socket.sync_close = true
 		end

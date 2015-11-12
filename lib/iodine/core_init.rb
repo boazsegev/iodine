@@ -55,8 +55,8 @@ module Iodine
 			if @queue.empty?
 				#clear any closed IO objects.
 				@time = Time.now
-				@ios.keys.each &@status_loop
-				@ios.values.each &@timeout_proc
+				@ios.keys.each(&@status_loop)
+				@ios.values.each(&@timeout_proc)
 				until @io_in.empty?
 					n_io = @io_in.pop
 					@ios[n_io[0]] = n_io[1]
@@ -70,7 +70,7 @@ module Iodine
 				begin
 					r = IO.select(@ios.keys, nil, nil, 0.15)
 					r[0].each {|io| @queue << [@ios[io]] } if r
-				rescue => e
+				rescue 
 					
 				end
 				unless @stop && @queue.empty?

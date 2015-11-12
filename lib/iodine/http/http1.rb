@@ -124,7 +124,7 @@ module Iodine
 				log_finished response
 			end
 			def stream_response response, finish = false
-				timeout = 15
+				set_timeout 15
 				unless response.headers.frozen?
 					response['transfer-encoding'.freeze] = 'chunked'.freeze
 					response.headers['connection'.freeze] = 'close'.freeze

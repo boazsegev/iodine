@@ -125,7 +125,7 @@ module Iodine
 					touch
 					r
 				end
-			rescue => e
+			rescue # => e
 				# Iodine.info e.message
 				close
 			end

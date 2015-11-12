@@ -42,7 +42,7 @@ module Iodine
 			return false unless @next <= @reactor.time
 			return true if @repeat_limit == 0
 			@repeat_limit -= 1 if @repeat_limit.to_i > 0
-			@reactor.run *@args, &@job
+			@reactor.run(*@args, &@job)
 			@next = @reactor.time + @interval
 			@repeat_limit == 0
 		end

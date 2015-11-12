@@ -133,10 +133,6 @@ module Iodine
 				@request.ssl?
 			end
 
-			# return the HTTP's handshake data, including any cookies sent by the server.
-			def request
-				@request
-			end
 			# return a Hash with the HTTP cookies recieved during the HTTP's handshake.
 			def cookies
 				@request.cookies
@@ -154,7 +150,7 @@ module Iodine
 				end
 				byte_size = data.bytesize
 				if byte_size > (::Iodine::Http::Websockets::FRAME_SIZE_LIMIT+2)
-					sections = byte_size/FRAME_SIZE_LIMIT + (byte_size % ::Iodine::Http::Websockets::FRAME_SIZE_LIMIT ? 1 : 0)
+					# sections = byte_size/FRAME_SIZE_LIMIT + (byte_size % ::Iodine::Http::Websockets::FRAME_SIZE_LIMIT ? 1 : 0)
 					ret = write( data.slice!( 0...::Iodine::Http::Websockets::FRAME_SIZE_LIMIT ), op_code, data.empty?, ext) && (ext = op_code = 0) until data.empty?
 					return ret # avoid sending an empty frame.
 				end

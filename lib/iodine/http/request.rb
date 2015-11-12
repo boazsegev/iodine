@@ -22,7 +22,7 @@ module Iodine
 				end
 				# overrides the []= method to set the cookie for the response (by encoding it and preparing it to be sent), as well as to save the cookie in the combined cookie jar (unencoded and available).
 				def []= key, val
-					return super unless @response
+					return super unless instance_variable_defined?(:@response) && @response
 					if key.is_a?(Symbol) && self.has_key?( key.to_s)
 						key = key.to_s
 					elsif self.has_key?( key.to_s.to_sym)

@@ -84,13 +84,13 @@ module Iodine
 	end
 end
 
-# ENV["RACK_HANDLER"] = 'grhttp'
+# ENV["RACK_HANDLER"] = 'iodine'
 
 # make Iodine the default fallback position for Rack.
 begin
 	require 'rack/handler'
 	Rack::Handler::WEBrick = Rack::Handler.get(:iodine)
-rescue Exception => e
+rescue Exception
 
 end
 ::Rack::Handler.register( 'iodine', 'Iodine::Http::Rack') if defined?(::Rack)

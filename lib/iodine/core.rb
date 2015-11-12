@@ -62,7 +62,7 @@ module Iodine
 		job = @queue && @queue.pop
 		if job && job[0]
 			begin
-				job[0].call *job[1]
+				job[0].call(*job[1])
 			rescue => e
 				error e
 			end
