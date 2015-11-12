@@ -28,7 +28,7 @@ module Iodine
 					elsif self.has_key?( key.to_s.to_sym)
 						key = key.to_s.to_sym
 					end
-					@response.set_cookie key, (val.nil? ? nil : val.to_s.dup)
+					@response.set_cookie key, (val.nil? ? nil : val)
 					super
 				end
 				# overrides th [] method to allow Symbols and Strings to mix and match

@@ -8,6 +8,14 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.12
+
+**Update**: Passing a hash as the cookie value will allow to set cookie parameters using the {Response#set_cookie} options. i.e.: `cookies['key']= {value: "lock", max_age: 20}`. 
+
+**Security**: set the HttpOnly flag for session id cookies.
+
+***
+
 Change log v.0.1.11
 
 **Fix**: fixed the Rack server Handler, which was broken in version 0.1.10.
