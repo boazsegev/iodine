@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.13
+
+**Compatibility**: minor fixes and changes in preperation for Ruby 2.3.0.
+
+***
+
 Change log v.0.1.12
 
 **Update**: Passing a hash as the cookie value will allow to set cookie parameters using the {Response#set_cookie} options. i.e.: `cookies['key']= {value: "lock", max_age: 20}`. 
