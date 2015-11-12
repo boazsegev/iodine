@@ -205,20 +205,19 @@ module Iodine
 					ssl.connect
 				end
 				# prep custom headers
-				custom_headers = ''
+				custom_headers = String.new
 				custom_headers = @options[:headers] if @options[:headers].is_a?(String)
 				@options[:headers].each {|k, v| custom_headers << "#{k.to_s}: #{v.to_s}\r\n"} if @options[:headers].is_a?(Hash)
-				@options[:cookies].each {|k, v| raise 'Illegal cookie name' if k.to_s.match(/[\x00-\x20\(\)<>@,;:\\\"\/\[\]\?\=\{\}\s]/); custom_headers << "Cookie: #{ k }=#{ Iodine::Http::Request.encode_url v }\r\n"} if @options[:cookies].is_a?(Hash)
+				@options[:cookies].each {|k, v| raise 'Illegal cookie name' if k.to_s.match(/[\x00-\x20\(\)<>@,;:\\\"\/\[\]\?\=\{\}\s]/.freeze); custom_headers << "Cookie: #{ k }=#{ Iodine::Http::Request.encode_url v }\r\n"} if @options[:cookies].is_a?(Hash)
 
 				# send protocol upgrade request
-				websocket_key = [(Array.new(16) {rand 255} .pack 'c*' )].pack('m0*')
-				(ssl || socket).write "GET #{url.path}#{url.query.to_s.empty? ? '' : ('?' + url.query)} HTTP/1.1\r\nHost: #{url.host}#{url.port ? (':'+url.port.to_s) : ''}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nOrigin: #{ssl ? 'https' : 'http'}://#{url.host}\r\nSec-WebSocket-Key: #{websocket_key}\r\nSec-WebSocket-Version: 13\r\n#{custom_headers}\r\n"
+				websocket_key = [(Array.new(16) {rand 255} .pack 'c*'.freeze )].pack('m0*'.freeze)
+				(ssl || socket).write "GET #{url.path}#{url.query.to_s.empty? ? ''.freeze : ("?#{url.query}")} HTTP/1.1\r\nHost: #{url.host}#{url.port ? (":#{url.port.to_s}") : ''.freeze}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nOrigin: #{ssl ? 'https'.freeze : 'http'.freeze}://#{url.host}\r\nSec-WebSocket-Key: #{websocket_key}\r\nSec-WebSocket-Version: 13\r\n#{custom_headers}\r\n"
 				# wait for answer - make sure we don't over-read
 				# (a websocket message might be sent immidiately after connection is established)
-				reply = ''
-				reply.force_encoding(::Encoding::ASCII_8BIT)
+				reply = String.new.force_encoding(::Encoding::ASCII_8BIT)
 				stop_time = Time.now + (@options[:timeout] || 5)
-				stop_reply = "\r\n\r\n"
+				stop_reply = "\r\n\r\n".freeze
 				until reply[-4..-1] == stop_reply
 					begin
 						reply << ( ssl ? ssl.read_nonblock(1) : socket.recv_nonblock(1) )
@@ -230,24 +229,24 @@ module Iodine
 					raise "Connection failed" if socket.closed?
 				end
 				# review reply
-				raise "Connection Refused. Reply was:\r\n #{reply}" unless reply.lines[0].match(/^HTTP\/[\d\.]+ 101/i)
-				raise 'Websocket Key Authentication failed.' unless reply.match(/^Sec-WebSocket-Accept:[\s]*([^\s]*)/i) && reply.match(/^Sec-WebSocket-Accept:[\s]*([^\s]*)/i)[1] == Digest::SHA1.base64digest(websocket_key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+				raise "Connection Refused. Reply was:\r\n #{reply}" unless reply.lines[0].match(/^HTTP\/[\d\.]+ 101/i.freeze)
+				raise 'Websocket Key Authentication failed.' unless reply.match(/^Sec-WebSocket-Accept:[\s]*([^\s]*)/i.freeze) && reply.match(/^Sec-WebSocket-Accept:[\s]*([^\s]*)/i.freeze)[1] == Digest::SHA1.base64digest(websocket_key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
 				# read the body's data and parse any incoming data.
 				@request = Iodine::Http::Request.new
-				@request[:method] = 'GET'
-				@request['host'] = "#{url.host}:#{url.port}"
+				@request[:method] = 'GET'.freeze
+				@request['host'.freeze] = "#{url.host}:#{url.port}"
 				@request[:query] = url.path
-				@request[:version] = '1.1'
+				@request[:version] = '1.1'.freeze
 				reply = StringIO.new reply
 				reply.gets
 
 				until reply.eof?
 					until @request[:headers_complete] || (l = reply.gets).nil?
 						if l.include? ':'
-							l = l.strip.split(/:[\s]?/, 2)
+							l = l.strip.split(/:[\s]?/.freeze, 2)
 							l[0].strip! ; l[0].downcase!;
 							@request[l[0]] ? (@request[l[0]].is_a?(Array) ? (@request[l[0]] << l[1]) : @request[l[0]] = [@request[l[0]], l[1] ]) : (@request[l[0]] = l[1])
-						elsif l =~ /^[\r]?\n/
+						elsif l =~ /^[\r]?\n/.freeze
 							@request[:headers_complete] = true
 						else
 							#protocol error

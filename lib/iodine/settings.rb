@@ -120,7 +120,7 @@ module Iodine
 	def create_cert bits=2048, cn=nil, comment='a self signed certificate for when we only need encryption and no more.'
 		unless cn
 			host_name = Socket::gethostbyname(Socket::gethostname)[0].split('.')
-			cn = ''
+			cn = String.new
 			host_name.each {|n| cn << "/DC=#{n}"}
 			cn << "/CN=Iodine.#{host_name.join('.')}"
 		end			

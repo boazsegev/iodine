@@ -6,7 +6,7 @@ module Iodine
 				@handler = @options[:handler]
 				@ws_extentions = @options[:ext]
 				@options[:request][:io] = self
-				@parser = {body: '', stage: 0, step: 0, mask_key: [], len_bytes: []}
+				@parser = {body: String.new, stage: 0, step: 0, mask_key: [], len_bytes: []}
 				set_timeout = self.class.default_timeout
 				@handler.on_open if @handler.respond_to? :on_open
 			end
@@ -149,10 +149,10 @@ module Iodine
 				# and MUST NOT use them unless the server indicates that it wishes to use the extension.
 				ws_extentions = []
 				ext = []
-				request['sec-websocket-extensions'.freeze].to_s.split(/[\s]*[,][\s]*/).each {|ex| ex = ex.split(/[\s]*;[\s]*/); ( ( tmp = SUPPORTED_EXTENTIONS[ ex[0] ].call(ex[1..-1]) ) && (ws_extentions << tmp) && (ext << tmp.name) ) if SUPPORTED_EXTENTIONS[ ex[0] ] }
+				request['sec-websocket-extensions'.freeze].to_s.split(/[\s]*[,][\s]*/.freeze).each {|ex| ex = ex.split(/[\s]*;[\s]*/.freeze); ( ( tmp = SUPPORTED_EXTENTIONS[ ex[0] ].call(ex[1..-1]) ) && (ws_extentions << tmp) && (ext << tmp.name) ) if SUPPORTED_EXTENTIONS[ ex[0] ] }
 				ext.compact!
 				if ext.any?
-					response['sec-websocket-extensions'.freeze] = ext.join(', ')
+					response['sec-websocket-extensions'.freeze] = ext.join(', '.freeze)
 				else
 					ws_extentions = nil
 				end
@@ -200,7 +200,7 @@ module Iodine
 
 			def self.refuse response
 				response.status = 400
-				response['sec-websocket-extensions'.freeze] = SUPPORTED_EXTENTIONS.keys.join(', ')
+				response['sec-websocket-extensions'.freeze] = SUPPORTED_EXTENTIONS.keys.join(', '.freeze)
 				response['sec-websocket-version'.freeze] = '13'.freeze
 				false
 			end
@@ -298,7 +298,7 @@ module Iodine
 					close
 					parser[:p_op_code] = nil if parser[:p_op_code] == 8
 				else
-					parser[:message] ? ((parser[:message] << parser[:body]) && parser[:body].clear) : ((parser[:message] = parser[:body]) && parser[:body] = '')
+					parser[:message] ? ((parser[:message] << parser[:body]) && parser[:body].clear) : ((parser[:message] = parser[:body]) && parser[:body] = String.new)
 					# handle parser[:op_code] == 0 / fin == false (continue a frame that hasn't ended yet)
 					if parser[:fin]
 						@ws_extentions.each {|ex| ex.parse_message(parser) } if @ws_extentions

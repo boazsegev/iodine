@@ -8,7 +8,7 @@ module Iodine
 				@app = app
 				Iodine.threads ||= 18
 				Iodine.port = options[:Port]
-				RACK_DICTIONARY['rack.multiprocess'] = Iodine.processes.to_i > 1
+				RACK_DICTIONARY['rack.multiprocess'.freeze] = Iodine.processes.to_i > 1
 				Iodine.protocol ||= Iodine::Http::Http1
 				@pre_rack_handler = Iodine::Http.on_http unless Iodine::Http.on_http == Iodine::Http::NOT_IMPLEMENTED
 				Iodine::Http.on_http self
@@ -27,7 +27,7 @@ module Iodine
 				res[1].each {|k, v| response.headers[k.to_s.downcase] = v }
 				response.body = res[2]
 				response.raw_cookies.clear
-				response.headers['set-cookie'] = response.headers.delete('set-cookie').split("\n").join("\r\nset-cookie: ") if request[:io].is_a?(Iodine::Http::Http1) && response.headers['set-cookie']
+				response.headers['set-cookie'.freeze] = response.headers.delete('set-cookie'.freeze).split("\n".freeze).join("\r\nset-cookie: ".freeze) if request[:io].is_a?(Iodine::Http::Http1) && response.headers['set-cookie'.freeze]
 				response.request[:no_log] = true
 				true
 			end
@@ -41,12 +41,12 @@ module Iodine
 				# env.each {|k, v| env[k] = @request[v] if v.is_a?(Symbol)}
 				RACK_ADDON.each {|k, v| env[k] = (request[v].is_a?(String) ? ( request[v].frozen? ? request[v].dup.force_encoding('ASCII-8BIT') : request[v].force_encoding('ASCII-8BIT') ): request[v])}
 				request.each {|k, v| env["HTTP_#{k.upcase.tr('-', '_')}"] = v if k.is_a?(String) }
-				env['rack.input'.freeze] ||= request[:body] || StringIO.new(''.force_encoding('ASCII-8BIT'.freeze))
+				env['rack.input'.freeze] ||= request[:body] || StringIO.new(''.force_encoding('ASCII-8BIT'.freeze).freeze)
 				env['CONTENT_LENGTH'.freeze] = env.delete 'HTTP_CONTENT_LENGTH'.freeze if env['HTTP_CONTENT_LENGTH'.freeze]
 				env['CONTENT_TYPE'.freeze] = env.delete 'HTTP_CONTENT_TYPE'.freeze if env['HTTP_CONTENT_TYPE'.freeze]
-				env['HTTP_VERSION'.freeze] = "HTTP/#{request[:version].to_s}"
-				env['QUERY_STRING'.freeze] ||= ''
-				env['rack.errors'.freeze] = StringIO.new('')
+				env['HTTP_VERSION'.freeze] = "HTTP/#{request[:version].to_s}".freeze
+				env['QUERY_STRING'.freeze] ||= ''.freeze
+				env['rack.errors'.freeze] = StringIO.new(''.freeze)
 				# should unchain cookies from Array to String
 				env['HTTP_COOKIE'] = env['HTTP_COOKIE'].join '; ' if env['HTTP_COOKIE'].is_a?(Array)
 				env
@@ -68,9 +68,9 @@ module Iodine
 			}
 
 			RACK_DICTIONARY = {
-				"GATEWAY_INTERFACE"	=>"CGI/1.2",
-				'SERVER_SOFTWARE'	=> "Iodine v. #{Iodine::VERSION}",
-				'SCRIPT_NAME'		=> ''.force_encoding('ASCII-8BIT'),
+				"GATEWAY_INTERFACE"	=>"CGI/1.2".freeze,
+				'SERVER_SOFTWARE'	=> "Iodine v. #{Iodine::VERSION}".freeze,
+				'SCRIPT_NAME'		=> ''.force_encoding('ASCII-8BIT'.freeze).freeze,
 				'rack.logger'		=> Iodine,
 				'rack.multithread'	=> true,
 				'rack.multiprocess'	=> false,
@@ -78,8 +78,8 @@ module Iodine
 				# 'rack.hijack_io'	=> nil,
 				'rack.run_once'		=> false
 			}
-			RACK_DICTIONARY['rack.version'] = ::Rack.version.split('.') if defined?(::Rack)
-			HASH_SYM_PROC = Proc.new {|h,k| k = (Symbol === k ? k.to_s : k.to_s.to_sym); h.has_key?(k) ? h[k] : (h["gr.#{k.to_s}"] if h.has_key?("gr.#{k.to_s}") ) }
+			RACK_DICTIONARY['rack.version'.freeze] = ::Rack.version.split('.'.freeze) if defined?(::Rack)
+			HASH_SYM_PROC = Proc.new {|h,k| k = (Symbol === k ? k.to_s : k.to_s.to_sym); h.has_key?(k) ? h[k] : (h["iodine.#{k.to_s}"] if h.has_key?("iodine.#{k.to_s}") ) }
 		end
 	end
 end

@@ -66,13 +66,13 @@ module Iodine
 					data = StringIO.new data
 					results = {}
 					while (field = decode_field(data))
-						name = (field[0].is_a?(String) && field[0][0] == ':') ? field[0][1..-1].to_sym : field[0]
+						name = (field[0].is_a?(String) && field[0][0] == ':'.freeze) ? field[0][1..-1].to_sym : field[0]
 						results[name] ? (results[name].is_a?(String) ? (results[name] = [results[name], field[1]]) : (results[name] << field[1]) ) : (results[name] = field[1]) if field[1]
 					end
 					results
 				end
 				def encode headers = {}
-					buffer = ''.force_encoding(::Encoding::ASCII_8BIT)
+					buffer = String.new.force_encoding(::Encoding::ASCII_8BIT)
 					headers.each {|k, v| buffer << encode_field( (k.is_a?(String) ? k : ":#{k.to_s}".freeze) ,v) if v}
 					buffer.force_encoding(::Encoding::ASCII_8BIT)
 				end
@@ -121,10 +121,10 @@ module Iodine
 					if value.is_a?(Array)
 						return (value.map {|v| encode_field name, v} .join)
 					end
-					raise "Http/2 headers must be LOWERCASE Strings!" if name[0] =~ /[A-Z]/n
+					raise "Http/2 headers must be LOWERCASE Strings!" if name[0] =~ /[A-Z]/n.freeze
 					value = value.to_s
-					if name == 'set-cookie'
-						buffer = ''.force_encoding ::Encoding::ASCII_8BIT
+					if name == 'set-cookie'.freeze
+						buffer = String.new.force_encoding ::Encoding::ASCII_8BIT
 						buffer << pack_number( 55, 1, 4)
 						buffer << pack_string(value)
 						return buffer
@@ -132,11 +132,11 @@ module Iodine
 					index = @encoding_list.find(name, value)
 					return pack_number( index, 1, 1) if index
 					index = @encoding_list.find_name name
-					buffer = ''.force_encoding(::Encoding::ASCII_8BIT)
+					buffer = String.new.force_encoding(::Encoding::ASCII_8BIT)
 					if index
 						buffer << pack_number( index, 1, 2)
 					else
-						raise "Http/2 headers whould be Strings! or allowed Psedo-Header Symbol Only!" if name[0] == ':'
+						raise "Http/2 headers whould be Strings! or allowed Psedo-Header Symbol Only!" if name[0] == ':'.freeze
 						buffer << pack_number( 0, 1, 2)
 						buffer << pack_string(name)
 					end
@@ -193,8 +193,8 @@ module Iodine
 				end
 				def inflate data
 					data = StringIO.new data
-					str = ''
-					buffer = ''
+					str = String.new
+					buffer = String.new
 					until data.eof?
 						byte = data.getbyte
 						8.times do |i|
@@ -209,8 +209,8 @@ module Iodine
 					str
 				end
 				def deflate data
-					str = ''.force_encoding ::Encoding::ASCII_8BIT
-					buffer = ''.force_encoding ::Encoding::ASCII_8BIT
+					str = String.new.force_encoding ::Encoding::ASCII_8BIT
+					buffer = String.new.force_encoding ::Encoding::ASCII_8BIT
 					data.bytes.each do |i|
 						buffer << HUFFMAN.key(i)
 						if (buffer.bytesize % 8) == 0
@@ -219,7 +219,7 @@ module Iodine
 						end
 					end
 					unless buffer.empty?
-						(8-(buffer.bytesize % 8)).times { buffer << '1'} if (buffer.bytesize % 8)
+						(8-(buffer.bytesize % 8)).times { buffer << '1'.freeze} if (buffer.bytesize % 8)
 						str << [buffer].pack('B*'.freeze)
 						buffer.clear
 					end

@@ -12,7 +12,7 @@ module Iodine
 				@hpack = ::Iodine::Http::Http2::HPACK.new
 
 				# the header-stream cache
-				@header_buffer = ''
+				@header_buffer = String.new
 				@header_end_stream = false
 				@header_sid = nil
 				@frame_locker = Mutex.new
@@ -74,7 +74,7 @@ module Iodine
 					body.close
 					buffer.clear
 				else
-					emit_payload('', request[:sid], 0, 1)
+					emit_payload(''.freeze, request[:sid], 0, 1)
 				end
 				log_finished response
 			end
@@ -92,7 +92,7 @@ module Iodine
 					buffer.clear
 					body.close
 				elsif finish
-					emit_payload('', request[:sid], 0, 1)
+					emit_payload(''.freeze, request[:sid], 0, 1)
 				end
 				log_finished response if finish
 			end
@@ -195,7 +195,7 @@ module Iodine
 					return (connection_error(PROTOCOL_ERROR) && Iodine.warn("Preface not given"))
 				end
 				@connected = true
-				emit_frame '', 0, 0x4
+				emit_frame ''.freeze, 0, 0x4
 				true
 			end
 
@@ -222,14 +222,14 @@ module Iodine
 					frame[:flags] = tmp.ord
 				end
 				unless frame[:sid]
-					tmp = (frame[:sid_bytes] ||= '')
+					tmp = (frame[:sid_bytes] ||= String.new)
 					tmp << data.read(4 - tmp.bytesize).to_s
 					return false if tmp.bytesize < 4
 					tmp = frame.delete(:sid_bytes).unpack('N')[0]
 					frame[:sid] = tmp & 2147483647
 					frame[:R] = tmp & 2147483648
 				end
-				tmp = (frame[:body] ||= '')
+				tmp = (frame[:body] ||= String.new)
 				tmp << data.read(frame[:length] - tmp.bytesize).to_s
 				return false if tmp.bytesize < frame[:length]
 				#TODO: something - Async?
@@ -257,7 +257,7 @@ module Iodine
 					process_ping frame
 				when 7 # GOAWAY
 					go_away NO_ERROR
-					Iodine.error "Http2 Disconnection with error (#{frame[:flags].to_s}): #{frame[:body].strip}" unless frame[:flags] == 0 && frame[:body] == ''
+					Iodine.error "Http2 Disconnection with error (#{frame[:flags].to_s}): #{frame[:body].strip}" unless frame[:flags] == 0 && frame[:body] == ''.freeze
 				when 8 # WINDOW_UPDATE
 				else # Error, frame not recognized
 				end
@@ -402,7 +402,7 @@ module Iodine
 						# Unsupported parameters MUST be ignored
 					end
 				end
-				emit_frame '', 0, 4, 1
+				emit_frame ''.freeze, 0, 4, 1
 			end
 
 			def process_request request

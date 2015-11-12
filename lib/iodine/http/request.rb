@@ -98,12 +98,12 @@ module Iodine
 
 			# the base url ([http/https]://host[:port])
 			def base_url switch_scheme = nil
-				"#{switch_scheme || self[:scheme]}://#{self[:host_name]}#{self[:port]? ":#{self[:port]}" : ''}"
+				"#{switch_scheme || self[:scheme]}://#{self[:host_name]}#{self[:port]? ":#{self[:port]}" : ''.freeze}".freeze
 			end
 
 			# the request's url, without any GET parameters ([http/https]://host[:port]/path)
 			def request_url switch_scheme = nil
-				"#{base_url switch_scheme}#{self[:original_path]}"
+				"#{base_url switch_scheme}#{self[:original_path]}".freeze
 			end
 
 			# the protocol's scheme (http/https/ws/wss) managing this request
@@ -213,12 +213,12 @@ module Iodine
 				request[:version] ||= '1'
 
 				request[:scheme] ||= request['x-forwarded-proto'.freeze] ? request['x-forwarded-proto'.freeze].downcase : ( request[:io].ssl? ? 'https'.freeze : 'http'.freeze)
-				tmp = (request['host'.freeze] || request[:authority] || ''.freeze).split(':')
+				tmp = (request['host'.freeze] || request[:authority] || ''.freeze).split(':'.freeze)
 				request[:host_name] = tmp[0]
 				request[:port] = tmp[1] || nil
 
-				tmp = (request[:query] ||= request[:path] ).split('?', 2)
-				request[:path] = tmp[0].chomp('/')
+				tmp = (request[:query] ||= request[:path] ).split('?'.freeze, 2)
+				request[:path] = tmp[0].chomp('/'.freeze)
 				request[:original_path] = tmp[0].freeze
 				request[:quary_params] = tmp[1]
 				extract_params tmp[1].split(/[&;]/.freeze), (request[:params] ||= {}) if tmp[1]
@@ -313,7 +313,7 @@ module Iodine
 			end
 			# decode form / uri data (including the '+' sign as a space (%20) replacement).
 			def self.uri_decode! s
-				s.gsub!('+'.freeze, '%20'.freeze); s.gsub!(/\%[0-9a-f]{2}/i) {|m| m[1..2].to_i(16).chr}; s.gsub!(/&#[0-9]{4};/i) {|m| [m[2..5].to_i].pack 'U'.freeze }; s
+				s.gsub!('+'.freeze, '%20'.freeze); s.gsub!(/\%[0-9a-f]{2}/i.freeze) {|m| m[1..2].to_i(16).chr}; s.gsub!(/&#[0-9]{4};/i.freeze) {|m| [m[2..5].to_i].pack 'U'.freeze }; s
 			end
 			# extracts parameters from header data 
 			def self.extract_header data, target_hash
@@ -325,7 +325,7 @@ module Iodine
 			end
 			# decode percent-encoded data (excluding the '+' sign for encoding).
 			def self.form_decode! s
-				s.gsub!(/\%[0-9a-f]{2}/i) {|m| m[1..2].to_i(16).chr}; s.gsub!(/&#[0-9]{4};/i) {|m| [m[2..5].to_i].pack 'U'.freeze }; s
+				s.gsub!(/\%[0-9a-f]{2}/i.freeze) {|m| m[1..2].to_i(16).chr}; s.gsub!(/&#[0-9]{4};/i.freeze) {|m| [m[2..5].to_i].pack 'U'.freeze }; s
 			end
 			# Changes String to a Ruby Object, if it's a special string...
 			def self.rubyfy!(string)
@@ -348,32 +348,32 @@ module Iodine
 				# parse content
 				request[:body].rewind
 				case request['content-type'.freeze].to_s
-				when /x-www-form-urlencoded/
+				when /x-www-form-urlencoded/.freeze
 					extract_params request[:body].read.split(/[&;]/), request[:params] #, :form # :uri
-				when /multipart\/form-data/
+				when /multipart\/form-data/.freeze
 					read_multipart request, request
-				when /text\/xml/
+				when /text\/xml/.freeze
 					# to-do support xml?
 					# request[:xml] = make_utf8! request[:body].read
 					nil
-				when /application\/json/
+				when /application\/json/.freeze
 					JSON.parse(make_utf8! request[:body].read).each {|k, v| add_param_to_hash k, v, request[:params]} rescue true
 				end
 				request[:body].rewind if request[:body]
 			end
 
 			# parse a mime/multipart body or part.
-			def self.read_multipart request, headers = {}, boundary = [], name_prefix = ''
+			def self.read_multipart request, headers = {}, boundary = [], name_prefix = String.new
 				body = request[:body]
-				return unless headers['content-type'].to_s =~ /multipart/i
+				return unless headers['content-type'.freeze].to_s =~ /multipart/i.freeze
 				part_headers = {}
-				extract_header headers['content-type'].split(/[;,][\s]?/), part_headers
+				extract_header headers['content-type'.freeze].split(/[;,][\s]?/.freeze), part_headers
 				boundary << part_headers[:boundary]
 				if part_headers[:name]
 					if name_prefix.empty?
 						name_prefix << part_headers[:name]
 					else
-						name_prefix << "[#{part_headers[:name]}]"
+						name_prefix << "[#{part_headers[:name]}]".freeze
 					end
 				end
 				part_headers.delete :name

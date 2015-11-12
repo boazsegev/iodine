@@ -34,10 +34,10 @@ module Iodine
 				@keep_alive = @http_sblocks_count = false
 				# propegate flash object
 				@flash = Hash.new do |hs,k|
-					hs["magic_flash_#{k.to_s}".to_sym] if hs.has_key? "magic_flash_#{k.to_s}".to_sym
+					hs["magic_flash_#{k.to_s}".freeze.to_sym] if hs.has_key? "magic_flash_#{k.to_s}".freeze.to_sym
 				end
 				request.cookies.each do |k,v|
-					@flash[k] = v if k.to_s.start_with? 'magic_flash_'
+					@flash[k] = v if k.to_s.start_with? 'magic_flash_'.freeze
 				end
 			end
 
@@ -177,7 +177,7 @@ module Iodine
 			end
 
 
-			COOKIE_NAME_REGEXP = /[\x00-\x20\(\)\<\>@,;:\\\"\/\[\]\?\=\{\}\s]/
+			COOKIE_NAME_REGEXP = /[\x00-\x20\(\)\<\>@,;:\\\"\/\[\]\?\=\{\}\s]/.freeze
 
 			# Sets/deletes cookies when headers are sent.
 			#
@@ -214,12 +214,12 @@ module Iodine
 				params[:path] ||= '/'.freeze
 				value = Iodine::Http::Request.encode_url(value) # this dups the string
 				if params[:max_age]
-					value << ('; Max-Age=%s' % params[:max_age])
+					value << ('; Max-Age=%s'.freeze % params[:max_age])
 				else
-					value << ('; Expires=%s' % params[:expires].httpdate)
+					value << ('; Expires=%s'.freeze % params[:expires].httpdate)
 				end
-				value << "; Path=#{params[:path]}"
-				value << "; Domain=#{params[:domain]}" if params[:domain]
+				value << "; Path=#{params[:path]}".freeze
+				value << "; Domain=#{params[:domain]}".freeze if params[:domain]
 				value << '; Secure'.freeze if params[:secure]
 				value << '; HttpOnly'.freeze if params[:http_only]
 				@cookies[name.to_sym] = value
@@ -327,7 +327,7 @@ module Iodine
 				elsif  @body.is_a?(File) || @body.is_a?(Tempfile) || @body.is_a?(StringIO)
 					@body
 				elsif @body.respond_to? :each
-					tmp = ''
+					tmp = String.new
 					@body.each {|s| tmp << s}
 					@body.close if @body.respond_to? :close
 					@body = nil
@@ -338,7 +338,7 @@ module Iodine
 				body_io.rewind
 
 				if !(@headers.frozen?) && @request['range'.freeze] && @request.get? && @status == 200 && @headers['content-length'.freeze].nil?
-					r = @request['range'.freeze].match(/^bytes=([\d]+)\-([\d]+)?$/i)
+					r = @request['range'.freeze].match(/^bytes=([\d]+)\-([\d]+)?$/i.freeze)
 					if r
 						old_size = body_io.size
 						start_pos = r[1].to_i
@@ -353,9 +353,9 @@ module Iodine
 							body_io.rewind
 						end
 						@headers['content-range'.freeze] = "bytes #{start_pos}-#{end_pos}/#{old_size}"
-						@headers['accept-ranges'.freeze] ||= 'bytes'
+						@headers['accept-ranges'.freeze] ||= 'bytes'.freeze
 					else
-						@headers['accept-ranges'.freeze] ||= 'none'
+						@headers['accept-ranges'.freeze] ||= 'none'.freeze
 					end
 				end
 
@@ -374,7 +374,7 @@ module Iodine
 					end
 					#set new flash cookies
 					@flash.each do |k,v|
-						set_cookie "magic_flash_#{k.to_s}", v
+						set_cookie "magic_flash_#{k.to_s}".freeze, v
 					end
 					@cookies.freeze
 					# response.cookies.set_response nil

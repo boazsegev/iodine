@@ -22,22 +22,22 @@ module Iodine
 								return close
 							end
 							next if l.empty?
-							request[:method], request[:query], request[:version] = l.split(/[\s]+/, 3)
+							request[:method], request[:query], request[:version] = l.split(/[\s]+/.freeze, 3)
 							return (Iodine.warn('Htt1 Protocol Error, closing connection.') && close) unless request[:method] =~ HTTP_METHODS_REGEXP
-							request[:version] = (request[:version] || '1.1'.freeze).match(/[\d\.]+/)[0]
+							request[:version] = (request[:version] || '1.1'.freeze).match(/[\d\.]+/.freeze)[0]
 							request[:time_recieved] = Time.now
 						end
 						until request[:headers_complete] || (l = data.gets).nil?
-							if l.include? ':'
+							if l.include? ':'.freeze
 								# n = l.slice!(0, l.index(':')); l.slice! 0
 								# n.strip! ; n.downcase!; n.freeze
 								# request[n] ? (request[n].is_a?(Array) ? (request[n] << l) : request[n] = [request[n], l ]) : (request[n] = l)
 								request[:headers_size] ||= 0
 								request[:headers_size] += l.bytesize
-								l = l.strip.split(/:[\s]?/, 2)
+								l = l.strip.split(/:[\s]?/.freeze, 2)
 								l[0].strip! ; l[0].downcase!;
 								request[l[0]] ? (request[l[0]].is_a?(Array) ? (request[l[0]] << l[1]) : request[l[0]] = [request[l[0]], l[1] ]) : (request[l[0]] = l[1])
-							elsif l =~ /^[\r]?\n/
+							elsif l =~ /^[\r]?\n/.freeze
 								request[:headers_complete] = true
 							else
 								#protocol error
@@ -102,10 +102,10 @@ module Iodine
 				headers['content-length'.freeze] ||= body.size if body
 
 				keep_alive = response.keep_alive
-				if (request[:version].to_f > 1 && request['connection'.freeze].nil?) || request['connection'.freeze].to_s =~ /ke/i || (headers['connection'.freeze] && headers['connection'.freeze] =~ /^ke/i)
+				if (request[:version].to_f > 1 && request['connection'.freeze].nil?) || request['connection'.freeze].to_s =~ /ke/i.freeze || (headers['connection'.freeze] && headers['connection'.freeze] =~ /^ke/i.freeze)
 					keep_alive = true
 					headers['connection'.freeze] ||= 'keep-alive'.freeze
-					headers['keep-alive'.freeze] ||= "timeout=#{(@timeout ||= 3).to_s}"
+					headers['keep-alive'.freeze] ||= "timeout=#{(@timeout ||= 3).to_s}".freeze
 				else
 					headers['connection'.freeze] ||= 'close'.freeze
 				end
@@ -115,7 +115,7 @@ module Iodine
 				buffer = String.new
 				until body.eof?
 					written = write(body.read 65_536, buffer)
-					return Iodine.warn("Http/1 couldn't send response because connection was lost.") && body.close unless written
+					return Iodine.warn("Http/1 couldn't send response because connection was lost.".freeze) && body.close unless written
 					response.bytes_written += written
 				end
 				body.close
@@ -126,7 +126,7 @@ module Iodine
 			def stream_response response, finish = false
 				timeout = 15
 				unless response.headers.frozen?
-					response['transfer-encoding'.freeze] = 'chunked'
+					response['transfer-encoding'.freeze] = 'chunked'.freeze
 					response.headers['connection'.freeze] = 'close'.freeze
 					send_headers response
 					@refuse_requests = true
@@ -136,11 +136,11 @@ module Iodine
 				buffer = String.new
 				until body.eof?
 					written = stream_data(body.read 65_536, buffer)
-					return Iodine.warn("Http/1 couldn't send response because connection was lost.") && body.close unless written
+					return Iodine.warn("Http/1 couldn't send response because connection was lost.".freeze) && body.close unless written
 					response.bytes_written += written
 				end if body
 				if finish
-					response.bytes_written += stream_data('')
+					response.bytes_written += stream_data(''.freeze)
 					log_finished response
 					close unless response.keep_alive
 				end
@@ -166,7 +166,7 @@ module Iodine
 				when 'OPTIONS'.freeze
 					response = ::Iodine::Http::Response.new request
 					response[:Allow] = 'GET,HEAD,POST,PUT,DELETE,OPTIONS'.freeze
-					response['access-control-allow-origin'.freeze] = '*'
+					response['access-control-allow-origin'.freeze] = '*'.freeze
 					response['content-length'.freeze] = 0
 					send_response response
 					return false

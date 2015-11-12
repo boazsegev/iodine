@@ -214,7 +214,7 @@ module Iodine
 		# reads from the IO up to the specified number of bytes (defaults to ~1Mb).
 		def read_ssl size
 			@send_locker.synchronize do
-				data = ''
+				data = String.new
 				begin
 					 (data << @io.read_nonblock(size).to_s) until data.bytesize >= size
 				rescue OpenSSL::SSL::SSLErrorWaitReadable, IO::WaitReadable, IO::WaitWritable
