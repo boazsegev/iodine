@@ -148,7 +148,7 @@ module Iodine
 			def session
 				return @session if instance_variable_defined?(:@session) && @session
 				id = request.cookies[::Iodine::Http.session_token.to_sym] || SecureRandom.uuid
-				set_cookie ::Iodine::Http.session_token, id, expires: (Time.now+86_400), secure: @request.ssl?, http_only: true
+				set_cookie ::Iodine::Http.session_token, id, expires: :session, secure: @request.ssl?, http_only: true
 				@request[:session] = @session = ::Iodine::Http::SessionManager.get(id)
 			end
 
@@ -228,17 +228,17 @@ module Iodine
 				name = name.to_s
 				raise 'Illegal cookie name' if name =~ COOKIE_NAME_REGEXP
 				if value.nil?
-					params[:expires] = (Time.now - 315360000)
+					params[:expires] = (Iodine.time - 315360000)
 					value = 'deleted'.freeze					
 				else
-					params[:expires] ||= (Time.now + 315360000) unless params[:max_age]
+					params[:expires] ||= (Iodine.time + 315360000) unless params[:max_age]
 				end
 				params[:path] ||= '/'.freeze
 				value = Iodine::Http::Request.encode_url(value) # this dups the string
 				if params[:max_age]
 					value << ('; Max-Age=%s'.freeze % params[:max_age])
 				else
-					value << ('; Expires=%s'.freeze % params[:expires].httpdate)
+					value << ('; Expires=%s'.freeze % params[:expires].httpdate) if params[:expires].is_a(::Time)
 				end
 				value << "; Path=#{params[:path]}".freeze
 				value << "; Domain=#{params[:domain]}".freeze if params[:domain]
