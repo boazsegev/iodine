@@ -12,6 +12,8 @@ Change log v.0.1.13
 
 **Change**: Session cookie lifetime is now limited to the browser's session. The local data will still persist until the tmp-folder is cleared (when using session file storage).
 
+**Fix**: renamed the SSL session token so that the SSL session id isn't lost when a non-secure session is used.
+
 **Fix**: The `flash` cookie-jar will now actively prevent Symbol and String keys from overlapping.
 
 **Compatibility**: minor fixes and changes in preperation for Ruby 2.3.0.

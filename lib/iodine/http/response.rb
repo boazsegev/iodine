@@ -21,8 +21,8 @@ module Iodine
 						key = key.to_s
 					elsif self.has_key?( key.to_s.to_sym)
 						key = key.to_s.to_sym
-					elsif self.has_key? "magic_flash_#{k.to_s}".freeze.to_sym
-						key = "magic_flash_#{k.to_s}".freeze.to_sym
+					elsif self.has_key? "magic_flash_#{key.to_s}".freeze.to_sym
+						key = "magic_flash_#{key.to_s}".freeze.to_sym
 					end
 					super
 				end
@@ -147,8 +147,14 @@ module Iodine
 			# @return [Hash like storage] creates and returns the session storage object with all the data from a previous connection.
 			def session
 				return @session if instance_variable_defined?(:@session) && @session
-				id = request.cookies[::Iodine::Http.session_token.to_sym] || SecureRandom.uuid
-				set_cookie ::Iodine::Http.session_token, id, expires: :session, secure: @request.ssl?, http_only: true
+				if @request.ssl?
+					@@sec_session_token ||= "#{::Iodine::Http.session_token}_enc".freeze
+					id = @request.cookies[@@sec_session_token.to_sym] || SecureRandom.uuid
+					set_cookie @@sec_session_token, id, expires: :session, secure: true, http_only: true
+				else
+				id = @request.cookies[::Iodine::Http.session_token.to_sym] || SecureRandom.uuid
+					set_cookie ::Iodine::Http.session_token, id, expires: :session, http_only: true
+				end
 				@request[:session] = @session = ::Iodine::Http::SessionManager.get(id)
 			end
 
