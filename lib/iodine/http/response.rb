@@ -238,7 +238,7 @@ module Iodine
 				if params[:max_age]
 					value << ('; Max-Age=%s'.freeze % params[:max_age])
 				else
-					value << ('; Expires=%s'.freeze % params[:expires].httpdate) if params[:expires].is_a(::Time)
+					value << ('; Expires=%s'.freeze % params[:expires].httpdate) if params[:expires].is_a?(::Time)
 				end
 				value << "; Path=#{params[:path]}".freeze
 				value << "; Domain=#{params[:domain]}".freeze if params[:domain]
