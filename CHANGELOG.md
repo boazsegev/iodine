@@ -10,6 +10,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Change log v.0.1.13
 
+**Fix**: The `flash` cookie-jar will now actively prevent Symbol and String keys from overlapping.
+
 **Compatibility**: minor fixes and changes in preperation for Ruby 2.3.0.
 
 ***

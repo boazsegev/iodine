@@ -4,6 +4,30 @@ module Iodine
 		#
 		# The response can be sent in stages but should complete within the scope of the connecton's message. Please notice that headers and status cannot be changed once the response started sending data.
 		class Response
+			# Makes sure that the `flash` cookie-jar doesn't have Symbols and Strings overlapping.
+			class Flash < ::Hash
+				# overrides the []= method to set the cookie for the response (by encoding it and preparing it to be sent), as well as to save the cookie in the combined cookie jar (unencoded and available).
+				def []= key, val
+					if key.is_a?(Symbol) && self.has_key?( key.to_s)
+						key = key.to_s
+					elsif self.has_key?( key.to_s.to_sym)
+						key = key.to_s.to_sym
+					end
+					super
+				end
+				# overrides th [] method to allow Symbols and Strings to mix and match
+				def [] key
+					if key.is_a?(Symbol) && self.has_key?( key.to_s)
+						key = key.to_s
+					elsif self.has_key?( key.to_s.to_sym)
+						key = key.to_s.to_sym
+					elsif self.has_key? "magic_flash_#{k.to_s}".freeze.to_sym
+						key = "magic_flash_#{k.to_s}".freeze.to_sym
+					end
+					super
+				end
+			end
+
 			# the response's status code
 			attr_accessor :status
 			# the response's headers
@@ -33,9 +57,7 @@ module Iodine
 				@bytes_written = 0
 				@keep_alive = @http_sblocks_count = false
 				# propegate flash object
-				@flash = Hash.new do |hs,k|
-					hs["magic_flash_#{k.to_s}".freeze.to_sym] if hs.has_key? "magic_flash_#{k.to_s}".freeze.to_sym
-				end
+				@flash = ::Iodine::Http::Response::Flash.new
 				request.cookies.each do |k,v|
 					@flash[k] = v if k.to_s.start_with? 'magic_flash_'.freeze
 				end
@@ -83,7 +105,7 @@ module Iodine
 				Iodine.run block, &@stream_proc
 			end
 
-			# Creates nested streaming blocks for an Array or another Enumerable object. Once all streaming blocks are done, the response will automatically finish.
+			# Creates nested streaming blocks for an Array object (an object answering `#shift`). Once all streaming blocks are done, the response will automatically finish.
 			#
 			# Since streaming blocks might run in parallel, nesting the streaming blocks is important...
 			#
@@ -245,7 +267,7 @@ module Iodine
 				request.delete(:body).tap {|f| f.close unless f.respond_to?(:close) && f.closed? rescue false } if request[:body] && @http_sblocks_count.to_i == 0
 			end
 
-			# Returns the connection's UUID.
+			# Returns the connection's LOCAL UUID.
 			def uuid
 				request[:io].id
 			end
@@ -311,7 +333,7 @@ module Iodine
 				511=>"Network Authentication Required".freeze
 			}
 
-			# This will return the Body object as an IO like object, such as StringIO (or File)... And set the body to `nil` (seeing as it was extracted from the response).
+			# This will return the Body object as an IO like object, such as StringIO (or File) and set the body to `nil` (seeing as it was extracted from the response).
 			#
 			# This method will also attempts to set headers and update the response status in relation to the body, if applicable. Call this BEFORE getting any final data about the response or sending the headers.
 			def extract_body
