@@ -57,7 +57,6 @@ module Iodine
 				data = ::StringIO.new data
 				parse_preface data unless @connected
 				true while parse_frame data
-				data.string.clear
 			end
 
 			def send_response response
@@ -67,12 +66,10 @@ module Iodine
 				return body && body.close unless send_headers response, request
 				return log_finished(response) && body && body.close if request.head?
 				if body
-					buffer = String.new
 					until body.eof?
-						response.bytes_written += emit_payload(body.read(@settings[SETTINGS_MAX_FRAME_SIZE], buffer), request[:sid], 0, (body.eof? ? 1 : 0))
+						response.bytes_written += emit_payload(body.read(@settings[SETTINGS_MAX_FRAME_SIZE], Thread.current[:write_buffer]), request[:sid], 0, (body.eof? ? 1 : 0))
 					end
 					body.close
-					buffer.clear
 				else
 					emit_payload(''.freeze, request[:sid], 0, 1)
 				end
@@ -85,11 +82,9 @@ module Iodine
 				send_headers response, request
 				return body && body.close if request.head?
 				if body
-					buffer = String.new
 					until body.eof?
-						response.bytes_written += emit_payload(body.read(@settings[SETTINGS_MAX_FRAME_SIZE], buffer), request[:sid], 0, ((finish && body.eof?) ? 1 : 0))
+						response.bytes_written += emit_payload(body.read(@settings[SETTINGS_MAX_FRAME_SIZE], Thread.current[:write_buffer]), request[:sid], 0, ((finish && body.eof?) ? 1 : 0))
 					end
-					buffer.clear
 					body.close
 				elsif finish
 					emit_payload(''.freeze, request[:sid], 0, 1)
@@ -146,7 +141,9 @@ module Iodine
 				request = response.request
 				return if Iodine.logger.nil? || request[:no_log]
 				t_n = Time.now
-				Iodine.log("#{request[:client_ip]} [#{t_n.utc}] #{request[:method]} #{request[:original_path]} #{request[:scheme]}\/2 #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n").clear
+				(Thread.current[:log_buffer] ||= String.new).clear
+				Thread.current[:log_buffer] << "#{request[:client_ip]} [#{t_n.utc}] #{request[:method]} #{request[:original_path]} #{request[:scheme]}\/2 #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n"
+				Iodine.log Thread.current[:log_buffer]
 			end
 
 			def send_headers response, request
@@ -155,7 +152,10 @@ module Iodine
 				# headers[:status] = response.status.to_s
 				headers['set-cookie'] = response.extract_cookies
 				headers.freeze
-				emit_payload (@hpack.encode(status: response.status.to_s) + @hpack.encode(headers)), request[:sid], 1, (request.head? ? 1 : 0)
+				(out = (Thread.current[:headers_buffer] ||= String.new)).clear
+				out <<  @hpack.encode(headers)
+				emit_payload (out), request[:sid], 1, (request.head? ? 1 : 0)
+				out.clear
 				return true
 			end
 

@@ -72,7 +72,7 @@ module Iodine
 	def startup use_rescue = false, hide_message = false
 		@force_running = true
 		threads = []
-		(@thread_count ||= 1).times { threads << Thread.new { Thread.current[:buffer] ||= String.new; cycle } }
+		(@thread_count ||= 1).times { threads << Thread.new { Thread.current[:buffer] ||= String.new; Thread.current[:write_buffer] ||= String.new; cycle } }
 		unless @stop
 			if use_rescue
 				sleep rescue true

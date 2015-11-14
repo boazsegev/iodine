@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.16
+
+**Performance**: Http/1 and Http/2 connections now share and recycle their write buffer when while reading the response body and writing it to the IO. This (hopefuly) prevents exess `malloc` calls by the interperter.
+
+***
+
 Change log v.0.1.15
 
 **Update**: IO reactor will now update IO status even when tasks are pending. IO will still be read only when there are no more tasks to handle, but this allows chained tasks to relate to the updated IO status. i.e. this should improve websocket availability for broadcasting (delay from connection to availability might occure until IO is registered).

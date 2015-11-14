@@ -17,13 +17,13 @@ module Iodine
 						unless request[:method]
 							l = data.gets.strip
 							if l.bytesize > 16_384
-								write "HTTP/1.0 414 Request-URI Too Long\r\ncontent-length: 20\r\n\r\nRequest URI too Long"
-								Iodine.warn "Http/1 URI too long, closing connection."
+								write "HTTP/1.0 414 Request-URI Too Long\r\ncontent-length: 20\r\n\r\nRequest URI too Long".freeze
+								Iodine.warn "Http/1 URI too long, closing connection.".freeze
 								return close
 							end
 							next if l.empty?
 							request[:method], request[:query], request[:version] = l.split(/[\s]+/.freeze, 3)
-							return (Iodine.warn('Htt1 Protocol Error, closing connection.') && close) unless request[:method] =~ HTTP_METHODS_REGEXP
+							return (Iodine.warn('Htt1 Protocol Error, closing connection.'.freeze) && close) unless request[:method] =~ HTTP_METHODS_REGEXP
 							request[:version] = (request[:version] || '1.1'.freeze).match(/[\d\.]+/.freeze)[0]
 							request[:time_recieved] = Time.now
 						end
@@ -41,12 +41,12 @@ module Iodine
 								request[:headers_complete] = true
 							else
 								#protocol error
-								Iodine.warn 'Protocol Error, closing connection.'
+								Iodine.warn 'Protocol Error, closing connection.'.freeze
 								return close
 							end
 							if request.length > 2096 || request[:headers_size] > 262_144
-								write "HTTP/1.0 431 Request Header Fields Too Large\r\ncontent-length: 31\r\n\r\nRequest Header Fields Too Large"
-								return (Iodine.warn('Http1 header overloading, closing connection.') && close)
+								write "HTTP/1.0 431 Request Header Fields Too Large\r\ncontent-length: 31\r\n\r\nRequest Header Fields Too Large".freeze
+								return (Iodine.warn('Http1 header overloading, closing connection.'.freeze) && close)
 							end
 						end
 						until request[:body_complete] && request[:headers_complete]
@@ -56,7 +56,7 @@ module Iodine
 									chunk = data.gets
 									return false unless chunk
 									@parser[:length] = chunk.to_i(16)
-									return (Iodine.warn('Protocol Error, closing connection.') && close) unless @parser[:length]
+									return (Iodine.warn('Protocol Error, closing connection.'.freeze) && close) unless @parser[:length]
 									request[:body_complete] = true && break if @parser[:length] == 0
 									@parser[:act_length] = 0
 									request[:body] ||= Tempfile.new('iodine'.freeze, :encoding => 'binary'.freeze)
@@ -73,7 +73,7 @@ module Iodine
 								request[:body] << packet
 								request[:body_complete] = true if request['content-length'.freeze].to_i - request[:body].size <= 0
 							elsif request['content-type'.freeze]
-								Iodine.warn 'Body type protocol error.' unless request[:body]
+								Iodine.warn 'Body type protocol error.'.freeze unless request[:body]
 								line = data.gets
 								return false unless line
 								(request[:body] ||= Tempfile.new('iodine'.freeze, :encoding => 'binary'.freeze) ) << line
@@ -85,7 +85,7 @@ module Iodine
 						if request[:body] && request[:body].size > ::Iodine::Http.max_http_buffer
 							Iodine.warn("Http1 message body too big, closing connection (Iodine::Http.max_http_buffer == #{::Iodine::Http.max_http_buffer} bytes) - #{request[:body].size} bytes.")
 							request.delete(:body).tap {|f| f.close unless f.closed? } rescue false
-							write "HTTP/1.0 413 Payload Too Large\r\ncontent-length: 17\r\n\r\nPayload Too Large"
+							write "HTTP/1.0 413 Payload Too Large\r\ncontent-length: 17\r\n\r\nPayload Too Large".freeze
 							return close
 						end
 						(@request = ::Iodine::Http::Request.new(self)) && ( (::Iodine::Http.http2 && ::Iodine::Http::Http2.handshake(request, self, data)) || dispatch(request, data) ) if request.delete :body_complete
@@ -109,17 +109,15 @@ module Iodine
 				else
 					headers['connection'.freeze] ||= 'close'.freeze
 				end
-
 				send_headers response
 				return log_finished(response) && (body && body.close) if request.head? || body.nil?
-				buffer = String.new
+				
 				until body.eof?
-					written = write(body.read 65_536, buffer)
+					written = write(body.read 65_536, Thread.current[:write_buffer])
 					return Iodine.warn("Http/1 couldn't send response because connection was lost.".freeze) && body.close unless written
 					response.bytes_written += written
 				end
 				body.close
-				buffer.clear
 				close unless keep_alive
 				log_finished response
 			end
@@ -133,9 +131,8 @@ module Iodine
 				end
 				return if response.request.head?
 				body = response.extract_body
-				buffer = String.new
 				until body.eof?
-					written = stream_data(body.read 65_536, buffer)
+					written = stream_data(body.read 65_536, Thread.current[:write_buffer])
 					return Iodine.warn("Http/1 couldn't send response because connection was lost.".freeze) && body.close unless written
 					response.bytes_written += written
 				end if body
@@ -144,7 +141,6 @@ module Iodine
 					log_finished response
 					close unless response.keep_alive
 				end
-				buffer.clear
 				body.close if body
 				true
 			end
@@ -197,8 +193,9 @@ module Iodine
 				headers = response.headers
 
 				# response['date'.freeze] ||= request[:time_recieved].httpdate
+				(out = (Thread.current[:headers_buffer] ||= String.new)).clear
 
-				out = "HTTP/#{request[:version]} #{response.status} #{::Iodine::Http::Response::STATUS_CODES[response.status] || 'unknown'}\r\n"
+				out << "HTTP/#{request[:version]} #{response.status} #{::Iodine::Http::Response::STATUS_CODES[response.status] || 'unknown'}\r\n"
 
 				out << request[:time_recieved].utc.strftime("Date: %a, %d %b %Y %H:%M:%S GMT\r\n".freeze) unless headers['date'.freeze]
 
@@ -209,7 +206,6 @@ module Iodine
 				out << "\r\n"
 
 				response.bytes_written += (write(out) || 0)
-				out.clear
 				headers.freeze
 				response.raw_cookies.freeze
 			end
@@ -222,7 +218,9 @@ module Iodine
 				request = response.request
 				return if Iodine.logger.nil? || request[:no_log]
 				t_n = Time.now
-				Iodine.log("#{request[:client_ip]} [#{t_n.utc}] \"#{request[:method]} #{request[:original_path]} #{request[:scheme]}\/#{request[:version]}\" #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n").clear
+				(Thread.current[:log_buffer] ||= String.new).clear
+				Thread.current[:log_buffer] << "#{request[:client_ip]} [#{t_n.utc}] \"#{request[:method]} #{request[:original_path]} #{request[:scheme]}\/#{request[:version]}\" #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n"
+				Iodine.log(Thread.current[:log_buffer])
 			end
 		end
 	end
