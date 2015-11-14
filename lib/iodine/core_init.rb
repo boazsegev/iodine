@@ -52,20 +52,20 @@ module Iodine
 		@status_loop = Proc.new {|io|  @io_out << io if io.closed? || !(io.stat.readable? rescue false) }
 		@close_callback = Proc.new {|prot| prot.on_close if prot }
 		@reactor = [ (Proc.new do
+			@ios.keys.each(&@status_loop)
+			@ios.values.each(&@timeout_proc)
+			until @io_in.empty?
+				n_io = @io_in.pop
+				@ios[n_io[0]] = n_io[1]
+			end
+			until @io_out.empty?
+				o_io = @io_out.pop
+				o_io.close unless o_io.closed?
+				run @ios.delete(o_io), &@close_callback
+			end
 			if @queue.empty?
 				#clear any closed IO objects.
 				@time = Time.now
-				@ios.keys.each(&@status_loop)
-				@ios.values.each(&@timeout_proc)
-				until @io_in.empty?
-					n_io = @io_in.pop
-					@ios[n_io[0]] = n_io[1]
-				end
-				until @io_out.empty?
-					o_io = @io_out.pop
-					o_io.close unless o_io.closed?
-					run @ios.delete(o_io), &@close_callback
-				end
 				# react to IO events
 				begin
 					r = IO.select(@ios.keys, nil, nil, 0.15)

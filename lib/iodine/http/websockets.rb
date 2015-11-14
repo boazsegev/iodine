@@ -81,9 +81,9 @@ module Iodine
 			end
 			alias :<< :send_data
 
-			# Sends a ping.
+			# Sends a ping and calles the :on_ping callback (if exists).
 			def ping
-				write PING_FRAME
+				write(PING_FRAME) && ( (@handler.respond_to?(:on_ping) && @handler.on_ping) || true)
 			end
 			# Sends an empty pong.
 			def pong

@@ -28,6 +28,9 @@ module Iodine
 			# cleanup, if needed, using this callback.
 			def on_close
 			end
+			# called whenever a ping is sent (no data transfer caused timeout).
+			def on_ping
+			end
 			# extra cleanup, if needed, when server is shutting down while the websocket is connected.
 			#
 			# You can use on_close unless some "going away" cleanup is required.
@@ -48,15 +51,17 @@ module Iodine
 
 			# Write data to the client, using Websockets encoded frames.
 			def write data
-				# We leverage the fact that the Http response can be used to send Websocket data.
-				#
-				# you can also use Websocket#send_data or it's alias Websocket#<< for example:
+				# We can use Websocket#send_data or it's alias Websocket#<< for example:
 				#
 				#        # @request[:io] contains the Websockets Protocol instance
 				#        @request[:io] << data
 				#
 				# do NOT use Websocket#write (which writes the data directly, bypassing the protocol).
-				@response << data
+				#
+				# We can also leverage the fact that the Http response can be used to send Websocket data.
+				#
+				#        @response << data
+				(@___ws_io ||= @request[:io]) << data
 			end
 
 			# Send messages directly to a specific Websocket.
@@ -71,7 +76,7 @@ module Iodine
 			# This implementation is limited to a single process on a single server.
 			# Consider using Redis for a scalable implementation.
 			def broadcast data
-				::Iodine::Http::Websockets.broadcast data, self
+				::Iodine::Http::Websockets.broadcast data, @request[:io]
 			end
 			# Closes the connection
 			def close

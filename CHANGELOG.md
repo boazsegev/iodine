@@ -8,9 +8,15 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
-Change log v.0.1.14
+Change log v.0.1.15
 
-**
+**Update**: IO reactor will now update IO status even when tasks are pending. IO will still be read only when there are no more tasks to handle, but this allows chained tasks to relate to the updated IO status. i.e. this should improve websocket availability for broadcasting (delay from connection to availability might occure until IO is registered).
+
+**Update**: Websockets now support the `on_ping` callback, which will be called whenever a ping was sent without error.
+
+***
+
+Change log v.0.1.14
 
 **Update**: the Response now supports `redirect_to` for both permanent and temporary redirection, with an optional `flash` cookie setup.
 
