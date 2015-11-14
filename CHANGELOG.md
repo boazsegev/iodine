@@ -8,6 +8,16 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.14
+
+**
+
+**Update**: the Response now supports `redirect_to` for both permanent and temporary redirection, with an optional `flash` cookie setup.
+
+**Performance**: the Protocol class now recycles the data string as a thread global socket buffer (different threads have different buffer strings), preventing excessice `malloc` called by the Ruby interpreter. To keep the `data` (in `on_message(data)`) past the `on_message` method's scope, make sure to duplicate it using `data.dup`, or the string's buffer will be recycled.
+
+***
+
 Change log v.0.1.13
 
 **Change**: Session cookie lifetime is now limited to the browser's session. The local data will still persist until the tmp-folder is cleared (when using session file storage).
@@ -16,7 +26,7 @@ Change log v.0.1.13
 
 **Fix**: The `flash` cookie-jar will now actively prevent Symbol and String keys from overlapping.
 
-**Compatibility**: minor fixes and changes in preperation for Ruby 2.3.0.
+**Compatibility**: minor fixes and changes in preperation for Ruby 2.3.0. These may affect performance due to slower String initialization times.
 
 ***
 
