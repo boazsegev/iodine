@@ -277,7 +277,28 @@ module Iodine
 			def uuid
 				request[:io].id
 			end
-			
+
+			# Sets the response to redirect to a different page.
+			#
+			# The method accepts:
+			# url:: a String containing the URL to which the response forwards. `nil` or an empty string will be replaced with: `request.base_url`.
+			# options:: an options Hash. Any key-value pairs not supported WILL be used as flash cookie name-value pairs.
+			#
+			# The option's hash includes the following options:
+			# permanent:: a `true`/`false` value stating the redirection type. Defaults to `false` (temporary redirection).
+			# *:: remember, all other key-value pairs WILL be used as flash cookie name-value pairs.
+			def redirect_to url, options = {}
+				raise 'Cannot redirect after headers were sent.' if headers_sent?
+				url = "#{@request.base_url}/".freeze if url.nil? || (url.is_a?(String) && url.empty?)
+				raise TypeError, 'URL must be a String.' unless url.is_a?(String)
+				url = url_for(url) unless url.is_a?(String) || url.nil?
+				# redirect
+				@status = options.delete(:permanent) ? 301 : 302
+				self['location'] = url
+				@flash.update options
+				true
+			end
+
 			# response status codes, as defined.
 			STATUS_CODES = {100=>"Continue".freeze,
 				101=>"Switching Protocols".freeze,
