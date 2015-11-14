@@ -65,6 +65,10 @@ module Iodine
 		def on_open
 		end
 		# This method is called whenever data is received from the IO.
+		#
+		# The `data` received is a reference to the socket's buffer and it will be cleared and replaced whenever `read`
+		# is called or when new IO data comes in (after `on_message` had completed). To presist
+		# the data, make sure to duplicate the data String using `data.dup`.
 		def on_message data
 		end
 
@@ -106,7 +110,7 @@ module Iodine
 		# reads from the IO up to the specified number of bytes (defaults to ~2Mb).
 		def read size = 2_097_152
 			touch
-			ssl? ? read_ssl(size) : @io.recv_nonblock( size  )
+			ssl? ? read_ssl(size) : @io.read_nonblock( size , Thread.current[:buffer] )
 			# @io.read_nonblock( size  ) # this one is a bit slower...
 		rescue OpenSSL::SSL::SSLErrorWaitReadable, IO::WaitReadable, IO::WaitWritable
 			nil
@@ -181,7 +185,7 @@ module Iodine
 				data = read
 				if data
 					on_message(data)
-					data.clear
+					# data.clear
 				end
 			ensure
 				@locker.unlock
@@ -216,7 +220,7 @@ module Iodine
 			@send_locker.synchronize do
 				data = String.new
 				begin
-					 (data << @io.read_nonblock(size).to_s) until data.bytesize >= size
+					 (data << @io.read_nonblock(size, Thread.current[:buffer]).to_s) until data.bytesize >= size
 				rescue OpenSSL::SSL::SSLErrorWaitReadable, IO::WaitReadable, IO::WaitWritable
 
 				rescue IOError
