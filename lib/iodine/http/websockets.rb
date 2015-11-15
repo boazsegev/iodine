@@ -16,7 +16,7 @@ module Iodine
 			end
 			# handle broadcasts.
 			def on_broadcast data
-				@locker.synchronize { @handler.on_broadcast(data) if @handler.respond_to? :on_broadcast }
+				@locker.synchronize { @handler.on_broadcast(data) } if @handler.respond_to? :on_broadcast
 			end
 			# cleanup after closing.
 			def on_close
