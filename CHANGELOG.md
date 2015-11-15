@@ -10,7 +10,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Change log v.0.1.16
 
-**Performance**: Http/1 and Http/2 connections now share and recycle their write buffer when while reading the response body and writing it to the IO. This (hopefuly) prevents exess `malloc` calls by the interperter.
+**Performance**: Http/1 and Http/2 connections now share and recycle their write buffer when while reading the response body and writing it to the IO. This (hopefuly) prevents excess `malloc` calls by the interperter.
 
 ***
 
@@ -26,7 +26,7 @@ Change log v.0.1.14
 
 **Update**: the Response now supports `redirect_to` for both permanent and temporary redirection, with an optional `flash` cookie setup.
 
-**Performance**: the Protocol class now recycles the data string as a thread global socket buffer (different threads have different buffer strings), preventing excessice `malloc` called by the Ruby interpreter. To keep the `data` (in `on_message(data)`) past the `on_message` method's scope, make sure to duplicate it using `data.dup`, or the string's buffer will be recycled.
+**Performance**: the Protocol class now recycles the data string as a thread global socket buffer (different threads have different buffer strings), preventing excessive `malloc` calls by the Ruby interpreter. To keep the `data` (in `on_message(data)`) past the `on_message` method's scope, be sure to duplicate it using `data.dup`, or the string's buffer will be recycled.
 
 ***
 
