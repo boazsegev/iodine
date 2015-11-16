@@ -158,6 +158,16 @@ module Iodine
 				@request[:session] = @session = ::Iodine::Http::SessionManager.get(id)
 			end
 
+			# Returns the OLD session storage object when the connection was upgraded to SSL.
+			#
+			# By default and for security reasons, session id's created on a secure connection will NOT be available on a non secure connection (SSL/TLS).
+			# However, while upgrading to the encrypted connection, the non_encrypted session storage is still available for review.
+			#
+			# @return [nil, "Hash like storage"] returns the non-encypeted  connection's session storage object, if it exists. This method will NOT create a new sesssion if it didn't exist.
+			def session_old
+				::Iodine::Http::SessionManager.get(@request.cookies[::Iodine::Http.session_token.to_sym]) if @request.cookies[::Iodine::Http.session_token.to_sym]
+			end
+
 			# Returns a writable combined hash of the request's cookies and the response cookie values.
 			#
 			# Any cookies writen to this hash (`response.cookies[:name] = value` will be set using default values).
