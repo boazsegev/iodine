@@ -8,6 +8,20 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.17
+
+**Credit**: thanks you @frozenfoxx for going through the readme and fixing my broken grammer.
+
+**Fix**: fixed an issue where multiple Pings might get sent. Now pings are exclusive (run within their own Mutex).
+
+**Fix**: Http/2 is back... sorry about breaking it in the 0.1.16 version. When I updated the write buffer I forgot to write the status of the response, causing a protocol error related with the headers. It's now working again.
+
+**Update**: by default and for security reasons, session id's created through a secure connection (SSL) will NOT be available on a non secure connection (SSL/TLS). However, while upgrading to the encrypted connection, the non_encrypted session storage is now available for review using the `Response#session_old` method.
+
+* Remember that sessions are never really safe, no matter how much we guard them. Session hijacking is far too easy. This is why Iodine stores the session data locally and not within the session cookie. This is also why you should review any authentication before performing sensitive tasks based on session stored authentication data.
+
+***
+
 Change log v.0.1.16
 
 **Performance**: Http/1 and Http/2 connections now share and recycle their write buffer when while reading the response body and writing it to the IO. This (hopefuly) prevents excess `malloc` calls by the interperter.
