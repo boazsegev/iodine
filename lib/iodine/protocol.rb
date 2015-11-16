@@ -166,6 +166,7 @@ module Iodine
 		def initialize io, options = nil
 			@timeout ||= nil
 			@send_locker = Mutex.new
+			@ping_locker = Mutex.new
 			@locker = Mutex.new
 			@io = io
 			@options = options
@@ -193,11 +194,13 @@ module Iodine
 		end
 
 
-		# This method is used by Iodine to ask whether a timeout has occured.
+		# This method is used by Iodine invoke a timeout review.
 		#
 		# Normally you won't need to override this method. See {#ping}
 		def timeout? time
-			ping if @timeout && !@send_locker.locked? && ( (time - @last_active) > @timeout )
+			return unless @ping_locker.try_lock
+			touch && ping if @timeout && !@send_locker.locked? && ( (time - @last_active) > @timeout )
+			@ping_locker.unlock
 		end
 
 		protected
