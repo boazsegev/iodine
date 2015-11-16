@@ -82,9 +82,7 @@ module Iodine
 				send_headers response, request
 				return body && body.close if request.head?
 				if body
-					until body.eof?
-						response.bytes_written += emit_payload(body.read(@settings[SETTINGS_MAX_FRAME_SIZE], Thread.current[:write_buffer]), request[:sid], 0, ((finish && body.eof?) ? 1 : 0))
-					end
+					response.bytes_written += emit_payload body, request[:sid], 0,(finish ? 1 : 0)
 					body.close
 				elsif finish
 					emit_payload(''.freeze, request[:sid], 0, 1)
@@ -93,7 +91,7 @@ module Iodine
 			end
 
 			def ping
-				@frame_locker.synchronize { emit_frame "pniodine", 0, 6 }
+				@frame_locker.synchronize { emit_frame "pniodine".freeze, 0, 6 }
 			end
 
 			def push request
@@ -102,7 +100,7 @@ module Iodine
 				# emit push promise
 				emit_payload @hpack.encode(path: request[:path], method: request[:method], scheme: request[:scheme], authority: request[:authority]), (request[:sid] = (@last_push += 2)), 5, 4
 				# queue for app dispatch
-				Iodine.run request, &::Iodine::Http::Http2.dispatch
+				Iodine.run( request, &::Iodine::Http::Http2.dispatch)
 			end
 
 			def go_away error_code
@@ -119,8 +117,8 @@ module Iodine
 
 			# clear text handshake
 			def self.handshake request, io, data
-				return false unless request['upgrade'] =~ /h2c/ && request['http2-settings']
-				io.write "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n"
+				return false unless request['upgrade'.freeze] =~ /h2c/.freeze && request['http2-settings'.freeze]
+				io.write "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n".freeze
 				http_2 = self.new(io, request)
 				unless data.eof?
 					http_2.on_message data.read
@@ -150,12 +148,12 @@ module Iodine
 				return false if response.headers.frozen?
 				headers = response.headers
 				# headers[:status] = response.status.to_s
-				headers['set-cookie'] = response.extract_cookies
+				headers['set-cookie'.freeze] = response.extract_cookies
 				headers.freeze
-				(out = (Thread.current[:headers_buffer] ||= String.new)).clear
-				out <<  @hpack.encode(headers)
-				emit_payload (out), request[:sid], 1, (request.head? ? 1 : 0)
-				out.clear
+				(Thread.current[:headers_buffer] ||= String.new).clear
+				Thread.current[:headers_buffer] <<  @hpack.encode(status: response.status)
+				Thread.current[:headers_buffer] <<  @hpack.encode(headers)
+				emit_payload Thread.current[:headers_buffer], request[:sid], 1, (request.head? ? 1 : 0)
 				return true
 			end
 
@@ -175,17 +173,17 @@ module Iodine
 				max_frame_size = 131_072 if max_frame_size > 131_072
 				return @frame_locker.synchronize { emit_frame(payload, sid, type, ( (type == 0x1 || type == 0x5) ? (flags | 0x4) : flags ) ) } if payload.bytesize <= max_frame_size
 				sent = 0
-				payload = StringIO.new payload
+				payload = StringIO.new payload unless payload.respond_to? :read
 				if type == 0x1 || type == 0x5
 					@frame_locker.synchronize do
-						sent += emit_frame(payload.read(max_frame_size), sid, 0x1, flags & 254)
-						sent += emit_frame(payload.read(max_frame_size), sid, 0x9, 0) while payload.size - payload.pos > max_frame_size
-						sent += emit_frame(payload.read(max_frame_size), sid, 0x9, (0x4 | (flags & 0x1)) )
+						sent += emit_frame(payload.read(max_frame_size, Thread.current[:write_buffer]), sid, 0x1, flags & 254)
+						sent += emit_frame(payload.read(max_frame_size, Thread.current[:write_buffer]), sid, 0x9, 0) while payload.size - payload.pos > max_frame_size
+						sent += emit_frame(payload.read(max_frame_size, Thread.current[:write_buffer]), sid, 0x9, (0x4 | (flags & 0x1)) )
 					end
 					return sent
 				end
-				sent += @frame_locker.synchronize { emit_frame(payload.read(max_frame_size), sid, type, (flags & 254)) } while payload.size - payload.pos > max_frame_size
-				sent += @frame_locker.synchronize { emit_frame(payload.read(max_frame_size), sid, type, flags) }
+				sent += @frame_locker.synchronize { emit_frame(payload.read(max_frame_size, Thread.current[:write_buffer]), sid, type, (flags & 254)) } while payload.size - payload.pos > max_frame_size
+				sent += @frame_locker.synchronize { emit_frame(payload.read(max_frame_size, Thread.current[:write_buffer]), sid, type, flags) }
 			end
 
 			def parse_preface data
