@@ -12,7 +12,7 @@ Change log v.0.1.17
 
 **Credit**: thanks you @frozenfoxx for going through the readme and fixing my broken grammer.
 
-**Fix**: fixed an issue where multiple Pings might get sent. Now pings are exclusive (run within their own Mutex).
+**Fix**: fixed an issue where multiple Pings might get sent when pinging takes time. Now pings are exclusive (run within their own Mutex).
 
 **Fix**: Http/2 is back... sorry about breaking it in the 0.1.16 version. When I updated the write buffer I forgot to write the status of the response, causing a protocol error related with the headers. It's now working again.
 
