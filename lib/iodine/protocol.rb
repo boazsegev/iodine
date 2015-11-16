@@ -199,8 +199,11 @@ module Iodine
 		# Normally you won't need to override this method. See {#ping}
 		def timeout? time
 			return unless @ping_locker.try_lock
-			touch && ping if @timeout && !@send_locker.locked? && ( (time - @last_active) > @timeout )
-			@ping_locker.unlock
+			begin
+				touch && ping if @timeout && !@send_locker.locked? && ( (time - @last_active) > @timeout )
+			ensure
+				@ping_locker.unlock	
+			end
 		end
 
 		protected
