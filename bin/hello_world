@@ -59,6 +59,7 @@ Process.fork do
       res.stream_async { sleep 2; res << "I was sleeping..."}
       next
     end
+    res << "Old session visits: #{res.session_old[:count]}\n\n" if res.session_old
 		res.session[:count] ||= 0
 		res.session[:count] += 1
     res['content-type'] = 'text/plain'
