@@ -111,6 +111,11 @@ module Iodine
 				self[:scheme]
 			end
 
+			# the host's name (without the port)
+			def host_name
+				self[:host_name]
+			end
+
 			# @return [true, false] returns true if the requested was an SSL protocol (true also if the connection is clear-text behind an SSL Proxy, such as with some PaaS providers).
 			def ssl?
 				self[:io].ssl? || self[:scheme] == 'https'.freeze || self[:scheme] == 'wss'.freeze

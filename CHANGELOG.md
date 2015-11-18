@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.18
+
+**Update**: The request now has the shortcut method `Request#host_name` for accessing the host's name (without the port part of the string).
+
+***
+
 Change log v.0.1.17
 
 **Credit**: thanks you @frozenfoxx for going through the readme and fixing my broken grammer.
