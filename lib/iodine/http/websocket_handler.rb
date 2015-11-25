@@ -11,7 +11,18 @@ module Iodine
 			attr_reader :request 
 			# The Http response, also allowing for websocket data
 			attr_reader :response
-			# this is called while still communicating over Http (during the upgrade process).
+			# this shoulw be called while still communicating over Http,
+			# as part of the "upgrade" process. The new object should be returned by the {Iodine::Http#on_websocket} handler.
+			#
+			# i.e.:
+			#
+			#           Iodine::Http.on_websocket do |request, response|
+			#                  next if request.path =~ /refuse/
+			#                  Iodine::Http::WebsocketHandler.new request, response
+			#           end
+			#
+			#
+			# see also the {WebsocketHandler.call} method for an example.
 			def initialize request, response
 				@request = request
 				@response = response
@@ -37,7 +48,7 @@ module Iodine
 			def on_shutdown
 			end
 
-			# This method allows the class itself to act as the Websocket handler, usable with:
+			# This method allows the class itself to act as the global Websocket handler, accepting websocket connections. Example use:
 			#
 			#           # Iodine::Http::WebsocketHandler's default implementation does nothing.
 			#           Iodine::Http.on_websocket Iodine::Http::WebsocketHandler
