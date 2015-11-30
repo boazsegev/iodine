@@ -48,7 +48,7 @@ module Iodine
 		# the value is usually `nil` unless the protocol instance was created by a different protocol while "upgrading" from one protocol to the next.
 		attr_reader :options
 		# The protocol's Mutex locker. It should be locked whenever your code is runing, unless you are
-		# writing asynchronouse code.
+		# writing asynchronous code.
 		#
 		# Use with care (or, better yet, don't use).
 		attr_reader :locker
