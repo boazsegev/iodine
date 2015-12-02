@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.19
+
+**Update**: added the `go_away` method to the Http/1 peorotocol, for seamless connection closeing across Http/2, Http/1 and Websockets.
+
+***
+
 Change log v.0.1.18
 
 **Update**: The request now has the shortcut method `Request#host_name` for accessing the host's name (without the port part of the string).

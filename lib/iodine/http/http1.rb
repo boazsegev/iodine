@@ -145,6 +145,11 @@ module Iodine
 				true
 			end
 
+			def go_away error_code
+				return false if @io.closed?
+				close
+			end
+
 			protected
 
 			HTTP_METHODS = %w{GET HEAD POST PUT DELETE TRACE OPTIONS CONNECT PATCH}
