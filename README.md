@@ -262,6 +262,10 @@ For instance, in Iodine's implementation for the Websocket protocol: Websocket m
 
 The exception to the rule is the `ping` implementation. Your protocol's `ping` method will execute in parallel with other parts of your protocol's code. Pinging is a machanism that is often time sensitive and is required to maintain an open connection. For this reason, if your code is working hard on a long task, a ping will still occure automatically in the background and offset any connection timeout. 
 
+If your code is short and efficient (no blocking tasks), it is best to run Iodine in a single threaded mode (you get better performance AND safer code, as long as you don't block):
+
+      Iodine.threads = 1
+
 ## Contributing
 
 Bug reports and pull requests are welcome on GitHub at https://github.com/boazsegev/iodine.
