@@ -109,8 +109,8 @@ module Iodine
 					next
 				end
 				on_shutdown do
-					log "Stopping to listen on port #{@port} and shutting down.\n"
-					@server.close unless @server.closed?
+					@server.close unless @server.nil? || @server.closed?
+					log "Stopped listening to port #{@port}.\n"
 				end
 				::Iodine::Base::Listener.accept(@server, false)
 				log "Iodine #{VERSION} is listening on port #{@port}#{ ' to SSL/TLS connections.' if @ssl}\n"
