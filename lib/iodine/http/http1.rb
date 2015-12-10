@@ -82,8 +82,8 @@ module Iodine
 								request[:body_complete] = true
 							end
 						end
-						if request[:body] && request[:body].size > ::Iodine::Http.max_http_buffer
-							Iodine.warn("Http1 message body too big, closing connection (Iodine::Http.max_http_buffer == #{::Iodine::Http.max_http_buffer} bytes) - #{request[:body].size} bytes.")
+						if request[:body] && request[:body].size > ::Iodine::Http.max_body_size
+							Iodine.warn("Http1 message body too big, closing connection (Iodine::Http.max_body_size == #{::Iodine::Http.max_body_size} bytes) - #{request[:body].size} bytes.")
 							request.delete(:body).tap {|f| f.close unless f.closed? } rescue false
 							write "HTTP/1.0 413 Payload Too Large\r\ncontent-length: 17\r\n\r\nPayload Too Large".freeze
 							return close

@@ -100,13 +100,23 @@ module Iodine
 			@session_token
 		end
 
-		# Sets the maximum bytes allowed for an HTTP's body request (file upload data). Defaults to the command line `-limit` argument, or ~0.25GB.
+		# `max_http_buffer` is deprecated. Use `max_body_size` instead.
 		def max_http_buffer= size
-			@max_http_buffer = size
+			Iodine.warn "`max_http_buffer` is deprecated. Use `max_body_size` instead."
+			max_body_size = size
 		end
-		# Gets the maximum bytes allowed for an HTTP's body request (file upload data). Defaults to the command line `-limit` argument, or ~0.25GB.
+		# `max_http_buffer` is deprecated. Use `max_body_size` instead.
 		def max_http_buffer
-			@max_http_buffer
+			Iodine.warn "`max_http_buffer` is deprecated. Use `max_body_size` instead."
+			@max_body_size
+		end
+		# Sets the maximum bytes allowed for an HTTP's body request (file upload data). Defaults to the command line `-limit` argument, or ~0.5GB.
+		def max_body_size= size
+			@max_body_size = size
+		end
+		# Gets the maximum bytes allowed for an HTTP's body request (file upload data). Defaults to the command line `-limit` argument, or ~0.5GB.
+		def max_body_size
+			@max_body_size
 		end
 
 		# Sets whether Iodine will allow connections to the experiemntal Http2 protocol. Defaults to false unless the `http2` command line flag is present.
@@ -159,7 +169,7 @@ module Iodine
 		protected
 
 		@http2 = (ARGV.index('http2') && true)
-		@max_http_buffer = ((ARGV.index('-limit') && ARGV[ARGV.index('-limit') + 1]) || 536_870_912).to_i
+		@max_body_size = ((ARGV.index('-limit') && ARGV[ARGV.index('-limit') + 1]) || 536_870_912).to_i
 
 		@websocket_app = @http_app = NOT_IMPLEMENTED = Proc.new { |i,o| false }
 		@session_token = "#{File.basename($0, '.*')}_uuid"

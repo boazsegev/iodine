@@ -337,8 +337,8 @@ module Iodine
 				(frame[:stream][:body] ||= Tempfile.new('iodine'.freeze, :encoding => 'binary'.freeze) ) << frame[:body]
 
 				# check request size
-				if frame[:stream][:body].size > ::Iodine::Http.max_http_buffer
-					Iodine.warn("Http2 payload (message size) too big (Iodine::Http.max_http_buffer == #{::Iodine::Http.max_http_buffer} bytes) - #{frame[:stream][:body].size} bytes.")
+				if frame[:stream][:body].size > ::Iodine::Http.max_body_size
+					Iodine.warn("Http2 payload (message size) too big (Iodine::Http.max_body_size == #{::Iodine::Http.max_body_size} bytes) - #{frame[:stream][:body].size} bytes.")
 					return connection_error( ENHANCE_YOUR_CALM )
 				end
 

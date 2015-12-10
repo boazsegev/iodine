@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.20
+
+**API Changes**: `Iodine::Http.max_http_buffer` was replaced with `Iodine::Http.max_body_size`, for a better understanding of the method's result.
+
+***
+
 Change log v.0.1.19
 
 **Update**: added the `go_away` method to the Http/1 peorotocol, for seamless connection closeing across Http/2, Http/1 and Websockets.
