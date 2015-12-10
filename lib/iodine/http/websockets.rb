@@ -177,7 +177,7 @@ module Iodine
 			# Although memory will be allocated for the latest TCP/IP frame,
 			# this allows the websocket to disconnect if the incoming expected message size exceeds the allowed maximum size.
 			#
-			# If the sessage size limit is exceeded, the disconnection will be immidiate as an attack will be assumed. The protocol's normal disconnect sequesnce will be discarded.
+			# If the message size limit is exceeded, the disconnection will be immidiate as an attack will be assumed. The protocol's normal disconnect sequesnce will be discarded.
 			def self.message_size_limit=val
 				@message_size_limit = val
 			end
