@@ -23,7 +23,7 @@ module Iodine
 							end
 							next if l.empty?
 							request[:method], request[:query], request[:version] = l.split(/[\s]+/.freeze, 3)
-							return (Iodine.warn('Htt1 Protocol Error, closing connection.'.freeze) && close) unless request[:method] =~ HTTP_METHODS_REGEXP
+							return (Iodine.warn('Http1 Protocol Error, closing connection.'.freeze, l, request) && close) unless request[:method] =~ HTTP_METHODS_REGEXP
 							request[:version] = (request[:version] || '1.1'.freeze).match(/[\d\.]+/.freeze)[0]
 							request[:time_recieved] = Time.now
 						end

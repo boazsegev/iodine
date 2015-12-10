@@ -10,6 +10,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Change log v.0.1.20
 
+**Update/Fix**: Updated the `x-forwarded-for` header recognition, to accommodate an Array formatting sometimes used (`["ip1", "ip2", ...]`).
+
+**Update**: native support for the `Forwarded` header Http.
+
 **API Changes**: `Iodine::Http.max_http_buffer` was replaced with `Iodine::Http.max_body_size`, for a better understanding of the method's result.
 
 ***

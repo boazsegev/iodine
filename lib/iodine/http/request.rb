@@ -180,12 +180,12 @@ module Iodine
 			def patch?
 				self[:method] == HTTP_PATCH
 			end
-			HTTP_CTYPE = 'content-type'.freeze; HTTP_JSON = /application\/json/
+			HTTP_CTYPE = 'content-type'.freeze; HTTP_JSON = /application\/json/.freeze
 			# returns true if the request is of type JSON.
 			def json?
 				self[HTTP_CTYPE] =~ HTTP_JSON
 			end
-			HTTP_XML = /text\/xml/
+			HTTP_XML = /text\/xml/.freeze
 			# returns true if the request is of type XML.
 			def xml?
 				self[HTTP_CTYPE].match HTTP_XML
@@ -214,13 +214,20 @@ module Iodine
 
 				request.delete :headers_size
 
-				request[:client_ip] = request['x-forwarded-for'.freeze].to_s.split(/,[\s]?/)[0] || (request[:io].io.to_io.remote_address.ip_address) rescue 'unknown IP'.freeze
-				request[:version] ||= '1'
+				# 2014 RFC 7239 Forwarded: for=192.0.2.60; proto=http; by=203.0.113.43
+				if tmp = request['forwarded'.freeze]
+					tmp = tmp.join(';'.freeze) if tmp.is_a?(Array)
+					tmp.match(/proto=([^\s;]+)/i.freeze).tap {|m| request[:scheme] = m[1].downcase if m } unless request[:scheme]
+					tmp.match(/for=[\[]?[\"]?([^\s;\",]+)/i.freeze).tap {|m| request[:client_ip] = m[1] if m } unless request[:client_ip]
+				end
+
+				request[:client_ip] ||= (request['x-forwarded-for'.freeze].to_s.match(/[^\s\[\"\,]+/.freeze) || request[:io].io.to_io.remote_address.ip_address).to_s rescue 'unknown'.freeze
+				request[:version] ||= '1'.freeze
 
 				request[:scheme] ||= request['x-forwarded-proto'.freeze] ? request['x-forwarded-proto'.freeze].downcase : ( request[:io].ssl? ? 'https'.freeze : 'http'.freeze)
 				tmp = (request['host'.freeze] || request[:authority] || ''.freeze).split(':'.freeze)
 				request[:host_name] = tmp[0]
-				request[:port] = tmp[1] || nil
+				request[:port] = tmp[1]
 
 				tmp = (request[:query] ||= request[:path] ).split('?'.freeze, 2)
 				request[:path] = tmp[0].chomp('/'.freeze)
@@ -266,7 +273,7 @@ module Iodine
 
 			# encodes URL data.
 			def self.encode_url str
-				(str.to_s.gsub(/[^a-z0-9\*\.\_\-]/i) {|m| '%%%02x'.freeze % m.ord }).force_encoding(::Encoding::ASCII_8BIT)
+				(str.to_s.gsub(/[^a-z0-9\*\.\_\-]/i.freeze) {|m| '%%%02x'.freeze % m.ord }).force_encoding(::Encoding::ASCII_8BIT)
 			end
 
 			# Adds paramaters to a Hash object, according to the Iodine's server conventions.
@@ -284,7 +291,7 @@ module Iodine
 						c = (h[n] ||= {})
 					end
 					n = a.last
-					n.chomp!(']'); n.strip!;
+					n.chomp!(']'.freeze); n.strip!;
 					n = n.empty? ? nil : ( (n.to_i.to_s == n) ?  n.to_i : n.to_sym )
 					if n
 						if c[n]
@@ -354,7 +361,7 @@ module Iodine
 				request[:body].rewind
 				case request['content-type'.freeze].to_s
 				when /x-www-form-urlencoded/.freeze
-					extract_params request[:body].read.split(/[&;]/), request[:params] #, :form # :uri
+					extract_params request[:body].read.split(/[&;]/.freeze), request[:params] #, :form # :uri
 				when /multipart\/form-data/.freeze
 					read_multipart request, request
 				when /text\/xml/.freeze
@@ -387,12 +394,12 @@ module Iodine
 				boundary_length = nil
 				true until ( (line = body.gets) ) && line =~ /\A--(#{boundary.join '|'})(--)?[\r]?\n/
 				until body.eof?
-					return if line =~ /--[\r]?\n/
+					return if line =~ /--[\r]?\n/.freeze
 					return boundary.pop if boundary.count > 1 && line.match(/--(#{boundary.join '|'})/)[1] != boundary.last
 					boundary_length = line.bytesize
-					line = body.gets until line.nil? || line =~ /\:/
-					until line.nil? || line =~ /^[\r]?\n/
-						tmp = line.strip.split ':', 2
+					line = body.gets until line.nil? || line =~ /\:/.freeze
+					until line.nil? || line =~ /^[\r]?\n/.freeze
+						tmp = line.strip.split ':'.freeze, 2
 						return Iodine.error "Http multipart parsing error (multipart header data malformed): #{line}" unless tmp && tmp.count == 2
 						tmp[0].strip!; tmp[0].downcase!; tmp[1].strip!; 
 						part_headers[tmp[0]] = tmp[1]
@@ -403,7 +410,7 @@ module Iodine
 						Iodine.error "Wrong multipart format with headers: #{part_headers}"
 						return
 					end
-					extract_header part_headers['content-disposition'.freeze].split(/[;,][\s]?/), part_headers
+					extract_header part_headers['content-disposition'.freeze].split(/[;,][\s]?/.freeze), part_headers
 					if name_prefix.empty?
 						name = part_headers[:name][1..-2]
 					else
@@ -420,7 +427,7 @@ module Iodine
 					end_part_pos += 1 unless body.getc =~ /[\r\n]/.freeze
 					end_part_pos += 1 unless body.getc =~ /[\r\n\-]/.freeze
 					if part_headers['content-type'.freeze]
-						if part_headers['content-type'.freeze] =~ /multipart/i
+						if part_headers['content-type'.freeze] =~ /multipart/i.freeze
 							body.pos = start_part_pos
 							read_multipart request, part_headers, boundary, name_prefix
 						else
@@ -428,13 +435,13 @@ module Iodine
 							add_param_to_hash "#{name}[type]", make_utf8!(part_headers['content-type'.freeze]), request[:params]
 							part_headers.each {|k,v|  add_param_to_hash "#{name}[#{k.to_s}]", make_utf8!(v[0] == '"' ? v[1..-2].to_s : v), request[:params] if v}
 
-							tmp = Tempfile.new 'upload', encoding: 'binary'
+							tmp = Tempfile.new 'upload'.freeze, encoding: 'binary'.freeze
 							body.pos = start_part_pos
 							((end_part_pos - start_part_pos)/65_536).to_i.times {tmp << body.read(65_536)} 
 							tmp << body.read(end_part_pos - body.pos)
 							add_param_to_hash "#{name}[size]", tmp.size, request[:params]
 							add_param_to_hash "#{name}[file]", tmp, request[:params] do |hash, key|
-								if key == :data || key == "data" && hash.has_key?(:file) && hash[:file].is_a?(::Tempfile)
+								if key == :data || key == "data".freeze && hash.has_key?(:file) && hash[:file].is_a?(::Tempfile)
 									hash[:file].rewind
 									(hash[:data] = hash[:file].read)
 								end
