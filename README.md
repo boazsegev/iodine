@@ -9,6 +9,8 @@ In fact, it's so fun to write network protocols that mix and match together, tha
 
 To use Iodine, you just set up your tasks - including a single server, if you want one. Iodine will start running once your application is finished and it won't stop runing until all the scheduled tasks have completed.
 
+Iodine is used by [the Plezi Ruby framework for real-time applications](http://www.plezi.io).
+
 ## Installation
 
 Add this line to your application's Gemfile:
