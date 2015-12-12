@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.1.21
+
+**Optimization**: Minor optimization - creates 1 less Time object per request (The logging still creates a Time object unless disabled using `Iodine.logger = nil`)
+
+***
+
 Change log v.0.1.20
 
 **Update/Fix**: Updated the `x-forwarded-for` header recognition, to accommodate an Array formatting sometimes used (`["ip1", "ip2", ...]`).

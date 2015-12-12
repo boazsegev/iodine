@@ -43,9 +43,4 @@ module Iodine
 		raw_text
 	end
 
-
-	protected
-
-	@logger = Logger.new(STDOUT)
-
 end
