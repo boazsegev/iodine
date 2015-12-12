@@ -14,7 +14,7 @@ Change log v.0.1.21
 
 **Security**: Http/1 now reviews the Body's size as it grows (similar to Http/2), mitigating any potential attacks related to the size of the data sent.
 
-**Logs**: Log the number of threads utilized when running in server mode.
+**Logs**: Log the number of threads utilized when starting up the server.
 
 ***
 
