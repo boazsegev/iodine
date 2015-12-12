@@ -139,9 +139,10 @@ module Iodine
 				request = response.request
 				return if Iodine.logger.nil? || request[:no_log]
 				t_n = Time.now
-				(Thread.current[:log_buffer] ||= String.new).clear
-				Thread.current[:log_buffer] << "#{request[:client_ip]} [#{t_n.utc}] #{request[:method]} #{request[:original_path]} #{request[:scheme]}\/2 #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n"
-				Iodine.log Thread.current[:log_buffer]
+				# (Thread.current[:log_buffer] ||= String.new).clear
+				# Thread.current[:log_buffer] << "#{request[:client_ip]} [#{t_n.utc}] #{request[:method]} #{request[:original_path]} #{request[:scheme]}\/2 #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n"
+				# Iodine.log Thread.current[:log_buffer]
+				Iodine.log("#{request[:client_ip]} [#{t_n.utc}] #{request[:method]} #{request[:original_path]} #{request[:scheme]}\/2 #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n").clear
 			end
 
 			def send_headers response, request

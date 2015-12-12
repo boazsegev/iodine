@@ -4,7 +4,6 @@ module Iodine
 			def on_open
 				set_timeout 1
 				@refuse_requests = false
-				@bytes_sent = 0
 				@parser = {}
 			end
 			def on_message data
@@ -28,12 +27,21 @@ module Iodine
 							request[:time_recieved] = Iodine.time
 						end
 						until request[:headers_complete] || (l = data.gets).nil?
+							# if l.bytesize > 16_384
+							# 	write "HTTP/1.0 413 Entity Too Large\r\ncontent-length: 16\r\n\r\nEntity Too Large".freeze
+							# 	Iodine.warn "Http/1 Header data too large, closing connection.".freeze
+							# 	return close
+							# end
 							if l.include? ':'.freeze
 								# n = l.slice!(0, l.index(':')); l.slice! 0
 								# n.strip! ; n.downcase!; n.freeze
 								# request[n] ? (request[n].is_a?(Array) ? (request[n] << l) : request[n] = [request[n], l ]) : (request[n] = l)
 								request[:headers_size] ||= 0
 								request[:headers_size] += l.bytesize
+								if request.length > 2096 || request[:headers_size] > 262_144
+									write "HTTP/1.0 431 Request Header Fields Too Large\r\ncontent-length: 31\r\n\r\nRequest Header Fields Too Large".freeze
+									return (Iodine.warn('Http1 header overloading, closing connection.'.freeze) && close)
+								end
 								l = l.strip.split(/:[\s]?/.freeze, 2)
 								l[0].strip! ; l[0].downcase!;
 								request[l[0]] ? (request[l[0]].is_a?(Array) ? (request[l[0]] << l[1]) : request[l[0]] = [request[l[0]], l[1] ]) : (request[l[0]] = l[1])
@@ -44,14 +52,11 @@ module Iodine
 								Iodine.warn 'Protocol Error, closing connection.'.freeze
 								return close
 							end
-							if request.length > 2096 || request[:headers_size] > 262_144
-								write "HTTP/1.0 431 Request Header Fields Too Large\r\ncontent-length: 31\r\n\r\nRequest Header Fields Too Large".freeze
-								return (Iodine.warn('Http1 header overloading, closing connection.'.freeze) && close)
-							end
 						end
-						until request[:body_complete] && request[:headers_complete]
-							if request['transfer-coding'.freeze] == 'chunked'.freeze
-								# ad mid chunk logic here
+						next unless request[:headers_complete]
+						if request['transfer-coding'.freeze] == 'chunked'.freeze
+							until request[:body_complete]
+								# add mid chunk logic here
 								if @parser[:length].to_i == 0
 									chunk = data.gets
 									return false unless chunk
@@ -66,27 +71,28 @@ module Iodine
 								request[:body] << chunk
 								@parser[:act_length] += chunk.bytesize
 								(@parser[:act_length] = @parser[:length] = 0) && (data.gets) if @parser[:act_length] >= @parser[:length]
-							elsif request['content-length'.freeze] && request['content-length'.freeze].to_i != 0
+								return if bad_body_size?
+							end
+						elsif request['content-length'.freeze] && request['content-length'.freeze].to_i != 0
+							until request[:body_complete]
 								request[:body] ||= Tempfile.new('iodine'.freeze, :encoding => 'binary'.freeze)
 								packet = data.read(request['content-length'.freeze].to_i - request[:body].size)
 								return false unless packet
 								request[:body] << packet
+								return if bad_body_size?
 								request[:body_complete] = true if request['content-length'.freeze].to_i - request[:body].size <= 0
-							elsif request['content-type'.freeze]
+							end
+						elsif request['content-type'.freeze]
+							until request[:body_complete]
 								Iodine.warn 'Body type protocol error.'.freeze unless request[:body]
 								line = data.gets
 								return false unless line
 								(request[:body] ||= Tempfile.new('iodine'.freeze, :encoding => 'binary'.freeze) ) << line
+								return if bad_body_size?
 								request[:body_complete] = true if line =~ EOHEADERS
-							else
-								request[:body_complete] = true
 							end
-						end
-						if request[:body] && request[:body].size > ::Iodine::Http.max_body_size
-							Iodine.warn("Http1 message body too big, closing connection (Iodine::Http.max_body_size == #{::Iodine::Http.max_body_size} bytes) - #{request[:body].size} bytes.")
-							request.delete(:body).tap {|f| f.close unless f.closed? } rescue false
-							write "HTTP/1.0 413 Payload Too Large\r\ncontent-length: 17\r\n\r\nPayload Too Large".freeze
-							return close
+						else
+							request[:body_complete] = true
 						end
 						(@request = ::Iodine::Http::Request.new(self)) && ( (::Iodine::Http.http2 && ::Iodine::Http::Http2.handshake(request, self, data)) || dispatch(request, data) ) if request.delete :body_complete
 					end
@@ -219,13 +225,24 @@ module Iodine
 			end
 
 			def log_finished response
-				@bytes_sent = 0
 				request = response.request
 				return if Iodine.logger.nil? || request[:no_log]
 				t_n = Time.now
-				(Thread.current[:log_buffer] ||= String.new).clear
-				Thread.current[:log_buffer] << "#{request[:client_ip]} [#{t_n.utc}] \"#{request[:method]} #{request[:original_path]} #{request[:scheme]}\/#{request[:version]}\" #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n"
-				Iodine.log(Thread.current[:log_buffer])
+				# (Thread.current[:log_buffer] ||= String.new).clear
+				# Thread.current[:log_buffer] << "#{request[:client_ip]} [#{t_n.utc}] \"#{request[:method]} #{request[:original_path]} #{request[:scheme]}\/#{request[:version]}\" #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n"
+				# Iodine.log(Thread.current[:log_buffer])
+				Iodine.log("#{request[:client_ip]} [#{t_n.utc}] \"#{request[:method]} #{request[:original_path]} #{request[:scheme]}\/#{request[:version]}\" #{response.status} #{response.bytes_written.to_s} #{((t_n - request[:time_recieved])*1000).round(2)}ms\n").clear
+			end
+
+			def bad_body_size?
+				request = @request
+				if request[:body] && request[:body].size > ::Iodine::Http.max_body_size
+					Iodine.warn("Http1 message body too big, closing connection (Iodine::Http.max_body_size == #{::Iodine::Http.max_body_size} bytes) - #{request[:body].size} bytes.")
+					request.delete(:body).tap {|f| f.close unless f.closed? } rescue false
+					write "HTTP/1.0 413 Payload Too Large\r\ncontent-length: 17\r\n\r\nPayload Too Large".freeze
+					return true
+				end
+				false
 			end
 		end
 	end

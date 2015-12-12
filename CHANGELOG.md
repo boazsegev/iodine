@@ -10,7 +10,11 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Change log v.0.1.21
 
-**Optimization**: Minor optimization - creates 1 less Time object per request (The logging still creates a Time object unless disabled using `Iodine.logger = nil`)
+**Optimization**: Minor optimizations. i.e. - creates 1 less Time object per request (The logging still creates a Time object unless disabled using `Iodine.logger = nil`).
+
+**Security**: Http/1 now reviews the Body's size as it grows (similar to Http/2), mitigating any potential attacks related to the size of the data sent.
+
+**Logs**: Log the number of threads utilized when running in server mode.
 
 ***
 

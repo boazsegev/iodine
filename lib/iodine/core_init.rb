@@ -103,7 +103,7 @@ module Iodine
 					@server = ::TCPServer.new(@bind, @port)
 				rescue => e
 					fatal e.message
-					fatal "Running existing tasks and exiting."
+					fatal "Running existing tasks with #{@thread_count} thread(s) and exiting."
 					@queue << @reactor
 					Process.kill("INT", 0)
 					next
@@ -113,7 +113,7 @@ module Iodine
 					log "Stopped listening to port #{@port}.\n"
 				end
 				::Iodine::Base::Listener.accept(@server, false)
-				log "Iodine #{VERSION} is listening on port #{@port}#{ ' to SSL/TLS connections.' if @ssl}\n"
+				log "Iodine #{VERSION} is listening on port #{@port}#{ ' (SSL/TLS)' if @ssl} with #{@thread_count} thread(s).\n"
 				if @spawn_count && @spawn_count.to_i > 1 && Process.respond_to?(:fork)
 					log "Server will run using #{@spawn_count.to_i} processes - Spawning #{@spawn_count.to_i - 1 } more processes.\n"
 					(@spawn_count.to_i - 1).times do
@@ -129,7 +129,7 @@ module Iodine
 				end
 				log "Press ^C to stop the server.\n"
 			else
-				log "#{self == Iodine ? 'Iodine' : "#{self.name} (Iodine)"} #{VERSION} is running.\n"
+				log "#{self == Iodine ? 'Iodine' : "#{self.name} (Iodine)"} #{VERSION} is running with #{@thread_count} thread(s).\n"
 				log "Press ^C to stop the cycling.\n"
 			end
 			on_shutdown do
