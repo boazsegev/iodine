@@ -315,7 +315,7 @@ module Iodine
 
 				frame[:stream].update @hpack.decode(@header_buffer) # this is where HPACK comes in
 				return (Iodine.warn('Http2 header overloading, closing connection.') && connection_error( ENHANCE_YOUR_CALM ) ) if frame[:stream].length > 2096
-				frame[:stream][:time_recieved] ||= Time.now
+				frame[:stream][:time_recieved] ||= Iodine.time
 				frame[:stream][:version] ||= '2'.freeze
 
 				process_request(@open_streams.delete frame[:sid]) if @header_end_stream
