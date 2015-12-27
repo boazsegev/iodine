@@ -21,7 +21,10 @@ require "iodine/http"
 
 # Iodine.processes = 4
 
-Iodine::Http.on_http { "Hello World!" }
+HELLO = "Hello World!"
+Iodine::Http.on_http { HELLO }
+
+Iodine.logger = nil
 
 
 class WSChatServer < Iodine::Http::WebsocketHandler
