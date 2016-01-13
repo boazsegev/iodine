@@ -11,6 +11,21 @@ To use Iodine, you just set up your tasks - including a single server, if you wa
 
 Iodine is used by [the Plezi Ruby framework for real-time applications](http://www.plezi.io).
 
+## Notice! and limitations...
+
+Iodine 0.1.x is implemented in Ruby, using a `select` system call.
+
+`select` is limited to 1024 open connections! after 1024 connection, `select` could cause "udefined behavior", including a possible "crash"... sometimes it's not important... but it should be.
+
+Hence, a move to kqueue/epoll is required.
+
+Iodine 0.2.x will include (hopefully), a kpoll / epoll implementation for Linux/BSD server environments, such as Heroku dynos (running unbuto 14.
+
+However, it is unlikely that Iodine's beautiful API could survive this shift.
+
+The 0.1.x API should be considered deprecated and a new API is under development (assuming I will manage to link some decent C code to Ruby).
+
+
 ## Installation
 
 Add this line to your application's Gemfile:
