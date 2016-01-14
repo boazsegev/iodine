@@ -15,15 +15,17 @@ Iodine is used by [the Plezi Ruby framework for real-time applications](http://w
 
 Iodine 0.1.x is implemented in Ruby, using a `select` system call.
 
-`select` is limited to 1024 open connections! after 1024 connection, `select` could cause "udefined behavior", including a possible "crash"... sometimes it's not important... but it should be.
+`select` is limited to 1024 open connections! after 1024 connection, `select` could cause "undefined behavior", including a possible "crash"... sometimes it's not important... some hosting environments only allow 1024 connections anyway...
+
+...but websockets are connection hungry beasts.
 
 Hence, a move to kqueue/epoll is required.
 
-Iodine 0.2.x will include (hopefully), a kpoll / epoll implementation for Linux/BSD server environments, such as Heroku dynos (running unbuto 14.
+Iodine 0.2.x will include (hopefully), a kpoll / epoll implementation for Linux/BSD server environments, such as Heroku dynos (which run a flavor of unbuto 14).
 
 However, it is unlikely that Iodine's beautiful API could survive this shift.
 
-The 0.1.x API should be considered deprecated and a new API is under development (assuming I will manage to link some decent C code to Ruby).
+The 0.1.x API should be considered deprecated while a new API is under development (assuming I will manage to link some decent C code to Ruby)... I satrted out by displiking EventMachine's API, now it seems they might not have had a choice.
 
 
 ## Installation
