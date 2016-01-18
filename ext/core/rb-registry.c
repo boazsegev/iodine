@@ -58,6 +58,7 @@ finish:
 
 // a callback for the GC (marking active objects)
 static void registry_mark(void* ignore) {
+  // Registry.print();
   pthread_mutex_lock(&registry_lock);
   struct Object* line = registry.first;
   while (line) {
@@ -91,7 +92,8 @@ static struct rb_data_type_struct my_registry_type_struct = {
     .function.dmark = (void (*)(void*))registry_mark,
 };
 
-void init(VALUE owner) {
+// initialize the registry
+static void init(VALUE owner) {
   pthread_mutex_lock(&registry_lock);
   if (registry.owner)
     goto finish;
@@ -107,8 +109,26 @@ finish:
   pthread_mutex_unlock(&registry_lock);
 }
 
+// print data, for testing
+static void print(void) {
+  pthread_mutex_lock(&registry_lock);
+  struct Object* line = registry.first;
+  fprintf(stderr, "Registry owner is %lu\n", registry.owner);
+  long index = 0;
+  while (line) {
+    fprintf(stderr, "[%lu] => obj %lu type %d at %p\n", index++, line->obj,
+            TYPE(line->obj), line);
+    line = line->next;
+  }
+  fprintf(stderr, "Total of %lu registered objects being marked\n", index);
+  pthread_mutex_unlock(&registry_lock);
+}
+
 ////////////////////////////////////////////
 // The API gateway
-struct ___RegistryClass___ Registry = {.init = init,
-                                       .remove = unregister_object,
-                                       .add = register_object};
+struct ___RegistryClass___ Registry = {
+    .init = init,
+    .remove = unregister_object,
+    .add = register_object,
+    .print = print,
+};

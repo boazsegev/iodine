@@ -96,7 +96,6 @@ static void* thread_loop_no_gvl(struct Async* async) {
 VALUE thread_loop(void* async) {
   rb_thread_call_without_gvl((void* (*)(void*))thread_loop_no_gvl, async,
                              (void (*)(void*))async_kill, async);
-  // Registry.remove(rb_get_thread());
   return Qnil;
 }
 

@@ -1,5 +1,9 @@
 #!/usr/bin/env ruby
 
+Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
+puts `rake clean`
+puts `rake compile`
+
 require 'benchmark'
 $LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
 require "bundler/setup"
@@ -14,3 +18,6 @@ require "iodine"
 
 require "irb"
 IRB.start
+
+# ab -n 1000000 -c 200 -k http://127.0.0.1:3000/
+# ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/

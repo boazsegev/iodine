@@ -1,0 +1,48 @@
+#!/usr/bin/env ruby
+
+Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
+puts `rake clean`
+puts `rake compile`
+
+require 'benchmark'
+$LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
+require "bundler/setup"
+require "iodine"
+
+# You can add fixtures and/or initialization code here to make experimenting
+# with your gem easier. You can also use a different console, if you like.
+
+# (If you use this, don't forget to add pry to your Gemfile!)
+# require "pry"
+# Pry.start
+
+class EchoProtocol
+  # `on_message` is an optional alternative to the `on_data` callback.
+  # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
+  def on_message buffer
+    # writing will never block and will use a buffer written in C when needed.
+    write buffer
+    # close will be performed only once all the data in the write buffer
+    # was sent. use `force_close` to close early.
+    close if buffer.match /^bye[\r\n]/i
+    # # use buffer.dup to save the data from being recycled once we return.
+    # data = "Echoed data: #{buffer}"
+    # # run asynchronous tasks with ease
+    # run do
+    #   sleep 1
+    #   puts data
+    # end
+  end
+end
+
+# create the server object and setup any settings we might need.
+server = Iodine.new
+server.threads = 1
+server.processes = 1
+server.busy_msg = "To many connections, try again later."
+server.protocol = EchoProtocol
+server.start
+
+
+# ab -n 1000000 -c 200 -k http://127.0.0.1:3000/
+# ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/

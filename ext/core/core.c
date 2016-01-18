@@ -2,6 +2,7 @@
 #include "lib-server.h"
 #include <ruby.h>
 #include <ruby/thread.h>
+#include <ruby/encoding.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,20 +54,21 @@
 //        - :port= - sets the port for the connection. port should be a string.
 //        - :start - starts the server
 
-static VALUE rProtocol;         // protocol module
-static VALUE rCore;             // core class
-static VALUE rServer;           // server object to Ruby class
-static ID server_var_id;        // id for the Server variable (pointer)
-static ID fd_var_id;            // id for the file descriptor (Fixnum)
-static ID buff_var_id;          // id for the file descriptor (Fixnum)
-static ID call_proc_id;         // id for the Proc.call method
-static ID new_func_id;          // id for the Class.new method
-static ID on_open_func_id;      // the on_open callback's ID
-static ID on_data_func_id;      // the on_data callback
-static ID on_message_func_id;   // the on_message optional
-static ID on_shutdown_func_id;  // the on_shutdown callback
-static ID on_close_func_id;     // the on_close callback
-static ID ping_func_id;         // the ping callback
+static int BinaryEncodingIndex;  // encoding index
+static VALUE rProtocol;          // protocol module
+static VALUE rCore;              // core class
+static VALUE rServer;            // server object to Ruby class
+static ID server_var_id;         // id for the Server variable (pointer)
+static ID fd_var_id;             // id for the file descriptor (Fixnum)
+static ID buff_var_id;           // id for the file descriptor (Fixnum)
+static ID call_proc_id;          // id for the Proc.call method
+static ID new_func_id;           // id for the Class.new method
+static ID on_open_func_id;       // the on_open callback's ID
+static ID on_data_func_id;       // the on_data callback
+static ID on_message_func_id;    // the on_message optional
+static ID on_shutdown_func_id;   // the on_shutdown callback
+static ID on_close_func_id;      // the on_close callback
+static ID ping_func_id;          // the ping callback
 
 // for debugging:
 // static void print_func_name_from_id(ID func) {
@@ -144,16 +146,17 @@ static VALUE run_ruby_method_unsafe(VALUE _tsk) {
   return rb_funcall(task->obj, task->method, 0);
 }
 // GVL gateway
-void* run_ruby_method_within_gvl(void* _tsk) {
+static void* run_ruby_method_within_gvl(void* _tsk) {
   struct RubyApiCall* task = _tsk;
   int state = 0;
   task->returned = rb_protect(run_ruby_method_unsafe, (VALUE)(task), &state);
   if (state) {
     VALUE exc = rb_errinfo();
     if (exc != Qnil) {
-      VALUE msg = rb_funcall(exc, rb_intern("to_s"), 0, 0);
-      fprintf(stderr, "Exception raised: %.*s\n", (int)RSTRING_LEN(msg),
-              RSTRING_PTR(msg));
+      VALUE msg = rb_attr_get(exc, rb_intern("mesg"));
+      VALUE exc_class = rb_class_name(CLASS_OF(exc));
+      fprintf(stderr, "%.*s: %.*s\n", (int)RSTRING_LEN(exc_class),
+              RSTRING_PTR(exc_class), (int)RSTRING_LEN(msg), RSTRING_PTR(msg));
       rb_backtrace();
       rb_set_errinfo(Qnil);
     }
@@ -172,9 +175,12 @@ static VALUE call(VALUE obj, ID method) {
 // The functions manage access to these C methods from the Ruby objects.
 
 // performs pending async tasks while managing their Ruby registry.
-static void perform_async(VALUE task) {
-  call(task, call_proc_id);
-  Registry.remove(task);
+static void perform_async(void* task) {
+  fprintf(stderr, "performing Async task\n");
+  call((VALUE)task, call_proc_id);
+  fprintf(stderr, "Removing Async task\n");
+  Registry.remove((VALUE)task);
+  // // DON'T do this... async tasks might be persistent methods...
   // rb_gc_force_recycle(task);
 }
 
@@ -192,9 +198,12 @@ static VALUE run_async(VALUE self) {
         "be performed immediately.");
     rb_yield(Qnil);
   }
-  Server.run_async(srv, (void (*)(void*))perform_async,
-                   (void*)Registry.add(rb_block_proc()));
-  return Qnil;
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qnil;
+  Registry.add(block);
+  Server.run_async(srv, perform_async, (void*)block);
+  return block;
 }
 
 // writes data to the connection
@@ -246,6 +255,8 @@ static VALUE srv_read(int argc, VALUE* argv, VALUE self) {
   }
   // struct Server* srv = DATA_PTR(rb_ivar_get(self, server_var_id));
   ssize_t in = Server.read(fd, RSTRING_PTR(str), len);
+  // make sure it's binary encoded
+  rb_enc_associate_index(str, BinaryEncodingIndex);
   // set actual size....
   if (in > 0)
     rb_str_set_len(str, (long)in);
@@ -370,7 +381,8 @@ static void on_close(struct Server* server, int fd) {
   call(protocol, on_close_func_id);
   Registry.remove(protocol);
   Server.set_udata(server, fd, 0);
-  rb_gc_force_recycle(protocol);  // force GC to clear this out?
+  // // DON'T do this... async tasks might have bindings to this one...
+  // rb_gc_force_recycle(protocol);
 }
 
 // called when the server starts up. Saves the server object to the instance.
@@ -379,16 +391,6 @@ static void on_init(struct Server* server) {
   // save the updated protocol class as a global value on the server, using fd=0
   Server.set_udata(server, 0,
                    (void*)rb_ivar_get(core_instance, rb_intern("@protocol")));
-  // // we cannot do this, as this is Ruby API, which can't be done here.
-  // // save the server object to the core instance.
-  // fprintf(stderr, "wrapping TypeData struct\n");
-  // VALUE r_server = TypedData_Wrap_Struct(rServer, &my_server_type, server);
-  // fprintf(stderr, "saving to var\n");
-  // rb_ivar_set(core_instance, server_var_id, r_server);
-  // // testing registry
-  // struct Registry* reg = DATA_PTR(rb_ivar_get(rCore, registry_object_id));
-  // rb_warn("registry pointer: %p, next: %p prev: %p, proc: %lu\n", reg,
-  //         reg->next, reg->prev, reg->obj);
   // message
   fprintf(stderr,
           "Starting up Iodine V. 0.2.0 with %d threads on %d processes\n",
@@ -427,13 +429,13 @@ static void unblck(void* _) {
 // the actual method
 static VALUE srv_start(VALUE self) {
   // load the settings from the Ruby layer to the C layer
-  VALUE rb_protocol, rb_port, rb_bind, rb_timeout, rb_threads, rb_processes;
-  rb_protocol = rb_ivar_get(self, rb_intern("@protocol"));
-  rb_port = rb_ivar_get(self, rb_intern("@port"));
-  rb_bind = rb_ivar_get(self, rb_intern("@address"));
-  rb_timeout = rb_ivar_get(self, rb_intern("@timeout"));
-  rb_threads = rb_ivar_get(self, rb_intern("@threads"));
-  rb_processes = rb_ivar_get(self, rb_intern("@processes"));
+  VALUE rb_protocol = rb_ivar_get(self, rb_intern("@protocol"));
+  VALUE rb_port = rb_ivar_get(self, rb_intern("@port"));
+  VALUE rb_bind = rb_ivar_get(self, rb_intern("@address"));
+  VALUE rb_timeout = rb_ivar_get(self, rb_intern("@timeout"));
+  VALUE rb_threads = rb_ivar_get(self, rb_intern("@threads"));
+  VALUE rb_processes = rb_ivar_get(self, rb_intern("@processes"));
+  VALUE rb_busymsg = rb_ivar_get(self, rb_intern("@busy_msg"));
   // validate protocol - this is the only required setting
   if (TYPE(rb_protocol) != T_CLASS) {
     rb_raise(rb_eTypeError,
@@ -482,6 +484,11 @@ static VALUE srv_start(VALUE self) {
     rb_raise(rb_eTypeError, "threads isn't a valid number (-1 to 128).");
     return Qnil;
   }
+  // validate busy message
+  if (rb_busymsg != Qnil && TYPE(rb_busymsg) != T_STRING) {
+    rb_raise(rb_eTypeError, "busy_msg should be either a String or nil.");
+    return Qnil;
+  }
   // make port into a CString (for Lib-Server)
   char port[7];
   char* bind = rb_bind == Qnil ? NULL : StringValueCStr(rb_bind);
@@ -510,6 +517,7 @@ static VALUE srv_start(VALUE self) {
       .port = (iport > 0 ? port : NULL),
       .address = bind,
       .udata = &self,
+      .busy_msg = (rb_busymsg == Qnil ? NULL : StringValueCStr(rb_busymsg)),
   };
   // rb_thread_call_without_gvl(slow_func, slow_arg, unblck_func, unblck_arg);
   rb_thread_call_without_gvl(srv_start_no_gvl, &settings, unblck, NULL);
@@ -535,6 +543,9 @@ void Init_core(void) {
   on_message_func_id = rb_intern("on_message");
   buff_var_id = rb_intern("scrtbuffer");
 
+  BinaryEncodingIndex = rb_enc_find_index("binary");
+  fprintf(stderr, "encoding index is %d\n", BinaryEncodingIndex);
+
   // The core Iodine class wraps the ServerSettings and little more.
   rCore = rb_define_class("Iodine", rb_cObject);
   rb_define_method(rCore, "start", srv_start, 0);
@@ -545,6 +556,7 @@ void Init_core(void) {
   rb_define_attr(rCore, "threads", 1, 1);
   rb_define_attr(rCore, "processes", 1, 1);
   rb_define_attr(rCore, "timeout", 1, 1);
+  rb_define_attr(rCore, "busy_msg", 1, 1);
 
   // The Protocol module will inject helper methods and core functionality into
   // the Ruby protocol class provided by the user.

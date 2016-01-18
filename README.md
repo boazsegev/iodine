@@ -13,7 +13,7 @@ Iodine is an **evented** framework with a simple API that runs low level C code 
 
     This makes Iodine ideal for writing HTTP/2 and Websocket servers (which is it's intended design).
 
-* Iodine runs **only on Linux/Unix** based systems (OS X, Ubunto, etc'). This is by design and allows us to:
+* Iodine runs **only on Linux/Unix** based systems (OS X, Ubuntu, etc'). This is by design and allows us to:
 
      * Optimize our code for the production environment.
 
@@ -46,21 +46,21 @@ class EchoProtocol
     write buffer
     # close will be performed only once all the data in the write buffer
     # was sent. use `force_close` to close early.
-    close if buffer.match /^bye[\r\n]/
+    close if buffer.match /^bye[\r\n]/i
     # use buffer.dup to save the data from being recycled once we return.
     data = buffer.dup
     # run asynchronous tasks with ease
-    run {
+    run do
       sleep 1
       puts "Echoed data: #{data}"
-    }
+    end
   end
 end
 
 # create the server object and setup any settings we might need.
 server = Iodine.new
 server.threads = 1
-server.processes = 4
+server.processes = 1
 server.busy_msg = "To many connections, try again later."
 server.protocol = EchoProtocol
 server.start
@@ -69,17 +69,13 @@ server.start
 
 ## Why not EventMachine?
 
-Iodine started because I had an aversion to the EventMachine API.
+You can go ahead and use EventMachine if you like. They're doing amazing work on that one and it's been used a lot in Ruby-land... really, tons of good developers and people on that project, I'm sure.
 
-Since I didn't understand all the minute details of EventMachine's API, it kept crashing my system every time I reached ~1024 active connections....
+But me, I prefer to make sure my development software runs the exact same way as my production software, so here we are.
 
-... I didn't like that.
+Also, I don't really understand all the minute details of EventMachine's API, it kept crashing my system every time I reached ~1024 active connections... I'm sure I just don't know how to use EventMachine, but that's just that.
 
-Originally I wrote Iodine in Ruby. It had a nice API but suffered from the same connection limit. It didn't crash and it was way more fun to use, but in retrospect it was a worst.
-
-Now, in version 0.2.0, Iodine is written in C.
-
-Having said that, the people working on EventMachine did and keep doing an amazing job. Many people love EventMachine and it's a powerful tool. I personally didn't manage to develop a good relationship with the product, but reading some of the code I was amazed at the work that was put into it. Bravo.
+But hey, you're here - why not take Iodine out for a spin and see for yourself?
 
 ## Do you want to contribute?
 
