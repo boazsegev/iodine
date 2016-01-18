@@ -25,13 +25,13 @@ class EchoProtocol
     # close will be performed only once all the data in the write buffer
     # was sent. use `force_close` to close early.
     close if buffer.match /^bye[\r\n]/i
-    # # use buffer.dup to save the data from being recycled once we return.
-    # data = "Echoed data: #{buffer}"
-    # # run asynchronous tasks with ease
-    # run do
-    #   sleep 1
-    #   puts data
-    # end
+    # use buffer.dup to save the data from being recycled once we return.
+    data = buffer.dup
+    # run asynchronous tasks with ease
+    run do
+      sleep 1
+      puts "Echoed data: #{data}"
+    end
   end
 end
 

@@ -176,9 +176,7 @@ static VALUE call(VALUE obj, ID method) {
 
 // performs pending async tasks while managing their Ruby registry.
 static void perform_async(void* task) {
-  fprintf(stderr, "performing Async task\n");
   call((VALUE)task, call_proc_id);
-  fprintf(stderr, "Removing Async task\n");
   Registry.remove((VALUE)task);
   // // DON'T do this... async tasks might be persistent methods...
   // rb_gc_force_recycle(task);
@@ -544,7 +542,6 @@ void Init_core(void) {
   buff_var_id = rb_intern("scrtbuffer");
 
   BinaryEncodingIndex = rb_enc_find_index("binary");
-  fprintf(stderr, "encoding index is %d\n", BinaryEncodingIndex);
 
   // The core Iodine class wraps the ServerSettings and little more.
   rCore = rb_define_class("Iodine", rb_cObject);
