@@ -7,7 +7,7 @@ Iodine makes writing Object Oriented **Network Services** easy to write.
 
 Iodine is an **evented** framework with a simple API that runs low level C code with support for **epoll** and **kqueue** - this means that:
 
-* Iodine can handle thousands of concurrent connections (initially tested with ___ concurrent connections).
+* Iodine can handle thousands of concurrent connections (tested with 20K).
 
     That's right,  isn't subject to the 1024 connection limit imposed by native Ruby and `select`/`poll` based applications.
 
@@ -80,6 +80,10 @@ But hey, you're here - why not take Iodine out for a spin and see for yourself?
 ## Do you want to contribute?
 
 Yes, please, here are some thoughts:
+
+* I'm really not good at writing automated tests and benchmarks, any help would be appreciated.
+
+* Anybody knows how to document Ruby API written in C?
 
 * Some of the code is still super raw and could be either optimized or improved upon.
 
