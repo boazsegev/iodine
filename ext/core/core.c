@@ -536,7 +536,7 @@ void Init_core(void) {
   buff_var_id = rb_intern("scrtbuffer");
 
   // The core Iodine class wraps the ServerSettings and little more.
-  rCore = rb_define_class("IodineCore", rb_cObject);
+  rCore = rb_define_class("Iodine", rb_cObject);
   rb_define_method(rCore, "start", srv_start, 0);
   rb_define_method(rCore, "run", run_async, 0);
   rb_define_attr(rCore, "protocol", 1, 1);
