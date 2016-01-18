@@ -9,15 +9,15 @@ Gem::Specification.new do |spec|
   spec.authors       = ["Boaz Segev"]
   spec.email         = ["Boaz@2be.co.il"]
 
-  spec.summary       = %q{ IOdine makes writing evented server applications easy to write. }
-  spec.description   = %q{ IOdine is a super easy way to write network services and tasking scripts.}
+  spec.summary       = %q{ Iodine - writing C servers in Ruby.}
+  spec.description   = %q{ Iodine - writing C servers in Ruby.}
   spec.homepage      = "https://github.com/boazsegev/iodine"
   spec.license       = "MIT"
 
   # Prevent pushing this gem to RubyGems.org by setting 'allowed_push_host', or
   # delete this section to allow pushing this gem to any host.
   if spec.respond_to?(:metadata)
-    spec.metadata['allowed_push_host'] = "https://rubygems.org"
+    spec.metadata['allowed_push_host'] = "none" #"https://rubygems.org"
   else
     raise "RubyGems 2.0 or newer is required to protect against public gem pushes."
   end
@@ -26,6 +26,10 @@ Gem::Specification.new do |spec|
   spec.bindir        = "exe"
   spec.executables   = spec.files.grep(%r{^exe/}) { |f| File.basename(f) }
   spec.require_paths = ["lib"]
+
+  spec.extensions = %w[ext/core/extconf.rb]
+
+  spec.add_dependency "rake-compiler"
 
   spec.add_development_dependency "bundler", "~> 1.10"
   spec.add_development_dependency "rake", "~> 10.0"

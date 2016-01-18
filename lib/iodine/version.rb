@@ -1,3 +1,3 @@
-module Iodine
-  VERSION = "0.1.20"
+class Iodine
+  VERSION = "0.2.0"
 end

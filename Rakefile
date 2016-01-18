@@ -1,5 +1,6 @@
 require "bundler/gem_tasks"
 require "rake/testtask"
+require "rake/extensiontask"
 
 Rake::TestTask.new(:test) do |t|
   t.libs << "test"
@@ -8,3 +9,7 @@ Rake::TestTask.new(:test) do |t|
 end
 
 task :default => :test
+
+Rake::ExtensionTask.new "core" do |ext|
+  ext.lib_dir = "lib/iodine"
+end
