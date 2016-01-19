@@ -317,6 +317,35 @@ static VALUE srv_force_close(VALUE self, VALUE data) {
   return Qnil;
 }
 
+// replaces a connection's existing protocol with another
+static VALUE srv_upgrade(VALUE self, VALUE protocol) {
+  struct Server* srv = DATA_PTR(rb_ivar_get(self, server_var_id));
+  int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
+  // include the rProtocol within the object.
+  if (TYPE(protocol) == T_CLASS) {
+    // include the Protocol module
+    // // do we neet to check?
+    // if (rb_mod_include_p(protocol, rProtocol) == Qfalse)
+    rb_include_module(protocol, rProtocol);
+    protocol = call(protocol, new_func_id);
+  } else {
+    // include the Protocol module in the object's class
+    VALUE p_class = rb_obj_class(protocol);
+    // // do we neet to check?
+    // if (rb_mod_include_p(p_class, rProtocol) == Qfalse)
+    rb_include_module(p_class, rProtocol);
+  }
+  // set the new protocol at the server's udata
+  Server.set_udata(srv, fd, (void*)protocol);
+  // remove old protocol from the Registry.
+  Registry.remove(self);
+  // add new protocol to the Registry
+  Registry.add(protocol);
+  // initialize the new protocol
+  call(protocol, on_open_func_id);
+  return protocol;
+}
+
 ////////////////////////////////////////////////////////////////////////
 // Lib-Server uses callbacks for the protocol.
 //
@@ -533,7 +562,6 @@ static VALUE srv_start(VALUE self) {
   if (TYPE(rb_protocol) == T_CLASS) {  // a class
     // include the protocol module
     rb_include_module(rb_protocol, rProtocol);
-
   } else {  // it's a module
     // extend the protocol module
   }
@@ -610,6 +638,7 @@ void Init_core(void) {
   rb_define_method(rProtocol, "write_urgent", srv_write_urgent, 1);
   rb_define_method(rProtocol, "close", srv_close, 0);
   rb_define_method(rProtocol, "force_close", srv_force_close, 0);
+  rb_define_method(rProtocol, "upgrade", srv_upgrade, 0);
 
   // Every Protocol (and Server?) instance will hold a reference to the server
   // define the Server Ruby class.
