@@ -23,13 +23,17 @@ Iodine is an **evented** framework with a simple API that runs low level C code 
 
 Iodine is a C extension for Ruby, developed on Ruby MRI 2.3.0.
 
-## Iodine 0.1.x - is this an upgrade?
+## Try before before you buy?
 
-This is **not** an upgrade, this is a **rewrite**.
+Well, it is **free** and **open source**, no need to buy, so of course you can try it out.
 
-Iodine 0.1.x was written in Ruby and had tons of bells and whistles and a somewhat different API. It was limited to 1024 concurrent connections.
+It's installable like any other gem, just run:
 
-Iodine 0.2.x is written in C, doesn't have as many bells and whistles (i.e., no Websocket Client) and has a stripped down API (simpler to learn). The connection limit is computed according to the system limits and connection overflows are terminated with an optional busy message, so the system won't crash.
+     $ gem install iodine
+
+If building the native C extension fails, please notice that some Ruby installations, such as on Ubuntu, require that you separately install the development headers (`ruby.h` and friends). I have no idea why they do that, as you will need the development headers for any native gems you want to install - so hurry up and get it.
+
+If you have the development headers but still can't compile the Iodine extension, [open an issue](https://github.com/boazsegev/iodine/issues) with any messages you're getting and I be happy to look into it.
 
 ## Mr. Sandman, write me a server
 
@@ -66,6 +70,14 @@ server.protocol = EchoProtocol
 server.start
 
 ```
+
+## Iodine 0.1.x - is this an upgrade?
+
+This is **not** an upgrade, this is a **rewrite**.
+
+Iodine 0.1.x was written in Ruby and had tons of bells and whistles and a somewhat different API. It was limited to 1024 concurrent connections.
+
+Iodine 0.2.x is written in C, doesn't have as many bells and whistles (i.e., no Websocket Client) and has a stripped down API (simpler to learn). The connection limit is computed according to the system limits and connection overflows are terminated with an optional busy message, so the system won't crash.
 
 ## Why not EventMachine?
 
