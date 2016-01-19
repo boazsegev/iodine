@@ -1,4 +1,5 @@
 #include "rb-registry.h"
+#include "rb-call.h"
 #include "lib-server.h"
 #include <ruby.h>
 #include <ruby/thread.h>
@@ -54,6 +55,7 @@
 //        - :port= - sets the port for the connection. port should be a string.
 //        - :start - starts the server
 
+static char* VERSION;
 static int BinaryEncodingIndex;  // encoding index
 static VALUE rProtocol;          // protocol module
 static VALUE rCore;              // core class
@@ -133,42 +135,6 @@ static struct rb_data_type_struct my_server_type = {
 //
 // seperation is reqiured :-)
 
-// a structure for Ruby API calls
-struct RubyApiCall {
-  VALUE obj;
-  VALUE returned;
-  ID method;
-};
-
-// running the actual method call
-static VALUE run_ruby_method_unsafe(VALUE _tsk) {
-  struct RubyApiCall* task = (void*)_tsk;
-  return rb_funcall(task->obj, task->method, 0);
-}
-// GVL gateway
-static void* run_ruby_method_within_gvl(void* _tsk) {
-  struct RubyApiCall* task = _tsk;
-  int state = 0;
-  task->returned = rb_protect(run_ruby_method_unsafe, (VALUE)(task), &state);
-  if (state) {
-    VALUE exc = rb_errinfo();
-    if (exc != Qnil) {
-      VALUE msg = rb_attr_get(exc, rb_intern("mesg"));
-      VALUE exc_class = rb_class_name(CLASS_OF(exc));
-      fprintf(stderr, "%.*s: %.*s\n", (int)RSTRING_LEN(exc_class),
-              RSTRING_PTR(exc_class), (int)RSTRING_LEN(msg), RSTRING_PTR(msg));
-      rb_backtrace();
-      rb_set_errinfo(Qnil);
-    }
-  }
-  return task;
-}
-// wrapping any API calls for exception management
-static VALUE call(VALUE obj, ID method) {
-  struct RubyApiCall task = {.obj = obj, .method = method};
-  rb_thread_call_with_gvl(run_ruby_method_within_gvl, &task);
-  return task.returned;
-}
 ////////////////////////////////////////////////////////////////////////
 // Lib-Server provides helper methods that are very benificial.
 //
@@ -176,7 +142,7 @@ static VALUE call(VALUE obj, ID method) {
 
 // performs pending async tasks while managing their Ruby registry.
 static void perform_async(void* task) {
-  call((VALUE)task, call_proc_id);
+  RubyCaller.call((VALUE)task, call_proc_id);
   Registry.remove((VALUE)task);
   // // DON'T do this... async tasks might be persistent methods...
   // rb_gc_force_recycle(task);
@@ -184,7 +150,7 @@ static void perform_async(void* task) {
 
 // performs pending protocol task while managing it's Ruby registry.
 static void perform_protocol_async(struct Server* srv, int fd, void* task) {
-  call((VALUE)task, call_proc_id);
+  RubyCaller.call((VALUE)task, call_proc_id);
   Registry.remove((VALUE)task);
   // // DON'T do this... async tasks might be persistent methods...
   // rb_gc_force_recycle(task);
@@ -327,7 +293,7 @@ static VALUE srv_upgrade(VALUE self, VALUE protocol) {
     // // do we neet to check?
     // if (rb_mod_include_p(protocol, rProtocol) == Qfalse)
     rb_include_module(protocol, rProtocol);
-    protocol = call(protocol, new_func_id);
+    protocol = RubyCaller.call(protocol, new_func_id);
   } else {
     // include the Protocol module in the object's class
     VALUE p_class = rb_obj_class(protocol);
@@ -342,7 +308,7 @@ static VALUE srv_upgrade(VALUE self, VALUE protocol) {
   // add new protocol to the Registry
   Registry.add(protocol);
   // initialize the new protocol
-  call(protocol, on_open_func_id);
+  RubyCaller.call(protocol, on_open_func_id);
   return protocol;
 }
 
@@ -388,7 +354,7 @@ static VALUE def_on_data(VALUE self) {
 // a new connection - registers a new protocol object and forwards the event.
 static void on_open(struct Server* server, int fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, 0);
-  protocol = call(protocol, new_func_id);
+  protocol = RubyCaller.call(protocol, new_func_id);
   if (protocol == Qnil) {
     Server.close(server, fd);
     return;
@@ -398,7 +364,7 @@ static void on_open(struct Server* server, int fd) {
   rb_ivar_set(protocol, server_var_id,
               TypedData_Wrap_Struct(rServer, &my_server_type, server));
   Server.set_udata(server, fd, (void*)protocol);
-  call(protocol, on_open_func_id);
+  RubyCaller.call(protocol, on_open_func_id);
 }
 
 // // called when data is pending on the connection.
@@ -419,7 +385,7 @@ static void on_data(struct Server* server, int fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
-  call(protocol, on_data_func_id);
+  RubyCaller.call(protocol, on_data_func_id);
 }
 
 // calls the ping callback
@@ -427,7 +393,7 @@ static void ping(struct Server* server, int fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
-  call(protocol, ping_func_id);
+  RubyCaller.call(protocol, ping_func_id);
 }
 
 // calls the on_shutdown callback
@@ -435,7 +401,7 @@ static void on_shutdown(struct Server* server, int fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
-  call(protocol, on_shutdown_func_id);
+  RubyCaller.call(protocol, on_shutdown_func_id);
 }
 
 // calls the on_close callback and de-registers the connection
@@ -443,7 +409,7 @@ static void on_close(struct Server* server, int fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
-  call(protocol, on_close_func_id);
+  RubyCaller.call(protocol, on_close_func_id);
   Registry.remove(protocol);
   Server.set_udata(server, fd, 0);
   // // DON'T do this... async tasks might have bindings to this one...
@@ -457,9 +423,10 @@ static void on_init(struct Server* server) {
   Server.set_udata(server, 0,
                    (void*)rb_ivar_get(core_instance, rb_intern("@protocol")));
   // message
-  fprintf(stderr,
-          "Starting up Iodine V. 0.2.0 with %d threads on %d processes\n",
-          Server.settings(server)->threads, Server.settings(server)->processes);
+  fprintf(stderr, "Starting up Iodine V. %s using %d thread%s X %d processes\n",
+          VERSION, Server.settings(server)->threads,
+          (Server.settings(server)->threads > 1 ? "s" : ""),
+          Server.settings(server)->processes);
 }
 
 // called when server is idling
@@ -512,12 +479,7 @@ static VALUE srv_start(VALUE self) {
     rb_raise(rb_eTypeError, "port isn't a valid number.");
     return Qnil;
   }
-  // get port from ARGV or set default (3000)
-  if (rb_port == Qnil)
-    rb_port = rb_eval_string(
-        "((ARGV.index('-p') && ARGV[ARGV.index('-p') + 1]) || ENV['PORT'] || "
-        "3000).to_i");
-  int iport = rb_port == Qnil ? 0 : FIX2INT(rb_port);
+  int iport = rb_port == Qnil ? 3000 : FIX2INT(rb_port);
   if (iport > 65535 || iport < 0) {
     rb_raise(rb_eTypeError, "port out of range.");
     return Qnil;
@@ -621,6 +583,14 @@ void Init_core(void) {
   rb_define_attr(rCore, "timeout", 1, 1);
   rb_define_attr(rCore, "busy_msg", 1, 1);
 
+  // get-set version
+  {
+    VALUE version = rb_const_get(rCore, rb_intern("VERSION"));
+    if (version == Qnil)
+      VERSION = "0.2.0";
+    else
+      VERSION = StringValueCStr(version);
+  }
   // The Protocol module will inject helper methods and core functionality into
   // the Ruby protocol class provided by the user.
   rProtocol = rb_define_module_under(rCore, "Protocol");

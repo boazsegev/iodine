@@ -19,11 +19,11 @@ Iodine is an **evented** framework with a simple API that runs low level C code 
 
      * Have our testing and development machines behave the same as our ultimate production environment.
 
-     * Catch any issues (and Bugs) while in development - just ask AT&T about how important this is ;-)
+     * Catch any issues (read: bugs) while in development - just ask AT&T about how important this is ;-)
 
-Iodine is a C extension for Ruby, developed on Ruby MRI 2.3.0.
+Iodine is a C extension for Ruby, developed with Ruby MRI 2.3.0 and 2.2.4 (it should support the whole Ruby 2.0 family, but it might not).
 
-## Try before before you buy?
+## Can I try before before I buy?
 
 Well, it is **free** and **open source**, no need to buy, so of course you can try it out.
 
@@ -36,6 +36,8 @@ If building the native C extension fails, please notice that some Ruby installat
 If you have the development headers but still can't compile the Iodine extension, [open an issue](https://github.com/boazsegev/iodine/issues) with any messages you're getting and I be happy to look into it.
 
 ## Mr. Sandman, write me a server
+
+Girls love flowers, or so my ex used to keep telling me... but I think code is the way to really show that something is hot. I mean, look at this short and sweet echo server - it's so elegant I could cry:
 
 ```ruby
 
@@ -71,25 +73,25 @@ server.start
 
 ```
 
-## Iodine 0.1.x - is this an upgrade?
+## I loved Iodine 0.1.x - is this an upgrade?
 
-This is **not** an upgrade, this is a **rewrite**.
+This is **not** an upgrade, this is a **full rewrite**.
 
 Iodine 0.1.x was written in Ruby and had tons of bells and whistles and a somewhat different API. It was limited to 1024 concurrent connections.
 
-Iodine 0.2.x is written in C, doesn't have as many bells and whistles (i.e., no Websocket Client) and has a stripped down API (simpler to learn). The connection limit is computed according to the system limits and connection overflows are terminated with an optional busy message, so the system won't crash.
+Iodine 0.2.x is written in C, doesn't have as many bells and whistles (i.e., no Websocket Client) and has a stripped down API (simpler to learn). The connection limit is calculated on startup, according to the system's limits. Connection overflows are terminated with an optional busy message, so the system won't crash.
 
 ## Why not EventMachine?
 
 You can go ahead and use EventMachine if you like. They're doing amazing work on that one and it's been used a lot in Ruby-land... really, tons of good developers and people on that project, I'm sure.
 
-But me, I prefer to make sure my development software runs the exact same way as my production software, so here we are.
+But me, I prefer to make sure my development software runs the exact same code as my production software, so here we are.
 
 Also, I don't really understand all the minute details of EventMachine's API, it kept crashing my system every time I reached ~1024 active connections... I'm sure I just don't know how to use EventMachine, but that's just that.
 
 Besides, you're here - why not take Iodine out for a spin and see for yourself?
 
-## Do you want to contribute?
+## Can I contribute?
 
 Yes, please, here are some thoughts:
 
@@ -104,6 +106,14 @@ Yes, please, here are some thoughts:
 * Bug reports and pull requests are welcome on GitHub at https://github.com/boazsegev/iodine.
 
 * If you love the project or thought the code was nice, maybe helped you in your own project, drop me a line. I'd love to know.
+
+## I'm also writing a Ruby extension in C
+
+Really?! That's great!
+
+We could all use some more documentation around the subject and having an eco-system for extension tidbits would be nice.
+
+Just to help you out, I recommend you look at the [Registry](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-registry.h) Iodine is using to keep Ruby objects that are owned by C-land from being collected by the garbage collector... some people use global Ruby arrays, but that sounds like a performance hog to me. This one is a simple binary tree.
 
 ## License
 

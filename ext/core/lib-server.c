@@ -607,9 +607,11 @@ static int fd_task(struct Server* server,
     if (server->async) {
       if (!(msg = malloc(sizeof(struct ConnTask))))
         return -1;
-      *msg = (struct ConnTask){
-          .server = server, .task = task, .arg = arg, .fd = sockfd};
-      Async.run(server->async, (void (*)(void*))perform_each_task, task);
+      msg->server = server;
+      msg->task = task;
+      msg->arg = arg;
+      msg->fd = sockfd;
+      Async.run(server->async, (void (*)(void*))perform_each_task, msg);
     } else {
       task(server, sockfd, arg);
     }
