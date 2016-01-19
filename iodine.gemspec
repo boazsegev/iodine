@@ -9,8 +9,8 @@ Gem::Specification.new do |spec|
   spec.authors       = ["Boaz Segev"]
   spec.email         = ["Boaz@2be.co.il"]
 
-  spec.summary       = %q{ IOdine makes writing evented server applications easy to write. }
-  spec.description   = %q{ IOdine is a super easy way to write network services and tasking scripts.}
+  spec.summary       = %q{ The Iodine v.0.1.X line and API is deprecated and will not be supported after v. 0.2.0 is released. }
+  spec.description   = %q{ The Iodine v.0.1.X line and API is deprecated and will not be supported after v. 0.2.0 is released. }
   spec.homepage      = "https://github.com/boazsegev/iodine"
   spec.license       = "MIT"
 
@@ -30,4 +30,12 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency "bundler", "~> 1.10"
   spec.add_development_dependency "rake", "~> 10.0"
   spec.add_development_dependency "minitest"
+
+
+
+  spec.post_install_message = "The Iodine 0.1.x API is now deprecated.\n"+
+                              "Version 0.2.x will include a drastic change and it WILL break existing code.\n" +
+                              "DON'T UPGRADE BEYOND THIS POINT UNLESS YOU'RE PREPARED FOR A HUGE CANGE.\n" +
+                              "Future version of Iodine will be written in C and require a Linux/Unix machine."
+
 end

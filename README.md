@@ -15,7 +15,7 @@ Iodine is used by [the Plezi Ruby framework for real-time applications](http://w
 
 Iodine 0.1.x is implemented in Ruby, using a `select` system call.
 
-`select` is limited to 1024 open connections! after 1024 connection, `select` could cause "undefined behavior", including a possible "crash"... sometimes it's not important... some hosting environments only allow 1024 connections anyway...
+`select` is limited to 1024 open connections! after 1024 connection, `select` could cause "undefined behavior", including a possible "crash"... sometimes it's not important... some hosting environments only allow 1024 connections anyway... EventMachine crashes on my system after 1024 connections too...
 
 ...but websockets are connection hungry beasts.
 
