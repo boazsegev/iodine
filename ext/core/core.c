@@ -182,6 +182,37 @@ static void perform_async(void* task) {
   // rb_gc_force_recycle(task);
 }
 
+// performs pending protocol task while managing it's Ruby registry.
+static void perform_protocol_async(struct Server* srv, int fd, void* task) {
+  call((VALUE)task, call_proc_id);
+  Registry.remove((VALUE)task);
+  // // DON'T do this... async tasks might be persistent methods...
+  // rb_gc_force_recycle(task);
+}
+
+// run a protocol task (preventing concurrency)
+static VALUE run_protocol_task(VALUE self) {
+  // requires a block to be passed
+  rb_need_block();
+  // get the server object
+  struct Server* srv =
+      (struct Server*)DATA_PTR(rb_ivar_get(self, server_var_id));
+  // requires multi-threading
+  if (Server.settings(srv)->threads < 0) {
+    rb_warn(
+        "called an async method in a non-async mode - the task will "
+        "be performed immediately.");
+    rb_yield(Qnil);
+  }
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qnil;
+  Registry.add(block);
+  Server.fd_task(srv, FIX2INT(rb_ivar_get(self, fd_var_id)),
+                 perform_protocol_async, (void*)block);
+  return block;
+}
+
 // schedules async tasks while managing their Ruby registry.
 static VALUE run_async(VALUE self) {
   // requires a block to be passed
@@ -209,6 +240,13 @@ static VALUE srv_write(VALUE self, VALUE data) {
   struct Server* srv = DATA_PTR(rb_ivar_get(self, server_var_id));
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
   return LONG2FIX(Server.write(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data)));
+}
+// writes data to the connection
+static VALUE srv_write_urgent(VALUE self, VALUE data) {
+  struct Server* srv = DATA_PTR(rb_ivar_get(self, server_var_id));
+  int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
+  return LONG2FIX(
+      Server.write_urgent(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data)));
 }
 
 // reads from a connection, up to x size bytes
@@ -566,8 +604,10 @@ void Init_core(void) {
   rb_define_method(rProtocol, "on_close", empty_func, 0);
   // helper method
   rb_define_method(rProtocol, "run", run_async, 0);
+  rb_define_method(rProtocol, "defer", run_protocol_task, 0);
   rb_define_method(rProtocol, "read", srv_read, -1);
   rb_define_method(rProtocol, "write", srv_write, 1);
+  rb_define_method(rProtocol, "write_urgent", srv_write_urgent, 1);
   rb_define_method(rProtocol, "close", srv_close, 0);
   rb_define_method(rProtocol, "force_close", srv_force_close, 0);
 
