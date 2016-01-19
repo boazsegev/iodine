@@ -75,13 +75,13 @@ But me, I prefer to make sure my development software runs the exact same way as
 
 Also, I don't really understand all the minute details of EventMachine's API, it kept crashing my system every time I reached ~1024 active connections... I'm sure I just don't know how to use EventMachine, but that's just that.
 
-But hey, you're here - why not take Iodine out for a spin and see for yourself?
+Besides, you're here - why not take Iodine out for a spin and see for yourself?
 
 ## Do you want to contribute?
 
 Yes, please, here are some thoughts:
 
-* I'm really not good at writing automated tests and benchmarks, any help would be appreciated.
+* I'm really not good at writing automated tests and benchmarks, any help would be appreciated. I keep testing manually and it sucks (and it's mistake prone).
 
 * Anybody knows how to document Ruby API written in C?
 
