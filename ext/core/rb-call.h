@@ -11,4 +11,5 @@
 //
 extern struct _Ruby_Method_Caller_Class_ {
   VALUE (*call)(VALUE object, ID method_id);
+  VALUE (*call_unsafe)(VALUE object, ID method_id);
 } RubyCaller;

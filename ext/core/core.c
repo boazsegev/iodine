@@ -285,6 +285,8 @@ static VALUE srv_force_close(VALUE self, VALUE data) {
 
 // replaces a connection's existing protocol with another
 static VALUE srv_upgrade(VALUE self, VALUE protocol) {
+  if (protocol == Qnil)
+    return Qnil;
   struct Server* srv = DATA_PTR(rb_ivar_get(self, server_var_id));
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
   // include the rProtocol within the object.
@@ -293,7 +295,7 @@ static VALUE srv_upgrade(VALUE self, VALUE protocol) {
     // // do we neet to check?
     // if (rb_mod_include_p(protocol, rProtocol) == Qfalse)
     rb_include_module(protocol, rProtocol);
-    protocol = RubyCaller.call(protocol, new_func_id);
+    protocol = RubyCaller.call_unsafe(protocol, new_func_id);
   } else {
     // include the Protocol module in the object's class
     VALUE p_class = rb_obj_class(protocol);
@@ -301,14 +303,21 @@ static VALUE srv_upgrade(VALUE self, VALUE protocol) {
     // if (rb_mod_include_p(p_class, rProtocol) == Qfalse)
     rb_include_module(p_class, rProtocol);
   }
+  // make sure everything whent as it should
+  if (protocol == Qnil)
+    return Qnil;
   // set the new protocol at the server's udata
   Server.set_udata(srv, fd, (void*)protocol);
   // remove old protocol from the Registry.
   Registry.remove(self);
   // add new protocol to the Registry
   Registry.add(protocol);
+  // initialize pre-required variables
+  rb_ivar_set(protocol, fd_var_id, INT2FIX(fd));
+  rb_ivar_set(protocol, server_var_id,
+              TypedData_Wrap_Struct(rServer, &my_server_type, srv));
   // initialize the new protocol
-  RubyCaller.call(protocol, on_open_func_id);
+  RubyCaller.call_unsafe(protocol, on_open_func_id);
   return protocol;
 }
 
@@ -608,7 +617,7 @@ void Init_core(void) {
   rb_define_method(rProtocol, "write_urgent", srv_write_urgent, 1);
   rb_define_method(rProtocol, "close", srv_close, 0);
   rb_define_method(rProtocol, "force_close", srv_force_close, 0);
-  rb_define_method(rProtocol, "upgrade", srv_upgrade, 0);
+  rb_define_method(rProtocol, "upgrade", srv_upgrade, 1);
 
   // Every Protocol (and Server?) instance will hold a reference to the server
   // define the Server Ruby class.

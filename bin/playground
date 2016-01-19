@@ -16,6 +16,13 @@ require "iodine"
 # require "pry"
 # Pry.start
 
+class ShoooProtocol
+  def on_message buffer
+    write "what do you mean - #{buffer.strip} ?!\n"
+    close if buffer =~ /^bye[\r\n]/i
+  end
+
+end
 class EchoProtocol
   # `on_message` is an optional alternative to the `on_data` callback.
   # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
@@ -24,7 +31,8 @@ class EchoProtocol
     write buffer
     # close will be performed only once all the data in the write buffer
     # was sent. use `force_close` to close early.
-    close if buffer.match /^bye[\r\n]/i
+    close if buffer =~ /^bye[\r\n]/i
+    upgrade ShoooProtocol
     # # use buffer.dup to save the data from being recycled once we return.
     # data = buffer.dup
     # # run asynchronous tasks with ease
