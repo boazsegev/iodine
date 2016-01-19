@@ -25,7 +25,7 @@ Iodine is a C extension for Ruby, developed with Ruby MRI 2.3.0 and 2.2.4 (it sh
 
 ## Can I try before before I buy?
 
-Well, it is **free** and **open source**, no need to buy, so of course you can try it out.
+Well, it is **free** and **open source**, no need to buy.. and of course you can try it out.
 
 It's installable like any other gem, just run:
 
