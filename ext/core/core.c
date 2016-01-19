@@ -57,7 +57,7 @@
 
 static char* VERSION;
 static int BinaryEncodingIndex;  // encoding index
-static VALUE rProtocol;          // protocol module
+static VALUE rDynProtocol;       // protocol module
 static VALUE rCore;              // core class
 static VALUE rServer;            // server object to Ruby class
 static ID server_var_id;         // id for the Server variable (pointer)
@@ -126,14 +126,33 @@ static struct rb_data_type_struct my_server_type = {
     .function.dfree = (void (*)(void*))dont_free,
 };
 
+// defines an inline helper function to embed a server pointer in an object
+static inline void set_server(VALUE object, server_pt srv) {
+  rb_ivar_set(object, server_var_id,
+              TypedData_Wrap_Struct(rServer, &my_server_type, srv));
+}
+
+// defines a macro like function to get the server pointer embeded in an object
+static inline server_pt get_server(object) {
+  return (server_pt)DATA_PTR(rb_ivar_get((object), server_var_id));
+}
+
 ////////////////////////////////////////////////////////////////////////
-// The Ruby framework manages it's own contextc switching and memory...
-// this means that when we make calls to Ruby (i.e. creating Ruby objects),
-// we rick currupting the Ruby framework. Also, Ruby uses all these signals (for
-// it's context switchings) and long-jumps (i.e. Ruby exceptions) that can drive
-// the C code a little nuts...
-//
-// seperation is reqiured :-)
+/* /////////////////////////////////////////////////////////////////////
+The Dynamic/Stateful Protocol
+--------------------
+
+The dynamic (stateful) prtocol is defined as a Ruby class instance which is in
+control of one single connection.
+
+It is called bynamic because it is dynamically allocated for each connection and
+then discarded.
+
+It is (mostly) thread-safe as long as it's operations are limited to the scope
+of the object.
+
+The following are it's helper methods and callbacks
+*/  /////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////
 // Lib-Server provides helper methods that are very benificial.
@@ -161,8 +180,7 @@ static VALUE run_protocol_task(VALUE self) {
   // requires a block to be passed
   rb_need_block();
   // get the server object
-  struct Server* srv =
-      (struct Server*)DATA_PTR(rb_ivar_get(self, server_var_id));
+  struct Server* srv = get_server(self);
   // requires multi-threading
   if (Server.settings(srv)->threads < 0) {
     rb_warn(
@@ -184,8 +202,7 @@ static VALUE run_async(VALUE self) {
   // requires a block to be passed
   rb_need_block();
   // get the server object
-  struct Server* srv =
-      (struct Server*)DATA_PTR(rb_ivar_get(self, server_var_id));
+  struct Server* srv = get_server(self);
   // requires multi-threading
   if (Server.settings(srv)->threads < 0) {
     rb_warn(
@@ -203,13 +220,13 @@ static VALUE run_async(VALUE self) {
 
 // writes data to the connection
 static VALUE srv_write(VALUE self, VALUE data) {
-  struct Server* srv = DATA_PTR(rb_ivar_get(self, server_var_id));
+  struct Server* srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
   return LONG2FIX(Server.write(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data)));
 }
 // writes data to the connection
 static VALUE srv_write_urgent(VALUE self, VALUE data) {
-  struct Server* srv = DATA_PTR(rb_ivar_get(self, server_var_id));
+  struct Server* srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
   return LONG2FIX(
       Server.write_urgent(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data)));
@@ -255,7 +272,7 @@ static VALUE srv_read(int argc, VALUE* argv, VALUE self) {
       rb_str_resize(buffer, (len = 1024));
     str = buffer;
   }
-  // struct Server* srv = DATA_PTR(rb_ivar_get(self, server_var_id));
+  // struct Server* srv = get_server(self);
   ssize_t in = Server.read(fd, RSTRING_PTR(str), len);
   // make sure it's binary encoded
   rb_enc_associate_index(str, BinaryEncodingIndex);
@@ -270,7 +287,7 @@ static VALUE srv_read(int argc, VALUE* argv, VALUE self) {
 
 // closes a connection, gracefully
 static VALUE srv_close(VALUE self, VALUE data) {
-  struct Server* srv = DATA_PTR(rb_ivar_get(self, server_var_id));
+  struct Server* srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
   Server.close(srv, fd);
   return Qnil;
@@ -287,21 +304,21 @@ static VALUE srv_force_close(VALUE self, VALUE data) {
 static VALUE srv_upgrade(VALUE self, VALUE protocol) {
   if (protocol == Qnil)
     return Qnil;
-  struct Server* srv = DATA_PTR(rb_ivar_get(self, server_var_id));
+  struct Server* srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
-  // include the rProtocol within the object.
+  // include the rDynProtocol within the object.
   if (TYPE(protocol) == T_CLASS) {
     // include the Protocol module
     // // do we neet to check?
-    // if (rb_mod_include_p(protocol, rProtocol) == Qfalse)
-    rb_include_module(protocol, rProtocol);
+    // if (rb_mod_include_p(protocol, rDynProtocol) == Qfalse)
+    rb_include_module(protocol, rDynProtocol);
     protocol = RubyCaller.call_unsafe(protocol, new_func_id);
   } else {
     // include the Protocol module in the object's class
     VALUE p_class = rb_obj_class(protocol);
     // // do we neet to check?
-    // if (rb_mod_include_p(p_class, rProtocol) == Qfalse)
-    rb_include_module(p_class, rProtocol);
+    // if (rb_mod_include_p(p_class, rDynProtocol) == Qfalse)
+    rb_include_module(p_class, rDynProtocol);
   }
   // make sure everything whent as it should
   if (protocol == Qnil)
@@ -314,15 +331,14 @@ static VALUE srv_upgrade(VALUE self, VALUE protocol) {
   Registry.add(protocol);
   // initialize pre-required variables
   rb_ivar_set(protocol, fd_var_id, INT2FIX(fd));
-  rb_ivar_set(protocol, server_var_id,
-              TypedData_Wrap_Struct(rServer, &my_server_type, srv));
+  set_server(protocol, srv);
   // initialize the new protocol
   RubyCaller.call_unsafe(protocol, on_open_func_id);
   return protocol;
 }
 
 ////////////////////////////////////////////////////////////////////////
-// Lib-Server uses callbacks for the protocol.
+// Dynamic Protocol callbacks for the protocol.
 //
 // The following callbacks bridge the Ruby and C layers togethr.
 
@@ -331,12 +347,12 @@ static VALUE empty_func(VALUE self) {
   return Qnil;
 }
 //  default callback - do nothing
-static VALUE def_on_message(VALUE self, VALUE data) {
+static VALUE def_dyn_message(VALUE self, VALUE data) {
   return Qnil;
 }
 // defaule ping method
 static VALUE no_ping_func(VALUE self) {
-  struct Server* srv = DATA_PTR(rb_ivar_get(self, server_var_id));
+  struct Server* srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
   // only close if the main code (on_data / task) isn't running.
   if (!Server.is_busy(srv, fd))
@@ -346,7 +362,7 @@ static VALUE no_ping_func(VALUE self) {
   return Qnil;
 }
 // defaule on_data method
-static VALUE def_on_data(VALUE self) {
+static VALUE def_dyn_data(VALUE self) {
   VALUE buff = rb_ivar_get(self, buff_var_id);
   if (buff == Qnil) {
     rb_ivar_set(self, buff_var_id, (buff = rb_str_buf_new(1024)));
@@ -361,7 +377,7 @@ static VALUE def_on_data(VALUE self) {
 }
 
 // a new connection - registers a new protocol object and forwards the event.
-static void on_open(struct Server* server, int fd) {
+static void dyn_open(struct Server* server, int fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, 0);
   protocol = RubyCaller.call(protocol, new_func_id);
   if (protocol == Qnil) {
@@ -370,27 +386,13 @@ static void on_open(struct Server* server, int fd) {
   }
   Registry.add(protocol);
   rb_ivar_set(protocol, fd_var_id, INT2FIX(fd));
-  rb_ivar_set(protocol, server_var_id,
-              TypedData_Wrap_Struct(rServer, &my_server_type, server));
+  set_server(protocol, server);
   Server.set_udata(server, fd, (void*)protocol);
   RubyCaller.call(protocol, on_open_func_id);
 }
 
-// // called when data is pending on the connection.
-// // (this is a testing implementation)
-// static void on_data(struct Server* server, int fd) {
-//   char buff[128];
-//   int in = 0;
-//   if ((in = Server.read(fd, buff, 128)) <= 0)
-//     return;
-//   Server.write(server, fd, buff, in);
-//   if (!memcmp(buff, "bye", 3)) {
-//     Server.close(server, fd);
-//   }
-// }
-
 // the on_data implementation
-static void on_data(struct Server* server, int fd) {
+static void dyn_data(struct Server* server, int fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
@@ -398,7 +400,7 @@ static void on_data(struct Server* server, int fd) {
 }
 
 // calls the ping callback
-static void ping(struct Server* server, int fd) {
+static void dyn_ping(struct Server* server, int fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
@@ -406,7 +408,7 @@ static void ping(struct Server* server, int fd) {
 }
 
 // calls the on_shutdown callback
-static void on_shutdown(struct Server* server, int fd) {
+static void dyn_shutdown(struct Server* server, int fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
@@ -414,7 +416,7 @@ static void on_shutdown(struct Server* server, int fd) {
 }
 
 // calls the on_close callback and de-registers the connection
-static void on_close(struct Server* server, int fd) {
+static void dyn_close(struct Server* server, int fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
@@ -424,6 +426,49 @@ static void on_close(struct Server* server, int fd) {
   // // DON'T do this... async tasks might have bindings to this one...
   // rb_gc_force_recycle(protocol);
 }
+
+////////////////////////////////////////////////////////////////////////
+// The Dynamic Protocol object.
+struct Protocol DynamicProtocol = {.on_open = dyn_open,
+                                   .on_data = dyn_data,
+                                   .ping = dyn_ping,
+                                   .on_shutdown = dyn_shutdown,
+                                   .on_close = dyn_close};
+
+////////////////////////////////////////////////////////////////////////
+// Initialize the Dynamic Protocol module and its methods.
+
+static void init_dynamic_protocol(void) {  // The Protocol module will inject
+                                           // helper methods and core
+                                           // functionality into
+  // the Ruby protocol class provided by the user.
+  rDynProtocol = rb_define_module_under(rCore, "DynProtocol");
+  rb_define_method(rDynProtocol, "on_open", empty_func, 0);
+  rb_define_method(rDynProtocol, "on_data", def_dyn_data, 0);
+  rb_define_method(rDynProtocol, "on_message", def_dyn_message, 1);
+  rb_define_method(rDynProtocol, "ping", no_ping_func, 0);
+  rb_define_method(rDynProtocol, "on_shutdown", empty_func, 0);
+  rb_define_method(rDynProtocol, "on_close", empty_func, 0);
+  // helper method
+  rb_define_method(rDynProtocol, "run", run_async, 0);
+  rb_define_method(rDynProtocol, "defer", run_protocol_task, 0);
+  rb_define_method(rDynProtocol, "read", srv_read, -1);
+  rb_define_method(rDynProtocol, "write", srv_write, 1);
+  rb_define_method(rDynProtocol, "write_urgent", srv_write_urgent, 1);
+  rb_define_method(rDynProtocol, "close", srv_close, 0);
+  rb_define_method(rDynProtocol, "force_close", srv_force_close, 0);
+  rb_define_method(rDynProtocol, "upgrade", srv_upgrade, 1);
+}
+
+////////////////////////////////////////////////////////////////////////
+/* /////////////////////////////////////////////////////////////////////
+The Iodine Core
+--------------------
+
+The following puts it all together - Dynamic protocols, static protocol and
+the joy of life.
+
+*/  /////////////////////////////////////////////////////////////////////
 
 // called when the server starts up. Saves the server object to the instance.
 static void on_init(struct Server* server) {
@@ -532,17 +577,12 @@ static VALUE srv_start(VALUE self) {
   snprintf(port, 6, "%d", iport);
   if (TYPE(rb_protocol) == T_CLASS) {  // a class
     // include the protocol module
-    rb_include_module(rb_protocol, rProtocol);
-  } else {  // it's a module
-    // extend the protocol module
+    rb_include_module(rb_protocol, rDynProtocol);
+  } else {  // it's a module - a static protocol?
+    // extend the static protocol module
   }
-  struct Protocol protocol = {.on_open = on_open,
-                              .on_data = on_data,
-                              .ping = ping,
-                              .on_shutdown = on_shutdown,
-                              .on_close = on_close};
   struct ServerSettings settings = {
-      .protocol = &protocol,
+      .protocol = &DynamicProtocol,
       .timeout = timeout,
       .threads = rb_threads == Qnil ? 0 : (FIX2INT(rb_threads)),
       .processes = rb_processes == Qnil ? 0 : (FIX2INT(rb_processes)),
@@ -600,24 +640,7 @@ void Init_core(void) {
     else
       VERSION = StringValueCStr(version);
   }
-  // The Protocol module will inject helper methods and core functionality into
-  // the Ruby protocol class provided by the user.
-  rProtocol = rb_define_module_under(rCore, "Protocol");
-  rb_define_method(rProtocol, "on_open", empty_func, 0);
-  rb_define_method(rProtocol, "on_data", def_on_data, 0);
-  rb_define_method(rProtocol, "on_message", def_on_message, 1);
-  rb_define_method(rProtocol, "ping", no_ping_func, 0);
-  rb_define_method(rProtocol, "on_shutdown", empty_func, 0);
-  rb_define_method(rProtocol, "on_close", empty_func, 0);
-  // helper method
-  rb_define_method(rProtocol, "run", run_async, 0);
-  rb_define_method(rProtocol, "defer", run_protocol_task, 0);
-  rb_define_method(rProtocol, "read", srv_read, -1);
-  rb_define_method(rProtocol, "write", srv_write, 1);
-  rb_define_method(rProtocol, "write_urgent", srv_write_urgent, 1);
-  rb_define_method(rProtocol, "close", srv_close, 0);
-  rb_define_method(rProtocol, "force_close", srv_force_close, 0);
-  rb_define_method(rProtocol, "upgrade", srv_upgrade, 1);
+  init_dynamic_protocol();
 
   // Every Protocol (and Server?) instance will hold a reference to the server
   // define the Server Ruby class.

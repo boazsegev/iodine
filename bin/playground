@@ -32,7 +32,7 @@ class EchoProtocol
     # close will be performed only once all the data in the write buffer
     # was sent. use `force_close` to close early.
     close if buffer =~ /^bye[\r\n]/i
-    upgrade ShoooProtocol
+    # upgrade ShoooProtocol
     # # use buffer.dup to save the data from being recycled once we return.
     # data = buffer.dup
     # # run asynchronous tasks with ease

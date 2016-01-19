@@ -1,4 +1,15 @@
-# The ProtocolExample class is used only for documenting the Protocol API, it will not be included when requiring `iodine`.
+# The DynamicProtocol class is used only for documenting the Protocol API, it will not be included when requiring `iodine`.
+#
+# The dynamic (stateful) prtocol is defined as a Ruby class instance which is in control of one single connection.
+#
+# It is called dynamic because it is dynamically allocated for each connection and then discarded,
+# also it sounded better then calling it "the stateful protocol", even though that's what it actually is
+# (as keeps the state of the connection).
+#
+# It is (mostly) thread-safe as long as it's operations are limited to the scope
+# of the object.
+#
+# ## The Callbacks
 #
 # A protocol class MUST contain ONE of the following callbacks:
 #
@@ -17,13 +28,14 @@
 # Use {#defer} to run protocol related tasks (this locks the connection, preventing it from running more then one task at a time and offering thread safety),
 # or {#run} to run asynchronous tasks that aren't protocol related.
 #
-# API:
+# ## The API:
 #
 # After a new connection is accepted and a new protocol object is created, the protocol will be linked with Iodine's Protocol API.
 # Only the main protocol will be able to access the API within `initialize`, so it's best to use `on_open` for any Initialization required.
 #
-# The ProtocolExample class contains method to document Iodine's protocol API (they all call `super`).
-class ProtocolExample
+# This DynamicProtocol class contains the API as methods just document Iodine's dynamic protocol API
+# (they all call `super` and this file will not be included when Iodine is loaded).
+class DynamicProtocol
 
   # Reads n bytes from the network connection, where n is:
   #
