@@ -107,14 +107,32 @@ Yes, please, here are some thoughts:
 
 * If you love the project or thought the code was nice, maybe helped you in your own project, drop me a line. I'd love to know.
 
+## License
+
+The gem is available as open source under the terms of the [MIT License](http://opensource.org/licenses/MIT).
+
+---
+
 ## I'm also writing a Ruby extension in C
 
 Really?! That's great!
 
 We could all use some more documentation around the subject and having an eco-system for extension tidbits would be nice.
 
-Just to help you out, I recommend you look at the [Registry](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-registry.h) Iodine is using to keep Ruby objects that are owned by C-land from being collected by the garbage collector... some people use global Ruby arrays, but that sounds like a performance hog to me. This one is a simple binary tree.
+Here's a few things you can use from this project and they seem to be handy to have (and easy to port):
 
-## License
+* Iodine is using a [Registry](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-registry.h) to keep Ruby objects that are owned by C-land from being collected by the garbage collector...
 
-The gem is available as open source under the terms of the [MIT License](http://opensource.org/licenses/MIT).
+    some people use global Ruby arrays, but that sounds like a performance hog to me.
+
+    This one is a simple binary tree with a Ruby GC callback. Remember to initialize the Registry (`Registry.init(owner)`) so it's "owned" by some Roby-land object. I'm attaching it to one of Iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
+
+* I was using a native thread pool library ([`libasync.h`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/libasync.h)) until I realized how many issues Ruby has with POSIX threads... So now there's a Ruby-thread implementation for this library at ([`libasync-rb.c`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/libasync-rb.c)).
+
+    Notice that all the new threads are free from the GVL - this allows true concurrency... but, you can't make Ruby API calls in that state.
+
+    To perform Ruby API calls you need to re-enter the global lock (GVL), albeit temporarily, using `rb_thread_call_with_gvl` and `rv_protect` (gotta watch out from Ruby `longjmp` exceptions).
+
+* Since I needed to call Ruby methods while multi-threading and running outside the GVL, I wrote [`RubyCaller`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-call.h) which let's me call an object's method and wraps all the `rb_thread_call_with_gvl` and `rv_protect` details in a secret hidden place I never have to see again.
+
+These are nice code snippets that can be easily used in other extensions. They're easy enough to write, I guess, but I already did the legwork, so enjoy.
