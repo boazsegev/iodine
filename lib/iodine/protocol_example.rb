@@ -24,6 +24,7 @@
 #
 # The ProtocolExample class contains method to document Iodine's protocol API (they all call `super`).
 class ProtocolExample
+
   # Reads n bytes from the network connection, where n is:
   #
   # - the number of bytes set in the optional `buffer_or_length` argument.
@@ -36,6 +37,7 @@ class ProtocolExample
   def read buffer_or_length = nil
     super
   end
+
   # Writes all the data in the String `data` to the connection.
   #
   # If the data cannot be written in a single non-blocking system call,
@@ -44,6 +46,7 @@ class ProtocolExample
   def write data
     super
   end
+
   # Writes all the data in the String `data` to the connection.
   #
   # If the data cannot be written in a single non-blocking system call,
@@ -62,6 +65,7 @@ class ProtocolExample
   def write_urgent data
     super
   end
+
   # Closes the connection.
   #
   # If there is an internal write buffer with pending data to be sent (see {#write}),
@@ -69,14 +73,35 @@ class ProtocolExample
   def close
     super
   end
+
   # Closes the connection immediately, even if there's still data waiting to be sent (see {#close} and {#write}).
   def force_close
     super
   end
+
+  # Replaces the current protocol instance with another.
   #
+  # The `handler` is expected to be a protocol instance object.
+  # Once it is passed to the {#upgrade} method, it's class will be extended to include
+  # Iodine's API (by way of a mixin) and it's `on_open` callback will be called.
+  #
+  # If `handler` is a class, the API will be injected to the class (by way of a mixin)
+  # and a new instance will be created before calling `on_open`.
+  def upgrade handler
+    super
+  end
+
+  # This schedules a task to be performed asynchronously within the lock of this
+  # protocol's connection.
+  #
+  # The task won't be performed while `on_message` or `on_data` is still active.
+  # No single connection will perform more then a single task at a time.
   def defer
     super
   end
+
+  # This schedules a task to be performed asynchronously. In a multi-threaded
+  # setting, tasks might be performed concurrently.
   def run
     super
   end
