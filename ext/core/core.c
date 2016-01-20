@@ -1,12 +1,4 @@
-#include "rb-registry.h"
-#include "rb-call.h"
-#include "lib-server.h"
-#include <ruby.h>
-#include <ruby/thread.h>
-#include <ruby/encoding.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "core.h"
 #include <pthread.h>
 #include <sys/socket.h>
 
@@ -72,6 +64,18 @@ static ID on_shutdown_func_id;   // the on_shutdown callback
 static ID on_close_func_id;      // the on_close callback
 static ID ping_func_id;          // the ping callback
 
+/////////////////////////////////////
+// GC friendly wrapper for saving the
+// C Server pointer inside a Ruby object.
+
+// GC will call this to "free" the memory... which would be bad.
+static void dont_free(void* obj) {}
+// the data wrapper and the dont_free instruction callback
+struct rb_data_type_struct iodine_core_server_type = {
+    .wrap_struct_name = "IodineServer",
+    .function.dfree = (void (*)(void*))dont_free,
+};
+
 // for debugging:
 // static void print_func_name_from_id(ID func) {
 //   ID __id_list__[9] = {call_proc_id,         // id for the Proc.call method
@@ -106,36 +110,6 @@ static ID ping_func_id;          // the ping callback
 //   }
 //   printf("calling unknown Ruby method\n");
 // }
-
-////////////////////////////////////////////////////////////////////////
-// Every object (the Iodine core, the protocols) will have a reference to their
-// respective `struct Server` object, allowing them to invoke server methods
-// (i.e. `write`, `close`, etc')...
-//
-// This data (a C pointer) needs to be attached to the Ruby objects via a T_DATA
-// object variable. These T_DATA types define memory considerations for the GC.
-//
-// We need to make sure Ruby doesn't free our server along with our object...
-
-// we need this so GC doesn't free the server object... (a false free method)
-// maybe there's another way to do this?
-void dont_free(void* obj) {}
-// define the server data type
-static struct rb_data_type_struct my_server_type = {
-    .wrap_struct_name = "IodineServer",
-    .function.dfree = (void (*)(void*))dont_free,
-};
-
-// defines an inline helper function to embed a server pointer in an object
-static inline void set_server(VALUE object, server_pt srv) {
-  rb_ivar_set(object, server_var_id,
-              TypedData_Wrap_Struct(rServer, &my_server_type, srv));
-}
-
-// defines a macro like function to get the server pointer embeded in an object
-static inline server_pt get_server(object) {
-  return (server_pt)DATA_PTR(rb_ivar_get((object), server_var_id));
-}
 
 ////////////////////////////////////////////////////////////////////////
 /* /////////////////////////////////////////////////////////////////////
