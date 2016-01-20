@@ -1,7 +1,6 @@
 require "iodine/version"
 require "iodine/core"
 
-# Please read the {file:README.md} file for an introduction to Iodine and an overview of it's API.
 class Iodine
   # The {#initialize} method accepts either a Hash of settings or no arguments (default state).
   #
