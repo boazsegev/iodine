@@ -39,7 +39,9 @@ If you have the development headers but still can't compile the Iodine extension
 
 ## Mr. Sandman, write me a server
 
-Girls love flowers, or so my ex used to keep telling me... but I think code is the way to really show that something is hot. I mean, look at this short and sweet echo server - it's so elegant I could cry:
+Girls love flowers, or so my ex used to keep telling me... but I think code is the way to really show that something is hot!
+
+I mean, look at this short and sweet echo server - it's so elegant I could cry:
 
 ```ruby
 

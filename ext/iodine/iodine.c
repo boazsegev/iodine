@@ -162,6 +162,8 @@ static VALUE run_async(VALUE self) {
   rb_need_block();
   // get the server object
   struct Server* srv = get_server(self);
+  if (!srv)
+    rb_raise(rb_eRuntimeError, "Server isn't running.");
   // requires multi-threading
   if (Server.settings(srv)->threads < 0) {
     rb_warn(
@@ -187,6 +189,8 @@ static VALUE run_after(VALUE self, VALUE milliseconds) {
   Check_Type(milliseconds, T_FIXNUM);
   // get the server object
   struct Server* srv = get_server(self);
+  if (!srv)
+    rb_raise(rb_eRuntimeError, "Server isn't running.");
   // get the block
   VALUE block = rb_block_proc();
   if (block == Qnil)
@@ -208,6 +212,8 @@ static VALUE run_every(VALUE self, VALUE milliseconds) {
   Check_Type(milliseconds, T_FIXNUM);
   // get the server object
   struct Server* srv = get_server(self);
+  if (!srv)
+    rb_raise(rb_eRuntimeError, "Server isn't running.");
   // get the block
   VALUE block = rb_block_proc();
   if (block == Qnil)
@@ -225,8 +231,10 @@ static VALUE run_every(VALUE self, VALUE milliseconds) {
 
 // counts all the connections on the server
 VALUE count_all(VALUE self) {
-  get_server(self);
-  return LONG2FIX(Server.count(get_server(self), NULL));
+  server_pt srv = get_server(self);
+  if (!srv)
+    rb_raise(rb_eRuntimeError, "Server isn't running.");
+  return LONG2FIX(Server.count(srv, NULL));
 }
 
 void add_helper_methods(VALUE klass) {

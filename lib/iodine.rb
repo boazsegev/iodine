@@ -28,11 +28,11 @@ class Iodine
     if !state.is_a?(Hash)
       raise TypeError, "The `new` method accepts either a Hash with initial settings or no parameters."
     end
-    protocol = state[:protocol]
-    port = (state[:port] || (ARGV.index('-p') && ARGV[ARGV.index('-p') + 1]) || ENV['PORT'] || "3000").to_i
-    threads = state[:threads] || 1
-    threads = state[:processes] || 1
-    threads = state[:timeout] || 10
-    busy_msg = state[:busy_msg]
+    @protocol = state[:protocol]
+    @port = (state[:port] || (ARGV.index('-p') && ARGV[ARGV.index('-p') + 1]) || ENV['PORT'] || "3000").to_i
+    @threads = state[:threads] || 1
+    @processes = state[:processes] || 1
+    @timeout = state[:timeout] || 10
+    @busy_msg = state[:busy_msg]
   end
 end
