@@ -64,7 +64,9 @@ struct HttpRequest {
   // points to the HTTP method name's location within the buffer (actually,
   // position 0).
   char* method;
-  // points to the query string's location within the buffer.
+  // The portion of the request URL that follows the ?, if any.
+  char* path;
+  // The portion of the request URL that follows the ?, if any.
   char* query;
   // points to the version string's location within the buffer.
   char* version;

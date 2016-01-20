@@ -94,10 +94,16 @@ restart:
     buff[pos++] = 0;
     if (pos > len - 3)
       goto bad_request;
-    request->query = &buff[pos];
-    // get version
-    while (pos < (len - 2) && buff[pos] != ' ')
+    request->path = &buff[pos];
+    // get query and version
+    while (pos < (len - 2) && buff[pos] != ' ' && buff[pos] != '?')
       pos++;
+    if (buff[pos] == '?') {
+      buff[pos++] = 0;
+      request->query = buff + pos;
+      while (pos < (len - 2) && buff[pos] != ' ')
+        pos++;
+    }
     buff[pos++] = 0;
     if (pos + 5 > len)
       goto bad_request;
@@ -119,7 +125,8 @@ restart:
     tmp1 = &buff[pos];
     while (pos + 2 < len && buff[pos] != ':') {
       if (buff[pos] >= 'A' && buff[pos] <= 'Z')
-        buff[pos] = buff[pos] | 32;  // lowercase the header field.
+        buff[pos] = buff[pos] & 223;  // uppercase the header field.
+      // buff[pos] = buff[pos] | 32;    // lowercase is nice, but less common.
       pos++;
     }
     if (pos + 4 > len)  // must have at least 4 eol markers...
@@ -135,11 +142,11 @@ restart:
       goto bad_request;
     buff[pos++] = 0;
     buff[pos++] = 0;
-    if (!strcmp(tmp1, "host")) {
+    if (!strcmp(tmp1, "HOST")) {
       request->host = tmp2;
-    } else if (!strcmp(tmp1, "content-type")) {
+    } else if (!strcmp(tmp1, "CONTENT-TYPE")) {
       request->content_type = tmp2;
-    } else if (!strcmp(tmp1, "content-length")) {
+    } else if (!strcmp(tmp1, "CONTENT-LENGTH")) {
       request->content_length = atoi(tmp2);
     }
   }
@@ -285,8 +292,13 @@ void http_default_on_request(struct HttpRequest* req) {
   strcpy(buff, req->method);
   pos += strlen(req->method);
   buff[pos++] = ' ';
-  strcpy(buff + pos, req->query);
-  pos += strlen(req->query);
+  strcpy(buff + pos, req->path);
+  pos += strlen(req->path);
+  if (req->query) {
+    buff[pos++] = '?';
+    strcpy(buff + pos, req->query);
+    pos += strlen(req->query);
+  }
   buff[pos++] = ' ';
   strcpy(buff + pos, req->version);
   pos += strlen(req->version);
