@@ -10,6 +10,6 @@ end
 
 task :default => :test
 
-Rake::ExtensionTask.new "core" do |ext|
+Rake::ExtensionTask.new "iodine" do |ext|
   ext.lib_dir = "lib/iodine"
 end

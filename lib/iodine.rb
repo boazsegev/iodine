@@ -1,5 +1,5 @@
 require "iodine/version"
-require "iodine/core"
+require "iodine/iodine"
 
 class Iodine
   # The {#initialize} method accepts either a Hash of settings or no arguments (default state).

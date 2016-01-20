@@ -29,7 +29,9 @@ Well, it is **free** and **open source**, no need to buy.. and of course you can
 
 It's installable like any other gem, just run:
 
-     $ gem install iodine
+```
+$ gem install iodine
+```
 
 If building the native C extension fails, please notice that some Ruby installations, such as on Ubuntu, require that you separately install the development headers (`ruby.h` and friends). I have no idea why they do that, as you will need the development headers for any native gems you want to install - so hurry up and get it.
 

@@ -1,4 +1,4 @@
-#include "core.h"
+#include "iodine.h"
 #include <pthread.h>
 #include <sys/socket.h>
 
@@ -50,7 +50,7 @@
 static char* VERSION;
 static int BinaryEncodingIndex;  // encoding index
 static VALUE rDynProtocol;       // protocol module
-static VALUE rCore;              // core class
+static VALUE rIodine;            // core class
 static VALUE rServer;            // server object to Ruby class
 static ID server_var_id;         // id for the Server variable (pointer)
 static ID fd_var_id;             // id for the file descriptor (Fixnum)
@@ -230,10 +230,10 @@ VALUE count_all(VALUE self) {
 }
 
 void add_helper_methods(VALUE klass) {
-  rb_define_method(rCore, "connection_count", count_all, 0);
-  rb_define_method(rCore, "run", run_async, 0);
-  rb_define_method(rCore, "run_after", run_after, 1);
-  rb_define_method(rCore, "run_every", run_every, 1);
+  rb_define_method(rIodine, "connection_count", count_all, 0);
+  rb_define_method(rIodine, "run", run_async, 0);
+  rb_define_method(rIodine, "run_after", run_after, 1);
+  rb_define_method(rIodine, "run_every", run_every, 1);
 }
 ////////////////////////////////////////////////////////////////////////
 /* /////////////////////////////////////////////////////////////////////
@@ -503,7 +503,7 @@ static void init_dynamic_protocol(void) {  // The Protocol module will inject
                                            // helper methods and core
                                            // functionality into
   // the Ruby protocol class provided by the user.
-  rDynProtocol = rb_define_module_under(rCore, "DynProtocol");
+  rDynProtocol = rb_define_module_under(rIodine, "DynamicProtocol");
   rb_define_method(rDynProtocol, "on_open", empty_func, 0);
   rb_define_method(rDynProtocol, "on_data", def_dyn_data, 0);
   rb_define_method(rDynProtocol, "on_message", def_dyn_message, 1);
@@ -681,7 +681,7 @@ static VALUE srv_start(VALUE self) {
 //
 // Here we connect all the C code to the Ruby interface, completing the bridge
 // between Lib-Server and Ruby.
-void Init_core(void) {
+void Init_iodine(void) {
   // initialize globally used IDs, for faster access to the Ruby layer.
   call_proc_id = rb_intern("call");
   server_var_id = rb_intern("server");
@@ -698,21 +698,21 @@ void Init_core(void) {
   BinaryEncodingIndex = rb_enc_find_index("binary");
 
   // The core Iodine class wraps the ServerSettings and little more.
-  rCore = rb_define_class("Iodine", rb_cObject);
-  add_helper_methods(rCore);
-  rb_define_method(rCore, "start", srv_start, 0);
-  rb_define_method(rCore, "on_start", on_start, 0);
-  rb_define_attr(rCore, "protocol", 1, 1);
-  rb_define_attr(rCore, "port", 1, 1);
-  rb_define_attr(rCore, "address", 1, 1);
-  rb_define_attr(rCore, "threads", 1, 1);
-  rb_define_attr(rCore, "processes", 1, 1);
-  rb_define_attr(rCore, "timeout", 1, 1);
-  rb_define_attr(rCore, "busy_msg", 1, 1);
+  rIodine = rb_define_class("Iodine", rb_cObject);
+  add_helper_methods(rIodine);
+  rb_define_method(rIodine, "start", srv_start, 0);
+  rb_define_method(rIodine, "on_start", on_start, 0);
+  rb_define_attr(rIodine, "protocol", 1, 1);
+  rb_define_attr(rIodine, "port", 1, 1);
+  rb_define_attr(rIodine, "address", 1, 1);
+  rb_define_attr(rIodine, "threads", 1, 1);
+  rb_define_attr(rIodine, "processes", 1, 1);
+  rb_define_attr(rIodine, "timeout", 1, 1);
+  rb_define_attr(rIodine, "busy_msg", 1, 1);
 
   // get-set version
   {
-    VALUE version = rb_const_get(rCore, rb_intern("VERSION"));
+    VALUE version = rb_const_get(rIodine, rb_intern("VERSION"));
     if (version == Qnil)
       VERSION = "0.2.0";
     else
@@ -722,10 +722,10 @@ void Init_core(void) {
 
   // Every Protocol (and Server?) instance will hold a reference to the server
   // define the Server Ruby class.
-  rServer = rb_define_class_under(rCore, "ServerObject", rb_cData);
+  rServer = rb_define_class_under(rIodine, "ServerObject", rb_cData);
 
   // Initialize the registry under the Iodine core
-  Registry.init(rCore);
+  Registry.init(rIodine);
 }
 //
 // require "/Users/2Be/rC/iodine/ext/ccore/core"
