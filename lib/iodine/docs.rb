@@ -23,7 +23,7 @@ class Iodine
   # Runs an asynchronous task after set amount of milliseconds.
   def run_after milliseconds
   end
-  # Runs an asynchronous task every set amount of milliseconds. see {DynProtocol#run_every}.
+  # Runs an asynchronous task every set amount of milliseconds. see {DynamicProtocol#run_every}.
   def run_every milliseconds
   end
   # returns the total number of connections and timers currently used.
