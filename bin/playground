@@ -36,7 +36,7 @@ class EchoProtocol
     # # use buffer.dup to save the data from being recycled once we return.
     # data = buffer.dup
     # # run asynchronous tasks with ease
-    # defer do
+    # run do
     #   sleep 1
     #   puts "Echoed data: #{data}"
     # end
@@ -49,6 +49,13 @@ server.threads = 10
 server.processes = 1
 server.busy_msg = "To many connections, try again later."
 server.protocol = EchoProtocol
+
+b = server.on_start do
+  server.run_after(1000) {puts "A seconds have passed?"}
+  server.run_every(1000) {puts "#{server.connection_count} clients connected."}
+  puts "Since we have 2 timers, we have #{server.connection_count} connections."
+end
+
 server.start
 
 # ab -n 1000000 -c 20000 -k http://127.0.0.1:3000/

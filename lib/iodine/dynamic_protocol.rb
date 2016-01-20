@@ -117,10 +117,26 @@ class DynamicProtocol
   def run
     super
   end
-  # def run_after miliseconds
-  #   super
-  # end
-  # def run_every miliseconds, repetitions
-  #   super
-  # end
+  # Runs a task after the specified number of milliseconds have passed. The task will NOT repeat.
+  #
+  # running timer based tasks requires the use of a file descriptor on the server,
+  # meanining that it will require the resources of a single connection and will
+  # be counted as a connection when calling {#connection_count}
+  def run_after milliseconds
+    super
+  end
+  # Runs a persistent task every time the specified number of milliseconds have passed.
+  #
+  # Persistent tasks stay in the memory until Ruby exits.
+  #
+  # **Use {#run_after} recorsively for a task that repeats itself for a limited amount of times**.
+  #
+  # milliseconds:: the number of milliseconds between each cycle.
+  def run_every milliseconds
+    super
+  end
+  # Returns the number of total connections (including timers) in the reactor.
+  def connection_count
+    super
+  end
 end

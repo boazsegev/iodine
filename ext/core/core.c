@@ -113,6 +113,130 @@ struct rb_data_type_struct iodine_core_server_type = {
 
 ////////////////////////////////////////////////////////////////////////
 /* /////////////////////////////////////////////////////////////////////
+Global helper methods
+
+The following functions and ruby helper methods (functions for ruby) are
+relevant for any Ruby Iodine object (an object with a reference to the server).
+
+They are attached to both the core (Iodine instance objects) and the protocol(s)
+*/  /////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////
+// Async tasks are supported by libserver,
+// here are some helpers to integrate this
+// support inside Ruby objects.
+
+// performs pending async tasks while managing their Ruby registry.
+// initiated by Server.async
+static void perform_async(void* task) {
+  RubyCaller.call((VALUE)task, call_proc_id);
+  Registry.remove((VALUE)task);
+  // // DON'T do this... async tasks might be persistent methods...
+  // rb_gc_force_recycle(task);
+}
+
+// performs pending async tasks while managing their Ruby registry.
+// initiated by Server.async
+static void perform_repeated_timer(void* task) {
+  RubyCaller.call((VALUE)task, call_proc_id);
+  // Timers will remain in the memory... forever!
+  // Registry.remove((VALUE)task);
+  // // DON'T do this... async tasks might be persistent methods...
+  // rb_gc_force_recycle(task);
+}
+
+// performs pending protocol task while managing it's Ruby registry.
+// initiated by Server.defer
+static void perform_protocol_async(struct Server* srv, int fd, void* task) {
+  RubyCaller.call((VALUE)task, call_proc_id);
+  Registry.remove((VALUE)task);
+  // // DON'T do this... async tasks might be persistent methods...
+  // rb_gc_force_recycle(task);
+}
+
+// A helper method that any object with a server instance variable can link to.
+// schedules async tasks while managing their Ruby registry.
+// used by Iodine (core) and DynProtocol (and future objects)
+static VALUE run_async(VALUE self) {
+  // requires a block to be passed
+  rb_need_block();
+  // get the server object
+  struct Server* srv = get_server(self);
+  // requires multi-threading
+  if (Server.settings(srv)->threads < 0) {
+    rb_warn(
+        "called an async method in a non-async mode - the task will "
+        "be performed immediately.");
+    rb_yield(Qnil);
+  }
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qnil;
+  Registry.add(block);
+  Server.run_async(srv, perform_async, (void*)block);
+  return block;
+}
+
+// A helper method that any object with a server instance variable can link to.
+// schedules async tasks while managing their Ruby registry.
+// used by Iodine (core) and DynProtocol (and future objects)
+static VALUE run_after(VALUE self, VALUE milliseconds) {
+  // requires a block to be passed
+  rb_need_block();
+  // milliseconds must be a Fixnum
+  Check_Type(milliseconds, T_FIXNUM);
+  // get the server object
+  struct Server* srv = get_server(self);
+  // get the block
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qnil;
+  // register the task
+  Registry.add(block);
+  // schedule using perform_async (deregisters the block on completion).
+  Server.run_after(srv, FIX2LONG(milliseconds), perform_async, (void*)block);
+  return block;
+}
+
+// A helper method that any object with a server instance variable can link to.
+// schedules async tasks while managing their Ruby registry.
+// used by Iodine (core) and DynProtocol (and future objects)
+static VALUE run_every(VALUE self, VALUE milliseconds) {
+  // requires a block to be passed
+  rb_need_block();
+  // milliseconds must be a Fixnum
+  Check_Type(milliseconds, T_FIXNUM);
+  // get the server object
+  struct Server* srv = get_server(self);
+  // get the block
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qnil;
+  // register the block
+  Registry.add(block);
+  // schedule using perform_repeated_timer (doesn't deregister the block).
+  Server.run_every(srv, FIX2LONG(milliseconds), 0, perform_repeated_timer,
+                   (void*)block);
+  return block;
+}
+
+/////////////////////////////////////
+// connection counting and references.
+
+// counts all the connections on the server
+VALUE count_all(VALUE self) {
+  get_server(self);
+  return LONG2FIX(Server.count(get_server(self), NULL));
+}
+
+void add_helper_methods(VALUE klass) {
+  rb_define_method(rCore, "connection_count", count_all, 0);
+  rb_define_method(rCore, "run", run_async, 0);
+  rb_define_method(rCore, "run_after", run_after, 1);
+  rb_define_method(rCore, "run_every", run_every, 1);
+}
+////////////////////////////////////////////////////////////////////////
+/* /////////////////////////////////////////////////////////////////////
 The Dynamic/Stateful Protocol
 --------------------
 
@@ -133,22 +257,6 @@ The following are it's helper methods and callbacks
 //
 // The functions manage access to these C methods from the Ruby objects.
 
-// performs pending async tasks while managing their Ruby registry.
-static void perform_async(void* task) {
-  RubyCaller.call((VALUE)task, call_proc_id);
-  Registry.remove((VALUE)task);
-  // // DON'T do this... async tasks might be persistent methods...
-  // rb_gc_force_recycle(task);
-}
-
-// performs pending protocol task while managing it's Ruby registry.
-static void perform_protocol_async(struct Server* srv, int fd, void* task) {
-  RubyCaller.call((VALUE)task, call_proc_id);
-  Registry.remove((VALUE)task);
-  // // DON'T do this... async tasks might be persistent methods...
-  // rb_gc_force_recycle(task);
-}
-
 // run a protocol task (preventing concurrency)
 static VALUE run_protocol_task(VALUE self) {
   // requires a block to be passed
@@ -168,27 +276,6 @@ static VALUE run_protocol_task(VALUE self) {
   Registry.add(block);
   Server.fd_task(srv, FIX2INT(rb_ivar_get(self, fd_var_id)),
                  perform_protocol_async, (void*)block);
-  return block;
-}
-
-// schedules async tasks while managing their Ruby registry.
-static VALUE run_async(VALUE self) {
-  // requires a block to be passed
-  rb_need_block();
-  // get the server object
-  struct Server* srv = get_server(self);
-  // requires multi-threading
-  if (Server.settings(srv)->threads < 0) {
-    rb_warn(
-        "called an async method in a non-async mode - the task will "
-        "be performed immediately.");
-    rb_yield(Qnil);
-  }
-  VALUE block = rb_block_proc();
-  if (block == Qnil)
-    return Qnil;
-  Registry.add(block);
-  Server.run_async(srv, perform_async, (void*)block);
   return block;
 }
 
@@ -425,6 +512,8 @@ static void init_dynamic_protocol(void) {  // The Protocol module will inject
   rb_define_method(rDynProtocol, "on_close", empty_func, 0);
   // helper method
   rb_define_method(rDynProtocol, "run", run_async, 0);
+  rb_define_method(rDynProtocol, "run_after", run_after, 0);
+  rb_define_method(rDynProtocol, "run_every", run_every, 0);
   rb_define_method(rDynProtocol, "defer", run_protocol_task, 0);
   rb_define_method(rDynProtocol, "read", srv_read, -1);
   rb_define_method(rDynProtocol, "write", srv_write, 1);
@@ -444,6 +533,13 @@ the joy of life.
 
 */  /////////////////////////////////////////////////////////////////////
 
+// API for the user to setup an on_start callback
+VALUE on_start(VALUE self) {  // requires a block to be passed
+  rb_need_block();
+  VALUE callback = rb_block_proc();
+  rb_iv_set(self, "on_start_block", callback);
+  return callback;
+}
 // called when the server starts up. Saves the server object to the instance.
 static void on_init(struct Server* server) {
   VALUE core_instance = *((VALUE*)Server.settings(server)->udata);
@@ -455,6 +551,13 @@ static void on_init(struct Server* server) {
           VERSION, Server.settings(server)->threads,
           (Server.settings(server)->threads > 1 ? "s" : ""),
           Server.settings(server)->processes);
+  // set the server variable in the core server object.. is this GC safe?
+  set_server(core_instance, server);
+  // perform on_init callback
+  VALUE on_start_block = rb_iv_get(core_instance, "on_start_block");
+  if (on_start_block != Qnil) {
+    RubyCaller.call(on_start_block, call_proc_id);
+  }
 }
 
 // called when server is idling
@@ -596,8 +699,9 @@ void Init_core(void) {
 
   // The core Iodine class wraps the ServerSettings and little more.
   rCore = rb_define_class("Iodine", rb_cObject);
+  add_helper_methods(rCore);
   rb_define_method(rCore, "start", srv_start, 0);
-  rb_define_method(rCore, "run", run_async, 0);
+  rb_define_method(rCore, "on_start", on_start, 0);
   rb_define_attr(rCore, "protocol", 1, 1);
   rb_define_attr(rCore, "port", 1, 1);
   rb_define_attr(rCore, "address", 1, 1);
