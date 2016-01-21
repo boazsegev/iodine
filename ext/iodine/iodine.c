@@ -76,41 +76,6 @@ struct rb_data_type_struct iodine_core_server_type = {
     .function.dfree = (void (*)(void*))dont_free,
 };
 
-// for debugging:
-// static void print_func_name_from_id(ID func) {
-//   ID __id_list__[9] = {call_proc_id,         // id for the Proc.call method
-//                        new_func_id,          // id for the Class.new method
-//                        on_open_func_id,      // the on_open callback's ID
-//                        on_data_func_id,      // the on_data callback
-//                        on_message_func_id,   // the on_message optional
-//                        on_shutdown_func_id,  // the on_shutdown callback
-//                        on_close_func_id,     // the on_close callback
-//                        ping_func_id,         // the ping callback
-//                        0};
-//   char* __name_list__[] = {"call",                // id for the Proc.call
-//   method
-//                            "new",                 // id for the Class.new
-//                            method
-//                            "on_open",             // the on_open callback's
-//                            ID
-//                            "on_data",             // the on_data callback
-//                            "on_message_func_id",  // the on_message optional
-//                            "on_shutdown_func_id",  // the on_shutdown
-//                            callback
-//                            "on_close_func_id",     // the on_close callback
-//                            "ping_func_id",         // the ping callback
-//                            0};
-//   int i = 0;
-//   while (__id_list__[i]) {
-//     if (__id_list__[i] == func) {
-//       printf("calling %s\n", __name_list__[i]);
-//       return;
-//     }
-//     i++;
-//   }
-//   printf("calling unknown Ruby method\n");
-// }
-
 ////////////////////////////////////////////////////////////////////////
 /* /////////////////////////////////////////////////////////////////////
 Global helper methods
@@ -230,14 +195,14 @@ static VALUE run_every(VALUE self, VALUE milliseconds) {
 // connection counting and references.
 
 // counts all the connections on the server
-VALUE count_all(VALUE self) {
+static VALUE count_all(VALUE self) {
   server_pt srv = get_server(self);
   if (!srv)
     rb_raise(rb_eRuntimeError, "Server isn't running.");
   return LONG2FIX(Server.count(srv, NULL));
 }
 
-void add_helper_methods(VALUE klass) {
+static void add_helper_methods(VALUE klass) {
   rb_define_method(rIodine, "connection_count", count_all, 0);
   rb_define_method(rIodine, "run", run_async, 0);
   rb_define_method(rIodine, "run_after", run_after, 1);
@@ -293,6 +258,7 @@ static VALUE srv_write(VALUE self, VALUE data) {
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
   return LONG2FIX(Server.write(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data)));
 }
+
 // writes data to the connection
 static VALUE srv_write_urgent(VALUE self, VALUE data) {
   struct Server* srv = get_server(self);
@@ -542,7 +508,7 @@ the joy of life.
 */  /////////////////////////////////////////////////////////////////////
 
 // API for the user to setup an on_start callback
-VALUE on_start(VALUE self) {  // requires a block to be passed
+static VALUE on_start(VALUE self) {  // requires a block to be passed
   rb_need_block();
   VALUE callback = rb_block_proc();
   rb_iv_set(self, "on_start_block", callback);
