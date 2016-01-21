@@ -7,8 +7,15 @@
 // a non-GVL ruby thread zone.
 
 // a structure for Ruby API calls
-struct RubyApiCall {
+struct RubySimpleCall {
   VALUE obj;
+  VALUE returned;
+  ID method;
+};
+struct RubyArgCall {
+  VALUE obj;
+  int argc;
+  VALUE* argv;
   VALUE returned;
   ID method;
 };
@@ -25,15 +32,19 @@ static void* handle_exception(void* _) {
   }
   return (void*)exc;
 }
+
+////////////////////////////////////////////////////////////////////////////
+// A simple (and a bit lighter) design for when there's no need for arguments.
+
 // running the actual method call
 static VALUE run_ruby_method_unsafe(VALUE _tsk) {
-  struct RubyApiCall* task = (void*)_tsk;
-  return rb_funcall(task->obj, task->method, 0);
+  struct RubySimpleCall* task = (void*)_tsk;
+  return rb_funcall2(task->obj, task->method, 0, NULL);
 }
 
 // GVL gateway
 static void* run_ruby_method_within_gvl(void* _tsk) {
-  struct RubyApiCall* task = _tsk;
+  struct RubySimpleCall* task = _tsk;
   int state = 0;
   task->returned = rb_protect(run_ruby_method_unsafe, (VALUE)(task), &state);
   if (state)
@@ -43,14 +54,14 @@ static void* run_ruby_method_within_gvl(void* _tsk) {
 
 // wrapping any API calls for exception management AND GVL entry
 static VALUE call(VALUE obj, ID method) {
-  struct RubyApiCall task = {.obj = obj, .method = method};
+  struct RubySimpleCall task = {.obj = obj, .method = method};
   rb_thread_call_with_gvl(run_ruby_method_within_gvl, &task);
   return task.returned;
 }
 
 // wrapping any API calls for exception management
 static VALUE call_unsafe(VALUE obj, ID method) {
-  struct RubyApiCall task = {.obj = obj, .method = method};
+  struct RubySimpleCall task = {.obj = obj, .method = method};
   int state = 0;
   task.returned = rb_protect(run_ruby_method_unsafe, (VALUE)(&task), &state);
   if (state)
@@ -58,8 +69,49 @@ static VALUE call_unsafe(VALUE obj, ID method) {
   return task.returned;
 }
 
+////////////////////////////////////////////////////////////////////////////
+// A heavier (memory) design for when we're passing arguments around.
+
+// running the actual method call
+static VALUE run_argv_method_unsafe(VALUE _tsk) {
+  struct RubyArgCall* task = (void*)_tsk;
+  return rb_funcall2(task->obj, task->method, task->argc, task->argv);
+}
+
+// GVL gateway
+static void* run_argv_method_within_gvl(void* _tsk) {
+  struct RubyArgCall* task = _tsk;
+  int state = 0;
+  task->returned = rb_protect(run_argv_method_unsafe, (VALUE)(task), &state);
+  if (state)
+    handle_exception(NULL);
+  return task;
+}
+
+// wrapping any API calls for exception management AND GVL entry
+static VALUE call_arg(VALUE obj, ID method, int argc, VALUE* argv) {
+  struct RubyArgCall task = {
+      .obj = obj, .method = method, .argc = argc, .argv = argv};
+  rb_thread_call_with_gvl(run_argv_method_within_gvl, &task);
+  return task.returned;
+}
+
+// wrapping any API calls for exception management
+static VALUE call_argv_unsafe(VALUE obj, ID method, int argc, VALUE* argv) {
+  struct RubyArgCall task = {
+      .obj = obj, .method = method, .argc = argc, .argv = argv};
+  int state = 0;
+  task.returned = rb_protect(run_argv_method_unsafe, (VALUE)(&task), &state);
+  if (state)
+    handle_exception(NULL);
+  return task.returned;
+}
+
+////////////////////////////////////////////////////////////////////////////
 // the API interface
 struct _Ruby_Method_Caller_Class_ RubyCaller = {
     .call = call,
     .call_unsafe = call_unsafe,
+    .call2 = call_arg,
+    .call_unsafe2 = call_argv_unsafe,
 };
