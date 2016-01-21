@@ -701,16 +701,3 @@ void Init_iodine(void) {
   // Initialize the registry under the Iodine core
   Registry.init(rIodine);
 }
-//
-// require "/Users/2Be/rC/iodine/ext/ccore/core"
-// i = IodineCore.new
-// class Prtc
-// def on_message data
-//   write data
-//   close if data =~ /^bye/
-// end
-// end
-// i.protocol = Prtc
-// i.threads = 2
-// i.processes = 1
-// i.start
