@@ -127,6 +127,13 @@ extern const struct ServerClass {
   // sets the opaque pointer to be associated with the connection. returns the
   // old pointer, if any.
   void* (*set_udata)(struct Server* server, int sockfd, void* udata);
+  // Connects an existing connection (fd) with the server's reactor and protocol
+  // management system, so that the server can be used also to manage connection
+  // based resources asynchronously (i.e. database resources etc').
+  //
+  // since no new connections are expected on fd == 0..2, it's possible to store
+  // global data in these locations.
+  int (*connect)(struct Server* server, int sockfd, struct Protocol* protocol);
   // counts the number of connections for the specified protocol (NULL = all
   // protocols).
   long (*count)(struct Server* server, char* service);
@@ -169,6 +176,9 @@ extern const struct ServerClass {
 
   /// "touches" a socket, reseting it's timeout counter.
   void (*touch)(struct Server* server, int sockfd);
+  // sets the timeout limit for the specified connectionl, in seconds, up to
+  // 255 seconds (the maximum allowed timeout count).
+  void (*set_timeout)(struct Server* server, int sockfd, unsigned char timeout);
   // returns true if the a specific connection's protected callback is running
   //
   // protected callbacks include only the `on_message` callback and tasks
