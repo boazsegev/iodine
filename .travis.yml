@@ -6,7 +6,7 @@ rvm:
   - 2.0.0
 compiler:
   - clang
-  - gcc
+  - gcc-4.8
 os:
   - linux
   - osx
