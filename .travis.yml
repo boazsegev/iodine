@@ -10,6 +10,7 @@ compiler:
 os:
   - linux
   - osx
+sudo: required
 addons:
   apt:
     sources:
