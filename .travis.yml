@@ -10,4 +10,10 @@ compiler:
 os:
   - linux
   - osx
+addons:
+  apt:
+    sources:
+      - ubuntu-toolchain-r-test
+    packages:
+      - gcc-4.8
 before_install: gem install bundler -v 1.10.6
