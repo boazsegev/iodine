@@ -172,23 +172,45 @@ static VALUE request_to_env(struct HttpRequest* request) {
   // itterate through the headers and set the HTTP_X "variables"
   HttpRequest.first(request);
 }
+
+// Gets the response object, within a GVL context
+static void* get_response_in_gvl(void* _res) {
+  struct HttpRequest* request = _res;
+  VALUE env = request_to_env(request);
+  // a regular request is forwarded to the on_request callback.
+  VALUE response = RubyCaller.call2((VALUE)Server.get_udata(request->server, 0),
+                                    call_proc_id, 1, &env);
+  // clean-up env and register response
+  Registry.remove(env);
+  Registry.add(response);
+  return (void*)response;
+}
 // translate a struct HttpRequest to a Hash, according top the
 // Rack specifications.
 static void send_response(struct HttpRequest* request, VALUE response) {
+  static char internal_error[] =
+      "HTTP/1.1 502 Internal Error\r\n"
+      "Connection: closed\r\n"
+      "Content-Length: 16\r\n\r\n"
+      "Internal Error\r\n";
+  // nil is a bad response... we have an error
+  if (response == Qnil)
+    goto internal_err;
   int todo;
   return;
+internal_err:
+  Registry.remove(response);
+  Server.write(request->server, request->sockfd, internal_error,
+               sizeof(internal_error));
+  Server.close(request->server, request->sockfd);
 }
 
 // The core handler passed on to the HttpProtocol object.
 static void on_request(struct HttpRequest* request) {
-  VALUE env = request_to_env(request);
-  // a regular request is forwarded to the on_request callback.
-  ;
-  VALUE response = RubyCaller.call2((VALUE)Server.get_udata(request->server, 0),
-                                    call_proc_id, 1, &env);
+  // put inside the GVL
+  VALUE response = (VALUE)rb_thread_call_with_gvl(get_response_in_gvl, request);
+  // left GVL, send data.
   send_response(request, response);
-  // clean-up
-  Registry.remove(env);
 }
 
 /* ////////////////////////////////////////////////////////////
