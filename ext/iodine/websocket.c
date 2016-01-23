@@ -86,11 +86,17 @@ static void set_max_body_size(size_t max_bsize) {
   websocket_max_body_size = max_bsize;
 }
 
-int ws_send_text(server_pt srv, int sockfd, void* data, size_t length);
+int ws_send_text(server_pt srv, int sockfd, void* data, size_t length) {
+  return -1;
+}
 
-int ws_send_binary(server_pt srv, int sockfd, void* data, size_t length);
+int ws_send_binary(server_pt srv, int sockfd, void* data, size_t length) {
+  return -1;
+}
 
-void ws_close(server_pt srv, int sockfd);
+void ws_close(server_pt srv, int sockfd) {
+  return;
+}
 
 /////////
 // The API's gateway (namespace)
