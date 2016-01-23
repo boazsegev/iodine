@@ -27,7 +27,7 @@ Gem::Specification.new do |spec|
   spec.executables   = spec.files.grep(%r{^exe/}) { |f| File.basename(f) }
   spec.require_paths = ["lib", "ext"]
 
-  spec.extensions = %w[ext/iodine/extconf.rb]
+  spec.extensions = %w[ext/iodine/extconf.rb ext/iodine/extconf-http.rb]
 
   spec.add_dependency "rake-compiler"
 

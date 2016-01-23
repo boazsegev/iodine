@@ -484,10 +484,8 @@ static void init_dynamic_protocol(void) {  // The Protocol module will inject
   rb_define_method(rDynProtocol, "ping", no_ping_func, 0);
   rb_define_method(rDynProtocol, "on_shutdown", empty_func, 0);
   rb_define_method(rDynProtocol, "on_close", empty_func, 0);
-  // helper method
-  rb_define_method(rDynProtocol, "run", run_async, 0);
-  rb_define_method(rDynProtocol, "run_after", run_after, 0);
-  rb_define_method(rDynProtocol, "run_every", run_every, 0);
+  // helper methods
+  add_helper_methods(rDynProtocol);
   rb_define_method(rDynProtocol, "defer", run_protocol_task, 0);
   rb_define_method(rDynProtocol, "read", srv_read, -1);
   rb_define_method(rDynProtocol, "write", srv_write, 1);
@@ -535,15 +533,8 @@ static void on_init(struct Server* server) {
 }
 
 // called when server is idling
-void on_idle(struct Server* srv) {
-  // call(reg->obj, on_data_func_id);
-  // rb_gc_start();
-}
-
-// called for each new thread
-void on_new_thread(struct Server* srv) {
-  // todo: register threads with Ruby....
-  // fprintf(stderr, "A new worker thread is listening to tasks\n");
+static void on_idle(struct Server* srv) {
+  // RubyCaller.call((VALUE)Server.get_udata(srv, 0), idle_func_id);
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -639,7 +630,6 @@ static VALUE srv_start(VALUE self) {
       .processes = rb_processes == Qnil ? 0 : (FIX2INT(rb_processes)),
       .on_init = on_init,
       .on_idle = on_idle,
-      .on_init_thread = on_new_thread,
       .port = (iport > 0 ? port : NULL),
       .address = bind,
       .udata = &self,
@@ -647,7 +637,7 @@ static VALUE srv_start(VALUE self) {
   };
   // rb_thread_call_without_gvl(slow_func, slow_arg, unblck_func, unblck_arg);
   rb_thread_call_without_gvl(srv_start_no_gvl, &settings, unblck, NULL);
-  return Qnil;
+  return self;
 }
 
 ////////////////////////////////////////////////////////////////////////

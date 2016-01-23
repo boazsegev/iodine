@@ -1,0 +1,26 @@
+#!/usr/bin/env ruby
+
+Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
+puts `rake clean`
+puts `rake compile`
+
+require 'benchmark'
+$LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
+require "bundler/setup"
+require "iodine/http"
+
+
+# create the server object and setup any settings we might need.
+server = Iodine::Http.new
+server.threads = 10
+server.processes = 1
+server.on_request = Proc.new {|env| }
+
+# server.on_start do
+#   server.run_every(1000) {puts "#{server.connection_count} clients connected."}
+# end
+
+server.start
+
+# ab -n 1000000 -c 20000 -k http://127.0.0.1:3000/
+# ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/

@@ -23,8 +23,8 @@ static void http_on_data(struct Server* server, int sockfd) {
   static char* bad_req =
       "HTTP/1.1 400 Bad HttpRequest\r\n"
       "Connection: closed\r\n"
-      "Content-Length: 13\r\n\r\n"
-      "Bad HttpRequest\r\n";
+      "Content-Length: 16\r\n\r\n"
+      "Bad Http Request\r\n";
   static char* too_big_err =
       "HTTP/1.1 413 Entity Too Large\r\n"
       "Connection: closed\r\n"
@@ -124,7 +124,7 @@ restart:
   while (pos < len && buff[pos] != '\r') {
     tmp1 = &buff[pos];
     while (pos + 2 < len && buff[pos] != ':') {
-      if (buff[pos] >= 'A' && buff[pos] <= 'Z')
+      if (buff[pos] >= 'a' && buff[pos] <= 'z')
         buff[pos] = buff[pos] & 223;  // uppercase the header field.
       // buff[pos] = buff[pos] | 32;    // lowercase is nice, but less common.
       pos++;
