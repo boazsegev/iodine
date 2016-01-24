@@ -13,43 +13,44 @@ The server is (mostly) Rack compatible, except:
 
 //////////////
 // general global definitions we will use herein.
-static int BinaryEncodingIndex;  // encoding index
-static VALUE rHttp;              // The Iodine::Http class
-static VALUE rIodine;            // The Iodine class
-static VALUE rServer;            // server object to Ruby class
-static ID server_var_id;         // id for the Server variable (pointer)
-static ID fd_var_id;             // id for the file descriptor (Fixnum)
-static ID call_proc_id;          // id for `#call`
+static int BinaryEncodingIndex;      // encoding index
+static rb_encoding* BinaryEncoding;  // encoding object
+static VALUE rHttp;                  // The Iodine::Http class
+static VALUE rIodine;                // The Iodine class
+static VALUE rServer;                // server object to Ruby class
+static ID server_var_id;             // id for the Server variable (pointer)
+static ID fd_var_id;                 // id for the file descriptor (Fixnum)
+static ID call_proc_id;              // id for `#call`
 // for Rack
-VALUE CONTENT_TYPE;     // for Rack.
-VALUE CONTENT_LENGTH;   // for Rack.
-VALUE SCRIPT_NAME;      // for Rack
-VALUE PATH_INFO;        // for Rack
-VALUE QUERY_STRING;     // for Rack
-VALUE QUERY_ESTRING;    // for rack (if no query)
-VALUE SERVER_NAME;      // for Rack
-VALUE SERVER_PORT;      // for Rack
-VALUE SERVER_PORT_80;   // for Rack
-VALUE SERVER_PORT_443;  // for Rack
-VALUE R_VERSION;        // for Rack: rack.version
-VALUE R_VERSION_V;      // for Rack: rack.version
-VALUE R_SCHEME;         // for Rack: rack.url_scheme
-VALUE R_SCHEME_HTTP;    // for Rack: rack.url_scheme value
-VALUE R_SCHEME_HTTPS;   // for Rack: rack.url_scheme value
-VALUE R_INPUT;          // for Rack: rack.input
-VALUE R_ERRORS;         // for Rack: rack.errors
-VALUE R_ERRORS_V;       // for Rack: rack.errors
-VALUE R_MTHREAD;        // for Rack: rack.multithread
-VALUE R_MTHREAD_V;      // for Rack: rack.multithread
-VALUE R_MPROCESS;       // for Rack: rack.multiprocess
-VALUE R_MPROCESS_V;     // for Rack: rack.multiprocess
-VALUE R_RUN_ONCE;       // for Rack: rack.run_once
-VALUE R_HIJACK_Q;       // for Rack: rack.hijack?
-VALUE R_HIJACK_Q_V;     // for Rack: rack.hijack?
-VALUE R_HIJACK;         // for Rack: rack.hijack
-VALUE R_HIJACK_V;       // for Rack: rack.hijack
-VALUE R_HIJACK_IO;      // for Rack: rack.hijack_io
-VALUE R_HIJACK_IO_V;    // for Rack: rack.hijack_io
+static VALUE CONTENT_TYPE;     // for Rack.
+static VALUE CONTENT_LENGTH;   // for Rack.
+static VALUE SCRIPT_NAME;      // for Rack
+static VALUE PATH_INFO;        // for Rack
+static VALUE QUERY_STRING;     // for Rack
+static VALUE QUERY_ESTRING;    // for rack (if no query)
+static VALUE SERVER_NAME;      // for Rack
+static VALUE SERVER_PORT;      // for Rack
+static VALUE SERVER_PORT_80;   // for Rack
+static VALUE SERVER_PORT_443;  // for Rack
+static VALUE R_VERSION;        // for Rack: rack.version
+static VALUE R_VERSION_V;      // for Rack: rack.version
+static VALUE R_SCHEME;         // for Rack: rack.url_scheme
+static VALUE R_SCHEME_HTTP;    // for Rack: rack.url_scheme value
+static VALUE R_SCHEME_HTTPS;   // for Rack: rack.url_scheme value
+static VALUE R_INPUT;          // for Rack: rack.input
+static VALUE R_ERRORS;         // for Rack: rack.errors
+static VALUE R_ERRORS_V;       // for Rack: rack.errors
+static VALUE R_MTHREAD;        // for Rack: rack.multithread
+static VALUE R_MTHREAD_V;      // for Rack: rack.multithread
+static VALUE R_MPROCESS;       // for Rack: rack.multiprocess
+static VALUE R_MPROCESS_V;     // for Rack: rack.multiprocess
+static VALUE R_RUN_ONCE;       // for Rack: rack.run_once
+static VALUE R_HIJACK_Q;       // for Rack: rack.hijack?
+static VALUE R_HIJACK_Q_V;     // for Rack: rack.hijack?
+static VALUE R_HIJACK;         // for Rack: rack.hijack
+static VALUE R_HIJACK_V;       // for Rack: rack.hijack
+static VALUE R_HIJACK_IO;      // for Rack: rack.hijack_io
+static VALUE R_HIJACK_IO_V;    // for Rack: rack.hijack_io
 
 // rack.version must be an array of Integers.
 // rack.url_scheme must either be http or https.
@@ -89,11 +90,15 @@ static VALUE request_to_env(struct HttpRequest* request) {
   rb_hash_aset(env, R_HIJACK_IO, R_HIJACK_IO_V);
   rb_hash_aset(env, R_RUN_ONCE, Qfalse);
   // set the simple core settings
-  rb_hash_aset(env, PATH_INFO, rb_str_new_cstr(request->path));
+  rb_hash_aset(
+      env, PATH_INFO,
+      rb_enc_str_new(request->path, strlen(request->path), BinaryEncoding));
   rb_hash_aset(
       env, QUERY_STRING,
-      (request->query ? rb_str_new_cstr(request->query) : QUERY_ESTRING));
-  // set scheme R_SCHEME_HTTP  or R_SCHEME_HTTPS or dynamic
+      (request->query ? rb_enc_str_new(request->query, strlen(request->query),
+                                       BinaryEncoding)
+                      : QUERY_ESTRING));
+  // set scheme to R_SCHEME_HTTP or R_SCHEME_HTTPS or dynamic
   int ssl = 0;
   {
     if (HttpRequest.find(request, "x-forwarded-proto")) {
@@ -144,7 +149,7 @@ static VALUE request_to_env(struct HttpRequest* request) {
         break;
     }
     rb_hash_aset(env, SERVER_NAME, rb_str_new(request->host, pos));
-    if (pos < len)
+    if (++pos < len)
       rb_hash_aset(env, SERVER_PORT,
                    rb_str_new(request->host + pos, len - pos));
     else
@@ -152,25 +157,42 @@ static VALUE request_to_env(struct HttpRequest* request) {
   }
   // set POST data (todo)
   if (request->content_type) {
-    rb_hash_aset(env, CONTENT_TYPE, rb_str_new_cstr(request->content_type));
+    rb_hash_aset(env, CONTENT_TYPE,
+                 rb_enc_str_new(request->content_type,
+                                strlen(request->content_type), BinaryEncoding));
   }
   if (request->content_length) {
-    rb_hash_aset(env, CONTENT_LENGTH, INT2FIX(request->content_length));
+    // CONTENT_LENGTH should be a string (damn stupid Rack specs).
+    HttpRequest.find(request, "CONTENT-LENGTH");
+    char* value = HttpRequest.value(request);
+    rb_hash_aset(env, CONTENT_LENGTH,
+                 rb_enc_str_new(value, strlen(value), BinaryEncoding));
   }
-  if (request->body_str) {
-    /* todo: make request->body_str into an IO stream */
-    int todo;
-    rb_hash_aset(env, R_INPUT, rb_str_new_cstr(request->body_str));
-  } else if (request->body_file) {
-    /* todo: make request->body_file into an IO stream */
-    int todo;
-  } else {
-    /* todo: make an empty IO stream */
-    int todo;
-  }
-
+  rb_hash_aset(env, R_INPUT, RackIO.new(request));
   // itterate through the headers and set the HTTP_X "variables"
   HttpRequest.first(request);
+  {
+    char *name, *value;
+    VALUE header;
+    size_t hlen = 0;
+    do {
+      name = HttpRequest.name(request);
+      value = HttpRequest.value(request);
+      // careful, pointer comparison crashed Ruby (although it works without
+      // Ruby)... this could be an issue.
+      if (value == (request->content_type) ||
+          (name[0] == 'C' && !strcmp(name, "CONTENT-LENGTH")))
+        continue;
+      hlen = strlen(name) + 5;
+      header = rb_str_buf_new(hlen);
+      memcpy(RSTRING_PTR(header), "HTTP_", 5);
+      memcpy(RSTRING_PTR(header) + 5, name, hlen - 5);
+      rb_enc_associate(header, BinaryEncoding);
+      rb_hash_aset(env, header,
+                   rb_enc_str_new(value, strlen(value), BinaryEncoding));
+    } while (HttpRequest.next(request));
+  }
+  return env;
 }
 
 // Gets the response object, within a GVL context
@@ -379,6 +401,7 @@ static VALUE http_protocol_set(VALUE self, VALUE _) {
 void Init_iodine_http(void) {
   // get IDs and data that's used often
   BinaryEncodingIndex = rb_enc_find_index("binary");  // sets encoding for data
+  BinaryEncoding = rb_enc_find("binary");             // sets encoding for data
   call_proc_id = rb_intern("call");     // used to call the main callback
   server_var_id = rb_intern("server");  // when upgrading
   fd_var_id = rb_intern("sockfd");      // when upgrading
@@ -425,4 +448,7 @@ void Init_iodine_http(void) {
   rb_define_method(rHttp, "protocol", http_protocol_get, 0);
   rb_define_method(rHttp, "start", http_start, 0);
   rb_define_attr(rHttp, "on_request", 1, 1);
+
+  // initialize the RackIO class
+  RackIO.init(rHttp);
 }

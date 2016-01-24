@@ -9,5 +9,6 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "iodine.h"
 #include "http-protocol.h"
 #include "http-request.h"
+#include "rb-rack-io.h"
 
 #endif /* HTTP_H */

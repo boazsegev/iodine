@@ -23,6 +23,16 @@ Iodine is an **evented** framework with a simple API that runs low level C code 
 
 Iodine is a C extension for Ruby, developed with Ruby MRI 2.3.0 and 2.2.4 (it should support the whole Ruby 2.0 family, but it might not).
 
+## Iodine::Http (wait for it...)
+
+Since many network services start off as Http, Iodine includes a small HTTP Rack server running in C with special support for the Upgrade directive.
+
+This means that it's easy to minimize the number of Ruby objects you need before an Upgrade takes place and a new protocol is established.
+
+Also, since the HTTP parser is written in C (with no RegExp), it's fast.
+
+Iodine::Http imposes a few restrictions for performance and security reasons:
+
 ## Can I try before before I buy?
 
 Well, it is **free** and **open source**, no need to buy.. and of course you can try it out.
