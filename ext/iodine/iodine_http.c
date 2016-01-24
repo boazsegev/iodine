@@ -195,17 +195,33 @@ static VALUE request_to_env(struct HttpRequest* request) {
   return env;
 }
 
-// Gets the response object, within a GVL context
-static void* get_response_in_gvl(void* _res) {
-  struct HttpRequest* request = _res;
-  VALUE env = request_to_env(request);
-  // a regular request is forwarded to the on_request callback.
-  VALUE response = RubyCaller.call2((VALUE)Server.get_udata(request->server, 0),
-                                    call_proc_id, 1, &env);
-  // clean-up env and register response
-  Registry.remove(env);
-  Registry.add(response);
-  return (void*)response;
+// itterate through the headers and add them to the response buffer
+// (we are recycling the request's buffer)
+static int for_each_header_pair(VALUE key, VALUE val, VALUE _req) {
+  struct HttpRequest* request = (void*)_req;
+  int pos_s = 0, pos_e = 0;
+  char* key_s = RSTRING_PTR(key);
+  char* val_s = RSTRING_PTR(val);
+  int key_len = rb_str_length(key), val_len = rb_str_length(val);
+  // scan the value for newline (\n) delimiters
+  while (pos_e < val_len) {
+    // make sure we don't overflow
+    if (request->private.pos >= HTTP_HEAD_MAX_SIZE)
+      return ST_STOP;
+    // scanning for newline (\n) delimiters
+    while (pos_e < val_len && val_s[pos_e] != '\n')
+      pos_e++;
+    // whether we hit a delimitor or the end of string, write the header
+    request->private.pos +=
+        snprintf(request->buffer + request->private.pos,
+                 HTTP_HEAD_MAX_SIZE - request->private.pos, "%.*s: %.*s\r\n",
+                 key_len, key_s, pos_e - pos_s, val_s + pos_s);
+    // move forward (skip the '\n' if exists)
+    pos_s = pos_e + 1;
+    pos_e++;
+  }
+  // no errors, return 0
+  return ST_CONTINUE;
 }
 // translate a struct HttpRequest to a Hash, according top the
 // Rack specifications.
@@ -218,21 +234,75 @@ static void send_response(struct HttpRequest* request, VALUE response) {
   // nil is a bad response... we have an error
   if (response == Qnil)
     goto internal_err;
+  if (TYPE(response) != T_ARRAY)
+    goto internal_err;
+
+  VALUE tmp;
+  char* tmp_s;
+  // get status code from array (obj 0)
+  // NOTICE: this may not always be a number (could be the string "200").
+  tmp = rb_ary_entry(response, 0);
+  if (TYPE(tmp) == T_STRING)
+    tmp = rb_str_to_inum(tmp, 10, 0);
+  if (TYPE(tmp) != T_FIXNUM || (tmp = FIX2INT(tmp)) > 512 || tmp < 100 ||
+      !(tmp_s = HttpStatus.to_s(tmp)))
+    goto internal_err;
+  request->private.pos = 0;
+  request->private.pos +=
+      snprintf(request->buffer, HTTP_HEAD_MAX_SIZE - request->private.pos,
+               "HTTP/1.1 %lu %s", tmp, tmp_s);
+
+  // Start printing headers to head-buffer
+  tmp = rb_ary_entry(response, 1);
+  rb_hash_foreach(tmp, for_each_header_pair, (VALUE)request);
+  // make sure we're not overflowing
+  if (request->private.pos >= HTTP_HEAD_MAX_SIZE)
+    goto internal_err;
+
+  // write headers to server
+  Server.write(request->server, request->sockfd, request->buffer,
+               request->private.pos);
+
+  // write body
+
+  // [String] is most likely
+  // String is a likely error
+  // IO less likely
+  // each emulators (streaming solutions - Yack!)
+
+  // Upgrade (if 4th element)
+
   int todo;
+  // Registry.remove(response);
   return;
 internal_err:
-  Registry.remove(response);
+  // Registry.remove(response);
   Server.write(request->server, request->sockfd, internal_error,
                sizeof(internal_error));
   Server.close(request->server, request->sockfd);
+  rb_warn(
+      "Invalid HTTP response, send 502 error code and closed connectiom.\n"
+      "The response must be an Array:\n[<Fixnum -s tatus code>, "
+      "{<Hash-headers>}, [<Array/IO - data], <optional Protocol "
+      "for Upgrade>]");
 }
 
+// Gets the response object, within a GVL context
+static void* handle_request_in_gvl(void* _res) {
+  struct HttpRequest* request = _res;
+  VALUE env = request_to_env(request);
+  // a regular request is forwarded to the on_request callback.
+  VALUE response = RubyCaller.call2((VALUE)Server.get_udata(request->server, 0),
+                                    call_proc_id, 1, &env);
+  // clean-up env and register response
+  Registry.remove(env);
+  send_response(request, response);
+  return (void*)response;
+}
 // The core handler passed on to the HttpProtocol object.
 static void on_request(struct HttpRequest* request) {
-  // put inside the GVL
-  VALUE response = (VALUE)rb_thread_call_with_gvl(get_response_in_gvl, request);
-  // left GVL, send data.
-  send_response(request, response);
+  // work inside the GVL
+  rb_thread_call_with_gvl(handle_request_in_gvl, request);
 }
 
 /* ////////////////////////////////////////////////////////////
