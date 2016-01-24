@@ -21,6 +21,7 @@ static VALUE rServer;                // server object to Ruby class
 static ID server_var_id;             // id for the Server variable (pointer)
 static ID fd_var_id;                 // id for the file descriptor (Fixnum)
 static ID call_proc_id;              // id for `#call`
+static ID each_method_id;            // id for `#call`
 // for Rack
 static VALUE CONTENT_TYPE;     // for Rack.
 static VALUE CONTENT_LENGTH;   // for Rack.
@@ -223,6 +224,18 @@ static int for_each_header_pair(VALUE key, VALUE val, VALUE _req) {
   // no errors, return 0
   return ST_CONTINUE;
 }
+// itterate through the headers and add them to the response buffer
+// (we are recycling the request's buffer)
+static VALUE for_each_string(VALUE str, VALUE _req, int argc, VALUE argv) {
+  struct HttpRequest* request = (void*)_req;
+  // write body
+  if (TYPE(str) != T_STRING) {
+    return Qfalse;
+  }
+  Server.write(request->server, request->sockfd, RSTRING_PTR(str),
+               rb_str_length(str));
+  return Qtrue;
+}
 // translate a struct HttpRequest to a Hash, according top the
 // Rack specifications.
 static void send_response(struct HttpRequest* request, VALUE response) {
@@ -235,6 +248,8 @@ static void send_response(struct HttpRequest* request, VALUE response) {
   if (response == Qnil)
     goto internal_err;
   if (TYPE(response) != T_ARRAY)
+    goto internal_err;
+  if (RARRAY_LEN(response) < 3)
     goto internal_err;
 
   VALUE tmp;
@@ -264,15 +279,32 @@ static void send_response(struct HttpRequest* request, VALUE response) {
                request->private.pos);
 
   // write body
-
-  // [String] is most likely
-  // String is a likely error
-  // IO less likely
-  // each emulators (streaming solutions - Yack!)
+  tmp = rb_ary_entry(response, 2);
+  if (TYPE(tmp) == T_ARRAY) {
+    // [String] is most likely
+    int len = RARRAY_LEN(tmp);
+    VALUE str;
+    for (size_t i = 0; i < len; i++) {
+      str = rb_ary_entry(response, i);
+      if (TYPE(str) != T_STRING)
+        goto internal_err;
+      Server.write(request->server, request->sockfd, RSTRING_PTR(str),
+                   rb_str_length(str));
+    }
+  } else if (TYPE(tmp) == T_STRING) {
+    // String is a likely error
+    Server.write(request->server, request->sockfd, RSTRING_PTR(tmp),
+                 rb_str_length(tmp));
+  } else {
+    rb_block_call(tmp, each_method_id, 0, NULL, for_each_string,
+                  (VALUE)request);
+  }
 
   // Upgrade (if 4th element)
-
-  int todo;
+  if (RARRAY_LEN(response) > 3) {
+    int todo;
+    tmp = rb_ary_entry(response, 3);
+  }
   // Registry.remove(response);
   return;
 internal_err:
@@ -475,6 +507,8 @@ void Init_iodine_http(void) {
   call_proc_id = rb_intern("call");     // used to call the main callback
   server_var_id = rb_intern("server");  // when upgrading
   fd_var_id = rb_intern("sockfd");      // when upgrading
+  each_method_id = rb_intern("each");   // for the response
+
   // some common Rack strings
   CONTENT_TYPE = rb_str_new_literal("CONTENT-TYPE");
   CONTENT_LENGTH = rb_str_new_literal("CONTENT-LENGTH");

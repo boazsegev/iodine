@@ -355,7 +355,7 @@ static VALUE srv_upgrade(VALUE self, VALUE protocol) {
     // if (rb_mod_include_p(p_class, rDynProtocol) == Qfalse)
     rb_include_module(p_class, rDynProtocol);
   }
-  // make sure everything whent as it should
+  // make sure everything went as it should
   if (protocol == Qnil)
     return Qnil;
   // set the new protocol at the server's udata
