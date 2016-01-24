@@ -22,6 +22,7 @@ static ID server_var_id;             // id for the Server variable (pointer)
 static ID fd_var_id;                 // id for the file descriptor (Fixnum)
 static ID call_proc_id;              // id for `#call`
 static ID each_method_id;            // id for `#call`
+static ID to_s_method_id;            // id for `#call`
 // for Rack
 static VALUE CONTENT_TYPE;     // for Rack.
 static VALUE CONTENT_LENGTH;   // for Rack.
@@ -74,9 +75,10 @@ The Http on_request handling functions
 // translate a struct HttpRequest to a Hash, according top the
 // Rack specifications.
 static VALUE request_to_env(struct HttpRequest* request) {
-  return Qnil;
   // Create the env Hash
   VALUE env = rb_hash_new();
+  // fprintf(stderr, "env == %lu (it's %s)\n", env,
+  //         (env == Qnil ? "nil" : "okay"));
   // Register the object
   Registry.add(env);
   // setup static env data
@@ -201,6 +203,20 @@ static VALUE request_to_env(struct HttpRequest* request) {
 static int for_each_header_pair(VALUE key, VALUE val, VALUE _req) {
   struct HttpRequest* request = (void*)_req;
   int pos_s = 0, pos_e = 0;
+  if (TYPE(key) != T_STRING)
+    key = RubyCaller.call_unsafe(key, to_s_method_id);
+  if (TYPE(val) != T_STRING) {
+    if (TYPE(val) == T_FIXNUM) {
+      request->private.pos +=
+          snprintf(request->buffer + request->private.pos,
+                   HTTP_HEAD_MAX_SIZE - request->private.pos, "%.*s: %ld\r\n",
+                   (int)rb_str_length(key), RSTRING_PTR(key), FIX2LONG(val));
+      return ST_CONTINUE;
+    }
+    val = RubyCaller.call_unsafe(val, to_s_method_id);
+    if (val == Qnil)
+      return ST_STOP;
+  }
   char* key_s = RSTRING_PTR(key);
   char* val_s = RSTRING_PTR(val);
   int key_len = rb_str_length(key), val_len = rb_str_length(val);
@@ -265,14 +281,19 @@ static void send_response(struct HttpRequest* request, VALUE response) {
   request->private.pos = 0;
   request->private.pos +=
       snprintf(request->buffer, HTTP_HEAD_MAX_SIZE - request->private.pos,
-               "HTTP/1.1 %lu %s", tmp, tmp_s);
+               "HTTP/1.1 %lu %s\r\n", tmp, tmp_s);
 
   // Start printing headers to head-buffer
   tmp = rb_ary_entry(response, 1);
   rb_hash_foreach(tmp, for_each_header_pair, (VALUE)request);
   // make sure we're not overflowing
-  if (request->private.pos >= HTTP_HEAD_MAX_SIZE)
+  if (request->private.pos >= HTTP_HEAD_MAX_SIZE - 2) {
+    rb_warn("Header overflow detected! Header size is limited to ~8Kb.");
     goto internal_err;
+  }
+  // write the extra EOL markers
+  request->buffer[request->private.pos++] = '\r';
+  request->buffer[request->private.pos++] = '\n';
 
   // write headers to server
   Server.write(request->server, request->sockfd, request->buffer,
@@ -285,9 +306,11 @@ static void send_response(struct HttpRequest* request, VALUE response) {
     int len = RARRAY_LEN(tmp);
     VALUE str;
     for (size_t i = 0; i < len; i++) {
-      str = rb_ary_entry(response, i);
-      if (TYPE(str) != T_STRING)
+      str = rb_ary_entry(tmp, i);
+      if (TYPE(str) != T_STRING) {
+        fprintf(stderr, "data in array isn't a string! (index %lu)\n", i);
         goto internal_err;
+      }
       Server.write(request->server, request->sockfd, RSTRING_PTR(str),
                    rb_str_length(str));
     }
@@ -314,7 +337,7 @@ internal_err:
   Server.close(request->server, request->sockfd);
   rb_warn(
       "Invalid HTTP response, send 502 error code and closed connectiom.\n"
-      "The response must be an Array:\n[<Fixnum -s tatus code>, "
+      "The response must be an Array:\n[<Fixnum - status code>, "
       "{<Hash-headers>}, [<Array/IO - data], <optional Protocol "
       "for Upgrade>]");
 }
@@ -324,8 +347,8 @@ static void* handle_request_in_gvl(void* _res) {
   struct HttpRequest* request = _res;
   VALUE env = request_to_env(request);
   // a regular request is forwarded to the on_request callback.
-  VALUE response = RubyCaller.call2((VALUE)Server.get_udata(request->server, 0),
-                                    call_proc_id, 1, &env);
+  VALUE response = RubyCaller.call_unsafe2(
+      (VALUE)Server.get_udata(request->server, 0), call_proc_id, 1, &env);
   // clean-up env and register response
   Registry.remove(env);
   send_response(request, response);
@@ -397,8 +420,8 @@ static void unblck(void* _) {
 // This method starts the Http server instance.
 static VALUE http_start(VALUE self) {
   // review the callback
-  VALUE on_request = rb_iv_get(self, "@on_request");
-  if (rb_obj_method(on_request, ID2SYM(call_proc_id)) == Qnil) {
+  VALUE on_request_handler = rb_iv_get(self, "@on_request");
+  if (rb_obj_method(on_request_handler, ID2SYM(call_proc_id)) == Qnil) {
     rb_raise(rb_eTypeError,
              "The on_request callback should be an object that answers to the "
              "method `call`");
@@ -456,7 +479,7 @@ static VALUE http_start(VALUE self) {
   snprintf(port, 6, "%d", iport);
   // create the HttpProtocol object
   struct HttpProtocol http_protocol = HttpProtocol();
-  // http_protocol.on_request = xxx;
+  http_protocol.on_request = on_request;
   // http_protocol.maximum_body_size = xxx;
 
   // setup the server
@@ -508,41 +531,64 @@ void Init_iodine_http(void) {
   server_var_id = rb_intern("server");  // when upgrading
   fd_var_id = rb_intern("sockfd");      // when upgrading
   each_method_id = rb_intern("each");   // for the response
+  to_s_method_id = rb_intern("to_s");   // for the response
 
   // some common Rack strings
   CONTENT_TYPE = rb_str_new_literal("CONTENT-TYPE");
+  Registry.add(CONTENT_TYPE);
   CONTENT_LENGTH = rb_str_new_literal("CONTENT-LENGTH");
+  Registry.add(CONTENT_LENGTH);
   SCRIPT_NAME = rb_str_new_literal("SCRIPT_NAME");
+  Registry.add(SCRIPT_NAME);
   PATH_INFO = rb_str_new_literal("PATH_INFO");
+  Registry.add(PATH_INFO);
   QUERY_STRING = rb_str_new_literal("QUERY_STRING");
+  Registry.add(QUERY_STRING);
   QUERY_ESTRING = rb_str_new_literal("");
+  Registry.add(QUERY_ESTRING);
   SERVER_NAME = rb_str_new_literal("SERVER_NAME");
+  Registry.add(SERVER_NAME);
   SERVER_PORT = rb_str_new_literal("SERVER_PORT");
+  Registry.add(SERVER_PORT);
   SERVER_PORT_80 = rb_str_new_literal("80");
+  Registry.add(SERVER_PORT_80);
   SERVER_PORT_443 = rb_str_new_literal("443");
+  Registry.add(SERVER_PORT_443);
   R_VERSION = rb_str_new_literal("rack.version");
+  Registry.add(R_VERSION);
   R_SCHEME = rb_str_new_literal("rack.url_scheme");
+  Registry.add(R_SCHEME);
   R_SCHEME_HTTP = rb_str_new_literal("http");
+  Registry.add(R_SCHEME_HTTP);
   R_SCHEME_HTTPS = rb_str_new_literal("https");
+  Registry.add(R_SCHEME_HTTPS);
   R_INPUT = rb_str_new_literal("rack.input");
+  Registry.add(R_INPUT);
   R_ERRORS = rb_str_new_literal("rack.errors");
+  Registry.add(R_ERRORS);
   R_MTHREAD = rb_str_new_literal("rack.multithread");
+  Registry.add(R_MTHREAD);
   R_MPROCESS = rb_str_new_literal("rack.multiprocess");
+  Registry.add(R_MPROCESS);
   R_RUN_ONCE = rb_str_new_literal("rack.run_once");
+  Registry.add(R_RUN_ONCE);
   R_HIJACK_Q = rb_str_new_literal("rack.hijack?");
+  Registry.add(R_HIJACK_Q);
   R_HIJACK_Q_V = Qfalse;
   R_HIJACK = rb_str_new_literal("rack.hijack");
+  Registry.add(R_HIJACK);
   R_HIJACK_V = Qnil;  // rb_fdopen(int fd, const char *modestr)
   R_HIJACK_IO = rb_str_new_literal("rack.hijack_io");
+  Registry.add(R_HIJACK_IO);
   R_HIJACK_IO_V = Qnil;
-
+  // open the Iodine class
+  rIodine = rb_define_class("Iodine", rb_cObject);
   // setup for Rack.
   VALUE version_val = rb_const_get(rIodine, rb_intern("VERSION"));
   R_VERSION_V = rb_str_split(version_val, ".");
+  Registry.add(R_VERSION_V);
   R_ERRORS_V = rb_stdout;
 
-  // open the Iodine class
-  rIodine = rb_define_class("Iodine", rb_cObject);
   // define the Server class - for upgrades
   rServer = rb_define_class_under(rIodine, "ServerObject", rb_cData);
   // define the Http class
@@ -552,7 +598,6 @@ void Init_iodine_http(void) {
   rb_define_method(rHttp, "protocol", http_protocol_get, 0);
   rb_define_method(rHttp, "start", http_start, 0);
   rb_define_attr(rHttp, "on_request", 1, 1);
-
   // initialize the RackIO class
   RackIO.init(rHttp);
 }

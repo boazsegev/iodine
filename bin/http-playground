@@ -14,7 +14,10 @@ require "iodine/http"
 server = Iodine::Http.new
 server.threads = 10
 server.processes = 1
-server.on_request = Proc.new {|env| }
+server.on_request = Proc.new do |env|
+  out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
+   [200, {"Content-Length" => out.length, "Connection" => "keep-alive", "Keep-Alive"=> 1}, [out]];
+end
 
 # server.on_start do
 #   server.run_every(1000) {puts "#{server.connection_count} clients connected."}

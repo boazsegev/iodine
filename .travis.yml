@@ -15,3 +15,5 @@ dist: trusty
 before_install:
   - cc --version
   - gem install bundler -v 1.10.6
+notifications:
+  email: false
