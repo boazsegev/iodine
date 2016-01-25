@@ -12,7 +12,7 @@ require "iodine/http"
 
 # create the server object and setup any settings we might need.
 server = Iodine::Http.new
-server.threads = 10
+server.threads = 4
 server.processes = 1
 server.on_request = Proc.new do |env|
   out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
