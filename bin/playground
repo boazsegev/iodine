@@ -29,6 +29,7 @@ class EchoProtocol
   def on_message buffer
     # writing will never block and will use a buffer written in C when needed.
     write buffer
+    puts buffer.dump
     # close will be performed only once all the data in the write buffer
     # was sent. use `force_close` to close early.
     close if buffer =~ /^bye[\r\n]/i
