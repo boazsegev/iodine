@@ -24,6 +24,7 @@ static ID call_proc_id;              // id for `#call`
 static ID each_method_id;            // id for `#call`
 static ID to_s_method_id;            // id for `#call`
 // for Rack
+static VALUE REQUEST_METHOD;   // for Rack
 static VALUE CONTENT_TYPE;     // for Rack.
 static VALUE CONTENT_LENGTH;   // for Rack.
 static VALUE SCRIPT_NAME;      // for Rack
@@ -79,7 +80,20 @@ static VALUE request_to_env(struct HttpRequest* request) {
   // Create the env Hash
   VALUE env = rb_hash_new();
   // Register the object
-  // Registry.add(env);
+  Registry.add(env);
+  // set the simple core settings
+
+  rb_hash_aset(
+      env, REQUEST_METHOD,
+      rb_enc_str_new(request->method, strlen(request->method), BinaryEncoding));
+  rb_hash_aset(
+      env, PATH_INFO,
+      rb_enc_str_new(request->path, strlen(request->path), BinaryEncoding));
+  rb_hash_aset(
+      env, QUERY_STRING,
+      (request->query ? rb_enc_str_new(request->query, strlen(request->query),
+                                       BinaryEncoding)
+                      : QUERY_ESTRING));
   // setup static env data
   rb_hash_aset(env, R_VERSION, R_VERSION_V);
   rb_hash_aset(env, SCRIPT_NAME, QUERY_ESTRING);
@@ -91,15 +105,6 @@ static VALUE request_to_env(struct HttpRequest* request) {
   rb_hash_aset(env, R_HIJACK_Q, R_HIJACK_Q_V);
   rb_hash_aset(env, R_HIJACK_IO, R_HIJACK_IO_V);
   rb_hash_aset(env, R_RUN_ONCE, Qfalse);
-  // set the simple core settings
-  rb_hash_aset(
-      env, PATH_INFO,
-      rb_enc_str_new(request->path, strlen(request->path), BinaryEncoding));
-  rb_hash_aset(
-      env, QUERY_STRING,
-      (request->query ? rb_enc_str_new(request->query, strlen(request->query),
-                                       BinaryEncoding)
-                      : QUERY_ESTRING));
   // set scheme to R_SCHEME_HTTP or R_SCHEME_HTTPS or dynamic
   int ssl = 0;
   {
@@ -139,8 +144,10 @@ static VALUE request_to_env(struct HttpRequest* request) {
         }
       }
       // default to http
+      if (pos == len)
+        rb_hash_aset(env, R_SCHEME, R_SCHEME_HTTP);
+    } else
       rb_hash_aset(env, R_SCHEME, R_SCHEME_HTTP);
-    }
   }
   // set host data
   {
@@ -178,7 +185,6 @@ static VALUE request_to_env(struct HttpRequest* request) {
   {
     char *name, *value;
     VALUE header;
-    size_t hlen = 0;
     do {
       name = HttpRequest.name(request);
       value = HttpRequest.value(request);
@@ -187,10 +193,7 @@ static VALUE request_to_env(struct HttpRequest* request) {
       if (value == (request->content_type) ||
           (name[0] == 'C' && !strcmp(name, "CONTENT-LENGTH")))
         continue;
-      hlen = strlen(name) + 5;
-      header = rb_str_buf_new(hlen);
-      memcpy(RSTRING_PTR(header), "HTTP_", 5);
-      memcpy(RSTRING_PTR(header) + 5, name, hlen - 5);
+      header = rb_sprintf("HTTP_%s", name);
       rb_enc_associate(header, BinaryEncoding);
       rb_hash_aset(env, header,
                    rb_enc_str_new(value, strlen(value), BinaryEncoding));
@@ -286,6 +289,9 @@ static void send_response(struct HttpRequest* request, VALUE response) {
 
   // Start printing headers to head-buffer
   tmp = rb_ary_entry(response, 1);
+  if (TYPE(tmp) != T_HASH)
+    goto internal_err;
+  // add connection and keep alive headers?
   rb_hash_foreach(tmp, for_each_header_pair, (VALUE)request);
   // make sure we're not overflowing
   if (request->private.pos >= HTTP_HEAD_MAX_SIZE - 2) {
@@ -351,9 +357,11 @@ static void* handle_request_in_gvl(void* _res) {
   VALUE response = RubyCaller.call_unsafe2(
       (VALUE)Server.get_udata(request->server, 0), call_proc_id, 1, &env);
   // clean-up env and register response
-  // Registry.remove(env);
+  if (Registry.replace(env, response))
+    Registry.add(response);
   send_response(request, response);
-  return (void*)response;
+  Registry.remove(response);
+  return 0;
 }
 // The core handler passed on to the HttpProtocol object.
 static void on_request(struct HttpRequest* request) {
@@ -534,53 +542,78 @@ void Init_iodine_http(void) {
   each_method_id = rb_intern("each");   // for the response
   to_s_method_id = rb_intern("to_s");   // for the response
 
-  // some common Rack strings
-  CONTENT_TYPE = rb_enc_str_new_literal("CONTENT-TYPE", BinaryEncoding);
+  // some common Rack & Http strings
+  REQUEST_METHOD = rb_enc_str_new_literal("REQUEST_METHOD", BinaryEncoding);
+  rb_global_variable(&REQUEST_METHOD);
+  rb_obj_freeze(REQUEST_METHOD);
+  CONTENT_TYPE = rb_enc_str_new_literal("CONTENT_TYPE", BinaryEncoding);
   rb_global_variable(&CONTENT_TYPE);
-  CONTENT_LENGTH = rb_enc_str_new_literal("CONTENT-LENGTH", BinaryEncoding);
+  rb_obj_freeze(CONTENT_TYPE);
+  CONTENT_LENGTH = rb_enc_str_new_literal("CONTENT_LENGTH", BinaryEncoding);
   rb_global_variable(&CONTENT_LENGTH);
+  rb_obj_freeze(CONTENT_LENGTH);
   SCRIPT_NAME = rb_enc_str_new_literal("SCRIPT_NAME", BinaryEncoding);
   rb_global_variable(&SCRIPT_NAME);
+  rb_obj_freeze(SCRIPT_NAME);
   PATH_INFO = rb_enc_str_new_literal("PATH_INFO", BinaryEncoding);
   rb_global_variable(&PATH_INFO);
+  rb_obj_freeze(PATH_INFO);
   QUERY_STRING = rb_enc_str_new_literal("QUERY_STRING", BinaryEncoding);
   rb_global_variable(&QUERY_STRING);
+  rb_obj_freeze(QUERY_STRING);
   QUERY_ESTRING = rb_str_buf_new(0);
   rb_global_variable(&QUERY_ESTRING);
+  rb_obj_freeze(QUERY_ESTRING);
   SERVER_NAME = rb_enc_str_new_literal("SERVER_NAME", BinaryEncoding);
   rb_global_variable(&SERVER_NAME);
+  rb_obj_freeze(SERVER_NAME);
   SERVER_PORT = rb_enc_str_new_literal("SERVER_PORT", BinaryEncoding);
   rb_global_variable(&SERVER_PORT);
+  rb_obj_freeze(SERVER_PORT);
   SERVER_PORT_80 = rb_enc_str_new_literal("80", BinaryEncoding);
   rb_global_variable(&SERVER_PORT_80);
+  rb_obj_freeze(SERVER_PORT_80);
   SERVER_PORT_443 = rb_enc_str_new_literal("443", BinaryEncoding);
   rb_global_variable(&SERVER_PORT_443);
+  rb_obj_freeze(SERVER_PORT_443);
   R_VERSION = rb_enc_str_new_literal("rack.version", BinaryEncoding);
   rb_global_variable(&R_VERSION);
+  rb_obj_freeze(R_VERSION);
   R_SCHEME = rb_enc_str_new_literal("rack.url_scheme", BinaryEncoding);
   rb_global_variable(&R_SCHEME);
+  rb_obj_freeze(R_SCHEME);
   R_SCHEME_HTTP = rb_enc_str_new_literal("http", BinaryEncoding);
   rb_global_variable(&R_SCHEME_HTTP);
+  rb_obj_freeze(R_SCHEME_HTTP);
   R_SCHEME_HTTPS = rb_enc_str_new_literal("https", BinaryEncoding);
   rb_global_variable(&R_SCHEME_HTTPS);
+  rb_obj_freeze(R_SCHEME_HTTPS);
   R_INPUT = rb_enc_str_new_literal("rack.input", BinaryEncoding);
   rb_global_variable(&R_INPUT);
+  rb_obj_freeze(R_INPUT);
   R_ERRORS = rb_enc_str_new_literal("rack.errors", BinaryEncoding);
   rb_global_variable(&R_ERRORS);
+  rb_obj_freeze(R_ERRORS);
   R_MTHREAD = rb_enc_str_new_literal("rack.multithread", BinaryEncoding);
   rb_global_variable(&R_MTHREAD);
+  rb_obj_freeze(R_MTHREAD);
   R_MPROCESS = rb_enc_str_new_literal("rack.multiprocess", BinaryEncoding);
   rb_global_variable(&R_MPROCESS);
+  rb_obj_freeze(R_MPROCESS);
   R_RUN_ONCE = rb_enc_str_new_literal("rack.run_once", BinaryEncoding);
   rb_global_variable(&R_RUN_ONCE);
+  rb_obj_freeze(R_RUN_ONCE);
   R_HIJACK_Q = rb_enc_str_new_literal("rack.hijack?", BinaryEncoding);
   rb_global_variable(&R_HIJACK_Q);
+  rb_obj_freeze(R_HIJACK_Q);
   R_HIJACK_Q_V = Qfalse;
   R_HIJACK = rb_enc_str_new_literal("rack.hijack", BinaryEncoding);
   rb_global_variable(&R_HIJACK);
+  rb_obj_freeze(R_HIJACK);
   R_HIJACK_V = Qnil;  // rb_fdopen(int fd, const char *modestr)
   R_HIJACK_IO = rb_enc_str_new_literal("rack.hijack_io", BinaryEncoding);
   rb_global_variable(&R_HIJACK_IO);
+  rb_obj_freeze(R_HIJACK_IO);
   R_HIJACK_IO_V = Qnil;
   // open the Iodine class
   rIodine = rb_define_class("Iodine", rb_cObject);

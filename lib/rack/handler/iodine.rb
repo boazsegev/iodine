@@ -6,10 +6,12 @@ class Iodine
 		module Rack
 			module_function
 			def run(app, options = {})
+        # puts "press E to start"
+        # gets
 				@app = app
         server = Iodine::Http.new
 				server.threads ||= 18
-				server.port = options[:Port] if options[:Port]
+				server.port = options[:Port].to_i if options[:Port]
 				server.on_request = @app
         server.start
 				true

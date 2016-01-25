@@ -55,6 +55,28 @@ static void unregister_object(VALUE obj) {
 finish:
   pthread_mutex_unlock(&registry_lock);
 }
+// Replaces one registry object with another,
+// allowing updates to the Registry with no memory allocations.
+//
+// returns 0 if all OK, returns -1 if it couldn't replace the object.
+static int replace_object(VALUE obj, VALUE new_obj) {
+  int ret = -1;
+  pthread_mutex_lock(&registry_lock);
+  struct Object* line = registry.first;
+  struct Object* prev = NULL;
+  while (line) {
+    if (line->obj == obj) {
+      line->obj = new_obj;
+      ret = 0;
+      goto finish;
+    }
+    prev = line;
+    line = line->next;
+  }
+finish:
+  pthread_mutex_unlock(&registry_lock);
+  return ret;
+}
 
 // a callback for the GC (marking active objects)
 static void registry_mark(void* ignore) {
@@ -130,5 +152,6 @@ struct ___RegistryClass___ Registry = {
     .init = init,
     .remove = unregister_object,
     .add = register_object,
+    .replace = replace_object,
     .print = print,
 };
