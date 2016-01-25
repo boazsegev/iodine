@@ -291,12 +291,51 @@ static void send_response(struct HttpRequest* request, VALUE response) {
   tmp = rb_ary_entry(response, 1);
   if (TYPE(tmp) != T_HASH)
     goto internal_err;
-  // add connection and keep alive headers?
   rb_hash_foreach(tmp, for_each_header_pair, (VALUE)request);
   // make sure we're not overflowing
   if (request->private.pos >= HTTP_HEAD_MAX_SIZE - 2) {
     rb_warn("Header overflow detected! Header size is limited to ~8Kb.");
     goto internal_err;
+  }
+  // review connection (+ keep alive) and date headers
+  tmp = 0;
+  request->private.max = 0;
+  // review buffer and check if the headers exist
+  while (request->private.max < request->private.pos) {
+    if ((request->buffer[request->private.max++]) != '\n')
+      continue;
+    if ((request->buffer[request->private.max++] | 32) == 'c' &&
+        (request->buffer[request->private.max++] | 32) == 'o' &&
+        (request->buffer[request->private.max++] | 32) == 'n' &&
+        (request->buffer[request->private.max++] | 32) == 'n' &&
+        (request->buffer[request->private.max++] | 32) == 'e' &&
+        (request->buffer[request->private.max++] | 32) == 'c' &&
+        (request->buffer[request->private.max++] | 32) == 't' &&
+        (request->buffer[request->private.max++] | 32) == 'i' &&
+        (request->buffer[request->private.max++] | 32) == 'o' &&
+        (request->buffer[request->private.max++] | 32) == 'n' &&
+        (request->buffer[request->private.max++] | 32) == ':') {
+      tmp = tmp | 2;
+    }
+    if ((request->buffer[request->private.max++] | 32) == 'd' &&
+        (request->buffer[request->private.max++] | 32) == 'a' &&
+        (request->buffer[request->private.max++] | 32) == 't' &&
+        (request->buffer[request->private.max++] | 32) == 'e' &&
+        (request->buffer[request->private.max++] | 32) == ':')
+      tmp = tmp | 4;
+  }
+  // if the connection headers aren't there, add them
+  if (!(tmp & 2)) {
+    static char conn_header[] =
+        "Connection: keep-alive\r\nKeep-Alive: timeout=2\r\n";
+    // static size_t conn_header_len = 47;  // sizeof(conn_header) -1;
+    if (request->private.pos + sizeof(conn_header) >= HTTP_HEAD_MAX_SIZE - 2) {
+      rb_warn("Header overflow detected! Header size is limited to ~8Kb.");
+      goto internal_err;
+    }
+    memcpy(request->buffer + request->private.pos, conn_header,
+           sizeof(conn_header));
+    request->private.pos += sizeof(conn_header) - 1;
   }
   // write the extra EOL markers
   request->buffer[request->private.pos++] = '\r';
