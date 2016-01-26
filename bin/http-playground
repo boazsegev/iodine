@@ -16,7 +16,7 @@ server.threads = 4
 server.processes = 1
 server.on_request = Proc.new do |env|
   out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
-   [200, {"Content-Length" => out.length, "Connection" => "keep-alive", "Keep-Alive"=> 1}, [out]];
+   [200, {"Content-Length" => out.length}, [out]];
 end
 
 # server.on_start do
@@ -25,5 +25,6 @@ end
 
 server.start
 
+# ab -n 100000 -c 200 -k http://127.0.0.1:3000/
 # ab -n 1000000 -c 20000 -k http://127.0.0.1:3000/
 # ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/

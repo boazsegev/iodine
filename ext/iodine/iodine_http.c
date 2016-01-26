@@ -274,6 +274,11 @@ static void send_response(struct HttpRequest* request, VALUE response) {
 
   VALUE tmp;
   char* tmp_s;
+  char close_when_done = 0;
+  // check for keep alive
+  if (request->version[6] != '.' || (HttpRequest.find(request, "CONNECTION") &&
+                                     HttpRequest.value(request)[0] == 'k'))
+    close_when_done = 1;
   // get status code from array (obj 0)
   // NOTICE: this may not always be a number (could be the string "200").
   tmp = rb_ary_entry(response, 0);
@@ -316,6 +321,11 @@ static void send_response(struct HttpRequest* request, VALUE response) {
         (request->buffer[request->private.max++] | 32) == 'n' &&
         (request->buffer[request->private.max++] | 32) == ':') {
       tmp = tmp | 2;
+      // check for close twice, as the first 'c' could be a space
+      if (request->buffer[request->private.max++] == 'c' ||
+          request->buffer[request->private.max++] == 'c') {
+        close_when_done = 1;
+      }
     }
     if ((request->buffer[request->private.max++] | 32) == 'd' &&
         (request->buffer[request->private.max++] | 32) == 'a' &&
@@ -326,16 +336,28 @@ static void send_response(struct HttpRequest* request, VALUE response) {
   }
   // if the connection headers aren't there, add them
   if (!(tmp & 2)) {
-    static char conn_header[] =
-        "Connection: keep-alive\r\nKeep-Alive: timeout=2\r\n";
-    // static size_t conn_header_len = 47;  // sizeof(conn_header) -1;
-    if (request->private.pos + sizeof(conn_header) >= HTTP_HEAD_MAX_SIZE - 2) {
-      rb_warn("Header overflow detected! Header size is limited to ~8Kb.");
-      goto internal_err;
+    if (close_when_done) {
+      static char close_conn_header[] = "Connection: close\r\n";
+      if (request->private.pos + sizeof(close_conn_header) >=
+          HTTP_HEAD_MAX_SIZE - 2) {
+        rb_warn("Header overflow detected! Header size is limited to ~8Kb.");
+        goto internal_err;
+      }
+      memcpy(request->buffer + request->private.pos, close_conn_header,
+             sizeof(close_conn_header));
+      request->private.pos += sizeof(close_conn_header) - 1;
+    } else {
+      static char kpalv_conn_header[] =
+          "Connection: keep-alive\r\nKeep-Alive: timeout=2\r\n";
+      if (request->private.pos + sizeof(kpalv_conn_header) >=
+          HTTP_HEAD_MAX_SIZE - 2) {
+        rb_warn("Header overflow detected! Header size is limited to ~8Kb.");
+        goto internal_err;
+      }
+      memcpy(request->buffer + request->private.pos, kpalv_conn_header,
+             sizeof(kpalv_conn_header));
+      request->private.pos += sizeof(kpalv_conn_header) - 1;
     }
-    memcpy(request->buffer + request->private.pos, conn_header,
-           sizeof(conn_header));
-    request->private.pos += sizeof(conn_header) - 1;
   }
   // write the extra EOL markers
   request->buffer[request->private.pos++] = '\r';
@@ -368,6 +390,9 @@ static void send_response(struct HttpRequest* request, VALUE response) {
     rb_block_call(tmp, each_method_id, 0, NULL, for_each_string,
                   (VALUE)request);
   }
+
+  if (close_when_done)
+    Server.close(request->server, request->sockfd);
 
   // Upgrade (if 4th element)
   if (RARRAY_LEN(response) > 3) {

@@ -5,12 +5,20 @@ class Iodine
 		# This is the Rack handler for the Iodine's HTTP server.
 		module Rack
 			module_function
+			@threads = 8
+			def threads= t_count
+				@threads = t_count
+			end
+			def threads
+				@threads
+			end
+
 			def run(app, options = {})
-        # puts "press E to start"
-        # gets
+        puts "press E to start"
+        gets
 				@app = app
         server = Iodine::Http.new
-				server.threads ||= 18
+				server.threads = @threads
 				server.port = options[:Port].to_i if options[:Port]
 				server.on_request = @app
         server.start
