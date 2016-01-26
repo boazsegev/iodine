@@ -332,13 +332,30 @@ static void send_response(struct HttpRequest* request, VALUE response) {
         close_when_done = 1;
       }
     }
-    if ((request->buffer[request->private.max++] | 32) == 'd' &&
-        (request->buffer[request->private.max++] | 32) == 'a' &&
+    if ((request->buffer[request->private.max++] | 32) == 'a' &&
         (request->buffer[request->private.max++] | 32) == 't' &&
         (request->buffer[request->private.max++] | 32) == 'e' &&
         (request->buffer[request->private.max++] | 32) == ':')
       tmp = tmp | 4;
+    if ((request->buffer[request->private.max++] | 32) == 'n' &&
+        (request->buffer[request->private.max++] | 32) == 't' &&
+        (request->buffer[request->private.max++] | 32) == 'e' &&
+        (request->buffer[request->private.max++] | 32) == 'n' &&
+        (request->buffer[request->private.max++] | 32) == 't' &&
+        (request->buffer[request->private.max++] | 32) == '-' &&
+        (request->buffer[request->private.max++] | 32) == 'l' &&
+        (request->buffer[request->private.max++] | 32) == 'e' &&
+        (request->buffer[request->private.max++] | 32) == 'n' &&
+        (request->buffer[request->private.max++] | 32) == 'g' &&
+        (request->buffer[request->private.max++] | 32) == 't' &&
+        (request->buffer[request->private.max++] | 32) == 'h' &&
+        (request->buffer[request->private.max++] | 32) == ':')
+      tmp = tmp | 8;
   }
+  // if we don't have a content length we need to close the connection when
+  // done.
+  if (!(tmp & 8))
+    close_when_done = 1;
   // if the connection headers aren't there, add them
   if (!(tmp & 2)) {
     if (close_when_done) {
@@ -374,6 +391,9 @@ static void send_response(struct HttpRequest* request, VALUE response) {
   // write headers to server
   Server.write(request->server, request->sockfd, request->buffer,
                request->private.pos);
+
+  // fprintf(stderr, "Headers sent:\n%.*s", request->private.pos,
+  // request->buffer);
 
   // write body
   tmp = rb_ary_entry(response, 2);
