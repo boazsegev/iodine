@@ -275,10 +275,14 @@ static void send_response(struct HttpRequest* request, VALUE response) {
   VALUE tmp;
   char* tmp_s;
   char close_when_done = 0;
+
   // check for keep alive
-  if (request->version[6] != '.' || (HttpRequest.find(request, "CONNECTION") &&
-                                     HttpRequest.value(request)[0] == 'k'))
+  if (HttpRequest.find(request, "CONNECTION")) {
+    if (HttpRequest.value(request)[0] == 'c')
+      close_when_done = 1;
+  } else if (request->version[6] != '.') {
     close_when_done = 1;
+  }
   // get status code from array (obj 0)
   // NOTICE: this may not always be a number (could be the string "200").
   tmp = rb_ary_entry(response, 0);
