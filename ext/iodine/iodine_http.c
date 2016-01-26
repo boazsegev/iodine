@@ -214,7 +214,7 @@ static int for_each_header_pair(VALUE key, VALUE val, VALUE _req) {
       request->private.pos +=
           snprintf(request->buffer + request->private.pos,
                    HTTP_HEAD_MAX_SIZE - request->private.pos, "%.*s: %ld\r\n",
-                   (int)rb_str_length(key), RSTRING_PTR(key), FIX2LONG(val));
+                   (int)RSTRING_LEN(key), RSTRING_PTR(key), FIX2LONG(val));
       return ST_CONTINUE;
     }
     val = RubyCaller.call_unsafe(val, to_s_method_id);
@@ -223,7 +223,7 @@ static int for_each_header_pair(VALUE key, VALUE val, VALUE _req) {
   }
   char* key_s = RSTRING_PTR(key);
   char* val_s = RSTRING_PTR(val);
-  int key_len = rb_str_length(key), val_len = rb_str_length(val);
+  int key_len = RSTRING_LEN(key), val_len = RSTRING_LEN(val);
   // scan the value for newline (\n) delimiters
   while (pos_e < val_len) {
     // make sure we don't overflow
@@ -253,7 +253,7 @@ static VALUE for_each_string(VALUE str, VALUE _req, int argc, VALUE argv) {
     return Qfalse;
   }
   Server.write(request->server, request->sockfd, RSTRING_PTR(str),
-               rb_str_length(str));
+               RSTRING_LEN(str));
   return Qtrue;
 }
 // translate a struct HttpRequest to a Hash, according top the
@@ -324,6 +324,7 @@ static void send_response(struct HttpRequest* request, VALUE response) {
       // check for close twice, as the first 'c' could be a space
       if (request->buffer[request->private.max++] == 'c' ||
           request->buffer[request->private.max++] == 'c') {
+        fprintf(stderr, "found a 'close' header\n");
         close_when_done = 1;
       }
     }
@@ -359,6 +360,9 @@ static void send_response(struct HttpRequest* request, VALUE response) {
       request->private.pos += sizeof(kpalv_conn_header) - 1;
     }
   }
+  if (!(tmp & 4)) {
+    int ___todo_date;
+  }
   // write the extra EOL markers
   request->buffer[request->private.pos++] = '\r';
   request->buffer[request->private.pos++] = '\n';
@@ -380,12 +384,12 @@ static void send_response(struct HttpRequest* request, VALUE response) {
         goto internal_err;
       }
       Server.write(request->server, request->sockfd, RSTRING_PTR(str),
-                   rb_str_length(str));
+                   RSTRING_LEN(str));
     }
   } else if (TYPE(tmp) == T_STRING) {
     // String is a likely error
     Server.write(request->server, request->sockfd, RSTRING_PTR(tmp),
-                 rb_str_length(tmp));
+                 RSTRING_LEN(tmp));
   } else {
     rb_block_call(tmp, each_method_id, 0, NULL, for_each_string,
                   (VALUE)request);

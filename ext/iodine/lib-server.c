@@ -413,6 +413,8 @@ static int server_listen(struct ServerSettings settings) {
     busy[i] = 0;
     tout[i] = 0;
     idle[i] = 0;
+    buffer_map[i] = 0;
+    // buffer_map[i] = Buffer.new(0);
   }
 
   // setup concurrency
@@ -721,9 +723,10 @@ static ssize_t buffer_send(struct Server* server,
   ssize_t snt = -1;
   // reset timeout
   server->idle[sockfd] = 0;
-  // try to avoid the buffer if we can.
+  // try to avoid the buffer if we can... - is this safe (too many assumptions)?
   if (!server->buffer_map[sockfd]) {
     ssize_t snt = send(sockfd, data, len, 0);
+    // sending failed with a socket error
     if (snt < 0 && !(errno & (EWOULDBLOCK | EAGAIN))) {
       if (move && data)
         free(data);
@@ -1053,6 +1056,8 @@ static long calculate_file_limit(void) {
   // (http://www.metabrew.com/article/a-million-user-comet-application-with-mochiweb-part-3)
   // 10,000 connections == 16*1024*10000 == +- 160Mb? seems a tight fit...
   // i.e. the Http request buffer is 8Kb... maybe 24Kb is a better minimum?
+  // Some per connection heap allocated data (i.e. 88 bytes per user-land
+  // buffer) also matters.
   getrlimit(RLIMIT_DATA, &rlim);
   if (flim > rlim.rlim_cur / (24 * 1024)) {
     printf(
