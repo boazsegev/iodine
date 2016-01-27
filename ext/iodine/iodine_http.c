@@ -199,6 +199,7 @@ static VALUE request_to_env(struct HttpRequest* request) {
                    rb_enc_str_new(value, strlen(value), BinaryEncoding));
     } while (HttpRequest.next(request));
   }
+  HttpRequest.first(request);
   return env;
 }
 
@@ -249,13 +250,11 @@ static int for_each_header_pair(VALUE key, VALUE val, VALUE _req) {
 static VALUE for_each_string(VALUE str, VALUE _req, int argc, VALUE argv) {
   struct HttpRequest* request = (void*)_req;
   // write body
-  if (TYPE(str) != T_STRING) {
+  if (TYPE(str) != T_STRING || !RSTRING_LEN(str)) {
     return Qfalse;
   }
-  fprintf(stderr, "Writing:\n%.*s", (int)RSTRING_LEN(str), RSTRING_PTR(str));
   Server.write(request->server, request->sockfd, RSTRING_PTR(str),
                RSTRING_LEN(str));
-  fprintf(stderr, "\n\nDone(writing)");
   return Qtrue;
 }
 // translate a struct HttpRequest to a Hash, according top the
@@ -393,9 +392,6 @@ static void send_response(struct HttpRequest* request, VALUE response) {
   // write headers to server
   Server.write(request->server, request->sockfd, request->buffer,
                request->private.pos);
-
-  fprintf(stderr, "Headers sent:\n%.*s", request->private.pos, request->buffer);
-
   // write body
   tmp = rb_ary_entry(response, 2);
   if (TYPE(tmp) == T_ARRAY) {

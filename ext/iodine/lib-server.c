@@ -723,6 +723,8 @@ static ssize_t buffer_send(struct Server* server,
                            size_t len,
                            char move,
                            char urgent) {
+  // if (!len && data)
+  //   return 0;
   ssize_t snt = -1;
   // reset timeout
   server->idle[sockfd] = 0;

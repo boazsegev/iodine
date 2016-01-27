@@ -4,11 +4,15 @@ Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
 puts `rake clean`
 puts `rake compile`
 
+require 'rack/request'
+require 'rack/response'
+require 'rack/multipart/parser'
+require 'rack'
+
 require 'benchmark'
 $LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
 require "bundler/setup"
 require "iodine/http"
-
 
 # create the server object and setup any settings we might need.
 server = Iodine::Http.new
@@ -16,7 +20,9 @@ server.threads = 4
 server.processes = 1
 server.on_request = Proc.new do |env|
   out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
-   [200, {"Content-Length" => out.length}, [out]];
+  request = Rack::Request.new(env)
+  out += "\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
+  [200, {"Content-Length" => out.length}, [out]];
 end
 
 # server.on_start do

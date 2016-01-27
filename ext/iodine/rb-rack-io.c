@@ -131,20 +131,25 @@ static VALUE rio_read(int argc, VALUE* argv, VALUE self) {
   // create the buffer if we don't have one.
   if (!buffer) {
     buffer = rb_str_buf_new(len);
+    // make sure the buffer is binary encoded.
+    rb_enc_associate(buffer, BinaryEncoding);
   } else {
+    // make sure the buffer is binary encoded.
+    rb_enc_associate(buffer, BinaryEncoding);
     if (rb_str_capacity(buffer) < len)
       rb_str_resize(buffer, len);
   }
-  // make sure the buffer is binary encoded.
-  rb_enc_associate(buffer, BinaryEncoding);
   // read the data.
   if (request->body_str) {
     memcpy(RSTRING_PTR(buffer), request->body_str + pos, len);
+    rb_str_set_len(buffer, len);
     rb_ivar_set(self, pos_id, LONG2FIX(pos + len));
     return buffer;
   } else if (request->body_file) {
-    if (fread(RSTRING_PTR(buffer), 1, len, request->body_file) == 0 && ret_nil)
+    if ((len = fread(RSTRING_PTR(buffer), 1, len, request->body_file)) == 0 &&
+        ret_nil)
       return Qnil;
+    rb_str_set_len(buffer, len);
     return buffer;
   }
   return Qnil;
@@ -168,8 +173,9 @@ static VALUE rio_each(VALUE self) {
   rb_need_block();
   rio_rewind(self);
   VALUE str = Qnil;
-  while ((str = rio_gets(self)) != Qnil)
+  while ((str = rio_gets(self)) != Qnil) {
     rb_yield(str);
+  }
   return self;
 }
 
