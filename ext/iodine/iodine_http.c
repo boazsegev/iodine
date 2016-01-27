@@ -252,8 +252,10 @@ static VALUE for_each_string(VALUE str, VALUE _req, int argc, VALUE argv) {
   if (TYPE(str) != T_STRING) {
     return Qfalse;
   }
+  fprintf(stderr, "Writing:\n%.*s", (int)RSTRING_LEN(str), RSTRING_PTR(str));
   Server.write(request->server, request->sockfd, RSTRING_PTR(str),
                RSTRING_LEN(str));
+  fprintf(stderr, "\n\nDone(writing)");
   return Qtrue;
 }
 // translate a struct HttpRequest to a Hash, according top the
@@ -392,8 +394,7 @@ static void send_response(struct HttpRequest* request, VALUE response) {
   Server.write(request->server, request->sockfd, request->buffer,
                request->private.pos);
 
-  // fprintf(stderr, "Headers sent:\n%.*s", request->private.pos,
-  // request->buffer);
+  fprintf(stderr, "Headers sent:\n%.*s", request->private.pos, request->buffer);
 
   // write body
   tmp = rb_ary_entry(response, 2);
@@ -414,6 +415,8 @@ static void send_response(struct HttpRequest* request, VALUE response) {
     // String is a likely error
     Server.write(request->server, request->sockfd, RSTRING_PTR(tmp),
                  RSTRING_LEN(tmp));
+  } else if (tmp == Qnil) {
+    // nothing to do?
   } else {
     rb_block_call(tmp, each_method_id, 0, NULL, for_each_string,
                   (VALUE)request);

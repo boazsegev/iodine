@@ -116,7 +116,7 @@ static VALUE rio_read(int argc, VALUE* argv, VALUE self) {
     if (ret_nil)
       return Qnil;
     else
-      return rb_str_buf_new(0);
+      return rb_str_buf_new(1);
   }
   // calculate length if it wasn't specified.
   if (!len) {

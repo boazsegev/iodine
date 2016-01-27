@@ -208,8 +208,7 @@ static ssize_t buffer_flush(struct Buffer* buffer, int fd) {
                        buffer->packet->length - buffer->sent);
   if (sent < 0 && !(errno & (EWOULDBLOCK | EAGAIN))) {
     close(fd);
-  }
-  if (sent > 0) {
+  } else if (sent > 0) {
     buffer->sent += sent;
   }
   if (buffer->sent >= buffer->packet->length) {
@@ -265,6 +264,7 @@ size_t buffer_pending(struct Buffer* buffer) {
 const struct BufferClass Buffer = {
     .new = new_buffer,
     .destroy = (void (*)(void*))destroy_buffer,
+    .clear = (void (*)(void*))clear_buffer,
     .write = (size_t (*)(void*, void*, size_t))buffer_copy,
     .write_move = (size_t (*)(void*, void*, size_t))buffer_move,
     .write_next = (size_t (*)(void*, void*, size_t))buffer_next,
