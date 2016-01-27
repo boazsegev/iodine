@@ -1,21 +1,14 @@
 require 'iodine/http'
 
 class Iodine
-	class Http
-		# This is the Rack handler for the Iodine's HTTP server.
-		module Rack
-			module_function
-			@threads = 8
-			def threads= t_count
-				@threads = t_count
+	module Base
+		class RackHandler < Iodine::Http
+			def name
+				"Iodine::Rack"
 			end
-			def threads
-				@threads
-			end
-
 			def run(app, options = {})
-        puts "press E to start"
-        gets
+        # puts "press E to start"
+        # gets
 				@app = app
         server = Iodine::Http.new
 				server.threads = @threads
@@ -26,6 +19,32 @@ class Iodine
 			end
 		end
 	end
+	Rack = Iodine::Base::RackHandler.new
+	# class Http
+	# 	# This is the Rack handler for the Iodine's HTTP server.
+	# 	module Rack
+	# 		module_function
+	# 		@threads = 8
+	# 		def threads= t_count
+	# 			@threads = t_count
+	# 		end
+	# 		def threads
+	# 			@threads
+	# 		end
+	#
+	# 		def run(app, options = {})
+  #       # puts "press E to start"
+  #       # gets
+	# 			@app = app
+  #       server = Iodine::Http.new
+	# 			server.threads = @threads
+	# 			server.port = options[:Port].to_i if options[:Port]
+	# 			server.on_request = @app
+  #       server.start
+	# 			true
+	# 		end
+	# 	end
+	# end
 end
 
 # ENV["RACK_HANDLER"] = 'iodine'
@@ -37,4 +56,4 @@ begin
 rescue Exception
 
 end
-::Rack::Handler.register( 'iodine', 'Iodine::Http::Rack') if defined?(::Rack)
+::Rack::Handler.register( 'iodine', 'Iodine::Rack') if defined?(::Rack)

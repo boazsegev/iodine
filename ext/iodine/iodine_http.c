@@ -338,9 +338,8 @@ static void send_response(struct HttpRequest* request, VALUE response) {
         (request->buffer[request->private.max++] | 32) == 'e' &&
         (request->buffer[request->private.max++] | 32) == ':')
       tmp = tmp | 4;
-    if ((request->buffer[request->private.max++] | 32) == 'n' &&
-        (request->buffer[request->private.max++] | 32) == 't' &&
-        (request->buffer[request->private.max++] | 32) == 'e' &&
+    if (  // "con" passed "t" failed (connect), "e" failed (date), check the
+        // rest
         (request->buffer[request->private.max++] | 32) == 'n' &&
         (request->buffer[request->private.max++] | 32) == 't' &&
         (request->buffer[request->private.max++] | 32) == '-' &&
@@ -392,6 +391,7 @@ static void send_response(struct HttpRequest* request, VALUE response) {
   // write headers to server
   Server.write(request->server, request->sockfd, request->buffer,
                request->private.pos);
+
   // write body
   tmp = rb_ary_entry(response, 2);
   if (TYPE(tmp) == T_ARRAY) {
@@ -404,7 +404,7 @@ static void send_response(struct HttpRequest* request, VALUE response) {
         fprintf(stderr, "data in array isn't a string! (index %lu)\n", i);
         goto internal_err;
       }
-      if (RSTRING_LEN(str) &&
+      if (RSTRING_PTR(str) && RSTRING_LEN(str) &&
           !Server.write(request->server, request->sockfd, RSTRING_PTR(str),
                         RSTRING_LEN(str)))
         goto unknown_stop;
@@ -431,12 +431,14 @@ static void send_response(struct HttpRequest* request, VALUE response) {
   }
 
 unknown_stop:
+  HttpRequest.destroy(request);
   return;
 internal_err:
   // Registry.remove(response);
   Server.write(request->server, request->sockfd, internal_error,
                sizeof(internal_error));
   Server.close(request->server, request->sockfd);
+  HttpRequest.destroy(request);
   rb_warn(
       "Invalid HTTP response, send 502 error code and closed connectiom.\n"
       "The response must be an Array:\n[<Fixnum - status code>, "

@@ -202,12 +202,17 @@ finish:
 
   // reset inner "pos"
   request->private.pos = 0;
+  // disconnect the request object from the server storage
+  // this prevents on_close from clearing the memory while on_request is still
+  // accessing the request.
+  Server.set_udata(server, sockfd, NULL);
   // callback
-  if (protocol->on_request) {
+  if (protocol->on_request)
     protocol->on_request(request);
-  }
-  // cleanup
-  goto cleanup;
+  else
+    HttpRequest.destroy(request);
+  // no need for cleanup
+  return;
 
 bad_request:
   // send a bed request response. hang up.
@@ -270,21 +275,21 @@ void http_default_on_request(struct HttpRequest* req) {
     asprintf(&head, http_file_echo, req->content_type, req->content_length);
     if (!head) {
       perror("WTF?! head");
-      return;
+      goto cleanup;
     }
     Server.write_move(req->server, req->sockfd, head, strlen(head));
     head = malloc(req->content_length + 1);  // the +1 is redundent.
     if (!head) {
       perror("WTF?! body");
-      return;
+      goto cleanup;
     }
     if (!fread(head, 1, req->content_length, req->body_file)) {
       perror("WTF?! file reading");
       free(head);
-      return;
+      goto cleanup;
     }
     Server.write_move(req->server, req->sockfd, head, req->content_length);
-    return;
+    goto cleanup;
   }
   // write reques's head onto the buffer
   char buff[HTTP_HEAD_MAX_SIZE] = {0};
@@ -330,10 +335,12 @@ void http_default_on_request(struct HttpRequest* req) {
   if (!reply) {
     perror("WTF?!");
     close(req->sockfd);
-    return;
+    goto cleanup;
   }
   // send(req->sockfd, reply, strlen(reply), 0);
   Server.write_move(req->server, req->sockfd, reply, buff_len);
+cleanup:
+  HttpRequest.destroy(req);
 }
 
 ////////////////
