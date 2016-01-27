@@ -404,13 +404,16 @@ static void send_response(struct HttpRequest* request, VALUE response) {
         fprintf(stderr, "data in array isn't a string! (index %lu)\n", i);
         goto internal_err;
       }
-      Server.write(request->server, request->sockfd, RSTRING_PTR(str),
-                   RSTRING_LEN(str));
+      if (RSTRING_LEN(str) &&
+          !Server.write(request->server, request->sockfd, RSTRING_PTR(str),
+                        RSTRING_LEN(str)))
+        goto unknown_stop;
     }
   } else if (TYPE(tmp) == T_STRING) {
     // String is a likely error
-    Server.write(request->server, request->sockfd, RSTRING_PTR(tmp),
-                 RSTRING_LEN(tmp));
+    if (RSTRING_LEN(tmp))
+      Server.write(request->server, request->sockfd, RSTRING_PTR(tmp),
+                   RSTRING_LEN(tmp));
   } else if (tmp == Qnil) {
     // nothing to do?
   } else {
@@ -426,7 +429,8 @@ static void send_response(struct HttpRequest* request, VALUE response) {
     int todo;
     tmp = rb_ary_entry(response, 3);
   }
-  // Registry.remove(response);
+
+unknown_stop:
   return;
 internal_err:
   // Registry.remove(response);

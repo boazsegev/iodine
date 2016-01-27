@@ -225,12 +225,12 @@ static void on_shutdown(struct ReactorSettings* reactor, int fd) {
 // called when a file descriptor was closed (either locally or by the other
 // party, when it's a socket or a pipe).
 static void on_close(struct ReactorSettings* reactor, int fd) {
-  if (!_protocol_(reactor, fd))
-    return;
-  if (_protocol_(reactor, fd)->on_close)
-    _protocol_(reactor, fd)->on_close(_server_(reactor), fd);
-  _protocol_(reactor, fd) = 0;
-  _server_(reactor)->tout[fd] = 0;
+  if (_protocol_(reactor, fd)) {
+    if (_protocol_(reactor, fd)->on_close)
+      _protocol_(reactor, fd)->on_close(_server_(reactor), fd);
+    _protocol_(reactor, fd) = 0;
+    _server_(reactor)->tout[fd] = 0;
+  }
   // we can keep the buffer on standby for the connection... but we won't
   if (_server_(reactor)->buffer_map[fd]) {
     Buffer.clear(_server_(reactor)->buffer_map[fd]);
@@ -723,8 +723,6 @@ static ssize_t buffer_send(struct Server* server,
                            size_t len,
                            char move,
                            char urgent) {
-  // if (!len && data)
-  //   return 0;
   ssize_t snt = -1;
   // reset timeout
   server->idle[sockfd] = 0;
@@ -760,7 +758,7 @@ static ssize_t buffer_send(struct Server* server,
             : (urgent ? Buffer.write_next : Buffer.write))(
           server->buffer_map[sockfd], data, len) == len) {
     Buffer.flush(server->buffer_map[sockfd], sockfd);
-    return len;
+    return 0;
   }
   fprintf(stderr, "couldn't write to the buffer on address %p...\n",
           server->buffer_map[sockfd]);
