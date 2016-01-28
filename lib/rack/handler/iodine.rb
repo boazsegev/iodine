@@ -10,11 +10,10 @@ class Iodine
         # puts "press E to start"
         # gets
 				@app = app
-        server = Iodine::Http.new
-				server.threads = @threads
-				server.port = options[:Port].to_i if options[:Port]
-				server.on_request = @app
-        server.start
+				@port = options[:Port].to_i if options[:Port]
+				@threads ||= ENV['MAX_THREADS']
+				@on_request = @app
+        start
 				true
 			end
 		end

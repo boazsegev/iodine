@@ -9,11 +9,11 @@ Iodine is an **evented** framework with a simple API that runs low level C code 
 
 * Iodine can handle thousands of concurrent connections (tested with 20K).
 
-    That's right,  isn't subject to the 1024 connection limit imposed by native Ruby and `select`/`poll` based applications.
+    That's right, Iodine isn't subject to the 1024 connection limit imposed by native Ruby and `select`/`poll` based applications.
 
-    This makes Iodine ideal for writing HTTP/2 and Websocket servers (which is it's intended design).
+    This makes Iodine ideal for writing HTTP/2 and Websocket servers (which is in it's design's DNA).
 
-* Iodine runs **only on Linux/Unix** based systems (OS X, Ubuntu, etc'). This is by design and allows us to:
+* Iodine runs **only on Linux/Unix** based systems (i.e. OS X, Ubuntu, etc'). This is by design and allows us to:
 
      * Optimize our code for the production environment.
 
@@ -31,7 +31,7 @@ This means that it's easy to minimize the number of Ruby objects you need before
 
 Also, since the HTTP parser is written in C (with no RegExp), it's fast.
 
-Iodine::Http imposes a few restrictions for performance and security reasons:
+Iodine::Http imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less then 8Kb in size. These restrictions shouldn't be an issue.
 
 ## Can I try before before I buy?
 

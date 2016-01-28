@@ -592,8 +592,8 @@ static VALUE http_start(VALUE self) {
   struct ServerSettings settings = {
       .protocol = (struct Protocol*)(&http_protocol),
       .timeout = timeout,
-      .threads = rb_threads == Qnil ? 0 : (FIX2INT(rb_threads)),
-      .processes = rb_processes == Qnil ? 0 : (FIX2INT(rb_processes)),
+      .threads = rb_threads == Qnil ? 1 : (FIX2INT(rb_threads)),
+      .processes = rb_processes == Qnil ? 1 : (FIX2INT(rb_processes)),
       .on_init = on_init,
       .on_idle = on_idle,
       .port = (iport > 0 ? port : NULL),

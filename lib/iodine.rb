@@ -30,8 +30,8 @@ class Iodine
     end
     @protocol = state[:protocol]
     @port = (state[:port] || (ARGV.index('-p') && ARGV[ARGV.index('-p') + 1]) || ENV['PORT'] || "3000").to_i
-    @threads = state[:threads] || 1
-    @processes = state[:processes] || 1
+    @threads = state[:threads]
+    @processes = state[:processes]
     @timeout = state[:timeout]
     @busy_msg = state[:busy_msg]
   end
