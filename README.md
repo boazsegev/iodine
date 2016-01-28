@@ -21,12 +21,11 @@ Iodine 0.1.x is implemented in Ruby, using a `select` system call.
 
 Hence, a move to kqueue/epoll is required.
 
-Iodine 0.2.x will include (hopefully), a kpoll / epoll implementation for Linux/BSD server environments, such as Heroku dynos (which run a flavor of unbuto 14).
+Iodine 0.2.x includes a kpoll / epoll implementation for Linux/BSD server environments, such as Heroku dynos (which run a flavor of unbuto 14).
 
-However, it is unlikely that Iodine's beautiful API could survive this shift.
+However, it is unlikely that Iodine's beautiful API could survive this shift. Iodine 0.2.x introduces a lot of changes. For example, Iodine is now a class (not a module), so that network services are created using `Iodine.new`. Also, Iodine's autostart feature as well as "task mode" are left behind (it seemed no-one was actually using "task mode").
 
-The 0.1.x API should be considered deprecated while a new API is under development (assuming I will manage to link some decent C code to Ruby)... I satrted out by displiking EventMachine's API, now it seems they might not have had a choice.
-
+The 0.1.x API should be considered deprecated while a new API is under development... I satrted out by disliking EventMachine's API, now it seems they might not have had a choice.
 
 ## Installation
 
