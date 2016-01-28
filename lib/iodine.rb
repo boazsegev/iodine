@@ -1,4 +1,5 @@
 require "iodine/version"
+require "iodine/logging"
 require "iodine/iodine"
 
 class Iodine
@@ -34,5 +35,6 @@ class Iodine
     @processes = state[:processes]
     @timeout = state[:timeout]
     @busy_msg = state[:busy_msg]
+    @logger = state[:logger] || Logger.new(STDOUT)
   end
 end
