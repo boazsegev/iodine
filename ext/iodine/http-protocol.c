@@ -148,6 +148,8 @@ restart:
       request->content_type = tmp2;
     } else if (!strcmp(tmp1, "CONTENT-LENGTH")) {
       request->content_length = atoi(tmp2);
+    } else if (!strcmp(tmp1, "UPGRADE")) {
+      request->upgrade = tmp2;
     }
   }
   // check if the the request was fully sent

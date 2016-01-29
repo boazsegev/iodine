@@ -76,6 +76,8 @@ struct HttpRequest {
   size_t content_length;
   // points to the body's content type header, if any.
   char* content_type;
+  // points to the Upgrade header, if any.
+  char* upgrade;
   // points the body of the request, if the body fitted within the buffer.
   // otherwise, NULL.
   char* body_str;
