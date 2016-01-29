@@ -34,7 +34,7 @@ class Iodine
   # After a new connection is accepted and a new protocol object is created, the protocol will be linked with Iodine's Protocol API.
   # Only the main protocol will be able to access the API within `initialize`, so it's best to use `on_open` for any Initialization required.
   #
-  module DynamicProtocol
+  module Protocol
 
     # Reads n bytes from the network connection, where n is:
     #

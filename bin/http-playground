@@ -34,6 +34,7 @@ server.start
 # ab -n 100000 -c 200 -k http://127.0.0.1:3000/
 # ab -n 1000000 -c 20000 -k http://127.0.0.1:3000/
 # ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/
+# RACK_ENV="production" rackup -p 3000 -s iodine
 # GET /assets/cases.css HTTP/1.1
 # host: localhost:3000
 #

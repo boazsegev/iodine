@@ -17,12 +17,15 @@ static int BinaryEncodingIndex;      // encoding index
 static rb_encoding* BinaryEncoding;  // encoding object
 static VALUE rHttp;                  // The Iodine::Http class
 static VALUE rIodine;                // The Iodine class
+static VALUE rDynProtocol;           // protocol module
 static VALUE rServer;                // server object to Ruby class
 static ID server_var_id;             // id for the Server variable (pointer)
 static ID fd_var_id;                 // id for the file descriptor (Fixnum)
 static ID call_proc_id;              // id for `#call`
 static ID each_method_id;            // id for `#call`
 static ID to_s_method_id;            // id for `#call`
+static ID new_func_id;               // id for the Class.new method
+static ID on_open_func_id;           // the on_open callback's ID
 // for Rack
 static VALUE REQUEST_METHOD;   // for Rack
 static VALUE CONTENT_TYPE;     // for Rack.
@@ -382,7 +385,12 @@ static void send_response(struct HttpRequest* request, VALUE response) {
     }
   }
   if (!(tmp & 4)) {
-    int ___todo_date;
+    struct tm t;
+    gmtime_r(&Server.reactor(request->server)->last_tick, &t);
+    request->private.pos +=
+        strftime(request->buffer + request->private.pos,
+                 HTTP_HEAD_MAX_SIZE - request->private.pos - 2,
+                 "Date: %a, %d %b %Y %H:%M:%S %Z\r\n", &t);
   }
   // write the extra EOL markers
   request->buffer[request->private.pos++] = '\r';
@@ -426,8 +434,36 @@ static void send_response(struct HttpRequest* request, VALUE response) {
 
   // Upgrade (if 4th element)
   if (RARRAY_LEN(response) > 3) {
-    int todo;
     tmp = rb_ary_entry(response, 3);
+    // no real upgrade element
+    if (tmp == Qnil)
+      goto unknown_stop;
+    // include the rDynProtocol within the object.
+    if (TYPE(tmp) == T_CLASS) {
+      // include the Protocol module
+      // // do we neet to check?
+      // if (rb_mod_include_p(protocol, rDynProtocol) == Qfalse)
+      rb_include_module(tmp, rDynProtocol);
+      tmp = RubyCaller.call_unsafe(tmp, new_func_id);
+    } else {
+      // include the Protocol module in the object's class
+      VALUE p_class = rb_obj_class(tmp);
+      // // do we neet to check?
+      // if (rb_mod_include_p(p_class, rDynProtocol) == Qfalse)
+      rb_include_module(p_class, rDynProtocol);
+    }
+    // make sure everything went as it should
+    if (tmp == Qnil)
+      goto unknown_stop;
+    // set the new protocol at the server's udata
+    Server.set_udata(request->server, request->sockfd, (void*)tmp);
+    // add new protocol to the Registry
+    Registry.add(tmp);
+    // initialize pre-required variables
+    rb_ivar_set(tmp, fd_var_id, INT2FIX(request->sockfd));
+    set_server(tmp, request->server);
+    // initialize the new protocol
+    RubyCaller.call_unsafe(tmp, on_open_func_id);
   }
 
 unknown_stop:
@@ -633,11 +669,13 @@ void Init_iodine_http(void) {
   // get IDs and data that's used often
   BinaryEncodingIndex = rb_enc_find_index("binary");  // sets encoding for data
   BinaryEncoding = rb_enc_find("binary");             // sets encoding for data
-  call_proc_id = rb_intern("call");     // used to call the main callback
-  server_var_id = rb_intern("server");  // when upgrading
-  fd_var_id = rb_intern("sockfd");      // when upgrading
-  each_method_id = rb_intern("each");   // for the response
-  to_s_method_id = rb_intern("to_s");   // for the response
+  call_proc_id = rb_intern("call");        // used to call the main callback
+  server_var_id = rb_intern("server");     // when upgrading
+  fd_var_id = rb_intern("sockfd");         // when upgrading
+  new_func_id = rb_intern("new");          // when upgrading
+  on_open_func_id = rb_intern("on_open");  // when upgrading
+  each_method_id = rb_intern("each");      // for the response
+  to_s_method_id = rb_intern("to_s");      // for the response
 
   // some common Rack & Http strings
   REQUEST_METHOD = rb_enc_str_new_literal("REQUEST_METHOD", BinaryEncoding);
@@ -723,6 +761,8 @@ void Init_iodine_http(void) {
   // define the Server class - for upgrades
   rServer = rb_define_class_under(rIodine, "ServerObject", rb_cData);
   rb_global_variable(&rServer);
+  // define the DynamicProtocol Class for upgrades
+  rDynProtocol = rb_define_module_under(rIodine, "Protocol");
   // define the Http class
   rHttp = rb_define_class_under(rIodine, "Http", rIodine);
   rb_global_variable(&rHttp);

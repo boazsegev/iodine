@@ -12,4 +12,6 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "http-status.h"
 #include "rb-rack-io.h"
 
+void Init_iodine_http(void);
+
 #endif /* HTTP_H */

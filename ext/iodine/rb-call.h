@@ -1,3 +1,5 @@
+#ifndef RB_CALL_H
+#define RB_CALL_H
 #include <ruby.h>
 
 ////////////////////////////////////////////////////////////////////////
@@ -32,3 +34,5 @@ extern struct _Ruby_Method_Caller_Class_ {
   VALUE (*call2)(VALUE obj, ID method, int argc, VALUE* argv);
   VALUE (*call_unsafe2)(VALUE obj, ID method, int argc, VALUE* argv);
 } RubyCaller;
+
+#endif  // RB_CALL_H

@@ -1,4 +1,5 @@
 #include "iodine.h"
+#include "iodine_http.h"
 #include <pthread.h>
 #include <sys/socket.h>
 
@@ -477,7 +478,7 @@ static void init_dynamic_protocol(void) {  // The Protocol module will inject
                                            // helper methods and core
                                            // functionality into
   // the Ruby protocol class provided by the user.
-  rDynProtocol = rb_define_module_under(rIodine, "DynamicProtocol");
+  rDynProtocol = rb_define_module_under(rIodine, "Protocol");
   rb_define_method(rDynProtocol, "on_open", empty_func, 0);
   rb_define_method(rDynProtocol, "on_data", def_dyn_data, 0);
   rb_define_method(rDynProtocol, "on_message", def_dyn_message, 1);
@@ -690,4 +691,7 @@ void Init_iodine(void) {
 
   // Initialize the registry under the Iodine core
   Registry.init(rIodine);
+
+  // initialize the Http server
+  Init_iodine_http();
 }
