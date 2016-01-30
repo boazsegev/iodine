@@ -48,22 +48,26 @@
 //        - :port= - sets the port for the connection. port should be a string.
 //        - :start - starts the server
 
+// non static data
+VALUE rDynProtocol;  // protocol module
+VALUE rIodine;       // core class
+VALUE rServer;       // server object to Ruby class
+VALUE rBase;
+int BinaryEncodingIndex;      // encoding index
+rb_encoding* BinaryEncoding;  // encoding object
+
 static char* VERSION;
-static int BinaryEncodingIndex;  // encoding index
-static VALUE rDynProtocol;       // protocol module
-static VALUE rIodine;            // core class
-static VALUE rServer;            // server object to Ruby class
-static ID server_var_id;         // id for the Server variable (pointer)
-static ID fd_var_id;             // id for the file descriptor (Fixnum)
-static ID buff_var_id;           // id for the file descriptor (Fixnum)
-static ID call_proc_id;          // id for the Proc.call method
-static ID new_func_id;           // id for the Class.new method
-static ID on_open_func_id;       // the on_open callback's ID
-static ID on_data_func_id;       // the on_data callback
-static ID on_message_func_id;    // the on_message optional
-static ID on_shutdown_func_id;   // the on_shutdown callback
-static ID on_close_func_id;      // the on_close callback
-static ID ping_func_id;          // the ping callback
+static ID server_var_id;        // id for the Server variable (pointer)
+static ID fd_var_id;            // id for the file descriptor (Fixnum)
+static ID buff_var_id;          // id for the file descriptor (Fixnum)
+static ID call_proc_id;         // id for the Proc.call method
+static ID new_func_id;          // id for the Class.new method
+static ID on_open_func_id;      // the on_open callback's ID
+static ID on_data_func_id;      // the on_data callback
+static ID on_message_func_id;   // the on_message optional
+static ID on_shutdown_func_id;  // the on_shutdown callback
+static ID on_close_func_id;     // the on_close callback
+static ID ping_func_id;         // the ping callback
 
 /////////////////////////////////////
 // GC friendly wrapper for saving the
@@ -192,6 +196,28 @@ static VALUE run_every(VALUE self, VALUE milliseconds) {
   return block;
 }
 
+// run a protocol task (preventing concurrency)
+static VALUE run_protocol_task(VALUE self) {
+  // requires a block to be passed
+  rb_need_block();
+  // get the server object
+  struct Server* srv = get_server(self);
+  // requires multi-threading
+  if (Server.settings(srv)->threads < 0) {
+    rb_warn(
+        "called an async method in a non-async mode - the task will "
+        "be performed immediately.");
+    rb_yield(Qnil);
+  }
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qnil;
+  Registry.add(block);
+  Server.fd_task(srv, FIX2INT(rb_ivar_get(self, fd_var_id)),
+                 perform_protocol_async, (void*)block);
+  return block;
+}
+
 /////////////////////////////////////
 // connection counting and references.
 
@@ -203,11 +229,13 @@ static VALUE count_all(VALUE self) {
   return LONG2FIX(Server.count(srv, NULL));
 }
 
-static void add_helper_methods(VALUE klass) {
-  rb_define_method(rIodine, "connection_count", count_all, 0);
-  rb_define_method(rIodine, "run", run_async, 0);
-  rb_define_method(rIodine, "run_after", run_after, 1);
-  rb_define_method(rIodine, "run_every", run_every, 1);
+void iodine_add_helper_methods(VALUE klass, int deffer) {
+  rb_define_method(klass, "connection_count", count_all, 0);
+  rb_define_method(klass, "run", run_async, 0);
+  rb_define_method(klass, "run_after", run_after, 1);
+  rb_define_method(klass, "run_every", run_every, 1);
+  if (deffer)
+    rb_define_method(klass, "defer", run_protocol_task, 0);
 }
 ////////////////////////////////////////////////////////////////////////
 /* /////////////////////////////////////////////////////////////////////
@@ -230,28 +258,6 @@ The following are it's helper methods and callbacks
 // Lib-Server provides helper methods that are very benificial.
 //
 // The functions manage access to these C methods from the Ruby objects.
-
-// run a protocol task (preventing concurrency)
-static VALUE run_protocol_task(VALUE self) {
-  // requires a block to be passed
-  rb_need_block();
-  // get the server object
-  struct Server* srv = get_server(self);
-  // requires multi-threading
-  if (Server.settings(srv)->threads < 0) {
-    rb_warn(
-        "called an async method in a non-async mode - the task will "
-        "be performed immediately.");
-    rb_yield(Qnil);
-  }
-  VALUE block = rb_block_proc();
-  if (block == Qnil)
-    return Qnil;
-  Registry.add(block);
-  Server.fd_task(srv, FIX2INT(rb_ivar_get(self, fd_var_id)),
-                 perform_protocol_async, (void*)block);
-  return block;
-}
 
 // writes data to the connection
 static VALUE srv_write(VALUE self, VALUE data) {
@@ -486,8 +492,7 @@ static void init_dynamic_protocol(void) {  // The Protocol module will inject
   rb_define_method(rDynProtocol, "on_shutdown", empty_func, 0);
   rb_define_method(rDynProtocol, "on_close", empty_func, 0);
   // helper methods
-  add_helper_methods(rDynProtocol);
-  rb_define_method(rDynProtocol, "defer", run_protocol_task, 0);
+  iodine_add_helper_methods(rDynProtocol, 1);
   rb_define_method(rDynProtocol, "read", srv_read, -1);
   rb_define_method(rDynProtocol, "write", srv_write, 1);
   rb_define_method(rDynProtocol, "write_urgent", srv_write_urgent, 1);
@@ -660,11 +665,12 @@ void Init_iodine(void) {
   on_message_func_id = rb_intern("on_message");
   buff_var_id = rb_intern("scrtbuffer");
 
-  BinaryEncodingIndex = rb_enc_find_index("binary");
+  BinaryEncodingIndex = rb_enc_find_index("binary");  // sets encoding for data
+  BinaryEncoding = rb_enc_find("binary");             // sets encoding for data
 
   // The core Iodine class wraps the ServerSettings and little more.
   rIodine = rb_define_class("Iodine", rb_cObject);
-  add_helper_methods(rIodine);
+  iodine_add_helper_methods(rIodine, 0);
   rb_define_method(rIodine, "start", srv_start, 0);
   rb_define_method(rIodine, "on_start", on_start, 0);
   rb_define_attr(rIodine, "protocol", 1, 1);
@@ -687,11 +693,13 @@ void Init_iodine(void) {
 
   // Every Protocol (and Server?) instance will hold a reference to the server
   // define the Server Ruby class.
-  rServer = rb_define_class_under(rIodine, "ServerObject", rb_cData);
+  rBase = rb_define_module_under(rIodine, "Base");
+  rServer = rb_define_class_under(rBase, "ServerObject", rb_cData);
 
   // Initialize the registry under the Iodine core
   Registry.init(rIodine);
 
   // initialize the Http server
+  // must be done only after all the globals, including BinaryEncoding, are set
   Init_iodine_http();
 }

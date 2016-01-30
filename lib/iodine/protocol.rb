@@ -1,23 +1,22 @@
 class Iodine
-  # The DynamicProtocol class is used only for documenting the Protocol API, it will not be included when requiring `iodine`.
+  # The Protocol class is used only for documenting the Protocol API, it will not be included when requiring `iodine`.
   #
-  # The dynamic (stateful) prtocol is defined as a Ruby class instance which is in control of one single connection.
+  # A dynamic (stateful) protocol is defined as a Ruby class instance which is in control of one single connection.
   #
   # It is called dynamic because it is dynamically allocated for each connection and then discarded,
-  # also it sounded better then calling it "the stateful protocol", even though that's what it actually is
-  # (as keeps the state of the connection).
+  # also it sounded better then calling it "the stateful protocol", even though that's what it actually is.
   #
   # It is (mostly) thread-safe as long as it's operations are limited to the scope
   # of the object.
   #
-  # **The Callbacks**
+  # <b>The Callbacks</b>
   #
-  # A protocol class MUST contain ONE of the following callbacks:
+  # A protocol class <b>MUST</b> contain ONE of the following callbacks:
   #
   # on_data:: called whened there's data available to be read, but no data was read just yet. `on_data` will not be called again untill all the existing network buffer was read (edge triggered event).
   # on_message(buffer):: the default `on_data` implementation creates a 1Kb buffer and reads data while recycling the same String memory space. The buffer is forwarded to the `on_message` callback before being recycled. The buffer object will be over-written once `on_message` returns, so creating a persistent copy requires `buffer.dup`.
   #
-  # A protocol class MAY contain any of the following optional callbacks:
+  # A protocol class <b>MAY</b> contain any of the following optional callbacks:
   #
   # on_open:: called after a new connection was accepted and the protocol was linked with Iodine's Protocol API. Initialization should be performed here.
   # ping:: called whenever timeout was reached. The default implementation will close the connection unless a protocol task ({Protocol#defer}, `on_data` or `on_message`) are busy in the background.
@@ -29,7 +28,7 @@ class Iodine
   # Use {#defer} to run protocol related tasks (this locks the connection, preventing it from running more then one task at a time and offering thread safety),
   # or {#run} to run asynchronous tasks that aren't protocol related.
   #
-  # **The API:**
+  # <b>The API:</b>
   #
   # After a new connection is accepted and a new protocol object is created, the protocol will be linked with Iodine's Protocol API.
   # Only the main protocol will be able to access the API within `initialize`, so it's best to use `on_open` for any Initialization required.

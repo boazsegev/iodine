@@ -24,7 +24,7 @@ static void http_on_data(struct Server* server, int sockfd) {
       "HTTP/1.1 400 Bad HttpRequest\r\n"
       "Connection: closed\r\n"
       "Content-Length: 16\r\n\r\n"
-      "Bad Http Request\r\n";
+      "Bad HTTP Request\r\n";
   static char* too_big_err =
       "HTTP/1.1 413 Entity Too Large\r\n"
       "Connection: closed\r\n"
@@ -207,13 +207,14 @@ finish:
   // disconnect the request object from the server storage
   // this prevents on_close from clearing the memory while on_request is still
   // accessing the request.
+  // It also allows upgrade protocol objects to use the storage for their data.
   Server.set_udata(server, sockfd, NULL);
   // callback
   if (protocol->on_request)
     protocol->on_request(request);
-  else
-    HttpRequest.destroy(request);
-  // no need for cleanup
+  // we need a different cleanup, because we disconnected the request from the
+  // server's udata.
+  HttpRequest.destroy(request);
   return;
 
 bad_request:

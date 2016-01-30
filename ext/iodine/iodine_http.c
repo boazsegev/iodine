@@ -1,3 +1,4 @@
+#include "iodine_websocket.h"
 #include "iodine_http.h"
 #include <ruby/io.h>
 
@@ -11,21 +12,18 @@ The server is (mostly) Rack compatible, except:
 
 //////////////////////////////////////////////////////////// */
 
+// This one is shared
+VALUE rHttp;  // The Iodine::Http class
+
 //////////////
 // general global definitions we will use herein.
-static int BinaryEncodingIndex;      // encoding index
-static rb_encoding* BinaryEncoding;  // encoding object
-static VALUE rHttp;                  // The Iodine::Http class
-static VALUE rIodine;                // The Iodine class
-static VALUE rDynProtocol;           // protocol module
-static VALUE rServer;                // server object to Ruby class
-static ID server_var_id;             // id for the Server variable (pointer)
-static ID fd_var_id;                 // id for the file descriptor (Fixnum)
-static ID call_proc_id;              // id for `#call`
-static ID each_method_id;            // id for `#call`
-static ID to_s_method_id;            // id for `#call`
-static ID new_func_id;               // id for the Class.new method
-static ID on_open_func_id;           // the on_open callback's ID
+static ID server_var_id;    // id for the Server variable (pointer)
+static ID fd_var_id;        // id for the file descriptor (Fixnum)
+static ID call_proc_id;     // id for `#call`
+static ID each_method_id;   // id for `#call`
+static ID to_s_method_id;   // id for `#call`
+static ID new_func_id;      // id for the Class.new method
+static ID on_open_func_id;  // the on_open callback's ID
 // for Rack
 static VALUE REQUEST_METHOD;   // for Rack
 static VALUE CONTENT_TYPE;     // for Rack.
@@ -57,7 +55,8 @@ static VALUE R_HIJACK;         // for Rack: rack.hijack
 static VALUE R_HIJACK_V;       // for Rack: rack.hijack
 static VALUE R_HIJACK_IO;      // for Rack: rack.hijack_io
 static VALUE R_HIJACK_IO_V;    // for Rack: rack.hijack_io
-
+static VALUE XSENDFILETYPE;    // sendfile support
+static VALUE XSENDFILE;        // sendfile support
 // rack.version must be an array of Integers.
 // rack.url_scheme must either be http or https.
 // There must be a valid input stream in rack.input.
@@ -68,7 +67,8 @@ static VALUE R_HIJACK_IO_V;    // for Rack: rack.hijack_io
 // The PATH_INFO, if non-empty, must start with /
 // The CONTENT_LENGTH, if given, must consist of digits only.
 // One of SCRIPT_NAME or PATH_INFO must be set. PATH_INFO should be / if
-// SCRIPT_NAME is empty. SCRIPT_NAME never should be /, but instead be empty.
+// SCRIPT_NAME is empty. SCRIPT_NAME never should be /, but instead be
+// empty.
 
 /* ////////////////////////////////////////////////////////////
 
@@ -262,7 +262,7 @@ static VALUE for_each_string(VALUE str, VALUE _req, int argc, VALUE argv) {
 }
 // translate a struct HttpRequest to a Hash, according top the
 // Rack specifications.
-static void send_response(struct HttpRequest* request, VALUE response) {
+static int send_response(struct HttpRequest* request, VALUE response) {
   static char internal_error[] =
       "HTTP/1.1 502 Internal Error\r\n"
       "Connection: closed\r\n"
@@ -432,12 +432,30 @@ static void send_response(struct HttpRequest* request, VALUE response) {
   if (close_when_done)
     Server.close(request->server, request->sockfd);
 
+unknown_stop:
+  return close_when_done;
+internal_err:
+  // Registry.remove(response);
+  Server.write(request->server, request->sockfd, internal_error,
+               sizeof(internal_error));
+  Server.close(request->server, request->sockfd);
+  rb_warn(
+      "Invalid HTTP response, send 502 error code and closed connectiom.\n"
+      "The response must be an Array:\n[<Fixnum - status code>, "
+      "{<Hash-headers>}, [<Array/IO - data], <optional Protocol "
+      "for Upgrade>]");
+  return 1;
+}
+// Upgrade to a generic Protocol (Iodine Core style)
+static void perform_generic_upgrade(struct HttpRequest* request,
+                                    VALUE response) {
+  VALUE tmp = 0;
   // Upgrade (if 4th element)
   if (RARRAY_LEN(response) > 3) {
     tmp = rb_ary_entry(response, 3);
     // no real upgrade element
     if (tmp == Qnil)
-      goto unknown_stop;
+      return;
     // include the rDynProtocol within the object.
     if (TYPE(tmp) == T_CLASS) {
       // include the Protocol module
@@ -454,7 +472,7 @@ static void send_response(struct HttpRequest* request, VALUE response) {
     }
     // make sure everything went as it should
     if (tmp == Qnil)
-      goto unknown_stop;
+      return;
     // set the new protocol at the server's udata
     Server.set_udata(request->server, request->sockfd, (void*)tmp);
     // add new protocol to the Registry
@@ -465,34 +483,46 @@ static void send_response(struct HttpRequest* request, VALUE response) {
     // initialize the new protocol
     RubyCaller.call_unsafe(tmp, on_open_func_id);
   }
-
-unknown_stop:
-  HttpRequest.destroy(request);
-  return;
-internal_err:
-  // Registry.remove(response);
-  Server.write(request->server, request->sockfd, internal_error,
-               sizeof(internal_error));
-  Server.close(request->server, request->sockfd);
-  HttpRequest.destroy(request);
-  rb_warn(
-      "Invalid HTTP response, send 502 error code and closed connectiom.\n"
-      "The response must be an Array:\n[<Fixnum - status code>, "
-      "{<Hash-headers>}, [<Array/IO - data], <optional Protocol "
-      "for Upgrade>]");
 }
-
 // Gets the response object, within a GVL context
 static void* handle_request_in_gvl(void* _res) {
   struct HttpRequest* request = _res;
   VALUE env = request_to_env(request);
-  // a regular request is forwarded to the on_request callback.
-  VALUE response = RubyCaller.call_unsafe2(
-      (VALUE)Server.get_udata(request->server, 0), call_proc_id, 1, &env);
+  VALUE response;
+  // check for Websocket request
+  if (request->upgrade && !strcasecmp(request->upgrade, "websocket") &&
+      (response = (VALUE)Server.get_udata(request->server, 1))) {
+    // a regular request is forwarded to the websocket callback (stored in 0).
+    response = RubyCaller.call_unsafe2(response, call_proc_id, 1, &env);
+    // clean-up env and register response
+    if (Registry.replace(env, response))
+      Registry.add(response);
+    // update response for Websocket support
+    if (TYPE(response) == T_ARRAY && RARRAY_LEN(response) > 3) {
+      // upgrade taking place, make sure the upgrade headers are valid for the
+      // response.
+      rb_ary_store(response, 0, INT2FIX(101));
+    } else if (TYPE(response) == T_ARRAY) {
+      // no upgrade object - send 400 error with headers.
+      rb_ary_store(response, 0, INT2FIX(400));
+    }
+    // sends the response and performs the upgrade, if needed
+    if (!send_response(request, response))
+      Websockets.new(request, response);
+    // Registry is a Bag, not a Set. Only the first reference is removed,
+    // any added references (if exist) are left in the Registry.
+    Registry.remove(response);
+    return 0;
+  }
+  // perform HTTP callback
+  response = (VALUE)Server.get_udata(request->server, 0);
+  if (response)
+    response = RubyCaller.call_unsafe2(response, call_proc_id, 1, &env);
   // clean-up env and register response
   if (Registry.replace(env, response))
     Registry.add(response);
-  send_response(request, response);
+  if (!send_response(request, response))
+    perform_generic_upgrade(request, response);
   Registry.remove(response);
   return 0;
 }
@@ -517,7 +547,11 @@ static void on_init(struct Server* server) {
   VALUE core_instance = ((VALUE)Server.settings(server)->udata);
   // save the updated on_request  as a global value on the server, using
   // fd=0
-  Server.set_udata(server, 0, (void*)rb_iv_get(core_instance, "@on_request"));
+  if (rb_iv_get(core_instance, "@on_http") != Qnil)
+    Server.set_udata(server, 0, (void*)rb_iv_get(core_instance, "@on_http"));
+  if (rb_iv_get(core_instance, "@on_websocket") != Qnil)
+    Server.set_udata(server, 1,
+                     (void*)rb_iv_get(core_instance, "@on_websocket"));
   // message
   VALUE version_val = rb_const_get(rIodine, rb_intern("VERSION"));
   char* version_str = StringValueCStr(version_val);
@@ -561,12 +595,30 @@ static void unblck(void* _) {
 //
 // This method starts the Http server instance.
 static VALUE http_start(VALUE self) {
-  // review the callback
-  VALUE on_request_handler = rb_iv_get(self, "@on_request");
-  if (rb_obj_method(on_request_handler, ID2SYM(call_proc_id)) == Qnil) {
+  fprintf(stderr, "start called.\n");
+  // review the callbacks
+  VALUE on_http_handler = rb_iv_get(self, "@on_http");
+  VALUE on_websocket_handler = rb_iv_get(self, "@on_websocket");
+  if (on_websocket_handler == Qnil && on_http_handler == Qnil) {
+    rb_raise(
+        rb_eRuntimeError,
+        "Either the `on_http` callback or the `on_websocket` must be defined");
+    return Qnil;
+  }
+  if (on_http_handler != Qnil &&
+      !rb_respond_to(on_http_handler, call_proc_id)) {
     rb_raise(rb_eTypeError,
-             "The on_request callback should be an object that answers to the "
+             "The on_http callback should be an object that answers to the "
              "method `call`");
+    return Qnil;
+  }
+  // review the callbacks
+  if (on_websocket_handler != Qnil &&
+      !rb_respond_to(on_websocket_handler, call_proc_id)) {
+    rb_raise(
+        rb_eTypeError,
+        "The on_websocket callback should be an object that answers to the "
+        "method `call`");
     return Qnil;
   }
   // get current settings
@@ -667,8 +719,6 @@ static VALUE http_protocol_set(VALUE self, VALUE _) {
 // initialize the class and the whole of the Iodine/http library
 void Init_iodine_http(void) {
   // get IDs and data that's used often
-  BinaryEncodingIndex = rb_enc_find_index("binary");  // sets encoding for data
-  BinaryEncoding = rb_enc_find("binary");             // sets encoding for data
   call_proc_id = rb_intern("call");        // used to call the main callback
   server_var_id = rb_intern("server");     // when upgrading
   fd_var_id = rb_intern("sockfd");         // when upgrading
@@ -750,19 +800,20 @@ void Init_iodine_http(void) {
   rb_global_variable(&R_HIJACK_IO);
   rb_obj_freeze(R_HIJACK_IO);
   R_HIJACK_IO_V = Qnil;
-  // open the Iodine class
-  rIodine = rb_define_class("Iodine", rb_cObject);
   // setup for Rack.
   VALUE version_val = rb_const_get(rIodine, rb_intern("VERSION"));
   R_VERSION_V = rb_str_split(version_val, ".");
   rb_global_variable(&R_VERSION_V);
   R_ERRORS_V = rb_stdout;
+  // sendfile - for later...
+  XSENDFILETYPE = rb_enc_str_new_literal("X-Sendfile-Type", BinaryEncoding);
+  rb_global_variable(&XSENDFILETYPE);
+  rb_obj_freeze(XSENDFILETYPE);
+  XSENDFILE = rb_enc_str_new_literal("X-Sendfile", BinaryEncoding);
+  rb_global_variable(&XSENDFILE);
+  rb_obj_freeze(XSENDFILE);
 
-  // define the Server class - for upgrades
-  rServer = rb_define_class_under(rIodine, "ServerObject", rb_cData);
   rb_global_variable(&rServer);
-  // define the DynamicProtocol Class for upgrades
-  rDynProtocol = rb_define_module_under(rIodine, "Protocol");
   // define the Http class
   rHttp = rb_define_class_under(rIodine, "Http", rIodine);
   rb_global_variable(&rHttp);
@@ -770,7 +821,8 @@ void Init_iodine_http(void) {
   rb_define_method(rHttp, "protocol=", http_protocol_set, 1);
   rb_define_method(rHttp, "protocol", http_protocol_get, 0);
   rb_define_method(rHttp, "start", http_start, 0);
-  rb_define_attr(rHttp, "on_request", 1, 1);
+  rb_define_attr(rHttp, "on_http", 1, 1);
+  rb_define_attr(rHttp, "on_websocket", 1, 1);
   // initialize the RackIO class
-  RackIO.init(rHttp);
+  RackIO.init();
 }

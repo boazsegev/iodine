@@ -1,6 +1,4 @@
 require 'iodine'
-require 'iodine/iodine_http'
-
 
 class Iodine
   # The Http class inherits from the core {Iodine} class, so that all the methods

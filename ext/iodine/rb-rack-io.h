@@ -5,7 +5,7 @@
 
 extern struct _RackIO_ {
   VALUE (*new)(struct HttpRequest* request);
-  void (*init)(VALUE owner);
+  void (*init)(void);
 } RackIO;
 
 #endif  // RUBY_RACK_IO_H

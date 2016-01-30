@@ -12,7 +12,7 @@ class Iodine
 				@app = app
 				@port = options[:Port].to_i if options[:Port]
 				@threads ||= ENV['MAX_THREADS']
-				@on_request = @app
+				@on_http = @app
         start
 				true
 			end

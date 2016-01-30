@@ -7,11 +7,11 @@ Iodine makes writing Object Oriented **Network Services** easy to write.
 
 Iodine is an **evented** framework with a simple API that runs low level C code with support for **epoll** and **kqueue** - this means that:
 
-* Iodine can handle thousands of concurrent connections (tested with 20K).
+* Iodine can handle **thousands of concurrent connections** (tested with 20K connections).
 
     That's right, Iodine isn't subject to the 1024 connection limit imposed by native Ruby and `select`/`poll` based applications.
 
-    This makes Iodine ideal for writing HTTP/2 and Websocket servers (which is in it's design's DNA).
+    This makes Iodine ideal for writing HTTP/2 and Websocket servers (which is the reason for it's development).
 
 * Iodine runs **only on Linux/Unix** based systems (i.e. OS X, Ubuntu, etc'). This is by design and allows us to:
 
@@ -23,17 +23,40 @@ Iodine is an **evented** framework with a simple API that runs low level C code 
 
 Iodine is a C extension for Ruby, developed with Ruby MRI 2.3.0 and 2.2.4 (it should support the whole Ruby 2.0 family, but it might not).
 
-## Iodine::Rack
+## Iodine::Rack - an HTTP and Websockets server
 
-Since many network services start off as Http, Iodine includes a small HTTP Rack server running in C with special support for the Upgrade directive.
+Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC).
+
+Iodine's HTTP server includes special support for the Upgrade directive (just add another object to the Rack response array, so it will look like this: `[<status>, {<headers>}, [<body>], <new protocol>]`).
 
 This is especially effective as it allows the use of middleware for connection upgrading, while having the main application answer to any HTTP requests.
 
 This means that it's easy to minimize the number of Ruby objects you need before an Upgrade takes place and a new protocol is established.
 
-Also, since the HTTP parser is written in C (with no RegExp), it's fast.
+Also, since the HTTP and Websocket parsers are written in C (with no RegExp), they're fast.
 
 Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less then 8Kb in size. These restrictions shouldn't be an issue.
+
+Here's a fast HTTP echo server with Iodine::Rack, which can be used directly from `irb`:
+
+```ruby
+class WebsocketEcho
+  def on_message data
+    write data
+  end
+end
+# handle HTTP requests
+Iodine::Rack.on_http = Proc.new do |env|
+   [200, {"Content-Length" => "12"}, ["Hello World!"]]
+end
+# if a websocket handler is defined, it will be used for Websocket requests
+Iodine::Rack.on_websocket = Proc.new do |env|
+  # return a new object, or class, as the Websocket protocol handler
+  WebsocketEcho
+end
+```
+
+\* The websocket protocol is still being developed. The existing server is HTTP only.
 
 ## Can I try before before I buy?
 

@@ -13,5 +13,6 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "rb-rack-io.h"
 
 void Init_iodine_http(void);
+extern VALUE rHttp;
 
 #endif /* HTTP_H */

@@ -20,6 +20,8 @@ struct Object {
 //
 // allow multiple registrartions (bag)
 static VALUE register_object(VALUE obj) {
+  if (!obj || obj == Qnil)
+    return 0;
   struct Object* line = malloc(sizeof(struct Object));
   if (!line) {
     perror("No Memory");
@@ -37,6 +39,8 @@ static VALUE register_object(VALUE obj) {
 //
 // free only one.
 static void unregister_object(VALUE obj) {
+  if (!obj || obj == Qnil)
+    return;
   pthread_mutex_lock(&registry_lock);
   struct Object* line = registry.first;
   struct Object* prev = NULL;
@@ -61,6 +65,8 @@ finish:
 // returns 0 if all OK, returns -1 if it couldn't replace the object.
 static int replace_object(VALUE obj, VALUE new_obj) {
   int ret = -1;
+  if (obj == new_obj)
+    return 0;
   pthread_mutex_lock(&registry_lock);
   struct Object* line = registry.first;
   struct Object* prev = NULL;

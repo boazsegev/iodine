@@ -18,7 +18,7 @@ require "iodine/http"
 server = Iodine::Http.new
 server.threads = 4
 server.processes = 1
-server.on_request = Proc.new do |env|
+server.on_http= Proc.new do |env|
   out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
   request = Rack::Request.new(env)
   out += "\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)

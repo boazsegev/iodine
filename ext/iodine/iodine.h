@@ -20,6 +20,12 @@
 
 // define the server data type
 extern struct rb_data_type_struct iodine_core_server_type;
+extern VALUE rIodine;
+extern VALUE rServer;
+extern VALUE rBase;
+extern VALUE rDynProtocol;
+extern int BinaryEncodingIndex;      // encoding index
+extern rb_encoding* BinaryEncoding;  // encoding object
 
 // a macro helper function to embed a server pointer in an object
 #define set_server(object, srv)        \

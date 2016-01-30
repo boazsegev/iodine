@@ -1,5 +1,6 @@
 #include "rb-rack-io.h"
 #include "rb-call.h"
+#include "iodine.h"
 #include <ruby/encoding.h>
 
 /* this file manages a minimal interface to act as an IO wrapper according to
@@ -65,8 +66,7 @@ static struct rb_data_type_struct http_request_data_type = {
 //////////////////////////////
 // Ruby land API
 
-// gets returns a line. this is okay for small lines, but can be a security
-// risk... one that Rack requires.
+// gets returns a line. this is okay for small lines, but should really be used.
 static VALUE rio_gets(VALUE self) {
   struct HttpRequest* request = get_request(self);
   if (request->body_str) {
@@ -92,6 +92,7 @@ static VALUE rio_gets(VALUE self) {
   return Qnil;
 }
 
+// Reads data from the IO, according to the Rack specifications for `#read`.
 static VALUE rio_read(int argc, VALUE* argv, VALUE self) {
   struct HttpRequest* request = get_request(self);
   size_t pos = FIX2LONG(rb_ivar_get(self, pos_id));
@@ -155,10 +156,12 @@ static VALUE rio_read(int argc, VALUE* argv, VALUE self) {
   return Qnil;
 }
 
+// Does nothing - this is controlled by the server.
 static VALUE rio_close(VALUE self) {
   return Qnil;
 }
 
+// Rewinds the IO, so that it is read from the begining.
 static VALUE rio_rewind(VALUE self) {
   struct HttpRequest* request = get_request(self);
   if (request->body_str) {
@@ -169,6 +172,7 @@ static VALUE rio_rewind(VALUE self) {
   return self;
 }
 
+// Passes each line of the input to the block. This should be avoided.
 static VALUE rio_each(VALUE self) {
   rb_need_block();
   rio_rewind(self);
@@ -193,8 +197,8 @@ static VALUE new_rack_io(struct HttpRequest* request) {
 }
 
 // initialize library
-static void init_rack_io(VALUE owner) {
-  rRackIO = rb_define_class_under(owner, "RackIO", rb_cObject);
+static void init_rack_io(void) {
+  rRackIO = rb_define_class_under(rBase, "RackIO", rb_cObject);
   rRequestData = rb_define_class_under(rRackIO, "RequestData", rb_cData);
   req_var_id = rb_intern("request");
   call_new_id = rb_intern("new");
