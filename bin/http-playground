@@ -14,6 +14,13 @@ $LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
 require "bundler/setup"
 require "iodine/http"
 
+
+class WSEcho
+  def on_message data
+    write data
+  end
+end
+
 # create the server object and setup any settings we might need.
 server = Iodine::Http.new
 server.threads = 4
@@ -23,6 +30,10 @@ server.on_http= Proc.new do |env|
   request = Rack::Request.new(env)
   out += "\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
   [200, {"Content-Length" => out.length}, [out]];
+end
+
+server.on_websocket= Proc.new do |env|
+  [0,{}, [], WSEcho];
 end
 
 # server.on_start do

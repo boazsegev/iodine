@@ -1,6 +1,8 @@
 #include "iodine_websocket.h"
 #include "iodine_http.h"
 #include <ruby/io.h>
+// includes SHA1 functions locally, as static functions
+#include "sha1.inc"
 
 /* ////////////////////////////////////////////////////////////
 This file creates an HTTP server based on the Iodine libraries.
@@ -57,6 +59,14 @@ static VALUE R_HIJACK_IO;      // for Rack: rack.hijack_io
 static VALUE R_HIJACK_IO_V;    // for Rack: rack.hijack_io
 static VALUE XSENDFILETYPE;    // sendfile support
 static VALUE XSENDFILE;        // sendfile support
+static VALUE UPGRADE_HEADER;
+static VALUE CONNECTION_HEADER;
+static VALUE CONNECTION_CLOSE;
+static VALUE WEBSOCKET_STR;
+static VALUE WEBSOCKET_VER;
+static VALUE WEBSOCKET_SEC_VER;
+static VALUE WEBSOCKET_SEC_EXT;
+static VALUE WEBSOCKET_SEC_ACPT;
 // rack.version must be an array of Integers.
 // rack.url_scheme must either be http or https.
 // There must be a valid input stream in rack.input.
@@ -282,9 +292,11 @@ static int send_response(struct HttpRequest* request, VALUE response) {
 
   // check for keep alive
   if (HttpRequest.find(request, "CONNECTION")) {
-    if (HttpRequest.value(request)[0] == 'c')
+    if ((HttpRequest.value(request)[0] | 32) == 'c')
       close_when_done = 1;
+    // done with CONNECTION header
   } else if (request->version[6] != '.') {
+    // no connection header, check version
     close_when_done = 1;
   }
   // get status code from array (obj 0)
@@ -330,9 +342,8 @@ static int send_response(struct HttpRequest* request, VALUE response) {
         (request->buffer[request->private.max++] | 32) == ':') {
       tmp = tmp | 2;
       // check for close twice, as the first 'c' could be a space
-      if (request->buffer[request->private.max++] == 'c' ||
-          request->buffer[request->private.max++] == 'c') {
-        fprintf(stderr, "found a 'close' header\n");
+      if ((request->buffer[request->private.max++] | 32) == 'c' ||
+          (request->buffer[request->private.max++] | 32) == 'c') {
         close_when_done = 1;
       }
     }
@@ -357,7 +368,7 @@ static int send_response(struct HttpRequest* request, VALUE response) {
   }
   // if we don't have a content length we need to close the connection when
   // done.
-  if (!(tmp & 8))
+  if (!(tmp & 8) && !(tmp & 2))
     close_when_done = 1;
   // if the connection headers aren't there, add them
   if (!(tmp & 2)) {
@@ -489,9 +500,15 @@ static void* handle_request_in_gvl(void* _res) {
   struct HttpRequest* request = _res;
   VALUE env = request_to_env(request);
   VALUE response;
-  // check for Websocket request
+  char* recv_str = NULL;
+  static char ws_key_accpt_str[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+  // check for a valid and supported Websocket request (ver 13)
+  // If exists, forward this request to the special handler
   if (request->upgrade && !strcasecmp(request->upgrade, "websocket") &&
-      (response = (VALUE)Server.get_udata(request->server, 1))) {
+      (response = (VALUE)Server.get_udata(request->server, 1)) &&
+      HttpRequest.find(request, "SEC-WEBSOCKET-VERSION") &&
+      (recv_str = HttpRequest.value(request)) && recv_str[0] == '1' &&
+      recv_str[1] == '3') {
     // a regular request is forwarded to the websocket callback (stored in 0).
     response = RubyCaller.call_unsafe2(response, call_proc_id, 1, &env);
     // clean-up env and register response
@@ -502,16 +519,61 @@ static void* handle_request_in_gvl(void* _res) {
       // upgrade taking place, make sure the upgrade headers are valid for the
       // response.
       rb_ary_store(response, 0, INT2FIX(101));
-    } else if (TYPE(response) == T_ARRAY) {
+      // we're done with the `env` variable, so we can use it to store the
+      // headers.
+      env = rb_ary_entry(response, 1);
+      // set content-length to 0 - this will avoid closing the websocket for
+      // a missing header
+      // rb_hash_aset(env, CONTENT_LENGTH, INT2FIX(0));
+      // connection and upgrade headers
+      rb_hash_aset(env, CONNECTION_HEADER, UPGRADE_HEADER);
+      rb_hash_aset(env, UPGRADE_HEADER, WEBSOCKET_STR);
+      // websocket version (13)
+      rb_hash_aset(env, WEBSOCKET_SEC_VER, WEBSOCKET_VER);
+      // websocket extentions (none)
+      // rb_hash_aset(env, WEBSOCKET_SEC_EXT, QUERY_ESTRING);
+      // the accept Base64 Hash - we need to compute this one and set it
+      if (!HttpRequest.find(request, "SEC-WEBSOCKET-KEY"))
+        goto refuse_websocket;
+      // the client's unique string
+      recv_str = HttpRequest.value(request);
+      if (!recv_str)
+        goto refuse_websocket;
+      ;
+      // use the SHA1 methods provided to concat the client string and hash
+      struct sha1nfo sha1;
+      sha1_init(&sha1);
+      sha1_write(&sha1, recv_str, strlen(recv_str));
+      sha1_write(&sha1, ws_key_accpt_str, sizeof(ws_key_accpt_str) - 1);
+      // create a ruby stribg to contain the data
+      VALUE accpt_str = rb_str_buf_new(30);
+      if (accpt_str == Qnil)
+        goto refuse_websocket;
+      // base encode the data
+      int len = ws_base64_encode((char*)sha1_result(&sha1),
+                                 RSTRING_PTR(accpt_str), 20);
+      // set the string's length and encoding
+      rb_str_set_len(accpt_str, len);
+      rb_enc_associate_index(accpt_str, BinaryEncodingIndex);
+      // set the accept hashed value in the headers
+      rb_hash_aset(env, WEBSOCKET_SEC_ACPT, accpt_str);
+    } else if (TYPE(response) == T_ARRAY && RARRAY_LEN(response) > 2) {
+    refuse_websocket:
       // no upgrade object - send 400 error with headers.
       rb_ary_store(response, 0, INT2FIX(400));
+      // we're done with the `env` variable, so we can use it to store the
+      // headers.
+      env = rb_ary_entry(response, 1);
+      // close connection header
+      rb_hash_aset(env, CONNECTION_HEADER, CONNECTION_CLOSE);
     }
     // sends the response and performs the upgrade, if needed
     if (!send_response(request, response))
       Websockets.new(request, response);
-    // Registry is a Bag, not a Set. Only the first reference is removed,
-    // any added references (if exist) are left in the Registry.
-    Registry.remove(response);
+    else
+      // Registry is a Bag, not a Set. Only the first reference is removed,
+      // any added references (if exist) are left in the Registry.
+      Registry.remove(response);
     return 0;
   }
   // perform HTTP callback
@@ -595,7 +657,6 @@ static void unblck(void* _) {
 //
 // This method starts the Http server instance.
 static VALUE http_start(VALUE self) {
-  fprintf(stderr, "start called.\n");
   // review the callbacks
   VALUE on_http_handler = rb_iv_get(self, "@on_http");
   VALUE on_websocket_handler = rb_iv_get(self, "@on_websocket");
@@ -628,6 +689,9 @@ static VALUE http_start(VALUE self) {
   VALUE rb_timeout = rb_ivar_get(self, rb_intern("@timeout"));
   VALUE rb_threads = rb_ivar_get(self, rb_intern("@threads"));
   VALUE rb_processes = rb_ivar_get(self, rb_intern("@processes"));
+  VALUE rb_max_body = rb_ivar_get(self, rb_intern("@max_body_size"));
+  VALUE rb_max_msg = rb_ivar_get(self, rb_intern("@max_msg_size"));
+  VALUE rb_ws_tout = rb_ivar_get(self, rb_intern("@ws_timeout"));
   // validate port
   if (rb_port != Qnil && TYPE(rb_port) != T_FIXNUM) {
     rb_raise(rb_eTypeError, "port isn't a valid number.");
@@ -666,6 +730,32 @@ static VALUE http_start(VALUE self) {
     rb_raise(rb_eTypeError, "threads isn't a valid number (-1 to 128).");
     return Qnil;
   }
+  // validate body and message size limits
+  int imax_body = rb_max_body == Qnil ? 32 : FIX2INT(rb_max_body);
+  if (imax_body > 2048 || imax_body < 0) {
+    rb_raise(rb_eTypeError,
+             "max_body_size out of range. should be lo less then 0 and no more "
+             "then 2048 (2Gb).");
+    return Qnil;
+  }
+  int imax_msg = rb_max_msg == Qnil ? 65536 : FIX2INT(rb_max_msg);
+  if (imax_msg > 2097152 || imax_msg < 0) {
+    rb_raise(rb_eTypeError,
+             "rb_max_msg out of range. should be lo less then 0 and no more "
+             "then 2,097,152 (2Mb). Default is 64Kb");
+    return Qnil;
+  }
+  Websockets.max_msg_size = imax_msg;
+  // validate ws timeout
+  int iwstout = rb_ws_tout == Qnil ? 45 : FIX2INT(rb_ws_tout);
+  if (iwstout > 120 || iwstout < 0) {
+    rb_raise(rb_eTypeError,
+             "ws_timeout out of range. should be lo less then 0 and no more "
+             "then 120 (2 minutes). Default is 45 seconds.");
+    return Qnil;
+  }
+  Websockets.timeout = iwstout;
+
   // make port into a CString (for Lib-Server)
   char port[7];
   char* bind = rb_bind == Qnil ? NULL : StringValueCStr(rb_bind);
@@ -674,7 +764,7 @@ static VALUE http_start(VALUE self) {
   // create the HttpProtocol object
   struct HttpProtocol http_protocol = HttpProtocol();
   http_protocol.on_request = on_request;
-  // http_protocol.maximum_body_size = xxx;
+  http_protocol.maximum_body_size = imax_msg;
 
   // setup the server
   struct ServerSettings settings = {
@@ -805,6 +895,34 @@ void Init_iodine_http(void) {
   R_VERSION_V = rb_str_split(version_val, ".");
   rb_global_variable(&R_VERSION_V);
   R_ERRORS_V = rb_stdout;
+  // Websocket Upgrade
+  UPGRADE_HEADER = rb_enc_str_new_literal("Upgrade", BinaryEncoding);
+  rb_global_variable(&UPGRADE_HEADER);
+  rb_obj_freeze(UPGRADE_HEADER);
+  CONNECTION_HEADER = rb_enc_str_new_literal("connection", BinaryEncoding);
+  rb_global_variable(&CONNECTION_HEADER);
+  rb_obj_freeze(CONNECTION_HEADER);
+  CONNECTION_CLOSE = rb_enc_str_new_literal("close", BinaryEncoding);
+  rb_global_variable(&CONNECTION_CLOSE);
+  rb_obj_freeze(CONNECTION_CLOSE);
+  WEBSOCKET_STR = rb_enc_str_new_literal("websocket", BinaryEncoding);
+  rb_global_variable(&WEBSOCKET_STR);
+  rb_obj_freeze(WEBSOCKET_STR);
+  WEBSOCKET_VER = rb_enc_str_new_literal("13", BinaryEncoding);
+  rb_global_variable(&WEBSOCKET_VER);
+  rb_obj_freeze(WEBSOCKET_VER);
+  WEBSOCKET_SEC_VER =
+      rb_enc_str_new_literal("sec-websocket-version", BinaryEncoding);
+  rb_global_variable(&WEBSOCKET_SEC_VER);
+  rb_obj_freeze(WEBSOCKET_SEC_VER);
+  WEBSOCKET_SEC_EXT =
+      rb_enc_str_new_literal("sec-websocket-extensions", BinaryEncoding);
+  rb_global_variable(&WEBSOCKET_SEC_EXT);
+  rb_obj_freeze(WEBSOCKET_SEC_EXT);
+  WEBSOCKET_SEC_ACPT =
+      rb_enc_str_new_literal("sec-websocket-accept", BinaryEncoding);
+  rb_global_variable(&WEBSOCKET_SEC_EXT);
+  rb_obj_freeze(WEBSOCKET_SEC_EXT);
   // sendfile - for later...
   XSENDFILETYPE = rb_enc_str_new_literal("X-Sendfile-Type", BinaryEncoding);
   rb_global_variable(&XSENDFILETYPE);
@@ -821,6 +939,9 @@ void Init_iodine_http(void) {
   rb_define_method(rHttp, "protocol=", http_protocol_set, 1);
   rb_define_method(rHttp, "protocol", http_protocol_get, 0);
   rb_define_method(rHttp, "start", http_start, 0);
+  rb_define_attr(rHttp, "max_body_size", 1, 1);
+  rb_define_attr(rHttp, "max_msg_size", 1, 1);
+  rb_define_attr(rHttp, "ws_timeout", 1, 1);
   rb_define_attr(rHttp, "on_http", 1, 1);
   rb_define_attr(rHttp, "on_websocket", 1, 1);
   // initialize the RackIO class

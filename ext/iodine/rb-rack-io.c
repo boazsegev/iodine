@@ -36,7 +36,6 @@ static VALUE rRackIO;
 static VALUE rRequestData;
 static ID call_new_id;
 static ID pos_id;
-static rb_encoding* BinaryEncoding;
 //////////////////////////////
 // the request data type
 

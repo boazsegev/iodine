@@ -12,6 +12,8 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "iodine_http.h"
 
 extern struct __Websockets__CLASS__ {
+  int max_msg_size;
+  unsigned char timeout;
   void (*init)(void);
   void (*new)(struct HttpRequest* request, VALUE handler);
   void (*reject)(struct HttpRequest* request);
