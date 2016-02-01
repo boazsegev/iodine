@@ -7,10 +7,12 @@ class Iodine
   # Setting the `busy_msg` property will be quitely ignored.
   # Setting the protocol property will print a warning before being ignored.
   #
-  # In addition, the `on_request` property is introduced.
-  # `on_request` MUST be an object that answers to `call`.
+  # In addition, the following properties are introduced:
   #
-  # `on_request`'s `#call` will receives a Rack-compatible `env` object and should return a Rack compatible response.
+  # on_http:: set (or get) the handler for HTTP requests. This handler should behave like a Rack application object.
+  # on_websocket:: set (or get) the handler for special Websocket upgrade requests. This handler should behave like a Rack application object and return an array with four (4) objects, the last object being the connection's persistent websocket handler (see {WebsocketProtocol}).
   class Http
+
+
   end
 end

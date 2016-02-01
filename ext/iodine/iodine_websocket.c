@@ -204,7 +204,7 @@ void websocket_write(server_pt srv,
 //////////////////////////////////////
 // Protocol Instance Methods
 
-/// This method sends a close frame and closes the websocket connection.
+// This method sends a close frame and closes the websocket connection.
 static VALUE ws_close(VALUE self) {
   server_pt srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
@@ -212,10 +212,21 @@ static VALUE ws_close(VALUE self) {
   return Qnil;
 }
 
-/// This method writes the data to the websocket.
-///
-/// If the data isn't UTF8 encoded (the default encoding), it will be sent as
-/// binary data according to the websocket protocol framing rules.
+/* This method writes the data to the websocket.
+
+If the data isn't UTF8 encoded (the default encoding), it will be sent as
+binary data according to the websocket protocol framing rules.
+
+i.e.
+
+      # sending a regular websocket text frame (UTF-8)
+      write "This is a text message"
+       # sending a binary websocket frame
+      data = "binary"
+      data.force_encoding("binary")
+      write data
+
+ */
 static VALUE ws_write(VALUE self, VALUE data) {
   server_pt srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
@@ -224,7 +235,23 @@ static VALUE ws_write(VALUE self, VALUE data) {
   return self;
 }
 
-/// This method sends a close frame and closes the websocket connection.
+/*
+The block passed to `each` will be called for every connected websocket's
+handler.
+
+i.e. , here is a simple websocket broadcasting service:
+
+      def MyBroadcast
+        def on_message data
+          # this will also broadcast to `self`
+          each {|h| h.write data}
+        end
+      end
+
+      srv = Iodine::Http.new
+      srv.on_websocket = Proc.new {|env| MyBroadcast }
+
+*/
 static VALUE ws_each(VALUE self) {
   // requires a block to be passed
   rb_need_block();
