@@ -790,9 +790,12 @@ static ssize_t buffer_write_urgent_move(struct Server* server,
 }
 
 static void buffer_close(struct Server* server, int sockfd) {
-  server->buffer_map[sockfd]
-      ? Buffer.close_when_done(server->buffer_map[sockfd], sockfd)
-      : close(sockfd);
+  if (server->buffer_map[sockfd]) {
+    Buffer.close_when_done(server->buffer_map[sockfd], sockfd);
+    // // No need to flush, as it's either closing immediately or still writing.
+    // Buffer.flush(server->buffer_map[sockfd], sockfd);
+  } else
+    close(sockfd);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

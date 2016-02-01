@@ -16,7 +16,6 @@ extern struct __Websockets__CLASS__ {
   unsigned char timeout;
   void (*init)(void);
   void (*new)(struct HttpRequest* request, VALUE handler);
-  void (*reject)(struct HttpRequest* request);
 } Websockets;
 
 #endif /* HTTP_H */

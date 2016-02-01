@@ -13,10 +13,13 @@ The server is (mostly) Rack compatible, except:
 
 //////////////
 // general global definitions we will use herein.
-static VALUE rWebsocket;        // The Iodine::Http::Websocket class
+static VALUE rWebsocket;           // The Iodine::Http::Websocket class
+static rb_encoding* UTF8Encoding;  // encoding object
+static int UTF8EncodingIndex;
 static ID server_var_id;        // id for the Server variable (pointer)
 static ID fd_var_id;            // id for the file descriptor (Fixnum)
 static ID call_proc_id;         // id for `#call`
+static ID dup_func_id;          // id for the buffer.dup method
 static ID new_func_id;          // id for the Class.new method
 static ID on_open_func_id;      // the on_open callback's ID
 static ID on_close_func_id;     // the on_close callback's ID
@@ -43,15 +46,15 @@ struct WebsocketProtocol {
     char mask[4];
     char tmp_buffer[1024];
     struct {
-      unsigned fin : 1;
-      unsigned rsv1 : 1;
-      unsigned rsv2 : 1;
-      unsigned rsv3 : 1;
       unsigned op_code : 4;
+      unsigned rsv3 : 1;
+      unsigned rsv2 : 1;
+      unsigned rsv1 : 1;
+      unsigned fin : 1;
     } head, head2;
     struct {
-      unsigned masked : 1;
       unsigned size : 7;
+      unsigned masked : 1;
     } sdata;
     struct {
       unsigned has_mask : 1;
@@ -72,25 +75,150 @@ static void WebsocketProtocol_destroy(struct WebsocketProtocol* ws) {
   free(ws);
 }
 
+// network byte issues
+#ifdef __BIG_ENDIAN__
+#define IS_BIG_ENDIAN 1
+#else
+#define IS_BIG_ENDIAN (!*(unsigned char*)&(uint16_t){1})
+#endif
+
+//////////////////////////////////////
+// GVL lock for ruby API calls
+
+void* resize_buffer_in_gvl(void* data) {
+  struct WebsocketProtocol* ws = data;
+  rb_str_resize(ws->buffer, RSTRING_LEN(ws->buffer) + ws->parser.length -
+                                ws->parser.received);
+  return 0;
+}
+
+void* dup_and_on_message_in_gvl(void* data) {
+  struct WebsocketProtocol* ws = data;
+  // we trust in Ruby's "lazy copy"...
+  VALUE str = RubyCaller.call_unsafe(ws->buffer, dup_func_id);
+  RubyCaller.call_unsafe2(ws->handler, on_msg_func_id, 1, &str);
+  return 0;
+}
+
+//////////////////////////////////////
+// Protocol Helper Methods
+void websocket_close(server_pt srv, int fd) {
+  Server.write(srv, fd, "\x88\x00", 2);
+  Server.close(srv, fd);
+  return;
+}
+
+void websocket_write(server_pt srv,
+                     int fd,
+                     void* data,
+                     size_t len,
+                     char text,
+                     char first,
+                     char last) {
+  if (len < 126) {
+    struct {
+      unsigned op_code : 4;
+      unsigned rsv3 : 1;
+      unsigned rsv2 : 1;
+      unsigned rsv1 : 1;
+      unsigned fin : 1;
+      unsigned size : 7;
+      unsigned masked : 1;
+    } head = {.op_code = (first ? (text ? 1 : 2) : 0),
+              .fin = last,
+              .size = len,
+              .masked = 0};
+    void* buff = malloc(len + 2);
+    if (!buff) {
+      fprintf(stderr,
+              "ERROR: Couldn't allocate memory for buffer (writing websocket "
+              "data to network).\n");
+      return;
+    }
+    memcpy(buff, &head, 2);
+    memcpy(buff + 2, data, len);
+    Server.write(srv, fd, buff, len + 2);
+  } else if (len <= 65532) {
+    /* head is 4 bytes */
+    struct {
+      unsigned op_code : 4;
+      unsigned rsv3 : 1;
+      unsigned rsv2 : 1;
+      unsigned rsv1 : 1;
+      unsigned fin : 1;
+      unsigned size : 7;
+      unsigned masked : 1;
+      unsigned length : 16;
+    } head = {.op_code = (first ? (text ? 1 : 2) : 0),
+              .fin = last,
+              .size = 126,
+              .masked = 0,
+              .length = htons(len)};
+    /* head is 4 bytes */
+    void* buff = malloc(len + 4);
+    if (!buff) {
+      fprintf(stderr,
+              "ERROR: Couldn't allocate memory for buffer (writing websocket "
+              "data to network).\n");
+      return;
+    }
+    memcpy(buff, &head, 4);
+    memcpy(buff + 4, data, len);
+    Server.write(srv, fd, buff, len + 4);
+  } else {
+    /* fragmentation is better */
+    while (len > 65532) {
+      websocket_write(srv, fd, data, 65532, text, first, 0);
+      data += 65532;
+      first = 0;
+    }
+    websocket_write(srv, fd, data, len, text, first, 1);
+  }
+  return;
+}
+
+//////////////////////////////////////
+// Protocol Instance Methods
+
+/// This method sends a close frame and closes the websocket connection.
+static VALUE ws_close(VALUE self) {
+  server_pt srv = get_server(self);
+  int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
+  websocket_close(srv, fd);
+  return Qnil;
+}
+
+/// This method writes the data to the websocket.
+///
+/// If the data isn't UTF8 encoded (the default encoding), it will be sent as
+/// binary data according to the websocket protocol framing rules.
+static VALUE ws_write(VALUE self, VALUE data) {
+  server_pt srv = get_server(self);
+  int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
+  websocket_write(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data),
+                  (rb_enc_get_index(data) == UTF8EncodingIndex), 1, 1);
+  return self;
+}
+
 //////////////////////////////////////
 // Protocol Callbacks
 void on_close(server_pt server, int sockfd) {
   struct WebsocketProtocol* ws =
       (struct WebsocketProtocol*)Server.get_protocol(server, sockfd);
-  RubyCaller.call_unsafe(ws->handler, on_close_func_id);
+  RubyCaller.call(ws->handler, on_close_func_id);
   WebsocketProtocol_destroy(ws);
 }
 void on_shutdown(server_pt server, int sockfd) {
   struct WebsocketProtocol* ws =
       (struct WebsocketProtocol*)Server.get_protocol(server, sockfd);
-  RubyCaller.call_unsafe(ws->handler, on_shutdown_func_id);
+  RubyCaller.call(ws->handler, on_shutdown_func_id);
+  websocket_close(server, sockfd);
 }
 
 void ping(server_pt server, int sockfd) {
   // struct WebsocketProtocol* ws =
   //     (struct WebsocketProtocol*)Server.get_protocol(server, sockfd);
   Server.write_urgent(server, sockfd, "\x89\x00", 2);
-  // RubyCaller.call_unsafe(ws->handler, on_close_func_id);
 }
 
 void on_data(server_pt server, int sockfd) {
@@ -98,7 +226,12 @@ void on_data(server_pt server, int sockfd) {
       (struct WebsocketProtocol*)Server.get_protocol(server, sockfd);
   ssize_t len = 0;
   int pos = 0;
+  int data_len = 0;
+  size_t buf_pos = 0;
+  size_t tmp = 0;
   while ((len = Server.read(sockfd, ws->parser.tmp_buffer, 1024)) > 0) {
+    data_len = 0;
+    pos = 0;
     while (pos < len) {
       // collect the frame's head
       if (!(*(char*)(&ws->parser.head))) {
@@ -116,6 +249,13 @@ void on_data(server_pt server, int sockfd) {
       // save the mask and size information
       if (!(*(char*)(&ws->parser.sdata))) {
         *((char*)(&(ws->parser.sdata))) = ws->parser.tmp_buffer[pos];
+        // set length
+        if (!IS_BIG_ENDIAN)
+          ws->parser.state.at_len = ws->parser.sdata.size == 127
+                                        ? 7
+                                        : ws->parser.sdata.size == 126 ? 1 : 0;
+        else
+          ws->parser.state.at_len = 0;
         pos++;
         continue;
       }
@@ -127,19 +267,35 @@ void on_data(server_pt server, int sockfd) {
       collect_len:
         ////////// NOTICE: Network Byte Order might mess this code up - test
         /// this
-        if ((ws->parser.state.at_len == 1 && ws->parser.sdata.size == 126) ||
-            (ws->parser.state.at_len == 7 && ws->parser.sdata.size == 127)) {
-          ws->parser.psize.bytes[ws->parser.state.at_len] =
-              ws->parser.tmp_buffer[pos++];
-          ws->parser.state.has_len = 1;
-          ws->parser.length = (ws->parser.sdata.size == 126)
-                                  ? (ws->parser.psize.len1 + 126)
-                                  : (ws->parser.psize.len2 + 127);
+        if (IS_BIG_ENDIAN) {
+          if ((ws->parser.state.at_len == 1 && ws->parser.sdata.size == 126) ||
+              (ws->parser.state.at_len == 7 && ws->parser.sdata.size == 127)) {
+            ws->parser.psize.bytes[ws->parser.state.at_len] =
+                ws->parser.tmp_buffer[pos++];
+            ws->parser.state.has_len = 1;
+            ws->parser.length = (ws->parser.sdata.size == 126)
+                                    ? ws->parser.psize.len1
+                                    : ws->parser.psize.len2;
+          } else {
+            ws->parser.psize.bytes[ws->parser.state.at_len++] =
+                ws->parser.tmp_buffer[pos++];
+            if (pos < len)
+              goto collect_len;
+          }
         } else {
-          ws->parser.psize.bytes[ws->parser.state.at_len++] =
-              ws->parser.tmp_buffer[pos++];
-          if (pos < len)
-            goto collect_len;
+          if (ws->parser.state.at_len == 0) {
+            ws->parser.psize.bytes[ws->parser.state.at_len] =
+                ws->parser.tmp_buffer[pos++];
+            ws->parser.state.has_len = 1;
+            ws->parser.length = (ws->parser.sdata.size == 126)
+                                    ? ws->parser.psize.len1
+                                    : ws->parser.psize.len2;
+          } else {
+            ws->parser.psize.bytes[ws->parser.state.at_len--] =
+                ws->parser.tmp_buffer[pos++];
+            if (pos < len)
+              goto collect_len;
+          }
         }
         continue;
       }
@@ -161,49 +317,119 @@ void on_data(server_pt server, int sockfd) {
               ws->parser.tmp_buffer[pos++];
           if (pos < len)
             goto collect_mask;
+          else
+            continue;
         }
-        continue;
+        // since it's possible that there's no more data (0 length frame),
+        // we don't go `continue` (check while loop) and we process what we
+        // have.
       }
+
       // Now that we know everything about the frame, let's collect the data
+
+      // How much data in the buffer is part of the frame?
+      data_len = len - pos;
+      if (data_len + ws->parser.received > ws->parser.length)
+        data_len = ws->parser.length - ws->parser.received;
 
       // a note about unmasking: since ws->parser.state.at_mask is only 2 bits,
       // it will wrap around (i.e. 3++ == 0), so no modulus is required.
       // unmask:
       if (ws->parser.sdata.masked) {
-        for (size_t i = pos; i < len && i < ws->parser.length + pos; i++) {
-          ws->parser.tmp_buffer[i] ^=
+        for (int i = 0; i < data_len; i++) {
+          ws->parser.tmp_buffer[i + pos] ^=
               ws->parser.mask[ws->parser.state.at_mask++];
         }
       } else {
         // enforce masking?
       }
-      // pings, pongs and other non-Ruby handled messages.
-      if (!ws->parser.head.op_code) {
-        /* continuation frame */
-        if (ws->parser.head.fin) {
-          /* This was the last frame */
+      // Copy the data to the Ruby buffer - only if it's a user message
+      if (ws->parser.head.op_code == 1 || ws->parser.head.op_code == 2 ||
+          (!ws->parser.head.op_code &&
+           (ws->parser.head2.op_code == 1 || ws->parser.head2.op_code == 2))) {
+        // get current Ruby Position length
+        buf_pos = RSTRING_LEN(ws->buffer);
+        // review buffer's capacity - it can only grow.
+        tmp = rb_str_capacity(ws->buffer);
+        if (buf_pos + ws->parser.length - ws->parser.received > tmp) {
+          // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!! //
+          // resizing the buffer MUST be performed within the GVL lock!
+          // due to memory manipulation.
+          // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!! //
+          rb_thread_call_with_gvl(resize_buffer_in_gvl, ws);
         }
-      } else if (ws->parser.head.op_code == 1) {
-        /* text data */
-      } else if (ws->parser.head.op_code == 2) {
-        /* binary data */
-      } else if (ws->parser.head.op_code == 8) {
-        /* close */
-      } else if (ws->parser.head.op_code == 9) {
-        /* ping */
-      } else if (ws->parser.head.op_code == 10) {
-        /* pong */
-      } else if (ws->parser.head.op_code > 2 && ws->parser.head.op_code < 8) {
-        /* future control frames. ignore. */
-      } else {
-        /* code */
+        // copy here
+        memcpy(RSTRING_PTR(ws->buffer) + buf_pos, ws->parser.tmp_buffer + pos,
+               data_len);
+        rb_str_set_len(ws->buffer, buf_pos + data_len);
+      }
+      // set the frame's data received so far (copied or not)
+      // we couldn't do it soonet, because we needed the value to compute the
+      // Ruby buffer capacity (within the GVL resize function).
+      ws->parser.received += data_len;
+
+      // check that we have collected the whole of the frame.
+      if (ws->parser.length > ws->parser.received) {
+        pos += data_len;
+        continue;
       }
 
-      // RubyCaller.call2(ws->handler, on_msg_func_id, 1, &(ws->buffer));
-
+      // we have the whole frame, time to process the data.
+      // pings, pongs and other non-Ruby handled messages.
+      if (ws->parser.head.op_code == 0 || ws->parser.head.op_code == 1 ||
+          ws->parser.head.op_code == 2) {
+        /* a user data frame */
+        if (ws->parser.head.fin) {
+          /* This was the last frame */
+          if (ws->parser.head2.op_code == 1) {
+            /* text data */
+            rb_enc_associate(ws->buffer, UTF8Encoding);
+          } else if (ws->parser.head2.op_code == 2) {
+            /* binary data */
+            rb_enc_associate(ws->buffer, BinaryEncoding);
+          } else  // not a recognized frame, don't act
+            goto reset_parser;
+          // call the on_message callback
+          // we dont use:
+          // // RubyCaller.call2(ws->handler, on_msg_func_id, 1, &(ws->buffer));
+          // since we want to dup the buffer (Ruby's lazy copy)
+          rb_thread_call_with_gvl(dup_and_on_message_in_gvl, ws);
+          goto reset_parser;
+        }
+      } else if (ws->parser.head.op_code == 8) {
+        /* close */
+        websocket_close(server, sockfd);
+        if (ws->parser.head2.op_code == ws->parser.head.op_code)
+          goto reset_parser;
+      } else if (ws->parser.head.op_code == 9) {
+        /* ping */
+        // write Pong - TODO: echo ping data...
+        Server.write(server, sockfd, "\x8A\x00", 2);
+        if (ws->parser.head2.op_code == ws->parser.head.op_code)
+          goto reset_parser;
+      } else if (ws->parser.head.op_code == 10) {
+        /* pong */
+        // do nothing... almost
+        if (ws->parser.head2.op_code == ws->parser.head.op_code)
+          goto reset_parser;
+      } else if (ws->parser.head.op_code > 2 && ws->parser.head.op_code < 8) {
+        /* future control frames. ignore. */
+        if (ws->parser.head2.op_code == ws->parser.head.op_code)
+          goto reset_parser;
+      } else {
+        /* WTF? */
+        if (ws->parser.head.fin)
+          goto reset_parser;
+      }
+      // not done, but move the pos marker along
+      pos += data_len;
       continue;
+
     reset_parser:
-      // clear the parser and call a handler, entering the GVL
+      // move the pos marker along - in case we have more then one frame in the
+      // buffer
+      pos += data_len;
+      // clear the parser
       *((char*)(&(ws->parser.head))) = 0;
       *((char*)(&(ws->parser.head2))) = 0;
       *((char*)(&(ws->parser.sdata))) = 0;
@@ -214,6 +440,9 @@ void on_data(server_pt server, int sockfd) {
       ws->parser.psize.len2 = 0;
       ws->parser.length = 0;
       ws->parser.received = 0;
+      // clear the Ruby buffer
+      rb_str_set_len(ws->buffer, 0);
+      rb_enc_associate(ws->buffer, BinaryEncoding);
     }
   }
 }
@@ -225,7 +454,10 @@ static struct WebsocketProtocol* WebsocketProtocol_new(void) {
   struct WebsocketProtocol* ws = malloc(sizeof(struct WebsocketProtocol));
   *ws = (struct WebsocketProtocol){
       .protocol.service = ws_service_name,  // set the service name for `each`
-      .protocol.on_close = on_close,        // set the destructor
+      .protocol.on_data = on_data,          // set the callback
+      .protocol.on_shutdown = on_shutdown,  // set the callback
+      .protocol.on_close = on_close,        // set the callback
+      .protocol.ping = ping,                // set the callback
   };
   return ws;
 }
@@ -248,8 +480,9 @@ void websocket_new(struct HttpRequest* request, VALUE handler) {
     rb_include_module(handler, rWebsocket);
     handler = RubyCaller.call_unsafe(handler, new_func_id);
     // check that we created a handler
-    if (handler == Qnil || handler == Qfalse)
+    if (handler == Qnil || handler == Qfalse) {
       goto reject;
+    }
   } else {
     // include the Protocol module in the object's class
     VALUE p_class = rb_obj_class(handler);
@@ -260,6 +493,8 @@ void websocket_new(struct HttpRequest* request, VALUE handler) {
   // set the Ruby handler for websocket messages
   ws->handler = handler;
   ws->buffer = rb_str_buf_new(2048);
+  rb_str_set_len(ws->buffer, 0);
+  rb_enc_associate(ws->buffer, BinaryEncoding);
   Registry.add(handler);
   Registry.add(ws->buffer);
   // setup server protocol and any data we need (i.e. timeout)
@@ -272,22 +507,11 @@ void websocket_new(struct HttpRequest* request, VALUE handler) {
   set_server(handler, request->server);
   // call the on_open callback
   RubyCaller.call_unsafe(handler, on_open_func_id);
-
+  return;
 reject:
   if (ws)
     WebsocketProtocol_destroy(ws);
-  Websockets.reject(request);
-  return;
-}
-void websocket_reject(struct HttpRequest* request) {
-  static char bad_req[] =
-      "HTTP/1.1 400 Bad HttpRequest\r\n"
-      "Connection: closed\r\n"
-      "Content-Length: 16\r\n\r\n"
-      "Bad HTTP Request\r\n";
-  fprintf(stderr, "WEBSOCKET REJECT\n");
-  Server.write(request->server, request->sockfd, bad_req, sizeof(bad_req));
-  Server.close(request->server, request->sockfd);
+  websocket_close(request->server, request->sockfd);
   return;
 }
 
@@ -310,14 +534,19 @@ void Init_websocket(void) {
   call_proc_id = rb_intern("call");          // used to call the main callback
   server_var_id = rb_intern("server");       // when upgrading
   fd_var_id = rb_intern("sockfd");           // when upgrading
+  dup_func_id = rb_intern("dup");            // when upgrading
   new_func_id = rb_intern("new");            // when upgrading
   on_open_func_id = rb_intern("on_open");    // when upgrading
   on_close_func_id = rb_intern("on_close");  // method ID
   on_shutdown_func_id = rb_intern("on_shutdown");  // a callback's ID
   on_msg_func_id = rb_intern("on_message");        // a callback's ID
+  UTF8Encoding = rb_enc_find("UTF-8");             // sets encoding for data
+  UTF8EncodingIndex = rb_enc_find_index("UTF-8");  // sets encoding for data
 
   // the Ruby websockets protocol class.
   rWebsocket = rb_define_module_under(rHttp, "WebsocketProtocol");
+  if (rWebsocket == Qfalse)
+    fprintf(stderr, "WTF?!\n");
   // // callbacks and handlers
   rb_define_method(rWebsocket, "on_open", empty_func, 0);
   rb_define_method(rWebsocket, "on_message", def_dyn_message, 1);
@@ -325,8 +554,8 @@ void Init_websocket(void) {
   rb_define_method(rWebsocket, "on_close", empty_func, 0);
   // // helper methods
   // add_helper_methods(rWebsocket);
-  // rb_define_method(rWebsocket, "write", srv_write, 1);
-  // rb_define_method(rWebsocket, "close", srv_close, 0);
+  rb_define_method(rWebsocket, "write", ws_write, 1);
+  rb_define_method(rWebsocket, "close", ws_close, 0);
   // rb_define_method(rWebsocket, "each", srv_close, 0);
 }
 
@@ -335,5 +564,4 @@ struct __Websockets__CLASS__ Websockets = {
     .max_msg_size = 65536,
     .init = Init_websocket,
     .new = websocket_new,
-    .reject = websocket_reject,
 };

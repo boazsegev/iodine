@@ -16,8 +16,18 @@ require "iodine/http"
 
 
 class WSEcho
+  def on_open
+    puts "We have a websocket connection"
+  end
+  def on_close
+    puts "Bye Bye..."
+  end
+  def on_shutdown
+    puts "I'm shutting down"
+  end
   def on_message data
-    write data
+    puts data
+    write "echo: #{data}"
   end
 end
 
@@ -51,3 +61,5 @@ server.start
 #
 #
 # connection: close
+
+# ws = new WebSocket("ws://localhost:3000"); ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);}; ws.onclose = function(e) {console.log("closed")}

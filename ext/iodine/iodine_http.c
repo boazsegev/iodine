@@ -569,11 +569,10 @@ static void* handle_request_in_gvl(void* _res) {
     }
     // sends the response and performs the upgrade, if needed
     if (!send_response(request, response))
-      Websockets.new(request, response);
-    else
-      // Registry is a Bag, not a Set. Only the first reference is removed,
-      // any added references (if exist) are left in the Registry.
-      Registry.remove(response);
+      Websockets.new(request, rb_ary_entry(response, 3));
+    // Registry is a Bag, not a Set. Only the first reference is removed,
+    // any added references (if exist) are left in the Registry.
+    Registry.remove(response);
     return 0;
   }
   // perform HTTP callback
@@ -946,4 +945,6 @@ void Init_iodine_http(void) {
   rb_define_attr(rHttp, "on_websocket", 1, 1);
   // initialize the RackIO class
   RackIO.init();
+  // initialize the Websockets class
+  Websockets.init();
 }
