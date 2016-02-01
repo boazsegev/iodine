@@ -19,6 +19,7 @@ static int UTF8EncodingIndex;
 static ID server_var_id;        // id for the Server variable (pointer)
 static ID fd_var_id;            // id for the file descriptor (Fixnum)
 static ID call_proc_id;         // id for `#call`
+static ID send_func_id;         // id for `#__send__`
 static ID dup_func_id;          // id for the buffer.dup method
 static ID new_func_id;          // id for the Class.new method
 static ID on_open_func_id;      // the on_open callback's ID
@@ -95,13 +96,24 @@ void* resize_buffer_in_gvl(void* data) {
 void* dup_and_on_message_in_gvl(void* data) {
   struct WebsocketProtocol* ws = data;
   // we trust in Ruby's "lazy copy"...
-  VALUE str = RubyCaller.call_unsafe(ws->buffer, dup_func_id);
+  //        RubyCaller.call_unsafe(ws->buffer, dup_func_id);
+  VALUE str = rb_obj_dup(ws->buffer);
   RubyCaller.call_unsafe2(ws->handler, on_msg_func_id, 1, &str);
   return 0;
 }
 
 //////////////////////////////////////
 // Protocol Helper Methods
+
+static void websocket_perform_task(server_pt srv, int fd, void* task) {
+  // hmm... call a method and sends arguments to the ws->handler....
+  struct WebsocketProtocol* ws =
+      (struct WebsocketProtocol*)Server.get_protocol(srv, fd);
+  VALUE args = (VALUE)task;
+  RubyCaller.call2(ws->handler, send_func_id, RARRAY_LEN(args),
+                   RARRAY_PTR(args));
+}
+
 void websocket_close(server_pt srv, int fd) {
   Server.write(srv, fd, "\x88\x00", 2);
   Server.close(srv, fd);
@@ -198,6 +210,14 @@ static VALUE ws_write(VALUE self, VALUE data) {
   websocket_write(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data),
                   (rb_enc_get_index(data) == UTF8EncodingIndex), 1, 1);
   return self;
+}
+
+/// This method sends a close frame and closes the websocket connection.
+static VALUE ws_each(VALUE self, VALUE args) {
+  server_pt srv = get_server(self);
+  int c =
+      Server.each(srv, ws_service_name, websocket_perform_task, (void*)args);
+  return INT2FIX(c);
 }
 
 //////////////////////////////////////
@@ -531,6 +551,7 @@ static VALUE def_dyn_message(VALUE self, VALUE data) {
 // initialize the class and the whole of the Iodine/http library
 void Init_websocket(void) {
   // get IDs and data that's used often
+  send_func_id = rb_intern("__send__");      // used for `each`
   call_proc_id = rb_intern("call");          // used to call the main callback
   server_var_id = rb_intern("server");       // when upgrading
   fd_var_id = rb_intern("sockfd");           // when upgrading
@@ -556,7 +577,7 @@ void Init_websocket(void) {
   // add_helper_methods(rWebsocket);
   rb_define_method(rWebsocket, "write", ws_write, 1);
   rb_define_method(rWebsocket, "close", ws_close, 0);
-  // rb_define_method(rWebsocket, "each", srv_close, 0);
+  rb_define_method(rWebsocket, "each", ws_each, -2);
 }
 
 struct __Websockets__CLASS__ Websockets = {

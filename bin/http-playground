@@ -27,6 +27,9 @@ class WSEcho
   end
   def on_message data
     puts data
+    each :echo, data
+  end
+  def echo data
     write "echo: #{data}"
   end
 end
