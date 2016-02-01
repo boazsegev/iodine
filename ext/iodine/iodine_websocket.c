@@ -105,13 +105,25 @@ void* dup_and_on_message_in_gvl(void* data) {
 //////////////////////////////////////
 // Protocol Helper Methods
 
-static void websocket_perform_task(server_pt srv, int fd, void* task) {
-  // hmm... call a method and sends arguments to the ws->handler....
+// performs pending protocol task while managing it's Ruby registry.
+// initiated by each
+static void each_protocol_async(struct Server* srv, int fd, void* task) {
   struct WebsocketProtocol* ws =
       (struct WebsocketProtocol*)Server.get_protocol(srv, fd);
-  VALUE args = (VALUE)task;
-  RubyCaller.call2(ws->handler, send_func_id, RARRAY_LEN(args),
-                   RARRAY_PTR(args));
+  if (ws && ws->protocol.service == ws_service_name)
+    RubyCaller.call2((VALUE)task, call_proc_id, 1, &(ws->handler));
+  // the task should be removed even if the handler was closed or doesn't exist,
+  // since it was scheduled and we need to clear every reference.
+  Registry.remove((VALUE)task);
+}
+
+static void each_protocol_async_schedule(struct Server* srv,
+                                         int fd,
+                                         void* task) {
+  // Registry is a bag, adding the same task multiple times will increase the
+  // number of references we have.
+  Registry.add((VALUE)task);
+  Server.fd_task(srv, fd, each_protocol_async, task);
 }
 
 void websocket_close(server_pt srv, int fd) {
@@ -213,11 +225,24 @@ static VALUE ws_write(VALUE self, VALUE data) {
 }
 
 /// This method sends a close frame and closes the websocket connection.
-static VALUE ws_each(VALUE self, VALUE args) {
-  server_pt srv = get_server(self);
-  int c =
-      Server.each(srv, ws_service_name, websocket_perform_task, (void*)args);
-  return INT2FIX(c);
+static VALUE ws_each(VALUE self) {
+  // requires a block to be passed
+  rb_need_block();
+  // get the server object
+  struct Server* srv = get_server(self);
+  // requires multi-threading
+  if (Server.settings(srv)->threads < 0) {
+    rb_warn(
+        "called an async method in a non-async mode - the task will "
+        "be performed immediately.");
+    rb_yield(Qnil);
+  }
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qnil;
+  Server.each_block(srv, ws_service_name, each_protocol_async_schedule,
+                    (void*)block);
+  return block;
 }
 
 //////////////////////////////////////
@@ -226,6 +251,7 @@ void on_close(server_pt server, int sockfd) {
   struct WebsocketProtocol* ws =
       (struct WebsocketProtocol*)Server.get_protocol(server, sockfd);
   RubyCaller.call(ws->handler, on_close_func_id);
+  Server.set_udata(server, sockfd, NULL);
   WebsocketProtocol_destroy(ws);
 }
 void on_shutdown(server_pt server, int sockfd) {
@@ -521,6 +547,8 @@ void websocket_new(struct HttpRequest* request, VALUE handler) {
   Server.set_protocol(request->server, request->sockfd, (struct Protocol*)ws);
   Server.set_timeout(request->server, request->sockfd, Websockets.timeout);
   Server.touch(request->server, request->sockfd);
+  // for the global each
+  Server.set_udata(request->server, request->sockfd, (void*)ws->handler);
   // set the server and fd values for the handler... (used for `write` and
   // `close`)
   rb_ivar_set(handler, fd_var_id, INT2FIX(request->sockfd));

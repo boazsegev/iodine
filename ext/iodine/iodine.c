@@ -109,10 +109,6 @@ static void perform_async(void* task) {
 // initiated by Server.async
 static void perform_repeated_timer(void* task) {
   RubyCaller.call((VALUE)task, call_proc_id);
-  // Timers will remain in the memory... forever!
-  // Registry.remove((VALUE)task);
-  // // DON'T do this... async tasks might be persistent methods...
-  // rb_gc_force_recycle(task);
 }
 
 // performs pending protocol task while managing it's Ruby registry.
@@ -120,8 +116,26 @@ static void perform_repeated_timer(void* task) {
 static void perform_protocol_async(struct Server* srv, int fd, void* task) {
   RubyCaller.call((VALUE)task, call_proc_id);
   Registry.remove((VALUE)task);
-  // // DON'T do this... async tasks might be persistent methods...
-  // rb_gc_force_recycle(task);
+}
+
+// performs pending protocol task while managing it's Ruby registry.
+// initiated by each
+static void each_protocol_async(struct Server* srv, int fd, void* task) {
+  void* handler = Server.get_udata(srv, fd);
+  if (handler)
+    RubyCaller.call2((VALUE)task, call_proc_id, 1, handler);
+  // the task should be removed even if the handler was closed or doesn't exist,
+  // since it was scheduled and we need to clear every reference.
+  Registry.remove((VALUE)task);
+}
+
+static void each_protocol_async_schedule(struct Server* srv,
+                                         int fd,
+                                         void* task) {
+  // Registry is a bag, adding the same task multiple times will increase the
+  // number of references we have.
+  Registry.add((VALUE)task);
+  Server.fd_task(srv, fd, each_protocol_async, task);
 }
 
 // A helper method that any object with a server instance variable can link to.
@@ -218,6 +232,30 @@ static VALUE run_protocol_task(VALUE self) {
   return block;
 }
 
+/// `each` will itterate through all the connections on the server and pass
+/// their handler to the block of code. i.e.:
+///
+///      MyProtocol.each { |h| h.task(arg) if h.is_a?(MyProtocol) }
+static VALUE run_each(VALUE self) {
+  // requires a block to be passed
+  rb_need_block();
+  // get the server object
+  struct Server* srv = get_server(self);
+  // requires multi-threading
+  if (Server.settings(srv)->threads < 0) {
+    rb_warn(
+        "called an async method in a non-async mode - the task will "
+        "be performed immediately.");
+    rb_yield(Qnil);
+  }
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qnil;
+  Registry.add(block);
+  Server.each_block(srv, NULL, each_protocol_async_schedule, (void*)block);
+  return block;
+}
+
 /////////////////////////////////////
 // connection counting and references.
 
@@ -231,9 +269,11 @@ static VALUE count_all(VALUE self) {
 
 void iodine_add_helper_methods(VALUE klass, int deffer) {
   rb_define_method(klass, "connection_count", count_all, 0);
+  rb_define_method(klass, "each", run_each, 0);
   rb_define_method(klass, "run", run_async, 0);
   rb_define_method(klass, "run_after", run_after, 1);
   rb_define_method(klass, "run_every", run_every, 1);
+
   if (deffer)
     rb_define_method(klass, "defer", run_protocol_task, 0);
 }
