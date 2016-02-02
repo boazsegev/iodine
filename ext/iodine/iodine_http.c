@@ -945,6 +945,7 @@ void Init_iodine_http(void) {
   rb_define_attr(rHttp, "ws_timeout", 1, 1);
   rb_define_attr(rHttp, "on_http", 1, 1);
   rb_define_attr(rHttp, "on_websocket", 1, 1);
+  rb_define_attr(rHttp, "public_folder", 1, 1);
   // initialize the RackIO class
   RackIO.init();
   // initialize the Websockets class

@@ -54,6 +54,9 @@ struct HttpProtocol {
   int maximum_body_size;
   /// the callback to be performed when requests come in.
   void (*on_request)(struct HttpRequest* request);
+  /// a public folder for file transfers - allows to circumvent any application
+  /// layer server and simply serve files.
+  char* public_folder;
 };
 
 #endif /* HTTP_PROTOCOL_H */

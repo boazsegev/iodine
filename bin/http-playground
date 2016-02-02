@@ -27,7 +27,7 @@ class WSEcho
   end
   def on_message data
     puts data
-    each {|h| h.echo data }
+    each {|h| puts "calling echo for #{h}"; h.echo data }
   end
   def echo data
     write "echo: #{data}"
@@ -36,8 +36,8 @@ end
 
 # create the server object and setup any settings we might need.
 server = Iodine::Http.new
-server.threads = 1
-server.processes = 1
+server.threads = 4
+server.processes = 2
 server.on_http= Proc.new do |env|
   out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
   request = Rack::Request.new(env)
@@ -74,13 +74,14 @@ end
 server.start
 
 # def nag
-#   puts `ab -n 100000 -c 200 -k http://127.0.0.1:3000/`
-#   sleep 2
+#   puts `ab -n 200000 -c 6000 -k http://127.0.0.1:3000/`
+#   sleep 16
 # end
 #
 # nag while true
 
 # ab -n 100000 -c 200 -k http://127.0.0.1:3000/
+# ab -n 100000 -c 4000 -k http://127.0.0.1:3000/
 # ab -n 1000000 -c 20000 -k http://127.0.0.1:3000/
 # ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/
 # RACK_ENV="production" rackup -p 3000 -s iodine
@@ -90,4 +91,4 @@ server.start
 #
 # connection: close
 
-# ws = new WebSocket("ws://localhost:3000"); ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);}; ws.onclose = function(e) {console.log("closed")}
+# ws = new WebSocket("ws://localhost:3000"); ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);}; ws.onclose = function(e) {console.log("closed")}; ws.onopen = function(e) {ws.send("hi");};

@@ -13,6 +13,43 @@
 
 #define _http_(protocol) ((struct HttpProtocol*)(protocol))
 
+// reviewes the request and attempts to answer with a static file.
+// returns 0 if no file was found, otherwise returns 1.
+static int http_sendfile(struct HttpRequest* req) {
+  return 0;
+  // TODO implement a send-file
+  FILE* file;
+  struct HttpProtocol* protocol =
+      (struct HttpProtocol*)Server.get_protocol(req->server, req->sockfd);
+  size_t folder_len = strlen(protocol->public_folder);
+  size_t file_len = strlen(req->path);
+  char fname[file_len + folder_len + 1];
+  memcpy(fname, protocol->public_folder, folder_len);
+  memcpy(fname + folder_len, req->path, file_len);
+  fname[file_len + folder_len + 1] = 0;
+  if ((file = fopen(fname, "rb"))) {
+    // we will recycle file_len for the file size
+    fseek(file, 0L, SEEK_END);
+    file_len = ftell(file);
+    rewind(file);
+    // we now need to write some headers... we can recycle the request when
+    // we're done with it... are we? not really... we might support partial
+    // sends later on.
+
+    // we should also collect the file's mime type
+    {
+      char* ext = strrchr(fname, '.') + 1;
+      if (ext && ext[0]) {
+        // we have the extension, now get the mime from the map
+      }
+    }
+
+    fclose(file);
+    return 1;
+  }
+  return 0;
+}
+
 // implement on_close to close the FILE * for the body (if exists).
 static void http_on_close(struct Server* server, int sockfd) {
   HttpRequest.destroy(Server.set_udata(server, sockfd, NULL));
@@ -209,8 +246,9 @@ finish:
   // accessing the request.
   // It also allows upgrade protocol objects to use the storage for their data.
   Server.set_udata(server, sockfd, NULL);
-  // perform callback
-  if (protocol->on_request)
+  // perform callback if a file wasn't sent.
+  if ((!protocol->public_folder || !http_sendfile(request)) &&
+      protocol->on_request)
     protocol->on_request(request);
   // we need a different cleanup, because we disconnected the request from the
   // server's udata.
@@ -357,5 +395,6 @@ struct HttpProtocol HttpProtocol(void) {
       .parent.on_close = http_on_close,
       .maximum_body_size = 32,
       .on_request = http_default_on_request,
+      .public_folder = NULL,
   };
 }
