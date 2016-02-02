@@ -36,12 +36,12 @@ end
 
 # create the server object and setup any settings we might need.
 server = Iodine::Http.new
-server.threads = 4
+server.threads = 1
 server.processes = 1
 server.on_http= Proc.new do |env|
   out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
-  # request = Rack::Request.new(env)
-  # out += "\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
+  request = Rack::Request.new(env)
+  out += "\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
   [200, {"Content-Length" => out.length}, [out]];
 end
 
@@ -50,7 +50,7 @@ server.on_websocket= Proc.new do |env|
 end
 
 server.on_start do
-  server.run_every(1200) {puts "running...#{server.connection_count} clients"}
+  # server.run_every(1200) {puts "running...#{server.connection_count} clients"}
   # server.run_every(1000) do
   #   begin
   #     puts "making a system call"

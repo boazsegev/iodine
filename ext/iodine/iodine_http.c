@@ -434,7 +434,8 @@ static int send_response(struct HttpRequest* request, VALUE response) {
       Server.write(request->server, request->sockfd, RSTRING_PTR(tmp),
                    RSTRING_LEN(tmp));
   } else if (tmp == Qnil) {
-    // nothing to do?
+    // nothing to do.
+    // This could be a websocket/upgrade decision.
   } else {
     rb_block_call(tmp, each_method_id, 0, NULL, for_each_string,
                   (VALUE)request);
@@ -504,6 +505,7 @@ static void* handle_request_in_gvl(void* _res) {
   static char ws_key_accpt_str[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
   // check for a valid and supported Websocket request (ver 13)
   // If exists, forward this request to the special handler
+  // Notice the assignment of the callback stored as udata 1.
   if (request->upgrade && !strcasecmp(request->upgrade, "websocket") &&
       (response = (VALUE)Server.get_udata(request->server, 1)) &&
       HttpRequest.find(request, "SEC-WEBSOCKET-VERSION") &&
@@ -518,12 +520,12 @@ static void* handle_request_in_gvl(void* _res) {
     if (TYPE(response) == T_ARRAY && RARRAY_LEN(response) > 3) {
       // upgrade taking place, make sure the upgrade headers are valid for the
       // response.
-      rb_ary_store(response, 0, INT2FIX(101));
+      rb_ary_store(response, 0, INT2FIX(101));  // status
+      rb_ary_store(response, 2, Qnil);          // no content.
       // we're done with the `env` variable, so we can use it to store the
       // headers.
       env = rb_ary_entry(response, 1);
-      // set content-length to 0 - this will avoid closing the websocket for
-      // a missing header
+      // set content-length to 0 - needed?
       // rb_hash_aset(env, CONTENT_LENGTH, INT2FIX(0));
       // connection and upgrade headers
       rb_hash_aset(env, CONNECTION_HEADER, UPGRADE_HEADER);
@@ -920,8 +922,8 @@ void Init_iodine_http(void) {
   rb_obj_freeze(WEBSOCKET_SEC_EXT);
   WEBSOCKET_SEC_ACPT =
       rb_enc_str_new_literal("sec-websocket-accept", BinaryEncoding);
-  rb_global_variable(&WEBSOCKET_SEC_EXT);
-  rb_obj_freeze(WEBSOCKET_SEC_EXT);
+  rb_global_variable(&WEBSOCKET_SEC_ACPT);
+  rb_obj_freeze(WEBSOCKET_SEC_ACPT);
   // sendfile - for later...
   XSENDFILETYPE = rb_enc_str_new_literal("X-Sendfile-Type", BinaryEncoding);
   rb_global_variable(&XSENDFILETYPE);
