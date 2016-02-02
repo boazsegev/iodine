@@ -7,7 +7,7 @@
 /pkg/
 /spec/reports/
 /tmp/
-
+/old_stuff/
 *.bundle
 
 .ruby-version
