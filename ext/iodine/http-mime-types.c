@@ -9,7 +9,7 @@ struct Pair {
   char* ext;
 };
 
-struct Pair List[] = {
+static struct Pair List[] = {
     {"application/andrew-inset", "ez"},
     {"application/applixware", "aw"},
     {"application/atom+xml", "atom"},
