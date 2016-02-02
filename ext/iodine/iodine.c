@@ -232,10 +232,11 @@ static VALUE run_protocol_task(VALUE self) {
   return block;
 }
 
-/// `each` will itterate through all the connections on the server and pass
-/// their handler to the block of code. i.e.:
-///
-///      MyProtocol.each { |h| h.task(arg) if h.is_a?(MyProtocol) }
+/* `each` will itterate through all the connections on the server and pass
+ their handler to the block of code. i.e.:
+
+      MyProtocol.each { |h| h.task(arg) if h.is_a?(MyProtocol) }
+*/
 static VALUE run_each(VALUE self) {
   // requires a block to be passed
   rb_need_block();
@@ -299,14 +300,20 @@ The following are it's helper methods and callbacks
 //
 // The functions manage access to these C methods from the Ruby objects.
 
-// writes data to the connection
+/* writes data to the connection.
+
+use:
+
+        write "the data"
+*/
 static VALUE srv_write(VALUE self, VALUE data) {
   struct Server* srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
   return LONG2FIX(Server.write(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data)));
 }
 
-// writes data to the connection
+/* writes data to the connection, pushing the data as early in the queue as
+possible without distrupting the data's integrity. */
 static VALUE srv_write_urgent(VALUE self, VALUE data) {
   struct Server* srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
@@ -314,8 +321,7 @@ static VALUE srv_write_urgent(VALUE self, VALUE data) {
       Server.write_urgent(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data)));
 }
 
-// reads from a connection, up to x size bytes
-// DEFAULTS TO 10Kb
+/*  reads from a connection, up to x size bytes, defaults to 10Kb bytes. */
 static VALUE srv_read(int argc, VALUE* argv, VALUE self) {
   if (argc > 1) {
     rb_raise(
@@ -367,7 +373,7 @@ static VALUE srv_read(int argc, VALUE* argv, VALUE self) {
   return str;
 }
 
-// closes a connection, gracefully
+// closes a connection, gracefully.
 static VALUE srv_close(VALUE self, VALUE data) {
   struct Server* srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
@@ -375,14 +381,14 @@ static VALUE srv_close(VALUE self, VALUE data) {
   return Qnil;
 }
 
-// closes a connection, without waiting for writing to finish
+// closes a connection, without waiting for writing to finish.
 static VALUE srv_force_close(VALUE self, VALUE data) {
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
   close(fd);
   return Qnil;
 }
 
-// replaces a connection's existing protocol with another
+// replaces a connection's existing protocol with another.
 static VALUE srv_upgrade(VALUE self, VALUE protocol) {
   if (protocol == Qnil)
     return Qnil;
@@ -424,15 +430,15 @@ static VALUE srv_upgrade(VALUE self, VALUE protocol) {
 //
 // The following callbacks bridge the Ruby and C layers togethr.
 
-//  default callback - do nothing
+//  Please override this method and implement your own callback.
 static VALUE empty_func(VALUE self) {
   return Qnil;
 }
-//  default callback - do nothing
+//  Please override this method and implement your own callback.
 static VALUE def_dyn_message(VALUE self, VALUE data) {
   return Qnil;
 }
-// defaule ping method
+//  Feel free to override this method and implement your own callback.
 static VALUE no_ping_func(VALUE self) {
   struct Server* srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));

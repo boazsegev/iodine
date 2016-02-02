@@ -1,7 +1,6 @@
 require "iodine/version"
 require "iodine/logging"
 require "iodine/iodine"
-require "logger"
 
 class Iodine
   # The {#initialize} method accepts either a Hash of settings or no arguments (default state).
@@ -36,6 +35,5 @@ class Iodine
     @processes = state[:processes]
     @timeout = state[:timeout]
     @busy_msg = state[:busy_msg]
-    @logger = state[:logger] || ::Logger.new(STDOUT)
   end
 end

@@ -3,7 +3,7 @@
 #include "iodine.h"
 #include <ruby/encoding.h>
 
-/* this file manages a minimal interface to act as an IO wrapper according to
+/* RackIO manages a minimal interface to act as an IO wrapper according to
 these Rack specifications:
 
 The input stream is an IO-like object which contains the raw HTTP POST data.
@@ -33,6 +33,7 @@ close must never be called on the input stream.
 
 */
 static VALUE rRackIO;
+
 static VALUE rRequestData;
 static ID call_new_id;
 static ID pos_id;

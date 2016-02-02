@@ -19,7 +19,6 @@ static int UTF8EncodingIndex;
 static ID server_var_id;        // id for the Server variable (pointer)
 static ID fd_var_id;            // id for the file descriptor (Fixnum)
 static ID call_proc_id;         // id for `#call`
-static ID send_func_id;         // id for `#__send__`
 static ID dup_func_id;          // id for the buffer.dup method
 static ID new_func_id;          // id for the Class.new method
 static ID on_open_func_id;      // the on_open callback's ID
@@ -593,11 +592,15 @@ reject:
 //////////////
 // Empty callbacks for default implementations.
 
-//  default callback - do nothing
+//  Please override this method and implement your own callback.
 static VALUE empty_func(VALUE self) {
   return Qnil;
 }
-//  default callback - do nothing
+/* The `on_message(data)` callback is the main method for any websocket
+implementation.
+
+Please override this method and implement your own callback.
+*/
 static VALUE def_dyn_message(VALUE self, VALUE data) {
   return Qnil;
 }
@@ -606,7 +609,6 @@ static VALUE def_dyn_message(VALUE self, VALUE data) {
 // initialize the class and the whole of the Iodine/http library
 void Init_websocket(void) {
   // get IDs and data that's used often
-  send_func_id = rb_intern("__send__");      // used for `each`
   call_proc_id = rb_intern("call");          // used to call the main callback
   server_var_id = rb_intern("server");       // when upgrading
   fd_var_id = rb_intern("sockfd");           // when upgrading
