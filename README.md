@@ -37,12 +37,13 @@ Also, since the HTTP and Websocket parsers are written in C (with no RegExp), th
 
 Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less then 8Kb in size. These restrictions shouldn't be an issue.
 
-Here's a fast HTTP echo server with Iodine::Rack, which can be used directly from `irb`:
+Here's a fast HTTP broadcast server with Iodine::Rack, which can be used directly from `irb`:
 
 ```ruby
-class WebsocketEcho
+class My_Broadcast
   def on_message data
-    write data
+    each {|ws| ws.write data }
+    close if data =~ /^bye[\r\n]/i
   end
 end
 # handle HTTP requests
@@ -52,11 +53,11 @@ end
 # if a websocket handler is defined, it will be used for Websocket requests
 Iodine::Rack.on_websocket = Proc.new do |env|
   # return a new object, or class, as the Websocket protocol handler
-  WebsocketEcho
+  My_Broadcast
 end
+# start the server
+Iodine::Rack.start
 ```
-
-\* The websocket protocol is still being developed. The existing server is HTTP only.
 
 ## Can I try before before I buy?
 
@@ -91,7 +92,7 @@ class EchoProtocol
     write buffer
     # close will be performed only once all the data in the write buffer
     # was sent. use `force_close` to close early.
-    close if buffer.match /^bye[\r\n]/i
+    close if buffer =~ /^bye[\r\n]/i
     # use buffer.dup to save the data from being recycled once we return.
     data = buffer.dup
     # run asynchronous tasks with ease

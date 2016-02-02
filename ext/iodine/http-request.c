@@ -41,7 +41,11 @@ const struct HttpRequestClass HttpRequest = {
 // The constructor
 static struct HttpRequest* request_new(struct Server* server, int sockfd) {
   struct HttpRequest* req = malloc(sizeof(struct HttpRequest));
-  *req = (struct HttpRequest){.sockfd = sockfd, .server = server};
+  *req = (struct HttpRequest){
+      .sockfd = sockfd,  // set the sockets fd
+      .server = server,  // set the server
+      .body_file = 0     // everything else should be zeroed out by the compiler
+  };
   return req;
 }
 

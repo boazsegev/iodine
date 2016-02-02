@@ -209,7 +209,7 @@ finish:
   // accessing the request.
   // It also allows upgrade protocol objects to use the storage for their data.
   Server.set_udata(server, sockfd, NULL);
-  // callback
+  // perform callback
   if (protocol->on_request)
     protocol->on_request(request);
   // we need a different cleanup, because we disconnected the request from the
