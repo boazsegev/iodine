@@ -693,6 +693,7 @@ static VALUE http_start(VALUE self) {
   VALUE rb_max_body = rb_ivar_get(self, rb_intern("@max_body_size"));
   VALUE rb_max_msg = rb_ivar_get(self, rb_intern("@max_msg_size"));
   VALUE rb_ws_tout = rb_ivar_get(self, rb_intern("@ws_timeout"));
+  VALUE rb_public_folder = rb_ivar_get(self, rb_intern("@public_folder"));
   // validate port
   if (rb_port != Qnil && TYPE(rb_port) != T_FIXNUM) {
     rb_raise(rb_eTypeError, "port isn't a valid number.");
@@ -756,6 +757,12 @@ static VALUE http_start(VALUE self) {
     return Qnil;
   }
   Websockets.timeout = iwstout;
+  // validate the public folder type
+  if (rb_public_folder != Qnil && TYPE(rb_public_folder) != T_STRING) {
+    rb_raise(rb_eTypeError,
+             "rb_public_folder should be either a String or nil.");
+    return Qnil;
+  }
 
   // make port into a CString (for Lib-Server)
   char port[7];
@@ -766,6 +773,8 @@ static VALUE http_start(VALUE self) {
   struct HttpProtocol http_protocol = HttpProtocol();
   http_protocol.on_request = on_request;
   http_protocol.maximum_body_size = imax_msg;
+  http_protocol.public_folder =
+      rb_public_folder == Qnil ? NULL : StringValueCStr(rb_public_folder);
 
   // setup the server
   struct ServerSettings settings = {

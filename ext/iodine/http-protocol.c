@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "http-protocol.h"
+#include "http-mime-types.h"
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
@@ -13,38 +14,107 @@
 
 #define _http_(protocol) ((struct HttpProtocol*)(protocol))
 
+#define is_hex(c)                                              \
+  (((c) >= '0' && (c) <= '9') || ((c) >= 'a' && (c) <= 'f') || \
+   ((c) >= 'A' && c <= 'F'))
+#define hex_val(c) (((c) >= '0' && (c) <= '9') ? ((c)-48) : (((c) | 32) - 87))
+
 // reviewes the request and attempts to answer with a static file.
 // returns 0 if no file was found, otherwise returns 1.
 static int http_sendfile(struct HttpRequest* req) {
-  return 0;
-  // TODO implement a send-file
+  static char* http_file_response_no_mime =
+      "HTTP/1.1 200 OK\r\n"
+      "Connection: keep-alive\r\n"
+      "Keep-Alive: 1\r\n"
+      "Accept-Ranges: none\r\n"
+      "Content-Length: %lu\r\n\r\n";
+  static char* http_file_response =
+      "HTTP/1.1 200 OK\r\n"
+      "Connection: keep-alive\r\n"
+      "Keep-Alive: 1\r\n"
+      "Accept-Ranges: none\r\n"
+      "Content-Type: %s\r\n"
+      "Content-Length: %lu\r\n\r\n";
+
   FILE* file;
+  char* mime = NULL;
+  char* ext = NULL;
+
+  // collect the protocol path and the request's path length and data
   struct HttpProtocol* protocol =
       (struct HttpProtocol*)Server.get_protocol(req->server, req->sockfd);
-  size_t folder_len = strlen(protocol->public_folder);
-  size_t file_len = strlen(req->path);
-  char fname[file_len + folder_len + 1];
-  memcpy(fname, protocol->public_folder, folder_len);
-  memcpy(fname + folder_len, req->path, file_len);
-  fname[file_len + folder_len + 1] = 0;
-  if ((file = fopen(fname, "rb"))) {
-    // we will recycle file_len for the file size
-    fseek(file, 0L, SEEK_END);
-    file_len = ftell(file);
-    rewind(file);
-    // we now need to write some headers... we can recycle the request when
-    // we're done with it... are we? not really... we might support partial
-    // sends later on.
-
-    // we should also collect the file's mime type
-    {
-      char* ext = strrchr(fname, '.') + 1;
-      if (ext && ext[0]) {
-        // we have the extension, now get the mime from the map
+  size_t len = strlen(protocol->public_folder);
+  // create and initialize the filename, including decoding the path
+  char fname[strlen(req->path) + len + 1];
+  memcpy(fname, protocol->public_folder, len);
+  // if the ast character is a '/', step back.
+  if (fname[len - 1] == '/' || fname[len - 1] == '\\')
+    len--;
+  // decode and review the request->path data
+  int i = 0;
+  while (req->path[i]) {
+    if (req->path[i] == '+')  // decode space
+      fname[len] = ' ';
+    else if (req->path[i] == '%') {
+      // decode hex value
+      if (is_hex(req->path[i + 1]) && is_hex(req->path[i + 2])) {
+        // this is a percent encoded value.
+        fname[len] =
+            (hex_val(req->path[i + 1]) * 16) + hex_val(req->path[i + 2]);
+        i += 2;
+      } else {
+        // there was an error in the URL encoding... what to do? ignore?
+        return 0;
       }
+    } else
+      fname[len] = req->path[i];
+    len++;
+    i++;
+  }
+  fname[len] = 0;
+  i = 0;
+
+  // scan path string for double dots (security - prevent path manipulation)
+  // set the extention point value, while were doing so.
+  while (fname[i]) {
+    if (fname[i] == '.')
+      ext = fname + i;
+    // return false if we found a "/.." in our string.
+    if (fname[i++] == '/' && fname[i++] == '.' && fname[i++] == '.')
+      return 0;
+  }
+  // fprintf(stderr, "looking for file: %s\n", fname);
+  if ((file = fopen(fname, "rb"))) {
+    // we will recycle len for the file size
+    fseek(file, 0L, SEEK_END);
+    len = ftell(file);
+    rewind(file);
+
+    // get the mime type (we have an ext pointer and the string isn't empty)
+    if (ext && ext[1]) {
+      mime = MimeType.find(ext + 1);
     }
 
-    fclose(file);
+    // we now need to write some headers... we can recycle the ext pointer for
+    // the data
+    if (mime)
+      len = asprintf(&ext, http_file_response, mime, len);
+    else
+      len = asprintf(&ext, http_file_response_no_mime, len);
+
+    // review the string
+    if (!len || !ext) {
+      fclose(file);
+      return 0;
+    }
+
+    // send headers
+    Server.write_move(req->server, req->sockfd, ext, len);
+    // send file, unless the request method is "HEAD"
+    if (strcasecmp("HEAD", req->method))
+      Server.sendfile(req->server, req->sockfd, file);
+    // // The file will be closed by the buffer.
+    // DONT fclose(file);
     return 1;
   }
   return 0;

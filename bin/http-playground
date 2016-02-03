@@ -38,10 +38,11 @@ end
 server = Iodine::Http.new
 server.threads = 4
 server.processes = 2
+server.public_folder = '/Users/2Be/Documents/Scratch'
 server.on_http= Proc.new do |env|
   out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
   request = Rack::Request.new(env)
-  out += "\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
+  out += "\nRequest Path: #{request.path_into}\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
   [200, {"Content-Length" => out.length}, [out]];
 end
 
