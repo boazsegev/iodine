@@ -401,7 +401,7 @@ static int send_response(struct HttpRequest* request, VALUE response) {
     request->private.pos +=
         strftime(request->buffer + request->private.pos,
                  HTTP_HEAD_MAX_SIZE - request->private.pos - 2,
-                 "Date: %a, %d %b %Y %H:%M:%S %Z\r\n", &t);
+                 "Date: %a, %d %b %Y %H:%M:%S GMT\r\n", &t);
   }
   // write the extra EOL markers
   request->buffer[request->private.pos++] = '\r';
