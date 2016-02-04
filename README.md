@@ -55,6 +55,8 @@ Iodine::Rack.on_websocket = Proc.new do |env|
   # return a new object, or class, as the Websocket protocol handler
   My_Broadcast
 end
+# static file serving is as easy as (supports simple byte serving):
+Iodine::Rack.public_folder = "www/public/"
 # start the server
 Iodine::Rack.start
 ```
