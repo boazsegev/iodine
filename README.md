@@ -3,7 +3,7 @@
 [![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
 [![GitHub](https://img.shields.io/badge/GitHub-Open%20Source-blue.svg)](https://github.com/boazsegev/iodine)
 
-Iodine makes writing Object Oriented **Network Services** easy to write.
+Iodine 0.2.0 makes writing Object Oriented **Network Services** easy to write.
 
 Iodine is an **evented** framework with a simple API that runs low level C code with support for **epoll** and **kqueue** - this means that:
 
