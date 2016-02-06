@@ -61,6 +61,8 @@ Iodine::Rack.public_folder = "www/public/"
 Iodine::Rack.start
 ```
 
+Of course, if you still want to use Rack's `hijack` API, Iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack (why do that when you can write a protocol object and have the main reactor manage the socket?).
+
 ## Can I try before before I buy?
 
 Well, it is **free** and **open source**, no need to buy.. and of course you can try it out.
