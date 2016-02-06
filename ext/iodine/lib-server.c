@@ -816,6 +816,20 @@ static void buffer_close(struct Server* server, int sockfd) {
       : close(sockfd);
 }
 
+static int server_hijack(struct Server* server, int sockfd) {
+  if (server->buffer_map[sockfd]) {
+    // make sure to finish sending all the data, as no more `on_ready` events
+    // will occur
+    while (!Buffer.empty(server->buffer_map[sockfd]) &&
+           Buffer.flush(server->buffer_map[sockfd], sockfd) >= 0)
+      ;
+    Buffer.clear(server->buffer_map[sockfd]);
+  }
+  server->protocol_map[sockfd] = NULL;
+  server->tout[sockfd] = 0;
+  return server->reactor.hijack(&server->reactor, sockfd);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // stopping and signal managment
 
@@ -928,6 +942,7 @@ const struct ServerClass Server = {
     .write_move_urgent = buffer_write_urgent_move,
     .sendfile = buffer_sendfile,
     .close = buffer_close,
+    .hijack = server_hijack,
     .count = count,
     .each = each,
     .each_block = each_block,

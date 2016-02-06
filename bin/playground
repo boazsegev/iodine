@@ -59,5 +59,18 @@ end
 
 server.start
 
+# def block_call(&block)
+#   yield
+# end
+#
+# def just_yield
+#   yield
+# end
+# Benchmark.bm do |bm|
+# a = bm.report("block") {2_000_000.times {block_call {1+1} } }
+# a = a / bm.report("yield") {2_000_000.times {just_yield {1+1} } }
+# puts a
+# end
+
 # ab -n 1000000 -c 20000 -k http://127.0.0.1:3000/
 # ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/

@@ -4,7 +4,7 @@
 #include "http-request.h"
 
 extern struct _RackIO_ {
-  VALUE (*new)(struct HttpRequest* request);
+  VALUE (*new)(struct HttpRequest* request, VALUE env);
   void (*init)(void);
 } RackIO;
 

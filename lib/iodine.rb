@@ -1,3 +1,5 @@
+require "socket"
+
 require "iodine/version"
 require "iodine/logging"
 require "iodine/iodine"

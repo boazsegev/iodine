@@ -2,6 +2,8 @@
 #include "rb-call.h"
 #include "iodine.h"
 #include <ruby/encoding.h>
+#include <ruby/io.h>
+#include <ruby/io.h>
 
 /* RackIO manages a minimal interface to act as an IO wrapper according to
 these Rack specifications:
@@ -37,6 +39,10 @@ static VALUE rRackIO;
 static VALUE rRequestData;
 static ID call_new_id;
 static ID pos_id;
+static ID env_id;
+
+static VALUE TCPSOCKET_CLASS;
+static ID for_fd_id;
 //////////////////////////////
 // the request data type
 
@@ -183,14 +189,38 @@ static VALUE rio_each(VALUE self) {
   return self;
 }
 
+// defined by iodine_http
+extern VALUE R_HIJACK;     // for Rack: rack.hijack
+extern VALUE R_HIJACK_IO;  // for Rack: rack.hijack_io
+
+static VALUE rio_get_io(VALUE self) {
+  if (TCPSOCKET_CLASS == Qnil)
+    return Qfalse;
+  struct HttpRequest* request = get_request(self);
+  // hijack the IO object
+  VALUE fd = INT2FIX(request->sockfd);
+  VALUE env = rb_ivar_get(self, env_id);
+  // make sure we're not repeating ourselves
+  VALUE new_io = rb_hash_aref(env, R_HIJACK_IO);
+  if (new_io != Qnil)
+    return new_io;
+  // VALUE new_io = how the fuck do we create a new IO from the fd?
+  new_io = RubyCaller.call_unsafe2(TCPSOCKET_CLASS, for_fd_id, 1,
+                                   &fd);  // TCPSocket.for_fd(fd) ... cool...
+  rb_hash_aset(env, R_HIJACK_IO, new_io);
+  if (Server.hijack(request->server, request->sockfd))
+    return Qnil;
+  return new_io;
+}
 //////////////////////////////
 // C land API
 
 // new object
-static VALUE new_rack_io(struct HttpRequest* request) {
+static VALUE new_rack_io(struct HttpRequest* request, VALUE env) {
   VALUE rack_io = rb_funcall2(rRackIO, call_new_id, 0, NULL);
   set_request(rack_io, request);
   rb_ivar_set(rack_io, pos_id, INT2FIX(0));
+  rb_ivar_set(rack_io, env_id, env);
   if (request->body_file)
     rewind(request->body_file);
   return rack_io;
@@ -203,13 +233,18 @@ static void init_rack_io(void) {
   req_var_id = rb_intern("request");
   call_new_id = rb_intern("new");
   pos_id = rb_intern("pos");
+  env_id = rb_intern("env");
+  for_fd_id = rb_intern("for_fd");
+
   BinaryEncoding = rb_enc_find("binary");
+  TCPSOCKET_CLASS = rb_const_get(rb_cObject, rb_intern("TCPSocket"));
   // IO methods
   rb_define_method(rRackIO, "rewind", rio_rewind, 0);
   rb_define_method(rRackIO, "gets", rio_gets, 0);
   rb_define_method(rRackIO, "read", rio_read, -1);
   rb_define_method(rRackIO, "close", rio_close, 0);
   rb_define_method(rRackIO, "each", rio_each, 0);
+  rb_define_method(rRackIO, "_hijack", rio_get_io, 0);
 }
 
 ////////////////////////////////////////////////////////////////////////////

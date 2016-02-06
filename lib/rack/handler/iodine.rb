@@ -17,7 +17,16 @@ class Iodine
 			end
 			# Runs a Rack app.
 			def run(app, options = {})
-				@app = app
+				if(@app)
+					old_app = @app
+					@app = Proc.new do |env|
+						ret = old_app.call(env)
+						ret = app.call(env) if (ret==nil || (ret.is_a?(Array) && ret[0].to_i == 404))
+						ret
+					end
+				else
+					@app = app
+				end
 				@port = options[:Port].to_i if options[:Port]
 				@threads ||= ENV['MAX_THREADS'].to_i if ENV['MAX_THREADS']
 				@on_http = @app

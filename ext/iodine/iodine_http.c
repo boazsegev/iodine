@@ -26,47 +26,48 @@ static ID each_method_id;   // id for `#call`
 static ID to_s_method_id;   // id for `#call`
 static ID new_func_id;      // id for the Class.new method
 static ID on_open_func_id;  // the on_open callback's ID
+static VALUE _hijack_sym;
+
 // for Rack
-static VALUE REQUEST_METHOD;   // for Rack
-static VALUE CONTENT_TYPE;     // for Rack.
-static VALUE CONTENT_LENGTH;   // for Rack.
-static VALUE SCRIPT_NAME;      // for Rack
-static VALUE PATH_INFO;        // for Rack
-static VALUE QUERY_STRING;     // for Rack
-static VALUE QUERY_ESTRING;    // for rack (if no query)
-static VALUE SERVER_NAME;      // for Rack
-static VALUE SERVER_PORT;      // for Rack
-static VALUE SERVER_PORT_80;   // for Rack
-static VALUE SERVER_PORT_443;  // for Rack
-static VALUE R_VERSION;        // for Rack: rack.version
-static VALUE R_VERSION_V;      // for Rack: rack.version
-static VALUE R_SCHEME;         // for Rack: rack.url_scheme
-static VALUE R_SCHEME_HTTP;    // for Rack: rack.url_scheme value
-static VALUE R_SCHEME_HTTPS;   // for Rack: rack.url_scheme value
-static VALUE R_INPUT;          // for Rack: rack.input
-static VALUE R_ERRORS;         // for Rack: rack.errors
-static VALUE R_ERRORS_V;       // for Rack: rack.errors
-static VALUE R_MTHREAD;        // for Rack: rack.multithread
-static VALUE R_MTHREAD_V;      // for Rack: rack.multithread
-static VALUE R_MPROCESS;       // for Rack: rack.multiprocess
-static VALUE R_MPROCESS_V;     // for Rack: rack.multiprocess
-static VALUE R_RUN_ONCE;       // for Rack: rack.run_once
-static VALUE R_HIJACK_Q;       // for Rack: rack.hijack?
-static VALUE R_HIJACK_Q_V;     // for Rack: rack.hijack?
-static VALUE R_HIJACK;         // for Rack: rack.hijack
-static VALUE R_HIJACK_V;       // for Rack: rack.hijack
-static VALUE R_HIJACK_IO;      // for Rack: rack.hijack_io
-static VALUE R_HIJACK_IO_V;    // for Rack: rack.hijack_io
-static VALUE XSENDFILETYPE;    // sendfile support
-static VALUE XSENDFILE;        // sendfile support
-static VALUE UPGRADE_HEADER;
-static VALUE CONNECTION_HEADER;
-static VALUE CONNECTION_CLOSE;
-static VALUE WEBSOCKET_STR;
-static VALUE WEBSOCKET_VER;
-static VALUE WEBSOCKET_SEC_VER;
-static VALUE WEBSOCKET_SEC_EXT;
-static VALUE WEBSOCKET_SEC_ACPT;
+static VALUE REQUEST_METHOD;      // for Rack
+static VALUE CONTENT_TYPE;        // for Rack.
+static VALUE CONTENT_LENGTH;      // for Rack.
+static VALUE SCRIPT_NAME;         // for Rack
+static VALUE PATH_INFO;           // for Rack
+static VALUE QUERY_STRING;        // for Rack
+static VALUE QUERY_ESTRING;       // for rack (if no query)
+static VALUE SERVER_NAME;         // for Rack
+static VALUE SERVER_PORT;         // for Rack
+static VALUE SERVER_PORT_80;      // for Rack
+static VALUE SERVER_PORT_443;     // for Rack
+static VALUE R_VERSION;           // for Rack: rack.version
+static VALUE R_VERSION_V;         // for Rack: rack.version
+static VALUE R_SCHEME;            // for Rack: rack.url_scheme
+static VALUE R_SCHEME_HTTP;       // for Rack: rack.url_scheme value
+static VALUE R_SCHEME_HTTPS;      // for Rack: rack.url_scheme value
+static VALUE R_INPUT;             // for Rack: rack.input
+static VALUE R_ERRORS;            // for Rack: rack.errors
+static VALUE R_ERRORS_V;          // for Rack: rack.errors
+static VALUE R_MTHREAD;           // for Rack: rack.multithread
+static VALUE R_MTHREAD_V;         // for Rack: rack.multithread
+static VALUE R_MPROCESS;          // for Rack: rack.multiprocess
+static VALUE R_MPROCESS_V;        // for Rack: rack.multiprocess
+static VALUE R_RUN_ONCE;          // for Rack: rack.run_once
+static VALUE R_HIJACK_Q;          // for Rack: rack.hijack?
+VALUE R_HIJACK;                   // for Rack: rack.hijack
+static VALUE R_HIJACK_V;          // for Rack: rack.hijack
+VALUE R_HIJACK_IO;                // for Rack: rack.hijack_io
+static VALUE R_IOFD;              // Iodine variables on Rack: iodine.fd
+static VALUE XSENDFILETYPE;       // sendfile support
+static VALUE XSENDFILE;           // sendfile support
+static VALUE UPGRADE_HEADER;      // upgrade support
+static VALUE CONNECTION_HEADER;   // upgrade support
+static VALUE CONNECTION_CLOSE;    // upgrade support
+static VALUE WEBSOCKET_STR;       // upgrade support
+static VALUE WEBSOCKET_VER;       // upgrade support
+static VALUE WEBSOCKET_SEC_VER;   // upgrade support
+static VALUE WEBSOCKET_SEC_EXT;   // upgrade support
+static VALUE WEBSOCKET_SEC_ACPT;  // upgrade support
 // rack.version must be an array of Integers.
 // rack.url_scheme must either be http or https.
 // There must be a valid input stream in rack.input.
@@ -94,8 +95,7 @@ static VALUE request_to_env(struct HttpRequest* request) {
   VALUE env = rb_hash_new();
   // Register the object
   Registry.add(env);
-  // set the simple core settings
-
+  // set the simple core request data
   rb_hash_aset(
       env, REQUEST_METHOD,
       rb_enc_str_new(request->method, strlen(request->method), BinaryEncoding));
@@ -107,16 +107,14 @@ static VALUE request_to_env(struct HttpRequest* request) {
       (request->query ? rb_enc_str_new(request->query, strlen(request->query),
                                        BinaryEncoding)
                       : QUERY_ESTRING));
+  rb_hash_aset(env, R_IOFD, INT2FIX(request->sockfd));
+
   // setup static env data
   rb_hash_aset(env, R_VERSION, R_VERSION_V);
   rb_hash_aset(env, SCRIPT_NAME, QUERY_ESTRING);
   rb_hash_aset(env, R_ERRORS, R_ERRORS_V);
   rb_hash_aset(env, R_MTHREAD, R_MTHREAD_V);
   rb_hash_aset(env, R_MPROCESS, R_MPROCESS_V);
-  rb_hash_aset(env, R_HIJACK_Q, R_HIJACK_Q_V);
-  rb_hash_aset(env, R_HIJACK, R_HIJACK_V);
-  rb_hash_aset(env, R_HIJACK_Q, R_HIJACK_Q_V);
-  rb_hash_aset(env, R_HIJACK_IO, R_HIJACK_IO_V);
   rb_hash_aset(env, R_RUN_ONCE, Qfalse);
   // set scheme to R_SCHEME_HTTP or R_SCHEME_HTTPS or dynamic
   int ssl = 0;
@@ -192,7 +190,14 @@ static VALUE request_to_env(struct HttpRequest* request) {
     rb_hash_aset(env, CONTENT_LENGTH,
                  rb_enc_str_new(value, strlen(value), BinaryEncoding));
   }
-  rb_hash_aset(env, R_INPUT, RackIO.new(request));
+  VALUE rack_io = 0;
+  rb_hash_aset(env, R_INPUT, (rack_io = RackIO.new(request, env)));
+  // setup Hijacking headers
+  //   rb_hash_aset(env, R_HIJACK_Q, Qfalse);
+  VALUE hj_method = rb_obj_method(rack_io, _hijack_sym);
+  rb_hash_aset(env, R_HIJACK_Q, Qtrue);
+  rb_hash_aset(env, R_HIJACK, hj_method);
+  rb_hash_aset(env, R_HIJACK_IO, Qnil);
   // itterate through the headers and set the HTTP_X "variables"
   HttpRequest.first(request);
   {
@@ -278,13 +283,6 @@ static int send_response(struct HttpRequest* request, VALUE response) {
       "Connection: closed\r\n"
       "Content-Length: 16\r\n\r\n"
       "Internal Error\r\n";
-  // nil is a bad response... we have an error
-  if (response == Qnil)
-    goto internal_err;
-  if (TYPE(response) != T_ARRAY)
-    goto internal_err;
-  if (RARRAY_LEN(response) < 3)
-    goto internal_err;
 
   VALUE tmp;
   char* tmp_s;
@@ -299,6 +297,18 @@ static int send_response(struct HttpRequest* request, VALUE response) {
     // no connection header, check version
     close_when_done = 1;
   }
+
+  // nil is a bad response... we have an error
+  if (response == Qnil)
+    goto internal_err;
+  // false is an intentional ignore - this is not an error (might be a highjack)
+  if (response == Qfalse)
+    goto unknown_stop;
+  if (TYPE(response) != T_ARRAY)
+    goto internal_err;
+  if (RARRAY_LEN(response) < 3)
+    goto internal_err;
+
   // get status code from array (obj 0)
   // NOTICE: this may not always be a number (could be the string "200").
   tmp = rb_ary_entry(response, 0);
@@ -595,6 +605,9 @@ static void* handle_request_in_gvl(void* _res) {
   response = (VALUE)Server.get_udata(request->server, 0);
   if (response)
     response = RubyCaller.call_unsafe2(response, call_proc_id, 1, &env);
+  // review env for highjack and clear request body if true
+  if (rb_hash_aref(env, R_HIJACK_IO) != Qnil && TYPE(response) == T_ARRAY)
+    rb_ary_store(response, 2, Qnil);
   // clean-up env and register response
   if (Registry.replace(env, response))
     Registry.add(response);
@@ -833,13 +846,15 @@ static VALUE http_protocol_set(VALUE self, VALUE _) {
 // initialize the class and the whole of the Iodine/http library
 void Init_iodine_http(void) {
   // get IDs and data that's used often
-  call_proc_id = rb_intern("call");        // used to call the main callback
-  server_var_id = rb_intern("server");     // when upgrading
-  fd_var_id = rb_intern("sockfd");         // when upgrading
-  new_func_id = rb_intern("new");          // when upgrading
-  on_open_func_id = rb_intern("on_open");  // when upgrading
-  each_method_id = rb_intern("each");      // for the response
-  to_s_method_id = rb_intern("to_s");      // for the response
+  call_proc_id = rb_intern("call");            // used to call the main callback
+  server_var_id = rb_intern("server");         // when upgrading
+  fd_var_id = rb_intern("sockfd");             // when upgrading
+  new_func_id = rb_intern("new");              // when upgrading
+  on_open_func_id = rb_intern("on_open");      // when upgrading
+  each_method_id = rb_intern("each");          // for the response
+  to_s_method_id = rb_intern("to_s");          // for the response
+  _hijack_sym = ID2SYM(rb_intern("_hijack"));  // for hijacking
+  rb_global_variable(&_hijack_sym);
 
   // some common Rack & Http strings
   REQUEST_METHOD = rb_enc_str_new_literal("REQUEST_METHOD", BinaryEncoding);
@@ -905,7 +920,6 @@ void Init_iodine_http(void) {
   R_HIJACK_Q = rb_enc_str_new_literal("rack.hijack?", BinaryEncoding);
   rb_global_variable(&R_HIJACK_Q);
   rb_obj_freeze(R_HIJACK_Q);
-  R_HIJACK_Q_V = Qfalse;
   R_HIJACK = rb_enc_str_new_literal("rack.hijack", BinaryEncoding);
   rb_global_variable(&R_HIJACK);
   rb_obj_freeze(R_HIJACK);
@@ -913,10 +927,19 @@ void Init_iodine_http(void) {
   R_HIJACK_IO = rb_enc_str_new_literal("rack.hijack_io", BinaryEncoding);
   rb_global_variable(&R_HIJACK_IO);
   rb_obj_freeze(R_HIJACK_IO);
-  R_HIJACK_IO_V = Qnil;
-  // setup for Rack.
-  VALUE version_val = rb_const_get(rIodine, rb_intern("VERSION"));
-  R_VERSION_V = rb_str_split(version_val, ".");
+
+  // Iodine variavles
+  R_IOFD = rb_enc_str_new_literal("iodine.fd", BinaryEncoding);
+  rb_global_variable(&R_IOFD);
+  rb_obj_freeze(R_IOFD);
+  // VALUE version_val = rb_const_get(rIodine, rb_intern("iodine.version"));
+  // R_IOVERSION_V = rb_str_split(version_val, ".");
+  // rb_global_variable(&R_IOVERSION_V);
+
+  // setup for Rack version 1.3.
+  R_VERSION_V = rb_ary_new_capa(2);
+  rb_ary_push(R_VERSION_V, rb_enc_str_new_literal("1", BinaryEncoding));
+  rb_ary_push(R_VERSION_V, rb_enc_str_new_literal("3", BinaryEncoding));
   rb_global_variable(&R_VERSION_V);
   R_ERRORS_V = rb_stdout;
   // Websocket Upgrade
