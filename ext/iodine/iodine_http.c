@@ -347,24 +347,38 @@ static int send_response(struct HttpRequest* request, VALUE response) {
         close_when_done = 1;
       }
     }
+    // check for date. The "d" was already skipped over
     if ((request->buffer[request->private.max++] | 32) == 'a' &&
         (request->buffer[request->private.max++] | 32) == 't' &&
         (request->buffer[request->private.max++] | 32) == 'e' &&
         (request->buffer[request->private.max++] | 32) == ':')
       tmp = tmp | 4;
+    // check for content length
     if (  // "con" passed "t" failed (connect), "e" failed (date), check the
         // rest
         (request->buffer[request->private.max++] | 32) == 'n' &&
         (request->buffer[request->private.max++] | 32) == 't' &&
-        (request->buffer[request->private.max++] | 32) == '-' &&
-        (request->buffer[request->private.max++] | 32) == 'l' &&
-        (request->buffer[request->private.max++] | 32) == 'e' &&
-        (request->buffer[request->private.max++] | 32) == 'n' &&
-        (request->buffer[request->private.max++] | 32) == 'g' &&
-        (request->buffer[request->private.max++] | 32) == 't' &&
-        (request->buffer[request->private.max++] | 32) == 'h' &&
-        (request->buffer[request->private.max++] | 32) == ':')
-      tmp = tmp | 8;
+        (request->buffer[request->private.max++] | 32) == '-') {
+      if ((request->buffer[request->private.max++] | 32) == 'l' &&
+          (request->buffer[request->private.max++] | 32) == 'e' &&
+          (request->buffer[request->private.max++] | 32) == 'n' &&
+          (request->buffer[request->private.max++] | 32) == 'g' &&
+          (request->buffer[request->private.max++] | 32) == 't' &&
+          (request->buffer[request->private.max++] | 32) == 'h' &&
+          (request->buffer[request->private.max++] | 32) == ':')
+        tmp = tmp | 8;
+      // check for "content-encoding"
+      if (  // "content-e" passed on failing "content-length" (__ncoding)
+          (request->buffer[request->private.max++] | 32) == 'n' &&
+          (request->buffer[request->private.max++] | 32) == 'c' &&
+          (request->buffer[request->private.max++] | 32) == 'o' &&
+          (request->buffer[request->private.max++] | 32) == 'd' &&
+          (request->buffer[request->private.max++] | 32) == 'i' &&
+          (request->buffer[request->private.max++] | 32) == 'n' &&
+          (request->buffer[request->private.max++] | 32) == 'g' &&
+          (request->buffer[request->private.max++] | 32) == ':')
+        tmp = tmp | 16;
+    }
   }
   // if we don't have a content length we need to close the connection when
   // done.
