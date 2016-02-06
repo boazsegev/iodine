@@ -19,7 +19,7 @@ class Iodine
 			def run(app, options = {})
 				@app = app
 				@port = options[:Port].to_i if options[:Port]
-				@threads ||= ENV['MAX_THREADS']
+				@threads ||= ENV['MAX_THREADS'].to_i if ENV['MAX_THREADS']
 				@on_http = @app
         start
 				true
