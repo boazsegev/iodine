@@ -1,4 +1,19 @@
 language: ruby
 rvm:
-  - 2.2.3
-before_install: gem install bundler -v 1.10.6
+  - 2.2.4
+  - 2.3.0
+  - 2.1.0
+  - 2.0.0
+compiler:
+  - clang
+  - gcc
+os:
+  - linux
+  - osx
+sudo: required
+dist: trusty
+before_install:
+  - cc --version
+  - gem install bundler -v 1.10.6
+notifications:
+  email: false

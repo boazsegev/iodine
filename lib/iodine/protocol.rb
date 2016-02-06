@@ -1,247 +1,141 @@
-module Iodine
+class Iodine
+  # The Protocol class is used only for documenting the Protocol API, it will not be included when requiring `iodine`.
+  #
+  # A dynamic (stateful) protocol is defined as a Ruby class instance which is in control of one single connection.
+  #
+  # It is called dynamic because it is dynamically allocated for each connection and then discarded,
+  # also it sounded better then calling it "the stateful protocol", even though that's what it actually is.
+  #
+  # It is (mostly) thread-safe as long as it's operations are limited to the scope
+  # of the object.
+  #
+  # <b>The Callbacks</b>
+  #
+  # A protocol class <b>MUST</b> contain ONE of the following callbacks:
+  #
+  # on_data:: called whened there's data available to be read, but no data was read just yet. `on_data` will not be called again untill all the existing network buffer was read (edge triggered event).
+  # on_message(buffer):: the default `on_data` implementation creates a 1Kb buffer and reads data while recycling the same String memory space. The buffer is forwarded to the `on_message` callback before being recycled. The buffer object will be over-written once `on_message` returns, so creating a persistent copy requires `buffer.dup`.
+  #
+  # A protocol class <b>MAY</b> contain any of the following optional callbacks:
+  #
+  # on_open:: called after a new connection was accepted and the protocol was linked with Iodine's Protocol API. Initialization should be performed here.
+  # ping:: called whenever timeout was reached. The default implementation will close the connection unless a protocol task ({Protocol#defer}, `on_data` or `on_message`) are busy in the background.
+  # on_shutdown:: called if the connection is still open while the server is shutting down. This allows the protocol to send a "going away" frame before the connection is closed and `on_close` is called.
+  # on_close:: called after a connection was closed, for any cleanup (if any).
+  #
+  # WARNING: for thread safety and connection management, `on_open`, `on_shutdown`, `on_close` and `ping` will all be performed within the reactor's main thread.
+  # Do not run long running tasks within these callbacks, or the server might block while you do.
+  # Use {#defer} to run protocol related tasks (this locks the connection, preventing it from running more then one task at a time and offering thread safety),
+  # or {#run} to run asynchronous tasks that aren't protocol related.
+  #
+  # <b>The API:</b>
+  #
+  # After a new connection is accepted and a new protocol object is created, the protocol will be linked with Iodine's Protocol API.
+  # Only the main protocol will be able to access the API within `initialize`, so it's best to use `on_open` for any Initialization required.
+  #
+  module Protocol
 
-	# This is the Basic Iodine server unit - a network protocol.
-	#
-	# A new protocol instance will be created for every network connection.
-	#
-	# A new protocol might be initialized also when switching between protocols. In this use-case, the
-	# protocol can be initialized with an optional second `options` parameter (the first parameter MUST be the IO object used),
-	# allowing this data to be accessed within the {#on_open} method using the `@options` instance variable or the `options` accessor.
-	#
-	# For example, when switching protocols midstream (i.e. for implementing an Http Upgrade to another protocol such as Websockets):
-	# 
-	#      class MyNextProtocol
-	#         def on_open
-	#            @secret = options[:secret]
-	#         end
-	#      end
-	#
-	#      # in the old protocol:
-	#
-	#      class MyOriginalProtocol
-	#         def switch_to_next_protocol
-	#            MyNextProtocol.new @io, secret: "my secret data"
-	#         end
-	#      end
-	#
-	# The recommended use is to inherit this class and override any of the following:
-	# on_open:: called whenever the Protocol is initialized. Override this to initialize the Protocol object.
-	# on_message(data):: called whenever data is received from the IO. Override this to implement the actual network protocol.
-	# on_close:: called AFTER the Protocol's IO is closed.
-	# on_shutdown:: called when the server's shutdown process had started and BEFORE the Protocol's IO is closed. It allows graceful shutdown for network protocols.
-	# ping:: called when timeout was reached. see {#set_timeout}
-	#
-	# Once the network protocol class was created, remember to tell Iodine about it:
-	#       class MyProtocol << Iodine::Protocol
-	#           # your code here
-	#       end
-	#       # tell Iodine
-	#       Iodine.protocol = MyProtocol
-	#
-	class Protocol
+    # Reads n bytes from the network connection, where n is:
+    #
+    # - the number of bytes set in the optional `buffer_or_length` argument.
+    #
+    # - the String capacity (not length) of the String passed as the optional `buffer_or_length` argument.
+    #
+    # - 1024 Bytes (1Kb) if the optional `buffer_or_length` is either missing or contains a String who's capacity is less then 1Kb.
+    #
+    # Always returns a String (either the same one used as the buffer or a new one). The string will be empty if no data was available.
+    def read buffer_or_length = nil
+      super
+    end
 
-		# returns the IO object. If the connection uses SSL/TLS, this will return the SSLSocket (not a native IO object).
-		#
-		# Using one of the Protocol methods {#write}, {#read}, {#close} is prefered over direct access.
-		attr_reader :io
-		# the argument or options Hash passed to the initializer as a second argument (the first argument MUST be the IO object).
-		# the value is usually `nil` unless the protocol instance was created by a different protocol while "upgrading" from one protocol to the next.
-		attr_reader :options
-		# The protocol's Mutex locker. It should be locked whenever your code is runing, unless you are
-		# writing asynchronous code.
-		#
-		# Use with care (or, better yet, don't use).
-		attr_reader :locker
+    # Writes all the data in the String `data` to the connection.
+    #
+    # If the data cannot be written in a single non-blocking system call,
+    # the data will be saved to an internal buffer and will be written asyncronously
+    # whenever the socket signals that it's ready to write.
+    def write data
+      super
+    end
 
-		# Sets the timeout in seconds for IO activity (set timeout within {#on_open}).
-		#
-		# After timeout is reached, {#ping} will be called. The connection will be closed if {#ping} returns `false` or `nil`.
-		def set_timeout seconds
-			@timeout = seconds
-		end
+    # Writes all the data in the String `data` to the connection.
+    #
+    # If the data cannot be written in a single non-blocking system call,
+    # the data will be saved to an internal buffer and will be written asyncronously
+    # whenever the socket signals that it's ready to write.
+    #
+    # If a write buffer already exists with multiple items in it's queue (package based protocol),
+    # the data will be queued as the next "package" to be sent, so that packages aren't corrupted or injected in the middle of other packets.
+    #
+    # A "package" refers to a unit of data sent using {#write} and not to the TCP/IP packets.
+    # This allows to easily write protocols that package their data, such as HTTP/2.
+    #
+    # {#write_urgent}'s best use-case is the `ping`, which shouldn't corrupt any data being senk, but must be sent as soon as possible.
+    #
+    # #{write}, {#write_urgent} and #{close} are designed to be thread safe.
+    def write_urgent data
+      super
+    end
 
-		# This method is called whenever the Protocol is initialized - i.e.:
-		# a new connection is established or an old connection switches to this protocol.
-		def on_open
-		end
-		# This method is called whenever data is received from the IO.
-		#
-		# The `data` received is a reference to the socket's buffer and it will be cleared and replaced whenever `read`
-		# is called or when new IO data comes in (after `on_message` had completed). To presist
-		# the data, make sure to duplicate the data String using `data.dup`.
-		def on_message data
-		end
+    # Closes the connection.
+    #
+    # If there is an internal write buffer with pending data to be sent (see {#write}),
+    # {#close} will return immediately and the connection will only be closed when all the data was sent.
+    def close
+      super
+    end
 
-		# This method is called AFTER the Protocol's IO is closed - it will only be called once.
-		def on_close
-		end
+    # Closes the connection immediately, even if there's still data waiting to be sent (see {#close} and {#write}).
+    def force_close
+      super
+    end
 
-		# This method is called when the server's shutdown process had started and BEFORE the Protocol's IO is closed. It allows graceful shutdown for network protocols.
-		def on_shutdown
-		end
+    # Replaces the current protocol instance with another.
+    #
+    # The `handler` is expected to be a protocol instance object.
+    # Once it is passed to the {#upgrade} method, it's class will be extended to include
+    # Iodine's API (by way of a mixin) and it's `on_open` callback will be called.
+    #
+    # If `handler` is a class, the API will be injected to the class (by way of a mixin)
+    # and a new instance will be created before calling `on_open`.
+    def upgrade handler
+      super
+    end
 
-		# This method is called whenever a timeout has occurred. Either implement a ping or close the connection.
-		# The default implementation closes the connection unless the protocol is still processing information received before timeout occurred.
-		def ping
-			close unless @locker.locked?
-		end
+    # This schedules a task to be performed asynchronously within the lock of this
+    # protocol's connection.
+    #
+    # The task won't be performed while `on_message` or `on_data` is still active.
+    # No single connection will perform more then a single task at a time.
+    def defer
+      super
+    end
 
-		#############
-		## functionality and helpers
-
-
-		# returns true if the protocol is using an encrypted connection (the IO is an OpenSSL::SSL::SSLSocket).
-		def ssl?
-			@io.is_a?(OpenSSL::SSL::SSLSocket) # io.npn_protocol
-		end
-
-
-		# Closes the IO object.
-		# @return [nil]
-		def close
-			@io.close unless @io.closed?
-			nil
-		end
-		alias :disconnect :close
-		def closed?
-			@io.closed?
-		end
-
-		# reads from the IO up to the specified number of bytes (defaults to ~2Mb).
-		def read size = 2_097_152
-			touch
-			ssl? ? read_ssl(size) : @io.read_nonblock( size , Thread.current[:buffer] )
-			# @io.read_nonblock( size  ) # this one is a bit slower...
-		rescue OpenSSL::SSL::SSLErrorWaitReadable, IO::WaitReadable, IO::WaitWritable
-			nil
-		rescue IOError, Errno::ECONNRESET
-			close
-		rescue => e
-			Iodine.warn "Protocol read error: #{e.class.name} #{e.message} (closing connection)"
-			close
-		end
-
-		# this method, writes data to the socket / io object.
-		def write data
-			begin
-				@send_locker.synchronize do
-					r = @io.write data
-					touch
-					r
-				end
-			rescue # => e
-				# Iodine.info e.message
-				close
-			end
-		end
-
-		# returns the connection's unique local ID as a Hex string.
-		#
-		# This can be used locally but not across processes.
-		def id
-			@id ||= @io.to_io.object_id.to_s(16)
-		end
-
-		# @return [Enumerable] returns an Enumerable with all the active connections (instances of THIS Protocol or it's children).
-		#
-		# if a block is passed, than this method exceutes the block.
-		def self.each
-			if block_given?
-				Iodine.to_a.each {|p| yield(p) if p.is_a?(self) }
-			else
-				( Iodine.to_a.select {|p| p.is_a?(self) } ).each
-			end
-		end
-
-
-		#################
-		## the following are Iodine's "system" methods, used internally. Don't override.
-
-
-		# This method is used by Iodine to initialized the Protocol.
-		#
-		# A new Protocol instance set itself up as the IO's protocol (replacing any previous protocol).
-		#
-		# Normally you won't need to override this method. Override {#on_open} instead.
-		def initialize io, options = nil
-			@timeout ||= nil
-			@send_locker = Mutex.new
-			@ping_locker = Mutex.new
-			@locker = Mutex.new
-			@io = io
-			@options = options
-			touch
-			@locker.synchronize do
-				Iodine.switch_protocol @io.to_io, self
-				on_open
-			end
-		end
-
-		# Called by Iodine whenever there is data in the IO's read buffer.
-		#
-		# Normally you won't need to override this method. Override {#on_message} instead.
-		def call
-			return unless @locker.try_lock
-			begin
-				data = read
-				if data
-					on_message(data)
-					# data.clear
-				end
-			ensure
-				@locker.unlock
-			end
-		end
-
-
-		# This method is used by Iodine invoke a timeout review.
-		#
-		# Normally you won't need to override this method. See {#ping}
-		def timeout? time
-			return unless @ping_locker.try_lock
-			begin
-				touch && ping if @timeout && !@send_locker.locked? && ( (time - @last_active) > @timeout )
-			ensure
-				@ping_locker.unlock	
-			end
-		end
-
-		protected
-		# This method is used by Iodine to create the IO handler whenever a new connection is established.
-		#
-		# Normally you won't need to override this method.
-		def self.accept io, ssl
-			ssl ? SSLConnector.new(io, self) :  self.new(io)
-		rescue
-			io.close unless io.closed?
-			raise
-		end
-		# This methos updates the timeout "watch", signifying the IO was active.
-		def touch
-			@last_active = Iodine.time
-		end
-
-		# reads from the IO up to the specified number of bytes (defaults to ~1Mb).
-		def read_ssl size
-			@send_locker.synchronize do
-				data = String.new
-				begin
-					 (data << @io.read_nonblock(size, Thread.current[:buffer]).to_s) until data.bytesize >= size
-				rescue OpenSSL::SSL::SSLErrorWaitReadable, IO::WaitReadable, IO::WaitWritable
-
-				rescue IOError
-					close
-				rescue => e
-					Iodine.warn "SSL Protocol read error: #{e.class.name} #{e.message} (closing connection)"
-					close
-				end
-				return false if data.to_s.empty?
-				touch
-				data
-			end
-		end
-
-
-	end
-
+    # This schedules a task to be performed asynchronously. In a multi-threaded
+    # setting, tasks might be performed concurrently.
+    def run
+      super
+    end
+    # Runs a task after the specified number of milliseconds have passed. The task will NOT repeat.
+    #
+    # running timer based tasks requires the use of a file descriptor on the server,
+    # meanining that it will require the resources of a single connection and will
+    # be counted as a connection when calling {#connection_count}
+    def run_after milliseconds
+      super
+    end
+    # Runs a persistent task every time the specified number of milliseconds have passed.
+    #
+    # Persistent tasks stay in the memory until Ruby exits.
+    #
+    # **Use {#run_after} recorsively for a task that repeats itself for a limited amount of times**.
+    #
+    # milliseconds:: the number of milliseconds between each cycle.
+    def run_every milliseconds
+      super
+    end
+    # Returns the number of total connections (including timers) in the reactor.
+    def connection_count
+      super
+    end
+  end
 end

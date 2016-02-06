@@ -6,7 +6,15 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+Change log v.0.2.0
+
+This version is a total rewrite. The API is totally changed, nothing stayed.
+
+Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby code written is just the fluff and feathers.
+
 ***
+
+### deprecation of the 0.1.x version line
 
 Change log v.0.1.21
 
@@ -90,7 +98,7 @@ Change log v.0.1.13
 
 Change log v.0.1.12
 
-**Update**: Passing a hash as the cookie value will allow to set cookie parameters using the {Response#set_cookie} options. i.e.: `cookies['key']= {value: "lock", max_age: 20}`. 
+**Update**: Passing a hash as the cookie value will allow to set cookie parameters using the {Response#set_cookie} options. i.e.: `cookies['key']= {value: "lock", max_age: 20}`.
 
 **Security**: set the HttpOnly flag for session id cookies.
 
@@ -223,4 +231,3 @@ I tested this new gem during the 0.0.x version releases, and I feel that version
 ## License
 
 The gem is available as open source under the terms of the [MIT License](http://opensource.org/licenses/MIT).
-

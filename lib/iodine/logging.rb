@@ -1,44 +1,54 @@
-module Iodine
+require "logger"
+
+class Iodine
 	public
 
-	# Gets the logging object and allows you to call logging methods (i.e. `Iodine.log.info "Running"`).
-	def logger
+	# sets a new logger. Should be a member of the Ruby `Logger` class.
+	def self.logger= new_logger
+		@logger = new_logger
+	end
+
+	# returns the logger object.
+	def self.logger
 		@logger
 	end
 
+	# the initial logger object logs to STDOUT.
+	@logger = ::Logger.new(STDOUT)
+
 	# logs info
 	# @return [String, Exception, Object] always returns the Object sent to the log.
-	def info data, &block
+	def self.info data, &block
 		@logger.info data, &block if @logger
 		data
 	end
 	# logs debug info
 	# @return [String, Exception, Object] always returns the Object sent to the log.
-	def debug data, &block
+	def self.debug data, &block
 		@logger.debug data, &block if @logger
 		data
 	end
 	# logs warning
 	# @return [String, Exception, Object] always returns the Object sent to the log.
-	def warn data, &block
+	def self.warn data, &block
 		@logger.warn data, &block if @logger
 		data
 	end
 	# logs errors
 	# @return [String, Exception, Object] always returns the Object sent to the log.
-	def error data, &block
+	def self.error data, &block
 		@logger.error data, &block if @logger
 		data
 	end
 	# logs a fatal error
 	# @return [String, Exception, Object] always returns the Object sent to the log.
-	def fatal data, &block
+	def self.fatal data, &block
 		@logger.fatal data, &block if @logger
 		data
 	end
 	# logs a raw text
 	# @return [String] always returns the Object sent to the log.
-	def log raw_text
+	def self.log raw_text
 		@logger << raw_text if @logger
 		raw_text
 	end

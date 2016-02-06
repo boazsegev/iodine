@@ -1,0 +1,108 @@
+#!/usr/bin/env ruby
+
+Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
+puts `rake clean`
+puts `rake compile`
+
+require 'rack/request'
+require 'rack/response'
+require 'rack/multipart/parser'
+require 'rack'
+
+require 'benchmark'
+$LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
+require "bundler/setup"
+require "iodine/http"
+
+
+class WSEcho
+  def on_open
+    puts "We have a websocket connection"
+  end
+  def on_close
+    puts "Bye Bye..."
+  end
+  def on_shutdown
+    puts "I'm shutting down"
+  end
+  def on_message data
+    puts data
+    each {|h| puts "calling echo for #{h}"; h.echo data }
+  end
+  def echo data
+    write "echo: #{data}"
+  end
+end
+
+# create the server object and setup any settings we might need.
+server = Iodine::Http.new
+server.threads = 1
+server.processes = 1
+server.public_folder = '/Users/2Be/Documents/Scratch'
+server.on_http= Proc.new do |env|
+  out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
+  request = Rack::Request.new(env)
+  out += "\nRequest Path: #{request.path_into}\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
+  [200, {"Content-Length" => out.length}, [out]];
+end
+
+server.on_http= Proc.new do |env|
+  [200, {"Content-Length" => "12"}, ["Hello World!"]];
+end
+
+server.on_websocket= Proc.new do |env|
+  [0,{}, [], WSEcho];
+end
+
+server.on_start do
+  # server.run_every(1200) {puts "running...#{server.connection_count} clients"}
+  # server.run_every(1000) do
+  #   begin
+  #     puts "making a system call"
+  #     puts `echo 'hi'`
+  #     puts `ab -n 100000 -c 200 -k http://127.0.0.1:3000/`
+  #   rescue => e
+  #     l = Logger.new STDOUT
+  #     l.error e
+  #   end
+  # end
+end
+
+
+# server.on_start do
+#   server.run_every(1000) {puts "#{server.connection_count} clients connected."}
+# end
+
+# puts "Press enter to start"
+# gets
+
+server.start
+
+# def nag
+#   puts `ab -n 200000 -c 6000 -k http://127.0.0.1:3000/`
+#   sleep 16
+# end
+#
+# nag while true
+
+# ab -n 100000 -c 200 -k http://127.0.0.1:3000/
+# ab -n 100000 -c 4000 -k http://127.0.0.1:3000/
+# ab -n 1000000 -c 20000 -k http://127.0.0.1:3000/
+# ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/
+# wrk -c200 -d4 -t12 http://localhost:3000/
+# RACK_ENV="production" rackup -p 3000 -s iodine
+# GET /assets/cases.css HTTP/1.1
+# host: localhost:3000
+#
+#
+# connection: close
+
+# ws = new WebSocket("ws://localhost:3000"); ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);}; ws.onclose = function(e) {console.log("closed")}; ws.onopen = function(e) {ws.send("hi");};
+
+
+# GET /Bo.jpg HTTP/1.1
+# host: localhost:3000
+#
+#
+# OPTIONS * HTTP/1.1
+# host: localhost:3000

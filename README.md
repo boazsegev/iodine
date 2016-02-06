@@ -1,295 +1,180 @@
-# Iodine
+# Iodine - a C kqueue/epoll EventMachine alternative
 [![Gem Version](https://badge.fury.io/rb/iodine.svg)](https://badge.fury.io/rb/iodine)
 [![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
 [![GitHub](https://img.shields.io/badge/GitHub-Open%20Source-blue.svg)](https://github.com/boazsegev/iodine)
 
-Iodine makes writing Object Oriented evented server applications easy to write.
+Iodine makes writing Object Oriented **Network Services** easy to write.
 
-In fact, it's so fun to write network protocols that mix and match together, that Iodine includes a built in Http, Http/2 (experimental) and Websocket server that act's a a great demonstration of the power behind Ruby and the Object Oriented approach.
+Iodine is an **evented** framework with a simple API that runs low level C code with support for **epoll** and **kqueue** - this means that:
 
-To use Iodine, you just set up your tasks - including a single server, if you want one. Iodine will start running once your application is finished and it won't stop runing until all the scheduled tasks have completed.
+* Iodine can handle **thousands of concurrent connections** (tested with 20K connections).
 
-Iodine is used by [the Plezi Ruby framework for real-time applications](http://www.plezi.io).
+    That's right, Iodine isn't subject to the 1024 connection limit imposed by native Ruby and `select`/`poll` based applications.
 
-## Notice! and limitations...
+    This makes Iodine ideal for writing HTTP/2 and Websocket servers (which is the reason for it's development).
 
-Iodine 0.1.x is implemented in Ruby, using a `select` system call.
+* Iodine runs **only on Linux/Unix** based systems (i.e. OS X, Ubuntu, etc'). This is by design and allows us to:
 
-`select` is limited to 1024 open connections! after 1024 connection, `select` could cause "undefined behavior", including a possible "crash"... sometimes it's not important... some hosting environments only allow 1024 connections anyway... EventMachine crashes on my system after 1024 connections too...
+     * Optimize our code for the production environment.
 
-...but websockets are connection hungry beasts.
+     * Have our testing and development machines behave the same as our ultimate production environment.
 
-Hence, a move to kqueue/epoll is required.
+     * Catch any issues (read: bugs) while in development - just ask AT&T about how important this is ;-)
 
-Iodine 0.2.x includes a kpoll / epoll implementation for Linux/BSD server environments, such as Heroku dynos (which run a flavor of unbuto 14).
+Iodine is a C extension for Ruby, developed with Ruby MRI 2.3.0 and 2.2.4 (it should support the whole Ruby 2.0 family, but it might not).
 
-However, it is unlikely that Iodine's beautiful API could survive this shift. Iodine 0.2.x introduces a lot of changes. For example, Iodine is now a class (not a module), so that network services are created using `Iodine.new`. Also, Iodine's autostart feature as well as "task mode" are left behind (it seemed no-one was actually using "task mode").
+## Iodine::Rack - an HTTP and Websockets server
 
-The 0.1.x API should be considered deprecated while a new API is under development... I satrted out by disliking EventMachine's API, now it seems they might not have had a choice.
+Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC).
 
-## Installation
+Iodine's HTTP server includes special support for the Upgrade directive (just add another object to the Rack response array, so it will look like this: `[<status>, {<headers>}, [<body>], <new protocol>]`).
 
-Add this line to your application's Gemfile:
+This is especially effective as it allows the use of middleware for connection upgrading, while having the main application answer to any HTTP requests.
 
-```ruby
-gem 'iodine'
-```
+This means that it's easy to minimize the number of Ruby objects you need before an Upgrade takes place and a new protocol is established.
 
-And then execute:
+Also, since the HTTP and Websocket parsers are written in C (with no RegExp), they're fast.
 
-    $ bundle
+Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less then 8Kb in size. These restrictions shouldn't be an issue.
 
-Or install it yourself as:
-
-    $ gem install iodine
-
-## Simple Usage: Running tasks and shutting down
-
-This mode of operation is effective if you have a `cron`-job that periodically initiates an Iodine Ruby script. It allows the script to easily initiate a task's stack and perform the tasks concurrently.
-
-Iodine starts to work once you app is finished setting all the tasks up (upon exit).
-
-To see how that works, open your `irb` terminal an try this:
-
+Here's a fast HTTP broadcast server with Iodine::Rack, which can be used directly from `irb`:
 
 ```ruby
-require 'iodine'
-
-# Iodine supports shutdown hooks
-Iodine.on_shutdown { puts "Done!" }
-# The last hook is the first scheduled for execution
-Iodine.on_shutdown { puts "Finishing up :-)" }
-
-# Setup tasks using the `run` or `callback` methods
-Iodine.run do
-    # tasks can create more tasks...
-    Iodine.run { puts "Task 2 completed!" }
-    puts "Task 1 completed!"
-end
-
-# set concurrency level (defaults to a single thread).
-Iodine.threads = 5
-
-# Iodine will start executing tasks once your script is done.
-exit
-```
-
-In this mode, Iodine will continue running until all the tasks have completed and then it will quit. Timer-based tasks will be ignored.
-
-## Simple Usage: Task polling
-
-This mode of operation is effective if you want Iodine to periodically initiate new tasks such as when you are not able to use `cron`.
-
-To initiate this mode, simply set: `Iodine.protocol = :timers` OR create a TimedEvent.
-
-In example form:
-
-
-```ruby
-require 'iodine'
-
-# set concurrency level (defaults to a single thread).
-Iodine.threads = 5
-
-# set Iodine to keep listening to TimedEvent(s).
-Iodine.protocol = :timers
-
-# perform a periodical task every ten seconds
-Iodine.run_every 10 do
-   Iodine.run { sleep 5; puts " * this could have been a long task..." }
-   puts "I could be polling a database to schedule more tasks..."
-end
-
-# Iodine will start running once your script is done and it will never stop unless stopped.
-exit
-```
-
-In this mode, Iodine will continue running until it receives a kill signal (i.e. `^C`). Once the kill signal had been received, Iodine will start shutting down, allowing up to ~20-25 seconds to complete any pending tasks (timeout).
-
-## Server Usage: an Http and Websocket server
-
-Using Iodine and leveraging Ruby's Object Oriented approach, is super fun to write our own network protocols and servers... This is Ioding itself includes an _optional_ Http and websocket server. Say "Hello World":
-
-```ruby
-# require the 'iodine/http' module if you want to use Iodine's Http server.
-require 'iodine/http'
-# returning a string will automatically append it to the response.
-Iodine::Http.on_http { |request, response| "Hello World!" }
-```
-
-Iodine's Http server includes comes right out of the box with Websocket support as well as an experimental support for Http/2 (it's just a start, no `push` support just yet, but you can try it out).
-
-Here's a quick chatroom server (use [www.websocket.org](http://www.websocket.org/echo.html) to check it out):
-
-```ruby
-# require the 'iodine/http' module if you want to use Iodine's Websocket server.
-require 'iodine/http'
-# create an object that will follow the Iodine Websocket API.
-class WSChatServer < Iodine::Http::WebsocketHandler
-  def on_open
-     @nickname = request.params[:nickname] || "unknown"
-     broadcast "#{@nickname} has joined the chat!"
-     write "Welcome #{@nickname}, you have joined the chat!"
-  end
+class My_Broadcast
   def on_message data
-     broadcast "#{@nickname} >> #{data}"
-     write ">> #{data}"
-  end
-  def on_broadcast data
-     write data
-  end
-  def on_close
-     broadcast "#{@nickname} has left the chat!"
+    each {|ws| ws.write data }
+    close if data =~ /^bye[\r\n]/i
   end
 end
-
-Iodine::Http.on_websocket WSChatServer
+# handle HTTP requests
+Iodine::Rack.on_http = Proc.new do |env|
+   [200, {"Content-Length" => "12"}, ["Hello World!"]]
+end
+# if a websocket handler is defined, it will be used for Websocket requests
+Iodine::Rack.on_websocket = Proc.new do |env|
+  # return a new object, or class, as the Websocket protocol handler
+  My_Broadcast
+end
+# static file serving is as easy as (supports simple byte serving):
+Iodine::Rack.public_folder = "www/public/"
+# start the server
+Iodine::Rack.start
 ```
 
-### Security and limits
+## Can I try before before I buy?
 
-Nobody wants their server to crash... Security measures are a fact of life as an internet entity. It is not only the theoretical malicious attacker from which a server must protect itself, but also from the unaware user or client.
+Well, it is **free** and **open source**, no need to buy.. and of course you can try it out.
 
-Mostly, it is assumed that Iodine will run behind a proxy (i.e. within a Heroku Dyno or viaduct.io process), as such it is assumed that the proxy will protect the Iodine Http server from undue stress.
+It's installable like any other gem, just run:
 
-Having said that, Iodine is built with certain security measures in mind:
+```
+$ gem install iodine
+```
 
-- Iodine will not accept IO data (neither from new connections nor form existing ones) while still answering existing requests and performing tasks. This safeguards against task overloading and DoS attacks causing a global crash, allowing the server to resume normal operation once a DoS attack had run it's course (and potentially allowing legitimate requests to be answered while the attack is still underway).
+If building the native C extension fails, please notice that some Ruby installations, such as on Ubuntu, require that you separately install the development headers (`ruby.h` and friends). I have no idea why they do that, as you will need the development headers for any native gems you want to install - so hurry up and get it.
 
-- Iodine will limit the query length, header count and header data size as well as well as react to header overloading by immediate disconnections. Iodine's limits are hardcoded to be slightly more than double those of common Proxies, so this counter-measure will only take effect should an attacker manage to bypass the Proxy.
+If you have the development headers but still can't compile the Iodine extension, [open an issue](https://github.com/boazsegev/iodine/issues) with any messages you're getting and I be happy to look into it.
 
-- Iodine limits every Http request body-size (file upload data, form data, etc') to ~0.5GB. This setting can be changed using `Iodine::Http.max_body_size`. This safeguard is meant to prevent Ruby from crashing due to insufficient memory (an error Iodine cannot, and should not, recover from).
+## Mr. Sandman, write me a server
 
-   It is recommended that this number will be lowered substantially whenever possible, by using `Iodine::Http.max_body_size = new_value`
+Girls love flowers, or so my ex used to keep telling me... but I think code is the way to really show that something is hot!
 
-   Do be aware that, at the moment, file upload data must passed through the memory on it's way to the temporary file. The parser's memory consumption will hopefully decrese in future releases, however, it is always recomended that large data be avoided when possible or handled using download/upload management protocols and services.
-
-## Server Usage: Plug in your network protocol
-
-Iodine is designed to help write network services (Servers) where each script is intended to implement a single server.
-
-This is not a philosophy based on any idea or preferences, but rather a response to real-world design where each Ruby script is usually assigned a single port for network access (hence, a single server).
-
-To help you write your network service, Iodine starts you off with the `Iodine::Protocol`. All network protocols should inherit from this class (or implement it's essencial functionality).
-
-Here's a quick Echo server:
+I mean, look at this short and sweet echo server - it's so elegant I could cry:
 
 ```ruby
+
 require 'iodine'
 
-# inherit from ::Iodine::Protocol
-class EchoServer < Iodine::Protocol
-    # The protocol class will call this withing a Mutex,
-    # making sure the IO isn't accessed while being initialized.
-	def on_open
-		Iodine.info "Opened connection."
-		set_timeout 5
-	end
-    # The protocol class will call this withing a Mutex, after reading the data from the IO.
-    # This makes this thread-safe per connection.
-	def on_message data
-		write("-- Closing connection, goodbye.\n") && close if data =~ /^(bye|close|exit|stop)/i
-		write(">> #{data.chomp}\n")
-	end
-	# Iodine makes sure this is called only once.
-	def on_close
-		Iodine.info "Closed connection."
-	end
-	# The is called whenever timeout is reached.
-	# By default, ping will close the connection.
-	# but we can do better...
-	def ping
-	    # `write` will automatically close the connection if it fails.
-		write "-- Are you still there?\n"
-	end
+# an echo protocol with asynchronous notifications.
+class EchoProtocol
+  # `on_message` is an optional alternative to the `on_data` callback.
+  # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
+  def on_message buffer
+    # writing will never block and will use a buffer written in C when needed.
+    write buffer
+    # close will be performed only once all the data in the write buffer
+    # was sent. use `force_close` to close early.
+    close if buffer =~ /^bye[\r\n]/i
+    # use buffer.dup to save the data from being recycled once we return.
+    data = buffer.dup
+    # run asynchronous tasks with ease
+    run do
+      sleep 1
+      puts "Echoed data: #{data}"
+    end
+  end
 end
 
-
-Iodine.protocol = EchoServer
-
-# if running this code within irb:
-exit
-```
-
-In this mode, Iodine will continue running until it receives a kill signal (i.e. `^C`). Once the kill signal had been received, Iodine will start shutting down, allowing up to ~20-25 seconds to complete any pending tasks (timeout).
-
-## Server Usage: IP address & port, SSL/TLS and other command line options
-
-Iodine automatically respects certain command line options that make it easier to use the same script over and over again with different results and making writing a `Procfile` (or similar setup files) a breeze.
-
-Let `./script.rb` be an Iodine ruby script, may an easy one such as our Hello World:
-
-```ruby
-#!/usr/bin/env ruby
-
-# script.rb
-require 'iodine/http'
-
-Iodine::Http.on_http do |request, response|
-  response << "Hello World!"
-end
+# create the server object and setup any settings we might need.
+server = Iodine.new
+server.threads = 1
+server.processes = 1
+server.busy_msg = "To many connections, try again later."
+server.protocol = EchoProtocol
+server.start
 
 ```
 
-Here are different command line options that Iodine recognizes automatically when running our script:
+## I loved Iodine 0.1.x - is this an upgrade?
 
-| purpose                                         | flag   | example                                  |
---------------------------------------------------|:------:|------------------------------------------|
-|  Set the server's port.                         | `-p`   | `ruby ./script.rb -p 4000`               |
-|  Limit the server's binding to a specific IP.   | `-ip`  | `ruby ./script.rb -p 4000 -ip 127.0.0.1` |
-|  Use SSL/TLS on a specific port.                | `ssl`  | `ruby ./script.rb -p 3030 ssl`           |
-|  Try out the experimental Http2 extention.      | `http2`|  `ruby ./script.rb -p 3030 ssl http2`    |
+This is **not** an upgrade, this is a **full rewrite**.
 
-## Server Usage: Running more than one server
+Iodine 0.1.x was written in Ruby and had tons of bells and whistles and a somewhat different API. It was limited to 1024 concurrent connections.
 
-On some machines, Iodine will allow you to run more than a single server, by forking the main process while still running the script. This is more of a hack to be used in development environments, since runnig multiple instances of the script is the prefered way to use Iodine in production.
+Iodine 0.2.x is written in C, doesn't have as many bells and whistles (i.e., no Websocket Client) and has a stripped down API (simpler to learn). The connection limit is calculated on startup, according to the system's limits. Connection overflows are terminated with an optional busy message, so the system won't crash.
 
-i.e.:
+## Why not EventMachine?
 
-```ruby
-require 'iodine/http'
+You can go ahead and use EventMachine if you like. They're doing amazing work on that one and it's been used a lot in Ruby-land... really, tons of good developers and people on that project, I'm sure.
 
-# We'll use a simple hello world with a slight "tweek" for this example.
-Iodine::Http.on_http do |request, response|
-  response << "Hello World!"
-  response << " We're on SSL/TLS!" if request.ssl?
-end
+But me, I prefer to make sure my development software runs the exact same code as my production software, so here we are.
 
-Iodine.ssl = false
+Also, I don't really understand all the minute details of EventMachine's API, it kept crashing my system every time I reached ~1024 active connections... I'm sure I just don't know how to use EventMachine, but that's just that.
 
-Process.fork do
-   Iodine.ssl = true
-   Iodine.port = 3030
-   # # we can also change network behavior, so we could have used:
-   # Iodine::Http.on_http { "Hello World! We're on SSL/TLS! - no `if` required ;-)" } 
-end if Process.respond_to? :fork
+Besides, you're here - why not take Iodine out for a spin and see for yourself?
 
-# if using irb
-exit
-```
+## Can I contribute?
 
-## Cuncurrency?
+Yes, please, here are some thoughts:
 
-Iodine maintains the idea of: "yes" to concurrency between objects but "no" to concurrency within objects.
+* I'm really not good at writing automated tests and benchmarks, any help would be appreciated. I keep testing manually and it sucks (and it's mistake prone).
 
-Iodine applies this concept when running in Task mode (or timer mode), by defaulting to single threaded mode, preventing multi-threading race conditions in an unknown environment. Also, each task runs in a single thread from the thread-pool, so unless it tries to set or manipulate global data, it's safe from race conditions.
+* Anybody knows how to document Ruby API written in C?
 
-Iodine applies this concept when running in Server mode by locking the Protocol instance whenever Iodine calls for actions related to that Protocol.
+* Some of the code is still super raw and could be either optimized or improved upon.
 
-For instance, in Iodine's implementation for the Websocket protocol: Websocket messages to different connections can run concurrently, however multiple messages to the same connection are only executed one at a time, maintaining their order (lately a fix in version 0.1.8 made sure that also websocket broadcasting will be executed within the Protocol lock, preventing concurrency within the same connection).
+* If we can write a Java wrapper for the C libraries, it would be nice... but it could be as big a project as the whole gem.
 
-The exception to the rule is the `ping` implementation. Your protocol's `ping` method will execute in parallel with other parts of your protocol's code. Pinging is a machanism that is often time sensitive and is required to maintain an open connection. For this reason, if your code is working hard on a long task, a ping will still occure automatically in the background and offset any connection timeout. 
+* Bug reports and pull requests are welcome on GitHub at https://github.com/boazsegev/iodine.
 
-If your code is short and efficient (no blocking tasks), it is best to run Iodine in a single threaded mode (you get better performance AND safer code, as long as you don't block):
-
-      Iodine.threads = 1
-
-## Contributing
-
-Bug reports and pull requests are welcome on GitHub at https://github.com/boazsegev/iodine.
-
+* If you love the project or thought the code was nice, maybe helped you in your own project, drop me a line. I'd love to know.
 
 ## License
 
 The gem is available as open source under the terms of the [MIT License](http://opensource.org/licenses/MIT).
 
+---
+
+## I'm also writing a Ruby extension in C
+
+Really?! That's great!
+
+We could all use some more documentation around the subject and having an eco-system for extension tidbits would be nice.
+
+Here's a few things you can use from this project and they seem to be handy to have (and easy to port):
+
+* Iodine is using a [Registry](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-registry.h) to keep Ruby objects that are owned by C-land from being collected by the garbage collector...
+
+    some people use global Ruby arrays, but that sounds like a performance hog to me.
+
+    This one is a simple binary tree with a Ruby GC callback. Remember to initialize the Registry (`Registry.init(owner)`) so it's "owned" by some Roby-land object. I'm attaching it to one of Iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
+
+* I was using a native thread pool library ([`libasync.h`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/libasync.h)) until I realized how many issues Ruby has with POSIX threads... So now there's a Ruby-thread implementation for this library at ([`libasync-rb.c`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/libasync-rb.c)).
+
+    Notice that all the new threads are free from the GVL - this allows true concurrency... but, you can't make Ruby API calls in that state.
+
+    To perform Ruby API calls you need to re-enter the global lock (GVL), albeit temporarily, using `rb_thread_call_with_gvl` and `rv_protect` (gotta watch out from Ruby `longjmp` exceptions).
+
+* Since I needed to call Ruby methods while multi-threading and running outside the GVL, I wrote [`RubyCaller`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-call.h) which let's me call an object's method and wraps all the `rb_thread_call_with_gvl` and `rv_protect` details in a secret hidden place I never have to see again.
+
+These are nice code snippets that can be easily used in other extensions. They're easy enough to write, I guess, but I already did the legwork, so enjoy.

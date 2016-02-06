@@ -7,7 +7,7 @@ puts `rake compile`
 require 'benchmark'
 $LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
 require "bundler/setup"
-require "iodine"
+require "iodine/http"
 
 # You can add fixtures and/or initialization code here to make experimenting
 # with your gem easier. You can also use a different console, if you like.
