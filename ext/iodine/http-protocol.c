@@ -388,6 +388,12 @@ restart:
     buff[pos++] = 0;
     if (!strcmp(tmp1, "HOST")) {
       request->host = tmp2;
+      // lowercase of hosts, to support case agnostic dns resolution
+      while (*tmp2 && (*tmp2) != ':') {
+        if (*tmp2 >= 'A' && *tmp2 <= 'Z')
+          *tmp2 = *tmp2 | 32;
+        tmp2++;
+      }
     } else if (!strcmp(tmp1, "CONTENT-TYPE")) {
       request->content_type = tmp2;
     } else if (!strcmp(tmp1, "CONTENT-LENGTH")) {
