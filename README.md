@@ -33,7 +33,25 @@ This is especially effective as it allows the use of middleware for connection u
 
 This means that it's easy to minimize the number of Ruby objects you need before an Upgrade takes place and a new protocol is established.
 
-Also, since the HTTP and Websocket parsers are written in C (with no RegExp), they're fast.
+Also, since the HTTP and Websocket parsers are written in C (with no RegExp), they're fast. Just compare the performance using:
+
+```bash
+wrk -c200 -d4 -t12 http://localhost:3000/
+# or
+ab -n 100000 -c 200 -k http://127.0.0.1:3000/
+```
+
+while running:
+
+```bash
+iodine -p 3000
+```
+
+vs.
+
+```bash
+rackup -p 3000 -E none -s <Other_Server_Here>
+```
 
 Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less then 8Kb in size. These restrictions shouldn't be an issue.
 
