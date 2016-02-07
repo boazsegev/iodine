@@ -315,8 +315,11 @@ static int send_response(struct HttpRequest* request, VALUE response) {
   if (TYPE(tmp) == T_STRING)
     tmp = rb_str_to_inum(tmp, 10, 0);
   if (TYPE(tmp) != T_FIXNUM || (tmp = FIX2INT(tmp)) > 512 || tmp < 100 ||
-      !(tmp_s = HttpStatus.to_s(tmp)))
+      !(tmp_s = HttpStatus.to_s(tmp))) {
+    if (FIX2INT(tmp) < 0)
+      return 0;  // faye return status -1 on hijack
     goto internal_err;
+  }
   request->private.pos = 0;
   request->private.pos +=
       snprintf(request->buffer, HTTP_HEAD_MAX_SIZE - request->private.pos,
@@ -606,12 +609,16 @@ static void* handle_request_in_gvl(void* _res) {
   if (response)
     response = RubyCaller.call_unsafe2(response, call_proc_id, 1, &env);
   // review env for highjack and clear request body if true
-  if (rb_hash_aref(env, R_HIJACK_IO) != Qnil && TYPE(response) == T_ARRAY)
+  if (rb_hash_aref(env, R_HIJACK_IO) != Qnil && TYPE(response) == T_ARRAY) {
+    return 0;  // TODO: add callback handler
     rb_ary_store(response, 2, Qnil);
+  }
   // clean-up env and register response
   if (Registry.replace(env, response))
     Registry.add(response);
-  if (!send_response(request, response))
+  if (send_response(request, response))
+    Server.close(request->server, request->sockfd);
+  else
     perform_generic_upgrade(request, response);
   Registry.remove(response);
   return 0;

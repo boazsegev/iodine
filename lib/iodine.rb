@@ -39,3 +39,5 @@ class Iodine
     @busy_msg = state[:busy_msg]
   end
 end
+
+require "rack/handler/iodine"

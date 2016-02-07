@@ -215,11 +215,9 @@ static void manage_timeout(struct ReactorSettings* reactor) {
 
 /// called for any open file descriptors when the reactor is shutting down.
 static void on_shutdown(struct ReactorSettings* reactor, int fd) {
-  // call all callbacks for active connections.
-  for (long i = 0; i <= reactor->last; i++) {
-    if (_protocol_(reactor, i) && _protocol_(reactor, i)->on_shutdown)
-      _protocol_(reactor, i)->on_shutdown(_server_(reactor), i);
-  }
+  // call the callback for the mentioned active(?) connection.
+  if (_protocol_(reactor, fd) && _protocol_(reactor, fd)->on_shutdown)
+    _protocol_(reactor, fd)->on_shutdown(_server_(reactor), fd);
 }
 
 // called when a file descriptor was closed (either locally or by the other

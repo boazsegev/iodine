@@ -1,0 +1,39 @@
+#!/usr/bin/env ruby
+
+Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
+puts `rake clean`
+puts `rake compile`
+
+require 'benchmark'
+require 'faye/websocket'
+
+$LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
+require "bundler/setup"
+require "iodine"
+
+
+Iodine::Rack.on_http = lambda do |env|
+  if Faye::WebSocket.websocket?(env)
+    ws = Faye::WebSocket.new(env)
+
+    ws.on :message do |event|
+      ws.send(event.data.to_s)
+    end
+
+    ws.on :close do |event|
+      p [:close, event.code, event.reason]
+      ws = nil
+    end
+
+    # Return async Rack response
+    ws.rack_response
+
+  else
+    # Normal HTTP request
+    [200, {'Content-Type' => 'text/plain'}, ["Hello\n"]]
+  end
+end
+
+Iodine::Rack.start
+
+# ws = new WebSocket("ws://localhost:3000"); ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);}; ws.onclose = function(e) {console.log("closed")}; ws.onopen = function(e) {ws.send("hi");};

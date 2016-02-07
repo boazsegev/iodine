@@ -1,4 +1,4 @@
-require 'iodine/http'
+require 'iodine'
 
 class Iodine
 	module Base
@@ -49,4 +49,9 @@ begin
 rescue Exception
 
 end
-::Rack::Handler.register( 'iodine', 'Iodine::Rack') if defined?(::Rack)
+
+begin
+	::Rack::Handler.register( 'iodine', 'Iodine::Rack') if defined?(::Rack)
+rescue Exception
+
+end

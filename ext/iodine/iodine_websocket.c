@@ -91,6 +91,13 @@ void* resize_buffer_in_gvl(void* data) {
                                 ws->parser.received);
   return 0;
 }
+void* reset_buffer_in_gvl(void* data) {
+  struct WebsocketProtocol* ws = data;
+  rb_str_modify(ws->buffer);
+  rb_str_set_len(ws->buffer, 0);
+  rb_enc_associate(ws->buffer, BinaryEncoding);
+  return 0;
+}
 
 void* dup_and_on_message_in_gvl(void* data) {
   struct WebsocketProtocol* ws = data;
@@ -147,7 +154,7 @@ void websocket_write(server_pt srv,
       unsigned fin : 1;
       unsigned size : 7;
       unsigned masked : 1;
-    } head = {.op_code = (first ? (text ? 1 : 2) : 0),
+    } head = {.op_code = (first ? (!text ? 2 : text) : 0),
               .fin = last,
               .size = len,
               .masked = 0};
@@ -475,8 +482,9 @@ void on_data(server_pt server, int sockfd) {
           goto reset_parser;
       } else if (ws->parser.head.op_code == 9) {
         /* ping */
-        // write Pong - TODO: echo ping data...
-        Server.write(server, sockfd, "\x8A\x00", 2);
+        // write Pong - including ping data...
+        websocket_write(server, sockfd, ws->parser.tmp_buffer + pos, data_len,
+                        10, 1, 1);
         if (ws->parser.head2.op_code == ws->parser.head.op_code)
           goto reset_parser;
       } else if (ws->parser.head.op_code == 10) {
@@ -513,8 +521,9 @@ void on_data(server_pt server, int sockfd) {
       ws->parser.length = 0;
       ws->parser.received = 0;
       // clear the Ruby buffer
-      rb_str_set_len(ws->buffer, 0);
-      rb_enc_associate(ws->buffer, BinaryEncoding);
+      rb_thread_call_with_gvl(reset_buffer_in_gvl, ws);
+      // rb_str_set_len(ws->buffer, 0);
+      // rb_enc_associate(ws->buffer, BinaryEncoding);
     }
   }
 }
