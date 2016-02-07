@@ -3,7 +3,7 @@
 #include <ruby.h>
 #include <ruby/io.h>
 // includes SHA1 functions locally, as static functions
-#include "sha1.inc"
+#include "sha1.h"
 #include <time.h>
 
 /* ////////////////////////////////////////////////////////////
