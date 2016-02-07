@@ -21,7 +21,7 @@ class Iodine
 					old_app = @app
 					@app = Proc.new do |env|
 						ret = old_app.call(env)
-						ret = app.call(env) if (ret==nil || (ret.is_a?(Array) && ret[0].to_i == 404))
+						ret = app.call(env) if (!ret.is_a?(Array) || (ret.is_a?(Array) && ret[0].to_i == 404))
 						ret
 					end
 				else
