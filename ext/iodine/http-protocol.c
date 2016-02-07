@@ -313,7 +313,7 @@ restart:
   }
 
   // review used size
-  if (HTTP_HEAD_MAX_SIZE == pos)
+  if (HTTP_HEAD_MAX_SIZE <= pos - 1)
     goto too_big;
 
   // read from the buffer
@@ -333,19 +333,19 @@ restart:
     // start parsing the request
     request->method = request->buffer;
     // get query
-    while (pos < (len - 2) && buff[pos] != ' ')
+    while (pos < (len - 1) && buff[pos] != ' ')
       pos++;
     buff[pos++] = 0;
     if (pos > len - 3)
       goto bad_request;
     request->path = &buff[pos];
     // get query and version
-    while (pos < (len - 2) && buff[pos] != ' ' && buff[pos] != '?')
+    while (pos < (len - 1) && buff[pos] != ' ' && buff[pos] != '?')
       pos++;
     if (buff[pos] == '?') {
       buff[pos++] = 0;
       request->query = buff + pos;
-      while (pos < (len - 2) && buff[pos] != ' ')
+      while (pos < (len - 1) && buff[pos] != ' ')
         pos++;
     }
     buff[pos++] = 0;
@@ -366,24 +366,27 @@ restart:
     request->private.header_hash = buff + pos;
     request->private.max = pos;
   }
+  if (len == 2 && buff[pos] == '\r' && buff[pos + 1] == '\n')
+    goto finish_headers;
+  // get headers
   while (pos < len && buff[pos] != '\r') {
-    tmp1 = &buff[pos];
-    while (pos + 2 < len && buff[pos] != ':') {
+    tmp1 = buff + pos;
+    while (pos < len && buff[pos] != ':') {
       if (buff[pos] >= 'a' && buff[pos] <= 'z')
         buff[pos] = buff[pos] & 223;  // uppercase the header field.
       // buff[pos] = buff[pos] | 32;    // lowercase is nice, but less common.
       pos++;
     }
-    if (pos + 4 > len)  // must have at least 4 eol markers...
+    if (pos >= len - 1)  // must have at least 2 eol markers + data
       goto bad_request;
     buff[pos++] = 0;
     if (buff[pos] == ' ')  // space after colon?
       buff[pos++] = 0;
-    tmp2 = &buff[pos];
+    tmp2 = buff + pos;
     // skip value
-    while (pos + 2 < len && buff[pos] != '\r')
+    while (pos + 1 < len && buff[pos] != '\r')
       pos++;
-    if (pos + 2 > len)  // must have atleast 4 eol markers...
+    if (pos >= len - 1)  // must have at least 2 eol markers...
       goto bad_request;
     buff[pos++] = 0;
     buff[pos++] = 0;
@@ -403,11 +406,15 @@ restart:
       request->upgrade = tmp2;
     }
   }
+
   // check if the the request was fully sent
   if (pos >= len - 1) {
     // break it up...
     goto restart;
   }
+
+finish_headers:
+
   // set the safety endpoint
   request->private.max = pos - request->private.max;
 
