@@ -33,31 +33,12 @@ This is especially effective as it allows the use of middleware for connection u
 
 This means that it's easy to minimize the number of Ruby objects you need before an Upgrade takes place and a new protocol is established.
 
-Also, since the HTTP and Websocket parsers are written in C (with no RegExp), they're fast. Just compare the performance using:
-
-```bash
-wrk -c200 -d4 -t12 http://localhost:3000/
-# or
-ab -n 100000 -c 200 -k http://127.0.0.1:3000/
-```
-
-while running:
-
-```bash
-iodine -p 3000
-```
-
-vs.
-
-```bash
-rackup -p 3000 -E none -s <Other_Server_Here>
-```
-
 Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less then 8Kb in size. These restrictions shouldn't be an issue.
 
-Here's a fast HTTP broadcast server with Iodine::Rack, which can be used directly from `irb`:
+Here's a small Http and Websocket broadcast server with Iodine::Rack, which can be used directly from `irb`:
 
 ```ruby
+# Our websocket controller
 class My_Broadcast
   def on_message data
     each {|ws| ws.write data }
@@ -80,6 +61,45 @@ Iodine::Rack.start
 ```
 
 Of course, if you still want to use Rack's `hijack` API, Iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack (why do that when you can write a protocol object and have the main reactor manage the socket?).
+
+### How does it compare to other servers?
+
+Since the HTTP and Websocket parsers are written in C (with no RegExp), they're fast.
+
+Since Iodine is still under development, I'm not posting any data, but you can compare the performance for yourself using `wrk` or `ab`:
+
+```bash
+$ wrk -c200 -d4 -t12 http://localhost:3000/
+# or
+$ ab -n 100000 -c 200 -k http://127.0.0.1:3000/
+```
+
+Create a simple `config.ru` file with a hello world app:
+
+```ruby
+App = Proc.new do |env|
+   [200,
+     {   "Content-Type" => "text/html",
+         "Content-Length" => "16"       },
+     ['Hello from Rack!']  ]
+end
+
+run App
+```
+
+Then start comparing servers:
+
+```bash
+$ iodine -p 3000
+```
+
+vs.
+
+```bash
+$ rackup -p 3000 -E none -s <Other_Server_Here>
+```
+
+Don't forget to compare the memory footprint after running some requests - it's not just speed that C is helping with.
 
 ## Can I try before before I buy?
 
