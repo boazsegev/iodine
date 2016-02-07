@@ -652,13 +652,29 @@ the joy of life.
 
 */  /////////////////////////////////////////////////////////////////////
 
-// API for the user to setup an on_start callback
+/**
+This method accepts a block and sets the block to run immediately after the
+server had started.
+
+Since functions such as `run`, `run_every` and `run_after` can only be called
+AFTER the reactor had started,
+use {#on_start} to setup any global tasks. i.e.
+
+    server = Iodine.new
+    server.on_start do
+        puts "My network service had started."
+        server.run_every(5000) {puts "#{server.count -1 } clients connected."}
+    end
+    # ...
+
+*/
 static VALUE on_start(VALUE self) {  // requires a block to be passed
   rb_need_block();
   VALUE callback = rb_block_proc();
   rb_iv_set(self, "on_start_block", callback);
   return callback;
 }
+
 // called when the server starts up. Saves the server object to the instance.
 static void on_init(struct Server* server) {
   VALUE core_instance = *((VALUE*)Server.settings(server)->udata);
@@ -701,7 +717,12 @@ static void unblck(void* _) {
   Server.stop_all();
 }
 /////////
-// the actual method
+/**
+This method starts the service and blocks the executing thread until the service
+is done.
+
+The service will stop once a signal is received (i.e., when ^C is pressed).
+*/
 static VALUE srv_start(VALUE self) {
   // load the settings from the Ruby layer to the C layer
   VALUE rb_protocol = rb_ivar_get(self, rb_intern("@protocol"));

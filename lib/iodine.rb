@@ -4,6 +4,29 @@ require "iodine/version"
 require "iodine/logging"
 require "iodine/iodine"
 
+# Iodine is a platform for writing evented network services on Ruby.
+#
+# Here is a sample Echo server using Iodine:
+#
+#
+#       # define the protocol for our service
+#       class EchoProtocol
+#         # this is just one possible callback with a recyclable buffer
+#         def on_message buffer
+#           # write the data we received
+#           write "echo: #{buffer}"
+#           # close the connection when the time comes
+#           close if buffer =~ /^bye[\n\r]/
+#         end
+#       end
+#       # create the service instance
+#       echo_server = Iodine.new timeout:10,
+#                                protocol: EchoProtocol
+#       # start the service
+#       echo_server.start
+#
+#
+# Please read the {file:README.md} file for an introduction to Iodine and an overview of it's API.
 class Iodine
   # The {#initialize} method accepts either a Hash of settings or no arguments (default state).
   #
