@@ -21,15 +21,9 @@ class WSEcho
   end
   def on_open
     puts "We have a websocket connection"
-    @srv.run_after(1000) {puts "I got #{ws_count}"}
   end
   def on_close
     puts "Bye Bye... only #{ws_count} left..."
-    # this is a special case where we are initializing a new fd
-    # when this fd just closed - probably overwriting our own data.
-    # solve this, and we're probably done debuging ;-)
-    run {puts "I miss them... now I have only #{ws_count}"}
-    run_after(10000) {puts "I miss them... now I have only #{ws_count}"}
   end
   def on_shutdown
     puts "I'm shutting down #{self}"
