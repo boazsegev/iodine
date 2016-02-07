@@ -191,9 +191,10 @@ static VALUE rio_each(VALUE self) {
 
 // defined by iodine_http
 extern VALUE R_HIJACK;     // for Rack: rack.hijack
+extern VALUE R_HIJACK_CB;  // for Rack: rack.hijack
 extern VALUE R_HIJACK_IO;  // for Rack: rack.hijack_io
 
-static VALUE rio_get_io(VALUE self) {
+static VALUE rio_get_io(int argc, VALUE* argv, VALUE self) {
   if (TCPSOCKET_CLASS == Qnil)
     return Qfalse;
   struct HttpRequest* request = get_request(self);
@@ -208,6 +209,9 @@ static VALUE rio_get_io(VALUE self) {
   new_io = RubyCaller.call_unsafe2(TCPSOCKET_CLASS, for_fd_id, 1,
                                    &fd);  // TCPSocket.for_fd(fd) ... cool...
   rb_hash_aset(env, R_HIJACK_IO, new_io);
+  if (argc)
+    rb_hash_aset(env, R_HIJACK_CB, *argv);
+
   if (Server.hijack(request->server, request->sockfd))
     return Qnil;
   return new_io;
@@ -244,7 +248,7 @@ static void init_rack_io(void) {
   rb_define_method(rRackIO, "read", rio_read, -1);
   rb_define_method(rRackIO, "close", rio_close, 0);
   rb_define_method(rRackIO, "each", rio_each, 0);
-  rb_define_method(rRackIO, "_hijack", rio_get_io, 0);
+  rb_define_method(rRackIO, "_hijack", rio_get_io, -1);
 }
 
 ////////////////////////////////////////////////////////////////////////////

@@ -351,7 +351,7 @@ restart:
     buff[pos++] = 0;
     if (pos + 5 > len)
       goto bad_request;
-    request->version = &buff[pos];
+    request->version = buff + pos;
     if (buff[pos] != 'H' || buff[pos + 1] != 'T' || buff[pos + 2] != 'T' ||
         buff[pos + 3] != 'P')
       goto bad_request;
@@ -362,7 +362,8 @@ restart:
       goto bad_request;
     buff[pos++] = 0;
     buff[pos++] = 0;
-    request->private.header_hash = &buff[pos];
+
+    request->private.header_hash = buff + pos;
     request->private.max = pos;
   }
   while (pos < len && buff[pos] != '\r') {

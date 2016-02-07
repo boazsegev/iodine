@@ -40,17 +40,15 @@ server.threads = 1
 server.processes = 1
 server.public_folder = '/Users/2Be/Documents/Scratch'
 server.on_http= Proc.new do |env|
-  out = env["rack.hijack"].call
-  server.run_after(3000) {
-    env["rack.hijack_io"].write "Hi!\n"
-    p out.addr
-    p out.peeraddr
-  }
-  [-1,{}, []]
-  # out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
-  # request = Rack::Request.new(env)
-  # out += "\nRequest Path: #{request.path_into}\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
-  # [200, {"Content-Length" => out.length}, [out]];
+  # out = env["rack.hijack"].call Proc.new {
+  #   env["rack.hijack_io"].write "Partial Hijack!\n"
+  #   env["rack.hijack_io"].close
+  # }
+  # [200,{"Content-Length" => "8", "Connection" => "close"}, []]
+  out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
+  request = Rack::Request.new(env)
+  out += "\nRequest Path: #{request.path_info}\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
+  [200, {"Content-Length" => out.length}, [out]];
 end
 
 # server.on_http= Proc.new do |env|

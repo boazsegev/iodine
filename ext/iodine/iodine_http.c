@@ -29,6 +29,8 @@ static ID on_open_func_id;  // the on_open callback's ID
 static VALUE _hijack_sym;
 
 // for Rack
+static VALUE HTTP_VERSION;        // extending Rack
+static VALUE REQUEST_URI;         // extending Rack
 static VALUE REQUEST_METHOD;      // for Rack
 static VALUE CONTENT_TYPE;        // for Rack.
 static VALUE CONTENT_LENGTH;      // for Rack.
@@ -55,9 +57,8 @@ static VALUE R_MPROCESS_V;        // for Rack: rack.multiprocess
 static VALUE R_RUN_ONCE;          // for Rack: rack.run_once
 static VALUE R_HIJACK_Q;          // for Rack: rack.hijack?
 VALUE R_HIJACK;                   // for Rack: rack.hijack
-static VALUE R_HIJACK_V;          // for Rack: rack.hijack
 VALUE R_HIJACK_IO;                // for Rack: rack.hijack_io
-static VALUE R_IOFD;              // Iodine variables on Rack: iodine.fd
+VALUE R_HIJACK_CB;                // for Rack: rack.hijack_io callback
 static VALUE XSENDFILETYPE;       // sendfile support
 static VALUE XSENDFILE;           // sendfile support
 static VALUE UPGRADE_HEADER;      // upgrade support
@@ -93,21 +94,24 @@ static VALUE request_to_env(struct HttpRequest* request) {
   // return Qnil;
   // Create the env Hash
   VALUE env = rb_hash_new();
+  VALUE tmp = 0;
   // Register the object
   Registry.add(env);
   // set the simple core request data
   rb_hash_aset(
       env, REQUEST_METHOD,
       rb_enc_str_new(request->method, strlen(request->method), BinaryEncoding));
-  rb_hash_aset(
-      env, PATH_INFO,
-      rb_enc_str_new(request->path, strlen(request->path), BinaryEncoding));
+  tmp = rb_enc_str_new(request->path, strlen(request->path), BinaryEncoding);
+  rb_hash_aset(env, PATH_INFO, tmp);
+  rb_hash_aset(env, REQUEST_URI, tmp);
   rb_hash_aset(
       env, QUERY_STRING,
       (request->query ? rb_enc_str_new(request->query, strlen(request->query),
                                        BinaryEncoding)
                       : QUERY_ESTRING));
-  rb_hash_aset(env, R_IOFD, INT2FIX(request->sockfd));
+  rb_hash_aset(env, HTTP_VERSION,
+               rb_enc_str_new(request->version, strlen(request->version),
+                              BinaryEncoding));
 
   // setup static env data
   rb_hash_aset(env, R_VERSION, R_VERSION_V);
@@ -116,6 +120,7 @@ static VALUE request_to_env(struct HttpRequest* request) {
   rb_hash_aset(env, R_MTHREAD, R_MTHREAD_V);
   rb_hash_aset(env, R_MPROCESS, R_MPROCESS_V);
   rb_hash_aset(env, R_RUN_ONCE, Qfalse);
+
   // set scheme to R_SCHEME_HTTP or R_SCHEME_HTTPS or dynamic
   int ssl = 0;
   {
@@ -190,11 +195,10 @@ static VALUE request_to_env(struct HttpRequest* request) {
     rb_hash_aset(env, CONTENT_LENGTH,
                  rb_enc_str_new(value, strlen(value), BinaryEncoding));
   }
-  VALUE rack_io = 0;
-  rb_hash_aset(env, R_INPUT, (rack_io = RackIO.new(request, env)));
+  rb_hash_aset(env, R_INPUT, (tmp = RackIO.new(request, env)));
   // setup Hijacking headers
   //   rb_hash_aset(env, R_HIJACK_Q, Qfalse);
-  VALUE hj_method = rb_obj_method(rack_io, _hijack_sym);
+  VALUE hj_method = rb_obj_method(tmp, _hijack_sym);
   rb_hash_aset(env, R_HIJACK_Q, Qtrue);
   rb_hash_aset(env, R_HIJACK, hj_method);
   rb_hash_aset(env, R_HIJACK_IO, Qnil);
@@ -468,8 +472,8 @@ static int send_response(struct HttpRequest* request, VALUE response) {
                   (VALUE)request);
   }
 
-  if (close_when_done)
-    Server.close(request->server, request->sockfd);
+// if (close_when_done)
+//   Server.close(request->server, request->sockfd);
 
 unknown_stop:
   return close_when_done;
@@ -528,6 +532,7 @@ static void* handle_request_in_gvl(void* _res) {
   struct HttpRequest* request = _res;
   VALUE env = request_to_env(request);
   VALUE response;
+  VALUE hj_callback = 0;
   char* recv_str = NULL;
   static char ws_key_accpt_str[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
   // check for a valid and supported Websocket request (ver 13)
@@ -609,9 +614,14 @@ static void* handle_request_in_gvl(void* _res) {
   if (response)
     response = RubyCaller.call_unsafe2(response, call_proc_id, 1, &env);
   // review env for highjack and clear request body if true
-  if (rb_hash_aref(env, R_HIJACK_IO) != Qnil && TYPE(response) == T_ARRAY) {
-    return 0;  // TODO: add callback handler
-    rb_ary_store(response, 2, Qnil);
+  if (rb_hash_aref(env, R_HIJACK_IO) != Qnil) {
+    if ((hj_callback = rb_hash_aref(env, R_HIJACK_CB)) != Qnil) {
+      rb_ary_store(response, 2, Qnil);
+      send_response(request, response);
+      RubyCaller.call_unsafe(hj_callback, call_proc_id);
+    }
+    Registry.remove(env);
+    return 0;
   }
   // clean-up env and register response
   if (Registry.replace(env, response))
@@ -930,18 +940,12 @@ void Init_iodine_http(void) {
   R_HIJACK = rb_enc_str_new_literal("rack.hijack", BinaryEncoding);
   rb_global_variable(&R_HIJACK);
   rb_obj_freeze(R_HIJACK);
-  R_HIJACK_V = Qnil;  // rb_fdopen(int fd, const char *modestr)
   R_HIJACK_IO = rb_enc_str_new_literal("rack.hijack_io", BinaryEncoding);
   rb_global_variable(&R_HIJACK_IO);
   rb_obj_freeze(R_HIJACK_IO);
-
-  // Iodine variavles
-  R_IOFD = rb_enc_str_new_literal("iodine.fd", BinaryEncoding);
-  rb_global_variable(&R_IOFD);
-  rb_obj_freeze(R_IOFD);
-  // VALUE version_val = rb_const_get(rIodine, rb_intern("iodine.version"));
-  // R_IOVERSION_V = rb_str_split(version_val, ".");
-  // rb_global_variable(&R_IOVERSION_V);
+  R_HIJACK_CB = rb_enc_str_new_literal("iodine.hijack_cb", BinaryEncoding);
+  rb_global_variable(&R_HIJACK_CB);
+  rb_obj_freeze(R_HIJACK_CB);
 
   // setup for Rack version 1.3.
   R_VERSION_V = rb_ary_new_capa(2);
@@ -949,6 +953,14 @@ void Init_iodine_http(void) {
   rb_ary_push(R_VERSION_V, rb_enc_str_new_literal("3", BinaryEncoding));
   rb_global_variable(&R_VERSION_V);
   R_ERRORS_V = rb_stdout;
+
+  // extending rack for often used, non-standard, env keys.
+  HTTP_VERSION = rb_enc_str_new_literal("HTTP_VERSION", BinaryEncoding);
+  rb_global_variable(&HTTP_VERSION);
+  rb_obj_freeze(HTTP_VERSION);
+  REQUEST_URI = rb_enc_str_new_literal("REQUEST_URI", BinaryEncoding);
+  rb_global_variable(&REQUEST_URI);
+  rb_obj_freeze(REQUEST_URI);
   // Websocket Upgrade
   UPGRADE_HEADER = rb_enc_str_new_literal("Upgrade", BinaryEncoding);
   rb_global_variable(&UPGRADE_HEADER);
