@@ -1013,14 +1013,69 @@ void Init_iodine_http(void) {
   rHttp = rb_define_class_under(rIodine, "Http", rIodine);
   rb_global_variable(&rHttp);
   // add the Http sub-functions
+
+  /* this overrides the default Iodine protocol method to prevent setting a
+protocol.
+  */
   rb_define_method(rHttp, "protocol=", http_protocol_set, 1);
+  /** this overrides the default Iodine protocol method to prevent getting an
+ non-existing protocol object (the protocol is written in C, not in Ruby).
+   */
   rb_define_method(rHttp, "protocol", http_protocol_get, 0);
   rb_define_method(rHttp, "start", http_start, 0);
+  /** The maximum body size (for posting and uploading data to the server).
+Defaults to 32 Mb.
+  */
   rb_define_attr(rHttp, "max_body_size", 1, 1);
+  /** The maximum websocket message size.
+Defaults to 64Kb.
+  */
   rb_define_attr(rHttp, "max_msg_size", 1, 1);
+  /** The initial websocket connection timeout (between 0-120 seconds).
+Defaults to 45 seconds.
+  */
   rb_define_attr(rHttp, "ws_timeout", 1, 1);
+  /** The HTTP handler. This object should answer to `call(env)` (can be a
+Proc).
+
+Iodine::Http adhers to the Rack specifications and the HTTP handler should do
+so as well.
+
+The one exception, both for the `on_http` and `on_websocket` handlers, is that
+when upgrading the connection, the Array can consist of 4 elements (instead of
+3), the last one being a new Protocol object.
+
+i.e.
+
+     Iodine::Rack.on_http = Proc.new {
+       [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
+     }
+  */
   rb_define_attr(rHttp, "on_http", 1, 1);
+  /** The HTTP handler. This object should answer to `call` (can be a Proc).
+
+see {on_http} for more details.
+
+i.e.
+
+     class MyEcho
+       def on_message data
+         write data
+       end
+     end
+     Iodine::Rack.on_websocket = Proc.new {
+       [0, {}, [], MyEcho]
+     }
+  */
   rb_define_attr(rHttp, "on_websocket", 1, 1);
+  /**
+Allows for basic static file delivery support.
+
+This allows static file serving to bypass the Ruby layer. If Iodine is running
+behind a proxy that is capable of serving static files, such as NginX or
+Apche, using that proxy will allow even better performance (under the
+assumption that the added network layer's overhead could be expensive).
+  */
   rb_define_attr(rHttp, "public_folder", 1, 1);
   // initialize the RackIO class
   RackIO.init();

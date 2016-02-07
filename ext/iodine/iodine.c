@@ -835,12 +835,19 @@ void Init_iodine(void) {
   iodine_add_helper_methods(rIodine, 0);
   rb_define_method(rIodine, "start", srv_start, 0);
   rb_define_method(rIodine, "on_start", on_start, 0);
+  // The default protocol for each new connection
   rb_define_attr(rIodine, "protocol", 1, 1);
+  // The port to listen to.
   rb_define_attr(rIodine, "port", 1, 1);
+  // The address to bind to (it's best to leave it as `nil`).
   rb_define_attr(rIodine, "address", 1, 1);
+  // The number of threads to use for concurrency.
   rb_define_attr(rIodine, "threads", 1, 1);
+  // The number of processes to use for concurrency.
   rb_define_attr(rIodine, "processes", 1, 1);
+  // The default timeout for each new connection.
   rb_define_attr(rIodine, "timeout", 1, 1);
+  // A message to be sent if the server is at capacity (no more file handles).
   rb_define_attr(rIodine, "busy_msg", 1, 1);
 
   // get-set version
