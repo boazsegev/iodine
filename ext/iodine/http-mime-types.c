@@ -1,5 +1,7 @@
 #include "http-mime-types.h"
+#include <stdio.h>
 #include <string.h>
+#include <strings.h>
 /* ////////////////////////////////////////////////////////////
 This is a status code map that takes common codes and returns a string.
 //////////////////////////////////////////////////////////// */

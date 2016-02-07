@@ -69,14 +69,12 @@ static int replace_object(VALUE obj, VALUE new_obj) {
     return 0;
   pthread_mutex_lock(&registry_lock);
   struct Object* line = registry.first;
-  struct Object* prev = NULL;
   while (line) {
     if (line->obj == obj) {
       line->obj = new_obj;
       ret = 0;
       goto finish;
     }
-    prev = line;
     line = line->next;
   }
 finish:

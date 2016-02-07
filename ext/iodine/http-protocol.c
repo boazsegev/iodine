@@ -1,8 +1,11 @@
 #define _GNU_SOURCE
 #include "http-protocol.h"
 #include "http-mime-types.h"
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <time.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -544,8 +547,9 @@ void http_default_on_request(struct HttpRequest* req) {
 
   if (req->body_file) {
     char* head = NULL;
-    asprintf(&head, http_file_echo, req->content_type, req->content_length);
-    if (!head) {
+    if (asprintf(&head, http_file_echo, req->content_type,
+                 req->content_length) <= 0 ||
+        !head) {
       perror("WTF?! head");
       goto cleanup;
     }

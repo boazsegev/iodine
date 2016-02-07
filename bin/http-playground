@@ -51,16 +51,16 @@ server.on_http= Proc.new do |env|
   [200, {"Content-Length" => out.length}, [out]];
 end
 
-# server.on_http= Proc.new do |env|
-#   [200, {"Content-Length" => "12"}, ["Hello World!"]];
-# end
+server.on_http= Proc.new do |env|
+  [200, {"Content-Length" => "12"}, ["Hello World!"]];
+end
 
 server.on_websocket= Proc.new do |env|
   [0,{}, [], WSEcho];
 end
 
 server.on_start do
-  # server.run_every(1200) {puts "running...#{server.connection_count} clients"}
+  server.run_every(1000) {puts "running...#{server.connection_count} clients"}
   # server.run_every(1000) do
   #   begin
   #     puts "making a system call"

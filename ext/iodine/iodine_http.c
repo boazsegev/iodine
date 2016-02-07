@@ -1,8 +1,10 @@
 #include "iodine_websocket.h"
 #include "iodine_http.h"
+#include <ruby.h>
 #include <ruby/io.h>
 // includes SHA1 functions locally, as static functions
 #include "sha1.inc"
+#include <time.h>
 
 /* ////////////////////////////////////////////////////////////
 This file creates an HTTP server based on the Iodine libraries.
@@ -880,126 +882,129 @@ void Init_iodine_http(void) {
   rb_global_variable(&_hijack_sym);
 
   // some common Rack & Http strings
-  REQUEST_METHOD = rb_enc_str_new_literal("REQUEST_METHOD", BinaryEncoding);
+  //
+  // Using `rb_enc_str_new_literal` is wonderful, but requires Ruby 2.2
+  // So it was replaced with `rb_enc_str_new_cstr`
+  REQUEST_METHOD = rb_enc_str_new_cstr("REQUEST_METHOD", BinaryEncoding);
   rb_global_variable(&REQUEST_METHOD);
   rb_obj_freeze(REQUEST_METHOD);
-  CONTENT_TYPE = rb_enc_str_new_literal("CONTENT_TYPE", BinaryEncoding);
+  CONTENT_TYPE = rb_enc_str_new_cstr("CONTENT_TYPE", BinaryEncoding);
   rb_global_variable(&CONTENT_TYPE);
   rb_obj_freeze(CONTENT_TYPE);
-  CONTENT_LENGTH = rb_enc_str_new_literal("CONTENT_LENGTH", BinaryEncoding);
+  CONTENT_LENGTH = rb_enc_str_new_cstr("CONTENT_LENGTH", BinaryEncoding);
   rb_global_variable(&CONTENT_LENGTH);
   rb_obj_freeze(CONTENT_LENGTH);
-  SCRIPT_NAME = rb_enc_str_new_literal("SCRIPT_NAME", BinaryEncoding);
+  SCRIPT_NAME = rb_enc_str_new_cstr("SCRIPT_NAME", BinaryEncoding);
   rb_global_variable(&SCRIPT_NAME);
   rb_obj_freeze(SCRIPT_NAME);
-  PATH_INFO = rb_enc_str_new_literal("PATH_INFO", BinaryEncoding);
+  PATH_INFO = rb_enc_str_new_cstr("PATH_INFO", BinaryEncoding);
   rb_global_variable(&PATH_INFO);
   rb_obj_freeze(PATH_INFO);
-  QUERY_STRING = rb_enc_str_new_literal("QUERY_STRING", BinaryEncoding);
+  QUERY_STRING = rb_enc_str_new_cstr("QUERY_STRING", BinaryEncoding);
   rb_global_variable(&QUERY_STRING);
   rb_obj_freeze(QUERY_STRING);
   QUERY_ESTRING = rb_str_buf_new(0);
   rb_global_variable(&QUERY_ESTRING);
   rb_obj_freeze(QUERY_ESTRING);
-  SERVER_NAME = rb_enc_str_new_literal("SERVER_NAME", BinaryEncoding);
+  SERVER_NAME = rb_enc_str_new_cstr("SERVER_NAME", BinaryEncoding);
   rb_global_variable(&SERVER_NAME);
   rb_obj_freeze(SERVER_NAME);
-  SERVER_PORT = rb_enc_str_new_literal("SERVER_PORT", BinaryEncoding);
+  SERVER_PORT = rb_enc_str_new_cstr("SERVER_PORT", BinaryEncoding);
   rb_global_variable(&SERVER_PORT);
   rb_obj_freeze(SERVER_PORT);
-  SERVER_PORT_80 = rb_enc_str_new_literal("80", BinaryEncoding);
+  SERVER_PORT_80 = rb_enc_str_new_cstr("80", BinaryEncoding);
   rb_global_variable(&SERVER_PORT_80);
   rb_obj_freeze(SERVER_PORT_80);
-  SERVER_PORT_443 = rb_enc_str_new_literal("443", BinaryEncoding);
+  SERVER_PORT_443 = rb_enc_str_new_cstr("443", BinaryEncoding);
   rb_global_variable(&SERVER_PORT_443);
   rb_obj_freeze(SERVER_PORT_443);
-  R_VERSION = rb_enc_str_new_literal("rack.version", BinaryEncoding);
+  R_VERSION = rb_enc_str_new_cstr("rack.version", BinaryEncoding);
   rb_global_variable(&R_VERSION);
   rb_obj_freeze(R_VERSION);
-  R_SCHEME = rb_enc_str_new_literal("rack.url_scheme", BinaryEncoding);
+  R_SCHEME = rb_enc_str_new_cstr("rack.url_scheme", BinaryEncoding);
   rb_global_variable(&R_SCHEME);
   rb_obj_freeze(R_SCHEME);
-  R_SCHEME_HTTP = rb_enc_str_new_literal("http", BinaryEncoding);
+  R_SCHEME_HTTP = rb_enc_str_new_cstr("http", BinaryEncoding);
   rb_global_variable(&R_SCHEME_HTTP);
   rb_obj_freeze(R_SCHEME_HTTP);
-  R_SCHEME_HTTPS = rb_enc_str_new_literal("https", BinaryEncoding);
+  R_SCHEME_HTTPS = rb_enc_str_new_cstr("https", BinaryEncoding);
   rb_global_variable(&R_SCHEME_HTTPS);
   rb_obj_freeze(R_SCHEME_HTTPS);
-  R_INPUT = rb_enc_str_new_literal("rack.input", BinaryEncoding);
+  R_INPUT = rb_enc_str_new_cstr("rack.input", BinaryEncoding);
   rb_global_variable(&R_INPUT);
   rb_obj_freeze(R_INPUT);
-  R_ERRORS = rb_enc_str_new_literal("rack.errors", BinaryEncoding);
+  R_ERRORS = rb_enc_str_new_cstr("rack.errors", BinaryEncoding);
   rb_global_variable(&R_ERRORS);
   rb_obj_freeze(R_ERRORS);
-  R_MTHREAD = rb_enc_str_new_literal("rack.multithread", BinaryEncoding);
+  R_MTHREAD = rb_enc_str_new_cstr("rack.multithread", BinaryEncoding);
   rb_global_variable(&R_MTHREAD);
   rb_obj_freeze(R_MTHREAD);
-  R_MPROCESS = rb_enc_str_new_literal("rack.multiprocess", BinaryEncoding);
+  R_MPROCESS = rb_enc_str_new_cstr("rack.multiprocess", BinaryEncoding);
   rb_global_variable(&R_MPROCESS);
   rb_obj_freeze(R_MPROCESS);
-  R_RUN_ONCE = rb_enc_str_new_literal("rack.run_once", BinaryEncoding);
+  R_RUN_ONCE = rb_enc_str_new_cstr("rack.run_once", BinaryEncoding);
   rb_global_variable(&R_RUN_ONCE);
   rb_obj_freeze(R_RUN_ONCE);
-  R_HIJACK_Q = rb_enc_str_new_literal("rack.hijack?", BinaryEncoding);
+  R_HIJACK_Q = rb_enc_str_new_cstr("rack.hijack?", BinaryEncoding);
   rb_global_variable(&R_HIJACK_Q);
   rb_obj_freeze(R_HIJACK_Q);
-  R_HIJACK = rb_enc_str_new_literal("rack.hijack", BinaryEncoding);
+  R_HIJACK = rb_enc_str_new_cstr("rack.hijack", BinaryEncoding);
   rb_global_variable(&R_HIJACK);
   rb_obj_freeze(R_HIJACK);
-  R_HIJACK_IO = rb_enc_str_new_literal("rack.hijack_io", BinaryEncoding);
+  R_HIJACK_IO = rb_enc_str_new_cstr("rack.hijack_io", BinaryEncoding);
   rb_global_variable(&R_HIJACK_IO);
   rb_obj_freeze(R_HIJACK_IO);
-  R_HIJACK_CB = rb_enc_str_new_literal("iodine.hijack_cb", BinaryEncoding);
+  R_HIJACK_CB = rb_enc_str_new_cstr("iodine.hijack_cb", BinaryEncoding);
   rb_global_variable(&R_HIJACK_CB);
   rb_obj_freeze(R_HIJACK_CB);
 
   // setup for Rack version 1.3.
   R_VERSION_V = rb_ary_new_capa(2);
-  rb_ary_push(R_VERSION_V, rb_enc_str_new_literal("1", BinaryEncoding));
-  rb_ary_push(R_VERSION_V, rb_enc_str_new_literal("3", BinaryEncoding));
+  rb_ary_push(R_VERSION_V, rb_enc_str_new_cstr("1", BinaryEncoding));
+  rb_ary_push(R_VERSION_V, rb_enc_str_new_cstr("3", BinaryEncoding));
   rb_global_variable(&R_VERSION_V);
   R_ERRORS_V = rb_stdout;
 
   // extending rack for often used, non-standard, env keys.
-  HTTP_VERSION = rb_enc_str_new_literal("HTTP_VERSION", BinaryEncoding);
+  HTTP_VERSION = rb_enc_str_new_cstr("HTTP_VERSION", BinaryEncoding);
   rb_global_variable(&HTTP_VERSION);
   rb_obj_freeze(HTTP_VERSION);
-  REQUEST_URI = rb_enc_str_new_literal("REQUEST_URI", BinaryEncoding);
+  REQUEST_URI = rb_enc_str_new_cstr("REQUEST_URI", BinaryEncoding);
   rb_global_variable(&REQUEST_URI);
   rb_obj_freeze(REQUEST_URI);
   // Websocket Upgrade
-  UPGRADE_HEADER = rb_enc_str_new_literal("Upgrade", BinaryEncoding);
+  UPGRADE_HEADER = rb_enc_str_new_cstr("Upgrade", BinaryEncoding);
   rb_global_variable(&UPGRADE_HEADER);
   rb_obj_freeze(UPGRADE_HEADER);
-  CONNECTION_HEADER = rb_enc_str_new_literal("connection", BinaryEncoding);
+  CONNECTION_HEADER = rb_enc_str_new_cstr("connection", BinaryEncoding);
   rb_global_variable(&CONNECTION_HEADER);
   rb_obj_freeze(CONNECTION_HEADER);
-  CONNECTION_CLOSE = rb_enc_str_new_literal("close", BinaryEncoding);
+  CONNECTION_CLOSE = rb_enc_str_new_cstr("close", BinaryEncoding);
   rb_global_variable(&CONNECTION_CLOSE);
   rb_obj_freeze(CONNECTION_CLOSE);
-  WEBSOCKET_STR = rb_enc_str_new_literal("websocket", BinaryEncoding);
+  WEBSOCKET_STR = rb_enc_str_new_cstr("websocket", BinaryEncoding);
   rb_global_variable(&WEBSOCKET_STR);
   rb_obj_freeze(WEBSOCKET_STR);
-  WEBSOCKET_VER = rb_enc_str_new_literal("13", BinaryEncoding);
+  WEBSOCKET_VER = rb_enc_str_new_cstr("13", BinaryEncoding);
   rb_global_variable(&WEBSOCKET_VER);
   rb_obj_freeze(WEBSOCKET_VER);
   WEBSOCKET_SEC_VER =
-      rb_enc_str_new_literal("sec-websocket-version", BinaryEncoding);
+      rb_enc_str_new_cstr("sec-websocket-version", BinaryEncoding);
   rb_global_variable(&WEBSOCKET_SEC_VER);
   rb_obj_freeze(WEBSOCKET_SEC_VER);
   WEBSOCKET_SEC_EXT =
-      rb_enc_str_new_literal("sec-websocket-extensions", BinaryEncoding);
+      rb_enc_str_new_cstr("sec-websocket-extensions", BinaryEncoding);
   rb_global_variable(&WEBSOCKET_SEC_EXT);
   rb_obj_freeze(WEBSOCKET_SEC_EXT);
   WEBSOCKET_SEC_ACPT =
-      rb_enc_str_new_literal("sec-websocket-accept", BinaryEncoding);
+      rb_enc_str_new_cstr("sec-websocket-accept", BinaryEncoding);
   rb_global_variable(&WEBSOCKET_SEC_ACPT);
   rb_obj_freeze(WEBSOCKET_SEC_ACPT);
   // sendfile - for later...
-  XSENDFILETYPE = rb_enc_str_new_literal("X-Sendfile-Type", BinaryEncoding);
+  XSENDFILETYPE = rb_enc_str_new_cstr("X-Sendfile-Type", BinaryEncoding);
   rb_global_variable(&XSENDFILETYPE);
   rb_obj_freeze(XSENDFILETYPE);
-  XSENDFILE = rb_enc_str_new_literal("X-Sendfile", BinaryEncoding);
+  XSENDFILE = rb_enc_str_new_cstr("X-Sendfile", BinaryEncoding);
   rb_global_variable(&XSENDFILE);
   rb_obj_freeze(XSENDFILE);
 

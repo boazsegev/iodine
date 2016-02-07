@@ -1,5 +1,6 @@
 #include "iodine_websocket.h"
 #include <ruby/io.h>
+#include <arpa/inet.h>
 
 /* ////////////////////////////////////////////////////////////
 This file creates an HTTP server based on the Iodine libraries.
