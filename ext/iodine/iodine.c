@@ -138,9 +138,10 @@ static void each_protocol_async_schedule(struct Server* srv,
   Server.fd_task(srv, fd, each_protocol_async, task);
 }
 
-// A helper method that any object with a server instance variable can link to.
-// schedules async tasks while managing their Ruby registry.
-// used by Iodine (core) and DynProtocol (and future objects)
+/*
+This schedules a task to be performed asynchronously. In a multi-threaded
+setting, tasks might be performed concurrently.
+*/
 static VALUE run_async(VALUE self) {
   // requires a block to be passed
   rb_need_block();
@@ -163,9 +164,14 @@ static VALUE run_async(VALUE self) {
   return block;
 }
 
-// A helper method that any object with a server instance variable can link to.
-// schedules async tasks while managing their Ruby registry.
-// used by Iodine (core) and DynProtocol (and future objects)
+/**
+Runs a connectionless task after the specified number of milliseconds have
+passed. The task will NOT repeat.
+
+Running timer based tasks requires the use of a file descriptor on the server,
+meanining that it will require the resources of a single connection and will
+be counted as a connection when calling {#connection_count}
+*/
 static VALUE run_after(VALUE self, VALUE milliseconds) {
   // requires a block to be passed
   rb_need_block();
@@ -186,9 +192,17 @@ static VALUE run_after(VALUE self, VALUE milliseconds) {
   return block;
 }
 
-// A helper method that any object with a server instance variable can link to.
-// schedules async tasks while managing their Ruby registry.
-// used by Iodine (core) and DynProtocol (and future objects)
+/**
+Runs a persistent connectionless task every time the specified number of
+milliseconds have passed.
+
+Persistent tasks stay in the memory until Ruby exits.
+
+**Use {#run_after} recorsively for a task that repeats itself for a limited
+amount of times**.
+
+milliseconds:: the number of milliseconds between each cycle.
+*/
 static VALUE run_every(VALUE self, VALUE milliseconds) {
   // requires a block to be passed
   rb_need_block();
@@ -210,7 +224,19 @@ static VALUE run_every(VALUE self, VALUE milliseconds) {
   return block;
 }
 
-// run a protocol task (preventing concurrency)
+/**
+This schedules a task to be performed asynchronously within the lock of this
+protocol's connection.
+
+The task won't be performed while `on_message` or `on_data` is still active.
+
+No single connection will perform more then a single task at a time, except for
+`on_open`, `on_close`, `ping`, and `on_shutdown` which are executed within the
+reactor's thread and shouldn't perform any long running tasks.
+
+This means that all `on_data`, `on_message`, `each` and `defer` tasks are
+exclusive per connection.
+*/
 static VALUE run_protocol_task(VALUE self) {
   // requires a block to be passed
   rb_need_block();
@@ -260,7 +286,9 @@ static VALUE run_each(VALUE self) {
 /////////////////////////////////////
 // connection counting and references.
 
-// counts all the connections on the server
+/**
+Returns the number of total connections (including timers) in the reactor.
+*/
 static VALUE count_all(VALUE self) {
   server_pt srv = get_server(self);
   if (!srv)
@@ -300,9 +328,13 @@ The following are it's helper methods and callbacks
 //
 // The functions manage access to these C methods from the Ruby objects.
 
-/* writes data to the connection.
+/**
+Writes all the data in the data String to the connection.
 
-use:
+The data will be saved to an internal buffer and will be written asyncronously
+whenever the socket signals that it's ready to write.
+
+Use:
 
         write "the data"
 */
@@ -312,8 +344,29 @@ static VALUE srv_write(VALUE self, VALUE data) {
   return LONG2FIX(Server.write(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data)));
 }
 
-/* writes data to the connection, pushing the data as early in the queue as
-possible without distrupting the data's integrity. */
+/**
+Writes all the data in the data String to the connection, pushing the data as
+early in the queue as
+possible without distrupting the data's integrity.
+
+The data will be saved to an internal buffer and will be written asyncronously
+whenever the socket signals that it's ready to write.
+
+If a write buffer already contains multiple items in it's queue (package based
+protocol),
+the data will be queued as the next "package" to be sent, so that packages
+aren't corrupted or injected in the middle of other packets.
+
+A "package" refers to a unit of data sent using {#write} or to a file sent using
+the {#sendfile} method, and not to the TCP/IP packets.
+This allows to easily write protocols that package their data, such as HTTP/2.
+
+{#write_urgent}'s best use-case is the `ping`, which shouldn't corrupt any data
+being sent, but must be sent as soon as possible.
+
+#{write}, {#write_urgent} and #{close} are designed to be thread safe.
+
+*/
 static VALUE srv_write_urgent(VALUE self, VALUE data) {
   struct Server* srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
@@ -321,7 +374,22 @@ static VALUE srv_write_urgent(VALUE self, VALUE data) {
       Server.write_urgent(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data)));
 }
 
-/*  reads from a connection, up to x size bytes, defaults to 10Kb bytes. */
+/**
+Reads `n` bytes from the network connection.
+
+The number of bytes to be read (n) is:
+
+- the number of bytes set in the optional `buffer_or_length` argument.
+
+- the String capacity (not length) of the String passed as the optional
+  `buffer_or_length` argument.
+
+- 1024 Bytes (1Kb) if the optional `buffer_or_length` is either missing or
+  contains a String who's capacity is less then 1Kb.
+
+Always returns a String (either the same one used as the buffer or a new one).
+The string will be empty if no data was available.
+*/
 static VALUE srv_read(int argc, VALUE* argv, VALUE self) {
   if (argc > 1) {
     rb_raise(
@@ -373,7 +441,14 @@ static VALUE srv_read(int argc, VALUE* argv, VALUE self) {
   return str;
 }
 
-// closes a connection, gracefully.
+/**
+Closes the connection.
+
+If there is an internal write buffer with pending data to be sent (see
+{#write}),
+{#close} will return immediately and the connection will only be closed when all
+the data was sent.
+ */
 static VALUE srv_close(VALUE self, VALUE data) {
   struct Server* srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
@@ -381,14 +456,34 @@ static VALUE srv_close(VALUE self, VALUE data) {
   return Qnil;
 }
 
-// closes a connection, without waiting for writing to finish.
+/**
+Closes the connection immediately, even if there's still data waiting to be sent
+(see {#close} and {#write}).
+*/
 static VALUE srv_force_close(VALUE self, VALUE data) {
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
   close(fd);
   return Qnil;
 }
 
-// replaces a connection's existing protocol with another.
+/**
+Replaces the current protocol instance with another.
+
+The `handler` is expected to be a protocol instance object.
+Once it is passed to the {#upgrade} method, it's class will be extended to
+include
+Iodine's API (by way of a mixin) and it's `on_open` callback will be called.
+
+If `handler` is a class, the API will be injected to the class (by way of a
+mixin)
+and a new instance will be created before calling `on_open`.
+
+Use:
+    new_protocol = MyProtocol.new
+    self.upgrade(new_protocol)
+Or:
+    self.upgrade(MyProtocol)
+*/
 static VALUE srv_upgrade(VALUE self, VALUE protocol) {
   if (protocol == Qnil)
     return Qnil;
