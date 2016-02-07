@@ -203,18 +203,24 @@ static VALUE request_to_env(struct HttpRequest* request) {
   rb_hash_aset(env, R_HIJACK, hj_method);
   rb_hash_aset(env, R_HIJACK_IO, Qnil);
   // itterate through the headers and set the HTTP_X "variables"
+  // we will do so destructively (overwriting the Parser's data)
   HttpRequest.first(request);
   {
-    char *name, *value;
+    char *name, *value, *tmp;
     VALUE header;
     do {
-      name = HttpRequest.name(request);
+      tmp = name = HttpRequest.name(request);
       value = HttpRequest.value(request);
       // careful, pointer comparison crashed Ruby (although it works without
       // Ruby)... this could be an issue.
       if (value == (request->content_type) ||
           (name[0] == 'C' && !strcmp(name, "CONTENT-LENGTH")))
         continue;
+
+      // replace '-' with '_' for header name
+      while (*(++tmp))
+        if (*tmp == '-')
+          *tmp = '_';
       header = rb_sprintf("HTTP_%s", name);
       rb_enc_associate(header, BinaryEncoding);
       rb_hash_aset(env, header,
@@ -540,7 +546,7 @@ static void* handle_request_in_gvl(void* _res) {
   // Notice the assignment of the callback stored as udata 1.
   if (request->upgrade && !strcasecmp(request->upgrade, "websocket") &&
       (response = (VALUE)Server.get_udata(request->server, 1)) &&
-      HttpRequest.find(request, "SEC-WEBSOCKET-VERSION") &&
+      HttpRequest.find(request, "SEC_WEBSOCKET_VERSION") &&
       (recv_str = HttpRequest.value(request)) && recv_str[0] == '1' &&
       recv_str[1] == '3') {
     // a regular request is forwarded to the websocket callback (stored in 0).
@@ -567,7 +573,7 @@ static void* handle_request_in_gvl(void* _res) {
       // websocket extentions (none)
       // rb_hash_aset(env, WEBSOCKET_SEC_EXT, QUERY_ESTRING);
       // the accept Base64 Hash - we need to compute this one and set it
-      if (!HttpRequest.find(request, "SEC-WEBSOCKET-KEY"))
+      if (!HttpRequest.find(request, "SEC_WEBSOCKET_KEY"))
         goto refuse_websocket;
       // the client's unique string
       recv_str = HttpRequest.value(request);

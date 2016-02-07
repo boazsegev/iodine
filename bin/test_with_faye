@@ -37,7 +37,7 @@ Iodine::Rack.on_http = lambda do |env|
   end
 end
 
-Iodine::Rack.timeout = 80
+Iodine::Rack.timeout = 2
 Iodine::Rack.start
 
 # ws = new WebSocket("ws://localhost:3000"); ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);}; ws.onclose = function(e) {console.log("closed")}; ws.onopen = function(e) {ws.send("hi");};
