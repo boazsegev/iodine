@@ -6,6 +6,8 @@ puts `rake compile`
 
 require 'benchmark'
 require 'faye/websocket'
+# require 'thin'
+# Faye::WebSocket.load_adapter('thin')
 
 $LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
 require "bundler/setup"

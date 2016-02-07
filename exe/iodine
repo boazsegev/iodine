@@ -1,0 +1,9 @@
+#!/usr/bin/env ruby
+
+require 'iodine'
+require 'rack'
+
+
+filename = (ARGV[-2].to_s[0] != '-' && AGRV[-1]) || "config.ru"
+app, opt = Rack::Builder.parse_file filename
+Iodine::Rack.run(app, opt)

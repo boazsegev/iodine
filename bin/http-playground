@@ -42,7 +42,9 @@ server.public_folder = '/Users/2Be/Documents/Scratch'
 server.on_http= Proc.new do |env|
   out = env["rack.hijack"].call
   server.run_after(3000) {
-    env["rack.hijack_io"].write "Hi!"
+    env["rack.hijack_io"].write "Hi!\n"
+    p out.addr
+    p out.peeraddr
   }
   [-1,{}, []]
   # out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
@@ -105,6 +107,7 @@ server.start
 # ws = new WebSocket("ws://localhost:3000"); ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);}; ws.onclose = function(e) {console.log("closed")}; ws.onopen = function(e) {ws.send("hi");};
 
 
+# telnet localhost 3000
 # GET /Bo.jpg HTTP/1.1
 # host: localhost:3000
 #

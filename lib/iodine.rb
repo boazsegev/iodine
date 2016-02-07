@@ -33,8 +33,10 @@ class Iodine
     end
     @protocol = state[:protocol]
     @port = (state[:port] || (ARGV.index('-p') && ARGV[ARGV.index('-p') + 1]) || ENV['PORT'] || "3000").to_i
-    @threads = state[:threads]
-    @processes = state[:processes]
+    @threads = (state[:threads] || (ARGV.index('-t') && ARGV[ARGV.index('-t') + 1]) || ENV['MAX_THREADS'])
+    @threads = @threads.to_i if @threads
+    @processes = (state[:processes] || (ARGV.index('-f') && ARGV[ARGV.index('-f') + 1]) || ENV['MAX_FORKS'])
+    @processes = @processes.to_i if @processes
     @timeout = state[:timeout]
     @busy_msg = state[:busy_msg]
   end

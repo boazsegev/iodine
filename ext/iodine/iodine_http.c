@@ -316,7 +316,7 @@ static int send_response(struct HttpRequest* request, VALUE response) {
     tmp = rb_str_to_inum(tmp, 10, 0);
   if (TYPE(tmp) != T_FIXNUM || (tmp = FIX2INT(tmp)) > 512 || tmp < 100 ||
       !(tmp_s = HttpStatus.to_s(tmp))) {
-    if (FIX2INT(tmp) < 0)
+    if (FIX2INT(tmp) <= 0)
       return 0;  // faye return status -1 on hijack
     goto internal_err;
   }
