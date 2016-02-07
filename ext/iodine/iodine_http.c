@@ -848,9 +848,9 @@ static VALUE http_start(VALUE self) {
   // setup some Rack dynamic values
   R_MTHREAD_V = settings.threads > 1 ? Qtrue : Qfalse;
   R_MPROCESS_V = settings.processes > 1 ? Qtrue : Qfalse;
-  // rb_thread_call_without_gvl(slow_func, slow_arg, unblck_func,
+  // rb_thread_call_without_gvl2(slow_func, slow_arg, unblck_func,
   // unblck_arg);
-  rb_thread_call_without_gvl(srv_start_no_gvl, &settings, unblck, NULL);
+  rb_thread_call_without_gvl2(srv_start_no_gvl, &settings, unblck, NULL);
   return self;
 }
 

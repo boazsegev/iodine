@@ -92,13 +92,6 @@ void* resize_buffer_in_gvl(void* data) {
                                 ws->parser.received);
   return 0;
 }
-void* reset_buffer_in_gvl(void* data) {
-  struct WebsocketProtocol* ws = data;
-  rb_str_modify(ws->buffer);
-  rb_str_set_len(ws->buffer, 0);
-  rb_enc_associate(ws->buffer, BinaryEncoding);
-  return 0;
-}
 
 void* dup_and_on_message_in_gvl(void* data) {
   struct WebsocketProtocol* ws = data;
@@ -106,6 +99,10 @@ void* dup_and_on_message_in_gvl(void* data) {
   //        RubyCaller.call_unsafe(ws->buffer, dup_func_id);
   VALUE str = rb_obj_dup(ws->buffer);
   RubyCaller.call_unsafe2(ws->handler, on_msg_func_id, 1, &str);
+  // reset the buffer
+  rb_str_modify(ws->buffer);
+  rb_str_set_len(ws->buffer, 0);
+  rb_enc_associate(ws->buffer, BinaryEncoding);
   return 0;
 }
 
@@ -279,20 +276,34 @@ static VALUE ws_each(VALUE self) {
   return block;
 }
 
+/**
+Returns the number of total websocket connections in this specific process.
+*/
+static VALUE ws_count(VALUE self) {
+  server_pt srv = get_server(self);
+  if (!srv)
+    rb_raise(rb_eRuntimeError, "Server isn't running.");
+  return LONG2FIX(Server.count(srv, ws_service_name));
+}
+
 //////////////////////////////////////
 // Protocol Callbacks
 void on_close(server_pt server, int sockfd) {
   struct WebsocketProtocol* ws =
       (struct WebsocketProtocol*)Server.get_protocol(server, sockfd);
-  RubyCaller.call(ws->handler, on_close_func_id);
+  if (!ws)
+    return;
   Server.set_udata(server, sockfd, NULL);
+  RubyCaller.call(ws->handler, on_close_func_id);
   WebsocketProtocol_destroy(ws);
 }
 void on_shutdown(server_pt server, int sockfd) {
   struct WebsocketProtocol* ws =
       (struct WebsocketProtocol*)Server.get_protocol(server, sockfd);
-  RubyCaller.call(ws->handler, on_shutdown_func_id);
-  websocket_close(server, sockfd);
+  if (ws) {
+    RubyCaller.call(ws->handler, on_shutdown_func_id);
+    websocket_close(server, sockfd);
+  }
 }
 
 void ping(server_pt server, int sockfd) {
@@ -304,6 +315,8 @@ void ping(server_pt server, int sockfd) {
 void on_data(server_pt server, int sockfd) {
   struct WebsocketProtocol* ws =
       (struct WebsocketProtocol*)Server.get_protocol(server, sockfd);
+  if (!ws)
+    return;
   ssize_t len = 0;
   int pos = 0;
   int data_len = 0;
@@ -521,9 +534,10 @@ void on_data(server_pt server, int sockfd) {
       ws->parser.psize.len2 = 0;
       ws->parser.length = 0;
       ws->parser.received = 0;
-      // clear the Ruby buffer
-      rb_thread_call_with_gvl(reset_buffer_in_gvl, ws);
-      // rb_str_set_len(ws->buffer, 0);
+      // The Ruby buffer was cleared within the GVL, the following should be
+      // safe now that we know the String isn't shared (it's here in case we got
+      // here without forwarding the data).
+      rb_str_set_len(ws->buffer, 0);
       // rb_enc_associate(ws->buffer, BinaryEncoding);
     }
   }
@@ -641,10 +655,12 @@ void Init_websocket(void) {
   rb_define_method(rWebsocket, "on_shutdown", empty_func, 0);
   rb_define_method(rWebsocket, "on_close", empty_func, 0);
   // // helper methods
-  // add_helper_methods(rWebsocket);
+  iodine_add_helper_methods(rWebsocket);
   rb_define_method(rWebsocket, "write", ws_write, 1);
   rb_define_method(rWebsocket, "close", ws_close, 0);
   rb_define_method(rWebsocket, "each", ws_each, -2);
+
+  rb_define_method(rWebsocket, "ws_count", ws_count, 0);
 }
 
 struct __Websockets__CLASS__ Websockets = {

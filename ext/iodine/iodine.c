@@ -129,6 +129,21 @@ static void each_protocol_async(struct Server* srv, int fd, void* task) {
   Registry.remove((VALUE)task);
 }
 
+struct _CallRunEveryUsingGVL {
+  server_pt srv;
+  void* task;
+  void* arg;
+  long mili;
+  int rep;
+};
+// performs pending protocol task while managing it's Ruby registry.
+// initiated by each
+static void* _create_timer_without_gvl(void* _data) {
+  struct _CallRunEveryUsingGVL* t = _data;
+  Server.run_every(t->srv, t->mili, t->rep, t->task, t->arg);
+  return 0;
+}
+
 static void each_protocol_async_schedule(struct Server* srv,
                                          int fd,
                                          void* task) {
@@ -171,6 +186,10 @@ passed. The task will NOT repeat.
 Running timer based tasks requires the use of a file descriptor on the server,
 meanining that it will require the resources of a single connection and will
 be counted as a connection when calling {#connection_count}
+
+NOTICE: Timers cannot be created from within the `on_close` callback, as this
+might result in deadlocking the connection (as timers are types of connections
+and the timer might require the resources of the closing connection).
 */
 static VALUE run_after(VALUE self, VALUE milliseconds) {
   // requires a block to be passed
@@ -188,7 +207,16 @@ static VALUE run_after(VALUE self, VALUE milliseconds) {
   // register the task
   Registry.add(block);
   // schedule using perform_async (deregisters the block on completion).
-  Server.run_after(srv, FIX2LONG(milliseconds), perform_async, (void*)block);
+  struct _CallRunEveryUsingGVL tsk = {.srv = srv,
+                                      .mili = FIX2LONG(milliseconds),
+                                      .task = perform_async,
+                                      .arg = (void*)block,
+                                      .rep = 1};
+  // schedule using perform_repeated_timer (doesn't deregister the block).
+  // Using `Server.run_after` might cause an `on_close` to be called,
+  // deadlocking Ruby's GVL.. we have to exit the GVL for this one...
+  // Server.run_after(srv, FIX2LONG(milliseconds), perform_async, (void*)block);
+  rb_thread_call_without_gvl2(_create_timer_without_gvl, &tsk, NULL, NULL);
   return block;
 }
 
@@ -202,6 +230,10 @@ Persistent tasks stay in the memory until Ruby exits.
 amount of times**.
 
 milliseconds:: the number of milliseconds between each cycle.
+
+NOTICE: Timers cannot be created from within the `on_close` callback, as this
+might result in deadlocking the connection (as timers are types of connections
+and the timer might require the resources of the closing connection).
 */
 static VALUE run_every(VALUE self, VALUE milliseconds) {
   // requires a block to be passed
@@ -219,8 +251,16 @@ static VALUE run_every(VALUE self, VALUE milliseconds) {
   // register the block
   Registry.add(block);
   // schedule using perform_repeated_timer (doesn't deregister the block).
-  Server.run_every(srv, FIX2LONG(milliseconds), 0, perform_repeated_timer,
-                   (void*)block);
+  struct _CallRunEveryUsingGVL tsk = {.srv = srv,
+                                      .mili = FIX2LONG(milliseconds),
+                                      .task = perform_repeated_timer,
+                                      .arg = (void*)block,
+                                      .rep = 0};
+  // Using `Server.run_every` might cause an `on_close` to be called,
+  // deadlocking Ruby's GVL.. we have to exit the GVL for this one...
+  // Server.run_every(srv, FIX2LONG(milliseconds), 0, perform_repeated_timer,
+  //                  (void*)block);
+  rb_thread_call_without_gvl2(_create_timer_without_gvl, &tsk, NULL, NULL);
   return block;
 }
 
@@ -296,15 +336,11 @@ static VALUE count_all(VALUE self) {
   return LONG2FIX(Server.count(srv, NULL));
 }
 
-void iodine_add_helper_methods(VALUE klass, int deffer) {
-  rb_define_method(klass, "connection_count", count_all, 0);
-  rb_define_method(klass, "each", run_each, 0);
+void iodine_add_helper_methods(VALUE klass) {
   rb_define_method(klass, "run", run_async, 0);
   rb_define_method(klass, "run_after", run_after, 1);
   rb_define_method(klass, "run_every", run_every, 1);
-
-  if (deffer)
-    rb_define_method(klass, "defer", run_protocol_task, 0);
+  rb_define_method(klass, "defer", run_protocol_task, 0);
 }
 ////////////////////////////////////////////////////////////////////////
 /* /////////////////////////////////////////////////////////////////////
@@ -633,7 +669,12 @@ static void init_dynamic_protocol(void) {  // The Protocol module will inject
   rb_define_method(rDynProtocol, "on_shutdown", empty_func, 0);
   rb_define_method(rDynProtocol, "on_close", empty_func, 0);
   // helper methods
-  iodine_add_helper_methods(rDynProtocol, 1);
+  rb_define_method(rDynProtocol, "connection_count", count_all, 0);
+  rb_define_method(rDynProtocol, "each", run_each, 0);
+  rb_define_method(rDynProtocol, "run", run_async, 0);
+  rb_define_method(rDynProtocol, "run_after", run_after, 1);
+  rb_define_method(rDynProtocol, "run_every", run_every, 1);
+  rb_define_method(rDynProtocol, "defer", run_protocol_task, 0);
   rb_define_method(rDynProtocol, "read", srv_read, -1);
   rb_define_method(rDynProtocol, "write", srv_write, 1);
   rb_define_method(rDynProtocol, "write_urgent", srv_write_urgent, 1);
@@ -803,8 +844,8 @@ static VALUE srv_start(VALUE self) {
       .udata = &self,
       .busy_msg = (rb_busymsg == Qnil ? NULL : StringValueCStr(rb_busymsg)),
   };
-  // rb_thread_call_without_gvl(slow_func, slow_arg, unblck_func, unblck_arg);
-  rb_thread_call_without_gvl(srv_start_no_gvl, &settings, unblck, NULL);
+  // rb_thread_call_without_gvl2(slow_func, slow_arg, unblck_func, unblck_arg);
+  rb_thread_call_without_gvl2(srv_start_no_gvl, &settings, unblck, NULL);
   return self;
 }
 
@@ -832,7 +873,13 @@ void Init_iodine(void) {
 
   // The core Iodine class wraps the ServerSettings and little more.
   rIodine = rb_define_class("Iodine", rb_cObject);
-  iodine_add_helper_methods(rIodine, 0);
+
+  rb_define_method(rIodine, "connection_count", count_all, 0);
+  rb_define_method(rIodine, "each", run_each, 0);
+  rb_define_method(rIodine, "run", run_async, 0);
+  rb_define_method(rIodine, "run_after", run_after, 1);
+  rb_define_method(rIodine, "run_every", run_every, 1);
+
   rb_define_method(rIodine, "start", srv_start, 0);
   rb_define_method(rIodine, "on_start", on_start, 0);
   // The default protocol for each new connection

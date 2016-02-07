@@ -35,3 +35,5 @@ extern rb_encoding* BinaryEncoding;  // encoding object
 // a macro helper to get the server pointer embeded in an object
 #define get_server(object) \
   (server_pt) DATA_PTR(rb_ivar_get((object), server_var_id))
+
+void iodine_add_helper_methods(VALUE klass);

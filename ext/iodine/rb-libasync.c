@@ -94,8 +94,8 @@ static void* thread_loop_no_gvl(struct Async* async) {
 }
 // the thread's GVL release
 VALUE thread_loop(void* async) {
-  rb_thread_call_without_gvl((void* (*)(void*))thread_loop_no_gvl, async,
-                             (void (*)(void*))async_kill, async);
+  rb_thread_call_without_gvl2((void* (*)(void*))thread_loop_no_gvl, async,
+                              (void (*)(void*))async_kill, async);
   return Qnil;
 }
 

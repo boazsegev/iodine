@@ -55,6 +55,7 @@ static void* run_ruby_method_within_gvl(void* _tsk) {
 // wrapping any API calls for exception management AND GVL entry
 static VALUE call(VALUE obj, ID method) {
   struct RubySimpleCall task = {.obj = obj, .method = method};
+  // if (ruby_thread_has_gvl_p())
   rb_thread_call_with_gvl(run_ruby_method_within_gvl, &task);
   return task.returned;
 }

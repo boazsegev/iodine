@@ -16,11 +16,20 @@ require "iodine/http"
 
 
 class WSEcho
+  def initialize srv
+    @srv = srv
+  end
   def on_open
     puts "We have a websocket connection"
+    @srv.run_after(1000) {puts "I got #{ws_count}"}
   end
   def on_close
-    puts "Bye Bye..."
+    puts "Bye Bye... only #{ws_count} left..."
+    # this is a special case where we are initializing a new fd
+    # when this fd just closed - probably overwriting our own data.
+    # solve this, and we're probably done debuging ;-)
+    run {puts "I miss them... now I have only #{ws_count}"}
+    run_after(10000) {puts "I miss them... now I have only #{ws_count}"}
   end
   def on_shutdown
     puts "I'm shutting down #{self}"
@@ -56,10 +65,12 @@ server.on_http= Proc.new do |env|
 end
 
 server.on_websocket= Proc.new do |env|
-  [0,{}, [], WSEcho];
+  [0,{}, [], WSEcho.new(server)];
 end
 
 server.on_start do
+  server.run {puts "I'm running!"}
+  server.run_after(5000) {puts "5 seconds have passed."}
   server.run_every(1000) {puts "running...#{server.connection_count} clients"}
   # server.run_every(1000) do
   #   begin
