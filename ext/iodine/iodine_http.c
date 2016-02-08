@@ -667,15 +667,6 @@ static void on_init(struct Server* server) {
   if (rb_iv_get(core_instance, "@on_websocket") != Qnil)
     Server.set_udata(server, 1,
                      (void*)rb_iv_get(core_instance, "@on_websocket"));
-  // message
-  VALUE version_val = rb_const_get(rIodine, rb_intern("VERSION"));
-  char* version_str = StringValueCStr(version_val);
-  fprintf(stderr,
-          "Starting up Iodine's HTTP server, V. %s using %d thread%s X %d "
-          "processes\n",
-          version_str, Server.settings(server)->threads,
-          (Server.settings(server)->threads > 1 ? "s" : ""),
-          Server.settings(server)->processes);
   // set the server variable in the core server object.. is this GC safe?
   set_server(core_instance, server);
   // perform on_init callback
@@ -697,9 +688,18 @@ static void on_idle(struct Server* srv) {
 // the no-GVL state
 static void* srv_start_no_gvl(void* _settings) {
   struct ServerSettings* settings = _settings;
+  // Write message
+  VALUE version_val = rb_const_get(rIodine, rb_intern("VERSION"));
+  char* version_str = StringValueCStr(version_val);
+  fprintf(stderr,
+          "Starting up Iodine's HTTP server, V. %s using %d thread%s X %d "
+          "processes\n",
+          version_str, settings->threads, (settings->threads > 1 ? "s" : ""),
+          settings->processes);
+
   long ret = Server.listen(*settings);
   if (ret < 0)
-    perror("Couldn't start server");
+    perror("Failed to start server");
   return 0;
 }
 //
