@@ -3,6 +3,29 @@
 require 'iodine'
 require 'rack'
 
+if(ARGV[0] =~ /(\-\?)|(help)|(\?)$/)
+  puts <<-EOS
+
+Iodine's HTTP/Websocket server version #{Iodine::VERSION}
+
+Use:
+
+    iodine <flags> <filename>
+
+Available otions:
+ -p     Port number. Default: 3000.
+ -t     Number of threads. Default: 1 => single worker thread (+ core thread).
+ -f     Number of forks (processes). Default: 1 => a single process.
+
+Example:
+
+    iodine -p 80
+
+    iodine -p 8080 path/to/app/conf.ru
+
+EOS
+  exit(0)
+end
 
 filename = (ARGV[-2].to_s[0] != '-' && ARGV[-1]) || "config.ru"
 app, opt = Rack::Builder.parse_file filename

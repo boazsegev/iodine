@@ -66,7 +66,9 @@ Of course, if you still want to use Rack's `hijack` API, Iodine will support you
 
 Since the HTTP and Websocket parsers are written in C (with no RegExp), they're fast.
 
-Since Iodine is still under development, I'm not posting any data, but you can compare the performance for yourself using `wrk` or `ab`:
+Also, Iodine's core and parsers are running outside of Ruby's global lock, meaning that they enjoy true concurrency before entering the Ruby layer (your application) - this offers Iodine a big advantage over other servers.
+
+I'm not posting any data because Iodine is still under development and things are somewhat dynamic - but you can compare the performance for yourself using `wrk` or `ab`:
 
 ```bash
 $ wrk -c200 -d4 -t12 http://localhost:3000/
@@ -99,7 +101,16 @@ vs.
 $ rackup -p 3000 -E none -s <Other_Server_Here>
 ```
 
-Don't forget to compare the memory footprint after running some requests - it's not just speed that C is helping with.
+Puma uses up to 16 threads when, so when comparing against Puma, consider using an equal number of threads:
+
+```bash
+// (t - threads)
+$ iodine -p 3000 -t 16
+```
+
+Review the `iodine -?` help for more data.
+
+Remember to compare the memory footprint after running some requests - it's not just speed that C is helping with.
 
 ## Can I try before before I buy?
 
