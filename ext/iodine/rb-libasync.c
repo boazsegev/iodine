@@ -170,11 +170,16 @@ static int async_run(struct Async* self, void (*task)(void*), void* arg) {
 void* join_with_rbthread(void* rbt) {
   return (void*)rb_funcall((VALUE)rbt, rb_intern("join"), 0);
 }
-// finish up
-static void async_finish(struct Async* self) {
+
+////////////
+// API gateway
+
+static void async_signal(struct Async* self) {
   struct Task package = {.task = 0, .arg = 0};
   if (write(self->out, &package, sizeof(struct Task)))
     ;
+}
+static void async_wait(struct Async* self) {
   for (int i = 0; i < self->count; i++) {
     if (!self->thread_pool[i])
       continue;
@@ -186,11 +191,18 @@ static void async_finish(struct Async* self) {
   free(self);
 }
 
+static void async_finish(struct Async* self) {
+  async_signal(self);
+  async_wait(self);
+}
+
 ////////////
 // API gateway
 
 // the API gateway
 const struct AsyncAPI Async = {.new = async_new,
                                .run = async_run,
+                               .signal = async_signal,
+                               .wait = async_wait,
                                .finish = async_finish,
                                .kill = async_kill};

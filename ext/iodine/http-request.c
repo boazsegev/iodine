@@ -51,10 +51,11 @@ static struct HttpRequest* request_new(struct Server* server, int sockfd) {
 
 // the destructor
 static void request_destroy(struct HttpRequest* self) {
-  if (!self)
+  if (!self || !self->server)
     return;
   if (self->body_file)
     fclose(self->body_file);
+  self->server = 0;
   free(self);
 }
 

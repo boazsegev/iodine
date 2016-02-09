@@ -64,6 +64,8 @@ static int http_sendfile(struct HttpRequest* req) {
   // collect the protocol path and the request's path length and data
   struct HttpProtocol* protocol =
       (struct HttpProtocol*)Server.get_protocol(req->server, req->sockfd);
+  if (!protocol)
+    return 1;
   size_t len = strlen(protocol->public_folder);
   // create and initialize the filename, including decoding the path
   char fname[strlen(req->path) + len + 1];
@@ -325,8 +327,11 @@ restart:
     request->private.pos = pos;
     return;
   }  // buffer is empty, but more data is underway
-  else if (len < 0)
-    goto cleanup;  // file error
+  else if (len < 0) {
+    return;
+    // don't cleanup - let `on_close` do it's job
+    // goto cleanup;  // file error
+  }
 
   // adjust length for buffer size positioing (so that len == max pos - 1).
   len += pos;
@@ -472,14 +477,15 @@ finish:
   // disconnect the request object from the server storage
   // this prevents on_close from clearing the memory while on_request is still
   // accessing the request.
-  // It also allows upgrade protocol objects to use the storage for their data.
+  // It also allows upgrade protocol objects to use the storage for their
+  // data.
   Server.set_udata(server, sockfd, NULL);
   // perform callback if a file wasn't sent.
   if ((!protocol->public_folder || !http_sendfile(request)) &&
       protocol->on_request)
     protocol->on_request(request);
-  // we need a different cleanup, because we disconnected the request from the
-  // server's udata.
+  // we need to destroy the request ourselves, because we disconnected the
+  // request from the server's udata.
   HttpRequest.destroy(request);
   return;
 
@@ -487,46 +493,25 @@ options:
   // send a bed request response. hang up.
   send(sockfd, options_req, strlen(options_req), 0);
   close(sockfd);
-  goto cleanup;
+  return;
 
 bad_request:
   // send a bed request response. hang up.
   send(sockfd, bad_req, strlen(bad_req), 0);
   close(sockfd);
-  goto cleanup;
+  return;
 
 too_big:
   // send a bed request response. hang up.
   send(sockfd, too_big_err, strlen(too_big_err), 0);
   close(sockfd);
-  goto cleanup;
+  return;
 
 internal_error:
   // send an internal error response. hang up.
   send(sockfd, intr_err, strlen(intr_err), 0);
   close(sockfd);
-  goto cleanup;
-
-cleanup:
-  // printf("cleanup\n");
-  // cleanup
-  HttpRequest.destroy(Server.set_udata(server, sockfd, NULL));
   return;
-
-  // test:
-  //   static char *http_format = "HTTP/1.1 200 OK\r\n"
-  //                              "Connection: keep-alive\r\n"
-  //                              "Keep-Alive: 1\r\n"
-  //                              "Content-Length: %d\r\n\r\n"
-  //                              "%s";
-  //   char *reply;
-  //   // format a reply an get a pointer.
-  //   asprintf(&reply, http_format, strlen("Hello"), "Hello");
-  //   // send the reply
-  //   protocol->write(sockfd, reply, strlen(reply));
-  //   // free the pointer
-  //   free(reply);
-  //   return;
 }
 
 // implement on_data to parse incoming requests.
@@ -551,21 +536,22 @@ void http_default_on_request(struct HttpRequest* req) {
                  req->content_length) <= 0 ||
         !head) {
       perror("WTF?! head");
-      goto cleanup;
+      return;
     }
-    Server.write_move(req->server, req->sockfd, head, strlen(head));
+    if (Server.write_move(req->server, req->sockfd, head, strlen(head)) < 0)
+      return;
     head = malloc(req->content_length + 1);  // the +1 is redundent.
     if (!head) {
       perror("WTF?! body");
-      goto cleanup;
+      return;
     }
     if (!fread(head, 1, req->content_length, req->body_file)) {
       perror("WTF?! file reading");
       free(head);
-      goto cleanup;
+      return;
     }
     Server.write_move(req->server, req->sockfd, head, req->content_length);
-    goto cleanup;
+    return;
   }
   // write reques's head onto the buffer
   char buff[HTTP_HEAD_MAX_SIZE] = {0};
@@ -611,12 +597,10 @@ void http_default_on_request(struct HttpRequest* req) {
   if (!reply) {
     perror("WTF?!");
     close(req->sockfd);
-    goto cleanup;
+    return;
   }
   // send(req->sockfd, reply, strlen(reply), 0);
   Server.write_move(req->server, req->sockfd, reply, buff_len);
-cleanup:
-  HttpRequest.destroy(req);
 }
 
 ////////////////

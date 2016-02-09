@@ -58,7 +58,7 @@ class Iodine
     @port = (state[:port] || (ARGV.index('-p') && ARGV[ARGV.index('-p') + 1]) || ENV['PORT'] || "3000").to_i
     @threads = (state[:threads] || (ARGV.index('-t') && ARGV[ARGV.index('-t') + 1]) || ENV['MAX_THREADS'])
     @threads = @threads.to_i if @threads
-    @processes = (state[:processes] || (ARGV.index('-w') && ARGV[ARGV.index('-w') + 1]) || ENV['MAX_FORKS'])
+    @processes = (state[:processes] || (ARGV.index('-w') && ARGV[ARGV.index('-w') + 1]) || ENV['MAX_WORKERS'])
     @processes = @processes.to_i if @processes
     @timeout = state[:timeout]
     @busy_msg = state[:busy_msg]

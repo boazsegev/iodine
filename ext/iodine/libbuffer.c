@@ -74,7 +74,7 @@ static inline void* new_buffer(size_t offset) {
 static inline void clear_buffer(struct Buffer* buffer) {
   if (is_buffer(buffer)) {
     pthread_mutex_lock(&buffer->lock);
-    struct Packet* to_free;
+    struct Packet* to_free = NULL;
     while ((to_free = buffer->packet)) {
       buffer->packet = buffer->packet->next;
       free_packet(to_free);
@@ -239,8 +239,7 @@ start_flush:
   sent = write(fd, buffer->packet->data + buffer->sent,
                buffer->packet->length - buffer->sent);
   if (sent < 0 && !(errno & (EWOULDBLOCK | EAGAIN))) {
-    close(fd);
-    goto clear_buffer;
+    return -1;
   } else if (sent > 0) {
     buffer->sent += sent;
   }

@@ -41,11 +41,20 @@ extern const struct AsyncAPI {
                  void* arg);
   // Asyn.run(async, task, arg) sends tasks to the asynchronous event queue.
   int (*run)(async_p self, void (*task)(void*), void* arg);
-  // Async.finish(async) will gracefully close down the async object,
-  // completing any scheduled tasks and freeing any related resources.
-  //
-  // This function will wait for all scheduled tasks to complete before it
-  // returns.
+  /** Async.signal(async) will gracefully signal the async object to finish up.
+   */
+  void (*signal)(async_p self);
+  /** Async.wait(async) will wait for the async object to, without sending a
+  signal. */
+  void (*wait)(async_p self);
+  /** Async.finish(async) will gracefully close down the async object,
+  completing any scheduled tasks and freeing any related resources.
+
+  This function will wait for all scheduled tasks to complete before it
+  returns.
+
+  This is equivilent to calling: `Async.signal(async); Async.wait(async);`
+  */
   void (*finish)(async_p self);
   // Async.kill(async) will destroy the async object, freeing all memory and
   // destroying the queue. Some background tasks might run to completion, but
