@@ -597,8 +597,9 @@ static void accept_async(server_pt server) {
     // handle server overload
     if (client >= _reactor_(server)->maxfd) {
       if (server->settings->busy_msg)
-        write(client, server->settings->busy_msg,
-              strlen(server->settings->busy_msg));
+        if (write(client, server->settings->busy_msg,
+                  strlen(server->settings->busy_msg)) < 0)
+          ;
       close(client);
       continue;
     }
@@ -630,42 +631,14 @@ static void async_on_data(server_pt* p_server) {
 
 static void on_data(struct Reactor* reactor, int fd) {
   // static socklen_t cl_addrlen = 0;
-  if (fd ==
-      _server_(reactor)->srvfd) {  // listening socket. accept connections.
+  if (fd == _server_(reactor)->srvfd) {
+    // listening socket. accept connections.
     Async.run(_server_(reactor)->async, (void (*)(void*))accept_async, reactor);
-    //     int client = 1;
-    //     while (1) {
-    // #ifdef SOCK_NONBLOCK
-    //       client = accept4(fd, NULL, &cl_addrlen, SOCK_NONBLOCK);
-    //       if (client <= 0)
-    //         return;
-    // #else
-    //       client = accept(fd, NULL, &cl_addrlen);
-    //       if (client <= 0)
-    //         return;
-    //       set_non_blocking_socket(client);
-    // #endif
-    //       // handle server overload
-    //       if (client >= reactor->maxfd) {
-    //         if (_server_(reactor)->settings->busy_msg)
-    //           write(client, _server_(reactor)->settings->busy_msg,
-    //                 strlen(_server_(reactor)->settings->busy_msg));
-    //         close(client);
-    //         continue;
-    //       }
-    //       // attach the new client (performs on_close if needed)
-    //       srv_attach(_server_(reactor), client,
-    //                  _server_(reactor)->settings->protocol);
-    //     }
   } else if (_protocol_(reactor, fd) && _protocol_(reactor, fd)->on_data) {
     _server_(reactor)->idle[fd] = 0;
     // clients, forward on.
-    if (_server_(reactor)->async) {  // perform multi-thread
-      Async.run(_server_(reactor)->async, (void (*)(void*))async_on_data,
-                &(_server_(reactor)->server_map[fd]));
-    } else {  // perform single thread
-      _protocol_(reactor, fd)->on_data(_server_(reactor), fd);
-    }
+    Async.run(_server_(reactor)->async, (void (*)(void*))async_on_data,
+              &(_server_(reactor)->server_map[fd]));
   }
 }
 
