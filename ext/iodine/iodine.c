@@ -468,6 +468,9 @@ static VALUE srv_read(int argc, VALUE* argv, VALUE self) {
   } else {
     // take the string's pointer and length
     len = rb_str_capacity(buffer);
+    // make sure the string is modifiable
+    rb_str_modify(buffer);
+    // resize te string if needed.
     if (len < 1024)
       rb_str_resize(buffer, (len = 1024));
     str = buffer;

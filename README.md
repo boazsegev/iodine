@@ -218,7 +218,7 @@ Here's a few things you can use from this project and they seem to be handy to h
 
     I'm attaching it to one of Iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
 
-* I was using a native thread pool library ([`libasync.h`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/libasync.h)) until I realized how many issues Ruby has with POSIX threads... So now there's a Ruby-thread implementation for this library at ([`rb-libasync.c`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-libasync.c)).
+* I was using a native thread pool library ([`libasync.h`](https://github.com/boazsegev/c-server-tools/blob/master/lib/libasync.c)) until I realized how many issues Ruby has with POSIX threads... So now there's a Ruby-thread implementation for this library at ([`rb-libasync.c`](https://github.com/boazsegev/iodine/blob/master/ext/iodine/rb-libasync.c)).
 
     Notice that all the new threads are free from the GVL - this allows true concurrency... but, you can't make Ruby API calls in that state.
 

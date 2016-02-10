@@ -93,12 +93,13 @@ void* resize_buffer_in_gvl(void* data) {
   return 0;
 }
 
-void* dup_and_on_message_in_gvl(void* data) {
+void* on_message_in_gvl(void* data) {
   struct WebsocketProtocol* ws = data;
-  // we trust in Ruby's "lazy copy"...
-  //        RubyCaller.call_unsafe(ws->buffer, dup_func_id);
-  VALUE str = rb_obj_dup(ws->buffer);
-  RubyCaller.call_unsafe2(ws->handler, on_msg_func_id, 1, &str);
+  // This will create a copy of heach message - can we trust the user not to
+  // save the string for later use? We'll have to, for most common usecase is
+  // JSON... why have another copy of the same data?
+  //            VALUE str = rb_obj_dup(ws->buffer);
+  RubyCaller.call_unsafe2(ws->handler, on_msg_func_id, 1, &ws->buffer);
   // reset the buffer
   rb_str_modify(ws->buffer);
   rb_str_set_len(ws->buffer, 0);
@@ -492,7 +493,7 @@ void on_data(server_pt server, int sockfd) {
           // we dont use:
           // // RubyCaller.call2(ws->handler, on_msg_func_id, 1, &(ws->buffer));
           // since we want to dup the buffer (Ruby's lazy copy)
-          rb_thread_call_with_gvl(dup_and_on_message_in_gvl, ws);
+          rb_thread_call_with_gvl(on_message_in_gvl, ws);
           goto reset_parser;
         }
       } else if (ws->parser.head.op_code == 8) {
@@ -628,6 +629,13 @@ static VALUE empty_func(VALUE self) {
 }
 /* The `on_message(data)` callback is the main method for any websocket
 implementation.
+
+<b>NOTICE</b>: the data passed to the `on_message` callback is the actual
+recycble network buffer, not a copy!
+
+<b>Use `data.dup`</b> to prevent data corruption
+when using the data beyond the scope of the `on_message` callback (i.e. when
+using the data within an `each` block).
 
 Please override this method and implement your own callback.
 */
