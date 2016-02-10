@@ -38,7 +38,7 @@ static int http_sendfile(struct HttpRequest* req) {
   static char* http_file_response_no_mime =
       "HTTP/1.1 200 OK\r\n"
       "Connection: keep-alive\r\n"
-      "Keep-Alive: 1\r\n"
+      "Keep-Alive: timeout=1\r\n"
       "Accept-Ranges: none\r\n"
       "Content-Length: %lu\r\n"
       "Date: %s, %d %s %04d %02d:%02d:%02d GMT\r\n"
@@ -48,7 +48,7 @@ static int http_sendfile(struct HttpRequest* req) {
   static char* http_file_response =
       "HTTP/1.1 200 OK\r\n"
       "Connection: keep-alive\r\n"
-      "Keep-Alive: 1\r\n"
+      "Keep-Alive: timeout=1\r\n"
       "Accept-Ranges: none\r\n"
       "Content-Type: %s\r\n"
       "Content-Length: %lu\r\n"
@@ -139,7 +139,7 @@ static int http_sendfile(struct HttpRequest* req) {
       static char* http_range_response =
           "HTTP/1.1 206 Partial content\r\n"
           "Connection: keep-alive\r\n"
-          "Keep-Alive: 1\r\n"
+          "Keep-Alive: timeout=1\r\n"
           "%s%s%s"
           "Content-Length: %lu\r\n"
           "Date: %s, %d %s %04d %02d:%02d:%02d GMT\r\n"
@@ -284,11 +284,15 @@ static void http_on_data(struct Server* server, int sockfd) {
       "Connection: closed\r\n"
       "Content-Length: 16\r\n\r\n"
       "Internal Error\r\n";
+  // top : { ; }
   int len = 0;
   char* tmp1 = NULL;
   char* tmp2 = NULL;
   struct HttpProtocol* protocol =
       (struct HttpProtocol*)Server.get_protocol(server, sockfd);
+  if (!protocol) {
+    return;
+  }
   struct HttpRequest* request = Server.get_udata(server, sockfd);
   if (!request) {
     Server.set_udata(server, sockfd,
@@ -323,14 +327,11 @@ restart:
 
   // read from the buffer
   len = Server.read(sockfd, buff + pos, HTTP_HEAD_MAX_SIZE - pos);
-  if (len == 0) {
+  if (len <= 0) {
+    // buffer is empty, but more data is underway or error
+    // anyway, don't cleanup - let `on_close` do it's job
     request->private.pos = pos;
     return;
-  }  // buffer is empty, but more data is underway
-  else if (len < 0) {
-    return;
-    // don't cleanup - let `on_close` do it's job
-    // goto cleanup;  // file error
   }
 
   // adjust length for buffer size positioing (so that len == max pos - 1).
@@ -474,16 +475,31 @@ finish:
 
   // reset inner "pos"
   request->private.pos = 0;
+
   // disconnect the request object from the server storage
   // this prevents on_close from clearing the memory while on_request is still
   // accessing the request.
   // It also allows upgrade protocol objects to use the storage for their
   // data.
   Server.set_udata(server, sockfd, NULL);
+
   // perform callback if a file wasn't sent.
   if ((!protocol->public_folder || !http_sendfile(request)) &&
-      protocol->on_request)
+      protocol->on_request) {
     protocol->on_request(request);
+  }
+
+  // // if there's more data, read it and recycle the request
+  // len = Server.read(sockfd, buff, HTTP_HEAD_MAX_SIZE);
+  // if (len > 0) {
+  //   if (request->body_file)
+  //     fclose(request->body_file);
+  //   request->private.pos = 0;
+  //   pos = 0;
+  //   Server.set_udata(server, sockfd, request);
+  //   goto restart;
+  // }
+
   // we need to destroy the request ourselves, because we disconnected the
   // request from the server's udata.
   HttpRequest.destroy(request);
@@ -492,25 +508,25 @@ finish:
 options:
   // send a bed request response. hang up.
   send(sockfd, options_req, strlen(options_req), 0);
-  close(sockfd);
+  Server.close(request->server, sockfd);
   return;
 
 bad_request:
   // send a bed request response. hang up.
   send(sockfd, bad_req, strlen(bad_req), 0);
-  close(sockfd);
+  Server.close(request->server, sockfd);
   return;
 
 too_big:
   // send a bed request response. hang up.
   send(sockfd, too_big_err, strlen(too_big_err), 0);
-  close(sockfd);
+  Server.close(request->server, sockfd);
   return;
 
 internal_error:
   // send an internal error response. hang up.
   send(sockfd, intr_err, strlen(intr_err), 0);
-  close(sockfd);
+  Server.close(request->server, sockfd);
   return;
 }
 
@@ -596,7 +612,7 @@ void http_default_on_request(struct HttpRequest* req) {
   // check
   if (!reply) {
     perror("WTF?!");
-    close(req->sockfd);
+    Server.close(req->server, req->sockfd);
     return;
   }
   // send(req->sockfd, reply, strlen(reply), 0);

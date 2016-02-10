@@ -614,12 +614,11 @@ static void async_on_data(server_pt* p_server) {
   if (!(*p_server))
     return;
   int sockfd = p_server - (*p_server)->server_map;
-  // printf("threaded on data for %d\n", sockfd);
-  struct Protocol* protocol = (*p_server)->protocol_map[sockfd];
-  if (!protocol || !protocol->on_data)
-    return;
   // if we get the handle, perform the task
   if (set_to_busy(*p_server, sockfd)) {
+    struct Protocol* protocol = (*p_server)->protocol_map[sockfd];
+    if (!protocol || !protocol->on_data)
+      return;
     protocol->on_data((*p_server), sockfd);
     // release the handle
     (*p_server)->busy[sockfd] = 0;
@@ -650,7 +649,6 @@ static void srv_cycle_core(server_pt server) {
   delta = reactor_review(_reactor_(server));
   if (delta < 0) {
     srv_stop(server);
-    perror("Reactor stopped short");
     return;
   } else if (delta == 0 && server->settings->on_idle) {
     server->settings->on_idle(server);

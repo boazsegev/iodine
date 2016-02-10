@@ -50,9 +50,9 @@ server.on_http= Proc.new do |env|
   [200, {"Content-Length" => out.length}, [out]];
 end
 
-# server.on_http= Proc.new do |env|
-#   [200, {"Content-Length" => "12"}, ["Hello World!"]];
-# end
+server.on_http= Proc.new do |env|
+  [200, {"Content-Length" => "12"}, ["Hello World!"]];
+end
 
 server.on_websocket= Proc.new do |env|
   [0,{}, [], WSEcho.new(server)];
@@ -85,8 +85,15 @@ end
 server.start
 
 # def nag
-#   puts `ab -n 200000 -c 6000 -k http://127.0.0.1:3000/`
-#   sleep 16
+#   puts `ab -n 200000 -c 2000 -k http://127.0.0.1:3000/`
+#   sleep 2
+# end
+#
+# nag while true
+#
+# def nag
+#   puts `wrk -c2000 -d10 -t4 http://localhost:3000/`
+#   sleep 3
 # end
 #
 # nag while true
