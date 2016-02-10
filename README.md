@@ -13,7 +13,7 @@ Iodine is an **evented** framework with a simple API that runs low level C code 
 
     This makes Iodine ideal for writing HTTP/2 and Websocket servers (which is the reason for it's development).
 
-* Iodine runs **only on Linux/Unix** based systems (i.e. OS X, Ubuntu, etc'). This is by design and allows us to:
+* Iodine runs **only on Linux/Unix** based systems (i.e. OS X, Ubuntu, etc'). This allows us to:
 
      * Optimize our code for the production environment.
 
@@ -190,11 +190,7 @@ Yes, please, here are some thoughts:
 
 * I'm really not good at writing automated tests and benchmarks, any help would be appreciated. I keep testing manually and it sucks (and it's mistake prone).
 
-* Anybody knows how to document Ruby API written in C?
-
-* Some of the code is still super raw and could be either optimized or improved upon.
-
-* If we can write a Java wrapper for the C libraries, it would be nice... but it could be as big a project as the whole gem.
+* If we can write a Java wrapper for the C libraries, it would be nice... but it could be as big a project as the whole gem, as a lot of the implementation is written within the bridge between these two languages.
 
 * Bug reports and pull requests are welcome on GitHub at https://github.com/boazsegev/iodine.
 
@@ -214,13 +210,15 @@ We could all use some more documentation around the subject and having an eco-sy
 
 Here's a few things you can use from this project and they seem to be handy to have (and easy to port):
 
-* Iodine is using a [Registry](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-registry.h) to keep Ruby objects that are owned by C-land from being collected by the garbage collector...
+* Iodine is using a [Registry](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-registry.h) to keep dynamic Ruby objects that are owned by C-land from being collected by the garbage collector in Ruby-land...
 
-    some people use global Ruby arrays, but that sounds like a performance hog to me.
+    Some people use global Ruby arrays, adding and removing Ruby objects to the array, but that sounds like a performance hog to me.
 
-    This one is a simple binary tree with a Ruby GC callback. Remember to initialize the Registry (`Registry.init(owner)`) so it's "owned" by some Roby-land object. I'm attaching it to one of Iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
+    This one is a simple binary tree with a Ruby GC callback. Remember to initialize the Registry (`Registry.init(owner)`) so it's "owned" by some Roby-land object, this allows it to bridge the two worlds for the GC's mark and sweep.
 
-* I was using a native thread pool library ([`libasync.h`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/libasync.h)) until I realized how many issues Ruby has with POSIX threads... So now there's a Ruby-thread implementation for this library at ([`libasync-rb.c`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/libasync-rb.c)).
+    I'm attaching it to one of Iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
+
+* I was using a native thread pool library ([`libasync.h`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/libasync.h)) until I realized how many issues Ruby has with POSIX threads... So now there's a Ruby-thread implementation for this library at ([`rb-libasync.c`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-libasync.c)).
 
     Notice that all the new threads are free from the GVL - this allows true concurrency... but, you can't make Ruby API calls in that state.
 

@@ -4,7 +4,7 @@ require "iodine/version"
 require "iodine/logging"
 require "iodine/iodine"
 
-# Iodine is a platform for writing evented network services on Ruby.
+# Iodine is both a Rack server and a platform for writing evented network services on Ruby.
 #
 # Here is a sample Echo server using Iodine:
 #
