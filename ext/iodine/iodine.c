@@ -302,6 +302,10 @@ static VALUE run_protocol_task(VALUE self) {
  their handler to the block of code. i.e.:
 
       MyProtocol.each { |h| h.task(arg) if h.is_a?(MyProtocol) }
+
+Notice that this is process ("worker") specific, this does not affect
+connections that are connected to a different process on the same machine or a
+different machine running the same application.
 */
 static VALUE run_each(VALUE self) {
   // requires a block to be passed
@@ -327,7 +331,11 @@ static VALUE run_each(VALUE self) {
 // connection counting and references.
 
 /**
-Returns the number of total connections (including timers) in the reactor.
+Returns the number of total connections (excluding timers) in the reactor.
+
+Notice that this is process ("worker") specific, this does not affect
+connections that are connected to a different process on the same machine or a
+different machine running the same application.
 */
 static VALUE count_all(VALUE self) {
   server_pt srv = get_server(self);

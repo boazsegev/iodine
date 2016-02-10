@@ -59,13 +59,12 @@ server.on_websocket= Proc.new do |env|
 end
 
 server.on_start do
-  server.run {puts "I'm running!"}
-  server.run_after(5000) {puts "5 seconds have passed."}
-  server.run_every(1000) {puts "running...#{server.connection_count} clients"}
-  # server.run_every(1000) do
+  # server.run {puts "I'm running!"}
+  # server.run_after(5000) {puts "5 seconds have passed."}
+  server.run_every(1000) {puts "#{server.connection_count} clients connected."}
+  # server.run_every(10000) do
   #   begin
   #     puts "making a system call"
-  #     puts `echo 'hi'`
   #     puts `ab -n 100000 -c 200 -k http://127.0.0.1:3000/`
   #   rescue => e
   #     l = Logger.new STDOUT
@@ -104,22 +103,5 @@ server.start
 # ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/
 # wrk -c200 -d4 -t12 http://localhost:3000/
 # RACK_ENV="production" rackup -p 3000 -s iodine
-# GET /assets/cases.css HTTP/1.1
-# host: localhost:3000
-#
-#
-# connection: close
 
 # ws = new WebSocket("ws://localhost:3000"); ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);}; ws.onclose = function(e) {console.log("closed")}; ws.onopen = function(e) {ws.send("hi");};
-
-
-# telnet localhost 3000
-# GET /Bo.jpg HTTP/1.1
-# host: localhost:3000
-#
-# GET / HTTP/1.1
-# host: localhost:3000
-#
-#
-# OPTIONS * HTTP/1.1
-# host: localhost:3000

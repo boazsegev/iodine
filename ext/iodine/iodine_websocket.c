@@ -229,7 +229,6 @@ i.e.
       data = "binary"
       data.force_encoding("binary")
       write data
-
  */
 static VALUE ws_write(VALUE self, VALUE data) {
   server_pt srv = get_server(self);
@@ -255,6 +254,9 @@ i.e. , here is a simple websocket broadcasting service:
       srv = Iodine::Http.new
       srv.on_websocket = Proc.new {|env| MyBroadcast }
 
+Notice that this is process ("worker") specific, this does not affect
+connections that are connected to a different process on the same machine or a
+different machine running the same application.
 */
 static VALUE ws_each(VALUE self) {
   // requires a block to be passed
@@ -278,6 +280,10 @@ static VALUE ws_each(VALUE self) {
 
 /**
 Returns the number of total websocket connections in this specific process.
+
+Notice that this is process ("worker") specific, this does not affect
+connections that are connected to a different process on the same machine or a
+different machine running the same application.
 */
 static VALUE ws_count(VALUE self) {
   server_pt srv = get_server(self);

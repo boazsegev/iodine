@@ -15,7 +15,6 @@ require "iodine"
 
 
 Iodine::Rack.on_http = lambda do |env|
-  p env
   if Faye::WebSocket.websocket?(env)
     ws = Faye::WebSocket.new(env)
 
