@@ -26,6 +26,7 @@ class WSEcho
   end
   def on_message data
     puts data
+    data = data.dup
     each {|h| h.echo data }
   end
   def echo data
@@ -37,6 +38,7 @@ end
 server = Iodine::Http.new
 server.threads = 16
 server.processes = 1
+server.timeout = 1
 server.public_folder = '/Users/2Be/Documents/Scratch'
 server.on_http= Proc.new do |env|
   # out = env["rack.hijack"].call Proc.new {

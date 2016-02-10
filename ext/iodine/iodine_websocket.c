@@ -631,11 +631,12 @@ static VALUE empty_func(VALUE self) {
 implementation.
 
 <b>NOTICE</b>: the data passed to the `on_message` callback is the actual
-recycble network buffer, not a copy!
+recycble network buffer, not a copy! <b>Use `data.dup` before moving the data
+out of the function's scope</b> to prevent data corruption (i.e. when
+using the data within an `each` block). For example (broadcasting):
 
-<b>Use `data.dup`</b> to prevent data corruption
-when using the data beyond the scope of the `on_message` callback (i.e. when
-using the data within an `each` block).
+        data = data.dup
+        each {|ws| ws.write data }
 
 Please override this method and implement your own callback.
 */
