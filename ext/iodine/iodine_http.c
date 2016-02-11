@@ -481,7 +481,7 @@ static int send_response(struct HttpRequest* request, VALUE response) {
     // nothing to do.
     // This could be a websocket/upgrade decision.
   } else if (rb_respond_to(tmp, each_method_id)) {
-    fprintf(stderr, "Review body as for-each ...\n");
+    // fprintf(stderr, "Review body as for-each ...\n");
     rb_block_call(tmp, each_method_id, 0, NULL, for_each_string,
                   (VALUE)request);
   }
