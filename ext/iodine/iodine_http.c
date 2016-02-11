@@ -240,6 +240,8 @@ static int for_each_header_pair(VALUE key, VALUE val, VALUE _req) {
   int pos_s = 0, pos_e = 0;
   if (TYPE(key) != T_STRING)
     key = RubyCaller.call_unsafe(key, to_s_method_id);
+  if (TYPE(key) != T_STRING)
+    return ST_CONTINUE;
   if (TYPE(val) != T_STRING) {
     if (TYPE(val) == T_FIXNUM) {
       request->private.pos +=
@@ -249,7 +251,7 @@ static int for_each_header_pair(VALUE key, VALUE val, VALUE _req) {
       return ST_CONTINUE;
     }
     val = RubyCaller.call_unsafe(val, to_s_method_id);
-    if (val == Qnil)
+    if (TYPE(val) != T_STRING)
       return ST_STOP;
   }
   char* key_s = RSTRING_PTR(key);
@@ -278,6 +280,7 @@ static int for_each_header_pair(VALUE key, VALUE val, VALUE _req) {
 // itterate through the headers and add them to the response buffer
 // (we are recycling the request's buffer)
 static VALUE for_each_string(VALUE str, VALUE _req, int argc, VALUE argv) {
+  // fprintf(stderr, "For_each - body\n");
   struct HttpRequest* request = (void*)_req;
   // write body
   if (TYPE(str) != T_STRING || !RSTRING_LEN(str)) {
@@ -310,12 +313,11 @@ static int send_response(struct HttpRequest* request, VALUE response) {
     close_when_done = 1;
   }
 
-  // nil is a bad response... we have an error
-  if (response == Qnil)
-    goto internal_err;
-  // false is an intentional ignore - this is not an error (might be a highjack)
+  // false is an intentional ignore - this is not an error (might be a
+  // highjack)
   if (response == Qfalse)
     goto unknown_stop;
+  // not an array...
   if (TYPE(response) != T_ARRAY)
     goto internal_err;
   if (RARRAY_LEN(response) < 3)
@@ -453,13 +455,14 @@ static int send_response(struct HttpRequest* request, VALUE response) {
   // write body
   tmp = rb_ary_entry(response, 2);
   if (TYPE(tmp) == T_ARRAY) {
+    // fprintf(stderr, "Review body as Array\n");
     // [String] is most likely
     int len = RARRAY_LEN(tmp);
     VALUE str;
     for (size_t i = 0; i < len; i++) {
       str = rb_ary_entry(tmp, i);
       if (TYPE(str) != T_STRING) {
-        fprintf(stderr, "data in array isn't a string! (index %lu)\n", i);
+        // fprintf(stderr, "data in array isn't a string! (index %lu)\n", i);
         goto internal_err;
       }
       if (RSTRING_PTR(str) && RSTRING_LEN(str) &&
@@ -468,20 +471,20 @@ static int send_response(struct HttpRequest* request, VALUE response) {
         goto unknown_stop;
     }
   } else if (TYPE(tmp) == T_STRING) {
+    // fprintf(stderr, "Review body as String\n");
     // String is a likely error
     if (RSTRING_LEN(tmp))
       Server.write(request->server, request->sockfd, RSTRING_PTR(tmp),
                    RSTRING_LEN(tmp));
   } else if (tmp == Qnil) {
+    // fprintf(stderr, "Review body as nil\n");
     // nothing to do.
     // This could be a websocket/upgrade decision.
-  } else {
+  } else if (rb_respond_to(tmp, each_method_id)) {
+    fprintf(stderr, "Review body as for-each ...\n");
     rb_block_call(tmp, each_method_id, 0, NULL, for_each_string,
                   (VALUE)request);
   }
-
-// if (close_when_done)
-//   Server.close(request->server, request->sockfd);
 
 unknown_stop:
   return close_when_done;
@@ -490,11 +493,7 @@ internal_err:
   Server.write(request->server, request->sockfd, internal_error,
                sizeof(internal_error));
   Server.close(request->server, request->sockfd);
-  rb_warn(
-      "Invalid HTTP response, send 502 error code and closed connectiom.\n"
-      "The response must be an Array:\n[<Fixnum - status code>, "
-      "{<Hash-headers>}, [<Array/IO - data], <optional Protocol "
-      "for Upgrade>]");
+  // rb_warn fails sometimes, causing the server to crash. It was removed.
   return 1;
 }
 // Upgrade to a generic Protocol (Iodine Core style)
@@ -599,6 +598,13 @@ static void* handle_request_in_gvl(void* _res) {
       rb_enc_associate_index(accpt_str, BinaryEncodingIndex);
       // set the accept hashed value in the headers
       rb_hash_aset(env, WEBSOCKET_SEC_ACPT, accpt_str);
+      // sends the response and performs the upgrade, if needed
+      if (!send_response(request, response))
+        Websockets.new(request, rb_ary_entry(response, 3));
+      // Registry is a Bag, not a Set. Only the first reference is removed,
+      // any added references (if exist) are left in the Registry.
+      Registry.remove(response);
+      return 0;
     } else if (TYPE(response) == T_ARRAY && RARRAY_LEN(response) > 2) {
     refuse_websocket:
       // no upgrade object - send 400 error with headers.
@@ -608,14 +614,13 @@ static void* handle_request_in_gvl(void* _res) {
       env = rb_ary_entry(response, 1);
       // close connection header
       rb_hash_aset(env, CONNECTION_HEADER, CONNECTION_CLOSE);
+      // sends the response and performs the upgrade, if needed
+      send_response(request, response);
+      // Registry is a Bag, not a Set. Only the first reference is removed,
+      // any added references (if exist) are left in the Registry.
+      Registry.remove(response);
+      return 0;
     }
-    // sends the response and performs the upgrade, if needed
-    if (!send_response(request, response))
-      Websockets.new(request, rb_ary_entry(response, 3));
-    // Registry is a Bag, not a Set. Only the first reference is removed,
-    // any added references (if exist) are left in the Registry.
-    Registry.remove(response);
-    return 0;
   }
   // perform HTTP callback
   response = (VALUE)Server.get_udata(request->server, 0);
@@ -714,9 +719,9 @@ static VALUE http_start(VALUE self) {
   VALUE on_http_handler = rb_iv_get(self, "@on_http");
   VALUE on_websocket_handler = rb_iv_get(self, "@on_websocket");
   if (on_websocket_handler == Qnil && on_http_handler == Qnil) {
-    rb_raise(
-        rb_eRuntimeError,
-        "Either the `on_http` callback or the `on_websocket` must be defined");
+    rb_raise(rb_eRuntimeError,
+             "Either the `on_http` callback or the `on_websocket` must be "
+             "defined");
     return Qnil;
   }
   if (on_http_handler != Qnil &&
