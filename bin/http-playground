@@ -36,9 +36,9 @@ end
 
 # create the server object and setup any settings we might need.
 server = Iodine::Http.new
-server.threads = 1
-server.processes = 1
-server.timeout = 1
+server.threads ||= 1
+server.processes ||= 1
+server.timeout ||= 1
 server.public_folder = '/Users/2Be/Documents/Scratch'
 count = 2
 server.on_http= Proc.new do |env|
@@ -47,17 +47,17 @@ server.on_http= Proc.new do |env|
   #   env["rack.hijack_io"].close
   # }
   # [200,{"Content-Length" => "8", "Connection" => "close"}, []]
-  count += 1
-  raise "you're odd!" if(count.odd?)
+  # count += 1
+  # raise "you're odd!" if(count.odd?)
   out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
   request = Rack::Request.new(env)
   out += "\nRequest Path: #{request.path_info}\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
   [200, {"Content-Length" => out.length}, [out]];
 end
 
-# server.on_http= Proc.new do |env|
-#   [200, {"Content-Length" => "12"}, ["Hello World!"]];
-# end
+server.on_http= Proc.new do |env|
+  [200, {"Content-Length" => "12"}, ["Hello World!"]];
+end
 
 server.on_websocket= Proc.new do |env|
   [0,{}, [], WSEcho.new(server)];

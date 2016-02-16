@@ -17,7 +17,7 @@ class Iodine
 			end
 			# Runs a Rack app.
 			def run(app, options = {})
-				if(@app)
+				if(@app && @app != app)
 					old_app = @app
 					@app = Proc.new do |env|
 						ret = old_app.call(env)
