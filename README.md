@@ -5,7 +5,7 @@
 
 Iodine 0.2.0 makes writing Object Oriented **Network Services** easy to write.
 
-Iodine is an **evented** framework with a simple API that runs low level C code with support for **epoll** and **kqueue** - this means that:
+Iodine is an **evented** framework with a simple API that builds off a low level [C code library](https://github.com/boazsegev/c-server-tools) with support for **epoll** and **kqueue** - this means that:
 
 * Iodine can handle **thousands of concurrent connections** (tested with 20K connections).
 
