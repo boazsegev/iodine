@@ -922,6 +922,7 @@ void Init_iodine(void) {
   // define the Server Ruby class.
   rBase = rb_define_module_under(rIodine, "Base");
   rServer = rb_define_class_under(rBase, "ServerObject", rb_cData);
+  rb_global_variable(&rServer);
 
   // Initialize the registry under the Iodine core
   Registry.init(rIodine);
