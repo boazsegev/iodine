@@ -941,8 +941,8 @@ void Init_iodine_http(void) {
 
   // setup for Rack version 1.3.
   R_VERSION_V = rb_ary_new();  // rb_ary_new is Ruby 2.0 compatible
-  rb_ary_push(R_VERSION_V, rb_enc_str_new_cstr("1", BinaryEncoding));
-  rb_ary_push(R_VERSION_V, rb_enc_str_new_cstr("3", BinaryEncoding));
+  rb_ary_push(R_VERSION_V, rb_enc_str_new("1", 1, BinaryEncoding));
+  rb_ary_push(R_VERSION_V, rb_enc_str_new("3", 1, BinaryEncoding));
   rb_global_variable(&R_VERSION_V);
   R_ERRORS_V = rb_stdout;
 
