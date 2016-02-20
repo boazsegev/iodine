@@ -672,10 +672,13 @@ static void on_init(struct Server* server) {
                      (void*)rb_iv_get(core_instance, "@on_websocket"));
   // set the server variable in the core server object.. is this GC safe?
   set_server(core_instance, server);
-  // perform on_init callback
-  VALUE on_start_block = rb_iv_get(core_instance, "on_start_block");
-  if (on_start_block != Qnil) {
-    RubyCaller.call(on_start_block, call_proc_id);
+  // perform on_init callback - we don't need the core_instance variable, we'll
+  // recycle it.
+  VALUE start_ary = rb_iv_get(core_instance, "on_start_array");
+  if (start_ary != Qnil) {
+    while ((core_instance = rb_ary_pop(start_ary)) != Qnil) {
+      RubyCaller.call(core_instance, call_proc_id);
+    }
   }
 }
 

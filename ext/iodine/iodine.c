@@ -722,8 +722,13 @@ use {#on_start} to setup any global tasks. i.e.
 */
 static VALUE on_start(VALUE self) {  // requires a block to be passed
   rb_need_block();
+
+  VALUE start_ary = rb_iv_get(self, "on_start_array");
+  if (start_ary == Qnil)
+    rb_iv_set(self, "on_start_array", (start_ary = rb_ary_new()));
+
   VALUE callback = rb_block_proc();
-  rb_iv_set(self, "on_start_block", callback);
+  rb_ary_push(start_ary, callback);
   return callback;
 }
 
@@ -740,10 +745,13 @@ static void on_init(struct Server* server) {
           Server.settings(server)->processes);
   // set the server variable in the core server object.. is this GC safe?
   set_server(core_instance, server);
-  // perform on_init callback
-  VALUE on_start_block = rb_iv_get(core_instance, "on_start_block");
-  if (on_start_block != Qnil) {
-    RubyCaller.call(on_start_block, call_proc_id);
+  // perform on_init callback - we don't need the core_instance variable, we'll
+  // recycle it.
+  VALUE start_ary = rb_iv_get(core_instance, "on_start_array");
+  if (start_ary != Qnil) {
+    while ((core_instance = rb_ary_pop(start_ary)) != Qnil) {
+      RubyCaller.call(core_instance, call_proc_id);
+    }
   }
 }
 
@@ -885,7 +893,7 @@ void Init_iodine(void) {
   // The core Iodine class wraps the ServerSettings and little more.
   rIodine = rb_define_class("Iodine", rb_cObject);
 
-  rb_define_method(rIodine, "connection_count", count_all, 0);
+  rb_define_method(rIodine, "count", count_all, 0);
   rb_define_method(rIodine, "each", run_each, 0);
   rb_define_method(rIodine, "run", run_async, 0);
   rb_define_method(rIodine, "run_after", run_after, 1);

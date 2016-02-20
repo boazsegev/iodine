@@ -55,9 +55,13 @@ server.on_http= Proc.new do |env|
   [200, {"Content-Length" => out.length}, [out]];
 end
 
-# server.on_http= Proc.new do |env|
-#   [200, {"Content-Length" => "12"}, ["Hello World!"]];
-# end
+server.on_http= Proc.new do |env|
+  # [200, {"Content-Length".freeze => "12".freeze}, ["Hello World!".freeze]];
+  req = Rack::Request.new env
+  res = Rack::Response.new
+  res.write "Hello World!".freeze
+  res.to_a
+end
 
 server.on_websocket= Proc.new do |env|
   [0,{}, [], WSEcho.new(server)];
@@ -66,7 +70,7 @@ end
 server.on_start do
   # server.run {puts "I'm running!"}
   # server.run_after(5000) {puts "5 seconds have passed."}
-  server.run_every(1000) {puts "#{server.connection_count} clients connected."}
+  server.run_every(1000) {puts "#{server.count} clients connected."}
   # server.run_every(10000) do
   #   begin
   #     puts "making a system call"
