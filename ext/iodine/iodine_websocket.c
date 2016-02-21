@@ -673,7 +673,7 @@ void Init_websocket(void) {
   iodine_add_helper_methods(rWebsocket);
   rb_define_method(rWebsocket, "write", ws_write, 1);
   rb_define_method(rWebsocket, "close", ws_close, 0);
-  rb_define_method(rWebsocket, "each", ws_each, -2);
+  rb_define_method(rWebsocket, "each", ws_each, 0);
 
   rb_define_method(rWebsocket, "ws_count", ws_count, 0);
 }

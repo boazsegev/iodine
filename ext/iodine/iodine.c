@@ -299,15 +299,18 @@ static VALUE run_protocol_task(VALUE self) {
 }
 
 /* `each` will itterate through all the connections on the server and pass
- their handler to the block of code. i.e.:
+ their handler to the block of code. i.e. (when using Iodine's Rack server):
 
-      MyProtocol.each { |h| h.task(arg) if h.is_a?(MyProtocol) }
+      Iodine::Rack.each { |h| h.task(arg) if h.is_a?(MyProtocol) }
 
-Notice that this is process ("worker") specific, this does not affect
+It's possible to pass each a string that will limit the protocol selection.
+Valid strings are "http", "websocket" and "dynamic". i.e.
+
+<b>Notice</b> that this is process ("worker") specific, this does not affect
 connections that are connected to a different process on the same machine or a
 different machine running the same application.
 */
-static VALUE run_each(VALUE self) {
+static VALUE run_each(int argc, VALUE* argv, VALUE self) {
   // requires a block to be passed
   rb_need_block();
   // get the server object
@@ -323,7 +326,15 @@ static VALUE run_each(VALUE self) {
   if (block == Qnil)
     return Qnil;
   Registry.add(block);
-  Server.each_block(srv, NULL, each_protocol_async_schedule, (void*)block);
+  if (argc) {
+    while (argc--) {
+      if (TYPE(argv[argc]) == T_STRING)
+        Server.each_block(srv, StringValueCStr(argv[argc]),
+                          each_protocol_async_schedule, (void*)block);
+    }
+  } else {
+    Server.each_block(srv, NULL, each_protocol_async_schedule, (void*)block);
+  }
   return block;
 }
 
@@ -663,7 +674,8 @@ struct Protocol DynamicProtocol = {.on_open = dyn_open,
                                    .on_data = dyn_data,
                                    .ping = dyn_ping,
                                    .on_shutdown = dyn_shutdown,
-                                   .on_close = dyn_close};
+                                   .on_close = dyn_close,
+                                   .service = "dyn"};
 
 ////////////////////////////////////////////////////////////////////////
 // Initialize the Dynamic Protocol module and its methods.
@@ -894,7 +906,7 @@ void Init_iodine(void) {
   rIodine = rb_define_class("Iodine", rb_cObject);
 
   rb_define_method(rIodine, "count", count_all, 0);
-  rb_define_method(rIodine, "each", run_each, 0);
+  rb_define_method(rIodine, "each", run_each, -1);
   rb_define_method(rIodine, "run", run_async, 0);
   rb_define_method(rIodine, "run_after", run_after, 1);
   rb_define_method(rIodine, "run_every", run_every, 1);
