@@ -17,6 +17,7 @@ class Iodine
 			end
 			# Runs a Rack app.
 			def run(app, options = {})
+				@app ||= @on_http
 				if(@app && @app != app)
 					old_app = @app
 					@app = Proc.new do |env|
