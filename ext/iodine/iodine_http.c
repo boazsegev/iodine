@@ -25,6 +25,7 @@ static ID server_var_id;    // id for the Server variable (pointer)
 static ID fd_var_id;        // id for the file descriptor (Fixnum)
 static ID call_proc_id;     // id for `#call`
 static ID each_method_id;   // id for `#call`
+static ID close_method_id;  // id for `#call`
 static ID to_s_method_id;   // id for `#call`
 static ID new_func_id;      // id for the Class.new method
 static ID on_open_func_id;  // the on_open callback's ID
@@ -482,6 +483,9 @@ static int send_response(struct HttpRequest* request, VALUE response) {
     // fprintf(stderr, "Review body as for-each ...\n");
     rb_block_call(tmp, each_method_id, 0, NULL, for_each_string,
                   (VALUE)request);
+    // we need to call `close` in case the object is an IO / BodyProxy
+    if (rb_respond_to(tmp, close_method_id))
+      RubyCaller.call_unsafe(tmp, close_method_id);
   }
 
 unknown_stop:
@@ -899,6 +903,7 @@ void Init_iodine_http(void) {
   on_open_func_id = rb_intern("on_open");      // when upgrading
   each_method_id = rb_intern("each");          // for the response
   to_s_method_id = rb_intern("to_s");          // for the response
+  close_method_id = rb_intern("close");        // for the response
   _hijack_sym = ID2SYM(rb_intern("_hijack"));  // for hijacking
   rb_global_variable(&_hijack_sym);
 
