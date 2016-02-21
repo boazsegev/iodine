@@ -30,7 +30,6 @@ Gem::Specification.new do |spec|
   spec.extensions = %w[ext/iodine/extconf.rb]
 
   spec.add_dependency "rake-compiler"
-  spec.add_dependency "rack"
 
   spec.add_development_dependency "bundler", "~> 1.10"
   spec.add_development_dependency "rake", "~> 10.0"
