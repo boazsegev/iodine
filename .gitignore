@@ -9,5 +9,6 @@
 /tmp/
 /old_stuff/
 *.bundle
+*.so
 
 .ruby-version
