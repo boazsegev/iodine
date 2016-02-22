@@ -35,4 +35,9 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency "rake", "~> 10.0"
   spec.add_development_dependency "rack"
   spec.add_development_dependency "minitest"
+
+  spec.post_install_message = "** WARNING!\n" +
+       "Iodine 0.2.0 is NOT an upgrade - it's a total rewrite, it's written in C specifically for Ruby MRI.\n\n" +
+       "If your application was using Iodine 0.1.x, it might not work after this \"upgrade\"."
+
 end

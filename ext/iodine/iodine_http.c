@@ -32,33 +32,34 @@ static ID on_open_func_id;  // the on_open callback's ID
 static VALUE _hijack_sym;
 
 // for Rack
-static VALUE HTTP_VERSION;        // extending Rack
-static VALUE REQUEST_URI;         // extending Rack
-static VALUE REQUEST_METHOD;      // for Rack
-static VALUE CONTENT_TYPE;        // for Rack.
-static VALUE CONTENT_LENGTH;      // for Rack.
-static VALUE SCRIPT_NAME;         // for Rack
-static VALUE PATH_INFO;           // for Rack
-static VALUE QUERY_STRING;        // for Rack
-static VALUE QUERY_ESTRING;       // for rack (if no query)
-static VALUE SERVER_NAME;         // for Rack
-static VALUE SERVER_PORT;         // for Rack
-static VALUE SERVER_PORT_80;      // for Rack
-static VALUE SERVER_PORT_443;     // for Rack
-static VALUE R_VERSION;           // for Rack: rack.version
-static VALUE R_VERSION_V;         // for Rack: rack.version
-static VALUE R_SCHEME;            // for Rack: rack.url_scheme
-static VALUE R_SCHEME_HTTP;       // for Rack: rack.url_scheme value
-static VALUE R_SCHEME_HTTPS;      // for Rack: rack.url_scheme value
-static VALUE R_INPUT;             // for Rack: rack.input
-static VALUE R_ERRORS;            // for Rack: rack.errors
-static VALUE R_ERRORS_V;          // for Rack: rack.errors
-static VALUE R_MTHREAD;           // for Rack: rack.multithread
-static VALUE R_MTHREAD_V;         // for Rack: rack.multithread
-static VALUE R_MPROCESS;          // for Rack: rack.multiprocess
-static VALUE R_MPROCESS_V;        // for Rack: rack.multiprocess
-static VALUE R_RUN_ONCE;          // for Rack: rack.run_once
-static VALUE R_HIJACK_Q;          // for Rack: rack.hijack?
+static VALUE HTTP_VERSION;     // extending Rack
+static VALUE REQUEST_URI;      // extending Rack
+static VALUE REQUEST_METHOD;   // for Rack
+static VALUE CONTENT_TYPE;     // for Rack.
+static VALUE CONTENT_LENGTH;   // for Rack.
+static VALUE SCRIPT_NAME;      // for Rack
+static VALUE PATH_INFO;        // for Rack
+static VALUE QUERY_STRING;     // for Rack
+static VALUE QUERY_ESTRING;    // for rack (if no query)
+static VALUE SERVER_NAME;      // for Rack
+static VALUE SERVER_PORT;      // for Rack
+static VALUE SERVER_PORT_80;   // for Rack
+static VALUE SERVER_PORT_443;  // for Rack
+static VALUE R_VERSION;        // for Rack: rack.version
+static VALUE R_VERSION_V;      // for Rack: rack.version
+static VALUE R_SCHEME;         // for Rack: rack.url_scheme
+static VALUE R_SCHEME_HTTP;    // for Rack: rack.url_scheme value
+static VALUE R_SCHEME_HTTPS;   // for Rack: rack.url_scheme value
+static VALUE R_INPUT;          // for Rack: rack.input
+static VALUE R_ERRORS;         // for Rack: rack.errors
+static VALUE R_ERRORS_V;       // for Rack: rack.errors
+static VALUE R_MTHREAD;        // for Rack: rack.multithread
+static VALUE R_MTHREAD_V;      // for Rack: rack.multithread
+static VALUE R_MPROCESS;       // for Rack: rack.multiprocess
+static VALUE R_MPROCESS_V;     // for Rack: rack.multiprocess
+static VALUE R_RUN_ONCE;       // for Rack: rack.run_once
+static VALUE R_HIJACK_Q;       // for Rack: rack.hijack?
+// these three are used also by rb-rack-io.c
 VALUE R_HIJACK;                   // for Rack: rack.hijack
 VALUE R_HIJACK_IO;                // for Rack: rack.hijack_io
 VALUE R_HIJACK_CB;                // for Rack: rack.hijack_io callback
@@ -554,9 +555,8 @@ static void* handle_request_in_gvl(void* _res) {
       recv_str[1] == '3') {
     // a regular request is forwarded to the websocket callback (stored in 0).
     response = RubyCaller.call_unsafe2(response, call_proc_id, 1, &env);
-    // clean-up env and register response
-    if (Registry.replace(env, response))
-      Registry.add(response);
+    // register response
+    Registry.add(response);
     // update response for Websocket support
     if (TYPE(response) == T_ARRAY && RARRAY_LEN(response) > 3) {
       // upgrade taking place, make sure the upgrade headers are valid for the
@@ -603,10 +603,8 @@ static void* handle_request_in_gvl(void* _res) {
       // sends the response and performs the upgrade, if needed
       if (!send_response(request, response))
         Websockets.new(request, rb_ary_entry(response, 3));
-      // Registry is a Bag, not a Set. Only the first reference is removed,
-      // any added references (if exist) are left in the Registry.
-      Registry.remove(response);
-      return 0;
+      // we're done - cleanup
+      goto cleanup;
     } else if (TYPE(response) == T_ARRAY && RARRAY_LEN(response) > 2) {
     refuse_websocket:
       // no upgrade object - send 400 error with headers.
@@ -618,10 +616,8 @@ static void* handle_request_in_gvl(void* _res) {
       rb_hash_aset(env, CONNECTION_HEADER, CONNECTION_CLOSE);
       // sends the response and performs the upgrade, if needed
       send_response(request, response);
-      // Registry is a Bag, not a Set. Only the first reference is removed,
-      // any added references (if exist) are left in the Registry.
-      Registry.remove(response);
-      return 0;
+      // we're done - cleanup
+      goto cleanup;
     }
   }
   // perform HTTP callback
@@ -635,16 +631,18 @@ static void* handle_request_in_gvl(void* _res) {
       send_response(request, response);
       RubyCaller.call_unsafe(hj_callback, call_proc_id);
     }
-    Registry.remove(env);
-    return 0;
+    goto cleanup;
   }
-  // clean-up env and register response
-  if (Registry.replace(env, response))
-    Registry.add(response);
+  // register response
+  Registry.add(response);
   if (send_response(request, response))
     Server.close(request->server, request->sockfd);
   else
     perform_generic_upgrade(request, response);
+cleanup:
+  // Registry is a Bag, not a Set. Only the first reference is removed,
+  // any added references (if exist) are left in the Registry.
+  Registry.remove(env);
   Registry.remove(response);
   return 0;
 }
@@ -832,15 +830,15 @@ static VALUE http_start(VALUE self) {
   unsigned char timeout = rb_timeout == Qnil ? 2 : FIX2INT(rb_timeout);
   snprintf(port, 6, "%d", iport);
   // create the HttpProtocol object
-  struct HttpProtocol http_protocol = HttpProtocol();
-  http_protocol.on_request = on_request;
-  http_protocol.maximum_body_size = imax_msg;
-  http_protocol.public_folder =
+  struct HttpProtocol* http_protocol = HttpProtocol.new();
+  http_protocol->on_request = on_request;
+  http_protocol->maximum_body_size = imax_msg;
+  http_protocol->public_folder =
       rb_public_folder == Qnil ? NULL : StringValueCStr(rb_public_folder);
 
   // setup the server
   struct ServerSettings settings = {
-      .protocol = (struct Protocol*)(&http_protocol),
+      .protocol = (struct Protocol*)(http_protocol),
       .timeout = timeout,
       .threads = rb_threads == Qnil ? 1 : (FIX2INT(rb_threads)),
       .processes = rb_processes == Qnil ? 1 : (FIX2INT(rb_processes)),
@@ -861,6 +859,8 @@ static VALUE http_start(VALUE self) {
   // rb_thread_call_without_gvl2(slow_func, slow_arg, unblck_func,
   // unblck_arg);
   rb_thread_call_without_gvl2(srv_start_no_gvl, &settings, unblck, NULL);
+  // cleanup the HttpProtocol object
+  HttpProtocol.destroy(http_protocol);
   return self;
 }
 

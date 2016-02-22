@@ -11,6 +11,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 
 /////////////////
 // functions used by the Http protocol, internally
@@ -178,70 +180,86 @@ static int http_sendfile(struct HttpRequest* req) {
           fclose(file);
           return 0;
         }
-        len = asprintf(
-            &ext, http_range_response, (mime ? "Content-Type: " : ""),
-            (mime ? mime : ""), (mime ? "\r\n" : ""), len,
-            Day2Str[t_now.tm_wday], t_now.tm_mday, Mon2Str[t_now.tm_mon],
-            t_now.tm_year + 1900, t_now.tm_hour, t_now.tm_min, t_now.tm_sec,
-            Day2Str[t_file.tm_wday], t_file.tm_mday, Mon2Str[t_file.tm_mon],
-            t_file.tm_year + 1900, t_file.tm_hour, t_file.tm_min, t_file.tm_sec,
-            start, finish - 1, file_data.st_size);
+        len = snprintf(
+            req->buffer, HTTP_HEAD_MAX_SIZE, http_range_response,
+            (mime ? "Content-Type: " : ""), (mime ? mime : ""),
+            (mime ? "\r\n" : ""), len, Day2Str[t_now.tm_wday], t_now.tm_mday,
+            Mon2Str[t_now.tm_mon], t_now.tm_year + 1900, t_now.tm_hour,
+            t_now.tm_min, t_now.tm_sec, Day2Str[t_file.tm_wday], t_file.tm_mday,
+            Mon2Str[t_file.tm_mon], t_file.tm_year + 1900, t_file.tm_hour,
+            t_file.tm_min, t_file.tm_sec, start, finish - 1, file_data.st_size);
         // review the string
-        if (!len || !ext) {
+        if (!len) {
           fclose(file);
           return 0;
         }
         // send the headers and the data (moving the pointers to the buffer)
-        Server.write_move(req->server, req->sockfd, ext, len);
+        Server.write(req->server, req->sockfd, req->buffer, len);
         Server.write_move(req->server, req->sockfd, data, finish - start);
         return 1;
       } else {
         // going to the EOF (big chunk or EOL requested) - send as file
         finish = file_data.st_size - 1;
         fseek(file, start, SEEK_SET);
-        len = asprintf(
-            &ext, http_range_response, (mime ? "Content-Type: " : ""),
-            (mime ? mime : ""), (mime ? "\r\n" : ""), file_data.st_size - start,
+        // len = asprintf(
+        //     &ext, http_range_response, (mime ? "Content-Type: " : ""),
+        //     (mime ? mime : ""), (mime ? "\r\n" : ""), file_data.st_size -
+        //     start,
+        //     Day2Str[t_now.tm_wday], t_now.tm_mday, Mon2Str[t_now.tm_mon],
+        //     t_now.tm_year + 1900, t_now.tm_hour, t_now.tm_min, t_now.tm_sec,
+        //     Day2Str[t_file.tm_wday], t_file.tm_mday, Mon2Str[t_file.tm_mon],
+        //     t_file.tm_year + 1900, t_file.tm_hour, t_file.tm_min,
+        //     t_file.tm_sec,
+        //     start, finish, file_data.st_size);
+        // // send the headers and the file
+        // Server.write_move(req->server, req->sockfd, ext, len);
+
+        len = snprintf(
+            req->buffer, HTTP_HEAD_MAX_SIZE, http_range_response,
+            (mime ? "Content-Type: " : ""), (mime ? mime : ""),
+            (mime ? "\r\n" : ""), file_data.st_size - start,
             Day2Str[t_now.tm_wday], t_now.tm_mday, Mon2Str[t_now.tm_mon],
             t_now.tm_year + 1900, t_now.tm_hour, t_now.tm_min, t_now.tm_sec,
             Day2Str[t_file.tm_wday], t_file.tm_mday, Mon2Str[t_file.tm_mon],
             t_file.tm_year + 1900, t_file.tm_hour, t_file.tm_min, t_file.tm_sec,
             start, finish, file_data.st_size);
         // send the headers and the file
-        Server.write_move(req->server, req->sockfd, ext, len);
+        Server.write(req->server, req->sockfd, req->buffer, len);
         Server.sendfile(req->server, req->sockfd, file);
         return 1;
       }
     }
   invalid_range:
     if (mime)
-      len = asprintf(
-          &ext, http_file_response, mime, file_data.st_size,
-          Day2Str[t_now.tm_wday], t_now.tm_mday, Mon2Str[t_now.tm_mon],
-          t_now.tm_year + 1900, t_now.tm_hour, t_now.tm_min, t_now.tm_sec,
-          Day2Str[t_file.tm_wday], t_file.tm_mday, Mon2Str[t_file.tm_mon],
-          t_file.tm_year + 1900, t_file.tm_hour, t_file.tm_min, t_file.tm_sec);
+      len = snprintf(req->buffer, HTTP_HEAD_MAX_SIZE, http_file_response, mime,
+                     file_data.st_size, Day2Str[t_now.tm_wday], t_now.tm_mday,
+                     Mon2Str[t_now.tm_mon], t_now.tm_year + 1900, t_now.tm_hour,
+                     t_now.tm_min, t_now.tm_sec, Day2Str[t_file.tm_wday],
+                     t_file.tm_mday, Mon2Str[t_file.tm_mon],
+                     t_file.tm_year + 1900, t_file.tm_hour, t_file.tm_min,
+                     t_file.tm_sec);
     else
-      len = asprintf(
-          &ext, http_file_response_no_mime, file_data.st_size,
-          Day2Str[t_now.tm_wday], t_now.tm_mday, Mon2Str[t_now.tm_mon],
-          t_now.tm_year + 1900, t_now.tm_hour, t_now.tm_min, t_now.tm_sec,
-          Day2Str[t_file.tm_wday], t_file.tm_mday, Mon2Str[t_file.tm_mon],
-          t_file.tm_year + 1900, t_file.tm_hour, t_file.tm_min, t_file.tm_sec);
+      len = snprintf(
+          req->buffer, HTTP_HEAD_MAX_SIZE, http_file_response_no_mime,
+          file_data.st_size, Day2Str[t_now.tm_wday], t_now.tm_mday,
+          Mon2Str[t_now.tm_mon], t_now.tm_year + 1900, t_now.tm_hour,
+          t_now.tm_min, t_now.tm_sec, Day2Str[t_file.tm_wday], t_file.tm_mday,
+          Mon2Str[t_file.tm_mon], t_file.tm_year + 1900, t_file.tm_hour,
+          t_file.tm_min, t_file.tm_sec);
 
     // review the string
-    if (!len || !ext) {
+    if (!len) {
       fclose(file);
       return 0;
     }
 
     // send headers
-    Server.write_move(req->server, req->sockfd, ext, len);
+    Server.write(req->server, req->sockfd, req->buffer, len);
     // send file, unless the request method is "HEAD"
     if (strcmp("HEAD", req->method))
       Server.sendfile(req->server, req->sockfd, file);
-    // // The file will be closed by the buffer.
-    // DONT fclose(file);
+    else  // The file will be closed by the buffer if it's sent, otherwise...
+      fclose(file);
 
     // DEBUG - print headers
     // HttpRequest.first(req);
@@ -257,7 +275,16 @@ static int http_sendfile(struct HttpRequest* req) {
 
 // implement on_close to close the FILE * for the body (if exists).
 static void http_on_close(struct Server* server, int sockfd) {
-  HttpRequest.destroy(Server.set_udata(server, sockfd, NULL));
+  struct HttpRequest* request = Server.set_udata(server, sockfd, NULL);
+  if (request) {
+    // clear the request data.
+    HttpRequest.clear(request);
+    // store the request in the object pool.
+    ObjectPool.push(
+        ((struct HttpProtocol*)(Server.get_protocol(server, sockfd)))
+            ->request_pool,
+        request);
+  }
 }
 // implement on_data to parse incoming requests.
 static void http_on_data(struct Server* server, int sockfd) {
@@ -296,7 +323,9 @@ static void http_on_data(struct Server* server, int sockfd) {
   struct HttpRequest* request = Server.get_udata(server, sockfd);
   if (!request) {
     Server.set_udata(server, sockfd,
-                     (request = HttpRequest.new(server, sockfd)));
+                     (request = ObjectPool.pop(protocol->request_pool)));
+    request->server = server;
+    request->sockfd = sockfd;
   }
   char* buff = request->buffer;
   int pos = request->private.pos;
@@ -352,8 +381,12 @@ parse:
     while (pos < (len - 1) && buff[pos] != ' ')
       pos++;
     buff[pos++] = 0;
-    if (pos > len - 3)
-      goto bad_request;
+    if (pos > len - 3) {
+      if (len >= HTTP_HEAD_MAX_SIZE - 32)
+        goto too_big;
+      else
+        goto bad_request;
+    }
     request->path = &buff[pos];
     // get query and version
     while (pos < (len - 1) && buff[pos] != ' ' && buff[pos] != '?')
@@ -365,8 +398,12 @@ parse:
         pos++;
     }
     buff[pos++] = 0;
-    if (pos + 5 > len)
-      goto bad_request;
+    if (pos + 5 > len) {
+      if (len >= HTTP_HEAD_MAX_SIZE - 32)
+        goto too_big;
+      else
+        goto bad_request;
+    }
     request->version = buff + pos;
     if (buff[pos] != 'H' || buff[pos + 1] != 'T' || buff[pos + 2] != 'T' ||
         buff[pos + 3] != 'P')
@@ -375,7 +412,12 @@ parse:
     while (pos < len - 2 && buff[pos] != '\r')
       pos++;
     if (pos > len - 2)  // must have 2 EOL markers before a header
-      goto bad_request;
+    {
+      if (len >= HTTP_HEAD_MAX_SIZE - 32)
+        goto too_big;
+      else
+        goto bad_request;
+    }
     buff[pos++] = 0;
     buff[pos++] = 0;
 
@@ -394,7 +436,12 @@ parse:
       pos++;
     }
     if (pos >= len - 1)  // must have at least 2 eol markers + data
-      goto bad_request;
+    {
+      if (len >= HTTP_HEAD_MAX_SIZE - 32)
+        goto too_big;
+      else
+        goto bad_request;
+    }
     buff[pos++] = 0;
     if (buff[pos] == ' ')  // space after colon?
       buff[pos++] = 0;
@@ -403,7 +450,12 @@ parse:
     while (pos + 1 < len && buff[pos] != '\r')
       pos++;
     if (pos >= len - 1)  // must have at least 2 eol markers...
-      goto bad_request;
+    {
+      if (len >= HTTP_HEAD_MAX_SIZE - 32)
+        goto too_big;
+      else
+        goto bad_request;
+    }
     buff[pos++] = 0;
     buff[pos++] = 0;
     if (!strcmp(tmp1, "HOST")) {
@@ -435,9 +487,7 @@ finish_headers:
   request->private.max = pos - request->private.max;
 
   // check for required `host` header and body content length (not chuncked)
-  if (!request->host ||
-      (request->content_type &&
-       !request->content_length))  // convert dynamically to Mb?
+  if (!request->host || (request->content_type && !request->content_length))
     goto bad_request;
   // zero out the last two "\r\n" before any message body
   buff[pos++] = 0;
@@ -531,7 +581,8 @@ cleanup_after_finish:
 
   // we need to destroy the request ourselves, because we disconnected the
   // request from the server's udata.
-  HttpRequest.destroy(request);
+  HttpRequest.clear(request);
+  ObjectPool.push(protocol->request_pool, request);
   return;
 
 options:
@@ -651,14 +702,29 @@ void http_default_on_request(struct HttpRequest* req) {
 ////////////////
 // public API
 
-/// returns a stack allocated, core-initialized, Http Protocol object.
-struct HttpProtocol HttpProtocol(void) {
-  return (struct HttpProtocol){
-      .parent.service = "http",
-      .parent.on_data = http_on_data,
-      .parent.on_close = http_on_close,
-      .maximum_body_size = 32,
-      .on_request = http_default_on_request,
-      .public_folder = NULL,
-  };
+static char http_service_name[] = "http";
+/** returns a new, initialized, Http Protocol object. */
+struct HttpProtocol* HttpProtocol_new(void) {
+  struct HttpProtocol* http = malloc(sizeof(struct HttpProtocol));
+  memset(http, 0, sizeof(struct HttpProtocol));
+  http->parent.service = http_service_name;
+  http->parent.on_data = http_on_data;
+  http->parent.on_close = http_on_close;
+  http->maximum_body_size = 32;
+  http->on_request = http_default_on_request;
+  http->public_folder = NULL;
+  // void* (*create)(void),  void (*destroy)(void* object), int size
+  http->request_pool =
+      ObjectPool.new_dynamic((void* (*)(void))HttpRequest.new,
+                             (void (*)(void*))HttpRequest.destroy, 32);
+  return http;
 }
+void HttpProtocol_destroy(struct HttpProtocol* http) {
+  ObjectPool.destroy(http->request_pool);
+  free(http);
+}
+
+struct ___HttpProtocol_CLASS___ HttpProtocol = {
+    .new = HttpProtocol_new,
+    .destroy = HttpProtocol_destroy,
+};

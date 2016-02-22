@@ -7,9 +7,10 @@ static pthread_mutex_t registry_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // the registry global
 static struct Registry {
+  struct Object* obj_pool;
   struct Object* first;
   VALUE owner;
-} registry = {.first = NULL, .owner = 0};
+} registry = {.obj_pool = NULL, .first = NULL, .owner = 0};
 // the references struct (bin-tree)
 struct Object {
   struct Object* next;
@@ -22,12 +23,18 @@ struct Object {
 static VALUE register_object(VALUE obj) {
   if (!obj || obj == Qnil)
     return 0;
-  struct Object* line = malloc(sizeof(struct Object));
+  struct Object* line;
+  pthread_mutex_lock(&registry_lock);
+  if (registry.obj_pool) {
+    line = registry.obj_pool;
+    registry.obj_pool = registry.obj_pool->next;
+  } else {
+    line = malloc(sizeof(struct Object));
+  }
   if (!line) {
     perror("No Memory");
     return 0;
   }
-  pthread_mutex_lock(&registry_lock);
   line->obj = obj;
   line->next = registry.first;
   registry.first = line;
@@ -50,7 +57,9 @@ static void unregister_object(VALUE obj) {
         registry.first = line->next;
       else if (prev)  // must be true, really
         prev->next = line->next;
-      free(line);
+      // move the object container to the discarded object pool
+      line->next = registry.obj_pool;
+      registry.obj_pool = line;
       goto finish;
     }
     prev = line;
@@ -98,14 +107,24 @@ static void registry_mark(void* ignore) {
 // clear the registry (end of lifetime)
 static void registry_clear(void* ignore) {
   pthread_mutex_lock(&registry_lock);
-  struct Object* line = registry.first;
-  struct Object* to_free = NULL;
+  struct Object* line;
+  struct Object* to_free;
+  // free active object references
+  line = registry.first;
   while (line) {
     to_free = line;
     line = line->next;
     free(to_free);
   }
   registry.first = NULL;
+  // free container pool
+  line = registry.obj_pool;
+  while (line) {
+    to_free = line;
+    line = line->next;
+    free(to_free);
+  }
+  registry.obj_pool = NULL;
   registry.owner = 0;
   pthread_mutex_unlock(&registry_lock);
 }
