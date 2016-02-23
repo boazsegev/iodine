@@ -42,25 +42,35 @@ server.timeout ||= 1
 server.public_folder = '/Users/2Be/Documents/Scratch'
 count = 2
 server.on_http= Proc.new do |env|
-  # out = env["rack.hijack"].call Proc.new {
-  #   env["rack.hijack_io"].write "Partial Hijack!\n"
-  #   env["rack.hijack_io"].close
-  # }
-  # [200,{"Content-Length" => "8", "Connection" => "close"}, []]
-  # count += 1
-  # raise "you're odd!" if(count.odd?)
-  out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
-  request = Rack::Request.new(env)
-  out += "\nRequest Path: #{request.path_info}\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
-  [200, {"Content-Length" => out.length}, [out]];
+  if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
+    env['iodine.upgrade'.freeze] = WSEcho.new(server)
+    [0,{}, []]
+  else
+    # out = env["rack.hijack"].call Proc.new {
+    #   env["rack.hijack_io"].write "Partial Hijack!\n"
+    #   env["rack.hijack_io"].close
+    # }
+    # [200,{"Content-Length" => "8", "Connection" => "close"}, []]
+    # count += 1
+    # raise "you're odd!" if(count.odd?)
+    out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
+    request = Rack::Request.new(env)
+    out += "\nRequest Path: #{request.path_info}\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
+    [200, {"Content-Length" => out.length}, [out]];
+  end
 end
 
 server.on_http= Proc.new do |env|
   # [200, {"Content-Length".freeze => "12".freeze}, ["Hello World!".freeze]];
-  req = Rack::Request.new env
-  res = Rack::Response.new
-  res.write "Hello World!".freeze
-  res.to_a
+  if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
+    env['iodine.websocket'.freeze] = WSEcho.new(server)
+    [0,{}, []]
+  else
+    req = Rack::Request.new env
+    res = Rack::Response.new
+    res.write "Hello World!".freeze
+    res.to_a
+  end
 end
 
 server.on_websocket= Proc.new do |env|

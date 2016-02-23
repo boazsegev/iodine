@@ -60,17 +60,20 @@ static VALUE R_MPROCESS_V;     // for Rack: rack.multiprocess
 static VALUE R_RUN_ONCE;       // for Rack: rack.run_once
 static VALUE R_HIJACK_Q;       // for Rack: rack.hijack?
 // these three are used also by rb-rack-io.c
-VALUE R_HIJACK;                   // for Rack: rack.hijack
-VALUE R_HIJACK_IO;                // for Rack: rack.hijack_io
-VALUE R_HIJACK_CB;                // for Rack: rack.hijack_io callback
-static VALUE UPGRADE_HEADER;      // upgrade support
-static VALUE CONNECTION_HEADER;   // upgrade support
-static VALUE CONNECTION_CLOSE;    // upgrade support
-static VALUE WEBSOCKET_STR;       // upgrade support
-static VALUE WEBSOCKET_VER;       // upgrade support
-static VALUE WEBSOCKET_SEC_VER;   // upgrade support
-static VALUE WEBSOCKET_SEC_EXT;   // upgrade support
-static VALUE WEBSOCKET_SEC_ACPT;  // upgrade support
+VALUE R_HIJACK;                     // for Rack: rack.hijack
+VALUE R_HIJACK_IO;                  // for Rack: rack.hijack_io
+VALUE R_HIJACK_CB;                  // for Rack: rack.hijack_io callback
+static VALUE R_IODINE_UPGRADE;      // Iodine upgrade support
+static VALUE R_IODINE_UPGRADE_DYN;  // Iodine upgrade support
+static VALUE UPGRADE_HEADER;        // upgrade support
+static VALUE UPGRADE_HEADER;        // upgrade support
+static VALUE CONNECTION_HEADER;     // upgrade support
+static VALUE CONNECTION_CLOSE;      // upgrade support
+static VALUE WEBSOCKET_STR;         // upgrade support
+static VALUE WEBSOCKET_VER;         // upgrade support
+static VALUE WEBSOCKET_SEC_VER;     // upgrade support
+static VALUE WEBSOCKET_SEC_EXT;     // upgrade support
+static VALUE WEBSOCKET_SEC_ACPT;    // upgrade support
 // rack.version must be an array of Integers.
 // rack.url_scheme must either be http or https.
 // There must be a valid input stream in rack.input.
@@ -204,6 +207,8 @@ static VALUE request_to_env(struct HttpRequest* request) {
   rb_hash_aset(env, R_HIJACK_Q, Qtrue);
   rb_hash_aset(env, R_HIJACK, hj_method);
   rb_hash_aset(env, R_HIJACK_IO, Qnil);
+  rb_hash_aset(env, R_IODINE_UPGRADE, Qnil);
+  rb_hash_aset(env, R_IODINE_UPGRADE_DYN, Qnil);
   // itterate through the headers and set the HTTP_X "variables"
   // we will do so destructively (overwriting the Parser's data)
   HttpRequest.first(request);
@@ -290,8 +295,9 @@ static VALUE for_each_string(VALUE str, VALUE _req, int argc, VALUE argv) {
                RSTRING_LEN(str));
   return Qtrue;
 }
-// translate a struct HttpRequest to a Hash, according top the
-// Rack specifications.
+// Sends the response while reviewing the headers and response data.
+// Returns 1 if the connection should be closed and 0 if the connection should
+// remain open.
 static int send_response(struct HttpRequest* request, VALUE response) {
   static char internal_error[] =
       "HTTP/1.1 502 Internal Error\r\n"
@@ -330,8 +336,8 @@ static int send_response(struct HttpRequest* request, VALUE response) {
     tmp = rb_str_to_inum(tmp, 10, 0);
   if (TYPE(tmp) != T_FIXNUM || (tmp = FIX2INT(tmp)) > 512 || tmp < 100 ||
       !(tmp_s = HttpStatus.to_s(tmp))) {
-    if (FIX2INT(tmp) <= 0)
-      return 0;  // faye return status -1 on hijack
+    if (TYPE(tmp) == T_FIXNUM && FIX2INT(tmp) <= 0)
+      return 0;  // faye return status -1 on hijack (that's why <=0)
     goto internal_err;
   }
   request->private.pos = 0;
@@ -499,151 +505,150 @@ internal_err:
   // rb_warn fails sometimes, causing the server to crash. It was removed.
   return 1;
 }
-// Upgrade to a generic Protocol (Iodine Core style)
-static void perform_generic_upgrade(struct HttpRequest* request,
-                                    VALUE response) {
-  VALUE tmp = 0;
-  // Upgrade (if 4th element)
-  if (RARRAY_LEN(response) > 3) {
-    tmp = rb_ary_entry(response, 3);
-    // no real upgrade element
-    if (tmp == Qnil)
-      return;
+
+// reviews the response and env to setup any upgrade specific headers
+// returns false if the response object shouldn't be sent
+// returns true if the response should be sent.
+static int prep_response(VALUE env,
+                         struct HttpRequest* request,
+                         VALUE response) {
+  VALUE handler;  // will hold the upgrade object
+  if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE)) != Qnil) {
+    // we're upgrading to a websocket connection - we need to set the headers.
+    static char ws_key_accpt_str[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    char* recv_str;
+    // upgrade taking place, make sure the upgrade headers are valid for the
+    // response.
+    rb_ary_store(response, 0, INT2FIX(101));  // status
+    rb_ary_store(response, 2, Qnil);          // no content.
+    // we're done with the `env` variable, so we can use it to store the
+    // headers.
+    env = rb_ary_entry(response, 1);
+    // set content-length to 0 - needed?
+    // rb_hash_aset(env, CONTENT_LENGTH, INT2FIX(0));
+    // connection and upgrade headers
+    rb_hash_aset(env, CONNECTION_HEADER, UPGRADE_HEADER);
+    rb_hash_aset(env, UPGRADE_HEADER, WEBSOCKET_STR);
+    // websocket version (13)
+    rb_hash_aset(env, WEBSOCKET_SEC_VER, WEBSOCKET_VER);
+    // websocket extentions (none)
+    // rb_hash_aset(env, WEBSOCKET_SEC_EXT, QUERY_ESTRING);
+    // the accept Base64 Hash - we need to compute this one and set it
+    if (!HttpRequest.find(request, "SEC_WEBSOCKET_KEY"))
+      goto refuse_websocket;
+    // the client's unique string
+    recv_str = HttpRequest.value(request);
+    if (!recv_str)
+      goto refuse_websocket;
+    ;
+    // use the SHA1 methods provided to concat the client string and hash
+    struct sha1nfo sha1;
+    sha1_init(&sha1);
+    sha1_write(&sha1, recv_str, strlen(recv_str));
+    sha1_write(&sha1, ws_key_accpt_str, sizeof(ws_key_accpt_str) - 1);
+    // create a ruby stribg to contain the data
+    VALUE accpt_str = rb_str_buf_new(30);
+    if (accpt_str == Qnil)
+      goto refuse_websocket;
+    // base encode the data
+    int len =
+        ws_base64_encode((char*)sha1_result(&sha1), RSTRING_PTR(accpt_str), 20);
+    // set the string's length and encoding
+    rb_str_set_len(accpt_str, len);
+    rb_enc_associate_index(accpt_str, BinaryEncodingIndex);
+    // set the accept hashed value in the headers
+    rb_hash_aset(env, WEBSOCKET_SEC_ACPT, accpt_str);
+
+  } else if ((handler = rb_hash_aref(env, R_HIJACK_IO)) != Qnil) {
+    // hijack without a callback - upgrade without sending the response.
+    if (rb_hash_aref(env, R_HIJACK_CB) == Qnil)
+      return 0;
+    else
+      rb_ary_store(response, 2, Qnil);
+  }
+  // else if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE_DYN)) != Qnil) {
+  //   // we're upgrading to a custom protocol - to prevent a response, send a
+  //   // status code that is <= 0
+  //     return 1;
+  // }
+  return 1;
+refuse_websocket:
+  // no upgrade object - send 400 error with headers.
+  rb_ary_store(response, 0, INT2FIX(400));
+  // we're done with the `env` variable, so we can use it to store the
+  // headers.
+  env = rb_ary_entry(response, 1);
+  // close connection header
+  rb_hash_aset(env, CONNECTION_HEADER, CONNECTION_CLOSE);
+  return 1;
+}
+
+// reviews the response and env and performs an upgrade if required.
+static void review_upgrade(VALUE env, struct HttpRequest* request) {
+  VALUE handler;  // will hold the upgrade object
+  if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE)) != Qnil) {
+    // websocket upgrade.
+    Websockets.new(request, handler);
+  } else if ((handler = rb_hash_aref(env, R_HIJACK_IO)) != Qnil) {
+    // Hijack - remove the socket and check if a callback was set to be called.
+    Server.hijack(request->server, request->sockfd);
+    // we're done with the handler object - we can use it to review if a
+    // callback exists.
+    if ((handler = rb_hash_aref(env, R_HIJACK_CB)) != Qnil) {
+      RubyCaller.call_unsafe(handler, call_proc_id);
+    }
+  } else if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE_DYN)) != Qnil) {
+    // generic upgrade.
     // include the rDynProtocol within the object.
-    if (TYPE(tmp) == T_CLASS) {
+    if (TYPE(handler) == T_CLASS) {
       // include the Protocol module
       // // do we neet to check?
       // if (rb_mod_include_p(protocol, rDynProtocol) == Qfalse)
-      rb_include_module(tmp, rDynProtocol);
-      tmp = RubyCaller.call_unsafe(tmp, new_func_id);
+      rb_include_module(handler, rDynProtocol);
+      handler = RubyCaller.call_unsafe(handler, new_func_id);
     } else {
       // include the Protocol module in the object's class
-      VALUE p_class = rb_obj_class(tmp);
+      VALUE p_class = rb_obj_class(handler);
       // // do we neet to check?
       // if (rb_mod_include_p(p_class, rDynProtocol) == Qfalse)
       rb_include_module(p_class, rDynProtocol);
     }
     // make sure everything went as it should
-    if (tmp == Qnil)
+    if (handler == Qnil)
       return;
     // set the new protocol at the server's udata
-    Server.set_udata(request->server, request->sockfd, (void*)tmp);
+    Server.set_udata(request->server, request->sockfd, (void*)handler);
     // add new protocol to the Registry
-    Registry.add(tmp);
+    Registry.add(handler);
     // initialize pre-required variables
-    rb_ivar_set(tmp, fd_var_id, INT2FIX(request->sockfd));
-    set_server(tmp, request->server);
+    rb_ivar_set(handler, fd_var_id, INT2FIX(request->sockfd));
+    set_server(handler, request->server);
     // initialize the new protocol
-    RubyCaller.call_unsafe(tmp, on_open_func_id);
+    RubyCaller.call_unsafe(handler, on_open_func_id);
   }
 }
 // Gets the response object, within a GVL context
-static void* handle_request_in_gvl(void* _res) {
-  struct HttpRequest* request = _res;
+static void* handle_request_in_gvl(void* _req) {
+  struct HttpRequest* request = _req;
   VALUE env = request_to_env(request);
-  VALUE response;
-  VALUE hj_callback = 0;
-  char* recv_str = NULL;
-  static char ws_key_accpt_str[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-  // check for a valid and supported Websocket request (ver 13)
-  // If exists, forward this request to the special handler
-  // Notice the assignment of the callback stored as udata 1.
-  if (request->upgrade && !strcasecmp(request->upgrade, "websocket") &&
-      (response = (VALUE)Server.get_udata(request->server, 1)) &&
-      HttpRequest.find(request, "SEC_WEBSOCKET_VERSION") &&
-      (recv_str = HttpRequest.value(request)) && recv_str[0] == '1' &&
-      recv_str[1] == '3') {
-    // a regular request is forwarded to the websocket callback (stored in 0).
-    response = RubyCaller.call_unsafe2(response, call_proc_id, 1, &env);
-    // register response
-    Registry.add(response);
-    // update response for Websocket support
-    if (TYPE(response) == T_ARRAY && RARRAY_LEN(response) > 3) {
-      // upgrade taking place, make sure the upgrade headers are valid for the
-      // response.
-      rb_ary_store(response, 0, INT2FIX(101));  // status
-      rb_ary_store(response, 2, Qnil);          // no content.
-      // we're done with the `env` variable, so we can use it to store the
-      // headers.
-      env = rb_ary_entry(response, 1);
-      // set content-length to 0 - needed?
-      // rb_hash_aset(env, CONTENT_LENGTH, INT2FIX(0));
-      // connection and upgrade headers
-      rb_hash_aset(env, CONNECTION_HEADER, UPGRADE_HEADER);
-      rb_hash_aset(env, UPGRADE_HEADER, WEBSOCKET_STR);
-      // websocket version (13)
-      rb_hash_aset(env, WEBSOCKET_SEC_VER, WEBSOCKET_VER);
-      // websocket extentions (none)
-      // rb_hash_aset(env, WEBSOCKET_SEC_EXT, QUERY_ESTRING);
-      // the accept Base64 Hash - we need to compute this one and set it
-      if (!HttpRequest.find(request, "SEC_WEBSOCKET_KEY"))
-        goto refuse_websocket;
-      // the client's unique string
-      recv_str = HttpRequest.value(request);
-      if (!recv_str)
-        goto refuse_websocket;
-      ;
-      // use the SHA1 methods provided to concat the client string and hash
-      struct sha1nfo sha1;
-      sha1_init(&sha1);
-      sha1_write(&sha1, recv_str, strlen(recv_str));
-      sha1_write(&sha1, ws_key_accpt_str, sizeof(ws_key_accpt_str) - 1);
-      // create a ruby stribg to contain the data
-      VALUE accpt_str = rb_str_buf_new(30);
-      if (accpt_str == Qnil)
-        goto refuse_websocket;
-      // base encode the data
-      int len = ws_base64_encode((char*)sha1_result(&sha1),
-                                 RSTRING_PTR(accpt_str), 20);
-      // set the string's length and encoding
-      rb_str_set_len(accpt_str, len);
-      rb_enc_associate_index(accpt_str, BinaryEncodingIndex);
-      // set the accept hashed value in the headers
-      rb_hash_aset(env, WEBSOCKET_SEC_ACPT, accpt_str);
-      // sends the response and performs the upgrade, if needed
-      if (!send_response(request, response))
-        Websockets.new(request, rb_ary_entry(response, 3));
-      // we're done - cleanup
-      goto cleanup;
-    } else if (TYPE(response) == T_ARRAY && RARRAY_LEN(response) > 2) {
-    refuse_websocket:
-      // no upgrade object - send 400 error with headers.
-      rb_ary_store(response, 0, INT2FIX(400));
-      // we're done with the `env` variable, so we can use it to store the
-      // headers.
-      env = rb_ary_entry(response, 1);
-      // close connection header
-      rb_hash_aset(env, CONNECTION_HEADER, CONNECTION_CLOSE);
-      // sends the response and performs the upgrade, if needed
-      send_response(request, response);
-      // we're done - cleanup
-      goto cleanup;
-    }
-  }
-  // perform HTTP callback
-  response = (VALUE)Server.get_udata(request->server, 0);
-  if (response)
-    response = RubyCaller.call_unsafe2(response, call_proc_id, 1, &env);
-  // review env for highjack and clear request body if true
-  if (rb_hash_aref(env, R_HIJACK_IO) != Qnil) {
-    if ((hj_callback = rb_hash_aref(env, R_HIJACK_CB)) != Qnil) {
-      rb_ary_store(response, 2, Qnil);
-      send_response(request, response);
-      RubyCaller.call_unsafe(hj_callback, call_proc_id);
-    }
+  Registry.add(env);
+  VALUE response = (VALUE)Server.get_udata(request->server, 0);
+  if (!response) {
     goto cleanup;
   }
-  // register response
+  response = RubyCaller.call_unsafe2(response, call_proc_id, 1, &env);
   Registry.add(response);
-  if (send_response(request, response))
+  if (prep_response(env, request, response) &&
+      send_response(request, response)) {
     Server.close(request->server, request->sockfd);
-  else
-    perform_generic_upgrade(request, response);
+    goto cleanup;
+  }
+  review_upgrade(env, request);
+// complete upgrade
 cleanup:
-  // Registry is a Bag, not a Set. Only the first reference is removed,
-  // any added references (if exist) are left in the Registry.
+  if (response)
+    Registry.remove(response);
   Registry.remove(env);
-  Registry.remove(response);
   return 0;
 }
 // The core handler passed on to the HttpProtocol object.
@@ -669,9 +674,6 @@ static void on_init(struct Server* server) {
   // fd=0
   if (rb_iv_get(core_instance, "@on_http") != Qnil)
     Server.set_udata(server, 0, (void*)rb_iv_get(core_instance, "@on_http"));
-  if (rb_iv_get(core_instance, "@on_websocket") != Qnil)
-    Server.set_udata(server, 1,
-                     (void*)rb_iv_get(core_instance, "@on_websocket"));
   // set the server variable in the core server object.. is this GC safe?
   set_server(core_instance, server);
   // perform on_init callback - we don't need the core_instance variable, we'll
@@ -720,27 +722,16 @@ static void unblck(void* _) {
 static VALUE http_start(VALUE self) {
   // review the callbacks
   VALUE on_http_handler = rb_iv_get(self, "@on_http");
-  VALUE on_websocket_handler = rb_iv_get(self, "@on_websocket");
-  if (on_websocket_handler == Qnil && on_http_handler == Qnil) {
-    rb_raise(rb_eRuntimeError,
-             "Either the `on_http` callback or the `on_websocket` must be "
-             "defined");
+  if (on_http_handler == Qnil) {
+    rb_raise(rb_eRuntimeError, "The `on_http` callback must be defined");
     return Qnil;
   }
+  // review the callback
   if (on_http_handler != Qnil &&
       !rb_respond_to(on_http_handler, call_proc_id)) {
     rb_raise(rb_eTypeError,
              "The on_http callback should be an object that answers to the "
              "method `call`");
-    return Qnil;
-  }
-  // review the callbacks
-  if (on_websocket_handler != Qnil &&
-      !rb_respond_to(on_websocket_handler, call_proc_id)) {
-    rb_raise(
-        rb_eTypeError,
-        "The on_websocket callback should be an object that answers to the "
-        "method `call`");
     return Qnil;
   }
   // get current settings
@@ -937,6 +928,8 @@ void Init_iodine_http(void) {
   _STORE_(R_HIJACK_IO, "rack.hijack_io");
   _STORE_(R_HIJACK_CB, "iodine.hijack_cb");  // implementation specific
   // websocket upgrade
+  _STORE_(R_IODINE_UPGRADE, "iodine.websocket");     // implementation specific
+  _STORE_(R_IODINE_UPGRADE_DYN, "iodine.protocol");  // implementation specific
   _STORE_(UPGRADE_HEADER, "Upgrade");
   _STORE_(CONNECTION_HEADER, "connection");
   _STORE_(CONNECTION_CLOSE, "close");
@@ -995,24 +988,53 @@ i.e.
      Iodine::Rack.on_http = Proc.new {
        [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
      }
+
+Iodine::Http offers native websocket and protocol upgrade support.
+
+To utilize websocket upgrade, simply provide a class or object to handle
+websocket events using the callbacks and methods defined in
+{Iodine::Http::WebsocketProtocol}
+
+
+Here's a short example:
+
+    class MyEcho
+      def on_message data
+        write data
+      end
+    end
+    server.on_http= Proc.new do |env|
+      if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
+        env['iodine.websocket'.freeze] = WSEcho # or: WSEcho.new
+        [0,{}, []] # It's possible to set cookies for the response.
+      else
+        [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
+      end
+    end
+
+Similarly, it's easy to upgrade to a custom protocol, as specified by the
+{Iodine::Protocol} mixin, by setting the `'iodine.protocol'` field. When using
+this method, you either send the response by setting a valid status code or
+prevent a response from being sent by setting a status code of 0 (or less).
+i.e.:
+
+    class MyProtocol
+      def on_message data
+        # regular socket echo - NOT websockets.
+        write data
+      end
+    end
+    server.on_http= Proc.new do |env|
+      if env["HTTP_UPGRADE".freeze] =~ /echo/i.freeze
+        env['iodine.protocol'.freeze] = MyProtocol
+        [0,{}, []] # no HTTP response will be sent.
+      else
+        [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
+      end
+    end
+
   */
   rb_define_attr(rHttp, "on_http", 1, 1);
-  /** The HTTP handler. This object should answer to `call` (can be a Proc).
-
-see {on_http} for more details.
-
-i.e.
-
-     class MyEcho
-       def on_message data
-         write data
-       end
-     end
-     Iodine::Rack.on_websocket = Proc.new {
-       [0, {}, [], MyEcho]
-     }
-  */
-  rb_define_attr(rHttp, "on_websocket", 1, 1);
   /**
 Allows for basic static file delivery support.
 

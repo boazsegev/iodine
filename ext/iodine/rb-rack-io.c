@@ -211,9 +211,6 @@ static VALUE rio_get_io(int argc, VALUE* argv, VALUE self) {
   rb_hash_aset(env, R_HIJACK_IO, new_io);
   if (argc)
     rb_hash_aset(env, R_HIJACK_CB, *argv);
-
-  if (Server.hijack(request->server, request->sockfd))
-    return Qnil;
   return new_io;
 }
 //////////////////////////////

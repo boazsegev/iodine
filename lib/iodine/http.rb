@@ -17,9 +17,13 @@ class Iodine
     # When the {Iodine::Http#on_websocket} function returns a four-member array (intead of the usual Rack array, that has only three members),
     # the fourth member will be used as a websocket connection handler and it will inherit all the methods from this module.
     #
-    # For some reason, the following methods do not show in the documentation.
-    # The links refer to the same methods as they apply to the {Iodine::Protocol} mixin:
-    # {Iodine::Protocol#run}, {Iodine::Protocol#run_every}, {Iodine::Protocol#run_after}, {Iodine::Protocol#defer}.
+    # <b>For some reason, the following methods do not show in the documentation:</b> The links refer to the same methods as they apply to the {Iodine::Protocol} mixin:
+    #
+    # * {Iodine::Protocol#run}
+    # * {Iodine::Protocol#run_every}
+    # * {Iodine::Protocol#run_after}
+    # * {Iodine::Protocol#defer}
+    #
     module WebsocketProtocol
     end
   end
