@@ -520,9 +520,15 @@ static int prep_response(VALUE env,
     // upgrade taking place, make sure the upgrade headers are valid for the
     // response.
     rb_ary_store(response, 0, INT2FIX(101));  // status
-    rb_ary_store(response, 2, Qnil);          // no content.
     // we're done with the `env` variable, so we can use it to store the
-    // headers.
+    // headers and the body for updating them.
+    env = rb_ary_entry(response, 2);
+    // close the body, if it exists.
+    if (rb_respond_to(env, close_method_id))
+      RubyCaller.call_unsafe(env, close_method_id);
+    // no body will be sent
+    rb_ary_store(response, 2, Qnil);
+    // grab the headers Hash
     env = rb_ary_entry(response, 1);
     // set content-length to 0 - needed?
     // rb_hash_aset(env, CONTENT_LENGTH, INT2FIX(0));
