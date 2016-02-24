@@ -60,22 +60,18 @@ server.on_http= Proc.new do |env|
   end
 end
 
-server.on_http= Proc.new do |env|
-  # [200, {"Content-Length".freeze => "12".freeze}, ["Hello World!".freeze]];
-  if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
-    env['iodine.websocket'.freeze] = WSEcho.new(server)
-    [0,{}, []]
-  else
-    req = Rack::Request.new env
-    res = Rack::Response.new
-    res.write "Hello World!".freeze
-    res.to_a
-  end
-end
-
-server.on_websocket= Proc.new do |env|
-  [0,{}, [], WSEcho.new(server)];
-end
+# server.on_http= Proc.new do |env|
+#   # [200, {"Content-Length".freeze => "12".freeze}, ["Hello World!".freeze]];
+#   if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
+#     env['iodine.websocket'.freeze] = WSEcho.new(server)
+#     [0,{}, []]
+#   else
+#     req = Rack::Request.new env
+#     res = Rack::Response.new
+#     res.write "Hello World!".freeze
+#     res.to_a
+#   end
+# end
 
 server.on_start do
   # server.run {puts "I'm running!"}
