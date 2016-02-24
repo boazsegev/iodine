@@ -27,33 +27,78 @@ Iodine is a C extension for Ruby, developed with Ruby MRI 2.3.0 and 2.2.4 (it sh
 
 Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC).
 
-Iodine's HTTP server includes special support for the Upgrade directive (just add another object to the Rack response array, so it will look like this: `[<status>, {<headers>}, [<body>], <new protocol>]`).
+Iodine's HTTP server includes special support for the Upgrade directive using Rack's `env` Hash to allow Hijacking as well as unique Protocol management that utilizes Iodine's reactor for better performance and integration.
 
-This is especially effective as it allows the use of middleware for connection upgrading, while having the main application answer to any HTTP requests.
+To upgrade to the Websocket Protocol, utilizing Iodine's Websocket parser and protocol support, use `env['iodine.websocket'] = MyWebsocketClass`. i.e.:
 
-This means that it's easy to minimize the number of Ruby objects you need before an Upgrade takes place and a new protocol is established.
+```ruby
+class WebsocketEcho
+  def on_message data
+    write data
+  end
+end
+server.on_http= Proc.new do |env|
+  if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
+    env['iodine.websocket'.freeze] = WebsocketEcho # or: WebsocketEcho.new
+    [0,{}, []] # It's possible to set cookies for the response.
+  else
+    [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
+  end
+end
+```
 
-Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less then 8Kb in size. These restrictions shouldn't be an issue.
+Upgrading to a custom protocol (i.e., to implement your own Websocket protocol with proprietary extensions) is performed using `env['iodine.protocol']`. i.e., we'll use an echo server without Websockets (direct socket echo):
+
+```ruby
+class MyProtocol
+  def on_message data
+    # regular socket echo - NOT websockets.
+    write data
+  end
+end
+server.on_http= Proc.new do |env|
+  if env["HTTP_UPGRADE".freeze] =~ /echo/i.freeze
+    env['iodine.protocol'.freeze] = MyProtocol
+    # no HTTP response will be sent when the status code is 0 (or less).
+    # to upgrade AFTER a response, set a valid response status code.
+    [0,{}, []]
+  else
+    [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
+  end
+end
+```
+
+This is especially effective as it allows the use of middleware for connection upgrading, while having the main application answer any HTTP requests.
+
+This means that it's easy to minimize the number of Ruby objects we need before an Upgrade takes place and a new protocol is established.
+
+Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less then 8Kb in size. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache.
 
 Here's a small Http and Websocket broadcast server with Iodine::Rack, which can be used directly from `irb`:
 
 ```ruby
+require 'iodine'
 # Our websocket controller
 class My_Broadcast
+  # handle HTTP requests as a class method
+  def self.call env
+    if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
+      env['iodine.websocket'.freeze] = self
+      [0,{}, []]
+    end
+    [200, {"Content-Length" => "12"}, ["Hello World!"]]
+  end
   def on_message data
-    each {|ws| ws.write data }
+    # data is the direct buffer and will be recycled once we leave this scope.
+    # we'll copy it to prevent corruption when broadcasting the data asynchronously.
+    data_copy = data.dup
+    # We'll broadcast the data asynchronously to all open websocket connections.
+    each {|ws| ws.write data_copy } # (limited to current process)
     close if data =~ /^bye[\r\n]/i
   end
 end
-# handle HTTP requests
-Iodine::Rack.on_http = Proc.new do |env|
-   [200, {"Content-Length" => "12"}, ["Hello World!"]]
-end
-# if a websocket handler is defined, it will be used for Websocket requests
-Iodine::Rack.on_websocket = Proc.new do |env|
-  # return a new object, or class, as the Websocket protocol handler
-  My_Broadcast
-end
+# Iodine::Rack is a default HTTP server, instance designed for Rack applications
+Iodine::Rack.on_http = My_Broadcast
 # static file serving is as easy as (supports simple byte serving):
 Iodine::Rack.public_folder = "www/public/"
 # start the server
