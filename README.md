@@ -32,11 +32,13 @@ Iodine's HTTP server includes special support for the Upgrade directive using Ra
 To upgrade to the Websocket Protocol, utilizing Iodine's Websocket parser and protocol support, use `env['iodine.websocket'] = MyWebsocketClass`. i.e.:
 
 ```ruby
+require 'iodine'
 class WebsocketEcho
   def on_message data
     write data
   end
 end
+server = Iodine::Http.new
 server.on_http= Proc.new do |env|
   if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
     env['iodine.websocket'.freeze] = WebsocketEcho # or: WebsocketEcho.new
@@ -50,12 +52,14 @@ end
 Upgrading to a custom protocol (i.e., to implement your own Websocket protocol with proprietary extensions) is performed using `env['iodine.protocol']`. i.e., we'll use an echo server without Websockets (direct socket echo):
 
 ```ruby
+require 'iodine'
 class MyProtocol
   def on_message data
     # regular socket echo - NOT websockets.
     write data
   end
 end
+server = Iodine::Http.new
 server.on_http= Proc.new do |env|
   if env["HTTP_UPGRADE".freeze] =~ /echo/i.freeze
     env['iodine.protocol'.freeze] = MyProtocol
@@ -68,7 +72,7 @@ server.on_http= Proc.new do |env|
 end
 ```
 
-This is especially effective as it allows the use of middleware for connection upgrading, while having the main application answer any HTTP requests.
+This is especially effective as it allows the use of middleware without interfering with connection upgrades.
 
 This means that it's easy to minimize the number of Ruby objects we need before an Upgrade takes place and a new protocol is established.
 
@@ -78,9 +82,11 @@ Here's a small Http and Websocket broadcast server with Iodine::Rack, which can 
 
 ```ruby
 require 'iodine'
-# Our websocket controller
+
+# Our server controller and websockets handler
 class My_Broadcast
-  # handle HTTP requests as a class method
+
+  # handle HTTP requests (a class callback, emulating a Proc)
   def self.call env
     if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
       env['iodine.websocket'.freeze] = self
@@ -88,6 +94,8 @@ class My_Broadcast
     end
     [200, {"Content-Length" => "12"}, ["Hello World!"]]
   end
+
+  # handles websocket data (an instance  callback)
   def on_message data
     # data is the direct buffer and will be recycled once we leave this scope.
     # we'll copy it to prevent corruption when broadcasting the data asynchronously.
@@ -97,10 +105,13 @@ class My_Broadcast
     close if data =~ /^bye[\r\n]/i
   end
 end
+
 # Iodine::Rack is a default HTTP server, instance designed for Rack applications
 Iodine::Rack.on_http = My_Broadcast
+
 # static file serving is as easy as (supports simple byte serving):
 Iodine::Rack.public_folder = "www/public/"
+
 # start the server
 Iodine::Rack.start
 ```
@@ -109,7 +120,7 @@ Of course, if you still want to use Rack's `hijack` API, Iodine will support you
 
 ### How does it compare to other servers?
 
-Since the HTTP and Websocket parsers are written in C (with no RegExp), they're fast.
+Since the HTTP and Websocket parsers are written in C (with no RegExp), they're fairly fast.
 
 Also, Iodine's core and parsers are running outside of Ruby's global lock, meaning that they enjoy true concurrency before entering the Ruby layer (your application) - this offers Iodine a big advantage over other servers.
 
@@ -126,9 +137,9 @@ Create a simple `config.ru` file with a hello world app:
 ```ruby
 App = Proc.new do |env|
    [200,
-     {   "Content-Type" => "text/html",
-         "Content-Length" => "16"       },
-     ['Hello from Rack!']  ]
+     {   "Content-Type".freeze => "text/html".freeze,
+         "Content-Length".freeze => "16".freeze },
+     ['Hello from Rack!'.freeze]  ]
 end
 
 run App
@@ -146,22 +157,29 @@ vs.
 $ rackup -p 3000 -E none -s <Other_Server_Here>
 ```
 
-Puma uses up to 16 threads when, so when comparing against Puma, consider using an equal number of threads:
+Puma ~16 threads by default, so when comparing against Puma, consider using an equal number of threads:
 
 ```bash
-// (t - threads)
-$ iodine -p 3000 -t 16
+// (t - threads, w - worker processes)
+$ iodine -p 3000 -t 16 -w 4
+```
+
+vs.
+
+```bash
+// (t - threads, w - worker processes)
+$ puma -p 3000 -w 4 -q
 ```
 
 Review the `iodine -?` help for more data.
 
-Remember to compare the memory footprint after running some requests - it's not just speed that C is helping with.
+Remember to compare the memory footprint after running some requests - it's not just speed that C is helping with, it's also memory management and object pooling (i.e., Iodine uses a buffer packet pool management).
 
 ## Can I try before before I buy?
 
 Well, it is **free** and **open source**, no need to buy.. and of course you can try it out.
 
-It's installable like any other gem, just run:
+It's installable just like any other gem on MRI, run:
 
 ```
 $ gem install iodine
