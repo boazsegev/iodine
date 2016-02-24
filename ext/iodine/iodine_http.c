@@ -498,7 +498,6 @@ static int send_response(struct HttpRequest* request, VALUE response) {
 unknown_stop:
   return close_when_done;
 internal_err:
-  // Registry.remove(response);
   Server.write(request->server, request->sockfd, internal_error,
                sizeof(internal_error));
   Server.close(request->server, request->sockfd);
@@ -624,7 +623,7 @@ static void review_upgrade(VALUE env, struct HttpRequest* request) {
       return;
     // set the new protocol at the server's udata
     Server.set_udata(request->server, request->sockfd, (void*)handler);
-    // add new protocol to the Registry
+    // add new protocol to the Registry - should be removed in on_close
     Registry.add(handler);
     // initialize pre-required variables
     rb_ivar_set(handler, fd_var_id, INT2FIX(request->sockfd));
@@ -637,7 +636,7 @@ static void review_upgrade(VALUE env, struct HttpRequest* request) {
 static void* handle_request_in_gvl(void* _req) {
   struct HttpRequest* request = _req;
   VALUE env = request_to_env(request);
-  Registry.add(env);
+  // Registry.add(env); // performed by the request_to_env function
   VALUE response = (VALUE)Server.get_udata(request->server, 0);
   if (!response) {
     goto cleanup;
