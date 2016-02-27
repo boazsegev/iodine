@@ -553,7 +553,7 @@ static VALUE srv_upgrade(VALUE self, VALUE protocol) {
     // // do we neet to check?
     // if (rb_mod_include_p(protocol, rDynProtocol) == Qfalse)
     rb_include_module(protocol, rDynProtocol);
-    protocol = RubyCaller.call_unsafe(protocol, new_func_id);
+    protocol = RubyCaller.call(protocol, new_func_id);
   } else {
     // include the Protocol module in the object's class
     VALUE p_class = rb_obj_class(protocol);
@@ -574,7 +574,7 @@ static VALUE srv_upgrade(VALUE self, VALUE protocol) {
   rb_ivar_set(protocol, fd_var_id, INT2FIX(fd));
   set_server(protocol, srv);
   // initialize the new protocol
-  RubyCaller.call_unsafe(protocol, on_open_func_id);
+  RubyCaller.call(protocol, on_open_func_id);
   return protocol;
 }
 

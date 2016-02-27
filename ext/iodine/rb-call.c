@@ -1,6 +1,7 @@
 #include "rb-call.h"
 #include <ruby.h>
 #include <ruby/thread.h>
+#include <pthread.h>
 
 ///////////////
 // this is a simple helper that calls Ruby methods on Ruby objects while within
@@ -19,6 +20,25 @@ struct RubyArgCall {
   VALUE returned;
   ID method;
 };
+
+// a thread specific global variable that lets us know if we're in the GVL
+_Thread_local static char in_gvl = 0;
+static char check_in_gvl(void) {
+  return in_gvl;
+}
+
+////////////////////////////////////////////////////////////////////////////
+// Calling C functions.
+static void* call_c(void* (*func)(void*), void* arg) {
+  if (in_gvl) {
+    return func(arg);
+  }
+  void* ret;
+  in_gvl = 1;
+  ret = rb_thread_call_with_gvl(func, arg);
+  in_gvl = 0;
+  return ret;
+}
 
 static void* handle_exception(void* _) {
   VALUE exc = rb_errinfo();
@@ -55,18 +75,7 @@ static void* run_ruby_method_within_gvl(void* _tsk) {
 // wrapping any API calls for exception management AND GVL entry
 static VALUE call(VALUE obj, ID method) {
   struct RubySimpleCall task = {.obj = obj, .method = method};
-  // if (ruby_thread_has_gvl_p())
-  rb_thread_call_with_gvl(run_ruby_method_within_gvl, &task);
-  return task.returned;
-}
-
-// wrapping any API calls for exception management
-static VALUE call_unsafe(VALUE obj, ID method) {
-  struct RubySimpleCall task = {.obj = obj, .method = method};
-  int state = 0;
-  task.returned = rb_protect(run_ruby_method_unsafe, (VALUE)(&task), &state);
-  if (state)
-    handle_exception(NULL);
+  call_c(run_ruby_method_within_gvl, &task);
   return task.returned;
 }
 
@@ -93,18 +102,7 @@ static void* run_argv_method_within_gvl(void* _tsk) {
 static VALUE call_arg(VALUE obj, ID method, int argc, VALUE* argv) {
   struct RubyArgCall task = {
       .obj = obj, .method = method, .argc = argc, .argv = argv};
-  rb_thread_call_with_gvl(run_argv_method_within_gvl, &task);
-  return task.returned;
-}
-
-// wrapping any API calls for exception management
-static VALUE call_argv_unsafe(VALUE obj, ID method, int argc, VALUE* argv) {
-  struct RubyArgCall task = {
-      .obj = obj, .method = method, .argc = argc, .argv = argv};
-  int state = 0;
-  task.returned = rb_protect(run_argv_method_unsafe, (VALUE)(&task), &state);
-  if (state)
-    handle_exception(NULL);
+  call_c(run_argv_method_within_gvl, &task);
   return task.returned;
 }
 
@@ -112,7 +110,7 @@ static VALUE call_argv_unsafe(VALUE obj, ID method, int argc, VALUE* argv) {
 // the API interface
 struct _Ruby_Method_Caller_Class_ RubyCaller = {
     .call = call,
-    .call_unsafe = call_unsafe,
     .call2 = call_arg,
-    .call_unsafe2 = call_argv_unsafe,
+    .call_c = call_c,
+    .in_gvl = check_in_gvl,
 };

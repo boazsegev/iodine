@@ -99,7 +99,7 @@ void* on_message_in_gvl(void* data) {
   // save the string for later use? We'll have to, for most common usecase is
   // JSON... why have another copy of the same data?
   //            VALUE str = rb_obj_dup(ws->buffer);
-  RubyCaller.call_unsafe2(ws->handler, on_msg_func_id, 1, &ws->buffer);
+  RubyCaller.call2(ws->handler, on_msg_func_id, 1, &ws->buffer);
   // reset the buffer
   rb_str_modify(ws->buffer);
   rb_str_set_len(ws->buffer, 0);
@@ -456,7 +456,7 @@ void on_data(server_pt server, int sockfd) {
           // resizing the buffer MUST be performed within the GVL lock!
           // due to memory manipulation.
           // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!! //
-          rb_thread_call_with_gvl(resize_buffer_in_gvl, ws);
+          RubyCaller.call_c(resize_buffer_in_gvl, ws);
         }
         // copy here
         memcpy(RSTRING_PTR(ws->buffer) + buf_pos, ws->parser.tmp_buffer + pos,
@@ -493,7 +493,7 @@ void on_data(server_pt server, int sockfd) {
           // we dont use:
           // // RubyCaller.call2(ws->handler, on_msg_func_id, 1, &(ws->buffer));
           // since we want to dup the buffer (Ruby's lazy copy)
-          rb_thread_call_with_gvl(on_message_in_gvl, ws);
+          RubyCaller.call_c(on_message_in_gvl, ws);
           goto reset_parser;
         }
       } else if (ws->parser.head.op_code == 8) {
@@ -581,7 +581,7 @@ void websocket_new(struct HttpRequest* request, VALUE handler) {
     // // do we neet to check?
     // if (rb_mod_include_p(handler, rWebsocket) == Qfalse)
     rb_include_module(handler, rWebsocket);
-    handler = RubyCaller.call_unsafe(handler, new_func_id);
+    handler = RubyCaller.call(handler, new_func_id);
     // check that we created a handler
     if (handler == Qnil || handler == Qfalse) {
       goto reject;
@@ -611,7 +611,7 @@ void websocket_new(struct HttpRequest* request, VALUE handler) {
   rb_ivar_set(handler, fd_var_id, INT2FIX(request->sockfd));
   set_server(handler, request->server);
   // call the on_open callback
-  RubyCaller.call_unsafe(handler, on_open_func_id);
+  RubyCaller.call(handler, on_open_func_id);
   return;
 reject:
   if (ws)

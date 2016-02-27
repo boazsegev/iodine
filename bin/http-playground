@@ -12,20 +12,28 @@ require 'rack'
 
 
 class WSEcho
-  def initialize srv
-    @srv = srv
+  def self.call env
+    if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
+      env['iodine.websocket'.freeze] = WSEcho
+      return [0,{}, []]
+    end
+    out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
+    request = Rack::Request.new(env)
+    out += "\nRequest Path: #{request.path_info}\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
+    [200, {"Content-Length" => out.length}, [out]];
   end
-  def on_open
-    puts "We have a websocket connection"
-  end
-  def on_close
-    puts "Bye Bye... only #{ws_count} left..."
-  end
+  # def on_open
+  #   puts "We have a websocket connection"
+  # end
+  # def on_close
+  #   puts "Bye Bye... only #{ws_count} left..."
+  # end
   def on_shutdown
     puts "I'm shutting down #{self}"
   end
   def on_message data
-    puts data
+    # puts data
+    write data
     data = data.dup
     each {|h| h.echo data }
   end
@@ -41,29 +49,12 @@ server.processes ||= 1
 server.timeout ||= 1
 server.public_folder = '/Users/2Be/Documents/Scratch'
 count = 2
-server.on_http= Proc.new do |env|
-  if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
-    env['iodine.upgrade'.freeze] = WSEcho.new(server)
-    [0,{}, []]
-  else
-    # out = env["rack.hijack"].call Proc.new {
-    #   env["rack.hijack_io"].write "Partial Hijack!\n"
-    #   env["rack.hijack_io"].close
-    # }
-    # [200,{"Content-Length" => "8", "Connection" => "close"}, []]
-    # count += 1
-    # raise "you're odd!" if(count.odd?)
-    out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
-    request = Rack::Request.new(env)
-    out += "\nRequest Path: #{request.path_info}\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
-    [200, {"Content-Length" => out.length}, [out]];
-  end
-end
+server.on_http= WSEcho
 
 # server.on_http= Proc.new do |env|
 #   # [200, {"Content-Length".freeze => "12".freeze}, ["Hello World!".freeze]];
 #   if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
-#     env['iodine.websocket'.freeze] = WSEcho.new(server)
+#     env['iodine.websocket'.freeze] = WSEcho.new
 #     [0,{}, []]
 #   else
 #     req = Rack::Request.new env

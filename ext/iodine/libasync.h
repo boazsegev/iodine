@@ -39,7 +39,11 @@ extern const struct AsyncAPI {
   async_p (*new)(int threads,
                  void (*on_thread_init)(async_p async, void* arg),
                  void* arg);
-  /** Asyn.run(async, task, arg) sends tasks to the asynchronous event queue. */
+  /** Asyn.run(async, task, arg) sends tasks to the asynchronous event queue.
+
+  returns -1 or 0 on error, otherwise returns a positive number.
+
+  */
   int (*run)(async_p self, void (*task)(void*), void* arg);
   /** Async.signal(async) will gracefully signal the async object to finish up.
    */
@@ -61,5 +65,9 @@ extern const struct AsyncAPI {
   // not all.
   void (*kill)(async_p self);
 } Async;
+
+// void* tell_us(char const* caller_name, void* arg);
+//
+// #define run(async, task, arg) run(tell_us(__func__, (async)), (task), (arg))
 
 #endif /* end of include guard: LIBASYNC_H */

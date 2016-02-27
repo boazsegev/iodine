@@ -14,6 +14,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <signal.h>
 #include <unistd.h>
 #include <execinfo.h>
+#include <fcntl.h>
 
 #include <ruby.h>
 #include <ruby/thread.h>
@@ -40,8 +41,6 @@ Feel free to copy, use and enjoy according to the license provided.
 // types used
 
 struct Async {
-  /// an array to `pthread_t` objects `count` long.
-  VALUE* thread_pool;
   /// the number of threads in the array.
   int count;
   /// The read only part of the pipe used to push tasks.
@@ -52,6 +51,8 @@ struct Async {
   void (*init_thread)(struct Async*, void*);
   /// a pointer for the callback.
   void* arg;
+  /// an array to `pthread_t` objects `count` long.
+  VALUE thread_pool[];
 };
 
 // A task structure.
@@ -61,8 +62,11 @@ struct Task {
 };
 
 /////////////////////
-// kill switch...
-// We'll need it for the GVL
+// Ruby Specific Code
+/////////////////////
+// the thread loop functions
+
+// a kill switch... We'll need it for the GVL
 static void async_kill(struct Async* self) {
   struct Task package = {.task = 0, .arg = 0};
   if (write(self->out, &package, sizeof(struct Task)))
@@ -75,8 +79,6 @@ static void async_kill(struct Async* self) {
   // free(self); // a leak is better then double freeing once finish is called.
 }
 
-/////////////////////
-// the thread loop functions
 // the main thread loop function
 static void* thread_loop_no_gvl(struct Async* async) {
   struct Task task = {};
@@ -85,27 +87,58 @@ static void* thread_loop_no_gvl(struct Async* async) {
     async->init_thread(async, async->arg);
   int in = async->in;
   while (read(in, &task, sizeof(struct Task)) > 0) {
-    if (!task.task)
+    if (!task.task) {
+      close(in);
       break;
+    }
     task.task(task.arg);
   }
-  close(in);
   return 0;
 }
+
 // the thread's GVL release
-VALUE thread_loop(void* async) {
+static VALUE thread_loop(void* async) {
   rb_thread_call_without_gvl2((void* (*)(void*))thread_loop_no_gvl, async,
                               (void (*)(void*))async_kill, async);
   return Qnil;
 }
 
-// creates a Ruby tread using an API call (requires GVL)
-void* create_ruby_thread_gvl(void* async) {
+// Within the GVL, creates a Ruby thread using an API call
+static void* create_ruby_thread_gvl(void* async) {
   return (void*)Registry.add(rb_thread_create(thread_loop, async));
+}
+
+// create a ruby thread
+static VALUE create_rb_thread(struct Async* async) {
+  return (VALUE)rb_thread_call_with_gvl(create_ruby_thread_gvl, async);
+}
+
+// protect call to join
+static void* _inner_join_with_rbthread(void* rbt) {
+  return (void*)rb_funcall((VALUE)rbt, rb_intern("join"), 0);
+}
+
+// join a ruby thread
+static void* join_rb_thread(VALUE thread) {
+  return rb_thread_call_with_gvl(_inner_join_with_rbthread, (void*)thread);
 }
 
 /////////////////////
 // the functions
+
+// a single task performance, for busy waiting.
+static int perform_single_task(async_p async) {
+  struct Task task = {};
+  if (read(async->in, &task, sizeof(struct Task)) > 0) {
+    if (!task.task) {
+      close(async->in);
+      return 0;
+    }
+    task.task(task.arg);
+    return 0;
+  } else
+    return -1;
+}
 
 // creates a new aync object
 static struct Async* async_new(int threads,
@@ -130,31 +163,24 @@ static struct Async* async_new(int threads,
   // setup the struct data
   async->count = threads;
   async->init_thread = on_init;
-  async->thread_pool = (void*)(async + 1);
   async->in = io[0];
   async->out = io[1];
   async->arg = arg;
-  // // testing pipes
-  // {
-  //   char tstsrt[] = "hithere";
-  //   char re[3] = {};
-  //   fprintf(stderr, "testing pipes\n");
-  //   fprintf(stderr, "write\n");
-  //   write(async->out, tstsrt, 2);
-  //   fprintf(stderr, "read\n");
-  //   read(async->in, re, 2);
-  //   fprintf(stderr, "got %s\n", re);
-  // }
+
+  // make sure write isn't blocking, otherwise we might deadlock.
+  fcntl(async->out, F_SETFL, O_NONBLOCK);
+
   // create the thread pool
   for (int i = 0; i < threads; i++) {
-    if ((async->thread_pool[i] = (VALUE)rb_thread_call_with_gvl(
-             create_ruby_thread_gvl, async)) == Qnil) {
+    if ((async->thread_pool[i] = create_rb_thread(async)) == Qnil) {
       close(io[0]);
       close(io[1]);
       free(async);
       return NULL;
     }
   }
+  // prevent pipe issues from stopping the flow of the mmain thread
+  signal(SIGPIPE, SIG_IGN);
   // return the pointer
   return async;
 }
@@ -162,28 +188,33 @@ static int async_run(struct Async* self, void (*task)(void*), void* arg) {
   if (!(task && self))
     return -1;
   struct Task package = {.task = task, .arg = arg};
-  return write(self->out, &package, sizeof(struct Task));
+  int written;
+  // "busy" wait for the task buffer to complete tasks by performing tasks in
+  // the buffer.
+  while ((written = write(self->out, &package, sizeof(struct Task))) !=
+         sizeof(struct Task)) {
+    // closed pipe or other error, return error
+    if (perform_single_task(self))
+      return -1;
+  }
+  return 0;
 }
-
-//////////////////////
-// protect call to join
-void* join_with_rbthread(void* rbt) {
-  return (void*)rb_funcall((VALUE)rbt, rb_intern("join"), 0);
-}
-
-////////////
-// API gateway
 
 static void async_signal(struct Async* self) {
   struct Task package = {.task = 0, .arg = 0};
-  if (write(self->out, &package, sizeof(struct Task)))
-    ;
+  while (write(self->out, &package, sizeof(struct Task)) !=
+         sizeof(struct Task)) {
+    // closed pipe, return error
+    if (perform_single_task(self))
+      return;
+  }
 }
+
 static void async_wait(struct Async* self) {
   for (int i = 0; i < self->count; i++) {
     if (!self->thread_pool[i])
       continue;
-    rb_thread_call_with_gvl(join_with_rbthread, (void*)self->thread_pool[i]);
+    join_rb_thread(self->thread_pool[i]);
     Registry.remove(self->thread_pool[i]);
   }
   close(self->in);
@@ -196,9 +227,14 @@ static void async_finish(struct Async* self) {
   async_wait(self);
 }
 
-////////////
-// API gateway
+// ////////////
+// // debug
+// void* tell_us(char const* caller_name, void* arg) {
+//   fprintf(stderr, "Run was called from %s\n", caller_name);
+//   return arg;
+// }
 
+////////////
 // the API gateway
 const struct AsyncAPI Async = {.new = async_new,
                                .run = async_run,

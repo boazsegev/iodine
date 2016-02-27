@@ -244,7 +244,7 @@ static int for_each_header_pair(VALUE key, VALUE val, VALUE _req) {
   struct HttpRequest* request = (void*)_req;
   int pos_s = 0, pos_e = 0;
   if (TYPE(key) != T_STRING)
-    key = RubyCaller.call_unsafe(key, to_s_method_id);
+    key = RubyCaller.call(key, to_s_method_id);
   if (TYPE(key) != T_STRING)
     return ST_CONTINUE;
   if (TYPE(val) != T_STRING) {
@@ -255,7 +255,7 @@ static int for_each_header_pair(VALUE key, VALUE val, VALUE _req) {
                    (int)RSTRING_LEN(key), RSTRING_PTR(key), FIX2LONG(val));
       return ST_CONTINUE;
     }
-    val = RubyCaller.call_unsafe(val, to_s_method_id);
+    val = RubyCaller.call(val, to_s_method_id);
     if (TYPE(val) != T_STRING)
       return ST_STOP;
   }
@@ -492,7 +492,7 @@ static int send_response(struct HttpRequest* request, VALUE response) {
                   (VALUE)request);
     // we need to call `close` in case the object is an IO / BodyProxy
     if (rb_respond_to(tmp, close_method_id))
-      RubyCaller.call_unsafe(tmp, close_method_id);
+      RubyCaller.call(tmp, close_method_id);
   }
 
 unknown_stop:
@@ -524,7 +524,7 @@ static int prep_response(VALUE env,
     env = rb_ary_entry(response, 2);
     // close the body, if it exists.
     if (rb_respond_to(env, close_method_id))
-      RubyCaller.call_unsafe(env, close_method_id);
+      RubyCaller.call(env, close_method_id);
     // no body will be sent
     rb_ary_store(response, 2, Qnil);
     // grab the headers Hash
@@ -600,7 +600,7 @@ static void review_upgrade(VALUE env, struct HttpRequest* request) {
     // we're done with the handler object - we can use it to review if a
     // callback exists.
     if ((handler = rb_hash_aref(env, R_HIJACK_CB)) != Qnil) {
-      RubyCaller.call_unsafe(handler, call_proc_id);
+      RubyCaller.call(handler, call_proc_id);
     }
   } else if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE_DYN)) != Qnil) {
     // generic upgrade.
@@ -610,7 +610,7 @@ static void review_upgrade(VALUE env, struct HttpRequest* request) {
       // // do we neet to check?
       // if (rb_mod_include_p(protocol, rDynProtocol) == Qfalse)
       rb_include_module(handler, rDynProtocol);
-      handler = RubyCaller.call_unsafe(handler, new_func_id);
+      handler = RubyCaller.call(handler, new_func_id);
     } else {
       // include the Protocol module in the object's class
       VALUE p_class = rb_obj_class(handler);
@@ -629,7 +629,7 @@ static void review_upgrade(VALUE env, struct HttpRequest* request) {
     rb_ivar_set(handler, fd_var_id, INT2FIX(request->sockfd));
     set_server(handler, request->server);
     // initialize the new protocol
-    RubyCaller.call_unsafe(handler, on_open_func_id);
+    RubyCaller.call(handler, on_open_func_id);
   }
 }
 // Gets the response object, within a GVL context
@@ -641,7 +641,7 @@ static void* handle_request_in_gvl(void* _req) {
   if (!response) {
     goto cleanup;
   }
-  response = RubyCaller.call_unsafe2(response, call_proc_id, 1, &env);
+  response = RubyCaller.call2(response, call_proc_id, 1, &env);
   Registry.add(response);
   if (prep_response(env, request, response) &&
       send_response(request, response)) {
@@ -659,7 +659,7 @@ cleanup:
 // The core handler passed on to the HttpProtocol object.
 static void on_request(struct HttpRequest* request) {
   // work inside the GVL
-  rb_thread_call_with_gvl(handle_request_in_gvl, request);
+  RubyCaller.call_c(handle_request_in_gvl, request);
 }
 
 /* ////////////////////////////////////////////////////////////

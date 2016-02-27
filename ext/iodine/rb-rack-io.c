@@ -206,8 +206,8 @@ static VALUE rio_get_io(int argc, VALUE* argv, VALUE self) {
   if (new_io != Qnil)
     return new_io;
   // VALUE new_io = how the fuck do we create a new IO from the fd?
-  new_io = RubyCaller.call_unsafe2(TCPSOCKET_CLASS, for_fd_id, 1,
-                                   &fd);  // TCPSocket.for_fd(fd) ... cool...
+  new_io = RubyCaller.call2(TCPSOCKET_CLASS, for_fd_id, 1,
+                            &fd);  // TCPSocket.for_fd(fd) ... cool...
   rb_hash_aset(env, R_HIJACK_IO, new_io);
   if (argc)
     rb_hash_aset(env, R_HIJACK_CB, *argv);
