@@ -241,6 +241,8 @@ i.e.
       write data
  */
 static VALUE ws_write(VALUE self, VALUE data) {
+  if (!data || data == Qnil)
+    return self;
   server_pt srv = get_server(self);
   int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
   websocket_write(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data),

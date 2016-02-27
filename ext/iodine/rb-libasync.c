@@ -229,7 +229,21 @@ static int extend_queue(async_p async, struct Task* task) {
   async->out = async->out - data->io.out;
   // write the task to the new queue - otherwise, our thread might quit before
   // it starts.
-  write(async->out, task, sizeof(struct Task));
+  if (write(async->out, task, sizeof(struct Task)) <= 0) {
+    // failed to write the new task... can this happen?
+
+    // swap the two writers back
+    async->out = async->out + data->io.out;
+    data->io.out = async->out - data->io.out;
+    async->out = async->out - data->io.out;
+    // close
+    close(data->io.in);
+    close(data->io.out);
+    // free
+    free(data);
+    // inform about the error
+    return -1;
+  }
   // create a thread that listens to the new queue and pushes it to the old
   // queue
   pthread_t thr;
