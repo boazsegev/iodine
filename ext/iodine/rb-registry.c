@@ -15,7 +15,25 @@ static struct Registry {
 struct Object {
   struct Object* next;
   VALUE obj;
+  int count;
 };
+
+// manage existing objects - add a reference
+int add_reference(VALUE obj) {
+  struct Object* line;
+  pthread_mutex_lock(&registry_lock);
+  line = registry.first;
+  while (line) {
+    if (line->obj == obj) {
+      line->count++;
+      pthread_mutex_unlock(&registry_lock);
+      return 1;
+    }
+    line = line->next;
+  }
+  pthread_mutex_unlock(&registry_lock);
+  return 0;
+}
 
 // add an object to the registry
 //
@@ -23,6 +41,8 @@ struct Object {
 static VALUE register_object(VALUE obj) {
   if (!obj || obj == Qnil)
     return 0;
+  if (add_reference(obj))
+    return obj;
   struct Object* line;
   pthread_mutex_lock(&registry_lock);
   if (registry.obj_pool) {
@@ -37,6 +57,7 @@ static VALUE register_object(VALUE obj) {
   }
   line->obj = obj;
   line->next = registry.first;
+  line->count = 1;
   registry.first = line;
   pthread_mutex_unlock(&registry_lock);
   return obj;
@@ -53,13 +74,16 @@ static void unregister_object(VALUE obj) {
   struct Object* prev = NULL;
   while (line) {
     if (line->obj == obj) {
-      if (line == registry.first)
-        registry.first = line->next;
-      else if (prev)  // must be true, really
-        prev->next = line->next;
-      // move the object container to the discarded object pool
-      line->next = registry.obj_pool;
-      registry.obj_pool = line;
+      line->count--;
+      if (!line->count) {
+        if (line == registry.first)
+          registry.first = line->next;
+        else if (prev)  // must be true, really
+          prev->next = line->next;
+        // move the object container to the discarded object pool
+        line->next = registry.obj_pool;
+        registry.obj_pool = line;
+      }
       goto finish;
     }
     prev = line;
@@ -68,28 +92,29 @@ static void unregister_object(VALUE obj) {
 finish:
   pthread_mutex_unlock(&registry_lock);
 }
-// Replaces one registry object with another,
-// allowing updates to the Registry with no memory allocations.
-//
-// returns 0 if all OK, returns -1 if it couldn't replace the object.
-static int replace_object(VALUE obj, VALUE new_obj) {
-  int ret = -1;
-  if (obj == new_obj)
-    return 0;
-  pthread_mutex_lock(&registry_lock);
-  struct Object* line = registry.first;
-  while (line) {
-    if (line->obj == obj) {
-      line->obj = new_obj;
-      ret = 0;
-      goto finish;
-    }
-    line = line->next;
-  }
-finish:
-  pthread_mutex_unlock(&registry_lock);
-  return ret;
-}
+
+// // Replaces one registry object with another,
+// // allowing updates to the Registry with no memory allocations.
+// //
+// // returns 0 if all OK, returns -1 if it couldn't replace the object.
+// static int replace_object(VALUE obj, VALUE new_obj) {
+//   int ret = -1;
+//   if (obj == new_obj)
+//     return 0;
+//   pthread_mutex_lock(&registry_lock);
+//   struct Object* line = registry.first;
+//   while (line) {
+//     if (line->obj == obj) {
+//       line->obj = new_obj;
+//       ret = 0;
+//       goto finish;
+//     }
+//     line = line->next;
+//   }
+// finish:
+//   pthread_mutex_unlock(&registry_lock);
+//   return ret;
+// }
 
 // a callback for the GC (marking active objects)
 static void registry_mark(void* ignore) {
@@ -175,6 +200,5 @@ struct ___RegistryClass___ Registry = {
     .init = init,
     .remove = unregister_object,
     .add = register_object,
-    .replace = replace_object,
     .print = print,
 };

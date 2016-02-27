@@ -86,14 +86,14 @@ static void WebsocketProtocol_destroy(struct WebsocketProtocol* ws) {
 //////////////////////////////////////
 // GVL lock for ruby API calls
 
-void* resize_buffer_in_gvl(void* data) {
+static void* resize_buffer_in_gvl(void* data) {
   struct WebsocketProtocol* ws = data;
   rb_str_resize(ws->buffer, RSTRING_LEN(ws->buffer) + ws->parser.length -
                                 ws->parser.received);
   return 0;
 }
 
-void* on_message_in_gvl(void* data) {
+static void* on_message_in_gvl(void* data) {
   struct WebsocketProtocol* ws = data;
   // This will create a copy of heach message - can we trust the user not to
   // save the string for later use? We'll have to, for most common usecase is
@@ -109,6 +109,15 @@ void* on_message_in_gvl(void* data) {
 
 //////////////////////////////////////
 // Protocol Helper Methods
+
+// performs a block of code on an active connection.
+// initiated by each_block
+static void each_protocol_block(struct Server* srv, int fd, void* task) {
+  struct WebsocketProtocol* ws =
+      (struct WebsocketProtocol*)Server.get_protocol(srv, fd);
+  if (ws && ws->protocol.service == ws_service_name)
+    RubyCaller.call2((VALUE)task, call_proc_id, 1, &(ws->handler));
+}
 
 // performs pending protocol task while managing it's Ruby registry.
 // initiated by each
@@ -131,7 +140,7 @@ static void each_protocol_async_schedule(struct Server* srv,
   Server.fd_task(srv, fd, each_protocol_async, task);
 }
 
-void websocket_close(server_pt srv, int fd) {
+static void websocket_close(server_pt srv, int fd) {
   Server.write(srv, fd, "\x88\x00", 2);
   Server.close(srv, fd);
   return;
@@ -240,8 +249,53 @@ static VALUE ws_write(VALUE self, VALUE data) {
 }
 
 /*
+Similar to {each}, the block passed to `each` will be called for every connected
+websocket's
+handler.
+
+However, unlike {each}, the code will be executed within <b>this</b>
+connection's lock, in a blocking manner, allowing other connections to
+concurrently perform other tasks.
+
+This option will require a significanltly lower amount of resources to perform,
+but due to the concurrency variation should only be used if the other
+connection's data isn't important (i.e., directly sending messages through the
+other connection sockets).
+
+i.e. , here is a simple blocking websocket broadcasting service:
+
+      def MyBroadcast
+        def on_message data
+          # this will also broadcast to `self`
+          each_block {|h| h.write data}
+        end
+      end
+
+      srv = Iodine::Http.new
+      srv.on_websocket = Proc.new {|env| MyBroadcast }
+
+Notice that this is process ("worker") specific, this does not affect
+connections that are connected to a different process on the same machine or a
+different machine running the same application.
+*/
+static VALUE ws_each_block(VALUE self) {
+  // requires a block to be passed
+  rb_need_block();
+  // get the server object
+  struct Server* srv = get_server(self);
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qnil;
+  Server.each_block(srv, ws_service_name, each_protocol_block, (void*)block);
+  return block;
+}
+
+/*
 The block passed to `each` will be called for every connected websocket's
 handler.
+
+Each connection will perform the block within it's own connection's lock, so
+that no single connection is performing more then a single task at a time.
 
 i.e. , here is a simple websocket broadcasting service:
 
@@ -269,7 +323,7 @@ static VALUE ws_each(VALUE self) {
     rb_warn(
         "called an async method in a non-async mode - the task will "
         "be performed immediately.");
-    rb_yield(Qnil);
+    return ws_each_block(self);
   }
   VALUE block = rb_block_proc();
   if (block == Qnil)
@@ -295,7 +349,7 @@ static VALUE ws_count(VALUE self) {
 
 //////////////////////////////////////
 // Protocol Callbacks
-void on_close(server_pt server, int sockfd) {
+static void on_close(server_pt server, int sockfd) {
   struct WebsocketProtocol* ws =
       (struct WebsocketProtocol*)Server.get_protocol(server, sockfd);
   if (!ws)
@@ -566,7 +620,7 @@ static struct WebsocketProtocol* WebsocketProtocol_new(void) {
 }
 
 // This should be called within the GVL, as it performs Ruby API calls
-void websocket_new(struct HttpRequest* request, VALUE handler) {
+static void websocket_new(struct HttpRequest* request, VALUE handler) {
   struct WebsocketProtocol* ws = NULL;
   // check that we actually have a websocket handler
   if (handler == Qnil || handler == Qfalse)
@@ -646,7 +700,7 @@ static VALUE def_dyn_message(VALUE self, VALUE data) {
 
 /////////////////////////////
 // initialize the class and the whole of the Iodine/http library
-void Init_websocket(void) {
+static void Init_websocket(void) {
   // get IDs and data that's used often
   call_proc_id = rb_intern("call");          // used to call the main callback
   server_var_id = rb_intern("server");       // when upgrading
@@ -674,6 +728,7 @@ void Init_websocket(void) {
   rb_define_method(rWebsocket, "write", ws_write, 1);
   rb_define_method(rWebsocket, "close", ws_close, 0);
   rb_define_method(rWebsocket, "each", ws_each, 0);
+  rb_define_method(rWebsocket, "each_block", ws_each_block, 0);
 
   rb_define_method(rWebsocket, "ws_count", ws_count, 0);
 }

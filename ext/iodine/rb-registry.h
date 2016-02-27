@@ -21,7 +21,6 @@
 extern struct ___RegistryClass___ {
   void (*init)(VALUE owner);
   void (*remove)(VALUE obj);
-  int (*replace)(VALUE old_obj, VALUE new_obj);
   VALUE (*add)(VALUE obj);
   void (*print)(void);
 } Registry;

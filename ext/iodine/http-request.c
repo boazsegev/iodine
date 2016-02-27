@@ -72,7 +72,7 @@ static void request_clear(struct HttpRequest* self) {
   self->content_type = 0;
   self->upgrade = 0;
   self->body_str = 0;
-  self->body_file = 0;
+  self->body_file = NULL;
   self->private.header_hash = 0;
   self->private.pos = 0;
   self->private.max = 0;

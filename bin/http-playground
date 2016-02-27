@@ -33,7 +33,7 @@ class WSEcho
   end
   def on_message data
     # puts data
-    write data
+    # write data
     data = data.dup
     each {|h| h.echo data }
   end
@@ -44,7 +44,7 @@ end
 
 # create the server object and setup any settings we might need.
 server = Iodine::Http.new
-server.threads ||= 1
+server.threads ||= 4
 server.processes ||= 1
 server.timeout ||= 1
 server.public_folder = '/Users/2Be/Documents/Scratch'

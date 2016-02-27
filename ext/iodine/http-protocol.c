@@ -549,35 +549,38 @@ finish:
     protocol->on_request(request);
   }
 
-  if (Server.get_udata(server, sockfd)) {
-    // someone else already started using this connection...
-    goto cleanup_after_finish;
-  }
-  if (pos < len) {
-    // if we have more data in the pipe, clear the request, move the buffer data
-    // and return to the beginning of the parsing.
-    HttpRequest.clear(request);
-    // move the data left in the buffer to the beginning of the buffer.
-    for (size_t i = 0; i < len - pos; i++) {
-      request->buffer[i] = request->buffer[pos + i];
-    }
-    len = len - pos;
-    pos = 0;
-    Server.set_udata(server, sockfd, request);
-    goto parse;
-  }
-  if (len == HTTP_HEAD_MAX_SIZE) {
-    // we might not have read all the data in the network socket.
-    // since we're edge triggered, we should continue reading.
-    len = Server.read(sockfd, buff, HTTP_HEAD_MAX_SIZE);
-    if (len > 0) {
-      HttpRequest.clear(request);
-      Server.set_udata(server, sockfd, request);
-      goto parse;
-    }
-  }
-
-cleanup_after_finish:
+  // // disable HTTP pipelining for now.
+  //
+  //   if (Server.get_udata(server, sockfd)) {
+  //     // someone else already started using this connection...
+  //     goto cleanup_after_finish;
+  //   }
+  //   if (pos < len) {
+  //     // if we have more data in the pipe, clear the request, move the buffer
+  //     data
+  //     // and return to the beginning of the parsing.
+  //     HttpRequest.clear(request);
+  //     // move the data left in the buffer to the beginning of the buffer.
+  //     for (size_t i = 0; i < len - pos; i++) {
+  //       request->buffer[i] = request->buffer[pos + i];
+  //     }
+  //     len = len - pos;
+  //     pos = 0;
+  //     Server.set_udata(server, sockfd, request);
+  //     goto parse;
+  //   }
+  //   if (len == HTTP_HEAD_MAX_SIZE) {
+  //     // we might not have read all the data in the network socket.
+  //     // since we're edge triggered, we should continue reading.
+  //     len = Server.read(sockfd, buff, HTTP_HEAD_MAX_SIZE);
+  //     if (len > 0) {
+  //       HttpRequest.clear(request);
+  //       Server.set_udata(server, sockfd, request);
+  //       goto parse;
+  //     }
+  //   }
+  //
+  // cleanup_after_finish:
 
   // we need to destroy the request ourselves, because we disconnected the
   // request from the server's udata.
