@@ -130,6 +130,8 @@ static void* join_rb_thread(VALUE thread) {
 /////////////////////
 // a single task performance, for busy waiting
 static int perform_single_task(async_p async) {
+  if (!async || fcntl(async->in, F_GETFL, NULL) == -1)
+    return -1;
   fprintf(stderr,
           "Warning: event queue overloaded!\n"
           "Perfoming out of band tasks, failure could occure.\n"
@@ -163,8 +165,14 @@ static void* extended_queue_thread(void* _data) {
   struct ExtQueueData* data = _data;
   struct Task task;
   int i;
+  signal(SIGPIPE, SIG_IGN);
   // get the core out pipe flags (blocking state not important)
   i = fcntl(data->async->out, F_GETFL, NULL);
+  if (i < 0)
+    return (void*)-1;
+  // warn
+  fprintf(stderr, "warning: Async Queue overflow handler (%d) initiated.\n",
+          data->io.in);
   // change the original queue writer object to a blocking state
   fcntl(data->io.out, F_SETFL, i & (~O_NONBLOCK));
   // make sure the reader doesn't block
@@ -188,6 +196,9 @@ static void* extended_queue_thread(void* _data) {
       // close the extra pipes
       close(data->io.in);
       close(data->io.out);
+      // notify
+      // fprintf(stderr, "Async: Queue overflow handler (%d) exit.\n",
+      //         data->io.in);
       // free the data object
       free(data);
       return 0;
@@ -210,7 +221,7 @@ static void* extended_queue_thread(void* _data) {
 static int extend_queue(async_p async, struct Task* task) {
   // create the data carrier
   struct ExtQueueData* data = malloc(sizeof(struct ExtQueueData));
-  if (!data)
+  if (!data || !async || (fcntl(async->in, F_GETFL) < 0))  // closed queue
     return -1;
   // create the extra pipes
   if (pipe(&data->io.in)) {
@@ -340,8 +351,10 @@ static int async_run(struct Async* self, void (*task)(void*), void* arg) {
     if (!extend_queue(self, &package))
       break;
     // closed pipe or other error, return error
-    if (perform_single_task(self))
+    if (perform_single_task(self)) {
+      pthread_mutex_unlock(&self->locker);
       return -1;
+    }
   }
   pthread_mutex_unlock(&self->locker);
   return 0;
@@ -349,6 +362,8 @@ static int async_run(struct Async* self, void (*task)(void*), void* arg) {
 
 static void async_signal(struct Async* self) {
   struct Task package = {.task = 0, .arg = 0};
+  if (!self)
+    return;
   pthread_mutex_lock(&self->locker);
   while (write(self->out, &package, sizeof(struct Task)) !=
          sizeof(struct Task)) {
@@ -368,8 +383,6 @@ static void async_wait(struct Async* self) {
     join_rb_thread(self->thread_pool[i]);
     Registry.remove(self->thread_pool[i]);
   }
-  close(self->in);
-  close(self->out);
   pthread_mutex_destroy(&self->locker);
   free(self);
 }
