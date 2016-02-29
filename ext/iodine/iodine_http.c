@@ -863,13 +863,14 @@ static VALUE http_start(VALUE self) {
 /////////////////////////////
 // stuff related to the core inheritance.
 
-// prevent protocol changes
+// Stub getter/setter to prevent protocol changes on the HTTP server class.
 static VALUE http_protocol_get(VALUE self) {
   rb_warn(
       "The Iodine HTTP protocol is written in C, it cannot be edited nor "
       "viewed in Ruby.");
   return self;
 }
+// Stub getter/setter to prevent protocol changes on the HTTP server class.
 static VALUE http_protocol_set(VALUE self, VALUE _) {
   return http_protocol_get(self);
 }

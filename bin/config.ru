@@ -37,8 +37,8 @@ end
 # 	# [200, {"Content-Type" => "text/html"}, ['Hello from Rack!'] ]
 # end
 
-puts "press Enter to start #{Process.pid}"
-gets
-Iodine::Rack.threads ||= 4
+# puts "press Enter to start #{Process.pid}"
+# gets
+# Iodine::Rack.threads ||= 4
 
 run WSEcho
