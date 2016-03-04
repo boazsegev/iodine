@@ -1,5 +1,5 @@
 /*
-copyright: Boaz segev, 2015
+copyright: Boaz segev, 2016
 license: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
@@ -7,7 +7,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #ifndef LIB_SERVER_H
 #define LIB_SERVER_H
 
-#define LIB_SERVER_VERSION 0.2.0
+#define LIB_SERVER_VERSION "0.2.0"
 
 // lib server is based off and requires the following libraries:
 #include "libreact.h"
@@ -76,6 +76,11 @@ struct ServerSettings {
   void (*on_idle)(struct Server* server);
   // called each time a new worker thread is spawned (within the new thread).
   void (*on_init_thread)(struct Server* server);
+  // a NULL terminated string for when the server is busy (defaults to NULL - a
+  // simple disconnection with no message).
+  char* busy_msg;
+  // opaque user data.
+  void* udata;
   // sets the amount of threads to be created for the server's thread-pool.
   // Defaults to 1 - all `on_data`/`on_message` callbacks are deffered to a
   // single working thread, protecting the reactor from blocking code.
@@ -84,11 +89,6 @@ struct ServerSettings {
   // sets the amount of processes to be used (processes will be forked).
   // Defaults to 1 working processes (no forking).
   int processes;
-  // a NULL terminated string for when the server is busy (defaults to NULL - a
-  // simple disconnection with no message).
-  char* busy_msg;
-  // opaque user data.
-  void* udata;
   // sets the timeout for new connections. defaults to 5 seconds.
   unsigned char timeout;
 };

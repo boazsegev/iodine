@@ -27,6 +27,37 @@ Iodine is a C extension for Ruby, developed with Ruby MRI 2.3.0 and 2.2.4 (it sh
 
 Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC).
 
+### Running the web server
+
+Using the Iodine server is easy, simply add Iodine as a gem to your Rack application:
+
+```ruby
+# notice that the `git` is required since Iodine::Rack isn't yet officially released.
+gem 'iodine', :git => 'https://github.com/boazsegev/iodine.git'
+```
+
+To get the most out of Iodine, consider the amount of CPU cores available and the concurrency level the application requires.
+
+Puma's model of 16 threads and 4 processes is easily adopted and proved to provide a good enough balance for most use-cases. Use:
+
+```bash
+bundler exec iodine -p $PORT -t 16 - w 4
+```
+
+### Static file serving support
+
+Iodine supports static file serving that allows the server to serve static files directly, with no Ruby layer (all from C-land).
+
+This means that Iodine won't lock Ruby's GVL when sending static files (nor log these requests). The files will be sent directly, allowing for true native concurrency.
+
+To setup native static file service, setup the public folder's address **before** starting the server. This is easily done by adding a single line to the application. i.e.:
+
+```ruby
+Iodine::Rack.public_folder = '/my/public/folder/'
+```
+
+### Special HTTP `Upgrade` support
+
 Iodine's HTTP server includes special support for the Upgrade directive using Rack's `env` Hash to allow Hijacking as well as unique Protocol management that utilizes Iodine's reactor for better performance and integration.
 
 To upgrade to the Websocket Protocol, utilizing Iodine's Websocket parser and protocol support, use `env['iodine.websocket'] = MyWebsocketClass`. i.e.:
@@ -109,7 +140,7 @@ end
 # Iodine::Rack is a default HTTP server, instance designed for Rack applications
 Iodine::Rack.on_http = My_Broadcast
 
-# static file serving is as easy as (supports simple byte serving):
+# static file serving is as easy as (also supports simple byte serving):
 Iodine::Rack.public_folder = "www/public/"
 
 # start the server

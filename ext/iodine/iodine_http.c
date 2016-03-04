@@ -823,7 +823,7 @@ static VALUE http_start(VALUE self) {
   // make port into a CString (for Lib-Server)
   char port[7];
   char* bind = rb_bind == Qnil ? NULL : StringValueCStr(rb_bind);
-  unsigned char timeout = rb_timeout == Qnil ? 2 : FIX2INT(rb_timeout);
+  unsigned char timeout = rb_timeout == Qnil ? 4 : FIX2INT(rb_timeout);
   snprintf(port, 6, "%d", iport);
   // create the HttpProtocol object
   struct HttpProtocol* http_protocol = HttpProtocol.new();
