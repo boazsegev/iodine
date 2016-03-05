@@ -12,6 +12,7 @@ static int request_next(struct HttpRequest* self);
 static int request_find(struct HttpRequest* self, char* const name);
 static char* request_name(struct HttpRequest* self);
 static char* request_value(struct HttpRequest* self);
+static int request_is_request(struct HttpRequest* self);
 
 const struct HttpRequestClass HttpRequest = {
     // retures an new heap allocated request object
@@ -20,6 +21,8 @@ const struct HttpRequestClass HttpRequest = {
     .clear = request_clear,
     // releases the resources used by a request object and frees it's memory.
     .destroy = request_destroy,
+    // validated that this is a request object
+    .is_request = request_is_request,
 
     // Header handling
 
@@ -44,6 +47,7 @@ const struct HttpRequestClass HttpRequest = {
 // The constructor
 static struct HttpRequest* request_new(void) {
   struct HttpRequest* req = calloc(sizeof(struct HttpRequest), 1);
+  req->private.is_request = request_is_request;
   return req;
 }
 
@@ -78,6 +82,12 @@ static void request_clear(struct HttpRequest* self) {
   self->private.max = 0;
   self->private.bd_rcved = 0;
 }
+
+// validating a request object
+static int request_is_request(struct HttpRequest* self) {
+  return (self && (self->private.is_request == request_is_request));
+}
+
 // implement the following request handlers:
 
 static void request_first(struct HttpRequest* self) {
