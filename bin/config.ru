@@ -1,5 +1,5 @@
-
-
+#
+#
 class WSEcho
   def self.call env
     if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
@@ -31,14 +31,14 @@ class WSEcho
   end
 end
 
-
-# rack_app = Proc.new do |env|
-# 	[200, {"Content-Type" => "text/html", "Content-Length" => "16"}, ['Hello from Rack!'] ]
-# 	# [200, {"Content-Type" => "text/html"}, ['Hello from Rack!'] ]
-# end
-
 # puts "press Enter to start #{Process.pid}"
 # gets
 # Iodine::Rack.threads ||= 4
 
 run WSEcho
+
+# rack_app = Proc.new do |env|
+# 	[200, {"Content-Type" => "text/html", "Content-Length" => "16"}, ['Hello from Rack!'] ]
+# 	# [200, {"Content-Type" => "text/html"}, ['Hello from Rack!'] ]
+# end
+# run rack_app

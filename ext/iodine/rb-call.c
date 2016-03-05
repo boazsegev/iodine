@@ -40,6 +40,8 @@ static void* call_c(void* (*func)(void*), void* arg) {
   return ret;
 }
 
+////////////////////////////////////////////////////////////////////////////
+// Handling exceptions (printing the backtrace doesn't really work well).
 static void* handle_exception(void* _) {
   VALUE exc = rb_errinfo();
   if (exc != Qnil) {

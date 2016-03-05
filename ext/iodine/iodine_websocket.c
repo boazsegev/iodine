@@ -99,9 +99,13 @@ static void* on_message_in_gvl(void* data) {
   // save the string for later use? We'll have to, for most common usecase is
   // JSON... why have another copy of the same data?
   //            VALUE str = rb_obj_dup(ws->buffer);
+  //            RubyCaller.call2(ws->handler, on_msg_func_id, 1, &str);
+  // vs.
+  //            RubyCaller.call2(ws->handler, on_msg_func_id, 1, &ws->buffer);
   RubyCaller.call2(ws->handler, on_msg_func_id, 1, &ws->buffer);
-  // reset the buffer
+  // make sure the string is modifiable
   rb_str_modify(ws->buffer);
+  // reset the buffer
   rb_str_set_len(ws->buffer, 0);
   rb_enc_associate(ws->buffer, BinaryEncoding);
   return 0;
@@ -330,8 +334,10 @@ static VALUE ws_each(VALUE self) {
   VALUE block = rb_block_proc();
   if (block == Qnil)
     return Qnil;
+  Registry.add(block);
   Server.each_block(srv, ws_service_name, each_protocol_async_schedule,
                     (void*)block);
+  Registry.remove(block);
   return block;
 }
 

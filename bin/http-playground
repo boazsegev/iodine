@@ -34,8 +34,8 @@ class WSEcho
   def on_message data
     # puts data
     # write data
-    data = data.dup
-    each {|h| h.echo data }
+    data_cp = data.dup
+    each {|h| h.echo data_cp }
   end
   def echo data
     write "echo: #{data}"
