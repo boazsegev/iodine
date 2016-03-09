@@ -27,6 +27,9 @@ extern VALUE rDynProtocol;
 extern int BinaryEncodingIndex;      // encoding index
 extern rb_encoding* BinaryEncoding;  // encoding object
 
+// the Iodine dynamic protocol
+extern struct Protocol DynamicProtocol;
+
 // a macro helper function to embed a server pointer in an object
 #define set_server(object, srv)        \
   rb_ivar_set((object), server_var_id, \

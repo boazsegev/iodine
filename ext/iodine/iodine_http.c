@@ -621,6 +621,9 @@ static void review_upgrade(VALUE env, struct HttpRequest* request) {
     // make sure everything went as it should
     if (handler == Qnil)
       return;
+    // switch from HTTP to a dynamic protocol
+    if (Server.set_protocol(request->server, request->sockfd, &DynamicProtocol))
+      return;
     // set the new protocol at the server's udata
     Server.set_udata(request->server, request->sockfd, (void*)handler);
     // add new protocol to the Registry - should be removed in on_close
