@@ -663,7 +663,6 @@ static void dyn_close(struct Server* server, int fd) {
     return;
   RubyCaller.call(protocol, on_close_func_id);
   Registry.remove(protocol);
-  Server.set_udata(server, fd, 0);
   // // DON'T do this... async tasks might have bindings to this one...
   // rb_gc_force_recycle(protocol);
 }

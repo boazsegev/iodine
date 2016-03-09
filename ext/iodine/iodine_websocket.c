@@ -44,6 +44,8 @@ struct WebsocketProtocol {
     } psize;
     size_t length;
     size_t received;
+    int pos;
+    int data_len;
     char mask[4];
     char tmp_buffer[1024];
     struct {
@@ -65,6 +67,7 @@ struct WebsocketProtocol {
       unsigned rsv : 1;
     } state;
   } parser;
+  int max_message_size;
 };
 
 // The protocol's destructor
@@ -85,6 +88,27 @@ static void WebsocketProtocol_destroy(struct WebsocketProtocol* ws) {
 
 //////////////////////////////////////
 // GVL lock for ruby API calls
+
+// // this option is safer but causes more entries to the GVL, and the added
+// // safety seems irrelevant once we handle RString state in the callback.
+// static void* copy_data_to_buffer_in_gvl(void* data) {
+//   struct WebsocketProtocol* ws = data;
+//
+//   // get current Ruby Position length
+//   size_t buf_pos = RSTRING_LEN(ws->buffer);
+//   // review and resize the buffer's capacity - it can only grow.
+//   size_t tmp = rb_str_capacity(ws->buffer);
+//   if (buf_pos + ws->parser.length - ws->parser.received > tmp) {
+//     // we need to resize the buffer
+//     rb_str_resize(ws->buffer, RSTRING_LEN(ws->buffer) + ws->parser.length -
+//                                   ws->parser.received);
+//   }
+//   // copy here
+//   memcpy(RSTRING_PTR(ws->buffer) + buf_pos,
+//          ws->parser.tmp_buffer + ws->parser.pos, ws->parser.data_len);
+//   rb_str_set_len(ws->buffer, buf_pos + ws->parser.data_len);
+//   return 0;
+// }
 
 static void* resize_buffer_in_gvl(void* data) {
   struct WebsocketProtocol* ws = data;
@@ -150,6 +174,8 @@ static void websocket_close(server_pt srv, int fd) {
   return;
 }
 
+#define WS_MAX_FRAME_SIZE 65532
+
 void websocket_write(server_pt srv,
                      int fd,
                      void* data,
@@ -180,7 +206,7 @@ void websocket_write(server_pt srv,
     memcpy(buff, &head, 2);
     memcpy(buff + 2, data, len);
     Server.write(srv, fd, buff, len + 2);
-  } else if (len <= 65532) {
+  } else if (len <= WS_MAX_FRAME_SIZE) {
     /* head is 4 bytes */
     struct {
       unsigned op_code : 4;
@@ -196,7 +222,7 @@ void websocket_write(server_pt srv,
               .size = 126,
               .masked = 0,
               .length = htons(len)};
-    /* head is 4 bytes */
+    /* head MUST be 4 bytes */
     void* buff = malloc(len + 4);
     if (!buff) {
       fprintf(stderr,
@@ -208,10 +234,10 @@ void websocket_write(server_pt srv,
     memcpy(buff + 4, data, len);
     Server.write(srv, fd, buff, len + 4);
   } else {
-    /* fragmentation is better */
-    while (len > 65532) {
-      websocket_write(srv, fd, data, 65532, text, first, 0);
-      data += 65532;
+    /* frame fragmentation is better for large data*/
+    while (len > WS_MAX_FRAME_SIZE) {
+      websocket_write(srv, fd, data, WS_MAX_FRAME_SIZE, text, first, 0);
+      data += WS_MAX_FRAME_SIZE;
       first = 0;
     }
     websocket_write(srv, fd, data, len, text, first, 1);
@@ -362,7 +388,7 @@ static void on_close(server_pt server, int sockfd) {
       (struct WebsocketProtocol*)Server.get_protocol(server, sockfd);
   if (!ws)
     return;
-  Server.set_udata(server, sockfd, NULL);
+  // Server.set_udata(server, sockfd, NULL); // will deadlock...
   RubyCaller.call(ws->handler, on_close_func_id);
   WebsocketProtocol_destroy(ws);
 }
@@ -387,30 +413,28 @@ void on_data(server_pt server, int sockfd) {
   if (!ws)
     return;
   ssize_t len = 0;
-  int pos = 0;
-  int data_len = 0;
   size_t buf_pos = 0;
   size_t tmp = 0;
   while ((len = Server.read(sockfd, ws->parser.tmp_buffer, 1024)) > 0) {
-    data_len = 0;
-    pos = 0;
-    while (pos < len) {
+    ws->parser.data_len = 0;
+    ws->parser.pos = 0;
+    while (ws->parser.pos < len) {
       // collect the frame's head
       if (!(*(char*)(&ws->parser.head))) {
-        *((char*)(&(ws->parser.head))) = ws->parser.tmp_buffer[pos];
+        *((char*)(&(ws->parser.head))) = ws->parser.tmp_buffer[ws->parser.pos];
+        // save a copy if it's the first head in a fragmented message
+        if (!(*(char*)(&ws->parser.head2))) {
+          ws->parser.head2 = ws->parser.head;
+        }
         // advance
-        pos++;
+        ws->parser.pos++;
         // go back to the `while` head, to review if there's more data
         continue;
-      }
-      // save a copy if it's the first head in a fragmented message
-      if (!(*(char*)(&ws->parser.head2))) {
-        ws->parser.head2 = ws->parser.head;
       }
 
       // save the mask and size information
       if (!(*(char*)(&ws->parser.sdata))) {
-        *((char*)(&(ws->parser.sdata))) = ws->parser.tmp_buffer[pos];
+        *((char*)(&(ws->parser.sdata))) = ws->parser.tmp_buffer[ws->parser.pos];
         // set length
         if (!IS_BIG_ENDIAN)
           ws->parser.state.at_len = ws->parser.sdata.size == 127
@@ -418,7 +442,7 @@ void on_data(server_pt server, int sockfd) {
                                         : ws->parser.sdata.size == 126 ? 1 : 0;
         else
           ws->parser.state.at_len = 0;
-        pos++;
+        ws->parser.pos++;
         continue;
       }
 
@@ -427,91 +451,100 @@ void on_data(server_pt server, int sockfd) {
       // avoiding a loop so we don't mixup the meaning of "continue" and
       // "break"
       collect_len:
-        ////////// NOTICE: Network Byte Order might mess this code up - test
-        /// this
+        ////////// NOTICE: Network Byte Order requires us to translate the data
         if (IS_BIG_ENDIAN) {
           if ((ws->parser.state.at_len == 1 && ws->parser.sdata.size == 126) ||
               (ws->parser.state.at_len == 7 && ws->parser.sdata.size == 127)) {
             ws->parser.psize.bytes[ws->parser.state.at_len] =
-                ws->parser.tmp_buffer[pos++];
+                ws->parser.tmp_buffer[ws->parser.pos++];
             ws->parser.state.has_len = 1;
             ws->parser.length = (ws->parser.sdata.size == 126)
                                     ? ws->parser.psize.len1
                                     : ws->parser.psize.len2;
           } else {
             ws->parser.psize.bytes[ws->parser.state.at_len++] =
-                ws->parser.tmp_buffer[pos++];
-            if (pos < len)
+                ws->parser.tmp_buffer[ws->parser.pos++];
+            if (ws->parser.pos < len)
               goto collect_len;
           }
         } else {
           if (ws->parser.state.at_len == 0) {
             ws->parser.psize.bytes[ws->parser.state.at_len] =
-                ws->parser.tmp_buffer[pos++];
+                ws->parser.tmp_buffer[ws->parser.pos++];
             ws->parser.state.has_len = 1;
             ws->parser.length = (ws->parser.sdata.size == 126)
                                     ? ws->parser.psize.len1
                                     : ws->parser.psize.len2;
           } else {
             ws->parser.psize.bytes[ws->parser.state.at_len--] =
-                ws->parser.tmp_buffer[pos++];
-            if (pos < len)
+                ws->parser.tmp_buffer[ws->parser.pos++];
+            if (ws->parser.pos < len)
               goto collect_len;
           }
         }
         continue;
-      }
-      if (!ws->parser.length && ws->parser.sdata.size < 126)
+      } else if (!ws->parser.length && ws->parser.sdata.size < 126)
+        // we should have the length data in the head
         ws->parser.length = ws->parser.sdata.size;
 
-      // check that the data is masked and thet we we didn't colleced the mask
+      // check that the data is masked and that we didn't colleced the mask yet
       if (ws->parser.sdata.masked && !(ws->parser.state.has_mask)) {
-      // avoiding a loop so we don't mixup the meaning of "continue" and
-      // "break"
+      // avoiding a loop so we don't mixup the meaning of "continue" and "break"
       collect_mask:
         if (ws->parser.state.at_mask == 3) {
           ws->parser.mask[ws->parser.state.at_mask] =
-              ws->parser.tmp_buffer[pos++];
+              ws->parser.tmp_buffer[ws->parser.pos++];
           ws->parser.state.has_mask = 1;
           ws->parser.state.at_mask = 0;
         } else {
           ws->parser.mask[ws->parser.state.at_mask++] =
-              ws->parser.tmp_buffer[pos++];
-          if (pos < len)
+              ws->parser.tmp_buffer[ws->parser.pos++];
+          if (ws->parser.pos < len)
             goto collect_mask;
           else
             continue;
         }
         // since it's possible that there's no more data (0 length frame),
-        // we don't go `continue` (check while loop) and we process what we
+        // we don't use `continue` (check while loop) and we process what we
         // have.
       }
 
       // Now that we know everything about the frame, let's collect the data
 
       // How much data in the buffer is part of the frame?
-      data_len = len - pos;
-      if (data_len + ws->parser.received > ws->parser.length)
-        data_len = ws->parser.length - ws->parser.received;
+      ws->parser.data_len = len - ws->parser.pos;
+      if (ws->parser.data_len + ws->parser.received > ws->parser.length)
+        ws->parser.data_len = ws->parser.length - ws->parser.received;
 
       // a note about unmasking: since ws->parser.state.at_mask is only 2 bits,
-      // it will wrap around (i.e. 3++ == 0), so no modulus is required.
+      // it will wrap around (i.e. 3++ == 0), so no modulus is required :-)
       // unmask:
       if (ws->parser.sdata.masked) {
-        for (int i = 0; i < data_len; i++) {
-          ws->parser.tmp_buffer[i + pos] ^=
+        for (int i = 0; i < ws->parser.data_len; i++) {
+          ws->parser.tmp_buffer[i + ws->parser.pos] ^=
               ws->parser.mask[ws->parser.state.at_mask++];
         }
       } else {
-        // enforce masking?
+        // TODO enforce masking? we probably should, for security reasons...
+        // fprintf(stderr, "WARNING Websockets: got unmasked message!\n");
+        // Server.close(server, sockfd);
+        // return;
       }
       // Copy the data to the Ruby buffer - only if it's a user message
+      // RubyCaller.call_c(copy_data_to_buffer_in_gvl, ws);
       if (ws->parser.head.op_code == 1 || ws->parser.head.op_code == 2 ||
           (!ws->parser.head.op_code &&
            (ws->parser.head2.op_code == 1 || ws->parser.head2.op_code == 2))) {
         // get current Ruby Position length
         buf_pos = RSTRING_LEN(ws->buffer);
-        // review buffer's capacity - it can only grow.
+        // check message size limit
+        if (Websockets.max_msg_size < buf_pos + ws->parser.data_len) {
+          // close connection!
+          fprintf(stderr, "ERR Websocket: Payload too big, review limits.\n");
+          Server.close(server, sockfd);
+          return;
+        }
+        // review and resize the buffer's capacity - it can only grow.
         tmp = rb_str_capacity(ws->buffer);
         if (buf_pos + ws->parser.length - ws->parser.received > tmp) {
           // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!! //
@@ -521,18 +554,18 @@ void on_data(server_pt server, int sockfd) {
           RubyCaller.call_c(resize_buffer_in_gvl, ws);
         }
         // copy here
-        memcpy(RSTRING_PTR(ws->buffer) + buf_pos, ws->parser.tmp_buffer + pos,
-               data_len);
-        rb_str_set_len(ws->buffer, buf_pos + data_len);
+        memcpy(RSTRING_PTR(ws->buffer) + buf_pos,
+               ws->parser.tmp_buffer + ws->parser.pos, ws->parser.data_len);
+        rb_str_set_len(ws->buffer, buf_pos + ws->parser.data_len);
       }
       // set the frame's data received so far (copied or not)
       // we couldn't do it soonet, because we needed the value to compute the
       // Ruby buffer capacity (within the GVL resize function).
-      ws->parser.received += data_len;
+      ws->parser.received += ws->parser.data_len;
 
       // check that we have collected the whole of the frame.
       if (ws->parser.length > ws->parser.received) {
-        pos += data_len;
+        ws->parser.pos += ws->parser.data_len;
         continue;
       }
 
@@ -566,8 +599,8 @@ void on_data(server_pt server, int sockfd) {
       } else if (ws->parser.head.op_code == 9) {
         /* ping */
         // write Pong - including ping data...
-        websocket_write(server, sockfd, ws->parser.tmp_buffer + pos, data_len,
-                        10, 1, 1);
+        websocket_write(server, sockfd, ws->parser.tmp_buffer + ws->parser.pos,
+                        ws->parser.data_len, 10, 1, 1);
         if (ws->parser.head2.op_code == ws->parser.head.op_code)
           goto reset_parser;
       } else if (ws->parser.head.op_code == 10) {
@@ -585,13 +618,13 @@ void on_data(server_pt server, int sockfd) {
           goto reset_parser;
       }
       // not done, but move the pos marker along
-      pos += data_len;
+      ws->parser.pos += ws->parser.data_len;
       continue;
 
     reset_parser:
       // move the pos marker along - in case we have more then one frame in the
       // buffer
-      pos += data_len;
+      ws->parser.pos += ws->parser.data_len;
       // clear the parser
       *((char*)(&(ws->parser.head))) = 0;
       *((char*)(&(ws->parser.head2))) = 0;
@@ -615,7 +648,7 @@ void on_data(server_pt server, int sockfd) {
 //////////////////////////////////////
 // Protocol constructor
 
-static struct WebsocketProtocol* WebsocketProtocol_new(void) {
+static struct WebsocketProtocol* WebsocketProtocol_new() {
   struct WebsocketProtocol* ws = malloc(sizeof(struct WebsocketProtocol));
   *ws = (struct WebsocketProtocol){
       .protocol.service = ws_service_name,  // set the service name for `each`
@@ -663,7 +696,9 @@ static void websocket_new(struct HttpRequest* request, VALUE handler) {
   Registry.add(handler);
   Registry.add(ws->buffer);
   // setup server protocol and any data we need (i.e. timeout)
-  Server.set_protocol(request->server, request->sockfd, (struct Protocol*)ws);
+  if (Server.set_protocol(request->server, request->sockfd,
+                          (struct Protocol*)ws))
+    goto reject;  // reject on error
   Server.set_timeout(request->server, request->sockfd, Websockets.timeout);
   Server.touch(request->server, request->sockfd);
   // for the global each

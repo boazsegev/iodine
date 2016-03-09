@@ -2,6 +2,8 @@
 #include <ruby.h>
 #include <pthread.h>
 
+#define RUBY_REG_DBG
+
 // a mutex to protect the registry
 static pthread_mutex_t registry_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -118,7 +120,9 @@ finish:
 
 // a callback for the GC (marking active objects)
 static void registry_mark(void* ignore) {
-  // Registry.print();
+#ifdef RUBY_REG_DBG
+  Registry.print();
+#endif
   pthread_mutex_lock(&registry_lock);
   struct Object* line = registry.first;
   while (line) {
@@ -186,8 +190,8 @@ static void print(void) {
   fprintf(stderr, "Registry owner is %lu\n", registry.owner);
   long index = 0;
   while (line) {
-    fprintf(stderr, "[%lu] => obj %lu type %d at %p\n", index++, line->obj,
-            TYPE(line->obj), line);
+    fprintf(stderr, "[%lu] => %d X obj %lu type %d at %p\n", index++,
+            line->count, line->obj, TYPE(line->obj), line);
     line = line->next;
   }
   fprintf(stderr, "Total of %lu registered objects being marked\n", index);

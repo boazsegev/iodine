@@ -214,53 +214,75 @@ static uint8_t* sha1_result(sha1nfo* s) {
 // }
 // #define IS_BIG_ENDIAN (!*(unsigned char*)&(uint16_t){1})
 
-// I wrote this one (Boaz Segev)... anyone is free to copy this one.
+// I wrote this one (Boaz Segev)... anyone is free to copy the code (but give
+// credit in the code).
+//
+// This will encode a byte array (data) of a specified length (len) and
+// place
+// the encoded data into the target byte buffer (target). The target buffer
+// MUST
+// have enough room for the expected data.
+//
+// Base64 encoding always requires 4 bytes for each 3 bytes. Padding is
+// added if
+// the raw data's length isn't devisable by 3.
+//
+// Always assume the target buffer should have room enough for (len*4/3 + 4)
+// bytes.
+//
+// Returns the number of bytes actually written to the target buffer
+// (including
+// the Base64 required padding and excluding a NULL terminator).
+//
+// A NULL terminator char is NOT written to the target buffer.
 static int ws_base64_encode(char* data, char* target, int len) {
-  int written = 0;
-  struct {
-    unsigned b2 : 2;
-    unsigned b6 : 6;
-  } * _2b6;
-  struct {
-    unsigned b6 : 6;
-    unsigned b2 : 2;
-  } * _6b2;
-  struct {
-    unsigned b1 : 4;
-    unsigned b2 : 4;
-  } * _4b4;
   static char codes[] =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+  int written = 0;
+  // // optional implementation: allow a non writing, length computation.
+  // if (!target)
+  //   return (len % 3) ? (((len + 3) / 3) * 4) : (len / 3);
+  // use a union to avoid padding issues.
+  union {
+    struct {
+      unsigned tail : 2;
+      unsigned data : 6;
+    } byte1;
+    struct {
+      unsigned prev : 8;
+      unsigned tail : 4;
+      unsigned head : 4;
+    } byte2;
+    struct {
+      unsigned prev : 16;
+      unsigned data : 6;
+      unsigned head : 2;
+    } byte3;
+  } * section;
   while (len >= 3) {
-    _2b6 = (void*)data;
-    target[0] = codes[_2b6->b6];
-    _4b4 = (void*)data + 1;
-    target[1] = codes[(_2b6->b2 << 4) | _4b4->b2];
-    _6b2 = (void*)data + 2;
-    target[2] = codes[_4b4->b1 << 2 | _6b2->b2];
-    target[3] = codes[_6b2->b6];
+    section = (void*)data;
+    target[0] = codes[section->byte1.data];
+    target[1] = codes[(section->byte1.tail << 4) | (section->byte2.head)];
+    target[2] = codes[(section->byte2.tail << 2) | (section->byte3.head)];
+    target[3] = codes[section->byte3.data];
 
     target += 4;
     data += 3;
     len -= 3;
     written += 4;
   }
+  section = (void*)data;
   if (len == 2) {
-    _2b6 = (void*)data;
-    target[0] = codes[_2b6->b6];
-    _4b4 = (void*)data + 1;
-    target[1] = codes[(_2b6->b2 << 4) | _4b4->b2];
-    _6b2 = (void*)data + 2;
-    target[2] = codes[_4b4->b1 << 2 | _6b2->b2];
+    target[0] = codes[section->byte1.data];
+    target[1] = codes[(section->byte1.tail << 4) | (section->byte2.head)];
+    target[2] = codes[section->byte2.tail << 2];
     target[3] = '=';
   } else if (len == 1) {
-    _2b6 = (void*)data;
-    target[0] = codes[_2b6->b6];
-    target[1] = codes[(_2b6->b2 << 4)];
+    target[0] = codes[section->byte1.data];
+    target[1] = codes[section->byte1.tail << 4];
     target[2] = '=';
     target[3] = '=';
   }
-  target += 4;
   written += 4;
   return written;
 }

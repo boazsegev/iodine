@@ -63,7 +63,9 @@ static void* _inner_join_with_rbthread(void* rbt) {
 
 // join a ruby thread
 static void* join_thread(THREAD_TYPE thr) {
-  return rb_thread_call_with_gvl(_inner_join_with_rbthread, (void*)thr);
+  void* ret = rb_thread_call_with_gvl(_inner_join_with_rbthread, (void*)thr);
+  Registry.remove(thr);
+  return ret;
 }
 
 // /** POSIX version: create thread  */
@@ -125,10 +127,10 @@ The Async struct
 */
 struct Async {
   /** the task queue - MUST be first in the struct*/
-  pthread_mutex_t lock;     // a mutex for data integrity.
-  struct AsyncTask* tasks;  // active tasks
-  struct AsyncTask* pool;   // a task node pool
-  struct AsyncTask** pos;   // the position for new tasks.
+  pthread_mutex_t lock;              // a mutex for data integrity.
+  struct AsyncTask* volatile tasks;  // active tasks
+  struct AsyncTask* volatile pool;   // a task node pool
+  struct AsyncTask** volatile pos;   // the position for new tasks.
   /** The pipe used for thread wakeup */
   struct {
     /** read incoming data (opaque data), used for wakeup */
@@ -139,9 +141,9 @@ struct Async {
   /** the number of initialized threads */
   int count;
   /** data flags */
-  struct {
+  volatile struct {
     /** the running flag */
-    volatile unsigned run : 1;
+    unsigned run : 1;
     /** reserved for future use */
     unsigned rsrv : 7;
   } flags;
@@ -426,7 +428,6 @@ static async_p async_new(int threads) {
   async_p async = malloc(sizeof(*async) + (threads * sizeof(THREAD_TYPE)));
   async->tasks = NULL;
   async->pool = NULL;
-  async->pos = &async->tasks;
   async->pipe.in = 0;
   async->pipe.out = 0;
   if (pthread_mutex_init(&(async->lock), NULL)) {

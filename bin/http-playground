@@ -33,9 +33,10 @@ class WSEcho
   end
   def on_message data
     # puts data
-    # write data
+    write data
     data_cp = data.dup
-    each {|h| h.echo data_cp }
+    # puts "broadcasting #{data_cp.bytesize} bytes"
+    # each {|h| h.echo data_cp }
   end
   def echo data
     write "echo: #{data}"
@@ -84,7 +85,7 @@ end
 #   server.run_every(1000) {puts "#{server.connection_count} clients connected."}
 # end
 
-# puts "Press enter to start (#{Process.pid})"
+puts "Press enter to start (#{Process.pid})"
 # gets
 
 server.start
