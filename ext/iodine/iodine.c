@@ -96,6 +96,11 @@ They are attached to both the core (Iodine instance objects) and the protocol(s)
 // here are some helpers to integrate this
 // support inside Ruby objects.
 
+// removes a VALUE from the registry, in case a task ISN'T performed
+static void each_fallback(struct Server* srv, int fd, void* task) {
+  Registry.remove((VALUE)task);
+}
+
 // performs pending async tasks while managing their Ruby registry.
 // initiated by Server.async
 static void perform_async(void* task) {
@@ -150,7 +155,7 @@ static void each_protocol_async_schedule(struct Server* srv,
   // Registry is a bag, adding the same task multiple times will increase the
   // number of references we have.
   Registry.add((VALUE)task);
-  Server.fd_task(srv, fd, each_protocol_async, task);
+  Server.fd_task(srv, fd, each_protocol_async, task, each_fallback);
 }
 
 /*
@@ -294,7 +299,7 @@ static VALUE run_protocol_task(VALUE self) {
     return Qnil;
   Registry.add(block);
   Server.fd_task(srv, FIX2INT(rb_ivar_get(self, fd_var_id)),
-                 perform_protocol_async, (void*)block);
+                 perform_protocol_async, (void*)block, each_fallback);
   return block;
 }
 

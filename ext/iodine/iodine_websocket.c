@@ -138,6 +138,11 @@ static void* on_message_in_gvl(void* data) {
 //////////////////////////////////////
 // Protocol Helper Methods
 
+// removes a VALUE from the registry, in case a task ISN'T performed
+static void each_fallback(struct Server* srv, int fd, void* task) {
+  Registry.remove((VALUE)task);
+}
+
 // performs a block of code on an active connection.
 // initiated by each_block
 static void each_protocol_block(struct Server* srv, int fd, void* task) {
@@ -165,7 +170,7 @@ static void each_protocol_async_schedule(struct Server* srv,
   // Registry is a bag, adding the same task multiple times will increase the
   // number of references we have.
   Registry.add((VALUE)task);
-  Server.fd_task(srv, fd, each_protocol_async, task);
+  Server.fd_task(srv, fd, each_protocol_async, task, each_fallback);
 }
 
 static void websocket_close(server_pt srv, int fd) {
