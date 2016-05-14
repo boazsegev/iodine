@@ -24,6 +24,7 @@ struct ObjectPool {
   struct ObjectContainer* containers;
   void* (*create)(void);
   void (*destroy)(void* object);
+  int object_count;
   int is_waiting;
   int wait_in;
   int wait_out;
@@ -31,6 +32,13 @@ struct ObjectPool {
 
 /////////////////////////////////////////////////////////
 // The API
+
+/**
+Returns the (approximate) number of objects available the pool.
+*/
+int pool_count(object_pool pool) {
+  return pool->object_count;
+}
 
 /**
 Grabs an object from the pool, removing it from the pool's
@@ -50,6 +58,8 @@ static void* pop(object_pool pool) {
     // move the object's container to the container pool
     c->next = pool->containers;
     pool->containers = c;
+    // update the object count
+    pool->object_count--;
     // unlock
     pthread_mutex_unlock(&pool->lock);
     // return the object
@@ -60,11 +70,12 @@ static void* pop(object_pool pool) {
       pool->is_waiting++;
       pthread_mutex_unlock(&pool->lock);
       // time to block
-      if (read(pool->wait_out, &(c), 1) <= 0)
-        return 0;
-      ;
+      if (read(pool->wait_out, &(c), 1))
+        ;
       return pop(pool);
     } else {
+      // reset the object count
+      pool->object_count = 0;
       // this is a dynamic object pool - create a new object.
       pthread_mutex_unlock(&pool->lock);
       return pool->create();
@@ -74,8 +85,7 @@ static void* pop(object_pool pool) {
 }
 /**
 Returns an object (or pushes a new object) to the pool, making it available
-for
-future `pop` calls.
+for future `pop` calls.
 */
 static void push(object_pool pool, void* object) {
   pthread_mutex_lock(&pool->lock);
@@ -88,9 +98,11 @@ static void push(object_pool pool, void* object) {
   c->next = pool->objects;
   c->object = object;
   pool->objects = c;
+  // update the object count
+  pool->object_count++;
   // send a signal if someone is waiting
   if (pool->is_waiting) {
-    if (write(pool->wait_in, &c, 1) <= 0)
+    if (write(pool->wait_in, &c, 1))
       ;
     pool->is_waiting--;
   }
@@ -112,6 +124,7 @@ static void* new_dynamic(void* (*create)(void),
     return NULL;
   struct ObjectPool* pool = malloc(sizeof(struct ObjectPool));
   pool->wait_in = pool->wait_out = pool->is_waiting = 0;
+  pool->object_count = 0;
   pool->objects = NULL;
   pool->containers = NULL;
   pool->create = create;
@@ -143,6 +156,7 @@ static void* new_blocking(void* (*create)(void),
   if (pipe(io))
     return NULL;
   struct ObjectPool* pool = malloc(sizeof(struct ObjectPool));
+  pool->object_count = 0;
   pool->is_waiting = 0;
   pool->wait_in = io[0];
   pool->wait_out = io[1];
@@ -186,10 +200,11 @@ static void destroy(object_pool pool) {
   return;
 }
 
-struct __Object_Pool_API__ ObjectPool = {
-    .new_dynamic = new_dynamic,
-    .new_blocking = new_blocking,
+struct ObjectPool_API__ ObjectPool = {
+    .create_dynamic = new_dynamic,
+    .create_blocking = new_blocking,
     .destroy = destroy,
     .push = push,
     .pop = pop,
+    .count = pool_count,
 };

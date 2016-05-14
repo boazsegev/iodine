@@ -30,6 +30,9 @@ extern rb_encoding* BinaryEncoding;  // encoding object
 // the Iodine dynamic protocol
 extern struct Protocol DynamicProtocol;
 
+// the Idle implementation... assumes that settings.udata == (void*)server
+void on_idle_server_callback(struct Server* srv);
+
 // a macro helper function to embed a server pointer in an object
 #define set_server(object, srv)        \
   rb_ivar_set((object), server_var_id, \

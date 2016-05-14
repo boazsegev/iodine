@@ -7,6 +7,7 @@ Feel free to copy, use and enjoy according to the license provided.
 
 // lib server is based off and requires the following libraries:
 #include "lib-server.h"
+#include "libbuffer.h"
 
 // #include <ssl.h>
 // sys includes
@@ -26,24 +27,49 @@ Feel free to copy, use and enjoy according to the license provided.
 
 ////////////////////////////////////////////////////////////////////////////////
 // socket binding and server limits helpers
-static int bind_server_socket(struct Server*);
+static int bind_server_socket(server_pt);
 static int set_non_blocking_socket(int fd);
 static long srv_capacity(void);
 
-// // async data sending buffer and helpers
-// struct Buffer {
-//   struct Buffer* next;
-//   int fd;
-//   void* data;
-//   int len;
-//   int sent;
-//   unsigned notification : 1;
-//   unsigned moved : 1;
-//   unsigned final : 1;
-//   unsigned urgent : 1;
-//   unsigned destroy : 4;
-//   unsigned rsv : 3;
-// };
+////////////////////////////////////////////////////////////////////////////////
+// The data associated with each connection
+struct ConnectionData {
+  server_pt srv;
+  struct Protocol* protocol;
+  ssize_t (*reading_hook)(server_pt srv, int fd, void* buffer, size_t size);
+  void* buffer;
+  void* udata;
+  int fd;
+  volatile uint32_t counter;
+  unsigned tout : 8;
+  unsigned idle : 8;
+  volatile unsigned busy : 1;
+};
+
+////////////////////////////////////////////////////////////////////////////////
+// Task object containers
+
+// the data-type for async messages
+struct FDTask {
+  union fd_id conn_id;
+  struct FDTask* next;
+  server_pt server;
+  void (*task)(server_pt server, uint64_t conn_id, void* arg);
+  void* arg;
+  void (*fallback)(server_pt server, uint64_t origin, void* arg);
+};
+
+// A self handling task structure
+struct GroupTask {
+  uint64_t conn_origin;
+  struct GroupTask* next;
+  server_pt server;
+  char* service;
+  void (*task)(server_pt server, uint64_t conn, void* arg);
+  void* arg;
+  void (*on_finished)(server_pt server, uint64_t origin, void* arg);
+  uint32_t pos;
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 // The server data object container
@@ -57,24 +83,16 @@ struct Server {
   // a mutex for server data integrity
   pthread_mutex_t lock;
   // maps each connection to it's protocol.
-  struct Protocol* volatile* protocol_map;
-  // Used to send the server data + sockfd number to any worker threads.
-  // pointer offset calculations are used to calculate the sockfd.
-  struct Server** server_map;
-  // maps each udata with it's associated connection fd.
-  void** udata_map;
-  /// maps a connection's "busy" flag, preventing the same connection from
-  /// running `on_data` on two threads. use busy[fd] to get the status of the
-  /// flag.
-  volatile char* busy;
-  /// maps all connection's timeout values. use tout[fd] to get/set the
-  /// timeout.
-  unsigned char* tout;
-  /// maps all connection's idle cycle count values. use idle[fd] to get/set
-  /// the count.
-  unsigned char* idle;
-  // a buffer map.
-  void** buffer_map;
+  struct ConnectionData* connections;
+  /// a mutex for server data integrity
+  pthread_mutex_t task_lock;
+  /// fd task pool.
+  struct FDTask* fd_task_pool;
+  /// group task pool.
+  struct GroupTask* group_task_pool;
+  /// task(s) pool size
+  size_t fd_task_pool_size;
+  size_t group_task_pool_size;
   // socket capacity
   long capacity;
   /// the last timeout review
@@ -88,6 +106,42 @@ struct Server {
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+// Macros for checking a connection ID is valid or retriving it's data
+
+/** returns the connection's data */
+#define connection_data(srv, conn) ((srv)->connections[(conn).data.fd])
+
+/** valuates as FALSE (0) if the connection is valid and true if outdated */
+#define validate_connection(srv, conn)                                \
+  ((connection_data((srv), (conn)).counter != (conn).data.counter) || \
+   (connection_data((srv), (conn)).counter &&                         \
+    (connection_data((srv), (conn)).protocol == NULL)))
+
+/** returns a value if the connection isn't valid */
+#define is_open_connection_or_return(srv, conn, ret) \
+  if (validate_connection((srv), (conn)))            \
+    return (ret);
+
+// object accessing helper macros
+
+/** casts the server to the reactor pointer. */
+#define _reactor_(server) ((struct Reactor*)(server))
+/** casts the reactor pointer to a server pointer. */
+#define _server_(reactor) ((server_pt)(reactor))
+/** gets a specific connection data object from the server (reactor). */
+#define _connection_(reactor, fd) (_server_(reactor)->connections[(fd)])
+/** gets a specific protocol from a server's connection. */
+#define _protocol_(reactor, fd) (_connection_((reactor), (fd))).protocol
+/** gets a server connection's UUID. */
+#define _fd_uuid_(reactor, sfd)                                            \
+  (((union fd_id){.data.fd = (sfd),                                        \
+                  .data.counter = _connection_((reactor), (sfd)).counter}) \
+       .uuid)
+/** creates a UUID from an fd and a counter object. */
+#define _fd_counter_uuid_(sfd, count) \
+  (((union fd_id){.data.fd = (sfd), .data.counter = count}).uuid)
+
+////////////////////////////////////////////////////////////////////////////////
 // Server API gateway
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -99,13 +153,19 @@ struct Server {
 // Server settings and objects
 
 /** returns the originating process pid */
-static pid_t root_pid(struct Server* server);
+static pid_t root_pid(server_pt server);
 /// allows direct access to the reactor object. use with care.
-static struct Reactor* srv_reactor(struct Server* server);
+static struct Reactor* srv_reactor(server_pt server);
 /// allows direct access to the server's original settings. use with care.
-static struct ServerSettings* srv_settings(struct Server* server);
+static struct ServerSettings* srv_settings(server_pt server);
 /// returns the computed capacity for any server instance on the system.
 static long srv_capacity(void);
+
+/**
+Returns the file descriptor belonging to the connection's UUID, if
+available. Returns -1 if the connection is closed (we cannot use 0 since 0
+is potentially a valid file descriptor). */
+int to_fd(server_pt server, uint64_t connection_id);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Server actions
@@ -114,14 +174,14 @@ static long srv_capacity(void);
 a default protocol). */
 static int srv_listen(struct ServerSettings);
 /// stops a specific server, closing any open connections.
-static void srv_stop(struct Server* server);
+static void srv_stop(server_pt server);
 /// stops any and all server instances, closing any open connections.
 static void srv_stop_all(void);
 
 // helpers
 static void srv_cycle_core(server_pt server);
 static int set_to_busy(server_pt server, int fd);
-static void async_on_data(server_pt* p_server);
+static void async_on_data(struct ConnectionData* conn);
 static void on_ready(struct Reactor* reactor, int fd);
 static void on_shutdown(struct Reactor* reactor, int fd);
 static void on_close(struct Reactor* reactor, int fd);
@@ -129,7 +189,7 @@ static void clear_conn_data(server_pt server, int fd);
 static void accept_async(server_pt server);
 
 // signal management
-static void register_server(struct Server* server);
+static void register_server(server_pt server);
 static void on_signal(int sig);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -140,27 +200,29 @@ static void on_signal(int sig);
 Protected callbacks include only the `on_message` callback and tasks forwarded
 to the connection using the `td_task` or `each` functions.
 */
-static unsigned char is_busy(struct Server* server, int sockfd);
+static uint8_t is_busy(server_pt server, union fd_id cuuid);
+/** Returns true if the connection's UUID points to a valid connection (valid
+ * meanning `on_close` wasn't called and processed just yet).
+*/
+static uint8_t is_open(server_pt server, union fd_id cuuid);
 /// retrives the active protocol object for the requested file descriptor.
-static struct Protocol* get_protocol(struct Server* server, int sockfd);
+static struct Protocol* get_protocol(server_pt server, union fd_id cuuid);
 /// sets the active protocol object for the requested file descriptor.
-static int set_protocol(struct Server* server,
-                        int sockfd,
+static int set_protocol(server_pt server,
+                        union fd_id cuuid,
                         struct Protocol* new_protocol);
 /** retrives an opaque pointer set by `set_udata` and associated with the
 connection.
 
 since no new connections are expected on fd == 0..2, it's possible to store
 global data in these locations. */
-static void* get_udata(struct Server* server, int sockfd);
+static void* get_udata(server_pt server, union fd_id cuuid);
 /** Sets the opaque pointer to be associated with the connection. returns the
 old pointer, if any. */
-static void* set_udata(struct Server* server, int sockfd, void* udata);
+static void* set_udata(server_pt server, union fd_id cuuid, void* udata);
 /** Sets the timeout limit for the specified connectionl, in seconds, up to
 255 seconds (the maximum allowed timeout count). */
-static void set_timeout(struct Server* server,
-                        int sockfd,
-                        unsigned char timeout);
+static void set_timeout(server_pt server, union fd_id cuuid, uint8_t timeout);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Socket actions
@@ -169,29 +231,37 @@ static void set_timeout(struct Server* server,
 management system, so that the server can be used also to manage connection
 based resources asynchronously (i.e. database resources etc').
 */
-static int srv_attach(struct Server* server,
-                      int sockfd,
-                      struct Protocol* protocol);
+static int srv_attach(server_pt server, int sockfd, struct Protocol* protocol);
 /** Closes the connection.
 
 If any data is waiting to be written, close will
 return immediately and the connection will only be closed once all the data
 was sent. */
-static void srv_close(struct Server* server, int sockfd);
+static void srv_close(server_pt server, union fd_id cuuid);
 /** Hijack a socket (file descriptor) from the server, clearing up it's
 resources. The control of hte socket is totally relinquished.
 
 This method will block until all the data in the buffer is sent before
 releasing control of the socket. */
-static int srv_hijack(struct Server* server, int sockfd);
+static int srv_hijack(server_pt server, union fd_id cuuid);
 /** Counts the number of connections for the specified protocol (NULL = all
 protocols). */
-static long srv_count(struct Server* server, char* service);
+static long srv_count(server_pt server, char* service);
 /// "touches" a socket, reseting it's timeout counter.
-static void srv_touch(struct Server* server, int sockfd);
+static void srv_touch(server_pt server, union fd_id cuuid);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Read and Write
+
+/**
+Sets up the read/write hooks, allowing for transport layer extensions (i.e.
+SSL/TLS) or monitoring extensions.
+*/
+void rw_hooks(
+    server_pt srv,
+    union fd_id cuuid,
+    ssize_t (*reading_hook)(server_pt srv, int fd, void* buffer, size_t size),
+    ssize_t (*writing_hook)(server_pt srv, int fd, void* data, size_t len));
 
 /** Reads up to `max_len` of data from a socket. the data is stored in the
 `buffer` and the number of bytes received is returned.
@@ -201,7 +271,10 @@ Returns -1 if an error was raised and the connection was closed.
 Returns the number of bytes written to the buffer. Returns 0 if no data was
 available.
 */
-static ssize_t srv_read(int sockfd, void* buffer, size_t max_len);
+static ssize_t srv_read(server_pt srv,
+                        union fd_id cuuid,
+                        void* buffer,
+                        size_t max_len);
 /** Copies & writes data to the socket, managing an asyncronous buffer.
 
 returns 0 on success. success means that the data is in a buffer waiting to
@@ -210,8 +283,8 @@ destroyed (never sent).
 
 On error, returns -1 otherwise returns the number of bytes in `len`.
 */
-static ssize_t srv_write(struct Server* server,
-                         int sockfd,
+static ssize_t srv_write(server_pt server,
+                         union fd_id cuuid,
                          void* data,
                          size_t len);
 /** Writes data to the socket, moving the data's pointer directly to the buffer.
@@ -224,8 +297,8 @@ destroyed (never sent).
 
 On error, returns -1 otherwise returns the number of bytes in `len`.
 */
-static ssize_t srv_write_move(struct Server* server,
-                              int sockfd,
+static ssize_t srv_write_move(server_pt server,
+                              union fd_id cuuid,
                               void* data,
                               size_t len);
 /** Copies & writes data to the socket, managing an asyncronous buffer.
@@ -242,8 +315,8 @@ destroyed (never sent).
 
 On error, returns -1 otherwise returns the number of bytes in `len`.
 */
-static ssize_t srv_write_urgent(struct Server* server,
-                                int sockfd,
+static ssize_t srv_write_urgent(server_pt server,
+                                union fd_id cuuid,
                                 void* data,
                                 size_t len);
 /** Writes data to the socket, moving the data's pointer directly to the buffer.
@@ -262,8 +335,8 @@ destroyed (never sent).
 
 On error, returns -1 otherwise returns the number of bytes in `len`.
 */
-static ssize_t srv_write_move_urgent(struct Server* server,
-                                     int sockfd,
+static ssize_t srv_write_move_urgent(server_pt server,
+                                     union fd_id cuuid,
                                      void* data,
                                      size_t len);
 /**
@@ -274,37 +347,43 @@ Once the file was sent, the `FILE *` will be closed using `fclose`.
 The file will be buffered to the socket chunk by chunk, so that memory
 consumption is capped at ~ 64Kb.
 */
-static ssize_t srv_sendfile(struct Server* server, int sockfd, FILE* file);
+static ssize_t srv_sendfile(server_pt server, union fd_id cuuid, FILE* file);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Tasks + Async
 
 /** Schedules a specific task to run asyncronously for each connection.
 a NULL service identifier == all connections (all protocols). */
-static int each(struct Server* server,
+static int each(server_pt server,
+                union fd_id origin,
                 char* service,
-                void (*task)(struct Server* server, int fd, void* arg),
+                void (*task)(server_pt server, uint64_t target_fd, void* arg),
                 void* arg,
-                void (*fallback)(struct Server* server, int fd, void* arg));
+                void (*on_finish)(server_pt server,
+                                  uint64_t origin,
+                                  void* arg));
 /** Schedules a specific task to run for each connection. The tasks will be
  * performed sequencially, in a blocking manner. The method will only return
  * once all the tasks were completed. A NULL service identifier == all
  * connections (all protocols).
 */
-static int each_block(struct Server* server,
+static int each_block(server_pt server,
+                      union fd_id origin,
                       char* service,
-                      void (*task)(struct Server* server, int fd, void* arg),
+                      void (*task)(server_pt server,
+                                   uint64_t target_fd,
+                                   void* arg),
                       void* arg);
 /** Schedules a specific task to run asyncronously for a specific connection.
 
 returns -1 on failure, 0 on success (success being scheduling or performing
 the task).
 */
-static int fd_task(struct Server* server,
-                   int sockfd,
-                   void (*task)(struct Server* server, int fd, void* arg),
+static int fd_task(server_pt server,
+                   union fd_id target,
+                   void (*task)(server_pt server, uint64_t fd, void* arg),
                    void* arg,
-                   void (*fallback)(struct Server* server, int fd, void* arg));
+                   void (*fallback)(server_pt server, uint64_t fd, void* arg));
 /** Runs an asynchronous task, IF threading is enabled (set the
 `threads` to 1 (the default) or greater).
 
@@ -313,7 +392,7 @@ If threading is disabled, the current thread will perform the task and return.
 Returns -1 on error or 0
 on succeess.
 */
-static int run_async(struct Server* self, void task(void*), void* arg);
+static int run_async(server_pt self, void task(void*), void* arg);
 /** Creates a system timer (at the cost of 1 file descriptor) and pushes the
 timer to the reactor. The task will NOT repeat. Returns -1 on error or the
 new file descriptor on succeess.
@@ -322,7 +401,7 @@ NOTICE: Do NOT create timers from within the on_close callback, as this might
 block resources from being properly freed (if the timer and the on_close
 object share the same fd number).
 */
-static int run_after(struct Server* self,
+static int run_after(server_pt self,
                      long milliseconds,
                      void task(void*),
                      void* arg);
@@ -335,61 +414,95 @@ NOTICE: Do NOT create timers from within the on_close callback, as this might
 block resources from being properly freed (if the timer and the on_close
 object share the same fd number).
 */
-static int run_every(struct Server* self,
+static int run_every(server_pt self,
                      long milliseconds,
                      int repetitions,
                      void task(void*),
                      void* arg);
 
-// helpers
+// Global Task helpers
+static inline int perform_single_task(server_pt srv,
+                                      uint64_t connection_id,
+                                      void (*task)(server_pt server,
+                                                   uint64_t connection_id,
+                                                   void* arg),
+                                      void* arg);
+// FDTask helpers
+struct FDTask* new_fd_task(server_pt srv);
+void destroy_fd_task(server_pt srv, struct FDTask* task);
+static void perform_fd_task(struct FDTask* task);
 
-// the data-type for async messages
-struct ConnTask {
-  struct Server* server;
-  int fd;
-  void (*task)(struct Server* server, int fd, void* arg);
-  void* arg;
-  void (*fallback)(struct Server* server, int fd, void* arg);
-};
-// the async handler
-static void perform_each_task(struct ConnTask* task);
-void make_a_task_async(struct Server* server, int fd, void* arg);
+// GroupTask helpers
+struct GroupTask* new_group_task(server_pt srv);
+void destroy_group_task(server_pt srv, struct GroupTask* task);
+static void perform_group_task(struct GroupTask* task);
+void add_to_group_task(server_pt server, int fd, void* arg);
 
 ////////////////////////////////////////////////////////////////////////////////
 // The actual Server API access setup
 // The following allows access to helper functions and defines a namespace
 // for the API in this library.
-const struct ___Server__API____ Server = {
-    .reactor = srv_reactor,                      //
-    .settings = srv_settings,                    //
-    .capacity = srv_capacity,                    //
-    .listen = srv_listen,                        //
-    .stop = srv_stop,                            //
-    .stop_all = srv_stop_all,                    //
-    .is_busy = is_busy,                          //
-    .get_protocol = get_protocol,                //
-    .set_protocol = set_protocol,                //
-    .get_udata = get_udata,                      //
-    .set_udata = set_udata,                      //
-    .set_timeout = set_timeout,                  //
-    .attach = srv_attach,                        //
-    .close = srv_close,                          //
-    .hijack = srv_hijack,                        //
-    .count = srv_count,                          //
-    .touch = srv_touch,                          //
-    .read = srv_read,                            //
-    .write = srv_write,                          //
-    .write_move = srv_write_move,                //
-    .write_urgent = srv_write_urgent,            //
-    .write_move_urgent = srv_write_move_urgent,  //
-    .sendfile = srv_sendfile,                    //
-    .each = each,                                //
-    .each_block = each_block,                    //
-    .fd_task = fd_task,                          //
-    .run_async = run_async,                      //
-    .run_after = run_after,                      //
-    .run_every = run_every,                      //
-    .root_pid = root_pid,                        //
+const struct Server__API___ Server = {
+    /* accessor and server functions */
+    .reactor = srv_reactor,
+    .settings = srv_settings,
+    .capacity = srv_capacity,
+    .listen = srv_listen,
+    .stop = srv_stop,
+    .stop_all = srv_stop_all,
+    .root_pid = root_pid,
+    /* connection data functions */
+    .is_busy = (uint8_t (*)(server_pt, uint64_t))is_busy,
+    .is_open = (uint8_t (*)(server_pt, uint64_t))is_open,
+    .get_protocol = (struct Protocol * (*)(server_pt, uint64_t))get_protocol,
+    .set_protocol =
+        (int (*)(server_pt, uint64_t, struct Protocol*))set_protocol,
+    .get_udata = (void* (*)(server_pt, uint64_t))get_udata,
+    .set_udata = (void* (*)(server_pt, uint64_t, void*))set_udata,
+    .set_timeout = (void (*)(server_pt, uint64_t, uint8_t))set_timeout,
+    /* connection managment functions */
+    .attach = srv_attach,
+    .close = (void (*)(server_pt, uint64_t))srv_close,
+    .hijack = (int (*)(server_pt, uint64_t))srv_hijack,
+    .count = srv_count,
+    /* connection activity and read/write functions */
+    .touch = (void (*)(server_pt, uint64_t))srv_touch,
+    .rw_hooks = (void (*)(server_pt,
+                          uint64_t,
+                          ssize_t (*)(server_pt, int, void*, size_t),
+                          ssize_t (*)(server_pt, int, void*, size_t)))rw_hooks,
+    .read = (ssize_t (*)(server_pt, uint64_t, void*, size_t))srv_read,
+    .write = (ssize_t (*)(server_pt, uint64_t, void*, size_t))srv_write,
+    .write_move =
+        (ssize_t (*)(server_pt, uint64_t, void*, size_t))srv_write_move,
+    .write_urgent =
+        (ssize_t (*)(server_pt, uint64_t, void*, size_t))srv_write_urgent,
+    .write_move_urgent = (ssize_t (*)(server_pt,
+                                      uint64_t,
+                                      void*,
+                                      size_t))srv_write_move_urgent,  //
+    .sendfile = (ssize_t (*)(server_pt, uint64_t, FILE*))srv_sendfile,
+    /* connection tasks functions */
+    .each = (int (*)(server_pt,
+                     uint64_t,
+                     char*,
+                     void (*)(server_pt, uint64_t, void*),
+                     void*,
+                     void (*)(server_pt, uint64_t, void*)))each,
+    .each_block = (int (*)(server_pt,
+                           uint64_t,
+                           char*,
+                           void (*)(server_pt, uint64_t, void*),
+                           void*))each_block,
+    .fd_task = (int (*)(server_pt,
+                        uint64_t,
+                        void (*)(server_pt, uint64_t, void*),
+                        void*,
+                        void (*)(server_pt, uint64_t, void*)))fd_task,
+    /* global task functions */
+    .run_async = run_async,
+    .run_after = run_after,
+    .run_every = run_every,
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -408,9 +521,9 @@ struct TimerProtocol {
 };
 
 // the timer's on_data callback
-static void tp_perform_on_data(struct Server* self, int fd) {
+static void tp_perform_on_data(server_pt self, uint64_t conn) {
   struct TimerProtocol* timer =
-      (struct TimerProtocol*)Server.get_protocol(self, fd);
+      (struct TimerProtocol*)Server.get_protocol(self, conn);
   if (timer) {
     // set local data copy, to avoid race contitions related to `free`.
     void (*task)(void*) = (void (*)(void*))timer->task;
@@ -419,12 +532,12 @@ static void tp_perform_on_data(struct Server* self, int fd) {
     if (task)
       task(arg);
     // reset the timer
-    reactor_reset_timer(fd);
+    reactor_reset_timer(server_uuid_to_fd(conn));
     // close the file descriptor
     if (timer->repeat < 0)
       return;
     if (timer->repeat == 0) {
-      reactor_close((struct Reactor*)self, fd);
+      reactor_close((struct Reactor*)self, server_uuid_to_fd(conn));
       return;
     }
     timer->repeat--;
@@ -432,10 +545,10 @@ static void tp_perform_on_data(struct Server* self, int fd) {
 }
 
 // the timer's on_close (cleanup)
-static void tp_perform_on_close(struct Server* self, int fd) {
+static void tp_perform_on_close(server_pt self, uint64_t conn) {
   // free the protocol object when it was "aborted" using `close`.
   struct TimerProtocol* timer =
-      (struct TimerProtocol*)Server.get_protocol(self, fd);
+      (struct TimerProtocol*)Server.get_protocol(self, conn);
   if (timer)
     free(timer);
 }
@@ -460,57 +573,61 @@ static struct TimerProtocol* TimerProtocol(void* task,
 // Server settings and objects
 
 /** returns the originating process pid */
-static pid_t root_pid(struct Server* server) {
+static pid_t root_pid(server_pt server) {
   return server->root_pid;
 }
 /// allows direct access to the reactor object. use with care.
-static struct Reactor* srv_reactor(struct Server* server) {
+static struct Reactor* srv_reactor(server_pt server) {
   return (struct Reactor*)server;
 }
 /// allows direct access to the server's original settings. use with care.
-static struct ServerSettings* srv_settings(struct Server* server) {
+static struct ServerSettings* srv_settings(server_pt server) {
   return server->settings;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Socket settings and data
 
-/** Returns true if a specific connection's protected callback is running.
+/** Returns true if a specific connection's protected callback is running AND
+the connection is still active
 
 Protected callbacks include only the `on_message` callback and tasks forwarded
 to the connection using the `td_task` or `each` functions.
 */
-static unsigned char is_busy(struct Server* server, int sockfd) {
-  return server->busy[sockfd];
+static uint8_t is_busy(server_pt server, union fd_id cuuid) {
+  return server->connections[cuuid.data.fd].counter == cuuid.data.counter &&
+         server->connections[cuuid.data.fd].busy;
 }
+/** Returns true if a specific connection is still valid (on_close hadn't
+completed) */
+static uint8_t is_open(server_pt server, union fd_id cuuid) {
+  return !validate_connection(server, cuuid);
+}
+
 /// retrives the active protocol object for the requested file descriptor.
-static struct Protocol* get_protocol(struct Server* server, int sockfd) {
-  return server->protocol_map[sockfd];
+static struct Protocol* get_protocol(server_pt server, union fd_id conn) {
+  is_open_connection_or_return(server, conn, NULL);
+  return server->connections[conn.data.fd].protocol;
 }
 /// sets the active protocol object for the requested file descriptor.
-static int set_protocol(struct Server* server,
-                        int sockfd,
+static int set_protocol(server_pt server,
+                        union fd_id conn,
                         struct Protocol* new_protocol) {
-  // before bothering with the mutex, make sure we have a valid connection.
-  if (!server->protocol_map[sockfd]) {
-    // fprintf(stderr,
-    //         "ERROR: Cannot set a protocol for a disconnected socket.\n");
-    return -1;
-  }
+  is_open_connection_or_return(server, conn, -1);
   // on_close and set_protocol should never conflict.
   // we should also prevent the same thread from deadlocking
   // (i.e., when on_close tries to update the protocol)
   if (pthread_mutex_trylock(&(server->lock)))
     return -1;
   // review the connection's validity again (in proteceted state)
-  if (!server->protocol_map[sockfd]) {
+  if (validate_connection(server, conn)) {
     pthread_mutex_unlock(&(server->lock));
     // fprintf(stderr,
     //         "ERROR: Cannot set a protocol for a disconnected socket.\n");
     return -1;
   }
   // set the new protocol
-  server->protocol_map[sockfd] = new_protocol;
+  server->connections[conn.data.fd].protocol = new_protocol;
   // release the lock
   pthread_mutex_unlock(&(server->lock));
   // return 0 (no error)
@@ -521,54 +638,66 @@ connection.
 
 since no new connections are expected on fd == 0..2, it's possible to store
 global data in these locations. */
-static void* get_udata(struct Server* server, int sockfd) {
-  return server->udata_map[sockfd];
+static void* get_udata(server_pt server, union fd_id conn) {
+  if (validate_connection(server, conn))
+    return NULL;
+  return server->connections[conn.data.fd].udata;
 }
 /** Sets the opaque pointer to be associated with the connection. returns the
-old pointer, if any. */
-static void* set_udata(struct Server* server, int sockfd, void* udata) {
-  void* old = server->udata_map[sockfd];
-  // pthread_mutex_lock(&(server->lock));
-  server->udata_map[sockfd] = udata;
-  // pthread_mutex_unlock(&(server->lock));
+old pointer, if any.
+
+Returns NULL both on error (i.e. old connection ID) and
+sucess (no previous value). Check that the value was set using `get_udata`.
+*/
+static void* set_udata(server_pt server, union fd_id conn, void* udata) {
+  if (validate_connection(server, conn))
+    return NULL;
+  pthread_mutex_lock(&(server->lock));
+  if (validate_connection(server, conn)) {
+    pthread_mutex_unlock(&(server->lock));
+    return NULL;
+  }
+  void* old = connection_data(server, conn).udata;
+  connection_data(server, conn).udata = udata;
+  pthread_mutex_unlock(&(server->lock));
   return old;
 }
 /** Sets the timeout limit for the specified connectionl, in seconds, up to
 255 seconds (the maximum allowed timeout count). */
-static void set_timeout(server_pt server, int fd, unsigned char timeout) {
-  server->tout[fd] = timeout;
+static void set_timeout(server_pt server, union fd_id conn, uint8_t timeout) {
+  connection_data(server, conn).tout = timeout;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Server actions & Core
 
-// helper macros
-#define _reactor_(server) ((struct Reactor*)(server))
-#define _server_(reactor) ((server_pt)(reactor))
-#define _protocol_(reactor, fd) (_server_(reactor)->protocol_map[(fd)])
-
 // clears a connection's data
 static void clear_conn_data(server_pt server, int fd) {
-  server->protocol_map[fd] = 0;
-  server->busy[fd] = 0;
-  server->tout[fd] = 0;
-  server->idle[fd] = 0;
-  server->udata_map[fd] = NULL;
-  Buffer.clear(server->buffer_map[fd]);
+  Buffer.clear(server->connections[fd].buffer);
+  server->connections[fd].counter++;
+  server->connections[fd].idle = 0;
+  server->connections[fd].protocol = NULL;
+  server->connections[fd].reading_hook = NULL;
+  server->connections[fd].tout = 0;
+  server->connections[fd].udata = NULL;
+  server->connections[fd].busy = 0;
 }
 // on_ready, handles async buffer sends
 static void on_ready(struct Reactor* reactor, int fd) {
-  if (Buffer.flush(_server_(reactor)->buffer_map[fd], fd) > 0)
-    _server_(reactor)->idle[fd] = 0;
+  if (Buffer.flush(_server_(reactor)->connections[fd].buffer,
+                   _fd_uuid_(reactor, fd)) > 0)
+    _server_(reactor)->connections[fd].idle = 0;
   if (_protocol_(reactor, fd) && _protocol_(reactor, fd)->on_ready)
-    _protocol_(reactor, fd)->on_ready(_server_(reactor), fd);
+    _protocol_(reactor, fd)
+        ->on_ready(_server_(reactor), _fd_uuid_(reactor, fd));
 }
 
 /// called for any open file descriptors when the reactor is shutting down.
 static void on_shutdown(struct Reactor* reactor, int fd) {
   // call the callback for the mentioned active(?) connection.
   if (_protocol_(reactor, fd) && _protocol_(reactor, fd)->on_shutdown)
-    _protocol_(reactor, fd)->on_shutdown(_server_(reactor), fd);
+    _protocol_(reactor, fd)
+        ->on_shutdown(_server_(reactor), _fd_uuid_(reactor, fd));
 }
 
 // called when a file descriptor was closed (either locally or by the other
@@ -589,7 +718,8 @@ static void on_close(struct Reactor* reactor, int fd) {
   }
   if (_protocol_(reactor, fd)) {
     if (_protocol_(reactor, fd)->on_close)
-      _protocol_(reactor, fd)->on_close(_server_(reactor), fd);
+      _protocol_(reactor, fd)
+          ->on_close(_server_(reactor), _fd_uuid_(reactor, fd));
     clear_conn_data(_server_(reactor), fd);
   }
   pthread_mutex_unlock(&(_server_(reactor)->lock));
@@ -598,17 +728,17 @@ static void on_close(struct Reactor* reactor, int fd) {
 // The busy flag is used to make sure that a single connection doesn't perform
 // two "critical" tasks at the same time. Critical tasks are defined as the
 // `on_message` callback and any user task requested by `each` or `fd_task`.
-static int set_to_busy(struct Server* server, int sockfd) {
+static int set_to_busy(server_pt server, int sockfd) {
   static pthread_mutex_t locker = PTHREAD_MUTEX_INITIALIZER;
 
-  if (!server->protocol_map[sockfd])
+  if (!_protocol_(server, sockfd))
     return 0;
   pthread_mutex_lock(&locker);
-  if (server->busy[sockfd] == 1) {
+  if (_connection_(server, sockfd).busy == 1) {
     pthread_mutex_unlock(&locker);
     return 0;
   }
-  server->busy[sockfd] = 1;
+  _connection_(server, sockfd).busy = 1;
   pthread_mutex_unlock(&locker);
   return 1;
 }
@@ -642,27 +772,24 @@ static void accept_async(server_pt server) {
   }
 }
 // makes sure that the on_data callback isn't overlapping a previous on_data
-static void async_on_data(server_pt* p_server) {
+static void async_on_data(struct ConnectionData* conn) {
   // compute sockfd by comparing the distance between the original pointer and
   // the passed pointer's address.
-  if (!(*p_server))
+  if (!conn || !conn->protocol || !conn->protocol->on_data)
     return;
-  int sockfd = p_server - (*p_server)->server_map;
   // if we get the handle, perform the task
-  if (set_to_busy(*p_server, sockfd)) {
-    struct Protocol* protocol = (*p_server)->protocol_map[sockfd];
-    if (!protocol || !protocol->on_data)
-      return;
-    (*p_server)->idle[sockfd] = 0;
-    protocol->on_data((*p_server), sockfd);
+  if (set_to_busy(conn->srv, conn->fd)) {
+    conn->idle = 0;
+    conn->protocol->on_data(conn->srv,
+                            _fd_counter_uuid_(conn->fd, conn->counter));
     // release the handle
-    (*p_server)->busy[sockfd] = 0;
+    conn->busy = 0;
     return;
   }
   // we didn't get the handle, reschedule - but only if the connection is still
   // open.
-  if ((*p_server)->protocol_map[sockfd])
-    Async.run((*p_server)->async, (void (*)(void*))async_on_data, p_server);
+  if (conn->protocol)
+    Async.run(conn->srv->async, (void (*)(void*))async_on_data, conn);
 }
 
 static void on_data(struct Reactor* reactor, int fd) {
@@ -671,40 +798,47 @@ static void on_data(struct Reactor* reactor, int fd) {
     // listening socket. accept connections.
     Async.run(_server_(reactor)->async, (void (*)(void*))accept_async, reactor);
   } else if (_protocol_(reactor, fd) && _protocol_(reactor, fd)->on_data) {
-    _server_(reactor)->idle[fd] = 0;
+    _connection_(reactor, fd).idle = 0;
     // clients, forward on.
     Async.run(_server_(reactor)->async, (void (*)(void*))async_on_data,
-              &(_server_(reactor)->server_map[fd]));
+              &_connection_(reactor, fd));
   }
 }
 
 // calls the reactor's core and checks for timeouts.
 // schedules it's own execution when done.
+// shouldn't be called by more then a single thread at a time (NOT thread safe)
 static void srv_cycle_core(server_pt server) {
+  static size_t idle_performed = 0;
   int delta;  // we also use this for other things, but it's the TOut delta
   // review reactor events
   delta = reactor_review(_reactor_(server));
   if (delta < 0) {
     srv_stop(server);
     return;
-  } else if (delta == 0 && server->settings->on_idle) {
-    server->settings->on_idle(server);
-  }
+  } else if (delta == 0) {
+    if (server->settings->on_idle && idle_performed == 0)
+      server->settings->on_idle(server);
+    idle_performed = 1;
+  } else
+    idle_performed = 0;
   // timeout + local close management
   if (server->last_to != _reactor_(server)->last_tick) {
     // We use the delta with fuzzy logic (only after the first second)
     int delta = _reactor_(server)->last_tick - server->last_to;
     for (long i = 3; i <= _reactor_(server)->maxfd; i++) {
-      if (server->protocol_map[i] && fcntl(i, F_GETFL) < 0 && errno == EBADF) {
+      if (_protocol_(server, i) && fcntl(i, F_GETFL) < 0 && errno == EBADF) {
         reactor_close(_reactor_(server), i);
       }
-      if (server->tout[i]) {
-        if (server->tout[i] > server->idle[i])
-          server->idle[i] += server->idle[i] ? delta : 1;
+      if (_connection_(server, i).tout) {
+        if (_connection_(server, i).tout > _connection_(server, i).idle)
+          _connection_(server, i).idle +=
+              _connection_(server, i).idle ? delta : 1;
         else {
-          if (server->protocol_map[i] && server->protocol_map[i]->ping)
-            server->protocol_map[i]->ping(server, i);
-          else if (!server->busy[i] || server->idle[i] == 255)
+          if (_protocol_(server, i) && _protocol_(server, i)->ping)
+            _protocol_(server, i)->ping(server, i);
+          else if (!_connection_(server, i).busy ||
+                   _connection_(server, i).idle == 255)
             reactor_close(_reactor_(server), i);
         }
       }
@@ -742,28 +876,23 @@ static int srv_listen(struct ServerSettings settings) {
   if (!settings.processes || settings.processes <= 0)
     settings.processes = 1;
 
-  // We can use the stack for the server's core memory.
+  // V.3 Avoids using the Stack, allowing userspace to use the memory
   long capacity = srv_capacity();
-  void* udata_map[capacity];
-  struct Protocol* volatile protocol_map[capacity];
-  struct Server* server_map[capacity];
-  void* buffer_map[capacity];
-  volatile char busy[capacity];
-  unsigned char tout[capacity];
-  unsigned char idle[capacity];
+  struct ConnectionData* connections = calloc(sizeof(*connections), capacity);
+  if (!connections)
+    return -1;
+
   // populate the Server structure with the data
   struct Server srv = {
       // initialize the server object
       .settings = &settings,  // store a pointer to the settings
       .last_to = 0,           // last timeout review
       .capacity = capacity,   // the server's capacity
-      .protocol_map = protocol_map,
-      .udata_map = udata_map,
-      .server_map = server_map,
-      .buffer_map = buffer_map,
-      .busy = busy,
-      .tout = tout,
-      .idle = idle,
+      .connections = connections,
+      .fd_task_pool = NULL,
+      .fd_task_pool_size = 0,
+      .group_task_pool = NULL,
+      .group_task_pool_size = 0,
       .reactor.maxfd = capacity - 1,
       .reactor.on_data = on_data,
       .reactor.on_ready = on_ready,
@@ -772,28 +901,35 @@ static int srv_listen(struct ServerSettings settings) {
   };
   // initialize the server data mutex
   if (pthread_mutex_init(&srv.lock, NULL)) {
+    free(connections);
     return -1;
   }
+  // initialize the server task pool mutex
+  if (pthread_mutex_init(&srv.task_lock, NULL)) {
+    pthread_mutex_destroy(&srv.lock);
+    free(connections);
+    return -1;
+  }
+
   // bind the server's socket - if relevent
   int srvfd = 0;
   if (settings.port > 0) {
     srvfd = bind_server_socket(&srv);
     // if we didn't get a socket, quit now.
-    if (srvfd < 0)
+    if (srvfd < 0) {
+      pthread_mutex_destroy(&srv.task_lock);
+      pthread_mutex_destroy(&srv.lock);
+      free(connections);
       return -1;
+    }
     srv.srvfd = srvfd;
   }
 
-  // zero out data...
+  // initialize connection data...
   for (int i = 0; i < capacity; i++) {
-    protocol_map[i] = 0;
-    server_map[i] = &srv;
-    busy[i] = 0;
-    tout[i] = 0;
-    idle[i] = 0;
-    udata_map[i] = 0;
-    // buffer_map[i] = 0;
-    buffer_map[i] = Buffer.new(0);
+    connections[i].srv = &srv;
+    connections[i].fd = i;
+    connections[i].buffer = Buffer.create(&srv);
   }
 
   // register signals - do this before concurrency, so that they are inherited.
@@ -818,10 +954,13 @@ static int srv_listen(struct ServerSettings settings) {
     }
   }
   // once we forked, we can initiate a thread pool for each process
-  srv.async = Async.new(settings.threads);
+  srv.async = Async.create(settings.threads);
   if (srv.async <= 0) {
     if (srvfd)
       close(srvfd);
+    pthread_mutex_destroy(&srv.task_lock);
+    pthread_mutex_destroy(&srv.lock);
+    free(connections);
     return -1;
   }
 
@@ -830,13 +969,16 @@ static int srv_listen(struct ServerSettings settings) {
 
   // let'm know...
   if (srvfd)
-    printf("(%d) Listening on port %s (max sockets: %lu, ~%d used)\n", getpid(),
-           srv.settings->port, srv.capacity, srv.srvfd + 2);
+    printf(
+        "(pid %d x %d threads) Listening on port %s (max sockets: %lu, ~%d "
+        "used)\n",
+        getpid(), srv.settings->threads, srv.settings->port, srv.capacity,
+        srv.srvfd + 2);
   else
     printf(
-        "(%d) Started a non-listening network service"
+        "(pid %d x %d threads) Started a non-listening network service"
         "(max sockets: %lu ~ at least 6 are in system use)\n",
-        getpid(), srv.capacity);
+        getpid(), srv.settings->threads, srv.capacity);
 
   // initialize reactor
   reactor_init(&srv.reactor);
@@ -853,7 +995,6 @@ static int srv_listen(struct ServerSettings settings) {
   srv.run = 1;
   Async.run(srv.async, (void (*)(void*))srv_cycle_core, &srv);
   Async.wait(srv.async);
-  fprintf(stderr, "server done\n");
   // cleanup
   reactor_stop(&srv.reactor);
 
@@ -873,7 +1014,7 @@ static int srv_listen(struct ServerSettings settings) {
 
   if (settings.on_finish)
     settings.on_finish(&srv);
-  printf("\n(%d) Stopped listening for port %s\n", getpid(), settings.port);
+  printf("(pid %d) Stopped listening on port %s\n", getpid(), settings.port);
   if (getpid() != srv.root_pid) {
     fflush(NULL);
     exit(0);
@@ -884,12 +1025,20 @@ static int srv_listen(struct ServerSettings settings) {
   sigaction(SIGPIPE, &old_pipe, NULL);
 
   // destroy the buffers.
-  for (int i = 0; i < srv_capacity(); i++) {
-    Buffer.destroy(buffer_map[i]);
+  for (int i = 0; i < capacity; i++) {
+    Buffer.destroy(connections[i].buffer);
+    connections[i].buffer = NULL;
   }
+  // destroy the task pools
+  destroy_fd_task(&srv, NULL);
+  destroy_group_task(&srv, NULL);
 
-  // destroy the mutex
+  // destroy the mutexes
   pthread_mutex_destroy(&srv.lock);
+  pthread_mutex_destroy(&srv.task_lock);
+
+  // free the connection data array
+  free(connections);
 
   return 0;
 }
@@ -901,86 +1050,116 @@ static int srv_listen(struct ServerSettings settings) {
 management system, so that the server can be used also to manage connection
 based resources asynchronously (i.e. database resources etc').
 */
-static int srv_attach(server_pt server, int sockfd, struct Protocol* protocol) {
-  if (server->protocol_map[sockfd]) {
-    on_close((struct Reactor*)server, sockfd);
-  }
+static int srv_attach_core(server_pt server,
+                           int sockfd,
+                           struct Protocol* protocol,
+                           long milliseconds) {
   if (sockfd >= server->capacity)
     return -1;
+  if (_protocol_(server, sockfd)) {
+    on_close((struct Reactor*)server, sockfd);
+  }
+  // udata can be set and received for closed connections
+  clear_conn_data(server, sockfd);
   // setup protocol
-  server->protocol_map[sockfd] = protocol;  // set_protocol() would cost more
+  _protocol_(server, sockfd) = protocol;  // set_protocol() would cost more
   // setup timeouts
-  server->tout[sockfd] = server->settings->timeout;
-  server->idle[sockfd] = 0;
-  // call on_open
+  _connection_(server, sockfd).tout = server->settings->timeout;
+  _connection_(server, sockfd).idle = 0;
   // register the client - start it off as busy, protocol still initializing
   // we don't need the mutex, because it's all fresh
-  server->busy[sockfd] = 1;
+  _connection_(server, sockfd).busy = 1;
   // attach the socket to the reactor
-  if (reactor_add((struct Reactor*)server, sockfd) < 0) {
+  if (((milliseconds > 0) && (reactor_add_timer((struct Reactor*)server, sockfd,
+                                                milliseconds) < 0)) ||
+      ((milliseconds <= 0) &&
+       (reactor_add((struct Reactor*)server, sockfd) < 0))) {
     clear_conn_data(server, sockfd);
     return -1;
   }
+  // call on_open
   if (protocol->on_open)
-    protocol->on_open(server, sockfd);
-  server->busy[sockfd] = 0;
+    protocol->on_open(server, _fd_uuid_(server, sockfd));
+  _connection_(server, sockfd).busy = 0;
   return 0;
 }
+static int srv_attach(server_pt server, int sockfd, struct Protocol* protocol) {
+  return srv_attach_core(server, sockfd, protocol, 0);
+}
+
 /** Closes the connection.
 
 If any data is waiting to be written, close will
 return immediately and the connection will only be closed once all the data
 was sent. */
-static void srv_close(struct Server* server, int sockfd) {
-  if (!server->protocol_map[sockfd])
+static void srv_close(server_pt server, union fd_id conn) {
+  if (validate_connection(server, conn) || !_protocol_(server, conn.data.fd))
     return;
-  if (Buffer.empty(server->buffer_map[sockfd])) {
-    reactor_close((struct Reactor*)server, sockfd);
+  if (Buffer.is_empty(_connection_(server, conn.data.fd).buffer)) {
+    reactor_close((struct Reactor*)server, conn.data.fd);
   } else
-    Buffer.close_when_done(server->buffer_map[sockfd], sockfd);
+    Buffer.close_when_done(_connection_(server, conn.data.fd).buffer,
+                           conn.data.fd);
 }
 /** Hijack a socket (file descriptor) from the server, clearing up it's
 resources. The control of the socket is totally relinquished.
 
 This method will block until all the data in the buffer is sent before
 releasing control of the socket. */
-static int srv_hijack(struct Server* server, int sockfd) {
-  if (!server->protocol_map[sockfd])
-    return -1;
-  reactor_remove((struct Reactor*)server, sockfd);
-  while (!Buffer.empty(server->buffer_map[sockfd]) &&
-         Buffer.flush(server->buffer_map[sockfd], sockfd) >= 0)
+static int srv_hijack(server_pt server, union fd_id conn) {
+  is_open_connection_or_return(server, conn, -1);
+  reactor_remove((struct Reactor*)server, conn.data.fd);
+  while (!Buffer.is_empty(_connection_(server, conn.data.fd).buffer) &&
+         Buffer.flush(_connection_(server, conn.data.fd).buffer,
+                      conn.data.fd) >= 0)
     ;
-  clear_conn_data(server, sockfd);
+  clear_conn_data(server, conn.data.fd);
   return 0;
 }
 /** Counts the number of connections for the specified protocol (NULL = all
 protocols). */
-static long srv_count(struct Server* server, char* service) {
+static long srv_count(server_pt server, char* service) {
   int c = 0;
   if (service) {
     for (int i = 0; i < server->capacity; i++) {
-      if (server->protocol_map[i] &&
-          (server->protocol_map[i]->service == service ||
-           !strcmp(server->protocol_map[i]->service, service)))
+      if (_protocol_(server, i) &&
+          (_protocol_(server, i)->service == service ||
+           !strcmp((_protocol_(server, i)->service), service)))
         c++;
     }
   } else {
     for (int i = 0; i < server->capacity; i++) {
-      if (server->protocol_map[i] &&
-          server->protocol_map[i]->service != timer_protocol_name)
+      if (_protocol_(server, i) &&
+          _protocol_(server, i)->service != timer_protocol_name)
         c++;
     }
   }
   return c;
 }
 /// "touches" a socket, reseting it's timeout counter.
-static void srv_touch(struct Server* server, int sockfd) {
-  server->idle[sockfd] = 0;
+static void srv_touch(server_pt server, union fd_id conn) {
+  if (validate_connection(server, conn))
+    return;
+  _connection_(server, conn.data.fd).idle = 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Read and Write
+
+/**
+Sets up the read/write hooks, allowing for transport layer extensions (i.e.
+SSL/TLS) or monitoring extensions.
+*/
+void rw_hooks(
+    server_pt srv,
+    union fd_id conn,
+    ssize_t (*reading_hook)(server_pt srv, int fd, void* buffer, size_t size),
+    ssize_t (*writing_hook)(server_pt srv, int fd, void* data, size_t len)) {
+  if (validate_connection(srv, conn))
+    return;
+  _connection_(srv, conn.data.fd).reading_hook = reading_hook;
+  Buffer.set_whook(_connection_(srv, conn.data.fd).buffer, writing_hook);
+}
 
 /** Reads up to `max_len` of data from a socket. the data is stored in the
 `buffer` and the number of bytes received is returned.
@@ -990,35 +1169,47 @@ Returns -1 if an error was raised and the connection was closed.
 Returns the number of bytes written to the buffer. Returns 0 if no data was
 available.
 */
-static ssize_t srv_read(int fd, void* buffer, size_t max_len) {
+static ssize_t srv_read(server_pt srv,
+                        union fd_id conn,
+                        void* buffer,
+                        size_t max_len) {
   ssize_t read = 0;
-  if ((read = recv(fd, buffer, max_len, 0)) > 0) {
-    // return data
+  if (_connection_(srv, conn.data.fd).reading_hook == NULL) {
+    // no reading hook
+    if ((read = recv(conn.data.fd, buffer, max_len, 0)) > 0) {
+      // reset timeout
+      _connection_(srv, conn.data.fd).idle = 0;
+      // return read count
+      return read;
+    } else {
+      if (read && (errno & (EWOULDBLOCK | EAGAIN)))
+        return 0;
+    }
+    return -1;
+  } else {  // existing reading hook
+    read = _connection_(srv, conn.data.fd)
+               .reading_hook(srv, conn.data.fd, buffer, max_len);
+    if (read > 0)
+      _connection_(srv, conn.data.fd).idle = 0;
     return read;
-  } else {
-    if (read && (errno & (EWOULDBLOCK | EAGAIN)))
-      return 0;
   }
-  // We don't need this:
-  // close(fd);
-  return -1;
 }
 /** Copies & writes data to the socket, managing an asyncronous buffer.
 
 On error, returns -1 otherwise returns the number of bytes already sent.
 */
-static ssize_t srv_write(struct Server* server,
-                         int sockfd,
+static ssize_t srv_write(server_pt server,
+                         union fd_id conn,
                          void* data,
                          size_t len) {
-  // make sure the socket is alive
-  if (!server->protocol_map[sockfd])
-    return -1;
+  is_open_connection_or_return(server, conn, -1);
   // reset timeout
-  server->idle[sockfd] = 0;
+  _connection_(server, conn.data.fd).idle = 0;
   // send data
-  Buffer.write(server->buffer_map[sockfd], data, len);
-  return Buffer.flush(server->buffer_map[sockfd], sockfd);
+  Buffer.write(_connection_(server, conn.data.fd).buffer, data, len);
+  if (Buffer.flush(_connection_(server, conn.data.fd).buffer, conn.uuid) < 0)
+    return -1;
+  return 0;
 }
 /** Writes data to the socket, moving the data's pointer directly to the buffer.
 
@@ -1026,18 +1217,18 @@ Once the data was written, `free` will be called to free the data's memory.
 
 On error, returns -1 otherwise returns the number of bytes already sent.
 */
-static ssize_t srv_write_move(struct Server* server,
-                              int sockfd,
+static ssize_t srv_write_move(server_pt server,
+                              union fd_id conn,
                               void* data,
                               size_t len) {
-  // make sure the socket is alive
-  if (!server->protocol_map[sockfd])
-    return -1;
+  is_open_connection_or_return(server, conn, -1);
   // reset timeout
-  server->idle[sockfd] = 0;
+  _connection_(server, conn.data.fd).idle = 0;
   // send data
-  Buffer.write_move(server->buffer_map[sockfd], data, len);
-  return Buffer.flush(server->buffer_map[sockfd], sockfd);
+  Buffer.write_move(_connection_(server, conn.data.fd).buffer, data, len);
+  if (Buffer.flush(_connection_(server, conn.data.fd).buffer, conn.uuid) < 0)
+    return -1;
+  return 0;
 }
 /** Copies & writes data to the socket, managing an asyncronous buffer.
 
@@ -1049,18 +1240,18 @@ middle).
 
 On error, returns -1 otherwise returns the number of bytes already sent.
 */
-static ssize_t srv_write_urgent(struct Server* server,
-                                int sockfd,
+static ssize_t srv_write_urgent(server_pt server,
+                                union fd_id conn,
                                 void* data,
                                 size_t len) {
-  // make sure the socket is alive
-  if (!server->protocol_map[sockfd])
-    return -1;
+  is_open_connection_or_return(server, conn, -1);
   // reset timeout
-  server->idle[sockfd] = 0;
+  _connection_(server, conn.data.fd).idle = 0;
   // send data
-  Buffer.write_next(server->buffer_map[sockfd], data, len);
-  return Buffer.flush(server->buffer_map[sockfd], sockfd);
+  Buffer.write_next(_connection_(server, conn.data.fd).buffer, data, len);
+  if (Buffer.flush(_connection_(server, conn.data.fd).buffer, conn.uuid) < 0)
+    return -1;
+  return 0;
 }
 /** Writes data to the socket, moving the data's pointer directly to the buffer.
 
@@ -1074,18 +1265,18 @@ middle).
 
 On error, returns -1 otherwise returns the number of bytes already sent.
 */
-static ssize_t srv_write_move_urgent(struct Server* server,
-                                     int sockfd,
+static ssize_t srv_write_move_urgent(server_pt server,
+                                     union fd_id conn,
                                      void* data,
                                      size_t len) {
-  // make sure the socket is alive
-  if (!server->protocol_map[sockfd])
-    return -1;
+  is_open_connection_or_return(server, conn, -1);
   // reset timeout
-  server->idle[sockfd] = 0;
+  _connection_(server, conn.data.fd).idle = 0;
   // send data
-  Buffer.write_move_next(server->buffer_map[sockfd], data, len);
-  return Buffer.flush(server->buffer_map[sockfd], sockfd);
+  Buffer.write_move_next(_connection_(server, conn.data.fd).buffer, data, len);
+  if (Buffer.flush(_connection_(server, conn.data.fd).buffer, conn.uuid) < 0)
+    return -1;
+  return 0;
 }
 /**
 Sends a whole file as if it were a single atomic packet.
@@ -1095,94 +1286,214 @@ Once the file was sent, the `FILE *` will be closed using `fclose`.
 The file will be buffered to the socket chunk by chunk, so that memory
 consumption is capped at ~ 64Kb.
 */
-static ssize_t srv_sendfile(struct Server* server, int sockfd, FILE* file) {
-  // make sure the socket is alive
-  if (!server->protocol_map[sockfd])
-    return -1;
+static ssize_t srv_sendfile(server_pt server, union fd_id conn, FILE* file) {
+  is_open_connection_or_return(server, conn, -1);
   // reset timeout
-  server->idle[sockfd] = 0;
+  _connection_(server, conn.data.fd).idle = 0;
   // send data
-  Buffer.sendfile(server->buffer_map[sockfd], file);
-  return Buffer.flush(server->buffer_map[sockfd], sockfd);
+  if (Buffer.sendfile(_connection_(server, conn.data.fd).buffer, file))
+    return -1;
+  if (Buffer.flush(_connection_(server, conn.data.fd).buffer, conn.uuid) < 0)
+    return -1;
+  return 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Tasks + Async
 
-// the async handler
-static void perform_each_task(struct ConnTask* task) {
-  // is it okay to perform the task?
-  if (task->server->protocol_map[task->fd] &&
-      set_to_busy(task->server, task->fd)) {
+// macro for each task review
+
+#define check_if_connection_fits_service(server, i, service_name)         \
+  ((service_name && server->connections[i].protocol &&                    \
+    server->connections[i].protocol->service &&                           \
+    (server->connections[i].protocol->service == service_name ||          \
+     !strcmp(server->connections[i].protocol->service, service_name))) || \
+   (service_name == NULL && server->connections[i].protocol &&            \
+    server->connections[i].protocol->service != timer_protocol_name))
+
+// Global Task helpers
+static inline int perform_single_task(server_pt srv,
+                                      uint64_t connection_id,
+                                      void (*task)(server_pt server,
+                                                   uint64_t connection_id,
+                                                   void* arg),
+                                      void* arg) {
+  is_open_connection_or_return(srv, ((union fd_id)connection_id), 0);
+  if (set_to_busy(srv, ((union fd_id)connection_id).data.fd)) {
     // perform the task
-    task->task(task->server, task->fd, task->arg);
+    task(srv, connection_id, arg);
     // release the busy flag
-    task->server->busy[task->fd] = 0;
-    // free the memory
+    _connection_(srv, connection_id).busy = 0;
+    // return completion flag;
+    return 1;
+  }
+  return 0;
+}
+
+// FDTask helpers
+struct FDTask* new_fd_task(server_pt srv) {
+  struct FDTask* ret = NULL;
+  pthread_mutex_lock(&srv->task_lock);
+  if (srv->fd_task_pool) {
+    ret = srv->fd_task_pool;
+    srv->fd_task_pool = srv->fd_task_pool->next;
+    --srv->fd_task_pool_size;
+    pthread_mutex_unlock(&srv->task_lock);
+    return ret;
+  }
+  pthread_mutex_unlock(&srv->task_lock);
+  ret = malloc(sizeof(*ret));
+  return ret;
+}
+void destroy_fd_task(server_pt srv, struct FDTask* task) {
+  if (task == NULL) {
+    pthread_mutex_lock(&srv->task_lock);
+    struct FDTask* tmp;
+    srv->fd_task_pool_size = 0;
+    while ((tmp = srv->fd_task_pool)) {
+      srv->fd_task_pool = srv->fd_task_pool->next;
+      free(tmp);
+    }
+    pthread_mutex_unlock(&srv->task_lock);
+    return;
+  }
+  pthread_mutex_lock(&srv->task_lock);
+  if (srv->fd_task_pool_size >= 128) {
+    pthread_mutex_unlock(&srv->task_lock);
     free(task);
     return;
   }
-  // reschedule - but only if the connection is still open
-  if (task->server->protocol_map[task->fd])
-    Async.run(task->server->async, (void (*)(void*))perform_each_task, task);
-  else if (task->fallback)  // check for fallback, call if requested
-    task->fallback(task->server, task->fd, task->arg);
-  return;
+  task->next = srv->fd_task_pool;
+  srv->fd_task_pool = task;
+  ++srv->fd_task_pool_size;
+  pthread_mutex_unlock(&srv->task_lock);
+}
+static void perform_fd_task(struct FDTask* task) {
+  // is it okay to perform the task?
+  if (validate_connection(task->server, task->conn_id)) {
+    if (task->fallback)  // check for fallback, call if requested
+      task->fallback(task->server, task->conn_id.uuid, task->arg);
+    destroy_fd_task(task->server, task);
+    return;
+  }
+
+  if (perform_single_task(task->server, task->conn_id.uuid, task->task,
+                          task->arg)) {
+    // free the memory
+    destroy_fd_task(task->server, task);
+  } else
+    Async.run(task->server->async, (void (*)(void*))perform_fd_task, task);
 }
 
-// schedules a task for async performance
-void make_a_task_async(struct Server* server, int fd, void* arg) {
-  if (server->async) {
-    struct ConnTask* task = malloc(sizeof(struct ConnTask));
-    if (!task)
-      return;
-    memcpy(task, arg, sizeof(struct ConnTask));
-    task->fd = fd;
-    Async.run(server->async, (void (*)(void*))perform_each_task, task);
-  } else {
-    struct ConnTask* task = arg;
-    task->task(server, fd, task->arg);
+// GroupTask helpers
+struct GroupTask* new_group_task(server_pt srv) {
+  struct GroupTask* ret = NULL;
+  pthread_mutex_lock(&srv->task_lock);
+  if (srv->group_task_pool) {
+    ret = srv->group_task_pool;
+    srv->group_task_pool = srv->group_task_pool->next;
+    --srv->group_task_pool_size;
+    pthread_mutex_unlock(&srv->task_lock);
+    return ret;
   }
+  pthread_mutex_unlock(&srv->task_lock);
+  ret = malloc(sizeof(*ret));
+  memset(ret, 0, sizeof(*ret));
+  return ret;
+}
+void destroy_group_task(server_pt srv, struct GroupTask* task) {
+  if (task == NULL) {
+    pthread_mutex_lock(&srv->task_lock);
+    struct GroupTask* tmp;
+    srv->group_task_pool_size = 0;
+    while ((tmp = srv->group_task_pool)) {
+      srv->group_task_pool = srv->group_task_pool->next;
+      free(tmp);
+    }
+    pthread_mutex_unlock(&srv->task_lock);
+    return;
+  }
+  pthread_mutex_lock(&srv->task_lock);
+  if (srv->group_task_pool_size >= 64) {
+    pthread_mutex_unlock(&srv->task_lock);
+    free(task);
+    return;
+  }
+  task->next = srv->group_task_pool;
+  srv->group_task_pool = task;
+  ++srv->group_task_pool_size;
+  pthread_mutex_unlock(&srv->task_lock);
+}
+
+static void perform_group_task(struct GroupTask* task) {
+  // the maximum number of bytes to review (each bit == 1 fd);
+  long fd_max = task->server->capacity;
+  // continue cycle
+  while (task->pos < fd_max) {
+    // the byte contains at least one bit marker for a task related fd
+
+    // is it okay to perform the task?
+    if (task->pos != server_uuid_to_fd(task->conn_origin) &&
+        check_if_connection_fits_service(task->server, task->pos,
+                                         task->service)) {
+      if (perform_single_task(task->server, task->pos, task->task, task->arg))
+        task->pos++;
+      goto rescedule;
+    } else  // closed/same connection, ignore it.
+      task->pos++;
+  }
+  // clear the task away...
+  if (task->on_finished) {
+    if (fd_task(task->server, (union fd_id)task->conn_origin, task->on_finished,
+                task->arg, task->on_finished))
+      task->on_finished(task->server, task->conn_origin, task->arg);
+  }
+  destroy_group_task(task->server, task);
+  return;
+rescedule:
+  Async.run(task->server->async, (void (*)(void*)) & perform_group_task, task);
+  return;
 }
 
 /** Schedules a specific task to run asyncronously for each connection.
 a NULL service identifier == all connections (all protocols). */
-static int each(struct Server* server,
+static int each(server_pt server,
+                union fd_id origin_fd,
                 char* service,
-                void (*task)(struct Server* server, int fd, void* arg),
+                void (*task)(server_pt server, uint64_t target_fd, void* arg),
                 void* arg,
-                void (*fallback)(struct Server* server, int fd, void* arg)) {
-  struct ConnTask msg = {
-      .server = server, .task = task, .arg = arg, .fallback = fallback,
-  };
-  return each_block(server, service, make_a_task_async, &msg);
+                void (*on_finish)(server_pt server,
+                                  uint64_t origin_fd,
+                                  void* arg)) {
+  struct GroupTask* gtask = new_group_task(server);
+  if (!gtask || !task)
+    return -1;
+  gtask->arg = arg;
+  gtask->task = task;
+  gtask->server = server;
+  gtask->on_finished = on_finish;
+  gtask->conn_origin = origin_fd.uuid;
+  gtask->pos = 0;
+  gtask->service = service;
+  Async.run(server->async, (void (*)(void*)) & perform_group_task, gtask);
+  return 0;
 }
 /** Schedules a specific task to run for each connection. The tasks will be
  * performed sequencially, in a blocking manner. The method will only return
  * once all the tasks were completed. A NULL service identifier == all
  * connections (all protocols).
 */
-static int each_block(struct Server* server,
+static int each_block(server_pt server,
+                      union fd_id origin_fd,
                       char* service,
-                      void (*task)(struct Server* server, int fd, void* arg),
+                      void (*task)(server_pt server, uint64_t fd, void* arg),
                       void* arg) {
   int c = 0;
-  if (service) {
-    for (int i = 0; i < server->capacity; i++) {
-      if (server->protocol_map[i] && server->protocol_map[i]->service &&
-          (server->protocol_map[i]->service == service ||
-           !strcmp(server->protocol_map[i]->service, service))) {
-        task(server, i, arg);
-        c++;
-      }
-    }
-  } else {
-    for (int i = 0; i < server->capacity; i++) {
-      if (server->protocol_map[i] &&
-          server->protocol_map[i]->service != timer_protocol_name) {
-        task(server, i, arg);
-        c++;
-      }
+  for (int i = 0; i < server->capacity; i++) {
+    if (i != origin_fd.data.fd &&
+        check_if_connection_fits_service(server, i, service)) {
+      task(server, i, arg);
+      ++c;
     }
   }
   return c;
@@ -1192,18 +1503,24 @@ static int each_block(struct Server* server,
 returns -1 on failure, 0 on success (success being scheduling or performing
 the task).
 */
-static int fd_task(struct Server* server,
-                   int sockfd,
-                   void (*task)(struct Server* server, int fd, void* arg),
+static int fd_task(server_pt server,
+                   union fd_id conn,
+                   void (*task)(server_pt server, uint64_t conn, void* arg),
                    void* arg,
-                   void (*fallback)(struct Server* server, int fd, void* arg)) {
-  if (server->protocol_map[sockfd]) {
-    struct ConnTask msg = {
-        .server = server, .task = task, .arg = arg, .fallback = fallback};
-    make_a_task_async(server, sockfd, &msg);
-    return 0;
-  }
-  return -1;
+                   void (*fallback)(server_pt server,
+                                    uint64_t conn,
+                                    void* arg)) {
+  is_open_connection_or_return(server, conn, -1);
+  struct FDTask* msg = new_fd_task(server);
+  if (!msg)
+    return -1;
+  *msg = (struct FDTask){.conn_id = conn,
+                         .server = server,
+                         .task = task,
+                         .arg = arg,
+                         .fallback = fallback};
+  Async.run(server->async, (void (*)(void*)) & perform_fd_task, msg);
+  return 0;
 }
 /** Runs an asynchronous task, IF threading is enabled (set the
 `threads` to 1 (the default) or greater).
@@ -1213,7 +1530,7 @@ If threading is disabled, the current thread will perform the task and return.
 Returns -1 on error or 0
 on succeess.
 */
-static int run_async(struct Server* self, void task(void*), void* arg) {
+static int run_async(server_pt self, void task(void*), void* arg) {
   return Async.run(self->async, task, arg);
 }
 /** Creates a system timer (at the cost of 1 file descriptor) and pushes the
@@ -1224,7 +1541,7 @@ NOTICE: Do NOT create timers from within the on_close callback, as this might
 block resources from being properly freed (if the timer and the on_close
 object share the same fd number).
 */
-static int run_after(struct Server* self,
+static int run_after(server_pt self,
                      long milliseconds,
                      void task(void*),
                      void* arg) {
@@ -1239,7 +1556,7 @@ NOTICE: Do NOT create timers from within the on_close callback, as this might
 block resources from being properly freed (if the timer and the on_close
 object share the same fd number).
 */
-static int run_every(struct Server* self,
+static int run_every(server_pt self,
                      long milliseconds,
                      int repetitions,
                      void task(void*),
@@ -1249,27 +1566,12 @@ static int run_every(struct Server* self,
     return -1;
   struct Protocol* timer_protocol =
       (struct Protocol*)TimerProtocol(task, arg, repetitions);
-  if (srv_attach(self, tfd, timer_protocol)) {
+  if (srv_attach_core(self, tfd, timer_protocol, milliseconds)) {
     free(timer_protocol);
     return -1;
   }
   // remove the default timeout (timers shouldn't timeout)
-  self->tout[tfd] = 0;
-
-  // srv_attach connected the fd as a regular socket - remove it and reconnect
-  // as a timer
-  reactor_remove((struct Reactor*)self, tfd);
-  if (reactor_add_timer((struct Reactor*)self, tfd, milliseconds) < 0) {
-    perror("Closing timer");
-    printf("Timer %d closing for server with sock %d, epoll %d, map data: %d\n",
-           tfd, self->srvfd, self->reactor.private.reactor_fd,
-           self->reactor.private.map[tfd]);
-    // close(tfd);
-    // on_close might be called by the server to free the resources - we
-    // shouldn't race... but we are making some changes...
-    reactor_close((struct Reactor*)self, tfd);
-    return -1;
-  };
+  _connection_(self, tfd).tout = 0;
   return 0;
 }
 
@@ -1280,7 +1582,7 @@ static int run_every(struct Server* self,
 // types and global data
 struct ServerSet {
   struct ServerSet* next;
-  struct Server* server;
+  server_pt server;
 };
 static struct ServerSet* global_servers_set = NULL;
 static pthread_mutex_t global_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -1341,6 +1643,7 @@ static void on_signal(int sig) {
     raise(sig);
     return;
   }
+  fprintf(stderr, "(pid %d) Exit signal received.\n", getpid());
   srv_stop_all();
 }
 
@@ -1366,7 +1669,7 @@ static inline int set_non_blocking_socket(int fd)  // Thanks to Bjorn Reese
 }
 
 // helper functions used in the context of this file
-static int bind_server_socket(struct Server* self) {
+static int bind_server_socket(server_pt self) {
   int srvfd;
   // setup the address
   struct addrinfo hints;

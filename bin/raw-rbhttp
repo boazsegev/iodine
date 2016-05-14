@@ -1,0 +1,41 @@
+#!/usr/bin/env ruby
+
+Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
+puts `rake clean`
+puts `rake compile`
+
+require 'benchmark'
+$LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
+require "bundler/setup"
+require "iodine"
+
+class HttpProtocol
+  # `on_message` is an optional alternative to the `on_data` callback.
+  # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
+  def on_data
+    # writing will never block and will use a buffer written in C when needed.
+    data = nil
+    while (data = read)
+      write "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=1\r\nContent-Length: 12\r\n\r\nHello World!"
+    end
+  end
+end
+
+# create the server object and setup any settings we might need.
+server = Iodine.new
+server.threads = 10
+server.processes = 1
+server.timeout = 3
+server.busy_msg = "To many connections, try again later."
+server.protocol = HttpProtocol
+
+b = server.on_start do
+  server.run_after(1000) {puts "A seconds have passed?"}
+  server.run_every(1000) {puts "#{server.count} clients connected."}
+  puts "Since we have 2 timers, we have #{server.count} connections."
+end
+
+server.start
+
+# # test using:
+# ab -n 100000 -c 200 -k http://127.0.0.1:3000/

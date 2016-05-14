@@ -2,7 +2,7 @@
 #include <ruby.h>
 #include <pthread.h>
 
-#define RUBY_REG_DBG
+// #define RUBY_REG_DBG
 
 // a mutex to protect the registry
 static pthread_mutex_t registry_lock = PTHREAD_MUTEX_INITIALIZER;

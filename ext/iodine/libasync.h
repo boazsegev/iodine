@@ -4,24 +4,48 @@ license: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
-#ifndef LIB_ASYNC_2_H
-#define LIB_ASYNC_2_H
+#ifndef LIB_ASYNC_H
+#define LIB_ASYNC_H
 
-#define LIB_ASYNC_VERSION "0.2.0"
+#define LIB_ASYNC_VERSION "0.3.0"
 
 typedef struct Async* async_p;
+/** \file
+This is an easy to use thread pool library.
 
-extern struct __ASYNC_API__ {
+The Async global object allows us access to the Async thread pool API. i.e.:
+
+    async_p async = Async.create(4); // 4 worker threads
+    Async.finish(async); // signal and wait, then the object self-destructs.
+
+Please note, this library isn't fork-friendly) - fork **before** you create the
+thread pool. In general, mixing `fork` with multi-threading isn't safe nor
+trivial - always fork before multi-threading.
+*/
+
+/**
+This is an easy to use thread pool library.
+
+The Async global object allows us access to the Async thread pool API. i.e.:
+
+    async_p async = Async.create(4); // 4 worker threads
+    Async.finish(async); // signal and wait, then the object self-destructs.
+
+Please note, this library isn't fork-friendly) - fork **before** you create the
+thread pool. In general, mixing `fork` with multi-threading isn't safe nor
+trivial - always fork before multi-threading.
+*/
+extern struct Async_API___ {
   /**
 Creates a new Async object (a thread pool) and returns a pointer using the
 `aync_p` (Async Pointer) type.
 
 Requires the number of new threads to be initialized. Use:
 
-    async_p async = Async.new(8);
+    async_p async = Async.create(8);
 
   */
-  async_p (*new)(int threads);
+  async_p (*create)(int threads);
 
   /**
 Signals an Async object to finish up.
@@ -84,4 +108,4 @@ Use:
   void (*finish)(async_p);
 } Async;
 
-#endif
+#endif /* LIB_ASYNC_H */

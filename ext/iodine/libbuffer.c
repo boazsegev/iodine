@@ -10,16 +10,19 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <unistd.h>
 #include <errno.h>
 
-///////////////////
-// The pre-allocated memory per packet
+/******************************************************************************
+The pre-allocated memory per packet
+*/
+
+// packet sizes
 #ifndef BUFFER_PACKET_SIZE
 #define BUFFER_PACKET_SIZE (1024 * 64)
 #endif
 #ifndef BUFFER_MAX_PACKET_POOL
-#define BUFFER_MAX_PACKET_POOL 100
+#define BUFFER_MAX_PACKET_POOL 127
 #endif
-///////////////////
-// The packets
+
+// Buffer packets
 struct Packet {
   ssize_t length;
   struct Packet* next;
@@ -32,26 +35,29 @@ struct Packet {
   } metadata;
 };
 
-///////////////////
 // The global packet container pool
 static struct {
   int ref_count;
   int pool_count;
   struct Packet* pool;
-} ContainerPool = {0, 0};
+} ContainerPool = {0};
 
+// the packet pool mutex
 static pthread_mutex_t container_pool_locker = PTHREAD_MUTEX_INITIALIZER;
 
+// register a buffer in the pool - the pool will self-distruct when the last
+// buffer unregisters.
 static void register_buffer(void) {
   pthread_mutex_lock(&container_pool_locker);
   ContainerPool.ref_count++;
   pthread_mutex_unlock(&container_pool_locker);
 }
-
+// unregister a buffer in the pool
 static void unregister_buffer(void) {
   pthread_mutex_lock(&container_pool_locker);
   ContainerPool.ref_count--;
-  if (!ContainerPool.ref_count) {
+  if (ContainerPool.ref_count <= 0) {
+    ContainerPool.ref_count = 0;  // never fall from 0
     struct Packet* to_free;
     while ((to_free = ContainerPool.pool)) {
       ContainerPool.pool = to_free->next;
@@ -60,7 +66,7 @@ static void unregister_buffer(void) {
   }
   pthread_mutex_unlock(&container_pool_locker);
 }
-
+// grab a packet from the pool
 static struct Packet* get_packet(void) {
   struct Packet* packet;
   pthread_mutex_lock(&container_pool_locker);
@@ -68,6 +74,8 @@ static struct Packet* get_packet(void) {
   if (packet) {
     ContainerPool.pool = packet->next;
     ContainerPool.pool_count--;
+    if (ContainerPool.pool_count < 0)  // just in case...?
+      ContainerPool.pool_count = 0;
   } else {
     packet = malloc(sizeof(struct Packet));
   }
@@ -75,12 +83,12 @@ static struct Packet* get_packet(void) {
   if (!packet)
     return 0;
   packet->data = packet->mem;
-  packet->next = 0;
+  packet->next = NULL;
   packet->length = 0;
   *((char*)&packet->metadata) = 0;
   return packet;
 }
-
+// return a packet to the pool, or free it (when the pool is full).
 static void free_packet(struct Packet* packet) {
   if (packet->data != packet->mem && packet->data) {
     if (packet->length)
@@ -97,38 +105,47 @@ static void free_packet(struct Packet* packet) {
     free(packet);
   pthread_mutex_unlock(&container_pool_locker);
 }
-///////////////////
+
+/******************************************************************************
+The Buffer data and helper methods
+*/
+
 // The buffer structure
 struct Buffer {
   void* id;
   // pointer to the actual data.
   struct Packet* packet;
-  // the amount of data sent from the first packet
+  // the amount of data sent from the first packet.
   size_t sent;
-  // a data locker.
+  // a mutex preventing buffer corruption.
   pthread_mutex_t lock;
+  // a writing hook, allowing for SSL sockets or other extensions.
+  ssize_t (*writing_hook)(server_pt srv, int fd, void* data, size_t len);
+  // the buffer's owner
+  server_pt owner;
 };
 
-///////////////////
-// helpers
-
+// validates that this is an actual buffer object.
 static inline int is_buffer(struct Buffer* object) {
-  // if (object->id != is_buffer)
-  //   printf("ERROR, Buffer received a non buffer object\n");
   return object->id == is_buffer;
 }
 
-///////////////////
-// The functions
+/******************************************************************************
+The Buffer API
+*/
 
-static inline void* new_buffer(size_t offset) {
+// create a new buffer object
+static inline void* new_buffer(server_pt owner) {
   struct Buffer* buffer = malloc(sizeof(struct Buffer));
   if (!buffer)
     return 0;
-  *buffer = (struct Buffer){//.lock = PTHREAD_MUTEX_INITIALIZER,
-                            .id = is_buffer,
-                            .sent = offset,
-                            .packet = NULL};
+  *buffer = (struct Buffer){
+      //.lock = PTHREAD_MUTEX_INITIALIZER,
+      .id = is_buffer,
+      .sent = 0,
+      .packet = NULL,
+      .owner = owner,
+  };
 
   if (pthread_mutex_init(&buffer->lock, NULL)) {
     free(buffer);
@@ -147,8 +164,17 @@ static inline void clear_buffer(struct Buffer* buffer) {
       buffer->packet = buffer->packet->next;
       free_packet(to_free);
     }
+    buffer->writing_hook = NULL;
     pthread_mutex_unlock(&buffer->lock);
   }
+}
+
+// sets the buffer's writing hook
+void set_whook(
+    struct Buffer* buffer,
+    ssize_t (*writing_hook)(server_pt srv, int fd, void* data, size_t len)) {
+  if (is_buffer(buffer))
+    buffer->writing_hook = writing_hook;
 }
 
 // destroys the buffer
@@ -207,8 +233,8 @@ static inline size_t buffer_move_logic(struct Buffer* buffer,
     return 0;
   np->data = data;
   np->length = length;
-  np->next = NULL;
-  *((char*)&np->metadata) = 0;
+  // np->next = NULL; // performed by `get_packet`
+  // *((char*)&np->metadata) = 0; // performed by `get_packet`
   np->metadata.can_interrupt = 1;
   insert_packets_to_buffer(buffer, np, urgent);
   return length;
@@ -289,7 +315,8 @@ static size_t buffer_copy_next(struct Buffer* buffer,
 
 // Flushes the buffer (writes as much as it can)...
 // This is where a lot of the action takes place :-)
-static ssize_t buffer_flush(struct Buffer* buffer, int fd) {
+static ssize_t buffer_flush(struct Buffer* buffer, uint64_t conn) {
+  int fd = server_uuid_to_fd(conn);
   if (!is_buffer(buffer))
     return -1;
   ssize_t sent = 0;
@@ -320,7 +347,7 @@ start_flush:
         buffer->packet = buffer->packet->next;
         free_packet(packet);
         packet = NULL;
-      } else {  // this will be the last the file will offer.
+      } else {  // this will be the last the file packet for this file.
         // set the next packet.
         packet->next = buffer->packet->next;
         // free the file packet.
@@ -340,18 +367,35 @@ start_flush:
     goto start_flush;
   }
   // the packet, at this point, is always a data packet. send the data.
-  sent = write(fd, buffer->packet->data + buffer->sent,
-               buffer->packet->length - buffer->sent);
-  if (sent < 0 && !(errno & (EWOULDBLOCK | EAGAIN | EINTR))) {
+
+  // write using the writing hook if available.
+  if (buffer->writing_hook) {
+    sent = buffer->writing_hook(buffer->owner, fd,
+                                buffer->packet->data + buffer->sent,
+                                buffer->packet->length - buffer->sent);
+  } else {
+    sent = write(fd, buffer->packet->data + buffer->sent,
+                 buffer->packet->length - buffer->sent);
+    if (sent < 0 && (errno & (EWOULDBLOCK | EAGAIN | EINTR)))
+      sent = 0;
+  }
+  if (sent < 0) {
     pthread_mutex_unlock(&buffer->lock);
     return -1;
   } else if (sent > 0) {
     buffer->sent += sent;
+    // Server.touch(buffer->owner, conn);  // Do we need this?
   }
   if (buffer->sent >= buffer->packet->length) {
     // review the close connection flag means: "Close the connection"
     if (buffer->packet->metadata.close_after) {
-      close(fd);
+      packet = buffer->packet;
+      buffer->sent = 0;
+      buffer->packet = buffer->packet->next;
+      free_packet(packet);
+      pthread_mutex_unlock(&(buffer->lock));
+      Server.close(buffer->owner, conn);
+      return sent;
       // buffer clearing should be performed by the Buffer's owner.
     }
     packet = buffer->packet;
@@ -379,13 +423,15 @@ static void buffer_close_w_d(struct Buffer* buffer, int fd) {
   if (!is_buffer(buffer))
     return;
   if (!buffer->packet) {
-    close(fd);
+    reactor_close((struct Reactor*)buffer->owner, fd);
     return;
   }
   pthread_mutex_lock(&buffer->lock);
   struct Packet* packet = buffer->packet;
-  if (!packet)
+  if (!packet) {
+    reactor_close((struct Reactor*)buffer->owner, fd);
     goto finish;
+  }
   while (packet->next)
     packet = packet->next;
   packet->metadata.close_after = 1;
@@ -416,19 +462,21 @@ size_t buffer_pending(struct Buffer* buffer) {
 }
 
 /** returns true (1) if the buffer is empty, otherwise returns false (0). */
-char buffer_empty(struct Buffer* buffer) {
+char buffer_is_empty(struct Buffer* buffer) {
   if (!is_buffer(buffer))
     return 1;
   return buffer->packet == NULL;
 }
 
-///////////////////
-// The interface
+/******************************************************************************
+The API Interface
+*/
 
 const struct BufferClass Buffer = {
-    .new = new_buffer,
+    .create = new_buffer,
     .destroy = (void (*)(void*))destroy_buffer,
     .clear = (void (*)(void*))clear_buffer,
+    .set_whook = (void (*)(void*, ssize_t (*)()))set_whook,
     .sendfile = (int (*)(void*, FILE*))buffer_sendfile,
     .write = (size_t (*)(void*, void*, size_t))buffer_copy,
     .write_move = (size_t (*)(void*, void*, size_t))buffer_move,
@@ -436,6 +484,5 @@ const struct BufferClass Buffer = {
     .write_move_next = (size_t (*)(void*, void*, size_t))buffer_move_next,
     .flush = (ssize_t (*)(void*, int))buffer_flush,
     .close_when_done = (void (*)(void*, int))buffer_close_w_d,
-    .pending = (size_t (*)(void*))buffer_pending,
-    .empty = (char (*)(void*))buffer_empty,
+    .is_empty = (char (*)(void*))buffer_is_empty,
 };

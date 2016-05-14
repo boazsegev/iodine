@@ -5,7 +5,6 @@ license: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #include "libasync.h"
-#include "rb-registry.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -16,9 +15,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <pthread.h>
 #include <fcntl.h>
 #include <sched.h>
-
-#include <ruby.h>
-#include <ruby/thread.h>
+#include <stdatomic.h>
 
 /******************************************************************************
 Forward declarations - used for functions that might be needed before they are
@@ -56,6 +53,12 @@ Portability - used to help port this to different frameworks (i.e. Ruby).
 // }
 
 /** Ruby version: join thread  */
+
+#include "rb-registry.h"
+
+#include <ruby.h>
+#include <ruby/thread.h>
+
 // protect call to join
 static void* _inner_join_with_rbthread(void* rbt) {
   return (void*)rb_funcall((VALUE)rbt, rb_intern("join"), 0);
@@ -279,7 +282,7 @@ static void* worker_thread_cycle(void* _async) {
 #endif
   }
 
-  // ignore pipe signals
+  // ignore pipe issues
   signal(SIGPIPE, SIG_IGN);
 
   // setup signal and thread's local-storage async variable.
@@ -327,7 +330,8 @@ Use:
 static void async_signal(async_p async) {
   async->flags.run = 0;
   // send `async->count` number of wakeup signales (data content is irrelevant)
-  write(async->pipe.out, async, async->count);
+  if (write(async->pipe.out, async, async->count))
+    ;
 }
 
 /**
@@ -346,8 +350,8 @@ static void async_wait(async_p async) {
   if (!async)
     return;
   // wake threads (just in case) by sending `async->count` number of wakeups
-  if (async->pipe.out)
-    write(async->pipe.out, async, async->count);
+  if (async->pipe.out && write(async->pipe.out, async, async->count))
+    ;
   // join threads.
   for (size_t i = 0; i < async->count; i++) {
     join_thread(async->threads[i]);
@@ -413,6 +417,7 @@ static void async_destroy(async_p async) {
   }
   pthread_mutex_unlock(&async->lock);
   pthread_mutex_destroy(&async->lock);
+  free(async);
 }
 
 /**
@@ -421,7 +426,7 @@ Creates a new Async object (a thread pool) and returns a pointer using the
 
 Requires the number of new threads to be initialized. Use:
 
-  async_p async = Async.new(8);
+  async_p async = Async.create(8);
 
 */
 static async_p async_new(int threads) {
@@ -462,8 +467,8 @@ static async_p async_new(int threads) {
 API gateway
 */
 
-struct __ASYNC_API__ Async = {
-    .new = async_new,
+struct Async_API___ Async = {
+    .create = async_new,
     .signal = async_signal,
     .wait = async_wait,
     .finish = async_finish,

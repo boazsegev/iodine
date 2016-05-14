@@ -1,3 +1,9 @@
+/*
+copyright: Boaz segev, 2016
+license: MIT
+
+Feel free to copy, use and enjoy according to the license provided.
+*/
 #define _GNU_SOURCE
 #include "http-protocol.h"
 #include "http-mime-types.h"
@@ -13,6 +19,26 @@
 #include <stdio.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+
+/////////////////
+// Header case (Uppercase vs. Lowercase)
+#ifndef HEADERS_UPPERCASE
+#define HEADERS_UPPERCASE 1
+#endif
+
+#if HEADERS_UPPERCASE == 1
+#define HOST_HEADER "HOST"
+#define CONTENT_TYPE_HEADER "CONTENT-TYPE"
+#define CONTENT_LENGTH_HEADER "CONTENT-LENGTH"
+#define UPGRADE_HEADER "UPGRADE"
+#else
+#define HOST_HEADER "host"
+#define CONTENT_TYPE_HEADER "content-type"
+#define CONTENT_LENGTH_HEADER "content-length"
+#define UPGRADE_HEADER "upgrade"
+#endif
+
+#define HTTP_SEND_RANGE_AS_DATA_LIMIT 131072
 
 /////////////////
 // functions used by the Http protocol, internally
@@ -136,7 +162,7 @@ static int http_sendfile(struct HttpRequest* req) {
     // we now need to write some headers... we can recycle the ext pointer
     // for
     // the data
-    if (HttpRequest.find(req, "RANGE") && ((ext = HttpRequest.value(req))) &&
+    if (HttpRequest.find(req, "range") && ((ext = HttpRequest.value(req))) &&
         (ext[0] | 32) == 'b' && (ext[1] | 32) == 'y' && (ext[2] | 32) == 't' &&
         (ext[3] | 32) == 'e' && (ext[4] | 32) == 's' && (ext[5] | 32) == '=') {
       // ext holds the first range, starting on index 6 i.e. RANGE: bytes=0-1
@@ -169,7 +195,8 @@ static int http_sendfile(struct HttpRequest* req) {
       }
       if (finish)
         finish++;
-      if (finish && finish >= start && (finish - start) < 65536 &&
+      if (finish && finish >= start &&
+          (finish - start) < HTTP_SEND_RANGE_AS_DATA_LIMIT &&
           finish < file_data.st_size - 1) {
         // it's a small chunk, put it in the buffer and send it as data
         char* data = malloc(finish - start);
@@ -194,11 +221,13 @@ static int http_sendfile(struct HttpRequest* req) {
         // review the string
         if (!len) {
           fclose(file);
+          free(data);
           return 0;
         }
         // send the headers and the data (moving the pointers to the buffer)
         Server.write(req->server, req->sockfd, req->buffer, len);
-        Server.write_move(req->server, req->sockfd, data, finish - start);
+        if (Server.write_move(req->server, req->sockfd, data, finish - start))
+          free(data);
         return 1;
       } else {
         // going to the EOF (big chunk or EOL requested) - send as file
@@ -226,9 +255,15 @@ static int http_sendfile(struct HttpRequest* req) {
             Day2Str[t_file.tm_wday], t_file.tm_mday, Mon2Str[t_file.tm_mon],
             t_file.tm_year + 1900, t_file.tm_hour, t_file.tm_min, t_file.tm_sec,
             start, finish, file_data.st_size);
+        // review the string
+        if (!len) {
+          fclose(file);
+          return 0;
+        }
         // send the headers and the file
         Server.write(req->server, req->sockfd, req->buffer, len);
-        Server.sendfile(req->server, req->sockfd, file);
+        if (Server.sendfile(req->server, req->sockfd, file))
+          fclose(file);
         return 1;
       }
     }
@@ -259,9 +294,9 @@ static int http_sendfile(struct HttpRequest* req) {
     // send headers
     Server.write(req->server, req->sockfd, req->buffer, len);
     // send file, unless the request method is "HEAD"
-    if (strcmp("HEAD", req->method))
-      Server.sendfile(req->server, req->sockfd, file);
-    else  // The file will be closed by the buffer if it's sent, otherwise...
+    if (strcasecmp("HEAD", req->method) == 0 ||
+        Server.sendfile(req->server, req->sockfd, file))
+      // The file will be closed by the buffer if it's sent, otherwise...
       fclose(file);
 
     // DEBUG - print headers
@@ -277,7 +312,7 @@ static int http_sendfile(struct HttpRequest* req) {
 }
 
 // implement on_close to close the FILE * for the body (if exists).
-static void http_on_close(struct Server* server, int sockfd) {
+static void http_on_close(struct Server* server, uint64_t sockfd) {
   struct HttpRequest* request = Server.get_udata(server, sockfd);
   if (HttpRequest.is_request(request)) {
     // clear the request data.
@@ -290,7 +325,7 @@ static void http_on_close(struct Server* server, int sockfd) {
   }
 }
 // implement on_data to parse incoming requests.
-static void http_on_data(struct Server* server, int sockfd) {
+static void http_on_data(struct Server* server, uint64_t sockfd) {
   // setup static error codes
   static char* options_req =
       "HTTP/1.1 200 OK\r\n"
@@ -343,7 +378,7 @@ restart:
   if (request->body_file) {
     char buff[HTTP_HEAD_MAX_SIZE];
     int t = 0;
-    while ((len = Server.read(sockfd, buff, HTTP_HEAD_MAX_SIZE)) > 0) {
+    while ((len = Server.read(server, sockfd, buff, HTTP_HEAD_MAX_SIZE)) > 0) {
       pos = len;
       if (request->content_length - request->private.bd_rcved < pos) {
         pos = request->content_length - request->private.bd_rcved;
@@ -367,7 +402,7 @@ restart:
     goto too_big;
 
   // read from the buffer
-  len = Server.read(sockfd, buff + pos, HTTP_HEAD_MAX_SIZE - pos);
+  len = Server.read(server, sockfd, buff + pos, HTTP_HEAD_MAX_SIZE - pos);
   if (len <= 0) {
     // buffer is empty, but more data is underway or error
     // anyway, don't cleanup - let `on_close` do it's job
@@ -437,9 +472,15 @@ parse:
   while (pos < len && buff[pos] != '\r') {
     tmp1 = buff + pos;
     while (pos < len && buff[pos] != ':') {
+#if HEADERS_UPPERCASE == 1
+      // uppercase / Ruby style.
       if (buff[pos] >= 'a' && buff[pos] <= 'z')
-        buff[pos] = buff[pos] & 223;  // uppercase the header field.
-      // buff[pos] = buff[pos] | 32;    // lowercase is nice, but less common.
+        buff[pos] = buff[pos] & 223;
+#else
+      // lowercase / Node.js style.
+      if (buff[pos] >= 'A' && buff[pos] <= 'Z')
+        buff[pos] = buff[pos] | 32;
+#endif
       pos++;
     }
     if (pos >= len - 1)  // must have at least 2 eol markers + data
@@ -465,7 +506,7 @@ parse:
     }
     buff[pos++] = 0;
     buff[pos++] = 0;
-    if (!strcmp(tmp1, "HOST")) {
+    if (!strcmp(tmp1, HOST_HEADER)) {
       request->host = tmp2;
       // lowercase of hosts, to support case agnostic dns resolution
       while (*tmp2 && (*tmp2) != ':') {
@@ -473,11 +514,11 @@ parse:
           *tmp2 = *tmp2 | 32;
         tmp2++;
       }
-    } else if (!strcmp(tmp1, "CONTENT-TYPE")) {
+    } else if (!strcmp(tmp1, CONTENT_TYPE_HEADER)) {
       request->content_type = tmp2;
-    } else if (!strcmp(tmp1, "CONTENT-LENGTH")) {
+    } else if (!strcmp(tmp1, CONTENT_LENGTH_HEADER)) {
       request->content_length = atoi(tmp2);
-    } else if (!strcmp(tmp1, "UPGRADE")) {
+    } else if (!strcmp(tmp1, UPGRADE_HEADER)) {
       request->upgrade = tmp2;
     }
   }
@@ -537,7 +578,7 @@ finish_headers:
 finish:
 
   // answer the OPTIONS method, if exists
-  if (!strcmp(request->method, "OPTIONS"))
+  if (!strcasecmp(request->method, "OPTIONS"))
     goto options;
 
   // reset inner "pos"
@@ -556,7 +597,7 @@ finish:
     protocol->on_request(request);
   }
 
-  if (Server.get_udata(server, sockfd)) {
+  if (!Server.is_open(server, sockfd)) {
     // someone else already started using this connection...
     goto cleanup_after_finish;
   }
@@ -576,7 +617,7 @@ finish:
   if (len == HTTP_HEAD_MAX_SIZE) {
     // we might not have read all the data in the network socket.
     // since we're edge triggered, we should continue reading.
-    len = Server.read(sockfd, buff, HTTP_HEAD_MAX_SIZE);
+    len = Server.read(server, sockfd, buff, HTTP_HEAD_MAX_SIZE);
     if (len > 0) {
       HttpRequest.clear(request);
       Server.set_udata(server, sockfd, request);
@@ -588,33 +629,35 @@ cleanup_after_finish:
 
   // we need to destroy the request ourselves, because we disconnected the
   // request from the server's udata.
-  HttpRequest.clear(request);
-  ObjectPool.push(protocol->request_pool, request);
-  return;
+  if (HttpRequest.is_request(request)) {
+    HttpRequest.clear(request);
+    ObjectPool.push(protocol->request_pool, request);
+    return;
+  }
 
 options:
   // send a bed request response. hang up.
-  send(sockfd, options_req, strlen(options_req), 0);
+  Server.write(server, sockfd, options_req, sizeof(options_req) - 1);
   Server.close(request->server, sockfd);
-  return;
+  goto cleanup_after_finish;
 
 bad_request:
   // send a bed request response. hang up.
-  send(sockfd, bad_req, strlen(bad_req), 0);
+  Server.write(server, sockfd, bad_req, sizeof(bad_req) - 1);
   Server.close(request->server, sockfd);
-  return;
+  goto cleanup_after_finish;
 
 too_big:
   // send a bed request response. hang up.
-  send(sockfd, too_big_err, strlen(too_big_err), 0);
+  Server.write(server, sockfd, too_big_err, sizeof(too_big_err) - 1);
   Server.close(request->server, sockfd);
-  return;
+  goto cleanup_after_finish;
 
 internal_error:
   // send an internal error response. hang up.
-  send(sockfd, intr_err, strlen(intr_err), 0);
+  Server.write(server, sockfd, intr_err, sizeof(intr_err) - 1);
   Server.close(request->server, sockfd);
-  return;
+  goto cleanup_after_finish;
 }
 
 // implement on_data to parse incoming requests.
@@ -722,8 +765,8 @@ struct HttpProtocol* HttpProtocol_new(void) {
   http->public_folder = NULL;
   // void* (*create)(void),  void (*destroy)(void* object), int size
   http->request_pool =
-      ObjectPool.new_dynamic((void* (*)(void))HttpRequest.new,
-                             (void (*)(void*))HttpRequest.destroy, 32);
+      ObjectPool.create_dynamic((void* (*)(void))HttpRequest.create,
+                                (void (*)(void*))HttpRequest.destroy, 32);
   return http;
 }
 void HttpProtocol_destroy(struct HttpProtocol* http) {
@@ -731,7 +774,7 @@ void HttpProtocol_destroy(struct HttpProtocol* http) {
   free(http);
 }
 
-struct ___HttpProtocol_CLASS___ HttpProtocol = {
-    .new = HttpProtocol_new,
+struct HttpProtocolClass HttpProtocol = {
+    .create = HttpProtocol_new,
     .destroy = HttpProtocol_destroy,
 };

@@ -10,74 +10,20 @@ require "bundler/setup"
 require "iodine"
 require 'rack'
 
-
-class WSEcho
-  def self.call env
-    if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
-      env['iodine.websocket'.freeze] = WSEcho
-      return [0,{}, []]
-    end
-    out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
-    request = Rack::Request.new(env)
-    out += "\nRequest Path: #{request.path_info}\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
-    [200, {"Content-Length" => out.length}, [out]];
-  end
-  # def on_open
-  #   puts "We have a websocket connection"
-  # end
-  # def on_close
-  #   puts "Bye Bye... only #{ws_count} left..."
-  # end
-  def on_shutdown
-    puts "I'm shutting down #{self}"
-  end
-  def on_message data
-    # puts data
-    write data
-    data_cp = data.dup
-    # puts "broadcasting #{data_cp.bytesize} bytes"
-    # each {|h| h.echo data_cp }
-  end
-  def echo data
-    write "echo: #{data}"
-  end
-end
-
 # create the server object and setup any settings we might need.
 server = Iodine::Http.new
-server.threads ||= 4
-server.processes ||= 1
+server.threads ||= 16
+server.processes ||= 4
 server.timeout ||= 1
-server.public_folder = '/Users/2Be/Documents/Scratch'
+server.public_folder = '~/Documents/Scratch'
 count = 2
-server.on_http= WSEcho
+server.on_http= Proc.new {|env| [200, {"Content-Length".freeze => "12".freeze}, ["Hello World!".freeze]]}
 
-# server.on_http= Proc.new do |env|
-#   # [200, {"Content-Length".freeze => "12".freeze}, ["Hello World!".freeze]];
-#   if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
-#     env['iodine.websocket'.freeze] = WSEcho.new
-#     [0,{}, []]
-#   else
-#     req = Rack::Request.new env
-#     res = Rack::Response.new
-#     res.write "Hello World!".freeze
-#     res.to_a
-#   end
-# end
 
 server.on_start do
   # server.run {puts "I'm running!"}
   # server.run_after(5000) {puts "5 seconds have passed."}
-  server.run_every(1000) {puts "#{server.count} clients connected."}
-  # server.run_every(10000) do
-  #   begin
-  #     puts "making a system call"
-  #     puts `ab -n 100000 -c 200 -k http://127.0.0.1:3000/`
-  #   rescue => e
-  #     l = Logger.new STDOUT
-  #     l.error e
-  #   end
-  # end
+  # server.run_every(1000) {puts "#{server.count} clients connected."}
 end
 
 

@@ -16,7 +16,7 @@ static int request_is_request(struct HttpRequest* self);
 
 const struct HttpRequestClass HttpRequest = {
     // retures an new heap allocated request object
-    .new = request_new,
+    .create = request_new,
     // releases the resources used by a request object and keeps it's memory.
     .clear = request_clear,
     // releases the resources used by a request object and frees it's memory.
@@ -112,7 +112,7 @@ static int request_next(struct HttpRequest* self) {
 static int request_find(struct HttpRequest* self, char* const name) {
   self->private.pos = 0;
   do {
-    if (!strcmp(self->private.header_hash + self->private.pos, name))
+    if (!strcasecmp(self->private.header_hash + self->private.pos, name))
       return 1;
   } while (request_next(self));
   return 0;

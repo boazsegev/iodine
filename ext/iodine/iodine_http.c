@@ -1,9 +1,7 @@
-#include "iodine_websocket.h"
+// #include "iodine_websocket.h"
 #include "iodine_http.h"
 #include <ruby.h>
 #include <ruby/io.h>
-// includes SHA1 functions locally, as static functions
-#include "sha1.h"
 #include <time.h>
 
 /* ////////////////////////////////////////////////////////////
@@ -24,9 +22,9 @@ VALUE rHttp;  // The Iodine::Http class
 static ID server_var_id;    // id for the Server variable (pointer)
 static ID fd_var_id;        // id for the file descriptor (Fixnum)
 static ID call_proc_id;     // id for `#call`
-static ID each_method_id;   // id for `#call`
-static ID close_method_id;  // id for `#call`
-static ID to_s_method_id;   // id for `#call`
+static ID each_method_id;   // id for `#each`
+static ID close_method_id;  // id for `#close`
+static ID to_s_method_id;   // id for `#to_s`
 static ID new_func_id;      // id for the Class.new method
 static ID on_open_func_id;  // the on_open callback's ID
 static VALUE _hijack_sym;
@@ -186,6 +184,7 @@ static VALUE request_to_env(struct HttpRequest* request) {
       rb_hash_aset(env, SERVER_PORT, (ssl ? SERVER_PORT_443 : SERVER_PORT_80));
   }
   // set POST data
+  char* content_length_header = NULL;
   if (request->content_length) {
     // check for content type
     if (request->content_type) {
@@ -195,7 +194,9 @@ static VALUE request_to_env(struct HttpRequest* request) {
                          BinaryEncoding));
     }
     // CONTENT_LENGTH should be a string (damn stupid Rack specs).
+    // find already showed success, no need for `if`
     HttpRequest.find(request, "CONTENT-LENGTH");
+    content_length_header = HttpRequest.name(request);
     char* value = HttpRequest.value(request);
     rb_hash_aset(env, CONTENT_LENGTH,
                  rb_enc_str_new(value, strlen(value), BinaryEncoding));
@@ -220,8 +221,7 @@ static VALUE request_to_env(struct HttpRequest* request) {
       value = HttpRequest.value(request);
       // careful, pointer comparison crashed Ruby (although it works without
       // Ruby)... this could be an issue.
-      if (value == (request->content_type) ||
-          (name[0] == 'C' && !strcmp(name, "CONTENT-LENGTH")))
+      if (value == (request->content_type) || (name == content_length_header))
         continue;
 
       // replace '-' with '_' for header name
@@ -240,41 +240,31 @@ static VALUE request_to_env(struct HttpRequest* request) {
 
 // itterate through the headers and add them to the response buffer
 // (we are recycling the request's buffer)
-static int for_each_header_pair(VALUE key, VALUE val, VALUE _req) {
-  struct HttpRequest* request = (void*)_req;
-  int pos_s = 0, pos_e = 0;
+static int for_each_header_data(VALUE key, VALUE val, VALUE _res) {
+  // fprintf(stderr, "For_each - headers\n");
+  struct HttpResponse* response = (void*)_res;
   if (TYPE(key) != T_STRING)
     key = RubyCaller.call(key, to_s_method_id);
   if (TYPE(key) != T_STRING)
     return ST_CONTINUE;
   if (TYPE(val) != T_STRING) {
-    if (TYPE(val) == T_FIXNUM) {
-      request->private.pos +=
-          snprintf(request->buffer + request->private.pos,
-                   HTTP_HEAD_MAX_SIZE - request->private.pos, "%.*s: %ld\r\n",
-                   (int)RSTRING_LEN(key), RSTRING_PTR(key), FIX2LONG(val));
-      return ST_CONTINUE;
-    }
     val = RubyCaller.call(val, to_s_method_id);
     if (TYPE(val) != T_STRING)
       return ST_STOP;
   }
   char* key_s = RSTRING_PTR(key);
+  int key_len = RSTRING_LEN(key);
   char* val_s = RSTRING_PTR(val);
-  int key_len = RSTRING_LEN(key), val_len = RSTRING_LEN(val);
+  int val_len = RSTRING_LEN(val);
   // scan the value for newline (\n) delimiters
+  int pos_s = 0, pos_e = 0;
   while (pos_e < val_len) {
-    // make sure we don't overflow
-    if (request->private.pos >= HTTP_HEAD_MAX_SIZE)
-      return ST_STOP;
     // scanning for newline (\n) delimiters
     while (pos_e < val_len && val_s[pos_e] != '\n')
       pos_e++;
-    // whether we hit a delimitor or the end of string, write the header
-    request->private.pos +=
-        snprintf(request->buffer + request->private.pos,
-                 HTTP_HEAD_MAX_SIZE - request->private.pos, "%.*s: %.*s\r\n",
-                 key_len, key_s, pos_e - pos_s, val_s + pos_s);
+    HttpResponse.write_header(response, key_s, key_len, val_s + pos_s,
+                              pos_e - pos_s);
+    // fprintf(stderr, "For_each - headers: wrote header\n");
     // move forward (skip the '\n' if exists)
     pos_s = pos_e + 1;
     pos_e++;
@@ -282,333 +272,55 @@ static int for_each_header_pair(VALUE key, VALUE val, VALUE _req) {
   // no errors, return 0
   return ST_CONTINUE;
 }
-// itterate through the headers and add them to the response buffer
-// (we are recycling the request's buffer)
-static VALUE for_each_string(VALUE str, VALUE _req, int argc, VALUE argv) {
+
+// writes the body to the response object
+static VALUE for_each_body_string(VALUE str, VALUE _res, int argc, VALUE argv) {
   // fprintf(stderr, "For_each - body\n");
-  struct HttpRequest* request = (void*)_req;
+  struct HttpResponse* response = (void*)_res;
   // write body
   if (TYPE(str) != T_STRING || !RSTRING_LEN(str)) {
     return Qfalse;
   }
-  Server.write(request->server, request->sockfd, RSTRING_PTR(str),
-               RSTRING_LEN(str));
+  HttpResponse.write_body(response, RSTRING_PTR(str), RSTRING_LEN(str));
   return Qtrue;
 }
-// Sends the response while reviewing the headers and response data.
-// Returns 1 if the connection should be closed and 0 if the connection should
-// remain open.
-static int send_response(struct HttpRequest* request, VALUE response) {
-  static char internal_error[] =
-      "HTTP/1.1 502 Internal Error\r\n"
-      "Connection: closed\r\n"
-      "Content-Length: 16\r\n\r\n"
-      "Internal Error\r\n";
 
-  VALUE tmp;
-  char* tmp_s;
-  char close_when_done = 0;
-
-  // check for keep alive
-  if (HttpRequest.find(request, "CONNECTION")) {
-    if ((HttpRequest.value(request)[0] | 32) == 'c')
-      close_when_done = 1;
-    // done with CONNECTION header
-  } else if (request->version[6] != '.') {
-    // no connection header, check version
-    close_when_done = 1;
+// Gets the response object, within a GVL context
+static void* handle_request_in_gvl(void* _req) {
+  struct HttpRequest* request = _req;
+  struct HttpResponse* response = NULL;
+  VALUE env = request_to_env(request);
+  // Registry.add(env); // performed by the request_to_env function
+  VALUE rb_response = (VALUE)Server.get_udata(request->server, 0);
+  if (!rb_response) {
+    goto cleanup;
   }
+  rb_response = RubyCaller.call2(rb_response, call_proc_id, 1, &env);
+  Registry.add(rb_response);
+  /////////////// we now have the response object ready. Time to work...
 
-  // false is an intentional ignore - this is not an error (might be a
-  // highjack)
-  if (response == Qfalse)
-    goto unknown_stop;
-  // not an array...
-  if (TYPE(response) != T_ARRAY)
-    goto internal_err;
-  if (RARRAY_LEN(response) < 3)
-    goto internal_err;
-
-  // get status code from array (obj 0)
-  // NOTICE: this may not always be a number (could be the string "200").
-  tmp = rb_ary_entry(response, 0);
-  if (TYPE(tmp) == T_STRING)
-    tmp = rb_str_to_inum(tmp, 10, 0);
-  if (TYPE(tmp) != T_FIXNUM || (tmp = FIX2INT(tmp)) > 512 || tmp < 100 ||
-      !(tmp_s = HttpStatus.to_s(tmp))) {
-    if (TYPE(tmp) == T_FIXNUM && FIX2INT(tmp) <= 0)
-      return 0;  // faye return status -1 on hijack (that's why <=0)
-    goto internal_err;
-  }
-  request->private.pos = 0;
-  request->private.pos +=
-      snprintf(request->buffer, HTTP_HEAD_MAX_SIZE - request->private.pos,
-               "HTTP/1.1 %lu %s\r\n", tmp, tmp_s);
-
-  // Start printing headers to head-buffer
-  tmp = rb_ary_entry(response, 1);
-  if (TYPE(tmp) != T_HASH)
-    goto internal_err;
-  rb_hash_foreach(tmp, for_each_header_pair, (VALUE)request);
-  // make sure we're not overflowing
-  if (request->private.pos >= HTTP_HEAD_MAX_SIZE - 2) {
-    rb_warn("Header overflow detected! Header size is limited to ~8Kb.");
-    goto internal_err;
-  }
-  // review connection (+ keep alive) and date headers
-  tmp = 0;
-  request->private.max = 0;
-  // review buffer and check if the headers exist
-  while (request->private.max < request->private.pos) {
-    if ((request->buffer[request->private.max++]) != '\n')
-      continue;
-    if ((request->buffer[request->private.max++] | 32) == 'c' &&
-        (request->buffer[request->private.max++] | 32) == 'o' &&
-        (request->buffer[request->private.max++] | 32) == 'n' &&
-        (request->buffer[request->private.max++] | 32) == 'n' &&
-        (request->buffer[request->private.max++] | 32) == 'e' &&
-        (request->buffer[request->private.max++] | 32) == 'c' &&
-        (request->buffer[request->private.max++] | 32) == 't' &&
-        (request->buffer[request->private.max++] | 32) == 'i' &&
-        (request->buffer[request->private.max++] | 32) == 'o' &&
-        (request->buffer[request->private.max++] | 32) == 'n' &&
-        (request->buffer[request->private.max++] | 32) == ':') {
-      tmp = tmp | 2;
-      // check for close twice, as the first 'c' could be a space
-      if ((request->buffer[request->private.max++] | 32) == 'c' ||
-          (request->buffer[request->private.max++] | 32) == 'c') {
-        close_when_done = 1;
-      }
-    }
-    // check for date. The "d" was already skipped over
-    if ((request->buffer[request->private.max++] | 32) == 'a' &&
-        (request->buffer[request->private.max++] | 32) == 't' &&
-        (request->buffer[request->private.max++] | 32) == 'e' &&
-        (request->buffer[request->private.max++] | 32) == ':')
-      tmp = tmp | 4;
-    // check for content length
-    if (  // "con" passed "t" failed (connect), "e" failed (date), check the
-        // rest
-        (request->buffer[request->private.max++] | 32) == 'n' &&
-        (request->buffer[request->private.max++] | 32) == 't' &&
-        (request->buffer[request->private.max++] | 32) == '-') {
-      if ((request->buffer[request->private.max++] | 32) == 'l' &&
-          (request->buffer[request->private.max++] | 32) == 'e' &&
-          (request->buffer[request->private.max++] | 32) == 'n' &&
-          (request->buffer[request->private.max++] | 32) == 'g' &&
-          (request->buffer[request->private.max++] | 32) == 't' &&
-          (request->buffer[request->private.max++] | 32) == 'h' &&
-          (request->buffer[request->private.max++] | 32) == ':')
-        tmp = tmp | 8;
-      // check for "content-encoding"
-      if (  // "content-e" passed on failing "content-length" (__ncoding)
-          (request->buffer[request->private.max++] | 32) == 'n' &&
-          (request->buffer[request->private.max++] | 32) == 'c' &&
-          (request->buffer[request->private.max++] | 32) == 'o' &&
-          (request->buffer[request->private.max++] | 32) == 'd' &&
-          (request->buffer[request->private.max++] | 32) == 'i' &&
-          (request->buffer[request->private.max++] | 32) == 'n' &&
-          (request->buffer[request->private.max++] | 32) == 'g' &&
-          (request->buffer[request->private.max++] | 32) == ':')
-        tmp = tmp | 16;
-    }
-  }
-  // if we don't have a content length we need to close the connection when
-  // done.
-  if (!(tmp & 8) && !(tmp & 2))
-    close_when_done = 1;
-  // if the connection headers aren't there, add them
-  if (!(tmp & 2)) {
-    if (close_when_done) {
-      static char close_conn_header[] = "Connection: close\r\n";
-      if (request->private.pos + sizeof(close_conn_header) >=
-          HTTP_HEAD_MAX_SIZE - 2) {
-        rb_warn("Header overflow detected! Header size is limited to ~8Kb.");
-        goto internal_err;
-      }
-      memcpy(request->buffer + request->private.pos, close_conn_header,
-             sizeof(close_conn_header));
-      request->private.pos += sizeof(close_conn_header) - 1;
-    } else {
-      static char kpalv_conn_header[] =
-          "Connection: keep-alive\r\nKeep-Alive: timeout=2\r\n";
-      if (request->private.pos + sizeof(kpalv_conn_header) >=
-          HTTP_HEAD_MAX_SIZE - 2) {
-        rb_warn("Header overflow detected! Header size is limited to ~8Kb.");
-        goto internal_err;
-      }
-      memcpy(request->buffer + request->private.pos, kpalv_conn_header,
-             sizeof(kpalv_conn_header));
-      request->private.pos += sizeof(kpalv_conn_header) - 1;
-    }
-  }
-  if (!(tmp & 4)) {
-    struct tm t;
-    gmtime_r(&Server.reactor(request->server)->last_tick, &t);
-    request->private.pos +=
-        strftime(request->buffer + request->private.pos,
-                 HTTP_HEAD_MAX_SIZE - request->private.pos - 2,
-                 "Date: %a, %d %b %Y %H:%M:%S GMT\r\n", &t);
-  }
-  // write the extra EOL markers
-  request->buffer[request->private.pos++] = '\r';
-  request->buffer[request->private.pos++] = '\n';
-
-  // write headers to server
-  Server.write(request->server, request->sockfd, request->buffer,
-               request->private.pos);
-
-  // write body
-  tmp = rb_ary_entry(response, 2);
-  if (TYPE(tmp) == T_ARRAY) {
-    // fprintf(stderr, "Review body as Array\n");
-    // [String] is most likely
-    int len = RARRAY_LEN(tmp);
-    VALUE str;
-    for (size_t i = 0; i < len; i++) {
-      str = rb_ary_entry(tmp, i);
-      if (TYPE(str) != T_STRING) {
-        // fprintf(stderr, "data in array isn't a string! (index %lu)\n", i);
-        goto internal_err;
-      }
-      if (RSTRING_PTR(str) && RSTRING_LEN(str) &&
-          !Server.write(request->server, request->sockfd, RSTRING_PTR(str),
-                        RSTRING_LEN(str)))
-        goto unknown_stop;
-    }
-  } else if (TYPE(tmp) == T_STRING) {
-    // fprintf(stderr, "Review body as String\n");
-    // String is a likely error
-    if (RSTRING_LEN(tmp))
-      Server.write(request->server, request->sockfd, RSTRING_PTR(tmp),
-                   RSTRING_LEN(tmp));
-  } else if (tmp == Qnil) {
-    // fprintf(stderr, "Review body as nil\n");
-    // nothing to do.
-    // This could be a websocket/upgrade decision.
-  } else if (rb_respond_to(tmp, each_method_id)) {
-    // fprintf(stderr, "Review body as for-each ...\n");
-    rb_block_call(tmp, each_method_id, 0, NULL, for_each_string,
-                  (VALUE)request);
-    // we need to call `close` in case the object is an IO / BodyProxy
-    if (rb_respond_to(tmp, close_method_id))
-      RubyCaller.call(tmp, close_method_id);
-  }
-
-unknown_stop:
-  return close_when_done;
-internal_err:
-  Server.write(request->server, request->sockfd, internal_error,
-               sizeof(internal_error));
-  Server.close(request->server, request->sockfd);
-  // rb_warn fails sometimes, causing the server to crash. It was removed.
-  return 1;
-}
-
-// reviews the response and env to setup any upgrade specific headers
-// returns false if the response object shouldn't be sent
-// returns true if the response should be sent.
-static int prep_response(VALUE env,
-                         struct HttpRequest* request,
-                         VALUE response) {
-  VALUE handler;  // will hold the upgrade object
-  if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE)) != Qnil) {
-    // we're upgrading to a websocket connection - we need to set the headers.
-    static char ws_key_accpt_str[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    char* recv_str;
-    // upgrade taking place, make sure the upgrade headers are valid for the
-    // response.
-    rb_ary_store(response, 0, INT2FIX(101));  // status
-    // we're done with the `env` variable, so we can use it to store the
-    // headers and the body for updating them.
-    env = rb_ary_entry(response, 2);
-    // close the body, if it exists.
-    if (rb_respond_to(env, close_method_id))
-      RubyCaller.call(env, close_method_id);
-    // no body will be sent
-    rb_ary_store(response, 2, Qnil);
-    // grab the headers Hash
-    env = rb_ary_entry(response, 1);
-    // set content-length to 0 - needed?
-    // rb_hash_aset(env, CONTENT_LENGTH, INT2FIX(0));
-    // connection and upgrade headers
-    rb_hash_aset(env, CONNECTION_HEADER, UPGRADE_HEADER);
-    rb_hash_aset(env, UPGRADE_HEADER, WEBSOCKET_STR);
-    // websocket version (13)
-    rb_hash_aset(env, WEBSOCKET_SEC_VER, WEBSOCKET_VER);
-    // websocket extentions (none)
-    // rb_hash_aset(env, WEBSOCKET_SEC_EXT, QUERY_ESTRING);
-    // the accept Base64 Hash - we need to compute this one and set it
-    if (!HttpRequest.find(request, "SEC_WEBSOCKET_KEY"))
-      goto refuse_websocket;
-    // the client's unique string
-    recv_str = HttpRequest.value(request);
-    if (!recv_str)
-      goto refuse_websocket;
-    ;
-    // use the SHA1 methods provided to concat the client string and hash
-    struct sha1nfo sha1;
-    sha1_init(&sha1);
-    sha1_write(&sha1, recv_str, strlen(recv_str));
-    sha1_write(&sha1, ws_key_accpt_str, sizeof(ws_key_accpt_str) - 1);
-    // create a ruby stribg to contain the data
-    VALUE accpt_str = rb_str_buf_new(30);
-    if (accpt_str == Qnil)
-      goto refuse_websocket;
-    // base encode the data
-    int len =
-        ws_base64_encode((char*)sha1_result(&sha1), RSTRING_PTR(accpt_str), 20);
-    // set the string's length and encoding
-    rb_str_set_len(accpt_str, len);
-    rb_enc_associate_index(accpt_str, BinaryEncodingIndex);
-    // set the accept hashed value in the headers
-    rb_hash_aset(env, WEBSOCKET_SEC_ACPT, accpt_str);
-
-  } else if ((handler = rb_hash_aref(env, R_HIJACK_IO)) != Qnil) {
-    // hijack without a callback - upgrade without sending the response.
-    if (rb_hash_aref(env, R_HIJACK_CB) == Qnil)
-      return 0;
-    else
-      rb_ary_store(response, 2, Qnil);
-  }
-  // else if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE_DYN)) != Qnil) {
-  //   // we're upgrading to a custom protocol - to prevent a response, send a
-  //   // status code that is <= 0
-  //     return 1;
-  // }
-  return 1;
-refuse_websocket:
-  // no upgrade object - send 400 error with headers.
-  rb_ary_store(response, 0, INT2FIX(400));
-  // we're done with the `env` variable, so we can use it to store the
-  // headers.
-  env = rb_ary_entry(response, 1);
-  // close connection header
-  rb_hash_aset(env, CONNECTION_HEADER, CONNECTION_CLOSE);
-  return 1;
-}
-
-// reviews the response and env and performs an upgrade if required.
-static void review_upgrade(VALUE env, struct HttpRequest* request) {
+  // // // Review pre-response Upgrade(s) or Hijacking
   VALUE handler;  // will hold the upgrade object
   if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE)) != Qnil) {
     // websocket upgrade.
-    Websockets.new(request, handler);
+    rb_ary_store(rb_response, 0, INT2FIX(101));  // set status
+    // we're done with the `handler` variable for now, so we can use as tmp.
+    handler = rb_ary_entry(rb_response, 2);
+    // close the body, if it exists.
+    if (rb_respond_to(handler, close_method_id))
+      RubyCaller.call(handler, close_method_id);
+    // no body will be sent
+    rb_ary_store(rb_response, 2, Qnil);
+    handler = 0;
   } else if ((handler = rb_hash_aref(env, R_HIJACK_IO)) != Qnil) {
-    // Hijack - remove the socket and check if a callback was set to be called.
+    // Hijack now.
     Server.hijack(request->server, request->sockfd);
-    // we're done with the handler object - we can use it to review if a
-    // callback exists.
-    if ((handler = rb_hash_aref(env, R_HIJACK_CB)) != Qnil) {
-      RubyCaller.call(handler, call_proc_id);
-    }
+    goto cleanup;
   } else if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE_DYN)) != Qnil) {
     // generic upgrade.
     // include the rDynProtocol within the object.
     if (TYPE(handler) == T_CLASS) {
       // include the Protocol module
-      // // do we neet to check?
-      // if (rb_mod_include_p(protocol, rDynProtocol) == Qfalse)
       rb_include_module(handler, rDynProtocol);
       handler = RubyCaller.call(handler, new_func_id);
     } else {
@@ -618,47 +330,106 @@ static void review_upgrade(VALUE env, struct HttpRequest* request) {
       // if (rb_mod_include_p(p_class, rDynProtocol) == Qfalse)
       rb_include_module(p_class, rDynProtocol);
     }
-    // make sure everything went as it should
-    if (handler == Qnil)
-      return;
-    // switch from HTTP to a dynamic protocol
-    if (Server.set_protocol(request->server, request->sockfd, &DynamicProtocol))
-      return;
-    // set the new protocol at the server's udata
-    Server.set_udata(request->server, request->sockfd, (void*)handler);
     // add new protocol to the Registry - should be removed in on_close
     Registry.add(handler);
+    // set the new protocol as the connection's udata
+    Server.set_udata(request->server, request->sockfd, (void*)handler);
     // initialize pre-required variables
     rb_ivar_set(handler, fd_var_id, INT2FIX(request->sockfd));
     set_server(handler, request->server);
+    // switch from HTTP to a dynamic protocol
+    Server.set_protocol(request->server, request->sockfd, &DynamicProtocol);
     // initialize the new protocol
     RubyCaller.call(handler, on_open_func_id);
-  }
-}
-// Gets the response object, within a GVL context
-static void* handle_request_in_gvl(void* _req) {
-  struct HttpRequest* request = _req;
-  VALUE env = request_to_env(request);
-  // Registry.add(env); // performed by the request_to_env function
-  VALUE response = (VALUE)Server.get_udata(request->server, 0);
-  if (!response) {
     goto cleanup;
   }
-  response = RubyCaller.call2(response, call_proc_id, 1, &env);
-  Registry.add(response);
-  if (prep_response(env, request, response) &&
-      send_response(request, response)) {
-    Server.close(request->server, request->sockfd);
+  // // // prep and send the HTTP response
+  response = HttpResponse.create(request);
+  if (!response)
     goto cleanup;
+  VALUE body = rb_ary_entry(rb_response, 2);
+
+  // extract the hijack callback header from the response, if it exists...
+  if ((handler = rb_hash_aref(rb_ary_entry(rb_response, 1), R_HIJACK_CB)) !=
+      Qnil) {
+    rb_hash_delete(rb_ary_entry(rb_response, 1), R_HIJACK_CB);
+    // close the body, if it exists.
+    if (rb_respond_to(body, close_method_id))
+      RubyCaller.call(body, close_method_id);
+    // no body will be sent
+    rb_ary_store(rb_response, 2, Qnil);
+    body = Qnil;
   }
-  review_upgrade(env, request);
-// complete upgrade
+  // set status
+  {
+    VALUE tmp = rb_ary_entry(rb_response, 0);
+    if (TYPE(tmp) == T_STRING)
+      tmp = rb_str_to_inum(tmp, 10, 0);
+    if (TYPE(tmp) == T_FIXNUM)
+      response->status = FIX2INT(tmp);
+  }
+
+  // write headers
+  rb_hash_foreach(rb_ary_entry(rb_response, 1), for_each_header_data,
+                  (VALUE)response);
+
+  // handle body
+  if (TYPE(body) == T_ARRAY && RARRAY_LEN(body) == 1)  // [String] is likely
+    body = rb_ary_entry(body, 0);
+
+  if (TYPE(body) == T_STRING) {
+    // fprintf(stderr, "Review body as String\n");
+    if (RSTRING_LEN(body))
+      HttpResponse.write_body(response, RSTRING_PTR(body), RSTRING_LEN(body));
+    else
+      HttpResponse.send(response);
+  } else if (body == Qnil) {
+    // fprintf(stderr, "Review body as nil\n");
+    // This could be a websocket/upgrade/hijack - review post-response
+    if (handler) {
+      // Post response Hijack, send response and hijack
+      HttpResponse.send(response);
+      goto cleanup;
+    } else if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE)) != Qnil) {
+      // perform websocket upgrade.
+      // websocket_upgrade(...);
+      HttpResponse.send(response);  // tmp
+      goto cleanup;
+    }
+  } else if (rb_respond_to(body, each_method_id)) {
+    // fprintf(stderr, "Review body as for-each ...\n");
+    if (!response->metadata.connection_written &&
+        !response->metadata.connection_len_written) {
+      // fprintf(stderr, "closing after send ...\n");
+
+      // close the connection to indicate message length... bad user
+      // protection
+      HttpResponse.write_header(response, "Connection", 10, "close", 5);
+      response->content_length = -1;
+      rb_block_call(body, each_method_id, 0, NULL, for_each_body_string,
+                    (VALUE)response);
+      HttpResponse.close(response);
+      // we need to call `close` in case the object is an IO / BodyProxy
+      if (rb_respond_to(body, close_method_id))
+        RubyCaller.call(body, close_method_id);
+      goto cleanup;
+    }
+    rb_block_call(body, each_method_id, 0, NULL, for_each_body_string,
+                  (VALUE)response);
+    // we need to call `close` in case the object is an IO / BodyProxy
+    if (rb_respond_to(body, close_method_id))
+      RubyCaller.call(body, close_method_id);
+  }
+
 cleanup:
+  if (rb_response)
+    Registry.remove(rb_response);
   if (response)
-    Registry.remove(response);
+    HttpResponse.destroy(response);
   Registry.remove(env);
   return 0;
 }
+
 // The core handler passed on to the HttpProtocol object.
 static void on_request(struct HttpRequest* request) {
   // work inside the GVL
@@ -677,47 +448,81 @@ The main class - Iodine::Http
 // called when the server starts up. Saves the server object to the
 // instance.
 static void on_init(struct Server* server) {
-  VALUE core_instance = ((VALUE)Server.settings(server)->udata);
+  VALUE self = ((VALUE)Server.settings(server)->udata);
   // save the updated on_request  as a global value on the server, using
   // fd=0
-  if (rb_iv_get(core_instance, "@on_http") != Qnil)
-    Server.set_udata(server, 0, (void*)rb_iv_get(core_instance, "@on_http"));
+  if (rb_iv_get(self, "@on_http") != Qnil)
+    Server.set_udata(server, 0, (void*)rb_iv_get(self, "@on_http"));
   // set the server variable in the core server object.. is this GC safe?
-  set_server(core_instance, server);
-  // perform on_init callback - we don't need the core_instance variable, we'll
+  set_server(self, server);
+  // HTTP timeout
+  VALUE rb_timeout = rb_ivar_get(self, rb_intern("@timeout"));
+  if (rb_timeout != Qnil)
+    Server.settings(server)->timeout = FIX2INT(rb_timeout);
+
+  // setup HTTP limits
+  VALUE rb_max_body = rb_ivar_get(self, rb_intern("@max_body_size"));
+  if (rb_max_body != Qnil)
+    ((struct HttpProtocol*)Server.settings(server)->protocol)
+        ->maximum_body_size = FIX2INT(rb_max_body);
+  // setup websocket settings
+  VALUE rb_max_msg = rb_ivar_get(self, rb_intern("@max_msg_size"));
+  if (rb_max_msg != Qnil)
+    Websocket.max_msg_size = FIX2INT(rb_max_msg);
+  VALUE rb_ws_tout = rb_ivar_get(self, rb_intern("@ws_timeout"));
+  if (rb_ws_tout != Qnil)
+    Websocket.timeout = FIX2INT(rb_ws_tout);
+
+  // perform on_init callback - we don't need the self variable, we'll
   // recycle it.
-  VALUE start_ary = rb_iv_get(core_instance, "on_start_array");
+  VALUE start_ary = rb_iv_get(self, "on_start_array");
   if (start_ary != Qnil) {
-    while ((core_instance = rb_ary_pop(start_ary)) != Qnil) {
-      RubyCaller.call(core_instance, call_proc_id);
+    while ((self = rb_ary_pop(start_ary)) != Qnil) {
+      RubyCaller.call(self, call_proc_id);
     }
   }
-}
-
-// called when server is idling
-static void on_idle(struct Server* srv) {
-  // call(reg->obj, on_data_func_id);
-  // rb_gc_start();
 }
 
 /////////////////////////////
 // Running the Http server
 //
 // the no-GVL state
-static void* srv_start_no_gvl(void* _settings) {
-  struct ServerSettings* settings = _settings;
+static void* srv_start_no_gvl(void* _self) {
+  VALUE self = (VALUE)_self;
+
+  // make port into a CString (for Lib-Server)
+  char port[7];
+  VALUE rb_port = rb_ivar_get(self, rb_intern("@port"));
+  int iport = rb_port == Qnil ? 3000 : FIX2INT(rb_port);
+  snprintf(port, 6, "%d", iport);
+  // bind address
+  VALUE rb_bind = rb_ivar_get(self, rb_intern("@address"));
+  char* bind = rb_bind == Qnil ? NULL : StringValueCStr(rb_bind);
+
+  // concurrency
+  VALUE rb_threads = rb_ivar_get(self, rb_intern("@threads"));
+  int threads = rb_threads == Qnil ? 1 : (FIX2INT(rb_threads));
+  VALUE rb_processes = rb_ivar_get(self, rb_intern("@processes"));
+  int processes = rb_processes == Qnil ? 1 : (FIX2INT(rb_processes));
+
+  // Public folder
+  VALUE rb_public_folder = rb_ivar_get(self, rb_intern("@public_folder"));
+  char* public_folder =
+      (rb_public_folder == Qnil ? NULL : StringValueCStr(rb_public_folder));
+
   // Write message
   VALUE version_val = rb_const_get(rIodine, rb_intern("VERSION"));
   char* version_str = StringValueCStr(version_val);
   fprintf(stderr,
           "Starting up Iodine's HTTP server, V. %s using %d thread%s X %d "
           "processes\n",
-          version_str, settings->threads, (settings->threads > 1 ? "s" : ""),
-          settings->processes);
+          version_str, threads, (threads > 1 ? "s" : ""), processes);
 
-  long ret = Server.listen(*settings);
-  if (ret < 0)
-    perror("Failed to start server");
+  // Start Http Server
+  start_http_server(
+      on_request, public_folder, .threads = threads, .processes = processes,
+      .on_init = on_init, .on_idle = on_idle_server_callback,
+      .port = (iport > 0 ? port : NULL), .address = bind, .udata = (void*)self);
   return 0;
 }
 //
@@ -791,7 +596,7 @@ static VALUE http_start(VALUE self) {
     rb_raise(rb_eTypeError, "threads isn't a valid number (-1 to 128).");
     return Qnil;
   }
-  // validate body and message size limits
+  // validate body size limits
   int imax_body = rb_max_body == Qnil ? 32 : FIX2INT(rb_max_body);
   if (imax_body > 2048 || imax_body < 0) {
     rb_raise(rb_eTypeError,
@@ -799,14 +604,14 @@ static VALUE http_start(VALUE self) {
              "then 2048 (2Gb).");
     return Qnil;
   }
+  // validate ws message size limits
   int imax_msg = rb_max_msg == Qnil ? 65536 : FIX2INT(rb_max_msg);
   if (imax_msg > 2097152 || imax_msg < 0) {
     rb_raise(rb_eTypeError,
-             "rb_max_msg out of range. should be lo less then 0 and no more "
+             "max_msg_size out of range. should be lo less then 0 and no more "
              "then 2,097,152 (2Mb). Default is 64Kb");
     return Qnil;
   }
-  Websockets.max_msg_size = imax_msg;
   // validate ws timeout
   int iwstout = rb_ws_tout == Qnil ? 45 : FIX2INT(rb_ws_tout);
   if (iwstout > 120 || iwstout < 0) {
@@ -815,51 +620,18 @@ static VALUE http_start(VALUE self) {
              "then 120 (2 minutes). Default is 45 seconds.");
     return Qnil;
   }
-  Websockets.timeout = iwstout;
   // validate the public folder type
   if (rb_public_folder != Qnil && TYPE(rb_public_folder) != T_STRING) {
-    rb_raise(rb_eTypeError,
-             "rb_public_folder should be either a String or nil.");
+    rb_raise(rb_eTypeError, "public_folder should be either a String or nil.");
     return Qnil;
   }
-
-  // make port into a CString (for Lib-Server)
-  char port[7];
-  char* bind = rb_bind == Qnil ? NULL : StringValueCStr(rb_bind);
-  unsigned char timeout = rb_timeout == Qnil ? 4 : FIX2INT(rb_timeout);
-  snprintf(port, 6, "%d", iport);
-  // create the HttpProtocol object
-  struct HttpProtocol* http_protocol = HttpProtocol.new();
-  http_protocol->on_request = on_request;
-  http_protocol->maximum_body_size = imax_msg;
-  http_protocol->public_folder =
-      rb_public_folder == Qnil ? NULL : StringValueCStr(rb_public_folder);
-
-  // setup the server
-  struct ServerSettings settings = {
-      .protocol = (struct Protocol*)(http_protocol),
-      .timeout = timeout,
-      .threads = rb_threads == Qnil ? 1 : (FIX2INT(rb_threads)),
-      .processes = rb_processes == Qnil ? 1 : (FIX2INT(rb_processes)),
-      .on_init = on_init,
-      .on_idle = on_idle,
-      .port = (iport > 0 ? port : NULL),
-      .address = bind,
-      .udata = (void*)self,
-      .busy_msg =
-          "HTTP/1.1 500 Server Too Busy\r\n"
-          "Connection: closed\r\n"
-          "Content-Length: 15\r\n\r\n"
-          "Server Too Busy\r\n",
-  };
-  // setup some Rack dynamic values
-  R_MTHREAD_V = settings.threads > 1 ? Qtrue : Qfalse;
-  R_MPROCESS_V = settings.processes > 1 ? Qtrue : Qfalse;
-  // rb_thread_call_without_gvl2(slow_func, slow_arg, unblck_func,
-  // unblck_arg);
-  rb_thread_call_without_gvl2(srv_start_no_gvl, &settings, unblck, NULL);
-  // cleanup the HttpProtocol object
-  HttpProtocol.destroy(http_protocol);
+  // validation complete - write data to env variables before leaving GVL
+  // start server
+  R_MTHREAD_V =
+      (rb_threads == Qnil ? 1 : (FIX2INT(rb_threads))) > 1 ? Qtrue : Qfalse;
+  R_MPROCESS_V =
+      (rb_processes == Qnil ? 1 : (FIX2INT(rb_processes))) > 1 ? Qtrue : Qfalse;
+  rb_thread_call_without_gvl2(srv_start_no_gvl, (void*)self, unblck, NULL);
   return self;
 }
 
@@ -1056,5 +828,5 @@ assumption that the added network layer's overhead could be expensive).
   // initialize the RackIO class
   RackIO.init();
   // initialize the Websockets class
-  Websockets.init();
+  // Websockets.init();
 }

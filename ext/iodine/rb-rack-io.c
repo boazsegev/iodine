@@ -199,7 +199,7 @@ static VALUE rio_get_io(int argc, VALUE* argv, VALUE self) {
     return Qfalse;
   struct HttpRequest* request = get_request(self);
   // hijack the IO object
-  VALUE fd = INT2FIX(request->sockfd);
+  VALUE fd = INT2FIX(server_uuid_to_fd(request->sockfd));
   VALUE env = rb_ivar_get(self, env_id);
   // make sure we're not repeating ourselves
   VALUE new_io = rb_hash_aref(env, R_HIJACK_IO);

@@ -96,8 +96,17 @@ They are attached to both the core (Iodine instance objects) and the protocol(s)
 // here are some helpers to integrate this
 // support inside Ruby objects.
 
+// performs pending async protocol tasks.
+// initiated by Server.each
+static void perform_each_task(struct Server* srv, uint64_t fd, void* task) {
+  void* handler = Server.get_udata(srv, fd);
+  fprintf(stderr, "performing task for %llu, handler: %p\n", fd, handler);
+  if (handler)
+    RubyCaller.call2((VALUE)task, call_proc_id, 1, (VALUE*)&handler);
+}
+
 // removes a VALUE from the registry, in case a task ISN'T performed
-static void each_fallback(struct Server* srv, int fd, void* task) {
+static void each_finished(struct Server* srv, uint64_t fd, void* task) {
   Registry.remove((VALUE)task);
 }
 
@@ -118,21 +127,25 @@ static void perform_repeated_timer(void* task) {
 
 // performs pending protocol task while managing it's Ruby registry.
 // initiated by Server.defer
-static void perform_protocol_async(struct Server* srv, int fd, void* task) {
+static void perform_protocol_async(struct Server* srv,
+                                   uint64_t fd,
+                                   void* task) {
   RubyCaller.call((VALUE)task, call_proc_id);
   Registry.remove((VALUE)task);
 }
 
-// performs pending protocol task while managing it's Ruby registry.
-// initiated by each
-static void each_protocol_async(struct Server* srv, int fd, void* task) {
-  void* handler = Server.get_udata(srv, fd);
-  if (handler)
-    RubyCaller.call2((VALUE)task, call_proc_id, 1, handler);
-  // the task should be removed even if the handler was closed or doesn't exist,
-  // since it was scheduled and we need to clear every reference.
-  Registry.remove((VALUE)task);
-}
+// // performs pending protocol task while managing it's Ruby registry.
+// // initiated by each
+// static void each_protocol_async(struct Server* srv, uint64_t fd, void* task)
+// {
+//   void* handler = Server.get_udata(srv, fd);
+//   if (handler)
+//     RubyCaller.call2((VALUE)task, call_proc_id, 1, handler);
+//   // the task should be removed even if the handler was closed or doesn't
+//   exist,
+//   // since it was scheduled and we need to clear every reference.
+//   Registry.remove((VALUE)task);
+// }
 
 struct _CallRunEveryUsingGVL {
   server_pt srv;
@@ -147,15 +160,6 @@ static void* _create_timer_without_gvl(void* _data) {
   struct _CallRunEveryUsingGVL* t = _data;
   Server.run_every(t->srv, t->mili, t->rep, t->task, t->arg);
   return 0;
-}
-
-static void each_protocol_async_schedule(struct Server* srv,
-                                         int fd,
-                                         void* task) {
-  // Registry is a bag, adding the same task multiple times will increase the
-  // number of references we have.
-  Registry.add((VALUE)task);
-  Server.fd_task(srv, fd, each_protocol_async, task, each_fallback);
 }
 
 /*
@@ -190,7 +194,7 @@ passed. The task will NOT repeat.
 
 Running timer based tasks requires the use of a file descriptor on the server,
 meanining that it will require the resources of a single connection and will
-be counted as a connection when calling {#connection_count}
+be counted as a connection when calling {#count}
 
 NOTICE: Timers cannot be created from within the `on_close` callback, as this
 might result in deadlocking the connection (as timers are types of connections
@@ -293,13 +297,14 @@ static VALUE run_protocol_task(VALUE self) {
         "called an async method in a non-async mode - the task will "
         "be performed immediately.");
     rb_yield(Qnil);
+    return Qnil;
   }
   VALUE block = rb_block_proc();
   if (block == Qnil)
     return Qnil;
   Registry.add(block);
-  Server.fd_task(srv, FIX2INT(rb_ivar_get(self, fd_var_id)),
-                 perform_protocol_async, (void*)block, each_fallback);
+  Server.fd_task(srv, (uint64_t)NUM2ULL(rb_ivar_get(self, fd_var_id)),
+                 perform_protocol_async, (void*)block, each_finished);
   return block;
 }
 
@@ -320,12 +325,17 @@ static VALUE run_each(int argc, VALUE* argv, VALUE self) {
   rb_need_block();
   // get the server object
   struct Server* srv = get_server(self);
+  if (!srv) {
+    rb_warn("No Server instance found!.");
+    return Qnil;
+  }
   // requires multi-threading
   if (Server.settings(srv)->threads < 0) {
     rb_warn(
         "called an async method in a non-async mode - the task will "
         "be performed immediately.");
-    rb_yield(Qnil);
+    // rb_yield(Qnil);
+    // return Qnil;
   }
   VALUE block = rb_block_proc();
   if (block == Qnil)
@@ -334,12 +344,38 @@ static VALUE run_each(int argc, VALUE* argv, VALUE self) {
   if (argc) {
     while (argc--) {
       if (TYPE(argv[argc]) == T_STRING)
-        Server.each_block(srv, StringValueCStr(argv[argc]),
-                          each_protocol_async_schedule, (void*)block);
+        Server.each(srv, 0, StringValueCStr(argv[argc]), perform_each_task,
+                    (void*)block, each_finished);
     }
   } else {
-    Server.each_block(srv, NULL, each_protocol_async_schedule, (void*)block);
+    Server.each(srv, 0, NULL, perform_each_task, (void*)block, each_finished);
   }
+  return block;
+}
+
+static VALUE dyn_run_each(VALUE self) {
+  // requires a block to be passed
+  rb_need_block();
+  // get the server object
+  struct Server* srv = get_server(self);
+  if (!srv)
+    return Qnil;
+  // requires multi-threading
+  if (Server.settings(srv)->threads < 0) {
+    rb_warn(
+        "called an async method in a non-async mode - the task will "
+        "be performed immediately.");
+  }
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qnil;
+  Registry.add(block);
+  uint64_t org_fd = (rb_ivar_get(self, fd_var_id) == Qnil)
+                        ? 0
+                        : NUM2ULL(rb_ivar_get(self, fd_var_id));
+  struct Protocol* protocol = Server.get_protocol(srv, org_fd);
+  Server.each(srv, org_fd, (protocol ? protocol->service : NULL),
+              perform_each_task, (void*)block, each_finished);
   return block;
 }
 
@@ -400,7 +436,7 @@ Use:
 */
 static VALUE srv_write(VALUE self, VALUE data) {
   struct Server* srv = get_server(self);
-  int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
+  uint64_t fd = NUM2ULL(rb_ivar_get(self, fd_var_id));
   return LONG2FIX(Server.write(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data)));
 }
 
@@ -429,7 +465,7 @@ being sent, but must be sent as soon as possible.
 */
 static VALUE srv_write_urgent(VALUE self, VALUE data) {
   struct Server* srv = get_server(self);
-  int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
+  uint64_t fd = NUM2ULL(rb_ivar_get(self, fd_var_id));
   return LONG2FIX(
       Server.write_urgent(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data)));
 }
@@ -447,8 +483,8 @@ The number of bytes to be read (n) is:
 - 1024 Bytes (1Kb) if the optional `buffer_or_length` is either missing or
   contains a String who's capacity is less then 1Kb.
 
-Always returns a String (either the same one used as the buffer or a new one).
-The string will be empty if no data was available.
+Returns a String (either the same one used as the buffer or a new one) on a
+successful read. Returns `nil` if no data was available.
 */
 static VALUE srv_read(int argc, VALUE* argv, VALUE self) {
   if (argc > 1) {
@@ -469,7 +505,7 @@ static VALUE srv_read(int argc, VALUE* argv, VALUE self) {
   }
   VALUE str;
   long len;
-  int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
+  uint64_t fd = NUM2ULL(rb_ivar_get(self, fd_var_id));
   if (buffer == Qnil) {
     buffer = LONG2FIX(1024);
   }
@@ -491,15 +527,17 @@ static VALUE srv_read(int argc, VALUE* argv, VALUE self) {
       rb_str_resize(buffer, (len = 1024));
     str = buffer;
   }
-  // struct Server* srv = get_server(self);
-  ssize_t in = Server.read(fd, RSTRING_PTR(str), len);
+  struct Server* srv = get_server(self);
+  ssize_t in = Server.read(srv, fd, RSTRING_PTR(str), len);
   // make sure it's binary encoded
   rb_enc_associate_index(str, BinaryEncodingIndex);
   // set actual size....
   if (in > 0)
     rb_str_set_len(str, (long)in);
-  else
+  else {
     rb_str_set_len(str, 0);
+    str = Qnil;
+  }
   // return empty string? or fix above if to return Qnil?
   return str;
 }
@@ -514,18 +552,8 @@ the data was sent.
  */
 static VALUE srv_close(VALUE self, VALUE data) {
   struct Server* srv = get_server(self);
-  int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
+  uint64_t fd = NUM2ULL(rb_ivar_get(self, fd_var_id));
   Server.close(srv, fd);
-  return Qnil;
-}
-
-/**
-Closes the connection immediately, even if there's still data waiting to be sent
-(see {#close} and {#write}).
-*/
-static VALUE srv_force_close(VALUE self, VALUE data) {
-  int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
-  close(fd);
   return Qnil;
 }
 
@@ -551,7 +579,7 @@ static VALUE srv_upgrade(VALUE self, VALUE protocol) {
   if (protocol == Qnil)
     return Qnil;
   struct Server* srv = get_server(self);
-  int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
+  uint64_t fd = NUM2ULL(rb_ivar_get(self, fd_var_id));
   // include the rDynProtocol within the object.
   if (TYPE(protocol) == T_CLASS) {
     // include the Protocol module
@@ -599,7 +627,7 @@ static VALUE def_dyn_message(VALUE self, VALUE data) {
 //  Feel free to override this method and implement your own callback.
 static VALUE no_ping_func(VALUE self) {
   struct Server* srv = get_server(self);
-  int fd = FIX2INT(rb_ivar_get(self, fd_var_id));
+  uint64_t fd = NUM2ULL(rb_ivar_get(self, fd_var_id));
   // only close if the main code (on_data / task) isn't running.
   if (!Server.is_busy(srv, fd))
     Server.close(srv, fd);
@@ -622,23 +650,35 @@ static VALUE def_dyn_data(VALUE self) {
   return Qnil;
 }
 
-// a new connection - registers a new protocol object and forwards the event.
-static void dyn_open(struct Server* server, int fd) {
-  VALUE protocol = (VALUE)Server.get_udata(server, 0);
+struct on_open_data_s {
+  server_pt srv;
+  uint64_t fd;
+};
+
+static void* dyn_on_open_safe(void* data) {
+  struct on_open_data_s* args = data;
+  VALUE protocol = (VALUE)Server.get_udata(args->srv, 0);
   protocol = RubyCaller.call(protocol, new_func_id);
   if (protocol == Qnil) {
-    Server.close(server, fd);
-    return;
+    Server.close(args->srv, args->fd);
+    return NULL;
   }
   Registry.add(protocol);
-  rb_ivar_set(protocol, fd_var_id, INT2FIX(fd));
-  set_server(protocol, server);
-  Server.set_udata(server, fd, (void*)protocol);
+  rb_ivar_set(protocol, fd_var_id, ULL2NUM(args->fd));
+  set_server(protocol, args->srv);
+  Server.set_udata(args->srv, args->fd, (void*)protocol);
   RubyCaller.call(protocol, on_open_func_id);
+  return NULL;
+}
+
+// a new connection - registers a new protocol object and forwards the event.
+static void dyn_open(struct Server* server, uint64_t fd) {
+  struct on_open_data_s args = {.srv = server, .fd = fd};
+  RubyCaller.call_c(dyn_on_open_safe, &args);
 }
 
 // the on_data implementation
-static void dyn_data(struct Server* server, int fd) {
+static void dyn_data(struct Server* server, uint64_t fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
@@ -646,7 +686,7 @@ static void dyn_data(struct Server* server, int fd) {
 }
 
 // calls the ping callback
-static void dyn_ping(struct Server* server, int fd) {
+static void dyn_ping(struct Server* server, uint64_t fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
@@ -654,7 +694,7 @@ static void dyn_ping(struct Server* server, int fd) {
 }
 
 // calls the on_shutdown callback
-static void dyn_shutdown(struct Server* server, int fd) {
+static void dyn_shutdown(struct Server* server, uint64_t fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
@@ -662,7 +702,7 @@ static void dyn_shutdown(struct Server* server, int fd) {
 }
 
 // calls the on_close callback and de-registers the connection
-static void dyn_close(struct Server* server, int fd) {
+static void dyn_close(struct Server* server, uint64_t fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
@@ -697,7 +737,7 @@ static void init_dynamic_protocol(void) {  // The Protocol module will inject
   rb_define_method(rDynProtocol, "on_close", empty_func, 0);
   // helper methods
   rb_define_method(rDynProtocol, "connection_count", count_all, 0);
-  rb_define_method(rDynProtocol, "each", run_each, 0);
+  rb_define_method(rDynProtocol, "each", dyn_run_each, 0);
   rb_define_method(rDynProtocol, "run", run_async, 0);
   rb_define_method(rDynProtocol, "run_after", run_after, 1);
   rb_define_method(rDynProtocol, "run_every", run_every, 1);
@@ -706,7 +746,6 @@ static void init_dynamic_protocol(void) {  // The Protocol module will inject
   rb_define_method(rDynProtocol, "write", srv_write, 1);
   rb_define_method(rDynProtocol, "write_urgent", srv_write_urgent, 1);
   rb_define_method(rDynProtocol, "close", srv_close, 0);
-  rb_define_method(rDynProtocol, "force_close", srv_force_close, 0);
   rb_define_method(rDynProtocol, "upgrade", srv_upgrade, 1);
 }
 
@@ -750,7 +789,7 @@ static VALUE on_start(VALUE self) {  // requires a block to be passed
 
 // called when the server starts up. Saves the server object to the instance.
 static void on_init(struct Server* server) {
-  VALUE core_instance = *((VALUE*)Server.settings(server)->udata);
+  VALUE core_instance = (VALUE)Server.settings(server)->udata;
   // save the updated protocol class as a global value on the server, using fd=0
   Server.set_udata(server, 0,
                    (void*)rb_ivar_get(core_instance, rb_intern("@protocol")));
@@ -772,7 +811,8 @@ static void on_init(struct Server* server) {
 }
 
 // called when server is idling
-static void on_idle(struct Server* srv) {
+void on_idle_server_callback(struct Server* srv) {
+  // TODO: implement on_idle support
   // RubyCaller.call((VALUE)Server.get_udata(srv, 0), idle_func_id);
 }
 
@@ -873,10 +913,10 @@ static VALUE srv_start(VALUE self) {
       .threads = rb_threads == Qnil ? 1 : (FIX2INT(rb_threads)),
       .processes = rb_processes == Qnil ? 1 : (FIX2INT(rb_processes)),
       .on_init = on_init,
-      .on_idle = on_idle,
+      .on_idle = on_idle_server_callback,
       .port = (iport > 0 ? port : NULL),
       .address = bind,
-      .udata = &self,
+      .udata = (void*)self,
       .busy_msg = (rb_busymsg == Qnil ? NULL : StringValueCStr(rb_busymsg)),
   };
   // rb_thread_call_without_gvl2(slow_func, slow_arg, unblck_func, unblck_arg);

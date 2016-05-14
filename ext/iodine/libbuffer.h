@@ -1,11 +1,13 @@
 /*
-copyright: Boaz segev, 2015
+copyright: Boaz segev, 2016
 license: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
 #ifndef LIB_BUFFER_H
 #define LIB_BUFFER_H
+
+#define LIB_BUFFER_VERSION "0.3.0"
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -15,13 +17,15 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <stdio.h>
 #include <sys/types.h>
 
+#include "lib-server.h"
+
 /************************************************/ /**
 This library introduces a packet based Buffer object for network data output.
 The buffer is pretty much a wrapper for a binary tree with mutexes.
 
 To Create a Buffer use:
 
-`void * Buffer.new(0)` - the offset sets a pre-sent amount for the first packet.
+`void * Buffer.create(srv)` - srv is a pointer to the server owining the buffer.
 
 To destroy a Buffer use:
 
@@ -57,20 +61,53 @@ extern const struct BufferClass {
   Creates a new buffer object, reserving memory for the core data and creating a
   mutex.
 
-  The buffer object should require ~88 bytes (system dependent), including the
+  The buffer object should require ~96 bytes (system dependent), including the
   mutex object.
   */
-  void* (*new)(size_t offset);
+  void* (*create)(server_pt owner);
   /**
   Clears the buffer and destroys the buffer object - releasing it's core memory
   and the mutex associated with the buffer.
   */
   void (*destroy)(void* buffer);
   /**
-  Clears all the data in the buffer (freeing the data's memory) and closes any
-  pending files.
+  Clears all the data in the buffer (freeing the data's memory), closes any
+  pending files and resets the writing hook.
   */
   void (*clear)(void* buffer);
+  /**
+  Sets a writing hook (needs to be reset any time the buffer is cleared).
+
+  A writing hook will be used instead of the `write` function to send data to
+  the socket. This allows this buffer to be used for special protocol extension
+  or transport layers, such as SSL/TLS.
+
+  A writing hook is a function that takes in a pointer to the server (the
+  buffer's owner), the socket to which writing should be performed (fd), a
+  pointer to the data to be written and the length of the data to be written:
+
+  A writing hook should return the number of bytes actually sent from the data
+  buffer (not the number of bytes sent through the socket, but the number of
+  bytes that can be marked as sent).
+
+  A writing hook should return -1 if the data couldn't be sent and processing
+  should be stop (the connection was lost or suffered a fatal error).
+
+  A writing hook should return 0 if no data was sent, but the connection should
+  remain open or no fatal error occured.
+
+  i.e.:
+
+      ssize_t writing_hook(server_pt srv, int fd, void* data, size_t len) {
+        int sent = write(fd, data, len);
+        if (sent < 0 && (errno & (EWOULDBLOCK | EAGAIN | EINTR)))
+          sent = 0;
+        return sent;
+      }
+  */
+  void (*set_whook)(
+      void* buffer,
+      ssize_t (*writing_hook)(server_pt srv, int fd, void* data, size_t len));
   /**
   Flushes the buffer data through the socket. Returns the number of bytes sent,
   if any. returns -1 on error.
@@ -115,12 +152,7 @@ extern const struct BufferClass {
   Marks the connection to closes once the current buffer data was sent.
   */
   void (*close_when_done)(void* buffer, int fd);
-  /**
-  returns the sizes of all the pending data packets, excluding files (yet to
-  be implemented).
-  */
-  size_t (*pending)(void* buffer);
   /** returns true (1) if the buffer is empty, otherwise returns false (0). */
-  char (*empty)(void* buffer);
+  char (*is_empty)(void* buffer);
 } Buffer;
 #endif

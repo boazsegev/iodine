@@ -1,5 +1,5 @@
 /*
-copyright: Boaz segev, 2015
+copyright: Boaz segev, 2016
 license: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
@@ -8,36 +8,40 @@ Feel free to copy, use and enjoy according to the license provided.
 #define HTTP_PROTOCOL_H
 #include "lib-server.h"
 #include "http-request.h"
+#include "http-response.h"
 #include "http-objpool.h"
 #include <stdio.h>
 
-#ifndef HTTP_HEAD_MAX_SIZE
+/** Sets the maximum headers buffer size (the headers size limit). */
 #define HTTP_HEAD_MAX_SIZE 8192  // 8*1024
-#endif
+
+/** Sets the header's case (uppercase vs. lowercase). */
+#define HEADERS_UPPERCASE 1
+
 /**
  the following structures are defined herein:
 */
 
 /**
 A Procotol suited for Http/1.x servers. The struct must be obtained using a
-contructor. i.e.:
+contructor and released using a destructor. i.e.:
 
-       struct HttpProtocol http = HttpProtocol();
+       struct HttpProtocol * http = HttpProtocol.create();
+       ; // run server using protocol
+       HttpProtocol.destroy(http);
 
-the `struct HttpProtocol` objects live on the stack and their memory is
-automatically released at the end of the block (function/if block.etc').
 */
 struct HttpProtocol;
 
-extern struct ___HttpProtocol_CLASS___ {
+extern struct HttpProtocolClass {
   /** returns a new, initialized, Http Protocol object. */
-  struct HttpProtocol* (*new)(void);
+  struct HttpProtocol* (*create)(void);
   /** destroys an existing HttpProtocol object, releasing it's memory and
   resources. */
   void (*destroy)(struct HttpProtocol*);
 } HttpProtocol;
 
-/************************************************/ /**
+/************************************************/ /** \file
 The HttpProtocol implements a very basic and raw protocol layer over Http,
 leaving much of the work for the implementation.
 
@@ -60,7 +64,9 @@ struct HttpProtocol {
 
   This must be the first declaration to allow pointer casting inheritance. */
   struct Protocol parent;
-  /** sets the maximum size for a body, in Mb (Mega-Bytes). */
+  /**
+  Sets the maximum size for a body, in Mb (Mega-Bytes). Defaults to 32 Mb.
+   */
   int maximum_body_size;
   /** the callback to be performed when requests come in. */
   void (*on_request)(struct HttpRequest* request);
