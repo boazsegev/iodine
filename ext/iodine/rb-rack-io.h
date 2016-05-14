@@ -1,3 +1,9 @@
+/*
+copyright: Boaz segev, 2016
+license: MIT
+
+Feel free to copy, use and enjoy according to the license provided.
+*/
 #ifndef RUBY_RACK_IO_H
 #define RUBY_RACK_IO_H
 #include <ruby.h>
@@ -8,4 +14,4 @@ extern struct _RackIO_ {
   void (*init)(void);
 } RackIO;
 
-#endif  // RUBY_RACK_IO_H
+#endif /* RUBY_RACK_IO_H */

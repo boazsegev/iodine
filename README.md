@@ -188,7 +188,7 @@ vs.
 $ rackup -p 3000 -E none -s <Other_Server_Here>
 ```
 
-Puma ~16 threads by default, so when comparing against Puma, consider using an equal number of threads:
+Puma has ~16 threads by default, so when comparing against Puma, consider using an equal number of threads:
 
 ```bash
 // (t - threads, w - worker processes)

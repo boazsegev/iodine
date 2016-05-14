@@ -33,7 +33,9 @@ end
 
 # puts "press Enter to start #{Process.pid}"
 # gets
-# Iodine::Rack.threads ||= 4
+# require 'iodine'
+# Iodine::Rack.threads ||= 16
+# Iodine::Rack.processes ||= 4
 
 # run WSEcho
 
