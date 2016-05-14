@@ -1,9 +1,9 @@
-# Iodine - a C kqueue/epoll EventMachine alternative
+# Iodine - a C kqueue/epoll EventMachine alternative (pre-release)
 [![Gem Version](https://badge.fury.io/rb/iodine.svg)](https://badge.fury.io/rb/iodine)
 [![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
 [![GitHub](https://img.shields.io/badge/GitHub-Open%20Source-blue.svg)](https://github.com/boazsegev/iodine)
 
-Iodine 0.2.0 makes writing Object Oriented **Network Services** easy to write.
+Iodine 0.2.0 (pre-release) makes writing Object Oriented **Network Services** easy to write.
 
 Iodine is an **evented** framework with a simple API that builds off a low level [C code library](https://github.com/boazsegev/c-server-tools) with support for **epoll** and **kqueue** - this means that:
 
@@ -270,9 +270,9 @@ Iodine 0.2.x is written in C, doesn't have as many bells and whistles (i.e., no 
 
 ## Why not EventMachine?
 
-You can go ahead and use EventMachine if you like. They're doing amazing work on that one and it's been used a lot in Ruby-land... really, tons of good developers and people on that project, I'm sure.
+You can go ahead and use EventMachine if you like. They're doing amazing work on that one and it's been used a lot in Ruby-land... really, tons of good developers and people on that project, I'm sure...
 
-But me, I prefer to make sure my development software runs the exact same code as my production software, so here we are.
+But me, I prefer to make sure my development software runs the exact same code as my production software. So here we are.
 
 Also, I don't really understand all the minute details of EventMachine's API, it kept crashing my system every time I reached ~1024 active connections... I'm sure I just don't know how to use EventMachine, but that's just that.
 
@@ -284,7 +284,7 @@ Yes, please, here are some thoughts:
 
 * I'm really not good at writing automated tests and benchmarks, any help would be appreciated. I keep testing manually and it sucks (and it's mistake prone).
 
-* If we can write a Java wrapper for the C libraries, it would be nice... but it could be as big a project as the whole gem, as a lot of the implementation is written within the bridge between these two languages.
+* If we can write a Java wrapper for the C libraries, it would be nice... but it could be as big a project as the whole gem, as a lot of optimizations are implemented within the bridge between these two languages.
 
 * Bug reports and pull requests are welcome on GitHub at https://github.com/boazsegev/iodine.
 
@@ -312,7 +312,7 @@ Here's a few things you can use from this project and they seem to be handy to h
 
     I'm attaching it to one of Iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
 
-* I was using a native thread pool library ([`libasync.h`](https://github.com/boazsegev/c-server-tools/blob/master/lib/libasync.c)) until I realized how many issues Ruby has with POSIX threads... So now there's a Ruby-thread implementation for this library at ([`rb-libasync.c`](https://github.com/boazsegev/iodine/blob/master/ext/iodine/rb-libasync.c)).
+* I was using a POSIX thread pool library ([`libasync.h`](https://github.com/boazsegev/c-server-tools/blob/master/lib/libasync.c)) until I realized how many issues Ruby has with non-Ruby threads... So now there's a Ruby-thread implementation for this library at ([`rb-libasync.c`](https://github.com/boazsegev/iodine/blob/master/ext/iodine/rb-libasync.c)).
 
     Notice that all the new threads are free from the GVL - this allows true concurrency... but, you can't make Ruby API calls in that state.
 
