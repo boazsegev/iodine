@@ -389,6 +389,8 @@ static void* handle_request_in_gvl(void* _req) {
     if (handler) {
       // Post response Hijack, send response and hijack
       HttpResponse.send(response);
+      // TODO: Hijack and call callback.
+      // cleanup
       goto cleanup;
     } else if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE)) != Qnil) {
       // perform websocket upgrade.
