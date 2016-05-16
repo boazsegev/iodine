@@ -34,9 +34,9 @@ class WSEcho
   def on_message data
     puts "got message: #{data}"
     write data
-  end
-  def echo data
-    write "echo: #{data}"
+    data_cp = "Broadcast: #{data}"
+    puts "broadcasting #{data_cp.bytesize} bytes"
+    each {|h| h.write data_cp }
   end
 end
 

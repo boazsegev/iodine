@@ -124,6 +124,31 @@ static VALUE ws_count(VALUE self) {
   return self;
 }
 
+static void rb_perform_ws_task(ws_s* ws, void* arg) {
+  VALUE handler = (VALUE)Websocket.get_udata(ws);
+  if (!handler)
+    return;
+  RubyCaller.call2((VALUE)arg, call_proc_id, 1, (VALUE*)&arg);
+}
+
+static void rb_finish_ws_task(ws_s* ws, void* arg) {
+  Registry.remove((VALUE)arg);
+}
+
+static VALUE ws_each(VALUE self) {
+  // requires a block to be passed
+  rb_need_block();
+  ws_s* ws = get_ws(self);
+  if (!ws)
+    return Qnil;
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qnil;
+  Registry.add(block);
+  Websocket.each(ws, rb_perform_ws_task, (void*)block, rb_finish_ws_task);
+  return block;
+}
+
 //////////////////////////////////////
 // Protocol functions
 void ws_on_open(ws_s* ws) {
@@ -250,5 +275,6 @@ void Init_iodine_websocket(void) {
   rb_define_method(rWebsocket, "write", ws_write, 1);
   rb_define_method(rWebsocket, "close", ws_close, 0);
 
-  rb_define_method(rWebsocket, "ws_count", ws_count, 0);
+  rb_define_method(rWebsocket, "each", ws_each, 0);
+  rb_define_method(rWebsocket, "count", ws_count, 0);
 }
