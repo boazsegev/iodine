@@ -75,7 +75,7 @@ struct WebsocketSettings {
 #define websocket_upgrade(...) \
   Websocket.upgrade((struct WebsocketSettings){__VA_ARGS__})
 /**
-NOT IMPLEMENTED - will cause segfault.
+The Websocket API is available through this global `Websocket` object.
 */
 extern struct Websockets_API__ {
   /**
@@ -106,15 +106,15 @@ extern struct Websockets_API__ {
   void (*close)(ws_s* ws);
   /**
   Performs a task on each websocket connection that shares the same process.
-
-  NOT IMPLEMENTED.
    */
   int (*each)(ws_s* ws_originator,
               void (*task)(ws_s* ws_target, void* arg),
               void* arg,
               void (*on_finish)(ws_s* ws_originator, void* arg));
   /**
+  Counts the number of websocket connections.
   */
+  long (*count)(ws_s* ws);
 } Websocket;
 
 #endif

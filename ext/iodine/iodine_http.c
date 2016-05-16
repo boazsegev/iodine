@@ -1,4 +1,4 @@
-// #include "iodine_websocket.h"
+#include "iodine_websocket.h"
 #include "iodine_http.h"
 #include <ruby.h>
 #include <ruby/io.h>
@@ -232,6 +232,11 @@ static VALUE request_to_env(struct HttpRequest* request) {
       rb_enc_associate(header, BinaryEncoding);
       rb_hash_aset(env, header,
                    rb_enc_str_new(value, strlen(value), BinaryEncoding));
+      // undo the change ('_' -> '-')
+      tmp = name;
+      while (*(++tmp))
+        if (*tmp == '_')
+          *tmp = '-';
     } while (HttpRequest.next(request));
   }
   HttpRequest.first(request);
@@ -303,7 +308,6 @@ static void* handle_request_in_gvl(void* _req) {
   VALUE handler;  // will hold the upgrade object
   if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE)) != Qnil) {
     // websocket upgrade.
-    rb_ary_store(rb_response, 0, INT2FIX(101));  // set status
     // we're done with the `handler` variable for now, so we can use as tmp.
     handler = rb_ary_entry(rb_response, 2);
     // close the body, if it exists.
@@ -311,7 +315,7 @@ static void* handle_request_in_gvl(void* _req) {
       RubyCaller.call(handler, close_method_id);
     // no body will be sent
     rb_ary_store(rb_response, 2, Qnil);
-    handler = 0;
+    handler = Qnil;
   } else if ((handler = rb_hash_aref(env, R_HIJACK_IO)) != Qnil) {
     // Hijack now.
     Server.hijack(request->server, request->sockfd);
@@ -351,7 +355,8 @@ static void* handle_request_in_gvl(void* _req) {
 
   // extract the hijack callback header from the response, if it exists...
   if ((handler = rb_hash_aref(rb_ary_entry(rb_response, 1), R_HIJACK_CB)) !=
-      Qnil) {
+          Qnil ||
+      (handler = rb_hash_aref(env, R_HIJACK_CB)) != Qnil) {
     rb_hash_delete(rb_ary_entry(rb_response, 1), R_HIJACK_CB);
     // close the body, if it exists.
     if (rb_respond_to(body, close_method_id))
@@ -386,16 +391,18 @@ static void* handle_request_in_gvl(void* _req) {
   } else if (body == Qnil) {
     // fprintf(stderr, "Review body as nil\n");
     // This could be a websocket/upgrade/hijack - review post-response
-    if (handler) {
+    if (handler != Qnil) {
       // Post response Hijack, send response and hijack
       HttpResponse.send(response);
-      // TODO: Hijack and call callback.
+      // Hijack and call callback. TODO: test this
+      body = rb_hash_aref(env, R_HIJACK);                 // use `body` as `tmp`
+      body = RubyCaller.call(body, call_proc_id);         // grab the IO
+      RubyCaller.call2(handler, call_proc_id, 1, &body);  // call the callback
       // cleanup
       goto cleanup;
     } else if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE)) != Qnil) {
       // perform websocket upgrade.
-      // websocket_upgrade(...);
-      HttpResponse.send(response);  // tmp
+      iodine_websocket_upgrade(request, response, handler);
       goto cleanup;
     }
   } else if (rb_respond_to(body, each_method_id)) {
@@ -830,5 +837,5 @@ assumption that the added network layer's overhead could be expensive).
   // initialize the RackIO class
   RackIO.init();
   // initialize the Websockets class
-  // Websockets.init();
+  Init_iodine_websocket();
 }

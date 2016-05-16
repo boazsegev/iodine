@@ -1,77 +1,18 @@
 #include "iodine.h"
+#include "iodine_http.h"
 #include "iodine_websocket.h"
 #include "rb-call.h"
 #include "rb-registry.h"
 #include <ruby/io.h>
 #include <arpa/inet.h>
 
-/* ////////////////////////////////////////////////////////////
-This file creates an HTTP server based on the Iodine libraries.
-
-The server is (mostly) Rack compatible, except:
-
-1. upgrade requests are handled using special upgrade handlers.
-2. if a String is returned, it is a assumed to be a status 200 Html data?
-
-//////////////////////////////////////////////////////////// */
-
-/*******************************************************************************
-Buffer management - update to change the way the buffer is handled.
-*/
-struct buffer_s {
-  void* data;
-  size_t size;
-  VALUE extra;
-};
-
-/** returns a buffer_s struct, with a buffer (at least) `size` long. */
-struct buffer_s create_ws_buffer(size_t size);
-/** returns a buffer_s struct, with a buffer (at least) `size` long. */
-struct buffer_s resize_ws_buffer(struct buffer_s);
-/** releases an existing buffer. */
-void free_ws_buffer(struct buffer_s);
-/** Sets the initial buffer size. (16Kb)*/
-#define WS_INITIAL_BUFFER_SIZE 16384
-
-/** buffer increments by 4,096 Bytes (4Kb) */
-#define round_up_buffer_size(size) (((size) >> 12) + 1) << 12
-
-struct buffer_s create_ws_buffer(size_t size) {
-  struct buffer_s buff;
-  buff.size = round_up_buffer_size(size);
-  buff.data = malloc(buff.size);
-  // buff.extra = rb_str_buf_new(2048);
-  // rb_str_set_len(buff.extra, 0);
-  // rb_enc_associate(buff.extra, BinaryEncoding);
-  // Registry.add(buff.extra);
-  return buff;
-}
-
-struct buffer_s resize_ws_buffer(struct buffer_s buff) {
-  buff.size = round_up_buffer_size(buff.size);
-  void* tmp = realloc(buff.data, buff.size);
-  if (!tmp) {
-    free_ws_buffer(buff);
-    buff.size = 0;
-  }
-  buff.data = tmp;
-  return buff;
-}
-void free_ws_buffer(struct buffer_s buff) {
-  if (buff.data)
-    free(buff.data);
-  // Registry.remove(buff.extra);
-}
-
-#undef round_up_buffer_size
-
 //////////////
 // general global definitions we will use herein.
 static VALUE rWebsocket;           // The Iodine::Http::Websocket class
 static rb_encoding* UTF8Encoding;  // encoding object
 static int UTF8EncodingIndex;
-static ID server_var_id;        // id for the Server variable (pointer)
-static ID fd_var_id;            // id for the file descriptor (Fixnum)
+static ID buff_var_id;          // id for websocket buffer
+static ID ws_var_id;            // id for websocket pointer
 static ID call_proc_id;         // id for `#call`
 static ID dup_func_id;          // id for the buffer.dup method
 static ID new_func_id;          // id for the Class.new method
@@ -80,12 +21,117 @@ static ID on_close_func_id;     // the on_close callback's ID
 static ID on_shutdown_func_id;  // a callback's ID
 static ID on_msg_func_id;       // a callback's ID
 
+/*******************************************************************************
+Buffer management - update to change the way the buffer is handled.
+*/
+struct buffer_s {
+  void* data;
+  size_t size;
+};
+
+/** returns a buffer_s struct, with a buffer (at least) `size` long. */
+struct buffer_s create_ws_buffer(ws_s* owner);
+
+/** returns a buffer_s struct, with a buffer (at least) `size` long. */
+struct buffer_s resize_ws_buffer(ws_s* owner, struct buffer_s);
+
+/** releases an existing buffer. */
+void free_ws_buffer(ws_s* owner, struct buffer_s);
+
+/** Sets the initial buffer size. (16Kb)*/
+#define WS_INITIAL_BUFFER_SIZE 16384
+
+// buffer increments by 4,096 Bytes (4Kb)
+#define round_up_buffer_size(size) (((size) >> 12) + 1) << 12
+
+struct buffer_args {
+  struct buffer_s buffer;
+  ws_s* ws;
+};
+
+void* ruby_land_buffer(void* _buf) {
+  struct buffer_args* args = _buf;
+  if (args->buffer.data) {
+    round_up_buffer_size(args->buffer.size);
+    VALUE rbbuff =
+        rb_ivar_get((VALUE)Websocket.get_udata(args->ws), buff_var_id);
+    rb_str_modify(rbbuff);
+    rb_str_resize(rbbuff, args->buffer.size);
+    args->buffer.data = RSTRING_PTR(rbbuff);
+    args->buffer.size = rb_str_capacity(rbbuff);
+  } else {
+    VALUE rbbuff = rb_str_buf_new(WS_INITIAL_BUFFER_SIZE);
+    rb_ivar_set((VALUE)Websocket.get_udata(args->ws), buff_var_id, rbbuff);
+    rb_str_set_len(rbbuff, 0);
+    rb_enc_associate(rbbuff, BinaryEncoding);
+    args->buffer.data = RSTRING_PTR(rbbuff);
+    args->buffer.size = WS_INITIAL_BUFFER_SIZE;
+  }
+  return NULL;
+}
+
+struct buffer_s create_ws_buffer(ws_s* owner) {
+  struct buffer_args args = {.ws = owner};
+  RubyCaller.call_c(ruby_land_buffer, &args);
+  return args.buffer;
+}
+
+struct buffer_s resize_ws_buffer(ws_s* owner, struct buffer_s buffer) {
+  struct buffer_args args = {.ws = owner, .buffer = buffer};
+  RubyCaller.call_c(ruby_land_buffer, &args);
+  return args.buffer;
+}
+void free_ws_buffer(ws_s* owner, struct buffer_s buff) {}
+
+#undef round_up_buffer_size
+
+//////////////////////////////////////
+// Ruby functions
+
+// GC will call this to "free" the memory... which would be bad.
+static void dont_free(void* obj) {}
+// the data wrapper and the dont_free instruction callback
+static struct rb_data_type_struct iodine_websocket_type = {
+    .wrap_struct_name = "IodineWebsocketData",
+    .function.dfree = (void (*)(void*))dont_free,
+};
+/** a macro helper function to embed a server pointer in an object */
+#define set_ws(object, ws)         \
+  rb_ivar_set((object), ws_var_id, \
+              TypedData_Wrap_Struct(rServer, &iodine_websocket_type, (ws)))
+
+/** a macro helper to get the server pointer embeded in an object */
+#define get_ws(object) (ws_s*) DATA_PTR(rb_ivar_get((object), ws_var_id))
+
+static VALUE ws_close(VALUE self) {
+  // TODO get ws object
+  ws_s* ws = get_ws(self);
+  Websocket.close(ws);
+  return self;
+}
+
+static VALUE ws_write(VALUE self, VALUE data) {
+  // TODO get ws object
+  ws_s* ws = get_ws(self);
+  Websocket.write(ws, RSTRING_PTR(data), RSTRING_LEN(data),
+                  rb_enc_get(data) == UTF8Encoding);
+  return self;
+}
+
+static VALUE ws_count(VALUE self) {
+  ws_s* ws = get_ws(self);
+  Websocket.count(ws);
+  return self;
+}
+
 //////////////////////////////////////
 // Protocol functions
 void ws_on_open(ws_s* ws) {
   VALUE handler = (VALUE)Websocket.get_udata(ws);
   if (!handler)
     return;
+  // TODO save ws to handler
+  set_ws(handler, ws);
   RubyCaller.call(handler, on_open_func_id);
 }
 void ws_on_close(ws_s* ws) {
@@ -105,7 +151,13 @@ void ws_on_data(ws_s* ws, char* data, size_t length, int is_text) {
   VALUE handler = (VALUE)Websocket.get_udata(ws);
   if (!handler)
     return;
-  RubyCaller.call2(handler, on_msg_func_id, 0, NULL);
+  VALUE buffer = rb_ivar_get(handler, buff_var_id);
+  if (is_text)
+    rb_enc_associate(buffer, UTF8Encoding);
+  else
+    rb_enc_associate(buffer, BinaryEncoding);
+  rb_str_set_len(buffer, length);
+  RubyCaller.call2(handler, on_msg_func_id, 1, &buffer);
 }
 
 //////////////////////////////////////
@@ -114,10 +166,12 @@ void ws_on_data(ws_s* ws, char* data, size_t length, int is_text) {
 void iodine_websocket_upgrade(struct HttpRequest* request,
                               struct HttpResponse* response,
                               VALUE handler) {
+  fprintf(stderr, "Enter Upgrade.\n");
   // make sure we have a valid handler, with the Websocket Protocol mixin.
   if (handler == Qnil || handler == Qfalse) {
     response->status = 400;
     HttpResponse.send(response);
+    fprintf(stderr, "No Handler!!!\n");
     return;
   }
   if (TYPE(handler) == T_CLASS) {
@@ -135,67 +189,11 @@ void iodine_websocket_upgrade(struct HttpRequest* request,
   // set the connection's udata
   Server.set_udata(request->server, request->sockfd, (void*)handler);
   // send upgrade response and set new protocol
+  fprintf(stderr, "calling upgrade!\n");
   websocket_upgrade(.request = request, .response = response,
                     .udata = (void*)handler, .on_close = ws_on_close,
                     .on_open = ws_on_open, .on_shutdown = ws_on_shutdown,
                     .on_message = ws_on_data);
-}
-
-// This should be called within the GVL, as it performs Ruby API calls
-static void websocket_new(struct HttpRequest* request, VALUE handler) {
-  struct WebsocketProtocol* ws = NULL;
-  // check that we actually have a websocket handler
-  if (handler == Qnil || handler == Qfalse)
-    goto reject;
-  // create the Websocket Protocol
-  ws = WebsocketProtocol_new();
-  if (!ws)
-    goto reject;
-  // make sure we have a valid handler, with the Websocket Protocol mixin.
-  if (TYPE(handler) == T_CLASS) {
-    // include the Protocol module
-    // // do we neet to check?
-    // if (rb_mod_include_p(handler, rWebsocket) == Qfalse)
-    rb_include_module(handler, rWebsocket);
-    handler = RubyCaller.call(handler, new_func_id);
-    // check that we created a handler
-    if (handler == Qnil || handler == Qfalse) {
-      goto reject;
-    }
-  } else {
-    // include the Protocol module in the object's class
-    VALUE p_class = rb_obj_class(handler);
-    // // do we neet to check?
-    // if (rb_mod_include_p(handler, rWebsocket) == Qfalse)
-    rb_include_module(p_class, rWebsocket);
-  }
-  // set the Ruby handler for websocket messages
-  ws->handler = handler;
-  ws->buffer = rb_str_buf_new(2048);
-  rb_str_set_len(ws->buffer, 0);
-  rb_enc_associate(ws->buffer, BinaryEncoding);
-  Registry.add(handler);
-  Registry.add(ws->buffer);
-  // setup server protocol and any data we need (i.e. timeout)
-  if (Server.set_protocol(request->server, request->sockfd,
-                          (struct Protocol*)ws))
-    goto reject;  // reject on error
-  Server.set_timeout(request->server, request->sockfd, Websockets.timeout);
-  Server.touch(request->server, request->sockfd);
-  // for the global each
-  Server.set_udata(request->server, request->sockfd, (void*)ws->handler);
-  // set the server and fd values for the handler... (used for `write` and
-  // `close`)
-  rb_ivar_set(handler, fd_var_id, INT2FIX(request->sockfd));
-  set_server(handler, request->server);
-  // call the on_open callback
-  RubyCaller.call(handler, on_open_func_id);
-  return;
-reject:
-  if (ws)
-    WebsocketProtocol_destroy(ws);
-  websocket_close(request->server, request->sockfd);
-  return;
 }
 
 //////////////
@@ -224,11 +222,11 @@ static VALUE def_dyn_message(VALUE self, VALUE data) {
 
 /////////////////////////////
 // initialize the class and the whole of the Iodine/http library
-static void Init_websocket(void) {
+void Init_iodine_websocket(void) {
   // get IDs and data that's used often
   call_proc_id = rb_intern("call");          // used to call the main callback
-  server_var_id = rb_intern("server");       // when upgrading
-  fd_var_id = rb_intern("sockfd");           // when upgrading
+  ws_var_id = rb_intern("ws_ptr");           // when upgrading
+  buff_var_id = rb_intern("ws_buffer");      // when upgrading
   dup_func_id = rb_intern("dup");            // when upgrading
   new_func_id = rb_intern("new");            // when upgrading
   on_open_func_id = rb_intern("on_open");    // when upgrading
@@ -251,15 +249,6 @@ static void Init_websocket(void) {
   iodine_add_helper_methods(rWebsocket);
   rb_define_method(rWebsocket, "write", ws_write, 1);
   rb_define_method(rWebsocket, "close", ws_close, 0);
-  rb_define_method(rWebsocket, "each", ws_each, 0);
-  rb_define_method(rWebsocket, "each_block", ws_each_block, 0);
 
   rb_define_method(rWebsocket, "ws_count", ws_count, 0);
 }
-
-struct __Websockets__CLASS__ Websockets = {
-    .timeout = 45,
-    .max_msg_size = 65536,
-    .init = Init_websocket,
-    .new = websocket_new,
-};

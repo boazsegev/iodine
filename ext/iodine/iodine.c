@@ -397,6 +397,7 @@ static VALUE count_all(VALUE self) {
 }
 
 void iodine_add_helper_methods(VALUE klass) {
+  rb_define_method(klass, "each", dyn_run_each, 0);
   rb_define_method(klass, "run", run_async, 0);
   rb_define_method(klass, "run_after", run_after, 1);
   rb_define_method(klass, "run_every", run_every, 1);
