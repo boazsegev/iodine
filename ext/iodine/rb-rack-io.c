@@ -1,6 +1,6 @@
 #include "rb-rack-io.h"
 #include "rb-call.h"
-#include "iodine.h"
+#include "iodine_core.h"
 #include <ruby/encoding.h>
 #include <ruby/io.h>
 #include <ruby/io.h>
