@@ -110,6 +110,7 @@ static VALUE ws_close(VALUE self) {
   return self;
 }
 
+/** Writes data to the websocket. Returns `self` (the websocket object). */
 static VALUE ws_write(VALUE self, VALUE data) {
   // TODO get ws object
   ws_s* ws = get_ws(self);
@@ -118,6 +119,8 @@ static VALUE ws_write(VALUE self, VALUE data) {
   return self;
 }
 
+/** Returns the number of active websocket connections (including connections
+ * that are in the process of closing down). */
 static VALUE ws_count(VALUE self) {
   ws_s* ws = get_ws(self);
   return LONG2FIX(Websocket.count(ws));
@@ -134,6 +137,19 @@ static void rb_finish_ws_task(ws_s* ws, void* arg) {
   Registry.remove((VALUE)arg);
 }
 
+/** Performs a block of code for each websocket connection. The function returns
+the block of code.
+
+The block of code should accept a single variable which is the websocket
+connection.
+
+i.e.:
+
+      def on_message data
+        msg = data.dup; # data will be overwritten once the function exists.
+        each {|ws| ws.write msg}
+      end
+ */
 static VALUE ws_each(VALUE self) {
   // requires a block to be passed
   rb_need_block();
@@ -220,7 +236,8 @@ void iodine_websocket_upgrade(struct HttpRequest* request,
 //////////////
 // Empty callbacks for default implementations.
 
-//  Please override this method and implement your own callback.
+/**  Please override this method and implement your own callback for this event.
+ */
 static VALUE empty_func(VALUE self) {
   return Qnil;
 }
@@ -232,8 +249,10 @@ recycble network buffer, not a copy! <b>Use `data.dup` before moving the data
 out of the function's scope</b> to prevent data corruption (i.e. when
 using the data within an `each` block). For example (broadcasting):
 
-        data = data.dup
-        each {|ws| ws.write data }
+      def on_message data
+        msg = data.dup; # data will be overwritten once the function exists.
+        each {|ws| ws.write msg}
+      end
 
 Please override this method and implement your own callback.
 */
