@@ -120,15 +120,14 @@ static VALUE ws_write(VALUE self, VALUE data) {
 
 static VALUE ws_count(VALUE self) {
   ws_s* ws = get_ws(self);
-  Websocket.count(ws);
-  return self;
+  return LONG2FIX(Websocket.count(ws));
 }
 
 static void rb_perform_ws_task(ws_s* ws, void* arg) {
   VALUE handler = (VALUE)Websocket.get_udata(ws);
   if (!handler)
     return;
-  RubyCaller.call2((VALUE)arg, call_proc_id, 1, (VALUE*)&arg);
+  RubyCaller.call2((VALUE)arg, call_proc_id, 1, (VALUE*)&handler);
 }
 
 static void rb_finish_ws_task(ws_s* ws, void* arg) {
