@@ -1,5 +1,7 @@
 #!/usr/bin/env ruby
 
+# this is arbitrary code that will be executed after Iodine compiles. Used for ad-hok testing.
+
 Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
 puts `rake clean`
 puts `rake compile`

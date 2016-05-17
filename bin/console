@@ -1,5 +1,7 @@
 #!/usr/bin/env ruby
 
+# this will compile Iodine and start a Ruby console with the Iodine gem loaded.
+
 Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
 puts `rake clean`
 puts `rake compile`
@@ -18,6 +20,3 @@ require "iodine"
 
 require "irb"
 IRB.start
-
-# ab -n 1000000 -c 200 -k http://127.0.0.1:3000/
-# ~/ruby/wrk/wrk -c400 -d10 -t12 http://localhost:3000/

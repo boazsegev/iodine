@@ -1,5 +1,10 @@
 #!/usr/bin/env ruby
 
+# this will compile Iodine and run an echo server.
+
+# # test using:
+# telnet localhost 3000
+
 Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
 puts `rake clean`
 puts `rake compile`
@@ -27,13 +32,11 @@ server.processes = 1
 server.busy_msg = "To many connections, try again later."
 server.protocol = EchoProtocol
 
+# test some timers and repeated events
 b = server.on_start do
   server.run_after(1000) {puts "A seconds have passed?"}
   server.run_every(1000) {puts "#{server.count} clients connected."}
-  puts "Since we have 2 timers, we have #{server.count} connections."
+  puts "We have 2 timers and #{server.count} connections."
 end
 
 server.start
-
-# # test using:
-# telnet localhost 3000

@@ -1,5 +1,11 @@
 #!/usr/bin/env ruby
 
+# this will compile Iodine and run a raw sockets broadcasting (chatroom) server.
+
+# # test using:
+# telnet localhost 3000
+
+
 Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
 puts `rake clean`
 puts `rake compile`
@@ -16,6 +22,7 @@ require "iodine"
 # require "pry"
 # Pry.start
 
+# test the upgrade protocol using the ShoooProtocol
 class ShoooProtocol
   def on_message buffer
     write "what do you mean - #{buffer.strip} ?!\n Shoo, away with you!"
@@ -23,6 +30,8 @@ class ShoooProtocol
   end
 
 end
+
+# the broadcasting protocol
 class EchoProtocol
   # `on_message` is an optional alternative to the `on_data` callback.
   # `on_message` has a 1Kb buffer that recycles itself for memory optimization.

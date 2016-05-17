@@ -17,8 +17,8 @@ Available otions:
  -t     Number of threads. Default: 1 => single worker thread (+ core thread).
  -w     Number of worker processes. Default: 1 => a single process.
  -www   Public folder for static file serving. Default: nil (none).
- -maxb  Maximum Mb per HTTP message (max body size). Default: 32 Mb.
- -maxm  Maximum Bytes per websocket message (max message size). Default: ~64Kb.
+ -maxbd  Maximum Mb per HTTP message (max body size). Default: 32 Mb.
+ -maxms  Maximum Bytes per websocket message (max message size). Default: ~64Kb.
  -ping  Websocket ping interval in seconds. Default: 45 seconds.
 
 Example:
@@ -35,11 +35,11 @@ end
 
 filename = (ARGV[-2].to_s[0] != '-' && ARGV[-1]) || "config.ru"
 app, opt = Rack::Builder.parse_file filename
-if ARGV.index('-maxb') && ARGV[ARGV.index('-maxb') + 1]
-  Iodine::Rack.max_body_size = ARGV[ARGV.index('-maxb') + 1].to_i
+if ARGV.index('-maxbd') && ARGV[ARGV.index('-maxbd') + 1]
+  Iodine::Rack.max_body_size = ARGV[ARGV.index('-maxbd') + 1].to_i
 end
-if ARGV.index('-maxm') && ARGV[ARGV.index('-maxm') + 1]
-  Iodine::Rack.max_msg_size = ARGV[ARGV.index('-maxm') + 1].to_i
+if ARGV.index('-maxms') && ARGV[ARGV.index('-maxms') + 1]
+  Iodine::Rack.max_msg_size = ARGV[ARGV.index('-maxms') + 1].to_i
 end
 if ARGV.index('-ping') && ARGV[ARGV.index('-ping') + 1]
   Iodine::Rack.ws_timeout = ARGV[ARGV.index('-ping') + 1].to_i
