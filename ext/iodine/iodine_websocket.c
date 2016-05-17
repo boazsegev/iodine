@@ -190,12 +190,10 @@ void ws_on_data(ws_s* ws, char* data, size_t length, int is_text) {
 void iodine_websocket_upgrade(struct HttpRequest* request,
                               struct HttpResponse* response,
                               VALUE handler) {
-  fprintf(stderr, "Enter Upgrade.\n");
   // make sure we have a valid handler, with the Websocket Protocol mixin.
   if (handler == Qnil || handler == Qfalse) {
     response->status = 400;
     HttpResponse.send(response);
-    fprintf(stderr, "No Handler!!!\n");
     return;
   }
   if (TYPE(handler) == T_CLASS) {
@@ -213,7 +211,6 @@ void iodine_websocket_upgrade(struct HttpRequest* request,
   // set the connection's udata
   Server.set_udata(request->server, request->sockfd, (void*)handler);
   // send upgrade response and set new protocol
-  fprintf(stderr, "calling upgrade!\n");
   websocket_upgrade(.request = request, .response = response,
                     .udata = (void*)handler, .on_close = ws_on_close,
                     .on_open = ws_on_open, .on_shutdown = ws_on_shutdown,
@@ -263,7 +260,7 @@ void Init_iodine_websocket(void) {
   // the Ruby websockets protocol class.
   rWebsocket = rb_define_module_under(rHttp, "WebsocketProtocol");
   if (rWebsocket == Qfalse)
-    fprintf(stderr, "WTF?!\n");
+    fprintf(stderr, "WTF?!\n"), exit(-1);
   // // callbacks and handlers
   rb_define_method(rWebsocket, "on_open", empty_func, 0);
   rb_define_method(rWebsocket, "on_message", def_dyn_message, 1);
