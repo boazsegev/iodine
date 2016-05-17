@@ -1,4 +1,4 @@
-#include "iodine.h"
+#include "iodine_core.h"
 #include "iodine_http.h"
 #include "iodine_websocket.h"
 #include "rb-call.h"
