@@ -70,31 +70,29 @@ callback. i.e.:
                         .on_init = on_startup);
     }
 */
-#define start_http_server(on_request_callback, http_public_folder, ...)  \
-  do {                                                                   \
-    struct HttpProtocol* protocol = HttpProtocol.create();               \
-    if ((NULL != (void*)on_request_callback))                            \
-      protocol->on_request = (on_request_callback);                      \
-    char real_public_path[PATH_MAX];                                     \
-    if ((http_public_folder) && ((char*)http_public_folder)[0] == '~' && \
-        getenv("HOME") && strlen((http_public_folder)) < PATH_MAX) {     \
-      strcpy(real_public_path, getenv("HOME"));                          \
-      strcpy(real_public_path + strlen(real_public_path),                \
-             ((char*)http_public_folder) + 1);                           \
-      protocol->public_folder = real_public_path;                        \
-    } else if ((http_public_folder))                                     \
-      protocol->public_folder =                                          \
-          realpath((http_public_folder), real_public_path);              \
-    HttpResponse.init_pool();                                            \
-    if (Server.listen((struct ServerSettings){                           \
-            .timeout = HTTP_DEFAULT_TIMEOUT,                             \
-            .busy_msg =                                                  \
-                "HTTP/1.1 503 Service Unavailable\r\n\r\nServer Busy.",  \
-            __VA_ARGS__,                                                 \
-            .protocol = (struct Protocol*)(protocol)}))                  \
-      perror("Failed to start server");                                  \
-    HttpResponse.destroy_pool();                                         \
-    HttpProtocol.destroy(protocol);                                      \
+#define start_http_server(on_request_callback, http_public_folder, ...)     \
+  do {                                                                      \
+    struct HttpProtocol* protocol = HttpProtocol.create();                  \
+    if ((NULL != (void*)on_request_callback))                               \
+      protocol->on_request = (on_request_callback);                         \
+    char real_public_path[PATH_MAX];                                        \
+    if ((http_public_folder) && ((char*)http_public_folder)[0] == '~' &&    \
+        getenv("HOME") && strlen((http_public_folder)) < PATH_MAX) {        \
+      strcpy(real_public_path, getenv("HOME"));                             \
+      strcpy(real_public_path + strlen(real_public_path),                   \
+             ((char*)http_public_folder) + 1);                              \
+      protocol->public_folder = real_public_path;                           \
+    } else if ((http_public_folder))                                        \
+      protocol->public_folder =                                             \
+          realpath((http_public_folder), real_public_path);                 \
+    HttpResponse.init_pool();                                               \
+    Server.listen((struct ServerSettings){                                  \
+        .timeout = HTTP_DEFAULT_TIMEOUT,                                    \
+        .busy_msg = "HTTP/1.1 503 Service Unavailable\r\n\r\nServer Busy.", \
+        __VA_ARGS__,                                                        \
+        .protocol = (struct Protocol*)(protocol)});                         \
+    HttpResponse.destroy_pool();                                            \
+    HttpProtocol.destroy(protocol);                                         \
   } while (0);
 
 #ifdef SSL_VERIFY_PEER
@@ -122,8 +120,7 @@ callback. i.e.:
         .protocol = (struct Protocol*)(protocol)};                          \
   };                                                                        \
   TLSServer.update_settings(&settings);                                     \
-  if (Server.listen(settings))                                              \
-    perror("Failed to start server");                                       \
+  Server.listen(settings);                                                  \
   HttpResponse.destroy_pool();                                              \
   HttpProtocol.destroy(protocol);                                           \
   }                                                                         \

@@ -11,7 +11,7 @@ Iodine is an **evented** framework with a simple API that builds off a low level
 
     That's right, Iodine isn't subject to the 1024 connection limit imposed by native Ruby and `select`/`poll` based applications.
 
-    This makes Iodine ideal for writing HTTP/2 and Websocket servers (which is the reason for it's development).
+    This makes Iodine ideal for writing HTTP/2 and Websocket servers (which is what started this whole thing).
 
 * Iodine runs **only on Linux/Unix** based systems (i.e. OS X, Ubuntu, etc'). This allows us to:
 
@@ -32,7 +32,7 @@ Iodine includes a light and fast HTTP and Websocket server written in C that was
 Using the Iodine server is easy, simply add Iodine as a gem to your Rack application:
 
 ```ruby
-# notice that the `git` is required since Iodine::Rack isn't yet officially released.
+# notice that the `git` is required since Iodine 2.0 hadn't been released just yet.
 gem 'iodine', :git => 'https://github.com/boazsegev/iodine.git'
 ```
 

@@ -413,11 +413,10 @@ static void* handle_request_in_gvl(void* _req) {
 
       // close the connection to indicate message length... bad user
       // protection
-      HttpResponse.write_header(response, "Connection", 10, "close", 5);
+      response->metadata.should_close = 1;
       response->content_length = -1;
       rb_block_call(body, each_method_id, 0, NULL, for_each_body_string,
                     (VALUE)response);
-      HttpResponse.close(response);
       // we need to call `close` in case the object is an IO / BodyProxy
       if (rb_respond_to(body, close_method_id))
         RubyCaller.call(body, close_method_id);
@@ -431,10 +430,10 @@ static void* handle_request_in_gvl(void* _req) {
   }
 
 cleanup:
-  if (rb_response)
-    Registry.remove(rb_response);
   if (response)
     HttpResponse.destroy(response);
+  if (rb_response)
+    Registry.remove(rb_response);
   Registry.remove(env);
   return 0;
 }
@@ -808,7 +807,7 @@ this method, you either send the response by setting a valid status code or
 prevent a response from being sent by setting a status code of 0 (or less).
 i.e.:
 
-    class MyProtocol
+    class MyEchoProtocol
       def on_message data
         # regular socket echo - NOT websockets.
         write data
@@ -816,7 +815,7 @@ i.e.:
     end
     server.on_http= Proc.new do |env|
       if env["HTTP_UPGRADE".freeze] =~ /echo/i.freeze
-        env['iodine.protocol'.freeze] = MyProtocol
+        env['iodine.protocol'.freeze] = MyEchoProtocol
         [0,{}, []] # no HTTP response will be sent.
       else
         [200, {"Content-Length" => "12"}, ["Welcome Home"] ]

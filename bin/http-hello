@@ -14,7 +14,7 @@ require 'rack'
 # create the server object and setup any settings we might need.
 server = Iodine::Http.new
 server.threads ||= 16
-server.processes ||= 1
+server.processes ||= 4
 server.public_folder = '~/Documents/Scratch'
 count = 2
 server.on_http= Proc.new {|env| [200, {"Content-Length".freeze => "12".freeze}, ["Hello World!".freeze]]}

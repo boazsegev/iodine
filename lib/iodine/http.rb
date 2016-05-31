@@ -10,11 +10,12 @@ class Iodine
   # In addition, the following properties are introduced:
   #
   # on_http:: set (or get) the handler for HTTP requests. This handler should behave like a Rack application object.
-  # on_websocket:: set (or get) the handler for special Websocket upgrade requests. This handler should behave like a Rack application object and return an array with four (4) objects, the last object being the connection's persistent websocket handler (see {WebsocketProtocol}).
+  #
+  # The `on_http` handler can set special `env` hash keys to "upgrade" the HTTP connection to a websocket connection or any other protocol.
   class Http
     # The WebsocketProtocol module is used as a mixin for any websocket connection, much like {Protocol} is used for generic connections.
     #
-    # When the {Iodine::Http#on_websocket} function returns a four-member array (intead of the usual Rack array, that has only three members),
+    # When the {Iodine::Http#on_http} function returns a four-member array (intead of the usual Rack array, that has only three members),
     # the fourth member will be used as a websocket connection handler and it will inherit all the methods from this module.
     #
     # <b>For some reason, the following methods do not show in the documentation:</b> The links refer to the same methods as they apply to the {Iodine::Protocol} mixin:

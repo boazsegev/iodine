@@ -241,24 +241,28 @@ void iodine_websocket_upgrade(struct HttpRequest* request,
 static VALUE empty_func(VALUE self) {
   return Qnil;
 }
-/* The `on_message(data)` callback is the main method for any websocket
-implementation.
-
-<b>NOTICE</b>: the data passed to the `on_message` callback is the actual
-recycble network buffer, not a copy! <b>Use `data.dup` before moving the data
-out of the function's scope</b> to prevent data corruption (i.e. when
-using the data within an `each` block). For example (broadcasting):
-
-      def on_message data
-        msg = data.dup; # data will be overwritten once the function exists.
-        each {|ws| ws.write msg}
-      end
-
-Please override this method and implement your own callback.
-*/
-static VALUE def_dyn_message(VALUE self, VALUE data) {
-  return Qnil;
-}
+// /* The `on_message(data)` callback is the main method for any websocket
+// implementation. It is the only required callback for a websocket handler
+// (without this handler, errors will occur).
+//
+// <b>NOTICE</b>: the data passed to the `on_message` callback is the actual
+// recycble network buffer, not a copy! <b>Use `data.dup` before moving the data
+// out of the function's scope</b> to prevent data corruption (i.e. when
+// using the data within an `each` block). For example (broadcasting):
+//
+//       def on_message data
+//         msg = data.dup; # data will be overwritten once the function exists.
+//         each {|ws| ws.write msg}
+//       end
+//
+// Please override this method and implement your own callback.
+// */
+// static VALUE def_dyn_message(VALUE self, VALUE data) {
+//   fprintf(stderr,
+//           "WARNING: websocket handler on_message override missing or "
+//           "bypassed.\n");
+//   return Qnil;
+// }
 
 /////////////////////////////
 // initialize the class and the whole of the Iodine/http library
@@ -282,7 +286,7 @@ void Init_iodine_websocket(void) {
     fprintf(stderr, "WTF?!\n"), exit(-1);
   // // callbacks and handlers
   rb_define_method(rWebsocket, "on_open", empty_func, 0);
-  rb_define_method(rWebsocket, "on_message", def_dyn_message, 1);
+  // rb_define_method(rWebsocket, "on_message", def_dyn_message, 1);
   rb_define_method(rWebsocket, "on_shutdown", empty_func, 0);
   rb_define_method(rWebsocket, "on_close", empty_func, 0);
   // // helper methods
