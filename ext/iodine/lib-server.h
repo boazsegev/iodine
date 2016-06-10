@@ -19,6 +19,7 @@ Feel free to copy, use and enjoy according to the license provided.
 /* lib server is based off and requires the following libraries: */
 #include "libreact.h"
 #include "libasync.h"
+#include "libsock.h"
 
 /** \file
 ## Lib-Server - a dynamic protocol server library
@@ -85,10 +86,10 @@ Use:
 
 /* The following types are defined for the userspace of this library: */
 
-struct Server;                    /** used internally. no public data exposed */
-typedef struct Server* server_pt; /** a pointer to a server object */
-struct ServerSettings;            /** sets up the server's behavior */
-struct Protocol;                  /** controls connection events */
+struct Server; /** used internally. no public data exposed */
+typedef const struct Server* server_pt; /** a pointer to a server object */
+struct ServerSettings;                  /** sets up the server's behavior */
+struct Protocol;                        /** controls connection events */
 
 /**
 The start_server(...) macro is a shortcut that allows to easily create a
@@ -405,8 +406,25 @@ extern const struct Server__API___ {
 
   The file will be buffered to the socket chunk by chunk, so that memory
   consumption is capped at ~ 64Kb.
+
+  Returns -1 and closes the file on error. Returns 0 on success.
   */
   ssize_t (*sendfile)(server_pt srv, uint64_t connection_id, FILE* file);
+  /** Submits a `libsock` packet to the `libsock` socket buffer. See `libsock`
+  for more details.
+
+  returns 0 on success. success means that the data is in a buffer waiting to
+  be written. If the socket is forced to close at this point, the buffer will be
+  destroyed (never sent).
+
+  On error, returns -1. Returns 0 on success
+
+  Packet memory is always managed by the server (on error, it will be correctly
+  freed).
+  */
+  ssize_t (*send_packet)(server_pt srv,
+                         uint64_t connection_id,
+                         sock_packet_s* packet);
 
   /****************************************************************************
   * Tasks + Async

@@ -5,7 +5,7 @@ license: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #ifndef LIBSOCK
-#define LIBSOCK "0.0.1"
+#define LIBSOCK "0.0.3"
 
 /** \file
 The libsock is a non-blocking socket helper library, using a user level buffer,
@@ -74,6 +74,8 @@ int sock_accept(struct Reactor* owner, int server_fd);
 client connection to the address requested.
 
 Returns the new file descriptor fd. Retruns -1 on error.
+
+NOT IMPLEMENTED (yet)
 */
 int sock_connect(struct Reactor* owner, char* address, char* port);
 
@@ -162,16 +164,16 @@ struct SockWriteOpt {
   const void* buffer;
   /** The length (size) of the buffer. irrelevant for file pointers. */
   size_t length;
-  /** The user land buffer will recieve ownership of the buffer (forced as
+  /** The user land buffer will receive ownership of the buffer (forced as
    * TRUE
    * when `file` is set). */
   unsigned move : 1;
-  /** for internal use */
+  /** The packet will be sent as soon as possible. */
   unsigned urgent : 1;
   /** The buffer points to a file pointer: `FILE *`  */
   unsigned file : 1;
   /** for internal use */
-  unsigned merge : 1;
+  unsigned rsv : 1;
 };
 /**
 `sock_write2_fn` is the actual function behind the macro `sock_write2`.
@@ -180,8 +182,8 @@ ssize_t sock_write2_fn(struct SockWriteOpt options);
 /**
 `sock_write2` is similar to `sock_write`, except special properties can be set.
 
-The number of bytes written to the internal buffer will be returned (should be
-all the data). On error, -1 will be returned.
+On error, -1 will be returned. Otherwise returns 0. All the bytes are
+transferred to the socket's user level buffer.
 */
 #define sock_write2(...) sock_write2_fn((struct SockWriteOpt){__VA_ARGS__})
 /**
@@ -227,31 +229,27 @@ This API allows
 #ifndef BUFFER_PACKET_SIZE
 #define BUFFER_PACKET_SIZE (1024 * 17)
 #endif
-/** File data is sent a chunk at a time. This is a chunk size.
-
-16Kb allows for 1Kb of protocol specific padding, in case of a transport layer.
-*/
 #ifndef BUFFER_FILE_READ_SIZE
-#define BUFFER_FILE_READ_SIZE (1024 * 16)
+#define BUFFER_FILE_READ_SIZE (BUFFER_PACKET_SIZE - 1024)
 #endif
 
 /**
-Buffer packets - can be used for directly writing individual or multiple
-packets to the buffer instead of using the `sock_write(2)` helpers.
+Buffer packets - can be used for directly writing individual or multiple packets
+to the buffer instead of using the `sock_write(2)` helper functions / macros.
 
 See `sock_checkout_packet` and `sock_send_packet` for more information.
 
-Unused Packets can be freed using `free`.
+Unused Packets that were checked out using the `sock_checkout_packet` function,
+should never be freed using `free` and should always use the `sock_free_packet`
+function.
 */
-struct Packet {
+typedef struct sock_packet_s {
   ssize_t length;
   void* buffer;
-  /** pre allocated memory. */
-  char internal_memory[BUFFER_PACKET_SIZE];
   /** Metadata about the packet. */
-  struct PacketMetadata {
+  struct {
     /** allows the linking of a number of packets together. */
-    struct Packet* next;
+    struct sock_packet_s* next;
     /** sets whether a packet can be inserted before this packet without
      * interrupting the communication flow. */
     unsigned can_interrupt : 1;
@@ -264,36 +262,46 @@ struct Packet {
     /** sets whether this packet (or packet chain) should be inserted in before
      * the first `can_interrupt` packet, or at the end of the queu. */
     unsigned urgent : 1;
+    /** Reserved for internal use - (memory shifting flag)*/
+    unsigned nested : 1;
     /** Reserved for future use. */
-    unsigned rsrv : 4;
+    unsigned rsrv : 3;
   } metadata;
-};
+} sock_packet_s;
 
 /**
-Checks out a `struct Packet` from the packet pool, transfering the ownership
-of
-the memory to the calling function. returns NULL if the pool was empty and
+Checks out a `sock_packet_s` from the packet pool, transfering the
+ownership
+of the memory to the calling function. returns NULL if the pool was empty and
 memory allocation had failed.
-*/
-struct Packet* sock_checkout_packet(void);
-/**
-Attches a packet to a socket's output buffer and calls `sock_flush` for the
-socket. If an error occurs, the packet's memory will **not** be released.
 
-Returns -1 (and the ownership of the packet) on error. Returns 0 (and takes
-ownership of the Packet) on success.
+Every checked out buffer packet comes with an attached buffer of
+BUFFER_PACKET_SIZE bytes. This buffer is accessible using the `packet->buffer`
+pointer (which can be safely overwritten to point to an external buffer).
+
+This attached buffer is safely and automatically freed or returned to the memory
+pool once `sock_send_packet` or `sock_free_packet` are called.
 */
-ssize_t sock_send_packet(int fd, struct Packet* packet);
+sock_packet_s* sock_checkout_packet(void);
+/**
+Attaches a packet to a socket's output buffer and calls `sock_flush` for the
+socket.
+
+The packet's memory is **always** handled by the `sock_send_packet` function
+(even on error).
+
+Returns -1 on error. Returns 0 on success.
+*/
+ssize_t sock_send_packet(int fd, sock_packet_s* packet);
 
 /**
 Use `sock_free_packet` to free unused packets that were checked-out using
 `sock_checkout_packet`.
 
-It's also possible to use `free`, but then the Packet pooling and resource
-management (freeing any external memory attached or closing any `FILE` pointers)
-will be ignored for that packet.
+NEVER use `free`, for any packet checked out using the pool management function
+`sock_checkout_packet`.
 */
-void sock_free_packet(struct Packet* packet);
+void sock_free_packet(sock_packet_s* packet);
 
 /* *****************************************************************************
 TLC - Transport Layer Callbacks.
@@ -309,7 +317,7 @@ struct sockTLC {
   void* udata;
   /** TLC encoding function. Should return 0 on success and -1 on error. Should
    * edit the Packet directly.*/
-  int (*wrap)(int fd, struct Packet* packet, void* udata);
+  int (*wrap)(int fd, sock_packet_s* packet, void* udata);
   /** TLC decoding function. Should return 0 on success and -1 on error. Should
    * edit the buffer and the buffer length directly.*/
   int (*unwrap)(int fd,

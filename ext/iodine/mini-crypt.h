@@ -5,7 +5,8 @@ license: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #ifndef MINI_CRYPT
-#define MINI_CRYPT "0.1.0"
+#define MINI_CRYPT "0.1.1"
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 
@@ -129,12 +130,54 @@ typedef struct {
   unsigned type_512 : 1;
 } sha2_s;
 
+/**
+The `xor_key_s` type is a struct containing XOR key data. This will be used for
+all the encryption/decription functions that use XOR key data, such as the
+`MiniCrypt.xor_crypt` function.
+*/
+typedef struct xor_key_s {
+  /** A pointer to a string containing the key. */
+  uint8_t* key;
+  /** The length of the key string */
+  size_t length;
+  /**
+  The vector / position from which to start the next encryption/decryption.
+
+  This value is automatically advanced when encrypting / decrypting data.
+  */
+  size_t position;
+  /**
+  An optional callback to be called whenever the XOR key finished a cycle and
+  the `position` is being reset to 0.
+
+  The function should return 0 on sucess and -1 on failure. Failue will cause
+  endryption/decryption to fail.
+  */
+  int (*on_cycle)(struct xor_key_s* key);
+  /** Opaque user data. */
+  void* udata;
+} xor_key_s;
+
+/**
+File dump data.
+
+This struct (or, a pointer to this struct) is returned by the `MiniCrypt.fdump`
+function on success.
+
+To free the pointer returned, simply call `free`.
+*/
+typedef struct {
+  size_t length;
+  char data[];
+} fdump_s;
+
 /*******************************************************************************
 API Gateway (the MiniCrypt global object)
 */
 
 /**
-The MiniCrypt global object (member of the struct MiniCrypt__API___) is the API
+The MiniCrypt global object (member of the struct MiniCrypt__API___) is the
+API
 namespace gateway fot the MiniCrypt library.
 
 For example:
@@ -244,6 +287,88 @@ extern struct MiniCrypt__API___ {
   */
   int (*base64_decode)(char* target, char* encoded, int base64_len);
 
+  /*****************************************************************************
+  Hex Conversion
+  */
+
+  /**
+  Returns 1 if the string is HEX encoded (no non-valid hex values). Returns 0 if
+  it isn't.
+  */
+  int (*is_hex)(const char* string, size_t length);
+  /**
+  This will convert the string (byte stream) to a Hex string. This is not
+  cryptography, just conversion for pretty print.
+
+  The target buffer MUST have enough room for the expected data. The expected
+  data is double the length of the string + 1 byte for the NULL terminator
+  byte.
+
+  A NULL byte will be appended to the target buffer. The function will return
+  the number of bytes written to the target buffer.
+
+  Returns the number of bytes actually written to the target buffer (excluding
+  the NULL terminator byte).
+  */
+  int (*str2hex)(char* target, const char* string, size_t length);
+
+  /**
+  This will convert a Hex string to a byte string. This is not cryptography,
+  just conversion for pretty print.
+
+  The target buffer MUST have enough room for the expected data. The expected
+  data is half the length of the Hex string + 1 byte for the NULL terminator
+  byte.
+
+  A NULL byte will be appended to the target buffer. The function will return
+  the number of bytes written to the target buffer.
+
+  If the target buffer is NULL, the encoded string will be destructively
+  edited
+  and the decoded data will be placed in the original string's buffer.
+
+  Returns the number of bytes actually written to the target buffer (excluding
+  the NULL terminator byte).
+  */
+  int (*hex2str)(char* target, char* hex, size_t length);
+
+  /*****************************************************************************
+  Other helper functions
+  */
+
+  /**
+  Uses an XOR key `xor_key_s` to encrypt / decrypt the data provided.
+
+  Encryption/decryption can be destructive (the target and the source can point
+  to the same object).
+
+  The key's `on_cycle` callback option should be utilized to er-calculate the
+  key every cycle. Otherwise, XOR encryption should be avoided.
+
+  A more secure encryption would be easier to implement using seperate
+  `xor_key_s` objects for encryption and decription.
+
+  If `target` is NULL, the source will be used as the target (destructive mode).
+
+  Returns -1 on error and 0 on success.
+  */
+  int (*xor_crypt)(xor_key_s* key,
+                   void* target,
+                   const void* source,
+                   size_t length);
+
+  /**
+  Allocates memory and dumps the whole file into the memory allocated.
+  Remember
+  to call `free` when done.
+
+  Returns the number of bytes allocated. On error, returns 0 and sets the
+  container pointer to NULL.
+
+  This function has some Unix specific properties that resolve links and user
+  folder referencing.
+  */
+  fdump_s* (*fdump)(const char* file_path, size_t size_limit);
 } MiniCrypt;
 
 /* end include gate */

@@ -455,7 +455,7 @@ The main class - Iodine::Http
 
 // called when the server starts up. Saves the server object to the
 // instance.
-static void on_init(struct Server* server) {
+static void on_init(server_pt server) {
   VALUE self = ((VALUE)Server.settings(server)->udata);
   // save the updated on_request  as a global value on the server, using
   // fd=0

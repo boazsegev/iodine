@@ -8,6 +8,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
+#include "lib-server.h"
 
 #ifndef HTTP_REQUEST_H
 #define HTTP_REQUEST_H
@@ -77,11 +78,9 @@ shouldn't be performed by the developer (unless fixing a bug in the library).
 */
 struct HttpRequest {
   /** The server initiating that forwarded the request. */
-  struct Server* server;
+  server_pt server;
   /** The socket waiting on the response */
   uint64_t sockfd;
-  /** buffers the head of the request (not the body) */
-  char buffer[HTTP_HEAD_MAX_SIZE];
   /**
   points to the HTTP method name's location within the buffer (actually,
   position 0). */
@@ -120,6 +119,8 @@ struct HttpRequest {
     /** body size count (for parser validation) */
     unsigned int bd_rcved;
   } private;
+  /** buffers the head of the request (not the body) */
+  char buffer[HTTP_HEAD_MAX_SIZE];
 };
 
 #endif /* HTTP_PROTOCOL_H */

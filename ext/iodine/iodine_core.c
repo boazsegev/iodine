@@ -98,7 +98,7 @@ They are attached to both the core (Iodine instance objects) and the protocol(s)
 
 // performs pending async protocol tasks.
 // initiated by Server.each
-static void perform_each_task(struct Server* srv, uint64_t fd, void* task) {
+static void perform_each_task(server_pt srv, uint64_t fd, void* task) {
   void* handler = Server.get_udata(srv, fd);
   fprintf(stderr, "performing task for %llu, handler: %p\n", fd, handler);
   if (handler)
@@ -106,7 +106,7 @@ static void perform_each_task(struct Server* srv, uint64_t fd, void* task) {
 }
 
 // removes a VALUE from the registry, in case a task ISN'T performed
-static void each_finished(struct Server* srv, uint64_t fd, void* task) {
+static void each_finished(server_pt srv, uint64_t fd, void* task) {
   Registry.remove((VALUE)task);
 }
 
@@ -127,16 +127,14 @@ static void perform_repeated_timer(void* task) {
 
 // performs pending protocol task while managing it's Ruby registry.
 // initiated by Server.defer
-static void perform_protocol_async(struct Server* srv,
-                                   uint64_t fd,
-                                   void* task) {
+static void perform_protocol_async(server_pt srv, uint64_t fd, void* task) {
   RubyCaller.call((VALUE)task, call_proc_id);
   Registry.remove((VALUE)task);
 }
 
 // // performs pending protocol task while managing it's Ruby registry.
 // // initiated by each
-// static void each_protocol_async(struct Server* srv, uint64_t fd, void* task)
+// static void each_protocol_async(server_pt srv, uint64_t fd, void* task)
 // {
 //   void* handler = Server.get_udata(srv, fd);
 //   if (handler)
@@ -170,7 +168,7 @@ static VALUE run_async(VALUE self) {
   // requires a block to be passed
   rb_need_block();
   // get the server object
-  struct Server* srv = get_server(self);
+  server_pt srv = get_server(self);
   if (!srv)
     rb_raise(rb_eRuntimeError, "Server isn't running.");
   // requires multi-threading
@@ -206,7 +204,7 @@ static VALUE run_after(VALUE self, VALUE milliseconds) {
   // milliseconds must be a Fixnum
   Check_Type(milliseconds, T_FIXNUM);
   // get the server object
-  struct Server* srv = get_server(self);
+  server_pt srv = get_server(self);
   if (!srv)
     rb_raise(rb_eRuntimeError, "Server isn't running.");
   // get the block
@@ -250,7 +248,7 @@ static VALUE run_every(VALUE self, VALUE milliseconds) {
   // milliseconds must be a Fixnum
   Check_Type(milliseconds, T_FIXNUM);
   // get the server object
-  struct Server* srv = get_server(self);
+  server_pt srv = get_server(self);
   if (!srv)
     rb_raise(rb_eRuntimeError, "Server isn't running.");
   // get the block
@@ -290,7 +288,7 @@ static VALUE run_protocol_task(VALUE self) {
   // requires a block to be passed
   rb_need_block();
   // get the server object
-  struct Server* srv = get_server(self);
+  server_pt srv = get_server(self);
   // requires multi-threading
   if (Server.settings(srv)->threads < 0) {
     rb_warn(
@@ -324,7 +322,7 @@ static VALUE run_each(int argc, VALUE* argv, VALUE self) {
   // requires a block to be passed
   rb_need_block();
   // get the server object
-  struct Server* srv = get_server(self);
+  server_pt srv = get_server(self);
   if (!srv) {
     rb_warn("No Server instance found!.");
     return Qnil;
@@ -357,7 +355,7 @@ static VALUE dyn_run_each(VALUE self) {
   // requires a block to be passed
   rb_need_block();
   // get the server object
-  struct Server* srv = get_server(self);
+  server_pt srv = get_server(self);
   if (!srv)
     return Qnil;
   // requires multi-threading
@@ -436,7 +434,7 @@ Use:
         write "the data"
 */
 static VALUE srv_write(VALUE self, VALUE data) {
-  struct Server* srv = get_server(self);
+  server_pt srv = get_server(self);
   uint64_t fd = NUM2ULL(rb_ivar_get(self, fd_var_id));
   return LONG2FIX(Server.write(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data)));
 }
@@ -465,7 +463,7 @@ being sent, but must be sent as soon as possible.
 
 */
 static VALUE srv_write_urgent(VALUE self, VALUE data) {
-  struct Server* srv = get_server(self);
+  server_pt srv = get_server(self);
   uint64_t fd = NUM2ULL(rb_ivar_get(self, fd_var_id));
   return LONG2FIX(
       Server.write_urgent(srv, fd, RSTRING_PTR(data), RSTRING_LEN(data)));
@@ -528,7 +526,7 @@ static VALUE srv_read(int argc, VALUE* argv, VALUE self) {
       rb_str_resize(buffer, (len = 1024));
     str = buffer;
   }
-  struct Server* srv = get_server(self);
+  server_pt srv = get_server(self);
   ssize_t in = Server.read(srv, fd, RSTRING_PTR(str), len);
   // make sure it's binary encoded
   rb_enc_associate_index(str, BinaryEncodingIndex);
@@ -552,7 +550,7 @@ If there is an internal write buffer with pending data to be sent (see
 the data was sent.
  */
 static VALUE srv_close(VALUE self, VALUE data) {
-  struct Server* srv = get_server(self);
+  server_pt srv = get_server(self);
   uint64_t fd = NUM2ULL(rb_ivar_get(self, fd_var_id));
   Server.close(srv, fd);
   return Qnil;
@@ -579,7 +577,7 @@ Or:
 static VALUE srv_upgrade(VALUE self, VALUE protocol) {
   if (protocol == Qnil)
     return Qnil;
-  struct Server* srv = get_server(self);
+  server_pt srv = get_server(self);
   uint64_t fd = NUM2ULL(rb_ivar_get(self, fd_var_id));
   // include the rDynProtocol within the object.
   if (TYPE(protocol) == T_CLASS) {
@@ -627,7 +625,7 @@ static VALUE def_dyn_message(VALUE self, VALUE data) {
 }
 //  Feel free to override this method and implement your own callback.
 static VALUE no_ping_func(VALUE self) {
-  struct Server* srv = get_server(self);
+  server_pt srv = get_server(self);
   uint64_t fd = NUM2ULL(rb_ivar_get(self, fd_var_id));
   // only close if the main code (on_data / task) isn't running.
   if (!Server.is_busy(srv, fd))
@@ -673,13 +671,13 @@ static void* dyn_on_open_safe(void* data) {
 }
 
 // a new connection - registers a new protocol object and forwards the event.
-static void dyn_open(struct Server* server, uint64_t fd) {
+static void dyn_open(server_pt server, uint64_t fd) {
   struct on_open_data_s args = {.srv = server, .fd = fd};
   RubyCaller.call_c(dyn_on_open_safe, &args);
 }
 
 // the on_data implementation
-static void dyn_data(struct Server* server, uint64_t fd) {
+static void dyn_data(server_pt server, uint64_t fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
@@ -687,7 +685,7 @@ static void dyn_data(struct Server* server, uint64_t fd) {
 }
 
 // calls the ping callback
-static void dyn_ping(struct Server* server, uint64_t fd) {
+static void dyn_ping(server_pt server, uint64_t fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
@@ -695,7 +693,7 @@ static void dyn_ping(struct Server* server, uint64_t fd) {
 }
 
 // calls the on_shutdown callback
-static void dyn_shutdown(struct Server* server, uint64_t fd) {
+static void dyn_shutdown(server_pt server, uint64_t fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
@@ -703,7 +701,7 @@ static void dyn_shutdown(struct Server* server, uint64_t fd) {
 }
 
 // calls the on_close callback and de-registers the connection
-static void dyn_close(struct Server* server, uint64_t fd) {
+static void dyn_close(server_pt server, uint64_t fd) {
   VALUE protocol = (VALUE)Server.get_udata(server, fd);
   if (!protocol)
     return;
@@ -789,7 +787,7 @@ static VALUE on_start(VALUE self) {  // requires a block to be passed
 }
 
 // called when the server starts up. Saves the server object to the instance.
-static void on_init(struct Server* server) {
+static void on_init(server_pt server) {
   VALUE core_instance = (VALUE)Server.settings(server)->udata;
   // save the updated protocol class as a global value on the server, using fd=0
   Server.set_udata(server, 0,
@@ -812,7 +810,7 @@ static void on_init(struct Server* server) {
 }
 
 // called when server is idling
-void on_idle_server_callback(struct Server* srv) {
+void on_idle_server_callback(server_pt srv) {
   // TODO: implement on_idle support
   // RubyCaller.call((VALUE)Server.get_udata(srv, 0), idle_func_id);
 }
