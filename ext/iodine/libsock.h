@@ -5,7 +5,7 @@ license: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #ifndef LIBSOCK
-#define LIBSOCK "0.0.4"
+#define LIBSOCK "0.0.5"
 
 /** \file
 The libsock is a non-blocking socket helper library, using a user level buffer,
@@ -28,13 +28,16 @@ This information is also useful when implementing read / write hooks.
 */
 #ifndef BUFFER_PACKET_SIZE
 #define BUFFER_PACKET_SIZE \
-  (1024 * 32) /* When using sendfile, consider lowering this value */
+  (1024 * 16) /* Use 32 Kb. With sendfile, 16 Kb might be better. */
 #endif
 #ifndef BUFFER_FILE_READ_SIZE
 #define BUFFER_FILE_READ_SIZE BUFFER_PACKET_SIZE
 #endif
-#ifndef BUFFER_MAX_PACKET_POOL
-#define BUFFER_MAX_PACKET_POOL 64
+#ifndef BUFFER_PACKET_POOL
+#define BUFFER_PACKET_POOL 248 /* hard limit unless BUFFER_ALLOW_MALLOC */
+#endif
+#ifndef BUFFER_ALLOW_MALLOC
+#define BUFFER_ALLOW_MALLOC 0
 #endif
 
 /* *****************************************************************************
@@ -56,7 +59,7 @@ int sock_set_non_block(int fd);
 
 /**
 Gets the maximum number of file descriptors this process can be allowed to
-access.
+access (== maximum fd value + 1).
 
 If the "soft" limit is lower then the "hard" limit, the process's limits will be
 extended to the allowed "hard" limit.
@@ -124,7 +127,7 @@ Returns -1 on error and 0 on success.
 int sock_attach(struct Reactor* owner, int fd);
 
 /**
-Clears a socket state data and buffer.
+Clears a socket state data and buffer and sets it's state to "disconnected".
 
 Use this function after the socket was closed remotely or without using the
 `sock_API`.
@@ -179,14 +182,15 @@ typedef struct {
   const void* buffer;
   /** The length (size) of the buffer. irrelevant for file pointers. */
   size_t length;
+  /** Starting point offset, when the buffer is a file
+  * (see `sock_write_info_s.is_fd`). */
+  off_t offset;
   /** The user land buffer will receive ownership of the buffer (forced as
    * TRUE
    * when `file` is set). */
   unsigned move : 1;
   /** The packet will be sent as soon as possible. */
   unsigned urgent : 1;
-  /** The buffer points to a file pointer: `FILE *`  */
-  unsigned file : 1;
   /** The buffer contains the value of a file descriptor int - casting, not
    * pointing, i.e.: `.buffer = (void*)fd;` */
   unsigned is_fd : 1;
@@ -215,6 +219,15 @@ the connection is closed.
 automatically when the socket is ready.
 */
 ssize_t sock_flush(int fd);
+/**
+`sock_flush_strong` performs the same action as `sock_flush` but returns only
+after all the data was sent. This is an "active" wait, polling isn't performed.
+*/
+void sock_flush_strong(int fd);
+/**
+Calls `sock_flush` for each file descriptor that's buffer isn't empty.
+*/
+void sock_flush_all(void);
 /**
 `sock_close` marks the connection for disconnection once all the data was
 sent.
@@ -257,14 +270,18 @@ typedef struct sock_packet_s {
   struct {
     /** allows the linking of a number of packets together. */
     struct sock_packet_s* next;
+    /** Starting point offset, when the buffer is a file (see
+     * `sock_packet_s.metadata.is_fd`). */
+    off_t offset;
     /** sets whether a packet can be inserted before this packet without
      * interrupting the communication flow. */
     unsigned can_interrupt : 1;
     /** sets whether a packet's buffer contains a file descriptor - casting, not
      * pointing, i.e.: `packet->buffer = (void*)fd;` */
     unsigned is_fd : 1;
-    /** sets whether a packet's buffer is of type `FILE *`. */
-    unsigned is_file : 1;
+    /** Keeps the `FILE *` or fd open - avoids automatically closing the file.
+     */
+    unsigned keep_open : 1;
     /** sets whether a packet's buffer is pre-allocated (references the
      * `internal_memory`) or whether the data is allocated using `malloc` and
      * should be freed. */
@@ -275,7 +292,8 @@ typedef struct sock_packet_s {
     /** Reserved for internal use - (memory shifting flag)*/
     unsigned internal_flag : 1;
     /** Reserved for future use. */
-    unsigned rsrv : 2;
+    unsigned rsrv : 1;
+    /**/
   } metadata;
 } sock_packet_s;
 
@@ -320,9 +338,8 @@ Experimental
 */
 
 /**
-This struct is used for setting a Transport Layer Callback that will replace
-the `sock_write2` and `sock_read` implementations for the requested socket.
- */
+The following struct is used for setting a the read/write hooks that will
+replace the default system calls to `recv` and `write`. */
 typedef struct sock_rw_hook_s {
   /** Implement reading from a file descriptor. Should behave like the file
    * system `read` call, including the setup or errno to EAGAIN / EWOULDBLOCK.*/
@@ -331,7 +348,7 @@ typedef struct sock_rw_hook_s {
    * `write` call.*/
   ssize_t (*write)(int fd, const void* buf, size_t count);
   /** The `on_clear` callback is called when the socket data is cleared, ideally
-   * when the connection is closed, allowing for dynamic sock_tlc_s memory
+   * when the connection is closed, allowing for dynamic sock_rw_hook_s memory
    * management.
    *
    * The `on_clear` callback is called within the socket's lock (mutex),
@@ -342,13 +359,13 @@ typedef struct sock_rw_hook_s {
 } sock_rw_hook_s;
 
 /* *****************************************************************************
-TLC implementation
+RW hooks implementation
 */
 
-/** Gets a socket TLC chain. */
+/** Gets a socket hook state (a pointer to the struct). */
 struct sock_rw_hook_s* sock_rw_hook_get(int fd);
 
-/** Sets a socket TLC chain. */
-int sock_rw_hook_set(int fd, struct sock_rw_hook_s* tlc);
+/** Sets a socket hook state (a pointer to the struct). */
+int sock_rw_hook_set(int fd, struct sock_rw_hook_s* rw_hooks);
 
 #endif /* LIBSOCK */

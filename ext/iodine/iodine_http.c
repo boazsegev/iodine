@@ -301,6 +301,11 @@ static void* handle_request_in_gvl(void* _req) {
     goto cleanup;
   }
   rb_response = RubyCaller.call2(rb_response, call_proc_id, 1, &env);
+  if (rb_response == Qnil || (void*)rb_response == NULL ||
+      rb_response == Qfalse) {
+    rb_response = 0;
+    goto cleanup;
+  }
   Registry.add(rb_response);
   /////////////// we now have the response object ready. Time to work...
 

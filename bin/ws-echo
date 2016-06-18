@@ -26,7 +26,7 @@ class WSEcho
     puts "We have a websocket connection"
   end
   def on_close
-    puts "Bye Bye... only #{ws_count} left..."
+    puts "Bye Bye... only #{count} left..."
   end
   def on_shutdown
     puts "I'm shutting down #{self}"

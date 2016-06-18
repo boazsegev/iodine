@@ -5,17 +5,8 @@ license: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #ifndef MINI_CRYPT
-#define MINI_CRYPT "0.1.1"
 
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-
-/** \file
+/**
 The MiniCrypt library supplies the following, basic, cryptographic functions:
 
 - SHA-1 hashing (considered less secure, use SHA-2/SHA-3 instead).
@@ -41,8 +32,18 @@ All functions will be available under the MiniCrypt global object, i.e.:
 
 
 */
+#define MINI_CRYPT "0.1.1"
 
-/*******************************************************************************
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <time.h>
+
+/* *****************************************************************************
 Helper types / structs
 */
 
@@ -176,14 +177,16 @@ typedef struct {
   char data[];
 } fdump_s;
 
-/*******************************************************************************
+/* *****************************************************************************
 API Gateway (the MiniCrypt global object)
 */
 
 /**
 The MiniCrypt global object (member of the struct MiniCrypt__API___) is the
-API
-namespace gateway fot the MiniCrypt library.
+API namespace gateway fot the MiniCrypt library.
+
+The MiniCrypt library supplies basic cryptographic functions and helper
+functions. It shouldn't be used for actual data security.
 
 For example:
 
@@ -196,7 +199,7 @@ For example:
 
 */
 extern struct MiniCrypt__API___ {
-  /*****************************************************************************
+  /* ***************************************************************************
   SHA-1 hashing
   */
 
@@ -217,7 +220,7 @@ extern struct MiniCrypt__API___ {
   */
   char* (*sha1_result)(sha1_s* s);
 
-  /*****************************************************************************
+  /* ***************************************************************************
   SHA-2 hashing
   */
 
@@ -249,7 +252,7 @@ extern struct MiniCrypt__API___ {
   */
   char* (*sha2_result)(sha2_s* s);
 
-  /*****************************************************************************
+  /* ***************************************************************************
   Base64 encoding
   */
 
@@ -292,7 +295,7 @@ extern struct MiniCrypt__API___ {
   */
   int (*base64_decode)(char* target, char* encoded, int base64_len);
 
-  /*****************************************************************************
+  /* ***************************************************************************
   Hex Conversion
   */
 
@@ -337,8 +340,8 @@ extern struct MiniCrypt__API___ {
   */
   int (*hex2str)(char* target, char* hex, size_t length);
 
-  /*****************************************************************************
-  Other helper functions
+  /* ***************************************************************************
+  XOR encryption
   */
 
   /**
@@ -362,6 +365,10 @@ extern struct MiniCrypt__API___ {
                    const void* source,
                    size_t length);
 
+  /* ***************************************************************************
+  Other helper functions
+  */
+
   /**
   Allocates memory and dumps the whole file into the memory allocated.
   Remember
@@ -374,6 +381,14 @@ extern struct MiniCrypt__API___ {
   folder referencing.
   */
   fdump_s* (*fdump)(const char* file_path, size_t size_limit);
+  /**
+  A faster (yet less localized) alternative to `gmtime_r`.
+
+  See the libc `gmtime_r` documentation for details.
+
+  Falls back to `gmtime_r` for dates before epoch.
+  */
+  struct tm* (*gmtime)(const time_t* timer, struct tm* tmbuf);
 } MiniCrypt;
 
 /* end include gate */

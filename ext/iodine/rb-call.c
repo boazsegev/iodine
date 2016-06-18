@@ -52,7 +52,7 @@ static void* handle_exception(void* _) {
     rb_backtrace();
     rb_set_errinfo(Qnil);
   }
-  return (void*)exc;
+  return (void*)Qnil;
 }
 
 ////////////////////////////////////////////////////////////////////////////

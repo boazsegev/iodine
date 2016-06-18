@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <stdatomic.h>
 #include "libsock.h"
+#include "mini-crypt.h"
 
 /******************************************************************************
 Function declerations.
@@ -126,7 +127,7 @@ static int send_response(struct HttpResponse*);
 /* used by `send_response` and others... */
 static sock_packet_s* prep_headers(struct HttpResponse* response);
 static int send_headers(struct HttpResponse*, sock_packet_s*);
-
+static size_t write_date_data(char* target, struct tm* tmbuf);
 /**
 Sends the headers (if they weren't previously sent) and writes the data to the
 underlying socket.
@@ -171,13 +172,14 @@ the function returns 0.
 */
 static int req_sendfile(struct HttpResponse* response,
                         int source_fd,
+                        off_t offset,
                         size_t length);
 /**
 Closes the connection.
 */
 static void close_response(struct HttpResponse*);
 
-/******************************************************************************
+/** ****************************************************************************
 The API gateway
 */
 struct HttpResponseClass HttpResponse = {
@@ -201,6 +203,13 @@ struct HttpResponseClass HttpResponse = {
     .close = close_response,
 };
 
+/**
+Alternative to gmtime
+*/
+
+// static char* DAYS[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+// static char * Months = {  "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
+// "Aug", "Sep", "Oct", "Nov", "Dec"};
 /******************************************************************************
 The response object pool.
 */
@@ -330,8 +339,14 @@ static void reset(struct HttpResponse* response, struct HttpRequest* request) {
           (request && request->connection &&
            (strcasecmp(request->connection, "close") == 0)),
       .metadata.packet = response->metadata.packet};
-  if (response->metadata.packet == NULL)
+  while (response->metadata.packet == NULL) {
     response->metadata.packet = sock_checkout_packet();
+    if (response->metadata.packet == NULL) {
+      // fprintf(stderr, "==== Response cycle\n");
+      sock_flush_all();
+      sched_yield();
+    }
+  }
   response->metadata.headers_pos =
       response->metadata.packet->buffer + HTTP_HEADER_START;
 
@@ -573,6 +588,56 @@ static int send_response(struct HttpResponse* response) {
   //           response->header_buffer + i);
   // }
 };
+static char* DAY_NAMES[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+static char* MONTH_NAMES[] = {"Jan ", "Feb ", "Mar ", "Apr ", "May ", "Jun ",
+                              "Jul ", "Aug ", "Sep ", "Oct ", "Nov ", "Dec "};
+static const char* GMT_STR = "GMT";
+static size_t write_date_data(char* target, struct tm* tmbuf) {
+  char* pos = target;
+  uint16_t tmp;
+  *(uint64_t*)pos = *((uint64_t*)DAY_NAMES[tmbuf->tm_wday]);
+  pos[3] = ',';
+  pos[4] = ' ';
+  pos += 5;
+  if (tmbuf->tm_mday < 10) {
+    *pos = '0' + tmbuf->tm_mday;
+    ++pos;
+  } else {
+    tmp = tmbuf->tm_mday / 10;
+    pos[0] = '0' + tmp;
+    pos[1] = '0' + (tmbuf->tm_mday - (tmp * 10));
+    pos += 2;
+  }
+  *(pos++) = ' ';
+  *(uint64_t*)pos = *((uint64_t*)MONTH_NAMES[tmbuf->tm_mon]);
+  pos += 4;
+  // assums years with less then 10K.
+  pos[3] = '0' + (tmbuf->tm_year % 10);
+  tmp = (tmbuf->tm_year + 1900) / 10;
+  pos[2] = '0' + (tmp % 10);
+  tmp = tmp / 10;
+  pos[1] = '0' + (tmp % 10);
+  tmp = tmp / 10;
+  pos[0] = '0' + (tmp % 10);
+  pos[4] = ' ';
+  pos += 5;
+  tmp = tmbuf->tm_hour / 10;
+  pos[0] = '0' + tmp;
+  pos[1] = '0' + (tmbuf->tm_hour - (tmp * 10));
+  pos[2] = ':';
+  tmp = tmbuf->tm_min / 10;
+  pos[3] = '0' + tmp;
+  pos[4] = '0' + (tmbuf->tm_min - (tmp * 10));
+  pos[5] = ':';
+  tmp = tmbuf->tm_sec / 10;
+  pos[6] = '0' + tmp;
+  pos[7] = '0' + (tmbuf->tm_sec - (tmp * 10));
+  pos += 8;
+  pos[0] = ' ';
+  *((uint64_t*)(pos + 1)) = *((uint64_t*)GMT_STR);
+  pos += 4;
+  return pos - target;
+}
 
 static sock_packet_s* prep_headers(struct HttpResponse* response) {
   sock_packet_s* headers;
@@ -599,27 +664,21 @@ static sock_packet_s* prep_headers(struct HttpResponse* response) {
       response->date = response->last_modified;
     struct tm t;
     // date header
-    gmtime_r(&response->date, &t);
-    // response->metadata.headers_pos +=
-    //     strftime(response->metadata.headers_pos, 100,
-    //              "Date: %a, %d %b %Y %H:%M:%S GMT\r\n", &t);
+    MiniCrypt.gmtime(&response->date, &t);
     memcpy(response->metadata.headers_pos, "Date: ", 6);
     response->metadata.headers_pos += 6;
-    response->metadata.headers_pos += strftime(
-        response->metadata.headers_pos, 100, "%a, %d %b %Y %H:%M:%S", &t);
-    memcpy(response->metadata.headers_pos, " GMT\r\n", 6);
-    response->metadata.headers_pos += 6;
+    response->metadata.headers_pos +=
+        write_date_data(response->metadata.headers_pos, &t);
+    *(response->metadata.headers_pos++) = '\r';
+    *(response->metadata.headers_pos++) = '\n';
     // last-modified header
-    gmtime_r(&response->last_modified, &t);
-    // response->metadata.headers_pos +=
-    //     strftime(response->metadata.headers_pos, 100,
-    //              "Last-Modified: %a, %d %b %Y %H:%M:%S GMT\r\n", &t);
+    MiniCrypt.gmtime(&response->last_modified, &t);
     memcpy(response->metadata.headers_pos, "Last-Modified: ", 15);
     response->metadata.headers_pos += 15;
-    response->metadata.headers_pos += strftime(
-        response->metadata.headers_pos, 100, "%a, %d %b %Y %H:%M:%S", &t);
-    memcpy(response->metadata.headers_pos, " GMT\r\n", 6);
-    response->metadata.headers_pos += 6;
+    response->metadata.headers_pos +=
+        write_date_data(response->metadata.headers_pos, &t);
+    *(response->metadata.headers_pos++) = '\r';
+    *(response->metadata.headers_pos++) = '\n';
   }
   // write the keep-alive (connection) header, if missing
   if (!response->metadata.connection_written) {
@@ -757,7 +816,7 @@ static int sendfile_path(struct HttpResponse* response, char* file_path) {
     return -1;
   }
   response->last_modified = f_data.st_mtime;
-  return req_sendfile(response, f_fd, f_data.st_size);
+  return req_sendfile(response, f_fd, f_data.st_size, 0);
 }
 /**
 Sends the headers (if they weren't previously sent) and writes the data to the
@@ -771,6 +830,7 @@ the function returns 0.
 */
 static int req_sendfile(struct HttpResponse* response,
                         int source_fd,
+                        off_t offset,
                         size_t length) {
   if (!response->content_length)
     response->content_length = length;
@@ -780,9 +840,9 @@ static int req_sendfile(struct HttpResponse* response,
   if (headers != NULL) {  // we haven't sent the headers yet
     if (headers->length < (BUFFER_PACKET_SIZE - HTTP_HEADER_START)) {
       // we can fit at least some of the data inside the response buffer.
-      ssize_t i_read =
-          read(source_fd, response->metadata.headers_pos,
-               ((BUFFER_PACKET_SIZE - HTTP_HEADER_START) - headers->length));
+      ssize_t i_read = pread(
+          source_fd, response->metadata.headers_pos,
+          ((BUFFER_PACKET_SIZE - HTTP_HEADER_START) - headers->length), offset);
       if (i_read > 0) {
         if (i_read >= length) {
           headers->length += length;
@@ -791,6 +851,7 @@ static int req_sendfile(struct HttpResponse* response,
         } else {
           headers->length += i_read;
           length -= i_read;
+          offset += i_read;
         }
       }
     }
@@ -801,7 +862,7 @@ static int req_sendfile(struct HttpResponse* response,
     }
   }
   return Server.sendfile(response->metadata.server, response->metadata.fd_uuid,
-                         source_fd, length);
+                         source_fd, offset, length);
 }
 
 /**
