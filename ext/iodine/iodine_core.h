@@ -10,6 +10,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <ruby.h>
 #include <ruby/thread.h>
 #include <ruby/encoding.h>
+#include <ruby/version.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

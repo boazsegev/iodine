@@ -2,6 +2,7 @@
 #include "iodine_http.h"
 #include <ruby.h>
 #include <ruby/io.h>
+#include <ruby/version.h>
 #include <time.h>
 
 /* ////////////////////////////////////////////////////////////
@@ -536,9 +537,12 @@ static void* srv_start_no_gvl(void* _self) {
   VALUE version_val = rb_const_get(rIodine, rb_intern("VERSION"));
   char* version_str = StringValueCStr(version_val);
   fprintf(stderr,
-          "Starting up Iodine's HTTP server, V. %s using %d thread%s X %d "
-          "processes\n",
-          version_str, threads, (threads > 1 ? "s" : ""), processes);
+          "Starting up Iodine Http Server:\n"
+          " * Ruby V. %d.%d.%d\n * Iodine V. %s \n"
+          " * %d thread%s X %d processes\n\n",
+          RUBY_API_VERSION_MAJOR, RUBY_API_VERSION_MINOR,
+          RUBY_API_VERSION_TEENY, version_str, threads,
+          (threads > 1 ? "s" : ""), processes);
 
   // Start Http Server
   start_http_server(
