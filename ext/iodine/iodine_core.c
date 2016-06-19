@@ -793,11 +793,12 @@ static void on_init(server_pt server) {
   Server.set_udata(server, 0,
                    (void*)rb_ivar_get(core_instance, rb_intern("@protocol")));
   // message
+  VALUE ruby_version = rb_const_get(rIodine, rb_intern("RUBY_VERSION"));
   fprintf(stderr,
-          "Starting up Iodine:\n * Ruby V. %d.%d.%d\n * Iodine V. %s \n"
+          "Starting up Iodine:\n * Ruby v.%s\n * Iodine v.%s\n"
           " * %d thread%s X %d processes\n\n",
-          RUBY_API_VERSION_MAJOR, RUBY_API_VERSION_MINOR,
-          RUBY_API_VERSION_TEENY, VERSION, Server.settings(server)->threads,
+          StringValueCStr(ruby_version), VERSION,
+          Server.settings(server)->threads,
           (Server.settings(server)->threads > 1 ? "s" : ""),
           Server.settings(server)->processes);
   // set the server variable in the core server object.. is this GC safe?

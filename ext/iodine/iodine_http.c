@@ -284,10 +284,23 @@ static VALUE for_each_body_string(VALUE str, VALUE _res, int argc, VALUE argv) {
   // fprintf(stderr, "For_each - body\n");
   struct HttpResponse* response = (void*)_res;
   // write body
-  if (TYPE(str) != T_STRING || !RSTRING_LEN(str)) {
+  if (TYPE(str) != T_STRING) {
+    fprintf(stderr, "Iodine Server Error: response body was not a String\n");
     return Qfalse;
   }
-  HttpResponse.write_body(response, RSTRING_PTR(str), RSTRING_LEN(str));
+  if (RSTRING_LEN(str)) {
+    if (HttpResponse.write_body(response, RSTRING_PTR(str), RSTRING_LEN(str))) {
+      fprintf(stderr,
+              "Iodine Server Error: couldn't write response to connection\n");
+      return Qfalse;
+    }
+  } else {
+    if (HttpResponse.send(response)) {
+      fprintf(stderr,
+              "Iodine Server Error: couldn't write response to connection\n");
+      return Qfalse;
+    }
+  }
   return Qtrue;
 }
 
@@ -299,7 +312,8 @@ static void* handle_request_in_gvl(void* _req) {
   // Registry.add(env); // performed by the request_to_env function
   VALUE rb_response = (VALUE)Server.get_udata(request->server, 0);
   if (!rb_response) {
-    goto cleanup;
+    fprintf(stderr, "* No Ruby Response handler\n");
+    goto internal_error;
   }
   rb_response = RubyCaller.call2(rb_response, call_proc_id, 1, &env);
   if (rb_response == Qnil || (void*)rb_response == NULL ||
@@ -308,12 +322,14 @@ static void* handle_request_in_gvl(void* _req) {
     goto internal_error;
   }
   Registry.add(rb_response);
+  // fprintf(stderr, "added response to registry\n");
   /////////////// we now have the response object ready. Time to work...
 
   // // // Review pre-response Upgrade(s) or Hijacking
   VALUE handler;  // will hold the upgrade object
   if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE)) != Qnil) {
     // websocket upgrade.
+    // fprintf(stderr, "ws upgrade\n");
     // we're done with the `handler` variable for now, so we can use as tmp.
     handler = rb_ary_entry(rb_response, 2);
     // close the body, if it exists.
@@ -324,10 +340,12 @@ static void* handle_request_in_gvl(void* _req) {
     handler = Qnil;
   } else if ((handler = rb_hash_aref(env, R_HIJACK_IO)) != Qnil) {
     // Hijack now.
+    // fprintf(stderr, "Hijacked\n");
     Server.hijack(request->server, request->sockfd);
     goto cleanup;
   } else if ((handler = rb_hash_aref(env, R_IODINE_UPGRADE_DYN)) != Qnil) {
     // generic upgrade.
+    // fprintf(stderr, "Generic Upgrade\n");
     // include the rDynProtocol within the object.
     if (TYPE(handler) == T_CLASS) {
       // include the Protocol module
@@ -353,16 +371,19 @@ static void* handle_request_in_gvl(void* _req) {
     RubyCaller.call(handler, on_open_func_id);
     goto cleanup;
   }
+  // fprintf(stderr, "grabbing response\n");
   // // // prep and send the HTTP response
   response = HttpResponse.create(request);
   if (!response)
     goto cleanup;
+  // fprintf(stderr, "grabbing body\n");
   VALUE body = rb_ary_entry(rb_response, 2);
 
   // extract the hijack callback header from the response, if it exists...
   if ((handler = rb_hash_aref(rb_ary_entry(rb_response, 1), R_HIJACK_CB)) !=
           Qnil ||
       (handler = rb_hash_aref(env, R_HIJACK_CB)) != Qnil) {
+    // fprintf(stderr, "hijack callback review\n");
     rb_hash_delete(rb_ary_entry(rb_response, 1), R_HIJACK_CB);
     // close the body, if it exists.
     if (rb_respond_to(body, close_method_id))
@@ -373,6 +394,7 @@ static void* handle_request_in_gvl(void* _req) {
   }
   // set status
   {
+    // fprintf(stderr, "set status\n");
     VALUE tmp = rb_ary_entry(rb_response, 0);
     if (TYPE(tmp) == T_STRING)
       tmp = rb_str_to_inum(tmp, 10, 0);
@@ -380,14 +402,16 @@ static void* handle_request_in_gvl(void* _req) {
       response->status = FIX2INT(tmp);
   }
 
+  // fprintf(stderr, "Write headers\n");
   // write headers
   rb_hash_foreach(rb_ary_entry(rb_response, 1), for_each_header_data,
                   (VALUE)response);
 
   // handle body
-  if (TYPE(body) == T_ARRAY && RARRAY_LEN(body) == 1)  // [String] is likely
+  if (TYPE(body) == T_ARRAY && RARRAY_LEN(body) == 1) {  // [String] is likely
     body = rb_ary_entry(body, 0);
-
+    // fprintf(stderr, "Body was a single item array, unpacket to string\n");
+  }
   if (TYPE(body) == T_STRING) {
     // fprintf(stderr, "Review body as String\n");
     if (RSTRING_LEN(body))
@@ -415,29 +439,31 @@ static void* handle_request_in_gvl(void* _req) {
     // fprintf(stderr, "Review body as for-each ...\n");
     if (!response->metadata.connection_written &&
         !response->metadata.connection_len_written) {
-      // fprintf(stderr, "closing after send ...\n");
-
-      // close the connection to indicate message length... bad user
-      // protection
+      // close the connection to indicate message length...
+      // protection from bad code
       response->metadata.should_close = 1;
       response->content_length = -1;
-      rb_block_call(body, each_method_id, 0, NULL, for_each_body_string,
-                    (VALUE)response);
-      // we need to call `close` in case the object is an IO / BodyProxy
-      if (rb_respond_to(body, close_method_id))
-        RubyCaller.call(body, close_method_id);
-      goto cleanup;
     }
     rb_block_call(body, each_method_id, 0, NULL, for_each_body_string,
                   (VALUE)response);
+    // make sure the response is sent even if it was an empty collection
+    HttpResponse.send(response);
     // we need to call `close` in case the object is an IO / BodyProxy
     if (rb_respond_to(body, close_method_id))
       RubyCaller.call(body, close_method_id);
+  } else {
+    HttpResponse.reset(response, request);
+    goto internal_error;
   }
 
 cleanup:
-  if (response)
+  if (response) {
+    // TODO log ?
+    fprintf(stderr, "[%llu] : %s - %s : %d\n", request->sockfd, request->method,
+            request->path, response->status);
+    // destroy response
     HttpResponse.destroy(response);
+  }
   if (rb_response)
     Registry.remove(rb_response);
   Registry.remove(env);
@@ -449,6 +475,9 @@ internal_error:
   response->status = 500;
   response->metadata.should_close = 1;
   HttpResponse.write_body(response, "Internal error.", 15);
+  // TODO log ?
+  // fprintf(stderr, "%s - %s : %d\n", request->method, request->path,
+  //         response->status);
   HttpResponse.destroy(response);
   return 0;
 }
@@ -534,15 +563,14 @@ static void* srv_start_no_gvl(void* _self) {
       (rb_public_folder == Qnil ? NULL : StringValueCStr(rb_public_folder));
 
   // Write message
-  VALUE version_val = rb_const_get(rIodine, rb_intern("VERSION"));
-  char* version_str = StringValueCStr(version_val);
+  VALUE iodine_version = rb_const_get(rIodine, rb_intern("VERSION"));
+  VALUE ruby_version = rb_const_get(rIodine, rb_intern("RUBY_VERSION"));
   fprintf(stderr,
           "Starting up Iodine Http Server:\n"
-          " * Ruby V. %d.%d.%d\n * Iodine V. %s \n"
+          " * Ruby v.%s\n * Iodine v.%s \n"
           " * %d thread%s X %d processes\n\n",
-          RUBY_API_VERSION_MAJOR, RUBY_API_VERSION_MINOR,
-          RUBY_API_VERSION_TEENY, version_str, threads,
-          (threads > 1 ? "s" : ""), processes);
+          StringValueCStr(ruby_version), StringValueCStr(iodine_version),
+          threads, (threads > 1 ? "s" : ""), processes);
 
   // Start Http Server
   start_http_server(
