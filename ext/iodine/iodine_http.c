@@ -285,19 +285,23 @@ static VALUE for_each_body_string(VALUE str, VALUE _res, int argc, VALUE argv) {
   struct HttpResponse* response = (void*)_res;
   // write body
   if (TYPE(str) != T_STRING) {
-    fprintf(stderr, "Iodine Server Error: response body was not a String\n");
+    fprintf(stderr,
+            "Iodine Server Error:"
+            "response body was not a String\n");
     return Qfalse;
   }
   if (RSTRING_LEN(str)) {
     if (HttpResponse.write_body(response, RSTRING_PTR(str), RSTRING_LEN(str))) {
-      fprintf(stderr,
-              "Iodine Server Error: couldn't write response to connection\n");
+      // fprintf(stderr,
+      //         "Iodine Server Error:"
+      //         "couldn't write response to connection\n");
       return Qfalse;
     }
   } else {
     if (HttpResponse.send(response)) {
-      fprintf(stderr,
-              "Iodine Server Error: couldn't write response to connection\n");
+      // fprintf(stderr,
+      //         "Iodine Server Error:"
+      //         "couldn't write response to connection\n");
       return Qfalse;
     }
   }
@@ -412,6 +416,15 @@ static void* handle_request_in_gvl(void* _req) {
     body = rb_ary_entry(body, 0);
     // fprintf(stderr, "Body was a single item array, unpacket to string\n");
   }
+
+  if (response->status < 200 || response->status == 204 ||
+      response->status == 304) {
+    if (rb_respond_to(body, close_method_id))
+      RubyCaller.call(body, close_method_id);
+    body = Qnil;
+    response->content_length = -1;
+  }
+
   if (TYPE(body) == T_STRING) {
     // fprintf(stderr, "Review body as String\n");
     if (RSTRING_LEN(body))
@@ -434,7 +447,8 @@ static void* handle_request_in_gvl(void* _req) {
       // perform websocket upgrade.
       iodine_websocket_upgrade(request, response, handler);
       goto cleanup;
-    }
+    } else
+      HttpResponse.send(response);
   } else if (rb_respond_to(body, each_method_id)) {
     // fprintf(stderr, "Review body as for-each ...\n");
     if (!response->metadata.connection_written &&
@@ -459,8 +473,9 @@ static void* handle_request_in_gvl(void* _req) {
 cleanup:
   if (response) {
     // TODO log ?
-    fprintf(stderr, "[%llu] : %s - %s : %d\n", request->sockfd, request->method,
-            request->path, response->status);
+    // fprintf(stderr, "[%llu] : %s - %s : %d\n", request->sockfd,
+    // request->method,
+    //         request->path, response->status);
     // destroy response
     HttpResponse.destroy(response);
   }
