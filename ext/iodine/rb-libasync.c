@@ -437,8 +437,8 @@ static void async_destroy(async_p async) {
         to_free < async->task_pool_mem + ASYNC_TASK_POOL_SIZE) {
       //
     } else {
-      // fprintf(stderr, "Freeing pool %p > %p > %p \n", async, to_free,
-      //         async->task_pool_mem + ASYNC_TASK_POOL_SIZE);
+      fprintf(stderr, "*** Possible error, freeing pool %p > %p > %p \n", async,
+              to_free, async->task_pool_mem + ASYNC_TASK_POOL_SIZE);
       free(to_free);
     }
   }
@@ -503,8 +503,11 @@ static async_p async_new(int threads) {
   }
   // initiaite a task pool
   for (size_t i = 0; i < ASYNC_TASK_POOL_SIZE - 1; i++) {
-    async->task_pool_mem[i].next = async->task_pool_mem + i + 1;
+    async->task_pool_mem[i] =
+        (async_task_ns){.next = async->task_pool_mem + i + 1};
   }
+  async->task_pool_mem[ASYNC_TASK_POOL_SIZE - 1] =
+      (async_task_ns){.next = NULL};
   atomic_store(&async->pool, async->task_pool_mem);
   return async;
 }
