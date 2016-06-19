@@ -34,7 +34,7 @@ This information is also useful when implementing read / write hooks.
 #define BUFFER_FILE_READ_SIZE BUFFER_PACKET_SIZE
 #endif
 #ifndef BUFFER_PACKET_POOL
-#define BUFFER_PACKET_POOL 248 /* hard limit unless BUFFER_ALLOW_MALLOC */
+#define BUFFER_PACKET_POOL 512 /* hard limit unless BUFFER_ALLOW_MALLOC */
 #endif
 #ifndef BUFFER_ALLOW_MALLOC
 #define BUFFER_ALLOW_MALLOC 0

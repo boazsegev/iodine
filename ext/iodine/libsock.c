@@ -339,6 +339,9 @@ static void destroy_lib_data(void) {
     fd_info = NULL;
   }
   if (buffer_pool.allocated) {
+#if defined(DEBUG_SOCKLIB) && DEBUG_SOCKLIB == 1
+    libsock_test();
+#endif
     buffer_pool.pool = NULL;
     free(buffer_pool.allocated);
     buffer_pool.allocated = NULL;
