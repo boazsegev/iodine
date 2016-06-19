@@ -304,7 +304,7 @@ static void* handle_request_in_gvl(void* _req) {
   if (rb_response == Qnil || (void*)rb_response == NULL ||
       rb_response == Qfalse) {
     rb_response = 0;
-    goto cleanup;
+    goto internal_error;
   }
   Registry.add(rb_response);
   /////////////// we now have the response object ready. Time to work...
@@ -440,6 +440,15 @@ cleanup:
   if (rb_response)
     Registry.remove(rb_response);
   Registry.remove(env);
+  return 0;
+internal_error:
+  response = HttpResponse.create(request);
+  if (!response)
+    Server.close(request->server, request->sockfd);
+  response->status = 500;
+  response->metadata.should_close = 1;
+  HttpResponse.write_body(response, "Internal error.", 15);
+  HttpResponse.destroy(response);
   return 0;
 }
 

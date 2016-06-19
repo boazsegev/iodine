@@ -19,7 +19,7 @@ class WSEcho
     end
     out = "ENV:\r\n#{env.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}"
     request = Rack::Request.new(env)
-    raise "hell" if(request.path_info =~ /raise[.]*/)
+    pr_raise if(request.path_info =~ /raise[.]*/)
     out += "\nRequest Path: #{request.path_info}\nParams:\r\n#{request.params.to_a.map {|h| "#{h[0]}: #{h[1]}"} .join "\n"}" unless(request.params.empty?)
     [200, {"Content-Length" => out.length}, [out]];
   end
@@ -38,6 +38,9 @@ class WSEcho
     data_cp = "Broadcast: #{data}"
     puts "broadcasting #{data_cp.bytesize} bytes"
     each {|h| h.write data_cp }
+  end
+  def self.pr_raise
+    raise "hell"
   end
 end
 

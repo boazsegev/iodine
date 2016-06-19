@@ -47,8 +47,19 @@ static void* handle_exception(void* _) {
   if (exc != Qnil) {
     VALUE msg = rb_attr_get(exc, rb_intern("mesg"));
     VALUE exc_class = rb_class_name(CLASS_OF(exc));
-    fprintf(stderr, "%.*s: %.*s\n", (int)RSTRING_LEN(exc_class),
-            RSTRING_PTR(exc_class), (int)RSTRING_LEN(msg), RSTRING_PTR(msg));
+    VALUE bt = RubyCaller.call(exc, rb_intern("backtrace"));
+    if (TYPE(bt) == T_ARRAY) {
+      bt = rb_ary_join(bt, rb_str_new_literal("\n"));
+      fprintf(stderr, "Iodine caught an unprotected exception - %.*s: %.*s\n%s",
+              (int)RSTRING_LEN(exc_class), RSTRING_PTR(exc_class),
+              (int)RSTRING_LEN(msg), RSTRING_PTR(msg), StringValueCStr(bt));
+    } else {
+      fprintf(stderr,
+              "Iodine caught an unprotected exception - %.*s: %.*s\n"
+              "No backtrace available.\n",
+              (int)RSTRING_LEN(exc_class), RSTRING_PTR(exc_class),
+              (int)RSTRING_LEN(msg), RSTRING_PTR(msg));
+    }
     rb_backtrace();
     rb_set_errinfo(Qnil);
   }
