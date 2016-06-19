@@ -241,8 +241,9 @@ static void perform_tasks(async_p async) {
         // move the old task container to the pool.
         while (!atomic_compare_exchange_weak(&async->pool, &c->next, c))
           ;
-      } else
+      } else {
         free(c);
+      }
       // perform the task
       task.task(task.arg);
     }
@@ -407,29 +408,44 @@ Object creation and destruction
 Destroys the Async object, releasing it's memory.
 */
 static void async_destroy(async_p async) {
+  // fprintf(stderr, "Destroying Async\n");
   pthread_mutex_lock(&async->lock);
   async_task_ns* to_free;
   async_task_ns* pos;
   async->pos = NULL;
   // free all tasks
+  // fprintf(stderr, "Destroying tasks\n");
   pos = async->tasks;
   while ((to_free = pos)) {
     pos = pos->next;
-    if (to_free >= async->task_pool_mem + ASYNC_TASK_POOL_SIZE ||
-        to_free < async->task_pool_mem)
+    if (to_free >= async->task_pool_mem &&
+        to_free < async->task_pool_mem + ASYNC_TASK_POOL_SIZE) {
+      //
+    } else {
+      // fprintf(stderr, "Freeing task %p > %p > %p \n", async, to_free,
+      //         async->task_pool_mem + ASYNC_TASK_POOL_SIZE);
       free(to_free);
+    }
   }
   async->tasks = NULL;
   // free task pool - not really needed
   pos = atomic_load(&async->pool);
+  // fprintf(stderr, "Destroying pool\n");
   while ((to_free = pos)) {
     pos = pos->next;
-    if (to_free >= async->task_pool_mem + ASYNC_TASK_POOL_SIZE ||
-        to_free < async->task_pool_mem)
+    if (to_free >= async->task_pool_mem &&
+        to_free < async->task_pool_mem + ASYNC_TASK_POOL_SIZE) {
+      //
+    } else {
+      // fprintf(stderr, "Freeing pool %p > %p > %p \n", async, to_free,
+      //         async->task_pool_mem + ASYNC_TASK_POOL_SIZE);
       free(to_free);
+    }
   }
+  // fprintf(stderr, "storing nothing\n");
   atomic_store(&async->pool, NULL);
   // close pipe
+  // fprintf(stderr, "Closing pipe\n");
   if (async->pipe.in) {
     close(async->pipe.in);
     async->pipe.in = 0;
@@ -438,8 +454,10 @@ static void async_destroy(async_p async) {
     close(async->pipe.out);
     async->pipe.out = 0;
   }
+  // fprintf(stderr, "Destroying mutex\n");
   pthread_mutex_unlock(&async->lock);
   pthread_mutex_destroy(&async->lock);
+  // fprintf(stderr, "freeing self\n");
   free(async);
 }
 
