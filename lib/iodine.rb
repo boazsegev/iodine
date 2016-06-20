@@ -61,6 +61,9 @@ class Iodine
     @processes = @processes.to_i if @processes
     @timeout = state[:timeout]
     @busy_msg = state[:busy_msg]
+    # the following is only for the subclass Iodine::Http
+    @log = true if ARGV.index('-v')
+    @public_folder = ARGV[ARGV.index('-www') + 1] if ARGV.index('-www')
   end
 end
 

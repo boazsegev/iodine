@@ -6,7 +6,11 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
 #include <stdatomic.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
+#include <arpa/inet.h>
 #include "libsock.h"
 #include "mini-crypt.h"
 
@@ -178,6 +182,14 @@ static int req_sendfile(struct HttpResponse* response,
 Closes the connection.
 */
 static void close_response(struct HttpResponse*);
+/**
+Starts counting miliseconds for log results.
+*/
+static void log_start(struct HttpResponse*);
+/**
+prints out the log to stderr.
+*/
+static void log_finish(struct HttpRequest*, struct HttpResponse*);
 
 /** ****************************************************************************
 The API gateway
@@ -201,6 +213,8 @@ struct HttpResponseClass HttpResponse = {
     .sendfile = req_sendfile,
     .sendfile2 = sendfile_path,
     .close = close_response,
+    .log_start = log_start,
+    .log_finish = log_finish,
 };
 
 /**
@@ -710,12 +724,15 @@ static sock_packet_s* prep_headers(struct HttpResponse* response) {
   headers->length = response->metadata.headers_pos - (char*)headers->buffer;
   return headers;
 }
+
+/** helper - sends the headers */
 static int send_headers(struct HttpResponse* response, sock_packet_s* packet) {
   if (packet == NULL)
     return -1;
   // mark headers as sent
   response->metadata.headers_sent = 1;
   response->metadata.packet = NULL;
+  response->metadata.headers_pos = (char*)packet->length;
   // write data to network
   return Server.send_packet(response->metadata.server,
                             response->metadata.fd_uuid, packet);
@@ -759,6 +776,7 @@ static int write_body(struct HttpResponse* response,
     if (send_headers(response, headers))
       return -1;
   }
+  response->metadata.headers_pos += length;
   return Server.write(response->metadata.server, response->metadata.fd_uuid,
                       (void*)body, length);
 }
@@ -791,6 +809,7 @@ static int write_body_move(struct HttpResponse* response,
       send_headers(response, headers);
     }
   }
+  response->metadata.headers_pos += length;
   return Server.write_move(response->metadata.server,
                            response->metadata.fd_uuid, (void*)body, length);
 }
@@ -862,6 +881,7 @@ static int req_sendfile(struct HttpResponse* response,
       return -1;
     }
   }
+  response->metadata.headers_pos += length;
   return Server.sendfile(response->metadata.server, response->metadata.fd_uuid,
                          source_fd, offset, length);
 }
@@ -871,4 +891,49 @@ Closes the connection.
 */
 static void close_response(struct HttpResponse* response) {
   return Server.close(response->metadata.server, response->metadata.fd_uuid);
+}
+
+/**
+Starts counting miliseconds for log results.
+*/
+static void log_start(struct HttpResponse* response) {
+  response->metadata.clock_start = clock();
+  response->metadata.logged = 1;
+}
+/**
+prints out the log to stderr.
+*/
+static void log_finish(struct HttpRequest* request,
+                       struct HttpResponse* response) {
+  size_t bytes_sent = (size_t)response->metadata.headers_pos;
+
+  size_t mili = response->metadata.logged
+                    ? ((clock() - response->metadata.clock_start) /
+                       (CLOCKS_PER_SEC / 1000))
+                    : 0;
+  struct tm tm;
+  struct sockaddr_in addrinfo;
+  socklen_t addrlen = sizeof(addrinfo);
+  MiniCrypt.gmtime(&((struct Reactor*)request->server)->last_tick, &tm);
+  int got_add = getpeername(server_uuid_to_fd(request->sockfd),
+                            (struct sockaddr*)&addrinfo, &addrlen);
+
+  if (response->metadata.logged)
+    fprintf(stderr,
+            "%s - - [%d/%.*s/%d:%02d:%02d:%02d GMT] "
+            "\"%s %s %s\" "
+            "%d %'lu %'lu ms\n",
+            (got_add ? ("[unknown]") : (inet_ntoa(addrinfo.sin_addr))),
+            tm.tm_mday, 3, MONTH_NAMES[tm.tm_mon], tm.tm_year + 1900,
+            tm.tm_hour, tm.tm_min, tm.tm_sec, request->method, request->path,
+            request->version, response->status, bytes_sent, mili);
+  else
+    fprintf(stderr,
+            "%s - - [%d/%.*s/%d:%02d:%02d:%02d GMT] "
+            "\"%s %s %s\" "
+            "%d %'lu\n",
+            (got_add ? ("[unknown]") : (inet_ntoa(addrinfo.sin_addr))),
+            tm.tm_mday, 3, MONTH_NAMES[tm.tm_mon], tm.tm_year + 1900,
+            tm.tm_hour, tm.tm_min, tm.tm_sec, request->method, request->path,
+            request->version, response->status, bytes_sent);
 }

@@ -312,9 +312,20 @@ static VALUE for_each_body_string(VALUE str, VALUE _res, int argc, VALUE argv) {
 static void* handle_request_in_gvl(void* _req) {
   struct HttpRequest* request = _req;
   struct HttpResponse* response = NULL;
-  VALUE env = request_to_env(request);
+  struct HttpProtocol* protocol =
+      (struct HttpProtocol*)Server.settings(request->server)->protocol;
+  VALUE env = 0;
+  VALUE rb_response = 0;
+  // fprintf(stderr, "grabbing C HttpResponse object\n");
+  response = HttpResponse.create(request);
+  if (!response)
+    goto cleanup;
+  if (protocol->log_static)
+    HttpResponse.log_start(response);
+
+  env = request_to_env(request);
   // Registry.add(env); // performed by the request_to_env function
-  VALUE rb_response = (VALUE)Server.get_udata(request->server, 0);
+  rb_response = (VALUE)Server.get_udata(request->server, 0);
   if (!rb_response) {
     fprintf(stderr, "* No Ruby Response handler\n");
     goto internal_error;
@@ -375,11 +386,6 @@ static void* handle_request_in_gvl(void* _req) {
     RubyCaller.call(handler, on_open_func_id);
     goto cleanup;
   }
-  // fprintf(stderr, "grabbing response\n");
-  // // // prep and send the HTTP response
-  response = HttpResponse.create(request);
-  if (!response)
-    goto cleanup;
   // fprintf(stderr, "grabbing body\n");
   VALUE body = rb_ary_entry(rb_response, 2);
 
@@ -472,11 +478,10 @@ static void* handle_request_in_gvl(void* _req) {
 
 cleanup:
   if (response) {
-    // TODO log ?
-    // fprintf(stderr, "[%llu] : %s - %s : %d\n", request->sockfd,
-    // request->method,
-    //         request->path, response->status);
-    // destroy response
+    // log
+    if (protocol->log_static)
+      HttpResponse.log_finish(request, response);
+    // destroy
     HttpResponse.destroy(response);
   }
   if (rb_response)
@@ -484,15 +489,13 @@ cleanup:
   Registry.remove(env);
   return 0;
 internal_error:
-  response = HttpResponse.create(request);
-  if (!response)
-    Server.close(request->server, request->sockfd);
   response->status = 500;
   response->metadata.should_close = 1;
   HttpResponse.write_body(response, "Internal error.", 15);
-  // TODO log ?
-  // fprintf(stderr, "%s - %s : %d\n", request->method, request->path,
-  //         response->status);
+  // log
+  if (protocol->log_static)
+    HttpResponse.log_finish(request, response);
+  // destroy
   HttpResponse.destroy(response);
   return 0;
 }
@@ -522,6 +525,10 @@ static void on_init(server_pt server) {
     Server.set_udata(server, 0, (void*)rb_iv_get(self, "@on_http"));
   // set the server variable in the core server object.. is this GC safe?
   set_server(self, server);
+  // HTTP logging
+  VALUE server_log = rb_ivar_get(self, rb_intern("@log"));
+  if (server_log != Qnil && server_log != Qfalse)
+    ((struct HttpProtocol*)Server.settings(server)->protocol)->log_static = 1;
   // HTTP timeout
   VALUE rb_timeout = rb_ivar_get(self, rb_intern("@timeout"));
   if (rb_timeout != Qnil)
@@ -823,6 +830,10 @@ Defaults to 64Kb.
 Defaults to 45 seconds.
   */
   rb_define_attr(rHttp, "ws_timeout", 1, 1);
+  /** Sets whether Iodine will print logs for handled requests. Iodine's logs
+   * might differ from middleware logs.
+  */
+  rb_define_attr(rHttp, "log", 1, 1);
   /** The HTTP handler. This object should answer to `call(env)` (can be a
 Proc).
 
