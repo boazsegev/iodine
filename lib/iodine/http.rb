@@ -1,6 +1,6 @@
 require 'iodine'
 
-class Iodine
+module Iodine
   # The Http class and it's subclasses inherits from the core {Iodine} class and {Protocol}, so that all the methods
   # and properties of the Iodine class (except the `protocol` and `busy_msg` properties) can be used.
   #

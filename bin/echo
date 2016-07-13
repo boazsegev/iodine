@@ -10,33 +10,37 @@ puts `rake clean`
 puts `rake compile`
 
 require 'benchmark'
-$LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
-require "bundler/setup"
-require "iodine"
+$LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__)
+require 'bundler/setup'
+require 'iodine'
 
 class EchoProtocol
+  @timeout = 10
+
+  def self.on_start
+    puts '* Echo service is now running.'
+  end
+
+  def on_open
+    puts 'New connection'
+  end
+
+  def ping
+    write "-- are you there?\n"
+  end
+
   # `on_message` is an optional alternative to the `on_data` callback.
   # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
-  def on_message buffer
+  def on_message(buffer)
     # writing will never block and will use a buffer written in C when needed.
-    write buffer
+    write 'Echo: buffer'
     puts buffer.dump
     close if buffer =~ /^bye[\r\n]/i
   end
 end
 
 # create the server object and setup any settings we might need.
-server = Iodine.new
-server.threads = 10
-server.processes = 1
-server.busy_msg = "To many connections, try again later."
-server.protocol = EchoProtocol
-
-# test some timers and repeated events
-b = server.on_start do
-  server.run_after(1000) {puts "A seconds have passed?"}
-  server.run_every(1000) {puts "#{server.count} clients connected."}
-  puts "We have 2 timers and #{server.count} connections."
-end
-
-server.start
+Iodine.listen '3000', EchoProtocol
+# server.threads = 10
+# server.processes = 1
+Iodine.start

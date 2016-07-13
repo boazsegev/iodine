@@ -5,15 +5,14 @@
 # # test using:
 # telnet localhost 3000
 
-
 Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
 puts `rake clean`
 puts `rake compile`
 
 require 'benchmark'
-$LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
-require "bundler/setup"
-require "iodine"
+$LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__)
+require 'bundler/setup'
+require 'iodine'
 
 # You can add fixtures and/or initialization code here to make experimenting
 # with your gem easier. You can also use a different console, if you like.
@@ -24,18 +23,28 @@ require "iodine"
 
 # test the upgrade protocol using the ShoooProtocol
 class ShoooProtocol
-  def on_message buffer
-    write "what do you mean - #{buffer.strip} ?!\n Shoo, away with you!"
+  @timeout = 10
+  def ping
+    write "Wha, ya' still here?! Go away!\n"
     close
   end
 
+  def on_message(buffer)
+    write "what do you mean - #{buffer.strip} ?!\nShoo, away with you!\n"
+    close
+  end
 end
 
 # the broadcasting protocol
 class EchoProtocol
+  def self.on_start
+    Iodine.run_every(1000) { puts "#{Iodine.count} clients connected." }
+    puts "We have 1 timer, and #{Iodine.count} connections."
+  end
+
   # `on_message` is an optional alternative to the `on_data` callback.
   # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
-  def on_message buffer
+  def on_message(buffer)
     # writing will never block and will use a buffer written in C when needed.
     write buffer
     puts buffer.dump
@@ -46,20 +55,12 @@ class EchoProtocol
     # use buffer.dup to save the data from being recycled once we return.
     data = "Someone said: #{buffer}"
     # run asynchronous tasks with ease
-    each  {|c| puts c; c.write data }
+    each { |c| puts c; c.write data }
   end
 end
 
 # create the server object and setup any settings we might need.
-server = Iodine.new
-server.threads = 10
-server.processes = 1
-server.busy_msg = "To many connections, try again later."
-server.protocol = EchoProtocol
-
-b = server.on_start do
-  server.run_every(1000) {puts "#{server.count} clients connected."}
-  puts "We have 1 timer, and #{server.count} connections."
-end
-
-server.start
+Iodine.listen 3000, EchoProtocol
+Iodine.threads = 10
+Iodine.processes = 1
+Iodine.start

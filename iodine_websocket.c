@@ -203,8 +203,8 @@ void ws_on_data(ws_s* ws, char* data, size_t length, int is_text) {
 //////////////////////////////////////
 // Protocol constructor
 
-void iodine_websocket_upgrade(struct HttpRequest* request,
-                              struct HttpResponse* response,
+void iodine_websocket_upgrade(http_request_s* request,
+                              http_response_s* response,
                               VALUE handler) {
   // make sure we have a valid handler, with the Websocket Protocol mixin.
   if (handler == Qnil || handler == Qfalse) {

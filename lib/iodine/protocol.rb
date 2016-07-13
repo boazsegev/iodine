@@ -1,4 +1,4 @@
-class Iodine
+module Iodine
   # The Protocol class is used only for documenting the Protocol API, it will not be included when requiring `iodine`.
   #
   # A dynamic (stateful) protocol is defined as a Ruby class instance which is in control of one single connection.

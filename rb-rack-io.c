@@ -67,14 +67,19 @@ static struct rb_data_type_struct http_request_data_type = {
 
 // a macro helper to get the server pointer embeded in an object
 #define get_request(object) \
-  ((struct HttpRequest*)DATA_PTR(rb_ivar_get((object), req_var_id)))
+  ((http_request_s*)DATA_PTR(rb_ivar_get((object), req_var_id)))
 
 //////////////////////////////
 // Ruby land API
 
-// gets returns a line. this is okay for small lines, but should really be used.
+/**
+Gets returns a line. this is okay for small lines,
+but shouldn't really be used.
+
+Limited to ~ 1Mb of a line length.
+*/
 static VALUE rio_gets(VALUE self) {
-  struct HttpRequest* request = get_request(self);
+  http_request_s* request = get_request(self);
   if (request->body_str) {
     size_t pos = FIX2LONG(rb_ivar_get(self, pos_id));
     if (pos == request->content_length)
@@ -86,13 +91,31 @@ static VALUE rio_gets(VALUE self) {
     rb_ivar_set(self, pos_id, LONG2FIX(pos_e + 1));
     return rb_enc_str_new(request->body_str + pos, pos_e - pos, BinaryEncoding);
   } else if (request->body_file) {
-    if (feof(request->body_file))
+    VALUE str = rb_str_buf_new(1024);
+    rb_enc_associate_index(str, BinaryEncodingIndex);
+    char* pos = RSTRING_PTR(str);
+    *pos = 0;
+    for (size_t rounds = 1; rounds < 1024;) {
+      for (size_t i = 0; i < 1024; i++) {
+        if (read(request->body_file, pos, 1) <= 0)
+          goto broke;
+        if (*pos == '\n') {
+          goto broke;
+        }
+        ++pos;
+      }
+      rounds++;
+      rb_str_resize(str, (rounds * 1024));
+      pos = RSTRING_PTR(str) + ((rounds - 1) * 1024);
+    }
+  broke:
+    if (*pos == 0 && pos == RSTRING_PTR(str))
       return Qnil;
-    char* line = NULL;
-    // Brrr... double copy - this sucks.
-    size_t line_len = getline(&line, 0, request->body_file);
-    VALUE str = rb_enc_str_new(line, line_len, BinaryEncoding);
-    free(line);
+    if (pos - RSTRING_PTR(str) > rb_str_capacity(str)) {
+      *(++pos) = 0;
+      rb_str_set_len(str, pos - RSTRING_PTR(str));
+    } else
+      rb_str_set_len(str, pos - RSTRING_PTR(str) + 1);
     return str;
   }
   return Qnil;
@@ -100,7 +123,7 @@ static VALUE rio_gets(VALUE self) {
 
 // Reads data from the IO, according to the Rack specifications for `#read`.
 static VALUE rio_read(int argc, VALUE* argv, VALUE self) {
-  struct HttpRequest* request = get_request(self);
+  http_request_s* request = get_request(self);
   size_t pos = FIX2LONG(rb_ivar_get(self, pos_id));
   VALUE buffer = 0;
   char ret_nil = 0;
@@ -118,8 +141,7 @@ static VALUE rio_read(int argc, VALUE* argv, VALUE self) {
   }
   // return if we're at the EOF.
   if ((!request->body_str && !request->body_file) ||
-      (request->body_str && (request->content_length == pos)) ||
-      (request->body_file && feof(request->body_file))) {
+      (request->body_str && (request->content_length == pos))) {
     if (ret_nil)
       return Qnil;
     else
@@ -128,7 +150,7 @@ static VALUE rio_read(int argc, VALUE* argv, VALUE self) {
   // calculate length if it wasn't specified.
   if (!len) {
     if (request->body_file)
-      pos = ftell(request->body_file);
+      pos = lseek(request->body_file, 0, SEEK_CUR);
     len = request->content_length - pos;
   } else {
     // make sure we're not reading more then we have (string buffer)
@@ -153,7 +175,7 @@ static VALUE rio_read(int argc, VALUE* argv, VALUE self) {
     rb_ivar_set(self, pos_id, LONG2FIX(pos + len));
     return buffer;
   } else if (request->body_file) {
-    if ((len = fread(RSTRING_PTR(buffer), 1, len, request->body_file)) == 0 &&
+    if ((len = read(request->body_file, RSTRING_PTR(buffer), len)) == 0 &&
         ret_nil)
       return Qnil;
     rb_str_set_len(buffer, len);
@@ -169,11 +191,11 @@ static VALUE rio_close(VALUE self) {
 
 // Rewinds the IO, so that it is read from the begining.
 static VALUE rio_rewind(VALUE self) {
-  struct HttpRequest* request = get_request(self);
+  http_request_s* request = get_request(self);
   if (request->body_str) {
     rb_ivar_set(self, pos_id, INT2FIX(0));
   } else if (request->body_file) {
-    rewind(request->body_file);
+    lseek(request->body_file, 0, SEEK_SET);
   }
   return self;
 }
@@ -197,9 +219,9 @@ extern VALUE R_HIJACK_IO;  // for Rack: rack.hijack_io
 static VALUE rio_get_io(int argc, VALUE* argv, VALUE self) {
   if (TCPSOCKET_CLASS == Qnil)
     return Qfalse;
-  struct HttpRequest* request = get_request(self);
+  http_request_s* request = get_request(self);
   // hijack the IO object
-  VALUE fd = INT2FIX(server_uuid_to_fd(request->sockfd));
+  VALUE fd = INT2FIX(sock_uuid2fd(request->metadata.fd));
   VALUE env = rb_ivar_get(self, env_id);
   // make sure we're not repeating ourselves
   VALUE new_io = rb_hash_aref(env, R_HIJACK_IO);
@@ -217,19 +239,19 @@ static VALUE rio_get_io(int argc, VALUE* argv, VALUE self) {
 // C land API
 
 // new object
-static VALUE new_rack_io(struct HttpRequest* request, VALUE env) {
+static VALUE new_rack_io(http_request_s* request, VALUE env) {
   VALUE rack_io = rb_funcall2(rRackIO, call_new_id, 0, NULL);
   set_request(rack_io, request);
   rb_ivar_set(rack_io, pos_id, INT2FIX(0));
   rb_ivar_set(rack_io, env_id, env);
   if (request->body_file)
-    rewind(request->body_file);
+    lseek(request->body_file, 0, SEEK_SET);
   return rack_io;
 }
 
 // initialize library
 static void init_rack_io(void) {
-  rRackIO = rb_define_class_under(rBase, "RackIO", rb_cObject);
+  rRackIO = rb_define_class_under(IodineBase, "RackIO", rb_cObject);
   rRequestData = rb_define_class_under(rRackIO, "RequestData", rb_cData);
   req_var_id = rb_intern("request");
   call_new_id = rb_intern("new");
