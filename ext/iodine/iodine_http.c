@@ -77,13 +77,10 @@ static inline VALUE copy2env(http_request_s* request) {
   rb_hash_aset(env, R_HIJACK, hname);
 
   /* handle the HOST header, including the possible host:#### format*/
-  for (size_t i = 0; i < request->host_len; i++) {
-    if (request->host[i] == ':') {
-      pos = (char*)request->host + i;
-      break;
-    }
-  }
-  if (pos == NULL) {
+  pos = (char*)request->host;
+  while (*pos && *pos != ':')
+    pos++;
+  if (*pos == 0) {
     rb_hash_aset(
         env, SERVER_NAME,
         rb_enc_str_new(request->host, request->host_len, BinaryEncoding));
@@ -132,24 +129,26 @@ static inline VALUE copy2env(http_request_s* request) {
     } else if (header->name_length == 9 &&
                strncasecmp("forwarded", header->name, 9) == 0) {
       pos = (char*)header->value;
-      while (*pos) {
-        if (((*(pos++) | 32) == 'p') && ((*(pos++) | 32) == 'r') &&
-            ((*(pos++) | 32) == 'o') && ((*(pos++) | 32) == 't') &&
-            ((*(pos++) | 32) == 'o') && ((*(pos++) | 32) == '=')) {
-          if ((pos[0] | 32) == 'h' && (pos[1] | 32) == 't' &&
-              (pos[2] | 32) == 't' && (pos[3] | 32) == 'p') {
-            if ((pos[4] | 32) == 's') {
-              rb_hash_aset(env, R_URL_SCHEME, HTTPS_SCHEME);
+      if (pos) {
+        while (*pos) {
+          if (((*(pos++) | 32) == 'p') && ((*(pos++) | 32) == 'r') &&
+              ((*(pos++) | 32) == 'o') && ((*(pos++) | 32) == 't') &&
+              ((*(pos++) | 32) == 'o') && ((*(pos++) | 32) == '=')) {
+            if ((pos[0] | 32) == 'h' && (pos[1] | 32) == 't' &&
+                (pos[2] | 32) == 't' && (pos[3] | 32) == 'p') {
+              if ((pos[4] | 32) == 's') {
+                rb_hash_aset(env, R_URL_SCHEME, HTTPS_SCHEME);
+              } else {
+                rb_hash_aset(env, R_URL_SCHEME, HTTP_SCHEME);
+              }
             } else {
-              rb_hash_aset(env, R_URL_SCHEME, HTTP_SCHEME);
+              char* tmp = pos;
+              while (*tmp && *tmp != ';')
+                tmp++;
+              rb_hash_aset(env, R_URL_SCHEME, rb_str_new(pos, tmp - pos));
             }
-          } else {
-            char* tmp = pos;
-            while (*tmp && *tmp != ';')
-              tmp++;
-            rb_hash_aset(env, R_URL_SCHEME, rb_str_new(pos, tmp - pos));
+            break;
           }
-          break;
         }
       }
     }
@@ -331,6 +330,8 @@ static void* on_rack_request_in_GVL(http_request_s* request) {
   VALUE tmp;
   // pass env variable to handler
   VALUE rbresponse = RubyCaller.call2(rack_app_handler, call_proc_id, 1, &env);
+  if (rbresponse == 0 || rbresponse == Qnil)
+    goto internal_error;
   Registry.add(rbresponse);
   // check for immediate upgrade
   if (ruby2c_review_immediate_upgrade(rbresponse, env)) {
@@ -371,6 +372,8 @@ internal_error:
 }
 
 static void on_rack_request(http_request_s* request) {
+  // if (request->body_file)
+  //   fprintf(stderr, "Request data is stored in a temporary file\n");
   RubyCaller.call_c((void* (*)(void*))on_rack_request_in_GVL, request);
 }
 
@@ -470,6 +473,23 @@ int iodine_http_review(void) {
     log_static = (rblog == Qnil || rblog == Qfalse) ? 0 : 1;
     // initialize the Rack env template
     init_env_template();
+
+    // get Iodine concurrency info
+    VALUE rb_threads = rb_ivar_get(Iodine, rb_intern("@threads"));
+    int threads = rb_threads == Qnil ? 1 : (FIX2INT(rb_threads));
+    VALUE rb_processes = rb_ivar_get(Iodine, rb_intern("@processes"));
+    int processes = rb_processes == Qnil ? 1 : (FIX2INT(rb_processes));
+
+    // Write message
+    VALUE iodine_version = rb_const_get(Iodine, rb_intern("VERSION"));
+    VALUE ruby_version = rb_const_get(Iodine, rb_intern("RUBY_VERSION"));
+    fprintf(stderr,
+            "Starting up Iodine Http Server:\n"
+            " * Ruby v.%s\n * Iodine v.%s \n"
+            " * %d processes X %d thread%s\n\n",
+            StringValueCStr(ruby_version), StringValueCStr(iodine_version),
+            processes, threads, (threads > 1 ? "s" : ""));
+
     // listen
     return http1_listen(port, address, .on_request = on_rack_request,
                         .log_static = log_static,
