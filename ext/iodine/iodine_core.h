@@ -43,6 +43,7 @@ extern ID ping_func_id;
 extern ID buff_var_id;
 extern ID fd_var_id;
 extern ID timeout_var_id;
+extern ID to_s_method_id;
 
 __unused static inline void iodine_set_fd(VALUE handler, intptr_t fd) {
   rb_ivar_set(handler, fd_var_id, LONG2NUM((long)fd));

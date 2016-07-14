@@ -27,8 +27,10 @@ require 'iodine/iodine'
 #
 # Please read the {file:README.md} file for an introduction to Iodine and an overview of it's API.
 module Iodine
-  @threads = ((ARGV.index('-t') && ARGV[ARGV.index('-t') + 1]) || ENV['MAX_THREADS']).to_i
-  @processes = ((ARGV.index('-w') && ARGV[ARGV.index('-w') + 1]) || ENV['MAX_WORKERS']).to_i
+  @threads = (ARGV.index('-t') && ARGV[ARGV.index('-t') + 1]) || ENV['MAX_THREADS']
+  @processes = (ARGV.index('-w') && ARGV[ARGV.index('-w') + 1]) || ENV['MAX_WORKERS']
+  @threads = @threads.to_i if @threads
+  @processes = @processes.to_i if @processes
 
   def self.threads
     @threads

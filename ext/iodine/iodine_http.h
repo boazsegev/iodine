@@ -6,6 +6,7 @@
 /* the Iodine::Rack HTTP server class*/
 extern VALUE IodineHttp;
 /* these three are used also by rb-rack-io.c */
+extern VALUE R_HIJACK;
 extern VALUE R_HIJACK_IO;
 extern VALUE R_HIJACK_CB;
 

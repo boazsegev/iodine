@@ -4,6 +4,8 @@ license: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
+#include "rb-libasync.h"
+
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif

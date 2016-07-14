@@ -29,6 +29,7 @@ ID ping_func_id;
 ID buff_var_id;
 ID fd_var_id;
 ID timeout_var_id;
+ID to_s_method_id;
 
 /* local core data variables */
 static VALUE DynamicProtocol;
@@ -406,7 +407,7 @@ static VALUE iodine_listen_dyn_protocol(VALUE self, VALUE port, VALUE handler) {
   }
   if (TYPE(port) != T_FIXNUM)
     rb_raise(rb_eTypeError, "The port variable must be a Fixnum.");
-  port = rb_funcall2(port, rb_intern("to_s"), 0, NULL);
+  port = rb_funcall2(port, to_s_method_id, 0, NULL);
   // listen
   server_listen(.port = StringValueCStr(port), .udata = (void*)handler,
                 .on_open = on_open_dyn_protocol,
@@ -601,6 +602,7 @@ void Init_iodine(void) {
   buff_var_id = rb_intern("scrtbuffer");
   fd_var_id = rb_intern("scrtfd");
   timeout_var_id = rb_intern("@timeout");
+  to_s_method_id = rb_intern("to_s");
 
   BinaryEncodingIndex = rb_enc_find_index("binary");  // sets encoding for data
   UTF8EncodingIndex = rb_enc_find_index("UTF-8");     // sets encoding for data

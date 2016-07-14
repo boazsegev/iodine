@@ -4,12 +4,16 @@
 /* the Iodine::Rack HTTP server class*/
 VALUE IodineHttp;
 /* these three are used also by rb-rack-io.c */
+VALUE R_HIJACK;
 VALUE R_HIJACK_IO;
 VALUE R_HIJACK_CB;
 VALUE IODINE_UPGRADE;
 VALUE IODINE_WEBSOCKET;
 
 static VALUE hijack_func_sym;
+static ID to_fixnum_func_id;
+static ID close_method_id;
+static ID each_method_id;
 
 #define rack_declare(rack_name) static VALUE rack_name
 
@@ -134,6 +138,8 @@ static VALUE rack_app_handler = 0;
 static inline VALUE copy2env(http_request_s* request) {
   VALUE env = rb_hash_dup(ENV_TEMPLATE);
   VALUE hname; /* will be used later, both as tmp and to iterate header names */
+  char* pos = NULL;
+  const char* reader = NULL;
   Registry.add(env);
   /* Copy basic data */
   rb_hash_aset(
@@ -152,10 +158,9 @@ static inline VALUE copy2env(http_request_s* request) {
   rb_hash_aset(env, R_INPUT, (hname = RackIO.new(request, env)));
 
   hname = rb_obj_method(hname, hijack_func_sym);
-  rb_hash_aset(env, R_HIJACK_CB, hname);
+  rb_hash_aset(env, R_HIJACK, hname);
 
   /* handle the HOST header, including the possible host:#### format*/
-  char* pos = NULL;
   for (size_t i = 0; i < request->host_len; i++) {
     if (request->host[i] == ':') {
       pos = (char*)request->host + i;
@@ -236,8 +241,10 @@ static inline VALUE copy2env(http_request_s* request) {
     hname = rb_str_buf_new(6 + header->name_length);
     memcpy(RSTRING_PTR(hname), "HTTP_", 5);
     pos = RSTRING_PTR(hname) + 5;
-    for (size_t j = 0; j < header->name_length; j++) {
-      *(pos++) = to_upper(header->name[j]);
+    reader = header->name;
+    while (*reader) {
+      *(pos++) = to_upper(*reader);
+      ++reader;
     }
     *pos = 0;
     rb_str_set_len(hname, 5 + header->name_length);
@@ -247,39 +254,203 @@ static inline VALUE copy2env(http_request_s* request) {
   return env;
 }
 
-static inline void ruby2c_response_headers(http_response_s* response,
-                                           VALUE rbresponse) {}
+// itterate through the headers and add them to the response buffer
+// (we are recycling the request's buffer)
+static int for_each_header_data(VALUE key, VALUE val, VALUE _res) {
+  // fprintf(stderr, "For_each - headers\n");
+  if (TYPE(key) != T_STRING)
+    key = RubyCaller.call(key, to_s_method_id);
+  if (TYPE(key) != T_STRING)
+    return ST_CONTINUE;
+  if (TYPE(val) != T_STRING) {
+    val = RubyCaller.call(val, to_s_method_id);
+    if (TYPE(val) != T_STRING)
+      return ST_STOP;
+  }
+  char* val_s = RSTRING_PTR(val);
+  int val_len = RSTRING_LEN(val);
+  // scan the value for newline (\n) delimiters
+  int pos_s = 0, pos_e = 0;
+  while (pos_e < val_len) {
+    // scanning for newline (\n) delimiters
+    while (pos_e < val_len && val_s[pos_e] != '\n')
+      pos_e++;
+    http_response_write_header(
+        (void*)_res, .name = RSTRING_PTR(key), .name_length = RSTRING_LEN(key),
+        .value = val_s + pos_s, .value_length = pos_e - pos_s);
+    // fprintf(stderr, "For_each - headers: wrote header\n");
+    // move forward (skip the '\n' if exists)
+    pos_s = pos_e + 1;
+    pos_e++;
+  }
+  // no errors, return 0
+  return ST_CONTINUE;
+}
 
-static inline int ruby2c_review_upgrade(http_response_s* response,
-                                        VALUE rbresponse) {
+static inline int ruby2c_review_immediate_upgrade(VALUE rbresponse, VALUE env) {
+  // TODO
   /* Need to deal with:
     rack_set(IODINE_UPGRADE, "iodine.upgrade");
     rack_set(IODINE_WEBSOCKET, "iodine.websocket");
   */
   return 0;
 }
-static inline void ruby2c_response_send(http_response_s* response,
-                                        VALUE rbresponse) {
-  http_response_write_body(response, "Fix ME!", 7);
+
+// writes the body to the response object
+static VALUE for_each_body_string(VALUE str, VALUE _res, int argc, VALUE argv) {
+  // fprintf(stderr, "For_each - body\n");
+  // write body
+  if (TYPE(str) != T_STRING) {
+    fprintf(stderr,
+            "Iodine Server Error:"
+            "response body was not a String\n");
+    return Qfalse;
+  }
+  if (RSTRING_LEN(str)) {
+    if (http_response_write_body((void*)_res, RSTRING_PTR(str),
+                                 RSTRING_LEN(str))) {
+      // fprintf(stderr,
+      //         "Iodine Server Error:"
+      //         "couldn't write response to connection\n");
+      return Qfalse;
+    }
+  } else {
+    http_response_finish((void*)_res);
+    return Qfalse;
+  }
+  return Qtrue;
+}
+
+static inline int ruby2c_response_send(http_response_s* response,
+                                       VALUE rbresponse,
+                                       VALUE env) {
+  VALUE body = rb_ary_entry(rbresponse, 2);
+  if (response->status < 200 || response->status == 204 ||
+      response->status == 304) {
+    if (rb_respond_to(body, close_method_id))
+      RubyCaller.call(body, close_method_id);
+    body = Qnil;
+    response->content_length = -1;
+  }
+
+  if (TYPE(body) == T_ARRAY && RARRAY_LEN(body) == 1) {  // [String] is likely
+    body = rb_ary_entry(body, 0);
+    // fprintf(stderr, "Body was a single item array, unpacket to string\n");
+  }
+
+  if (TYPE(body) == T_STRING) {
+    // fprintf(stderr, "Review body as String\n");
+    if (RSTRING_LEN(body))
+      http_response_write_body(response, RSTRING_PTR(body), RSTRING_LEN(body));
+    else
+      http_response_finish(response);
+    return 0;
+  } else if (body == Qnil) {
+    http_response_finish(response);
+    return 0;
+  } else if (rb_respond_to(body, each_method_id)) {
+    // fprintf(stderr, "Review body as for-each ...\n");
+    if (!response->metadata.connection_written &&
+        !response->metadata.content_length_written) {
+      // close the connection to indicate message length...
+      // protection from bad code
+      response->metadata.should_close = 1;
+      response->content_length = -1;
+    }
+    rb_block_call(body, each_method_id, 0, NULL, for_each_body_string,
+                  (VALUE)response);
+    // make sure the response is sent even if it was an empty collection
+    http_response_finish(response);
+    // we need to call `close` in case the object is an IO / BodyProxy
+    if (rb_respond_to(body, close_method_id))
+      RubyCaller.call(body, close_method_id);
+    return 0;
+  }
+  return -1;
+}
+
+static inline int ruby2c_review_upgrade(http_response_s* response,
+                                        VALUE rbresponse,
+                                        VALUE env) {
+  VALUE handler;
+  if ((handler = rb_hash_aref(env, R_HIJACK_CB)) != Qnil) {
+    // send headers
+    http_response_finish(response);
+    //  remove socket from libsock and libserver
+    server_hijack(response->metadata.request->metadata.fd);
+    // call the callback
+    VALUE io_ruby = RubyCaller.call(rb_hash_aref(env, R_HIJACK), call_proc_id);
+    RubyCaller.call2(handler, call_proc_id, 1, &io_ruby);
+  } else if ((handler = rb_hash_aref(env, R_HIJACK_IO)) != Qnil) {
+    // send nothing.
+    http_response_destroy(response);
+    // remove socket from libsock and libserver
+    server_hijack(response->metadata.request->metadata.fd);
+  } else if ((handler = rb_hash_aref(env, IODINE_WEBSOCKET)) != Qnil) {
+    // use response as existing base for native websocket upgrade
+    // TODO
+  } else if ((handler = rb_hash_aref(env, IODINE_UPGRADE)) != Qnil) {
+    intptr_t fduuid = response->metadata.request->metadata.fd;
+    // send headers
+    http_response_finish(response);
+    // upgrade protocol
+    iodine_upgrade2basic(fduuid, handler);
+    // prevent response processing.
+  } else {
+    return 0;
+  }
+  // get body object to close it (if needed)
+  handler = rb_ary_entry(rbresponse, 2);
+  // we need to call `close` in case the object is an IO / BodyProxy
+  if (handler != Qnil && rb_respond_to(handler, close_method_id))
+    RubyCaller.call(handler, close_method_id);
+  return 1;
 }
 
 static void* on_rack_request_in_GVL(http_request_s* request) {
   http_response_s response = http_response_init(request);
   // create /register env variable
   VALUE env = copy2env(request);
+  // will be used later
+  VALUE tmp;
   // pass env variable to handler
   VALUE rbresponse = RubyCaller.call2(rack_app_handler, call_proc_id, 1, &env);
   Registry.add(rbresponse);
+  // check for immediate upgrade
+  if (ruby2c_review_immediate_upgrade(rbresponse, env)) {
+    http_response_destroy(&response);
+    return NULL;
+  }
+  // set response status
+  tmp = rb_ary_entry(rbresponse, 0);
+  if (TYPE(tmp) == T_STRING)
+    tmp = rb_funcall2(tmp, to_fixnum_func_id, 0, NULL);
+  if (TYPE(tmp) != T_FIXNUM)
+    goto internal_error;
+  response.status = FIX2ULONG(tmp);
   // handle header copy from ruby land to C land.
-  ruby2c_response_headers(&response, rbresponse);
-  // review for upgrade.
-  if (ruby2c_review_upgrade(&response, rbresponse) == 0) {
+  VALUE response_headers = rb_ary_entry(rbresponse, 1);
+  if (TYPE(response_headers) != T_HASH)
+    goto internal_error;
+  rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(&response));
+  // review for belated (post response headers) upgrade.
+  if (ruby2c_review_upgrade(&response, rbresponse, env) == 0) {
     // send the request body.
-    ruby2c_response_send(&response, rbresponse);
+    if (ruby2c_response_send(&response, rbresponse, env))
+      goto internal_error;
   }
   Registry.remove(rbresponse);
   Registry.remove(env);
   http_response_destroy(&response);
+  return NULL;
+internal_error:
+  Registry.remove(rbresponse);
+  Registry.remove(env);
+  http_response_destroy(&response);
+  response = http_response_init(request);
+  response.status = 500;
+  http_response_write_body(&response, "Error 500, Internal error.", 26);
+  http_response_finish(&response);
   return NULL;
 }
 
@@ -411,7 +582,8 @@ void Init_iodine_http(void) {
   rack_set(R_INPUT, "rack.input");
 
   rack_set(R_HIJACK_IO, "rack.hijack_io");
-  rack_set(R_HIJACK_CB, "rack.hijack");
+  rack_set(R_HIJACK, "rack.hijack");
+  rack_set(R_HIJACK_CB, "iodine.hijack_cb");
 
   rack_set(IODINE_UPGRADE, "iodine.upgrade");
   rack_set(IODINE_WEBSOCKET, "iodine.websocket");
@@ -420,6 +592,9 @@ void Init_iodine_http(void) {
   rack_set(QUERY_ESTRING, "");
 
   hijack_func_sym = ID2SYM(rb_intern("_hijack"));
+  to_fixnum_func_id = rb_intern("to_i");
+  close_method_id = rb_intern("close");
+  each_method_id = rb_intern("each");
 
   IodineHttp = rb_define_module_under(Iodine, "Rack");
   RackIO.init();
