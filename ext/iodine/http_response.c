@@ -50,6 +50,7 @@ http_response_s http_response_init(http_request_s* request) {
   time_t date = server_last_tick();
   return (http_response_s){
       .metadata.request = request,
+      .metadata.fd = request->metadata.fd,
       .metadata.packet = packet,
       .status = 200,
       .date = date,
@@ -90,15 +91,15 @@ int http_response_write_header(http_response_s* response,
                                http_headers_s header) {
   // check if the header is a reserved header
   if ((header.name_length == 4 || header.name_length == 0) &&
-      strcasecmp(header.name, "date") == 0)
+      strncasecmp(header.name, "date", 4) == 0)
     response->metadata.date_written = 1;
   else if ((header.name_length == 10 || header.name_length == 0) &&
-           strcasecmp(header.name, "connection") == 0) {
+           strncasecmp(header.name, "connection", 10) == 0) {
     response->metadata.connection_written = 1;
     if (header.value && header.value[0] == 'c')
       response->metadata.should_close = 1;
   } else if ((header.name_length == 14 || header.name_length == 0) &&
-             strcasecmp(header.name, "content-length") == 0)
+             strncasecmp(header.name, "content-length", 14) == 0)
     response->metadata.content_length_written = 1;
 
   // write the header to the protocol

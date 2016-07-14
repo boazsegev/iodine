@@ -105,6 +105,8 @@ module Iodine
   end
 end
 
+# Iodine::Rack.app = proc { |env| p env; puts env['rack.input'].read(1024).tap { |s| puts "Got data #{s.length} long, #{s[0].ord}, #{s[1].ord} ... #{s[s.length - 2].ord}, #{s[s.length - 1].ord}:" if s }; env['rack.input'].rewind; [404, {}, []] }
+
 ENV['RACK_HANDLER'] = 'iodine'
 
 # make Iodine the default fallback position for Rack.
