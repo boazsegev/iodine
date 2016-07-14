@@ -556,7 +556,6 @@ static void* srv_start_no_gvl(void* _) {
   VALUE rb_pr_i = rb_iv_get(Iodine, "@processes");
   size_t threads = (TYPE(rb_th_i) == T_FIXNUM) ? FIX2ULONG(rb_th_i) : 0;
   size_t processes = (TYPE(rb_pr_i) == T_FIXNUM) ? FIX2ULONG(rb_pr_i) : 0;
-  fprintf(stderr, "threads count: %lu\n", threads);
   server_run(.threads = threads, .processes = processes);
   return NULL;
 }

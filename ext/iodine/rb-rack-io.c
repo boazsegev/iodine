@@ -343,8 +343,9 @@ static VALUE new_rack_io(http_request_s* request, VALUE env) {
   } else {
     rack_io = rb_funcall2(rRackStrIO, new_func_id, 0, NULL);
     rb_ivar_set(rack_io, io_id, ULONG2NUM(((intptr_t)request->body_str)));
-    fprintf(stderr, "rack body IO:%.*s\n", (int)request->content_length,
-            request->body_str);
+    // fprintf(stderr, "rack body IO (%lu, %p):%.*s\n", request->content_length,
+    //         request->body_str, (int)request->content_length,
+    //         request->body_str);
   }
   set_uuid(rack_io, request);
   set_pos(rack_io, 0);
