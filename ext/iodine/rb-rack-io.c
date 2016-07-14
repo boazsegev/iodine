@@ -34,42 +34,51 @@ rewindable object if the underlying input stream is not rewindable.
 close must never be called on the input stream.
 
 */
-static VALUE rRackIO;
 
-static VALUE rRequestData;
+/* *****************************************************************************
+Core data / helpers
+*/
+
+static VALUE rRackStrIO;
+static VALUE rRackFileIO;
+
 static ID pos_id;
+static ID end_id;
 static ID env_id;
+static ID io_id;
 
 static VALUE TCPSOCKET_CLASS;
 static ID for_fd_id;
-//////////////////////////////
-// the request data type
 
-// var ID
-static ID req_var_id;
+#define set_uuid(object, request) \
+  rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->metadata.fd))
 
-// GC will call this to "free" the memory... which would be bad, as it's managed
-// by the server
-static void dont_free(void* obj) {}
+inline static intptr_t get_uuid(VALUE obj) {
+  VALUE i = rb_ivar_get(obj, fd_var_id);
+  return (intptr_t)FIX2ULONG(i);
+}
 
-// the data wrapper and the dont_free instruction callback
-static struct rb_data_type_struct http_request_data_type = {
-    .wrap_struct_name = "HttpRequestData",
-    .function.dfree = (void (*)(void*))dont_free,
-};
+#define set_pos(object, pos) rb_ivar_set((object), pos_id, ULONG2NUM(pos))
 
-// a macro helper function to embed a server pointer in an object
-#define set_request(object, request) \
-  rb_ivar_set(                       \
-      (object), req_var_id,          \
-      TypedData_Wrap_Struct(rRequestData, &http_request_data_type, (request)))
+inline static size_t get_pos(VALUE obj) {
+  VALUE i = rb_ivar_get(obj, pos_id);
+  return (size_t)FIX2ULONG(i);
+}
+
+inline static size_t get_end(VALUE obj) {
+  VALUE i = rb_ivar_get(obj, end_id);
+  return (size_t)FIX2ULONG(i);
+}
+
+/* *****************************************************************************
+StrIO API
+*/
 
 // a macro helper to get the server pointer embeded in an object
-#define get_request(object) \
-  ((http_request_s*)DATA_PTR(rb_ivar_get((object), req_var_id)))
-
-//////////////////////////////
-// Ruby land API
+inline static char* get_str(VALUE obj) {
+  VALUE i = rb_ivar_get(obj, io_id);
+  return (char*)FIX2ULONG(i);
+}
 
 /**
 Gets returns a line. this is okay for small lines,
@@ -77,56 +86,28 @@ but shouldn't really be used.
 
 Limited to ~ 1Mb of a line length.
 */
-static VALUE rio_gets(VALUE self) {
-  http_request_s* request = get_request(self);
-  if (request->body_str) {
-    size_t pos = FIX2LONG(rb_ivar_get(self, pos_id));
-    if (pos == request->content_length)
-      return Qnil;
-    size_t pos_e = pos;
-    while ((pos_e < request->content_length) &&
-           request->body_str[pos_e] != '\n')
-      pos_e++;
-    rb_ivar_set(self, pos_id, LONG2FIX(pos_e + 1));
-    return rb_enc_str_new(request->body_str + pos, pos_e - pos, BinaryEncoding);
-  } else if (request->body_file) {
-    VALUE str = rb_str_buf_new(1024);
-    rb_enc_associate_index(str, BinaryEncodingIndex);
-    char* pos = RSTRING_PTR(str);
-    *pos = 0;
-    for (size_t rounds = 1; rounds < 1024;) {
-      for (size_t i = 0; i < 1024; i++) {
-        if (read(request->body_file, pos, 1) <= 0)
-          goto broke;
-        if (*pos == '\n') {
-          goto broke;
-        }
-        ++pos;
-      }
-      rounds++;
-      rb_str_resize(str, (rounds * 1024));
-      pos = RSTRING_PTR(str) + ((rounds - 1) * 1024);
-    }
-  broke:
-    if (*pos == 0 && pos == RSTRING_PTR(str))
-      return Qnil;
-    if (pos - RSTRING_PTR(str) > rb_str_capacity(str)) {
-      *(++pos) = 0;
-      rb_str_set_len(str, pos - RSTRING_PTR(str));
-    } else
-      rb_str_set_len(str, pos - RSTRING_PTR(str) + 1);
-    return str;
-  }
-  return Qnil;
+static VALUE strio_gets(VALUE self) {
+  char* str = get_str(self);
+  size_t pos = get_pos(self);
+  size_t end = get_end(self);
+  if (str == NULL || pos == end)
+    return Qnil;
+  size_t pos_e = pos;
+
+  while ((pos_e < end) && str[pos_e] != '\n')
+    pos_e++;
+  set_pos(self, pos_e + 1);
+  return rb_enc_str_new(str + pos, pos_e - pos, BinaryEncoding);
 }
 
 // Reads data from the IO, according to the Rack specifications for `#read`.
-static VALUE rio_read(int argc, VALUE* argv, VALUE self) {
-  http_request_s* request = get_request(self);
-  size_t pos = FIX2LONG(rb_ivar_get(self, pos_id));
-  VALUE buffer = 0;
+static VALUE strio_read(int argc, VALUE* argv, VALUE self) {
+  char* str = get_str(self);
+  size_t pos = get_pos(self);
+  size_t end = get_end(self);
+  VALUE buffer = Qnil;
   char ret_nil = 0;
-  size_t len = 0;
+  ssize_t len = 0;
   // get the buffer object if given
   if (argc == 2) {
     Check_Type(argv[1], T_STRING);
@@ -136,26 +117,151 @@ static VALUE rio_read(int argc, VALUE* argv, VALUE self) {
   if (argc > 0 && argv[0] != Qnil) {
     Check_Type(argv[0], T_FIXNUM);
     len = FIX2LONG(argv[0]);
+    if (len < 0)
+      rb_raise(rb_eRangeError, "length should be bigger then 0.");
     ret_nil = 1;
   }
   // return if we're at the EOF.
-  if ((!request->body_str && !request->body_file) ||
-      (request->body_str && (request->content_length == pos))) {
-    if (ret_nil)
-      return Qnil;
-    else
-      return rb_str_buf_new(1);
-  }
+  if (str == NULL)
+    goto no_data;
   // calculate length if it wasn't specified.
-  if (!len) {
-    if (request->body_file)
-      pos = lseek(request->body_file, 0, SEEK_CUR);
-    len = request->content_length - pos;
-  } else {
+  if (len == 0) {
     // make sure we're not reading more then we have (string buffer)
-    if (request->body_str && (len > (request->content_length - pos)))
-      len = request->content_length - pos;
+    len = end - pos;
+    // set position for future reads
+    set_pos(self, end);
+    if (len == 0)
+      goto no_data;
+  } else {
+    // set position for future reads
+    set_pos(self, pos + len);
   }
+  if (len + pos > end)
+    len = end - pos;
+  // create the buffer if we don't have one.
+  if (buffer == Qnil) {
+    buffer = rb_str_buf_new(len);
+    // make sure the buffer is binary encoded.
+    rb_enc_associate(buffer, BinaryEncoding);
+  } else {
+    // make sure the buffer is binary encoded.
+    rb_enc_associate(buffer, BinaryEncoding);
+    if (rb_str_capacity(buffer) < len)
+      rb_str_resize(buffer, len);
+  }
+  // read the data.
+  memcpy(RSTRING_PTR(buffer), str + pos, len);
+  rb_str_set_len(buffer, len);
+  return buffer;
+no_data:
+  if (ret_nil)
+    return Qnil;
+  else
+    return rb_str_buf_new(0);
+}
+
+// Does nothing - this is controlled by the server.
+static VALUE strio_close(VALUE self) {
+  return Qnil;
+}
+
+// Rewinds the IO, so that it is read from the begining.
+static VALUE rio_rewind(VALUE self) {
+  set_pos(self, 0);
+  return self;
+}
+
+// Passes each line of the input to the block. This should be avoided.
+static VALUE strio_each(VALUE self) {
+  rb_need_block();
+  rio_rewind(self);
+  VALUE str = Qnil;
+  while ((str = strio_gets(self)) != Qnil) {
+    rb_yield(str);
+  }
+  return self;
+}
+
+/* *****************************************************************************
+TempFileIO API
+*/
+
+// a macro helper to get the server pointer embeded in an object
+inline static int get_tmpfile(VALUE obj) {
+  VALUE i = rb_ivar_get(obj, io_id);
+  return (int)FIX2INT(i);
+}
+
+/**
+Gets returns a line. this is okay for small lines,
+but shouldn't really be used.
+
+Limited to ~ 1Mb of a line length.
+*/
+static VALUE tfio_gets(VALUE self) {
+  int fd = get_tmpfile(self);
+  size_t pos = get_pos(self);
+  size_t end = get_end(self);
+  if (pos == end)
+    return Qnil;
+  size_t pos_e = pos;
+  char c;
+  int ret;
+  VALUE buffer;
+
+  do {
+    ret = pread(fd, &c, 1, pos_e);
+  } while (ret > 0 && c != '\n' && (++pos_e < end));
+  set_pos(self, pos_e + 1);
+  if (pos > pos_e) {
+    buffer = rb_str_buf_new(pos_e - pos);
+    // make sure the buffer is binary encoded.
+    rb_enc_associate(buffer, BinaryEncoding);
+    pread(fd, RSTRING_PTR(buffer), pos_e - pos, pos);
+    rb_str_set_len(buffer, pos_e - pos);
+    return buffer;
+  }
+  return Qnil;
+}
+
+// Reads data from the IO, according to the Rack specifications for `#read`.
+static VALUE tfio_read(int argc, VALUE* argv, VALUE self) {
+  int fd = get_tmpfile(self);
+  size_t pos = get_pos(self);
+  size_t end = get_end(self);
+  VALUE buffer = Qnil;
+  char ret_nil = 0;
+  ssize_t len = 0;
+  // get the buffer object if given
+  if (argc == 2) {
+    Check_Type(argv[1], T_STRING);
+    buffer = argv[1];
+  }
+  // get the length object, if given
+  if (argc > 0 && argv[0] != Qnil) {
+    Check_Type(argv[0], T_FIXNUM);
+    len = FIX2LONG(argv[0]);
+    if (len < 0)
+      rb_raise(rb_eRangeError, "length should be bigger then 0.");
+    ret_nil = 1;
+  }
+  // return if we're at the EOF.
+  if (pos == end)
+    goto no_data;
+  // calculate length if it wasn't specified.
+  if (len == 0) {
+    // make sure we're not reading more then we have (string buffer)
+    len = end - pos;
+    // set position for future reads
+    set_pos(self, end);
+    if (len == 0)
+      goto no_data;
+  } else {
+    // set position for future reads
+    set_pos(self, pos + len);
+  }
+  if (len + pos > end)
+    len = end - pos;
   // create the buffer if we don't have one.
   if (!buffer) {
     buffer = rb_str_buf_new(len);
@@ -168,47 +274,35 @@ static VALUE rio_read(int argc, VALUE* argv, VALUE self) {
       rb_str_resize(buffer, len);
   }
   // read the data.
-  if (request->body_str) {
-    memcpy(RSTRING_PTR(buffer), request->body_str + pos, len);
-    rb_str_set_len(buffer, len);
-    rb_ivar_set(self, pos_id, LONG2FIX(pos + len));
-    return buffer;
-  } else if (request->body_file) {
-    if ((len = read(request->body_file, RSTRING_PTR(buffer), len)) == 0 &&
-        ret_nil)
-      return Qnil;
-    rb_str_set_len(buffer, len);
-    return buffer;
-  }
-  return Qnil;
+  pread(fd, RSTRING_PTR(buffer), len, pos);
+  rb_str_set_len(buffer, len);
+  return buffer;
+no_data:
+  if (ret_nil)
+    return Qnil;
+  else
+    return rb_str_buf_new(0);
 }
 
 // Does nothing - this is controlled by the server.
-static VALUE rio_close(VALUE self) {
+static VALUE tfio_close(VALUE self) {
   return Qnil;
 }
 
-// Rewinds the IO, so that it is read from the begining.
-static VALUE rio_rewind(VALUE self) {
-  http_request_s* request = get_request(self);
-  if (request->body_str) {
-    rb_ivar_set(self, pos_id, INT2FIX(0));
-  } else if (request->body_file) {
-    lseek(request->body_file, 0, SEEK_SET);
-  }
-  return self;
-}
-
 // Passes each line of the input to the block. This should be avoided.
-static VALUE rio_each(VALUE self) {
+static VALUE tfio_each(VALUE self) {
   rb_need_block();
   rio_rewind(self);
   VALUE str = Qnil;
-  while ((str = rio_gets(self)) != Qnil) {
+  while ((str = tfio_gets(self)) != Qnil) {
     rb_yield(str);
   }
   return self;
 }
+
+/* *****************************************************************************
+Hijacking
+*/
 
 // defined by iodine_http
 extern VALUE R_HIJACK;     // for Rack: rack.hijack
@@ -218,9 +312,9 @@ extern VALUE R_HIJACK_IO;  // for Rack: rack.hijack_io
 static VALUE rio_get_io(int argc, VALUE* argv, VALUE self) {
   if (TCPSOCKET_CLASS == Qnil)
     return Qfalse;
-  http_request_s* request = get_request(self);
+  intptr_t fduuid = get_uuid(self);
   // hijack the IO object
-  VALUE fd = INT2FIX(sock_uuid2fd(request->metadata.fd));
+  VALUE fd = INT2FIX(sock_uuid2fd(fduuid));
   VALUE env = rb_ivar_get(self, env_id);
   // make sure we're not repeating ourselves
   VALUE new_io = rb_hash_aref(env, R_HIJACK_IO);
@@ -234,38 +328,58 @@ static VALUE rio_get_io(int argc, VALUE* argv, VALUE self) {
     rb_hash_aset(env, R_HIJACK_CB, *argv);
   return new_io;
 }
-//////////////////////////////
-// C land API
+
+/* *****************************************************************************
+C land API
+*/
 
 // new object
 static VALUE new_rack_io(http_request_s* request, VALUE env) {
-  VALUE rack_io = rb_funcall2(rRackIO, new_func_id, 0, NULL);
-  set_request(rack_io, request);
-  rb_ivar_set(rack_io, pos_id, INT2FIX(0));
-  rb_ivar_set(rack_io, env_id, env);
-  if (request->body_file)
+  VALUE rack_io;
+  if (request->body_file > 0) {
+    rack_io = rb_funcall2(rRackFileIO, new_func_id, 0, NULL);
+    rb_ivar_set(rack_io, io_id, ULONG2NUM(request->body_file));
     lseek(request->body_file, 0, SEEK_SET);
+  } else {
+    rack_io = rb_funcall2(rRackStrIO, new_func_id, 0, NULL);
+    rb_ivar_set(rack_io, io_id, ULONG2NUM(((intptr_t)request->body_str)));
+    fprintf(stderr, "rack body IO:%.*s\n", (int)request->content_length,
+            request->body_str);
+  }
+  set_uuid(rack_io, request);
+  set_pos(rack_io, 0);
+  rb_ivar_set(rack_io, end_id, ULONG2NUM(request->content_length));
+  rb_ivar_set(rack_io, env_id, env);
+
   return rack_io;
 }
 
 // initialize library
 static void init_rack_io(void) {
-  rRackIO = rb_define_class_under(IodineBase, "RackIO", rb_cObject);
-  rRequestData = rb_define_class_under(rRackIO, "RequestData", rb_cData);
-  req_var_id = rb_intern("request");
+  rRackStrIO = rb_define_class_under(IodineBase, "RackStrIO", rb_cObject);
+  rRackFileIO = rb_define_class_under(IodineBase, "RackTmpFileIO", rb_cObject);
+
   pos_id = rb_intern("pos");
+  end_id = rb_intern("io_end");
+  io_id = rb_intern("rack_io");
   env_id = rb_intern("env");
   for_fd_id = rb_intern("for_fd");
 
-  BinaryEncoding = rb_enc_find("binary");
   TCPSOCKET_CLASS = rb_const_get(rb_cObject, rb_intern("TCPSocket"));
   // IO methods
-  rb_define_method(rRackIO, "rewind", rio_rewind, 0);
-  rb_define_method(rRackIO, "gets", rio_gets, 0);
-  rb_define_method(rRackIO, "read", rio_read, -1);
-  rb_define_method(rRackIO, "close", rio_close, 0);
-  rb_define_method(rRackIO, "each", rio_each, 0);
-  rb_define_method(rRackIO, "_hijack", rio_get_io, -1);
+  rb_define_method(rRackStrIO, "rewind", rio_rewind, 0);
+  rb_define_method(rRackStrIO, "gets", strio_gets, 0);
+  rb_define_method(rRackStrIO, "read", strio_read, -1);
+  rb_define_method(rRackStrIO, "close", strio_close, 0);
+  rb_define_method(rRackStrIO, "each", strio_each, 0);
+  rb_define_method(rRackStrIO, "_hijack", rio_get_io, -1);
+
+  rb_define_method(rRackFileIO, "rewind", rio_rewind, 0);
+  rb_define_method(rRackFileIO, "gets", tfio_gets, 0);
+  rb_define_method(rRackFileIO, "read", tfio_read, -1);
+  rb_define_method(rRackFileIO, "close", tfio_close, 0);
+  rb_define_method(rRackFileIO, "each", tfio_each, 0);
+  rb_define_method(rRackFileIO, "_hijack", rio_get_io, -1);
 }
 
 ////////////////////////////////////////////////////////////////////////////
