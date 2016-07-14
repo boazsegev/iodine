@@ -1,4 +1,5 @@
 #include "iodine_http.h"
+#include "iodine_websocket.h"
 #include "websockets.h"
 
 /* the Iodine::Rack HTTP server class*/
@@ -41,91 +42,6 @@ rack_declare(R_URL_SCHEME);  // rack.url_scheme
 rack_declare(R_INPUT);       // rack.input
 // rack_declare(R_HIJACK); // rack.hijack
 // rack_declare(R_HIJACK_CB);// rack.hijack_io
-
-/*
-rack_declare(HTTP_VERSION);
-rack_declare(REQUEST_URI);
-rack_declare(REQUEST_METHOD);
-rack_declare(CONTENT_TYPE);
-rack_declare(CONTENT_LENGTH);
-rack_declare(SCRIPT_NAME);
-rack_declare(PATH_INFO);
-rack_declare(SERVER_NAME);
-rack_declare(SERVER_PORT);
-
-rack_declare(UPGRADE_HEADER);      // upgrade support
-rack_declare(UPGRADE_HEADER);      // upgrade support
-rack_declare(CONNECTION_HEADER);   // upgrade support
-rack_declare(CONNECTION_CLOSE);    // upgrade support
-rack_declare(WEBSOCKET_STR);       // upgrade support
-rack_declare(WEBSOCKET_VER);       // upgrade support
-rack_declare(WEBSOCKET_SEC_VER);   // upgrade support
-rack_declare(WEBSOCKET_SEC_EXT);   // upgrade support
-rack_declare(WEBSOCKET_SEC_ACPT);  // upgrade support
-
-rack_declare(QUERY_ESTRING);         // ""
-rack_declare(SERVER_PORT_80);        // 80
-rack_declare(SERVER_PORT_443);       // 443
-rack_declare(R_VERSION);             // rack.version
-rack_declare(R_VERSION_V);           // rack.version array
-rack_declare(R_SCHEME);              // rack.url_scheme
-rack_declare(R_SCHEME_HTTP);         // http
-rack_declare(R_SCHEME_HTTPS);        // https
-rack_declare(R_INPUT);               // rack.input
-rack_declare(R_ERRORS);              // rack.errors
-rack_declare(R_ERRORS_V);            // rack.errors array
-rack_declare(R_MTHREAD);             // for Rack: rack.multithread
-rack_declare(R_MTHREAD_V);           // for Rack: rack.multithread
-rack_declare(R_MPROCESS);            // for Rack: rack.multiprocess
-rack_declare(R_MPROCESS_V);          // for Rack: rack.multiprocess
-rack_declare(R_RUN_ONCE);            // for Rack: rack.run_once
-rack_declare(R_HIJACK_Q);            // for Rack: rack.hijack?
-rack_declare(R_IODINE_UPGRADE);      // iodine.upgrade
-rack_declare(R_IODINE_UPGRADE_DYN);  // Iodine upgrade support
-
-rack_declare(_hijack_sym);
-
-// for Rack
-rack_declare(HTTP_VERSION);          // extending Rack
-rack_declare(REQUEST_URI);           // extending Rack
-rack_declare(REQUEST_METHOD);        // for Rack
-rack_declare(CONTENT_TYPE);          // for Rack.
-rack_declare(CONTENT_LENGTH);        // for Rack.
-rack_declare(SCRIPT_NAME);           // for Rack
-rack_declare(PATH_INFO);             // for Rack
-rack_declare(QUERY_STRING);          // for Rack
-rack_declare(QUERY_ESTRING);         // for rack (if no query)
-rack_declare(SERVER_NAME);           // for Rack
-rack_declare(SERVER_PORT);           // for Rack
-rack_declare(SERVER_PORT_80);        // for Rack
-rack_declare(SERVER_PORT_443);       // for Rack
-rack_declare(R_VERSION);             // for Rack: rack.version
-rack_declare(R_VERSION_V);           // for Rack: rack.version
-rack_declare(R_SCHEME);              // for Rack: rack.url_scheme
-rack_declare(R_SCHEME_HTTP);         // for Rack: rack.url_scheme value
-rack_declare(R_SCHEME_HTTPS);        // for Rack: rack.url_scheme value
-rack_declare(R_INPUT);               // for Rack: rack.input
-rack_declare(R_ERRORS);              // for Rack: rack.errors
-rack_declare(R_ERRORS_V);            // for Rack: rack.errors
-rack_declare(R_MTHREAD);             // for Rack: rack.multithread
-rack_declare(R_MTHREAD_V);           // for Rack: rack.multithread
-rack_declare(R_MPROCESS);            // for Rack: rack.multiprocess
-rack_declare(R_MPROCESS_V);          // for Rack: rack.multiprocess
-rack_declare(R_RUN_ONCE);            // for Rack: rack.run_once
-rack_declare(R_HIJACK_Q);            // for Rack: rack.hijack?
-rack_declare(R_IODINE_UPGRADE);      // Iodine upgrade support
-rack_declare(R_IODINE_UPGRADE_DYN);  // Iodine upgrade support
-rack_declare(UPGRADE_HEADER);        // upgrade support
-rack_declare(UPGRADE_HEADER);        // upgrade support
-rack_declare(CONNECTION_HEADER);     // upgrade support
-rack_declare(CONNECTION_CLOSE);      // upgrade support
-rack_declare(WEBSOCKET_STR);         // upgrade support
-rack_declare(WEBSOCKET_VER);         // upgrade support
-rack_declare(WEBSOCKET_SEC_VER);     // upgrade support
-rack_declare(WEBSOCKET_SEC_EXT);     // upgrade support
-rack_declare(WEBSOCKET_SEC_ACPT);    // upgrade support
-
-*/
 
 /* *****************************************************************************
 HTTP Protocol initialization
@@ -178,7 +94,7 @@ static inline VALUE copy2env(http_request_s* request) {
         rb_enc_str_new(request->host, pos - request->host, BinaryEncoding));
     rb_hash_aset(
         env, SERVER_PORT,
-        rb_enc_str_new(pos + 1, request->host_len - ((pos - request->host) - 1),
+        rb_enc_str_new(pos + 1, request->host_len - ((pos + 1) - request->host),
                        BinaryEncoding));
   }
 
@@ -598,6 +514,7 @@ void Init_iodine_http(void) {
 
   IodineHttp = rb_define_module_under(Iodine, "Rack");
   RackIO.init();
+  Init_iodine_websocket();
 }
 
 // REQUEST_METHOD

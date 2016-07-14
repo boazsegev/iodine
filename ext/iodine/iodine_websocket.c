@@ -8,18 +8,10 @@
 
 //////////////
 // general global definitions we will use herein.
-static VALUE rWebsocket;           // The Iodine::Http::Websocket class
-static rb_encoding* UTF8Encoding;  // encoding object
-static int UTF8EncodingIndex;
-static ID buff_var_id;          // id for websocket buffer
-static ID ws_var_id;            // id for websocket pointer
-static ID call_proc_id;         // id for `#call`
-static ID dup_func_id;          // id for the buffer.dup method
-static ID new_func_id;          // id for the Class.new method
-static ID on_open_func_id;      // the on_open callback's ID
-static ID on_close_func_id;     // the on_close callback's ID
-static ID on_shutdown_func_id;  // a callback's ID
-static ID on_msg_func_id;       // a callback's ID
+static VALUE rWebsocket;      // The Iodine::Http::Websocket class
+static VALUE rWebsocketData;  // The Iodine::Http::Websocket class
+static ID ws_var_id;          // id for websocket pointer
+static ID dup_func_id;        // id for the buffer.dup method
 
 /*******************************************************************************
 Buffer management - update to change the way the buffer is handled.
@@ -54,14 +46,14 @@ void* ruby_land_buffer(void* _buf) {
   if (args->buffer.data) {
     round_up_buffer_size(args->buffer.size);
     VALUE rbbuff =
-        rb_ivar_get((VALUE)Websocket.get_udata(args->ws), buff_var_id);
+        rb_ivar_get((VALUE)websocket_get_udata(args->ws), buff_var_id);
     rb_str_modify(rbbuff);
     rb_str_resize(rbbuff, args->buffer.size);
     args->buffer.data = RSTRING_PTR(rbbuff);
     args->buffer.size = rb_str_capacity(rbbuff);
   } else {
     VALUE rbbuff = rb_str_buf_new(WS_INITIAL_BUFFER_SIZE);
-    rb_ivar_set((VALUE)Websocket.get_udata(args->ws), buff_var_id, rbbuff);
+    rb_ivar_set((VALUE)websocket_get_udata(args->ws), buff_var_id, rbbuff);
     rb_str_set_len(rbbuff, 0);
     rb_enc_associate(rbbuff, BinaryEncoding);
     args->buffer.data = RSTRING_PTR(rbbuff);
@@ -96,9 +88,10 @@ static struct rb_data_type_struct iodine_websocket_type = {
     .function.dfree = (void (*)(void*))dont_free,
 };
 /** a macro helper function to embed a server pointer in an object */
-#define set_ws(object, ws)         \
-  rb_ivar_set((object), ws_var_id, \
-              TypedData_Wrap_Struct(rServer, &iodine_websocket_type, (ws)))
+#define set_ws(object, ws) \
+  rb_ivar_set(             \
+      (object), ws_var_id, \
+      TypedData_Wrap_Struct(rWebsocketData, &iodine_websocket_type, (ws)))
 
 /** a macro helper to get the server pointer embeded in an object */
 #define get_ws(object) (ws_s*) DATA_PTR(rb_ivar_get((object), ws_var_id))
@@ -106,7 +99,7 @@ static struct rb_data_type_struct iodine_websocket_type = {
 static VALUE ws_close(VALUE self) {
   // TODO get ws object
   ws_s* ws = get_ws(self);
-  Websocket.close(ws);
+  websocket_close(ws);
   return self;
 }
 
@@ -114,7 +107,7 @@ static VALUE ws_close(VALUE self) {
 static VALUE ws_write(VALUE self, VALUE data) {
   // TODO get ws object
   ws_s* ws = get_ws(self);
-  Websocket.write(ws, RSTRING_PTR(data), RSTRING_LEN(data),
+  websocket_write(ws, RSTRING_PTR(data), RSTRING_LEN(data),
                   rb_enc_get(data) == UTF8Encoding);
   return self;
 }
@@ -123,11 +116,11 @@ static VALUE ws_write(VALUE self, VALUE data) {
  * that are in the process of closing down). */
 static VALUE ws_count(VALUE self) {
   ws_s* ws = get_ws(self);
-  return LONG2FIX(Websocket.count(ws));
+  return LONG2FIX(websocket_count(ws));
 }
 
 static void rb_perform_ws_task(ws_s* ws, void* arg) {
-  VALUE handler = (VALUE)Websocket.get_udata(ws);
+  VALUE handler = (VALUE)websocket_get_udata(ws);
   if (!handler)
     return;
   RubyCaller.call2((VALUE)arg, call_proc_id, 1, (VALUE*)&handler);
@@ -160,14 +153,14 @@ static VALUE ws_each(VALUE self) {
   if (block == Qnil)
     return Qnil;
   Registry.add(block);
-  Websocket.each(ws, rb_perform_ws_task, (void*)block, rb_finish_ws_task);
+  websocket_each(ws, rb_perform_ws_task, (void*)block, rb_finish_ws_task);
   return block;
 }
 
 //////////////////////////////////////
 // Protocol functions
 void ws_on_open(ws_s* ws) {
-  VALUE handler = (VALUE)Websocket.get_udata(ws);
+  VALUE handler = (VALUE)websocket_get_udata(ws);
   if (!handler)
     return;
   // TODO save ws to handler
@@ -175,20 +168,20 @@ void ws_on_open(ws_s* ws) {
   RubyCaller.call(handler, on_open_func_id);
 }
 void ws_on_close(ws_s* ws) {
-  VALUE handler = (VALUE)Websocket.get_udata(ws);
+  VALUE handler = (VALUE)websocket_get_udata(ws);
   if (!handler)
     return;
   RubyCaller.call(handler, on_close_func_id);
   Registry.remove(handler);
 }
 void ws_on_shutdown(ws_s* ws) {
-  VALUE handler = (VALUE)Websocket.get_udata(ws);
+  VALUE handler = (VALUE)websocket_get_udata(ws);
   if (!handler)
     return;
   RubyCaller.call(handler, on_shutdown_func_id);
 }
-void ws_on_data(ws_s* ws, char* data, size_t length, int is_text) {
-  VALUE handler = (VALUE)Websocket.get_udata(ws);
+void ws_on_data(ws_s* ws, char* data, size_t length, uint8_t is_text) {
+  VALUE handler = (VALUE)websocket_get_udata(ws);
   if (!handler)
     return;
   VALUE buffer = rb_ivar_get(handler, buff_var_id);
@@ -197,7 +190,7 @@ void ws_on_data(ws_s* ws, char* data, size_t length, int is_text) {
   else
     rb_enc_associate(buffer, BinaryEncoding);
   rb_str_set_len(buffer, length);
-  RubyCaller.call2(handler, on_msg_func_id, 1, &buffer);
+  RubyCaller.call2(handler, on_message_func_id, 1, &buffer);
 }
 
 //////////////////////////////////////
@@ -209,7 +202,7 @@ void iodine_websocket_upgrade(http_request_s* request,
   // make sure we have a valid handler, with the Websocket Protocol mixin.
   if (handler == Qnil || handler == Qfalse) {
     response->status = 400;
-    HttpResponse.send(response);
+    http_response_finish(response);
     return;
   }
   if (TYPE(handler) == T_CLASS) {
@@ -224,8 +217,6 @@ void iodine_websocket_upgrade(http_request_s* request,
   }
   // add the handler to the registry
   Registry.add(handler);
-  // set the connection's udata
-  Server.set_udata(request->server, request->sockfd, (void*)handler);
   // send upgrade response and set new protocol
   websocket_upgrade(.request = request, .response = response,
                     .udata = (void*)handler, .on_close = ws_on_close,
@@ -268,20 +259,13 @@ static VALUE empty_func(VALUE self) {
 // initialize the class and the whole of the Iodine/http library
 void Init_iodine_websocket(void) {
   // get IDs and data that's used often
-  call_proc_id = rb_intern("call");          // used to call the main callback
-  ws_var_id = rb_intern("ws_ptr");           // when upgrading
-  buff_var_id = rb_intern("ws_buffer");      // when upgrading
-  dup_func_id = rb_intern("dup");            // when upgrading
-  new_func_id = rb_intern("new");            // when upgrading
-  on_open_func_id = rb_intern("on_open");    // when upgrading
-  on_close_func_id = rb_intern("on_close");  // method ID
-  on_shutdown_func_id = rb_intern("on_shutdown");  // a callback's ID
-  on_msg_func_id = rb_intern("on_message");        // a callback's ID
-  UTF8Encoding = rb_enc_find("UTF-8");             // sets encoding for data
-  UTF8EncodingIndex = rb_enc_find_index("UTF-8");  // sets encoding for data
+  ws_var_id = rb_intern("ws_ptr");  // when upgrading
+  dup_func_id = rb_intern("dup");   // when upgrading
+
+  rWebsocketData = rb_define_class_under(IodineBase, "WSData", rb_cData);
 
   // the Ruby websockets protocol class.
-  rWebsocket = rb_define_module_under(rHttp, "WebsocketProtocol");
+  rWebsocket = rb_define_module_under(Iodine, "Websocket");
   if (rWebsocket == Qfalse)
     fprintf(stderr, "WTF?!\n"), exit(-1);
   // // callbacks and handlers
@@ -289,8 +273,6 @@ void Init_iodine_websocket(void) {
   // rb_define_method(rWebsocket, "on_message", def_dyn_message, 1);
   rb_define_method(rWebsocket, "on_shutdown", empty_func, 0);
   rb_define_method(rWebsocket, "on_close", empty_func, 0);
-  // // helper methods
-  iodine_add_helper_methods(rWebsocket);
   rb_define_method(rWebsocket, "write", ws_write, 1);
   rb_define_method(rWebsocket, "close", ws_close, 0);
 
