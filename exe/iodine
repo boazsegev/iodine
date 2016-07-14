@@ -3,7 +3,7 @@
 require 'iodine'
 require 'rack'
 
-if(ARGV[0] =~ /(\-\?)|(help)|(\?)$/)
+if ARGV[0] =~ /(\-\?)|(help)|(\?)$/
   puts <<-EOS
 
 Iodine's HTTP/Websocket server version #{Iodine::VERSION}
@@ -33,7 +33,7 @@ EOS
   exit(0)
 end
 
-filename = (ARGV[-2].to_s[0] != '-' && ARGV[-1]) || "config.ru"
+filename = (ARGV[-2].to_s[0] != '-' && ARGV[-1].to_s[0] != '-' && ARGV[-1]) || 'config.ru'
 app, opt = Rack::Builder.parse_file filename
 if ARGV.index('-maxbd') && ARGV[ARGV.index('-maxbd') + 1]
   Iodine::Rack.max_body_size = ARGV[ARGV.index('-maxbd') + 1].to_i
@@ -47,4 +47,5 @@ end
 if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
   Iodine::Rack.public_folder = ARGV[ARGV.index('-www') + 1]
 end
+Iodine::Rack.log = true if ARGV.index('-v')
 Iodine::Rack.run(app, opt)

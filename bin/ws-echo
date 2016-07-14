@@ -48,6 +48,7 @@ end
 Iodine.threads ||= 4
 Iodine.processes ||= 1
 Iodine::Rack.public = '~/Documents/Scratch'
+Iodine::Rack.log = 1
 count = 2
 Iodine::Rack.app = WSEcho
 Iodine.start

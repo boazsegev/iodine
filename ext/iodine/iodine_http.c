@@ -15,7 +15,7 @@ static VALUE hijack_func_sym;
 static ID to_fixnum_func_id;
 static ID close_method_id;
 static ID each_method_id;
-
+static _Bool iodine_http_request_logging = 0;
 #define rack_declare(rack_name) static VALUE rack_name
 
 #define rack_set(rack_name, str)                                      \
@@ -257,8 +257,7 @@ static inline int ruby2c_response_send(http_response_s* response,
     // fprintf(stderr, "Review body as String\n");
     if (RSTRING_LEN(body))
       http_response_write_body(response, RSTRING_PTR(body), RSTRING_LEN(body));
-    else
-      http_response_finish(response);
+    http_response_finish(response);
     return 0;
   } else if (body == Qnil) {
     http_response_finish(response);
@@ -298,12 +297,14 @@ static inline int ruby2c_review_upgrade(http_response_s* response,
     RubyCaller.call2(handler, call_proc_id, 1, &io_ruby);
   } else if ((handler = rb_hash_aref(env, R_HIJACK_IO)) != Qnil) {
     // send nothing.
+    if (iodine_http_request_logging)
+      http_response_log_finish(response);
     http_response_destroy(response);
     // remove socket from libsock and libserver
     server_hijack(response->metadata.request->metadata.fd);
   } else if ((handler = rb_hash_aref(env, IODINE_WEBSOCKET)) != Qnil) {
     // use response as existing base for native websocket upgrade
-    // TODO
+    iodine_websocket_upgrade(response->metadata.request, response, handler);
   } else if ((handler = rb_hash_aref(env, IODINE_UPGRADE)) != Qnil) {
     intptr_t fduuid = response->metadata.request->metadata.fd;
     // send headers
@@ -324,6 +325,8 @@ static inline int ruby2c_review_upgrade(http_response_s* response,
 
 static void* on_rack_request_in_GVL(http_request_s* request) {
   http_response_s response = http_response_init(request);
+  if (iodine_http_request_logging)
+    http_response_log_start(&response);
   // create /register env variable
   VALUE env = copy2env(request);
   // will be used later
@@ -355,6 +358,7 @@ static void* on_rack_request_in_GVL(http_request_s* request) {
     // send the request body.
     if (ruby2c_response_send(&response, rbresponse, env))
       goto internal_error;
+    // http_response_finish(&response);
   }
   Registry.remove(rbresponse);
   Registry.remove(env);
@@ -365,6 +369,8 @@ internal_error:
   Registry.remove(env);
   http_response_destroy(&response);
   response = http_response_init(request);
+  if (iodine_http_request_logging)
+    http_response_log_start(&response);
   response.status = 500;
   http_response_write_body(&response, "Error 500, Internal error.", 26);
   http_response_finish(&response);
@@ -436,7 +442,6 @@ int iodine_http_review(void) {
     const char* address = NULL;
     const char* public_folder = NULL;
     size_t max_body_size;
-    uint8_t log_static;
     // review port
     if (TYPE(rbport) != T_FIXNUM && TYPE(rbport) != T_STRING &&
         TYPE(rbport) != Qnil)
@@ -470,7 +475,8 @@ int iodine_http_review(void) {
     // review max body size
     max_body_size = (TYPE(rbmaxbody) == T_FIXNUM) ? FIX2ULONG(rbmaxbody) : 0;
     // review logging
-    log_static = (rblog == Qnil || rblog == Qfalse) ? 0 : 1;
+    iodine_http_request_logging = (rblog != Qnil && rblog != Qfalse);
+
     // initialize the Rack env template
     init_env_template();
 
@@ -492,7 +498,7 @@ int iodine_http_review(void) {
 
     // listen
     return http1_listen(port, address, .on_request = on_rack_request,
-                        .log_static = log_static,
+                        .log_static = iodine_http_request_logging,
                         .max_body_size = max_body_size,
                         .public_folder = public_folder, .timeout = timeout);
   }
