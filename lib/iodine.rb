@@ -29,9 +29,6 @@ require 'iodine/iodine'
 module Iodine
   @threads = ((ARGV.index('-t') && ARGV[ARGV.index('-t') + 1]) || ENV['MAX_THREADS']).to_i
   @processes = ((ARGV.index('-w') && ARGV[ARGV.index('-w') + 1]) || ENV['MAX_WORKERS']).to_i
-  # the following is only for the subclass Iodine::Http
-  @log = true if ARGV.index('-v')
-  @public_folder = ARGV[ARGV.index('-www') + 1] if ARGV.index('-www')
 
   def self.threads
     @threads

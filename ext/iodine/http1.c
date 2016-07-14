@@ -315,7 +315,9 @@ static void http1_on_finish(http_settings_s* settings) {
     free(settings);
 }
 
-int http1_listen(char* port, char* address, http_settings_s settings) {
+int http1_listen(const char* port,
+                 const char* address,
+                 http_settings_s settings) {
   if (settings.on_request == NULL) {
     fprintf(
         stderr,

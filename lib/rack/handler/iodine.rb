@@ -1,4 +1,5 @@
 require 'iodine'
+require 'iodine/iodine'
 
 module Iodine
   module Base
@@ -7,39 +8,101 @@ module Iodine
     # creating a custom IO class allows Rack to directly access the C data and minimizes data duplication, enhancing performance.
     class RackIO
     end
-    # This class inherits from {Iodine::Http Iodine::Http} and implements the methods required from a Rack handler.
-    #
-    # {Iodine::Rack Iodine::Rack} is an instance of this class.
-    class RackHandler # < Iodine::Http
-      # returns the name of the handler.
-      def name
-        'Iodine::Rack'
-      end
+  end
+  # {Iodine::Rack} is an Iodine HTTP and Websocket Rack server bundled with {Iodine} for your convinience.
+  module Rack
+    # get/set the Rack application.
+    def self.app=(val)
+      @app = val
+    end
 
-      # Runs a Rack app.
-      def run(app, options = {})
-        @app ||= @on_http
-        if @app && @app != app
-          old_app = @app
-          @app = proc do |env|
-            ret = old_app.call(env)
-            ret = app.call(env) if !ret.is_a?(Array) || (ret.is_a?(Array) && ret[0].to_i == 404)
-            ret
-          end
-        else
-          @app = app
+    # get/set the Rack application.
+    def self.app
+      @app
+    end
+
+    # get/set the HTTP connection timeout property. Defaults to 5. Limited to a maximum of 255. 0 values are silently ignored.
+    def self.timeout=(t)
+      @timeout = t
+    end
+
+    # get/set the HTTP connection timeout property. Defaults to 5.
+    def self.timeout
+      @timeout
+    end
+
+    # get/set the HTTP public folder property. Defaults to 5. Defaults to the incoming argumrnts or `nil`.
+    def self.public=(val)
+      @public = val
+    end
+    @public_folder = ARGV[ARGV.index('-www') + 1] if ARGV.index('-www')
+
+    # get/set the HTTP public folder property. Defaults to 5.
+    def self.public
+      @public
+    end
+
+    # get/set the maximum HTTP body size for incoming data. Defaults to ~50Mb. 0 values are silently ignored.
+    def self.max_body_size=(val)
+      @max_body_size = val
+    end
+
+    # get/set the maximum HTTP body size for incoming data. Defaults to ~50Mb.
+    def self.max_body_size
+      @max_body_size
+    end
+
+    # get/set the HTTP logging value (true / false). Defaults to the incoming argumrnts or `false`.
+    def self.log=(val)
+      @log = val
+    end
+
+    # get/set the HTTP logging value (true / false). Defaults to the incoming argumrnts or `false`.
+    def self.log
+      @log
+    end
+    @log = true if ARGV.index('-v')
+
+    # get/set the HTTP listenning port. Defaults to 3000.
+    def self.port=(val)
+      @port = val
+    end
+
+    # get/set the HTTP listenning port. Defaults to 3000.
+    def self.port
+      @port
+    end
+    @port = ARGV[ARGV.index('-p') + 1] if ARGV.index('-p')
+    @port ||= 3000
+
+    # get/set the HTTP socket binding address. Defaults to `nil` (usually best).
+    def self.address=(val)
+      @address = val
+    end
+
+    # get/set the HTTP socket binding address. Defaults to `nil` (usually best).
+    def self.address
+      @address
+    end
+    @address = nil
+
+    # Runs a Rack app, as par the Rack handler requirements.
+    def self.run(app, _options = {})
+      @app
+      if @app && @app != app
+        old_app = @app
+        @app = proc do |env|
+          ret = old_app.call(env)
+          ret = app.call(env) if !ret.is_a?(Array) || (ret.is_a?(Array) && ret[0].to_i == 404)
+          ret
         end
-        @port = options[:Port].to_i if options[:Port]
-        @threads ||= ENV['MAX_THREADS'].to_i if ENV['MAX_THREADS']
-        @on_http = @app
-        start
-        true
+      else
+        @app = app
       end
+      Iodine.start
+      true
     end
   end
-  # Iodine::Rack is an instance of the Iodine::Http server child class and it will run a Rack Http server if called using
-  # `Iodine::Rack.run app` or when called upon by Rack.
-  Rack = Iodine::Base::RackHandler.new
 end
 
 ENV['RACK_HANDLER'] = 'iodine'

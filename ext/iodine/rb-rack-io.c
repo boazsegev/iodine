@@ -37,7 +37,6 @@ close must never be called on the input stream.
 static VALUE rRackIO;
 
 static VALUE rRequestData;
-static ID call_new_id;
 static ID pos_id;
 static ID env_id;
 
@@ -240,7 +239,7 @@ static VALUE rio_get_io(int argc, VALUE* argv, VALUE self) {
 
 // new object
 static VALUE new_rack_io(http_request_s* request, VALUE env) {
-  VALUE rack_io = rb_funcall2(rRackIO, call_new_id, 0, NULL);
+  VALUE rack_io = rb_funcall2(rRackIO, new_func_id, 0, NULL);
   set_request(rack_io, request);
   rb_ivar_set(rack_io, pos_id, INT2FIX(0));
   rb_ivar_set(rack_io, env_id, env);
@@ -254,7 +253,6 @@ static void init_rack_io(void) {
   rRackIO = rb_define_class_under(IodineBase, "RackIO", rb_cObject);
   rRequestData = rb_define_class_under(rRackIO, "RequestData", rb_cData);
   req_var_id = rb_intern("request");
-  call_new_id = rb_intern("new");
   pos_id = rb_intern("pos");
   env_id = rb_intern("env");
   for_fd_id = rb_intern("for_fd");

@@ -1,5 +1,5 @@
 #include "iodine_core.h"
-// #include "iodine_http.h"
+#include "iodine_http.h"
 #include <ruby/io.h>
 
 /* *****************************************************************************
@@ -440,7 +440,7 @@ VALUE iodine_upgrade2basic(intptr_t fduuid, VALUE handler) {
   }
   protocol_s* protocol = dyn_set_protocol(fduuid, handler, timeout);
   if (protocol) {
-    if (server_set_protocol(fduuid, protocol))
+    if (server_switch_protocol(fduuid, protocol))
       dyn_protocol_on_close(protocol);
     return handler;
   }
@@ -570,6 +570,7 @@ Starts the Iodine event loop. This will hang the thread until an interrupt
 Returns the Iodine module.
 */
 static VALUE iodine_start(VALUE self) {
+  iodine_http_review();
   rb_thread_call_without_gvl2(srv_start_no_gvl, (void*)self, unblck, NULL);
 
   return self;
@@ -636,5 +637,5 @@ void Init_iodine(void) {
 
   // initialize the Http server
   // must be done only after all the globals, including BinaryEncoding, are set
-  // Init_iodine_http();
+  Init_iodine_http();
 }

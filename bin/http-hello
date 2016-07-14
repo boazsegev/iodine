@@ -6,24 +6,25 @@ puts `rake clean`
 puts `rake compile`
 
 require 'benchmark'
-$LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
-require "bundler/setup"
-require "iodine"
+$LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__)
+require 'bundler/setup'
+require 'iodine'
 require 'rack'
 
 # create the server object and setup any settings we might need.
-server = Iodine::Http.new
-server.threads ||= 16
-server.processes ||= 4
-server.public_folder = '~/Documents/Scratch'
+Iodine::Rack
+Iodine.threads ||= 16
+Iodine.processes ||= 4
+Iodine::Rack.public = '~/Documents/Scratch'
 count = 2
-server.on_http= Proc.new {|env| [200, {"Content-Length".freeze => "12".freeze}, ["Hello World!".freeze]]}
+Iodine::Rack.app = proc { |_env| [200, { 'Content-Length'.freeze => '12'.freeze }, ['Hello World!'.freeze]] }
+puts Iodine::Rack.address
+Iodine.start
 
+# puts env.to_a.map { |pair| pair.join(': ') } .join("\n").to_s;
 
 # puts "Press enter to start (#{Process.pid})"
 # gets
-
-server.start
 
 ###############
 ## for testing:
