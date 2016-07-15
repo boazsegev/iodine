@@ -1,18 +1,26 @@
 #include "rb-registry.h"
 #include <ruby.h>
 #include <pthread.h>
+#include <stdatomic.h>
 
 // #define RUBY_REG_DBG
-
-// a mutex to protect the registry
-static pthread_mutex_t registry_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // the registry global
 static struct Registry {
   struct Object* obj_pool;
   struct Object* first;
   VALUE owner;
+  atomic_bool lock;
 } registry = {.obj_pool = NULL, .first = NULL, .owner = 0};
+
+#define try_lock_registry() atomic_exchange(&registry.lock, 1)
+#define unlock_registry() atomic_store(&registry.lock, 0)
+#define lock_registry()         \
+  {                             \
+    while (try_lock_registry()) \
+      sched_yield();            \
+  }
+
 // the references struct (bin-tree)
 struct Object {
   struct Object* next;
@@ -23,17 +31,17 @@ struct Object {
 // manage existing objects - add a reference
 int add_reference(VALUE obj) {
   struct Object* line;
-  pthread_mutex_lock(&registry_lock);
+  lock_registry();
   line = registry.first;
   while (line) {
     if (line->obj == obj) {
       line->count++;
-      pthread_mutex_unlock(&registry_lock);
+      unlock_registry();
       return 1;
     }
     line = line->next;
   }
-  pthread_mutex_unlock(&registry_lock);
+  unlock_registry();
   return 0;
 }
 
@@ -46,7 +54,7 @@ static VALUE register_object(VALUE obj) {
   if (add_reference(obj))
     return obj;
   struct Object* line;
-  pthread_mutex_lock(&registry_lock);
+  lock_registry();
   if (registry.obj_pool) {
     line = registry.obj_pool;
     registry.obj_pool = registry.obj_pool->next;
@@ -55,13 +63,14 @@ static VALUE register_object(VALUE obj) {
   }
   if (!line) {
     perror("No Memory");
+    unlock_registry();
     return 0;
   }
   line->obj = obj;
   line->next = registry.first;
   line->count = 1;
   registry.first = line;
-  pthread_mutex_unlock(&registry_lock);
+  unlock_registry();
   return obj;
 }
 
@@ -71,7 +80,7 @@ static VALUE register_object(VALUE obj) {
 static void unregister_object(VALUE obj) {
   if (!obj || obj == Qnil)
     return;
-  pthread_mutex_lock(&registry_lock);
+  lock_registry();
   struct Object* line = registry.first;
   struct Object* prev = NULL;
   while (line) {
@@ -92,7 +101,7 @@ static void unregister_object(VALUE obj) {
     line = line->next;
   }
 finish:
-  pthread_mutex_unlock(&registry_lock);
+  unlock_registry();
 }
 
 // // Replaces one registry object with another,
@@ -123,19 +132,19 @@ static void registry_mark(void* ignore) {
 #ifdef RUBY_REG_DBG
   Registry.print();
 #endif
-  pthread_mutex_lock(&registry_lock);
+  lock_registry();
   struct Object* line = registry.first;
   while (line) {
     if (line->obj)
       rb_gc_mark(line->obj);
     line = line->next;
   }
-  pthread_mutex_unlock(&registry_lock);
+  unlock_registry();
 }
 
 // clear the registry (end of lifetime)
 static void registry_clear(void* ignore) {
-  pthread_mutex_lock(&registry_lock);
+  lock_registry();
   struct Object* line;
   struct Object* to_free;
   // free active object references
@@ -155,7 +164,7 @@ static void registry_clear(void* ignore) {
   }
   registry.obj_pool = NULL;
   registry.owner = 0;
-  pthread_mutex_unlock(&registry_lock);
+  unlock_registry();
 }
 
 // the data-type used to identify the registry
@@ -168,7 +177,7 @@ static struct rb_data_type_struct my_registry_type_struct = {
 
 // initialize the registry
 static void init(VALUE owner) {
-  pthread_mutex_lock(&registry_lock);
+  lock_registry();
   if (registry.owner)
     goto finish;
   if (!owner)
@@ -180,12 +189,12 @@ static void init(VALUE owner) {
       TypedData_Wrap_Struct(rReferences, &my_registry_type_struct, &registry);
   rb_ivar_set(owner, rb_intern("registry"), r_registry);
 finish:
-  pthread_mutex_unlock(&registry_lock);
+  unlock_registry();
 }
 
 // print data, for testing
 static void print(void) {
-  pthread_mutex_lock(&registry_lock);
+  lock_registry();
   struct Object* line = registry.first;
   fprintf(stderr, "Registry owner is %lu\n", registry.owner);
   long index = 0;
@@ -195,7 +204,7 @@ static void print(void) {
     line = line->next;
   }
   fprintf(stderr, "Total of %lu registered objects being marked\n", index);
-  pthread_mutex_unlock(&registry_lock);
+  unlock_registry();
 }
 
 ////////////////////////////////////////////
