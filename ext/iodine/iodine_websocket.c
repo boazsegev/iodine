@@ -96,7 +96,7 @@ inline static ws_s* get_ws(VALUE obj) {
 }
 
 #define set_handler(ws, handler) websocket_set_udata((ws), (VALUE)handler)
-#define get_handler(ws) ((VALUE)websocket_get_udata((ws)))
+#define get_handler(ws) ((VALUE)websocket_get_udata((ws_s*)(ws)))
 
 /* *****************************************************************************
 Websocket Ruby API
@@ -161,8 +161,9 @@ Websocket task performance
 static void iodine_ws_perform_each_task(intptr_t fd,
                                         protocol_s* protocol,
                                         void* data) {
-  RubyCaller.call2((VALUE)data, call_proc_id, 1,
-                   &(dyn_prot(protocol)->handler));
+  VALUE handler = get_handler(protocol);
+  if (handler)
+    RubyCaller.call2((VALUE)data, call_proc_id, 1, &handler);
 }
 static void iodine_ws_finish_each_task(intptr_t fd,
                                        protocol_s* protocol,

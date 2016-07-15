@@ -39,7 +39,7 @@ class WSEcho
     puts "got message: #{data}"
     write data
     data_cp = "Broadcast: #{data}"
-    puts "broadcasting #{data_cp.bytesize} bytes"
+    # puts "broadcasting #{data_cp.bytesize} bytes"
     each { |h| h.write data_cp }
   end
 
@@ -119,8 +119,8 @@ server.start
 
 # ws = new WebSocket("ws://localhost:3000"); ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);}; ws.onclose = function(e) {console.log("closed")}; ws.onopen = function(e) {ws.send("hi");};
 # for(i = 0; i< 256; i++) {
-#   ws = new WebSocket("ws://localhost:3000");
-#   ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data); e.target.close(); };
+#   ws = new WebSocket("ws://localhost:3000/");
+#   ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data); window.setTimeout(function(iws) {iws.send("leaving soon...");}, 3000, e.target); window.setTimeout(function(iws) {iws.close();}, 5000, e.target); };
 #   ws.onclose = function(e) {console.log("closed")};
 #   ws.onopen = function(e) {e.target.send("hi");};
 # };
