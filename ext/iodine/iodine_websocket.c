@@ -284,6 +284,8 @@ void iodine_websocket_upgrade(http_request_s* request,
   }
   // add the handler to the registry
   Registry.add(handler);
+  // set the UUID for the connection
+  set_uuid(handler, request);
   // send upgrade response and set new protocol
   websocket_upgrade(.request = request, .response = response,
                     .udata = (void*)handler, .on_close = ws_on_close,
