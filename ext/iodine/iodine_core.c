@@ -405,9 +405,10 @@ static VALUE iodine_listen_dyn_protocol(VALUE self, VALUE port, VALUE handler) {
     rb_raise(rb_eTypeError, "The connection handler MUST be of type Class.");
     return Qnil;
   }
-  if (TYPE(port) != T_FIXNUM)
-    rb_raise(rb_eTypeError, "The port variable must be a Fixnum.");
-  port = rb_funcall2(port, to_s_method_id, 0, NULL);
+  if (TYPE(port) != T_FIXNUM && TYPE(port) != T_STRING)
+    rb_raise(rb_eTypeError, "The port variable must be a Fixnum or a String.");
+  if (TYPE(port) == T_FIXNUM)
+    port = rb_funcall2(port, to_s_method_id, 0, NULL);
   // listen
   server_listen(.port = StringValueCStr(port), .udata = (void*)handler,
                 .on_open = on_open_dyn_protocol,

@@ -6,13 +6,6 @@
 #include <ruby/io.h>
 #include <arpa/inet.h>
 
-//////////////
-// general global definitions we will use herein.
-static VALUE rWebsocket;      // The Iodine::Http::Websocket class
-static VALUE rWebsocketData;  // The Iodine::Http::Websocket class
-static ID ws_var_id;          // id for websocket pointer
-static ID dup_func_id;        // id for the buffer.dup method
-
 /*******************************************************************************
 Buffer management - update to change the way the buffer is handled.
 */
@@ -77,35 +70,46 @@ void free_ws_buffer(ws_s* owner, struct buffer_s buff) {}
 
 #undef round_up_buffer_size
 
-//////////////////////////////////////
-// Ruby functions
+/* *****************************************************************************
+Core helpers and data
+*/
 
-// GC will call this to "free" the memory... which would be bad.
-static void dont_free(void* obj) {}
-// the data wrapper and the dont_free instruction callback
-static struct rb_data_type_struct iodine_websocket_type = {
-    .wrap_struct_name = "IodineWebsocketData",
-    .function.dfree = (void (*)(void*))dont_free,
-};
-/** a macro helper function to embed a server pointer in an object */
+static VALUE rWebsocket;       // The Iodine::Http::Websocket class
+static VALUE rWebsocketClass;  // The Iodine::Http::Websocket class
+static ID ws_var_id;           // id for websocket pointer
+static ID dup_func_id;         // id for the buffer.dup method
+
+#define set_uuid(object, request) \
+  rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->metadata.fd))
+
+inline static intptr_t get_uuid(VALUE obj) {
+  VALUE i = rb_ivar_get(obj, fd_var_id);
+  return (intptr_t)FIX2ULONG(i);
+}
+
 #define set_ws(object, ws) \
-  rb_ivar_set(             \
-      (object), ws_var_id, \
-      TypedData_Wrap_Struct(rWebsocketData, &iodine_websocket_type, (ws)))
+  rb_ivar_set((object), ws_var_id, ULONG2NUM(((VALUE)(ws))))
 
-/** a macro helper to get the server pointer embeded in an object */
-#define get_ws(object) (ws_s*) DATA_PTR(rb_ivar_get((object), ws_var_id))
+inline static ws_s* get_ws(VALUE obj) {
+  VALUE i = rb_ivar_get(obj, ws_var_id);
+  return (ws_s*)FIX2ULONG(i);
+}
 
-static VALUE ws_close(VALUE self) {
-  // TODO get ws object
+#define set_handler(ws, handler) websocket_set_udata((ws), (VALUE)handler)
+#define get_handler(ws) ((VALUE)websocket_get_udata((ws)))
+
+/* *****************************************************************************
+Websocket Ruby API
+*/
+
+static VALUE iodine_ws_close(VALUE self) {
   ws_s* ws = get_ws(self);
   websocket_close(ws);
   return self;
 }
 
 /** Writes data to the websocket. Returns `self` (the websocket object). */
-static VALUE ws_write(VALUE self, VALUE data) {
-  // TODO get ws object
+static VALUE iodine_ws_write(VALUE self, VALUE data) {
   ws_s* ws = get_ws(self);
   websocket_write(ws, RSTRING_PTR(data), RSTRING_LEN(data),
                   rb_enc_get(data) == UTF8Encoding);
@@ -114,20 +118,61 @@ static VALUE ws_write(VALUE self, VALUE data) {
 
 /** Returns the number of active websocket connections (including connections
  * that are in the process of closing down). */
-static VALUE ws_count(VALUE self) {
+static VALUE iodine_ws_count(VALUE self) {
   ws_s* ws = get_ws(self);
   return LONG2FIX(websocket_count(ws));
 }
 
-static void rb_perform_ws_task(ws_s* ws, void* arg) {
-  VALUE handler = (VALUE)websocket_get_udata(ws);
-  if (!handler)
-    return;
-  RubyCaller.call2((VALUE)arg, call_proc_id, 1, (VALUE*)&handler);
+/* *****************************************************************************
+Websocket defer
+*/
+
+static void iodine_perform_defer(intptr_t uuid,
+                                 protocol_s* protocol,
+                                 void* arg) {
+  RubyCaller.call((VALUE)arg, call_proc_id);
+  Registry.remove((VALUE)arg);
+}
+static void iodine_defer_fallback(intptr_t uuid, void* arg) {
+  Registry.remove((VALUE)arg);
+};
+
+/**
+Schedules a block of code to execute at a later time, IF the connection is still
+open and while preventing concurent code from running for the same connection
+object.
+*/
+static VALUE iodine_defer(VALUE self) {
+  // requires a block to be passed
+  rb_need_block();
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qfalse;
+  Registry.add(block);
+  intptr_t fd = iodine_get_fd(self);
+  server_task(fd, iodine_perform_defer, (void*)block, iodine_defer_fallback);
+  return self;
 }
 
-static void rb_finish_ws_task(ws_s* ws, void* arg) {
-  Registry.remove((VALUE)arg);
+/* *****************************************************************************
+Websocket task performance
+*/
+
+static void iodine_ws_perform_each_task(intptr_t fd,
+                                        protocol_s* protocol,
+                                        void* data) {
+  RubyCaller.call2((VALUE)data, call_proc_id, 1,
+                   &(dyn_prot(protocol)->handler));
+}
+static void iodine_ws_finish_each_task(intptr_t fd,
+                                       protocol_s* protocol,
+                                       void* data) {
+  Registry.remove((VALUE)data);
+}
+
+inline static void iodine_ws_run_each(intptr_t origin, VALUE block) {
+  server_each(origin, WEBSOCKET_ID_STR, iodine_ws_perform_each_task,
+              (void*)block, iodine_ws_finish_each_task);
 }
 
 /** Performs a block of code for each websocket connection. The function returns
@@ -143,45 +188,64 @@ i.e.:
         each {|ws| ws.write msg}
       end
  */
-static VALUE ws_each(VALUE self) {
+static VALUE iodine_ws_each(VALUE self) {
   // requires a block to be passed
   rb_need_block();
-  ws_s* ws = get_ws(self);
-  if (!ws)
-    return Qnil;
   VALUE block = rb_block_proc();
   if (block == Qnil)
     return Qnil;
   Registry.add(block);
-  websocket_each(ws, rb_perform_ws_task, (void*)block, rb_finish_ws_task);
+  intptr_t fd = get_uuid(self);
+  iodine_ws_run_each(fd, block);
   return block;
+}
+
+/**
+Runs the required block for each dynamic protocol connection.
+
+Tasks will be performed within each connections lock, so no connection will have
+more then one task being performed at the same time (similar to {#defer}).
+
+Also, unlike {Iodine.run}, the block will **not** be called unless the
+connection remains open at the time it's execution is scheduled.
+
+Always returns `self`.
+*/
+static VALUE iodine_ws_class_each(VALUE self) {
+  // requires a block to be passed
+  rb_need_block();
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qfalse;
+  Registry.add(block);
+  iodine_ws_run_each(-1, block);
+  return self;
 }
 
 //////////////////////////////////////
 // Protocol functions
 void ws_on_open(ws_s* ws) {
-  VALUE handler = (VALUE)websocket_get_udata(ws);
+  VALUE handler = get_handler(ws);
   if (!handler)
     return;
-  // TODO save ws to handler
   set_ws(handler, ws);
   RubyCaller.call(handler, on_open_func_id);
 }
 void ws_on_close(ws_s* ws) {
-  VALUE handler = (VALUE)websocket_get_udata(ws);
+  VALUE handler = get_handler(ws);
   if (!handler)
     return;
   RubyCaller.call(handler, on_close_func_id);
   Registry.remove(handler);
 }
 void ws_on_shutdown(ws_s* ws) {
-  VALUE handler = (VALUE)websocket_get_udata(ws);
+  VALUE handler = get_handler(ws);
   if (!handler)
     return;
   RubyCaller.call(handler, on_shutdown_func_id);
 }
 void ws_on_data(ws_s* ws, char* data, size_t length, uint8_t is_text) {
-  VALUE handler = (VALUE)websocket_get_udata(ws);
+  VALUE handler = get_handler(ws);
   if (!handler)
     return;
   VALUE buffer = rb_ivar_get(handler, buff_var_id);
@@ -208,12 +272,14 @@ void iodine_websocket_upgrade(http_request_s* request,
   if (TYPE(handler) == T_CLASS) {
     // include the Protocol module
     rb_include_module(handler, rWebsocket);
+    rb_extend_object(handler, rWebsocketClass);
     handler = RubyCaller.call(handler, new_func_id);
     // check that we created a handler
   } else {
     // include the Protocol module in the object's class
     VALUE p_class = rb_obj_class(handler);
     rb_include_module(p_class, rWebsocket);
+    rb_extend_object(p_class, rWebsocketClass);
   }
   // add the handler to the registry
   Registry.add(handler);
@@ -227,7 +293,7 @@ void iodine_websocket_upgrade(http_request_s* request,
 //////////////
 // Empty callbacks for default implementations.
 
-/**  Please override this method and implement your own callback for this event.
+/**  Please implement your own callback for this event.
  */
 static VALUE empty_func(VALUE self) {
   return Qnil;
@@ -262,8 +328,6 @@ void Init_iodine_websocket(void) {
   ws_var_id = rb_intern("ws_ptr");  // when upgrading
   dup_func_id = rb_intern("dup");   // when upgrading
 
-  rWebsocketData = rb_define_class_under(IodineBase, "WSData", rb_cData);
-
   // the Ruby websockets protocol class.
   rWebsocket = rb_define_module_under(Iodine, "Websocket");
   if (rWebsocket == Qfalse)
@@ -273,9 +337,13 @@ void Init_iodine_websocket(void) {
   // rb_define_method(rWebsocket, "on_message", def_dyn_message, 1);
   rb_define_method(rWebsocket, "on_shutdown", empty_func, 0);
   rb_define_method(rWebsocket, "on_close", empty_func, 0);
-  rb_define_method(rWebsocket, "write", ws_write, 1);
-  rb_define_method(rWebsocket, "close", ws_close, 0);
+  rb_define_method(rWebsocket, "write", iodine_ws_write, 1);
+  rb_define_method(rWebsocket, "close", iodine_ws_close, 0);
 
-  rb_define_method(rWebsocket, "each", ws_each, 0);
-  rb_define_method(rWebsocket, "count", ws_count, 0);
+  rb_define_method(rWebsocket, "defer", iodine_defer, 0);
+  rb_define_method(rWebsocket, "each", iodine_ws_each, 0);
+  rb_define_method(rWebsocket, "count", iodine_ws_count, 0);
+
+  rWebsocketClass = rb_define_module_under(IodineBase, "WebsocketClass");
+  rb_define_method(rWebsocketClass, "each", iodine_ws_class_each, 0);
 }

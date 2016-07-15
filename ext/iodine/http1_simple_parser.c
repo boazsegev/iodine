@@ -32,12 +32,12 @@ Useful macros an helpers
     }                             \
   }
 
-#define EAT_EOL()     \
-  {                   \
-    if (*pos == '\r') \
-      *(pos++) = 0;   \
-    if (*pos == '\n') \
-      *(pos++) = 0;   \
+#define EAT_EOL()                  \
+  {                                \
+    if (*pos == '\r' || *pos == 0) \
+      *(pos++) = 0;                \
+    if (*pos == '\n' || *pos == 0) \
+      *(pos++) = 0;                \
   }
 
 static inline char* seek_to_char(char* start, char* end, char tok) {
@@ -51,7 +51,7 @@ static inline char* seek_to_char(char* start, char* end, char tok) {
 
 static inline char* seek_to_2eol(char* start, char* end) {
   while (start < end) {
-    if (*start == '\r' || *start == '\n')
+    if ((*start == '\r' && *(start + 1) == '\n') || *start == '\n')
       return start;
     ++start;
   }

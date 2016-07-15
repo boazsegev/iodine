@@ -33,14 +33,14 @@ class EchoProtocol
   # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
   def on_message(buffer)
     # writing will never block and will use a buffer written in C when needed.
-    write 'Echo: buffer'
+    write "Echo: #{buffer}"
     puts buffer.dump
     close if buffer =~ /^bye[\r\n]/i
   end
 end
 
 # create the server object and setup any settings we might need.
-Iodine.listen '3000', EchoProtocol
+Iodine.listen 3000, EchoProtocol
 # server.threads = 10
 # server.processes = 1
 Iodine.start

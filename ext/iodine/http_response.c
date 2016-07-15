@@ -378,7 +378,7 @@ void http_response_log_finish(http_response_s* response) {
   char buffer[HTTP_REQUEST_LOG_LIMIT];
   char* tmp;
   size_t pos;
-  if (got_add) {
+  if (got_add == 0) {
     tmp = inet_ntoa(addrinfo.sin_addr);
     pos = strlen(tmp);
     memcpy(buffer, tmp, pos);
@@ -423,7 +423,7 @@ void http_response_log_finish(http_response_s* response) {
   }
   buffer[pos++] = ' ';
   // limit version to 10 chars
-  if (request->path_len <= 10) {
+  if (request->version_len <= 10) {
     memcpy(buffer + pos, request->version, request->version_len);
     pos += request->version_len;
   } else {

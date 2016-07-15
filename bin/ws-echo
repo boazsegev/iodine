@@ -70,10 +70,8 @@ Iodine.start
 #   server.run_every(1000) {puts "#{server.connection_count} clients connected."}
 # end
 
-puts "Press enter to start (#{Process.pid})"
+# puts "Press enter to start (#{Process.pid})"
 # gets
-
-server.start
 
 # def nag
 #   puts `ab -n 200000 -c 2000 -k http://127.0.0.1:3000/`
