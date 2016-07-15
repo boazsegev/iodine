@@ -420,6 +420,7 @@ static void init_env_template(void) {
   add_value_to_env(ENV_TEMPLATE, "rack.run_once", Qfalse);
   add_value_to_env(ENV_TEMPLATE, "rack.hijack?", Qtrue);
   add_str_to_env(ENV_TEMPLATE, "SCRIPT_NAME", "");
+  rb_hash_aset(ENV_TEMPLATE, IODINE_WEBSOCKET, Qnil);
 }
 #undef add_str_to_env
 #undef add_value_to_env

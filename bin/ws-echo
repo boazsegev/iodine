@@ -47,7 +47,7 @@ end
 # create the server object and setup any settings we might need.
 Iodine.threads ||= 4
 Iodine.processes ||= 1
-Iodine::Rack.public = '~/Documents/Scratch'
+Iodine::Rack.public = nil
 Iodine::Rack.log = 1
 count = 2
 Iodine::Rack.app = WSEcho
