@@ -104,6 +104,7 @@ void free_ws_buffer(ws_s* owner, struct buffer_s buff) {}
 Websocket Ruby API
 */
 
+/** Closes the websocket connection. */
 static VALUE iodine_ws_close(VALUE self) {
   ws_s* ws = get_ws(self);
   websocket_close(ws);
@@ -125,6 +126,18 @@ static VALUE iodine_ws_count(VALUE self) {
   return LONG2FIX(websocket_count(ws));
 }
 
+/**
+Returns a connection's UUID which is valid for **this process** (not a machine
+or internet unique value).
+
+This can be used together with a true process wide UUID to uniquely identify a
+connection across the internet.
+*/
+static VALUE iodine_ws_uuid(VALUE self) {
+  intptr_t uuid = get_uuid(self);
+  return LONG2FIX(uuid);
+}
+
 /* *****************************************************************************
 Websocket defer
 */
@@ -132,7 +145,10 @@ Websocket defer
 static void iodine_perform_defer(intptr_t uuid,
                                  protocol_s* protocol,
                                  void* arg) {
-  RubyCaller.call((VALUE)arg, call_proc_id);
+  VALUE obj = protocol->service == WEBSOCKET_ID_STR
+                  ? get_handler(protocol)
+                  : dyn_prot(protocol)->handler;
+  RubyCaller.call2((VALUE)arg, call_proc_id, 1, &obj);
   Registry.remove((VALUE)arg);
 }
 static void iodine_defer_fallback(intptr_t uuid, void* arg) {
@@ -140,20 +156,45 @@ static void iodine_defer_fallback(intptr_t uuid, void* arg) {
 };
 
 /**
-Schedules a block of code to execute at a later time, IF the connection is still
+Schedules a block of code to execute at a later time, **if** the connection is
+still
 open and while preventing concurent code from running for the same connection
 object.
+
+An optional `uuid` argument can be passed along, so that the block of code will
+run for the requested connection rather then this connection.
+
+**Careful**: as this might cause this connection's object to run code
+concurrently when data owned by this connection is accessed from within the
+block of code.
+
+On success returns the block, otherwise (connection invalid) returns `false`. A
+sucessful event registration doesn't guaranty that the block will be called (the
+connection might close between the event registration and the execution).
 */
-static VALUE iodine_defer(VALUE self) {
+static VALUE iodine_defer(int argc, VALUE* argv, VALUE self) {
+  intptr_t fd;
+  // check arguments.
+  if (argc > 1)
+    rb_raise(rb_eArgError,
+             "this function expects no more then 1 (optional) "
+             "argument.");
+  else if (argc == 1) {
+    Check_Type(*argv, T_FIXNUM);
+    fd = FIX2LONG(*argv);
+    if (!sock_isvalid(fd))
+      return Qfalse;
+  } else
+    fd = iodine_get_fd(self);
   // requires a block to be passed
   rb_need_block();
   VALUE block = rb_block_proc();
   if (block == Qnil)
     return Qfalse;
   Registry.add(block);
-  intptr_t fd = iodine_get_fd(self);
+
   server_task(fd, iodine_perform_defer, (void*)block, iodine_defer_fallback);
-  return self;
+  return block;
 }
 
 /* *****************************************************************************
@@ -223,6 +264,34 @@ static VALUE iodine_ws_class_each(VALUE self) {
   Registry.add(block);
   iodine_ws_run_each(-1, block);
   return self;
+}
+
+/**
+Schedules a block of code to run for the specified connection at a later time,
+(**if** the connection is open) and while preventing concurent code from running
+for the same connection object.
+
+The block of code will receive the connection's object. i.e.
+
+    Iodine::Websocket.defer(uuid) {|ws| ws.write "I'm doing this" }
+
+On success returns the block, otherwise (connection invalid) returns `false`. A
+sucessful event registration doesn't guaranty that the block will be called (the
+connection might close between the event registration and the execution).
+*/
+static VALUE iodine_class_defer(VALUE self, VALUE obj_uuid) {
+  intptr_t fd = FIX2LONG(obj_uuid);
+  if (!sock_isvalid(fd))
+    return Qfalse;
+  // requires a block to be passed
+  rb_need_block();
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qfalse;
+  Registry.add(block);
+
+  server_task(fd, iodine_perform_defer, (void*)block, iodine_defer_fallback);
+  return block;
 }
 
 //////////////////////////////////////
@@ -345,10 +414,14 @@ void Init_iodine_websocket(void) {
   rb_define_method(rWebsocket, "write", iodine_ws_write, 1);
   rb_define_method(rWebsocket, "close", iodine_ws_close, 0);
 
-  rb_define_method(rWebsocket, "defer", iodine_defer, 0);
+  rb_define_method(rWebsocket, "uuid", iodine_ws_uuid, 0);
+  rb_define_method(rWebsocket, "defer", iodine_defer, -1);
   rb_define_method(rWebsocket, "each", iodine_ws_each, 0);
   rb_define_method(rWebsocket, "count", iodine_ws_count, 0);
 
+  rb_define_singleton_method(rWebsocket, "each", iodine_ws_class_each, 0);
+
   rWebsocketClass = rb_define_module_under(IodineBase, "WebsocketClass");
   rb_define_method(rWebsocketClass, "each", iodine_ws_class_each, 0);
+  rb_define_method(rWebsocketClass, "defer", iodine_class_defer, 1);
 }

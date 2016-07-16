@@ -24,6 +24,7 @@ class WSEcho
 
   def on_open
     puts 'We have a websocket connection'
+    defer { puts "This websocket's uuid is #{uuid}" }
   end
 
   def on_close
