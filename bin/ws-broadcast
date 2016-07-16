@@ -54,20 +54,9 @@ Iodine.processes ||= 1
 Iodine::Rack.public = nil
 Iodine::Rack.log = 1
 Iodine::Rack.app = WSEcho
+# puts "Press enter to start (#{Process.pid})"
+# gets
 Iodine.start
-
-# server.on_http= Proc.new do |env|
-#   # [200, {"Content-Length".freeze => "12".freeze}, ["Hello World!".freeze]];
-#   if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
-#     env['iodine.websocket'.freeze] = WSEcho.new
-#     [0,{}, []]
-#   else
-#     req = Rack::Request.new env
-#     res = Rack::Response.new
-#     res.write "Hello World!".freeze
-#     res.to_a
-#   end
-# end
 
 # server.on_start do
 #   # server.run {puts "I'm running!"}
@@ -84,14 +73,7 @@ Iodine.start
 #   # end
 # end
 #
-# server.on_start do
-#   server.run_every(1000) {puts "#{server.connection_count} clients connected."}
-# end
-
-puts "Press enter to start (#{Process.pid})"
-# gets
-
-server.start
+#   Iodine.run_every(1000) {puts "#{server.connection_count} clients connected."}
 
 # def nag
 #   puts `ab -n 200000 -c 2000 -k http://127.0.0.1:3000/`

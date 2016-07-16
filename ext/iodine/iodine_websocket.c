@@ -6,6 +6,34 @@
 #include <ruby/io.h>
 #include <arpa/inet.h>
 
+/* *****************************************************************************
+Core helpers and data
+*/
+
+static VALUE rWebsocket;       // The Iodine::Http::Websocket class
+static VALUE rWebsocketClass;  // The Iodine::Http::Websocket class
+static ID ws_var_id;           // id for websocket pointer
+static ID dup_func_id;         // id for the buffer.dup method
+
+#define set_uuid(object, request) \
+  rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->metadata.fd))
+
+inline static intptr_t get_uuid(VALUE obj) {
+  VALUE i = rb_ivar_get(obj, fd_var_id);
+  return (intptr_t)FIX2ULONG(i);
+}
+
+#define set_ws(object, ws) \
+  rb_ivar_set((object), ws_var_id, ULONG2NUM(((VALUE)(ws))))
+
+inline static ws_s* get_ws(VALUE obj) {
+  VALUE i = rb_ivar_get(obj, ws_var_id);
+  return (ws_s*)FIX2ULONG(i);
+}
+
+#define set_handler(ws, handler) websocket_set_udata((ws), (VALUE)handler)
+#define get_handler(ws) ((VALUE)websocket_get_udata((ws_s*)(ws)))
+
 /*******************************************************************************
 Buffer management - update to change the way the buffer is handled.
 */
@@ -35,24 +63,25 @@ struct buffer_args {
 };
 
 void* ruby_land_buffer(void* _buf) {
-  struct buffer_args* args = _buf;
-  if (args->buffer.data) {
-    round_up_buffer_size(args->buffer.size);
-    VALUE rbbuff =
-        rb_ivar_get((VALUE)websocket_get_udata(args->ws), buff_var_id);
-    rb_str_modify(rbbuff);
-    rb_str_resize(rbbuff, args->buffer.size);
-    args->buffer.data = RSTRING_PTR(rbbuff);
-    args->buffer.size = rb_str_capacity(rbbuff);
-  } else {
+#define args ((struct buffer_args*)(_buf))
+  if (args->buffer.data == NULL) {
     VALUE rbbuff = rb_str_buf_new(WS_INITIAL_BUFFER_SIZE);
-    rb_ivar_set((VALUE)websocket_get_udata(args->ws), buff_var_id, rbbuff);
+    rb_ivar_set(get_handler(args->ws), buff_var_id, rbbuff);
     rb_str_set_len(rbbuff, 0);
     rb_enc_associate(rbbuff, BinaryEncoding);
     args->buffer.data = RSTRING_PTR(rbbuff);
     args->buffer.size = WS_INITIAL_BUFFER_SIZE;
+
+  } else {
+    round_up_buffer_size(args->buffer.size);
+    VALUE rbbuff = rb_ivar_get(get_handler(args->ws), buff_var_id);
+    rb_str_modify(rbbuff);
+    rb_str_resize(rbbuff, args->buffer.size);
+    args->buffer.data = RSTRING_PTR(rbbuff);
+    args->buffer.size = rb_str_capacity(rbbuff);
   }
   return NULL;
+#undef args
 }
 
 struct buffer_s create_ws_buffer(ws_s* owner) {
@@ -62,6 +91,7 @@ struct buffer_s create_ws_buffer(ws_s* owner) {
 }
 
 struct buffer_s resize_ws_buffer(ws_s* owner, struct buffer_s buffer) {
+  buffer.size = round_up_buffer_size(buffer.size);
   struct buffer_args args = {.ws = owner, .buffer = buffer};
   RubyCaller.call_c(ruby_land_buffer, &args);
   return args.buffer;
@@ -69,34 +99,6 @@ struct buffer_s resize_ws_buffer(ws_s* owner, struct buffer_s buffer) {
 void free_ws_buffer(ws_s* owner, struct buffer_s buff) {}
 
 #undef round_up_buffer_size
-
-/* *****************************************************************************
-Core helpers and data
-*/
-
-static VALUE rWebsocket;       // The Iodine::Http::Websocket class
-static VALUE rWebsocketClass;  // The Iodine::Http::Websocket class
-static ID ws_var_id;           // id for websocket pointer
-static ID dup_func_id;         // id for the buffer.dup method
-
-#define set_uuid(object, request) \
-  rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->metadata.fd))
-
-inline static intptr_t get_uuid(VALUE obj) {
-  VALUE i = rb_ivar_get(obj, fd_var_id);
-  return (intptr_t)FIX2ULONG(i);
-}
-
-#define set_ws(object, ws) \
-  rb_ivar_set((object), ws_var_id, ULONG2NUM(((VALUE)(ws))))
-
-inline static ws_s* get_ws(VALUE obj) {
-  VALUE i = rb_ivar_get(obj, ws_var_id);
-  return (ws_s*)FIX2ULONG(i);
-}
-
-#define set_handler(ws, handler) websocket_set_udata((ws), (VALUE)handler)
-#define get_handler(ws) ((VALUE)websocket_get_udata((ws_s*)(ws)))
 
 /* *****************************************************************************
 Websocket Ruby API
