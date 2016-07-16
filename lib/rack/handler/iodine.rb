@@ -2,13 +2,6 @@ require 'iodine'
 require 'iodine/iodine'
 
 module Iodine
-  module Base
-    # RackIO is the IO gateway for the HTTP request's body.
-    #
-    # creating a custom IO class allows Rack to directly access the C data and minimizes data duplication, enhancing performance.
-    class RackIO
-    end
-  end
   # {Iodine::Rack} is an Iodine HTTP and Websocket Rack server bundled with {Iodine} for your convinience.
   module Rack
     # get/set the Rack application.
@@ -87,7 +80,7 @@ module Iodine
     @address = nil
 
     # Runs a Rack app, as par the Rack handler requirements.
-    def self.run(app, _options = {})
+    def self.run(app, options = {})
       @app
       if @app && @app != app
         old_app = @app
@@ -99,6 +92,8 @@ module Iodine
       else
         @app = app
       end
+      @port = options[:Port] if options[:Port]
+      @port = options[:Address] if options[:Address]
       Iodine.start
       true
     end
