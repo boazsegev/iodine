@@ -69,21 +69,21 @@ Iodine.start
 #   end
 # end
 
-server.on_start do
-  # server.run {puts "I'm running!"}
-  # server.run_after(5000) {puts "5 seconds have passed."}
-  server.run_every(1000) { puts "#{server.count} clients connected." }
-  # server.run_every(10000) do
-  #   begin
-  #     puts "making a system call"
-  #     puts `ab -n 100000 -c 200 -k http://127.0.0.1:3000/`
-  #   rescue => e
-  #     l = Logger.new STDOUT
-  #     l.error e
-  #   end
-  # end
-end
-
+# server.on_start do
+#   # server.run {puts "I'm running!"}
+#   # server.run_after(5000) {puts "5 seconds have passed."}
+#   server.run_every(1000) { puts "#{server.count} clients connected." }
+#   # server.run_every(10000) do
+#   #   begin
+#   #     puts "making a system call"
+#   #     puts `ab -n 100000 -c 200 -k http://127.0.0.1:3000/`
+#   #   rescue => e
+#   #     l = Logger.new STDOUT
+#   #     l.error e
+#   #   end
+#   # end
+# end
+#
 # server.on_start do
 #   server.run_every(1000) {puts "#{server.connection_count} clients connected."}
 # end
