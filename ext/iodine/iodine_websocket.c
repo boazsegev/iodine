@@ -104,7 +104,8 @@ void free_ws_buffer(ws_s* owner, struct buffer_s buff) {}
 Websocket Ruby API
 */
 
-/** Closes the websocket connection. */
+/** Closes the websocket connection. The connection is only closed after
+ * existing data in the outgoing buffer is sent. */
 static VALUE iodine_ws_close(VALUE self) {
   ws_s* ws = get_ws(self);
   websocket_close(ws);
