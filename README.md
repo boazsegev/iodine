@@ -50,17 +50,29 @@ Iodine supports static file serving that allows the server to serve static files
 
 This means that Iodine won't lock Ruby's GVL when sending static files (nor log these requests). The files will be sent directly, allowing for true native concurrency.
 
-To setup native static file service, setup the public folder's address **before** starting the server. This is easily done by adding a single line to the application. i.e.:
+To setup native static file service, setup the public folder's address **before** starting the server.
+
+This can be done when starting the server from the command line:
+
+```bash
+bundler exec iodine -p $PORT -t 16 - w 4 -www /my/public/folder
+```
+
+Or by adding a single line to the application. i.e. (a `config.ru` example):
 
 ```ruby
-Iodine::Rack.public_folder = '/my/public/folder/'
+require 'iodine'
+Iodine::Rack.public = '/my/public/folder'
+out = [404, {"Content-Length" => "10".freeze}.freeze, ["Not Found.".freeze].freeze].freeze
+app = Proc.new { out }
+run app
 ```
 
 ### Special HTTP `Upgrade` support
 
 Iodine's HTTP server includes special support for the Upgrade directive using Rack's `env` Hash to allow Hijacking as well as unique Protocol management that utilizes Iodine's reactor for better performance and integration.
 
-To upgrade to the Websocket Protocol, utilizing Iodine's Websocket parser and protocol support, use `env['iodine.websocket'] = MyWebsocketClass`. i.e.:
+Iodine also provides native Websocket protocol support. To upgrade to the Websocket Protocol, use `env['iodine.websocket'] = MyWebsocketClass`. i.e. (a terminal example, easily convertible to a `config.ru`):
 
 ```ruby
 require 'iodine'
@@ -69,8 +81,7 @@ class WebsocketEcho
     write data
   end
 end
-server = Iodine::Http.new
-server.on_http= Proc.new do |env|
+Iodine::Rack.app= Proc.new do |env|
   if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
     env['iodine.websocket'.freeze] = WebsocketEcho # or: WebsocketEcho.new
     [0,{}, []] # It's possible to set cookies for the response.
@@ -78,20 +89,20 @@ server.on_http= Proc.new do |env|
     [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
   end
 end
+Iodine.start
 ```
 
-Upgrading to a custom protocol (i.e., to implement your own Websocket protocol with proprietary extensions) is performed using `env['iodine.protocol']`. i.e., we'll use an echo server without Websockets (direct socket echo):
+Upgrading to a custom protocol (i.e., to implement your own Websocket protocol with special extensions) is performed using `env['iodine.protocol']`. In the following (terminal) example, we'll use an echo server without (direct socket echo):
 
 ```ruby
 require 'iodine'
 class MyProtocol
   def on_message data
-    # regular socket echo - NOT websockets.
+    # regular socket echo - NOT websockets - notice the upgrade code
     write data
   end
 end
-server = Iodine::Http.new
-server.on_http= Proc.new do |env|
+Iodine::Rack.app = Proc.new do |env|
   if env["HTTP_UPGRADE".freeze] =~ /echo/i.freeze
     env['iodine.protocol'.freeze] = MyProtocol
     # no HTTP response will be sent when the status code is 0 (or less).
@@ -101,11 +112,10 @@ server.on_http= Proc.new do |env|
     [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
   end
 end
+Iodine.start
 ```
 
-This is especially effective as it allows the use of middleware without interfering with connection upgrades.
-
-This means that it's easy to minimize the number of Ruby objects we need before an Upgrade takes place and a new protocol is established.
+This design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems) etc'. This also allows us to use middleware without interfering with connection upgrades.
 
 Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less then 8Kb in size. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache.
 
@@ -123,7 +133,7 @@ class My_Broadcast
       env['iodine.websocket'.freeze] = self
       [0,{}, []]
     end
-    [200, {"Content-Length" => "12"}, ["Hello World!"]]
+    [200, {"Content-Length" => "12".freeze}, ["Hello World!".freeze]]
   end
 
   # handles websocket data (an instance  callback)
@@ -137,14 +147,11 @@ class My_Broadcast
   end
 end
 
-# Iodine::Rack is a default HTTP server, instance designed for Rack applications
-Iodine::Rack.on_http = My_Broadcast
-
 # static file serving is as easy as (also supports simple byte serving):
-Iodine::Rack.public_folder = "www/public/"
+Iodine::Rack.public = "www/public"
 
-# start the server
-Iodine::Rack.start
+# start the server while setting the app at the same time
+Iodine::Rack.run My_Broadcast
 ```
 
 Of course, if you still want to use Rack's `hijack` API, Iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack (why do that when you can write a protocol object and have the main reactor manage the socket?).
@@ -154,6 +161,8 @@ Of course, if you still want to use Rack's `hijack` API, Iodine will support you
 Since the HTTP and Websocket parsers are written in C (with no RegExp), they're fairly fast.
 
 Also, Iodine's core and parsers are running outside of Ruby's global lock, meaning that they enjoy true concurrency before entering the Ruby layer (your application) - this offers Iodine a big advantage over other servers.
+
+Another assumption Iodine makes is that it is behind a load balancer / proxy (which is the normal way Ruby applications are deployed) - this allows Iodine to disregard header validity checks (we're not checking for invalid characters) which speeds up the parsing process even more.
 
 I'm not posting any data because Iodine is still under development and things are somewhat dynamic - but you can compare the performance for yourself using `wrk` or `ab`:
 
@@ -168,8 +177,8 @@ Create a simple `config.ru` file with a hello world app:
 ```ruby
 App = Proc.new do |env|
    [200,
-     {   "Content-Type".freeze => "text/html".freeze,
-         "Content-Length".freeze => "16".freeze },
+     {   "Content-Type" => "text/html".freeze,
+         "Content-Length" => "16".freeze },
      ['Hello from Rack!'.freeze]  ]
 end
 
@@ -179,27 +188,27 @@ run App
 Then start comparing servers:
 
 ```bash
-$ iodine -p 3000
+$ rackup -p 3000 -E production -s iodine
 ```
 
 vs.
 
 ```bash
-$ rackup -p 3000 -E none -s <Other_Server_Here>
+$ rackup -p 3000 -E production -s <Other_Server_Here>
 ```
 
 Puma has ~16 threads by default, so when comparing against Puma, consider using an equal number of threads:
 
 ```bash
-// (t - threads, w - worker processes)
-$ iodine -p 3000 -t 16 -w 4
+# (t - threads, w - worker processes)
+$ RACK_ENV=production iodine -p 3000 -t 16 -w 4
 ```
 
 vs.
 
 ```bash
-// (t - threads, w - worker processes)
-$ puma -p 3000 -w 4 -q
+# (t - threads, w - worker processes)
+$ RACK_ENV=production puma -p 3000 -w 4 -q
 ```
 
 Review the `iodine -?` help for more data.
@@ -250,13 +259,11 @@ class EchoProtocol
   end
 end
 
-# create the server object and setup any settings we might need.
-server = Iodine.new
-server.threads = 1
-server.processes = 1
-server.busy_msg = "To many connections, try again later."
-server.protocol = EchoProtocol
-server.start
+# listen on port 3000 for the echo protocol.
+Iodine.listen 3000, EchoProtocol
+Iodine.threads = 1
+Iodine.processes = 1
+Iodine.start
 
 ```
 
@@ -264,7 +271,7 @@ server.start
 
 This is **not** an upgrade, this is a **full rewrite**.
 
-Iodine 0.1.x was written in Ruby and had tons of bells and whistles and a somewhat different API. It was limited to 1024 concurrent connections.
+Iodine 0.1.x was written in Ruby and had tons of bells and whistles and a somewhat different API. It also inherited the `IO.select` limit of 1024 concurrent connections.
 
 Iodine 0.2.x is written in C, doesn't have as many bells and whistles (i.e., no Websocket Client) and has a stripped down API (simpler to learn). The connection limit is calculated on startup, according to the system's limits. Connection overflows are terminated with an optional busy message, so the system won't crash.
 
@@ -282,9 +289,9 @@ Besides, you're here - why not take Iodine out for a spin and see for yourself?
 
 Yes, please, here are some thoughts:
 
-* I'm really not good at writing automated tests and benchmarks, any help would be appreciated. I keep testing manually and it sucks (and it's mistake prone).
+* I'm really not good at writing automated tests and benchmarks, any help would be appreciated. I keep testing manually and that's less then ideal (and it's mistake prone).
 
-* If we can write a Java wrapper for the C libraries, it would be nice... but it could be as big a project as the whole gem, as a lot of optimizations are implemented within the bridge between these two languages.
+* If we can write a Java wrapper for [the C libraries](https://github.com/boazsegev/c-server-tools), it would be nice... but it could be as big a project as the whole gem, as a lot of minor details are implemented within the bridge between these two languages.
 
 * Bug reports and pull requests are welcome on GitHub at https://github.com/boazsegev/iodine.
 
@@ -296,7 +303,7 @@ The gem is available as open source under the terms of the [MIT License](http://
 
 ---
 
-## I'm also writing a Ruby extension in C
+## "I'm also writing a Ruby extension in C"
 
 Really?! That's great!
 
@@ -312,12 +319,12 @@ Here's a few things you can use from this project and they seem to be handy to h
 
     I'm attaching it to one of Iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
 
-* I was using a POSIX thread pool library ([`libasync.h`](https://github.com/boazsegev/c-server-tools/blob/master/lib/libasync.c)) until I realized how many issues Ruby has with non-Ruby threads... So now there's a Ruby-thread implementation for this library at ([`rb-libasync.c`](https://github.com/boazsegev/iodine/blob/master/ext/iodine/rb-libasync.c)).
+* I was using a POSIX thread pool library ([`libasync.h`](https://github.com/boazsegev/c-server-tools/blob/master/lib/libasync.c)) until I realized how many issues Ruby has with non-Ruby threads... So now there's a Ruby-thread implementation for this library at ([`rb-libasync.h`](https://github.com/boazsegev/iodine/blob/master/ext/iodine/rb-libasync.h)).
 
     Notice that all the new threads are free from the GVL - this allows true concurrency... but, you can't make Ruby API calls in that state.
 
     To perform Ruby API calls you need to re-enter the global lock (GVL), albeit temporarily, using `rb_thread_call_with_gvl` and `rv_protect` (gotta watch out from Ruby `longjmp` exceptions).
 
-* Since I needed to call Ruby methods while multi-threading and running outside the GVL, I wrote [`RubyCaller`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-call.h) which let's me call an object's method and wraps all the `rb_thread_call_with_gvl` and `rb_protect` details in a secret hidden place I never have to see again.
+* Since I needed to call Ruby methods while multi-threading and running outside the GVL, I wrote [`RubyCaller`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-call.h) which let's me call an object's method and wraps all the `rb_thread_call_with_gvl` and `rb_protect` details in a secret hidden place I never have to see again. It also keeps track of the thread's state, so if we're already within the GVL, we won't enter it "twice" (which will crash Ruby sporadically).
 
 These are nice code snippets that can be easily used in other extensions. They're easy enough to write, I guess, but I already did the legwork, so enjoy.
