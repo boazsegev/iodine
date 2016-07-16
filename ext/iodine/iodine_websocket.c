@@ -279,8 +279,8 @@ On success returns the block, otherwise (connection invalid) returns `false`. A
 sucessful event registration doesn't guaranty that the block will be called (the
 connection might close between the event registration and the execution).
 */
-static VALUE iodine_class_defer(VALUE self, VALUE obj_uuid) {
-  intptr_t fd = FIX2LONG(obj_uuid);
+static VALUE iodine_class_defer(VALUE self, VALUE ws_uuid) {
+  intptr_t fd = FIX2LONG(ws_uuid);
   if (!sock_isvalid(fd))
     return Qfalse;
   // requires a block to be passed
@@ -420,6 +420,7 @@ void Init_iodine_websocket(void) {
   rb_define_method(rWebsocket, "count", iodine_ws_count, 0);
 
   rb_define_singleton_method(rWebsocket, "each", iodine_ws_class_each, 0);
+  rb_define_singleton_method(rWebsocket, "defer", iodine_class_defer, 1);
 
   rWebsocketClass = rb_define_module_under(IodineBase, "WebsocketClass");
   rb_define_method(rWebsocketClass, "each", iodine_ws_class_each, 0);
