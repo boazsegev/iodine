@@ -217,7 +217,8 @@ static VALUE tfio_gets(VALUE self) {
     buffer = rb_str_buf_new(pos_e - pos);
     // make sure the buffer is binary encoded.
     rb_enc_associate(buffer, BinaryEncoding);
-    pread(fd, RSTRING_PTR(buffer), pos_e - pos, pos);
+    if (pread(fd, RSTRING_PTR(buffer), pos_e - pos, pos) < 0)
+      return Qnil;
     rb_str_set_len(buffer, pos_e - pos);
     return buffer;
   }
@@ -274,7 +275,8 @@ static VALUE tfio_read(int argc, VALUE* argv, VALUE self) {
       rb_str_resize(buffer, len);
   }
   // read the data.
-  pread(fd, RSTRING_PTR(buffer), len, pos);
+  if (pread(fd, RSTRING_PTR(buffer), len, pos) <= 0)
+    goto no_data;
   rb_str_set_len(buffer, len);
   return buffer;
 no_data:

@@ -471,8 +471,9 @@ static void iodine_run_always(void* block) {
 Runs the required block later. The block might run concurrently with the
 existing code (depending on the amount and availability of worker threads).
 
-On sucess (Iodine is already running), returns the block object. On failue,
-returns `false`.
+Returns the block object. The block will run only while Iodine is running (run
+will be delayed until Iodine.start is called, unless Iodine's event loop is
+active).
 */
 static VALUE iodine_run_async(VALUE self) {
   // requires a block to be passed
@@ -482,8 +483,8 @@ static VALUE iodine_run_async(VALUE self) {
     return Qfalse;
   Registry.add(block);
   if (async_run(iodine_run_once, (void*)block)) {
-    Registry.remove(block);
-    return Qfalse;
+    server_run_after(1, iodine_run_once, (void*)block);
+    ;
   }
   return block;
 }

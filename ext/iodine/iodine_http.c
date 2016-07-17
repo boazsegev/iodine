@@ -158,7 +158,7 @@ static inline VALUE copy2env(http_request_s* request) {
     pos = RSTRING_PTR(hname) + 5;
     reader = header->name;
     while (*reader) {
-      *(pos++) = to_upper(*reader);
+      *(pos++) = *reader == '-' ? '_' : to_upper(*reader);
       ++reader;
     }
     *pos = 0;

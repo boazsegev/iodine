@@ -55,7 +55,7 @@ void free_ws_buffer(ws_s* owner, struct buffer_s);
 #define WS_INITIAL_BUFFER_SIZE 16384
 
 // buffer increments by 4,096 Bytes (4Kb)
-#define round_up_buffer_size(size) (((size) >> 12) + 1) << 12
+#define round_up_buffer_size(size) ((((size) >> 12) + 1) << 12)
 
 struct buffer_args {
   struct buffer_s buffer;
@@ -73,7 +73,6 @@ void* ruby_land_buffer(void* _buf) {
     args->buffer.size = WS_INITIAL_BUFFER_SIZE;
 
   } else {
-    round_up_buffer_size(args->buffer.size);
     VALUE rbbuff = rb_ivar_get(get_handler(args->ws), buff_var_id);
     rb_str_modify(rbbuff);
     rb_str_resize(rbbuff, args->buffer.size);
