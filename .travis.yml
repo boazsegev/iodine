@@ -8,9 +8,6 @@ rvm:
 compiler:
   - clang
   - gcc
-os:
-  - linux
-  - osx
 sudo: required
 dist: trusty
 before_install:
