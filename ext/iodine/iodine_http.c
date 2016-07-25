@@ -38,8 +38,10 @@ rack_declare(SERVER_NAME);
 rack_declare(SERVER_PORT);
 rack_declare(CONTENT_LENGTH);
 rack_declare(CONTENT_TYPE);
-rack_declare(R_URL_SCHEME);  // rack.url_scheme
-rack_declare(R_INPUT);       // rack.input
+rack_declare(R_URL_SCHEME);           // rack.url_scheme
+rack_declare(R_INPUT);                // rack.input
+rack_declare(XSENDFILE);              // for X-Sendfile support
+rack_declare(CONTENT_LENGTH_HEADER);  // for X-Sendfile support
 // rack_declare(R_HIJACK); // rack.hijack
 // rack_declare(R_HIJACK_CB);// rack.hijack_io
 
@@ -202,15 +204,6 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE _res) {
   return ST_CONTINUE;
 }
 
-static inline int ruby2c_review_immediate_upgrade(VALUE rbresponse, VALUE env) {
-  // TODO
-  /* Need to deal with:
-    rack_set(IODINE_UPGRADE, "iodine.upgrade");
-    rack_set(IODINE_WEBSOCKET, "iodine.websocket");
-  */
-  return 0;
-}
-
 // writes the body to the response object
 static VALUE for_each_body_string(VALUE str, VALUE _res, int argc, VALUE argv) {
   // fprintf(stderr, "For_each - body\n");
@@ -336,11 +329,6 @@ static void* on_rack_request_in_GVL(http_request_s* request) {
   if (rbresponse == 0 || rbresponse == Qnil)
     goto internal_error;
   Registry.add(rbresponse);
-  // check for immediate upgrade
-  if (ruby2c_review_immediate_upgrade(rbresponse, env)) {
-    http_response_destroy(&response);
-    return NULL;
-  }
   // set response status
   tmp = rb_ary_entry(rbresponse, 0);
   if (TYPE(tmp) == T_STRING)
@@ -352,7 +340,20 @@ static void* on_rack_request_in_GVL(http_request_s* request) {
   VALUE response_headers = rb_ary_entry(rbresponse, 1);
   if (TYPE(response_headers) != T_HASH)
     goto internal_error;
+  // extract the X-Sendfile header (never show original path)
+  VALUE xfiles = rb_hash_delete(response_headers, XSENDFILE);
+  // remove XFile's content length headers, as this will be controled by Iodine
+  if (xfiles != Qnil) {
+    rb_hash_delete(response_headers, CONTENT_LENGTH_HEADER);
+  }
+  // review each header and write it to the response.
   rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(&response));
+  // If the X-Sendfile header was provided, send the file directly and finish
+  if (xfiles != Qnil &&
+      http_response_sendfile2(&response, request, RSTRING_PTR(xfiles),
+                              RSTRING_LEN(xfiles), NULL, 0, 1) == 0) {
+    goto finish;
+  }
   // review for belated (post response headers) upgrade.
   if (ruby2c_review_upgrade(&response, rbresponse, env) == 0) {
     // send the request body.
@@ -360,6 +361,7 @@ static void* on_rack_request_in_GVL(http_request_s* request) {
       goto internal_error;
     // http_response_finish(&response);
   }
+finish:
   Registry.remove(rbresponse);
   Registry.remove(env);
   http_response_destroy(&response);
@@ -419,6 +421,8 @@ static void init_env_template(void) {
   add_value_to_env(ENV_TEMPLATE, "rack.multiprocess", Qtrue);
   add_value_to_env(ENV_TEMPLATE, "rack.run_once", Qfalse);
   add_value_to_env(ENV_TEMPLATE, "rack.hijack?", Qtrue);
+  add_value_to_env(ENV_TEMPLATE, "sendfile.type", XSENDFILE);
+  add_value_to_env(ENV_TEMPLATE, "HTTP_X_SENDFILE_TYPE", XSENDFILE);
   add_str_to_env(ENV_TEMPLATE, "SCRIPT_NAME", "");
   rb_hash_aset(ENV_TEMPLATE, IODINE_WEBSOCKET, Qnil);
 }
@@ -523,6 +527,8 @@ void Init_iodine_http(void) {
   rack_set(QUERY_ESTRING, "");
   rack_set(R_URL_SCHEME, "rack.url_scheme");
   rack_set(R_INPUT, "rack.input");
+  rack_set(XSENDFILE, "X-Sendfile");
+  rack_set(CONTENT_LENGTH_HEADER, "Content-Length");
 
   rack_set(R_HIJACK_IO, "rack.hijack_io");
   rack_set(R_HIJACK, "rack.hijack");
