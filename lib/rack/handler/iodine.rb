@@ -28,7 +28,7 @@ module Iodine
     def self.public=(val)
       @public = val
     end
-    @public_folder = ARGV[ARGV.index('-www') + 1] if ARGV.index('-www')
+    @public = ARGV[ARGV.index('-www') + 1] if ARGV.index('-www')
 
     # get/set the HTTP public folder property. Defaults to 5.
     def self.public

@@ -45,7 +45,7 @@ if ARGV.index('-ping') && ARGV[ARGV.index('-ping') + 1]
   Iodine::Rack.ws_timeout = ARGV[ARGV.index('-ping') + 1].to_i
 end
 if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
-  Iodine::Rack.public_folder = ARGV[ARGV.index('-www') + 1]
+  Iodine::Rack.public = ARGV[ARGV.index('-www') + 1]
 end
 Iodine::Rack.log = true if ARGV.index('-v')
 Iodine::Rack.run(app, opt)
