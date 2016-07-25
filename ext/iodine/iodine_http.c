@@ -16,6 +16,7 @@ static ID to_fixnum_func_id;
 static ID close_method_id;
 static ID each_method_id;
 static _Bool iodine_http_request_logging = 0;
+static _Bool iodine_http_static_file_server = 0;
 #define rack_declare(rack_name) static VALUE rack_name
 
 #define rack_set(rack_name, str)                                      \
@@ -341,7 +342,10 @@ static void* on_rack_request_in_GVL(http_request_s* request) {
   if (TYPE(response_headers) != T_HASH)
     goto internal_error;
   // extract the X-Sendfile header (never show original path)
-  VALUE xfiles = rb_hash_delete(response_headers, XSENDFILE);
+  // X-Sendfile support only present when iodine sercers static files.
+  VALUE xfiles = iodine_http_static_file_server
+                     ? rb_hash_delete(response_headers, XSENDFILE)
+                     : Qnil;
   // remove XFile's content length headers, as this will be controled by Iodine
   if (xfiles != Qnil) {
     rb_hash_delete(response_headers, CONTENT_LENGTH_HEADER);
@@ -421,8 +425,10 @@ static void init_env_template(void) {
   add_value_to_env(ENV_TEMPLATE, "rack.multiprocess", Qtrue);
   add_value_to_env(ENV_TEMPLATE, "rack.run_once", Qfalse);
   add_value_to_env(ENV_TEMPLATE, "rack.hijack?", Qtrue);
-  add_value_to_env(ENV_TEMPLATE, "sendfile.type", XSENDFILE);
-  add_value_to_env(ENV_TEMPLATE, "HTTP_X_SENDFILE_TYPE", XSENDFILE);
+  if (iodine_http_static_file_server) {
+    add_value_to_env(ENV_TEMPLATE, "sendfile.type", XSENDFILE);
+    add_value_to_env(ENV_TEMPLATE, "HTTP_X_SENDFILE_TYPE", XSENDFILE);
+  }
   add_str_to_env(ENV_TEMPLATE, "SCRIPT_NAME", "");
   rb_hash_aset(ENV_TEMPLATE, IODINE_WEBSOCKET, Qnil);
 }
@@ -467,8 +473,10 @@ int iodine_http_review(void) {
       rb_raise(rb_eTypeError,
                "The public folder variable `public` must be either a String or "
                "`nil`.");
-    if (TYPE(rbwww) == T_STRING)
+    if (TYPE(rbwww) == T_STRING) {
       public_folder = StringValueCStr(rbwww);
+      iodine_http_static_file_server = 1;
+    }
     // review timeout
     uint8_t timeout = (TYPE(rbtout) == T_FIXNUM) ? FIX2ULONG(rbtout) : 0;
     if (FIX2ULONG(rbtout) > 255) {
