@@ -15,6 +15,9 @@ static VALUE rWebsocketClass;  // The Iodine::Http::Websocket class
 static ID ws_var_id;           // id for websocket pointer
 static ID dup_func_id;         // id for the buffer.dup method
 
+size_t iodine_websocket_max_msg_size = 0;
+uint8_t iodine_websocket_timeout = 0;
+
 #define set_uuid(object, request) \
   rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->metadata.fd))
 
@@ -361,7 +364,9 @@ void iodine_websocket_upgrade(http_request_s* request,
   websocket_upgrade(.request = request, .response = response,
                     .udata = (void*)handler, .on_close = ws_on_close,
                     .on_open = ws_on_open, .on_shutdown = ws_on_shutdown,
-                    .on_message = ws_on_data);
+                    .on_message = ws_on_data,
+                    .max_msg_size = iodine_websocket_max_msg_size,
+                    .timeout = iodine_websocket_timeout);
 }
 
 //////////////

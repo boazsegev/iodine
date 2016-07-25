@@ -446,9 +446,11 @@ int iodine_http_review(void) {
     VALUE rbport = rb_iv_get(IodineHttp, "@port");
     VALUE rbaddress = rb_iv_get(IodineHttp, "@address");
     VALUE rbmaxbody = rb_iv_get(IodineHttp, "@max_body_size");
+    VALUE rbmaxmsg = rb_iv_get(IodineHttp, "@max_msg_size");
     VALUE rbwww = rb_iv_get(IodineHttp, "@public");
     VALUE rblog = rb_iv_get(IodineHttp, "@log");
     VALUE rbtout = rb_iv_get(IodineHttp, "@timeout");
+    VALUE rbwstout = rb_iv_get(IodineHttp, "@ws_timeout");
     const char* port = "3000";
     const char* address = NULL;
     const char* public_folder = NULL;
@@ -485,8 +487,20 @@ int iodine_http_review(void) {
               "silently ignored.\n");
       timeout = 0;
     }
+    // review websocket timeout
+    iodine_websocket_timeout =
+        (TYPE(rbwstout) == T_FIXNUM) ? FIX2ULONG(rbwstout) : 0;
+    if (FIX2ULONG(rbwstout) > 255) {
+      fprintf(stderr,
+              "Iodine Warning: Iodine::Rack Websocket timeout value "
+              "is over 255 and is silently ignored.\n");
+      iodine_websocket_timeout = 0;
+    }
     // review max body size
     max_body_size = (TYPE(rbmaxbody) == T_FIXNUM) ? FIX2ULONG(rbmaxbody) : 0;
+    // review max websocket message size
+    iodine_websocket_max_msg_size =
+        (TYPE(rbmaxmsg) == T_FIXNUM) ? FIX2ULONG(rbmaxmsg) : 0;
     // review logging
     iodine_http_request_logging = (rblog != Qnil && rblog != Qfalse);
 

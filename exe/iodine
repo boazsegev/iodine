@@ -10,16 +10,20 @@ Iodine's HTTP/Websocket server version #{Iodine::VERSION}
 
 Use:
 
-    iodine <flags> <filename>
+    iodine <options> <filename>
 
-Available otions:
- -p     Port number. Default: 3000.
- -t     Number of threads. Default: 1 => single worker thread (+ core thread).
- -w     Number of worker processes. Default: 1 => a single process.
- -www   Public folder for static file serving. Default: nil (none).
- -maxbd  Maximum Mb per HTTP message (max body size). Default: 32 Mb.
- -maxms  Maximum Bytes per websocket message (max message size). Default: ~64Kb.
- -ping  Websocket ping interval in seconds. Default: 45 seconds.
+Both <options> and <filename> are optional.
+
+Available options:
+ -p          Port number. Default: 3000.
+ -t          Number of threads. Default: 1 => single worker thread.
+ -w          Number of worker processes. Default: 1 => a single process.
+ -www        Public folder for static file serving. Default: nil (none).
+ -maxbd      Maximum Mb per HTTP message (max body size). Default: ~50Mb.
+ -maxms      Maximum Bytes per Websocket message. Default: ~250Kb.
+ -ping       Websocket ping interval in seconds. Default: 40 seconds.
+
+ <filename>  Defaults to: config.ru
 
 Example:
 

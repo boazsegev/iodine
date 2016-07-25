@@ -24,6 +24,16 @@ module Iodine
       @timeout
     end
 
+    # get/set the Websocket connection timeout property. Defaults to 40 seconds. Limited to a maximum of 255. 0 values are silently ignored.
+    def self.ws_timeout=(t)
+      @ws_timeout = t
+    end
+
+    # get/set the Websocket connection timeout property. Defaults to 40 seconds. Limited to a maximum of 255. 0 values are silently ignored.
+    def self.ws_timeout
+      @ws_timeout
+    end
+
     # get/set the HTTP public folder property. Defaults to 5. Defaults to the incoming argumrnts or `nil`.
     def self.public=(val)
       @public = val
@@ -43,6 +53,16 @@ module Iodine
     # get/set the maximum HTTP body size for incoming data. Defaults to ~50Mb.
     def self.max_body_size
       @max_body_size
+    end
+
+    # get/set the maximum Websocket body size for incoming data. Defaults to defaults to ~250KB. 0 values are silently ignored.
+    def self.max_msg_size=(val)
+      @max_msg_size = val
+    end
+
+    # get/set the maximum Websocket body size for incoming data. Defaults to defaults to ~250KB. 0 values are silently ignored.
+    def self.max_msg_size
+      @max_msg_size
     end
 
     # get/set the HTTP logging value (true / false). Defaults to the incoming argumrnts or `false`.
