@@ -8,7 +8,7 @@ require 'rack/lint'
 # This value (app) sets which of the different applications will run.
 #
 # Valid values are "hello", "slow" (debugs env values), "simple"
-app = 'slow'
+app = 'hello'
 # This is a simple Hello World Rack application, for benchmarking.
 hello = proc do |_env|
   [200, { 'Content-Type'.freeze => 'text/html'.freeze,

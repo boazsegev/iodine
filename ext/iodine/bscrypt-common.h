@@ -57,7 +57,7 @@ and: https://software.intel.com/sites/landingpage/IntrinsicsGuide/
 #endif
 
 #ifndef BSCRYPT_TEST
-#define BSCRYPT_TEST 1
+#define BSCRYPT_TEST 0
 #endif
 
 /* *****************************************************************************
