@@ -176,7 +176,7 @@ void bscrypt_rand_bytes(void* target, size_t length) {
 /*******************************************************************************
 Random
 */
-#if defined(BSCRYPT_TEST) && BSCRYPT_TEST == 1
+#if defined(DEBUG) && DEBUG == 1
 void bscrypt_test_random(void) {
   clock_t start, end;
   bscrypt_rand256();

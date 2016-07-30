@@ -72,7 +72,7 @@ static inline __unused char* bscrypt_sha1(sha1_s* s,
   return bscrypt_sha1_result(s);
 }
 
-#if defined(BSCRYPT_TEST) && BSCRYPT_TEST == 1
+#if defined(DEBUG) && DEBUG == 1
 void bscrypt_test_sha1(void);
 #endif
 

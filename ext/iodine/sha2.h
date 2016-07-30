@@ -127,7 +127,7 @@ static inline __unused char* bscrypt_sha2_384(sha2_s* s,
   return bscrypt_sha2_result(s);
 }
 
-#if defined(BSCRYPT_TEST) && BSCRYPT_TEST == 1
+#if defined(DEBUG) && DEBUG == 1
 void bscrypt_test_sha2(void);
 #endif
 

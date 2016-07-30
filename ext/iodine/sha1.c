@@ -272,11 +272,11 @@ char* bscrypt_sha1_result(sha1_s* s) {
 /*******************************************************************************
 SHA-1 testing
 */
-#if defined(BSCRYPT_TEST) && BSCRYPT_TEST == 1
+#if defined(DEBUG) && DEBUG == 1
 #include <time.h>
 
 // clang-format off
-#if defined(__has_include) && __has_include(<openssl/sha.h>)
+#if defined(TEST_OPENSSL) && defined(__has_include) && __has_include(<openssl/sha.h>)
 #   include <openssl/sha.h>
 #   define HAS_OPEN_SSL 1
 #endif

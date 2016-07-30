@@ -647,7 +647,7 @@ char* bscrypt_sha2_result(sha2_s* s) {
 /*******************************************************************************
 SHA-2 testing
 */
-#if defined(BSCRYPT_TEST) && BSCRYPT_TEST == 1
+#if defined(DEBUG) && DEBUG == 1
 
 // SHA_512 = 1, SHA_512_256 = 3, SHA_512_224 = 5, SHA_384 = 7, SHA_256 = 2,
 //              SHA_224 = 4,
@@ -658,7 +658,7 @@ static char* sha2_variant_names[] = {
 };
 
 // clang-format off
-#if defined(__has_include) && __has_include(<openssl/sha.h>)
+#if defined(TEST_OPENSSL) && defined(__has_include) && __has_include(<openssl/sha.h>)
 #   include <openssl/sha.h>
 #   define HAS_OPEN_SSL 1
 #endif

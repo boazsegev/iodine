@@ -56,10 +56,6 @@ and: https://software.intel.com/sites/landingpage/IntrinsicsGuide/
 #define __unused __attribute__((unused))
 #endif
 
-#ifndef BSCRYPT_TEST
-#define BSCRYPT_TEST 0
-#endif
-
 /* *****************************************************************************
 C++ extern
 */
