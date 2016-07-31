@@ -40,7 +40,13 @@
                         $('#output')[0].scrollHeight }, "slow");
         }
     </script>
+    <style>
+    html, body {width:100%; height: 100%; background-color: #ddd; color: #111;}
+    h3, form {text-align: center;}
+    input {background-color: #fff; color: #111; padding: 0.3em;}
+    </style>
 </head><body>
+  <h3>The Ugly Chatroom POC</h3>
     <form id='form'>
         <input type='text' id='text' name='text' placeholder='nickname'></input>
         <input type='submit' value='send'></input>
