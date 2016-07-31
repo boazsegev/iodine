@@ -1,0 +1,23 @@
+GIT
+  remote: https://github.com/boazsegev/iodine.git
+  revision: fcf3b507ca2c273946a309b4a0903d72e4fd39e2
+  specs:
+    iodine (0.2.0)
+      rake-compiler
+
+GEM
+  specs:
+    rack (1.6.4)
+    rake (10.5.0)
+    rake-compiler (0.9.5)
+      rake
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  iodine!
+  rack
+
+BUNDLED WITH
+   1.12.5
