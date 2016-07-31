@@ -1,2 +1,1 @@
-gem 'rack'
 gem 'iodine', git: 'https://github.com/boazsegev/iodine.git'

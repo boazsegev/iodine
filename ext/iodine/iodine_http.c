@@ -413,6 +413,13 @@ static void init_env_template(void) {
   ENV_TEMPLATE = rb_hash_new();
   rb_global_variable(&ENV_TEMPLATE);
 
+  // Start with the stuff Iodine will review.
+  rb_hash_aset(ENV_TEMPLATE, IODINE_WEBSOCKET, Qnil);
+  if (iodine_http_static_file_server) {
+    add_value_to_env(ENV_TEMPLATE, "sendfile.type", XSENDFILE);
+    add_value_to_env(ENV_TEMPLATE, "HTTP_X_SENDFILE_TYPE", XSENDFILE);
+  }
+
   // add the rack.version
   tmp = rb_ary_new();  // rb_ary_new is Ruby 2.0 compatible
   rb_ary_push(tmp, INT2FIX(1));
@@ -425,12 +432,7 @@ static void init_env_template(void) {
   add_value_to_env(ENV_TEMPLATE, "rack.multiprocess", Qtrue);
   add_value_to_env(ENV_TEMPLATE, "rack.run_once", Qfalse);
   add_value_to_env(ENV_TEMPLATE, "rack.hijack?", Qtrue);
-  if (iodine_http_static_file_server) {
-    add_value_to_env(ENV_TEMPLATE, "sendfile.type", XSENDFILE);
-    add_value_to_env(ENV_TEMPLATE, "HTTP_X_SENDFILE_TYPE", XSENDFILE);
-  }
   add_str_to_env(ENV_TEMPLATE, "SCRIPT_NAME", "");
-  rb_hash_aset(ENV_TEMPLATE, IODINE_WEBSOCKET, Qnil);
 }
 #undef add_str_to_env
 #undef add_value_to_env
