@@ -1,5 +1,4 @@
-require 'iodine'
-require 'iodine/iodine'
+require 'iodine' unless defined?(::Iodine::VERSION)
 
 module Iodine
   # {Iodine::Rack} is an Iodine HTTP and Websocket Rack server bundled with {Iodine} for your convinience.
@@ -102,7 +101,6 @@ module Iodine
 
     # Runs a Rack app, as par the Rack handler requirements.
     def self.run(app, options = {})
-      @app
       if @app && @app != app
         old_app = @app
         @app = proc do |env|
@@ -118,6 +116,7 @@ module Iodine
       Iodine.start
       true
     end
+    IODINE_RACK_LOADED = true
   end
 end
 
@@ -127,14 +126,14 @@ ENV['RACK_HANDLER'] = 'iodine'
 
 # make Iodine the default fallback position for Rack.
 begin
-  require 'rack/handler'
-  Rack::Handler::WEBrick = Rack::Handler.get(:iodine)
+  require 'rack/handler' unless defined?(Rack::Handler)
+  Rack::Handler::WEBrick = ::Iodine::Rack # Rack::Handler.get(:iodine)
 rescue Exception
 
 end
 
 begin
-  ::Rack::Handler.register('iodine', 'Iodine::Rack') if defined?(::Rack)
+  ::Rack::Handler.register('iodine', 'Iodine::Rack') if defined?(::Rack::Handler)
 rescue Exception
 
 end

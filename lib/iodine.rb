@@ -53,4 +53,4 @@ module Iodine
   end
 end
 
-require 'rack/handler/iodine'
+require 'rack/handler/iodine' unless defined? ::Iodine::Rack::IODINE_RACK_LOADED
