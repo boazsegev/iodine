@@ -19,10 +19,11 @@ Available options:
  -t          Number of threads. Default: 1 => single worker thread.
  -w          Number of worker processes. Default: 1 => a single process.
  -www        Public folder for static file serving. Default: nil (none).
+ -v          Log responses.
+ -q          Never log responses.
  -maxbd      Maximum Mb per HTTP message (max body size). Default: ~50Mb.
  -maxms      Maximum Bytes per Websocket message. Default: ~250Kb.
  -ping       Websocket ping interval in seconds. Default: 40 seconds.
-
  <filename>  Defaults to: config.ru
 
 Example:
@@ -52,4 +53,5 @@ if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
   Iodine::Rack.public = ARGV[ARGV.index('-www') + 1]
 end
 Iodine::Rack.log = true if ARGV.index('-v')
+Iodine::Rack.log = false if ARGV.index('-q')
 Iodine::Rack.run(app, opt)

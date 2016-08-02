@@ -70,7 +70,7 @@ static inline VALUE copy2env(http_request_s* request) {
   rb_hash_aset(
       env, QUERY_STRING,
       (request->query
-           ? rb_enc_str_new(request->path, request->path_len, BinaryEncoding)
+           ? rb_enc_str_new(request->query, request->query_len, BinaryEncoding)
            : QUERY_ESTRING));
 
   /* setup input IO + hijack support */
