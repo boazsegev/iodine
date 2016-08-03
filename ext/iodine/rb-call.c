@@ -45,7 +45,7 @@ static void* call_c(void* (*func)(void*), void* arg) {
 static void* handle_exception(void* _) {
   VALUE exc = rb_errinfo();
   if (exc != Qnil) {
-    VALUE msg = rb_attr_get(exc, rb_intern("mesg"));
+    VALUE msg = RubyCaller.call(exc, rb_intern("message"));
     VALUE exc_class = rb_class_name(CLASS_OF(exc));
     VALUE bt = RubyCaller.call(exc, rb_intern("backtrace"));
     if (TYPE(bt) == T_ARRAY) {
