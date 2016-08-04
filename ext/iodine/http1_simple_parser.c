@@ -288,13 +288,15 @@ ssize_t http1_parse_request_headers(void* buffer,
   EAT_EOL();
   if (request->content_length && (end - pos) >= request->content_length) {
     request->body_str = (void*)pos;
-    fprintf(stderr,
-            "assigning body to string. content-length %lu, buffer left: "
-            "%lu/%lu\n(%lu) %p:%.*s\n",
-            request->content_length, end - pos, len, request->content_length,
-            request->body_str, (int)request->content_length, request->body_str);
+    // fprintf(stderr,
+    //         "assigning body to string. content-length %lu, buffer left: "
+    //         "%lu/%lu\n(%lu) %p:%.*s\n",
+    //         request->content_length, end - pos, len, request->content_length,
+    //         request->body_str, (int)request->content_length,
+    //         request->body_str);
     return (ssize_t)(pos - (char*)buffer) + request->content_length;
   }
+
   // we're done.
   return pos - (char*)buffer;
 }
@@ -333,6 +335,7 @@ ssize_t http1_parse_request_body(void* buffer,
     uintptr_t* tmp = (uintptr_t*)(&request->metadata.next);
     *tmp = 0;
   }
+  // make sure we have anything to read. This might be an initializing call.
   if (len == 0)
     return ((uintptr_t)(request->metadata.next)) >= request->content_length
                ? 0
@@ -347,19 +350,17 @@ ssize_t http1_parse_request_body(void* buffer,
     return -1;
   // update the `next` field data with the received content length
   uintptr_t* tmp = (uintptr_t*)(&request->metadata.next);
-  *tmp += to_read;
+  *tmp += to_read;  // request->metadata.next += to_read;
+
   // check the state and return.
-  if (((uintptr_t)(request->metadata.next)) >= request->content_length) {
-    fprintf(stderr, "Body Parsing Complete\n");
+  if (((uintptr_t)request->metadata.next) >= request->content_length) {
     lseek(request->body_file, 0, SEEK_SET);
     return to_read;
   }
-  fprintf(stderr, "Body Parsing: need more data, %ld != %ld\n",
-          (uintptr_t)(request->metadata.next), request->content_length);
   return -2;
 }
 
-#if 1 || defined(DEBUG) && DEBUG == 1
+#if defined(DEBUG) && DEBUG == 1
 
 #include <time.h>
 
@@ -407,7 +408,7 @@ void http_parser_test(void) {
         request->content_length, 12);
     pok("* Correct body\n", "* WRONG body\n",
         memcmp(request->body_str, "Hello World!", request->content_length), 0);
-    fprintf(stderr, "%.*s\n", (int)request->content_length, request->body_str);
+    fprintf(stderr, "%.*s\n", request->content_length, request->body_str);
 #undef pok
   }
   http_request_clear(request);
@@ -459,7 +460,7 @@ void http_parser_test(void) {
   ret = read(request->body_file, request_text, request->content_length);
   if (ret < 0)
     perror("Couldn't read temporary file");
-  fprintf(stderr, "Body:\n%.*s\n", (int)request->content_length, request_text);
+  fprintf(stderr, "Body:\n%.*s\n", request->content_length, request_text);
 
   http_request_clear(request);
 }

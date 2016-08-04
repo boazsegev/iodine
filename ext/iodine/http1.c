@@ -156,7 +156,7 @@ protocol_s* http1_alloc(intptr_t fd, http_settings_s* settings) {
 HTTP/1.1 protocol bare-bones implementation
 */
 
-#define HTTP_BODY_CHUNK_SIZE 8 * 1024  // 3072  // 4096
+#define HTTP_BODY_CHUNK_SIZE 3072  // 4096
 
 /* parse and call callback */
 static void http1_on_data(intptr_t uuid, http1_protocol_s* protocol) {
@@ -176,7 +176,6 @@ static void http1_on_data(intptr_t uuid, http1_protocol_s* protocol) {
                         HTTP1_MAX_HEADER_SIZE - protocol->buffer_pos);
         // update buffer read position.
         protocol->buffer_pos += len;
-        fprintf(stderr, "read len (length) %ld\n", len);
       }
       if (len <= 0) {
         return;
@@ -186,8 +185,6 @@ static void http1_on_data(intptr_t uuid, http1_protocol_s* protocol) {
           http1_parse_request_headers(buffer, protocol->buffer_pos, request);
       // review result
       if (result >= 0) {  // headers comeplete
-        fprintf(stderr, "finished headers (length) %ld\n", result);
-        fprintf(stderr, "content-length %ld\n", request->content_length);
         // mark buffer position, for HTTP pipelining
         protocol->buffer_pos = result;
         // are we done?
@@ -210,11 +207,6 @@ static void http1_on_data(intptr_t uuid, http1_protocol_s* protocol) {
         goto parser_error;
       // assume incomplete (result == -2), even if wrong, we're right.
       len = 0;
-      if (len < HTTP_BODY_CHUNK_SIZE) {
-        fprintf(stderr, "pausing parser\n");
-        return;
-        goto parse_body;
-      }
       continue;
     }
     if (request->body_file > 0) {
@@ -222,18 +214,18 @@ static void http1_on_data(intptr_t uuid, http1_protocol_s* protocol) {
       buffer = buff;
       // request body parsing
       len = sock_read(uuid, buffer, HTTP_BODY_CHUNK_SIZE);
-      fprintf(stderr, "parsing body, read %ld\n", len);
       if (len <= 0)
         return;
       result = http1_parse_request_body(buffer, len, request);
-      fprintf(stderr, "parsing body, result %ld\n", result);
       if (result >= 0) {
-        fprintf(stderr, "request from body\n");
         // set buffer pos for piplining support
         protocol->buffer_pos = result;
         goto handle_request;
       } else if (result == -1)  // parser error
         goto parser_error;
+      if (len < HTTP_BODY_CHUNK_SIZE)  // pause parser for more data
+        return;
+      goto parse_body;
     }
     continue;
   handle_request:
