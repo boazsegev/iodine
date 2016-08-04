@@ -251,7 +251,7 @@ static VALUE tfio_read(int argc, VALUE* argv, VALUE self) {
     goto no_data;
   // calculate length if it wasn't specified.
   if (len == 0) {
-    // make sure we're not reading more then we have (string buffer)
+    // make sure we're not reading more then we have
     len = end - pos;
     // set position for future reads
     set_pos(self, end);
@@ -261,10 +261,11 @@ static VALUE tfio_read(int argc, VALUE* argv, VALUE self) {
     // set position for future reads
     set_pos(self, pos + len);
   }
+  // limit read to what we have
   if (len + pos > end)
     len = end - pos;
   // create the buffer if we don't have one.
-  if (!buffer) {
+  if (buffer == Qnil) {
     buffer = rb_str_buf_new(len);
     // make sure the buffer is binary encoded.
     rb_enc_associate(buffer, BinaryEncoding);
