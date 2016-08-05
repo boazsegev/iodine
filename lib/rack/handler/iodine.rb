@@ -113,7 +113,7 @@ module Iodine
       end
       @port = options[:Port] if options[:Port]
       @port = options[:Address] if options[:Address]
-      Rack.set_const :Websocket, ::Iodine::Websocket
+      Rack.const_set :Websocket, ::Iodine::Websocket
       Iodine.start
       Rack.send :remove_const, :Websocket
       true
