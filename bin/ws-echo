@@ -12,8 +12,8 @@ require 'rack'
 
 class WSEcho
   def self.call(env)
-    if env['HTTP_UPGRADE'.freeze] =~ /websocket/i
-      env['iodine.websocket'.freeze] = WSEcho
+    if env['upgrade.websocket?'.freeze] # && env['HTTP_UPGRADE'.freeze] =~ /websocket/i
+      env['upgrade.websocket'.freeze] = WSEcho
       return [0, {}, []]
     end
     out = "ENV:\r\n#{env.to_a.map { |h| "#{h[0]}: #{h[1]}" } .join "\n"}\n"

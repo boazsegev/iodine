@@ -8,6 +8,12 @@ VALUE IodineHttp;
 VALUE R_HIJACK;
 VALUE R_HIJACK_IO;
 VALUE R_HIJACK_CB;
+
+VALUE UPGRADE_TCP;
+VALUE UPGRADE_TCP_Q;
+VALUE UPGRADE_WEBSOCKET;
+VALUE UPGRADE_WEBSOCKET_Q;
+/* backwards compatibility, temp */
 VALUE IODINE_UPGRADE;
 VALUE IODINE_WEBSOCKET;
 
@@ -75,6 +81,15 @@ static inline VALUE copy2env(http_request_s* request) {
 
   /* setup input IO + hijack support */
   rb_hash_aset(env, R_INPUT, (hname = RackIO.new(request, env)));
+
+  /* publish upgrade support */
+  if (request->upgrade) {
+    rb_hash_aset(env, UPGRADE_WEBSOCKET_Q, Qtrue);
+    rb_hash_aset(env, UPGRADE_TCP_Q, Qtrue);
+  } else {
+    rb_hash_aset(env, UPGRADE_WEBSOCKET_Q, Qnil);
+    rb_hash_aset(env, UPGRADE_TCP_Q, Qnil);
+  }
 
   hname = rb_obj_method(hname, hijack_func_sym);
   rb_hash_aset(env, R_HIJACK, hname);
@@ -296,10 +311,12 @@ static inline int ruby2c_review_upgrade(http_response_s* response,
     http_response_destroy(response);
     // remove socket from libsock and libserver
     server_hijack(response->metadata.request->metadata.fd);
-  } else if ((handler = rb_hash_aref(env, IODINE_WEBSOCKET)) != Qnil) {
+  } else if ((handler = rb_hash_aref(env, UPGRADE_WEBSOCKET)) != Qnil ||
+             (handler = rb_hash_aref(env, IODINE_WEBSOCKET)) != Qnil) {
     // use response as existing base for native websocket upgrade
     iodine_websocket_upgrade(response->metadata.request, response, handler);
-  } else if ((handler = rb_hash_aref(env, IODINE_UPGRADE)) != Qnil) {
+  } else if ((handler = rb_hash_aref(env, UPGRADE_TCP)) != Qnil ||
+             (handler = rb_hash_aref(env, IODINE_UPGRADE)) != Qnil) {
     intptr_t fduuid = response->metadata.request->metadata.fd;
     // send headers
     http_response_finish(response);
@@ -558,6 +575,13 @@ void Init_iodine_http(void) {
   rack_set(R_HIJACK, "rack.hijack");
   rack_set(R_HIJACK_CB, "iodine.hijack_cb");
 
+  rack_set(UPGRADE_TCP, "upgrade.tcp");
+  rack_set(UPGRADE_WEBSOCKET, "upgrade.websocket");
+
+  rack_set(UPGRADE_TCP_Q, "upgrade.tcp?");
+  rack_set(UPGRADE_WEBSOCKET_Q, "upgrade.websocket?");
+
+  /* backwards compatability, temp */
   rack_set(IODINE_UPGRADE, "iodine.upgrade");
   rack_set(IODINE_WEBSOCKET, "iodine.websocket");
 

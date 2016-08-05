@@ -70,9 +70,19 @@ run app
 
 ### Special HTTP `Upgrade` support
 
-Iodine's HTTP server includes special support for the Upgrade directive using Rack's `env` Hash to allow Hijacking as well as unique Protocol management that utilizes Iodine's reactor for better performance and integration.
+Iodine's HTTP server includes special support for the Upgrade directive using Rack's `env` Hash, allowing the application to focus on services and data while Iodine takes care of the network layer.
 
-Iodine also provides native Websocket protocol support. To upgrade to the Websocket Protocol, use `env['iodine.websocket'] = MyWebsocketClass`. i.e. (a terminal example, easily convertible to a `config.ru`):
+Upgrading an HTTP connection can be performed either using Iodine's Websocket Protocol support with `env['upgrade.websocket']` or by implementing your own protocol directly over the TCP/IP layer - be it a websocket flavor or something completely different - using `env['upgrade.tcp']`.
+
+#### Websockets
+
+When an HTTP Upgrade request is received, Iodine will set the Rack Hash's upgrade property to `true`, so that: `env[upgrade.websocket?] == true`
+
+To "upgrade" the HTTP request to the Websockets protocol, simply provide Iodine with a Websocket Callback Object instance or class: `env['upgrade.websocket'] = MyWebsocketClass` or `env['upgrade.websocket'] = MyWebsocketClass.new(args)`
+
+Iodine will adopt the object, providing it with network functionality (methods such as `write`, `each`, `defer` and `close` will become available) and invoke it's callbacks on network events.
+
+Here is a simple example we can run in the terminal (`irb`) or easily paste into a `config.ru` file:
 
 ```ruby
 require 'iodine'
@@ -82,9 +92,9 @@ class WebsocketEcho
   end
 end
 Iodine::Rack.app= Proc.new do |env|
-  if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
+  if env['upgrade.websocket?'.freeze] && env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
     env['iodine.websocket'.freeze] = WebsocketEcho # or: WebsocketEcho.new
-    [0,{}, []] # It's possible to set cookies for the response.
+    [100,{}, []] # It's possible to set cookies for the response.
   else
     [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
   end
@@ -92,7 +102,9 @@ end
 Iodine.start
 ```
 
-Upgrading to a custom protocol (i.e., to implement your own Websocket protocol with special extensions) is performed using `env['iodine.protocol']`. In the following (terminal) example, we'll use an echo server without (direct socket echo):
+#### TCP/IP (raw) sockets
+
+Upgrading to a custom protocol (i.e., in order to implement your own Websocket protocol with special extensions) is performed almost the ame way, using `env['upgrade.tcp']`. In the following (terminal) example, we'll use an echo server without (direct socket echo):
 
 ```ruby
 require 'iodine'
@@ -103,11 +115,11 @@ class MyProtocol
   end
 end
 Iodine::Rack.app = Proc.new do |env|
-  if env["HTTP_UPGRADE".freeze] =~ /echo/i.freeze
-    env['iodine.protocol'.freeze] = MyProtocol
+  if env['upgrade.tcp?'.freeze] && env["HTTP_UPGRADE".freeze] =~ /echo/i.freeze
+    env['upgrade.tcp'.freeze] = MyProtocol
     # no HTTP response will be sent when the status code is 0 (or less).
     # to upgrade AFTER a response, set a valid response status code.
-    [0,{}, []]
+    [1000,{}, []]
   else
     [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
   end
@@ -115,11 +127,13 @@ end
 Iodine.start
 ```
 
-This design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems) etc'. This also allows us to use middleware without interfering with connection upgrades.
+#### A few notes
+
+This design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems) etc'. This also allows us to use middleware without interfering with connection upgrades and provides up with backwards compatibility.
 
 Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less then 8Kb in size. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache.
 
-Here's a small Http and Websocket broadcast server with Iodine::Rack, which can be used directly from `irb`:
+Here's a small HTTP and Websocket broadcast server with Iodine::Rack, which can be used directly from `irb`:
 
 ```ruby
 require 'iodine'
@@ -130,10 +144,14 @@ class My_Broadcast
   # handle HTTP requests (a class callback, emulating a Proc)
   def self.call env
     if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
-      env['iodine.websocket'.freeze] = self
+      env['upgrade.websocket'.freeze] = self.new(env)
       [0,{}, []]
     end
     [200, {"Content-Length" => "12".freeze}, ["Hello World!".freeze]]
+  end
+
+  def initialize env
+    @env = env # allows us to access the HTTP request data during the Websocket session
   end
 
   # handles websocket data (an instance  callback)
@@ -154,7 +172,7 @@ Iodine::Rack.public = "www/public"
 Iodine::Rack.run My_Broadcast
 ```
 
-Of course, if you still want to use Rack's `hijack` API, Iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack (why do that when you can write a protocol object and have the main reactor manage the socket?).
+Of course, if you still want to use Rack's `hijack` API, Iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack, as well as a socket buffer for non-blocking `write` operations (why do that when you can write a protocol object and have the main reactor manage the socket?).
 
 ### How does it compare to other servers?
 
@@ -233,7 +251,7 @@ If you have the development headers but still can't compile the Iodine extension
 
 Girls love flowers, or so my ex used to keep telling me... but I think code is the way to really show that something is hot!
 
-I mean, look at this short and sweet echo server - it's so elegant I could cry:
+I mean, look at this short and sweet echo server - No HTTP, just use `telnet`... but it's so elegant I could cry:
 
 ```ruby
 
@@ -319,7 +337,7 @@ Here's a few things you can use from this project and they seem to be handy to h
 
     I'm attaching it to one of Iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
 
-* I was using a POSIX thread pool library ([`libasync.h`](https://github.com/boazsegev/c-server-tools/blob/master/lib/libasync.c)) until I realized how many issues Ruby has with non-Ruby threads... So now there's a Ruby-thread implementation for this library at ([`rb-libasync.h`](https://github.com/boazsegev/iodine/blob/master/ext/iodine/rb-libasync.h)).
+* I was using a POSIX thread pool library ([`libasync.h`](https://github.com/boazsegev/c-server-tools/blob/master/lib/libasync.c)) until I realized how many issues Ruby has with non-Ruby threads... So now there's a Ruby-thread port for this library at ([`rb-libasync.h`](https://github.com/boazsegev/iodine/blob/master/ext/iodine/rb-libasync.h)).
 
     Notice that all the new threads are free from the GVL - this allows true concurrency... but, you can't make Ruby API calls in that state.
 
