@@ -86,9 +86,6 @@ static inline VALUE copy2env(http_request_s* request) {
   if (request->upgrade) {
     rb_hash_aset(env, UPGRADE_WEBSOCKET_Q, Qtrue);
     rb_hash_aset(env, UPGRADE_TCP_Q, Qtrue);
-  } else {
-    rb_hash_aset(env, UPGRADE_WEBSOCKET_Q, Qnil);
-    rb_hash_aset(env, UPGRADE_TCP_Q, Qnil);
   }
 
   hname = rb_obj_method(hname, hijack_func_sym);
@@ -431,11 +428,18 @@ static void init_env_template(void) {
   rb_global_variable(&ENV_TEMPLATE);
 
   // Start with the stuff Iodine will review.
-  rb_hash_aset(ENV_TEMPLATE, IODINE_WEBSOCKET, Qnil);
+  rb_hash_aset(ENV_TEMPLATE, UPGRADE_WEBSOCKET, Qnil);
+  rb_hash_aset(ENV_TEMPLATE, UPGRADE_TCP, Qnil);
   if (iodine_http_static_file_server) {
     add_value_to_env(ENV_TEMPLATE, "sendfile.type", XSENDFILE);
     add_value_to_env(ENV_TEMPLATE, "HTTP_X_SENDFILE_TYPE", XSENDFILE);
   }
+  rb_hash_aset(ENV_TEMPLATE, UPGRADE_WEBSOCKET_Q, Qnil);
+  rb_hash_aset(ENV_TEMPLATE, UPGRADE_TCP_Q, Qnil);
+
+  /* backwards compatibility, temp */
+  rb_hash_aset(ENV_TEMPLATE, IODINE_WEBSOCKET, Qnil);
+  rb_hash_aset(ENV_TEMPLATE, IODINE_UPGRADE, Qnil);
 
   // add the rack.version
   tmp = rb_ary_new();  // rb_ary_new is Ruby 2.0 compatible
