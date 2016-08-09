@@ -1,4 +1,9 @@
 language: ruby
+os:
+  - linux
+  - osx
+before_install:
+  - gem install bundler -v 1.10.6
 compiler:
   - clang
   - gcc
@@ -10,8 +15,6 @@ rvm:
   - 2.0.0
 # sudo: required
 # dist: trusty
-# before_install:
-#   - gem install bundler -v 1.10.6
 # addons:
 #   apt:
 #     sources:
