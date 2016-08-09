@@ -1,8 +1,14 @@
-require "mkmf"
+require 'mkmf'
 
-abort "Missing a Linux/Unix OS evented API (epoll/kqueue)." unless have_func("kevent") || have_func("epoll_ctl")
+abort 'Missing a Linux/Unix OS evented API (epoll/kqueue).' unless have_func('kevent') || have_func('epoll_ctl')
 # abort "Missing OpenSSL." unless have_library("ssl")
 
 $CFLAGS = '-std=c11 -O3 -Wall'
 
-create_makefile "iodine/iodine"
+if find_executable('gcc')
+  $CC = 'gcc'
+elsif find_executable('clang')
+  $CC = 'clang'
+end
+
+create_makefile 'iodine/iodine'
