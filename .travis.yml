@@ -1,6 +1,4 @@
-language:
-  - c
-  - ruby
+language: ruby
 compiler:
   - clang
   - gcc
@@ -13,6 +11,9 @@ rvm:
 sudo: required
 dist: trusty
 before_install:
+  - cc --version
+  - export CC="gcc"
+  - export cc="gcc"
   - cc --version
   - gem install bundler -v 1.10.6
 notifications:
