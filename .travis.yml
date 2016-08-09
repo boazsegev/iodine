@@ -13,6 +13,8 @@ rvm:
   - 2.3.1
   - 2.1.0
   - 2.0.0
+notifications:
+  email: false
 # sudo: required
 # dist: trusty
 # addons:
@@ -21,5 +23,3 @@ rvm:
 #       - ubuntu-toolchain-r-test
 #     packages:
 #       - gcc-5
-# notifications:
-#   email: false
