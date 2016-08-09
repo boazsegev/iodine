@@ -11,10 +11,12 @@ rvm:
 sudo: required
 dist: trusty
 before_install:
-  - cc --version
-  - export CC="gcc"
-  - export cc="gcc"
-  - cc --version
   - gem install bundler -v 1.10.6
+addons:
+  apt:
+    sources:
+      - ubuntu-toolchain-r-test
+    packages:
+      - gcc-5
 notifications:
   email: false
