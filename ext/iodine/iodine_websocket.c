@@ -23,7 +23,7 @@ uint8_t iodine_websocket_timeout = 0;
 
 inline static intptr_t get_uuid(VALUE obj) {
   VALUE i = rb_ivar_get(obj, fd_var_id);
-  return (intptr_t)FIX2ULONG(i);
+  return i != Qnil ? (intptr_t)FIX2ULONG(i) : 0;
 }
 
 #define set_ws(object, ws) \
@@ -110,6 +110,8 @@ Websocket Ruby API
  * existing data in the outgoing buffer is sent. */
 static VALUE iodine_ws_close(VALUE self) {
   ws_s* ws = get_ws(self);
+  if (((protocol_s*)ws)->service != WEBSOCKET_ID_STR)
+    return Qfalse;
   websocket_close(ws);
   return self;
 }
@@ -117,6 +119,8 @@ static VALUE iodine_ws_close(VALUE self) {
 /** Writes data to the websocket. Returns `self` (the websocket object). */
 static VALUE iodine_ws_write(VALUE self, VALUE data) {
   ws_s* ws = get_ws(self);
+  if (((protocol_s*)ws)->service != WEBSOCKET_ID_STR)
+    return Qfalse;
   websocket_write(ws, RSTRING_PTR(data), RSTRING_LEN(data),
                   rb_enc_get(data) == UTF8Encoding);
   return self;
