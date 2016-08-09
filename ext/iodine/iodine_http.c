@@ -552,7 +552,7 @@ int iodine_http_review(void) {
                         .max_body_size = max_body_size,
                         .public_folder = public_folder, .timeout = timeout);
   }
-  return -1;
+  return 0;
 }
 
 /* *****************************************************************************

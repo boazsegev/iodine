@@ -577,7 +577,10 @@ Starts the Iodine event loop. This will hang the thread until an interrupt
 Returns the Iodine module.
 */
 static VALUE iodine_start(VALUE self) {
-  iodine_http_review();
+  if (iodine_http_review() == -1) {
+    perror("Iodine couldn't start HTTP service... port busy? ");
+    return Qnil;
+  }
   rb_thread_call_without_gvl2(srv_start_no_gvl, (void*)self, unblck, NULL);
 
   return self;
