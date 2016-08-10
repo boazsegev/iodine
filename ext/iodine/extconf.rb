@@ -6,12 +6,15 @@ abort 'Missing support for atomic operations (support for C11) - is your compile
 
 $CFLAGS = '-std=c11 -O3 -Wall'
 
-if find_executable('gcc')
-  $CC = ENV['CC'] ||= 'gcc'
-  # $CPP = ENV['CPP'] ||= 'gcc'
-elsif find_executable('clang')
-  $CC = ENV['CC'] ||= 'clang'
-  # $CPP = ENV['CPP'] ||= 'clang'
+if find_executable('clang')
+  $CC = ENV['CC'] = 'clang'
+  $CPP = ENV['CPP'] = 'clang'
+elsif find_executable('gcc-5')
+  $CC = ENV['CC'] = 'gcc-5'
+  $CPP = ENV['CPP'] = 'gcc-5'
+elsif find_executable('gcc-4.9')
+  $CC = ENV['CC'] = 'gcc-4.9'
+  $CPP = ENV['CPP'] = 'gcc-4.9'
 end
 
 $CC = ENV['CC'] if ENV['CC']
