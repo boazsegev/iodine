@@ -6,7 +6,7 @@ before_install:
   - gem install bundler -v 1.10.6
   - cc --version
   - sudo update-alternatives --remove-all cc
-  - sudo update-alternatives --install /usr/bin/gcc cc /usr/bin/gcc-4.9 20
+  - sudo update-alternatives --install /usr/bin/cc /usr/bin/gcc-4.9 20
   - sudo update-alternatives --config cc
   - cc --version
 rvm:
