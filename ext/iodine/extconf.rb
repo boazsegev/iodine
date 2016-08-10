@@ -2,6 +2,8 @@ require 'mkmf'
 
 $CFLAGS = '-std=c11 -O3 -Wall'
 
+abort 'Missing a Linux/Unix OS evented API (epoll/kqueue).' unless have_func('kevent') || have_func('epoll_ctl')
+
 if ENV['CC']
   ENV['CPP'] ||= ENV['CC']
   puts "detected user prefered compiler (#{ENV['CC']})."
@@ -28,7 +30,6 @@ end
 RbConfig::MAKEFILE_CONFIG['CC'] = $CC = ENV['CC'] if ENV['CC']
 RbConfig::MAKEFILE_CONFIG['CPP'] = $CPP = ENV['CPP'] if ENV['CPP']
 
-abort 'Missing a Linux/Unix OS evented API (epoll/kqueue).' unless have_func('kevent') || have_func('epoll_ctl')
 abort 'Missing support for atomic operations (support for C11) - is your compiler updated?' unless have_header('stdatomic.h')
 # abort "Missing OpenSSL." unless have_library("ssl")
 
