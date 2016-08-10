@@ -11,8 +11,8 @@ rvm:
   - 2.2.2
 notifications:
   email: false
-# sudo: required
-# dist: trusty
+sudo: required
+dist: trusty
 addons:
   apt:
     sources:

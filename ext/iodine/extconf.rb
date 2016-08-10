@@ -1,7 +1,5 @@
 require 'mkmf'
 
-$CFLAGS = '-std=c11 -O3 -Wall'
-
 abort 'Missing a Linux/Unix OS evented API (epoll/kqueue).' unless have_func('kevent') || have_func('epoll_ctl')
 
 if ENV['CC']
@@ -26,6 +24,8 @@ elsif find_executable('gcc-4.9')
 else
   warn 'unknown / old compiler version - installation might fail.'
 end
+
+$CFLAGS = '-std=c11 -O3 -Wall'
 
 RbConfig::MAKEFILE_CONFIG['CC'] = $CC = ENV['CC'] if ENV['CC']
 RbConfig::MAKEFILE_CONFIG['CPP'] = $CPP = ENV['CPP'] if ENV['CPP']
