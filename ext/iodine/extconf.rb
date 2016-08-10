@@ -8,11 +8,14 @@ $CFLAGS = '-std=c11 -O3 -Wall'
 if find_executable('gcc')
   puts 'Attempting to set compiler to gcc.'
   $CC = ENV['CC'] ||= 'gcc'
+  # $CPP = ENV['CPP'] ||= 'gcc'
 elsif find_executable('clang')
   puts 'Attempting to set compiler to clang.'
   $CC = ENV['CC'] ||= 'clang'
+  # $CPP = ENV['CPP'] ||= 'clang'
 end
 
-RbConfig::MAKEFILE_CONFIG['CC'] = ENV['CC'] if ENV['CC']
+$CC = ENV['CC'] if ENV['CC']
+$CC = ENV['CPP'] if ENV['CPP']
 
 create_makefile 'iodine/iodine'

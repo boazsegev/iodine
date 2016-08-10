@@ -29,11 +29,14 @@ Gem::Specification.new do |spec|
 
   spec.extensions = %w(ext/iodine/extconf.rb)
 
+  spec.required_ruby_version = '>= 2.2.2' # for Rack
+
   spec.add_dependency 'rack'
   spec.add_dependency 'rake-compiler'
 
   spec.requirements << 'A Unix based system, i.e.: Linux / OS X / BSD.'
   spec.requirements << 'An updated C compiler (with support for C11).'
+  spec.requirements << 'Ruby >= 2.2.2'
 
   spec.add_development_dependency 'bundler', '~> 1.10'
   spec.add_development_dependency 'rake', '~> 10.0'
