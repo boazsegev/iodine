@@ -1,10 +1,13 @@
 language: ruby
 os:
   - linux
-  - osx
+  # - osx
 before_install:
   - gem install bundler -v 1.10.6
   - cc --version
+  - sudo update-alternatives --remove-all gcc
+  - sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.9 20
+  - sudo update-alternatives --config gcc
   - gcc --version
 rvm:
   - 2.2.4
@@ -15,12 +18,13 @@ notifications:
   email: false
 # sudo: required
 # dist: trusty
-# addons:
-#   apt:
-#     sources:
-#       - ubuntu-toolchain-r-test
-#     packages:
-#       - gcc-5
+addons:
+  apt:
+    sources:
+      - ubuntu-toolchain-r-test
+    packages:
+      - gcc-4.9
+      # - gcc-5
 # compiler:
 #   - clang
 #   - gcc
