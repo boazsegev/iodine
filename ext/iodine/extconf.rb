@@ -5,10 +5,10 @@ abort 'Missing a Linux/Unix OS evented API (epoll/kqueue).' unless have_func('ke
 if ENV['CC']
   ENV['CPP'] ||= ENV['CC']
   puts "detected user prefered compiler (#{ENV['CC']})."
-elsif find_executable('clang') && (`clang -dumpversion`.to_i > 3 || (`clang -dumpversion`.to_i == 3 && `clang -dumpversion`[2..-1].to_i >= 1))
-  $CC = ENV['CC'] = 'clang'
-  $CPP = ENV['CPP'] = 'clang'
-  puts "using clang compiler v. #{`clang -dumpversion`}."
+# elsif find_executable('clang') # && (`clang -dumpversion`.to_i > 3 || (`clang -dumpversion`.to_i == 3 && `clang -dumpversion`[2..-1].to_i >= 1))
+#   $CC = ENV['CC'] = 'clang'
+#   $CPP = ENV['CPP'] = 'clang'
+#   puts "using clang compiler v. #{`clang -dumpversion`}."
 elsif find_executable('gcc-6')
   $CC = ENV['CC'] = 'gcc-6'
   $CPP = ENV['CPP'] = find_executable('g++-6') ? 'g++-6' : 'gcc-6'
