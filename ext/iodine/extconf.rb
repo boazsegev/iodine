@@ -1,11 +1,18 @@
 require 'mkmf'
 
+def check_for_stdatomics
+  RbConfig::MAKEFILE_CONFIG['CC'] = $CC = ENV['CC'] if ENV['CC']
+  RbConfig::MAKEFILE_CONFIG['CPP'] = $CPP = ENV['CPP'] if ENV['CPP']
+  abort 'Ruby indicates the default compiler is missing support for atomic operations (support for C11) - is your compiler updated?' unless have_header('stdatomic.h')
+end
+
 abort 'Missing a Linux/Unix OS evented API (epoll/kqueue).' unless have_func('kevent') || have_func('epoll_ctl')
 
 if ENV['CC']
   ENV['CPP'] ||= ENV['CC']
   puts "detected user prefered compiler (#{ENV['CC']})."
-elsif find_executable('clang') && system("printf \"\#include <stdatomic.h>\nint main(void) {}\" | clang -include stdatomic.h -xc -o /dev/null -", out: '/dev/null')
+  check_for_stdatomics
+elsif find_executable('clang') && puts('testing clang for stdatomic support...').nil? && system("printf \"\#include <stdatomic.h>\nint main(void) {}\" | clang -include stdatomic.h -xc -o /dev/null -", out: '/dev/null')
   $CC = ENV['CC'] = 'clang'
   $CPP = ENV['CPP'] = 'clang'
   puts "using clang compiler v. #{`clang -dumpversion`}."
@@ -23,14 +30,13 @@ elsif find_executable('gcc-4.9')
   puts 'using gcc-4.9 compiler.'
 else
   warn 'unknown / old compiler version - installation might fail.'
+  check_for_stdatomics
 end
 
 $CFLAGS = '-std=c11 -O3 -Wall'
-
 RbConfig::MAKEFILE_CONFIG['CC'] = $CC = ENV['CC'] if ENV['CC']
 RbConfig::MAKEFILE_CONFIG['CPP'] = $CPP = ENV['CPP'] if ENV['CPP']
 
-puts 'Ruby indicates the default compiler is missing support for atomic operations (support for C11) - is your compiler updated?' unless have_header('stdatomic.h')
 # abort "Missing OpenSSL." unless have_library("ssl")
 
 create_makefile 'iodine/iodine'
