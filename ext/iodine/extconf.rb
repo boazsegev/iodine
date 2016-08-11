@@ -5,7 +5,7 @@ abort 'Missing a Linux/Unix OS evented API (epoll/kqueue).' unless have_func('ke
 if ENV['CC']
   ENV['CPP'] ||= ENV['CC']
   puts "detected user prefered compiler (#{ENV['CC']})."
-elsif find_executable('clang') && `echo 'int main(void) {}' | clang -include stdatomic.h -xc -o /dev/null -`.empty?
+elsif find_executable('clang') && system("printf \"\#include <stdatomic.h>\nint main(void) {}\" | clang -include stdatomic.h -xc -o /dev/null -", out: '/dev/null')
   $CC = ENV['CC'] = 'clang'
   $CPP = ENV['CPP'] = 'clang'
   puts "using clang compiler v. #{`clang -dumpversion`}."
