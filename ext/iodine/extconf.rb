@@ -3,7 +3,7 @@ require 'mkmf'
 def check_for_stdatomics
   RbConfig::MAKEFILE_CONFIG['CC'] = $CC = ENV['CC'] if ENV['CC']
   RbConfig::MAKEFILE_CONFIG['CPP'] = $CPP = ENV['CPP'] if ENV['CPP']
-  abort 'Ruby indicates the default compiler is missing support for atomic operations (support for C11) - is your compiler updated?' unless have_header('stdatomic.h')
+  abort 'Missing support for atomic operations (support for C11) - is your compiler updated?' unless have_header('stdatomic.h')
 end
 
 abort 'Missing a Linux/Unix OS evented API (epoll/kqueue).' unless have_func('kevent') || have_func('epoll_ctl')
