@@ -101,6 +101,7 @@ module Iodine
 
     # Runs a Rack app, as par the Rack handler requirements.
     def self.run(app, options = {})
+      # nested applications... is that a thing?
       if @app && @app != app
         old_app = @app
         @app = proc do |env|
@@ -113,8 +114,14 @@ module Iodine
       end
       @port = options[:Port] if options[:Port]
       @port = options[:Address] if options[:Address]
+      # load anything marked with `autoload`, since autoload isn't thread safe nor fork positive.
+      Module.constants.each { |n| Module.const_get(n) }
+      # provide Websocket features using Rack::Websocket
+      Rack.send :remove_const, :Websocket
       Rack.const_set :Websocket, ::Iodine::Websocket
+      # start Iodine
       Iodine.start
+      # remove the Websocket features from Rack::Websocket
       Rack.send :remove_const, :Websocket
       true
     end
