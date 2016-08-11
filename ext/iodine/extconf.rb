@@ -5,10 +5,10 @@ abort 'Missing a Linux/Unix OS evented API (epoll/kqueue).' unless have_func('ke
 if ENV['CC']
   ENV['CPP'] ||= ENV['CC']
   puts "detected user prefered compiler (#{ENV['CC']})."
-# elsif find_executable('clang') # && (`clang -dumpversion`.to_i > 3 || (`clang -dumpversion`.to_i == 3 && `clang -dumpversion`[2..-1].to_i >= 1))
-#   $CC = ENV['CC'] = 'clang'
-#   $CPP = ENV['CPP'] = 'clang'
-#   puts "using clang compiler v. #{`clang -dumpversion`}."
+elsif find_executable('clang') && `echo 'int main(void) {}' | clang -include stdatomic.h -xc -o /dev/null -`.empty?
+  $CC = ENV['CC'] = 'clang'
+  $CPP = ENV['CPP'] = 'clang'
+  puts "using clang compiler v. #{`clang -dumpversion`}."
 elsif find_executable('gcc-6')
   $CC = ENV['CC'] = 'gcc-6'
   $CPP = ENV['CPP'] = find_executable('g++-6') ? 'g++-6' : 'gcc-6'
@@ -30,7 +30,7 @@ $CFLAGS = '-std=c11 -O3 -Wall'
 RbConfig::MAKEFILE_CONFIG['CC'] = $CC = ENV['CC'] if ENV['CC']
 RbConfig::MAKEFILE_CONFIG['CPP'] = $CPP = ENV['CPP'] if ENV['CPP']
 
-puts 'Missing support for atomic operations (support for C11) - is your compiler updated?' unless have_header('stdatomic.h')
+puts 'Ruby indicates the default compiler is missing support for atomic operations (support for C11) - is your compiler updated?' unless have_header('stdatomic.h')
 # abort "Missing OpenSSL." unless have_library("ssl")
 
 create_makefile 'iodine/iodine'
