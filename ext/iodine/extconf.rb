@@ -29,7 +29,6 @@ elsif find_executable('gcc-4.9')
   $CPP = ENV['CPP'] = find_executable('g++-4.9') ? 'g++-4.9' : 'gcc-4.9'
   puts 'using gcc-4.9 compiler.'
 else
-  warn 'unknown / old compiler version - installation might fail.'
   check_for_stdatomics
 end
 
