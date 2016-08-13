@@ -21,6 +21,10 @@ struct RubyArgCall {
   ID method;
 };
 
+#ifndef _Thread_local
+#define _Thread_local __thread
+#endif
+
 // a thread specific global variable that lets us know if we're in the GVL
 _Thread_local static char in_gvl = 0;
 static char check_in_gvl(void) {
