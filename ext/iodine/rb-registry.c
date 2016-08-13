@@ -1,7 +1,6 @@
 #include "rb-registry.h"
 #include <ruby.h>
-#include <pthread.h>
-#include <stdatomic.h>
+#include "spnlock.h"
 
 // #define RUBY_REG_DBG
 
@@ -10,16 +9,15 @@ static struct Registry {
   struct Object* obj_pool;
   struct Object* first;
   VALUE owner;
-  atomic_bool lock;
-} registry = {.obj_pool = NULL, .first = NULL, .owner = 0};
+  spn_lock_i lock;
+} registry = {.obj_pool = NULL,
+              .first = NULL,
+              .owner = 0,
+              .lock = SPN_LOCK_INIT};
 
-#define try_lock_registry() atomic_exchange(&registry.lock, 1)
-#define unlock_registry() atomic_store(&registry.lock, 0)
-#define lock_registry()         \
-  {                             \
-    while (try_lock_registry()) \
-      sched_yield();            \
-  }
+#define try_lock_registry() spn_trylock(&registry.lock)
+#define unlock_registry() spn_unlock(&registry.lock)
+#define lock_registry() spn_lock(&registry.lock)
 
 // the references struct (bin-tree)
 struct Object {
