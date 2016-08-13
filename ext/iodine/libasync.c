@@ -5,9 +5,6 @@ license: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #include "rb-libasync.h"
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
 
 #include "libasync.h"
 
@@ -115,8 +112,7 @@ A Simple busy lock implementation ... (spnlock.h) ... copied for portability
 /*********
  * manage the way threads "wait" for the lock to release
  */
-#if (defined(__unix__) || defined(__APPLE__) || defined(__linux__)) && \
-    defined(__has_include) && __has_include(<time.h>)
+#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
 /* nanosleep seems to be the most effective and efficient reschedule */
 #include <time.h>
 #define reschedule_thread()                           \
@@ -136,7 +132,9 @@ A Simple busy lock implementation ... (spnlock.h) ... copied for portability
  */
 
 /* prefer C11 standard implementation where available (trust the system) */
-#if defined(__has_include) && __has_include(<stdatomic.h>)
+#if defined(__has_include)
+#if __has_include(<stdatomic.h>)
+#define SPN_TMP_HAS_ATOMICS 1
 #include <stdatomic.h>
 typedef atomic_bool spn_lock_i;
 #define SPN_LOCK_INIT ATOMIC_VAR_INIT(0)
@@ -151,11 +149,17 @@ __unused static inline void spn_unlock(spn_lock_i* lock) {
   __asm__ volatile("" ::: "memory");
 }
 /** returns a lock's state (non 0 == Busy). */
-__unused static inline int is_spn_locked(spn_lock_i* lock) {
+__unused static inline int spn_is_locked(spn_lock_i* lock) {
   return atomic_load(lock);
 }
-#else
+#endif
+#endif
 
+/* Chack if stdatomic was available */
+#ifdef SPN_TMP_HAS_ATOMICS
+#undef SPN_TMP_HAS_ATOMICS
+
+#else
 /* Test for compiler builtins */
 
 /* use clang builtins if available - trust the compiler */
@@ -222,7 +226,7 @@ __unused static inline void spn_unlock(spn_lock_i* lock) {
   *lock = 0;
 }
 /** returns a lock's state (non 0 == Busy). */
-__unused static inline int is_spn_locked(spn_lock_i* lock) {
+__unused static inline int spn_is_locked(spn_lock_i* lock) {
   __asm__ volatile("" ::: "memory");
   return *lock;
 }
