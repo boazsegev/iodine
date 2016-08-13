@@ -21,7 +21,7 @@ struct RubyArgCall {
   ID method;
 };
 
-#ifndef _Thread_local
+#if __STDC_VERSION__ < 201112L || __STDC_NO_THREADS__
 #define _Thread_local __thread
 #endif
 
