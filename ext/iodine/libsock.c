@@ -29,9 +29,7 @@ Support `libreact` on_close callback, if exist.
 #pragma weak reactor_on_close
 void reactor_on_close(intptr_t uuid) {}
 #pragma weak reactor_remove
-int reactor_remove(intptr_t uuid) {
-  return -1;
-}
+int reactor_remove(intptr_t uuid) { return -1; }
 
 /* *****************************************************************************
 Support timeout setting.
@@ -67,7 +65,7 @@ Library related helper functions
 /**
 Sets a socket to non blocking state.
 */
-inline int sock_set_non_block(int fd)  // Thanks to Bjorn Reese
+inline int sock_set_non_block(int fd) // Thanks to Bjorn Reese
 {
 /* If they have O_NONBLOCK, use the Posix way to do it */
 #if defined(O_NONBLOCK)
@@ -136,10 +134,10 @@ Written by Boaz Segev at 2016. Donated to the public domain for all to enjoy.
 #if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
 /* nanosleep seems to be the most effective and efficient reschedule */
 #include <time.h>
-#define reschedule_thread()                           \
-  {                                                   \
-    static const struct timespec tm = {.tv_nsec = 1}; \
-    nanosleep(&tm, NULL);                             \
+#define reschedule_thread()                                                    \
+  {                                                                            \
+    static const struct timespec tm = {.tv_nsec = 1};                          \
+    nanosleep(&tm, NULL);                                                      \
   }
 
 #else /* no effective rescheduling, just spin... */
@@ -160,17 +158,17 @@ Written by Boaz Segev at 2016. Donated to the public domain for all to enjoy.
 typedef atomic_bool spn_lock_i;
 #define SPN_LOCK_INIT ATOMIC_VAR_INIT(0)
 /** returns 1 if the lock was busy (TRUE == FAIL). */
-__unused static inline int spn_trylock(spn_lock_i* lock) {
+__unused static inline int spn_trylock(spn_lock_i *lock) {
   __asm__ volatile("" ::: "memory");
   return atomic_exchange(lock, 1);
 }
 /** Releases a lock. */
-__unused static inline void spn_unlock(spn_lock_i* lock) {
+__unused static inline void spn_unlock(spn_lock_i *lock) {
   atomic_store(lock, 0);
   __asm__ volatile("" ::: "memory");
 }
 /** returns a lock's state (non 0 == Busy). */
-__unused static inline int spn_is_locked(spn_lock_i* lock) {
+__unused static inline int spn_is_locked(spn_lock_i *lock) {
   return atomic_load(lock);
 }
 #endif
@@ -189,18 +187,18 @@ __unused static inline int spn_is_locked(spn_lock_i* lock) {
 /* define the type */
 typedef volatile uint8_t spn_lock_i;
 /** returns 1 if the lock was busy (TRUE == FAIL). */
-__unused static inline int spn_trylock(spn_lock_i* lock) {
+__unused static inline int spn_trylock(spn_lock_i *lock) {
   return __sync_swap(lock, 1);
 }
 #define SPN_TMP_HAS_BUILTIN 1
 #endif
 /* use gcc builtins if available - trust the compiler */
-#elif defined(__GNUC__) && \
+#elif defined(__GNUC__) &&                                                     \
     (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 4))
 /* define the type */
 typedef volatile uint8_t spn_lock_i;
 /** returns 1 if the lock was busy (TRUE == FAIL). */
-__unused static inline int spn_trylock(spn_lock_i* lock) {
+__unused static inline int spn_trylock(spn_lock_i *lock) {
   return __sync_fetch_and_or(lock, 1);
 }
 #define SPN_TMP_HAS_BUILTIN 1
@@ -211,13 +209,13 @@ __unused static inline int spn_trylock(spn_lock_i* lock) {
 #undef SPN_TMP_HAS_BUILTIN
 
 /* use Intel's asm if on Intel - trust Intel's documentation */
-#elif defined(__amd64__) || defined(__x86_64__) || defined(__x86__) || \
-    defined(__i386__) || defined(__ia64__) || defined(_M_IA64) ||      \
+#elif defined(__amd64__) || defined(__x86_64__) || defined(__x86__) ||         \
+    defined(__i386__) || defined(__ia64__) || defined(_M_IA64) ||              \
     defined(__itanium__) || defined(__i386__)
 /* define the type */
 typedef volatile uint8_t spn_lock_i;
 /** returns 1 if the lock was busy (TRUE == FAIL). */
-__unused static inline int spn_trylock(spn_lock_i* lock) {
+__unused static inline int spn_trylock(spn_lock_i *lock) {
   spn_lock_i tmp;
   __asm__ volatile("xchgb %0,%1" : "=r"(tmp), "=m"(*lock) : "0"(1) : "memory");
   return tmp;
@@ -228,7 +226,7 @@ __unused static inline int spn_trylock(spn_lock_i* lock) {
 /* define the type */
 typedef volatile uint8_t spn_lock_i;
 /** returns TRUE (non-zero) if the lock was busy (TRUE == FAIL). */
-__unused static inline int spn_trylock(spn_lock_i* lock) {
+__unused static inline int spn_trylock(spn_lock_i *lock) {
   spn_lock_i tmp;
   __asm__ volatile("ldstub    [%1], %0" : "=r"(tmp) : "r"(lock) : "memory");
   return tmp; /* return 0xFF if the lock was busy, 0 if free */
@@ -242,12 +240,12 @@ __unused static inline int spn_trylock(spn_lock_i* lock) {
 #define SPN_LOCK_INIT 0
 
 /** Releases a lock. */
-__unused static inline void spn_unlock(spn_lock_i* lock) {
+__unused static inline void spn_unlock(spn_lock_i *lock) {
   __asm__ volatile("" ::: "memory");
   *lock = 0;
 }
 /** returns a lock's state (non 0 == Busy). */
-__unused static inline int spn_is_locked(spn_lock_i* lock) {
+__unused static inline int spn_is_locked(spn_lock_i *lock) {
   __asm__ volatile("" ::: "memory");
   return *lock;
 }
@@ -255,7 +253,7 @@ __unused static inline int spn_is_locked(spn_lock_i* lock) {
 #endif /* has atomics */
 #include <stdio.h>
 /** Busy waits for the lock. */
-__unused static inline void spn_lock(spn_lock_i* lock) {
+__unused static inline void spn_lock(spn_lock_i *lock) {
   while (spn_trylock(lock)) {
     reschedule_thread();
   }
@@ -272,7 +270,7 @@ Library Core Data
 
 typedef struct {
   /** write buffer - a linked list */
-  sock_packet_s* packet;
+  sock_packet_s *packet;
   /** The fd UUID for the current connection */
   fduuid_u fduuid;
   /** the amount of data sent from the current buffer packet */
@@ -290,29 +288,29 @@ typedef struct {
   unsigned rsv : 5;
   /* -- placement enforces padding to guaranty memory alignment -- */
   /** Read/Write hooks. */
-  sock_rw_hook_s* rw_hooks;
+  sock_rw_hook_s *rw_hooks;
 } fd_info_s;
 
 #define LIB_SOCK_STATE_OPEN 1
 #define LIB_SOCK_STATE_CLOSED 0
 
-static fd_info_s* fd_info = NULL;
+static fd_info_s *fd_info = NULL;
 static size_t fd_capacity = 0;
 
 #define uuid2info(uuid) fd_info[sock_uuid2fd(uuid)]
 #define validate_connection(uuid) (sock_uuid2fd(uuid) >= fd_capacity)
 
 static struct {
-  sock_packet_s* pool;
-  sock_packet_s* allocated;
+  sock_packet_s *pool;
+  sock_packet_s *allocated;
   spn_lock_i lock;
 } buffer_pool = {.lock = SPN_LOCK_INIT};
 
 #define BUFFER_PACKET_REAL_SIZE (sizeof(sock_packet_s) + BUFFER_PACKET_SIZE)
 
-#define is_valid(uuid)                                \
-  (fd_info[sock_uuid2fd(uuid)].fduuid.data.counter == \
-       ((fduuid_u)(uuid)).data.counter &&             \
+#define is_valid(uuid)                                                         \
+  (fd_info[sock_uuid2fd(uuid)].fduuid.data.counter ==                          \
+       ((fduuid_u)(uuid)).data.counter &&                                      \
    uuid2info(uuid).open)
 
 /* reset a socket state */
@@ -353,7 +351,7 @@ Call this function before calling any `libsock` functions.
 */
 static void destroy_lib_data(void) {
   if (fd_info) {
-    while (fd_capacity--) {  // include 0 in countdown
+    while (fd_capacity--) { // include 0 in countdown
       set_fd(fd_capacity, LIB_SOCK_STATE_CLOSED);
     }
     munmap(fd_info, (BUFFER_PACKET_REAL_SIZE * BUFFER_PACKET_POOL) +
@@ -378,7 +376,7 @@ void sock_lib_init(void) {
   size_t fd_map_mem_size = sizeof(fd_info_s) * fd_capacity;
   size_t buffer_mem_size = BUFFER_PACKET_REAL_SIZE * BUFFER_PACKET_POOL;
 
-  void* buff_mem;
+  void *buff_mem;
   buff_mem = mmap(NULL, fd_map_mem_size + buffer_mem_size,
                   PROT_READ | PROT_WRITE | PROT_EXEC,
                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -396,10 +394,10 @@ void sock_lib_init(void) {
   /* initialize pool */
   buffer_pool.allocated = buff_mem + fd_map_mem_size;
   buffer_pool.pool = buffer_pool.allocated;
-  sock_packet_s* pos = buffer_pool.pool;
+  sock_packet_s *pos = buffer_pool.pool;
   for (size_t i = 0; i < BUFFER_PACKET_POOL - 1; i++) {
     *pos = (sock_packet_s){
-        .metadata.next = (void*)(((uintptr_t)pos) + BUFFER_PACKET_REAL_SIZE),
+        .metadata.next = (void *)(((uintptr_t)pos) + BUFFER_PACKET_REAL_SIZE),
     };
     pos = pos->metadata.next;
   }
@@ -407,14 +405,13 @@ void sock_lib_init(void) {
   /* deallocate and manage on exit */
   atexit(destroy_lib_data);
 #ifdef DEBUG
-  fprintf(stderr,
-          "\nInitialized libsock for %lu sockets, "
-          "each one requires %lu bytes.\n"
-          "overall ovearhead: %lu bytes.\n"
-          "Initialized packet pool for %d elements, "
-          "each one %lu bytes.\n"
-          "overall buffer ovearhead: %lu bytes.\n"
-          "=== Total: %lu bytes ===\n\n",
+  fprintf(stderr, "\nInitialized libsock for %lu sockets, "
+                  "each one requires %lu bytes.\n"
+                  "overall ovearhead: %lu bytes.\n"
+                  "Initialized packet pool for %d elements, "
+                  "each one %lu bytes.\n"
+                  "overall buffer ovearhead: %lu bytes.\n"
+                  "=== Total: %lu bytes ===\n\n",
           fd_capacity, sizeof(*fd_info), sizeof(*fd_info) * fd_capacity,
           BUFFER_PACKET_POOL, BUFFER_PACKET_REAL_SIZE,
           BUFFER_PACKET_REAL_SIZE * BUFFER_PACKET_POOL,
@@ -423,10 +420,10 @@ void sock_lib_init(void) {
 #endif
 }
 
-#define review_lib()     \
-  do {                   \
-    if (fd_info == NULL) \
-      sock_lib_init();   \
+#define review_lib()                                                           \
+  do {                                                                         \
+    if (fd_info == NULL)                                                       \
+      sock_lib_init();                                                         \
   } while (0)
 
 /* *****************************************************************************
@@ -449,7 +446,7 @@ static inline int sock_flush_fd_failed(int fd) {
 #if defined(__linux__) /* linux sendfile API */
 static inline int sock_flush_os_sendfile(int fd) {
   size_t sent;
-  sock_packet_s* packet = fd_info[fd].packet;
+  sock_packet_s *packet = fd_info[fd].packet;
   sent =
       sendfile64(fd, (int)((ssize_t)packet->buffer), &packet->metadata.offset,
                  packet->length - fd_info[fd].sent);
@@ -472,7 +469,7 @@ static inline int sock_flush_os_sendfile(int fd) {
 
 static inline int sock_flush_os_sendfile(int fd) {
   off_t act_sent;
-  sock_packet_s* packet = fd_info[fd].packet;
+  sock_packet_s *packet = fd_info[fd].packet;
   act_sent = packet->length - fd_info[fd].sent;
 
 #if defined(__APPLE__)
@@ -504,9 +501,7 @@ static inline int sock_flush_os_sendfile(int fd) {
 
 #else
 
-static inline int sock_flush_os_sendfile(int fd) {
-  return -1;
-}
+static inline int sock_flush_os_sendfile(int fd) { return -1; }
 
 #endif
 
@@ -514,7 +509,7 @@ static inline int sock_flush_fd(int fd) {
   if (USE_SENDFILE && fd_info[fd].rw_hooks == NULL)
     return sock_flush_os_sendfile(fd);
   ssize_t sent;
-  sock_packet_s* packet = fd_info[fd].packet;
+  sock_packet_s *packet = fd_info[fd].packet;
   // how much data are we expecting to send...?
   ssize_t i_exp = (BUFFER_PACKET_SIZE > packet->length) ? packet->length
                                                         : BUFFER_PACKET_SIZE;
@@ -535,10 +530,10 @@ static inline int sock_flush_fd(int fd) {
   // send the data
   if (fd_info[fd].rw_hooks && fd_info[fd].rw_hooks->write)
     sent = fd_info[fd].rw_hooks->write(
-        fd_info[fd].fduuid.uuid, (((void*)(packet + 1)) + fd_info[fd].sent),
+        fd_info[fd].fduuid.uuid, (((void *)(packet + 1)) + fd_info[fd].sent),
         i_exp - fd_info[fd].sent);
   else
-    sent = write(fd, (((void*)(packet + 1)) + fd_info[fd].sent),
+    sent = write(fd, (((void *)(packet + 1)) + fd_info[fd].sent),
                  i_exp - fd_info[fd].sent);
   // review result and update packet data
   if (sent < 0) {
@@ -589,7 +584,7 @@ static void sock_flush_unsafe(int fd) {
         return;
     }
     if (fd_info[fd].packet && fd_info[fd].packet->length <= fd_info[fd].sent) {
-      sock_packet_s* packet = fd_info[fd].packet;
+      sock_packet_s *packet = fd_info[fd].packet;
       fd_info[fd].packet = packet->metadata.next;
       packet->metadata.next = NULL;
       fd_info[fd].sent = 0;
@@ -598,8 +593,8 @@ static void sock_flush_unsafe(int fd) {
   }
 }
 
-static inline void sock_send_packet_unsafe(int fd, sock_packet_s* packet) {
-  fd_info_s* sfd = fd_info + fd;
+static inline void sock_send_packet_unsafe(int fd, sock_packet_s *packet) {
+  fd_info_s *sfd = fd_info + fd;
   if (sfd->packet == NULL) {
     /* no queue, nothing to check */
     sfd->packet = packet;
@@ -608,7 +603,7 @@ static inline void sock_send_packet_unsafe(int fd, sock_packet_s* packet) {
 
   } else if (packet->metadata.urgent == 0) {
     /* not urgent, last in line */
-    sock_packet_s* pos = sfd->packet;
+    sock_packet_s *pos = sfd->packet;
     while (pos->metadata.next)
       pos = pos->metadata.next;
     pos->metadata.next = packet;
@@ -617,10 +612,10 @@ static inline void sock_send_packet_unsafe(int fd, sock_packet_s* packet) {
 
   } else {
     /* urgent, find a spot we can interrupt */
-    sock_packet_s** pos = &sfd->packet;
+    sock_packet_s **pos = &sfd->packet;
     while (*pos && (*pos)->metadata.can_interrupt == 0)
       pos = &(*pos)->metadata.next;
-    sock_packet_s* tail = *pos;
+    sock_packet_s *tail = *pos;
     *pos = packet;
     if (tail) {
       pos = &packet->metadata.next;
@@ -639,16 +634,16 @@ Listen
 /**
 Opens a listening non-blocking socket. Return's the socket's UUID.
 */
-intptr_t sock_listen(const char* address, const char* port) {
+intptr_t sock_listen(const char *address, const char *port) {
   review_lib();
   int srvfd;
   // setup the address
   struct addrinfo hints;
-  struct addrinfo* servinfo;        // will point to the results
-  memset(&hints, 0, sizeof hints);  // make sure the struct is empty
-  hints.ai_family = AF_UNSPEC;      // don't care IPv4 or IPv6
-  hints.ai_socktype = SOCK_STREAM;  // TCP stream sockets
-  hints.ai_flags = AI_PASSIVE;      // fill in my IP for me
+  struct addrinfo *servinfo;       // will point to the results
+  memset(&hints, 0, sizeof hints); // make sure the struct is empty
+  hints.ai_family = AF_UNSPEC;     // don't care IPv4 or IPv6
+  hints.ai_socktype = SOCK_STREAM; // TCP stream sockets
+  hints.ai_flags = AI_PASSIVE;     // fill in my IP for me
   if (getaddrinfo(address, port, &hints, &servinfo)) {
     // perror("addr err");
     return -1;
@@ -676,7 +671,7 @@ intptr_t sock_listen(const char* address, const char* port) {
   // bind the address to the socket
   {
     int bound = 0;
-    for (struct addrinfo* p = servinfo; p != NULL; p = p->ai_next) {
+    for (struct addrinfo *p = servinfo; p != NULL; p = p->ai_next) {
       if (!bind(srvfd, p->ai_addr, p->ai_addrlen))
         bound = 1;
     }
@@ -724,16 +719,16 @@ intptr_t sock_accept(intptr_t srv_uuid) {
 /* *****************************************************************************
 Connect
 */
-intptr_t sock_connect(char* address, char* port) {
+intptr_t sock_connect(char *address, char *port) {
   review_lib();
   int fd;
   // setup the address
   struct addrinfo hints;
-  struct addrinfo* addrinfo;        // will point to the results
-  memset(&hints, 0, sizeof hints);  // make sure the struct is empty
-  hints.ai_family = AF_UNSPEC;      // don't care IPv4 or IPv6
-  hints.ai_socktype = SOCK_STREAM;  // TCP stream sockets
-  hints.ai_flags = AI_PASSIVE;      // fill in my IP for me
+  struct addrinfo *addrinfo;       // will point to the results
+  memset(&hints, 0, sizeof hints); // make sure the struct is empty
+  hints.ai_family = AF_UNSPEC;     // don't care IPv4 or IPv6
+  hints.ai_socktype = SOCK_STREAM; // TCP stream sockets
+  hints.ai_flags = AI_PASSIVE;     // fill in my IP for me
   if (getaddrinfo(address, port, &hints, &addrinfo)) {
     return -1;
   }
@@ -799,8 +794,8 @@ intptr_t sock_fd2uuid(int fd) {
 Buffer API.
 */
 
-static inline sock_packet_s* sock_try_checkout_packet(void) {
-  sock_packet_s* packet;
+static inline sock_packet_s *sock_try_checkout_packet(void) {
+  sock_packet_s *packet;
   spn_lock(&buffer_pool.lock);
   packet = buffer_pool.pool;
   if (packet) {
@@ -819,9 +814,9 @@ ownership of the memory to the calling function. The function will hang until a
 packet becomes available, so never check out more then a single packet at a
 time.
 */
-sock_packet_s* sock_checkout_packet(void) {
+sock_packet_s *sock_checkout_packet(void) {
   review_lib();
-  sock_packet_s* packet = NULL;
+  sock_packet_s *packet = NULL;
   for (;;) {
     spn_lock(&buffer_pool.lock);
     packet = buffer_pool.pool;
@@ -840,7 +835,7 @@ sock_packet_s* sock_checkout_packet(void) {
 Attaches a packet to a socket's output buffer and calls `sock_flush` for the
 socket.
 */
-ssize_t sock_send_packet(intptr_t uuid, sock_packet_s* packet) {
+ssize_t sock_send_packet(intptr_t uuid, sock_packet_s *packet) {
   review_lib();
   if (!is_valid(uuid)) {
     sock_free_packet(packet);
@@ -856,8 +851,8 @@ ssize_t sock_send_packet(intptr_t uuid, sock_packet_s* packet) {
 Use `sock_free_packet` to free unused packets that were checked-out using
 `sock_checkout_packet`.
 */
-void sock_free_packet(sock_packet_s* packet) {
-  sock_packet_s* next = packet;
+void sock_free_packet(sock_packet_s *packet) {
+  sock_packet_s *next = packet;
   if (packet == NULL)
     return;
   for (;;) {
@@ -879,14 +874,14 @@ void sock_free_packet(sock_packet_s* packet) {
 /* *****************************************************************************
 Reading
 */
-ssize_t sock_read(intptr_t uuid, void* buf, size_t count) {
+ssize_t sock_read(intptr_t uuid, void *buf, size_t count) {
   review_lib();
   if (!is_valid(uuid)) {
     errno = ENODEV;
     return -1;
   }
   ssize_t i_read;
-  fd_info_s* sfd = fd_info + sock_uuid2fd(uuid);
+  fd_info_s *sfd = fd_info + sock_uuid2fd(uuid);
   if (sfd->rw_hooks && sfd->rw_hooks->read)
     i_read = sfd->rw_hooks->read(uuid, buf, count);
   else
@@ -958,19 +953,19 @@ ssize_t sock_write2_fn(sock_write_info_s options) {
     options.length = strlen(options.buffer);
   if (options.length == 0)
     return -1;
-  sock_packet_s* packet = sock_checkout_packet();
+  sock_packet_s *packet = sock_checkout_packet();
   packet->metadata.can_interrupt = 1;
   packet->metadata.urgent = options.urgent;
 
   if (options.is_fd) {
-    packet->buffer = (void*)options.buffer;
+    packet->buffer = (void *)options.buffer;
     packet->length = options.length;
     packet->metadata.is_fd = options.is_fd;
     packet->metadata.offset = options.offset;
     return sock_send_packet(options.fduuid, packet);
   } else {
     if (options.move) {
-      packet->buffer = (void*)options.buffer;
+      packet->buffer = (void *)options.buffer;
       packet->length = options.length;
       packet->metadata.external = 1;
       return sock_send_packet(options.fduuid, packet);
@@ -981,10 +976,9 @@ ssize_t sock_write2_fn(sock_write_info_s options) {
         return sock_send_packet(options.fduuid, packet);
       } else {
         if (packet->metadata.urgent) {
-          fprintf(stderr,
-                  "Socket err:"
-                  "Large data cannot be sent as an urgent packet.\n"
-                  "Urgency silently ignored\n");
+          fprintf(stderr, "Socket err:"
+                          "Large data cannot be sent as an urgent packet.\n"
+                          "Urgency silently ignored\n");
           packet->metadata.urgent = 0;
         }
         size_t to_cpy;
@@ -1051,7 +1045,7 @@ RW hooks implementation
 */
 
 /** Gets a socket hook state (a pointer to the struct). */
-struct sock_rw_hook_s* sock_rw_hook_get(intptr_t uuid) {
+struct sock_rw_hook_s *sock_rw_hook_get(intptr_t uuid) {
   review_lib();
   if (validate_connection(uuid))
     return NULL;
@@ -1059,7 +1053,7 @@ struct sock_rw_hook_s* sock_rw_hook_get(intptr_t uuid) {
 }
 
 /** Sets a socket hook state (a pointer to the struct). */
-int sock_rw_hook_set(intptr_t uuid, sock_rw_hook_s* rw_hooks) {
+int sock_rw_hook_set(intptr_t uuid, sock_rw_hook_s *rw_hooks) {
   review_lib();
   if (validate_connection(uuid))
     return -1;
