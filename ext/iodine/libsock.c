@@ -23,6 +23,13 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <sys/resource.h>
 
 /* *****************************************************************************
+Use spinlocks "spnlock.h".
+
+For portability, it's possible copy "spnlock.h" directly after this line.
+*/
+#include "spnlock.h"
+
+/* *****************************************************************************
 Support `libreact` on_close callback, if exist.
 */
 
@@ -56,6 +63,13 @@ OS Sendfile settings.
 #define USE_SENDFILE 0
 #endif
 
+#endif
+
+/* *****************************************************************************
+Buffer and socket map memory allocation. Defaults to mmap.
+*/
+#ifndef USE_MALLOC
+#define USE_MALLOC 0
 #endif
 
 /* *****************************************************************************
@@ -114,157 +128,6 @@ ssize_t sock_max_capacity(void) {
 }
 
 /* *****************************************************************************
-A Simple busy lock implementation ... (spnlock.h) Copied for portability
-Written by Boaz Segev at 2016. Donated to the public domain for all to enjoy.
-*/
-#ifndef _SPN_LOCK_H
-#define _SPN_LOCK_H
-
-/* allow of the unused flag */
-#ifndef __unused
-#define __unused __attribute__((unused))
-#endif
-
-#include <stdlib.h>
-#include <stdint.h>
-
-/*********
- * manage the way threads "wait" for the lock to release
- */
-#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
-/* nanosleep seems to be the most effective and efficient reschedule */
-#include <time.h>
-#define reschedule_thread()                                                    \
-  {                                                                            \
-    static const struct timespec tm = {.tv_nsec = 1};                          \
-    nanosleep(&tm, NULL);                                                      \
-  }
-
-#else /* no effective rescheduling, just spin... */
-#define reschedule_thread()
-
-#endif
-/* end `reschedule_thread` block*/
-
-/*********
- * The spin lock core functions (spn_trylock, spn_unlock, is_spn_locked)
- */
-
-/* prefer C11 standard implementation where available (trust the system) */
-#if defined(__has_include)
-#if __has_include(<stdatomic.h>)
-#define SPN_TMP_HAS_ATOMICS 1
-#include <stdatomic.h>
-typedef atomic_bool spn_lock_i;
-#define SPN_LOCK_INIT ATOMIC_VAR_INIT(0)
-/** returns 1 if the lock was busy (TRUE == FAIL). */
-__unused static inline int spn_trylock(spn_lock_i *lock) {
-  __asm__ volatile("" ::: "memory");
-  return atomic_exchange(lock, 1);
-}
-/** Releases a lock. */
-__unused static inline void spn_unlock(spn_lock_i *lock) {
-  atomic_store(lock, 0);
-  __asm__ volatile("" ::: "memory");
-}
-/** returns a lock's state (non 0 == Busy). */
-__unused static inline int spn_is_locked(spn_lock_i *lock) {
-  return atomic_load(lock);
-}
-#endif
-#endif
-
-/* Chack if stdatomic was available */
-#ifdef SPN_TMP_HAS_ATOMICS
-#undef SPN_TMP_HAS_ATOMICS
-
-#else
-/* Test for compiler builtins */
-
-/* use clang builtins if available - trust the compiler */
-#if defined(__clang__)
-#if defined(__has_builtin) && __has_builtin(__sync_swap)
-/* define the type */
-typedef volatile uint8_t spn_lock_i;
-/** returns 1 if the lock was busy (TRUE == FAIL). */
-__unused static inline int spn_trylock(spn_lock_i *lock) {
-  return __sync_swap(lock, 1);
-}
-#define SPN_TMP_HAS_BUILTIN 1
-#endif
-/* use gcc builtins if available - trust the compiler */
-#elif defined(__GNUC__) &&                                                     \
-    (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 4))
-/* define the type */
-typedef volatile uint8_t spn_lock_i;
-/** returns 1 if the lock was busy (TRUE == FAIL). */
-__unused static inline int spn_trylock(spn_lock_i *lock) {
-  return __sync_fetch_and_or(lock, 1);
-}
-#define SPN_TMP_HAS_BUILTIN 1
-#endif
-
-/* Check if compiler builtins were available, if not, try assembly*/
-#if SPN_TMP_HAS_BUILTIN
-#undef SPN_TMP_HAS_BUILTIN
-
-/* use Intel's asm if on Intel - trust Intel's documentation */
-#elif defined(__amd64__) || defined(__x86_64__) || defined(__x86__) ||         \
-    defined(__i386__) || defined(__ia64__) || defined(_M_IA64) ||              \
-    defined(__itanium__) || defined(__i386__)
-/* define the type */
-typedef volatile uint8_t spn_lock_i;
-/** returns 1 if the lock was busy (TRUE == FAIL). */
-__unused static inline int spn_trylock(spn_lock_i *lock) {
-  spn_lock_i tmp;
-  __asm__ volatile("xchgb %0,%1" : "=r"(tmp), "=m"(*lock) : "0"(1) : "memory");
-  return tmp;
-}
-
-/* use SPARC's asm if on SPARC - trust the design */
-#elif defined(__sparc__) || defined(__sparc)
-/* define the type */
-typedef volatile uint8_t spn_lock_i;
-/** returns TRUE (non-zero) if the lock was busy (TRUE == FAIL). */
-__unused static inline int spn_trylock(spn_lock_i *lock) {
-  spn_lock_i tmp;
-  __asm__ volatile("ldstub    [%1], %0" : "=r"(tmp) : "r"(lock) : "memory");
-  return tmp; /* return 0xFF if the lock was busy, 0 if free */
-}
-
-#else
-/* I don't know how to provide green thread safety on PowerPC or ARM */
-#error "Couldn't implement a spinlock for this system / compiler"
-#endif /* types and atomic exchange */
-/** Initialization value in `free` state. */
-#define SPN_LOCK_INIT 0
-
-/** Releases a lock. */
-__unused static inline void spn_unlock(spn_lock_i *lock) {
-  __asm__ volatile("" ::: "memory");
-  *lock = 0;
-}
-/** returns a lock's state (non 0 == Busy). */
-__unused static inline int spn_is_locked(spn_lock_i *lock) {
-  __asm__ volatile("" ::: "memory");
-  return *lock;
-}
-
-#endif /* has atomics */
-#include <stdio.h>
-/** Busy waits for the lock. */
-__unused static inline void spn_lock(spn_lock_i *lock) {
-  while (spn_trylock(lock)) {
-    reschedule_thread();
-  }
-}
-
-/* *****************************************************************************
-spnlock.h finished
-*/
-#endif
-
-/* *****************************************************************************
 Library Core Data
 */
 
@@ -298,7 +161,10 @@ static fd_info_s *fd_info = NULL;
 static size_t fd_capacity = 0;
 
 #define uuid2info(uuid) fd_info[sock_uuid2fd(uuid)]
-#define validate_connection(uuid) (sock_uuid2fd(uuid) >= fd_capacity)
+#define is_valid(uuid)                                                         \
+  (fd_info[sock_uuid2fd(uuid)].fduuid.data.counter ==                          \
+       ((fduuid_u)(uuid)).data.counter &&                                      \
+   uuid2info(uuid).open)
 
 static struct {
   sock_packet_s *pool;
@@ -307,11 +173,6 @@ static struct {
 } buffer_pool = {.lock = SPN_LOCK_INIT};
 
 #define BUFFER_PACKET_REAL_SIZE (sizeof(sock_packet_s) + BUFFER_PACKET_SIZE)
-
-#define is_valid(uuid)                                                         \
-  (fd_info[sock_uuid2fd(uuid)].fduuid.data.counter ==                          \
-       ((fduuid_u)(uuid)).data.counter &&                                      \
-   uuid2info(uuid).open)
 
 /* reset a socket state */
 static inline void set_fd(int fd, unsigned int state) {
@@ -354,8 +215,12 @@ static void destroy_lib_data(void) {
     while (fd_capacity--) { // include 0 in countdown
       set_fd(fd_capacity, LIB_SOCK_STATE_CLOSED);
     }
+#if USE_MALLOC == 1
+    free(fd_info);
+#else
     munmap(fd_info, (BUFFER_PACKET_REAL_SIZE * BUFFER_PACKET_POOL) +
                         (sizeof(fd_info_s) * fd_capacity));
+#endif
   }
   fd_info = NULL;
   buffer_pool.pool = NULL;
@@ -368,7 +233,7 @@ Initializes the library.
 
 Call this function before calling any `libsock` functions.
 */
-void sock_lib_init(void) {
+static void sock_lib_init(void) {
   if (fd_info)
     return;
 
@@ -377,6 +242,13 @@ void sock_lib_init(void) {
   size_t buffer_mem_size = BUFFER_PACKET_REAL_SIZE * BUFFER_PACKET_POOL;
 
   void *buff_mem;
+#if USE_MALLOC == 1
+  buff_mem = malloc(fd_map_mem_size + buffer_mem_size);
+  if (buff_mem == NULL) {
+    perror("Couldn't initialize libsock - not enough memory? ");
+    exit(1);
+  }
+#else
   buff_mem = mmap(NULL, fd_map_mem_size + buffer_mem_size,
                   PROT_READ | PROT_WRITE | PROT_EXEC,
                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -385,7 +257,7 @@ void sock_lib_init(void) {
     perror("Couldn't initialize libsock - not enough memory? ");
     exit(1);
   }
-
+#endif
   fd_info = buff_mem;
   for (size_t i = 0; i < fd_capacity; i++) {
     fd_info[i] = (fd_info_s){.lock = SPN_LOCK_INIT};
@@ -421,10 +293,8 @@ void sock_lib_init(void) {
 }
 
 #define review_lib()                                                           \
-  do {                                                                         \
-    if (fd_info == NULL)                                                       \
-      sock_lib_init();                                                         \
-  } while (0)
+  if (fd_info == NULL)                                                         \
+    sock_lib_init();
 
 /* *****************************************************************************
 Read / Write internals
@@ -776,18 +646,14 @@ Returns 1 if the uuid refers to a valid and open, socket.
 
 Returns 0 if not.
 */
-int sock_isvalid(intptr_t uuid) {
-  review_lib();
-  return is_valid(uuid);
-}
+int sock_isvalid(intptr_t uuid) { return fd_info && is_valid(uuid); }
 
 /**
 `sock_fd2uuid` takes an existing file decriptor `fd` and returns it's active
 `uuid`.
 */
 intptr_t sock_fd2uuid(int fd) {
-  review_lib();
-  return fd_info[fd].open ? fd_info[fd].fduuid.uuid : -1;
+  return (fd_info && fd_info[fd].open) ? fd_info[fd].fduuid.uuid : -1;
 }
 
 /* *****************************************************************************
@@ -836,8 +702,7 @@ Attaches a packet to a socket's output buffer and calls `sock_flush` for the
 socket.
 */
 ssize_t sock_send_packet(intptr_t uuid, sock_packet_s *packet) {
-  review_lib();
-  if (!is_valid(uuid)) {
+  if (!fd_info || !is_valid(uuid)) {
     sock_free_packet(packet);
     return -1;
   }
@@ -875,8 +740,7 @@ void sock_free_packet(sock_packet_s *packet) {
 Reading
 */
 ssize_t sock_read(intptr_t uuid, void *buf, size_t count) {
-  review_lib();
-  if (!is_valid(uuid)) {
+  if (!fd_info || !is_valid(uuid)) {
     errno = ENODEV;
     return -1;
   }
@@ -904,8 +768,7 @@ Flushing
 */
 
 ssize_t sock_flush(intptr_t uuid) {
-  review_lib();
-  if (!is_valid(uuid))
+  if (!fd_info || !is_valid(uuid))
     return -1;
   spn_lock(&uuid2info(uuid).lock);
   sock_flush_unsafe(sock_uuid2fd(uuid));
@@ -922,7 +785,8 @@ after all the data was sent. This is an "active" wait, polling isn't
 performed.
 */
 void sock_flush_strong(intptr_t uuid) {
-  review_lib();
+  if (!fd_info)
+    return;
   while (is_valid(uuid) && uuid2info(uuid).packet)
     sock_flush(uuid);
 }
@@ -942,8 +806,7 @@ Writing
 */
 
 ssize_t sock_write2_fn(sock_write_info_s options) {
-  review_lib();
-  if (!is_valid(options.fduuid)) {
+  if (!fd_info || !is_valid(options.fduuid)) {
     errno = ENODEV;
     return -1;
   }
@@ -1022,8 +885,7 @@ Closing.
 void sock_close(intptr_t uuid) {
   // fprintf(stderr, "called sock_close for %lu (%d)\n", uuid,
   // sock_uuid2fd(uuid));
-  review_lib();
-  if (!is_valid(uuid))
+  if (!fd_info || !is_valid(uuid))
     return;
   fd_info[sock_uuid2fd(uuid)].close = 1;
   sock_flush(uuid);
@@ -1032,8 +894,7 @@ void sock_close(intptr_t uuid) {
 void sock_force_close(intptr_t uuid) {
   // fprintf(stderr, "called sock_force_close for %lu (%d)\n", uuid,
   //         sock_uuid2fd(uuid));
-  review_lib();
-  if (!is_valid(uuid))
+  if (!fd_info || !is_valid(uuid))
     return;
   shutdown(sock_uuid2fd(uuid), SHUT_RDWR);
   close(sock_uuid2fd(uuid));
@@ -1046,16 +907,14 @@ RW hooks implementation
 
 /** Gets a socket hook state (a pointer to the struct). */
 struct sock_rw_hook_s *sock_rw_hook_get(intptr_t uuid) {
-  review_lib();
-  if (validate_connection(uuid))
+  if (!fd_info || !is_valid(uuid))
     return NULL;
   return uuid2info(uuid).rw_hooks;
 }
 
 /** Sets a socket hook state (a pointer to the struct). */
 int sock_rw_hook_set(intptr_t uuid, sock_rw_hook_s *rw_hooks) {
-  review_lib();
-  if (validate_connection(uuid))
+  if (!fd_info || !is_valid(uuid))
     return -1;
   spn_lock(&(uuid2info(uuid).lock));
   uuid2info(uuid).rw_hooks = rw_hooks;
@@ -1068,6 +927,7 @@ test
 */
 #ifdef DEBUG
 void sock_libtest(void) {
+  sock_lib_init();
   sock_packet_s *p, *pl;
   size_t count = 0;
   fprintf(stderr, "Testing packet pool\n");

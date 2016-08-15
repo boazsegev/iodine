@@ -27,16 +27,22 @@ All functions will be available using the prefix `bscrypt_`, i.e.:
 #include "random.h"
 #include "sha1.h"
 #include "sha2.h"
+#include "siphash.h"
 #include "xor-crypt.h"
 
-#if defined(BSCRYPT_TEST) && BSCRYPT_TEST == 1
-#define bscrypt_test()     \
-  {                        \
-    bscrypt_test_sha1();   \
-    bscrypt_test_sha2();   \
-    bscrypt_test_base64(); \
-    bscrypt_test_random(); \
+#if defined(DEBUG) && DEBUG == 1
+#define bscrypt_test()                                                         \
+  {                                                                            \
+    bscrypt_test_sha1();                                                       \
+    bscrypt_test_sha2();                                                       \
+    bscrypt_test_base64();                                                     \
+    bscrypt_test_random();                                                     \
+    bscrypt_test_siphash();                                                    \
   }
+#else
+#define bscrypt_test()                                                         \
+  fprintf(stderr,                                                              \
+          "Debug mode not enabled, define DEBUG as 1 in the compiler.\n");
 #endif
 
 /* end include gate */
