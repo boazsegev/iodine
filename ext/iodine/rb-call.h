@@ -44,12 +44,12 @@ extern struct _Ruby_Method_Caller_Class_ {
   /**
 calls a Object's ruby method with arguments, adjusting for the GVL if needed
   */
-  VALUE (*call2)(VALUE obj, ID method, int argc, VALUE* argv);
+  VALUE (*call2)(VALUE obj, ID method, int argc, VALUE *argv);
   /**
 calls a C method that requires the GVL for access to the Ruby API, managing the
 GVL state as required.
   */
-  void* (*call_c)(void* (*func)(void*), void* arg);
+  void *(*call_c)(void *(*func)(void *), void *arg);
   /**
 returns the thread's GVL status (1 if inside a GVL and 0 if free from the
 GVL).

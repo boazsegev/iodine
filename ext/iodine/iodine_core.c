@@ -7,14 +7,14 @@ Core data
 */
 
 /* these should be made globally accessible to any Iodine module */
-rb_encoding* BinaryEncoding;
-rb_encoding* UTF8Encoding;
+rb_encoding *BinaryEncoding;
+rb_encoding *UTF8Encoding;
 int BinaryEncodingIndex;
 int UTF8EncodingIndex;
 VALUE Iodine;
 VALUE IodineBase;
 VALUE Iodine_Version;
-const char* Iodine_Version_Str;
+const char *Iodine_Version_Str;
 ID call_proc_id;
 ID on_start_func_id;
 ID on_finish_func_id;
@@ -38,7 +38,7 @@ static VALUE DynamicProtocolClass;
 The Core dynamic Iodine protocol
 */
 
-static const char* iodine_protocol_service = "IodineDynamicProtocol";
+static const char *iodine_protocol_service = "IodineDynamicProtocol";
 
 /* *****************************************************************************
 The Core dynamic Iodine protocol methods and helpers
@@ -55,7 +55,7 @@ The number of bytes to be read (n) is:
 Returns a String (either the same one used as the buffer or a new one) on a
 successful read. Returns `nil` if no data was available.
 */
-static VALUE dyn_read(int argc, VALUE* argv, VALUE self) {
+static VALUE dyn_read(int argc, VALUE *argv, VALUE self) {
   if (argc > 1) {
     rb_raise(
         rb_eArgError,
@@ -151,11 +151,11 @@ static VALUE dyn_close(VALUE self) {
 The Core dynamic Iodine protocol task implementation
 */
 
-static void dyn_perform_defer(intptr_t uuid, protocol_s* protocol, void* arg) {
+static void dyn_perform_defer(intptr_t uuid, protocol_s *protocol, void *arg) {
   RubyCaller.call((VALUE)arg, call_proc_id);
   Registry.remove((VALUE)arg);
 }
-static void dyn_defer_fallback(intptr_t uuid, void* arg) {
+static void dyn_defer_fallback(intptr_t uuid, void *arg) {
   Registry.remove((VALUE)arg);
 };
 
@@ -179,24 +179,22 @@ static VALUE dyn_defer(VALUE self) {
     return Qfalse;
   Registry.add(block);
   intptr_t fd = iodine_get_fd(self);
-  server_task(fd, dyn_perform_defer, (void*)block, dyn_defer_fallback);
+  server_task(fd, dyn_perform_defer, (void *)block, dyn_defer_fallback);
   return self;
 }
 
-static void dyn_perform_each_task(intptr_t fd,
-                                  protocol_s* protocol,
-                                  void* data) {
+static void dyn_perform_each_task(intptr_t fd, protocol_s *protocol,
+                                  void *data) {
   RubyCaller.call2((VALUE)data, call_proc_id, 1,
                    &(dyn_prot(protocol)->handler));
 }
-static void dyn_finish_each_task(intptr_t fd,
-                                 protocol_s* protocol,
-                                 void* data) {
+static void dyn_finish_each_task(intptr_t fd, protocol_s *protocol,
+                                 void *data) {
   Registry.remove((VALUE)data);
 }
 
-void iodine_run_each(intptr_t origin, const char* service, VALUE block) {
-  server_each(origin, service, dyn_perform_each_task, (void*)block,
+void iodine_run_each(intptr_t origin, const char *service, VALUE block) {
+  server_each(origin, service, dyn_perform_each_task, (void *)block,
               dyn_finish_each_task);
 }
 
@@ -219,7 +217,7 @@ static VALUE dyn_each(VALUE self) {
     return Qfalse;
   Registry.add(block);
   intptr_t fd = iodine_get_fd(self);
-  server_each(fd, iodine_protocol_service, dyn_perform_each_task, (void*)block,
+  server_each(fd, iodine_protocol_service, dyn_perform_each_task, (void *)block,
               dyn_finish_each_task);
   return self;
 }
@@ -242,7 +240,7 @@ static VALUE dyn_class_each(VALUE self) {
   if (block == Qnil)
     return Qfalse;
   Registry.add(block);
-  server_each(-1, iodine_protocol_service, dyn_perform_each_task, (void*)block,
+  server_each(-1, iodine_protocol_service, dyn_perform_each_task, (void *)block,
               dyn_finish_each_task);
   return self;
 }
@@ -265,13 +263,9 @@ static VALUE not_implemented_ping(VALUE self) {
   return Qnil;
 }
 /** implement this callback to handle the event. */
-static VALUE not_implemented(VALUE self) {
-  return Qnil;
-}
+static VALUE not_implemented(VALUE self) { return Qnil; }
 /** implement this callback to handle the event. */
-static VALUE not_implemented2(VALUE self, VALUE data) {
-  return Qnil;
-}
+static VALUE not_implemented2(VALUE self, VALUE data) { return Qnil; }
 
 /**
 A default on_data implementation will read up to 1Kb into a reusable buffer from
@@ -295,35 +289,34 @@ static VALUE default_on_data(VALUE self) {
 }
 
 /** called when a data is available, but will not run concurrently */
-static void dyn_protocol_on_data(intptr_t fduuid, protocol_s* protocol) {
+static void dyn_protocol_on_data(intptr_t fduuid, protocol_s *protocol) {
   RubyCaller.call(dyn_prot(protocol)->handler, on_data_func_id);
 }
 /** called when the socket is ready to be written to. */
-static void dyn_protocol_on_ready(intptr_t fduuid, protocol_s* protocol) {
+static void dyn_protocol_on_ready(intptr_t fduuid, protocol_s *protocol) {
   RubyCaller.call(dyn_prot(protocol)->handler, on_ready_func_id);
 }
 /** called when the server is shutting down,
  * but before closing the connection. */
-static void dyn_protocol_on_shutdown(intptr_t fduuid, protocol_s* protocol) {
+static void dyn_protocol_on_shutdown(intptr_t fduuid, protocol_s *protocol) {
   RubyCaller.call(dyn_prot(protocol)->handler, on_shutdown_func_id);
 }
 /** called when the connection was closed, but will not run concurrently */
-static void dyn_protocol_on_close(protocol_s* protocol) {
+static void dyn_protocol_on_close(protocol_s *protocol) {
   RubyCaller.call(dyn_prot(protocol)->handler, on_close_func_id);
   Registry.remove(dyn_prot(protocol)->handler);
   free(protocol);
 }
 /** called when a connection's timeout was reached */
-static void dyn_protocol_ping(intptr_t fduuid, protocol_s* protocol) {
+static void dyn_protocol_ping(intptr_t fduuid, protocol_s *protocol) {
   RubyCaller.call(dyn_prot(protocol)->handler, ping_func_id);
 }
 
-static inline protocol_s* dyn_set_protocol(intptr_t fduuid,
-                                           VALUE handler,
+static inline protocol_s *dyn_set_protocol(intptr_t fduuid, VALUE handler,
                                            uint8_t timeout) {
   Registry.add(handler);
   iodine_set_fd(handler, fduuid);
-  dyn_protocol_s* protocol = malloc(sizeof(*protocol));
+  dyn_protocol_s *protocol = malloc(sizeof(*protocol));
   if (protocol == NULL) {
     Registry.remove(handler);
     return NULL;
@@ -339,9 +332,9 @@ static inline protocol_s* dyn_set_protocol(intptr_t fduuid,
       .protocol.service = iodine_protocol_service,
   };
   RubyCaller.call(handler, on_open_func_id);
-  return (protocol_s*)protocol;
+  return (protocol_s *)protocol;
 }
-static protocol_s* on_open_dyn_protocol(intptr_t fduuid, void* udata) {
+static protocol_s *on_open_dyn_protocol(intptr_t fduuid, void *udata) {
   VALUE rb_tout = rb_ivar_get((VALUE)udata, timeout_var_id);
   uint8_t timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
   VALUE handler = RubyCaller.call((VALUE)udata, new_func_id);
@@ -351,11 +344,11 @@ static protocol_s* on_open_dyn_protocol(intptr_t fduuid, void* udata) {
 }
 
 /** called once, when Iodine starts running. */
-static void on_server_start_for_handler(void* udata) {
+static void on_server_start_for_handler(void *udata) {
   RubyCaller.call((VALUE)udata, on_start_func_id);
 }
 /** called once, when Iodine stops running. */
-static void on_server_on_finish_for_handler(void* udata) {
+static void on_server_on_finish_for_handler(void *udata) {
   RubyCaller.call((VALUE)udata, on_finish_func_id);
 }
 
@@ -415,7 +408,7 @@ static VALUE iodine_listen_dyn_protocol(VALUE self, VALUE port, VALUE handler) {
   if (TYPE(port) == T_FIXNUM)
     port = rb_funcall2(port, to_s_method_id, 0, NULL);
   // listen
-  server_listen(.port = StringValueCStr(port), .udata = (void*)handler,
+  server_listen(.port = StringValueCStr(port), .udata = (void *)handler,
                 .on_open = on_open_dyn_protocol,
                 .on_start = on_server_start_for_handler,
                 .on_finish = on_server_on_finish_for_handler);
@@ -445,7 +438,7 @@ VALUE iodine_upgrade2basic(intptr_t fduuid, VALUE handler) {
       rb_tout = rb_ivar_get(handler, timeout_var_id);
     timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
   }
-  protocol_s* protocol = dyn_set_protocol(fduuid, handler, timeout);
+  protocol_s *protocol = dyn_set_protocol(fduuid, handler, timeout);
   if (protocol) {
     if (server_switch_protocol(fduuid, protocol))
       dyn_protocol_on_close(protocol);
@@ -458,12 +451,12 @@ VALUE iodine_upgrade2basic(intptr_t fduuid, VALUE handler) {
 Iodine Task Management
 */
 
-static void iodine_run_once(void* block) {
+static void iodine_run_once(void *block) {
   RubyCaller.call((VALUE)block, call_proc_id);
   Registry.remove((VALUE)block);
 }
 
-static void iodine_run_always(void* block) {
+static void iodine_run_always(void *block) {
   RubyCaller.call((VALUE)block, call_proc_id);
 }
 
@@ -482,8 +475,8 @@ static VALUE iodine_run_async(VALUE self) {
   if (block == Qnil)
     return Qfalse;
   Registry.add(block);
-  if (async_run(iodine_run_once, (void*)block)) {
-    server_run_after(1, iodine_run_once, (void*)block);
+  if (async_run(iodine_run_once, (void *)block)) {
+    server_run_after(1, iodine_run_once, (void *)block);
     ;
   }
   return block;
@@ -507,7 +500,7 @@ static VALUE iodine_run_after(VALUE self, VALUE milliseconds) {
   if (block == Qnil)
     return Qfalse;
   Registry.add(block);
-  server_run_after(milli, iodine_run_once, (void*)block);
+  server_run_after(milli, iodine_run_once, (void *)block);
   return block;
 }
 /**
@@ -527,7 +520,7 @@ The event will repeat itself until the number of repetitions had been delpeted.
 
 Always returns a copy of the block object.
 */
-static VALUE iodine_run_every(int argc, VALUE* argv, VALUE self) {
+static VALUE iodine_run_every(int argc, VALUE *argv, VALUE self) {
   VALUE milliseconds, repetitions, block;
 
   rb_scan_args(argc, argv, "11&", &milliseconds, &repetitions, &block);
@@ -546,19 +539,17 @@ static VALUE iodine_run_every(int argc, VALUE* argv, VALUE self) {
   // requires a block to be passed
   rb_need_block();
   Registry.add(block);
-  server_run_every(milli, repeat, iodine_run_always, (void*)block,
-                   (void (*)(void*))Registry.remove);
+  server_run_every(milli, repeat, iodine_run_always, (void *)block,
+                   (void (*)(void *))Registry.remove);
   return block;
 }
 
-static VALUE iodine_count(VALUE self) {
-  return ULONG2NUM(server_count(NULL));
-}
+static VALUE iodine_count(VALUE self) { return ULONG2NUM(server_count(NULL)); }
 /* *****************************************************************************
 Running the server
 */
 
-static void* srv_start_no_gvl(void* _) {
+static void *srv_start_no_gvl(void *_) {
   VALUE rb_th_i = rb_iv_get(Iodine, "@threads");
   VALUE rb_pr_i = rb_iv_get(Iodine, "@processes");
   size_t threads = (TYPE(rb_th_i) == T_FIXNUM) ? FIX2ULONG(rb_th_i) : 0;
@@ -567,9 +558,7 @@ static void* srv_start_no_gvl(void* _) {
   return NULL;
 }
 
-static void unblck(void* _) {
-  server_stop();
-}
+static void unblck(void *_) { server_stop(); }
 /**
 Starts the Iodine event loop. This will hang the thread until an interrupt
 (`^C`) signal is received.
@@ -581,7 +570,7 @@ static VALUE iodine_start(VALUE self) {
     perror("Iodine couldn't start HTTP service... port busy? ");
     return Qnil;
   }
-  rb_thread_call_without_gvl2(srv_start_no_gvl, (void*)self, unblck, NULL);
+  rb_thread_call_without_gvl2(srv_start_no_gvl, (void *)self, unblck, NULL);
 
   return self;
 }
@@ -613,10 +602,10 @@ void Init_iodine(void) {
   timeout_var_id = rb_intern("@timeout");
   to_s_method_id = rb_intern("to_s");
 
-  BinaryEncodingIndex = rb_enc_find_index("binary");  // sets encoding for data
-  UTF8EncodingIndex = rb_enc_find_index("UTF-8");     // sets encoding for data
-  BinaryEncoding = rb_enc_find("binary");             // sets encoding for data
-  UTF8Encoding = rb_enc_find("UTF-8");                // sets encoding for data
+  BinaryEncodingIndex = rb_enc_find_index("binary"); // sets encoding for data
+  UTF8EncodingIndex = rb_enc_find_index("UTF-8");    // sets encoding for data
+  BinaryEncoding = rb_enc_find("binary");            // sets encoding for data
+  UTF8Encoding = rb_enc_find("UTF-8");               // sets encoding for data
 
   // The core Iodine module wraps libserver functionality and little more.
   Iodine = rb_define_module("Iodine");

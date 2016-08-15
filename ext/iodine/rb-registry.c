@@ -6,14 +6,12 @@
 
 // the registry global
 static struct Registry {
-  struct Object* obj_pool;
-  struct Object* first;
+  struct Object *obj_pool;
+  struct Object *first;
   VALUE owner;
   spn_lock_i lock;
-} registry = {.obj_pool = NULL,
-              .first = NULL,
-              .owner = 0,
-              .lock = SPN_LOCK_INIT};
+} registry = {
+    .obj_pool = NULL, .first = NULL, .owner = 0, .lock = SPN_LOCK_INIT};
 
 #define try_lock_registry() spn_trylock(&registry.lock)
 #define unlock_registry() spn_unlock(&registry.lock)
@@ -21,14 +19,14 @@ static struct Registry {
 
 // the references struct (bin-tree)
 struct Object {
-  struct Object* next;
+  struct Object *next;
   VALUE obj;
   int count;
 };
 
 // manage existing objects - add a reference
 int add_reference(VALUE obj) {
-  struct Object* line;
+  struct Object *line;
   lock_registry();
   line = registry.first;
   while (line) {
@@ -51,7 +49,7 @@ static VALUE register_object(VALUE obj) {
     return 0;
   if (add_reference(obj))
     return obj;
-  struct Object* line;
+  struct Object *line;
   lock_registry();
   if (registry.obj_pool) {
     line = registry.obj_pool;
@@ -79,15 +77,15 @@ static void unregister_object(VALUE obj) {
   if (!obj || obj == Qnil)
     return;
   lock_registry();
-  struct Object* line = registry.first;
-  struct Object* prev = NULL;
+  struct Object *line = registry.first;
+  struct Object *prev = NULL;
   while (line) {
     if (line->obj == obj) {
       line->count--;
       if (!line->count) {
         if (line == registry.first)
           registry.first = line->next;
-        else if (prev)  // must be true, really
+        else if (prev) // must be true, really
           prev->next = line->next;
         // move the object container to the discarded object pool
         line->next = registry.obj_pool;
@@ -126,12 +124,12 @@ finish:
 // }
 
 // a callback for the GC (marking active objects)
-static void registry_mark(void* ignore) {
+static void registry_mark(void *ignore) {
 #ifdef RUBY_REG_DBG
   Registry.print();
 #endif
   lock_registry();
-  struct Object* line = registry.first;
+  struct Object *line = registry.first;
   while (line) {
     if (line->obj)
       rb_gc_mark(line->obj);
@@ -141,10 +139,10 @@ static void registry_mark(void* ignore) {
 }
 
 // clear the registry (end of lifetime)
-static void registry_clear(void* ignore) {
+static void registry_clear(void *ignore) {
   lock_registry();
-  struct Object* line;
-  struct Object* to_free;
+  struct Object *line;
+  struct Object *to_free;
   // free active object references
   line = registry.first;
   while (line) {
@@ -169,8 +167,8 @@ static void registry_clear(void* ignore) {
 // this sets the callbacks.
 static struct rb_data_type_struct my_registry_type_struct = {
     .wrap_struct_name = "RubyReferencesIn_C_Land",
-    .function.dfree = (void (*)(void*))registry_clear,
-    .function.dmark = (void (*)(void*))registry_mark,
+    .function.dfree = (void (*)(void *))registry_clear,
+    .function.dmark = (void (*)(void *))registry_mark,
 };
 
 // initialize the registry
@@ -193,7 +191,7 @@ finish:
 // print data, for testing
 static void print(void) {
   lock_registry();
-  struct Object* line = registry.first;
+  struct Object *line = registry.first;
   fprintf(stderr, "Registry owner is %lu\n", registry.owner);
   long index = 0;
   while (line) {

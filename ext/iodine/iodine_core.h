@@ -21,8 +21,8 @@ Feel free to copy, use and enjoy according to the license provided.
 #define __unused __attribute__((unused))
 #endif
 
-extern rb_encoding* BinaryEncoding;
-extern rb_encoding* UTF8Encoding;
+extern rb_encoding *BinaryEncoding;
+extern rb_encoding *UTF8Encoding;
 extern int BinaryEncodingIndex;
 extern int UTF8EncodingIndex;
 
@@ -60,11 +60,11 @@ typedef struct {
   VALUE handler;
 } dyn_protocol_s;
 
-#define dyn_prot(protocol) ((dyn_protocol_s*)(protocol))
+#define dyn_prot(protocol) ((dyn_protocol_s *)(protocol))
 
 /* "upgrades" a connection to a dynamic generic protocol */
 VALUE iodine_upgrade2basic(intptr_t fduuid, VALUE handler);
 /* runs a task for each connection in the service. */
-void iodine_run_each(intptr_t origin, const char* service, VALUE block);
+void iodine_run_each(intptr_t origin, const char *service, VALUE block);
 
 #endif

@@ -50,7 +50,7 @@ static ID io_id;
 static VALUE TCPSOCKET_CLASS;
 static ID for_fd_id;
 
-#define set_uuid(object, request) \
+#define set_uuid(object, request)                                              \
   rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->metadata.fd))
 
 inline static intptr_t get_uuid(VALUE obj) {
@@ -75,9 +75,9 @@ StrIO API
 */
 
 // a macro helper to get the server pointer embeded in an object
-inline static char* get_str(VALUE obj) {
+inline static char *get_str(VALUE obj) {
   VALUE i = rb_ivar_get(obj, io_id);
-  return (char*)FIX2ULONG(i);
+  return (char *)FIX2ULONG(i);
 }
 
 /**
@@ -87,7 +87,7 @@ but shouldn't really be used.
 Limited to ~ 1Mb of a line length.
 */
 static VALUE strio_gets(VALUE self) {
-  char* str = get_str(self);
+  char *str = get_str(self);
   size_t pos = get_pos(self);
   size_t end = get_end(self);
   if (str == NULL || pos == end)
@@ -101,8 +101,8 @@ static VALUE strio_gets(VALUE self) {
 }
 
 // Reads data from the IO, according to the Rack specifications for `#read`.
-static VALUE strio_read(int argc, VALUE* argv, VALUE self) {
-  char* str = get_str(self);
+static VALUE strio_read(int argc, VALUE *argv, VALUE self) {
+  char *str = get_str(self);
   size_t pos = get_pos(self);
   size_t end = get_end(self);
   VALUE buffer = Qnil;
@@ -161,9 +161,7 @@ no_data:
 }
 
 // Does nothing - this is controlled by the server.
-static VALUE strio_close(VALUE self) {
-  return Qnil;
-}
+static VALUE strio_close(VALUE self) { return Qnil; }
 
 // Rewinds the IO, so that it is read from the begining.
 static VALUE rio_rewind(VALUE self) {
@@ -226,7 +224,7 @@ static VALUE tfio_gets(VALUE self) {
 }
 
 // Reads data from the IO, according to the Rack specifications for `#read`.
-static VALUE tfio_read(int argc, VALUE* argv, VALUE self) {
+static VALUE tfio_read(int argc, VALUE *argv, VALUE self) {
   int fd = get_tmpfile(self);
   size_t pos = get_pos(self);
   size_t end = get_end(self);
@@ -288,9 +286,7 @@ no_data:
 }
 
 // Does nothing - this is controlled by the server.
-static VALUE tfio_close(VALUE self) {
-  return Qnil;
-}
+static VALUE tfio_close(VALUE self) { return Qnil; }
 
 // Passes each line of the input to the block. This should be avoided.
 static VALUE tfio_each(VALUE self) {
@@ -308,11 +304,11 @@ Hijacking
 */
 
 // defined by iodine_http
-extern VALUE R_HIJACK;     // for Rack: rack.hijack
-extern VALUE R_HIJACK_CB;  // for Rack: rack.hijack
-extern VALUE R_HIJACK_IO;  // for Rack: rack.hijack_io
+extern VALUE R_HIJACK;    // for Rack: rack.hijack
+extern VALUE R_HIJACK_CB; // for Rack: rack.hijack
+extern VALUE R_HIJACK_IO; // for Rack: rack.hijack_io
 
-static VALUE rio_get_io(int argc, VALUE* argv, VALUE self) {
+static VALUE rio_get_io(int argc, VALUE *argv, VALUE self) {
   if (TCPSOCKET_CLASS == Qnil)
     return Qfalse;
   intptr_t fduuid = get_uuid(self);
@@ -325,7 +321,7 @@ static VALUE rio_get_io(int argc, VALUE* argv, VALUE self) {
     return new_io;
   // VALUE new_io = how the fuck do we create a new IO from the fd?
   new_io = RubyCaller.call2(TCPSOCKET_CLASS, for_fd_id, 1,
-                            &fd);  // TCPSocket.for_fd(fd) ... cool...
+                            &fd); // TCPSocket.for_fd(fd) ... cool...
   rb_hash_aset(env, R_HIJACK_IO, new_io);
   if (argc)
     rb_hash_aset(env, R_HIJACK_CB, *argv);
@@ -337,7 +333,7 @@ C land API
 */
 
 // new object
-static VALUE new_rack_io(http_request_s* request, VALUE env) {
+static VALUE new_rack_io(http_request_s *request, VALUE env) {
   VALUE rack_io;
   if (request->body_file > 0) {
     rack_io = rb_funcall2(rRackFileIO, new_func_id, 0, NULL);
@@ -389,6 +385,5 @@ static void init_rack_io(void) {
 ////////////////////////////////////////////////////////////////////////////
 // the API interface
 struct _RackIO_ RackIO = {
-    .new = new_rack_io,
-    .init = init_rack_io,
+    .new = new_rack_io, .init = init_rack_io,
 };

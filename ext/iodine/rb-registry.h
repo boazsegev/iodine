@@ -30,4 +30,4 @@ extern struct ___RegistryClass___ {
   void (*print)(void);
 } Registry;
 
-#endif  // RB_REGISTRY_HELPER_H
+#endif // RB_REGISTRY_HELPER_H
