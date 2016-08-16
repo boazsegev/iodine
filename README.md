@@ -14,7 +14,7 @@ Iodine is an **evented** framework with a simple API that builds off a low level
 
     This makes Iodine ideal for writing HTTP/2 and Websocket servers (which is what started this whole thing).
 
-* Iodine runs **only on Linux/Unix** based systems (i.e. OS X, Ubuntu, etc'). This allows us to:
+* Iodine supports only **Linux/Unix** based systems (i.e. OS X, Ubuntu, FreeBSD etc'). This allows us to:
 
      * Optimize our code for the production environment.
 
@@ -22,7 +22,7 @@ Iodine is an **evented** framework with a simple API that builds off a low level
 
      * Catch any issues (read: bugs) while in development - just ask AT&T about how important this is ;-)
 
-Iodine is a C extension for Ruby, developed with Ruby MRI 2.3.0 and 2.2.4 (it should support the whole Ruby 2.0 family, but it might not).
+Iodine is a C extension for Ruby, developed for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 family, but Rack requires Ruby 2.2.2, and so Iodine matches this requirement.
 
 ## Iodine::Rack - an HTTP and Websockets server
 
