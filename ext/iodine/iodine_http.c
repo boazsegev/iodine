@@ -535,11 +535,20 @@ int iodine_http_review(void) {
     // Write message
     VALUE iodine_version = rb_const_get(Iodine, rb_intern("VERSION"));
     VALUE ruby_version = rb_const_get(Iodine, rb_intern("RUBY_VERSION"));
-    fprintf(stderr, "Starting up Iodine Http Server:\n"
-                    " * Ruby v.%s\n * Iodine v.%s \n"
-                    " * %d processes X %d thread%s\n\n",
-            StringValueCStr(ruby_version), StringValueCStr(iodine_version),
-            processes, threads, (threads > 1 ? "s" : ""));
+    if (public_folder)
+      fprintf(stderr, "Starting up Iodine Http Server:\n"
+                      " * Ruby v.%s\n * Iodine v.%s \n"
+                      " * %d processes X %d thread%s\n"
+                      " * Serving static files from:\n"
+                      "           %s\n\n",
+              StringValueCStr(ruby_version), StringValueCStr(iodine_version),
+              processes, threads, (threads > 1 ? "s" : ""), public_folder);
+    else
+      fprintf(stderr, "Starting up Iodine Http Server:\n"
+                      " * Ruby v.%s\n * Iodine v.%s \n"
+                      " * %d processes X %d thread%s\n\n",
+              StringValueCStr(ruby_version), StringValueCStr(iodine_version),
+              processes, threads, (threads > 1 ? "s" : ""));
 
     // listen
     return http1_listen(port, address, .on_request = on_rack_request,
