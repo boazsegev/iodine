@@ -114,13 +114,6 @@ module Iodine
       end
       @port = options[:Port] if options[:Port]
       @port = options[:Address] if options[:Address]
-      # load anything marked with `autoload`, since autoload isn't thread safe nor fork positive.
-      Module.constants.each do |n|
-        begin
-          Object.const_get(n)
-        rescue Exception => _e
-        end
-      end
       # provide Websocket features using Rack::Websocket
       Rack.send :remove_const, :Websocket if defined?(Rack::Websocket)
       Rack.const_set :Websocket, ::Iodine::Websocket

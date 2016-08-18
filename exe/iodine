@@ -21,6 +21,7 @@ Available options:
  -www        Public folder for static file serving. Default: nil (none).
  -v          Log responses.
  -q          Never log responses.
+ -warmup     Warmup invokes autoloading (lazy loading) during server startup.
  -maxbd      Maximum Mb per HTTP message (max body size). Default: ~50Mb.
  -maxms      Maximum Bytes per Websocket message. Default: ~250Kb.
  -ping       Websocket ping interval in seconds. Default: 40 seconds.
@@ -54,4 +55,5 @@ if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
 end
 Iodine::Rack.log = true if ARGV.index('-v')
 Iodine::Rack.log = false if ARGV.index('-q')
+Iodine.warmup if ARGV.index('-warmup')
 Iodine::Rack.run(app, opt)

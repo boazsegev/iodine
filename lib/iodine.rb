@@ -51,6 +51,20 @@ module Iodine
   def self.processes=(count)
     @processes = count.to_i
   end
+
+  # Runs the warmup sequence. {warmup} attempts to get every "autoloaded" (lazy loaded)
+  # file to load now instead of waiting for "first access". This allows multi-threaded safety and better memory utilization during forking.
+  #
+  # Use {warmup} when either {processes} or {threads} are set to more then 1.
+  def self.warmup
+    # load anything marked with `autoload`, since autoload isn't thread safe nor fork friendly.
+    Module.constants.each do |n|
+      begin
+        Object.const_get(n)
+      rescue Exception => _e
+      end
+    end
+  end
 end
 
 require 'rack/handler/iodine' unless defined? ::Iodine::Rack::IODINE_RACK_LOADED
