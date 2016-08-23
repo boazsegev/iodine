@@ -42,7 +42,7 @@ To get the most out of Iodine, consider the amount of CPU cores available and th
 Puma's model of 16 threads and 4 processes is easily adopted and proved to provide a good enough balance for most use-cases. Use:
 
 ```bash
-bundler exec iodine -p $PORT -t 16 - w 4
+bundler exec iodine -p $PORT -t 16 -w 4
 ```
 
 ### Static file serving support
@@ -56,7 +56,7 @@ To setup native static file service, setup the public folder's address **before*
 This can be done when starting the server from the command line:
 
 ```bash
-bundler exec iodine -p $PORT -t 16 - w 4 -www /my/public/folder
+bundler exec iodine -p $PORT -t 16 -w 4 -www /my/public/folder
 ```
 
 Or by adding a single line to the application. i.e. (a `config.ru` example):
