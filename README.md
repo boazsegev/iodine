@@ -132,7 +132,7 @@ Iodine.start
 
 This design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems) etc'. This also allows us to use middleware without interfering with connection upgrades and provides up with backwards compatibility.
 
-Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less then 8Kb in size. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache.
+Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less than 8Kb in size. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache.
 
 Here's a small HTTP and Websocket broadcast server with Iodine::Rack, which can be used directly from `irb`:
 
