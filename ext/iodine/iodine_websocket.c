@@ -134,6 +134,16 @@ static VALUE iodine_ws_count(VALUE self) {
 }
 
 /**
+Returns a weak indication as to the state of the socket's buffer. If the server
+has data in the buffer that wasn't written to the socket, `has_pending?` will
+return `true`, otherwise `false` will be returned.
+*/
+static VALUE iodine_ws_has_pending(VALUE self) {
+  intptr_t uuid = get_uuid(self);
+  return sock_packets_pending(uuid) ? Qtrue : Qfalse;
+}
+
+/**
 Returns a connection's UUID which is valid for **this process** (not a machine
 or internet unique value).
 
@@ -319,6 +329,12 @@ void ws_on_shutdown(ws_s *ws) {
     return;
   RubyCaller.call(handler, on_shutdown_func_id);
 }
+void ws_on_ready(ws_s *ws) {
+  VALUE handler = get_handler(ws);
+  if (!handler)
+    return;
+  RubyCaller.call(handler, on_ready_func_id);
+}
 void ws_on_data(ws_s *ws, char *data, size_t length, uint8_t is_text) {
   VALUE handler = get_handler(ws);
   if (!handler)
@@ -363,7 +379,7 @@ void iodine_websocket_upgrade(http_request_s *request,
   websocket_upgrade(.request = request, .response = response,
                     .udata = (void *)handler, .on_close = ws_on_close,
                     .on_open = ws_on_open, .on_shutdown = ws_on_shutdown,
-                    .on_message = ws_on_data,
+                    .on_ready = ws_on_ready, .on_message = ws_on_data,
                     .max_msg_size = iodine_websocket_max_msg_size,
                     .timeout = iodine_websocket_timeout);
 }
@@ -413,10 +429,13 @@ void Init_iodine_websocket(void) {
   // rb_define_method(rWebsocket, "on_message", def_dyn_message, 1);
   rb_define_method(rWebsocket, "on_shutdown", empty_func, 0);
   rb_define_method(rWebsocket, "on_close", empty_func, 0);
+  rb_define_method(rWebsocket, "on_ready", empty_func, 0);
   rb_define_method(rWebsocket, "write", iodine_ws_write, 1);
   rb_define_method(rWebsocket, "close", iodine_ws_close, 0);
 
   rb_define_method(rWebsocket, "uuid", iodine_ws_uuid, 0);
+  rb_define_method(rWebsocket, "conn_id", iodine_ws_uuid, 0);
+  rb_define_method(rWebsocket, "has_pending?", iodine_ws_has_pending, 0);
   rb_define_method(rWebsocket, "defer", iodine_defer, -1);
   rb_define_method(rWebsocket, "each", iodine_ws_each, 0);
   rb_define_method(rWebsocket, "count", iodine_ws_count, 0);

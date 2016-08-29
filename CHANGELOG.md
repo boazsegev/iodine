@@ -6,6 +6,18 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+Change log v.0.2.1
+
+**Notice**: The [Rack Websocket Draft](https://github.com/rack/rack/pull/1107) does not support the `each` and `defer` methods. Although I tried to maintain these as part of the draft, the community preferred to leave the implementation of these to the client (rather then the server). If collisions occur, these methods might be removed in the future.
+
+**Update**: Websockets now support the `has_pending?` method and `on_ready` callback, as suggested by the [Rack Websocket Draft](https://github.com/rack/rack/pull/1107).
+
+**Update**: deprecated the websocket method `uuid` in favor of `conn_id`, as suggested by the [Rack Websocket Draft](https://github.com/rack/rack/pull/1107).
+
+**Fix**: fixed an issue were the server would crash when attempting to send a long enough websocket message.
+
+***
+
 Change log v.0.2.0
 
 This version is a total rewrite. The API is totally changed, nothing stayed.

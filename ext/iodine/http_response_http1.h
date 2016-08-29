@@ -69,16 +69,6 @@ h1p_finalize_headers(http_response_s *response) {
     status = http_response_status_str(response->status);
   }
 
-  /* write the keep-alive (connection) header, if missing */
-  if (!response->metadata.connection_written) {
-    if (response->metadata.should_close) {
-      h1p_protected_copy(response, "Connection:close\r\n", 18);
-    } else {
-      h1p_protected_copy(response, "Connection:keep-alive\r\n"
-                                   "Keep-Alive:timeout=2\r\n",
-                         45);
-    }
-  }
   /* write the content length header, unless forced not to (<0) */
   if (response->metadata.content_length_written == 0 &&
       !(response->content_length < 0) && response->status >= 200 &&
@@ -109,6 +99,16 @@ h1p_finalize_headers(http_response_s *response) {
         http_date2str(response->metadata.headers_pos, &t);
     *(response->metadata.headers_pos++) = '\r';
     *(response->metadata.headers_pos++) = '\n';
+  }
+  /* write the keep-alive (connection) header, if missing */
+  if (!response->metadata.connection_written) {
+    if (response->metadata.should_close) {
+      h1p_protected_copy(response, "Connection:close\r\n", 18);
+    } else {
+      h1p_protected_copy(response, "Connection:keep-alive\r\n"
+                                   "Keep-Alive:timeout=2\r\n",
+                         45);
+    }
   }
   /* write the headers completion marker (empty line - `\r\n`) */
   *(response->metadata.headers_pos++) = '\r';

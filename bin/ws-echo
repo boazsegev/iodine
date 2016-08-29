@@ -35,9 +35,14 @@ class WSEcho
     puts "I'm shutting down #{self}"
   end
 
+  def on_ready
+    puts "on_ready called foe #{self}"
+  end
+
   def on_message(data)
     puts "got message: #{data}"
     write data
+    write (data * 16_384) if data =~ /^multi me$/
   end
 
   def echo(data)
