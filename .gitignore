@@ -12,3 +12,5 @@
 *.so
 
 .ruby-version
+
+.DS_Store
