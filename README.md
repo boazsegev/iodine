@@ -47,6 +47,8 @@ Puma's model of 16 threads and 4 processes is easily adopted and proved to provi
 bundler exec iodine -p $PORT -t 16 -w 4
 ```
 
+It should be noted that Websocket support means that no automatic process scaling is provided... It is important to use `iodine` with the `-w` option and set the number of desired processes (ideally equal to the number of CPU cores).
+
 ### Static file serving support
 
 Iodine supports static file serving that allows the server to serve static files directly, with no Ruby layer (all from C-land).

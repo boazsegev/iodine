@@ -30,6 +30,14 @@ module Iodine
   @threads = (ARGV.index('-t') && ARGV[ARGV.index('-t') + 1]) || ENV['MAX_THREADS']
   @processes = (ARGV.index('-w') && ARGV[ARGV.index('-w') + 1]) || ENV['MAX_WORKERS']
   @threads = @threads.to_i if @threads
+  if @processes == 'auto'
+    begin
+      require 'etc'
+      @processes = Etc.nprocessors
+    rescue Exception
+      warn "This version of Ruby doesn't support automatic CPU core detection."
+    end
+  end
   @processes = @processes.to_i if @processes
 
   # Get/Set the number of threads used in the thread pool (a static thread pool). Can be 1 (single working thread, the main thread will sleep) and can be 0 (the main thread will be used as the only active thread).

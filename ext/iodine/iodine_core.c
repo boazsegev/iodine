@@ -550,10 +550,27 @@ Running the server
 */
 
 static void *srv_start_no_gvl(void *_) {
+  // collect requested settings
   VALUE rb_th_i = rb_iv_get(Iodine, "@threads");
   VALUE rb_pr_i = rb_iv_get(Iodine, "@processes");
   size_t threads = (TYPE(rb_th_i) == T_FIXNUM) ? FIX2ULONG(rb_th_i) : 0;
   size_t processes = (TYPE(rb_pr_i) == T_FIXNUM) ? FIX2ULONG(rb_pr_i) : 0;
+// print a warnning if settings are sub optimal
+#ifdef _SC_NPROCESSORS_ONLN
+  size_t cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
+  if ((processes << 1) < cpu_count || processes > (cpu_count << 1))
+    fprintf(
+        stderr, "* Performance warnning:\n"
+                "  - This computer has %lu CPUs available and you'll be "
+                "utilizing %lu processes.\n  - %s\n"
+                "  - Use the command line option: `-w %lu`\n"
+                "  - Or, within Ruby: `Iodine.processes = %lu`\n",
+        cpu_count, processes,
+        (processes < cpu_count
+             ? "Some CPUs won't be utilized, inhibiting performance."
+             : "This causes excessive context switches, wasting resources."),
+        cpu_count, cpu_count);
+#endif
   server_run(.threads = threads, .processes = processes);
   return NULL;
 }
