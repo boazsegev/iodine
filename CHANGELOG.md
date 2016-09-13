@@ -8,7 +8,9 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
-Change log v.0.2.2 (pre-release)
+Change log v.0.2.2
+
+**Update** The static file service now supports `ETag` caching, sending a 304 (not changed) response for valid ETags.
 
 **Update**: A performance warning now shows if the CPUs are significantly under-utilized (less than half are used) of if too many are utilized (more than double the amount of CPUs), warning against under-utilization or excessive context switching (respectively).
 
