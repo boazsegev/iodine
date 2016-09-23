@@ -9,8 +9,8 @@ Gem::Specification.new do |spec|
   spec.authors       = ['Boaz Segev']
   spec.email         = ['Boaz@2be.co.il']
 
-  spec.summary       = ' Iodine - writing C servers in Ruby.'
-  spec.description   = ' Iodine - writing C servers in Ruby.'
+  spec.summary       = ' Iodine - leveraging C for Ruby servers.'
+  spec.description   = ' Iodine - leveraging C for Ruby servers.'
   spec.homepage      = 'https://github.com/boazsegev/iodine'
   spec.license       = 'MIT'
 
@@ -37,6 +37,7 @@ Gem::Specification.new do |spec|
   spec.requirements << 'A Unix based system, i.e.: Linux / OS X / BSD.'
   spec.requirements << 'An updated C compiler, with support for C11 (i.e. gcc 4.9 or later).'
   spec.requirements << 'Ruby >= 2.2.2'
+  spec.requirements << 'Ruby >= 2.0.0 is recommended.'
 
   spec.add_development_dependency 'bundler', '~> 1.10'
   spec.add_development_dependency 'rake', '~> 10.0'

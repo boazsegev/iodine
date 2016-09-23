@@ -558,7 +558,8 @@ static void *srv_start_no_gvl(void *_) {
 // print a warnning if settings are sub optimal
 #ifdef _SC_NPROCESSORS_ONLN
   size_t cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
-  if ((processes << 1) < cpu_count || processes > (cpu_count << 1))
+  if (cpu_count > 0 &&
+      ((processes << 1) < cpu_count || processes > (cpu_count << 1)))
     fprintf(
         stderr, "* Performance warnning:\n"
                 "  - This computer has %lu CPUs available and you'll be "
