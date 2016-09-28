@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.2.3 (pre-release)
+
+**Update**: The global socket `write` buffer was increased to ~16Mb (from ~4Mb), allowing for more concurrent `write` operations. However, the `write` buffer is still limited and `write` might block while the buffer is full. Blocking and "hanging" the server until there's enough room in the buffer for the requested `write` will slow the server down while keeping it healthy and more secure. IMHO, it is the lesser of two evils.
+
+***
+
 Change log v.0.2.2
 
 **Update** The static file service now supports `ETag` caching, sending a 304 (not changed) response for valid ETags.
