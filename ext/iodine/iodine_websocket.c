@@ -116,14 +116,22 @@ static VALUE iodine_ws_close(VALUE self) {
   return self;
 }
 
-/** Writes data to the websocket. Returns `self` (the websocket object). */
+/**
+ * Writes data to the websocket.
+ *
+ * Returns `true` on success or `false if the websocket was closed or an error
+ * occurred.
+ *
+ * `write` will return immediately UNLESS resources are insufficient. If the
+ * global `write` buffer is full, `write` will block until a buffer "packet"
+ * becomes available and can be assigned to the socket. */
 static VALUE iodine_ws_write(VALUE self, VALUE data) {
   ws_s *ws = get_ws(self);
   if (((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
     return Qfalse;
   websocket_write(ws, RSTRING_PTR(data), RSTRING_LEN(data),
                   rb_enc_get(data) == UTF8Encoding);
-  return self;
+  return Qtrue;
 }
 
 /** Returns the number of active websocket connections (including connections

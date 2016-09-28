@@ -36,6 +36,8 @@ The server **must** extend the Websocket Callback Object's *class* using `extend
 
     `write` shall return `true` on success and `false` if the websocket is closed.
 
+    A server **should** document whether `write` will block or return immediately. It is recommended that servers implements some type of internal (and possibly limited) buffer, allowing `write` to return immediately when resources allow.
+
 * `close` closes the connection once all the data in the outgoing queue was sent. If `close` is called while there is still data to be sent, `close` will only take effect once the data was sent.
 
     `close` shall always return `nil`.
