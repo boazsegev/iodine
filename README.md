@@ -28,7 +28,7 @@ Iodine is a C extension for Ruby, developed for Ruby MRI 2.2.2 and up... it shou
 
 ## Iodine::Rack - an HTTP and Websockets server
 
-Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC).
+Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the Websocket draft extension.
 
 ### Running the web server
 
@@ -47,7 +47,19 @@ Puma's model of 16 threads and 4 processes is easily adopted and proved to provi
 bundler exec iodine -p $PORT -t 16 -w 4
 ```
 
-It should be noted that Websocket support means that no automatic process scaling is provided... It is important to use `iodine` with the `-w` option and set the number of desired processes (ideally equal to the number of CPU cores).
+It should be noted that Websocket support means that no automatic process scaling is provided (since Websockets don't share data across processes without your help)... It is important to use `iodine` with the `-w` option and set the number of desired processes (ideally equal to the number of CPU cores).
+
+### Writing data to the network layer
+
+Iodine allows Ruby to write strings to the network layer. This includes HTTP and Websocket responses.
+
+Iodine will handle an internal buffer (~4 to ~16 Mb, version depending) so that `write` can return immediately (non-blocking).
+
+However, when the buffer is full, `write` will block until enough space in he buffer becomes available. Sending up to 16Kb of data (a single buffer "packet") is optimal. Sending a larger response might effect concurrency. Best Websocket response length is ~1Kb (1 TCP / IP packet) and allows for faster transmissions.
+
+When using the Iodine's web server (`Iodine::Rack`), the static file service offered by Iodine streams files (instead of using the buffer). Every file response will require up to 2 buffer "packets" (~32Kb), one for the header and the other for file streaming.
+
+This means that even a Gigabyte long response will use ~32Kb of memory, as long as it uses the static file service or the `X-Sendfile` extension (Iodine's static file service can be invoked by the Ruby application using the `X-Sendfile` header).
 
 ### Static file serving support
 
@@ -72,6 +84,32 @@ out = [404, {"Content-Length" => "10".freeze}.freeze, ["Not Found.".freeze].free
 app = Proc.new { out }
 run app
 ```
+
+#### X-Sendfile
+
+Sending can be performed by using the `X-Sendfile` header in the Ruby application response.
+
+i.e. (example `config.ru` for Iodine):
+
+```ruby
+app = proc do |env|
+  request = Rack::Request.new(env)
+  if request.path_info == '/source'.freeze
+    [200, { 'X-Sendfile' => File.expand_path(__FILE__) }, []]
+  elsif request.path_info == '/file'.freeze
+    [200, { 'X-Header' => 'This was a Rack::Sendfile response sent as text' }, File.open(__FILE__)]
+  else
+    [200, { 'Content-Type'.freeze => 'text/html'.freeze,
+            'Content-Length'.freeze => request.path_info.length.to_s },
+     [request.path_info]]
+ end
+end
+# # optional:
+# use Rack::Sendfile
+run app
+```
+
+Go to [localhost:3000/source](http://localhost:3000/source) to download the `config.ru` file using the `X-Sendfile` extension.
 
 ### Special HTTP `Upgrade` support
 
