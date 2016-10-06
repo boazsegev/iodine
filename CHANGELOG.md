@@ -8,7 +8,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
-Change log v.0.2.3 (pre-release)
+Change log v.0.2.3
 
 **Update** The `write` system call is now deferred when resources allow, meaning that (as long as the `write` buffer isn't full) `write` is not only non-blocking, but it's performed as a separate event, outside of the Ruby GIL.
 
