@@ -5,10 +5,10 @@ license: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #ifndef LIB_SOCK
-#define LIB_SOCK "0.2.0"
+#define LIB_SOCK "0.2.2"
 #define LIB_SOCK_VERSION_MAJOR 0
 #define LIB_SOCK_VERSION_MINOR 2
-#define LIB_SOCK_VERSION_PATCH 0
+#define LIB_SOCK_VERSION_PATCH 2
 
 /** \file
 The libsock is a non-blocking socket helper library, using a user level buffer,
@@ -218,12 +218,17 @@ void sock_touch(intptr_t uuid);
 `sock_read` attempts to read up to count bytes from the socket into the buffer
 starting at buf.
 
-It's behavior should conform to the native `read` implementations, except some
-data might be available in the kernel's buffer while it is not available to be
-read using sock_read (i.e., when using a transport layer, such as TLS).
+`sock_read`'s return values are wildly different then the native return values
+and they aim at making far simpler sense.
 
-Also, some internal buffering will might be used in cases where the transport
-layer data available is larger then the data requested.
+`sock_read` returns the number of bytes read (0 is a valid return value which
+simply means that no bytes were read from the buffer).
+
+On a connection error (NOT EAGAIN or EWOULDBLOCK) or signal interrupt,
+`sock_read` returns -1.
+
+Data might be available in the kernel's buffer while it is not available to be
+read using `sock_read` (i.e., when using a transport layer, such as TLS).
 */
 ssize_t sock_read(intptr_t uuid, void *buf, size_t count);
 
