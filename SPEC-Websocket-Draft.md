@@ -16,9 +16,9 @@ The Websocket Callback Object should be a class (or an instance of such class) w
 
 * `on_message(data)` WILL be called when incoming Websocket data is received. `data` will be a String with an encoding of UTF-8 for text messages and `binary` encoding for non-text messages (as specified by the Websocket Protocol).
 
-    The *client* **must** assume that the `data` String will be a **recyclable buffer** and that it's content will be corrupted the moment the `on_message` callback returns.
+    The *client* **MUST** assume that the `data` String will be a **recyclable buffer** and that it's content will be corrupted the moment the `on_message` callback returns.
 
-* `on_ready()` MAY be called when the state of the out-going socket buffer changes from full to not full (data can be sent to the socket). **If** `has_pending?` returns `true`, the `on_ready` callback **must** be called once the buffer state changes.
+* `on_ready()` **MAY** be called when the state of the out-going socket buffer changes from full to not full (data can be sent to the socket). **If** `has_pending?` returns `true`, the `on_ready` callback **MUST** be called once the buffer state changes.
 
 * `on_shutdown()` MAY be called during the server's graceful shutdown process, _before_ the connection is closed and in addition to the `on_close` function (which is called _after_ the connection is closed.
 
@@ -28,15 +28,15 @@ The Websocket Callback Object should be a class (or an instance of such class) w
 
 The following method names are reserved for the network implementation: `write`, `close` and `has_pending?`.
 
-The server **must** extend the Websocket Callback Object's *class* using `extend`, so that the Websocket Callback Object inherits the following methods:
+The server **MUST** extend the Websocket Callback Object's *class* using `extend`, so that the Websocket Callback Object inherits the following methods:
 
-* `write(data)` will attempt to send the data through the websocket connection. `data` **must** be a String. If `data` is UTF-8 encoded, the data will be sent as text. If `data` is binary encoded it will be sent as non-text (as specified by the Websocket Protocol).
+* `write(data)` will attempt to send the data through the websocket connection. `data` **MUST** be a String. If `data` is UTF-8 encoded, the data will be sent as text. If `data` is binary encoded it will be sent as non-text (as specified by the Websocket Protocol).
 
     `write` has the same delivery promise as `Socket#write` (a successful `write` does **not** mean any of the data will reach the other side).
 
     `write` shall return `true` on success and `false` if the websocket is closed.
 
-    A server **should** document whether `write` will block or return immediately. It is **recommended** that servers implement buffered IO, allowing `write` to return immediately when resources allow and block (or, possibly, disconnect) when the IO buffer is full.
+    A server **SHOULD** document whether `write` will block or return immediately. It is **RECOMMENDED** that servers implement buffered IO, allowing `write` to return immediately when resources allow and block (or, possibly, disconnect) when the IO buffer is full.
 
 * `close` closes the connection once all the data in the outgoing queue was sent. If `close` is called while there is still data to be sent, `close` will only take effect once the data was sent.
 
@@ -54,9 +54,9 @@ The following keywords (both as method names and instance variable names) are re
 
 * The `conn_id` object may be used as a connection ID for any functionality not specified herein.
 
-Connection `ping` / `pong`, timeouts and network considerations should be implemented by the server. It is **recommended** (but not required) that the server send `ping`s to prevent connection timeouts and detect network failure.
+Connection `ping` / `pong`, timeouts and network considerations should be implemented by the server. It is **RECOMMENDED** (but not required) that the server send `ping`s to prevent connection timeouts and detect network failure.
 
-Server settings **may** (not required) be provided to allow for customization and adaptation for different network environments or websocket extensions. It is **recommended** that any settings be available as command line arguments and **not** incorporated into the application's logic.
+Server settings **MAY** (not required) be provided to allow for customization and adaptation for different network environments or websocket extensions. It is **RECOMMENDED** that any settings be available as command line arguments and **not** incorporated into the application's logic.
 
 ## Upgrading
 
