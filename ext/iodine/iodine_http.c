@@ -43,6 +43,9 @@ rack_declare(QUERY_STRING);
 rack_declare(QUERY_ESTRING);
 rack_declare(SERVER_NAME);
 rack_declare(SERVER_PORT);
+rack_declare(SERVER_PROTOCOL);
+rack_declare(HTTP_VERSION);
+rack_declare(REMOTE_ADDR);
 rack_declare(CONTENT_LENGTH);
 rack_declare(CONTENT_TYPE);
 rack_declare(R_URL_SCHEME);          // rack.url_scheme
@@ -78,6 +81,18 @@ static inline VALUE copy2env(http_request_s *request) {
       (request->query
            ? rb_enc_str_new(request->query, request->query_len, BinaryEncoding)
            : QUERY_ESTRING));
+  rb_hash_aset(
+      env, QUERY_STRING,
+      (request->query
+           ? rb_enc_str_new(request->query, request->query_len, BinaryEncoding)
+           : QUERY_ESTRING));
+
+  hname =
+      rb_enc_str_new(request->version, request->version_len, BinaryEncoding);
+  rb_hash_aset(env, SERVER_PROTOCOL, hname);
+  rb_hash_aset(env, HTTP_VERSION, hname);
+
+  // rack_declare(REMOTE_ADDR);
 
   /* setup input IO + hijack support */
   rb_hash_aset(env, R_INPUT, (hname = RackIO.new(request, env)));
@@ -571,6 +586,9 @@ void Init_iodine_http(void) {
   rack_autoset(SERVER_PORT);
   rack_autoset(CONTENT_LENGTH);
   rack_autoset(CONTENT_TYPE);
+  rack_autoset(SERVER_PROTOCOL);
+  rack_autoset(HTTP_VERSION);
+  rack_autoset(REMOTE_ADDR);
   rack_set(HTTP_SCHEME, "http");
   rack_set(HTTPS_SCHEME, "https");
   rack_set(QUERY_ESTRING, "");

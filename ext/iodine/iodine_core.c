@@ -566,7 +566,7 @@ static void *srv_start_no_gvl(void *_) {
                 "utilizing %lu processes.\n  - %s\n"
                 "  - Use the command line option: `-w %lu`\n"
                 "  - Or, within Ruby: `Iodine.processes = %lu`\n",
-        cpu_count, processes,
+        cpu_count, (processes ? processes : 1),
         (processes < cpu_count
              ? "Some CPUs won't be utilized, inhibiting performance."
              : "This causes excessive context switches, wasting resources."),
