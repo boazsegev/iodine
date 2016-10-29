@@ -10,7 +10,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Change log v.0.2.4
 
-**Minor Fix**: Fixed the processor under-utilization warning, where 0 might be shown for the number processes instead of 1.
+**Minor Fix**: Fixed the processor under-utilization warning, where "0" might be shown for the number processes instead of "1".
 
 **Update**: Added support for the `env` keys `HTTP_VERSION` and `SERVER_PROTOCOL` to indicate the HTTP protocol version. Iodine implements an HTTP/1.1 server, so versions aren't expected to be higher than 1.x.
 
