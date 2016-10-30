@@ -8,7 +8,7 @@
 
 Iodine makes writing Object Oriented **Network Services** easy to write.
 
-Iodine is an **evented** framework with a simple API that builds off a low level [C code library](https://github.com/boazsegev/c-server-tools) with support for **epoll** and **kqueue** - this means that:
+Iodine is an **evented** framework with a simple API that builds off the low level [C code library facil.io](https://github.com/boazsegev/facil.io) with support for **epoll** and **kqueue** - this means that:
 
 * Iodine can handle **thousands of concurrent connections** (tested with 20K connections).
 
@@ -352,7 +352,7 @@ Yes, please, here are some thoughts:
 
 * I'm really not good at writing automated tests and benchmarks, any help would be appreciated. I keep testing manually and that's less then ideal (and it's mistake prone).
 
-* If we can write a Java wrapper for [the C libraries](https://github.com/boazsegev/c-server-tools), it would be nice... but it could be as big a project as the whole gem, as a lot of minor details are implemented within the bridge between these two languages.
+* If we can write a Java wrapper for [the C libraries](https://github.com/boazsegev/facil.io), it would be nice... but it could be as big a project as the whole gem, as a lot of minor details are implemented within the bridge between these two languages.
 
 * Bug reports and pull requests are welcome on GitHub at https://github.com/boazsegev/iodine.
 
@@ -380,7 +380,7 @@ Here's a few things you can use from this project and they seem to be handy to h
 
     I'm attaching it to one of Iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
 
-* I was using a POSIX thread pool library ([`libasync.h`](https://github.com/boazsegev/c-server-tools/blob/master/lib/libasync.c)) until I realized how many issues Ruby has with non-Ruby threads... So now there's a Ruby-thread port for this library at ([`rb-libasync.h`](https://github.com/boazsegev/iodine/blob/master/ext/iodine/rb-libasync.h)).
+* I was using a POSIX thread pool library ([`libasync.h`](https://github.com/boazsegev/facil.io/blob/master/lib/libasync.c)) until I realized how many issues Ruby has with non-Ruby threads... So now there's a Ruby-thread port for this library at ([`rb-libasync.h`](https://github.com/boazsegev/iodine/blob/master/ext/iodine/rb-libasync.h)).
 
     Notice that all the new threads are free from the GVL - this allows true concurrency... but, you can't make Ruby API calls in that state.
 
