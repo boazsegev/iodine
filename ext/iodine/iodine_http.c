@@ -554,16 +554,21 @@ int iodine_http_review(void) {
       fprintf(stderr, "Starting up Iodine Http Server:\n"
                       " * Ruby v.%s\n * Iodine v.%s \n"
                       " * %d processes X %d thread%s\n"
+                      " * %d max concurrent connections / open files\n"
                       " * Serving static files from:\n"
                       "           %s\n\n",
               StringValueCStr(ruby_version), StringValueCStr(iodine_version),
-              processes, threads, (threads > 1 ? "s" : ""), public_folder);
+              processes, threads, (threads > 1 ? "s" : ""), sock_max_capacity(),
+              public_folder);
     else
       fprintf(stderr, "Starting up Iodine Http Server:\n"
                       " * Ruby v.%s\n * Iodine v.%s \n"
-                      " * %d processes X %d thread%s\n\n",
+                      " * %d processes X %d thread%s\n"
+                      " * %d max concurrent connections / open files\n"
+                      "\n",
               StringValueCStr(ruby_version), StringValueCStr(iodine_version),
-              processes, threads, (threads > 1 ? "s" : ""));
+              processes, threads, (threads > 1 ? "s" : ""),
+              sock_max_capacity());
 
     // listen
     return http1_listen(port, address, .on_request = on_rack_request,
