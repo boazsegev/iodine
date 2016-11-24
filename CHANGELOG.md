@@ -14,6 +14,8 @@ Change log v.0.2.4
 
 **Update**: Added support for the `env` keys `HTTP_VERSION` and `SERVER_PROTOCOL` to indicate the HTTP protocol version. Iodine implements an HTTP/1.1 server, so versions aren't expected to be higher than 1.x.
 
+**Update**: Iodine::Rack startup messages now include details regarding open file limits imposed by the OS (open file limits control the maximum allowed concurrent connections and other resource limits).
+
 ***
 
 Change log v.0.2.3
