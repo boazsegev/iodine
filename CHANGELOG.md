@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.2.5 (pre-release)
+
+**Minor Fix**: Fix Iodine::Rack's startup message's `fprint` call to fit correct argument sizes (Linux warnings).
+
+***
+
 Change log v.0.2.4
 
 **Minor Fix**: Patched Iodine against Apple's broken `getrlimit` on macOS. This allows correct auto-setting of open file limits for the socket layer.
