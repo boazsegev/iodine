@@ -60,11 +60,11 @@ Server settings **MAY** (not required) be provided to allow for customization an
 
 ## Upgrading
 
-* **Server**: When an upgrade request is received, the server will set the `env['upgrade.websockets?']` flag to `true`, indicating that: 1. this specific request is upgradable; and 2. this server supports specification.
+* **Server**: When an upgrade request is received, the server will set the `env['upgrade.websocket?']` flag to `true`, indicating that: 1. this specific request is upgradable; and 2. this server supports specification.
 
-* **Client**: When a client decides to upgrade a request, they will place a Websocket Callback Object (either a class or an instance) in the `env['upgrade.websockets']` Hash key.
+* **Client**: When a client decides to upgrade a request, they will place a Websocket Callback Object (either a class or an instance) in the `env['upgrade.websocket']` Hash key.
 
-* **Server**: The server will review the `env` Hash *before* sending the response. If the `env['upgrade.websockets']` was set, the server will perform the upgrade.
+* **Server**: The server will review the `env` Hash *before* sending the response. If the `env['upgrade.websocket']` was set, the server will perform the upgrade.
 
  * **Server**: The server will send the correct response status and headers, as will as any headers present in the response. The server will also perform any required housekeeping, such as closing the response body, if exists.
 
