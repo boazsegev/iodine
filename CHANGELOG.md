@@ -8,7 +8,9 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
-Change log v.0.2.5 (pre-release)
+Change log v.0.2.5
+
+**Fix:**: fix for issue #9 (credit to Jack Christensen for exposing the issue) caused by an unlocked critical section's "window of opportunity" that allowed asynchronous Websocket `each` blocks to run during the tail of the Websocket handshake (while the `on_open` callback was running in parallel).
 
 **Minor Fix**: Fix Iodine::Rack's startup message's `fprint` call to fit correct argument sizes (Linux warnings).
 
