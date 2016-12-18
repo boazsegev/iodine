@@ -1,10 +1,10 @@
+#include "iodine_websocket.h"
 #include "iodine_core.h"
 #include "iodine_http.h"
-#include "iodine_websocket.h"
 #include "rb-call.h"
 #include "rb-registry.h"
-#include <ruby/io.h>
 #include <arpa/inet.h>
+#include <ruby/io.h>
 
 /* *****************************************************************************
 Core helpers and data
@@ -31,6 +31,8 @@ inline static intptr_t get_uuid(VALUE obj) {
 
 inline static ws_s *get_ws(VALUE obj) {
   VALUE i = rb_ivar_get(obj, ws_var_id);
+  if (i == Qnil)
+    return NULL;
   return (ws_s *)FIX2ULONG(i);
 }
 
@@ -126,8 +128,14 @@ static VALUE iodine_ws_close(VALUE self) {
  * global `write` buffer is full, `write` will block until a buffer "packet"
  * becomes available and can be assigned to the socket. */
 static VALUE iodine_ws_write(VALUE self, VALUE data) {
+  Check_Type(data, T_STRING);
   ws_s *ws = get_ws(self);
-  if (((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
+  // if ((void *)ws == (void *)0x04 || (void *)data == (void *)0x04 ||
+  //     RSTRING_PTR(data) == (void *)0x04)
+  //   fprintf(stderr, "iodine_ws_write: self = %p ; data = %p\n"
+  //                   "\t\tString ptr: %p, String length: %lu\n",
+  //           (void *)ws, (void *)data, RSTRING_PTR(data), RSTRING_LEN(data));
+  if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
     return Qfalse;
   websocket_write(ws, RSTRING_PTR(data), RSTRING_LEN(data),
                   rb_enc_get(data) == UTF8Encoding);
@@ -252,6 +260,11 @@ i.e.:
         msg = data.dup; # data will be overwritten once the function exists.
         each {|ws| ws.write msg}
       end
+
+
+The block of code will be executed asynchronously, to avoid having two blocks
+of code running at the same time and minimizing race conditions when using
+multilple threads.
  */
 static VALUE iodine_ws_each(VALUE self) {
   // requires a block to be passed
@@ -268,7 +281,8 @@ static VALUE iodine_ws_each(VALUE self) {
 /**
 Runs the required block for each dynamic protocol connection.
 
-Tasks will be performed within each connections lock, so no connection will have
+Tasks will be performed asynchronously, within each connections lock, so no
+connection will have
 more then one task being performed at the same time (similar to {#defer}).
 
 Also, unlike {Iodine.run}, the block will **not** be called unless the
@@ -425,8 +439,8 @@ static VALUE empty_func(VALUE self) { return Qnil; }
 // initialize the class and the whole of the Iodine/http library
 void Init_iodine_websocket(void) {
   // get IDs and data that's used often
-  ws_var_id = rb_intern("ws_ptr"); // when upgrading
-  dup_func_id = rb_intern("dup");  // when upgrading
+  ws_var_id = rb_intern("iodine_ws_ptr"); // when upgrading
+  dup_func_id = rb_intern("dup");         // when upgrading
 
   // the Ruby websockets protocol class.
   rWebsocket = rb_define_module_under(Iodine, "Websocket");
