@@ -4,17 +4,8 @@
 
 // #define RUBY_REG_DBG
 
-#define REGISTRY_POOL_SIZE 1024
-// the references struct (bin-tree)
-struct Object {
-  struct Object *next;
-  VALUE obj;
-  int count;
-};
-
 // the registry global
 static struct Registry {
-  struct Object pool_mem[REGISTRY_POOL_SIZE];
   struct Object *obj_pool;
   struct Object *first;
   VALUE owner;
@@ -26,14 +17,28 @@ static struct Registry {
 #define unlock_registry() spn_unlock(&registry.lock)
 #define lock_registry() spn_lock(&registry.lock)
 
-inline static void free_node(struct Object *to_free) {
-  if (to_free >= registry.pool_mem &&
-      (intptr_t)to_free <= (intptr_t)(&registry.obj_pool)) {
-    to_free->next = registry.obj_pool;
-    registry.obj_pool = to_free;
-  } else {
-    free(to_free);
+// the references struct (bin-tree)
+struct Object {
+  struct Object *next;
+  VALUE obj;
+  int count;
+};
+
+// manage existing objects - add a reference
+int add_reference(VALUE obj) {
+  struct Object *line;
+  lock_registry();
+  line = registry.first;
+  while (line) {
+    if (line->obj == obj) {
+      line->count++;
+      unlock_registry();
+      return 1;
+    }
+    line = line->next;
   }
+  unlock_registry();
+  return 0;
 }
 
 // add an object to the registry
@@ -42,30 +47,25 @@ inline static void free_node(struct Object *to_free) {
 static VALUE register_object(VALUE obj) {
   if (!obj || obj == Qnil)
     return 0;
-  struct Object *line = registry.first;
+  if (add_reference(obj))
+    return obj;
+  struct Object *line;
   lock_registry();
-  while (line) {
-    if (line->obj == obj) {
-      line->count++;
-      goto finish;
-    }
-    line = line->next;
-  }
   if (registry.obj_pool) {
     line = registry.obj_pool;
     registry.obj_pool = registry.obj_pool->next;
   } else {
     line = malloc(sizeof(struct Object));
   }
-  if (line == NULL) {
+  if (!line) {
     perror("No Memory!");
-    exit(1);
+    unlock_registry();
+    return 0;
   }
   line->obj = obj;
   line->next = registry.first;
   line->count = 1;
   registry.first = line;
-finish:
   unlock_registry();
   return obj;
 }
@@ -77,18 +77,24 @@ static void unregister_object(VALUE obj) {
   if (!obj || obj == Qnil)
     return;
   lock_registry();
-  struct Object **line = &registry.first;
-  while (*line) {
-    if ((*line)->obj == obj) {
-      (*line)->count -= 1;
-      if ((*line)->count <= 0) {
-        struct Object *to_free = *line;
-        *line = (*line)->next;
-        free_node(to_free);
-        goto finish;
+  struct Object *line = registry.first;
+  struct Object *prev = NULL;
+  while (line) {
+    if (line->obj == obj) {
+      line->count--;
+      if (!line->count) {
+        if (line == registry.first)
+          registry.first = line->next;
+        else if (prev) // must be true, really
+          prev->next = line->next;
+        // move the object container to the discarded object pool
+        line->next = registry.obj_pool;
+        registry.obj_pool = line;
       }
+      goto finish;
     }
-    line = &((*line)->next);
+    prev = line;
+    line = line->next;
   }
 finish:
   unlock_registry();
@@ -142,9 +148,17 @@ static void registry_clear(void *ignore) {
   while (line) {
     to_free = line;
     line = line->next;
-    free_node(to_free);
+    free(to_free);
   }
   registry.first = NULL;
+  // free container pool
+  line = registry.obj_pool;
+  while (line) {
+    to_free = line;
+    line = line->next;
+    free(to_free);
+  }
+  registry.obj_pool = NULL;
   registry.owner = 0;
   unlock_registry();
 }
@@ -160,7 +174,6 @@ static struct rb_data_type_struct my_registry_type_struct = {
 // initialize the registry
 static void init(VALUE owner) {
   lock_registry();
-  // only one registry
   if (registry.owner)
     goto finish;
   if (!owner)
@@ -171,12 +184,6 @@ static void init(VALUE owner) {
   VALUE r_registry =
       TypedData_Wrap_Struct(rReferences, &my_registry_type_struct, &registry);
   rb_ivar_set(owner, rb_intern("registry"), r_registry);
-  // initialize memory pool
-  for (size_t i = 0; i < REGISTRY_POOL_SIZE - 1; i++) {
-    registry.pool_mem[i].next = registry.pool_mem + i + 1;
-  }
-  registry.pool_mem[REGISTRY_POOL_SIZE - 1].next = NULL;
-  registry.obj_pool = registry.pool_mem;
 finish:
   unlock_registry();
 }
