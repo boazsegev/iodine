@@ -32,7 +32,7 @@ else
   check_for_stdatomics
 end
 
-$CFLAGS = '-std=c11 -O3 -Wall'
+$CFLAGS = '-std=c11 -O3 -Wall -DSERVER_DELAY_IO=1'
 RbConfig::MAKEFILE_CONFIG['CC'] = $CC = ENV['CC'] if ENV['CC']
 RbConfig::MAKEFILE_CONFIG['CPP'] = $CPP = ENV['CPP'] if ENV['CPP']
 

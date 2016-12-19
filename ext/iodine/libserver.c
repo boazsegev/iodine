@@ -458,6 +458,9 @@ static void server_cycle(void *_) {
     } else {
       perform_idle = 1;
     }
+#if SERVER_DELAY_IO
+    async_perform();
+#endif
     async_run(server_cycle, NULL);
   }
 }
