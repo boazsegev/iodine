@@ -213,7 +213,7 @@ Of course, if you still want to use Rack's `hijack` API, Iodine will support you
 
 ### How does it compare to other servers?
 
-Personally, after looking around, the only comparable servers are Puma and Passenger, which Iodine significantly outperformed on my tests.
+Personally, after looking around, the only comparable servers are Puma and Passenger (the open source version), which Iodine significantly outperformed on my tests.
 
 Since the HTTP and Websocket parsers are written in C (with no RegExp), they're fairly fast.
 
