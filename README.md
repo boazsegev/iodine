@@ -213,13 +213,15 @@ Of course, if you still want to use Rack's `hijack` API, Iodine will support you
 
 ### How does it compare to other servers?
 
+Personally, after looking around, the only comparable servers are Puma and Passenger, which Iodine significantly outperformed on my tests.
+
 Since the HTTP and Websocket parsers are written in C (with no RegExp), they're fairly fast.
 
-Also, Iodine's core and parsers are running outside of Ruby's global lock, meaning that they enjoy true concurrency before entering the Ruby layer (your application) - this offers Iodine a big advantage over other servers.
+Also, Iodine's core and parsers are running outside of Ruby's global lock, meaning that they enjoy true concurrency before entering the Ruby layer (your application) - this offers Iodine a big advantage over other Ruby servers.
 
-Another assumption Iodine makes is that it is behind a load balancer / proxy (which is the normal way Ruby applications are deployed) - this allows Iodine to disregard header validity checks (we're not checking for invalid characters) which speeds up the parsing process even more.
+Another assumption Iodine makes is that it is behind a load balancer / proxy (which is the normal way Ruby applications are deployed) - this allows Iodine to disregard header validity checks (we're not checking for invalid characters) which speeds up the parsing process even further.
 
-I'm not posting any data because Iodine is still under development and things are somewhat dynamic - but you can compare the performance for yourself using `wrk` or `ab`:
+I recommend benchmarking the performance for yourself using `wrk` or `ab`:
 
 ```bash
 $ wrk -c200 -d4 -t12 http://localhost:3000/
@@ -240,31 +242,15 @@ end
 run App
 ```
 
-Then start comparing servers:
+Then start comparing servers. Here are the settings I used to compare Iodine and Puma (4 processes, 16 threads):
 
 ```bash
-$ rackup -p 3000 -E production -s iodine
-```
-
-vs.
-
-```bash
-$ rackup -p 3000 -E production -s <Other_Server_Here>
-```
-
-Puma has ~16 threads by default, so when comparing against Puma, consider using an equal number of threads:
-
-```bash
-# (t - threads, w - worker processes)
 $ RACK_ENV=production iodine -p 3000 -t 16 -w 4
+# vs.
+$ RACK_ENV=production puma -p 3000 -t 16 -w 4
 ```
 
-vs.
-
-```bash
-# (t - threads, w - worker processes)
-$ RACK_ENV=production puma -p 3000 -w 4 -q
-```
+Iodine performed almost twice as well, (~90K req/sec vs. ~44K req/sec) while keeping a memory foot print that was more then 20% lower (~65Mb vs. ~85Mb).
 
 Review the `iodine -?` help for more data.
 
