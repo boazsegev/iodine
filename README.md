@@ -10,21 +10,15 @@ Iodine makes writing Object Oriented **Network Services** easy to write.
 
 Iodine is an **evented** framework with a simple API that builds off the low level [C code library facil.io](https://github.com/boazsegev/facil.io) with support for **epoll** and **kqueue** - this means that:
 
-* Iodine can handle **thousands of concurrent connections** (tested with 20K connections).
+* Iodine can handle **thousands of concurrent connections** (tested with more then 20K connections).
 
     That's right, Iodine isn't subject to the 1024 connection limit imposed by native Ruby and `select`/`poll` based applications.
 
     This makes Iodine ideal for writing HTTP/2 and Websocket servers (which is what started this whole thing).
 
-* Iodine supports only **Linux/Unix** based systems (i.e. OS X, Ubuntu, FreeBSD etc'). This allows us to:
+* Iodine supports only **Linux/Unix** based systems (i.e. OS X, Ubuntu, FreeBSD etc'), which are ideal for evented IO (while Windows and Solaris are better at IO *completion* events, which are totally different).
 
-     * Optimize our code for the production environment.
-
-     * Have our testing and development machines behave the same as our ultimate production environment.
-
-     * Catch any issues (read: bugs) while in development - just ask AT&T about how important this is ;-)
-
-Iodine is a C extension for Ruby, developed for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 family, but Rack requires Ruby 2.2.2, and so Iodine matches this requirement.
+Iodine is a C extension for Ruby, developed for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but Rack requires Ruby 2.2.2, and so Iodine matches this requirement.
 
 ## Iodine::Rack - an HTTP and Websockets server
 
