@@ -10,7 +10,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Change log v.0.2.7
 
-**Minor Fix**: fixed an issue where a negative number or processes or threads would initiate a very large number of forks, promoting a resource choke to the system.
+**Minor Fix**: fixed an issue where a negative number or processes or threads would initiate a very large number of forks, promoting a resource choke to the system. limited the number of threads (1023) and processes (127).
 
 **Update**: Automated the number of processes (forks) and threads used when these are not explicitly specified. These follow the number of cores / 2.
 
