@@ -8,6 +8,14 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.2.7
+
+**Minor Fix**: fixed an issue where a negative number or processes or threads would initiate a very large number of forks, promoting a resource choke to the system.
+
+**Update**: Automated the number of processes (forks) and threads used when these are not explicitly specified. These follow the number of cores / 2.
+
+***
+
 Change log v.0.2.6
 
 **Update**: The IO reactor review will now be delayed until all events scheduled are done. This means that is events schedule future events, no IO data will be reviewed until all scheduled data is done. Foolish use might cause infinite loops that skip the IO reactor, but otherwise performance is improved (since the IO reactor might cause a thread to "sleep", delaying event execution).

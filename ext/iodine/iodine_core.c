@@ -553,11 +553,16 @@ static void *srv_start_no_gvl(void *_) {
   // collect requested settings
   VALUE rb_th_i = rb_iv_get(Iodine, "@threads");
   VALUE rb_pr_i = rb_iv_get(Iodine, "@processes");
-  size_t threads = (TYPE(rb_th_i) == T_FIXNUM) ? FIX2ULONG(rb_th_i) : 0;
-  size_t processes = (TYPE(rb_pr_i) == T_FIXNUM) ? FIX2ULONG(rb_pr_i) : 0;
+  ssize_t threads = (TYPE(rb_th_i) == T_FIXNUM) ? FIX2LONG(rb_th_i) : 0;
+  ssize_t processes = (TYPE(rb_pr_i) == T_FIXNUM) ? FIX2LONG(rb_pr_i) : 0;
 // print a warnning if settings are sub optimal
 #ifdef _SC_NPROCESSORS_ONLN
   size_t cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
+  if (processes <= 0)
+    processes = (cpu_count >> 1) ? (cpu_count >> 1) : 1;
+  if (threads <= 0)
+    threads = (cpu_count >> 1) ? (cpu_count >> 1) : 1;
+
   if (cpu_count > 0 &&
       ((processes << 1) < cpu_count || processes > (cpu_count << 1)))
     fprintf(
@@ -571,6 +576,11 @@ static void *srv_start_no_gvl(void *_) {
              ? "Some CPUs won't be utilized, inhibiting performance."
              : "This causes excessive context switches, wasting resources."),
         cpu_count, cpu_count);
+#else
+  if (processes <= 0)
+    processes = 1;
+  if (threads <= 0)
+    threads = 1;
 #endif
   server_run(.threads = threads, .processes = processes);
   return NULL;

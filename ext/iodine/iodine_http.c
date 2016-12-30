@@ -541,33 +541,23 @@ int iodine_http_review(void) {
     // initialize the Rack env template
     init_env_template();
 
-    // get Iodine concurrency info
-    VALUE rb_threads = rb_ivar_get(Iodine, rb_intern("@threads"));
-    int threads = rb_threads == Qnil ? 1 : (FIX2INT(rb_threads));
-    VALUE rb_processes = rb_ivar_get(Iodine, rb_intern("@processes"));
-    int processes = rb_processes == Qnil ? 1 : (FIX2INT(rb_processes));
-
     // Write message
     VALUE iodine_version = rb_const_get(Iodine, rb_intern("VERSION"));
     VALUE ruby_version = rb_const_get(Iodine, rb_intern("RUBY_VERSION"));
     if (public_folder)
       fprintf(stderr, "Starting up Iodine Http Server:\n"
                       " * Ruby v.%s\n * Iodine v.%s \n"
-                      " * %lu processes X %lu thread%s\n"
                       " * %lu max concurrent connections / open files\n"
                       " * Serving static files from:\n"
                       "           %s\n\n",
               StringValueCStr(ruby_version), StringValueCStr(iodine_version),
-              (size_t)processes, (size_t)threads, (threads > 1 ? "s" : ""),
               (size_t)sock_max_capacity(), public_folder);
     else
       fprintf(stderr, "Starting up Iodine Http Server:\n"
                       " * Ruby v.%s\n * Iodine v.%s \n"
-                      " * %lu processes X %lu thread%s\n"
                       " * %lu max concurrent connections / open files\n"
                       "\n",
               StringValueCStr(ruby_version), StringValueCStr(iodine_version),
-              (size_t)processes, (size_t)threads, (threads > 1 ? "s" : ""),
               (size_t)sock_max_capacity());
 
     // listen
