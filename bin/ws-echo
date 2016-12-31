@@ -36,7 +36,7 @@ class WSEcho
   end
 
   def on_ready
-    puts "on_ready called foe #{self}"
+    puts "on_ready called for #{self}"
   end
 
   def on_message(data)
