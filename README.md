@@ -33,6 +33,8 @@ Using the Iodine server is easy, simply add Iodine as a gem to your Rack applica
 gem 'iodine', :git => 'https://github.com/boazsegev/iodine.git'
 ```
 
+Iodine will calculate, when possible, a good enough default concurrency model for fast applications... this might not fit your application if you use database access or other blocking calls.
+
 To get the most out of Iodine, consider the amount of CPU cores available and the concurrency level the application requires.
 
 Puma's model of 16 threads and 4 processes is easily adopted and proved to provide a good enough balance for most use-cases. Use:
@@ -41,7 +43,9 @@ Puma's model of 16 threads and 4 processes is easily adopted and proved to provi
 bundler exec iodine -p $PORT -t 16 -w 4
 ```
 
-It should be noted that Websocket support means that no automatic process scaling is provided (since Websockets don't share data across processes without your help)... It is important to use `iodine` with the `-w` option and set the number of desired processes (ideally equal to the number of CPU cores).
+It should be noted that automatic process scaling will cause issues with Websocket broadcast (`each`) support, ssince the `Websocket#each` method will be limited to the calling process (other clients might be connected to a different process.
+
+I recommended that you consider using Redis to scale Websocket "events" across processes / machines. look into [plezi.io](http://www.plezi.io) for automatic Websocket scaling with Redis and Iodine.
 
 ### Writing data to the network layer
 
