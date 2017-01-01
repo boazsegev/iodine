@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.2.8 (next release)
+
+**Housekeeping**: Cleaned up some code, removed old files, copied over the latest [`facil.io`](http://facil.io) library. There's probably some more housekeeping left to perform, especially anywhere where documentation is concerned. I welcome help with documentation.
+
+***
+
 Change log v.0.2.7
 
 **Minor Fix**: fixed an issue where a negative number or processes or threads would initiate a very large number of forks, promoting a resource choke to the system. limited the number of threads (1023) and processes (127).
