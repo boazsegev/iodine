@@ -6,9 +6,11 @@ Feel free to copy, use and enjoy according to the license provided.
 */
 #ifndef RB_ASYNC_EXT_H
 #define RB_ASYNC_EXT_H
+// clang-format off
 #include "rb-registry.h"
 #include <ruby.h>
 #include <ruby/thread.h>
+// clang-format on
 
 /******************************************************************************
 Portability - used to help port this to different frameworks (i.e. Ruby).
