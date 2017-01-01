@@ -1,8 +1,13 @@
+/*
+Copyright: Boaz segev, 2016-2017
+License: MIT
+
+Feel free to copy, use and enjoy according to the license provided.
+*/
 #include "rb-rack-io.h"
-#include "rb-call.h"
 #include "iodine_core.h"
+#include "rb-call.h"
 #include <ruby/encoding.h>
-#include <ruby/io.h>
 #include <ruby/io.h>
 
 /* RackIO manages a minimal interface to act as an IO wrapper according to

@@ -1,17 +1,17 @@
 /*
-copyright: Boaz segev, 2016
-license: MIT
+Copyright: Boaz segev, 2016-2017
+License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
 #ifndef IODINE_CORE_H
 #define IODINE_CORE_H
-#include "rb-registry.h"
-#include "rb-call.h"
 #include "libserver.h"
+#include "rb-call.h"
+#include "rb-registry.h"
 #include <ruby.h>
-#include <ruby/thread.h>
 #include <ruby/encoding.h>
+#include <ruby/thread.h>
 #include <ruby/version.h>
 #include <stdio.h>
 #include <stdlib.h>

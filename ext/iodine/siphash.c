@@ -1,6 +1,13 @@
+/*
+Copyright: Boaz segev, 2016-2017
+License: MIT except for any non-public-domain algorithms (none that I'm aware
+of), which might be subject to their own licenses.
+
+Feel free to copy, use and enjoy in accordance with to the license(s).
+*/
 #include "siphash.h"
-#include <stdlib.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 // clang-format off
 #if !defined(__BIG_ENDIAN__) && !defined(__LITTLE_ENDIAN__)
@@ -80,7 +87,7 @@ uint64_t siphash24(const void *data, size_t len, uint64_t iv_key[2]) {
   word.i = 0;
   uint8_t *pos = word.str;
   uint8_t *w8 = (void *)w64;
-  switch (len) {
+  switch (len) { // fallthrough is intentional
   case 7:
     pos[6] = w8[6];
   case 6:

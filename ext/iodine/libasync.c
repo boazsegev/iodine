@@ -1,5 +1,5 @@
 /*
-copyright: Boaz segev, 2016
+copyright: Boaz segev, 2016-2017
 license: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
@@ -43,7 +43,7 @@ Performance options.
 
 /* Sentinal thread to respawn crashed threads - limited crash resistance. */
 #ifndef ASYNC_USE_SENTINEL
-#define ASYNC_USE_SENTINEL 1
+#define ASYNC_USE_SENTINEL 0
 #endif
 
 /* *****************************************************************************
@@ -241,7 +241,7 @@ static inline void perform_tasks(void) {
 }
 
 /******************************************************************************
-Pasuing and resuming threads
+Pausing and resuming threads
 */
 
 static inline void pause_thread() {

@@ -1,14 +1,14 @@
 /*
-copyright: Boaz segev, 2016
-license: MIT
+Copyright: Boaz segev, 2016-2017
+License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
 #ifndef RB_ASYNC_EXT_H
 #define RB_ASYNC_EXT_H
+#include "rb-registry.h"
 #include <ruby.h>
 #include <ruby/thread.h>
-#include "rb-registry.h"
 
 /******************************************************************************
 Portability - used to help port this to different frameworks (i.e. Ruby).

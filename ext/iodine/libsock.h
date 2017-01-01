@@ -1,6 +1,6 @@
 /*
-copyright: Boaz segev, 2016
-license: MIT
+Copyright: Boaz segev, 2016-2017
+License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
@@ -20,10 +20,10 @@ The library is designed to be thread safe, but not fork safe.
 */
 
 #include <stdint.h>
-#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #ifndef __unused
 #define __unused __attribute__((unused))
