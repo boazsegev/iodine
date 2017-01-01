@@ -6,7 +6,6 @@ Feel free to copy, use and enjoy according to the license provided.
 */
 #include "iodine_core.h"
 #include "iodine_http.h"
-#include <ruby/io.h>
 
 /* *****************************************************************************
 Core data

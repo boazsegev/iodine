@@ -4,11 +4,18 @@ License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
+// clang-format off
 #include "rb-rack-io.h"
 #include "iodine_core.h"
-#include "rb-call.h"
-#include <ruby/encoding.h>
 #include <ruby/io.h>
+#include <ruby/encoding.h>
+#include <unistd.h>
+// clang-format on
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include "rb-call.h"
 
 /* RackIO manages a minimal interface to act as an IO wrapper according to
 these Rack specifications:

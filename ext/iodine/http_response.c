@@ -4,6 +4,14 @@ License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+// clang-format off
+#include "http_response_http1.h"
+// clang-format on
+
 #include "base64.h"
 #include "http.h"
 #include "siphash.h"
@@ -16,9 +24,6 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
-// clang-format off
-#include "http_response_http1.h"
-// clang-format on
 
 /* *****************************************************************************
 Helpers

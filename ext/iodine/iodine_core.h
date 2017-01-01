@@ -6,13 +6,20 @@ Feel free to copy, use and enjoy according to the license provided.
 */
 #ifndef IODINE_CORE_H
 #define IODINE_CORE_H
-#include "libserver.h"
-#include "rb-call.h"
-#include "rb-registry.h"
+// clang-format off
 #include <ruby.h>
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <ruby/encoding.h>
 #include <ruby/thread.h>
 #include <ruby/version.h>
+#include <ruby/io.h>
+// clang-format on
+
+#include "libserver.h"
+#include "rb-call.h"
+#include "rb-registry.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
