@@ -62,8 +62,8 @@ struct buffer_s resize_ws_buffer(ws_s *owner, struct buffer_s);
 /** releases an existing buffer. */
 void free_ws_buffer(ws_s *owner, struct buffer_s);
 
-/** Sets the initial buffer size. (16Kb)*/
-#define WS_INITIAL_BUFFER_SIZE 16384
+/** Sets the initial buffer size. (4Kb)*/
+#define WS_INITIAL_BUFFER_SIZE 4096
 
 // buffer increments by 4,096 Bytes (4Kb)
 #define round_up_buffer_size(size) ((((size) >> 12) + 1) << 12)
@@ -106,7 +106,10 @@ struct buffer_s resize_ws_buffer(ws_s *owner, struct buffer_s buffer) {
   RubyCaller.call_c(ruby_land_buffer, &args);
   return args.buffer;
 }
-void free_ws_buffer(ws_s *owner, struct buffer_s buff) {}
+void free_ws_buffer(ws_s *owner, struct buffer_s buff) {
+  (void)(owner);
+  (void)(buff);
+}
 
 #undef round_up_buffer_size
 
@@ -183,6 +186,7 @@ Websocket defer
 
 static void iodine_perform_defer(intptr_t uuid, protocol_s *protocol,
                                  void *arg) {
+  (void)(uuid);
   VALUE obj = protocol->service == WEBSOCKET_ID_STR
                   ? get_handler(protocol)
                   : dyn_prot(protocol)->handler;
@@ -190,6 +194,7 @@ static void iodine_perform_defer(intptr_t uuid, protocol_s *protocol,
   Registry.remove((VALUE)arg);
 }
 static void iodine_defer_fallback(intptr_t uuid, void *arg) {
+  (void)(uuid);
   Registry.remove((VALUE)arg);
 };
 
@@ -240,12 +245,15 @@ Websocket task performance
 
 static void iodine_ws_perform_each_task(intptr_t fd, protocol_s *protocol,
                                         void *data) {
+  (void)(fd);
   VALUE handler = get_handler(protocol);
   if (handler)
     RubyCaller.call2((VALUE)data, call_proc_id, 1, &handler);
 }
 static void iodine_ws_finish_each_task(intptr_t fd, protocol_s *protocol,
                                        void *data) {
+  (void)(fd);
+  (void)(protocol);
   Registry.remove((VALUE)data);
 }
 
@@ -321,6 +329,7 @@ sucessful event registration doesn't guaranty that the block will be called (the
 connection might close between the event registration and the execution).
 */
 static VALUE iodine_class_defer(VALUE self, VALUE ws_uuid) {
+  (void)(self);
   intptr_t fd = FIX2LONG(ws_uuid);
   if (!sock_isvalid(fd))
     return Qfalse;
@@ -364,6 +373,7 @@ void ws_on_ready(ws_s *ws) {
   RubyCaller.call(handler, on_ready_func_id);
 }
 void ws_on_data(ws_s *ws, char *data, size_t length, uint8_t is_text) {
+  (void)(data);
   VALUE handler = get_handler(ws);
   if (!handler)
     return;
@@ -417,7 +427,10 @@ void iodine_websocket_upgrade(http_request_s *request,
 
 /**  Please implement your own callback for this event.
  */
-static VALUE empty_func(VALUE self) { return Qnil; }
+static VALUE empty_func(VALUE self) {
+  (void)(self);
+  return Qnil;
+}
 // /* The `on_message(data)` callback is the main method for any websocket
 // implementation. It is the only required callback for a websocket handler
 // (without this handler, errors will occur).

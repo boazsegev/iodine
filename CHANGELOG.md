@@ -10,7 +10,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Change log v.0.2.8 (next release)
 
-**Memory Performance**: The Websocket connection Protocol now utilizes both a C level memory pool and a local thread storage for temporary data. This helps mitigate possible memory fragmentation issues related with long running processes and long-lived objects. In addition, the socket `read` buffer was moved from the protocol object to a local thread storage (assumes pthreads and not green threads). This minimizes the memory footprint for each connection (at the expense of memory locality) and should allow Iodine to support more concurrent connections with less system resources.
+**Memory Performance**: The Websocket connection Protocol now utilizes both a C level memory pool and a local thread storage for temporary data. This helps mitigate possible memory fragmentation issues related to long running processes and long-lived objects. In addition, the socket `read` buffer was moved from the protocol object to a local thread storage (assumes pthreads and not green threads). This minimizes the memory footprint for each connection (at the expense of memory locality) and should allow Iodine to support more concurrent connections using less system resources. Last, but not least, the default message buffer per connection starts at 4Kb instead of 16Kb (grows as needed, up to `Iodine::Rack.max_msg_size`), assuming smaller messages are the norm.
 
 **Housekeeping**: Cleaned up some code, removed old files, copied over the latest [`facil.io`](http://facil.io) library. There's probably some more housekeeping left to perform, especially anywhere where documentation is concerned. I welcome help with documentation.
 
