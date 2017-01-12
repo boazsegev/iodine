@@ -7,6 +7,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "websockets.h"
 #include "bscrypt.h"
 #include "libserver.h"
+#include "mempool.h"
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,15 +54,16 @@ the code probably wouldn't offer a high performance boost.
 #define round_up_buffer_size(size) (((size) >> 12) + 1) << 12
 
 struct buffer_s create_ws_buffer(ws_s *owner) {
+  (void)(owner);
   struct buffer_s buff;
   buff.size = round_up_buffer_size(WS_INITIAL_BUFFER_SIZE);
-  buff.data = malloc(buff.size);
+  buff.data = mempool_malloc(buff.size);
   return buff;
 }
 
 struct buffer_s resize_ws_buffer(ws_s *owner, struct buffer_s buff) {
   buff.size = round_up_buffer_size(buff.size);
-  void *tmp = realloc(buff.data, buff.size);
+  void *tmp = mempool_realloc(buff.data, buff.size);
   if (!tmp) {
     free_ws_buffer(owner, buff);
     buff.size = 0;
@@ -70,8 +72,9 @@ struct buffer_s resize_ws_buffer(ws_s *owner, struct buffer_s buff) {
   return buff;
 }
 void free_ws_buffer(ws_s *owner, struct buffer_s buff) {
+  (void)(owner);
   if (buff.data)
-    free(buff.data);
+    mempool_free(buff.data);
 }
 
 #undef round_up_buffer_size
@@ -113,10 +116,8 @@ struct Websocket {
     } psize;
     size_t length;
     size_t received;
-    int pos;
     int data_len;
     char mask[4];
-    char tmp_buffer[1024];
     struct {
       unsigned op_code : 4;
       unsigned rsv3 : 1;
@@ -143,13 +144,22 @@ The Websocket Protocol Identifying String. Used for the `each` function.
 */
 char *WEBSOCKET_ID_STR = "websockets";
 
+/**
+A thread localized buffer used for reading and parsing data from the socket.
+*/
+static __thread struct {
+  int pos;
+  char buffer[1024];
+} read_buffer;
+
 /*******************************************************************************
 The Websocket Protocol implementation
 */
 
 #define ws_protocol(fd) ((ws_s *)(server_get_protocol(fd)))
 
-static void ws_ping(intptr_t fd, protocol_s *_ws) {
+static void ws_ping(intptr_t fd, protocol_s *ws) {
+  (void)(ws);
   sock_packet_s *packet;
   while ((packet = sock_checkout_packet()) == NULL)
     sock_flush_all();
@@ -162,16 +172,19 @@ static void ws_ping(intptr_t fd, protocol_s *_ws) {
 static void on_close(protocol_s *_ws) { destroy_ws((ws_s *)_ws); }
 
 static void on_ready(intptr_t fduuid, protocol_s *ws) {
+  (void)(fduuid);
   if (ws && ws->service == WEBSOCKET_ID_STR && ((ws_s *)ws)->on_ready)
     ((ws_s *)ws)->on_ready((ws_s *)ws);
 }
 
 static void on_open(intptr_t fd, protocol_s *ws, void *callback) {
+  (void)(fd);
   if (callback && ws && ws->service == WEBSOCKET_ID_STR)
     ((void (*)(void *))callback)(ws);
 }
 
 static void on_shutdown(intptr_t fd, protocol_s *ws) {
+  (void)(fd);
   if (ws && ((ws_s *)ws)->on_shutdown)
     ((ws_s *)ws)->on_shutdown((ws_s *)ws);
 }
@@ -180,37 +193,37 @@ static void on_shutdown(intptr_t fd, protocol_s *ws) {
 static void websocket_write_impl(intptr_t fd, void *data, size_t len, char text,
                                  char first, char last, char client);
 
+/* read data from the socket, parse it and invoke the websocket events. */
 static void on_data(intptr_t sockfd, protocol_s *_ws) {
 #define ws ((ws_s *)_ws)
   if (ws == NULL || ws->protocol.service != WEBSOCKET_ID_STR)
     return;
   ssize_t len = 0;
-  while ((len = sock_read(sockfd, ws->parser.tmp_buffer, 1024)) > 0) {
+  while ((len = sock_read(sockfd, read_buffer.buffer, 1024)) > 0) {
     ws->parser.data_len = 0;
-    ws->parser.pos = 0;
-    while (ws->parser.pos < len) {
+    read_buffer.pos = 0;
+    while (read_buffer.pos < len) {
       // collect the frame's head
       if (!(*(char *)(&ws->parser.head))) {
-        *((char *)(&(ws->parser.head))) = ws->parser.tmp_buffer[ws->parser.pos];
+        *((char *)(&(ws->parser.head))) = read_buffer.buffer[read_buffer.pos];
         // save a copy if it's the first head in a fragmented message
         if (!(*(char *)(&ws->parser.head2))) {
           ws->parser.head2 = ws->parser.head;
         }
         // advance
-        ws->parser.pos++;
+        read_buffer.pos++;
         // go back to the `while` head, to review if there's more data
         continue;
       }
 
       // save the mask and size information
       if (!(*(char *)(&ws->parser.sdata))) {
-        *((char *)(&(ws->parser.sdata))) =
-            ws->parser.tmp_buffer[ws->parser.pos];
+        *((char *)(&(ws->parser.sdata))) = read_buffer.buffer[read_buffer.pos];
         // set length
         ws->parser.state.at_len = ws->parser.sdata.size == 127
                                       ? 7
                                       : ws->parser.sdata.size == 126 ? 1 : 0;
-        ws->parser.pos++;
+        read_buffer.pos++;
         continue;
       }
 
@@ -224,29 +237,29 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
         if ((ws->parser.state.at_len == 1 && ws->parser.sdata.size == 126) ||
             (ws->parser.state.at_len == 7 && ws->parser.sdata.size == 127)) {
           ws->parser.psize.bytes[ws->parser.state.at_len] =
-              ws->parser.tmp_buffer[ws->parser.pos++];
+              read_buffer.buffer[read_buffer.pos++];
           ws->parser.state.has_len = 1;
           ws->parser.length = (ws->parser.sdata.size == 126)
                                   ? ws->parser.psize.len1
                                   : ws->parser.psize.len2;
         } else {
           ws->parser.psize.bytes[ws->parser.state.at_len++] =
-              ws->parser.tmp_buffer[ws->parser.pos++];
-          if (ws->parser.pos < len)
+              read_buffer.buffer[read_buffer.pos++];
+          if (read_buffer.pos < len)
             goto collect_len;
         }
 #else
         if (ws->parser.state.at_len == 0) {
           ws->parser.psize.bytes[ws->parser.state.at_len] =
-              ws->parser.tmp_buffer[ws->parser.pos++];
+              read_buffer.buffer[read_buffer.pos++];
           ws->parser.state.has_len = 1;
           ws->parser.length = (ws->parser.sdata.size == 126)
                                   ? ws->parser.psize.len1
                                   : ws->parser.psize.len2;
         } else {
           ws->parser.psize.bytes[ws->parser.state.at_len--] =
-              ws->parser.tmp_buffer[ws->parser.pos++];
-          if (ws->parser.pos < len)
+              read_buffer.buffer[read_buffer.pos++];
+          if (read_buffer.pos < len)
             goto collect_len;
         }
 #endif
@@ -261,13 +274,13 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
       collect_mask:
         if (ws->parser.state.at_mask == 3) {
           ws->parser.mask[ws->parser.state.at_mask] =
-              ws->parser.tmp_buffer[ws->parser.pos++];
+              read_buffer.buffer[read_buffer.pos++];
           ws->parser.state.has_mask = 1;
           ws->parser.state.at_mask = 0;
         } else {
           ws->parser.mask[ws->parser.state.at_mask++] =
-              ws->parser.tmp_buffer[ws->parser.pos++];
-          if (ws->parser.pos < len)
+              read_buffer.buffer[read_buffer.pos++];
+          if (read_buffer.pos < len)
             goto collect_mask;
           else
             continue;
@@ -280,7 +293,7 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
       // Now that we know everything about the frame, let's collect the data
 
       // How much data in the buffer is part of the frame?
-      ws->parser.data_len = len - ws->parser.pos;
+      ws->parser.data_len = len - read_buffer.pos;
       if (ws->parser.data_len + ws->parser.received > ws->parser.length)
         ws->parser.data_len = ws->parser.length - ws->parser.received;
 
@@ -289,7 +302,7 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
       // unmask:
       if (ws->parser.sdata.masked) {
         for (int i = 0; i < ws->parser.data_len; i++) {
-          ws->parser.tmp_buffer[i + ws->parser.pos] ^=
+          read_buffer.buffer[i + read_buffer.pos] ^=
               ws->parser.mask[ws->parser.state.at_mask++];
         }
       } else if (ws->parser.state.client == 0) {
@@ -298,8 +311,7 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
         sock_close(sockfd);
         return;
       }
-      // Copy the data to the Ruby buffer - only if it's a user message
-      // RubyCaller.call_c(copy_data_to_buffer_in_gvl, ws);
+      // Copy the data to the Websocket buffer - only if it's a user message
       if (ws->parser.head.op_code == 1 || ws->parser.head.op_code == 2 ||
           (!ws->parser.head.op_code &&
            (ws->parser.head2.op_code == 1 || ws->parser.head2.op_code == 2))) {
@@ -322,7 +334,7 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
         }
         // copy here
         memcpy(ws->buffer.data + ws->length,
-               ws->parser.tmp_buffer + ws->parser.pos, ws->parser.data_len);
+               read_buffer.buffer + read_buffer.pos, ws->parser.data_len);
         ws->length += ws->parser.data_len;
       }
       // set the frame's data received so far (copied or not)
@@ -332,7 +344,7 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
 
       // check that we have collected the whole of the frame.
       if (ws->parser.length > ws->parser.received) {
-        ws->parser.pos += ws->parser.data_len;
+        read_buffer.pos += ws->parser.data_len;
         continue;
       }
 
@@ -364,7 +376,7 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
       } else if (ws->parser.head.op_code == 9) {
         /* ping */
         // write Pong - including ping data...
-        websocket_write_impl(sockfd, ws->parser.tmp_buffer + ws->parser.pos,
+        websocket_write_impl(sockfd, read_buffer.buffer + read_buffer.pos,
                              ws->parser.data_len, 10, 1, 1,
                              ws->parser.state.client);
         if (ws->parser.head2.op_code == ws->parser.head.op_code)
@@ -384,13 +396,13 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
           goto reset_parser;
       }
       // not done, but move the pos marker along
-      ws->parser.pos += ws->parser.data_len;
+      read_buffer.pos += ws->parser.data_len;
       continue;
 
     reset_parser:
       // move the pos marker along - in case we have more then one frame in the
       // buffer
-      ws->parser.pos += ws->parser.data_len;
+      read_buffer.pos += ws->parser.data_len;
       // clear the parser
       *((char *)(&(ws->parser.state))) = *((char *)(&(ws->parser.sdata))) =
           *((char *)(&(ws->parser.head2))) = *((char *)(&(ws->parser.head))) =
@@ -410,8 +422,9 @@ Create/Destroy the websocket object
 */
 
 static ws_s *new_websocket() {
-  // allocate the protocol object (TODO: (maybe) pooling)
-  ws_s *ws = calloc(sizeof(*ws), 1);
+  // allocate the protocol object
+  ws_s *ws = mempool_malloc(sizeof(*ws));
+  memset(ws, 0, sizeof(*ws));
 
   // setup the protocol & protocol callbacks
   ws->protocol.ping = ws_ping;
@@ -427,7 +440,7 @@ static void destroy_ws(ws_s *ws) {
   if (ws->on_close)
     ws->on_close(ws);
   free_ws_buffer(ws, ws->buffer);
-  free(ws);
+  mempool_free(ws);
 }
 
 /*******************************************************************************
@@ -660,7 +673,10 @@ void websocket_close(ws_s *ws) {
 /**
 Counts the number of websocket connections.
 */
-size_t websocket_count(ws_s *ws) { return server_count(WEBSOCKET_ID_STR); }
+size_t websocket_count(ws_s *ws) {
+  (void)(ws);
+  return server_count(WEBSOCKET_ID_STR);
+}
 
 /*******************************************************************************
 Each Implementation
@@ -674,11 +690,13 @@ struct WSTask {
 };
 /** Performs a task on each websocket connection that shares the same process */
 static void perform_ws_task(intptr_t fd, protocol_s *_ws, void *_arg) {
+  (void)(fd);
   struct WSTask *tsk = _arg;
   tsk->task((ws_s *)(_ws), tsk->arg);
 }
 /** clears away a wesbocket task. */
 static void finish_ws_task(intptr_t fd, protocol_s *_ws, void *_arg) {
+  (void)(fd);
   struct WSTask *tsk = _arg;
   if (tsk->on_finish)
     tsk->on_finish((ws_s *)(_ws), tsk->arg);
