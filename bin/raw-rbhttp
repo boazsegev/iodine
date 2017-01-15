@@ -15,21 +15,19 @@ require 'bundler/setup'
 require 'iodine'
 
 class HttpProtocol
-  @timeout = 5
+  @timeout = 10
   # `on_message` is an optional alternative to the `on_data` callback.
   # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
   def on_data
     # writing will never block and will use a buffer written in C when needed.
-    data = nil
-    while (data = read)
-      write "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=1\r\nContent-Length: 12\r\n\r\nHello World!"
-    end
+    write "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=1\r\nContent-Length: 12\r\n\r\nHello World!"
   end
 end
 
 puts "thread #{Iodine.threads}"
 # Listen
 Iodine.listen '3000', HttpProtocol
-Iodine.threads = 7
+Iodine.threads = 8
+Iodine.processes = 1
 puts "now, thread #{Iodine.threads}"
 Iodine.start

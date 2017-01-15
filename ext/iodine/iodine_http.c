@@ -240,6 +240,8 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE _res) {
 
 // writes the body to the response object
 static VALUE for_each_body_string(VALUE str, VALUE _res, int argc, VALUE argv) {
+  (void)(argv);
+  (void)(argc);
   // fprintf(stderr, "For_each - body\n");
   // write body
   if (TYPE(str) != T_STRING) {
@@ -264,6 +266,7 @@ static VALUE for_each_body_string(VALUE str, VALUE _res, int argc, VALUE argv) {
 
 static inline int ruby2c_response_send(http_response_s *response,
                                        VALUE rbresponse, VALUE env) {
+  (void)(env);
   VALUE body = rb_ary_entry(rbresponse, 2);
   if (response->status < 200 || response->status == 204 ||
       response->status == 304) {

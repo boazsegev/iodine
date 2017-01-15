@@ -96,7 +96,7 @@ static VALUE dyn_read(int argc, VALUE *argv, VALUE self) {
     len = rb_str_capacity(buffer);
     // make sure the string is modifiable
     rb_str_modify(buffer);
-    // resize te string if needed.
+    // resize the string if needed.
     if (len < 1024)
       rb_str_resize(buffer, (len = 1024));
     str = buffer;
@@ -140,6 +140,20 @@ static VALUE dyn_write_urgent(VALUE self, VALUE data) {
 }
 
 /**
+Update's a connection's timeout.
+
+Returns self.
+*/
+static VALUE dyn_set_timeout(VALUE self, VALUE timeout) {
+  intptr_t fd = iodine_get_fd(self);
+  unsigned int tout = FIX2UINT(timeout);
+  if (tout > 255)
+    tout = 255;
+  server_set_timeout(fd, tout);
+  return self;
+}
+
+/**
 Closes a connection.
 
 The connection will be closed only once all the data was sent.
@@ -157,10 +171,13 @@ The Core dynamic Iodine protocol task implementation
 */
 
 static void dyn_perform_defer(intptr_t uuid, protocol_s *protocol, void *arg) {
+  (void)(uuid);
+  (void)(protocol);
   RubyCaller.call((VALUE)arg, call_proc_id);
   Registry.remove((VALUE)arg);
 }
 static void dyn_defer_fallback(intptr_t uuid, void *arg) {
+  (void)(uuid);
   Registry.remove((VALUE)arg);
 };
 
@@ -190,11 +207,14 @@ static VALUE dyn_defer(VALUE self) {
 
 static void dyn_perform_each_task(intptr_t fd, protocol_s *protocol,
                                   void *data) {
+  (void)(fd);
   RubyCaller.call2((VALUE)data, call_proc_id, 1,
                    &(dyn_prot(protocol)->handler));
 }
 static void dyn_finish_each_task(intptr_t fd, protocol_s *protocol,
                                  void *data) {
+  (void)(protocol);
+  (void)(fd);
   Registry.remove((VALUE)data);
 }
 
@@ -268,9 +288,16 @@ static VALUE not_implemented_ping(VALUE self) {
   return Qnil;
 }
 /** implement this callback to handle the event. */
-static VALUE not_implemented(VALUE self) { return Qnil; }
+static VALUE not_implemented(VALUE self) {
+  (void)(self);
+  return Qnil;
+}
 /** implement this callback to handle the event. */
-static VALUE not_implemented2(VALUE self, VALUE data) { return Qnil; }
+static VALUE not_implemented2(VALUE self, VALUE data) {
+  (void)(self);
+  (void)(data);
+  return Qnil;
+}
 
 /**
 A default on_data implementation will read up to 1Kb into a reusable buffer from
@@ -295,15 +322,18 @@ static VALUE default_on_data(VALUE self) {
 
 /** called when a data is available, but will not run concurrently */
 static void dyn_protocol_on_data(intptr_t fduuid, protocol_s *protocol) {
+  (void)(fduuid);
   RubyCaller.call(dyn_prot(protocol)->handler, on_data_func_id);
 }
 /** called when the socket is ready to be written to. */
 static void dyn_protocol_on_ready(intptr_t fduuid, protocol_s *protocol) {
+  (void)(fduuid);
   RubyCaller.call(dyn_prot(protocol)->handler, on_ready_func_id);
 }
 /** called when the server is shutting down,
  * but before closing the connection. */
 static void dyn_protocol_on_shutdown(intptr_t fduuid, protocol_s *protocol) {
+  (void)(fduuid);
   RubyCaller.call(dyn_prot(protocol)->handler, on_shutdown_func_id);
 }
 /** called when the connection was closed, but will not run concurrently */
@@ -314,9 +344,10 @@ static void dyn_protocol_on_close(protocol_s *protocol) {
 }
 /** called when a connection's timeout was reached */
 static void dyn_protocol_ping(intptr_t fduuid, protocol_s *protocol) {
+  (void)(fduuid);
   RubyCaller.call(dyn_prot(protocol)->handler, ping_func_id);
 }
-
+/** Update's a connection's handler and timeout. */
 static inline protocol_s *dyn_set_protocol(intptr_t fduuid, VALUE handler,
                                            uint8_t timeout) {
   Registry.add(handler);
@@ -339,6 +370,7 @@ static inline protocol_s *dyn_set_protocol(intptr_t fduuid, VALUE handler,
   RubyCaller.call(handler, on_open_func_id);
   return (protocol_s *)protocol;
 }
+
 static protocol_s *on_open_dyn_protocol(intptr_t fduuid, void *udata) {
   VALUE rb_tout = rb_ivar_get((VALUE)udata, timeout_var_id);
   uint8_t timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
@@ -385,6 +417,7 @@ void Init_DynamicProtocol(void) {
   rb_define_method(DynamicProtocol, "defer", dyn_defer, 0);
   rb_define_method(DynamicProtocol, "each", dyn_each, 0);
   rb_define_method(DynamicProtocol, "upgrade", dyn_upgrade, 1);
+  rb_define_method(DynamicProtocol, "timeout=", dyn_set_timeout, 0);
 }
 
 /* *****************************************************************************
@@ -474,6 +507,7 @@ will be delayed until Iodine.start is called, unless Iodine's event loop is
 active).
 */
 static VALUE iodine_run_async(VALUE self) {
+  (void)(self);
   // requires a block to be passed
   rb_need_block();
   VALUE block = rb_block_proc();
@@ -494,6 +528,7 @@ Time is counted only once Iodine started running (using {Iodine.start}).
 Always returns a copy of the block object.
 */
 static VALUE iodine_run_after(VALUE self, VALUE milliseconds) {
+  (void)(self);
   if (TYPE(milliseconds) != T_FIXNUM) {
     rb_raise(rb_eTypeError, "milliseconds must be a number");
     return Qnil;
@@ -526,6 +561,7 @@ The event will repeat itself until the number of repetitions had been delpeted.
 Always returns a copy of the block object.
 */
 static VALUE iodine_run_every(int argc, VALUE *argv, VALUE self) {
+  (void)(self);
   VALUE milliseconds, repetitions, block;
 
   rb_scan_args(argc, argv, "11&", &milliseconds, &repetitions, &block);
@@ -549,12 +585,16 @@ static VALUE iodine_run_every(int argc, VALUE *argv, VALUE self) {
   return block;
 }
 
-static VALUE iodine_count(VALUE self) { return ULONG2NUM(server_count(NULL)); }
+static VALUE iodine_count(VALUE self) {
+  (void)(self);
+  return ULONG2NUM(server_count(NULL));
+}
 /* *****************************************************************************
 Running the server
 */
 
 static void *srv_start_no_gvl(void *_) {
+  (void)(_);
   // collect requested settings
   VALUE rb_th_i = rb_iv_get(Iodine, "@threads");
   VALUE rb_pr_i = rb_iv_get(Iodine, "@processes");
@@ -591,7 +631,10 @@ static void *srv_start_no_gvl(void *_) {
   return NULL;
 }
 
-static void unblck(void *_) { server_stop(); }
+static void unblck(void *_) {
+  (void)(_);
+  server_stop();
+}
 /**
 Starts the Iodine event loop. This will hang the thread until an interrupt
 (`^C`) signal is received.

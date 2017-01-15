@@ -28,6 +28,10 @@ module Iodine
   # Use {#defer} to run protocol related tasks (this locks the connection, preventing it from running more then one task at a time and offering thread safety),
   # or {#run} to run asynchronous tasks that aren't protocol related.
   #
+  # <b>Connection timeouts</b>
+  #
+  # By setting a class variable called `@timeout` it is possible to define a default timeout for new connections. However, changing this default timeout should be performed using the {#timeout} methods.
+  #
   # <b>The API:</b>
   #
   # After a new connection is accepted and a new protocol object is created, the protocol will be linked with Iodine's Protocol API.

@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.2.10 (next release)
+
+**Update**: added documentation and an extra helper method to set a connection's timeout when using custom protocols (Iodine as an EventMachine alternative).
+
+***
+
 Change log v.0.2.9
 
 **Fix**: fixed a gcc-4.8 compatibility issue that prevented iodine 0.2.8 from compiling on Heroku's cedar-14 stack. This was related to missing system include files in gcc-4.8. It should be noted that Heroku's stack and compiler (which utilizes Ubuntu 14) has known issues and / or limited support for some of it's published features... but I should have remembered that before releasing version 0.2.8... sorry about that.

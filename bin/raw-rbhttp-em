@@ -1,0 +1,63 @@
+#!/usr/bin/env ruby
+
+# this will compile Iodine and run a raw sockets server that emulates HTTP (without parsing any incoming requests).
+
+# # test using:
+# ab -n 100000 -c 200 -k http://127.0.0.1:3000/
+# wrk -c200 -d4 -t12 http://localhost:3000/
+
+Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
+# puts `rake clean`
+# puts `rake compile`
+
+require 'benchmark'
+# $LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__)
+# require 'bundler/setup'
+
+require 'eventmachine'
+
+module HttpProtocol
+  def receive_data data
+    send_data "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=1\r\nContent-Length: 12\r\n\r\nHello World!"
+  end
+end
+
+puts "Running EM emulating HTTP."
+
+if EventMachine.kqueue?
+  EventMachine.kqueue = true
+  puts "using Kqueue."
+end
+if EventMachine.epoll?
+  EventMachine.epoll = true
+  puts "using epoll."
+end
+
+# Note that this will block current thread.
+EventMachine.run {
+ EventMachine.start_server "127.0.0.1", 3030, HttpProtocol
+}
+
+#
+# require 'iodine'
+#
+# class HttpProtocol
+#   @timeout = 5
+#   # `on_message` is an optional alternative to the `on_data` callback.
+#   # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
+#   def on_data
+#     # writing will never block and will use a buffer written in C when needed.
+#     data = nil
+#     while (data = read)
+#       write "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=1\r\nContent-Length: 12\r\n\r\nHello World!"
+#     end
+#   end
+# end
+#
+# puts "thread #{Iodine.threads}"
+# # Listen
+# Iodine.listen '3000', HttpProtocol
+# Iodine.threads = 7
+# Iodine.processes = 1
+# puts "now, thread #{Iodine.threads}"
+# Iodine.start

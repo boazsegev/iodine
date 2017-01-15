@@ -6,7 +6,9 @@
 [![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
 [![GitHub](https://img.shields.io/badge/GitHub-Open%20Source-blue.svg)](https://github.com/boazsegev/iodine)
 
-Iodine makes writing Object Oriented **Network Services** easy to write.
+Iodine is a fast concurrent web server for real-time Ruby applications, with native support for Websockets, static file service and HTTP/1.1.
+
+Iodine also supports custom protocol authoring, making Object Oriented **Network Services** easy to write.
 
 Iodine is an **evented** framework with a simple API that builds off the low level [C code library facil.io](https://github.com/boazsegev/facil.io) with support for **epoll** and **kqueue** - this means that:
 
@@ -63,7 +65,7 @@ This means that even a Gigabyte long response will use ~32Kb of memory, as long 
 
 Iodine supports static file serving that allows the server to serve static files directly, with no Ruby layer (all from C-land).
 
-This means that Iodine won't lock Ruby's GVL when sending static files (nor log these requests). The files will be sent directly, allowing for true native concurrency.
+This means that Iodine won't lock Ruby's GVL when sending static files. The files will be sent directly, allowing for true native concurrency. Since the Ruby layer is unaware of these requests, logging can be performed by turning iodine's logger on.
 
 To setup native static file service, setup the public folder's address **before** starting the server.
 
@@ -83,9 +85,17 @@ app = Proc.new { out }
 run app
 ```
 
+To enable logging from the command line, use the `-v` (verbose) option:
+
+```bash
+bundler exec iodine -p $PORT -t 16 -w 4 -www /my/public/folder -v
+```
+
 #### X-Sendfile
 
-Sending can be performed by using the `X-Sendfile` header in the Ruby application response.
+Ruby can leverage static file support (if enabled) by using the `X-Sendfile` header in the Ruby application response.
+
+This allows Ruby to send very large files using a very small memory footprint, as well as (when possible) leveraging the `sendfile` system call.
 
 i.e. (example `config.ru` for Iodine):
 
@@ -95,7 +105,7 @@ app = proc do |env|
   if request.path_info == '/source'.freeze
     [200, { 'X-Sendfile' => File.expand_path(__FILE__) }, []]
   elsif request.path_info == '/file'.freeze
-    [200, { 'X-Header' => 'This was a Rack::Sendfile response sent as text' }, File.open(__FILE__)]
+    [200, { 'X-Header' => 'This was a Rack::Sendfile response sent as text.' }, File.open(__FILE__)]
   else
     [200, { 'Content-Type'.freeze => 'text/html'.freeze,
             'Content-Length'.freeze => request.path_info.length.to_s },
