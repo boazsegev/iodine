@@ -154,6 +154,16 @@ static VALUE dyn_set_timeout(VALUE self, VALUE timeout) {
 }
 
 /**
+Returns the connection's timeout.
+*/
+static VALUE dyn_get_timeout(VALUE self) {
+  intptr_t fd = iodine_get_fd(self);
+  uint8_t tout = server_get_timeout(fd);
+  unsigned int tout_int = tout;
+  return UINT2NUM(tout_int);
+}
+
+/**
 Closes a connection.
 
 The connection will be closed only once all the data was sent.
@@ -417,7 +427,8 @@ void Init_DynamicProtocol(void) {
   rb_define_method(DynamicProtocol, "defer", dyn_defer, 0);
   rb_define_method(DynamicProtocol, "each", dyn_each, 0);
   rb_define_method(DynamicProtocol, "upgrade", dyn_upgrade, 1);
-  rb_define_method(DynamicProtocol, "timeout=", dyn_set_timeout, 0);
+  rb_define_method(DynamicProtocol, "timeout=", dyn_set_timeout, 1);
+  rb_define_method(DynamicProtocol, "timeout", dyn_get_timeout, 0);
 }
 
 /* *****************************************************************************
