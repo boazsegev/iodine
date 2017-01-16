@@ -554,7 +554,7 @@ int iodine_http_review(void) {
     VALUE iodine_version = rb_const_get(Iodine, rb_intern("VERSION"));
     VALUE ruby_version = rb_const_get(Iodine, rb_intern("RUBY_VERSION"));
     if (public_folder)
-      fprintf(stderr, "Starting up Iodine Http Server:\n"
+      fprintf(stderr, "Starting up Iodine HTTP Server:\n"
                       " * Ruby v.%s\n * Iodine v.%s \n"
                       " * %lu max concurrent connections / open files\n"
                       " * Serving static files from:\n"
@@ -562,7 +562,7 @@ int iodine_http_review(void) {
               StringValueCStr(ruby_version), StringValueCStr(iodine_version),
               (size_t)sock_max_capacity(), public_folder);
     else
-      fprintf(stderr, "Starting up Iodine Http Server:\n"
+      fprintf(stderr, "Starting up Iodine HTTP Server:\n"
                       " * Ruby v.%s\n * Iodine v.%s \n"
                       " * %lu max concurrent connections / open files\n"
                       "\n",
