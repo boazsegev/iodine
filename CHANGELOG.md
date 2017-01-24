@@ -8,7 +8,11 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
-Change log v.0.2.10 (next release)
+Change log v.0.2.11 (next release)
+
+***
+
+Change log v.0.2.10
 
 **Update**: added documentation and an extra helper method to set a connection's timeout when using custom protocols (Iodine as an EventMachine alternative).
 
