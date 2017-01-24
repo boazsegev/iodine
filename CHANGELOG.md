@@ -10,6 +10,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Change log v.0.2.11 (next release)
 
+**Update**: lessons learned from `facil.io` have been implemented for better compatibility of Iodine's core C layer.
+
 ***
 
 Change log v.0.2.10

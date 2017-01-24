@@ -24,8 +24,8 @@ Portability - used to help port this to different frameworks (i.e. Ruby).
 #endif
 
 /* The unused directive */
-#ifndef __unused
-#define __unused __attribute__((unused))
+#ifndef UNUSED_FUNC
+#define UNUSED_FUNC __attribute__((unused))
 #endif
 
 /* used here but declared elsewhere */
@@ -40,7 +40,7 @@ static void *_inner_join_with_rbthread(void *rbt) {
 }
 
 /* join a ruby thread */
-__unused static void *join_thread(THREAD_TYPE thr) {
+UNUSED_FUNC static void *join_thread(THREAD_TYPE thr) {
   void *ret = rb_thread_call_with_gvl(_inner_join_with_rbthread, (void *)thr);
   Registry.remove(thr);
   return ret;
@@ -68,7 +68,7 @@ static void *create_ruby_thread_gvl(void *_args) {
 }
 
 /* create a ruby thread */
-__unused static int create_thread(THREAD_TYPE *thr,
+UNUSED_FUNC static int create_thread(THREAD_TYPE *thr,
                                   void *(*thread_func)(void *), void *arg) {
   struct CreateThreadArgs *data = malloc(sizeof(*data));
   if (!data)

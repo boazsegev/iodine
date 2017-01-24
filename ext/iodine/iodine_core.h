@@ -24,8 +24,8 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef __unused
-#define __unused __attribute__((unused))
+#ifndef UNUSED_FUNC
+#define UNUSED_FUNC __attribute__((unused))
 #endif
 
 extern rb_encoding *BinaryEncoding;
@@ -52,10 +52,10 @@ extern ID fd_var_id;
 extern ID timeout_var_id;
 extern ID to_s_method_id;
 
-__unused static inline void iodine_set_fd(VALUE handler, intptr_t fd) {
+UNUSED_FUNC static inline void iodine_set_fd(VALUE handler, intptr_t fd) {
   rb_ivar_set(handler, fd_var_id, LONG2NUM((long)fd));
 }
-__unused static inline intptr_t iodine_get_fd(VALUE handler) {
+UNUSED_FUNC static inline intptr_t iodine_get_fd(VALUE handler) {
   return ((intptr_t)NUM2LONG(rb_ivar_get(handler, fd_var_id)));
 }
 /* *****************************************************************************
