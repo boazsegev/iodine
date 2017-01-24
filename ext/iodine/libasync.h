@@ -1,5 +1,5 @@
 /*
-Copyright: Boaz segev, 2016-2017
+Copyright: Boaz Segev, 2016-2017
 License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
@@ -56,6 +56,11 @@ Use:
 
 */
 void async_perform();
+
+/**
+Returns TRUE (not 0) if there are any pending tasks.
+*/
+int async_any(void);
 
 /**
 Waits for all the present tasks to complete and threads to exist.

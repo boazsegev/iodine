@@ -1,5 +1,5 @@
 /*
-Copyright: Boaz segev, 2016-2017
+Copyright: Boaz Segev, 2016-2017
 License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
@@ -25,8 +25,8 @@ The library is designed to be thread safe, but not fork safe.
 #include <sys/types.h>
 #include <unistd.h>
 
-#ifndef __unused
-#define __unused __attribute__((unused))
+#ifndef UNUSED_FUNC
+#define UNUSED_FUNC __attribute__((unused))
 #endif
 
 /* *****************************************************************************
@@ -297,8 +297,8 @@ the maximum amount of data to be sent.
 
 Returns -1 and closes the file on error. Returns 0 on success.
 */
-__unused static inline ssize_t sock_sendfile(intptr_t uuid, int source_fd,
-                                             off_t offset, size_t length) {
+UNUSED_FUNC static inline ssize_t sock_sendfile(intptr_t uuid, int source_fd,
+                                                off_t offset, size_t length) {
   return sock_write2(.fduuid = uuid, .buffer = (void *)((intptr_t)source_fd),
                      .length = length, .is_fd = 1, .offset = offset);
 }
@@ -415,7 +415,7 @@ ssize_t sock_send_packet(intptr_t uuid, sock_packet_s *packet);
 Returns TRUE (non 0) if there is data waiting to be written to the socket in the
 user-land buffer.
 */
-_Bool sock_packets_pending(intptr_t uuid);
+int sock_packets_pending(intptr_t uuid);
 
 /**
 Use `sock_free_packet` to free unused packets that were checked-out using

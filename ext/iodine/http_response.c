@@ -24,6 +24,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
+#include <unistd.h>
 
 /* *****************************************************************************
 Helpers
@@ -340,7 +341,7 @@ int http_response_sendfile2(http_response_s *response, http_request_s *request,
       ext++;
     }
     // fprintf(stderr, "Start: %lu / %lld\n", start, file_data.st_size);
-    if (start >= file_data.st_size - 1)
+    if ((off_t)start >= file_data.st_size - 1)
       goto invalid_range;
     ext++;
     while (is_num(*ext)) {
@@ -349,7 +350,7 @@ int http_response_sendfile2(http_response_s *response, http_request_s *request,
       ext++;
     }
     // going to the EOF (big chunk or EOL requested) - send as file
-    if (finish >= file_data.st_size)
+    if ((off_t)finish >= file_data.st_size)
       finish = file_data.st_size;
     char *pos = buffer + 6;
     memcpy(buffer, "bytes ", 6);
@@ -405,7 +406,7 @@ no_file:
 }
 
 #ifdef RUSAGE_SELF
-const static size_t CLOCK_RESOLUTION = 1000; /* in miliseconds */
+static const size_t CLOCK_RESOLUTION = 1000; /* in miliseconds */
 static size_t get_clock_mili(void) {
   struct rusage rusage;
   getrusage(RUSAGE_SELF, &rusage);

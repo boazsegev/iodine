@@ -12,6 +12,27 @@ Change log v.0.2.10 (next release)
 
 **Update**: added documentation and an extra helper method to set a connection's timeout when using custom protocols (Iodine as an EventMachine alternative).
 
+**C Layer Update** updated the [`facil.io`](http://facil.io) library used, to incorporate the following fixes / update:
+
+* Better cross platform compilation by avoiding some name-space clashes. i.e, fixes a name clash with the `__used` directive / macro, where some OSs (i.e. CentOS) used a similar directive with different semantics.
+
+* Reviewed and fixed some signed vs. unsigned integer comparisons.
+
+* Smoother event scheduling by increasing the event-node's pool size.
+
+* Smoother thread concurrency growth by managing thread `nanosleep` times as thread count dependent.
+
+* Cleared out "unused variable" warnings.
+
+* Streamlined the `accept` process to remove a double socket's data clean-up.
+
+* `SERVER_DELAY_IO` is now implemented as an event instead of a stack frame.
+
+* Fixed a possible Linux `sendfile` implementation issue where sometimes errors wouldn't be caught or `sendfile` would be called past a file's limit (edge case handling).
+
+* `bscrypt` random generator (where `dev/random` is unavailable) should now provide more entropy.
+
+
 ***
 
 Change log v.0.2.9

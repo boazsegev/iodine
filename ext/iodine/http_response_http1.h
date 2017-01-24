@@ -12,8 +12,8 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "http_response.h"
 // clang-format on
 
-#ifndef __unused
-#define __unused __attribute__((unused))
+#ifndef UNUSED_FUNC
+#define UNUSED_FUNC __attribute__((unused))
 #endif
 
 /* *****************************************************************************
@@ -63,7 +63,7 @@ static inline int h1p_protected_copy(http_response_s *response,
 
 /* this function assume the padding in `h1p_protected_copy` saved enough room
  * for the data to be safely written.*/
-__unused static inline sock_packet_s *
+UNUSED_FUNC static inline sock_packet_s *
 h1p_finalize_headers(http_response_s *response) {
   if (HEADERS_FINISHED(response))
     return NULL;
@@ -157,7 +157,7 @@ static int h1p_send_headers(http_response_s *response, sock_packet_s *packet) {
 Implementation
 ***************************************************************************** */
 
-__unused static inline int h1p_response_write_header(http_response_s *response,
+UNUSED_FUNC static inline int h1p_response_write_header(http_response_s *response,
                                                      http_headers_s header) {
   if (HEADERS_FINISHED(response) || header.name == NULL)
     return -1;
@@ -179,7 +179,7 @@ __unused static inline int h1p_response_write_header(http_response_s *response,
 /**
 Set / Delete a cookie using this helper function.
 */
-__unused static int h1p_response_set_cookie(http_response_s *response,
+UNUSED_FUNC static int h1p_response_set_cookie(http_response_s *response,
                                             http_cookie_s cookie) {
   if (HEADERS_FINISHED(response) || cookie.name == NULL ||
       overflowing(response))
@@ -287,7 +287,7 @@ __unused static int h1p_response_set_cookie(http_response_s *response,
 /**
 Sends the headers (if unsent) and sends the body.
 */
-__unused static inline int h1p_response_write_body(http_response_s *response,
+UNUSED_FUNC static inline int h1p_response_write_body(http_response_s *response,
                                                    const char *body,
                                                    size_t length) {
   if (!response->content_length)
@@ -298,7 +298,7 @@ __unused static inline int h1p_response_write_body(http_response_s *response,
         ((BUFFER_PACKET_SIZE - H1P_HEADER_START) - headers->length);
     if (i_read > 1024) {
       /* we can fit at least some of the data inside the response buffer. */
-      if (i_read > length) {
+      if ((size_t)i_read > length) {
         i_read = length;
         /* we can fit the data inside the response buffer. */
         memcpy(response->metadata.headers_pos, body, i_read);
@@ -322,7 +322,7 @@ __unused static inline int h1p_response_write_body(http_response_s *response,
 /**
 Sends the headers (if unsent) and schedules the file to be sent.
 */
-__unused static inline int h1p_response_sendfile(http_response_s *response,
+UNUSED_FUNC static inline int h1p_response_sendfile(http_response_s *response,
                                                  int source_fd, off_t offset,
                                                  size_t length) {
   if (!response->content_length)
@@ -337,7 +337,7 @@ __unused static inline int h1p_response_sendfile(http_response_s *response,
           source_fd, response->metadata.headers_pos,
           ((BUFFER_PACKET_SIZE - H1P_HEADER_START) - headers->length), offset);
       if (i_read > 0) {
-        if (i_read >= length) {
+        if ((size_t)i_read >= length) {
           headers->length += length;
           close(source_fd);
           return h1p_send_headers(response, headers);
@@ -358,7 +358,7 @@ __unused static inline int h1p_response_sendfile(http_response_s *response,
   return sock_sendfile(response->metadata.fd, source_fd, offset, length);
 }
 
-__unused static inline int h1p_response_finish(http_response_s *response) {
+UNUSED_FUNC static inline int h1p_response_finish(http_response_s *response) {
   sock_packet_s *headers = h1p_finalize_headers(response);
   if (headers) {
     return h1p_send_headers(response, headers);

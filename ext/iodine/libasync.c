@@ -1,12 +1,12 @@
 /*
-copyright: Boaz segev, 2016-2017
+copyright: Boaz Segev, 2016-2017
 license: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
-// clang-format off
-#include "rb-libasync.h"
-// clang-format on
+
+#include "rb-libasync.h" // enable this line for Iodine's Ruby
+
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -30,7 +30,7 @@ Performance options.
 */
 
 #ifndef ASYNC_TASK_POOL_SIZE
-#define ASYNC_TASK_POOL_SIZE 170
+#define ASYNC_TASK_POOL_SIZE 1024
 #endif
 
 /* Spinlock vs. Mutex data protection. */
@@ -40,7 +40,7 @@ Performance options.
 
 /* use pipe for wakeup if == 0 else, use nanosleep when no tasks. */
 #ifndef ASYNC_NANO_SLEEP
-#define ASYNC_NANO_SLEEP 16777216 // 8388608  // 1048576  // 524288
+#define ASYNC_NANO_SLEEP 8388608 // 1048576  // 524288 // 16777216
 #endif
 
 /* Sentinal thread to respawn crashed threads - limited crash resistance. */
@@ -253,7 +253,9 @@ static inline void pause_thread() {
     read(async->io.in, &tmp, 1);
   }
 #else
-  struct timespec act, tm = {.tv_sec = 0, .tv_nsec = ASYNC_NANO_SLEEP};
+  struct timespec act,
+      tm = {.tv_sec = 0,
+            .tv_nsec = ASYNC_NANO_SLEEP * (async ? async->thread_count : 1)};
   nanosleep(&tm, &act);
 // sched_yield();
 #endif
@@ -298,7 +300,8 @@ static void on_err_signal(int sig) {
 }
 
 // The worker cycle
-static void *worker_thread_cycle(void *_) {
+static void *worker_thread_cycle(void *unused) {
+  (void)(unused);
   // register error signals when using a sentinal
   if (ASYNC_USE_SENTINEL) {
     signal(SIGSEGV, on_err_signal);
@@ -386,6 +389,11 @@ Use:
 void async_perform() { perform_tasks(); }
 
 /**
+Returns TRUE (not 0) if there are any pending tasks.
+*/
+int async_any(void) { return (async && async->tasks); }
+
+/**
 Schedules a task to be performed by the thread pool.
 
 The Task should be a function such as `void task(void
@@ -462,19 +470,22 @@ Test
 static spn_lock_i i_lock = SPN_LOCK_INIT;
 static size_t i_count = 0;
 
-static void sample_task(void *_) {
+static void sample_task(void *unused) {
+  (void)(unused);
   spn_lock(&i_lock);
   i_count++;
   spn_unlock(&i_lock);
 }
 
-static void sched_sample_task(void *_) {
+static void sched_sample_task(void *unused) {
+  (void)(unused);
   for (size_t i = 0; i < 1024; i++) {
     async_run(sample_task, async);
   }
 }
 
-static void text_task_text(void *_) {
+static void text_task_text(void *unused) {
+  (void)(unused);
   spn_lock(&i_lock);
   fprintf(stderr, "this text should print before async_finish returns\n");
   spn_unlock(&i_lock);
