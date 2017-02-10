@@ -1,3 +1,10 @@
+### Inactivity Notice
+
+This proposed draft is only implemented by Iodine and hadn't seen external activity in the last four months. It is unlikely that this initiative will grow to become a community convention.
+
+I still believe it's important to separate the Websocket server from the Websocket application (much like Rack did for HTTP).n I hope that in the future a community convention for this separation of concerns can be achieved.
+
+---
 ## Rack Websockets
 
 This is the proposed Websocket support extension for Rack servers.
