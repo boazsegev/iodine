@@ -1,4 +1,4 @@
-### Inactivity Notice
+### Draft Inactivity Notice
 
 This proposed draft is only implemented by Iodine and hadn't seen external activity in the last four months. It is unlikely that this initiative will grow to become a community convention.
 
