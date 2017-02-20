@@ -8,7 +8,15 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
-Change log v.0.2.11 (next release)
+Change log v.0.2.12 (next release)
+
+***
+
+Change log v.0.2.11
+
+**Fix**: C layer memory pool had a race-condition that could have caused, in some unlikely events, memory allocation failure for Websocket protocol handlers. This had now been addressed and fixed.
+
+**Experimental feature**: added an `each_write` feature to allow direct `write` operations that write data to all open Websocket connections sharing the same process (worker). When this method is called without the optional block, the data will be sent without the need to acquire the Ruby GIL.
 
 **Update**: lessons learned from `facil.io` have been implemented for better compatibility of Iodine's core C layer.
 

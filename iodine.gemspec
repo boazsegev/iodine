@@ -40,7 +40,7 @@ Gem::Specification.new do |spec|
   spec.requirements << 'Ruby >= 2.3.0 is recommended.'
 
   spec.add_development_dependency 'bundler', '~> 1.10'
-  spec.add_development_dependency 'rake', '~> 10.0'
+  spec.add_development_dependency 'rake', '~> 12.0'
   spec.add_development_dependency 'minitest'
 
   # spec.post_install_message = "** WARNING!\n" \

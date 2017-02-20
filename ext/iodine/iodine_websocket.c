@@ -193,10 +193,11 @@ static void iodine_perform_defer(intptr_t uuid, protocol_s *protocol,
   RubyCaller.call2((VALUE)arg, call_proc_id, 1, &obj);
   Registry.remove((VALUE)arg);
 }
+
 static void iodine_defer_fallback(intptr_t uuid, void *arg) {
   (void)(uuid);
   Registry.remove((VALUE)arg);
-};
+}
 
 /**
 Schedules a block of code to execute at a later time, **if** the connection is
@@ -237,6 +238,49 @@ static VALUE iodine_defer(int argc, VALUE *argv, VALUE self) {
 
   server_task(fd, iodine_perform_defer, (void *)block, iodine_defer_fallback);
   return block;
+}
+
+/* *****************************************************************************
+Websocket Multi-Write
+*/
+
+static uint8_t iodine_ws_if_callback(ws_s *ws, void *block) {
+  VALUE handler = get_handler(ws);
+  uint8_t ret = 0;
+  if (handler)
+    ret = RubyCaller.call2((VALUE)block, call_proc_id, 1, &handler);
+  return ret && ret != Qnil && ret != Qfalse;
+}
+
+/**
+ * Writes data to all the Websocket connections sharing the same process
+ * (worker) except `self`.
+ *
+ * If a block is given, it will be passed each Websocket connection in turn
+ * (much like `each`) and send the data only if the block returns a "truthy"
+ * value (i.e. NOT `false` or `nil`).
+ *
+ * See both {#write} and {#each} for more details.
+ */
+static VALUE iodine_ws_multiwrite(VALUE self, VALUE data) {
+  Check_Type(data, T_STRING);
+  ws_s *ws = get_ws(self);
+  // if ((void *)ws == (void *)0x04 || (void *)data == (void *)0x04 ||
+  //     RSTRING_PTR(data) == (void *)0x04)
+  //   fprintf(stderr, "iodine_ws_write: self = %p ; data = %p\n"
+  //                   "\t\tString ptr: %p, String length: %lu\n",
+  //           (void *)ws, (void *)data, RSTRING_PTR(data), RSTRING_LEN(data));
+  if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
+    ws = NULL;
+
+  VALUE block = Qnil;
+  if (rb_block_given_p())
+    block = rb_block_proc();
+  websocket_write_each(ws, RSTRING_PTR(data), RSTRING_LEN(data),
+                       rb_enc_get(data) == UTF8Encoding, 0,
+                       ((block == Qnil) ? NULL : iodine_ws_if_callback),
+                       (void *)block);
+  return Qtrue;
 }
 
 /* *****************************************************************************
@@ -472,6 +516,7 @@ void Init_iodine_websocket(void) {
   rb_define_method(rWebsocket, "on_close", empty_func, 0);
   rb_define_method(rWebsocket, "on_ready", empty_func, 0);
   rb_define_method(rWebsocket, "write", iodine_ws_write, 1);
+  rb_define_method(rWebsocket, "each_write", iodine_ws_multiwrite, 1);
   rb_define_method(rWebsocket, "close", iodine_ws_close, 0);
 
   rb_define_method(rWebsocket, "uuid", iodine_ws_uuid, 0);
@@ -483,6 +528,7 @@ void Init_iodine_websocket(void) {
 
   rb_define_singleton_method(rWebsocket, "each", iodine_ws_class_each, 0);
   rb_define_singleton_method(rWebsocket, "defer", iodine_class_defer, 1);
+  rb_define_singleton_method(rWebsocket, "each_write", iodine_ws_multiwrite, 1);
 
   rWebsocketClass = rb_define_module_under(IodineBase, "WebsocketClass");
   rb_define_method(rWebsocketClass, "each", iodine_ws_class_each, 0);
