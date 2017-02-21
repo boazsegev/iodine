@@ -32,7 +32,7 @@ class ShootoutApp
     else
       msg = {type: 'broadcast', payload: payload}.to_json
       # Iodine::Websocket.each {|ws| ws.write msg}
-      Iodine::Websocket.multiwrite(msg) # {|ws| true }
+      Iodine::Websocket.each_write(msg) # {|ws| true }
       write({type: "broadcastResult", payload: payload}.to_json)
     end
   end

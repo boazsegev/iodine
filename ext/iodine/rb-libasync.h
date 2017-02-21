@@ -32,7 +32,10 @@ Portability - used to help port this to different frameworks (i.e. Ruby).
 void async_signal();
 
 /* used here but declared elsewhere */
-void call_async_signal(void *_) { async_signal(); }
+void call_async_signal(void *_) {
+  (void)(_);
+  async_signal();
+}
 
 /* protect the call to join from any exceptions */
 static void *_inner_join_with_rbthread(void *rbt) {
@@ -69,7 +72,7 @@ static void *create_ruby_thread_gvl(void *_args) {
 
 /* create a ruby thread */
 UNUSED_FUNC static int create_thread(THREAD_TYPE *thr,
-                                  void *(*thread_func)(void *), void *arg) {
+                                     void *(*thread_func)(void *), void *arg) {
   struct CreateThreadArgs *data = malloc(sizeof(*data));
   if (!data)
     return -1;
