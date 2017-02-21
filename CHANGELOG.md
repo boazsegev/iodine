@@ -10,7 +10,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Change log v.0.2.12
 
-**Fix** removed `mempool` after it failed extended concurrency tests.
+**Fix** removed `mempool` after it failed some stress and concurrency tests.
 
 ***
 
