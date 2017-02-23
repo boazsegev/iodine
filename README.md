@@ -370,7 +370,7 @@ Here's a few things you can use from this project and they seem to be handy to h
 
     Some people use global Ruby arrays, adding and removing Ruby objects to the array, but that sounds like a performance hog to me.
 
-    This one is a simple binary tree with a Ruby GC callback. Remember to initialize the Registry (`Registry.init(owner)`) so it's "owned" by some Roby-land object, this allows it to bridge the two worlds for the GC's mark and sweep.
+    This one is a simple binary tree with a Ruby GC callback. Remember to initialize the Registry (`Registry.init(owner)`) so it's "owned" by some Ruby-land object, this allows it to bridge the two worlds for the GC's mark and sweep.
 
     I'm attaching it to one of Iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
 
