@@ -45,9 +45,10 @@ Puma's model of 16 threads and 4 processes is easily adopted and proved to provi
 bundler exec iodine -p $PORT -t 16 -w 4
 ```
 
-It should be noted that automatic process scaling will cause issues with Websocket broadcast (`each`) support, ssince the `Websocket#each` method will be limited to the calling process (other clients might be connected to a different process.
+It should be noted that automatic process scaling will cause issues with Websocket broadcast (`each`) support, since the `Websocket#each` method will be limited to the calling process (other clients might be connected to a different process).
 
-I recommended that you consider using Redis to scale Websocket "events" across processes / machines. look into [plezi.io](http://www.plezi.io) for automatic Websocket scaling with Redis and Iodine.
+It is recommended that you consider using Redis to scale Websocket "events" across processes / machines.  
+Look into [plezi.io](http://www.plezi.io) for automatic Websocket scaling with Redis and Iodine.
 
 ### Writing data to the network layer
 
@@ -55,7 +56,7 @@ Iodine allows Ruby to write strings to the network layer. This includes HTTP and
 
 Iodine will handle an internal buffer (~4 to ~16 Mb, version depending) so that `write` can return immediately (non-blocking).
 
-However, when the buffer is full, `write` will block until enough space in he buffer becomes available. Sending up to 16Kb of data (a single buffer "packet") is optimal. Sending a larger response might effect concurrency. Best Websocket response length is ~1Kb (1 TCP / IP packet) and allows for faster transmissions.
+However, when the buffer is full, `write` will block until enough space in the buffer becomes available. Sending up to 16Kb of data (a single buffer "packet") is optimal. Sending a larger response might effect concurrency. Best Websocket response length is ~1Kb (1 TCP / IP packet) and allows for faster transmissions.
 
 When using the Iodine's web server (`Iodine::Rack`), the static file service offered by Iodine streams files (instead of using the buffer). Every file response will require up to 2 buffer "packets" (~32Kb), one for the header and the other for file streaming.
 
@@ -155,7 +156,7 @@ Iodine.start
 
 #### TCP/IP (raw) sockets
 
-Upgrading to a custom protocol (i.e., in order to implement your own Websocket protocol with special extensions) is performed almost the ame way, using `env['upgrade.tcp']`. In the following (terminal) example, we'll use an echo server without (direct socket echo):
+Upgrading to a custom protocol (i.e., in order to implement your own Websocket protocol with special extensions) is performed almost the same way, using `env['upgrade.tcp']`. In the following (terminal) example, we'll use an echo server without direct socket echo:
 
 ```ruby
 require 'iodine'
@@ -180,7 +181,7 @@ Iodine.start
 
 #### A few notes
 
-This design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems) etc'. This also allows us to use middleware without interfering with connection upgrades and provides up with backwards compatibility.
+This design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems), etc. This also allows us to use middleware without interfering with connection upgrades and provides  backwards compatibility.
 
 Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less than 8Kb in size. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache.
 
@@ -270,7 +271,7 @@ Review the `iodine -?` help for more data.
 
 Remember to compare the memory footprint after running some requests - it's not just speed that C is helping with, it's also memory management and object pooling (i.e., Iodine uses a buffer packet pool management).
 
-## Can I try before before I buy?
+## Can I try before I buy?
 
 Well, it is **free** and **open source**, no need to buy.. and of course you can try it out.
 
@@ -280,9 +281,9 @@ It's installable just like any other gem on MRI, run:
 $ gem install iodine
 ```
 
-If building the native C extension fails, please notice that some Ruby installations, such as on Ubuntu, require that you separately install the development headers (`ruby.h` and friends). I have no idea why they do that, as you will need the development headers for any native gems you want to install - so hurry up and get it.
+If building the native C extension fails, please note that some Ruby installations, such as on Ubuntu, require that you separately install the development headers (`ruby.h` and friends). I have no idea why they do that, as you will need the development headers for any native gems you want to install - so hurry up and get them.
 
-If you have the development headers but still can't compile the Iodine extension, [open an issue](https://github.com/boazsegev/iodine/issues) with any messages you're getting and I be happy to look into it.
+If you have the development headers but still can't compile the Iodine extension, [open an issue](https://github.com/boazsegev/iodine/issues) with any messages you're getting and I'll be happy to look into it.
 
 ## Mr. Sandman, write me a server
 
