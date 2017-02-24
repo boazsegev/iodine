@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.2.13 (next release)
+
+**Credit** credit to Elia Schito (@elia) and Augusts Bautra (@Epigene) for fixing parts of the documentation (PR #11 , #12).
+
+***
+
 Change log v.0.2.12
 
 **Fix** removed `mempool` after it failed some stress and concurrency tests.
