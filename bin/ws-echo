@@ -111,3 +111,5 @@ Iodine.start
 #   ws.onclose = function(e) {console.log("closed")};
 #   ws.onopen = function(e) {e.target.send("hi");};
 # };
+# ws = new WebSocket("ws://localhost:3000"); ws.onmessage = function(e) {console.log("Got message " + e.data.length + " bytes long"); for(var i = 0; i < e.data.length ; i += 4) {if (e.data.slice(i, i+4) != "text") {console.log( "incoming message corrupted? ", e.data.slice(i, i+4) ); return;};}; }; ws.onclose = function(e) {console.log("closed")}; ws.onopen = function(e) {ws.send("hi");};
+# str = "text"; function size_test() { if(ws.readyState != 1) return; if(str.length > 4194304) {console.log("str reached 4MiB!"); str = "test"; return;}; ws.send(str); str = str + str; window.setTimeout(size_test, 150); }; size_test();

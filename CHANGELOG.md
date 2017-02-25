@@ -8,15 +8,17 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
-Change log v.0.2.13 (next release)
+Change log v.0.2.13
 
-**Credit** credit to Elia Schito (@elia) and Augusts Bautra (@Epigene) for fixing parts of the documentation (PR #11 , #12).
+**Fix**: Fixed an issue presented in the C layer, where big fragmented websocket messages sent by the client could cause parsing errors and potentially, in some cases, cause a server thread to spin in a loop (DoS). Credit to @Filly for exposing the issue in the [`facil.io`](https://github.com/boazsegev/facil.io) layer. It should be noted that Chrome is the only browser where this issue could be invoked for testing.
+
+**Credit**: credit to Elia Schito (@elia) and Augusts Bautra (@Epigene) for fixing parts of the documentation (PR #11 , #12).
 
 ***
 
 Change log v.0.2.12
 
-**Fix** removed `mempool` after it failed some stress and concurrency tests.
+**Fix**: removed `mempool` after it failed some stress and concurrency tests.
 
 ***
 
