@@ -5,7 +5,7 @@ os:
 before_install:
   - gem install bundler -v 1.10.6
 rvm:
-  - ruby-2.4.0-rc1
+  - 2.4.0
   - 2.3.1
   - 2.3.0
   - 2.2.4
