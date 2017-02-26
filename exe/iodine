@@ -16,8 +16,8 @@ Both <options> and <filename> are optional.
 
 Available options:
  -p          Port number. Default: 3000.
- -t          Number of threads. Default: 1 => single worker thread.
- -w          Number of worker processes. Default: 1 => a single process.
+ -t          Number of threads. Default: half of the CPU core count.
+ -w          Number of worker processes. half of the CPU core count.
  -www        Public folder for static file serving. Default: nil (none).
  -v          Log responses.
  -q          Never log responses.
