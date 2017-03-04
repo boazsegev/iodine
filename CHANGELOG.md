@@ -8,6 +8,14 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+Change log v.0.2.14 (next)
+
+**Fix**: fixed the experimental `each_write`. An issue was found where passing a block might crash Iodine, since the block will be freed by the GC before Iodine was done with it. Now the block is correctly added to the object Registry, preventing premature memory deallocation.
+
+**Deprecation**: In version 0.2.1 we have notified that the the websocket method `uuid` was deprecated in favor of `conn_id`, as suggested by the [Rack Websocket Draft](https://github.com/rack/rack/pull/1107). This deprecation is now enforced.
+
+***
+
 Change log v.0.2.13
 
 **Fix**: Fixed an issue presented in the C layer, where big fragmented websocket messages sent by the client could cause parsing errors and potentially, in some cases, cause a server thread to spin in a loop (DoS). Credit to @Filly for exposing the issue in the [`facil.io`](https://github.com/boazsegev/facil.io) layer. It should be noted that Chrome is the only browser where this issue could be invoked for testing.

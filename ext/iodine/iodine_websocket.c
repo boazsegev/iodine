@@ -252,6 +252,12 @@ static uint8_t iodine_ws_if_callback(ws_s *ws, void *block) {
   return ret && ret != Qnil && ret != Qfalse;
 }
 
+static void iodine_ws_write_each_complete(ws_s *ws, void *block) {
+  (void)ws;
+  if ((VALUE)block != Qnil)
+    Registry.remove((VALUE)block);
+}
+
 /**
  * Writes data to all the Websocket connections sharing the same process
  * (worker) except `self`.
@@ -276,10 +282,15 @@ static VALUE iodine_ws_multiwrite(VALUE self, VALUE data) {
   VALUE block = Qnil;
   if (rb_block_given_p())
     block = rb_block_proc();
-  websocket_write_each(ws, RSTRING_PTR(data), RSTRING_LEN(data),
-                       rb_enc_get(data) == UTF8Encoding, 0,
-                       ((block == Qnil) ? NULL : iodine_ws_if_callback),
-                       (void *)block);
+  if (block != Qnil)
+    Registry.add(block);
+  websocket_write_each(.origin = ws, .data = RSTRING_PTR(data),
+                       .length = RSTRING_LEN(data),
+                       .is_text = (rb_enc_get(data) == UTF8Encoding),
+                       .on_finished = iodine_ws_write_each_complete,
+                       .filter =
+                           ((block == Qnil) ? NULL : iodine_ws_if_callback),
+                       .arg = (void *)block);
   return Qtrue;
 }
 
@@ -519,7 +530,7 @@ void Init_iodine_websocket(void) {
   rb_define_method(rWebsocket, "each_write", iodine_ws_multiwrite, 1);
   rb_define_method(rWebsocket, "close", iodine_ws_close, 0);
 
-  rb_define_method(rWebsocket, "uuid", iodine_ws_uuid, 0);
+  // rb_define_method(rWebsocket, "uuid", iodine_ws_uuid, 0);
   rb_define_method(rWebsocket, "conn_id", iodine_ws_uuid, 0);
   rb_define_method(rWebsocket, "has_pending?", iodine_ws_has_pending, 0);
   rb_define_method(rWebsocket, "defer", iodine_defer, -1);
