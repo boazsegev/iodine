@@ -12,6 +12,8 @@ Change log v.0.2.14 (next)
 
 **Fix**: fixed the experimental `each_write`. An issue was found where passing a block might crash Iodine, since the block will be freed by the GC before Iodine was done with it. Now the block is correctly added to the object Registry, preventing premature memory deallocation.
 
+**Fix**: fixed another issue with `each_write` where a race condition review was performed outside the protected critical section, in some cases this would caused memory to be freed twice and crash the server. This issue is now resolved.
+
 **Deprecation**: In version 0.2.1 we have notified that the the websocket method `uuid` was deprecated in favor of `conn_id`, as suggested by the [Rack Websocket Draft](https://github.com/rack/rack/pull/1107). This deprecation is now enforced.
 
 ***
