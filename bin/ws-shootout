@@ -98,3 +98,5 @@ Iodine.start
 #   ws.onclose = function(e) {console.log("closed")};
 #   ws.onopen = function(e) {e.target.send("hi");};
 # };
+
+# sleep 10 while `websocket-bench broadcast ws://127.0.0.1:3000/ --concurrent 10 --sample-size 100 --step-size 1000 --limit-percentile 95 --limit-rtt 250ms --initial-clients 1000`.tap {|s| puts s; puts "zzz..."}

@@ -8,7 +8,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
-Change log v.0.2.14 (next)
+Change log v.0.2.14
 
 **Fix**: fixed the experimental `each_write`. An issue was found where passing a block might crash Iodine, since the block will be freed by the GC before Iodine was done with it. Now the block is correctly added to the object Registry, preventing premature memory deallocation.
 
