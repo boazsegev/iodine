@@ -31,8 +31,7 @@ Iodine includes a light and fast HTTP and Websocket server written in C that was
 Using the Iodine server is easy, simply add Iodine as a gem to your Rack application:
 
 ```ruby
-# notice that the `git` is required since Iodine 2.0 hadn't been released just yet.
-gem 'iodine', :git => 'https://github.com/boazsegev/iodine.git'
+gem 'iodine', '>=0.2'
 ```
 
 Iodine will calculate, when possible, a good enough default concurrency model for fast applications... this might not fit your application if you use database access or other blocking calls.
