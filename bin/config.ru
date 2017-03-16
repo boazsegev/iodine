@@ -10,10 +10,12 @@ require 'rack/lint'
 # Valid values are "hello", "slow" (debugs env values), "simple"
 app = 'hello'
 # This is a simple Hello World Rack application, for benchmarking.
+HELLO_RESPONSE = [200, { 'Content-Type'.freeze => 'text/html'.freeze,
+        'Content-Length'.freeze => '16'.freeze }.freeze,
+ ['Hello from Rack!'.freeze]].freeze
+
 hello = proc do |_env|
-  [200, { 'Content-Type'.freeze => 'text/html'.freeze,
-          'Content-Length'.freeze => '16'.freeze },
-   ['Hello from Rack!'.freeze]]
+  HELLO_RESPONSE
 end
 
 slow = proc do |env|
