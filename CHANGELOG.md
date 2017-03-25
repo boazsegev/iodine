@@ -8,7 +8,13 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
-Change log v.0.2.14
+#### Change log v.0.2.15
+
+**Fix**: Fixed typo in logging and code comments, credit to @jmoriau in PR #13.
+
+***
+
+#### Change log v.0.2.14
 
 **Fix**: fixed the experimental `each_write`. An issue was found where passing a block might crash Iodine, since the block will be freed by the GC before Iodine was done with it. Now the block is correctly added to the object Registry, preventing premature memory deallocation.
 
@@ -18,7 +24,7 @@ Change log v.0.2.14
 
 ***
 
-Change log v.0.2.13
+#### Change log v.0.2.13
 
 **Fix**: Fixed an issue presented in the C layer, where big fragmented websocket messages sent by the client could cause parsing errors and potentially, in some cases, cause a server thread to spin in a loop (DoS). Credit to @Filly for exposing the issue in the [`facil.io`](https://github.com/boazsegev/facil.io) layer. It should be noted that Chrome is the only browser where this issue could be invoked for testing.
 
@@ -26,13 +32,13 @@ Change log v.0.2.13
 
 ***
 
-Change log v.0.2.12
+#### Change log v.0.2.12
 
 **Fix**: removed `mempool` after it failed some stress and concurrency tests.
 
 ***
 
-Change log v.0.2.11
+#### Change log v.0.2.11
 
 **Fix**: C layer memory pool had a race-condition that could have caused, in some unlikely events, memory allocation failure for Websocket protocol handlers. This had now been addressed and fixed.
 
@@ -42,7 +48,7 @@ Change log v.0.2.11
 
 ***
 
-Change log v.0.2.10
+#### Change log v.0.2.10
 
 **Update**: added documentation and an extra helper method to set a connection's timeout when using custom protocols (Iodine as an EventMachine alternative).
 
@@ -69,13 +75,13 @@ Change log v.0.2.10
 
 ***
 
-Change log v.0.2.9
+#### Change log v.0.2.9
 
 **Fix**: fixed a gcc-4.8 compatibility issue that prevented iodine 0.2.8 from compiling on Heroku's cedar-14 stack. This was related to missing system include files in gcc-4.8. It should be noted that Heroku's stack and compiler (which utilizes Ubuntu 14) has known issues and / or limited support for some of it's published features... but I should have remembered that before releasing version 0.2.8... sorry about that.
 
 ***
 
-Change log v.0.2.8
+#### Change log v.0.2.8
 
 **Memory Performance**: The Websocket connection Protocol now utilizes both a C level memory pool and a local thread storage for temporary data. This helps mitigate possible memory fragmentation issues related to long running processes and long-lived objects. In addition, the socket `read` buffer was moved from the protocol object to a local thread storage (assumes pthreads and not green threads). This minimizes the memory footprint for each connection (at the expense of memory locality) and should allow Iodine to support more concurrent connections using less system resources. Last, but not least, the default message buffer per connection starts at 4Kb instead of 16Kb (grows as needed, up to `Iodine::Rack.max_msg_size`), assuming smaller messages are the norm.
 
@@ -83,7 +89,7 @@ Change log v.0.2.8
 
 ***
 
-Change log v.0.2.7
+#### Change log v.0.2.7
 
 **Minor Fix**: fixed an issue where a negative number of processes or threads would initiate a very large number of forks, promoting a system resource choke. Limited the number of threads (1023) and processes (127).
 
@@ -91,13 +97,13 @@ Change log v.0.2.7
 
 ***
 
-Change log v.0.2.6
+#### Change log v.0.2.6
 
 **Update**: The IO reactor review will now be delayed until all events scheduled are done. This means that is events schedule future events, no IO data will be reviewed until all scheduled data is done. Foolish use might cause infinite loops that skip the IO reactor, but otherwise performance is improved (since the IO reactor might cause a thread to "sleep", delaying event execution).
 
 ***
 
-Change log v.0.2.5
+#### Change log v.0.2.5
 
 **Fix:**: fix for issue #9 (credit to Jack Christensen for exposing the issue) caused by an unlocked critical section's "window of opportunity" that allowed asynchronous Websocket `each` blocks to run during the tail of the Websocket handshake (while the `on_open` callback was running in parallel).
 
@@ -105,7 +111,7 @@ Change log v.0.2.5
 
 ***
 
-Change log v.0.2.4
+#### Change log v.0.2.4
 
 **Minor Fix**: Patched Iodine against Apple's broken `getrlimit` on macOS. This allows correct auto-setting of open file limits for the socket layer.
 
@@ -117,7 +123,7 @@ Change log v.0.2.4
 
 ***
 
-Change log v.0.2.3
+#### Change log v.0.2.3
 
 **Update**: The `write` system call is now deferred when resources allow, meaning that (as long as the `write` buffer isn't full) `write` is not only non-blocking, but it's performed as a separate event, outside of the Ruby GIL.
 
@@ -125,7 +131,7 @@ Change log v.0.2.3
 
 ***
 
-Change log v.0.2.2
+#### Change log v.0.2.2
 
 **Update** The static file service now supports `ETag` caching, sending a 304 (not changed) response for valid ETags.
 
@@ -133,7 +139,7 @@ Change log v.0.2.2
 
 ***
 
-Change log v.0.2.1
+#### Change log v.0.2.1
 
 **Notice**: The [Rack Websocket Draft](https://github.com/rack/rack/pull/1107) does not support the `each` and `defer` methods. Although I tried to maintain these as part of the draft, the community preferred to leave the implementation of these to the client (rather then the server). If collisions occur, these methods might be removed in the future.
 
@@ -145,7 +151,7 @@ Change log v.0.2.1
 
 ***
 
-Change log v.0.2.0
+#### Change log v.0.2.0
 
 This version is a total rewrite. The API is totally changed, nothing stayed.
 
@@ -155,7 +161,7 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 ### deprecation of the 0.1.x version line
 
-Change log v.0.1.21
+#### Change log v.0.1.21
 
 **Optimization**: Minor optimizations. i.e. - creates 1 less Time object per request (The logging still creates a Time object unless disabled using `Iodine.logger = nil`).
 
@@ -165,7 +171,7 @@ Change log v.0.1.21
 
 ***
 
-Change log v.0.1.20
+#### Change log v.0.1.20
 
 **Update/Fix**: Updated the `x-forwarded-for` header recognition, to accommodate an Array formatting sometimes used (`["ip1", "ip2", ...]`).
 
@@ -175,19 +181,19 @@ Change log v.0.1.20
 
 ***
 
-Change log v.0.1.19
+#### Change log v.0.1.19
 
 **Update**: added the `go_away` method to the Http/1 peorotocol, for seamless connection closeing across Http/2, Http/1 and Websockets.
 
 ***
 
-Change log v.0.1.18
+#### Change log v.0.1.18
 
 **Update**: The request now has the shortcut method `Request#host_name` for accessing the host's name (without the port part of the string).
 
 ***
 
-Change log v.0.1.17
+#### Change log v.0.1.17
 
 **Credit**: thanks you @frozenfoxx for going through the readme and fixing my broken grammer.
 
@@ -201,13 +207,13 @@ Change log v.0.1.17
 
 ***
 
-Change log v.0.1.16
+#### Change log v.0.1.16
 
 **Performance**: Http/1 and Http/2 connections now share and recycle their write buffer when while reading the response body and writing it to the IO. This (hopefuly) prevents excess `malloc` calls by the interperter.
 
 ***
 
-Change log v.0.1.15
+#### Change log v.0.1.15
 
 **Update**: IO reactor will now update IO status even when tasks are pending. IO will still be read only when there are no more tasks to handle, but this allows chained tasks to relate to the updated IO status. i.e. this should improve websocket availability for broadcasting (delay from connection to availability might occure until IO is registered).
 
@@ -215,7 +221,7 @@ Change log v.0.1.15
 
 ***
 
-Change log v.0.1.14
+#### Change log v.0.1.14
 
 **Update**: the Response now supports `redirect_to` for both permanent and temporary redirection, with an optional `flash` cookie setup.
 
@@ -223,7 +229,7 @@ Change log v.0.1.14
 
 ***
 
-Change log v.0.1.13
+#### Change log v.0.1.13
 
 **Change**: Session cookie lifetime is now limited to the browser's session. The local data will still persist until the tmp-folder is cleared (when using session file storage).
 
@@ -235,7 +241,7 @@ Change log v.0.1.13
 
 ***
 
-Change log v.0.1.12
+#### Change log v.0.1.12
 
 **Update**: Passing a hash as the cookie value will allow to set cookie parameters using the {Response#set_cookie} options. i.e.: `cookies['key']= {value: "lock", max_age: 20}`.
 
@@ -243,13 +249,13 @@ Change log v.0.1.12
 
 ***
 
-Change log v.0.1.11
+#### Change log v.0.1.11
 
 **Fix**: fixed the Rack server Handler, which was broken in version 0.1.10.
 
 ***
 
-Change log v.0.1.10
+#### Change log v.0.1.10
 
 **Fix**: make sure the WebsocketClient doesn't automatically renew the connection when the connection was manually closed by the client.
 
@@ -257,7 +263,7 @@ Change log v.0.1.10
 
 ***
 
-Change log v.0.1.9
+#### Change log v.0.1.9
 
 **Fix**: WebsocketClient connection renewal will now keep the same WebsocketClient instance object.
 
@@ -267,7 +273,7 @@ Change log v.0.1.9
 
 ***
 
-Change log v.0.1.8
+#### Change log v.0.1.8
 
 **Fix**: Websocket broadcasts are now correctly executed within the IO's mutex locker. This maintains the idea that only one thread at a time should be executing code on behald of any given Protocol object ("yes" to concurrency between objects but "no" to concurrency within objects).
 
@@ -283,13 +289,13 @@ Change log v.0.1.8
 
 ***
 
-Change log v.0.1.7
+#### Change log v.0.1.7
 
 Removed a deprecation notice for blocking API. Client API will remain blocking due to use-case requirements.
 
 ***
 
-Change log v.0.1.6
+#### Change log v.0.1.6
 
 **Fix**: fixed an issue where a session key-value pair might not get deleted when using `session.delete key` and the `key` is not a String object. Also, now setting a key's value to `nil` should delete the key-value pair.
 
@@ -303,7 +309,7 @@ Change log v.0.1.6
 
 ***
 
-Change log v.0.1.5
+#### Change log v.0.1.5
 
 **Feature**: The Response#body can now be set to a File object, allowing Iodine to preserve memory when serving large static files from disc. Limited Range requests are also supported - together, these changes allow Iodine to serve media files (such as movies) while suffering a smaller memory penalty and supporting a wider variaty of players (Safari requires Range request support for it's media player).
 
@@ -311,7 +317,7 @@ Change log v.0.1.5
 
 ***
 
-Change log v.0.1.4
+#### Change log v.0.1.4
 
 **Fix**: fixed an issue with where the WebsocketClient#on_close wouldn't be called for a renewable Websocket connection during shutdown.
 
@@ -321,19 +327,19 @@ Change log v.0.1.4
 
 ***
 
-Change log v.0.1.3
+#### Change log v.0.1.3
 
 **Fix**: fixed an issue with the new form/multipart parser, where the '+' sign would be converted to spaces on form fields (not uploaded files), causing inadvert potential change to the original POSTed data.
 
 ***
 
-Change log v.0.1.2
+#### Change log v.0.1.2
 
 **Fix**: fixed an issue where the default implementation of `ping` didn not reset the timeout if the connection wasn't being closed (the default implementation checks if the Protocol is working on existing data and either resets the timer allowing the work to complete or closes the connection if no work is being done).
 
 ***
 
-Change log v.0.1.1
+#### Change log v.0.1.1
 
 **Fix**: Fixed an issue where slow processing of Http/1 requests could cause timeout disconnections to occur while the request is being processed.
 
@@ -347,7 +353,7 @@ Change log v.0.1.1
 
 ***
 
-Change log v.0.1.0
+#### Change log v.0.1.0
 
 **First actual release**:
 
