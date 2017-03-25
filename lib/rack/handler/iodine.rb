@@ -76,12 +76,12 @@ module Iodine
     @log = true if ARGV.index('-v')
     @log = false if ARGV.index('-q')
 
-    # get/set the HTTP listenning port. Defaults to 3000.
+    # get/set the HTTP listening port. Defaults to 3000.
     def self.port=(val)
       @port = val
     end
 
-    # get/set the HTTP listenning port. Defaults to 3000.
+    # get/set the HTTP listening port. Defaults to 3000.
     def self.port
       @port
     end
