@@ -435,10 +435,10 @@ void Init_DynamicProtocol(void) {
 Iodine functions
 */
 
-/** Sets up a listenning socket. Conncetions received at the assigned port will
+/** Sets up a listening socket. Conncetions received at the assigned port will
 be handled by the assigned handler.
 
-Multiple services (listenning sockets) can be registered before starting the
+Multiple services (listening sockets) can be registered before starting the
 Iodine event loop. */
 static VALUE iodine_listen_dyn_protocol(VALUE self, VALUE port, VALUE handler) {
   // validate that the handler is a class and include the Iodine::Protocol
