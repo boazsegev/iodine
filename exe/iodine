@@ -39,8 +39,27 @@ EOS
   exit(0)
 end
 
+app, opt = nil, nil
 filename = (ARGV[-2].to_s[0] != '-' && ARGV[-1].to_s[0] != '-' && ARGV[-1]) || 'config.ru'
-app, opt = Rack::Builder.parse_file filename
+
+begin
+  app, opt = Rack::Builder.parse_file filename
+rescue
+  if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
+    puts "WARNING: Ruby application not found - missing #{filename}?"
+    puts "         Running only static file service."
+    app = Rack::Builder.new do
+      run lambda { |env| [404, {'Content-Type' => 'text/plain', 'Content-Length'.freeze => '21'.freeze}, ['Error 404 - Not Found']] }
+    end
+    opt = Rack::Server::Options.new.parse!([])
+    p app, opt
+  else
+    puts "ERROR: Ruby application not found - missing #{filename}? For help run:"
+    puts "       iodine -?"
+    exit(0)
+  end
+end
+
 if ARGV.index('-maxbd') && ARGV[ARGV.index('-maxbd') + 1]
   Iodine::Rack.max_body_size = ARGV[ARGV.index('-maxbd') + 1].to_i
 end

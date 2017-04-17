@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+#### Change log v.0.2.16
+
+**Update**: iodine can now run as a basic HTTP static file server without a Ruby application (no `config.ru`) when the `-www` option is used from the command line.
+
+***
+
 #### Change log v.0.2.15
 
 **Fix**: Fixed typo in logging and code comments, credit to @jmoriau in PR #13.
