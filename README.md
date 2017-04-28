@@ -24,7 +24,7 @@ Iodine is a C extension for Ruby, developed for Ruby MRI 2.2.2 and up... it shou
 
 ## Iodine::Rack - an HTTP and Websockets server
 
-Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the Websocket draft extension.
+Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the [Websocket draft extension](./SPEC-Websocket-Draft.md).
 
 ### Running the web server
 
