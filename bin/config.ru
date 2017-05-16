@@ -8,7 +8,7 @@ require 'rack/lint'
 # This value (app) sets which of the different applications will run.
 #
 # Valid values are "hello", "slow" (debugs env values), "simple"
-app = 'hello'
+app = 'big'
 # This is a simple Hello World Rack application, for benchmarking.
 HELLO_RESPONSE = [200, { 'Content-Type'.freeze => 'text/html'.freeze,
         'Content-Length'.freeze => '16'.freeze }.freeze,
@@ -48,12 +48,20 @@ simple = proc do |env|
  end
 end
 
+logo_png = nil
+big = proc do |_env|
+  logo_png ||= IO.binread '../logo.png'
+  [200, { 'Content-Length'.freeze => logo_png.length.to_s , 'Content-Type'.freeze => 'image/png'.freeze}, [logo_png]]
+end
+
 case app
 when 'simple'
   use Rack::Sendfile
   run simple
 when 'hello'
   run hello
+when 'big'
+  run big
 when 'slow'
   use Rack::Lint
   run slow

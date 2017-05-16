@@ -189,7 +189,7 @@ static void dyn_perform_defer(intptr_t uuid, protocol_s *protocol, void *arg) {
 static void dyn_defer_fallback(intptr_t uuid, void *arg) {
   (void)(uuid);
   Registry.remove((VALUE)arg);
-};
+}
 
 /**
 Runs the required block later (defers the blocks execution).
@@ -326,7 +326,7 @@ static VALUE default_on_data(VALUE self) {
     if (!RSTRING_LEN(buff))
       return Qnil;
     rb_funcall(self, on_message_func_id, 1, buff);
-  } while (RSTRING_LEN(buff) == rb_str_capacity(buff));
+  } while (RSTRING_LEN(buff) == (ssize_t)rb_str_capacity(buff));
   return Qnil;
 }
 
@@ -603,6 +603,21 @@ static VALUE iodine_count(VALUE self) {
 /* *****************************************************************************
 Running the server
 */
+static int sock_io_thread = 0;
+static void *iodine_io_thread(void *arg) {
+  (void)arg;
+  static const struct timespec tm = {.tv_nsec = 16777216UL};
+  while (sock_io_thread) {
+    sock_flush_all();
+    nanosleep(&tm, NULL);
+  }
+  return NULL;
+}
+
+static void iodine_start_io_thread(void) {
+  pthread_t io_thread;
+  pthread_create(&io_thread, NULL, iodine_io_thread, NULL);
+}
 
 static void *srv_start_no_gvl(void *_) {
   (void)(_);
@@ -619,16 +634,17 @@ static void *srv_start_no_gvl(void *_) {
   if (threads <= 0)
     threads = (cpu_count >> 1) ? (cpu_count >> 1) : 1;
 
-  if (cpu_count > 0 &&
-      ((processes << 1) < cpu_count || processes > (cpu_count << 1)))
+  if (cpu_count > 0 && (((size_t)processes << 1) < cpu_count ||
+                        (size_t)processes > (cpu_count << 1)))
     fprintf(
-        stderr, "* Performance warnning:\n"
-                "  - This computer has %lu CPUs available and you'll be "
-                "utilizing %lu processes.\n  - %s\n"
-                "  - Use the command line option: `-w %lu`\n"
-                "  - Or, within Ruby: `Iodine.processes = %lu`\n",
+        stderr,
+        "* Performance warnning:\n"
+        "  - This computer has %lu CPUs available and you'll be "
+        "utilizing %lu processes.\n  - %s\n"
+        "  - Use the command line option: `-w %lu`\n"
+        "  - Or, within Ruby: `Iodine.processes = %lu`\n",
         cpu_count, (processes ? processes : 1),
-        (processes < cpu_count
+        ((size_t)processes < cpu_count
              ? "Some CPUs won't be utilized, inhibiting performance."
              : "This causes excessive context switches, wasting resources."),
         cpu_count, cpu_count);
@@ -638,7 +654,10 @@ static void *srv_start_no_gvl(void *_) {
   if (threads <= 0)
     threads = 1;
 #endif
-  server_run(.threads = threads, .processes = processes);
+  sock_io_thread = 1;
+  server_run(.threads = threads, .processes = processes,
+             .on_init = iodine_start_io_thread);
+  sock_io_thread = 0;
   return NULL;
 }
 

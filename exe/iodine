@@ -22,8 +22,9 @@ Available options:
  -v          Log responses.
  -q          Never log responses.
  -warmup     Warmup invokes autoloading (lazy loading) during server startup.
- -maxbd      Maximum Mb per HTTP message (max body size). Default: ~50Mb.
- -maxms      Maximum Bytes per Websocket message. Default: ~250Kb.
+ -tout       HTTP inactivity connection timeout. Default: 5.
+ -maxbd      Maximum Mb per HTTP message (max body size). Default: 50Mib.
+ -maxms      Maximum Bytes per Websocket message. Default: 250Kib.
  -ping       Websocket ping interval in seconds. Default: 40 seconds.
  <filename>  Defaults to: config.ru
 
@@ -71,6 +72,10 @@ if ARGV.index('-ping') && ARGV[ARGV.index('-ping') + 1]
 end
 if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
   Iodine::Rack.public = ARGV[ARGV.index('-www') + 1]
+end
+if ARGV.index('-tout') && ARGV[ARGV.index('-tout') + 1]
+  Iodine::Rack.timeout = ARGV[ARGV.index('-tout') + 1].to_i
+  puts "WARNNING: Iodine::Rack.timeout set to 0 (ignored, timeout will be ~5 minutes)."
 end
 Iodine::Rack.log = true if ARGV.index('-v')
 Iodine::Rack.log = false if ARGV.index('-q')
