@@ -603,7 +603,11 @@ static VALUE iodine_count(VALUE self) {
 /* *****************************************************************************
 Running the server
 */
+#include <pthread.h>
+
 static volatile int sock_io_thread = 0;
+static pthread_t sock_io_pthread;
+
 static void *iodine_io_thread(void *arg) {
   (void)arg;
   static const struct timespec tm = {.tv_nsec = 16777216UL};
@@ -613,11 +617,10 @@ static void *iodine_io_thread(void *arg) {
   }
   return NULL;
 }
-#include <pthread.h>
 static void iodine_start_io_thread(void) {
-  pthread_t io_thread;
-  pthread_create(&io_thread, NULL, iodine_io_thread, NULL);
+  pthread_create(&sock_io_pthread, NULL, iodine_io_thread, NULL);
 }
+static void iodine_join_io_thread(void) { pthread_join(sock_io_pthread, NULL); }
 
 static void *srv_start_no_gvl(void *_) {
   (void)(_);
@@ -656,7 +659,8 @@ static void *srv_start_no_gvl(void *_) {
 #endif
   sock_io_thread = 1;
   server_run(.threads = threads, .processes = processes,
-             .on_init = iodine_start_io_thread);
+             .on_init = iodine_start_io_thread,
+             .on_finish = iodine_join_io_thread);
   sock_io_thread = 0;
   return NULL;
 }
