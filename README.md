@@ -225,15 +225,48 @@ Iodine::Rack.run My_Broadcast
 
 Of course, if you still want to use Rack's `hijack` API, Iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack, as well as a socket buffer for non-blocking `write` operations (why do that when you can write a protocol object and have the main reactor manage the socket?).
 
+### Performance oriented design - but safety first
+
+Iodine is an evened server, similar in it's architecture to `nginx` and `puma`. It's different than the simple "thread-per-client" design that is often taught when we begin to learn about network programming.
+
+By leveraging `epoll` (on Linux) and `kqueue` (on BSD), iodine can listen to multiple network events on multiple sockets using a single thread.
+
+All these events go into a task queue, together with the application events and any user generated tasks, such as ones scheduled by [`Iodine.run`](http://www.rubydoc.info/github/boazsegev/iodine/Iodine#run-class_method).
+
+In pseudo-code, this might look like this
+
+```ruby
+QUEUE = Queue.new
+
+def server_cycle
+    QUEUE << get_next_32_socket_events # these events schedule the proper user code to run
+    QUEUE << [server]
+end
+
+def run_server
+      while ((event = QUEUE.pop))
+            event.shift.call(*event)
+      end
+end
+```
+
+In pure Ruby (without using C extensions or Java), it's possible to do the same by using `select`... and although `select` has some issues, it works well for smaller concurrency levels.
+
+The server events are fairly fast and fragmented (longer code is fragmented across multiple events), so one thread is enough to run the server including it's static file service and everything... but single threaded mode should probably be avoided.
+
+The thread pool is there to help slow user code. It's very common that the application's code will run slower and require external resources (i.e., databases, a pub/sub service, etc'). This slow code could "starve" the server (that is patiently waiting to run it's tasks on the same thread) - which is why a thread pool is often necessary.
+
+The slower your application code, the more threads you will need to keep the server running smoothly.
+
 ### How does it compare to other servers?
 
-Personally, after looking around, the only comparable servers are Puma and Passenger (the open source version), which Iodine significantly outperformed on my tests.
+Personally, after looking around, the only comparable servers are Puma and Passenger, which Iodine significantly outperformed on my tests (I didn't test Passenger's enterprise version).
 
 Since the HTTP and Websocket parsers are written in C (with no RegExp), they're fairly fast.
 
 Also, Iodine's core and parsers are running outside of Ruby's global lock, meaning that they enjoy true concurrency before entering the Ruby layer (your application) - this offers Iodine a big advantage over other Ruby servers.
 
-Another assumption Iodine makes is that it is behind a load balancer / proxy (which is the normal way Ruby applications are deployed) - this allows Iodine to disregard header validity checks (we're not checking for invalid characters) which speeds up the parsing process even further.
+Another assumption Iodine makes is that it is behind a load balancer / proxy (which is the normal way Ruby applications are deployed) - this allows Iodine to disregard header validity checks (we're not checking for invalid characters) and focus it's resources on other security and performance concerns.
 
 I recommend benchmarking the performance for yourself using `wrk` or `ab`:
 
