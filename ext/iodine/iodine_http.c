@@ -385,15 +385,11 @@ static void *on_rack_request_in_GVL(http_request_s *request) {
   // If the X-Sendfile header was provided, send the file directly and finish
   if (xfiles != Qnil &&
       http_response_sendfile2(response, request, RSTRING_PTR(xfiles),
-                              RSTRING_LEN(xfiles), NULL, 0, 1) == 0) {
-    goto finish;
-  }
+                              RSTRING_LEN(xfiles), NULL, 0, 1) == 0)
+    goto external_done;
   // review for belated (post response headers) upgrade.
-  if (ruby2c_review_upgrade(response, rbresponse, env)) {
-    Registry.remove(rbresponse);
-    Registry.remove(env);
-    return NULL;
-  }
+  if (ruby2c_review_upgrade(response, rbresponse, env))
+    goto external_done;
   // send the request body.
   if (ruby2c_response_send(response, rbresponse, env))
     goto internal_error;
@@ -401,6 +397,10 @@ finish:
   Registry.remove(rbresponse);
   Registry.remove(env);
   http_response_finish(response);
+  return NULL;
+external_done:
+  Registry.remove(rbresponse);
+  Registry.remove(env);
   return NULL;
 internal_error:
   Registry.remove(rbresponse);
