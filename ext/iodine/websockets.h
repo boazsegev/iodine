@@ -7,8 +7,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #ifndef WEBSOCKETS_H
 #define WEBSOCKETS_H
 
-#include "http_request.h"
-#include "http_response.h"
+#include "http.h"
 
 /**
 The Websocket type is an opaque type used by the websocket API to provide
@@ -135,7 +134,7 @@ here, for convinience of calling the function.
 */
 struct websocket_write_each_args_s {
   /** The originating websocket client will be excluded from the `write`.
-    * Can be NULL. */
+   * Can be NULL. */
   ws_s *origin;
   /** The data to be written to the websocket - required(!) */
   void *data;

@@ -13,7 +13,7 @@ require 'rack'
 
 # create the server object and setup any settings we might need.
 Iodine::Rack
-Iodine.threads ||= 16
+Iodine.threads ||= 1
 Iodine.processes ||= 1 # 4
 Iodine::Rack.public = '~/Documents/Scratch'
 count = 2

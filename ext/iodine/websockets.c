@@ -4,13 +4,16 @@ license: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
-#include "websockets.h"
+#include "spnlock.inc"
+
 #include "bscrypt.h"
-#include "libserver.h"
+#include "websockets.h"
 #include <arpa/inet.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #if !defined(__BIG_ENDIAN__) && !defined(__LITTLE_ENDIAN__)
 #include <endian.h>
@@ -161,13 +164,8 @@ The Websocket Protocol implementation
 
 static void ws_ping(intptr_t fd, protocol_s *ws) {
   (void)(ws);
-  sock_packet_s *packet;
-  while ((packet = sock_checkout_packet()) == NULL)
-    sock_flush_all();
-  *packet = (sock_packet_s){
-      .buffer = "\x89\x00", .length = 2, .metadata.urgent = 1,
-  };
-  sock_send_packet(fd, packet);
+  sock_write2(.uuid = fd, .buffer = "\x89\x00", .length = 2, .move = 1,
+              .dealloc = SOCK_DEALLOC_NOOP);
 }
 
 static void on_close(protocol_s *_ws) { destroy_ws((ws_s *)_ws); }
@@ -583,17 +581,16 @@ static void websocket_write_impl(intptr_t fd, void *data, size_t len,
     len = websocket_encode(buff, data, len, text, first, last, client);
     sock_write(fd, buff, len);
   } else if (len <= WS_MAX_FRAME_SIZE) {
-    if (len >= BUFFER_PACKET_SIZE) { // if len is larger then a single packet.
+    if (len >= BUFFER_PACKET_SIZE - 8) { // can't feet in sock buffer
       /* head MUST be 4 bytes */
       void *buff = malloc(len + 4);
       len = websocket_encode(buff, data, len, text, first, last, client);
-      sock_write2(.fduuid = fd, .buffer = buff, .length = len, .move = 1);
+      sock_write2(.uuid = fd, .buffer = buff, .length = len, .move = 1);
     } else {
-      sock_packet_s *packet = sock_checkout_packet();
-      packet->length = websocket_encode(packet->buffer, data, len, text, first,
-                                        last, client);
-      packet->metadata.can_interrupt = 1;
-      sock_send_packet(fd, packet);
+      sock_buffer_s *sbuff = sock_buffer_checkout();
+      sbuff->len =
+          websocket_encode(sbuff->buf, data, len, text, first, last, client);
+      sock_buffer_send(fd, sbuff);
     }
   } else {
     /* frame fragmentation is better for large data then large frames */
@@ -617,8 +614,6 @@ The API implementation
 ssize_t websocket_upgrade(websocket_settings_s settings) {
   // A static data used for all websocket connections.
   static char ws_key_accpt_str[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-  // a temporary response object, in case none is provided.
-  http_response_s tmp_response;
   // require either a request or a response.
   if (((uintptr_t)settings.request | (uintptr_t)settings.response) ==
       (uintptr_t)NULL)
@@ -631,17 +626,16 @@ ssize_t websocket_upgrade(websocket_settings_s settings) {
   http_response_s *response = settings.response;
   if (response == NULL) {
     /* initialize a default upgrade response */
-    tmp_response = http_response_init(settings.request);
-    response = &tmp_response;
+    response = http_response_create(settings.request);
   } else
-    settings.request = response->metadata.request;
+    settings.request = response->request;
   // allocate the protocol object (TODO: (maybe) pooling)
   ws_s *ws = new_websocket();
   if (!ws)
     goto refuse;
 
   // setup the socket-server data
-  ws->fd = response->metadata.request->metadata.fd;
+  ws->fd = response->request->fd;
   // Setup ws callbacks
   ws->on_close = settings.on_close;
   ws->on_message = settings.on_message;
@@ -655,17 +649,15 @@ ssize_t websocket_upgrade(websocket_settings_s settings) {
   const char *recv_str;
 
   recv_str =
-      http_request_find_header(settings.request, "sec-websocket-version", 21);
+      http_request_header_find(settings.request, "sec-websocket-version", 21)
+          .data;
   if (recv_str == NULL || recv_str[0] != '1' || recv_str[1] != '3')
     goto refuse;
 
-  recv_str =
-      http_request_find_header(settings.request, "sec-websocket-key", 17);
-  if (recv_str == NULL)
+  http_header_s sec_h =
+      http_request_header_find(settings.request, "sec-websocket-key", 17);
+  if (sec_h.data == NULL)
     goto refuse;
-  size_t recv_len =
-      settings.request->headers[settings.request->metadata.headers_pos]
-          .value_length;
 
   // websocket extentions (none)
 
@@ -674,7 +666,7 @@ ssize_t websocket_upgrade(websocket_settings_s settings) {
   // use the SHA1 methods provided to concat the client string and hash
   sha1_s sha1;
   sha1 = bscrypt_sha1_init();
-  bscrypt_sha1_write(&sha1, recv_str, recv_len);
+  bscrypt_sha1_write(&sha1, sec_h.data, sec_h.data_len);
   bscrypt_sha1_write(&sha1, ws_key_accpt_str, sizeof(ws_key_accpt_str) - 1);
   // base encode the data
   char websockets_key[32];
@@ -686,20 +678,19 @@ ssize_t websocket_upgrade(websocket_settings_s settings) {
   // upgrade taking place, make sure the upgrade headers are valid for the
   // response.
   response->status = 101;
-  http_response_write_header(response, .name = "Connection", .name_length = 10,
-                             .value = "Upgrade", .value_length = 7);
-  http_response_write_header(response, .name = "Upgrade", .name_length = 7,
-                             .value = "websocket", .value_length = 9);
+  http_response_write_header(response, .name = "Connection", .name_len = 10,
+                             .data = "Upgrade", .data_len = 7);
+  http_response_write_header(response, .name = "Upgrade", .name_len = 7,
+                             .data = "websocket", .data_len = 9);
   http_response_write_header(response, .name = "sec-websocket-version",
-                             .name_length = 21, .value = "13",
-                             .value_length = 2);
+                             .name_len = 21, .data = "13", .data_len = 2);
   // set the string's length and encoding
   http_response_write_header(response, .name = "Sec-WebSocket-Accept",
-                             .name_length = 20, .value = websockets_key,
-                             .value_length = len);
-  // inform about 0 extension support
-  recv_str = http_request_find_header(settings.request,
-                                      "sec-websocket-extensions", 24);
+                             .name_len = 20, .data = websockets_key,
+                             .data_len = len);
+  // // inform about 0 extension support
+  // sec_h = http_request_header_find(settings.request,
+  // "sec-websocket-extensions", 24);
   // if (recv_str != NULL)
   //   http_response_write_header(response, .name =
   //   "Sec-Websocket-Extensions",
@@ -711,21 +702,17 @@ refuse:
   response->status = 400;
 cleanup:
   if (response->status == 101) {
-    // set the protocol lock
-    ws->protocol.callback_lock = SPN_LOCK_INIT;
-    spn_lock(&ws->protocol.callback_lock);
     // send the response
     http_response_finish(response);
-    // update the protocol object, cleanning up the old one
-    server_switch_protocol(ws->fd, (void *)ws);
     // we have an active websocket connection - prep the connection buffer
     ws->buffer = create_ws_buffer(ws);
     // update the timeout
-    server_set_timeout(ws->fd, settings.timeout);
+    facil_set_timeout(ws->fd, settings.timeout);
+    // update the protocol object, cleanning up the old one
+    facil_attach(ws->fd, (protocol_s *)ws);
     // call the on_open callback
     if (settings.on_open)
-      server_task(ws->fd, on_open, (void *)settings.on_open, NULL);
-    spn_unlock(&ws->protocol.callback_lock);
+      facil_defer(ws->fd, on_open, (void *)settings.on_open, NULL);
     return 0;
   }
   http_response_finish(response);
@@ -756,13 +743,8 @@ int websocket_write(ws_s *ws, void *data, size_t size, uint8_t is_text) {
 }
 /** Closes a websocket connection. */
 void websocket_close(ws_s *ws) {
-  sock_packet_s *packet;
-  while ((packet = sock_checkout_packet()) == NULL)
-    sock_flush_all();
-  *packet = (sock_packet_s){
-      .buffer = "\x88\x00", .length = 2,
-  };
-  sock_send_packet(ws->fd, packet);
+  sock_write2(.uuid = ws->fd, .buffer = "\x88\x00", .length = 2, .move = 1,
+              .dealloc = SOCK_DEALLOC_NOOP);
   sock_close(ws->fd);
   return;
 }
@@ -772,7 +754,7 @@ Counts the number of websocket connections.
 */
 size_t websocket_count(ws_s *ws) {
   (void)(ws);
-  return server_count(WEBSOCKET_ID_STR);
+  return facil_count(WEBSOCKET_ID_STR);
 }
 
 /*******************************************************************************
@@ -793,11 +775,18 @@ static void perform_ws_task(intptr_t fd, protocol_s *_ws, void *_arg) {
   tsk->task((ws_s *)(_ws), tsk->arg);
 }
 /** clears away a wesbocket task. */
-static void finish_ws_task(intptr_t fd, protocol_s *_ws, void *_arg) {
-  (void)(fd);
-  struct WSTask *tsk = _arg;
-  if (tsk->on_finish)
-    tsk->on_finish((ws_s *)(_ws), tsk->arg);
+static void finish_ws_task(intptr_t fd, void *arg) {
+  struct WSTask *tsk = arg;
+  if (tsk->on_finish) {
+    protocol_s *ws = facil_protocol_try_lock(fd, FIO_PR_LOCK_TASK);
+    if (!ws && errno != EBADF) {
+      defer((void (*)(void *, void *))finish_ws_task, (void *)fd, arg);
+      return;
+    }
+    tsk->on_finish((ws_s *)ws, tsk->arg);
+    if (ws)
+      facil_protocol_unlock(ws, FIO_PR_LOCK_TASK);
+  }
   free(tsk);
 }
 
@@ -812,8 +801,8 @@ void websocket_each(ws_s *ws_originator,
   tsk->arg = arg;
   tsk->on_finish = on_finish;
   tsk->task = task;
-  server_each((ws_originator ? ws_originator->fd : -1), WEBSOCKET_ID_STR,
-              perform_ws_task, tsk, finish_ws_task);
+  facil_each((ws_originator ? ws_originator->fd : -1), WEBSOCKET_ID_STR,
+             perform_ws_task, tsk, finish_ws_task);
 }
 /*******************************************************************************
 Multi-Write (direct broadcast) Implementation
@@ -835,14 +824,16 @@ struct websocket_multi_write {
 static void ws_mw_defered_on_finish_fb(intptr_t fd, void *arg) {
   (void)(fd);
   struct websocket_multi_write *fin = arg;
-  fin->on_finished(NULL, fin->arg);
+  if (fin->on_finished)
+    fin->on_finished(NULL, fin->arg);
   free(fin);
 }
 static void ws_mw_defered_on_finish(intptr_t fd, protocol_s *ws, void *arg) {
-  (void)(fd);
+  (void)fd;
   struct websocket_multi_write *fin = arg;
-  fin->on_finished((ws->service == WEBSOCKET_ID_STR ? (ws_s *)ws : NULL),
-                   fin->arg);
+  if (fin->on_finished) {
+    fin->on_finished((ws_s *)ws, fin->arg);
+  }
   free(fin);
 }
 
@@ -853,7 +844,7 @@ static void ws_reduce_or_free_multi_write(void *buff) {
   if (!mw->count) {
     spn_unlock(&mw->lock);
     if (mw->on_finished) {
-      server_task(mw->origin, ws_mw_defered_on_finish, mw,
+      facil_defer(mw->origin, ws_mw_defered_on_finish, mw,
                   ws_mw_defered_on_finish_fb);
     } else
       free(mw);
@@ -861,10 +852,9 @@ static void ws_reduce_or_free_multi_write(void *buff) {
     spn_unlock(&mw->lock);
 }
 
-static void ws_finish_multi_write(intptr_t fd, protocol_s *_ws, void *arg) {
+static void ws_finish_multi_write(intptr_t fd, void *arg) {
   struct websocket_multi_write *multi = arg;
   (void)(fd);
-  (void)(_ws);
   ws_reduce_or_free_multi_write(multi->buffer);
 }
 
@@ -872,21 +862,11 @@ static void ws_direct_multi_write(intptr_t fd, protocol_s *_ws, void *arg) {
   struct websocket_multi_write *multi = arg;
   if (((ws_s *)(_ws))->parser.client != multi->as_client)
     return;
-
-  sock_packet_s *packet = sock_checkout_packet();
-  *packet = (sock_packet_s){
-      .buffer = multi->buffer,
-      .length = multi->length,
-      .metadata.can_interrupt = 1,
-      .metadata.dealloc = ws_reduce_or_free_multi_write,
-      .metadata.external = 1,
-  };
-
   spn_lock(&multi->lock);
   multi->count += 1;
   spn_unlock(&multi->lock);
-
-  sock_send_packet(fd, packet);
+  sock_write2(.uuid = fd, .buffer = multi->buffer, .length = multi->length,
+              .dealloc = ws_reduce_or_free_multi_write, .move = 1);
 }
 
 static void ws_check_multi_write(intptr_t fd, protocol_s *_ws, void *arg) {
@@ -917,8 +897,8 @@ int websocket_write_each(struct websocket_write_each_args_s args) {
       .count = 1,
   };
 
-  server_each(multi->origin, WEBSOCKET_ID_STR,
-              (args.filter ? ws_check_multi_write : ws_direct_multi_write),
-              multi, ws_finish_multi_write);
+  facil_each(multi->origin, WEBSOCKET_ID_STR,
+             (args.filter ? ws_check_multi_write : ws_direct_multi_write),
+             multi, ws_finish_multi_write);
   return 0;
 }

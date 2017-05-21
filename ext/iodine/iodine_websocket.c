@@ -25,7 +25,7 @@ size_t iodine_websocket_max_msg_size = 0;
 uint8_t iodine_websocket_timeout = 0;
 
 #define set_uuid(object, request)                                              \
-  rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->metadata.fd))
+  rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->fd))
 
 inline static intptr_t get_uuid(VALUE obj) {
   VALUE i = rb_ivar_get(obj, fd_var_id);
@@ -165,7 +165,7 @@ return `true`, otherwise `false` will be returned.
 */
 static VALUE iodine_ws_has_pending(VALUE self) {
   intptr_t uuid = get_uuid(self);
-  return sock_packets_pending(uuid) ? Qtrue : Qfalse;
+  return sock_has_pending(uuid) ? Qtrue : Qfalse;
 }
 
 /**
@@ -236,7 +236,7 @@ static VALUE iodine_defer(int argc, VALUE *argv, VALUE self) {
     return Qfalse;
   Registry.add(block);
 
-  server_task(fd, iodine_perform_defer, (void *)block, iodine_defer_fallback);
+  facil_defer(fd, iodine_perform_defer, (void *)block, iodine_defer_fallback);
   return block;
 }
 
@@ -305,16 +305,14 @@ static void iodine_ws_perform_each_task(intptr_t fd, protocol_s *protocol,
   if (handler)
     RubyCaller.call2((VALUE)data, call_proc_id, 1, &handler);
 }
-static void iodine_ws_finish_each_task(intptr_t fd, protocol_s *protocol,
-                                       void *data) {
+static void iodine_ws_finish_each_task(intptr_t fd, void *data) {
   (void)(fd);
-  (void)(protocol);
   Registry.remove((VALUE)data);
 }
 
 inline static void iodine_ws_run_each(intptr_t origin, VALUE block) {
-  server_each(origin, WEBSOCKET_ID_STR, iodine_ws_perform_each_task,
-              (void *)block, iodine_ws_finish_each_task);
+  facil_each(origin, WEBSOCKET_ID_STR, iodine_ws_perform_each_task,
+             (void *)block, iodine_ws_finish_each_task);
 }
 
 /** Performs a block of code for each websocket connection. The function returns
@@ -395,7 +393,7 @@ static VALUE iodine_class_defer(VALUE self, VALUE ws_uuid) {
     return Qfalse;
   Registry.add(block);
 
-  server_task(fd, iodine_perform_defer, (void *)block, iodine_defer_fallback);
+  facil_defer(fd, iodine_perform_defer, (void *)block, iodine_defer_fallback);
   return block;
 }
 
