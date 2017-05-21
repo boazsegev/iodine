@@ -393,7 +393,7 @@ static void *on_rack_request_in_GVL(http_request_s *request) {
   // send the request body.
   if (ruby2c_response_send(response, rbresponse, env))
     goto internal_error;
-finish:
+
   Registry.remove(rbresponse);
   Registry.remove(env);
   http_response_finish(response);
