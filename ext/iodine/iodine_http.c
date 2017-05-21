@@ -142,31 +142,31 @@ static inline VALUE copy2env(http_request_s *request) {
         strncasecmp("content-length", header.name, 14) == 0) {
       rb_hash_aset(
           env, CONTENT_LENGTH,
-          rb_enc_str_new(header.data, header.data_len, BinaryEncoding));
+          rb_enc_str_new(header.value, header.value_len, BinaryEncoding));
       header = http_request_header_next(request);
       continue;
     } else if (header.name_len == 12 &&
                strncasecmp("content-type", header.name, 12) == 0) {
       rb_hash_aset(
           env, CONTENT_TYPE,
-          rb_enc_str_new(header.data, header.data_len, BinaryEncoding));
+          rb_enc_str_new(header.value, header.value_len, BinaryEncoding));
       header = http_request_header_next(request);
       continue;
     } else if (header.name_len == 27 &&
                strncasecmp("x-forwarded-proto", header.name, 27) == 0) {
-      if (header.data_len >= 5 && !strncasecmp(header.data, "https", 5)) {
+      if (header.value_len >= 5 && !strncasecmp(header.value, "https", 5)) {
         rb_hash_aset(env, R_URL_SCHEME, HTTPS_SCHEME);
-      } else if (header.data_len == 4 &&
-                 *((uint32_t *)header.data) == *((uint32_t *)"http")) {
+      } else if (header.value_len == 4 &&
+                 *((uint32_t *)header.value) == *((uint32_t *)"http")) {
         rb_hash_aset(env, R_URL_SCHEME, HTTP_SCHEME);
       } else {
         rb_hash_aset(
             env, R_URL_SCHEME,
-            rb_enc_str_new(header.data, header.data_len, BinaryEncoding));
+            rb_enc_str_new(header.value, header.value_len, BinaryEncoding));
       }
     } else if (header.name_len == 9 &&
                strncasecmp("forwarded", header.name, 9) == 0) {
-      pos = (char *)header.data;
+      pos = (char *)header.value;
       if (pos) {
         while (*pos) {
           if (((*(pos++) | 32) == 'p') && ((*(pos++) | 32) == 'r') &&
@@ -201,8 +201,9 @@ static inline VALUE copy2env(http_request_s *request) {
     }
     *pos = 0;
     rb_str_set_len(hname, 5 + header.name_len);
-    rb_hash_aset(env, hname,
-                 rb_enc_str_new(header.data, header.data_len, BinaryEncoding));
+    rb_hash_aset(
+        env, hname,
+        rb_enc_str_new(header.value, header.value_len, BinaryEncoding));
     header = http_request_header_next(request);
   }
   return env;
@@ -231,7 +232,7 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE _res) {
       pos_e++;
     http_response_write_header(
         (void *)_res, .name = RSTRING_PTR(key), .name_len = RSTRING_LEN(key),
-        .data = val_s + pos_s, .data_len = pos_e - pos_s);
+        .value = val_s + pos_s, .value_len = pos_e - pos_s);
     // fprintf(stderr, "For_each - headers: wrote header\n");
     // move forward (skip the '\n' if exists)
     pos_s = pos_e + 1;
