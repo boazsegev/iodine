@@ -100,6 +100,7 @@ static inline VALUE copy2env(http_request_s *request) {
   rb_hash_aset(env, HTTP_VERSION, hname);
 
   // rack_declare(REMOTE_ADDR);
+  // rb_hash_aset(env, REMOTE_ADDR, hname);
 
   /* setup input IO + hijack support */
   rb_hash_aset(env, R_INPUT, (hname = RackIO.create(request, env)));
@@ -502,8 +503,11 @@ int iodine_http_review(void) {
         TYPE(rbport) != Qnil)
       rb_raise(rb_eTypeError,
                "The port variable must be either a Fixnum or a String.");
-    if (TYPE(rbport) == T_FIXNUM)
+    if (TYPE(rbport) == T_FIXNUM) {
       rbport = rb_funcall2(rbport, rb_intern("to_s"), 0, NULL);
+      // rb_ivar_set(self, rb_intern("_port"), port);
+      rb_iv_set(IodineHttp, "@port", rbport);
+    }
     if (TYPE(rbport) == T_STRING)
       port = StringValueCStr(rbport);
     // review address

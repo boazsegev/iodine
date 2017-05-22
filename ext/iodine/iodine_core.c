@@ -454,6 +454,7 @@ static VALUE iodine_listen_dyn_protocol(VALUE self, VALUE port, VALUE handler) {
     rb_raise(rb_eTypeError, "The port variable must be a Fixnum or a String.");
   if (TYPE(port) == T_FIXNUM)
     port = rb_funcall2(port, to_s_method_id, 0, NULL);
+  rb_ivar_set(self, rb_intern("_port"), port);
   // listen
   facil_listen(.port = StringValueCStr(port), .udata = (void *)handler,
                .on_open = on_open_dyn_protocol,
