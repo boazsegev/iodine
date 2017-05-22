@@ -153,15 +153,15 @@ static VALUE dyn_set_timeout(VALUE self, VALUE timeout) {
   return self;
 }
 
-// /**
-// Returns the connection's timeout.
-// */
-// static VALUE dyn_get_timeout(VALUE self) {
-//   intptr_t fd = iodine_get_fd(self);
-//   uint8_t tout = server_get_timeout(fd);
-//   unsigned int tout_int = tout;
-//   return UINT2NUM(tout_int);
-// }
+/**
+Returns the connection's timeout.
+*/
+static VALUE dyn_get_timeout(VALUE self) {
+  intptr_t fd = iodine_get_fd(self);
+  uint8_t tout = facil_get_timeout(fd);
+  unsigned int tout_int = tout;
+  return UINT2NUM(tout_int);
+}
 
 /**
 Closes a connection.
@@ -426,7 +426,7 @@ void Init_DynamicProtocol(void) {
   rb_define_method(DynamicProtocol, "each", dyn_each, 0);
   rb_define_method(DynamicProtocol, "upgrade", dyn_upgrade, 1);
   rb_define_method(DynamicProtocol, "timeout=", dyn_set_timeout, 1);
-  // rb_define_method(DynamicProtocol, "timeout", dyn_get_timeout, 0);
+  rb_define_method(DynamicProtocol, "timeout", dyn_get_timeout, 0);
 }
 
 /* *****************************************************************************
@@ -640,12 +640,13 @@ static void *srv_start_no_gvl(void *_) {
 #ifdef _SC_NPROCESSORS_ONLN
   size_t cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
   if (processes <= 0)
-    processes = (cpu_count >> 1) ? (cpu_count >> 1) : 1;
+    processes = 0;
   if (threads <= 0)
-    threads = (cpu_count >> 1) ? (cpu_count >> 1) : 1;
+    threads = 0;
 
-  if (cpu_count > 0 && (((size_t)processes << 1) < cpu_count ||
-                        (size_t)processes > (cpu_count << 1)))
+  if (processes && threads && cpu_count > 0 &&
+      (((size_t)processes << 1) < cpu_count ||
+       (size_t)processes > (cpu_count << 1)))
     fprintf(
         stderr,
         "* Performance warnning:\n"
@@ -660,9 +661,9 @@ static void *srv_start_no_gvl(void *_) {
         cpu_count, cpu_count);
 #else
   if (processes <= 0)
-    processes = 1;
+    processes = 0;
   if (threads <= 0)
-    threads = 1;
+    threads = 0;
 #endif
   sock_io_thread = 1;
   defer(iodine_start_io_thread, NULL, NULL);

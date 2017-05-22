@@ -677,7 +677,9 @@ void facil_run(struct facil_run_args args) {
   if (!args.threads)
     args.threads = 1;
   if (FACIL_PRINT_STATE) {
-    fprintf(stderr, "Server is running, press ^C to stop\n");
+    fprintf(stderr, "Server is running %u %s X %u %s, press ^C to stop\n",
+            args.processes, args.processes > 1 ? "workers" : "worker",
+            args.threads, args.threads > 1 ? "threads" : "thread");
     defer(print_pid, NULL, NULL);
   }
   defer(facil_init_run, &args, NULL);
