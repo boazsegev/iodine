@@ -31,8 +31,8 @@ Gem::Specification.new do |spec|
 
   spec.required_ruby_version = '>= 2.2.2' # for Rack
 
-  spec.add_dependency 'rack'
-  spec.add_dependency 'rake-compiler'
+  spec.add_dependency 'rack', '>= 2'
+  spec.add_dependency 'rake-compiler', '>= 1'
 
   spec.requirements << 'A Unix based system: Linux / macOS / BSD.'
   spec.requirements << 'An updated C compiler.'
@@ -41,7 +41,7 @@ Gem::Specification.new do |spec|
 
   spec.add_development_dependency 'bundler', '~> 1.10'
   spec.add_development_dependency 'rake', '~> 12.0'
-  spec.add_development_dependency 'minitest'
+  spec.add_development_dependency 'minitest', '>=1'
 
   # spec.post_install_message = "** WARNING!\n" \
   #                             "Iodine 0.2.0 is NOT an upgrade - it's a total rewrite, it's written in C specifically for Ruby MRI.\n\n" \

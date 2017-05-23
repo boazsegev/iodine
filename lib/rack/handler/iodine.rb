@@ -86,7 +86,7 @@ module Iodine
       @port
     end
     @port = ARGV[ARGV.index('-p') + 1] if ARGV.index('-p')
-    @port ||= 3000
+    @port ||= 3000.to_s
 
     # get/set the HTTP socket binding address. Defaults to `nil` (usually best).
     def self.address=(val)
@@ -112,15 +112,15 @@ module Iodine
       else
         @app = app
       end
-      @port = options[:Port] if options[:Port]
-      @port = options[:Address] if options[:Address]
+      @port = options[:Port].to_s if options[:Port]
+      @port = options[:Address].to_s if options[:Address]
       # provide Websocket features using Rack::Websocket
-      Rack.send :remove_const, :Websocket if defined?(Rack::Websocket)
-      Rack.const_set :Websocket, ::Iodine::Websocket
+      # Rack.send :remove_const, :Websocket if defined?(Rack::Websocket)
+      # Rack.const_set :Websocket, ::Iodine::Websocket
       # start Iodine
       Iodine.start
       # remove the Websocket features from Rack::Websocket
-      Rack.send :remove_const, :Websocket
+      # Rack.send :remove_const, :Websocket
       true
     end
     IODINE_RACK_LOADED = true

@@ -33,6 +33,8 @@ class ShootoutApp
       msg = {type: 'broadcast', payload: payload}.to_json
       # Iodine::Websocket.each {|ws| ws.write msg}
       Iodine::Websocket.each_write(msg) # {|ws| true }
+      # each_write(msg) # {|ws| true }
+      # write msg
       write({type: "broadcastResult", payload: payload}.to_json)
     end
   end
@@ -46,6 +48,9 @@ Iodine::Rack.public = nil
 Iodine::Rack.app = ShootoutApp
 Iodine.start
 
+# websocket-bench broadcast ws://127.0.0.1:3000/ --concurrent 10 --sample-size 100 --step-size 1000 --limit-percentile 95 --limit-rtt 250ms --initial-clients 1000
+
+#
 # server.on_http= Proc.new do |env|
 #   # [200, {"Content-Length".freeze => "12".freeze}, ["Hello World!".freeze]];
 #   if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze

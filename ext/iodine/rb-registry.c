@@ -5,8 +5,9 @@ License: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #include "rb-registry.h"
-#include "spnlock.h"
 #include <ruby.h>
+
+#include "spnlock.inc"
 
 // #define RUBY_REG_DBG
 
@@ -125,6 +126,7 @@ finish:
 
 // a callback for the GC (marking active objects)
 static void registry_mark(void *ignore) {
+  (void)ignore;
 #ifdef RUBY_REG_DBG
   Registry.print();
 #endif
@@ -140,6 +142,7 @@ static void registry_mark(void *ignore) {
 
 // clear the registry (end of lifetime)
 static void registry_clear(void *ignore) {
+  (void)ignore;
   lock_registry();
   struct Object *line;
   struct Object *to_free;
@@ -195,7 +198,7 @@ static void print(void) {
   long index = 0;
   while (line) {
     fprintf(stderr, "[%lu] => %d X obj %lu type %d at %p\n", index++,
-            line->count, line->obj, TYPE(line->obj), line);
+            line->count, line->obj, TYPE(line->obj), (void *)line);
     line = line->next;
   }
   fprintf(stderr, "Total of %lu registered objects being marked\n", index);

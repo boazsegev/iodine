@@ -17,9 +17,11 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <ruby/io.h>
 // clang-format on
 
-#include "libserver.h"
 #include "rb-call.h"
 #include "rb-registry.h"
+
+#include "facil.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

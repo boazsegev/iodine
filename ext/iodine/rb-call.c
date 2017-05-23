@@ -25,14 +25,15 @@ struct RubyArgCall {
 };
 
 // running the actual method call
-static VALUE run_ruby_method_unsafe(VALUE _tsk) {
-  struct RubyArgCall *task = (void *)_tsk;
+static VALUE run_ruby_method_unsafe(VALUE tsk_) {
+  struct RubyArgCall *task = (void *)tsk_;
   return rb_funcall2(task->obj, task->method, task->argc, task->argv);
 }
 
 ////////////////////////////////////////////////////////////////////////////
 // Handling exceptions (printing the backtrace doesn't really work well).
-static void *handle_exception(void *_) {
+static void *handle_exception(void *ignr) {
+  (void)ignr;
   VALUE exc = rb_errinfo();
   if (exc != Qnil) {
     VALUE msg = RubyCaller.call(exc, rb_intern("message"));
@@ -44,8 +45,9 @@ static void *handle_exception(void *_) {
               (int)RSTRING_LEN(exc_class), RSTRING_PTR(exc_class),
               (int)RSTRING_LEN(msg), RSTRING_PTR(msg), StringValueCStr(bt));
     } else {
-      fprintf(stderr, "Iodine caught an unprotected exception - %.*s: %.*s\n"
-                      "No backtrace available.\n",
+      fprintf(stderr,
+              "Iodine caught an unprotected exception - %.*s: %.*s\n"
+              "No backtrace available.\n",
               (int)RSTRING_LEN(exc_class), RSTRING_PTR(exc_class),
               (int)RSTRING_LEN(msg), RSTRING_PTR(msg));
     }
@@ -56,8 +58,8 @@ static void *handle_exception(void *_) {
 }
 
 // GVL gateway
-static void *run_ruby_method_within_gvl(void *_tsk) {
-  struct RubyArgCall *task = _tsk;
+static void *run_ruby_method_within_gvl(void *tsk_) {
+  struct RubyArgCall *task = tsk_;
   int state = 0;
   task->returned = rb_protect(run_ruby_method_unsafe, (VALUE)(task), &state);
   if (state)

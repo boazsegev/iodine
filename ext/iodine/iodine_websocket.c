@@ -25,7 +25,7 @@ size_t iodine_websocket_max_msg_size = 0;
 uint8_t iodine_websocket_timeout = 0;
 
 #define set_uuid(object, request)                                              \
-  rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->metadata.fd))
+  rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->fd))
 
 inline static intptr_t get_uuid(VALUE obj) {
   VALUE i = rb_ivar_get(obj, fd_var_id);
@@ -42,8 +42,8 @@ inline static ws_s *get_ws(VALUE obj) {
   return (ws_s *)FIX2ULONG(i);
 }
 
-#define set_handler(ws, handler) websocket_set_udata((ws), (VALUE)handler)
-#define get_handler(ws) ((VALUE)websocket_get_udata((ws_s *)(ws)))
+#define set_handler(ws, handler) websocket_udata_set((ws), (VALUE)handler)
+#define get_handler(ws) ((VALUE)websocket_udata((ws_s *)(ws)))
 
 /*******************************************************************************
 Buffer management - update to change the way the buffer is handled.
@@ -154,8 +154,8 @@ static VALUE iodine_ws_write(VALUE self, VALUE data) {
 /** Returns the number of active websocket connections (including connections
  * that are in the process of closing down). */
 static VALUE iodine_ws_count(VALUE self) {
-  ws_s *ws = get_ws(self);
-  return LONG2FIX(websocket_count(ws));
+  return LONG2FIX(websocket_count());
+  (void)self;
 }
 
 /**
@@ -165,7 +165,7 @@ return `true`, otherwise `false` will be returned.
 */
 static VALUE iodine_ws_has_pending(VALUE self) {
   intptr_t uuid = get_uuid(self);
-  return sock_packets_pending(uuid) ? Qtrue : Qfalse;
+  return sock_has_pending(uuid) ? Qtrue : Qfalse;
 }
 
 /**
@@ -236,7 +236,8 @@ static VALUE iodine_defer(int argc, VALUE *argv, VALUE self) {
     return Qfalse;
   Registry.add(block);
 
-  server_task(fd, iodine_perform_defer, (void *)block, iodine_defer_fallback);
+  facil_defer(.uuid = fd, .task = iodine_perform_defer, .arg = (void *)block,
+              .fallback = iodine_defer_fallback);
   return block;
 }
 
@@ -245,6 +246,8 @@ Websocket Multi-Write
 */
 
 static uint8_t iodine_ws_if_callback(ws_s *ws, void *block) {
+  if (!ws)
+    return 0;
   VALUE handler = get_handler(ws);
   uint8_t ret = 0;
   if (handler)
@@ -305,16 +308,15 @@ static void iodine_ws_perform_each_task(intptr_t fd, protocol_s *protocol,
   if (handler)
     RubyCaller.call2((VALUE)data, call_proc_id, 1, &handler);
 }
-static void iodine_ws_finish_each_task(intptr_t fd, protocol_s *protocol,
-                                       void *data) {
+static void iodine_ws_finish_each_task(intptr_t fd, void *data) {
   (void)(fd);
-  (void)(protocol);
   Registry.remove((VALUE)data);
 }
 
 inline static void iodine_ws_run_each(intptr_t origin, VALUE block) {
-  server_each(origin, WEBSOCKET_ID_STR, iodine_ws_perform_each_task,
-              (void *)block, iodine_ws_finish_each_task);
+  facil_each(.origin = origin, .service = WEBSOCKET_ID_STR,
+             .task = iodine_ws_perform_each_task, .arg = (void *)block,
+             .on_complete = iodine_ws_finish_each_task);
 }
 
 /** Performs a block of code for each websocket connection. The function returns
@@ -395,7 +397,8 @@ static VALUE iodine_class_defer(VALUE self, VALUE ws_uuid) {
     return Qfalse;
   Registry.add(block);
 
-  server_task(fd, iodine_perform_defer, (void *)block, iodine_defer_fallback);
+  facil_defer(.uuid = fd, .task = iodine_perform_defer, .arg = (void *)block,
+              .fallback = iodine_defer_fallback);
   return block;
 }
 
@@ -413,6 +416,7 @@ void ws_on_close(ws_s *ws) {
   if (!handler)
     return;
   RubyCaller.call(handler, on_close_func_id);
+  set_ws(handler, Qnil);
   Registry.remove(handler);
 }
 void ws_on_shutdown(ws_s *ws) {

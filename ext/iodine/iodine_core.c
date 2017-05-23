@@ -133,7 +133,7 @@ Returns `false` on error and `self` on success.
 */
 static VALUE dyn_write_urgent(VALUE self, VALUE data) {
   intptr_t fd = iodine_get_fd(self);
-  if (sock_write2(.fduuid = fd, .buffer = RSTRING(data),
+  if (sock_write2(.uuid = fd, .buffer = RSTRING(data),
                   .length = RSTRING_LEN(data), .urgent = 1))
     return Qfalse;
   return self;
@@ -149,7 +149,7 @@ static VALUE dyn_set_timeout(VALUE self, VALUE timeout) {
   unsigned int tout = FIX2UINT(timeout);
   if (tout > 255)
     tout = 255;
-  server_set_timeout(fd, tout);
+  facil_set_timeout(fd, tout);
   return self;
 }
 
@@ -158,7 +158,7 @@ Returns the connection's timeout.
 */
 static VALUE dyn_get_timeout(VALUE self) {
   intptr_t fd = iodine_get_fd(self);
-  uint8_t tout = server_get_timeout(fd);
+  uint8_t tout = facil_get_timeout(fd);
   unsigned int tout_int = tout;
   return UINT2NUM(tout_int);
 }
@@ -211,7 +211,8 @@ static VALUE dyn_defer(VALUE self) {
     return Qfalse;
   Registry.add(block);
   intptr_t fd = iodine_get_fd(self);
-  server_task(fd, dyn_perform_defer, (void *)block, dyn_defer_fallback);
+  facil_defer(.uuid = fd, .task = dyn_perform_defer, .arg = (void *)block,
+              .fallback = dyn_defer_fallback);
   return self;
 }
 
@@ -221,16 +222,15 @@ static void dyn_perform_each_task(intptr_t fd, protocol_s *protocol,
   RubyCaller.call2((VALUE)data, call_proc_id, 1,
                    &(dyn_prot(protocol)->handler));
 }
-static void dyn_finish_each_task(intptr_t fd, protocol_s *protocol,
-                                 void *data) {
-  (void)(protocol);
+static void dyn_finish_each_task(intptr_t fd, void *data) {
   (void)(fd);
   Registry.remove((VALUE)data);
 }
 
 void iodine_run_each(intptr_t origin, const char *service, VALUE block) {
-  server_each(origin, service, dyn_perform_each_task, (void *)block,
-              dyn_finish_each_task);
+  facil_each(.origin = origin, .service = service,
+             .task = dyn_perform_each_task, .arg = (void *)block,
+             .on_complete = dyn_finish_each_task);
 }
 
 /**
@@ -252,8 +252,9 @@ static VALUE dyn_each(VALUE self) {
     return Qfalse;
   Registry.add(block);
   intptr_t fd = iodine_get_fd(self);
-  server_each(fd, iodine_protocol_service, dyn_perform_each_task, (void *)block,
-              dyn_finish_each_task);
+  facil_each(.origin = fd, .service = iodine_protocol_service,
+             .task = dyn_perform_each_task, .arg = (void *)block,
+             .on_complete = dyn_finish_each_task);
   return self;
 }
 
@@ -275,8 +276,9 @@ static VALUE dyn_class_each(VALUE self) {
   if (block == Qnil)
     return Qfalse;
   Registry.add(block);
-  server_each(-1, iodine_protocol_service, dyn_perform_each_task, (void *)block,
-              dyn_finish_each_task);
+  facil_each(.origin = -1, .service = iodine_protocol_service,
+             .task = dyn_perform_each_task, .arg = (void *)block,
+             .on_complete = dyn_finish_each_task);
   return self;
 }
 
@@ -367,7 +369,7 @@ static inline protocol_s *dyn_set_protocol(intptr_t fduuid, VALUE handler,
     Registry.remove(handler);
     return NULL;
   }
-  server_set_timeout(fduuid, timeout);
+  facil_set_timeout(fduuid, timeout);
   *protocol = (dyn_protocol_s){
       .handler = handler,
       .protocol.on_data = dyn_protocol_on_data,
@@ -456,11 +458,12 @@ static VALUE iodine_listen_dyn_protocol(VALUE self, VALUE port, VALUE handler) {
     rb_raise(rb_eTypeError, "The port variable must be a Fixnum or a String.");
   if (TYPE(port) == T_FIXNUM)
     port = rb_funcall2(port, to_s_method_id, 0, NULL);
+  rb_ivar_set(self, rb_intern("_port"), port);
   // listen
-  server_listen(.port = StringValueCStr(port), .udata = (void *)handler,
-                .on_open = on_open_dyn_protocol,
-                .on_start = on_server_start_for_handler,
-                .on_finish = on_server_on_finish_for_handler);
+  facil_listen(.port = StringValueCStr(port), .udata = (void *)handler,
+               .on_open = on_open_dyn_protocol,
+               .on_start = on_server_start_for_handler,
+               .on_finish = on_server_on_finish_for_handler);
   return self;
 }
 
@@ -489,7 +492,7 @@ VALUE iodine_upgrade2basic(intptr_t fduuid, VALUE handler) {
   }
   protocol_s *protocol = dyn_set_protocol(fduuid, handler, timeout);
   if (protocol) {
-    if (server_switch_protocol(fduuid, protocol))
+    if (facil_attach(fduuid, protocol))
       dyn_protocol_on_close(protocol);
     return handler;
   }
@@ -500,6 +503,11 @@ VALUE iodine_upgrade2basic(intptr_t fduuid, VALUE handler) {
 Iodine Task Management
 */
 
+static void iodine_run_once2(void *block, void *ignr) {
+  (void)ignr;
+  RubyCaller.call((VALUE)block, call_proc_id);
+  Registry.remove((VALUE)block);
+}
 static void iodine_run_once(void *block) {
   RubyCaller.call((VALUE)block, call_proc_id);
   Registry.remove((VALUE)block);
@@ -525,10 +533,8 @@ static VALUE iodine_run_async(VALUE self) {
   if (block == Qnil)
     return Qfalse;
   Registry.add(block);
-  if (async_run(iodine_run_once, (void *)block)) {
-    server_run_after(1, iodine_run_once, (void *)block);
-    ;
-  }
+  if (defer(iodine_run_once2, (void *)block, NULL))
+    perror("ERROR: dropped defered task");
   return block;
 }
 
@@ -551,7 +557,7 @@ static VALUE iodine_run_after(VALUE self, VALUE milliseconds) {
   if (block == Qnil)
     return Qfalse;
   Registry.add(block);
-  server_run_after(milli, iodine_run_once, (void *)block);
+  facil_run_every(milli, 1, iodine_run_once, (void *)block, NULL);
   return block;
 }
 /**
@@ -591,14 +597,14 @@ static VALUE iodine_run_every(int argc, VALUE *argv, VALUE self) {
   // requires a block to be passed
   rb_need_block();
   Registry.add(block);
-  server_run_every(milli, repeat, iodine_run_always, (void *)block,
-                   (void (*)(void *))Registry.remove);
+  facil_run_every(milli, repeat, iodine_run_always, (void *)block,
+                  (void (*)(void *))Registry.remove);
   return block;
 }
 
 static VALUE iodine_count(VALUE self) {
   (void)(self);
-  return ULONG2NUM(server_count(NULL));
+  return ULONG2NUM(facil_count(NULL));
 }
 /* *****************************************************************************
 Running the server
@@ -617,10 +623,15 @@ static void *iodine_io_thread(void *arg) {
   }
   return NULL;
 }
-static void iodine_start_io_thread(void) {
+static void iodine_start_io_thread(void *a1, void *a2) {
+  (void)a1;
+  (void)a2;
   pthread_create(&sock_io_pthread, NULL, iodine_io_thread, NULL);
 }
-static void iodine_join_io_thread(void) { pthread_join(sock_io_pthread, NULL); }
+static void iodine_join_io_thread(void) {
+  sock_io_thread = 0;
+  pthread_join(sock_io_pthread, NULL);
+}
 
 static void *srv_start_no_gvl(void *_) {
   (void)(_);
@@ -633,12 +644,13 @@ static void *srv_start_no_gvl(void *_) {
 #ifdef _SC_NPROCESSORS_ONLN
   size_t cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
   if (processes <= 0)
-    processes = (cpu_count >> 1) ? (cpu_count >> 1) : 1;
+    processes = 0;
   if (threads <= 0)
-    threads = (cpu_count >> 1) ? (cpu_count >> 1) : 1;
+    threads = 0;
 
-  if (cpu_count > 0 && (((size_t)processes << 1) < cpu_count ||
-                        (size_t)processes > (cpu_count << 1)))
+  if (processes && threads && cpu_count > 0 &&
+      (((size_t)processes << 1) < cpu_count ||
+       (size_t)processes > (cpu_count << 1)))
     fprintf(
         stderr,
         "* Performance warnning:\n"
@@ -653,22 +665,17 @@ static void *srv_start_no_gvl(void *_) {
         cpu_count, cpu_count);
 #else
   if (processes <= 0)
-    processes = 1;
+    processes = 0;
   if (threads <= 0)
-    threads = 1;
+    threads = 0;
 #endif
   sock_io_thread = 1;
-  server_run(.threads = threads, .processes = processes,
-             .on_init = iodine_start_io_thread,
-             .on_finish = iodine_join_io_thread);
-  sock_io_thread = 0;
+  defer(iodine_start_io_thread, NULL, NULL);
+  facil_run(.threads = threads, .processes = processes,
+            .on_finish = iodine_join_io_thread);
   return NULL;
 }
 
-static void unblck(void *_) {
-  (void)(_);
-  server_stop();
-}
 /**
 Starts the Iodine event loop. This will hang the thread until an interrupt
 (`^C`) signal is received.
@@ -680,7 +687,7 @@ static VALUE iodine_start(VALUE self) {
     perror("Iodine couldn't start HTTP service... port busy? ");
     return Qnil;
   }
-  rb_thread_call_without_gvl2(srv_start_no_gvl, (void *)self, unblck, NULL);
+  rb_thread_call_without_gvl2(srv_start_no_gvl, (void *)self, NULL, NULL);
 
   return self;
 }

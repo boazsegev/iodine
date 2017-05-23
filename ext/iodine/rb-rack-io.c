@@ -63,7 +63,7 @@ static VALUE TCPSOCKET_CLASS;
 static ID for_fd_id;
 
 #define set_uuid(object, request)                                              \
-  rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->metadata.fd))
+  rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->fd))
 
 inline static intptr_t get_uuid(VALUE obj) {
   VALUE i = rb_ivar_get(obj, fd_var_id);
@@ -158,7 +158,7 @@ static VALUE strio_read(int argc, VALUE *argv, VALUE self) {
   } else {
     // make sure the buffer is binary encoded.
     rb_enc_associate(buffer, BinaryEncoding);
-    if (rb_str_capacity(buffer) < len)
+    if (rb_str_capacity(buffer) < (size_t)len)
       rb_str_resize(buffer, len);
   }
   // read the data.
@@ -173,7 +173,10 @@ no_data:
 }
 
 // Does nothing - this is controlled by the server.
-static VALUE strio_close(VALUE self) { return Qnil; }
+static VALUE strio_close(VALUE self) {
+  (void)self;
+  return Qnil;
+}
 
 // Rewinds the IO, so that it is read from the begining.
 static VALUE rio_rewind(VALUE self) {
@@ -282,7 +285,7 @@ static VALUE tfio_read(int argc, VALUE *argv, VALUE self) {
   } else {
     // make sure the buffer is binary encoded.
     rb_enc_associate(buffer, BinaryEncoding);
-    if (rb_str_capacity(buffer) < len)
+    if (rb_str_capacity(buffer) < (size_t)len)
       rb_str_resize(buffer, len);
   }
   // read the data.
@@ -298,7 +301,10 @@ no_data:
 }
 
 // Does nothing - this is controlled by the server.
-static VALUE tfio_close(VALUE self) { return Qnil; }
+static VALUE tfio_close(VALUE self) {
+  (void)self;
+  return Qnil;
+}
 
 // Passes each line of the input to the block. This should be avoided.
 static VALUE tfio_each(VALUE self) {
@@ -397,5 +403,5 @@ static void init_rack_io(void) {
 ////////////////////////////////////////////////////////////////////////////
 // the API interface
 struct _RackIO_ RackIO = {
-    .new = new_rack_io, .init = init_rack_io,
+    .create = new_rack_io, .init = init_rack_io,
 };
