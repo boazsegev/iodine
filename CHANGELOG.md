@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+#### Change log v.0.3.1
+
+**Gem Specification update**: We updated the gem specification to allow for Rack 1.x users and to update the gem description.
+
+***
+
 #### Change log v.0.3.0
 
 **`facil.io` C Core Update**: The C library core that drives Iodine [`facil.io`](http://facil.io) was updated to version 0.4.0 and Iodine follows closely on the heels of this update. The transition was easy enough and the API remains unchanged... but because the performance gain was so big and because it's a new code base, we opted to bump the minor release version.
