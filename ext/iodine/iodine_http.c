@@ -8,6 +8,9 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "iodine_websocket.h"
 #include "websockets.h"
 
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
 /* the Iodine::Rack HTTP server class*/
 VALUE IodineHttp;
 /* these three are used also by rb-rack-io.c */
@@ -37,6 +40,8 @@ static _Bool iodine_http_static_file_server = 0;
   rb_obj_freeze(rack_name);
 
 #define rack_autoset(rack_name) rack_set((rack_name), #rack_name)
+
+static uint8_t IODINE_IS_DEVELOPMENT_MODE = 0;
 
 static VALUE ENV_TEMPLATE;
 
@@ -99,8 +104,19 @@ static inline VALUE copy2env(http_request_s *request) {
   rb_hash_aset(env, SERVER_PROTOCOL, hname);
   rb_hash_aset(env, HTTP_VERSION, hname);
 
-  // rack_declare(REMOTE_ADDR);
-  // rb_hash_aset(env, REMOTE_ADDR, hname);
+  // Suppoer for Ruby web-console.
+  hname = rb_str_buf_new(64);
+  sock_peer_addr_s addrinfo = sock_peer_addr(request->fd);
+  if (addrinfo.addrlen &&
+      inet_ntop(
+          addrinfo.addr->sa_family,
+          addrinfo.addr->sa_family == AF_INET
+              ? (void *)&((struct sockaddr_in *)addrinfo.addr)->sin_addr
+              : (void *)&((struct sockaddr_in6 *)addrinfo.addr)->sin6_addr,
+          RSTRING_PTR(hname), 64)) {
+    rb_str_set_len(hname, strlen(RSTRING_PTR(hname)));
+    rb_hash_aset(env, REMOTE_ADDR, hname);
+  }
 
   /* setup input IO + hijack support */
   rb_hash_aset(env, R_INPUT, (hname = RackIO.create(request, env)));
@@ -483,6 +499,10 @@ Rack object API
 */
 
 int iodine_http_review(void) {
+  if ((getenv("RACK_ENV") && !strcasecmp(getenv("RACK_ENV"), "development")) ||
+      (getenv("RAILS_ENV") && !strcasecmp(getenv("RAILS_ENV"), "development")))
+    IODINE_IS_DEVELOPMENT_MODE = 1;
+
   rack_app_handler = rb_iv_get(IodineHttp, "@app");
   if (rack_app_handler != Qnil &&
       rb_respond_to(rack_app_handler, call_proc_id)) {
