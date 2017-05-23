@@ -42,8 +42,8 @@ inline static ws_s *get_ws(VALUE obj) {
   return (ws_s *)FIX2ULONG(i);
 }
 
-#define set_handler(ws, handler) websocket_set_udata((ws), (VALUE)handler)
-#define get_handler(ws) ((VALUE)websocket_get_udata((ws_s *)(ws)))
+#define set_handler(ws, handler) websocket_udata_set((ws), (VALUE)handler)
+#define get_handler(ws) ((VALUE)websocket_udata((ws_s *)(ws)))
 
 /*******************************************************************************
 Buffer management - update to change the way the buffer is handled.
@@ -154,8 +154,8 @@ static VALUE iodine_ws_write(VALUE self, VALUE data) {
 /** Returns the number of active websocket connections (including connections
  * that are in the process of closing down). */
 static VALUE iodine_ws_count(VALUE self) {
-  ws_s *ws = get_ws(self);
-  return LONG2FIX(websocket_count(ws));
+  return LONG2FIX(websocket_count());
+  (void)self;
 }
 
 /**
@@ -236,7 +236,8 @@ static VALUE iodine_defer(int argc, VALUE *argv, VALUE self) {
     return Qfalse;
   Registry.add(block);
 
-  facil_defer(fd, iodine_perform_defer, (void *)block, iodine_defer_fallback);
+  facil_defer(.uuid = fd, .task = iodine_perform_defer, .arg = (void *)block,
+              .fallback = iodine_defer_fallback);
   return block;
 }
 
@@ -245,6 +246,8 @@ Websocket Multi-Write
 */
 
 static uint8_t iodine_ws_if_callback(ws_s *ws, void *block) {
+  if (!ws)
+    return 0;
   VALUE handler = get_handler(ws);
   uint8_t ret = 0;
   if (handler)
@@ -311,8 +314,9 @@ static void iodine_ws_finish_each_task(intptr_t fd, void *data) {
 }
 
 inline static void iodine_ws_run_each(intptr_t origin, VALUE block) {
-  facil_each(origin, WEBSOCKET_ID_STR, iodine_ws_perform_each_task,
-             (void *)block, iodine_ws_finish_each_task);
+  facil_each(.origin = origin, .service = WEBSOCKET_ID_STR,
+             .task = iodine_ws_perform_each_task, .arg = (void *)block,
+             .on_complete = iodine_ws_finish_each_task);
 }
 
 /** Performs a block of code for each websocket connection. The function returns
@@ -393,7 +397,8 @@ static VALUE iodine_class_defer(VALUE self, VALUE ws_uuid) {
     return Qfalse;
   Registry.add(block);
 
-  facil_defer(fd, iodine_perform_defer, (void *)block, iodine_defer_fallback);
+  facil_defer(.uuid = fd, .task = iodine_perform_defer, .arg = (void *)block,
+              .fallback = iodine_defer_fallback);
   return block;
 }
 
@@ -411,6 +416,7 @@ void ws_on_close(ws_s *ws) {
   if (!handler)
     return;
   RubyCaller.call(handler, on_close_func_id);
+  set_ws(handler, Qnil);
   Registry.remove(handler);
 }
 void ws_on_shutdown(ws_s *ws) {

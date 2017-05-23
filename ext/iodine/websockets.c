@@ -176,11 +176,11 @@ static void on_ready(intptr_t fduuid, protocol_s *ws) {
     ((ws_s *)ws)->on_ready((ws_s *)ws);
 }
 
-static void on_open(intptr_t fd, protocol_s *ws, void *callback) {
-  (void)(fd);
-  if (callback && ws && ws->service == WEBSOCKET_ID_STR)
-    ((void (*)(void *))callback)(ws);
-}
+// static void on_open(intptr_t fd, protocol_s *ws, void *callback) {
+//   (void)(fd);
+//   if (callback && ws && ws->service == WEBSOCKET_ID_STR)
+//     ((void (*)(void *))callback)(ws);
+// }
 
 static void on_shutdown(intptr_t fd, protocol_s *ws) {
   (void)(fd);
@@ -577,9 +577,14 @@ static void websocket_write_impl(intptr_t fd, void *data, size_t len,
                                  char text, /* TODO: add client masking */
                                  char first, char last, char client) {
   if (len < 126) {
-    char buff[len + (client ? 6 : 2)];
-    len = websocket_encode(buff, data, len, text, first, last, client);
-    sock_write(fd, buff, len);
+    sock_buffer_s *sbuff = sock_buffer_checkout();
+    sbuff->len =
+        websocket_encode(sbuff->buf, data, len, text, first, last, client);
+    sock_buffer_send(fd, sbuff);
+    // // was:
+    // char buff[len + (client ? 6 : 2)];
+    // len = websocket_encode(buff, data, len, text, first, last, client);
+    // sock_write(fd, buff, len);
   } else if (len <= WS_MAX_FRAME_SIZE) {
     if (len >= BUFFER_PACKET_SIZE - 8) { // can't feet in sock buffer
       /* head MUST be 4 bytes */
@@ -641,7 +646,6 @@ ssize_t websocket_upgrade(websocket_settings_s settings) {
   ws->on_message = settings.on_message;
   ws->on_ready = settings.on_ready;
   ws->on_shutdown = settings.on_shutdown;
-
   // setup any user data
   ws->udata = settings.udata;
   // buffer limits
@@ -708,11 +712,13 @@ cleanup:
     ws->buffer = create_ws_buffer(ws);
     // update the timeout
     facil_set_timeout(ws->fd, settings.timeout);
-    // update the protocol object, cleanning up the old one
-    facil_attach(ws->fd, (protocol_s *)ws);
     // call the on_open callback
     if (settings.on_open)
-      facil_defer(ws->fd, on_open, (void *)settings.on_open, NULL);
+      settings.on_open(ws);
+    // facil_defer(.uuid = ws->fd, .task = on_open,
+    //             .arg = (void *)settings.on_open);
+    // update the protocol object, cleanning up the old one
+    facil_attach(ws->fd, (protocol_s *)ws);
     return 0;
   }
   http_response_finish(response);
@@ -723,12 +729,12 @@ cleanup:
   websocket_upgrade((websocket_settings_s){__VA_ARGS__})
 
 /** Returns the opaque user data associated with the websocket. */
-void *websocket_get_udata(ws_s *ws) { return ws->udata; }
+void *websocket_udata(ws_s *ws) { return ws->udata; }
 /** Returns the the process specific connection's UUID (see `libsock`). */
-intptr_t websocket_get_fduuid(ws_s *ws) { return ws->fd; }
+intptr_t websocket_uuid(ws_s *ws) { return ws->fd; }
 /** Sets the opaque user data associated with the websocket.
  * Returns the old value, if any. */
-void *websocket_set_udata(ws_s *ws, void *udata) {
+void *websocket_udata_set(ws_s *ws, void *udata) {
   void *old = ws->udata;
   ws->udata = udata;
   return old;
@@ -752,10 +758,7 @@ void websocket_close(ws_s *ws) {
 /**
 Counts the number of websocket connections.
 */
-size_t websocket_count(ws_s *ws) {
-  (void)(ws);
-  return facil_count(WEBSOCKET_ID_STR);
-}
+size_t websocket_count(void) { return facil_count(WEBSOCKET_ID_STR); }
 
 /*******************************************************************************
 Each Implementation
@@ -769,10 +772,10 @@ struct WSTask {
 };
 /** Performs a task on each websocket connection that shares the same process
  */
-static void perform_ws_task(intptr_t fd, protocol_s *_ws, void *_arg) {
+static void perform_ws_task(intptr_t fd, protocol_s *ws_, void *tsk_) {
   (void)(fd);
-  struct WSTask *tsk = _arg;
-  tsk->task((ws_s *)(_ws), tsk->arg);
+  struct WSTask *tsk = tsk_;
+  tsk->task((ws_s *)(ws_), tsk->arg);
 }
 /** clears away a wesbocket task. */
 static void finish_ws_task(intptr_t fd, void *arg) {
@@ -794,15 +797,15 @@ static void finish_ws_task(intptr_t fd, void *arg) {
 Performs a task on each websocket connection that shares the same process
 (except the originating `ws_s` connection which is allowed to be NULL).
  */
-void websocket_each(ws_s *ws_originator,
-                    void (*task)(ws_s *ws_target, void *arg), void *arg,
-                    void (*on_finish)(ws_s *ws_originator, void *arg)) {
+#undef websocket_each
+void websocket_each(struct websocket_each_args_s args) {
   struct WSTask *tsk = malloc(sizeof(*tsk));
-  tsk->arg = arg;
-  tsk->on_finish = on_finish;
-  tsk->task = task;
-  facil_each((ws_originator ? ws_originator->fd : -1), WEBSOCKET_ID_STR,
-             perform_ws_task, tsk, finish_ws_task);
+  tsk->arg = args.arg;
+  tsk->on_finish = args.on_finish;
+  tsk->task = args.task;
+  facil_each(.origin = (args.origin ? args.origin->fd : -1),
+             .service = WEBSOCKET_ID_STR, .task = perform_ws_task, .arg = tsk,
+             .on_complete = finish_ws_task);
 }
 /*******************************************************************************
 Multi-Write (direct broadcast) Implementation
@@ -844,8 +847,9 @@ static void ws_reduce_or_free_multi_write(void *buff) {
   if (!mw->count) {
     spn_unlock(&mw->lock);
     if (mw->on_finished) {
-      facil_defer(mw->origin, ws_mw_defered_on_finish, mw,
-                  ws_mw_defered_on_finish_fb);
+      facil_defer(.uuid = mw->origin, .task = ws_mw_defered_on_finish,
+                  .arg = mw, .fallback = ws_mw_defered_on_finish_fb,
+                  .task_type = FIO_PR_LOCK_WRITE);
     } else
       free(mw);
   } else
@@ -883,8 +887,11 @@ int websocket_write_each(struct websocket_write_each_args_s args) {
     return -1;
   struct websocket_multi_write *multi =
       malloc(sizeof(*multi) + args.length + 16 /* max head size + 2 */);
-  if (!multi)
+  if (!multi) {
+    if (args.on_finished)
+      defer((void (*)(void *, void *))args.on_finished, NULL, args.arg);
     return -1;
+  }
   *multi = (struct websocket_multi_write){
       .length = websocket_encode(multi->buffer, args.data, args.length,
                                  args.is_text, 1, 1, args.as_client),
@@ -897,8 +904,10 @@ int websocket_write_each(struct websocket_write_each_args_s args) {
       .count = 1,
   };
 
-  facil_each(multi->origin, WEBSOCKET_ID_STR,
-             (args.filter ? ws_check_multi_write : ws_direct_multi_write),
-             multi, ws_finish_multi_write);
+  facil_each(.origin = multi->origin, .service = WEBSOCKET_ID_STR,
+             .task_type = FIO_PR_LOCK_WRITE,
+             .task =
+                 (args.filter ? ws_check_multi_write : ws_direct_multi_write),
+             .arg = multi, .on_complete = ws_finish_multi_write);
   return 0;
 }

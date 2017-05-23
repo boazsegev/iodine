@@ -211,7 +211,8 @@ static VALUE dyn_defer(VALUE self) {
     return Qfalse;
   Registry.add(block);
   intptr_t fd = iodine_get_fd(self);
-  facil_defer(fd, dyn_perform_defer, (void *)block, dyn_defer_fallback);
+  facil_defer(.uuid = fd, .task = dyn_perform_defer, .arg = (void *)block,
+              .fallback = dyn_defer_fallback);
   return self;
 }
 
@@ -227,8 +228,9 @@ static void dyn_finish_each_task(intptr_t fd, void *data) {
 }
 
 void iodine_run_each(intptr_t origin, const char *service, VALUE block) {
-  facil_each(origin, service, dyn_perform_each_task, (void *)block,
-             dyn_finish_each_task);
+  facil_each(.origin = origin, .service = service,
+             .task = dyn_perform_each_task, .arg = (void *)block,
+             .on_complete = dyn_finish_each_task);
 }
 
 /**
@@ -250,8 +252,9 @@ static VALUE dyn_each(VALUE self) {
     return Qfalse;
   Registry.add(block);
   intptr_t fd = iodine_get_fd(self);
-  facil_each(fd, iodine_protocol_service, dyn_perform_each_task, (void *)block,
-             dyn_finish_each_task);
+  facil_each(.origin = fd, .service = iodine_protocol_service,
+             .task = dyn_perform_each_task, .arg = (void *)block,
+             .on_complete = dyn_finish_each_task);
   return self;
 }
 
@@ -273,8 +276,9 @@ static VALUE dyn_class_each(VALUE self) {
   if (block == Qnil)
     return Qfalse;
   Registry.add(block);
-  facil_each(-1, iodine_protocol_service, dyn_perform_each_task, (void *)block,
-             dyn_finish_each_task);
+  facil_each(.origin = -1, .service = iodine_protocol_service,
+             .task = dyn_perform_each_task, .arg = (void *)block,
+             .on_complete = dyn_finish_each_task);
   return self;
 }
 
