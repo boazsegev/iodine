@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+#### Change log v.0.3.0
+
+**`facil.io` C Core Update**: The C library core that drives Iodine [`facil.io`](http://facil.io) was updated to version 0.4.0 and Iodine follows closely on the heels of this update. The transition was easy enough and the API remains unchanged... but because the performance gain was so big and because it's a new code base, we opted to bump the minor release version.
+
+***
+
 #### Change log v.0.2.17
 
 **Performance**: Enhanced Performance for single threaded / blocking applications by adding a dedicated IO thread. This is related to issue #14.

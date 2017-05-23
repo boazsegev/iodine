@@ -29,7 +29,8 @@ elsif find_executable('gcc-4.9')
   $CPP = ENV['CPP'] = find_executable('g++-4.9') ? 'g++-4.9' : 'gcc-4.9'
   puts 'using gcc-4.9 compiler.'
 else
-  check_for_stdatomics
+  # check_for_stdatomics
+  puts 'using an unknown (old?) compiler... who knows if this will work out... we hope.'
 end
 
 $CFLAGS = '-std=c11 -O3 -Wall -DSERVER_DELAY_IO=1'
