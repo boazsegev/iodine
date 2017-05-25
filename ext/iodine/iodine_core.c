@@ -609,17 +609,18 @@ static VALUE iodine_count(VALUE self) {
 /* *****************************************************************************
 Running the server
 */
+#include "spnlock.inc"
 #include <pthread.h>
-
 static volatile int sock_io_thread = 0;
 static pthread_t sock_io_pthread;
 
 static void *iodine_io_thread(void *arg) {
   (void)arg;
-  static const struct timespec tm = {.tv_nsec = 16777216UL};
+  // static const struct timespec tm = {.tv_nsec = 524288UL};
   while (sock_io_thread) {
     sock_flush_all();
-    nanosleep(&tm, NULL);
+    throttle_thread(524288UL);
+    // nanosleep(&tm, NULL);
   }
   return NULL;
 }

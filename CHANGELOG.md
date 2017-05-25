@@ -10,6 +10,11 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.3.1
 
+**Update**:Follow `facil.io`'s update for healthier thread throttling and energy consumption.
+***
+
+#### Change log v.0.3.1
+
 **Fix**: Fixed a minor issue with the logging of responses where the size of the response is unknown (streamed).
 
 **Gem Specification update**: We updated the gem specification to allow for Rack 1.x users and to update the gem description.
