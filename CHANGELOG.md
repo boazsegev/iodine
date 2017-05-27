@@ -8,9 +8,29 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+#### Change log v.0.3.3
+
+**Update**: Now using `facil.io` v.0.4.1
+
+**Fix**: (from `facil.io`) fixed the default response `Date` (should have been "now", but wasn't initialized).
+
+**Compatibility**: (from `facil.io`) Now checks for HTTP/1.0 clients to determine connection persistence.
+
+**Compatibility**: (from `facil.io`) Added spaces after header names (`:` => `: `), since some parsers don't seem to read the RFC.
+
+***
+
+#### Change log v.0.3.2
+
+**Fix**: (from `facil.io`) fixed thread throttling for better energy conservation.
+
+**Fix**: (from `facil.io`) fixed stream response logging.
+
+***
+
 #### Change log v.0.3.1
 
-**Update**:Follow `facil.io`'s update for healthier thread throttling and energy consumption.
+**Update**: Follow `facil.io`'s update for healthier thread throttling and energy consumption.
 ***
 
 #### Change log v.0.3.1
