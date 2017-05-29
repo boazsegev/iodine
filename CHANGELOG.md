@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+#### Change log v.0.3.4
+
+**Fix**: (`sock`, `facil`, bscrypt) Add missing `static` keywords to prevent state collisions with other libraries.
+
+***
+
 #### Change log v.0.3.3
 
 **Update**: Now using `facil.io` v.0.4.1
