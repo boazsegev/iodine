@@ -83,6 +83,9 @@ end
 # ab -n 1000000 -c 2000 -k http://127.0.0.1:3000/
 # wrk -c400 -d5 -t12 http://localhost:3000/
 #
+# ab -n 1000000 -c 2000 -r http://127.0.0.1:3000/
+# wrk -c400 -d5 -t12 -H"Connection: close" http://localhost:3000/
+#
 # def cycle
 #   puts `wrk -c4000 -d5 -t12 http://localhost:3000/`
 #   sleep(2)

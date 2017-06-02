@@ -8,6 +8,14 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+#### Change log v.0.3.5
+
+**Fix**: (`sock`) Fixed an issue with the `sendfile` implementation on macOS and BSD, where medium to large files wouldn't be sent correctly.
+
+**Minor changes**: This release incorporates some more minor changes from the [`facil.io` 0.4.2 update](https://github.com/boazsegev/facil.io/releases/tag/v.0.4.2).
+
+***
+
 #### Change log v.0.3.4
 
 **Fix**: (`sock`, `facil`, bscrypt) Add missing `static` keywords to prevent state collisions with other libraries.
