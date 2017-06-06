@@ -616,11 +616,12 @@ static pthread_t sock_io_pthread;
 
 static void *iodine_io_thread(void *arg) {
   (void)arg;
+  struct timespec tm;
   // static const struct timespec tm = {.tv_nsec = 524288UL};
   while (sock_io_thread) {
     sock_flush_all();
-    throttle_thread(524288UL);
-    // nanosleep(&tm, NULL);
+    tm = (struct timespec){.tv_nsec = 524288UL, .tv_sec = 1};
+    nanosleep(&tm, NULL);
   }
   return NULL;
 }
