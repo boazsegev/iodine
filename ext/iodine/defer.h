@@ -74,6 +74,14 @@ Return value is ignored.
 */
 int defer_join_thread(void *p_thr);
 
+/**
+OVERRIDE THIS to replace the default pthread implementation.
+
+Throttles or reschedules the current running thread. Default implementation
+simply micro-sleeps.
+*/
+void defer_thread_throttle(unsigned long microsec);
+
 /* *****************************************************************************
 Child Process support (`fork`)
 ***************************************************************************** */
@@ -97,6 +105,8 @@ int defer_perform_in_fork(unsigned int process_count,
 /** Returns TRUE (1) if the forked thread pool hadn't been signaled to finish
  * up. */
 int defer_fork_is_active(void);
+/** Returns the process number for the current working proceess. 0 == parent. */
+int defer_fork_pid(void);
 
 #ifdef __cplusplus
 } /* closing brace for extern "C" */

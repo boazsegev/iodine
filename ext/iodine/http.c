@@ -9,6 +9,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "http.h"
 #include "http1.h"
 
+#include <signal.h>
 #include <string.h>
 #include <strings.h>
 #include <time.h>
@@ -54,13 +55,13 @@ int http_listen(const char *port, const char *address,
     fprintf(
         stderr,
         "ERROR: http_listen requires the .on_request parameter to be set\n");
-    exit(11);
+    kill(0, SIGINT), exit(11);
   }
   http_on_open_func on_open_callback = http_get_on_open_func(&arg_settings);
   if (!on_open_callback) {
     fprintf(stderr, "ERROR: The requested HTTP protocol version isn't "
                     "supported at the moment.\n");
-    exit(11);
+    kill(0, SIGINT), exit(11);
   }
   http_settings_s *settings = malloc(sizeof(*settings));
   *settings = arg_settings;
@@ -258,6 +259,25 @@ size_t http_date2str(char *target, struct tm *tmbuf) {
                  return -1;                                                    \
                  0;                                                            \
                }))
+static inline int hex2byte(uint8_t *dest, const uint8_t *source) {
+  if (source[0] >= '0' && source[0] <= '9')
+    *dest = (source[0] - '0');
+  else if ((source[0] >= 'a' && source[0] <= 'f') ||
+           (source[0] >= 'A' && source[0] <= 'F'))
+    *dest = (source[0] | 32) - 87;
+  else
+    return -1;
+  *dest <<= 4;
+  if (source[1] >= '0' && source[1] <= '9')
+    *dest |= (source[1] - '0');
+  else if ((source[1] >= 'a' && source[1] <= 'f') ||
+           (source[1] >= 'A' && source[1] <= 'F'))
+    *dest |= (source[1] | 32) - 87;
+  else
+    return -1;
+  return 0;
+}
+#undef hex_val_tmp
 ssize_t http_decode_url(char *dest, const char *url_data, size_t length) {
   char *pos = dest;
   const char *end = url_data + length;
@@ -269,7 +289,9 @@ ssize_t http_decode_url(char *dest, const char *url_data, size_t length) {
     } else if (*url_data == '%') {
       // decode hex value
       // this is a percent encoded value.
-      *(pos++) = (hex_val(url_data[1]) << 4) | hex_val(url_data[2]);
+      if (hex2byte((uint8_t *)pos, (uint8_t *)&url_data[1]))
+        return -1;
+      pos++;
       url_data += 3;
     } else
       *(pos++) = *(url_data++);
@@ -288,7 +310,9 @@ ssize_t http_decode_url_unsafe(char *dest, const char *url_data) {
     } else if (*url_data == '%') {
       // decode hex value
       // this is a percent encoded value.
-      *(pos++) = (hex_val(url_data[1]) << 4) | hex_val(url_data[2]);
+      if (hex2byte((uint8_t *)pos, (uint8_t *)&url_data[1]))
+        return -1;
+      pos++;
       url_data += 3;
     } else
       *(pos++) = *(url_data++);

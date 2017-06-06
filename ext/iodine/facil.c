@@ -8,6 +8,7 @@ Feel free to copy, use and enjoy according to the license provided.
 
 #include "evio.h"
 #include "facil.h"
+#include "fio_list.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -56,16 +57,22 @@ static inline void clear_connection_data_unsafe(intptr_t uuid,
 inline static protocol_s *protocol_try_lock(intptr_t fd,
                                             enum facil_protocol_lock_e type) {
   if (spn_trylock(&fd_data(fd).lock))
-    return NULL;
+    goto would_block;
   protocol_s *pr = fd_data(fd).protocol;
   if (!pr) {
     spn_unlock(&fd_data(fd).lock);
+    errno = EBADF;
     return NULL;
   }
-  if (spn_trylock(&prt_meta(pr).locks[type]))
-    pr = NULL;
+  if (spn_trylock(&prt_meta(pr).locks[type])) {
+    spn_unlock(&fd_data(fd).lock);
+    goto would_block;
+  }
   spn_unlock(&fd_data(fd).lock);
   return pr;
+would_block:
+  errno = EWOULDBLOCK;
+  return NULL;
 }
 /** See `facil_protocol_try_lock` for details. */
 inline static void protocol_unlock(protocol_s *pr,
@@ -363,9 +370,10 @@ listener_alloc(struct facil_listen_args settings) {
 inline static void listener_on_start(size_t fd) {
   intptr_t uuid = sock_fd2uuid(fd);
   if (uuid < 0)
-    fprintf(stderr, "ERROR: listening socket dropped?\n"), exit(4);
+    fprintf(stderr, "ERROR: listening socket dropped?\n"), kill(0, SIGINT),
+        exit(4);
   if (evio_add(fd, (void *)uuid) < 0)
-    perror("Couldn't register listening socket"), exit(4);
+    perror("Couldn't register listening socket"), kill(0, SIGINT), exit(4);
   fd_data(fd).active = facil_data->last_cycle;
   // call the on_init callback
   struct ListenerProtocol *listener =
@@ -540,7 +548,8 @@ static inline timer_protocol_s *timer_alloc(void (*task)(void *), void *arg,
 inline static void timer_on_server_start(int fd) {
   if (evio_add_timer(fd, (void *)sock_fd2uuid(fd),
                      prot2timer(fd_data(fd).protocol).milliseconds))
-    perror("Couldn't register a required timed event."), exit(4);
+    perror("Couldn't register a required timed event."), kill(0, SIGINT),
+        exit(4);
 }
 
 /**
@@ -579,6 +588,260 @@ error:
   else if (fd != -1)
     close(fd);
   return -1;
+}
+
+/* *****************************************************************************
+Cluster Messaging
+***************************************************************************** */
+/* cluster state management */
+static struct {
+  uintptr_t count;
+  fio_list_s handlers;
+  spn_lock_i lock;
+  struct facil_cluster_data_pipe {
+    intptr_t in;
+    intptr_t out;
+  } * pipes;
+} facil_cluster_data = {.handlers = FIO_LIST_INIT(facil_cluster_data.handlers),
+                        .lock = SPN_LOCK_INIT};
+
+/* internal support for the default pub/sub cluster engin */
+#pragma weak pubsub_cluster_init
+void pubsub_cluster_init(void) {}
+
+/* message handler */
+typedef struct {
+  fio_list_s list;
+  void (*on_message)(void *data, uint32_t len);
+  uint32_t msg_type;
+} fio_cluster_handler;
+
+/* message sending and protocol. */
+struct facil_cluster_msg_packet {
+  uint16_t count;
+  spn_lock_i lock;
+  struct facil_cluster_msg {
+    uint32_t len;
+    uint32_t msg_type;
+  } payload;
+  uint8_t data[];
+};
+
+/* pipe communication protocol object. */
+struct facil_cluster_protocol {
+  protocol_s protocol;
+  size_t mem_size;
+  size_t read;
+  struct facil_cluster_msg *msg;
+};
+
+/* cluster handling of message */
+static void facil_cluster_handle_msg(struct facil_cluster_msg *msg) {
+  fio_cluster_handler *hnd;
+  spn_lock(&facil_cluster_data.lock);
+  fio_list_for_each(fio_cluster_handler, list, hnd,
+                    facil_cluster_data.handlers) {
+    if (hnd->msg_type == msg->msg_type) {
+      hnd->on_message(msg + 1, msg->len - sizeof(*msg));
+    }
+  }
+  spn_unlock(&facil_cluster_data.lock);
+}
+
+/* cluster service ID */
+static char *facil_cluster_protocol_id = "facil_io_internal_cluster_protocol";
+
+/* cluster protocol on_close callback */
+static void facil_cluster_on_close(protocol_s *pr_) {
+  struct facil_cluster_protocol *pr = (struct facil_cluster_protocol *)pr_;
+  if (pr->msg)
+    free(pr->msg);
+  free(pr);
+#if FACIL_PRINT_STATE == 1
+  if (defer_fork_is_active())
+    fprintf(stderr, "ERROR: facil cluster member (%d) closed prematurely.\n",
+            defer_fork_pid());
+#endif
+}
+
+/* cluster protocol on_data callback */
+static void facil_cluster_on_data(intptr_t uuid, protocol_s *pr_) {
+  struct facil_cluster_protocol *pr = (struct facil_cluster_protocol *)pr_;
+  while (1) {
+    errno = 0;
+    if (pr->read < 8 || pr->read < pr->msg->len) {
+      ssize_t read = sock_read(uuid, (void *)((uintptr_t)pr->msg + pr->read),
+                               pr->mem_size - pr->read);
+      if (read <= 0) {
+        if (read < 0)
+          perror("ERROR: cluster pipe read error");
+        return;
+      }
+      pr->read += read;
+      if (pr->read < 8)
+        continue;
+      if (pr->mem_size < pr->msg->len) {
+        void *tmp = realloc(pr->msg, pr->msg->len);
+        if (!tmp)
+          perror("ERROR: (critical) cannot allocate memory for a clustered "
+                 "message."),
+              kill(0, SIGINT), exit(errno);
+        pr->msg = tmp;
+#if defined(FACIL_PRINT_STATE) && FACIL_PRINT_STATE == 1 && defined(DEBUG)
+        fprintf(stderr, "* Cluster (%d) Reallocated msg size to %u\n",
+                defer_fork_pid(), pr->msg->len);
+#endif
+        pr->mem_size = pr->msg->len;
+      }
+    }
+    if ((size_t)(pr->msg->len) <= pr->read) {
+      facil_cluster_handle_msg(pr->msg);
+      pr->read = pr->read - pr->msg->len;
+      if (pr->read)
+        memcpy(pr->msg, (void *)((uintptr_t)pr->msg + pr->msg->len), pr->read);
+    }
+  }
+}
+
+/* Registers process specific information */
+static void facil_cluster_register(void *arg1, void *arg2) {
+  (void)arg1;
+  (void)arg2;
+  if (facil_cluster_data.count < 2)
+    return;
+  // for (size_t i = 0; i < facil_cluster_data.count; i++) {
+  //   if (i == (size_t)defer_fork_pid())
+  //     continue;
+  //   sock_close(facil_cluster_data.pipes[i].in);
+  // }
+  // sock_close(facil_cluster_data.pipes[defer_fork_pid()].out);
+  struct facil_cluster_protocol *pr = malloc(sizeof(*pr));
+  if (!pr)
+    perror("ERROR: (critical) cannot allocate memory for cluster."),
+        kill(0, SIGINT), exit(errno);
+  *pr = (struct facil_cluster_protocol){
+      .protocol.service = facil_cluster_protocol_id,
+      .protocol.on_data = facil_cluster_on_data,
+      .protocol.on_close = facil_cluster_on_close,
+      .protocol.ping = listener_ping,
+  };
+  pr->msg = calloc(1, 1024);
+  pr->mem_size = 1024;
+  if (!pr->msg)
+    perror("ERROR: (critical) cannot allocate memory for cluster."),
+        kill(0, SIGINT), exit(errno);
+  facil_attach(facil_cluster_data.pipes[defer_fork_pid()].in, &pr->protocol);
+}
+
+static void facil_cluster_init(uint16_t count) {
+  if (facil_cluster_data.pipes || count < 2)
+    return;
+  facil_cluster_data.pipes =
+      malloc((sizeof(struct facil_cluster_data_pipe) * count));
+  if (!facil_cluster_data.pipes)
+    goto error;
+
+  static protocol_s stub_protocol = {.service = NULL, .ping = listener_ping};
+  stub_protocol.service = facil_cluster_protocol_id;
+
+  facil_cluster_data.count = count;
+  int p_tmp[2];
+
+  for (size_t i = 0; i < count; i++) {
+    if (pipe(p_tmp))
+      goto error;
+    sock_set_non_block(p_tmp[0]);
+    sock_set_non_block(p_tmp[1]);
+    facil_cluster_data.pipes[i].in = sock_open(p_tmp[0]);
+    facil_cluster_data.pipes[i].out = sock_open(p_tmp[1]);
+    facil_attach(facil_cluster_data.pipes[i].in, &stub_protocol);
+    facil_attach(facil_cluster_data.pipes[i].out, &stub_protocol);
+  }
+  pubsub_cluster_init();
+  defer(facil_cluster_register, NULL, NULL);
+  return;
+error:
+  perror("ERROR: (facil.io) Couldn't initialize cluster pipes");
+  kill(0, SIGINT), exit(errno);
+}
+
+static void facil_cluster_destroy(void) {
+  if (!facil_cluster_data.pipes)
+    return;
+  for (size_t i = 0; i < facil_cluster_data.count; i++) {
+    sock_close(facil_cluster_data.pipes[i].out);
+    sock_close(facil_cluster_data.pipes[i].in);
+  }
+
+  fio_cluster_handler *hnd;
+  while ((hnd = fio_list_pop(fio_cluster_handler, list,
+                             facil_cluster_data.handlers)))
+    free(hnd);
+  free(facil_cluster_data.pipes);
+  facil_cluster_data.pipes = NULL;
+}
+
+void facil_cluster_set_handler(uint32_t msg_type,
+                               void (*on_message)(void *data, uint32_t len)) {
+  fio_cluster_handler *hnd;
+  spn_lock(&facil_cluster_data.lock);
+  fio_list_for_each(fio_cluster_handler, list, hnd,
+                    facil_cluster_data.handlers) {
+    if (hnd->msg_type == msg_type) {
+      hnd->on_message = on_message;
+      spn_unlock(&facil_cluster_data.lock);
+      return;
+    }
+  }
+  hnd = malloc(sizeof(*hnd));
+  *hnd = (fio_cluster_handler){.msg_type = msg_type, .on_message = on_message};
+  fio_list_push(fio_cluster_handler, list, facil_cluster_data.handlers, hnd);
+  spn_unlock(&facil_cluster_data.lock);
+}
+
+static void facil_msg_free(void *msg_) {
+  struct facil_cluster_msg_packet *msg = msg_;
+  spn_lock(&msg->lock);
+  msg->count--;
+  if (msg->count) {
+    spn_unlock(&msg->lock);
+    return;
+  }
+  free(msg);
+}
+int facil_cluster_send(uint32_t msg_type, void *data, uint32_t len) {
+  if (!defer_fork_is_active()) {
+#ifdef DEBUG
+    fprintf(stderr,
+            "WARNING: (debug, ignored) `facil_cluster_send` can only be "
+            "called while facil.io is running.\n");
+#endif
+    return -1;
+  }
+  if (facil_cluster_data.count < 2)
+    return 0;
+  if (!data || !len)
+    return -1;
+  struct facil_cluster_msg_packet *msg = malloc(len + sizeof(*msg));
+  if (!msg)
+    return -1;
+  msg->count = facil_cluster_data.count - 1;
+  msg->lock = SPN_LOCK_INIT;
+  msg->payload.len = len + sizeof(msg->payload);
+  msg->payload.msg_type = msg_type;
+  memcpy(msg->data, data, len);
+  for (int i = 0; i < (int)facil_cluster_data.count; i++) {
+    if (defer_fork_pid() == i)
+      continue;
+    if (sock_write2(.uuid = facil_cluster_data.pipes[i].out, .buffer = msg,
+                    .offset =
+                        ((uintptr_t) &
+                         (((struct facil_cluster_msg_packet *)(0))->payload)),
+                    .length = msg->payload.len, .move = 1,
+                    .dealloc = facil_msg_free))
+      perror("ERROR: Cluster `write` failed");
+  }
+  return 0;
 }
 
 /* *****************************************************************************
@@ -685,6 +948,7 @@ static void facil_cleanup(void *arg) {
   ((struct facil_run_args *)arg)->on_finish();
   defer_perform();
   evio_close();
+  facil_cluster_destroy();
 }
 
 #undef facil_run
@@ -707,6 +971,7 @@ void facil_run(struct facil_run_args args) {
     args.processes = 1;
   if (!args.threads)
     args.threads = 1;
+  facil_cluster_init(args.processes);
   if (FACIL_PRINT_STATE) {
     fprintf(stderr, "Server is running %u %s X %u %s, press ^C to stop\n",
             args.processes, args.processes > 1 ? "workers" : "worker",
@@ -747,8 +1012,11 @@ int facil_attach(intptr_t uuid, protocol_s *protocol) {
       protocol->on_shutdown = mock_on_ev;
     protocol->rsv = 0;
   }
-  if (!sock_isvalid(uuid))
+  if (!sock_isvalid(uuid)) {
+    if (protocol)
+      defer(deferred_on_close, protocol, NULL);
     return -1;
+  }
   spn_lock(&uuid_data(uuid).lock);
   protocol_s *old_protocol = uuid_data(uuid).protocol;
   uuid_data(uuid).protocol = protocol;
@@ -787,7 +1055,7 @@ time_t facil_last_tick(void) { return facil_data->last_cycle; }
  */
 protocol_s *facil_protocol_try_lock(intptr_t uuid,
                                     enum facil_protocol_lock_e type) {
-  if (sock_isvalid(uuid) || !uuid_data(uuid).protocol) {
+  if (!sock_isvalid(uuid) || !uuid_data(uuid).protocol) {
     errno = EBADF;
     return NULL;
   }

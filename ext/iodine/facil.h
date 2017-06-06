@@ -287,6 +287,8 @@ void facil_run(struct facil_run_args args);
  * The old protocol's `on_close` will be scheduled, if they both exist.
  *
  * Returns -1 on error and 0 on success.
+ *
+ * On error, the new protocol's `on_close` callback will be called.
  */
 int facil_attach(intptr_t uuid, protocol_s *protocol);
 
@@ -398,6 +400,37 @@ struct facil_each_args_s {
  */
 int facil_each(struct facil_each_args_s args);
 #define facil_each(...) facil_each((struct facil_each_args_s){__VA_ARGS__})
+
+/* *****************************************************************************
+Cluster specific API - cluster messaging.
+***************************************************************************** */
+
+/**
+Sets a callback / handler for a message of type `msg_type`.
+
+Callbacks are invoked using an O(n) matching, where `n` is the number of
+registered callbacks.
+
+The `msg_type` value can be any number less than 1,073,741,824. All values
+starting at 1,073,741,824 are reserved for internal use.
+*/
+void facil_cluster_set_handler(uint32_t msg_type,
+                               void (*on_message)(void *data, uint32_t len));
+
+/** Sends a message of type `msg_type` to the **other** cluster processes.
+
+`msg_type` should match a message type used when calling
+`facil_cluster_set_handler` to set the appropriate callback.
+
+Unknown `msg_type` values are silently ignored.
+
+The `msg_type` value can be any number less than 1,073,741,824. All values
+starting at 1,073,741,824 are reserved for internal use.
+
+Callbacks are invoked using an O(n) matching, where `n` is the number of
+registered callbacks.
+*/
+int facil_cluster_send(uint32_t msg_type, void *data, uint32_t len);
 
 /* *****************************************************************************
 Lower Level API - for special circumstances, use with care under .

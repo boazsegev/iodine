@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+#### Change log v.0.3.6
+
+**Update**: Now using `facil.io` v.0.4.3. This fixes some delays in websocket packet flushing (latency), as well as other internal polishes. It also promises some possible future feature extensions that could add a major performance boost.
+
+***
+
 #### Change log v.0.3.5
 
 **Fix**: (`sock`) Fixed an issue with the `sendfile` implementation on macOS and BSD, where medium to large files wouldn't be sent correctly.
