@@ -1,8 +1,10 @@
 ### Draft Inactivity Notice
 
-This proposed draft is only implemented by Iodine and hadn't seen external activity in the last four months. It is unlikely that this initiative will grow to become a community convention.
+This proposed draft is only implemented by Iodine and hadn't seen external activity in a while.
 
-I still believe it's important to separate the Websocket server from the Websocket application (much like Rack did for HTTP).n I hope that in the future a community convention for this separation of concerns can be achieved.
+Even though a number of other development teams (such as the teams for the Puma and Passenger server) mentioned that they plan to implements this draft, Iodine seems to be the only server currently implementing this draft and it is unlikely that this initiative will grow to become a community convention.
+
+I still believe it's important to separate the Websocket server from the Websocket API used by application developers and frameworks, much like Rack did for HTTP. I hope that in the future a community convention for this separation of concerns can be achieved.
 
 ---
 ## Rack Websockets
@@ -88,3 +90,36 @@ Server settings **MAY** (not required) be provided to allow for customization an
     The `on_close` callback will **not** be called while `on_message` or `on_open` callbacks are running.
 
     The `on_ready` callback might be called concurrently with the `on_message` callback, allowing data to be sent even while other data is being processed. Multi-threading considerations may apply.
+
+---
+
+## Rack Websockets: Iodine Extensions
+
+Iodine implements the described specification as well as adds the following methods to the Websocket Callback Object (in addition to `#write`, `#close` and `has_pending?`):
+
+* `Iodine::Websocket.each` (class method) will run a block of code for each connected Websocket Callback Object **in the current process**. This can be called from outside of a Websocket Callback Object as well.
+
+    ```ruby
+    Iodine::Websocket.each {|ws| write "hello" }
+    ```
+
+* `#each` (instance method) will run a block of code for each connected Websocket Callback Object **in the current process**, EXCEPT the calling websocket (self) object.
+
+    ```ruby
+    each {|ws| write "hello" }
+    ```
+
+* `Iodine::Websocket.defer(conn_id)` Schedules a block of code to run for the specified connection at a later time, (*if* the connection is open) while preventing concurrent code from running for the same connection object.
+
+    ```ruby
+    Iodine::Websocket.defer(self.conn_id) {|ws| write "still open" }
+    ```
+
+* `#defer` (instance method) Schedules a block of code to run for the specified connection at a later time, (*if* the connection is still open) while preventing concurrent code from running for the same connection object.
+
+    ```ruby
+    Iodine::Websocket.defer(self.conn_id) {|ws| write "still open" }
+    ```
+
+
+* `#count` (instance method) Returns the number of active websocket connections (including connections that are in the process of closing down).
