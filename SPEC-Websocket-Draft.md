@@ -100,26 +100,30 @@ Iodine implements the described specification as well as adds the following meth
 * `Iodine::Websocket.each` (class method) will run a block of code for each connected Websocket Callback Object **in the current process**. This can be called from outside of a Websocket Callback Object as well.
 
     ```ruby
-    Iodine::Websocket.each {|ws| write "hello" }
+    Iodine::Websocket.each {|ws| ws.write "hello" }
     ```
 
 * `#each` (instance method) will run a block of code for each connected Websocket Callback Object **in the current process**, EXCEPT the calling websocket (self) object.
 
     ```ruby
-    each {|ws| write "hello" }
+    each {|ws| ws.write "hello" }
     ```
 
 * `Iodine::Websocket.defer(conn_id)` Schedules a block of code to run for the specified connection at a later time, (*if* the connection is open) while preventing concurrent code from running for the same connection object.
 
     ```ruby
-    Iodine::Websocket.defer(self.conn_id) {|ws| write "still open" }
+    Iodine::Websocket.defer(self.conn_id) {|ws| ws.write "still open" }
     ```
 
 * `#defer` (instance method) Schedules a block of code to run for the specified connection at a later time, (*if* the connection is still open) while preventing concurrent code from running for the same connection object.
 
     ```ruby
-    Iodine::Websocket.defer(self.conn_id) {|ws| write "still open" }
+    defer { write "still open" }
     ```
 
 
 * `#count` (instance method) Returns the number of active websocket connections (including connections that are in the process of closing down).
+
+    ```ruby
+    write "#{count} clients connected"
+    ```
