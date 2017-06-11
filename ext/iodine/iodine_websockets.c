@@ -240,24 +240,24 @@ static VALUE iodine_defer(int argc, VALUE *argv, VALUE self) {
 }
 
 /* *****************************************************************************
-Websocket Multi-Write
+Websocket Multi-Write - Deprecated
 */
 
-static uint8_t iodine_ws_if_callback(ws_s *ws, void *block) {
-  if (!ws)
-    return 0;
-  VALUE handler = get_handler(ws);
-  uint8_t ret = 0;
-  if (handler)
-    ret = RubyCaller.call2((VALUE)block, iodine_call_proc_id, 1, &handler);
-  return ret && ret != Qnil && ret != Qfalse;
-}
-
-static void iodine_ws_write_each_complete(ws_s *ws, void *block) {
-  (void)ws;
-  if ((VALUE)block != Qnil)
-    Registry.remove((VALUE)block);
-}
+// static uint8_t iodine_ws_if_callback(ws_s *ws, void *block) {
+//   if (!ws)
+//     return 0;
+//   VALUE handler = get_handler(ws);
+//   uint8_t ret = 0;
+//   if (handler)
+//     ret = RubyCaller.call2((VALUE)block, iodine_call_proc_id, 1, &handler);
+//   return ret && ret != Qnil && ret != Qfalse;
+// }
+//
+// static void iodine_ws_write_each_complete(ws_s *ws, void *block) {
+//   (void)ws;
+//   if ((VALUE)block != Qnil)
+//     Registry.remove((VALUE)block);
+// }
 
 /**
  * Writes data to all the Websocket connections sharing the same process

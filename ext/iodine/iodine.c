@@ -169,7 +169,7 @@ static void *srv_start_no_gvl(void *_) {
       (((size_t)processes << 1) < cpu_count ||
        (size_t)processes > (cpu_count << 1)))
     fprintf(stderr,
-            "* Performance warnning:\n"
+            "\n* Performance warnning:\n"
             "  - This computer reports %lu available CPUs... "
             "they will not be fully utilized.\n",
             cpu_count);
@@ -181,6 +181,7 @@ static void *srv_start_no_gvl(void *_) {
 #endif
   sock_io_thread = 1;
   defer(iodine_start_io_thread, NULL, NULL);
+  fprintf(stderr, "\n");
   facil_run(.threads = threads, .processes = processes,
             .on_finish = iodine_join_io_thread);
   return NULL;

@@ -518,8 +518,8 @@ void *iodine_print_http_msg2_in_gvl(void *d_) {
   } *arg = d_;
   if (arg->www) {
     fprintf(stderr,
-            " * Iodine HTTP Server on port %s:\n"
-            " * Serving static files from %s\n",
+            "Iodine HTTP Server on port %s:\n"
+            " *    Serving static files from %s\n\n",
             StringValueCStr(arg->port), StringValueCStr(arg->www));
     Registry.remove(arg->www);
   }
@@ -540,7 +540,7 @@ void *iodine_print_http_msg_in_gvl(void *d_) {
             "\nStarting up Iodine HTTP Server on port %s:\n"
             " * Ruby v.%s\n * Iodine v.%s \n"
             " * %lu max concurrent connections / open files\n"
-            " * Serving static files from %s\n",
+            " * Serving static files from %s\n\n",
             StringValueCStr(arg->port), StringValueCStr(ruby_version),
             StringValueCStr(iodine_version), (size_t)sock_max_capacity(),
             StringValueCStr(arg->www));
@@ -549,7 +549,7 @@ void *iodine_print_http_msg_in_gvl(void *d_) {
     fprintf(stderr,
             "\nStarting up Iodine HTTP Server on port %s:\n"
             " * Ruby v.%s\n * Iodine v.%s \n"
-            " * %lu max concurrent connections / open files\n",
+            " * %lu max concurrent connections / open files\n\n",
             StringValueCStr(arg->port), StringValueCStr(ruby_version),
             StringValueCStr(iodine_version), (size_t)sock_max_capacity());
   Registry.remove(arg->port);
