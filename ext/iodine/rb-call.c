@@ -111,9 +111,5 @@ static VALUE call_arg(VALUE obj, ID method, int argc, VALUE *argv) {
 ////////////////////////////////////////////////////////////////////////////
 // the API interface
 struct _Ruby_Method_Caller_Class_ RubyCaller = {
-    .call = call,
-    .call2 = call_arg,
-    .call_c = call_c,
-    // .leave_gvl = leave_gvl,
-    .in_gvl = check_in_gvl,
+    .call = call, .call2 = call_arg, .call_c = call_c, .in_gvl = check_in_gvl,
 };

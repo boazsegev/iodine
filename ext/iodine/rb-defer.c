@@ -71,22 +71,3 @@ int defer_join_thread(void *thr) {
   Registry.remove((VALUE)thr);
   return 0;
 }
-
-/******************************************************************************
-Portability - used to help port this to different frameworks (i.e. Ruby).
-*/
-
-#define THREAD_TYPE VALUE
-
-/* Don't use sentinals with Ruby */
-#ifndef ASYNC_USE_SENTINEL
-#define ASYNC_USE_SENTINEL 0
-#endif
-
-/* The unused directive */
-#ifndef UNUSED_FUNC
-#define UNUSED_FUNC __attribute__((unused))
-#endif
-
-/* used here but declared elsewhere */
-void async_signal();
