@@ -4,25 +4,21 @@ License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
-#include "iodine_websocket.h"
-#include "iodine_core.h"
-#include "iodine_http.h"
-#include "rb-call.h"
-#include "rb-registry.h"
+#include "iodine_websockets.h"
+
+#include "websockets.h"
+
 #include <arpa/inet.h>
 #include <ruby/io.h>
 
 /* *****************************************************************************
 Core helpers and data
-*/
+***************************************************************************** */
 
 static VALUE rWebsocket;      // The Iodine::Http::Websocket class
 static VALUE rWebsocketClass; // The Iodine::Http::Websocket class
 static ID ws_var_id;          // id for websocket pointer
 static ID dup_func_id;        // id for the buffer.dup method
-
-size_t iodine_websocket_max_msg_size = 0;
-uint8_t iodine_websocket_timeout = 0;
 
 #define set_uuid(object, request)                                              \
   rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->fd))
@@ -45,9 +41,10 @@ inline static ws_s *get_ws(VALUE obj) {
 #define set_handler(ws, handler) websocket_udata_set((ws), (VALUE)handler)
 #define get_handler(ws) ((VALUE)websocket_udata((ws_s *)(ws)))
 
-/*******************************************************************************
-Buffer management - update to change the way the buffer is handled.
-*/
+/* *****************************************************************************
+Buffer management - Rubyfy the way the buffer is handled.
+***************************************************************************** */
+
 struct buffer_s {
   void *data;
   size_t size;
@@ -115,7 +112,7 @@ void free_ws_buffer(ws_s *owner, struct buffer_s buff) {
 
 /* *****************************************************************************
 Websocket Ruby API
-*/
+***************************************************************************** */
 
 /** Closes the websocket connection. The connection is only closed after
  * existing data in the outgoing buffer is sent. */
@@ -187,9 +184,8 @@ Websocket defer
 static void iodine_perform_defer(intptr_t uuid, protocol_s *protocol,
                                  void *arg) {
   (void)(uuid);
-  VALUE obj = protocol->service == WEBSOCKET_ID_STR
-                  ? get_handler(protocol)
-                  : dyn_prot(protocol)->handler;
+  VALUE obj = protocol->service == WEBSOCKET_ID_STR ? get_handler(protocol)
+                                                    : (VALUE)(protocol + 1);
   RubyCaller.call2((VALUE)arg, call_proc_id, 1, &obj);
   Registry.remove((VALUE)arg);
 }
@@ -229,6 +225,8 @@ static VALUE iodine_defer(int argc, VALUE *argv, VALUE self) {
       return Qfalse;
   } else
     fd = iodine_get_fd(self);
+  if (!fd)
+    fd = -1;
   // requires a block to be passed
   rb_need_block();
   VALUE block = rb_block_proc();
@@ -271,31 +269,32 @@ static void iodine_ws_write_each_complete(ws_s *ws, void *block) {
  *
  * See both {#write} and {#each} for more details.
  */
-static VALUE iodine_ws_multiwrite(VALUE self, VALUE data) {
-  Check_Type(data, T_STRING);
-  ws_s *ws = get_ws(self);
-  // if ((void *)ws == (void *)0x04 || (void *)data == (void *)0x04 ||
-  //     RSTRING_PTR(data) == (void *)0x04)
-  //   fprintf(stderr, "iodine_ws_write: self = %p ; data = %p\n"
-  //                   "\t\tString ptr: %p, String length: %lu\n",
-  //           (void *)ws, (void *)data, RSTRING_PTR(data), RSTRING_LEN(data));
-  if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
-    ws = NULL;
-
-  VALUE block = Qnil;
-  if (rb_block_given_p())
-    block = rb_block_proc();
-  if (block != Qnil)
-    Registry.add(block);
-  websocket_write_each(.origin = ws, .data = RSTRING_PTR(data),
-                       .length = RSTRING_LEN(data),
-                       .is_text = (rb_enc_get(data) == UTF8Encoding),
-                       .on_finished = iodine_ws_write_each_complete,
-                       .filter =
-                           ((block == Qnil) ? NULL : iodine_ws_if_callback),
-                       .arg = (void *)block);
-  return Qtrue;
-}
+// static VALUE iodine_ws_multiwrite(VALUE self, VALUE data) {
+//   Check_Type(data, T_STRING);
+//   ws_s *ws = get_ws(self);
+//   // if ((void *)ws == (void *)0x04 || (void *)data == (void *)0x04 ||
+//   //     RSTRING_PTR(data) == (void *)0x04)
+//   //   fprintf(stderr, "iodine_ws_write: self = %p ; data = %p\n"
+//   //                   "\t\tString ptr: %p, String length: %lu\n",
+//   //           (void *)ws, (void *)data, RSTRING_PTR(data),
+//   RSTRING_LEN(data)); if (!ws || ((protocol_s *)ws)->service !=
+//   WEBSOCKET_ID_STR)
+//     ws = NULL;
+//
+//   VALUE block = Qnil;
+//   if (rb_block_given_p())
+//     block = rb_block_proc();
+//   if (block != Qnil)
+//     Registry.add(block);
+//   websocket_write_each(.origin = ws, .data = RSTRING_PTR(data),
+//                        .length = RSTRING_LEN(data),
+//                        .is_text = (rb_enc_get(data) == UTF8Encoding),
+//                        .on_finished = iodine_ws_write_each_complete,
+//                        .filter =
+//                            ((block == Qnil) ? NULL : iodine_ws_if_callback),
+//                        .arg = (void *)block);
+//   return Qtrue;
+// }
 
 /* *****************************************************************************
 Websocket task performance
@@ -445,42 +444,6 @@ void ws_on_data(ws_s *ws, char *data, size_t length, uint8_t is_text) {
   RubyCaller.call2(handler, on_message_func_id, 1, &buffer);
 }
 
-//////////////////////////////////////
-// Protocol constructor
-
-void iodine_websocket_upgrade(http_request_s *request,
-                              http_response_s *response, VALUE handler) {
-  // make sure we have a valid handler, with the Websocket Protocol mixin.
-  if (handler == Qnil || handler == Qfalse) {
-    response->status = 400;
-    http_response_finish(response);
-    return;
-  }
-  if (TYPE(handler) == T_CLASS) {
-    // include the Protocol module
-    rb_include_module(handler, rWebsocket);
-    rb_extend_object(handler, rWebsocketClass);
-    handler = RubyCaller.call(handler, new_func_id);
-    // check that we created a handler
-  } else {
-    // include the Protocol module in the object's class
-    VALUE p_class = rb_obj_class(handler);
-    rb_include_module(p_class, rWebsocket);
-    rb_extend_object(p_class, rWebsocketClass);
-  }
-  // add the handler to the registry
-  Registry.add(handler);
-  // set the UUID for the connection
-  set_uuid(handler, request);
-  // send upgrade response and set new protocol
-  websocket_upgrade(.request = request, .response = response,
-                    .udata = (void *)handler, .on_close = ws_on_close,
-                    .on_open = ws_on_open, .on_shutdown = ws_on_shutdown,
-                    .on_ready = ws_on_ready, .on_message = ws_on_data,
-                    .max_msg_size = iodine_websocket_max_msg_size,
-                    .timeout = iodine_websocket_timeout);
-}
-
 //////////////
 // Empty callbacks for default implementations.
 
@@ -513,9 +476,48 @@ static VALUE empty_func(VALUE self) {
 //   return Qnil;
 // }
 
-/////////////////////////////
-// initialize the class and the whole of the Iodine/http library
-void Init_iodine_websocket(void) {
+/* *****************************************************************************
+Upgrading
+***************************************************************************** */
+
+void iodine_websocket_upgrade(http_request_s *request,
+                              http_response_s *response, VALUE handler,
+                              size_t max_msg, uint8_t ping) {
+  // make sure we have a valid handler, with the Websocket Protocol mixin.
+  if (handler == Qnil || handler == Qfalse) {
+    response->status = 400;
+    http_response_finish(response);
+    return;
+  }
+  if (TYPE(handler) == T_CLASS) {
+    // include the Protocol module
+    rb_include_module(handler, rWebsocket);
+    rb_extend_object(handler, rWebsocketClass);
+    handler = RubyCaller.call(handler, new_func_id);
+    // check that we created a handler
+  } else {
+    // include the Protocol module in the object's class
+    VALUE p_class = rb_obj_class(handler);
+    rb_include_module(p_class, rWebsocket);
+    rb_extend_object(p_class, rWebsocketClass);
+  }
+  // add the handler to the registry
+  Registry.add(handler);
+  // set the UUID for the connection
+  set_uuid(handler, request);
+  // send upgrade response and set new protocol
+  websocket_upgrade(.request = request, .response = response,
+                    .udata = (void *)handler, .on_close = ws_on_close,
+                    .on_open = ws_on_open, .on_shutdown = ws_on_shutdown,
+                    .on_ready = ws_on_ready, .on_message = ws_on_data,
+                    .max_msg_size = max_msg, .timeout = ping);
+}
+
+/* *****************************************************************************
+Initialization
+***************************************************************************** */
+
+void Iodine_init_websocket(void) {
   // get IDs and data that's used often
   ws_var_id = rb_intern("iodine_ws_ptr"); // when upgrading
   dup_func_id = rb_intern("dup");         // when upgrading
@@ -531,10 +533,8 @@ void Init_iodine_websocket(void) {
   rb_define_method(rWebsocket, "on_close", empty_func, 0);
   rb_define_method(rWebsocket, "on_ready", empty_func, 0);
   rb_define_method(rWebsocket, "write", iodine_ws_write, 1);
-  rb_define_method(rWebsocket, "each_write", iodine_ws_multiwrite, 1);
   rb_define_method(rWebsocket, "close", iodine_ws_close, 0);
 
-  // rb_define_method(rWebsocket, "uuid", iodine_ws_uuid, 0);
   rb_define_method(rWebsocket, "conn_id", iodine_ws_uuid, 0);
   rb_define_method(rWebsocket, "has_pending?", iodine_ws_has_pending, 0);
   rb_define_method(rWebsocket, "defer", iodine_defer, -1);
@@ -543,7 +543,6 @@ void Init_iodine_websocket(void) {
 
   rb_define_singleton_method(rWebsocket, "each", iodine_ws_class_each, 0);
   rb_define_singleton_method(rWebsocket, "defer", iodine_class_defer, 1);
-  rb_define_singleton_method(rWebsocket, "each_write", iodine_ws_multiwrite, 1);
 
   rWebsocketClass = rb_define_module_under(IodineBase, "WebsocketClass");
   rb_define_method(rWebsocketClass, "each", iodine_ws_class_each, 0);

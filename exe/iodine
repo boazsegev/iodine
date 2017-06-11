@@ -19,8 +19,7 @@ Available options:
  -t          Number of threads. Default: half of the CPU core count.
  -w          Number of worker processes. half of the CPU core count.
  -www        Public folder for static file serving. Default: nil (none).
- -v          Log responses.
- -q          Never log responses.
+ -v          Log responses. Default: never log responses.
  -warmup     Warmup invokes autoloading (lazy loading) during server startup.
  -tout       HTTP inactivity connection timeout. Default: 5.
  -maxbd      Maximum Mb per HTTP message (max body size). Default: 50Mib.

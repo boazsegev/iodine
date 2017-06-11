@@ -17,6 +17,10 @@ Feel free to copy, use and enjoy according to the license provided.
 #define REGISTRY_POOL_SIZE 1024
 #endif
 
+#ifndef RUBY_REG_DBG
+#define RUBY_REG_DBG 0
+#endif
+
 typedef struct {
   union {
     fio_list_s pool;
@@ -61,13 +65,19 @@ inline static void free_node(obj_s *to_free) {
 static VALUE register_object(VALUE ruby_obj) {
   if (!ruby_obj || ruby_obj == Qnil || ruby_obj == Qfalse)
     return 0;
-
   lock_registry();
   obj_s *obj = (void *)fio_ht_find(&registry.store, (uint64_t)ruby_obj);
   if (obj) {
     obj = fio_node2obj(obj_s, node, obj);
+#if RUBY_REG_DBG == 1
+    fprintf(stderr, "Ruby Registry: register %p ref: %" PRIu64 " + 1\n",
+            (void *)ruby_obj, obj->ref);
+#endif
     goto exists;
   }
+#if RUBY_REG_DBG == 1
+  fprintf(stderr, "Ruby Registry: register %p\n", (void *)ruby_obj);
+#endif
   obj = fio_list_pop(obj_s, pool, registry.pool);
   if (!obj)
     obj = malloc(sizeof(obj_s));
@@ -77,6 +87,7 @@ static VALUE register_object(VALUE ruby_obj) {
     exit(1);
   }
   obj->obj = ruby_obj;
+  fio_ht_add(&registry.store, &obj->node, (uint64_t)ruby_obj);
 exists:
   atomic_bump(&obj->ref);
 
@@ -90,19 +101,35 @@ static void unregister_object(VALUE ruby_obj) {
     return;
   lock_registry();
   obj_s *obj = (void *)fio_ht_find(&registry.store, (uint64_t)ruby_obj);
+  if (!obj) {
+#if RUBY_REG_DBG == 1
+    fprintf(stderr, "Ruby Registry: unregister - NOT FOUND %p\n",
+            (void *)ruby_obj);
+#endif
+    goto finish;
+  }
+  obj = fio_node2obj(obj_s, node, obj);
   if (atomic_cut(&obj->ref)) {
     unlock_registry();
+#if RUBY_REG_DBG == 1
+    fprintf(stderr, "Ruby Registry: unregistered %p ref: %" PRIu64 "  \n",
+            (void *)ruby_obj, obj->ref);
+#endif
     return;
   }
   fio_ht_remove(&obj->node);
   free_node(obj);
+finish:
   unlock_registry();
+#if RUBY_REG_DBG == 1
+  fprintf(stderr, "Ruby Registry: unregistered %p\n", (void *)ruby_obj);
+#endif
 }
 
 /* a callback for the GC (marking active objects) */
 static void registry_mark(void *ignore) {
   (void)ignore;
-#ifdef RUBY_REG_DBG
+#if RUBY_REG_DBG == 1
   Registry.print();
 #endif
   lock_registry();
@@ -114,6 +141,9 @@ static void registry_mark(void *ignore) {
 /* clear the registry (end of lifetime) */
 static void registry_clear(void *ignore) {
   (void)ignore;
+#if RUBY_REG_DBG == 1
+  fprintf(stderr, "Ruby Registry:  Clear!!!\n");
+#endif
   lock_registry();
   obj_s *obj;
   fio_ht_for_each(obj_s, node, obj, registry.store) {

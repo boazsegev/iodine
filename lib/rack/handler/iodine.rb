@@ -46,22 +46,42 @@ module Iodine
 
     # get/set the maximum HTTP body size for incoming data. Defaults to ~50Mb. 0 values are silently ignored.
     def self.max_body_size=(val)
-      @max_body_size = val
+      @max_body = val
     end
 
     # get/set the maximum HTTP body size for incoming data. Defaults to ~50Mb.
     def self.max_body_size
-      @max_body_size
+      @max_body
+    end
+
+    # get/set the maximum HTTP body size for incoming data. Defaults to ~50Mb. 0 values are silently ignored.
+    def self.max_body=(val)
+      @max_body = val
+    end
+
+    # get/set the maximum HTTP body size for incoming data. Defaults to ~50Mb.
+    def self.max_body
+      @max_body
     end
 
     # get/set the maximum Websocket body size for incoming data. Defaults to defaults to ~250KB. 0 values are silently ignored.
     def self.max_msg_size=(val)
-      @max_msg_size = val
+      @max_msg = val
     end
 
     # get/set the maximum Websocket body size for incoming data. Defaults to defaults to ~250KB. 0 values are silently ignored.
     def self.max_msg_size
-      @max_msg_size
+      @max_msg
+    end
+
+    # get/set the maximum Websocket body size for incoming data. Defaults to defaults to ~250KB. 0 values are silently ignored.
+    def self.max_msg=(val)
+      @max_msg = val
+    end
+
+    # get/set the maximum Websocket body size for incoming data. Defaults to defaults to ~250KB. 0 values are silently ignored.
+    def self.max_msg
+      @max_msg
     end
 
     # get/set the HTTP logging value (true / false). Defaults to the incoming argumrnts or `false`.
@@ -114,13 +134,19 @@ module Iodine
       end
       @port = options[:Port].to_s if options[:Port]
       @port = options[:Address].to_s if options[:Address]
-      # provide Websocket features using Rack::Websocket
+
+      # # provide Websocket features using Rack::Websocket
       # Rack.send :remove_const, :Websocket if defined?(Rack::Websocket)
       # Rack.const_set :Websocket, ::Iodine::Websocket
+
+      # Listen
+      Iodine::HTTP.listen app: @app, port: @port, address: @address, log: @log, max_msg: max_msg, max_body: max_body, public: @public, ping: @ws_timeout, timeout: @timeout 
       # start Iodine
       Iodine.start
-      # remove the Websocket features from Rack::Websocket
+
+      # # remove the Websocket features from Rack::Websocket
       # Rack.send :remove_const, :Websocket
+
       true
     end
     IODINE_RACK_LOADED = true

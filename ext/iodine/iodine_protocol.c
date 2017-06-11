@@ -114,7 +114,6 @@ static VALUE dyn_run_each(VALUE self) {
     origin = -1;
 
   Registry.add(block);
-  struct facil_each_args_s args;
   facil_each(.arg = (void *)block, .service = "IodineDynamic", .origin = origin,
              .task_type = FIO_PR_LOCK_TASK, .task = iodine_perform_task,
              .on_complete = iodine_clear_task);
@@ -474,21 +473,24 @@ static VALUE iodine_connect(VALUE self, VALUE address, VALUE port,
 }
 
 /**
-Attaches an existing IO object (i.e., a pipe, a unix socket, etc') as if it were
-a regular connection.
+Attaches an existing file descriptor (`fd`) (i.e., a pipe, a unix socket, etc')
+as if it were a regular connection.
 
 i.e.
 
-      Iodine.attach my_io_obj, MyProtocolClass.new
+      Iodine.attach my_io_obj.to_i, MyProtocolClass.new
 
 */
-static VALUE iodine_attach(VALUE self, VALUE io, VALUE handler) {
-  VALUE rbfd = RubyCaller.call(io, to_i_func);
-  if (rbfd == Qnil || rbfd == Qfalse)
+static VALUE iodine_attach_fd(VALUE self, VALUE rbfd, VALUE handler) {
+  Check_Type(rbfd, T_FIXNUM);
+  if (handler == Qnil || handler == Qfalse)
     return Qfalse;
   intptr_t uuid = FIX2INT(rbfd);
   if (!uuid || uuid == -1)
     return Qfalse;
+  /* make sure the uuid is connected to the sock library */
+  if (sock_fd2uuid(uuid) == -1)
+    sock_open(uuid);
   if (TYPE(handler) == T_CLASS) {
     // include the Protocol module, preventing coder errors
     rb_include_module(handler, IodineProtocol);
@@ -503,6 +505,18 @@ static VALUE iodine_attach(VALUE self, VALUE io, VALUE handler) {
   on_open_dyn_protocol_instance(uuid, (void *)handler);
   return self;
 }
+/**
+Attaches an existing IO object (i.e., a pipe, a unix socket, etc') as if it were
+a regular connection.
+
+i.e.
+
+      Iodine.attach my_io_obj, MyProtocolClass.new
+
+*/
+static VALUE iodine_attach_io(VALUE self, VALUE io, VALUE handler) {
+  return iodine_attach_fd(self, RubyCaller.call(io, to_i_func), handler);
+}
 /* *****************************************************************************
 Library Initialization
 ***************************************************************************** */
@@ -512,7 +526,7 @@ Library Initialization
 //
 // Here we connect all the C code to the Ruby interface, completing the bridge
 // between Lib-Server and Ruby.
-void Init_iodine_protocol(void) {
+void Iodine_init_protocol(void) {
 
   /* add Iodine module functions */
   rb_define_module_function(Iodine, "each", dyn_run_each, 0);
@@ -520,7 +534,8 @@ void Init_iodine_protocol(void) {
   rb_define_module_function(Iodine, "defer", dyn_defer, 0);
   rb_define_module_function(Iodine, "listen", iodine_listen, 2);
   rb_define_module_function(Iodine, "connect", iodine_connect, 3);
-  rb_define_module_function(Iodine, "attach", iodine_attach, 2);
+  rb_define_module_function(Iodine, "attach_io", iodine_attach_io, 2);
+  rb_define_module_function(Iodine, "attach_fd", iodine_attach_fd, 2);
 
   /* Create the `Protocol` module and set stub functions */
   IodineProtocol = rb_define_module_under(Iodine, "Protocol");

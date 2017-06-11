@@ -53,11 +53,10 @@ end
 # create the server object and setup any settings we might need.
 Iodine.threads ||= 4
 Iodine.processes ||= 1
-Iodine::Rack.public = nil
-Iodine::Rack.log = 1
 count = 2
-Iodine::Rack.run WSEcho
 
+Iodine::HTTP.listen app: WSEcho, log: true, port: 3000
+Iodine.start
 # server.on_http= Proc.new do |env|
 #   # [200, {"Content-Length".freeze => "12".freeze}, ["Hello World!".freeze]];
 #   if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze

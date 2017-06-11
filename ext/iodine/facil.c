@@ -235,7 +235,7 @@ finish:
 }
 
 /* *****************************************************************************
-Mock Protocol and service Callbacks
+Mock Protocol Callbacks and Service Funcions
 ***************************************************************************** */
 static void mock_on_ev(intptr_t uuid, protocol_s *protocol) {
   (void)uuid;
@@ -249,6 +249,24 @@ static void mock_ping(intptr_t uuid, protocol_s *protocol) {
   sock_force_close(uuid);
 }
 static void mock_idle(void) {}
+
+/* Support for the default pub/sub cluster engine */
+#pragma weak pubsub_cluster_init
+void pubsub_cluster_init(void) {}
+
+/*
+ * Support for the (removed) file caching service.
+ *
+ * It's possible to re-add the service from the `unused` folder.
+ */
+#pragma weak fio_cfd_clear
+void fio_cfd_clear(void) {}
+
+/* perform initialization for external services. */
+static void facil_external_init(void) { pubsub_cluster_init(); }
+
+/* perform cleanup for external services. */
+static void facil_external_cleanup(void) { fio_cfd_clear(); }
 
 /* *****************************************************************************
 The listenning protocol
@@ -266,7 +284,7 @@ struct ListenerProtocol {
   sock_rw_hook_s *(*set_rw_hooks)(intptr_t uuid, void *udata);
   void (*on_start)(void *udata);
   void (*on_finish)(void *udata);
-  const char *port;
+  char port[16];
 };
 
 static sock_rw_hook_s *listener_set_rw_hooks(intptr_t uuid, void *udata) {
@@ -360,8 +378,9 @@ listener_alloc(struct facil_listen_args settings) {
         .on_finish = settings.on_finish,
         .set_rw_hooks = settings.set_rw_hooks,
         .rw_udata = settings.rw_udata,
-        .port = settings.port,
     };
+    size_t tmp = strlen(settings.port);
+    memcpy(listener->port, settings.port, tmp + 1);
     return listener;
   }
   return NULL;
@@ -457,7 +476,7 @@ static void connector_on_close(protocol_s *pconnector) {
 #undef facil_connect
 intptr_t facil_connect(struct facil_connect_args opt) {
   if (!opt.address || !opt.port || !opt.on_connect)
-    return -1;
+    goto error;
   if (!opt.set_rw_hooks)
     opt.set_rw_hooks = listener_set_rw_hooks;
   if (!facil_data->last_cycle)
@@ -476,15 +495,19 @@ intptr_t facil_connect(struct facil_connect_args opt) {
       .opened = 0,
   };
   if (!connector)
-    return -1;
+    goto error;
   intptr_t uuid = sock_connect(opt.address, opt.port);
   if (uuid == -1)
-    return -1;
+    goto error;
   if (facil_attach(uuid, &connector->protocol) == -1) {
     sock_close(uuid);
     return -1;
   }
   return uuid;
+error:
+  if (opt.on_fail)
+    opt.on_fail(opt.udata);
+  return -1;
 }
 
 /* *****************************************************************************
@@ -606,15 +629,11 @@ static struct {
                         .handlers.prev = &facil_cluster_data.handlers,
                         .lock = SPN_LOCK_INIT};
 
-/* internal support for the default pub/sub cluster engin */
-#pragma weak pubsub_cluster_init
-void pubsub_cluster_init(void) {}
-
 /* message handler */
 typedef struct {
   fio_list_s list;
   void (*on_message)(void *data, uint32_t len);
-  uint32_t msg_type;
+  int32_t msg_type;
 } fio_cluster_handler;
 
 /* message sending and protocol. */
@@ -623,7 +642,7 @@ struct facil_cluster_msg_packet {
   spn_lock_i lock;
   struct facil_cluster_msg {
     uint32_t len;
-    uint32_t msg_type;
+    int32_t msg_type;
   } payload;
   uint8_t data[];
 };
@@ -758,7 +777,6 @@ static void facil_cluster_init(uint16_t count) {
     facil_attach(facil_cluster_data.pipes[i].in, &stub_protocol);
     facil_attach(facil_cluster_data.pipes[i].out, &stub_protocol);
   }
-  pubsub_cluster_init();
   defer(facil_cluster_register, NULL, NULL);
   return;
 error:
@@ -782,7 +800,7 @@ static void facil_cluster_destroy(void) {
   facil_cluster_data.pipes = NULL;
 }
 
-void facil_cluster_set_handler(uint32_t msg_type,
+void facil_cluster_set_handler(int32_t msg_type,
                                void (*on_message)(void *data, uint32_t len)) {
   fio_cluster_handler *hnd;
   spn_lock(&facil_cluster_data.lock);
@@ -810,7 +828,7 @@ static void facil_msg_free(void *msg_) {
   }
   free(msg);
 }
-int facil_cluster_send(uint32_t msg_type, void *data, uint32_t len) {
+int facil_cluster_send(int32_t msg_type, void *data, uint32_t len) {
   if (!defer_fork_is_active()) {
 #ifdef DEBUG
     fprintf(stderr,
@@ -932,6 +950,7 @@ static void facil_init_run(void *arg, void *arg2) {
     }
   }
   facil_data->need_review = 1;
+  facil_external_init();
   defer(facil_cycle, arg, NULL);
 }
 
@@ -950,6 +969,7 @@ static void facil_cleanup(void *arg) {
   defer_perform();
   evio_close();
   facil_cluster_destroy();
+  facil_external_cleanup();
 }
 
 #undef facil_run
