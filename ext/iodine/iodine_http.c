@@ -680,6 +680,13 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
     return Qfalse;
   }
 
+  if ((app == Qnil || app == Qfalse)) {
+    fprintf(stderr,
+            "* Iodine: (no app) the HTTP service on port %s will only serve "
+            "static files.\n",
+            (port ? StringValueCStr(port) : "3000"));
+  }
+
   defer(iodine_print_http_msg, (www ? (void *)www : NULL), NULL);
   return Qtrue;
   (void)self;

@@ -195,7 +195,8 @@ static void iodine_review_rack_app(void) {
 
   VALUE rack = rb_const_get(Iodine, rb_intern("Rack"));
   VALUE app = rb_ivar_get(rack, rb_intern("@app"));
-  if (app == Qnil || app == Qfalse)
+  VALUE www = rb_ivar_get(rack, rb_intern("@public"));
+  if ((app == Qnil || app == Qfalse) && (www == Qnil || www == Qfalse))
     return;
   VALUE opt = rb_hash_new();
   Registry.add(opt);
