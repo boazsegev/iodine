@@ -186,6 +186,43 @@ static void *srv_start_no_gvl(void *_) {
   return NULL;
 }
 
+static void iodine_review_rack_app(void) {
+  /* Check for Iodine::Rack.app and perform the C equivalent:
+   *  Iodine::HTTP.listen app: @app, port: @port, address: @address, log: @log,
+   *          max_msg: max_msg, max_body: max_body, public: @public, ping:
+   *          @ws_timeout, timeout: @timeout
+   */
+
+  VALUE rack = rb_const_get(Iodine, rb_intern("Rack"));
+  VALUE app = rb_ivar_get(rack, rb_intern("@app"));
+  if (app == Qnil || app == Qfalse)
+    return;
+  VALUE opt = rb_hash_new();
+  Registry.add(opt);
+
+  rb_hash_aset(opt, ID2SYM(rb_intern("app")),
+               rb_ivar_get(rack, rb_intern("@app")));
+  rb_hash_aset(opt, ID2SYM(rb_intern("port")),
+               rb_ivar_get(rack, rb_intern("@port")));
+  rb_hash_aset(opt, ID2SYM(rb_intern("app")),
+               rb_ivar_get(rack, rb_intern("@app")));
+  rb_hash_aset(opt, ID2SYM(rb_intern("address")),
+               rb_ivar_get(rack, rb_intern("@address")));
+  rb_hash_aset(opt, ID2SYM(rb_intern("log")),
+               rb_ivar_get(rack, rb_intern("@log")));
+  rb_hash_aset(opt, ID2SYM(rb_intern("max_msg")),
+               rb_ivar_get(rack, rb_intern("@max_msg")));
+  rb_hash_aset(opt, ID2SYM(rb_intern("max_body")),
+               rb_ivar_get(rack, rb_intern("@max_body")));
+  rb_hash_aset(opt, ID2SYM(rb_intern("public")),
+               rb_ivar_get(rack, rb_intern("@public")));
+  rb_hash_aset(opt, ID2SYM(rb_intern("ping")),
+               rb_ivar_get(rack, rb_intern("@ping")));
+  rb_hash_aset(opt, ID2SYM(rb_intern("timeout")),
+               rb_ivar_get(rack, rb_intern("@ws_timeout")));
+  rb_funcall2(IodineHTTP, rb_intern("listen"), 1, &opt);
+}
+
 /**
 Starts the Iodine event loop. This will hang the thread until an interrupt
 (`^C`) signal is received.
@@ -193,6 +230,8 @@ Starts the Iodine event loop. This will hang the thread until an interrupt
 Returns the Iodine module.
 */
 static VALUE iodine_start(VALUE self) {
+  /* for the special Iodine::Rack object and backwards compatibility */
+  iodine_review_rack_app();
   rb_thread_call_without_gvl2(srv_start_no_gvl, (void *)self, NULL, NULL);
   return self;
 }

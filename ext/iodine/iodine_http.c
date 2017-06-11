@@ -476,7 +476,6 @@ static void init_env_template(iodine_http_settings_s *set, uint8_t xsendfile) {
   VALUE tmp;
   set->env = rb_hash_new();
   Registry.add(set->env);
-  fprintf(stderr, "* Initialized Rack ENV template at %p\n", (void *)set->env);
 
   // Start with the stuff Iodine will review.
   rb_hash_aset(set->env, UPGRADE_WEBSOCKET, Qnil);

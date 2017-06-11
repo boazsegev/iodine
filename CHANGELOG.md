@@ -8,6 +8,21 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+#### Change log v.0.4.0
+
+**Update**: Now using `facil.io` v.0.4.5. The extended features allowed us to have multiple HTTP ports and servers on the same Iodine process.
+
+**Feature + Breaking Change**: Iodine now support multiple HTTP servers at once. i.e.:
+
+```ruby
+# `Iodine::HTTP.listen` initializes an HTTP service in the C and system levels, so it can't be changed once initialized.
+Iodine::HTTP.listen port: 3000, app: my_app1
+Iodine::HTTP.listen port: 3000, app: my_app2, public: "./www"
+Iodine.start
+```
+
+***
+
 #### Change log v.0.3.6
 
 **Update**: Now using `facil.io` v.0.4.3. This fixes some delays in websocket packet flushing (latency), as well as other internal polishes. It also promises some possible future feature extensions that could add a major performance boost.

@@ -139,8 +139,6 @@ module Iodine
       # Rack.send :remove_const, :Websocket if defined?(Rack::Websocket)
       # Rack.const_set :Websocket, ::Iodine::Websocket
 
-      # Listen
-      Iodine::HTTP.listen app: @app, port: @port, address: @address, log: @log, max_msg: max_msg, max_body: max_body, public: @public, ping: @ws_timeout, timeout: @timeout 
       # start Iodine
       Iodine.start
 
