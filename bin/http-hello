@@ -19,6 +19,7 @@ Iodine::Rack.public = '~/Documents/Scratch'
 count = 2
 Iodine::Rack.app = proc { |_env| [200, { 'Content-Length'.freeze => '12'.freeze }, ['He11o World!'.freeze]] }
 puts Iodine::Rack.address
+Iodine::HTTP.listen app: Iodine::Rack.app, port: "3030", public: '~/Documents/Scratch'
 Iodine.start
 
 # puts env.to_a.map { |pair| pair.join(': ') } .join("\n").to_s;

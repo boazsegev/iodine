@@ -42,7 +42,7 @@ static ID attach_method_id;
 #define rack_declare(rack_name) static VALUE rack_name
 
 #define rack_set(rack_name, str)                                               \
-  (rack_name) = rb_enc_str_new((str), strlen((str)), IodineBinaryEncoding);          \
+  (rack_name) = rb_enc_str_new((str), strlen((str)), IodineBinaryEncoding);    \
   rb_global_variable(&(rack_name));                                            \
   rb_obj_freeze(rack_name);
 
@@ -84,26 +84,26 @@ static inline VALUE copy2env(http_request_s *request, VALUE template) {
   char *pos = NULL;
   const char *reader = NULL;
   /* Copy basic data */
-  rb_hash_aset(
-      env, REQUEST_METHOD,
-      rb_enc_str_new(request->method, request->method_len, IodineBinaryEncoding));
+  rb_hash_aset(env, REQUEST_METHOD,
+               rb_enc_str_new(request->method, request->method_len,
+                              IodineBinaryEncoding));
 
   rb_hash_aset(
       env, PATH_INFO,
       rb_enc_str_new(request->path, request->path_len, IodineBinaryEncoding));
-  rb_hash_aset(
-      env, QUERY_STRING,
-      (request->query
-           ? rb_enc_str_new(request->query, request->query_len, IodineBinaryEncoding)
-           : QUERY_ESTRING));
-  rb_hash_aset(
-      env, QUERY_STRING,
-      (request->query
-           ? rb_enc_str_new(request->query, request->query_len, IodineBinaryEncoding)
-           : QUERY_ESTRING));
+  rb_hash_aset(env, QUERY_STRING,
+               (request->query
+                    ? rb_enc_str_new(request->query, request->query_len,
+                                     IodineBinaryEncoding)
+                    : QUERY_ESTRING));
+  rb_hash_aset(env, QUERY_STRING,
+               (request->query
+                    ? rb_enc_str_new(request->query, request->query_len,
+                                     IodineBinaryEncoding)
+                    : QUERY_ESTRING));
 
-  hname =
-      rb_enc_str_new(request->version, request->version_len, IodineBinaryEncoding);
+  hname = rb_enc_str_new(request->version, request->version_len,
+                         IodineBinaryEncoding);
   rb_hash_aset(env, SERVER_PROTOCOL, hname);
   rb_hash_aset(env, HTTP_VERSION, hname);
 
@@ -143,9 +143,9 @@ static inline VALUE copy2env(http_request_s *request, VALUE template) {
         rb_enc_str_new(request->host, request->host_len, IodineBinaryEncoding));
     rb_hash_aset(env, SERVER_PORT, QUERY_ESTRING);
   } else {
-    rb_hash_aset(
-        env, SERVER_NAME,
-        rb_enc_str_new(request->host, pos - request->host, IodineBinaryEncoding));
+    rb_hash_aset(env, SERVER_NAME,
+                 rb_enc_str_new(request->host, pos - request->host,
+                                IodineBinaryEncoding));
     rb_hash_aset(env, SERVER_PORT,
                  rb_enc_str_new(pos + 1,
                                 request->host_len - ((pos + 1) - request->host),
@@ -180,9 +180,9 @@ static inline VALUE copy2env(http_request_s *request, VALUE template) {
                  *((uint32_t *)header.value) == *((uint32_t *)"http")) {
         rb_hash_aset(env, R_URL_SCHEME, HTTP_SCHEME);
       } else {
-        rb_hash_aset(
-            env, R_URL_SCHEME,
-            rb_enc_str_new(header.value, header.value_len, IodineBinaryEncoding));
+        rb_hash_aset(env, R_URL_SCHEME,
+                     rb_enc_str_new(header.value, header.value_len,
+                                    IodineBinaryEncoding));
       }
     } else if (header.name_len == 9 &&
                strncasecmp("forwarded", header.name, 9) == 0) {
@@ -461,15 +461,15 @@ Initializing basic Rack ENV template
 
 #define add_str_to_env(env, key, value)                                        \
   {                                                                            \
-    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);            \
+    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);      \
     rb_obj_freeze(k);                                                          \
-    VALUE v = rb_enc_str_new((value), strlen((value)), IodineBinaryEncoding);        \
+    VALUE v = rb_enc_str_new((value), strlen((value)), IodineBinaryEncoding);  \
     rb_obj_freeze(v);                                                          \
     rb_hash_aset(env, k, v);                                                   \
   }
 #define add_value_to_env(env, key, value)                                      \
   {                                                                            \
-    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);            \
+    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);      \
     rb_obj_freeze(k);                                                          \
     rb_hash_aset((env), k, value);                                             \
   }
@@ -510,44 +510,77 @@ static void init_env_template(iodine_http_settings_s *set, uint8_t xsendfile) {
 Listenninng to HTTP
 ***************************************************************************** */
 
-void *iodine_print_http_msg_in_gvl(void *public_folder_) {
+void *iodine_print_http_msg2_in_gvl(void *d_) {
   // Write message
-  VALUE iodine_version = rb_const_get(Iodine, rb_intern("VERSION"));
-  VALUE ruby_version = rb_const_get(Iodine, rb_intern("RUBY_VERSION"));
-  VALUE public_folder = (VALUE)public_folder_;
-  if (public_folder) {
+  struct {
+    VALUE www;
+    VALUE port;
+  } *arg = d_;
+  if (arg->www) {
     fprintf(stderr,
-            "Starting up Iodine HTTP Server:\n"
-            " * Ruby v.%s\n * Iodine v.%s \n"
-            " * %lu max concurrent connections / open files\n"
-            " * Serving static files from %s",
-            StringValueCStr(ruby_version), StringValueCStr(iodine_version),
-            (size_t)sock_max_capacity(), StringValueCStr(public_folder));
-    Registry.remove(public_folder);
-  } else
-    fprintf(stderr,
-            "Starting up Iodine HTTP Server:\n"
-            " * Ruby v.%s\n * Iodine v.%s \n"
-            " * %lu max concurrent connections / open files\n"
-            "\n",
-            StringValueCStr(ruby_version), StringValueCStr(iodine_version),
-            (size_t)sock_max_capacity());
+            " * Iodine HTTP Server on port %s:\n"
+            " * Serving static files from %s\n",
+            StringValueCStr(arg->port), StringValueCStr(arg->www));
+    Registry.remove(arg->www);
+  }
+  Registry.remove(arg->port);
   return NULL;
 }
 
-static void iodine_print_http_msg(void *public_folder_, void *arg2) {
-  (void)arg2;
-  if (defer_fork_pid())
-    return;
-  RubyCaller.call_c(iodine_print_http_msg_in_gvl, public_folder_);
+void *iodine_print_http_msg_in_gvl(void *d_) {
+  // Write message
+  VALUE iodine_version = rb_const_get(Iodine, rb_intern("VERSION"));
+  VALUE ruby_version = rb_const_get(Iodine, rb_intern("RUBY_VERSION"));
+  struct {
+    VALUE www;
+    VALUE port;
+  } *arg = d_;
+  if (arg->www) {
+    fprintf(stderr,
+            "\nStarting up Iodine HTTP Server on port %s:\n"
+            " * Ruby v.%s\n * Iodine v.%s \n"
+            " * %lu max concurrent connections / open files\n"
+            " * Serving static files from %s\n",
+            StringValueCStr(arg->port), StringValueCStr(ruby_version),
+            StringValueCStr(iodine_version), (size_t)sock_max_capacity(),
+            StringValueCStr(arg->www));
+    Registry.remove(arg->www);
+  } else
+    fprintf(stderr,
+            "\nStarting up Iodine HTTP Server on port %s:\n"
+            " * Ruby v.%s\n * Iodine v.%s \n"
+            " * %lu max concurrent connections / open files\n",
+            StringValueCStr(arg->port), StringValueCStr(ruby_version),
+            StringValueCStr(iodine_version), (size_t)sock_max_capacity());
+  Registry.remove(arg->port);
+
+  return NULL;
 }
 
-static void free_iodine_http(void *set_, void *ignr) {
+static void iodine_print_http_msg1(void *www, void *port) {
+  if (defer_fork_pid())
+    return;
+  struct {
+    void *www;
+    void *port;
+  } data = {.www = www, .port = port};
+  RubyCaller.call_c(iodine_print_http_msg_in_gvl, (void *)&data);
+}
+static void iodine_print_http_msg2(void *www, void *port) {
+  if (defer_fork_pid())
+    return;
+  struct {
+    void *www;
+    void *port;
+  } data = {.www = www, .port = port};
+  RubyCaller.call_c(iodine_print_http_msg2_in_gvl, (void *)&data);
+}
+
+static void free_iodine_http(void *set_) {
   iodine_http_settings_s *set = set_;
   Registry.remove(set->app);
   Registry.remove(set->env);
   free(set);
-  (void)ignr;
 }
 /**
 Listens to incoming HTTP connections and handles incoming requests using the
@@ -584,6 +617,7 @@ will be dynamically managed by Iodine. The `timeout` option is only relevant to
 HTTP/1.x connections.
 */
 VALUE iodine_http_listen(VALUE self, VALUE opt) {
+  static int called_once = 0;
   uint8_t log_http = 0;
   size_t ping = 0;
   size_t max_body = 0;
@@ -657,7 +691,8 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
     if (RB_TYPE_P(port, T_FIXNUM))
       port = rb_funcall2(port, iodine_to_s_method_id, 0, NULL);
   } else
-    port = 0;
+    port = rb_str_new("3000", 4);
+  Registry.add(port);
 
   if ((app != Qnil && app != Qfalse))
     Registry.add(app);
@@ -669,7 +704,7 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
 
   init_env_template(set, (www ? 1 : 0));
 
-  if (http_listen((port ? StringValueCStr(port) : "3000"),
+  if (http_listen(StringValueCStr(port),
                   (address ? StringValueCStr(address) : NULL),
                   .on_request = on_rack_request, .udata = set,
                   .timeout = (tout ? FIX2INT(tout) : tout),
@@ -688,8 +723,13 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
             "static files.\n",
             (port ? StringValueCStr(port) : "3000"));
   }
+  if (called_once)
+    defer(iodine_print_http_msg2, (www ? (void *)www : NULL), (void *)port);
+  else {
+    called_once = 1;
+    defer(iodine_print_http_msg1, (www ? (void *)www : NULL), (void *)port);
+  }
 
-  defer(iodine_print_http_msg, (www ? (void *)www : NULL), NULL);
   return Qtrue;
   (void)self;
 }
