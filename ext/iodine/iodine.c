@@ -14,32 +14,32 @@ VALUE Iodine;
 VALUE IodineBase;
 VALUE Iodine_Version;
 
-ID fd_var_id;
-ID timeout_var_id;
-ID call_proc_id;
-ID new_func_id;
-ID on_open_func_id;
-ID on_message_func_id;
-ID on_data_func_id;
-ID on_ready_func_id;
-ID on_shutdown_func_id;
-ID on_close_func_id;
-ID ping_func_id;
-ID buff_var_id;
-ID to_s_method_id;
-ID to_i_func;
+ID iodine_fd_var_id;
+ID iodine_timeout_var_id;
+ID iodine_call_proc_id;
+ID iodine_new_func_id;
+ID iodine_on_open_func_id;
+ID iodine_on_message_func_id;
+ID iodine_on_data_func_id;
+ID iodine_on_ready_func_id;
+ID iodine_on_shutdown_func_id;
+ID iodine_on_close_func_id;
+ID iodine_ping_func_id;
+ID iodine_buff_var_id;
+ID iodine_to_s_method_id;
+ID iodine_to_i_func_id;
 
-rb_encoding *BinaryEncoding;
-rb_encoding *UTF8Encoding;
-int BinaryEncodingIndex;
-int UTF8EncodingIndex;
+rb_encoding *IodineBinaryEncoding;
+rb_encoding *IodineUTF8Encoding;
+int IodineBinaryEncodingIndex;
+int IodineUTF8EncodingIndex;
 
 /* *****************************************************************************
 Internal helpers
 ***************************************************************************** */
 
 static void iodine_run_task(void *block_) {
-  RubyCaller.call((VALUE)block_, call_proc_id);
+  RubyCaller.call((VALUE)block_, iodine_call_proc_id);
 }
 /* *****************************************************************************
 Published functions
@@ -248,25 +248,27 @@ Library Initialization
 // between Lib-Server and Ruby.
 void Init_iodine(void) {
   // initialize globally used IDs, for faster access to the Ruby layer.
-  fd_var_id = rb_intern("scrtfd");
-  call_proc_id = rb_intern("call");
-  new_func_id = rb_intern("new");
-  on_open_func_id = rb_intern("on_open");
-  on_message_func_id = rb_intern("on_message");
-  on_data_func_id = rb_intern("on_data");
-  on_shutdown_func_id = rb_intern("on_shutdown");
-  on_close_func_id = rb_intern("on_close");
-  on_ready_func_id = rb_intern("on_ready");
-  ping_func_id = rb_intern("ping");
-  buff_var_id = rb_intern("scrtbuffer");
-  timeout_var_id = rb_intern("@timeout");
-  to_s_method_id = rb_intern("to_s");
-  to_i_func = rb_intern("to_i");
+  iodine_fd_var_id = rb_intern("scrtfd");
+  iodine_call_proc_id = rb_intern("call");
+  iodine_new_func_id = rb_intern("new");
+  iodine_on_open_func_id = rb_intern("on_open");
+  iodine_on_message_func_id = rb_intern("on_message");
+  iodine_on_data_func_id = rb_intern("on_data");
+  iodine_on_shutdown_func_id = rb_intern("on_shutdown");
+  iodine_on_close_func_id = rb_intern("on_close");
+  iodine_on_ready_func_id = rb_intern("on_ready");
+  iodine_ping_func_id = rb_intern("ping");
+  iodine_buff_var_id = rb_intern("scrtbuffer");
+  iodine_timeout_var_id = rb_intern("@timeout");
+  iodine_to_s_method_id = rb_intern("to_s");
+  iodine_to_i_func_id = rb_intern("to_i");
 
-  BinaryEncodingIndex = rb_enc_find_index("binary"); // sets encoding for data
-  UTF8EncodingIndex = rb_enc_find_index("UTF-8");    // sets encoding for data
-  BinaryEncoding = rb_enc_find("binary");            // sets encoding for data
-  UTF8Encoding = rb_enc_find("UTF-8");               // sets encoding for data
+  IodineBinaryEncodingIndex =
+      rb_enc_find_index("binary"); // sets encoding for data
+  IodineUTF8EncodingIndex =
+      rb_enc_find_index("UTF-8");               // sets encoding for data
+  IodineBinaryEncoding = rb_enc_find("binary"); // sets encoding for data
+  IodineUTF8Encoding = rb_enc_find("UTF-8");    // sets encoding for data
 
   // The core Iodine module wraps libserver functionality and little more.
   Iodine = rb_define_module("Iodine");

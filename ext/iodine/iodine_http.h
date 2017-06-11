@@ -11,9 +11,9 @@ Feel free to copy, use and enjoy according to the license provided.
 /* the Iodine::Rack HTTP server class*/
 extern VALUE IodineHTTP;
 /* these three are used also by rb-rack-io.c */
-extern VALUE R_HIJACK;
-extern VALUE R_HIJACK_IO;
-extern VALUE R_HIJACK_CB;
+extern VALUE IODINE_R_HIJACK;
+extern VALUE IODINE_R_HIJACK_IO;
+extern VALUE IODINE_R_HIJACK_CB;
 
 void Iodine_init_http(void);
 

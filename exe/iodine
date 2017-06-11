@@ -48,11 +48,7 @@ rescue
   if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
     puts "WARNING: Ruby application not found - missing #{filename}?"
     puts "         Running only static file service."
-    app = Rack::Builder.new do
-      run lambda { |env| [404, {'Content-Type' => 'text/plain', 'Content-Length'.freeze => '21'.freeze}, ['Error 404 - Not Found']] }
-    end
     opt = Rack::Server::Options.new.parse!([])
-    p app, opt
   else
     puts "ERROR: Ruby application not found - missing #{filename}? For help run:"
     puts "       iodine -?"
@@ -74,7 +70,7 @@ if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
 end
 if ARGV.index('-tout') && ARGV[ARGV.index('-tout') + 1]
   Iodine::Rack.timeout = ARGV[ARGV.index('-tout') + 1].to_i
-  puts "WARNNING: Iodine::Rack.timeout set to 0 (ignored, timeout will be ~5 minutes)."
+  puts "WARNNING: Iodine::Rack.timeout set to 0 (ignored, timeout will be ~5 seconds)."
 end
 Iodine::Rack.log = true if ARGV.index('-v')
 Iodine::Rack.log = false if ARGV.index('-q')

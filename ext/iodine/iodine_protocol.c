@@ -29,18 +29,18 @@ static void iodine_clear_task(intptr_t origin, void *block_) {
 }
 
 static void iodine_perform_task(intptr_t uuid, protocol_s *pr, void *block_) {
-  RubyCaller.call2((VALUE)block_, call_proc_id, 1, (VALUE *)(pr + 1));
+  RubyCaller.call2((VALUE)block_, iodine_call_proc_id, 1, (VALUE *)(pr + 1));
   (void)uuid;
 }
 static void iodine_perform_task_and_free(intptr_t uuid, protocol_s *pr,
                                          void *block_) {
-  RubyCaller.call2((VALUE)block_, call_proc_id, 1, (VALUE *)(pr + 1));
+  RubyCaller.call2((VALUE)block_, iodine_call_proc_id, 1, (VALUE *)(pr + 1));
   Registry.remove((VALUE)block_);
   (void)uuid;
 }
 
 static void iodine_perform_deferred(void *block_, void *ignr) {
-  RubyCaller.call((VALUE)block_, call_proc_id);
+  RubyCaller.call((VALUE)block_, iodine_call_proc_id);
   Registry.remove((VALUE)block_);
   (void)ignr;
 }
@@ -77,15 +77,15 @@ more then 1Kb of space.
 */
 static VALUE dyn_read(int argc, VALUE *argv, VALUE self);
 static VALUE default_on_data(VALUE self) {
-  VALUE buff = rb_ivar_get(self, buff_var_id);
+  VALUE buff = rb_ivar_get(self, iodine_buff_var_id);
   if (buff == Qnil) {
-    rb_ivar_set(self, buff_var_id, (buff = rb_str_buf_new(1024)));
+    rb_ivar_set(self, iodine_buff_var_id, (buff = rb_str_buf_new(1024)));
   }
   do {
     dyn_read(1, &buff, self);
     if (!RSTRING_LEN(buff))
       return Qnil;
-    rb_funcall(self, on_message_func_id, 1, buff);
+    rb_funcall(self, iodine_on_message_func_id, 1, buff);
   } while (RSTRING_LEN(buff) == (ssize_t)rb_str_capacity(buff));
   return Qnil;
 }
@@ -174,7 +174,7 @@ static VALUE dyn_read(int argc, VALUE *argv, VALUE self) {
   }
   ssize_t in = sock_read(fd, RSTRING_PTR(str), len);
   // make sure it's binary encoded
-  rb_enc_associate_index(str, BinaryEncodingIndex);
+  rb_enc_associate_index(str, IodineBinaryEncodingIndex);
   // set actual size....
   if (in > 0)
     rb_str_set_len(str, (long)in);
@@ -303,29 +303,29 @@ static char *iodine_protocol_service = "Iodine Custom Protocol";
 /** called when a data is available, but will not run concurrently */
 static void dyn_protocol_on_data(intptr_t fduuid, protocol_s *protocol) {
   (void)(fduuid);
-  RubyCaller.call(dyn_prot(protocol)->handler, on_data_func_id);
+  RubyCaller.call(dyn_prot(protocol)->handler, iodine_on_data_func_id);
 }
 /** called when the socket is ready to be written to. */
 static void dyn_protocol_on_ready(intptr_t fduuid, protocol_s *protocol) {
   (void)(fduuid);
-  RubyCaller.call(dyn_prot(protocol)->handler, on_ready_func_id);
+  RubyCaller.call(dyn_prot(protocol)->handler, iodine_on_ready_func_id);
 }
 /** called when the server is shutting down,
  * but before closing the connection. */
 static void dyn_protocol_on_shutdown(intptr_t fduuid, protocol_s *protocol) {
   (void)(fduuid);
-  RubyCaller.call(dyn_prot(protocol)->handler, on_shutdown_func_id);
+  RubyCaller.call(dyn_prot(protocol)->handler, iodine_on_shutdown_func_id);
 }
 /** called when the connection was closed, but will not run concurrently */
 static void dyn_protocol_on_close(protocol_s *protocol) {
-  RubyCaller.call(dyn_prot(protocol)->handler, on_close_func_id);
+  RubyCaller.call(dyn_prot(protocol)->handler, iodine_on_close_func_id);
   Registry.remove(dyn_prot(protocol)->handler);
   free(protocol);
 }
 /** called when a connection's timeout was reached */
 static void dyn_protocol_ping(intptr_t fduuid, protocol_s *protocol) {
   (void)(fduuid);
-  RubyCaller.call(dyn_prot(protocol)->handler, ping_func_id);
+  RubyCaller.call(dyn_prot(protocol)->handler, iodine_ping_func_id);
 }
 
 /* *****************************************************************************
@@ -352,14 +352,14 @@ static inline protocol_s *dyn_set_protocol(intptr_t fduuid, VALUE handler,
       .protocol.service = iodine_protocol_service,
       .handler = handler,
   };
-  RubyCaller.call(handler, on_open_func_id);
+  RubyCaller.call(handler, iodine_on_open_func_id);
   return &protocol->protocol;
 }
 
 static protocol_s *on_open_dyn_protocol(intptr_t fduuid, void *udata) {
-  VALUE rb_tout = rb_ivar_get((VALUE)udata, timeout_var_id);
+  VALUE rb_tout = rb_ivar_get((VALUE)udata, iodine_timeout_var_id);
   uint8_t timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
-  VALUE handler = RubyCaller.call((VALUE)udata, new_func_id);
+  VALUE handler = RubyCaller.call((VALUE)udata, iodine_new_func_id);
   if (handler == Qnil)
     return NULL;
   return dyn_set_protocol(fduuid, handler, timeout);
@@ -385,7 +385,7 @@ static VALUE iodine_listen(VALUE self, VALUE port, VALUE handler) {
   if (TYPE(port) != T_FIXNUM && TYPE(port) != T_STRING)
     rb_raise(rb_eTypeError, "The port variable must be a Fixnum or a String.");
   if (TYPE(port) == T_FIXNUM)
-    port = rb_funcall2(port, to_s_method_id, 0, NULL);
+    port = rb_funcall2(port, iodine_to_s_method_id, 0, NULL);
   rb_ivar_set(self, rb_intern("_port"), port);
   // listen
   if (facil_listen(.port = StringValueCStr(port), .udata = (void *)handler,
@@ -399,20 +399,20 @@ VALUE dyn_switch_prot(VALUE self, VALUE handler) {
   intptr_t fd = iodine_get_fd(self);
   if (TYPE(handler) == T_CLASS) {
     // get the timeout
-    VALUE rb_tout = rb_ivar_get(handler, timeout_var_id);
+    VALUE rb_tout = rb_ivar_get(handler, iodine_timeout_var_id);
     timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
     // include the Protocol module, preventing coder errors
     rb_include_module(handler, IodineProtocol);
-    handler = RubyCaller.call(handler, new_func_id);
+    handler = RubyCaller.call(handler, iodine_new_func_id);
   } else {
     // include the Protocol module in the object's class
     VALUE p_class = rb_obj_class(handler);
     // include the Protocol module, preventing coder errors
     rb_include_module(p_class, IodineProtocol);
     // get the timeout
-    VALUE rb_tout = rb_ivar_get(p_class, timeout_var_id);
+    VALUE rb_tout = rb_ivar_get(p_class, iodine_timeout_var_id);
     if (rb_tout == Qnil)
-      rb_tout = rb_ivar_get(handler, timeout_var_id);
+      rb_tout = rb_ivar_get(handler, iodine_timeout_var_id);
     timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
   }
   if (facil_attach(fd, dyn_set_protocol(fd, handler, timeout)))
@@ -421,7 +421,7 @@ VALUE dyn_switch_prot(VALUE self, VALUE handler) {
 }
 
 static protocol_s *on_open_dyn_protocol_instance(intptr_t fduuid, void *udata) {
-  VALUE rb_tout = rb_ivar_get((VALUE)udata, timeout_var_id);
+  VALUE rb_tout = rb_ivar_get((VALUE)udata, iodine_timeout_var_id);
   uint8_t timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
   protocol_s *pr = dyn_set_protocol(fduuid, (VALUE)udata, timeout);
   Registry.remove((VALUE)udata);
@@ -441,27 +441,27 @@ static VALUE iodine_connect(VALUE self, VALUE address, VALUE port,
   uint8_t timeout;
   if (TYPE(handler) == T_CLASS) {
     // get the timeout
-    VALUE rb_tout = rb_ivar_get(handler, timeout_var_id);
+    VALUE rb_tout = rb_ivar_get(handler, iodine_timeout_var_id);
     timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
     // include the Protocol module, preventing coder errors
     rb_include_module(handler, IodineProtocol);
-    handler = RubyCaller.call(handler, new_func_id);
+    handler = RubyCaller.call(handler, iodine_new_func_id);
   } else {
     // include the Protocol module in the object's class
     VALUE p_class = rb_obj_class(handler);
     // include the Protocol module, preventing coder errors
     rb_include_module(p_class, IodineProtocol);
     // get the timeout
-    VALUE rb_tout = rb_ivar_get(p_class, timeout_var_id);
+    VALUE rb_tout = rb_ivar_get(p_class, iodine_timeout_var_id);
     if (rb_tout == Qnil)
-      rb_tout = rb_ivar_get(handler, timeout_var_id);
+      rb_tout = rb_ivar_get(handler, iodine_timeout_var_id);
     timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
   }
   Registry.add(handler);
   if (TYPE(port) != T_FIXNUM && TYPE(port) != T_STRING)
     rb_raise(rb_eTypeError, "The port variable must be a Fixnum or a String.");
   if (TYPE(port) == T_FIXNUM)
-    port = rb_funcall2(port, to_s_method_id, 0, NULL);
+    port = rb_funcall2(port, iodine_to_s_method_id, 0, NULL);
   // connect
   if (facil_connect(.port = StringValueCStr(port),
                     .address = StringValueCStr(address),
@@ -494,7 +494,7 @@ static VALUE iodine_attach_fd(VALUE self, VALUE rbfd, VALUE handler) {
   if (TYPE(handler) == T_CLASS) {
     // include the Protocol module, preventing coder errors
     rb_include_module(handler, IodineProtocol);
-    handler = RubyCaller.call(handler, new_func_id);
+    handler = RubyCaller.call(handler, iodine_new_func_id);
   } else {
     // include the Protocol module in the object's class
     VALUE p_class = rb_obj_class(handler);
@@ -515,7 +515,7 @@ i.e.
 
 */
 static VALUE iodine_attach_io(VALUE self, VALUE io, VALUE handler) {
-  return iodine_attach_fd(self, RubyCaller.call(io, to_i_func), handler);
+  return iodine_attach_fd(self, RubyCaller.call(io, iodine_to_i_func_id), handler);
 }
 /* *****************************************************************************
 Library Initialization

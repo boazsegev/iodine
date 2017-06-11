@@ -24,9 +24,9 @@ typedef struct {
 } iodine_http_settings_s;
 
 /* these three are used also by rb-rack-io.c */
-VALUE R_HIJACK;
-VALUE R_HIJACK_IO;
-VALUE R_HIJACK_CB;
+VALUE IODINE_R_HIJACK;
+VALUE IODINE_R_HIJACK_IO;
+VALUE IODINE_R_HIJACK_CB;
 
 VALUE UPGRADE_TCP;
 VALUE UPGRADE_TCP_Q;
@@ -42,7 +42,7 @@ static ID attach_method_id;
 #define rack_declare(rack_name) static VALUE rack_name
 
 #define rack_set(rack_name, str)                                               \
-  (rack_name) = rb_enc_str_new((str), strlen((str)), BinaryEncoding);          \
+  (rack_name) = rb_enc_str_new((str), strlen((str)), IodineBinaryEncoding);          \
   rb_global_variable(&(rack_name));                                            \
   rb_obj_freeze(rack_name);
 
@@ -68,8 +68,8 @@ rack_declare(R_URL_SCHEME);          // rack.url_scheme
 rack_declare(R_INPUT);               // rack.input
 rack_declare(XSENDFILE);             // for X-Sendfile support
 rack_declare(CONTENT_LENGTH_HEADER); // for X-Sendfile support
-// rack_declare(R_HIJACK); // rack.hijack
-// rack_declare(R_HIJACK_CB);// rack.hijack_io
+// rack_declare(IODINE_R_HIJACK); // rack.hijack
+// rack_declare(IODINE_R_HIJACK_CB);// rack.hijack_io
 
 /* *****************************************************************************
 Copying data from the C request to the Rack's ENV
@@ -86,24 +86,24 @@ static inline VALUE copy2env(http_request_s *request, VALUE template) {
   /* Copy basic data */
   rb_hash_aset(
       env, REQUEST_METHOD,
-      rb_enc_str_new(request->method, request->method_len, BinaryEncoding));
+      rb_enc_str_new(request->method, request->method_len, IodineBinaryEncoding));
 
   rb_hash_aset(
       env, PATH_INFO,
-      rb_enc_str_new(request->path, request->path_len, BinaryEncoding));
+      rb_enc_str_new(request->path, request->path_len, IodineBinaryEncoding));
   rb_hash_aset(
       env, QUERY_STRING,
       (request->query
-           ? rb_enc_str_new(request->query, request->query_len, BinaryEncoding)
+           ? rb_enc_str_new(request->query, request->query_len, IodineBinaryEncoding)
            : QUERY_ESTRING));
   rb_hash_aset(
       env, QUERY_STRING,
       (request->query
-           ? rb_enc_str_new(request->query, request->query_len, BinaryEncoding)
+           ? rb_enc_str_new(request->query, request->query_len, IodineBinaryEncoding)
            : QUERY_ESTRING));
 
   hname =
-      rb_enc_str_new(request->version, request->version_len, BinaryEncoding);
+      rb_enc_str_new(request->version, request->version_len, IodineBinaryEncoding);
   rb_hash_aset(env, SERVER_PROTOCOL, hname);
   rb_hash_aset(env, HTTP_VERSION, hname);
 
@@ -131,7 +131,7 @@ static inline VALUE copy2env(http_request_s *request, VALUE template) {
   }
 
   hname = rb_obj_method(hname, hijack_func_sym);
-  rb_hash_aset(env, R_HIJACK, hname);
+  rb_hash_aset(env, IODINE_R_HIJACK, hname);
 
   /* handle the HOST header, including the possible host:#### format*/
   pos = (char *)request->host;
@@ -140,16 +140,16 @@ static inline VALUE copy2env(http_request_s *request, VALUE template) {
   if (*pos == 0) {
     rb_hash_aset(
         env, SERVER_NAME,
-        rb_enc_str_new(request->host, request->host_len, BinaryEncoding));
+        rb_enc_str_new(request->host, request->host_len, IodineBinaryEncoding));
     rb_hash_aset(env, SERVER_PORT, QUERY_ESTRING);
   } else {
     rb_hash_aset(
         env, SERVER_NAME,
-        rb_enc_str_new(request->host, pos - request->host, BinaryEncoding));
+        rb_enc_str_new(request->host, pos - request->host, IodineBinaryEncoding));
     rb_hash_aset(env, SERVER_PORT,
                  rb_enc_str_new(pos + 1,
                                 request->host_len - ((pos + 1) - request->host),
-                                BinaryEncoding));
+                                IodineBinaryEncoding));
   }
 
   /* default schema to http, it might be updated later */
@@ -162,14 +162,14 @@ static inline VALUE copy2env(http_request_s *request, VALUE template) {
         strncasecmp("content-length", header.name, 14) == 0) {
       rb_hash_aset(
           env, CONTENT_LENGTH,
-          rb_enc_str_new(header.value, header.value_len, BinaryEncoding));
+          rb_enc_str_new(header.value, header.value_len, IodineBinaryEncoding));
       header = http_request_header_next(request);
       continue;
     } else if (header.name_len == 12 &&
                strncasecmp("content-type", header.name, 12) == 0) {
       rb_hash_aset(
           env, CONTENT_TYPE,
-          rb_enc_str_new(header.value, header.value_len, BinaryEncoding));
+          rb_enc_str_new(header.value, header.value_len, IodineBinaryEncoding));
       header = http_request_header_next(request);
       continue;
     } else if (header.name_len == 27 &&
@@ -182,7 +182,7 @@ static inline VALUE copy2env(http_request_s *request, VALUE template) {
       } else {
         rb_hash_aset(
             env, R_URL_SCHEME,
-            rb_enc_str_new(header.value, header.value_len, BinaryEncoding));
+            rb_enc_str_new(header.value, header.value_len, IodineBinaryEncoding));
       }
     } else if (header.name_len == 9 &&
                strncasecmp("forwarded", header.name, 9) == 0) {
@@ -223,7 +223,7 @@ static inline VALUE copy2env(http_request_s *request, VALUE template) {
     rb_str_set_len(hname, 5 + header.name_len);
     rb_hash_aset(
         env, hname,
-        rb_enc_str_new(header.value, header.value_len, BinaryEncoding));
+        rb_enc_str_new(header.value, header.value_len, IodineBinaryEncoding));
     header = http_request_header_next(request);
   }
   return env;
@@ -238,11 +238,11 @@ Handling the HTTP response
 static int for_each_header_data(VALUE key, VALUE val, VALUE _res) {
   // fprintf(stderr, "For_each - headers\n");
   if (TYPE(key) != T_STRING)
-    key = RubyCaller.call(key, to_s_method_id);
+    key = RubyCaller.call(key, iodine_to_s_method_id);
   if (TYPE(key) != T_STRING)
     return ST_CONTINUE;
   if (TYPE(val) != T_STRING) {
-    val = RubyCaller.call(val, to_s_method_id);
+    val = RubyCaller.call(val, iodine_to_s_method_id);
     if (TYPE(val) != T_STRING)
       return ST_STOP;
   }
@@ -337,15 +337,16 @@ Handling Upgrade cases
 static inline int ruby2c_review_upgrade(http_response_s *response,
                                         VALUE rbresponse, VALUE env) {
   VALUE handler;
-  if ((handler = rb_hash_aref(env, R_HIJACK_CB)) != Qnil) {
+  if ((handler = rb_hash_aref(env, IODINE_R_HIJACK_CB)) != Qnil) {
     // send headers
     http_response_finish(response);
     //  remove socket from libsock and libserver
     facil_attach(response->fd, NULL);
     // call the callback
-    VALUE io_ruby = RubyCaller.call(rb_hash_aref(env, R_HIJACK), call_proc_id);
-    RubyCaller.call2(handler, call_proc_id, 1, &io_ruby);
-  } else if ((handler = rb_hash_aref(env, R_HIJACK_IO)) != Qnil) {
+    VALUE io_ruby = RubyCaller.call(rb_hash_aref(env, IODINE_R_HIJACK),
+                                    iodine_call_proc_id);
+    RubyCaller.call2(handler, iodine_call_proc_id, 1, &io_ruby);
+  } else if ((handler = rb_hash_aref(env, IODINE_R_HIJACK_IO)) != Qnil) {
     // send nothing.
     http_response_destroy(response);
     // remove socket from libsock and libserver
@@ -388,7 +389,8 @@ static void *on_rack_request_in_GVL(http_request_s *request) {
   // will be used later
   VALUE tmp;
   // pass env variable to handler
-  VALUE rbresponse = RubyCaller.call2(settings->app, call_proc_id, 1, &env);
+  VALUE rbresponse =
+      RubyCaller.call2(settings->app, iodine_call_proc_id, 1, &env);
   if (rbresponse == 0 || rbresponse == Qnil)
     goto internal_error;
   Registry.add(rbresponse);
@@ -459,15 +461,15 @@ Initializing basic Rack ENV template
 
 #define add_str_to_env(env, key, value)                                        \
   {                                                                            \
-    VALUE k = rb_enc_str_new((key), strlen((key)), BinaryEncoding);            \
+    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);            \
     rb_obj_freeze(k);                                                          \
-    VALUE v = rb_enc_str_new((value), strlen((value)), BinaryEncoding);        \
+    VALUE v = rb_enc_str_new((value), strlen((value)), IodineBinaryEncoding);        \
     rb_obj_freeze(v);                                                          \
     rb_hash_aset(env, k, v);                                                   \
   }
 #define add_value_to_env(env, key, value)                                      \
   {                                                                            \
-    VALUE k = rb_enc_str_new((key), strlen((key)), BinaryEncoding);            \
+    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);            \
     rb_obj_freeze(k);                                                          \
     rb_hash_aset((env), k, value);                                             \
   }
@@ -491,8 +493,8 @@ static void init_env_template(iodine_http_settings_s *set, uint8_t xsendfile) {
   tmp = rb_ary_new(); // rb_ary_new is Ruby 2.0 compatible
   rb_ary_push(tmp, INT2FIX(1));
   rb_ary_push(tmp, INT2FIX(3));
-  // rb_ary_push(tmp, rb_enc_str_new("1", 1, BinaryEncoding));
-  // rb_ary_push(tmp, rb_enc_str_new("3", 1, BinaryEncoding));
+  // rb_ary_push(tmp, rb_enc_str_new("1", 1, IodineBinaryEncoding));
+  // rb_ary_push(tmp, rb_enc_str_new("3", 1, IodineBinaryEncoding));
   add_value_to_env(set->env, "rack.version", tmp);
   add_value_to_env(set->env, "rack.errors", rb_stderr);
   add_value_to_env(set->env, "rack.multithread", Qtrue);
@@ -653,7 +655,7 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
       rb_raise(rb_eTypeError,
                "The `port` property MUST be either a String or a Number");
     if (RB_TYPE_P(port, T_FIXNUM))
-      port = rb_funcall2(port, to_s_method_id, 0, NULL);
+      port = rb_funcall2(port, iodine_to_s_method_id, 0, NULL);
   } else
     port = 0;
 
@@ -721,9 +723,9 @@ void Iodine_init_http(void) {
   rack_set(XSENDFILE, "X-Sendfile");
   rack_set(CONTENT_LENGTH_HEADER, "Content-Length");
 
-  rack_set(R_HIJACK_IO, "rack.hijack_io");
-  rack_set(R_HIJACK, "rack.hijack");
-  rack_set(R_HIJACK_CB, "iodine.hijack_cb");
+  rack_set(IODINE_R_HIJACK_IO, "rack.hijack_io");
+  rack_set(IODINE_R_HIJACK, "rack.hijack");
+  rack_set(IODINE_R_HIJACK_CB, "iodine.hijack_cb");
 
   rack_set(UPGRADE_TCP, "upgrade.tcp");
   rack_set(UPGRADE_WEBSOCKET, "upgrade.websocket");

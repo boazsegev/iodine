@@ -32,31 +32,31 @@ extern VALUE Iodine;
 extern VALUE IodineBase;
 extern VALUE Iodine_Version;
 
-extern ID fd_var_id;
-extern ID timeout_var_id;
-extern ID call_proc_id;
-extern ID new_func_id;
-extern ID on_open_func_id;
-extern ID on_message_func_id;
-extern ID on_data_func_id;
-extern ID on_ready_func_id;
-extern ID on_shutdown_func_id;
-extern ID on_close_func_id;
-extern ID ping_func_id;
-extern ID buff_var_id;
-extern ID to_s_method_id;
-extern ID to_i_func;
+extern ID iodine_fd_var_id;
+extern ID iodine_timeout_var_id;
+extern ID iodine_call_proc_id;
+extern ID iodine_new_func_id;
+extern ID iodine_on_open_func_id;
+extern ID iodine_on_message_func_id;
+extern ID iodine_on_data_func_id;
+extern ID iodine_on_ready_func_id;
+extern ID iodine_on_shutdown_func_id;
+extern ID iodine_on_close_func_id;
+extern ID iodine_ping_func_id;
+extern ID iodine_buff_var_id;
+extern ID iodine_to_s_method_id;
+extern ID iodine_to_i_func_id;
 
-extern rb_encoding *BinaryEncoding;
-extern rb_encoding *UTF8Encoding;
-extern int BinaryEncodingIndex;
-extern int UTF8EncodingIndex;
+extern rb_encoding *IodineBinaryEncoding;
+extern rb_encoding *IodineUTF8Encoding;
+extern int IodineBinaryEncodingIndex;
+extern int IodineUTF8EncodingIndex;
 
 UNUSED_FUNC static inline void iodine_set_fd(VALUE handler, intptr_t fd) {
-  rb_ivar_set(handler, fd_var_id, LONG2NUM((long)fd));
+  rb_ivar_set(handler, iodine_fd_var_id, LONG2NUM((long)fd));
 }
 UNUSED_FUNC static inline intptr_t iodine_get_fd(VALUE handler) {
-  return ((intptr_t)NUM2LONG(rb_ivar_get(handler, fd_var_id)));
+  return ((intptr_t)NUM2LONG(rb_ivar_get(handler, iodine_fd_var_id)));
 }
 
 #endif

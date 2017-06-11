@@ -21,10 +21,10 @@ static ID ws_var_id;          // id for websocket pointer
 static ID dup_func_id;        // id for the buffer.dup method
 
 #define set_uuid(object, request)                                              \
-  rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->fd))
+  rb_ivar_set((object), iodine_fd_var_id, ULONG2NUM((request)->fd))
 
 inline static intptr_t get_uuid(VALUE obj) {
-  VALUE i = rb_ivar_get(obj, fd_var_id);
+  VALUE i = rb_ivar_get(obj, iodine_fd_var_id);
   return i != Qnil ? (intptr_t)FIX2ULONG(i) : 0;
 }
 
@@ -74,14 +74,14 @@ void *ruby_land_buffer(void *_buf) {
 #define args ((struct buffer_args *)(_buf))
   if (args->buffer.data == NULL) {
     VALUE rbbuff = rb_str_buf_new(WS_INITIAL_BUFFER_SIZE);
-    rb_ivar_set(get_handler(args->ws), buff_var_id, rbbuff);
+    rb_ivar_set(get_handler(args->ws), iodine_buff_var_id, rbbuff);
     rb_str_set_len(rbbuff, 0);
-    rb_enc_associate(rbbuff, BinaryEncoding);
+    rb_enc_associate(rbbuff, IodineBinaryEncoding);
     args->buffer.data = RSTRING_PTR(rbbuff);
     args->buffer.size = WS_INITIAL_BUFFER_SIZE;
 
   } else {
-    VALUE rbbuff = rb_ivar_get(get_handler(args->ws), buff_var_id);
+    VALUE rbbuff = rb_ivar_get(get_handler(args->ws), iodine_buff_var_id);
     rb_str_modify(rbbuff);
     rb_str_resize(rbbuff, args->buffer.size);
     args->buffer.data = RSTRING_PTR(rbbuff);
@@ -144,7 +144,7 @@ static VALUE iodine_ws_write(VALUE self, VALUE data) {
   if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
     return Qfalse;
   websocket_write(ws, RSTRING_PTR(data), RSTRING_LEN(data),
-                  rb_enc_get(data) == UTF8Encoding);
+                  rb_enc_get(data) == IodineUTF8Encoding);
   return Qtrue;
 }
 
@@ -186,7 +186,7 @@ static void iodine_perform_defer(intptr_t uuid, protocol_s *protocol,
   (void)(uuid);
   VALUE obj = protocol->service == WEBSOCKET_ID_STR ? get_handler(protocol)
                                                     : (VALUE)(protocol + 1);
-  RubyCaller.call2((VALUE)arg, call_proc_id, 1, &obj);
+  RubyCaller.call2((VALUE)arg, iodine_call_proc_id, 1, &obj);
   Registry.remove((VALUE)arg);
 }
 
@@ -249,7 +249,7 @@ static uint8_t iodine_ws_if_callback(ws_s *ws, void *block) {
   VALUE handler = get_handler(ws);
   uint8_t ret = 0;
   if (handler)
-    ret = RubyCaller.call2((VALUE)block, call_proc_id, 1, &handler);
+    ret = RubyCaller.call2((VALUE)block, iodine_call_proc_id, 1, &handler);
   return ret && ret != Qnil && ret != Qfalse;
 }
 
@@ -288,7 +288,7 @@ static void iodine_ws_write_each_complete(ws_s *ws, void *block) {
 //     Registry.add(block);
 //   websocket_write_each(.origin = ws, .data = RSTRING_PTR(data),
 //                        .length = RSTRING_LEN(data),
-//                        .is_text = (rb_enc_get(data) == UTF8Encoding),
+//                        .is_text = (rb_enc_get(data) == IodineUTF8Encoding),
 //                        .on_finished = iodine_ws_write_each_complete,
 //                        .filter =
 //                            ((block == Qnil) ? NULL : iodine_ws_if_callback),
@@ -305,7 +305,7 @@ static void iodine_ws_perform_each_task(intptr_t fd, protocol_s *protocol,
   (void)(fd);
   VALUE handler = get_handler(protocol);
   if (handler)
-    RubyCaller.call2((VALUE)data, call_proc_id, 1, &handler);
+    RubyCaller.call2((VALUE)data, iodine_call_proc_id, 1, &handler);
 }
 static void iodine_ws_finish_each_task(intptr_t fd, void *data) {
   (void)(fd);
@@ -408,13 +408,13 @@ void ws_on_open(ws_s *ws) {
   if (!handler)
     return;
   set_ws(handler, ws);
-  RubyCaller.call(handler, on_open_func_id);
+  RubyCaller.call(handler, iodine_on_open_func_id);
 }
 void ws_on_close(ws_s *ws) {
   VALUE handler = get_handler(ws);
   if (!handler)
     return;
-  RubyCaller.call(handler, on_close_func_id);
+  RubyCaller.call(handler, iodine_on_close_func_id);
   set_ws(handler, Qnil);
   Registry.remove(handler);
 }
@@ -422,26 +422,26 @@ void ws_on_shutdown(ws_s *ws) {
   VALUE handler = get_handler(ws);
   if (!handler)
     return;
-  RubyCaller.call(handler, on_shutdown_func_id);
+  RubyCaller.call(handler, iodine_on_shutdown_func_id);
 }
 void ws_on_ready(ws_s *ws) {
   VALUE handler = get_handler(ws);
   if (!handler)
     return;
-  RubyCaller.call(handler, on_ready_func_id);
+  RubyCaller.call(handler, iodine_on_ready_func_id);
 }
 void ws_on_data(ws_s *ws, char *data, size_t length, uint8_t is_text) {
   (void)(data);
   VALUE handler = get_handler(ws);
   if (!handler)
     return;
-  VALUE buffer = rb_ivar_get(handler, buff_var_id);
+  VALUE buffer = rb_ivar_get(handler, iodine_buff_var_id);
   if (is_text)
-    rb_enc_associate(buffer, UTF8Encoding);
+    rb_enc_associate(buffer, IodineUTF8Encoding);
   else
-    rb_enc_associate(buffer, BinaryEncoding);
+    rb_enc_associate(buffer, IodineBinaryEncoding);
   rb_str_set_len(buffer, length);
-  RubyCaller.call2(handler, on_message_func_id, 1, &buffer);
+  RubyCaller.call2(handler, iodine_on_message_func_id, 1, &buffer);
 }
 
 //////////////
@@ -493,7 +493,7 @@ void iodine_websocket_upgrade(http_request_s *request,
     // include the Protocol module
     rb_include_module(handler, rWebsocket);
     rb_extend_object(handler, rWebsocketClass);
-    handler = RubyCaller.call(handler, new_func_id);
+    handler = RubyCaller.call(handler, iodine_new_func_id);
     // check that we created a handler
   } else {
     // include the Protocol module in the object's class
