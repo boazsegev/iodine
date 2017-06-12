@@ -1,5 +1,6 @@
 #include "iodine.h"
 #include "iodine_engine.h"
+#include "iodine_helpers.h"
 #include "iodine_http.h"
 #include "iodine_protocol.h"
 #include "iodine_websockets.h"
@@ -314,4 +315,5 @@ void Init_iodine(void) {
   Iodine_init_engine();
   Iodine_init_http();
   Iodine_init_websocket();
+  Iodine_init_helpers();
 }

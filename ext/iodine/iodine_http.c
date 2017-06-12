@@ -122,7 +122,7 @@ static inline VALUE copy2env(http_request_s *request, VALUE template) {
   }
 
   /* setup input IO + hijack support */
-  rb_hash_aset(env, R_INPUT, (hname = RackIO.create(request, env)));
+  rb_hash_aset(env, R_INPUT, (hname = IodineRackIO.create(request, env)));
 
   /* publish upgrade support */
   if (request->upgrade) {
@@ -779,5 +779,5 @@ void Iodine_init_http(void) {
   each_method_id = rb_intern("each");
   attach_method_id = rb_intern("attach_fd");
 
-  RackIO.init();
+  IodineRackIO.init();
 }

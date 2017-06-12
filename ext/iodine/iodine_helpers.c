@@ -1,0 +1,95 @@
+/*
+Copyright: Boaz segev, 2016-2017
+License: MIT
+
+Feel free to copy, use and enjoy according to the license provided.
+*/
+#include "iodine_helpers.h"
+
+#include "http.h"
+
+/*
+Add all sorts of useless stuff here.
+*/
+
+/* *****************************************************************************
+URL Decoding
+***************************************************************************** */
+
+/**
+Decodes a URL encoded String in place.
+
+Raises an exception on error... but this might result in a partially decoded
+String.
+*/
+static VALUE url_decode_inplace(VALUE self, VALUE str) {
+  Check_Type(str, T_STRING);
+  ssize_t len =
+      http_decode_url(RSTRING_PTR(str), RSTRING_PTR(str), RSTRING_LEN(str));
+  if (len < 0)
+    rb_raise(rb_eRuntimeError, "Malformed URL string - couldn't decode (String "
+                               "might have been partially altered).");
+  rb_str_set_len(str, len);
+  return str;
+  (void)self;
+}
+
+/**
+Decodes a URL encoded String, returning a new String with the decoded data.
+*/
+static VALUE url_decode(VALUE self, VALUE str) {
+  Check_Type(str, T_STRING);
+  VALUE str2 = rb_str_buf_new(RSTRING_LEN(str));
+  ssize_t len =
+      http_decode_url(RSTRING_PTR(str2), RSTRING_PTR(str), RSTRING_LEN(str));
+  if (len < 0)
+    rb_raise(rb_eRuntimeError, "Malformed URL string - couldn't decode (String "
+                               "might have been partially altered).");
+  rb_str_set_len(str2, len);
+  return str2;
+  (void)self;
+}
+
+/* *****************************************************************************
+HTTP Dates
+***************************************************************************** */
+
+/**
+Takes an optional Integer for Unix Time and returns a faster (though less
+localized) HTTP Date formatted String.
+
+
+        Iodine::Rack.time2str => "Sun, 11 Jun 2017 06:14:08 GMT"
+
+        Iodine::Rack.time2str(Time.now.to_i) => "Wed, 15 Nov 1995 06:25:24 GMT"
+
+Since Iodine uses time caching within it's reactor, using the default value
+(now) will be faster than providing an explicit time using `Time.now.to_i`.
+
+*/
+static VALUE date_str(int argc, VALUE *argv, VALUE self) {
+  if (argc > 1)
+    rb_raise(rb_eArgError,
+             "wrong number of arguments (given %d, expected 0..1).", argc);
+  time_t last_tick;
+  if (argc) {
+    Check_Type(argv[0], T_FIXNUM);
+    last_tick = FIX2ULONG(argv[0]);
+  } else
+    last_tick = facil_last_tick();
+  VALUE str = rb_str_buf_new(32);
+  struct tm tm;
+
+  http_gmtime(&last_tick, &tm);
+  size_t len = http_date2str(RSTRING_PTR(str), &tm);
+  rb_str_set_len(str, len);
+  return str;
+  (void)self;
+}
+
+void Iodine_init_helpers(void) {
+  VALUE IodineRack = rb_define_module_under(Iodine, "Rack");
+  rb_define_module_function(IodineRack, "decode_url!", url_decode_inplace, 1);
+  rb_define_module_function(IodineRack, "decode_url", url_decode_inplace, 1);
+  rb_define_module_function(IodineRack, "time2str", date_str, -1);
+}

@@ -17,7 +17,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #endif
 #include "rb-call.h"
 
-/* RackIO manages a minimal interface to act as an IO wrapper according to
+/* IodineRackIO manages a minimal interface to act as an IO wrapper according to
 these Rack specifications:
 
 The input stream is an IO-like object which contains the raw HTTP POST data.
@@ -402,6 +402,6 @@ static void init_rack_io(void) {
 
 ////////////////////////////////////////////////////////////////////////////
 // the API interface
-struct _RackIO_ RackIO = {
+struct IodineRackIO IodineRackIO = {
     .create = new_rack_io, .init = init_rack_io,
 };
