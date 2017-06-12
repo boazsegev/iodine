@@ -16,8 +16,8 @@ Both <options> and <filename> are optional.
 
 Available options:
  -p          Port number. Default: 3000.
- -t          Number of threads. Default: half of the CPU core count.
- -w          Number of worker processes. half of the CPU core count.
+ -t          Number of threads. Default: CPU core count.
+ -w          Number of worker processes. Default: CPU core count.
  -www        Public folder for static file serving. Default: nil (none).
  -v          Log responses. Default: never log responses.
  -warmup     Warmup invokes autoloading (lazy loading) during server startup.
