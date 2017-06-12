@@ -93,26 +93,22 @@ Server settings **MAY** (not required) be provided to allow for customization an
 
 ---
 
-## Rack Websockets: Iodine Extensions
+## Iodine Collection Extension
 
-Iodine implements the described specification as well as adds the following methods to the Websocket Callback Object (in addition to `#write`, `#close` and `has_pending?`):
+The following extension is meant to allow iodine to manage connection memory and resource allocation while relieving developers from rewriting the same workflow of connection storing (`on_open do ALL_WS << self; end `) and management.
 
-* `Iodine::Websocket.each` (class method) will run a block of code for each connected Websocket Callback Object **in the current process**. This can be called from outside of a Websocket Callback Object as well.
+This extension should be easy enough to implement using a loop or an array within the each process context. These methods do **not** cross process boundaries and they are meant to help implement more advanced features (they aren't a feature on their own).
+
+* `Iodine::Websocket.each` (class method) will run a block of code for each connected Websocket Callback Object **belonging to the current process**. This can be called from outside of a Websocket Callback Object as well.
 
     ```ruby
     Iodine::Websocket.each {|ws| ws.write "hello" }
     ```
 
-* `#each` (instance method) will run a block of code for each connected Websocket Callback Object **in the current process**, EXCEPT the calling websocket (self) object.
+* `#each` (instance method) will run a block of code for each connected Websocket Callback Object **belonging to the current process**, EXCEPT the calling websocket (self) object.
 
     ```ruby
     each {|ws| ws.write "hello" }
-    ```
-
-* `Iodine::Websocket.defer(conn_id)` Schedules a block of code to run for the specified connection at a later time, (*if* the connection is open) while preventing concurrent code from running for the same connection object.
-
-    ```ruby
-    Iodine::Websocket.defer(self.conn_id) {|ws| ws.write "still open" }
     ```
 
 * `#defer` (instance method) Schedules a block of code to run for the specified connection at a later time, (*if* the connection is still open) while preventing concurrent code from running for the same connection object.
@@ -121,9 +117,40 @@ Iodine implements the described specification as well as adds the following meth
     defer { write "still open" }
     ```
 
+* `Iodine::Websocket.defer(conn_id)` Schedules a block of code to run for the specified connection at a later time, (*if* the connection is open) while preventing concurrent code from running for the same connection object.
 
-* `#count` (instance method) Returns the number of active websocket connections (including connections that are in the process of closing down).
+    ```ruby
+    Iodine::Websocket.defer(self.conn_id) {|ws| ws.write "still open" }
+    ```
+
+* `#count` (instance method) Returns the number of active websocket connections (including connections that are in the process of closing down) **belonging to the current process**.
 
     ```ruby
     write "#{count} clients connected"
     ```
+
+## Iodine pub/sub Extensions to the Rack Websockets
+
+Iodine is in the process of implementing pub/sub extensions to the Rack Websockets.
+
+These extensions aren't likely to be adapted by other servers, since they require much more effort than a loop or an array... they require pipes and callbacks and a process cluster messaging system... a lot of coffee and ice-cream would help as well.
+
+However, this extension should allow (at some point) servers to attach external services (such as Redis, MongoDB, etc') to their inner reactor and event loop, preventing conflicts and decreasing "blocking" code (database access and IO bound tasks are some of the main causes for blocking code).
+
+ The intended design goal looks like this:
+
+ * `#subscribe(channel, pattern = nil, engine = nil)` (instance method) Subscribes to a channel using a specific "engine" (pub/sub service connector). i.e.
+
+         ```ruby
+         # client side subscription
+         subscribe("channel 1") # => subscription ID?
+
+         # server side subscription
+         subscribe("channel [0-9]", true) {|channel, message| puts message }
+         ```
+
+ * `#unsubscribe(channel, pattern = nil, engine = nil)` (instance method) cancel / stop a subscription.
+
+ * `#publish(channel, message, pattern = nil, engine = nil)` (instance method) publishes a message to engine's specified channel.
+
+The `nil` engine is an internal process cluster pub/sub service that doesn't require a database but doesn't extend beyond the machine.
