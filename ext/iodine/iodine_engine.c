@@ -79,6 +79,14 @@ Returns `self`, always.
 
 This is the ONLY method inherited from {Iodine::PubSub::Engine} that
 should be called from within your code (by the engine itself).
+
+**Notice:**
+
+Message distribution requires both the {Iodine::PubSub::Engine} instance and the
+channel to be the same.
+
+If a client subscribed to "channel 1" on engine A, they will NOT receive
+messages from "channel 1" on engine B.
 */
 static VALUE engine_distribute(int argc, VALUE *argv, VALUE self) {
   if (argc < 2 || argc > 3)
