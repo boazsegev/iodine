@@ -194,7 +194,7 @@ void Iodine_init_engine(void) {
   engine_unsubid = rb_intern("publish");
 
   IodinePubSub = rb_define_module_under(Iodine, "PubSub");
-  IodineEngine = rb_define_class_under(IodinePubSub, "Engine", Qnil);
+  IodineEngine = rb_define_class_under(IodinePubSub, "Engine", rb_cObject);
   rb_define_protected_method(IodineEngine, "distribute", engine_distribute, -1);
   rb_define_method(IodineEngine, "subscribe", engine_sub_placeholder, 2);
   rb_define_method(IodineEngine, "unsubscribe", engine_sub_placeholder, 2);
