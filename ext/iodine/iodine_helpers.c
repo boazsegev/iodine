@@ -50,6 +50,42 @@ static VALUE url_decode(VALUE self, VALUE str) {
   (void)self;
 }
 
+/**
+Decodes a percent encoded String (normally the "path" of a request), editing the
+String in place.
+
+Raises an exception on error... but this might result in a partially decoded
+String.
+*/
+static VALUE path_decode_inplace(VALUE self, VALUE str) {
+  Check_Type(str, T_STRING);
+  ssize_t len =
+      http_decode_path(RSTRING_PTR(str), RSTRING_PTR(str), RSTRING_LEN(str));
+  if (len < 0)
+    rb_raise(rb_eRuntimeError, "Malformed URL string - couldn't decode (String "
+                               "might have been partially altered).");
+  rb_str_set_len(str, len);
+  return str;
+  (void)self;
+}
+
+/**
+Decodes a percent encoded String (normally the "path" of a request), returning a
+new String with the decoded data.
+*/
+static VALUE path_decode(VALUE self, VALUE str) {
+  Check_Type(str, T_STRING);
+  VALUE str2 = rb_str_buf_new(RSTRING_LEN(str));
+  ssize_t len =
+      http_decode_path(RSTRING_PTR(str2), RSTRING_PTR(str), RSTRING_LEN(str));
+  if (len < 0)
+    rb_raise(rb_eRuntimeError, "Malformed URL string - couldn't decode (String "
+                               "might have been partially altered).");
+  rb_str_set_len(str2, len);
+  return str2;
+  (void)self;
+}
+
 /* *****************************************************************************
 HTTP Dates
 ***************************************************************************** */
@@ -90,6 +126,8 @@ static VALUE date_str(int argc, VALUE *argv, VALUE self) {
 void Iodine_init_helpers(void) {
   VALUE IodineRack = rb_define_module_under(Iodine, "Rack");
   rb_define_module_function(IodineRack, "decode_url!", url_decode_inplace, 1);
-  rb_define_module_function(IodineRack, "decode_url", url_decode_inplace, 1);
+  rb_define_module_function(IodineRack, "decode_url", url_decode, 1);
+  rb_define_module_function(IodineRack, "decode_path!", path_decode_inplace, 1);
+  rb_define_module_function(IodineRack, "decode_path", path_decode, 1);
   rb_define_module_function(IodineRack, "time2str", date_str, -1);
 }
