@@ -58,9 +58,12 @@ struct pubsub_subscribe_args {
     uint32_t len;
   } channel;
   /** The on message callback */
-  void (*on_message)(pubsub_sub_pt s, pubsub_message_s msg, void *udata);
-  /** Opaque user data */
-  void *udata;
+  void (*on_message)(pubsub_sub_pt reg, pubsub_message_s msg, void *udata1,
+                     void *udata2);
+  /** Opaque user data#1 */
+  void *udata1;
+  /** Opaque user data#2 .. using two allows allocation to be avoided. */
+  void *udata2;
   /** Use pattern matching for channel subscription. */
   unsigned use_pattern : 1;
 };
@@ -118,12 +121,23 @@ int pubsub_publish(struct pubsub_publish_args);
  * When an engine received a message to publish, they should call the
  * `pubsub_eng_distribute` function. i.e.:
  *
+ *       pubsub_engine_distribute(
+ *           .engine = self,
+ *           .channel.name = "channel 1",
+ *           .channel.len = 9,
+ *           .msg.data = "hello",
+ *           .msg.len = 5,
+ *           .push2cluster = self->push2cluster,
+ *           .use_pattern = 0 );
+ *
+ * Engines MUST survive until the pub/sub service is finished using them and
+ * there are no more subscriptions.
  */
 struct pubsub_engine_s {
   /** Should return 0 on success and -1 on failure. */
   int (*subscribe)(const pubsub_engine_s *eng, const char *ch, size_t ch_len,
                    uint8_t use_pattern);
-  /** Return value is ignored - nothing should be returned. */
+  /** Return value is ignored. */
   void (*unsubscribe)(const pubsub_engine_s *eng, const char *ch, size_t ch_len,
                       uint8_t use_pattern);
   /** Should return 0 on success and -1 on failure. */
