@@ -19,6 +19,8 @@ typedef struct {
 
 VALUE IodineProtocol;
 
+static char *iodine_protocol_service = "Iodine Custom Protocol";
+
 /* *****************************************************************************
 Internal helpers
 ***************************************************************************** */
@@ -29,20 +31,18 @@ static void iodine_clear_task(intptr_t origin, void *block_) {
 }
 
 static void iodine_perform_task(intptr_t uuid, protocol_s *pr, void *block_) {
-  RubyCaller.call2((VALUE)block_, iodine_call_proc_id, 1, (VALUE *)(pr + 1));
+  if (pr->service == iodine_protocol_service) {
+    RubyCaller.call2((VALUE)block_, iodine_call_proc_id, 1, (VALUE *)(pr + 1));
+  }
   (void)uuid;
 }
 static void iodine_perform_task_and_free(intptr_t uuid, protocol_s *pr,
                                          void *block_) {
-  RubyCaller.call2((VALUE)block_, iodine_call_proc_id, 1, (VALUE *)(pr + 1));
+  if (pr->service == iodine_protocol_service) {
+    RubyCaller.call2((VALUE)block_, iodine_call_proc_id, 1, (VALUE *)(pr + 1));
+  }
   Registry.remove((VALUE)block_);
   (void)uuid;
-}
-
-static void iodine_perform_deferred(void *block_, void *ignr) {
-  RubyCaller.call((VALUE)block_, iodine_call_proc_id);
-  Registry.remove((VALUE)block_);
-  (void)ignr;
 }
 
 /* *****************************************************************************
@@ -93,6 +93,13 @@ static VALUE default_on_data(VALUE self) {
 /* *****************************************************************************
 Published functions
 ***************************************************************************** */
+
+/** Returns the number of total connections managed by Iodine. */
+static VALUE dyn_count(VALUE self) {
+  size_t count = facil_count(iodine_protocol_service);
+  return ULL2NUM(count);
+  (void)self;
+}
 
 /**
 Runs a task for each dynamic connection (not websockets or HTTP).
@@ -255,9 +262,21 @@ static VALUE dyn_close(VALUE self) {
 }
 
 /**
-Runs the required block later (defers the blocks execution).
+Returns a connection's localized ID which is valid for **this process** (not a
+machine or internet unique value).
 
-When this function is called as an instance method, a lock on the connection
+This can be used together with a true process wide UUID to uniquely identify a
+connection across the internet.
+*/
+static VALUE dyn_uuid(VALUE self) {
+  intptr_t uuid = iodine_get_fd(self);
+  return LONG2FIX(uuid);
+}
+
+/**
+Schedules a block to execute (defers the blocks execution).
+
+When this function is called by a Protocol instance, a lock on the connection
 will be used to prevent multiple tasks / callbacks from running concurrently.
 i.e.
 
@@ -277,20 +296,29 @@ Returns the block given (or `false`).
 associated with a specific connection (the method was called as an instance
 method) and the connection was closed before the deferred task was performed.
 */
-static VALUE dyn_defer(VALUE self) {
+static VALUE dyn_defer(int argc, VALUE *argv, VALUE self) {
   rb_need_block();
+  intptr_t fd;
+  // check arguments.
+  if (argc > 1)
+    rb_raise(rb_eArgError, "this function expects no more then 1 (optional) "
+                           "argument.");
+  else if (argc == 1) {
+    Check_Type(*argv, T_FIXNUM);
+    fd = FIX2LONG(*argv);
+  } else
+    fd = iodine_get_fd(self);
+
+  if (!sock_isvalid(fd))
+    return Qfalse;
+
   VALUE block = rb_block_proc();
   if (block == Qnil)
     return Qfalse;
   Registry.add(block);
-  intptr_t fd = iodine_get_fd(self);
-  if (fd) {
-    facil_defer(.uuid = fd, .task = iodine_perform_task_and_free,
-                .task_type = FIO_PR_LOCK_TASK, .arg = (void *)block,
-                .fallback = iodine_clear_task);
-  } else {
-    defer(iodine_perform_deferred, (void *)block, NULL);
-  }
+  facil_defer(.uuid = fd, .task = iodine_perform_task_and_free,
+              .task_type = FIO_PR_LOCK_TASK, .arg = (void *)block,
+              .fallback = iodine_clear_task);
   return block;
 }
 
@@ -298,7 +326,6 @@ static VALUE dyn_defer(VALUE self) {
 Connection management
 ***************************************************************************** */
 #define dyn_prot(protocol) ((iodine_protocol_s *)(protocol))
-static char *iodine_protocol_service = "Iodine Custom Protocol";
 
 /** called when a data is available, but will not run concurrently */
 static void dyn_protocol_on_data(intptr_t fduuid, protocol_s *protocol) {
@@ -330,7 +357,8 @@ static void dyn_protocol_ping(intptr_t fduuid, protocol_s *protocol) {
 
 /* *****************************************************************************
 Connection management API
-***************************************************************************** */
+*****************************************************************************
+*/
 
 /** Update's a connection's handler and timeout. */
 static inline protocol_s *dyn_set_protocol(intptr_t fduuid, VALUE handler,
@@ -473,8 +501,8 @@ static VALUE iodine_connect(VALUE self, VALUE address, VALUE port,
 }
 
 /**
-Attaches an existing file descriptor (`fd`) (i.e., a pipe, a unix socket, etc')
-as if it were a regular connection.
+Attaches an existing file descriptor (`fd`) (i.e., a pipe, a unix socket,
+etc') as if it were a regular connection.
 
 i.e.
 
@@ -506,8 +534,8 @@ static VALUE iodine_attach_fd(VALUE self, VALUE rbfd, VALUE handler) {
   return self;
 }
 /**
-Attaches an existing IO object (i.e., a pipe, a unix socket, etc') as if it were
-a regular connection.
+Attaches an existing IO object (i.e., a pipe, a unix socket, etc') as if it
+were a regular connection.
 
 i.e.
 
@@ -515,11 +543,13 @@ i.e.
 
 */
 static VALUE iodine_attach_io(VALUE self, VALUE io, VALUE handler) {
-  return iodine_attach_fd(self, RubyCaller.call(io, iodine_to_i_func_id), handler);
+  return iodine_attach_fd(self, RubyCaller.call(io, iodine_to_i_func_id),
+                          handler);
 }
 /* *****************************************************************************
 Library Initialization
-***************************************************************************** */
+*****************************************************************************
+*/
 
 ////////////////////////////////////////////////////////////////////////
 // Ruby loads the library and invokes the Init_<lib_name> function...
@@ -529,9 +559,8 @@ Library Initialization
 void Iodine_init_protocol(void) {
 
   /* add Iodine module functions */
+  rb_define_module_function(Iodine, "defer", dyn_defer, -1);
   rb_define_module_function(Iodine, "each", dyn_run_each, 0);
-  rb_define_module_function(Iodine, "run", dyn_defer, 0);
-  rb_define_module_function(Iodine, "defer", dyn_defer, 0);
   rb_define_module_function(Iodine, "listen", iodine_listen, 2);
   rb_define_module_function(Iodine, "connect", iodine_connect, 3);
   rb_define_module_function(Iodine, "attach_io", iodine_attach_io, 2);
@@ -547,12 +576,18 @@ void Iodine_init_protocol(void) {
   rb_define_method(IodineProtocol, "on_shutdown", not_implemented, 0);
   rb_define_method(IodineProtocol, "ping", not_implemented_ping, 0);
 
-  /* Add module instance functions */
+  /* Add module functions */
+  rb_define_module_function(IodineProtocol, "defer", dyn_defer, -1);
+  rb_define_module_function(IodineProtocol, "count", dyn_count, 0);
+
+  /* Add module instance methods */
+  rb_define_method(IodineProtocol, "conn_id", dyn_uuid, 0);
+  rb_define_method(IodineProtocol, "count", dyn_count, 0);
   rb_define_method(IodineProtocol, "read", dyn_read, -1);
   rb_define_method(IodineProtocol, "write", dyn_write, 1);
   rb_define_method(IodineProtocol, "write_urgent", dyn_write_urgent, 1);
   rb_define_method(IodineProtocol, "close", dyn_close, 0);
-  rb_define_method(IodineProtocol, "defer", dyn_defer, 0);
+  rb_define_method(IodineProtocol, "defer", dyn_defer, -1);
   rb_define_method(IodineProtocol, "each", dyn_run_each, 0);
   rb_define_method(IodineProtocol, "switch_protocol", dyn_switch_prot, 1);
   rb_define_method(IodineProtocol, "timeout=", dyn_set_timeout, 1);

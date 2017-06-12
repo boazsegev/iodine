@@ -46,13 +46,6 @@ static struct {
 #define unlock_registry() spn_unlock(&registry.lock)
 #define lock_registry() spn_lock(&registry.lock)
 
-static inline uint64_t atomic_bump(volatile uint64_t *i) {
-  return __sync_add_and_fetch(i, 1ULL);
-}
-static inline uint64_t atomic_cut(volatile uint64_t *i) {
-  return __sync_sub_and_fetch(i, 1ULL);
-}
-
 inline static void free_node(obj_s *to_free) {
   if (to_free >= registry.pool_mem &&
       (intptr_t)to_free <= (intptr_t)(&registry.pool))
@@ -89,7 +82,7 @@ static VALUE register_object(VALUE ruby_obj) {
   obj->obj = ruby_obj;
   fio_ht_add(&registry.store, &obj->node, (uint64_t)ruby_obj);
 exists:
-  atomic_bump(&obj->ref);
+  spn_add(&obj->ref, 1);
 
   unlock_registry();
   return ruby_obj;
@@ -109,7 +102,7 @@ static void unregister_object(VALUE ruby_obj) {
     goto finish;
   }
   obj = fio_node2obj(obj_s, node, obj);
-  if (atomic_cut(&obj->ref)) {
+  if (spn_sub(&obj->ref, 1)) {
     unlock_registry();
 #if RUBY_REG_DBG == 1
     fprintf(stderr, "Ruby Registry: unregistered %p ref: %" PRIu64 "  \n",

@@ -1,4 +1,5 @@
 #include "iodine.h"
+#include "iodine_engine.h"
 #include "iodine_http.h"
 #include "iodine_protocol.h"
 #include "iodine_websockets.h"
@@ -41,6 +42,13 @@ Internal helpers
 static void iodine_run_task(void *block_) {
   RubyCaller.call((VALUE)block_, iodine_call_proc_id);
 }
+
+static void iodine_perform_deferred(void *block_, void *ignr) {
+  RubyCaller.call((VALUE)block_, iodine_call_proc_id);
+  Registry.remove((VALUE)block_);
+  (void)ignr;
+}
+
 /* *****************************************************************************
 Published functions
 ***************************************************************************** */
@@ -117,6 +125,17 @@ static VALUE iodine_run_every(int argc, VALUE *argv, VALUE self) {
   facil_run_every(milli, repeat, iodine_run_task, (void *)block,
                   (void (*)(void *))Registry.remove);
   return block;
+}
+
+static VALUE iodine_run(VALUE self) {
+  rb_need_block();
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qfalse;
+  Registry.add(block);
+  defer(iodine_perform_deferred, (void *)block, NULL);
+  return block;
+  (void)self;
 }
 
 /* *****************************************************************************
@@ -279,6 +298,7 @@ void Init_iodine(void) {
   // the Iodine singleton functions
   rb_define_module_function(Iodine, "start", iodine_start, 0);
   rb_define_module_function(Iodine, "count", iodine_count, 0);
+  rb_define_module_function(Iodine, "run", iodine_run, 0);
   rb_define_module_function(Iodine, "run_after", iodine_run_after, 1);
   rb_define_module_function(Iodine, "run_every", iodine_run_every, -1);
 
@@ -291,6 +311,7 @@ void Init_iodine(void) {
 
   /* Initialize the rest of the library. */
   Iodine_init_protocol();
+  Iodine_init_engine();
   Iodine_init_http();
   Iodine_init_websocket();
 }

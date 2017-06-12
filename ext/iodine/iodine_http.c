@@ -592,15 +592,15 @@ specifications.
 
 Accepts a single Hash argument with the following properties:
 
-`app`:: the Rack application that handles incoming requests. Default: `nil`.
-`port`:: the port to listen to. Default: 3000.
-`address`:: the address to bind to. Default: binds to all possible addresses.
-`log`:: enable response logging (Hijacked sockets aren't logged). Default: off.
-`public`:: The root public folder for static file service. Default: none.
-`timeout`:: Timeout for inactive HTTP/1.x connections. Defaults: 5 seconds.
-`max_body`:: The maximum body size for incoming HTTP messages. Default: ~50Mib.
-`max_msg`:: The maximum Websocket message size allowed. Default: ~250Kib.
-`ping`:: The Websocket `ping` interval. Default: 40 sec.
+app:: the Rack application that handles incoming requests. Default: `nil`.
+port:: the port to listen to. Default: 3000.
+address:: the address to bind to. Default: binds to all possible addresses.
+log:: enable response logging (Hijacked sockets aren't logged). Default: off.
+public:: The root public folder for static file service. Default: none.
+timeout:: Timeout for inactive HTTP/1.x connections. Defaults: 5 seconds.
+max_body:: The maximum body size for incoming HTTP messages. Default: ~50Mib.
+max_msg:: The maximum Websocket message size allowed. Default: ~250Kib.
+ping:: The Websocket `ping` interval. Default: 40 sec.
 
 Either the `app` or the `public` properties are required. If niether exists, the
 function will fail. If both exist, Iodine will serve static files as well as

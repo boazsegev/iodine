@@ -1,7 +1,9 @@
 require 'iodine' unless defined?(::Iodine::VERSION)
 
 module Iodine
-  # {Iodine::Rack} is an Iodine HTTP and Websocket Rack server bundled with {Iodine} for your convinience.
+  # {Iodine::Rack} provides both a Rack complient interface (connecting Iodine to Rack) for an HTTP and Websocket Server.
+  #
+  # {Iodine::Rack} also provides convinient access to the {Iodine::HTTP.listen} function, which powers the {Iodine::Rack} server.
   module Rack
     # get/set the Rack application.
     def self.app=(val)

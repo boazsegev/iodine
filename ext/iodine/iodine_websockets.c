@@ -179,7 +179,7 @@ static VALUE iodine_ws_uuid(VALUE self) {
 
 /* *****************************************************************************
 Websocket defer
-*/
+***************************************************************************** */
 
 static void iodine_perform_defer(intptr_t uuid, protocol_s *protocol,
                                  void *arg) {
@@ -197,12 +197,11 @@ static void iodine_defer_fallback(intptr_t uuid, void *arg) {
 
 /**
 Schedules a block of code to execute at a later time, **if** the connection is
-still
-open and while preventing concurent code from running for the same connection
-object.
+still open and while preventing concurent code from running for the same
+connection object.
 
-An optional `uuid` argument can be passed along, so that the block of code will
-run for the requested connection rather then this connection.
+An optional `conn_id` argument can be passed along, so that the block of code
+will run for the requested connection rather then this connection.
 
 **Careful**: as this might cause this connection's object to run code
 concurrently when data owned by this connection is accessed from within the
@@ -226,7 +225,7 @@ static VALUE iodine_defer(int argc, VALUE *argv, VALUE self) {
   } else
     fd = iodine_get_fd(self);
   if (!fd)
-    fd = -1;
+    rb_raise(rb_eArgError, "This method requires a target connection.");
   // requires a block to be passed
   rb_need_block();
   VALUE block = rb_block_proc();
@@ -241,7 +240,7 @@ static VALUE iodine_defer(int argc, VALUE *argv, VALUE self) {
 
 /* *****************************************************************************
 Websocket Multi-Write - Deprecated
-*/
+***************************************************************************** */
 
 // static uint8_t iodine_ws_if_callback(ws_s *ws, void *block) {
 //   if (!ws)
@@ -373,16 +372,17 @@ static VALUE iodine_ws_class_each(VALUE self) {
 
 /**
 Schedules a block of code to run for the specified connection at a later time,
-(**if** the connection is open) and while preventing concurent code from running
-for the same connection object.
+(**if** the connection is open). The block will run within the connection's
+lock, offering a fast concurrency synchronizing tool.
 
 The block of code will receive the connection's object. i.e.
 
     Iodine::Websocket.defer(uuid) {|ws| ws.write "I'm doing this" }
 
-On success returns the block, otherwise (connection invalid) returns `false`. A
-sucessful event registration doesn't guaranty that the block will be called (the
-connection might close between the event registration and the execution).
+On success returns the block, otherwise (connection invalid) returns `false`.
+
+A sucessful event registration doesn't guaranty that the block will be called
+(the connection might close between the event registration and the execution).
 */
 static VALUE iodine_class_defer(VALUE self, VALUE ws_uuid) {
   (void)(self);
@@ -543,8 +543,4 @@ void Iodine_init_websocket(void) {
 
   rb_define_singleton_method(rWebsocket, "each", iodine_ws_class_each, 0);
   rb_define_singleton_method(rWebsocket, "defer", iodine_class_defer, 1);
-
-  rWebsocketClass = rb_define_module_under(IodineBase, "WebsocketClass");
-  rb_define_method(rWebsocketClass, "each", iodine_ws_class_each, 0);
-  rb_define_method(rWebsocketClass, "defer", iodine_class_defer, 1);
 }

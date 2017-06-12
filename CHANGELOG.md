@@ -10,6 +10,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.4.0
 
+**Braking change**: Some of the API was changed / updated, hopefully simplified.
+
 **DEPRECTAION / Braking change**: The `websocket#write_each` function is gone. Future (planned) support for a Pub/Sub API would have caused confusion and since it's barely used (probably only there as a benchmarking proof of concept) it was removed.
 
 **Update**: Now using `facil.io` v.0.4.5. The extended features allowed us to have multiple HTTP ports and servers on the same Iodine process.
