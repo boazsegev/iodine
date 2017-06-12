@@ -741,9 +741,7 @@ Initialization
 
 void Iodine_init_http(void) {
 
-  IodineHTTP = rb_define_module_under(Iodine, "HTTP");
-
-  rb_define_module_function(IodineHTTP, "listen", iodine_http_listen, 1);
+  rb_define_module_function(Iodine, "listen2http", iodine_http_listen, 1);
 
   rack_autoset(REQUEST_METHOD);
   rack_autoset(PATH_INFO);
