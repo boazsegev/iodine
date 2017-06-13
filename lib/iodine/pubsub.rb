@@ -27,6 +27,11 @@ module Iodine
   module PubSub
     # The {Iodine::PubSub::Engine} class makes it easy to use leverage Iodine's pub/sub system using external services.
     #
+    # Iodine comes with two built-in engines:
+    #
+    # * `Iodine::PubSub::Engine::CLUSTER` will distribute messages to all subscribers in the process cluster.
+    # * `Iodine::PubSub::Engine::SINGLE_PROCESS` will distribute messages to all subscribers sharing the same process.
+    #
     # {Iodine::PubSub::Engine} instances should be initialized only after Iodine
     # started running (or the `fork`ing of the engine's connection will introduce communication issues).
     #
@@ -58,6 +63,11 @@ module Iodine
     # risks by performing specific checks for connection related pub/sub actions.
     #
     class Engine
+
+      # This is the (currently) default pub/sub engine. It will distribute messages to all subscribers in the process cluster.
+      CLUSTER
+      # This is a single process pub/sub engine. It will distribute messages to all subscribers sharing the same process.
+      SINGLE_PROCESS
       # This might cause duplicate massages: when the {#push2cluster} attribute is `true`, distributed messages will be distributed to the whole Iodine process cluster and not just the current process.
       #
       # Normal implementations will have a single engine per process, but during application initialization

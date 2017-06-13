@@ -20,6 +20,12 @@ static VALUE rWebsocketClass; // The Iodine::Http::Websocket class
 static ID ws_var_id;          // id for websocket pointer
 static ID dup_func_id;        // id for the buffer.dup method
 
+static ID force_var_id;
+static ID channel_var_id;
+static ID pattern_var_id;
+static ID text_var_id;
+static ID binary_var_id;
+
 #define set_uuid(object, request)                                              \
   rb_ivar_set((object), iodine_fd_var_id, ULONG2NUM((request)->fd))
 
@@ -521,6 +527,12 @@ void Iodine_init_websocket(void) {
   // get IDs and data that's used often
   ws_var_id = rb_intern("iodine_ws_ptr"); // when upgrading
   dup_func_id = rb_intern("dup");         // when upgrading
+
+  force_var_id = rb_intern("fource");
+  channel_var_id = rb_intern("channel");
+  pattern_var_id = rb_intern("pattern");
+  text_var_id = rb_intern("text");
+  binary_var_id = rb_intern("binary");
 
   // the Ruby websockets protocol class.
   rWebsocket = rb_define_module_under(Iodine, "Websocket");

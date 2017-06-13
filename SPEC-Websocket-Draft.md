@@ -141,7 +141,7 @@ However, this extension will allow plugins to attach external pub/sub services (
 
  The intended design goal looks like this:
 
- * `#subscribe(channel, pattern = nil, engine = nil)` (instance method) Subscribes to a channel using a specific "engine" (pub/sub service connector). Returns a subscription object.
+ * `#subscribe` (instance method) Subscribes to a channel using a specific "engine" (pub/sub service connector). *Returns a subscription object (success) or `nil` (error)*.
 
     Messages from the subscription are sent directly to the client unless an optional block is provided.
 
@@ -149,29 +149,32 @@ However, this extension will allow plugins to attach external pub/sub services (
 
     All subscriptions (including server side subscriptions) are automatically canceled by the server when the websocket closes.
 
- * `#subscription?(channel, pattern = nil, engine = nil)` (instance method) locates an existing subscription, if any. Returns a subscription object.
+ * `#subscription?` (instance method) locates an existing subscription, if any. *Returns a subscription object (success) or `nil` (error)*.
 
- * `#unsubscribe(subscription_object)` (instance method) cancel / stop a subscription. Safely ignores `nil` subscription objects. Returns `nil`.
+ * `#unsubscribe` (instance method) cancel / stop a subscription. Safely ignores `nil` subscription objects. Returns `nil`.
 
     Notice: there's no need to call this function during the `on_close` callback, since by that point in time it's possible that there will be no more subscriptions left.
 
- * `#publish(channel, message, pattern = nil, engine = nil)` (instance method) publishes a message to engine's specified channel. Returns `true` on success or `false` on failure (engine error).
+ * `#publish` (instance method) publishes a message to engine's specified channel. Returns `true` on success or `false` on failure (i.e., engine error).
 
 For example:
 
 ```ruby
 # client side subscription
-s = subscribe("channel 1") # => subscription ID?
+s = subscribe(channel: "channel 1") # => subscription ID?
 # client side unsubscribe
 unsubscribe(s)
 
+# client side subscription forcing binary encoding for Websocket protocol.
+subscribe(channel: "channel 1", encoding: :binary) # => subscription ID?
+
 # client side pattern subscription without saving reference
-subscribe("channel [0-9]", true) # => subscription ID?
+subscribe(pattern: "channel [0-9]") # => subscription ID?
 # client side unsubscribe
-unsubscribe( subscription? "channel [0-9]", true)
+unsubscribe( subscription?(pattern: "channel [0-9]"))
 
 # server side anonymous block subscription
-s = subscribe("channel [0-9]", true) do |channel, message|
+s = subscribe(channel: "channel ✨") do |channel, message|
     puts message
 end
 # server side unsubscribe
@@ -179,20 +182,21 @@ unsubscribe(s)
 
 # server side persistent block subscription without saving reference
 block = proc {|channel, message| puts message }
-subscribe("*", true, &block)
+subscribe({pattern: "*"}, &block)
 # server side unsubscribe
-unsubscribe subscription?("*", true, &block)
+unsubscribe subscription?({pattern: "*"}, &block)
 
 # server side anonymous block subscription requires reference...
-subscribe("channel [0-9]", true) do |channel, message|
+subscribe(pattern: "channel 5", force: text) do |channel, message|
     puts message
 end
 # It's impossible to locate an anonymous block subscriptions!
-subscription? ("channel [0-9]", true) do |channel, message|
+subscription? (pattern: "channel 5", force: text) do |channel, message|
     puts message
-end #  => nil # ! can't locate
+end
+#  => nil # ! can't locate
 
 ```
 The `nil` engine is an internal process cluster pub/sub service that doesn't require a database but doesn't extend beyond the single server machine.
 
-Perhaps a watered down version of this desigbn (without the default "cluster" `nil` engine) would be adopted by some servers, since it would be just a step away from the Collection Extension (`each` and friends).
+Perhaps a watered down version of this design (without the default "cluster" `nil` engine) would be adopted by some servers, since it would be just a step away from the Collection Extension (`each` and friends).

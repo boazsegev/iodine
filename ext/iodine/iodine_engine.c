@@ -19,8 +19,9 @@ static ID engine_pubid;
 static ID engine_unsubid;
 
 typedef struct {
-  pubsub_engine_s engine;
+  pubsub_engine_s *engine;
   VALUE handler;
+  unsigned allocated : 1;
 } iodine_engine_s;
 
 /* *****************************************************************************
@@ -100,12 +101,13 @@ static VALUE engine_distribute(int argc, VALUE *argv, VALUE self) {
 
   VALUE push2cluster = rb_ivar_get(self, cluster_varid);
 
-  pubsub_engine_s *engine;
-  Data_Get_Struct(self, pubsub_engine_s, engine);
+  iodine_engine_s *engine;
+  Data_Get_Struct(self, iodine_engine_s, engine);
 
-  engine->push2cluster = (push2cluster != Qnil && push2cluster != Qfalse),
+  engine->engine->push2cluster =
+      (push2cluster != Qnil && push2cluster != Qfalse),
 
-  pubsub_engine_distribute(.engine = engine,
+  pubsub_engine_distribute(.engine = engine->engine,
                            .channel.name = RSTRING_PTR(channel),
                            .channel.len = RSTRING_LEN(channel),
                            .msg.data = RSTRING_PTR(msg),
@@ -165,23 +167,32 @@ static void engine_mark(void *eng_) {
 /* a callback for the GC (marking active objects) */
 static void engine_free(void *eng_) {
   iodine_engine_s *eng = eng_;
-  /* what to do ?*/
+  if (eng->allocated)
+    free(eng->engine);
   free(eng);
 }
 
 /* GMP::Integer.allocate */
 VALUE engine_alloc_c(VALUE self) {
   iodine_engine_s *eng = malloc(sizeof(*eng));
+  pubsub_engine_s *ceng = malloc(sizeof(*ceng));
+  *ceng = (pubsub_engine_s){
+      .subscribe = engine_subscribe,
+      .unsubscribe = engine_unsubscribe,
+      .publish = engine_publish,
+  };
 
   *eng = (iodine_engine_s){
-      .handler = self,
-      .engine.subscribe = engine_subscribe,
-      .engine.unsubscribe = engine_unsubscribe,
-      .engine.publish = engine_publish,
+      .handler = self, .engine = ceng, .allocated = 1,
   };
-  // Registry.add(self);
-  return Data_Wrap_Struct(self, engine_free, NULL, eng);
+
+  return Data_Wrap_Struct(self, engine_mark, engine_free, eng);
 }
+
+/* *****************************************************************************
+Initialize C pubsub engines
+***************************************************************************** */
+
 /* *****************************************************************************
 Initialization
 ***************************************************************************** */
@@ -200,4 +211,33 @@ void Iodine_init_engine(void) {
   rb_define_method(IodineEngine, "unsubscribe", engine_sub_placeholder, 2);
   rb_define_method(IodineEngine, "publish", engine_pub_placeholder, 3);
   rb_define_alloc_func(IodineEngine, engine_alloc_c);
+
+  VALUE engine_in_c;
+  iodine_engine_s *engine;
+
+  /* *************************
+  Initialize C pubsub engines
+  ************************** */
+
+  engine_in_c = rb_funcallv(IodineEngine, iodine_new_func_id, 0, NULL);
+  Data_Get_Struct(engine_in_c, iodine_engine_s, engine);
+  engine->allocated = 0;
+  free(engine->engine);
+  engine->engine = (pubsub_engine_s *)&PUBSUB_CLUSTER_ENGINE;
+
+  /** This is the (currently) default pub/sub engine. It will distribute
+   * messages to all subscribers in the process cluster. */
+  rb_define_const(IodineEngine, "CLUSTER", engine_in_c);
+  // rb_const_set(IodineEngine, rb_intern("CLUSTER"), e);
+
+  engine_in_c = rb_funcallv(IodineEngine, iodine_new_func_id, 0, NULL);
+  Data_Get_Struct(engine_in_c, iodine_engine_s, engine);
+  engine->allocated = 0;
+  free(engine->engine);
+  engine->engine = (pubsub_engine_s *)&PUBSUB_CLUSTER_ENGINE;
+
+  /** This is a single process pub/sub engine. It will distribute messages to
+   * all subscribers sharing the same process. */
+  rb_define_const(IodineEngine, "SINGLE_PROCESS", engine_in_c);
+  // rb_const_set(IodineEngine, rb_intern("SINGLE_PROCESS"), e);
 }
