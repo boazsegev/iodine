@@ -3,8 +3,6 @@ module Iodine
     # Command line interface
     module CLI
 
-      module_functions
-
       def print_help
         puts <<-EOS
 
@@ -102,6 +100,8 @@ EOS
         Iodine.warmup if ARGV.index('-warmup')
         Iodine::Rack.run(app, opt)
       end
+
+      include self
     end
   end
 end
