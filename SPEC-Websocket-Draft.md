@@ -95,9 +95,11 @@ Server settings **MAY** (not required) be provided to allow for customization an
 
 ## Iodine Collection Extension
 
-The following extension is meant to allow iodine to manage connection memory and resource allocation while relieving developers from rewriting the same workflow of connection storing (`on_open do ALL_WS << self; end `) and management.
+The biggest benefit from Iodine's Collection Extension is that it allows the creation of pub/sub plugins and other similar extensions that require access to all the connected Websockets - no nee for the plugin to ask "where's the list" or "add this code to `on_open`" or anything at all, truly "plug and play".
 
-This extension should be easy enough to implement using a loop or an array within the each process context. These methods do **not** cross process boundaries and they are meant to help implement more advanced features (they aren't a feature on their own).
+This extension should be easy enough to implement using a loop or an array within each process context. These methods do **not** cross process boundaries and they are meant to help implement more advanced features (they aren't a feature as much as an "access point").
+
+Internally, this extension also allows iodine to manage connection memory and resource allocation while relieving developers from rewriting the same workflow of connection storing (`on_open do ALL_WS << self; end `) and management. Knowing that the user doesn't keep Websocket object references, allows Iodine to safely optimize it's memory use.
 
 * `Iodine::Websocket.each` (class method) will run a block of code for each connected Websocket Callback Object **belonging to the current process**. This can be called from outside of a Websocket Callback Object as well.
 
@@ -129,28 +131,68 @@ This extension should be easy enough to implement using a loop or an array withi
     write "#{count} clients connected"
     ```
 
-## Iodine pub/sub Extensions to the Rack Websockets
+## Iodine pub/sub Extension to the Rack Websockets
 
-Iodine is in the process of implementing pub/sub extensions to the Rack Websockets.
+Iodine is in the process of implementing pub/sub extensions for it's Rack Websockets.
 
-These extensions aren't likely to be adapted by other servers, since they require much more effort than a loop or an array... they require pipes and callbacks and a process cluster messaging system... a lot of coffee and ice-cream would help as well.
+This extension isn't likely to be adopted by other servers, since it requires much more effort than a loop or an array... it requires pipes and callbacks and a process cluster messaging system... a lot of coffee and ice-cream would help as well.
 
-However, this extension should allow (at some point) servers to attach external services (such as Redis, MongoDB, etc') to their inner reactor and event loop, preventing conflicts and decreasing "blocking" code (database access and IO bound tasks are some of the main causes for blocking code).
+However, this extension will allow plugins to attach external pub/sub services (such as Redis, MongoDB, etc') to iodine's inner reactor, event loop, and connection locking systems, decreasing "blocking" code and possible conflicts.
 
  The intended design goal looks like this:
 
- * `#subscribe(channel, pattern = nil, engine = nil)` (instance method) Subscribes to a channel using a specific "engine" (pub/sub service connector). i.e.
+ * `#subscribe(channel, pattern = nil, engine = nil)` (instance method) Subscribes to a channel using a specific "engine" (pub/sub service connector). Returns a subscription object.
 
-         ```ruby
-         # client side subscription
-         subscribe("channel 1") # => subscription ID?
+    Messages from the subscription are sent directly to the client unless an optional block is provided.
 
-         # server side subscription
-         subscribe("channel [0-9]", true) {|channel, message| puts message }
-         ```
+    If an optional block is provided, it should accept the channel and message couplet (i.e. `{|channel, message| } `) and call the websocket `write` manually.
 
- * `#unsubscribe(channel, pattern = nil, engine = nil)` (instance method) cancel / stop a subscription.
+    All subscriptions (including server side subscriptions) are automatically canceled by the server when the websocket closes.
 
- * `#publish(channel, message, pattern = nil, engine = nil)` (instance method) publishes a message to engine's specified channel.
+ * `#subscription?(channel, pattern = nil, engine = nil)` (instance method) locates an existing subscription, if any. Returns a subscription object.
 
-The `nil` engine is an internal process cluster pub/sub service that doesn't require a database but doesn't extend beyond the machine.
+ * `#unsubscribe(subscription_object)` (instance method) cancel / stop a subscription. Safely ignores `nil` subscription objects. Returns `nil`.
+
+    Notice: there's no need to call this function during the `on_close` callback, since by that point in time it's possible that there will be no more subscriptions left.
+
+ * `#publish(channel, message, pattern = nil, engine = nil)` (instance method) publishes a message to engine's specified channel. Returns `true` on success or `false` on failure (engine error).
+
+For example:
+
+```ruby
+# client side subscription
+s = subscribe("channel 1") # => subscription ID?
+# client side unsubscribe
+unsubscribe(s)
+
+# client side pattern subscription without saving reference
+subscribe("channel [0-9]", true) # => subscription ID?
+# client side unsubscribe
+unsubscribe( subscription? "channel [0-9]", true)
+
+# server side anonymous block subscription
+s = subscribe("channel [0-9]", true) do |channel, message|
+    puts message
+end
+# server side unsubscribe
+unsubscribe(s)
+
+# server side persistent block subscription without saving reference
+block = proc {|channel, message| puts message }
+subscribe("*", true, &block)
+# server side unsubscribe
+unsubscribe subscription?("*", true, &block)
+
+# server side anonymous block subscription requires reference...
+subscribe("channel [0-9]", true) do |channel, message|
+    puts message
+end
+# It's impossible to locate an anonymous block subscriptions!
+subscription? ("channel [0-9]", true) do |channel, message|
+    puts message
+end #  => nil # ! can't locate
+
+```
+The `nil` engine is an internal process cluster pub/sub service that doesn't require a database but doesn't extend beyond the single server machine.
+
+Perhaps a watered down version of this desigbn (without the default "cluster" `nil` engine) would be adopted by some servers, since it would be just a step away from the Collection Extension (`each` and friends).
