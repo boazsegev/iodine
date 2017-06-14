@@ -340,7 +340,7 @@ static inline int ruby2c_review_upgrade(http_response_s *response,
   if ((handler = rb_hash_aref(env, IODINE_R_HIJACK_CB)) != Qnil) {
     // send headers
     http_response_finish(response);
-    //  remove socket from libsock and libserver
+    //  remove socket from facil.io
     facil_attach(response->fd, NULL);
     // call the callback
     VALUE io_ruby = RubyCaller.call(rb_hash_aref(env, IODINE_R_HIJACK),
@@ -349,7 +349,7 @@ static inline int ruby2c_review_upgrade(http_response_s *response,
   } else if ((handler = rb_hash_aref(env, IODINE_R_HIJACK_IO)) != Qnil) {
     // send nothing.
     http_response_destroy(response);
-    // remove socket from libsock and libserver
+    //  remove socket from facil.io
     facil_attach(response->fd, NULL);
   } else if ((handler = rb_hash_aref(env, UPGRADE_WEBSOCKET)) != Qnil) {
     iodine_http_settings_s *settings = response->request->settings->udata;
@@ -407,20 +407,31 @@ static void *on_rack_request_in_GVL(http_request_s *request) {
     goto internal_error;
   // extract the X-Sendfile header (never show original path)
   // X-Sendfile support only present when iodine sercers static files.
-  VALUE xfiles = request->settings->public_folder
-                     ? rb_hash_delete(response_headers, XSENDFILE)
-                     : Qnil;
-  // remove XFile's content length headers, as this will be controled by Iodine
-  if (xfiles != Qnil) {
+  VALUE xfiles;
+  if (request->settings->public_folder &&
+      (xfiles = rb_hash_aref(response_headers, XSENDFILE)) != Qnil) {
+    int fr = 0;
+    if (OBJ_FROZEN(response_headers)) {
+      response_headers = rb_hash_dup(response_headers);
+      Registry.add(response_headers);
+      fr = 1;
+    }
+    rb_hash_delete(response_headers, XSENDFILE);
+    // remove XFile's content length headers, as this will be controled by
+    // Iodine
     rb_hash_delete(response_headers, CONTENT_LENGTH_HEADER);
+    // review each header and write it to the response.
+    rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(response));
+    // send the file directly and finish
+    http_response_sendfile2(response, request, RSTRING_PTR(xfiles),
+                            RSTRING_LEN(xfiles), NULL, 0, 1);
+    if (fr)
+      Registry.remove(response_headers);
+    goto external_done;
   }
   // review each header and write it to the response.
   rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(response));
   // If the X-Sendfile header was provided, send the file directly and finish
-  if (xfiles != Qnil &&
-      http_response_sendfile2(response, request, RSTRING_PTR(xfiles),
-                              RSTRING_LEN(xfiles), NULL, 0, 1) == 0)
-    goto external_done;
   // review for belated (post response headers) upgrade.
   if (ruby2c_review_upgrade(response, rbresponse, env))
     goto external_done;

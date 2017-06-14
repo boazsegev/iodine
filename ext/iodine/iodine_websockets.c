@@ -15,10 +15,9 @@ Feel free to copy, use and enjoy according to the license provided.
 Core helpers and data
 ***************************************************************************** */
 
-static VALUE rWebsocket;      // The Iodine::Http::Websocket class
-static VALUE rWebsocketClass; // The Iodine::Http::Websocket class
-static ID ws_var_id;          // id for websocket pointer
-static ID dup_func_id;        // id for the buffer.dup method
+static VALUE rWebsocket; // The Iodine::Http::Websocket class
+static ID ws_var_id;     // id for websocket pointer
+static ID dup_func_id;   // id for the buffer.dup method
 
 static ID force_var_id;
 static ID channel_var_id;
@@ -490,22 +489,21 @@ void iodine_websocket_upgrade(http_request_s *request,
                               http_response_s *response, VALUE handler,
                               size_t max_msg, uint8_t ping) {
   // make sure we have a valid handler, with the Websocket Protocol mixin.
-  if (handler == Qnil || handler == Qfalse) {
-    response->status = 400;
-    http_response_finish(response);
-    return;
-  }
+  if (TYPE(handler) != T_CLASS && TYPE(handler) != T_MODULE)
+    goto failed;
   if (TYPE(handler) == T_CLASS) {
     // include the Protocol module
     rb_include_module(handler, rWebsocket);
-    rb_extend_object(handler, rWebsocketClass);
+    rb_extend_object(handler, rWebsocket);
     handler = RubyCaller.call(handler, iodine_new_func_id);
+    if (handler == Qnil || handler == Qfalse)
+      goto failed;
     // check that we created a handler
   } else {
     // include the Protocol module in the object's class
     VALUE p_class = rb_obj_class(handler);
     rb_include_module(p_class, rWebsocket);
-    rb_extend_object(p_class, rWebsocketClass);
+    rb_extend_object(p_class, rWebsocket);
   }
   // add the handler to the registry
   Registry.add(handler);
@@ -517,6 +515,11 @@ void iodine_websocket_upgrade(http_request_s *request,
                     .on_open = ws_on_open, .on_shutdown = ws_on_shutdown,
                     .on_ready = ws_on_ready, .on_message = ws_on_data,
                     .max_msg_size = max_msg, .timeout = ping);
+  return;
+failed:
+  response->status = 400;
+  http_response_finish(response);
+  return;
 }
 
 /* *****************************************************************************

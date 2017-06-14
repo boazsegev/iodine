@@ -197,7 +197,6 @@ Initialize C pubsub engines
 Initialization
 ***************************************************************************** */
 void Iodine_init_engine(void) {
-  struct rb_data_type_struct s;
   cluster_varid = rb_intern("@push2cluster");
   engine_varid = rb_intern("engine");
   engine_subid = rb_intern("subscribe");
@@ -212,12 +211,11 @@ void Iodine_init_engine(void) {
   rb_define_method(IodineEngine, "publish", engine_pub_placeholder, 3);
   rb_define_alloc_func(IodineEngine, engine_alloc_c);
 
-  VALUE engine_in_c;
-  iodine_engine_s *engine;
-
   /* *************************
   Initialize C pubsub engines
   ************************** */
+  VALUE engine_in_c;
+  iodine_engine_s *engine;
 
   engine_in_c = rb_funcallv(IodineEngine, iodine_new_func_id, 0, NULL);
   Data_Get_Struct(engine_in_c, iodine_engine_s, engine);

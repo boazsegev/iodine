@@ -21,13 +21,14 @@ module MyHTTPRouter
           'Content-Length' => '32' },
    ['Please connect using websockets.']]
 
-   WS_RESPONSE = [0, {}, []].freese
+   WS_RESPONSE = [0, {}, []]
 
    # this is function will be called by the Rack server (iodine) for every request.
    def self.call env
      # check if this is an upgrade request.
      if(env['upgrade.websocket?'.freeze])
        env['upgrade.websocket'.freeze] = WebsocketEcho
+       return [0, {}, []]
        return WS_RESPONSE
      end
      # simply return the RESPONSE object, no matter what request was received.
@@ -39,7 +40,7 @@ end
 class WebsocketEcho
   # seng a message to new clients.
   def on_open
-    puts self
+    p self
     write "Welcome to our echo service!"
   end
   # send a message, letting the client know the server is suggunt down.

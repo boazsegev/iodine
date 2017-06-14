@@ -284,17 +284,13 @@ void Init_iodine(void) {
   iodine_to_s_method_id = rb_intern("to_s");
   iodine_to_i_func_id = rb_intern("to_i");
 
-  IodineBinaryEncodingIndex =
-      rb_enc_find_index("binary"); // sets encoding for data
-  IodineUTF8EncodingIndex =
-      rb_enc_find_index("UTF-8");               // sets encoding for data
-  IodineBinaryEncoding = rb_enc_find("binary"); // sets encoding for data
-  IodineUTF8Encoding = rb_enc_find("UTF-8");    // sets encoding for data
+  IodineBinaryEncodingIndex = rb_enc_find_index("binary");
+  IodineUTF8EncodingIndex = rb_enc_find_index("UTF-8");
+  IodineBinaryEncoding = rb_enc_find("binary");
+  IodineUTF8Encoding = rb_enc_find("UTF-8");
 
   // The core Iodine module wraps libserver functionality and little more.
   Iodine = rb_define_module("Iodine");
-
-  // Iodine_Version = rb_const_get(Iodine, rb_intern("VERSION"));
 
   // the Iodine singleton functions
   rb_define_module_function(Iodine, "start", iodine_start, 0);

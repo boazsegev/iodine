@@ -64,12 +64,18 @@ module Iodine
   # file to load now instead of waiting for "first access". This allows multi-threaded safety and better memory utilization during forking.
   #
   # Use {warmup} when either {processes} or {threads} are set to more then 1.
-  def self.warmup
+  def self.warmup app
     # load anything marked with `autoload`, since autoload isn't thread safe nor fork friendly.
     Module.constants.each do |n|
       begin
         Object.const_get(n)
       rescue Exception => _e
+      end
+    end
+    ::Rack::Builder.new(app) do |r|
+      r.warmup do |app|
+        client = ::Rack::MockRequest.new(app)
+        client.get('/')
       end
     end
   end

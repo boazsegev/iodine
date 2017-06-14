@@ -1,3 +1,6 @@
+require 'iodine'
+require 'rack'
+
 module Iodine
   module Base
     # Command line interface
@@ -40,34 +43,30 @@ EOS
 
 
       def try_file filename
-        begin
-          return Rack::Builder.parse_file filename
-        rescue
-          return [nil, nil]
-        end
+        return nil unless File.exist? filename
+        return ::Rack::Builder.parse_file filename
       end
 
 
 
       def call
-
-        #!/usr/bin/env ruby
-
-        require 'iodine'
-        require 'rack'
-
         if ARGV[0] =~ /(\-\?)|(help)|(\?)|(h)|(\-h)$/
           return print_help
         end
 
         app, opt = nil, nil
-        filename = (ARGV[-2].to_s[0] != '-' && ARGV[-1].to_s[0] != '-' && ARGV[-1])
+        filename = ((ARGV[-2].to_s[0] != '-' || ARGV[-2].to_s == '-warmup') && ARGV[-1].to_s[0] != '-' && ARGV[-1])
         if filename
           app, opt = try_file filename;
-          puts "Couldn't find #{filename}, testing for config.ru" if !opt
+          unless opt
+            puts "* Couldn't find #{filename}\n  testing for config.ru\n"
+            app, opt = try_file "config.ru"
+          end
+        else
+          app, opt = try_file "config.ru";
         end
-        app, opt = try_file "config.ru";
-        unless app || opt
+
+        unless opt
           puts "WARNING: Ruby application not found#{ filename ? " - missing both #{filename} and config.ru" : " - missing config.ru"}."
           if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
             puts "         Running only static file service."
@@ -97,11 +96,11 @@ EOS
         end
         Iodine::Rack.log = true if ARGV.index('-v')
         Iodine::Rack.log = false if ARGV.index('-q')
-        Iodine.warmup if ARGV.index('-warmup')
+        Iodine.warmup(app) if ARGV.index('-warmup')
         Iodine::Rack.run(app, opt)
       end
 
-      include self
+      extend self
     end
   end
 end

@@ -21,7 +21,7 @@ module MyHTTPRouter
           'Content-Length' => '32' },
    ['Please connect using websockets.']]
 
-  WS_RESPONSE = [0, {}, []].freese
+  WS_RESPONSE = [0, {}, []].freeze
 
    # this is function will be called by the Rack server (iodine) for every request.
    def self.call env

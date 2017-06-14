@@ -1,7 +1,5 @@
 #!/usr/bin/env ruby
 
-require 'iodine'
 require 'iodine/cli'
-require 'rack'
 
 Iodine::Base::CLI.call
