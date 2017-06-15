@@ -19,7 +19,8 @@ static ID engine_pubid;
 static ID engine_unsubid;
 
 typedef struct {
-  pubsub_engine_s *engine;
+  pubsub_engine_s engine;
+  pubsub_engine_s *p;
   VALUE handler;
   unsigned allocated : 1;
 } iodine_engine_s;
@@ -104,10 +105,9 @@ static VALUE engine_distribute(int argc, VALUE *argv, VALUE self) {
   iodine_engine_s *engine;
   Data_Get_Struct(self, iodine_engine_s, engine);
 
-  engine->engine->push2cluster =
-      (push2cluster != Qnil && push2cluster != Qfalse),
+  engine->p->push2cluster = (push2cluster != Qnil && push2cluster != Qfalse),
 
-  pubsub_engine_distribute(.engine = engine->engine,
+  pubsub_engine_distribute(.engine = engine->p,
                            .channel.name = RSTRING_PTR(channel),
                            .channel.len = RSTRING_LEN(channel),
                            .msg.data = RSTRING_PTR(msg),
@@ -117,42 +117,91 @@ static VALUE engine_distribute(int argc, VALUE *argv, VALUE self) {
   return self;
 }
 
+pubsub_engine_s *iodine_engine_ruby2facil(VALUE ruby_engine) {
+  if (ruby_engine == Qnil || ruby_engine == Qfalse)
+    return NULL;
+  iodine_engine_s *engine;
+  Data_Get_Struct(ruby_engine, iodine_engine_s, engine);
+  if (engine)
+    return engine->p;
+  return NULL;
+}
+
 /* *****************************************************************************
 C => Ruby Bridge
 ***************************************************************************** */
 
-/* Should return 0 on success and -1 on failure. */
-static int engine_subscribe(const pubsub_engine_s *eng_, const char *ch,
-                            size_t ch_len, uint8_t use_pattern) {
+struct engine_gvl_args_s {
+  const pubsub_engine_s *eng;
+  const char *ch;
+  size_t ch_len;
+  const char *msg;
+  size_t msg_len;
+  uint8_t use_pattern;
+};
+
+static void *engine_subscribe_inGVL(void *a_) {
+  struct engine_gvl_args_s *args = a_;
   VALUE data[2];
-  data[0] = rb_str_new(ch, ch_len);
-  data[1] = use_pattern ? Qtrue : Qnil;
-  VALUE eng = ((iodine_engine_s *)eng_)->handler;
+  data[0] = rb_str_new(args->ch, args->ch_len);
+  data[1] = args->use_pattern ? Qtrue : Qnil;
+  VALUE eng = ((iodine_engine_s *)args->eng)->handler;
   eng = RubyCaller.call2(eng, engine_subid, 2, data);
-  return ((eng == Qfalse || eng == Qnil) ? -1 : 0);
+  return ((eng == Qfalse || eng == Qnil) ? (void *)-1 : (void *)0);
+}
+
+/* Should return 0 on success and -1 on failure. */
+static int engine_subscribe(const pubsub_engine_s *eng, const char *ch,
+                            size_t ch_len, uint8_t use_pattern) {
+  struct engine_gvl_args_s args = {
+      .eng = eng, .ch = ch, .ch_len = ch_len, .use_pattern = use_pattern,
+  };
+  return RubyCaller.call_c(engine_subscribe_inGVL, &args) ? 0 : -1;
+}
+
+static void *engine_unsubscribe_inGVL(void *a_) {
+  struct engine_gvl_args_s *args = a_;
+  VALUE data[2];
+  data[0] = rb_str_new(args->ch, args->ch_len);
+  data[1] = args->use_pattern ? Qtrue : Qnil;
+  VALUE eng = ((iodine_engine_s *)args->eng)->handler;
+  RubyCaller.call2(eng, engine_unsubid, 2, data);
+  return NULL;
 }
 
 /* Return value is ignored - nothing should be returned. */
-static void engine_unsubscribe(const pubsub_engine_s *eng_, const char *ch,
+static void engine_unsubscribe(const pubsub_engine_s *eng, const char *ch,
                                size_t ch_len, uint8_t use_pattern) {
-  VALUE data[2];
-  data[0] = rb_str_new(ch, ch_len);
-  data[1] = use_pattern ? Qtrue : Qnil;
-  VALUE eng = ((iodine_engine_s *)eng_)->handler;
-  RubyCaller.call2(eng, engine_subid, 2, data);
+  struct engine_gvl_args_s args = {
+      .eng = eng, .ch = ch, .ch_len = ch_len, .use_pattern = use_pattern,
+  };
+  RubyCaller.call_c(engine_unsubscribe_inGVL, &args);
+}
+
+static void *engine_publish_inGVL(void *a_) {
+  struct engine_gvl_args_s *args = a_;
+  VALUE data[3];
+  data[0] = rb_str_new(args->ch, args->ch_len);
+  data[1] = rb_str_new(args->msg, args->msg_len);
+  data[2] = args->use_pattern ? Qtrue : Qnil;
+  VALUE eng = ((iodine_engine_s *)args->eng)->handler;
+  eng = RubyCaller.call2(eng, engine_pubid, 3, data);
+  return ((eng == Qfalse || eng == Qnil) ? (void *)-1 : 0);
 }
 
 /* Should return 0 on success and -1 on failure. */
-static int engine_publish(const pubsub_engine_s *eng_, const char *ch,
+static int engine_publish(const pubsub_engine_s *eng, const char *ch,
                           size_t ch_len, const char *msg, size_t msg_len,
                           uint8_t use_pattern) {
-  VALUE data[3];
-  data[0] = rb_str_new(ch, ch_len);
-  data[1] = rb_str_new(msg, msg_len);
-  data[2] = use_pattern ? Qtrue : Qnil;
-  VALUE eng = ((iodine_engine_s *)eng_)->handler;
-  eng = RubyCaller.call2(eng, engine_subid, 3, data);
-  return ((eng == Qfalse || eng == Qnil) ? -1 : 0);
+  struct engine_gvl_args_s args = {
+      .eng = eng,
+      .ch = ch,
+      .ch_len = ch_len,
+      .msg = msg,
+      .msg_len = msg_len,
+      .use_pattern = use_pattern,
+  };
+  return RubyCaller.call_c(engine_publish_inGVL, &args) ? 0 : -1;
 }
 
 /* *****************************************************************************
@@ -168,25 +217,34 @@ static void engine_mark(void *eng_) {
 static void engine_free(void *eng_) {
   iodine_engine_s *eng = eng_;
   if (eng->allocated)
-    free(eng->engine);
+    free(eng->p);
   free(eng);
 }
 
 /* GMP::Integer.allocate */
 VALUE engine_alloc_c(VALUE self) {
   iodine_engine_s *eng = malloc(sizeof(*eng));
-  pubsub_engine_s *ceng = malloc(sizeof(*ceng));
-  *ceng = (pubsub_engine_s){
-      .subscribe = engine_subscribe,
-      .unsubscribe = engine_unsubscribe,
-      .publish = engine_publish,
-  };
-
-  *eng = (iodine_engine_s){
-      .handler = self, .engine = ceng, .allocated = 1,
-  };
+  if (TYPE(self) == T_CLASS)
+    *eng = (iodine_engine_s){
+        .handler = self,
+        .engine =
+            {
+                .subscribe = engine_subscribe,
+                .unsubscribe = engine_unsubscribe,
+                .publish = engine_publish,
+            },
+        .allocated = 0,
+        .p = &eng->engine,
+    };
 
   return Data_Wrap_Struct(self, engine_mark, engine_free, eng);
+}
+
+VALUE engine_initialize(VALUE self) {
+  iodine_engine_s *engine;
+  Data_Get_Struct(self, iodine_engine_s, engine);
+  engine->handler = self;
+  return self;
 }
 
 /* *****************************************************************************
@@ -200,16 +258,19 @@ void Iodine_init_engine(void) {
   cluster_varid = rb_intern("@push2cluster");
   engine_varid = rb_intern("engine");
   engine_subid = rb_intern("subscribe");
-  engine_pubid = rb_intern("unsubscribe");
-  engine_unsubid = rb_intern("publish");
+  engine_unsubid = rb_intern("unsubscribe");
+  engine_pubid = rb_intern("publish");
 
   IodinePubSub = rb_define_module_under(Iodine, "PubSub");
   IodineEngine = rb_define_class_under(IodinePubSub, "Engine", rb_cObject);
-  rb_define_protected_method(IodineEngine, "distribute", engine_distribute, -1);
+
+  rb_define_alloc_func(IodineEngine, engine_alloc_c);
+  rb_define_method(IodineEngine, "initialize", engine_initialize, 0);
+
+  rb_define_method(IodineEngine, "distribute", engine_distribute, -1);
   rb_define_method(IodineEngine, "subscribe", engine_sub_placeholder, 2);
   rb_define_method(IodineEngine, "unsubscribe", engine_sub_placeholder, 2);
   rb_define_method(IodineEngine, "publish", engine_pub_placeholder, 3);
-  rb_define_alloc_func(IodineEngine, engine_alloc_c);
 
   /* *************************
   Initialize C pubsub engines
@@ -219,9 +280,7 @@ void Iodine_init_engine(void) {
 
   engine_in_c = rb_funcallv(IodineEngine, iodine_new_func_id, 0, NULL);
   Data_Get_Struct(engine_in_c, iodine_engine_s, engine);
-  engine->allocated = 0;
-  free(engine->engine);
-  engine->engine = (pubsub_engine_s *)&PUBSUB_CLUSTER_ENGINE;
+  engine->p = (pubsub_engine_s *)&PUBSUB_CLUSTER_ENGINE;
 
   /** This is the (currently) default pub/sub engine. It will distribute
    * messages to all subscribers in the process cluster. */
@@ -230,9 +289,7 @@ void Iodine_init_engine(void) {
 
   engine_in_c = rb_funcallv(IodineEngine, iodine_new_func_id, 0, NULL);
   Data_Get_Struct(engine_in_c, iodine_engine_s, engine);
-  engine->allocated = 0;
-  free(engine->engine);
-  engine->engine = (pubsub_engine_s *)&PUBSUB_CLUSTER_ENGINE;
+  engine->p = (pubsub_engine_s *)&PUBSUB_CLUSTER_ENGINE;
 
   /** This is a single process pub/sub engine. It will distribute messages to
    * all subscribers sharing the same process. */

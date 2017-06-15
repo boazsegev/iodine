@@ -79,6 +79,18 @@ module Iodine
       end
     end
   end
+
+  module Websocket
+    @default_pubsub ||= ::Iodine::PubSub::Engine::CLUSTER
+    # returns the currently default engine.
+    def self.default_pubsub
+      @default_pubsub
+    end
+    # sets a new default engine.
+    def self.default_pubsub= eng
+      @default_pubsub = eng
+    end
+  end
 end
 
 require 'rack/handler/iodine' unless defined? ::Iodine::Rack::IODINE_RACK_LOADED

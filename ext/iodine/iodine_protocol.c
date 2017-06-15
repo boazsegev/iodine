@@ -197,13 +197,29 @@ static VALUE dyn_read(int argc, VALUE *argv, VALUE self) {
 Writes data to the connection. Returns `false` on error and `self` on success.
 */
 static VALUE dyn_write(VALUE self, VALUE data) {
+  Check_Type(data, T_STRING);
   intptr_t fd = iodine_get_fd(self);
-  Registry.add(data);
-  if (sock_write2(.uuid = fd, .buffer = RSTRING(data),
-                  .length = RSTRING_LEN(data), .move = 1,
-                  .dealloc = (void (*)(void *))Registry.remove)) {
+  if (sock_write(fd, RSTRING_PTR(data), RSTRING_LEN(data))) {
     return Qfalse;
   }
+  return self;
+}
+
+/**
+Moves a String to iodine's socket's buffer. This is a zero-copy write and
+requires that the string remain unchanged during the process.
+
+For example, Strings received by `on_message` can't be used, because they use a
+recyclable buffer and they will be destroyed once `on_message` returns.
+*/
+static VALUE dyn_write_move(VALUE self, VALUE data) {
+  Check_Type(data, T_STRING);
+  Registry.add(data);
+  intptr_t fd = iodine_get_fd(self);
+  if (sock_write2(.uuid = fd, .buffer = RSTRING_PTR(data),
+                  .length = RSTRING_LEN(data), .move = 1,
+                  .dealloc = (void (*)(void *))Registry.remove))
+    return Qfalse;
   return self;
 }
 
@@ -214,11 +230,10 @@ fragmantation of previously scheduled data.
 Returns `false` on error and `self` on success.
 */
 static VALUE dyn_write_urgent(VALUE self, VALUE data) {
+  Check_Type(data, T_STRING);
   intptr_t fd = iodine_get_fd(self);
   Registry.add(data);
-  if (sock_write2(.uuid = fd, .buffer = RSTRING(data),
-                  .length = RSTRING_LEN(data), .urgent = 1, .move = 1,
-                  .dealloc = (void (*)(void *))Registry.remove)) {
+  if (sock_write(fd, RSTRING_PTR(data), RSTRING_LEN(data))) {
     return Qfalse;
   }
   return self;
@@ -262,15 +277,30 @@ static VALUE dyn_close(VALUE self) {
 }
 
 /**
-Returns a connection's localized ID which is valid for **this process** (not a
+Returns a connection's localized ID which is valid for *this process* (not a
 machine or internet unique value).
+
+Once the connection is closed and the `on_close` callback was called, this
+method returns `nil`.
 
 This can be used together with a true process wide UUID to uniquely identify a
 connection across the internet.
 */
 static VALUE dyn_uuid(VALUE self) {
   intptr_t uuid = iodine_get_fd(self);
+  if (!uuid || uuid == -1)
+    return Qnil;
   return LONG2FIX(uuid);
+}
+
+/**
+Returns true if the connection is open and false if closed.
+*/
+static VALUE dyn_is_open(VALUE self) {
+  intptr_t uuid = iodine_get_fd(self);
+  if (uuid && sock_isvalid(uuid))
+    return Qtrue;
+  return Qfalse;
 }
 
 /**
@@ -346,6 +376,7 @@ static void dyn_protocol_on_shutdown(intptr_t fduuid, protocol_s *protocol) {
 /** called when the connection was closed, but will not run concurrently */
 static void dyn_protocol_on_close(protocol_s *protocol) {
   RubyCaller.call(dyn_prot(protocol)->handler, iodine_on_close_func_id);
+  iodine_set_fd(dyn_prot(protocol)->handler, 0);
   Registry.remove(dyn_prot(protocol)->handler);
   free(protocol);
 }
@@ -388,8 +419,6 @@ static protocol_s *on_open_dyn_protocol(intptr_t fduuid, void *udata) {
   VALUE rb_tout = rb_ivar_get((VALUE)udata, iodine_timeout_var_id);
   uint8_t timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
   VALUE handler = RubyCaller.call((VALUE)udata, iodine_new_func_id);
-  if (handler == Qnil)
-    return NULL;
   return dyn_set_protocol(fduuid, handler, timeout);
 }
 
@@ -467,7 +496,7 @@ i.e.
 static VALUE iodine_connect(VALUE self, VALUE address, VALUE port,
                             VALUE handler) {
   uint8_t timeout;
-  if (TYPE(handler) == T_CLASS) {
+  if (TYPE(handler) == T_CLASS || TYPE(handler) == T_MODULE) {
     // get the timeout
     VALUE rb_tout = rb_ivar_get(handler, iodine_timeout_var_id);
     timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
@@ -485,19 +514,22 @@ static VALUE iodine_connect(VALUE self, VALUE address, VALUE port,
       rb_tout = rb_ivar_get(handler, iodine_timeout_var_id);
     timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
   }
-  Registry.add(handler);
   if (TYPE(port) != T_FIXNUM && TYPE(port) != T_STRING)
     rb_raise(rb_eTypeError, "The port variable must be a Fixnum or a String.");
+  Registry.add(handler);
   if (TYPE(port) == T_FIXNUM)
     port = rb_funcall2(port, iodine_to_s_method_id, 0, NULL);
   // connect
-  if (facil_connect(.port = StringValueCStr(port),
-                    .address = StringValueCStr(address),
-                    .udata = (void *)handler,
-                    .on_connect = on_open_dyn_protocol_instance,
-                    .on_fail = (void (*)(void *))Registry.remove) == -1)
+  intptr_t uuid = facil_connect(.port = StringValueCStr(port),
+                                .address = StringValueCStr(address),
+                                .udata = (void *)handler,
+                                .on_connect = on_open_dyn_protocol_instance,
+                                .on_fail = (void (*)(void *))Registry.remove);
+  if (uuid == -1)
     return Qnil;
-  return self;
+  iodine_set_fd(handler, uuid);
+  return handler;
+  (void)self;
 }
 
 /**
@@ -581,10 +613,13 @@ void Iodine_init_protocol(void) {
   rb_define_module_function(IodineProtocol, "count", dyn_count, 0);
 
   /* Add module instance methods */
+
+  rb_define_method(IodineProtocol, "open?", dyn_is_open, 0);
   rb_define_method(IodineProtocol, "conn_id", dyn_uuid, 0);
   rb_define_method(IodineProtocol, "count", dyn_count, 0);
   rb_define_method(IodineProtocol, "read", dyn_read, -1);
   rb_define_method(IodineProtocol, "write", dyn_write, 1);
+  rb_define_method(IodineProtocol, "write!", dyn_write_move, 1);
   rb_define_method(IodineProtocol, "write_urgent", dyn_write_urgent, 1);
   rb_define_method(IodineProtocol, "close", dyn_close, 0);
   rb_define_method(IodineProtocol, "defer", dyn_defer, -1);

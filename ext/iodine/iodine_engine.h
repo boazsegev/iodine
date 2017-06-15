@@ -12,4 +12,8 @@ extern VALUE IodineEngine;
 
 void Iodine_init_engine(void);
 
+typedef struct pubsub_engine_s pubsub_engine_s;
+
+pubsub_engine_s *iodine_engine_ruby2facil(VALUE engine);
+
 #endif

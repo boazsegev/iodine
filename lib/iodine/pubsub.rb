@@ -1,5 +1,3 @@
-require 'iodine'
-
 module Iodine
    # Iodine is equiped with an internal pub/sub service that allows improved resource management from a deployment perspective.
    #
@@ -68,6 +66,7 @@ module Iodine
       CLUSTER
       # This is a single process pub/sub engine. It will distribute messages to all subscribers sharing the same process.
       SINGLE_PROCESS
+
       # This might cause duplicate massages: when the {#push2cluster} attribute is `true`, distributed messages will be distributed to the whole Iodine process cluster and not just the current process.
       #
       # Normal implementations will have a single engine per process, but during application initialization

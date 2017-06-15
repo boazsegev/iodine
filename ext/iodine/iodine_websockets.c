@@ -5,7 +5,9 @@ License: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #include "iodine_websockets.h"
+#include "iodine_engine.h"
 
+#include "pubsub.h"
 #include "websockets.h"
 
 #include <arpa/inet.h>
@@ -15,15 +17,18 @@ Feel free to copy, use and enjoy according to the license provided.
 Core helpers and data
 ***************************************************************************** */
 
-static VALUE rWebsocket; // The Iodine::Http::Websocket class
-static ID ws_var_id;     // id for websocket pointer
-static ID dup_func_id;   // id for the buffer.dup method
+static VALUE IodineWebsocket; // The Iodine::Http::Websocket class
+static ID ws_var_id;          // id for websocket pointer
+static ID dup_func_id;        // id for the buffer.dup method
+static ID engine_default_var_id;
 
-static ID force_var_id;
-static ID channel_var_id;
-static ID pattern_var_id;
-static ID text_var_id;
-static ID binary_var_id;
+static VALUE force_var_id;
+static VALUE channel_var_id;
+static VALUE pattern_var_id;
+static VALUE text_var_id;
+static VALUE binary_var_id;
+static VALUE engine_var_id;
+static VALUE message_var_id;
 
 #define set_uuid(object, request)                                              \
   rb_ivar_set((object), iodine_fd_var_id, ULONG2NUM((request)->fd))
@@ -45,6 +50,13 @@ inline static ws_s *get_ws(VALUE obj) {
 
 #define set_handler(ws, handler) websocket_udata_set((ws), (VALUE)handler)
 #define get_handler(ws) ((VALUE)websocket_udata((ws_s *)(ws)))
+
+pubsub_engine_s *iodine_engine_default(void) {
+  VALUE def = rb_ivar_get(IodineWebsocket, engine_default_var_id);
+  if (def == Qnil || def == Qfalse)
+    return NULL;
+  return iodine_engine_ruby2facil(def);
+}
 
 /* *****************************************************************************
 Buffer management - Rubyfy the way the buffer is handled.
@@ -123,7 +135,7 @@ Websocket Ruby API
  * existing data in the outgoing buffer is sent. */
 static VALUE iodine_ws_close(VALUE self) {
   ws_s *ws = get_ws(self);
-  if (((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
+  if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
     return Qfalse;
   websocket_close(ws);
   return self;
@@ -171,7 +183,7 @@ static VALUE iodine_ws_has_pending(VALUE self) {
 }
 
 /**
-Returns a connection's UUID which is valid for **this process** (not a machine
+Returns a connection's UUID which is valid for *this process* (not a machine
 or internet unique value).
 
 This can be used together with a true process wide UUID to uniquely identify a
@@ -243,6 +255,182 @@ static VALUE iodine_defer(int argc, VALUE *argv, VALUE self) {
   return block;
 }
 
+/* *****************************************************************************
+Websocket Pub/Sub API
+***************************************************************************** */
+
+static void *on_pubsub_notificationinGVL(websocket_pubsub_notification_s *n) {
+  VALUE rbn[2];
+  rbn[0] = rb_str_new(n->channel.name, n->channel.len);
+  Registry.add(rbn[0]);
+  rbn[1] = rb_str_new(n->msg.data, n->msg.len);
+  Registry.add(rbn[1]);
+  RubyCaller.call2((VALUE)n->udata, iodine_call_proc_id, 2, rbn);
+  Registry.remove(rbn[0]);
+  Registry.remove(rbn[1]);
+  return NULL;
+}
+
+static void on_pubsub_notificationin(websocket_pubsub_notification_s n) {
+  RubyCaller.call_c((void *(*)(void *))on_pubsub_notificationinGVL, &n);
+}
+
+/**
+Subscribes the websocket to a channel belonging to a specific pub/sub service
+(using an {Iodine::PubSub::Engine} to connect Iodine to the service).
+
+The function accepts a single argument (a {Hash}) and an optional block.
+
+If no block is provided, the message is sent directly to the websocket client.
+
+Accepts a single {Hash} argument with the following possible options:
+
+:channel :: REQUIRED. The channel to subscribe to.
+:engine :: If provided, the engine to use for pub/sub. Otherwise the
+:force :: This can be set to either nil, :text or :binary and controls the way
+the message will be forwarded to the websocket client. This is only valid if no
+block was provided. Defaults to smart encoding based testing.
+
+
+*/
+static VALUE iodine_ws_subscribe(VALUE self, VALUE args) {
+  Check_Type(args, T_HASH);
+  ws_s *ws = get_ws(self);
+  if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
+    return Qfalse;
+  uint8_t use_pattern = 0, force_text = 0, force_binary = 0;
+
+  VALUE rb_ch = rb_hash_aref(args, channel_var_id);
+  if (rb_ch == Qnil || rb_ch == Qfalse) {
+    use_pattern = 1;
+    rb_ch = rb_hash_aref(args, pattern_var_id);
+    if (rb_ch == Qnil || rb_ch == Qfalse)
+      rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
+  }
+  Check_Type(rb_ch, T_STRING);
+
+  VALUE tmp = rb_hash_aref(args, force_var_id);
+  if (tmp == text_var_id)
+    force_text = 1;
+  else if (tmp == binary_var_id)
+    force_binary = 1;
+  Check_Type(rb_ch, T_STRING);
+
+  VALUE block = 0;
+  if (rb_block_given_p()) {
+    block = rb_block_proc();
+  }
+
+  pubsub_engine_s *engine =
+      iodine_engine_ruby2facil(rb_hash_aref(args, engine_var_id));
+  if (!engine)
+    engine = iodine_engine_default();
+  if (!engine)
+    rb_raise(rb_eRuntimeError, "No engine or default engine to use.");
+
+  uintptr_t subid = websocket_subscribe(
+      ws, .channel.name = RSTRING_PTR(rb_ch), .channel.len = RSTRING_LEN(rb_ch),
+      .engine = engine, .use_pattern = use_pattern, .force_text = force_text,
+      .force_binary = force_binary,
+      .on_message = (block ? on_pubsub_notificationin : NULL),
+      .udata = (void *)block);
+  if (!subid)
+    return Qnil;
+  return ULL2NUM(subid);
+}
+static VALUE iodine_ws_is_subscribed(VALUE self, VALUE args) {
+  Check_Type(args, T_HASH);
+  ws_s *ws = get_ws(self);
+  if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
+    return Qfalse;
+  uint8_t use_pattern = 0, force_text = 0, force_binary = 0;
+
+  VALUE rb_ch = rb_hash_aref(args, channel_var_id);
+  if (rb_ch == Qnil || rb_ch == Qfalse) {
+    use_pattern = 1;
+    rb_ch = rb_hash_aref(args, pattern_var_id);
+    if (rb_ch == Qnil || rb_ch == Qfalse)
+      rb_raise(rb_eArgError, "channel is requires for pub/sub methods.");
+  }
+  Check_Type(rb_ch, T_STRING);
+
+  VALUE tmp = rb_hash_aref(args, force_var_id);
+  if (tmp == text_var_id)
+    force_text = 1;
+  else if (tmp == binary_var_id)
+    force_binary = 1;
+  Check_Type(rb_ch, T_STRING);
+
+  VALUE block = 0;
+  if (rb_block_given_p()) {
+    block = rb_block_proc();
+  }
+
+  pubsub_engine_s *engine =
+      iodine_engine_ruby2facil(rb_hash_aref(args, engine_var_id));
+  if (!engine)
+    engine = iodine_engine_default();
+  if (!engine)
+    rb_raise(rb_eRuntimeError, "No engine or default engine to use.");
+
+  uintptr_t subid = websocket_find_sub(
+      ws, .channel.name = RSTRING_PTR(rb_ch), .channel.len = RSTRING_LEN(rb_ch),
+      .engine = engine, .use_pattern = use_pattern, .force_text = force_text,
+      .force_binary = force_binary,
+      .on_message = (block ? on_pubsub_notificationin : NULL),
+      .udata = (void *)block);
+  if (!subid)
+    return Qnil;
+  return LONG2NUM(subid);
+}
+
+static VALUE iodine_ws_unsubscribe(VALUE self, VALUE sub_id) {
+  ws_s *ws = get_ws(self);
+  if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
+    return Qfalse;
+  Check_Type(sub_id, T_FIXNUM);
+  websocket_unsubscribe(ws, NUM2LONG(sub_id));
+  return Qnil;
+}
+
+static VALUE iodine_ws_publish(VALUE self, VALUE args) {
+  Check_Type(args, T_HASH);
+  ws_s *ws = get_ws(self);
+  if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
+    return Qfalse;
+  uint8_t use_pattern = 0, force_text = 0, force_binary = 0;
+
+  VALUE rb_ch = rb_hash_aref(args, channel_var_id);
+  if (rb_ch == Qnil || rb_ch == Qfalse) {
+    use_pattern = 1;
+    rb_ch = rb_hash_aref(args, pattern_var_id);
+    if (rb_ch == Qnil || rb_ch == Qfalse)
+      rb_raise(rb_eArgError, "channel is requires for pub/sub methods.");
+  }
+  Check_Type(rb_ch, T_STRING);
+
+  VALUE rb_msg = rb_hash_aref(args, message_var_id);
+  if (rb_msg == Qnil || rb_msg == Qfalse) {
+    rb_raise(rb_eArgError, "channel is requires for pub/sub methods.");
+  }
+  Check_Type(rb_msg, T_STRING);
+
+  pubsub_engine_s *engine =
+      iodine_engine_ruby2facil(rb_hash_aref(args, engine_var_id));
+  if (!engine)
+    engine = iodine_engine_default();
+  if (!engine)
+    rb_raise(rb_eRuntimeError, "No engine or default engine to use.");
+
+  intptr_t subid =
+      pubsub_publish(.engine = engine, .channel.name = (RSTRING_PTR(rb_ch)),
+                     .channel.len = (RSTRING_LEN(rb_ch)),
+                     .msg.data = (RSTRING_PTR(rb_msg)),
+                     .msg.len = (RSTRING_LEN(rb_msg)));
+  if (!subid)
+    return Qfalse;
+  return Qtrue;
+}
 /* *****************************************************************************
 Websocket Multi-Write - Deprecated
 ***************************************************************************** */
@@ -353,14 +541,14 @@ static VALUE iodine_ws_each(VALUE self) {
 }
 
 /**
-Runs the required block for each dynamic protocol connection.
+Runs the required block for each websocket.
 
-Tasks will be performed asynchronously, within each connections lock, so no
-connection will have
-more then one task being performed at the same time (similar to {#defer}).
+Tasks will be performed asynchronously, within each connection's lock, so no
+connection will have more then one task being performed at the same time
+(similar to {#defer}).
 
 Also, unlike {Iodine.run}, the block will **not** be called unless the
-connection remains open at the time it's execution is scheduled.
+websocket is still open at the time it's execution begins.
 
 Always returns `self`.
 */
@@ -376,11 +564,11 @@ static VALUE iodine_ws_class_each(VALUE self) {
 }
 
 /**
-Schedules a block of code to run for the specified connection at a later time,
+Schedules a block of code to run for the specified websocket at a later time,
 (**if** the connection is open). The block will run within the connection's
 lock, offering a fast concurrency synchronizing tool.
 
-The block of code will receive the connection's object. i.e.
+The block of code will receive the websocket's callback object. i.e.
 
     Iodine::Websocket.defer(uuid) {|ws| ws.write "I'm doing this" }
 
@@ -489,12 +677,13 @@ void iodine_websocket_upgrade(http_request_s *request,
                               http_response_s *response, VALUE handler,
                               size_t max_msg, uint8_t ping) {
   // make sure we have a valid handler, with the Websocket Protocol mixin.
-  if (TYPE(handler) != T_CLASS && TYPE(handler) != T_MODULE)
+  if (handler == Qnil || handler == Qfalse || TYPE(handler) == T_FIXNUM ||
+      TYPE(handler) == T_STRING || TYPE(handler) == T_SYMBOL)
     goto failed;
-  if (TYPE(handler) == T_CLASS) {
+  if (TYPE(handler) == T_CLASS || TYPE(handler) == T_MODULE) {
     // include the Protocol module
-    rb_include_module(handler, rWebsocket);
-    rb_extend_object(handler, rWebsocket);
+    rb_include_module(handler, IodineWebsocket);
+    rb_extend_object(handler, IodineWebsocket);
     handler = RubyCaller.call(handler, iodine_new_func_id);
     if (handler == Qnil || handler == Qfalse)
       goto failed;
@@ -502,8 +691,8 @@ void iodine_websocket_upgrade(http_request_s *request,
   } else {
     // include the Protocol module in the object's class
     VALUE p_class = rb_obj_class(handler);
-    rb_include_module(p_class, rWebsocket);
-    rb_extend_object(p_class, rWebsocket);
+    rb_include_module(p_class, IodineWebsocket);
+    rb_extend_object(p_class, IodineWebsocket);
   }
   // add the handler to the registry
   Registry.add(handler);
@@ -531,31 +720,40 @@ void Iodine_init_websocket(void) {
   ws_var_id = rb_intern("iodine_ws_ptr"); // when upgrading
   dup_func_id = rb_intern("dup");         // when upgrading
 
-  force_var_id = rb_intern("fource");
-  channel_var_id = rb_intern("channel");
-  pattern_var_id = rb_intern("pattern");
-  text_var_id = rb_intern("text");
-  binary_var_id = rb_intern("binary");
+  force_var_id = ID2SYM(rb_intern("fource"));
+  channel_var_id = ID2SYM(rb_intern("channel"));
+  pattern_var_id = ID2SYM(rb_intern("pattern"));
+  message_var_id = ID2SYM(rb_intern("message"));
+  engine_var_id = ID2SYM(rb_intern("engine"));
+  text_var_id = ID2SYM(rb_intern("text"));
+  binary_var_id = ID2SYM(rb_intern("binary"));
+
+  engine_default_var_id = rb_intern("@default_pubsub");
 
   // the Ruby websockets protocol class.
-  rWebsocket = rb_define_module_under(Iodine, "Websocket");
-  if (rWebsocket == Qfalse)
+  IodineWebsocket = rb_define_module_under(Iodine, "Websocket");
+  if (IodineWebsocket == Qfalse)
     fprintf(stderr, "WTF?!\n"), exit(-1);
   // // callbacks and handlers
-  rb_define_method(rWebsocket, "on_open", empty_func, 0);
-  // rb_define_method(rWebsocket, "on_message", def_dyn_message, 1);
-  rb_define_method(rWebsocket, "on_shutdown", empty_func, 0);
-  rb_define_method(rWebsocket, "on_close", empty_func, 0);
-  rb_define_method(rWebsocket, "on_ready", empty_func, 0);
-  rb_define_method(rWebsocket, "write", iodine_ws_write, 1);
-  rb_define_method(rWebsocket, "close", iodine_ws_close, 0);
+  rb_define_method(IodineWebsocket, "on_open", empty_func, 0);
+  // rb_define_method(IodineWebsocket, "on_message", def_dyn_message, 1);
+  rb_define_method(IodineWebsocket, "on_shutdown", empty_func, 0);
+  rb_define_method(IodineWebsocket, "on_close", empty_func, 0);
+  rb_define_method(IodineWebsocket, "on_ready", empty_func, 0);
+  rb_define_method(IodineWebsocket, "write", iodine_ws_write, 1);
+  rb_define_method(IodineWebsocket, "close", iodine_ws_close, 0);
 
-  rb_define_method(rWebsocket, "conn_id", iodine_ws_uuid, 0);
-  rb_define_method(rWebsocket, "has_pending?", iodine_ws_has_pending, 0);
-  rb_define_method(rWebsocket, "defer", iodine_defer, -1);
-  rb_define_method(rWebsocket, "each", iodine_ws_each, 0);
-  rb_define_method(rWebsocket, "count", iodine_ws_count, 0);
+  rb_define_method(IodineWebsocket, "conn_id", iodine_ws_uuid, 0);
+  rb_define_method(IodineWebsocket, "has_pending?", iodine_ws_has_pending, 0);
+  rb_define_method(IodineWebsocket, "defer", iodine_defer, -1);
+  rb_define_method(IodineWebsocket, "each", iodine_ws_each, 0);
+  rb_define_method(IodineWebsocket, "count", iodine_ws_count, 0);
 
-  rb_define_singleton_method(rWebsocket, "each", iodine_ws_class_each, 0);
-  rb_define_singleton_method(rWebsocket, "defer", iodine_class_defer, 1);
+  rb_define_method(IodineWebsocket, "subscribe", iodine_ws_subscribe, 1);
+  rb_define_method(IodineWebsocket, "unsubscribe", iodine_ws_unsubscribe, 1);
+  rb_define_method(IodineWebsocket, "subscribed?", iodine_ws_is_subscribed, 1);
+  rb_define_method(IodineWebsocket, "publish", iodine_ws_publish, 1);
+
+  rb_define_singleton_method(IodineWebsocket, "each", iodine_ws_class_each, 0);
+  rb_define_singleton_method(IodineWebsocket, "defer", iodine_class_defer, 1);
 }
