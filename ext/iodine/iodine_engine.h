@@ -7,8 +7,16 @@ License: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #include "iodine.h"
+#include "pubsub.h"
 
 extern VALUE IodineEngine;
+
+typedef struct {
+  pubsub_engine_s engine;
+  pubsub_engine_s *p;
+  VALUE handler;
+  unsigned allocated : 1;
+} iodine_engine_s;
 
 void Iodine_init_engine(void);
 

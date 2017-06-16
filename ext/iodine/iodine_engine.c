@@ -12,18 +12,10 @@ Feel free to copy, use and enjoy according to the license provided.
 VALUE IodineEngine;
 
 static VALUE IodinePubSub;
-static ID cluster_varid;
 static ID engine_varid;
 static ID engine_subid;
 static ID engine_pubid;
 static ID engine_unsubid;
-
-typedef struct {
-  pubsub_engine_s engine;
-  pubsub_engine_s *p;
-  VALUE handler;
-  unsigned allocated : 1;
-} iodine_engine_s;
 
 /* *****************************************************************************
 Mock Functions
@@ -100,12 +92,8 @@ static VALUE engine_distribute(int argc, VALUE *argv, VALUE self) {
   Check_Type(channel, T_STRING);
   Check_Type(msg, T_STRING);
 
-  VALUE push2cluster = rb_ivar_get(self, cluster_varid);
-
   iodine_engine_s *engine;
   Data_Get_Struct(self, iodine_engine_s, engine);
-
-  engine->p->push2cluster = (push2cluster != Qnil && push2cluster != Qfalse),
 
   pubsub_engine_distribute(.engine = engine->p,
                            .channel.name = RSTRING_PTR(channel),
@@ -255,7 +243,6 @@ Initialize C pubsub engines
 Initialization
 ***************************************************************************** */
 void Iodine_init_engine(void) {
-  cluster_varid = rb_intern("@push2cluster");
   engine_varid = rb_intern("engine");
   engine_subid = rb_intern("subscribe");
   engine_unsubid = rb_intern("unsubscribe");
@@ -284,7 +271,7 @@ void Iodine_init_engine(void) {
 
   /** This is the (currently) default pub/sub engine. It will distribute
    * messages to all subscribers in the process cluster. */
-  rb_define_const(IodineEngine, "CLUSTER", engine_in_c);
+  rb_define_const(IodinePubSub, "CLUSTER", engine_in_c);
   // rb_const_set(IodineEngine, rb_intern("CLUSTER"), e);
 
   engine_in_c = rb_funcallv(IodineEngine, iodine_new_func_id, 0, NULL);
@@ -293,6 +280,6 @@ void Iodine_init_engine(void) {
 
   /** This is a single process pub/sub engine. It will distribute messages to
    * all subscribers sharing the same process. */
-  rb_define_const(IodineEngine, "SINGLE_PROCESS", engine_in_c);
+  rb_define_const(IodinePubSub, "SINGLE_PROCESS", engine_in_c);
   // rb_const_set(IodineEngine, rb_intern("SINGLE_PROCESS"), e);
 }

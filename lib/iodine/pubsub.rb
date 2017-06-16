@@ -61,18 +61,10 @@ module Iodine
     # risks by performing specific checks for connection related pub/sub actions.
     #
     class Engine
-
-      # This is the (currently) default pub/sub engine. It will distribute messages to all subscribers in the process cluster.
-      CLUSTER
-      # This is a single process pub/sub engine. It will distribute messages to all subscribers sharing the same process.
-      SINGLE_PROCESS
-
-      # This might cause duplicate massages: when the {#push2cluster} attribute is `true`, distributed messages will be distributed to the whole Iodine process cluster and not just the current process.
-      #
-      # Normal implementations will have a single engine per process, but during application initialization
-      # it's sometimes possible to limit the "reading" to the root process, allowing a single "read" connection to distribute data to the
-      # whole Iodine process cluster.
-      attr_accessor :push2cluster
     end
+    # This is the (currently) default pub/sub engine. It will distribute messages to all subscribers in the process cluster.
+    CLUSTER
+    # This is a single process pub/sub engine. It will distribute messages to all subscribers sharing the same process.
+    SINGLE_PROCESS
   end
 end
