@@ -93,7 +93,7 @@ Server settings **MAY** (not required) be provided to allow for customization an
 
 ---
 
-## Iodine Collection Extension
+## Iodine's Collection Extension to the Rack Websockets
 
 The biggest benefit from Iodine's Collection Extension is that it allows the creation of pub/sub plugins and other similar extensions that require access to all the connected Websockets - no nee for the plugin to ask "where's the list" or "add this code to `on_open`" or anything at all, truly "plug and play".
 
@@ -131,31 +131,39 @@ Internally, this extension also allows iodine to manage connection memory and re
     write "#{count} clients connected"
     ```
 
-## Iodine pub/sub Extension to the Rack Websockets
+## Iodine's Pub/Sub Extension to the Rack Websockets
 
-Iodine is in the process of implementing pub/sub extensions for it's Rack Websockets.
+This extension separates the websocket Pub/Sub semantics from the Pub/Sub engine (i.e. Redis, MongoDB, etc') or the Server. If the Collection Extension is implemented, than this isn't necessarily a big step forward (the big step forward is what can be done with is).
 
-This extension isn't likely to be adopted by other servers, since it requires much more effort than a loop or an array... it requires pipes and callbacks and a process cluster messaging system... a lot of coffee and ice-cream would help as well.
+I don't personally believe this has a chance of being adopted by other server implementors, but it's a very powerful tool that Iodine supports.
 
-However, this extension will allow plugins to attach external pub/sub services (such as Redis, MongoDB, etc') to iodine's inner reactor, event loop, and connection locking systems, decreasing "blocking" code and possible conflicts.
+Including these semantics, in the form of the described API, allows servers and Pub/Sub engines to be optimized in different ways without distracting the application (or framework implementor with environmental details.
 
- The intended design goal looks like this:
+For example, Iodine includes two default Pub/Sub engines `Iodine::PubSub::Engine::CLUSTER` (the default) and `Iodine::PubSub::Engine::SINGLE_PROCESS` that implement a localized Pub/Sub engine within a process cluster.
 
- * `#subscribe` (instance method) Subscribes to a channel using a specific "engine" (pub/sub service connector). *Returns a subscription object (success) or `nil` (error)*.
+ The Websocket module (i.e. `Iodine::Websocket`) includes the following singleton methods:
+
+ * `Iodine::Websocket.default_pubsub=` sets the default Pub/Sub engine.
+
+ * `Iodine::Websocket.default_pubsub` gets the default Pub/Sub engine.
+
+Websocket Callback Objects inherit the following functions:
+
+ * `#subscribe` (instance method) Subscribes to a channel using a specific "engine" (or the default engine). *Returns a subscription object (success) or `nil` (error)*. Doesn't promise actual subscription, only that the subscription request was scheduled to be sent.
 
     Messages from the subscription are sent directly to the client unless an optional block is provided.
 
     If an optional block is provided, it should accept the channel and message couplet (i.e. `{|channel, message| } `) and call the websocket `write` manually.
 
-    All subscriptions (including server side subscriptions) are automatically canceled by the server when the websocket closes.
+    All subscriptions (including server side subscriptions) MUST be automatically canceled **by the server** when the websocket closes.
 
  * `#subscription?` (instance method) locates an existing subscription, if any. *Returns a subscription object (success) or `nil` (error)*.
 
- * `#unsubscribe` (instance method) cancel / stop a subscription. Safely ignores `nil` subscription objects. Returns `nil`.
+ * `#unsubscribe` (instance method) cancel / stop a subscription. Safely ignores `nil` subscription objects. Returns `nil`. Performance promise is similar to `subscribe` - the event was scheduled.
 
-    Notice: there's no need to call this function during the `on_close` callback, since by that point in time it's possible that there will be no more subscriptions left.
+    Notice: there's no need to call this function during the `on_close` callback, since the server will cancel all subscriptions automatically.
 
- * `#publish` (instance method) publishes a message to engine's specified channel. Returns `true` on success or `false` on failure (i.e., engine error).
+ * `#publish` (instance method) publishes a message to engine's specified channel. Returns `true` on success or `false` on failure (i.e., engine error). Doesn't promise actual publishing, only that the message was scheduled to be published.
 
 For example:
 
@@ -197,6 +205,17 @@ end
 #  => nil # ! can't locate
 
 ```
-The `nil` engine is an internal process cluster pub/sub service that doesn't require a database but doesn't extend beyond the single server machine.
 
-Perhaps a watered down version of this design (without the default "cluster" `nil` engine) would be adopted by some servers, since it would be just a step away from the Collection Extension (`each` and friends).
+Servers supporting this extension aren't required to implement any Pub/Sub engines, but they MUST implement a **bridge** between the server and Pub/Sub Engines that follows the following semantics:
+
+Engines MUST inherit from a server specific Engine class and implement the following three methods that will be called by the server when required (servers might implement an internal distribution layer and call these functions at their discretion):
+
+* `subscribe(channel, is_pattern)`: Subscribes to the channel. The `is_pattern` flag sets the type of subscription. Returns `true` / `false`.
+
+* `unsubscribe(channel, is_pattern)`: Unsubscribes from the channel. The `is_pattern` flag sets the type of subscription. Returns `true` / `false`.
+
+* `publish(channel, msg, is_pattern)`: Publishes to the channel (or all channels matching the pattern). Returns `true` / `false` (some engines, such as Redis, might not support pattern publishing, they should simply return `false`).
+
+Engines inherit the following message from the server's Engine class and call it when messages were received:
+
+* `distribute(channel, message, is_pattern = nil)`: If `channel` is a channel pattern rather than a channel name, the `is_pattern` should be set to `true` by the Engine. Engines that don't support pattern publishing, can simply ignore this flag.
