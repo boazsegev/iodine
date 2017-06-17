@@ -45,6 +45,10 @@ static void iodine_perform_task_and_free(intptr_t uuid, protocol_s *pr,
   (void)uuid;
 }
 
+static void remove_from_registry(intptr_t uuid, void *val) {
+  Registry.remove((VALUE)val);
+  (void)uuid;
+}
 /* *****************************************************************************
 Function placeholders
 ***************************************************************************** */
@@ -374,11 +378,12 @@ static void dyn_protocol_on_shutdown(intptr_t fduuid, protocol_s *protocol) {
   RubyCaller.call(dyn_prot(protocol)->handler, iodine_on_shutdown_func_id);
 }
 /** called when the connection was closed, but will not run concurrently */
-static void dyn_protocol_on_close(protocol_s *protocol) {
+static void dyn_protocol_on_close(intptr_t uuid, protocol_s *protocol) {
   RubyCaller.call(dyn_prot(protocol)->handler, iodine_on_close_func_id);
   iodine_set_fd(dyn_prot(protocol)->handler, 0);
   Registry.remove(dyn_prot(protocol)->handler);
   free(protocol);
+  (void)uuid;
 }
 /** called when a connection's timeout was reached */
 static void dyn_protocol_ping(intptr_t fduuid, protocol_s *protocol) {
@@ -524,7 +529,7 @@ static VALUE iodine_connect(VALUE self, VALUE address, VALUE port,
                                 .address = StringValueCStr(address),
                                 .udata = (void *)handler,
                                 .on_connect = on_open_dyn_protocol_instance,
-                                .on_fail = (void (*)(void *))Registry.remove);
+                                .on_fail = remove_from_registry);
   if (uuid == -1)
     return Qnil;
   iodine_set_fd(handler, uuid);

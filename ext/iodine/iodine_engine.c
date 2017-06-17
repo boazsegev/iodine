@@ -8,6 +8,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "rb-call.h"
 
 #include "pubsub.h"
+#include "redis_engine.h"
 
 VALUE IodineEngine;
 
@@ -29,7 +30,8 @@ call this function from your own code / application.
 
 The function should return `true` on success and `nil` or `false` on failure.
 */
-VALUE engine_sub_placeholder(VALUE self, VALUE channel, VALUE use_pattern) {
+static VALUE engine_sub_placeholder(VALUE self, VALUE channel,
+                                    VALUE use_pattern) {
   return Qnil;
   (void)self;
   (void)channel;
@@ -45,8 +47,8 @@ call this function from your own code / application.
 
 The function should return `true` on success and `nil` or `false` on failure.
 */
-VALUE engine_pub_placeholder(VALUE self, VALUE channel, VALUE msg,
-                             VALUE use_pattern) {
+static VALUE engine_pub_placeholder(VALUE self, VALUE channel, VALUE msg,
+                                    VALUE use_pattern) {
   return Qnil;
   (void)self;
   (void)msg;
@@ -204,13 +206,13 @@ static void engine_mark(void *eng_) {
 /* a callback for the GC (marking active objects) */
 static void engine_free(void *eng_) {
   iodine_engine_s *eng = eng_;
-  if (eng->allocated)
-    free(eng->p);
+  if (eng->dealloc)
+    eng->dealloc(eng->p);
   free(eng);
 }
 
 /* GMP::Integer.allocate */
-VALUE engine_alloc_c(VALUE self) {
+static VALUE engine_alloc_c(VALUE self) {
   iodine_engine_s *eng = malloc(sizeof(*eng));
   if (TYPE(self) == T_CLASS)
     *eng = (iodine_engine_s){
@@ -221,14 +223,13 @@ VALUE engine_alloc_c(VALUE self) {
                 .unsubscribe = engine_unsubscribe,
                 .publish = engine_publish,
             },
-        .allocated = 0,
         .p = &eng->engine,
     };
 
   return Data_Wrap_Struct(self, engine_mark, engine_free, eng);
 }
 
-VALUE engine_initialize(VALUE self) {
+static VALUE engine_initialize(VALUE self) {
   iodine_engine_s *engine;
   Data_Get_Struct(self, iodine_engine_s, engine);
   engine->handler = self;
@@ -236,8 +237,167 @@ VALUE engine_initialize(VALUE self) {
 }
 
 /* *****************************************************************************
-Initialize C pubsub engines
+Redis
 ***************************************************************************** */
+
+struct redis_callback_data {
+  resp_object_s *msg;
+  VALUE block;
+};
+
+/*
+populate
+*/
+int populate_redis_callback_reply(resp_parser_pt p, resp_object_s *o,
+                                  void *rep) {
+  switch (o->type) {
+  case RESP_ARRAY:
+  case RESP_PUBSUB:
+    break;
+  case RESP_NULL:
+    rb_ary_push((VALUE)rep, Qnil);
+  case RESP_NUMBER:
+    rb_ary_push((VALUE)rep, LONG2NUM(resp_obj2num(o)->number));
+    break;
+  case RESP_ERR:
+  case RESP_STRING:
+    rb_ary_push((VALUE)rep, rb_str_new((char *)resp_obj2str(o)->string,
+                                       resp_obj2str(o)->len));
+    break;
+  case RESP_OK:
+    rb_ary_push((VALUE)rep, rb_str_new("OK", 2));
+    break;
+  }
+  return 0;
+  (void)p;
+}
+/*
+Perform a Redis message callback in the GVL
+*/
+static void *perform_redis_callback_inGVL(void *data) {
+  struct redis_callback_data *a = data;
+  VALUE reply = rb_ary_new();
+  resp_obj_each(NULL, a->msg, populate_redis_callback_reply, (void *)reply);
+  rb_funcall(a->block, iodine_call_proc_id, 1, &reply);
+  Registry.remove(a->block);
+  return NULL;
+}
+
+/*
+Redis message callback
+*/
+static void redis_callback(pubsub_engine_s *e, resp_object_s *msg,
+                           void *block) {
+  struct redis_callback_data d = {
+      .msg = msg, .block = (VALUE)block,
+  };
+  RubyCaller.call_c(perform_redis_callback_inGVL, &d);
+  (void)e;
+}
+
+/**
+Sends commands / messages to the underlying Redis Pub connection.
+
+The method accepts an optional callback block. i.e.:
+
+      redis.send("Echo", "Hello World!") do |reply|
+         p reply # => ["Hello World!"]
+      end
+
+This connection is only for publishing and database commands. The Sub commands,
+such as SUBSCRIBE and PSUBSCRIBE, will break the engine.
+*/
+static VALUE redis_send(int argc, VALUE *argv, VALUE self) {
+  if (argc < 1)
+    rb_raise(rb_eArgError,
+             "wrong number of arguments (given %d, expected at least 1).",
+             argc);
+  resp_object_s *cmd = NULL;
+  Check_Type(argv[0], T_STRING);
+
+  iodine_engine_s *e;
+  Data_Get_Struct(self, iodine_engine_s, e);
+  cmd = resp_arr2obj(argc, NULL);
+  for (int i = 0; i < argc; i++) {
+    switch (TYPE(argv[i])) {
+    case T_SYMBOL:
+      argv[i] = rb_sym2str(argv[i]);
+    /* Fallthrough */
+    case T_STRING:
+      resp_obj2arr(cmd)->array[i] =
+          resp_str2obj(RSTRING_PTR(argv[i]), RSTRING_LEN(argv[i]));
+      break;
+    case T_FIXNUM:
+      resp_obj2arr(cmd)->array[i] = resp_num2obj(FIX2LONG(argv[i]));
+      break;
+    default:
+      goto error;
+      break;
+    }
+  }
+
+  if (rb_block_given_p()) {
+    VALUE block = Qnil;
+    block = rb_block_proc();
+    Registry.add(block);
+    redis_engine_send(e->p, cmd, redis_callback, (void *)block);
+    return block;
+  } else {
+    redis_engine_send(e->p, cmd, NULL, NULL);
+  }
+  return Qnil;
+error:
+  if (cmd)
+    resp_free_object(cmd);
+  rb_raise(rb_eArgError, "Arguments can only include Strings, Symbols and "
+                         "Integers - no arrays or hashes or other objects can "
+                         "be sent.");
+  return self;
+}
+
+/**
+Initializes a new RedisEngine for Pub/Sub.
+
+use:
+
+    RedisEngine.new(address, port = 6379, ping_interval = 0)
+
+Accepts:
+
+@address:: the Redis server's address. Required.
+@port:: the Redis Server port. Default: 6379
+@port:: the PING interval. Default: 0 (~5 minutes).
+*/
+static VALUE redis_engine_initialize(int argc, VALUE *argv, VALUE self) {
+  if (argc < 1 || argc > 3)
+    rb_raise(rb_eArgError,
+             "wrong number of arguments (given %d, expected 1..3).", argc);
+  VALUE address = argv[0];
+  VALUE port = argc >= 2 ? argv[1] : Qnil;
+  VALUE ping = argc >= 3 ? argv[2] : Qnil;
+  Check_Type(address, T_STRING);
+  if (port != Qnil) {
+    if (TYPE(port) == T_FIXNUM)
+      port = rb_fix2str(port, 10);
+    Check_Type(port, T_STRING);
+  }
+  if (ping != Qnil)
+    Check_Type(ping, T_FIXNUM);
+  size_t iping = FIX2LONG(ping);
+  if (iping > 255)
+    rb_raise(rb_eRangeError, "ping_interval too big (0..255)");
+
+  iodine_engine_s *engine;
+  Data_Get_Struct(self, iodine_engine_s, engine);
+  engine->handler = self;
+  engine->p = redis_engine_create(
+      StringValueCStr(address), (port == Qnil ? "6379" : StringValueCStr(port)),
+      iping);
+  if (!engine->p)
+    rb_raise(rb_eRuntimeError, "unknown error, can't initialize RedisEngine.");
+  engine->dealloc = redis_engine_destroy;
+  return self;
+}
 
 /* *****************************************************************************
 Initialization
@@ -282,4 +442,9 @@ void Iodine_init_engine(void) {
    * all subscribers sharing the same process. */
   rb_define_const(IodinePubSub, "SINGLE_PROCESS", engine_in_c);
   // rb_const_set(IodineEngine, rb_intern("SINGLE_PROCESS"), e);
+
+  engine_in_c =
+      rb_define_class_under(IodinePubSub, "RedisEngine", IodineEngine);
+  rb_define_method(engine_in_c, "initialize", redis_engine_initialize, -1);
+  rb_define_method(engine_in_c, "send", redis_send, -1);
 }

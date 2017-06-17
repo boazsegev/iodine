@@ -587,11 +587,12 @@ static void iodine_print_http_msg2(void *www, void *port) {
   RubyCaller.call_c(iodine_print_http_msg2_in_gvl, (void *)&data);
 }
 
-static void free_iodine_http(void *set_) {
+static void free_iodine_http(intptr_t uuid, void *set_) {
   iodine_http_settings_s *set = set_;
   Registry.remove(set->app);
   Registry.remove(set->env);
   free(set);
+  (void)uuid;
 }
 /**
 Listens to incoming HTTP connections and handles incoming requests using the

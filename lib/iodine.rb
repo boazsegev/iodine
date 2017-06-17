@@ -81,7 +81,7 @@ module Iodine
   end
 
   module Websocket
-    @default_pubsub ||= ::Iodine::PubSub::Engine::CLUSTER
+    @default_pubsub ||= ::Iodine::PubSub::CLUSTER
     # returns the currently default engine.
     def self.default_pubsub
       @default_pubsub

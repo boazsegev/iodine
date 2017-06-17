@@ -7,19 +7,15 @@
 #      REDIS_URL=redis://localhost:6379/0 iodine -t 1 -p 3000 redis.ru
 #      REDIS_URL=redis://localhost:6379/0 iodine -t 1 -p 3030 redis.ru
 #
-
-# load the engine code
-load './redis_pubsub.rb'
-
+require 'uri'
 # initialize the Redis engine for each Iodine process by using `Iodine.run`
-Iodine.run do
-    if ENV["REDIS_URL"]
-      Iodine::Websocket.default_pubsub = Iodine::PubSub::RedisEngine.new(ENV["REDIS_URL"])
-    else
-      puts "* No Redis! pub/sub is limited to the process cluster."
-    end
-    puts Iodine::Websocket.default_pubsub
+if ENV["REDIS_URL"]
+  uri = URI(ENV["REDIS_URL"])
+  Iodine::Websocket.default_pubsub = Iodine::PubSub::RedisEngine.new(uri.host, uri.port)
+else
+  puts "* No Redis! pub/sub is limited to the process cluster."
 end
+puts "The default Pub/Sub engine is:", Iodine::Websocket.default_pubsub
 
 # A simple router - Checks for Websocket Upgrade and answers HTTP.
 module MyHTTPRouter

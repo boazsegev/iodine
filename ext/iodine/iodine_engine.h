@@ -15,7 +15,7 @@ typedef struct {
   pubsub_engine_s engine;
   pubsub_engine_s *p;
   VALUE handler;
-  unsigned allocated : 1;
+  void (*dealloc)(pubsub_engine_s *);
 } iodine_engine_s;
 
 void Iodine_init_engine(void);
