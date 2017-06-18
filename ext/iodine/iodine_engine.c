@@ -364,10 +364,10 @@ use:
 
 Accepts:
 
-@address:: the Redis server's address. Required.
-@port:: the Redis Server port. Default: 6379
-@ping:: the PING interval. Default: 0 (~5 minutes).
-@auth:: authentication password. Default: none.
+address:: the Redis server's address. Required.
+port:: the Redis Server port. Default: 6379
+ping:: the PING interval. Default: 0 (~5 minutes).
+auth:: authentication password. Default: none.
 */
 static VALUE redis_engine_initialize(int argc, VALUE *argv, VALUE self) {
   if (argc < 1 || argc > 4)

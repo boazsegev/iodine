@@ -279,14 +279,19 @@ static void on_pubsub_notificationin(websocket_pubsub_notification_s n) {
 Subscribes the websocket to a channel belonging to a specific pub/sub service
 (using an {Iodine::PubSub::Engine} to connect Iodine to the service).
 
-The function accepts a single argument (a {Hash}) and an optional block.
+The function accepts a single argument (a Hash) and an optional block.
 
 If no block is provided, the message is sent directly to the websocket client.
 
-Accepts a single {Hash} argument with the following possible options:
+Accepts a single Hash argument with the following possible options:
 
-:channel :: REQUIRED. The channel to subscribe to.
-:engine :: If provided, the engine to use for pub/sub. Otherwise the
+:engine :: If provided, the engine to use for pub/sub. Otherwise the default
+engine is used.
+
+:channel :: Required (unless :pattern). The channel to subscribe to.
+
+:pattern :: An alternative to the required :channel, subscribes to a pattern.
+
 :force :: This can be set to either nil, :text or :binary and controls the way
 the message will be forwarded to the websocket client. This is only valid if no
 block was provided. Defaults to smart encoding based testing.
@@ -338,6 +343,24 @@ static VALUE iodine_ws_subscribe(VALUE self, VALUE args) {
     return Qnil;
   return ULL2NUM(subid);
 }
+/**
+Searches for the subscription ID for the describes subscription.
+
+Takes the same arguments as {subscribe}, a single Hash argument with the
+following possible options:
+
+:engine :: If provided, the engine to use for pub/sub. Otherwise the default
+engine is used.
+
+:channel :: The subscription's channel.
+
+:pattern :: An alternative to the required :channel, subscribes to a pattern.
+
+:force :: This can be set to either nil, :text or :binary and controls the way
+the message will be forwarded to the websocket client. This is only valid if no
+block was provided. Defaults to smart encoding based testing.
+
+*/
 static VALUE iodine_ws_is_subscribed(VALUE self, VALUE args) {
   Check_Type(args, T_HASH);
   ws_s *ws = get_ws(self);
@@ -350,7 +373,7 @@ static VALUE iodine_ws_is_subscribed(VALUE self, VALUE args) {
     use_pattern = 1;
     rb_ch = rb_hash_aref(args, pattern_var_id);
     if (rb_ch == Qnil || rb_ch == Qfalse)
-      rb_raise(rb_eArgError, "channel is requires for pub/sub methods.");
+      rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
   }
   Check_Type(rb_ch, T_STRING);
 
@@ -384,6 +407,9 @@ static VALUE iodine_ws_is_subscribed(VALUE self, VALUE args) {
   return LONG2NUM(subid);
 }
 
+/**
+Cancels the subscription matching `sub_id`.
+*/
 static VALUE iodine_ws_unsubscribe(VALUE self, VALUE sub_id) {
   ws_s *ws = get_ws(self);
   if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
@@ -393,11 +419,24 @@ static VALUE iodine_ws_unsubscribe(VALUE self, VALUE sub_id) {
   return Qnil;
 }
 
+/**
+Publishes a message to a channel.
+
+Accepts a single Hash argument with the following possible options:
+
+:engine :: If provided, the engine to use for pub/sub. Otherwise the default
+engine is used.
+
+:channel :: Required (unless :pattern). The channel to publish to.
+
+:pattern :: An alternative to the required :channel, publishes to a pattern.
+This is NOT supported by Redis and it's limited to the local process cluster.
+
+:message :: REQUIRED. The message to be published.
+:
+*/
 static VALUE iodine_ws_publish(VALUE self, VALUE args) {
   Check_Type(args, T_HASH);
-  ws_s *ws = get_ws(self);
-  if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
-    return Qfalse;
   uint8_t use_pattern = 0, force_text = 0, force_binary = 0;
 
   VALUE rb_ch = rb_hash_aref(args, channel_var_id);
@@ -405,13 +444,13 @@ static VALUE iodine_ws_publish(VALUE self, VALUE args) {
     use_pattern = 1;
     rb_ch = rb_hash_aref(args, pattern_var_id);
     if (rb_ch == Qnil || rb_ch == Qfalse)
-      rb_raise(rb_eArgError, "channel is requires for pub/sub methods.");
+      rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
   }
   Check_Type(rb_ch, T_STRING);
 
   VALUE rb_msg = rb_hash_aref(args, message_var_id);
   if (rb_msg == Qnil || rb_msg == Qfalse) {
-    rb_raise(rb_eArgError, "channel is requires for pub/sub methods.");
+    rb_raise(rb_eArgError, "message is required for the :publish method.");
   }
   Check_Type(rb_msg, T_STRING);
 
@@ -430,6 +469,7 @@ static VALUE iodine_ws_publish(VALUE self, VALUE args) {
   if (!subid)
     return Qfalse;
   return Qtrue;
+  (void)self;
 }
 /* *****************************************************************************
 Websocket Multi-Write - Deprecated
@@ -756,4 +796,5 @@ void Iodine_init_websocket(void) {
 
   rb_define_singleton_method(IodineWebsocket, "each", iodine_ws_class_each, 0);
   rb_define_singleton_method(IodineWebsocket, "defer", iodine_class_defer, 1);
+  rb_define_singleton_method(IodineWebsocket, "publish", iodine_ws_publish, 1);
 }
