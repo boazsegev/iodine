@@ -1,11 +1,14 @@
+/*
+Copyright: Boaz segev, 2017
+License: MIT except for any non-public-domain algorithms (none that I'm aware
+of), which might be subject to their own licenses.
+
+Feel free to copy, use and enjoy in accordance with to the license(s).
+*/
 #ifndef H_REDIS_CONNECTION_H
 #define H_REDIS_CONNECTION_H
 #include "facil.h"
 #include "resp.h"
-
-/* *****************************************************************************
-Sending Commands or Responses
-***************************************************************************** */
 
 /* *****************************************************************************
 Connectivity
@@ -34,6 +37,10 @@ struct redis_context_args {
   void (*on_close)(intptr_t uuid, void *udata);
   /** called when the Redix connection opens. */
   void (*on_open)(intptr_t uuid, void *udata);
+  /** Authentication string (password). */
+  char *auth;
+  /** Authentication string (password) length. */
+  size_t auth_len;
   /** Opaque user data. */
   void *udata;
   /** PING intervals. */

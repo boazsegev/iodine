@@ -366,15 +366,17 @@ Accepts:
 
 @address:: the Redis server's address. Required.
 @port:: the Redis Server port. Default: 6379
-@port:: the PING interval. Default: 0 (~5 minutes).
+@ping:: the PING interval. Default: 0 (~5 minutes).
+@auth:: authentication password. Default: none.
 */
 static VALUE redis_engine_initialize(int argc, VALUE *argv, VALUE self) {
-  if (argc < 1 || argc > 3)
+  if (argc < 1 || argc > 4)
     rb_raise(rb_eArgError,
-             "wrong number of arguments (given %d, expected 1..3).", argc);
+             "wrong number of arguments (given %d, expected 1..4).", argc);
   VALUE address = argv[0];
   VALUE port = argc >= 2 ? argv[1] : Qnil;
   VALUE ping = argc >= 3 ? argv[2] : Qnil;
+  VALUE auth = argc >= 4 ? argv[3] : Qnil;
   Check_Type(address, T_STRING);
   if (port != Qnil) {
     if (TYPE(port) == T_FIXNUM)
@@ -383,6 +385,9 @@ static VALUE redis_engine_initialize(int argc, VALUE *argv, VALUE self) {
   }
   if (ping != Qnil)
     Check_Type(ping, T_FIXNUM);
+  if (auth != Qnil) {
+    Check_Type(auth, T_STRING);
+  }
   size_t iping = FIX2LONG(ping);
   if (iping > 255)
     rb_raise(rb_eRangeError, "ping_interval too big (0..255)");
@@ -390,9 +395,13 @@ static VALUE redis_engine_initialize(int argc, VALUE *argv, VALUE self) {
   iodine_engine_s *engine;
   Data_Get_Struct(self, iodine_engine_s, engine);
   engine->handler = self;
-  engine->p = redis_engine_create(
-      StringValueCStr(address), (port == Qnil ? "6379" : StringValueCStr(port)),
-      iping);
+  engine->p =
+      redis_engine_create(.address = StringValueCStr(address),
+                          .port =
+                              (port == Qnil ? "6379" : StringValueCStr(port)),
+                          .ping_interval = iping,
+                          .auth = (auth == Qnil ? NULL : StringValueCStr(auth)),
+                          .auth_len = (auth == Qnil ? 0 : RSTRING_LEN(auth)));
   if (!engine->p)
     rb_raise(rb_eRuntimeError, "unknown error, can't initialize RedisEngine.");
   engine->dealloc = redis_engine_destroy;

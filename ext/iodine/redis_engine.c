@@ -1,3 +1,10 @@
+/*
+Copyright: Boaz segev, 2017
+License: MIT except for any non-public-domain algorithms (none that I'm aware
+of), which might be subject to their own licenses.
+
+Feel free to copy, use and enjoy in accordance with to the license(s).
+*/
 #include "spnlock.inc"
 
 #include "fio_list.h"
@@ -170,10 +177,12 @@ static void on_open_pub(intptr_t uuid, void *e) {
   redis_engine_s *r = e;
   if (r->pub != uuid)
     return;
-  fprintf(stderr,
-          "INFO: (RedisEngine) redis Pub "
-          "connection (re)established: %s:%s\n",
-          r->address ? r->address : "0.0.0.0", r->port);
+  if (!r->pub_state) /* no message on first connection */
+    fprintf(stderr,
+            "INFO: (RedisEngine) redis Pub "
+            "connection (re)established: %s:%s\n",
+            r->address ? r->address : "0.0.0.0", r->port);
+  r->pub_state = 1;
   spn_lock(&r->lock);
   callbacks_s *cb;
   fio_list_for_each(callbacks_s, node, cb, r->callbacks) { cb->sent = 0; }
@@ -185,10 +194,11 @@ static void on_open_sub(intptr_t uuid, void *e) {
   redis_engine_s *r = e;
   if (r->sub != uuid)
     return;
-  fprintf(stderr,
-          "INFO: (RedisEngine) redis Sub "
-          "connection (re)established: %s:%s\n",
-          r->address ? r->address : "0.0.0.0", r->port);
+  if (!r->sub_state) /* no message on first connection */
+    fprintf(stderr,
+            "INFO: (RedisEngine) redis Sub "
+            "connection (re)established: %s:%s\n",
+            r->address ? r->address : "0.0.0.0", r->port);
   r->sub_state = 1;
   pubsub_engine_resubscribe(&r->engine);
   (void)uuid;
@@ -309,13 +319,13 @@ See the {pubsub.h} file for documentation about engines.
 
 function names speak for themselves ;-)
 */
-pubsub_engine_s *redis_engine_create(const char *address, const char *port,
-                                     uint8_t ping) {
-  if (!port) {
+#undef redis_engine_create
+pubsub_engine_s *redis_engine_create(struct redis_engine_create_args a) {
+  if (!a.port) {
     return NULL;
   }
-  size_t addr_len = address ? strlen(address) : 0;
-  size_t port_len = strlen(port);
+  size_t addr_len = a.address ? strlen(a.address) : 0;
+  size_t port_len = strlen(a.port);
   redis_engine_s *e = malloc(sizeof(*e) + addr_len + port_len + 2);
   *e = (redis_engine_s){
       .engine = {.subscribe = subscribe,
@@ -330,23 +340,25 @@ pubsub_engine_s *redis_engine_create(const char *address, const char *port,
       .sub_state = 1,
       .pub_state = 1,
   };
-  if (address)
-    memcpy(e->address, address, addr_len);
+  if (a.address)
+    memcpy(e->address, a.address, addr_len);
   else
     e->address = NULL;
   e->address[addr_len] = 0;
-  memcpy(e->port, port, port_len);
+  memcpy(e->port, a.port, port_len);
   e->port[port_len] = 0;
 
   e->sub_ctx =
-      redis_create_context(.parser = e->parser, .on_message = on_message_sub,
+      redis_create_context(.parser = e->parser, .auth = (char *)a.auth,
+                           .auth_len = a.auth_len, .on_message = on_message_sub,
                            .on_close = on_close_sub, .on_open = on_open_sub,
-                           .udata = e, .ping = ping),
+                           .udata = e, .ping = a.ping_interval),
 
   e->pub_ctx =
-      redis_create_context(.parser = e->parser, .on_message = on_message_pub,
+      redis_create_context(.parser = e->parser, .auth = (char *)a.auth,
+                           .auth_len = a.auth_len, .on_message = on_message_pub,
                            .on_close = on_close_pub, .on_open = on_open_pub,
-                           .udata = e, .ping = ping),
+                           .udata = e, .ping = a.ping_interval, ),
 
   defer(initialize_engine, e, NULL);
   return (pubsub_engine_s *)e;

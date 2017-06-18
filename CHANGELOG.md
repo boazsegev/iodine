@@ -14,7 +14,32 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **DEPRECTAION / Braking change**: The `websocket#write_each` function is gone. Future (planned) support for a Pub/Sub API would have caused confusion and since it's barely used (probably only there as a benchmarking proof of concept) it was removed.
 
-**Update**: Now using `facil.io` v.0.4.5. The extended features allowed us to have multiple HTTP ports and servers on the same Iodine process.
+**Update**: Now using `facil.io` v.0.5.0 The extended features include the following listed features.
+
+**Feature**: Iodine now support native Websocket Pub/Sub, with [an example in the `examples` folder](./examples/redis.ru). i.e.:
+
+```ruby
+# Within a Websocket connection:
+subscribe "chat"
+publish "chat", "Iodine is here!"
+```
+
+**Feature**: Iodine's Pub/Sub API supports both direct client messages and server filtered messages. i.e.
+
+```ruby
+# Within a Websocket connection:
+subscribe("chat-server") {|msg| write "Notice: #{msg}" }
+# v.s
+subscribe("chat-client")
+
+publish "chat-server", "Iodine is here!"
+```
+
+**Feature**: Iodine's Pub/Sub API includes support for home made Pub/Sub Engines connecting Iodine to your Pub/Sub service of choice.
+
+**Feature**: Iodine's Pub/Sub support includes a Process Cluster engine (pub/sub to all Websockets sharing the process cluster) as well as a Single Process engine (pub/sub to all websockets supporting a single process).
+
+**Feature**: Iodine's Pub/Sub support includes a native Redis Pub/Sub engine. The parser is written from the ground up in C to keep the Iodine licensing as MIT. It's young, so keep your eyes pealed and submit any issues you encounter.
 
 **Feature + Breaking Change**: Iodine now support multiple HTTP servers at once. i.e.:
 

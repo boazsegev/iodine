@@ -11,7 +11,7 @@ require 'uri'
 # initialize the Redis engine for each Iodine process by using `Iodine.run`
 if ENV["REDIS_URL"]
   uri = URI(ENV["REDIS_URL"])
-  Iodine::Websocket.default_pubsub = Iodine::PubSub::RedisEngine.new(uri.host, uri.port)
+  Iodine::Websocket.default_pubsub = Iodine::PubSub::RedisEngine.new(uri.host, uri.port, 0, uri.password)
 else
   puts "* No Redis! pub/sub is limited to the process cluster."
 end
