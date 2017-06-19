@@ -137,8 +137,10 @@ static VALUE date_str(int argc, VALUE *argv, VALUE self) {
              "wrong number of arguments (given %d, expected 0..1).", argc);
   time_t last_tick;
   if (argc) {
+    if (TYPE(argv[0]) != T_FIXNUM)
+      argv[0] = rb_funcallv(argv[0], iodine_to_i_func_id, 0, NULL);
     Check_Type(argv[0], T_FIXNUM);
-    last_tick = FIX2ULONG(argv[0]);
+    last_tick = FIX2ULONG(argv[0]) ? FIX2ULONG(argv[0]) : facil_last_tick();
   } else
     last_tick = facil_last_tick();
   VALUE str = rb_str_buf_new(32);
@@ -151,6 +153,62 @@ static VALUE date_str(int argc, VALUE *argv, VALUE self) {
   (void)self;
 }
 
+/**
+Takes `time` and returns a faster (though less localized) HTTP Date formatted
+String.
+
+
+        Iodine::Rack.rfc2822(Time.now) => "Sun, 11 Jun 2017 06:14:08 -0000"
+
+        Iodine::Rack.rfc2822(0)      => "Sun, 11 Jun 2017 06:14:08 -0000"
+
+Since Iodine uses time caching within it's reactor, using the default value
+(by passing 0) will be faster than providing an explicit time using `Time.now`.
+*/
+static VALUE iodine_rfc2822(VALUE self, VALUE rtm) {
+  time_t last_tick;
+  rtm = rb_funcallv(rtm, iodine_to_i_func_id, 0, NULL);
+  last_tick = FIX2ULONG(rtm) ? FIX2ULONG(rtm) : facil_last_tick();
+  VALUE str = rb_str_buf_new(34);
+  struct tm tm;
+
+  http_gmtime(&last_tick, &tm);
+  size_t len = http_date2rfc2822(RSTRING_PTR(str), &tm);
+  rb_str_set_len(str, len);
+  return str;
+  (void)self;
+}
+
+/**
+Takes `time` and returns a faster (though less localized) HTTP Date formatted
+String.
+
+
+        Iodine::Rack.rfc2109(Time.now) => "Sun, 11-Jun-2017 06:14:08 GMT"
+
+        Iodine::Rack.rfc2109(0)      => "Sun, 11-Jun-2017 06:14:08 GMT"
+
+Since Iodine uses time caching within it's reactor, using the default value
+(by passing 0) will be faster than providing an explicit time using `Time.now`.
+*/
+static VALUE iodine_rfc2109(VALUE self, VALUE rtm) {
+  time_t last_tick;
+  rtm = rb_funcallv(rtm, iodine_to_i_func_id, 0, NULL);
+  last_tick = FIX2ULONG(rtm) ? FIX2ULONG(rtm) : facil_last_tick();
+  VALUE str = rb_str_buf_new(32);
+  struct tm tm;
+
+  http_gmtime(&last_tick, &tm);
+  size_t len = http_date2rfc2109(RSTRING_PTR(str), &tm);
+  rb_str_set_len(str, len);
+  return str;
+  (void)self;
+}
+
+/* *****************************************************************************
+Ruby Initialization
+***************************************************************************** */
+
 void Iodine_init_helpers(void) {
   VALUE tmp = rb_define_module_under(Iodine, "Rack");
   tmp = rb_define_module_under(tmp, "Utils");
@@ -159,12 +217,19 @@ void Iodine_init_helpers(void) {
   rb_define_module_function(tmp, "decode_path!", path_decode_inplace, 1);
   rb_define_module_function(tmp, "decode_path", path_decode, 1);
   rb_define_module_function(tmp, "time2str", date_str, -1);
+  rb_define_module_function(tmp, "rfc2109", iodine_rfc2109, 1);
+  rb_define_module_function(tmp, "rfc2822", iodine_rfc2822, 1);
 
   tmp = rb_define_module_under(IodineBase, "MonkeyPatch");
   tmp = rb_define_module_under(tmp, "RackUtils");
+  /* we define it all twice for easier monkey patching */
   rb_define_method(tmp, "unescape", unescape, -1);
   rb_define_method(tmp, "unescape_path", path_decode, 1);
+  rb_define_method(tmp, "rfc2109", iodine_rfc2109, 1);
+  rb_define_method(tmp, "rfc2822", iodine_rfc2822, 1);
   rb_define_module_function(tmp, "unescape", unescape, -1);
   rb_define_module_function(tmp, "unescape_path", path_decode, 1);
+  rb_define_module_function(tmp, "rfc2109", iodine_rfc2109, 1);
+  rb_define_module_function(tmp, "rfc2822", iodine_rfc2822, 1);
   // rb_define_module_function(IodineUtils, "time2str", date_str, -1);
 }

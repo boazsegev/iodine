@@ -492,6 +492,8 @@ static VALUE iodine_subscribe(VALUE self, VALUE args) {
     if (rb_ch == Qnil || rb_ch == Qfalse)
       rb_raise(rb_eArgError, "a channel is required for pub/sub methods.");
   }
+  if (TYPE(rb_ch) == T_SYMBOL)
+    rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);
 
   VALUE block = rb_block_proc();
@@ -549,6 +551,8 @@ static VALUE iodine_publish(VALUE self, VALUE args) {
     if (rb_ch == Qnil || rb_ch == Qfalse)
       rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
   }
+  if (TYPE(rb_ch) == T_SYMBOL)
+    rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);
 
   VALUE rb_msg = rb_hash_aref(args, message_var_id);

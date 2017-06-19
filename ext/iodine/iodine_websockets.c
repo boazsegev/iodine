@@ -304,6 +304,8 @@ static VALUE iodine_ws_subscribe(VALUE self, VALUE args) {
     if (rb_ch == Qnil || rb_ch == Qfalse)
       rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
   }
+  if (TYPE(rb_ch) == T_SYMBOL)
+    rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);
 
   VALUE tmp = rb_hash_aref(args, force_var_id);
@@ -311,7 +313,6 @@ static VALUE iodine_ws_subscribe(VALUE self, VALUE args) {
     force_text = 1;
   else if (tmp == binary_var_id)
     force_binary = 1;
-  Check_Type(rb_ch, T_STRING);
 
   VALUE block = 0;
   if (rb_block_given_p()) {
@@ -363,6 +364,8 @@ static VALUE iodine_ws_is_subscribed(VALUE self, VALUE args) {
     if (rb_ch == Qnil || rb_ch == Qfalse)
       rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
   }
+  if (TYPE(rb_ch) == T_SYMBOL)
+    rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);
 
   VALUE tmp = rb_hash_aref(args, force_var_id);
@@ -370,7 +373,6 @@ static VALUE iodine_ws_is_subscribed(VALUE self, VALUE args) {
     force_text = 1;
   else if (tmp == binary_var_id)
     force_binary = 1;
-  Check_Type(rb_ch, T_STRING);
 
   VALUE block = 0;
   if (rb_block_given_p()) {
@@ -430,6 +432,8 @@ static VALUE iodine_ws_publish(VALUE self, VALUE args) {
     if (rb_ch == Qnil || rb_ch == Qfalse)
       rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
   }
+  if (TYPE(rb_ch) == T_SYMBOL)
+    rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);
 
   VALUE rb_msg = rb_hash_aref(args, message_var_id);

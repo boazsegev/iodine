@@ -70,7 +70,7 @@ EOS
           puts "WARNING: Ruby application not found#{ filename ? " - missing both #{filename} and config.ru" : " - missing config.ru"}."
           if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
             puts "         Running only static file service."
-            opt = Rack::Server::Options.new.parse!([])
+            opt = ::Rack::Server::Options.new.parse!([])
           else
             puts "For help run:"
             puts "       iodine -?"

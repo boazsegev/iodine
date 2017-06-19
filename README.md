@@ -6,7 +6,7 @@
 [![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
 [![GitHub](https://img.shields.io/badge/GitHub-Open%20Source-blue.svg)](https://github.com/boazsegev/iodine)
 
-Iodine is a fast concurrent web server for real-time Ruby applications, with native support for Websockets, static file service and HTTP/1.1.
+Iodine is a fast concurrent web server for real-time Ruby applications, with native support for Websockets, Pub/Sub, static file service, HTTP/1.1 and Redis Pub/Sub scaling (2 connections per Iodine process).
 
 Iodine also supports custom protocol authoring, making Object Oriented **Network Services** easy to write.
 
@@ -22,54 +22,41 @@ Iodine is an **evented** framework with a simple API that builds off the low lev
 
 Iodine is a C extension for Ruby, developed for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but Rack requires Ruby 2.2.2, and so Iodine matches this requirement.
 
-## Iodine::Rack + Iodine::HTTP == a fast and powerful HTTP + Websockets server
+## Iodine::Rack == a fast and powerful HTTP + Websockets server with native Pub/Sub
 
 Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the [Websocket draft extension](./SPEC-Websocket-Draft.md).
 
-With `Iodine::HTTP` it's possible to run multiple HTTP applications in addition to (or instead of) the default `Iodine::Rack` HTTP service.
+With `Iodine.listen2http` it's possible to run multiple HTTP applications in addition to (or instead of) the default `Iodine::Rack` HTTP service.
+
+Iodine also supports native process cluster Pub/Sub and a native RedisEngins to easily scale Iodine's Pub/Sub horizontally.
 
 ### Running the web server
 
 Using the Iodine server is easy, simply add Iodine as a gem to your Rack application:
 
 ```ruby
-gem 'iodine', '>=0.4'
+gem 'iodine', '~>0.4'
 ```
 
-Iodine will calculate, when possible, a good enough default concurrency model for fast applications... this might not fit your application if you use database access or other blocking calls.
+Iodine will calculate, when possible, a good enough default concurrency model for lightweight applications... this might not fit your application if you use heavier database access or other blocking calls.
 
 To get the most out of Iodine, consider the amount of CPU cores available and the concurrency level the application requires.
 
-Puma's model of 16 threads and 4 processes is easily adopted and proved to provide a good enough balance for most use-cases. Use:
+The common model of 16 threads and 4 processes can be easily adopted:
 
 ```bash
 bundler exec iodine -p $PORT -t 16 -w 4
 ```
 
-It should be noted that automatic process scaling will cause issues with Websocket broadcast (`each`) support, since the `Websocket#each` method will be limited to the calling process (other clients might be connected to a different process).
-
-It is recommended that you consider using Redis to scale Websocket "events" across processes / machines.  
-Look into [plezi.io](http://www.plezi.io) for automatic Websocket scaling with Redis and Iodine.
-
-### Writing data to the network layer
-
-Iodine allows Ruby to write strings to the network layer. This includes HTTP and Websocket responses.
-
-Iodine will handle an internal buffer (~4 to ~16 Mb, version depending) so that `write` can return immediately (non-blocking).
-
-However, when the buffer is full, `write` will block until enough space in the buffer becomes available. Sending up to 16Kb of data (a single buffer "packet") is optimal. Sending a larger response might effect concurrency. Best Websocket response length is ~1Kb (1 TCP / IP packet) and allows for faster transmissions.
-
-When using the Iodine's web server (`Iodine::Rack`), the static file service offered by Iodine streams files (instead of using the buffer). Every file response will require up to 2 buffer "packets" (~32Kb), one for the header and the other for file streaming.
-
-This means that even a Gigabyte long response will use ~32Kb of memory, as long as it uses the static file service or the `X-Sendfile` extension (Iodine's static file service can be invoked by the Ruby application using the `X-Sendfile` header).
-
 ### Static file serving support
 
-Iodine supports static file serving that allows the server to serve static files directly, with no Ruby layer (all from C-land).
+Iodine supports an internal static file service that bypasses the Ruby layer  and serves static files directly from "C-land".
 
-This means that Iodine won't lock Ruby's GVL when sending static files. The files will be sent directly, allowing for true native concurrency. Since the Ruby layer is unaware of these requests, logging can be performed by turning iodine's logger on.
+This means that Iodine won't lock Ruby's GVL when sending static files. The files will be sent directly, allowing for true native concurrency.
 
-To setup native static file service, setup the public folder's address **before** starting the server.
+Since the Ruby layer is unaware of these requests, logging can be performed by turning iodine's logger on.
+
+To use native static file service, setup the public folder's address **before** starting the server.
 
 This can be done when starting the server from the command line:
 
@@ -135,23 +122,28 @@ To "upgrade" the HTTP request to the Websockets protocol, simply provide Iodine 
 
 Iodine will adopt the object, providing it with network functionality (methods such as `write`, `each`, `defer` and `close` will become available) and invoke it's callbacks on network events.
 
-Here is a simple example we can run in the terminal (`irb`) or easily paste into a `config.ru` file:
+Here is a simple chatroom example we can run in the terminal (`irb`) or easily paste into a `config.ru` file:
 
 ```ruby
 require 'iodine'
 class WebsocketEcho
+  def on_open
+    subscribe channel: :chat
+    write "You're now in the chatroom."
+  end
   def on_message data
-    write data
+    publish channel: "chat", message: data
   end
 end
 Iodine::Rack.app= Proc.new do |env|
   if env['upgrade.websocket?'.freeze] && env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
-    env['iodine.websocket'.freeze] = WebsocketEcho # or: WebsocketEcho.new
-    [100,{}, []] # It's possible to set cookies for the response.
+    env['upgrade.websocket'.freeze] = WebsocketEcho # or: WebsocketEcho.new
+    [0,{}, []] # It's possible to set cookies for the response.
   else
     [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
   end
 end
+Iodine.threads = 1 # this line can be safely removed.
 Iodine.start
 ```
 
@@ -182,7 +174,7 @@ Iodine.start
 
 #### A few notes
 
-This design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems), etc. This also allows us to use middleware without interfering with connection upgrades and provides  backwards compatibility.
+This design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems), etc. This also allows us to use middleware without interfering with connection upgrades and provides backwards compatibility.
 
 Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less than 8Kb in size. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache.
 
@@ -356,14 +348,6 @@ Iodine.processes = 1
 Iodine.start
 
 ```
-
-## I loved Iodine 0.1.x - is this an upgrade?
-
-This is **not** an upgrade, this is a **full rewrite**.
-
-Iodine 0.1.x was written in Ruby and had tons of bells and whistles and a somewhat different API. It also inherited the `IO.select` limit of 1024 concurrent connections.
-
-Iodine 0.2.x is written in C, doesn't have as many bells and whistles (i.e., no Websocket Client) and has a stripped down API (simpler to learn). The connection limit is calculated on startup, according to the system's limits. Connection overflows are terminated with an optional busy message, so the system won't crash.
 
 ## Why not EventMachine?
 

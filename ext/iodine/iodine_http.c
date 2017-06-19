@@ -384,6 +384,9 @@ static void *on_rack_request_in_GVL(http_request_s *request) {
   iodine_http_settings_s *settings = request->settings->udata;
   if (request->settings->log_static)
     http_response_log_start(response);
+  if (!settings->app)
+    goto no_app;
+
   // create /register env variable
   VALUE env = copy2env(request, settings->env);
   // will be used later
@@ -443,20 +446,41 @@ static void *on_rack_request_in_GVL(http_request_s *request) {
   Registry.remove(env);
   http_response_finish(response);
   return NULL;
+
 external_done:
   Registry.remove(rbresponse);
   Registry.remove(env);
   return NULL;
+
+no_app:
+  response->status = 404;
+  if (!request->settings->public_folder ||
+      http_response_sendfile2(response, request,
+                              request->settings->public_folder,
+                              request->settings->public_folder_length,
+                              "404.html", 8, request->settings->log_static)) {
+    http_response_write_body(response, "Error 404, Page Not Found.", 26);
+    http_response_finish(response);
+  }
+  return NULL;
+
 internal_error:
-  Registry.remove(rbresponse);
+  if (rbresponse && rbresponse != Qnil)
+    Registry.remove(rbresponse);
   Registry.remove(env);
   http_response_destroy(response);
   response = http_response_create(request);
   if (request->settings->log_static)
     http_response_log_start(response);
   response->status = 500;
-  http_response_write_body(response, "Error 500, Internal error.", 26);
-  http_response_finish(response);
+  if (!request->settings->public_folder ||
+      http_response_sendfile2(response, request,
+                              request->settings->public_folder,
+                              request->settings->public_folder_length,
+                              "500.html", 8, request->settings->log_static)) {
+    http_response_write_body(response, "Error 500, Internal error.", 26);
+    http_response_finish(response);
+  }
   return NULL;
 }
 
@@ -519,7 +543,8 @@ static void init_env_template(iodine_http_settings_s *set, uint8_t xsendfile) {
 
 /* *****************************************************************************
 Listenninng to HTTP
-***************************************************************************** */
+*****************************************************************************
+*/
 
 void *iodine_print_http_msg2_in_gvl(void *d_) {
   // Write message
@@ -598,8 +623,8 @@ static void free_iodine_http(intptr_t uuid, void *set_) {
 Listens to incoming HTTP connections and handles incoming requests using the
 Rack specification.
 
-This is delegated to a lower level C HTTP and Websocket implementation, no Ruby
-object will be crated except the `env` object required by the Rack
+This is delegated to a lower level C HTTP and Websocket implementation, no
+Ruby object will be crated except the `env` object required by the Rack
 specifications.
 
 Accepts a single Hash argument with the following properties:
@@ -614,19 +639,20 @@ max_body:: The maximum body size for incoming HTTP messages. Default: ~50Mib.
 max_msg:: The maximum Websocket message size allowed. Default: ~250Kib.
 ping:: The Websocket `ping` interval. Default: 40 sec.
 
-Either the `app` or the `public` properties are required. If niether exists, the
-function will fail. If both exist, Iodine will serve static files as well as
-dynamic requests.
+Either the `app` or the `public` properties are required. If niether exists,
+the function will fail. If both exist, Iodine will serve static files as well
+as dynamic requests.
 
-When using the static file server, it's possible to serve `gzip` versions of the
-static files by saving a compressed version with the `gz` extension (i.e.
+When using the static file server, it's possible to serve `gzip` versions of
+the static files by saving a compressed version with the `gz` extension (i.e.
 `styles.css.gz`).
 
-`gzip` will only be served to clients tat support the `gzip` transfer encoding.
+`gzip` will only be served to clients tat support the `gzip` transfer
+encoding.
 
-Once HTTP/2 is supported (planned, but probably very far away), HTTP/2 timeouts
-will be dynamically managed by Iodine. The `timeout` option is only relevant to
-HTTP/1.x connections.
+Once HTTP/2 is supported (planned, but probably very far away), HTTP/2
+timeouts will be dynamically managed by Iodine. The `timeout` option is only
+relevant to HTTP/1.x connections.
 */
 VALUE iodine_http_listen(VALUE self, VALUE opt) {
   static int called_once = 0;
