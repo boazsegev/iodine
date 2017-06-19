@@ -540,7 +540,7 @@ This is NOT supported by Redis and it's limited to the local process cluster.
 */
 static VALUE iodine_publish(VALUE self, VALUE args) {
   Check_Type(args, T_HASH);
-  uint8_t use_pattern = 0, force_text = 0, force_binary = 0;
+  uint8_t use_pattern = 0;
 
   VALUE rb_ch = rb_hash_aref(args, channel_var_id);
   if (rb_ch == Qnil || rb_ch == Qfalse) {
@@ -564,7 +564,8 @@ static VALUE iodine_publish(VALUE self, VALUE args) {
       pubsub_publish(.engine = engine, .channel.name = (RSTRING_PTR(rb_ch)),
                      .channel.len = (RSTRING_LEN(rb_ch)),
                      .msg.data = (RSTRING_PTR(rb_msg)),
-                     .msg.len = (RSTRING_LEN(rb_msg)));
+                     .msg.len = (RSTRING_LEN(rb_msg)),
+                     .use_pattern = use_pattern);
   if (!ret)
     return Qfalse;
   return Qtrue;

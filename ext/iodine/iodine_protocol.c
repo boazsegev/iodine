@@ -500,11 +500,7 @@ i.e.
 */
 static VALUE iodine_connect(VALUE self, VALUE address, VALUE port,
                             VALUE handler) {
-  uint8_t timeout;
   if (TYPE(handler) == T_CLASS || TYPE(handler) == T_MODULE) {
-    // get the timeout
-    VALUE rb_tout = rb_ivar_get(handler, iodine_timeout_var_id);
-    timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
     // include the Protocol module, preventing coder errors
     rb_include_module(handler, IodineProtocol);
     handler = RubyCaller.call(handler, iodine_new_func_id);
@@ -513,11 +509,6 @@ static VALUE iodine_connect(VALUE self, VALUE address, VALUE port,
     VALUE p_class = rb_obj_class(handler);
     // include the Protocol module, preventing coder errors
     rb_include_module(p_class, IodineProtocol);
-    // get the timeout
-    VALUE rb_tout = rb_ivar_get(p_class, iodine_timeout_var_id);
-    if (rb_tout == Qnil)
-      rb_tout = rb_ivar_get(handler, iodine_timeout_var_id);
-    timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
   }
   if (TYPE(port) != T_FIXNUM && TYPE(port) != T_STRING)
     rb_raise(rb_eTypeError, "The port variable must be a Fixnum or a String.");
