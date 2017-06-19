@@ -26,6 +26,49 @@ require 'iodine/iodine'
 #
 #
 # Please read the {file:README.md} file for an introduction to Iodine and an overview of it's API.
+#
+# == The API
+#
+# The main API methods for the top {Iodine} namesapce are grouped here by subject.
+#
+# === Event Loop / Concurrency
+#
+# Iodine manages an internal event-loop and reactor pattern. The following API
+# manages Iodine's behavior.
+#
+# * {Iodine.thread}, {Iodine.threads=} gets or sets the amount of threads iodine will use in it's working thread pool.
+# * {Iodine.processes}, {Iodine.processes} gets or sets the amount of processes iodine will utilize (`fork`) to handle connections.
+# * {Iodine.start} starts iodine's event loop and reactor pattern. At this point, it's impossible to change the number of threads or processes used.
+#
+# === Event and Task Scheduling
+#
+# * {Iodine.run} schedules a block of code to run asynchronously.
+# * {Iodine.run_after}, {Iodine.run_every} schedules a block of code to run (asynchronously) using a timer.
+# * {Iodine.start} starts iodine's event loop and reactor pattern. At this point, it's impossible to change the number of threads or processes used.
+#
+# === Connection Handling
+#
+# Iodine handles connections using {Iodine::Protocol} objects. The following API
+# manages either built-in or custom {Protocol} objects (classes / instances) in relation to their network sockets.
+#
+# * {Iodine.attach_fd}, {Iodine.attach_io} allows Iodine to take controll of an IO object (i.e., a TCP/IP Socket, a Unix Socket or a pipe).
+# * {Iodine.connect} creates a new TCP/IP connection using the specified Protocol.
+# * {Iodine.listen} listens to new TCP/IP connections using the specified Protocol.
+# * {Iodine.listen2http} listens to new TCP/IP connections using the buildin HTTP / Websocket Protocol.
+# * {Iodine.warmup} warms up and HTTP Rack applications.
+# * {Iodine.each} runs a code of block for every existing connection (except HTTP / Websocket connections).
+# * {Iodine.count} counts the number of connections (including HTTP / Websocket connections).
+#
+# === Pub/Sub
+#
+# Iodine offers a native Pub/Sub engine (no database required) that can be easily extended by implementing a Pub/Sub {Iodine::PubSub::Engine}.
+#
+# The following methods offect server side Pub/Sub that allows the server code to react to channel event.
+#
+# * {Iodine.subscribe}, {Iodine.unsubscribe} manages a process's subscription to a channel (which is different than a connection's subscription, such as employed by {Iodine::Websocket}).
+# * {Iodine.publish} publishes a message to a Pub/Sub channel. The message will be sent to all subscribers - connections, other processes in the cluster and even other machines (when using the {Iodine::PubSub::RedisEngine}).
+# * {Iodine.default_pubsub=}, {Iodine.default_pubsub} sets or gets the default Pub/Sub {Iodine::PubSub::Engine}. i.e., when set to a new {Iodine::PubSub::RedisEngine} instance, all Pub/Sub method calls will use the Redis engine (unless explicitly requiring a different engine).
+#
 module Iodine
   @threads = (ARGV.index('-t') && ARGV[ARGV.index('-t') + 1]) || ENV['MAX_THREADS']
   @processes = (ARGV.index('-w') && ARGV[ARGV.index('-w') + 1]) || ENV['MAX_WORKERS']
