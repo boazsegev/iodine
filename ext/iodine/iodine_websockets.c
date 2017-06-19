@@ -769,7 +769,7 @@ void Iodine_init_websocket(void) {
 
   rb_define_method(IodineWebsocket, "conn_id", iodine_ws_uuid, 0);
   rb_define_method(IodineWebsocket, "has_pending?", iodine_ws_has_pending, 0);
-  // rb_define_method(IodineWebsocket, "defer", iodine_defer, -1);
+  rb_define_method(IodineWebsocket, "defer", iodine_defer, -1);
   // rb_define_method(IodineWebsocket, "each", iodine_ws_each, 0);
 
   rb_define_method(IodineWebsocket, "subscribe", iodine_ws_subscribe, 1);

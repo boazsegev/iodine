@@ -36,7 +36,7 @@ require 'iodine/iodine'
 # Iodine manages an internal event-loop and reactor pattern. The following API
 # manages Iodine's behavior.
 #
-# * {Iodine.thread}, {Iodine.threads=} gets or sets the amount of threads iodine will use in it's working thread pool.
+# * {Iodine.threads}, {Iodine.threads=} gets or sets the amount of threads iodine will use in it's working thread pool.
 # * {Iodine.processes}, {Iodine.processes} gets or sets the amount of processes iodine will utilize (`fork`) to handle connections.
 # * {Iodine.start} starts iodine's event loop and reactor pattern. At this point, it's impossible to change the number of threads or processes used.
 #
@@ -45,7 +45,6 @@ require 'iodine/iodine'
 # * {Iodine.run} schedules a block of code to run asynchronously.
 # * {Iodine.run_after}, {Iodine.run_every} schedules a block of code to run (asynchronously) using a timer.
 # * {Iodine.start} starts iodine's event loop and reactor pattern. At this point, it's impossible to change the number of threads or processes used.
-# * {Iodine::Websocket#defer}, {Iodine::Protocol#defer} schedules a connection bound asynchronous task, that will run **if** the connection is still open.
 #
 # In addition to the top level API, there's also the connection class and connection instance API, as specified in the {Iodine::Protocol} and {Iodine::Websocket} documentation, which allows for a connection bound task(s) to be scheduled to run within the connection's lock (for example, {Iodine::Websocket#defer} and {Iodine::Websocket#each}).
 #
@@ -74,9 +73,8 @@ require 'iodine/iodine'
 # * {Iodine.subscribe}, {Iodine.unsubscribe} manages a process's subscription to a channel (which is different than a connection's subscription, such as employed by {Iodine::Websocket}).
 # * {Iodine.publish} publishes a message to a Pub/Sub channel. The message will be sent to all subscribers - connections, other processes in the cluster and even other machines (when using the {Iodine::PubSub::RedisEngine}).
 # * {Iodine.default_pubsub=}, {Iodine.default_pubsub} sets or gets the default Pub/Sub {Iodine::PubSub::Engine}. i.e., when set to a new {Iodine::PubSub::RedisEngine} instance, all Pub/Sub method calls will use the Redis engine (unless explicitly requiring a different engine).
-# * {Iodine::Websocket} objects have a seperate Pub/Sub implementation that allows direct client Pub/Sub (forward the message to the client directly) and manages the subscription's lifetime to match the connection's lifetime.
 #
-# In addition to the top level API, there's also the {Iodine::Websocket} specific Pub/Sub API that manages subscriptions in relation to a specific connection (when the connection closes, the subscriptions are canceled).
+# {Iodine::Websocket} objects have a seperate Pub/Sub implementation that manages the subscription's lifetime to match the connection's lifetime and allows direct client Pub/Sub (forwards the message to the client directly).
 #
 # == Patching Rack
 #
@@ -94,8 +92,8 @@ require 'iodine/iodine'
 #         bm.report("    Rack.rfc2822")    {1_000_000.times { Rack::Utils.rfc2822(Time.now) } }
 #         bm.report("    Rack.rfc2109")    {1_000_000.times { Rack::Utils.rfc2109(Time.now) } }
 #         # Perform Patch
-#         puts "            --- Monkey Patching Rack ---"
 #         Iodine.patch_rack
+#         puts "            --- Monkey Patching Rack ---"
 #         # Post Patch
 #         bm.report("Patched.unescape")    {1_000_000.times { Rack::Utils.unescape s } }
 #         bm.report(" Patched.rfc2822")    {1_000_000.times { Rack::Utils.rfc2822(Time.now) } }
@@ -113,7 +111,7 @@ require 'iodine/iodine'
 #         Patched.rfc2109  0.690000   0.010000   0.700000 (  0.700155)
 #
 # At the moment, the extent of the monkey patching offered is very limited.
-# As new optimizations are added, the police regarding monkey patching (benifit vs. risks) might be re-evaluated.
+# As new optimizations are added, the policy regarding monkey patching (benifit vs. risks) might be re-evaluated.
 module Iodine
   @threads = (ARGV.index('-t') && ARGV[ARGV.index('-t') + 1]) || ENV['MAX_THREADS']
   @processes = (ARGV.index('-w') && ARGV[ARGV.index('-w') + 1]) || ENV['MAX_WORKERS']
