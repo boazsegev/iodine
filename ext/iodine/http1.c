@@ -27,6 +27,7 @@ typedef struct http1_protocol_s {
   void (*on_request)(http_request_s *request);
   struct http1_protocol_s *next;
   http1_request_s request;
+  ssize_t len; /* used as a persistent socket `read` indication. */
 } http1_protocol_s;
 
 static void http1_on_data(intptr_t uuid, http1_protocol_s *protocol);
@@ -42,7 +43,7 @@ static struct {
   http1_protocol_s protocol_mem[HTTP1_POOL_SIZE];
 } http1_pool = {.lock = SPN_LOCK_INIT, .init = 0};
 
-static void http1_free(http1_protocol_s *pr) {
+static void http1_free(intptr_t uuid, http1_protocol_s *pr) {
   if ((uintptr_t)pr < (uintptr_t)http1_pool.protocol_mem ||
       (uintptr_t)pr >= (uintptr_t)(http1_pool.protocol_mem + HTTP1_POOL_SIZE))
     goto use_free;
@@ -54,14 +55,15 @@ static void http1_free(http1_protocol_s *pr) {
 use_free:
   free(pr);
   return;
+  (void)uuid;
 }
 
 static inline void http1_set_protocol_data(http1_protocol_s *pr) {
-  pr->protocol =
-      (protocol_s){.on_data = (void (*)(intptr_t, protocol_s *))http1_on_data,
-                   .on_close = (void (*)(protocol_s *))http1_free};
+  pr->protocol = (protocol_s){
+      .on_data = (void (*)(intptr_t, protocol_s *))http1_on_data,
+      .on_close = (void (*)(intptr_t uuid, protocol_s *))http1_free};
   pr->request.request = (http_request_s){.fd = 0, .http_version = HTTP_V1};
-  pr->request.header_pos = pr->request.buffer_pos = 0;
+  pr->request.header_pos = pr->request.buffer_pos = pr->len = 0;
 }
 
 static http1_protocol_s *http1_alloc(void) {
@@ -73,6 +75,8 @@ static http1_protocol_s *http1_alloc(void) {
   http1_pool.next = pr->next;
   spn_unlock(&http1_pool.lock);
   http1_request_clear(&pr->request.request);
+  pr->request.request.settings = pr->settings;
+  pr->len = 0;
   return pr;
 use_malloc:
   if (http1_pool.init == 0)
@@ -107,24 +111,29 @@ static void http1_on_header_found(http_request_s *request,
   ((http1_request_s *)request)->header_pos += 1;
 }
 
+static void http1_on_data(intptr_t uuid, http1_protocol_s *pr);
+static void http1_on_data_def(intptr_t uuid, protocol_s *pr, void *ignr) {
+  sock_touch(uuid);
+  http1_on_data(uuid, (http1_protocol_s *)pr);
+  (void)ignr;
+}
 /* parse and call callback */
-static void http1_on_data(intptr_t uuid, http1_protocol_s *protocol) {
-  ssize_t len = 0;
+static void http1_on_data(intptr_t uuid, http1_protocol_s *pr) {
   ssize_t result;
   char buff[HTTP_BODY_CHUNK_SIZE];
-  char *buffer;
-  http1_request_s *request = &protocol->request;
+  http1_request_s *request = &pr->request;
+  char *buffer = request->buffer;
   for (;;) {
     // handle requests with no file data
     if (request->request.body_file <= 0) {
       // request headers parsing
-      if (len == 0) {
+      if (pr->len == 0) {
         buffer = request->buffer;
         // make sure headers don't overflow
-        len = sock_read(uuid, buffer + request->buffer_pos,
-                        HTTP1_MAX_HEADER_SIZE - request->buffer_pos);
+        pr->len = sock_read(uuid, buffer + request->buffer_pos,
+                            HTTP1_MAX_HEADER_SIZE - request->buffer_pos);
         // update buffer read position.
-        request->buffer_pos += len;
+        request->buffer_pos += pr->len;
         // if (len > 0) {
         //   fprintf(stderr, "\n----\nRead from socket, %lu bytes, total
         //   %lu:\n",
@@ -135,9 +144,8 @@ static void http1_on_data(intptr_t uuid, http1_protocol_s *protocol) {
         //   fprintf(stderr, "\n");
         // }
       }
-      if (len <= 0) {
-        return;
-      }
+      if (pr->len <= 0)
+        goto finished_reading;
 
       // parse headers
       result =
@@ -149,12 +157,11 @@ static void http1_on_data(intptr_t uuid, http1_protocol_s *protocol) {
         if (request->request.content_length == 0 || request->request.body_str) {
           goto handle_request;
         }
-        if (request->request.content_length >
-            protocol->settings->max_body_size) {
+        if (request->request.content_length > pr->settings->max_body_size) {
           goto body_to_big;
         }
         // initialize or submit body data
-        result = http1_parse_request_body(buffer + result, len - result,
+        result = http1_parse_request_body(buffer + result, pr->len - result,
                                           (http_request_s *)request);
         if (result >= 0) {
           request->buffer_pos += result;
@@ -165,7 +172,7 @@ static void http1_on_data(intptr_t uuid, http1_protocol_s *protocol) {
       } else if (result == -1) // parser error
         goto parser_error;
       // assume incomplete (result == -2), even if wrong, we're right.
-      len = 0;
+      pr->len = 0;
       continue;
     }
     if (request->request.body_file > 0) {
@@ -173,16 +180,16 @@ static void http1_on_data(intptr_t uuid, http1_protocol_s *protocol) {
     parse_body:
       buffer = buff;
       // request body parsing
-      len = sock_read(uuid, buffer, HTTP_BODY_CHUNK_SIZE);
-      if (len <= 0)
-        return;
-      result = http1_parse_request_body(buffer, len, &request->request);
+      pr->len = sock_read(uuid, buffer, HTTP_BODY_CHUNK_SIZE);
+      if (pr->len <= 0)
+        goto finished_reading;
+      result = http1_parse_request_body(buffer, pr->len, &request->request);
       if (result >= 0) {
         goto handle_request;
       } else if (result == -1) // parser error
         goto parser_error;
-      if (len < HTTP_BODY_CHUNK_SIZE) // pause parser for more data
-        return;
+      if (pr->len < HTTP_BODY_CHUNK_SIZE) // pause parser for more data
+        goto finished_reading;
       goto parse_body;
     }
     continue;
@@ -190,24 +197,25 @@ static void http1_on_data(intptr_t uuid, http1_protocol_s *protocol) {
     // review required headers / data
     if (request->request.host == NULL)
       goto bad_request;
-    http_settings_s *settings = protocol->settings;
+    http_settings_s *settings = pr->settings;
+    request->request.settings = settings;
     // call request callback
-    if (protocol && settings &&
+    if (pr && settings &&
         (request->request.upgrade || settings->public_folder == NULL ||
          http_response_sendfile2(
              NULL, &request->request, settings->public_folder,
              settings->public_folder_length, request->request.path,
              request->request.path_len, settings->log_static))) {
-      protocol->on_request(&request->request);
+      pr->on_request(&request->request);
       // fprintf(stderr, "Called on_request\n");
     }
     // rotate buffer for HTTP pipelining
     if ((ssize_t)request->buffer_pos <= result) {
-      len = 0;
+      pr->len = 0;
       // fprintf(stderr, "\n----\nAll data consumed.\n");
     } else {
       memmove(request->buffer, buffer + result, request->buffer_pos - result);
-      len = request->buffer_pos - result;
+      pr->len = request->buffer_pos - result;
       // fprintf(stderr, "\n----\ndata after move, %lu long:\n%.*s\n", len,
       //         (int)len, request->buffer);
     }
@@ -215,14 +223,22 @@ static void http1_on_data(intptr_t uuid, http1_protocol_s *protocol) {
     //         request->buffer);
     // clear request state
     http1_request_clear(&request->request);
-    request->buffer_pos = len;
+    request->buffer_pos = pr->len;
     // make sure to use the correct buffer.
     buffer = request->buffer;
+    if (pr->len) {
+      /* prevent this connection from hogging the thread by pipelining endless
+       * requests.
+       */
+      facil_defer(.task = http1_on_data_def, .task_type = FIO_PR_LOCK_TASK,
+                  .uuid = uuid);
+      return;
+    }
   }
   // no routes lead here.
   fprintf(stderr,
           "I am lost on a deserted island, no code can reach me here :-)\n");
-  return; // How did we get here?
+  goto finished_reading; // How did we get here?
 parser_error:
   if (request->request.headers_count >= HTTP1_MAX_HEADER_COUNT)
     goto too_big;
@@ -231,34 +247,51 @@ bad_request:
   {
     http_response_s *response = http_response_create(&request->request);
     response->status = 400;
-    http_response_write_body(response, "Bad Request", 11);
+    if (pr->settings->public_folder &&
+        !http_response_sendfile2(response, &request->request,
+                                 pr->settings->public_folder,
+                                 pr->settings->public_folder_length, "400.html",
+                                 8, pr->settings->log_static))
+      http_response_write_body(response, "Bad Request", 11);
     http_response_finish(response);
     sock_close(uuid);
     request->buffer_pos = 0;
-    return;
+    goto finished_reading;
   }
 too_big:
   /* handle oversized headers */
   {
     http_response_s *response = http_response_create(&request->request);
     response->status = 431;
-    http_response_write_body(response, "Request Header Fields Too Large", 31);
+    if (pr->settings->public_folder &&
+        !http_response_sendfile2(response, &request->request,
+                                 pr->settings->public_folder,
+                                 pr->settings->public_folder_length, "431.html",
+                                 8, pr->settings->log_static))
+      http_response_write_body(response, "Request Header Fields Too Large", 31);
     http_response_finish(response);
     sock_close(uuid);
     request->buffer_pos = 0;
-    return;
+    goto finished_reading;
   body_to_big:
     /* handle oversized body */
     {
       http_response_s *response = http_response_create(&request->request);
       response->status = 413;
-      http_response_write_body(response, "Payload Too Large", 17);
+      if (pr->settings->public_folder &&
+          !http_response_sendfile2(response, &request->request,
+                                   pr->settings->public_folder,
+                                   pr->settings->public_folder_length,
+                                   "413.html", 8, pr->settings->log_static))
+        http_response_write_body(response, "Payload Too Large", 17);
       http_response_finish(response);
       sock_close(uuid);
       request->buffer_pos = 0;
-      return;
+      goto finished_reading;
     }
   }
+finished_reading:
+  pr->len = 0;
 }
 
 /* *****************************************************************************

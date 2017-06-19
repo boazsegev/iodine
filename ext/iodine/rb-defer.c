@@ -58,7 +58,7 @@ void *defer_new_thread(void *(*thread_func)(void *), pool_pt pool) {
     return NULL;
   *data = (struct CreateThreadArgs){.thread_func = thread_func, .arg = pool};
   void *thr = rb_thread_call_with_gvl(create_ruby_thread_gvl, data);
-  if (thr == (void *)Qnil)
+  if (!thr || thr == (void *)Qnil || thr == (void *)Qfalse)
     thr = NULL;
   return thr;
 }
@@ -67,26 +67,9 @@ void *defer_new_thread(void *(*thread_func)(void *), pool_pt pool) {
 OVERRIDE THIS to replace the default pthread implementation.
 */
 int defer_join_thread(void *thr) {
+  if (!thr || (VALUE)thr == Qfalse || (VALUE)thr == Qnil)
+    return -1;
   rb_thread_call_with_gvl(_inner_join_with_rbthread, (void *)thr);
   Registry.remove((VALUE)thr);
   return 0;
 }
-
-/******************************************************************************
-Portability - used to help port this to different frameworks (i.e. Ruby).
-*/
-
-#define THREAD_TYPE VALUE
-
-/* Don't use sentinals with Ruby */
-#ifndef ASYNC_USE_SENTINEL
-#define ASYNC_USE_SENTINEL 0
-#endif
-
-/* The unused directive */
-#ifndef UNUSED_FUNC
-#define UNUSED_FUNC __attribute__((unused))
-#endif
-
-/* used here but declared elsewhere */
-void async_signal();

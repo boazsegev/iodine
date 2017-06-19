@@ -28,6 +28,9 @@ typedef struct {
   };
 } http_header_s;
 
+/** Settings typedef */
+typedef struct http_settings_s http_settings_s;
+
 /* *****************************************************************************
 Core include files
 */
@@ -56,14 +59,14 @@ HTTP Core API & data structure
 */
 
 /** Manages protocol settings for the HTTP protocol */
-typedef struct {
+struct http_settings_s {
   /**
   The maximum size of an HTTP request's body (when posting data).
 
   Defaults to ~ 50Mb.
   */
   size_t max_body_size;
-  /** the callback to be performed when requests come in. */
+  /** REQUIRED: the callback to be performed when requests come in. */
   void (*on_request)(http_request_s *request);
   /**
   A public folder for file transfers - allows to circumvent any application
@@ -74,20 +77,28 @@ typedef struct {
   The length of the public_folder string.
   */
   size_t public_folder_length;
-  /** (optional)
+  /** Opaque user data. */
+  void *udata;
+  /** Opaque user data for the optional `set_rw_hooks`. */
+  void *rw_udata;
+  /** (optional) the callback to be performed when the HTTP service closes. */
+  void (*on_finish)(intptr_t uuid, void *udata);
+  /**
    * Allows a an implementation for the transport layer (i.e. TLS) without
    * effecting the HTTP protocol.
    */
   sock_rw_hook_s *(*set_rw_hooks)(intptr_t fduuid, void *rw_udata);
-  /** Opaque user data for `set_rw_hooks`. */
-  void *rw_udata;
+  /**
+   * A cleanup callback for the `rw_udata`.
+   */
+  void (*on_finish_rw)(intptr_t uuid, void *rw_udata);
   /**
   Logging flag - set to TRUE to log static file requests.
 
   Dynamic request logging is always the dynamic application's responsibility.
   */
   uint8_t log_static;
-  /** An HTTP connection timeout. For HTTP/1.1 this defaults to ~5 seconds.*/
+  /** An HTTP/1.x connection timeout. Defaults to ~5 seconds.*/
   uint8_t timeout;
   /**
   The default HTTP version which a new connection will use. At the moment, only
@@ -98,7 +109,7 @@ typedef struct {
   internal flag for library use.
   */
   uint8_t private_metaflags;
-} http_settings_s;
+};
 
 typedef protocol_s *(*http_on_open_func)(intptr_t, void *);
 typedef void (*http_on_finish_func)(void *);
@@ -155,7 +166,7 @@ A NULL terminating byte is written.
 
 Returns the number of bytes actually written (excluding the NULL byte).
 */
-inline size_t http_ul2a(char *dest, size_t num) {
+static inline size_t http_ul2a(char *dest, size_t num) {
   uint8_t digits = 1;
   size_t tmp = num;
   while ((tmp /= 10))
@@ -174,7 +185,14 @@ inline size_t http_ul2a(char *dest, size_t num) {
 /** Decodes a URL encoded string, no buffer overflow protection. */
 ssize_t http_decode_url_unsafe(char *dest, const char *url_data);
 
-/** Decodes a URL encoded string. */
+/** Decodes a URL encoded string (i.e., the "query" part of a request). */
 ssize_t http_decode_url(char *dest, const char *url_data, size_t length);
+
+/** Decodes the "path" part of a request, no buffer overflow protection. */
+ssize_t http_decode_path_unsafe(char *dest, const char *url_data);
+
+/** Decodes the "path" part of an HTTP request, no buffer overflow protection.
+ */
+ssize_t http_decode_path(char *dest, const char *url_data, size_t length);
 
 #endif

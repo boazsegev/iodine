@@ -4,20 +4,20 @@ License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
-// clang-format off
 #include "rb-rack-io.h"
-#include "iodine_core.h"
-#include <ruby/io.h>
+
+#include "iodine.h"
+
 #include <ruby/encoding.h>
+#include <ruby/io.h>
 #include <unistd.h>
-// clang-format on
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
 #include "rb-call.h"
 
-/* RackIO manages a minimal interface to act as an IO wrapper according to
+/* IodineRackIO manages a minimal interface to act as an IO wrapper according to
 these Rack specifications:
 
 The input stream is an IO-like object which contains the raw HTTP POST data.
@@ -63,10 +63,10 @@ static VALUE TCPSOCKET_CLASS;
 static ID for_fd_id;
 
 #define set_uuid(object, request)                                              \
-  rb_ivar_set((object), fd_var_id, ULONG2NUM((request)->fd))
+  rb_ivar_set((object), iodine_fd_var_id, ULONG2NUM((request)->fd))
 
 inline static intptr_t get_uuid(VALUE obj) {
-  VALUE i = rb_ivar_get(obj, fd_var_id);
+  VALUE i = rb_ivar_get(obj, iodine_fd_var_id);
   return (intptr_t)FIX2ULONG(i);
 }
 
@@ -109,7 +109,7 @@ static VALUE strio_gets(VALUE self) {
   while ((pos_e < end) && str[pos_e] != '\n')
     pos_e++;
   set_pos(self, pos_e + 1);
-  return rb_enc_str_new(str + pos, pos_e - pos, BinaryEncoding);
+  return rb_enc_str_new(str + pos, pos_e - pos, IodineBinaryEncoding);
 }
 
 // Reads data from the IO, according to the Rack specifications for `#read`.
@@ -154,10 +154,10 @@ static VALUE strio_read(int argc, VALUE *argv, VALUE self) {
   if (buffer == Qnil) {
     buffer = rb_str_buf_new(len);
     // make sure the buffer is binary encoded.
-    rb_enc_associate(buffer, BinaryEncoding);
+    rb_enc_associate(buffer, IodineBinaryEncoding);
   } else {
     // make sure the buffer is binary encoded.
-    rb_enc_associate(buffer, BinaryEncoding);
+    rb_enc_associate(buffer, IodineBinaryEncoding);
     if (rb_str_capacity(buffer) < (size_t)len)
       rb_str_resize(buffer, len);
   }
@@ -229,7 +229,7 @@ static VALUE tfio_gets(VALUE self) {
   if (pos > pos_e) {
     buffer = rb_str_buf_new(pos_e - pos);
     // make sure the buffer is binary encoded.
-    rb_enc_associate(buffer, BinaryEncoding);
+    rb_enc_associate(buffer, IodineBinaryEncoding);
     if (pread(fd, RSTRING_PTR(buffer), pos_e - pos, pos) < 0)
       return Qnil;
     rb_str_set_len(buffer, pos_e - pos);
@@ -281,10 +281,10 @@ static VALUE tfio_read(int argc, VALUE *argv, VALUE self) {
   if (buffer == Qnil) {
     buffer = rb_str_buf_new(len);
     // make sure the buffer is binary encoded.
-    rb_enc_associate(buffer, BinaryEncoding);
+    rb_enc_associate(buffer, IodineBinaryEncoding);
   } else {
     // make sure the buffer is binary encoded.
-    rb_enc_associate(buffer, BinaryEncoding);
+    rb_enc_associate(buffer, IodineBinaryEncoding);
     if (rb_str_capacity(buffer) < (size_t)len)
       rb_str_resize(buffer, len);
   }
@@ -322,9 +322,9 @@ Hijacking
 */
 
 // defined by iodine_http
-extern VALUE R_HIJACK;    // for Rack: rack.hijack
-extern VALUE R_HIJACK_CB; // for Rack: rack.hijack
-extern VALUE R_HIJACK_IO; // for Rack: rack.hijack_io
+extern VALUE IODINE_R_HIJACK;    // for Rack: rack.hijack
+extern VALUE IODINE_R_HIJACK_CB; // for Rack: rack.hijack
+extern VALUE IODINE_R_HIJACK_IO; // for Rack: rack.hijack_io
 
 static VALUE rio_get_io(int argc, VALUE *argv, VALUE self) {
   if (TCPSOCKET_CLASS == Qnil)
@@ -334,15 +334,15 @@ static VALUE rio_get_io(int argc, VALUE *argv, VALUE self) {
   VALUE fd = INT2FIX(sock_uuid2fd(fduuid));
   VALUE env = rb_ivar_get(self, env_id);
   // make sure we're not repeating ourselves
-  VALUE new_io = rb_hash_aref(env, R_HIJACK_IO);
+  VALUE new_io = rb_hash_aref(env, IODINE_R_HIJACK_IO);
   if (new_io != Qnil)
     return new_io;
   // VALUE new_io = how the fuck do we create a new IO from the fd?
   new_io = RubyCaller.call2(TCPSOCKET_CLASS, for_fd_id, 1,
                             &fd); // TCPSocket.for_fd(fd) ... cool...
-  rb_hash_aset(env, R_HIJACK_IO, new_io);
+  rb_hash_aset(env, IODINE_R_HIJACK_IO, new_io);
   if (argc)
-    rb_hash_aset(env, R_HIJACK_CB, *argv);
+    rb_hash_aset(env, IODINE_R_HIJACK_CB, *argv);
   return new_io;
 }
 
@@ -354,11 +354,11 @@ C land API
 static VALUE new_rack_io(http_request_s *request, VALUE env) {
   VALUE rack_io;
   if (request->body_file > 0) {
-    rack_io = rb_funcall2(rRackFileIO, new_func_id, 0, NULL);
+    rack_io = rb_funcall2(rRackFileIO, iodine_new_func_id, 0, NULL);
     rb_ivar_set(rack_io, io_id, ULONG2NUM(request->body_file));
     lseek(request->body_file, 0, SEEK_SET);
   } else {
-    rack_io = rb_funcall2(rRackStrIO, new_func_id, 0, NULL);
+    rack_io = rb_funcall2(rRackStrIO, iodine_new_func_id, 0, NULL);
     rb_ivar_set(rack_io, io_id, ULONG2NUM(((intptr_t)request->body_str)));
     // fprintf(stderr, "rack body IO (%lu, %p):%.*s\n", request->content_length,
     //         request->body_str, (int)request->content_length,
@@ -402,6 +402,6 @@ static void init_rack_io(void) {
 
 ////////////////////////////////////////////////////////////////////////////
 // the API interface
-struct _RackIO_ RackIO = {
+struct IodineRackIO IodineRackIO = {
     .create = new_rack_io, .init = init_rack_io,
 };

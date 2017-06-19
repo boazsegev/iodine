@@ -383,15 +383,23 @@ Writing - from files
 struct sock_packet_file_data_s {
   intptr_t fd;
   off_t offset;
-  void (*close)(void *);
+  union {
+    void (*close)(intptr_t);
+    void (*dealloc)(void *);
+  };
+  int *pfd;
   uint8_t buffer[];
 };
 
 static void sock_perform_close_fd(intptr_t fd) { close(fd); }
+static void sock_perform_close_pfd(void *pfd) { close(*(int *)pfd); }
 
 static void sock_close_from_fd(packet_s *packet) {
   struct sock_packet_file_data_s *ext = (void *)packet->buffer.buf;
-  ext->close((void *)ext->fd);
+  if (ext->pfd)
+    ext->dealloc(ext->pfd);
+  else
+    ext->close(ext->fd);
 }
 
 static int sock_write_from_fd(int fd, struct packet_s *packet) {
@@ -871,10 +879,9 @@ ssize_t sock_read(intptr_t uuid, void *buf, size_t count) {
 */
 ssize_t sock_write2_fn(sock_write_info_s options) {
   int fd = sock_uuid2fd(options.uuid);
-  if (validate_uuid(options.uuid))
-    clear_fd(fd, 0);
+
   // avoid work when an error is expected to occur.
-  if (!fdinfo(fd).open || options.offset < 0) {
+  if (validate_uuid(options.uuid) || !fdinfo(fd).open || options.offset < 0) {
     if (options.move == 0) {
       errno = (options.offset < 0) ? ERANGE : EBADF;
       return -1;
@@ -887,12 +894,11 @@ ssize_t sock_write2_fn(sock_write_info_s options) {
     errno = (options.offset < 0) ? ERANGE : EBADF;
     return -1;
   }
-  // if (options.offset < 0)
-  //   options.offset = 0;
+
   packet_s *packet = sock_packet_grab();
   packet->buffer.len = options.length;
-  if (options.is_fd == 0) {  /* is data */
-    if (options.move == 0) { /* memory is copied. */
+  if (options.is_fd == 0 && options.is_pfd == 0) { /* is data */
+    if (options.move == 0) {                       /* memory is copied. */
       if (options.length <= BUFFER_PACKET_SIZE) {
         /* small enough for internal buffer */
         memcpy(packet->buffer.buf, (uint8_t *)options.buffer + options.offset,
@@ -915,11 +921,18 @@ ssize_t sock_write2_fn(sock_write_info_s options) {
     ext->dealloc = options.dealloc ? options.dealloc : free;
     packet->metadata = (struct packet_metadata_s){
         .write_func = sock_write_buffer_ext, .free_func = sock_free_buffer_ext};
+
   } else { /* is file */
     struct sock_packet_file_data_s *ext = (void *)packet->buffer.buf;
-    ext->fd = options.data_fd;
-    ext->close = options.dealloc ? options.dealloc
-                                 : (void (*)(void *))sock_perform_close_fd;
+    if (options.is_pfd) {
+      ext->pfd = (int *)options.buffer;
+      ext->fd = *ext->pfd;
+      ext->dealloc = options.dealloc ? options.dealloc : sock_perform_close_pfd;
+    } else {
+      ext->fd = options.data_fd;
+      ext->pfd = NULL;
+      ext->close = options.close ? options.close : sock_perform_close_fd;
+    }
     ext->offset = options.offset;
     packet->metadata = (struct packet_metadata_s){
         .write_func =
@@ -929,6 +942,7 @@ ssize_t sock_write2_fn(sock_write_info_s options) {
         .free_func = options.move ? sock_close_from_fd
                                   : (void (*)(packet_s *))SOCK_DEALLOC_NOOP};
   }
+
 /* place packet in queue */
 place_packet_in_queue:
   if (validate_uuid(options.uuid))

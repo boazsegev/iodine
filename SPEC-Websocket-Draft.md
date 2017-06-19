@@ -69,13 +69,13 @@ Server settings **MAY** (not required) be provided to allow for customization an
 
 ## Upgrading
 
-* **Server**: When an upgrade request is received, the server will set the `env['upgrade.websocket?']` flag to `true`, indicating that: 1. this specific request is upgradable; and 2. this server supports specification.
+* **Server**: When an upgrade request is received, the server will set the `env['upgrade.websocket?']` flag to `true`, indicating that: 1. this specific request is upgradable; and 2. this server supports this specification.
 
 * **Client**: When a client decides to upgrade a request, they will place a Websocket Callback Object (either a class or an instance) in the `env['upgrade.websocket']` Hash key.
 
 * **Server**: The server will review the `env` Hash *before* sending the response. If the `env['upgrade.websocket']` was set, the server will perform the upgrade.
 
- * **Server**: The server will send the correct response status and headers, as will as any headers present in the response. The server will also perform any required housekeeping, such as closing the response body, if exists.
+ * **Server**: The server will send the correct response status and headers, as well as any headers present in the response object. The server will also perform any required housekeeping, such as closing the response body, if exists.
 
      The response status provided by the response object shall be ignored and the correct response status shall be set by the server.
 
@@ -93,26 +93,24 @@ Server settings **MAY** (not required) be provided to allow for customization an
 
 ---
 
-## Rack Websockets: Iodine Extensions
+## Iodine's Collection Extension to the Rack Websockets
 
-Iodine implements the described specification as well as adds the following methods to the Websocket Callback Object (in addition to `#write`, `#close` and `has_pending?`):
+The biggest benefit from Iodine's Collection Extension is that it allows the creation of pub/sub plugins and other similar extensions that require access to all the connected Websockets - no nee for the plugin to ask "where's the list" or "add this code to `on_open`" or anything at all, truly "plug and play".
 
-* `Iodine::Websocket.each` (class method) will run a block of code for each connected Websocket Callback Object **in the current process**. This can be called from outside of a Websocket Callback Object as well.
+This extension should be easy enough to implement using a loop or an array within each process context. These methods do **not** cross process boundaries and they are meant to help implement more advanced features (they aren't a feature as much as an "access point").
+
+Internally, this extension also allows iodine to manage connection memory and resource allocation while relieving developers from rewriting the same workflow of connection storing (`on_open do ALL_WS << self; end `) and management. Knowing that the user doesn't keep Websocket object references, allows Iodine to safely optimize it's memory use.
+
+* `Iodine::Websocket.each` (class method) will run a block of code for each connected Websocket Callback Object **belonging to the current process**. This can be called from outside of a Websocket Callback Object as well.
 
     ```ruby
     Iodine::Websocket.each {|ws| ws.write "hello" }
     ```
 
-* `#each` (instance method) will run a block of code for each connected Websocket Callback Object **in the current process**, EXCEPT the calling websocket (self) object.
+* `#each` (instance method) will run a block of code for each connected Websocket Callback Object **belonging to the current process**, EXCEPT the calling websocket (self) object.
 
     ```ruby
     each {|ws| ws.write "hello" }
-    ```
-
-* `Iodine::Websocket.defer(conn_id)` Schedules a block of code to run for the specified connection at a later time, (*if* the connection is open) while preventing concurrent code from running for the same connection object.
-
-    ```ruby
-    Iodine::Websocket.defer(self.conn_id) {|ws| ws.write "still open" }
     ```
 
 * `#defer` (instance method) Schedules a block of code to run for the specified connection at a later time, (*if* the connection is still open) while preventing concurrent code from running for the same connection object.
@@ -121,9 +119,103 @@ Iodine implements the described specification as well as adds the following meth
     defer { write "still open" }
     ```
 
+* `Iodine::Websocket.defer(conn_id)` Schedules a block of code to run for the specified connection at a later time, (*if* the connection is open) while preventing concurrent code from running for the same connection object.
 
-* `#count` (instance method) Returns the number of active websocket connections (including connections that are in the process of closing down).
+    ```ruby
+    Iodine::Websocket.defer(self.conn_id) {|ws| ws.write "still open" }
+    ```
+
+* `#count` (instance method) Returns the number of active websocket connections (including connections that are in the process of closing down) **belonging to the current process**.
 
     ```ruby
     write "#{count} clients connected"
     ```
+
+## Iodine's Pub/Sub Extension to the Rack Websockets
+
+This extension separates the websocket Pub/Sub semantics from the Pub/Sub engine (i.e. Redis, MongoDB, etc') or the Server. If the Collection Extension is implemented, than this isn't necessarily a big step forward (the big step forward is what can be done with is).
+
+I don't personally believe this has a chance of being adopted by other server implementors, but it's a very powerful tool that Iodine supports.
+
+Including these semantics, in the form of the described API, allows servers and Pub/Sub engines to be optimized in different ways without distracting the application (or framework implementor with environmental details.
+
+For example, Iodine includes two default Pub/Sub engines `Iodine::PubSub::Engine::CLUSTER` (the default) and `Iodine::PubSub::Engine::SINGLE_PROCESS` that implement a localized Pub/Sub engine within a process cluster.
+
+ The Websocket module (i.e. `Iodine::Websocket`) includes the following singleton methods:
+
+ * `Iodine::Websocket.default_pubsub=` sets the default Pub/Sub engine.
+
+ * `Iodine::Websocket.default_pubsub` gets the default Pub/Sub engine.
+
+Websocket Callback Objects inherit the following functions:
+
+ * `#subscribe` (instance method) Subscribes to a channel using a specific "engine" (or the default engine). *Returns a subscription object (success) or `nil` (error)*. Doesn't promise actual subscription, only that the subscription request was scheduled to be sent.
+
+    Messages from the subscription are sent directly to the client unless an optional block is provided.
+
+    If an optional block is provided, it should accept the channel and message couplet (i.e. `{|channel, message| } `) and call the websocket `write` manually.
+
+    All subscriptions (including server side subscriptions) MUST be automatically canceled **by the server** when the websocket closes.
+
+ * `#subscription?` (instance method) locates an existing subscription, if any. *Returns a subscription object (success) or `nil` (error)*.
+
+ * `#unsubscribe` (instance method) cancel / stop a subscription. Safely ignores `nil` subscription objects. Returns `nil`. Performance promise is similar to `subscribe` - the event was scheduled.
+
+    Notice: there's no need to call this function during the `on_close` callback, since the server will cancel all subscriptions automatically.
+
+ * `#publish` (instance method) publishes a message to engine's specified channel. Returns `true` on success or `false` on failure (i.e., engine error). Doesn't promise actual publishing, only that the message was scheduled to be published.
+
+For example:
+
+```ruby
+# client side subscription
+s = subscribe(channel: "channel 1") # => subscription ID?
+# client side unsubscribe
+unsubscribe(s)
+
+# client side subscription forcing binary encoding for Websocket protocol.
+subscribe(channel: "channel 1", encoding: :binary) # => subscription ID?
+
+# client side pattern subscription without saving reference
+subscribe(pattern: "channel [0-9]") # => subscription ID?
+# client side unsubscribe
+unsubscribe( subscription?(pattern: "channel [0-9]"))
+
+# server side anonymous block subscription
+s = subscribe(channel: "channel ✨") do |channel, message|
+    puts message
+end
+# server side unsubscribe
+unsubscribe(s)
+
+# server side persistent block subscription without saving reference
+block = proc {|channel, message| puts message }
+subscribe({pattern: "*"}, &block)
+# server side unsubscribe
+unsubscribe subscription?({pattern: "*"}, &block)
+
+# server side anonymous block subscription requires reference...
+subscribe(pattern: "channel 5", force: text) do |channel, message|
+    puts message
+end
+# It's impossible to locate an anonymous block subscriptions!
+subscription? (pattern: "channel 5", force: text) do |channel, message|
+    puts message
+end
+#  => nil # ! can't locate
+
+```
+
+Servers supporting this extension aren't required to implement any Pub/Sub engines, but they MUST implement a **bridge** between the server and Pub/Sub Engines that follows the following semantics:
+
+Engines MUST inherit from a server specific Engine class and implement the following three methods that will be called by the server when required (servers might implement an internal distribution layer and call these functions at their discretion):
+
+* `subscribe(channel, is_pattern)`: Subscribes to the channel. The `is_pattern` flag sets the type of subscription. Returns `true` / `false`.
+
+* `unsubscribe(channel, is_pattern)`: Unsubscribes from the channel. The `is_pattern` flag sets the type of subscription. Returns `true` / `false`.
+
+* `publish(channel, msg, is_pattern)`: Publishes to the channel (or all channels matching the pattern). Returns `true` / `false` (some engines, such as Redis, might not support pattern publishing, they should simply return `false`).
+
+Engines inherit the following message from the server's Engine class and call it when messages were received:
+
+* `distribute(channel, message, is_pattern = nil)`: If `channel` is a channel pattern rather than a channel name, the `is_pattern` should be set to `true` by the Engine. Engines that don't support pattern publishing, can simply ignore this flag.

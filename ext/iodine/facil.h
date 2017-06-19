@@ -14,8 +14,8 @@ extern "C" {
 
 #define H_FACIL_H
 #define FACIL_VERSION_MAJOR 0
-#define FACIL_VERSION_MINOR 4
-#define FACIL_VERSION_PATCH 2
+#define FACIL_VERSION_MINOR 5
+#define FACIL_VERSION_PATCH 0
 
 #ifndef FACIL_PRINT_STATE
 /**
@@ -67,7 +67,7 @@ struct FacilIOProtocol {
    * but before closing the connection. */
   void (*on_shutdown)(intptr_t uuid, protocol_s *protocol);
   /** called when the connection was closed, but will not run concurrently */
-  void (*on_close)(protocol_s *protocol);
+  void (*on_close)(intptr_t uuid, protocol_s *protocol);
   /** called when a connection's timeout was reached */
   void (*ping)(intptr_t uuid, protocol_s *protocol);
   /** private metadata used by facil. */
@@ -178,12 +178,16 @@ struct facil_listen_args {
    * timed event scheduling.
    *
    * This will be called seperately for every process. */
-  void (*on_start)(void *udata);
+  void (*on_start)(intptr_t uuid, void *udata);
   /**
    * Called when the server is done, usable for cleanup.
    *
    * This will be called seperately for every process. */
-  void (*on_finish)(void *udata);
+  void (*on_finish)(intptr_t uuid, void *udata);
+  /**
+   * A cleanup callback for the `rw_udata`.
+   */
+  void (*on_finish_rw)(intptr_t uuid, void *rw_udata);
 };
 
 /** Schedule a network service on a listening socket. */
@@ -215,9 +219,10 @@ struct facil_connect_args {
    */
   protocol_s *(*on_connect)(intptr_t uuid, void *udata);
   /**
-   * The `on_fail` is called when a socket fails to connect.
+   * The `on_fail` is called when a socket fails to connect. The old sock UUID
+   * is passed along.
    */
-  void (*on_fail)(void *udata);
+  void (*on_fail)(intptr_t uuid, void *udata);
   /** Opaque user data. */
   void *udata;
   /** Opaque user data for `set_rw_hooks`. */
@@ -402,7 +407,10 @@ int facil_each(struct facil_each_args_s args);
 #define facil_each(...) facil_each((struct facil_each_args_s){__VA_ARGS__})
 
 /* *****************************************************************************
-Cluster specific API - cluster messaging.
+Cluster specific API - local cluster messaging.
+
+Facil supports message process clustering, so that a multi-process application
+can easily send and receive messages across process boundries.
 ***************************************************************************** */
 
 /**
@@ -411,10 +419,10 @@ Sets a callback / handler for a message of type `msg_type`.
 Callbacks are invoked using an O(n) matching, where `n` is the number of
 registered callbacks.
 
-The `msg_type` value can be any number less than 1,073,741,824. All values
-starting at 1,073,741,824 are reserved for internal use.
+The `msg_type` value can be any positive number up to 2^31-1 (2,147,483,647).
+All values less than 0 are reserved for internal use.
 */
-void facil_cluster_set_handler(uint32_t msg_type,
+void facil_cluster_set_handler(int32_t msg_type,
                                void (*on_message)(void *data, uint32_t len));
 
 /** Sends a message of type `msg_type` to the **other** cluster processes.
@@ -430,7 +438,7 @@ starting at 1,073,741,824 are reserved for internal use.
 Callbacks are invoked using an O(n) matching, where `n` is the number of
 registered callbacks.
 */
-int facil_cluster_send(uint32_t msg_type, void *data, uint32_t len);
+int facil_cluster_send(int32_t msg_type, void *data, uint32_t len);
 
 /* *****************************************************************************
 Lower Level API - for special circumstances, use with care under .

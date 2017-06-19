@@ -26,6 +26,84 @@ require 'iodine/iodine'
 #
 #
 # Please read the {file:README.md} file for an introduction to Iodine and an overview of it's API.
+#
+# == The API
+#
+# The main API methods for the top {Iodine} namesapce are grouped here by subject.
+#
+# === Event Loop / Concurrency
+#
+# Iodine manages an internal event-loop and reactor pattern. The following API
+# manages Iodine's behavior.
+#
+# * {Iodine.thread}, {Iodine.threads=} gets or sets the amount of threads iodine will use in it's working thread pool.
+# * {Iodine.processes}, {Iodine.processes} gets or sets the amount of processes iodine will utilize (`fork`) to handle connections.
+# * {Iodine.start} starts iodine's event loop and reactor pattern. At this point, it's impossible to change the number of threads or processes used.
+#
+# === Event and Task Scheduling
+#
+# * {Iodine.run} schedules a block of code to run asynchronously.
+# * {Iodine.run_after}, {Iodine.run_every} schedules a block of code to run (asynchronously) using a timer.
+# * {Iodine.start} starts iodine's event loop and reactor pattern. At this point, it's impossible to change the number of threads or processes used.
+#
+# In addition to the top level API, there's also the connection class and connection instance API, as specified in the {Iodine::Protocol} and {Iodine::Websocket} documentation, which allows for a connection bound task(s) to be scheduled to run within the connection's lock (for example, {Iodine::Websocket#defer} and {Iodine::Websocket#each}).
+#
+# === Connection Handling
+#
+# Iodine handles connections using {Iodine::Protocol} objects. The following API
+# manages either built-in or custom {Protocol} objects (classes / instances) in relation to their network sockets.
+#
+# * {Iodine.attach_fd}, {Iodine.attach_io} allows Iodine to take controll of an IO object (i.e., a TCP/IP Socket, a Unix Socket or a pipe).
+# * {Iodine.connect} creates a new TCP/IP connection using the specified Protocol.
+# * {Iodine.listen} listens to new TCP/IP connections using the specified Protocol.
+# * {Iodine.listen2http} listens to new TCP/IP connections using the buildin HTTP / Websocket Protocol.
+# * {Iodine.warmup} warms up and HTTP Rack applications.
+# * {Iodine.each} runs a code of block for every existing connection (except HTTP / Websocket connections).
+# * {Iodine.count} counts the number of connections (including HTTP / Websocket connections).
+#
+# In addition to the top level API, there's also the connection class and connection instance API, as specified in the {Iodine::Protocol} and {Iodine::Websocket} documentation.
+#
+# === Pub/Sub
+#
+# Iodine offers a native Pub/Sub engine (no database required) that can be easily extended by implementing a Pub/Sub {Iodine::PubSub::Engine}.
+#
+# The following methods offect server side Pub/Sub that allows the server code to react to channel event.
+#
+# * {Iodine.subscribe}, {Iodine.unsubscribe} manages a process's subscription to a channel (which is different than a connection's subscription, such as employed by {Iodine::Websocket}).
+# * {Iodine.publish} publishes a message to a Pub/Sub channel. The message will be sent to all subscribers - connections, other processes in the cluster and even other machines (when using the {Iodine::PubSub::RedisEngine}).
+# * {Iodine.default_pubsub=}, {Iodine.default_pubsub} sets or gets the default Pub/Sub {Iodine::PubSub::Engine}. i.e., when set to a new {Iodine::PubSub::RedisEngine} instance, all Pub/Sub method calls will use the Redis engine (unless explicitly requiring a different engine).
+#
+# In addition to the top level API, there's also the {Iodine::Websocket} specific Pub/Sub API that manages subscriptions in relation to a specific connection (when the connection closes, the subscriptions are canceled).
+#
+# === Patching Rack
+#
+# Although Iodine offers Rack::Utils optimizations using monkey patching, Iodine does NOT monkey patch Rack automatically.
+#
+# Choosing to monkey patch Rack::Utils could offer significant performance gains for some applications. i.e. (on my machine):
+#
+#       require 'iodine'
+#       require 'rack'
+#       s = '%E3%83%AB%E3%83%93%E3%82%A4%E3%82%B9%E3%81%A8'
+#       Benchmark.bm do |bm|
+#         # Pre-Patch
+#         bm.report("Rack")    {1_000_000.times { Rack::Utils.unescape s } }
+#
+#         # Perform Patch
+#         Rack::Utils.class_eval do
+#           Iodine::Base::MonkeyPatch::RackUtils.methods(false).each do |m|
+#             define_singleton_method(m,
+#                   Iodine::Base::MonkeyPatch::RackUtils.instance_method(m) )
+#           end
+#         end
+#
+#         # Post Patch
+#         bm.report("Patched") {1_000_000.times { Rack::Utils.unescape s } }
+#       end && nil
+#
+# Results:
+#         user     system      total        real
+#       Rack     8.620000   0.020000   8.640000 (  8.636676)
+#       Patched  0.320000   0.000000   0.320000 (  0.322377)
 module Iodine
   @threads = (ARGV.index('-t') && ARGV[ARGV.index('-t') + 1]) || ENV['MAX_THREADS']
   @processes = (ARGV.index('-w') && ARGV[ARGV.index('-w') + 1]) || ENV['MAX_WORKERS']
@@ -64,7 +142,7 @@ module Iodine
   # file to load now instead of waiting for "first access". This allows multi-threaded safety and better memory utilization during forking.
   #
   # Use {warmup} when either {processes} or {threads} are set to more then 1.
-  def self.warmup
+  def self.warmup app
     # load anything marked with `autoload`, since autoload isn't thread safe nor fork friendly.
     Module.constants.each do |n|
       begin
@@ -72,7 +150,15 @@ module Iodine
       rescue Exception => _e
       end
     end
+    ::Rack::Builder.new(app) do |r|
+      r.warmup do |app|
+        client = ::Rack::MockRequest.new(app)
+        client.get('/')
+      end
+    end
   end
+
+  self.default_pubsub = ::Iodine::PubSub::CLUSTER
 end
 
 require 'rack/handler/iodine' unless defined? ::Iodine::Rack::IODINE_RACK_LOADED

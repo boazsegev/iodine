@@ -22,16 +22,18 @@ Iodine is an **evented** framework with a simple API that builds off the low lev
 
 Iodine is a C extension for Ruby, developed for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but Rack requires Ruby 2.2.2, and so Iodine matches this requirement.
 
-## Iodine::Rack - an HTTP and Websockets server
+## Iodine::Rack + Iodine::HTTP == a fast and powerful HTTP + Websockets server
 
 Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the [Websocket draft extension](./SPEC-Websocket-Draft.md).
+
+With `Iodine::HTTP` it's possible to run multiple HTTP applications in addition to (or instead of) the default `Iodine::Rack` HTTP service.
 
 ### Running the web server
 
 Using the Iodine server is easy, simply add Iodine as a gem to your Rack application:
 
 ```ruby
-gem 'iodine', '>=0.3'
+gem 'iodine', '>=0.4'
 ```
 
 Iodine will calculate, when possible, a good enough default concurrency model for fast applications... this might not fit your application if you use database access or other blocking calls.

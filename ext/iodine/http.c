@@ -32,14 +32,19 @@ http_on_finish_func http_get_on_finish_func(http_settings_s *settings) {
   return (http_on_finish_func)route[settings->version];
 }
 
-void http_on_finish(void *set) {
+void http_on_finish(intptr_t uuid, void *set) {
   http_settings_s *settings = set;
   if (http_get_on_finish_func(set))
     http_get_on_finish_func(set)(set);
-  if (settings->private_metaflags & 1)
+
+  if (settings->on_finish)
+    settings->on_finish(uuid, settings->udata);
+
+  if (settings->private_metaflags & 2) {
     free((void *)settings->public_folder);
-  if (settings->private_metaflags & 2)
     free(settings);
+  }
+  (void)uuid;
 }
 
 /**
@@ -83,14 +88,19 @@ int http_listen(const char *port, const char *address,
       memcpy(tmp + home_len, settings->public_folder + 1,
              settings->public_folder_length); // copy also the NULL
       settings->public_folder = tmp;
-      settings->private_metaflags |= 1;
       settings->public_folder_length = strlen(settings->public_folder);
+    } else {
+      settings->public_folder = malloc(settings->public_folder_length + 1);
+      memcpy((void *)settings->public_folder, arg_settings.public_folder,
+             settings->public_folder_length);
+      ((uint8_t *)settings->public_folder)[settings->public_folder_length] = 0;
     }
   }
 
   return facil_listen(.port = port, .address = address,
                       .set_rw_hooks = arg_settings.set_rw_hooks,
                       .rw_udata = arg_settings.rw_udata,
+                      .on_finish_rw = arg_settings.on_finish_rw,
                       .on_finish = http_on_finish, .on_open = on_open_callback,
                       .udata = settings);
 }
@@ -277,7 +287,7 @@ static inline int hex2byte(uint8_t *dest, const uint8_t *source) {
     return -1;
   return 0;
 }
-#undef hex_val_tmp
+
 ssize_t http_decode_url(char *dest, const char *url_data, size_t length) {
   char *pos = dest;
   const char *end = url_data + length;
@@ -320,4 +330,40 @@ ssize_t http_decode_url_unsafe(char *dest, const char *url_data) {
   *pos = 0;
   return pos - dest;
 }
+
+ssize_t http_decode_path(char *dest, const char *url_data, size_t length) {
+  char *pos = dest;
+  const char *end = url_data + length;
+  while (url_data < end) {
+    if (*url_data == '%') {
+      // decode hex value
+      // this is a percent encoded value.
+      if (hex2byte((uint8_t *)pos, (uint8_t *)&url_data[1]))
+        return -1;
+      pos++;
+      url_data += 3;
+    } else
+      *(pos++) = *(url_data++);
+  }
+  *pos = 0;
+  return pos - dest;
+}
+
+ssize_t http_decode_path_unsafe(char *dest, const char *url_data) {
+  char *pos = dest;
+  while (*url_data) {
+    if (*url_data == '%') {
+      // decode hex value
+      // this is a percent encoded value.
+      if (hex2byte((uint8_t *)pos, (uint8_t *)&url_data[1]))
+        return -1;
+      pos++;
+      url_data += 3;
+    } else
+      *(pos++) = *(url_data++);
+  }
+  *pos = 0;
+  return pos - dest;
+}
+
 #undef hex_val

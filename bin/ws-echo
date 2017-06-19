@@ -58,7 +58,6 @@ Iodine::Rack.log = 1
 count = 2
 Iodine::Rack.app = WSEcho
 Iodine.start
-
 # server.on_http= Proc.new do |env|
 #   # [200, {"Content-Length".freeze => "12".freeze}, ["Hello World!".freeze]];
 #   if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
