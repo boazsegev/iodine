@@ -294,7 +294,7 @@ void Init_iodine(void) {
 
   // the Iodine singleton functions
   rb_define_module_function(Iodine, "start", iodine_start, 0);
-  rb_define_module_function(Iodine, "count", iodine_count, 0);
+  rb_define_singleton_method(Iodine, "count", iodine_count, 0);
   rb_define_module_function(Iodine, "run", iodine_run, 0);
   rb_define_module_function(Iodine, "run_after", iodine_run_after, 1);
   rb_define_module_function(Iodine, "run_every", iodine_run_every, -1);

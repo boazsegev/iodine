@@ -605,8 +605,8 @@ void Iodine_init_protocol(void) {
   rb_define_method(IodineProtocol, "ping", not_implemented_ping, 0);
 
   /* Add module functions */
-  rb_define_module_function(IodineProtocol, "defer", dyn_defer, -1);
-  rb_define_module_function(IodineProtocol, "count", dyn_count, 0);
+  rb_define_singleton_method(IodineProtocol, "defer", dyn_defer, -1);
+  rb_define_singleton_method(IodineProtocol, "count", dyn_count, 0);
 
   /* Add module instance methods */
 

@@ -227,9 +227,9 @@ void Iodine_init_helpers(void) {
   rb_define_method(tmp, "unescape_path", path_decode, 1);
   rb_define_method(tmp, "rfc2109", iodine_rfc2109, 1);
   rb_define_method(tmp, "rfc2822", iodine_rfc2822, 1);
-  rb_define_module_function(tmp, "unescape", unescape, -1);
-  rb_define_module_function(tmp, "unescape_path", path_decode, 1);
-  rb_define_module_function(tmp, "rfc2109", iodine_rfc2109, 1);
-  rb_define_module_function(tmp, "rfc2822", iodine_rfc2822, 1);
+  rb_define_singleton_method(tmp, "unescape", unescape, -1);
+  rb_define_singleton_method(tmp, "unescape_path", path_decode, 1);
+  rb_define_singleton_method(tmp, "rfc2109", iodine_rfc2109, 1);
+  rb_define_singleton_method(tmp, "rfc2822", iodine_rfc2822, 1);
   // rb_define_module_function(IodineUtils, "time2str", date_str, -1);
 }

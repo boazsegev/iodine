@@ -83,6 +83,7 @@ require 'iodine/iodine'
 #
 #       require 'iodine'
 #       require 'rack'
+#       # a String in need of decoding
 #       s = '%E3%83%AB%E3%83%93%E3%82%A4%E3%82%B9%E3%81%A8'
 #       Benchmark.bm do |bm|
 #         # Pre-Patch
