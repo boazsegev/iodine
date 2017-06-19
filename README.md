@@ -128,10 +128,13 @@ Here is a simple chatroom example we can run in the terminal (`irb`) or easily p
 require 'iodine'
 class WebsocketEcho
   def on_open
+    # Pub/Sub directly to the client (or use a block to process the messages)
     subscribe channel: :chat
+    # Writing directly to the socket
     write "You're now in the chatroom."
   end
   def on_message data
+    # Strings and symbol channel names are equivalent.
     publish channel: "chat", message: data
   end
 end
@@ -143,7 +146,14 @@ Iodine::Rack.app= Proc.new do |env|
     [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
   end
 end
-Iodine.threads = 1 # this line can be safely removed.
+# Pus/Sub can be server oriented as well as connection bound
+root_pid = Process.pid
+Iodine.subscribe(channel: :chat) {|ch, msg| puts msg if Process.pid == root_pid }
+# By default, Pub/Sub performs in process cluster mode.
+Iodine.processes = 4
+# static file serving can be set manually as well as using the command line:
+Iodine::Rack.public = "www/public"
+#
 Iodine.start
 ```
 

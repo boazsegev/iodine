@@ -385,7 +385,7 @@ static void *on_rack_request_in_GVL(http_request_s *request) {
   if (request->settings->log_static)
     http_response_log_start(response);
   if (!settings->app)
-    goto no_app;
+    goto err_not_found;
 
   // create /register env variable
   VALUE env = copy2env(request, settings->env);
@@ -425,11 +425,19 @@ static void *on_rack_request_in_GVL(http_request_s *request) {
     rb_hash_delete(response_headers, CONTENT_LENGTH_HEADER);
     // review each header and write it to the response.
     rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(response));
-    // send the file directly and finish
-    http_response_sendfile2(response, request, RSTRING_PTR(xfiles),
-                            RSTRING_LEN(xfiles), NULL, 0, 1);
     if (fr)
       Registry.remove(response_headers);
+    // send the file directly and finish
+    if (http_response_sendfile2(response, request, RSTRING_PTR(xfiles),
+                                RSTRING_LEN(xfiles), NULL, 0, 1)) {
+      http_response_destroy(response);
+      response = http_response_create(request);
+      if (request->settings->log_static)
+        http_response_log_start(response);
+      Registry.remove(rbresponse);
+      Registry.remove(env);
+      goto err_not_found;
+    }
     goto external_done;
   }
   // review each header and write it to the response.
@@ -452,7 +460,7 @@ external_done:
   Registry.remove(env);
   return NULL;
 
-no_app:
+err_not_found:
   response->status = 404;
   if (!request->settings->public_folder ||
       http_response_sendfile2(response, request,

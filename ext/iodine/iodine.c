@@ -207,7 +207,7 @@ static void *srv_start_no_gvl(void *_) {
   return NULL;
 }
 
-static void iodine_review_rack_app(void) {
+static int iodine_review_rack_app(void) {
   /* Check for Iodine::Rack.app and perform the C equivalent:
    *  Iodine::HTTP.listen app: @app, port: @port, address: @address, log: @log,
    *          max_msg: max_msg, max_body: max_body, public: @public, ping:
@@ -218,7 +218,7 @@ static void iodine_review_rack_app(void) {
   VALUE app = rb_ivar_get(rack, rb_intern("@app"));
   VALUE www = rb_ivar_get(rack, rb_intern("@public"));
   if ((app == Qnil || app == Qfalse) && (www == Qnil || www == Qfalse))
-    return;
+    return 0;
   VALUE opt = rb_hash_new();
   Registry.add(opt);
 
@@ -242,7 +242,9 @@ static void iodine_review_rack_app(void) {
                rb_ivar_get(rack, rb_intern("@ping")));
   rb_hash_aset(opt, ID2SYM(rb_intern("timeout")),
                rb_ivar_get(rack, rb_intern("@ws_timeout")));
-  rb_funcall2(Iodine, rb_intern("listen2http"), 1, &opt);
+  if (rb_funcall2(Iodine, rb_intern("listen2http"), 1, &opt) == Qfalse)
+    return -1;
+  return 0;
 }
 
 /**
@@ -253,7 +255,10 @@ Returns the Iodine module.
 */
 static VALUE iodine_start(VALUE self) {
   /* for the special Iodine::Rack object and backwards compatibility */
-  iodine_review_rack_app();
+  if (iodine_review_rack_app()) {
+    fprintf(stderr, "ERROR: (iodine) cann't start Iodine::Rack.\n");
+    return Qnil;
+  }
   rb_thread_call_without_gvl2(srv_start_no_gvl, (void *)self, NULL, NULL);
   return self;
 }
