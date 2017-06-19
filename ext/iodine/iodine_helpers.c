@@ -43,8 +43,7 @@ static VALUE url_decode(VALUE self, VALUE str) {
   ssize_t len =
       http_decode_url(RSTRING_PTR(str2), RSTRING_PTR(str), RSTRING_LEN(str));
   if (len < 0)
-    rb_raise(rb_eRuntimeError, "Malformed URL string - couldn't decode (String "
-                               "might have been partially altered).");
+    rb_raise(rb_eRuntimeError, "Malformed URL string - couldn't decode.");
   rb_str_set_len(str2, len);
   return str2;
   (void)self;
@@ -62,8 +61,9 @@ static VALUE path_decode_inplace(VALUE self, VALUE str) {
   ssize_t len =
       http_decode_path(RSTRING_PTR(str), RSTRING_PTR(str), RSTRING_LEN(str));
   if (len < 0)
-    rb_raise(rb_eRuntimeError, "Malformed URL string - couldn't decode (String "
-                               "might have been partially altered).");
+    rb_raise(rb_eRuntimeError,
+             "Malformed URL path string - couldn't decode (String "
+             "might have been partially altered).");
   rb_str_set_len(str, len);
   return str;
   (void)self;
@@ -79,9 +79,37 @@ static VALUE path_decode(VALUE self, VALUE str) {
   ssize_t len =
       http_decode_path(RSTRING_PTR(str2), RSTRING_PTR(str), RSTRING_LEN(str));
   if (len < 0)
-    rb_raise(rb_eRuntimeError, "Malformed URL string - couldn't decode (String "
-                               "might have been partially altered).");
+    rb_raise(rb_eRuntimeError, "Malformed URL path string - couldn't decode.");
   rb_str_set_len(str2, len);
+  return str2;
+  (void)self;
+}
+
+/**
+Decodes a URL encoded String, returning a new String with the decoded data.
+
+This variation matches the Rack::Utils.unescape signature by accepting and
+mostly ignoring an optional Encoding argument.
+*/
+static VALUE unescape(int argc, VALUE *argv, VALUE self) {
+  if (argc < 1 || argc > 2)
+    rb_raise(rb_eArgError,
+             "wrong number of arguments (given %d, expected 1..2).", argc);
+  VALUE str = argv[0];
+  Check_Type(str, T_STRING);
+  VALUE str2 = rb_str_buf_new(RSTRING_LEN(str));
+  ssize_t len =
+      http_decode_url(RSTRING_PTR(str2), RSTRING_PTR(str), RSTRING_LEN(str));
+  if (len < 0)
+    rb_raise(rb_eRuntimeError, "Malformed URL path string - couldn't decode.");
+  rb_str_set_len(str2, len);
+  rb_encoding *enc = IodineUTF8Encoding;
+  if (argc == 2 && argv[1] != Qnil && argv[1] != Qfalse) {
+    enc = rb_enc_get(argv[1]);
+    if (!enc)
+      enc == IodineUTF8Encoding;
+  }
+  rb_enc_associate(str2, enc);
   return str2;
   (void)self;
 }
@@ -124,10 +152,19 @@ static VALUE date_str(int argc, VALUE *argv, VALUE self) {
 }
 
 void Iodine_init_helpers(void) {
-  VALUE IodineRack = rb_define_module_under(Iodine, "Rack");
-  rb_define_module_function(IodineRack, "decode_url!", url_decode_inplace, 1);
-  rb_define_module_function(IodineRack, "decode_url", url_decode, 1);
-  rb_define_module_function(IodineRack, "decode_path!", path_decode_inplace, 1);
-  rb_define_module_function(IodineRack, "decode_path", path_decode, 1);
-  rb_define_module_function(IodineRack, "time2str", date_str, -1);
+  VALUE tmp = rb_define_module_under(Iodine, "Rack");
+  tmp = rb_define_module_under(tmp, "Utils");
+  rb_define_module_function(tmp, "decode_url!", url_decode_inplace, 1);
+  rb_define_module_function(tmp, "decode_url", url_decode, 1);
+  rb_define_module_function(tmp, "decode_path!", path_decode_inplace, 1);
+  rb_define_module_function(tmp, "decode_path", path_decode, 1);
+  rb_define_module_function(tmp, "time2str", date_str, -1);
+
+  tmp = rb_define_module_under(IodineBase, "MonkeyPatch");
+  tmp = rb_define_module_under(tmp, "RackUtils");
+  rb_define_method(tmp, "unescape", unescape, -1);
+  rb_define_method(tmp, "unescape_path", path_decode, 1);
+  rb_define_module_function(tmp, "unescape", unescape, -1);
+  rb_define_module_function(tmp, "unescape_path", path_decode, 1);
+  // rb_define_module_function(IodineUtils, "time2str", date_str, -1);
 }

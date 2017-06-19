@@ -46,7 +46,7 @@ require 'iodine/iodine'
 # * {Iodine.run_after}, {Iodine.run_every} schedules a block of code to run (asynchronously) using a timer.
 # * {Iodine.start} starts iodine's event loop and reactor pattern. At this point, it's impossible to change the number of threads or processes used.
 #
-# In addition to the top level API, there's also the connection class and connection instance API, as specified in the {Iodine::Protocol} and {Iodine::Websocket} documentation, which allows for a connection bound task(s) to be scheduled to run within the connection's lock (for example, {Iodine::Websocket#defer} and {Iodine::Websocket#each}). 
+# In addition to the top level API, there's also the connection class and connection instance API, as specified in the {Iodine::Protocol} and {Iodine::Websocket} documentation, which allows for a connection bound task(s) to be scheduled to run within the connection's lock (for example, {Iodine::Websocket#defer} and {Iodine::Websocket#each}).
 #
 # === Connection Handling
 #
@@ -75,6 +75,35 @@ require 'iodine/iodine'
 #
 # In addition to the top level API, there's also the {Iodine::Websocket} specific Pub/Sub API that manages subscriptions in relation to a specific connection (when the connection closes, the subscriptions are canceled).
 #
+# === Patching Rack
+#
+# Although Iodine offers Rack::Utils optimizations using monkey patching, Iodine does NOT monkey patch Rack automatically.
+#
+# Choosing to monkey patch Rack::Utils could offer significant performance gains for some applications. i.e. (on my machine):
+#
+#       require 'iodine'
+#       require 'rack'
+#       s = '%E3%83%AB%E3%83%93%E3%82%A4%E3%82%B9%E3%81%A8'
+#       Benchmark.bm do |bm|
+#         # Pre-Patch
+#         bm.report("Rack")    {1_000_000.times { Rack::Utils.unescape s } }
+#
+#         # Perform Patch
+#         Rack::Utils.class_eval do
+#           Iodine::Base::MonkeyPatch::RackUtils.methods(false).each do |m|
+#             define_singleton_method(m,
+#                   Iodine::Base::MonkeyPatch::RackUtils.instance_method(m) )
+#           end
+#         end
+#
+#         # Post Patch
+#         bm.report("Patched") {1_000_000.times { Rack::Utils.unescape s } }
+#       end && nil
+#
+# Results:
+#         user     system      total        real
+#       Rack     8.620000   0.020000   8.640000 (  8.636676)
+#       Patched  0.320000   0.000000   0.320000 (  0.322377)
 module Iodine
   @threads = (ARGV.index('-t') && ARGV[ARGV.index('-t') + 1]) || ENV['MAX_THREADS']
   @processes = (ARGV.index('-w') && ARGV[ARGV.index('-w') + 1]) || ENV['MAX_WORKERS']
