@@ -1,7 +1,7 @@
 require 'iodine' unless defined?(::Iodine::VERSION)
 
 module Iodine
-  # {Iodine::Rack} provides both a Rack complient interface (connecting Iodine to Rack) for an HTTP and Websocket Server.
+  # {Iodine::Rack} provides a Rack complient interface (connecting Iodine to Rack) for an HTTP and Websocket Server.
   #
   # {Iodine::Rack} also provides convinient access to the {Iodine::HTTP.listen} function, which powers the {Iodine::Rack} server.
   module Rack
