@@ -107,7 +107,7 @@ static VALUE unescape(int argc, VALUE *argv, VALUE self) {
   if (argc == 2 && argv[1] != Qnil && argv[1] != Qfalse) {
     enc = rb_enc_get(argv[1]);
     if (!enc)
-      enc == IodineUTF8Encoding;
+      enc = IodineUTF8Encoding;
   }
   rb_enc_associate(str2, enc);
   return str2;

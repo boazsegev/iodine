@@ -151,8 +151,8 @@ module Iodine
       end
     end
     ::Rack::Builder.new(app) do |r|
-      r.warmup do |app|
-        client = ::Rack::MockRequest.new(app)
+      r.warmup do |a|
+        client = ::Rack::MockRequest.new(a)
         client.get('/')
       end
     end
