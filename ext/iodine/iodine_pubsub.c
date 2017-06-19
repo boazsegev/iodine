@@ -4,7 +4,7 @@ License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
-#include "iodine_engine.h"
+#include "iodine_pubsub.h"
 #include "rb-call.h"
 
 #include "pubsub.h"
@@ -17,6 +17,11 @@ static ID engine_varid;
 static ID engine_subid;
 static ID engine_pubid;
 static ID engine_unsubid;
+static ID default_pubsubid;
+
+static VALUE channel_var_id;
+static VALUE pattern_var_id;
+static VALUE message_var_id;
 
 /* *****************************************************************************
 Mock Functions
@@ -409,13 +414,175 @@ static VALUE redis_engine_initialize(int argc, VALUE *argv, VALUE self) {
 }
 
 /* *****************************************************************************
+PubSub settings
+***************************************************************************** */
+
+/**
+Sets the default Pub/Sub engine to be used.
+
+See {Iodine::PubSub} and {Iodine::PubSub::Engine} for more details.
+*/
+static VALUE ips_set_default(VALUE self, VALUE en) {
+  iodine_engine_s *e;
+  Data_Get_Struct(en, iodine_engine_s, e);
+  if (!e)
+    rb_raise(rb_eArgError, "deafult engine must be an Iodine::PubSub::Engine.");
+  if (!e->p)
+    rb_raise(rb_eArgError, "This Iodine::PubSub::Engine is broken.");
+  rb_ivar_set(self, default_pubsubid, en);
+  PUBSUB_DEFAULT_ENGINE = e->p;
+  return self;
+}
+
+/**
+Returns the default Pub/Sub engine (if any).
+
+See {Iodine::PubSub} and {Iodine::PubSub::Engine} for more details.
+*/
+static VALUE ips_get_default(VALUE self) {
+  return rb_ivar_get(self, default_pubsubid);
+}
+
+/* *****************************************************************************
+Pub/Sub API
+***************************************************************************** */
+
+static void *on_pubsub_notificationinGVL(pubsub_message_s *n) {
+  VALUE rbn[2];
+  rbn[0] = rb_str_new(n->channel.name, n->channel.len);
+  Registry.add(rbn[0]);
+  rbn[1] = rb_str_new(n->msg.data, n->msg.len);
+  Registry.add(rbn[1]);
+  RubyCaller.call2((VALUE)n->udata1, iodine_call_proc_id, 2, rbn);
+  Registry.remove(rbn[0]);
+  Registry.remove(rbn[1]);
+  return NULL;
+}
+
+static void on_pubsub_notificationin(pubsub_message_s *n) {
+  RubyCaller.call_c((void *(*)(void *))on_pubsub_notificationinGVL, n);
+}
+
+/**
+Subscribes the process to a channel belonging to a specific pub/sub service
+(using an {Iodine::PubSub::Engine} to connect Iodine to the service).
+
+The function accepts a single argument (a Hash) and a required block.
+
+Accepts a single Hash argument with the following possible options:
+
+:engine :: If provided, the engine to use for pub/sub. Otherwise the default
+engine is used.
+
+:channel :: Required (unless :pattern). The channel to subscribe to.
+
+:pattern :: An alternative to the required :channel, subscribes to a pattern.
+
+*/
+static VALUE iodine_subscribe(VALUE self, VALUE args) {
+  Check_Type(args, T_HASH);
+  rb_need_block();
+
+  uint8_t use_pattern = 0;
+
+  VALUE rb_ch = rb_hash_aref(args, channel_var_id);
+  if (rb_ch == Qnil || rb_ch == Qfalse) {
+    use_pattern = 1;
+    rb_ch = rb_hash_aref(args, pattern_var_id);
+    if (rb_ch == Qnil || rb_ch == Qfalse)
+      rb_raise(rb_eArgError, "a channel is required for pub/sub methods.");
+  }
+  Check_Type(rb_ch, T_STRING);
+
+  VALUE block = rb_block_proc();
+
+  pubsub_engine_s *engine =
+      iodine_engine_ruby2facil(rb_hash_aref(args, engine_varid));
+
+  uintptr_t subid =
+      (uintptr_t)pubsub_subscribe(.channel.name = RSTRING_PTR(rb_ch),
+                                  .channel.len = RSTRING_LEN(rb_ch),
+                                  .engine = engine, .use_pattern = use_pattern,
+                                  .on_message =
+                                      (block ? on_pubsub_notificationin : NULL),
+                                  .udata1 = (void *)block);
+  if (!subid)
+    return Qnil;
+  return ULL2NUM(subid);
+  (void)self;
+}
+
+/**
+Cancels the subscription matching `sub_id`.
+*/
+static VALUE iodine_unsubscribe(VALUE self, VALUE sub_id) {
+  Check_Type(sub_id, T_FIXNUM);
+  pubsub_unsubscribe((pubsub_sub_pt)NUM2LONG(sub_id));
+  return Qnil;
+  (void)self;
+}
+
+/**
+Publishes a message to a channel.
+
+Accepts a single Hash argument with the following possible options:
+
+:engine :: If provided, the engine to use for pub/sub. Otherwise the default
+engine is used.
+
+:channel :: Required (unless :pattern). The channel to publish to.
+
+:pattern :: An alternative to the required :channel, publishes to a pattern.
+This is NOT supported by Redis and it's limited to the local process cluster.
+
+:message :: REQUIRED. The message to be published.
+:
+*/
+static VALUE iodine_publish(VALUE self, VALUE args) {
+  Check_Type(args, T_HASH);
+  uint8_t use_pattern = 0, force_text = 0, force_binary = 0;
+
+  VALUE rb_ch = rb_hash_aref(args, channel_var_id);
+  if (rb_ch == Qnil || rb_ch == Qfalse) {
+    use_pattern = 1;
+    rb_ch = rb_hash_aref(args, pattern_var_id);
+    if (rb_ch == Qnil || rb_ch == Qfalse)
+      rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
+  }
+  Check_Type(rb_ch, T_STRING);
+
+  VALUE rb_msg = rb_hash_aref(args, message_var_id);
+  if (rb_msg == Qnil || rb_msg == Qfalse) {
+    rb_raise(rb_eArgError, "message is required for the :publish method.");
+  }
+  Check_Type(rb_msg, T_STRING);
+
+  pubsub_engine_s *engine =
+      iodine_engine_ruby2facil(rb_hash_aref(args, engine_varid));
+
+  intptr_t ret =
+      pubsub_publish(.engine = engine, .channel.name = (RSTRING_PTR(rb_ch)),
+                     .channel.len = (RSTRING_LEN(rb_ch)),
+                     .msg.data = (RSTRING_PTR(rb_msg)),
+                     .msg.len = (RSTRING_LEN(rb_msg)));
+  if (!ret)
+    return Qfalse;
+  return Qtrue;
+  (void)self;
+}
+
+/* *****************************************************************************
 Initialization
 ***************************************************************************** */
-void Iodine_init_engine(void) {
+void Iodine_init_pubsub(void) {
   engine_varid = rb_intern("engine");
   engine_subid = rb_intern("subscribe");
   engine_unsubid = rb_intern("unsubscribe");
   engine_pubid = rb_intern("publish");
+  default_pubsubid = rb_intern("default_pubsub");
+  channel_var_id = ID2SYM(rb_intern("channel"));
+  pattern_var_id = ID2SYM(rb_intern("pattern"));
+  message_var_id = ID2SYM(rb_intern("message"));
 
   IodinePubSub = rb_define_module_under(Iodine, "PubSub");
   IodineEngine = rb_define_class_under(IodinePubSub, "Engine", rb_cObject);
@@ -428,6 +595,13 @@ void Iodine_init_engine(void) {
   rb_define_method(IodineEngine, "unsubscribe", engine_sub_placeholder, 2);
   rb_define_method(IodineEngine, "publish", engine_pub_placeholder, 3);
 
+  rb_define_module_function(Iodine, "default_pubsub=", ips_set_default, 1);
+  rb_define_module_function(Iodine, "default_pubsub", ips_get_default, 0);
+
+  rb_define_module_function(Iodine, "subscribe", iodine_subscribe, 1);
+  rb_define_module_function(Iodine, "unsubscribe", iodine_unsubscribe, 1);
+  rb_define_module_function(Iodine, "publish", iodine_publish, 1);
+
   /* *************************
   Initialize C pubsub engines
   ************************** */
@@ -436,7 +610,7 @@ void Iodine_init_engine(void) {
 
   engine_in_c = rb_funcallv(IodineEngine, iodine_new_func_id, 0, NULL);
   Data_Get_Struct(engine_in_c, iodine_engine_s, engine);
-  engine->p = (pubsub_engine_s *)&PUBSUB_CLUSTER_ENGINE;
+  engine->p = (pubsub_engine_s *)PUBSUB_CLUSTER_ENGINE;
 
   /** This is the (currently) default pub/sub engine. It will distribute
    * messages to all subscribers in the process cluster. */
@@ -445,7 +619,7 @@ void Iodine_init_engine(void) {
 
   engine_in_c = rb_funcallv(IodineEngine, iodine_new_func_id, 0, NULL);
   Data_Get_Struct(engine_in_c, iodine_engine_s, engine);
-  engine->p = (pubsub_engine_s *)&PUBSUB_CLUSTER_ENGINE;
+  engine->p = (pubsub_engine_s *)PUBSUB_PROCESS_ENGINE;
 
   /** This is a single process pub/sub engine. It will distribute messages to
    * all subscribers sharing the same process. */

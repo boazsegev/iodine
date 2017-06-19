@@ -18,7 +18,7 @@ typedef struct {
   void (*dealloc)(pubsub_engine_s *);
 } iodine_engine_s;
 
-void Iodine_init_engine(void);
+void Iodine_init_pubsub(void);
 
 typedef struct pubsub_engine_s pubsub_engine_s;
 

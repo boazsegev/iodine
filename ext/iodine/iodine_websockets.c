@@ -5,7 +5,7 @@ License: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #include "iodine_websockets.h"
-#include "iodine_engine.h"
+#include "iodine_pubsub.h"
 
 #include "pubsub.h"
 #include "websockets.h"
@@ -20,7 +20,6 @@ Core helpers and data
 static VALUE IodineWebsocket; // The Iodine::Http::Websocket class
 static ID ws_var_id;          // id for websocket pointer
 static ID dup_func_id;        // id for the buffer.dup method
-static ID engine_default_var_id;
 
 static VALUE force_var_id;
 static VALUE channel_var_id;
@@ -50,13 +49,6 @@ inline static ws_s *get_ws(VALUE obj) {
 
 #define set_handler(ws, handler) websocket_udata_set((ws), (VALUE)handler)
 #define get_handler(ws) ((VALUE)websocket_udata((ws_s *)(ws)))
-
-pubsub_engine_s *iodine_engine_default(void) {
-  VALUE def = rb_ivar_get(IodineWebsocket, engine_default_var_id);
-  if (def == Qnil || def == Qfalse)
-    return NULL;
-  return iodine_engine_ruby2facil(def);
-}
 
 /* *****************************************************************************
 Buffer management - Rubyfy the way the buffer is handled.
@@ -328,10 +320,6 @@ static VALUE iodine_ws_subscribe(VALUE self, VALUE args) {
 
   pubsub_engine_s *engine =
       iodine_engine_ruby2facil(rb_hash_aref(args, engine_var_id));
-  if (!engine)
-    engine = iodine_engine_default();
-  if (!engine)
-    rb_raise(rb_eRuntimeError, "No engine or default engine to use.");
 
   uintptr_t subid = websocket_subscribe(
       ws, .channel.name = RSTRING_PTR(rb_ch), .channel.len = RSTRING_LEN(rb_ch),
@@ -391,10 +379,6 @@ static VALUE iodine_ws_is_subscribed(VALUE self, VALUE args) {
 
   pubsub_engine_s *engine =
       iodine_engine_ruby2facil(rb_hash_aref(args, engine_var_id));
-  if (!engine)
-    engine = iodine_engine_default();
-  if (!engine)
-    rb_raise(rb_eRuntimeError, "No engine or default engine to use.");
 
   uintptr_t subid = websocket_find_sub(
       ws, .channel.name = RSTRING_PTR(rb_ch), .channel.len = RSTRING_LEN(rb_ch),
@@ -456,10 +440,6 @@ static VALUE iodine_ws_publish(VALUE self, VALUE args) {
 
   pubsub_engine_s *engine =
       iodine_engine_ruby2facil(rb_hash_aref(args, engine_var_id));
-  if (!engine)
-    engine = iodine_engine_default();
-  if (!engine)
-    rb_raise(rb_eRuntimeError, "No engine or default engine to use.");
 
   intptr_t subid =
       pubsub_publish(.engine = engine, .channel.name = (RSTRING_PTR(rb_ch)),
@@ -471,6 +451,7 @@ static VALUE iodine_ws_publish(VALUE self, VALUE args) {
   return Qtrue;
   (void)self;
 }
+
 /* *****************************************************************************
 Websocket Multi-Write - Deprecated
 ***************************************************************************** */
@@ -768,8 +749,6 @@ void Iodine_init_websocket(void) {
   text_var_id = ID2SYM(rb_intern("text"));
   binary_var_id = ID2SYM(rb_intern("binary"));
 
-  engine_default_var_id = rb_intern("@default_pubsub");
-
   // the Ruby websockets protocol class.
   IodineWebsocket = rb_define_module_under(Iodine, "Websocket");
   if (IodineWebsocket == Qfalse)
@@ -796,5 +775,6 @@ void Iodine_init_websocket(void) {
 
   rb_define_singleton_method(IodineWebsocket, "each", iodine_ws_class_each, 0);
   rb_define_singleton_method(IodineWebsocket, "defer", iodine_class_defer, 1);
-  rb_define_singleton_method(IodineWebsocket, "publish", iodine_ws_publish, 1);
+  // rb_define_singleton_method(IodineWebsocket, "publish", iodine_ws_publish,
+  // 1);
 }
