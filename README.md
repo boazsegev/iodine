@@ -188,45 +188,6 @@ This design has a number of benefits, some of them related to better IO handling
 
 Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less than 8Kb in size. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache.
 
-Here's a small HTTP and Websocket broadcast server with Iodine::Rack, which can be used directly from `irb`:
-
-```ruby
-require 'iodine'
-
-# Our server controller and websockets handler
-class My_Broadcast
-
-  # handle HTTP requests (a class callback, emulating a Proc)
-  def self.call env
-    if env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
-      env['upgrade.websocket'.freeze] = self.new(env)
-      [0,{}, []]
-    end
-    [200, {"Content-Length" => "12".freeze}, ["Hello World!".freeze]]
-  end
-
-  def initialize env
-    @env = env # allows us to access the HTTP request data during the Websocket session
-  end
-
-  # handles websocket data (an instance  callback)
-  def on_message data
-    # data is the direct buffer and will be recycled once we leave this scope.
-    # we'll copy it to prevent corruption when broadcasting the data asynchronously.
-    data_copy = data.dup
-    # We'll broadcast the data asynchronously to all open websocket connections.
-    each {|ws| ws.write data_copy } # (limited to current process)
-    close if data =~ /^bye[\r\n]/i
-  end
-end
-
-# static file serving is as easy as (also supports simple byte serving):
-Iodine::Rack.public = "www/public"
-
-# start the server while setting the app at the same time
-Iodine::Rack.run My_Broadcast
-```
-
 Of course, if you still want to use Rack's `hijack` API, Iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack, as well as a socket buffer for non-blocking `write` operations (why do that when you can write a protocol object and have the main reactor manage the socket?).
 
 ### Performance oriented design - but safety first
@@ -299,11 +260,13 @@ Then start comparing servers. Here are the settings I used to compare Iodine and
 $ RACK_ENV=production iodine -p 3000 -t 16 -w 4
 # vs.
 $ RACK_ENV=production puma -p 3000 -t 16 -w 4
+# Review the `iodine -?` help for more command line options.
 ```
 
-Iodine performed almost twice as well, (~90K req/sec vs. ~44K req/sec) while keeping a memory foot print that was more then 20% lower (~65Mb vs. ~85Mb).
 
-Review the `iodine -?` help for more data.
+When benchmarking with `wrk`, Iodine performed significantly better, (~62K req/sec vs. ~44K req/sec) while keeping a lower memory foot print (~60Mb vs. ~111Mb).
+
+When benchmarking with `ab`, I got different results, where Iodine still performed significantly better, (~72K req/sec vs. ~36K req/sec and ~61Mb vs. ~81.6Mb). I suspect the difference between the two benchmarks has to do with system calls to `write`, but I have no real proof.
 
 Remember to compare the memory footprint after running some requests - it's not just speed that C is helping with, it's also memory management and object pooling (i.e., Iodine uses a buffer packet pool management).
 
@@ -365,7 +328,7 @@ You can go ahead and use EventMachine if you like. They're doing amazing work on
 
 But me, I prefer to make sure my development software runs the exact same code as my production software. So here we are.
 
-Also, I don't really understand all the minute details of EventMachine's API, it kept crashing my system every time I reached ~1024 active connections... I'm sure I just don't know how to use EventMachine, but that's just that.
+Also, I don't really understand all the minute details of EventMachine's API, it kept crashing my system every time I reached 1K-2K active connections... I'm sure I just don't know how to use EventMachine, but that's just that.
 
 Besides, you're here - why not take Iodine out for a spin and see for yourself?
 
