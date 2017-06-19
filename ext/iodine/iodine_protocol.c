@@ -587,8 +587,8 @@ Library Initialization
 void Iodine_init_protocol(void) {
 
   /* add Iodine module functions */
-  rb_define_module_function(Iodine, "defer", dyn_defer, -1);
-  rb_define_module_function(Iodine, "each", dyn_run_each, 0);
+  // rb_define_module_function(Iodine, "defer", dyn_defer, -1);
+  // rb_define_module_function(Iodine, "each", dyn_run_each, 0);
   rb_define_module_function(Iodine, "listen", iodine_listen, 2);
   rb_define_module_function(Iodine, "connect", iodine_connect, 3);
   rb_define_module_function(Iodine, "attach_io", iodine_attach_io, 2);
@@ -607,9 +607,10 @@ void Iodine_init_protocol(void) {
   /* Add module functions */
   rb_define_singleton_method(IodineProtocol, "defer", dyn_defer, -1);
   rb_define_singleton_method(IodineProtocol, "count", dyn_count, 0);
+  rb_define_singleton_method(IodineProtocol, "each", dyn_run_each, 0);
 
   /* Add module instance methods */
-
+  // rb_define_method(IodineProtocol, "each", dyn_run_each, 0);
   rb_define_method(IodineProtocol, "open?", dyn_is_open, 0);
   rb_define_method(IodineProtocol, "conn_id", dyn_uuid, 0);
   rb_define_method(IodineProtocol, "count", dyn_count, 0);
@@ -619,7 +620,6 @@ void Iodine_init_protocol(void) {
   rb_define_method(IodineProtocol, "write_urgent", dyn_write_urgent, 1);
   rb_define_method(IodineProtocol, "close", dyn_close, 0);
   rb_define_method(IodineProtocol, "defer", dyn_defer, -1);
-  rb_define_method(IodineProtocol, "each", dyn_run_each, 0);
   rb_define_method(IodineProtocol, "switch_protocol", dyn_switch_prot, 1);
   rb_define_method(IodineProtocol, "timeout=", dyn_set_timeout, 1);
   rb_define_method(IodineProtocol, "timeout", dyn_get_timeout, 0);

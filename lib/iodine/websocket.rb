@@ -6,7 +6,7 @@ module Iodine
   # The websocket API is divided into three main groups:
   # * Server <=> Client relations ({#write}, {#close} etc')
   # * Client <=> Server <=> Client relations ({#subscribe}, {#publish}, etc').
-  # * Task scheduling ({#defer}, {#each}).
+  # * Task scheduling ({Iodine::Websocket.defer}, {#defer}, {Iodine::Websocket.each}).
   module Websocket
   end
 end

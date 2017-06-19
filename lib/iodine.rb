@@ -45,6 +45,7 @@ require 'iodine/iodine'
 # * {Iodine.run} schedules a block of code to run asynchronously.
 # * {Iodine.run_after}, {Iodine.run_every} schedules a block of code to run (asynchronously) using a timer.
 # * {Iodine.start} starts iodine's event loop and reactor pattern. At this point, it's impossible to change the number of threads or processes used.
+# * {Iodine::Websocket#defer}, {Iodine::Protocol#defer} schedules a connection bound asynchronous task, that will run **if** the connection is still open.
 #
 # In addition to the top level API, there's also the connection class and connection instance API, as specified in the {Iodine::Protocol} and {Iodine::Websocket} documentation, which allows for a connection bound task(s) to be scheduled to run within the connection's lock (for example, {Iodine::Websocket#defer} and {Iodine::Websocket#each}).
 #
@@ -58,8 +59,9 @@ require 'iodine/iodine'
 # * {Iodine.listen} listens to new TCP/IP connections using the specified Protocol.
 # * {Iodine.listen2http} listens to new TCP/IP connections using the buildin HTTP / Websocket Protocol.
 # * {Iodine.warmup} warms up and HTTP Rack applications.
-# * {Iodine.each} runs a code of block for every existing connection (except HTTP / Websocket connections).
 # * {Iodine.count} counts the number of connections (including HTTP / Websocket connections).
+# * {Iodine::Protocol.each} runs a code of block for every connection sharing the process (except HTTP / Websocket connections).
+# * {Iodine::Websocket.each} runs a code of block for every existing websocket sharing the process.
 #
 # In addition to the top level API, there's also the connection class and connection instance API, as specified in the {Iodine::Protocol} and {Iodine::Websocket} documentation.
 #
@@ -72,6 +74,7 @@ require 'iodine/iodine'
 # * {Iodine.subscribe}, {Iodine.unsubscribe} manages a process's subscription to a channel (which is different than a connection's subscription, such as employed by {Iodine::Websocket}).
 # * {Iodine.publish} publishes a message to a Pub/Sub channel. The message will be sent to all subscribers - connections, other processes in the cluster and even other machines (when using the {Iodine::PubSub::RedisEngine}).
 # * {Iodine.default_pubsub=}, {Iodine.default_pubsub} sets or gets the default Pub/Sub {Iodine::PubSub::Engine}. i.e., when set to a new {Iodine::PubSub::RedisEngine} instance, all Pub/Sub method calls will use the Redis engine (unless explicitly requiring a different engine).
+# * {Iodine::Websocket} objects have a seperate Pub/Sub implementation that allows direct client Pub/Sub (forward the message to the client directly) and manages the subscription's lifetime to match the connection's lifetime.
 #
 # In addition to the top level API, there's also the {Iodine::Websocket} specific Pub/Sub API that manages subscriptions in relation to a specific connection (when the connection closes, the subscriptions are canceled).
 #
