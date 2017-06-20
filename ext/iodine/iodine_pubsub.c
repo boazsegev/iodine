@@ -518,6 +518,8 @@ static VALUE iodine_subscribe(VALUE self, VALUE args) {
 Cancels the subscription matching `sub_id`.
 */
 static VALUE iodine_unsubscribe(VALUE self, VALUE sub_id) {
+  if (sub_id == Qnil || sub_id == Qfalse)
+    return Qnil;
   Check_Type(sub_id, T_FIXNUM);
   pubsub_unsubscribe((pubsub_sub_pt)NUM2LONG(sub_id));
   return Qnil;

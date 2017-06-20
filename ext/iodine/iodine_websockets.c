@@ -397,6 +397,8 @@ static VALUE iodine_ws_is_subscribed(VALUE self, VALUE args) {
 Cancels the subscription matching `sub_id`.
 */
 static VALUE iodine_ws_unsubscribe(VALUE self, VALUE sub_id) {
+  if (sub_id == Qnil || sub_id == Qfalse)
+    return Qnil;
   ws_s *ws = get_ws(self);
   if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
     return Qfalse;
