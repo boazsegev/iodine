@@ -1,7 +1,7 @@
 require 'iodine'
 
-ON_IDLE = proc { Iodine::Base.db_print_registry ; Iodine.on_idle(&ON_IDLE) }
-ON_IDLE.call
+# ON_IDLE = proc { Iodine::Base.db_print_registry ; Iodine.on_idle(&ON_IDLE) }
+# ON_IDLE.call
 
 class ShootoutApp
   # the default HTTP response
