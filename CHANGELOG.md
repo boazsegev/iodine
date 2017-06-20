@@ -16,6 +16,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Update**: Now using `facil.io` v.0.5.0 The extended features include the following listed features.
 
+**Fixes**: This was such a big rewrite, I suspect half the fixes I want to list are things I broke during the rewrite... but there were plenty of fixes.
+
 **Feature**: Iodine now support native Websocket Pub/Sub, with [an example in the `examples` folder](./examples/redis.ru). i.e.:
 
 ```ruby

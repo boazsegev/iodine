@@ -251,6 +251,11 @@ static VALUE iodine_defer(int argc, VALUE *argv, VALUE self) {
 Websocket Pub/Sub API
 ***************************************************************************** */
 
+static void iodine_on_unsubscribe(void *u) {
+  if (u && (VALUE)u != Qnil && u != (VALUE)Qfalse)
+    Registry.remove((VALUE)u);
+}
+
 static void *on_pubsub_notificationinGVL(websocket_pubsub_notification_s *n) {
   VALUE rbn[2];
   rbn[0] = rb_str_new(n->channel.name, n->channel.len);
@@ -317,6 +322,7 @@ static VALUE iodine_ws_subscribe(VALUE self, VALUE args) {
   VALUE block = 0;
   if (rb_block_given_p()) {
     block = rb_block_proc();
+    Registry.add(block);
   }
 
   pubsub_engine_s *engine =
@@ -327,6 +333,7 @@ static VALUE iodine_ws_subscribe(VALUE self, VALUE args) {
       .engine = engine, .use_pattern = use_pattern, .force_text = force_text,
       .force_binary = force_binary,
       .on_message = (block ? on_pubsub_notificationin : NULL),
+      .on_unsubscribe = (block ? iodine_on_unsubscribe : NULL),
       .udata = (void *)block);
   if (!subid)
     return Qnil;
@@ -633,8 +640,10 @@ void ws_on_open(ws_s *ws) {
 }
 void ws_on_close(ws_s *ws) {
   VALUE handler = get_handler(ws);
-  if (!handler)
+  if (!handler) {
+    fprintf(stderr, "Closing a handlerless websocket?!\n");
     return;
+  }
   RubyCaller.call(handler, iodine_on_close_func_id);
   set_ws(handler, Qnil);
   Registry.remove(handler);

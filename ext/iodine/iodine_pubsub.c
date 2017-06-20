@@ -447,6 +447,12 @@ static VALUE ips_get_default(VALUE self) {
 Pub/Sub API
 ***************************************************************************** */
 
+static void iodine_on_unsubscribe(void *u1, void *u2) {
+  if (u1 && (VALUE)u1 != Qnil && u1 != (VALUE)Qfalse)
+    Registry.remove((VALUE)u1);
+  (void)u2;
+}
+
 static void *on_pubsub_notificationinGVL(pubsub_message_s *n) {
   VALUE rbn[2];
   rbn[0] = rb_str_new(n->channel.name, n->channel.len);
@@ -501,13 +507,13 @@ static VALUE iodine_subscribe(VALUE self, VALUE args) {
   pubsub_engine_s *engine =
       iodine_engine_ruby2facil(rb_hash_aref(args, engine_varid));
 
-  uintptr_t subid =
-      (uintptr_t)pubsub_subscribe(.channel.name = RSTRING_PTR(rb_ch),
-                                  .channel.len = RSTRING_LEN(rb_ch),
-                                  .engine = engine, .use_pattern = use_pattern,
-                                  .on_message =
-                                      (block ? on_pubsub_notificationin : NULL),
-                                  .udata1 = (void *)block);
+  uintptr_t subid = (uintptr_t)
+      pubsub_subscribe(.channel.name = RSTRING_PTR(rb_ch),
+                       .channel.len = RSTRING_LEN(rb_ch), .engine = engine,
+                       .use_pattern = use_pattern,
+                       .on_message = (block ? on_pubsub_notificationin : NULL),
+                       .on_unsubscribe = (block ? iodine_on_unsubscribe : NULL),
+                       .udata1 = (void *)block);
   if (!subid)
     return Qnil;
   return ULL2NUM(subid);

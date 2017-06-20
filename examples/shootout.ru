@@ -1,3 +1,8 @@
+require 'iodine'
+
+ON_IDLE = proc { Iodine::Base.db_print_registry ; Iodine.on_idle(&ON_IDLE) }
+ON_IDLE.call
+
 class ShootoutApp
   # the default HTTP response
   def self.call(env)
@@ -36,6 +41,8 @@ class ShootoutApp
     puts "Incoming message format error - not JSON?"
   end
 end
+
+run ShootoutApp
 #
 # def cycle
 #   puts `websocket-bench broadcast ws://127.0.0.1:3000/ --concurrent 10 --sample-size 100 --server-type binary --step-size 1000 --limit-percentile 95 --limit-rtt 250ms --initial-clients 1000`

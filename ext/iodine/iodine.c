@@ -140,6 +140,53 @@ static VALUE iodine_run(VALUE self) {
 }
 
 /* *****************************************************************************
+Idling
+***************************************************************************** */
+#include "fio_list.h"
+#include "spnlock.inc"
+
+typedef struct {
+  fio_list_s node;
+  VALUE block;
+} iodine_idle_block_s;
+
+static spn_lock_i iodine_on_idle_lock = SPN_LOCK_INIT;
+static fio_list_s iodine_on_idle_list =
+    FIO_LIST_INIT_STATIC(iodine_on_idle_list);
+
+/**
+Schedules a single occuring event for the next idle cycle.
+
+To schedule a reoccuring event, simply reschedule the event at the end of it's
+run.
+
+i.e.
+
+      IDLE_PROC = Proc.new { puts "idle"; Iodine.on_idle &IDLE_PROC }
+      Iodine.on_idle &IDLE_PROC
+*/
+VALUE iodine_sched_on_idle(VALUE self) {
+  rb_need_block();
+  iodine_idle_block_s *b = malloc(sizeof(*b));
+  b->block = rb_block_proc();
+  Registry.add(b->block);
+  spn_lock(&iodine_on_idle_lock);
+  fio_list_push(iodine_idle_block_s, node, iodine_on_idle_list, b);
+  spn_unlock(&iodine_on_idle_lock);
+  return b->block;
+  (void)self;
+}
+
+static void iodine_on_idle(void) {
+  iodine_idle_block_s *b;
+  spn_lock(&iodine_on_idle_lock);
+  while ((b = fio_list_shift(iodine_idle_block_s, node, iodine_on_idle_list))) {
+    defer(iodine_perform_deferred, (void *)b->block, NULL);
+    free(b);
+  }
+  spn_unlock(&iodine_on_idle_lock);
+}
+/* *****************************************************************************
 Running the server
 ***************************************************************************** */
 
@@ -203,7 +250,7 @@ static void *srv_start_no_gvl(void *_) {
   defer(iodine_start_io_thread, NULL, NULL);
   fprintf(stderr, "\n");
   facil_run(.threads = threads, .processes = processes,
-            .on_finish = iodine_join_io_thread);
+            .on_idle = iodine_on_idle, .on_finish = iodine_join_io_thread);
   return NULL;
 }
 
@@ -264,6 +311,16 @@ static VALUE iodine_start(VALUE self) {
 }
 
 /* *****************************************************************************
+Debug
+***************************************************************************** */
+
+VALUE iodine_print_registry(VALUE self) {
+  Registry.print();
+  return Qnil;
+  (void)self;
+}
+
+/* *****************************************************************************
 Library Initialization
 ***************************************************************************** */
 
@@ -303,10 +360,13 @@ void Init_iodine(void) {
   rb_define_module_function(Iodine, "run", iodine_run, 0);
   rb_define_module_function(Iodine, "run_after", iodine_run_after, 1);
   rb_define_module_function(Iodine, "run_every", iodine_run_every, -1);
+  rb_define_module_function(Iodine, "on_idle", iodine_sched_on_idle, 0);
 
   // Every Protocol (and Server?) instance will hold a reference to the server
   // define the Server Ruby class.
   IodineBase = rb_define_module_under(Iodine, "Base");
+  rb_define_module_function(IodineBase, "db_print_registry",
+                            iodine_print_registry, 0);
 
   // Initialize the registry under the Iodine core
   Registry.init(Iodine);

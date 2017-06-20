@@ -44,6 +44,7 @@ typedef struct {
 typedef struct pubsub_sub_s {
   fio_ht_node_s clients;
   void (*on_message)(pubsub_message_s *msg);
+  void (*on_unsubscribe)(void *udata1, void *udata2);
   void *udata1;
   void *udata2;
   channel_s *parent;
@@ -67,8 +68,11 @@ Helpers
 
 static void pubsub_free_client(void *client_, void *ignr) {
   client_s *client = client_;
-  if (!spn_sub(&client->active, 1))
-    free(client);
+  if (spn_sub(&client->active, 1))
+    return;
+  if (client->on_unsubscribe)
+    client->on_unsubscribe(client->udata1, client->udata2);
+  free(client);
   (void)ignr;
 }
 
@@ -332,11 +336,11 @@ API
 #undef pubsub_subscribe
 pubsub_sub_pt pubsub_subscribe(struct pubsub_subscribe_args args) {
   if (!args.on_message)
-    return NULL;
+    goto err_unlocked;
   if (args.channel.name && !args.channel.len)
     args.channel.len = strlen(args.channel.name);
   if (args.channel.len > FIO_PUBBSUB_MAX_CHANNEL_LEN) {
-    return NULL;
+    goto err_unlocked;
   }
   if (!args.engine)
     args.engine = PUBSUB_DEFAULT_ENGINE;
@@ -398,6 +402,7 @@ found_channel:
     goto error;
   *client = (client_s){
       .on_message = args.on_message,
+      .on_unsubscribe = args.on_unsubscribe,
       .udata1 = args.udata1,
       .udata2 = args.udata2,
       .parent = ch,
@@ -415,6 +420,9 @@ found_client:
 
 error:
   spn_unlock(&pubsub_GIL);
+err_unlocked:
+  if (args.on_unsubscribe)
+    args.on_unsubscribe(args.udata1, args.udata2);
   return NULL;
 }
 

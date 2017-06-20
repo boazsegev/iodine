@@ -79,7 +79,7 @@ static VALUE register_object(VALUE ruby_obj) {
     kill(0, SIGINT);
     exit(1);
   }
-  obj->obj = ruby_obj;
+  *obj = (obj_s){.obj = ruby_obj};
   fio_ht_add(&registry.store, &obj->node, (uint64_t)ruby_obj);
 exists:
   spn_add(&obj->ref, 1);
@@ -192,6 +192,9 @@ static void print(void) {
   }
   fprintf(stderr, "Total of %" PRIu64 " registered objects being marked\n",
           index);
+  fprintf(stderr,
+          "Registry uses %" PRIu64 " Hash bins for %" PRIu64 " objects\n",
+          registry.store.bin_count, registry.store.count);
   unlock_registry();
 }
 
