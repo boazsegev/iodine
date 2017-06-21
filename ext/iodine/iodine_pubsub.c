@@ -261,8 +261,9 @@ int populate_redis_callback_reply(resp_parser_pt p, resp_object_s *o,
     break;
   case RESP_NULL:
     rb_ary_push((VALUE)rep, Qnil);
+    break;
   case RESP_NUMBER:
-    rb_ary_push((VALUE)rep, LONG2NUM(resp_obj2num(o)->number));
+    rb_ary_push((VALUE)rep, LONG2FIX(resp_obj2num(o)->number));
     break;
   case RESP_ERR:
   case RESP_STRING:
@@ -283,7 +284,7 @@ static void *perform_redis_callback_inGVL(void *data) {
   struct redis_callback_data *a = data;
   VALUE reply = rb_ary_new();
   resp_obj_each(NULL, a->msg, populate_redis_callback_reply, (void *)reply);
-  rb_funcall(a->block, iodine_call_proc_id, 1, &reply);
+  rb_funcallv(a->block, iodine_call_proc_id, 1, &reply);
   Registry.remove(a->block);
   return NULL;
 }
@@ -342,15 +343,14 @@ static VALUE redis_send(int argc, VALUE *argv, VALUE self) {
   }
 
   if (rb_block_given_p()) {
-    VALUE block = Qnil;
-    block = rb_block_proc();
+    VALUE block = rb_block_proc();
     Registry.add(block);
     redis_engine_send(e->p, cmd, redis_callback, (void *)block);
     return block;
   } else {
     redis_engine_send(e->p, cmd, NULL, NULL);
   }
-  return Qnil;
+  return Qtrue;
 error:
   if (cmd)
     resp_free_object(cmd);
@@ -431,7 +431,7 @@ static VALUE ips_set_default(VALUE self, VALUE en) {
     rb_raise(rb_eArgError, "This Iodine::PubSub::Engine is broken.");
   rb_ivar_set(self, default_pubsubid, en);
   PUBSUB_DEFAULT_ENGINE = e->p;
-  return self;
+  return en;
 }
 
 /**
