@@ -152,16 +152,18 @@ module Iodine
   # Use {warmup} when either {processes} or {threads} are set to more then 1.
   def self.warmup app
     # load anything marked with `autoload`, since autoload isn't thread safe nor fork friendly.
-    Module.constants.each do |n|
-      begin
-        Object.const_get(n)
-      rescue Exception => _e
+    Iodine.run do
+      Module.constants.each do |n|
+        begin
+          Object.const_get(n)
+        rescue Exception => _e
+        end
       end
-    end
-    ::Rack::Builder.new(app) do |r|
-      r.warmup do |a|
-        client = ::Rack::MockRequest.new(a)
-        client.get('/')
+      ::Rack::Builder.new(app) do |r|
+        r.warmup do |a|
+          client = ::Rack::MockRequest.new(a)
+          client.get('/')
+        end
       end
     end
   end

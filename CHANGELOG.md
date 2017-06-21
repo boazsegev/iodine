@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+#### Change log v.0.4.1 (next)
+
+**Fix**: postpone warmup in fear of abuse and collisions when using `fork`. i.e., during warmup, an application might perform actions that conflict with `fork` and worker initialization, such as creating a database connection pool during warmup, or maybe spawning a thread. Now `warmup` is postponed until *after* worker processes are up and running, resulting in a per-process warmup rather than a per-cluster warmup.
+
+***
+
 #### Change log v.0.4.0
 
 **Braking change**: Some of the API was changed / updated, hopefully simplified.
