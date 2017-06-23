@@ -23,7 +23,7 @@ Iodine is an **evented** framework with a simple API that builds off the low lev
 
 * Iodine supports only **Linux/Unix** based systems (i.e. OS X, Ubuntu, FreeBSD etc'), which are ideal for evented IO (while Windows and Solaris are better at IO *completion* events, which are totally different).
 
-Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but Rack requires Ruby 2.2.2, and so Iodine matches this requirement.
+Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but Rack requires Ruby 2.2.2, and so iodine matches this requirement.
 
 ## Iodine::Rack == a fast and powerful HTTP + Websockets server with native Pub/Sub
 
@@ -31,11 +31,11 @@ Iodine includes a light and fast HTTP and Websocket server written in C that was
 
 With `Iodine.listen2http` it's possible to run multiple HTTP applications in addition to (or instead of) the default `Iodine::Rack` HTTP service.
 
-Iodine also supports native process cluster Pub/Sub and a native RedisEngins to easily scale Iodine's Pub/Sub horizontally.
+Iodine also supports native process cluster Pub/Sub and a native RedisEngins to easily scale iodine's Pub/Sub horizontally.
 
 ### Running the web server
 
-Using the Iodine server is easy, simply add Iodine as a gem to your Rack application:
+Using the iodine server is easy, simply add iodine as a gem to your Rack application:
 
 ```ruby
 gem 'iodine', '~>0.4'
@@ -43,7 +43,7 @@ gem 'iodine', '~>0.4'
 
 Iodine will calculate, when possible, a good enough default concurrency model for lightweight applications... this might not fit your application if you use heavier database access or other blocking calls.
 
-To get the most out of Iodine, consider the amount of CPU cores available and the concurrency level the application requires.
+To get the most out of iodine, consider the amount of CPU cores available and the concurrency level the application requires.
 
 The common model of 16 threads and 4 processes can be easily adopted:
 
@@ -55,7 +55,7 @@ bundler exec iodine -p $PORT -t 16 -w 4
 
 Iodine supports an internal static file service that bypasses the Ruby layer  and serves static files directly from "C-land".
 
-This means that Iodine won't lock Ruby's GVL when sending static files. The files will be sent directly, allowing for true native concurrency.
+This means that iodine won't lock Ruby's GVL when sending static files. The files will be sent directly, allowing for true native concurrency.
 
 Since the Ruby layer is unaware of these requests, logging can be performed by turning iodine's logger on.
 
@@ -89,7 +89,7 @@ Ruby can leverage static file support (if enabled) by using the `X-Sendfile` hea
 
 This allows Ruby to send very large files using a very small memory footprint, as well as (when possible) leveraging the `sendfile` system call.
 
-i.e. (example `config.ru` for Iodine):
+i.e. (example `config.ru` for iodine):
 
 ```ruby
 app = proc do |env|
@@ -127,15 +127,15 @@ It's as easy as that. No extra code required.
 
 ### Special HTTP `Upgrade` support
 
-Iodine's HTTP server includes special support for the Upgrade directive using Rack's `env` Hash, allowing the application to focus on services and data while Iodine takes care of the network layer.
+Iodine's HTTP server includes special support for the Upgrade directive using Rack's `env` Hash, allowing the application to focus on services and data while iodine takes care of the network layer.
 
-Upgrading an HTTP connection can be performed either using Iodine's Websocket Protocol support with `env['upgrade.websocket']` or by implementing your own protocol directly over the TCP/IP layer - be it a websocket flavor or something completely different - using `env['upgrade.tcp']`.
+Upgrading an HTTP connection can be performed either using iodine's Websocket Protocol support with `env['upgrade.websocket']` or by implementing your own protocol directly over the TCP/IP layer - be it a websocket flavor or something completely different - using `env['upgrade.tcp']`.
 
 #### Websockets
 
-When an HTTP Upgrade request is received, Iodine will set the Rack Hash's upgrade property to `true`, so that: `env[upgrade.websocket?] == true`
+When an HTTP Upgrade request is received, iodine will set the Rack Hash's upgrade property to `true`, so that: `env[upgrade.websocket?] == true`
 
-To "upgrade" the HTTP request to the Websockets protocol, simply provide Iodine with a Websocket Callback Object instance or class: `env['upgrade.websocket'] = MyWebsocketClass` or `env['upgrade.websocket'] = MyWebsocketClass.new(args)`
+To "upgrade" the HTTP request to the Websockets protocol, simply provide iodine with a Websocket Callback Object instance or class: `env['upgrade.websocket'] = MyWebsocketClass` or `env['upgrade.websocket'] = MyWebsocketClass.new(args)`
 
 Iodine will adopt the object, providing it with network functionality (methods such as `write`, `each`, `defer` and `close` will become available) and invoke it's callbacks on network events.
 
@@ -182,7 +182,7 @@ Here's an example that adds horizontal scaling to the chat application in the pr
 
 ```ruby
 require 'uri'
-# initialize the Redis engine for each Iodine process.
+# initialize the Redis engine for each iodine process.
 if ENV["REDIS_URL"]
   uri = URI(ENV["REDIS_URL"])
   Iodine.default_pubsub = Iodine::PubSub::RedisEngine.new(uri.host, uri.port, 0, uri.password)
@@ -202,16 +202,19 @@ if(Iodine.default_pubsub.is_a? Iodine::PubSub::RedisEngine)
 end
 ```
 
-**Notice:**
+**Details and Limitations:**
 
-Iodine does not use a Hash table for the Pub/Sub channels, it uses a [4 bit trie](https://en.wikipedia.org/wiki/Trie).
+* Iodine does not use a Hash table for the Pub/Sub channels, it uses a [4 bit trie](https://en.wikipedia.org/wiki/Trie).
 
-The cost is higher memory consumption per channel and a limitation of 1024 bytes per channel name (shorter names are better).
+    The cost is higher memory consumption per channel and a limitation of 1024 bytes per channel name (shorter names are better).
 
-The bonus is high lookup times, zero chance of channel conflicts and an optimized preference for shared prefix channels (i.e. "user:1", "user:2"...).
+    The bonus is high lookup times, zero chance of channel conflicts and an optimized preference for shared prefix channels (i.e. "user:1", "user:2"...).
 
-Another added bonus is pattern publishing (is addition to pattern subscriptions) which isn't available when using Redis (since Redis doesn't support this feature).
+    Another added bonus is pattern publishing (is addition to pattern subscriptions) which isn't available when using Redis (since Redis doesn't support this feature).
 
+* Iodine's Redis client does *not* support multiple databases. This is both becasue [database scoping is ignored by Redis during pub/sub](https://redis.io/topics/pubsub#database-amp-scoping) and because [Redis Cluster doesn't support multiple databases](https://redis.io/topics/cluster-spec). This indicated that multiple database support just isn't worth the extra effort.
+
+* The iodine Redis client will use two Redis connections per process (one for subscriptions and the other for publishing and commands). Both connections will be automatically re-established if timeouts or errors occur.
 
 #### TCP/IP (raw) sockets
 
@@ -244,7 +247,7 @@ This design has a number of benefits, some of them related to better IO handling
 
 Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less than 8Kb in size. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache.
 
-Of course, if you still want to use Rack's `hijack` API, Iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack, as well as a socket buffer for non-blocking `write` operations (why do that when you can write a protocol object and have the main reactor manage the socket?).
+Of course, if you still want to use Rack's `hijack` API, iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack, as well as a socket buffer for non-blocking `write` operations (why do that when you can write a protocol object and have the main reactor manage the socket?).
 
 ### Performance oriented design - but safety first
 
@@ -281,13 +284,13 @@ The slower your application code, the more threads you will need to keep the ser
 
 ### How does it compare to other servers?
 
-Personally, after looking around, the only comparable servers are Puma and Passenger, which Iodine significantly outperformed on my tests (I didn't test Passenger's enterprise version).
+Personally, after looking around, the only comparable servers are Puma and Passenger, which iodine significantly outperformed on my tests (I didn't test Passenger's enterprise version).
 
 Since the HTTP and Websocket parsers are written in C (with no RegExp), they're fairly fast.
 
-Also, Iodine's core and parsers are running outside of Ruby's global lock, meaning that they enjoy true concurrency before entering the Ruby layer (your application) - this offers Iodine a big advantage over other Ruby servers.
+Also, iodine's core and parsers are running outside of Ruby's global lock, meaning that they enjoy true concurrency before entering the Ruby layer (your application) - this offers iodine a big advantage over other Ruby servers.
 
-Another assumption Iodine makes is that it is behind a load balancer / proxy (which is the normal way Ruby applications are deployed) - this allows Iodine to disregard header validity checks (we're not checking for invalid characters) and focus it's resources on other security and performance concerns.
+Another assumption iodine makes is that it is behind a load balancer / proxy (which is the normal way Ruby applications are deployed) - this allows iodine to disregard header validity checks (we're not checking for invalid characters) and focus it's resources on other security and performance concerns.
 
 I recommend benchmarking the performance for yourself using `wrk` or `ab`:
 
@@ -310,7 +313,7 @@ end
 run App
 ```
 
-Then start comparing servers. Here are the settings I used to compare Iodine and Puma (4 processes, 16 threads):
+Then start comparing servers. Here are the settings I used to compare iodine and Puma (4 processes, 16 threads):
 
 ```bash
 $ RACK_ENV=production iodine -p 3000 -t 16 -w 4
@@ -320,11 +323,11 @@ $ RACK_ENV=production puma -p 3000 -t 16 -w 4
 ```
 
 
-When benchmarking with `wrk`, Iodine performed significantly better, (~62K req/sec vs. ~44K req/sec) while keeping a lower memory foot print (~60Mb vs. ~111Mb).
+When benchmarking with `wrk`, iodine performed significantly better, (~62K req/sec vs. ~44K req/sec) while keeping a lower memory foot print (~60Mb vs. ~111Mb).
 
-When benchmarking with `ab`, I got different results, where Iodine still performed significantly better, (~72K req/sec vs. ~36K req/sec and ~61Mb vs. ~81.6Mb). I suspect the difference between the two benchmarks has to do with system calls to `write`, but I have no real proof.
+When benchmarking with `ab`, I got different results, where iodine still performed significantly better, (~72K req/sec vs. ~36K req/sec and ~61Mb vs. ~81.6Mb). I suspect the difference between the two benchmarks has to do with system calls to `write`, but I have no real proof.
 
-Remember to compare the memory footprint after running some requests - it's not just speed that C is helping with, it's also memory management and object pooling (i.e., Iodine uses a buffer packet pool management).
+Remember to compare the memory footprint after running some requests - it's not just speed that C is helping with, it's also memory management and object pooling (i.e., iodine uses a buffer packet pool management).
 
 ## Can I try before I buy?
 
@@ -338,7 +341,7 @@ $ gem install iodine
 
 If building the native C extension fails, please note that some Ruby installations, such as on Ubuntu, require that you separately install the development headers (`ruby.h` and friends). I have no idea why they do that, as you will need the development headers for any native gems you want to install - so hurry up and get them.
 
-If you have the development headers but still can't compile the Iodine extension, [open an issue](https://github.com/boazsegev/iodine/issues) with any messages you're getting and I'll be happy to look into it.
+If you have the development headers but still can't compile the iodine extension, [open an issue](https://github.com/boazsegev/iodine/issues) with any messages you're getting and I'll be happy to look into it.
 
 ## Mr. Sandman, write me a server
 
@@ -386,7 +389,7 @@ But me, I prefer to make sure my development software runs the exact same code a
 
 Also, I don't really understand all the minute details of EventMachine's API, it kept crashing my system every time I reached 1K-2K active connections... I'm sure I just don't know how to use EventMachine, but that's just that.
 
-Besides, you're here - why not take Iodine out for a spin and see for yourself?
+Besides, you're here - why not take iodine out for a spin and see for yourself?
 
 ## Can I contribute?
 
@@ -420,7 +423,7 @@ Here's a few things you can use from this project and they seem to be handy to h
 
     This one is a simple binary tree with a Ruby GC callback. Remember to initialize the Registry (`Registry.init(owner)`) so it's "owned" by some Ruby-land object, this allows it to bridge the two worlds for the GC's mark and sweep.
 
-    I'm attaching it to one of Iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
+    I'm attaching it to one of iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
 
 * I was using a POSIX thread pool library ([`libasync.h`](https://github.com/boazsegev/facil.io/blob/master/lib/libasync.c)) until I realized how many issues Ruby has with non-Ruby threads... So now there's a Ruby-thread port for this library at ([`rb-libasync.h`](https://github.com/boazsegev/iodine/blob/master/ext/iodine/rb-libasync.h)).
 

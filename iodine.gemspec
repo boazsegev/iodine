@@ -9,8 +9,8 @@ Gem::Specification.new do |spec|
   spec.authors       = ['Boaz Segev']
   spec.email         = ['bo@plezi.io']
 
-  spec.summary       = ' Iodine - HTTP / Websocket Server & EventMachine alternative for Ruby MRI - a kqueue/epoll C extension.'
-  spec.description   = ' Iodine - HTTP / Websocket Server & EventMachine alternative for Ruby MRI - a kqueue/epoll C extension.'
+  spec.summary       = 'iodine - HTTP / Websocket Server with Pub/Sub support, optimized for Ruby MRI on Linux / BSD'
+  spec.description   = 'iodine - HTTP / Websocket Server with Pub/Sub support, optimized for Ruby MRI on Linux / BSD'
   spec.homepage      = 'https://github.com/boazsegev/iodine'
   spec.license       = 'MIT'
 
