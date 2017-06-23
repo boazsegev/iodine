@@ -1,4 +1,4 @@
-# Iodine - HTTP / Websocket Server & EventMachine alternative: C kqueue/epoll extension
+# iodine - HTTP / Websocket Server with Pub/Sub support, optimized for Ruby MRI on Linux / BSD
 [![Logo](https://github.com/boazsegev/iodine/raw/master/logo.png)](https://github.com/boazsegev/iodine)
 
 [![Build Status](https://travis-ci.org/boazsegev/iodine.svg?branch=master)](https://travis-ci.org/boazsegev/iodine)
@@ -6,21 +6,24 @@
 [![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
 [![GitHub](https://img.shields.io/badge/GitHub-Open%20Source-blue.svg)](https://github.com/boazsegev/iodine)
 
-Iodine is a fast concurrent web server for real-time Ruby applications, with native support for Websockets, Pub/Sub, static file service, HTTP/1.1 and Redis Pub/Sub scaling (2 connections per Iodine process).
+Iodine is a fast concurrent web server for real-time Ruby applications, with native support for:
 
-Iodine also supports custom protocol authoring, making Object Oriented **Network Services** easy to write.
+* Websockets;
+* Pub/Sub (with optional Redis Pub/Sub scaling);
+* Static file service (with automatic `gzip` support for pre-compressed versions);
+* HTTP/1.1 keep-alive and pipelining;
+* Asynchronous event scheduling and timers;
+* Client connectivity (attach client sockets to make them evented);
+* Custom protocol authoring;
+* and more!
 
 Iodine is an **evented** framework with a simple API that builds off the low level [C code library facil.io](https://github.com/boazsegev/facil.io) with support for **epoll** and **kqueue** - this means that:
 
-* Iodine can handle **thousands of concurrent connections** (tested with more then 20K connections).
-
-    That's right, Iodine isn't subject to the 1024 connection limit imposed by native Ruby and `select`/`poll` based applications.
-
-    This makes Iodine ideal for writing HTTP/2 and Websocket servers (which is what started this whole thing).
+* Iodine can handle **thousands of concurrent connections** (tested with more then 20K connections)!
 
 * Iodine supports only **Linux/Unix** based systems (i.e. OS X, Ubuntu, FreeBSD etc'), which are ideal for evented IO (while Windows and Solaris are better at IO *completion* events, which are totally different).
 
-Iodine is a C extension for Ruby, developed for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but Rack requires Ruby 2.2.2, and so Iodine matches this requirement.
+Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but Rack requires Ruby 2.2.2, and so Iodine matches this requirement.
 
 ## Iodine::Rack == a fast and powerful HTTP + Websockets server with native Pub/Sub
 
@@ -108,6 +111,20 @@ run app
 
 Go to [localhost:3000/source](http://localhost:3000/source) to download the `config.ru` file using the `X-Sendfile` extension.
 
+#### Pre-Compressed assets / files
+
+Simply `gzip` your static files and iodine will automatically recognize and send the `gz` version if the client (browser) supports the `gzip` transfer-encoding.
+
+For example, to offer a compressed version of `style.css`, run (in the terminal):
+
+      $  gzip -k -9 style.css
+
+Now, you will have two files in your folder, `style.css` and `style.css.gz`.
+
+When a browser that supports compressed encoding (which is most browsers) requests the file, iodine will recognize that a pre-compressed option exists and will prefer the `gzip` compressed version.
+
+It's as easy as that. No extra code required.
+
 ### Special HTTP `Upgrade` support
 
 Iodine's HTTP server includes special support for the Upgrade directive using Rack's `env` Hash, allowing the application to focus on services and data while Iodine takes care of the network layer.
@@ -126,7 +143,7 @@ Here is a simple chatroom example we can run in the terminal (`irb`) or easily p
 
 ```ruby
 require 'iodine'
-class WebsocketEcho
+class WebsocketChat
   def on_open
     # Pub/Sub directly to the client (or use a block to process the messages)
     subscribe channel: :chat
@@ -140,7 +157,7 @@ class WebsocketEcho
 end
 Iodine::Rack.app= Proc.new do |env|
   if env['upgrade.websocket?'.freeze] && env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
-    env['upgrade.websocket'.freeze] = WebsocketEcho # or: WebsocketEcho.new
+    env['upgrade.websocket'.freeze] = WebsocketChat # or: WebsocketChat.new
     [0,{}, []] # It's possible to set cookies for the response.
   else
     [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
@@ -156,6 +173,45 @@ Iodine::Rack.public = "www/public"
 #
 Iodine.start
 ```
+
+#### Native Pub/Sub with *optional* Redis scaling
+
+Iodine's core, `facil.io` offers a native Pub/Sub implementation. The implementation is totally native to iodine, it covers the whole process cluster and it can be easily scaled by using Redis (which isn't required except for horizontal scaling).
+
+Here's an example that adds horizontal scaling to the chat application in the previous example, so that Pub/Sub messages are published across many machines at once:
+
+```ruby
+require 'uri'
+# initialize the Redis engine for each Iodine process.
+if ENV["REDIS_URL"]
+  uri = URI(ENV["REDIS_URL"])
+  Iodine.default_pubsub = Iodine::PubSub::RedisEngine.new(uri.host, uri.port, 0, uri.password)
+else
+  puts "* No Redis, it's okay, pub/sub will still run on the whole process cluster."
+end
+
+# ... the rest of the application remain unchanged.
+```
+
+The new Redis client can also be used for asynchronous Redis command execution. i.e.:
+
+```ruby
+if(Iodine.default_pubsub.is_a? Iodine::PubSub::RedisEngine)
+  # Ask Redis about all it's client connections and print out the reply.
+  Iodine.default_pubsub.send("CLIENT LIST") { |reply| puts reply }
+end
+```
+
+**Notice:**
+
+Iodine does not use a Hash table for the Pub/Sub channels, it uses a [4 bit trie](https://en.wikipedia.org/wiki/Trie).
+
+The cost is higher memory consumption per channel and a limitation of 1024 bytes per channel name (shorter names are better).
+
+The bonus is high lookup times, zero chance of channel conflicts and an optimized preference for shared prefix channels (i.e. "user:1", "user:2"...).
+
+Another added bonus is pattern publishing (is addition to pattern subscriptions) which isn't available when using Redis (since Redis doesn't support this feature).
+
 
 #### TCP/IP (raw) sockets
 
