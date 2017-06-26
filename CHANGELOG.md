@@ -8,6 +8,15 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+#### Change log v.0.4.3
+
+This release is a ghost hunt release, attempting to find an issue noticed only during when deploying in the Heroku production environment.
+
+**Fix**: fixed a possible issue in fragmented pipelined Websocket messages. This
+
+
+***
+
 #### Change log v.0.4.2
 
 **Fix**: fixed an issue where Websocket `ping` timeouts were being ignored for the default `Iodine::Rack` server, causing the default (40 seconds) to persist over specified valued.
