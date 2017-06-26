@@ -12,7 +12,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 This release is a ghost hunt release, attempting to find an issue noticed only during when deploying in the Heroku production environment.
 
-**Fix**: fixed a possible issue in fragmented pipelined Websocket messages. This
+**Fix**: fixed a possible issue in fragmented pipelined Websocket messages.
 
 
 ***
