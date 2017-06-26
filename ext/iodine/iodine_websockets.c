@@ -54,70 +54,70 @@ inline static ws_s *get_ws(VALUE obj) {
 Buffer management - Rubyfy the way the buffer is handled.
 ***************************************************************************** */
 
-struct buffer_s {
-  void *data;
-  size_t size;
-};
-
-/** returns a buffer_s struct, with a buffer (at least) `size` long. */
-struct buffer_s create_ws_buffer(ws_s *owner);
-
-/** returns a buffer_s struct, with a buffer (at least) `size` long. */
-struct buffer_s resize_ws_buffer(ws_s *owner, struct buffer_s);
-
-/** releases an existing buffer. */
-void free_ws_buffer(ws_s *owner, struct buffer_s);
-
-/** Sets the initial buffer size. (4Kb)*/
-#define WS_INITIAL_BUFFER_SIZE 4096
-
-// buffer increments by 4,096 Bytes (4Kb)
-#define round_up_buffer_size(size) ((((size) >> 12) + 1) << 12)
-
-struct buffer_args {
-  struct buffer_s buffer;
-  ws_s *ws;
-};
-
-void *ruby_land_buffer(void *_buf) {
-#define args ((struct buffer_args *)(_buf))
-  if (args->buffer.data == NULL) {
-    VALUE rbbuff = rb_str_buf_new(WS_INITIAL_BUFFER_SIZE);
-    rb_ivar_set(get_handler(args->ws), iodine_buff_var_id, rbbuff);
-    rb_str_set_len(rbbuff, 0);
-    rb_enc_associate(rbbuff, IodineBinaryEncoding);
-    args->buffer.data = RSTRING_PTR(rbbuff);
-    args->buffer.size = WS_INITIAL_BUFFER_SIZE;
-
-  } else {
-    VALUE rbbuff = rb_ivar_get(get_handler(args->ws), iodine_buff_var_id);
-    rb_str_modify(rbbuff);
-    rb_str_resize(rbbuff, args->buffer.size);
-    args->buffer.data = RSTRING_PTR(rbbuff);
-    args->buffer.size = rb_str_capacity(rbbuff);
-  }
-  return NULL;
-#undef args
-}
-
-struct buffer_s create_ws_buffer(ws_s *owner) {
-  struct buffer_args args = {.ws = owner};
-  RubyCaller.call_c(ruby_land_buffer, &args);
-  return args.buffer;
-}
-
-struct buffer_s resize_ws_buffer(ws_s *owner, struct buffer_s buffer) {
-  buffer.size = round_up_buffer_size(buffer.size);
-  struct buffer_args args = {.ws = owner, .buffer = buffer};
-  RubyCaller.call_c(ruby_land_buffer, &args);
-  return args.buffer;
-}
-void free_ws_buffer(ws_s *owner, struct buffer_s buff) {
-  (void)(owner);
-  (void)(buff);
-}
-
-#undef round_up_buffer_size
+// struct buffer_s {
+//   void *data;
+//   size_t size;
+// };
+//
+// /** returns a buffer_s struct, with a buffer (at least) `size` long. */
+// struct buffer_s create_ws_buffer(ws_s *owner);
+//
+// /** returns a buffer_s struct, with a buffer (at least) `size` long. */
+// struct buffer_s resize_ws_buffer(ws_s *owner, struct buffer_s);
+//
+// /** releases an existing buffer. */
+// void free_ws_buffer(ws_s *owner, struct buffer_s);
+//
+// /** Sets the initial buffer size. (4Kb)*/
+// #define WS_INITIAL_BUFFER_SIZE 4096
+//
+// // buffer increments by 4,096 Bytes (4Kb)
+// #define round_up_buffer_size(size) ((((size) >> 12) + 1) << 12)
+//
+// struct buffer_args {
+//   struct buffer_s buffer;
+//   ws_s *ws;
+// };
+//
+// void *ruby_land_buffer(void *_buf) {
+// #define args ((struct buffer_args *)(_buf))
+//   if (args->buffer.data == NULL) {
+//     VALUE rbbuff = rb_str_buf_new(WS_INITIAL_BUFFER_SIZE);
+//     rb_ivar_set(get_handler(args->ws), iodine_buff_var_id, rbbuff);
+//     rb_str_set_len(rbbuff, 0);
+//     rb_enc_associate(rbbuff, IodineBinaryEncoding);
+//     args->buffer.data = RSTRING_PTR(rbbuff);
+//     args->buffer.size = WS_INITIAL_BUFFER_SIZE;
+//
+//   } else {
+//     VALUE rbbuff = rb_ivar_get(get_handler(args->ws), iodine_buff_var_id);
+//     rb_str_modify(rbbuff);
+//     rb_str_resize(rbbuff, args->buffer.size);
+//     args->buffer.data = RSTRING_PTR(rbbuff);
+//     args->buffer.size = rb_str_capacity(rbbuff);
+//   }
+//   return NULL;
+// #undef args
+// }
+//
+// struct buffer_s create_ws_buffer(ws_s *owner) {
+//   struct buffer_args args = {.ws = owner};
+//   RubyCaller.call_c(ruby_land_buffer, &args);
+//   return args.buffer;
+// }
+//
+// struct buffer_s resize_ws_buffer(ws_s *owner, struct buffer_s buffer) {
+//   buffer.size = round_up_buffer_size(buffer.size);
+//   struct buffer_args args = {.ws = owner, .buffer = buffer};
+//   RubyCaller.call_c(ruby_land_buffer, &args);
+//   return args.buffer;
+// }
+// void free_ws_buffer(ws_s *owner, struct buffer_s buff) {
+//   (void)(owner);
+//   (void)(buff);
+// }
+//
+// #undef round_up_buffer_size
 
 /* *****************************************************************************
 Websocket Ruby API
@@ -664,6 +664,7 @@ void ws_on_ready(ws_s *ws) {
 
 struct ws_on_data_args_s {
   ws_s *ws;
+  void *data;
   size_t length;
   uint8_t is_text;
 };
@@ -674,24 +675,19 @@ void *ws_on_data_inGIL(void *args_) {
     fprintf(stderr, "ERROR: iodine can't find Websocket handler!\n");
     return NULL;
   }
-  VALUE buffer = rb_ivar_get(handler, iodine_buff_var_id);
+  VALUE buffer = rb_str_new(a->data, a->length);
   if (a->is_text)
     rb_enc_associate(buffer, IodineUTF8Encoding);
   else
     rb_enc_associate(buffer, IodineBinaryEncoding);
-  fprintf(stderr, "INFO: iodine set encoding. Setting length to %lu\n",
-          a->length);
-  rb_str_set_len(buffer, a->length);
   fprintf(stderr, "INFO: iodine calling Ruby handler\n");
   rb_funcallv(handler, iodine_on_message_func_id, 1, &buffer);
-  /* make sure the string is modifiable and no buffer space is freed */
-  rb_str_modify(buffer);
-  rb_str_set_len(buffer, rb_str_capacity(buffer));
   // RubyCaller.call2(handler, iodine_on_message_func_id, 1, &buffer);
   return NULL;
 }
 void ws_on_data(ws_s *ws, char *data, size_t length, uint8_t is_text) {
-  struct ws_on_data_args_s a = {.ws = ws, .length = length, .is_text = is_text};
+  struct ws_on_data_args_s a = {
+      .ws = ws, .data = data, .length = length, .is_text = is_text};
   RubyCaller.call_c(ws_on_data_inGIL, &a);
   (void)(data);
 }
