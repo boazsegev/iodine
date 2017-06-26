@@ -251,6 +251,8 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
   data_len = 0;
   read_buffer.pos = 0;
   while (read_buffer.pos < len) {
+    fprintf(stderr, "INFO: websocket read loop while %d < %ld\n",
+            read_buffer.pos, len);
     // collect the frame's head
     if (!ws->parser.state.has_head) {
       ws->parser.state.has_head = 1;
