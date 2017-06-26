@@ -684,6 +684,8 @@ void *ws_on_data_inGIL(void *args_) {
   rb_str_set_len(buffer, a->length);
   fprintf(stderr, "INFO: iodine calling Ruby handler\n");
   rb_funcallv(handler, iodine_on_message_func_id, 1, &buffer);
+  /* reclaim full capacity */
+  rb_str_set_len(buffer, rb_str_capacity(buffer));
   // RubyCaller.call2(handler, iodine_on_message_func_id, 1, &buffer);
   return NULL;
 }
