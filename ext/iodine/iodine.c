@@ -286,7 +286,7 @@ static int iodine_review_rack_app(void) {
   rb_hash_aset(opt, ID2SYM(rb_intern("public")),
                rb_ivar_get(rack, rb_intern("@public")));
   rb_hash_aset(opt, ID2SYM(rb_intern("ping")),
-               rb_ivar_get(rack, rb_intern("@ping")));
+               rb_ivar_get(rack, rb_intern("@ws_timeout")));
   rb_hash_aset(opt, ID2SYM(rb_intern("timeout")),
                rb_ivar_get(rack, rb_intern("@ws_timeout")));
   if (rb_funcall2(Iodine, rb_intern("listen2http"), 1, &opt) == Qfalse)

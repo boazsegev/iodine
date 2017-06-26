@@ -10,6 +10,14 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.4.1
 
+**Fix**: fixed an issue where Websocket `ping` timeouts were being ignored for the default `Iodine::Rack` server, causing the default (40 seconds) to persist over specified valued.
+
+**Fix**: fixed a possible issue with highjacking which might cause the server to hang.
+
+***
+
+#### Change log v.0.4.1
+
 **Fix**: postpone warmup in fear of abuse and collisions when using `fork`. i.e., during warmup, an application might perform actions that conflict with `fork` and worker initialization, such as creating a database connection pool during warmup, or maybe spawning a thread. Now `warmup` is postponed until *after* worker processes are up and running, resulting in a per-process warmup rather than a per-cluster warmup.
 
 **Fix** move the `rake-compiler` dependency to "development" instead of "runtime". Credit to Luis Lavena (@luislavena) for exposing the issue (#19).
