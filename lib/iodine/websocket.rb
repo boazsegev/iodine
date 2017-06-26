@@ -7,6 +7,8 @@ module Iodine
   # * Server <=> Client relations ({Iodine::Websocket#write}, {Iodine::Websocket#close} etc')
   # * Client <=> Server <=> Client relations ({Iodine::Websocket#subscribe}, {Iodine::Websocket#publish}, etc').
   # * Task scheduling ({Iodine::Websocket.defer}, {Iodine::Websocket#defer}, {Iodine::Websocket.each}).
+  #
+  # Notice that Websocket callback objects (as specified by the {file:SPEC-Websocket-Draft.md proposed Rack specification} *MUST* provide an `on_message(data)` callback.
   module Websocket
   end
 end

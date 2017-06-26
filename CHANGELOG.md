@@ -8,12 +8,15 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
+#### Change log v.0.4.4
+
+**Fix**: fixed an issue related to Ruby 2.3 optimizations of String management (an issue that didn't seem to effect Ruby 2.4). This fix disables the recyclable buffer implemented for the `on_message` Websocket callback. The callback will now receive a copy of the buffer (not the buffer itself), so there is no risk of collisions between the network buffer (managed in C) and the `on_message(data)` String (managed by Ruby).
+
+***
+
 #### Change log v.0.4.3
 
-This release is a ghost hunt release, attempting to find an issue noticed only during when deploying in the Heroku production environment.
-
 **Fix**: fixed a possible issue in fragmented pipelined Websocket messages.
-
 
 ***
 

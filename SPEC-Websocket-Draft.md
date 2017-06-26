@@ -23,9 +23,11 @@ The Websocket Callback Object should be a class (or an instance of such class) w
 
 * `on_open()` WILL be called once the upgrade had completed.
 
-* `on_message(data)` WILL be called when incoming Websocket data is received. `data` will be a String with an encoding of UTF-8 for text messages and `binary` encoding for non-text messages (as specified by the Websocket Protocol).
+* `on_message(data)` (REQUIRED) WILL be called when incoming Websocket data is received. `data` will be a String with an encoding of UTF-8 for text messages and `binary` encoding for non-text messages (as specified by the Websocket Protocol).
 
     The *client* **MUST** assume that the `data` String will be a **recyclable buffer** and that it's content will be corrupted the moment the `on_message` callback returns.
+
+    Servers MAY, optionally, implement a **recyclable buffer** for the `on_message` callback. However, this is optional and it is *not* required.
 
 * `on_ready()` **MAY** be called when the state of the out-going socket buffer changes from full to not full (data can be sent to the socket). **If** `has_pending?` returns `true`, the `on_ready` callback **MUST** be called once the buffer state changes.
 
@@ -66,6 +68,8 @@ The following keywords (both as method names and instance variable names) are re
 Connection `ping` / `pong`, timeouts and network considerations should be implemented by the server. It is **RECOMMENDED** (but not required) that the server send `ping`s to prevent connection timeouts and detect network failure.
 
 Server settings **MAY** (not required) be provided to allow for customization and adaptation for different network environments or websocket extensions. It is **RECOMMENDED** that any settings be available as command line arguments and **not** incorporated into the application's logic.
+
+The requirement that the server extends the class of the Websocket Callback Object (instead of the client application doing so explicitly) is designed to allow the client application to be more server agnostic.
 
 ## Upgrading
 
