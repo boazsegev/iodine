@@ -661,19 +661,32 @@ void ws_on_ready(ws_s *ws) {
     return;
   RubyCaller.call(handler, iodine_on_ready_func_id);
 }
-void ws_on_data(ws_s *ws, char *data, size_t length, uint8_t is_text) {
-  (void)(data);
-  VALUE handler = get_handler(ws);
+
+struct ws_on_data_args_s {
+  ws_s *ws;
+  size_t length;
+  uint8_t is_text;
+};
+void *ws_on_data_inGIL(void *args_) {
+  struct ws_on_data_args_s *a = args_;
+  VALUE handler = get_handler(a->ws);
   if (!handler)
-    return;
+    return NULL;
   VALUE buffer = rb_ivar_get(handler, iodine_buff_var_id);
-  if (is_text)
+  if (a->is_text)
     rb_enc_associate(buffer, IodineUTF8Encoding);
   else
     rb_enc_associate(buffer, IodineBinaryEncoding);
-  rb_str_set_len(buffer, length);
+  rb_str_set_len(buffer, a->length);
   fprintf(stderr, "INFO: iodine calling Ruby handler\n");
-  RubyCaller.call2(handler, iodine_on_message_func_id, 1, &buffer);
+  rb_funcallv(handler, iodine_on_message_func_id, 1, &buffer);
+  // RubyCaller.call2(handler, iodine_on_message_func_id, 1, &buffer);
+  return NULL;
+}
+void ws_on_data(ws_s *ws, char *data, size_t length, uint8_t is_text) {
+  struct ws_on_data_args_s a = {.ws = ws, .length = length, .is_text = is_text};
+  RubyCaller.call_c(ws_on_data_inGIL, &a);
+  (void)(data);
 }
 
 //////////////
