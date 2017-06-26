@@ -416,9 +416,11 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
         goto reset_state;
       }
       /* This was the last frame */
-      if (ws->on_message) /* call the on_message callback */
+      if (ws->on_message) /* call the on_message callback */ {
+        fprintf(stderr, "INFO: websocket Callback called\n");
         ws->on_message(ws, ws->buffer.data, ws->length,
                        ws->parser.head2.op_code == 1);
+      }
       goto reset_parser;
     } else if (ws->parser.head.op_code == 8) {
       /* op-code == close */
@@ -472,6 +474,8 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
     ws->parser.received = ws->parser.length = ws->parser.psize.len2 = data_len =
         0;
   }
+  fprintf(stderr, "INFO: websocket read loop finished %d < %ld\n",
+          read_buffer.pos, len);
   facil_force_event(sockfd, FIO_EVENT_ON_DATA);
 #undef ws
 }
