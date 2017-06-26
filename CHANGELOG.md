@@ -8,7 +8,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ***
 
-#### Change log v.0.4.1
+#### Change log v.0.4.2
 
 **Fix**: fixed an issue where Websocket `ping` timeouts were being ignored for the default `Iodine::Rack` server, causing the default (40 seconds) to persist over specified valued.
 
