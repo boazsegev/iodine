@@ -668,21 +668,19 @@ struct ws_on_data_args_s {
   uint8_t is_text;
 };
 void *ws_on_data_inGIL(void *args_) {
-  fprintf(stderr, "INFO: iodine entered GIL\n");
   struct ws_on_data_args_s *a = args_;
   VALUE handler = get_handler(a->ws);
   if (!handler) {
     fprintf(stderr, "ERROR: iodine can't find Websocket handler!\n");
     return NULL;
   }
-  fprintf(stderr, "INFO: iodine collected handler\n");
   VALUE buffer = rb_ivar_get(handler, iodine_buff_var_id);
-  fprintf(stderr, "INFO: iodine collected buffer string\n");
   if (a->is_text)
     rb_enc_associate(buffer, IodineUTF8Encoding);
   else
     rb_enc_associate(buffer, IodineBinaryEncoding);
-  fprintf(stderr, "INFO: iodine set encoding\n");
+  fprintf(stderr, "INFO: iodine set encoding. Setting length to %lu\n",
+          a->length);
   rb_str_set_len(buffer, a->length);
   fprintf(stderr, "INFO: iodine calling Ruby handler\n");
   rb_funcallv(handler, iodine_on_message_func_id, 1, &buffer);
