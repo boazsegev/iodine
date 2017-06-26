@@ -680,9 +680,7 @@ void *ws_on_data_inGIL(void *args_) {
     rb_enc_associate(buffer, IodineUTF8Encoding);
   else
     rb_enc_associate(buffer, IodineBinaryEncoding);
-  fprintf(stderr, "INFO: iodine calling Ruby handler\n");
   rb_funcallv(handler, iodine_on_message_func_id, 1, &buffer);
-  // RubyCaller.call2(handler, iodine_on_message_func_id, 1, &buffer);
   return NULL;
 }
 void ws_on_data(ws_s *ws, char *data, size_t length, uint8_t is_text) {

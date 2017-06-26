@@ -115,8 +115,6 @@ struct Websocket {
   struct buffer_s buffer;
   /** message length (how much of the buffer actually used). */
   size_t length;
-  /** for fragmenting the `on_data` parsing and message handling. */
-  size_t resume_from;
   /** parser. */
   struct {
     union {
@@ -233,12 +231,6 @@ static void websocket_write_impl(intptr_t fd, void *data, size_t len, char text,
 static size_t websocket_encode(void *buff, void *data, size_t len, char text,
                                char first, char last, char client);
 
-static void on_data(intptr_t sockfd, protocol_s *_ws);
-static void on_data_def(intptr_t sockfd, protocol_s *_ws, void *arg) {
-  on_data(sockfd, _ws);
-  (void)arg;
-}
-
 /* read data from the socket, parse it and invoke the websocket events. */
 static void on_data(intptr_t sockfd, protocol_s *_ws) {
 #define ws ((ws_s *)_ws)
@@ -246,13 +238,12 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
     return;
   ssize_t len = 0;
   ssize_t data_len = 0;
+  read_buffer.pos = 0;
+
   if ((len = sock_read(sockfd, read_buffer.buffer, WEBSOCKET_READ_MAX)) <= 0)
     return;
-  data_len = 0;
-  read_buffer.pos = 0;
+
   while (read_buffer.pos < len) {
-    fprintf(stderr, "INFO: websocket read loop while %d < %ld\n",
-            read_buffer.pos, len);
     // collect the frame's head
     if (!ws->parser.state.has_head) {
       ws->parser.state.has_head = 1;
@@ -416,12 +407,9 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
         goto reset_state;
       }
       /* This was the last frame */
-      if (ws->on_message) /* call the on_message callback */ {
-        fprintf(stderr, "INFO: websocket Callback called\n");
+      if (ws->on_message) /* call the on_message callback */
         ws->on_message(ws, ws->buffer.data, ws->length,
                        ws->parser.head2.op_code == 1);
-        fprintf(stderr, "INFO: websocket Callback returned\n");
-      }
       goto reset_parser;
     } else if (ws->parser.head.op_code == 8) {
       /* op-code == close */
@@ -475,8 +463,6 @@ static void on_data(intptr_t sockfd, protocol_s *_ws) {
     ws->parser.received = ws->parser.length = ws->parser.psize.len2 = data_len =
         0;
   }
-  fprintf(stderr, "INFO: websocket read loop finished %d >= %ld\n",
-          read_buffer.pos, len);
   facil_force_event(sockfd, FIO_EVENT_ON_DATA);
 #undef ws
 }
