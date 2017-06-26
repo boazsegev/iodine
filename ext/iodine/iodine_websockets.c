@@ -641,7 +641,8 @@ void ws_on_open(ws_s *ws) {
 void ws_on_close(ws_s *ws) {
   VALUE handler = get_handler(ws);
   if (!handler) {
-    fprintf(stderr, "Closing a handlerless websocket?!\n");
+    fprintf(stderr,
+            "ERROR: (iodine websockets) Closing a handlerless websocket?!\n");
     return;
   }
   RubyCaller.call(handler, iodine_on_close_func_id);
@@ -671,6 +672,7 @@ void ws_on_data(ws_s *ws, char *data, size_t length, uint8_t is_text) {
   else
     rb_enc_associate(buffer, IodineBinaryEncoding);
   rb_str_set_len(buffer, length);
+  fprintf(stderr, "INFO: iodine calling Ruby handler\n");
   RubyCaller.call2(handler, iodine_on_message_func_id, 1, &buffer);
 }
 
