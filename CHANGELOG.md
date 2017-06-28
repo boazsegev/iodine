@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.4.5
+
+**Fix**: fix static file service for `X-Sendfile` as well as static error file fallback pages (404.html etc').
+
 ***
 
 #### Change log v.0.4.4
