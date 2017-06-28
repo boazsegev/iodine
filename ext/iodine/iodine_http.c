@@ -412,7 +412,8 @@ static void *on_rack_request_in_GVL(http_request_s *request) {
   // X-Sendfile support only present when iodine sercers static files.
   VALUE xfiles;
   if (request->settings->public_folder &&
-      (xfiles = rb_hash_aref(response_headers, XSENDFILE)) != Qnil) {
+      (xfiles = rb_hash_aref(response_headers, XSENDFILE)) != Qnil &&
+      TYPE(xfiles) == T_STRING) {
     int fr = 0;
     if (OBJ_FROZEN(response_headers)) {
       response_headers = rb_hash_dup(response_headers);
