@@ -397,7 +397,9 @@ Yes, please, here are some thoughts:
 
 * I'm really not good at writing automated tests and benchmarks, any help would be appreciated. I keep testing manually and that's less then ideal (and it's mistake prone).
 
-* If we can write a Java wrapper for [the C libraries](https://github.com/boazsegev/facil.io), it would be nice... but it could be as big a project as the whole gem, as a lot of minor details are implemented within the bridge between these two languages.
+* If we can write a Java wrapper for [the `facil.io` C framework](https://github.com/boazsegev/facil.io), it would be nice... but it could be as big a project as the whole gem, as a lot of minor details are implemented within the bridge between these two languages.
+
+* PRs or issues related to [the `facil.io` C framework](https://github.com/boazsegev/facil.io) would be better placed in [the `facil.io` repository](https://github.com/boazsegev/facil.io).
 
 * Bug reports and pull requests are welcome on GitHub at https://github.com/boazsegev/iodine.
 
