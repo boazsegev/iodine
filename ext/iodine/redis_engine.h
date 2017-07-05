@@ -17,6 +17,11 @@ subscription or publication... it will simply try until successful.
 #include "pubsub.h"
 #include "resp.h"
 
+/* support C++ */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** possible arguments for the `redis_engine_create` function call */
 struct redis_engine_create_args {
   /** Redis server's address */
@@ -64,5 +69,10 @@ See the {pubsub.h} file for documentation about engines.
 
 function names speak for themselves ;-)
 */
-void redis_engine_destroy(pubsub_engine_s *engine);
+void redis_engine_destroy(const pubsub_engine_s *engine);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
+
 #endif

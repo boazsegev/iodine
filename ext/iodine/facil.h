@@ -8,14 +8,10 @@ Feel free to copy, use and enjoy according to the license provided.
 /**
 "facil.h" is the main header for the facil.io server platform.
 */
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #define H_FACIL_H
 #define FACIL_VERSION_MAJOR 0
 #define FACIL_VERSION_MINOR 5
-#define FACIL_VERSION_PATCH 0
+#define FACIL_VERSION_PATCH 2
 
 #ifndef FACIL_PRINT_STATE
 /**
@@ -29,6 +25,11 @@ Required facil libraries
 ***************************************************************************** */
 #include "defer.h"
 #include "sock.h"
+
+/* support C++ */
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* *****************************************************************************
 Core object types

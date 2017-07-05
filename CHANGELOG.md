@@ -6,6 +6,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.4.6
+
+**Update**: Now using `facil.io` v.0.5.2.
+
+**Fix**: (from `facil.io`) fix `SIGTERM` handling, make sure sibling processes exit when a sibling dies.
+
 #### Change log v.0.4.5
 
 **Fix**: fix static file service for `X-Sendfile` as well as static error file fallback pages (404.html etc').
