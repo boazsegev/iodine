@@ -399,7 +399,7 @@ Yes, please, here are some thoughts:
 
 * If we can write a Java wrapper for [the `facil.io` C framework](https://github.com/boazsegev/facil.io), it would be nice... but it could be as big a project as the whole gem, as a lot of minor details are implemented within the bridge between these two languages.
 
-* PRs or issues related to [the `facil.io` C framework](https://github.com/boazsegev/facil.io) would be better placed in [the `facil.io` repository](https://github.com/boazsegev/facil.io).
+* PRs or issues related to [the `facil.io` C framework](https://github.com/boazsegev/facil.io) should be placed in [the `facil.io` repository](https://github.com/boazsegev/facil.io).
 
 * Bug reports and pull requests are welcome on GitHub at https://github.com/boazsegev/iodine.
 
