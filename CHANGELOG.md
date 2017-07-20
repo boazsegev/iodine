@@ -6,6 +6,18 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.4.7
+
+**Update**: Now using `facil.io` edge (stripped down v.0.5.3).
+
+**Fix**: (`websocket`) fix #21, where a client's first message could have been lost due to long `on_open` processing times. This was fixed by fragmenting the `upgrade` event into two events, adding the `facil_attach_locked` feature and attaching the new protocol before sending the response. Credit to @madsheep and @nilclass for exposing the issue and tracking it down to the `on_open` callbacks.
+
+**Fix**: (`sock`) sockets created using the TCP/IP `sock` library now use `TCP_NODELAY` as the new default. This shouldn't be considered a breaking change as much as it should be considered a fix.
+
+**Fix**: (`http1`) HTTP/1.x now correctly initializes the `udata` pointer to NULL fore each new request.
+
+**Fix**: (`defer`) a shutdown issue in `defer_perform_in_fork` was detected by @cdkrot and his fix was implemented.
+
 #### Change log v.0.4.6
 
 **Update**: Now using `facil.io` v.0.5.2.
