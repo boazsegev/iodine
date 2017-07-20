@@ -128,12 +128,10 @@ static void deferred_on_data(void *arg, void *arg2) {
   protocol_s *pr = protocol_try_lock(sock_uuid2fd(arg), FIO_PR_LOCK_TASK);
   if (!pr)
     goto postpone;
-  fprintf(stderr, "On Data Accepted %p\n", arg);
   pr->on_data((intptr_t)arg, pr);
   protocol_unlock(pr, FIO_PR_LOCK_TASK);
   return;
 postpone:
-  fprintf(stderr, ".");
   defer(deferred_on_data, arg, NULL);
   (void)arg2;
 }
