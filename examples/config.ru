@@ -40,8 +40,7 @@ end
 class WebsocketEcho
   # seng a message to new clients.
   def on_open
-    p self
-    sleep 1
+    write "Echo service initiated."
   end
   # send a message, letting the client know the server is suggunt down.
   def on_shutdown
