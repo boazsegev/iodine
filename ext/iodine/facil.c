@@ -128,10 +128,12 @@ static void deferred_on_data(void *arg, void *arg2) {
   protocol_s *pr = protocol_try_lock(sock_uuid2fd(arg), FIO_PR_LOCK_TASK);
   if (!pr)
     goto postpone;
+  fprintf(stderr, "On Data Accepted %p\n", arg);
   pr->on_data((intptr_t)arg, pr);
   protocol_unlock(pr, FIO_PR_LOCK_TASK);
   return;
 postpone:
+  fprintf(stderr, ".");
   defer(deferred_on_data, arg, NULL);
   (void)arg2;
 }
@@ -505,6 +507,7 @@ static void connector_on_close(intptr_t uuid, protocol_s *pconnector) {
 
 #undef facil_connect
 intptr_t facil_connect(struct facil_connect_args opt) {
+  intptr_t uuid = -1;
   if (!opt.address || !opt.port || !opt.on_connect)
     goto error;
   if (!opt.set_rw_hooks)
@@ -524,7 +527,7 @@ intptr_t facil_connect(struct facil_connect_args opt) {
       .rw_udata = opt.rw_udata,
       .opened = 0,
   };
-  intptr_t uuid = connector->uuid = sock_connect(opt.address, opt.port);
+  uuid = connector->uuid = sock_connect(opt.address, opt.port);
   /* check for errors, always invoke the on_fail if required */
   if (uuid == -1)
     goto error;
@@ -1080,10 +1083,8 @@ void facil_run(struct facil_run_args args) {
 Setting the protocol
 ***************************************************************************** */
 
-/** Attaches (or updates) a protocol object to a socket UUID.
- * Returns -1 on error and 0 on success.
- */
-int facil_attach(intptr_t uuid, protocol_s *protocol) {
+static int facil_attach_state(intptr_t uuid, protocol_s *protocol,
+                              protocol_metadata_s state) {
   if (!facil_data)
     facil_lib_init();
   if (protocol) {
@@ -1097,7 +1098,7 @@ int facil_attach(intptr_t uuid, protocol_s *protocol) {
       protocol->ping = mock_ping;
     if (!protocol->on_shutdown)
       protocol->on_shutdown = mock_on_ev;
-    protocol->rsv = 0;
+    prt_meta(protocol) = state;
   }
   spn_lock(&uuid_data(uuid).lock);
   if (!sock_isvalid(uuid)) {
@@ -1115,6 +1116,24 @@ int facil_attach(intptr_t uuid, protocol_s *protocol) {
   if (evio_isactive())
     evio_add(sock_uuid2fd(uuid), (void *)uuid);
   return 0;
+}
+
+/** Attaches (or updates) a protocol object to a socket UUID.
+ * Returns -1 on error and 0 on success.
+ */
+int facil_attach(intptr_t uuid, protocol_s *protocol) {
+  return facil_attach_state(uuid, protocol, (protocol_metadata_s){.rsv = 0});
+}
+
+/**
+ * Attaches (or updates) a LOCKED protocol object to a socket UUID.
+ */
+int facil_attach_locked(intptr_t uuid, protocol_s *protocol) {
+  {
+    protocol_metadata_s state = {.rsv = 0};
+    spn_lock(state.locks + FIO_PR_LOCK_TASK);
+    return facil_attach_state(uuid, protocol, state);
+  }
 }
 
 /** Sets a timeout for a specific connection (if active). */
