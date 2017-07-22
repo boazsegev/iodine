@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.4.8 (next release)
+
+**Fix**: HTTP request logging included an extra info line which was a debug/testing message inherited from `facil.io` v.0.5.3-pre-release. This is now removed.
+
 #### Change log v.0.4.7
 
 **Update**: Now using `facil.io` edge (stripped down v.0.5.3).
