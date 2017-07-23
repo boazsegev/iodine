@@ -6,7 +6,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
-#### Change log v.0.4.8 (next release)
+#### Change log v.0.4.8
 
 **Change**: (`facil.io`) the internal HTTP parser was replaced with something easier to read, for maintainability reasons. Performance seems to be unaffected.
 
