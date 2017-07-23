@@ -12,6 +12,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: HTTP request logging included an extra info line which was a debug/testing message inherited from `facil.io` v.0.5.3-pre-release. This is now removed.
 
+**Performance**: The `now` HTTP Date string is now cached for up to 2 seconds, improving performance for `Date`, `Last-Modified` and Iodine logging messages that relate to the current time. However, it's likely that Rack will write it's own date string, masking this feature.
+
 #### Change log v.0.4.7
 
 **Update**: Now using `facil.io` edge (stripped down v.0.5.3).
