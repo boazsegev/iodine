@@ -82,8 +82,11 @@ static VALUE iodine_run_after(VALUE self, VALUE milliseconds) {
   if (block == Qnil)
     return Qfalse;
   Registry.add(block);
-  facil_run_every(milli, 1, iodine_run_task, (void *)block,
-                  (void (*)(void *))Registry.remove);
+  if (facil_run_every(milli, 1, iodine_run_task, (void *)block,
+                      (void (*)(void *))Registry.remove) == -1) {
+    perror("ERROR: Iodine couldn't initialize timer");
+    return Qnil;
+  }
   return block;
 }
 /**
@@ -123,8 +126,11 @@ static VALUE iodine_run_every(int argc, VALUE *argv, VALUE self) {
   // requires a block to be passed
   rb_need_block();
   Registry.add(block);
-  facil_run_every(milli, repeat, iodine_run_task, (void *)block,
-                  (void (*)(void *))Registry.remove);
+  if (facil_run_every(milli, repeat, iodine_run_task, (void *)block,
+                      (void (*)(void *))Registry.remove) == -1) {
+    perror("ERROR: Iodine couldn't initialize timer");
+    return Qnil;
+  }
   return block;
 }
 
