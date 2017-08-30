@@ -6,7 +6,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
-#### Change log v.0.4.9
+#### Change log v.0.4.9 (next)
 
 **Change**: (`facil.io`) the internal Websocket parser was replaced with something easier to read, for maintainability reasons. Performance seems to be mostly unaffected (sometimes it's faster and sometimes it's slower, common case is slightly optimized).
 
