@@ -11,7 +11,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #define H_FACIL_H
 #define FACIL_VERSION_MAJOR 0
 #define FACIL_VERSION_MINOR 5
-#define FACIL_VERSION_PATCH 2
+#define FACIL_VERSION_PATCH 3
 
 #ifndef FACIL_PRINT_STATE
 /**
@@ -349,6 +349,8 @@ size_t facil_count(void *service);
  * will repeat forever.
  *
  * Returns -1 on error or the new file descriptor on succeess.
+ *
+ * The `on_finish` handler is always called (even on error).
  */
 int facil_run_every(size_t milliseconds, size_t repetitions,
                     void (*task)(void *), void *arg, void (*on_finish)(void *));

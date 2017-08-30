@@ -6,6 +6,16 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.4.9
+
+**Change**: (`facil.io`) the internal Websocket parser was replaced with something easier to read, for maintainability reasons. Performance seems to be mostly unaffected (sometimes it's faster and sometimes it's slower, common case is slightly optimized).
+
+**Fix**: (`Iodine`) test for timer creation error in `run_after` and `run_every`.
+
+**Fix**: (`facil.io`) timer creation now correctly detects if the reactor was stopped, allowing the creation of new timers before the reactor's reactivation.
+
+***
+
 #### Change log v.0.4.8
 
 **Change**: (`facil.io`) the internal HTTP parser was replaced with something easier to read, for maintainability reasons. Performance seems to be unaffected.
@@ -13,6 +23,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 **Fix**: HTTP request logging included an extra info line which was a debug/testing message inherited from `facil.io` v.0.5.3-pre-release. This is now removed.
 
 **Performance**: The `now` HTTP Date string is now cached for up to 2 seconds, improving performance for `Date`, `Last-Modified` and Iodine logging messages that relate to the current time. However, it's likely that Rack will write it's own date string, masking this feature.
+
+***
 
 #### Change log v.0.4.7
 
@@ -26,11 +38,15 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: (`defer`) a shutdown issue in `defer_perform_in_fork` was detected by @cdkrot and his fix was implemented.
 
+***
+
 #### Change log v.0.4.6
 
 **Update**: Now using `facil.io` v.0.5.2.
 
 **Fix**: (from `facil.io`) fix `SIGTERM` handling, make sure sibling processes exit when a sibling dies.
+
+***
 
 #### Change log v.0.4.5
 
