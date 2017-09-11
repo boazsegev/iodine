@@ -72,6 +72,7 @@ static VALUE not_implemented2(VALUE self, VALUE data) {
   return Qnil;
 }
 
+static VALUE dyn_read(int argc, VALUE *argv, VALUE self);
 /**
 A default on_data implementation will read up to 1Kb into a reusable buffer from
 the socket and call the `on_message` callback.
@@ -79,7 +80,6 @@ the socket and call the `on_message` callback.
 It is recommended that you implement this callback if messages might require
 more then 1Kb of space.
 */
-static VALUE dyn_read(int argc, VALUE *argv, VALUE self);
 static VALUE default_on_data(VALUE self) {
   VALUE buff = rb_ivar_get(self, iodine_buff_var_id);
   if (buff == Qnil) {
@@ -132,15 +132,16 @@ static VALUE dyn_run_each(VALUE self) {
 }
 
 /**
-Reads `n` bytes from the network connection.
+Reads up to `n` bytes from the network connection.
 The number of bytes to be read (n) is:
 - the number of bytes set in the optional `buffer_or_length` argument.
 - the String capacity (not length) of the String passed as the optional
   `buffer_or_length` argument.
 - 1024 Bytes (1Kb) if the optional `buffer_or_length` is either missing or
-  contains a String who's capacity is less then 1Kb.
+  contains a String with a capacity less then 1Kb.
 Returns a String (either the same one used as the buffer or a new one) on a
-successful read. Returns `nil` if no data was available.
+successful read.
+Returns `nil` if no data was available.
 */
 static VALUE dyn_read(int argc, VALUE *argv, VALUE self) {
   if (argc > 1) {
