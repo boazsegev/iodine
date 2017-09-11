@@ -25,7 +25,7 @@ Iodine is an **evented** framework with a simple API that builds off the low lev
 
 Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but Rack requires Ruby 2.2.2, and so iodine matches this requirement.
 
-## Iodine::Rack == a fast and powerful HTTP + Websockets server with native Pub/Sub
+## Iodine::Rack == fast & powerful HTTP + Websockets server with native Pub/Sub
 
 Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the [Websocket draft extension](./SPEC-Websocket-Draft.md).
 
@@ -263,8 +263,10 @@ In pseudo-code, this might look like this
 QUEUE = Queue.new
 
 def server_cycle
-    QUEUE << get_next_32_socket_events # these events schedule the proper user code to run
-    QUEUE << [server]
+    if(QUEUE.empty?)
+      QUEUE << get_next_32_socket_events # these events schedule the proper user code to run
+    end
+    QUEUE << server_cycle
 end
 
 def run_server
@@ -276,9 +278,13 @@ end
 
 In pure Ruby (without using C extensions or Java), it's possible to do the same by using `select`... and although `select` has some issues, it works well for smaller concurrency levels.
 
-The server events are fairly fast and fragmented (longer code is fragmented across multiple events), so one thread is enough to run the server including it's static file service and everything... but single threaded mode should probably be avoided.
+The server events are fairly fast and fragmented (longer code is fragmented across multiple events), so one thread is enough to run the server including it's static file service and everything... 
 
-The thread pool is there to help slow user code. It's very common that the application's code will run slower and require external resources (i.e., databases, a pub/sub service, etc'). This slow code could "starve" the server (that is patiently waiting to run it's tasks on the same thread) - which is why a thread pool is often necessary.
+...but single threaded mode should probably be avoided.
+
+The thread pool is there to help slow user code.
+
+It's very common that the application's code will run slower and require external resources (i.e., databases, a custom pub/sub service, etc'). This slow code could "starve" the server, which is patiently waiting to run it's tasks on the same thread.
 
 The slower your application code, the more threads you will need to keep the server running smoothly.
 
@@ -290,7 +296,7 @@ Since the HTTP and Websocket parsers are written in C (with no RegExp), they're 
 
 Also, iodine's core and parsers are running outside of Ruby's global lock, meaning that they enjoy true concurrency before entering the Ruby layer (your application) - this offers iodine a big advantage over other Ruby servers.
 
-Another assumption iodine makes is that it is behind a load balancer / proxy (which is the normal way Ruby applications are deployed) - this allows iodine to disregard header validity checks (we're not checking for invalid characters) and focus it's resources on other security and performance concerns.
+Another assumption iodine makes is that it is behind a load balancer / proxy (which is the normal way Ruby applications are deployed) - this allows iodine to disregard some header validity checks (we're not checking for invalid characters) and focus it's resources on other security and performance concerns.
 
 I recommend benchmarking the performance for yourself using `wrk` or `ab`:
 
@@ -325,7 +331,7 @@ $ RACK_ENV=production puma -p 3000 -t 16 -w 4
 
 When benchmarking with `wrk`, iodine performed significantly better, (~62K req/sec vs. ~44K req/sec) while keeping a lower memory foot print (~60Mb vs. ~111Mb).
 
-When benchmarking with `ab`, I got different results, where iodine still performed significantly better, (~72K req/sec vs. ~36K req/sec and ~61Mb vs. ~81.6Mb). I suspect the difference between the two benchmarks has to do with system calls to `write`, but I have no real proof.
+When benchmarking with `ab`, I got different results, where iodine still performed significantly better, (~72K req/sec vs. ~36K req/sec and ~61Mb vs. ~81.6Mb). I suspect the difference between the two benchmarks has to do with system calls to `write` and possible packet fragmentation, but I have no real proof.
 
 Remember to compare the memory footprint after running some requests - it's not just speed that C is helping with, it's also memory management and object pooling (i.e., iodine uses a buffer packet pool management).
 
@@ -345,9 +351,9 @@ If you have the development headers but still can't compile the iodine extension
 
 ## Mr. Sandman, write me a server
 
-Girls love flowers, or so my ex used to keep telling me... but I think code is the way to really show that something is hot!
+Iodine allows custom TCP/IP server authoring, for those cases where we need raw TCP/IP (UDP isn't supported just yet). 
 
-I mean, look at this short and sweet echo server - No HTTP, just use `telnet`... but it's so elegant I could cry:
+Here's a short and sweet echo server - No HTTP, just use `telnet`:
 
 ```ruby
 
@@ -427,12 +433,12 @@ Here's a few things you can use from this project and they seem to be handy to h
 
     I'm attaching it to one of iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
 
-* I was using a POSIX thread pool library ([`libasync.h`](https://github.com/boazsegev/facil.io/blob/master/lib/libasync.c)) until I realized how many issues Ruby has with non-Ruby threads... So now there's a Ruby-thread port for this library at ([`rb-libasync.h`](https://github.com/boazsegev/iodine/blob/master/ext/iodine/rb-libasync.h)).
+* I was using a POSIX thread pool library ([`defer.h`](https://github.com/boazsegev/facil.io/blob/master/lib/facil/core/defer.c)) until I realized how many issues Ruby has with non-Ruby threads... So now there's a Ruby-thread patch for this library at ([`rb-defer.c`](https://github.com/boazsegev/iodine/blob/master/ext/iodine/rb-defer.c)).
 
     Notice that all the new threads are free from the GVL - this allows true concurrency... but, you can't make Ruby API calls in that state.
 
     To perform Ruby API calls you need to re-enter the global lock (GVL), albeit temporarily, using `rb_thread_call_with_gvl` and `rv_protect` (gotta watch out from Ruby `longjmp` exceptions).
 
-* Since I needed to call Ruby methods while multi-threading and running outside the GVL, I wrote [`RubyCaller`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-call.h) which let's me call an object's method and wraps all the `rb_thread_call_with_gvl` and `rb_protect` details in a secret hidden place I never have to see again. It also keeps track of the thread's state, so if we're already within the GVL, we won't enter it "twice" (which will crash Ruby sporadically).
+* Since I needed to call Ruby methods while multi-threading and running outside the GVL, I wrote [`RubyCaller`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-call.h) which let's me call an object's method and wraps all the `rb_thread_call_with_gvl` and `rb_protect` details in a secret hidden place I never have to see again. It also keeps track of the thread's state, so if we're already within the GVL, we won't enter it "twice" (which could crash Ruby sporadically).
 
 These are nice code snippets that can be easily used in other extensions. They're easy enough to write, I guess, but I already did the legwork, so enjoy.

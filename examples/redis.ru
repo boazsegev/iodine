@@ -30,7 +30,6 @@ module MyHTTPRouter
      # check if this is an upgrade request.
      if(env['upgrade.websocket?'.freeze])
        env['upgrade.websocket'.freeze] = WS_RedisPubSub.new(env['PATH_INFO'] ? env['PATH_INFO'][1..-1] : "guest")
-       return [0, {}, []]
        return WS_RESPONSE
      end
      # simply return the RESPONSE object, no matter what request was received.

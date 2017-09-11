@@ -28,7 +28,6 @@ module MyHTTPRouter
      # check if this is an upgrade request.
      if(env['upgrade.websocket?'.freeze])
        env['upgrade.websocket'.freeze] = WebsocketEcho
-       return [0, {}, []]
        return WS_RESPONSE
      end
      # simply return the RESPONSE object, no matter what request was received.

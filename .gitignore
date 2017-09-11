@@ -12,5 +12,6 @@
 *.so
 
 .ruby-version
+.clang_complete
 
 .DS_Store

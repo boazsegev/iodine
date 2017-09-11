@@ -1,5 +1,8 @@
 #!/usr/bin/env ruby
 
+
+$VERBOSE = true
+
 Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
 puts `rake clean`
 puts `rake compile`
