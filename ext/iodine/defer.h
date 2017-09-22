@@ -19,6 +19,11 @@ forked process.
 #define LIB_DEFER_VERSION_MINOR 1
 #define LIB_DEFER_VERSION_PATCH 2
 
+/* child process reaping is enabled by default */
+#ifndef NO_CHILD_REAPER
+#define NO_CHILD_REAPER 0
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -107,6 +112,11 @@ int defer_perform_in_fork(unsigned int process_count,
 int defer_fork_is_active(void);
 /** Returns the process number for the current working proceess. 0 == parent. */
 int defer_fork_pid(void);
+
+#ifdef DEBUG
+/** minor testing facilities */
+void defer_test(void);
+#endif
 
 #ifdef __cplusplus
 } /* closing brace for extern "C" */

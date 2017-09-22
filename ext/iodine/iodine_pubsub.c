@@ -478,7 +478,7 @@ The function accepts a single argument (a Hash) and a required block.
 Accepts a single Hash argument with the following possible options:
 
 :engine :: If provided, the engine to use for pub/sub. Otherwise the default
-engine is used.
+        :: engine is used.
 
 :channel :: Required (unless :pattern). The channel to subscribe to.
 

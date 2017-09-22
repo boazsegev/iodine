@@ -10,9 +10,13 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Change**: (`facil.io`) the internal Websocket parser was replaced with something easier to read, for maintainability reasons. Performance seems to be mostly unaffected (sometimes it's faster and sometimes it's slower, common case is slightly optimized).
 
+**Change**: (`facil.io`) iodine will compile facil.io with the `NO_CHILD_REAPER` flag, in order to workaround the Rails ExecJS gem that [assumes no child reaping is performed](https://github.com/rails/execjs/issues/68). This workaround is, hopefully, temporary.
+
 **Fix**: (`Iodine`) test for timer creation error in `run_after` and `run_every`.
 
 **Fix**: (`facil.io`) timer creation now correctly detects if the reactor was stopped, allowing the creation of new timers before the reactor's reactivation.
+
+**Fix**: (`facil.io`) timer timeout review is now correctly ignored, preventing the timer from being shut down prematurely.
 
 ***
 

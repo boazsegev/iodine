@@ -352,8 +352,10 @@ int defer_perform_in_fork(unsigned int process_count,
     goto finish;
   };
 
-  /* setup zomie reaping */
+/* setup zomie reaping */
+#if !defined(NO_CHILD_REAPER) || NO_CHILD_REAPER == 0
   reap_children();
+#endif
 
   if (!process_count)
     process_count = 1;
@@ -468,6 +470,18 @@ static void pid_task(void *arg, void *unused2) {
 void defer_test(void) {
   time_t start, end;
   fprintf(stderr, "Starting defer testing\n");
+
+  spn_lock(&i_lock);
+  i_count = 0;
+  spn_unlock(&i_lock);
+  start = clock();
+  for (size_t i = 0; i < (1024 * 1024); i++) {
+    sample_task(NULL, NULL);
+  }
+  end = clock();
+  fprintf(stderr,
+          "Deferless (direct call) counter: %lu cycles with i_count = %lu\n",
+          end - start, i_count);
 
   spn_lock(&i_lock);
   i_count = 0;
