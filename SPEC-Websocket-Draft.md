@@ -131,15 +131,19 @@ Internally, this extension also allows iodine to manage connection memory and re
 
 ## Iodine's Pub/Sub Extension to the Rack Websockets
 
-This extension separates the websocket Pub/Sub semantics from the Pub/Sub engine (i.e. Redis, MongoDB, etc') or the Server. If the Collection Extension is implemented, than this isn't necessarily a big step forward (the big step forward is what can be done with is).
+This extension separates the websocket Pub/Sub semantics from the Pub/Sub engine (i.e. Redis, MongoDB, etc'). This allows the Pub/Sub pattern to integrate with the Websocket API without the need for servers or applications to implement the Pub/Sub features.
+
+This allows Pub/Sub "engines" to seamlessly integrate with a server and offer Pub/Sub functionality for the specified environment, without the need for applications or servers to know anything about the Pub/Sub details or the environment.
+
+For example, Iodine includes three Pub/Sub engines `Iodine::PubSub::CLUSTER` (the default, for single machine multi-process pub/sub), `Iodine::PubSub::SINGLE_PROCESS` (a single process pub/sub) and `Iodine::PubSub::RedisEngine` (for horizontal scaling across machine boundaries, using Redis pub/sub)...
+
+...but it would be easy enough to write a gem that will add another engine for MongoDB Pub/Sub and that engine would be server agnostic.
+
+If the Collection Extension is implemented, than this extension should be relatively easy to implement by the server.
 
 I don't personally believe this has a chance of being adopted by other server implementors, but it's a very powerful tool that Iodine supports.
 
-Including these semantics, in the form of the described API, allows servers and Pub/Sub engines to be optimized in different ways without distracting the application (or framework implementor with environmental details.
-
-For example, Iodine includes two default Pub/Sub engines `Iodine::PubSub::Engine::CLUSTER` (the default) and `Iodine::PubSub::Engine::SINGLE_PROCESS` that implement a localized Pub/Sub engine within a process cluster.
-
- The Websocket module (i.e. `Iodine::Websocket`) includes the following singleton methods:
+The Websocket module (i.e. `Iodine::Websocket`) includes the following singleton methods:
 
  * `Iodine::Websocket.default_pubsub=` sets the default Pub/Sub engine.
 
