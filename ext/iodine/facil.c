@@ -580,8 +580,7 @@ static void timer_on_close(intptr_t uuid, protocol_s *protocol) {
 
 static void timer_ping(intptr_t uuid, protocol_s *protocol) {
   sock_touch(uuid);
-  free(protocol);
-  (void)uuid;
+  (void)protocol;
 }
 
 static inline timer_protocol_s *timer_alloc(void (*task)(void *), void *arg,
