@@ -6,6 +6,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.4.10
+
+**Portability**: (`mac OS High Sierra`) iodine will load the Objective C library on macOS machines before starting up the server - this will prevent `fork` from crashing the server on macOS High Sierra, see [discussion here](https://github.com/puma/puma/issues/1421).
+
+**Fix**: (`facil.io`) fixes an error with the new Websocket parser (introduced in v. 0.4.9) that caused medium sized messages (127 Bytes - 64Kib) to be parsed incorrectly. Apologies. The test program I used seems to have validated messages using length comparison (instead of data comparison). Credit to Tom Lahti (@uidzip) for exposing the issue.
+
 #### Change log v.0.4.9
 
 **Change**: (`facil.io`) the internal Websocket parser was replaced with something easier to read, for maintainability reasons. Performance seems to be mostly unaffected (sometimes it's faster and sometimes it's slower, common case is slightly optimized).

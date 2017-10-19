@@ -5,6 +5,7 @@
 #include "iodine_pubsub.h"
 #include "iodine_websockets.h"
 #include "rb-rack-io.h"
+#include <dlfcn.h>
 /*
 Copyright: Boaz segev, 2016-2017
 License: MIT
@@ -326,6 +327,13 @@ VALUE iodine_print_registry(VALUE self) {
   (void)self;
 }
 
+static void patch_env(void) {
+#ifdef __APPLE__
+  /* patch for dealing with the High Sierra `fork` limitations */
+  void *obj_c_runtime = dlopen("Foundation.framework/Foundation", RTLD_LAZY);
+#endif
+}
+
 /* *****************************************************************************
 Library Initialization
 ***************************************************************************** */
@@ -336,6 +344,8 @@ Library Initialization
 // Here we connect all the C code to the Ruby interface, completing the bridge
 // between Lib-Server and Ruby.
 void Init_iodine(void) {
+  // load any environment specific patches
+  patch_env();
   // initialize globally used IDs, for faster access to the Ruby layer.
   iodine_fd_var_id = rb_intern("scrtfd");
   iodine_call_proc_id = rb_intern("call");

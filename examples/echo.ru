@@ -12,6 +12,9 @@
 #
 #      ab -c 2000 -t 5 -n 1000000 -k http://127.0.0.1:3000/
 #      wrk -c2000 -d5 -t12 http://localhost:3000/
+#
+# Test websocket echo using the browser. For example:
+#      ws = new WebSocket("ws://localhost:3000"); ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);}; ws.onclose = function(e) {console.log("closed")}; ws.onopen = function(e) {ws.send("hi");};
 
 
 # A simple router - Checks for Websocket Upgrade and answers HTTP.

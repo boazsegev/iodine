@@ -21,11 +21,9 @@ Iodine is an **evented** framework with a simple API that builds off the low lev
 
 * Iodine can handle **thousands of concurrent connections** (tested with more then 20K connections)!
 
-* Iodine supports only **Linux/Unix** based systems (i.e. macOS\*, Ubuntu, FreeBSD etc'), which are ideal for evented IO (while Windows and Solaris are better at IO *completion* events, which are totally different).
+* Iodine supports only **Linux/Unix** based systems (i.e. macOS, Ubuntu, FreeBSD etc'), which are ideal for evented IO (while Windows and Solaris are better at IO *completion* events, which are totally different).
 
 Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but Rack requires Ruby 2.2.2, and so iodine matches this requirement.
-
-\* for **macOS High Sierra**: please be aware of [this issue](https://github.com/puma/puma/issues/1421) and [workaround](https://github.com/puma/puma/issues/1421#issuecomment-332694766) regarding certain gem bindings (such as `pg`), multi-process servers and lazy loading.
 
 ## Iodine::Rack == fast & powerful HTTP + Websockets server with native Pub/Sub
 
