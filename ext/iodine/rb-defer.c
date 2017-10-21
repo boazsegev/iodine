@@ -8,6 +8,8 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "rb-registry.h"
 #include <ruby.h>
 #include <ruby/thread.h>
+
+#include <stdint.h>
 // clang-format on
 
 #include "defer.h"
@@ -41,8 +43,16 @@ static void *create_ruby_thread_gvl(void *args) {
 }
 
 /* protect the call to join from any exceptions */
-static void *_inner_join_with_rbthread(void *rbt) {
+static void *inner_join_with_rbthread_(void *rbt) {
   return (void *)rb_funcall((VALUE)rbt, rb_intern("join"), 0);
+}
+
+static void *fork_using_ruby(void *ignr) {
+  const VALUE ProcessClass = rb_const_get(rb_cObject, rb_intern("Process"));
+  const VALUE pid = rb_funcall(ProcessClass, rb_intern("fork"), 0);
+  if (pid == Qnil)
+    return (void *)0;
+  return (void *)(intptr_t)(NUM2INT(pid));
 }
 
 /* *****************************************************************************
@@ -69,7 +79,18 @@ OVERRIDE THIS to replace the default pthread implementation.
 int defer_join_thread(void *thr) {
   if (!thr || (VALUE)thr == Qfalse || (VALUE)thr == Qnil)
     return -1;
-  rb_thread_call_with_gvl(_inner_join_with_rbthread, (void *)thr);
+  rb_thread_call_with_gvl(inner_join_with_rbthread_, (void *)thr);
   Registry.remove((VALUE)thr);
   return 0;
+}
+
+/**
+OVERRIDE THIS to replace the default `fork` implementation or to inject hooks
+into the forking function.
+
+Behaves like the system's `fork`.
+*/
+int defer_new_child(void) {
+  intptr_t pid = (intptr_t)rb_thread_call_with_gvl(fork_using_ruby, NULL);
+  return (int)pid;
 }
