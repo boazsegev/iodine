@@ -9,8 +9,8 @@ Gem::Specification.new do |spec|
   spec.authors       = ['Boaz Segev']
   spec.email         = ['bo@plezi.io']
 
-  spec.summary       = 'iodine - HTTP / Websocket Server with Pub/Sub support, optimized for Ruby MRI on Linux / BSD'
-  spec.description   = 'iodine - HTTP / Websocket Server with Pub/Sub support, optimized for Ruby MRI on Linux / BSD'
+  spec.summary       = 'iodine - a fast HTTP / Websocket Server with Pub/Sub support, optimized for Ruby MRI on Linux / BSD'
+  spec.description   = 'A fast HTTP / Websocket Server with built-in Pub/Sub support (with or without Redis), static file support and many other features, optimized for Ruby MRI on Linux / BSD / macOS'
   spec.homepage      = 'https://github.com/boazsegev/iodine'
   spec.license       = 'MIT'
 
@@ -31,17 +31,17 @@ Gem::Specification.new do |spec|
 
   spec.required_ruby_version = '>= 2.2.2' # Because earlier versions had been discontinued
 
-  spec.add_dependency 'rack'
+  spec.add_dependency 'rack', '>= 1.0', '< 3.0'
 
   spec.requirements << 'A Unix based system: Linux / macOS / BSD.'
   spec.requirements << 'An updated C compiler.'
   spec.requirements << 'Ruby >= 2.2.2 required for Rack 2.'
   spec.requirements << 'Ruby >= 2.4.0 recommended.'
 
-  spec.add_development_dependency 'bundler', '>= 1.10'
-  spec.add_development_dependency 'rake', '~> 12.0'
-  spec.add_development_dependency 'minitest', '>=5'
-  spec.add_development_dependency 'rake-compiler', '>= 1'
+  spec.add_development_dependency 'bundler', '>= 1.10', '< 2.0'
+  spec.add_development_dependency 'rake', '~> 12.0', '< 13.0'
+  spec.add_development_dependency 'minitest', '>=5', '< 6.0'
+  spec.add_development_dependency 'rake-compiler', '>= 1', '< 2.0'
 
   # spec.post_install_message = "** WARNING!\n" \
   #                             "Iodine 0.2.0 is NOT an upgrade - it's a total rewrite, it's written in C specifically for Ruby MRI.\n\n" \
