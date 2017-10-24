@@ -2,8 +2,9 @@ require 'iodine'
 require 'rack'
 
 module Iodine
+  # The Iodine::Base namespace is reserved for internal use and is NOT part of the public API.
   module Base
-    # Command line interface
+    # Command line interface. The Ruby CLI might be changed in future versions.
     module CLI
 
       def print_help

@@ -1,4 +1,5 @@
 module Iodine
+  # The Iodine::Base namespace is reserved for internal use and is NOT part of the public API.
   module Base
     # Iodine does NOT monkey patch automatically at this time.
     #

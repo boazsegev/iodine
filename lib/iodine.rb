@@ -57,7 +57,7 @@ require 'iodine/iodine'
 # * {Iodine.connect} creates a new TCP/IP connection using the specified Protocol.
 # * {Iodine.listen} listens to new TCP/IP connections using the specified Protocol.
 # * {Iodine.listen2http} listens to new TCP/IP connections using the buildin HTTP / Websocket Protocol.
-# * {Iodine.warmup} warms up and HTTP Rack applications.
+# * {Iodine.warmup} warms up any HTTP Rack applications.
 # * {Iodine.count} counts the number of connections (including HTTP / Websocket connections).
 # * {Iodine::Protocol.each} runs a code of block for every connection sharing the process (except HTTP / Websocket connections).
 # * {Iodine::Websocket.each} runs a code of block for every existing websocket sharing the process.
@@ -74,7 +74,7 @@ require 'iodine/iodine'
 # * {Iodine.publish} publishes a message to a Pub/Sub channel. The message will be sent to all subscribers - connections, other processes in the cluster and even other machines (when using the {Iodine::PubSub::RedisEngine}).
 # * {Iodine.default_pubsub=}, {Iodine.default_pubsub} sets or gets the default Pub/Sub {Iodine::PubSub::Engine}. i.e., when set to a new {Iodine::PubSub::RedisEngine} instance, all Pub/Sub method calls will use the Redis engine (unless explicitly requiring a different engine).
 #
-# {Iodine::Websocket} objects have a seperate Pub/Sub implementation that manages the subscription's lifetime to match the connection's lifetime and allows direct client Pub/Sub (forwards the message to the client directly).
+# {Iodine::Websocket} objects have a seperate Pub/Sub implementation that manages the subscription's lifetime to match the connection's lifetime and allows direct client Pub/Sub (forwards the message to the client directly without invoking the Ruby interpreter).
 #
 # == Patching Rack
 #
@@ -149,7 +149,9 @@ module Iodine
   # Runs the warmup sequence. {warmup} attempts to get every "autoloaded" (lazy loaded)
   # file to load now instead of waiting for "first access". This allows multi-threaded safety and better memory utilization during forking.
   #
-  # Use {warmup} when either {processes} or {threads} are set to more then 1.
+  # However, `warmup` might cause undefined behavior and should be avoided when using gems that initiate network / database connections or gems that spawn threads (i.e., ActiveRecord / ActiveCable).
+  #
+  # Use {warmup} when either {processes} or {threads} are set to more then 1 and gems don't spawn threads or initialize network connections.
   def self.warmup app
     # load anything marked with `autoload`, since autoload isn't thread safe nor fork friendly.
     Iodine.run do

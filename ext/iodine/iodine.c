@@ -321,22 +321,24 @@ static VALUE iodine_start(VALUE self) {
 Debug
 ***************************************************************************** */
 
+/** Used for debugging purpuses. Lists GC protected objects */
 VALUE iodine_print_registry(VALUE self) {
   Registry.print();
   return Qnil;
   (void)self;
 }
 
+/* *****************************************************************************
+Library Initialization
+***************************************************************************** */
+
+/** Any patches required by the running environment for consistent behavior */
 static void patch_env(void) {
 #ifdef __APPLE__
   /* patch for dealing with the High Sierra `fork` limitations */
   void *obj_c_runtime = dlopen("Foundation.framework/Foundation", RTLD_LAZY);
 #endif
 }
-
-/* *****************************************************************************
-Library Initialization
-***************************************************************************** */
 
 ////////////////////////////////////////////////////////////////////////
 // Ruby loads the library and invokes the Init_<lib_name> function...

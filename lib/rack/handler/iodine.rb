@@ -135,7 +135,7 @@ module Iodine
         @app = app
       end
       @port = options[:Port].to_s if options[:Port]
-      @port = options[:Address].to_s if options[:Address]
+      @address = options[:Address].to_s if options[:Address]
 
       # # provide Websocket features using Rack::Websocket
       # Rack.send :remove_const, :Websocket if defined?(Rack::Websocket)
