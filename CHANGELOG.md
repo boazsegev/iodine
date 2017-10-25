@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.4.12
+
+**Fix**: (`facil.io`) fixes some lingering issues with the new Websocket parser, namely an issue where certain network packet lengths would cause the parser to fail. Credit to Tom Lahti (@uidzip) for exposing the issue.
+
 #### Change log v.0.4.11
 
 **Fix**: (`iodine`) use Ruby `fork` instead of system `fork`, allowing Ruby hooks to run before and after forking. This also fixes an issue where the Ruby timer thread isn't (re)initialized.
