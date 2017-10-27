@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Next
+
+**Fix**: (`facil.io`) fixes an issue where timer monitoring would report failure when the timer exists and is being monitored.
+
 #### Change log v.0.4.12
 
 **Fix**: (`facil.io`) fixes some lingering issues with the new Websocket parser, namely an issue where certain network packet lengths would cause the parser to fail. Credit to Tom Lahti (@uidzip) for exposing the issue.
