@@ -72,7 +72,7 @@ Or by adding a single line to the application. i.e. (a `config.ru` example):
 ```ruby
 require 'iodine'
 Iodine::Rack.public = '/my/public/folder'
-out = [404, {"Content-Length" => "10".freeze}.freeze, ["Not Found.".freeze].freeze].freeze
+out = [404, {"Content-Length" => "10"}, ["Not Found."]].freeze
 app = Proc.new { out }
 run app
 ```
@@ -99,8 +99,8 @@ app = proc do |env|
   elsif request.path_info == '/file'.freeze
     [200, { 'X-Header' => 'This was a Rack::Sendfile response sent as text.' }, File.open(__FILE__)]
   else
-    [200, { 'Content-Type'.freeze => 'text/html'.freeze,
-            'Content-Length'.freeze => request.path_info.length.to_s },
+    [200, { 'Content-Type' => 'text/html',
+            'Content-Length' => request.path_info.length.to_s },
      [request.path_info]]
  end
 end
