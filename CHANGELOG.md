@@ -92,7 +92,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: fixed an issue where Websocket `ping` timeouts were being ignored for the default `Iodine::Rack` server, causing the default (40 seconds) to persist over specified valued.
 
-**Fix**: fixed a possible issue with highjacking which might cause the server to hang.
+**Fix**: fixed a possible issue with high-jacking which might cause the server to hang.
 
 ***
 
@@ -233,13 +233,13 @@ Iodine.start
 
 **Fix**: fixed another issue with `each_write` where a race condition review was performed outside the protected critical section, in some cases this would caused memory to be freed twice and crash the server. This issue is now resolved.
 
-**Deprecation**: In version 0.2.1 we have notified that the the websocket method `uuid` was deprecated in favor of `conn_id`, as suggested by the [Rack Websocket Draft](https://github.com/rack/rack/pull/1107). This deprecation is now enforced.
+**Deprecation**: In version 0.2.1 we have notified that the the Websocket method `uuid` was deprecated in favor of `conn_id`, as suggested by the [Rack Websocket Draft](https://github.com/rack/rack/pull/1107). This deprecation is now enforced.
 
 ***
 
 #### Change log v.0.2.13
 
-**Fix**: Fixed an issue presented in the C layer, where big fragmented websocket messages sent by the client could cause parsing errors and potentially, in some cases, cause a server thread to spin in a loop (DoS). Credit to @Filly for exposing the issue in the [`facil.io`](https://github.com/boazsegev/facil.io) layer. It should be noted that Chrome is the only browser where this issue could be invoked for testing.
+**Fix**: Fixed an issue presented in the C layer, where big fragmented Websocket messages sent by the client could cause parsing errors and potentially, in some cases, cause a server thread to spin in a loop (DoS). Credit to @Filly for exposing the issue in the [`facil.io`](https://github.com/boazsegev/facil.io) layer. It should be noted that Chrome is the only browser where this issue could be invoked for testing.
 
 **Credit**: credit to Elia Schito (@elia) and Augusts Bautra (@Epigene) for fixing parts of the documentation (PR #11 , #12).
 
@@ -358,7 +358,7 @@ Iodine.start
 
 **Update**: Websockets now support the `has_pending?` method and `on_ready` callback, as suggested by the [Rack Websocket Draft](https://github.com/rack/rack/pull/1107).
 
-**Update**: deprecated the websocket method `uuid` in favor of `conn_id`, as suggested by the [Rack Websocket Draft](https://github.com/rack/rack/pull/1107).
+**Update**: deprecated the Websocket method `uuid` in favor of `conn_id`, as suggested by the [Rack Websocket Draft](https://github.com/rack/rack/pull/1107).
 
 **Fix**: fixed an issue were the server would crash when attempting to send a long enough websocket message.
 
@@ -378,7 +378,7 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **Optimization**: Minor optimizations. i.e. - creates 1 less Time object per request (The logging still creates a Time object unless disabled using `Iodine.logger = nil`).
 
-**Security**: Http/1 now reviews the Body's size as it grows (similar to Http/2), mitigating any potential attacks related to the size of the data sent.
+**Security**: HTTP/1 now reviews the Body's size as it grows (similar to HTTP/2), mitigating any potential attacks related to the size of the data sent.
 
 **Logs**: Log the number of threads utilized when starting up the server.
 
@@ -388,15 +388,15 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **Update/Fix**: Updated the `x-forwarded-for` header recognition, to accommodate an Array formatting sometimes used (`["ip1", "ip2", ...]`).
 
-**Update**: native support for the `Forwarded` header Http.
+**Update**: native support for the `Forwarded` header HTTP.
 
-**API Changes**: `Iodine::Http.max_http_buffer` was replaced with `Iodine::Http.max_body_size`, for a better understanding of the method's result.
+**API Changes**: `Iodine::HTTP.max_http_buffer` was replaced with `Iodine::HTTP.max_body_size`, for a better understanding of the method's result.
 
 ***
 
 #### Change log v.0.1.19
 
-**Update**: added the `go_away` method to the Http/1 peorotocol, for seamless connection closeing across Http/2, Http/1 and Websockets.
+**Update**: added the `go_away` method to the HTTP/1 protocol, for seamless connection closeing across HTTP/2, HTTP/1 and Websockets.
 
 ***
 
@@ -408,11 +408,11 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 #### Change log v.0.1.17
 
-**Credit**: thanks you @frozenfoxx for going through the readme and fixing my broken grammer.
+**Credit**: thanks you @frozenfoxx for going through the readme and fixing my broken grammar.
 
 **Fix**: fixed an issue where multiple Pings might get sent when pinging takes time. Now pings are exclusive (run within their own Mutex).
 
-**Fix**: Http/2 is back... sorry about breaking it in the 0.1.16 version. When I updated the write buffer I forgot to write the status of the response, causing a protocol error related with the headers. It's now working again.
+**Fix**: HTTP/2 is back... sorry about breaking it in the 0.1.16 version. When I updated the write buffer I forgot to write the status of the response, causing a protocol error related with the headers. It's now working again.
 
 **Update**: by default and for security reasons, session id's created through a secure connection (SSL) will NOT be available on a non secure connection (SSL/TLS). However, while upgrading to the encrypted connection, the non_encrypted session storage is now available for review using the `Response#session_old` method.
 
@@ -422,13 +422,13 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 #### Change log v.0.1.16
 
-**Performance**: Http/1 and Http/2 connections now share and recycle their write buffer when while reading the response body and writing it to the IO. This (hopefuly) prevents excess `malloc` calls by the interperter.
+**Performance**: HTTP/1 and HTTP/2 connections now share and recycle their write buffer when while reading the response body and writing it to the IO. This (hopefully) prevents excess `malloc` calls by the interpreter.
 
 ***
 
 #### Change log v.0.1.15
 
-**Update**: IO reactor will now update IO status even when tasks are pending. IO will still be read only when there are no more tasks to handle, but this allows chained tasks to relate to the updated IO status. i.e. this should improve websocket availability for broadcasting (delay from connection to availability might occure until IO is registered).
+**Update**: IO reactor will now update IO status even when tasks are pending. IO will still be read only when there are no more tasks to handle, but this allows chained tasks to relate to the updated IO status. i.e. this should improve Websocket availability for broadcasting (delay from connection to availability might occur until IO is registered).
 
 **Update**: Websockets now support the `on_ping` callback, which will be called whenever a ping was sent without error.
 
@@ -450,7 +450,7 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **Fix**: The `flash` cookie-jar will now actively prevent Symbol and String keys from overlapping.
 
-**Compatibility**: minor fixes and changes in preperation for Ruby 2.3.0. These may affect performance due to slower String initialization times.
+**Compatibility**: minor fixes and changes in preparation for Ruby 2.3.0. These may affect performance due to slower String initialization times.
 
 ***
 
@@ -458,7 +458,7 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **Update**: Passing a hash as the cookie value will allow to set cookie parameters using the {Response#set_cookie} options. i.e.: `cookies['key']= {value: "lock", max_age: 20}`.
 
-**Security**: set the HttpOnly flag for session id cookies.
+**Security**: set the HTTPOnly flag for session id cookies.
 
 ***
 
@@ -472,7 +472,7 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **Fix**: make sure the WebsocketClient doesn't automatically renew the connection when the connection was manually closed by the client.
 
-**Performance**: faster TimedEvent clearing when manually stopped. Minor improvements to direct big-file sending (recycle buffer to avoid malloc).
+**Performance**: faster TimedEvent clearing when manually stopped. Minor improvements to direct big-file sending (recycle buffer to avoid `malloc`).
 
 ***
 
@@ -488,17 +488,17 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 #### Change log v.0.1.8
 
-**Fix**: Websocket broadcasts are now correctly executed within the IO's mutex locker. This maintains the idea that only one thread at a time should be executing code on behald of any given Protocol object ("yes" to concurrency between objects but "no" to concurrency within objects).
+**Fix**: Websocket broadcasts are now correctly executed within the IO's mutex locker. This maintains the idea that only one thread at a time should be executing code on behalf of any given Protocol object ("yes" to concurrency between objects but "no" to concurrency within objects).
 
 **Fix** fixed an issue where manually setting the number of threads for Rack applications (when using Iodine as a Rack server), the setting was mistakenly ignored.
 
-**Fix** fixed an issue where sometimes extractin the Http response's body would fail (if body is `nil`).
+**Fix** fixed an issue where sometimes extracting the HTTP response's body would fail (if body is `nil`).
 
-**Feature**: session objects are now aware of the session id. The seesion id is available by calling `response.session.id`
+**Feature**: session objects are now aware of the session id. The session id is available by calling `response.session.id`
 
-**Fix** fixed an issue where Http streaming wasn't chunk encoding after connection error handling update.
+**Fix** fixed an issue where HTTP streaming wasn't chunk encoding after connection error handling update.
 
-**Fix** fixed an issue where Http streaming would disconnect while still processing. Streaming timeout now extended to 15 seconds between response writes.
+**Fix** fixed an issue where HTTP streaming would disconnect while still processing. Streaming timeout now extended to 15 seconds between response writes.
 
 ***
 
@@ -514,7 +514,7 @@ Removed a deprecation notice for blocking API. Client API will remain blocking d
 
 **Fix**: fixed an issue where WebsocketClient wouldn't mask outgoing data, causing some servers to respond badly.
 
-**Performance**: minor performance improvements to the websocket parser, for unmasking messages.
+**Performance**: minor performance improvements to the Websocket parser, for unmasking messages.
 
 **Deprecation notice**:
 
@@ -524,7 +524,7 @@ Removed a deprecation notice for blocking API. Client API will remain blocking d
 
 #### Change log v.0.1.5
 
-**Feature**: The Response#body can now be set to a File object, allowing Iodine to preserve memory when serving large static files from disc. Limited Range requests are also supported - together, these changes allow Iodine to serve media files (such as movies) while suffering a smaller memory penalty and supporting a wider variaty of players (Safari requires Range request support for it's media player).
+**Feature**: The Response#body can now be set to a File object, allowing Iodine to preserve memory when serving large static files from disc. Limited Range requests are also supported - together, these changes allow Iodine to serve media files (such as movies) while suffering a smaller memory penalty and supporting a wider variety of players (Safari requires Range request support for it's media player).
 
 **Fix**: Fixed an issue where Iodine might take a long time to shut down after a Fatal Error during the server initialization.
 
@@ -536,33 +536,33 @@ Removed a deprecation notice for blocking API. Client API will remain blocking d
 
 **Fix**: fixed an issue where a protocol's #on_close callback wouldn't be called if the Iodine server receives a shutdown signal.
 
-**Fix**: fixed an issue where Http2 header size limit condition was not recognized by the Ruby parser (a double space issue, might be an issue with the 2.2.3 Ruby parser).
+**Fix**: fixed an issue where HTTP2 header size limit condition was not recognized by the Ruby parser (a double space issue, might be an issue with the 2.2.3 Ruby parser).
 
 ***
 
 #### Change log v.0.1.3
 
-**Fix**: fixed an issue with the new form/multipart parser, where the '+' sign would be converted to spaces on form fields (not uploaded files), causing inadvert potential change to the original POSTed data.
+**Fix**: fixed an issue with the new form/multipart parser, where the '+' sign would be converted to spaces on form fields (not uploaded files), causing in-advert potential change to the original POSTed data.
 
 ***
 
 #### Change log v.0.1.2
 
-**Fix**: fixed an issue where the default implementation of `ping` didn not reset the timeout if the connection wasn't being closed (the default implementation checks if the Protocol is working on existing data and either resets the timer allowing the work to complete or closes the connection if no work is being done).
+**Fix**: fixed an issue where the default implementation of `ping` did not reset the timeout if the connection wasn't being closed (the default implementation checks if the Protocol is working on existing data and either resets the timer allowing the work to complete or closes the connection if no work is being done).
 
 ***
 
 #### Change log v.0.1.1
 
-**Fix**: Fixed an issue where slow processing of Http/1 requests could cause timeout disconnections to occur while the request is being processed.
+**Fix**: Fixed an issue where slow processing of HTTP/1 requests could cause timeout disconnections to occur while the request is being processed.
 
 **Change/Security**: Uploads now use temporary files. Aceessing the data for file uploads should be done throught the `:file` property of the params hash (i.e. `params[:upload_field_name][:file]`). Using the `:data` property (old API) would cause the whole file to be dumped to the memory and the file's content will be returned as a String.
 
-**Change/Security**: Http upload limits are now enforced. The current default limit is about ~0.5GB.
+**Change/Security**: HTTP upload limits are now enforced. The current default limit is about ~0.5GB.
 
 **Feature**: WebsocketClient now supports both an auto-connection-renewal and a polling machanism built in to the `WebsocketClient.connect` API. The polling feature is mostly a handy helper for testing, as it is assumed that connection renewal and pub/sub offer a better design than polling.
 
-**Logging**: Better Http error logging and recognition.
+**Logging**: Better HTTP error logging and recognition.
 
 ***
 
@@ -572,17 +572,17 @@ Removed a deprecation notice for blocking API. Client API will remain blocking d
 
 We learn, we evolve, we change... but we remember our past and do our best to help with the transition and make it worth the toll it takes on our resources.
 
-I took much of the code used for GRHttp and GReactor, changed it, morphed it and united it into the singular Iodine gem. This includes Major API changes, refactoring of code, bug fixes and changes to the core approach of how a task/io based application should behave or be constructed.
+I took much of the code used for GRHTTP and GReactor, changed it, morphed it and united it into the singular Iodine gem. This includes Major API changes, refactoring of code, bug fixes and changes to the core approach of how a task/io based application should behave or be constructed.
 
 For example, Iodine kicks in automatically when the setup script is done, so that all code is run from within tasks and IO connections and no code is run in parallel to the Iodine engine.
 
 Another example, Iodine now favors Object Oriented code, so that some actions - such as writing a network service - require classes of objects to be declared or inherited (i.e. the Protocol class).
 
-This allows objects to manage their data as if they were in a single thread environment, unless the objects themselves are calling asynchronous code. For example, the Protocol class makes sure that the `on_open` and `on_message(data)` callbacks are excecuted within a Mutex (`on_close` is an exception to the rule since it is assumed that objects should be prepared to loose network connection at any moment).
+This allows objects to manage their data as if they were in a single thread environment, unless the objects themselves are calling asynchronous code. For example, the Protocol class makes sure that the `on_open` and `on_message(data)` callbacks are executed within a Mutex (`on_close` is an exception to the rule since it is assumed that objects should be prepared to loose network connection at any moment).
 
-Another example is that real-life deployemnt preferences were favored over adjustability or features. This means that some command-line arguments are automatically recognized (such as the `-p <port>` argument) and thet Iodine assumes a single web service per script/process (whereas GReactor and GRHttp allowed multiple listening sockets).
+Another example is that real-life deployment preferences were favored over adjustability or features. This means that some command-line arguments are automatically recognized (such as the `-p <port>` argument) and that Iodine assumes a single web service per script/process (whereas GReactor and GRHTTP allowed multiple listening sockets).
 
-I tested this new gem during the 0.0.x version releases, and I feel that version 0.1.0 is stable enough to work with. For instance, I left the Iodine server running all night under stress (repeatedly benchmarking it)... millions of requests later, under heavey load, a restart wasn't required and memory consumption didn't show any increase after the warmup period.
+I tested this new gem during the 0.0.x version releases, and I feel that version 0.1.0 is stable enough to work with. For instance, I left the Iodine server running all night under stress (repeatedly benchmarking it)... millions of requests later, under heavy load, a restart wasn't required and memory consumption didn't show any increase after the warmup period.
 
 
 

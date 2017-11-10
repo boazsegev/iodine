@@ -71,7 +71,9 @@ Or by adding a single line to the application. i.e. (a `config.ru` example):
 
 ```ruby
 require 'iodine'
+# static file service
 Iodine::Rack.public = '/my/public/folder'
+# application
 out = [404, {"Content-Length" => "10"}, ["Not Found."]].freeze
 app = Proc.new { out }
 run app
@@ -276,7 +278,7 @@ def run_server
 end
 ```
 
-In pure Ruby (without using C extensions or Java), it's possible to do the same by using `select`... and although `select` has some issues, it works well for smaller concurrency levels.
+In pure Ruby (without using C extensions or Java), it's possible to do the same by using `select`... and although `select` has some issues, it works well for lighter loads.
 
 The server events are fairly fast and fragmented (longer code is fragmented across multiple events), so one thread is enough to run the server including it's static file service and everything... 
 
@@ -286,7 +288,7 @@ The thread pool is there to help slow user code.
 
 It's very common that the application's code will run slower and require external resources (i.e., databases, a custom pub/sub service, etc'). This slow code could "starve" the server, which is patiently waiting to run it's tasks on the same thread.
 
-The slower your application code, the more threads you will need to keep the server running smoothly.
+The slower your application code, the more threads you will need to keep the server running in a responsive manner (note that responsiveness and speed aren't always the same).
 
 ### How does it compare to other servers?
 
