@@ -374,6 +374,7 @@ void reap_child_handler(int sig) {
   errno = old_errno;
 }
 
+#if !defined(NO_CHILD_REAPER) || NO_CHILD_REAPER == 0
 /* initializes zombie reaping for the process */
 inline static void reap_children(void) {
   struct sigaction sa;
@@ -385,6 +386,7 @@ inline static void reap_children(void) {
     kill(0, SIGINT), exit(errno);
   }
 }
+#endif
 
 /* a global process identifier (0 == root) */
 static int defer_fork_pid_id = 0;
