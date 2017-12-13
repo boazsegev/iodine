@@ -6,6 +6,34 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.4.15
+
+**Update**: (`facil.io`) updating the facil.io library version to use the 0.5.8 released version.
+
+This includes the following changes (as well as other minor changes), as detailed in facil.io's CHANGELOG:
+
+**Fix**: (`defer`, `fiobj`) fix Linux compatibility concerns (when using GCC). Credit goes to @kotocom.
+
+**Fix**: (`defer`) fixes the non-debug version of the new defer, which didn't define some debug macros.
+
+**Updates**: minor updates to the boilerplate documentation and the "new application" creation process.
+
+**Fix**: Added `cmake_minimum_required` and related CMake fixes to the CMake file and generator. Credit to David Morán (@david-moran) for [PR #22](https://github.com/boazsegev/facil.io/pull/22) fixing the CMakelist.txt.
+
+**Compatibility**: (`websocket_parser`) removed unaligned memory access from the XOR logic in the parser, making it more compatible with older CPU systems that don't support unaligned memory access or 64 bit word lengths.
+
+**Optimization**: (`defer`) rewrote the data structure to use a hybrid cyclic buffer and linked list for the task queue (instead of a simple linked list), optimizing locality and minimizing memory allocations.
+
+**Misc**: minor updates and tweaks, such as adding the `fiobj_ary2prt` function for operations such as quick sort, updating some documentation etc'.
+
+**Fix**: (`fiobj`) fixed an where `gcc` would complain about overwriting the `fio_cstr_s` struct due to `const` members. Credit to @vit1251 for exposing this issue.
+
+**Fix**: (`fiobj`) fixed NULL pointer testing for `fiobj_free(NULL)`.
+
+**Compatibility**: (`gcc-6`) Fix some compatibility concerns with `gcc` version 6, as well as some warnings that were exposed when testing with `gcc`.
+
+**Optimization**: (`fiobj`) optimized the JSON parsing memory allocations as well as fixed some of the function declarations to add the `const` keyword where relevant.
+
 #### Change log v.0.4.14
 
 **Fix**: (`facil.io`) fixes an issue where timer monitoring would report failure when the timer exists and is being monitored.

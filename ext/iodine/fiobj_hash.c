@@ -1,16 +1,49 @@
 /*
-Copyright: Boaz segev, 2017
+Copyright: Boaz Segev, 2017
 License: MIT
-
-Feel free to copy, use and enjoy according to the license provided.
 */
 
-#include "fiobj_types.h"
-
-/* MUST be a power of 2 */
-#define HASH_INITIAL_CAPACITY 16
+#include "fiobj_hash.h"
+#include "fiobj_internal.h"
 
 #include <errno.h>
+
+/* *****************************************************************************
+Hash types
+***************************************************************************** */
+/* MUST be a power of 2 */
+#define FIOBJ_HASH_MAX_MAP_SEEK (256)
+
+typedef struct {
+  uintptr_t hash;
+  fio_ls_s *container;
+} map_info_s;
+
+typedef struct {
+  uintptr_t capa;
+  map_info_s *data;
+} fio_map_s;
+
+typedef struct {
+  struct fiobj_vtable_s *vtable;
+  uintptr_t count;
+  uintptr_t mask;
+  fio_ls_s items;
+  fio_map_s map;
+} fiobj_hash_s;
+
+/* Hash node */
+typedef struct {
+  struct fiobj_vtable_s *vtable;
+  fiobj_s *name;
+  fiobj_s *obj;
+} fiobj_couplet_s;
+
+void fiobj_hash_rehash(fiobj_s *h);
+
+#define obj2hash(o) ((fiobj_hash_s *)(o))
+#define obj2couplet(o) ((fiobj_couplet_s *)(o))
+
 /* *****************************************************************************
 Internal Map Array
 We avoid the fiobj_ary_s to prevent code entanglement
@@ -35,8 +68,8 @@ static inline uintptr_t fio_map_cuckoo_steps(uintptr_t step) {
 }
 
 /* seeks the hash's position in the map */
-static map_info_s *fio_hash_seek(fio_hash_s *h, uintptr_t hash) {
-  /* TODO: consider implementing Robing Hood reordering during seek */
+static map_info_s *fio_hash_seek(fiobj_hash_s *h, uintptr_t hash) {
+  /* TODO: consider implementing Robing Hood reordering during seek? */
   map_info_s *pos = h->map.data + (hash & h->mask);
   uintptr_t i = 0;
   const uintptr_t limit = h->map.capa > FIOBJ_HASH_MAX_MAP_SEEK
@@ -51,18 +84,40 @@ static map_info_s *fio_hash_seek(fio_hash_s *h, uintptr_t hash) {
   return NULL;
 }
 
+/* seeks the hash's position in the map while actually comparing key data */
+// static map_info_s *fio_hash_seek_secure(fiobj_hash_s *h, uintptr_t hash,
+//                                         fiobj_s *key) {
+//   /* TODO: consider implementing Robing Hood reordering during seek? */
+//   map_info_s *pos = h->map.data + (hash & h->mask);
+//   uintptr_t i = 0;
+//   const uintptr_t limit = h->map.capa > FIOBJ_HASH_MAX_MAP_SEEK
+//                               ? FIOBJ_HASH_MAX_MAP_SEEK
+//                               : (h->map.capa >> 1);
+//   while (i < limit) {
+//     if (!pos->hash ||
+//         (pos->hash == hash &&
+//          (!pos->container || !pos->container->obj ||
+//           obj2couplet(pos->container->obj)->name == key ||
+//           fiobj_iseq(obj2couplet(pos->container->obj)->name, key))))
+//       return pos;
+//     pos = h->map.data +
+//           (((hash & h->mask) + fio_map_cuckoo_steps(i++)) & h->mask);
+//   }
+//   return NULL;
+// }
+
 /* finds an object in the map */
-static void *fio_hash_find(fio_hash_s *h, uintptr_t hash) {
+static void *fio_hash_find(fiobj_hash_s *h, uintptr_t hash) {
   map_info_s *info = fio_hash_seek(h, hash);
   if (!info || !info->container)
     return NULL;
-  return info->container->obj;
+  return (void *)info->container->obj;
 }
 
 /* inserts an object to the map, rehashing if required, returning old object.
  * set obj to NULL to remove existing data.
  */
-static void *fio_hash_insert(fio_hash_s *h, uintptr_t hash, void *obj) {
+static void *fio_hash_insert(fiobj_hash_s *h, uintptr_t hash, void *obj) {
   map_info_s *info = fio_hash_seek(h, hash);
   if (!info)
     return (void *)(-1);
@@ -85,14 +140,14 @@ static void *fio_hash_insert(fio_hash_s *h, uintptr_t hash, void *obj) {
     return obj;
   }
   /* replace */
-  void *old = info->container->obj;
+  void *old = (void *)info->container->obj;
   info->container->obj = obj;
   return old;
 }
 
 /* attempts to rehash the hashmap. */
 void fiobj_hash_rehash(fiobj_s *h_) {
-  fio_hash_s *h = obj2hash(h_);
+  fiobj_hash_s *h = obj2hash(h_);
 // fprintf(stderr,
 //         "- Rehash with "
 //         "length/capacity == %lu/%lu\n",
@@ -103,7 +158,7 @@ retry_rehashing:
   fio_ls_s *pos = h->items.next;
   while (pos != &h->items) {
     /* can't use fio_hash_insert, because we're recycling containers */
-    uintptr_t pos_hash = obj2sym(obj2couplet(pos->obj)->name)->hash;
+    uintptr_t pos_hash = fiobj_sym_id(obj2couplet(pos->obj)->name);
     map_info_s *info = fio_hash_seek(h, pos_hash);
     if (!info) {
       goto retry_rehashing;
@@ -117,10 +172,12 @@ retry_rehashing:
 Couplet alloc + Couplet VTable
 ***************************************************************************** */
 
+const uintptr_t FIOBJ_T_COUPLET;
+
 static void fiobj_couplet_dealloc(fiobj_s *o) {
-  fiobj_dealloc(obj2couplet(o)->name);
-  fiobj_dealloc(obj2couplet(o)->obj);
-  free(&OBJ2HEAD(o));
+  if (OBJREF_REM(obj2couplet(o)->name) == 0)
+    OBJVTBL(obj2couplet(o)->name)->free(obj2couplet(o)->name);
+  fiobj_dealloc(o);
 }
 
 static size_t fiobj_couplet_each1(fiobj_s *o, size_t start_at,
@@ -128,29 +185,30 @@ static size_t fiobj_couplet_each1(fiobj_s *o, size_t start_at,
                                   void *arg) {
   if (obj2couplet(o)->obj == NULL)
     return 0;
-  return OBJ2HEAD(obj2couplet(o)->obj)
-      .vtable->each1(obj2couplet(o)->obj, start_at, task, arg);
+  return OBJVTBL(obj2couplet(o)->obj)
+      ->each1(obj2couplet(o)->obj, start_at, task, arg);
 }
 
-static int fiobj_coup_is_eq(fiobj_s *self, fiobj_s *other) {
-  if (!other || other->type != FIOBJ_T_COUPLET)
+static int fiobj_coup_is_eq(const fiobj_s *self, const fiobj_s *other) {
+
+  if (other->type != FIOBJ_T_COUPLET)
     return 0;
-  OBJ2HEAD(obj2couplet(self)->name)
-      .vtable->is_eq(obj2couplet(self)->name, obj2couplet(other)->name);
-  if (obj2couplet(self)->obj == obj2couplet(other)->obj)
-    return 1;
-  if (!obj2couplet(self)->obj || !obj2couplet(other)->obj)
+  if (obj2couplet(self)->name != obj2couplet(other)->name &&
+      (!obj2couplet(other)->name || !obj2couplet(self)->name ||
+       !OBJVTBL(obj2couplet(self)->name)
+            ->is_eq(obj2couplet(self)->name, obj2couplet(other)->name)))
     return 0;
-  return OBJ2HEAD(obj2couplet(self)->obj)
-      .vtable->is_eq(obj2couplet(self)->obj, obj2couplet(other)->obj);
+  return fiobj_iseq(obj2couplet(self)->obj, obj2couplet(other)->obj);
 }
 
 /** Returns the number of elements in the Array. */
-static size_t fiobj_couplet_count_items(fiobj_s *o) {
+static size_t fiobj_couplet_count_items(const fiobj_s *o) {
   if (obj2couplet(o)->obj == NULL)
     return 0;
-  return OBJ2HEAD(obj2couplet(o)->obj).vtable->count(obj2couplet(o)->obj);
+  return OBJVTBL(obj2couplet(o)->obj)->count(obj2couplet(o)->obj);
 }
+
+fiobj_s *fiobj_couplet2obj(const fiobj_s *obj);
 
 static struct fiobj_vtable_s FIOBJ_VTABLE_COUPLET = {
     .free = fiobj_couplet_dealloc,
@@ -159,20 +217,19 @@ static struct fiobj_vtable_s FIOBJ_VTABLE_COUPLET = {
     .to_str = fiobj_noop_str,
     .is_eq = fiobj_coup_is_eq,
     .count = fiobj_couplet_count_items,
+    .unwrap = fiobj_couplet2obj,
     .each1 = fiobj_couplet_each1,
 };
 
+const uintptr_t FIOBJ_T_COUPLET = (uintptr_t)(&FIOBJ_VTABLE_COUPLET);
+
 static inline fiobj_s *fiobj_couplet_alloc(void *sym, void *obj) {
-  fiobj_head_s *head;
-  head = malloc(sizeof(*head) + sizeof(fio_couplet_s));
-  if (!head)
+  fiobj_s *o = fiobj_alloc(sizeof(fiobj_couplet_s));
+  if (!o)
     perror("ERROR: fiobj hash couldn't allocate couplet"), exit(errno);
-  *head = (fiobj_head_s){
-      .ref = 1, .vtable = &FIOBJ_VTABLE_COUPLET,
-  };
-  *(fio_couplet_s *)(HEAD2OBJ(head)) =
-      (fio_couplet_s){.type = FIOBJ_T_COUPLET, .name = sym, .obj = obj};
-  return HEAD2OBJ(head);
+  *(obj2couplet(o)) = (fiobj_couplet_s){
+      .vtable = &FIOBJ_VTABLE_COUPLET, .name = fiobj_dup(sym), .obj = obj};
+  return o;
 }
 
 /**
@@ -181,10 +238,10 @@ static inline fiobj_s *fiobj_couplet_alloc(void *sym, void *obj) {
  *
  * Otherwise returns NULL.
  */
-fiobj_s *fiobj_couplet2key(fiobj_s *obj) {
+fiobj_s *fiobj_couplet2key(const fiobj_s *obj) {
   if (!obj || obj->type != FIOBJ_T_COUPLET)
     return NULL;
-  return ((fio_couplet_s *)obj)->name;
+  return obj2couplet(obj)->name;
 }
 
 /**
@@ -193,15 +250,17 @@ fiobj_s *fiobj_couplet2key(fiobj_s *obj) {
  *
  * Otherwise returns NULL.
  */
-fiobj_s *fiobj_couplet2obj(fiobj_s *obj) {
+fiobj_s *fiobj_couplet2obj(const fiobj_s *obj) {
   if (!obj || obj->type != FIOBJ_T_COUPLET)
-    return obj;
-  return ((fio_couplet_s *)obj)->obj;
+    return (fiobj_s *)obj;
+  return obj2couplet(obj)->obj;
 }
 
 /* *****************************************************************************
 Hash alloc + VTable
 ***************************************************************************** */
+
+const uintptr_t FIOBJ_T_HASH;
 
 static void fiobj_hash_dealloc(fiobj_s *h) {
   while (fio_ls_pop(&obj2hash(h)->items))
@@ -209,7 +268,7 @@ static void fiobj_hash_dealloc(fiobj_s *h) {
   free(obj2hash(h)->map.data);
   obj2hash(h)->map.data = NULL;
   obj2hash(h)->map.capa = 0;
-  free(&OBJ2HEAD(h));
+  fiobj_dealloc(h);
 }
 
 static size_t fiobj_hash_each1(fiobj_s *o, const size_t start_at,
@@ -225,30 +284,32 @@ static size_t fiobj_hash_each1(fiobj_s *o, const size_t start_at,
   }
   while (pos != &obj2hash(o)->items) {
     ++i;
-    if (task(pos->obj, arg) == -1)
+    if (task((fiobj_s *)pos->obj, arg) == -1)
       return i;
     pos = pos->next;
   }
   return i;
 }
 
-static int fiobj_hash_is_eq(fiobj_s *self, fiobj_s *other) {
-  if (!other || other->type != FIOBJ_T_HASH)
+static int fiobj_hash_is_eq(const fiobj_s *self, const fiobj_s *other) {
+  if (other->type != FIOBJ_T_HASH)
     return 0;
   if (obj2hash(self)->count != obj2hash(other)->count)
     return 0;
-  fio_ls_s *pos = obj2hash(self)->items.next;
-  while (pos != &obj2hash(self)->items) {
-    if (!fio_hash_find((fio_hash_s *)other,
-                       obj2sym(obj2couplet(pos->obj)->name)->hash))
-      return 0;
-    pos = pos->next;
-  }
+  // fio_ls_s *pos = obj2hash(self)->items.next;
+  // while (pos != &obj2hash(self)->items) {
+  //   if (!fio_hash_find((fiobj_hash_s *)other,
+  //                      fiobj_sym_id(obj2couplet(pos->obj)->name)))
+  //     return 0;
+  //   pos = pos->next;
+  // }
   return 1;
 }
 
 /** Returns the number of elements in the Array. */
-static size_t fiobj_hash_count_items(fiobj_s *o) { return obj2hash(o)->count; }
+static size_t fiobj_hash_count_items(const fiobj_s *o) {
+  return obj2hash(o)->count;
+}
 
 static struct fiobj_vtable_s FIOBJ_VTABLE_HASH = {
     .free = fiobj_hash_dealloc,
@@ -257,8 +318,11 @@ static struct fiobj_vtable_s FIOBJ_VTABLE_HASH = {
     .to_str = fiobj_noop_str,
     .is_eq = fiobj_hash_is_eq,
     .count = fiobj_hash_count_items,
+    .unwrap = fiobj_noop_unwrap,
     .each1 = fiobj_hash_each1,
 };
+
+const uintptr_t FIOBJ_T_HASH = (uintptr_t)(&FIOBJ_VTABLE_HASH);
 
 /* *****************************************************************************
 Hash API
@@ -271,26 +335,23 @@ Hash API
  * retain order of object insertion.
  */
 fiobj_s *fiobj_hash_new(void) {
-  fiobj_head_s *head = malloc(sizeof(*head) + sizeof(fio_hash_s));
-  if (!head)
+  fiobj_s *o = fiobj_alloc(sizeof(fiobj_hash_s));
+  if (!o)
     perror("ERROR: fiobj hash couldn't allocate memory"), exit(errno);
-  *head = (fiobj_head_s){
-      .ref = 1, .vtable = &FIOBJ_VTABLE_HASH,
-  };
-  *obj2hash(HEAD2OBJ(head)) = (fio_hash_s){
-      .type = FIOBJ_T_HASH,
+  *obj2hash(o) = (fiobj_hash_s){
+      .vtable = &FIOBJ_VTABLE_HASH,
       .mask = (HASH_INITIAL_CAPACITY - 1),
-      .items = FIO_LS_INIT((obj2hash(HEAD2OBJ(head))->items)),
+      .items = FIO_LS_INIT((obj2hash(o)->items)),
       .map.data = calloc(sizeof(map_info_s), HASH_INITIAL_CAPACITY),
       .map.capa = HASH_INITIAL_CAPACITY,
   };
-  // fio_map_reset(&obj2hash(HEAD2OBJ(head))->map,
-  // obj2hash(HEAD2OBJ(head))->mask);
-  return HEAD2OBJ(head);
+  if (!obj2hash(o)->map.data)
+    perror("ERROR: fiobj hash couldn't allocate memory"), exit(errno);
+  return o;
 }
 
 /** Returns the number of elements in the Hash. */
-size_t fiobj_hash_count(fiobj_s *hash) {
+size_t fiobj_hash_count(const fiobj_s *hash) {
   if (!hash || hash->type != FIOBJ_T_HASH)
     return 0;
   return obj2hash(hash)->count;
@@ -304,33 +365,32 @@ size_t fiobj_hash_count(fiobj_s *hash) {
  */
 int fiobj_hash_set(fiobj_s *hash, fiobj_s *sym, fiobj_s *obj) {
   if (hash->type != FIOBJ_T_HASH) {
-    fiobj_dealloc((fiobj_s *)obj);
+    fiobj_free(obj);
     return -1;
   }
-  switch (sym->type) {
-  case FIOBJ_T_SYMBOL:
-    sym = fiobj_dup(sym);
-    break;
-  case FIOBJ_T_STRING:
-    sym = fiobj_sym_new(obj2str(sym)->str, obj2str(sym)->len);
-    break;
-  default:
-    fiobj_dealloc((fiobj_s *)obj);
+  uintptr_t hash_value = 0;
+  if (sym->type == FIOBJ_T_SYMBOL) {
+    hash_value = fiobj_sym_id(sym);
+  } else if (FIOBJ_IS_STRING(sym)) {
+    fio_cstr_s str = fiobj_obj2cstr(sym);
+    hash_value = fiobj_sym_hash(str.value, str.len);
+  } else {
+    fiobj_free((fiobj_s *)obj);
     return -1;
   }
 
   fiobj_s *coup = fiobj_couplet_alloc(sym, obj);
-  fiobj_s *old = fio_hash_insert((fio_hash_s *)hash, obj2sym(sym)->hash, coup);
+  fiobj_s *old = fio_hash_insert(obj2hash(hash), hash_value, coup);
   while (old == (void *)-1) {
     fiobj_hash_rehash(hash);
-    old = fio_hash_insert((fio_hash_s *)hash, obj2sym(sym)->hash, coup);
+    old = fio_hash_insert(obj2hash(hash), hash_value, coup);
     // fprintf(stderr, "WARN: (fiobj Hash) collision limit reached"
     //                 " - forced rehashing\n");
   }
   if (old) {
     fiobj_free(obj2couplet(old)->obj);
     obj2couplet(old)->obj = NULL;
-    fiobj_dealloc(old);
+    fiobj_couplet_dealloc(old);
   }
   return 0;
 }
@@ -344,22 +404,21 @@ fiobj_s *fiobj_hash_remove(fiobj_s *hash, fiobj_s *sym) {
     return 0;
   }
   uintptr_t hash_value = 0;
-  switch (sym->type) {
-  case FIOBJ_T_SYMBOL:
-    hash_value = obj2sym(sym)->hash;
-    break;
-  case FIOBJ_T_STRING:
-    hash_value = fiobj_sym_hash(obj2str(sym)->str, obj2str(sym)->len);
-    break;
-  default:
-    return 0;
+  if (sym->type == FIOBJ_T_SYMBOL) {
+    hash_value = fiobj_sym_id(sym);
+  } else if (FIOBJ_IS_STRING(sym)) {
+    fio_cstr_s str = fiobj_obj2cstr(sym);
+    hash_value = fiobj_sym_hash(str.value, str.len);
+  } else {
+    return NULL;
   }
-  fiobj_s *coup = fio_hash_insert((fio_hash_s *)hash, hash_value, NULL);
+  fiobj_s *coup = fio_hash_insert(obj2hash(hash), hash_value, NULL);
   if (!coup)
     return NULL;
   fiobj_s *ret = fiobj_couplet2obj(coup);
   obj2couplet(coup)->obj = NULL;
-  fiobj_dealloc((fiobj_s *)coup);
+
+  fiobj_couplet_dealloc((fiobj_s *)coup);
   return ret;
 }
 
@@ -381,22 +440,20 @@ int fiobj_hash_delete(fiobj_s *hash, fiobj_s *sym) {
  * Returns a temporary handle to the object associated with the Symbol, NULL
  * if none.
  */
-fiobj_s *fiobj_hash_get(fiobj_s *hash, fiobj_s *sym) {
+fiobj_s *fiobj_hash_get(const fiobj_s *hash, fiobj_s *sym) {
   if (hash->type != FIOBJ_T_HASH) {
     return 0;
   }
   uintptr_t hash_value = 0;
-  switch (sym->type) {
-  case FIOBJ_T_SYMBOL:
-    hash_value = obj2sym(sym)->hash;
-    break;
-  case FIOBJ_T_STRING:
-    hash_value = fiobj_sym_hash(obj2str(sym)->str, obj2str(sym)->len);
-    break;
-  default:
+  if (sym->type == FIOBJ_T_SYMBOL) {
+    hash_value = fiobj_sym_id(sym);
+  } else if (FIOBJ_IS_STRING(sym)) {
+    fio_cstr_s str = fiobj_obj2cstr(sym);
+    hash_value = fiobj_sym_hash(str.value, str.len);
+  } else {
     return 0;
   }
-  fiobj_s *coup = fio_hash_find((fio_hash_s *)hash, hash_value);
+  fiobj_s *coup = fio_hash_find(obj2hash(hash), hash_value);
   if (!coup)
     return NULL;
   return fiobj_couplet2obj(coup);
@@ -410,12 +467,12 @@ fiobj_s *fiobj_hash_get(fiobj_s *hash, fiobj_s *sym) {
  *
  * Returns NULL if no object is asociated with this String data.
  */
-fiobj_s *fiobj_hash_get2(fiobj_s *hash, const char *str, size_t len) {
+fiobj_s *fiobj_hash_get2(const fiobj_s *hash, const char *str, size_t len) {
   if (hash->type != FIOBJ_T_HASH || str == NULL) {
     return NULL;
   }
   uintptr_t hashed_sym = fiobj_sym_hash(str, len);
-  fiobj_s *coup = fio_hash_find((fio_hash_s *)hash, hashed_sym);
+  fiobj_s *coup = fio_hash_find(obj2hash(hash), hashed_sym);
   if (!coup)
     return NULL;
   return fiobj_couplet2obj(coup);
@@ -424,24 +481,27 @@ fiobj_s *fiobj_hash_get2(fiobj_s *hash, const char *str, size_t len) {
 /**
  * Returns 1 if the key (Symbol) exists in the Hash, even if value is NULL.
  */
-int fiobj_hash_haskey(fiobj_s *hash, fiobj_s *sym) {
+int fiobj_hash_haskey(const fiobj_s *hash, fiobj_s *sym) {
   if (hash->type != FIOBJ_T_HASH) {
     return 0;
   }
   uintptr_t hash_value = 0;
-  switch (sym->type) {
-  case FIOBJ_T_SYMBOL:
-    hash_value = obj2sym(sym)->hash;
-    break;
-  case FIOBJ_T_STRING:
-    hash_value = fiobj_sym_hash(obj2str(sym)->str, obj2str(sym)->len);
-    break;
-  default:
+  if (sym->type == FIOBJ_T_SYMBOL) {
+    hash_value = fiobj_sym_id(sym);
+  } else if (FIOBJ_IS_STRING(sym)) {
+    fio_cstr_s str = fiobj_obj2cstr(sym);
+    hash_value = fiobj_sym_hash(str.value, str.len);
+  } else {
     return 0;
   }
-
-  fiobj_s *coup = fio_hash_find((fio_hash_s *)hash, hash_value);
+  fiobj_s *coup = fio_hash_find(obj2hash(hash), hash_value);
   if (!coup)
     return 0;
   return 1;
 }
+
+/**
+ * Returns a temporary theoretical Hash map capacity.
+ * This could be used for testig performance and memory consumption.
+ */
+size_t fiobj_hash_capa(const fiobj_s *hash) { return obj2hash(hash)->map.capa; }
