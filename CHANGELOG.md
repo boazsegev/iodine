@@ -18,25 +18,25 @@ This includes the following changes (as well as other minor changes), as detaile
 
 **Compatibility**: (`gcc-6`) Fix some compatibility concerns with `gcc` version 6, as well as some warnings that were exposed when testing with `gcc`.
 
-***
+---
 
 #### Change log v.0.4.14
 
 **Fix**: (`facil.io`) fixes an issue where timer monitoring would report failure when the timer exists and is being monitored.
 
-***
+---
 
 #### Change log v.0.4.12
 
 **Fix**: (`facil.io`) fixes some lingering issues with the new Websocket parser, namely an issue where certain network packet lengths would cause the parser to fail. Credit to Tom Lahti (@uidzip) for exposing the issue.
 
-***
+---
 
 #### Change log v.0.4.11
 
 **Fix**: (`iodine`) use Ruby `fork` instead of system `fork`, allowing Ruby hooks to run before and after forking. This also fixes an issue where the Ruby timer thread isn't (re)initialized.
 
-***
+---
 
 #### Change log v.0.4.10
 
@@ -44,7 +44,7 @@ This includes the following changes (as well as other minor changes), as detaile
 
 **Fix**: (`facil.io`) fixes an error with the new Websocket parser (introduced in v. 0.4.9) that caused medium sized messages (127 Bytes - 64Kib) to be parsed incorrectly. Apologies. The test program I used seems to have validated messages using length comparison (instead of data comparison). Credit to Tom Lahti (@uidzip) for exposing the issue.
 
-***
+---
 
 #### Change log v.0.4.9
 
@@ -58,7 +58,7 @@ This includes the following changes (as well as other minor changes), as detaile
 
 **Fix**: (`facil.io`) timer timeout review is now correctly ignored, preventing the timer from being shut down prematurely.
 
-***
+---
 
 #### Change log v.0.4.8
 
@@ -68,7 +68,7 @@ This includes the following changes (as well as other minor changes), as detaile
 
 **Performance**: The `now` HTTP Date string is now cached for up to 2 seconds, improving performance for `Date`, `Last-Modified` and Iodine logging messages that relate to the current time. However, it's likely that Rack will write it's own date string, masking this feature.
 
-***
+---
 
 #### Change log v.0.4.7
 
@@ -82,7 +82,7 @@ This includes the following changes (as well as other minor changes), as detaile
 
 **Fix**: (`defer`) a shutdown issue in `defer_perform_in_fork` was detected by @cdkrot and his fix was implemented.
 
-***
+---
 
 #### Change log v.0.4.6
 
@@ -90,25 +90,25 @@ This includes the following changes (as well as other minor changes), as detaile
 
 **Fix**: (from `facil.io`) fix `SIGTERM` handling, make sure sibling processes exit when a sibling dies.
 
-***
+---
 
 #### Change log v.0.4.5
 
 **Fix**: fix static file service for `X-Sendfile` as well as static error file fallback pages (404.html etc').
 
-***
+---
 
 #### Change log v.0.4.4
 
 **Fix**: fixed an issue related to Ruby 2.3 optimizations of String management (an issue that didn't seem to effect Ruby 2.4). This fix disables the recyclable buffer implemented for the `on_message` Websocket callback. The callback will now receive a copy of the buffer (not the buffer itself), so there is no risk of collisions between the network buffer (managed in C) and the `on_message(data)` String (managed by Ruby).
 
-***
+---
 
 #### Change log v.0.4.3
 
 **Fix**: fixed a possible issue in fragmented pipelined Websocket messages.
 
-***
+---
 
 #### Change log v.0.4.2
 
@@ -116,7 +116,7 @@ This includes the following changes (as well as other minor changes), as detaile
 
 **Fix**: fixed a possible issue with high-jacking which might cause the server to hang.
 
-***
+---
 
 #### Change log v.0.4.1
 
@@ -124,7 +124,7 @@ This includes the following changes (as well as other minor changes), as detaile
 
 **Fix** move the `rake-compiler` dependency to "development" instead of "runtime". Credit to Luis Lavena (@luislavena) for exposing the issue (#19).
 
-***
+---
 
 #### Change log v.0.4.0
 
@@ -170,13 +170,13 @@ Iodine::HTTP.listen port: 3000, app: my_app2, public: "./www"
 Iodine.start
 ```
 
-***
+---
 
 #### Change log v.0.3.6
 
 **Update**: Now using `facil.io` v.0.4.3. This fixes some delays in websocket packet flushing (latency), as well as other internal polishes. It also promises some possible future feature extensions that could add a major performance boost.
 
-***
+---
 
 #### Change log v.0.3.5
 
@@ -184,13 +184,13 @@ Iodine.start
 
 **Minor changes**: This release incorporates some more minor changes from the [`facil.io` 0.4.2 update](https://github.com/boazsegev/facil.io/releases/tag/v.0.4.2).
 
-***
+---
 
 #### Change log v.0.3.4
 
 **Fix**: (`sock`, `facil`, bscrypt) Add missing `static` keywords to prevent state collisions with other libraries.
 
-***
+---
 
 #### Change log v.0.3.3
 
@@ -202,7 +202,7 @@ Iodine.start
 
 **Compatibility**: (from `facil.io`) Added spaces after header names (`:` => `: `), since some parsers don't seem to read the RFC.
 
-***
+---
 
 #### Change log v.0.3.2
 
@@ -210,12 +210,12 @@ Iodine.start
 
 **Fix**: (from `facil.io`) fixed stream response logging.
 
-***
+---
 
 #### Change log v.0.3.1
 
 **Update**: Follow `facil.io`'s update for healthier thread throttling and energy consumption.
-***
+---
 
 #### Change log v.0.3.1
 
@@ -223,31 +223,31 @@ Iodine.start
 
 **Gem Specification update**: We updated the gem specification to allow for Rack 1.x users and to update the gem description.
 
-***
+---
 
 #### Change log v.0.3.0
 
 **`facil.io` C Core Update**: The C library core that drives Iodine [`facil.io`](http://facil.io) was updated to version 0.4.0 and Iodine follows closely on the heels of this update. The transition was easy enough and the API remains unchanged... but because the performance gain was so big and because it's a new code base, we opted to bump the minor release version.
 
-***
+---
 
 #### Change log v.0.2.17
 
 **Performance**: Enhanced Performance for single threaded / blocking applications by adding a dedicated IO thread. This is related to issue #14.
 
-***
+---
 
 #### Change log v.0.2.16
 
 **Update**: iodine can now run as a basic HTTP static file server without a Ruby application (no `config.ru`) when the `-www` option is used from the command line.
 
-***
+---
 
 #### Change log v.0.2.15
 
 **Fix**: Fixed typo in logging and code comments, credit to @jmoriau in PR #13.
 
-***
+---
 
 #### Change log v.0.2.14
 
@@ -257,7 +257,7 @@ Iodine.start
 
 **Deprecation**: In version 0.2.1 we have notified that the the Websocket method `uuid` was deprecated in favor of `conn_id`, as suggested by the [Rack Websocket Draft](https://github.com/rack/rack/pull/1107). This deprecation is now enforced.
 
-***
+---
 
 #### Change log v.0.2.13
 
@@ -265,13 +265,13 @@ Iodine.start
 
 **Credit**: credit to Elia Schito (@elia) and Augusts Bautra (@Epigene) for fixing parts of the documentation (PR #11 , #12).
 
-***
+---
 
 #### Change log v.0.2.12
 
 **Fix**: removed `mempool` after it failed some stress and concurrency tests.
 
-***
+---
 
 #### Change log v.0.2.11
 
@@ -281,7 +281,7 @@ Iodine.start
 
 **Update**: lessons learned from `facil.io` have been implemented for better compatibility of Iodine's core C layer.
 
-***
+---
 
 #### Change log v.0.2.10
 
@@ -308,13 +308,13 @@ Iodine.start
 * `bscrypt` random generator (where `dev/random` is unavailable) should now provide more entropy.
 
 
-***
+---
 
 #### Change log v.0.2.9
 
 **Fix**: fixed a gcc-4.8 compatibility issue that prevented iodine 0.2.8 from compiling on Heroku's cedar-14 stack. This was related to missing system include files in gcc-4.8. It should be noted that Heroku's stack and compiler (which utilizes Ubuntu 14) has known issues and / or limited support for some of it's published features... but I should have remembered that before releasing version 0.2.8... sorry about that.
 
-***
+---
 
 #### Change log v.0.2.8
 
@@ -322,7 +322,7 @@ Iodine.start
 
 **Housekeeping**: Cleaned up some code, removed old files, copied over the latest [`facil.io`](http://facil.io) library. There's probably some more housekeeping left to perform, especially anywhere where documentation is concerned. I welcome help with documentation.
 
-***
+---
 
 #### Change log v.0.2.7
 
@@ -330,13 +330,13 @@ Iodine.start
 
 **Update**: Automated the number of processes (forks) and threads used when these are not explicitly specified. These follow the number of cores / 2.
 
-***
+---
 
 #### Change log v.0.2.6
 
 **Update**: The IO reactor review will now be delayed until all events scheduled are done. This means that is events schedule future events, no IO data will be reviewed until all scheduled data is done. Foolish use might cause infinite loops that skip the IO reactor, but otherwise performance is improved (since the IO reactor might cause a thread to "sleep", delaying event execution).
 
-***
+---
 
 #### Change log v.0.2.5
 
@@ -344,7 +344,7 @@ Iodine.start
 
 **Minor Fix**: Fix Iodine::Rack's startup message's `fprintf` call to fit correct argument sizes (Linux warnings).
 
-***
+---
 
 #### Change log v.0.2.4
 
@@ -356,7 +356,7 @@ Iodine.start
 
 **Update**: Iodine::Rack startup messages now include details regarding open file limits imposed by the OS (open file limits control the maximum allowed concurrent connections and other resource limits).
 
-***
+---
 
 #### Change log v.0.2.3
 
@@ -364,7 +364,7 @@ Iodine.start
 
 **Update**: The global socket `write` buffer was increased to ~16Mb (from ~4Mb), allowing for more concurrent `write` operations. However, the `write` buffer is still limited and `write` might block while the buffer is full. Blocking and "hanging" the server until there's enough room in the buffer for the requested `write` will slow the server down while keeping it healthy and more secure. IMHO, it is the lesser of two evils.
 
-***
+---
 
 #### Change log v.0.2.2
 
@@ -372,7 +372,7 @@ Iodine.start
 
 **Update**: A performance warning now shows if the CPUs are significantly under-utilized (less than half are used) of if too many are utilized (more than double the amount of CPUs), warning against under-utilization or excessive context switching (respectively).
 
-***
+---
 
 #### Change log v.0.2.1
 
@@ -384,7 +384,7 @@ Iodine.start
 
 **Fix**: fixed an issue were the server would crash when attempting to send a long enough websocket message.
 
-***
+---
 
 #### Change log v.0.2.0
 
@@ -392,7 +392,7 @@ This version is a total rewrite. The API is totally changed, nothing stayed.
 
 Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby code written is just the fluff and feathers.
 
-***
+---
 
 ### deprecation of the 0.1.x version line
 
@@ -404,7 +404,7 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **Logs**: Log the number of threads utilized when starting up the server.
 
-***
+---
 
 #### Change log v.0.1.20
 
@@ -414,19 +414,19 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **API Changes**: `Iodine::HTTP.max_http_buffer` was replaced with `Iodine::HTTP.max_body_size`, for a better understanding of the method's result.
 
-***
+---
 
 #### Change log v.0.1.19
 
 **Update**: added the `go_away` method to the HTTP/1 protocol, for seamless connection closeing across HTTP/2, HTTP/1 and Websockets.
 
-***
+---
 
 #### Change log v.0.1.18
 
 **Update**: The request now has the shortcut method `Request#host_name` for accessing the host's name (without the port part of the string).
 
-***
+---
 
 #### Change log v.0.1.17
 
@@ -440,13 +440,13 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 * Remember that sessions are never really safe, no matter how much we guard them. Session hijacking is far too easy. This is why Iodine stores the session data locally and not within the session cookie. This is also why you should review any authentication before performing sensitive tasks based on session stored authentication data.
 
-***
+---
 
 #### Change log v.0.1.16
 
 **Performance**: HTTP/1 and HTTP/2 connections now share and recycle their write buffer when while reading the response body and writing it to the IO. This (hopefully) prevents excess `malloc` calls by the interpreter.
 
-***
+---
 
 #### Change log v.0.1.15
 
@@ -454,7 +454,7 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **Update**: Websockets now support the `on_ping` callback, which will be called whenever a ping was sent without error.
 
-***
+---
 
 #### Change log v.0.1.14
 
@@ -462,7 +462,7 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **Performance**: the Protocol class now recycles the data string as a thread global socket buffer (different threads have different buffer strings), preventing excessive `malloc` calls by the Ruby interpreter. To keep the `data` (in `on_message(data)`) past the `on_message` method's scope, be sure to duplicate it using `data.dup`, or the string's buffer will be recycled.
 
-***
+---
 
 #### Change log v.0.1.13
 
@@ -474,7 +474,7 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **Compatibility**: minor fixes and changes in preparation for Ruby 2.3.0. These may affect performance due to slower String initialization times.
 
-***
+---
 
 #### Change log v.0.1.12
 
@@ -482,13 +482,13 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **Security**: set the HTTPOnly flag for session id cookies.
 
-***
+---
 
 #### Change log v.0.1.11
 
 **Fix**: fixed the Rack server Handler, which was broken in version 0.1.10.
 
-***
+---
 
 #### Change log v.0.1.10
 
@@ -496,7 +496,7 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **Performance**: faster TimedEvent clearing when manually stopped. Minor improvements to direct big-file sending (recycle buffer to avoid `malloc`).
 
-***
+---
 
 #### Change log v.0.1.9
 
@@ -506,7 +506,7 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **Update**: repeatedly calling `Iodine.force_start!` will now be ignored, as might have been expected. Once Iodine had started, `force_start!` cannot be called until Iodine had finished (and even than, Iodine might never be as fresh nor as young as it was).
 
-***
+---
 
 #### Change log v.0.1.8
 
@@ -522,13 +522,13 @@ Iodine is now written in C, as a C extension for Ruby. The little, if any, ruby 
 
 **Fix** fixed an issue where HTTP streaming would disconnect while still processing. Streaming timeout now extended to 15 seconds between response writes.
 
-***
+---
 
 #### Change log v.0.1.7
 
 Removed a deprecation notice for blocking API. Client API will remain blocking due to use-case requirements.
 
-***
+---
 
 #### Change log v.0.1.6
 
@@ -542,7 +542,7 @@ Removed a deprecation notice for blocking API. Client API will remain blocking d
 
 (removed after reviewing use-cases).
 
-***
+---
 
 #### Change log v.0.1.5
 
@@ -550,7 +550,7 @@ Removed a deprecation notice for blocking API. Client API will remain blocking d
 
 **Fix**: Fixed an issue where Iodine might take a long time to shut down after a Fatal Error during the server initialization.
 
-***
+---
 
 #### Change log v.0.1.4
 
@@ -560,19 +560,19 @@ Removed a deprecation notice for blocking API. Client API will remain blocking d
 
 **Fix**: fixed an issue where HTTP2 header size limit condition was not recognized by the Ruby parser (a double space issue, might be an issue with the 2.2.3 Ruby parser).
 
-***
+---
 
 #### Change log v.0.1.3
 
 **Fix**: fixed an issue with the new form/multipart parser, where the '+' sign would be converted to spaces on form fields (not uploaded files), causing in-advert potential change to the original POSTed data.
 
-***
+---
 
 #### Change log v.0.1.2
 
 **Fix**: fixed an issue where the default implementation of `ping` did not reset the timeout if the connection wasn't being closed (the default implementation checks if the Protocol is working on existing data and either resets the timer allowing the work to complete or closes the connection if no work is being done).
 
-***
+---
 
 #### Change log v.0.1.1
 
@@ -586,7 +586,7 @@ Removed a deprecation notice for blocking API. Client API will remain blocking d
 
 **Logging**: Better HTTP error logging and recognition.
 
-***
+---
 
 #### Change log v.0.1.0
 
