@@ -18,23 +18,33 @@ This includes the following changes (as well as other minor changes), as detaile
 
 **Compatibility**: (`gcc-6`) Fix some compatibility concerns with `gcc` version 6, as well as some warnings that were exposed when testing with `gcc`.
 
+***
+
 #### Change log v.0.4.14
 
 **Fix**: (`facil.io`) fixes an issue where timer monitoring would report failure when the timer exists and is being monitored.
+
+***
 
 #### Change log v.0.4.12
 
 **Fix**: (`facil.io`) fixes some lingering issues with the new Websocket parser, namely an issue where certain network packet lengths would cause the parser to fail. Credit to Tom Lahti (@uidzip) for exposing the issue.
 
+***
+
 #### Change log v.0.4.11
 
 **Fix**: (`iodine`) use Ruby `fork` instead of system `fork`, allowing Ruby hooks to run before and after forking. This also fixes an issue where the Ruby timer thread isn't (re)initialized.
+
+***
 
 #### Change log v.0.4.10
 
 **Portability**: (`mac OS High Sierra`) iodine will load the Objective C library on macOS machines before starting up the server - this will prevent `fork` from crashing the server on macOS High Sierra, see [discussion here](https://github.com/puma/puma/issues/1421).
 
 **Fix**: (`facil.io`) fixes an error with the new Websocket parser (introduced in v. 0.4.9) that caused medium sized messages (127 Bytes - 64Kib) to be parsed incorrectly. Apologies. The test program I used seems to have validated messages using length comparison (instead of data comparison). Credit to Tom Lahti (@uidzip) for exposing the issue.
+
+***
 
 #### Change log v.0.4.9
 
