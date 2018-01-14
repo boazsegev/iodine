@@ -53,6 +53,7 @@ static void *fork_using_ruby(void *ignr) {
   if (pid == Qnil)
     return (void *)0;
   return (void *)(intptr_t)(NUM2INT(pid));
+  (void)ignr;
 }
 
 /* *****************************************************************************
@@ -90,7 +91,7 @@ into the forking function.
 
 Behaves like the system's `fork`.
 */
-int defer_new_child(void) {
+int facil_fork(void) {
   intptr_t pid = (intptr_t)rb_thread_call_with_gvl(fork_using_ruby, NULL);
   return (int)pid;
 }
