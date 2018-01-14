@@ -247,6 +247,37 @@ static VALUE iodine_defer(int argc, VALUE *argv, VALUE self) {
   return block;
 }
 
+/**
+Schedules a block of code to run for the specified websocket at a later time,
+(**if** the connection is open). The block will run within the connection's
+lock, offering a fast concurrency synchronizing tool.
+
+The block of code will receive the websocket's callback object. i.e.
+
+    Iodine::Websocket.defer(uuid) {|ws| ws.write "I'm doing this" }
+
+On success returns the block, otherwise (connection invalid) returns `false`.
+
+A sucessful event registration doesn't guaranty that the block will be called
+(the connection might close between the event registration and the execution).
+*/
+static VALUE iodine_class_defer(VALUE self, VALUE ws_uuid) {
+  (void)(self);
+  intptr_t fd = FIX2LONG(ws_uuid);
+  if (!sock_isvalid(fd))
+    return Qfalse;
+  // requires a block to be passed
+  rb_need_block();
+  VALUE block = rb_block_proc();
+  if (block == Qnil)
+    return Qfalse;
+  Registry.add(block);
+
+  facil_defer(.uuid = fd, .task = iodine_perform_defer, .arg = (void *)block,
+              .fallback = iodine_defer_fallback);
+  return block;
+}
+
 /* *****************************************************************************
 Websocket Pub/Sub API
 ***************************************************************************** */
@@ -466,169 +497,6 @@ static VALUE iodine_ws_publish(VALUE self, VALUE args) {
   (void)self;
 }
 
-/* *****************************************************************************
-Websocket Multi-Write - Deprecated
-***************************************************************************** */
-
-// static uint8_t iodine_ws_if_callback(ws_s *ws, void *block) {
-//   if (!ws)
-//     return 0;
-//   VALUE handler = get_handler(ws);
-//   uint8_t ret = 0;
-//   if (handler)
-//     ret = RubyCaller.call2((VALUE)block, iodine_call_proc_id, 1, &handler);
-//   return ret && ret != Qnil && ret != Qfalse;
-// }
-//
-// static void iodine_ws_write_each_complete(ws_s *ws, void *block) {
-//   (void)ws;
-//   if ((VALUE)block != Qnil)
-//     Registry.remove((VALUE)block);
-// }
-
-/**
- * Writes data to all the Websocket connections sharing the same process
- * (worker) except `self`.
- *
- * If a block is given, it will be passed each Websocket connection in turn
- * (much like `each`) and send the data only if the block returns a "truthy"
- * value (i.e. NOT `false` or `nil`).
- *
- * See both {#write} and {#each} for more details.
- */
-// static VALUE iodine_ws_multiwrite(VALUE self, VALUE data) {
-//   Check_Type(data, T_STRING);
-//   ws_s *ws = get_ws(self);
-//   // if ((void *)ws == (void *)0x04 || (void *)data == (void *)0x04 ||
-//   //     RSTRING_PTR(data) == (void *)0x04)
-//   //   fprintf(stderr, "iodine_ws_write: self = %p ; data = %p\n"
-//   //                   "\t\tString ptr: %p, String length: %lu\n",
-//   //           (void *)ws, (void *)data, RSTRING_PTR(data),
-//   RSTRING_LEN(data)); if (!ws || ((protocol_s *)ws)->service !=
-//   WEBSOCKET_ID_STR)
-//     ws = NULL;
-//
-//   VALUE block = Qnil;
-//   if (rb_block_given_p())
-//     block = rb_block_proc();
-//   if (block != Qnil)
-//     Registry.add(block);
-//   websocket_write_each(.origin = ws, .data = RSTRING_PTR(data),
-//                        .length = RSTRING_LEN(data),
-//                        .is_text = (rb_enc_get(data) == IodineUTF8Encoding),
-//                        .on_finished = iodine_ws_write_each_complete,
-//                        .filter =
-//                            ((block == Qnil) ? NULL : iodine_ws_if_callback),
-//                        .arg = (void *)block);
-//   return Qtrue;
-// }
-
-/* *****************************************************************************
-Websocket task performance
-*/
-
-static void iodine_ws_perform_each_task(intptr_t fd, protocol_s *protocol,
-                                        void *data) {
-  (void)(fd);
-  VALUE handler = get_handler(protocol);
-  if (handler)
-    RubyCaller.call2((VALUE)data, iodine_call_proc_id, 1, &handler);
-}
-static void iodine_ws_finish_each_task(intptr_t fd, void *data) {
-  (void)(fd);
-  Registry.remove((VALUE)data);
-}
-
-inline static void iodine_ws_run_each(intptr_t origin, VALUE block) {
-  facil_each(.origin = origin, .service = WEBSOCKET_ID_STR,
-             .task = iodine_ws_perform_each_task, .arg = (void *)block,
-             .on_complete = iodine_ws_finish_each_task);
-}
-
-/** Performs a block of code for each websocket connection. The function returns
-the block of code.
-
-The block of code should accept a single variable which is the websocket
-connection.
-
-i.e.:
-
-      def on_message data
-        msg = data.dup; # data will be overwritten once the function exists.
-        each {|ws| ws.write msg}
-      end
-
-
-The block of code will be executed asynchronously, to avoid having two blocks
-of code running at the same time and minimizing race conditions when using
-multilple threads.
- */
-static VALUE iodine_ws_each(VALUE self) {
-  // requires a block to be passed
-  rb_need_block();
-  VALUE block = rb_block_proc();
-  if (block == Qnil)
-    return Qnil;
-  Registry.add(block);
-  intptr_t fd = get_uuid(self);
-  iodine_ws_run_each(fd, block);
-  return block;
-}
-
-/**
-Runs the required block for each websocket.
-
-Tasks will be performed asynchronously, within each connection's lock, so no
-connection will have more then one task being performed at the same time
-(similar to {#defer}).
-
-Also, unlike {Iodine.run}, the block will **not** be called unless the
-websocket is still open at the time it's execution begins.
-
-Always returns `self`.
-*/
-static VALUE iodine_ws_class_each(VALUE self) {
-  // requires a block to be passed
-  rb_need_block();
-  VALUE block = rb_block_proc();
-  if (block == Qnil)
-    return Qfalse;
-  Registry.add(block);
-  iodine_ws_run_each(-1, block);
-  return self;
-}
-
-/**
-Schedules a block of code to run for the specified websocket at a later time,
-(**if** the connection is open). The block will run within the connection's
-lock, offering a fast concurrency synchronizing tool.
-
-The block of code will receive the websocket's callback object. i.e.
-
-    Iodine::Websocket.defer(uuid) {|ws| ws.write "I'm doing this" }
-
-On success returns the block, otherwise (connection invalid) returns `false`.
-
-A sucessful event registration doesn't guaranty that the block will be called
-(the connection might close between the event registration and the execution).
-*/
-static VALUE iodine_class_defer(VALUE self, VALUE ws_uuid) {
-  (void)(self);
-  intptr_t fd = FIX2LONG(ws_uuid);
-  if (!sock_isvalid(fd))
-    return Qfalse;
-  // requires a block to be passed
-  rb_need_block();
-  VALUE block = rb_block_proc();
-  if (block == Qnil)
-    return Qfalse;
-  Registry.add(block);
-
-  facil_defer(.uuid = fd, .task = iodine_perform_defer, .arg = (void *)block,
-              .fallback = iodine_defer_fallback);
-  return block;
-}
-
 //////////////////////////////////////
 // Protocol functions
 void ws_on_open(ws_s *ws) {
@@ -750,7 +618,7 @@ void Iodine_init_websocket(void) {
   ws_var_id = rb_intern("iodine_ws_ptr"); // when upgrading
   dup_func_id = rb_intern("dup");         // when upgrading
 
-  force_var_id = ID2SYM(rb_intern("fource"));
+  force_var_id = ID2SYM(rb_intern("encoding"));
   channel_var_id = ID2SYM(rb_intern("channel"));
   pattern_var_id = ID2SYM(rb_intern("pattern"));
   message_var_id = ID2SYM(rb_intern("message"));
@@ -781,7 +649,6 @@ void Iodine_init_websocket(void) {
   rb_define_method(IodineWebsocket, "subscribed?", iodine_ws_is_subscribed, 1);
   rb_define_method(IodineWebsocket, "publish", iodine_ws_publish, 1);
 
-  rb_define_singleton_method(IodineWebsocket, "each", iodine_ws_class_each, 0);
   rb_define_singleton_method(IodineWebsocket, "defer", iodine_class_defer, 1);
   rb_define_singleton_method(IodineWebsocket, "count", iodine_ws_count, 0);
   // rb_define_singleton_method(IodineWebsocket, "publish", iodine_ws_publish,

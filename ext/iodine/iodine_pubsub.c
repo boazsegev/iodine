@@ -52,13 +52,11 @@ call this function from your own code / application.
 
 The function should return `true` on success and `nil` or `false` on failure.
 */
-static VALUE engine_pub_placeholder(VALUE self, VALUE channel, VALUE msg,
-                                    VALUE use_pattern) {
+static VALUE engine_pub_placeholder(VALUE self, VALUE channel, VALUE msg) {
   return Qnil;
   (void)self;
   (void)msg;
   (void)channel;
-  (void)use_pattern;
 }
 
 /* *****************************************************************************
@@ -89,26 +87,18 @@ channel to be the same.
 If a client subscribed to "channel 1" on engine A, they will NOT receive
 messages from "channel 1" on engine B.
 */
-static VALUE engine_distribute(int argc, VALUE *argv, VALUE self) {
-  if (argc < 2 || argc > 3)
-    rb_raise(rb_eArgError,
-             "wrong number of arguments (given %d, expected 2..3).", argc);
-  VALUE channel = argv[0];
-  VALUE msg = argv[1];
-  VALUE pattern = argc >= 3 ? argv[2] : Qnil;
+static VALUE engine_distribute(VALUE self, VALUE channel, VALUE msg) {
   Check_Type(channel, T_STRING);
   Check_Type(msg, T_STRING);
 
   iodine_engine_s *engine;
   Data_Get_Struct(self, iodine_engine_s, engine);
+  FIOBJ ch = fiobj_str_new(RSTRING_PTR(channel), RSTRING_LEN(channel));
+  FIOBJ m = fiobj_str_new(RSTRING_PTR(msg), RSTRING_LEN(msg));
 
-  pubsub_engine_distribute(.engine = engine->p,
-                           .channel.name = RSTRING_PTR(channel),
-                           .channel.len = RSTRING_LEN(channel),
-                           .msg.data = RSTRING_PTR(msg),
-                           .msg.len = RSTRING_LEN(msg),
-                           .use_pattern =
-                               (pattern != Qnil && pattern != Qfalse));
+  pubsub_publish(.engine = PUBSUB_PROCESS_ENGINE, .channel = ch, .message = m);
+  fiobj_free(ch);
+  fiobj_free(msg);
   return self;
 }
 
@@ -455,9 +445,11 @@ static void iodine_on_unsubscribe(void *u1, void *u2) {
 
 static void *on_pubsub_notificationinGVL(pubsub_message_s *n) {
   VALUE rbn[2];
-  rbn[0] = rb_str_new(n->channel.name, n->channel.len);
+  fio_cstr_s tmp = fiobj_obj2cstr(n->channel);
+  rbn[0] = rb_str_new(tmp.data, tmp.len);
   Registry.add(rbn[0]);
-  rbn[1] = rb_str_new(n->msg.data, n->msg.len);
+  tmp = fiobj_obj2cstr(n->message);
+  rbn[1] = rb_str_new(tmp.data, tmp.len);
   Registry.add(rbn[1]);
   RubyCaller.call2((VALUE)n->udata1, iodine_call_proc_id, 2, rbn);
   Registry.remove(rbn[0]);
@@ -476,9 +468,6 @@ Subscribes the process to a channel belonging to a specific pub/sub service
 The function accepts a single argument (a Hash) and a required block.
 
 Accepts a single Hash argument with the following possible options:
-
-:engine :: If provided, the engine to use for pub/sub. Otherwise the default
-        :: engine is used.
 
 :channel :: Required (unless :pattern). The channel to subscribe to.
 
@@ -502,18 +491,15 @@ static VALUE iodine_subscribe(VALUE self, VALUE args) {
     rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);
 
+  FIOBJ ch = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
   VALUE block = rb_block_proc();
 
-  pubsub_engine_s *engine =
-      iodine_engine_ruby2facil(rb_hash_aref(args, engine_varid));
-
   uintptr_t subid = (uintptr_t)
-      pubsub_subscribe(.channel.name = RSTRING_PTR(rb_ch),
-                       .channel.len = RSTRING_LEN(rb_ch), .engine = engine,
-                       .use_pattern = use_pattern,
+      pubsub_subscribe(.channel = ch, .use_pattern = use_pattern,
                        .on_message = (block ? on_pubsub_notificationin : NULL),
                        .on_unsubscribe = (block ? iodine_on_unsubscribe : NULL),
                        .udata1 = (void *)block);
+  fiobj_free(ch);
   if (!subid)
     return Qnil;
   return ULL2NUM(subid);
@@ -603,10 +589,10 @@ void Iodine_init_pubsub(void) {
   rb_define_alloc_func(IodineEngine, engine_alloc_c);
   rb_define_method(IodineEngine, "initialize", engine_initialize, 0);
 
-  rb_define_method(IodineEngine, "distribute", engine_distribute, -1);
+  rb_define_method(IodineEngine, "distribute", engine_distribute, 2);
   rb_define_method(IodineEngine, "subscribe", engine_sub_placeholder, 2);
   rb_define_method(IodineEngine, "unsubscribe", engine_sub_placeholder, 2);
-  rb_define_method(IodineEngine, "publish", engine_pub_placeholder, 3);
+  rb_define_method(IodineEngine, "publish", engine_pub_placeholder, 2);
 
   rb_define_module_function(Iodine, "default_pubsub=", ips_set_default, 1);
   rb_define_module_function(Iodine, "default_pubsub", ips_get_default, 0);
