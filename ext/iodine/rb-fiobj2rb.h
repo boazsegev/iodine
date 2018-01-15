@@ -1,0 +1,97 @@
+#ifndef H_RB_FIOBJ2RUBY_H
+/*
+Copyright: Boaz segev, 2016-2017
+License: MIT
+
+Feel free to copy, use and enjoy according to the license provided.
+*/
+#define H_RB_FIOBJ2RUBY_H
+#include <fiobj.h>
+#include <ruby.h>
+
+typedef struct {
+  FIOBJ stack;
+  uintptr_t count;
+  VALUE rb;
+} fiobj2rb_s;
+
+static inline VALUE fiobj2rb(FIOBJ o) {
+  VALUE rb;
+  switch (FIOBJ_TYPE(o)) {
+  case FIOBJ_T_NUMBER:
+    rb = LONG2FIX(fiobj_obj2num(o));
+    break;
+  case FIOBJ_T_NULL:
+    rb = Qnil;
+    break;
+  case FIOBJ_T_TRUE:
+    rb = Qtrue;
+    break;
+  case FIOBJ_T_FALSE:
+    rb = Qfalse;
+    break;
+  case FIOBJ_T_FLOAT:
+    rb = DBL2NUM(fiobj_obj2float(o));
+    break;
+  case FIOBJ_T_DATA:    /* fallthrough */
+  case FIOBJ_T_UNKNOWN: /* fallthrough */
+  case FIOBJ_T_STRING: {
+    fio_cstr_s tmp = fiobj_obj2cstr(o);
+    rb = rb_str_new(tmp.data, tmp.len);
+  } break;
+  case FIOBJ_T_ARRAY:
+    rb = rb_ary_new();
+    break;
+  case FIOBJ_T_HASH:
+    rb = rb_hash_new();
+    break;
+  };
+  return rb;
+}
+
+static int fiobj2rb_task(FIOBJ o, void *data_) {
+  fiobj2rb_s *data = data_;
+  uintptr_t count_tmp;
+  VALUE rb_tmp;
+  rb_tmp = fiobj2rb(o);
+  if (data->rb) {
+    if (fiobj_hash_key_in_loop()) {
+      rb_hash_aset(data->rb, fiobj2rb(fiobj_hash_key_in_loop()), rb_tmp);
+    } else {
+      rb_ary_push(data->rb, rb_tmp);
+    }
+    --data->count;
+  } else {
+    data->rb = rb_tmp;
+  }
+  if (FIOBJ_TYPE_IS(o, FIOBJ_T_ARRAY)) {
+    fiobj_ary_push(data->stack, (FIOBJ)data->count);
+    fiobj_ary_push(data->stack, (FIOBJ)data->rb);
+    data->count = fiobj_ary_count(o);
+    data->rb = rb_tmp;
+  } else if (FIOBJ_TYPE_IS(o, FIOBJ_T_HASH)) {
+    fiobj_ary_push(data->stack, (FIOBJ)data->count);
+    fiobj_ary_push(data->stack, (FIOBJ)data->rb);
+    data->count = fiobj_hash_count(o);
+    data->rb = rb_tmp;
+  }
+  while (data->count == 0 && fiobj_ary_count(data->stack)) {
+    data->rb = fiobj_ary_pop(data->stack);
+    data->count = fiobj_ary_pop(data->stack);
+  }
+  return 0;
+}
+
+static inline VALUE fiobj2rb_deep(FIOBJ obj) {
+  fiobj2rb_s data = {.stack = fiobj_ary_new()};
+
+  /* deep copy */
+  fiobj_each2(obj, fiobj2rb_task, &data);
+  /* cleanup (shouldn't happen, but what the hell)... */
+  while (fiobj_ary_pop(data.stack))
+    ;
+  fiobj_free(data.stack);
+  return data.rb;
+}
+
+#endif /* H_RB_FIOBJ2RUBY_H */

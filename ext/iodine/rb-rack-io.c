@@ -60,7 +60,7 @@ static VALUE TCPSOCKET_CLASS;
 static ID for_fd_id;
 
 #define set_handle(object, handle)                                             \
-  rb_ivar_set((object), iodine_fd_var_id, ULONG2NUM((uintptr_t)handle))
+  rb_ivar_set((object), iodine_fd_var_id, ULL2NUM((uintptr_t)handle))
 
 inline static http_s *get_handle(VALUE obj) {
   VALUE i = rb_ivar_get(obj, iodine_fd_var_id);
@@ -153,7 +153,7 @@ static VALUE rio_read(int argc, VALUE *argv, VALUE self) {
 static VALUE rio_close(VALUE self) {
   FIOBJ io = get_data(self);
   fiobj_free(io);
-  rb_ivar_set(self, io_id, ULONG2NUM(0));
+  rb_ivar_set(self, io_id, INT2NUM(0));
   (void)self;
   return Qnil;
 }
@@ -209,7 +209,7 @@ C land API
 // new object
 static VALUE new_rack_io(http_s *h, VALUE env) {
   VALUE rack_io = rb_funcall2(rRackIO, iodine_new_func_id, 0, NULL);
-  rb_ivar_set(rack_io, io_id, ULONG2NUM(h->body));
+  rb_ivar_set(rack_io, io_id, ULL2NUM(h->body));
   set_handle(rack_io, h);
   rb_ivar_set(rack_io, env_id, env);
   return rack_io;
