@@ -222,7 +222,7 @@ static VALUE dyn_write_move(VALUE self, VALUE data) {
   Registry.add(data);
   intptr_t fd = iodine_get_fd(self);
   if (sock_write2(.uuid = fd, .buffer = RSTRING_PTR(data),
-                  .length = RSTRING_LEN(data), .move = 1,
+                  .length = RSTRING_LEN(data),
                   .dealloc = (void (*)(void *))Registry.remove))
     return Qfalse;
   return self;

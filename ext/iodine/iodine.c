@@ -149,17 +149,11 @@ static VALUE iodine_run(VALUE self) {
 /* *****************************************************************************
 Idling
 ***************************************************************************** */
-#include "fio_list.h"
+#include "fio_llist.h"
 #include "spnlock.inc"
 
-typedef struct {
-  fio_list_s node;
-  VALUE block;
-} iodine_idle_block_s;
-
 static spn_lock_i iodine_on_idle_lock = SPN_LOCK_INIT;
-static fio_list_s iodine_on_idle_list =
-    FIO_LIST_INIT_STATIC(iodine_on_idle_list);
+static fio_ls_s iodine_on_idle_list = FIO_LS_INIT(iodine_on_idle_list);
 
 /**
 Schedules a single occuring event for the next idle cycle.
@@ -174,22 +168,20 @@ i.e.
 */
 VALUE iodine_sched_on_idle(VALUE self) {
   rb_need_block();
-  iodine_idle_block_s *b = malloc(sizeof(*b));
-  b->block = rb_block_proc();
-  Registry.add(b->block);
+  VALUE block = rb_block_proc();
+  Registry.add(block);
   spn_lock(&iodine_on_idle_lock);
-  fio_list_push(iodine_idle_block_s, node, iodine_on_idle_list, b);
+  fio_ls_push(&iodine_on_idle_list, (void *)block);
   spn_unlock(&iodine_on_idle_lock);
-  return b->block;
+  return block;
   (void)self;
 }
 
 static void iodine_on_idle(void) {
-  iodine_idle_block_s *b;
   spn_lock(&iodine_on_idle_lock);
-  while ((b = fio_list_shift(iodine_idle_block_s, node, iodine_on_idle_list))) {
-    defer(iodine_perform_deferred, (void *)b->block, NULL);
-    free(b);
+  while (fio_ls_any(&iodine_on_idle_list)) {
+    VALUE block = (VALUE)fio_ls_shift(&iodine_on_idle_list);
+    defer(iodine_perform_deferred, (void *)block, NULL);
   }
   spn_unlock(&iodine_on_idle_lock);
 }
@@ -206,10 +198,9 @@ static pthread_t sock_io_pthread;
 static void *iodine_io_thread(void *arg) {
   (void)arg;
   struct timespec tm;
-  // static const struct timespec tm = {.tv_nsec = 524288UL};
   while (sock_io_thread) {
     sock_flush_all();
-    tm = (struct timespec){.tv_nsec = 524288UL, .tv_sec = 1};
+    tm = (struct timespec){.tv_nsec = 0, .tv_sec = 1};
     nanosleep(&tm, NULL);
   }
   return NULL;
