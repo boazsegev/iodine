@@ -140,13 +140,14 @@ static VALUE date_str(int argc, VALUE *argv, VALUE self) {
     if (TYPE(argv[0]) != T_FIXNUM)
       argv[0] = rb_funcallv(argv[0], iodine_to_i_func_id, 0, NULL);
     Check_Type(argv[0], T_FIXNUM);
-    last_tick = FIX2ULONG(argv[0]) ? FIX2ULONG(argv[0]) : facil_last_tick();
+    last_tick =
+        FIX2ULONG(argv[0]) ? FIX2ULONG(argv[0]) : facil_last_tick().tv_sec;
   } else
-    last_tick = facil_last_tick();
+    last_tick = facil_last_tick().tv_sec;
   VALUE str = rb_str_buf_new(32);
   struct tm tm;
 
-  http_gmtime(&last_tick, &tm);
+  http_gmtime(last_tick, &tm);
   size_t len = http_date2str(RSTRING_PTR(str), &tm);
   rb_str_set_len(str, len);
   return str;
@@ -168,11 +169,11 @@ Since Iodine uses time caching within it's reactor, using the default value
 static VALUE iodine_rfc2822(VALUE self, VALUE rtm) {
   time_t last_tick;
   rtm = rb_funcallv(rtm, iodine_to_i_func_id, 0, NULL);
-  last_tick = FIX2ULONG(rtm) ? FIX2ULONG(rtm) : facil_last_tick();
+  last_tick = FIX2ULONG(rtm) ? FIX2ULONG(rtm) : facil_last_tick().tv_sec;
   VALUE str = rb_str_buf_new(34);
   struct tm tm;
 
-  http_gmtime(&last_tick, &tm);
+  http_gmtime(last_tick, &tm);
   size_t len = http_date2rfc2822(RSTRING_PTR(str), &tm);
   rb_str_set_len(str, len);
   return str;
@@ -194,11 +195,11 @@ Since Iodine uses time caching within it's reactor, using the default value
 static VALUE iodine_rfc2109(VALUE self, VALUE rtm) {
   time_t last_tick;
   rtm = rb_funcallv(rtm, iodine_to_i_func_id, 0, NULL);
-  last_tick = FIX2ULONG(rtm) ? FIX2ULONG(rtm) : facil_last_tick();
+  last_tick = FIX2ULONG(rtm) ? FIX2ULONG(rtm) : facil_last_tick().tv_sec;
   VALUE str = rb_str_buf_new(32);
   struct tm tm;
 
-  http_gmtime(&last_tick, &tm);
+  http_gmtime(last_tick, &tm);
   size_t len = http_date2rfc2109(RSTRING_PTR(str), &tm);
   rb_str_set_len(str, len);
   return str;
