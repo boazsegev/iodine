@@ -5,6 +5,7 @@ License: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #include "iodine_http.h"
+#include "http.h"
 #include "iodine_websockets.h"
 #include "rb-rack-io.h"
 
@@ -19,8 +20,6 @@ VALUE IodineHTTP;
 typedef struct {
   VALUE app;
   VALUE env;
-  unsigned long max_msg : 56;
-  unsigned ping : 8;
 } iodine_http_settings_s;
 
 /* these three are used also by rb-rack-io.c */
@@ -77,61 +76,102 @@ Copying data from the C request to the Rack's ENV
 
 #define to_upper(c) (((c) >= 'a' && (c) <= 'z') ? ((c) & ~32) : (c))
 
-static inline VALUE copy2env(http_request_s *request, VALUE template) {
-  VALUE env = rb_hash_dup(template);
+static inline VALUE copy2env(http_s *h, uint8_t is_upgrade) {
+  VALUE env = rb_hash_new();
   Registry.add(env);
-  VALUE hname; /* will be used later, both as tmp and to iterate header names */
+
+#define add_str_to_env(env, key, value)                                        \
+  {                                                                            \
+    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);      \
+    rb_obj_freeze(k);                                                          \
+    VALUE v = rb_enc_str_new((value), strlen((value)), IodineBinaryEncoding);  \
+    rb_obj_freeze(v);                                                          \
+    rb_hash_aset(env, k, v);                                                   \
+  }
+#define add_value_to_env(env, key, value)                                      \
+  {                                                                            \
+    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);      \
+    rb_obj_freeze(k);                                                          \
+    rb_hash_aset((env), k, value);                                             \
+  }
+
+  // Start with the stuff Iodine will review.
+  rb_hash_aset(env, UPGRADE_WEBSOCKET, Qnil);
+  rb_hash_aset(env, UPGRADE_TCP, Qnil);
+  if (http_settings(h)->public_folder) {
+    add_value_to_env(env, "sendfile.type", XSENDFILE);
+    add_value_to_env(env, "HTTP_X_SENDFILE_TYPE", XSENDFILE);
+  }
+  rb_hash_aset(env, UPGRADE_WEBSOCKET_Q, Qnil);
+  rb_hash_aset(env, UPGRADE_TCP_Q, Qnil);
+
+  // add the rack.version
+  {
+    static VALUE rack_version = 0;
+    if (!rack_version) {
+      rack_version = rb_ary_new(); // rb_ary_new is Ruby 2.0 compatible
+      rb_ary_push(rack_version, INT2FIX(1));
+      rb_ary_push(rack_version, INT2FIX(3));
+      Registry.add(rack_version);
+    }
+    add_value_to_env(env, "rack.version", rack_version);
+  }
+  add_value_to_env(env, "rack.errors", rb_stderr);
+  add_value_to_env(env, "rack.multithread", Qtrue);
+  add_value_to_env(env, "rack.multiprocess", Qtrue);
+  add_value_to_env(env, "rack.run_once", Qfalse);
+  add_value_to_env(env, "rack.hijack?", Qtrue);
+  add_str_to_env(env, "SCRIPT_NAME", "");
+
+  fio_cstr_s tmp;
   char *pos = NULL;
   const char *reader = NULL;
   /* Copy basic data */
+  tmp = fiobj_obj2cstr(h->method);
   rb_hash_aset(env, REQUEST_METHOD,
-               rb_enc_str_new(request->method, request->method_len,
-                              IodineBinaryEncoding));
-
-  rb_hash_aset(
-      env, PATH_INFO,
-      rb_enc_str_new(request->path, request->path_len, IodineBinaryEncoding));
+               rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
+  tmp = fiobj_obj2cstr(h->path);
+  rb_hash_aset(env, PATH_INFO,
+               rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
+  tmp = fiobj_obj2cstr(h->query);
   rb_hash_aset(env, QUERY_STRING,
-               (request->query
-                    ? rb_enc_str_new(request->query, request->query_len,
-                                     IodineBinaryEncoding)
-                    : QUERY_ESTRING));
-  rb_hash_aset(env, QUERY_STRING,
-               (request->query
-                    ? rb_enc_str_new(request->query, request->query_len,
-                                     IodineBinaryEncoding)
-                    : QUERY_ESTRING));
+               tmp.len ? rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding)
+                       : QUERY_ESTRING);
+  {
+    // HTTP version appears twice
+    tmp = fiobj_obj2cstr(h->version);
+    VALUE hname = rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding);
+    rb_hash_aset(env, SERVER_PROTOCOL, hname);
+    rb_hash_aset(env, HTTP_VERSION, hname);
+  }
 
-  hname = rb_enc_str_new(request->version, request->version_len,
-                         IodineBinaryEncoding);
-  rb_hash_aset(env, SERVER_PROTOCOL, hname);
-  rb_hash_aset(env, HTTP_VERSION, hname);
-
-  // Suppoer for Ruby web-console.
-  hname = rb_str_buf_new(64);
-  sock_peer_addr_s addrinfo = sock_peer_addr(request->fd);
-  if (addrinfo.addrlen &&
-      inet_ntop(
-          addrinfo.addr->sa_family,
-          addrinfo.addr->sa_family == AF_INET
-              ? (void *)&((struct sockaddr_in *)addrinfo.addr)->sin_addr
-              : (void *)&((struct sockaddr_in6 *)addrinfo.addr)->sin6_addr,
-          RSTRING_PTR(hname), 64)) {
-    rb_str_set_len(hname, strlen(RSTRING_PTR(hname)));
-    rb_hash_aset(env, REMOTE_ADDR, hname);
+  { // Support for Ruby web-console.
+    VALUE address = rb_str_buf_new(64);
+    sock_peer_addr_s addrinfo = http_peer_addr(h);
+    if (addrinfo.addrlen &&
+        inet_ntop(
+            addrinfo.addr->sa_family,
+            addrinfo.addr->sa_family == AF_INET
+                ? (void *)&((struct sockaddr_in *)addrinfo.addr)->sin_addr
+                : (void *)&((struct sockaddr_in6 *)addrinfo.addr)->sin6_addr,
+            RSTRING_PTR(address), 64)) {
+      rb_str_set_len(address, strlen(RSTRING_PTR(address)));
+      rb_hash_aset(env, REMOTE_ADDR, address);
+    }
   }
 
   /* setup input IO + hijack support */
-  rb_hash_aset(env, R_INPUT, (hname = IodineRackIO.create(request, env)));
-
+  {
+    VALUE m;
+    rb_hash_aset(env, R_INPUT, (m = IodineRackIO.create(h, env)));
+    m = rb_obj_method(m, hijack_func_sym);
+    rb_hash_aset(env, IODINE_R_HIJACK, m);
+  }
   /* publish upgrade support */
-  if (request->upgrade) {
+  if (is_upgrade) {
     rb_hash_aset(env, UPGRADE_WEBSOCKET_Q, Qtrue);
     rb_hash_aset(env, UPGRADE_TCP_Q, Qtrue);
   }
-
-  hname = rb_obj_method(hname, hijack_func_sym);
-  rb_hash_aset(env, IODINE_R_HIJACK, hname);
 
   /* handle the HOST header, including the possible host:#### format*/
   pos = (char *)request->host;
@@ -228,6 +268,9 @@ static inline VALUE copy2env(http_request_s *request, VALUE template) {
   }
   return env;
 }
+#undef add_str_to_env
+#undef add_value_to_env
+#undef add_header_to_env
 
 /* *****************************************************************************
 Handling the HTTP response
@@ -379,12 +422,9 @@ static inline int ruby2c_review_upgrade(http_response_s *response,
 Handling HTTP requests
 ***************************************************************************** */
 
-static void *on_rack_request_in_GVL(http_request_s *request) {
-  http_response_s *response = http_response_create(request);
-  iodine_http_settings_s *settings = request->settings->udata;
-  if (request->settings->log_static)
-    http_response_log_start(response);
-  if (!settings->app)
+static void *on_rack_request_in_GVL(void *h_) {
+  http_s *h = h_;
+  if (!h->udata)
     goto err_not_found;
 
   // create /register env variable
@@ -493,62 +533,17 @@ internal_error:
   return NULL;
 }
 
-static void on_rack_request(http_request_s *request) {
+static void on_rack_request(http_s *request) {
   // if (request->body_file)
   //   fprintf(stderr, "Request data is stored in a temporary file\n");
   RubyCaller.call_c((void *(*)(void *))on_rack_request_in_GVL, request);
 }
 
-/* *****************************************************************************
-Initializing basic Rack ENV template
-***************************************************************************** */
-
-#define add_str_to_env(env, key, value)                                        \
-  {                                                                            \
-    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);      \
-    rb_obj_freeze(k);                                                          \
-    VALUE v = rb_enc_str_new((value), strlen((value)), IodineBinaryEncoding);  \
-    rb_obj_freeze(v);                                                          \
-    rb_hash_aset(env, k, v);                                                   \
-  }
-#define add_value_to_env(env, key, value)                                      \
-  {                                                                            \
-    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);      \
-    rb_obj_freeze(k);                                                          \
-    rb_hash_aset((env), k, value);                                             \
-  }
-
-static void init_env_template(iodine_http_settings_s *set, uint8_t xsendfile) {
-  VALUE tmp;
-  set->env = rb_hash_new();
-  Registry.add(set->env);
-
-  // Start with the stuff Iodine will review.
-  rb_hash_aset(set->env, UPGRADE_WEBSOCKET, Qnil);
-  rb_hash_aset(set->env, UPGRADE_TCP, Qnil);
-  if (xsendfile) {
-    add_value_to_env(set->env, "sendfile.type", XSENDFILE);
-    add_value_to_env(set->env, "HTTP_X_SENDFILE_TYPE", XSENDFILE);
-  }
-  rb_hash_aset(set->env, UPGRADE_WEBSOCKET_Q, Qnil);
-  rb_hash_aset(set->env, UPGRADE_TCP_Q, Qnil);
-
-  // add the rack.version
-  tmp = rb_ary_new(); // rb_ary_new is Ruby 2.0 compatible
-  rb_ary_push(tmp, INT2FIX(1));
-  rb_ary_push(tmp, INT2FIX(3));
-  // rb_ary_push(tmp, rb_enc_str_new("1", 1, IodineBinaryEncoding));
-  // rb_ary_push(tmp, rb_enc_str_new("3", 1, IodineBinaryEncoding));
-  add_value_to_env(set->env, "rack.version", tmp);
-  add_value_to_env(set->env, "rack.errors", rb_stderr);
-  add_value_to_env(set->env, "rack.multithread", Qtrue);
-  add_value_to_env(set->env, "rack.multiprocess", Qtrue);
-  add_value_to_env(set->env, "rack.run_once", Qfalse);
-  add_value_to_env(set->env, "rack.hijack?", Qtrue);
-  add_str_to_env(set->env, "SCRIPT_NAME", "");
+static void on_rack_upgrade(http_s *request) {
+  // if (request->body_file)
+  //   fprintf(stderr, "Request data is stored in a temporary file\n");
+  RubyCaller.call_c((void *(*)(void *))on_rack_request_in_GVL, request);
 }
-#undef add_str_to_env
-#undef add_value_to_env
 
 /* *****************************************************************************
 Listenninng to HTTP
@@ -621,11 +616,8 @@ static void iodine_print_http_msg2(void *www, void *port) {
   RubyCaller.call_c(iodine_print_http_msg2_in_gvl, (void *)&data);
 }
 
-static void free_iodine_http(intptr_t uuid, void *set_) {
-  iodine_http_settings_s *set = set_;
-  Registry.remove(set->app);
-  Registry.remove(set->env);
-  free(set);
+static void free_iodine_http(intptr_t uuid, void *app) {
+  Registry.remove(app);
   (void)uuid;
 }
 /**
@@ -667,7 +659,9 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
   static int called_once = 0;
   uint8_t log_http = 0;
   size_t ping = 0;
+  size_t ping_ws = 0;
   size_t max_body = 0;
+  size_t max_headers = 0;
   size_t max_msg = 0;
   Check_Type(opt, T_HASH);
   VALUE app = rb_hash_aref(opt, ID2SYM(rb_intern("app")));
@@ -686,6 +680,11 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
   if (tmp != Qnil && tmp != Qfalse) {
     Check_Type(tmp, T_FIXNUM);
     max_body = FIX2ULONG(tmp);
+  }
+  tmp = rb_hash_aref(opt, ID2SYM(rb_intern("max_headers")));
+  if (tmp != Qnil && tmp != Qfalse) {
+    Check_Type(tmp, T_FIXNUM);
+    max_headers = FIX2ULONG(tmp);
   }
 
   tmp = rb_hash_aref(opt, ID2SYM(rb_intern("ping")));
@@ -737,32 +736,34 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
                "The `port` property MUST be either a String or a Number");
     if (RB_TYPE_P(port, T_FIXNUM))
       port = rb_funcall2(port, iodine_to_s_method_id, 0, NULL);
-  } else
+    Registry.add(port);
+  } else if (port == Qfalse)
+    port = NULL;
+  else {
     port = rb_str_new("3000", 4);
-  Registry.add(port);
+    Registry.add(port);
+  }
 
   if ((app != Qnil && app != Qfalse))
     Registry.add(app);
   else
     app = 0;
 
-  iodine_http_settings_s *set = malloc(sizeof(*set));
-  *set = (iodine_http_settings_s){.app = app, .ping = ping, .max_msg = max_msg};
-
-  init_env_template(set, (www ? 1 : 0));
-
-  if (http_listen(StringValueCStr(port),
-                  (address ? StringValueCStr(address) : NULL),
-                  .on_request = on_rack_request, .udata = set,
-                  .timeout = (tout ? FIX2INT(tout) : tout),
-                  .on_finish = free_iodine_http, .log_static = log_http,
-                  .max_body_size = max_body,
-                  .public_folder = (www ? StringValueCStr(www) : NULL))) {
+  if (http_listen(
+          StringValueCStr(port), (address ? StringValueCStr(address) : NULL),
+          .on_request = on_rack_request, .on_upgrade = on_rack_upgrade,
+          .udata = (void *)app, .timeout = (tout ? FIX2INT(tout) : tout),
+          .ws_timeout = ping, .ws_max_msg_size = max_msg,
+          .max_header_size = max_headers, .on_finish = free_iodine_http,
+          .log = log_http, .max_body_size = max_body,
+          .public_folder = (www ? StringValueCStr(www) : NULL))) {
     fprintf(stderr,
             "ERROR: Failed to initialize a listening HTTP socket for port %s\n",
             port ? StringValueCStr(port) : "3000");
     return Qfalse;
   }
+  Registry.remove(port);
+  Registry.remove(www);
 
   if ((app == Qnil || app == Qfalse)) {
     fprintf(stderr,
@@ -817,9 +818,6 @@ void Iodine_init_http(void) {
 
   rack_set(UPGRADE_TCP_Q, "upgrade.tcp?");
   rack_set(UPGRADE_WEBSOCKET_Q, "upgrade.websocket?");
-
-  rack_set(QUERY_ESTRING, "");
-  rack_set(QUERY_ESTRING, "");
 
   hijack_func_sym = ID2SYM(rb_intern("_hijack"));
   close_method_id = rb_intern("close");
