@@ -336,20 +336,20 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
   for (int i = 0; i < key_len; ++i) {
     key_s[i] = tolower(key_s[i]);
   }
+  FIOBJ name = fiobj_str_new(key_s, key_len);
   // scan the value for newline (\n) delimiters
   int pos_s = 0, pos_e = 0;
   while (pos_e < val_len) {
     // scanning for newline (\n) delimiters
     while (pos_e < val_len && val_s[pos_e] != '\n')
       pos_e++;
-    http_set_header2(
-        h, (fio_cstr_s){.data = RSTRING_PTR(key), .len = RSTRING_LEN(key)},
-        (fio_cstr_s){.data = val_s + pos_s, .len = pos_e - pos_s});
+    http_set_header(h, name, fiobj_str_new(val_s + pos_s, pos_e - pos_s));
     // fprintf(stderr, "For_each - headers: wrote header\n");
     // move forward (skip the '\n' if exists)
     pos_s = pos_e + 1;
     pos_e++;
   }
+  fiobj_free(name);
   // no errors, return 0
   return ST_CONTINUE;
 }
@@ -401,6 +401,7 @@ static inline int ruby2c_response_send(http_s *h, VALUE rbresponse, VALUE env) {
                   (VALUE)body_str);
     fio_cstr_s tmp = fiobj_obj2cstr(body_str);
     http_send_body(h, tmp.data, tmp.length);
+    fiobj_free(body_str);
     // we need to call `close` in case the object is an IO / BodyProxy
     if (rb_respond_to(body, close_method_id))
       RubyCaller.call(body, close_method_id);
@@ -604,7 +605,7 @@ void *iodine_print_http_msg_in_gvl(void *d_) {
 }
 
 static void iodine_print_http_msg1(void *www, void *port) {
-  if (facil_parent_pid() == getpid())
+  if (facil_parent_pid() != getpid())
     return;
   struct {
     void *www;
@@ -613,7 +614,7 @@ static void iodine_print_http_msg1(void *www, void *port) {
   RubyCaller.call_c(iodine_print_http_msg_in_gvl, (void *)&data);
 }
 static void iodine_print_http_msg2(void *www, void *port) {
-  if (facil_parent_pid() == getpid())
+  if (facil_parent_pid() != getpid())
     return;
   struct {
     void *www;
