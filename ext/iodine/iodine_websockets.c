@@ -29,8 +29,8 @@ static VALUE binary_var_id;
 static VALUE engine_var_id;
 static VALUE message_var_id;
 
-#define set_uuid(object, request)                                              \
-  rb_ivar_set((object), iodine_fd_var_id, ULONG2NUM((request)->fd))
+#define set_uuid(object, uuid)                                                 \
+  rb_ivar_set((object), iodine_fd_var_id, ULONG2NUM((uuid)))
 
 inline static intptr_t get_uuid(VALUE obj) {
   VALUE i = rb_ivar_get(obj, iodine_fd_var_id);
@@ -289,9 +289,11 @@ static void iodine_on_unsubscribe(void *u) {
 
 static void *on_pubsub_notificationinGVL(websocket_pubsub_notification_s *n) {
   VALUE rbn[2];
-  rbn[0] = rb_str_new(n->channel.name, n->channel.len);
+  fio_cstr_s tmp = fiobj_obj2cstr(n->channel);
+  rbn[0] = rb_str_new(tmp.data, tmp.len);
   Registry.add(rbn[0]);
-  rbn[1] = rb_str_new(n->msg.data, n->msg.len);
+  tmp = fiobj_obj2cstr(n->message);
+  rbn[1] = rb_str_new(tmp.data, tmp.len);
   Registry.add(rbn[1]);
   RubyCaller.call2((VALUE)n->udata, iodine_call_proc_id, 2, rbn);
   Registry.remove(rbn[0]);
@@ -312,9 +314,6 @@ The function accepts a single argument (a Hash) and an optional block.
 If no block is provided, the message is sent directly to the websocket client.
 
 Accepts a single Hash argument with the following possible options:
-
-:engine :: If provided, the engine to use for pub/sub. Otherwise the default
-engine is used.
 
 :channel :: Required (unless :pattern). The channel to subscribe to.
 
@@ -356,16 +355,15 @@ static VALUE iodine_ws_subscribe(VALUE self, VALUE args) {
     Registry.add(block);
   }
 
-  pubsub_engine_s *engine =
-      iodine_engine_ruby2facil(rb_hash_aref(args, engine_var_id));
+  FIOBJ channel = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
 
   uintptr_t subid = websocket_subscribe(
-      ws, .channel.name = RSTRING_PTR(rb_ch), .channel.len = RSTRING_LEN(rb_ch),
-      .engine = engine, .use_pattern = use_pattern, .force_text = force_text,
-      .force_binary = force_binary,
+      ws, .channel = channel, .use_pattern = use_pattern,
+      .force_text = force_text, .force_binary = force_binary,
       .on_message = (block ? on_pubsub_notificationin : NULL),
       .on_unsubscribe = (block ? iodine_on_unsubscribe : NULL),
       .udata = (void *)block);
+  fiobj_free(channel);
   if (!subid)
     return Qnil;
   return ULL2NUM(subid);
@@ -375,9 +373,6 @@ Searches for the subscription ID for the describes subscription.
 
 Takes the same arguments as {subscribe}, a single Hash argument with the
 following possible options:
-
-:engine :: If provided, the engine to use for pub/sub. Otherwise the default
-engine is used.
 
 :channel :: The subscription's channel.
 
@@ -417,15 +412,14 @@ static VALUE iodine_ws_is_subscribed(VALUE self, VALUE args) {
     block = rb_block_proc();
   }
 
-  pubsub_engine_s *engine =
-      iodine_engine_ruby2facil(rb_hash_aref(args, engine_var_id));
+  FIOBJ channel = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
 
   uintptr_t subid = websocket_find_sub(
-      ws, .channel.name = RSTRING_PTR(rb_ch), .channel.len = RSTRING_LEN(rb_ch),
-      .engine = engine, .use_pattern = use_pattern, .force_text = force_text,
-      .force_binary = force_binary,
+      ws, .channel = channel, .use_pattern = use_pattern,
+      .force_text = force_text, .force_binary = force_binary,
       .on_message = (block ? on_pubsub_notificationin : NULL),
       .udata = (void *)block);
+  fiobj_free(channel);
   if (!subid)
     return Qnil;
   return LONG2NUM(subid);
@@ -453,24 +447,17 @@ Accepts a single Hash argument with the following possible options:
 :engine :: If provided, the engine to use for pub/sub. Otherwise the default
 engine is used.
 
-:channel :: Required (unless :pattern). The channel to publish to.
-
-:pattern :: An alternative to the required :channel, publishes to a pattern.
-This is NOT supported by Redis and it's limited to the local process cluster.
+:channel :: REQUIRED. The channel to publish to.
 
 :message :: REQUIRED. The message to be published.
 :
 */
 static VALUE iodine_ws_publish(VALUE self, VALUE args) {
   Check_Type(args, T_HASH);
-  uint8_t use_pattern = 0;
 
   VALUE rb_ch = rb_hash_aref(args, channel_var_id);
   if (rb_ch == Qnil || rb_ch == Qfalse) {
-    use_pattern = 1;
-    rb_ch = rb_hash_aref(args, pattern_var_id);
-    if (rb_ch == Qnil || rb_ch == Qfalse)
-      rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
+    rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
   }
   if (TYPE(rb_ch) == T_SYMBOL)
     rb_ch = rb_sym2str(rb_ch);
@@ -484,13 +471,11 @@ static VALUE iodine_ws_publish(VALUE self, VALUE args) {
 
   pubsub_engine_s *engine =
       iodine_engine_ruby2facil(rb_hash_aref(args, engine_var_id));
+  FIOBJ channel = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
+  FIOBJ msg = fiobj_str_new(RSTRING_PTR(rb_msg), RSTRING_LEN(rb_msg));
 
   intptr_t subid =
-      pubsub_publish(.engine = engine, .channel.name = (RSTRING_PTR(rb_ch)),
-                     .channel.len = (RSTRING_LEN(rb_ch)),
-                     .msg.data = (RSTRING_PTR(rb_msg)),
-                     .msg.len = (RSTRING_LEN(rb_msg)),
-                     .use_pattern = use_pattern);
+      pubsub_publish(.engine = engine, .channel = channel, .message = msg);
   if (!subid)
     return Qfalse;
   return Qtrue;
@@ -501,6 +486,7 @@ static VALUE iodine_ws_publish(VALUE self, VALUE args) {
 // Protocol functions
 void ws_on_open(ws_s *ws) {
   VALUE handler = get_handler(ws);
+  set_uuid(handler, websocket_uuid(ws));
   if (!handler)
     return;
   set_ws(handler, ws);
@@ -571,9 +557,7 @@ static VALUE empty_func(VALUE self) {
 Upgrading
 ***************************************************************************** */
 
-void iodine_websocket_upgrade(http_request_s *request,
-                              http_response_s *response, VALUE handler,
-                              size_t max_msg, uint8_t ping) {
+void iodine_websocket_upgrade(http_s *h, VALUE handler) {
   // make sure we have a valid handler, with the Websocket Protocol mixin.
   if (handler == Qnil || handler == Qfalse || TYPE(handler) == T_FIXNUM ||
       TYPE(handler) == T_STRING || TYPE(handler) == T_SYMBOL)
@@ -594,18 +578,13 @@ void iodine_websocket_upgrade(http_request_s *request,
   }
   // add the handler to the registry
   Registry.add(handler);
-  // set the UUID for the connection
-  set_uuid(handler, request);
   // send upgrade response and set new protocol
-  websocket_upgrade(.request = request, .response = response,
-                    .udata = (void *)handler, .on_close = ws_on_close,
-                    .on_open = ws_on_open, .on_shutdown = ws_on_shutdown,
-                    .on_ready = ws_on_ready, .on_message = ws_on_data,
-                    .max_msg_size = max_msg, .timeout = ping);
+  http_upgrade2ws(.http = h, .udata = (void *)handler, .on_close = ws_on_close,
+                  .on_open = ws_on_open, .on_shutdown = ws_on_shutdown,
+                  .on_ready = ws_on_ready, .on_message = ws_on_data);
   return;
 failed:
-  response->status = 400;
-  http_response_finish(response);
+  http_send_error(h, 400);
   return;
 }
 

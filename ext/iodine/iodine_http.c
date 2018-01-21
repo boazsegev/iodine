@@ -10,6 +10,9 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "rb-rack-io.h"
 
 #include <arpa/inet.h>
+#include <ctype.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/socket.h>
 
 /* *****************************************************************************
@@ -325,8 +328,14 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
     if (TYPE(val) != T_STRING)
       return ST_STOP;
   }
+  char *key_s = RSTRING_PTR(key);
+  int key_len = RSTRING_LEN(key);
   char *val_s = RSTRING_PTR(val);
   int val_len = RSTRING_LEN(val);
+  // make the headers lowercase
+  for (int i = 0; i < key_len; ++i) {
+    key_s[i] = tolower(key_s[i]);
+  }
   // scan the value for newline (\n) delimiters
   int pos_s = 0, pos_e = 0;
   while (pos_e < val_len) {
