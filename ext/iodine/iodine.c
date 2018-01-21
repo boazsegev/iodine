@@ -328,6 +328,7 @@ static void patch_env(void) {
 #ifdef __APPLE__
   /* patch for dealing with the High Sierra `fork` limitations */
   void *obj_c_runtime = dlopen("Foundation.framework/Foundation", RTLD_LAZY);
+  (void)obj_c_runtime;
 #endif
 }
 

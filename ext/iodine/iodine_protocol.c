@@ -352,7 +352,7 @@ static VALUE dyn_defer(int argc, VALUE *argv, VALUE self) {
     return Qfalse;
   Registry.add(block);
   facil_defer(.uuid = fd, .task = iodine_perform_task_and_free,
-              .task_type = FIO_PR_LOCK_TASK, .arg = (void *)block,
+              .type = FIO_PR_LOCK_TASK, .arg = (void *)block,
               .fallback = iodine_clear_task);
   return block;
 }
@@ -421,11 +421,11 @@ static inline protocol_s *dyn_set_protocol(intptr_t fduuid, VALUE handler,
   return &protocol->protocol;
 }
 
-static protocol_s *on_open_dyn_protocol(intptr_t fduuid, void *udata) {
+static void on_open_dyn_protocol(intptr_t fduuid, void *udata) {
   VALUE rb_tout = rb_ivar_get((VALUE)udata, iodine_timeout_var_id);
   uint8_t timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
   VALUE handler = RubyCaller.call((VALUE)udata, iodine_new_func_id);
-  return dyn_set_protocol(fduuid, handler, timeout);
+  facil_attach(fduuid, dyn_set_protocol(fduuid, handler, timeout));
 }
 
 /** Sets up a listening socket. Conncetions received at the assigned port will
@@ -483,12 +483,12 @@ VALUE dyn_switch_prot(VALUE self, VALUE handler) {
   return handler;
 }
 
-static protocol_s *on_open_dyn_protocol_instance(intptr_t fduuid, void *udata) {
+static void on_open_dyn_protocol_instance(intptr_t fduuid, void *udata) {
   VALUE rb_tout = rb_ivar_get((VALUE)udata, iodine_timeout_var_id);
   uint8_t timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
   protocol_s *pr = dyn_set_protocol(fduuid, (VALUE)udata, timeout);
   Registry.remove((VALUE)udata);
-  return pr;
+  facil_attach(fduuid, pr);
 }
 
 /**

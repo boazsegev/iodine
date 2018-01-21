@@ -13,9 +13,10 @@ typedef struct {
   FIOBJ stack;
   uintptr_t count;
   VALUE rb;
+  uint8_t str2sym;
 } fiobj2rb_s;
 
-static inline VALUE fiobj2rb(FIOBJ o) {
+static inline VALUE fiobj2rb(FIOBJ o, uint8_t str2sym) {
   VALUE rb;
   switch (FIOBJ_TYPE(o)) {
   case FIOBJ_T_NUMBER:
@@ -37,7 +38,13 @@ static inline VALUE fiobj2rb(FIOBJ o) {
   case FIOBJ_T_UNKNOWN: /* fallthrough */
   case FIOBJ_T_STRING: {
     fio_cstr_s tmp = fiobj_obj2cstr(o);
-    rb = rb_str_new(tmp.data, tmp.len);
+    if (str2sym) {
+      rb = rb_intern2(tmp.data, tmp.len);
+      rb = ID2SYM(rb);
+    } else {
+      rb = rb_str_new(tmp.data, tmp.len);
+    }
+
   } break;
   case FIOBJ_T_ARRAY:
     rb = rb_ary_new();
@@ -51,12 +58,12 @@ static inline VALUE fiobj2rb(FIOBJ o) {
 
 static int fiobj2rb_task(FIOBJ o, void *data_) {
   fiobj2rb_s *data = data_;
-  uintptr_t count_tmp;
   VALUE rb_tmp;
-  rb_tmp = fiobj2rb(o);
+  rb_tmp = fiobj2rb(o, 0);
   if (data->rb) {
     if (fiobj_hash_key_in_loop()) {
-      rb_hash_aset(data->rb, fiobj2rb(fiobj_hash_key_in_loop()), rb_tmp);
+      rb_hash_aset(data->rb, fiobj2rb(fiobj_hash_key_in_loop(), data->str2sym),
+                   rb_tmp);
     } else {
       rb_ary_push(data->rb, rb_tmp);
     }
@@ -82,8 +89,8 @@ static int fiobj2rb_task(FIOBJ o, void *data_) {
   return 0;
 }
 
-static inline VALUE fiobj2rb_deep(FIOBJ obj) {
-  fiobj2rb_s data = {.stack = fiobj_ary_new()};
+static inline VALUE fiobj2rb_deep(FIOBJ obj, uint8_t str2sym) {
+  fiobj2rb_s data = {.stack = fiobj_ary_new2(4), .str2sym = str2sym};
 
   /* deep copy */
   fiobj_each2(obj, fiobj2rb_task, &data);

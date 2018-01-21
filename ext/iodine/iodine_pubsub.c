@@ -141,7 +141,7 @@ static void engine_subscribe(const pubsub_engine_s *eng, FIOBJ ch,
   struct engine_gvl_args_s args = {
       .eng = eng, .ch = ch, .use_pattern = use_pattern,
   };
-  RubyCaller.call_c(engine_subscribe_inGVL, &args) ? 0 : -1;
+  RubyCaller.call_c(engine_subscribe_inGVL, &args);
 }
 
 static void *engine_unsubscribe_inGVL(void *a_) {
@@ -244,7 +244,7 @@ Perform a Redis message callback in the GVL
 */
 static void *perform_redis_callback_inGVL(void *data) {
   struct redis_callback_data *a = data;
-  VALUE reply = fiobj2rb_deep(a->msg);
+  VALUE reply = fiobj2rb_deep(a->msg, 1);
   Registry.add(reply);
   rb_funcallv(a->block, iodine_call_proc_id, 1, &reply);
   Registry.remove(a->block);

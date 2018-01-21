@@ -76,6 +76,39 @@ Copying data from the C request to the Rack's ENV
 
 #define to_upper(c) (((c) >= 'a' && (c) <= 'z') ? ((c) & ~32) : (c))
 
+int iodine_copy2env_task(FIOBJ o, void *env_) {
+  VALUE env = (VALUE)env_;
+  FIOBJ name = fiobj_hash_key_in_loop();
+  fio_cstr_s tmp = fiobj_obj2cstr(name);
+  VALUE hname = rb_str_buf_new(6 + tmp.len);
+  {
+    memcpy(RSTRING_PTR(hname), "HTTP_", 5);
+    char *pos = RSTRING_PTR(hname) + 5;
+    char *reader = tmp.data;
+    while (*reader) {
+      *(pos++) = *reader == '-' ? '_' : to_upper(*reader);
+      ++reader;
+    }
+    *pos = 0;
+    rb_str_set_len(hname, 5 + tmp.len);
+  }
+  if (FIOBJ_TYPE_IS(o, FIOBJ_T_STRING)) {
+    tmp = fiobj_obj2cstr(o);
+    rb_hash_aset(env, hname,
+                 rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
+
+  } else {
+    /* it's an array */
+    VALUE ary = rb_ary_new();
+    rb_hash_aset(env, hname, ary);
+    size_t count = fiobj_ary_count(o);
+    for (size_t i = 0; i < count; ++i) {
+      tmp = fiobj_obj2cstr(fiobj_ary_index(o, i));
+      rb_ary_push(ary, rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
+    }
+  }
+  return 0;
+}
 static inline VALUE copy2env(http_s *h, uint8_t is_upgrade) {
   VALUE env = rb_hash_new();
   Registry.add(env);
@@ -96,8 +129,14 @@ static inline VALUE copy2env(http_s *h, uint8_t is_upgrade) {
   }
 
   // Start with the stuff Iodine will review.
-  rb_hash_aset(env, UPGRADE_WEBSOCKET, Qnil);
-  rb_hash_aset(env, UPGRADE_TCP, Qnil);
+  /* publish upgrade support */
+  if (is_upgrade) {
+    rb_hash_aset(env, UPGRADE_WEBSOCKET_Q, Qtrue);
+    rb_hash_aset(env, UPGRADE_TCP_Q, Qtrue);
+  } else {
+    rb_hash_aset(env, UPGRADE_WEBSOCKET, Qnil);
+    rb_hash_aset(env, UPGRADE_TCP, Qnil);
+  }
   if (http_settings(h)->public_folder) {
     add_value_to_env(env, "sendfile.type", XSENDFILE);
     add_value_to_env(env, "HTTP_X_SENDFILE_TYPE", XSENDFILE);
@@ -125,7 +164,6 @@ static inline VALUE copy2env(http_s *h, uint8_t is_upgrade) {
 
   fio_cstr_s tmp;
   char *pos = NULL;
-  const char *reader = NULL;
   /* Copy basic data */
   tmp = fiobj_obj2cstr(h->method);
   rb_hash_aset(env, REQUEST_METHOD,
@@ -167,66 +205,74 @@ static inline VALUE copy2env(http_s *h, uint8_t is_upgrade) {
     m = rb_obj_method(m, hijack_func_sym);
     rb_hash_aset(env, IODINE_R_HIJACK, m);
   }
-  /* publish upgrade support */
-  if (is_upgrade) {
-    rb_hash_aset(env, UPGRADE_WEBSOCKET_Q, Qtrue);
-    rb_hash_aset(env, UPGRADE_TCP_Q, Qtrue);
-  }
 
   /* handle the HOST header, including the possible host:#### format*/
-  pos = (char *)request->host;
+  static uint64_t host_hash = 0;
+  if (!host_hash)
+    host_hash = fio_siphash("host", 4);
+  tmp = fiobj_obj2cstr(fiobj_hash_get2(h->headers, host_hash));
+  pos = tmp.data;
   while (*pos && *pos != ':')
     pos++;
   if (*pos == 0) {
-    rb_hash_aset(
-        env, SERVER_NAME,
-        rb_enc_str_new(request->host, request->host_len, IodineBinaryEncoding));
+    rb_hash_aset(env, SERVER_NAME,
+                 rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
     rb_hash_aset(env, SERVER_PORT, QUERY_ESTRING);
   } else {
-    rb_hash_aset(env, SERVER_NAME,
-                 rb_enc_str_new(request->host, pos - request->host,
-                                IodineBinaryEncoding));
-    rb_hash_aset(env, SERVER_PORT,
-                 rb_enc_str_new(pos + 1,
-                                request->host_len - ((pos + 1) - request->host),
-                                IodineBinaryEncoding));
+    rb_hash_aset(
+        env, SERVER_NAME,
+        rb_enc_str_new(tmp.data, pos - tmp.data, IodineBinaryEncoding));
+    ++pos;
+    rb_hash_aset(
+        env, SERVER_PORT,
+        rb_enc_str_new(pos, tmp.len - (pos - tmp.data), IodineBinaryEncoding));
   }
 
   /* default schema to http, it might be updated later */
   rb_hash_aset(env, R_URL_SCHEME, HTTP_SCHEME);
 
-  /* add all headers, exclude special cases */
-  http_header_s header = http_request_header_first(request);
-  while (header.name) {
-    if (header.name_len == 14 &&
-        strncasecmp("content-length", header.name, 14) == 0) {
-      rb_hash_aset(
-          env, CONTENT_LENGTH,
-          rb_enc_str_new(header.value, header.value_len, IodineBinaryEncoding));
-      header = http_request_header_next(request);
-      continue;
-    } else if (header.name_len == 12 &&
-               strncasecmp("content-type", header.name, 12) == 0) {
-      rb_hash_aset(
-          env, CONTENT_TYPE,
-          rb_enc_str_new(header.value, header.value_len, IodineBinaryEncoding));
-      header = http_request_header_next(request);
-      continue;
-    } else if (header.name_len == 27 &&
-               strncasecmp("x-forwarded-proto", header.name, 27) == 0) {
-      if (header.value_len >= 5 && !strncasecmp(header.value, "https", 5)) {
+  /* remove special headers */
+
+  static uint64_t content_length_hash = 0;
+  if (!content_length_hash)
+    content_length_hash = fio_siphash("content-length", 14);
+  tmp = fiobj_obj2cstr(fiobj_hash_get2(h->headers, content_length_hash));
+  if (tmp.data)
+    rb_hash_aset(env, CONTENT_LENGTH,
+                 rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
+  fiobj_hash_delete2(h->headers, content_length_hash);
+
+  static uint64_t content_type_hash = 0;
+  if (!content_type_hash)
+    content_length_hash = fio_siphash("content-type", 12);
+  tmp = fiobj_obj2cstr(fiobj_hash_get2(h->headers, content_type_hash));
+  if (tmp.data)
+    rb_hash_aset(env, CONTENT_TYPE,
+                 rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
+  fiobj_hash_delete2(h->headers, content_type_hash);
+
+  /* handle scheme / sepcial forwarding headers */
+  {
+    FIOBJ objtmp;
+    static uint64_t xforward_hash = 0;
+    if (!xforward_hash)
+      xforward_hash = fio_siphash("x-forwarded-proto", 27);
+    static uint64_t forward_hash = 0;
+    if (!forward_hash)
+      forward_hash = fio_siphash("forwarded", 9);
+    if ((objtmp = fiobj_hash_get2(h->headers, xforward_hash))) {
+      tmp = fiobj_obj2cstr(objtmp);
+      if (tmp.len >= 5 && !strncasecmp(tmp.data, "https", 5)) {
         rb_hash_aset(env, R_URL_SCHEME, HTTPS_SCHEME);
-      } else if (header.value_len == 4 &&
-                 *((uint32_t *)header.value) == *((uint32_t *)"http")) {
+      } else if (tmp.len == 4 && !strncasecmp(tmp.data, "http", 4)) {
         rb_hash_aset(env, R_URL_SCHEME, HTTP_SCHEME);
       } else {
         rb_hash_aset(env, R_URL_SCHEME,
-                     rb_enc_str_new(header.value, header.value_len,
-                                    IodineBinaryEncoding));
+                     rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
       }
-    } else if (header.name_len == 9 &&
-               strncasecmp("forwarded", header.name, 9) == 0) {
-      pos = (char *)header.value;
+    } else if ((objtmp = fiobj_hash_get2(h->headers, forward_hash))) {
+      tmp = fiobj_obj2cstr(objtmp);
+      pos = tmp.data;
       if (pos) {
         while (*pos) {
           if (((*(pos++) | 32) == 'p') && ((*(pos++) | 32) == 'r') &&
@@ -249,23 +295,12 @@ static inline VALUE copy2env(http_s *h, uint8_t is_upgrade) {
           }
         }
       }
+    } else {
     }
-
-    hname = rb_str_buf_new(6 + header.name_len);
-    memcpy(RSTRING_PTR(hname), "HTTP_", 5);
-    pos = RSTRING_PTR(hname) + 5;
-    reader = header.name;
-    while (*reader) {
-      *(pos++) = *reader == '-' ? '_' : to_upper(*reader);
-      ++reader;
-    }
-    *pos = 0;
-    rb_str_set_len(hname, 5 + header.name_len);
-    rb_hash_aset(
-        env, hname,
-        rb_enc_str_new(header.value, header.value_len, IodineBinaryEncoding));
-    header = http_request_header_next(request);
   }
+
+  /* add all headers, exclude special cases */
+  fiobj_each1(h->headers, 0, iodine_copy2env_task, (void *)env);
   return env;
 }
 #undef add_str_to_env
@@ -278,7 +313,8 @@ Handling the HTTP response
 
 // itterate through the headers and add them to the response buffer
 // (we are recycling the request's buffer)
-static int for_each_header_data(VALUE key, VALUE val, VALUE _res) {
+static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
+  http_s *h = (http_s *)h_;
   // fprintf(stderr, "For_each - headers\n");
   if (TYPE(key) != T_STRING)
     key = RubyCaller.call(key, iodine_to_s_method_id);
@@ -297,9 +333,9 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE _res) {
     // scanning for newline (\n) delimiters
     while (pos_e < val_len && val_s[pos_e] != '\n')
       pos_e++;
-    http_response_write_header(
-        (void *)_res, .name = RSTRING_PTR(key), .name_len = RSTRING_LEN(key),
-        .value = val_s + pos_s, .value_len = pos_e - pos_s);
+    http_set_header2(
+        h, (fio_cstr_s){.data = RSTRING_PTR(key), .len = RSTRING_LEN(key)},
+        (fio_cstr_s){.data = val_s + pos_s, .len = pos_e - pos_s});
     // fprintf(stderr, "For_each - headers: wrote header\n");
     // move forward (skip the '\n' if exists)
     pos_s = pos_e + 1;
@@ -310,7 +346,8 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE _res) {
 }
 
 // writes the body to the response object
-static VALUE for_each_body_string(VALUE str, VALUE _res, int argc, VALUE argv) {
+static VALUE for_each_body_string(VALUE str, VALUE body_, int argc,
+                                  VALUE argv) {
   (void)(argv);
   (void)(argc);
   // fprintf(stderr, "For_each - body\n");
@@ -321,26 +358,18 @@ static VALUE for_each_body_string(VALUE str, VALUE _res, int argc, VALUE argv) {
     return Qfalse;
   }
   if (RSTRING_LEN(str)) {
-    if (http_response_write_body((void *)_res, RSTRING_PTR(str),
-                                 RSTRING_LEN(str))) {
-      // fprintf(stderr, "Iodine Server Error:"
-      //                 "couldn't write response to connection\n");
-      return Qfalse;
-    }
+    fiobj_str_write((FIOBJ)body_, RSTRING_PTR(str), RSTRING_LEN(str));
   }
   return Qtrue;
 }
 
-static inline int ruby2c_response_send(http_response_s *response,
-                                       VALUE rbresponse, VALUE env) {
+static inline int ruby2c_response_send(http_s *h, VALUE rbresponse, VALUE env) {
   (void)(env);
   VALUE body = rb_ary_entry(rbresponse, 2);
-  if (response->status < 200 || response->status == 204 ||
-      response->status == 304) {
+  if (h->status < 200 || h->status == 204 || h->status == 304) {
     if (rb_respond_to(body, close_method_id))
       RubyCaller.call(body, close_method_id);
     body = Qnil;
-    response->content_length = -1;
   }
 
   if (TYPE(body) == T_ARRAY && RARRAY_LEN(body) == 1) { // [String] is likely
@@ -351,20 +380,18 @@ static inline int ruby2c_response_send(http_response_s *response,
   if (TYPE(body) == T_STRING) {
     // fprintf(stderr, "Review body as String\n");
     if (RSTRING_LEN(body))
-      http_response_write_body(response, RSTRING_PTR(body), RSTRING_LEN(body));
+      http_send_body(h, RSTRING_PTR(body), RSTRING_LEN(body));
     return 0;
   } else if (body == Qnil) {
+    http_finish(h);
     return 0;
   } else if (rb_respond_to(body, each_method_id)) {
     // fprintf(stderr, "Review body as for-each ...\n");
-    if (!response->connection_written && !response->content_length_written) {
-      // close the connection to indicate message length...
-      // protection from bad code
-      response->should_close = 1;
-      response->content_length = -1;
-    }
+    FIOBJ body_str = fiobj_str_buf(0);
     rb_block_call(body, each_method_id, 0, NULL, for_each_body_string,
-                  (VALUE)response);
+                  (VALUE)body_str);
+    fio_cstr_s tmp = fiobj_obj2cstr(body_str);
+    http_send_body(h, tmp.data, tmp.length);
     // we need to call `close` in case the object is an IO / BodyProxy
     if (rb_respond_to(body, close_method_id))
       RubyCaller.call(body, close_method_id);
@@ -377,34 +404,27 @@ static inline int ruby2c_response_send(http_response_s *response,
 Handling Upgrade cases
 ***************************************************************************** */
 
-static inline int ruby2c_review_upgrade(http_response_s *response,
-                                        VALUE rbresponse, VALUE env) {
+static inline int ruby2c_review_upgrade(http_s *h, VALUE rbresponse,
+                                        VALUE env) {
   VALUE handler;
   if ((handler = rb_hash_aref(env, IODINE_R_HIJACK_CB)) != Qnil) {
     // send headers
-    http_response_finish(response);
-    //  remove socket from facil.io
-    facil_attach(response->fd, NULL);
+    http_finish(h);
     // call the callback
     VALUE io_ruby = RubyCaller.call(rb_hash_aref(env, IODINE_R_HIJACK),
                                     iodine_call_proc_id);
     RubyCaller.call2(handler, iodine_call_proc_id, 1, &io_ruby);
   } else if ((handler = rb_hash_aref(env, IODINE_R_HIJACK_IO)) != Qnil) {
-    // send nothing.
-    http_response_destroy(response);
-    //  remove socket from facil.io
-    facil_attach(response->fd, NULL);
+    //  do nothing
   } else if ((handler = rb_hash_aref(env, UPGRADE_WEBSOCKET)) != Qnil) {
-    iodine_http_settings_s *settings = response->request->settings->udata;
     // use response as existing base for native websocket upgrade
-    iodine_websocket_upgrade(response->request, response, handler,
-                             settings->max_msg, settings->ping);
+    iodine_websocket_upgrade(h, handler);
   } else if ((handler = rb_hash_aref(env, UPGRADE_TCP)) != Qnil) {
-    intptr_t fduuid = response->fd;
+    intptr_t uuid = http_hijack(h, NULL);
     // send headers
-    http_response_finish(response);
+    http_finish(h);
     // upgrade protocol
-    VALUE args[2] = {(ULONG2NUM(sock_uuid2fd(fduuid))), handler};
+    VALUE args[2] = {(ULONG2NUM(sock_uuid2fd(uuid))), handler};
     RubyCaller.call2(Iodine, attach_method_id, 2, args);
     // prevent response processing.
   } else {
@@ -422,18 +442,19 @@ static inline int ruby2c_review_upgrade(http_response_s *response,
 Handling HTTP requests
 ***************************************************************************** */
 
-static void *on_rack_request_in_GVL(void *h_) {
-  http_s *h = h_;
+static inline void *iodine_handle_request_in_GVL(http_s *h,
+                                                 uint8_t is_upgrade) {
+  VALUE rbresponse = 0;
+  VALUE env = 0;
   if (!h->udata)
     goto err_not_found;
 
   // create /register env variable
-  VALUE env = copy2env(request, settings->env);
+  env = copy2env(h, is_upgrade);
   // will be used later
   VALUE tmp;
   // pass env variable to handler
-  VALUE rbresponse =
-      RubyCaller.call2(settings->app, iodine_call_proc_id, 1, &env);
+  rbresponse = RubyCaller.call2((VALUE)h->udata, iodine_call_proc_id, 1, &env);
   if (rbresponse == 0 || rbresponse == Qnil)
     goto internal_error;
   Registry.add(rbresponse);
@@ -443,38 +464,30 @@ static void *on_rack_request_in_GVL(void *h_) {
     tmp = rb_funcall2(tmp, to_fixnum_func_id, 0, NULL);
   if (TYPE(tmp) != T_FIXNUM)
     goto internal_error;
-  response->status = FIX2ULONG(tmp);
+  h->status = FIX2ULONG(tmp);
   // handle header copy from ruby land to C land.
   VALUE response_headers = rb_ary_entry(rbresponse, 1);
   if (TYPE(response_headers) != T_HASH)
     goto internal_error;
   // extract the X-Sendfile header (never show original path)
-  // X-Sendfile support only present when iodine sercers static files.
+  // X-Sendfile support only present when iodine serves static files.
   VALUE xfiles;
-  if (request->settings->public_folder &&
+  if (http_settings(h)->public_folder &&
       (xfiles = rb_hash_aref(response_headers, XSENDFILE)) != Qnil &&
       TYPE(xfiles) == T_STRING) {
-    int fr = 0;
     if (OBJ_FROZEN(response_headers)) {
       response_headers = rb_hash_dup(response_headers);
-      Registry.add(response_headers);
-      fr = 1;
     }
+    Registry.add(response_headers);
     rb_hash_delete(response_headers, XSENDFILE);
     // remove XFile's content length headers, as this will be controled by
     // Iodine
     rb_hash_delete(response_headers, CONTENT_LENGTH_HEADER);
     // review each header and write it to the response.
-    rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(response));
-    if (fr)
-      Registry.remove(response_headers);
+    rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(h));
+    Registry.remove(response_headers);
     // send the file directly and finish
-    if (http_response_sendfile2(response, request, RSTRING_PTR(xfiles),
-                                RSTRING_LEN(xfiles), NULL, 0, 1)) {
-      http_response_destroy(response);
-      response = http_response_create(request);
-      if (request->settings->log_static)
-        http_response_log_start(response);
+    if (http_sendfile2(h, RSTRING_PTR(xfiles), RSTRING_LEN(xfiles), NULL, 0)) {
       Registry.remove(rbresponse);
       Registry.remove(env);
       goto err_not_found;
@@ -482,18 +495,17 @@ static void *on_rack_request_in_GVL(void *h_) {
     goto external_done;
   }
   // review each header and write it to the response.
-  rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(response));
+  rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(h));
   // If the X-Sendfile header was provided, send the file directly and finish
   // review for belated (post response headers) upgrade.
-  if (ruby2c_review_upgrade(response, rbresponse, env))
+  if (ruby2c_review_upgrade(h, rbresponse, env))
     goto external_done;
   // send the request body.
-  if (ruby2c_response_send(response, rbresponse, env))
+  if (ruby2c_response_send(h, rbresponse, env))
     goto internal_error;
 
   Registry.remove(rbresponse);
   Registry.remove(env);
-  http_response_finish(response);
   return NULL;
 
 external_done:
@@ -502,47 +514,32 @@ external_done:
   return NULL;
 
 err_not_found:
-  response->status = 404;
-  if (!request->settings->public_folder ||
-      http_response_sendfile2(response, request,
-                              request->settings->public_folder,
-                              request->settings->public_folder_length,
-                              "404.html", 8, request->settings->log_static)) {
-    http_response_write_body(response, "Error 404, Page Not Found.", 26);
-    http_response_finish(response);
-  }
+  Registry.remove(rbresponse);
+  Registry.remove(env);
+  http_send_error(h, 404);
   return NULL;
 
 internal_error:
-  if (rbresponse && rbresponse != Qnil)
-    Registry.remove(rbresponse);
+  Registry.remove(rbresponse);
   Registry.remove(env);
-  http_response_destroy(response);
-  response = http_response_create(request);
-  if (request->settings->log_static)
-    http_response_log_start(response);
-  response->status = 500;
-  if (!request->settings->public_folder ||
-      http_response_sendfile2(response, request,
-                              request->settings->public_folder,
-                              request->settings->public_folder_length,
-                              "500.html", 8, request->settings->log_static)) {
-    http_response_write_body(response, "Error 500, Internal error.", 26);
-    http_response_finish(response);
-  }
+  http_send_error(h, 500);
   return NULL;
 }
 
-static void on_rack_request(http_s *request) {
-  // if (request->body_file)
-  //   fprintf(stderr, "Request data is stored in a temporary file\n");
-  RubyCaller.call_c((void *(*)(void *))on_rack_request_in_GVL, request);
+static void *on_rack_request_in_GVL(void *h_) {
+  return iodine_handle_request_in_GVL(h_, 0);
+}
+static void *on_rack_upgrade_in_GVL(void *h_) {
+  return iodine_handle_request_in_GVL(h_, 1);
+}
+static void on_rack_request(http_s *h) {
+  RubyCaller.call_c((void *(*)(void *))on_rack_request_in_GVL, h);
 }
 
-static void on_rack_upgrade(http_s *request) {
-  // if (request->body_file)
-  //   fprintf(stderr, "Request data is stored in a temporary file\n");
-  RubyCaller.call_c((void *(*)(void *))on_rack_request_in_GVL, request);
+static void on_rack_upgrade(http_s *h, char *proto, size_t len) {
+  RubyCaller.call_c((void *(*)(void *))on_rack_upgrade_in_GVL, h);
+  (void)proto;
+  (void)len;
 }
 
 /* *****************************************************************************
@@ -598,7 +595,7 @@ void *iodine_print_http_msg_in_gvl(void *d_) {
 }
 
 static void iodine_print_http_msg1(void *www, void *port) {
-  if (defer_fork_pid())
+  if (facil_parent_pid() == getpid())
     return;
   struct {
     void *www;
@@ -607,7 +604,7 @@ static void iodine_print_http_msg1(void *www, void *port) {
   RubyCaller.call_c(iodine_print_http_msg_in_gvl, (void *)&data);
 }
 static void iodine_print_http_msg2(void *www, void *port) {
-  if (defer_fork_pid())
+  if (facil_parent_pid() == getpid())
     return;
   struct {
     void *www;
@@ -616,9 +613,8 @@ static void iodine_print_http_msg2(void *www, void *port) {
   RubyCaller.call_c(iodine_print_http_msg2_in_gvl, (void *)&data);
 }
 
-static void free_iodine_http(intptr_t uuid, void *app) {
-  Registry.remove(app);
-  (void)uuid;
+static void free_iodine_http(http_settings_s *s) {
+  Registry.remove((VALUE)s->udata);
 }
 /**
 Listens to incoming HTTP connections and handles incoming requests using the
@@ -659,7 +655,6 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
   static int called_once = 0;
   uint8_t log_http = 0;
   size_t ping = 0;
-  size_t ping_ws = 0;
   size_t max_body = 0;
   size_t max_headers = 0;
   size_t max_msg = 0;
@@ -738,7 +733,7 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
       port = rb_funcall2(port, iodine_to_s_method_id, 0, NULL);
     Registry.add(port);
   } else if (port == Qfalse)
-    port = NULL;
+    port = 0;
   else {
     port = rb_str_new("3000", 4);
     Registry.add(port);
