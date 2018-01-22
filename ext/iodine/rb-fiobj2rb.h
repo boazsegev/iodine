@@ -16,6 +16,8 @@ typedef struct {
   uint8_t str2sym;
 } fiobj2rb_s;
 
+typedef struct { uint8_t str2sym; } fiobj2rb_settings_s;
+
 static inline VALUE fiobj2rb(FIOBJ o, uint8_t str2sym) {
   VALUE rb;
   switch (FIOBJ_TYPE(o)) {

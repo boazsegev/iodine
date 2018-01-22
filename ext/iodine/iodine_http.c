@@ -6,6 +6,7 @@ Feel free to copy, use and enjoy according to the license provided.
 */
 #include "iodine_http.h"
 #include "http.h"
+#include "iodine_json.h"
 #include "iodine_websockets.h"
 #include "rb-rack-io.h"
 
@@ -913,4 +914,5 @@ void Iodine_init_http(void) {
 
   IodineRackIO.init();
   initialize_env_template();
+  Iodine_init_json();
 }
