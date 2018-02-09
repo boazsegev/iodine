@@ -7,6 +7,14 @@ License: MIT
 
 #include "fio_ary.h"
 #include <assert.h>
+
+#ifndef FIOBJ_ARRAY_DEFAULT_CAPA
+#define FIOBJ_ARRAY_DEFAULT_CAPA 8
+#endif
+#ifndef FIOBJ_ARRAY_DEFAULT_OFFSET
+#define FIOBJ_ARRAY_DEFAULT_OFFSET (FIOBJ_ARRAY_DEFAULT_CAPA >> 2)
+#endif
+
 /* *****************************************************************************
 Array Type
 ***************************************************************************** */
@@ -52,9 +60,9 @@ static size_t fiobj_ary_is_true(const FIOBJ ary) {
   return fiobj_ary_count(ary) > 0;
 }
 
-fio_cstr_s fiobject___noop_to_str(FIOBJ o);
-intptr_t fiobject___noop_to_i(FIOBJ o);
-double fiobject___noop_to_f(FIOBJ o);
+fio_cstr_s fiobject___noop_to_str(const FIOBJ o);
+intptr_t fiobject___noop_to_i(const FIOBJ o);
+double fiobject___noop_to_f(const FIOBJ o);
 
 const fiobj_object_vtable_s FIOBJECT_VTABLE_ARRAY = {
     .class_name = "Array",
@@ -90,7 +98,9 @@ static FIOBJ fiobj_ary_alloc(size_t capa, size_t start_at) {
 }
 
 /** Creates a mutable empty Array object. Use `fiobj_free` when done. */
-FIOBJ fiobj_ary_new(void) { return fiobj_ary_alloc(32, 8); }
+FIOBJ fiobj_ary_new(void) {
+  return fiobj_ary_alloc(FIOBJ_ARRAY_DEFAULT_CAPA, FIOBJ_ARRAY_DEFAULT_OFFSET);
+}
 /** Creates a mutable empty Array object with the requested capacity. */
 FIOBJ fiobj_ary_new2(size_t capa) { return fiobj_ary_alloc(capa, 0); }
 

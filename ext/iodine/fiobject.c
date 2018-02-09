@@ -24,14 +24,14 @@ struct task_packet_s {
   void *arg;
   fio_ary_s *stack;
   FIOBJ next;
-  uintptr_t *counter;
+  uintptr_t counter;
   uint8_t stop;
   uint8_t incomplete;
 };
 
 static int fiobj_task_wrapper(FIOBJ o, void *p_) {
   struct task_packet_s *p = p_;
-  ++*p->counter;
+  ++p->counter;
   int ret = p->task(o, p->arg);
   if (ret == -1) {
     p->stop = 1;
@@ -73,16 +73,10 @@ size_t fiobj_each2(FIOBJ o, int (*task)(FIOBJ obj, void *arg), void *arg) {
     return 1;
   uintptr_t pos = 0;
   fio_ary_s stack = FIO_ARY_INIT;
-  size_t count = 1;
   struct task_packet_s packet = {
-      .task = task, .arg = arg, .stack = &stack, .counter = &count,
+      .task = task, .arg = arg, .stack = &stack, .counter = 1,
   };
-  fio_ary_new(&stack, 0);
-  fio_ary_push(&stack, (void *)pos);
-  fio_ary_push(&stack, (void *)o);
   do {
-    o = (FIOBJ)fio_ary_pop(&stack);
-    pos = (uintptr_t)fio_ary_pop(&stack);
     if (!pos)
       packet.next = 0;
     packet.incomplete = 0;
@@ -98,11 +92,12 @@ size_t fiobj_each2(FIOBJ o, int (*task)(FIOBJ obj, void *arg), void *arg) {
       fio_ary_push(&stack, (void *)0);
       fio_ary_push(&stack, (void *)packet.next);
     }
-
-  } while (fio_ary_count(&stack));
+    o = (FIOBJ)fio_ary_pop(&stack);
+    pos = (uintptr_t)fio_ary_pop(&stack);
+  } while (o);
 finish:
   fio_ary_free(&stack);
-  return count;
+  return packet.counter;
 }
 
 /* *****************************************************************************
@@ -220,25 +215,25 @@ void fiobject___simple_dealloc(FIOBJ o, void (*task)(FIOBJ, void *),
   (void)arg;
 }
 
-uintptr_t fiobject___noop_count(FIOBJ o) {
+uintptr_t fiobject___noop_count(const FIOBJ o) {
   (void)o;
   return 0;
 }
-size_t fiobject___noop_is_eq(FIOBJ o1, FIOBJ o2) {
+size_t fiobject___noop_is_eq(const FIOBJ o1, const FIOBJ o2) {
   (void)o1;
   (void)o2;
   return 0;
 }
 
-fio_cstr_s fiobject___noop_to_str(FIOBJ o) {
+fio_cstr_s fiobject___noop_to_str(const FIOBJ o) {
   (void)o;
   return (fio_cstr_s){.len = 0, .data = NULL};
 }
-intptr_t fiobject___noop_to_i(FIOBJ o) {
+intptr_t fiobject___noop_to_i(const FIOBJ o) {
   (void)o;
   return 0;
 }
-double fiobject___noop_to_f(FIOBJ o) {
+double fiobject___noop_to_f(const FIOBJ o) {
   (void)o;
   return 0;
 }

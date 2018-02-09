@@ -1,5 +1,5 @@
 /*
-Copyright: Boaz segev, 2016-2017
+Copyright: Boaz Segev, 2016-2018
 License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
@@ -109,7 +109,8 @@ The Request / Response type and functions
 static const char hex_chars[] = {'0', '1', '2', '3', '4', '5', '6', '7',
                                  '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
 
-#define HTTP_INVALID_HANDLE(h) (!h || (!h->method && !h->status_str))
+#define HTTP_INVALID_HANDLE(h)                                                 \
+  (!h || (!h->method && !h->status_str && h->status))
 /**
  * Sets a response header, taking ownership of the value object, but NOT the
  * name object (so name objects could be reused in future responses).
@@ -315,9 +316,8 @@ int http_send_body(http_s *r, void *data, uintptr_t length) {
     return -1;
   add_content_length(r, length);
   add_date(r);
-  int ret =
-      ((http_vtable_s *)r->private_data.vtbl)->http_send_body(r, data, length);
-  return ret;
+  return ((http_vtable_s *)r->private_data.vtbl)
+      ->http_send_body(r, data, length);
 }
 /**
  * Sends the response headers and the specified file (the response's body).
@@ -333,9 +333,8 @@ int http_sendfile(http_s *r, int fd, uintptr_t length, uintptr_t offset) {
   };
   add_content_length(r, length);
   add_date(r);
-  int ret = ((http_vtable_s *)r->private_data.vtbl)
-                ->http_sendfile(r, fd, length, offset);
-  return ret;
+  return ((http_vtable_s *)r->private_data.vtbl)
+      ->http_sendfile(r, fd, length, offset);
 }
 /**
  * Sends the response headers and the specified file (the response's body).
@@ -370,6 +369,7 @@ int http_sendfile2(http_s *h, const char *prefix, size_t prefix_len,
       char *pos = (char *)encoded;
       const char *end = encoded + encoded_len;
       while (pos < end) {
+        /* test for path manipulations while decoding */
         if (*pos == '/' && (pos[1] == '/' ||
                             (((uintptr_t)end - (uintptr_t)pos >= 4) &&
                              pos[1] == '.' && pos[2] == '.' && pos[3] == '/')))
@@ -508,6 +508,32 @@ found_file:
       }
     }
   }
+  /* test for an OPTIONS request or invalid methods */
+  s = fiobj_obj2cstr(h->method);
+  switch (s.len) {
+  case 7:
+    if (!strncasecmp("options", s.data, 7)) {
+      http_set_header2(h, (fio_cstr_s){.data = "allow", .len = 5},
+                       (fio_cstr_s){.data = "GET, HEAD", .len = 9});
+      h->status = 200;
+      http_finish(h);
+      return 0;
+    }
+    break;
+  case 3:
+    if (!strncasecmp("get", s.data, 3))
+      goto open_file;
+    break;
+  case 4:
+    if (!strncasecmp("head", s.data, 4)) {
+      http_set_header(h, HTTP_HEADER_CONTENT_LENGTH, fiobj_num_new(length));
+      http_finish(h);
+      return 0;
+    }
+    break;
+  }
+  http_send_error(h, 403);
+  return 0;
 open_file:
   s = fiobj_obj2cstr(filename);
   file = open(s.data, O_RDONLY);
@@ -588,6 +614,8 @@ void http_finish(http_s *r) {
   if (!r || !r->private_data.vtbl) {
     return;
   }
+  add_content_length(r, 0);
+  add_date(r);
   ((http_vtable_s *)r->private_data.vtbl)->http_finish(r);
 }
 /**
@@ -944,30 +972,52 @@ int http_connect(const char *address, struct http_settings_s arg_settings) {
   }
   size_t len;
   char *a, *p;
-  if (!address || (len = strlen(address)) <= 7 ||
-      strncasecmp(address, "http", 4)) {
+  uint8_t is_websocket = 0;
+  uint8_t is_secure = 0;
+  FIOBJ path = FIOBJ_INVALID;
+  if (!address || (len = strlen(address)) <= 5) {
+    fprintf(stderr, "ERROR: http_connect requires a valid address.\n");
+    errno = EINVAL;
+    return -1;
+  }
+  if (!strncasecmp(address, "ws", 2)) {
+    is_websocket = 1;
+    address += 2;
+    len -= 2;
+  } else if (len >= 7 && !strncasecmp(address, "http", 4)) {
+    address += 4;
+    len -= 4;
+  } else {
     fprintf(stderr, "ERROR: http_connect requires a valid address.\n");
     errno = EINVAL;
     return -1;
   }
   /* parse address */
-  if (address[5] == 's') {
+  if (address[0] == 's') {
     /* TODO: SSL/TLS */
+    is_secure = 1;
     fprintf(stderr, "ERROR: http_connect doesn't support TLS/SSL "
                     "just yet.\n");
     errno = EINVAL;
     return -1;
+  } else if (len <= 3 || strncmp(address, "://", 3)) {
+    fprintf(stderr, "ERROR: http_connect requires a valid address.\n");
+    errno = EINVAL;
+    return -1;
   } else {
-    len -= 7;
+    len -= 3;
+    address += 3;
     a = malloc(len + 1);
     if (!a) {
       perror("FATAL ERROR: http_connect couldn't allocate memory "
              "for address parsing");
     }
-    memcpy(a, address + 7, len + 1);
+    memcpy(a, address, len + 1);
   }
   p = memchr(a, '/', len);
   if (p) {
+    if (len - (p - a))
+      path = fiobj_str_new(p, len - (p - a));
     len = p - a;
     *p = 0;
   }
@@ -985,7 +1035,7 @@ int http_connect(const char *address, struct http_settings_s arg_settings) {
       }
     }
   } else {
-    if (address[5] == 's')
+    if (is_secure)
       p = "443";
     else
       p = "80";
@@ -996,21 +1046,530 @@ int http_connect(const char *address, struct http_settings_s arg_settings) {
     arg_settings.timeout = 30;
   http_settings_s *settings = http_settings_new(arg_settings);
   settings->is_client = 1;
+  if (!arg_settings.ws_timeout)
+    settings->ws_timeout = 0; /* allow server to dictate timeout */
+  if (!arg_settings.timeout)
+    settings->timeout = 0; /* allow server to dictate timeout */
   http_s *h = malloc(sizeof(*h));
   HTTP_ASSERT(h, "HTTP Client handler allocation failed");
-  http_s_new(h, 0, http1_vtable(), arg_settings.udata);
+  http_s_new(h, 0, http1_vtable());
+  h->udata = arg_settings.udata;
   h->status = 0;
+  h->path = path;
   settings->udata = h;
   http_set_header2(h, (fio_cstr_s){.data = "host", .len = 4},
                    (fio_cstr_s){.data = a, .len = len});
-  intptr_t ret =
-      facil_connect(.address = a, .port = p, .on_fail = http_on_client_failed,
-                    .on_connect = http_on_open_client, .udata = settings);
+  intptr_t ret;
+  if (is_websocket) {
+    /* force HTTP/1.1 */
+    ret =
+        facil_connect(.address = a, .port = p, .on_fail = http_on_client_failed,
+                      .on_connect = http_on_open_client, .udata = settings);
+    (void)0;
+  } else {
+    /* Allow for any HTTP version */
+    ret =
+        facil_connect(.address = a, .port = p, .on_fail = http_on_client_failed,
+                      .on_connect = http_on_open_client, .udata = settings);
+    (void)0;
+  }
   free(a);
   return ret;
 }
 #define http_connect(address, ...)                                             \
   http_connect((address), (struct http_settings_s){__VA_ARGS__})
+
+/* *****************************************************************************
+HTTP Websocket Connect
+***************************************************************************** */
+
+#undef http_upgrade2ws
+static void on_websocket_http_connected(http_s *h) {
+  websocket_settings_s *s = h->udata;
+  h->udata = http_settings(h)->udata = NULL;
+  s->http = h;
+  if (!h->path) {
+    fprintf(stderr, "WARNING: (websocket client) path not specified in "
+                    "address, assuming root!\n");
+    h->path = fiobj_str_new("/", 1);
+  }
+  http_upgrade2ws(*s);
+  free(s);
+}
+
+static void on_websocket_http_connection_finished(http_settings_s *settings) {
+  websocket_settings_s *s = settings->udata;
+  if (s) {
+    if (s->on_close)
+      s->on_close(0, s->udata);
+    free(s);
+  }
+}
+
+#undef websocket_connect
+int websocket_connect(const char *address, websocket_settings_s settings) {
+  websocket_settings_s *s = malloc(sizeof(*s));
+  *s = settings;
+  return http_connect(address, .on_request = on_websocket_http_connected,
+                      .on_response = on_websocket_http_connected,
+                      .on_finish = on_websocket_http_connection_finished,
+                      .ws_timeout = 3, .udata = s);
+}
+#define websocket_connect(address, ...)                                        \
+  websocket_connect((address), (websocket_settings_s){__VA_ARGS__})
+
+/* *****************************************************************************
+HTTP GET and POST parsing helpers
+***************************************************************************** */
+
+/** URL decodes a string, returning a `FIOBJ`. */
+static inline FIOBJ http_urlstr2fiobj(char *s, size_t len) {
+  FIOBJ o = fiobj_str_buf(len);
+  ssize_t l = http_decode_url(fiobj_obj2cstr(o).data, s, len);
+  if (l < 0) {
+    fiobj_free(o);
+    return fiobj_str_new(NULL, 0); /* empty string */
+  }
+  fiobj_str_resize(o, (size_t)l);
+  return o;
+}
+
+/** converts a string into a `FIOBJ`. */
+static inline FIOBJ http_str2fiobj(char *s, size_t len, uint8_t encoded) {
+  switch (len) {
+  case 0:
+    return fiobj_str_new(NULL, 0); /* empty string */
+  case 4:
+    if (!strncasecmp(s, "true", 4))
+      return fiobj_true();
+    if (!strncasecmp(s, "null", 4))
+      return fiobj_null();
+    break;
+  case 5:
+    if (!strncasecmp(s, "false", 5))
+      return fiobj_false();
+  }
+  {
+    char *end = s;
+    const uint64_t tmp = fio_atol(&end);
+    if (end == s + len)
+      return fiobj_num_new(tmp);
+  }
+  {
+    char *end = s;
+    const double tmp = fio_atof(&end);
+    if (end == s + len)
+      return fiobj_float_new(tmp);
+  }
+  if (encoded)
+    return http_urlstr2fiobj(s, len);
+  return fiobj_str_new(s, len);
+}
+
+/** Parses the query part of an HTTP request/response. Uses `http_add2hash`. */
+void http_parse_query(http_s *h) {
+  if (!h->query)
+    return;
+  if (!h->params)
+    h->params = fiobj_hash_new();
+  fio_cstr_s q = fiobj_obj2cstr(h->query);
+  do {
+    char *cut = memchr(q.data, '&', q.len);
+    if (!cut)
+      cut = q.data + q.len;
+    char *cut2 = memchr(q.data, '=', (cut - q.data));
+    if (cut2) {
+      /* we only add named elements... */
+      http_add2hash(h->params, q.data, (size_t)(cut2 - q.data), (cut2 + 1),
+                    (size_t)(cut - (cut2 + 1)), 1);
+    }
+    if (cut[0] == '&') {
+      /* protecting against some ...less informed... clients */
+      if (cut[1] == 'a' && cut[2] == 'm' && cut[3] == 'p' && cut[4] == ';')
+        cut += 5;
+      else
+        cut += 1;
+    }
+    q.len -= (uintptr_t)(cut - q.data);
+    q.data = cut;
+  } while (q.len);
+}
+
+/**
+ * Adds a named parameter to the hash, resolving nesting references.
+ *
+ * i.e.:
+ *
+ * * "name[]" references a nested Array (nested in the Hash).
+ * * "name[key]" references a nested Hash.
+ * * "name[][key]" references a nested Hash within an array. Hash keys will be
+ *   unique (repeating a key advances the hash).
+ * * These rules can be nested (i.e. "name[][key1][][key2]...")
+ * * "name[][]" is an error (there's no way for the parser to analyse
+ *    dimentions)
+ *
+ * Note: names can't begine with "[" or end with "]" as these are reserved
+ *       characters.
+ */
+int http_add2hash2(FIOBJ dest, char *name, size_t name_len, FIOBJ val,
+                   uint8_t encoded) {
+  if (!name)
+    goto error;
+  FIOBJ nested_ary = FIOBJ_INVALID;
+  char *cut1;
+  /* we can't start with an empty object name */
+  while (name_len && name[0] == '[') {
+    --name_len;
+    ++name;
+  }
+  if (!name_len) {
+    /* an empty name is an error */
+    goto error;
+  }
+  uint32_t nesting = ((uint32_t)~0);
+rebase:
+  /* test for nesting level limit (limit at 32) */
+  if (!nesting)
+    goto error;
+  /* start clearing away bits. */
+  nesting >>= 1;
+  /* since we might be rebasing, notice that "name" might be "name]" */
+  cut1 = memchr(name, '[', name_len);
+  if (!cut1)
+    goto place_in_hash;
+  /* simple case "name=" (the "=" was already removed) */
+  if (cut1 == name) {
+    /* an empty name is an error */
+    goto error;
+  }
+  if (cut1 + 1 == name + name_len) {
+    /* we have name[= ... autocorrect */
+    name_len -= 1;
+    goto place_in_array;
+  }
+
+  if (cut1[1] == ']') {
+    /* Nested Array "name[]..." */
+
+    /* Test for name[]= */
+    if ((cut1 + 2) == name + name_len) {
+      name_len -= 2;
+      goto place_in_array;
+    }
+
+    /* Test for a nested Array format error */
+    if (cut1[2] != '[' || cut1[3] == ']') { /* error, we can't parse this */
+      goto error;
+    }
+
+    /* we have name[][key...= */
+
+    /* ensure array exists and it's an array + set nested_ary */
+    const size_t len = ((cut1[-1] == ']') ? (size_t)((cut1 - 1) - name)
+                                          : (size_t)(cut1 - name));
+    const uint64_t hash = fio_siphash(name, len); /* hash the current name */
+    nested_ary = fiobj_hash_get2(dest, hash);
+    if (!nested_ary) {
+      /* create a new nested array */
+      FIOBJ key =
+          encoded ? http_urlstr2fiobj(name, len) : fiobj_str_new(name, len);
+      nested_ary = fiobj_ary_new2(4);
+      fiobj_hash_set(dest, key, nested_ary);
+      fiobj_free(key);
+    } else if (!FIOBJ_TYPE_IS(nested_ary, FIOBJ_T_ARRAY)) {
+      /* convert existing object to an array - auto error correction */
+      FIOBJ key =
+          encoded ? http_urlstr2fiobj(name, len) : fiobj_str_new(name, len);
+      FIOBJ tmp = fiobj_ary_new2(4);
+      fiobj_ary_push(tmp, nested_ary);
+      nested_ary = tmp;
+      fiobj_hash_set(dest, key, nested_ary);
+      fiobj_free(key);
+    }
+
+    /* test if last object in the array is a hash - create hash if not */
+    dest = fiobj_ary_index(nested_ary, -1);
+    if (!dest || !FIOBJ_TYPE_IS(dest, FIOBJ_T_HASH)) {
+      dest = fiobj_hash_new();
+      fiobj_ary_push(nested_ary, dest);
+    }
+
+    /* rebase `name` to `key` and restart. */
+    cut1 += 3; /* consume "[][" */
+    name_len -= (size_t)(cut1 - name);
+    name = cut1;
+    goto rebase;
+
+  } else {
+    /* we have name[key]... */
+    const size_t len = ((cut1[-1] == ']') ? (size_t)((cut1 - 1) - name)
+                                          : (size_t)(cut1 - name));
+    const uint64_t hash = fio_siphash(name, len); /* hash the current name */
+    FIOBJ tmp = fiobj_hash_get2(dest, hash);
+    if (!tmp) {
+      /* hash doesn't exist, create it */
+      FIOBJ key =
+          encoded ? http_urlstr2fiobj(name, len) : fiobj_str_new(name, len);
+      tmp = fiobj_hash_new();
+      fiobj_hash_set(dest, key, tmp);
+      fiobj_free(key);
+    } else if (!FIOBJ_TYPE_IS(tmp, FIOBJ_T_HASH)) {
+      /* type error, referencing an existing object that isn't a Hash */
+      goto error;
+    }
+    dest = tmp;
+    /* no rollback is possible once we enter the new nesting level... */
+    nested_ary = FIOBJ_INVALID;
+    /* rebase `name` to `key` and restart. */
+    cut1 += 1; /* consume "[" */
+    name_len -= (size_t)(cut1 - name);
+    name = cut1;
+    goto rebase;
+  }
+
+place_in_hash:
+  if (name[name_len - 1] == ']')
+    --name_len;
+  FIOBJ key = encoded ? http_urlstr2fiobj(name, name_len)
+                      : fiobj_str_new(name, name_len);
+  FIOBJ old = fiobj_hash_replace(dest, key, val);
+  if (old) {
+    if (nested_ary) {
+      fiobj_hash_replace(dest, key, old);
+      old = fiobj_hash_new();
+      fiobj_hash_set(old, key, val);
+      fiobj_ary_push(nested_ary, old);
+    } else {
+      if (!FIOBJ_TYPE_IS(old, FIOBJ_T_ARRAY)) {
+        FIOBJ tmp = fiobj_ary_new2(4);
+        fiobj_ary_push(tmp, old);
+        old = tmp;
+      }
+      fiobj_ary_push(old, val);
+      fiobj_hash_replace(dest, key, old);
+    }
+  }
+  fiobj_free(key);
+  return 0;
+
+place_in_array:
+  if (name[name_len - 1] == ']')
+    --name_len;
+  uint64_t hash = fio_siphash(name, name_len);
+  FIOBJ ary = fiobj_hash_get2(dest, hash);
+  if (!ary) {
+    FIOBJ key = encoded ? http_urlstr2fiobj(name, name_len)
+                        : fiobj_str_new(name, name_len);
+    ary = fiobj_ary_new2(4);
+    fiobj_hash_set(dest, key, ary);
+    fiobj_free(key);
+  } else if (!FIOBJ_TYPE_IS(ary, FIOBJ_T_ARRAY)) {
+    FIOBJ tmp = fiobj_ary_new2(4);
+    fiobj_ary_push(tmp, ary);
+    ary = tmp;
+    FIOBJ key = encoded ? http_urlstr2fiobj(name, name_len)
+                        : fiobj_str_new(name, name_len);
+    fiobj_hash_replace(dest, key, ary);
+    fiobj_free(key);
+  }
+  fiobj_ary_push(ary, val);
+  return 0;
+error:
+  fiobj_free(val);
+  errno = EOPNOTSUPP;
+  return -1;
+}
+
+/**
+ * Adds a named parameter to the hash, resolving nesting references.
+ *
+ * i.e.:
+ *
+ * * "name[]" references a nested Array (nested in the Hash).
+ * * "name[key]" references a nested Hash.
+ * * "name[][key]" references a nested Hash within an array. Hash keys will be
+ *   unique (repeating a key advances the hash).
+ * * These rules can be nested (i.e. "name[][key1][][key2]...")
+ * * "name[][]" is an error (there's no way for the parser to analyse
+ *    dimentions)
+ *
+ * Note: names can't begine with "[" or end with "]" as these are reserved
+ *       characters.
+ */
+int http_add2hash(FIOBJ dest, char *name, size_t name_len, char *value,
+                  size_t value_len, uint8_t encoded) {
+  return http_add2hash2(dest, name, name_len,
+                        http_str2fiobj(value, value_len, encoded), encoded);
+}
+
+/* *****************************************************************************
+HTTP Body Parsing
+***************************************************************************** */
+#include "http_mime_parser.h"
+
+typedef struct {
+  http_mime_parser_s p;
+  http_s *h;
+  fio_cstr_s buffer;
+  size_t pos;
+  size_t partial_offset;
+  size_t partial_length;
+  FIOBJ partial_name;
+} http_fio_mime_s;
+
+#define http_mime_parser2fio(parser) ((http_fio_mime_s *)(parser))
+
+/** Called when all the data is available at once. */
+static void http_mime_parser_on_data(http_mime_parser_s *parser, void *name,
+                                     size_t name_len, void *filename,
+                                     size_t filename_len, void *mimetype,
+                                     size_t mimetype_len, void *value,
+                                     size_t value_len) {
+  if (!filename) {
+    http_add2hash(http_mime_parser2fio(parser)->h->params, name, name_len,
+                  value, value_len, 0);
+    return;
+  }
+  FIOBJ n = fiobj_str_new(name, name_len);
+  fiobj_str_write(n, "[data]", 6);
+  fio_cstr_s tmp = fiobj_obj2cstr(n);
+  http_add2hash(http_mime_parser2fio(parser)->h->params, tmp.data, tmp.len,
+                value, value_len, 0);
+  fiobj_str_resize(n, name_len);
+  fiobj_str_write(n, "[type]", 6);
+  tmp = fiobj_obj2cstr(n);
+  http_add2hash(http_mime_parser2fio(parser)->h->params, tmp.data, tmp.len,
+                mimetype, mimetype_len, 0);
+  fiobj_str_resize(n, name_len);
+  fiobj_str_write(n, "[name]", 6);
+  tmp = fiobj_obj2cstr(n);
+  fprintf(stderr, "filename length %zu\n", filename_len);
+  http_add2hash(http_mime_parser2fio(parser)->h->params, tmp.data, tmp.len,
+                filename, filename_len, 0);
+  fiobj_free(n);
+}
+
+/** Called when the data didn't fit in the buffer. Data will be streamed. */
+static void http_mime_parser_on_partial_start(
+    http_mime_parser_s *parser, void *name, size_t name_len, void *filename,
+    size_t filename_len, void *mimetype, size_t mimetype_len) {
+  http_mime_parser2fio(parser)->partial_length = 0;
+  http_mime_parser2fio(parser)->partial_offset = 0;
+  http_mime_parser2fio(parser)->partial_name = fiobj_str_new(name, name_len);
+
+  if (!filename)
+    return;
+
+  fiobj_str_write(http_mime_parser2fio(parser)->partial_name, "[type]", 6);
+  fio_cstr_s tmp = fiobj_obj2cstr(http_mime_parser2fio(parser)->partial_name);
+  http_add2hash(http_mime_parser2fio(parser)->h->params, tmp.data, tmp.len,
+                mimetype, mimetype_len, 0);
+
+  fiobj_str_resize(http_mime_parser2fio(parser)->partial_name, name_len);
+  fiobj_str_write(http_mime_parser2fio(parser)->partial_name, "[name]", 6);
+  tmp = fiobj_obj2cstr(http_mime_parser2fio(parser)->partial_name);
+  http_add2hash(http_mime_parser2fio(parser)->h->params, tmp.data, tmp.len,
+                filename, filename_len, 0);
+
+  fiobj_str_resize(http_mime_parser2fio(parser)->partial_name, name_len);
+  fiobj_str_write(http_mime_parser2fio(parser)->partial_name, "[data]", 6);
+}
+
+/** Called when partial data is available. */
+static void http_mime_parser_on_partial_data(http_mime_parser_s *parser,
+                                             void *value, size_t value_len) {
+  if (!http_mime_parser2fio(parser)->partial_offset)
+    http_mime_parser2fio(parser)->partial_offset =
+        http_mime_parser2fio(parser)->pos +
+        ((uintptr_t)value -
+         (uintptr_t)http_mime_parser2fio(parser)->buffer.data);
+  http_mime_parser2fio(parser)->partial_length += value_len;
+  (void)value;
+}
+
+/** Called when the partial data is complete. */
+static void http_mime_parser_on_partial_end(http_mime_parser_s *parser) {
+
+  fio_cstr_s tmp = fiobj_obj2cstr(http_mime_parser2fio(parser)->partial_name);
+  http_add2hash2(http_mime_parser2fio(parser)->h->params, tmp.data, tmp.len,
+                 fiobj_data_slice(http_mime_parser2fio(parser)->h->body,
+                                  http_mime_parser2fio(parser)->partial_offset,
+                                  http_mime_parser2fio(parser)->partial_length),
+                 0);
+  fiobj_free(http_mime_parser2fio(parser)->partial_name);
+  http_mime_parser2fio(parser)->partial_name = FIOBJ_INVALID;
+}
+
+/**
+ * Called when URL decoding is required.
+ *
+ * Should support inplace decoding (`dest == encoded`).
+ *
+ * Should return the length of the decoded string.
+ */
+static inline size_t http_mime_decode_url(char *dest, const char *encoded,
+                                          size_t length) {
+  return http_decode_url(dest, encoded, length);
+}
+
+/**
+ * Attempts to decode the request's body.
+ *
+ * Supported Types include:
+ * * application/x-www-form-urlencoded
+ * * application/json
+ * * multipart/form-data
+ */
+int http_parse_body(http_s *h) {
+  static uint64_t content_type_hash;
+  if (!h->body)
+    return -1;
+  if (!content_type_hash)
+    content_type_hash = fio_siphash("content-type", 12);
+  FIOBJ ct = fiobj_hash_get2(h->headers, content_type_hash);
+  fio_cstr_s content_type = fiobj_obj2cstr(ct);
+  if (content_type.len < 16)
+    return -1;
+  if (content_type.len >= 33 &&
+      !strncasecmp("application/x-www-form-urlencoded", content_type.data,
+                   33)) {
+    if (!h->params)
+      h->params = fiobj_hash_new();
+    FIOBJ tmp = h->query;
+    h->query = h->body;
+    http_parse_query(h);
+    h->query = tmp;
+    return 0;
+  }
+  if (content_type.len >= 16 &&
+      !strncasecmp("application/json", content_type.data, 16)) {
+    if (h->params)
+      return -1;
+    content_type = fiobj_obj2cstr(h->body);
+    if (fiobj_json2obj(&h->params, content_type.data, content_type.len) == 0)
+      return -1;
+    if (FIOBJ_TYPE_IS(h->params, FIOBJ_T_HASH))
+      return 0;
+    fiobj_free(h->params);
+    h->params = FIOBJ_INVALID;
+    return -1;
+  }
+
+  http_fio_mime_s p = {.h = h};
+  if (http_mime_parser_init(&p.p, content_type.data, content_type.len))
+    return -1;
+  if (!h->params)
+    h->params = fiobj_hash_new();
+
+  do {
+    size_t cons = http_mime_parse(&p.p, p.buffer.data, p.buffer.len);
+    p.pos += cons;
+    p.buffer = fiobj_data_pread(h->body, p.pos, 256);
+  } while (p.buffer.data && !p.p.done && !p.p.error);
+  fiobj_free(p.partial_name);
+  p.partial_name = FIOBJ_INVALID;
+  return 0;
+}
 
 /* *****************************************************************************
 HTTP Helper functions that could be used globally

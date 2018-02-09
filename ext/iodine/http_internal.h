@@ -1,5 +1,5 @@
 /*
-Copyright: Boaz segev, 2016-2017
+Copyright: Boaz Segev, 2016-2018
 License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
@@ -61,6 +61,7 @@ Constants that shouldn't be accessed by the users (`fiobj_dup` required).
 
 extern FIOBJ HTTP_HEADER_ACCEPT_RANGES;
 extern FIOBJ HTTP_HEADER_WS_SEC_KEY;
+extern FIOBJ HTTP_HEADER_WS_SEC_CLIENT_KEY;
 extern FIOBJ HTTP_HVALUE_BYTES;
 extern FIOBJ HTTP_HVALUE_CLOSE;
 extern FIOBJ HTTP_HVALUE_GZIP;
@@ -76,7 +77,7 @@ HTTP request/response object management
 ***************************************************************************** */
 
 static inline void http_s_new(http_s *h, http_protocol_s *owner,
-                              http_vtable_s *vtbl, void *udata) {
+                              http_vtable_s *vtbl) {
   *h = (http_s){
       .private_data =
           {
@@ -87,23 +88,10 @@ static inline void http_s_new(http_s *h, http_protocol_s *owner,
       .headers = fiobj_hash_new(),
       .received_at = facil_last_tick(),
       .status = 200,
-      .udata = udata,
-      // .received_at = ,
-      // .method = ,
-      // .status_str = ,
-      // .version = ,
-      // .status = ,
-      // .path = ,
-      // .query = ,
-      // .headers = ,
-      // .cookies = ,
-      // .params = ,
-      // .body = ,
-      // .udata = ,
   };
 }
 
-static inline void http_s_clear(http_s *h, void *udata, uint8_t log) {
+static inline void http_s_clear(http_s *h, uint8_t log) {
   if (log && h->status && !h->status_str)
     http_write_log(h);
   fiobj_free(h->method);
@@ -126,8 +114,6 @@ static inline void http_s_clear(http_s *h, void *udata, uint8_t log) {
       .headers = h->headers,
       .received_at = facil_last_tick(),
       .status = 200,
-      .udata = udata,
-
   };
 }
 
@@ -147,39 +133,6 @@ static inline void http_s_destroy(http_s *h, uint8_t log) {
 
   *h = (http_s){.private_data.vtbl = h->private_data.vtbl};
 }
-
-// static inline void http_s_init(http_s *h, http_protocol_s *owner,
-//                                http_vtable_s *vtbl, void *udata) {
-//   *h = (http_s){
-//       .private_data =
-//           {
-//               .vtbl = vtbl,
-//               .flag = (uintptr_t)owner,
-//               .out_headers = fiobj_hash_new(),
-//           },
-//       .headers = fiobj_hash_new(),
-//       .received_at = facil_last_tick(),
-//       .status = 200,
-//       .udata = udata,
-//   };
-// }
-
-// static inline void http_s_cleanup(http_s *h, uint8_t log) {
-//   if (log && h->status && !h->status_str)
-//     http_write_log(h);
-//   fiobj_free(h->method);
-//   fiobj_free(h->status_str);
-//   fiobj_free(h->private_data.out_headers);
-//   fiobj_free(h->headers);
-//   fiobj_free(h->version);
-//   fiobj_free(h->query);
-//   fiobj_free(h->path);
-//   fiobj_free(h->cookies);
-//   fiobj_free(h->body);
-//   fiobj_free(h->params);
-
-//   *h = (http_s){.private_data.vtbl = h->private_data.vtbl};
-// }
 
 /** Use this function to handle HTTP requests.*/
 void http_on_request_handler______internal(http_s *h,

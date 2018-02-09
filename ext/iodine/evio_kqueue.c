@@ -60,13 +60,15 @@ intptr_t evio_create() {
 /**
 Removes a file descriptor from the polling object.
 */
-// static int evio_remove(int fd) {
-//   struct kevent chevent[3];
-//   EV_SET(chevent, fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
-//   EV_SET(chevent + 1, fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
-//   EV_SET(chevent + 2, fd, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
-//   return kevent(evio_fd, chevent, 3, NULL, 0, NULL);
-// }
+void evio_remove(int fd) {
+  if (evio_fd < 0)
+    return;
+  struct kevent chevent[3];
+  EV_SET(chevent, fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+  EV_SET(chevent + 1, fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
+  EV_SET(chevent + 2, fd, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
+  kevent(evio_fd, chevent, 3, NULL, 0, NULL);
+}
 
 /**
 Adds a file descriptor to the polling object.
@@ -81,15 +83,42 @@ int evio_add(int fd, void *callback_arg) {
 }
 
 /**
+Adds a file descriptor to the polling object (ONE SHOT), to be polled for
+incoming data (`evio_on_data` wil be called).
+*/
+int evio_add_read(int fd, void *callback_arg) {
+  struct kevent chevent[1];
+  EV_SET(chevent, fd, EVFILT_READ, EV_ADD | EV_ENABLE | EV_CLEAR | EV_ONESHOT,
+         0, 0, callback_arg);
+  return kevent(evio_fd, chevent, 1, NULL, 0, NULL);
+}
+
+/**
+Adds a file descriptor to the polling object (ONE SHOT), to be polled for
+outgoing buffer readiness data (`evio_on_ready` wil be called).
+*/
+int evio_add_write(int fd, void *callback_arg) {
+  struct kevent chevent[1];
+  EV_SET(chevent, fd, EVFILT_WRITE, EV_ADD | EV_ENABLE | EV_CLEAR | EV_ONESHOT,
+         0, 0, callback_arg);
+  return kevent(evio_fd, chevent, 1, NULL, 0, NULL);
+}
+
+/**
 Creates a timer file descriptor, system dependent.
 */
 int evio_open_timer() {
 #ifdef P_tmpdir
-  char template[] = P_tmpdir "evio_facil_timer_XXXXXX";
+  if (P_tmpdir[sizeof(P_tmpdir) - 1] == '/') {
+    char name_template[] = P_tmpdir "evio_facil_timer_XXXXXX";
+    return mkstemp(name_template);
+  }
+  char name_template[] = P_tmpdir "/evio_facil_timer_XXXXXX";
+  return mkstemp(name_template);
 #else
-  char template[] = "/tmp/evio_facil_timer_XXXXXX";
+  char name_template[] = "/tmp/evio_facil_timer_XXXXXX";
+  return mkstemp(name_template);
 #endif
-  return mkstemp(template);
 }
 
 /**
@@ -120,10 +149,7 @@ int evio_review(const int timeout_millisec) {
   if (active_count > 0) {
     for (int i = 0; i < active_count; i++) {
       // test for event(s) type
-      if (events[i].filter == EVFILT_WRITE) {
-        evio_on_ready(events[i].udata);
-      } else if (events[i].filter == EVFILT_READ ||
-                 events[i].filter == EVFILT_TIMER) {
+      if (events[i].filter == EVFILT_READ || events[i].filter == EVFILT_TIMER) {
         evio_on_data(events[i].udata);
       }
       // connection errors should be reported after `read` in case there's data
@@ -135,6 +161,9 @@ int evio_review(const int timeout_millisec) {
         //             ? "EV_EOF"
         //             : (events[i].flags & EV_ERROR) ? "EV_ERROR" : "WTF?");
         evio_on_error(events[i].udata);
+      } else if (events[i].filter == EVFILT_WRITE) {
+        // we can only write if there's no error in the socket
+        evio_on_ready(events[i].udata);
       }
     }
   } else if (active_count < 0) {

@@ -55,12 +55,12 @@ static void on_number(json_parser_s *p, long long i);
 static void on_float(json_parser_s *p, double f);
 /** a String was detected (int / float). update `pos` to point at ending */
 static void on_string(json_parser_s *p, void *start, size_t length);
-/** a dictionary object was detected */
-static void on_start_object(json_parser_s *p);
+/** a dictionary object was detected, should return 0 unless error occurred. */
+static int on_start_object(json_parser_s *p);
 /** a dictionary object closure detected */
 static void on_end_object(json_parser_s *p);
-/** an array object was detected */
-static void on_start_array(json_parser_s *p);
+/** an array object was detected, should return 0 unless error occurred. */
+static int on_start_array(json_parser_s *p);
 /** an array closure was detected */
 static void on_end_array(json_parser_s *p);
 /** the JSON parsing is complete */
@@ -145,6 +145,23 @@ static const uint8_t is_hex[] = {
     0,  0,  0,  0, 0, 0,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0, 0, 0,  0,  0,
     0,  0,  0,  0, 0, 0,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0};
 
+/*
+Stops seeking a String:
+['\\', '"']
+*/
+static const uint8_t string_seek_stop[] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
 /* *****************************************************************************
 JSON String Helper - Seeking to the end of a string
 ***************************************************************************** */
@@ -154,7 +171,7 @@ JSON String Helper - Seeking to the end of a string
  */
 static inline int seek2marker(uint8_t **buffer,
                               register const uint8_t *const limit) {
-  if (**buffer == '"' || **buffer == '\\')
+  if (string_seek_stop[**buffer])
     return 1;
 
 #if !__x86_64__ && !__aarch64__
@@ -168,7 +185,7 @@ static inline int seek2marker(uint8_t **buffer,
         (uint8_t *)(((uintptr_t)(*buffer) & (~(uintptr_t)7)) + 8);
     if (limit >= alignment) {
       while (*buffer < alignment) {
-        if (**buffer == '"' || **buffer == '\\')
+        if (string_seek_stop[**buffer])
           return 1;
         *buffer += 1;
       }
@@ -196,8 +213,27 @@ static inline int seek2marker(uint8_t **buffer,
 #if !__x86_64__ && !__aarch64__
 finish:
 #endif
+  if (*buffer + 4 <= limit) {
+    if (string_seek_stop[(*buffer)[0]]) {
+      // *buffer += 0;
+      return 1;
+    }
+    if (string_seek_stop[(*buffer)[1]]) {
+      *buffer += 1;
+      return 1;
+    }
+    if (string_seek_stop[(*buffer)[2]]) {
+      *buffer += 2;
+      return 1;
+    }
+    if (string_seek_stop[(*buffer)[3]]) {
+      *buffer += 3;
+      return 1;
+    }
+    *buffer += 4;
+  }
   while (*buffer < limit) {
-    if (**buffer == '"' || **buffer == '\\')
+    if (string_seek_stop[**buffer])
       return 1;
     (*buffer)++;
   }
@@ -250,7 +286,7 @@ fio_json_parse(json_parser_s *parser, const char *buffer, size_t length) {
         on_string(parser, pos, (uintptr_t)(tmp - pos));
         pos = key + 1;
         parser->key = 0;
-        continue /* skip tests */;
+        continue; /* skip tests */
       } else {
         ++pos;
         on_string(parser, pos, (uintptr_t)(tmp - pos));
@@ -270,7 +306,8 @@ fio_json_parse(json_parser_s *parser, const char *buffer, size_t length) {
         goto error;
       parser->dict = (parser->dict << 1) | 1;
       ++pos;
-      on_start_object(parser);
+      if (on_start_object(parser))
+        goto error;
       break;
     case '}':
       if ((parser->dict & 1) == 0) {
@@ -303,7 +340,8 @@ fio_json_parse(json_parser_s *parser, const char *buffer, size_t length) {
         goto error;
       ++pos;
       parser->dict = (parser->dict << 1);
-      on_start_array(parser);
+      if (on_start_array(parser))
+        goto error;
       break;
     case ']':
       if ((parser->dict & 1))
@@ -386,7 +424,8 @@ fio_json_parse(json_parser_s *parser, const char *buffer, size_t length) {
       if (!tmp)
         goto stop;
       pos = tmp + 1;
-      continue /* skip tests */;
+      continue; /* skip tests */
+      ;
     }
     case '/': /* C style / Javascript style comment */
       if (pos[1] == '*') {
@@ -406,7 +445,8 @@ fio_json_parse(json_parser_s *parser, const char *buffer, size_t length) {
         pos = tmp + 1;
       } else
         goto error;
-      continue /* skip tests */;
+      continue; /* skip tests */
+      ;
     default:
       goto error;
     }
@@ -603,6 +643,7 @@ typedef struct {
   json_parser_s p;
   FIOBJ key;
   FIOBJ top;
+  FIOBJ target;
   fio_ary_s stack;
   uint8_t is_hash;
 } fiobj_json_parser_s;
@@ -657,13 +698,21 @@ static void on_string(json_parser_s *p, void *start, size_t length) {
   fiobj_json_add2parser((fiobj_json_parser_s *)p, str);
 }
 /** a dictionary object was detected */
-static void on_start_object(json_parser_s *p) {
-  FIOBJ hash = fiobj_hash_new();
+static int on_start_object(json_parser_s *p) {
   fiobj_json_parser_s *pr = (fiobj_json_parser_s *)p;
-  fiobj_json_add2parser(pr, hash);
-  fio_ary_push(&pr->stack, (void *)pr->top);
-  pr->top = hash;
+  if (pr->target) {
+    /* push NULL, don't free the objects */
+    fio_ary_push(&pr->stack, (void *)pr->top);
+    pr->top = pr->target;
+    pr->target = FIOBJ_INVALID;
+  } else {
+    FIOBJ hash = fiobj_hash_new();
+    fiobj_json_add2parser(pr, hash);
+    fio_ary_push(&pr->stack, (void *)pr->top);
+    pr->top = hash;
+  }
   pr->is_hash = 1;
+  return 0;
 }
 /** a dictionary object closure detected */
 static void on_end_object(json_parser_s *p) {
@@ -678,13 +727,16 @@ static void on_end_object(json_parser_s *p) {
   pr->is_hash = FIOBJ_TYPE_IS(pr->top, FIOBJ_T_HASH);
 }
 /** an array object was detected */
-static void on_start_array(json_parser_s *p) {
-  FIOBJ ary = fiobj_ary_new2(4);
-  fiobj_json_add2parser((fiobj_json_parser_s *)p, ary);
+static int on_start_array(json_parser_s *p) {
   fiobj_json_parser_s *pr = (fiobj_json_parser_s *)p;
+  if (pr->target)
+    return -1;
+  FIOBJ ary = fiobj_ary_new2(4);
+  fiobj_json_add2parser(pr, ary);
   fio_ary_push(&pr->stack, (void *)pr->top);
   pr->top = ary;
   pr->is_hash = 0;
+  return 0;
 }
 /** an array closure was detected */
 static void on_end_array(json_parser_s *p) {
@@ -742,8 +794,7 @@ static void write_safe_str(FIOBJ dest, const FIOBJ str) {
   }
   while (len) {
     char *restrict writer = (char *)t.data;
-    while (len &&
-           (src[0] > 32 && src[0] != '"' && src[0] != '\\' && src[0] != '/')) {
+    while (len && (src[0] > 32 && src[0] != '"' && src[0] != '\\')) {
       len--;
       writer[end++] = *(src++);
     }
@@ -937,11 +988,39 @@ size_t fiobj_json2obj(FIOBJ *pobj, const void *data, size_t len) {
 }
 
 /**
+ * Updates a Hash using JSON data.
+ *
+ * Parsing errors and non-dictionar object JSON data are silently ignored,
+ * attempting to update the Hash as much as possible before any errors
+ * encountered.
+ *
+ * Conflicting Hash data is overwritten (prefering the new over the old).
+ *
+ * Returns the number of bytes consumed. On Error, 0 is returned and no data is
+ * consumed.
+ */
+size_t fiobj_hash_update_json(FIOBJ hash, const void *data, size_t len) {
+  if (!hash)
+    return 0;
+  fiobj_json_parser_s p = {.top = FIOBJ_INVALID, .target = hash};
+  size_t consumed = fio_json_parse(&p.p, data, len);
+  fio_ary_free(&p.stack);
+  fiobj_free(p.key);
+  if (p.top != hash)
+    fiobj_free(p.top);
+  return consumed;
+}
+
+/**
  * Formats an object into a JSON string, appending the JSON string to an
  * existing String. Remember to `fiobj_free`.
  */
 FIOBJ fiobj_obj2json2(FIOBJ dest, FIOBJ o, uint8_t pretty) {
   assert(dest && FIOBJ_TYPE_IS(dest, FIOBJ_T_STRING));
+  if (!o) {
+    fiobj_str_write(dest, "null", 4);
+    return 0;
+  }
   fio_ary_s stack;
   obj2json_data_s data = {
       .dest = dest, .stack = &stack, .pretty = pretty, .count = 1,
@@ -977,6 +1056,7 @@ void fiobj_test_json(void) {
   char json_str[] = "{\"array\":[1,2,3,\"boom\"],\"my\":{\"secret\":42},"
                     "\"true\":true,\"false\":false,\"null\":null,\"float\":-2."
                     "2,\"string\":\"I \\\"wrote\\\" this.\"}";
+  char json_str_update[] = "{\"array\":[1,2,3]}";
   char json_str2[] =
       "[\n    \"JSON Test Pattern pass1\",\n    {\"object with 1 "
       "member\":[\"array with 1 element\"]},\n    {},\n    [],\n    -42,\n    "
@@ -1070,8 +1150,19 @@ void fiobj_test_json(void) {
           (int)fiobj_obj2cstr(tmp).len, fiobj_obj2cstr(tmp).data);
   if (!strcmp(fiobj_obj2cstr(tmp).data, json_str))
     fprintf(stderr, "* Stringify == Original.\n");
-  fiobj_free(o);
+  TEST_ASSERT(
+      fiobj_hash_update_json(o, json_str_update, strlen(json_str_update)),
+      "JSON update failed to parse data.");
   fiobj_free(tmp);
+
+  tmp = fiobj_hash_get2(o, fio_siphash("array", 5));
+  TEST_ASSERT(FIOBJ_TYPE_IS(tmp, FIOBJ_T_ARRAY),
+              "JSON updated 'array' not an Array!\n");
+  TEST_ASSERT(fiobj_ary_count(tmp) == 3, "JSON updated 'array' not updated?");
+  tmp = fiobj_hash_get2(o, fio_siphash("float", 5));
+  TEST_ASSERT(FIOBJ_TYPE_IS(tmp, FIOBJ_T_FLOAT),
+              "JSON updated (old) 'float' missing!\n");
+  fiobj_free(o);
   fprintf(stderr, "* passed.\n");
 
   fprintf(stderr, "=== Testing JSON parsing (UTF-8 and special cases)\n");
@@ -1098,7 +1189,6 @@ void fiobj_test_json(void) {
               "JSON direct G clef String incorrect %s !\n",
               fiobj_obj2cstr(o).data);
   fiobj_free(o);
-
   fiobj_json2obj(&o, "\"Hello\\u0000World\"", 19);
   TEST_ASSERT(FIOBJ_TYPE_IS(o, FIOBJ_T_STRING),
               "JSON NUL containing String incorrect type! %p => %s\n",

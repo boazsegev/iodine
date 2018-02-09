@@ -1,5 +1,5 @@
 /*
-Copyright: Boaz segev, 2016-2017
+Copyright: Boaz Segev, 2016-2018
 License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
@@ -394,7 +394,19 @@ int http_listen(const char *port, const char *binding, struct http_settings_s);
  * response.
  *
  * `address` should contain a full URL style address for the server. i.e.:
+ *
  *           "http:/www.example.com:8080/"
+ *
+ * If an `address` includes a path or query data, they will be automatically
+ * attached (both of them) to the HTTP handl'es `path` property. i.e.
+ *
+ *           "http:/www.example.com:8080/my_path?foo=bar"
+ *           // will result in:
+ *           fiobj_obj2cstr(h->path).data; //=> "/my_path?foo=bar"
+ *
+ * To open a Websocket connection, it's possible to use the `ws` protocol
+ * signature. However, it would be better to use the `websocket_connect`
+ * function instead.
  *
  * Returns -1 on error and 0 on success. the `on_finish` callback is always
  * called.
@@ -488,14 +500,30 @@ typedef struct {
   /**
    * The (optional) on_close callback will be called once a websocket connection
    * is terminated or failed to be established.
+   *
+   * The `uuid` is the connection's unique ID that can identify the Websocket. A
+   * value of `uuid == 0` indicates the Websocket connection wasn't established
+   * (an error occured).
+   *
+   * The `udata` is the user data as set during the upgrade or using the
+   * `websocket_udata_set` function.
    */
-  void (*on_close)(ws_s *ws);
+  void (*on_close)(intptr_t uuid, void *udata);
   /** Opaque user data. */
   void *udata;
 } websocket_settings_s;
 
 /**
  * Upgrades an HTTP/1.1 connection to a Websocket connection.
+ *
+ * This function will end the HTTP stage of the connection and attempt to
+ * "upgrade" to a Websockets connection.
+ *
+ * Thie `http_s` handle will be invalid after this call and the `udata` will be
+ * set to the new Websocket `udata`.
+ *
+ * A client connection's `on_finish` callback will be called (since the HTTP
+ * stage has finished).
  */
 int http_upgrade2ws(websocket_settings_s);
 
@@ -515,7 +543,80 @@ int http_upgrade2ws(websocket_settings_s);
 #define http_upgrade2ws(...)                                                   \
   http_upgrade2ws((websocket_settings_s){__VA_ARGS__})
 
+/**
+ * Connects to a Websocket service according to the provided address.
+ *
+ * This is a somewhat naive connector object, it doesn't perform any
+ * authentication or other logical handling. However, it's quire easy to author
+ * a complext authentication logic using a combination of `http_connect` and
+ * `http_upgrade2ws`.
+ *
+ * Returns the uuid for the future websocket on success.
+ *
+ * Returns -1 on error;
+ */
+int websocket_connect(const char *address, websocket_settings_s settings);
+#define websocket_connect(address, ...)                                        \
+  websocket_connect((address), (websocket_settings_s){__VA_ARGS__})
+
 #include "websockets.h"
+
+/* *****************************************************************************
+HTTP GET and POST parsing helpers
+***************************************************************************** */
+
+/**
+ * Attempts to decode the request's body.
+ *
+ * Supported Types include:
+ * * application/x-www-form-urlencoded
+ * * application/json
+ * * multipart/form-data
+ */
+int http_parse_body(http_s *h);
+
+/** Parses the query part of an HTTP request/response. Uses `http_add2hash`. */
+void http_parse_query(http_s *h);
+
+/**
+ * Adds a named parameter to the hash, converting a string to an object and
+ * resolving nesting references and URL decoding if required.
+ *
+ * i.e.:
+ *
+ * * "name[]" references a nested Array (nested in the Hash).
+ * * "name[key]" references a nested Hash.
+ * * "name[][key]" references a nested Hash within an array. Hash keys will be
+ *   unique (repeating a key advances the hash).
+ * * These rules can be nested (i.e. "name[][key1][][key2]...")
+ * * "name[][]" is an error (there's no way for the parser to analyse
+ *    dimentions)
+ *
+ * Note: names can't begine with "[" or end with "]" as these are reserved
+ *       characters.
+ */
+int http_add2hash(FIOBJ dest, char *name, size_t name_len, char *value,
+                  size_t value_len, uint8_t encoded);
+
+/**
+ * Adds a named parameter to the hash, using an existing object and resolving
+ * nesting references.
+ *
+ * i.e.:
+ *
+ * * "name[]" references a nested Array (nested in the Hash).
+ * * "name[key]" references a nested Hash.
+ * * "name[][key]" references a nested Hash within an array. Hash keys will be
+ *   unique (repeating a key advances the hash).
+ * * These rules can be nested (i.e. "name[][key1][][key2]...")
+ * * "name[][]" is an error (there's no way for the parser to analyse
+ *    dimentions)
+ *
+ * Note: names can't begine with "[" or end with "]" as these are reserved
+ *       characters.
+ */
+int http_add2hash2(FIOBJ dest, char *name, size_t name_len, FIOBJ value,
+                   uint8_t encoded);
 
 /* *****************************************************************************
 HTTP Status Strings and Mime-Type helpers
@@ -556,7 +657,7 @@ extern FIOBJ HTTP_HEADER_SET_COOKIE;
 extern FIOBJ HTTP_HEADER_UPGRADE;
 
 /* *****************************************************************************
-HTTP General Helper functions that might be used globally
+HTTP General Helper functions that could be used globally
 ***************************************************************************** */
 
 /**
@@ -572,7 +673,7 @@ FIOBJ http_req2str(http_s *h);
  */
 void http_write_log(http_s *h);
 /* *****************************************************************************
-HTTP Time related helper functions that might be used globally
+HTTP Time related helper functions that could be used globally
 ***************************************************************************** */
 
 /**
@@ -613,7 +714,7 @@ HTTP URL decoding helper functions that might be used globally
 /** Decodes a URL encoded string, no buffer overflow protection. */
 ssize_t http_decode_url_unsafe(char *dest, const char *url_data);
 
-/** Decodes a URL encoded string (i.e., the "query" part of a request). */
+/** Decodes a URL encoded string (query / form data). */
 ssize_t http_decode_url(char *dest, const char *url_data, size_t length);
 
 /** Decodes the "path" part of a request, no buffer overflow protection. */

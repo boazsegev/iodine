@@ -16,7 +16,7 @@ static inline VALUE iodine_json_convert(VALUE str, fiobj2rb_settings_s s) {
     rb_raise(rb_eRuntimeError, "JSON parsing failed. Not JSON?");
     return Qnil;
   }
-  VALUE ret = fiobj2rb(json, s.str2sym);
+  VALUE ret = fiobj2rb_deep(json, s.str2sym);
   fiobj_free(json);
   return ret;
 }
