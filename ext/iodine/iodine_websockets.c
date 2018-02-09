@@ -492,16 +492,16 @@ void ws_on_open(ws_s *ws) {
   set_ws(handler, ws);
   RubyCaller.call(handler, iodine_on_open_func_id);
 }
-void ws_on_close(ws_s *ws) {
-  VALUE handler = get_handler(ws);
+void ws_on_close(intptr_t uuid, void *handler_) {
+  VALUE handler = (VALUE)handler_;
   if (!handler) {
     fprintf(stderr,
             "ERROR: (iodine websockets) Closing a handlerless websocket?!\n");
     return;
   }
   RubyCaller.call(handler, iodine_on_close_func_id);
-  set_ws(handler, Qnil);
   Registry.remove(handler);
+  (void)uuid;
 }
 void ws_on_shutdown(ws_s *ws) {
   VALUE handler = get_handler(ws);
