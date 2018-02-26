@@ -6,7 +6,7 @@
 [![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
 [![GitHub](https://img.shields.io/badge/GitHub-Open%20Source-blue.svg)](https://github.com/boazsegev/iodine)
 
-**Notice**: *iodine's core library, [facil.io](https://github.com/boazsegev/facil.io) is being re-vamped with many updates and changes. This is a time to ask - what features are important for you? [let me know here](https://github.com/boazsegev/facil.io/issues/24)*.
+**Notice: *iodine's core library, [facil.io](https://github.com/boazsegev/facil.io) is being re-vamped with many updates and changes. This is a time to ask - what features are important for you? [let me know here](https://github.com/boazsegev/facil.io/issues/24)***.
 
 Iodine is a fast concurrent web server for real-time Ruby applications, with native support for:
 

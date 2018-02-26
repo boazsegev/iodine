@@ -31,6 +31,8 @@ Includes and state
 #include <sys/types.h>
 #include <sys/un.h>
 
+#include "fio_mem.h"
+
 /* *****************************************************************************
 OS Sendfile settings.
 */
@@ -133,13 +135,19 @@ static void sock_packet_free_attempt(void *packet_, void *ignr) {
 }
 
 static inline void sock_packet_free(packet_s *packet) {
-  defer(sock_packet_free_cb, (void *)((uintptr_t)packet->free_func),
-        packet->buffer);
+  if (packet->free_func == fio_free) {
+    fio_free(packet->buffer);
+  } else if (packet->free_func == free) {
+    free(packet->buffer);
+  } else {
+    defer(sock_packet_free_cb, (void *)((uintptr_t)packet->free_func),
+          packet->buffer);
+  }
   if (packet >= packet_pool.mem &&
       packet <= packet_pool.mem + (BUFFER_PACKET_POOL - 1)) {
     defer(sock_packet_free_attempt, packet, NULL);
   } else
-    free(packet);
+    fio_free(packet);
 }
 
 static inline packet_s *sock_packet_new(void) {
@@ -157,7 +165,7 @@ none_in_pool:
     goto init;
   spn_unlock(&packet_pool.lock);
 no_lock:
-  packet = malloc(sizeof(*packet));
+  packet = fio_malloc(sizeof(*packet));
   if (!packet) {
     perror("FATAL ERROR: memory allocation failed");
     exit(errno);
@@ -305,13 +313,13 @@ static inline int initialize_sock_lib(size_t capacity) {
 #endif
 
 finish:
+  if (init_exit)
+    return 0;
+  init_exit = 1;
   packet_pool.lock = SPN_LOCK_INIT;
   for (size_t i = 0; i < sock_data_store.capacity; ++i) {
     sock_data_store.fds[i].lock = SPN_LOCK_INIT;
   }
-  if (init_exit)
-    return 0;
-  init_exit = 1;
   atexit(clear_sock_lib);
   return 0;
 }
@@ -880,7 +888,7 @@ intptr_t sock_connect(char *address, char *port) {
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
     if (clear_fd(fd, 1))
       return -1;
-    fdinfo(fd).addrinfo = *((struct sockaddr_in6 *)addrinfo->ai_addr);
+    memcpy(&fdinfo(fd).addrinfo, addrinfo->ai_addr, addrinfo->ai_addrlen);
     fdinfo(fd).addrlen = addrinfo->ai_addrlen;
     freeaddrinfo(addrinfo);
   }

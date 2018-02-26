@@ -6,6 +6,8 @@ Feel free to copy, use and enjoy according to the license provided.
 */
 #include "http_internal.h"
 
+#include "fio_mem.h"
+
 #include "http1.h"
 
 static uint64_t http_upgrade_hash = 0;
@@ -15,6 +17,21 @@ void http_on_request_handler______internal(http_s *h,
   if (!http_upgrade_hash)
     http_upgrade_hash = fio_siphash("upgrade", 7);
   h->udata = settings->udata;
+
+  static uint64_t host_hash = 0;
+  if (!host_hash)
+    host_hash = fio_siphash("host", 4);
+
+  if (1) {
+    /* test for Host header and avoid duplicates */
+    FIOBJ tmp = fiobj_hash_get2(h->headers, host_hash);
+    if (!tmp)
+      http_send_error(h, 400);
+    if (FIOBJ_TYPE_IS(tmp, FIOBJ_T_ARRAY)) {
+      fiobj_hash_set(h->headers, HTTP_HEADER_HOST, fiobj_ary_pop(tmp));
+    }
+  }
+
   FIOBJ t = fiobj_hash_get2(h->headers, http_upgrade_hash);
   if (t == FIOBJ_INVALID) {
     if (settings->public_folder) {
@@ -24,19 +41,6 @@ void http_on_request_handler______internal(http_s *h,
                           path_str.len)) {
         return;
       }
-    }
-    static uint64_t host_hash = 0;
-    if (!host_hash)
-      host_hash = fio_siphash("host", 4);
-    {
-      FIOBJ tmp = fiobj_hash_get2(h->headers, host_hash);
-      if (FIOBJ_TYPE_IS(tmp, FIOBJ_T_ARRAY)) {
-        FIOBJ sym = fiobj_str_new("host", 4);
-        fiobj_hash_set(h->headers, sym, fiobj_ary_pop(tmp));
-        fiobj_free(sym);
-      }
-      if (!tmp)
-        http_send_error(h, 400);
     }
     settings->on_request(h);
     return;
@@ -69,7 +73,7 @@ int http_send_error2(size_t error, intptr_t uuid, http_settings_s *settings) {
   if (!uuid || !settings || !error)
     return -1;
   protocol_s *pr = http1_new(uuid, settings, NULL, 0);
-  http_s *r = malloc(sizeof(*r));
+  http_s *r = fio_malloc(sizeof(*r));
   HTTP_ASSERT(pr, "Couldn't allocate response object for error report.")
   http_s_new(r, (http_protocol_s *)pr, http1_vtable());
   int ret = http_send_error(r, error);
@@ -89,6 +93,7 @@ FIOBJ HTTP_HEADER_DATE;
 FIOBJ HTTP_HEADER_ETAG;
 FIOBJ HTTP_HEADER_HOST;
 FIOBJ HTTP_HEADER_LAST_MODIFIED;
+FIOBJ HTTP_HEADER_ORIGIN;
 FIOBJ HTTP_HEADER_SET_COOKIE;
 FIOBJ HTTP_HEADER_UPGRADE;
 FIOBJ HTTP_HEADER_WS_SEC_CLIENT_KEY;
@@ -120,6 +125,7 @@ void http_lib_cleanup(void) {
   HTTPLIB_RESET(HTTP_HEADER_ETAG);
   HTTPLIB_RESET(HTTP_HEADER_HOST);
   HTTPLIB_RESET(HTTP_HEADER_LAST_MODIFIED);
+  HTTPLIB_RESET(HTTP_HEADER_ORIGIN);
   HTTPLIB_RESET(HTTP_HEADER_SET_COOKIE);
   HTTPLIB_RESET(HTTP_HEADER_UPGRADE);
   HTTPLIB_RESET(HTTP_HEADER_WS_SEC_CLIENT_KEY);
@@ -151,6 +157,7 @@ void http_lib_init(void) {
   HTTP_HEADER_ETAG = fiobj_str_new("etag", 4);
   HTTP_HEADER_HOST = fiobj_str_new("host", 4);
   HTTP_HEADER_LAST_MODIFIED = fiobj_str_new("last-modified", 13);
+  HTTP_HEADER_ORIGIN = fiobj_str_new("origin", 6);
   HTTP_HEADER_SET_COOKIE = fiobj_str_new("set-cookie", 10);
   HTTP_HEADER_UPGRADE = fiobj_str_new("upgrade", 7);
   HTTP_HEADER_WS_SEC_CLIENT_KEY = fiobj_str_new("sec-websocket-key", 17);
@@ -164,6 +171,33 @@ void http_lib_init(void) {
   HTTP_HVALUE_WS_SEC_VERSION = fiobj_str_new("sec-websocket-version", 21);
   HTTP_HVALUE_WS_UPGRADE = fiobj_str_new("Upgrade", 7);
   HTTP_HVALUE_WS_VERSION = fiobj_str_new("13", 2);
+
+  fiobj_obj2hash(HTTP_HEADER_ACCEPT_RANGES);
+  fiobj_obj2hash(HTTP_HEADER_CACHE_CONTROL);
+  fiobj_obj2hash(HTTP_HEADER_CONNECTION);
+  fiobj_obj2hash(HTTP_HEADER_CONTENT_ENCODING);
+  fiobj_obj2hash(HTTP_HEADER_CONTENT_LENGTH);
+  fiobj_obj2hash(HTTP_HEADER_CONTENT_RANGE);
+  fiobj_obj2hash(HTTP_HEADER_CONTENT_TYPE);
+  fiobj_obj2hash(HTTP_HEADER_COOKIE);
+  fiobj_obj2hash(HTTP_HEADER_DATE);
+  fiobj_obj2hash(HTTP_HEADER_ETAG);
+  fiobj_obj2hash(HTTP_HEADER_HOST);
+  fiobj_obj2hash(HTTP_HEADER_LAST_MODIFIED);
+  fiobj_obj2hash(HTTP_HEADER_ORIGIN);
+  fiobj_obj2hash(HTTP_HEADER_SET_COOKIE);
+  fiobj_obj2hash(HTTP_HEADER_UPGRADE);
+  fiobj_obj2hash(HTTP_HEADER_WS_SEC_CLIENT_KEY);
+  fiobj_obj2hash(HTTP_HEADER_WS_SEC_KEY);
+  fiobj_obj2hash(HTTP_HVALUE_BYTES);
+  fiobj_obj2hash(HTTP_HVALUE_CLOSE);
+  fiobj_obj2hash(HTTP_HVALUE_GZIP);
+  fiobj_obj2hash(HTTP_HVALUE_KEEP_ALIVE);
+  fiobj_obj2hash(HTTP_HVALUE_MAX_AGE);
+  fiobj_obj2hash(HTTP_HVALUE_WEBSOCKET);
+  fiobj_obj2hash(HTTP_HVALUE_WS_SEC_VERSION);
+  fiobj_obj2hash(HTTP_HVALUE_WS_UPGRADE);
+  fiobj_obj2hash(HTTP_HVALUE_WS_VERSION);
 
 #define REGISTER_MIME(ext, type)                                               \
   http_mimetype_register(ext, sizeof(ext) - 1,                                 \

@@ -20,10 +20,10 @@ Compile time settings
 ***************************************************************************** */
 
 #ifndef DEFER_THROTTLE
-#define DEFER_THROTTLE 524287UL
+#define DEFER_THROTTLE 1048574UL
 #endif
 #ifndef DEFER_THROTTLE_LIMIT
-#define DEFER_THROTTLE_LIMIT 1572864UL
+#define DEFER_THROTTLE_LIMIT 2097148UL
 #endif
 
 #ifndef DEFER_QUEUE_BLOCK_COUNT
@@ -257,8 +257,11 @@ error:
  * Frees the memory asociated with a thread indentifier (allows the thread to
  * run it's course, just the identifier is freed).
  */
-#pragma weak defer_join_thread
-void defer_free_thread(void *p_thr) { free(p_thr); }
+#pragma weak defer_free_thread
+void defer_free_thread(void *p_thr) {
+  pthread_detach(*((pthread_t *)p_thr));
+  free(p_thr);
+}
 
 #pragma weak defer_join_thread
 int defer_join_thread(void *p_thr) {
@@ -283,7 +286,7 @@ void *defer_new_thread(void *(*thread_func)(void *), void *arg) {
   return NULL;
 }
 
-#pragma weak defer_join_thread
+#pragma weak defer_free_thread
 void defer_free_thread(void *p_thr) { void(p_thr); }
 
 #pragma weak defer_join_thread
@@ -305,6 +308,8 @@ void defer_thread_wait(pool_pt pool, void *p_thr) {
   size_t throttle = (pool->count) * DEFER_THROTTLE;
   if (!throttle || throttle > DEFER_THROTTLE_LIMIT)
     throttle = DEFER_THROTTLE_LIMIT;
+  if (throttle == DEFER_THROTTLE)
+    throttle <<= 1;
   throttle_thread(throttle);
   (void)p_thr;
 }

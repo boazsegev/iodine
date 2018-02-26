@@ -11,6 +11,8 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "fio_hashmap.h"
 #include "fiobj4sock.h"
 
+#include "fio_mem.h"
+
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
@@ -147,28 +149,32 @@ postpone:
   (void)arg2;
 }
 
-static void deferred_on_data(void *arg, void *arg2) {
-  if (!uuid_data(arg).protocol) {
+static void deferred_on_data(void *uuid, void *arg2) {
+  if (!uuid_data(uuid).protocol) {
     return;
   }
-  protocol_s *pr = protocol_try_lock(sock_uuid2fd(arg), FIO_PR_LOCK_TASK);
+  protocol_s *pr = protocol_try_lock(sock_uuid2fd(uuid), FIO_PR_LOCK_TASK);
   if (!pr) {
     if (errno == EBADF)
       return;
     goto postpone;
   }
-  spn_unlock(&uuid_data(arg).scheduled);
-  pr->on_data((intptr_t)arg, pr);
+  spn_unlock(&uuid_data(uuid).scheduled);
+  pr->on_data((intptr_t)uuid, pr);
   protocol_unlock(pr, FIO_PR_LOCK_TASK);
-  if (!spn_trylock(&uuid_data(arg).scheduled)) {
-    evio_add_read(sock_uuid2fd((intptr_t)arg), arg);
+  if (!spn_trylock(&uuid_data(uuid).scheduled)) {
+    evio_add_read(sock_uuid2fd((intptr_t)uuid), uuid);
   }
-  // else
-  //   fprintf(stderr, "skipped evio_add\n");
   return;
 postpone:
-  defer(deferred_on_data, arg, NULL);
-  (void)arg2;
+  if (arg2) {
+    /* the event is being forced, so force rescheduling */
+    defer(deferred_on_data, (void *)uuid, (void *)1);
+  } else {
+    /* the protocol was locked, so there might not be any need for the event */
+    evio_add_read(sock_uuid2fd((intptr_t)uuid), uuid);
+  }
+  return;
 }
 
 static void deferred_ping(void *arg, void *arg2) {
@@ -213,7 +219,7 @@ void facil_force_event(intptr_t uuid, enum facil_io_event ev) {
   switch (ev) {
   case FIO_EVENT_ON_DATA:
     spn_trylock(&uuid_data(uuid).scheduled);
-    evio_on_data((void *)uuid);
+    defer(deferred_on_data, (void *)uuid, (void *)1);
     break;
   case FIO_EVENT_ON_TIMEOUT:
     defer(deferred_ping, (void *)uuid, NULL);
@@ -282,6 +288,8 @@ static void mock_idle(void) {}
 void pubsub_cluster_init(void) {}
 #pragma weak pubsub_cluster_on_fork
 void pubsub_cluster_on_fork(void) {}
+#pragma weak pubsub_cluster_cleanup
+void pubsub_cluster_cleanup(void) {}
 
 /* perform initialization for external services. */
 static void facil_external_init(void) {
@@ -303,12 +311,17 @@ static void facil_external_root_init(void) {
   pubsub_cluster_init();
 }
 /* perform cleanup for external services. */
-static void facil_external_root_cleanup(void) { http_lib_cleanup(); }
+static void facil_external_root_cleanup(void) {
+  http_lib_cleanup();
+  pubsub_cluster_cleanup();
+}
 
 /* *****************************************************************************
 Initialization and Cleanup
 ***************************************************************************** */
 static spn_lock_i facil_libinit_lock = SPN_LOCK_INIT;
+
+static void facil_cluster_cleanup(void); /* cluster data cleanup */
 
 static void facil_libcleanup(void) {
   /* free memory */
@@ -318,9 +331,11 @@ static void facil_libcleanup(void) {
            sizeof(*facil_data) + ((size_t)facil_data->capacity *
                                   sizeof(struct connection_data_s)));
     facil_external_root_cleanup();
+    facil_cluster_cleanup();
     facil_data = NULL;
   }
   spn_unlock(&facil_libinit_lock);
+  defer_perform(); /* perform any lingering cleanup tasks */
 }
 
 static void facil_lib_init(void) {
@@ -599,6 +614,7 @@ intptr_t facil_connect(struct facil_connect_args opt) {
   uuid = connector->uuid = sock_connect(opt.address, opt.port);
   /* check for errors, always invoke the on_fail if required */
   if (uuid == -1) {
+    free(connector);
     goto error;
   }
   if (facil_attach(uuid, &connector->protocol) == -1) {
@@ -829,7 +845,7 @@ static void cluster_deferred_handler(void *msg_data_, void *ignr) {
   data->on_message(data->filter, data->channel, data->msg);
   fiobj_free(data->channel);
   fiobj_free(data->msg);
-  free(data);
+  fio_free(data);
   (void)ignr;
 }
 
@@ -840,7 +856,7 @@ static void cluster_forward_msg2handlers(cluster_pr_s *c) {
   spn_unlock(&facil_cluster_data.lock);
   // fprintf(stderr, "handler for %d: %p\n", c->filter, target_);
   if (target_) {
-    cluster_msg_data_s *data = malloc(sizeof(*data));
+    cluster_msg_data_s *data = fio_malloc(sizeof(*data));
     if (!data) {
       perror("FATAL ERROR: (facil.io cluster) couldn't allocate memory");
       exit(errno);
@@ -1153,9 +1169,9 @@ static void cluster_on_new_peer(intptr_t srv, protocol_s *pr) {
 static void cluster_on_listening_close(intptr_t srv, protocol_s *pr) {
   if (facil_parent_pid() == getpid()) {
     unlink(facil_cluster_data.cluster_name);
-    if (facil_cluster_data.root == srv)
-      facil_cluster_data.root = -1;
   }
+  if (facil_cluster_data.root == srv)
+    facil_cluster_data.root = -1;
   (void)srv;
   (void)pr;
 }
@@ -1175,12 +1191,6 @@ static int cluster_on_start(void) {
   } else {
     facil_cluster_data.client_mode = 1;
     fio_hash_free(&facil_cluster_data.clients);
-    // FIO_HASH_FOR_FREE(&facil_cluster_data.clients, pos) {
-    //   if (!pos->obj)
-    //     continue;
-    //   close(sock_uuid2fd(pos->key));
-    //   sock_force_close(pos->key);
-    // }
     facil_cluster_data.clients = (fio_hash_s)FIO_HASH_INIT;
     if (facil_cluster_data.root != -1) {
       close(sock_uuid2fd(facil_cluster_data.root)); /* prevent `shutdown` */
@@ -1277,6 +1287,10 @@ int facil_cluster_send(int32_t filter, FIOBJ ch, FIOBJ msg) {
   return 0;
 }
 
+static void facil_cluster_cleanup(void) {
+  fio_hash_free(&facil_cluster_data.handlers);
+  fio_hash_free(&facil_cluster_data.clients);
+}
 /* *****************************************************************************
 Running the server
 ***************************************************************************** */
@@ -1338,8 +1352,9 @@ static void facil_cycle(void *arg, void *ignr) {
     if (events < 0) {
       goto error;
     }
-    if (events > 0)
+    if (events > 0) {
       idle = 1;
+    }
   } else {
     events = evio_review(512);
     if (events < 0)
@@ -1367,6 +1382,15 @@ error:
     defer(facil_cycle, arg, ignr);
   (void)1;
 }
+
+/** use evio_review instead of micro sleeping */
+// void defer_thread_wait(pool_pt pool, void *p_thr) {
+//   evio_wait(2000);
+//   if (!defer_has_queue())
+//     throttle_thread(1UL);
+//   (void)p_thr;
+//   (void)pool;
+// }
 
 /**
 OVERRIDE THIS to replace the default `fork` implementation or to inject hooks
@@ -1839,10 +1863,10 @@ struct task {
 };
 
 static inline struct task *alloc_facil_task(void) {
-  return malloc(sizeof(struct task));
+  return fio_malloc(sizeof(struct task));
 }
 
-static inline void free_facil_task(struct task *task) { free(task); }
+static inline void free_facil_task(struct task *task) { fio_free(task); }
 
 static void mock_on_task_done(intptr_t uuid, void *arg) {
   (void)uuid;

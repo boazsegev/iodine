@@ -18,6 +18,9 @@ must be implemented by the including file (the callbacks).
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#if DEBUG
+#include <stdio.h>
+#endif
 /* *****************************************************************************
 API - Message Wrapping
 ***************************************************************************** */
@@ -145,20 +148,6 @@ void websocket_xmask(void *msg, uint64_t len, uint32_t mask) {
   if (len > 7) {
     { /* XOR any unaligned memory (4 byte alignment) */
       const uintptr_t offset = 4 - ((uintptr_t)msg & 3);
-      // switch (offset) {
-      // case 3:
-      //   ((uint8_t *)msg)[2] ^= ((uint8_t *)(&mask))[2];
-      // /* fallthrough */
-      // case 2:
-      //   ((uint8_t *)msg)[1] ^= ((uint8_t *)(&mask))[1];
-      // /* fallthrough */
-      // case 1:
-      //   ((uint8_t *)msg)[0] ^= ((uint8_t *)(&mask))[0];
-      //   /* rotate mask and move pointer to first 4 byte alignment */
-      //   mask = (mask << (offset << 3)) | (mask >> ((4 - offset) << 3));
-      //   msg = (void *)((uintptr_t)msg + offset);
-      //   len -= offset;
-      // }
       switch (offset) {
       case 3:
         ((uint8_t *)msg)[2] ^= ((uint8_t *)(&mask))[2];
@@ -396,7 +385,7 @@ static uint64_t websocket_server_wrap(void *target, void *msg, uint64_t len,
 static uint64_t websocket_client_wrap(void *target, void *msg, uint64_t len,
                                       unsigned char opcode, unsigned char first,
                                       unsigned char last, unsigned char rsv) {
-  uint32_t mask = rand() + 0x01020408;
+  uint32_t mask = rand() | 0x01020408;
   ((uint8_t *)target)[0] = 0 |
                            /* opcode */ (((first ? opcode : 0) & 15)) |
                            /* rsv */ ((rsv & 7) << 4) |
@@ -459,8 +448,9 @@ Message unwrapping
 inline static struct websocket_packet_info_s
 websocket_buffer_peek(void *buffer, uint64_t len) {
   if (len < 2) {
-    return (struct websocket_packet_info_s){0 /* packet */, 2 /* head */,
-                                            0 /* masked? */};
+    const struct websocket_packet_info_s info = {0 /* packet */, 2 /* head */,
+                                                 0 /* masked? */};
+    return info;
   }
   const uint8_t mask_f = (((uint8_t *)buffer)[1] >> 7) & 1;
   const uint8_t mask_l = (mask_f << 2);
@@ -510,6 +500,9 @@ static uint64_t websocket_consume(void *buffer, uint64_t len, void *udata,
       ((uint8_t *)(&mask))[3] = ((uint8_t *)(payload))[-1];
       websocket_xmask(payload, info.packet_length, mask);
     } else if (require_masking && info.packet_length) {
+#if DEBUG
+      fprintf(stderr, "ERROR: Websocket protocol error - unmasked data.\n");
+#endif
       websocket_on_protocol_error(udata);
     }
     /* call callback */
@@ -542,6 +535,10 @@ static uint64_t websocket_consume(void *buffer, uint64_t len, void *udata,
       websocket_on_protocol_pong(udata, payload, info.packet_length);
       break;
     default:
+#if DEBUG
+      fprintf(stderr, "ERROR: Websocket protocol error - unknown opcode %u\n",
+              (unsigned int)(pos[0] & 15));
+#endif
       websocket_on_protocol_error(udata);
     }
     /* step forward */

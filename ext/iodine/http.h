@@ -578,6 +578,9 @@ int http_parse_body(http_s *h);
 /** Parses the query part of an HTTP request/response. Uses `http_add2hash`. */
 void http_parse_query(http_s *h);
 
+/** Parses any Cookie / Set-Cookie headers, using the `http_add2hash` scheme. */
+void http_parse_cookies(http_s *h, uint8_t is_url_encoded);
+
 /**
  * Adds a named parameter to the hash, converting a string to an object and
  * resolving nesting references and URL decoding if required.
@@ -653,6 +656,7 @@ extern FIOBJ HTTP_HEADER_DATE;
 extern FIOBJ HTTP_HEADER_ETAG;
 extern FIOBJ HTTP_HEADER_HOST;
 extern FIOBJ HTTP_HEADER_LAST_MODIFIED;
+extern FIOBJ HTTP_HEADER_ORIGIN;
 extern FIOBJ HTTP_HEADER_SET_COOKIE;
 extern FIOBJ HTTP_HEADER_UPGRADE;
 

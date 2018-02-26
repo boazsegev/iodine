@@ -79,13 +79,14 @@ License: MIT
 #endif
 
 #ifndef FIO_HASH_REALLOC /* NULL ptr indicates new allocation */
-#define FIO_HASH_REALLOC(ptr, size) realloc((ptr), (size))
+#define FIO_HASH_REALLOC(ptr, original_size, size, valid_data_length)          \
+  realloc((ptr), (size))
 #endif
 #ifndef FIO_HASH_CALLOC
 #define FIO_HASH_CALLOC(size, count) calloc((size), (count))
 #endif
 #ifndef FIO_HASH_FREE
-#define FIO_HASH_FREE(ptr) free((ptr))
+#define FIO_HASH_FREE(ptr, size) free((ptr))
 #endif
 
 /* *****************************************************************************
@@ -239,7 +240,7 @@ struct fio_hash_s {
 #undef FIO_HASH_FOR_LOOP
 #define FIO_HASH_FOR_LOOP(hash, container)                                     \
   for (fio_hash_data_ordered_s *container = (hash)->ordered;                   \
-       container && !FIO_HASH_KEY_ISINVALID(container->key); ++container)
+       container && (container < (hash)->ordered + (hash)->pos); ++container)
 
 #undef FIO_HASH_FOR_FREE
 #define FIO_HASH_FOR_FREE(hash, container)                                     \
@@ -251,12 +252,12 @@ struct fio_hash_s {
 #undef FIO_HASH_FOR_EMPTY
 #define FIO_HASH_FOR_EMPTY(hash, container)                                    \
   for (fio_hash_data_ordered_s *container = (hash)->ordered;                   \
-       (container && !FIO_HASH_KEY_ISINVALID(container->key)) ||               \
+       (container && (container < (hash)->ordered + (hash)->pos)) ||           \
        (memset((hash)->map, 0, (hash)->capa * sizeof(*(hash)->map)),           \
         ((hash)->pos = (hash)->count = 0));                                    \
-       FIO_HASH_KEY_DESTROY(container->key),                                   \
-                               container->key = FIO_HASH_KEY_INVALID,          \
-                               container->obj = NULL, (++container))
+       (FIO_HASH_KEY_DESTROY(container->key),                                  \
+        container->key = FIO_HASH_KEY_INVALID, container->obj = NULL),         \
+                               (++container))
 #define FIO_HASH_INIT                                                          \
   { .capa = 0 }
 
@@ -270,8 +271,8 @@ FIO_FUNC void fio_hash_new__internal__safe_capa(fio_hash_s *h, size_t capa) {
   *h = (fio_hash_s){
       .mask = (capa - 1),
       .map = (fio_hash_data_s *)FIO_HASH_CALLOC(sizeof(*h->map), capa),
-      .ordered = (fio_hash_data_ordered_s *)FIO_HASH_CALLOC(sizeof(*h->ordered),
-                                                            capa + 1),
+      .ordered =
+          (fio_hash_data_ordered_s *)FIO_HASH_CALLOC(sizeof(*h->ordered), capa),
       .capa = capa,
   };
   if (!h->map || !h->ordered) {
@@ -296,8 +297,8 @@ FIO_FUNC void fio_hash_new(fio_hash_s *h) {
 }
 
 FIO_FUNC void fio_hash_free(fio_hash_s *h) {
-  FIO_HASH_FREE(h->map);
-  FIO_HASH_FREE(h->ordered);
+  FIO_HASH_FREE(h->map, h->capa);
+  FIO_HASH_FREE(h->ordered, h->capa);
   *h = (fio_hash_s){.map = NULL};
 }
 
@@ -345,7 +346,7 @@ FIO_FUNC inline void *fio_hash_find(fio_hash_s *hash, FIO_HASH_KEY_TYPE key) {
 FIO_FUNC void *fio_hash_insert(fio_hash_s *hash, FIO_HASH_KEY_TYPE key,
                                void *obj) {
   /* ensure some space */
-  if (obj && hash->pos + 1 > hash->capa)
+  if (obj && hash->pos >= hash->capa)
     fio_hash_rehash(hash);
 
   /* find where the object belongs in the map */
@@ -376,23 +377,33 @@ FIO_FUNC void *fio_hash_insert(fio_hash_s *hash, FIO_HASH_KEY_TYPE key,
     /* manage counters and mark end position */
     hash->count++;
     hash->pos++;
-    hash->ordered[hash->pos] =
-        (fio_hash_data_ordered_s){.key = FIO_HASH_KEY_INVALID, .obj = NULL};
+    return NULL;
+  }
+
+  if (!obj && !info->obj->obj) {
+    /* a delete operation for an empty element */
     return NULL;
   }
 
   /* an object exists, this is a "replace/delete" operation */
-  void *old = (void *)info->obj->obj;
+  const void *old = (void *)info->obj->obj;
+
   if (!obj) {
     /* it was a delete operation */
     if (info->obj == hash->ordered + hash->pos - 1) {
       /* we removed the last ordered element, no need to keep any holes. */
-      return fio_hash_pop(hash, NULL);
+      fio_hash_pop(hash, NULL);
+      *info = (fio_hash_data_s){.obj = NULL};
+      return (void *)old;
     }
     --hash->count;
+  } else if (!old) {
+    /* inserted an item after a previous one was removed. */
+    ++hash->count;
   }
-  info->obj->obj = (fio_hash_data_s *)obj;
-  return old;
+  info->obj->obj = obj;
+
+  return (void *)old;
 }
 
 /**
@@ -409,25 +420,34 @@ FIO_FUNC void *fio_hash_pop(fio_hash_s *hash, FIO_HASH_KEY_TYPE *key) {
   /* removing hole from hashtable is possible because it's the last element */
   fio_hash_data_s *info =
       fio_hash_seek_pos_(hash, hash->ordered[hash->pos].key);
-  if (info) /* no info is a data corruption error we'll ignore for now... */
-    *info = (fio_hash_data_s){.key = FIO_HASH_KEY_INVALID, .obj = NULL};
+  if (!info) {
+    /* no info is a data corruption error. */
+    fprintf(stderr, "FATAL ERROR: (fio_hash) unexpected missing container.\n");
+    exit(-1);
+  }
+  *info = (fio_hash_data_s){.obj = NULL};
   /* cleanup key (or copy to target) and reset the ordered position. */
   if (key)
     *key = hash->ordered[hash->pos].key;
   else
     FIO_HASH_KEY_DESTROY(hash->ordered[hash->pos].key);
-  hash->ordered[hash->pos] =
-      (fio_hash_data_ordered_s){.key = FIO_HASH_KEY_INVALID, .obj = NULL};
+  hash->ordered[hash->pos] = (fio_hash_data_ordered_s){.obj = NULL};
   /* remove any holes from the top (top is kept tight) */
+  --hash->pos;
   while (hash->pos && hash->ordered[hash->pos - 1].obj == NULL) {
-    --hash->pos;
     fio_hash_data_s *info =
         fio_hash_seek_pos_(hash, hash->ordered[hash->pos].key);
-    if (info) /* no info is a data corruption error we'll ignore for now... */
-      *info = (fio_hash_data_s){.key = FIO_HASH_KEY_INVALID, .obj = NULL};
+    if (!info) {
+      /* no info is a data corruption error. */
+      fprintf(stderr,
+              "FATAL ERROR: (fio_hash) unexpected missing container (2).\n");
+      exit(-1);
+    }
+    *info = (fio_hash_data_s){.key = FIO_HASH_KEY_INVALID, .obj = NULL};
     FIO_HASH_KEY_DESTROY(hash->ordered[hash->pos].key);
     hash->ordered[hash->pos] =
         (fio_hash_data_ordered_s){.key = FIO_HASH_KEY_INVALID, .obj = NULL};
+    --hash->pos;
   }
   return old;
 }
@@ -441,8 +461,8 @@ retry_rehashing:
   {
     /* It's better to reallocate using calloc than manually zero out memory */
     /* Maybe there's enough zeroed out pages available in the system */
+    FIO_HASH_FREE(h->map, h->capa);
     h->capa = h->mask + 1;
-    FIO_HASH_FREE(h->map);
     h->map = (fio_hash_data_s *)FIO_HASH_CALLOC(sizeof(*h->map), h->capa);
     if (!h->map) {
       perror("HashMap Allocation Failed");
@@ -450,8 +470,9 @@ retry_rehashing:
     }
     /* the ordered list doesn't care about initialized memory, so realloc */
     /* will be faster. */
-    h->ordered = (fio_hash_data_ordered_s *)FIO_HASH_REALLOC(
-        h->ordered, (h->capa + 1) * sizeof(*h->ordered));
+    h->ordered = (fio_hash_data_ordered_s *)(FIO_HASH_REALLOC(
+        h->ordered, ((h->capa >> 1) * sizeof(*h->ordered)),
+        ((h->capa) * sizeof(*h->ordered)), ((h->pos) * sizeof(*h->ordered))));
     if (!h->ordered) {
       perror("HashMap Reallocation Failed");
       exit(errno);
@@ -496,8 +517,8 @@ retry_rehashing:
       ++reader;
     }
     h->pos = writer;
-    h->ordered[h->pos] =
-        (fio_hash_data_ordered_s){.key = FIO_HASH_KEY_INVALID, .obj = NULL};
+    // h->ordered[h->pos] =
+    //     (fio_hash_data_ordered_s){.key = FIO_HASH_KEY_INVALID, .obj = NULL};
   }
 }
 

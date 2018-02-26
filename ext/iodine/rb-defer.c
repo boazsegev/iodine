@@ -85,6 +85,8 @@ int defer_join_thread(void *thr) {
   return 0;
 }
 
+void defer_free_thread(void *thr) { (void)thr; }
+
 /**
 OVERRIDE THIS to replace the default `fork` implementation or to inject hooks
 into the forking function.
