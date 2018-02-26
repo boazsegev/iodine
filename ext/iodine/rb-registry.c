@@ -9,6 +9,9 @@ Feel free to copy, use and enjoy according to the license provided.
 
 #include "spnlock.inc"
 
+#define FIO_OVERRIDE_MALLOC 1
+#include "fio_mem.h"
+
 #include "fio_hashmap.h"
 #include <signal.h>
 
