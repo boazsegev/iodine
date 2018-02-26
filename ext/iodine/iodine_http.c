@@ -318,10 +318,7 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
 }
 
 // writes the body to the response object
-static VALUE for_each_body_string(VALUE str, VALUE body_, int argc,
-                                  VALUE argv) {
-  (void)(argv);
-  (void)(argc);
+static VALUE for_each_body_string(VALUE str, VALUE body_) {
   // fprintf(stderr, "For_each - body\n");
   // write body
   if (TYPE(str) != T_STRING) {
@@ -329,7 +326,7 @@ static VALUE for_each_body_string(VALUE str, VALUE body_, int argc,
                     "response body was not a String\n");
     return Qfalse;
   }
-  if (RSTRING_LEN(str)) {
+  if (RSTRING_LEN(str) && RSTRING_PTR(str)) {
     fiobj_str_write((FIOBJ)body_, RSTRING_PTR(str), RSTRING_LEN(str));
   }
   return Qtrue;
