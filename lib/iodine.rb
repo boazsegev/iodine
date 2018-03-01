@@ -179,7 +179,42 @@ module Iodine
     end
   end
 
+  @after_fork_blocks = []
+  def self.after_fork(*args, &block)
+    if(block)
+      @after_fork_blocks << [args, block]
+    else
+      @after_fork_blocks.each {|b| b[1].call(b[0]) }
+    end
+  end
+
+  @before_fork_blocks = []
+  def self.before_fork(*args, &block)
+    if(block)
+      @before_fork_blocks << [args, block]
+    else
+      @before_fork_blocks.each {|b| b[1].call(b[0]) }
+    end
+  end
+
   self.default_pubsub = ::Iodine::PubSub::CLUSTER
 end
+
+if(!defined?(after_fork))
+  def after_fork(*args, &block)
+    Iodine.after_fork(*args, &block)
+  end
+end
+if(!defined?(on_worker_boot))
+  def on_worker_boot(*args, &block)
+    Iodine.after_fork(*args, &block)
+  end
+end
+if(!defined?(before_fork))
+  def before_fork(*args, &block)
+    Iodine.before_fork(*args, &block)
+  end
+end
+
 
 require 'rack/handler/iodine' unless defined? ::Iodine::Rack::IODINE_RACK_LOADED

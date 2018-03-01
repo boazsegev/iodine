@@ -6,6 +6,8 @@ Feel free to copy, use and enjoy according to the license provided.
 */
 // clang-format off
 #include "rb-registry.h"
+#include "rb-call.h"
+#include "iodine.h"
 #include <ruby.h>
 #include <ruby/thread.h>
 
@@ -47,12 +49,36 @@ static void *inner_join_with_rbthread_(void *rbt) {
   return (void *)rb_funcall((VALUE)rbt, rb_intern("join"), 0);
 }
 
+static VALUE iodine_call_before_fork(VALUE ignr) {
+  (void)ignr;
+  rb_funcall(Iodine, rb_intern("before_fork"), 0);
+  return Qnil;
+}
+static VALUE iodine_call_after_fork(VALUE ignr) {
+  (void)ignr;
+  rb_funcall(Iodine, rb_intern("after_fork"), 0);
+  return Qnil;
+}
+
 static void *fork_using_ruby(void *ignr) {
+  int state = 0;
+  rb_protect(iodine_call_before_fork, (VALUE)(NULL), &state);
+  if (state)
+    return (void *)-1;
   const VALUE ProcessClass = rb_const_get(rb_cObject, rb_intern("Process"));
-  const VALUE pid = rb_funcall(ProcessClass, rb_intern("fork"), 0);
-  if (pid == Qnil)
-    return (void *)0;
-  return (void *)(intptr_t)(NUM2INT(pid));
+  const VALUE rb_pid = rb_funcall(ProcessClass, rb_intern("fork"), 0);
+  intptr_t pid = 0;
+  if (rb_pid != Qnil) {
+    pid = NUM2INT(rb_pid);
+  }
+  if (!pid) {
+    rb_protect(iodine_call_after_fork, (VALUE)(NULL), &state);
+    if (state) {
+      fprintf(stderr, "ERROR: iodine caught an unhandled exception in an "
+                      "Iodine.after_fork callback.\n");
+    }
+  }
+  return (void *)pid;
   (void)ignr;
 }
 
