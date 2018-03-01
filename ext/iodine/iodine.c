@@ -194,6 +194,10 @@ Running the server
 
 static volatile int sock_io_thread = 0;
 static pthread_t sock_io_pthread;
+typedef struct {
+  size_t threads;
+  size_t processes;
+} iodine_start_settings_s;
 
 static void *iodine_io_thread(void *arg) {
   (void)arg;
@@ -215,39 +219,12 @@ static void iodine_join_io_thread(void) {
   pthread_join(sock_io_pthread, NULL);
 }
 
-static void *srv_start_no_gvl(void *_) {
-  (void)(_);
-  // collect requested settings
-  VALUE rb_th_i = rb_iv_get(Iodine, "@threads");
-  VALUE rb_pr_i = rb_iv_get(Iodine, "@processes");
-  ssize_t threads = (TYPE(rb_th_i) == T_FIXNUM) ? FIX2LONG(rb_th_i) : 0;
-  ssize_t processes = (TYPE(rb_pr_i) == T_FIXNUM) ? FIX2LONG(rb_pr_i) : 0;
-// print a warnning if settings are sub optimal
-#ifdef _SC_NPROCESSORS_ONLN
-  size_t cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
-  if (processes <= 0)
-    processes = 0;
-  if (threads <= 0)
-    threads = 0;
-
-  if (processes && threads && cpu_count > 0 &&
-      (((size_t)processes << 1) < cpu_count ||
-       (size_t)processes > (cpu_count << 1)))
-    fprintf(stderr,
-            "\n* Performance warnning:\n"
-            "  - This computer reports %lu available CPUs... "
-            "they will not be fully utilized.\n",
-            cpu_count);
-#else
-  if (processes <= 0)
-    processes = 0;
-  if (threads <= 0)
-    threads = 0;
-#endif
+static void *srv_start_no_gvl(void *s_) {
+  iodine_start_settings_s *s = s_;
   sock_io_thread = 1;
-  defer(iodine_start_io_thread, NULL, NULL);
+  // defer(iodine_start_io_thread, NULL, NULL);
   fprintf(stderr, "\n");
-  facil_run(.threads = threads, .processes = processes,
+  facil_run(.threads = s->threads, .processes = s->processes,
             .on_idle = iodine_on_idle, .on_finish = iodine_join_io_thread);
   return NULL;
 }
@@ -304,7 +281,15 @@ static VALUE iodine_start(VALUE self) {
     fprintf(stderr, "ERROR: (iodine) cann't start Iodine::Rack.\n");
     return Qnil;
   }
-  rb_thread_call_without_gvl2(srv_start_no_gvl, (void *)self, NULL, NULL);
+
+  VALUE rb_th_i = rb_iv_get(Iodine, "@threads");
+  VALUE rb_pr_i = rb_iv_get(Iodine, "@processes");
+
+  iodine_start_settings_s s = {
+      .threads = ((TYPE(rb_th_i) == T_FIXNUM) ? FIX2LONG(rb_th_i) : 0),
+      .processes = ((TYPE(rb_pr_i) == T_FIXNUM) ? FIX2LONG(rb_pr_i) : 0)};
+
+  rb_thread_call_without_gvl2(srv_start_no_gvl, (void *)&s, NULL, NULL);
   return self;
 }
 

@@ -296,10 +296,13 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
   char *val_s = RSTRING_PTR(val);
   int val_len = RSTRING_LEN(val);
   // make the headers lowercase
-  for (int i = 0; i < key_len; ++i) {
-    key_s[i] = tolower(key_s[i]);
-  }
   FIOBJ name = fiobj_str_new(key_s, key_len);
+  {
+    fio_cstr_s tmp = fiobj_obj2cstr(name);
+    for (int i = 0; i < key_len; ++i) {
+      tmp.data[i] = tolower(tmp.data[i]);
+    }
+  }
   // scan the value for newline (\n) delimiters
   int pos_s = 0, pos_e = 0;
   while (pos_e < val_len) {
@@ -344,12 +347,13 @@ static inline int ruby2c_response_send(iodine_http_request_handle_s *handle,
     handle->type = IODINE_HTTP_NONE;
     return 0;
   }
-  if (TYPE(body) == T_ARRAY && RARRAY_LEN(body) == 0) { // only headers
-    handle->type = IODINE_HTTP_EMPTY;
-  } else if (TYPE(body) == T_ARRAY &&
-             RARRAY_LEN(body) == 1) { // [String] is likely
-    body = rb_ary_entry(body, 0);
-    // fprintf(stderr, "Body was a single item array, unpacket to string\n");
+  if (TYPE(body) == T_ARRAY) {
+    if (RARRAY_LEN(body) == 0) { // only headers
+      handle->type = IODINE_HTTP_EMPTY;
+    } else if (RARRAY_LEN(body) == 1) { // [String] is likely
+      body = rb_ary_entry(body, 0);
+      // fprintf(stderr, "Body was a single item array, unpacket to string\n");
+    }
   }
 
   if (TYPE(body) == T_STRING) {
@@ -360,7 +364,7 @@ static inline int ruby2c_response_send(iodine_http_request_handle_s *handle,
     return 0;
   } else if (rb_respond_to(body, each_method_id)) {
     // fprintf(stderr, "Review body as for-each ...\n");
-    handle->body = fiobj_str_buf(0);
+    handle->body = fiobj_str_buf(1);
     handle->type = IODINE_HTTP_SENDBODY;
     rb_block_call(body, each_method_id, 0, NULL, for_each_body_string,
                   (VALUE)handle->body);
@@ -424,22 +428,28 @@ iodine_handle_request_in_GVL(iodine_http_request_handle_s *handle,
   if (!h->udata)
     goto err_not_found;
 
-  // create /register env variable
+  // create / register env variable
   env = copy2env(h, is_upgrade);
   // will be used later
   VALUE tmp;
   // pass env variable to handler
   rbresponse = RubyCaller.call2((VALUE)h->udata, iodine_call_proc_id, 1, &env);
+  // test handler's return value
   if (rbresponse == 0 || rbresponse == Qnil)
     goto internal_error;
   Registry.add(rbresponse);
+
   // set response status
   tmp = rb_ary_entry(rbresponse, 0);
-  if (TYPE(tmp) == T_STRING)
-    tmp = rb_funcall2(tmp, to_fixnum_func_id, 0, NULL);
-  if (TYPE(tmp) != T_FIXNUM)
+  if (TYPE(tmp) == T_STRING) {
+    char *data = RSTRING_PTR(tmp);
+    h->status = fio_atol(&data);
+  } else if (TYPE(tmp) == T_FIXNUM) {
+    h->status = FIX2ULONG(tmp);
+  } else {
     goto internal_error;
-  h->status = FIX2ULONG(tmp);
+  }
+
   // handle header copy from ruby land to C land.
   VALUE response_headers = rb_ary_entry(rbresponse, 1);
   if (TYPE(response_headers) != T_HASH)
@@ -457,8 +467,7 @@ iodine_handle_request_in_GVL(iodine_http_request_handle_s *handle,
     handle->body = fiobj_str_new(RSTRING_PTR(xfiles), RSTRING_LEN(xfiles));
     handle->type = IODINE_HTTP_XSENDFILE;
     rb_hash_delete(response_headers, XSENDFILE);
-    // remove XFile's content length headers, as this will be controled by
-    // Iodine
+    // remove content length headers, as this will be controled by iodine
     rb_hash_delete(response_headers, CONTENT_LENGTH_HEADER);
     // review each header and write it to the response.
     rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(h));
@@ -468,8 +477,7 @@ iodine_handle_request_in_GVL(iodine_http_request_handle_s *handle,
   }
   // review each header and write it to the response.
   rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(h));
-  // If the X-Sendfile header was provided, send the file directly and finish
-  // review for belated (post response headers) upgrade.
+  // review for upgrade.
   if (ruby2c_review_upgrade(h, rbresponse, env))
     goto external_done;
   // send the request body.
