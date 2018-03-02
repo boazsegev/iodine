@@ -800,8 +800,11 @@ static void initialize_env_template(void) {
   env_template_no_upgrade = rb_hash_new();
   env_template_with_upgrade = rb_hash_new();
 
-  Registry.add(env_template_no_upgrade);
-  Registry.add(env_template_with_upgrade);
+  rb_global_variable(&env_template_no_upgrade);
+  rb_global_variable(&env_template_with_upgrade);
+
+// Registry.add(env_template_no_upgrade);
+// Registry.add(env_template_with_upgrade);
 
 #define add_str_to_env(env, key, value)                                        \
   {                                                                            \
@@ -836,7 +839,8 @@ static void initialize_env_template(void) {
       rack_version = rb_ary_new(); // rb_ary_new is Ruby 2.0 compatible
       rb_ary_push(rack_version, INT2FIX(1));
       rb_ary_push(rack_version, INT2FIX(3));
-      Registry.add(rack_version);
+      rb_global_variable(&rack_version);
+      // Registry.add(rack_version);
     }
     add_value_to_env(env_template_with_upgrade, "rack.version", rack_version);
     add_value_to_env(env_template_no_upgrade, "rack.version", rack_version);
