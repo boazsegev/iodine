@@ -1528,7 +1528,7 @@ static void *facil_sentinel_worker_thread(void *arg) {
   errno = 0;
   pid_t child = facil_fork();
   if (child == -1) {
-    perror("FATAL ERROR: couldn't spawn workers at startup");
+    perror("FATAL ERROR: couldn't spawn worker.");
     kill(facil_parent_pid(), SIGINT);
     facil_stop();
     return NULL;
