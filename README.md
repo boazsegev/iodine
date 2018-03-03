@@ -33,7 +33,7 @@ Iodine includes a light and fast HTTP and Websocket server written in C that was
 
 With `Iodine.listen2http` it's possible to run multiple HTTP applications in addition to (or instead of) the default `Iodine::Rack` HTTP service.
 
-Iodine also supports native process cluster Pub/Sub and a native RedisEngins to easily scale iodine's Pub/Sub horizontally.
+Iodine also supports native process cluster Pub/Sub and a native RedisEngine to easily scale iodine's Pub/Sub horizontally.
 
 ### Running the web server
 
@@ -216,7 +216,7 @@ end
 
     Another added bonus is pattern publishing (is addition to pattern subscriptions) which isn't available when using Redis (since Redis doesn't support this feature).
 
-* Iodine's Redis client does *not* support multiple databases. This is both becasue [database scoping is ignored by Redis during pub/sub](https://redis.io/topics/pubsub#database-amp-scoping) and because [Redis Cluster doesn't support multiple databases](https://redis.io/topics/cluster-spec). This indicated that multiple database support just isn't worth the extra effort.
+* Iodine's Redis client does *not* support multiple databases. This is both because [database scoping is ignored by Redis during pub/sub](https://redis.io/topics/pubsub#database-amp-scoping) and because [Redis Cluster doesn't support multiple databases](https://redis.io/topics/cluster-spec). This indicated that multiple database support just isn't worth the extra effort.
 
 * The iodine Redis client will use two Redis connections per process (one for subscriptions and the other for publishing and commands). Both connections will be automatically re-established if timeouts or errors occur.
 
