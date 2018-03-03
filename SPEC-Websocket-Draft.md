@@ -99,7 +99,7 @@ The requirement that the server extends the class of the Websocket Callback Obje
 
 ## Iodine's Collection Extension to the Rack Websockets
 
-The biggest benefit from Iodine's Collection Extension is that it allows the creation of pub/sub plugins and other similar extensions that require access to all the connected Websockets - no nee for the plugin to ask "where's the list" or "add this code to `on_open`" or anything at all, truly "plug and play".
+The biggest benefit from Iodine's Collection Extension is that it allows the creation of pub/sub plugins and other similar extensions that require access to all the connected Websockets - no need for the plugin to ask "where's the list" or "add this code to `on_open`" or anything at all, truly "plug and play".
 
 This extension should be easy enough to implement using a loop or an array within each process context. These methods do **not** cross process boundaries and they are meant to help implement more advanced features (they aren't a feature as much as an "access point").
 
