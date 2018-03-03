@@ -14,6 +14,7 @@ Faster and more robust pub/sub, moved the whole network layer outside of the GIL
 
 Support for the Unicorn style `before_fork` and `after_fork` DSL as well as the Puma style `on_worker_boot` DSL (these are meant for portability, but they aren't as safe as the `Iodine.defer` calls that protect against exceptions).
 
+Credit to Anatoly Nosov (@jomei) for fixing some typos in the documentation.
 
 ---
 
