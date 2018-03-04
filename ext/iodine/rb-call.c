@@ -22,6 +22,7 @@ struct RubyArgCall {
   VALUE *argv;
   VALUE returned;
   ID method;
+  int exception;
 };
 
 // running the actual method call
@@ -62,8 +63,10 @@ static void *run_ruby_method_within_gvl(void *tsk_) {
   struct RubyArgCall *task = tsk_;
   int state = 0;
   task->returned = rb_protect(run_ruby_method_unsafe, (VALUE)(task), &state);
-  if (state)
+  if (state) {
+    task->exception = 1;
     handle_exception(NULL);
+  }
   return task;
 }
 
@@ -72,11 +75,13 @@ static void *run_ruby_method_within_gvl(void *tsk_) {
 
 // a thread specific global variable that lets us know if we're in the GVL
 static _Thread_local char in_gvl = 0;
-static char check_in_gvl(void) { return in_gvl; }
+static char iodine_rb_check_in_gvl(void) { return in_gvl; }
+
+static void iodine_rb_set_gvl_state(char state) { in_gvl = state; }
 
 ////////////////////////////////////////////////////////////////////////////
 // Calling C functions.
-static void *call_c(void *(*func)(void *), void *arg) {
+static void *iodine_rb_call_c(void *(*func)(void *), void *arg) {
   if (in_gvl) {
     return func(arg);
   }
@@ -87,13 +92,23 @@ static void *call_c(void *(*func)(void *), void *arg) {
   return ret;
 }
 
+static void *iodine_rb_leave_gvl(void *(*func)(void *), void *arg) {
+  if (!in_gvl) {
+    return func(arg);
+  }
+  in_gvl = 0;
+  void *ret = rb_thread_call_without_gvl(func, arg, NULL, NULL);
+  in_gvl = 1;
+  return ret;
+}
+
 ////////////////////////////////////////////////////////////////////////////
 // A simple (and a bit lighter) design for when there's no need for arguments.
 
 // wrapping any API calls for exception management AND GVL entry
-static VALUE call(VALUE obj, ID method) {
+static VALUE iodin_rb_call(VALUE obj, ID method) {
   struct RubyArgCall task = {.obj = obj, .method = method};
-  call_c(run_ruby_method_within_gvl, &task);
+  iodine_rb_call_c(run_ruby_method_within_gvl, &task);
   return task.returned;
 }
 
@@ -101,15 +116,20 @@ static VALUE call(VALUE obj, ID method) {
 // A heavier (memory) design for when we're passing arguments around.
 
 // wrapping any API calls for exception management AND GVL entry
-static VALUE call_arg(VALUE obj, ID method, int argc, VALUE *argv) {
+static VALUE iodin_rb_call_arg(VALUE obj, ID method, int argc, VALUE *argv) {
   struct RubyArgCall task = {
       .obj = obj, .method = method, .argc = argc, .argv = argv};
-  call_c(run_ruby_method_within_gvl, &task);
+  iodine_rb_call_c(run_ruby_method_within_gvl, &task);
   return task.returned;
 }
 
 ////////////////////////////////////////////////////////////////////////////
 // the API interface
 struct _Ruby_Method_Caller_Class_ RubyCaller = {
-    .call = call, .call2 = call_arg, .call_c = call_c, .in_gvl = check_in_gvl,
+    .call = iodin_rb_call,
+    .call2 = iodin_rb_call_arg,
+    .call_c = iodine_rb_call_c,
+    .leave_gvl = iodine_rb_leave_gvl,
+    .in_gvl = iodine_rb_check_in_gvl,
+    .set_gvl_state = iodine_rb_set_gvl_state,
 };

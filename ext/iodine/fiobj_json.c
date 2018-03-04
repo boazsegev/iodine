@@ -152,6 +152,7 @@ static void fio_json_on_error(json_parser_s *p) {
   fiobj_free((FIOBJ)fio_ary_index(&pr->stack, 0));
   fiobj_free(pr->key);
   fio_ary_free(&pr->stack);
+  pr->stack = FIO_ARY_INIT;
   *pr = (fiobj_json_parser_s){.top = FIOBJ_INVALID};
 }
 

@@ -126,7 +126,9 @@ size_t fiobj_hash_count(const FIOBJ o) {
   assert(o && FIOBJ_TYPE_IS(o, FIOBJ_T_HASH));
   return fio_hash_count(&obj2hash(o)->hash);
 }
+
 intptr_t fiobj_hash2num(const FIOBJ o) { return (intptr_t)fiobj_hash_count(o); }
+
 static size_t fiobj_hash_is_true(const FIOBJ o) {
   return fiobj_hash_count(o) != 0;
 }

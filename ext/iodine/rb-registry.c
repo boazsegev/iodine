@@ -118,6 +118,8 @@ finish:
   unlock_registry();
 }
 
+static void registry_on_fork(void) { unlock_registry(); }
+
 /* print data, for testing */
 static void print(void) {
   lock_registry();
@@ -144,4 +146,5 @@ struct ___RegistryClass___ Registry = {
     .remove = unregister_object,
     .add = register_object,
     .print = print,
+    .on_fork = registry_on_fork,
 };

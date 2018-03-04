@@ -14,6 +14,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "fio_mem.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -738,8 +739,13 @@ int facil_run_every(size_t milliseconds, size_t repetitions,
   if (protocol == NULL)
     goto error;
   facil_attach(uuid, (protocol_s *)protocol);
-  if (evio_isactive() && evio_set_timer(fd, (void *)uuid, milliseconds) == -1)
-    goto error;
+  if (evio_isactive() && evio_set_timer(fd, (void *)uuid, milliseconds) == -1) {
+    /* don't goto error because the protocol is attached. */
+    const int old = errno;
+    sock_close(uuid);
+    errno = old;
+    return -1;
+  }
   return 0;
 error:
   if (uuid != -1) {
@@ -919,6 +925,25 @@ static inline void cluster_send2traget(uint32_t ch_len, uint32_t msg_len,
     fiobj_send_free(facil_cluster_data.root, fiobj_dup(forward));
   } else {
     cluster_send2clients(ch_len, msg_len, type, id, ch_data, msg_data, 0);
+  }
+}
+
+static inline void facil_cluster_signal_children(void) {
+  cluster_send2traget(0, 0, CLUSTER_MESSAGE_SHUTDOWN, 0, NULL, NULL);
+  uint8_t msg[16];
+  cluster_uint2str(msg, 0);
+  cluster_uint2str(msg + 4, 0);
+  cluster_uint2str(msg + 8, CLUSTER_MESSAGE_SHUTDOWN);
+  cluster_uint2str(msg + 12, 0);
+  FIO_HASH_FOR_LOOP(&facil_cluster_data.clients, i) {
+    if (i->obj) {
+      int attempt = write(sock_uuid2fd(i->key), msg, 16);
+      if (attempt > 0 && attempt != 16) {
+        fwrite("FATAL ERROR: Couldn't perform hot restart\n", 42, 1, stderr);
+        kill(0, SIGINT);
+        return;
+      }
+    }
   }
 }
 
@@ -1194,8 +1219,11 @@ static int cluster_on_start(void) {
     fio_hash_free(&facil_cluster_data.clients);
     facil_cluster_data.clients = (fio_hash_s)FIO_HASH_INIT;
     if (facil_cluster_data.root != -1) {
-      close(sock_uuid2fd(facil_cluster_data.root)); /* prevent `shutdown` */
-      sock_force_close(facil_cluster_data.root);
+      /* prevent `shutdown` */
+      const int fd = sock_hijack(facil_cluster_data.root);
+      if (fd >= 0)
+        close(fd);
+      sock_on_close(facil_cluster_data.root);
     }
     facil_cluster_data.root =
         facil_connect(.address = facil_cluster_data.cluster_name,
@@ -1451,8 +1479,13 @@ static void facil_worker_startup(uint8_t sentinel) {
           timer_on_server_start(i);
         else {
           /* prevent normal connections from being shared across workers */
-          close(i);
-          sock_force_close(sock_fd2uuid(i));
+          intptr_t uuid = sock_fd2uuid(i);
+          /* play nice in non-facil.io environments */
+          if (sock_hijack(uuid) >= 0)
+            close(i); /* use `close` to avoid signaling peer */
+          fd_data(i).protocol->on_close(
+              uuid, fd_data(i).protocol); /* manually invoke close event */
+          clear_connection_data_unsafe(uuid, NULL); /* cleanup */
         }
       }
     }
@@ -1537,16 +1570,31 @@ static void *facil_sentinel_worker_thread(void *arg) {
     waitpid(child, &status, 0);
 #if DEBUG
     if (facil_data->active) { /* !WIFEXITED(status) || WEXITSTATUS(status) */
-      fprintf(stderr,
-              "FATAL ERROR: Child worker (%d) crashed. Stopping services in "
-              "DEBUG mode.\n",
-              child);
+      if (!WIFEXITED(status) || WEXITSTATUS(status)) {
+        fprintf(stderr,
+                "FATAL ERROR: Child worker (%d) crashed. Stopping services in "
+                "DEBUG mode.\n",
+                child);
+      } else {
+        fprintf(
+            stderr,
+            "INFO (FATAL): Child worker (%d) shutdown. Stopping services in "
+            "DEBUG mode.\n",
+            child);
+      }
       kill(0, SIGINT);
     }
 #else
     if (facil_data->active) {
-      fprintf(stderr, "ERROR: Child worker (%d) crashed. Respawning worker.\n",
-              child);
+      if (!WIFEXITED(status) || WEXITSTATUS(status)) {
+        fprintf(stderr,
+                "ERROR: Child worker (%d) crashed. Respawning worker.\n",
+                child);
+      } else {
+        fprintf(stderr,
+                "INFO: Child worker (%d) shutdown. Respawning worker.\n",
+                child);
+      }
       defer(facil_sentinel_task, (void *)1, NULL);
     }
 #endif
@@ -1570,6 +1618,21 @@ static void *facil_sentinel_worker_thread(void *arg) {
   return NULL;
 }
 
+#if FIO_SENTINEL_USE_PTHREAD
+static void facil_sentinel_task(void *arg1, void *arg2) {
+  pthread_t sentinel;
+  if (pthread_create(&sentinel, NULL, facil_sentinel_worker_thread, arg1)) {
+    perror("FATAL ERROR: couldn't start sentinel thread");
+    exit(errno);
+  }
+  pthread_detach(sentinel);
+  if (facil_parent_pid() == getpid())
+    facil_cluster_data.listening.on_data(facil_cluster_data.root,
+                                         &facil_cluster_data.listening);
+  (void)arg1;
+  (void)arg2;
+}
+#else
 static void facil_sentinel_task(void *arg1, void *arg2) {
   void *thrd = defer_new_thread(facil_sentinel_worker_thread, arg1);
   defer_free_thread(thrd);
@@ -1579,12 +1642,21 @@ static void facil_sentinel_task(void *arg1, void *arg2) {
   (void)arg1;
   (void)arg2;
 }
+#endif
 
 /* handles the SIGINT and SIGTERM signals by shutting down workers */
 static void sig_int_handler(int sig) {
-  if (sig != SIGINT && sig != SIGTERM)
-    return;
-  facil_stop();
+  switch (sig) {
+  case SIGUSR1:
+    facil_cluster_signal_children();
+    break;
+  case SIGINT:  /* fallthrough */
+  case SIGTERM: /* fallthrough */
+    facil_stop();
+    break;
+  default:
+    break;
+  }
 }
 
 /* handles the SIGINT and SIGTERM signals by shutting down workers */
@@ -1602,6 +1674,11 @@ static void facil_setp_signal_handler(void) {
   };
 
   if (sigaction(SIGTERM, &act, &old)) {
+    perror("couldn't set signal handler");
+    return;
+  };
+
+  if (sigaction(SIGUSR1, &act, &old)) {
     perror("couldn't set signal handler");
     return;
   };

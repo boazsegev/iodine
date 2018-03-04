@@ -222,7 +222,7 @@ static void iodine_join_io_thread(void) {
 static void *srv_start_no_gvl(void *s_) {
   iodine_start_settings_s *s = s_;
   sock_io_thread = 1;
-  // defer(iodine_start_io_thread, NULL, NULL);
+  defer(iodine_start_io_thread, NULL, NULL);
   fprintf(stderr, "\n");
   facil_run(.threads = s->threads, .processes = s->processes,
             .on_idle = iodine_on_idle, .on_finish = iodine_join_io_thread);
@@ -292,7 +292,9 @@ static VALUE iodine_start(VALUE self) {
       .threads = ((TYPE(rb_th_i) == T_FIXNUM) ? FIX2LONG(rb_th_i) : 0),
       .processes = ((TYPE(rb_pr_i) == T_FIXNUM) ? FIX2LONG(rb_pr_i) : 0)};
 
-  rb_thread_call_without_gvl2(srv_start_no_gvl, (void *)&s, NULL, NULL);
+  RubyCaller.set_gvl_state(1);
+  RubyCaller.leave_gvl(srv_start_no_gvl, (void *)&s);
+
   return self;
 }
 

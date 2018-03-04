@@ -5,6 +5,7 @@ License: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #include "iodine_http.h"
+#include "fio_mem.h"
 #include "http.h"
 #include "iodine_json.h"
 #include "iodine_websockets.h"
@@ -85,18 +86,24 @@ int iodine_copy2env_task(FIOBJ o, void *env_) {
   VALUE env = (VALUE)env_;
   FIOBJ name = fiobj_hash_key_in_loop();
   fio_cstr_s tmp = fiobj_obj2cstr(name);
-  VALUE hname = rb_str_buf_new(6 + tmp.len);
-  {
-    memcpy(RSTRING_PTR(hname), "HTTP_", 5);
-    char *pos = RSTRING_PTR(hname) + 5;
-    char *reader = tmp.data;
-    while (*reader) {
-      *(pos++) = *reader == '-' ? '_' : to_upper(*reader);
-      ++reader;
+  VALUE hname = (VALUE)0;
+  if (tmp.len > 59) {
+    char *buf = fio_malloc(tmp.len + 5);
+    memcpy(buf, "HTTP_", 5);
+    for (size_t i = 0; i < tmp.len; ++i) {
+      buf[i + 5] = (tmp.data[i] == '-') ? '_' : to_upper(tmp.data[i]);
     }
-    *pos = 0;
-    rb_str_set_len(hname, 5 + tmp.len);
+    hname = rb_enc_str_new(buf, tmp.len + 5, IodineBinaryEncoding);
+    fio_free(buf);
+  } else {
+    char buf[64];
+    memcpy(buf, "HTTP_", 5);
+    for (size_t i = 0; i < tmp.len; ++i) {
+      buf[i + 5] = (tmp.data[i] == '-') ? '_' : to_upper(tmp.data[i]);
+    }
+    hname = rb_enc_str_new(buf, tmp.len + 5, IodineBinaryEncoding);
   }
+
   if (FIOBJ_TYPE_IS(o, FIOBJ_T_STRING)) {
     tmp = fiobj_obj2cstr(o);
     rb_hash_aset(env, hname,
@@ -141,7 +148,8 @@ static inline VALUE copy2env(http_s *h, uint8_t is_upgrade) {
   }
 
   { // Support for Ruby web-console.
-    VALUE address = rb_str_buf_new(64);
+    char buf[64];
+    buf[63] = 0;
     sock_peer_addr_s addrinfo = http_peer_addr(h);
     if (addrinfo.addrlen &&
         inet_ntop(
@@ -149,9 +157,8 @@ static inline VALUE copy2env(http_s *h, uint8_t is_upgrade) {
             addrinfo.addr->sa_family == AF_INET
                 ? (void *)&((struct sockaddr_in *)addrinfo.addr)->sin_addr
                 : (void *)&((struct sockaddr_in6 *)addrinfo.addr)->sin6_addr,
-            RSTRING_PTR(address), 64)) {
-      rb_str_set_len(address, strlen(RSTRING_PTR(address)));
-      rb_hash_aset(env, REMOTE_ADDR, address);
+            buf, 64)) {
+      rb_hash_aset(env, REMOTE_ADDR, rb_str_new(buf, strlen(buf)));
     }
   }
 
