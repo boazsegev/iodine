@@ -12,11 +12,12 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <ruby/thread.h>
 
 #include <stdint.h>
-#include <pthread.h>
 // clang-format on
 
 #include <spnlock.inc>
 #include "defer.h"
+
+#include <pthread.h>
 
 /* *****************************************************************************
 Local helpers
@@ -56,11 +57,14 @@ static void *create_ruby_thread_gvl(void *args) {
 static void *fork_using_ruby(void *ignr) {
   RubyCaller.call(Iodine, rb_intern("before_fork"));
   const VALUE ProcessClass = rb_const_get(rb_cObject, rb_intern("Process"));
-  const VALUE rb_pid = rb_funcall(ProcessClass, rb_intern("fork"), 0);
+  const VALUE rb_pid = RubyCaller.call(ProcessClass, rb_intern("fork"));
   intptr_t pid = 0;
   if (rb_pid != Qnil) {
     pid = NUM2INT(rb_pid);
+  } else {
+    pid = 0;
   }
+  RubyCaller.set_gvl_state(1); /* enforce GVL state in thread storage */
   if (!pid) {
     Registry.on_fork();
     RubyCaller.call(Iodine, rb_intern("after_fork"));
@@ -111,7 +115,6 @@ into the forking function.
 Behaves like the system's `fork`.
 */
 int facil_fork(void) {
-  // intptr_t pid = (intptr_t)rb_thread_call_with_gvl(fork_using_ruby, NULL);
   intptr_t pid = (intptr_t)RubyCaller.call_c(fork_using_ruby, NULL);
   return (int)pid;
 }
