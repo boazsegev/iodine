@@ -179,6 +179,14 @@ module Iodine
     end
   end
 
+  def self.patch_json
+    ::JSON.class_eval do
+        ::JSON.define_singleton_method(:parse,
+              Iodine::JSON.instance_method(:parse) )
+    end
+  end
+
+
   @after_fork_blocks = []
   def self.after_fork(*args, &block)
     if(block)

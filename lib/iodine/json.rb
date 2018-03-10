@@ -1,7 +1,9 @@
 module Iodine
   # Iodine includes a lenient JSON parser that attempts to ignore JSON errors when possible and adds some extensions such as Hex numerical representations and comments.
   #
-  # On my system, the Iodine JSON parser is more than 30% faster. When using the {Iodine::JSON.parse!} method, the speed increase can be higher (I had ~63% speed increase when benchmarking).
+  # On my system, the Iodine JSON parser is more than 30% faster than the native Ruby parser. When using symbols the speed increase is even higher.
+  #
+  # It's easy to monkey-patch the system's `JSON.parse` method (not the `JSON.parse!` method) by using `Iodine.patch_json`.
   #
   # You can benchmark the Iodine JSON performance and decide if you wish to monkey-patch the Ruby implementation.
   #
@@ -13,7 +15,7 @@ module Iodine
   #      STR = IO.binread(JSON_FILENAME); nil
   #
   #      JSON.parse(STR) == Iodine::JSON.parse(STR) # => true
-  #      JSON.parse!(STR) == Iodine::JSON.parse!(STR) # => false (symbols)
+  #      JSON.parse!(STR) == Iodine::JSON.parse!(STR) # => undefined, maybe true maybe false
   #
   #      # warm-up
   #      TIMES.times { JSON.parse STR }
@@ -21,17 +23,17 @@ module Iodine
   #
   #      Benchmark.bm do |b|
   #        sys = b.report("system") { TIMES.times { JSON.parse STR } }
-  #        sys_bang = b.report("system!") { TIMES.times { JSON.parse! STR } }
+  #        sys_sym = b.report("system-sym") { TIMES.times { JSON.parse STR, symbolize_names: true } }
   #        iodine = b.report("iodine") { TIMES.times { Iodine::JSON.parse STR } }
-  #        iodine_bang = b.report("iodine!") { TIMES.times { Iodine::JSON.parse! STR } }
+  #        iodine_sym = b.report("iodine-sym") { TIMES.times { Iodine::JSON.parse STR, symbolize_names: true } }
   #
   #        puts "----------------------------"
   #        puts "Iodine::JSON speed as percent of Ruby's native JSON:"
-  #        puts "normal: #{sys/iodine}"
-  #        puts "bang: #{sys_bang/iodine_bang}"
+  #        puts "normal:    #{sys/iodine}"
+  #        puts "symolized: #{sys_sym/iodine_sym}"
   #      end
   #
-  # Note that the bang(!) method behaves slightly different than the Ruby implementation, by using Symbols for Hash keys (instead of Strings).
+  # Note that the bang(!) method will NOT be automatically monkey-patched, as some important features are unsupported by the Iodine parser.
   #
   module JSON
   end

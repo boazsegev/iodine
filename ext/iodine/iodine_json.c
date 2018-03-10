@@ -190,19 +190,19 @@ static inline VALUE iodine_json_convert(VALUE str, fiobj2rb_settings_s s) {
 static inline void iodine_json_update_settings(VALUE h,
                                                fiobj2rb_settings_s *s) {
   VALUE tmp;
-  if (rb_hash_aref(h, max_nesting))
+  if (rb_hash_aref(h, max_nesting) != Qnil)
     fprintf(stderr,
             "WARNING: max_nesting ignored on this JSON implementation.\n");
-  if (rb_hash_aref(h, allow_nan))
+  if (rb_hash_aref(h, allow_nan) != Qnil)
     fprintf(stderr, "WARNING: allow_nan ignored on this JSON implementation. "
                     "NaN always allowed.\n");
-  if (rb_hash_aref(h, create_additions))
+  if (rb_hash_aref(h, create_additions) != Qnil)
     fprintf(stderr,
             "WARNING: create_additions ignored on this JSON implementation.\n");
-  if (rb_hash_aref(h, object_class))
+  if (rb_hash_aref(h, object_class) != Qnil)
     fprintf(stderr,
             "WARNING: object_class ignored on this JSON implementation.\n");
-  if (rb_hash_aref(h, array_class))
+  if (rb_hash_aref(h, array_class) != Qnil)
     fprintf(stderr,
             "WARNING: array_class ignored on this JSON implementation.\n");
   if ((tmp = rb_hash_aref(h, symbolize_names)) != Qnil) {
@@ -238,7 +238,7 @@ rather than String key (this is often faster than the regular
 {Iodine::JSON.parse} function).
 */
 static VALUE iodine_json_parse_bang(int argc, VALUE *argv, VALUE self) {
-  fiobj2rb_settings_s s = {.str2sym = 1};
+  fiobj2rb_settings_s s = {.str2sym = 0};
   if (argc > 2)
     rb_raise(rb_eTypeError, "function requires supports up to two arguments.");
   if (argc == 2) {
@@ -268,7 +268,10 @@ void Iodine_init_json(void) {
       STR = IO.binread(JSON_FILENAME); nil
 
       JSON.parse(STR) == Iodine::JSON.parse(STR) # => true
-      JSON.parse!(STR) == Iodine::JSON.parse!(STR) # => false (symbols)
+      JSON.parse(STR,
+          symbolize_names: true) == Iodine::JSON.parse(STR,
+           symbolize_names: true) # => true
+      JSON.parse!(STR) == Iodine::JSON.parse!(STR) # => true/false (unknown)
 
       # warm-up
       TIMES.times { JSON.parse STR }
@@ -276,14 +279,16 @@ void Iodine_init_json(void) {
 
       Benchmark.bm do |b|
         sys = b.report("system") { TIMES.times { JSON.parse STR } }
-        sys_bang = b.report("system!") { TIMES.times { JSON.parse! STR } }
+        sys_sym = b.report("system sym") { TIMES.times { JSON.parse STR,
+                                                 symbolize_names: true } }
         iodine = b.report("iodine") { TIMES.times { Iodine::JSON.parse STR } }
-        iodine_bang = b.report("iodine!") do
-                           TIMES.times { Iodine::JSON.parse! STR }
+        iodine_sym = b.report("iodine sym") do
+                           TIMES.times { Iodine::JSON.parse STR,
+                                                  symbolize_names: true }
                       end
-        puts "System/Iodine: #{sys/iodine}"
-        puts "System!/Iodine!: #{sys_bang/iodine_bang}"
-      end
+        puts "System    /    Iodine: #{sys/iodine}"
+        puts "System-sym/Iodine-sym: #{sys_sym/iodine_sym}"
+      end; nil
 
 
   */

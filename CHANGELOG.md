@@ -20,6 +20,10 @@ Credit to Anatoly Nosov (@jomei) for fixing some typos in the documentation.
 
 ---
 
+#### Change log v.0.4.17
+
+**Fix**: (iodine RubyCaller) fixed issue #26 that exposed an issue in the exception handling logic. This fix enforces exception handling whenever entering the Ruby GVL (GIL), allowing C functions to safely enter the user's Ruby code (where before C functions were assumed to be safe and user code would be executed unprotected when routed through certain functions). Credit to @haukot for exposing this issue (issue #26).
+
 #### Change log v.0.4.16
 
 **Fix**: (`websocket_parser`) The websocket parser had a memory offset and alignment handling issue in it's unmasking (XOR) logic and the new memory alignment protection code. The issue would impact the parser in rare occasions when multiple messages where pipelined in the internal buffer and their length produced an odd alignment (the issue would occur with very fast clients, or a very stressed server).
