@@ -13,22 +13,39 @@ Feel free to copy, use and enjoy according to the license provided.
 #define _Thread_local __thread
 #endif
 
-///////////////
-// this is a simple helper that calls Ruby methods on Ruby objects while within
-// a non-GVL ruby thread zone.
-struct RubyArgCall {
+typedef enum {
+  RUBY_TASK,
+  C_TASK,
+} iodine_task_type_en;
+
+typedef struct {
+  iodine_task_type_en type;
   VALUE obj;
   int argc;
   VALUE *argv;
   VALUE returned;
   ID method;
   int exception;
-};
+} iodine_rb_task_s;
+
+typedef struct {
+  iodine_task_type_en type;
+  void *(*func)(void *);
+  void *arg;
+} iodine_c_task_s;
 
 // running the actual method call
-static VALUE run_ruby_method_unsafe(VALUE tsk_) {
-  struct RubyArgCall *task = (void *)tsk_;
-  return rb_funcall2(task->obj, task->method, task->argc, task->argv);
+static VALUE iodine_ruby_caller_perform(VALUE tsk_) {
+  switch (*(iodine_task_type_en *)tsk_) {
+  case RUBY_TASK: {
+    iodine_rb_task_s *task = (void *)tsk_;
+    return rb_funcall2(task->obj, task->method, task->argc, task->argv);
+  }
+  case C_TASK: {
+    iodine_c_task_s *task = (void *)tsk_;
+    return (VALUE)task->func(task->arg);
+  }
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -58,16 +75,14 @@ static void *handle_exception(void *ignr) {
   return (void *)Qnil;
 }
 
-// GVL gateway
-static void *run_ruby_method_within_gvl(void *tsk_) {
-  struct RubyArgCall *task = tsk_;
+/* wrap the function call in the exception handling code */
+static void *iodine_protected_call(void *tsk_) {
   int state = 0;
-  task->returned = rb_protect(run_ruby_method_unsafe, (VALUE)(task), &state);
+  VALUE ret = rb_protect(iodine_ruby_caller_perform, (VALUE)(tsk_), &state);
   if (state) {
-    task->exception = 1;
     handle_exception(NULL);
   }
-  return task;
+  return (void *)ret;
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -81,13 +96,14 @@ static void iodine_rb_set_gvl_state(char state) { in_gvl = state; }
 
 ////////////////////////////////////////////////////////////////////////////
 // Calling C functions.
-static void *iodine_rb_call_c(void *(*func)(void *), void *arg) {
+static inline void *iodine_rb_call_c(void *(*func)(void *), void *arg) {
   if (in_gvl) {
     return func(arg);
   }
+  iodine_c_task_s task = {.type = C_TASK, .func = func, .arg = arg};
   void *ret;
   in_gvl = 1;
-  ret = rb_thread_call_with_gvl(func, arg);
+  ret = rb_thread_call_with_gvl(iodine_protected_call, &task);
   in_gvl = 0;
   return ret;
 }
@@ -103,24 +119,27 @@ static void *iodine_rb_leave_gvl(void *(*func)(void *), void *arg) {
 }
 
 ////////////////////////////////////////////////////////////////////////////
-// A simple (and a bit lighter) design for when there's no need for arguments.
-
-// wrapping any API calls for exception management AND GVL entry
-static VALUE iodin_rb_call(VALUE obj, ID method) {
-  struct RubyArgCall task = {.obj = obj, .method = method};
-  iodine_rb_call_c(run_ruby_method_within_gvl, &task);
-  return task.returned;
-}
-
-////////////////////////////////////////////////////////////////////////////
 // A heavier (memory) design for when we're passing arguments around.
 
 // wrapping any API calls for exception management AND GVL entry
 static VALUE iodin_rb_call_arg(VALUE obj, ID method, int argc, VALUE *argv) {
-  struct RubyArgCall task = {
-      .obj = obj, .method = method, .argc = argc, .argv = argv};
-  iodine_rb_call_c(run_ruby_method_within_gvl, &task);
-  return task.returned;
+  iodine_rb_task_s task = {.type = RUBY_TASK,
+                           .obj = obj,
+                           .method = method,
+                           .argc = argc,
+                           .argv = argv};
+  void *ret;
+  if (in_gvl)
+    return (VALUE)rb_funcall2(obj, method, argc, argv);
+  in_gvl = 1;
+  ret = rb_thread_call_with_gvl(iodine_protected_call, &task);
+  in_gvl = 0;
+  return (VALUE)ret;
+}
+
+// wrapping any API calls for exception management AND GVL entry
+static VALUE iodin_rb_call(VALUE obj, ID method) {
+  return iodin_rb_call_arg(obj, method, 0, NULL);
 }
 
 ////////////////////////////////////////////////////////////////////////////
