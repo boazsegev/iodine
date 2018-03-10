@@ -36,25 +36,35 @@ This library keeps track of the thread, adjusting the method to be called in
 case the thread is already within the GVL.
 
 The library assums that it is within a Ruby thread that is was released of
-the GVL using `rb_thread_call_without_gvl2` or `rb_thread_call_without_gvl`.
+the GVL using `rb_thread_call_without_gvl`. If this isn t the case, use the
+`RubyCaller.set_gvl_state` function to manually set the GVL state assumption.
 */
 extern struct _Ruby_Method_Caller_Class_ {
   /** calls a Object's ruby method, adjusting for the GVL if needed */
   VALUE (*call)(VALUE object, ID method_id);
   /**
-calls a Object's ruby method with arguments, adjusting for the GVL if needed
-  */
+   * calls a Object's ruby method with arguments, adjusting for the GVL if
+   * needed
+   */
   VALUE (*call2)(VALUE obj, ID method, int argc, VALUE *argv);
   /**
-calls a C method that requires the GVL for access to the Ruby API, managing the
-GVL state as required.
-  */
+   * calls a C method that requires the GVL for access to the Ruby API, managing
+   * the GVL state as required.
+   */
   void *(*call_c)(void *(*func)(void *), void *arg);
   /**
-returns the thread's GVL status (1 if inside a GVL and 0 if free from the
-GVL).
-  */
+   * Exits the GVL (if the thread is withing the GVL) and calls a C function.
+   */
+  void *(*leave_gvl)(void *(*func)(void *), void *arg);
+  /**
+   * returns the thread's GVL status (1 if inside a GVL and 0 if free from the
+   * GVL).
+   */
   char (*in_gvl)(void);
+  /**
+   * forces a thread's GVL state flag (ignoring the actual GVL state) - careful!
+   */
+  void (*set_gvl_state)(char state);
 } RubyCaller;
 
 #endif /* RB_CALL_H */
