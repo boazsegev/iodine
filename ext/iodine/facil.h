@@ -27,14 +27,26 @@ Feel free to copy, use and enjoy according to the license provided.
  * FACIL_CPU_CORES_LIMIT, it will assume an error and cap the number of cores
  * detected to the assigned limit.
  *
- * The default autot-detection cap is at 7 cores, for the simple reason that
- * system wide memory allocation locks start to exhibit negative effects
- * somewhere around this point.
+ * The default auto-detection cap is set at 8 cores. The number is arbitrary
+ * (historically the number 7 was used after testing `malloc` race conditions on
+ * a MacBook Pro).
  *
  * The does NOT effect manually set worker values.
  */
-#define FACIL_CPU_CORES_LIMIT 7
+#define FACIL_CPU_CORES_LIMIT 8
 #endif
+
+#ifndef FIO_DEDICATED_SYSTEM
+/**
+ * If FIO_DEDICATED_SYSTEM is true, facil.io assumes that the whole system is at
+ * it's service and that no other process is using the CPU cores.
+ *
+ * Accordingly, facil.io will activate the threads more often in an attempt to
+ * utilize all the cores.
+ */
+#define FIO_DEDICATED_SYSTEM 0
+#endif
+
 /* *****************************************************************************
 Required facil libraries
 ***************************************************************************** */
@@ -266,9 +278,25 @@ Core API
 ***************************************************************************** */
 
 struct facil_run_args {
-  /** The number of threads to run in the thread pool. Has "smart" defaults. */
+  /**
+   * The number of threads to run in the thread pool. Has "smart" defaults.
+   *
+   *
+   * A positive value will indicate a set number of threads (or processes).
+   *
+   * Zeros and negative values are fun and have complex behaviour. For example:
+   *
+   * * Negative values indicate a fraction of the number of CPU cores. i.e.
+   *   -2 will normally indicate "half" (1/2) the number of cores.
+   *
+   * * If `processes` is also either zero or a negative value and
+   *   unequal to `threads`, the numbers will be calculated as a ratio,
+   *   indicating the cores should be divided between processes and threads
+   *   according to the calculated ratio (best attempt).
+   *
+   */
   int16_t threads;
-  /** The number of processes to run (including this one). "smart" defaults. */
+  /** The number of processes to run (including this one). See `threads`. */
   int16_t processes;
   /** called if the event loop in cycled with no pending events. */
   void (*on_idle)(void);

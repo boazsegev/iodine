@@ -289,8 +289,8 @@ static VALUE iodine_start(VALUE self) {
   VALUE rb_pr_i = rb_iv_get(Iodine, "@processes");
 
   iodine_start_settings_s s = {
-      .threads = ((TYPE(rb_th_i) == T_FIXNUM) ? FIX2LONG(rb_th_i) : 0),
-      .processes = ((TYPE(rb_pr_i) == T_FIXNUM) ? FIX2LONG(rb_pr_i) : 0)};
+      .threads = ((TYPE(rb_th_i) == T_FIXNUM) ? FIX2INT(rb_th_i) : 0),
+      .processes = ((TYPE(rb_pr_i) == T_FIXNUM) ? FIX2INT(rb_pr_i) : 0)};
 
   RubyCaller.set_gvl_state(1);
   RubyCaller.leave_gvl(srv_start_no_gvl, (void *)&s);
