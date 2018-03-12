@@ -503,17 +503,18 @@ static VALUE iodine_subscribe(VALUE self, VALUE args) {
   Check_Type(rb_ch, T_STRING);
 
   VALUE block = rb_block_proc();
+  Registry.add(block);
 
   pubsub_engine_s *engine =
       iodine_engine_ruby2facil(rb_hash_aref(args, engine_varid));
 
-  uintptr_t subid = (uintptr_t)
-      pubsub_subscribe(.channel.name = RSTRING_PTR(rb_ch),
-                       .channel.len = RSTRING_LEN(rb_ch), .engine = engine,
-                       .use_pattern = use_pattern,
-                       .on_message = (block ? on_pubsub_notificationin : NULL),
-                       .on_unsubscribe = (block ? iodine_on_unsubscribe : NULL),
-                       .udata1 = (void *)block);
+  uintptr_t subid =
+      (uintptr_t)pubsub_subscribe(.channel.name = RSTRING_PTR(rb_ch),
+                                  .channel.len = RSTRING_LEN(rb_ch),
+                                  .engine = engine, .use_pattern = use_pattern,
+                                  .on_message = on_pubsub_notificationin,
+                                  .on_unsubscribe = iodine_on_unsubscribe,
+                                  .udata1 = (void *)block);
   if (!subid)
     return Qnil;
   return ULL2NUM(subid);
