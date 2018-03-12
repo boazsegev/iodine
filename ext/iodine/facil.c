@@ -1376,8 +1376,9 @@ static void perform_idle(void *arg, void *ignr) {
   (void)ignr;
 }
 
-static void facil_cycle(void *arg, void *ignr) {
+static void facil_cycle(void *ignr, void *ignr2) {
   (void)ignr;
+  (void)ignr2;
   static int idle = 0;
   clock_gettime(CLOCK_REALTIME, &facil_data->last_cycle);
   int events;
@@ -1396,7 +1397,7 @@ static void facil_cycle(void *arg, void *ignr) {
     if (events > 0) {
       idle = 1;
     } else if (idle) {
-      defer(perform_idle, arg, ignr);
+      defer(perform_idle, ignr, ignr2);
       idle = 0;
     }
   }
@@ -1409,22 +1410,13 @@ static void facil_cycle(void *arg, void *ignr) {
     facil_data->need_review = 0;
     defer(facil_review_timeout, (void *)0, NULL);
   }
-  defer(facil_cycle, arg, ignr);
+  defer(facil_cycle, ignr, ignr2);
   return;
 error:
   if (facil_data->active)
-    defer(facil_cycle, arg, ignr);
+    defer(facil_cycle, ignr, ignr2);
   (void)1;
 }
-
-/** use evio_review instead of micro sleeping */
-// void defer_thread_wait(pool_pt pool, void *p_thr) {
-//   evio_wait(2000);
-//   if (!defer_has_queue())
-//     throttle_thread(1UL);
-//   (void)p_thr;
-//   (void)pool;
-// }
 
 /**
 OVERRIDE THIS to replace the default `fork` implementation or to inject hooks
@@ -1730,17 +1722,6 @@ static inline size_t facil_detect_cpu_cores(void) {
   ssize_t cpu_count = 0;
 #ifdef _SC_NPROCESSORS_ONLN
   cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
-#if FACIL_CPU_CORES_LIMIT
-  if (cpu_count > FACIL_CPU_CORES_LIMIT) {
-    fprintf(stderr,
-            "INFO: Detected %zu cores. Capping auto-detection of cores "
-            "to %zu.\n"
-            "      To increase auto-detection limit, recompile with:\n"
-            "             -DFACIL_CPU_CORES_LIMIT=%zu \n",
-            cpu_count, (size_t)FACIL_CPU_CORES_LIMIT, cpu_count);
-    cpu_count = FACIL_CPU_CORES_LIMIT;
-  }
-#endif
 #endif
   return cpu_count;
 }
@@ -1756,35 +1737,40 @@ void facil_run(struct facil_run_args args) {
     args.on_finish = mock_idle;
   if (!args.threads && !args.processes) {
     /* both options set to 0 - default to cores*cores matrix */
-    args.threads = args.processes = (int16_t)facil_detect_cpu_cores();
+    ssize_t cpu_count = facil_detect_cpu_cores();
+#if FACIL_CPU_CORES_LIMIT
+    if (cpu_count > FACIL_CPU_CORES_LIMIT) {
+      fprintf(
+          stderr,
+          "INFO: Detected %zu cores. Capping auto-detection of cores "
+          "to %zu.\n"
+          "      Avoid this message by setting threads / workers manually.\n"
+          "      To increase auto-detection limit, recompile with:\n"
+          "             -DFACIL_CPU_CORES_LIMIT=%zu \n",
+          cpu_count, (size_t)FACIL_CPU_CORES_LIMIT, cpu_count);
+      cpu_count = FACIL_CPU_CORES_LIMIT;
+    }
+#endif
+    args.threads = args.processes = (int16_t)cpu_count;
   } else if (args.threads < 0 || args.processes < 0) {
     /* Set any option that is less than 0 be equal to cores/value */
+    /* Set any option equal to 0 be equal to the other option in value */
     ssize_t cpu_count = facil_detect_cpu_cores();
 
-    if (args.threads <= 0 && args.processes <= 0 &&
-        args.threads != args.processes &&
-        (args.threads + args.processes < -1)) {
-      /* Both options are negative, allowing to adjust resources by ratio */
-      if (args.processes < args.threads) {
-        int16_t tmp = args.threads;
-        args.threads = args.processes;
-        args.processes = tmp;
-      }
-      if (args.processes == 0)
-        args.processes = -1;
-      args.threads = args.threads / args.processes;
-      if (args.threads == 0)
-        args.threads = -1;
-      args.processes = 0 - args.threads;
-    }
-
     if (cpu_count > 0) {
+      int16_t threads = 0;
       if (args.threads < 0)
-        args.threads = (int16_t)(cpu_count / (args.threads * -1));
+        threads = (int16_t)(cpu_count / (args.threads * -1));
+      if (args.threads == 0)
+        threads = -1 * args.processes;
       if (args.processes < 0)
         args.processes = (int16_t)(cpu_count / (args.processes * -1));
+      if (args.processes == 0)
+        args.processes = -1 * args.threads;
+      args.threads = threads;
     }
   }
+
   /* make sure we have at least one process and at least one thread */
   if (args.processes <= 0)
     args.processes = 1;
