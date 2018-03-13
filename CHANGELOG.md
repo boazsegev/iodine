@@ -20,9 +20,15 @@ Credit to Anatoly Nosov (@jomei) for fixing some typos in the documentation.
 
 ---
 
+#### Change log v.0.4.18
+
+**Fix**: (`iodine pub/bus`) fixed issue #27 (?) where the `block` used for subscriptions would be recycled by the GC and the memory address (retained by `iodine`) would point at invalid Ruby objects (at worst) or become invalid (at best). Credit to Dmitry Davydov (@haukot) for exposing this issue.
+
+**Fix**: (`facil pub/bus`) fixed issue #27 (?) where the `memcpy` was used instead of `memmove`, resulting in possibly corrupt data in cluster messaging system. Credit to Dmitry Davydov (@haukot) for exposing this issue.
+
 #### Change log v.0.4.17
 
-**Fix**: (iodine RubyCaller) fixed issue #26 that exposed an issue in the exception handling logic. This fix enforces exception handling whenever entering the Ruby GVL (GIL), allowing C functions to safely enter the user's Ruby code (where before C functions were assumed to be safe and user code would be executed unprotected when routed through certain functions). Credit to @haukot for exposing this issue (issue #26).
+**Fix**: (`iodine RubyCaller`) fixed issue #26 that exposed an issue in the exception handling logic. This fix enforces exception handling whenever entering the Ruby GVL (GIL), allowing C functions to safely enter the user's Ruby code (where before C functions were assumed to be safe and user code would be executed unprotected when routed through certain functions). Credit to Dmitry Davydov (@haukot) for exposing this issue (issue #26).
 
 #### Change log v.0.4.16
 
