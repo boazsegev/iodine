@@ -192,15 +192,18 @@ static int pubsub_cluster_publish(struct pubsub_publish_args args) {
 static void pubsub_cluster_handle_publishing(void *data, uint32_t len) {
   msg_s *msg = data;
   if (len != sizeof(*msg) + msg->pub.channel.len + msg->pub.msg.len + 2) {
-    fprintf(stderr,
-            "ERROR: (pub/sub) cluster message size error. Message ignored.\n");
+    fprintf(
+        stderr,
+        "ERROR: (pub/sub) cluster message size error. Message ignored.\n"
+        "                 expecting %zu (ch: %zu, msg: %zu), got %zu\n",
+        (size_t)(sizeof(*msg) + msg->pub.channel.len + msg->pub.msg.len + 2),
+        (size_t)msg->pub.channel.len, (size_t)msg->pub.msg.len, (size_t)len);
     return;
   }
   msg = malloc(len);
   if (!msg) {
-    fprintf(
-        stderr,
-        "ERROR: (pub/sub) cluster message allocation error.Message ignored.\n");
+    fprintf(stderr, "ERROR: (pub/sub) cluster message allocation error. "
+                    "Message ignored.\n");
     return;
   }
   memcpy(msg, data, len);
