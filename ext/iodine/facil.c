@@ -761,7 +761,7 @@ static void facil_cluster_on_data(intptr_t uuid, protocol_s *pr_) {
   while (1) {
     errno = 0;
     if (pr->read < 8 || pr->read < pr->msg->len) {
-      ssize_t read = sock_read(uuid, (void *)((uintptr_t)pr->msg + pr->read),
+      ssize_t read = sock_read(uuid, (void *)(((uintptr_t)pr->msg) + pr->read),
                                pr->mem_size - pr->read);
       if (read <= 0) {
         if (read < 0)
@@ -786,10 +786,13 @@ static void facil_cluster_on_data(intptr_t uuid, protocol_s *pr_) {
       }
     }
     if ((size_t)(pr->msg->len) <= pr->read) {
+      const size_t msg_len = (size_t)(pr->msg->len);
+      const size_t leftover = (size_t)(pr->read - msg_len);
       facil_cluster_handle_msg(pr->msg);
-      pr->read = pr->read - pr->msg->len;
-      if (pr->read)
-        memcpy(pr->msg, (void *)((uintptr_t)pr->msg + pr->msg->len), pr->read);
+      pr->read = leftover;
+      if (leftover) {
+        memmove(pr->msg, (void *)(((uintptr_t)pr->msg) + msg_len), pr->read);
+      }
     }
   }
 }
