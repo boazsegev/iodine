@@ -17,7 +17,16 @@ VALUE Iodine;
 VALUE IodineBase;
 VALUE Iodine_Version;
 
+VALUE iodine_force_var_id;
+VALUE iodine_channel_var_id;
+VALUE iodine_pattern_var_id;
+VALUE iodine_text_var_id;
+VALUE iodine_binary_var_id;
+VALUE iodine_engine_var_id;
+VALUE iodine_message_var_id;
+
 ID iodine_fd_var_id;
+ID iodine_cdata_var_id;
 ID iodine_timeout_var_id;
 ID iodine_call_proc_id;
 ID iodine_new_func_id;
@@ -331,20 +340,29 @@ void Init_iodine(void) {
   // load any environment specific patches
   patch_env();
   // initialize globally used IDs, for faster access to the Ruby layer.
-  iodine_fd_var_id = rb_intern("scrtfd");
-  iodine_call_proc_id = rb_intern("call");
-  iodine_new_func_id = rb_intern("new");
-  iodine_on_open_func_id = rb_intern("on_open");
-  iodine_on_message_func_id = rb_intern("on_message");
-  iodine_on_data_func_id = rb_intern("on_data");
-  iodine_on_shutdown_func_id = rb_intern("on_shutdown");
-  iodine_on_close_func_id = rb_intern("on_close");
-  iodine_on_ready_func_id = rb_intern("on_ready");
-  iodine_ping_func_id = rb_intern("ping");
   iodine_buff_var_id = rb_intern("scrtbuffer");
+  iodine_call_proc_id = rb_intern("call");
+  iodine_cdata_var_id = rb_intern("iodine_cdata");
+  iodine_fd_var_id = rb_intern("iodine_fd");
+  iodine_new_func_id = rb_intern("new");
+  iodine_on_close_func_id = rb_intern("on_close");
+  iodine_on_data_func_id = rb_intern("on_data");
+  iodine_on_message_func_id = rb_intern("on_message");
+  iodine_on_open_func_id = rb_intern("on_open");
+  iodine_on_ready_func_id = rb_intern("on_ready");
+  iodine_on_shutdown_func_id = rb_intern("on_shutdown");
+  iodine_ping_func_id = rb_intern("ping");
   iodine_timeout_var_id = rb_intern("@timeout");
-  iodine_to_s_method_id = rb_intern("to_s");
   iodine_to_i_func_id = rb_intern("to_i");
+  iodine_to_s_method_id = rb_intern("to_s");
+
+  iodine_binary_var_id = ID2SYM(rb_intern("binary"));
+  iodine_channel_var_id = ID2SYM(rb_intern("channel"));
+  iodine_engine_var_id = ID2SYM(rb_intern("engine"));
+  iodine_force_var_id = ID2SYM(rb_intern("encoding"));
+  iodine_message_var_id = ID2SYM(rb_intern("message"));
+  iodine_pattern_var_id = ID2SYM(rb_intern("pattern"));
+  iodine_text_var_id = ID2SYM(rb_intern("text"));
 
   IodineBinaryEncodingIndex = rb_enc_find_index("binary");
   IodineUTF8EncodingIndex = rb_enc_find_index("UTF-8");

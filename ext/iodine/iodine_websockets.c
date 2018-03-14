@@ -21,14 +21,6 @@ static VALUE IodineWebsocket; // The Iodine::Http::Websocket class
 static ID ws_var_id;          // id for websocket pointer
 static ID dup_func_id;        // id for the buffer.dup method
 
-static VALUE force_var_id;
-static VALUE channel_var_id;
-static VALUE pattern_var_id;
-static VALUE text_var_id;
-static VALUE binary_var_id;
-static VALUE engine_var_id;
-static VALUE message_var_id;
-
 #define set_uuid(object, uuid)                                                 \
   rb_ivar_set((object), iodine_fd_var_id, ULONG2NUM((uuid)))
 
@@ -263,10 +255,10 @@ static VALUE iodine_ws_subscribe(VALUE self, VALUE args) {
     return Qfalse;
   uint8_t use_pattern = 0, force_text = 0, force_binary = 0;
 
-  VALUE rb_ch = rb_hash_aref(args, channel_var_id);
+  VALUE rb_ch = rb_hash_aref(args, iodine_channel_var_id);
   if (rb_ch == Qnil || rb_ch == Qfalse) {
     use_pattern = 1;
-    rb_ch = rb_hash_aref(args, pattern_var_id);
+    rb_ch = rb_hash_aref(args, iodine_pattern_var_id);
     if (rb_ch == Qnil || rb_ch == Qfalse)
       rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
   }
@@ -274,10 +266,10 @@ static VALUE iodine_ws_subscribe(VALUE self, VALUE args) {
     rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);
 
-  VALUE tmp = rb_hash_aref(args, force_var_id);
-  if (tmp == text_var_id)
+  VALUE tmp = rb_hash_aref(args, iodine_force_var_id);
+  if (tmp == iodine_text_var_id)
     force_text = 1;
-  else if (tmp == binary_var_id)
+  else if (tmp == iodine_binary_var_id)
     force_binary = 1;
 
   VALUE block = 0;
@@ -321,10 +313,10 @@ static VALUE iodine_ws_is_subscribed(VALUE self, VALUE args) {
     return Qfalse;
   uint8_t use_pattern = 0, force_text = 0, force_binary = 0;
 
-  VALUE rb_ch = rb_hash_aref(args, channel_var_id);
+  VALUE rb_ch = rb_hash_aref(args, iodine_channel_var_id);
   if (rb_ch == Qnil || rb_ch == Qfalse) {
     use_pattern = 1;
-    rb_ch = rb_hash_aref(args, pattern_var_id);
+    rb_ch = rb_hash_aref(args, iodine_pattern_var_id);
     if (rb_ch == Qnil || rb_ch == Qfalse)
       rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
   }
@@ -332,10 +324,10 @@ static VALUE iodine_ws_is_subscribed(VALUE self, VALUE args) {
     rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);
 
-  VALUE tmp = rb_hash_aref(args, force_var_id);
-  if (tmp == text_var_id)
+  VALUE tmp = rb_hash_aref(args, iodine_force_var_id);
+  if (tmp == iodine_text_var_id)
     force_text = 1;
-  else if (tmp == binary_var_id)
+  else if (tmp == iodine_binary_var_id)
     force_binary = 1;
 
   VALUE block = 0;
@@ -386,7 +378,7 @@ engine is used.
 static VALUE iodine_ws_publish(VALUE self, VALUE args) {
   Check_Type(args, T_HASH);
 
-  VALUE rb_ch = rb_hash_aref(args, channel_var_id);
+  VALUE rb_ch = rb_hash_aref(args, iodine_channel_var_id);
   if (rb_ch == Qnil || rb_ch == Qfalse) {
     rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
   }
@@ -394,14 +386,14 @@ static VALUE iodine_ws_publish(VALUE self, VALUE args) {
     rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);
 
-  VALUE rb_msg = rb_hash_aref(args, message_var_id);
+  VALUE rb_msg = rb_hash_aref(args, iodine_message_var_id);
   if (rb_msg == Qnil || rb_msg == Qfalse) {
     rb_raise(rb_eArgError, "message is required for the :publish method.");
   }
   Check_Type(rb_msg, T_STRING);
 
   pubsub_engine_s *engine =
-      iodine_engine_ruby2facil(rb_hash_aref(args, engine_var_id));
+      iodine_engine_ruby2facil(rb_hash_aref(args, iodine_engine_var_id));
   FIOBJ channel = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
   FIOBJ msg = fiobj_str_new(RSTRING_PTR(rb_msg), RSTRING_LEN(rb_msg));
 
@@ -527,14 +519,6 @@ void Iodine_init_websocket(void) {
   // get IDs and data that's used often
   ws_var_id = rb_intern("iodine_ws_ptr"); // when upgrading
   dup_func_id = rb_intern("dup");         // when upgrading
-
-  force_var_id = ID2SYM(rb_intern("encoding"));
-  channel_var_id = ID2SYM(rb_intern("channel"));
-  pattern_var_id = ID2SYM(rb_intern("pattern"));
-  message_var_id = ID2SYM(rb_intern("message"));
-  engine_var_id = ID2SYM(rb_intern("engine"));
-  text_var_id = ID2SYM(rb_intern("text"));
-  binary_var_id = ID2SYM(rb_intern("binary"));
 
   // the Ruby websockets protocol class.
   IodineWebsocket = rb_define_module_under(Iodine, "Websocket");

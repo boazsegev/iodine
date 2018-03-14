@@ -18,7 +18,7 @@ class HttpProtocol
   @timeout = 10
   # `on_message` is an optional alternative to the `on_data` callback.
   # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
-  def on_data
+  def on_message _
     # writing will never block and will use a buffer written in C when needed.
     write "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=1\r\nContent-Length: 12\r\n\r\nHello World!"
   end
