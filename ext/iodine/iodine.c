@@ -317,6 +317,11 @@ static VALUE iodine_start(VALUE self) {
   return self;
 }
 
+static VALUE iodine_is_running(VALUE self) {
+  return (facil_is_running() ? Qtrue : Qfalse);
+  (void)self;
+}
+
 /* *****************************************************************************
 Debug
 ***************************************************************************** */
@@ -374,6 +379,7 @@ void Init_iodine(void) {
 
   // the Iodine singleton functions
   rb_define_module_function(Iodine, "start", iodine_start, 0);
+  rb_define_module_function(Iodine, "running?", iodine_is_running, 0);
   rb_define_singleton_method(Iodine, "count", iodine_count, 0);
   rb_define_module_function(Iodine, "run", iodine_run, 0);
   rb_define_module_function(Iodine, "run_after", iodine_run_after, 1);

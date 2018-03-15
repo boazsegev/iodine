@@ -1103,6 +1103,12 @@ void facil_run(struct facil_run_args args) {
   if (FACIL_PRINT_STATE)
     fprintf(stderr, "\n   ---  Completed Shutdown  ---\n");
 }
+
+/**
+ * returns true (1) if the facil.io engine is already running.
+ */
+int facil_is_running(void) { return (facil_data && defer_fork_is_active()); }
+
 /* *****************************************************************************
 Setting the protocol
 ***************************************************************************** */
