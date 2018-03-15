@@ -286,6 +286,11 @@ void facil_run(struct facil_run_args args);
 #define facil_run(...) facil_run((struct facil_run_args){__VA_ARGS__})
 
 /**
+ * returns true (1) if the facil.io engine is already running.
+ */
+int facil_is_running(void);
+
+/**
  * Attaches (or updates) a protocol object to a socket UUID.
  *
  * The new protocol object can be NULL, which will practically "hijack" the
