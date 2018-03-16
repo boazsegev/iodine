@@ -206,19 +206,11 @@ if(Iodine.default_pubsub.is_a? Iodine::PubSub::RedisEngine)
 end
 ```
 
-**Details and Limitations:**
-
-* Iodine does not use a Hash table for the Pub/Sub channels, it uses a [4 bit trie](https://en.wikipedia.org/wiki/Trie).
-
-    The cost is higher memory consumption per channel and a limitation of 1024 bytes per channel name (shorter names are better).
-
-    The bonus is high lookup times, zero chance of channel conflicts and an optimized preference for shared prefix channels (i.e. "user:1", "user:2"...).
-
-    Another added bonus is pattern publishing (is addition to pattern subscriptions) which isn't available when using Redis (since Redis doesn't support this feature).
+**Pub/Sub Details and Limitations:**
 
 * Iodine's Redis client does *not* support multiple databases. This is both because [database scoping is ignored by Redis during pub/sub](https://redis.io/topics/pubsub#database-amp-scoping) and because [Redis Cluster doesn't support multiple databases](https://redis.io/topics/cluster-spec). This indicated that multiple database support just isn't worth the extra effort.
 
-* The iodine Redis client will use two Redis connections per process (one for subscriptions and the other for publishing and commands). Both connections will be automatically re-established if timeouts or errors occur.
+* The iodine Redis client will use a single Redis connection per process (for publishing data) and an extra Redis connection for subscriptions (owned by the master process). Connections will be automatically re-established if timeouts or errors occur.
 
 #### TCP/IP (raw) sockets
 
