@@ -312,6 +312,11 @@ static VALUE iodine_start(VALUE self) {
   return self;
 }
 
+static VALUE iodine_is_running(VALUE self) {
+  return (facil_is_running() ? Qtrue : Qfalse);
+  (void)self;
+}
+
 /* *****************************************************************************
 Debug
 ***************************************************************************** */
