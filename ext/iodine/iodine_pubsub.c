@@ -459,6 +459,7 @@ static VALUE iodine_subscribe(VALUE self, VALUE args) {
 
   FIOBJ ch = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
   VALUE block = rb_block_proc();
+  Registry.add(block);
 
   Registry.add(block);
   uintptr_t subid =
