@@ -1,6 +1,6 @@
 ### Draft Inactivity Notice
 
-This proposed draft is only implemented by Iodine and hadn't seen external activity in a while.
+This proposed draft is only implemented by Iodine and hadn't seen external activity in a long while.
 
 Even though a number of other development teams (such as the teams for the Puma and Passenger server) mentioned that they plan to implements this draft, Iodine seems to be the only server currently implementing this draft and it is unlikely that this initiative will grow to become a community convention.
 
@@ -97,19 +97,9 @@ The requirement that the server extends the class of the Websocket Callback Obje
 
 ---
 
-## Iodine's Collection Extension to the Rack Websockets
+## Iodine's General Extensions to the Rack Websockets
 
-The biggest benefit from Iodine's Collection Extension is that it allows the creation of pub/sub plugins and other similar extensions that require access to all the connected Websockets - no need for the plugin to ask "where's the list" or "add this code to `on_open`" or anything at all, truly "plug and play".
-
-This extension should be easy enough to implement using a loop or an array within each process context. These methods do **not** cross process boundaries and they are meant to help implement more advanced features (they aren't a feature as much as an "access point").
-
-Internally, this extension also allows iodine to manage connection memory and resource allocation while relieving developers from rewriting the same workflow of connection storing (`on_open do ALL_WS << self; end `) and management. Knowing that the user doesn't keep Websocket object references, allows Iodine to safely optimize it's memory use.
-
-* `Iodine::Websocket.each` (class method) will run a block of code for each connected Websocket Callback Object **belonging to the current process**. This can be called from outside of a Websocket Callback Object as well.
-
-    ```ruby
-    Iodine::Websocket.each {|ws| ws.write "You're connected to PID #{Process.pid}" }
-    ```
+Iodine adds the following Websocket functions as extensions to the specification:
 
 * `Iodine::Websocket.defer(conn_id)` Schedules a block of code to run for the specified connection at a later time, (*if* the connection is open) while preventing concurrent code from running for the same connection object.
 
@@ -123,23 +113,14 @@ Internally, this extension also allows iodine to manage connection memory and re
     defer { write "still open" }
     ```
 
-* `Iodine::Websocket.count` (instance method) Returns the number of active websocket connections (including connections that are in the process of closing down) **belonging to the current process**.
-
-    ```ruby
-    write "#{Iodine::Websocket.count} clients sharing this process"
-    ```
-
 ## Iodine's Pub/Sub Extension to the Rack Websockets
 
-This extension separates the websocket Pub/Sub semantics from the Pub/Sub engine (i.e. Redis, MongoDB, etc'). This allows the Pub/Sub pattern to integrate with the Websocket API without the need for servers or applications to implement the Pub/Sub features.
+This extension separates the websocket Pub/Sub semantics from the application, allowing Pub/Sub logic to be implemented in separate modules called Pub/Sub "engines" that could (potentially) be added to any conforming server.
 
-This allows Pub/Sub "engines" to seamlessly integrate with a server and offer Pub/Sub functionality for the specified environment, without the need for applications or servers to know anything about the Pub/Sub details or the environment.
 
-For example, Iodine includes three Pub/Sub engines `Iodine::PubSub::CLUSTER` (the default, for single machine multi-process pub/sub), `Iodine::PubSub::SINGLE_PROCESS` (a single process pub/sub) and `Iodine::PubSub::RedisEngine` (for horizontal scaling across machine boundaries, using Redis pub/sub)...
+For example, Iodine includes three Pub/Sub (native) engines `Iodine::PubSub::CLUSTER` (the default, for single machine multi-process pub/sub), `Iodine::PubSub::SINGLE_PROCESS` (a single process pub/sub) and `Iodine::PubSub::RedisEngine` (for horizontal scaling across machine boundaries, using Redis pub/sub)...
 
 ...but it would be easy enough to write a gem that will add another engine for MongoDB Pub/Sub and that engine would be server agnostic.
-
-If the Collection Extension is implemented, than this extension should be relatively easy to implement by the server.
 
 I don't personally believe this has a chance of being adopted by other server implementors, but it's a very powerful tool that Iodine supports.
 
@@ -151,21 +132,21 @@ The Websocket module (i.e. `Iodine::Websocket`) includes the following singleton
 
 Websocket Callback Objects inherit the following functions:
 
- * `#subscribe` (instance method) Subscribes to a channel using a specific "engine" (or the default engine). *Returns a subscription object (success) or `nil` (error)*. Doesn't promise actual subscription, only that the subscription request was scheduled to be sent.
+ * `#subscribe` (instance method) Subscribes to a channel. *Returns a subscription object (success) or `nil` (error)*. Doesn't promise actual subscription, only that the subscription request was reviewed and possibly *sent to all registered engines*.
 
     Messages from the subscription are sent directly to the client unless an optional block is provided.
 
-    If an optional block is provided, it should accept the channel and message couplet (i.e. `{|channel, message| } `) and call the websocket `write` manually.
+    If an optional block is provided, it should accept the channel and message couplet (i.e. `{|channel, message| } `) and (optionally) call the websocket `write` manually.
 
-    All subscriptions (including server side subscriptions) MUST be automatically canceled **by the server** when the websocket closes.
+    All subscriptions (including server side subscriptions) MUST be automatically canceled **by the server** when the websocket closes (the server wraps the engine's `subscribe` and manages subscription data in the Websocket object).
 
  * `#subscription?` (instance method) locates an existing subscription, if any. *Returns a subscription object (success) or `nil` (error)*.
 
- * `#unsubscribe` (instance method) cancel / stop a subscription. Safely ignores `nil` subscription objects. Returns `nil`. Performance promise is similar to `subscribe` - the event was scheduled.
+ * `#unsubscribe` (instance method) cancel / stop a subscription. Safely ignores `nil` subscription objects. *Returns `nil`*. Performance promise is similar to `subscribe` - the event was scheduled.
 
     Notice: there's no need to call this function during the `on_close` callback, since the server will cancel all subscriptions automatically.
 
- * `#publish` (instance method) publishes a message to engine's specified channel. Returns `true` on success or `false` on failure (i.e., engine error). Doesn't promise actual publishing, only that the message was scheduled to be published.
+ * `#publish` (instance method) publishes a message to a specific engine (or the default engine). Returns `true` on success or `false` on failure (i.e., engine error). Doesn't promise actual publishing, only that the message forwarded to the engine.
 
 For example:
 
@@ -197,27 +178,37 @@ subscribe({pattern: "*"}, &block)
 unsubscribe subscription?({pattern: "*"}, &block)
 
 # server side anonymous block subscription requires reference...
-subscribe(pattern: "channel 5", force: text) do |channel, message|
+subscribe(pattern: "channel 5", encoding: :text) do |channel, message|
     puts message
 end
 # It's impossible to locate an anonymous block subscriptions!
-subscription? (pattern: "channel 5", force: text) do |channel, message|
+subscription? (pattern: "channel 5", encoding: :text) do |channel, message|
     puts message
 end
 #  => nil # ! can't locate
 
 ```
 
-Servers supporting this extension aren't required to implement any Pub/Sub engines, but they MUST implement a **bridge** between the server and Pub/Sub Engines that follows the following semantics:
+To implement this extension:
 
-Engines MUST inherit from a server specific Engine class and implement the following three methods that will be called by the server when required (servers might implement an internal distribution layer and call these functions at their discretion):
+- A server should manage a "registry" for channels, clients and pub/sub engines. Also, the server should notify all the "registered" pub/sub engines about the following two events:
+
+    - A channel received it's first subscriber.
+    - A channel lost it's last subscriber.
+
+- A server should offer a way for engines to publish messages to registered clients (using the `#distribute` function provided).
+
+    This can be achieved either using a process bound pub/sub option or a cluster bound option.
+
+
+Engines MUST inherit from a server specific Engine class and implement the following three methods that will be called by the server when required (servers should implement an internal distribution layer and call these functions at their discretion):
 
 * `subscribe(channel, is_pattern)`: Subscribes to the channel. The `is_pattern` flag sets the type of subscription. Returns `true` / `false`.
 
 * `unsubscribe(channel, is_pattern)`: Unsubscribes from the channel. The `is_pattern` flag sets the type of subscription. Returns `true` / `false`.
 
-* `publish(channel, msg, is_pattern)`: Publishes to the channel (or all channels matching the pattern). Returns `true` / `false` (some engines, such as Redis, might not support pattern publishing, they should simply return `false`).
+* `publish(channel, msg)`: Publishes to the channel. Returns `true` / `false`. No promises made.
 
 Engines inherit the following message from the server's Engine class and call it when messages were received:
 
-* `distribute(channel, message, is_pattern = nil)`: If `channel` is a channel pattern rather than a channel name, the `is_pattern` should be set to `true` by the Engine. Engines that don't support pattern publishing, can simply ignore this flag.
+* `distribute(channel, message)`:  Servers are free to implement this however they see fit. Return values should be ignored.

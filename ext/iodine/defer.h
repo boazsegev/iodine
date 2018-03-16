@@ -23,7 +23,7 @@ call `defer_clear_queue` before exiting the program.
 #define LIB_DEFER_VERSION_MINOR 1
 #define LIB_DEFER_VERSION_PATCH 2
 
-/* child process reaping is enabled by default */
+/* child process reaping is can be enabled as a default */
 #ifndef NO_CHILD_REAPER
 #define NO_CHILD_REAPER 0
 #endif
@@ -54,79 +54,87 @@ Thread Pool support
 /** an opaque thread pool type */
 typedef struct defer_pool *pool_pt;
 
-/** Starts a thread pool that will run deferred tasks in the background. */
+/**
+ * Starts a thread pool that will run deferred tasks in the background.
+ *
+ * The `defer_idle` callback will be used to handle waiting threads. It can be
+ * used to sleep, or run background tasks. It will run concurrently and
+ * continuesly for all the threads in the pool that are idling.
+ *
+ * If `defer_idle` is NULL, a fallback to `nanosleep` will be used.
+ */
 pool_pt defer_pool_start(unsigned int thread_count);
+
 /** Signals a running thread pool to stop. Returns immediately. */
 void defer_pool_stop(pool_pt pool);
-/** Waits for a running thread pool, joining threads and finishing all tasks. */
+
+/**
+ * Waits for a running thread pool, joining threads and finishing all tasks.
+ *
+ * This function MUST be called in order to free the pool's data (the
+ * `pool_pt`).
+ */
 void defer_pool_wait(pool_pt pool);
+
 /** Returns TRUE (1) if the pool is hadn't been signaled to finish up. */
 int defer_pool_is_active(pool_pt pool);
 
 /**
-OVERRIDE THIS to replace the default pthread implementation.
-
-Accepts a pointer to a function and a single argument that should be executed
-within a new thread.
-
-The function should allocate memory for the thread object and return a pointer
-to the allocated memory that identifies the thread.
-
-On error NULL should be returned.
-*/
+ * OVERRIDE THIS to replace the default pthread implementation.
+ *
+ * Accepts a pointer to a function and a single argument that should be executed
+ * within a new thread.
+ *
+ * The function should allocate memory for the thread object and return a
+ * pointer to the allocated memory that identifies the thread.
+ *
+ * On error NULL should be returned.
+ */
 void *defer_new_thread(void *(*thread_func)(void *), pool_pt pool);
 
 /**
-OVERRIDE THIS to replace the default pthread implementation.
+ * OVERRIDE THIS to replace the default pthread implementation.
+ *
+ * Frees the memory asociated with a thread indentifier (allows the thread to
+ * run it's course, just the identifier is freed).
+ */
+void defer_free_thread(void *p_thr);
 
-Accepts a pointer returned from `defer_new_thread` (should also free any
-allocated memory) and joins the associated thread.
-
-Return value is ignored.
-*/
+/**
+ * OVERRIDE THIS to replace the default pthread implementation.
+ *
+ * Accepts a pointer returned from `defer_new_thread` (should also free any
+ * allocated memory) and joins the associated thread.
+ *
+ * Return value is ignored.
+ */
 int defer_join_thread(void *p_thr);
 
 /**
-OVERRIDE THIS to replace the default pthread implementation.
-
-Throttles or reschedules the current running thread. Default implementation
-simply micro-sleeps.
-*/
+ * OVERRIDE THIS to replace the default pthread implementation.
+ *
+ * Throttles or reschedules the current running thread. Default implementation
+ * simply micro-sleeps.
+ */
 void defer_thread_throttle(unsigned long microsec);
 
-/* *****************************************************************************
-Child Process support (`fork`)
-***************************************************************************** */
-
 /**
-OVERRIDE THIS to replace the default `fork` implementation or to inject hooks
-into the forking function.
-
-Behaves like the system's `fork`.
-*/
-int defer_new_child(void);
-
-/**
- * Forks the process, starts up a thread pool and waits for all tasks to run.
- * All existing tasks will run in all processes (multiple times).
+ * OVERRIDE THIS to replace the default nanosleep implementation.
  *
- * It's possible to synchronize workload across processes by using a pipe (or
- * pipes) and a self-scheduling event that reads instructions from the pipe.
- *
- * This function will use SIGINT or SIGTERM to signal all the children processes
- * to finish up and exit. It will also setup a child process reaper (which will
- * remain active for the application's lifetime).
- *
- * Returns 0 on success, -1 on error and a positive number if this is a child
- * process that was forked.
+ * A thread entering this function should wait for new evennts.
  */
-int defer_perform_in_fork(unsigned int process_count,
-                          unsigned int thread_count);
-/** Returns TRUE (1) if the forked thread pool hadn't been signaled to finish
- * up. */
-int defer_fork_is_active(void);
-/** Returns the process number for the current working proceess. 0 == parent. */
-int defer_fork_pid(void);
+void defer_thread_wait(pool_pt pool, void *p_thr);
+
+/**
+ * OVERRIDE THIS to replace the default implementation (which does nothing).
+ *
+ * This should signal a single waiting thread to wake up (a new task entered the
+ * queue).
+ */
+void defer_thread_signal(void);
+
+/** Call this function after forking, to make sure no locks are engaged. */
+void defer_on_fork(void);
 
 #ifdef DEBUG
 /** minor testing facilities */

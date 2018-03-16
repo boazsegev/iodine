@@ -28,6 +28,7 @@ extern struct ___RegistryClass___ {
   void (*remove)(VALUE obj);
   VALUE (*add)(VALUE obj);
   void (*print)(void);
+  void (*on_fork)(void);
 } Registry;
 
 #endif // RB_REGISTRY_HELPER_H

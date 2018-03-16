@@ -1,6 +1,6 @@
 #ifndef H_HTTP1_PARSER_H
 /*
-Copyright: Boaz segev, 2017
+Copyright: Boaz Segev, 2017-2018
 License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
@@ -21,9 +21,17 @@ to maintain and that could be used for an HTTP/1.x client as well.
 #include <sys/types.h>
 
 #ifndef HTTP_HEADERS_LOWERCASE
-/** when defined, HTTP headers will be converted to lowercase and header
- * searches will be case sensitive. */
+/**
+ * when defined, HTTP headers will be converted to lowercase and header
+ * searches will be case sensitive.
+ *
+ * this is required by facil.io and helps with HTTP/2 compatibility.
+ */
 #define HTTP_HEADERS_LOWERCASE 1
+#endif
+
+#ifndef HTTP1_PARSER_CONVERT_EOL2NUL
+#define HTTP1_PARSER_CONVERT_EOL2NUL 0
 #endif
 
 #if HTTP_HEADERS_LOWERCASE
@@ -41,7 +49,8 @@ typedef struct http1_parser_s {
   struct http1_parser_protected_read_only_state_s {
     ssize_t content_length; /* negative values indicate chuncked data state */
     ssize_t read;           /* total number of bytes read so far (body only) */
-    uint8_t reserved;       /* for internal use */
+    uint8_t *next;    /* the known position for the end of request/response */
+    uint8_t reserved; /* for internal use */
   } state;
 } http1_parser_s;
 
@@ -104,6 +113,8 @@ size_t http1_fio_parser_fn(struct http1_fio_parser_args_s *args);
 
 static inline __attribute__((unused)) size_t
 http1_fio_parser(struct http1_fio_parser_args_s args) {
+  if (!args.length)
+    return 0;
   return http1_fio_parser_fn(&args);
 }
 #if __STDC_VERSION__ >= 199901L

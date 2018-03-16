@@ -1,11 +1,11 @@
 /*
-copyright: Boaz segev, 2016-2017
+copyright: Boaz Segev, 2016-2018
 license: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
-#ifndef WEBSOCKETS_H
-#define WEBSOCKETS_H
+#ifndef H_WEBSOCKETS_H
+#define H_WEBSOCKETS_H
 
 #include "http.h"
 
@@ -14,109 +14,14 @@ Feel free to copy, use and enjoy according to the license provided.
 extern "C" {
 #endif
 
-/* *****************************************************************************
-Upgrading from HTTP to Websockets
-***************************************************************************** */
-
 /**
-The Websocket type is an opaque type used by the websocket API to provide
-identify a specific Websocket connection and manage it's internal state.
-*/
-typedef struct Websocket ws_s;
-
-/**
-The protocol / service identifier for `libserver`.
+The protocol / service identifier.
 */
 extern char *WEBSOCKET_ID_STR;
-/**
-The Websocket Handler contains all the settings required for new websocket
-connections.
 
-This struct is used for the named agruments in the `websocket_upgrade`
-macro.
-*/
-typedef struct {
-  /**
-  The (optional) on_message callback will be called whenever a websocket message
-  is
-  received for this connection.
-
-  The data received points to the websocket's message buffer and it will be
-  overwritten once the function exits (it cannot be saved for later, but it can
-  be copied).
-  */
-  void (*on_message)(ws_s *ws, char *data, size_t size, uint8_t is_text);
-  /**
-  The (optional) on_open callback will be called once the websocket connection
-  is established and before is is registered with `facil`, so no `on_message`
-  events are raised before `on_open` returns.
-  */
-  void (*on_open)(ws_s *ws);
-  /**
-  The (optional) on_ready callback will be after a the underlying socket's
-  buffer changes it's state from full to available.
-
-  If the socket's buffer is never full, the callback is never called.
-
-  It should be noted that `libsock` manages the socket's buffer overflow and
-  implements and augmenting user-land buffer, allowing data to be safely written
-  to the websocket without worrying over the socket's buffer.
-  */
-  void (*on_ready)(ws_s *ws);
-  /**
-  The (optional) on_shutdown callback will be called if a websocket connection
-  is still open while the server is shutting down (called before `on_close`).
-  */
-  void (*on_shutdown)(ws_s *ws);
-  /**
-  The (optional) on_close callback will be called once a websocket connection is
-  terminated or failed to be established.
-  */
-  void (*on_close)(ws_s *ws);
-  /** The `http_request_s` to be converted ("upgraded") to a websocket
-   * connection. Either a request or a response object is required.*/
-  http_request_s *request;
-  /**
-  The (optional) HttpResponse to be used for sending the upgrade response.
-
-  Using this object allows cookies to be set before "upgrading" the connection.
-
-  The ownership of the response object will remain unchanged - so if you have
-  created the response object, you should free it.
-  */
-  http_response_s *response;
-  /**
-  The maximum websocket message size/buffer (in bytes) for this connection.
-  */
-  size_t max_msg_size;
-  /** Opaque user data. */
-  void *udata;
-  /**
-  Timeout for the websocket connections, a ping will be sent
-  whenever the timeout is reached. Connections are only closed when a ping
-  cannot be sent (the network layer fails). Pongs aren't reviewed.
-  */
-  uint8_t timeout;
-} websocket_settings_s;
-
-/** This macro allows easy access to the `websocket_upgrade` function. The macro
- * allows the use of named arguments, using the `websocket_settings_s` struct
- * members. i.e.:
- *
- *     on_message(ws_s * ws, char * data, size_t size, int is_text) {
- *        ; // ... this is the websocket on_message callback
- *        websocket_write(ws, data, size, is_text); // a simple echo example
- *     }
- *
- *     on_request(http_request_s* request) {
- *        websocket_upgrade( .request = request, .on_message = on_message);
- *     }
- *
- * Returns 0 on sucess and -1 on failure. A response is always sent.
- */
-ssize_t websocket_upgrade(websocket_settings_s settings);
-#define websocket_upgrade(...)                                                 \
-  websocket_upgrade((websocket_settings_s){__VA_ARGS__})
+/** used internally: attaches the Websocket protocol to the socket. */
+void websocket_attach(intptr_t uuid, http_settings_s *http_settings,
+                      websocket_settings_s *args, void *data, size_t length);
 
 /* *****************************************************************************
 Websocket information
@@ -177,22 +82,12 @@ typedef struct pubsub_engine_s pubsub_engine_s;
 typedef struct {
   /** the websocket receiving the message. */
   ws_s *ws;
-  /** the pub/sub engine from which where the message originated. */
-  struct pubsub_engine_s *engine;
   /** the Websocket pub/sub subscription ID. */
   uintptr_t subscription_id;
   /** the channel where the message was published. */
-  struct {
-    const char *name;
-    size_t len;
-  } channel;
+  FIOBJ channel;
   /** the published message. */
-  struct {
-    const char *data;
-    size_t len;
-  } msg;
-  /** Pattern matching was used for channel subscription. */
-  unsigned use_pattern : 1;
+  FIOBJ message;
   /** user opaque data. */
   void *udata;
 } websocket_pubsub_notification_s;
@@ -201,17 +96,8 @@ typedef struct {
 struct websocket_subscribe_s {
   /** the websocket receiving the message. REQUIRED. */
   ws_s *ws;
-  /**
-   * The pub/sub engine to use.
-   *
-   * Default: engine will publish messages throughout the facil process cluster.
-   */
-  struct pubsub_engine_s *engine;
   /** the channel where the message was published. */
-  struct {
-    const char *name;
-    size_t len;
-  } channel;
+  FIOBJ channel;
   /**
    * The callback that handles pub/sub notifications.
    *
@@ -288,8 +174,7 @@ void websocket_unsubscribe(ws_s *ws, uintptr_t subscription_id);
 
 /* *****************************************************************************
 Websocket Tasks - within a single process scope, NOT and entire cluster
-*****************************************************************************
-*/
+***************************************************************************** */
 
 /** The named arguments for `websocket_each` */
 struct websocket_each_args_s {
@@ -303,17 +188,22 @@ struct websocket_each_args_s {
   void (*on_finish)(ws_s *origin, void *arg);
 };
 /**
-Performs a task on each websocket connection that shares the same process
-(except the originating `ws_s` connection which is allowed to be NULL).
+ * DEPRECATION NOTICE: this function will be removed in favor of pub/sub logic.
+ *
+ * Performs a task on each websocket connection that shares the same process
+ * (except the originating `ws_s` connection which is allowed to be NULL).
  */
-void websocket_each(struct websocket_each_args_s args);
+void __attribute__((deprecated))
+websocket_each(struct websocket_each_args_s args);
 #define websocket_each(...)                                                    \
   websocket_each((struct websocket_each_args_s){__VA_ARGS__})
 
 /**
-The Arguments passed to the `websocket_write_each` function / macro are defined
-here, for convinience of calling the function.
-*/
+ * DEPRECATION NOTICE: this function will be removed in favor of pub/sub logic.
+ *
+ * The Arguments passed to the `websocket_write_each` function / macro are
+ * defined here, for convinience of calling the function.
+ */
 struct websocket_write_each_args_s {
   /** The originating websocket client will be excluded from the `write`.
    * Can be NULL. */
@@ -343,7 +233,8 @@ Writes data to each websocket connection that shares the same process
 Accepts a sing `struct websocket_write_each_args_s` argument. See the struct
 details for possible arguments.
  */
-int websocket_write_each(struct websocket_write_each_args_s args);
+int __attribute__((deprecated))
+websocket_write_each(struct websocket_write_each_args_s args);
 #define websocket_write_each(...)                                              \
   websocket_write_each((struct websocket_write_each_args_s){__VA_ARGS__})
 

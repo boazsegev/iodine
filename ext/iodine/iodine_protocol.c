@@ -5,6 +5,11 @@ License: MIT
 Feel free to copy, use and enjoy according to the license provided.
 */
 #include "iodine_protocol.h"
+#include "iodine_pubsub.h"
+
+#include "fio_llist.h"
+#include "fiobj4sock.h"
+#include "pubsub.h"
 
 #include <ruby/io.h>
 
@@ -15,6 +20,7 @@ The protocol object
 typedef struct {
   protocol_s protocol;
   VALUE handler;
+  fio_ls_s subscriptions;
 } iodine_protocol_s;
 
 VALUE IodineProtocol;
@@ -30,12 +36,15 @@ static void iodine_clear_task(intptr_t origin, void *block_) {
   (void)origin;
 }
 
-static void iodine_perform_task(intptr_t uuid, protocol_s *pr, void *block_) {
-  if (pr->service == iodine_protocol_service) {
-    RubyCaller.call2((VALUE)block_, iodine_call_proc_id, 1, (VALUE *)(pr + 1));
-  }
-  (void)uuid;
-}
+// static void iodine_perform_task(intptr_t uuid, protocol_s *pr, void *block_)
+// {
+//   if (pr->service == iodine_protocol_service) {
+//     RubyCaller.call2((VALUE)block_, iodine_call_proc_id, 1, (VALUE *)(pr +
+//     1));
+//   }
+//   (void)uuid;
+// }
+
 static void iodine_perform_task_and_free(intptr_t uuid, protocol_s *pr,
                                          void *block_) {
   if (pr->service == iodine_protocol_service) {
@@ -95,41 +104,246 @@ static VALUE default_on_data(VALUE self) {
 }
 
 /* *****************************************************************************
-Published functions
+Pub/Sub functions
 ***************************************************************************** */
 
-/** Returns the number of total connections managed by Iodine. */
-static VALUE dyn_count(VALUE self) {
-  size_t count = facil_count(iodine_protocol_service);
-  return ULL2NUM(count);
-  (void)self;
+static void iodine_on_unsubscribe(void *u1, void *u2) {
+  if (u2 && (VALUE)u2 != Qnil && u2 != (VALUE)Qfalse)
+    Registry.remove((VALUE)u2);
+  (void)u1;
+}
+
+static void *on_pubsub_notificationinGVL(void *m_) {
+  pubsub_message_s *m = m_;
+  VALUE rbn[2];
+  fio_cstr_s tmp = fiobj_obj2cstr(m->channel);
+  rbn[0] = rb_str_new(tmp.data, tmp.len);
+  Registry.add(rbn[0]);
+  tmp = fiobj_obj2cstr(m->message);
+  rbn[1] = rb_str_new(tmp.data, tmp.len);
+  Registry.add(rbn[1]);
+  RubyCaller.call2((VALUE)m->udata2, iodine_call_proc_id, 2, rbn);
+  Registry.remove(rbn[0]);
+  Registry.remove(rbn[1]);
+  return NULL;
+}
+
+static void iodine_prot_on_pubsub_message_direct(pubsub_message_s *msg) {
+  protocol_s *pr =
+      facil_protocol_try_lock((intptr_t)msg->udata1, FIO_PR_LOCK_WRITE);
+  if (!pr) {
+    if (errno == EBADF)
+      return;
+    pubsub_defer(msg);
+    return;
+  }
+  fiobj_send_free((intptr_t)msg->udata1, fiobj_dup(msg->message));
+  facil_protocol_unlock(pr, FIO_PR_LOCK_WRITE);
+}
+
+static void iodine_prot_on_pubsub_message(pubsub_message_s *msg) {
+  protocol_s *pr =
+      facil_protocol_try_lock((intptr_t)msg->udata1, FIO_PR_LOCK_TASK);
+  if (!pr) {
+    if (errno == EBADF)
+      return;
+    pubsub_defer(msg);
+    return;
+  }
+  RubyCaller.call_c(on_pubsub_notificationinGVL, msg);
+  facil_protocol_unlock(pr, FIO_PR_LOCK_TASK);
 }
 
 /**
-Runs a task for each dynamic connection (not websockets or HTTP).
+Subscribes the protocol to a channel belonging to a specific pub/sub service
+(using an {Iodine::PubSub::Engine} to connect Iodine to the service).
 
-Requires a block and returns it as an object.
+The function accepts a single argument (a Hash) and an optional block.
 
-i.e., will write to every open dynamic connection:
+If no block is provided, the message is sent directly to the client.
 
-      Iodine.each {|obj| obj.write "hello!" }
+Accepts a single Hash argument with the following possible options:
+
+:channel :: Required (unless :pattern). The channel to subscribe to.
+
+:pattern :: An alternative to the required :channel, subscribes to a pattern.
 
 */
-static VALUE dyn_run_each(VALUE self) {
-  rb_need_block();
-  VALUE block = rb_block_proc();
-  if (block == Qnil)
-    return Qfalse;
-  intptr_t origin = iodine_get_fd(self);
-  if (!origin)
-    origin = -1;
+static VALUE iodine_proto_subscribe(VALUE self, VALUE args) {
+  Check_Type(args, T_HASH);
 
-  Registry.add(block);
-  facil_each(.arg = (void *)block, .service = "IodineDynamic", .origin = origin,
-             .task_type = FIO_PR_LOCK_TASK, .task = iodine_perform_task,
-             .on_complete = iodine_clear_task);
-  return block;
+  intptr_t fd = iodine_get_fd(self);
+  if (!fd || (VALUE)fd == Qnil || fd < 0)
+    return Qfalse;
+
+  iodine_protocol_s *pr = iodine_get_cdata(self);
+  if (!pr || (VALUE)pr == Qnil ||
+      pr->protocol.service != iodine_protocol_service)
+    return Qfalse;
+
+  uint8_t use_pattern = 0;
+
+  VALUE rb_ch = rb_hash_aref(args, iodine_channel_var_id);
+  if (rb_ch == Qnil || rb_ch == Qfalse) {
+    use_pattern = 1;
+    rb_ch = rb_hash_aref(args, iodine_pattern_var_id);
+    if (rb_ch == Qnil || rb_ch == Qfalse)
+      rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
+  }
+  if (TYPE(rb_ch) == T_SYMBOL)
+    rb_ch = rb_sym2str(rb_ch);
+  Check_Type(rb_ch, T_STRING);
+
+  VALUE block = 0;
+  if (rb_block_given_p()) {
+    block = rb_block_proc();
+    Registry.add(block);
+  }
+
+  FIOBJ channel = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
+
+  pubsub_sub_pt subid =
+      pubsub_subscribe(.channel = channel, .use_pattern = use_pattern,
+                       .on_message =
+                           (block ? iodine_prot_on_pubsub_message
+                                  : iodine_prot_on_pubsub_message_direct),
+                       .on_unsubscribe = iodine_on_unsubscribe,
+                       .udata1 = (void *)fd, .udata2 = (void *)block);
+  fiobj_free(channel);
+  if (!subid)
+    return Qnil;
+  fio_ls_push(&pr->subscriptions, subid);
+  return ULL2NUM((uintptr_t)subid);
 }
+
+/**
+Searches for the subscription ID for the describes subscription.
+
+Takes the same arguments as {subscribe}, a single Hash argument with the
+following possible options:
+
+:channel :: The subscription's channel.
+
+:pattern :: An alternative to the required :channel, subscribes to a pattern.
+
+Note that code blocks MUST be the same object (a persistent block) and cannot be
+an inline block. If an inline block is ysed, it's considered a different block
+and the attempt to find the subscription will always fail.
+*/
+static VALUE iodine_proto_is_subscribed(VALUE self, VALUE args) {
+  Check_Type(args, T_HASH);
+
+  intptr_t fd = iodine_get_fd(self);
+  if (!fd || (VALUE)fd == Qnil || fd < 0)
+    return Qfalse;
+
+  iodine_protocol_s *pr = iodine_get_cdata(self);
+  if (!pr || (VALUE)pr == Qnil ||
+      pr->protocol.service != iodine_protocol_service)
+    return Qfalse;
+
+  uint8_t use_pattern = 0;
+
+  VALUE rb_ch = rb_hash_aref(args, iodine_channel_var_id);
+  if (rb_ch == Qnil || rb_ch == Qfalse) {
+    use_pattern = 1;
+    rb_ch = rb_hash_aref(args, iodine_pattern_var_id);
+    if (rb_ch == Qnil || rb_ch == Qfalse)
+      rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
+  }
+  if (TYPE(rb_ch) == T_SYMBOL)
+    rb_ch = rb_sym2str(rb_ch);
+  Check_Type(rb_ch, T_STRING);
+
+  VALUE block = 0;
+  if (rb_block_given_p()) {
+    block = rb_block_proc();
+  }
+
+  FIOBJ channel = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
+  pubsub_sub_pt subid =
+      pubsub_find_sub(.channel = channel, .use_pattern = use_pattern,
+                      .on_message =
+                          (block ? iodine_prot_on_pubsub_message
+                                 : iodine_prot_on_pubsub_message_direct),
+                      .on_unsubscribe = iodine_on_unsubscribe,
+                      .udata1 = (void *)fd, .udata2 = (void *)block);
+  return ULL2NUM((uintptr_t)subid);
+}
+
+/**
+Cancels the subscription matching `sub_id`.
+*/
+static VALUE iodine_proto_unsubscribe(VALUE self, VALUE sub_id) {
+  if (sub_id == Qnil || sub_id == Qfalse)
+    return Qnil;
+  intptr_t fd = iodine_get_fd(self);
+  if (!fd || (VALUE)fd == Qnil || fd < 0)
+    return Qfalse;
+
+  iodine_protocol_s *pr = iodine_get_cdata(self);
+  if (!pr || (VALUE)pr == Qnil ||
+      pr->protocol.service != iodine_protocol_service)
+    return Qfalse;
+
+  Check_Type(sub_id, T_FIXNUM);
+  void *sub_pt = (void *)NUM2ULL(sub_id);
+  FIO_LS_FOR(&pr->subscriptions, pos) {
+    if (pos->obj == (void *)sub_pt) {
+      pubsub_unsubscribe(sub_pt);
+      fio_ls_remove(pos);
+      return Qtrue;
+    }
+  }
+  return Qnil;
+}
+
+/**
+Publishes a message to a channel.
+
+Accepts a single Hash argument with the following possible options:
+
+:engine :: If provided, the engine to use for pub/sub. Otherwise the default
+engine is used.
+
+:channel :: REQUIRED. The channel to publish to.
+
+:message :: REQUIRED. The message to be published.
+:
+*/
+static VALUE iodine_proto_publish(VALUE self, VALUE args) {
+  Check_Type(args, T_HASH);
+
+  VALUE rb_ch = rb_hash_aref(args, iodine_channel_var_id);
+  if (rb_ch == Qnil || rb_ch == Qfalse) {
+    rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
+  }
+  if (TYPE(rb_ch) == T_SYMBOL)
+    rb_ch = rb_sym2str(rb_ch);
+  Check_Type(rb_ch, T_STRING);
+
+  VALUE rb_msg = rb_hash_aref(args, iodine_message_var_id);
+  if (rb_msg == Qnil || rb_msg == Qfalse) {
+    rb_raise(rb_eArgError, "message is required for the :publish method.");
+  }
+  Check_Type(rb_msg, T_STRING);
+
+  pubsub_engine_s *engine =
+      iodine_engine_ruby2facil(rb_hash_aref(args, iodine_engine_var_id));
+  FIOBJ channel = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
+  FIOBJ msg = fiobj_str_new(RSTRING_PTR(rb_msg), RSTRING_LEN(rb_msg));
+
+  intptr_t subid =
+      pubsub_publish(.engine = engine, .channel = channel, .message = msg);
+  if (!subid)
+    return Qfalse;
+  return Qtrue;
+  (void)self;
+}
+
+/* *****************************************************************************
+Published functions
+***************************************************************************** */
 
 /**
 Reads up to `n` bytes from the network connection.
@@ -222,7 +436,7 @@ static VALUE dyn_write_move(VALUE self, VALUE data) {
   Registry.add(data);
   intptr_t fd = iodine_get_fd(self);
   if (sock_write2(.uuid = fd, .buffer = RSTRING_PTR(data),
-                  .length = RSTRING_LEN(data), .move = 1,
+                  .length = RSTRING_LEN(data),
                   .dealloc = (void (*)(void *))Registry.remove))
     return Qfalse;
   return self;
@@ -352,7 +566,7 @@ static VALUE dyn_defer(int argc, VALUE *argv, VALUE self) {
     return Qfalse;
   Registry.add(block);
   facil_defer(.uuid = fd, .task = iodine_perform_task_and_free,
-              .task_type = FIO_PR_LOCK_TASK, .arg = (void *)block,
+              .type = FIO_PR_LOCK_TASK, .arg = (void *)block,
               .fallback = iodine_clear_task);
   return block;
 }
@@ -382,7 +596,11 @@ static void dyn_protocol_on_shutdown(intptr_t fduuid, protocol_s *protocol) {
 static void dyn_protocol_on_close(intptr_t uuid, protocol_s *protocol) {
   RubyCaller.call(dyn_prot(protocol)->handler, iodine_on_close_func_id);
   iodine_set_fd(dyn_prot(protocol)->handler, 0);
+  iodine_set_cdata(dyn_prot(protocol)->handler, NULL);
   Registry.remove(dyn_prot(protocol)->handler);
+  while (fio_ls_any(&dyn_prot(protocol)->subscriptions)) {
+    pubsub_unsubscribe(fio_ls_pop(&dyn_prot(protocol)->subscriptions));
+  }
   free(protocol);
   (void)uuid;
 }
@@ -401,7 +619,6 @@ Connection management API
 static inline protocol_s *dyn_set_protocol(intptr_t fduuid, VALUE handler,
                                            uint8_t timeout) {
   Registry.add(handler);
-  iodine_set_fd(handler, fduuid);
   iodine_protocol_s *protocol = malloc(sizeof(*protocol));
   if (protocol == NULL) {
     Registry.remove(handler);
@@ -416,16 +633,23 @@ static inline protocol_s *dyn_set_protocol(intptr_t fduuid, VALUE handler,
       .protocol.ping = dyn_protocol_ping,
       .protocol.service = iodine_protocol_service,
       .handler = handler,
+      .subscriptions = FIO_LS_INIT(protocol->subscriptions),
   };
+  iodine_set_fd(handler, fduuid);
+  iodine_set_cdata(handler, protocol);
   RubyCaller.call(handler, iodine_on_open_func_id);
   return &protocol->protocol;
 }
 
-static protocol_s *on_open_dyn_protocol(intptr_t fduuid, void *udata) {
+static void on_open_dyn_protocol(intptr_t fduuid, void *udata) {
   VALUE rb_tout = rb_ivar_get((VALUE)udata, iodine_timeout_var_id);
   uint8_t timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
   VALUE handler = RubyCaller.call((VALUE)udata, iodine_new_func_id);
-  return dyn_set_protocol(fduuid, handler, timeout);
+  if (handler == Qnil) {
+    sock_close(fduuid);
+    return;
+  }
+  facil_attach(fduuid, dyn_set_protocol(fduuid, handler, timeout));
 }
 
 /** Sets up a listening socket. Conncetions received at the assigned port will
@@ -483,12 +707,12 @@ VALUE dyn_switch_prot(VALUE self, VALUE handler) {
   return handler;
 }
 
-static protocol_s *on_open_dyn_protocol_instance(intptr_t fduuid, void *udata) {
+static void on_open_dyn_protocol_instance(intptr_t fduuid, void *udata) {
   VALUE rb_tout = rb_ivar_get((VALUE)udata, iodine_timeout_var_id);
   uint8_t timeout = (TYPE(rb_tout) == T_FIXNUM) ? FIX2UINT(rb_tout) : 0;
   protocol_s *pr = dyn_set_protocol(fduuid, (VALUE)udata, timeout);
   Registry.remove((VALUE)udata);
-  return pr;
+  facil_attach(fduuid, pr);
 }
 
 /**
@@ -588,8 +812,6 @@ Library Initialization
 void Iodine_init_protocol(void) {
 
   /* add Iodine module functions */
-  // rb_define_module_function(Iodine, "defer", dyn_defer, -1);
-  // rb_define_module_function(Iodine, "each", dyn_run_each, 0);
   rb_define_module_function(Iodine, "listen", iodine_listen, 2);
   rb_define_module_function(Iodine, "connect", iodine_connect, 3);
   rb_define_module_function(Iodine, "attach_io", iodine_attach_io, 2);
@@ -607,14 +829,10 @@ void Iodine_init_protocol(void) {
 
   /* Add module functions */
   rb_define_singleton_method(IodineProtocol, "defer", dyn_defer, -1);
-  rb_define_singleton_method(IodineProtocol, "count", dyn_count, 0);
-  rb_define_singleton_method(IodineProtocol, "each", dyn_run_each, 0);
 
   /* Add module instance methods */
-  // rb_define_method(IodineProtocol, "each", dyn_run_each, 0);
   rb_define_method(IodineProtocol, "open?", dyn_is_open, 0);
   rb_define_method(IodineProtocol, "conn_id", dyn_uuid, 0);
-  rb_define_method(IodineProtocol, "count", dyn_count, 0);
   rb_define_method(IodineProtocol, "read", dyn_read, -1);
   rb_define_method(IodineProtocol, "write", dyn_write, 1);
   rb_define_method(IodineProtocol, "write!", dyn_write_move, 1);
@@ -624,4 +842,9 @@ void Iodine_init_protocol(void) {
   rb_define_method(IodineProtocol, "switch_protocol", dyn_switch_prot, 1);
   rb_define_method(IodineProtocol, "timeout=", dyn_set_timeout, 1);
   rb_define_method(IodineProtocol, "timeout", dyn_get_timeout, 0);
+  rb_define_method(IodineProtocol, "subscribe", iodine_proto_subscribe, 1);
+  rb_define_method(IodineProtocol, "unsubscribe", iodine_proto_unsubscribe, 1);
+  rb_define_method(IodineProtocol, "subscribed?", iodine_proto_is_subscribed,
+                   1);
+  rb_define_method(IodineProtocol, "publish", iodine_proto_publish, 1);
 }

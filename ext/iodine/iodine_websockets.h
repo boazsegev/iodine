@@ -12,8 +12,6 @@ Feel free to copy, use and enjoy according to the license provided.
 
 void Iodine_init_websocket(void);
 
-void iodine_websocket_upgrade(http_request_s *request,
-                              http_response_s *response, VALUE handler,
-                              size_t max_msg, uint8_t ping);
+void iodine_websocket_upgrade(http_s *request, VALUE handler);
 
 #endif

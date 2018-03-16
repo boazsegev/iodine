@@ -42,20 +42,18 @@ class EchoProtocol
     puts "We have 1 timer, and #{Iodine.count} connections."
   end
 
+  def on_open
+    subscribe(channel: :chat) {|ch, msg|  write msg }
+    subscribe channel: :quite
+  end
+
   # `on_message` is an optional alternative to the `on_data` callback.
   # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
   def on_message(buffer)
     # writing will never block and will use a buffer written in C when needed.
-    write buffer
-    puts buffer.dump
-    # close will be performed only once all the data in the write buffer
-    # was sent. use `force_close` to close early.
-    close if buffer =~ /^bye[\r\n]/i
-    upgrade ShoooProtocol if buffer =~ /^shoo[\r\n]/i
-    # use buffer.dup to save the data from being recycled once we return.
-    data = "Someone said: #{buffer}"
-    # run asynchronous tasks with ease
-    each { |c| puts c; c.write data }
+    publish channel: :chat, message: "Someone said: #{buffer}"
+    switch_protocol ShoooProtocol if buffer =~ /^shoo[\r\n]/i
+    write "You speak!\n" if unsubscribe(subscribed?(channel: :quite))
   end
 end
 

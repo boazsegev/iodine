@@ -51,5 +51,9 @@ class WebsocketEcho
   end
 end
 
+# if defined?(Iodine)
+#   Iodine.run_every(2000) { Iodine::Base.db_print_registry }
+# end
+
 # this function call links our HelloWorld application with Rack
 run MyHTTPRouter

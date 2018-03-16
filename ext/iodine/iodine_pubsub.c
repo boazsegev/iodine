@@ -8,6 +8,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "rb-call.h"
 
 #include "pubsub.h"
+#include "rb-fiobj2rb.h"
 #include "redis_engine.h"
 
 VALUE IodineEngine;
@@ -52,13 +53,11 @@ call this function from your own code / application.
 
 The function should return `true` on success and `nil` or `false` on failure.
 */
-static VALUE engine_pub_placeholder(VALUE self, VALUE channel, VALUE msg,
-                                    VALUE use_pattern) {
+static VALUE engine_pub_placeholder(VALUE self, VALUE channel, VALUE msg) {
   return Qnil;
   (void)self;
   (void)msg;
   (void)channel;
-  (void)use_pattern;
 }
 
 /* *****************************************************************************
@@ -89,26 +88,18 @@ channel to be the same.
 If a client subscribed to "channel 1" on engine A, they will NOT receive
 messages from "channel 1" on engine B.
 */
-static VALUE engine_distribute(int argc, VALUE *argv, VALUE self) {
-  if (argc < 2 || argc > 3)
-    rb_raise(rb_eArgError,
-             "wrong number of arguments (given %d, expected 2..3).", argc);
-  VALUE channel = argv[0];
-  VALUE msg = argv[1];
-  VALUE pattern = argc >= 3 ? argv[2] : Qnil;
+static VALUE engine_distribute(VALUE self, VALUE channel, VALUE msg) {
   Check_Type(channel, T_STRING);
   Check_Type(msg, T_STRING);
 
   iodine_engine_s *engine;
   Data_Get_Struct(self, iodine_engine_s, engine);
+  FIOBJ ch = fiobj_str_new(RSTRING_PTR(channel), RSTRING_LEN(channel));
+  FIOBJ m = fiobj_str_new(RSTRING_PTR(msg), RSTRING_LEN(msg));
 
-  pubsub_engine_distribute(.engine = engine->p,
-                           .channel.name = RSTRING_PTR(channel),
-                           .channel.len = RSTRING_LEN(channel),
-                           .msg.data = RSTRING_PTR(msg),
-                           .msg.len = RSTRING_LEN(msg),
-                           .use_pattern =
-                               (pattern != Qnil && pattern != Qfalse));
+  pubsub_publish(.engine = PUBSUB_PROCESS_ENGINE, .channel = ch, .message = m);
+  fiobj_free(ch);
+  fiobj_free(msg);
   return self;
 }
 
@@ -128,36 +119,36 @@ C => Ruby Bridge
 
 struct engine_gvl_args_s {
   const pubsub_engine_s *eng;
-  const char *ch;
-  size_t ch_len;
-  const char *msg;
-  size_t msg_len;
+  FIOBJ ch;
+  FIOBJ msg;
   uint8_t use_pattern;
 };
 
 static void *engine_subscribe_inGVL(void *a_) {
   struct engine_gvl_args_s *args = a_;
   VALUE data[2];
-  data[0] = rb_str_new(args->ch, args->ch_len);
+  fio_cstr_s tmp = fiobj_obj2cstr(args->ch);
+  data[0] = rb_str_new(tmp.data, tmp.len);
   data[1] = args->use_pattern ? Qtrue : Qnil;
   VALUE eng = ((iodine_engine_s *)args->eng)->handler;
   eng = RubyCaller.call2(eng, engine_subid, 2, data);
-  return ((eng == Qfalse || eng == Qnil) ? (void *)-1 : (void *)0);
+  return NULL;
 }
 
 /* Should return 0 on success and -1 on failure. */
-static int engine_subscribe(const pubsub_engine_s *eng, const char *ch,
-                            size_t ch_len, uint8_t use_pattern) {
+static void engine_subscribe(const pubsub_engine_s *eng, FIOBJ ch,
+                             uint8_t use_pattern) {
   struct engine_gvl_args_s args = {
-      .eng = eng, .ch = ch, .ch_len = ch_len, .use_pattern = use_pattern,
+      .eng = eng, .ch = ch, .use_pattern = use_pattern,
   };
-  return RubyCaller.call_c(engine_subscribe_inGVL, &args) ? 0 : -1;
+  RubyCaller.call_c(engine_subscribe_inGVL, &args);
 }
 
 static void *engine_unsubscribe_inGVL(void *a_) {
   struct engine_gvl_args_s *args = a_;
   VALUE data[2];
-  data[0] = rb_str_new(args->ch, args->ch_len);
+  fio_cstr_s tmp = fiobj_obj2cstr(args->ch);
+  data[0] = rb_str_new(tmp.data, tmp.len);
   data[1] = args->use_pattern ? Qtrue : Qnil;
   VALUE eng = ((iodine_engine_s *)args->eng)->handler;
   RubyCaller.call2(eng, engine_unsubid, 2, data);
@@ -165,36 +156,34 @@ static void *engine_unsubscribe_inGVL(void *a_) {
 }
 
 /* Return value is ignored - nothing should be returned. */
-static void engine_unsubscribe(const pubsub_engine_s *eng, const char *ch,
-                               size_t ch_len, uint8_t use_pattern) {
+static void engine_unsubscribe(const pubsub_engine_s *eng, FIOBJ ch,
+                               uint8_t use_pattern) {
   struct engine_gvl_args_s args = {
-      .eng = eng, .ch = ch, .ch_len = ch_len, .use_pattern = use_pattern,
+      .eng = eng, .ch = ch, .use_pattern = use_pattern,
   };
   RubyCaller.call_c(engine_unsubscribe_inGVL, &args);
 }
 
 static void *engine_publish_inGVL(void *a_) {
   struct engine_gvl_args_s *args = a_;
-  VALUE data[3];
-  data[0] = rb_str_new(args->ch, args->ch_len);
-  data[1] = rb_str_new(args->msg, args->msg_len);
-  data[2] = args->use_pattern ? Qtrue : Qnil;
+  VALUE data[2];
+  fio_cstr_s tmp = fiobj_obj2cstr(args->ch);
+  data[0] = rb_str_new(tmp.data, tmp.len);
+  Registry.add(data[0]);
+  tmp = fiobj_obj2cstr(args->msg);
+  data[1] = rb_str_new(tmp.data, tmp.len);
+  Registry.add(data[1]);
   VALUE eng = ((iodine_engine_s *)args->eng)->handler;
-  eng = RubyCaller.call2(eng, engine_pubid, 3, data);
+  eng = RubyCaller.call2(eng, engine_pubid, 2, data);
+  Registry.remove(data[0]);
+  Registry.remove(data[1]);
   return ((eng == Qfalse || eng == Qnil) ? (void *)-1 : 0);
 }
 
 /* Should return 0 on success and -1 on failure. */
-static int engine_publish(const pubsub_engine_s *eng, const char *ch,
-                          size_t ch_len, const char *msg, size_t msg_len,
-                          uint8_t use_pattern) {
+static int engine_publish(const pubsub_engine_s *eng, FIOBJ ch, FIOBJ msg) {
   struct engine_gvl_args_s args = {
-      .eng = eng,
-      .ch = ch,
-      .ch_len = ch_len,
-      .msg = msg,
-      .msg_len = msg_len,
-      .use_pattern = use_pattern,
+      .eng = eng, .ch = ch, .msg = msg,
   };
   return RubyCaller.call_c(engine_publish_inGVL, &args) ? 0 : -1;
 }
@@ -246,56 +235,29 @@ Redis
 ***************************************************************************** */
 
 struct redis_callback_data {
-  resp_object_s *msg;
+  FIOBJ msg;
   VALUE block;
 };
 
-/*
-populate
-*/
-int populate_redis_callback_reply(resp_parser_pt p, resp_object_s *o,
-                                  void *rep) {
-  switch (o->type) {
-  case RESP_ARRAY:
-  case RESP_PUBSUB:
-    break;
-  case RESP_NULL:
-    rb_ary_push((VALUE)rep, Qnil);
-    break;
-  case RESP_NUMBER:
-    rb_ary_push((VALUE)rep, LONG2FIX(resp_obj2num(o)->number));
-    break;
-  case RESP_ERR:
-  case RESP_STRING:
-    rb_ary_push((VALUE)rep, rb_str_new((char *)resp_obj2str(o)->string,
-                                       resp_obj2str(o)->len));
-    break;
-  case RESP_OK:
-    rb_ary_push((VALUE)rep, rb_str_new("OK", 2));
-    break;
-  }
-  return 0;
-  (void)p;
-}
 /*
 Perform a Redis message callback in the GVL
 */
 static void *perform_redis_callback_inGVL(void *data) {
   struct redis_callback_data *a = data;
-  VALUE reply = rb_ary_new();
-  resp_obj_each(NULL, a->msg, populate_redis_callback_reply, (void *)reply);
+  VALUE reply = fiobj2rb_deep(a->msg, 1);
+  Registry.add(reply);
   rb_funcallv(a->block, iodine_call_proc_id, 1, &reply);
   Registry.remove(a->block);
+  Registry.remove(reply);
   return NULL;
 }
 
 /*
 Redis message callback
 */
-static void redis_callback(pubsub_engine_s *e, resp_object_s *msg,
-                           void *block) {
+static void redis_callback(pubsub_engine_s *e, FIOBJ reply, void *block) {
   struct redis_callback_data d = {
-      .msg = msg, .block = (VALUE)block,
+      .msg = reply, .block = (VALUE)block,
   };
   RubyCaller.call_c(perform_redis_callback_inGVL, &d);
   (void)e;
@@ -318,46 +280,40 @@ static VALUE redis_send(int argc, VALUE *argv, VALUE self) {
     rb_raise(rb_eArgError,
              "wrong number of arguments (given %d, expected at least 1).",
              argc);
-  resp_object_s *cmd = NULL;
   Check_Type(argv[0], T_STRING);
-
-  iodine_engine_s *e;
-  Data_Get_Struct(self, iodine_engine_s, e);
-  cmd = resp_arr2obj(argc, NULL);
-  for (int i = 0; i < argc; i++) {
-    switch (TYPE(argv[i])) {
-    case T_SYMBOL:
-      argv[i] = rb_sym2str(argv[i]);
-    /* Fallthrough */
-    case T_STRING:
-      resp_obj2arr(cmd)->array[i] =
-          resp_str2obj(RSTRING_PTR(argv[i]), RSTRING_LEN(argv[i]));
-      break;
-    case T_FIXNUM:
-      resp_obj2arr(cmd)->array[i] = resp_num2obj(FIX2LONG(argv[i]));
-      break;
-    default:
-      goto error;
-      break;
+  FIOBJ data = FIOBJ_INVALID;
+  FIOBJ cmd = FIOBJ_INVALID;
+  if (argc > 1) {
+    for (int i = 0; i < argc; ++i) {
+      if (TYPE(argv[i]) == T_SYMBOL)
+        argv[i] = rb_sym2str(argv[i]);
+      if (TYPE(argv[i]) != T_FIXNUM)
+        Check_Type(argv[i], T_STRING);
+    }
+    data = fiobj_ary_new();
+    for (int i = 0; i < argc; ++i) {
+      if (TYPE(argv[i]) == T_FIXNUM)
+        fiobj_ary_push(data, fiobj_num_new(FIX2LONG(argv[i])));
+      else
+        fiobj_ary_push(
+            data, fiobj_str_new(RSTRING_PTR(argv[i]), RSTRING_LEN(argv[i])));
     }
   }
+  cmd = fiobj_str_new(RSTRING_PTR(argv[0]), RSTRING_LEN(argv[0]));
+  iodine_engine_s *e;
+  Data_Get_Struct(self, iodine_engine_s, e);
 
   if (rb_block_given_p()) {
     VALUE block = rb_block_proc();
     Registry.add(block);
-    redis_engine_send(e->p, cmd, redis_callback, (void *)block);
+    redis_engine_send(e->p, cmd, data, redis_callback, (void *)block);
     return block;
   } else {
-    redis_engine_send(e->p, cmd, NULL, NULL);
+    redis_engine_send(e->p, cmd, data, NULL, NULL);
   }
+  fiobj_free(cmd);
+  fiobj_free(data);
   return Qtrue;
-error:
-  if (cmd)
-    resp_free_object(cmd);
-  rb_raise(rb_eArgError, "Arguments can only include Strings, Symbols and "
-                         "Integers - no arrays or hashes or other objects can "
-                         "be sent.");
-  return self;
 }
 
 /**
@@ -407,9 +363,9 @@ static VALUE redis_engine_initialize(int argc, VALUE *argv, VALUE self) {
                           .ping_interval = iping,
                           .auth = (auth == Qnil ? NULL : StringValueCStr(auth)),
                           .auth_len = (auth == Qnil ? 0 : RSTRING_LEN(auth)));
+  engine->dealloc = redis_engine_destroy;
   if (!engine->p)
     rb_raise(rb_eRuntimeError, "unknown error, can't initialize RedisEngine.");
-  engine->dealloc = redis_engine_destroy;
   return self;
 }
 
@@ -455,9 +411,11 @@ static void iodine_on_unsubscribe(void *u1, void *u2) {
 
 static void *on_pubsub_notificationinGVL(pubsub_message_s *n) {
   VALUE rbn[2];
-  rbn[0] = rb_str_new(n->channel.name, n->channel.len);
+  fio_cstr_s tmp = fiobj_obj2cstr(n->channel);
+  rbn[0] = rb_str_new(tmp.data, tmp.len);
   Registry.add(rbn[0]);
-  rbn[1] = rb_str_new(n->msg.data, n->msg.len);
+  tmp = fiobj_obj2cstr(n->message);
+  rbn[1] = rb_str_new(tmp.data, tmp.len);
   Registry.add(rbn[1]);
   RubyCaller.call2((VALUE)n->udata1, iodine_call_proc_id, 2, rbn);
   Registry.remove(rbn[0]);
@@ -476,9 +434,6 @@ Subscribes the process to a channel belonging to a specific pub/sub service
 The function accepts a single argument (a Hash) and a required block.
 
 Accepts a single Hash argument with the following possible options:
-
-:engine :: If provided, the engine to use for pub/sub. Otherwise the default
-        :: engine is used.
 
 :channel :: Required (unless :pattern). The channel to subscribe to.
 
@@ -502,19 +457,17 @@ static VALUE iodine_subscribe(VALUE self, VALUE args) {
     rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);
 
+  FIOBJ ch = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
   VALUE block = rb_block_proc();
   Registry.add(block);
 
-  pubsub_engine_s *engine =
-      iodine_engine_ruby2facil(rb_hash_aref(args, engine_varid));
-
+  Registry.add(block);
   uintptr_t subid =
-      (uintptr_t)pubsub_subscribe(.channel.name = RSTRING_PTR(rb_ch),
-                                  .channel.len = RSTRING_LEN(rb_ch),
-                                  .engine = engine, .use_pattern = use_pattern,
+      (uintptr_t)pubsub_subscribe(.channel = ch, .use_pattern = use_pattern,
                                   .on_message = on_pubsub_notificationin,
                                   .on_unsubscribe = iodine_on_unsubscribe,
                                   .udata1 = (void *)block);
+  fiobj_free(ch);
   if (!subid)
     return Qnil;
   return ULL2NUM(subid);
@@ -572,13 +525,13 @@ static VALUE iodine_publish(VALUE self, VALUE args) {
 
   pubsub_engine_s *engine =
       iodine_engine_ruby2facil(rb_hash_aref(args, engine_varid));
+  FIOBJ ch = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
+  FIOBJ msg = fiobj_str_new(RSTRING_PTR(rb_msg), RSTRING_LEN(rb_msg));
 
   intptr_t ret =
-      pubsub_publish(.engine = engine, .channel.name = (RSTRING_PTR(rb_ch)),
-                     .channel.len = (RSTRING_LEN(rb_ch)),
-                     .msg.data = (RSTRING_PTR(rb_msg)),
-                     .msg.len = (RSTRING_LEN(rb_msg)),
-                     .use_pattern = use_pattern);
+      pubsub_publish(.engine = engine, .channel = ch, .message = msg);
+  fiobj_free(ch);
+  fiobj_free(msg);
   if (!ret)
     return Qfalse;
   return Qtrue;
@@ -604,10 +557,10 @@ void Iodine_init_pubsub(void) {
   rb_define_alloc_func(IodineEngine, engine_alloc_c);
   rb_define_method(IodineEngine, "initialize", engine_initialize, 0);
 
-  rb_define_method(IodineEngine, "distribute", engine_distribute, -1);
+  rb_define_method(IodineEngine, "distribute", engine_distribute, 2);
   rb_define_method(IodineEngine, "subscribe", engine_sub_placeholder, 2);
   rb_define_method(IodineEngine, "unsubscribe", engine_sub_placeholder, 2);
-  rb_define_method(IodineEngine, "publish", engine_pub_placeholder, 3);
+  rb_define_method(IodineEngine, "publish", engine_pub_placeholder, 2);
 
   rb_define_module_function(Iodine, "default_pubsub=", ips_set_default, 1);
   rb_define_module_function(Iodine, "default_pubsub", ips_get_default, 0);

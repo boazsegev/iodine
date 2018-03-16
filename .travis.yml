@@ -5,10 +5,9 @@ os:
 before_install:
   - gem install bundler -v 1.10.6
 rvm:
+  - 2.5.0
   - 2.4.0
   - 2.3.1
-  - 2.3.0
-  - 2.2.4
   - 2.2.2
 notifications:
   email: false

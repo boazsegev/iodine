@@ -22,7 +22,7 @@ spinlock / sync for tasks
 /* nanosleep seems to be the most effective and efficient reschedule */
 #define reschedule_thread()                                                    \
   {                                                                            \
-    static const struct timespec tm = {.tv_nsec = 1};                          \
+    const struct timespec tm = {.tv_nsec = 1};                                 \
     nanosleep(&tm, NULL);                                                      \
   }
 #define throttle_thread(micosec)                                               \
@@ -44,11 +44,11 @@ typedef volatile unsigned char spn_lock_i;
 
 /* C11 Atomics are defined? */
 #if defined(__ATOMIC_RELAXED)
-#define SPN_LOCK_BUILTIN(...) __atomic_exchange_n(__VA_ARGS__, __ATOMIC_ACQ_REL)
+#define SPN_LOCK_BUILTIN(...) __atomic_exchange_n(__VA_ARGS__, __ATOMIC_SEQ_CST)
 /** An atomic addition operation */
-#define spn_add(...) __atomic_add_fetch(__VA_ARGS__, __ATOMIC_ACQ_REL)
+#define spn_add(...) __atomic_add_fetch(__VA_ARGS__, __ATOMIC_SEQ_CST)
 /** An atomic subtraction operation */
-#define spn_sub(...) __atomic_sub_fetch(__VA_ARGS__, __ATOMIC_ACQ_REL)
+#define spn_sub(...) __atomic_sub_fetch(__VA_ARGS__, __ATOMIC_SEQ_CST)
 
 /* Select the correct compiler builtin method. */
 #elif defined(__has_builtin)
@@ -90,11 +90,22 @@ static inline __attribute__((unused)) int spn_is_locked(spn_lock_i *lock) {
   __asm__ volatile("" ::: "memory");
   return *lock;
 }
+
 /** Busy waits for the lock. */
 static inline __attribute__((unused)) void spn_lock(spn_lock_i *lock) {
   while (spn_trylock(lock)) {
     reschedule_thread();
   }
 }
+
+#if DEBUG
+/** Busy waits for a lock, reports contention. */
+#define spn_lock(lock)                                                         \
+  while (spn_trylock(lock)) {                                                  \
+    fprintf(stderr, "INFO: spinlock spin %s:%d\n", __FILE__, __LINE__);        \
+    reschedule_thread();                                                       \
+  }
+#include <stdio.h>
+#endif /* DEBUG */
 
 #endif /* H_SPNLOCK_H */

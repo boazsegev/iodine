@@ -1,12 +1,26 @@
-#ifndef H_FIOBJ_HASH_H
-#define H_FIOBJ_HASH_H
 /*
-Copyright: Boaz Segev, 2017
+Copyright: Boaz Segev, 2017-2018
 License: MIT
 */
+#ifndef H_FIOBJ_HASH_H
+/**
+ * The facil.io Hash object is an ordered Hash Table implementation.
+ *
+ * By compromising some of the HashMap's collision resistance (comparing only
+ * the Hash values rather than comparing key data), memory comparison can be
+ * avoided and performance increased.
+ *
+ * By being ordered it's possible to iterate over key-value pairs in the order
+ * in which they were added to the Hash table, making it possible to output JSON
+ * in a controlled manner.
+ */
+#define H_FIOBJ_HASH_H
 
+#include "fiobject.h"
+
+#include "fio_siphash.h"
 #include "fiobj_str.h"
-#include "fiobj_sym.h"
+#include <errno.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -15,51 +29,12 @@ extern "C" {
 /* MUST be a power of 2 */
 #define HASH_INITIAL_CAPACITY 16
 
-#include <errno.h>
-
 /** attempts to rehash the hashmap. */
-void fiobj_hash_rehash(fiobj_s *h);
+void fiobj_hash_rehash(FIOBJ h);
 
 /* *****************************************************************************
-Couplets API - the Key-Value pair, created by the Hash object
+Hash Creation
 ***************************************************************************** */
-
-/** Couplet type identifier. */
-extern const uintptr_t FIOBJ_T_COUPLET;
-
-/**
- * If object is a Hash couplet (occurs in `fiobj_each2`), returns the key
- * (Symbol) from the key-value pair.
- *
- * Otherwise returns NULL.
- */
-fiobj_s *fiobj_couplet2key(const fiobj_s *obj);
-
-/**
- * If object is a Hash couplet (occurs in `fiobj_each2`), returns the object
- * (the value) from the key-value pair.
- *
- * Otherwise returns NULL.
- */
-fiobj_s *fiobj_couplet2obj(const fiobj_s *obj);
-
-/* *****************************************************************************
-Hash API
-***************************************************************************** */
-
-/** Hash type identifier.
-
-The facil.io Hash object is, by default, an insecure (non-collision resistant)
-ordered Hash Table implementation.
-
-By being non-collision resistant (comparing only the Hash data), memory
-comparison can be avoided and performance increased.
-
-By being ordered it's possible to iterate over key-value pairs in the order in
-which they were added to the Hash table, making it possible to output JSON in a
-controlled manner.
-*/
-extern const uintptr_t FIOBJ_T_HASH;
 
 /**
  * Creates a mutable empty Hash object. Use `fiobj_free` when done.
@@ -67,10 +42,35 @@ extern const uintptr_t FIOBJ_T_HASH;
  * Notice that these Hash objects are optimized for smaller collections and
  * retain order of object insertion.
  */
-fiobj_s *fiobj_hash_new(void);
+FIOBJ fiobj_hash_new(void);
+
+/**
+ * Creates a mutable empty Hash object with an initial capacity of `capa`. Use
+ * `fiobj_free` when done.
+ *
+ * This allows optimizations for larger (or smaller) collections.
+ */
+FIOBJ fiobj_hash_new2(size_t capa);
+
+/* *****************************************************************************
+Hash properties and state
+***************************************************************************** */
+
+/**
+ * Returns a temporary theoretical Hash map capacity.
+ * This could be used for testig performance and memory consumption.
+ */
+size_t fiobj_hash_capa(const FIOBJ hash);
 
 /** Returns the number of elements in the Hash. */
-size_t fiobj_hash_count(const fiobj_s *hash);
+size_t fiobj_hash_count(const FIOBJ hash);
+
+/** Returns the key for the object in the current `fiobj_each` loop (if any). */
+FIOBJ fiobj_hash_key_in_loop(void);
+
+/* *****************************************************************************
+Populating the Hash
+***************************************************************************** */
 
 /**
  * Sets a key-value pair in the Hash, duplicating the Symbol and **moving**
@@ -78,13 +78,44 @@ size_t fiobj_hash_count(const fiobj_s *hash);
  *
  * Returns -1 on error.
  */
-int fiobj_hash_set(fiobj_s *hash, fiobj_s *sym, fiobj_s *obj);
+int fiobj_hash_set(FIOBJ hash, FIOBJ key, FIOBJ obj);
+
+/**
+ * Allows the Hash to be used as a stack.
+ *
+ * If a pointer `key` is provided, it will receive ownership of the key
+ * (remember to free).
+ *
+ * Returns FIOBJ_INVALID on error.
+ *
+ * Returns and object if successful (remember to free).
+ */
+FIOBJ fiobj_hash_pop(FIOBJ hash, FIOBJ *key);
+
+/**
+ * Replaces the value in a key-value pair, returning the old value (and it's
+ * ownership) to the caller.
+ *
+ * A return value of FIOBJ_INVALID indicates that no previous object existed
+ * (but a new key-value pair was created.
+ *
+ * Errors are silently ignored.
+ *
+ * Remember to free the returned object.
+ */
+FIOBJ fiobj_hash_replace(FIOBJ hash, FIOBJ key, FIOBJ obj);
 
 /**
  * Removes a key-value pair from the Hash, if it exists, returning the old
  * object (instead of freeing it).
  */
-fiobj_s *fiobj_hash_remove(fiobj_s *hash, fiobj_s *sym);
+FIOBJ fiobj_hash_remove(FIOBJ hash, FIOBJ key);
+
+/**
+ * Removes a key-value pair from the Hash, if it exists, returning the old
+ * object (instead of freeing it).
+ */
+FIOBJ fiobj_hash_remove2(FIOBJ hash, uint64_t key_hash);
 
 /**
  * Deletes a key-value pair from the Hash, if it exists, freeing the
@@ -92,34 +123,50 @@ fiobj_s *fiobj_hash_remove(fiobj_s *hash, fiobj_s *sym);
  *
  * Returns -1 on type error or if the object never existed.
  */
-int fiobj_hash_delete(fiobj_s *hash, fiobj_s *sym);
+int fiobj_hash_delete(FIOBJ hash, FIOBJ key);
 
 /**
- * Returns a temporary handle to the object associated with the Symbol, NULL
- * if none.
+ * Deletes a key-value pair from the Hash, if it exists, freeing the
+ * associated object.
+ *
+ * This function takes a `uint64_t` Hash value (see `fio_siphash`) to
+ * perform a lookup in the HashMap, which is slightly faster than the other
+ * variations.
+ *
+ * Returns -1 on type error or if the object never existed.
  */
-fiobj_s *fiobj_hash_get(const fiobj_s *hash, fiobj_s *sym);
+int fiobj_hash_delete2(FIOBJ hash, uint64_t key_hash);
 
 /**
- * Returns a temporary handle to the object associated with the Symbol C string.
- *
- * This function takes a C string instead of a Symbol, which is slower if a
- * Symbol can be cached but faster if a Symbol must be created.
- *
- * Returns NULL if no object is asociated with this String data.
+ * Returns a temporary handle to the object associated with the Symbol,
+ * FIOBJ_INVALID if none.
  */
-fiobj_s *fiobj_hash_get2(const fiobj_s *hash, const char *str, size_t len);
+FIOBJ fiobj_hash_get(const FIOBJ hash, FIOBJ key);
+
+/**
+ * Returns a temporary handle to the object associated hashed key value.
+ *
+ * This function takes a `uint64_t` Hash value (see `fio_siphash`) to
+ * perform a lookup in the HashMap, which is slightly faster than the other
+ * variations.
+ *
+ * Returns FIOBJ_INVALID if no object is asociated with this hashed key value.
+ */
+FIOBJ fiobj_hash_get2(const FIOBJ hash, uint64_t key_hash);
 
 /**
  * Returns 1 if the key (Symbol) exists in the Hash, even if it's value is NULL.
  */
-int fiobj_hash_haskey(const fiobj_s *hash, fiobj_s *sym);
+int fiobj_hash_haskey(const FIOBJ hash, FIOBJ key);
 
 /**
- * Returns a temporary theoretical Hash map capacity.
- * This could be used for testig performance and memory consumption.
+ * Empties the Hash.
  */
-size_t fiobj_hash_capa(const fiobj_s *hash);
+void fiobj_hash_clear(const FIOBJ hash);
+
+#if DEBUG
+void fiobj_test_hash(void);
+#endif
 
 #ifdef __cplusplus
 } /* extern "C" */
