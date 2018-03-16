@@ -296,7 +296,21 @@ The slower your application code, the more threads you will need to keep the ser
 
 Personally, after looking around, the only comparable servers are Puma and Passenger, which iodine significantly outperformed on my tests (I didn't test Passenger's enterprise version).
 
-Since the HTTP and Websocket parsers are written in C (with no RegExp), they're fairly fast.
+When benchmarking with `wrk` and using similar settings (4 workers, 16 threads each), iodine performed better than Puma (I don't have Passenger enterprise, so I couldn't compare against it). 
+
+* Iodine performed at 78,376.49 req/sec, consuming ~69Mb of memory.
+
+* Puma performed at 50,218.66 req/sec, consuming ~78Mb of memory.
+
+
+When benchmarking with `wrk` and using striped down settings (single worker, single thread), iodine performed better than Puma.
+
+* Iodine performed at 57,930.78 req/sec, consuming ~40Mb of memory.
+
+* Puma performed at 16,109.42 req/sec, consuming ~36Mb of memory.
+
+
+When benchmarking with `ab`, Puma seemed to experience significantly slower performance. I suspect the difference between the two benchmarks has to do with system calls to `write` and possible packet fragmentation, which iodine attempts to avoid... but I have no real proof.
 
 Also, iodine's core and parsers are running outside of Ruby's global lock, meaning that they enjoy true concurrency before entering the Ruby layer (your application) - this offers iodine a big advantage over other Ruby servers.
 
@@ -305,7 +319,7 @@ Another assumption iodine makes is that it is behind a load balancer / proxy (wh
 I recommend benchmarking the performance for yourself using `wrk` or `ab`:
 
 ```bash
-$ wrk -c200 -d4 -t12 http://localhost:3000/
+$ wrk -c200 -d4 -t2 http://localhost:3000/
 # or
 $ ab -n 100000 -c 200 -k http://127.0.0.1:3000/
 ```
@@ -332,16 +346,9 @@ $ RACK_ENV=production puma -p 3000 -t 16 -w 4
 # Review the `iodine -?` help for more command line options.
 ```
 
+## Free, as in freedom (BYO beer)
 
-When benchmarking with `wrk`, iodine performed significantly better, (~62K req/sec vs. ~44K req/sec) while keeping a lower memory foot print (~60Mb vs. ~111Mb).
-
-When benchmarking with `ab`, I got different results, where iodine still performed significantly better, (~72K req/sec vs. ~36K req/sec and ~61Mb vs. ~81.6Mb). I suspect the difference between the two benchmarks has to do with system calls to `write` and possible packet fragmentation, but I have no real proof.
-
-Remember to compare the memory footprint after running some requests - it's not just speed that C is helping with, it's also memory management and object pooling (i.e., iodine uses a buffer packet pool management).
-
-## Can I try before I buy?
-
-Well, it is **free** and **open source**, no need to buy.. and of course you can try it out.
+Iodine is **free** and **open source**, so why not take it out for a spin?
 
 It's installable just like any other gem on MRI, run:
 
