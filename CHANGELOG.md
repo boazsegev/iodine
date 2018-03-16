@@ -20,6 +20,10 @@ Credit to Anatoly Nosov (@jomei) for fixing some typos in the documentation.
 
 ---
 
+#### Change log v.0.4.19
+
+**Feature**: (`iodine`) added requested feature in issue #27, `Iodine.running?` will return Iodine's state.
+
 #### Change log v.0.4.18
 
 **Fix**: (`iodine pub/bus`) fixed issue #27 (?) where the `block` used for subscriptions would be recycled by the GC and the memory address (retained by `iodine`) would point at invalid Ruby objects (at worst) or become invalid (at best). Credit to Dmitry Davydov (@haukot) for exposing this issue.
