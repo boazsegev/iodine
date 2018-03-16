@@ -17,7 +17,16 @@ VALUE Iodine;
 VALUE IodineBase;
 VALUE Iodine_Version;
 
+VALUE iodine_force_var_id;
+VALUE iodine_channel_var_id;
+VALUE iodine_pattern_var_id;
+VALUE iodine_text_var_id;
+VALUE iodine_binary_var_id;
+VALUE iodine_engine_var_id;
+VALUE iodine_message_var_id;
+
 ID iodine_fd_var_id;
+ID iodine_cdata_var_id;
 ID iodine_timeout_var_id;
 ID iodine_call_proc_id;
 ID iodine_new_func_id;
@@ -149,17 +158,11 @@ static VALUE iodine_run(VALUE self) {
 /* *****************************************************************************
 Idling
 ***************************************************************************** */
-#include "fio_list.h"
+#include "fio_llist.h"
 #include "spnlock.inc"
 
-typedef struct {
-  fio_list_s node;
-  VALUE block;
-} iodine_idle_block_s;
-
 static spn_lock_i iodine_on_idle_lock = SPN_LOCK_INIT;
-static fio_list_s iodine_on_idle_list =
-    FIO_LIST_INIT_STATIC(iodine_on_idle_list);
+static fio_ls_s iodine_on_idle_list = FIO_LS_INIT(iodine_on_idle_list);
 
 /**
 Schedules a single occuring event for the next idle cycle.
@@ -174,22 +177,20 @@ i.e.
 */
 VALUE iodine_sched_on_idle(VALUE self) {
   rb_need_block();
-  iodine_idle_block_s *b = malloc(sizeof(*b));
-  b->block = rb_block_proc();
-  Registry.add(b->block);
+  VALUE block = rb_block_proc();
+  Registry.add(block);
   spn_lock(&iodine_on_idle_lock);
-  fio_list_push(iodine_idle_block_s, node, iodine_on_idle_list, b);
+  fio_ls_push(&iodine_on_idle_list, (void *)block);
   spn_unlock(&iodine_on_idle_lock);
-  return b->block;
+  return block;
   (void)self;
 }
 
 static void iodine_on_idle(void) {
-  iodine_idle_block_s *b;
   spn_lock(&iodine_on_idle_lock);
-  while ((b = fio_list_shift(iodine_idle_block_s, node, iodine_on_idle_list))) {
-    defer(iodine_perform_deferred, (void *)b->block, NULL);
-    free(b);
+  while (fio_ls_any(&iodine_on_idle_list)) {
+    VALUE block = (VALUE)fio_ls_shift(&iodine_on_idle_list);
+    defer(iodine_perform_deferred, (void *)block, NULL);
   }
   spn_unlock(&iodine_on_idle_lock);
 }
@@ -202,14 +203,17 @@ Running the server
 
 static volatile int sock_io_thread = 0;
 static pthread_t sock_io_pthread;
+typedef struct {
+  size_t threads;
+  size_t processes;
+} iodine_start_settings_s;
 
 static void *iodine_io_thread(void *arg) {
   (void)arg;
   struct timespec tm;
-  // static const struct timespec tm = {.tv_nsec = 524288UL};
   while (sock_io_thread) {
     sock_flush_all();
-    tm = (struct timespec){.tv_nsec = 524288UL, .tv_sec = 1};
+    tm = (struct timespec){.tv_nsec = 0, .tv_sec = 1};
     nanosleep(&tm, NULL);
   }
   return NULL;
@@ -224,39 +228,12 @@ static void iodine_join_io_thread(void) {
   pthread_join(sock_io_pthread, NULL);
 }
 
-static void *srv_start_no_gvl(void *_) {
-  (void)(_);
-  // collect requested settings
-  VALUE rb_th_i = rb_iv_get(Iodine, "@threads");
-  VALUE rb_pr_i = rb_iv_get(Iodine, "@processes");
-  ssize_t threads = (TYPE(rb_th_i) == T_FIXNUM) ? FIX2LONG(rb_th_i) : 0;
-  ssize_t processes = (TYPE(rb_pr_i) == T_FIXNUM) ? FIX2LONG(rb_pr_i) : 0;
-// print a warnning if settings are sub optimal
-#ifdef _SC_NPROCESSORS_ONLN
-  size_t cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
-  if (processes <= 0)
-    processes = 0;
-  if (threads <= 0)
-    threads = 0;
-
-  if (processes && threads && cpu_count > 0 &&
-      (((size_t)processes << 1) < cpu_count ||
-       (size_t)processes > (cpu_count << 1)))
-    fprintf(stderr,
-            "\n* Performance warnning:\n"
-            "  - This computer reports %lu available CPUs... "
-            "they will not be fully utilized.\n",
-            cpu_count);
-#else
-  if (processes <= 0)
-    processes = 0;
-  if (threads <= 0)
-    threads = 0;
-#endif
+static void *srv_start_no_gvl(void *s_) {
+  iodine_start_settings_s *s = s_;
   sock_io_thread = 1;
   defer(iodine_start_io_thread, NULL, NULL);
   fprintf(stderr, "\n");
-  facil_run(.threads = threads, .processes = processes,
+  facil_run(.threads = s->threads, .processes = s->processes,
             .on_idle = iodine_on_idle, .on_finish = iodine_join_io_thread);
   return NULL;
 }
@@ -296,8 +273,11 @@ static int iodine_review_rack_app(void) {
                rb_ivar_get(rack, rb_intern("@ws_timeout")));
   rb_hash_aset(opt, ID2SYM(rb_intern("timeout")),
                rb_ivar_get(rack, rb_intern("@ws_timeout")));
-  if (rb_funcall2(Iodine, rb_intern("listen2http"), 1, &opt) == Qfalse)
+  if (rb_funcall2(Iodine, rb_intern("listen2http"), 1, &opt) == Qfalse) {
+    Registry.remove(opt);
     return -1;
+  }
+  Registry.remove(opt);
   return 0;
 }
 
@@ -313,7 +293,17 @@ static VALUE iodine_start(VALUE self) {
     fprintf(stderr, "ERROR: (iodine) cann't start Iodine::Rack.\n");
     return Qnil;
   }
-  rb_thread_call_without_gvl2(srv_start_no_gvl, (void *)self, NULL, NULL);
+
+  VALUE rb_th_i = rb_iv_get(Iodine, "@threads");
+  VALUE rb_pr_i = rb_iv_get(Iodine, "@processes");
+
+  iodine_start_settings_s s = {
+      .threads = ((TYPE(rb_th_i) == T_FIXNUM) ? FIX2INT(rb_th_i) : 0),
+      .processes = ((TYPE(rb_pr_i) == T_FIXNUM) ? FIX2INT(rb_pr_i) : 0)};
+
+  RubyCaller.set_gvl_state(1);
+  RubyCaller.leave_gvl(srv_start_no_gvl, (void *)&s);
+
   return self;
 }
 
@@ -342,6 +332,7 @@ static void patch_env(void) {
 #ifdef __APPLE__
   /* patch for dealing with the High Sierra `fork` limitations */
   void *obj_c_runtime = dlopen("Foundation.framework/Foundation", RTLD_LAZY);
+  (void)obj_c_runtime;
 #endif
 }
 
@@ -354,20 +345,29 @@ void Init_iodine(void) {
   // load any environment specific patches
   patch_env();
   // initialize globally used IDs, for faster access to the Ruby layer.
-  iodine_fd_var_id = rb_intern("scrtfd");
-  iodine_call_proc_id = rb_intern("call");
-  iodine_new_func_id = rb_intern("new");
-  iodine_on_open_func_id = rb_intern("on_open");
-  iodine_on_message_func_id = rb_intern("on_message");
-  iodine_on_data_func_id = rb_intern("on_data");
-  iodine_on_shutdown_func_id = rb_intern("on_shutdown");
-  iodine_on_close_func_id = rb_intern("on_close");
-  iodine_on_ready_func_id = rb_intern("on_ready");
-  iodine_ping_func_id = rb_intern("ping");
   iodine_buff_var_id = rb_intern("scrtbuffer");
+  iodine_call_proc_id = rb_intern("call");
+  iodine_cdata_var_id = rb_intern("iodine_cdata");
+  iodine_fd_var_id = rb_intern("iodine_fd");
+  iodine_new_func_id = rb_intern("new");
+  iodine_on_close_func_id = rb_intern("on_close");
+  iodine_on_data_func_id = rb_intern("on_data");
+  iodine_on_message_func_id = rb_intern("on_message");
+  iodine_on_open_func_id = rb_intern("on_open");
+  iodine_on_ready_func_id = rb_intern("on_ready");
+  iodine_on_shutdown_func_id = rb_intern("on_shutdown");
+  iodine_ping_func_id = rb_intern("ping");
   iodine_timeout_var_id = rb_intern("@timeout");
-  iodine_to_s_method_id = rb_intern("to_s");
   iodine_to_i_func_id = rb_intern("to_i");
+  iodine_to_s_method_id = rb_intern("to_s");
+
+  iodine_binary_var_id = ID2SYM(rb_intern("binary"));
+  iodine_channel_var_id = ID2SYM(rb_intern("channel"));
+  iodine_engine_var_id = ID2SYM(rb_intern("engine"));
+  iodine_force_var_id = ID2SYM(rb_intern("encoding"));
+  iodine_message_var_id = ID2SYM(rb_intern("message"));
+  iodine_pattern_var_id = ID2SYM(rb_intern("pattern"));
+  iodine_text_var_id = ID2SYM(rb_intern("text"));
 
   IodineBinaryEncodingIndex = rb_enc_find_index("binary");
   IodineUTF8EncodingIndex = rb_enc_find_index("UTF-8");

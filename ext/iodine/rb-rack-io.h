@@ -9,10 +9,10 @@ Feel free to copy, use and enjoy according to the license provided.
 
 #include <ruby.h>
 
-#include "http_request.h"
+#include "http.h"
 
 extern struct IodineRackIO {
-  VALUE (*create)(http_request_s *request, VALUE env);
+  VALUE (*create)(http_s *h, VALUE env);
   void (*init)(void);
 } IodineRackIO;
 

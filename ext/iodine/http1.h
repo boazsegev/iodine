@@ -1,52 +1,29 @@
 /*
-copyright: Boaz segev, 2016-2017
-license: MIT
-
-Feel free to copy, use and enjoy according to the license provided.
+Copyright: Boaz Segev, 2017
+License: MIT
 */
 #ifndef H_HTTP1_H
 #define H_HTTP1_H
+
 #include "http.h"
 
-#ifndef HTTP1_MAX_HEADER_SIZE
+#ifndef HTTP1_READ_BUFFER
 /**
-Sets the maximum allowed size of a requests header section
-(all cookies, headers and other data that isn't the request's "body").
-
-This value includes the request line itself.
-
-Defaults to ~16Kb headers per request.
-*/
-#define HTTP1_MAX_HEADER_SIZE (16 * 1024) /* ~16kb */
+ * The size of a single `read` command, it sets the limit for an HTTP/1.1
+ * header line.
+ */
+#define HTTP1_READ_BUFFER (8 * 1024) /* ~8kb */
 #endif
 
-#ifndef HTTP1_MAX_HEADER_COUNT
-/** Sets the maximum allowed headers per request (obligatory).
+/** Creates an HTTP1 protocol object and handles any unread data in the buffer
+ * (if any). */
+protocol_s *http1_new(uintptr_t uuid, http_settings_s *settings,
+                      void *unread_data, size_t unread_length);
 
-Defaults to 64 headers per request */
-#define HTTP1_MAX_HEADER_COUNT (64)
-#endif
+/** Manually destroys the HTTP1 protocol object. */
+void http1_destroy(protocol_s *);
 
-#ifndef HTTP1_POOL_SIZE
-/** Defines the pre-allocated memory for incoming concurrent connections.
-
-Any concurrent HTTP1 connections over this amount will be dynamically allocated.
-*/
-#define HTTP1_POOL_SIZE (64) /* should be ~0.5Mb with default values*/
-#endif
-
-/** The HTTP/1.1 protocol identifier. */
-extern char *HTTP1_Protocol_String;
-
-/* *****************************************************************************
-HTTP listening helpers
-*/
-
-/**
-Allocates memory for an upgradable HTTP/1.1 protocol.
-
-The protocol self destructs when the `on_close` callback is called.
-*/
-protocol_s *http1_on_open(intptr_t fd, http_settings_s *settings);
+/** returns the HTTP/1.1 protocol's VTable. */
+void * http1_vtable(void);
 
 #endif

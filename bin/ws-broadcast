@@ -25,6 +25,7 @@ class WSEcho
 
   def on_open
     puts 'We have a websocket connection'
+    subscribe channel: :all
   end
 
   def on_close
@@ -37,10 +38,7 @@ class WSEcho
 
   def on_message(data)
     puts "got message: #{data}"
-    write data
-    data_cp = "Broadcast: #{data}"
-    # puts "broadcasting #{data_cp.bytesize} bytes"
-    each { |h| h.write data_cp }
+    publish channe: :all, message: data
   end
 
   def self.pr_raise

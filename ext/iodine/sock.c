@@ -21,17 +21,17 @@ Includes and state
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
+#include <sys/ioctl.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
-#include <sys/time.h>
+#include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/types.h>
-#include <time.h>
+#include <sys/un.h>
 
-#if BUFFER_PACKET_SIZE < (BUFFER_FILE_READ_SIZE + 64)
-#error BUFFER_PACKET_POOL must be bigger than BUFFER_FILE_READ_SIZE + 64.
-#endif
+#include "fio_mem.h"
 
 /* *****************************************************************************
 OS Sendfile settings.
@@ -76,32 +76,35 @@ int defer(void (*func)(void *, void *), void *arg, void *arg2) {
   func(arg, arg2);
   return 0;
 }
+
 static void sock_flush_defer(void *arg, void *ignored) {
   sock_flush((intptr_t)arg);
   return;
   (void)ignored;
-}
-/* *****************************************************************************
-Support `evio`.
-*/
-
-#pragma weak evio_remove
-int evio_remove(intptr_t uuid) {
-  (void)(uuid);
-  return -1;
 }
 
 /* *****************************************************************************
 User-Land Buffer and Packets
 ***************************************************************************** */
 
+#ifndef BUFFER_PACKET_POOL
+/* ~4 pages of memory */
+#define BUFFER_PACKET_POOL (((4096 << 2) - 16) / sizeof(packet_s))
+#endif
+
 typedef struct packet_s {
-  struct packet_metadata_s {
-    int (*write_func)(int fd, struct packet_s *packet);
-    void (*free_func)(struct packet_s *packet);
-    struct packet_s *next;
-  } metadata;
-  sock_buffer_s buffer;
+  struct packet_s *next;
+  int (*write_func)(int fd, struct packet_s *packet);
+  union {
+    void (*free_func)(void *);
+    void (*close_func)(intptr_t);
+  };
+  union {
+    void *buffer;
+    intptr_t fd;
+  };
+  intptr_t offset;
+  uintptr_t length;
 } packet_s;
 
 static struct {
@@ -113,70 +116,69 @@ static struct {
 
 void SOCK_DEALLOC_NOOP(void *arg) { (void)arg; }
 
-static inline void sock_packet_clear(packet_s *packet) {
-  packet->metadata.free_func(packet);
-  packet->metadata = (struct packet_metadata_s){
-      .free_func = (void (*)(packet_s *))SOCK_DEALLOC_NOOP};
-  packet->buffer.len = 0;
+typedef struct func_s { void (*task)(void *); } func_s;
+
+static void sock_packet_free_cb(void *task, void *buffer) {
+  func_s *t = (void *)&task;
+  t->task(buffer);
+}
+
+static void sock_packet_free_attempt(void *packet_, void *ignr) {
+  if (spn_trylock(&packet_pool.lock)) {
+    defer(sock_packet_free_attempt, packet_, ignr);
+    return;
+  }
+  packet_s *packet = packet_;
+  packet->next = packet_pool.next;
+  packet_pool.next = packet;
+  spn_unlock(&packet_pool.lock);
 }
 
 static inline void sock_packet_free(packet_s *packet) {
-  sock_packet_clear(packet);
+  if (packet->free_func == fio_free) {
+    fio_free(packet->buffer);
+  } else if (packet->free_func == free) {
+    free(packet->buffer);
+  } else {
+    defer(sock_packet_free_cb, (void *)((uintptr_t)packet->free_func),
+          packet->buffer);
+  }
   if (packet >= packet_pool.mem &&
       packet <= packet_pool.mem + (BUFFER_PACKET_POOL - 1)) {
-    spn_lock(&packet_pool.lock);
-    packet->metadata.next = packet_pool.next;
-    packet_pool.next = packet;
-    spn_unlock(&packet_pool.lock);
+    sock_packet_free_attempt(packet, NULL);
   } else
-    free(packet);
+    fio_free(packet);
 }
 
-static inline packet_s *sock_packet_try_grab(void) {
+static inline packet_s *sock_packet_new(void) {
   packet_s *packet;
-  spn_lock(&packet_pool.lock);
+  if (spn_trylock(&packet_pool.lock))
+    goto no_lock;
   packet = packet_pool.next;
   if (packet == NULL)
     goto none_in_pool;
-  packet_pool.next = packet->metadata.next;
+  packet_pool.next = packet->next;
   spn_unlock(&packet_pool.lock);
-  packet->metadata = (struct packet_metadata_s){
-      .free_func = (void (*)(packet_s *))SOCK_DEALLOC_NOOP};
-  packet->buffer.len = 0;
   return packet;
 none_in_pool:
   if (!packet_pool.init)
     goto init;
   spn_unlock(&packet_pool.lock);
-  return NULL;
+no_lock:
+  packet = fio_malloc(sizeof(*packet));
+  if (!packet) {
+    perror("FATAL ERROR: memory allocation failed");
+    exit(errno);
+  }
+  return packet;
 init:
   packet_pool.init = 1;
-  packet_pool.mem[0].metadata.free_func =
-      (void (*)(packet_s *))SOCK_DEALLOC_NOOP;
   for (size_t i = 2; i < BUFFER_PACKET_POOL; i++) {
-    packet_pool.mem[i - 1].metadata.next = packet_pool.mem + i;
-    packet_pool.mem[i - 1].metadata.free_func =
-        (void (*)(packet_s *))SOCK_DEALLOC_NOOP;
+    packet_pool.mem[i - 1].next = packet_pool.mem + i;
   }
-  packet_pool.mem[BUFFER_PACKET_POOL - 1].metadata.free_func =
-      (void (*)(packet_s *))SOCK_DEALLOC_NOOP;
   packet_pool.next = packet_pool.mem + 1;
   spn_unlock(&packet_pool.lock);
   packet = packet_pool.mem;
-  packet->metadata = (struct packet_metadata_s){
-      .free_func = (void (*)(packet_s *))SOCK_DEALLOC_NOOP};
-  packet->buffer.len = 0;
-  return packet;
-}
-
-static inline packet_s *sock_packet_grab(void) {
-  packet_s *packet = sock_packet_try_grab();
-  if (packet)
-    return packet;
-  while (packet == NULL) {
-    sock_flush_all();
-    packet = sock_packet_try_grab();
-  };
   return packet;
 }
 
@@ -184,22 +186,29 @@ static inline packet_s *sock_packet_grab(void) {
 Default Socket Read/Write Hook
 ***************************************************************************** */
 
-static ssize_t sock_default_hooks_read(intptr_t uuid, void *buf, size_t count) {
+static ssize_t sock_default_hooks_read(intptr_t uuid, void *udata, void *buf,
+                                       size_t count) {
   return read(sock_uuid2fd(uuid), buf, count);
+  (void)(udata);
 }
-static ssize_t sock_default_hooks_write(intptr_t uuid, const void *buf,
-                                        size_t count) {
+static ssize_t sock_default_hooks_write(intptr_t uuid, void *udata,
+                                        const void *buf, size_t count) {
   return write(sock_uuid2fd(uuid), buf, count);
+  (void)(udata);
 }
 
 static void sock_default_hooks_on_close(intptr_t fduuid,
-                                        struct sock_rw_hook_s *rw_hook) {
+                                        struct sock_rw_hook_s *rw_hook,
+                                        void *udata) {
+  (void)udata;
   (void)rw_hook;
   (void)fduuid;
 }
 
-static ssize_t sock_default_hooks_flush(intptr_t uuid) {
-  return (((void)(uuid)), 0);
+static ssize_t sock_default_hooks_flush(intptr_t uuid, void *udata) {
+  return 0;
+  (void)(uuid);
+  (void)(udata);
 }
 
 const sock_rw_hook_s SOCK_DEFAULT_HOOKS = {
@@ -208,6 +217,7 @@ const sock_rw_hook_s SOCK_DEFAULT_HOOKS = {
     .flush = sock_default_hooks_flush,
     .on_close = sock_default_hooks_on_close,
 };
+
 /* *****************************************************************************
 Socket Data Structures
 ***************************************************************************** */
@@ -222,12 +232,12 @@ struct fd_data_s {
   unsigned close : 1;
   /** future flags. */
   unsigned rsv : 5;
-  /** data sent from current packet - this is per packet. */
-  size_t sent;
   /** the currently active packet to be sent. */
   packet_s *packet;
   /** RW hooks. */
   sock_rw_hook_s *rw_hooks;
+  /** RW udata. */
+  void *rw_udata;
   /** Peer/listenning address. */
   struct sockaddr_in6 addrinfo;
   /** address length. */
@@ -240,14 +250,14 @@ static struct sock_data_store {
 } sock_data_store;
 
 #define fd2uuid(fd)                                                            \
-  (((uintptr_t)(fd) << 8) | (sock_data_store.fds[(fd)].counter))
+  (((uintptr_t)(fd) << 8) | (sock_data_store.fds[(fd)].counter & 0xFF))
 #define fdinfo(fd) sock_data_store.fds[(fd)]
 
 #define lock_fd(fd) spn_lock(&sock_data_store.fds[(fd)].lock)
 #define unlock_fd(fd) spn_unlock(&sock_data_store.fds[(fd)].lock)
 
 static inline int validate_uuid(uintptr_t uuid) {
-  uintptr_t fd = sock_uuid2fd(uuid);
+  uintptr_t fd = (uintptr_t)sock_uuid2fd(uuid);
   if ((intptr_t)uuid == -1 || sock_data_store.capacity <= fd ||
       fdinfo(fd).counter != (uuid & 0xFF))
     return -1;
@@ -256,17 +266,22 @@ static inline int validate_uuid(uintptr_t uuid) {
 
 static inline void sock_packet_rotate_unsafe(uintptr_t fd) {
   packet_s *packet = fdinfo(fd).packet;
-  fdinfo(fd).packet = packet->metadata.next;
-  fdinfo(fd).sent = 0;
+  fdinfo(fd).packet = packet->next;
   sock_packet_free(packet);
 }
 
-static void clear_sock_lib(void) { free(sock_data_store.fds); }
+static void clear_sock_lib(void) {
+  free(sock_data_store.fds);
+  sock_data_store.fds = NULL;
+  sock_data_store.capacity = 0;
+}
 
 static inline int initialize_sock_lib(size_t capacity) {
   static uint8_t init_exit = 0;
+  if (capacity > LIB_SOCK_MAX_CAPACITY)
+    capacity = LIB_SOCK_MAX_CAPACITY;
   if (sock_data_store.capacity >= capacity)
-    return 0;
+    goto finish;
   struct fd_data_s *new_collection =
       realloc(sock_data_store.fds, sizeof(struct fd_data_s) * capacity);
   if (!new_collection)
@@ -286,7 +301,7 @@ static inline int initialize_sock_lib(size_t capacity) {
           "\nInitialized libsock for %lu sockets, "
           "each one requires %lu bytes.\n"
           "overall ovearhead: %lu bytes.\n"
-          "Initialized packet pool for %d elements, "
+          "Initialized packet pool for %lu elements, "
           "each one %lu bytes.\n"
           "overall buffer ovearhead: %lu bytes.\n"
           "=== Socket Library Total: %lu bytes ===\n\n",
@@ -297,6 +312,11 @@ static inline int initialize_sock_lib(size_t capacity) {
               (sizeof(struct fd_data_s) * capacity));
 #endif
 
+finish:
+  packet_pool.lock = SPN_LOCK_INIT;
+  for (size_t i = 0; i < sock_data_store.capacity; ++i) {
+    sock_data_store.fds[i].lock = SPN_LOCK_INIT;
+  }
   if (init_exit)
     return 0;
   init_exit = 1;
@@ -317,20 +337,22 @@ clear:
                          .rw_hooks = (sock_rw_hook_s *)&SOCK_DEFAULT_HOOKS,
                          .counter = fdinfo(fd).counter + 1};
   spn_unlock(&(fdinfo(fd).lock));
-  packet = old_data.packet;
   while (old_data.packet) {
-    old_data.packet = old_data.packet->metadata.next;
-    sock_packet_free(packet);
     packet = old_data.packet;
+    old_data.packet = old_data.packet->next;
+    sock_packet_free(packet);
   }
-  old_data.rw_hooks->on_close(((fd << 8) | old_data.counter),
-                              old_data.rw_hooks);
-  if (old_data.open || (old_data.rw_hooks != &SOCK_DEFAULT_HOOKS)) {
+  old_data.rw_hooks->on_close(((fd << 8) | old_data.counter), old_data.rw_hooks,
+                              old_data.rw_udata);
+  if (old_data.open) {
     sock_on_close((fd << 8) | old_data.counter);
-    evio_remove((fd << 8) | old_data.counter);
   }
   return 0;
 reinitialize:
+  if (fd >= LIB_SOCK_MAX_CAPACITY) {
+    close(fd);
+    return -1;
+  }
   if (initialize_sock_lib(fd << 1))
     return -1;
   goto clear;
@@ -340,96 +362,64 @@ reinitialize:
 Writing - from memory
 ***************************************************************************** */
 
-struct sock_packet_ext_data_s {
-  uint8_t *buffer;
-  uint8_t *to_free;
-  void (*dealloc)(void *);
-};
-
 static int sock_write_buffer(int fd, struct packet_s *packet) {
   int written = fdinfo(fd).rw_hooks->write(
-      fd2uuid(fd), packet->buffer.buf + fdinfo(fd).sent,
-      packet->buffer.len - fdinfo(fd).sent);
+      fd2uuid(fd), fdinfo(fd).rw_udata,
+      ((uint8_t *)packet->buffer + packet->offset), packet->length);
   if (written > 0) {
-    fdinfo(fd).sent += written;
-    if (fdinfo(fd).sent == packet->buffer.len)
+    packet->length -= written;
+    packet->offset += written;
+    if (!packet->length)
       sock_packet_rotate_unsafe(fd);
   }
   return written;
-}
-
-static int sock_write_buffer_ext(int fd, struct packet_s *packet) {
-  struct sock_packet_ext_data_s *ext = (void *)packet->buffer.buf;
-  int written =
-      fdinfo(fd).rw_hooks->write(fd2uuid(fd), ext->buffer + fdinfo(fd).sent,
-                                 packet->buffer.len - fdinfo(fd).sent);
-  if (written > 0) {
-    fdinfo(fd).sent += written;
-    if (fdinfo(fd).sent == packet->buffer.len)
-      sock_packet_rotate_unsafe(fd);
-  }
-  return written;
-}
-
-static void sock_free_buffer_ext(packet_s *packet) {
-  struct sock_packet_ext_data_s *ext = (void *)packet->buffer.buf;
-  ext->dealloc(ext->to_free);
 }
 
 /* *****************************************************************************
 Writing - from files
 ***************************************************************************** */
 
-struct sock_packet_file_data_s {
-  intptr_t fd;
-  off_t offset;
-  union {
-    void (*close)(intptr_t);
-    void (*dealloc)(void *);
-  };
-  int *pfd;
-  uint8_t buffer[];
-};
+#ifndef BUFFER_FILE_READ_SIZE
+#define BUFFER_FILE_READ_SIZE 16384
+#endif
 
 static void sock_perform_close_fd(intptr_t fd) { close(fd); }
-static void sock_perform_close_pfd(void *pfd) { close(*(int *)pfd); }
-
-static void sock_close_from_fd(packet_s *packet) {
-  struct sock_packet_file_data_s *ext = (void *)packet->buffer.buf;
-  if (ext->pfd)
-    ext->dealloc(ext->pfd);
-  else
-    ext->close(ext->fd);
+static void sock_perform_close_pfd(void *pfd) {
+  close(*(int *)pfd);
+  free(pfd);
 }
 
 static int sock_write_from_fd(int fd, struct packet_s *packet) {
-  struct sock_packet_file_data_s *ext = (void *)packet->buffer.buf;
-  ssize_t count = 0;
+  ssize_t asked = 0;
+  ssize_t sent = 0;
+  ssize_t total = 0;
+  char buff[BUFFER_FILE_READ_SIZE];
   do {
-    fdinfo(fd).sent += count;
-    packet->buffer.len -= count;
+    packet->offset += sent;
+    packet->length -= sent;
   retry:
-    count = (packet->buffer.len < BUFFER_FILE_READ_SIZE)
-                ? pread(ext->fd, ext->buffer, packet->buffer.len,
-                        ext->offset + fdinfo(fd).sent)
-                : pread(ext->fd, ext->buffer, BUFFER_FILE_READ_SIZE,
-                        ext->offset + fdinfo(fd).sent);
-    if (count <= 0)
+    asked =
+        (packet->length < BUFFER_FILE_READ_SIZE)
+            ? pread(packet->fd, buff, packet->length, packet->offset)
+            : pread(packet->fd, buff, BUFFER_FILE_READ_SIZE, packet->offset);
+    if (asked <= 0)
       goto read_error;
-    count = fdinfo(fd).rw_hooks->write(fd2uuid(fd), ext->buffer, count);
-  } while (count == BUFFER_FILE_READ_SIZE && packet->buffer.len);
-  if (count >= 0) {
-    fdinfo(fd).sent += count;
-    packet->buffer.len -= count;
-    if (!packet->buffer.len) {
+    sent = fdinfo(fd).rw_hooks->write(fd2uuid(fd), fdinfo(fd).rw_udata, buff,
+                                      asked);
+  } while (sent == asked && packet->length);
+  if (sent >= 0) {
+    packet->offset += sent;
+    packet->length -= sent;
+    total += sent;
+    if (!packet->length) {
       sock_packet_rotate_unsafe(fd);
       return 1;
     }
   }
-  return count;
+  return total;
 
 read_error:
-  if (count == 0) {
+  if (sent == 0) {
     sock_packet_rotate_unsafe(fd);
     return 1;
   }
@@ -438,48 +428,44 @@ read_error:
   return -1;
 }
 
-#if USE_SENDFILE == 1
-
-#if defined(__linux__) /* linux sendfile API */
+#if USE_SENDFILE && defined(__linux__) /* linux sendfile API */
 
 static int sock_sendfile_from_fd(int fd, struct packet_s *packet) {
-  struct sock_packet_file_data_s *ext = (void *)packet->buffer.buf;
   ssize_t sent;
-  sent = sendfile64(fd, ext->fd, &ext->offset, packet->buffer.len);
+  sent = sendfile64(fd, packet->fd, &packet->offset, packet->length);
   if (sent < 0)
     return -1;
-  packet->buffer.len -= sent;
-  if (!packet->buffer.len)
+  packet->length -= sent;
+  if (!packet->length)
     sock_packet_rotate_unsafe(fd);
   return sent;
 }
 
-#elif defined(__APPLE__) || defined(__unix__) /* BSD / Apple API */
+#elif USE_SENDFILE &&                                                          \
+    (defined(__APPLE__) || defined(__unix__)) /* BSD / Apple API */
 
 static int sock_sendfile_from_fd(int fd, struct packet_s *packet) {
-  struct sock_packet_file_data_s *ext = (void *)packet->buffer.buf;
   off_t act_sent = 0;
   ssize_t ret = 0;
-  while (packet->buffer.len) {
-    act_sent = packet->buffer.len;
+  while (packet->length) {
+    act_sent = packet->length;
 #if defined(__APPLE__)
-    ret = sendfile(ext->fd, fd, ext->offset + fdinfo(fd).sent, &act_sent, NULL,
-                   0);
+    ret = sendfile(packet->fd, fd, packet->offset, &act_sent, NULL, 0);
 #else
-    ret = sendfile(ext->fd, fd, ext->offset + fdinfo(fd).sent, (size_t)act_sent,
-                   NULL, &act_sent, 0);
+    ret = sendfile(packet->fd, fd, packet->offset, (size_t)act_sent, NULL,
+                   &act_sent, 0);
 #endif
     if (ret < 0)
       goto error;
-    fdinfo(fd).sent += act_sent;
-    packet->buffer.len -= act_sent;
+    packet->length -= act_sent;
+    packet->offset += act_sent;
   }
   sock_packet_rotate_unsafe(fd);
   return act_sent;
 error:
-  if (errno == EAGAIN) {
-    fdinfo(fd).sent += act_sent;
-    packet->buffer.len -= act_sent;
+  if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+    packet->length -= act_sent;
+    packet->offset += act_sent;
   }
   return -1;
 }
@@ -515,18 +501,37 @@ static int (*sock_sendfile_from_fd)(int fd, struct packet_s *packet) =
     sock_write_from_fd;
 
 #endif
-#else
-static int (*sock_sendfile_from_fd)(int fd, struct packet_s *packet) =
-    sock_write_from_fd;
-#endif
+
+static int sock_sendfile_from_pfd(int fd, struct packet_s *packet) {
+  int ret;
+  struct packet_s tmp = *packet;
+  tmp.fd = ((intptr_t *)tmp.buffer)[0];
+  ret = sock_sendfile_from_fd(fd, &tmp);
+  tmp.fd = packet->fd;
+  *packet = tmp;
+  return ret;
+}
+
+static int sock_write_from_pfd(int fd, struct packet_s *packet) {
+  int ret;
+  struct packet_s tmp = *packet;
+  tmp.fd = ((intptr_t *)tmp.buffer)[0];
+  ret = sock_write_from_fd(fd, &tmp);
+  tmp.fd = packet->fd;
+  *packet = tmp;
+  return ret;
+}
 
 /* *****************************************************************************
 The API
 ***************************************************************************** */
 
 /* *****************************************************************************
-Process wide and helper sock_API.
+Process wide and helper sock API.
 */
+
+/** MUST be called after forking a process. */
+void sock_on_fork(void) { initialize_sock_lib(0); }
 
 /**
 Sets a socket to non blocking state.
@@ -543,10 +548,12 @@ int sock_set_non_block(int fd) {
     flags = 0;
   // printf("flags initial value was %d\n", flags);
   return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-#else
+#elif defined(FIONBIO)
   /* Otherwise, use the old way of doing it */
   static int flags = 1;
-  return ioctl(fd, FIOBIO, &flags);
+  return ioctl(fd, FIONBIO, &flags);
+#else
+#error No functions / argumnet macros for non-blocking sockets.
 #endif
 }
 
@@ -564,35 +571,42 @@ ssize_t sock_max_capacity(void) {
     return flim;
 #ifdef _SC_OPEN_MAX
   flim = sysconf(_SC_OPEN_MAX);
-#elif defined(OPEN_MAX)
-  flim = OPEN_MAX;
+#elif defined(FOPEN_MAX)
+  flim = FOPEN_MAX;
 #endif
   // try to maximize limits - collect max and set to max
   struct rlimit rlim = {.rlim_max = 0};
-  getrlimit(RLIMIT_NOFILE, &rlim);
-// printf("Meximum open files are %llu out of %llu\n", rlim.rlim_cur,
-//        rlim.rlim_max);
-#if defined(__APPLE__) /* Apple's getrlimit is broken. */
-  rlim.rlim_cur = rlim.rlim_max >= OPEN_MAX ? OPEN_MAX : rlim.rlim_max;
-#else
-  rlim.rlim_cur = rlim.rlim_max;
-#endif
+  if (getrlimit(RLIMIT_NOFILE, &rlim) == -1) {
+    fprintf(stderr, "WARNING: `getrlimit` failed in `sock_max_capacity`.\n");
+  } else {
+    // #if defined(__APPLE__) /* Apple's getrlimit is broken. */
+    //     rlim.rlim_cur = rlim.rlim_max >= FOPEN_MAX ? FOPEN_MAX :
+    //     rlim.rlim_max;
+    // #else
+    rlim.rlim_cur = rlim.rlim_max;
+    // #endif
 
-  setrlimit(RLIMIT_NOFILE, &rlim);
-  getrlimit(RLIMIT_NOFILE, &rlim);
-  // printf("Meximum open files are %llu out of %llu\n", rlim.rlim_cur,
-  //        rlim.rlim_max);
-  // if the current limit is higher than it was, update
-  if (flim < ((ssize_t)rlim.rlim_cur))
+    if (rlim.rlim_cur > LIB_SOCK_MAX_CAPACITY)
+      rlim.rlim_cur = LIB_SOCK_MAX_CAPACITY;
+
+    if (!setrlimit(RLIMIT_NOFILE, &rlim))
+      getrlimit(RLIMIT_NOFILE, &rlim);
     flim = rlim.rlim_cur;
+  }
+#if DEBUG
+  fprintf(stderr,
+          "libsock capacity initialization:\n"
+          "*    Meximum open files %lu out of %lu\n",
+          (unsigned long)flim, (unsigned long)rlim.rlim_max);
+#endif
   // initialize library to maximum capacity
   initialize_sock_lib(flim);
   // return what we have
-  return flim;
+  return sock_data_store.capacity;
 }
 
 /* *****************************************************************************
-The main sock_API.
+The main sock API.
 */
 
 /**
@@ -611,60 +625,107 @@ the same `fd`).
 */
 intptr_t sock_listen(const char *address, const char *port) {
   int srvfd;
-  // setup the address
-  struct addrinfo hints;
-  struct addrinfo *servinfo;       // will point to the results
-  memset(&hints, 0, sizeof hints); // make sure the struct is empty
-  hints.ai_family = AF_UNSPEC;     // don't care IPv4 or IPv6
-  hints.ai_socktype = SOCK_STREAM; // TCP stream sockets
-  hints.ai_flags = AI_PASSIVE;     // fill in my IP for me
-  if (getaddrinfo(address, port, &hints, &servinfo)) {
-    // perror("addr err");
-    return -1;
-  }
-  // get the file descriptor
-  srvfd =
-      socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol);
-  if (srvfd <= 0) {
-    // perror("socket err");
-    freeaddrinfo(servinfo);
-    return -1;
-  }
-  // make sure the socket is non-blocking
-  if (sock_set_non_block(srvfd) < 0) {
-    // perror("couldn't set socket as non blocking! ");
-    freeaddrinfo(servinfo);
-    close(srvfd);
-    return -1;
-  }
-  // avoid the "address taken"
-  {
-    int optval = 1;
-    setsockopt(srvfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
-  }
-  // bind the address to the socket
-  {
-    int bound = 0;
-    for (struct addrinfo *p = servinfo; p != NULL; p = p->ai_next) {
-      if (!bind(srvfd, p->ai_addr, p->ai_addrlen))
-        bound = 1;
+  if (!port || *port == 0 || (port[0] == '0' && port[1] == 0)) {
+    /* Unix socket */
+    if (!address) {
+      errno = EINVAL;
+      fprintf(
+          stderr,
+          "ERROR: (sock) sock_listen - a Unix socket requires a valid address."
+          "              or specify port for TCP/IP.\n");
+      return -1;
     }
+    struct sockaddr_un addr = {0};
+    size_t addr_len = strlen(address);
+    if (addr_len >= sizeof(addr.sun_path)) {
+      errno = ENAMETOOLONG;
+      return -1;
+    }
+    addr.sun_family = AF_UNIX;
+    memcpy(addr.sun_path, address, addr_len + 1); /* copy the NUL byte. */
+#if defined(__APPLE__)
+    addr.sun_len = addr_len;
+#endif
+    // get the file descriptor
+    srvfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (srvfd == -1) {
+      return -1;
+    }
+    if (sock_set_non_block(srvfd) == -1) {
+      close(srvfd);
+      return -1;
+    }
+    unlink(addr.sun_path);
+    if (bind(srvfd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
+      close(srvfd);
+      return -1;
+    }
+    /* chmod for foriegn connections */
+    fchmod(srvfd, 0777);
 
-    if (!bound) {
-      // perror("bind err");
+  } else {
+    /* TCP/IP socket */
+    // setup the address
+    struct addrinfo hints = {0};
+    struct addrinfo *servinfo;       // will point to the results
+    memset(&hints, 0, sizeof hints); // make sure the struct is empty
+    hints.ai_family = AF_UNSPEC;     // don't care IPv4 or IPv6
+    hints.ai_socktype = SOCK_STREAM; // TCP stream sockets
+    hints.ai_flags = AI_PASSIVE;     // fill in my IP for me
+    if (getaddrinfo(address, port, &hints, &servinfo)) {
+      // perror("addr err");
+      return -1;
+    }
+    // get the file descriptor
+    srvfd = socket(servinfo->ai_family, servinfo->ai_socktype,
+                   servinfo->ai_protocol);
+    if (srvfd <= 0) {
+      // perror("socket err");
+      freeaddrinfo(servinfo);
+      return -1;
+    }
+    // make sure the socket is non-blocking
+    if (sock_set_non_block(srvfd) < 0) {
+      // perror("couldn't set socket as non blocking! ");
       freeaddrinfo(servinfo);
       close(srvfd);
       return -1;
     }
+    // avoid the "address taken"
+    {
+      int optval = 1;
+      setsockopt(srvfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+    }
+    // allow listening ports to be opened from different processes
+    {
+      int optval = 1;
+      setsockopt(srvfd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+    }
+    // bind the address to the socket
+    {
+      int bound = 0;
+      for (struct addrinfo *p = servinfo; p != NULL; p = p->ai_next) {
+        if (!bind(srvfd, p->ai_addr, p->ai_addrlen))
+          bound = 1;
+      }
+
+      if (!bound) {
+        // perror("bind err");
+        freeaddrinfo(servinfo);
+        close(srvfd);
+        return -1;
+      }
+    }
+    freeaddrinfo(servinfo);
   }
-  freeaddrinfo(servinfo);
   // listen in
   if (listen(srvfd, SOMAXCONN) < 0) {
     // perror("couldn't start listening");
     close(srvfd);
     return -1;
   }
-  clear_fd(srvfd, 1);
+  if (clear_fd(srvfd, 1))
+    return -1;
   return fd2uuid(srvfd);
 }
 
@@ -688,7 +749,6 @@ intptr_t sock_accept(intptr_t srv_uuid) {
   struct sockaddr_in6 addrinfo;
   socklen_t addrlen = sizeof(addrinfo);
   int client;
-  int one = 1;
 #ifdef SOCK_NONBLOCK
   client = accept4(sock_uuid2fd(srv_uuid), (struct sockaddr *)&addrinfo,
                    &addrlen, SOCK_NONBLOCK);
@@ -701,8 +761,25 @@ intptr_t sock_accept(intptr_t srv_uuid) {
     return -1;
   sock_set_non_block(client);
 #endif
-  setsockopt(client, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-  clear_fd(client, 1);
+  // avoid the TCP delay algorithm.
+  {
+    int optval = 1;
+    setsockopt(client, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));
+  }
+  // handle socket buffers.
+  {
+    int optval = 0;
+    socklen_t size = (socklen_t)sizeof(optval);
+    if (!getsockopt(client, SOL_SOCKET, SO_SNDBUF, &optval, &size) &&
+        optval <= 131072) {
+      optval = 131072;
+      setsockopt(client, SOL_SOCKET, SO_SNDBUF, &optval, sizeof(optval));
+      optval = 131072;
+      setsockopt(client, SOL_SOCKET, SO_RCVBUF, &optval, sizeof(optval));
+    }
+  }
+  if (clear_fd(client, 1))
+    return -1;
   fdinfo(client).addrinfo = addrinfo;
   fdinfo(client).addrlen = addrlen;
   return fd2uuid(client);
@@ -735,47 +812,92 @@ before attempting to write to the socket.
 intptr_t sock_connect(char *address, char *port) {
   int fd;
   int one = 1;
-  // setup the address
-  struct addrinfo hints;
-  struct addrinfo *addrinfo;       // will point to the results
-  memset(&hints, 0, sizeof hints); // make sure the struct is empty
-  hints.ai_family = AF_UNSPEC;     // don't care IPv4 or IPv6
-  hints.ai_socktype = SOCK_STREAM; // TCP stream sockets
-  hints.ai_flags = AI_PASSIVE;     // fill in my IP for me
-  if (getaddrinfo(address, port, &hints, &addrinfo)) {
-    return -1;
-  }
-  // get the file descriptor
-  fd =
-      socket(addrinfo->ai_family, addrinfo->ai_socktype, addrinfo->ai_protocol);
-  if (fd <= 0) {
-    freeaddrinfo(addrinfo);
-    return -1;
-  }
-  // make sure the socket is non-blocking
-  if (sock_set_non_block(fd) < 0) {
-    freeaddrinfo(addrinfo);
-    close(fd);
-    return -1;
-  }
+  if (!port || *port == 0 || (port[0] == '0' && port[1] == 0)) {
+    /* Unix socket */
+    if (!address) {
+      errno = EINVAL;
+      fprintf(
+          stderr,
+          "ERROR: (sock) sock_listen - a Unix socket requires a valid address."
+          "              or specify port for TCP/IP.\n");
+      return -1;
+    }
 
-  if (connect(fd, addrinfo->ai_addr, addrinfo->ai_addrlen) < 0 &&
-      errno != EINPROGRESS) {
-    close(fd);
+    struct sockaddr_un addr = {.sun_family = AF_UNIX};
+    size_t addr_len = strlen(address);
+    if (addr_len >= sizeof(addr.sun_path)) {
+      errno = ENAMETOOLONG;
+      return -1;
+    }
+    addr.sun_family = AF_UNIX;
+    memcpy(addr.sun_path, address, addr_len + 1); /* copy the NUL byte. */
+#if defined(__APPLE__)
+    addr.sun_len = addr_len;
+#endif
+    // get the file descriptor
+    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd == -1) {
+      return -1;
+    }
+    if (sock_set_non_block(fd) == -1) {
+      close(fd);
+      return -1;
+    }
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1 &&
+        errno != EINPROGRESS) {
+      close(fd);
+      return -1;
+    }
+    if (clear_fd(fd, 1))
+      return -1;
+  } else {
+    // setup the address
+    struct addrinfo hints;
+    struct addrinfo *addrinfo;       // will point to the results
+    memset(&hints, 0, sizeof hints); // make sure the struct is empty
+    hints.ai_family = AF_UNSPEC;     // don't care IPv4 or IPv6
+    hints.ai_socktype = SOCK_STREAM; // TCP stream sockets
+    hints.ai_flags = AI_PASSIVE;     // fill in my IP for me
+    if (getaddrinfo(address, port, &hints, &addrinfo)) {
+      return -1;
+    }
+    // get the file descriptor
+    fd = socket(addrinfo->ai_family, addrinfo->ai_socktype,
+                addrinfo->ai_protocol);
+    if (fd <= 0) {
+      freeaddrinfo(addrinfo);
+      return -1;
+    }
+    // make sure the socket is non-blocking
+    if (sock_set_non_block(fd) < 0) {
+      freeaddrinfo(addrinfo);
+      close(fd);
+      return -1;
+    }
+
+    for (struct addrinfo *i = addrinfo; i; i = i->ai_next) {
+      if (connect(fd, i->ai_addr, i->ai_addrlen) == 0 || errno == EINPROGRESS)
+        goto connection_requested;
+    }
     freeaddrinfo(addrinfo);
+    close(fd);
     return -1;
+
+  connection_requested:
+
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    if (clear_fd(fd, 1))
+      return -1;
+    memcpy(&fdinfo(fd).addrinfo, addrinfo->ai_addr, addrinfo->ai_addrlen);
+    fdinfo(fd).addrlen = addrinfo->ai_addrlen;
+    freeaddrinfo(addrinfo);
   }
-  setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-  clear_fd(fd, 1);
-  fdinfo(fd).addrinfo = *((struct sockaddr_in6 *)addrinfo->ai_addr);
-  fdinfo(fd).addrlen = addrinfo->ai_addrlen;
-  freeaddrinfo(addrinfo);
   return fd2uuid(fd);
 }
 
 /**
 `sock_open` takes an existing file descriptor `fd` and initializes it's status
-as open and available for `sock_API` calls, returning a valid UUID.
+as open and available for `sock_*` API calls, returning a valid UUID.
 
 This will reinitialize the data (user buffer etc') for the file descriptor
 provided, calling the `reactor_on_close` callback if the `fd` was previously
@@ -793,8 +915,27 @@ response in the background while a disconnection and a new connection occur on
 the same `fd`).
 */
 intptr_t sock_open(int fd) {
-  clear_fd(fd, 1);
+  if (clear_fd(fd, 1))
+    return -1;
   return fd2uuid(fd);
+}
+
+/**
+ * `sock_hijack` is the reverse of the `sock_open` function, removing the
+ * connection from the `sock` library and clearing it's data without closing it
+ * (`sock_on_close` will NOT be called).
+ *
+ * Returns the original `fd` for the socket. On error returns -1.
+ */
+int sock_hijack(intptr_t uuid) {
+  const int fd = sock_uuid2fd(uuid);
+  if (validate_uuid(uuid) && fdinfo(fd).open) {
+    fprintf(stderr, "WARNING: SOCK HIJACK FAILING!\n");
+    return -1;
+  }
+  fdinfo(fd).open = 0;
+  clear_fd(fd, 0);
+  return fd;
 }
 
 /** Returns the information available about the socket's peer address. */
@@ -813,6 +954,16 @@ Returns 1 if the uuid refers to a valid and open, socket.
 Returns 0 if not.
 */
 int sock_isvalid(intptr_t uuid) {
+  // if (validate_uuid(uuid)) {
+  //   fprintf(stderr, "sock is INVALID %p\n", (void *)uuid);
+  //   if ((intptr_t)uuid == -1)
+  //     fprintf(stderr, "sock value == -1 %p\n", (void *)uuid);
+  //   if (sock_data_store.capacity <= (size_t)sock_uuid2fd(uuid))
+  //     fprintf(stderr, "sock value too big %p\n", (void *)uuid);
+  //   if (fdinfo(sock_uuid2fd(uuid)).counter != (uuid & 0xFF))
+  //     fprintf(stderr, "sock counter error %p != %p\n", (void *)uuid,
+  //             (void *)(fd2uuid(sock_uuid2fd(uuid))));
+  // }
   return validate_uuid(uuid) == 0 && fdinfo(sock_uuid2fd(uuid)).open;
 }
 
@@ -860,17 +1011,22 @@ ssize_t sock_read(intptr_t uuid, void *buf, size_t count) {
     return -1;
   }
   sock_rw_hook_s *rw = fdinfo(sock_uuid2fd(uuid)).rw_hooks;
+  void *udata = fdinfo(sock_uuid2fd(uuid)).rw_udata;
   unlock_fd(sock_uuid2fd(uuid));
   if (count == 0)
-    return rw->read(uuid, buf, count);
+    return rw->read(uuid, udata, buf, count);
   int old_errno = errno;
-  ssize_t ret = rw->read(uuid, buf, count);
+  ssize_t ret;
+retry_int:
+  ret = rw->read(uuid, udata, buf, count);
   if (ret > 0) {
     sock_touch(uuid);
     return ret;
   }
-  if (ret < 0 && (errno == EWOULDBLOCK || errno == EAGAIN || errno == EINTR ||
-                  errno == ENOTCONN)) {
+  if (ret < 0 && errno == EINTR)
+    goto retry_int;
+  if (ret < 0 &&
+      (errno == EWOULDBLOCK || errno == EAGAIN || errno == ENOTCONN)) {
     errno = old_errno;
     return 0;
   }
@@ -884,72 +1040,39 @@ ssize_t sock_read(intptr_t uuid, void *buf, size_t count) {
 ssize_t sock_write2_fn(sock_write_info_s options) {
   int fd = sock_uuid2fd(options.uuid);
 
-  // avoid work when an error is expected to occur.
-  if (validate_uuid(options.uuid) || !fdinfo(fd).open || options.offset < 0) {
-    if (options.move == 0) {
-      errno = (options.offset < 0) ? ERANGE : EBADF;
-      return -1;
-    }
-    if (options.move)
-      (options.dealloc ? options.dealloc : free)((void *)options.buffer);
-    else
-      (options.dealloc ? (void (*)(intptr_t))options.dealloc
-                       : sock_perform_close_fd)(options.data_fd);
-    errno = (options.offset < 0) ? ERANGE : EBADF;
-    return -1;
+  /* this extra work can be avoided if an error is already known to occur...
+   * but the extra complexity and branching isn't worth it, considering the
+   * common case should be that there's no expected error.
+   *
+   * It also important to point out that errors should handle deallocation,
+   * simplifying client-side error handling logic (this is a framework wide
+   * design choice where callbacks are passed).
+   */
+  packet_s *packet = sock_packet_new();
+  packet->length = options.length;
+  packet->offset = options.offset;
+  packet->buffer = (void *)options.buffer;
+  if (options.is_fd) {
+    packet->write_func = (fdinfo(fd).rw_hooks == &SOCK_DEFAULT_HOOKS)
+                             ? sock_sendfile_from_fd
+                             : sock_write_from_fd;
+    packet->free_func =
+        (options.dealloc ? options.dealloc
+                         : (void (*)(void *))sock_perform_close_fd);
+  } else if (options.is_pfd) {
+    packet->write_func = (fdinfo(fd).rw_hooks == &SOCK_DEFAULT_HOOKS)
+                             ? sock_sendfile_from_pfd
+                             : sock_write_from_pfd;
+    packet->free_func =
+        (options.dealloc ? options.dealloc : sock_perform_close_pfd);
+  } else {
+    packet->write_func = sock_write_buffer;
+    packet->free_func = (options.dealloc ? options.dealloc : free);
   }
 
-  packet_s *packet = sock_packet_grab();
-  packet->buffer.len = options.length;
-  if (options.is_fd == 0 && options.is_pfd == 0) { /* is data */
-    if (options.move == 0) {                       /* memory is copied. */
-      if (options.length <= BUFFER_PACKET_SIZE) {
-        /* small enough for internal buffer */
-        memcpy(packet->buffer.buf, (uint8_t *)options.buffer + options.offset,
-               options.length);
-        packet->metadata = (struct packet_metadata_s){
-            .write_func = sock_write_buffer,
-            .free_func = (void (*)(packet_s *))SOCK_DEALLOC_NOOP};
-        goto place_packet_in_queue;
-      }
-      /* too big for the pre-allocated buffer */
-      void *copy = malloc(options.length);
-      memcpy(copy, (uint8_t *)options.buffer + options.offset, options.length);
-      options.offset = 0;
-      options.buffer = copy;
-    }
-    /* memory moved, not copied. */
-    struct sock_packet_ext_data_s *ext = (void *)packet->buffer.buf;
-    ext->buffer = (uint8_t *)options.buffer + options.offset;
-    ext->to_free = (uint8_t *)options.buffer;
-    ext->dealloc = options.dealloc ? options.dealloc : free;
-    packet->metadata = (struct packet_metadata_s){
-        .write_func = sock_write_buffer_ext, .free_func = sock_free_buffer_ext};
+  /* place packet in queue */
 
-  } else { /* is file */
-    struct sock_packet_file_data_s *ext = (void *)packet->buffer.buf;
-    if (options.is_pfd) {
-      ext->pfd = (int *)options.buffer;
-      ext->fd = *ext->pfd;
-      ext->dealloc = options.dealloc ? options.dealloc : sock_perform_close_pfd;
-    } else {
-      ext->fd = options.data_fd;
-      ext->pfd = NULL;
-      ext->close = options.close ? options.close : sock_perform_close_fd;
-    }
-    ext->offset = options.offset;
-    packet->metadata = (struct packet_metadata_s){
-        .write_func =
-            (fdinfo(sock_uuid2fd(options.uuid)).rw_hooks == &SOCK_DEFAULT_HOOKS
-                 ? sock_sendfile_from_fd
-                 : sock_write_from_fd),
-        .free_func = options.move ? sock_close_from_fd
-                                  : (void (*)(packet_s *))SOCK_DEALLOC_NOOP};
-  }
-
-/* place packet in queue */
-place_packet_in_queue:
-  if (validate_uuid(options.uuid))
+  if (validate_uuid(options.uuid) || !options.buffer)
     goto error;
   lock_fd(fd);
   if (!fdinfo(fd).open) {
@@ -959,11 +1082,12 @@ place_packet_in_queue:
   packet_s **pos = &fdinfo(fd).packet;
   if (options.urgent == 0) {
     while (*pos)
-      pos = &(*pos)->metadata.next;
+      pos = &(*pos)->next;
+    packet->next = NULL;
   } else {
-    if (*pos && fdinfo(fd).sent)
-      pos = &(*pos)->metadata.next;
-    packet->metadata.next = *pos;
+    if (*pos)
+      pos = &(*pos)->next;
+    packet->next = *pos;
   }
   *pos = packet;
   unlock_fd(fd);
@@ -978,86 +1102,6 @@ error:
 }
 #define sock_write2(...) sock_write2_fn((sock_write_info_s){__VA_ARGS__})
 
-/**
-`sock_flush` writes the data in the internal buffer to the underlying file
-descriptor and closes the underlying fd once it's marked for closure (and all
-the data was sent).
-
-Return value: 0 will be returned on success and -1 will be returned on an error
-or when the connection is closed.
-
-**Please Note**: when using `libreact`, the `sock_flush` will be called
-automatically when the socket is ready.
-*/
-ssize_t sock_flush(intptr_t uuid) {
-  int fd = sock_uuid2fd(uuid);
-  if (validate_uuid(uuid) || !fdinfo(fd).open)
-    return -1;
-  ssize_t ret;
-  uint8_t touch = 0;
-  lock_fd(fd);
-  sock_rw_hook_s *rw;
-retry:
-  rw = fdinfo(fd).rw_hooks;
-  unlock_fd(fd);
-  while ((ret = rw->flush(fd)) > 0)
-    if (ret > 0)
-      touch = 1;
-  if (ret == -1) {
-    if (errno == EINTR)
-      goto retry;
-    if (errno == EWOULDBLOCK || errno == EAGAIN || errno == ENOTCONN ||
-        errno == ENOSPC)
-      goto finish;
-    goto error;
-  }
-  lock_fd(fd);
-  while (fdinfo(fd).packet && (ret = fdinfo(fd).packet->metadata.write_func(
-                                   fd, fdinfo(fd).packet)) > 0)
-    touch = 1;
-  if (ret == -1) {
-    if (errno == EINTR)
-      goto retry;
-    if (errno == EWOULDBLOCK || errno == EAGAIN || errno == ENOTCONN ||
-        errno == ENOSPC)
-      goto finish;
-    goto error;
-  }
-  if (fdinfo(fd).close && !fdinfo(fd).packet)
-    goto error;
-finish:
-  unlock_fd(fd);
-  if (touch)
-    sock_touch(uuid);
-  return 0;
-error:
-  unlock_fd(fd);
-  // fprintf(stderr,
-  //         "ERROR: sock `write` failed"
-  //         " for %p with %d\n",
-  //         (void *)uuid, errno);
-  sock_force_close(uuid);
-  return -1;
-}
-/**
-`sock_flush_strong` performs the same action as `sock_flush` but returns only
-after all the data was sent. This is a "busy" wait, polling isn't performed.
-*/
-void sock_flush_strong(intptr_t uuid) {
-  errno = 0;
-  while (sock_flush(uuid) == 0 && errno == 0)
-    ;
-}
-/**
-Calls `sock_flush` for each file descriptor that's buffer isn't empty.
-*/
-void sock_flush_all(void) {
-  for (size_t fd = 0; fd < sock_data_store.capacity; fd++) {
-    if (!fdinfo(fd).open || !fdinfo(fd).packet)
-      continue;
-    sock_flush(fd2uuid(fd));
-  }
-}
 /**
 `sock_close` marks the connection for disconnection once all the data was sent.
 The actual disconnection will be managed by the `sock_flush` function.
@@ -1079,10 +1123,12 @@ void sock_force_close(intptr_t uuid) {
   if (validate_uuid(uuid))
     return;
   // fprintf(stderr,
-  //         "ERROR: `sock_force_close` called"
-  //         " for %p with errno %d\n",
-  //         (void *)uuid, errno);
-  shutdown(sock_uuid2fd(uuid), SHUT_RDWR);
+  //         "INFO: (%d) `sock_force_close` called"
+  //         " for %p (fd: %u) with errno %d\n",
+  //         getpid(), (void *)uuid, (unsigned int)sock_uuid2fd(uuid), errno);
+  // perror("errno");
+  // // We might avoid shutdown, it has side-effects that aren't always clear
+  // shutdown(sock_uuid2fd(uuid), SHUT_RDWR);
   close(sock_uuid2fd(uuid));
   clear_fd(sock_uuid2fd(uuid), 0);
 }
@@ -1095,39 +1141,88 @@ memory copy operations.
 */
 
 /**
-Checks out a `sock_buffer_s` from the buffer pool.
-*/
-sock_buffer_s *sock_buffer_checkout(void) {
-  packet_s *ret = sock_packet_grab();
-  return &ret->buffer;
-}
-/**
-Attaches a packet to a socket's output buffer and calls `sock_flush` for the
-socket.
+`sock_flush` writes the data in the internal buffer to the underlying file
+descriptor and closes the underlying fd once it's marked for closure (and all
+the data was sent).
 
-Returns -1 on error. Returns 0 on success. The `buffer` memory is always
-automatically managed.
+Return value: 0 will be returned on success and -1 will be returned on an error
+or when the connection is closed.
+
+**Please Note**: when using `libreact`, the `sock_flush` will be called
+automatically when the socket is ready.
 */
-ssize_t sock_buffer_send(intptr_t uuid, sock_buffer_s *buffer) {
-  if (validate_uuid(uuid) || !fdinfo(sock_uuid2fd(uuid)).open) {
-    sock_buffer_free(buffer);
-    return -1;
-  }
-  packet_s **tmp, *packet = (packet_s *)((uintptr_t)(buffer) -
-                                         (uintptr_t)(&((packet_s *)0)->buffer));
-  // (packet_s *)((uintptr_t)(buffer) - sizeof(struct packet_metadata_s));
-  packet->metadata = (struct packet_metadata_s){
-      .write_func = sock_write_buffer,
-      .free_func = (void (*)(packet_s *))SOCK_DEALLOC_NOOP};
+ssize_t sock_flush(intptr_t uuid) {
   int fd = sock_uuid2fd(uuid);
+  if (validate_uuid(uuid) || !fdinfo(fd).open)
+    return -1;
+  ssize_t ret;
+  uint8_t touch = 0;
   lock_fd(fd);
-  tmp = &fdinfo(fd).packet;
-  while (*tmp)
-    tmp = &(*tmp)->metadata.next;
-  *tmp = packet;
+  sock_rw_hook_s *rw;
+  void *rw_udata;
+retry:
+  rw = fdinfo(fd).rw_hooks;
+  rw_udata = fdinfo(fd).rw_udata;
   unlock_fd(fd);
-  defer(sock_flush_defer, (void *)uuid, NULL);
+  while ((ret = rw->flush(uuid, rw_udata)) > 0)
+    if (ret > 0)
+      touch = 1;
+  if (ret == -1) {
+    if (errno == EINTR)
+      goto retry;
+    if (errno == EWOULDBLOCK || errno == EAGAIN || errno == ENOTCONN ||
+        errno == ENOSPC)
+      goto finish;
+    goto error;
+  }
+  lock_fd(fd);
+  while (fdinfo(fd).packet &&
+         (ret = fdinfo(fd).packet->write_func(fd, fdinfo(fd).packet)) > 0)
+    touch = 1;
+  if (ret == -1) {
+    if (errno == EINTR)
+      goto retry;
+    if (errno == EWOULDBLOCK || errno == EAGAIN || errno == ENOTCONN ||
+        errno == ENOSPC)
+      goto finish;
+    goto error;
+  }
+  if (!touch && fdinfo(fd).close && !fdinfo(fd).packet)
+    goto error;
+finish:
+  unlock_fd(fd);
+  if (touch)
+    sock_touch(uuid);
   return 0;
+error:
+  unlock_fd(fd);
+  // fprintf(stderr,
+  //         "ERROR: sock `flush` failed"
+  //         " for %p with %d\n",
+  //         (void *)uuid, errno);
+  sock_force_close(uuid);
+  return -1;
+}
+
+/**
+`sock_flush_strong` performs the same action as `sock_flush` but returns only
+after all the data was sent. This is a "busy" wait, polling isn't performed.
+*/
+void sock_flush_strong(intptr_t uuid) {
+  errno = 0;
+  while (sock_flush(uuid) == 0 && errno == 0)
+    ;
+}
+
+/**
+Calls `sock_flush` for each file descriptor that's buffer isn't empty.
+*/
+void sock_flush_all(void) {
+  for (size_t fd = 0; fd < sock_data_store.capacity; fd++) {
+    if (!fdinfo(fd).open || !fdinfo(fd).packet)
+      continue;
+    sock_flush(fd2uuid(fd));
+  }
 }
 
 /**
@@ -1136,18 +1231,8 @@ user-land buffer.
 */
 int sock_has_pending(intptr_t uuid) {
   return validate_uuid(uuid) == 0 && fdinfo(sock_uuid2fd(uuid)).open &&
-         fdinfo(sock_uuid2fd(uuid)).packet;
-}
-
-/**
-Use `sock_buffer_free` to free unused buffers that were checked-out using
-`sock_buffer_checkout`.
-*/
-void sock_buffer_free(sock_buffer_s *buffer) {
-  packet_s *packet =
-      (packet_s *)((uintptr_t)(buffer) - (uintptr_t)(&((packet_s *)0)->buffer));
-  // (packet_s *)((uintptr_t)(buffer) - sizeof(struct packet_metadata_s));
-  sock_packet_free(packet);
+         (fdinfo(sock_uuid2fd(uuid)).packet ||
+          fdinfo(sock_uuid2fd(uuid)).close);
 }
 
 /* *****************************************************************************
@@ -1159,14 +1244,22 @@ Experimental
 /** Gets a socket hook state (a pointer to the struct). */
 struct sock_rw_hook_s *sock_rw_hook_get(intptr_t uuid) {
   if (validate_uuid(uuid) || !fdinfo(sock_uuid2fd(uuid)).open ||
-      ((uuid = sock_uuid2fd(uuid)),
+      ((void)(uuid = sock_uuid2fd(uuid)),
        fdinfo(uuid).rw_hooks == &SOCK_DEFAULT_HOOKS))
     return NULL;
   return fdinfo(uuid).rw_hooks;
 }
 
+/** Returns the socket's udata associated with the read/write hook. */
+void *sock_rw_udata(intptr_t uuid) {
+  if (validate_uuid(uuid) || !fdinfo(sock_uuid2fd(uuid)).open)
+    return NULL;
+  uuid = sock_uuid2fd(uuid);
+  return fdinfo(uuid).rw_udata;
+}
+
 /** Sets a socket hook state (a pointer to the struct). */
-int sock_rw_hook_set(intptr_t uuid, sock_rw_hook_s *rw_hooks) {
+int sock_rw_hook_set(intptr_t uuid, sock_rw_hook_s *rw_hooks, void *udata) {
   if (validate_uuid(uuid) || !fdinfo(sock_uuid2fd(uuid)).open)
     return -1;
   if (!rw_hooks->read)
@@ -1180,6 +1273,7 @@ int sock_rw_hook_set(intptr_t uuid, sock_rw_hook_s *rw_hooks) {
   uuid = sock_uuid2fd(uuid);
   lock_fd(uuid);
   fdinfo(uuid).rw_hooks = rw_hooks;
+  fdinfo(uuid).rw_udata = udata;
   unlock_fd(uuid);
   return 0;
 }
@@ -1189,42 +1283,51 @@ test
 */
 #ifdef DEBUG
 void sock_libtest(void) {
-  char request[] = "GET / HTTP/1.1\r\n"
-                   "Host: www.google.com\r\n"
-                   "\r\n";
-  char buff[1024];
-  ssize_t i_read;
-  intptr_t uuid = sock_connect("www.google.com", "80");
-  if (uuid == -1)
-    perror("sock_connect failed"), exit(1);
-  if (sock_write(uuid, request, sizeof(request) - 1) < 0)
-    perror("sock_write error ");
-
-  while ((i_read = sock_read(uuid, buff, 1024)) >= 0) {
-    if (i_read == 0) { // could be we hadn't finished connecting yet.
-      sock_flush(uuid);
-      reschedule_thread();
-    } else {
-      fprintf(stderr, "\n%.*s\n\n", (int)i_read, buff);
-      break;
+  if (0) { /* this test can't be performed witout initializeing `facil`. */
+    char request[] = "GET / HTTP/1.1\r\n"
+                     "Host: www.google.com\r\n"
+                     "\r\n";
+    char buff[1024];
+    ssize_t i_read;
+    intptr_t uuid = sock_connect("www.google.com", "80");
+    if (uuid == -1) {
+      perror("sock_connect failed");
+      exit(1);
     }
+    if (sock_write(uuid, request, sizeof(request) - 1) < 0)
+      perror("sock_write error ");
+
+    while ((i_read = sock_read(uuid, buff, 1024)) >= 0) {
+      if (i_read == 0) { // could be we hadn't finished connecting yet.
+        sock_flush(uuid);
+        reschedule_thread();
+      } else {
+        fprintf(stderr, "\n%.*s\n\n", (int)i_read, buff);
+        break;
+      }
+    }
+    if (i_read < 0)
+      perror("Error with sock_read ");
+    fprintf(stderr, "done.\n");
+    sock_close(uuid);
   }
-  if (i_read < 0)
-    perror("Error with sock_read ");
-  fprintf(stderr, "done.\n");
-  sock_close(uuid);
+  sock_max_capacity();
+  for (int i = 0; i < 4; ++i) {
+    packet_s *packet = sock_packet_new();
+    sock_packet_free(packet);
+  }
   packet_s *head, *pos;
   pos = head = packet_pool.next;
   size_t count = 0;
   while (pos) {
     count++;
-    pos = pos->metadata.next;
+    pos = pos->next;
   }
-  fprintf(stderr, "Packet pool test %s (%d =? %lu)\n",
-          count == BUFFER_PACKET_POOL ? "PASS" : "FAIL", BUFFER_PACKET_POOL,
-          count);
-  count = sock_max_capacity();
-  printf("Allocated sock capacity %lu X %lu\n", count,
-         sizeof(struct fd_data_s));
+  fprintf(stderr, "Packet pool test %s (%lu =? %lu)\n",
+          count == BUFFER_PACKET_POOL ? "PASS" : "FAIL",
+          (unsigned long)BUFFER_PACKET_POOL, (unsigned long)count);
+  printf("Allocated sock capacity %lu X %lu\n",
+         (unsigned long)sock_data_store.capacity,
+         (unsigned long)sizeof(struct fd_data_s));
 }
 #endif

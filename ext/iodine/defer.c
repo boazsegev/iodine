@@ -20,10 +20,22 @@ Compile time settings
 ***************************************************************************** */
 
 #ifndef DEFER_THROTTLE
-#define DEFER_THROTTLE 524287UL
+#define DEFER_THROTTLE 1048574UL
 #endif
 #ifndef DEFER_THROTTLE_LIMIT
-#define DEFER_THROTTLE_LIMIT 1572864UL
+#define DEFER_THROTTLE_LIMIT 2097148UL
+#endif
+
+/**
+ * The progressive throttling model makes concurrency and parallelism more
+ * likely.
+ *
+ * Otherwise threads are assumed to be intended for "fallback" in case of slow
+ * user code, where a single thread should be active most of the time and other
+ * threads are activated only when that single thread is slow to perform.
+ */
+#ifndef DEFER_THROTTLE_PROGRESSIVE
+#define DEFER_THROTTLE_PROGRESSIVE 1
 #endif
 
 #ifndef DEFER_QUEUE_BLOCK_COUNT
@@ -126,10 +138,10 @@ critical_error:
 }
 
 static inline task_s pop_task(void) {
-  task_s ret = (task_s){NULL};
+  task_s ret = (task_s){.func = NULL};
   queue_block_s *to_free = NULL;
-  /* lock the state machine, to grab/create a task and place it at the tail
-  */ spn_lock(&deferred.lock);
+  /* lock the state machine, grab/create a task and place it at the tail */
+  spn_lock(&deferred.lock);
 
   /* empty? */
   if (deferred.reader->write == deferred.reader->read &&
@@ -182,6 +194,8 @@ static inline void clear_tasks(void) {
   spn_unlock(&deferred.lock);
 }
 
+void defer_on_fork(void) { deferred.lock = SPN_LOCK_INIT; }
+
 #define push_task(...) push_task((task_s){__VA_ARGS__})
 
 /* *****************************************************************************
@@ -194,6 +208,7 @@ int defer(void (*func)(void *, void *), void *arg1, void *arg2) {
   if (!func)
     goto call_error;
   push_task(.func = func, .arg1 = arg1, .arg2 = arg2);
+  defer_thread_signal();
   return 0;
 
 call_error:
@@ -221,6 +236,16 @@ void defer_clear_queue(void) { clear_tasks(); }
 Thread Pool Support
 ***************************************************************************** */
 
+/* thread pool data container */
+struct defer_pool {
+  volatile unsigned int flag;
+  unsigned int count;
+  struct thread_msg_s {
+    pool_pt pool;
+    void *thrd;
+  } threads[];
+};
+
 #if defined(__unix__) || defined(__APPLE__) || defined(__linux__) ||           \
     defined(DEBUG)
 #include <pthread.h>
@@ -238,12 +263,24 @@ error:
   return NULL;
 }
 
+/**
+ * OVERRIDE THIS to replace the default pthread implementation.
+ *
+ * Frees the memory asociated with a thread indentifier (allows the thread to
+ * run it's course, just the identifier is freed).
+ */
+#pragma weak defer_free_thread
+void defer_free_thread(void *p_thr) {
+  pthread_detach(*((pthread_t *)p_thr));
+  free(p_thr);
+}
+
 #pragma weak defer_join_thread
 int defer_join_thread(void *p_thr) {
   if (!p_thr)
     return -1;
   pthread_join(*((pthread_t *)p_thr), NULL);
-  free(p_thr);
+  defer_free_thread(p_thr);
   return 0;
 }
 
@@ -260,6 +297,10 @@ void *defer_new_thread(void *(*thread_func)(void *), void *arg) {
   (void)arg;
   return NULL;
 }
+
+#pragma weak defer_free_thread
+void defer_free_thread(void *p_thr) { void(p_thr); }
+
 #pragma weak defer_join_thread
 int defer_join_thread(void *p_thr) {
   (void)p_thr;
@@ -271,43 +312,80 @@ void defer_thread_throttle(unsigned long microsec) { return; }
 
 #endif /* DEBUG || pthread default */
 
-/* thread pool data container */
-struct defer_pool {
-  unsigned int flag;
-  unsigned int count;
-  void *threads[];
-};
+/**
+ * A thread entering this function should wait for new evennts.
+ */
+#pragma weak defer_thread_wait
+void defer_thread_wait(pool_pt pool, void *p_thr) {
+  if (DEFER_THROTTLE_PROGRESSIVE) {
+    /* keeps threads active (concurrent), but reduces performance */
+    static __thread size_t static_throttle = 1;
+    if (static_throttle < DEFER_THROTTLE_LIMIT)
+      static_throttle = (static_throttle << 1);
+    throttle_thread(static_throttle);
+    if (defer_has_queue())
+      static_throttle = 1;
+    (void)p_thr;
+    (void)pool;
+  } else {
+    /* Protects against slow user code, but mostly a single active thread */
+    size_t throttle =
+        pool ? ((pool->count) * DEFER_THROTTLE) : DEFER_THROTTLE_LIMIT;
+    if (!throttle || throttle > DEFER_THROTTLE_LIMIT)
+      throttle = DEFER_THROTTLE_LIMIT;
+    if (throttle == DEFER_THROTTLE)
+      throttle <<= 1;
+    throttle_thread(throttle);
+    (void)p_thr;
+  }
+}
+
+/**
+ * This should signal a single waiting thread to wake up (a new task entered the
+ * queue).
+ */
+#pragma weak defer_thread_signal
+void defer_thread_signal(void) { (void)0; }
 
 /* a thread's cycle. This is what a worker thread does... repeatedly. */
 static void *defer_worker_thread(void *pool_) {
-  volatile pool_pt pool = pool_;
+  struct thread_msg_s volatile *data = pool_;
   signal(SIGPIPE, SIG_IGN);
-  /* the throttle replaces conditional variables for better performance */
-  size_t throttle = (pool->count) * DEFER_THROTTLE;
-  if (!throttle || throttle > DEFER_THROTTLE_LIMIT)
-    throttle = DEFER_THROTTLE_LIMIT;
   /* perform any available tasks */
   defer_perform();
   /* as long as the flag is true, wait for and perform tasks. */
   do {
-    throttle_thread(throttle);
+    defer_thread_wait(data->pool, data->thrd);
     defer_perform();
-  } while (pool->flag);
+  } while (data->pool->flag);
   return NULL;
 }
 
 /** Signals a running thread pool to stop. Returns immediately. */
-void defer_pool_stop(pool_pt pool) { pool->flag = 0; }
+void defer_pool_stop(pool_pt pool) {
+  if (!pool)
+    return;
+  pool->flag = 0;
+  for (size_t i = 0; i < pool->count; ++i) {
+    defer_thread_signal();
+  }
+}
 
 /** Returns TRUE (1) if the pool is hadn't been signaled to finish up. */
-int defer_pool_is_active(pool_pt pool) { return pool->flag; }
+int defer_pool_is_active(pool_pt pool) { return (int)pool->flag; }
 
-/** Waits for a running thread pool, joining threads and finishing all tasks. */
+/**
+ * Waits for a running thread pool, joining threads and finishing all tasks.
+ *
+ * This function MUST be called in order to free the pool's data (the
+ * `pool_pt`).
+ */
 void defer_pool_wait(pool_pt pool) {
   while (pool->count) {
     pool->count--;
-    defer_join_thread(pool->threads[pool->count]);
+    defer_join_thread(pool->threads[pool->count].thrd);
   }
+  free(pool);
 }
 
 /** The logic behind `defer_pool_start`. */
@@ -316,8 +394,10 @@ static inline pool_pt defer_pool_initialize(unsigned int thread_count,
   pool->flag = 1;
   pool->count = 0;
   while (pool->count < thread_count &&
-         (pool->threads[pool->count] =
-              defer_new_thread(defer_worker_thread, pool)))
+         (pool->threads[pool->count].pool = pool) &&
+         (pool->threads[pool->count].thrd = defer_new_thread(
+              defer_worker_thread, (pool_pt)(pool->threads + pool->count))))
+
     pool->count++;
   if (pool->count == thread_count) {
     return pool;
@@ -330,169 +410,13 @@ static inline pool_pt defer_pool_initialize(unsigned int thread_count,
 pool_pt defer_pool_start(unsigned int thread_count) {
   if (thread_count == 0)
     return NULL;
-  pool_pt pool = malloc(sizeof(*pool) + (thread_count * sizeof(void *)));
+  pool_pt pool =
+      malloc(sizeof(*pool) + (thread_count * sizeof(*pool->threads)));
   if (!pool)
     return NULL;
+
   return defer_pool_initialize(thread_count, pool);
 }
-
-/* *****************************************************************************
-Child Process support (`fork`)
-***************************************************************************** */
-
-/**
-OVERRIDE THIS to replace the default `fork` implementation or to inject hooks
-into the forking function.
-
-Behaves like the system's `fork`.
-*/
-#pragma weak defer_new_child
-int defer_new_child(void) { return (int)fork(); }
-
-/* forked `defer` workers use a global thread pool object. */
-static pool_pt forked_pool;
-
-/* handles the SIGINT and SIGTERM signals by shutting down workers */
-static void sig_int_handler(int sig) {
-  if (sig != SIGINT && sig != SIGTERM)
-    return;
-  if (!forked_pool)
-    return;
-  defer_pool_stop(forked_pool);
-}
-
-/*
-Zombie Reaping
-With thanks to Dr Graham D Shaw.
-http://www.microhowto.info/howto/reap_zombie_processes_using_a_sigchld_handler.html
-*/
-void reap_child_handler(int sig) {
-  (void)(sig);
-  int old_errno = errno;
-  while (waitpid(-1, NULL, WNOHANG) > 0)
-    ;
-  errno = old_errno;
-}
-
-#if !defined(NO_CHILD_REAPER) || NO_CHILD_REAPER == 0
-/* initializes zombie reaping for the process */
-inline static void reap_children(void) {
-  struct sigaction sa;
-  sa.sa_handler = reap_child_handler;
-  sigemptyset(&sa.sa_mask);
-  sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-  if (sigaction(SIGCHLD, &sa, 0) == -1) {
-    perror("Child reaping initialization failed");
-    kill(0, SIGINT), exit(errno);
-  }
-}
-#endif
-
-/* a global process identifier (0 == root) */
-static int defer_fork_pid_id = 0;
-
-/**
- * Forks the process, starts up a thread pool and waits for all tasks to run.
- * All existing tasks will run in all processes (multiple times).
- *
- * Returns 0 on success, -1 on error and a positive number if this is a child
- * process that was forked.
- */
-int defer_perform_in_fork(unsigned int process_count,
-                          unsigned int thread_count) {
-  if (forked_pool)
-    return -1; /* we're already running inside an active `fork` */
-
-  /* we use a placeholder while initializing the forked thread pool, so calls to
-   * `defer_fork_is_active` don't fail.
-   */
-  static struct defer_pool pool_placeholder = {.count = 1, .flag = 1};
-
-  /* setup signal handling */
-  struct sigaction act, old, old_term, old_pipe;
-  pid_t *pids = NULL;
-  int ret = 0;
-  unsigned int pids_count;
-
-  act.sa_handler = sig_int_handler;
-  sigemptyset(&act.sa_mask);
-  act.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-
-  if (sigaction(SIGINT, &act, &old)) {
-    perror("couldn't set signal handler");
-    goto finish;
-  };
-
-  if (sigaction(SIGTERM, &act, &old_term)) {
-    perror("couldn't set signal handler");
-    goto finish;
-  };
-
-  act.sa_handler = SIG_IGN;
-  if (sigaction(SIGPIPE, &act, &old_pipe)) {
-    perror("couldn't set signal handler");
-    goto finish;
-  };
-
-/* setup zomie reaping */
-#if !defined(NO_CHILD_REAPER) || NO_CHILD_REAPER == 0
-  reap_children();
-#endif
-
-  if (!process_count)
-    process_count = 1;
-  --process_count;
-
-  /* for `process_count == 0` nothing happens */
-  pids = calloc(process_count, sizeof(*pids));
-  if (process_count && !pids)
-    goto finish;
-  for (pids_count = 0; pids_count < process_count; pids_count++) {
-    if (!(pids[pids_count] = (pid_t)defer_new_child())) {
-      defer_fork_pid_id = pids_count + 1;
-      forked_pool = &pool_placeholder;
-      forked_pool = defer_pool_start(thread_count);
-      defer_pool_wait(forked_pool);
-      defer_perform();
-      defer_perform();
-      return 1;
-    }
-    if (pids[pids_count] == -1) {
-      ret = -1;
-      goto finish;
-    }
-  }
-
-  forked_pool = &pool_placeholder;
-  forked_pool = defer_pool_start(thread_count);
-
-  defer_pool_wait(forked_pool);
-  forked_pool = NULL;
-
-  defer_perform();
-
-finish:
-  if (pids) {
-    for (size_t j = 0; j < pids_count; j++) {
-      kill(pids[j], SIGINT);
-    }
-    for (size_t j = 0; j < pids_count; j++) {
-      waitpid(pids[j], NULL, 0);
-    }
-    free(pids);
-  }
-  sigaction(SIGINT, &old, &act);
-  sigaction(SIGTERM, &old_term, &act);
-  sigaction(SIGTERM, &old_pipe, &act);
-  return ret;
-}
-
-/** Returns TRUE (1) if the forked thread pool hadn't been signaled to finish
- * up. */
-int defer_fork_is_active(void) { return forked_pool && forked_pool->flag; }
-
-/** Returns the process number for the current working proceess. 0 == parent. */
-int defer_fork_pid(void) { return defer_fork_pid_id; }
 
 /* *****************************************************************************
 Test
@@ -553,14 +477,8 @@ static void text_task(void *a1, void *a2) {
   defer(text_task_text, a1, a2);
 }
 
-static void pid_task(void *arg, void *unused2) {
-  (void)(unused2);
-  fprintf(stderr, "* %d pid is going to sleep... (%s)\n", getpid(),
-          arg ? (char *)arg : "unknown");
-}
-
 void defer_test(void) {
-  time_t start, end;
+  clock_t start, end;
   fprintf(stderr, "Starting defer testing\n");
 
   spn_lock(&i_lock);
@@ -574,7 +492,8 @@ void defer_test(void) {
   fprintf(stderr,
           "Deferless (direct call) counter: %lu cycles with i_count = %lu, "
           "%lu/%lu free/malloc\n",
-          end - start, i_count, count_dealloc, count_alloc);
+          (unsigned long)(end - start), (unsigned long)i_count,
+          (unsigned long)count_dealloc, (unsigned long)count_alloc);
 
   spn_lock(&i_lock);
   COUNT_RESET;
@@ -589,7 +508,8 @@ void defer_test(void) {
           "Defer single thread, two tasks: "
           "%lu cycles with i_count = %lu, %lu/%lu "
           "free/malloc\n",
-          end - start, i_count, count_dealloc, count_alloc);
+          (unsigned long)(end - start), (unsigned long)i_count,
+          (unsigned long)count_dealloc, (unsigned long)count_alloc);
 
   spn_lock(&i_lock);
   COUNT_RESET;
@@ -604,7 +524,8 @@ void defer_test(void) {
   fprintf(stderr,
           "Defer single thread: %lu cycles with i_count = %lu, %lu/%lu "
           "free/malloc\n",
-          end - start, i_count, count_dealloc, count_alloc);
+          (unsigned long)(end - start), (unsigned long)i_count,
+          (unsigned long)count_dealloc, (unsigned long)count_alloc);
 
   spn_lock(&i_lock);
   COUNT_RESET;
@@ -623,8 +544,9 @@ void defer_test(void) {
     fprintf(stderr,
             "Defer multi-thread (%d threads): %lu cycles with i_count = %lu, "
             "%lu/%lu free/malloc\n",
-            DEFER_TEST_THREAD_COUNT, end - start, i_count, count_dealloc,
-            count_alloc);
+            DEFER_TEST_THREAD_COUNT, (unsigned long)(end - start),
+            (unsigned long)i_count, (unsigned long)count_dealloc,
+            (unsigned long)count_alloc);
   } else
     fprintf(stderr, "Defer multi-thread: FAILED!\n");
 
@@ -641,26 +563,19 @@ void defer_test(void) {
   fprintf(stderr,
           "Defer single thread (2): %lu cycles with i_count = %lu, %lu/%lu "
           "free/malloc\n",
-          end - start, i_count, count_dealloc, count_alloc);
+          (unsigned long)(end - start), (unsigned long)i_count,
+          (unsigned long)count_dealloc, (unsigned long)count_alloc);
 
   fprintf(stderr, "calling defer_perform.\n");
   defer(text_task, NULL, NULL);
   defer_perform();
   fprintf(stderr,
           "defer_perform returned. i_count = %lu, %lu/%lu free/malloc\n",
-          i_count, count_dealloc, count_alloc);
-
-  fprintf(stderr, "press ^C to finish PID test\n");
-  defer(pid_task, "pid test", NULL);
-  if (defer_perform_in_fork(4, 64) > 0) {
-    fprintf(stderr, "* %d finished\n", getpid());
-    exit(0);
-  };
-  fprintf(stderr, "* Defer queue %lu/%lu free/malloc\n", count_dealloc,
-          count_alloc);
+          (unsigned long)i_count, (unsigned long)count_dealloc,
+          (unsigned long)count_alloc);
   defer_clear_queue();
-  fprintf(stderr, "* Defer queue %lu/%lu free/malloc\n", count_dealloc,
-          count_alloc);
+  fprintf(stderr, "* Defer cleared queue: %lu/%lu free/malloc\n",
+          (unsigned long)count_dealloc, (unsigned long)count_alloc);
 }
 
 #endif

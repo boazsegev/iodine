@@ -70,7 +70,7 @@ static void *handle_exception(void *ignr) {
               (int)RSTRING_LEN(msg), RSTRING_PTR(msg));
     }
     rb_backtrace();
-    fprintf(stderr, "\n");
+    fprintf(stderr, "\n\n");
     rb_set_errinfo(Qnil);
   }
   return (void *)Qnil;

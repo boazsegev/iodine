@@ -10,20 +10,73 @@ Feel free to copy, use and enjoy according to the license provided.
 */
 #define H_FACIL_H
 #define FACIL_VERSION_MAJOR 0
-#define FACIL_VERSION_MINOR 5
-#define FACIL_VERSION_PATCH 8
+#define FACIL_VERSION_MINOR 6
+#define FACIL_VERSION_PATCH 0
 
 #ifndef FACIL_PRINT_STATE
 /**
-When FACIL_PRINT_STATE is set to 1, facil.io will print out common messages
-regarding the server state (start / finish / listen messages).
-*/
+ * When FACIL_PRINT_STATE is set to 1, facil.io will print out common messages
+ * regarding the server state (start / finish / listen messages).
+ */
 #define FACIL_PRINT_STATE 1
 #endif
+
+#ifndef FACIL_CPU_CORES_LIMIT
+/**
+ * If facil.io detects more CPU cores than the number of cores stated in the
+ * FACIL_CPU_CORES_LIMIT, it will assume an error and cap the number of cores
+ * detected to the assigned limit.
+ *
+ * This is only relevant to automated values, when running facil.io with zero
+ * threads and processes, which invokes a large matrix of workers and threads
+ * (see {facil_run})
+ *
+ * The default auto-detection cap is set at 8 cores. The number is arbitrary
+ * (historically the number 7 was used after testing `malloc` race conditions on
+ * a MacBook Pro).
+ *
+ * The does NOT effect manually set (non-zero) worker/thread values.
+ */
+#define FACIL_CPU_CORES_LIMIT 8
+#endif
+
+#ifndef FIO_DEDICATED_SYSTEM
+/**
+ * If FIO_DEDICATED_SYSTEM is false, threads will be used (mostly) for
+ * non-prallel concurrency (protection against slow user code / high load) and
+ * processes will be used for parallelism. Otherwise, both threads and processes
+ * will be used for prallel concurrency (at the expense of increased polling).
+ *
+ * If FIO_DEDICATED_SYSTEM is true, facil.io assumes that the whole system is at
+ * it's service and that no other process is using the CPU cores.
+ *
+ * Accordingly, facil.io will poll the IO more often in an attempt to activate
+ * the threads and utilize all the cores whenever events occur.
+ *
+ * My tests show that the non-polling approach is faster, but it may be system
+ * specific.
+ */
+#define FIO_DEDICATED_SYSTEM 0
+#endif
+
+#ifndef FACIL_DISABLE_HOT_RESTART
+/**
+ * Disables the hot restart reaction to the SIGUSR1 signal
+ *
+ * The hot restart will attempt to shut down all workers, and spawn new workers,
+ * cleaning up any data cached by any of the workers.
+ *
+ * It's quite useless unless the workers are running their own VMs which are
+ * initialized in the listening socket's `on_start` callback.
+ */
+#define FACIL_DISABLE_HOT_RESTART 0
+#endif
+
 /* *****************************************************************************
 Required facil libraries
 ***************************************************************************** */
 #include "defer.h"
+#include "fiobj.h"
 #include "sock.h"
 
 /* support C++ */
@@ -144,8 +197,10 @@ static protocol_s *echo_on_open(intptr_t uuid, void *udata) {
 
 int main() {
   // Setup a listening socket
-  if (facil_listen(.port = "8888", .on_open = echo_on_open))
-    perror("No listening socket available on port 8888"), exit(-1);
+  if (facil_listen(.port = "8888", .on_open = echo_on_open)) {
+      perror("No listening socket available on port 8888");
+      exit(-1);
+  }
   // Run the server and hang until a stop signal is received.
   facil_run(.threads = 4, .processes = 1);
 }
@@ -155,40 +210,30 @@ int main() {
 struct facil_listen_args {
   /**
    * Called whenever a new connection is accepted.
-   * Should return a pointer to the connection's protocol
+   *
+   * Should either call `facil_attach` or close the connection.
    */
-  protocol_s *(*on_open)(intptr_t fduuid, void *udata);
+  void (*on_open)(intptr_t fduuid, void *udata);
   /** The network service / port. Defaults to "3000". */
   const char *port;
   /** The socket binding address. Defaults to the recommended NULL. */
   const char *address;
   /** Opaque user data. */
   void *udata;
-  /** Opaque user data for `set_rw_hooks`. */
-  void *rw_udata;
-  /** (optional)
-   * Called before `on_open`, allowing Read/Write hook initialization.
-   * Should return a pointer to the new RW hooks or NULL (to use default hooks).
-   *
-   * This allows a seperation between the transport layer (i.e. TLS) and the
-   * protocol (i.e. HTTP).
-   */
-  sock_rw_hook_s *(*set_rw_hooks)(intptr_t fduuid, void *rw_udata);
   /**
-   * Called when the server starts, allowing for further initialization, such as
-   * timed event scheduling.
+   * Called when the server starts (or a worker process is respawned), allowing
+   * for further initialization, such as timed event scheduling or VM
+   * initialization.
    *
-   * This will be called seperately for every process. */
+   * This will be called seperately for every worker process whenever it is
+   * spawned.
+   */
   void (*on_start)(intptr_t uuid, void *udata);
   /**
    * Called when the server is done, usable for cleanup.
    *
    * This will be called seperately for every process. */
   void (*on_finish)(intptr_t uuid, void *udata);
-  /**
-   * A cleanup callback for the `rw_udata`.
-   */
-  void (*on_finish_rw)(intptr_t uuid, void *rw_udata);
 };
 
 /** Schedule a network service on a listening socket. */
@@ -217,8 +262,10 @@ struct facil_connect_args {
   /**
    * The `on_connect` callback should return a pointer to a protocol object
    * that will handle any connection related events.
+   *
+   * Should either call `facil_attach` or close the connection.
    */
-  protocol_s *(*on_connect)(intptr_t uuid, void *udata);
+  void (*on_connect)(intptr_t uuid, void *udata);
   /**
    * The `on_fail` is called when a socket fails to connect. The old sock UUID
    * is passed along.
@@ -226,16 +273,8 @@ struct facil_connect_args {
   void (*on_fail)(intptr_t uuid, void *udata);
   /** Opaque user data. */
   void *udata;
-  /** Opaque user data for `set_rw_hooks`. */
-  void *rw_udata;
-  /** (optional)
-   * Called before `on_connect`, allowing Read/Write hook initialization.
-   * Should return a pointer to the new RW hooks or NULL (to use default hooks).
-   *
-   * This allows a seperation between the transport layer (i.e. TLS) and the
-   * protocol (i.e. HTTP).
-   */
-  sock_rw_hook_s *(*set_rw_hooks)(intptr_t fduuid, void *udata);
+  /** A non-system timeout after which connection is assumed to have failed. */
+  uint8_t timeout;
 };
 
 /**
@@ -267,10 +306,26 @@ Core API
 ***************************************************************************** */
 
 struct facil_run_args {
-  /** The number of threads to run in the thread pool. Has "smart" defaults. */
-  uint16_t threads;
-  /** The number of processes to run (including this one). "smart" defaults. */
-  uint16_t processes;
+  /**
+   * The number of threads to run in the thread pool. Has "smart" defaults.
+   *
+   *
+   * A positive value will indicate a set number of threads (or processes).
+   *
+   * Zeros and negative values are fun and include an interesting shorthand:
+   *
+   * * Negative values indicate a fraction of the number of CPU cores. i.e.
+   *   -2 will normally indicate "half" (1/2) the number of cores.
+   *
+   * * If the other option (i.e. `.processes` when setting `.threads`) is zero,
+   *   it will be automatically updated to reflect the option's absolute value.
+   *   i.e.:
+   *   if .threads == -2 and .processes == 0,
+   *   than facil.io will run 2 processes with (cores/2) threads per process.
+   */
+  int16_t threads;
+  /** The number of processes to run (including this one). See `threads`. */
+  int16_t processes;
   /** called if the event loop in cycled with no pending events. */
   void (*on_idle)(void);
   /** called when the server is done, to clean up any leftovers. */
@@ -291,12 +346,20 @@ void facil_run(struct facil_run_args args);
 int facil_is_running(void);
 
 /**
+OVERRIDE THIS to replace the default `fork` implementation or to inject hooks
+into the forking function.
+
+Behaves like the system's `fork`.
+*/
+int facil_fork(void);
+
+/**
  * Attaches (or updates) a protocol object to a socket UUID.
  *
- * The new protocol object can be NULL, which will practically "hijack" the
- * socket away from facil.
+ * The new protocol object can be NULL, which will detach ("hijack"), the
+ * socket.
  *
- * The old protocol's `on_close` will be scheduled, if they both exist.
+ * The old protocol's `on_close` (if any) will be scheduled.
  *
  * Returns -1 on error and 0 on success.
  *
@@ -310,10 +373,7 @@ int facil_attach(intptr_t uuid, protocol_s *protocol);
  * The protocol will be attached in the FIO_PR_LOCK_TASK state, requiring a
  * furthur call to `facil_protocol_unlock`.
  *
- * The new protocol object can be NULL, which will practically "hijack" the
- * socket away from facil.
- *
- * The old protocol's `on_close` will be scheduled, if they both exist.
+ * The old protocol's `on_close` (if any) will be scheduled.
  *
  * Returns -1 on error and 0 on success.
  *
@@ -335,14 +395,33 @@ enum facil_io_event {
 /** Schedules an IO event, even id it did not occur. */
 void facil_force_event(intptr_t uuid, enum facil_io_event);
 
+/**
+ * Temporarily prevents `on_data` events from firing.
+ *
+ * The `on_data` event will be automatically rescheduled when (if) the socket's
+ * outgoing buffer fills up or when `facil_force_event` is called with
+ * `FIO_EVENT_ON_DATA`.
+ *
+ * Note: the function will work as expected when called within the protocol's
+ * `on_data` callback and the `uuid` refers to a valid socket. Otherwise the
+ * function might quitely fail.
+ */
+void facil_quite(intptr_t uuid);
+
 /* *****************************************************************************
 Helper API
 ***************************************************************************** */
 
 /**
-Returns the last time the server reviewed any pending IO events.
-*/
-time_t facil_last_tick(void);
+ * Initializes zombie reaping for the process. Call before `facil_run` to enable
+ * global zombie reaping.
+ */
+void facil_reap_children(void);
+
+/**
+ * Returns the last time the server reviewed any pending IO events.
+ */
+struct timespec facil_last_tick(void);
 
 /** Counts all the connections of a specific type `service`. */
 size_t facil_count(void *service);
@@ -392,7 +471,7 @@ struct facil_defer_args_s {
   intptr_t uuid;
   /** The type of task to be performed. Defaults to `FIO_PR_LOCK_TASK` but could
    * also be seto to `FIO_PR_LOCK_WRITE`. */
-  enum facil_protocol_lock_e task_type;
+  enum facil_protocol_lock_e type;
   /** The task (function) to be performed. This is required. */
   void (*task)(intptr_t uuid, protocol_s *, void *arg);
   /** An opaque user data that will be passed along to the task. */
@@ -441,11 +520,14 @@ int facil_each(struct facil_each_args_s args);
 #define facil_each(...) facil_each((struct facil_each_args_s){__VA_ARGS__})
 
 /* *****************************************************************************
-Cluster specific API - local cluster messaging.
+ * Cluster specific API - local cluster messaging.
+ *
+ * Facil supports message process clustering, so that a multi-process
+ * application can easily send and receive messages across process boundries.
+ **************************************************************************** */
 
-Facil supports message process clustering, so that a multi-process application
-can easily send and receive messages across process boundries.
-***************************************************************************** */
+/** returns facil.io's parent (root) process pid. */
+pid_t facil_parent_pid(void);
 
 /**
 Sets a callback / handler for a message of type `msg_type`.
@@ -456,9 +538,9 @@ registered callbacks.
 The `msg_type` value can be any positive number up to 2^31-1 (2,147,483,647).
 All values less than 0 are reserved for internal use.
 */
-void facil_cluster_set_handler(int32_t msg_type,
-                               void (*on_message)(void *data, uint32_t len));
-
+void facil_cluster_set_handler(int32_t filter,
+                               void (*on_message)(int32_t filter, FIOBJ ch,
+                                                  FIOBJ msg));
 /** Sends a message of type `msg_type` to the **other** cluster processes.
 
 `msg_type` should match a message type used when calling
@@ -472,7 +554,7 @@ starting at 1,073,741,824 are reserved for internal use.
 Callbacks are invoked using an O(n) matching, where `n` is the number of
 registered callbacks.
 */
-int facil_cluster_send(int32_t msg_type, void *data, uint32_t len);
+int facil_cluster_send(int32_t filter, FIOBJ ch, FIOBJ msg);
 
 /* *****************************************************************************
 Lower Level API - for special circumstances, use with care under .

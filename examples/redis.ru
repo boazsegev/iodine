@@ -8,12 +8,13 @@
 #      REDIS_URL=redis://localhost:6379/0 iodine -t 1 -p 3030 redis.ru
 #
 require 'uri'
+require 'iodine'
 # initialize the Redis engine for each Iodine process.
 if ENV["REDIS_URL"]
   uri = URI(ENV["REDIS_URL"])
   Iodine.default_pubsub = Iodine::PubSub::RedisEngine.new(uri.host, uri.port, 0, uri.password)
 else
-  puts "* No Redis, it's okay, pub/sub will still run on the whole process cluster."
+  puts "* No Redis, it's okay, pub/sub will support the process cluster."
 end
 
 # A simple router - Checks for Websocket Upgrade and answers HTTP.
@@ -29,7 +30,7 @@ module MyHTTPRouter
    def self.call env
      # check if this is an upgrade request.
      if(env['upgrade.websocket?'.freeze])
-       env['upgrade.websocket'.freeze] = WS_RedisPubSub.new(env['PATH_INFO'] ? env['PATH_INFO'][1..-1] : "guest")
+       env['upgrade.websocket'.freeze] = WS_RedisPubSub.new(env['PATH_INFO'] && env['PATH_INFO'].length > 1 ? env['PATH_INFO'][1..-1] : "guest")
        return WS_RESPONSE
      end
      # simply return the RESPONSE object, no matter what request was received.

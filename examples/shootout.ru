@@ -10,10 +10,20 @@ class ShootoutApp
       env['upgrade.websocket'.freeze] = ShootoutApp.new
       return [0, {}, []]
     end
-    out = "ENV:\r\n#{env.to_a.map { |h| "#{h[0]}: #{h[1]}" } .join "\n"}\n"
+    out = []
+    len = 0
+    out << "ENV:\n"
+    len += 5
+    env.each { |k, v| out << "#{k}: #{v}\n" ; len += out[-1].length }
     request = Rack::Request.new(env)
-    out += "\nRequest Path: #{request.path_info}\nParams:\r\n#{request.params.to_a.map { |h| "#{h[0]}: #{h[1]}" } .join "\n"}\n" unless request.params.empty?
-    [200, { 'Content-Length' => out.length, 'Content-Type' => 'text/plain; charset=UTF-8;' }, [out]]
+    out << "\nRequest Path: #{request.path_info}\n"
+    len += out[-1].length 
+    unless request.params.empty?
+      out << "Params:\n"
+      len += out[-1].length 
+      request.params.each { |k,v| out << "#{k}: #{v}\n" ; len += out[-1].length }
+    end
+    [200, { 'Content-Length' => len.to_s, 'Content-Type' => 'text/plain; charset=UTF-8;' }, out]
   end
   # We'll base the shootout on the internal Pub/Sub service.
   # It's slower than writing to every socket a pre-parsed message, but it's closer
