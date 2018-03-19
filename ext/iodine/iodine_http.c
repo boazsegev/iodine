@@ -319,8 +319,8 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
     http_set_header(h, name, fiobj_str_new(val_s + pos_s, pos_e - pos_s));
     // fprintf(stderr, "For_each - headers: wrote header\n");
     // move forward (skip the '\n' if exists)
-    pos_s = pos_e + 1;
-    pos_e++;
+    ++pos_e;
+    pos_s = pos_e;
   }
   fiobj_free(name);
   // no errors, return 0
@@ -655,10 +655,10 @@ port:: the port to listen to. Default: 3000.
 address:: the address to bind to. Default: binds to all possible addresses.
 log:: enable response logging (Hijacked sockets aren't logged). Default: off.
 public:: The root public folder for static file service. Default: none.
-timeout:: Timeout for inactive HTTP/1.x connections. Defaults: 5 seconds.
+timeout:: Timeout for inactive HTTP/1.x connections. Defaults: 40 seconds.
 max_body:: The maximum body size for incoming HTTP messages. Default: ~50Mib.
 max_msg:: The maximum Websocket message size allowed. Default: ~250Kib.
-ping:: The Websocket `ping` interval. Default: 40 sec.
+ping:: The Websocket `ping` interval. Default: 40 seconds.
 
 Either the `app` or the `public` properties are required. If niether exists,
 the function will fail. If both exist, Iodine will serve static files as well

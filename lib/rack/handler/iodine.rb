@@ -16,12 +16,12 @@ module Iodine
     end
     @app = nil
 
-    # get/set the HTTP connection timeout property. Defaults to 5. Limited to a maximum of 255. 0 values are silently ignored.
+    # get/set the HTTP connection timeout property. Defaults to 40. Limited to a maximum of 255. 0 values are silently ignored.
     def self.timeout=(t)
       @timeout = t
     end
 
-    # get/set the HTTP connection timeout property. Defaults to 5.
+    # get/set the HTTP connection timeout property. Defaults to 40 seconds.
     def self.timeout
       @timeout
     end
@@ -38,14 +38,14 @@ module Iodine
     end
     @ws_timeout = 0
 
-    # get/set the HTTP public folder property. Defaults to 5. Defaults to the incoming argumrnts or `nil`.
+    # get/set the HTTP public folder property. Defaults to the incoming arguments or `nil`.
     def self.public=(val)
       @public = val
     end
     @public = nil
     @public = ARGV[ARGV.index('-www') + 1] if ARGV.index('-www')
 
-    # get/set the HTTP public folder property. Defaults to 5.
+    # get/set the HTTP public folder property. Defaults to `nil`.
     def self.public
       @public
     end
