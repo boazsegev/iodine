@@ -25,7 +25,7 @@ Available options:
  -www        Public folder for static file serving. Default: nil (none).
  -v          Log responses. Default: never log responses.
  -warmup     Warmup invokes autoloading (lazy loading) during server startup.
- -tout       HTTP inactivity connection timeout. Default: 5 seconds.
+ -tout       HTTP inactivity connection timeout. Default: 40 seconds.
  -maxbd      Maximum Mb per HTTP message (max body size). Default: 50Mib.
  -maxms      Maximum Bytes per Websocket message. Default: 250Kib.
  -ping       Websocket ping interval in seconds. Default: 40 seconds.

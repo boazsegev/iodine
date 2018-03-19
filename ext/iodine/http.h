@@ -353,7 +353,7 @@ typedef struct http_settings_s {
   /**
    * An HTTP/1.x connection timeout.
    *
-   * `http_listen` defaults to ~5s and `http_connect` defaults to ~30s.
+   * `http_listen` defaults to ~40s and `http_connect` defaults to ~30s.
    *
    * Note: the connection might be closed (by other side) before timeout occurs.
    */
@@ -649,8 +649,8 @@ void http_mimetype_register(char *file_ext, size_t file_ext_len,
                             FIOBJ mime_type_str);
 
 /**
- * Finds the mime-type associated with the file extension.
- *  Remember to call `fiobj_free`.
+ * Finds the mime-type associated with the file extension and returns a String.
+ * Remember to call `fiobj_free`.
  */
 FIOBJ http_mimetype_find(char *file_ext, size_t file_ext_len);
 
