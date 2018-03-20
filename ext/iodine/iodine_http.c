@@ -193,25 +193,35 @@ static inline VALUE copy2env(http_s *h, uint8_t is_upgrade) {
   }
 
   /* remove special headers */
-  static uint64_t content_length_hash = 0;
-  if (!content_length_hash)
-    content_length_hash = fio_siphash("content-length", 14);
-  tmp = fiobj_obj2cstr(fiobj_hash_get2(h->headers, content_length_hash));
-  if (tmp.data) {
-    rb_hash_aset(env, CONTENT_LENGTH,
-                 rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
-    fiobj_hash_delete2(h->headers, content_length_hash);
+  {
+    static uint64_t content_length_hash = 0;
+    if (!content_length_hash)
+      content_length_hash = fio_siphash("content-length", 14);
+    FIOBJ cl = fiobj_hash_get2(h->headers, content_length_hash);
+    if (cl) {
+      tmp = fiobj_obj2cstr(fiobj_hash_get2(h->headers, content_length_hash));
+      if (tmp.data) {
+        rb_hash_aset(env, CONTENT_LENGTH,
+                     rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
+        fiobj_hash_delete2(h->headers, content_length_hash);
+      }
+    }
   }
-  static uint64_t content_type_hash = 0;
-  if (!content_type_hash)
-    content_length_hash = fio_siphash("content-type", 12);
-  tmp = fiobj_obj2cstr(fiobj_hash_get2(h->headers, content_type_hash));
-  if (tmp.data) {
-    rb_hash_aset(env, CONTENT_TYPE,
-                 rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
-    fiobj_hash_delete2(h->headers, content_type_hash);
+  {
+    static uint64_t content_type_hash = 0;
+    if (!content_type_hash)
+      content_type_hash = fio_siphash("content-type", 12);
+    FIOBJ ct = fiobj_hash_get2(h->headers, content_type_hash);
+    if (ct) {
+      tmp = fiobj_obj2cstr(ct);
+      if (tmp.len && tmp.data) {
+        fprintf(stderr, "Content type: %s\n", tmp.data);
+        rb_hash_aset(env, CONTENT_TYPE,
+                     rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
+        fiobj_hash_delete2(h->headers, content_type_hash);
+      }
+    }
   }
-
   /* handle scheme / sepcial forwarding headers */
   {
     FIOBJ objtmp;
