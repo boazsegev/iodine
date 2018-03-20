@@ -1,4 +1,5 @@
 require 'iodine'
+require 'json'
 
 # ON_IDLE = proc { Iodine::Base.db_print_registry ; Iodine.on_idle(&ON_IDLE) }
 # ON_IDLE.call
