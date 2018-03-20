@@ -135,10 +135,15 @@ static inline VALUE copy2env(http_s *h, uint8_t is_upgrade) {
   tmp = fiobj_obj2cstr(h->path);
   rb_hash_aset(env, PATH_INFO,
                rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
-  tmp = fiobj_obj2cstr(h->query);
-  rb_hash_aset(env, QUERY_STRING,
-               tmp.len ? rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding)
-                       : QUERY_ESTRING);
+  if (h->query) {
+    tmp = fiobj_obj2cstr(h->query);
+    rb_hash_aset(env, QUERY_STRING,
+                 tmp.len
+                     ? rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding)
+                     : QUERY_ESTRING);
+  } else {
+    rb_hash_aset(env, QUERY_STRING, QUERY_ESTRING);
+  }
   {
     // HTTP version appears twice
     tmp = fiobj_obj2cstr(h->version);
