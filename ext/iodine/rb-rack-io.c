@@ -123,6 +123,8 @@ static VALUE rio_read(int argc, VALUE *argv, VALUE self) {
     len = FIX2LONG(argv[0]);
     if (len < 0)
       rb_raise(rb_eRangeError, "length should be bigger then 0.");
+    if (len == 0)
+      return rb_str_buf_new(0);
     ret_nil = 1;
   }
   // return if we're at the EOF.
@@ -130,9 +132,8 @@ static VALUE rio_read(int argc, VALUE *argv, VALUE self) {
   if (buf.len) {
     // create the buffer if we don't have one.
     if (buffer == Qnil) {
-      buffer = rb_str_new(buf.data, buf.len);
       // make sure the buffer is binary encoded.
-      rb_enc_associate(buffer, IodineBinaryEncoding);
+      buffer = rb_enc_str_new(buf.data, buf.len, IodineBinaryEncoding);
     } else {
       // make sure the buffer is binary encoded.
       rb_enc_associate(buffer, IodineBinaryEncoding);
