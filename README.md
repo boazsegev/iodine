@@ -1,4 +1,4 @@
-# iodine - HTTP / Websocket Server with Pub/Sub support, optimized for Ruby MRI on Linux / BSD
+# iodine - a fast HTTP / Websocket Server with native Pub/Sub support for the new web
 [![Gem](https://img.shields.io/gem/dt/iodine.svg)](https://rubygems.org/gems/iodine)
 [![Build Status](https://travis-ci.org/boazsegev/iodine.svg?branch=master)](https://travis-ci.org/boazsegev/iodine)
 [![Gem Version](https://badge.fury.io/rb/iodine.svg)](https://badge.fury.io/rb/iodine)
