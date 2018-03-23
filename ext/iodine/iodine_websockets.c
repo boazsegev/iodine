@@ -399,6 +399,8 @@ static VALUE iodine_ws_publish(VALUE self, VALUE args) {
 
   intptr_t subid =
       pubsub_publish(.engine = engine, .channel = channel, .message = msg);
+  fiobj_free(channel);
+  fiobj_free(msg);
   if (!subid)
     return Qfalse;
   return Qtrue;
