@@ -53,6 +53,10 @@ class ShootoutApp
   end
 end
 
+# if defined?(Iodine)
+#   Iodine.run_every(5000) { Iodine::Base.db_print_registry }
+# end
+
 run ShootoutApp
 #
 # def cycle
