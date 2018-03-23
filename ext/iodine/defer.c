@@ -10,6 +10,7 @@ Feel free to copy, use and enjoy according to the license provided.
 
 #include <errno.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -160,6 +161,11 @@ static inline task_s pop_task(void) {
       to_free = deferred.reader;
       deferred.reader = deferred.reader->next;
     } else {
+      if (deferred.reader != &static_queue && static_queue.state == 2) {
+        to_free = deferred.reader;
+        deferred.writer = &static_queue;
+        deferred.reader = &static_queue;
+      }
       deferred.reader->write = deferred.reader->read = deferred.reader->state =
           0;
     }
@@ -169,6 +175,7 @@ static inline task_s pop_task(void) {
 finish:
   if (to_free == &static_queue) {
     static_queue.state = 2;
+    static_queue.next = NULL;
   }
   spn_unlock(&deferred.lock);
 
@@ -526,7 +533,7 @@ void defer_test(void) {
             "- Defer %zu threads, %zu scheduling loops (%zu each):\n"
             "    %lu cycles with i_count = %lu, %lu/%lu "
             "free/malloc\n",
-            cpu_count, tasks, per_task, (unsigned long)(end - start),
+            (size_t)cpu_count, tasks, per_task, (unsigned long)(end - start),
             (unsigned long)i_count, (unsigned long)count_dealloc,
             (unsigned long)count_alloc);
     TEST_ASSERT(i_count == i_count_should_be, "ERROR: defer count invalid\n");

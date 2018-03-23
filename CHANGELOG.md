@@ -10,11 +10,13 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Changed... everything. At least all the internal bits.
 
-Faster and more robust pub/sub, moved the whole network layer outside of the GIL (not just slow clients).
+Faster and more robust pub/sub, moved the HTTP network layer outside of the GIL and more.
 
 Larger header support with a smaller HTTP memory footprint. "Hello World" will be slower, but everything else should run faster and smoother.
 
 Support for the Unicorn style `before_fork` and `after_fork` DSL as well as the Puma style `on_worker_boot` DSL (these are meant for portability, but they aren't as safe as the `Iodine.defer` calls that protect against exceptions).
+
+Deprecated the `each` function family in favor of the more scalable pub/sub approach.
 
 Credit to Anatoly Nosov (@jomei) for fixing some typos in the documentation.
 
