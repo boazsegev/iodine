@@ -1,10 +1,11 @@
 # iodine - HTTP / Websocket Server with Pub/Sub support, optimized for Ruby MRI on Linux / BSD
-[![Logo](https://github.com/boazsegev/iodine/raw/master/logo.png)](https://github.com/boazsegev/iodine)
-
+[![Gem](https://img.shields.io/gem/dt/iodine.svg)](https://rubygems.org/gems/iodine)
 [![Build Status](https://travis-ci.org/boazsegev/iodine.svg?branch=master)](https://travis-ci.org/boazsegev/iodine)
 [![Gem Version](https://badge.fury.io/rb/iodine.svg)](https://badge.fury.io/rb/iodine)
 [![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
 [![GitHub](https://img.shields.io/badge/GitHub-Open%20Source-blue.svg)](https://github.com/boazsegev/iodine)
+
+[![Logo](https://github.com/boazsegev/iodine/raw/master/logo.png)](https://github.com/boazsegev/iodine)
 
 **Notice: *iodine's core library, [facil.io](https://github.com/boazsegev/facil.io) is being re-vamped with many updates and changes. This is a time to ask - what features are important for you? [let me know here](https://github.com/boazsegev/facil.io/issues/24)***.
 
