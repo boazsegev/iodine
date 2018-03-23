@@ -57,8 +57,8 @@ run ShootoutApp
 #
 # def cycle
 #   puts `websocket-bench broadcast ws://127.0.0.1:3000/ --concurrent 10 --sample-size 100 --server-type binary --step-size 1000 --limit-percentile 95 --limit-rtt 250ms --initial-clients 1000`
-#   sleep(2)
-#   puts `wrk -c4000 -d15 -t12 http://localhost:3000/`
+#   sleep(4)
+#   puts `wrk -c4000 -d15 -t2 http://localhost:3000/`
 #   true
 # end
 # sleep(10) while cycle

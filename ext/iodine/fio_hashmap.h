@@ -246,7 +246,7 @@ struct fio_hash_s {
 #define FIO_HASH_FOR_FREE(hash, container)                                     \
   for (fio_hash_data_ordered_s *container = (hash)->ordered;                   \
        (container && (container < (hash)->ordered + (hash)->pos)) ||           \
-       ((fio_hash_free(hash), 0) != 0);                                        \
+       ((fio_hash_free(hash), (hash)->ordered) != NULL);                       \
        FIO_HASH_KEY_DESTROY(container->key), (++container))
 
 #undef FIO_HASH_FOR_EMPTY
@@ -396,7 +396,7 @@ FIO_FUNC void *fio_hash_insert(fio_hash_s *hash, FIO_HASH_KEY_TYPE key,
       FIO_HASH_KEY_DESTROY(hash->ordered[hash->pos].key);
       hash->ordered[hash->pos] = (fio_hash_data_ordered_s){.obj = NULL};
       *info = (fio_hash_data_s){.obj = NULL};
-      if (!hash->ordered[hash->pos - 1].obj) {
+      if (hash->pos && !hash->ordered[hash->pos - 1].obj) {
         fio_hash_pop(hash, NULL);
       } else {
         --hash->count;
