@@ -80,13 +80,6 @@ static VALUE iodine_ws_write(VALUE self, VALUE data) {
   return Qtrue;
 }
 
-/** Returns the number of active websocket connections (including connections
- * that are in the process of closing down). */
-static VALUE iodine_ws_count(VALUE self) {
-  return LONG2FIX(websocket_count());
-  (void)self;
-}
-
 /**
 Returns a weak indication as to the state of the socket's buffer. If the server
 has data in the buffer that wasn't written to the socket, `has_pending?` will
@@ -107,6 +100,16 @@ connection across the internet.
 static VALUE iodine_ws_uuid(VALUE self) {
   intptr_t uuid = get_uuid(self);
   return LONG2FIX(uuid);
+}
+
+/**
+Returns true is the connection is open, false if it isn't.
+*/
+static VALUE iodine_ws_is_open(VALUE self) {
+  intptr_t uuid = get_uuid(self);
+  if (uuid && sock_isvalid(uuid))
+    return Qtrue;
+  return Qfalse;
 }
 
 /* *****************************************************************************
@@ -424,6 +427,7 @@ void ws_on_close(intptr_t uuid, void *handler_) {
             "ERROR: (iodine websockets) Closing a handlerless websocket?!\n");
     return;
   }
+  set_uuid(handler, 0);
   RubyCaller.call(handler, iodine_on_close_func_id);
   Registry.remove(handler);
   (void)uuid;
@@ -537,6 +541,7 @@ void Iodine_init_websocket(void) {
 
   rb_define_method(IodineWebsocket, "conn_id", iodine_ws_uuid, 0);
   rb_define_method(IodineWebsocket, "has_pending?", iodine_ws_has_pending, 0);
+  rb_define_method(IodineWebsocket, "open?", iodine_ws_is_open, 0);
   rb_define_method(IodineWebsocket, "defer", iodine_defer, -1);
   // rb_define_method(IodineWebsocket, "each", iodine_ws_each, 0);
 
@@ -546,7 +551,6 @@ void Iodine_init_websocket(void) {
   rb_define_method(IodineWebsocket, "publish", iodine_ws_publish, 1);
 
   rb_define_singleton_method(IodineWebsocket, "defer", iodine_class_defer, 1);
-  rb_define_singleton_method(IodineWebsocket, "count", iodine_ws_count, 0);
   // rb_define_singleton_method(IodineWebsocket, "publish", iodine_ws_publish,
   // 1);
 }
