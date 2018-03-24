@@ -73,8 +73,10 @@ static VALUE iodine_ws_write(VALUE self, VALUE data) {
   //   fprintf(stderr, "iodine_ws_write: self = %p ; data = %p\n"
   //                   "\t\tString ptr: %p, String length: %lu\n",
   //           (void *)ws, (void *)data, RSTRING_PTR(data), RSTRING_LEN(data));
-  if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
+  if (!ws || ((protocol_s *)ws)->service != WEBSOCKET_ID_STR) {
+    rb_raise(rb_eIOError, "Connection is closed");
     return Qfalse;
+  }
   websocket_write(ws, RSTRING_PTR(data), RSTRING_LEN(data),
                   rb_enc_get(data) == IodineUTF8Encoding);
   return Qtrue;
@@ -427,6 +429,7 @@ void ws_on_close(intptr_t uuid, void *handler_) {
             "ERROR: (iodine websockets) Closing a handlerless websocket?!\n");
     return;
   }
+  set_ws(handler, NULL);
   set_uuid(handler, 0);
   RubyCaller.call(handler, iodine_on_close_func_id);
   Registry.remove(handler);
