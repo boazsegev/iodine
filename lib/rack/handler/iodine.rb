@@ -43,7 +43,6 @@ module Iodine
       @public = val
     end
     @public = nil
-    @public = ARGV[ARGV.index('-www') + 1] if ARGV.index('-www')
 
     # get/set the HTTP public folder property. Defaults to `nil`.
     def self.public
@@ -59,7 +58,6 @@ module Iodine
     def self.max_body_size
       @max_body
     end
-
     # get/set the maximum HTTP body size for incoming data. Defaults to ~50Mb. 0 values are silently ignored.
     def self.max_body=(val)
       @max_body = val
@@ -70,6 +68,18 @@ module Iodine
       @max_body
     end
     @max_body = 0
+
+    # get/set the maximum HTTP header length for incoming requests. Defaults to ~32Kb. 0 values are silently ignored.
+    def self.max_headers=(val)
+      @max_headers = val
+    end
+
+    # get/set the maximum HTTP header length for incoming requests. Defaults to ~32Kb.
+    def self.max_headers
+      @max_headers
+    end
+    @max_headers = 0
+
 
     # get/set the maximum Websocket body size for incoming data. Defaults to defaults to ~250KB. 0 values are silently ignored.
     def self.max_msg_size=(val)
@@ -102,8 +112,6 @@ module Iodine
       @log
     end
     @log = false
-    @log = true if ARGV.index('-v')
-    @log = false if ARGV.index('-q')
 
     # get/set the HTTP listening port. Defaults to 3000.
     def self.port=(val)
@@ -114,8 +122,7 @@ module Iodine
     def self.port
       @port
     end
-    @port = ARGV[ARGV.index('-p') + 1] if ARGV.index('-p')
-    @port ||= 3000.to_s
+    @port = 3000.to_s
 
     # get/set the HTTP socket binding address. Defaults to `nil` (usually best).
     def self.address=(val)
@@ -159,6 +166,38 @@ module Iodine
     IODINE_RACK_LOADED = true
   end
 end
+
+if ARGV.index('-b') && ARGV[ARGV.index('-b') + 1]
+  Iodine::Rack.address = ARGV[ARGV.index('-b') + 1]
+end
+if ARGV.index('-p') && ARGV[ARGV.index('-p') + 1]
+  Iodine::Rack.port = ARGV[ARGV.index('-p') + 1]
+end
+
+if ARGV.index('-maxbd') && ARGV[ARGV.index('-maxbd') + 1]
+  Iodine::Rack.max_body_size = ARGV[ARGV.index('-maxbd') + 1].to_i
+end
+if ARGV.index('-maxms') && ARGV[ARGV.index('-maxms') + 1]
+  Iodine::Rack.max_msg_size = ARGV[ARGV.index('-maxms') + 1].to_i
+end
+if ARGV.index('-ping') && ARGV[ARGV.index('-ping') + 1]
+  Iodine::Rack.ws_timeout = ARGV[ARGV.index('-ping') + 1].to_i
+end
+if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
+  Iodine::Rack.public = ARGV[ARGV.index('-www') + 1]
+end
+if ARGV.index('-maxhead') && ARGV[ARGV.index('-maxhead') + 1]
+  Iodine::Rack.max_headers = ARGV[ARGV.index('-maxhead') + 1].to_i
+end
+if ARGV.index('-tout') && ARGV[ARGV.index('-tout') + 1]
+  Iodine::Rack.timeout = ARGV[ARGV.index('-tout') + 1].to_i
+  puts "WARNNING: Iodine::Rack.timeout set to 0 (ignored, timeout will be ~5 seconds)."
+end
+Iodine::Rack.log = true if ARGV.index('-v')
+Iodine::Rack.log = false if ARGV.index('-q')
+
+
+
 
 # Iodine::Rack.app = proc { |env| p env; puts env['rack.input'].read(1024).tap { |s| puts "Got data #{s.length} long, #{s[0].ord}, #{s[1].ord} ... #{s[s.length - 2].ord}, #{s[s.length - 1].ord}:" if s }; env['rack.input'].rewind; [404, {}, []] }
 

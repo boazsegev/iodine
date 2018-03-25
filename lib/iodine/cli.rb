@@ -19,6 +19,7 @@ Use:
 Both <options> and <filename> are optional.
 
 Available options:
+ -b          Binding address. Default: nil (same as 0.0.0.0).
  -p          Port number. Default: 3000.
  -t          Number of threads. Default: CPU core count.
  -w          Number of worker processes. Default: CPU core count.
@@ -26,8 +27,9 @@ Available options:
  -v          Log responses. Default: never log responses.
  -warmup     Warmup invokes autoloading (lazy loading) during server startup.
  -tout       HTTP inactivity connection timeout. Default: 40 seconds.
- -maxbd      Maximum Mb per HTTP message (max body size). Default: 50Mib.
- -maxms      Maximum Bytes per Websocket message. Default: 250Kib.
+ -maxhead    Maximum total headers length per HTTP request. Default: 32Kb.
+ -maxbd      Maximum Mb per HTTP message (max body size). Default: 50Mb.
+ -maxms      Maximum Bytes per Websocket message. Default: 250Kb.
  -ping       Websocket ping interval in seconds. Default: 40 seconds.
  <filename>  Defaults to: config.ru
 
@@ -48,15 +50,13 @@ EOS
         return ::Rack::Builder.parse_file filename
       end
 
-
-
       def call
         if ARGV[0] =~ /(\-\?)|(help)|(\?)|(h)|(\-h)$/
           return print_help
         end
 
         app, opt = nil, nil
-        filename = ((ARGV[-2].to_s[0] != '-' || ARGV[-2].to_s == '-warmup') && ARGV[-1].to_s[0] != '-' && ARGV[-1])
+        filename = ((ARGV[-2].to_s[0] != '-' || ARGV[-2].to_s == '-warmup' || ARGV[-2].to_s == '-v' || ARGV[-2].to_s == '-q') && ARGV[-1].to_s[0] != '-' && ARGV[-1])
         if filename
           app, opt = try_file filename;
           unless opt
@@ -79,24 +79,6 @@ EOS
           end
         end
 
-        if ARGV.index('-maxbd') && ARGV[ARGV.index('-maxbd') + 1]
-          Iodine::Rack.max_body_size = ARGV[ARGV.index('-maxbd') + 1].to_i
-        end
-        if ARGV.index('-maxms') && ARGV[ARGV.index('-maxms') + 1]
-          Iodine::Rack.max_msg_size = ARGV[ARGV.index('-maxms') + 1].to_i
-        end
-        if ARGV.index('-ping') && ARGV[ARGV.index('-ping') + 1]
-          Iodine::Rack.ws_timeout = ARGV[ARGV.index('-ping') + 1].to_i
-        end
-        if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
-          Iodine::Rack.public = ARGV[ARGV.index('-www') + 1]
-        end
-        if ARGV.index('-tout') && ARGV[ARGV.index('-tout') + 1]
-          Iodine::Rack.timeout = ARGV[ARGV.index('-tout') + 1].to_i
-          puts "WARNNING: Iodine::Rack.timeout set to 0 (ignored, timeout will be ~5 seconds)."
-        end
-        Iodine::Rack.log = true if ARGV.index('-v')
-        Iodine::Rack.log = false if ARGV.index('-q')
         Iodine.warmup(app) if ARGV.index('-warmup')
         Iodine::Rack.run(app, opt)
       end
