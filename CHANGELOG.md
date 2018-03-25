@@ -10,13 +10,21 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Changed... everything. At least all the internal bits.
 
-Faster and more robust pub/sub, moved the HTTP network layer outside of the GIL and more.
+Deprecated the `each` function family in favor of the more scalable pub/sub approach.
 
-Larger header support with a smaller HTTP memory footprint. "Hello World" will be slower, but everything else should run faster and smoother.
+Moved the HTTP network layer outside of the GIL, more robust pub/sub (using Unix Sockets instead of pipes) and more.
+
+Larger header support. The total headers length now defaults to 32Kb, but can be adjusted. A hard coded length limit of 4Kb per header line is still enforced (to minimize network buffer).
+
+Improved concurrency and energy consumption (idling CPU cycles reduced).
+
+Higher overall memory consumption might be observed (some security and network features now perform data copying rather than allowing for direct data access).
+
+Slower RPM on very short responses ("Hello World" is slower), but iodine is still blazing fast, so don't worry.
+
+Improved automatic header completion for missing `Content-Length`, `Date` and `Last-Modified`.
 
 Support for the Unicorn style `before_fork` and `after_fork` DSL as well as the Puma style `on_worker_boot` DSL (these are meant for portability, but they aren't as safe as the `Iodine.defer` calls that protect against exceptions).
-
-Deprecated the `each` function family in favor of the more scalable pub/sub approach.
 
 Credit to Anatoly Nosov (@jomei) for fixing some typos in the documentation.
 
