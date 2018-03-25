@@ -290,6 +290,16 @@ Starts the Iodine event loop. This will hang the thread until an interrupt
 Returns the Iodine module.
 */
 static VALUE iodine_start(VALUE self) {
+  /* re-register the Rack::Push namespace to point at Iodine */
+  if (rb_const_defined(rb_cObject, rb_intern("Rack"))) {
+    VALUE rack = rb_const_get(rb_cObject, rb_intern("Rack"));
+    if (rack != Qnil) {
+      if (rb_const_defined(rack, rb_intern("Push"))) {
+        rb_const_remove(rack, rb_intern("Push"));
+      }
+      rb_const_set(rack, rb_intern("Push"), Iodine);
+    }
+  }
   /* for the special Iodine::Rack object and backwards compatibility */
   if (iodine_review_rack_app()) {
     fprintf(stderr, "ERROR: (iodine) cann't start Iodine::Rack.\n");
