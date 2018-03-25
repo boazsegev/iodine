@@ -239,8 +239,6 @@ static void on_shutdown(intptr_t fd, protocol_s *ws) {
     ((ws_s *)ws)->on_shutdown((ws_s *)ws);
 }
 
-/************** new implementation */
-
 static void on_data(intptr_t sockfd, protocol_s *ws_) {
   ws_s *const ws = (ws_s *)ws_;
   if (ws == NULL || ws->protocol.service != WEBSOCKET_ID_STR)
@@ -314,11 +312,11 @@ static ws_s *new_websocket(intptr_t uuid) {
   return ws;
 }
 static void destroy_ws(ws_s *ws) {
-  clear_subscriptions(ws);
   if (ws->on_close)
     ws->on_close(ws->fd, ws->udata);
   if (ws->msg)
     fiobj_free(ws->msg);
+  clear_subscriptions(ws);
   free_ws_buffer(ws, ws->buffer);
   free(ws);
 }
