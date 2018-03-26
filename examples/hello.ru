@@ -16,8 +16,7 @@
 module HelloWorld
   # This is the HTTP response object according to the Rack specification.
   RESPONSE = [200, { 'Content-Type' => 'text/html',
-          'Content-Length' => '32' },
-   ['Please connect using websockets.']]
+          'Content-Length' => '12' }, [ 'Hello World!' ] ]
 
    # this is function will be called by the Rack server (iodine) for every request.
    def self.call env
