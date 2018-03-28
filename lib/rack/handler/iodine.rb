@@ -213,6 +213,7 @@ end
 
 begin
   ::Rack::Handler.register('iodine', 'Iodine::Rack') if defined?(::Rack::Handler)
+  ::Rack::Handler.register('Iodine', 'Iodine::Rack') if defined?(::Rack::Handler)
 rescue Exception
 
 end
