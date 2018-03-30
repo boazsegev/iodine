@@ -367,51 +367,6 @@ static VALUE iodine_ws_unsubscribe(VALUE self, VALUE sub_id) {
   return Qnil;
 }
 
-/**
-Publishes a message to a channel.
-
-Accepts a single Hash argument with the following possible options:
-
-:engine :: If provided, the engine to use for pub/sub. Otherwise the default
-engine is used.
-
-:channel :: REQUIRED. The channel to publish to.
-
-:message :: REQUIRED. The message to be published.
-:
-*/
-static VALUE iodine_ws_publish(VALUE self, VALUE args) {
-  Check_Type(args, T_HASH);
-
-  VALUE rb_ch = rb_hash_aref(args, iodine_channel_var_id);
-  if (rb_ch == Qnil || rb_ch == Qfalse) {
-    rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
-  }
-  if (TYPE(rb_ch) == T_SYMBOL)
-    rb_ch = rb_sym2str(rb_ch);
-  Check_Type(rb_ch, T_STRING);
-
-  VALUE rb_msg = rb_hash_aref(args, iodine_message_var_id);
-  if (rb_msg == Qnil || rb_msg == Qfalse) {
-    rb_raise(rb_eArgError, "message is required for the :publish method.");
-  }
-  Check_Type(rb_msg, T_STRING);
-
-  pubsub_engine_s *engine =
-      iodine_engine_ruby2facil(rb_hash_aref(args, iodine_engine_var_id));
-  FIOBJ channel = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
-  FIOBJ msg = fiobj_str_new(RSTRING_PTR(rb_msg), RSTRING_LEN(rb_msg));
-
-  intptr_t subid =
-      pubsub_publish(.engine = engine, .channel = channel, .message = msg);
-  fiobj_free(channel);
-  fiobj_free(msg);
-  if (!subid)
-    return Qfalse;
-  return Qtrue;
-  (void)self;
-}
-
 //////////////////////////////////////
 // Protocol functions
 void ws_on_open(ws_s *ws) {
@@ -551,7 +506,7 @@ void Iodine_init_websocket(void) {
   rb_define_method(IodineWebsocket, "subscribe", iodine_ws_subscribe, 1);
   rb_define_method(IodineWebsocket, "unsubscribe", iodine_ws_unsubscribe, 1);
   rb_define_method(IodineWebsocket, "subscribed?", iodine_ws_is_subscribed, 1);
-  rb_define_method(IodineWebsocket, "publish", iodine_ws_publish, 1);
+  rb_define_method(IodineWebsocket, "publish", iodine_publish, 1);
 
   rb_define_singleton_method(IodineWebsocket, "defer", iodine_class_defer, 1);
   // rb_define_singleton_method(IodineWebsocket, "publish", iodine_ws_publish,

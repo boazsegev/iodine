@@ -9,7 +9,30 @@ I still believe it's important to separate the Websocket server from the Websock
 ---
 ## Rack Websockets
 
+### Purpose
+
 This is the proposed Websocket support extension for Rack servers.
+
+The purpose of these specifications is:
+
+1. To allow separation of concerns between the transport layer and the application, thereby allowing the application to be server agnostic.
+
+    Simply put, when choosing between conforming servers, the application doesn’t need to have any knowledge about the chosen server.
+
+2. To Support “native" (server-side) Websocket connections and Websocket events using application side callbacks.
+
+    Simply put, to make it easy for applications to accept Websocket connections from Websocket clients (commonly browsers).
+
+3. To Support “native” (server / extension side) pub/sub events\*.
+
+    Simply put, applications will not have to worry about inter-process communication when handling pub/sub.
+
+    This should simplify the idiomatic `subscribe` / `publish` approach to real-time data pushing.
+
+    \* Although pub/sub isn't a server specific concern, there is high coupling between server concerns and pub/sub. Specifically: pub/sub events are often scheduled to be sent directly to the client; and applications shouldn't be concerned about (or require knowledge when) running within multi-process (forking) servers.
+
+
+### Status
 
 Servers that publish Websocket support using the `env['upgrade.websocket?']` value are assume by users to follow the requirements set in this document and thus should follow the requirements set in herein.
 
@@ -27,19 +50,19 @@ The Websocket Callback Object should be a class (or an instance of such class) w
 
     The *client* **MUST** assume that the `data` String will be a **recyclable buffer** and that it's content will be corrupted the moment the `on_message` callback returns.
 
-    Servers MAY, optionally, implement a **recyclable buffer** for the `on_message` callback. However, this is optional and it is *not* required.
+    Servers **MAY**, optionally, implement a **recyclable buffer** for the `on_message` callback. However, this is optional and it is *not* required.
 
 * `on_ready()` **MAY** be called when the state of the out-going socket buffer changes from full to not full (data can be sent to the socket). **If** `has_pending?` returns `true`, the `on_ready` callback **MUST** be called once the buffer state changes.
 
-* `on_shutdown()` MAY be called during the server's graceful shutdown process, _before_ the connection is closed and in addition to the `on_close` function (which is called _after_ the connection is closed.
+* `on_shutdown()` **MAY** be called during the server's graceful shutdown process, _before_ the connection is closed and in addition to the `on_close` function (which is called _after_ the connection is closed.
 
-* `on_close()` WILL be called _after_ the connection was closed for whatever reason (socket errors, parsing errors, timeouts, client disconnection, `close` being called, etc').
+* `on_close()` **MUST** be called _after_ the connection was closed for whatever reason (socket errors, parsing errors, timeouts, client disconnection, `close` being called, etc').
 
 * `on_open`, `on_ready`, `on_shutdown` and `on_close` shouldn't expect any arguments (`arity == 0`).
 
 The following method names are reserved for the network implementation: `write`, `close` and `has_pending?`.
 
-The server **MUST** extend the Websocket Callback Object's *class* using `extend`, so that the Websocket Callback Object inherits the following methods:
+The server **MUST** extend the Websocket Callback Object's *class* using `extend`, so that the Websocket Callback Object **inherits** the following methods:
 
 * `write(data)` will attempt to send the data through the websocket connection. `data` **MUST** be a String. If `data` is UTF-8 encoded, the data will be sent as text. If `data` is binary encoded it will be sent as non-text (as specified by the Websocket Protocol).
 
@@ -52,6 +75,8 @@ The server **MUST** extend the Websocket Callback Object's *class* using `extend
 * `close` closes the connection once all the data in the outgoing queue was sent. If `close` is called while there is still data to be sent, `close` will only take effect once the data was sent.
 
     `close` shall always return `nil`.
+
+* `open?` returns the state of the connection. Servers **SOULD** set the method to return `true` if the connection is open and `false` if the connection is closed or marked to be closed.
 
 * `has_pending?` queries the state of the server's buffer for the specific connection (i.e., if the server has any data it is waiting to send through the socket).
 
@@ -94,6 +119,94 @@ The requirement that the server extends the class of the Websocket Callback Obje
     The `on_close` callback will **not** be called while `on_message` or `on_open` callbacks are running.
 
     The `on_ready` callback might be called concurrently with the `on_message` callback, allowing data to be sent even while other data is being processed. Multi-threading considerations may apply.
+
+## Pub/Sub handling
+
+The pub/sub design is idiomatic to Websocket approaches and should be supported on any supported server.
+
+However, servers **MAY** fail to publish or subscribe, thereby allowing servers to require external gems to implement these features (a server may opt to always fail).
+
+Servers **MUST** extend the Websocket callback object to implement the following pub/sub related methods:
+
+* `subscribe(args) { |channel, message| optional_block }` where `args` is a Hash object that supports (at least) the following possible keys:
+
+    * `channel` a String with similar semantics to a Redis channel (requires an exact String match to receive publications).
+
+    * `pattern` a String with similar semantics to a Redis pattern subscription (performs glob matching to filter publications).
+    
+    * If an optional `block` is provided, the block will be called when a publication was received. Otherwise, the message (**not** the channel data) should be sent directly to the Websocket client.
+
+    If the `subscribe` method is called within a Websocket object, the subscription must be associated with the Websocket object and canceled automatically when the Websocket connection is closed.
+
+    If the `subscribe` method isn't called from within a connection, it should be considered a global (non connection related) subscription and a block **MUST** be provided. 
+    
+    The `subscribe` method must return a subscription object if a subscription was scheduled (not necessarily performed). If it's already known that the subscription would fail, the method should return `nil`.
+
+    A global variation for this method (allowing global subscriptions to be created) should be defined as `Rack::Websocket.subscribe`.
+
+* `unsubscribe(sub)` where `sub` is a subscription object returned from `subscribe`.
+
+    The `unsubscribe` method must return `true` if the subscription object is valid and scheduled to be canceled or `false` if the subscription object is invalid.
+
+    A global variation for this method (allowing global subscriptions to be canceled) should be defined as `Rack::Websocket.unsubscribe`.
+
+* `publish(args)` where `args` is a Hash object that supports (at least) the following possible keys:
+
+    * `channel` a String that identifies the channel / stream / subject for the publication ("channel" is the semantic used by Redis and adopted herein, it is similar to "subject" or "stream" in other pub/sub systems).
+
+    * `message` a String with similar semantics to  a Redis pattern subscription (performs glob matching to filter publications).
+
+    * `engine` (optional) an with similar semantics to  a Redis pattern subscription (performs glob matching to filter publications).
+
+    The `publish` method must return `true` if a publication was scheduled (not necessarily performed). If it's already known that the publication would fail, the method should return `false`.
+
+    A server **SHOULD** call the relevant PubSubEngine's `publish` method after performing any internal book keeping logic. If `engine` is `nil`, the default PubSubEngine should be called. If `engine` is `false`, the server **MUST** forward the published message to the actual clients (if any).
+
+    A global alias for this method (allowing it to be accessed from outside active connections) should be defined as `Rack::Websocket.publish`.
+
+Servers **MUST** implement the following methods:
+
+* `Rack::Websocket.pubsub_register(engine)` where `engine` is a PubSubEngine object as described in this specification.
+
+    When a pub/sub engine is registered, the server **MUST** inform the engine of any existing or future subscriptions.
+
+    The server **MUST** call the engine's `subscribe` callback for each existing (and future) subscription.
+
+* `Rack::Websocket.pubsub_default = engine` sets a default pub/sub engine, where `engine` is a PubSubEngine object as described in this specification.
+
+    Servers **MUST** forward any `publish` method calls to the default pub/sub engine.
+
+* `Rack::Websocket.pubsub_default` returns the current default pub/sub engine, where the engine is a PubSubEngine object as described in this specification.
+
+* `Rack::Websocket.pubsub_reset(engine)` where `engine` is a PubSubEngine object as described in this specification.
+
+    Servers **MUST** behave as if the engine was newly registered and (re)inform the engine of any existing subscriptions.
+
+    The server **MUST** call the engine's `subscribe` callback for each existing (and future) subscription.
+
+Servers **MAY** implement pub/sub internally (in which case the `pubsub_default` engine is the server itself or a server's module).
+
+However, servers **MUST** support external pub/sub "engines" as described above, using PubSubEngine objects.
+
+PubSubEngine objects **MUST** implement the following methods:
+
+* `subscribe(channel, is_pattern)` this method performs the subscription to the specified channel.
+
+    If `is_pattern` is `true`, the channel subscription should use glob matching rather than exact match (same semantics as the Redis PSUBSCRIBE command).
+
+    The method must return `true` if a subscription was scheduled (or performed) or `false` if the subscription is known to fail.
+
+    This method will be called by the server (for each registered engine). The engine may assume that the method would never be called directly by an application.
+
+* `publish(channel, message)` where both `channel` and `message` are String object.
+
+    This method will be called by the server when a message is published *and* the engine is the default pub/sub engine. The engine **MUST** assume that the method might called directly by an application.
+
+When a PubSubEngine object receives a published message, it must call:
+
+```ruby
+Rack::Websocket.publish channel: channel, message: message, engine: false
+```
 
 ---
 

@@ -12,11 +12,11 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "redis_engine.h"
 
 VALUE IodineEngine;
+ID iodine_engine_pubid;
 
 static VALUE IodinePubSub;
 static ID engine_varid;
 static ID engine_subid;
-static ID engine_pubid;
 static ID engine_unsubid;
 static ID default_pubsubid;
 
@@ -54,6 +54,18 @@ call this function from your own code / application.
 The function should return `true` on success and `nil` or `false` on failure.
 */
 static VALUE engine_pub_placeholder(VALUE self, VALUE channel, VALUE msg) {
+  { /* test for built-in C engines */
+    iodine_engine_s *engine;
+    Data_Get_Struct(self, iodine_engine_s, engine);
+    if (engine->p != &engine->engine) {
+      FIOBJ ch = fiobj_str_new(RSTRING_PTR(channel), RSTRING_LEN(channel));
+      FIOBJ m = fiobj_str_new(RSTRING_PTR(msg), RSTRING_LEN(msg));
+      pubsub_publish(.engine = engine->p, .channel = ch, .message = m);
+      fiobj_free(ch);
+      fiobj_free(msg);
+      return Qtrue;
+    }
+  }
   return Qnil;
   (void)self;
   (void)msg;
@@ -64,44 +76,32 @@ static VALUE engine_pub_placeholder(VALUE self, VALUE channel, VALUE msg) {
 Ruby API
 ***************************************************************************** */
 
-/** @!visibility public
-Called by the engine to distribute a `message` to a `channel`. Supports
-`pattern` channel matching as well.
+// /** @!visibility public
+// Called by the engine to distribute a `message` to a `channel`. Supports
+// `pattern` channel matching as well.
 
-i.e.
+// i.e.
 
-      # Regular message distribution
-      self.distribute "My Channel", "Hello!"
-      # Pattern message distribution
-      self.distribute "My Ch*", "Hello!", true
+//       # Regular message distribution
+//       self.distribute "My Channel", "Hello!"
 
-Returns `self`, always.
+// Returns `self`, always.
 
-This is the ONLY method inherited from {Iodine::PubSub::Engine} that
-should be called from within your code (by the engine itself).
+// This is the ONLY method inherited from {Iodine::PubSub::Engine} that
+// should be called from within your code (by the engine itself).
+// */
+// static VALUE engine_distribute(VALUE self, VALUE channel, VALUE msg) {
+//   Check_Type(channel, T_STRING);
+//   Check_Type(msg, T_STRING);
 
-**Notice:**
+//   iodine_engine_s *engine;
+//   Data_Get_Struct(self, iodine_engine_s, engine);
+//   FIOBJ ch = fiobj_str_new(RSTRING_PTR(channel), RSTRING_LEN(channel));
+//   FIOBJ m = fiobj_str_new(RSTRING_PTR(msg), RSTRING_LEN(msg));
 
-Message distribution requires both the {Iodine::PubSub::Engine} instance and the
-channel to be the same.
-
-If a client subscribed to "channel 1" on engine A, they will NOT receive
-messages from "channel 1" on engine B.
-*/
-static VALUE engine_distribute(VALUE self, VALUE channel, VALUE msg) {
-  Check_Type(channel, T_STRING);
-  Check_Type(msg, T_STRING);
-
-  iodine_engine_s *engine;
-  Data_Get_Struct(self, iodine_engine_s, engine);
-  FIOBJ ch = fiobj_str_new(RSTRING_PTR(channel), RSTRING_LEN(channel));
-  FIOBJ m = fiobj_str_new(RSTRING_PTR(msg), RSTRING_LEN(msg));
-
-  pubsub_publish(.engine = PUBSUB_PROCESS_ENGINE, .channel = ch, .message = m);
-  fiobj_free(ch);
-  fiobj_free(msg);
-  return self;
-}
+//   pubsub_publish(.engine = PUBSUB_PROCESS_ENGINE, .channel = ch, .message =
+//   m); fiobj_free(ch); fiobj_free(msg); return self;
+// }
 
 pubsub_engine_s *iodine_engine_ruby2facil(VALUE ruby_engine) {
   if (ruby_engine == Qnil || ruby_engine == Qfalse)
@@ -174,7 +174,7 @@ static void *engine_publish_inGVL(void *a_) {
   data[1] = rb_str_new(tmp.data, tmp.len);
   Registry.add(data[1]);
   VALUE eng = ((iodine_engine_s *)args->eng)->handler;
-  eng = RubyCaller.call2(eng, engine_pubid, 2, data);
+  eng = RubyCaller.call2(eng, iodine_engine_pubid, 2, data);
   Registry.remove(data[0]);
   Registry.remove(data[1]);
   return ((eng == Qfalse || eng == Qnil) ? (void *)-1 : 0);
@@ -205,7 +205,7 @@ static void engine_free(void *eng_) {
   free(eng);
 }
 
-/* GMP::Integer.allocate */
+/* Iodine::PubSub::Engine.allocate */
 static VALUE engine_alloc_c(VALUE self) {
   iodine_engine_s *eng = malloc(sizeof(*eng));
   if (TYPE(self) == T_CLASS)
@@ -502,7 +502,7 @@ This is NOT supported by Redis and it's limited to the local process cluster.
 :message :: REQUIRED. The message to be published.
 :
 */
-static VALUE iodine_publish(VALUE self, VALUE args) {
+VALUE iodine_publish(VALUE self, VALUE args) {
   Check_Type(args, T_HASH);
   uint8_t use_pattern = 0;
 
@@ -545,7 +545,7 @@ void Iodine_init_pubsub(void) {
   engine_varid = rb_intern("engine");
   engine_subid = rb_intern("subscribe");
   engine_unsubid = rb_intern("unsubscribe");
-  engine_pubid = rb_intern("publish");
+  iodine_engine_pubid = rb_intern("publish");
   default_pubsubid = rb_intern("default_pubsub");
   channel_var_id = ID2SYM(rb_intern("channel"));
   pattern_var_id = ID2SYM(rb_intern("pattern"));
@@ -557,7 +557,6 @@ void Iodine_init_pubsub(void) {
   rb_define_alloc_func(IodineEngine, engine_alloc_c);
   rb_define_method(IodineEngine, "initialize", engine_initialize, 0);
 
-  rb_define_method(IodineEngine, "distribute", engine_distribute, 2);
   rb_define_method(IodineEngine, "subscribe", engine_sub_placeholder, 2);
   rb_define_method(IodineEngine, "unsubscribe", engine_sub_placeholder, 2);
   rb_define_method(IodineEngine, "publish", engine_pub_placeholder, 2);

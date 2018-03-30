@@ -10,6 +10,8 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "pubsub.h"
 
 extern VALUE IodineEngine;
+extern ID iodine_engine_pubid;
+VALUE iodine_publish(VALUE self, VALUE args);
 
 typedef struct {
   pubsub_engine_s engine;
