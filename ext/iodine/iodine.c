@@ -348,11 +348,12 @@ static void patch_env(void) {
 #endif
 }
 
-////////////////////////////////////////////////////////////////////////
-// Ruby loads the library and invokes the Init_<lib_name> function...
-//
-// Here we connect all the C code to the Ruby interface, completing the bridge
-// between Lib-Server and Ruby.
+/* *****************************************************************************
+Ruby loads the library and invokes the Init_<lib_name> function...
+
+Here we connect all the C code to the Ruby interface, completing the bridge
+between Lib-Server and Ruby.
+***************************************************************************** */
 void Init_iodine(void) {
   // load any environment specific patches
   patch_env();
@@ -386,7 +387,7 @@ void Init_iodine(void) {
   IodineBinaryEncoding = rb_enc_find("binary");
   IodineUTF8Encoding = rb_enc_find("UTF-8");
 
-  // The core Iodine module wraps libserver functionality and little more.
+  // The core Iodine module wraps facil.io functionality and little more.
   Iodine = rb_define_module("Iodine");
 
   // the Iodine singleton functions
@@ -398,8 +399,7 @@ void Init_iodine(void) {
   rb_define_module_function(Iodine, "run_every", iodine_run_every, -1);
   rb_define_module_function(Iodine, "on_idle", iodine_sched_on_idle, 0);
 
-  // Every Protocol (and Server?) instance will hold a reference to the server
-  // define the Server Ruby class.
+  /// Iodine::Base is for internal use.
   IodineBase = rb_define_module_under(Iodine, "Base");
   rb_define_module_function(IodineBase, "db_print_registry",
                             iodine_print_registry, 0);
