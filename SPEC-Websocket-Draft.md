@@ -64,7 +64,7 @@ The following method names are reserved for the network implementation: `write`,
 
 The server **MUST** extend the Websocket Callback Object's *class* using `extend`, so that the Websocket Callback Object **inherits** the following methods:
 
-* `write(data)` will attempt to send the data through the websocket connection. `data` **MUST** be a String. If `data` is UTF-8 encoded, the data will be sent as text. If `data` is binary encoded it will be sent as non-text (as specified by the Websocket Protocol).
+* `write(data, text = true)` will attempt to send the data through the websocket connection. `data` **MUST** be a String. If `data` is UTF-8 encoded, the data will be sent as text. If `data` is binary encoded it will be sent as non-text (as specified by the Websocket Protocol).
 
     `write` has the same delivery promise as `Socket#write` (a successful `write` does **not** mean any of the data will reach the other side).
 
@@ -84,11 +84,7 @@ The server **MUST** extend the Websocket Callback Object's *class* using `extend
 
     To clarify: **implementing `has_pending?` is semi-optional**, meaning that a server may choose to always return `false`, no matter the actual state of the socket's buffer.
 
-The following keywords (both as method names and instance variable names) are reserved for the internal server implementation: `_server_ws` and `conn_id`.
-
-* The `_server_ws` object is private and shouldn't be accessed by the client.
-
-* The `conn_id` object may be used as a connection ID for any functionality not specified herein.
+The following keywords (both as method names and instance variable names) are reserved for the internal server implementations: `_conn` and `conn_id`.
 
 Connection `ping` / `pong`, timeouts and network considerations should be implemented by the server. It is **RECOMMENDED** (but not required) that the server send `ping`s to prevent connection timeouts and detect network failure.
 
@@ -128,27 +124,27 @@ However, servers **MAY** fail to publish or subscribe, thereby allowing servers 
 
 Servers **MUST** extend the Websocket callback object to implement the following pub/sub related methods:
 
-* `subscribe(args) { |channel, message| optional_block }` where `args` is a Hash object that supports (at least) the following possible keys:
+* `subscribe(args) { |channel, message| optional_block }` where `args` is a Hash object that supports the following possible keys (undefined keys *SHOULD* be ignored):
 
-    * `channel` a String with similar semantics to a Redis channel (requires an exact String match to receive publications).
+    * `:channel` a String with similar semantics to a Redis channel (requires an exact String match to receive publications).
 
-    * `pattern` a String with similar semantics to a Redis pattern subscription (performs glob matching to filter publications).
+    * `:pattern` a String with similar semantics to a Redis pattern subscription (performs glob matching to filter publications).
     
     * If an optional `block` is provided, the block will be called when a publication was received. Otherwise, the message (**not** the channel data) should be sent directly to the Websocket client.
 
-    If the `subscribe` method is called within a Websocket object, the subscription must be associated with the Websocket object and canceled automatically when the Websocket connection is closed.
+    * `:as` accepts either `:text` or `:binary` Symbol objects. This will dictate the encoding for a WebSocket message that's directly sent to the client (as a text message or a binary blob). `:text` will be the default value for a missing `:as`
+    
+        This option is only valid if the optional `block` is missing.
+
+    If the `subscribe` method is called within a Websocket object, the subscription must be associated with the Websocket object and closed automatically when the Websocket connection is closed.
 
     If the `subscribe` method isn't called from within a connection, it should be considered a global (non connection related) subscription and a block **MUST** be provided. 
     
     The `subscribe` method must return a subscription object if a subscription was scheduled (not necessarily performed). If it's already known that the subscription would fail, the method should return `nil`.
 
+    The subscription object **MUST** support the method `close` (that will close the subscription).
+
     A global variation for this method (allowing global subscriptions to be created) should be defined as `Rack::Websocket.subscribe`.
-
-* `unsubscribe(sub)` where `sub` is a subscription object returned from `subscribe`.
-
-    The `unsubscribe` method must return `true` if the subscription object is valid and scheduled to be canceled or `false` if the subscription object is invalid.
-
-    A global variation for this method (allowing global subscriptions to be canceled) should be defined as `Rack::Websocket.unsubscribe`.
 
 * `publish(args)` where `args` is a Hash object that supports (at least) the following possible keys:
 
@@ -198,9 +194,17 @@ PubSubEngine objects **MUST** implement the following methods:
 
     This method will be called by the server (for each registered engine). The engine may assume that the method would never be called directly by an application.
 
+* `unsubscribe(channel, is_pattern)` this method performs closes the subscription to the specified channel.
+
+    The method's semantics are similar to `subscribe`.
+
+    This method will be called by the server (for each registered engine). The engine may assume that the method would never be called directly by an application.
+
 * `publish(channel, message)` where both `channel` and `message` are String object.
 
-    This method will be called by the server when a message is published *and* the engine is the default pub/sub engine. The engine **MUST** assume that the method might called directly by an application.
+    This method will be called by the server when a message is published using the engine.
+
+    The engine **MUST** assume that the method might called directly by an application.
 
 When a PubSubEngine object receives a published message, it must call:
 
