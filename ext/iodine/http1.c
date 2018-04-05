@@ -137,8 +137,8 @@ static FIOBJ headers2str(http_s *h, uintptr_t padding) {
         }
       } else {
         fio_cstr_s t = fiobj_obj2cstr(h->version);
-        if (t.len > 7 && t.data && t.data[5] == '1' && t.data[6] == '.' &&
-            t.data[7] == '1')
+        if (!p->close && t.len > 7 && t.data && t.data[5] == '1' &&
+            t.data[6] == '.' && t.data[7] == '1')
           fiobj_str_write(w.dest, "connection:keep-alive\r\n", 23);
         else {
           fiobj_str_write(w.dest, "connection:close\r\n", 18);
@@ -667,7 +667,8 @@ static void http1_on_data_first_time(intptr_t uuid, protocol_s *protocol) {
 
 /* *****************************************************************************
 Public API
-***************************************************************************** */
+*****************************************************************************
+*/
 
 /** Creates an HTTP1 protocol object and handles any unread data in the buffer
  * (if any). */

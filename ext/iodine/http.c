@@ -109,8 +109,6 @@ The Request / Response type and functions
 static const char hex_chars[] = {'0', '1', '2', '3', '4', '5', '6', '7',
                                  '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
 
-#define HTTP_INVALID_HANDLE(h)                                                 \
-  (!h || (!h->method && !h->status_str && h->status))
 /**
  * Sets a response header, taking ownership of the value object, but NOT the
  * name object (so name objects could be reused in future responses).
@@ -559,6 +557,7 @@ open_file:
   file = open(s.data, O_RDONLY);
   if (file == -1) {
     fprintf(stderr, "ERROR: Couldn't open file %s!\n", s.data);
+    perror("     ");
     http_send_error(h, 500);
     return 0;
   }
@@ -1803,7 +1802,6 @@ void http_write_log(http_s *h) {
   fiobj_str_write(l, "ms\r\n", 4);
 
   buff = fiobj_obj2cstr(l);
-
   fwrite(buff.data, 1, buff.len, stderr);
   fiobj_free(l);
 }
