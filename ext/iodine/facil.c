@@ -1452,9 +1452,8 @@ static void facil_cycle_schedule_events(void) {
 
 /* reactor pattern cycling during cleanup */
 static void facil_cycle_unwind(void *ignr, void *ignr2) {
-  facil_cycle_schedule_events();
   if (facil_data->connection_count) {
-    // fprintf(stderr, "Connection Count: %zu\n", facil_data->connection_count);
+    facil_cycle_schedule_events();
     defer(facil_cycle_unwind, ignr, ignr2);
     return;
   }
@@ -1605,9 +1604,9 @@ static void facil_worker_cleanup(void) {
       defer(deferred_on_shutdown, (void *)uuid, NULL);
     }
   }
-  defer(facil_cycle_unwind, NULL, NULL);
   facil_data->thread_pool = defer_pool_start(facil_data->threads);
   if (facil_data->thread_pool) {
+    defer(facil_cycle_unwind, NULL, NULL);
     defer_pool_wait(facil_data->thread_pool);
     facil_data->thread_pool = NULL;
   }
@@ -1619,13 +1618,7 @@ static void facil_worker_cleanup(void) {
       sock_force_close(uuid);
     }
   }
-  evio_review(0);
   defer_perform();
-  sock_flush_all();
-  evio_review(0);
-  sock_flush_all();
-  defer_perform();
-  sock_flush_all();
   facil_data->on_finish();
   defer_perform();
   evio_close();
