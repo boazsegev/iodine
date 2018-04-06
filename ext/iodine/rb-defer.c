@@ -80,12 +80,12 @@ The Defer library overriding functions
 /**
 OVERRIDE THIS to replace the default pthread implementation.
 */
-void *defer_new_thread(void *(*thread_func)(void *), pool_pt pool) {
+void *defer_new_thread(void *(*thread_func)(void *), void *arg) {
   struct CreateThreadArgs *data = malloc(sizeof(*data));
   if (!data)
     return NULL;
   *data = (struct CreateThreadArgs){
-      .thread_func = thread_func, .arg = pool,
+      .thread_func = thread_func, .arg = arg,
   };
   void *thr = RubyCaller.call_c(create_ruby_thread_gvl, data);
   if (!thr || thr == (void *)Qnil || thr == (void *)Qfalse) {
