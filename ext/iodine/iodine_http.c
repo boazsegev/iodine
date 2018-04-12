@@ -36,6 +36,10 @@ VALUE UPGRADE_TCP;
 VALUE UPGRADE_TCP_Q;
 VALUE UPGRADE_WEBSOCKET;
 VALUE UPGRADE_WEBSOCKET_Q;
+VALUE RACK_UPGRADE;
+VALUE RACK_UPGRADE_Q;
+VALUE RACK_UPGRADE_SSE;
+VALUE RACK_UPGRADE_WEBSOCKET;
 
 static VALUE hijack_func_sym;
 static ID to_fixnum_func_id;
@@ -52,6 +56,9 @@ static VALUE env_template_with_upgrade;
   (rack_name) = rb_enc_str_new((str), strlen((str)), IodineBinaryEncoding);    \
   rb_global_variable(&(rack_name));                                            \
   rb_obj_freeze(rack_name);
+#define rack_set_sym(rack_name, sym)                                           \
+  (rack_name) = rb_id2sym(rb_intern2((sym), strlen((sym))));                   \
+  rb_global_variable(&(rack_name));
 
 #define rack_autoset(rack_name) rack_set((rack_name), #rack_name)
 
@@ -125,6 +132,14 @@ static inline VALUE copy2env(http_s *h, uint8_t is_upgrade) {
   VALUE env = rb_hash_dup(is_upgrade ? env_template_with_upgrade
                                      : env_template_no_upgrade);
   Registry.add(env);
+
+  if (!is_upgrade) {
+    /* test for SSE upgrade */
+    fio_cstr_s tmp = fiobj_obj2cstr(fiobj_hash_get2(h->headers, 0));
+    if (tmp.len == 17 && !strncasecmp(tmp.data, "text/event-stream", 17)) {
+      rb_hash_aset(env, RACK_UPGRADE_Q, RACK_UPGRADE_SSE);
+    }
+  }
 
   fio_cstr_s tmp;
   char *pos = NULL;
@@ -414,7 +429,8 @@ static inline int ruby2c_review_upgrade(http_s *h, VALUE rbresponse,
     RubyCaller.call2(handler, iodine_call_proc_id, 1, &io_ruby);
   } else if ((handler = rb_hash_aref(env, IODINE_R_HIJACK_IO)) != Qnil) {
     //  do nothing
-  } else if ((handler = rb_hash_aref(env, UPGRADE_WEBSOCKET)) != Qnil) {
+  } else if ((handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil ||
+             (handler = rb_hash_aref(env, UPGRADE_WEBSOCKET)) != Qnil) {
     // use response as existing base for native websocket upgrade
     iodine_websocket_upgrade(h, handler);
   } else if ((handler = rb_hash_aref(env, UPGRADE_TCP)) != Qnil) {
@@ -846,8 +862,11 @@ static void initialize_env_template(void) {
   // Start with the stuff Iodine will review.
   /* publish upgrade support */
   rb_hash_aset(env_template_with_upgrade, UPGRADE_WEBSOCKET_Q, Qtrue);
-  rb_hash_aset(env_template_with_upgrade, UPGRADE_TCP_Q, Qtrue);
   rb_hash_aset(env_template_no_upgrade, UPGRADE_WEBSOCKET, Qnil);
+  rb_hash_aset(env_template_with_upgrade, RACK_UPGRADE_Q,
+               RACK_UPGRADE_WEBSOCKET);
+  rb_hash_aset(env_template_no_upgrade, RACK_UPGRADE, Qnil);
+  rb_hash_aset(env_template_with_upgrade, UPGRADE_TCP_Q, Qtrue);
   rb_hash_aset(env_template_no_upgrade, UPGRADE_TCP, Qnil);
   add_value_to_env(env_template_with_upgrade, "sendfile.type", XSENDFILE);
   add_value_to_env(env_template_with_upgrade, "HTTP_X_SENDFILE_TYPE",
@@ -937,6 +956,10 @@ void Iodine_init_http(void) {
 
   rack_set(UPGRADE_TCP_Q, "upgrade.tcp?");
   rack_set(UPGRADE_WEBSOCKET_Q, "upgrade.websocket?");
+  rack_set(RACK_UPGRADE, "rack.upgrade");
+  rack_set(RACK_UPGRADE_Q, "rack.upgrade?");
+  rack_set_sym(RACK_UPGRADE_SSE, "sse");
+  rack_set_sym(RACK_UPGRADE_WEBSOCKET, "websocket");
 
   hijack_func_sym = ID2SYM(rb_intern("_hijack"));
   close_method_id = rb_intern("close");
