@@ -15,6 +15,7 @@ VALUE IodineEngine;
 ID iodine_engine_pubid;
 
 static VALUE IodinePubSub;
+static VALUE IodinePubSubSubscription;
 static ID engine_varid;
 static ID engine_subid;
 static ID engine_unsubid;
@@ -70,6 +71,23 @@ static VALUE engine_pub_placeholder(VALUE self, VALUE channel, VALUE msg) {
   (void)self;
   (void)msg;
   (void)channel;
+}
+
+/* *****************************************************************************
+Ruby Subscription Object
+***************************************************************************** */
+
+// static void set_subscription(VALUE self, pubsub_sub_pt sub) {
+//   iodine_set_cdata(self, sub);
+// }
+
+static VALUE close_subscription(VALUE self) {
+  pubsub_sub_pt sub = iodine_get_cdata(self);
+  if (sub && sub != (pubsub_sub_pt)Qnil) {
+
+    pubsub_unsubscribe(sub);
+  }
+  return Qnil;
 }
 
 /* *****************************************************************************
@@ -489,42 +507,68 @@ static VALUE iodine_unsubscribe(VALUE self, VALUE sub_id) {
 /**
 Publishes a message to a channel.
 
-Accepts a single Hash argument with the following possible options:
+Can be used using two Strings:
+
+      publish(channel, message)
+
+The method accepts an optional `engine` argument:
+
+      publish(channel, message, my_pubsub_engine)
+
+
+Alternatively, accepts a single Hash argument with the following possible
+options:
+
+:channel :: REQUIRED. The channel to publish to.
+
+:message :: REQUIRED. The message to be published.
 
 :engine :: If provided, the engine to use for pub/sub. Otherwise the default
 engine is used.
 
-:channel :: Required (unless :pattern). The channel to publish to.
-
-:pattern :: An alternative to the required :channel, publishes to a pattern.
-This is NOT supported by Redis and it's limited to the local process cluster.
-
-:message :: REQUIRED. The message to be published.
-:
 */
-VALUE iodine_publish(VALUE self, VALUE args) {
-  Check_Type(args, T_HASH);
+VALUE iodine_publish(int argc, VALUE *argv, VALUE self) {
+  VALUE rb_ch, rb_msg;
   uint8_t use_pattern = 0;
+  pubsub_engine_s *engine = NULL;
+  switch (argc) {
+  case 3:
+    engine = iodine_engine_ruby2facil(rb_hash_aref(argv[2], engine_varid));
+  /* fallthrough */
+  case 2:
+    rb_ch = argv[0];
+    rb_msg = argv[1];
+    break;
+  case 1: {
+    /* single argument must be a Hash */
+    Check_Type(argv[0], T_HASH);
 
-  VALUE rb_ch = rb_hash_aref(args, channel_var_id);
-  if (rb_ch == Qnil || rb_ch == Qfalse) {
-    use_pattern = 1;
-    rb_ch = rb_hash_aref(args, pattern_var_id);
-    if (rb_ch == Qnil || rb_ch == Qfalse)
-      rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
+    rb_ch = rb_hash_aref(argv[0], channel_var_id);
+    if (rb_ch == Qnil || rb_ch == Qfalse) {
+      use_pattern = 1;
+      rb_ch = rb_hash_aref(argv[0], pattern_var_id);
+    }
+
+    rb_msg = rb_hash_aref(argv[0], message_var_id);
+
+    pubsub_engine_s *engine =
+        iodine_engine_ruby2facil(rb_hash_aref(argv[0], engine_varid));
+  } break;
+  default:
+    rb_raise(rb_eArgError, "method accepts 1 or 2 arguments.");
   }
+
+  if (rb_msg == Qnil || rb_msg == Qfalse) {
+    rb_raise(rb_eArgError, "message is required.");
+  }
+  Check_Type(rb_msg, T_STRING);
+
+  if (rb_ch == Qnil || rb_ch == Qfalse)
+    rb_raise(rb_eArgError, "channel is required .");
   if (TYPE(rb_ch) == T_SYMBOL)
     rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);
 
-  VALUE rb_msg = rb_hash_aref(args, message_var_id);
-  if (rb_msg == Qnil || rb_msg == Qfalse) {
-    rb_raise(rb_eArgError, "message is required for the :publish method.");
-  }
-  Check_Type(rb_msg, T_STRING);
-
-  pubsub_engine_s *engine =
-      iodine_engine_ruby2facil(rb_hash_aref(args, engine_varid));
   FIOBJ ch = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
   FIOBJ msg = fiobj_str_new(RSTRING_PTR(rb_msg), RSTRING_LEN(rb_msg));
 
@@ -553,6 +597,10 @@ void Iodine_init_pubsub(void) {
 
   IodinePubSub = rb_define_module_under(Iodine, "PubSub");
   IodineEngine = rb_define_class_under(IodinePubSub, "Engine", rb_cObject);
+  IodinePubSubSubscription =
+      rb_define_class_under(IodinePubSub, "Subscription", rb_cObject);
+
+  rb_define_method(IodinePubSubSubscription, "close", close_subscription, 0);
 
   rb_define_alloc_func(IodineEngine, engine_alloc_c);
   rb_define_method(IodineEngine, "initialize", engine_initialize, 0);
@@ -566,7 +614,7 @@ void Iodine_init_pubsub(void) {
 
   rb_define_module_function(Iodine, "subscribe", iodine_subscribe, 1);
   rb_define_module_function(Iodine, "unsubscribe", iodine_unsubscribe, 1);
-  rb_define_module_function(Iodine, "publish", iodine_publish, 1);
+  rb_define_module_function(Iodine, "publish", iodine_publish, -1);
 
   /* *************************
   Initialize C pubsub engines

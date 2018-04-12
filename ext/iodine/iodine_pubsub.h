@@ -11,7 +11,7 @@ Feel free to copy, use and enjoy according to the license provided.
 
 extern VALUE IodineEngine;
 extern ID iodine_engine_pubid;
-VALUE iodine_publish(VALUE self, VALUE args);
+VALUE iodine_publish(int argc, VALUE *argv, VALUE self);
 
 typedef struct {
   pubsub_engine_s engine;
