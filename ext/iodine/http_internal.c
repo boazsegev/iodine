@@ -81,6 +81,7 @@ int http_send_error2(size_t error, intptr_t uuid, http_settings_s *settings) {
   return ret;
 }
 
+FIOBJ HTTP_HEADER_ACCEPT;
 FIOBJ HTTP_HEADER_ACCEPT_RANGES;
 FIOBJ HTTP_HEADER_CACHE_CONTROL;
 FIOBJ HTTP_HEADER_CONNECTION;
@@ -100,6 +101,7 @@ FIOBJ HTTP_HEADER_WS_SEC_CLIENT_KEY;
 FIOBJ HTTP_HEADER_WS_SEC_KEY;
 FIOBJ HTTP_HVALUE_BYTES;
 FIOBJ HTTP_HVALUE_CLOSE;
+FIOBJ HTTP_HVALUE_CONTENT_TYPE_DEFAULT;
 FIOBJ HTTP_HVALUE_GZIP;
 FIOBJ HTTP_HVALUE_KEEP_ALIVE;
 FIOBJ HTTP_HVALUE_MAX_AGE;
@@ -113,6 +115,7 @@ void http_lib_cleanup(void) {
 #define HTTPLIB_RESET(x)                                                       \
   fiobj_free(x);                                                               \
   x = FIOBJ_INVALID;
+  HTTPLIB_RESET(HTTP_HEADER_ACCEPT);
   HTTPLIB_RESET(HTTP_HEADER_ACCEPT_RANGES);
   HTTPLIB_RESET(HTTP_HEADER_CACHE_CONTROL);
   HTTPLIB_RESET(HTTP_HEADER_CONNECTION);
@@ -132,6 +135,7 @@ void http_lib_cleanup(void) {
   HTTPLIB_RESET(HTTP_HEADER_WS_SEC_KEY);
   HTTPLIB_RESET(HTTP_HVALUE_BYTES);
   HTTPLIB_RESET(HTTP_HVALUE_CLOSE);
+  HTTPLIB_RESET(HTTP_HVALUE_CONTENT_TYPE_DEFAULT);
   HTTPLIB_RESET(HTTP_HVALUE_GZIP);
   HTTPLIB_RESET(HTTP_HVALUE_KEEP_ALIVE);
   HTTPLIB_RESET(HTTP_HVALUE_MAX_AGE);
@@ -139,12 +143,14 @@ void http_lib_cleanup(void) {
   HTTPLIB_RESET(HTTP_HVALUE_WS_SEC_VERSION);
   HTTPLIB_RESET(HTTP_HVALUE_WS_UPGRADE);
   HTTPLIB_RESET(HTTP_HVALUE_WS_VERSION);
+
 #undef HTTPLIB_RESET
 }
 
 void http_lib_init(void) {
   if (HTTP_HEADER_ACCEPT_RANGES)
     return;
+  HTTP_HEADER_ACCEPT = fiobj_str_new("accept", 6);
   HTTP_HEADER_ACCEPT_RANGES = fiobj_str_new("accept-ranges", 13);
   HTTP_HEADER_CACHE_CONTROL = fiobj_str_new("cache-control", 13);
   HTTP_HEADER_CONNECTION = fiobj_str_new("connection", 10);
@@ -164,6 +170,8 @@ void http_lib_init(void) {
   HTTP_HEADER_WS_SEC_KEY = fiobj_str_new("sec-websocket-accept", 20);
   HTTP_HVALUE_BYTES = fiobj_str_new("bytes", 5);
   HTTP_HVALUE_CLOSE = fiobj_str_new("close", 5);
+  HTTP_HVALUE_CONTENT_TYPE_DEFAULT =
+      fiobj_str_new("application/octet-stream", 24);
   HTTP_HVALUE_GZIP = fiobj_str_new("gzip", 4);
   HTTP_HVALUE_KEEP_ALIVE = fiobj_str_new("keep-alive", 10);
   HTTP_HVALUE_MAX_AGE = fiobj_str_new("max-age=3600", 12);
@@ -976,7 +984,6 @@ void http_lib_init(void) {
   REGISTER_MIME("stl", "application/vnd.ms-pki.stl");
   REGISTER_MIME("str", "application/vnd.pg.format");
   REGISTER_MIME("stw", "application/vnd.sun.xml.writer.template");
-  // REGISTER_MIME("sub", "image/vnd.dvb.subtitle");
   REGISTER_MIME("sub", "text/vnd.dvb.subtitle");
   REGISTER_MIME("sus", "application/vnd.sus-calendar");
   REGISTER_MIME("susp", "application/vnd.sus-calendar");
