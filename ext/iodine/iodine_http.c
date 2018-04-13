@@ -48,7 +48,8 @@ static ID each_method_id;
 static ID attach_method_id;
 
 static VALUE env_template_no_upgrade;
-static VALUE env_template_with_upgrade;
+static VALUE env_template_websockets;
+static VALUE env_template_sse;
 
 #define rack_declare(rack_name) static VALUE rack_name
 
@@ -82,6 +83,24 @@ rack_declare(R_URL_SCHEME);          // rack.url_scheme
 rack_declare(R_INPUT);               // rack.input
 rack_declare(XSENDFILE);             // for X-Sendfile support
 rack_declare(CONTENT_LENGTH_HEADER); // for X-Sendfile support
+
+/* used internally to handle requests */
+typedef struct {
+  http_s *h;
+  FIOBJ body;
+  enum iodine_http_response_type_enum {
+    IODINE_HTTP_NONE,
+    IODINE_HTTP_SENDBODY,
+    IODINE_HTTP_XSENDFILE,
+    IODINE_HTTP_EMPTY,
+    IODINE_HTTP_ERROR,
+  } type;
+  enum iodine_upgrade_type_enum {
+    IODINE_UPGRADE_NONE = 0,
+    IODINE_UPGRADE_WEBSOCKET,
+    IODINE_UPGRADE_SSE,
+  } upgrade;
+} iodine_http_request_handle_s;
 
 /* *****************************************************************************
 Copying data from the C request to the Rack's ENV
@@ -128,18 +147,21 @@ int iodine_copy2env_task(FIOBJ o, void *env_) {
   }
   return 0;
 }
-static inline VALUE copy2env(http_s *h, uint8_t is_upgrade) {
-  VALUE env = rb_hash_dup(is_upgrade ? env_template_with_upgrade
-                                     : env_template_no_upgrade);
-  Registry.add(env);
-
-  if (!is_upgrade) {
-    /* test for SSE upgrade */
-    fio_cstr_s tmp = fiobj_obj2cstr(fiobj_hash_get2(h->headers, 0));
-    if (tmp.len == 17 && !strncasecmp(tmp.data, "text/event-stream", 17)) {
-      rb_hash_aset(env, RACK_UPGRADE_Q, RACK_UPGRADE_SSE);
-    }
+static inline VALUE copy2env(iodine_http_request_handle_s *handle) {
+  VALUE env;
+  http_s *h = handle->h;
+  switch (handle->upgrade) {
+  case IODINE_UPGRADE_WEBSOCKET:
+    env = rb_hash_dup(env_template_websockets);
+    break;
+  case IODINE_UPGRADE_SSE:
+    env = rb_hash_dup(env_template_sse);
+    break;
+  case IODINE_UPGRADE_NONE:
+    env = rb_hash_dup(env_template_no_upgrade);
+    break;
   }
+  Registry.add(env);
 
   fio_cstr_s tmp;
   char *pos = NULL;
@@ -302,18 +324,6 @@ static inline VALUE copy2env(http_s *h, uint8_t is_upgrade) {
 Handling the HTTP response
 ***************************************************************************** */
 
-typedef struct {
-  http_s *h;
-  FIOBJ body;
-  enum iodine_http_response_type_enum {
-    IODINE_HTTP_NONE,
-    IODINE_HTTP_SENDBODY,
-    IODINE_HTTP_XSENDFILE,
-    IODINE_HTTP_EMPTY,
-    IODINE_HTTP_ERROR,
-  } type;
-} iodine_http_request_handle_s;
-
 // itterate through the headers and add them to the response buffer
 // (we are recycling the request's buffer)
 static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
@@ -417,8 +427,9 @@ static inline int ruby2c_response_send(iodine_http_request_handle_s *handle,
 Handling Upgrade cases
 ***************************************************************************** */
 
-static inline int ruby2c_review_upgrade(http_s *h, VALUE rbresponse,
-                                        VALUE env) {
+static inline int ruby2c_review_upgrade(iodine_http_request_handle_s *req,
+                                        VALUE rbresponse, VALUE env) {
+  http_s *h = req->h;
   VALUE handler;
   if ((handler = rb_hash_aref(env, IODINE_R_HIJACK_CB)) != Qnil) {
     // send headers
@@ -429,10 +440,16 @@ static inline int ruby2c_review_upgrade(http_s *h, VALUE rbresponse,
     RubyCaller.call2(handler, iodine_call_proc_id, 1, &io_ruby);
   } else if ((handler = rb_hash_aref(env, IODINE_R_HIJACK_IO)) != Qnil) {
     //  do nothing
-  } else if ((handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil ||
-             (handler = rb_hash_aref(env, UPGRADE_WEBSOCKET)) != Qnil) {
+  } else if (req->upgrade == IODINE_UPGRADE_WEBSOCKET &&
+             ((handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil ||
+              (handler = rb_hash_aref(env, UPGRADE_WEBSOCKET)) != Qnil)) {
     // use response as existing base for native websocket upgrade
     iodine_websocket_upgrade(h, handler);
+  } else if (req->upgrade == IODINE_UPGRADE_SSE &&
+             (handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil) {
+    // use response as existing base for SSE upgrade
+    // iodine_websocket_upgrade(h, handler);
+    fprintf(stderr, "TODO: write SSE supported.\n");
   } else if ((handler = rb_hash_aref(env, UPGRADE_TCP)) != Qnil) {
     // hijack post headers (might be very bad)
     intptr_t uuid = http_hijack(h, NULL);
@@ -457,9 +474,8 @@ static inline int ruby2c_review_upgrade(http_s *h, VALUE rbresponse,
 Handling HTTP requests
 ***************************************************************************** */
 
-static inline void *
-iodine_handle_request_in_GVL(iodine_http_request_handle_s *handle,
-                             uint8_t is_upgrade) {
+static inline void *iodine_handle_request_in_GVL(void *handle_) {
+  iodine_http_request_handle_s *handle = handle_;
   VALUE rbresponse = 0;
   VALUE env = 0;
   http_s *h = handle->h;
@@ -467,7 +483,7 @@ iodine_handle_request_in_GVL(iodine_http_request_handle_s *handle,
     goto err_not_found;
 
   // create / register env variable
-  env = copy2env(h, is_upgrade);
+  env = copy2env(handle);
   // will be used later
   VALUE tmp;
   // pass env variable to handler
@@ -516,7 +532,7 @@ iodine_handle_request_in_GVL(iodine_http_request_handle_s *handle,
   // review each header and write it to the response.
   rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(h));
   // review for upgrade.
-  if (ruby2c_review_upgrade(h, rbresponse, env))
+  if (h->status < 300 && ruby2c_review_upgrade(handle, rbresponse, env))
     goto external_done;
   // send the request body.
   if (ruby2c_response_send(handle, rbresponse, env))
@@ -545,13 +561,6 @@ internal_error:
   h->status = 500;
   handle->type = IODINE_HTTP_ERROR;
   return NULL;
-}
-
-static void *on_rack_request_in_GVL(void *h_) {
-  return iodine_handle_request_in_GVL(h_, 0);
-}
-static void *on_rack_upgrade_in_GVL(void *h_) {
-  return iodine_handle_request_in_GVL(h_, 1);
 }
 
 static inline void
@@ -584,14 +593,24 @@ iodine_perform_handle_action(iodine_http_request_handle_s handle) {
   }
 }
 static void on_rack_request(http_s *h) {
-  iodine_http_request_handle_s handle = (iodine_http_request_handle_s){.h = h};
-  RubyCaller.call_c((void *(*)(void *))on_rack_request_in_GVL, &handle);
+  iodine_http_request_handle_s handle = (iodine_http_request_handle_s){
+      .h = h, .upgrade = IODINE_UPGRADE_NONE,
+  };
+  RubyCaller.call_c((void *(*)(void *))iodine_handle_request_in_GVL, &handle);
   iodine_perform_handle_action(handle);
 }
 
 static void on_rack_upgrade(http_s *h, char *proto, size_t len) {
   iodine_http_request_handle_s handle = (iodine_http_request_handle_s){.h = h};
-  RubyCaller.call_c((void *(*)(void *))on_rack_upgrade_in_GVL, &handle);
+  if (len == 9 && proto[1] == 'e') {
+    handle.upgrade = IODINE_UPGRADE_WEBSOCKET;
+  } else if (len == 3 && proto[0] == 's') {
+    handle.upgrade = IODINE_UPGRADE_SSE;
+  } else {
+    http_send_error(h, 400);
+    return;
+  }
+  RubyCaller.call_c(iodine_handle_request_in_GVL, &handle);
   iodine_perform_handle_action(handle);
   (void)proto;
   (void)len;
@@ -836,13 +855,7 @@ static void initialize_env_template(void) {
   if (env_template_no_upgrade)
     return;
   env_template_no_upgrade = rb_hash_new();
-  env_template_with_upgrade = rb_hash_new();
-
   rb_global_variable(&env_template_no_upgrade);
-  rb_global_variable(&env_template_with_upgrade);
-
-// Registry.add(env_template_no_upgrade);
-// Registry.add(env_template_with_upgrade);
 
 #define add_str_to_env(env, key, value)                                        \
   {                                                                            \
@@ -859,50 +872,36 @@ static void initialize_env_template(void) {
     rb_hash_aset((env), k, value);                                             \
   }
 
-  // Start with the stuff Iodine will review.
-  /* publish upgrade support */
-  rb_hash_aset(env_template_with_upgrade, UPGRADE_WEBSOCKET_Q, Qtrue);
-  rb_hash_aset(env_template_no_upgrade, UPGRADE_WEBSOCKET, Qnil);
-  rb_hash_aset(env_template_with_upgrade, RACK_UPGRADE_Q,
-               RACK_UPGRADE_WEBSOCKET);
+  /* Set global template */
+  rb_hash_aset(env_template_no_upgrade, RACK_UPGRADE_Q, Qnil);
   rb_hash_aset(env_template_no_upgrade, RACK_UPGRADE, Qnil);
-  rb_hash_aset(env_template_with_upgrade, UPGRADE_TCP_Q, Qtrue);
+  rb_hash_aset(env_template_no_upgrade, UPGRADE_WEBSOCKET_Q, Qnil);
+  rb_hash_aset(env_template_no_upgrade, UPGRADE_WEBSOCKET, Qnil);
+  rb_hash_aset(env_template_no_upgrade, UPGRADE_TCP_Q, Qnil);
   rb_hash_aset(env_template_no_upgrade, UPGRADE_TCP, Qnil);
-  add_value_to_env(env_template_with_upgrade, "sendfile.type", XSENDFILE);
-  add_value_to_env(env_template_with_upgrade, "HTTP_X_SENDFILE_TYPE",
-                   XSENDFILE);
   add_value_to_env(env_template_no_upgrade, "sendfile.type", XSENDFILE);
   add_value_to_env(env_template_no_upgrade, "HTTP_X_SENDFILE_TYPE", XSENDFILE);
-  // add the rack.version
   {
+    /* add the rack.version */
     static VALUE rack_version = 0;
     if (!rack_version) {
       rack_version = rb_ary_new(); // rb_ary_new is Ruby 2.0 compatible
       rb_ary_push(rack_version, INT2FIX(1));
       rb_ary_push(rack_version, INT2FIX(3));
       rb_global_variable(&rack_version);
-      // Registry.add(rack_version);
+      rb_ary_freeze(rack_version);
     }
-    add_value_to_env(env_template_with_upgrade, "rack.version", rack_version);
     add_value_to_env(env_template_no_upgrade, "rack.version", rack_version);
   }
   add_str_to_env(env_template_no_upgrade, "SCRIPT_NAME", "");
-  add_str_to_env(env_template_with_upgrade, "SCRIPT_NAME", "");
   add_value_to_env(env_template_no_upgrade, "rack.errors", rb_stderr);
   add_value_to_env(env_template_no_upgrade, "rack.hijack?", Qtrue);
   add_value_to_env(env_template_no_upgrade, "rack.multiprocess", Qtrue);
   add_value_to_env(env_template_no_upgrade, "rack.multithread", Qtrue);
   add_value_to_env(env_template_no_upgrade, "rack.run_once", Qfalse);
-  add_value_to_env(env_template_with_upgrade, "rack.errors", rb_stderr);
-  add_value_to_env(env_template_with_upgrade, "rack.hijack?", Qtrue);
-  add_value_to_env(env_template_with_upgrade, "rack.multiprocess", Qtrue);
-  add_value_to_env(env_template_with_upgrade, "rack.multithread", Qtrue);
-  add_value_to_env(env_template_with_upgrade, "rack.run_once", Qfalse);
   /* default schema to http, it might be updated later */
-  rb_hash_aset(env_template_with_upgrade, R_URL_SCHEME, HTTP_SCHEME);
   rb_hash_aset(env_template_no_upgrade, R_URL_SCHEME, HTTP_SCHEME);
   /* placeholders... minimize rehashing*/
-  rb_hash_aset(env_template_with_upgrade, REQUEST_METHOD, QUERY_STRING);
   rb_hash_aset(env_template_no_upgrade, HTTP_VERSION, QUERY_STRING);
   rb_hash_aset(env_template_no_upgrade, IODINE_R_HIJACK, QUERY_STRING);
   rb_hash_aset(env_template_no_upgrade, PATH_INFO, QUERY_STRING);
@@ -912,14 +911,21 @@ static void initialize_env_template(void) {
   rb_hash_aset(env_template_no_upgrade, SERVER_NAME, QUERY_STRING);
   rb_hash_aset(env_template_no_upgrade, SERVER_PORT, QUERY_ESTRING);
   rb_hash_aset(env_template_no_upgrade, SERVER_PROTOCOL, QUERY_STRING);
-  rb_hash_aset(env_template_with_upgrade, HTTP_VERSION, QUERY_STRING);
-  rb_hash_aset(env_template_with_upgrade, IODINE_R_HIJACK, QUERY_STRING);
-  rb_hash_aset(env_template_with_upgrade, PATH_INFO, QUERY_STRING);
-  rb_hash_aset(env_template_with_upgrade, QUERY_STRING, QUERY_STRING);
-  rb_hash_aset(env_template_with_upgrade, REMOTE_ADDR, QUERY_STRING);
-  rb_hash_aset(env_template_with_upgrade, SERVER_NAME, QUERY_STRING);
-  rb_hash_aset(env_template_with_upgrade, SERVER_PORT, QUERY_ESTRING);
-  rb_hash_aset(env_template_with_upgrade, SERVER_PROTOCOL, QUERY_STRING);
+
+  /* WebSocket upgrade support */
+  env_template_websockets = rb_hash_dup(env_template_no_upgrade);
+  rb_global_variable(&env_template_websockets);
+  rb_hash_aset(env_template_websockets, UPGRADE_WEBSOCKET_Q, Qtrue);
+  rb_hash_aset(env_template_websockets, RACK_UPGRADE_Q, RACK_UPGRADE_WEBSOCKET);
+  rb_hash_aset(env_template_websockets, UPGRADE_TCP_Q, Qtrue);
+
+  /* SSE upgrade support */
+  env_template_sse = rb_hash_dup(env_template_no_upgrade);
+  rb_global_variable(&env_template_sse);
+  rb_hash_aset(env_template_sse, RACK_UPGRADE_Q, RACK_UPGRADE_SSE);
+
+#undef add_value_to_env
+#undef add_str_to_env
 }
 /* *****************************************************************************
 Initialization

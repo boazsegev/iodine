@@ -79,7 +79,7 @@ The server **MUST** extend the Callback Object's *class* using `extend`, so the 
 
 * `open?` returns the state of the connection. Servers **SOULD** set the method to return `true` if the connection is open and `false` if the connection is closed or marked to be closed.
 
-* `has_pending?` queries the state of the server's buffer for the specific connection (i.e., if the server has any data it is waiting to send through the socket).
+* `pending?` queries the state of the server's buffer for the specific connection (i.e., if the server has any data it is waiting to send through the socket).
 
     `has_pending?`, shall return `true` **if** the server has data waiting to be written to the socket **and** the server promises to call the `on_ready` callback once the buffer is empty and the socket is writable. Otherwise (i.e., if the server doesn't support the `on_ready` callback), `has_pending?` shall return `false`.
 

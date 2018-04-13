@@ -10,6 +10,10 @@ Feel free to copy, use and enjoy according to the license provided.
 
 #include "http1.h"
 
+/* *****************************************************************************
+Internal Request / Response Handlers
+***************************************************************************** */
+
 static uint64_t http_upgrade_hash = 0;
 /** Use this function to handle HTTP requests.*/
 void http_on_request_handler______internal(http_s *h,
@@ -33,25 +37,37 @@ void http_on_request_handler______internal(http_s *h,
   }
 
   FIOBJ t = fiobj_hash_get2(h->headers, http_upgrade_hash);
-  if (t == FIOBJ_INVALID) {
-    if (settings->public_folder) {
-      fio_cstr_s path_str = fiobj_obj2cstr(h->path);
-      if (!http_sendfile2(h, settings->public_folder,
-                          settings->public_folder_length, path_str.data,
-                          path_str.len)) {
-        return;
-      }
+  if (t)
+    goto upgrade;
+
+  if (fiobj_iseq(
+          fiobj_hash_get2(h->headers, fiobj_obj2hash(HTTP_HEADER_ACCEPT)),
+          HTTP_HVALUE_SSE_MIME))
+    goto eventsource;
+  if (settings->public_folder) {
+    fio_cstr_s path_str = fiobj_obj2cstr(h->path);
+    if (!http_sendfile2(h, settings->public_folder,
+                        settings->public_folder_length, path_str.data,
+                        path_str.len)) {
+      return;
     }
-    settings->on_request(h);
-    return;
-  } else {
+  }
+  settings->on_request(h);
+  return;
+
+upgrade:
+  if (1) {
     fio_cstr_s val = fiobj_obj2cstr(t);
     if (val.data[0] == 'h' && val.data[1] == '2') {
       http_send_error(h, 400);
     } else {
       settings->on_upgrade(h, val.data, val.len);
     }
+    return;
   }
+eventsource:
+  settings->on_upgrade(h, "sse", 3);
+  return;
 }
 
 void http_on_response_handler______internal(http_s *h,
@@ -69,6 +85,10 @@ void http_on_response_handler______internal(http_s *h,
   }
 }
 
+/* *****************************************************************************
+Internal helpers
+***************************************************************************** */
+
 int http_send_error2(size_t error, intptr_t uuid, http_settings_s *settings) {
   if (!uuid || !settings || !error)
     return -1;
@@ -80,6 +100,10 @@ int http_send_error2(size_t error, intptr_t uuid, http_settings_s *settings) {
   sock_close(uuid);
   return ret;
 }
+
+/* *****************************************************************************
+Library initialization
+***************************************************************************** */
 
 FIOBJ HTTP_HEADER_ACCEPT;
 FIOBJ HTTP_HEADER_ACCEPT_RANGES;
@@ -105,10 +129,12 @@ FIOBJ HTTP_HVALUE_CONTENT_TYPE_DEFAULT;
 FIOBJ HTTP_HVALUE_GZIP;
 FIOBJ HTTP_HVALUE_KEEP_ALIVE;
 FIOBJ HTTP_HVALUE_MAX_AGE;
+FIOBJ HTTP_HVALUE_NO_CACHE;
 FIOBJ HTTP_HVALUE_WEBSOCKET;
 FIOBJ HTTP_HVALUE_WS_SEC_VERSION;
 FIOBJ HTTP_HVALUE_WS_UPGRADE;
 FIOBJ HTTP_HVALUE_WS_VERSION;
+FIOBJ HTTP_HVALUE_SSE_MIME;
 
 void http_lib_cleanup(void) {
   http_mimetype_clear();
@@ -127,6 +153,7 @@ void http_lib_cleanup(void) {
   HTTPLIB_RESET(HTTP_HEADER_DATE);
   HTTPLIB_RESET(HTTP_HEADER_ETAG);
   HTTPLIB_RESET(HTTP_HEADER_HOST);
+  HTTPLIB_RESET(HTTP_HVALUE_SSE_MIME);
   HTTPLIB_RESET(HTTP_HEADER_LAST_MODIFIED);
   HTTPLIB_RESET(HTTP_HEADER_ORIGIN);
   HTTPLIB_RESET(HTTP_HEADER_SET_COOKIE);
@@ -139,6 +166,7 @@ void http_lib_cleanup(void) {
   HTTPLIB_RESET(HTTP_HVALUE_GZIP);
   HTTPLIB_RESET(HTTP_HVALUE_KEEP_ALIVE);
   HTTPLIB_RESET(HTTP_HVALUE_MAX_AGE);
+  HTTPLIB_RESET(HTTP_HVALUE_NO_CACHE);
   HTTPLIB_RESET(HTTP_HVALUE_WEBSOCKET);
   HTTPLIB_RESET(HTTP_HVALUE_WS_SEC_VERSION);
   HTTPLIB_RESET(HTTP_HVALUE_WS_UPGRADE);
@@ -175,6 +203,8 @@ void http_lib_init(void) {
   HTTP_HVALUE_GZIP = fiobj_str_new("gzip", 4);
   HTTP_HVALUE_KEEP_ALIVE = fiobj_str_new("keep-alive", 10);
   HTTP_HVALUE_MAX_AGE = fiobj_str_new("max-age=3600", 12);
+  HTTP_HVALUE_NO_CACHE = fiobj_str_new("no-cache, max-age=0", 19);
+  HTTP_HVALUE_SSE_MIME = fiobj_str_new("text/event-stream", 17);
   HTTP_HVALUE_WEBSOCKET = fiobj_str_new("websocket", 9);
   HTTP_HVALUE_WS_SEC_VERSION = fiobj_str_new("sec-websocket-version", 21);
   HTTP_HVALUE_WS_UPGRADE = fiobj_str_new("Upgrade", 7);
@@ -199,9 +229,12 @@ void http_lib_init(void) {
   fiobj_obj2hash(HTTP_HEADER_WS_SEC_KEY);
   fiobj_obj2hash(HTTP_HVALUE_BYTES);
   fiobj_obj2hash(HTTP_HVALUE_CLOSE);
+  fiobj_obj2hash(HTTP_HVALUE_CONTENT_TYPE_DEFAULT);
   fiobj_obj2hash(HTTP_HVALUE_GZIP);
   fiobj_obj2hash(HTTP_HVALUE_KEEP_ALIVE);
   fiobj_obj2hash(HTTP_HVALUE_MAX_AGE);
+  fiobj_obj2hash(HTTP_HVALUE_NO_CACHE);
+  fiobj_obj2hash(HTTP_HVALUE_SSE_MIME);
   fiobj_obj2hash(HTTP_HVALUE_WEBSOCKET);
   fiobj_obj2hash(HTTP_HVALUE_WS_SEC_VERSION);
   fiobj_obj2hash(HTTP_HVALUE_WS_UPGRADE);

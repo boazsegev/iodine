@@ -40,6 +40,8 @@ typedef struct http1pr_s {
   uint8_t buf[];
 } http1pr_s;
 
+struct http_vtable_s HTTP1_VTABLE; /* initialized later on */
+
 /* *****************************************************************************
 Internal Helpers
 ***************************************************************************** */
@@ -428,6 +430,116 @@ static int http1_http2websocket(websocket_settings_s *args) {
 }
 
 /* *****************************************************************************
+EventSource Support (SSE)
+***************************************************************************** */
+
+#undef http_upgrade2sse
+
+typedef struct {
+  protocol_s p;
+  http_sse_internal_s *sse;
+} http1_sse_protocol_s;
+
+static void http1_sse_on_ready(intptr_t uuid, protocol_s *p_) {
+  http1_sse_protocol_s *p = (http1_sse_protocol_s *)p_;
+  if (p->sse->sse.on_ready)
+    p->sse->sse.on_ready(&p->sse->sse);
+  (void)uuid;
+}
+static void http1_sse_on_shutdown(intptr_t uuid, protocol_s *p_) {
+  http1_sse_protocol_s *p = (http1_sse_protocol_s *)p_;
+  if (p->sse->sse.on_shutdown)
+    p->sse->sse.on_shutdown(&p->sse->sse);
+  (void)uuid;
+}
+static void http1_sse_on_close(intptr_t uuid, protocol_s *p_) {
+  http1_sse_protocol_s *p = (http1_sse_protocol_s *)p_;
+  if (p->sse->sse.on_close)
+    p->sse->sse.on_close(&p->sse->sse);
+  http_sse_destroy(p->sse);
+  free(p);
+  (void)uuid;
+}
+static void http1_sse_ping(intptr_t uuid, protocol_s *p_) {
+  sock_write2(.uuid = uuid, .buffer = ": ping\n\n", .length = 8,
+              .dealloc = SOCK_DEALLOC_NOOP);
+  (void)p_;
+}
+
+/**
+ * Upgrades an HTTP connection to an EventSource (SSE) connection.
+ *
+ * Thie `http_s` handle will be invalid after this call.
+ *
+ * On HTTP/1.1 connections, this will preclude future requests using the same
+ * connection.
+ */
+static int http1_upgrade2sse(http_s *h, http_sse_s *sse) {
+  const intptr_t uuid = handle2pr(h)->p.uuid;
+  /* send response */
+  http_set_header(h, HTTP_HEADER_CONTENT_TYPE, fiobj_dup(HTTP_HVALUE_SSE_MIME));
+  http_set_header(h, HTTP_HEADER_CACHE_CONTROL,
+                  fiobj_dup(HTTP_HVALUE_NO_CACHE));
+  http_set_header(h, HTTP_HEADER_CONTENT_ENCODING,
+                  fiobj_str_new("identity", 8));
+  handle2pr(h)->stop = 1;
+  htt1p_finish(h); /* avoid the enforced content length in http_finish */
+
+  /* switch protocol to SSE */
+  http1_sse_protocol_s *sse_pr = malloc(sizeof(*sse_pr));
+  if (!sse_pr)
+    goto failed;
+  *sse_pr = (http1_sse_protocol_s){
+      .p =
+          {
+              .service = "http/1.1 internal SSE",
+              .on_ready = http1_sse_on_ready,
+              .on_shutdown = http1_sse_on_shutdown,
+              .on_close = http1_sse_on_close,
+              .ping = http1_sse_ping,
+          },
+      .sse = malloc(sizeof(*(sse_pr->sse))),
+  };
+
+  if (!sse_pr->sse)
+    goto failed;
+
+  http_sse_init(sse_pr->sse, uuid, &HTTP1_VTABLE, sse);
+
+  if (facil_attach(uuid, &sse_pr->p))
+    return -1;
+
+  if (sse->on_open)
+    sse->on_open(&sse_pr->sse->sse);
+
+  return 0;
+
+failed:
+  sock_close(handle2pr(h)->p.uuid);
+  if (sse->on_close)
+    sse->on_close(sse);
+  return -1;
+  (void)sse;
+}
+
+#undef http_sse_write
+/**
+ * Writes data to an EventSource (SSE) connection.
+ *
+ * See the {struct http_sse_write_args} for possible named arguments.
+ */
+static int http1_sse_write(http_sse_s *sse, FIOBJ str) {
+  return fiobj_send_free(((http_sse_internal_s *)sse)->uuid, str);
+}
+
+/**
+ * Closes an EventSource (SSE) connection.
+ */
+static int http1_sse_close(http_sse_s *sse) {
+  sock_close(((http_sse_internal_s *)sse)->uuid);
+  return 0;
+}
+/* *****************************************************************************
 Virtual Table Decleration
 ***************************************************************************** */
 
@@ -441,6 +553,9 @@ struct http_vtable_s HTTP1_VTABLE = {
     .http_on_resume = http1_on_resume,
     .http_hijack = http1_hijack,
     .http2websocket = http1_http2websocket,
+    .http_upgrade2sse = http1_upgrade2sse,
+    .http_sse_write = http1_sse_write,
+    .http_sse_close = http1_sse_close,
 };
 
 void *http1_vtable(void) { return (void *)&HTTP1_VTABLE; }
