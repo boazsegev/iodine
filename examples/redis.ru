@@ -29,8 +29,9 @@ module MyHTTPRouter
    # this is function will be called by the Rack server (iodine) for every request.
    def self.call env
      # check if this is an upgrade request.
-     if(env['upgrade.websocket?'.freeze])
-       env['upgrade.websocket'.freeze] = WS_RedisPubSub.new(env['PATH_INFO'] && env['PATH_INFO'].length > 1 ? env['PATH_INFO'][1..-1] : "guest")
+     if(env['rack.upgrade?'.freeze])
+       puts "SSE connections will not be able te send data, just listen." if(env['rack.upgrade?'.freeze] == :sse)
+       env['rack.upgrade'.freeze] = WS_RedisPubSub.new(env['PATH_INFO'] && env['PATH_INFO'].length > 1 ? env['PATH_INFO'][1..-1] : "guest")
        return WS_RESPONSE
      end
      # simply return the RESPONSE object, no matter what request was received.
