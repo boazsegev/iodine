@@ -12,6 +12,6 @@ Feel free to copy, use and enjoy according to the license provided.
 
 void Iodine_init_websocket(void);
 
-void iodine_websocket_upgrade(http_s *request, VALUE handler);
-
+void iodine_upgrade_websocket(http_s *request, VALUE handler);
+void iodine_upgrade_sse(http_s *h, VALUE handler);
 #endif

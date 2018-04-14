@@ -551,8 +551,7 @@ VALUE iodine_publish(int argc, VALUE *argv, VALUE self) {
 
     rb_msg = rb_hash_aref(argv[0], message_var_id);
 
-    pubsub_engine_s *engine =
-        iodine_engine_ruby2facil(rb_hash_aref(argv[0], engine_varid));
+    engine = iodine_engine_ruby2facil(rb_hash_aref(argv[0], engine_varid));
   } break;
   default:
     rb_raise(rb_eArgError, "method accepts 1 or 2 arguments.");

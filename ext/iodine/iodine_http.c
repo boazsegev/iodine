@@ -42,7 +42,6 @@ VALUE RACK_UPGRADE_SSE;
 VALUE RACK_UPGRADE_WEBSOCKET;
 
 static VALUE hijack_func_sym;
-static ID to_fixnum_func_id;
 static ID close_method_id;
 static ID each_method_id;
 static ID attach_method_id;
@@ -444,12 +443,11 @@ static inline int ruby2c_review_upgrade(iodine_http_request_handle_s *req,
              ((handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil ||
               (handler = rb_hash_aref(env, UPGRADE_WEBSOCKET)) != Qnil)) {
     // use response as existing base for native websocket upgrade
-    iodine_websocket_upgrade(h, handler);
+    iodine_upgrade_websocket(h, handler);
   } else if (req->upgrade == IODINE_UPGRADE_SSE &&
              (handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil) {
     // use response as existing base for SSE upgrade
-    // iodine_websocket_upgrade(h, handler);
-    fprintf(stderr, "TODO: write SSE supported.\n");
+    iodine_upgrade_sse(h, handler);
   } else if ((handler = rb_hash_aref(env, UPGRADE_TCP)) != Qnil) {
     // hijack post headers (might be very bad)
     intptr_t uuid = http_hijack(h, NULL);
