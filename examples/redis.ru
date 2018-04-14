@@ -48,7 +48,7 @@ class WS_RedisPubSub
   def on_open
     subscribe channel: "chat"
     # let everyone know we arrived
-    # publish channel: "chat", message: "#{@name} entered the chat."
+    publish "chat", "#{@name} entered the chat."
   end
   # send a message, letting the client know the server is suggunt down.
   def on_shutdown
@@ -56,11 +56,11 @@ class WS_RedisPubSub
   end
   # perform the echo
   def on_message data
-    publish channel: "chat", message: "#{@name}: #{data}"
+    publish "chat", "#{@name}: #{data}"
   end
   def on_close
     # let everyone know we left
-    publish channel: "chat", message: "#{@name} left the chat."
+    publish "chat", "#{@name} left the chat."
     # we don't need to unsubscribe, subscriptions are cleared automatically once the connection is closed.
   end
 end
