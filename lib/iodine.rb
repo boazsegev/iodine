@@ -59,8 +59,6 @@ require 'iodine/iodine'
 # * {Iodine.listen2http} listens to new TCP/IP connections using the buildin HTTP / Websocket Protocol.
 # * {Iodine.warmup} warms up any HTTP Rack applications.
 # * {Iodine.count} counts the number of connections (including HTTP / Websocket connections).
-# * {Iodine::Protocol.each} runs a code of block for every connection sharing the process (except HTTP / Websocket connections).
-# * {Iodine::Websocket.each} runs a code of block for every existing websocket sharing the process.
 #
 # In addition to the top level API, there's also the connection class and connection instance API, as specified in the {Iodine::Protocol} and {Iodine::Websocket} documentation.
 #
@@ -70,11 +68,13 @@ require 'iodine/iodine'
 #
 # The following methods offect server side Pub/Sub that allows the server code to react to channel event.
 #
-# * {Iodine.subscribe}, {Iodine.unsubscribe} manages a process's subscription to a channel (which is different than a connection's subscription, such as employed by {Iodine::Websocket}).
-# * {Iodine.publish} publishes a message to a Pub/Sub channel. The message will be sent to all subscribers - connections, other processes in the cluster and even other machines (when using the {Iodine::PubSub::RedisEngine}).
+# * {Iodine.subscribe} subscribes the process to a channel (which might be different than a connection's subscription, see {Iodine::Websocket}).
+# * {Iodine.publish} publishes a message to a Pub/Sub channel. The message will be sent to all subscribers - connections, other processes in the cluster and possibly other machines (when using an engine such as {Iodine::PubSub::RedisEngine}).
 # * {Iodine.default_pubsub=}, {Iodine.default_pubsub} sets or gets the default Pub/Sub {Iodine::PubSub::Engine}. i.e., when set to a new {Iodine::PubSub::RedisEngine} instance, all Pub/Sub method calls will use the Redis engine (unless explicitly requiring a different engine).
 #
 # {Iodine::Websocket} objects have a seperate Pub/Sub implementation that manages the subscription's lifetime to match the connection's lifetime and allows direct client Pub/Sub (forwards the message to the client directly without invoking the Ruby interpreter).
+#
+# Note that {Iodine.subscribe} returns an {Iodine::PubSub::Subscription} object that can be used for closing the subscription.
 #
 # == Patching Rack
 #

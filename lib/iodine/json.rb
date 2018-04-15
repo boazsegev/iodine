@@ -31,7 +31,7 @@ module Iodine
   #        puts "Iodine::JSON speed as percent of Ruby's native JSON:"
   #        puts "normal:    #{sys/iodine}"
   #        puts "symolized: #{sys_sym/iodine_sym}"
-  #      end
+  #      end; nil
   #
   # Note that the bang(!) method will NOT be automatically monkey-patched, as some important features are unsupported by the Iodine parser.
   #
