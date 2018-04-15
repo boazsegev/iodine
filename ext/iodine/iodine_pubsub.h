@@ -9,9 +9,17 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "iodine.h"
 #include "pubsub.h"
 
+typedef enum {
+  IODINE_PUBSUB_GLOBAL,
+  IODINE_PUBSUB_WEBSOCKET,
+  IODINE_PUBSUB_SSE
+} iodine_pubsub_type_e;
+
 extern VALUE IodineEngine;
 extern ID iodine_engine_pubid;
 VALUE iodine_publish(int argc, VALUE *argv, VALUE self);
+VALUE iodine_subscribe(int argc, VALUE *argv, void *owner,
+                       iodine_pubsub_type_e type);
 
 typedef struct {
   pubsub_engine_s engine;

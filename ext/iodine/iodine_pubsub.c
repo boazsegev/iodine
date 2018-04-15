@@ -10,6 +10,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "pubsub.h"
 #include "rb-fiobj2rb.h"
 #include "redis_engine.h"
+#include "websockets.h"
 
 VALUE IodineEngine;
 ID iodine_engine_pubid;
@@ -21,9 +22,16 @@ static ID engine_subid;
 static ID engine_unsubid;
 static ID default_pubsubid;
 
-static VALUE channel_var_id;
-static VALUE pattern_var_id;
-static VALUE message_var_id;
+static ID to_str_shadow_id;
+
+static VALUE as_sym_id;
+static VALUE binary_sym_id;
+static VALUE match_sym_id;
+static VALUE message_sym_id;
+static VALUE redis_sym_id;
+static VALUE text_sym_id;
+static VALUE to_sym_id;
+static VALUE channel_sym_id;
 
 /* *****************************************************************************
 Mock Functions
@@ -76,18 +84,76 @@ static VALUE engine_pub_placeholder(VALUE self, VALUE channel, VALUE msg) {
 /* *****************************************************************************
 Ruby Subscription Object
 ***************************************************************************** */
+typedef struct {
+  uintptr_t subscription;
+  intptr_t uuid;
+  void *owner;
+  iodine_pubsub_type_e type;
+} iodine_subscription_s;
+
+static inline iodine_subscription_s subscription_data(VALUE self) {
+  iodine_subscription_s data = {.uuid = iodine_get_fd(self)};
+  if (data.uuid && !sock_isvalid(data.uuid)) {
+    iodine_set_fd(self, -1);
+    data.uuid = -1;
+    return data;
+  }
+
+  data.subscription =
+      ((uintptr_t)NUM2LL(rb_ivar_get(self, iodine_timeout_var_id)));
+  data.owner = iodine_get_cdata(self);
+  if (!data.owner) {
+    data.type = IODINE_PUBSUB_GLOBAL;
+  } else if ((uintptr_t)data.owner & 1) {
+    data.owner = (void *)((uintptr_t)data.owner & (~(uintptr_t)1));
+    data.type = IODINE_PUBSUB_SSE;
+  } else {
+    data.type = IODINE_PUBSUB_WEBSOCKET;
+  }
+  return data;
+}
+
+static inline VALUE subscription_initialize(uintptr_t sub, intptr_t uuid,
+                                            void *owner,
+                                            iodine_pubsub_type_e type,
+                                            VALUE channel) {
+  VALUE self = RubyCaller.call(IodinePubSubSubscription, iodine_new_func_id);
+  if (type == IODINE_PUBSUB_SSE)
+    owner = (void *)((uintptr_t)owner | (uintptr_t)1);
+  iodine_set_cdata(self, owner);
+  iodine_set_fd(self, uuid);
+  rb_ivar_set(self, to_str_shadow_id, channel);
+  rb_ivar_set(self, iodine_timeout_var_id, ULL2NUM(sub));
+  return self;
+}
 
 // static void set_subscription(VALUE self, pubsub_sub_pt sub) {
 //   iodine_set_cdata(self, sub);
 // }
 
+/** Closes (cancels) a subscription. */
 static VALUE close_subscription(VALUE self) {
-  pubsub_sub_pt sub = iodine_get_cdata(self);
-  if (sub && sub != (pubsub_sub_pt)Qnil) {
-
-    pubsub_unsubscribe(sub);
+  iodine_subscription_s data = subscription_data(self);
+  if (!data.subscription)
+    return Qnil;
+  switch (data.type) {
+  case IODINE_PUBSUB_GLOBAL:
+    pubsub_unsubscribe((pubsub_sub_pt)data.subscription);
+    break;
+  case IODINE_PUBSUB_WEBSOCKET:
+    websocket_unsubscribe(data.owner, data.subscription);
+    break;
+  case IODINE_PUBSUB_SSE:
+    http_sse_unsubscribe(data.owner, data.subscription);
+    break;
   }
+  rb_ivar_set(self, iodine_timeout_var_id, ULL2NUM(0));
   return Qnil;
+}
+
+/** Test if the subscription's target is equal to String. */
+static VALUE subscription_eq_s(VALUE self, VALUE str) {
+  return rb_str_equal(rb_attr_get(self, to_str_shadow_id), str);
 }
 
 /* *****************************************************************************
@@ -445,62 +511,171 @@ static void on_pubsub_notificationin(pubsub_message_s *n) {
   RubyCaller.call_c((void *(*)(void *))on_pubsub_notificationinGVL, n);
 }
 
-/**
-Subscribes the process to a channel belonging to a specific pub/sub service
-(using an {Iodine::PubSub::Engine} to connect Iodine to the service).
+static void iodine_on_unsubscribe_ws(void *u) {
+  if (u && (VALUE)u != Qnil && u != (VALUE)Qfalse)
+    Registry.remove((VALUE)u);
+}
 
-The function accepts a single argument (a Hash) and a required block.
+static void *
+on_pubsub_notificationinGVL_ws(websocket_pubsub_notification_s *n) {
+  VALUE rbn[2];
+  fio_cstr_s tmp = fiobj_obj2cstr(n->channel);
+  rbn[0] = rb_str_new(tmp.data, tmp.len);
+  Registry.add(rbn[0]);
+  tmp = fiobj_obj2cstr(n->message);
+  rbn[1] = rb_str_new(tmp.data, tmp.len);
+  Registry.add(rbn[1]);
+  RubyCaller.call2((VALUE)n->udata, iodine_call_proc_id, 2, rbn);
+  Registry.remove(rbn[0]);
+  Registry.remove(rbn[1]);
+  return NULL;
+}
 
-Accepts a single Hash argument with the following possible options:
+static void on_pubsub_notificationin_ws(websocket_pubsub_notification_s n) {
+  RubyCaller.call_c((void *(*)(void *))on_pubsub_notificationinGVL_ws, &n);
+}
 
-:channel :: Required (unless :pattern). The channel to subscribe to.
+static void on_pubsub_notificationin_sse(http_sse_s *sse, FIOBJ channel,
+                                         FIOBJ message, void *udata) {
+  websocket_pubsub_notification_s n = {
+      .channel = channel, .message = message, .udata = udata};
+  RubyCaller.call_c((void *(*)(void *))on_pubsub_notificationinGVL, &n);
+  (void)sse;
+}
 
-:pattern :: An alternative to the required :channel, subscribes to a pattern.
+/** Subscribes to a Pub/Sub channel - internal implementation */
+VALUE iodine_subscribe(int argc, VALUE *argv, void *owner,
+                       iodine_pubsub_type_e type) {
 
-*/
-static VALUE iodine_subscribe(VALUE self, VALUE args) {
-  Check_Type(args, T_HASH);
-  rb_need_block();
+  VALUE rb_ch = Qnil;
+  VALUE rb_opt = 0;
+  VALUE block = 0;
+  uint8_t use_pattern = 0, force_text = 1, force_binary = 0;
+  intptr_t uuid = 0;
 
-  uint8_t use_pattern = 0;
-
-  VALUE rb_ch = rb_hash_aref(args, channel_var_id);
-  if (rb_ch == Qnil || rb_ch == Qfalse) {
-    use_pattern = 1;
-    rb_ch = rb_hash_aref(args, pattern_var_id);
-    if (rb_ch == Qnil || rb_ch == Qfalse)
-      rb_raise(rb_eArgError, "a channel is required for pub/sub methods.");
+  switch (argc) {
+  case 2:
+    rb_ch = argv[0];
+    rb_opt = argv[1];
+    break;
+  case 1:
+    /* single argument must be a Hash / channel name */
+    if (TYPE(argv[0]) == T_HASH) {
+      rb_opt = argv[0];
+      rb_ch = rb_hash_aref(argv[0], to_sym_id);
+      if (rb_ch == Qnil || rb_ch == Qfalse) {
+        /* temporary backport support */
+        rb_ch = rb_hash_aref(argv[0], channel_sym_id);
+        if (rb_ch) {
+          fprintf(stderr,
+                  "WARNING: use of :channel in subscribe is deprecated.\n");
+        }
+      }
+    } else {
+      rb_ch = argv[0];
+    }
+    break;
+  default:
+    rb_raise(rb_eArgError, "method accepts 1 or 2 arguments.");
+    return Qfalse;
   }
+
+  if (rb_ch == Qnil || rb_ch == Qfalse) {
+    rb_raise(rb_eArgError,
+             "a target (:to) subject / stream / channel is required.");
+  }
+
   if (TYPE(rb_ch) == T_SYMBOL)
     rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);
 
-  FIOBJ ch = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
-  VALUE block = rb_block_proc();
-  Registry.add(block);
+  if (rb_opt) {
+    if (type == IODINE_PUBSUB_WEBSOCKET &&
+        rb_hash_aref(rb_opt, as_sym_id) == binary_sym_id) {
+      force_text = 0;
+      force_binary = 1;
+    }
+    if (rb_hash_aref(rb_opt, match_sym_id) == redis_sym_id) {
+      use_pattern = 1;
+    }
+  }
 
-  Registry.add(block);
-  uintptr_t subid =
-      (uintptr_t)pubsub_subscribe(.channel = ch, .use_pattern = use_pattern,
-                                  .on_message = on_pubsub_notificationin,
-                                  .on_unsubscribe = iodine_on_unsubscribe,
-                                  .udata1 = (void *)block);
-  fiobj_free(ch);
-  if (!subid)
+  if (rb_block_given_p()) {
+    block = rb_block_proc();
+    Registry.add(block);
+  } else if (type == IODINE_PUBSUB_GLOBAL) {
+    rb_need_block();
     return Qnil;
-  return ULL2NUM(subid);
-  (void)self;
+  }
+
+  FIOBJ ch = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
+
+  uintptr_t sub = 0;
+  switch (type) {
+  case IODINE_PUBSUB_GLOBAL:
+    sub = (uintptr_t)pubsub_subscribe(.channel = ch, .use_pattern = use_pattern,
+                                      .on_message = on_pubsub_notificationin,
+                                      .on_unsubscribe = iodine_on_unsubscribe,
+                                      .udata1 = (void *)block);
+    break;
+  case IODINE_PUBSUB_WEBSOCKET:
+    uuid = websocket_uuid(owner);
+    sub = websocket_subscribe(
+        owner, .channel = ch, .use_pattern = use_pattern,
+        .force_text = force_text, .force_binary = force_binary,
+        .on_message = (block ? on_pubsub_notificationin_ws : NULL),
+        .on_unsubscribe = (block ? iodine_on_unsubscribe_ws : NULL),
+        .udata = (void *)block);
+    break;
+  case IODINE_PUBSUB_SSE:
+    uuid = http_sse2uuid(owner);
+    sub = http_sse_subscribe(
+        owner, .channel = ch, .use_pattern = use_pattern,
+        .on_message = (block ? on_pubsub_notificationin_sse : NULL),
+        .on_unsubscribe = (block ? iodine_on_unsubscribe_ws : NULL),
+        .udata = (void *)block);
+
+    break;
+  }
+
+  fiobj_free(ch);
+  if (!sub)
+    return Qnil;
+  return subscription_initialize(sub, uuid, owner, type, rb_ch);
 }
 
+// clang-format off
 /**
-Cancels the subscription matching `sub_id`.
+Subscribes to a Pub/Sub channel.
+
+The method accepts 1-2 arguments and an optional block. These are all valid ways
+to call the method:
+
+      subscribe("my_stream") {|from, msg| p msg }
+      subscribe("my_stream", match: :redis) {|from, msg| p msg }
+      subscribe(to: "my_stream")  {|from, msg| p msg }
+      subscribe to: "my_stream", match: :redis, handler: MyProc
+
+The first argument must be either a String or a Hash.
+
+The second, optional, argument must be a Hash (if given).
+
+The options Hash supports the following possible keys (other keys are ignored, all keys are Symbols):
+
+:match :: The channel / subject name matching type to be used. Valid value is: `:redis`. Future versions hope to support `:nats` and `:rabbit` patern matching as well.
+
+:to :: The channel / subject to subscribe to.
+
+Returns an {Iodine::PubSub::Subscription} object that answers to:
+
+close :: closes the connection.
+to_s :: returns the subscription's target (stream / channel / subject).
+==(str) :: returns true if the string is an exact match for the target (even if the target itself is a pattern).
+
 */
-static VALUE iodine_unsubscribe(VALUE self, VALUE sub_id) {
-  if (sub_id == Qnil || sub_id == Qfalse)
-    return Qnil;
-  Check_Type(sub_id, T_FIXNUM);
-  pubsub_unsubscribe((pubsub_sub_pt)NUM2LONG(sub_id));
-  return Qnil;
+static VALUE iodine_subscribe_global(int argc, VALUE *argv, VALUE self) {
+  // clang-format on
+  return iodine_subscribe(argc, argv, NULL, IODINE_PUBSUB_GLOBAL);
   (void)self;
 }
 
@@ -509,19 +684,18 @@ Publishes a message to a channel.
 
 Can be used using two Strings:
 
-      publish(channel, message)
+      publish(to, message)
 
 The method accepts an optional `engine` argument:
 
-      publish(channel, message, my_pubsub_engine)
+      publish(to, message, my_pubsub_engine)
 
 
-Alternatively, accepts a single Hash argument with the following possible
-options:
+Alternatively, accepts the following named arguments:
 
-:channel :: REQUIRED. The channel to publish to.
+:to :: The channel to publish to (required).
 
-:message :: REQUIRED. The message to be published.
+:message :: The message to be published (required).
 
 :engine :: If provided, the engine to use for pub/sub. Otherwise the default
 engine is used.
@@ -543,18 +717,18 @@ VALUE iodine_publish(int argc, VALUE *argv, VALUE self) {
     /* single argument must be a Hash */
     Check_Type(argv[0], T_HASH);
 
-    rb_ch = rb_hash_aref(argv[0], channel_var_id);
+    rb_ch = rb_hash_aref(argv[0], to_sym_id);
     if (rb_ch == Qnil || rb_ch == Qfalse) {
       use_pattern = 1;
-      rb_ch = rb_hash_aref(argv[0], pattern_var_id);
+      rb_ch = rb_hash_aref(argv[0], match_sym_id);
     }
 
-    rb_msg = rb_hash_aref(argv[0], message_var_id);
+    rb_msg = rb_hash_aref(argv[0], message_sym_id);
 
     engine = iodine_engine_ruby2facil(rb_hash_aref(argv[0], engine_varid));
   } break;
   default:
-    rb_raise(rb_eArgError, "method accepts 1 or 2 arguments.");
+    rb_raise(rb_eArgError, "method accepts 1-3 arguments.");
   }
 
   if (rb_msg == Qnil || rb_msg == Qfalse) {
@@ -585,14 +759,21 @@ VALUE iodine_publish(int argc, VALUE *argv, VALUE self) {
 Initialization
 ***************************************************************************** */
 void Iodine_init_pubsub(void) {
-  engine_varid = rb_intern("engine");
+  default_pubsubid = rb_intern("default_pubsub");
   engine_subid = rb_intern("subscribe");
   engine_unsubid = rb_intern("unsubscribe");
+  engine_varid = rb_intern("engine");
   iodine_engine_pubid = rb_intern("publish");
-  default_pubsubid = rb_intern("default_pubsub");
-  channel_var_id = ID2SYM(rb_intern("channel"));
-  pattern_var_id = ID2SYM(rb_intern("pattern"));
-  message_var_id = ID2SYM(rb_intern("message"));
+  to_str_shadow_id = rb_intern("@to_s");
+
+  as_sym_id = ID2SYM(rb_intern("as"));
+  binary_sym_id = ID2SYM(rb_intern("binary"));
+  match_sym_id = ID2SYM(rb_intern("match"));
+  message_sym_id = ID2SYM(rb_intern("message"));
+  redis_sym_id = ID2SYM(rb_intern("redis"));
+  text_sym_id = ID2SYM(rb_intern("text"));
+  to_sym_id = ID2SYM(rb_intern("to"));
+  channel_sym_id = ID2SYM(rb_intern("channel"));
 
   IodinePubSub = rb_define_module_under(Iodine, "PubSub");
   IodineEngine = rb_define_class_under(IodinePubSub, "Engine", rb_cObject);
@@ -600,6 +781,8 @@ void Iodine_init_pubsub(void) {
       rb_define_class_under(IodinePubSub, "Subscription", rb_cObject);
 
   rb_define_method(IodinePubSubSubscription, "close", close_subscription, 0);
+  rb_define_method(IodinePubSubSubscription, "==", subscription_eq_s, 1);
+  rb_attr(IodinePubSubSubscription, rb_intern("to_s"), 1, 0, 1);
 
   rb_define_alloc_func(IodineEngine, engine_alloc_c);
   rb_define_method(IodineEngine, "initialize", engine_initialize, 0);
@@ -611,8 +794,7 @@ void Iodine_init_pubsub(void) {
   rb_define_module_function(Iodine, "default_pubsub=", ips_set_default, 1);
   rb_define_module_function(Iodine, "default_pubsub", ips_get_default, 0);
 
-  rb_define_module_function(Iodine, "subscribe", iodine_subscribe, 1);
-  rb_define_module_function(Iodine, "unsubscribe", iodine_unsubscribe, 1);
+  rb_define_module_function(Iodine, "subscribe", iodine_subscribe_global, -1);
   rb_define_module_function(Iodine, "publish", iodine_publish, -1);
 
   /* *************************
@@ -628,6 +810,7 @@ void Iodine_init_pubsub(void) {
   /** This is the (currently) default pub/sub engine. It will distribute
    * messages to all subscribers in the process cluster. */
   rb_define_const(IodinePubSub, "CLUSTER", engine_in_c);
+
   // rb_const_set(IodineEngine, rb_intern("CLUSTER"), e);
 
   engine_in_c = rb_funcallv(IodineEngine, iodine_new_func_id, 0, NULL);
@@ -637,6 +820,7 @@ void Iodine_init_pubsub(void) {
   /** This is a single process pub/sub engine. It will distribute messages to
    * all subscribers sharing the same process. */
   rb_define_const(IodinePubSub, "SINGLE_PROCESS", engine_in_c);
+
   // rb_const_set(IodineEngine, rb_intern("SINGLE_PROCESS"), e);
 
   engine_in_c =

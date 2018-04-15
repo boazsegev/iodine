@@ -355,6 +355,8 @@ Here we connect all the C code to the Ruby interface, completing the bridge
 between Lib-Server and Ruby.
 ***************************************************************************** */
 void Init_iodine(void) {
+  // Set GVL for main thread
+  RubyCaller.set_gvl_state(1);
   // load any environment specific patches
   patch_env();
   // initialize globally used IDs, for faster access to the Ruby layer.
