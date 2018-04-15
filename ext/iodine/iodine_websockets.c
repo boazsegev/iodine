@@ -50,22 +50,24 @@ Websocket Ruby API
  * existing data in the outgoing buffer is sent. */
 static VALUE iodine_ws_close(VALUE self) {
   void *ws = get_ws(self);
-  uintptr_t c_type = (uintptr_t)iodine_get_cdata(self);
-  if (!ws || !c_type) {
+  if (!ws) {
     return Qfalse;
   }
+  iodine_pubsub_type_e c_type = (iodine_pubsub_type_e)iodine_get_cdata(self);
   switch (c_type) {
-  case 1:
+  case IODINE_PUBSUB_WEBSOCKET:
     /* WebSockets*/
     if (((protocol_s *)ws)->service != WEBSOCKET_ID_STR) {
       return Qfalse;
     }
     websocket_close(ws);
     break;
-  case 2:
+  case IODINE_PUBSUB_SSE:
     /* SSE */
     http_sse_close(ws);
     break;
+  case IODINE_PUBSUB_GLOBAL:
+  /* fallthrough */
   default:
     return Qfalse;
     break;
@@ -79,36 +81,39 @@ static VALUE iodine_ws_close(VALUE self) {
  * Returns `true` on success or `false if the websocket was closed or an error
  * occurred.
  *
- * `write` will return immediately UNLESS resources are insufficient. If the
- * global `write` buffer is full, `write` will block until a buffer "packet"
- * becomes available and can be assigned to the socket. */
+ * `write` will return immediately, adding the data to the outgoing queue.
+ *
+ * If the connection is closed, `write` will raise an exception.
+ */
 static VALUE iodine_ws_write(VALUE self, VALUE data) {
   Check_Type(data, T_STRING);
   void *ws = get_ws(self);
-  uintptr_t c_type = (uintptr_t)iodine_get_cdata(self);
+  iodine_pubsub_type_e c_type = (iodine_pubsub_type_e)iodine_get_cdata(self);
   if (!ws || !c_type) {
     rb_raise(rb_eIOError, "Connection is closed");
     return Qfalse;
   }
   switch (c_type) {
-  case 1:
+  case IODINE_PUBSUB_WEBSOCKET:
     /* WebSockets*/
-    if (((protocol_s *)ws)->service != WEBSOCKET_ID_STR) {
-      rb_raise(rb_eIOError, "Connection is closed");
-      return Qfalse;
-    }
+    if (((protocol_s *)ws)->service != WEBSOCKET_ID_STR)
+      goto error;
     websocket_write(ws, RSTRING_PTR(data), RSTRING_LEN(data),
                     rb_enc_get(data) == IodineUTF8Encoding);
     return Qtrue;
     break;
-  case 2:
+  case IODINE_PUBSUB_SSE:
     /* SSE */
     http_sse_write(
         ws, .data = {.data = RSTRING_PTR(data), .len = RSTRING_LEN(data)});
     return Qtrue;
     break;
+  case IODINE_PUBSUB_GLOBAL:
+  /* fallthrough */
   default:
-    break;
+  error:
+    rb_raise(rb_eIOError, "Connection is closed");
+    return Qfalse;
   }
   return Qfalse;
 }
@@ -241,121 +246,45 @@ static VALUE iodine_class_defer(VALUE self, VALUE ws_uuid) {
 Websocket Pub/Sub API
 ***************************************************************************** */
 
-static void iodine_on_unsubscribe(void *u) {
-  if (u && (VALUE)u != Qnil && u != (VALUE)Qfalse)
-    Registry.remove((VALUE)u);
-}
-
-static void *on_pubsub_notificationinGVL(websocket_pubsub_notification_s *n) {
-  VALUE rbn[2];
-  fio_cstr_s tmp = fiobj_obj2cstr(n->channel);
-  rbn[0] = rb_str_new(tmp.data, tmp.len);
-  Registry.add(rbn[0]);
-  tmp = fiobj_obj2cstr(n->message);
-  rbn[1] = rb_str_new(tmp.data, tmp.len);
-  Registry.add(rbn[1]);
-  RubyCaller.call2((VALUE)n->udata, iodine_call_proc_id, 2, rbn);
-  Registry.remove(rbn[0]);
-  Registry.remove(rbn[1]);
-  return NULL;
-}
-
-static void on_pubsub_notificationin(websocket_pubsub_notification_s n) {
-  RubyCaller.call_c((void *(*)(void *))on_pubsub_notificationinGVL, &n);
-}
-
-static void on_pubsub_notificationin_sse(http_sse_s *sse, FIOBJ channel,
-                                         FIOBJ message, void *udata) {
-  websocket_pubsub_notification_s n = {
-      .channel = channel, .message = message, .udata = udata};
-  RubyCaller.call_c((void *(*)(void *))on_pubsub_notificationinGVL, &n);
-  (void)sse;
-}
-
+// clang-format off
 /**
-Subscribes the websocket to a channel belonging to a specific pub/sub service
-(using an {Iodine::PubSub::Engine} to connect Iodine to the service).
+Subscribes the connection to a Pub/Sub channel.
 
-The function accepts a single argument (a Hash) and an optional block.
+The method accepts 1-2 arguments and an optional block. These are all valid ways
+to call the method:
 
-If no block is provided, the message is sent directly to the websocket client.
+      subscribe("my_stream") {|from, msg| p msg }
+      subscribe("my_stream", match: :redis) {|from, msg| p msg }
+      subscribe(to: "my_stream")  {|from, msg| p msg }
+      subscribe to: "my_stream", match: :redis, handler: MyProc
 
-Accepts a single Hash argument with the following possible options:
+The first argument must be either a String or a Hash.
 
-:channel :: Required (unless :pattern). The channel to subscribe to.
+The second, optional, argument must be a Hash (if given).
 
-:pattern :: An alternative to the required :channel, subscribes to a pattern.
+The options Hash supports the following possible keys (other keys are ignored,
+all keys are Symbols):
 
-:force :: This can be set to either nil, :text or :binary and controls the way
-the message will be forwarded to the websocket client. This is only valid if no
-block was provided. Defaults to smart encoding based testing.
+:match :: The channel / subject name matching type to be used. Valid value is: `:redis`. Future versions hope to support `:nats` and `:rabbit` patern matching as well.
 
+:to :: The channel / subject to subscribe to.
+
+:as :: valid for WebSocket connections only. can be either `:text` or `:binary`. `:text` is the default transport for pub/sub events.
+
+Returns an {Iodine::PubSub::Subscription} object that answers to:
+
+#.close :: closes the connection.
+
+#.to_s :: returns the subscription's target (stream / channel / subject).
+
+#.==(str) :: returns true if the string is an exact match for the target (even if the target itself is a pattern).
 
 */
-static VALUE iodine_ws_subscribe(VALUE self, VALUE args) {
-  Check_Type(args, T_HASH);
-  void *ws = get_ws(self);
-  uintptr_t c_type = (uintptr_t)iodine_get_cdata(self);
-  if (!ws || !c_type) {
-    return Qfalse;
-  }
-
-  uint8_t use_pattern = 0, force_text = 0, force_binary = 0;
-
-  VALUE rb_ch = rb_hash_aref(args, iodine_channel_var_id);
-  if (rb_ch == Qnil || rb_ch == Qfalse) {
-    use_pattern = 1;
-    rb_ch = rb_hash_aref(args, iodine_pattern_var_id);
-    if (rb_ch == Qnil || rb_ch == Qfalse)
-      rb_raise(rb_eArgError, "channel is required for pub/sub methods.");
-  }
-  if (TYPE(rb_ch) == T_SYMBOL)
-    rb_ch = rb_sym2str(rb_ch);
-  Check_Type(rb_ch, T_STRING);
-
-  VALUE tmp = rb_hash_aref(args, iodine_force_var_id);
-  if (tmp == iodine_text_var_id)
-    force_text = 1;
-  else if (tmp == iodine_binary_var_id)
-    force_binary = 1;
-
-  VALUE block = 0;
-  if (rb_block_given_p()) {
-    block = rb_block_proc();
-    Registry.add(block);
-  }
-
-  FIOBJ channel = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
-  uintptr_t subid = 0;
-  switch (c_type) {
-  case 1:
-    /* WebSockets*/
-    if (((protocol_s *)ws)->service != WEBSOCKET_ID_STR) {
-      rb_raise(rb_eIOError, "Connection is closed");
-      return Qfalse;
-    }
-    subid = websocket_subscribe(
-        ws, .channel = channel, .use_pattern = use_pattern,
-        .force_text = force_text, .force_binary = force_binary,
-        .on_message = (block ? on_pubsub_notificationin : NULL),
-        .on_unsubscribe = (block ? iodine_on_unsubscribe : NULL),
-        .udata = (void *)block);
-    break;
-  case 2:
-    /* SSE */
-    subid = http_sse_subscribe(
-        ws, .channel = channel, .use_pattern = use_pattern,
-        .on_message = (block ? on_pubsub_notificationin_sse : NULL),
-        .on_unsubscribe = (block ? iodine_on_unsubscribe : NULL),
-        .udata = (void *)block);
-    break;
-  default:
-    break;
-  }
-  fiobj_free(channel);
-  if (!subid)
-    return Qnil;
-  return ULL2NUM(subid);
+static VALUE iodine_ws_subscribe(int argc, VALUE *argv, VALUE self) {
+  // clang-format on
+  ws_s *owner = get_ws(self);
+  return iodine_subscribe(argc, argv, owner,
+                          (iodine_pubsub_type_e)iodine_get_cdata(self));
 }
 
 /* *****************************************************************************
@@ -368,7 +297,7 @@ static void ws_on_open(ws_s *ws) {
     return;
   set_uuid(handler, websocket_uuid(ws));
   set_ws(handler, ws);
-  iodine_set_cdata(handler, (void *)1);
+  iodine_set_cdata(handler, (void *)IODINE_PUBSUB_WEBSOCKET);
   RubyCaller.call(handler, iodine_on_open_func_id);
 }
 static void ws_on_close(intptr_t uuid, void *handler_) {
@@ -380,7 +309,7 @@ static void ws_on_close(intptr_t uuid, void *handler_) {
   }
   set_ws(handler, NULL);
   set_uuid(handler, 0);
-  iodine_set_cdata(handler, NULL);
+  iodine_set_cdata(handler, (void *)IODINE_PUBSUB_GLOBAL);
   RubyCaller.call(handler, iodine_on_close_func_id);
   Registry.remove(handler);
   (void)uuid;
@@ -449,7 +378,7 @@ static void iodine_sse_on_open(http_sse_s *sse) {
     return;
   set_uuid(handler, http_sse2uuid(sse));
   set_ws(handler, sse);
-  iodine_set_cdata(handler, (void *)2);
+  iodine_set_cdata(handler, (void *)IODINE_PUBSUB_SSE);
   RubyCaller.call(handler, iodine_on_open_func_id);
 }
 
@@ -496,7 +425,7 @@ static void iodine_sse_on_close(http_sse_s *sse) {
   }
   set_ws(handler, NULL);
   set_uuid(handler, 0);
-  iodine_set_cdata(handler, NULL);
+  iodine_set_cdata(handler, IODINE_PUBSUB_GLOBAL);
   RubyCaller.call(handler, iodine_on_close_func_id);
   Registry.remove(handler);
 }
@@ -575,22 +504,28 @@ void Iodine_init_websocket(void) {
     fprintf(stderr, "WTF?!\n"), exit(-1);
   // // callbacks and handlers
   rb_define_method(IodineWebsocket, "on_open", empty_func, 0);
+
   // rb_define_method(IodineWebsocket, "on_message", empty_func_message, 1);
+
   rb_define_method(IodineWebsocket, "on_shutdown", empty_func, 0);
   rb_define_method(IodineWebsocket, "on_close", empty_func, 0);
   rb_define_method(IodineWebsocket, "on_ready", empty_func, 0);
   rb_define_method(IodineWebsocket, "write", iodine_ws_write, 1);
   rb_define_method(IodineWebsocket, "close", iodine_ws_close, 0);
 
-  rb_define_method(IodineWebsocket, "_c_id", iodine_ws_uuid, 0);
+  // rb_define_method(IodineWebsocket, "_c_id", iodine_ws_uuid, 0);
+
   rb_define_method(IodineWebsocket, "pending?", iodine_ws_has_pending, 0);
   rb_define_method(IodineWebsocket, "open?", iodine_ws_is_open, 0);
   rb_define_method(IodineWebsocket, "defer", iodine_defer, -1);
+
   // rb_define_method(IodineWebsocket, "each", iodine_ws_each, 0);
 
-  rb_define_method(IodineWebsocket, "subscribe", iodine_ws_subscribe, 1);
+  rb_define_method(IodineWebsocket, "subscribe", iodine_ws_subscribe, -1);
   rb_define_method(IodineWebsocket, "publish", iodine_publish, -1);
 
-  rb_define_singleton_method(IodineWebsocket, "defer", iodine_class_defer, 1);
+  // rb_define_singleton_method(IodineWebsocket, "defer", iodine_class_defer,
+  // 1);
+
   rb_define_singleton_method(IodineWebsocket, "publish", iodine_publish, -1);
 }
