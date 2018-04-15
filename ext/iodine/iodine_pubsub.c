@@ -26,6 +26,7 @@ static ID to_str_shadow_id;
 
 static VALUE as_sym_id;
 static VALUE binary_sym_id;
+static VALUE handler_sym_id;
 static VALUE match_sym_id;
 static VALUE message_sym_id;
 static VALUE redis_sym_id;
@@ -598,15 +599,22 @@ VALUE iodine_subscribe(int argc, VALUE *argv, void *owner,
     if (rb_hash_aref(rb_opt, match_sym_id) == redis_sym_id) {
       use_pattern = 1;
     }
+    block = rb_hash_aref(rb_opt, handler_sym_id);
+    if (block != Qnil)
+      Registry.add(block);
   }
 
-  if (rb_block_given_p()) {
-    block = rb_block_proc();
-    Registry.add(block);
-  } else if (type == IODINE_PUBSUB_GLOBAL) {
-    rb_need_block();
-    return Qnil;
+  if (block == Qnil) {
+    if (rb_block_given_p()) {
+      block = rb_block_proc();
+      Registry.add(block);
+    } else if (type == IODINE_PUBSUB_GLOBAL) {
+      rb_need_block();
+      return Qnil;
+    }
   }
+  if (block == Qnil)
+    block = 0;
 
   FIOBJ ch = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
 
@@ -768,12 +776,14 @@ void Iodine_init_pubsub(void) {
 
   as_sym_id = ID2SYM(rb_intern("as"));
   binary_sym_id = ID2SYM(rb_intern("binary"));
+  handler_sym_id = ID2SYM(rb_intern("handler"));
   match_sym_id = ID2SYM(rb_intern("match"));
   message_sym_id = ID2SYM(rb_intern("message"));
   redis_sym_id = ID2SYM(rb_intern("redis"));
   text_sym_id = ID2SYM(rb_intern("text"));
   to_sym_id = ID2SYM(rb_intern("to"));
-  channel_sym_id = ID2SYM(rb_intern("channel"));
+
+  channel_sym_id = ID2SYM(rb_intern("channel")); /* bawards compatibility */
 
   IodinePubSub = rb_define_module_under(Iodine, "PubSub");
   IodineEngine = rb_define_class_under(IodinePubSub, "Engine", rb_cObject);
