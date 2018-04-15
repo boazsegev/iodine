@@ -21,7 +21,7 @@ module Iodine
   #      TIMES.times { JSON.parse STR }
   #      TIMES.times { Iodine::JSON.parse STR }
   #
-  #      Benchmark.bm do |b|
+  #      puts ""; Benchmark.bm do |b|
   #        sys = b.report("system") { TIMES.times { JSON.parse STR } }
   #        sys_sym = b.report("system-sym") { TIMES.times { JSON.parse STR, symbolize_names: true } }
   #        iodine = b.report("iodine") { TIMES.times { Iodine::JSON.parse STR } }
