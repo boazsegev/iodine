@@ -161,33 +161,6 @@ static VALUE subscription_eq_s(VALUE self, VALUE str) {
 Ruby API
 ***************************************************************************** */
 
-// /** @!visibility public
-// Called by the engine to distribute a `message` to a `channel`. Supports
-// `pattern` channel matching as well.
-
-// i.e.
-
-//       # Regular message distribution
-//       self.distribute "My Channel", "Hello!"
-
-// Returns `self`, always.
-
-// This is the ONLY method inherited from {Iodine::PubSub::Engine} that
-// should be called from within your code (by the engine itself).
-// */
-// static VALUE engine_distribute(VALUE self, VALUE channel, VALUE msg) {
-//   Check_Type(channel, T_STRING);
-//   Check_Type(msg, T_STRING);
-
-//   iodine_engine_s *engine;
-//   Data_Get_Struct(self, iodine_engine_s, engine);
-//   FIOBJ ch = fiobj_str_new(RSTRING_PTR(channel), RSTRING_LEN(channel));
-//   FIOBJ m = fiobj_str_new(RSTRING_PTR(msg), RSTRING_LEN(msg));
-
-//   pubsub_publish(.engine = PUBSUB_PROCESS_ENGINE, .channel = ch, .message =
-//   m); fiobj_free(ch); fiobj_free(msg); return self;
-// }
-
 pubsub_engine_s *iodine_engine_ruby2facil(VALUE ruby_engine) {
   if (ruby_engine == Qnil || ruby_engine == Qfalse)
     return NULL;
@@ -211,11 +184,13 @@ struct engine_gvl_args_s {
 
 static void *engine_subscribe_inGVL(void *a_) {
   struct engine_gvl_args_s *args = a_;
+  VALUE eng = ((iodine_engine_s *)args->eng)->handler;
+  if (!eng || eng == Qnil || eng == Qfalse)
+    return NULL;
   VALUE data[2];
   fio_cstr_s tmp = fiobj_obj2cstr(args->ch);
-  data[0] = rb_str_new(tmp.data, tmp.len);
   data[1] = args->use_pattern ? Qtrue : Qnil;
-  VALUE eng = ((iodine_engine_s *)args->eng)->handler;
+  data[0] = rb_str_new(tmp.data, tmp.len);
   eng = RubyCaller.call2(eng, engine_subid, 2, data);
   return NULL;
 }
@@ -231,11 +206,13 @@ static void engine_subscribe(const pubsub_engine_s *eng, FIOBJ ch,
 
 static void *engine_unsubscribe_inGVL(void *a_) {
   struct engine_gvl_args_s *args = a_;
+  VALUE eng = ((iodine_engine_s *)args->eng)->handler;
+  if (!eng || eng == Qnil || eng == Qfalse)
+    return NULL;
   VALUE data[2];
   fio_cstr_s tmp = fiobj_obj2cstr(args->ch);
-  data[0] = rb_str_new(tmp.data, tmp.len);
   data[1] = args->use_pattern ? Qtrue : Qnil;
-  VALUE eng = ((iodine_engine_s *)args->eng)->handler;
+  data[0] = rb_str_new(tmp.data, tmp.len);
   RubyCaller.call2(eng, engine_unsubid, 2, data);
   return NULL;
 }
@@ -251,6 +228,9 @@ static void engine_unsubscribe(const pubsub_engine_s *eng, FIOBJ ch,
 
 static void *engine_publish_inGVL(void *a_) {
   struct engine_gvl_args_s *args = a_;
+  VALUE eng = ((iodine_engine_s *)args->eng)->handler;
+  if (!eng || eng == Qnil || eng == Qfalse)
+    return NULL;
   VALUE data[2];
   fio_cstr_s tmp = fiobj_obj2cstr(args->ch);
   data[0] = rb_str_new(tmp.data, tmp.len);
@@ -258,7 +238,6 @@ static void *engine_publish_inGVL(void *a_) {
   tmp = fiobj_obj2cstr(args->msg);
   data[1] = rb_str_new(tmp.data, tmp.len);
   Registry.add(data[1]);
-  VALUE eng = ((iodine_engine_s *)args->eng)->handler;
   eng = RubyCaller.call2(eng, iodine_engine_pubid, 2, data);
   Registry.remove(data[0]);
   Registry.remove(data[1]);
@@ -412,7 +391,7 @@ Accepts:
 
 address:: the Redis server's address. Required.
 port:: the Redis Server port. Default: 6379
-ping:: the PING interval. Default: 0 (~5 minutes).
+ping:: the PING interval up to 255 seconds. Default: 0 (~5 minutes).
 auth:: authentication password. Default: none.
 */
 static VALUE redis_engine_initialize(int argc, VALUE *argv, VALUE self) {
@@ -578,7 +557,7 @@ VALUE iodine_subscribe(int argc, VALUE *argv, void *owner,
     break;
   default:
     rb_raise(rb_eArgError, "method accepts 1 or 2 arguments.");
-    return Qfalse;
+    return Qnil;
   }
 
   if (rb_ch == Qnil || rb_ch == Qfalse) {
@@ -710,13 +689,13 @@ engine is used.
 
 */
 VALUE iodine_publish(int argc, VALUE *argv, VALUE self) {
-  VALUE rb_ch, rb_msg;
+  VALUE rb_ch, rb_msg, rb_engine = Qnil;
   uint8_t use_pattern = 0;
-  pubsub_engine_s *engine = NULL;
+  const pubsub_engine_s *engine = NULL;
   switch (argc) {
   case 3:
-    engine = iodine_engine_ruby2facil(rb_hash_aref(argv[2], engine_varid));
-  /* fallthrough */
+    /* fallthrough */
+    rb_engine = argv[2];
   case 2:
     rb_ch = argv[0];
     rb_msg = argv[1];
@@ -724,16 +703,13 @@ VALUE iodine_publish(int argc, VALUE *argv, VALUE self) {
   case 1: {
     /* single argument must be a Hash */
     Check_Type(argv[0], T_HASH);
-
     rb_ch = rb_hash_aref(argv[0], to_sym_id);
     if (rb_ch == Qnil || rb_ch == Qfalse) {
       use_pattern = 1;
       rb_ch = rb_hash_aref(argv[0], match_sym_id);
     }
-
     rb_msg = rb_hash_aref(argv[0], message_sym_id);
-
-    engine = iodine_engine_ruby2facil(rb_hash_aref(argv[0], engine_varid));
+    rb_engine = rb_hash_aref(argv[0], engine_varid);
   } break;
   default:
     rb_raise(rb_eArgError, "method accepts 1-3 arguments.");
@@ -749,6 +725,14 @@ VALUE iodine_publish(int argc, VALUE *argv, VALUE self) {
   if (TYPE(rb_ch) == T_SYMBOL)
     rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);
+
+  if (rb_engine == Qfalse) {
+    engine = PUBSUB_PROCESS_ENGINE;
+  } else if (rb_engine == Qnil) {
+    engine = NULL;
+  } else {
+    engine = iodine_engine_ruby2facil(rb_engine);
+  }
 
   FIOBJ ch = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
   FIOBJ msg = fiobj_str_new(RSTRING_PTR(rb_msg), RSTRING_LEN(rb_msg));
