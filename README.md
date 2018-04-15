@@ -11,7 +11,7 @@
 
 Iodine is a fast concurrent web server for real-time Ruby applications, with native support for:
 
-* Websockets;
+* Websockets and EventSource (SSE);
 * Pub/Sub (with optional Redis Pub/Sub scaling);
 * Static file service (with automatic `gzip` support for pre-compressed versions);
 * HTTP/1.1 keep-alive and pipelining;
@@ -132,45 +132,59 @@ It's as easy as that. No extra code required.
 
 ### Special HTTP `Upgrade` support
 
-Iodine's HTTP server includes special support for the Upgrade directive using Rack's `env` Hash, allowing the application to focus on services and data while iodine takes care of the network layer.
+Iodine's HTTP server implements the [WebSocket/SSE Rack Specification Draft](SPEC-Websocket-Draft.md), supporting native WebSocket/SSE connections using Rack's `env` Hash.
 
-Upgrading an HTTP connection can be performed either using iodine's Websocket Protocol support with `env['upgrade.websocket']` or by implementing your own protocol directly over the TCP/IP layer - be it a websocket flavor or something completely different - using `env['upgrade.tcp']`.
+This promotes separation of concerns, where iodine handles all the Network related logic and the application can focus on the API and data it provides.
 
-#### Websockets
+Upgrading an HTTP connection can be performed either using iodine's Websocket Protocol support with `env['rack.upgrade?']` or by implementing your own protocol directly over the TCP/IP layer - be it a websocket flavor or something completely different - using `env['upgrade.tcp']`.
 
-When an HTTP Upgrade request is received, iodine will set the Rack Hash's upgrade property to `true`, so that: `env[upgrade.websocket?] == true`
+#### EventSource / SSE
 
-To "upgrade" the HTTP request to the Websockets protocol, simply provide iodine with a Websocket Callback Object instance or class: `env['upgrade.websocket'] = MyWebsocketClass` or `env['upgrade.websocket'] = MyWebsocketClass.new(args)`
+Iodine treats EventSource / SSE connections as if they were a half-duplex WebSocket connection, using the exact same API and callbacks as WebSockets.
+
+When an EventSource / SSE request is received, iodine will set the Rack Hash's upgrade property to `:sse`, so that: `env[rack.upgrade?] == :sse`.
+
+The rest is detailed in the WebSocket support section.
+
+#### WebSockets
+
+When a WebSocket connection request is received, iodine will set the Rack Hash's upgrade property to `:websocket`, so that: `env[rack.upgrade?] == :websocket`
+
+To "upgrade" the HTTP request to the WebSockets protocol, simply provide iodine with a WebSocket Callback Object instance or class: `env['rack.upgrade'] = MyWebsocketClass` or `env['rack.upgrade'] = MyWebsocketClass.new(args)`
 
 Iodine will adopt the object, providing it with network functionality (methods such as `write`, `each`, `defer` and `close` will become available) and invoke it's callbacks on network events.
 
-Here is a simple chatroom example we can run in the terminal (`irb`) or easily paste into a `config.ru` file:
+Here is a simple chat-room example we can run in the terminal (`irb`) or easily paste into a `config.ru` file:
 
 ```ruby
 require 'iodine'
 class WebsocketChat
   def on_open
     # Pub/Sub directly to the client (or use a block to process the messages)
-    subscribe channel: :chat
+    subscribe :chat
     # Writing directly to the socket
     write "You're now in the chatroom."
   end
   def on_message data
     # Strings and symbol channel names are equivalent.
-    publish channel: "chat", message: data
+    publish "chat", data
   end
 end
 Iodine::Rack.app= Proc.new do |env|
-  if env['upgrade.websocket?'.freeze] && env["HTTP_UPGRADE".freeze] =~ /websocket/i.freeze
-    env['upgrade.websocket'.freeze] = WebsocketChat # or: WebsocketChat.new
+  if env['rack.upgrade?'.freeze] == :websocket 
+    env['rack.upgrade'.freeze] = WebsocketChat # or: WebsocketChat.new
+    [0,{}, []] # It's possible to set cookies for the response.
+  elsif env['rack.upgrade?'.freeze] == :sse
+    puts "SSE connections can only receive data from the server, the can't write." 
+    env['rack.upgrade'.freeze] = WebsocketChat # or: WebsocketChat.new
     [0,{}, []] # It's possible to set cookies for the response.
   else
-    [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
+    [200, {"Content-Length" => "12", "Content-Type" => "text/plain"}, ["Welcome Home"] ]
   end
 end
 # Pus/Sub can be server oriented as well as connection bound
 root_pid = Process.pid
-Iodine.subscribe(channel: :chat) {|ch, msg| puts msg if Process.pid == root_pid }
+Iodine.subscribe(:chat) {|ch, msg| puts msg if Process.pid == root_pid }
 # By default, Pub/Sub performs in process cluster mode.
 Iodine.processes = 4
 # static file serving can be set manually as well as using the command line:
@@ -232,7 +246,7 @@ Iodine::Rack.app = Proc.new do |env|
     # to upgrade AFTER a response, set a valid response status code.
     [1000,{}, []]
   else
-    [200, {"Content-Length" => "12"}, ["Welcome Home"] ]
+    [200, {"Content-Length" => "12", "Content-Type" => "text/plain"}, ["Welcome Home"] ]
   end
 end
 Iodine.start

@@ -46,7 +46,7 @@ class WS_RedisPubSub
   end
   # seng a message to new clients.
   def on_open
-    subscribe channel: "chat"
+    subscribe "chat"
     # let everyone know we arrived
     publish "chat", "#{@name} entered the chat."
   end
