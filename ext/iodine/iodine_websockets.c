@@ -125,7 +125,7 @@ return `true`, otherwise `false` will be returned.
 */
 static VALUE iodine_ws_has_pending(VALUE self) {
   intptr_t uuid = get_uuid(self);
-  return sock_has_pending(uuid) ? Qtrue : Qfalse;
+  return SIZET2NUM(sock_pending(uuid));
 }
 
 /**
@@ -515,7 +515,7 @@ void Iodine_init_websocket(void) {
 
   // rb_define_method(IodineWebsocket, "_c_id", iodine_ws_uuid, 0);
 
-  rb_define_method(IodineWebsocket, "pending?", iodine_ws_has_pending, 0);
+  rb_define_method(IodineWebsocket, "pending", iodine_ws_has_pending, 0);
   rb_define_method(IodineWebsocket, "open?", iodine_ws_is_open, 0);
   rb_define_method(IodineWebsocket, "defer", iodine_defer, -1);
 
