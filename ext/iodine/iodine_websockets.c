@@ -129,18 +129,6 @@ static VALUE iodine_ws_has_pending(VALUE self) {
 }
 
 /**
-Returns a connection's UUID which is valid for *this process* (not a machine
-or internet unique value).
-
-This can be used together with a true process wide UUID to uniquely identify a
-connection across the internet.
-*/
-static VALUE iodine_ws_uuid(VALUE self) {
-  intptr_t uuid = get_uuid(self);
-  return LONG2FIX(uuid);
-}
-
-/**
 Returns true is the connection is open, false if it isn't.
 */
 static VALUE iodine_ws_is_open(VALUE self) {
@@ -425,7 +413,7 @@ static void iodine_sse_on_close(http_sse_s *sse) {
   }
   set_ws(handler, NULL);
   set_uuid(handler, 0);
-  iodine_set_cdata(handler, IODINE_PUBSUB_GLOBAL);
+  iodine_set_cdata(handler, (void *)IODINE_PUBSUB_GLOBAL);
   RubyCaller.call(handler, iodine_on_close_func_id);
   Registry.remove(handler);
 }
