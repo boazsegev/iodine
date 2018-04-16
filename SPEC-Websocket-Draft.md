@@ -79,11 +79,13 @@ The server **MUST** extend the Callback Object's *class* using `extend`, so the 
 
 * `open?` returns the state of the connection. Servers **SOULD** set the method to return `true` if the connection is open and `false` if the connection is closed or marked to be closed.
 
-* `pending?` queries the state of the server's buffer for the specific connection (i.e., if the server has any data it is waiting to send through the socket).
+* `pending` SHOULD return the number of outgoing messages (calls to `write`) that need to be processed before the next time the `on_ready` callback is called.
 
-    `has_pending?`, shall return `true` **if** the server has data waiting to be written to the socket **and** the server promises to call the `on_ready` callback once the buffer is empty and the socket is writable. Otherwise (i.e., if the server doesn't support the `on_ready` callback), `has_pending?` shall return `false`.
+    Servers MAY choose to always return the value `0` if they never call the `on_ready` callback.
 
-    To clarify: **implementing `has_pending?` is semi-optional**, meaning that a server may choose to always return `false`, no matter the actual state of the socket's buffer.
+    Servers that return a value other than zero MUST call the `on_ready` callback when a call to `pending` would return the value `0`.
+
+    Servers that divide large messages into a number of smaller messages (implement message fragmentation) MAY count each fragment separately, as if the fragmentation was performed by the user and `write` was called more than once per message.
 
 The following keywords (both as method names and instance variable names) are reserved for the internal server implementations: `_c` and `_c_id`.
 
@@ -128,3 +130,76 @@ To clarify, an implicit `extend` doesn't require a namespace, while an explicit 
         The `on_close` callback will **not** be called while any other callback is running (`on_open`, `on_message`, `on_ready`, etc').
 
         The `on_ready` callback might be called concurrently with the `on_message` callback, allowing data to be sent even while other data is being processed. Multi-threading considerations may apply.
+
+## Example Usage
+
+The following is an example WebSocket echo server implemented using this specification:
+
+```ruby
+class WSConnection
+    def on_open
+        puts "WebSocket connection established."
+    end
+    def on_message(data)
+        write data
+        puts "on_ready MUST be implemented if #{ pending } != 0."
+    end
+    def on_ready
+        puts "Yap,on_ready is implemented."
+    end
+    def on_shutdown
+        write "The server is going away. Goodbye."
+    end
+    def on_close
+        puts "WebSocket connection closed."
+    end
+end
+
+module App
+   def self.call(env)
+       if(env['rack.upgrade?'.freeze] == :websocket)
+           env['rack.upgrade'.freeze] = WSConnection.new
+           return [0, {}, []]
+       end
+       return [200, {"Content-Length" => "12", "Content-Type" => "text/plain"}, ["Hello World!"]]
+   end
+end
+
+run App
+```
+
+The following is uses Push notifications for both WebSocket and SSE connections. The Pub/Sub API isn't part of this specification:
+
+```ruby
+class Chat
+    def initialize(nickname)
+        @nickname = nickname
+    end
+    def on_open
+        subscribe "chat"
+        publish "chat", "#{@nickname} joined the chat."
+    end
+    def on_message(data)
+        publish "chat", "#{@nickname}: #{data}"
+    end
+    def on_close
+        publish "chat", "#{@nickname}: left the chat."
+    end
+end
+
+module App
+   def self.call(env)
+       if(env['rack.upgrade?'.freeze])
+           nickname = env['PATH_INFO'][1..-1]
+           nickname = "Someone" if nickname == "".freeze
+           env['rack.upgrade'.freeze] = Chat.new(nickname)
+           return [0, {}, []]
+       end
+       return [200, {"Content-Length" => "12", "Content-Type" => "text/plain"}, ["Hello World!"]]
+   end
+end
+
+run App
+```
+
+Note that SSE connections will only be able to receive messages (the `on_message` callback is never called).
