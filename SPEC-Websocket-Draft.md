@@ -87,7 +87,7 @@ The server **MUST** extend the Callback Object's *class* using `extend`, so the 
 
     Servers that divide large messages into a number of smaller messages (implement message fragmentation) MAY count each fragment separately, as if the fragmentation was performed by the user and `write` was called more than once per message.
 
-The following keywords (both as method names and instance variable names) are reserved for the internal server implementations: `_c` and `_c_id`.
+The following keyword(s) (both as method names and instance variable names) is reserved for the internal server implementations: `_sock`.
 
 WebSocket `ping` / `pong`, timeouts and network considerations should be implemented by the server. It is **RECOMMENDED** (but not required) that the server send `ping`s to prevent connection timeouts and detect network failure.
 
