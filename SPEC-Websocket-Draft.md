@@ -47,15 +47,15 @@ The Callback Object should be a class (or an instance of such class) where **ins
 
     Servers **MAY**, optionally, implement a **recyclable buffer** for the `on_message` callback. However, this is optional and it is *not* required.
 
-* `on_ready()` **MAY** be called when the state of the out-going socket buffer changes from full to not full (data can be sent to the socket). **If** `has_pending?` returns `true`, the `on_ready` callback **MUST** be called once the buffer state changes.
+* `on_drained()` **MAY** be called when the the write buffer becomes empty. **If** `pending` returns a non-zero value, the `on_drained` callback **MUST** be called once the write buffer becomes empty.
 
 * `on_shutdown()` **MAY** be called during the server's graceful shutdown process, _before_ the connection is closed and in addition to the `on_close` function (which is called _after_ the connection is closed.
 
 * `on_close()` **MUST** be called _after_ the connection was closed for whatever reason (socket errors, parsing errors, timeouts, client disconnection, `close` being called, etc').
 
-* `on_open`, `on_ready`, `on_shutdown` and `on_close` shouldn't expect any arguments (`arity == 0`).
+* `on_open`, `on_drained`, `on_shutdown` and `on_close` shouldn't expect any arguments (`arity == 0`).
 
-The following method names are reserved for the network implementation: `write`, `close`, `open?` and `has_pending?`.
+The following method names are reserved for the network implementation: `write`, `close`, `open?` and `pending`.
 
 The server **MUST** extend the Callback Object's *class* using `extend`, so the Callback Object **inherits** the following methods (this approach promises applications could be server agnostic\*):
 
@@ -79,13 +79,13 @@ The server **MUST** extend the Callback Object's *class* using `extend`, so the 
 
 * `open?` returns the state of the connection. Servers **SOULD** set the method to return `true` if the connection is open and `false` if the connection is closed or marked to be closed.
 
-* `pending` SHOULD return the number of outgoing messages (calls to `write`) that need to be processed before the next time the `on_ready` callback is called.
+* `pending` SHOULD return the number of outgoing messages (calls to `write`) that need to be processed before the next time the `on_drained` callback is called\*.
 
-    Servers MAY choose to always return the value `0` if they never call the `on_ready` callback.
+    Servers MAY choose to always return the value `0` if they never call the `on_drained` callback.
 
-    Servers that return a value other than zero MUST call the `on_ready` callback when a call to `pending` would return the value `0`.
+    Servers that return a value other than zero MUST call the `on_drained` callback when a call to `pending` would return the value `0`.
 
-    Servers that divide large messages into a number of smaller messages (implement message fragmentation) MAY count each fragment separately, as if the fragmentation was performed by the user and `write` was called more than once per message.
+    \*Servers that divide large messages into a number of smaller messages (implement message fragmentation) MAY count each fragment separately, as if the fragmentation was performed by the user and `write` was called more than once per message.
 
 The following keyword(s) (both as method names and instance variable names) is reserved for the internal server implementations: `_sock`.
 
@@ -97,7 +97,11 @@ Server settings **MAY** (not required) be provided to allow for customization an
 
 To clarify, an implicit `extend` doesn't require a namespace, while an explicit `extend` does. By avoiding the requirement to explicitly extend the callback object, the application can be namespace agnostic.
 
-### Upgrading to WebSockets / EventSource
+---
+
+## Implementation Examples
+
+### Server-Client Upgrade to WebSockets / EventSource
 
 * **Server**:
 
@@ -127,9 +131,9 @@ To clarify, an implicit `extend` doesn't require a namespace, while an explicit 
 
         WebSocket messages shall be handled by the `on_message` callback in the same order in which they arrive and the `on_message` will **not** be executed concurrently for the same connection.
 
-        The `on_close` callback will **not** be called while any other callback is running (`on_open`, `on_message`, `on_ready`, etc').
+        The `on_close` callback will **not** be called while any other callback is running (`on_open`, `on_message`, `on_drained`, etc').
 
-        The `on_ready` callback might be called concurrently with the `on_message` callback, allowing data to be sent even while other data is being processed. Multi-threading considerations may apply.
+        The `on_drained` callback might be called concurrently with the `on_message` callback, allowing data to be sent even while other data is being processed. Multi-threading considerations may apply.
 
 ## Example Usage
 
@@ -142,10 +146,10 @@ class WSConnection
     end
     def on_message(data)
         write data
-        puts "on_ready MUST be implemented if #{ pending } != 0."
+        puts "on_drained MUST be implemented if #{ pending } != 0."
     end
-    def on_ready
-        puts "Yap,on_ready is implemented."
+    def on_drained
+        puts "Yap,on_drained is implemented."
     end
     def on_shutdown
         write "The server is going away. Goodbye."

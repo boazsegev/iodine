@@ -82,15 +82,15 @@ However, servers **MUST** support external pub/sub "engines" as described above,
 
 PubSubEngine objects **MUST** implement the following methods:
 
-* `subscribe(channel, is_pattern)` this method performs the subscription to the specified channel.
+* `subscribe(channel, as=nil)` this method performs the subscription to the specified channel.
 
-    If `is_pattern` is `true`, the channel subscription should use glob matching rather than exact match (same semantics as the Redis PSUBSCRIBE command).
+    If `as` is a Symbol that the engine recognizes (i.e., `:redis`, `:nats`, etc'), the engine should behave accordingly. i.e., the value `:redis` on a Redis engine will invoke the PSUBSCRIBE Redis command.
 
     The method must return `true` if a subscription was scheduled (or performed) or `false` if the subscription is known to fail.
 
     This method will be called by the server (for each registered engine). The engine may assume that the method would never be called directly by an application.
 
-* `unsubscribe(channel, is_pattern)` this method performs closes the subscription to the specified channel.
+* `unsubscribe(channel, as=nil)` this method performs closes the subscription to the specified channel.
 
     The method's semantics are similar to `subscribe`.
 
