@@ -38,8 +38,8 @@ class WSEcho
     puts "I'm shutting down #{self}"
   end
 
-  def on_ready
-    puts "on_ready called for #{self}"
+  def on_drained
+    puts "on_drained called for #{self}"
   end
 
   def on_message(data)

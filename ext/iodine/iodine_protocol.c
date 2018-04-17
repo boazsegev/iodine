@@ -76,6 +76,20 @@ static VALUE not_implemented(VALUE self) {
   return Qnil;
 }
 
+/** DEPRECATED! Please override {on_drained} instead. */
+static VALUE not_implemented_on_ready(VALUE self, VALUE data) {
+  (void)(self);
+  (void)(data);
+  return Qnil;
+}
+
+/** Override this callback to handle the event. */
+static VALUE not_implemented_drained(VALUE self) {
+  RubyCaller.call(self, rb_intern2("on_ready", 8));
+  (void)(self);
+  return Qnil;
+}
+
 /** Override this callback to handle the event. */
 static VALUE not_implemented2(VALUE self, VALUE data) {
   (void)(self);
@@ -401,7 +415,7 @@ static void dyn_protocol_on_data(intptr_t fduuid, protocol_s *protocol) {
 /** called when the socket is ready to be written to. */
 static void dyn_protocol_on_ready(intptr_t fduuid, protocol_s *protocol) {
   (void)(fduuid);
-  RubyCaller.call(dyn_prot(protocol)->handler, iodine_on_ready_func_id);
+  RubyCaller.call(dyn_prot(protocol)->handler, iodine_on_drained_func_id);
 }
 /** called when the server is shutting down,
  * but before closing the connection. */
@@ -650,7 +664,8 @@ void Iodine_init_protocol(void) {
   rb_define_method(IodineProtocol, "on_close", not_implemented, 0);
   rb_define_method(IodineProtocol, "on_message", not_implemented2, 1);
   rb_define_method(IodineProtocol, "on_data", default_on_data, 0);
-  rb_define_method(IodineProtocol, "on_ready", not_implemented, 0);
+  rb_define_method(IodineProtocol, "on_ready", not_implemented_on_ready, 0);
+  rb_define_method(IodineProtocol, "on_drained", not_implemented_drained, 0);
   rb_define_method(IodineProtocol, "on_shutdown", not_implemented, 0);
   rb_define_method(IodineProtocol, "ping", not_implemented_ping, 0);
 

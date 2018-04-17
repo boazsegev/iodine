@@ -312,7 +312,7 @@ static void ws_on_ready(ws_s *ws) {
   VALUE handler = get_handler(ws);
   if (!handler)
     return;
-  RubyCaller.call(handler, iodine_on_ready_func_id);
+  RubyCaller.call(handler, iodine_on_drained_func_id);
 }
 
 struct ws_on_data_args_s {
@@ -352,6 +352,19 @@ static VALUE empty_func(VALUE self) {
   return Qnil;
 }
 
+/**  Please implement your own callback for this event. */
+static VALUE empty_func_drained(VALUE self) {
+  RubyCaller.call(self, rb_intern2("on_ready", 8));
+  (void)(self);
+  return Qnil;
+}
+
+/** DEPRECATED! Please override {on_drained} instead. */
+static VALUE empty_func_on_ready(VALUE self) {
+  (void)(self);
+  return Qnil;
+}
+
 /* *****************************************************************************
 SSE Callbacks
 ***************************************************************************** */
@@ -380,7 +393,7 @@ static void iodine_sse_on_ready(http_sse_s *sse) {
   VALUE handler = (VALUE)sse->udata;
   if (!handler)
     return;
-  RubyCaller.call(handler, iodine_on_ready_func_id);
+  RubyCaller.call(handler, iodine_on_drained_func_id);
 }
 
 /**
@@ -497,9 +510,12 @@ void Iodine_init_websocket(void) {
 
   rb_define_method(IodineWebsocket, "on_shutdown", empty_func, 0);
   rb_define_method(IodineWebsocket, "on_close", empty_func, 0);
-  rb_define_method(IodineWebsocket, "on_ready", empty_func, 0);
+  rb_define_method(IodineWebsocket, "on_drained", empty_func_drained, 0);
   rb_define_method(IodineWebsocket, "write", iodine_ws_write, 1);
   rb_define_method(IodineWebsocket, "close", iodine_ws_close, 0);
+
+  /// Deprectaed!
+  rb_define_method(IodineWebsocket, "on_ready", empty_func_on_ready, 0);
 
   // rb_define_method(IodineWebsocket, "_c_id", iodine_ws_uuid, 0);
 
