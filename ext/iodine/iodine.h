@@ -49,7 +49,7 @@ extern ID iodine_on_close_func_id;
 extern ID iodine_on_data_func_id;
 extern ID iodine_on_message_func_id;
 extern ID iodine_on_open_func_id;
-extern ID iodine_on_ready_func_id;
+extern ID iodine_on_drained_func_id;
 extern ID iodine_on_shutdown_func_id;
 extern ID iodine_ping_func_id;
 extern ID iodine_timeout_var_id;

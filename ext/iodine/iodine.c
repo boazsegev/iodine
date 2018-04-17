@@ -33,7 +33,7 @@ ID iodine_new_func_id;
 ID iodine_on_open_func_id;
 ID iodine_on_message_func_id;
 ID iodine_on_data_func_id;
-ID iodine_on_ready_func_id;
+ID iodine_on_drained_func_id;
 ID iodine_on_shutdown_func_id;
 ID iodine_on_close_func_id;
 ID iodine_ping_func_id;
@@ -294,10 +294,10 @@ static VALUE iodine_start(VALUE self) {
   if (rb_const_defined(rb_cObject, rb_intern("Rack"))) {
     VALUE rack = rb_const_get(rb_cObject, rb_intern("Rack"));
     if (rack != Qnil) {
-      if (rb_const_defined(rack, rb_intern("Push"))) {
-        rb_const_remove(rack, rb_intern("Push"));
+      if (rb_const_defined(rack, rb_intern("PubSub"))) {
+        rb_const_remove(rack, rb_intern("PubSub"));
       }
-      rb_const_set(rack, rb_intern("Push"), Iodine);
+      rb_const_set(rack, rb_intern("PubSub"), Iodine);
     }
   }
   /* for the special Iodine::Rack object and backwards compatibility */
@@ -369,7 +369,7 @@ void Init_iodine(void) {
   iodine_on_data_func_id = rb_intern("on_data");
   iodine_on_message_func_id = rb_intern("on_message");
   iodine_on_open_func_id = rb_intern("on_open");
-  iodine_on_ready_func_id = rb_intern("on_ready");
+  iodine_on_drained_func_id = rb_intern("on_drained");
   iodine_on_shutdown_func_id = rb_intern("on_shutdown");
   iodine_ping_func_id = rb_intern("ping");
   iodine_timeout_var_id = rb_intern("@timeout");
