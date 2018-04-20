@@ -95,6 +95,7 @@ static VALUE iodine_engine_register2(VALUE self, VALUE engine) {
   Registry.add(engine);
   Data_Get_Struct(engine, iodine_engine_s, e);
   if (e->p) {
+    e->handler = engine;
     pubsub_engine_register(e->p);
     return Qtrue;
   }
@@ -143,6 +144,7 @@ static VALUE iodine_engine_reset2(VALUE self, VALUE engine) {
   iodine_engine_s *e;
   Data_Get_Struct(engine, iodine_engine_s, e);
   if (e->p) {
+    e->handler = engine;
     pubsub_engine_resubscribe(e->p);
     return Qtrue;
   }
@@ -886,11 +888,10 @@ void Iodine_init_pubsub(void) {
   rb_define_method(IodineEngine, "deregister", iodine_engine_deregister, 0);
   rb_define_method(IodineEngine, "reset", iodine_engine_reset, 0);
 
+  rb_define_module_function(Iodine, "subscribe", iodine_subscribe_global, -1);
+  rb_define_module_function(Iodine, "publish", iodine_publish, -1);
   rb_define_module_function(Iodine, "default_engine=", ips_set_default, 1);
   rb_define_module_function(Iodine, "default_engine", ips_get_default, 0);
-
-  rb_define_module_function(Iodine, "default_pubsub=", ips_set_default_dep, 1);
-  rb_define_module_function(Iodine, "default_pubsub", ips_get_default_dep, 0);
 
   rb_define_module_function(IodinePubSub, "default_engine=", ips_set_default,
                             1);
@@ -899,8 +900,14 @@ void Iodine_init_pubsub(void) {
   rb_define_method(IodinePubSub, "deregister", iodine_engine_deregister2, 1);
   rb_define_method(IodinePubSub, "reset", iodine_engine_reset2, 1);
 
-  rb_define_module_function(Iodine, "subscribe", iodine_subscribe_global, -1);
-  rb_define_module_function(Iodine, "publish", iodine_publish, -1);
+  rb_define_module_function(IodinePubSub, "subscribe", iodine_subscribe_global,
+                            -1);
+  rb_define_module_function(IodinePubSub, "publish", iodine_publish, -1);
+
+  /* deprecated */
+
+  rb_define_module_function(Iodine, "default_pubsub=", ips_set_default_dep, 1);
+  rb_define_module_function(Iodine, "default_pubsub", ips_get_default_dep, 0);
 
   /* *************************
   Initialize C pubsub engines
