@@ -23,7 +23,6 @@ typedef struct {
   VALUE obj;
   int argc;
   VALUE *argv;
-  VALUE returned;
   ID method;
   int exception;
 } iodine_rb_task_s;
@@ -130,8 +129,9 @@ static VALUE iodin_rb_call_arg(VALUE obj, ID method, int argc, VALUE *argv) {
                            .argc = argc,
                            .argv = argv};
   void *ret;
-  if (in_gvl)
-    return (VALUE)rb_funcall2(obj, method, argc, argv);
+  if (in_gvl) {
+    return (VALUE)iodine_protected_call(&task);
+  }
   in_gvl = 1;
   ret = rb_thread_call_with_gvl(iodine_protected_call, &task);
   in_gvl = 0;
