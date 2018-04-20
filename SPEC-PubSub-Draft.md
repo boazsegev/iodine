@@ -60,19 +60,23 @@ Conforming Pub/Sub implementations **MUST** extend the WebSocket and SSE callbac
 
 Implementations **MUST** implement the following methods:
 
-* `Rack::PubSub.pubsub_register(engine)` where `engine` is a PubSubEngine object as described in this specification.
+* `Rack::PubSub.register(engine)` where `engine` is a PubSubEngine object as described in this specification.
 
     When a pub/sub engine is registered, the implementation **MUST** inform the engine of any existing or future subscriptions.
 
     The implementation **MUST** call the engine's `subscribe` callback for each existing (and future) subscription.
 
-* `Rack::PubSub.pubsub_default = engine` sets a default pub/sub engine, where `engine` is a PubSubEngine object as described in this specification.
+* `Rack::PubSub.deregister(engine)` where `engine` is a PubSubEngine object as described in this specification.
+
+    Removes an engine from the pub/sub registration. The opposit of 
+
+* `Rack::PubSub.default_engine = engine` sets a default pub/sub engine, where `engine` is a PubSubEngine object as described in this specification.
 
     Implementations **MUST** forward any `publish` method calls to the default pub/sub engine.
 
-* `Rack::PubSub.pubsub_default` returns the current default pub/sub engine, where the engine is a PubSubEngine object as described in this specification.
+* `Rack::PubSub.default_engine` returns the current default pub/sub engine, where the engine is a PubSubEngine object as described in this specification.
 
-* `Rack::PubSub.pubsub_reset(engine)` where `engine` is a PubSubEngine object as described in this specification.
+* `Rack::PubSub.reset(engine)` where `engine` is a PubSubEngine object as described in this specification.
 
     Implementations **MUST** behave as if the engine was newly registered and (re)inform the engine of any existing subscriptions by calling engine's `subscribe` callback for each existing subscription.
 
