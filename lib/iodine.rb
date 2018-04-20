@@ -70,7 +70,7 @@ require 'iodine/iodine'
 #
 # * {Iodine.subscribe} subscribes the process to a channel (which might be different than a connection's subscription, see {Iodine::Websocket}).
 # * {Iodine.publish} publishes a message to a Pub/Sub channel. The message will be sent to all subscribers - connections, other processes in the cluster and possibly other machines (when using an engine such as {Iodine::PubSub::RedisEngine}).
-# * {Iodine.default_pubsub=}, {Iodine.default_pubsub} sets or gets the default Pub/Sub {Iodine::PubSub::Engine}. i.e., when set to a new {Iodine::PubSub::RedisEngine} instance, all Pub/Sub method calls will use the Redis engine (unless explicitly requiring a different engine).
+# * {Iodine::PubSub.default_engine=}, {Iodine::PubSub.default_engine} sets or gets the default Pub/Sub {Iodine::PubSub::Engine}. i.e., when set to a new {Iodine::PubSub::RedisEngine} instance, all Pub/Sub method calls will use the Redis engine (unless explicitly requiring a different engine).
 #
 # {Iodine::Websocket} objects have a seperate Pub/Sub implementation that manages the subscription's lifetime to match the connection's lifetime and allows direct client Pub/Sub (forwards the message to the client directly without invoking the Ruby interpreter).
 #
@@ -205,7 +205,7 @@ module Iodine
     end
   end
 
-  self.default_pubsub = ::Iodine::PubSub::CLUSTER
+  ::Iodine::PubSub.default_engine = ::Iodine::PubSub::CLUSTER
 end
 
 if(!defined?(after_fork))
