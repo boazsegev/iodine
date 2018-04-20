@@ -83,6 +83,83 @@ static VALUE engine_pub_placeholder(VALUE self, VALUE channel, VALUE msg) {
 }
 
 /* *****************************************************************************
+Engine registration and resetting
+***************************************************************************** */
+
+/**
+This method adds the engine to the pub/sub system, allowing it to recieve system
+wide notifications.
+*/
+static VALUE iodine_engine_register2(VALUE self, VALUE engine) {
+  iodine_engine_s *e;
+  Registry.add(engine);
+  Data_Get_Struct(engine, iodine_engine_s, e);
+  if (e->p) {
+    pubsub_engine_register(e->p);
+    return Qtrue;
+  }
+  return Qfalse;
+  (void)self;
+  (void)engine;
+}
+
+/**
+This method adds the engine to the pub/sub system, allowing it to recieve system
+wide notifications.
+*/
+static VALUE iodine_engine_register(VALUE self) {
+  return iodine_engine_register2(self, self);
+}
+
+/**
+This method removes the engine from the pub/sub system.
+*/
+static VALUE iodine_engine_deregister2(VALUE self, VALUE engine) {
+  iodine_engine_s *e;
+  Data_Get_Struct(engine, iodine_engine_s, e);
+  if (e->p) {
+    pubsub_engine_deregister(e->p);
+    Registry.remove(engine);
+    return Qtrue;
+  }
+  Registry.remove(engine);
+  return Qfalse;
+  (void)self;
+  (void)engine;
+}
+
+/**
+This method removes the engine from the pub/sub system.
+*/
+static VALUE iodine_engine_deregister(VALUE self) {
+  return iodine_engine_deregister2(self, self);
+}
+
+/**
+This method resets the engine, (re)sending all the current subscription data as
+if the {register} method was just called.
+*/
+static VALUE iodine_engine_reset2(VALUE self, VALUE engine) {
+  iodine_engine_s *e;
+  Data_Get_Struct(engine, iodine_engine_s, e);
+  if (e->p) {
+    pubsub_engine_resubscribe(e->p);
+    return Qtrue;
+  }
+  return Qfalse;
+  (void)self;
+  (void)engine;
+}
+
+/**
+This method resets the engine, (re)sending all the current subscription data as
+if the {register} method was just called.
+*/
+static VALUE iodine_engine_reset(VALUE self) {
+  return iodine_engine_reset2(self, self);
+}
+
+/* *****************************************************************************
 Ruby Subscription Object
 ***************************************************************************** */
 typedef struct {
@@ -274,7 +351,7 @@ static VALUE engine_alloc_c(VALUE self) {
   iodine_engine_s *eng = malloc(sizeof(*eng));
   if (TYPE(self) == T_CLASS)
     *eng = (iodine_engine_s){
-        .handler = self,
+        .handler = (VALUE)0,
         .engine =
             {
                 .subscribe = engine_subscribe,
@@ -290,6 +367,9 @@ static VALUE engine_alloc_c(VALUE self) {
 static VALUE engine_initialize(VALUE self) {
   iodine_engine_s *engine;
   Data_Get_Struct(self, iodine_engine_s, engine);
+  if (TYPE(self) == T_CLASS) {
+    fprintf(stderr, "This sucks...\n");
+  }
   engine->handler = self;
   return self;
 }
@@ -449,9 +529,17 @@ static VALUE ips_set_default(VALUE self, VALUE en) {
     rb_raise(rb_eArgError, "deafult engine must be an Iodine::PubSub::Engine.");
   if (!e->p)
     rb_raise(rb_eArgError, "This Iodine::PubSub::Engine is broken.");
-  rb_ivar_set(self, default_pubsubid, en);
+  rb_ivar_set(Iodine, default_pubsubid, en);
   PUBSUB_DEFAULT_ENGINE = e->p;
   return en;
+  (void)self;
+}
+
+/** Deprecated. Use {Iodine::PubSub.default_engine=}. */
+static VALUE ips_set_default_dep(VALUE self, VALUE en) {
+  fprintf(stderr, "WARNING: Iodine.default_pubsub is deprecated. Use "
+                  "Iodine::PubSub.default_engine.\n");
+  return ips_set_default(self, en);
 }
 
 /**
@@ -460,7 +548,17 @@ Returns the default Pub/Sub engine (if any).
 See {Iodine::PubSub} and {Iodine::PubSub::Engine} for more details.
 */
 static VALUE ips_get_default(VALUE self) {
-  return rb_ivar_get(self, default_pubsubid);
+  return rb_ivar_get(Iodine, default_pubsubid);
+  (void)self;
+}
+
+/**
+Deprecated. Use {Iodine::PubSub.default_engine}.
+*/
+static VALUE ips_get_default_dep(VALUE self) {
+  fprintf(stderr, "WARNING: Iodine.default_pubsub is deprecated. Use "
+                  "Iodine::PubSub.default_engine.\n");
+  return ips_get_default(self);
 }
 
 /* *****************************************************************************
@@ -784,9 +882,22 @@ void Iodine_init_pubsub(void) {
   rb_define_method(IodineEngine, "subscribe", engine_sub_placeholder, 2);
   rb_define_method(IodineEngine, "unsubscribe", engine_sub_placeholder, 2);
   rb_define_method(IodineEngine, "publish", engine_pub_placeholder, 2);
+  rb_define_method(IodineEngine, "register", iodine_engine_register, 0);
+  rb_define_method(IodineEngine, "deregister", iodine_engine_deregister, 0);
+  rb_define_method(IodineEngine, "reset", iodine_engine_reset, 0);
 
-  rb_define_module_function(Iodine, "default_pubsub=", ips_set_default, 1);
-  rb_define_module_function(Iodine, "default_pubsub", ips_get_default, 0);
+  rb_define_module_function(Iodine, "default_engine=", ips_set_default, 1);
+  rb_define_module_function(Iodine, "default_engine", ips_get_default, 0);
+
+  rb_define_module_function(Iodine, "default_pubsub=", ips_set_default_dep, 1);
+  rb_define_module_function(Iodine, "default_pubsub", ips_get_default_dep, 0);
+
+  rb_define_module_function(IodinePubSub, "default_engine=", ips_set_default,
+                            1);
+  rb_define_module_function(IodinePubSub, "default_engine", ips_get_default, 0);
+  rb_define_method(IodinePubSub, "register", iodine_engine_register2, 1);
+  rb_define_method(IodinePubSub, "deregister", iodine_engine_deregister2, 1);
+  rb_define_method(IodinePubSub, "reset", iodine_engine_reset2, 1);
 
   rb_define_module_function(Iodine, "subscribe", iodine_subscribe_global, -1);
   rb_define_module_function(Iodine, "publish", iodine_publish, -1);
