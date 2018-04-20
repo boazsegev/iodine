@@ -11,7 +11,7 @@ class PubSubReporter < Iodine::PubSub::Engine
     # register engine and make it into the new default
     @target = Iodine::PubSub.default_engine
     Iodine::PubSub.default_engine = self
-    register
+    Iodine::PubSub.register self
   end
   def subscribe to, as = nil
     puts "* Subscribing to \"#{to}\" (#{as || "exact match"})"
