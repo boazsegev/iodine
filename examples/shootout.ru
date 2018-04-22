@@ -30,11 +30,11 @@ class ShootoutApp
   # It's slower than writing to every socket a pre-parsed message, but it's closer
   # to real-life implementations.
   def on_open
-    subscribe channel: "shootout"
+    subscribe :shootout
   end
   def on_message data
     if data[0] == 'b' # binary
-      publish(channel: "shootout", message: data)
+      publish :shootout, data
       data[0] = 'r'
       write data
       return
@@ -45,7 +45,7 @@ class ShootoutApp
     else
       # data = {type: 'broadcast', payload: payload}.to_json
       # broadcast :push2client, data
-      publish(channel: "shootout", message: ({type: 'broadcast', payload: payload}.to_json))
+      publish :shootout, {type: 'broadcast', payload: payload}.to_json
       write({type: "broadcastResult", payload: payload}.to_json)
     end
   rescue
