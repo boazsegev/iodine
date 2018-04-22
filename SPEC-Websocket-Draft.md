@@ -1,10 +1,6 @@
 ### Draft State
 
-This proposed draft is only implemented by Iodine and hadn't seen external activity in a long while.
-
-Even though a number of other development teams (such as the teams for the Puma and Passenger server) mentioned that they plan to implements this draft, Iodine seems to be the only server currently implementing this draft at the moment.
-
-I am also discussing a variation of this draft to be implemented by [the Agoo server](https://github.com/ohler55/agoo).
+I am currently discussing a variation of this draft to be implemented by [the Agoo server](https://github.com/ohler55/agoo).
 
 ---
 ## Purpose
@@ -20,6 +16,8 @@ The purpose of these specifications is:
 2. To Support “native" (server-side) WebSocket and EventSource (SSE) connections and using application side callbacks.
 
     Simply put, to make it easy for applications to accept WebSocket and EventSource (SSE) connections from WebSocket and EventSource clients (commonly browsers).
+
+3. Allow applications to use WebSocket and EventSource (SSE) on HTTP/2 servers. Note: current `hijack` practices will break network connections when attempting to implement EventSource (SSE).
 
 ## Rack WebSockets / EventSource
 
@@ -47,7 +45,7 @@ The Callback Object should be a class (or an instance of such class) where **ins
 
     Servers **MAY**, optionally, implement a **recyclable buffer** for the `on_message` callback. However, this is optional and it is *not* required.
 
-* `on_drained()` **MAY** be called when the the write buffer becomes empty. **If** `pending` returns a non-zero value, the `on_drained` callback **MUST** be called once the write buffer becomes empty.
+* `on_drained()` **MAY** be called when the the `write` buffer becomes empty. **If** `pending` returns a non-zero value, the `on_drained` callback **MUST** be called once the write buffer becomes empty.
 
 * `on_shutdown()` **MAY** be called during the server's graceful shutdown process, _before_ the connection is closed and in addition to the `on_close` function (which is called _after_ the connection is closed.
 
@@ -77,11 +75,11 @@ The server **MUST** extend the Callback Object's *class* using `extend`, so the 
 
     `close` shall always return `nil`.
 
-* `open?` returns the state of the connection. Servers **SOULD** set the method to return `true` if the connection is open and `false` if the connection is closed or marked to be closed.
+* `open?` returns the state of the connection. Servers **MUST** set the method to return `true` if the connection is open and `false` if the connection is closed or marked to be closed.
 
-* `pending` SHOULD return the number of outgoing messages (calls to `write`) that need to be processed before the next time the `on_drained` callback is called\*.
+* `pending` **MUST** return the number of outgoing messages (calls to `write`) that need to be processed before the next time the `on_drained` callback is called\*.
 
-    Servers MAY choose to always return the value `0` if they never call the `on_drained` callback.
+    Servers **MAY** choose to always return the value `0` if they never call the `on_drained` callback.
 
     Servers that return a value other than zero MUST call the `on_drained` callback when a call to `pending` would return the value `0`.
 
@@ -117,7 +115,7 @@ To clarify, an implicit `extend` doesn't require a namespace, while an explicit 
 
     1. The server will review the `env` Hash *before* sending the response. If the `env['rack.upgrade']` was set, the server will perform the upgrade.
 
-        If the callback handler is a Class object, the server will create a new instance of that class.
+        **If the callback handler is a Class object, the server will create a new instance of that class**.
 
     2. The server will send the correct response status and headers, as well as any headers present in the response object. The server will also perform any required housekeeping, such as closing the response body, if it exists.
 
