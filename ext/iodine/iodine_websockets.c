@@ -20,6 +20,7 @@ Core helpers and data
 static VALUE IodineWebsocket; // The Iodine::Http::Websocket class
 static ID ws_var_id;          // id for websocket pointer
 static ID dup_func_id;        // id for the buffer.dup method
+static ID iodine_on_ready_id; // id for the on_ready method
 
 #define set_uuid(object, uuid)                                                 \
   rb_ivar_set((object), iodine_fd_var_id, ULONG2NUM((uuid)))
@@ -354,7 +355,7 @@ static VALUE empty_func(VALUE self) {
 
 /**  Please implement your own callback for this event. */
 static VALUE empty_func_drained(VALUE self) {
-  RubyCaller.call(self, rb_intern2("on_ready", 8));
+  RubyCaller.call(self, iodine_on_ready_id);
   (void)(self);
   return Qnil;
 }
@@ -447,8 +448,10 @@ static VALUE iodine_prep_ws_handler(VALUE handler) {
     handler = RubyCaller.call(handler, iodine_new_func_id);
     if (handler == Qnil || handler == Qfalse)
       return Qnil;
+    Registry.add(handler);
     // check that we created a handler
   } else {
+    Registry.add(handler);
     // include the Protocol module in the object's class
     VALUE p_class = rb_obj_class(handler);
     rb_include_module(p_class, IodineWebsocket);
@@ -462,7 +465,6 @@ void iodine_upgrade_websocket(http_s *h, VALUE handler) {
   handler = iodine_prep_ws_handler(handler);
   if (handler == Qnil)
     goto failed;
-  Registry.add(handler);
   // send upgrade response and set new protocol
   http_upgrade2ws(.http = h, .udata = (void *)handler, .on_close = ws_on_close,
                   .on_open = ws_on_open, .on_shutdown = ws_on_shutdown,
@@ -478,7 +480,6 @@ void iodine_upgrade_sse(http_s *h, VALUE handler) {
   handler = iodine_prep_ws_handler(handler);
   if (handler == Qnil)
     goto failed;
-  Registry.add(handler);
   // send upgrade response and set new protocol
   http_upgrade2sse(h, .udata = (void *)handler, .on_open = iodine_sse_on_open,
                    .on_ready = iodine_sse_on_ready,
@@ -498,6 +499,7 @@ void Iodine_init_websocket(void) {
   // get IDs and data that's used often
   ws_var_id = rb_intern("iodine_ws_ptr"); // when upgrading
   dup_func_id = rb_intern("dup");         // when upgrading
+  iodine_on_ready_id = rb_intern2("on_ready", 8);
 
   // the Ruby websockets protocol class.
   IodineWebsocket = rb_define_module_under(Iodine, "Websocket");
