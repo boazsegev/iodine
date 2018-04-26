@@ -233,6 +233,11 @@ static void *srv_start_no_gvl(void *s_) {
   sock_io_thread = 1;
   defer(iodine_start_io_thread, NULL, NULL);
   fprintf(stderr, "\n");
+  if (s->processes == 1 || (s->processes == 0 && s->threads > 0)) {
+    /* single worker */
+    RubyCaller.call(Iodine, rb_intern("before_fork"));
+    RubyCaller.call(Iodine, rb_intern("after_fork"));
+  }
   facil_run(.threads = s->threads, .processes = s->processes,
             .on_idle = iodine_on_idle, .on_finish = iodine_join_io_thread);
   return NULL;
