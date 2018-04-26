@@ -571,9 +571,17 @@ iodine_perform_handle_action(iodine_http_request_handle_s handle) {
     break;
   }
   case IODINE_HTTP_XSENDFILE: {
+    /* remove chunked content-encoding header, if any (Rack issue #1266) */
+    if (fiobj_obj2cstr(
+            fiobj_hash_get2(handle.h->private_data.out_headers,
+                            fiobj_obj2hash(HTTP_HEADER_CONTENT_ENCODING)))
+            .len == 7)
+      fiobj_hash_delete2(handle.h->private_data.out_headers,
+                         fiobj_obj2hash(HTTP_HEADER_CONTENT_ENCODING));
     fio_cstr_s data = fiobj_obj2cstr(handle.body);
-    if (http_sendfile2(handle.h, data.data, data.len, NULL, 0))
+    if (http_sendfile2(handle.h, data.data, data.len, NULL, 0)) {
       http_send_error(handle.h, 404);
+    }
     fiobj_free(handle.body);
     break;
   }
