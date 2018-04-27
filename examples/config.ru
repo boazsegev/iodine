@@ -1,12 +1,12 @@
-# This is a Websocket echo application.
+# This is a WebSocket / SSE notification broadcasting application.
 #
-# Running this application from the command line is eacy with:
+# Running this application from the command line is easy with:
 #
-#      iodine hello.ru
+#      iodine
 #
 # Or, in single thread and single process:
 #
-#      iodine -t 1 -w 1 hello.ru
+#      iodine -t 1 -w 1
 #
 # Benchmark with `ab` or `wrk` (a 5 seconds benchmark with 2000 concurrent clients):
 #
@@ -18,16 +18,16 @@
 module MyHTTPRouter
   # This is the HTTP response object according to the Rack specification.
   HTTP_RESPONSE = [200, { 'Content-Type' => 'text/html',
-          'Content-Length' => '32' },
-   ['Please connect using websockets.']]
+          'Content-Length' => '77' },
+   ['Please connect using WebSockets or SSE (send messages only using WebSockets).']]
 
-   WS_RESPONSE = [0, {}, []].freeze
+  WS_RESPONSE = [0, {}, []].freeze
 
    # this is function will be called by the Rack server (iodine) for every request.
    def self.call env
-     # check if this is an upgrade request.
-     if(env['upgrade.websocket?'.freeze])
-       env['upgrade.websocket'.freeze] = WebsocketEcho
+     # check if this is an upgrade request (WebsSocket / SSE).
+     if(env['rack.upgrade?'.freeze])
+       env['rack.upgrade'.freeze] = BroadcastClient
        return WS_RESPONSE
      end
      # simply return the RESPONSE object, no matter what request was received.
@@ -36,10 +36,10 @@ module MyHTTPRouter
 end
 
 # A simple Websocket Callback Object.
-class WebsocketEcho
+class BroadcastClient
   # seng a message to new clients.
   def on_open
-    write "Echo service initiated."
+    subscribe :broadcast
   end
   # send a message, letting the client know the server is suggunt down.
   def on_shutdown
@@ -47,13 +47,9 @@ class WebsocketEcho
   end
   # perform the echo
   def on_message data
-    write data
+    publish :broadcast, data
   end
 end
-
-# if defined?(Iodine)
-#   Iodine.run_every(2000) { Iodine::Base.db_print_registry }
-# end
 
 # this function call links our HelloWorld application with Rack
 run MyHTTPRouter

@@ -7,9 +7,16 @@ require 'json'
 class ShootoutApp
   # the default HTTP response
   def self.call(env)
-    if env['upgrade.websocket?'.freeze] # && env['HTTP_UPGRADE'.freeze] =~ /websocket/i
-      env['upgrade.websocket'.freeze] = ShootoutApp.new
-      return [0, {}, []]
+    if(Iodine::VERSION >= "0.5.0")
+       if(env['rack.upgrade?'.freeze] == :websocket)
+        env['rack.upgrade'.freeze] = ShootoutApp.new
+        return [0, {}, []]
+      end
+    else
+       if(env['upgrade.websocket?'.freeze])
+        env['upgrade.websocket'.freeze] = ShootoutApp.new
+        return [0, {}, []]
+      end
     end
     out = []
     len = 0
@@ -30,11 +37,19 @@ class ShootoutApp
   # It's slower than writing to every socket a pre-parsed message, but it's closer
   # to real-life implementations.
   def on_open
-    subscribe :shootout
+    if(Iodine::VERSION >= "0.5.0")
+      subscribe :shootout, as: :binary
+    else
+      subscribe channel: :shootout
+    end
   end
   def on_message data
     if data[0] == 'b' # binary
-      publish :shootout, data
+      if(Iodine::VERSION >= "0.5.0")
+        publish :shootout, data
+      else
+        publish channel: :shootout, message: data
+      end
       data[0] = 'r'
       write data
       return
@@ -45,7 +60,11 @@ class ShootoutApp
     else
       # data = {type: 'broadcast', payload: payload}.to_json
       # broadcast :push2client, data
-      publish :shootout, {type: 'broadcast', payload: payload}.to_json
+      if(Iodine::VERSION >= "0.5.0")
+        publish :shootout, {type: 'broadcast', payload: payload}.to_json
+      else
+        publish channel: :shootout, message: {type: 'broadcast', payload: payload}.to_json
+      end
       write({type: "broadcastResult", payload: payload}.to_json)
     end
   rescue

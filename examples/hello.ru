@@ -1,6 +1,6 @@
 # This is a simple Hello World Rack application
 #
-# Running this application from the command line is eacy with:
+# Running this application from the command line is easy with:
 #
 #      iodine hello.ru
 #
