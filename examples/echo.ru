@@ -1,12 +1,12 @@
 # This is a Websocket echo application.
 #
-# Running this application from the command line is eacy with:
+# Running this application from the command line is easy with:
 #
-#      iodine hello.ru
+#      iodine echo.ru
 #
 # Or, in single thread and single process:
 #
-#      iodine -t 1 -w 1 hello.ru
+#      iodine -t 1 -w 1 echo.ru
 #
 # Benchmark with `ab` or `wrk` (a 5 seconds benchmark with 2000 concurrent clients):
 #
@@ -29,8 +29,8 @@ module MyHTTPRouter
    # this is function will be called by the Rack server (iodine) for every request.
    def self.call env
      # check if this is an upgrade request.
-     if(env['upgrade.websocket?'.freeze])
-       env['upgrade.websocket'.freeze] = WebsocketEcho
+     if(env['rack.upgrade?'.freeze] == :websocket)
+       env['rack.upgrade'.freeze] = WebsocketEcho
        return WS_RESPONSE
      end
      # simply return the RESPONSE object, no matter what request was received.
@@ -42,7 +42,6 @@ end
 class WebsocketEcho
   # seng a message to new clients.
   def on_open
-    p self
     write "Welcome to our echo service!"
   end
   # send a message, letting the client know the server is suggunt down.
