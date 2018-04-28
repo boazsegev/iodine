@@ -1,25 +1,29 @@
 # Iodine limits and settings
 
-I will, at some point, document these... here's a few things:
+I will, at some point, document these... here's the key points:
 
-## HTTP/1.x limits
-
-* HTTP Headers have a ~16Kb total size limit.
+## HTTP limits
 
 * Uploads are adjustable and limited to ~50Mib by default.
 
-* HTTP keep-alive is adjustable and set to ~5 seconds by default.
+* HTTP connection timeout (keep-alive) is adjustable and set to ~60 seconds by default.
+
+* HTTP total header size is adjustable and limited to ~32Kib by default.
+
+* HTTP header line length size is limited to a hard-coded limit of 8Kb.
+
+* HTTP headers count is limited to a hard-coded limit of 128 headers.
 
 ## Websocket
 
 * Incoming Websocket message size limits are adjustable and limited to ~250Kib by default.
 
+## EventSource / SSE
+
+* Iodine will automatically attempt to send a `ping` event instead of disconnecting the connection. The ping interval is the same as the HTTP connection timeout interval.
+
 ## Pub/Sub
 
-* Channel names are binary safe, but limited to 1024 characters (even though Redis doesn't seem to limit channel name length).
-
-    Iodine uses a [trie](https://en.wikipedia.org/wiki/Trie) to match channel names. A trie offers binary exact matching with a fast lookup (unlike hash lookups, this offers zero name collision risk). However, it also means that channel names are memory **expensive**.
-
-    As a side effect, sequencial channel names have an advantage over random channel names.
+* Channel names are binary safe and unlimited in length - do NOT allow clients to dictate the channel name (as they might use extremely long names and cause resource starvation).
 
 * Pub/sub is limited to the process cluster. To use pub/sub with an external service (such as Redis) an "Engine" is required (see YARD documentation).

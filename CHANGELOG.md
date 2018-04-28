@@ -14,9 +14,9 @@ Iodine 0.5.0 is a stability oriented release. It also supports the updated Rack 
 
 Deprecated the `each` function family in favor of the more scalable pub/sub approach.
 
-Moved the HTTP network layer outside of the GIL, more robust pub/sub (using Unix Sockets instead of pipes) and more.
+Moved the HTTP network layer outside of the GIL, more robust pub/sub (using Unix Sockets instead of pipes), hot restart (in cluster mode) and more.
 
-Larger header support. The total headers length now defaults to 32Kb, but can be adjusted. A hard coded length limit of 4Kb per header line is still enforced (to minimize network buffer).
+Larger header support. The total headers length now defaults to 32Kb, but can be adjusted. A hard coded length limit of 8Kb per header line is still enforced (to minimize network buffer).
 
 Improved concurrency and energy consumption (idling CPU cycles reduced).
 
