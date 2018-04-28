@@ -44,7 +44,7 @@ inline static ws_s *get_ws(VALUE obj) {
 #define get_handler(ws) ((VALUE)websocket_udata((ws_s *)(ws)))
 
 /* *****************************************************************************
-Websocket Ruby API
+SSE / Websocket Ruby API
 ***************************************************************************** */
 
 /** Closes the websocket connection. The connection is only closed after
@@ -120,12 +120,12 @@ static VALUE iodine_ws_write(VALUE self, VALUE data) {
 }
 
 /**
-Returns a weak indication as to the state of the socket's buffer. If the server
-has data in the buffer that wasn't written to the socket, `has_pending?` will
-return `true`, otherwise `false` will be returned.
+Returns the number of pending writes or -1 if the connection is closed
 */
 static VALUE iodine_ws_has_pending(VALUE self) {
   intptr_t uuid = get_uuid(self);
+  if (!uuid || sock_isclosed(uuid))
+    return INT2NUM(-1);
   return SIZET2NUM(sock_pending(uuid));
 }
 
@@ -134,6 +134,15 @@ Returns true is the connection is open, false if it isn't.
 */
 static VALUE iodine_ws_is_open(VALUE self) {
   intptr_t uuid = get_uuid(self);
+  if (uuid && sock_isvalid(uuid))
+    return Qtrue;
+  return Qfalse;
+}
+
+/** Returns a local (per process) unique identifier for the conection. */
+static VALUE iodine_ws_uuid(VALUE self) {
+  intptr_t uuid = get_uuid(self);
+  return ULL2NUM(uuid);
   if (uuid && sock_isvalid(uuid))
     return Qtrue;
   return Qfalse;
@@ -519,7 +528,8 @@ void Iodine_init_websocket(void) {
   /// Deprectaed!
   rb_define_method(IodineWebsocket, "on_ready", empty_func_on_ready, 0);
 
-  // rb_define_method(IodineWebsocket, "_c_id", iodine_ws_uuid, 0);
+  rb_define_method(IodineWebsocket, "_cid", iodine_ws_uuid, 0);
+  rb_define_method(IodineWebsocket, "_sock", iodine_ws_uuid, 0);
 
   rb_define_method(IodineWebsocket, "pending", iodine_ws_has_pending, 0);
   rb_define_method(IodineWebsocket, "open?", iodine_ws_is_open, 0);

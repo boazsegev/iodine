@@ -77,15 +77,15 @@ The server **MUST** extend the Callback Object's *class* using `extend`, so the 
 
 * `open?` returns the state of the connection. Servers **MUST** set the method to return `true` if the connection is open and `false` if the connection is closed or marked to be closed.
 
-* `pending` **MUST** return the number of outgoing messages (calls to `write`) that need to be processed before the next time the `on_drained` callback is called\*.
+* `pending` **MUST** return -1 if the connection is closed or the number of pending writes (calls to `write`) that need to be processed before the next time the `on_drained` callback is called\*.
 
-    Servers **MAY** choose to always return the value `0` if they never call the `on_drained` callback.
+    Servers **MAY** choose to always return the value `0` if they never call the `on_drained` callback and the connection is open.
 
-    Servers that return a value other than zero MUST call the `on_drained` callback when a call to `pending` would return the value `0`.
+    Servers that return a positive number MUST call the `on_drained` callback when a call to `pending` would return the value `0`.
 
     \*Servers that divide large messages into a number of smaller messages (implement message fragmentation) MAY count each fragment separately, as if the fragmentation was performed by the user and `write` was called more than once per message.
 
-The following keyword(s) (both as method names and instance variable names) is reserved for the internal server implementations: `_sock`.
+The following keyword(s) (both as method names and instance variable names) is reserved for the internal server implementations: `_sock`, `_cid`.
 
 WebSocket `ping` / `pong`, timeouts and network considerations should be implemented by the server. It is **RECOMMENDED** (but not required) that the server send `ping`s to prevent connection timeouts and detect network failure.
 
