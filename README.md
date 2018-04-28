@@ -16,6 +16,7 @@ Iodine is a fast concurrent web server for real-time Ruby applications, with nat
 * Static file service (with automatic `gzip` support for pre-compressed versions);
 * HTTP/1.1 keep-alive and pipelining;
 * Asynchronous event scheduling and timers;
+* Hot Restart (using the USR1 signal);
 * Client connectivity (attach client sockets to make them evented);
 * Custom protocol authoring;
 * and more!
@@ -92,6 +93,8 @@ bundler exec iodine -p $PORT -t 16 -w 4 -www /my/public/folder -v
 
 Ruby can leverage static file support (if enabled) by using the `X-Sendfile` header in the Ruby application response.
 
+To enable iodine's native X-Sendfile support, a static file service (a public folder) needs to be assigned (this informs iodine that static files aren't sent using a different layer, such as nginx).
+
 This allows Ruby to send very large files using a very small memory footprint, as well as (when possible) leveraging the `sendfile` system call.
 
 i.e. (example `config.ru` for iodine):
@@ -114,7 +117,7 @@ end
 run app
 ```
 
-Go to [localhost:3000/source](http://localhost:3000/source) to download the `config.ru` file using the `X-Sendfile` extension.
+Go to [localhost:3000/source](http://localhost:3000/source) to experience the `X-Sendfile` extension at work.
 
 #### Pre-Compressed assets / files
 
@@ -130,13 +133,13 @@ When a browser that supports compressed encoding (which is most browsers) reques
 
 It's as easy as that. No extra code required.
 
-### Special HTTP `Upgrade` support
+### Special HTTP `Upgrade` and SSE support
 
 Iodine's HTTP server implements the [WebSocket/SSE Rack Specification Draft](SPEC-Websocket-Draft.md), supporting native WebSocket/SSE connections using Rack's `env` Hash.
 
 This promotes separation of concerns, where iodine handles all the Network related logic and the application can focus on the API and data it provides.
 
-Upgrading an HTTP connection can be performed either using iodine's Websocket Protocol support with `env['rack.upgrade?']` or by implementing your own protocol directly over the TCP/IP layer - be it a websocket flavor or something completely different - using `env['upgrade.tcp']`.
+Upgrading an HTTP connection can be performed either using iodine's native WebSocket / EventSource (SSE) support with `env['rack.upgrade?']` or by implementing your own protocol directly over the TCP/IP layer - be it a WebSocket flavor or something completely different - using `env['upgrade.tcp']`.
 
 #### EventSource / SSE
 
@@ -150,9 +153,9 @@ The rest is detailed in the WebSocket support section.
 
 When a WebSocket connection request is received, iodine will set the Rack Hash's upgrade property to `:websocket`, so that: `env[rack.upgrade?] == :websocket`
 
-To "upgrade" the HTTP request to the WebSockets protocol, simply provide iodine with a WebSocket Callback Object instance or class: `env['rack.upgrade'] = MyWebsocketClass` or `env['rack.upgrade'] = MyWebsocketClass.new(args)`
+To "upgrade" the HTTP request to the WebSockets protocol (or SSE), simply provide iodine with a WebSocket Callback Object instance or class: `env['rack.upgrade'] = MyWebsocketClass` or `env['rack.upgrade'] = MyWebsocketClass.new(args)`
 
-Iodine will adopt the object, providing it with network functionality (methods such as `write`, `each`, `defer` and `close` will become available) and invoke it's callbacks on network events.
+Iodine will adopt the object, providing it with network functionality (methods such as `write`, `defer` and `close` will become available) and invoke it's callbacks on network events.
 
 Here is a simple chat-room example we can run in the terminal (`irb`) or easily paste into a `config.ru` file:
 
@@ -256,9 +259,63 @@ Iodine.start
 
 This design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems), etc. This also allows us to use middleware without interfering with connection upgrades and provides backwards compatibility.
 
-Iodine::Rack imposes a few restrictions for performance and security reasons, such as that the headers (both sending and receiving) must be less than 8Kb in size. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache.
+Iodine::Rack imposes a few restrictions for performance and security reasons, such as limitimg each header line to 4Kb. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache or Nginx.
 
 Of course, if you still want to use Rack's `hijack` API, iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack, as well as a socket buffer for non-blocking `write` operations (why do that when you can write a protocol object and have the main reactor manage the socket?).
+
+### How does it compare to other servers?
+
+Personally, after looking around, the only comparable servers are Puma and Passenger (both offer multi-threaded and multi-process concurrency), which iodine significantly outperformed on my tests (I didn't test Passenger's enterprise version). Another upcoming server is the Agoo server (which has a very high performance).
+
+When benchmarking with `wrk`, on the same local machine with similar settings (4 workers, 16 threads each, 200 concurrent connections), iodine performed better than Puma (I don't have Passenger enterprise, so I couldn't compare against it). 
+
+* Iodine performed at 69,885.30 req/sec, consuming ~77.8Mb of memory.
+
+* Puma performed at 48,994.59 req/sec, consuming ~79.6Mb of memory.
+
+
+When benchmarking with `wrk` and using striped down settings (single worker, single thread, 200 concurrent connections), iodine was faster than Puma.
+
+* Iodine performed at 56,648.86 req/sec, consuming ~27.4Mb of memory.
+
+* Puma performed at 16,547.31 req/sec, consuming ~23.4Mb of memory.
+
+When benchmarking using a VM (crossing machine boundaries, single thread, single worker, 200 concurrent connections), iodine significantly outperformed Puma.
+
+* Iodine performed at 18,444.31 req/sec, consuming ~25.6Mb of memory.
+
+* Puma performed at 2,521.56 req/sec, consuming ~27.5Mb of memory.
+
+
+I have doubts about my own benchmarks and I recommend benchmarking the performance for yourself using `wrk` or `ab`:
+
+```bash
+$ wrk -c200 -d4 -t2 http://localhost:3000/
+# or
+$ ab -n 100000 -c 200 -k http://127.0.0.1:3000/
+```
+
+Create a simple `config.ru` file with a hello world app:
+
+```ruby
+App = Proc.new do |env|
+   [200,
+     {   "Content-Type" => "text/html".freeze,
+         "Content-Length" => "16".freeze },
+     ['Hello from Rack!'.freeze]  ]
+end
+
+run App
+```
+
+Then start comparing servers. Here are the settings I used to compare iodine and Puma (4 processes, 16 threads):
+
+```bash
+$ RACK_ENV=production iodine -p 3000 -t 16 -w 4
+# vs.
+$ RACK_ENV=production puma -p 3000 -t 16 -w 4
+# Review the `iodine -?` help for more command line options.
+```
 
 ### Performance oriented design - but safety first
 
@@ -299,65 +356,11 @@ It's very common that the application's code will run slower and require externa
 
 The slower your application code, the more threads you will need to keep the server running in a responsive manner (note that responsiveness and speed aren't always the same).
 
-### How does it compare to other servers?
-
-Personally, after looking around, the only comparable servers are Puma and Passenger, which iodine significantly outperformed on my tests (I didn't test Passenger's enterprise version).
-
-When benchmarking with `wrk` and using similar settings (4 workers, 16 threads each), iodine performed better than Puma (I don't have Passenger enterprise, so I couldn't compare against it). 
-
-* Iodine performed at 78,376.49 req/sec, consuming ~69Mb of memory.
-
-* Puma performed at 50,218.66 req/sec, consuming ~78Mb of memory.
-
-
-When benchmarking with `wrk` and using striped down settings (single worker, single thread), iodine performed better than Puma.
-
-* Iodine performed at 57,930.78 req/sec, consuming ~40Mb of memory.
-
-* Puma performed at 16,109.42 req/sec, consuming ~36Mb of memory.
-
-
-When benchmarking with `ab`, Puma seemed to experience significantly slower performance. I suspect the difference between the two benchmarks has to do with system calls to `write` and possible packet fragmentation, which iodine attempts to avoid... but I have no real proof.
-
-Also, iodine's core and parsers are running outside of Ruby's global lock, meaning that they enjoy true concurrency before entering the Ruby layer (your application) - this offers iodine a big advantage over other Ruby servers.
-
-Another assumption iodine makes is that it is behind a load balancer / proxy (which is the normal way Ruby applications are deployed) - this allows iodine to disregard some header validity checks (we're not checking for invalid characters) and focus it's resources on other security and performance concerns.
-
-I recommend benchmarking the performance for yourself using `wrk` or `ab`:
-
-```bash
-$ wrk -c200 -d4 -t2 http://localhost:3000/
-# or
-$ ab -n 100000 -c 200 -k http://127.0.0.1:3000/
-```
-
-Create a simple `config.ru` file with a hello world app:
-
-```ruby
-App = Proc.new do |env|
-   [200,
-     {   "Content-Type" => "text/html".freeze,
-         "Content-Length" => "16".freeze },
-     ['Hello from Rack!'.freeze]  ]
-end
-
-run App
-```
-
-Then start comparing servers. Here are the settings I used to compare iodine and Puma (4 processes, 16 threads):
-
-```bash
-$ RACK_ENV=production iodine -p 3000 -t 16 -w 4
-# vs.
-$ RACK_ENV=production puma -p 3000 -t 16 -w 4
-# Review the `iodine -?` help for more command line options.
-```
-
 ## Free, as in freedom (BYO beer)
 
 Iodine is **free** and **open source**, so why not take it out for a spin?
 
-It's installable just like any other gem on MRI, run:
+It's installable just like any other gem on Ruby MRI, run:
 
 ```
 $ gem install iodine

@@ -10,6 +10,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 Changed... everything. At least all the internal bits.
 
+Iodine 0.5.0 is a stability oriented release. It also supports the updated Rack specification draft for WebSocket and SSE connections (yes, iodine 0.5.0 brings about SSE support).
+
 Deprecated the `each` function family in favor of the more scalable pub/sub approach.
 
 Moved the HTTP network layer outside of the GIL, more robust pub/sub (using Unix Sockets instead of pipes) and more.
@@ -20,11 +22,9 @@ Improved concurrency and energy consumption (idling CPU cycles reduced).
 
 Higher overall memory consumption might be observed (some security and network features now perform data copying rather than allowing for direct data access).
 
-Slower RPM on very short responses ("Hello World" is slower), but iodine is still blazing fast, so don't worry.
-
 Improved automatic header completion for missing `Content-Length`, `Date` and `Last-Modified`.
 
-Support for the Unicorn style `before_fork` and `after_fork` DSL as well as the Puma style `on_worker_boot` DSL (these are meant for portability, but they aren't as safe as the `Iodine.defer` calls that protect against exceptions).
+Support for the Unicorn style `before_fork` and `after_fork` DSL as well as the Puma style `on_worker_boot` DSL.
 
 Credit to Anatoly Nosov (@jomei) for fixing some typos in the documentation.
 
