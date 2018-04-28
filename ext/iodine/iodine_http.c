@@ -20,7 +20,7 @@ Feel free to copy, use and enjoy according to the license provided.
 /* *****************************************************************************
 Available Globals
 ***************************************************************************** */
-VALUE IodineHTTP;
+static VALUE IodineHTTP;
 
 typedef struct {
   VALUE app;
@@ -32,14 +32,14 @@ VALUE IODINE_R_HIJACK;
 VALUE IODINE_R_HIJACK_IO;
 VALUE IODINE_R_HIJACK_CB;
 
-VALUE UPGRADE_TCP;
-VALUE UPGRADE_TCP_Q;
-VALUE UPGRADE_WEBSOCKET;
-VALUE UPGRADE_WEBSOCKET_Q;
-VALUE RACK_UPGRADE;
-VALUE RACK_UPGRADE_Q;
-VALUE RACK_UPGRADE_SSE;
-VALUE RACK_UPGRADE_WEBSOCKET;
+static VALUE UPGRADE_TCP;
+static VALUE UPGRADE_TCP_Q;
+static VALUE UPGRADE_WEBSOCKET;
+static VALUE UPGRADE_WEBSOCKET_Q;
+static VALUE RACK_UPGRADE;
+static VALUE RACK_UPGRADE_Q;
+static VALUE RACK_UPGRADE_SSE;
+static VALUE RACK_UPGRADE_WEBSOCKET;
 
 static VALUE hijack_func_sym;
 static ID close_method_id;
@@ -49,6 +49,8 @@ static ID attach_method_id;
 static VALUE env_template_no_upgrade;
 static VALUE env_template_websockets;
 static VALUE env_template_sse;
+
+static uint8_t support_xsendfile = 0;
 
 #define rack_declare(rack_name) static VALUE rack_name
 
@@ -81,6 +83,8 @@ rack_declare(CONTENT_TYPE);
 rack_declare(R_URL_SCHEME);          // rack.url_scheme
 rack_declare(R_INPUT);               // rack.input
 rack_declare(XSENDFILE);             // for X-Sendfile support
+rack_declare(XSENDFILE_TYPE);        // for X-Sendfile support
+rack_declare(XSENDFILE_TYPE_HEADER); // for X-Sendfile support
 rack_declare(CONTENT_LENGTH_HEADER); // for X-Sendfile support
 
 /* used internally to handle requests */
@@ -509,7 +513,7 @@ static inline void *iodine_handle_request_in_GVL(void *handle_) {
   // extract the X-Sendfile header (never show original path)
   // X-Sendfile support only present when iodine serves static files.
   VALUE xfiles;
-  if (http_settings(h)->public_folder &&
+  if (support_xsendfile &&
       (xfiles = rb_hash_aref(response_headers, XSENDFILE)) != Qnil &&
       TYPE(xfiles) == T_STRING) {
     if (OBJ_FROZEN(response_headers)) {
@@ -790,6 +794,9 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
   if ((www != Qnil && www != Qfalse)) {
     Check_Type(www, T_STRING);
     Registry.add(www);
+    rb_hash_aset(env_template_no_upgrade, XSENDFILE_TYPE, XSENDFILE);
+    rb_hash_aset(env_template_no_upgrade, XSENDFILE_TYPE_HEADER, XSENDFILE);
+    support_xsendfile = 1;
   } else
     www = 0;
 
@@ -887,8 +894,6 @@ static void initialize_env_template(void) {
   rb_hash_aset(env_template_no_upgrade, UPGRADE_WEBSOCKET, Qnil);
   rb_hash_aset(env_template_no_upgrade, UPGRADE_TCP_Q, Qnil);
   rb_hash_aset(env_template_no_upgrade, UPGRADE_TCP, Qnil);
-  add_value_to_env(env_template_no_upgrade, "sendfile.type", XSENDFILE);
-  add_value_to_env(env_template_no_upgrade, "HTTP_X_SENDFILE_TYPE", XSENDFILE);
   {
     /* add the rack.version */
     static VALUE rack_version = 0;
@@ -959,6 +964,8 @@ void Iodine_init_http(void) {
   rack_set(R_URL_SCHEME, "rack.url_scheme");
   rack_set(R_INPUT, "rack.input");
   rack_set(XSENDFILE, "X-Sendfile");
+  rack_set(XSENDFILE_TYPE, "sendfile.type");
+  rack_set(XSENDFILE_TYPE_HEADER, "HTTP_X_SENDFILE_TYPE");
   rack_set(CONTENT_LENGTH_HEADER, "Content-Length");
 
   rack_set(IODINE_R_HIJACK_IO, "rack.hijack_io");
