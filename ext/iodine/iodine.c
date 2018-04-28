@@ -15,7 +15,6 @@ Feel free to copy, use and enjoy according to the license provided.
 
 VALUE Iodine;
 VALUE IodineBase;
-VALUE Iodine_Version;
 
 VALUE iodine_force_var_id;
 VALUE iodine_channel_var_id;

@@ -30,7 +30,6 @@ Feel free to copy, use and enjoy according to the license provided.
 
 extern VALUE Iodine;
 extern VALUE IodineBase;
-extern VALUE Iodine_Version;
 
 extern VALUE iodine_binary_var_id;
 extern VALUE iodine_channel_var_id;

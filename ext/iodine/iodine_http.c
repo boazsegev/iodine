@@ -638,9 +638,7 @@ void *iodine_print_http_msg2_in_gvl(void *d_) {
             "Iodine HTTP Server on port %s:\n"
             " *    Serving static files from %s\n\n",
             StringValueCStr(arg->port), StringValueCStr(arg->www));
-    Registry.remove(arg->www);
   }
-  Registry.remove(arg->port);
   return NULL;
 }
 
@@ -656,41 +654,47 @@ void *iodine_print_http_msg_in_gvl(void *d_) {
     fprintf(stderr,
             "\nStarting up Iodine HTTP Server on port %s:\n"
             " * Ruby v.%s\n * Iodine v.%s \n"
-            " * %lu max concurrent connections / open files\n"
             " * Serving static files from %s\n\n",
             StringValueCStr(arg->port), StringValueCStr(ruby_version),
-            StringValueCStr(iodine_version), (size_t)sock_max_capacity(),
-            StringValueCStr(arg->www));
-    Registry.remove(arg->www);
-  } else
+            StringValueCStr(iodine_version), StringValueCStr(arg->www));
+  } else {
     fprintf(stderr,
             "\nStarting up Iodine HTTP Server on port %s:\n"
-            " * Ruby v.%s\n * Iodine v.%s \n"
-            " * %lu max concurrent connections / open files\n\n",
+            " * Ruby v.%s\n * Iodine v.%s \n\n",
             StringValueCStr(arg->port), StringValueCStr(ruby_version),
-            StringValueCStr(iodine_version), (size_t)sock_max_capacity());
-  Registry.remove(arg->port);
+            StringValueCStr(iodine_version));
+  }
 
   return NULL;
 }
 
 static void iodine_print_http_msg1(void *www, void *port) {
-  if (facil_parent_pid() != getpid())
-    return;
+  if (getpid() != facil_parent_pid())
+    goto finish;
   struct {
     void *www;
     void *port;
   } data = {.www = www, .port = port};
   RubyCaller.call_c(iodine_print_http_msg_in_gvl, (void *)&data);
+finish:
+  if (www) {
+    Registry.remove((VALUE)www);
+  }
+  Registry.remove((VALUE)port);
 }
 static void iodine_print_http_msg2(void *www, void *port) {
-  if (facil_parent_pid() != getpid())
-    return;
+  if (getpid() != facil_parent_pid())
+    goto finish;
   struct {
     void *www;
     void *port;
   } data = {.www = www, .port = port};
   RubyCaller.call_c(iodine_print_http_msg2_in_gvl, (void *)&data);
+finish:
+  if (www) {
+    Registry.remove((VALUE)www);
+  }
+  Registry.remove((VALUE)port);
 }
 
 static void free_iodine_http(http_settings_s *s) {
@@ -837,8 +841,6 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
             port ? StringValueCStr(port) : "3000");
     return Qfalse;
   }
-  Registry.remove(port);
-  Registry.remove(www);
 
   if ((app == Qnil || app == Qfalse)) {
     fprintf(stderr,
@@ -846,9 +848,9 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
             "static files.\n",
             (port ? StringValueCStr(port) : "3000"));
   }
-  if (called_once)
+  if (called_once) {
     defer(iodine_print_http_msg2, (www ? (void *)www : NULL), (void *)port);
-  else {
+  } else {
     called_once = 1;
     defer(iodine_print_http_msg1, (www ? (void *)www : NULL), (void *)port);
   }
