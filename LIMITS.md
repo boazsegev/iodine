@@ -24,6 +24,12 @@ I will, at some point, document these... here's the key points:
 
 ## Pub/Sub
 
-* Channel names are binary safe and unlimited in length - do NOT allow clients to dictate the channel name (as they might use extremely long names and cause resource starvation).
+* Channel names are binary safe and unlimited in length. However, name lengths effect performance.
+
+    **Do NOT allow clients to dictate the channel name**, as they might use extremely long names and cause resource starvation.
 
 * Pub/sub is limited to the process cluster. To use pub/sub with an external service (such as Redis) an "Engine" is required (see YARD documentation).
+
+* Pub/sub pattern matching supports only the Redis pattern matching approach. This makes patterns significantly more expensive and exact matches simpler and faster.
+
+    It's recommended to prefer exact channel/stream name matching when possible.
