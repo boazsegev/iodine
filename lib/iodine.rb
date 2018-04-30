@@ -170,7 +170,8 @@ module Iodine
     end
   end
 
-  def self.patch_rack
+    # Will monkey patch some Rack methods to increase their performance.
+    def self.patch_rack
     ::Rack::Utils.class_eval do
       Iodine::Base::MonkeyPatch::RackUtils.methods(false).each do |m|
         ::Rack::Utils.define_singleton_method(m,
@@ -179,6 +180,7 @@ module Iodine
     end
   end
 
+  # Will monkey patch the default JSON parser to replace the default `JSON.parse` with {Iodine::JSON.parse}.
   def self.patch_json
     ::JSON.class_eval do
         ::JSON.define_singleton_method(:parse,

@@ -236,6 +236,11 @@ static VALUE subscription_eq_s(VALUE self, VALUE str) {
   return rb_str_equal(rb_attr_get(self, to_str_shadow_id), str);
 }
 
+/** Returns the target stream / channel / pattern as a String object. */
+static VALUE subscription_to_s(VALUE self) {
+  return rb_attr_get(self, to_str_shadow_id);
+}
+
 /* *****************************************************************************
 Ruby API
 ***************************************************************************** */
@@ -877,6 +882,7 @@ void Iodine_init_pubsub(void) {
   rb_define_method(IodinePubSubSubscription, "close", close_subscription, 0);
   rb_define_method(IodinePubSubSubscription, "==", subscription_eq_s, 1);
   rb_attr(IodinePubSubSubscription, rb_intern("to_s"), 1, 0, 1);
+  rb_define_method(IodinePubSubSubscription, "to_s", subscription_to_s, 1);
 
   rb_define_alloc_func(IodineEngine, engine_alloc_c);
   rb_define_method(IodineEngine, "initialize", engine_initialize, 0);

@@ -33,7 +33,7 @@ module Iodine
   #        puts "symolized: #{sys_sym/iodine_sym}"
   #      end; nil
   #
-  # Note that the bang(!) method will NOT be automatically monkey-patched, as some important features are unsupported by the Iodine parser.
+  # Note that the bang(!) method should NOT be used for monkey-patching the default JSON parser, since some important features are unsupported by the Iodine parser.
   #
   module JSON
   end
