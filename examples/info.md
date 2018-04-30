@@ -76,7 +76,7 @@ When a connection is hijacked, the sockets don't close as fast as the web server
 
 This new proposal leaves the responsibility for the network / IO handling with the server, simplifying the application's code base and decoupling it from the network protocol.
 
-By using a callback object, the application is notified of any events. Leaving the application fee to focus on the data rather than the network layer.
+By using a callback object, the application is notified of any events. Leaving the application free to focus on the data rather than the network layer.
 
 The callback object doesn't even need to know anything about the server running the application or the underlying protocol.
 
