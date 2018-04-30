@@ -38,7 +38,7 @@ That's where things started to get messy.
 
 To handle the (now "free") socket, a lot of network logic had to be copied from the server layer to the application layer (buffering `write` calls, handling incoming data, protocol management, timeout handling, etc').
 
-This is an obvious violation of the "**S**" in S.O.L.I.D (single responsibility), as it adds IO handling responsibility to the application / framework.
+This is an obvious violation of the "**S**" in S.O.L.I.D (single responsibility), as it adds IO handling responsibilities to the application / framework.
 
 It also violates the DRY principle, since the IO handling logic is now duplicated (once within the server and once within the application / framework).
 
@@ -48,7 +48,7 @@ Additionally, this approach has issues with HTTP/2 connections, since the networ
 
 The `hijack` approach has many costs, some hidden, some more obvious.
 
-The most easily observed price is memory and performance.
+The most easily observed price is memory, performance and developer hours.
 
 Due to code duplication and extra work, the memory consumption for `hijack` based solutions is higher and their performance is slower (more system calls, more context switches, etc').
 
