@@ -193,7 +193,7 @@ Notice, no gems, no extra code, no huge memory consumption, just the Ruby server
 
 ### The amazing push
 
-So far, it's so simple, it's hard to notice how amazing this is.
+So far, it's so simple, it's hard to notice how powerful this is.
 
 Consider implementing a stock ticker, or in this case, a timer:
 
@@ -305,7 +305,7 @@ ws.onopen = function(e) { e.target.send("Yo!"); };
 
 ### Why didn't anyone think of this sooner?
 
-Actually, this isn't a new idea.
+Actually, this isn't a completely new idea.
 
 Evens as the `hijack` API itself was suggested, [an alternative approach was suggested](https://github.com/rack/rack/pull/481#issuecomment-11916942).
 
