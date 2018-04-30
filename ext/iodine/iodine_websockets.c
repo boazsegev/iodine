@@ -140,13 +140,13 @@ static VALUE iodine_ws_is_open(VALUE self) {
 }
 
 /** Returns a local (per process) unique identifier for the conection. */
-static VALUE iodine_ws_uuid(VALUE self) {
-  intptr_t uuid = get_uuid(self);
-  return ULL2NUM(uuid);
-  if (uuid && sock_isvalid(uuid))
-    return Qtrue;
-  return Qfalse;
-}
+// static VALUE iodine_ws_uuid(VALUE self) {
+//   intptr_t uuid = get_uuid(self);
+//   return ULL2NUM(uuid);
+//   if (uuid && sock_isvalid(uuid))
+//     return Qtrue;
+//   return Qfalse;
+// }
 
 /* *****************************************************************************
 Websocket defer
@@ -528,8 +528,8 @@ void Iodine_init_websocket(void) {
   /// Deprectaed!
   rb_define_method(IodineWebsocket, "on_ready", empty_func_on_ready, 0);
 
-  rb_define_method(IodineWebsocket, "_cid", iodine_ws_uuid, 0);
-  rb_define_method(IodineWebsocket, "_sock", iodine_ws_uuid, 0);
+  // rb_define_method(IodineWebsocket, "_cid", iodine_ws_uuid, 0);
+  // rb_define_method(IodineWebsocket, "_sock", iodine_ws_uuid, 0);
 
   rb_define_method(IodineWebsocket, "pending", iodine_ws_has_pending, 0);
   rb_define_method(IodineWebsocket, "open?", iodine_ws_is_open, 0);
