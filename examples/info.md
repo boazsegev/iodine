@@ -30,7 +30,7 @@ At some point in our history, the Rack specification needed a way to support lon
 
 For this purpose, [the Rack team came up with the `hijack` API approach](https://github.com/rack/rack/pull/481#issue-9702395).
 
-This approach allowed for a quick fix to a pressing need. was meant to be temporary, something quick until Rack 2.0 was released (5 years later, Rack 2.0 is yet to be released).
+This approach allowed for a quick fix to a pressing need. was meant to be temporary, something quick until Rack 2.0 was released (5 years later, the Rack protocol is still at version 1.3).
 
 The `hijack` API offers applications complete control of the socket. Just hijack the socket away from the server and voilá, instant long polling / SSE support... sort of.
 
