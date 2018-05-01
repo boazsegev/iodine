@@ -143,13 +143,13 @@ Upgrading an HTTP connection can be performed either using iodine's native WebSo
 
 Iodine treats EventSource / SSE connections as if they were a half-duplex WebSocket connection, using the exact same API and callbacks as WebSockets.
 
-When an EventSource / SSE request is received, iodine will set the Rack Hash's upgrade property to `:sse`, so that: `env[rack.upgrade?] == :sse`.
+When an EventSource / SSE request is received, iodine will set the Rack Hash's upgrade property to `:sse`, so that: `env['rack.upgrade?'] == :sse`.
 
 The rest is detailed in the WebSocket support section.
 
 #### WebSockets
 
-When a WebSocket connection request is received, iodine will set the Rack Hash's upgrade property to `:websocket`, so that: `env[rack.upgrade?] == :websocket`
+When a WebSocket connection request is received, iodine will set the Rack Hash's upgrade property to `:websocket`, so that: `env['rack.upgrade?'] == :websocket`
 
 To "upgrade" the HTTP request to the WebSockets protocol (or SSE), simply provide iodine with a WebSocket Callback Object instance or class: `env['rack.upgrade'] = MyWebsocketClass` or `env['rack.upgrade'] = MyWebsocketClass.new(args)`
 
