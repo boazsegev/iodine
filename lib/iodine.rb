@@ -190,6 +190,7 @@ module Iodine
 
 
   @after_fork_blocks = []
+  # Performs a block of code whenever a new worker process spins up (performed once per worker).
   def self.after_fork(*args, &block)
     if(block)
       @after_fork_blocks << [args, block]
@@ -199,6 +200,7 @@ module Iodine
   end
 
   @before_fork_blocks = []
+  # Performs a block of code just before a new worker process spins up (performed once per worker).
   def self.before_fork(*args, &block)
     if(block)
       @before_fork_blocks << [args, block]
@@ -211,16 +213,19 @@ module Iodine
 end
 
 if(!defined?(after_fork))
+  # Performs a block of code whenever a new worker process spins up (performed once per worker).
   def after_fork(*args, &block)
     Iodine.after_fork(*args, &block)
   end
 end
 if(!defined?(on_worker_boot))
+  # Performs a block of code whenever a new worker process spins up (performed once per worker).
   def on_worker_boot(*args, &block)
     Iodine.after_fork(*args, &block)
   end
 end
 if(!defined?(before_fork))
+  # Performs a block of code just before a new worker process spins up (performed once per worker).
   def before_fork(*args, &block)
     Iodine.before_fork(*args, &block)
   end
