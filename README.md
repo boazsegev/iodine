@@ -7,8 +7,6 @@
 
 [![Logo](https://github.com/boazsegev/iodine/raw/master/logo.png)](https://github.com/boazsegev/iodine)
 
-**Notice: *iodine's core library, [facil.io](https://github.com/boazsegev/facil.io) is being re-vamped with many updates and changes. This is a time to ask - what features are important for you? [let me know here](https://github.com/boazsegev/facil.io/issues/24)***.
-
 Iodine is a fast concurrent web server for real-time Ruby applications, with native support for:
 
 * Websockets and EventSource (SSE);
