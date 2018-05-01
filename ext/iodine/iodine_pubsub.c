@@ -795,7 +795,6 @@ engine is used.
 */
 VALUE iodine_publish(int argc, VALUE *argv, VALUE self) {
   VALUE rb_ch, rb_msg, rb_engine = Qnil;
-  uint8_t use_pattern = 0;
   const pubsub_engine_s *engine = NULL;
   switch (argc) {
   case 3:
@@ -809,10 +808,6 @@ VALUE iodine_publish(int argc, VALUE *argv, VALUE self) {
     /* single argument must be a Hash */
     Check_Type(argv[0], T_HASH);
     rb_ch = rb_hash_aref(argv[0], to_sym_id);
-    if (rb_ch == Qnil || rb_ch == Qfalse) {
-      use_pattern = 1;
-      rb_ch = rb_hash_aref(argv[0], match_sym_id);
-    }
     rb_msg = rb_hash_aref(argv[0], message_sym_id);
     rb_engine = rb_hash_aref(argv[0], engine_varid);
   } break;
@@ -826,7 +821,7 @@ VALUE iodine_publish(int argc, VALUE *argv, VALUE self) {
   Check_Type(rb_msg, T_STRING);
 
   if (rb_ch == Qnil || rb_ch == Qfalse)
-    rb_raise(rb_eArgError, "channel is required .");
+    rb_raise(rb_eArgError, "target / channel is required .");
   if (TYPE(rb_ch) == T_SYMBOL)
     rb_ch = rb_sym2str(rb_ch);
   Check_Type(rb_ch, T_STRING);

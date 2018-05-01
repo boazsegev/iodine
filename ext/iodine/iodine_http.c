@@ -20,7 +20,6 @@ Feel free to copy, use and enjoy according to the license provided.
 /* *****************************************************************************
 Available Globals
 ***************************************************************************** */
-static VALUE IodineHTTP;
 
 typedef struct {
   VALUE app;
@@ -160,7 +159,8 @@ static inline VALUE copy2env(iodine_http_request_handle_s *handle) {
   case IODINE_UPGRADE_SSE:
     env = rb_hash_dup(env_template_sse);
     break;
-  case IODINE_UPGRADE_NONE:
+  case IODINE_UPGRADE_NONE: /* fallthrough */
+  default:
     env = rb_hash_dup(env_template_no_upgrade);
     break;
   }

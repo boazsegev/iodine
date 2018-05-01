@@ -28,9 +28,6 @@ static inline VALUE fiobj2rb(FIOBJ o, uint8_t str2sym) {
   case FIOBJ_T_NUMBER:
     rb = LONG2FIX(fiobj_obj2num(o));
     break;
-  case FIOBJ_T_NULL:
-    rb = Qnil;
-    break;
   case FIOBJ_T_TRUE:
     rb = Qtrue;
     break;
@@ -57,6 +54,10 @@ static inline VALUE fiobj2rb(FIOBJ o, uint8_t str2sym) {
     break;
   case FIOBJ_T_HASH:
     rb = rb_hash_new();
+    break;
+  case FIOBJ_T_NULL: /* fallthrough */
+  default:
+    rb = Qnil;
     break;
   };
   return rb;
