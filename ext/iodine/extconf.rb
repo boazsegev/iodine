@@ -1,11 +1,5 @@
 require 'mkmf'
 
-def check_for_stdatomics
-  RbConfig::MAKEFILE_CONFIG['CC'] = $CC = ENV['CC'] if ENV['CC']
-  RbConfig::MAKEFILE_CONFIG['CPP'] = $CPP = ENV['CPP'] if ENV['CPP']
-  puts 'Missing support for atomic operations (support for C11) - is your compiler updated?' unless have_header('stdatomic.h')
-end
-
 abort 'Missing a Linux/Unix OS evented API (epoll/kqueue).' unless have_func('kevent') || have_func('epoll_ctl')
 
 if ENV['CC']
@@ -16,6 +10,10 @@ elsif find_executable('clang') && puts('testing clang for stdatomic support...')
   $CC = ENV['CC'] = 'clang'
   $CPP = ENV['CPP'] = 'clang'
   puts "using clang compiler v. #{`clang -dumpversion`}."
+elsif find_executable('gcc') && (`gcc -dumpversion 2>&1`.to_i >= 5)
+  $CC = ENV['CC'] = 'gcc'
+  $CPP = ENV['CPP'] = find_executable('g++') ? 'g++' : 'gcc'
+  puts "using gcc #{ `gcc -dumpversion 2>&1`.to_i }"
 elsif find_executable('gcc-6')
   $CC = ENV['CC'] = 'gcc-6'
   $CPP = ENV['CPP'] = find_executable('g++-6') ? 'g++-6' : 'gcc-6'
@@ -29,7 +27,6 @@ elsif find_executable('gcc-4.9')
   $CPP = ENV['CPP'] = find_executable('g++-4.9') ? 'g++-4.9' : 'gcc-4.9'
   puts 'using gcc-4.9 compiler.'
 else
-  # check_for_stdatomics
   puts 'using an unknown (old?) compiler... who knows if this will work out... we hope.'
 end
 
