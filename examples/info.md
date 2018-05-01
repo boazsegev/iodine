@@ -1,5 +1,7 @@
 # Ruby's Rack Push: Decoupling the real-time web application from the web
 
+![](https://bowild.files.wordpress.com/2018/05/6865783407_84f470ec02_o.jpg)
+
 Something exciting is coming.
 
 Everyone is talking about WebSockets and their older cousin EventSource / Server Sent Events (SSE). Faye and ActionCable are all the rage and real-time updates are becoming easier than ever.
