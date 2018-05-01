@@ -45,6 +45,7 @@ static VALUE iodine_ruby_caller_perform(VALUE tsk_) {
     return (VALUE)task->func(task->arg);
   }
   }
+  return Qnil;
 }
 
 ////////////////////////////////////////////////////////////////////////////

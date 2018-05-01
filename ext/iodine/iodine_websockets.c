@@ -209,6 +209,7 @@ static VALUE iodine_defer(int argc, VALUE *argv, VALUE self) {
   return block;
 }
 
+#if 0 /* deprecated */
 /**
 Schedules a block of code to run for the specified websocket at a later time,
 (**if** the connection is open). The block will run within the connection's
@@ -239,6 +240,8 @@ static VALUE iodine_class_defer(VALUE self, VALUE ws_uuid) {
               .fallback = iodine_defer_fallback);
   return block;
 }
+
+#endif
 
 /* *****************************************************************************
 Websocket Pub/Sub API
