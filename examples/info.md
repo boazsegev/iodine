@@ -56,7 +56,7 @@ Using `require 'faye'` will add WebSockets to your application, but it will take
 
 On the other hand, using the `agoo` or `iodine` HTTP servers will add both WebScokets and SSE to your application without any extra memory consumption.
 
-To be more specific, using `iodine` will consume about 2Mb of memory, less than Puma, while providing both HTTP and real-time capabilities.
+To be more specific, using `iodine` will consume about 2Mb of memory, marginally less than Puma, while providing both HTTP and real-time capabilities.
 
 ### The hidden `hijack` price
 
@@ -150,7 +150,7 @@ gem install iodine
 iodine -t 1
 ```
 
-Now open the browser, visit [localhost:3000](http://localhost:3000) and open the browser console to test some Javascript.
+Now open the browser, visit [localhost:3000](http://localhost:3000) and open the browser console to test some JavaScript.
 
 First try an EventSource (SSE) connection (run in browser console):
 
@@ -216,6 +216,8 @@ module LiveList
     # remove connection to the "live list"
     @lock.synchronize { @list.any? }
   end
+  # this will send a message to all the connections that share the same process.
+  # (in cluster mode we get partial broadcasting only and this doesn't scale)
   def self.broadcast(data)
     @lock.synchronize do
       @list.each do |c|
@@ -231,29 +233,16 @@ end
 
 # Broadcast the time very second... but...
 # Threads will BREAK in cluster mode.
-# There's a some complexity and bad code just for the sake of brevity.
-module TimerThread
-  @thread = nil
-  @lock = Mutex.new
-  def self.ensure
-    @lock.synchronize do
-      return if @thread && @thread.alive?
-      # initiate thread within the lock, it will run outside the lock.
-      @thread = Thread.new do
-        while(LiveList.any?) do
-          sleep(1)
-          LiveList.broadcast "The time is: #{Time.now}"
-        end
-      end
-    end
+@thread = Thread.new do
+  while(LiveList.any?) do
+    sleep(1)
+    LiveList.broadcast "The time is: #{Time.now}"
   end
 end
 
 # a Callback class
 class MyCallbacks
   def on_open
-    # Make sure the timer thread is live (this introduces coupling - bad code).
-    TimerThread.ensure
     # add connection to the "live list"
     LiveList << self
   end
@@ -280,15 +269,19 @@ end
 run APP
 ```
 
-Honestly, I don't love the code I just wrote for the previous example. There's some coupling between the callback object and the TimerThread as well as some avoidable complexity.
+Run the iodine server in single process mode: `iodine -w 1` and the little timer is ticking.
 
-For this next example, I'll author a chat room in 32 lines (including comments).
+Honestly, I don't love the code I just wrote for the previous example. It's a little long, it's slightly iffy and we can't use iodine's cluster mode.
 
-I will use Iodine's pub/sub extension API to avoids the LiveList and TimerThread objects, which will make cluster mode and scaling easier. 
+For my next example, I'll author a chat room in 32 lines (including comments).
+
+I will use Iodine's pub/sub extension API to avoid the LiveList module and the timer thread (I don't need a timer, so I'll skip the [`Iodine.run_every` method](https://www.rubydoc.info/github/boazsegev/iodine/master/Iodine#run_every-class_method)).
 
 Also, I'll limit the interaction to WebSocket clients. Why? to show I can.
 
-This will better demonstrate the power offered by the new `env['rack.upgrade']` approach. Sadly, this means that the example won't run on Agoo for now.
+This will better demonstrate the power offered by the new `env['rack.upgrade']` approach and it will also work in cluster mode.
+
+Sadly, this means that the example won't run on Agoo for now.
 
 ```ruby
 # Place in config.ru
@@ -322,6 +315,12 @@ APP = Proc.new do |env|
 end
 # The Rack DSL used to run the application
 run APP
+```
+
+Start the application from the command line (in terminal):
+
+```bash
+iodine
 ```
 
 Now try (in the browser console):
