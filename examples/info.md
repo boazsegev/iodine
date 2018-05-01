@@ -111,7 +111,7 @@ To set a callback object, the `env['rack.upgrade']` is introduced (notice the mi
 Now the design might look like this:
 
 ```ruby
-# place in config.ru
+# Place in config.ru
 RESPONSE = [200, { 'Content-Type' => 'text/html',
           'Content-Length' => '12' }, [ 'Hello World!' ] ]
 # a Callback class
@@ -130,7 +130,7 @@ end
 APP = Proc.new do |env|
   if(env['rack.upgrade?'])
     env['rack.upgrade'] = MyCallbacks.new
-    [0, {}, []]
+    [200, {}, []]
   else
     RESPONSE
   end
@@ -198,7 +198,7 @@ So far, it's so simple, it's hard to notice how powerful this is.
 Consider implementing a stock ticker, or in this case, a timer:
 
 ```ruby
-# place in config.ru
+# Place in config.ru
 RESPONSE = [200, { 'Content-Type' => 'text/html',
           'Content-Length' => '12' }, [ 'Hello World!' ] ]
 
@@ -212,16 +212,48 @@ module LiveList
   def self.>>(connection)
     @lock.synchronize { @list.delete connection }
   end
+  def any?
+    # remove connection to the "live list"
+    @lock.synchronize { @list.any? }
+  end
   def self.broadcast(data)
-    @lock.synchronize {
-      @list.each {|c| c.write data }
-    }
+    @lock.synchronize do
+      @list.each do |c|
+        begin
+          c.write data
+        rescue IOError => _e
+          # An IOError can occur if the connection was closed during the loop.
+        end
+      end
+    end
+  end
+end
+
+# Broadcast the time very second... but...
+# Threads will BREAK in cluster mode.
+# There's a some complexity and bad code just for the sake of brevity.
+module TimerThread
+  @thread = nil
+  @lock = Mutex.new
+  def self.ensure
+    @lock.synchronize do
+      return if @thread && @thread.alive?
+      # initiate thread within the lock, it will run outside the lock.
+      @thread = Thread.new do
+        while(LiveList.any?) do
+          sleep(1)
+          LiveList.broadcast "The time is: #{Time.now}"
+        end
+      end
+    end
   end
 end
 
 # a Callback class
 class MyCallbacks
   def on_open
+    # Make sure the timer thread is live (this introduces coupling - bad code).
+    TimerThread.ensure
     # add connection to the "live list"
     LiveList << self
   end
@@ -235,19 +267,11 @@ class MyCallbacks
   end
 end
 
-# Broadcast the time very second
-Thread.new do
-  while(true) do 
-    sleep(1)
-    LiveList.broadcast "The time is: #{Time.now}"
-  end
-end
-
 # The Rack application
 APP = Proc.new do |env|
   if(env['rack.upgrade?'])
     env['rack.upgrade'] = MyCallbacks.new
-    [0, {}, []]
+    [200, {}, []]
   else
     RESPONSE
   end
@@ -256,12 +280,18 @@ end
 run APP
 ```
 
-For this next example, I will use Iodine's pub/sub extension API to demonstrate the power offered by the new `env['rack.upgrade']` approach. This avoids the LiveList object and will make scaling easier.
+Honestly, I don't love the code I just wrote for the previous example. There's some coupling between the callback object and the TimerThread as well as some avoidable complexity.
 
-Here is a simple chat room, but in this case I limit the interaction to WebSocket client. Why? because I can.
+For this next example, I'll author a chat room in 32 lines (including comments).
+
+I will use Iodine's pub/sub extension API to avoids the LiveList and TimerThread objects, which will make cluster mode and scaling easier. 
+
+Also, I'll limit the interaction to WebSocket clients. Why? to show I can.
+
+This will better demonstrate the power offered by the new `env['rack.upgrade']` approach. Sadly, this means that the example won't run on Agoo for now.
 
 ```ruby
-# place in config.ru
+# Place in config.ru
 RESPONSE = [200, { 'Content-Type' => 'text/html',
           'Content-Length' => '12' }, [ 'Hello World!' ] ]
 # a Callback class
@@ -281,11 +311,11 @@ class MyCallbacks
     publish :chat, "#{@name} left the chat."
   end
 end
-# note the `env` variable
+# The actual Rack application
 APP = Proc.new do |env|
   if(env['rack.upgrade?'] == :websocket)
     env['rack.upgrade'] = MyCallbacks.new(env)
-    [0, {}, []]
+    [200, {}, []]
   else
     RESPONSE
   end
