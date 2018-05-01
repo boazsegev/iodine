@@ -808,6 +808,9 @@ VALUE iodine_publish(int argc, VALUE *argv, VALUE self) {
     /* single argument must be a Hash */
     Check_Type(argv[0], T_HASH);
     rb_ch = rb_hash_aref(argv[0], to_sym_id);
+    if (rb_ch == Qnil || rb_ch == Qfalse) {
+      rb_ch = rb_hash_aref(argv[0], channel_sym_id);
+    }
     rb_msg = rb_hash_aref(argv[0], message_sym_id);
     rb_engine = rb_hash_aref(argv[0], engine_varid);
   } break;
