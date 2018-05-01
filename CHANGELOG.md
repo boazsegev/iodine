@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.5.1 (next release)
+
+**Fix**: fixed some documentation errors. Credit to @janko-m (Janko Marohnić) for catching typos in the README.
+
 #### Change log v.0.5.0
 
 Changed... everything. At least all the internal bits and some of the API.
