@@ -54,8 +54,8 @@ static void *fork_using_ruby(void *ignr) {
   // // TODO:
   // iodine_join_io_thread();
   iodine_perform_fork_callbacks(1);
-  const VALUE ProcessClass = rb_const_get(rb_cObject, rb_intern("Process"));
-  const VALUE rb_pid = IodineCaller.call(ProcessClass, rb_intern("fork"));
+  const VALUE ProcessClass = rb_const_get(rb_cObject, rb_intern2("Process", 7));
+  const VALUE rb_pid = IodineCaller.call(ProcessClass, rb_intern2("fork", 4));
   intptr_t pid = 0;
   if (rb_pid != Qnil) {
     pid = NUM2INT(rb_pid);
@@ -63,7 +63,10 @@ static void *fork_using_ruby(void *ignr) {
     pid = 0;
   }
   IodineCaller.set_GVL(1); /* enforce GVL state in thread storage */
-  iodine_perform_fork_callbacks(1);
+  if (!pid) {
+    IodineStore.after_fork();
+  }
+  iodine_perform_fork_callbacks(0);
   // // TODO:
   // iodine_start_io_thread();
   return (void *)pid;
@@ -100,10 +103,7 @@ int defer_join_thread(void *thr) {
 }
 
 // void defer_free_thread(void *thr) { (void)thr; }
-void defer_free_thread(void *thr) {
-  IodineCaller.call((VALUE)thr, rb_intern("detach"));
-  IodineStore.remove((VALUE)thr);
-}
+void defer_free_thread(void *thr) { IodineStore.remove((VALUE)thr); }
 
 /**
 OVERRIDE THIS to replace the default `fork` implementation or to inject hooks
@@ -250,7 +250,7 @@ Sets a block of code to run before a new worker process is forked.
 VALUE iodine_before_fork_add(VALUE self) {
   rb_need_block();
   VALUE block = rb_block_proc();
-  IodineStore.add(block);
+  rb_global_variable(&block);
   spn_lock(&iodine_before_fork_lock);
   fio_ls_push(&iodine_before_fork_list, (void *)block);
   spn_unlock(&iodine_before_fork_lock);
@@ -264,7 +264,7 @@ Sets a block of code to run after a new worker process is forked.
 VALUE iodine_after_fork_add(VALUE self) {
   rb_need_block();
   VALUE block = rb_block_proc();
-  IodineStore.add(block);
+  rb_global_variable(&block);
   spn_lock(&iodine_after_fork_lock);
   fio_ls_push(&iodine_after_fork_list, (void *)block);
   spn_unlock(&iodine_after_fork_lock);

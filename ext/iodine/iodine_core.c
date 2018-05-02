@@ -181,7 +181,7 @@ static VALUE iodine_start(VALUE self) {
   VALUE threads_rb = iodine_threads_get(self);
   VALUE workers_rb = iodine_workers_get(self);
   iodine_start_params_s params = {
-      .threads = NUM2SHORT(threads_rb), .workers = NUM2SHORT(threads_rb),
+      .threads = NUM2SHORT(threads_rb), .workers = NUM2SHORT(workers_rb),
   };
   IodineCaller.leaveGVL(iodine_run_outside_GVL, &params);
   return self;

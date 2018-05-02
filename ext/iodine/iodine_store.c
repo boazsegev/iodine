@@ -40,7 +40,7 @@ static void storage_after_fork(void) { lock = SPN_LOCK_INIT; }
 
 /** Prints debugging information to the console. */
 static void storage_print(void) {
-  fprintf(stderr, "Ruby <=> C Memory storage stats:\n");
+  fprintf(stderr, "Ruby <=> C Memory storage stats (pid: %d):\n", getpid());
   spn_lock(&lock);
   uintptr_t index = 0;
   FIO_HASH_FOR_LOOP(&storage, pos) {
