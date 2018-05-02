@@ -26,6 +26,8 @@ between Lib-Server and Ruby.
 void Init_iodine(void) {
   // load any environment specific patches
   patch_env();
+  // force the GVL state for the main thread
+  IodineCaller.set_GVL(1);
   // initialize Object storage for GC protection
   iodine_storage_init();
 }

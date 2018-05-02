@@ -1,5 +1,5 @@
-#ifndef H_RB_STORE_H
-#define H_RB_STORE_H value
+#ifndef H_IODINE_STORAGE_H
+#define H_IODINE_STORAGE_H
 
 #include "ruby.h"
 
