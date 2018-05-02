@@ -54,6 +54,9 @@ static void *create_ruby_thread_gvl(void *args) {
   return (void *)Registry.add(rb_thread_create(defer_thread_inGVL, args));
 }
 
+/* used during fork */
+void iodine_start_io_thread(void *a1, void *a2);
+
 static void *fork_using_ruby(void *ignr) {
   RubyCaller.call(Iodine, rb_intern("before_fork"));
   const VALUE ProcessClass = rb_const_get(rb_cObject, rb_intern("Process"));
@@ -68,6 +71,7 @@ static void *fork_using_ruby(void *ignr) {
   if (!pid) {
     Registry.on_fork();
     RubyCaller.call(Iodine, rb_intern("after_fork"));
+    iodine_start_io_thread(NULL, NULL);
   }
   return (void *)pid;
   (void)ignr;
