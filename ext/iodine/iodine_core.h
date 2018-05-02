@@ -6,4 +6,10 @@
 #include "iodine_caller.h"
 #include "iodine_store.h"
 
+/* *****************************************************************************
+Constants
+***************************************************************************** */
+extern VALUE IodineModule;
+extern VALUE IodineBaseModule;
+
 #endif

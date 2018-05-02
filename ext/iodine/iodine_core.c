@@ -1,7 +1,7 @@
 #include "iodine_core.h"
 
 /* *****************************************************************************
-Library Initialization
+OS specific patches
 ***************************************************************************** */
 
 #ifdef __APPLE__
@@ -18,6 +18,13 @@ static void patch_env(void) {
 }
 
 /* *****************************************************************************
+Constants and State
+***************************************************************************** */
+
+VALUE IodineModule;
+VALUE IodineBaseModule;
+
+/* *****************************************************************************
 Ruby loads the library and invokes the Init_<lib_name> function...
 
 Here we connect all the C code to the Ruby interface, completing the bridge
@@ -28,6 +35,9 @@ void Init_iodine(void) {
   patch_env();
   // force the GVL state for the main thread
   IodineCaller.set_GVL(1);
+  // Create the Iodine module (namespace)
+  IodineModule = rb_define_module("Iodine");
+  IodineBaseModule = rb_define_module_under(IodineModule, "Base");
   // initialize Object storage for GC protection
   iodine_storage_init();
 }
