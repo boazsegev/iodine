@@ -217,7 +217,7 @@ static void *iodine_io_thread(void *arg) {
   }
   return NULL;
 }
-static void iodine_start_io_thread(void *a1, void *a2) {
+void iodine_start_io_thread(void *a1, void *a2) {
   (void)a1;
   (void)a2;
   pthread_create(&sock_io_pthread, NULL, iodine_io_thread, NULL);
@@ -230,7 +230,7 @@ static void iodine_join_io_thread(void) {
 static void *srv_start_no_gvl(void *s_) {
   iodine_start_settings_s *s = s_;
   sock_io_thread = 1;
-  defer(iodine_start_io_thread, NULL, NULL);
+  iodine_start_io_thread(NULL, NULL);
   fprintf(stderr, "\n");
   if (s->processes == 1 || (s->processes == 0 && s->threads > 0)) {
     /* single worker */
