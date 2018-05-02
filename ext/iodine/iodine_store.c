@@ -1,7 +1,7 @@
-
-#include "iodine_store.h"
+#include "iodine_core.h"
 
 #include "fio_hashmap.h"
+#include "iodine_store.h"
 #include "spnlock.inc"
 
 spn_lock_i lock = SPN_LOCK_INIT;
@@ -115,4 +115,6 @@ void iodine_storage_init(void) {
   VALUE storage_obj =
       TypedData_Wrap_Struct(tmp, &storage_type_struct, &storage);
   rb_global_variable(&storage_obj);
+  rb_define_module_function(IodineBase, "db_print_protected_objects",
+                            storage_print, 0);
 }
