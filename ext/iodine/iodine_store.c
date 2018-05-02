@@ -54,6 +54,11 @@ static void storage_print(void) {
   spn_unlock(&lock);
 }
 
+static VALUE storage_print_rb(VALUE self) {
+  storage_print();
+  return Qnil;
+  (void)self;
+}
 /* *****************************************************************************
 GC protection
 ***************************************************************************** */
@@ -115,6 +120,6 @@ void iodine_storage_init(void) {
   VALUE storage_obj =
       TypedData_Wrap_Struct(tmp, &storage_type_struct, &storage);
   rb_global_variable(&storage_obj);
-  rb_define_module_function(IodineBase, "db_print_protected_objects",
-                            storage_print, 0);
+  rb_define_module_function(IodineBaseModule, "db_print_protected_objects",
+                            storage_print_rb, 0);
 }
