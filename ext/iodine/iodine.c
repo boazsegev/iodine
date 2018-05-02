@@ -224,7 +224,10 @@ void iodine_start_io_thread(void *a1, void *a2) {
 }
 static void iodine_join_io_thread(void) {
   sock_io_thread = 0;
-  pthread_join(sock_io_pthread, NULL);
+  if (sock_io_pthread) {
+    pthread_join(sock_io_pthread, NULL);
+  }
+  sock_io_pthread = NULL;
 }
 
 static void *srv_start_no_gvl(void *s_) {
