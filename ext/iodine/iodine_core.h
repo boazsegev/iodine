@@ -3,6 +3,7 @@
 
 #include "ruby.h"
 
+#include "iodine_caller.h"
 #include "iodine_store.h"
 
 #endif
