@@ -1,5 +1,6 @@
 
-#include "rb_store.h"
+#include "iodine_store.h"
+
 #include "fio_hashmap.h"
 #include "spnlock.inc"
 
@@ -99,7 +100,7 @@ static struct rb_data_type_struct storage_type_struct = {
 Initialization
 ***************************************************************************** */
 
-struct IodineStorage_s RBStore = {
+struct IodineStorage_s IodineStore = {
     .add = storage_add,
     .remove = storage_remove,
     .after_fork = storage_after_fork,

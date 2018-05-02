@@ -3,6 +3,6 @@
 
 #include "ruby.h"
 
-#include "rb_store.h"
+#include "iodine_store.h"
 
 #endif
