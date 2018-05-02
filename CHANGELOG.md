@@ -8,6 +8,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.5.1 (next release)
 
+**Fix**: fixed compilation issues on OS X version < 10.12 and Alpine Linux. Credit to @jdickey (Jeff Dickey) for opening issue #32.
+
 **Fix**: fixed some documentation errors. Credit to @janko-m (Janko Marohnić) for catching typos in the README.
 
 #### Change log v.0.5.0
