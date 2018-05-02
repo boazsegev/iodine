@@ -294,4 +294,8 @@ void iodine_defer_initialize(void) {
                             1);
   rb_define_module_function(IodineModule, "run_every", iodine_defer_run_every,
                             -1);
+  rb_define_module_function(IodineModule, "before_fork", iodine_before_fork_add,
+                            0);
+  rb_define_module_function(IodineModule, "after_fork", iodine_after_fork_add,
+                            0);
 }
