@@ -1697,9 +1697,7 @@ static void facil_worker_cleanup(void) {
     }
   }
   defer_perform();
-  if (facil_data->on_finish) {
-    facil_data->on_finish();
-  }
+  facil_data->on_finish();
   defer_perform();
   evio_close();
   facil_external_cleanup();
