@@ -1,4 +1,4 @@
-#include "rb_iodine_core.h"
+#include "iodine_core.h"
 
 /* *****************************************************************************
 Library Initialization

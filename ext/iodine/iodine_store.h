@@ -12,7 +12,7 @@ extern struct IodineStorage_s {
   void (*after_fork)(void);
   /** Prints debugging information to the console. */
   void (*print)(void);
-} RBStore;
+} IodineStore;
 
 /** Initializes the storage unit for first use. */
 void iodine_storage_init(void);
