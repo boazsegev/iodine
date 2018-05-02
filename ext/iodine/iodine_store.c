@@ -12,26 +12,28 @@ API
 ***************************************************************************** */
 
 /** Adds an object to the storage (or increases it's reference count). */
-static void storage_add(VALUE obj) {
+static VALUE storage_add(VALUE obj) {
   if (obj == Qnil || obj == Qtrue || obj == Qfalse)
-    return;
+    return obj;
   spn_lock(&lock);
   uintptr_t val = (uintptr_t)fio_hash_insert(&storage, obj, (void *)1);
   if (val) {
     fio_hash_insert(&storage, obj, (void *)(val + 1));
   }
   spn_unlock(&lock);
+  return obj;
 }
 /** Removes an object from the storage (or decreases it's reference count). */
-static void storage_remove(VALUE obj) {
+static VALUE storage_remove(VALUE obj) {
   if (obj == Qnil || obj == Qtrue || obj == Qfalse)
-    return;
+    return obj;
   spn_lock(&lock);
   uintptr_t val = (uintptr_t)fio_hash_insert(&storage, obj, NULL);
   if (val > 1) {
     fio_hash_insert(&storage, obj, (void *)(val - 1));
   }
   spn_unlock(&lock);
+  return obj;
 }
 /** Should be called after forking to reset locks */
 static void storage_after_fork(void) { lock = SPN_LOCK_INIT; }

@@ -5,9 +5,9 @@
 
 extern struct IodineStorage_s {
   /** Adds an object to the storage (or increases it's reference count). */
-  void (*add)(VALUE);
+  VALUE (*add)(VALUE);
   /** Removes an object from the storage (or decreases it's reference count). */
-  void (*remove)(VALUE);
+  VALUE (*remove)(VALUE);
   /** Should be called after forking to reset locks */
   void (*after_fork)(void);
   /** Prints debugging information to the console. */

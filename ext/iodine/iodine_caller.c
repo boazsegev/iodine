@@ -93,7 +93,7 @@ static VALUE iodine_call(VALUE obj, ID method) {
   iodine_rb_task_s task = {
       .obj = obj, .argc = 0, .argv = NULL, .method = method,
   };
-  void *rv = iodine_protect_ruby_call(&task);
+  void *rv = iodine_enterGVL(iodine_protect_ruby_call, &task);
   return (VALUE)rv;
 }
 
@@ -102,7 +102,7 @@ static VALUE iodine_call2(VALUE obj, ID method, int argc, VALUE *argv) {
   iodine_rb_task_s task = {
       .obj = obj, .argc = argc, .argv = argv, .method = method,
   };
-  void *rv = iodine_protect_ruby_call(&task);
+  void *rv = iodine_enterGVL(iodine_protect_ruby_call, &task);
   return (VALUE)rv;
 }
 
