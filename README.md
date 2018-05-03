@@ -7,6 +7,16 @@
 
 [![Logo](https://github.com/boazsegev/iodine/raw/master/logo.png)](https://github.com/boazsegev/iodine)
 
+This branch is a rewrite in anticipation of the actual Rack specification for WebSocket and SSE connections.
+
+So many things changed since Iodine moved to C, but even after the major 0.5.0 rewrite, many pieces of code feel like patchwork.
+
+Hence, a total rewrite that centers around keeping things DRY and better organized. Also, this will leverage the new Connection object model to place it at center stage.
+
+Since I have other projects and this is a hobby thing, this will take time.
+
+---
+
 Iodine is a fast concurrent web server for real-time Ruby applications, with native support for:
 
 * Websockets and EventSource (SSE);

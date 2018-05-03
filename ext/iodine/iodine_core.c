@@ -218,4 +218,7 @@ void Init_iodine(void) {
 
   // initialize concurrency related methods
   iodine_defer_initialize();
+
+  // initialize the connection class
+  iodine_connection_init();
 }
