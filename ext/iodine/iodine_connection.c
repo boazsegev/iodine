@@ -93,6 +93,15 @@ iodine_connection_validate_data(VALUE self) {
 Ruby Connection Methods - write, close open? pending
 ***************************************************************************** */
 
+/**
+ * Writes data to the connection asynchronously.
+ *
+ * In effect, the `write` call does nothing, it only schedules the data to be
+ * sent and marks the data as pending.
+ *
+ * Use {pending} to test how many `write` operations are pending completion
+ * (`on_drained(client)` will be called when they complete).
+ */
 VALUE iodine_connection_write(VALUE self, VALUE data) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
   if (!c) {
@@ -133,6 +142,13 @@ VALUE iodine_connection_write(VALUE self, VALUE data) {
   }
   return Qnil;
 }
+
+/**
+ * Schedules the connection to be closed.
+ *
+ * The connection will be closed once all the scheduled `write` operations have
+ * been completed (or failed).
+ */
 VALUE iodine_connection_close(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
   if (c) {
@@ -145,6 +161,7 @@ VALUE iodine_connection_close(VALUE self) {
 
   return Qnil;
 }
+/** Returns true if the connection appears to be open (no known issues). */
 VALUE iodine_connection_is_open(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
   if (c) {
@@ -152,6 +169,10 @@ VALUE iodine_connection_is_open(VALUE self) {
   }
   return Qfalse;
 }
+/**
+ * Returns the number of pending `write` operations that need to complete
+ * before the next `on_drained` callback is called.
+ */
 VALUE iodine_connection_pending(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
   if (!c) {
@@ -160,6 +181,7 @@ VALUE iodine_connection_pending(VALUE self) {
   return SIZET2NUM((sock_pending(c->info.uuid)));
 }
 
+/** Returns the connection's type (`:sse`, `:websocket`, etc'). */
 VALUE iodine_connection_type(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
   switch (c->info.type) {
@@ -172,6 +194,40 @@ VALUE iodine_connection_type(VALUE self) {
   case IODINE_CONNECTION_RAW: /* fallthrough */
     return RAWSymbol;
     break;
+  }
+  return Qnil;
+}
+
+/**
+ * Returns the timeout / `ping` interval for the connection.
+ *
+ * Returns nil on error.
+ */
+VALUE iodine_connection_timeout_get(VALUE self) {
+  iodine_connection_data_s *c = iodine_connection_validate_data(self);
+  if (c) {
+    size_t tout = (size_t)facil_get_timeout(c->info.uuid);
+    return SIZET2NUM(tout);
+  }
+  return Qnil;
+}
+
+/**
+ * Sets the timeout / `ping` interval for the connection (up to 255 seconds).
+ *
+ * Returns nil on error.
+ */
+VALUE iodine_connection_timeout_set(VALUE self, VALUE timeout) {
+  Check_Type(timeout, T_FIXNUM);
+  int tout = NUM2INT(timeout);
+  if (tout < 0 || tout > 255) {
+    rb_raise(rb_eRangeError, "timeout out of range.");
+    return Qnil;
+  }
+  iodine_connection_data_s *c = iodine_connection_validate_data(self);
+  if (c) {
+    facil_set_timeout(c->info.uuid, (uint8_t)tout);
+    return timeout;
   }
   return Qnil;
 }
@@ -252,7 +308,17 @@ void iodine_connection_init(void) {
   SSESymbol = ID2SYM(rb_intern("sse"));
   RAWSymbol = ID2SYM(rb_intern("raw"));
 
+  // define the Connection Class and it's methods
   ConnectionKlass =
       rb_define_class_under(IodineModule, "Connection", rb_cObject);
   rb_define_alloc_func(ConnectionKlass, iodine_connection_data_alloc_c);
+  rb_define_method(ConnectionKlass, "write", iodine_connection_write, 1);
+  rb_define_method(ConnectionKlass, "close", iodine_connection_close, 0);
+  rb_define_method(ConnectionKlass, "open?", iodine_connection_is_open, 0);
+  rb_define_method(ConnectionKlass, "pending", iodine_connection_pending, 0);
+  rb_define_method(ConnectionKlass, "type", iodine_connection_type, 0);
+  rb_define_method(ConnectionKlass, "timeout", iodine_connection_timeout_get,
+                   0);
+  rb_define_method(ConnectionKlass, "timeout=", iodine_connection_timeout_set,
+                   1);
 }
