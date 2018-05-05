@@ -32,12 +32,14 @@ static void *iodine_io_thread(void *arg) {
   return NULL;
 }
 static void iodine_start_io_thread(void) {
-  sock_io_thread = 1;
-  pthread_create(&sock_io_pthread, NULL, iodine_io_thread, NULL);
+  if (!sock_io_thread) {
+    sock_io_thread = 1;
+    pthread_create(&sock_io_pthread, NULL, iodine_io_thread, NULL);
+  }
 }
 static void iodine_join_io_thread(void) {
-  sock_io_thread = 0;
-  if (sock_io_pthread) {
+  if (sock_io_thread) {
+    sock_io_thread = 0;
     pthread_join(sock_io_pthread, NULL);
   }
   sock_io_pthread = NULL;
@@ -70,7 +72,7 @@ static VALUE defer_thread_inGVL(void *args_) {
   struct CreateThreadArgs args = *old_args;
   IodineCaller.set_GVL(1);
   spn_unlock(&old_args->lock);
-  rb_thread_call_without_gvl(defer_thread_start, args_,
+  rb_thread_call_without_gvl(defer_thread_start, &args,
                              (void (*)(void *))call_async_signal, args.arg);
   return Qnil;
 }
