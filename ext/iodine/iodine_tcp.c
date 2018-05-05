@@ -170,14 +170,16 @@ static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
     rb_handler = rb_block_proc();
   }
   IodineStore.add(rb_handler);
-  if (rb_address) {
+  if (rb_address != Qnil) {
     Check_Type(rb_address, T_STRING);
   }
-  if (rb_port) {
+  if (rb_port != Qnil) {
     Check_Type(rb_port, T_STRING);
   }
-  if (facil_listen(.port = StringValueCStr(rb_port),
-                   .address = StringValueCStr(rb_address),
+  if (facil_listen(.port = (rb_port == Qnil ? NULL : StringValueCStr(rb_port)),
+                   .address =
+                       (rb_address == Qnil ? NULL
+                                           : StringValueCStr(rb_address)),
                    .on_open = iodine_tcp_on_open,
                    .udata = (void *)rb_handler) == -1) {
     IodineStore.remove(rb_handler);
