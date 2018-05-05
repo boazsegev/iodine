@@ -360,7 +360,6 @@ static void iodine_on_unsubscribe(void *udata1, void *udata2) {
     break;
   default:
     IodineStore.remove(block);
-    fprintf(stderr, "removed block subscription\n");
     break;
   }
   if (data) {
@@ -491,17 +490,17 @@ static VALUE iodine_pubsub_subscribe(int argc, VALUE *argv, VALUE self) {
     }
   } else {
     c = iodine_connection_validate_data(self);
-    if (!c) {
+    if (!c || (c->info.type == IODINE_CONNECTION_SSE && args.binary)) {
+      if (args.block) {
+        IodineStore.remove(args.block);
+      }
       return Qnil; /* cannot subscribe a closed connection. */
     }
     if (args.block == Qnil && args.binary) {
       args.block = Qtrue;
     }
+    spn_add(&c->ref, 1);
   }
-  spn_add(&c->ref, 1);
-
-  if (c->info.type == IODINE_CONNECTION_SSE && args.binary)
-    return Qnil;
 
   FIOBJ channel =
       fiobj_str_new(RSTRING_PTR(args.channel), RSTRING_LEN(args.channel));
