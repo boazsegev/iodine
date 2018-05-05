@@ -14,20 +14,25 @@ $LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__)
 require 'bundler/setup'
 require 'iodine'
 
-class HttpProtocol
-  @timeout = 10
+module HttpProtocol
+	def self.on_open client
+		client.timeout = 10
+	end
   # `on_message` is an optional alternative to the `on_data` callback.
   # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
-  def on_message _
+  def self.on_message client, _
     # writing will never block and will use a buffer written in C when needed.
-    write "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=1\r\nContent-Length: 12\r\n\r\nHello World!"
+    client.write "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=1\r\nContent-Length: 12\r\n\r\nHello World!"
+  end
+  def self.call
+  	self
   end
 end
 
 puts "thread #{Iodine.threads}"
 # Listen
-Iodine.listen '3000', HttpProtocol
-Iodine.threads = 8
-Iodine.processes = 1
+Iodine.listen port: '3000', handler: HttpProtocol
+Iodine.threads = 4
+Iodine.workers = 1
 puts "now, thread #{Iodine.threads}"
 Iodine.start

@@ -28,7 +28,7 @@ typedef struct {
 typedef struct {
   VALUE io;
   ssize_t len;
-  char *buffer[IODINE_MAX_READ];
+  char buffer[IODINE_MAX_READ];
 } iodine_buffer_s;
 
 /**
@@ -41,7 +41,10 @@ static const char *iodine_tcp_service = "iodine TCP/IP raw connection";
  */
 static void *iodine_tcp_on_data_in_GIL(void *b_) {
   iodine_buffer_s *b = b_;
-  VALUE data = IodineStore.add(rb_str_new((const char *)b->buffer, b->len));
+  if (!b) {
+    fprintf(stderr, "FATAL ERROR: (iodine->tcp/ip->on_data->GIL) WTF?!\n");
+  }
+  VALUE data = IodineStore.add(rb_str_new(b->buffer, b->len));
   rb_enc_associate(data, IodineBinaryEncoding);
   iodine_connection_fire_event(b->io, IODINE_CONNECTION_ON_MESSAGE, data);
   IodineStore.remove(data);
@@ -115,6 +118,7 @@ static void iodine_tcp_on_open(intptr_t uuid, void *udata) {
   *p = (iodine_protocol_s){
       .p =
           {
+              .service = iodine_tcp_service,
               .on_data = iodine_tcp_on_data,
               .on_ready = iodine_tcp_on_ready,
               .on_shutdown = iodine_tcp_on_shutdown,
@@ -218,9 +222,7 @@ static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
     rb_need_block();
     rb_handler = rb_block_proc();
   }
-  if (TYPE(rb_handler) != T_MODULE && TYPE(rb_handler) != T_CLASS) {
-    IodineStore.add(rb_handler);
-  }
+  IodineStore.add(rb_handler);
   if (rb_address != Qnil) {
     Check_Type(rb_address, T_STRING);
   }
@@ -248,9 +250,9 @@ Add the Ruby API methods to the Iodine object
 
 void iodine_init_tcp_connections(void) {
   call_id = rb_intern2("call", 4);
-  port_id = rb_id2sym(rb_intern("port"));
-  address_id = rb_id2sym(rb_intern("address"));
-  handler_id = rb_id2sym(rb_intern("handler"));
+  port_id = IodineStore.add(rb_id2sym(rb_intern("port")));
+  address_id = IodineStore.add(rb_id2sym(rb_intern("address")));
+  handler_id = IodineStore.add(rb_id2sym(rb_intern("handler")));
   IodineBinaryEncoding = rb_enc_find("binary");
 
   rb_define_module_function(IodineModule, "listen", iodine_tcp_listen, 1);

@@ -657,10 +657,11 @@ VALUE iodine_connection_new(iodine_connection_s args) {
   IodineStore.add(connection);
   iodine_connection_data_s *data = iodine_connection_ruby2C(connection);
   if (data == NULL) {
-    fprintf(stderr, "No C data!\n");
+    fprintf(
+        stderr,
+        "ERROR: (iodine) internal error, connection object has no C data!\n");
     return Qnil;
   }
-  fprintf(stderr, "Setting handler as %p\n", (void *)args.handler);
   *data = (iodine_connection_data_s){
       .info = args,
       .subscriptions = FIO_HASH_INIT,
@@ -723,7 +724,6 @@ void iodine_connection_fire_event(VALUE connection,
     break;
 
   case IODINE_CONNECTION_ON_CLOSE:
-    fprintf(stderr, "calling on_close %p\n", (void *)connection);
     if (data->answers_on_closed) {
       IodineCaller.call2(data->info.handler, on_closed_id, 1, args);
     }
@@ -734,7 +734,6 @@ void iodine_connection_fire_event(VALUE connection,
     iodine_sub_clear_all(&data->subscriptions);
     spn_unlock(&data->lock);
     IodineStore.remove(connection);
-    fprintf(stderr, "removed %p\n", (void *)connection);
     break;
   default:
     break;
@@ -744,8 +743,10 @@ void iodine_connection_fire_event(VALUE connection,
 void iodine_connection_init(void) {
   // set used constants
   IodineUTF8Encoding = rb_enc_find("UTF-8");
+  // used ID objects
   new_id = rb_intern2("new", 3);
   call_id = rb_intern2("call", 4);
+
   to_id = rb_intern2("to", 2);
   channel_id = rb_intern2("channel", 7);
   as_id = rb_intern2("as", 2);
@@ -761,10 +762,33 @@ void iodine_connection_init(void) {
   on_shutdown_id = rb_intern("on_shutdown");
   on_closed_id = rb_intern("on_closed");
   ping_id = rb_intern("ping");
+
+  // globalize ID objects
+  if (1) {
+    IodineStore.add(ID2SYM(to_id));
+    IodineStore.add(ID2SYM(channel_id));
+    IodineStore.add(ID2SYM(as_id));
+    IodineStore.add(ID2SYM(binary_id));
+    IodineStore.add(ID2SYM(match_id));
+    IodineStore.add(ID2SYM(redis_id));
+    IodineStore.add(ID2SYM(handler_id));
+    IodineStore.add(ID2SYM(engine_id));
+    IodineStore.add(ID2SYM(message_id));
+    IodineStore.add(ID2SYM(on_open_id));
+    IodineStore.add(ID2SYM(on_message_id));
+    IodineStore.add(ID2SYM(on_drained_id));
+    IodineStore.add(ID2SYM(on_shutdown_id));
+    IodineStore.add(ID2SYM(on_closed_id));
+    IodineStore.add(ID2SYM(ping_id));
+  }
+
   // should these be globalized?
   WebSocketSymbol = ID2SYM(rb_intern("websocket"));
   SSESymbol = ID2SYM(rb_intern("sse"));
   RAWSymbol = ID2SYM(rb_intern("raw"));
+  IodineStore.add(WebSocketSymbol);
+  IodineStore.add(SSESymbol);
+  IodineStore.add(RAWSymbol);
 
   // define the Connection Class and it's methods
   ConnectionKlass =
