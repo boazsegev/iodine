@@ -80,7 +80,7 @@ static void storage_mark(void *ignore) {
   storage_print();
 #endif
   spn_lock(&lock);
-  fio_hash_compact(&storage);
+  // fio_hash_compact(&storage);
   FIO_HASH_FOR_LOOP(&storage, pos) {
     if (pos->obj) {
       rb_gc_mark((VALUE)pos->key);
@@ -129,7 +129,8 @@ void iodine_storage_init(void) {
       rb_define_class_under(rb_cObject, "IodineObjectStorage", rb_cData);
   VALUE storage_obj =
       TypedData_Wrap_Struct(tmp, &storage_type_struct, &storage);
-  rb_global_variable(&storage_obj);
+  // rb_global_variable(&storage_obj);
+  rb_ivar_set(IodineModule, rb_intern2("storage", 7), storage_obj);
   rb_define_module_function(IodineBaseModule, "db_print_protected_objects",
                             storage_print_rb, 0);
 }
