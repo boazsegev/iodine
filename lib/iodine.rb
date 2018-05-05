@@ -8,6 +8,7 @@ require 'iodine/iodine'
 # Here is a sample Echo server using Iodine:
 #
 #
+#       require 'iodine'
 #       # define the protocol for our service
 #       class EchoProtocol
 #         def on_open(client)
@@ -25,8 +26,9 @@ require 'iodine/iodine'
 #         end
 #       end
 #       # create the service instance, the block returns a connection handler.
-#       Iodine.listen(port: 3000) { EchoProtocol.new }
+#       Iodine.listen(port: "3000") { EchoProtocol.new }
 #       # start the service
+#       Iodine.threads = 1
 #       Iodine.start
 #
 #
