@@ -15,14 +15,19 @@ require 'iodine/iodine'
 #           # Set a connection timeout
 #           client.timeout = 10
 #           # Write a welcome message
-#           client.write "Echo server running on Iodine #{Iodine::VERSION}."
+#           client.write "Echo server running on Iodine #{Iodine::VERSION}.\r\n"
 #         end
-#         # this is just one possible callback with a recyclable buffer
+#         # this is called for incoming data - note data might be fragmented.
 #         def on_message(client, data)
 #           # write the data we received
 #           client.write "echo: #{data}"
 #           # close the connection when the time comes
 #           client.close if data =~ /^bye[\n\r]/
+#         end
+#         # called if the connection is still open and the server is shutting down.
+#         def on_shutdown(client)
+#           # write the data we received
+#           client.write "Server going away\r\n"
 #         end
 #       end
 #       # create the service instance, the block returns a connection handler.

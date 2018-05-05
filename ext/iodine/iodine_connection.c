@@ -152,8 +152,7 @@ static inline iodine_connection_data_s *iodine_connection_ruby2C(VALUE self) {
 static inline iodine_connection_data_s *
 iodine_connection_validate_data(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_ruby2C(self);
-  if (c == NULL || c->info.handler == Qnil || c->info.uuid == -1 ||
-      sock_isclosed(c->info.uuid)) {
+  if (c == NULL || c->info.handler == Qnil || c->info.uuid == -1) {
     return NULL;
   }
   return c;
@@ -174,7 +173,7 @@ Ruby Connection Methods - write, close open? pending
  */
 static VALUE iodine_connection_write(VALUE self, VALUE data) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
-  if (!c) {
+  if (!c || sock_isclosed(c->info.uuid)) {
     rb_raise(rb_eIOError, "Connection closed or invalid.");
   }
   if (c->info.type == IODINE_CONNECTION_WEBSOCKET) {
@@ -221,7 +220,7 @@ static VALUE iodine_connection_write(VALUE self, VALUE data) {
  */
 static VALUE iodine_connection_close(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
-  if (c) {
+  if (c && !sock_isclosed(c->info.uuid)) {
     if (c->info.type == IODINE_CONNECTION_WEBSOCKET) {
       websocket_close(c->info.arg);
     } else {
@@ -234,7 +233,7 @@ static VALUE iodine_connection_close(VALUE self) {
 /** Returns true if the connection appears to be open (no known issues). */
 static VALUE iodine_connection_is_open(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
-  if (c) {
+  if (c && !sock_isclosed(c->info.uuid)) {
     return Qtrue;
   }
   return Qfalse;
@@ -245,7 +244,7 @@ static VALUE iodine_connection_is_open(VALUE self) {
  */
 static VALUE iodine_connection_pending(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
-  if (!c) {
+  if (!c || sock_isclosed(c->info.uuid)) {
     return INT2NUM(-1);
   }
   return SIZET2NUM((sock_pending(c->info.uuid)));
@@ -254,16 +253,18 @@ static VALUE iodine_connection_pending(VALUE self) {
 /** Returns the connection's type (`:sse`, `:websocket`, etc'). */
 static VALUE iodine_connection_type(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
-  switch (c->info.type) {
-  case IODINE_CONNECTION_WEBSOCKET:
-    return WebSocketSymbol;
-    break;
-  case IODINE_CONNECTION_SSE:
-    return SSESymbol;
-    break;
-  case IODINE_CONNECTION_RAW: /* fallthrough */
-    return RAWSymbol;
-    break;
+  if (c) {
+    switch (c->info.type) {
+    case IODINE_CONNECTION_WEBSOCKET:
+      return WebSocketSymbol;
+      break;
+    case IODINE_CONNECTION_SSE:
+      return SSESymbol;
+      break;
+    case IODINE_CONNECTION_RAW: /* fallthrough */
+      return RAWSymbol;
+      break;
+    }
   }
   return Qnil;
 }
@@ -275,7 +276,7 @@ static VALUE iodine_connection_type(VALUE self) {
  */
 static VALUE iodine_connection_timeout_get(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
-  if (c) {
+  if (c && !sock_isclosed(c->info.uuid)) {
     size_t tout = (size_t)facil_get_timeout(c->info.uuid);
     return SIZET2NUM(tout);
   }
@@ -295,7 +296,7 @@ static VALUE iodine_connection_timeout_set(VALUE self, VALUE timeout) {
     return Qnil;
   }
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
-  if (c) {
+  if (c && !sock_isclosed(c->info.uuid)) {
     facil_set_timeout(c->info.uuid, (uint8_t)tout);
     return timeout;
   }
@@ -326,7 +327,8 @@ static void iodine_on_pubsub(pubsub_message_s *msg) {
   switch (block) {
   case Qnil: /* fallthrough */
   case Qtrue: {
-    if (data->info.handler == Qnil || data->info.uuid == -1)
+    if (data->info.handler == Qnil || data->info.uuid == -1 ||
+        sock_isclosed(data->info.uuid))
       return;
     switch (data->info.type) {
     case IODINE_CONNECTION_WEBSOCKET: {
@@ -358,6 +360,7 @@ static void iodine_on_unsubscribe(void *udata1, void *udata2) {
     break;
   default:
     IodineStore.remove(block);
+    fprintf(stderr, "removed block subscription\n");
     break;
   }
   if (data) {
@@ -654,8 +657,10 @@ VALUE iodine_connection_new(iodine_connection_s args) {
   IodineStore.add(connection);
   iodine_connection_data_s *data = iodine_connection_ruby2C(connection);
   if (data == NULL) {
+    fprintf(stderr, "No C data!\n");
     return Qnil;
   }
+  fprintf(stderr, "Setting handler as %p\n", (void *)args.handler);
   *data = (iodine_connection_data_s){
       .info = args,
       .subscriptions = FIO_HASH_INIT,
@@ -676,10 +681,17 @@ void iodine_connection_fire_event(VALUE connection,
                                   iodine_connection_event_type_e ev,
                                   VALUE msg) {
   if (connection == Qnil) {
+    fprintf(
+        stderr,
+        "ERROR: (iodine) nil connection handle used by an internal API call\n");
     return;
   }
   iodine_connection_data_s *data = iodine_connection_validate_data(connection);
   if (!data) {
+    fprintf(stderr,
+            "ERROR: (iodine) invalid connection handle used by an "
+            "internal API call: %p\n",
+            (void *)connection);
     return;
   }
   VALUE args[2] = {connection, msg};
@@ -711,6 +723,7 @@ void iodine_connection_fire_event(VALUE connection,
     break;
 
   case IODINE_CONNECTION_ON_CLOSE:
+    fprintf(stderr, "calling on_close %p\n", (void *)connection);
     if (data->answers_on_closed) {
       IodineCaller.call2(data->info.handler, on_closed_id, 1, args);
     }
@@ -721,6 +734,7 @@ void iodine_connection_fire_event(VALUE connection,
     iodine_sub_clear_all(&data->subscriptions);
     spn_unlock(&data->lock);
     IodineStore.remove(connection);
+    fprintf(stderr, "removed %p\n", (void *)connection);
     break;
   default:
     break;
@@ -730,7 +744,7 @@ void iodine_connection_fire_event(VALUE connection,
 void iodine_connection_init(void) {
   // set used constants
   IodineUTF8Encoding = rb_enc_find("UTF-8");
-  call_id = rb_intern2("new", 3);
+  new_id = rb_intern2("new", 3);
   call_id = rb_intern2("call", 4);
   to_id = rb_intern2("to", 2);
   channel_id = rb_intern2("channel", 7);
