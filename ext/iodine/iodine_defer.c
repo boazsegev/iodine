@@ -1,4 +1,4 @@
-#include "iodine_core.h"
+#include "iodine.h"
 
 #include <ruby/thread.h>
 

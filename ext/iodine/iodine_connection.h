@@ -1,7 +1,7 @@
 #ifndef H_IODINE_CONNECTION_H
 #define H_IODINE_CONNECTION_H
 
-#include "iodine_core.h"
+#include "iodine.h"
 
 typedef enum {
   IODINE_CONNECTION_RAW,
