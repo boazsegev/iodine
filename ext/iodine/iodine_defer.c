@@ -11,6 +11,39 @@
 #include <pthread.h>
 
 /* *****************************************************************************
+IO flushing dedicated thread for protection against blocking code
+***************************************************************************** */
+
+static volatile int sock_io_thread = 0;
+static pthread_t sock_io_pthread;
+typedef struct {
+  size_t threads;
+  size_t processes;
+} iodine_start_settings_s;
+
+static void *iodine_io_thread(void *arg) {
+  (void)arg;
+  struct timespec tm;
+  while (sock_io_thread) {
+    sock_flush_all();
+    tm = (struct timespec){.tv_nsec = 0, .tv_sec = 1};
+    nanosleep(&tm, NULL);
+  }
+  return NULL;
+}
+static void iodine_start_io_thread(void) {
+  sock_io_thread = 1;
+  pthread_create(&sock_io_pthread, NULL, iodine_io_thread, NULL);
+}
+static void iodine_join_io_thread(void) {
+  sock_io_thread = 0;
+  if (sock_io_pthread) {
+    pthread_join(sock_io_pthread, NULL);
+  }
+  sock_io_pthread = NULL;
+}
+
+/* *****************************************************************************
 The Defer library overriding functions
 ***************************************************************************** */
 
@@ -51,9 +84,12 @@ static void *create_ruby_thread_gvl(void *args) {
 static void iodine_perform_fork_callbacks(uint8_t before);
 
 static void *fork_using_ruby(void *ignr) {
-  // // TODO:
-  // iodine_join_io_thread();
+  // stop IO thread and call before_fork callbacks
+  if (sock_io_pthread) {
+    iodine_join_io_thread();
+  }
   iodine_perform_fork_callbacks(1);
+  // fork
   const VALUE ProcessClass = rb_const_get(rb_cObject, rb_intern2("Process", 7));
   const VALUE rb_pid = IodineCaller.call(ProcessClass, rb_intern2("fork", 4));
   intptr_t pid = 0;
@@ -62,13 +98,14 @@ static void *fork_using_ruby(void *ignr) {
   } else {
     pid = 0;
   }
+  // manage post forking state
   IodineCaller.set_GVL(1); /* enforce GVL state in thread storage */
   if (!pid) {
     IodineStore.after_fork();
   }
   iodine_perform_fork_callbacks(0);
-  // // TODO:
-  // iodine_start_io_thread();
+  // re-initiate IO thread
+  iodine_start_io_thread();
   return (void *)pid;
   (void)ignr;
 }
@@ -298,4 +335,5 @@ void iodine_defer_initialize(void) {
                             0);
   rb_define_module_function(IodineModule, "after_fork", iodine_after_fork_add,
                             0);
+  iodine_start_io_thread();
 }
