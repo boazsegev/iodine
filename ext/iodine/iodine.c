@@ -1,5 +1,7 @@
 #include "iodine.h"
 
+#include <ruby/version.h>
+
 #include "facil.h"
 /* *****************************************************************************
 OS specific patches
@@ -221,4 +223,7 @@ void Init_iodine(void) {
 
   // initialize the connection class
   iodine_connection_init();
+
+  // intialize the TCP/IP related module
+  iodine_init_tcp_connections();
 }

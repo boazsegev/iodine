@@ -10,17 +10,22 @@ require 'iodine/iodine'
 #
 #       # define the protocol for our service
 #       class EchoProtocol
-#         @timeout = 10
+#         def on_open(client)
+#           # Set a connection timeout
+#           client.timeout = 10
+#           # Write a welcome message
+#           client.write "Echo server running on Iodine #{Iodine::VERSION}."
+#         end
 #         # this is just one possible callback with a recyclable buffer
-#         def on_message buffer
+#         def on_message(client, data)
 #           # write the data we received
-#           write "echo: #{buffer}"
+#           client.write "echo: #{data}"
 #           # close the connection when the time comes
-#           close if buffer =~ /^bye[\n\r]/
+#           client.close if data =~ /^bye[\n\r]/
 #         end
 #       end
-#       # create the service instance
-#       Iodine.listen 3000, EchoProtocol
+#       # create the service instance, the block returns a connection handler.
+#       Iodine.listen(port: 3000) { EchoProtocol.new }
 #       # start the service
 #       Iodine.start
 #
@@ -33,6 +38,8 @@ require 'iodine/iodine'
 # Methods for asynchronous execution include {run} (same as {defer}), {run_after} and {run_every}.
 #
 # Methods for application wide pub/sub include {subscribe}, {unsubscribe} and {publish}. Connection specific pub/sub methods are documented in the {Iodine::Connection} class).
+#
+# Methods for network connection establishment include {listen}.
 #
 # Please read the {file:README.md} file for an introduction to Iodine and an overview of it's API.
 #
