@@ -463,11 +463,13 @@ The options Hash supports the following possible keys (other keys are ignored, a
 
 :to :: The channel / subject to subscribe to.
 
+:as :: (only for WebSocket connections) accepts the optional value `:binary`. default is `:text`. Note that binary transmissions are illegal for some connections (such as SSE) and an attempted binary subscription will fail for these connections.
+
 :handler :: Any object that answers `#call(source, msg)` where source is the stream / channel name.
 
 Note: if an existing subscription with the same name exists, it will be replaced by this new subscription.
 
-Returns the name of the subscription, which matches the name be used in {unsubscribe}.
+Returns the name of the subscription, which matches the name be used in {unsubscribe} (or nil on failure).
 
 */
 static VALUE iodine_pubsub_subscribe(int argc, VALUE *argv, VALUE self) {
@@ -493,6 +495,9 @@ static VALUE iodine_pubsub_subscribe(int argc, VALUE *argv, VALUE self) {
   }
   spn_add(&c->ref, 1);
 
+  if (c->info.type == IODINE_CONNECTION_SSE && args.binary)
+    return Qnil;
+
   FIOBJ channel =
       fiobj_str_new(RSTRING_PTR(args.channel), RSTRING_LEN(args.channel));
   pubsub_sub_pt sub =
@@ -505,6 +510,8 @@ static VALUE iodine_pubsub_subscribe(int argc, VALUE *argv, VALUE self) {
     spn_lock(&c->lock);
     if (c->info.uuid == -1) {
       pubsub_unsubscribe(sub);
+      spn_unlock(&c->lock);
+      return Qnil;
     } else {
       iodine_sub_add(&c->subscriptions, sub);
     }
