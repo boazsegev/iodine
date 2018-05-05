@@ -43,7 +43,7 @@ static void *iodine_tcp_on_data_in_GIL(void *b_) {
   iodine_buffer_s *b = b_;
   VALUE data = IodineStore.add(rb_str_new((const char *)b->buffer, b->len));
   rb_enc_associate(data, IodineBinaryEncoding);
-  iodine_connection_fire_event(b->io, IODINE_CONNECTION_ON_DRAINED, data);
+  iodine_connection_fire_event(b->io, IODINE_CONNECTION_ON_MESSAGE, data);
   IodineStore.remove(data);
   return NULL;
   // return (void *)IodineStore.add(rb_usascii_str_new((const char *)b->buffer,
@@ -107,6 +107,7 @@ static void iodine_tcp_on_open(intptr_t uuid, void *udata) {
   VALUE handler = IodineCaller.call((VALUE)udata, call_id);
   if (handler == Qnil || handler == Qfalse || handler == Qtrue) {
     sock_close(uuid);
+    free(p);
     return;
   }
   /* temporary, in case `iodine_connection_new` invokes the GC */
@@ -127,6 +128,12 @@ static void iodine_tcp_on_open(intptr_t uuid, void *udata) {
   IodineStore.remove(handler);
   facil_attach(uuid, &p->p);
   iodine_connection_fire_event(p->io, IODINE_CONNECTION_ON_OPEN, Qnil);
+}
+
+/** called when the listening socket is destroyed */
+static void iodine_tcp_on_finish(intptr_t uuid, void *udata) {
+  IodineStore.remove((VALUE)udata);
+  (void)uuid;
 }
 
 /* *****************************************************************************
@@ -157,6 +164,48 @@ on_close(client) :: called when the connection with the client was closed.
 
 The `client` argument is an {Iodine::Connection} instance that represents the connection / the client.
 
+Here's a telnet based chat-room example:
+
+      require 'iodine'
+      # define the protocol for our service
+      module ChatHandler
+        def self.on_open(client)
+          # Set a connection timeout
+          client.timeout = 10
+          # subscribe to the chat channel.
+          client.subscribe :chat
+          # Write a welcome message
+          client.publish :chat, "new member entered the chat\r\n"
+        end
+        # this is called for incoming data - note data might be fragmented.
+        def self.on_message(client, data)
+          # publish the data we received
+          client.publish :chat, data
+          # close the connection when the time comes
+          client.close if data =~ /^bye[\n\r]/
+        end
+        # called whenever timeout occurs.
+        def self.ping(client)
+          client.write "System: quite, isn't it...?\r\n"
+        end
+        # called if the connection is still open and the server is shutting down.
+        def self.on_shutdown(client)
+          # write the data we received
+          client.write "Chat server going away. Try again later.\r\n"
+        end
+        # returns a connection handler, the ChatHandler module (self) in our example.
+        def self.call
+          self
+        end
+      end
+      # we can bothe the `handler` keuword or a block, anything that answers #call.
+      Iodine.listen(port: "3000", handler: ChatHandler)
+      # start the service
+      Iodine.threads = 1
+      Iodine.start
+
+
+
 Returns the handler object used.
 */
 static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
@@ -169,7 +218,9 @@ static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
     rb_need_block();
     rb_handler = rb_block_proc();
   }
-  IodineStore.add(rb_handler);
+  if (TYPE(rb_handler) != T_MODULE && TYPE(rb_handler) != T_CLASS) {
+    IodineStore.add(rb_handler);
+  }
   if (rb_address != Qnil) {
     Check_Type(rb_address, T_STRING);
   }
@@ -181,6 +232,7 @@ static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
                        (rb_address == Qnil ? NULL
                                            : StringValueCStr(rb_address)),
                    .on_open = iodine_tcp_on_open,
+                   .on_finish = iodine_tcp_on_finish,
                    .udata = (void *)rb_handler) == -1) {
     IodineStore.remove(rb_handler);
     rb_raise(rb_eRuntimeError,

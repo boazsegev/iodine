@@ -7,6 +7,10 @@
 spn_lock_i lock = SPN_LOCK_INIT;
 fio_hash_s storage = FIO_HASH_INIT;
 
+#ifndef IODINE_DEBUG
+#define IODINE_DEBUG 0
+#endif
+
 /* *****************************************************************************
 API
 ***************************************************************************** */
@@ -32,7 +36,8 @@ static VALUE storage_remove(VALUE obj) {
   if (val > 1) {
     fio_hash_insert(&storage, obj, (void *)(val - 1));
   }
-  if ((storage.count << 1) > storage.pos && (storage.pos << 1) > storage.capa) {
+  if ((storage.count << 1) <= storage.pos &&
+      (storage.pos << 1) > storage.capa) {
     fio_hash_compact(&storage);
   }
   spn_unlock(&lock);
