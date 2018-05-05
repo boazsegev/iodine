@@ -29,7 +29,7 @@ static VALUE storage_add(VALUE obj) {
 }
 /** Removes an object from the storage (or decreases it's reference count). */
 static VALUE storage_remove(VALUE obj) {
-  if (obj == Qnil || obj == Qtrue || obj == Qfalse)
+  if (obj == Qnil || obj == Qtrue || obj == Qfalse || storage.map == NULL)
     return obj;
   spn_lock(&lock);
   uintptr_t val = (uintptr_t)fio_hash_insert(&storage, obj, NULL);
