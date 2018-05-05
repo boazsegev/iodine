@@ -28,6 +28,7 @@ static ID message_id;
 static ID on_open_id;
 static ID on_message_id;
 static ID on_drained_id;
+static ID ping_id;
 static ID on_shutdown_id;
 static ID on_closed_id;
 static VALUE ConnectionKlass;
@@ -87,6 +88,7 @@ typedef struct {
   spn_lock_i lock;
   uint8_t answers_on_message;
   uint8_t answers_on_drained;
+  uint8_t answers_ping;
   /* these are one-shot, but the CPU cache might have the data, so set it */
   uint8_t answers_on_open;
   uint8_t answers_on_shutdown;
@@ -660,6 +662,7 @@ VALUE iodine_connection_new(iodine_connection_s args) {
       .ref = 1,
       .answers_on_open = (rb_respond_to(args.handler, on_open_id) != 0),
       .answers_on_message = (rb_respond_to(args.handler, on_message_id) != 0),
+      .answers_ping = (rb_respond_to(args.handler, ping_id) != 0),
       .answers_on_drained = (rb_respond_to(args.handler, on_drained_id) != 0),
       .answers_on_shutdown = (rb_respond_to(args.handler, on_shutdown_id) != 0),
       .answers_on_closed = (rb_respond_to(args.handler, on_closed_id) != 0),
@@ -682,19 +685,35 @@ void iodine_connection_fire_event(VALUE connection,
   VALUE args[2] = {connection, msg};
   switch (ev) {
   case IODINE_CONNECTION_ON_OPEN:
-    IodineCaller.call2(data->info.handler, on_open_id, 1, args);
+    if (data->answers_on_open) {
+      IodineCaller.call2(data->info.handler, on_open_id, 1, args);
+    }
     break;
   case IODINE_CONNECTION_ON_MESSAGE:
-    IodineCaller.call2(data->info.handler, on_message_id, 2, args);
+    if (data->answers_on_message) {
+      IodineCaller.call2(data->info.handler, on_message_id, 2, args);
+    }
     break;
   case IODINE_CONNECTION_ON_DRAINED:
-    IodineCaller.call2(data->info.handler, on_drained_id, 1, args);
+    if (data->answers_on_drained) {
+      IodineCaller.call2(data->info.handler, on_drained_id, 1, args);
+    }
     break;
   case IODINE_CONNECTION_ON_SHUTDOWN:
-    IodineCaller.call2(data->info.handler, on_shutdown_id, 1, args);
+    if (data->answers_on_shutdown) {
+      IodineCaller.call2(data->info.handler, on_shutdown_id, 1, args);
+    }
     break;
+  case IODINE_CONNECTION_PING:
+    if (data->answers_ping) {
+      IodineCaller.call2(data->info.handler, ping_id, 1, args);
+    }
+    break;
+
   case IODINE_CONNECTION_ON_CLOSE:
-    IodineCaller.call2(data->info.handler, on_closed_id, 1, args);
+    if (data->answers_on_closed) {
+      IodineCaller.call2(data->info.handler, on_closed_id, 1, args);
+    }
     spn_lock(&data->lock);
     data->info.handler = Qnil;
     data->info.uuid = -1;
@@ -727,6 +746,7 @@ void iodine_connection_init(void) {
   on_drained_id = rb_intern("on_drained");
   on_shutdown_id = rb_intern("on_shutdown");
   on_closed_id = rb_intern("on_closed");
+  ping_id = rb_intern("ping");
   // should these be globalized?
   WebSocketSymbol = ID2SYM(rb_intern("websocket"));
   SSESymbol = ID2SYM(rb_intern("sse"));

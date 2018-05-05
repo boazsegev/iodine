@@ -7,6 +7,7 @@
 #include "iodine_connection.h"
 #include "iodine_defer.h"
 #include "iodine_store.h"
+#include "iodine_tcp.h"
 
 /* *****************************************************************************
 Constants

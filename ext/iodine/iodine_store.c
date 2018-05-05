@@ -32,6 +32,9 @@ static VALUE storage_remove(VALUE obj) {
   if (val > 1) {
     fio_hash_insert(&storage, obj, (void *)(val - 1));
   }
+  if ((storage.count << 1) > storage.pos && (storage.pos << 1) > storage.capa) {
+    fio_hash_compact(&storage);
+  }
   spn_unlock(&lock);
   return obj;
 }
