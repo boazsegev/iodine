@@ -51,6 +51,7 @@ static ID iodine_call_proc_id;
 static VALUE env_template_no_upgrade;
 static VALUE env_template_websockets;
 static VALUE env_template_sse;
+static VALUE iodine_default_args;
 
 static rb_encoding *IodineUTF8Encoding;
 static rb_encoding *IodineBinaryEncoding;
@@ -758,6 +759,24 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
   size_t max_headers = 0;
   size_t max_msg = 0;
   Check_Type(opt, T_HASH);
+  /* copy from deafult hash */
+  rb_hash_set_ifnone(
+      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("public"))));
+  rb_hash_set_ifnone(
+      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("port"))));
+  rb_hash_set_ifnone(
+      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("address"))));
+  rb_hash_set_ifnone(
+      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("timeout"))));
+  rb_hash_set_ifnone(
+      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("max_msg"))));
+  rb_hash_set_ifnone(
+      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("max_body"))));
+  rb_hash_set_ifnone(
+      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("max_headers"))));
+  rb_hash_set_ifnone(
+      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("log"))));
+  /* test arguments */
   VALUE app = rb_hash_aref(opt, ID2SYM(rb_intern("app")));
   VALUE www = rb_hash_aref(opt, ID2SYM(rb_intern("public")));
   VALUE port = rb_hash_aref(opt, ID2SYM(rb_intern("port")));
@@ -951,6 +970,11 @@ static void initialize_env_template(void) {
 #undef add_value_to_env
 #undef add_str_to_env
 }
+
+static void initialize_default_args(void) {
+  IodineStore.add(iodine_default_args);
+}
+
 /* *****************************************************************************
 Initialization
 ***************************************************************************** */
@@ -958,6 +982,11 @@ Initialization
 void iodine_init_http(void) {
 
   rb_define_module_function(IodineModule, "listen2http", iodine_http_listen, 1);
+
+  /** Used by {listen2http} to set missing arguments. */
+  iodine_default_args = rb_hash_new();
+  rb_const_set(IodineModule, rb_intern2("DEFAULT_HTTP_ARGS", 17),
+               iodine_default_args);
 
   rack_autoset(REQUEST_METHOD);
   rack_autoset(PATH_INFO);
