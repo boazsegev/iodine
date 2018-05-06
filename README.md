@@ -9,11 +9,23 @@
 
 This branch is a rewrite in anticipation of the actual Rack specification for WebSocket and SSE connections.
 
+I apologize to all my amazing early adopters for the rapid changes in the API for connection objects (SSE / WebSockets) and Pub/Sub. This was a result of an attempt to create a de facto standard with other server authors. Hopefully the API in the 0.6.0 release will see the last of the changes.
+
 So many things changed since Iodine moved to C, but even after the major 0.5.0 rewrite, many pieces of code feel like patchwork.
 
 Hence, a total rewrite that centers around keeping things DRY and better organized. Also, this will leverage the new Connection object model to place it at center stage.
 
 Since I have other projects and this is a hobby thing, this will take time.
+---
+
+#### Change log v.0.6.0 (this branch)
+
+**API BREAKING CHANGE**: The API for persistent connections (SSE / WebSockets) was drastically changed in accordance with the Rack specification discussion that required each callback to accept a "client" object (replacing the `extend` approach. Please see the documentation.
+
+**API BREAKING CHANGE**: `Iodine.attach` was removed due to instability and issues regarding TLS/SSL and file system IO. I hope to fix these issues in a future release.
+
+**API BREAKING CHANGE**: Pub/Sub API was changed (again, sorry), replacing the pub/sub object with the `unsubscribe` method. This means there's no need for the client to map channel names to specific subscriptions (Iodine will perform this housekeeping task for the client).
+
 
 ---
 

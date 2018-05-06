@@ -8,11 +8,13 @@
 Static stuff
 ***************************************************************************** */
 static ID call_id;
+static ID on_closed_id;
 static rb_encoding *IodineBinaryEncoding;
 
 static VALUE port_id;
 static VALUE address_id;
 static VALUE handler_id;
+static VALUE timeout_id;
 
 /* *****************************************************************************
 Raw TCP/IP Protocol
@@ -140,14 +142,61 @@ static void iodine_tcp_on_finish(intptr_t uuid, void *udata) {
   (void)uuid;
 }
 
+/**
+ * The `on_connect` callback should return a pointer to a protocol object
+ * that will handle any connection related events.
+ *
+ * Should either call `facil_attach` or close the connection.
+ */
+static void iodine_tcp_on_connect(intptr_t uuid, void *udata) {
+  iodine_protocol_s *p = malloc(sizeof(*p));
+  if (!p) {
+    perror("FATAL ERROR: No Memory!");
+    exit(errno);
+  }
+  VALUE handler = (VALUE)udata;
+  *p = (iodine_protocol_s){
+      .p =
+          {
+              .service = iodine_tcp_service,
+              .on_data = iodine_tcp_on_data,
+              .on_ready = iodine_tcp_on_ready,
+              .on_shutdown = iodine_tcp_on_shutdown,
+              .on_close = iodine_tcp_on_close,
+              .ping = iodine_tcp_ping,
+          },
+      .io = iodine_connection_new(.type = IODINE_CONNECTION_RAW, .uuid = uuid,
+                                  .arg = p, .handler = handler),
+  };
+  /* clear away (remember the connection object manages these concerns) */
+  IodineStore.remove(handler);
+  facil_attach(uuid, &p->p);
+  iodine_connection_fire_event(p->io, IODINE_CONNECTION_ON_OPEN, Qnil);
+}
+
+/**
+ * The `on_fail` is called when a socket fails to connect. The old sock UUID
+ * is passed along.
+ */
+static void iodine_tcp_on_fail(intptr_t uuid, void *udata) {
+  VALUE handler = (VALUE)udata;
+  if (rb_respond_to(handler, on_closed_id)) {
+    VALUE client = Qnil;
+    IodineCaller.call2(handler, on_closed_id, 1, &client);
+  }
+  IodineStore.remove(handler);
+  (void)uuid;
+}
+
 /* *****************************************************************************
 The Ruby API implementation
 ***************************************************************************** */
 
 // clang-format off
 /**
-The {listen} method accepts a single Hash argument with the following optional
-keys:
+The {listen} method instructs iodine to listen to incoming connections using either TCP/IP or Unix sockets.
+
+The method accepts a single Hash argument with the following optional keys:
 
 :port :: The port to listen to, deafults to 0 (using a Unix socket)
 :address :: The address to listen to, which could be a Unix Socket path as well as an IPv4 / IPv6 address. Deafults to 0.0.0.0 (or the IPv6 equivelant).
@@ -157,7 +206,7 @@ The method also accepts an optional block.
 
 Either a block or the :handler key MUST be present.
 
-The handler object should return a connection handler that supports the following callbacks (see also {Iodine::Connection}):
+The handler Proc (or object) should return a connection callback object that supports the following callbacks (see also {Iodine::Connection}):
 
 on_open(client) :: called after a connection was established
 on_message(client, data) :: called when incoming data is available. Data may be fragmented.
@@ -197,7 +246,7 @@ Here's a telnet based chat-room example:
           # write the data we received
           client.write "Chat server going away. Try again later.\r\n"
         end
-        # returns a connection handler, the ChatHandler module (self) in our example.
+        # returns the callback object (self).
         def self.call
           self
         end
@@ -218,7 +267,7 @@ static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
   VALUE rb_port = rb_hash_aref(args, port_id);
   VALUE rb_address = rb_hash_aref(args, address_id);
   VALUE rb_handler = rb_hash_aref(args, handler_id);
-  if (rb_handler == Qnil) {
+  if (rb_handler == Qnil || rb_handler == Qfalse || rb_handler == Qtrue) {
     rb_need_block();
     rb_handler = rb_block_proc();
   }
@@ -244,6 +293,56 @@ static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
   (void)self;
 }
 
+// clang-format off
+/**
+The {connect} method instructs iodine to connect to a server using either TCP/IP or Unix sockets.
+
+The method accepts a single Hash argument with the following optional keys:
+
+:port :: The port to listen to, deafults to 0 (using a Unix socket)
+:address :: The address to listen to, which could be a Unix Socket path as well as an IPv4 / IPv6 address. Deafults to 0.0.0.0 (or the IPv6 equivelant).
+:handler :: A connection callback object that supports the following same callbacks listen in the {listen} method's documentation.
+:timeout :: An integer timeout for connection establishment (doen't effect the new connection's timeout. Should be in the rand of 0..255.
+
+The method also accepts an optional block.
+
+Either a block or the :handler key MUST be present.
+
+If the connection fails, only the `on_close` callback will be called (with a `nil` client).
+
+Returns the handler object used.
+*/
+static VALUE iodine_tcp_connect(VALUE self, VALUE args) {
+  // clang-format on
+  Check_Type(args, T_HASH);
+  VALUE rb_port = rb_hash_aref(args, port_id);
+  VALUE rb_address = rb_hash_aref(args, address_id);
+  VALUE rb_handler = rb_hash_aref(args, handler_id);
+  VALUE rb_timeout = rb_hash_aref(args, timeout_id);
+  uint8_t timeout = 0;
+  if (rb_handler == Qnil || rb_handler == Qfalse || rb_handler == Qtrue) {
+    rb_raise(rb_eArgError, "A callback object (:handler) must be provided.");
+  }
+  IodineStore.add(rb_handler);
+  if (rb_address != Qnil) {
+    Check_Type(rb_address, T_STRING);
+  }
+  if (rb_port != Qnil) {
+    Check_Type(rb_port, T_STRING);
+  }
+  if (rb_timeout != Qnil) {
+    Check_Type(rb_timeout, T_FIXNUM);
+    timeout = NUM2USHORT(rb_timeout);
+  }
+  facil_connect(.port = (rb_port == Qnil ? NULL : StringValueCStr(rb_port)),
+                .address =
+                    (rb_address == Qnil ? NULL : StringValueCStr(rb_address)),
+                .on_connect = iodine_tcp_on_connect,
+                .on_fail = iodine_tcp_on_fail, .timeout = timeout,
+                .udata = (void *)rb_handler);
+  return rb_handler;
+  (void)self;
+}
 /* *****************************************************************************
 Add the Ruby API methods to the Iodine object
 ***************************************************************************** */
@@ -253,7 +352,11 @@ void iodine_init_tcp_connections(void) {
   port_id = IodineStore.add(rb_id2sym(rb_intern("port")));
   address_id = IodineStore.add(rb_id2sym(rb_intern("address")));
   handler_id = IodineStore.add(rb_id2sym(rb_intern("handler")));
+  timeout_id = IodineStore.add(rb_id2sym(rb_intern("timout")));
+  on_closed_id = rb_intern("on_closed");
+
   IodineBinaryEncoding = rb_enc_find("binary");
 
   rb_define_module_function(IodineModule, "listen", iodine_tcp_listen, 1);
+  rb_define_module_function(IodineModule, "connect", iodine_tcp_connect, 1);
 }
