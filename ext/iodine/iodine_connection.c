@@ -117,7 +117,7 @@ size_t iodine_connection_data_size(const void *c_) {
   (void)c_;
 }
 
-static const rb_data_type_t iodine_connection_data_type = {
+const rb_data_type_t iodine_connection_data_type = {
     .wrap_struct_name = "IodineConnectionData",
     .function =
         {

@@ -643,7 +643,7 @@ Listenninng to HTTP
 *****************************************************************************
 */
 
-void *iodine_print_http_msg2_in_gvl(void *d_) {
+void *iodine_print_http_msg_in_gvl(void *d_) {
   // Write message
   struct {
     VALUE www;
@@ -658,33 +658,7 @@ void *iodine_print_http_msg2_in_gvl(void *d_) {
   return NULL;
 }
 
-void *iodine_print_http_msg_in_gvl(void *d_) {
-  // Write message
-  VALUE iodine_version = rb_const_get(IodineModule, rb_intern("VERSION"));
-  VALUE ruby_version = rb_const_get(IodineModule, rb_intern("RUBY_VERSION"));
-  struct {
-    VALUE www;
-    VALUE port;
-  } *arg = d_;
-  if (arg->www) {
-    fprintf(stderr,
-            "\nStarting up Iodine HTTP Server on port %s:\n"
-            " * Ruby v.%s\n * Iodine v.%s \n"
-            " * Serving static files from %s\n\n",
-            StringValueCStr(arg->port), StringValueCStr(ruby_version),
-            StringValueCStr(iodine_version), StringValueCStr(arg->www));
-  } else {
-    fprintf(stderr,
-            "\nStarting up Iodine HTTP Server on port %s:\n"
-            " * Ruby v.%s\n * Iodine v.%s \n\n",
-            StringValueCStr(arg->port), StringValueCStr(ruby_version),
-            StringValueCStr(iodine_version));
-  }
-
-  return NULL;
-}
-
-static void iodine_print_http_msg1(void *www, void *port) {
+static void iodine_print_http_msg(void *www, void *port) {
   if (getpid() != facil_parent_pid())
     goto finish;
   struct {
@@ -692,20 +666,6 @@ static void iodine_print_http_msg1(void *www, void *port) {
     void *port;
   } data = {.www = www, .port = port};
   IodineCaller.enterGVL(iodine_print_http_msg_in_gvl, (void *)&data);
-finish:
-  if (www) {
-    IodineStore.remove((VALUE)www);
-  }
-  IodineStore.remove((VALUE)port);
-}
-static void iodine_print_http_msg2(void *www, void *port) {
-  if (getpid() != facil_parent_pid())
-    goto finish;
-  struct {
-    void *www;
-    void *port;
-  } data = {.www = www, .port = port};
-  IodineCaller.enterGVL(iodine_print_http_msg2_in_gvl, (void *)&data);
 finish:
   if (www) {
     IodineStore.remove((VALUE)www);
@@ -752,7 +712,6 @@ timeouts will be dynamically managed by Iodine. The `timeout` option is only
 relevant to HTTP/1.x connections.
 */
 VALUE iodine_http_listen(VALUE self, VALUE opt) {
-  static int called_once = 0;
   uint8_t log_http = 0;
   size_t ping = 0;
   size_t max_body = 0;
@@ -885,12 +844,7 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
             "static files.\n",
             (port ? StringValueCStr(port) : "3000"));
   }
-  if (called_once) {
-    defer(iodine_print_http_msg2, (www ? (void *)www : NULL), (void *)port);
-  } else {
-    called_once = 1;
-    defer(iodine_print_http_msg1, (www ? (void *)www : NULL), (void *)port);
-  }
+  defer(iodine_print_http_msg, (www ? (void *)www : NULL), (void *)port);
 
   return Qtrue;
   (void)self;
@@ -969,10 +923,6 @@ static void initialize_env_template(void) {
 
 #undef add_value_to_env
 #undef add_str_to_env
-}
-
-static void initialize_default_args(void) {
-  IodineStore.add(iodine_default_args);
 }
 
 /* *****************************************************************************

@@ -161,6 +161,21 @@ static VALUE iodine_workers_set(VALUE self, VALUE val) {
   return val;
 }
 
+/** Prints the Iodine startup message */
+static void iodine_print_startup_message(iodine_start_params_s params) {
+  VALUE iodine_version = rb_const_get(IodineModule, rb_intern("VERSION"));
+  VALUE ruby_version = rb_const_get(IodineModule, rb_intern("RUBY_VERSION"));
+  facil_expected_concurrency(&params.threads, &params.workers);
+  fprintf(stderr,
+          "\nStarting up Iodine:\n"
+          " * Ruby v.%s\n * Iodine v.%s\n"
+          " * %d Workers X %d Threads per worker.\n"
+          "\n",
+          StringValueCStr(ruby_version), StringValueCStr(iodine_version),
+          params.workers, params.threads);
+  (void)params;
+}
+
 /**
  * This will block the calling (main) thread and start the Iodine reactor.
  *
@@ -185,6 +200,7 @@ static VALUE iodine_start(VALUE self) {
   iodine_start_params_s params = {
       .threads = NUM2SHORT(threads_rb), .workers = NUM2SHORT(workers_rb),
   };
+  iodine_print_startup_message(params);
   IodineCaller.leaveGVL(iodine_run_outside_GVL, &params);
   return self;
 }
