@@ -217,20 +217,9 @@ void iodine_init_helpers(void) {
   iodine_to_i_func_id = rb_intern("to_i");
   IodineUTF8Encoding = rb_enc_find("UTF-8");
   VALUE tmp = rb_define_module_under(IodineModule, "Rack");
-  tmp = rb_define_module_under(tmp, "Utils");
-  rb_define_module_function(tmp, "decode_url!", url_decode_inplace, 1);
-  rb_define_module_function(tmp, "decode_url", url_decode, 1);
-  rb_define_module_function(tmp, "decode_path!", path_decode_inplace, 1);
-  rb_define_module_function(tmp, "decode_path", path_decode, 1);
-  rb_define_module_function(tmp, "time2str", date_str, -1);
-  rb_define_module_function(tmp, "rfc2109", iodine_rfc2109, 1);
-  rb_define_module_function(tmp, "rfc2822", iodine_rfc2822, 1);
-
-  tmp = rb_define_module_under(IodineBaseModule, "MonkeyPatch");
   // clang-format off
   /**
-Iodine does NOT monkey patch Rack automatically. However, it's possible to
-moneky patch Rack::Utils using this module.
+Iodine does NOT monkey patch Rack automatically. However, it's possible and recommended to moneky patch Rack::Utils to use the methods in this module.
 
 Choosing to monkey patch Rack::Utils could offer significant performance gains for some applications. i.e. (on my machine):
 
@@ -254,15 +243,26 @@ Choosing to monkey patch Rack::Utils could offer significant performance gains f
 
 Results:
         user     system      total        real
-        Rack.unescape  8.660000   0.010000   8.670000 (  8.687807)
-        Rack.rfc2822  3.730000   0.000000   3.730000 (  3.727732)
-        Rack.rfc2109  3.020000   0.010000   3.030000 (  3.031940)
-                     --- Monkey Patching Rack ---
-        Patched.unescape  0.340000   0.000000   0.340000 (  0.341506)
-        Patched.rfc2822  0.740000   0.000000   0.740000 (  0.737796)
-        Patched.rfc2109  0.690000   0.010000   0.700000 (  0.700155)
+        Rack.unescape  8.706881   0.019995   8.726876 (  8.740530)
+        Rack.rfc2822  3.270305   0.007519   3.277824 (  3.279416)
+        Rack.rfc2109  3.152188   0.003852   3.156040 (  3.157975)
+                   --- Monkey Patching Rack ---
+        Patched.unescape  0.327231   0.003125   0.330356 (  0.337090)
+        Patched.rfc2822  0.691304   0.003330   0.694634 (  0.701172)
+        Patched.rfc2109  0.685029   0.001956   0.686985 (  0.687607)
 
   */
+  tmp = rb_define_module_under(tmp, "Utils");
+  // clang-format on
+  rb_define_module_function(tmp, "decode_url!", url_decode_inplace, 1);
+  rb_define_module_function(tmp, "decode_url", url_decode, 1);
+  rb_define_module_function(tmp, "decode_path!", path_decode_inplace, 1);
+  rb_define_module_function(tmp, "decode_path", path_decode, 1);
+  rb_define_module_function(tmp, "time2str", date_str, -1);
+  rb_define_module_function(tmp, "rfc2109", iodine_rfc2109, 1);
+  rb_define_module_function(tmp, "rfc2822", iodine_rfc2822, 1);
+
+  tmp = rb_define_module_under(IodineBaseModule, "MonkeyPatch");
   tmp = rb_define_module_under(tmp, "RackUtils");
   // clang-format on
   /* we define it all twice for easier monkey patching */

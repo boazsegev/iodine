@@ -48,11 +48,17 @@ require 'iodine/iodine'
 #
 # Methods for TCP/IP and Unix Sockets connections include {listen} and {connect}.
 #
-# Please read the {file:README.md} file for an introduction to Iodine and an overview of it's API.
+# Methods for HTTP connections include {listen2http}.
+#
+# Note that the HTTP server supports both TCP/IP and Unix Sockets as well as SSE / WebSockets extensions.
+#
+# Please read the {file:README.md} file for an introduction to Iodine.
 #
 module Iodine
 
     # Will monkey patch some Rack methods to increase their performance.
+    #
+    # This is recommended, see {Iodine::Rack::Utils} for details.
     def self.patch_rack
     ::Rack::Utils.class_eval do
       Iodine::Base::MonkeyPatch::RackUtils.methods(false).each do |m|
@@ -61,14 +67,6 @@ module Iodine
         end
       end
     end
-
-  # Will monkey patch the default JSON parser to replace the default `JSON.parse` with {Iodine::JSON.parse}.
-  def self.patch_json
-    ::JSON.class_eval do
-        ::JSON.define_singleton_method(:parse,
-              Iodine::JSON.instance_method(:parse) )
-    end
-  end
 
 end
 
