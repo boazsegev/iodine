@@ -29,7 +29,7 @@ typedef enum {
   IODINE_CONNECTION_ON_DRAINED,
   IODINE_CONNECTION_PING,
   IODINE_CONNECTION_ON_SHUTDOWN,
-  IODINE_CONNECTION_ON_CLOSE,
+  IODINE_CONNECTION_ON_CLOSE
 } iodine_connection_event_type_e;
 
 /**
@@ -41,5 +41,14 @@ void iodine_connection_fire_event(VALUE connection,
 
 /** Initializes the Connection Ruby class. */
 void iodine_connection_init(void);
+
+extern const rb_data_type_t iodine_connection_data_type;
+
+static inline iodine_connection_s *iodine_connection_CData(VALUE self) {
+  iodine_connection_s *c = NULL;
+  TypedData_Get_Struct(self, iodine_connection_s, &iodine_connection_data_type,
+                       c);
+  return c;
+}
 
 #endif
