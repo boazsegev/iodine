@@ -227,6 +227,9 @@ void Init_iodine(void) {
   // intialize the TCP/IP related module
   iodine_init_tcp_connections();
 
+  // initialize the HTTP module
+  iodine_init_http();
+
   // initialize JSON helpers
   iodine_init_json();
 
