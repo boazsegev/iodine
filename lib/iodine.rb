@@ -46,11 +46,30 @@ require 'iodine/iodine'
 #
 # Methods for application wide pub/sub include {subscribe}, {unsubscribe} and {publish}. Connection specific pub/sub methods are documented in the {Iodine::Connection} class).
 #
-# Methods for network connection establishment include {listen}.
+# Methods for TCP/IP and Unix Sockets connections include {listen} and {connect}.
 #
 # Please read the {file:README.md} file for an introduction to Iodine and an overview of it's API.
 #
 module Iodine
+
+    # Will monkey patch some Rack methods to increase their performance.
+    def self.patch_rack
+    ::Rack::Utils.class_eval do
+      Iodine::Base::MonkeyPatch::RackUtils.methods(false).each do |m|
+        ::Rack::Utils.define_singleton_method(m,
+              Iodine::Base::MonkeyPatch::RackUtils.instance_method(m) )
+        end
+      end
+    end
+
+  # Will monkey patch the default JSON parser to replace the default `JSON.parse` with {Iodine::JSON.parse}.
+  def self.patch_json
+    ::JSON.class_eval do
+        ::JSON.define_singleton_method(:parse,
+              Iodine::JSON.instance_method(:parse) )
+    end
+  end
+
 end
 
 

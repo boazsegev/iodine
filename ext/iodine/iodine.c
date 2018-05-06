@@ -226,4 +226,11 @@ void Init_iodine(void) {
 
   // intialize the TCP/IP related module
   iodine_init_tcp_connections();
+
+  // initialize JSON helpers
+  iodine_init_json();
+
+  // initialize Rack helpers and IO
+  iodine_init_helpers();
+  IodineRackIO.init();
 }
