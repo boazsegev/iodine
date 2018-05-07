@@ -844,47 +844,55 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
   size_t max_msg = 0;
   Check_Type(opt, T_HASH);
   /* copy from deafult hash */
-  rb_hash_set_ifnone(
-      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("public"))));
-  rb_hash_set_ifnone(
-      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("port"))));
-  rb_hash_set_ifnone(
-      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("address"))));
-  rb_hash_set_ifnone(
-      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("timeout"))));
-  rb_hash_set_ifnone(
-      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("max_msg"))));
-  rb_hash_set_ifnone(
-      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("max_body"))));
-  rb_hash_set_ifnone(
-      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("max_headers"))));
-  rb_hash_set_ifnone(
-      opt, rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("log"))));
   /* test arguments */
   VALUE app = rb_hash_aref(opt, ID2SYM(rb_intern("app")));
   VALUE www = rb_hash_aref(opt, ID2SYM(rb_intern("public")));
   VALUE port = rb_hash_aref(opt, ID2SYM(rb_intern("port")));
   VALUE address = rb_hash_aref(opt, ID2SYM(rb_intern("address")));
   VALUE tout = rb_hash_aref(opt, ID2SYM(rb_intern("timeout")));
+  if (www == Qnil) {
+    www = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("public")));
+  }
+  if (port == Qnil) {
+    port = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("port")));
+  }
+  if (address == Qnil) {
+    address = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("address")));
+  }
+  if (tout == Qnil) {
+    tout = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("timeout")));
+  }
 
   VALUE tmp = rb_hash_aref(opt, ID2SYM(rb_intern("max_msg")));
+  if (tmp == Qnil) {
+    tmp = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("max_msg")));
+  }
   if (tmp != Qnil && tmp != Qfalse) {
     Check_Type(tmp, T_FIXNUM);
     max_msg = FIX2ULONG(tmp);
   }
 
   tmp = rb_hash_aref(opt, ID2SYM(rb_intern("max_body")));
+  if (tmp == Qnil) {
+    tmp = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("max_body")));
+  }
   if (tmp != Qnil && tmp != Qfalse) {
     Check_Type(tmp, T_FIXNUM);
     max_body = FIX2ULONG(tmp);
   }
   tmp = rb_hash_aref(opt, ID2SYM(rb_intern("max_headers")));
+  if (tmp == Qnil) {
+    tmp = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("max_headers")));
+  }
   if (tmp != Qnil && tmp != Qfalse) {
     Check_Type(tmp, T_FIXNUM);
     max_headers = FIX2ULONG(tmp);
   }
 
   tmp = rb_hash_aref(opt, ID2SYM(rb_intern("ping")));
+  if (tmp == Qnil) {
+    tmp = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("ping")));
+  }
   if (tmp != Qnil && tmp != Qfalse) {
     Check_Type(tmp, T_FIXNUM);
     ping = FIX2ULONG(tmp);
@@ -896,6 +904,9 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
   }
 
   tmp = rb_hash_aref(opt, ID2SYM(rb_intern("log")));
+  if (tmp == Qnil) {
+    tmp = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("log")));
+  }
   if (tmp != Qnil && tmp != Qfalse)
     log_http = 1;
 
