@@ -811,6 +811,8 @@ specifications.
 
 Accepts a single Hash argument with the following properties:
 
+(it's possible to set default values using the {DEFAULT_HTTP_ARGS} Hash)
+
 app:: the Rack application that handles incoming requests. Default: `nil`.
 port:: the port to listen to. Default: 3000.
 address:: the address to bind to. Default: binds to all possible addresses.
