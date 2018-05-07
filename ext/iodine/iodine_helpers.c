@@ -218,7 +218,7 @@ void iodine_init_helpers(void) {
   IodineUTF8Encoding = rb_enc_find("UTF-8");
   VALUE tmp = rb_define_module_under(IodineModule, "Rack");
   // clang-format off
-  /**
+  /*
 Iodine does NOT monkey patch Rack automatically. However, it's possible and recommended to moneky patch Rack::Utils to use the methods in this module.
 
 Choosing to monkey patch Rack::Utils could offer significant performance gains for some applications. i.e. (on my machine):
@@ -262,6 +262,10 @@ Results:
   rb_define_module_function(tmp, "rfc2109", iodine_rfc2109, 1);
   rb_define_module_function(tmp, "rfc2822", iodine_rfc2822, 1);
 
+  /*
+The monkey-patched methods are in this module, allowing Iodine::Rack::Utils to
+include non-patched methods as well.
+  */
   tmp = rb_define_module_under(IodineBaseModule, "MonkeyPatch");
   tmp = rb_define_module_under(tmp, "RackUtils");
   // clang-format on

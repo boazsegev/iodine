@@ -176,9 +176,6 @@ static VALUE iodine_connection_write(VALUE self, VALUE data) {
   if (!c || sock_isclosed(c->info.uuid)) {
     rb_raise(rb_eIOError, "Connection closed or invalid.");
   }
-  if (c->info.type == IODINE_CONNECTION_WEBSOCKET) {
-    websocket_close(c->info.arg);
-  }
   switch (c->info.type) {
   case IODINE_CONNECTION_WEBSOCKET:
     /* WebSockets*/
