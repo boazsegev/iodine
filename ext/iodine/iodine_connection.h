@@ -14,6 +14,7 @@ typedef struct {
   intptr_t uuid;
   void *arg;
   VALUE handler;
+  VALUE env;
 } iodine_connection_s;
 
 /**

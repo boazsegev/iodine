@@ -103,6 +103,9 @@ static void iodine_connection_data_mark(void *c_) {
   if (c->info.handler != Qnil) {
     rb_gc_mark(c->info.handler);
   }
+  if (c->info.env && c->info.env != Qnil) {
+    rb_gc_mark(c->info.env);
+  }
 }
 /* a callback for the GC (marking active objects) */
 static void iodine_connection_data_free(void *c_) {
@@ -247,8 +250,8 @@ static VALUE iodine_connection_pending(VALUE self) {
   return SIZET2NUM((sock_pending(c->info.uuid)));
 }
 
-/** Returns the connection's type (`:sse`, `:websocket`, etc'). */
-static VALUE iodine_connection_type(VALUE self) {
+/** Returns the connection's protocol Symbol (`:sse`, `:websocket`, etc'). */
+static VALUE iodine_connection_protocol_name(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
   if (c) {
     switch (c->info.type) {
@@ -296,6 +299,17 @@ static VALUE iodine_connection_timeout_set(VALUE self, VALUE timeout) {
   if (c && !sock_isclosed(c->info.uuid)) {
     facil_set_timeout(c->info.uuid, (uint8_t)tout);
     return timeout;
+  }
+  return Qnil;
+}
+
+/**
+ * Returns the connection's `env` (if it originated from an HTTP request).
+ */
+static VALUE iodine_connection_env(VALUE self) {
+  iodine_connection_data_s *c = iodine_connection_validate_data(self);
+  if (c && c->info.env) {
+    return c->info.env;
   }
   return Qnil;
 }
@@ -725,6 +739,7 @@ void iodine_connection_fire_event(VALUE connection,
     }
     spn_lock(&data->lock);
     data->info.handler = Qnil;
+    data->info.env = Qnil;
     data->info.uuid = -1;
     data->info.arg = NULL;
     iodine_sub_clear_all(&data->subscriptions);
@@ -794,11 +809,14 @@ void iodine_connection_init(void) {
   rb_define_method(ConnectionKlass, "close", iodine_connection_close, 0);
   rb_define_method(ConnectionKlass, "open?", iodine_connection_is_open, 0);
   rb_define_method(ConnectionKlass, "pending", iodine_connection_pending, 0);
-  rb_define_method(ConnectionKlass, "type", iodine_connection_type, 0);
+  rb_define_method(ConnectionKlass, "protocol", iodine_connection_protocol_name,
+                   0);
   rb_define_method(ConnectionKlass, "timeout", iodine_connection_timeout_get,
                    0);
   rb_define_method(ConnectionKlass, "timeout=", iodine_connection_timeout_set,
                    1);
+  rb_define_method(ConnectionKlass, "env", iodine_connection_env, 0);
+
   rb_define_method(ConnectionKlass, "subscribe", iodine_pubsub_subscribe, -1);
   rb_define_method(ConnectionKlass, "unsubscribe", iodine_pubsub_unsubscribe,
                    1);

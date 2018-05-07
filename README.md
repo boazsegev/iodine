@@ -15,7 +15,6 @@ So many things changed since Iodine moved to C, but even after the major 0.5.0 r
 
 Hence, a total rewrite that centers around keeping things DRY and better organized. Also, this will leverage the new Connection object model to place it at center stage.
 
-Since I have other projects and this is a hobby thing, this will take time.
 ---
 
 #### Change log v.0.6.0 (this branch)

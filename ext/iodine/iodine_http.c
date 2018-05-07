@@ -189,9 +189,10 @@ static void iodine_ws_on_close(intptr_t uuid, void *udata) {
   (void)uuid;
 }
 
-static void iodine_ws_attach(http_s *h, VALUE handler) {
-  VALUE io = iodine_connection_new(.type = IODINE_CONNECTION_WEBSOCKET,
-                                   .arg = NULL, .handler = handler, .uuid = 0);
+static void iodine_ws_attach(http_s *h, VALUE handler, VALUE env) {
+  VALUE io =
+      iodine_connection_new(.type = IODINE_CONNECTION_WEBSOCKET, .arg = NULL,
+                            .handler = handler, .env = env, .uuid = 0);
   if (io == Qnil)
     return;
 
@@ -229,9 +230,9 @@ static void iodine_sse_on_open(http_sse_s *sse) {
   evio_add_write(sock_uuid2fd(c->uuid), (void *)c->uuid);
 }
 
-static void iodine_sse_attach(http_s *h, VALUE handler) {
+static void iodine_sse_attach(http_s *h, VALUE handler, VALUE env) {
   VALUE io = iodine_connection_new(.type = IODINE_CONNECTION_SSE, .arg = NULL,
-                                   .handler = handler, .uuid = 0);
+                                   .handler = handler, .env = env, .uuid = 0);
   if (io == Qnil)
     return;
 
@@ -584,11 +585,11 @@ static inline int ruby2c_review_upgrade(iodine_http_request_handle_s *req,
              ((handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil ||
               (handler = rb_hash_aref(env, UPGRADE_WEBSOCKET)) != Qnil)) {
     // use response as existing base for native websocket upgrade
-    iodine_ws_attach(h, handler);
+    iodine_ws_attach(h, handler, env);
   } else if (req->upgrade == IODINE_UPGRADE_SSE &&
              (handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil) {
     // use response as existing base for SSE upgrade
-    iodine_sse_attach(h, handler);
+    iodine_sse_attach(h, handler, env);
   } else if ((handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil) {
     // use response as existing base for SSE upgrade
     intptr_t uuid = http_hijack(h, NULL);
@@ -811,7 +812,7 @@ specifications.
 
 Accepts a single Hash argument with the following properties:
 
-(it's possible to set default values using the {DEFAULT_HTTP_ARGS} Hash)
+(it's possible to set default values using the {Iodine::DEFAULT_HTTP_ARGS} Hash)
 
 app:: the Rack application that handles incoming requests. Default: `nil`.
 port:: the port to listen to. Default: 3000.
@@ -1073,6 +1074,7 @@ void iodine_init_http(void) {
 
   /** Used by {listen2http} to set missing arguments. */
   iodine_default_args = rb_hash_new();
+  /** Used by {listen2http} to set missing arguments. */
   rb_const_set(IodineModule, rb_intern2("DEFAULT_HTTP_ARGS", 17),
                iodine_default_args);
 
