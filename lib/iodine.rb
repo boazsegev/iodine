@@ -102,6 +102,11 @@ if ARGV.index('-tout') && ARGV[ARGV.index('-tout') + 1]
   puts "WARNNING: timeout set to 0 (ignored, timeout will be ~5 seconds)." if (Iodine::DEFAULT_HTTP_ARGS[:timeout].to_i <= 0 || Iodine::DEFAULT_HTTP_ARGS[:timeout].to_i > 255)
 end
 Iodine::DEFAULT_HTTP_ARGS[:log] = true if ARGV.index('-v')
-Iodine::DEFAULT_HTTP_ARGS[:log] = false if ARGV.index('-q')
 
+if ARGV.index('-t') && ARGV[ARGV.index('-t') + 1].to_i != 0
+  Iodine.threads = ARGV[ARGV.index('-t') + 1].to_i
+end
+if ARGV.index('-w') && ARGV[ARGV.index('-w') + 1].to_i != 0
+  Iodine.workers = ARGV[ARGV.index('-w') + 1].to_i
+end
 

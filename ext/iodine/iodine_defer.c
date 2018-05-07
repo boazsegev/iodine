@@ -14,7 +14,7 @@
 IO flushing dedicated thread for protection against blocking code
 ***************************************************************************** */
 
-static volatile int sock_io_thread = 0;
+static spn_lock_i sock_io_thread = 0;
 static pthread_t sock_io_pthread;
 typedef struct {
   size_t threads;
@@ -31,18 +31,19 @@ static void *iodine_io_thread(void *arg) {
   }
   return NULL;
 }
-static void iodine_start_io_thread(void) {
-  if (!sock_io_thread) {
-    sock_io_thread = 1;
+static void iodine_start_io_thread(void *a_, void *b_) {
+  if (!spn_trylock(&sock_io_thread)) {
     pthread_create(&sock_io_pthread, NULL, iodine_io_thread, NULL);
   }
+  (void)a_;
+  (void)b_;
 }
 static void iodine_join_io_thread(void) {
-  if (sock_io_thread) {
+  if (spn_unlock(&sock_io_thread)) {
     sock_io_thread = 0;
     pthread_join(sock_io_pthread, NULL);
+    sock_io_pthread = NULL;
   }
-  sock_io_pthread = NULL;
 }
 
 /* *****************************************************************************
@@ -107,7 +108,7 @@ static void *fork_using_ruby(void *ignr) {
   }
   iodine_perform_fork_callbacks(0);
   // re-initiate IO thread
-  iodine_start_io_thread();
+  defer(iodine_start_io_thread, NULL, NULL);
   return (void *)pid;
   (void)ignr;
 }
@@ -337,5 +338,5 @@ void iodine_defer_initialize(void) {
                             0);
   rb_define_module_function(IodineModule, "after_fork", iodine_after_fork_add,
                             0);
-  iodine_start_io_thread();
+  defer(iodine_start_io_thread, NULL, NULL);
 }
