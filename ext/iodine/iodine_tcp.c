@@ -2,6 +2,7 @@
 #include <ruby/encoding.h>
 #include <ruby/io.h>
 
+#include "evio.h"
 #include "facil.h"
 
 /* *****************************************************************************
@@ -104,36 +105,10 @@ static void iodine_tcp_ping(intptr_t uuid, protocol_s *protocol) {
 
 /** called when a connection opens */
 static void iodine_tcp_on_open(intptr_t uuid, void *udata) {
-  iodine_protocol_s *p = malloc(sizeof(*p));
-  if (!p) {
-    perror("FATAL ERROR: No Memory!");
-    exit(errno);
-  }
   VALUE handler = IodineCaller.call((VALUE)udata, call_id);
-  if (handler == Qnil || handler == Qfalse || handler == Qtrue) {
-    sock_close(uuid);
-    free(p);
-    return;
-  }
-  /* temporary, in case `iodine_connection_new` invokes the GC */
   IodineStore.add(handler);
-  *p = (iodine_protocol_s){
-      .p =
-          {
-              .service = iodine_tcp_service,
-              .on_data = iodine_tcp_on_data,
-              .on_ready = iodine_tcp_on_ready,
-              .on_shutdown = iodine_tcp_on_shutdown,
-              .on_close = iodine_tcp_on_close,
-              .ping = iodine_tcp_ping,
-          },
-      .io = iodine_connection_new(.type = IODINE_CONNECTION_RAW, .uuid = uuid,
-                                  .arg = p, .handler = handler),
-  };
-  /* clear away (remember the connection object manages these concerns) */
+  iodine_tcp_attch_uuid(uuid, handler);
   IodineStore.remove(handler);
-  facil_attach(uuid, &p->p);
-  iodine_connection_fire_event(p->io, IODINE_CONNECTION_ON_OPEN, Qnil);
 }
 
 /** called when the listening socket is destroyed */
@@ -149,29 +124,9 @@ static void iodine_tcp_on_finish(intptr_t uuid, void *udata) {
  * Should either call `facil_attach` or close the connection.
  */
 static void iodine_tcp_on_connect(intptr_t uuid, void *udata) {
-  iodine_protocol_s *p = malloc(sizeof(*p));
-  if (!p) {
-    perror("FATAL ERROR: No Memory!");
-    exit(errno);
-  }
   VALUE handler = (VALUE)udata;
-  *p = (iodine_protocol_s){
-      .p =
-          {
-              .service = iodine_tcp_service,
-              .on_data = iodine_tcp_on_data,
-              .on_ready = iodine_tcp_on_ready,
-              .on_shutdown = iodine_tcp_on_shutdown,
-              .on_close = iodine_tcp_on_close,
-              .ping = iodine_tcp_ping,
-          },
-      .io = iodine_connection_new(.type = IODINE_CONNECTION_RAW, .uuid = uuid,
-                                  .arg = p, .handler = handler),
-  };
-  /* clear away (remember the connection object manages these concerns) */
+  iodine_tcp_attch_uuid(uuid, handler);
   IodineStore.remove(handler);
-  facil_attach(uuid, &p->p);
-  iodine_connection_fire_event(p->io, IODINE_CONNECTION_ON_OPEN, Qnil);
 }
 
 /**
@@ -343,6 +298,37 @@ static VALUE iodine_tcp_connect(VALUE self, VALUE args) {
   return rb_handler;
   (void)self;
 }
+
+// clang-format off
+/**
+The {attach_fd} method instructs iodine to attach a socket to the server using it's numerical file descriptor.
+
+This is faster than attaching a Ruby IO object since it allows iodine to directly call the system's read/write methods. However, this doesn't support TLS/SSL connections.
+
+This method requires two objects, a file descriptor (`fd`) and a callback object.
+
+See {listen} for details about the callback object.
+
+Returns the callback object (handler) used.
+*/
+static VALUE iodine_tcp_attach_fd(VALUE self, VALUE fd, VALUE handler) {
+  // clang-format on
+  Check_Type(fd, T_FIXNUM);
+  if (handler == Qnil || handler == Qfalse || handler == Qtrue) {
+    rb_raise(rb_eArgError, "A callback object must be provided.");
+  }
+  IodineStore.add(handler);
+  int other = dup(NUM2INT(fd));
+  if (other == -1) {
+    rb_raise(rb_eIOError, "invalid fd.");
+  }
+  intptr_t uuid = sock_open(other);
+  iodine_tcp_attch_uuid(uuid, handler);
+  IodineStore.remove(handler);
+  return handler;
+  (void)self;
+}
+
 /* *****************************************************************************
 Add the Ruby API methods to the Iodine object
 ***************************************************************************** */
@@ -359,4 +345,41 @@ void iodine_init_tcp_connections(void) {
 
   rb_define_module_function(IodineModule, "listen", iodine_tcp_listen, 1);
   rb_define_module_function(IodineModule, "connect", iodine_tcp_connect, 1);
+  rb_define_module_function(IodineModule, "attach_fd", iodine_tcp_attach_fd, 2);
+}
+
+/* *****************************************************************************
+Allow uuid attachment
+***************************************************************************** */
+
+/** assigns a protocol and IO object to a handler */
+void iodine_tcp_attch_uuid(intptr_t uuid, VALUE handler) {
+  if (handler == Qnil || handler == Qfalse || handler == Qtrue) {
+    sock_close(uuid);
+    return;
+  }
+  /* temporary, in case `iodine_connection_new` invokes the GC */
+  iodine_protocol_s *p = malloc(sizeof(*p));
+  if (!p) {
+    perror("FATAL ERROR: No Memory!");
+    exit(errno);
+  }
+  *p = (iodine_protocol_s){
+      .p =
+          {
+              .service = iodine_tcp_service,
+              .on_data = iodine_tcp_on_data,
+              .on_ready = NULL /* set only after the on_open callback */,
+              .on_shutdown = iodine_tcp_on_shutdown,
+              .on_close = iodine_tcp_on_close,
+              .ping = iodine_tcp_ping,
+          },
+      .io = iodine_connection_new(.type = IODINE_CONNECTION_RAW, .uuid = uuid,
+                                  .arg = p, .handler = handler),
+  };
+  /* clear away (remember the connection object manages these concerns) */
+  facil_attach(uuid, &p->p);
+  iodine_connection_fire_event(p->io, IODINE_CONNECTION_ON_OPEN, Qnil);
+  p->p.on_ready = iodine_tcp_on_ready;
+  evio_add_write(sock_uuid2fd(uuid), (void *)uuid);
 }

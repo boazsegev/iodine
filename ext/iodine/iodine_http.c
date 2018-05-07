@@ -6,6 +6,7 @@ Feel free to copy, use and enjoy according to the license provided.
 */
 #include "iodine.h"
 
+#include "evio.h"
 #include "fio_mem.h"
 #include "http.h"
 #include <ruby/encoding.h>
@@ -110,6 +111,135 @@ typedef struct {
     IODINE_UPGRADE_SSE,
   } upgrade;
 } iodine_http_request_handle_s;
+
+/* *****************************************************************************
+WebSocket support
+***************************************************************************** */
+
+typedef struct {
+  char *data;
+  size_t size;
+  uint8_t is_text;
+  VALUE io;
+} iodine_msg2ruby_s;
+
+static void *iodine_ws_fire_message(void *msg_) {
+  iodine_msg2ruby_s *msg = msg_;
+  VALUE data = rb_enc_str_new(
+      msg->data, msg->size,
+      (msg->is_text ? rb_utf8_encoding() : rb_ascii8bit_encoding()));
+  iodine_connection_fire_event(msg->io, IODINE_CONNECTION_ON_MESSAGE, data);
+  return NULL;
+}
+
+static void iodine_ws_on_message(ws_s *ws, char *data, size_t size,
+                                 uint8_t is_text) {
+  iodine_msg2ruby_s msg = {
+      .data = data,
+      .size = size,
+      .is_text = is_text,
+      .io = (VALUE)websocket_udata(ws),
+  };
+  IodineCaller.leaveGVL(iodine_ws_fire_message, &msg);
+}
+/**
+ * The (optional) on_open callback will be called once the websocket
+ * connection is established and before is is registered with `facil`, so no
+ * `on_message` events are raised before `on_open` returns.
+ */
+static void iodine_ws_on_open(ws_s *ws) {
+  VALUE h = (VALUE)websocket_udata(ws);
+  iodine_connection_s *c = iodine_connection_CData(h);
+  c->arg = ws;
+  c->uuid = websocket_uuid(ws);
+  iodine_connection_fire_event(h, IODINE_CONNECTION_ON_OPEN, Qnil);
+}
+/**
+ * The (optional) on_ready callback will be after a the underlying socket's
+ * buffer changes it's state from full to empty.
+ *
+ * If the socket's buffer is never used, the callback is never called.
+ */
+static void iodine_ws_on_ready(ws_s *ws) {
+  iodine_connection_fire_event((VALUE)websocket_udata(ws),
+                               IODINE_CONNECTION_ON_DRAINED, Qnil);
+}
+/**
+ * The (optional) on_shutdown callback will be called if a websocket
+ * connection is still open while the server is shutting down (called before
+ * `on_close`).
+ */
+static void iodine_ws_on_shutdown(ws_s *ws) {
+  iodine_connection_fire_event((VALUE)websocket_udata(ws),
+                               IODINE_CONNECTION_ON_SHUTDOWN, Qnil);
+}
+/**
+ * The (optional) on_close callback will be called once a websocket connection
+ * is terminated or failed to be established.
+ *
+ * The `uuid` is the connection's unique ID that can identify the Websocket. A
+ * value of `uuid == 0` indicates the Websocket connection wasn't established
+ * (an error occured).
+ *
+ * The `udata` is the user data as set during the upgrade or using the
+ * `websocket_udata_set` function.
+ */
+static void iodine_ws_on_close(intptr_t uuid, void *udata) {
+  iodine_connection_fire_event((VALUE)udata, IODINE_CONNECTION_ON_CLOSE, Qnil);
+  (void)uuid;
+}
+
+static void iodine_ws_attach(http_s *h, VALUE handler) {
+  VALUE io = iodine_connection_new(.type = IODINE_CONNECTION_WEBSOCKET,
+                                   .arg = NULL, .handler = handler, .uuid = 0);
+  if (io == Qnil)
+    return;
+
+  http_upgrade2ws(.http = h, .on_message = iodine_ws_on_message,
+                  .on_open = iodine_ws_on_open, .on_ready = iodine_ws_on_ready,
+                  .on_shutdown = iodine_ws_on_shutdown,
+                  .on_close = iodine_ws_on_close, .udata = (void *)io);
+}
+
+/* *****************************************************************************
+SSE support
+***************************************************************************** */
+
+static void iodine_sse_on_ready(http_sse_s *sse) {
+  iodine_connection_fire_event((VALUE)sse->udata, IODINE_CONNECTION_ON_DRAINED,
+                               Qnil);
+}
+
+static void iodine_sse_on_shutdown(http_sse_s *sse) {
+  iodine_connection_fire_event((VALUE)sse->udata, IODINE_CONNECTION_ON_SHUTDOWN,
+                               Qnil);
+}
+static void iodine_sse_on_close(http_sse_s *sse) {
+  iodine_connection_fire_event((VALUE)sse->udata, IODINE_CONNECTION_ON_CLOSE,
+                               Qnil);
+}
+
+static void iodine_sse_on_open(http_sse_s *sse) {
+  VALUE h = (VALUE)sse->udata;
+  iodine_connection_s *c = iodine_connection_CData(h);
+  c->arg = sse;
+  c->uuid = http_sse2uuid(sse);
+  iodine_connection_fire_event(h, IODINE_CONNECTION_ON_OPEN, Qnil);
+  sse->on_ready = iodine_sse_on_ready;
+  evio_add_write(sock_uuid2fd(c->uuid), (void *)c->uuid);
+}
+
+static void iodine_sse_attach(http_s *h, VALUE handler) {
+  VALUE io = iodine_connection_new(.type = IODINE_CONNECTION_SSE, .arg = NULL,
+                                   .handler = handler, .uuid = 0);
+  if (io == Qnil)
+    return;
+
+  http_upgrade2sse(h, .on_open = iodine_sse_on_open,
+                   .on_ready = NULL /* will be set after the on_open */,
+                   .on_shutdown = iodine_sse_on_shutdown,
+                   .on_close = iodine_sse_on_close, .udata = (void *)io);
+}
 
 /* *****************************************************************************
 Copying data from the C request to the Rack's ENV
@@ -454,23 +584,18 @@ static inline int ruby2c_review_upgrade(iodine_http_request_handle_s *req,
              ((handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil ||
               (handler = rb_hash_aref(env, UPGRADE_WEBSOCKET)) != Qnil)) {
     // use response as existing base for native websocket upgrade
-    // TODO!!!!
-    // iodine_upgrade_websocket(h, handler);
+    iodine_ws_attach(h, handler);
   } else if (req->upgrade == IODINE_UPGRADE_SSE &&
              (handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil) {
     // use response as existing base for SSE upgrade
-    // TODO!!!!
-    // iodine_upgrade_sse(h, handler);
-  } else if ((handler = rb_hash_aref(env, UPGRADE_TCP)) != Qnil) {
-    // hijack post headers (might be very bad)
+    iodine_sse_attach(h, handler);
+  } else if ((handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil) {
+    // use response as existing base for SSE upgrade
     intptr_t uuid = http_hijack(h, NULL);
     // send headers
     http_finish(h);
-    // upgrade protocol
-    VALUE args[2] = {(ULONG2NUM(sock_uuid2fd(uuid))), handler};
-    // TODO!!!
-    IodineCaller.call2(IodineModule, attach_method_id, 2, args);
-    // nothing left to do to prevent response processing.
+    // upgrade protocol to raw TCP/IP
+    iodine_tcp_attch_uuid(uuid, handler);
   } else {
     return 0;
   }
@@ -766,7 +891,7 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
   }
   if (ping > 255) {
     fprintf(stderr, "Iodine Warning: Websocket timeout value "
-                    "is over 255 and is silently ignored.\n");
+                    "is over 255 and will be ignored.\n");
     ping = 0;
   }
 
@@ -776,7 +901,7 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
 
   if ((app == Qnil || app == Qfalse) && (www == Qnil || www == Qfalse)) {
     fprintf(stderr, "Iodine Warning: HTTP without application or public folder "
-                    "(is silently ignored).\n");
+                    "(ignored).\n");
     return Qfalse;
   }
 
