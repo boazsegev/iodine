@@ -70,5 +70,38 @@ module Iodine
 
 end
 
+require 'rack/handler/iodine' unless defined? ::Iodine::Rack::IODINE_RACK_LOADED
 
-# require 'rack/handler/iodine' unless defined? ::Iodine::Rack::IODINE_RACK_LOADED
+
+### CLI argument parsing
+
+if ARGV.index('-b') && ARGV[ARGV.index('-b') + 1]
+  Iodine::DEFAULT_HTTP_ARGS[:address] = ARGV[ARGV.index('-b') + 1]
+end
+if ARGV.index('-p') && ARGV[ARGV.index('-p') + 1]
+  Iodine::DEFAULT_HTTP_ARGS[:port] = ARGV[ARGV.index('-p') + 1]
+end
+
+if ARGV.index('-maxbd') && ARGV[ARGV.index('-maxbd') + 1]
+  Iodine::DEFAULT_HTTP_ARGS[:max_body_size] = ARGV[ARGV.index('-maxbd') + 1].to_i
+end
+if ARGV.index('-maxms') && ARGV[ARGV.index('-maxms') + 1]
+  Iodine::DEFAULT_HTTP_ARGS[:max_msg_size] = ARGV[ARGV.index('-maxms') + 1].to_i
+end
+if ARGV.index('-maxhead') && ARGV[ARGV.index('-maxhead') + 1]  && ARGV[ARGV.index('-maxhead') + 1].to_i > 0
+  Iodine::DEFAULT_HTTP_ARGS[:max_headers] = ARGV[ARGV.index('-maxhead') + 1].to_i
+end
+if ARGV.index('-ping') && ARGV[ARGV.index('-ping') + 1]
+  Iodine::DEFAULT_HTTP_ARGS[:ping] = ARGV[ARGV.index('-ping') + 1].to_i
+end
+if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
+  Iodine::DEFAULT_HTTP_ARGS[:public] = ARGV[ARGV.index('-www') + 1]
+end
+if ARGV.index('-tout') && ARGV[ARGV.index('-tout') + 1]
+  Iodine::DEFAULT_HTTP_ARGS[:timeout] = ARGV[ARGV.index('-tout') + 1].to_i
+  puts "WARNNING: timeout set to 0 (ignored, timeout will be ~5 seconds)." if (Iodine::DEFAULT_HTTP_ARGS[:timeout].to_i <= 0 || Iodine::DEFAULT_HTTP_ARGS[:timeout].to_i > 255)
+end
+Iodine::DEFAULT_HTTP_ARGS[:log] = true if ARGV.index('-v')
+Iodine::DEFAULT_HTTP_ARGS[:log] = false if ARGV.index('-q')
+
+
