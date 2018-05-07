@@ -52,12 +52,14 @@ static ID iodine_call_proc_id;
 static VALUE env_template_no_upgrade;
 static VALUE env_template_websockets;
 static VALUE env_template_sse;
-static VALUE iodine_default_args;
 
 static rb_encoding *IodineUTF8Encoding;
 static rb_encoding *IodineBinaryEncoding;
 
 static uint8_t support_xsendfile = 0;
+
+/** Used by {listen2http} to set missing arguments. */
+static VALUE iodine_default_args;
 
 #define rack_declare(rack_name) static VALUE rack_name
 
@@ -802,6 +804,8 @@ finish:
 static void free_iodine_http(http_settings_s *s) {
   IodineStore.remove((VALUE)s->udata);
 }
+
+// clang-format off
 /**
 Listens to incoming HTTP connections and handles incoming requests using the
 Rack specification.
@@ -821,6 +825,7 @@ log:: enable response logging (Hijacked sockets aren't logged). Default: off.
 public:: The root public folder for static file service. Default: none.
 timeout:: Timeout for inactive HTTP/1.x connections. Defaults: 40 seconds.
 max_body:: The maximum body size for incoming HTTP messages. Default: ~50Mib.
+max_headers:: The maximum total header length for incoming HTTP messages. Default: ~64Kib.
 max_msg:: The maximum Websocket message size allowed. Default: ~250Kib.
 ping:: The Websocket `ping` interval. Default: 40 seconds.
 
@@ -840,6 +845,7 @@ timeouts will be dynamically managed by Iodine. The `timeout` option is only
 relevant to HTTP/1.x connections.
 */
 VALUE iodine_http_listen(VALUE self, VALUE opt) {
+  // clang-format on
   uint8_t log_http = 0;
   size_t ping = 0;
   size_t max_body = 0;
@@ -1074,6 +1080,7 @@ void iodine_init_http(void) {
 
   /** Used by {listen2http} to set missing arguments. */
   iodine_default_args = rb_hash_new();
+
   /** Used by {listen2http} to set missing arguments. */
   rb_const_set(IodineModule, rb_intern2("DEFAULT_HTTP_ARGS", 17),
                iodine_default_args);
