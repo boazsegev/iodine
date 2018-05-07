@@ -13,6 +13,7 @@ Feel free to copy, use and enjoy according to the license provided.
 
 extern struct IodineRackIO {
   VALUE (*create)(http_s *h, VALUE env);
+  void (*close)(VALUE rack_io);
   void (*init)(void);
 } IodineRackIO;
 

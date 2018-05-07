@@ -55,6 +55,8 @@ static VALUE rRackIO;
 static ID env_id;
 static ID io_id;
 
+static VALUE R_INPUT; /* rack.input */
+static VALUE hijack_func_sym;
 static VALUE TCPSOCKET_CLASS;
 static ID for_fd_id;
 static ID iodine_fd_var_id;
@@ -156,7 +158,7 @@ static VALUE rio_read(int argc, VALUE *argv, VALUE self) {
 // Does nothing - this is controlled by the server.
 static VALUE rio_close(VALUE self) {
   FIOBJ io = get_data(self);
-  fiobj_free(io);
+  // fiobj_free(io); // we don't call fiobj_dup, do we?
   rb_ivar_set(self, io_id, INT2NUM(0));
   (void)self;
   return Qnil;
@@ -216,7 +218,14 @@ static VALUE new_rack_io(http_s *h, VALUE env) {
   rb_ivar_set(rack_io, io_id, ULL2NUM(h->body));
   set_handle(rack_io, h);
   rb_ivar_set(rack_io, env_id, env);
+  rb_hash_aset(env, R_INPUT, rack_io);
+  rb_hash_aset(env, IODINE_R_HIJACK, rb_obj_method(rack_io, hijack_func_sym));
   return rack_io;
+}
+
+static void close_rack_io(VALUE rack_io) {
+  rio_close(rack_io);
+  set_handle(rack_io, NULL);
 }
 
 // initialize library
@@ -230,6 +239,11 @@ static void init_rack_io(void) {
   for_fd_id = rb_intern("for_fd");
   iodine_fd_var_id = rb_intern("fd");
   iodine_new_func_id = rb_intern("new");
+  hijack_func_sym = ID2SYM(rb_intern("_hijack"));
+
+  R_INPUT = rb_enc_str_new("rack.input", 10, rb_ascii8bit_encoding());
+  rb_obj_freeze(R_INPUT);
+  IodineStore.add(R_INPUT);
 
   TCPSOCKET_CLASS = rb_const_get(rb_cObject, rb_intern("TCPSocket"));
   // IO methods
@@ -245,5 +259,5 @@ static void init_rack_io(void) {
 ////////////////////////////////////////////////////////////////////////////
 // the API interface
 struct IodineRackIO IodineRackIO = {
-    .create = new_rack_io, .init = init_rack_io,
+    .create = new_rack_io, .close = close_rack_io, .init = init_rack_io,
 };
