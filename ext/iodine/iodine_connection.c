@@ -637,6 +637,7 @@ static VALUE iodine_pubsub_publish(int argc, VALUE *argv, VALUE self) {
   } else if (rb_engine == Qnil) {
     engine = NULL;
   } else {
+    // TODO: collect engine object
     // engine = iodine_engine_ruby2facil(rb_engine);
     engine = NULL;
   }

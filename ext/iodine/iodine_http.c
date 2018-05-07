@@ -347,14 +347,6 @@ static inline VALUE copy2env(iodine_http_request_handle_s *handle) {
     }
   }
 
-  /* setup input IO + hijack support */
-  {
-    VALUE m;
-    rb_hash_aset(env, R_INPUT, (m = IodineRackIO.create(h, env)));
-    m = rb_obj_method(m, hijack_func_sym);
-    rb_hash_aset(env, IODINE_R_HIJACK, m);
-  }
-
   /* handle the HOST header, including the possible host:#### format*/
   static uint64_t host_hash = 0;
   if (!host_hash)
@@ -624,11 +616,13 @@ static inline void *iodine_handle_request_in_GVL(void *handle_) {
 
   // create / register env variable
   env = copy2env(handle);
-  // will be used later
-  VALUE tmp;
+  // create rack.io
+  VALUE tmp = IodineRackIO.create(h, env);
   // pass env variable to handler
   rbresponse =
       IodineCaller.call2((VALUE)h->udata, iodine_call_proc_id, 1, &env);
+  // close rack.io
+  IodineRackIO.close(tmp);
   // test handler's return value
   if (rbresponse == 0 || rbresponse == Qnil)
     goto internal_error;
