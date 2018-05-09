@@ -157,7 +157,7 @@ static VALUE rio_read(int argc, VALUE *argv, VALUE self) {
 
 // Does nothing - this is controlled by the server.
 static VALUE rio_close(VALUE self) {
-  FIOBJ io = get_data(self);
+  // FIOBJ io = get_data(self);
   // fiobj_free(io); // we don't call fiobj_dup, do we?
   rb_ivar_set(self, io_id, INT2NUM(0));
   (void)self;
@@ -224,8 +224,9 @@ static VALUE new_rack_io(http_s *h, VALUE env) {
 }
 
 static void close_rack_io(VALUE rack_io) {
-  rio_close(rack_io);
-  set_handle(rack_io, NULL);
+  // rio_close(rack_io);
+  rb_ivar_set(rack_io, io_id, INT2NUM(0));
+  set_handle(rack_io, NULL); /* this disables hijacking. */
 }
 
 // initialize library

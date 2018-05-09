@@ -252,4 +252,7 @@ void Init_iodine(void) {
   // initialize Rack helpers and IO
   iodine_init_helpers();
   IodineRackIO.init();
+
+  // initialize Pub/Sub extension (for Engines)
+  iodine_pubsub_init();
 }

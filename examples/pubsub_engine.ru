@@ -9,9 +9,9 @@ class PubSubReporter < Iodine::PubSub::Engine
     # make sure engine setup is complete
     super 
     # register engine and make it into the new default
-    @target = Iodine::PubSub.default_engine
-    Iodine::PubSub.default_engine = self
-    Iodine::PubSub.register self
+    @target = Iodine::PubSub.default
+    Iodine::PubSub.default = self
+    Iodine::PubSub.attach self
   end
   def subscribe to, as = nil
     puts "* Subscribing to \"#{to}\" (#{as || "exact match"})"
@@ -57,22 +57,22 @@ class PubSubClient
     @name = name
   end
   # seng a message to new clients.
-  def on_open
-    subscribe "chat"
+  def on_open(client)
+    client.subscribe "chat"
     # let everyone know we arrived
-    publish "chat", "#{@name} entered the chat."
+    client.publish "chat", "#{@name} entered the chat."
   end
   # send a message, letting the client know the server is suggunt down.
-  def on_shutdown
-    write "Server shutting down. Goodbye."
+  def on_shutdown(client)
+    client.write "Server shutting down. Goodbye."
   end
   # perform the echo
-  def on_message data
-    publish "chat", "#{@name}: #{data}"
+  def on_message(client, data)
+    client.publish "chat", "#{@name}: #{data}"
   end
-  def on_close
+  def on_close(client)
     # let everyone know we left
-    publish "chat", "#{@name} left the chat."
+    client.publish "chat", "#{@name} left the chat."
     # we don't need to unsubscribe, subscriptions are cleared automatically once the connection is closed.
   end
 end
