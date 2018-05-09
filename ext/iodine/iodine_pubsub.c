@@ -1,5 +1,6 @@
 #include "iodine_pubsub.h"
 #include "pubsub.h"
+#include "redis_engine.h"
 
 /* *****************************************************************************
 static consts
@@ -9,6 +10,7 @@ static ID subscribe_id;
 static ID unsubscribe_id;
 static ID publish_id;
 static ID default_id;
+static ID redis_id;
 
 /**
 The {Iodine::PubSub::Engine} class is the parent for all engines to inherit
@@ -124,6 +126,17 @@ CLUSTER (not just this process) subscribes to a stream / channel.
 */
 static VALUE iodine_pubsub_subscribe(VALUE self, VALUE to, VALUE match) {
   return Qnil;
+#if 0
+  iodine_pubsub_s *e = iodine_pubsub_CData(self);
+  if (e->engine == &e->do_not_touch) {
+    /* this is a Ruby engine, nothing to do. */
+    return Qnil;
+  }
+  FIOBJ ch = fiobj_str_new(RSTRING_PTR(to), RSTRING_LEN(to));
+  e->engine->subscribe(e->engine, ch, SYM2ID(match) == redis_id);
+  fiobj_free(ch);
+  return to;
+#endif
   (void)self;
   (void)to;
   (void)match;
@@ -135,6 +148,17 @@ process CLUSTER (not just this process) unsubscribes from a stream / channel.
 */
 static VALUE iodine_pubsub_unsubscribe(VALUE self, VALUE to, VALUE match) {
   return Qnil;
+#if 0
+  iodine_pubsub_s *e = iodine_pubsub_CData(self);
+  if (e->engine == &e->do_not_touch) {
+    /* this is a Ruby engine, nothing to do. */
+    return Qnil;
+  }
+  FIOBJ ch = fiobj_str_new(RSTRING_PTR(to), RSTRING_LEN(to));
+  e->engine->unsubscribe(e->engine, ch, SYM2ID(match) == redis_id);
+  fiobj_free(ch);
+  return to;
+#endif
   (void)self;
   (void)to;
   (void)match;
@@ -142,7 +166,7 @@ static VALUE iodine_pubsub_unsubscribe(VALUE self, VALUE to, VALUE match) {
 
 /**
 OVERRIDE this callback - it will be called by {Iodine} whenever the
-{Iodine.publish} (or {Iosine::Connection#publish}) is called for this engine (or
+{Iodine.publish} (or {Iodine::Connection#publish}) is called for this engine (or
 if this engine is set as the default engine). This is per process (not per
 cluster) and the Engine is responsible for message propagation.
 */
@@ -158,7 +182,7 @@ static VALUE iodine_pubsub_publish(VALUE self, VALUE to, VALUE message) {
   e->engine->publish(e->engine, ch, msg);
   fiobj_free(ch);
   fiobj_free(msg);
-  return Qnil;
+  return self;
   (void)self;
   (void)to;
   (void)message;
@@ -178,6 +202,9 @@ static void iodine_pubsub_data_mark(void *c_) {
 /* a callback for the GC (marking active objects) */
 static void iodine_pubsub_data_free(void *c_) {
   iodine_pubsub_s *data = c_;
+  if (data->dealloc) {
+    data->dealloc(data->engine);
+  }
   free(data);
 }
 
@@ -315,6 +342,196 @@ static VALUE iodine_pubsub_reset(VALUE self, VALUE engine) {
 }
 
 /* *****************************************************************************
+Redis Engine
+***************************************************************************** */
+
+/**
+Initializes a new {Iodine::PubSub::Redis} engine.
+
+    Iodine::PubSub::Redis.new(url, opt = {})
+
+use:
+
+    REDIS_URL = "redis://localhost:6379/"
+    Iodine::PubSub::Redis.new(REDIS_URL, ping: 50) #pings every 50 seconds
+
+To use Redis authentication, add the password to the URL. i.e.:
+
+    REDIS_URL = "redis://redis:password@localhost:6379/"
+    Iodine::PubSub::Redis.new(REDIS_URL, ping: 50) #pings every 50 seconds
+
+The options hash accepts:
+
+:ping:: the PING interval up to 255 seconds. Default: 0 (~5 minutes).
+*/
+static VALUE iodine_pubsub_redis_new(int argc, VALUE *argv, VALUE self) {
+  if (!argc) {
+    rb_raise(rb_eArgError, "Iodine::PubSub::Redis.new(address, opt={}) "
+                           "requires at least 1 argument.");
+  }
+  VALUE url = argv[0];
+  Check_Type(url, T_STRING);
+  if (RSTRING_LEN(url) > 4096) {
+    rb_raise(rb_eArgError, "Redis URL too long.");
+  }
+  FIOBJ port = FIOBJ_INVALID;
+  FIOBJ address = FIOBJ_INVALID;
+  FIOBJ auth = FIOBJ_INVALID;
+  uint8_t ping = 0;
+
+  iodine_pubsub_s *e = iodine_pubsub_CData(self);
+  if (!e) {
+    rb_raise(rb_eTypeError, "not a valid engine");
+    return Qnil;
+  }
+
+  /* extract options */
+  if (argc == 2) {
+    Check_Type(argv[1], T_HASH);
+    VALUE tmp = rb_hash_aref(argv[1], rb_id2sym(rb_intern2("ping", 4)));
+    if (tmp != Qnil) {
+      Check_Type(tmp, T_FIXNUM);
+      if (NUM2SIZET(tmp) > 255) {
+        rb_raise(rb_eArgError,
+                 ":ping must be a non-negative integer under 255 seconds.");
+      }
+      ping = (uint8_t)NUM2SIZET(tmp);
+    }
+  }
+
+  /* parse URL assume redis://redis:password@localhost:6379 */
+  {
+    size_t l = RSTRING_LEN(url);
+    char *str = RSTRING_PTR(url);
+    char *pointers[5];
+    char *end = str + l;
+    uint8_t flag = 1;
+    uint8_t counter = 0;
+    for (size_t i = 0; i < l; i++) {
+      if (counter > 4)
+        goto finish;
+      if (str[i] == ':' && str[i + 1] == '/' && str[i + 2] == '/') {
+        pointers[counter++] = str + i + 3;
+        i = i + 2;
+        flag = 0;
+        continue;
+      }
+      if (str[i] == '@' && counter == 1 - flag) {
+        rb_raise(rb_eArgError, "malformed URL");
+      }
+      if (str[i] == ':' || str[i] == '@') {
+        pointers[counter++] = str + i + 1;
+        continue;
+      }
+      if (str[i] == '/') {
+        end = str + i;
+        break;
+      }
+    }
+    if (flag) {
+      if (counter > 3) {
+        rb_raise(rb_eArgError, "malformed URL");
+      }
+      /* move pointers one step forward and set 0 to str... */
+      char *pointers_2[5];
+      for (size_t i = 0; i < counter; ++i) {
+        pointers_2[i + 1] = pointers[i];
+      }
+      pointers_2[0] = str;
+      ++counter;
+      for (size_t i = 0; i < counter; ++i) {
+        pointers[i] = pointers_2[i];
+      }
+    }
+    /* review results */
+    switch (counter) {
+    case 1:
+      /* redis://localhost */
+      if (pointers[0] == end) {
+        goto finish;
+      }
+      address = fiobj_str_new(pointers[0], end - pointers[0]);
+      break;
+    case 2:
+      /* redis://localhost:6379 */
+      if (pointers[1] - pointers[0] - 1 == 0) {
+        goto finish;
+      }
+      address = fiobj_str_new(pointers[0], pointers[1] - pointers[0] - 1);
+      if (pointers[1] != end) {
+        port = fiobj_str_new(pointers[1], end - pointers[1]);
+      }
+      break;
+    case 3:
+      /* redis://redis:password@localhost */
+      if (pointers[2] - pointers[1] - 1 == 0 || end - pointers[2] == 0) {
+        goto finish;
+      }
+      address = fiobj_str_new(pointers[2], end - pointers[2]);
+      auth = fiobj_str_new(pointers[1], pointers[2] - pointers[1] - 1);
+      break;
+    case 4:
+      /* redis://redis:password@localhost:6379 */
+      if (pointers[2] - pointers[1] - 1 == 0 ||
+          pointers[3] - pointers[2] - 1 == 0 || end - pointers[3] == 0) {
+        goto finish;
+      }
+      port = fiobj_str_new(pointers[3], end - pointers[3]);
+      address = fiobj_str_new(pointers[2], pointers[3] - pointers[2] - 1);
+      auth = fiobj_str_new(pointers[1], pointers[2] - pointers[1] - 1);
+      break;
+    default:
+      goto finish;
+    }
+  }
+  fprintf(
+      stderr,
+      "INFO: Initializing Redis engine for address: %s - port: %s -  auth %s\n",
+      fiobj_obj2cstr(address).data, fiobj_obj2cstr(port).data,
+      fiobj_obj2cstr(auth).data);
+  /* create engine */
+  e->engine = redis_engine_create(
+          .address = fiobj_obj2cstr(address)
+          .data,
+          .port = (port == FIOBJ_INVALID ? "6379" : fiobj_obj2cstr(port).data),
+          .ping_interval = ping,
+          .auth = (auth == FIOBJ_INVALID ? NULL : fiobj_obj2cstr(auth).data),
+          .auth_len = (auth == FIOBJ_INVALID ? 0 : fiobj_obj2cstr(auth).len));
+  if (!e->engine) {
+    e->engine = &e->do_not_touch;
+  } else {
+    e->dealloc = redis_engine_destroy;
+  }
+
+finish:
+  fiobj_free(port);
+  fiobj_free(address);
+  fiobj_free(auth);
+  if (e->engine == &e->do_not_touch) {
+    rb_raise(rb_eArgError,
+             "Error initializing the Redis engine - malformed URL?");
+  }
+  return self;
+  (void)self;
+  (void)argc;
+  (void)argv;
+}
+
+/**
+Sends a Redis command. Accepts an optional block that will recieve the response.
+
+i.e.:
+
+    REDIS_URL = "redis://redis:password@localhost:6379/"
+    redis = Iodine::PubSub::Redis.new(REDIS_URL, ping: 50) #pings every 50
+seconds Iodine::PubSub.default = redis redis.cmd("KEYS", "*") {|result| p result
+}
+
+
+*/
+static VALUE iodine_pubsub_redis_cmd(int argc, VALUE *argv, VALUE self);
+
+/* *****************************************************************************
 Module initialization
 ***************************************************************************** */
 
@@ -324,6 +541,7 @@ void iodine_pubsub_init(void) {
   unsubscribe_id = rb_intern2("unsubscribe", 11);
   publish_id = rb_intern2("publish", 7);
   default_id = rb_intern2("default_engine", 14);
+  redis_id = rb_intern2("redis", 5);
 
   /* Define the PubSub module and it's methods */
 
@@ -338,6 +556,19 @@ void iodine_pubsub_init(void) {
 
   /* Define the Engine class and it's methods */
 
+  /**
+  The {Iodine::PubSub::Engine} class is the parent for all engines to inherit
+  from.
+
+  Engines should inherit this class and override the `subscribe`, `unsubscribe`
+  and `publish` callbacks (which shall be called by {Iodine}).
+
+  After creation, Engines should attach themselves to Iodine using
+  {Iodine::PubSub.attach} or their callbacks will never get called.
+
+  Engines can also set themselves to be the default engine using
+  {Iodine::PubSub.default=}.
+  */
   EngineClass = rb_define_class_under(PubSubModule, "Engine", rb_cObject);
   rb_define_alloc_func(EngineClass, iodine_pubsub_data_alloc_c);
   rb_define_method(EngineClass, "subscribe", iodine_pubsub_subscribe, 2);
@@ -352,4 +583,7 @@ void iodine_pubsub_init(void) {
   /* CLUSTER publishes data to all the subscribers in a single process. */
   rb_define_const(PubSubModule, "PROCESS",
                   iodine_pubsub_make_C_engine(PUBSUB_PROCESS_ENGINE));
+
+  VALUE RedisClass = rb_define_class_under(PubSubModule, "Redis", EngineClass);
+  rb_define_method(RedisClass, "initialize", iodine_pubsub_redis_new, -1);
 }

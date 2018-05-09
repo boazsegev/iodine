@@ -13,6 +13,7 @@ typedef struct {
   pubsub_engine_s do_not_touch;
   VALUE handler;
   pubsub_engine_s *engine;
+  void (*dealloc)(pubsub_engine_s *engine);
 } iodine_pubsub_s;
 
 static inline iodine_pubsub_s *iodine_pubsub_CData(VALUE obj) {
