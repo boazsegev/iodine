@@ -9,6 +9,7 @@
 #include "iodine_helpers.h"
 #include "iodine_http.h"
 #include "iodine_json.h"
+#include "iodine_pubsub.h"
 #include "iodine_rack_io.h"
 #include "iodine_store.h"
 #include "iodine_tcp.h"

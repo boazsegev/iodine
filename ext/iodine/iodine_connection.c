@@ -115,7 +115,7 @@ static void iodine_connection_data_free(void *c_) {
   free(data);
 }
 
-size_t iodine_connection_data_size(const void *c_) {
+static size_t iodine_connection_data_size(const void *c_) {
   return sizeof(iodine_connection_data_s);
   (void)c_;
 }
@@ -187,14 +187,23 @@ static VALUE iodine_connection_write(VALUE self, VALUE data) {
     return Qtrue;
     break;
   case IODINE_CONNECTION_SSE:
-    /* SSE */
+/* SSE */
+#if 1
+    http_sse_write(c->info.arg, .data = {.data = RSTRING_PTR(data),
+                                         .len = RSTRING_LEN(data)});
+    return Qtrue;
+#else
     if (rb_enc_get(data) == IodineUTF8Encoding) {
       http_sse_write(c->info.arg, .data = {.data = RSTRING_PTR(data),
                                            .len = RSTRING_LEN(data)});
       return Qtrue;
     }
-    rb_raise(rb_eEncodingError,
-             "This Connection type (SSE) requires data to be UTF-8 encoded.");
+    fprintf(stderr, "WARNING: ignoring an attept to write binary data to "
+                    "non-binary protocol (SSE).\n");
+    return Qfalse;
+// rb_raise(rb_eEncodingError,
+//          "This Connection type requires data to be UTF-8 encoded.");
+#endif
     break;
   case IODINE_CONNECTION_RAW: /* fallthrough */
   default: {
