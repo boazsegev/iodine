@@ -5,7 +5,6 @@
 #      REDIS_URL=redis://localhost:6379/0 iodine -t 1 -p 3000 redis.ru
 #      REDIS_URL=redis://localhost:6379/0 iodine -t 1 -p 3030 redis.ru
 #
-require 'uri'
 require 'iodine'
 # initialize the Redis engine for each Iodine process.
 if ENV["REDIS_URL"]
@@ -48,14 +47,18 @@ class WS_RedisPubSub
     client.publish "chat", "#{@name} entered the chat."
   end
   # send a message, letting the client know the server is suggunt down.
-  def on_shutdownclient 
+  def on_shutdown client 
     client.write "Server shutting down. Goodbye."
   end
   # perform the echo
   def on_message client, data
+    if ENV["REDIS_URL"]
+      Iodine::PubSub.default.cmd("INCR", "mycounter") {|result| p result }
+      Iodine::PubSub.default.cmd("GETSET", "last_message", data) {|result| p result }
+    end     
     client.publish "chat", "#{@name}: #{data}"
   end
-  def on_closeclient 
+  def on_close client
     # let everyone know we left
     client.publish "chat", "#{@name} left the chat."
     # we don't need to unsubscribe, subscriptions are cleared automatically once the connection is closed.
@@ -64,3 +67,6 @@ end
 
 # this function call links our HelloWorld application with Rack
 run MyHTTPRouter
+
+# Iodine.run_every(10000) { Iodine::Base.db_print_protected_objects }
+Iodine::PubSub.default.cmd("SET", "mycounter", 1) {|result| p result }

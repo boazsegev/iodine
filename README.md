@@ -25,6 +25,7 @@ Hence, a total rewrite that centers around keeping things DRY and better organiz
 
 **API BREAKING CHANGE**: Pub/Sub API was changed (again, sorry), replacing the pub/sub object with the `unsubscribe` method. This means there's no need for the client to map channel names to specific subscriptions (Iodine will perform this housekeeping task for the client).
 
+**Fix**: Iodine should now build correctly on FreeBSD. Credit to @adam12 (Adam Daniels) for detecting the issue.
 
 ---
 
