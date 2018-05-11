@@ -993,7 +993,7 @@ static void initialize_env_template(void) {
   if (env_template_no_upgrade)
     return;
   env_template_no_upgrade = rb_hash_new();
-  rb_global_variable(&env_template_no_upgrade);
+  IodineStore.add(env_template_no_upgrade);
 
 #define add_str_to_env(env, key, value)                                        \
   {                                                                            \
@@ -1050,14 +1050,14 @@ static void initialize_env_template(void) {
 
   /* WebSocket upgrade support */
   env_template_websockets = rb_hash_dup(env_template_no_upgrade);
-  rb_global_variable(&env_template_websockets);
+  IodineStore.add(env_template_websockets);
   rb_hash_aset(env_template_websockets, UPGRADE_WEBSOCKET_Q, Qtrue);
   rb_hash_aset(env_template_websockets, RACK_UPGRADE_Q, RACK_UPGRADE_WEBSOCKET);
   rb_hash_aset(env_template_websockets, UPGRADE_TCP_Q, Qtrue);
 
   /* SSE upgrade support */
   env_template_sse = rb_hash_dup(env_template_no_upgrade);
-  rb_global_variable(&env_template_sse);
+  IodineStore.add(env_template_sse);
   rb_hash_aset(env_template_sse, RACK_UPGRADE_Q, RACK_UPGRADE_SSE);
 
 #undef add_value_to_env
