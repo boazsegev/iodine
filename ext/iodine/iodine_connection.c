@@ -30,7 +30,7 @@ static ID on_message_id;
 static ID on_drained_id;
 static ID ping_id;
 static ID on_shutdown_id;
-static ID on_closed_id;
+static ID on_close_id;
 static VALUE ConnectionKlass;
 static rb_encoding *IodineUTF8Encoding;
 static VALUE WebSocketSymbol;
@@ -92,7 +92,7 @@ typedef struct {
   /* these are one-shot, but the CPU cache might have the data, so set it */
   uint8_t answers_on_open;
   uint8_t answers_on_shutdown;
-  uint8_t answers_on_closed;
+  uint8_t answers_on_close;
 } iodine_connection_data_s;
 
 /** frees an iodine_connection_data_s object*/
@@ -691,7 +691,7 @@ VALUE iodine_connection_new(iodine_connection_s args) {
       .answers_ping = (rb_respond_to(args.handler, ping_id) != 0),
       .answers_on_drained = (rb_respond_to(args.handler, on_drained_id) != 0),
       .answers_on_shutdown = (rb_respond_to(args.handler, on_shutdown_id) != 0),
-      .answers_on_closed = (rb_respond_to(args.handler, on_closed_id) != 0),
+      .answers_on_close = (rb_respond_to(args.handler, on_close_id) != 0),
       .lock = SPN_LOCK_INIT,
   };
   return connection;
@@ -744,8 +744,8 @@ void iodine_connection_fire_event(VALUE connection,
     break;
 
   case IODINE_CONNECTION_ON_CLOSE:
-    if (data->answers_on_closed) {
-      IodineCaller.call2(data->info.handler, on_closed_id, 1, args);
+    if (data->answers_on_close) {
+      IodineCaller.call2(data->info.handler, on_close_id, 1, args);
     }
     spn_lock(&data->lock);
     data->info.handler = Qnil;
@@ -781,7 +781,7 @@ void iodine_connection_init(void) {
   on_message_id = rb_intern("on_message");
   on_drained_id = rb_intern("on_drained");
   on_shutdown_id = rb_intern("on_shutdown");
-  on_closed_id = rb_intern("on_closed");
+  on_close_id = rb_intern("on_close");
   ping_id = rb_intern("ping");
 
   // globalize ID objects
@@ -799,7 +799,7 @@ void iodine_connection_init(void) {
     IodineStore.add(ID2SYM(on_message_id));
     IodineStore.add(ID2SYM(on_drained_id));
     IodineStore.add(ID2SYM(on_shutdown_id));
-    IodineStore.add(ID2SYM(on_closed_id));
+    IodineStore.add(ID2SYM(on_close_id));
     IodineStore.add(ID2SYM(ping_id));
   }
 
