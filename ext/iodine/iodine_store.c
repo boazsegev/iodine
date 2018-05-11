@@ -53,7 +53,7 @@ static void storage_print(void) {
   uintptr_t index = 0;
   FIO_HASH_FOR_LOOP(&storage, pos) {
     if (pos->obj) {
-      fprintf(stderr, "[%" PRIuPTR " ] => %" PRIuPTR " X obj %p type %d\n",
+      fprintf(stderr, "[%" PRIuPTR "] => %" PRIuPTR " X obj %p type %d\n",
               index++, (uintptr_t)pos->obj, (void *)pos->key, TYPE(pos->key));
     }
   }
