@@ -85,7 +85,7 @@ typedef struct {
 static void *iodine_run_outside_GVL(void *params_) {
   iodine_start_params_s *params = params_;
   facil_run(.threads = params->threads, .processes = params->workers,
-            .on_idle = iodine_on_idle, .on_finish = NULL);
+            .on_idle = iodine_on_idle, .on_finish = iodine_defer_on_finish);
   return NULL;
 }
 
