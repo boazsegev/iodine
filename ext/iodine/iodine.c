@@ -69,6 +69,7 @@ static void iodine_on_idle(void) {
   while (fio_ls_any(&iodine_on_idle_list)) {
     VALUE block = (VALUE)fio_ls_shift(&iodine_on_idle_list);
     defer(iodine_perform_deferred, (void *)block, NULL);
+    IodineStore.remove(block);
   }
   spn_unlock(&iodine_on_idle_lock);
 }
