@@ -21,9 +21,9 @@ Hence, a total rewrite that centers around keeping things DRY and better organiz
 
 **API BREAKING CHANGE**: The API for persistent connections (SSE / WebSockets) was drastically changed in accordance with the Rack specification discussion that required each callback to accept a "client" object (replacing the `extend` approach. Please see the documentation.
 
-**API BREAKING CHANGE**: `Iodine.attach` was removed due to instability and issues regarding TLS/SSL and file system IO. I hope to fix these issues in a future release.
+**API BREAKING CHANGE**: `Iodine.attach` was removed due to instability and issues regarding TLS/SSL and file system IO. I hope to fix these issues in a future release. For now the `Iodine.attach_fd` can be used for clear-text sockets and pipes.
 
-**API BREAKING CHANGE**: Pub/Sub API was changed (again, sorry), replacing the pub/sub object with the `unsubscribe` method. This means there's no need for the client to map channel names to specific subscriptions (Iodine will perform this housekeeping task for the client).
+**API BREAKING CHANGE**: Pub/Sub API was changed (again, sorry), replacing the pub/sub object with an updated `unsubscribe` method. This means there's no need for the client to map channel names to specific subscriptions (Iodine will perform this housekeeping task for the client).
 
 **Fix**: Iodine should now build correctly on FreeBSD. Credit to @adam12 (Adam Daniels) for detecting the issue.
 
@@ -49,7 +49,7 @@ Iodine is an **evented** framework with a simple API that builds off the low lev
 
 Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but Rack requires Ruby 2.2.2, and so iodine matches this requirement.
 
-## Iodine::Rack == fast & powerful HTTP + Websockets server with native Pub/Sub
+## Iodine - a fast & powerful HTTP + Websockets server with native Pub/Sub
 
 Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the [Websocket draft extension](./SPEC-Websocket-Draft.md).
 
@@ -62,7 +62,7 @@ Iodine also supports native process cluster Pub/Sub and a native RedisEngine to 
 Using the iodine server is easy, simply add iodine as a gem to your Rack application:
 
 ```ruby
-gem 'iodine', '~>0.4'
+gem 'iodine', '~>0.6'
 ```
 
 Iodine will calculate, when possible, a good enough default concurrency model for lightweight applications... this might not fit your application if you use heavier database access or other blocking calls.
@@ -96,11 +96,10 @@ Or by adding a single line to the application. i.e. (a `config.ru` example):
 ```ruby
 require 'iodine'
 # static file service
-Iodine::Rack.public = '/my/public/folder'
-# application
-out = [404, {"Content-Length" => "10"}, ["Not Found."]].freeze
-app = Proc.new { out }
-run app
+Iodine.listen2http public: '/my/public/folder'
+# for static file service, we only need a single thread per worker.
+Iodine.threads = 1
+Iodine.start
 ```
 
 To enable logging from the command line, use the `-v` (verbose) option:
@@ -123,7 +122,7 @@ i.e. (example `config.ru` for iodine):
 app = proc do |env|
   request = Rack::Request.new(env)
   if request.path_info == '/source'.freeze
-    [200, { 'X-Sendfile' => File.expand_path(__FILE__) }, []]
+    [200, { 'X-Sendfile' => File.expand_path(__FILE__), 'Content-Type' => 'text/plain'}, []]
   elsif request.path_info == '/file'.freeze
     [200, { 'X-Header' => 'This was a Rack::Sendfile response sent as text.' }, File.open(__FILE__)]
   else
@@ -181,25 +180,26 @@ Here is a simple chat-room example we can run in the terminal (`irb`) or easily 
 
 ```ruby
 require 'iodine'
-class WebsocketChat
-  def on_open
+module WebsocketChat
+  def on_open client
     # Pub/Sub directly to the client (or use a block to process the messages)
-    subscribe :chat
+    client.subscribe :chat
     # Writing directly to the socket
-    write "You're now in the chatroom."
+    client.write "You're now in the chatroom."
   end
-  def on_message data
+  def on_message client, data
     # Strings and symbol channel names are equivalent.
-    publish "chat", data
+    client.publish "chat", data
   end
+  extend self
 end
-Iodine::Rack.app= Proc.new do |env|
+APP = Proc.new do |env|
   if env['rack.upgrade?'.freeze] == :websocket 
-    env['rack.upgrade'.freeze] = WebsocketChat # or: WebsocketChat.new
+    env['rack.upgrade'.freeze] = WebsocketChat 
     [0,{}, []] # It's possible to set cookies for the response.
   elsif env['rack.upgrade?'.freeze] == :sse
     puts "SSE connections can only receive data from the server, the can't write." 
-    env['rack.upgrade'.freeze] = WebsocketChat # or: WebsocketChat.new
+    env['rack.upgrade'.freeze] = WebsocketChat
     [0,{}, []] # It's possible to set cookies for the response.
   else
     [200, {"Content-Length" => "12", "Content-Type" => "text/plain"}, ["Welcome Home"] ]
@@ -209,11 +209,12 @@ end
 root_pid = Process.pid
 Iodine.subscribe(:chat) {|ch, msg| puts msg if Process.pid == root_pid }
 # By default, Pub/Sub performs in process cluster mode.
-Iodine.processes = 4
-# static file serving can be set manually as well as using the command line:
-Iodine::Rack.public = "www/public"
-#
+Iodine.workers = 4
+# # in irb:
+Iodine.listen2http public: "www/public", app: APP
 Iodine.start
+# # or in config.ru
+run APP
 ```
 
 #### Native Pub/Sub with *optional* Redis scaling
@@ -223,24 +224,21 @@ Iodine's core, `facil.io` offers a native Pub/Sub implementation. The implementa
 Here's an example that adds horizontal scaling to the chat application in the previous example, so that Pub/Sub messages are published across many machines at once:
 
 ```ruby
-require 'uri'
 # initialize the Redis engine for each iodine process.
 if ENV["REDIS_URL"]
-  uri = URI(ENV["REDIS_URL"])
-  Iodine.default_pubsub = Iodine::PubSub::RedisEngine.new(uri.host, uri.port, 0, uri.password)
+  Iodine::PubSub.default = Iodine::PubSub::Redis.new(ENV["REDIS_URL"])
 else
   puts "* No Redis, it's okay, pub/sub will still run on the whole process cluster."
 end
-
-# ... the rest of the application remain unchanged.
+# ... the rest of the application remains unchanged.
 ```
 
 The new Redis client can also be used for asynchronous Redis command execution. i.e.:
 
 ```ruby
-if(Iodine.default_pubsub.is_a? Iodine::PubSub::RedisEngine)
+if(Iodine.default.is_a? Iodine::PubSub::Redis)
   # Ask Redis about all it's client connections and print out the reply.
-  Iodine.default_pubsub.send("CLIENT LIST") { |reply| puts reply }
+  Iodine.default.cmd("CLIENT LIST") { |reply| puts reply }
 end
 ```
 
@@ -252,27 +250,31 @@ end
 
 #### TCP/IP (raw) sockets
 
-Upgrading to a custom protocol (i.e., in order to implement your own Websocket protocol with special extensions) is performed almost the same way, using `env['upgrade.tcp']`. In the following (terminal) example, we'll use an echo server without direct socket echo:
+Upgrading to a custom protocol (i.e., in order to implement your own Websocket protocol with special extensions) is available when neither WebSockets nor SSE connection upgrades were requested. In the following (terminal) example, we'll use an echo server without direct socket echo:
 
 ```ruby
 require 'iodine'
 class MyProtocol
-  def on_message data
-    # regular socket echo - NOT websockets - notice the upgrade code
-    write data
+  def on_message client, data
+    # regular socket echo - NOT websockets
+    client.write data
   end
 end
-Iodine::Rack.app = Proc.new do |env|
-  if env['upgrade.tcp?'.freeze] && env["HTTP_UPGRADE".freeze] =~ /echo/i.freeze
-    env['upgrade.tcp'.freeze] = MyProtocol
-    # no HTTP response will be sent when the status code is 0 (or less).
-    # to upgrade AFTER a response, set a valid response status code.
-    [1000,{}, []]
+APP = Proc.new do |env|
+  if env["HTTP_UPGRADE".freeze] =~ /echo/i.freeze
+    env['upgrade.tcp'.freeze] = MyProtocol.new
+    # an HTTP response will be sent before changing protocols.
+    [101, { "Upgrade" => "echo" }, []]
   else
     [200, {"Content-Length" => "12", "Content-Type" => "text/plain"}, ["Welcome Home"] ]
   end
 end
+# # in irb:
+Iodine.listen2http public: "www/public", app: APP
+Iodine.threads = 1
 Iodine.start
+# # or in config.ru
+run APP
 ```
 
 #### A few notes
