@@ -9,6 +9,8 @@ require 'iodine'
 # initialize the Redis engine for each Iodine process.
 if ENV["REDIS_URL"]
   Iodine::PubSub.default = Iodine::PubSub::Redis.new(ENV["REDIS_URL"], ping: 10)
+  # Iodine.run_every(10000) { Iodine::Base.db_print_protected_objects }
+  Iodine::PubSub.default.cmd("SET", "mycounter", 1) {|result| p result }
 else
   puts "* No Redis, it's okay, pub/sub will support the process cluster."
 end
@@ -67,6 +69,3 @@ end
 
 # this function call links our HelloWorld application with Rack
 run MyHTTPRouter
-
-# Iodine.run_every(10000) { Iodine::Base.db_print_protected_objects }
-Iodine::PubSub.default.cmd("SET", "mycounter", 1) {|result| p result }
