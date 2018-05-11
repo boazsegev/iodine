@@ -293,7 +293,7 @@ only).
 VALUE iodine_before_fork_add(VALUE self) {
   rb_need_block();
   VALUE block = rb_block_proc();
-  rb_global_variable(&block);
+  IodineStore.add(block);
   spn_lock(&iodine_before_fork_lock);
   fio_ls_push(&iodine_before_fork_list, (void *)block);
   spn_unlock(&iodine_before_fork_lock);
@@ -308,7 +308,7 @@ only).
 VALUE iodine_after_fork_add(VALUE self) {
   rb_need_block();
   VALUE block = rb_block_proc();
-  rb_global_variable(&block);
+  IodineStore.add(block);
   spn_lock(&iodine_after_fork_lock);
   fio_ls_push(&iodine_after_fork_list, (void *)block);
   spn_unlock(&iodine_after_fork_lock);
@@ -324,7 +324,7 @@ VALUE iodine_on_shutdown_add(VALUE self) {
   // clang-format on
   rb_need_block();
   VALUE block = rb_block_proc();
-  rb_global_variable(&block);
+  IodineStore.add(block);
   spn_lock(&iodine_on_shutdown_lock);
   fio_ls_push(&iodine_on_shutdown_list, (void *)block);
   spn_unlock(&iodine_on_shutdown_lock);
@@ -345,11 +345,27 @@ static void iodine_perform_fork_callbacks(uint8_t before) {
 /* Performs any cleanup before worker dies */
 void iodine_defer_on_finish(void) {
   iodine_join_io_thread();
+  /* perform and clear away shutdown Procs */
   spn_lock(&iodine_on_shutdown_lock);
-  FIO_LS_FOR(&iodine_on_shutdown_list, pos) {
-    IodineCaller.call((VALUE)(pos->obj), call_id);
+  while (fio_ls_any(&iodine_on_shutdown_list)) {
+    void *obj = fio_ls_shift(&iodine_on_shutdown_list);
+    IodineCaller.call((VALUE)(obj), call_id);
+    IodineStore.remove((VALUE)(obj));
   }
   spn_unlock(&iodine_on_shutdown_lock);
+  /* clear away forking Procs */
+  spn_lock(&iodine_before_fork_lock);
+  while (fio_ls_any(&iodine_before_fork_list)) {
+    IodineStore.remove((VALUE)fio_ls_shift(&iodine_before_fork_list));
+  }
+  spn_unlock(&iodine_before_fork_lock);
+
+  spn_lock(&iodine_after_fork_lock);
+  while (fio_ls_any(&iodine_after_fork_list)) {
+    IodineStore.remove((VALUE)fio_ls_shift(&iodine_after_fork_list));
+    void *obj = fio_ls_shift(&iodine_after_fork_list);
+  }
+  spn_unlock(&iodine_after_fork_lock);
 }
 
 /* *****************************************************************************
