@@ -10,7 +10,6 @@ require 'iodine'
 if ENV["REDIS_URL"]
   Iodine::PubSub.default = Iodine::PubSub::Redis.new(ENV["REDIS_URL"], ping: 10)
   # Iodine.run_every(10000) { Iodine::Base.db_print_protected_objects }
-  Iodine::PubSub.default.cmd("SET", "mycounter", 1) {|result| p result }
 else
   puts "* No Redis, it's okay, pub/sub will support the process cluster."
 end
@@ -54,10 +53,6 @@ class WS_RedisPubSub
   end
   # perform the echo
   def on_message client, data
-    if ENV["REDIS_URL"]
-      Iodine::PubSub.default.cmd("INCR", "mycounter") {|result| p result }
-      Iodine::PubSub.default.cmd("GETSET", "last_message", data) {|result| p result }
-    end     
     client.publish "chat", "#{@name}: #{data}"
   end
   def on_close client
