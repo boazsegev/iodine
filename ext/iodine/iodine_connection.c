@@ -643,12 +643,12 @@ static VALUE iodine_pubsub_publish(int argc, VALUE *argv, VALUE self) {
 
   if (rb_engine == Qfalse) {
     engine = PUBSUB_PROCESS_ENGINE;
-  } else if (rb_engine == Qnil) {
-    engine = NULL;
-  } else {
-    // TODO: collect engine object
-    // engine = iodine_engine_ruby2facil(rb_engine);
-    engine = NULL;
+  } else if (rb_engine != Qnil) {
+    // collect engine object
+    iodine_pubsub_s *e = iodine_pubsub_CData(rb_engine);
+    if (e) {
+      engine = e->engine;
+    }
   }
 
   FIOBJ ch = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));

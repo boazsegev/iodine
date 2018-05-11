@@ -3,6 +3,17 @@
 #include "pubsub.h"
 #include "redis_engine.h"
 
+/*
+NOTE:
+
+This file defines Pub/Sub management and settings, not Pub/Sub usage.
+
+This file doen't include the `Iodine.subscribe`, `Iodine.unsubscribe` and
+`Iodine.publish` methods.
+
+These methods are all defined in the Connection module (iodine_connection.h).
+*/
+
 /* *****************************************************************************
 static consts
 ***************************************************************************** */

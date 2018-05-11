@@ -57,7 +57,7 @@ EOS
         end
 
         app, opt = nil, nil
-        filename = ((ARGV[-2].to_s[0] != '-' || ARGV[-2].to_s == '-warmup' || ARGV[-2].to_s == '-v' || ARGV[-2].to_s == '-q') && ARGV[-1].to_s[0] != '-' && ARGV[-1])
+        filename = ((ARGV[-2].to_s[0] != '-' || ARGV[-2].to_s == '-warmup' || ARGV[-2].to_s == '-v' || ARGV[-2].to_s == '-q' || (ARGV[-2].to_s[0] == '-' && ARGV[-2].to_i.to_s == ARGV[-2].to_s)) && ARGV[-1].to_s[0] != '-' && ARGV[-1])
         if filename
           app, opt = try_file filename;
           unless opt
