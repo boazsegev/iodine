@@ -414,7 +414,6 @@ static void pubsub_on_channel_destroy(channel_s *ch) {
 }
 
 /** Registers an engine, so it's callback can be called. */
-/** Registers an engine, so it's callback can be called. */
 void pubsub_engine_register(pubsub_engine_s *engine) {
   if (!engine) {
     return;
