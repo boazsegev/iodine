@@ -179,9 +179,14 @@ static VALUE iodine_pubsub_unsubscribe(VALUE self, VALUE to, VALUE match) {
 
 /**
 OVERRIDE this callback - it will be called by {Iodine} whenever the
-{Iodine.publish} (or {Iodine::Connection#publish}) is called for this engine (or
-if this engine is set as the default engine). This is per process (not per
-cluster) and the Engine is responsible for message propagation.
+{Iodine.publish} (or {Iodine::Connection#publish}) is called for this engine.
+
+If this {Engine} is set as the default {Engine}, then any call to
+{Iodine.publish} (or {Iodine::Connection#publish} will invoke this callback
+(unless another {Engine} was specified).
+
+NOTE: this callback is called per process event (not per cluster event) and the
+{Engine} is responsible for message propagation.
 */
 static VALUE iodine_pubsub_publish(VALUE self, VALUE to, VALUE message) {
   iodine_pubsub_s *e = iodine_pubsub_CData(self);
@@ -303,6 +308,10 @@ static VALUE iodine_pubsub_default_get(VALUE self) {
 /**
  * Attaches an {Iodine::PubSub::Engine} to the pub/sub system (more than a
  * single engine can be attached at the same time).
+ *
+ * After an engine was attached, it's callbacks will be called
+ * ({Iodine::PubSub::Engine#subscribe} and {Iodine::PubSub::Engine#unsubscribe})
+ * in response to Pub/Sub events.
  */
 static VALUE iodine_pubsub_attach(VALUE self, VALUE engine) {
   iodine_pubsub_s *e = iodine_pubsub_CData(engine);
@@ -319,7 +328,13 @@ static VALUE iodine_pubsub_attach(VALUE self, VALUE engine) {
   (void)self;
 }
 
-/** Removed an {Iodine::PubSub::Engine} from the pub/sub system. */
+/**
+ * Removes an {Iodine::PubSub::Engine} from the pub/sub system.
+ *
+ * After an {Iodine::PubSub::Engine} was detached, Iodine will no longer call
+ * the {Iodine::PubSub::Engine}'s callbacks ({Iodine::PubSub::Engine#subscribe}
+ * and {Iodine::PubSub::Engine#unsubscribe})
+ */
 static VALUE iodine_pubsub_dettach(VALUE self, VALUE engine) {
   iodine_pubsub_s *e = iodine_pubsub_CData(engine);
   if (!e) {
@@ -530,7 +545,7 @@ finish:
   (void)argv;
 }
 
-/** A claaback for Redis commands. */
+/** A callback for Redis commands. */
 static void iodine_pubsub_redis_callback(pubsub_engine_s *e, FIOBJ response,
                                          void *udata) {
   VALUE block = (VALUE)udata;

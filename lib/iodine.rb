@@ -40,7 +40,7 @@ require 'iodine/iodine'
 #
 # Methods for setting up and starting {Iodine} include {start}, {threads}, {threads=}, {workers} and {workers=}.
 #
-# Methods for setting startup / operational callbacks include {on_idle}, {before_fork} and {after_fork}.
+# Methods for setting startup / operational callbacks include {on_idle}, {on_shutdown}, {before_fork} and {after_fork}.
 #
 # Methods for asynchronous execution include {run} (same as {defer}), {run_after} and {run_every}.
 #
@@ -51,6 +51,8 @@ require 'iodine/iodine'
 # Methods for HTTP connections include {listen2http}.
 #
 # Note that the HTTP server supports both TCP/IP and Unix Sockets as well as SSE / WebSockets extensions.
+#
+# Iodine doesn't call {patch_rack} automatically, but doing so will improve Rack's performace.
 #
 # Please read the {file:README.md} file for an introduction to Iodine.
 #
