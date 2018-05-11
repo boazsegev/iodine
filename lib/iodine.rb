@@ -5,7 +5,7 @@ require 'iodine/iodine'
 
 # Iodine is an HTTP / WebSocket server as well as an Evented Network Tool Library.
 #
-# Here is a sample Echo server using Iodine:
+# Here is a simple telnet based echo server using Iodine (see full list at {Iodine::Connection}):
 #
 #
 #       require 'iodine'

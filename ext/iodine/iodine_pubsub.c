@@ -671,7 +671,7 @@ void iodine_pubsub_init(void) {
   /* CLUSTER publishes data to all the subscribers in the process cluster. */
   rb_define_const(PubSubModule, "CLUSTER",
                   iodine_pubsub_make_C_engine(PUBSUB_CLUSTER_ENGINE));
-  /* CLUSTER publishes data to all the subscribers in a single process. */
+  /* PROCESS publishes data to all the subscribers in a single process. */
   rb_define_const(PubSubModule, "PROCESS",
                   iodine_pubsub_make_C_engine(PUBSUB_PROCESS_ENGINE));
 
