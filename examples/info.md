@@ -82,7 +82,7 @@ By using a callback object, the application is notified of any events. Leaving t
 
 The callback object doesn't even need to know anything about the server running the application or the underlying protocol.
 
-The callback object is automatically linked to the correct API using Ruby's `extend` approach, allowing the application to remain totally server agnostic.
+~~The callback object is automatically linked to the correct API using Ruby's `extend` approach, allowing the application to remain totally server agnostic.~~ **EDIT**: the PR was updated, replacing the `extend` approach with an extra `client` object.
 
 ### How it works
 
@@ -108,7 +108,7 @@ Normally, this variable is set to `nil` (or missing from the `env` Hash).
 
 However, for WebSocket connection, the `env['rack.upgrade?']` variable is set to `:websocket` and for EventSource (SSE) connections the variable is set to `:sse`.
 
-To set a callback object, the `env['rack.upgrade']` is introduced (notice the missing question mark).
+To set a callback object, the `env['rack.upgrade']` is introduced (notice the *missing* question mark).
 
 Now the design might look like this:
 
@@ -116,7 +116,7 @@ Now the design might look like this:
 # Place in config.ru
 RESPONSE = [200, { 'Content-Type' => 'text/html',
           'Content-Length' => '12' }, [ 'Hello World!' ] ]
-# a Callback class
+# an example Callback class
 class MyCallbacks
   def on_open client
     puts "* Push connection opened."
@@ -147,7 +147,7 @@ Run this application with the Agoo or Iodine servers and let the magic sparkle.
 For example, using Iodine:
 
 ```bash
-# install iodine
+# install iodine, version 0.6.0 and up
 gem install iodine
 # start in single threaded mode
 iodine -t 1
@@ -186,7 +186,7 @@ And this same example will run perfectly using the Agoo server as well (both Ago
 Try it:
 
 ```bash
-# install the agoo server 
+# install the agoo server, version 2.1.0 and up
 gem install agoo
 # start it up
 rackup -s agoo -p 3000
@@ -205,14 +205,14 @@ Consider implementing a stock ticker, or in this case, a timer:
 RESPONSE = [200, { 'Content-Type' => 'text/html',
           'Content-Length' => '12' }, [ 'Hello World!' ] ]
 
-# A live connection storage
+# A global live connection storage
 module LiveList
   @list = []
   @lock = Mutex.new
-  def self.<<(connection)
+  def <<(connection)
     @lock.synchronize { @list << connection }
   end
-  def self.>>(connection)
+  def >>(connection)
     @lock.synchronize { @list.delete connection }
   end
   def any?
@@ -221,17 +221,16 @@ module LiveList
   end
   # this will send a message to all the connections that share the same process.
   # (in cluster mode we get partial broadcasting only and this doesn't scale)
-  def self.broadcast(data)
+  def broadcast(data)
+    # copy the list so we don't perform long operations in the critical section
+    tmp = nil # place tmp in this part of the scope
     @lock.synchronize do
-      @list.each do |c|
-        begin
-          c.write data
-        rescue IOError => _e
-          # An IOError can occur if the connection was closed during the loop.
-        end
-      end
+      tmp = @list.dup # copy list into tmp
     end
+    # iterate list outside of critical section
+    tmp.each {|c| c.write data }
   end
+  extend self
 end
 
 # Broadcast the time very second... but...
@@ -243,7 +242,7 @@ end
   end
 end
 
-# a static Callback module
+# an example static Callback module
 module MyCallbacks
   def on_open client
     # add connection to the "live list"
@@ -279,7 +278,7 @@ Honestly, I don't love the code I just wrote for the previous example. It's a li
 
 For my next example, I'll author a chat room in 32 lines (including comments).
 
-I will use Iodine's pub/sub extension API to avoid the LiveList module and the timer thread (I don't need a timer, so I'll skip the [`Iodine.run_every` method](https://www.rubydoc.info/github/boazsegev/iodine/master/Iodine#run_every-class_method)).
+I will use Iodine's pub/sub extension API to avoid the LiveList module and the timer thread. I don't want a timer, so I'll skip the [`Iodine.run_every` method](https://www.rubydoc.info/github/boazsegev/iodine/master/Iodine#run_every-class_method).
 
 Also, I'll limit the interaction to WebSocket clients. Why? to show I can.
 
@@ -291,6 +290,7 @@ Sadly, this means that the example won't run on Agoo for now.
 # Place in config.ru
 RESPONSE = [200, { 'Content-Type' => 'text/html',
           'Content-Length' => '12' }, [ 'Hello World!' ] ]
+CHAT = "chat".freeze
 # a Callback class
 class MyCallbacks
   def initialize env
@@ -298,14 +298,14 @@ class MyCallbacks
      @name = "unknown" if(@name.length == 0)
   end
   def on_open client
-    client.subscribe :chat
-    client.publish :chat, "#{@name} joined the chat."
+    client.subscribe CHAT
+    client.publish CHAT, "#{@name} joined the chat."
   end
   def on_message client, data
-    client.publish :chat, "#{@name}: #{data}"
+    client.publish CHAT, "#{@name}: #{data}"
   end
   def on_close client
-    client.publish :chat, "#{@name} left the chat."
+    client.publish CHAT, "#{@name} left the chat."
   end
 end
 # The actual Rack application
@@ -335,6 +335,8 @@ ws.onmessage = function(e) { console.log(e.data); };
 ws.onclose = function(e) { console.log("Closed"); };
 ws.onopen = function(e) { e.target.send("Yo!"); };
 ```
+
+**EDIT**: Agoo 2.1.0 now implements pub/sub extensions, albeit, using slightly different semantics. I did my best so the same code would work on both servers.
 
 ### Why didn't anyone think of this sooner?
 
