@@ -1,9 +1,6 @@
 require 'iodine'
 require 'json'
 
-# ON_IDLE = proc { Iodine::Base.db_print_registry ; Iodine.on_idle(&ON_IDLE) }
-# ON_IDLE.call
-
 module ShootoutApp
   # the default HTTP response
   def self.call(env)
@@ -50,10 +47,6 @@ module ShootoutApp
   end
 end
 
-# if defined?(Iodine)
-#   Iodine.run_every(5000) { Iodine::Base.db_print_registry }
-# end
-
 run ShootoutApp
 #
 # def cycle
@@ -63,3 +56,9 @@ run ShootoutApp
 #   true
 # end
 # sleep(10) while cycle
+
+# # Used when debugging:
+# ON_IDLE = proc { Iodine::Base.db_print_protected_objects ; Iodine.on_idle(&ON_IDLE) }
+# ON_IDLE.call
+# Iodine.on_shutdown { Iodine::Base.db_print_protected_objects }
+
