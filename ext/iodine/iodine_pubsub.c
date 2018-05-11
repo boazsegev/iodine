@@ -1,4 +1,5 @@
 #include "iodine_pubsub.h"
+#include "iodine_fiobj2rb.h"
 #include "pubsub.h"
 #include "redis_engine.h"
 
@@ -11,6 +12,7 @@ static ID unsubscribe_id;
 static ID publish_id;
 static ID default_id;
 static ID redis_id;
+static ID call_id;
 
 /**
 The {Iodine::PubSub::Engine} class is the parent for all engines to inherit
@@ -517,19 +519,96 @@ finish:
   (void)argv;
 }
 
+/** A claaback for Redis commands. */
+static void iodine_pubsub_redis_callback(pubsub_engine_s *e, FIOBJ response,
+                                         void *udata) {
+  VALUE block = (VALUE)udata;
+  if (block == Qnil) {
+    return;
+  }
+  VALUE rb = Qnil;
+  if (!FIOBJ_IS_NULL(response)) {
+    rb = IodineStore.add(fiobj2rb_deep(response, 0));
+  }
+  IodineCaller.call2(block, call_id, 1, &rb);
+  IodineStore.remove(rb);
+  IodineStore.remove(block);
+  (void)e;
+}
+
+// clang-format off
 /**
 Sends a Redis command. Accepts an optional block that will recieve the response.
 
 i.e.:
 
     REDIS_URL = "redis://redis:password@localhost:6379/"
-    redis = Iodine::PubSub::Redis.new(REDIS_URL, ping: 50) #pings every 50
-seconds Iodine::PubSub.default = redis redis.cmd("KEYS", "*") {|result| p result
+    redis = Iodine::PubSub::Redis.new(REDIS_URL, ping: 50) #pings every 50 seconds
+    Iodine::PubSub.default = redis
+    redis.cmd("KEYS", "*") {|result| p result
 }
 
 
 */
-static VALUE iodine_pubsub_redis_cmd(int argc, VALUE *argv, VALUE self);
+static VALUE iodine_pubsub_redis_cmd(int argc, VALUE *argv, VALUE self) {
+  // clang-format on
+  if (argc <= 0) {
+    rb_raise(rb_eArgError, "Iodine::PubSub::Redis#cmd(command, ...) is missing "
+                           "the required command argument.");
+  }
+  iodine_pubsub_s *e = iodine_pubsub_CData(self);
+  if (!e || !e->engine || e->engine == &e->do_not_touch) {
+    rb_raise(rb_eTypeError,
+             "Iodine::PubSub::Redis internal error - obsolete object?");
+  }
+  VALUE block = Qnil;
+  if (rb_block_given_p()) {
+    block = IodineStore.add(rb_block_proc());
+  }
+  FIOBJ data = fiobj_ary_new2((size_t)argc);
+  for (int i = 0; i < argc; ++i) {
+    switch (TYPE(argv[i])) {
+    case T_SYMBOL:
+      argv[i] = rb_sym2str(argv[i]);
+    /* overflow */
+    case T_STRING:
+      fiobj_ary_push(data,
+                     fiobj_str_new(RSTRING_PTR(argv[i]), RSTRING_LEN(argv[i])));
+      break;
+    case T_FIXNUM:
+      fiobj_ary_push(data, fiobj_num_new(NUM2SSIZET(argv[i])));
+      break;
+    case T_FLOAT:
+      fiobj_ary_push(data, fiobj_float_new(rb_float_value(argv[i])));
+      break;
+    case T_NIL:
+      fiobj_ary_push(data, fiobj_null());
+      break;
+    case T_TRUE:
+      fiobj_ary_push(data, fiobj_true());
+      break;
+    case T_FALSE:
+      fiobj_ary_push(data, fiobj_false());
+      break;
+    default:
+      goto wrong_type;
+    }
+  }
+  FIOBJ cmd = fiobj_ary_shift(data);
+  if (redis_engine_send(e->engine, cmd, data, iodine_pubsub_redis_callback,
+                        (void *)block)) {
+    iodine_pubsub_redis_callback(e->engine, fiobj_null(), (void *)block);
+  }
+  fiobj_free(cmd);
+  fiobj_free(data);
+  return self;
+
+wrong_type:
+  fiobj_free(data);
+  rb_raise(rb_eArgError,
+           "only String, Number (with limits), Symbol, true, false and nil "
+           "arguments can be used.");
+}
 
 /* *****************************************************************************
 Module initialization
@@ -542,6 +621,7 @@ void iodine_pubsub_init(void) {
   publish_id = rb_intern2("publish", 7);
   default_id = rb_intern2("default_engine", 14);
   redis_id = rb_intern2("redis", 5);
+  call_id = rb_intern2("call", 4);
 
   /* Define the PubSub module and it's methods */
 
@@ -586,4 +666,5 @@ void iodine_pubsub_init(void) {
 
   VALUE RedisClass = rb_define_class_under(PubSubModule, "Redis", EngineClass);
   rb_define_method(RedisClass, "initialize", iodine_pubsub_redis_new, -1);
+  rb_define_method(RedisClass, "cmd", iodine_pubsub_redis_cmd, -1);
 }
