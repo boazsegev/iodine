@@ -283,9 +283,12 @@ static spn_lock_i iodine_before_fork_lock = SPN_LOCK_INIT;
 static fio_ls_s iodine_before_fork_list = FIO_LS_INIT(iodine_before_fork_list);
 static spn_lock_i iodine_after_fork_lock = SPN_LOCK_INIT;
 static fio_ls_s iodine_after_fork_list = FIO_LS_INIT(iodine_after_fork_list);
+static spn_lock_i iodine_on_shutdown_lock = SPN_LOCK_INIT;
+static fio_ls_s iodine_on_shutdown_list = FIO_LS_INIT(iodine_on_shutdown_list);
 
 /**
-Sets a block of code to run before a new worker process is forked.
+Sets a block of code to run before a new worker process is forked (cluster mode
+only).
 */
 VALUE iodine_before_fork_add(VALUE self) {
   rb_need_block();
@@ -299,7 +302,8 @@ VALUE iodine_before_fork_add(VALUE self) {
 }
 
 /**
-Sets a block of code to run after a new worker process is forked.
+Sets a block of code to run after a new worker process is forked (cluster mode
+only).
 */
 VALUE iodine_after_fork_add(VALUE self) {
   rb_need_block();
@@ -308,6 +312,22 @@ VALUE iodine_after_fork_add(VALUE self) {
   spn_lock(&iodine_after_fork_lock);
   fio_ls_push(&iodine_after_fork_list, (void *)block);
   spn_unlock(&iodine_after_fork_lock);
+  return block;
+  (void)self;
+}
+
+// clang-format off
+/**
+Sets a block of code to run once a Worker process shuts down (both in single process mode and cluster mode).
+*/
+VALUE iodine_on_shutdown_add(VALUE self) {
+  // clang-format on
+  rb_need_block();
+  VALUE block = rb_block_proc();
+  rb_global_variable(&block);
+  spn_lock(&iodine_on_shutdown_lock);
+  fio_ls_push(&iodine_on_shutdown_list, (void *)block);
+  spn_unlock(&iodine_on_shutdown_lock);
   return block;
   (void)self;
 }
@@ -321,6 +341,17 @@ static void iodine_perform_fork_callbacks(uint8_t before) {
   FIO_LS_FOR(ls, pos) { IodineCaller.call((VALUE)(pos->obj), call_id); }
   spn_unlock(lock);
 }
+
+/* Performs any cleanup before worker dies */
+void iodine_defer_on_finish(void) {
+  iodine_join_io_thread();
+  spn_lock(&iodine_on_shutdown_lock);
+  FIO_LS_FOR(&iodine_on_shutdown_list, pos) {
+    IodineCaller.call((VALUE)(pos->obj), call_id);
+  }
+  spn_unlock(&iodine_on_shutdown_lock);
+}
+
 /* *****************************************************************************
 Add defer API to Iodine
 ***************************************************************************** */
@@ -337,6 +368,8 @@ void iodine_defer_initialize(void) {
   rb_define_module_function(IodineModule, "before_fork", iodine_before_fork_add,
                             0);
   rb_define_module_function(IodineModule, "after_fork", iodine_after_fork_add,
+                            0);
+  rb_define_module_function(IodineModule, "on_shutdown", iodine_on_shutdown_add,
                             0);
   defer(iodine_start_io_thread, NULL, NULL);
 }
