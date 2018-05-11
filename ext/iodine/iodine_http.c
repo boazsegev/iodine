@@ -33,14 +33,11 @@ VALUE IODINE_R_HIJACK;
 VALUE IODINE_R_HIJACK_IO;
 VALUE IODINE_R_HIJACK_CB;
 
-static VALUE UPGRADE_TCP;
-static VALUE UPGRADE_TCP_Q;
-static VALUE UPGRADE_WEBSOCKET;
-static VALUE UPGRADE_WEBSOCKET_Q;
 static VALUE RACK_UPGRADE;
 static VALUE RACK_UPGRADE_Q;
 static VALUE RACK_UPGRADE_SSE;
 static VALUE RACK_UPGRADE_WEBSOCKET;
+static VALUE UPGRADE_TCP;
 
 static VALUE hijack_func_sym;
 static ID close_method_id;
@@ -573,27 +570,46 @@ static inline int ruby2c_review_upgrade(iodine_http_request_handle_s *req,
     VALUE io_ruby = IodineCaller.call(rb_hash_aref(env, IODINE_R_HIJACK),
                                       iodine_call_proc_id);
     IodineCaller.call2(handler, iodine_call_proc_id, 1, &io_ruby);
+    goto upgraded;
   } else if ((handler = rb_hash_aref(env, IODINE_R_HIJACK_IO)) != Qnil) {
-    //  do nothing
-  } else if (req->upgrade == IODINE_UPGRADE_WEBSOCKET &&
-             ((handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil ||
-              (handler = rb_hash_aref(env, UPGRADE_WEBSOCKET)) != Qnil)) {
-    // use response as existing base for native websocket upgrade
-    iodine_ws_attach(h, handler, env);
-  } else if (req->upgrade == IODINE_UPGRADE_SSE &&
-             (handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil) {
-    // use response as existing base for SSE upgrade
-    iodine_sse_attach(h, handler, env);
-  } else if ((handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil) {
-    // use response as existing base for SSE upgrade
-    intptr_t uuid = http_hijack(h, NULL);
-    // send headers
-    http_finish(h);
-    // upgrade protocol to raw TCP/IP
-    iodine_tcp_attch_uuid(uuid, handler);
+    //  do nothing, just cleanup
+    goto upgraded;
+  } else if ((handler = rb_hash_aref(env, UPGRADE_TCP)) != Qnil) {
+    goto tcp_ip_upgrade;
   } else {
-    return 0;
+    switch (req->upgrade) {
+    case IODINE_UPGRADE_WEBSOCKET:
+      if ((handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil) {
+        // use response as existing base for native websocket upgrade
+        iodine_ws_attach(h, handler, env);
+        goto upgraded;
+      }
+      break;
+    case IODINE_UPGRADE_SSE:
+      if ((handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil) {
+        // use response as existing base for SSE upgrade
+        iodine_sse_attach(h, handler, env);
+        goto upgraded;
+      }
+      break;
+    default:
+      if ((handler = rb_hash_aref(env, RACK_UPGRADE)) != Qnil) {
+      tcp_ip_upgrade : {
+        // use response as existing base for raw TCP/IP upgrade
+        intptr_t uuid = http_hijack(h, NULL);
+        // send headers
+        http_finish(h);
+        // upgrade protocol to raw TCP/IP
+        iodine_tcp_attch_uuid(uuid, handler);
+        goto upgraded;
+      }
+      }
+      break;
+    }
   }
+  return 0;
+
+upgraded:
   // get body object to close it (if needed)
   handler = rb_ary_entry(rbresponse, 2);
   // we need to call `close` in case the object is an IO / BodyProxy
@@ -750,10 +766,12 @@ static void on_rack_upgrade(http_s *h, char *proto, size_t len) {
     handle.upgrade = IODINE_UPGRADE_WEBSOCKET;
   } else if (len == 3 && proto[0] == 's') {
     handle.upgrade = IODINE_UPGRADE_SSE;
-  } else {
-    http_send_error(h, 400);
-    return;
   }
+  /* when we stop supporting custom Upgrade headers: */
+  // else {
+  //   http_send_error(h, 400);
+  //   return;
+  // }
   IodineCaller.enterGVL(iodine_handle_request_in_GVL, &handle);
   iodine_perform_handle_action(handle);
   (void)proto;
@@ -1013,10 +1031,6 @@ static void initialize_env_template(void) {
   /* Set global template */
   rb_hash_aset(env_template_no_upgrade, RACK_UPGRADE_Q, Qnil);
   rb_hash_aset(env_template_no_upgrade, RACK_UPGRADE, Qnil);
-  rb_hash_aset(env_template_no_upgrade, UPGRADE_WEBSOCKET_Q, Qnil);
-  rb_hash_aset(env_template_no_upgrade, UPGRADE_WEBSOCKET, Qnil);
-  rb_hash_aset(env_template_no_upgrade, UPGRADE_TCP_Q, Qnil);
-  rb_hash_aset(env_template_no_upgrade, UPGRADE_TCP, Qnil);
   {
     /* add the rack.version */
     static VALUE rack_version = 0;
@@ -1051,9 +1065,7 @@ static void initialize_env_template(void) {
   /* WebSocket upgrade support */
   env_template_websockets = rb_hash_dup(env_template_no_upgrade);
   IodineStore.add(env_template_websockets);
-  rb_hash_aset(env_template_websockets, UPGRADE_WEBSOCKET_Q, Qtrue);
   rb_hash_aset(env_template_websockets, RACK_UPGRADE_Q, RACK_UPGRADE_WEBSOCKET);
-  rb_hash_aset(env_template_websockets, UPGRADE_TCP_Q, Qtrue);
 
   /* SSE upgrade support */
   env_template_sse = rb_hash_dup(env_template_no_upgrade);
@@ -1103,15 +1115,12 @@ void iodine_init_http(void) {
   rack_set(IODINE_R_HIJACK, "rack.hijack");
   rack_set(IODINE_R_HIJACK_CB, "iodine.hijack_cb");
 
-  rack_set(UPGRADE_TCP, "upgrade.tcp");
-  rack_set(UPGRADE_WEBSOCKET, "upgrade.websocket");
-
-  rack_set(UPGRADE_TCP_Q, "upgrade.tcp?");
-  rack_set(UPGRADE_WEBSOCKET_Q, "upgrade.websocket?");
   rack_set(RACK_UPGRADE, "rack.upgrade");
   rack_set(RACK_UPGRADE_Q, "rack.upgrade?");
   rack_set_sym(RACK_UPGRADE_SSE, "sse");
   rack_set_sym(RACK_UPGRADE_WEBSOCKET, "websocket");
+
+  UPGRADE_TCP = IodineStore.add(rb_str_new("upgrade.tcp", 11));
 
   hijack_func_sym = ID2SYM(rb_intern("_hijack"));
   close_method_id = rb_intern("close");

@@ -10,7 +10,7 @@ require 'iodine/iodine'
 #
 #       require 'iodine'
 #       # define the protocol for our service
-#       class EchoProtocol
+#       module EchoProtocol
 #         def on_open(client)
 #           # Set a connection timeout
 #           client.timeout = 10
@@ -29,9 +29,10 @@ require 'iodine/iodine'
 #           # write the data we received
 #           client.write "Server going away\r\n"
 #         end
+#         extend self
 #       end
 #       # create the service instance, the block returns a connection handler.
-#       Iodine.listen(port: "3000") { EchoProtocol.new }
+#       Iodine.listen(port: "3000") { EchoProtocol }
 #       # start the service
 #       Iodine.threads = 1
 #       Iodine.start
