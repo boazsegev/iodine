@@ -118,13 +118,14 @@ RESPONSE = [200, { 'Content-Type' => 'text/html',
           'Content-Length' => '12' }, [ 'Hello World!' ] ]
 # a Callback class
 class MyCallbacks
-  def on_open
+  def on_open client
     puts "* Push connection opened."
   end
-  def on_message data
+  def on_message client, data
     puts "* Incoming data: #{data}"
+    client.write "Roger that, \"#{data}\""
   end
-  def on_close
+  def on_close client
     puts "* Push connection closed."
   end
 end
@@ -242,26 +243,27 @@ end
   end
 end
 
-# a Callback class
-class MyCallbacks
-  def on_open
+# a static Callback module
+module MyCallbacks
+  def on_open client
     # add connection to the "live list"
-    LiveList << self
+    LiveList << client
   end
-  def on_message(data)
+  def on_message(client, data)
     # Just an example broadcast
     LiveList.broadcast "Special Announcement: #{data}"
   end
-  def on_close
+  def on_close client
     # remove connection to the "live list"
-    LiveList >> self
+    LiveList >> client
   end
+  extend self
 end
 
 # The Rack application
 APP = Proc.new do |env|
   if(env['rack.upgrade?'])
-    env['rack.upgrade'] = MyCallbacks.new
+    env['rack.upgrade'] = MyCallbacks
     [200, {}, []]
   else
     RESPONSE
@@ -295,15 +297,15 @@ class MyCallbacks
      @name = env["PATH_INFO"][1..-1]
      @name = "unknown" if(@name.length == 0)
   end
-  def on_open
-    subscribe :chat
-    publish :chat, "#{@name} joined the chat."
+  def on_open client
+    client.subscribe :chat
+    client.publish :chat, "#{@name} joined the chat."
   end
-  def on_message data
-    publish :chat, "#{@name}: #{data}"
+  def on_message client, data
+    client.publish :chat, "#{@name}: #{data}"
   end
-  def on_close
-    publish :chat, "#{@name} left the chat."
+  def on_close client
+    client.publish :chat, "#{@name} left the chat."
   end
 end
 # The actual Rack application
@@ -345,3 +347,5 @@ Another proposal was attempted [a few years ago](https://github.com/rack/rack/is
 But it seems things are finally going to change, as two high performance server, [agoo](https://github.com/ohler55/agoo) and [iodine](https://github.com/boazsegev/iodine) already support this new approach.
 
 Things look promising.
+
+**UPDATE**: code examples were updated to reflect changes in theRack specification's PR.
