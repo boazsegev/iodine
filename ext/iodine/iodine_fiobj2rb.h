@@ -35,7 +35,7 @@ static inline VALUE fiobj2rb(FIOBJ o, uint8_t str2sym) {
     rb = Qfalse;
     break;
   case FIOBJ_T_FLOAT:
-    rb = DBL2NUM(fiobj_obj2float(o));
+    rb = rb_float_new(fiobj_obj2float(o));
     break;
   case FIOBJ_T_DATA:    /* fallthrough */
   case FIOBJ_T_UNKNOWN: /* fallthrough */
