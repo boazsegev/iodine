@@ -110,3 +110,25 @@ if ARGV.index('-w') && ARGV[ARGV.index('-w') + 1].to_i != 0
   Iodine.workers = ARGV[ARGV.index('-w') + 1].to_i
 end
 
+### Puma / Thin DSL compatibility
+
+if(!defined?(after_fork))
+  # Performs a block of code whenever a new worker process spins up (performed once per worker).
+  def after_fork(*args, &block)
+    Iodine.after_fork(*args, &block)
+  end
+end
+if(!defined?(on_worker_boot))
+  # Performs a block of code whenever a new worker process spins up (performed once per worker).
+  def on_worker_boot(*args, &block)
+    Iodine.after_fork(*args, &block)
+  end
+end
+if(!defined?(before_fork))
+  # Performs a block of code just before a new worker process spins up (performed once per worker).
+  def before_fork(*args, &block)
+    Iodine.before_fork(*args, &block)
+  end
+end
+
+

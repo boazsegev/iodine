@@ -1,8 +1,15 @@
 module Iodine
-  # Iodine's {Iodine::Rack} module provides a Rack complient interface (connecting Iodine to Rack) for an HTTP and Websocket Server.
-	module Rack
-		# The methods in this module are designed to be Rack compatible and to provide higher performance than the original Rack methods.
-		module Utils
-		end
+  # Iodine's {Iodine::Connection} class is the class that TCP/IP, WebSockets and SSE connections inherit from.
+  #
+  # Instances of this class are passed to the callback objects. i.e.:
+  #
+  #     module MyConnectionCallbacks
+  #       def on_open client
+  #          client.is_a?(Iodine::Connection) # => true
+  #       end
+  #     end
+  #
+  # All connection related actions can be performed using the methods provided through this class.
+	class Connection
 	end
 end
