@@ -26,9 +26,9 @@ module Iodine
     # Iodine comes with two built-in engines:
     #
     # * `Iodine::PubSub::Engine::CLUSTER` will distribute messages to all subscribers in the process cluster.
-    # * `Iodine::PubSub::Engine::SINGLE_PROCESS` will distribute messages to all subscribers sharing the same process.
+    # * `Iodine::PubSub::Engine::PROCESS` will distribute messages to all subscribers sharing the same process.
     #
-    # {Iodine::PubSub::Engine} instances should be initialized only after Iodine
+    # It's recommended that {Iodine::PubSub::Engine} instances be initialized only after Iodine
     # started running (or the `fork`ing of the engine's connection will introduce communication issues).
     #
     # For this reason, the best approcah to initialization would be:
@@ -41,28 +41,15 @@ module Iodine
     #          MyEngine = MyEngineClass.new
     #       end
     #
-    # {Iodine::PubSub::Engine} child classes MUST override the {Iodine::PubSub::Engine#subscribe},
-    # {Iodine::PubSub::Engine#unsubscribe} and {Iodine::PubSub::Engine#publish}
+    # {Iodine::PubSub::Engine} child classes MUST override the {Iodine::PubSub::Engine#subscribe}, {Iodine::PubSub::Engine#unsubscribe} and {Iodine::PubSub::Engine#publish}
     # in order to perform this actions using the backend service (i.e. using Redis).
     #
     # Once an {Iodine::PubSub::Engine} instance receives a message from the backend service,
-    # it should forward the message to the Iodine distribution layer using the {Iodine::PubSub::Engine#distribute} method.
+    # it should forward the message to the Iodine distribution layer using the {Iodine.publish} method, setting the 3rd argument to `false`.
     #
-    # Iodine will than distribute the message to all registered clients.
-    #
-    # *IMPORTANT*:
-    #
-    # Connections shouldn't call any of the {Iodine::PubSub::Engine} or {Iodine::PubSub} methods directly,
-    # since connections might be disconnected at any time, at which point their memory will become corrupted or recycled.
-    #
-    # The connection pub/sub methods (coming soon) keep the application safe from these
-    # risks by performing specific checks for connection related pub/sub actions.
+    # Iodine will than distribute the message to all registered clients in that specific process (if the engine is cluster wide, set the 3rd argument to {Iodine::PubSub::CLUSTER}.
     #
     class Engine
     end
-    # This is the (currently) default pub/sub engine. It will distribute messages to all subscribers in the process cluster.
-    CLUSTER
-    # This is a single process pub/sub engine. It will distribute messages to all subscribers sharing the same process.
-    SINGLE_PROCESS
   end
 end

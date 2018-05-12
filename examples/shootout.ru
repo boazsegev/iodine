@@ -1,22 +1,12 @@
 require 'iodine'
 require 'json'
 
-# ON_IDLE = proc { Iodine::Base.db_print_registry ; Iodine.on_idle(&ON_IDLE) }
-# ON_IDLE.call
-
-class ShootoutApp
+module ShootoutApp
   # the default HTTP response
   def self.call(env)
-    if(Iodine::VERSION >= "0.5.0")
-       if(env['rack.upgrade?'.freeze] == :websocket)
-        env['rack.upgrade'.freeze] = ShootoutApp.new
-        return [0, {}, []]
-      end
-    else
-       if(env['upgrade.websocket?'.freeze])
-        env['upgrade.websocket'.freeze] = ShootoutApp.new
-        return [0, {}, []]
-      end
+     if(env['rack.upgrade?'.freeze] == :websocket)
+      env['rack.upgrade'.freeze] = ShootoutApp
+      return [0, {}, []]
     end
     out = []
     len = 0
@@ -36,45 +26,26 @@ class ShootoutApp
   # We'll base the shootout on the internal Pub/Sub service.
   # It's slower than writing to every socket a pre-parsed message, but it's closer
   # to real-life implementations.
-  def on_open
-    if(Iodine::VERSION >= "0.5.0")
-      subscribe :shootout, as: :binary
-    else
-      subscribe channel: :shootout
-    end
+  def self.on_open client
+      client.subscribe :shootout_b, as: :binary
+      client.subscribe :shootout
   end
-  def on_message data
+  def self.on_message client, data
     if data[0] == 'b' # binary
-      if(Iodine::VERSION >= "0.5.0")
-        publish :shootout, data
-      else
-        publish channel: :shootout, message: data
-      end
+        client.publish :shootout_b, data
       data[0] = 'r'
-      write data
+      client.write data
       return
     end
     cmd, payload = JSON(data).values_at('type', 'payload')
     if cmd == 'echo'
-      write({type: 'echo', payload: payload}.to_json)
+      client.write({type: 'echo', payload: payload}.to_json)
     else
-      # data = {type: 'broadcast', payload: payload}.to_json
-      # broadcast :push2client, data
-      if(Iodine::VERSION >= "0.5.0")
-        publish :shootout, {type: 'broadcast', payload: payload}.to_json
-      else
-        publish channel: :shootout, message: {type: 'broadcast', payload: payload}.to_json
-      end
-      write({type: "broadcastResult", payload: payload}.to_json)
+      client.publish :shootout, {type: 'broadcast', payload: payload}.to_json
+      client.write({type: "broadcastResult", payload: payload}.to_json)
     end
-  rescue
-    puts "Incoming message format error - not JSON?"
   end
 end
-
-# if defined?(Iodine)
-#   Iodine.run_every(5000) { Iodine::Base.db_print_registry }
-# end
 
 run ShootoutApp
 #
@@ -85,3 +56,9 @@ run ShootoutApp
 #   true
 # end
 # sleep(10) while cycle
+
+# # Used when debugging:
+# ON_IDLE = proc { Iodine::Base.db_print_protected_objects ; Iodine.on_idle(&ON_IDLE) }
+# ON_IDLE.call
+# Iodine.on_shutdown { Iodine::Base.db_print_protected_objects }
+

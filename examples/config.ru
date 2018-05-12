@@ -36,19 +36,20 @@ module MyHTTPRouter
 end
 
 # A simple Websocket Callback Object.
-class BroadcastClient
+module BroadcastClient
   # seng a message to new clients.
-  def on_open
-    subscribe :broadcast
+  def on_open client
+    client.subscribe :broadcast
   end
   # send a message, letting the client know the server is suggunt down.
-  def on_shutdown
-    write "Server shutting down. Goodbye."
+  def on_shutdown client
+    client.write "Server shutting down. Goodbye."
   end
   # perform the echo
-  def on_message data
-    publish :broadcast, data
+  def on_message client, data
+    client.publish :broadcast, data
   end
+  extend self
 end
 
 # this function call links our HelloWorld application with Rack

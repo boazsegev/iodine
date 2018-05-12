@@ -1,946 +1,696 @@
-/*
-Copyright: Boaz segev, 2016-2017
-License: MIT
-
-Feel free to copy, use and enjoy according to the license provided.
-*/
 #include "iodine_pubsub.h"
-#include "rb-call.h"
-
+#include "iodine_fiobj2rb.h"
 #include "pubsub.h"
-#include "rb-fiobj2rb.h"
 #include "redis_engine.h"
-#include "websockets.h"
 
-VALUE IodineEngine;
-ID iodine_engine_pubid;
+/*
+NOTE:
 
-static VALUE IodinePubSub;
-static VALUE IodinePubSubSubscription;
-static ID engine_varid;
-static ID engine_subid;
-static ID engine_unsubid;
-static ID default_pubsubid;
+This file defines Pub/Sub management and settings, not Pub/Sub usage.
 
-static ID to_str_shadow_id;
+This file doen't include the `Iodine.subscribe`, `Iodine.unsubscribe` and
+`Iodine.publish` methods.
 
-static VALUE as_sym_id;
-static VALUE binary_sym_id;
-static VALUE handler_sym_id;
-static VALUE match_sym_id;
-static VALUE message_sym_id;
-static VALUE redis_sym_id;
-static VALUE text_sym_id;
-static VALUE to_sym_id;
-static VALUE channel_sym_id;
+These methods are all defined in the Connection module (iodine_connection.h).
+*/
 
 /* *****************************************************************************
-Mock Functions
+static consts
 ***************************************************************************** */
 
-/**
-Override this method to handle (un)subscription requests.
-
-This function will be called by Iodine during pub/sub (un)subscription. Don't
-call this function from your own code / application.
-
-The function should return `true` on success and `nil` or `false` on failure.
-*/
-static VALUE engine_sub_placeholder(VALUE self, VALUE channel,
-                                    VALUE use_pattern) {
-  return Qnil;
-  (void)self;
-  (void)channel;
-  (void)use_pattern;
-}
+static ID subscribe_id;
+static ID unsubscribe_id;
+static ID publish_id;
+static ID default_id;
+static ID redis_id;
+static ID call_id;
 
 /**
-Override this method to handle message publishing to the underlying engine (i.e.
-from Ruby to Redis or from Ruby to MongoDB).
+The {Iodine::PubSub::Engine} class is the parent for all engines to inherit
+from.
 
-This function will be called by Iodine during pub/sub publication. Don't
-call this function from your own code / application.
+Engines should inherit this class and override the `subscribe`, `unsubscribe`
+and `publish` callbacks (which shall be called by {Iodine}).
 
-The function should return `true` on success and `nil` or `false` on failure.
+After creation, Engines should attach themselves to Iodine using
+{Iodine::PubSub.attach} or their callbacks will never get called.
+
+Engines can also set themselves to be the default engine using
+{Iodine::PubSub.default=}.
 */
-static VALUE engine_pub_placeholder(VALUE self, VALUE channel, VALUE msg) {
-  { /* test for built-in C engines */
-    iodine_engine_s *engine;
-    Data_Get_Struct(self, iodine_engine_s, engine);
-    if (engine->p != &engine->engine) {
-      FIOBJ ch = fiobj_str_new(RSTRING_PTR(channel), RSTRING_LEN(channel));
-      FIOBJ m = fiobj_str_new(RSTRING_PTR(msg), RSTRING_LEN(msg));
-      pubsub_publish(.engine = engine->p, .channel = ch, .message = m);
-      fiobj_free(ch);
-      fiobj_free(msg);
-      return Qtrue;
-    }
-  }
-  return Qnil;
-  (void)self;
-  (void)msg;
-  (void)channel;
-}
+static VALUE EngineClass;
 
 /* *****************************************************************************
-Engine registration and resetting
+Ruby <=> C Callbacks
 ***************************************************************************** */
 
-/**
-This method adds the engine to the pub/sub system, allowing it to recieve system
-wide notifications.
-*/
-static VALUE iodine_engine_register2(VALUE self, VALUE engine) {
-  iodine_engine_s *e;
-  Registry.add(engine);
-  Data_Get_Struct(engine, iodine_engine_s, e);
-  if (e->p) {
-    e->handler = engine;
-    pubsub_engine_register(e->p);
-    return Qtrue;
-  }
-  return Qfalse;
-  (void)self;
-  (void)engine;
-}
-
-/**
-This method adds the engine to the pub/sub system, allowing it to recieve system
-wide notifications.
-*/
-static VALUE iodine_engine_register(VALUE self) {
-  return iodine_engine_register2(self, self);
-}
-
-/**
-This method removes the engine from the pub/sub system.
-*/
-static VALUE iodine_engine_deregister2(VALUE self, VALUE engine) {
-  iodine_engine_s *e;
-  Data_Get_Struct(engine, iodine_engine_s, e);
-  if (e->p) {
-    pubsub_engine_deregister(e->p);
-    Registry.remove(engine);
-    return Qtrue;
-  }
-  Registry.remove(engine);
-  return Qfalse;
-  (void)self;
-  (void)engine;
-}
-
-/**
-This method removes the engine from the pub/sub system.
-*/
-static VALUE iodine_engine_deregister(VALUE self) {
-  return iodine_engine_deregister2(self, self);
-}
-
-/**
-This method resets the engine, (re)sending all the current subscription data as
-if the {register} method was just called.
-*/
-static VALUE iodine_engine_reset2(VALUE self, VALUE engine) {
-  iodine_engine_s *e;
-  Data_Get_Struct(engine, iodine_engine_s, e);
-  if (e->p) {
-    e->handler = engine;
-    pubsub_engine_resubscribe(e->p);
-    return Qtrue;
-  }
-  return Qfalse;
-  (void)self;
-  (void)engine;
-}
-
-/**
-This method resets the engine, (re)sending all the current subscription data as
-if the {register} method was just called.
-*/
-static VALUE iodine_engine_reset(VALUE self) {
-  return iodine_engine_reset2(self, self);
-}
-
-/* *****************************************************************************
-Ruby Subscription Object
-***************************************************************************** */
 typedef struct {
-  uintptr_t subscription;
-  intptr_t uuid;
-  void *owner;
-  iodine_pubsub_type_e type;
-} iodine_subscription_s;
-
-static inline iodine_subscription_s subscription_data(VALUE self) {
-  iodine_subscription_s data = {.uuid = iodine_get_fd(self)};
-  if (data.uuid && !sock_isvalid(data.uuid)) {
-    iodine_set_fd(self, -1);
-    data.uuid = -1;
-    return data;
-  }
-
-  data.subscription =
-      ((uintptr_t)NUM2LL(rb_ivar_get(self, iodine_timeout_var_id)));
-  data.owner = iodine_get_cdata(self);
-  if (!data.owner) {
-    data.type = IODINE_PUBSUB_GLOBAL;
-  } else if ((uintptr_t)data.owner & 1) {
-    data.owner = (void *)((uintptr_t)data.owner & (~(uintptr_t)1));
-    data.type = IODINE_PUBSUB_SSE;
-  } else {
-    data.type = IODINE_PUBSUB_WEBSOCKET;
-  }
-  return data;
-}
-
-static inline VALUE subscription_initialize(uintptr_t sub, intptr_t uuid,
-                                            void *owner,
-                                            iodine_pubsub_type_e type,
-                                            VALUE channel) {
-  VALUE self = RubyCaller.call(IodinePubSubSubscription, iodine_new_func_id);
-  if (type == IODINE_PUBSUB_SSE)
-    owner = (void *)((uintptr_t)owner | (uintptr_t)1);
-  iodine_set_cdata(self, owner);
-  iodine_set_fd(self, uuid);
-  rb_ivar_set(self, to_str_shadow_id, channel);
-  rb_ivar_set(self, iodine_timeout_var_id, ULL2NUM(sub));
-  return self;
-}
-
-// static void set_subscription(VALUE self, pubsub_sub_pt sub) {
-//   iodine_set_cdata(self, sub);
-// }
-
-/** Closes (cancels) a subscription. */
-static VALUE close_subscription(VALUE self) {
-  iodine_subscription_s data = subscription_data(self);
-  if (!data.subscription)
-    return Qnil;
-  switch (data.type) {
-  case IODINE_PUBSUB_GLOBAL:
-    pubsub_unsubscribe((pubsub_sub_pt)data.subscription);
-    break;
-  case IODINE_PUBSUB_WEBSOCKET:
-    websocket_unsubscribe(data.owner, data.subscription);
-    break;
-  case IODINE_PUBSUB_SSE:
-    http_sse_unsubscribe(data.owner, data.subscription);
-    break;
-  }
-  rb_ivar_set(self, iodine_timeout_var_id, ULL2NUM(0));
-  return Qnil;
-}
-
-/** Test if the subscription's target is equal to String. */
-static VALUE subscription_eq_s(VALUE self, VALUE str) {
-  return rb_str_equal(rb_attr_get(self, to_str_shadow_id), str);
-}
-
-/** Returns the target stream / channel / pattern as a String object. */
-static VALUE subscription_to_s(VALUE self) {
-  return rb_attr_get(self, to_str_shadow_id);
-}
-
-/* *****************************************************************************
-Ruby API
-***************************************************************************** */
-
-pubsub_engine_s *iodine_engine_ruby2facil(VALUE ruby_engine) {
-  if (ruby_engine == Qnil || ruby_engine == Qfalse)
-    return NULL;
-  iodine_engine_s *engine;
-  Data_Get_Struct(ruby_engine, iodine_engine_s, engine);
-  if (engine)
-    return engine->p;
-  return NULL;
-}
-
-/* *****************************************************************************
-C => Ruby Bridge
-***************************************************************************** */
-
-struct engine_gvl_args_s {
-  const pubsub_engine_s *eng;
+  iodine_pubsub_s *eng;
   FIOBJ ch;
   FIOBJ msg;
-  uint8_t use_pattern;
-};
+  uint8_t pattern;
+} iodine_pubsub_task_s;
 
-static void *engine_subscribe_inGVL(void *a_) {
-  struct engine_gvl_args_s *args = a_;
-  VALUE eng = ((iodine_engine_s *)args->eng)->handler;
-  if (!eng || eng == Qnil || eng == Qfalse)
-    return NULL;
-  VALUE data[2];
-  fio_cstr_s tmp = fiobj_obj2cstr(args->ch);
-  data[1] = args->use_pattern ? Qtrue : Qnil;
-  data[0] = rb_str_new(tmp.data, tmp.len);
-  eng = RubyCaller.call2(eng, engine_subid, 2, data);
+#define iodine_engine(eng) ((iodine_pubsub_s *)(eng))
+
+/* calls an engine's `subscribe` callback within the GVL */
+static void *iodine_pubsub_GIL_subscribe(void *tsk_) {
+  iodine_pubsub_task_s *task = tsk_;
+  VALUE args[2];
+  fio_cstr_s tmp = fiobj_obj2cstr(task->ch);
+  args[0] = rb_str_new(tmp.data, tmp.len);
+  args[1] = task->pattern ? Qtrue : Qnil; // TODO: Qtrue should be :redis
+  IodineCaller.call2(task->eng->handler, subscribe_id, 2, args);
   return NULL;
 }
 
-/* Should return 0 on success and -1 on failure. */
-static void engine_subscribe(const pubsub_engine_s *eng, FIOBJ ch,
-                             uint8_t use_pattern) {
-  struct engine_gvl_args_s args = {
-      .eng = eng, .ch = ch, .use_pattern = use_pattern,
-  };
-  RubyCaller.call_c(engine_subscribe_inGVL, &args);
+/** Must subscribe channel. Failures are ignored. */
+static void iodine_pubsub_on_subscribe(const pubsub_engine_s *eng,
+                                       FIOBJ channel, uint8_t use_pattern) {
+  if (iodine_engine(eng)->handler == Qnil) {
+    return;
+  }
+  iodine_pubsub_task_s task = {
+      .eng = iodine_engine(eng), .ch = channel, .pattern = use_pattern};
+  IodineCaller.enterGVL(iodine_pubsub_GIL_subscribe, &task);
 }
 
-static void *engine_unsubscribe_inGVL(void *a_) {
-  struct engine_gvl_args_s *args = a_;
-  VALUE eng = ((iodine_engine_s *)args->eng)->handler;
-  if (!eng || eng == Qnil || eng == Qfalse)
-    return NULL;
-  VALUE data[2];
-  fio_cstr_s tmp = fiobj_obj2cstr(args->ch);
-  data[1] = args->use_pattern ? Qtrue : Qnil;
-  data[0] = rb_str_new(tmp.data, tmp.len);
-  RubyCaller.call2(eng, engine_unsubid, 2, data);
+/* calls an engine's `unsubscribe` callback within the GVL */
+static void *iodine_pubsub_GIL_unsubscribe(void *tsk_) {
+  iodine_pubsub_task_s *task = tsk_;
+  VALUE args[2];
+  fio_cstr_s tmp = fiobj_obj2cstr(task->ch);
+  args[0] = rb_str_new(tmp.data, tmp.len);
+  args[1] = task->pattern ? Qtrue : Qnil; // TODO: Qtrue should be :redis
+  IodineCaller.call2(task->eng->handler, unsubscribe_id, 2, args);
   return NULL;
 }
 
-/* Return value is ignored - nothing should be returned. */
-static void engine_unsubscribe(const pubsub_engine_s *eng, FIOBJ ch,
-                               uint8_t use_pattern) {
-  struct engine_gvl_args_s args = {
-      .eng = eng, .ch = ch, .use_pattern = use_pattern,
-  };
-  RubyCaller.call_c(engine_unsubscribe_inGVL, &args);
+/** Must unsubscribe channel. Failures are ignored. */
+static void iodine_pubsub_on_unsubscribe(const pubsub_engine_s *eng,
+                                         FIOBJ channel, uint8_t use_pattern) {
+  if (iodine_engine(eng)->handler == Qnil) {
+    return;
+  }
+  iodine_pubsub_task_s task = {
+      .eng = iodine_engine(eng), .ch = channel, .pattern = use_pattern};
+  IodineCaller.enterGVL(iodine_pubsub_GIL_unsubscribe, &task);
 }
 
-static void *engine_publish_inGVL(void *a_) {
-  struct engine_gvl_args_s *args = a_;
-  VALUE eng = ((iodine_engine_s *)args->eng)->handler;
-  if (!eng || eng == Qnil || eng == Qfalse)
-    return NULL;
-  VALUE data[2];
-  fio_cstr_s tmp = fiobj_obj2cstr(args->ch);
-  data[0] = rb_str_new(tmp.data, tmp.len);
-  Registry.add(data[0]);
-  tmp = fiobj_obj2cstr(args->msg);
-  data[1] = rb_str_new(tmp.data, tmp.len);
-  Registry.add(data[1]);
-  eng = RubyCaller.call2(eng, iodine_engine_pubid, 2, data);
-  Registry.remove(data[0]);
-  Registry.remove(data[1]);
-  return ((eng == Qfalse || eng == Qnil) ? (void *)-1 : 0);
+/* calls an engine's `unsubscribe` callback within the GVL */
+static void *iodine_pubsub_GIL_publish(void *tsk_) {
+  iodine_pubsub_task_s *task = tsk_;
+  VALUE args[2];
+  fio_cstr_s tmp = fiobj_obj2cstr(task->ch);
+  args[0] = rb_str_new(tmp.data, tmp.len);
+  tmp = fiobj_obj2cstr(task->msg);
+  args[1] = rb_str_new(tmp.data, tmp.len);
+  IodineCaller.call2(task->eng->handler, publish_id, 2, args);
+  return NULL;
 }
 
-/* Should return 0 on success and -1 on failure. */
-static int engine_publish(const pubsub_engine_s *eng, FIOBJ ch, FIOBJ msg) {
-  struct engine_gvl_args_s args = {
-      .eng = eng, .ch = ch, .msg = msg,
-  };
-  return RubyCaller.call_c(engine_publish_inGVL, &args) ? 0 : -1;
+/** Should return 0 on success and -1 on failure. */
+static int iodine_pubsub_on_publish(const pubsub_engine_s *eng, FIOBJ channel,
+                                    FIOBJ msg) {
+  if (iodine_engine(eng)->handler == Qnil) {
+    return -1;
+  }
+  iodine_pubsub_task_s task = {
+      .eng = iodine_engine(eng), .ch = channel, .msg = msg};
+  IodineCaller.enterGVL(iodine_pubsub_GIL_publish, &task);
+  return 0;
+}
+/**
+ * facil.io will call this callback whenever starting, or restarting, the
+ * reactor.
+ *
+ * but iodine engines should probably use the `before_fork` and `after_fork`
+ * hooks.
+ */
+static void iodine_pubsub_on_startup(const pubsub_engine_s *eng) { (void)eng; }
+
+/* *****************************************************************************
+Ruby methods
+***************************************************************************** */
+
+/**
+OVERRIDE this callback - it will be called by {Iodine} whenever the process
+CLUSTER (not just this process) subscribes to a stream / channel.
+*/
+static VALUE iodine_pubsub_subscribe(VALUE self, VALUE to, VALUE match) {
+  return Qnil;
+#if 0
+  iodine_pubsub_s *e = iodine_pubsub_CData(self);
+  if (e->engine == &e->do_not_touch) {
+    /* this is a Ruby engine, nothing to do. */
+    return Qnil;
+  }
+  FIOBJ ch = fiobj_str_new(RSTRING_PTR(to), RSTRING_LEN(to));
+  e->engine->subscribe(e->engine, ch, SYM2ID(match) == redis_id);
+  fiobj_free(ch);
+  return to;
+#endif
+  (void)self;
+  (void)to;
+  (void)match;
+}
+
+/**
+OVERRIDE this callback - it will be called by {Iodine} whenever the whole
+process CLUSTER (not just this process) unsubscribes from a stream / channel.
+*/
+static VALUE iodine_pubsub_unsubscribe(VALUE self, VALUE to, VALUE match) {
+  return Qnil;
+#if 0
+  iodine_pubsub_s *e = iodine_pubsub_CData(self);
+  if (e->engine == &e->do_not_touch) {
+    /* this is a Ruby engine, nothing to do. */
+    return Qnil;
+  }
+  FIOBJ ch = fiobj_str_new(RSTRING_PTR(to), RSTRING_LEN(to));
+  e->engine->unsubscribe(e->engine, ch, SYM2ID(match) == redis_id);
+  fiobj_free(ch);
+  return to;
+#endif
+  (void)self;
+  (void)to;
+  (void)match;
+}
+
+/**
+OVERRIDE this callback - it will be called by {Iodine} whenever the
+{Iodine.publish} (or {Iodine::Connection#publish}) is called for this engine.
+
+If this {Engine} is set as the default {Engine}, then any call to
+{Iodine.publish} (or {Iodine::Connection#publish} will invoke this callback
+(unless another {Engine} was specified).
+
+NOTE: this callback is called per process event (not per cluster event) and the
+{Engine} is responsible for message propagation.
+*/
+static VALUE iodine_pubsub_publish(VALUE self, VALUE to, VALUE message) {
+  iodine_pubsub_s *e = iodine_pubsub_CData(self);
+  if (e->engine == &e->do_not_touch) {
+    /* this is a Ruby engine, nothing to do. */
+    return Qnil;
+  }
+  FIOBJ ch, msg;
+  ch = fiobj_str_new(RSTRING_PTR(to), RSTRING_LEN(to));
+  msg = fiobj_str_new(RSTRING_PTR(message), RSTRING_LEN(message));
+  e->engine->publish(e->engine, ch, msg);
+  fiobj_free(ch);
+  fiobj_free(msg);
+  return self;
+  (void)self;
+  (void)to;
+  (void)message;
 }
 
 /* *****************************************************************************
-C <=> Ruby Data allocation
+Ruby <=> C Data Type
 ***************************************************************************** */
 
 /* a callback for the GC (marking active objects) */
-static void engine_mark(void *eng_) {
-  iodine_engine_s *eng = eng_;
-  rb_gc_mark(eng->handler);
+static void iodine_pubsub_data_mark(void *c_) {
+  iodine_pubsub_s *c = c_;
+  if (c->handler != Qnil) {
+    rb_gc_mark(c->handler);
+  }
 }
 /* a callback for the GC (marking active objects) */
-static void engine_free(void *eng_) {
-  iodine_engine_s *eng = eng_;
-  if (eng->dealloc)
-    eng->dealloc(eng->p);
-  free(eng);
+static void iodine_pubsub_data_free(void *c_) {
+  iodine_pubsub_s *data = c_;
+  if (data->dealloc) {
+    data->dealloc(data->engine);
+  }
+  free(data);
 }
+
+static size_t iodine_pubsub_data_size(const void *c_) {
+  return sizeof(iodine_pubsub_s);
+  (void)c_;
+}
+
+const rb_data_type_t iodine_pubsub_data_type = {
+    .wrap_struct_name = "IodinePubSubData",
+    .function =
+        {
+            .dmark = iodine_pubsub_data_mark,
+            .dfree = iodine_pubsub_data_free,
+            .dsize = iodine_pubsub_data_size,
+        },
+    .data = NULL,
+    .flags = RUBY_TYPED_FREE_IMMEDIATELY,
+};
 
 /* Iodine::PubSub::Engine.allocate */
-static VALUE engine_alloc_c(VALUE self) {
-  iodine_engine_s *eng = malloc(sizeof(*eng));
-  if (TYPE(self) == T_CLASS)
-    *eng = (iodine_engine_s){
-        .handler = (VALUE)0,
-        .engine =
-            {
-                .subscribe = engine_subscribe,
-                .unsubscribe = engine_unsubscribe,
-                .publish = engine_publish,
-            },
-        .p = &eng->engine,
-    };
-
-  return Data_Wrap_Struct(self, engine_mark, engine_free, eng);
-}
-
-static VALUE engine_initialize(VALUE self) {
-  iodine_engine_s *engine;
-  Data_Get_Struct(self, iodine_engine_s, engine);
-  if (TYPE(self) == T_CLASS) {
-    fprintf(stderr, "This sucks...\n");
-  }
-  engine->handler = self;
-  return self;
+static VALUE iodine_pubsub_data_alloc_c(VALUE self) {
+  iodine_pubsub_s *c = malloc(sizeof(*c));
+  *c = (iodine_pubsub_s){
+      .do_not_touch =
+          {
+              .subscribe = iodine_pubsub_on_subscribe,
+              .unsubscribe = iodine_pubsub_on_unsubscribe,
+              .publish = iodine_pubsub_on_publish,
+              .on_startup = iodine_pubsub_on_startup,
+          },
+      .handler = Qnil,
+      .engine = &c->do_not_touch,
+  };
+  return TypedData_Wrap_Struct(self, &iodine_pubsub_data_type, c);
 }
 
 /* *****************************************************************************
-Redis
+C engines
 ***************************************************************************** */
 
-struct redis_callback_data {
-  FIOBJ msg;
-  VALUE block;
-};
-
-/*
-Perform a Redis message callback in the GVL
-*/
-static void *perform_redis_callback_inGVL(void *data) {
-  struct redis_callback_data *a = data;
-  VALUE reply = fiobj2rb_deep(a->msg, 1);
-  Registry.add(reply);
-  rb_funcallv(a->block, iodine_call_proc_id, 1, &reply);
-  Registry.remove(a->block);
-  Registry.remove(reply);
-  return NULL;
+static VALUE iodine_pubsub_make_C_engine(const pubsub_engine_s *e) {
+  VALUE engine = IodineCaller.call(EngineClass, rb_intern2("new", 3));
+  if (engine == Qnil) {
+    return Qnil;
+  }
+  iodine_pubsub_CData(engine)->engine = (pubsub_engine_s *)e;
+  return engine;
 }
 
-/*
-Redis message callback
-*/
-static void redis_callback(pubsub_engine_s *e, FIOBJ reply, void *block) {
-  struct redis_callback_data d = {
-      .msg = reply, .block = (VALUE)block,
-  };
-  RubyCaller.call_c(perform_redis_callback_inGVL, &d);
-  (void)e;
+/* *****************************************************************************
+PubSub module methods
+***************************************************************************** */
+
+/** Sets the default {Iodine::PubSub::Engine} for pub/sub methods. */
+static VALUE iodine_pubsub_default_set(VALUE self, VALUE engine) {
+  if (engine == Qnil) {
+    engine = rb_const_get(self, rb_intern2("CLUSTER", 7));
+  }
+  iodine_pubsub_s *e = iodine_pubsub_CData(engine);
+  if (!e) {
+    rb_raise(rb_eTypeError, "not a valid engine");
+    return Qnil;
+  }
+  if (e->handler == Qnil) {
+    e->handler = engine;
+  }
+  PUBSUB_DEFAULT_ENGINE = e->engine;
+  rb_ivar_set(self, rb_intern2("default_engine", 14), engine);
+  return engine;
+}
+
+/** Returns the default {Iodine::PubSub::Engine} for pub/sub methods. */
+static VALUE iodine_pubsub_default_get(VALUE self) {
+  VALUE def = rb_ivar_get(self, rb_intern2("default_engine", 14));
+  if (def == Qnil) {
+    def = rb_const_get(self, rb_intern2("CLUSTER", 7));
+    iodine_pubsub_default_set(self, def);
+  }
+  return def;
 }
 
 /**
-Sends commands / messages to the underlying Redis Pub connection.
-
-The method accepts an optional callback block. i.e.:
-
-      redis.send("Echo", "Hello World!") do |reply|
-         p reply # => ["Hello World!"]
-      end
-
-This connection is only for publishing and database commands. The Sub commands,
-such as SUBSCRIBE and PSUBSCRIBE, will break the engine.
-*/
-static VALUE redis_send(int argc, VALUE *argv, VALUE self) {
-  if (argc < 1)
-    rb_raise(rb_eArgError,
-             "wrong number of arguments (given %d, expected at least 1).",
-             argc);
-  Check_Type(argv[0], T_STRING);
-  FIOBJ data = FIOBJ_INVALID;
-  FIOBJ cmd = FIOBJ_INVALID;
-  if (argc > 1) {
-    for (int i = 0; i < argc; ++i) {
-      if (TYPE(argv[i]) == T_SYMBOL)
-        argv[i] = rb_sym2str(argv[i]);
-      if (TYPE(argv[i]) != T_FIXNUM)
-        Check_Type(argv[i], T_STRING);
-    }
-    data = fiobj_ary_new();
-    for (int i = 0; i < argc; ++i) {
-      if (TYPE(argv[i]) == T_FIXNUM)
-        fiobj_ary_push(data, fiobj_num_new(FIX2LONG(argv[i])));
-      else
-        fiobj_ary_push(
-            data, fiobj_str_new(RSTRING_PTR(argv[i]), RSTRING_LEN(argv[i])));
-    }
+ * Attaches an {Iodine::PubSub::Engine} to the pub/sub system (more than a
+ * single engine can be attached at the same time).
+ *
+ * After an engine was attached, it's callbacks will be called
+ * ({Iodine::PubSub::Engine#subscribe} and {Iodine::PubSub::Engine#unsubscribe})
+ * in response to Pub/Sub events.
+ */
+static VALUE iodine_pubsub_attach(VALUE self, VALUE engine) {
+  iodine_pubsub_s *e = iodine_pubsub_CData(engine);
+  if (!e) {
+    rb_raise(rb_eTypeError, "not a valid engine");
+    return Qnil;
   }
-  cmd = fiobj_str_new(RSTRING_PTR(argv[0]), RSTRING_LEN(argv[0]));
-  iodine_engine_s *e;
-  Data_Get_Struct(self, iodine_engine_s, e);
-
-  if (rb_block_given_p()) {
-    VALUE block = rb_block_proc();
-    Registry.add(block);
-    redis_engine_send(e->p, cmd, data, redis_callback, (void *)block);
-    return block;
-  } else {
-    redis_engine_send(e->p, cmd, data, NULL, NULL);
+  if (e->handler == Qnil) {
+    e->handler = engine;
   }
-  fiobj_free(cmd);
-  fiobj_free(data);
-  return Qtrue;
+  IodineStore.add(engine);
+  pubsub_engine_register(e->engine);
+  return engine;
+  (void)self;
 }
 
 /**
-Initializes a new RedisEngine for Pub/Sub.
+ * Removes an {Iodine::PubSub::Engine} from the pub/sub system.
+ *
+ * After an {Iodine::PubSub::Engine} was detached, Iodine will no longer call
+ * the {Iodine::PubSub::Engine}'s callbacks ({Iodine::PubSub::Engine#subscribe}
+ * and {Iodine::PubSub::Engine#unsubscribe})
+ */
+static VALUE iodine_pubsub_dettach(VALUE self, VALUE engine) {
+  iodine_pubsub_s *e = iodine_pubsub_CData(engine);
+  if (!e) {
+    rb_raise(rb_eTypeError, "not a valid engine");
+    return Qnil;
+  }
+  if (e->handler == Qnil) {
+    e->handler = engine;
+  }
+  IodineStore.remove(engine);
+  pubsub_engine_deregister(e->engine);
+  return engine;
+  (void)self;
+}
+
+/**
+ * Forces {Iodine} to call the {Iodine::PubSub::Engine#subscribe} callback for
+ * all existing subscriptions (i.e., when reconnecting to a Pub/Sub backend such
+ * as Redis).
+ */
+static VALUE iodine_pubsub_reset(VALUE self, VALUE engine) {
+  iodine_pubsub_s *e = iodine_pubsub_CData(engine);
+  if (!e) {
+    rb_raise(rb_eTypeError, "not a valid engine");
+    return Qnil;
+  }
+  if (e->handler == Qnil) {
+    e->handler = engine;
+  }
+  pubsub_engine_resubscribe(e->engine);
+  return engine;
+  (void)self;
+}
+
+/* *****************************************************************************
+Redis Engine
+***************************************************************************** */
+
+/**
+Initializes a new {Iodine::PubSub::Redis} engine.
+
+    Iodine::PubSub::Redis.new(url, opt = {})
 
 use:
 
-    RedisEngine.new(address, port = 6379, ping_interval = 0)
+    REDIS_URL = "redis://localhost:6379/"
+    Iodine::PubSub::Redis.new(REDIS_URL, ping: 50) #pings every 50 seconds
 
-Accepts:
+To use Redis authentication, add the password to the URL. i.e.:
 
-address:: the Redis server's address. Required.
-port:: the Redis Server port. Default: 6379
-ping:: the PING interval up to 255 seconds. Default: 0 (~5 minutes).
-auth:: authentication password. Default: none.
+    REDIS_URL = "redis://redis:password@localhost:6379/"
+    Iodine::PubSub::Redis.new(REDIS_URL, ping: 50) #pings every 50 seconds
+
+The options hash accepts:
+
+:ping:: the PING interval up to 255 seconds. Default: 0 (~5 minutes).
 */
-static VALUE redis_engine_initialize(int argc, VALUE *argv, VALUE self) {
-  if (argc < 1 || argc > 4)
-    rb_raise(rb_eArgError,
-             "wrong number of arguments (given %d, expected 1..4).", argc);
-  VALUE address = argv[0];
-  VALUE port = argc >= 2 ? argv[1] : Qnil;
-  VALUE ping = argc >= 3 ? argv[2] : Qnil;
-  VALUE auth = argc >= 4 ? argv[3] : Qnil;
-  Check_Type(address, T_STRING);
-  if (port != Qnil) {
-    if (TYPE(port) == T_FIXNUM)
-      port = rb_fix2str(port, 10);
-    Check_Type(port, T_STRING);
+static VALUE iodine_pubsub_redis_new(int argc, VALUE *argv, VALUE self) {
+  if (!argc) {
+    rb_raise(rb_eArgError, "Iodine::PubSub::Redis.new(address, opt={}) "
+                           "requires at least 1 argument.");
   }
-  if (ping != Qnil)
-    Check_Type(ping, T_FIXNUM);
-  if (auth != Qnil) {
-    Check_Type(auth, T_STRING);
+  VALUE url = argv[0];
+  Check_Type(url, T_STRING);
+  if (RSTRING_LEN(url) > 4096) {
+    rb_raise(rb_eArgError, "Redis URL too long.");
   }
-  size_t iping = FIX2LONG(ping);
-  if (iping > 255)
-    rb_raise(rb_eRangeError, "ping_interval too big (0..255)");
+  FIOBJ port = FIOBJ_INVALID;
+  FIOBJ address = FIOBJ_INVALID;
+  FIOBJ auth = FIOBJ_INVALID;
+  uint8_t ping = 0;
 
-  iodine_engine_s *engine;
-  Data_Get_Struct(self, iodine_engine_s, engine);
-  engine->handler = self;
-  engine->p =
-      redis_engine_create(.address = StringValueCStr(address),
-                          .port =
-                              (port == Qnil ? "6379" : StringValueCStr(port)),
-                          .ping_interval = iping,
-                          .auth = (auth == Qnil ? NULL : StringValueCStr(auth)),
-                          .auth_len = (auth == Qnil ? 0 : RSTRING_LEN(auth)));
-  engine->dealloc = redis_engine_destroy;
-  if (!engine->p)
-    rb_raise(rb_eRuntimeError, "unknown error, can't initialize RedisEngine.");
-  return self;
-}
+  iodine_pubsub_s *e = iodine_pubsub_CData(self);
+  if (!e) {
+    rb_raise(rb_eTypeError, "not a valid engine");
+    return Qnil;
+  }
 
-/* *****************************************************************************
-PubSub settings
-***************************************************************************** */
-
-/**
-Sets the default Pub/Sub engine to be used.
-
-See {Iodine::PubSub} and {Iodine::PubSub::Engine} for more details.
-*/
-static VALUE ips_set_default(VALUE self, VALUE en) {
-  iodine_engine_s *e;
-  Data_Get_Struct(en, iodine_engine_s, e);
-  if (!e)
-    rb_raise(rb_eArgError, "deafult engine must be an Iodine::PubSub::Engine.");
-  if (!e->p)
-    rb_raise(rb_eArgError, "This Iodine::PubSub::Engine is broken.");
-  rb_ivar_set(Iodine, default_pubsubid, en);
-  PUBSUB_DEFAULT_ENGINE = e->p;
-  return en;
-  (void)self;
-}
-
-/** Deprecated. Use {Iodine::PubSub.default_engine=}. */
-static VALUE ips_set_default_dep(VALUE self, VALUE en) {
-  fprintf(stderr, "WARNING: Iodine.default_pubsub is deprecated. Use "
-                  "Iodine::PubSub.default_engine.\n");
-  return ips_set_default(self, en);
-}
-
-/**
-Returns the default Pub/Sub engine (if any).
-
-See {Iodine::PubSub} and {Iodine::PubSub::Engine} for more details.
-*/
-static VALUE ips_get_default(VALUE self) {
-  return rb_ivar_get(Iodine, default_pubsubid);
-  (void)self;
-}
-
-/**
-Deprecated. Use {Iodine::PubSub.default_engine}.
-*/
-static VALUE ips_get_default_dep(VALUE self) {
-  fprintf(stderr, "WARNING: Iodine.default_pubsub is deprecated. Use "
-                  "Iodine::PubSub.default_engine.\n");
-  return ips_get_default(self);
-}
-
-/* *****************************************************************************
-Pub/Sub API
-***************************************************************************** */
-
-static void iodine_on_unsubscribe(void *u1, void *u2) {
-  if (u1 && (VALUE)u1 != Qnil && u1 != (VALUE)Qfalse)
-    Registry.remove((VALUE)u1);
-  (void)u2;
-}
-
-static void *on_pubsub_notificationinGVL(pubsub_message_s *n) {
-  VALUE rbn[2];
-  fio_cstr_s tmp = fiobj_obj2cstr(n->channel);
-  rbn[0] = rb_str_new(tmp.data, tmp.len);
-  Registry.add(rbn[0]);
-  tmp = fiobj_obj2cstr(n->message);
-  rbn[1] = rb_str_new(tmp.data, tmp.len);
-  Registry.add(rbn[1]);
-  RubyCaller.call2((VALUE)n->udata1, iodine_call_proc_id, 2, rbn);
-  Registry.remove(rbn[0]);
-  Registry.remove(rbn[1]);
-  return NULL;
-}
-
-static void on_pubsub_notificationin(pubsub_message_s *n) {
-  RubyCaller.call_c((void *(*)(void *))on_pubsub_notificationinGVL, n);
-}
-
-static void iodine_on_unsubscribe_ws(void *u) {
-  if (u && (VALUE)u != Qnil && u != (VALUE)Qfalse)
-    Registry.remove((VALUE)u);
-}
-
-static void *
-on_pubsub_notificationinGVL_ws(websocket_pubsub_notification_s *n) {
-  VALUE rbn[2];
-  fio_cstr_s tmp = fiobj_obj2cstr(n->channel);
-  rbn[0] = rb_str_new(tmp.data, tmp.len);
-  Registry.add(rbn[0]);
-  tmp = fiobj_obj2cstr(n->message);
-  rbn[1] = rb_str_new(tmp.data, tmp.len);
-  Registry.add(rbn[1]);
-  RubyCaller.call2((VALUE)n->udata, iodine_call_proc_id, 2, rbn);
-  Registry.remove(rbn[0]);
-  Registry.remove(rbn[1]);
-  return NULL;
-}
-
-static void on_pubsub_notificationin_ws(websocket_pubsub_notification_s n) {
-  RubyCaller.call_c((void *(*)(void *))on_pubsub_notificationinGVL_ws, &n);
-}
-
-static void on_pubsub_notificationin_sse(http_sse_s *sse, FIOBJ channel,
-                                         FIOBJ message, void *udata) {
-  websocket_pubsub_notification_s n = {
-      .channel = channel, .message = message, .udata = udata};
-  RubyCaller.call_c((void *(*)(void *))on_pubsub_notificationinGVL, &n);
-  (void)sse;
-}
-
-/** Subscribes to a Pub/Sub channel - internal implementation */
-VALUE iodine_subscribe(int argc, VALUE *argv, void *owner,
-                       iodine_pubsub_type_e type) {
-
-  VALUE rb_ch = Qnil;
-  VALUE rb_opt = 0;
-  VALUE block = 0;
-  uint8_t use_pattern = 0, force_text = 1, force_binary = 0;
-  intptr_t uuid = 0;
-
-  switch (argc) {
-  case 2:
-    rb_ch = argv[0];
-    rb_opt = argv[1];
-    break;
-  case 1:
-    /* single argument must be a Hash / channel name */
-    if (TYPE(argv[0]) == T_HASH) {
-      rb_opt = argv[0];
-      rb_ch = rb_hash_aref(argv[0], to_sym_id);
-      if (rb_ch == Qnil || rb_ch == Qfalse) {
-        /* temporary backport support */
-        rb_ch = rb_hash_aref(argv[0], channel_sym_id);
-        if (rb_ch) {
-          fprintf(stderr,
-                  "WARNING: use of :channel in subscribe is deprecated.\n");
-        }
+  /* extract options */
+  if (argc == 2) {
+    Check_Type(argv[1], T_HASH);
+    VALUE tmp = rb_hash_aref(argv[1], rb_id2sym(rb_intern2("ping", 4)));
+    if (tmp != Qnil) {
+      Check_Type(tmp, T_FIXNUM);
+      if (NUM2SIZET(tmp) > 255) {
+        rb_raise(rb_eArgError,
+                 ":ping must be a non-negative integer under 255 seconds.");
       }
-    } else {
-      rb_ch = argv[0];
+      ping = (uint8_t)NUM2SIZET(tmp);
     }
-    break;
-  default:
-    rb_raise(rb_eArgError, "method accepts 1 or 2 arguments.");
-    return Qnil;
   }
 
-  if (rb_ch == Qnil || rb_ch == Qfalse) {
+  /* parse URL assume redis://redis:password@localhost:6379 */
+  {
+    size_t l = RSTRING_LEN(url);
+    char *str = RSTRING_PTR(url);
+    char *pointers[5];
+    char *end = str + l;
+    uint8_t flag = 1;
+    uint8_t counter = 0;
+    for (size_t i = 0; i < l; i++) {
+      if (counter > 4)
+        goto finish;
+      if (str[i] == ':' && str[i + 1] == '/' && str[i + 2] == '/') {
+        pointers[counter++] = str + i + 3;
+        i = i + 2;
+        flag = 0;
+        continue;
+      }
+      if (str[i] == '@' && counter == 1 - flag) {
+        rb_raise(rb_eArgError, "malformed URL");
+      }
+      if (str[i] == ':' || str[i] == '@') {
+        pointers[counter++] = str + i + 1;
+        continue;
+      }
+      if (str[i] == '/') {
+        end = str + i;
+        break;
+      }
+    }
+    if (flag) {
+      if (counter > 3) {
+        rb_raise(rb_eArgError, "malformed URL");
+      }
+      /* move pointers one step forward and set 0 to str... */
+      char *pointers_2[5];
+      for (size_t i = 0; i < counter; ++i) {
+        pointers_2[i + 1] = pointers[i];
+      }
+      pointers_2[0] = str;
+      ++counter;
+      for (size_t i = 0; i < counter; ++i) {
+        pointers[i] = pointers_2[i];
+      }
+    }
+    /* review results */
+    switch (counter) {
+    case 1:
+      /* redis://localhost */
+      if (pointers[0] == end) {
+        goto finish;
+      }
+      address = fiobj_str_new(pointers[0], end - pointers[0]);
+      break;
+    case 2:
+      /* redis://localhost:6379 */
+      if (pointers[1] - pointers[0] - 1 == 0) {
+        goto finish;
+      }
+      address = fiobj_str_new(pointers[0], pointers[1] - pointers[0] - 1);
+      if (pointers[1] != end) {
+        port = fiobj_str_new(pointers[1], end - pointers[1]);
+      }
+      break;
+    case 3:
+      /* redis://redis:password@localhost */
+      if (pointers[2] - pointers[1] - 1 == 0 || end - pointers[2] == 0) {
+        goto finish;
+      }
+      address = fiobj_str_new(pointers[2], end - pointers[2]);
+      auth = fiobj_str_new(pointers[1], pointers[2] - pointers[1] - 1);
+      break;
+    case 4:
+      /* redis://redis:password@localhost:6379 */
+      if (pointers[2] - pointers[1] - 1 == 0 ||
+          pointers[3] - pointers[2] - 1 == 0 || end - pointers[3] == 0) {
+        goto finish;
+      }
+      port = fiobj_str_new(pointers[3], end - pointers[3]);
+      address = fiobj_str_new(pointers[2], pointers[3] - pointers[2] - 1);
+      auth = fiobj_str_new(pointers[1], pointers[2] - pointers[1] - 1);
+      break;
+    default:
+      goto finish;
+    }
+  }
+  fprintf(
+      stderr,
+      "INFO: Initializing Redis engine for address: %s - port: %s -  auth %s\n",
+      fiobj_obj2cstr(address).data, fiobj_obj2cstr(port).data,
+      fiobj_obj2cstr(auth).data);
+  /* create engine */
+  e->engine = redis_engine_create(
+          .address = fiobj_obj2cstr(address)
+          .data,
+          .port = (port == FIOBJ_INVALID ? "6379" : fiobj_obj2cstr(port).data),
+          .ping_interval = ping,
+          .auth = (auth == FIOBJ_INVALID ? NULL : fiobj_obj2cstr(auth).data),
+          .auth_len = (auth == FIOBJ_INVALID ? 0 : fiobj_obj2cstr(auth).len));
+  if (!e->engine) {
+    e->engine = &e->do_not_touch;
+  } else {
+    e->dealloc = redis_engine_destroy;
+  }
+
+finish:
+  fiobj_free(port);
+  fiobj_free(address);
+  fiobj_free(auth);
+  if (e->engine == &e->do_not_touch) {
     rb_raise(rb_eArgError,
-             "a target (:to) subject / stream / channel is required.");
+             "Error initializing the Redis engine - malformed URL?");
   }
+  return self;
+  (void)self;
+  (void)argc;
+  (void)argv;
+}
 
-  if (TYPE(rb_ch) == T_SYMBOL)
-    rb_ch = rb_sym2str(rb_ch);
-  Check_Type(rb_ch, T_STRING);
-
-  if (rb_opt) {
-    if (type == IODINE_PUBSUB_WEBSOCKET &&
-        rb_hash_aref(rb_opt, as_sym_id) == binary_sym_id) {
-      force_text = 0;
-      force_binary = 1;
-    }
-    if (rb_hash_aref(rb_opt, match_sym_id) == redis_sym_id) {
-      use_pattern = 1;
-    }
-    block = rb_hash_aref(rb_opt, handler_sym_id);
-    if (block != Qnil)
-      Registry.add(block);
-  }
-
+/** A callback for Redis commands. */
+static void iodine_pubsub_redis_callback(pubsub_engine_s *e, FIOBJ response,
+                                         void *udata) {
+  VALUE block = (VALUE)udata;
   if (block == Qnil) {
-    if (rb_block_given_p()) {
-      block = rb_block_proc();
-      Registry.add(block);
-    } else if (type == IODINE_PUBSUB_GLOBAL) {
-      rb_need_block();
-      return Qnil;
-    }
+    return;
   }
-  if (block == Qnil)
-    block = 0;
-
-  FIOBJ ch = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
-
-  uintptr_t sub = 0;
-  switch (type) {
-  case IODINE_PUBSUB_GLOBAL:
-    sub = (uintptr_t)pubsub_subscribe(.channel = ch, .use_pattern = use_pattern,
-                                      .on_message = on_pubsub_notificationin,
-                                      .on_unsubscribe = iodine_on_unsubscribe,
-                                      .udata1 = (void *)block);
-    break;
-  case IODINE_PUBSUB_WEBSOCKET:
-    uuid = websocket_uuid(owner);
-    sub = websocket_subscribe(
-        owner, .channel = ch, .use_pattern = use_pattern,
-        .force_text = force_text, .force_binary = force_binary,
-        .on_message = (block ? on_pubsub_notificationin_ws : NULL),
-        .on_unsubscribe = (block ? iodine_on_unsubscribe_ws : NULL),
-        .udata = (void *)block);
-    break;
-  case IODINE_PUBSUB_SSE:
-    uuid = http_sse2uuid(owner);
-    sub = http_sse_subscribe(
-        owner, .channel = ch, .use_pattern = use_pattern,
-        .on_message = (block ? on_pubsub_notificationin_sse : NULL),
-        .on_unsubscribe = (block ? iodine_on_unsubscribe_ws : NULL),
-        .udata = (void *)block);
-
-    break;
+  VALUE rb = Qnil;
+  if (!FIOBJ_IS_NULL(response)) {
+    rb = IodineStore.add(fiobj2rb_deep(response, 0));
   }
-
-  fiobj_free(ch);
-  if (!sub)
-    return Qnil;
-  return subscription_initialize(sub, uuid, owner, type, rb_ch);
+  IodineCaller.call2(block, call_id, 1, &rb);
+  IodineStore.remove(rb);
+  IodineStore.remove(block);
+  (void)e;
 }
 
 // clang-format off
 /**
-Subscribes to a Pub/Sub channel.
+Sends a Redis command. Accepts an optional block that will recieve the response.
 
-The method accepts 1-2 arguments and an optional block. These are all valid ways
-to call the method:
+i.e.:
 
-      subscribe("my_stream") {|from, msg| p msg }
-      subscribe("my_stream", match: :redis) {|from, msg| p msg }
-      subscribe(to: "my_stream")  {|from, msg| p msg }
-      subscribe to: "my_stream", match: :redis, handler: MyProc
-
-The first argument must be either a String or a Hash.
-
-The second, optional, argument must be a Hash (if given).
-
-The options Hash supports the following possible keys (other keys are ignored, all keys are Symbols):
-
-:match :: The channel / subject name matching type to be used. Valid value is: `:redis`. Future versions hope to support `:nats` and `:rabbit` patern matching as well.
-
-:to :: The channel / subject to subscribe to.
-
-Returns an {Iodine::PubSub::Subscription} object that answers to:
-
-close :: closes the connection.
-to_s :: returns the subscription's target (stream / channel / subject).
-==(str) :: returns true if the string is an exact match for the target (even if the target itself is a pattern).
-
-*/
-static VALUE iodine_subscribe_global(int argc, VALUE *argv, VALUE self) {
-  // clang-format on
-  return iodine_subscribe(argc, argv, NULL, IODINE_PUBSUB_GLOBAL);
-  (void)self;
+    REDIS_URL = "redis://redis:password@localhost:6379/"
+    redis = Iodine::PubSub::Redis.new(REDIS_URL, ping: 50) #pings every 50 seconds
+    Iodine::PubSub.default = redis
+    redis.cmd("KEYS", "*") {|result| p result
 }
 
-/**
-Publishes a message to a channel.
-
-Can be used using two Strings:
-
-      publish(to, message)
-
-The method accepts an optional `engine` argument:
-
-      publish(to, message, my_pubsub_engine)
-
-
-Alternatively, accepts the following named arguments:
-
-:to :: The channel to publish to (required).
-
-:message :: The message to be published (required).
-
-:engine :: If provided, the engine to use for pub/sub. Otherwise the default
-engine is used.
 
 */
-VALUE iodine_publish(int argc, VALUE *argv, VALUE self) {
-  VALUE rb_ch, rb_msg, rb_engine = Qnil;
-  const pubsub_engine_s *engine = NULL;
-  switch (argc) {
-  case 3:
-    /* fallthrough */
-    rb_engine = argv[2];
-  case 2:
-    rb_ch = argv[0];
-    rb_msg = argv[1];
-    break;
-  case 1: {
-    /* single argument must be a Hash */
-    Check_Type(argv[0], T_HASH);
-    rb_ch = rb_hash_aref(argv[0], to_sym_id);
-    if (rb_ch == Qnil || rb_ch == Qfalse) {
-      rb_ch = rb_hash_aref(argv[0], channel_sym_id);
+static VALUE iodine_pubsub_redis_cmd(int argc, VALUE *argv, VALUE self) {
+  // clang-format on
+  if (argc <= 0) {
+    rb_raise(rb_eArgError, "Iodine::PubSub::Redis#cmd(command, ...) is missing "
+                           "the required command argument.");
+  }
+  iodine_pubsub_s *e = iodine_pubsub_CData(self);
+  if (!e || !e->engine || e->engine == &e->do_not_touch) {
+    rb_raise(rb_eTypeError,
+             "Iodine::PubSub::Redis internal error - obsolete object?");
+  }
+  VALUE block = Qnil;
+  if (rb_block_given_p()) {
+    block = IodineStore.add(rb_block_proc());
+  }
+  FIOBJ data = fiobj_ary_new2((size_t)argc);
+  for (int i = 0; i < argc; ++i) {
+    switch (TYPE(argv[i])) {
+    case T_SYMBOL:
+      argv[i] = rb_sym2str(argv[i]);
+    /* overflow */
+    case T_STRING:
+      fiobj_ary_push(data,
+                     fiobj_str_new(RSTRING_PTR(argv[i]), RSTRING_LEN(argv[i])));
+      break;
+    case T_FIXNUM:
+      fiobj_ary_push(data, fiobj_num_new(NUM2SSIZET(argv[i])));
+      break;
+    case T_FLOAT:
+      fiobj_ary_push(data, fiobj_float_new(rb_float_value(argv[i])));
+      break;
+    case T_NIL:
+      fiobj_ary_push(data, fiobj_null());
+      break;
+    case T_TRUE:
+      fiobj_ary_push(data, fiobj_true());
+      break;
+    case T_FALSE:
+      fiobj_ary_push(data, fiobj_false());
+      break;
+    default:
+      goto wrong_type;
     }
-    rb_msg = rb_hash_aref(argv[0], message_sym_id);
-    rb_engine = rb_hash_aref(argv[0], engine_varid);
-  } break;
-  default:
-    rb_raise(rb_eArgError, "method accepts 1-3 arguments.");
   }
-
-  if (rb_msg == Qnil || rb_msg == Qfalse) {
-    rb_raise(rb_eArgError, "message is required.");
+  FIOBJ cmd = fiobj_ary_shift(data);
+  if (redis_engine_send(e->engine, cmd, data, iodine_pubsub_redis_callback,
+                        (void *)block)) {
+    iodine_pubsub_redis_callback(e->engine, fiobj_null(), (void *)block);
   }
-  Check_Type(rb_msg, T_STRING);
+  fiobj_free(cmd);
+  fiobj_free(data);
+  return self;
 
-  if (rb_ch == Qnil || rb_ch == Qfalse)
-    rb_raise(rb_eArgError, "target / channel is required .");
-  if (TYPE(rb_ch) == T_SYMBOL)
-    rb_ch = rb_sym2str(rb_ch);
-  Check_Type(rb_ch, T_STRING);
-
-  if (rb_engine == Qfalse) {
-    engine = PUBSUB_PROCESS_ENGINE;
-  } else if (rb_engine == Qnil) {
-    engine = NULL;
-  } else {
-    engine = iodine_engine_ruby2facil(rb_engine);
-  }
-
-  FIOBJ ch = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
-  FIOBJ msg = fiobj_str_new(RSTRING_PTR(rb_msg), RSTRING_LEN(rb_msg));
-
-  intptr_t ret =
-      pubsub_publish(.engine = engine, .channel = ch, .message = msg);
-  fiobj_free(ch);
-  fiobj_free(msg);
-  if (!ret)
-    return Qfalse;
-  return Qtrue;
-  (void)self;
+wrong_type:
+  fiobj_free(data);
+  rb_raise(rb_eArgError,
+           "only String, Number (with limits), Symbol, true, false and nil "
+           "arguments can be used.");
 }
 
 /* *****************************************************************************
-Initialization
+Module initialization
 ***************************************************************************** */
-void Iodine_init_pubsub(void) {
-  default_pubsubid = rb_intern("default_pubsub");
-  engine_subid = rb_intern("subscribe");
-  engine_unsubid = rb_intern("unsubscribe");
-  engine_varid = rb_intern("engine");
-  iodine_engine_pubid = rb_intern("publish");
-  to_str_shadow_id = rb_intern("@to_s");
 
-  as_sym_id = ID2SYM(rb_intern("as"));
-  binary_sym_id = ID2SYM(rb_intern("binary"));
-  handler_sym_id = ID2SYM(rb_intern("handler"));
-  match_sym_id = ID2SYM(rb_intern("match"));
-  message_sym_id = ID2SYM(rb_intern("message"));
-  redis_sym_id = ID2SYM(rb_intern("redis"));
-  text_sym_id = ID2SYM(rb_intern("text"));
-  to_sym_id = ID2SYM(rb_intern("to"));
+/** Initializes the Connection Ruby class. */
+void iodine_pubsub_init(void) {
+  subscribe_id = rb_intern2("subscribe", 9);
+  unsubscribe_id = rb_intern2("unsubscribe", 11);
+  publish_id = rb_intern2("publish", 7);
+  default_id = rb_intern2("default_engine", 14);
+  redis_id = rb_intern2("redis", 5);
+  call_id = rb_intern2("call", 4);
 
-  channel_sym_id = ID2SYM(rb_intern("channel")); /* bawards compatibility */
+  /* Define the PubSub module and it's methods */
 
-  IodinePubSub = rb_define_module_under(Iodine, "PubSub");
-  IodineEngine = rb_define_class_under(IodinePubSub, "Engine", rb_cObject);
-  IodinePubSubSubscription =
-      rb_define_class_under(IodinePubSub, "Subscription", rb_cObject);
-
-  rb_define_method(IodinePubSubSubscription, "close", close_subscription, 0);
-  rb_define_method(IodinePubSubSubscription, "==", subscription_eq_s, 1);
-  rb_attr(IodinePubSubSubscription, rb_intern("to_s"), 1, 0, 1);
-  rb_define_method(IodinePubSubSubscription, "to_s", subscription_to_s, 1);
-
-  rb_define_alloc_func(IodineEngine, engine_alloc_c);
-  rb_define_method(IodineEngine, "initialize", engine_initialize, 0);
-
-  rb_define_method(IodineEngine, "subscribe", engine_sub_placeholder, 2);
-  rb_define_method(IodineEngine, "unsubscribe", engine_sub_placeholder, 2);
-  rb_define_method(IodineEngine, "publish", engine_pub_placeholder, 2);
-  rb_define_method(IodineEngine, "register", iodine_engine_register, 0);
-  rb_define_method(IodineEngine, "deregister", iodine_engine_deregister, 0);
-  rb_define_method(IodineEngine, "reset", iodine_engine_reset, 0);
-
-  rb_define_module_function(Iodine, "subscribe", iodine_subscribe_global, -1);
-  rb_define_module_function(Iodine, "publish", iodine_publish, -1);
-  rb_define_module_function(Iodine, "default_engine=", ips_set_default, 1);
-  rb_define_module_function(Iodine, "default_engine", ips_get_default, 0);
-
-  rb_define_module_function(IodinePubSub, "default_engine=", ips_set_default,
+  VALUE PubSubModule = rb_define_module_under(IodineModule, "PubSub");
+  rb_define_module_function(PubSubModule, "default=", iodine_pubsub_default_set,
                             1);
-  rb_define_module_function(IodinePubSub, "default_engine", ips_get_default, 0);
-  rb_define_method(IodinePubSub, "register", iodine_engine_register2, 1);
-  rb_define_method(IodinePubSub, "deregister", iodine_engine_deregister2, 1);
-  rb_define_method(IodinePubSub, "reset", iodine_engine_reset2, 1);
+  rb_define_module_function(PubSubModule, "default", iodine_pubsub_default_get,
+                            0);
+  rb_define_module_function(PubSubModule, "attach", iodine_pubsub_attach, 1);
+  rb_define_module_function(PubSubModule, "dettach", iodine_pubsub_dettach, 1);
+  rb_define_module_function(PubSubModule, "reset", iodine_pubsub_reset, 1);
 
-  rb_define_module_function(IodinePubSub, "subscribe", iodine_subscribe_global,
-                            -1);
-  rb_define_module_function(IodinePubSub, "publish", iodine_publish, -1);
+  /* Define the Engine class and it's methods */
 
-  /* deprecated */
+  /**
+  The {Iodine::PubSub::Engine} class is the parent for all engines to inherit
+  from.
 
-  rb_define_module_function(Iodine, "default_pubsub=", ips_set_default_dep, 1);
-  rb_define_module_function(Iodine, "default_pubsub", ips_get_default_dep, 0);
+  Engines should inherit this class and override the `subscribe`, `unsubscribe`
+  and `publish` callbacks (which shall be called by {Iodine}).
 
-  /* *************************
-  Initialize C pubsub engines
-  ************************** */
-  VALUE engine_in_c;
-  iodine_engine_s *engine;
+  After creation, Engines should attach themselves to Iodine using
+  {Iodine::PubSub.attach} or their callbacks will never get called.
 
-  engine_in_c = rb_funcallv(IodineEngine, iodine_new_func_id, 0, NULL);
-  Data_Get_Struct(engine_in_c, iodine_engine_s, engine);
-  engine->p = (pubsub_engine_s *)PUBSUB_CLUSTER_ENGINE;
+  Engines can also set themselves to be the default engine using
+  {Iodine::PubSub.default=}.
+  */
+  EngineClass = rb_define_class_under(PubSubModule, "Engine", rb_cObject);
+  rb_define_alloc_func(EngineClass, iodine_pubsub_data_alloc_c);
+  rb_define_method(EngineClass, "subscribe", iodine_pubsub_subscribe, 2);
+  rb_define_method(EngineClass, "unsubscribe", iodine_pubsub_unsubscribe, 2);
+  rb_define_method(EngineClass, "publish", iodine_pubsub_publish, 2);
 
-  /** This is the (currently) default pub/sub engine. It will distribute
-   * messages to all subscribers in the process cluster. */
-  rb_define_const(IodinePubSub, "CLUSTER", engine_in_c);
+  /* Define the CLUSTER and PROCESS engines */
 
-  // rb_const_set(IodineEngine, rb_intern("CLUSTER"), e);
+  /* CLUSTER publishes data to all the subscribers in the process cluster. */
+  rb_define_const(PubSubModule, "CLUSTER",
+                  iodine_pubsub_make_C_engine(PUBSUB_CLUSTER_ENGINE));
+  /* PROCESS publishes data to all the subscribers in a single process. */
+  rb_define_const(PubSubModule, "PROCESS",
+                  iodine_pubsub_make_C_engine(PUBSUB_PROCESS_ENGINE));
 
-  engine_in_c = rb_funcallv(IodineEngine, iodine_new_func_id, 0, NULL);
-  Data_Get_Struct(engine_in_c, iodine_engine_s, engine);
-  engine->p = (pubsub_engine_s *)PUBSUB_PROCESS_ENGINE;
-
-  /** This is a single process pub/sub engine. It will distribute messages to
-   * all subscribers sharing the same process. */
-  rb_define_const(IodinePubSub, "SINGLE_PROCESS", engine_in_c);
-
-  // rb_const_set(IodineEngine, rb_intern("SINGLE_PROCESS"), e);
-
-  engine_in_c =
-      rb_define_class_under(IodinePubSub, "RedisEngine", IodineEngine);
-  rb_define_method(engine_in_c, "initialize", redis_engine_initialize, -1);
-  rb_define_method(engine_in_c, "send", redis_send, -1);
+  VALUE RedisClass = rb_define_class_under(PubSubModule, "Redis", EngineClass);
+  rb_define_method(RedisClass, "initialize", iodine_pubsub_redis_new, -1);
+  rb_define_method(RedisClass, "cmd", iodine_pubsub_redis_cmd, -1);
 }

@@ -1,37 +1,25 @@
-#ifndef H_IODINE_ENGINE_H
-#define H_IODINE_ENGINE_H
-/*
-Copyright: Boaz segev, 2016-2017
-License: MIT
+#ifndef H_IODINE_PUBSUB_H
+#define H_IODINE_PUBSUB_H
 
-Feel free to copy, use and enjoy according to the license provided.
-*/
 #include "iodine.h"
 #include "pubsub.h"
 
-typedef enum {
-  IODINE_PUBSUB_GLOBAL,
-  IODINE_PUBSUB_WEBSOCKET,
-  IODINE_PUBSUB_SSE
-} iodine_pubsub_type_e;
+/** Initializes the PubSub::Engine Ruby class. */
+void iodine_pubsub_init(void);
 
-extern VALUE IodineEngine;
-extern ID iodine_engine_pubid;
-VALUE iodine_publish(int argc, VALUE *argv, VALUE self);
-VALUE iodine_subscribe(int argc, VALUE *argv, void *owner,
-                       iodine_pubsub_type_e type);
+extern const rb_data_type_t iodine_pubsub_data_type;
 
 typedef struct {
-  pubsub_engine_s engine;
-  pubsub_engine_s *p;
+  pubsub_engine_s do_not_touch;
   VALUE handler;
-  void (*dealloc)(pubsub_engine_s *);
-} iodine_engine_s;
+  pubsub_engine_s *engine;
+  void (*dealloc)(pubsub_engine_s *engine);
+} iodine_pubsub_s;
 
-void Iodine_init_pubsub(void);
-
-typedef struct pubsub_engine_s pubsub_engine_s;
-
-pubsub_engine_s *iodine_engine_ruby2facil(VALUE engine);
+static inline iodine_pubsub_s *iodine_pubsub_CData(VALUE obj) {
+  iodine_pubsub_s *c = NULL;
+  TypedData_Get_Struct(obj, iodine_pubsub_s, &iodine_pubsub_data_type, c);
+  return c;
+}
 
 #endif

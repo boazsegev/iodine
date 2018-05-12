@@ -9,7 +9,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <fiobj.h>
 #include <ruby.h>
 
-#include "rb-registry.h"
+#include "iodine_store.h"
 
 typedef struct {
   FIOBJ stack;
@@ -35,7 +35,7 @@ static inline VALUE fiobj2rb(FIOBJ o, uint8_t str2sym) {
     rb = Qfalse;
     break;
   case FIOBJ_T_FLOAT:
-    rb = DBL2NUM(fiobj_obj2float(o));
+    rb = rb_float_new(fiobj_obj2float(o));
     break;
   case FIOBJ_T_DATA:    /* fallthrough */
   case FIOBJ_T_UNKNOWN: /* fallthrough */
@@ -67,7 +67,7 @@ static int fiobj2rb_task(FIOBJ o, void *data_) {
   fiobj2rb_s *data = data_;
   VALUE rb_tmp;
   rb_tmp = fiobj2rb(o, 0);
-  Registry.add(rb_tmp);
+  IodineStore.add(rb_tmp);
   if (data->rb) {
     if (RB_TYPE_P(data->rb, T_HASH)) {
       rb_hash_aset(data->rb, fiobj2rb(fiobj_hash_key_in_loop(), data->str2sym),
@@ -76,10 +76,10 @@ static int fiobj2rb_task(FIOBJ o, void *data_) {
       rb_ary_push(data->rb, rb_tmp);
     }
     --(data->count);
-    Registry.remove(rb_tmp);
+    IodineStore.remove(rb_tmp);
   } else {
     data->rb = rb_tmp;
-    // Registry.add(rb_tmp);
+    // IodineStore.add(rb_tmp);
   }
   if (FIOBJ_TYPE_IS(o, FIOBJ_T_ARRAY)) {
     fiobj_ary_push(data->stack, (FIOBJ)data->count);
@@ -108,7 +108,7 @@ static inline VALUE fiobj2rb_deep(FIOBJ obj, uint8_t str2sym) {
   while (fiobj_ary_pop(data.stack))
     ;
   fiobj_free(data.stack);
-  Registry.remove(data.rb);
+  IodineStore.remove(data.rb);
   return data.rb;
 }
 

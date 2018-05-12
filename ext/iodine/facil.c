@@ -135,7 +135,7 @@ static const char *CLUSTER_CONNECTION_PROTOCOL_NAME =
     "cluster connection __facil_internal__";
 
 static inline int is_counted_protocol(protocol_s *p) {
-  return p->service != TIMER_PROTOCOL_NAME &&
+  return p && p->service != TIMER_PROTOCOL_NAME &&
          p->service != CLUSTER_LISTEN_PROTOCOL_NAME &&
          p->service != CLUSTER_CONNECTION_PROTOCOL_NAME;
 }
@@ -419,6 +419,10 @@ Initialization and Cleanup
 ***************************************************************************** */
 static spn_lock_i facil_libinit_lock = SPN_LOCK_INIT;
 
+/** Rounds up any size to the nearest page alignment (assumes 4096 bytes per
+ * page) */
+#define round_size(size) (((size) & (~4095)) + (4096 * (!!((size)&4095))))
+
 static void facil_cluster_cleanup(void); /* cluster data cleanup */
 
 static void facil_libcleanup(void) {
@@ -427,10 +431,10 @@ static void facil_libcleanup(void) {
   if (facil_data) {
     facil_external_root_cleanup();
     facil_cluster_cleanup();
-    defer_perform(); /* perform any lingering cleanup tasks */
-    munmap(facil_data,
-           sizeof(*facil_data) + ((size_t)facil_data->capacity *
-                                  sizeof(struct connection_data_s)));
+    // defer_perform(); /* perform any lingering cleanup tasks? */
+    size_t mem_size = sizeof(*facil_data) + ((size_t)facil_data->capacity *
+                                             sizeof(struct connection_data_s));
+    munmap(facil_data, round_size(mem_size));
     facil_data = NULL;
   }
   spn_unlock(&facil_libinit_lock);
@@ -447,7 +451,7 @@ static void facil_lib_init(void) {
   spn_lock(&facil_libinit_lock);
   if (facil_data)
     goto finish;
-  facil_data = mmap(NULL, mem_size, PROT_READ | PROT_WRITE,
+  facil_data = mmap(NULL, round_size(mem_size), PROT_READ | PROT_WRITE,
                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (!facil_data || facil_data == MAP_FAILED) {
     perror("ERROR: Couldn't initialize the facil.io library");
@@ -1677,7 +1681,7 @@ static void facil_worker_cleanup(void) {
   facil_cluster_signal_children();
   for (int i = 0; i <= facil_data->capacity; ++i) {
     intptr_t uuid;
-    if (fd_data(i).protocol && is_counted_protocol(fd_data(i).protocol) &&
+    if (is_counted_protocol(fd_data(i).protocol) &&
         (uuid = sock_fd2uuid(i)) >= 0) {
       defer(deferred_on_shutdown, (void *)uuid, NULL);
     }
@@ -2059,7 +2063,7 @@ static int facil_attach_state(intptr_t uuid, protocol_s *protocol,
       spn_sub(&facil_data->connection_count, 1);
     }
     defer(deferred_on_close, (void *)uuid, old_protocol);
-  } else if (evio_isactive()) {
+  } else if (evio_isactive() && protocol) {
     return evio_add(sock_uuid2fd(uuid), (void *)uuid);
   }
   return 0;

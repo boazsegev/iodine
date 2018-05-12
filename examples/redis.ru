@@ -5,12 +5,10 @@
 #      REDIS_URL=redis://localhost:6379/0 iodine -t 1 -p 3000 redis.ru
 #      REDIS_URL=redis://localhost:6379/0 iodine -t 1 -p 3030 redis.ru
 #
-require 'uri'
 require 'iodine'
 # initialize the Redis engine for each Iodine process.
 if ENV["REDIS_URL"]
-  uri = URI(ENV["REDIS_URL"])
-  Iodine.default_pubsub = Iodine::PubSub::RedisEngine.new(uri.host, uri.port, 0, uri.password)
+  Iodine::PubSub.default = Iodine::PubSub::Redis.new(ENV["REDIS_URL"], ping: 10)
 else
   puts "* No Redis, it's okay, pub/sub will support the process cluster."
 end
@@ -43,22 +41,22 @@ class WS_RedisPubSub
     @name = name
   end
   # seng a message to new clients.
-  def on_open
-    subscribe "chat"
+  def on_open client
+    client.subscribe "chat"
     # let everyone know we arrived
-    publish "chat", "#{@name} entered the chat."
+    client.publish "chat", "#{@name} entered the chat."
   end
   # send a message, letting the client know the server is suggunt down.
-  def on_shutdown
-    write "Server shutting down. Goodbye."
+  def on_shutdown client 
+    client.write "Server shutting down. Goodbye."
   end
   # perform the echo
-  def on_message data
-    publish "chat", "#{@name}: #{data}"
+  def on_message client, data
+    client.publish "chat", "#{@name}: #{data}"
   end
-  def on_close
+  def on_close client
     # let everyone know we left
-    publish "chat", "#{@name} left the chat."
+    client.publish "chat", "#{@name} left the chat."
     # we don't need to unsubscribe, subscriptions are cleared automatically once the connection is closed.
   end
 end

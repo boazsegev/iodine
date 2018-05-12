@@ -1,5 +1,120 @@
 #!/usr/bin/env ruby
+require 'rack'
+require 'iodine'
 
-require 'iodine/cli'
+module Iodine
+  # The Iodine::Base namespace is reserved for internal use and is NOT part of the public API.
+  module Base
+    # Command line interface. The Ruby CLI might be changed in future versions.
+    module CLI
+
+      def print_help
+        puts <<-EOS
+
+Iodine's HTTP/Websocket server version #{Iodine::VERSION}
+
+Use:
+
+    iodine <options> <filename>
+
+Both <options> and <filename> are optional.
+
+Available options:
+ -b          Binding address. Default: nil (same as 0.0.0.0).
+ -p          Port number. Default: 3000.
+ -t          Number of threads. Default: CPU core count.
+ -w          Number of worker processes. Default: CPU core count.
+ -www        Public folder for static file serving. Default: nil (none).
+ -v          Log responses. Default: never log responses.
+ -warmup     Warmup invokes autoloading (lazy loading) during server startup.
+ -tout       HTTP inactivity connection timeout. Default: 40 seconds.
+ -maxhead    Maximum total headers length per HTTP request. Default: 32Kb.
+ -maxbd      Maximum Mb per HTTP message (max body size). Default: 50Mb.
+ -maxms      Maximum Bytes per Websocket message. Default: 250Kb.
+ -ping       WebSocket / SSE ping interval in seconds. Default: 40 seconds.
+ <filename>  Defaults to: config.ru
+
+Example:
+
+    iodine -p 80
+
+    iodine -p 8080 path/to/app/conf.ru
+
+    iodine -p 8080 -w 4 -t 16
+
+EOS
+      end
+
+
+      def try_file filename
+        return nil unless File.exist? filename
+        return ::Rack::Builder.parse_file filename
+      end
+
+      def filename_argument
+        return ((ARGV[-2].to_s[0] != '-' || ARGV[-2].to_s == '-warmup' || ARGV[-2].to_s == '-v' || ARGV[-2].to_s == '-q' || (ARGV[-2].to_s[0] == '-' && ARGV[-2].to_i.to_s == ARGV[-2].to_s)) && ARGV[-1].to_s[0] != '-' && ARGV[-1])
+      end
+
+      def get_app_opts
+        app, opt = nil, nil
+        filename = filename_argument
+        if filename
+          app, opt = try_file filename;
+          unless opt
+            puts "* Couldn't find #{filename}\n  testing for config.ru\n"
+            app, opt = try_file "config.ru"
+          end
+        else
+          app, opt = try_file "config.ru";
+        end
+
+        unless opt
+          puts "WARNING: Ruby application not found#{ filename ? " - missing both #{filename} and config.ru" : " - missing config.ru"}."
+          if Iodine::DEFAULT_HTTP_ARGS[:public]
+            puts "         Running only static file service."
+            opt = ::Rack::Server::Options.new.parse!([])
+          else
+            puts "For help run:"
+            puts "       iodine -?"
+            exit(0);
+          end
+        end
+        return app, opt
+      end
+
+      def perform_warmup
+        # load anything marked with `autoload`, since autoload isn't thread safe nor fork friendly.
+        Iodine.run do
+          Module.constants.each do |n|
+            begin
+              Object.const_get(n)
+            rescue Exception => _e
+            end
+          end
+          ::Rack::Builder.new(app) do |r|
+            r.warmup do |a|
+              client = ::Rack::MockRequest.new(a)
+              client.get('/')
+            end
+          end
+        end
+      end
+
+      def call
+        if ARGV[0] =~ /(\-\?)|(help)|(\?)|(h)|(\-h)$/
+          return print_help
+        end
+
+        app, opt = get_app_opts
+
+        perform_warmup if ARGV.index('-warmup')
+
+        Iodine::Rack.run(app, opt)
+      end
+
+      extend self
+    end
+  end
+end
 
 Iodine::Base::CLI.call

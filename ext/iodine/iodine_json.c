@@ -4,8 +4,8 @@
 #include "fio_json_parser.h"
 #include "fio_mem.h"
 #include "fiobj.h"
-#include "rb-fiobj2rb.h"
-#include "rb-registry.h"
+#include "iodine_fiobj2rb.h"
+#include "iodine_store.h"
 
 static VALUE max_nesting;
 static VALUE allow_nan;
@@ -37,20 +37,20 @@ static inline void iodine_json_add2parser(iodine_json_parser_s *p, VALUE o) {
     if (p->is_hash) {
       if (p->key) {
         rb_hash_aset(p->top, p->key, o);
-        Registry.remove(p->key);
+        IodineStore.remove(p->key);
         p->key = (VALUE)0;
       } else {
         // if (p->symbolize) {
         //   o = rb_to_symbol(o);
         // }
         p->key = o;
-        Registry.add(o);
+        IodineStore.add(o);
       }
     } else {
       rb_ary_push(p->top, o);
     }
   } else {
-    Registry.add(o);
+    IodineStore.add(o);
     p->top = o;
   }
 }
@@ -115,7 +115,7 @@ static void fio_json_on_end_object(json_parser_s *p) {
   if (pr->key) {
     fprintf(stderr, "WARNING: (JSON parsing) malformed JSON, "
                     "ignoring dangling Hash key.\n");
-    Registry.remove(pr->key);
+    IodineStore.remove(pr->key);
     pr->key = (VALUE)0;
   }
   pr->top = (VALUE)fio_ary_pop(&pr->stack);
@@ -147,8 +147,8 @@ static void fio_json_on_error(json_parser_s *p) {
 #if DEBUG
   fprintf(stderr, "ERROR: JSON on error called.\n");
 #endif
-  Registry.remove((VALUE)fio_ary_index(&pr->stack, 0));
-  Registry.remove(pr->key);
+  IodineStore.remove((VALUE)fio_ary_index(&pr->stack, 0));
+  IodineStore.remove(pr->key);
   fio_ary_free(&pr->stack);
   *pr = (iodine_json_parser_s){.top = 0};
 }
@@ -162,17 +162,17 @@ static inline VALUE iodine_json_convert(VALUE str, fiobj2rb_settings_s s) {
   iodine_json_parser_s p = {.top = 0, .symbolize = s.str2sym};
   size_t consumed = fio_json_parse(&p.p, RSTRING_PTR(str), RSTRING_LEN(str));
   if (!consumed || p.p.depth) {
-    Registry.remove((VALUE)fio_ary_index(&p.stack, 0));
+    IodineStore.remove((VALUE)fio_ary_index(&p.stack, 0));
     p.top = FIOBJ_INVALID;
   }
   fio_ary_free(&p.stack);
   if (p.key) {
-    Registry.remove((VALUE)p.key);
+    IodineStore.remove((VALUE)p.key);
   }
   if (!p.top) {
     rb_raise(rb_eEncodingError, "Malformed JSON format.");
   }
-  Registry.remove(p.top);
+  IodineStore.remove(p.top);
   return p.top;
 }
 
@@ -253,7 +253,7 @@ static VALUE iodine_json_parse_bang(int argc, VALUE *argv, VALUE self) {
   (void)self;
 }
 
-void Iodine_init_json(void) {
+void iodine_init_json(void) {
   /**
   Iodine::JSON offers a fast(er) JSON parser that is also lenient and supports
   some JSON extensions such as Hex number recognition and comments.
@@ -292,7 +292,7 @@ void Iodine_init_json(void) {
 
 
   */
-  VALUE tmp = rb_define_module_under(Iodine, "JSON");
+  VALUE tmp = rb_define_module_under(IodineModule, "JSON");
   max_nesting = ID2SYM(rb_intern("max_nesting"));
   allow_nan = ID2SYM(rb_intern("allow_nan"));
   symbolize_names = ID2SYM(rb_intern("symbolize_names"));
