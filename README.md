@@ -19,11 +19,11 @@ Hence, a total rewrite that centers around keeping things DRY and better organiz
 
 #### Change log v.0.6.0 (this branch)
 
-**API BREAKING CHANGE**: The API for persistent connections (SSE / WebSockets) was drastically changed in accordance with the Rack specification discussion that required each callback to accept a "client" object (replacing the `extend` approach. Please see the documentation.
+**API BREAKING CHANGE**: The API for persistent connections (SSE / WebSockets) was drastically changed in accordance with the Rack specification discussion that required each callback to accept a "client" object (replacing the `extend` approach). Please see the documentation.
 
 **API BREAKING CHANGE**: `Iodine.attach` was removed due to instability and issues regarding TLS/SSL and file system IO. I hope to fix these issues in a future release. For now the `Iodine.attach_fd` can be used for clear-text sockets and pipes.
 
-**API BREAKING CHANGE**: Pub/Sub API was changed (again, sorry), replacing the pub/sub object with an updated `unsubscribe` method. This means there's no need for the client to map channel names to specific subscriptions (Iodine will perform this housekeeping task for the client).
+**API BREAKING CHANGE**: Pub/Sub API was changed, replacing the previously suggested pub/sub object with an updated `unsubscribe` method. This means there's no need for the client to map channel names to specific subscriptions (Iodine will perform this housekeeping task for the client).
 
 **Fix**: Iodine should now build correctly on FreeBSD. Credit to @adam12 (Adam Daniels) for detecting the issue.
 
@@ -53,7 +53,7 @@ Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and
 
 Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the [Websocket draft extension](./SPEC-Websocket-Draft.md).
 
-With `Iodine.listen2http` it's possible to run multiple HTTP applications in addition to (or instead of) the default `Iodine::Rack` HTTP service.
+With `Iodine.listen2http` it's possible to run multiple HTTP applications (please remember not to set more than a single application on a single TCP/IP port). 
 
 Iodine also supports native process cluster Pub/Sub and a native RedisEngine to easily scale iodine's Pub/Sub horizontally.
 
@@ -281,24 +281,26 @@ run APP
 
 This design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems), etc. This also allows us to use middleware without interfering with connection upgrades and provides backwards compatibility.
 
-Iodine::Rack imposes a few restrictions for performance and security reasons, such as limitimg each header line to 4Kb. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache or Nginx.
+Iodine's HTTP server imposes a few restrictions for performance and security reasons, such as limiting each header line to 8Kb. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache or Nginx.
 
-Of course, if you still want to use Rack's `hijack` API, iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack, as well as a socket buffer for non-blocking `write` operations (why do that when you can write a protocol object and have the main reactor manage the socket?).
+If you still want to use Rack's `hijack` API, iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack, as well as a socket buffer for non-blocking `write` operations (why do that when you can write a protocol object and have the main reactor manage the socket?).
 
 ### How does it compare to other servers?
 
-Personally, after looking around, the only comparable servers are Puma and Passenger (both offer multi-threaded and multi-process concurrency), which iodine significantly outperformed on my tests (I didn't test Passenger's enterprise version). Another upcoming server is the Agoo server (which has a very high performance).
+Personally, after looking around, the only feature comparable servers are Puma and Passenger (both offer multi-threaded and multi-process concurrency), which iodine significantly outperformed on my tests (I didn't test Passenger's enterprise version). Another upcoming server is the Agoo server, which has a very high performance.
 
-When benchmarking with `wrk`, on the same local machine with similar settings (4 workers, 16 threads each, 200 concurrent connections), iodine performed better than Puma (I don't have Passenger enterprise, so I couldn't compare against it). 
+A note about benchmarks, performing benchmarks on a single machine isn't very reliable... but it's all I've got. Also, I don't have Passenger enterprise, so I couldn't compare against it.
 
-* Iodine performed at 69,885.30 req/sec, consuming ~77.8Mb of memory.
+When benchmarking with `wrk`, on the same local machine with similar settings for both Puma and Iodine (4 workers, 16 threads each, 200 concurrent connections), iodine performed better than Puma. 
+
+* Iodine performed at 74,786.27 req/sec, consuming ~68.4Mb of memory.
 
 * Puma performed at 48,994.59 req/sec, consuming ~79.6Mb of memory.
 
 
 When benchmarking with `wrk` and using striped down settings (single worker, single thread, 200 concurrent connections), iodine was faster than Puma.
 
-* Iodine performed at 56,648.86 req/sec, consuming ~27.4Mb of memory.
+* Iodine performed at 51,660.96 req/sec, consuming ~25.4Mb of memory.
 
 * Puma performed at 16,547.31 req/sec, consuming ~23.4Mb of memory.
 
@@ -307,7 +309,6 @@ When benchmarking using a VM (crossing machine boundaries, single thread, single
 * Iodine performed at 18,444.31 req/sec, consuming ~25.6Mb of memory.
 
 * Puma performed at 2,521.56 req/sec, consuming ~27.5Mb of memory.
-
 
 I have doubts about my own benchmarks and I recommend benchmarking the performance for yourself using `wrk` or `ab`:
 
@@ -338,6 +339,8 @@ $ RACK_ENV=production iodine -p 3000 -t 16 -w 4
 $ RACK_ENV=production puma -p 3000 -t 16 -w 4
 # Review the `iodine -?` help for more command line options.
 ```
+
+It's recommended that the servers (Iodine/Puma) and the client (`wrk`/`ab`) run on separate machines.
 
 ### Performance oriented design - but safety first
 
@@ -432,11 +435,11 @@ Iodine.start
 
 ## Why not EventMachine?
 
-You can go ahead and use EventMachine if you like. They're doing amazing work on that one and it's been used a lot in Ruby-land... really, tons of good developers and people on that project, I'm sure...
+You can go ahead and use EventMachine if you like. They're doing amazing work on that one and it's been used a lot in Ruby-land... really, tons of good developers and people on that project.
 
-But me, I prefer to make sure my development software runs the exact same code as my production software. So here we are.
+EventMachine also offers some really great optimization features and it was vastly improved upon in the last few years (When I started Iodine, it was far more annoying to work with).
 
-Also, I don't really understand all the minute details of EventMachine's API, it kept crashing my system every time I reached 1K-2K active connections... I'm sure I just don't know how to use EventMachine, but that's just that.
+But there's a distinct approach difference for me. EventMachine attempts to give the developer access to the network layer while Iodine attempts to abstract the network layer away.
 
 Besides, you're here - why not take iodine out for a spin and see for yourself?
 
@@ -446,42 +449,14 @@ Yes, please, here are some thoughts:
 
 * I'm really not good at writing automated tests and benchmarks, any help would be appreciated. I keep testing manually and that's less then ideal (and it's mistake prone).
 
-* If we can write a Java wrapper for [the `facil.io` C framework](https://github.com/boazsegev/facil.io), it would be nice... but it could be as big a project as the whole gem, as a lot of minor details are implemented within the bridge between these two languages.
-
 * PRs or issues related to [the `facil.io` C framework](https://github.com/boazsegev/facil.io) should be placed in [the `facil.io` repository](https://github.com/boazsegev/facil.io).
 
 * Bug reports and pull requests are welcome on GitHub at https://github.com/boazsegev/iodine.
+
+* If we can write a Java wrapper for [the `facil.io` C framework](https://github.com/boazsegev/facil.io), it would be nice... but it could be as big a project as the whole gem, as a lot of minor details are implemented within the bridge between these two languages.
 
 * If you love the project or thought the code was nice, maybe helped you in your own project, drop me a line. I'd love to know.
 
 ## License
 
 The gem is available as open source under the terms of the [MIT License](http://opensource.org/licenses/MIT).
-
----
-
-## "I'm also writing a Ruby extension in C"
-
-Really?! That's great!
-
-We could all use some more documentation around the subject and having an eco-system for extension tidbits would be nice.
-
-Here's a few things you can use from this project and they seem to be handy to have (and easy to port):
-
-* Iodine is using a [Registry](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-registry.h) to keep dynamic Ruby objects that are owned by C-land from being collected by the garbage collector in Ruby-land...
-
-    Some people use global Ruby arrays, adding and removing Ruby objects to the array, but that sounds like a performance hog to me.
-
-    This one is a simple binary tree with a Ruby GC callback. Remember to initialize the Registry (`Registry.init(owner)`) so it's "owned" by some Ruby-land object, this allows it to bridge the two worlds for the GC's mark and sweep.
-
-    I'm attaching it to one of iodine's library classes, just in-case someone adopts my code and decides the registry should be owned by the global Object class.
-
-* I was using a POSIX thread pool library ([`defer.h`](https://github.com/boazsegev/facil.io/blob/master/lib/facil/core/defer.c)) until I realized how many issues Ruby has with non-Ruby threads... So now there's a Ruby-thread patch for this library at ([`rb-defer.c`](https://github.com/boazsegev/iodine/blob/master/ext/iodine/rb-defer.c)).
-
-    Notice that all the new threads are free from the GVL - this allows true concurrency... but, you can't make Ruby API calls in that state.
-
-    To perform Ruby API calls you need to re-enter the global lock (GVL), albeit temporarily, using `rb_thread_call_with_gvl` and `rv_protect` (gotta watch out from Ruby `longjmp` exceptions).
-
-* Since I needed to call Ruby methods while multi-threading and running outside the GVL, I wrote [`RubyCaller`](https://github.com/boazsegev/iodine/blob/0.2.0/ext/core/rb-call.h) which let's me call an object's method and wraps all the `rb_thread_call_with_gvl` and `rb_protect` details in a secret hidden place I never have to see again. It also keeps track of the thread's state, so if we're already within the GVL, we won't enter it "twice" (which could crash Ruby sporadically).
-
-These are nice code snippets that can be easily used in other extensions. They're easy enough to write, I guess, but I already did the legwork, so enjoy.
