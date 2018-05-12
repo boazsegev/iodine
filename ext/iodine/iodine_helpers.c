@@ -4,18 +4,21 @@ License: MIT
 
 Feel free to copy, use and enjoy according to the license provided.
 */
-#include "iodine_helpers.h"
+#include "iodine.h"
 
 #include "http.h"
+#include <ruby/encoding.h>
 
 /*
 Add all sorts of useless stuff here.
 */
 
+static ID iodine_to_i_func_id;
+static rb_encoding *IodineUTF8Encoding;
+
 /* *****************************************************************************
 URL Decoding
 ***************************************************************************** */
-
 /**
 Decodes a URL encoded String in place.
 
@@ -210,9 +213,47 @@ static VALUE iodine_rfc2109(VALUE self, VALUE rtm) {
 Ruby Initialization
 ***************************************************************************** */
 
-void Iodine_init_helpers(void) {
-  VALUE tmp = rb_define_module_under(Iodine, "Rack");
+void iodine_init_helpers(void) {
+  iodine_to_i_func_id = rb_intern("to_i");
+  IodineUTF8Encoding = rb_enc_find("UTF-8");
+  VALUE tmp = rb_define_module_under(IodineModule, "Rack");
+  // clang-format off
+  /*
+Iodine does NOT monkey patch Rack automatically. However, it's possible and recommended to moneky patch Rack::Utils to use the methods in this module.
+
+Choosing to monkey patch Rack::Utils could offer significant performance gains for some applications. i.e. (on my machine):
+
+      require 'iodine'
+      require 'rack'
+      # a String in need of decoding
+      s = '%E3%83%AB%E3%83%93%E3%82%A4%E3%82%B9%E3%81%A8'
+      Benchmark.bm do |bm|
+        # Pre-Patch
+        bm.report("   Rack.unescape")    {1_000_000.times { Rack::Utils.unescape s } }
+        bm.report("    Rack.rfc2822")    {1_000_000.times { Rack::Utils.rfc2822(Time.now) } }
+        bm.report("    Rack.rfc2109")    {1_000_000.times { Rack::Utils.rfc2109(Time.now) } }
+        # Perform Patch
+        Iodine.patch_rack
+        puts "            --- Monkey Patching Rack ---"
+        # Post Patch
+        bm.report("Patched.unescape")    {1_000_000.times { Rack::Utils.unescape s } }
+        bm.report(" Patched.rfc2822")    {1_000_000.times { Rack::Utils.rfc2822(Time.now) } }
+        bm.report(" Patched.rfc2109")    {1_000_000.times { Rack::Utils.rfc2109(Time.now) } }
+      end && nil
+
+Results:
+        user     system      total        real
+        Rack.unescape  8.706881   0.019995   8.726876 (  8.740530)
+        Rack.rfc2822  3.270305   0.007519   3.277824 (  3.279416)
+        Rack.rfc2109  3.152188   0.003852   3.156040 (  3.157975)
+                   --- Monkey Patching Rack ---
+        Patched.unescape  0.327231   0.003125   0.330356 (  0.337090)
+        Patched.rfc2822  0.691304   0.003330   0.694634 (  0.701172)
+        Patched.rfc2109  0.685029   0.001956   0.686985 (  0.687607)
+
+  */
   tmp = rb_define_module_under(tmp, "Utils");
+  // clang-format on
   rb_define_module_function(tmp, "decode_url!", url_decode_inplace, 1);
   rb_define_module_function(tmp, "decode_url", url_decode, 1);
   rb_define_module_function(tmp, "decode_path!", path_decode_inplace, 1);
@@ -221,8 +262,13 @@ void Iodine_init_helpers(void) {
   rb_define_module_function(tmp, "rfc2109", iodine_rfc2109, 1);
   rb_define_module_function(tmp, "rfc2822", iodine_rfc2822, 1);
 
-  tmp = rb_define_module_under(IodineBase, "MonkeyPatch");
+  /*
+The monkey-patched methods are in this module, allowing Iodine::Rack::Utils to
+include non-patched methods as well.
+  */
+  tmp = rb_define_module_under(IodineBaseModule, "MonkeyPatch");
   tmp = rb_define_module_under(tmp, "RackUtils");
+  // clang-format on
   /* we define it all twice for easier monkey patching */
   rb_define_method(tmp, "unescape", unescape, -1);
   rb_define_method(tmp, "unescape_path", path_decode, 1);

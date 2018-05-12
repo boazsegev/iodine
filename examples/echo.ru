@@ -39,19 +39,20 @@ module MyHTTPRouter
 end
 
 # A simple Websocket Callback Object.
-class WebsocketEcho
+module WebsocketEcho
   # seng a message to new clients.
-  def on_open
-    write "Welcome to our echo service!"
+  def on_open client
+    client.write "Welcome to our echo service!"
   end
   # send a message, letting the client know the server is suggunt down.
-  def on_shutdown
-    write "Server shutting down. Goodbye."
+  def on_shutdown client
+    client.write "Server shutting down. Goodbye."
   end
   # perform the echo
-  def on_message data
-    write data
+  def on_message client, data
+    client.write data
   end
+  extend self
 end
 
 # this function call links our HelloWorld application with Rack
