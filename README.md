@@ -265,28 +265,30 @@ If you still want to use Rack's `hijack` API, iodine will support you - but be a
 
 ### How does it compare to other servers?
 
-Personally, after looking around, the only feature comparable servers are Puma and Passenger (both offer multi-threaded and multi-process concurrency), which iodine significantly outperformed on my tests (I didn't test Passenger's enterprise version). Another upcoming server is the Agoo server, which has a very high performance.
+The honest answer is "I don't know". I recommend that you perform your own tests.
 
-A note about benchmarks, performing benchmarks on a single machine isn't very reliable... but it's all I've got. Also, I don't have Passenger enterprise, so I couldn't compare against it.
+In my tests, pitching Iodine against Puma, Iodine was anywhere between x1.5 and x7 faster than Puma (depending on use-case). such a big difference is suspect and I recommend that you test it yourself.
 
-When benchmarking with `wrk`, on the same local machine with similar settings for both Puma and Iodine (4 workers, 16 threads each, 200 concurrent connections), iodine performed better than Puma. 
+Also, performing benchmarks on a single machine isn't very reliable... but it's all I've got.
+
+When benchmarking with `wrk`, on the same local machine with similar settings for both Puma and Iodine (4 workers, 16 threads each, 200 concurrent connections), I calculated Iodine to be x1.52 faster::
 
 * Iodine performed at 74,786.27 req/sec, consuming ~68.4Mb of memory.
 
 * Puma performed at 48,994.59 req/sec, consuming ~79.6Mb of memory.
 
+When benchmarking using a VM (crossing machine boundaries, 16 threads, 4 workers, 200 concurrent connections), I calculated Iodine to be x2.3 faster:
 
-When benchmarking with `wrk` and using striped down settings (single worker, single thread, 200 concurrent connections), iodine was faster than Puma.
+* Iodine performed at 23,559.56 req/sec, consuming ~88.8Mb of memory.
 
-* Iodine performed at 51,660.96 req/sec, consuming ~25.4Mb of memory.
+* Puma performed at 9,935.31 req/sec, consuming ~84.0Mb of memory.
 
-* Puma performed at 16,547.31 req/sec, consuming ~23.4Mb of memory.
-
-When benchmarking using a VM (crossing machine boundaries, single thread, single worker, 200 concurrent connections), iodine significantly outperformed Puma.
+When benchmarking using a VM (crossing machine boundaries, single thread, single worker, 200 concurrent connections), I calculated Iodine to be x7.3 faster:
 
 * Iodine performed at 18,444.31 req/sec, consuming ~25.6Mb of memory.
 
 * Puma performed at 2,521.56 req/sec, consuming ~27.5Mb of memory.
+
 
 I have doubts about my own benchmarks and I recommend benchmarking the performance for yourself using `wrk` or `ab`:
 
