@@ -6,7 +6,11 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
-#### Change log v.0.5.1 (next release)
+#### Change log v.0.5.2
+
+**Fix**: fixed compilation issues on FreeBSD. Credit to @adam12 (Adam Daniels) for opening issue #35 and offering a patch.
+
+#### Change log v.0.5.1
 
 **Fix**: fixed compilation issues on OS X version < 10.12 and Alpine Linux. Credit to @jdickey (Jeff Dickey) for opening issue #32.
 
