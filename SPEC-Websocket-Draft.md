@@ -166,7 +166,7 @@ end
 run App
 ```
 
-The following is uses Push notifications for both WebSocket and SSE connections. The Pub/Sub API isn't part of this specification but it is supported by iodine:
+The following example uses Push notifications for both WebSocket and SSE connections. The Pub/Sub API isn't part of this specification but it is supported by iodine:
 
 ```ruby
 class Chat
