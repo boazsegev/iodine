@@ -583,6 +583,7 @@ static VALUE iodine_pubsub_unsubscribe(VALUE self, VALUE name) {
   return ret;
 }
 
+// clang-format off
 /**
 Publishes a message to a channel.
 
@@ -601,11 +602,11 @@ Alternatively, accepts the following named arguments:
 
 :message :: The message to be published (required).
 
-:engine :: If provided, the engine to use for pub/sub. Otherwise the default
-engine is used.
+:engine :: If provided, the engine to use for pub/sub. Otherwise the default engine is used.
 
 */
 static VALUE iodine_pubsub_publish(int argc, VALUE *argv, VALUE self) {
+  // clang-format on
   VALUE rb_ch, rb_msg, rb_engine = Qnil;
   const pubsub_engine_s *engine = NULL;
   switch (argc) {

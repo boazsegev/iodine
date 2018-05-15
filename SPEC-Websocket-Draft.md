@@ -33,33 +33,30 @@ WebSocket and EventSource connection upgrade and handling is performed using a C
 
 The Callback Object should be a class (or an instance of such class) where **instances** implement any of the following callbacks:
 
-* `on_open()` WILL be called once the connection had been established.
+* `on_open(client)` WILL be called once the connection had been established.
 
-* `on_message(data)` WILL be called when incoming WebSocket data is received.
+* `on_message(client, data)` WILL be called when incoming WebSocket data is received.
 
     This callback is ignored for EventSource connections.
 
     `data` will be a String with an encoding of UTF-8 for text messages and `binary` encoding for non-text messages (as specified by the WebSocket Protocol).
 
-    The *client* **MUST** assume that the `data` String will be a **recyclable buffer** and that it's content will be corrupted the moment the `on_message` callback returns.
+    The *callback object* **MUST** assume that the `data` String will be a **recyclable buffer** and that it's content will be corrupted the moment the `on_message` callback returns.
 
     Servers **MAY**, optionally, implement a **recyclable buffer** for the `on_message` callback. However, this is optional and it is *not* required.
 
-* `on_drained()` **MAY** be called when the the `write` buffer becomes empty. **If** `pending` returns a non-zero value, the `on_drained` callback **MUST** be called once the write buffer becomes empty.
+* `on_drained(client)` **MAY** be called when the the `write` buffer becomes empty. **If** `pending` returns a non-zero value, the `on_drained` callback **MUST** be called once the write buffer becomes empty.
 
-* `on_shutdown()` **MAY** be called during the server's graceful shutdown process, _before_ the connection is closed and in addition to the `on_close` function (which is called _after_ the connection is closed.
+* `on_shutdown(client)` **MAY** be called during the server's graceful shutdown process, _before_ the connection is closed and in addition to the `on_close` function (which is called _after_ the connection is closed.
 
-* `on_close()` **MUST** be called _after_ the connection was closed for whatever reason (socket errors, parsing errors, timeouts, client disconnection, `close` being called, etc').
+* `on_close(client)` **MUST** be called _after_ the connection was closed for whatever reason (socket errors, parsing errors, timeouts, client disconnection, `close` being called, etc').
 
-* `on_open`, `on_drained`, `on_shutdown` and `on_close` shouldn't expect any arguments (`arity == 0`).
 
-The following method names are reserved for the network implementation: `write`, `close`, `open?` and `pending`.
+The server **MUST** provide the Callback Object with a `client` object, that supports the following methods (this approach promises applications could be server agnostic):
 
-The server **MUST** extend the Callback Object's *class* using `extend`, so the Callback Object **inherits** the following methods (this approach promises applications could be server agnostic\*):
+* `write(data)` will schedule the data to be sent. `data` **MUST** be a String.
 
-* `write(data)` will attempt to send the data through the connection. `data` **MUST** be a String.
-
-    `write` has the same delivery promise as `Socket#write` (a successful `write` does **not** mean any of the data will reach the other side).
+    A call to `write` only promises that the data is scheduled to be sent. Servers are encouraged to avoid blocking and return immediately, deferring the actual `write` operation for later.
 
     `write` shall return `true` on success and `false` if the connection is closed.
 
@@ -69,15 +66,15 @@ The server **MUST** extend the Callback Object's *class* using `extend`, so the 
 
     * If `data` is binary encoded it will be sent as non-text (as specified by the WebSocket Protocol).
 
-    A server **SHOULD** document whether `write` will block or return immediately. It is **RECOMMENDED** that servers implement buffered IO, allowing `write` to return immediately when resources allow and block (or, possibly, disconnect) when the IO buffer is full.
+    A server **SHOULD** document whether `write` will block. It is **RECOMMENDED** that servers implement buffered IO, allowing `write` to return immediately when resources allow and block (or, possibly, disconnect) when the IO buffer is full.
 
 * `close` closes the connection once all the data in the outgoing queue was sent. If `close` is called while there is still data to be sent, `close` will only take effect once the data was sent.
 
     `close` shall always return `nil`.
 
-* `open?` returns the state of the connection. Servers **MUST** set the method to return `true` if the connection is open and `false` if the connection is closed or marked to be closed.
+* `open?` returns `true` if the connection isn't known to have been closed and `false` if the connection is known to be closed or marked to be closed.
 
-* `pending` **MUST** return -1 if the connection is closed or the number of pending writes (calls to `write`) that need to be processed before the next time the `on_drained` callback is called\*.
+* `pending` **MUST** return -1 if the connection is closed. Otherwise, `pending` **SHOULD** return the number of pending writes (messages in the `write` queue\*) that need to be processed before the next time the `on_drained` callback is called.
 
     Servers **MAY** choose to always return the value `0` if they never call the `on_drained` callback and the connection is open.
 
@@ -85,7 +82,6 @@ The server **MUST** extend the Callback Object's *class* using `extend`, so the 
 
     \*Servers that divide large messages into a number of smaller messages (implement message fragmentation) MAY count each fragment separately, as if the fragmentation was performed by the user and `write` was called more than once per message.
 
-The following keyword(s) (both as method names and instance variable names) is reserved for the internal server implementations: `_sock`, `_cid`.
 
 WebSocket `ping` / `pong`, timeouts and network considerations should be implemented by the server. It is **RECOMMENDED** (but not required) that the server send `ping`s to prevent connection timeouts and detect network failure.
 
@@ -139,20 +135,20 @@ The following is an example WebSocket echo server implemented using this specifi
 
 ```ruby
 class WSConnection
-    def on_open
+    def on_open(client)
         puts "WebSocket connection established."
     end
-    def on_message(data)
-        write data
+    def on_message(client, data)
+        client.write data
         puts "on_drained MUST be implemented if #{ pending } != 0."
     end
-    def on_drained
+    def on_drained(client)
         puts "Yap,on_drained is implemented."
     end
-    def on_shutdown
-        write "The server is going away. Goodbye."
+    def on_shutdown(client)
+        client.write "The server is going away. Goodbye."
     end
-    def on_close
+    def on_close(client)
         puts "WebSocket connection closed."
     end
 end
@@ -170,22 +166,22 @@ end
 run App
 ```
 
-The following is uses Push notifications for both WebSocket and SSE connections. The Pub/Sub API isn't part of this specification:
+The following is uses Push notifications for both WebSocket and SSE connections. The Pub/Sub API isn't part of this specification but it is supported by iodine:
 
 ```ruby
 class Chat
     def initialize(nickname)
         @nickname = nickname
     end
-    def on_open
-        subscribe "chat"
-        publish "chat", "#{@nickname} joined the chat."
+    def on_open(client)
+        client.subscribe "chat"
+        client.publish "chat", "#{@nickname} joined the chat."
     end
-    def on_message(data)
-        publish "chat", "#{@nickname}: #{data}"
+    def on_message(client, data)
+        client.publish "chat", "#{@nickname}: #{data}"
     end
-    def on_close
-        publish "chat", "#{@nickname}: left the chat."
+    def on_close(client)
+        client.publish "chat", "#{@nickname}: left the chat."
     end
 end
 
