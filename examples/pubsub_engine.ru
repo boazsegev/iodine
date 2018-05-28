@@ -12,6 +12,9 @@ class PubSubReporter < Iodine::PubSub::Engine
     @target = Iodine::PubSub.default
     Iodine::PubSub.default = self
     Iodine::PubSub.attach self
+    Kernel.at_exit do
+      Iodine::PubSub.dettach self
+    end
   end
   def subscribe to, as = nil
     puts "* Subscribing to \"#{to}\" (#{as || "exact match"})"
