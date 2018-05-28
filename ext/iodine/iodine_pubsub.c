@@ -335,7 +335,7 @@ static VALUE iodine_pubsub_attach(VALUE self, VALUE engine) {
  * the {Iodine::PubSub::Engine}'s callbacks ({Iodine::PubSub::Engine#subscribe}
  * and {Iodine::PubSub::Engine#unsubscribe})
  */
-static VALUE iodine_pubsub_dettach(VALUE self, VALUE engine) {
+static VALUE iodine_pubsub_detach(VALUE self, VALUE engine) {
   iodine_pubsub_s *e = iodine_pubsub_CData(engine);
   if (!e) {
     rb_raise(rb_eTypeError, "not a valid engine");
@@ -657,7 +657,8 @@ void iodine_pubsub_init(void) {
   rb_define_module_function(PubSubModule, "default", iodine_pubsub_default_get,
                             0);
   rb_define_module_function(PubSubModule, "attach", iodine_pubsub_attach, 1);
-  rb_define_module_function(PubSubModule, "dettach", iodine_pubsub_dettach, 1);
+  rb_define_module_function(PubSubModule, "dettach", iodine_pubsub_detach, 1);
+  rb_define_module_function(PubSubModule, "detach", iodine_pubsub_detach, 1);
   rb_define_module_function(PubSubModule, "reset", iodine_pubsub_reset, 1);
 
   /* Define the Engine class and it's methods */
