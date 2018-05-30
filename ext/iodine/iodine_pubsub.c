@@ -220,6 +220,8 @@ static void iodine_pubsub_data_mark(void *c_) {
 /* a callback for the GC (marking active objects) */
 static void iodine_pubsub_data_free(void *c_) {
   iodine_pubsub_s *data = c_;
+  pubsub_engine_deregister(data->engine);
+  IodineStore.remove(data->handler); /* redundant except during exit */
   if (data->dealloc) {
     data->dealloc(data->engine);
   }

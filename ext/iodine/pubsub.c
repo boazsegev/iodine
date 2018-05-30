@@ -446,8 +446,10 @@ void pubsub_engine_deregister(pubsub_engine_s *engine) {
       (fio_hash_key_s){.hash = (uintptr_t)engine, .obj = FIOBJ_INVALID}, NULL);
   fio_hash_compact(&engines);
   spn_unlock(&engn_lock);
-  if (!old)
-    fprintf(stderr, "Deregister error, not registered?\n");
+  // if (!old) {
+  //   fprintf(stderr, "WARNING: (pub/sub) Deregister error,"
+  //                   " not registered?\n");
+  // }
 }
 
 /**

@@ -10,6 +10,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: (`Iodine::PubSub`) fixed typo, `Iodine::PubSub.detach` is now correctly spelled.
 
+**Fix**: (`Iodine::PubSub`) fix issue #37 where iodine would crash after the server's shutdown process due to Ruby Pub/Sub engines still being attached (or set as default) even after the Ruby interpreter freed all the Ruby objects. Credit to @sj26 (Samuel Cochran) for reporting the issue.
+
 #### Change log v.0.6.0
 
 I apologize to all my amazing early adopters for the rapid changes in the API for connection objects (SSE / WebSockets) and Pub/Sub. This was a result of an attempt to create a de-facto standard with other server authors. Hopefully the API in the 0.6.0 release will see the last of the changes.
