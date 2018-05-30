@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.6.2
+
+**Fix**: (`Iodine::PubSub`) fixed an issue where lazy initialization would cause the shutdown process to crash if no Pub/Sub engines were ever registered (fixes an attempt to seek within an uninitialized data structure). Credit to @sj26 (Samuel Cochran) for reporting the issue.
+
 #### Change log v.0.6.1
 
 **Fix**: (`Iodine::PubSub`) fixed typo, `Iodine::PubSub.detach` is now correctly spelled.

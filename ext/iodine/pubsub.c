@@ -438,6 +438,9 @@ void pubsub_engine_register(pubsub_engine_s *engine) {
 
 /** Unregisters an engine, so it could be safely destroyed. */
 void pubsub_engine_deregister(pubsub_engine_s *engine) {
+  if (engines.map == NULL) {
+    return;
+  }
   spn_lock(&engn_lock);
   if (PUBSUB_DEFAULT_ENGINE == engine)
     PUBSUB_DEFAULT_ENGINE = (pubsub_engine_s *)PUBSUB_CLUSTER_ENGINE;
