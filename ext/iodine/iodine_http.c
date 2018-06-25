@@ -139,7 +139,7 @@ static void iodine_ws_on_message(ws_s *ws, char *data, size_t size,
       .is_text = is_text,
       .io = (VALUE)websocket_udata(ws),
   };
-  IodineCaller.leaveGVL(iodine_ws_fire_message, &msg);
+  IodineCaller.enterGVL(iodine_ws_fire_message, &msg);
 }
 /**
  * The (optional) on_open callback will be called once the websocket

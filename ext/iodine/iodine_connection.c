@@ -100,14 +100,17 @@ typedef struct {
 /* a callback for the GC (marking active objects) */
 static void iodine_connection_data_mark(void *c_) {
   iodine_connection_data_s *c = c_;
-  if (c->info.handler != Qnil) {
+  if (!c) {
+    return;
+  }
+  if (c->info.handler && c->info.handler != Qnil) {
     rb_gc_mark(c->info.handler);
   }
   if (c->info.env && c->info.env != Qnil) {
     rb_gc_mark(c->info.env);
   }
 }
-/* a callback for the GC (marking active objects) */
+/* a callback for the GC (freeing inactive objects) */
 static void iodine_connection_data_free(void *c_) {
   iodine_connection_data_s *data = c_;
   if (spn_sub(&data->ref, 1))
@@ -129,7 +132,7 @@ const rb_data_type_t iodine_connection_data_type = {
             .dsize = iodine_connection_data_size,
         },
     .data = NULL,
-    .flags = RUBY_TYPED_FREE_IMMEDIATELY,
+    // .flags = RUBY_TYPED_FREE_IMMEDIATELY,
 };
 
 /* Iodine::PubSub::Engine.allocate */
@@ -177,7 +180,9 @@ Ruby Connection Methods - write, close open? pending
 static VALUE iodine_connection_write(VALUE self, VALUE data) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
   if (!c || sock_isclosed(c->info.uuid)) {
-    rb_raise(rb_eIOError, "Connection closed or invalid.");
+    // don't throw exceptions - closed connections are unavoidable.
+    return Qnil;
+    // rb_raise(rb_eIOError, "Connection closed or invalid.");
   }
   switch (c->info.type) {
   case IODINE_CONNECTION_WEBSOCKET:
@@ -231,7 +236,7 @@ static VALUE iodine_connection_close(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
   if (c && !sock_isclosed(c->info.uuid)) {
     if (c->info.type == IODINE_CONNECTION_WEBSOCKET) {
-      websocket_close(c->info.arg);
+      websocket_close(c->info.arg); /* sends WebSocket close packet */
     } else {
       sock_close(c->info.uuid);
     }
@@ -250,6 +255,9 @@ static VALUE iodine_connection_is_open(VALUE self) {
 /**
  * Returns the number of pending `write` operations that need to complete
  * before the next `on_drained` callback is called.
+ *
+ * Returns -1 if the connection is closed and 0 if `on_drained` won't be
+ * scheduled (no pending `write`).
  */
 static VALUE iodine_connection_pending(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);

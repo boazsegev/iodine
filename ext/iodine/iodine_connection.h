@@ -12,7 +12,7 @@ typedef enum {
 typedef struct {
   iodine_connection_type_e type;
   intptr_t uuid;
-  void *arg;
+  void *arg; /* holds the connection pointer (ws_s / sse_s) */
   VALUE handler;
   VALUE env;
 } iodine_connection_s;
