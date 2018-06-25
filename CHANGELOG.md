@@ -8,6 +8,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.6.2
 
+**Fix**: (WebSockets) fixed an issue where WebSocket message events would attempt to create a String object outside the GVL.
+
+**Fix**: (`Iodine::Connection`) minor updated to the documentation and memory validation system.
+
+#### Change log v.0.6.2
+
 **Fix**: (`Iodine::PubSub`) fixed an issue where lazy initialization would cause the shutdown process to crash if no Pub/Sub engines were ever registered (fixes an attempt to seek within an uninitialized data structure). Credit to @sj26 (Samuel Cochran) for reporting the issue.
 
 #### Change log v.0.6.1

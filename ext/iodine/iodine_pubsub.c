@@ -242,7 +242,7 @@ const rb_data_type_t iodine_pubsub_data_type = {
             .dsize = iodine_pubsub_data_size,
         },
     .data = NULL,
-    .flags = RUBY_TYPED_FREE_IMMEDIATELY,
+    // .flags = RUBY_TYPED_FREE_IMMEDIATELY,
 };
 
 /* Iodine::PubSub::Engine.allocate */
