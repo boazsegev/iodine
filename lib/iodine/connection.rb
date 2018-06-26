@@ -26,6 +26,8 @@ module Iodine
   #       def on_drained client
   #          client.is_a?(Iodine::Connection) # => true
   #       end
+  #       # Allows the module to be used as a static callback object (avoiding object allocation)
+  #       extend self
   #     end
   #
   # All connection related actions can be performed using the methods provided through this class.
