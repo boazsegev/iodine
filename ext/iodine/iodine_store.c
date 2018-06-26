@@ -65,6 +65,9 @@ static void storage_print(void) {
   spn_unlock(&lock);
 }
 
+/**
+ * Used for debugging purposes (when testing iodine for Ruby object "leaks").
+ */
 static VALUE storage_print_rb(VALUE self) {
   storage_print();
   return Qnil;
