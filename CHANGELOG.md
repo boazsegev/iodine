@@ -6,7 +6,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
-#### Change log v.0.6.2
+#### Change log v.0.6.3
 
 **Fix**: (WebSockets) fixed an issue where WebSocket message events would attempt to create a String object outside the GVL.
 
