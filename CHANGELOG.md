@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.6.4
+
+**Fix**: (HTTP/WebSockets) fixed an issue where negative status return values (such as ActionCable's `-1` status code) could cause iodine to assume an abnormal error and shut down the connection. Credit to @mdesantis (Maurizio De Santis) for opening issue #38.
+
 #### Change log v.0.6.3
 
 **Fix**: (WebSockets) fixed an issue where WebSocket message events would attempt to create a String object outside the GVL.
