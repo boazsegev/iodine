@@ -683,7 +683,8 @@ static inline void *iodine_handle_request_in_GVL(void *handle_) {
   // review each header and write it to the response.
   rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(h));
   // review for upgrade.
-  if (h->status < 300 && ruby2c_review_upgrade(handle, rbresponse, env))
+  if ((intptr_t)h->status < 300 &&
+      ruby2c_review_upgrade(handle, rbresponse, env))
     goto external_done;
   // send the request body.
   if (ruby2c_response_send(handle, rbresponse, env))
