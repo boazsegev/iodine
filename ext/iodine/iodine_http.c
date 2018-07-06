@@ -763,7 +763,7 @@ static void on_rack_request(http_s *h) {
 
 static void on_rack_upgrade(http_s *h, char *proto, size_t len) {
   iodine_http_request_handle_s handle = (iodine_http_request_handle_s){.h = h};
-  if (len == 9 && proto[1] == 'e') {
+  if (len == 9 && (proto[1] == 'e' || proto[1] == 'E')) {
     handle.upgrade = IODINE_UPGRADE_WEBSOCKET;
   } else if (len == 3 && proto[0] == 's') {
     handle.upgrade = IODINE_UPGRADE_SSE;
