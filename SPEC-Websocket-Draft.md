@@ -1,6 +1,6 @@
 ### Draft State
 
-I am currently discussing a variation of this draft to be implemented by [the Agoo server](https://github.com/ohler55/agoo).
+This draft is also implemented by [the Agoo server](https://github.com/ohler55/agoo) according to the specifications stated in [Rack PR#1272](https://github.com/rack/rack/pull/1272).
 
 ---
 ## Purpose
@@ -82,14 +82,11 @@ The server **MUST** provide the Callback Object with a `client` object, that sup
 
     \*Servers that divide large messages into a number of smaller messages (implement message fragmentation) MAY count each fragment separately, as if the fragmentation was performed by the user and `write` was called more than once per message.
 
+* `env` (iodine specific for now) returns the Rack `env` hash related to the originating HTTP request. Some changes to the `env` hash (such as removal of the IO hijacking support) might be required by the implementation.
 
 WebSocket `ping` / `pong`, timeouts and network considerations should be implemented by the server. It is **RECOMMENDED** (but not required) that the server send `ping`s to prevent connection timeouts and detect network failure.
 
 Server settings **MAY** (not required) be provided to allow for customization and adaptation for different network environments or WebSocket extensions. It is **RECOMMENDED** that any settings be available as command line arguments and **not** incorporated into the application's logic.
-
-\* The requirement that the server extends the class of the Callback Object (instead of the client application doing so explicitly) is designed to allow the client application to be server agnostic
-
-To clarify, an implicit `extend` doesn't require a namespace, while an explicit `extend` does. By avoiding the requirement to explicitly extend the callback object, the application can be namespace agnostic.
 
 ---
 
@@ -119,7 +116,7 @@ To clarify, an implicit `extend` doesn't require a namespace, while an explicit 
 
          If the application's response status indicates an error or a redirection (status code >= 300), the server shall ignore the Callback Object.
 
-    3. Once the upgrade had completed and the server extended the Callback Object, it will call the `on_open` callback.
+    3. Once the upgrade had completed, the server will call the `on_open` callback.
 
         No other callbacks shall be called until the `on_open` callback had returned.
 
