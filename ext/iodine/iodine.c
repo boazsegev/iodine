@@ -168,11 +168,11 @@ static void iodine_print_startup_message(iodine_start_params_s params) {
   fio_expected_concurrency(&params.threads, &params.workers);
   fprintf(stderr,
           "\nStarting up Iodine:\n"
-          " * Ruby v.%s\n * Iodine v.%s\n"
+          " * Iodine %s\n * Ruby %s\n * facil.io " FIO_VERSION_STRING " (%s)\n"
           " * %d Workers X %d Threads per worker.\n"
           "\n",
-          StringValueCStr(ruby_version), StringValueCStr(iodine_version),
-          params.workers, params.threads);
+          StringValueCStr(iodine_version), StringValueCStr(ruby_version),
+          fio_engine(), params.workers, params.threads);
   (void)params;
 }
 
