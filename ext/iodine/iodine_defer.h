@@ -2,6 +2,5 @@
 #define H_IODINE_DEFER_H
 
 void iodine_defer_initialize(void);
-void iodine_defer_on_finish(void);
 
 #endif

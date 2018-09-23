@@ -26,6 +26,16 @@
 #include <stdio.h>
 #endif
 
+#if !defined(__GNUC__) && !defined(__clang__) && !defined(FIO_GNUC_BYPASS)
+#define __attribute__(...)
+#define __has_include(...) 0
+#define __has_builtin(...) 0
+#define FIO_GNUC_BYPASS 1
+#elif !defined(__clang__) && __GNUC__ < 5
+#define __has_builtin(...) 0
+#define FIO_GNUC_BYPASS 1
+#endif
+
 /* *****************************************************************************
 JSON API
 ***************************************************************************** */
@@ -192,36 +202,37 @@ static inline int seek2marker(uint8_t **buffer,
   /* too short for this mess */
   if ((uintptr_t)limit <= 8 + ((uintptr_t)*buffer & (~(uintptr_t)7)))
     goto finish;
-
   /* align memory */
-  {
-    const uint8_t *alignment =
-        (uint8_t *)(((uintptr_t)(*buffer) & (~(uintptr_t)7)) + 8);
-    if (limit >= alignment) {
-      while (*buffer < alignment) {
-        if (string_seek_stop[**buffer])
-          return 1;
-        *buffer += 1;
+  if (1) {
+    {
+      const uint8_t *alignment =
+          (uint8_t *)(((uintptr_t)(*buffer) & (~(uintptr_t)7)) + 8);
+      if (limit >= alignment) {
+        while (*buffer < alignment) {
+          if (string_seek_stop[**buffer])
+            return 1;
+          *buffer += 1;
+        }
       }
     }
-  }
-  const uint8_t *limit64 = (uint8_t *)((uintptr_t)limit & (~(uintptr_t)7));
+    const uint8_t *limit64 = (uint8_t *)((uintptr_t)limit & (~(uintptr_t)7));
 #else
   const uint8_t *limit64 = (uint8_t *)limit - 7;
 #endif
-  uint64_t wanted1 = 0x0101010101010101ULL * '"';
-  uint64_t wanted2 = 0x0101010101010101ULL * '\\';
-  for (; *buffer < limit64; *buffer += 8) {
-    const uint64_t eq1 = ~((*((uint64_t *)*buffer)) ^ wanted1);
-    const uint64_t t1 =
-        ((eq1 & 0x7f7f7f7f7f7f7f7fULL) + 0x0101010101010101ULL) &
-        (eq1 & 0x8080808080808080ULL);
-    const uint64_t eq2 = ~((*((uint64_t *)*buffer)) ^ wanted2);
-    const uint64_t t2 =
-        ((eq2 & 0x7f7f7f7f7f7f7f7fULL) + 0x0101010101010101ULL) &
-        (eq2 & 0x8080808080808080ULL);
-    if ((t1 | t2)) {
-      break;
+    uint64_t wanted1 = 0x0101010101010101ULL * '"';
+    uint64_t wanted2 = 0x0101010101010101ULL * '\\';
+    for (; *buffer < limit64; *buffer += 8) {
+      const uint64_t eq1 = ~((*((uint64_t *)*buffer)) ^ wanted1);
+      const uint64_t t1 =
+          ((eq1 & 0x7f7f7f7f7f7f7f7fULL) + 0x0101010101010101ULL) &
+          (eq1 & 0x8080808080808080ULL);
+      const uint64_t eq2 = ~((*((uint64_t *)*buffer)) ^ wanted2);
+      const uint64_t t2 =
+          ((eq2 & 0x7f7f7f7f7f7f7f7fULL) + 0x0101010101010101ULL) &
+          (eq2 & 0x8080808080808080ULL);
+      if ((t1 | t2)) {
+        break;
+      }
     }
   }
 #if !ALLOW_UNALIGNED_MEMORY_ACCESS || (!__x86_64__ && !__aarch64__)

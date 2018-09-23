@@ -1,12 +1,11 @@
 #include "iodine_connection.h"
 
-#include "facil.h"
-#include "fio_mem.h"
-#include "fiobj4sock.h"
-#include "pubsub.h"
-#include "websockets.h"
+#define FIO_INCLUDE_LINKED_LIST
+#define FIO_INCLUDE_STR
+#include "fio.h"
 
-#include "spnlock.inc"
+#include "fiobj4sock.h"
+#include "websockets.h"
 
 #include <ruby/io.h>
 
@@ -41,41 +40,32 @@ static VALUE RAWSymbol;
 Pub/Sub storage
 ***************************************************************************** */
 
-#define FIO_HASH_KEY_TYPE FIOBJ
-#define FIO_HASH_KEY_INVALID FIOBJ_INVALID
-#define FIO_HASH_KEY2UINT(key) fiobj_obj2hash((key))
-#define FIO_HASH_COMPARE_KEYS(k1, k2) (fiobj_iseq((k1), (k2)))
-#define FIO_HASH_KEY_ISINVALID(key) ((key) == FIOBJ_INVALID)
-#define FIO_HASH_KEY_COPY(key) (fiobj_dup(key))
-#define FIO_HASH_KEY_DESTROY(key) (fiobj_free((key)))
+#define FIO_SET_NAME fio_subhash
+#define FIO_SET_OBJ_TYPE subscription_s *
+#define FIO_SET_KEY_TYPE fio_str_info_s
+#define FIO_SET_KEY_COMPARE(s1, s2)                                            \
+  ((s1).len == (s2).len &&                                                     \
+   ((s1).data == (s2).data || !memcmp((s1).data, (s2).data, (s1).len)))
+#define FIO_SET_OBJ_DESTROY(obj) fio_unsubscribe((obj))
+#include <fio.h> // creates the fio_str_set_s Set and functions
 
-#include "fio_hashmap.h"
-
-static inline VALUE iodine_sub_unsubscribe(fio_hash_s *store, FIOBJ channel) {
-  pubsub_sub_pt sub = fio_hash_insert(store, channel, NULL);
-  if (sub) {
-    pubsub_unsubscribe(sub);
-    return Qtrue;
-  }
-  return Qfalse;
+static inline VALUE iodine_sub_unsubscribe(fio_subhash_s *store,
+                                           fio_str_info_s channel) {
+  if (fio_subhash_remove(store, fio_siphash(channel.data, channel.len),
+                         channel))
+    return Qfalse;
+  return Qtrue;
 }
-static inline void iodine_sub_add(fio_hash_s *store, pubsub_sub_pt sub) {
-  FIOBJ channel = pubsub_sub_channel(sub); /* used for memory optimization */
-  sub = fio_hash_insert(store, channel, sub);
-  if (sub) {
-    pubsub_unsubscribe(sub);
-  }
+static inline void iodine_sub_add(fio_subhash_s *store, subscription_s *sub) {
+  fio_str_info_s ch = fio_subscription_channel(sub);
+  fio_subhash_insert(store, fio_siphash(ch.data, ch.len), ch, sub);
 }
-static inline void iodine_sub_clear_all(fio_hash_s *store) {
-  FIO_HASH_FOR_FREE(store, pos) {
-    if (pos->obj) {
-      pubsub_unsubscribe(pos->obj);
-    }
-  }
+static inline void iodine_sub_clear_all(fio_subhash_s *store) {
+  fio_subhash_free(store);
 }
 
-static spn_lock_i sub_lock = SPN_LOCK_INIT;
-static fio_hash_s sub_global = FIO_HASH_INIT;
+static fio_lock_i sub_lock = FIO_LOCK_INIT;
+static fio_subhash_s sub_global = FIO_SET_INIT;
 
 /* *****************************************************************************
 C <=> Ruby Data allocation
@@ -84,8 +74,8 @@ C <=> Ruby Data allocation
 typedef struct {
   iodine_connection_s info;
   size_t ref;
-  fio_hash_s subscriptions;
-  spn_lock_i lock;
+  fio_subhash_s subscriptions;
+  fio_lock_i lock;
   uint8_t answers_on_message;
   uint8_t answers_on_drained;
   uint8_t answers_ping;
@@ -113,7 +103,7 @@ static void iodine_connection_data_mark(void *c_) {
 /* a callback for the GC (freeing inactive objects) */
 static void iodine_connection_data_free(void *c_) {
   iodine_connection_data_s *data = c_;
-  if (spn_sub(&data->ref, 1))
+  if (fio_atomic_sub(&data->ref, 1))
     return;
   free(data);
 }
@@ -142,8 +132,8 @@ static VALUE iodine_connection_data_alloc_c(VALUE self) {
       .info.handler = (VALUE)0,
       .info.uuid = -1,
       .ref = 1,
-      .subscriptions = FIO_HASH_INIT,
-      .lock = SPN_LOCK_INIT,
+      .subscriptions = FIO_SET_INIT,
+      .lock = FIO_LOCK_INIT,
   };
   return TypedData_Wrap_Struct(self, &iodine_connection_data_type, c);
 }
@@ -179,7 +169,7 @@ Ruby Connection Methods - write, close open? pending
  */
 static VALUE iodine_connection_write(VALUE self, VALUE data) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
-  if (!c || sock_isclosed(c->info.uuid)) {
+  if (!c || fio_is_closed(c->info.uuid)) {
     // don't throw exceptions - closed connections are unavoidable.
     return Qnil;
     // rb_raise(rb_eIOError, "Connection closed or invalid.");
@@ -187,15 +177,14 @@ static VALUE iodine_connection_write(VALUE self, VALUE data) {
   switch (c->info.type) {
   case IODINE_CONNECTION_WEBSOCKET:
     /* WebSockets*/
-    websocket_write(c->info.arg, RSTRING_PTR(data), RSTRING_LEN(data),
+    websocket_write(c->info.arg, IODINE_RSTRINFO(data),
                     rb_enc_get(data) == IodineUTF8Encoding);
     return Qtrue;
     break;
   case IODINE_CONNECTION_SSE:
 /* SSE */
 #if 1
-    http_sse_write(c->info.arg, .data = {.data = RSTRING_PTR(data),
-                                         .len = RSTRING_LEN(data)});
+    http_sse_write(c->info.arg, .data = IODINE_RSTRINFO(data));
     return Qtrue;
 #else
     if (rb_enc_get(data) == IodineUTF8Encoding) {
@@ -212,14 +201,7 @@ static VALUE iodine_connection_write(VALUE self, VALUE data) {
     break;
   case IODINE_CONNECTION_RAW: /* fallthrough */
   default: {
-    size_t len = RSTRING_LEN(data);
-    char *copy = fio_malloc(len);
-    if (!copy) {
-      rb_raise(rb_eNoMemError, "failed to allocate memory for network buffer!");
-    }
-    memcpy(copy, RSTRING_PTR(data), len);
-    sock_write2(.uuid = c->info.uuid, .buffer = copy, .length = len,
-                .dealloc = fio_free);
+    fio_write(c->info.uuid, RSTRING_PTR(data), RSTRING_LEN(data));
     return Qtrue;
   } break;
   }
@@ -234,11 +216,11 @@ static VALUE iodine_connection_write(VALUE self, VALUE data) {
  */
 static VALUE iodine_connection_close(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
-  if (c && !sock_isclosed(c->info.uuid)) {
+  if (c && !fio_is_closed(c->info.uuid)) {
     if (c->info.type == IODINE_CONNECTION_WEBSOCKET) {
       websocket_close(c->info.arg); /* sends WebSocket close packet */
     } else {
-      sock_close(c->info.uuid);
+      fio_close(c->info.uuid);
     }
   }
 
@@ -247,7 +229,7 @@ static VALUE iodine_connection_close(VALUE self) {
 /** Returns true if the connection appears to be open (no known issues). */
 static VALUE iodine_connection_is_open(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
-  if (c && !sock_isclosed(c->info.uuid)) {
+  if (c && !fio_is_closed(c->info.uuid)) {
     return Qtrue;
   }
   return Qfalse;
@@ -261,10 +243,10 @@ static VALUE iodine_connection_is_open(VALUE self) {
  */
 static VALUE iodine_connection_pending(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
-  if (!c || sock_isclosed(c->info.uuid)) {
+  if (!c || fio_is_closed(c->info.uuid)) {
     return INT2NUM(-1);
   }
-  return SIZET2NUM((sock_pending(c->info.uuid)));
+  return SIZET2NUM((fio_pending(c->info.uuid)));
 }
 
 /** Returns the connection's protocol Symbol (`:sse`, `:websocket`, etc'). */
@@ -293,8 +275,8 @@ static VALUE iodine_connection_protocol_name(VALUE self) {
  */
 static VALUE iodine_connection_timeout_get(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
-  if (c && !sock_isclosed(c->info.uuid)) {
-    size_t tout = (size_t)facil_get_timeout(c->info.uuid);
+  if (c && !fio_is_closed(c->info.uuid)) {
+    size_t tout = (size_t)fio_timeout_get(c->info.uuid);
     return SIZET2NUM(tout);
   }
   return Qnil;
@@ -313,8 +295,8 @@ static VALUE iodine_connection_timeout_set(VALUE self, VALUE timeout) {
     return Qnil;
   }
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
-  if (c && !sock_isclosed(c->info.uuid)) {
-    facil_set_timeout(c->info.uuid, (uint8_t)tout);
+  if (c && !fio_is_closed(c->info.uuid)) {
+    fio_timeout_set(c->info.uuid, (uint8_t)tout);
     return timeout;
   }
   return Qnil;
@@ -337,38 +319,34 @@ Pub/Sub Callbacks (internal implementation)
 
 /* calls the Ruby block assigned to a pubsub event (within the GVL). */
 static void *iodine_on_pubsub_call_block(void *msg_) {
-  pubsub_message_s *msg = msg_;
-  fio_cstr_s tmp;
+  fio_msg_s *msg = msg_;
   VALUE args[2];
-  tmp = fiobj_obj2cstr(msg->channel);
-  args[0] = rb_str_new(tmp.data, tmp.len);
-  tmp = fiobj_obj2cstr(msg->message);
-  args[1] = rb_str_new(tmp.data, tmp.len);
+  args[0] = rb_str_new(msg->channel.data, msg->channel.len);
+  args[1] = rb_str_new(msg->msg.data, msg->msg.len);
   IodineCaller.call2((VALUE)msg->udata2, call_id, 2, args);
   return NULL;
 }
 
 /* callback for incoming subscription messages */
-static void iodine_on_pubsub(pubsub_message_s *msg) {
+static void iodine_on_pubsub(fio_msg_s *msg) {
   iodine_connection_data_s *data = msg->udata1;
   VALUE block = (VALUE)msg->udata2;
   switch (block) {
   case Qnil: /* fallthrough */
   case Qtrue: {
     if (data->info.handler == Qnil || data->info.uuid == -1 ||
-        sock_isclosed(data->info.uuid))
+        fio_is_closed(data->info.uuid))
       return;
     switch (data->info.type) {
     case IODINE_CONNECTION_WEBSOCKET: {
-      fio_cstr_s str = fiobj_obj2cstr(msg->message);
-      websocket_write(data->info.arg, str.data, str.len, (block == Qnil));
+      websocket_write(data->info.arg, msg->msg, (block == Qnil));
       return;
     }
     case IODINE_CONNECTION_SSE:
-      http_sse_write(data->info.arg, .data = fiobj_obj2cstr(msg->message));
+      http_sse_write(data->info.arg, .data = msg->msg);
       return;
     default:
-      fiobj_send_free(data->info.uuid, fiobj_dup(msg->message));
+      fio_write(data->info.uuid, msg->msg.data, msg->msg.len);
       return;
     }
   }
@@ -402,8 +380,8 @@ Ruby Connection Methods - Pub/Sub
 typedef struct {
   VALUE channel;
   VALUE block;
+  fio_match_fn pattern;
   uint8_t binary;
-  uint8_t pattern;
 } iodine_sub_args_s;
 
 /** Tests the `subscribe` Ruby arguments */
@@ -454,7 +432,7 @@ static iodine_sub_args_s iodine_subscribe_args(int argc, VALUE *argv) {
       ret.binary = 1;
     }
     if (rb_hash_aref(rb_opt, match_id) == redis_id) {
-      ret.pattern = 1;
+      ret.pattern = FIO_MATCH_GLOB;
     }
     ret.block = rb_hash_aref(rb_opt, handler_id);
     if (ret.block != Qnil) {
@@ -527,31 +505,28 @@ static VALUE iodine_pubsub_subscribe(int argc, VALUE *argv, VALUE self) {
     if (args.block == Qnil && args.binary) {
       args.block = Qtrue;
     }
-    spn_add(&c->ref, 1);
+    fio_atomic_add(&c->ref, 1);
   }
 
-  FIOBJ channel =
-      fiobj_str_new(RSTRING_PTR(args.channel), RSTRING_LEN(args.channel));
-  pubsub_sub_pt sub =
-      pubsub_subscribe(.channel = channel, .on_message = iodine_on_pubsub,
-                       .on_unsubscribe = iodine_on_unsubscribe, .udata1 = c,
-                       .udata2 = (void *)args.block,
-                       .use_pattern = args.pattern);
-  fiobj_free(channel);
+  subscription_s *sub =
+      fio_subscribe(.channel = IODINE_RSTRINFO(args.channel),
+                    .on_message = iodine_on_pubsub,
+                    .on_unsubscribe = iodine_on_unsubscribe, .udata1 = c,
+                    .udata2 = (void *)args.block, .match = args.pattern);
   if (c) {
-    spn_lock(&c->lock);
+    fio_lock(&c->lock);
     if (c->info.uuid == -1) {
-      pubsub_unsubscribe(sub);
-      spn_unlock(&c->lock);
+      fio_unsubscribe(sub);
+      fio_unlock(&c->lock);
       return Qnil;
     } else {
       iodine_sub_add(&c->subscriptions, sub);
     }
-    spn_unlock(&c->lock);
+    fio_unlock(&c->lock);
   } else {
-    spn_lock(&sub_lock);
+    fio_lock(&sub_lock);
     iodine_sub_add(&sub_global, sub);
-    spn_unlock(&sub_lock);
+    fio_unlock(&sub_lock);
   }
   return args.channel;
 }
@@ -572,22 +547,20 @@ Returns `false` if the subscription didn't exist.
 static VALUE iodine_pubsub_unsubscribe(VALUE self, VALUE name) {
   // clang-format on
   iodine_connection_data_s *c = NULL;
-  FIOBJ channel = fiobj_str_new(RSTRING_PTR(name), RSTRING_LEN(name));
   VALUE ret;
   if (TYPE(self) == T_MODULE) {
-    spn_lock(&sub_lock);
-    ret = iodine_sub_unsubscribe(&sub_global, channel);
-    spn_unlock(&sub_lock);
+    fio_lock(&sub_lock);
+    ret = iodine_sub_unsubscribe(&sub_global, IODINE_RSTRINFO(name));
+    fio_unlock(&sub_lock);
   } else {
     c = iodine_connection_validate_data(self);
     if (!c) {
-      return Qnil; /* cannot subscribe a closed connection. */
+      return Qnil; /* cannot unsubscribe a closed connection. */
     }
-    spn_lock(&sub_lock);
-    ret = iodine_sub_unsubscribe(&sub_global, channel);
-    spn_unlock(&sub_lock);
+    fio_lock(&sub_lock);
+    ret = iodine_sub_unsubscribe(&sub_global, IODINE_RSTRINFO(name));
+    fio_unlock(&sub_lock);
   }
-  fiobj_free(channel);
   return ret;
 }
 
@@ -616,7 +589,7 @@ Alternatively, accepts the following named arguments:
 static VALUE iodine_pubsub_publish(int argc, VALUE *argv, VALUE self) {
   // clang-format on
   VALUE rb_ch, rb_msg, rb_engine = Qnil;
-  const pubsub_engine_s *engine = NULL;
+  const fio_pubsub_engine_s *engine = NULL;
   switch (argc) {
   case 3:
     /* fallthrough */
@@ -651,7 +624,7 @@ static VALUE iodine_pubsub_publish(int argc, VALUE *argv, VALUE self) {
   Check_Type(rb_ch, T_STRING);
 
   if (rb_engine == Qfalse) {
-    engine = PUBSUB_PROCESS_ENGINE;
+    engine = FIO_PUBSUB_PROCESS;
   } else if (rb_engine != Qnil) {
     // collect engine object
     iodine_pubsub_s *e = iodine_pubsub_CData(rb_engine);
@@ -660,15 +633,8 @@ static VALUE iodine_pubsub_publish(int argc, VALUE *argv, VALUE self) {
     }
   }
 
-  FIOBJ ch = fiobj_str_new(RSTRING_PTR(rb_ch), RSTRING_LEN(rb_ch));
-  FIOBJ msg = fiobj_str_new(RSTRING_PTR(rb_msg), RSTRING_LEN(rb_msg));
-
-  intptr_t ret =
-      pubsub_publish(.engine = engine, .channel = ch, .message = msg);
-  fiobj_free(ch);
-  fiobj_free(msg);
-  if (!ret)
-    return Qfalse;
+  fio_publish(.engine = engine, .channel = IODINE_RSTRINFO(rb_ch),
+              .message = IODINE_RSTRINFO(rb_msg));
   return Qtrue;
   (void)self;
 }
@@ -693,7 +659,7 @@ VALUE iodine_connection_new(iodine_connection_s args) {
   }
   *data = (iodine_connection_data_s){
       .info = args,
-      .subscriptions = FIO_HASH_INIT,
+      .subscriptions = FIO_SET_INIT,
       .ref = 1,
       .answers_on_open = (rb_respond_to(args.handler, on_open_id) != 0),
       .answers_on_message = (rb_respond_to(args.handler, on_message_id) != 0),
@@ -701,7 +667,7 @@ VALUE iodine_connection_new(iodine_connection_s args) {
       .answers_on_drained = (rb_respond_to(args.handler, on_drained_id) != 0),
       .answers_on_shutdown = (rb_respond_to(args.handler, on_shutdown_id) != 0),
       .answers_on_close = (rb_respond_to(args.handler, on_close_id) != 0),
-      .lock = SPN_LOCK_INIT,
+      .lock = FIO_LOCK_INIT,
   };
   return connection;
 }
@@ -756,13 +722,13 @@ void iodine_connection_fire_event(VALUE connection,
     if (data->answers_on_close) {
       IodineCaller.call2(data->info.handler, on_close_id, 1, args);
     }
-    spn_lock(&data->lock);
+    fio_lock(&data->lock);
     data->info.handler = Qnil;
     data->info.env = Qnil;
     data->info.uuid = -1;
     data->info.arg = NULL;
     iodine_sub_clear_all(&data->subscriptions);
-    spn_unlock(&data->lock);
+    fio_unlock(&data->lock);
     IodineStore.remove(connection);
     break;
   default:

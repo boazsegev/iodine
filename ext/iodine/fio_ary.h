@@ -5,10 +5,11 @@ License: MIT
 */
 
 /**
- * A Dynamic Array for general use (void * pointers).
+ * A Dynamic Array for general use (for void * pointers or a predefined type).
  *
  * It's possible to switch from the default `void *` type to any type by
- * defining the `FIO_ARY_TYPE` and `FIO_ARY_TYPE_COMPARE(a,b)` macros.
+ * defining the `FIO_ARY_TYPE`, `FIO_ARY_TYPE_COMPARE(a,b)` and
+ * `FIO_ARY_TYPE_INVALID` macros.
  *
  * However, this will effect ALL the arrays that share the same translation unit
  * (the same *.c file).
@@ -17,12 +18,12 @@ License: MIT
  * pointer casting.
  *
  * Use:
-
-fio_ary_s ary;                   // a container can be placed on the stack.
-fio_ary_new(&ary);               // initialize the container
-fio_ary_push(&ary, (void*)1 );   // add / remove / read data...
-fio_ary_free(&ary)               // free any resources, not the container.
-
+ *
+ *     fio_ary_s ary;            // a container can be placed on the stack.
+ *     fio_ary_new(&ary);        // initialize the container
+ *     fio_ary_push(&ary, (void*)1 );  // add / remove / read data...
+ *     fio_ary_free(&ary)        // free any resources, not the container.
+ *
  */
 #define H_FIO_ARRAY_H
 
@@ -94,7 +95,7 @@ FIO_FUNC inline size_t fio_ary_capa(fio_ary_s *ary);
  * Returns the object placed in the Array, if any. Returns FIO_ARY_TYPE_INVALID
  * if no data or if the index is out of bounds.
  *
- * Negative values are retrived from the end of the array. i.e., `-1`
+ * Negative values are retrieved from the end of the array. i.e., `-1`
  * is the last item.
  */
 FIO_FUNC inline FIO_ARY_TYPE fio_ary_index(fio_ary_s *ary, intptr_t pos);
@@ -209,8 +210,8 @@ FIO_FUNC inline void fio_ary_new(fio_ary_s *ary, size_t capa) {
 FIO_FUNC inline void fio_ary_free(fio_ary_s *ary) {
   if (ary) {
     free(ary->arry);
+    *ary = FIO_ARY_INIT;
   }
-  *ary = FIO_ARY_INIT;
 }
 
 /* *****************************************************************************
@@ -240,7 +241,7 @@ FIO_FUNC void fio_ary_getmem(fio_ary_s *ary, intptr_t needed) {
     /* add some breathing room for future `unshift`s */
     needed = 0 - ((ary->capa < 1024) ? (ary->capa >> 1) : 1024);
 
-  } else if (needed == 1 && ary->start >= (ary->capa >> 1)) {
+  } else if (needed == 1 && ary->start && ary->start >= (ary->capa >> 1)) {
     /* FIFO support optimizes smaller FIFO ranges over bloating allocations. */
     size_t len = ary->end - ary->start;
     if (len) {
@@ -254,6 +255,9 @@ FIO_FUNC void fio_ary_getmem(fio_ary_s *ary, intptr_t needed) {
   /* alocate using exponential growth, up to single page size. */
   size_t updated_capa = ary->capa;
   size_t minimum = ary->capa + ((needed < 0) ? (0 - needed) : needed);
+  if (!updated_capa) {
+    updated_capa = 1;
+  }
   while (updated_capa <= minimum)
     updated_capa =
         (updated_capa <= 4096) ? (updated_capa << 1) : (updated_capa + 4096);
@@ -297,9 +301,11 @@ FIO_FUNC inline void fio_ary_concat(fio_ary_s *dest, fio_ary_s *src) {
     return;
   const intptr_t len = src->end - src->start;
   fio_ary_getmem(dest, len);
-  memcpy((void *)((uintptr_t)dest->arry + (sizeof(*dest->arry) * dest->end)),
-         (void *)((uintptr_t)src->arry + (sizeof(*dest->arry) * src->start)),
+  memcpy(dest->arry + dest->end, src->arry + src->start,
          (len * sizeof(*dest->arry)));
+  // memcpy((void *)((uintptr_t)dest->arry + (sizeof(*dest->arry) * dest->end)),
+  //        (void *)((uintptr_t)src->arry + (sizeof(*dest->arry) * src->start)),
+  //        (len * sizeof(*dest->arry)));
   dest->end += len;
 }
 
@@ -322,7 +328,7 @@ FIO_FUNC inline size_t fio_ary_capa(fio_ary_s *ary) { return ary->capa; }
  *
  *     fiobj_dup(fiobj_ary_index(array, 0));
  *
- * Negative values are retrived from the end of the array. i.e., `-1`
+ * Negative values are retrieved from the end of the array. i.e., `-1`
  * is the last item.
  */
 FIO_FUNC inline FIO_ARY_TYPE fio_ary_index(fio_ary_s *ary, intptr_t pos) {
@@ -429,7 +435,7 @@ FIO_FUNC inline FIO_ARY_TYPE fio_ary_pop(fio_ary_s *ary) {
 }
 
 /**
- * Unshifts an object to the begining of the Array. Returns -1 on error.
+ * Unshifts an object to the beginning of the Array. Returns -1 on error.
  *
  * This could be expensive, causing `memmove`.
  */
@@ -564,7 +570,7 @@ Testing
 #define TEST_ASSERT(cond, ...)                                                 \
   if (!(cond)) {                                                               \
     fprintf(stderr, "* " __VA_ARGS__);                                         \
-    fprintf(stderr, "\nTesting failed.\n");                                    \
+    fprintf(stderr, "\n !!! Testing failed !!!\n");                            \
     exit(-1);                                                                  \
   }
 /**
@@ -626,7 +632,7 @@ FIO_FUNC inline void fio_ary_test(void) {
     mem[0].i = i + 1;
     TEST_ASSERT(fio_ary_find(&ary, mem[0].obj) == i,
                 "Wrong object index - ary[%zd] != %zu",
-                fio_ary_find(&ary, mem[0].obj), mem[0].i);
+                (ssize_t)fio_ary_find(&ary, mem[0].obj), (size_t)mem[0].i);
     mem[0].obj = fio_ary_index(&ary, i);
     TEST_ASSERT(mem[0].i == (uintptr_t)(i + 1),
                 "Wrong object returned from fio_ary_index - ary[%d] != %d", i,
@@ -659,12 +665,39 @@ FIO_FUNC inline void fio_ary_test(void) {
               (size_t)fio_ary_count(&ary));
   TEST_ASSERT(fio_ary_find(&ary, mem[0].obj) == -1,
               "fio_ary_find should have failed after fio_ary_remove (%zd)",
-              fio_ary_find(&ary, mem[0].obj));
+              (ssize_t)fio_ary_find(&ary, mem[0].obj));
   mem[0].i = 2;
   TEST_ASSERT(fio_ary_find(&ary, mem[0].obj) == 0,
               "fio_ary_remove didn't clear holes from Array (%zu)",
               (size_t)fio_ary_find(&ary, mem[0].obj));
 
+  fio_ary_free(&ary);
+
+  fio_ary_s ary2 = FIO_ARY_INIT;
+  for (uintptr_t i = 0; i < (TEST_LIMIT >> 1); ++i) {
+    mem[i].i = ((TEST_LIMIT >> 1) << 1) - i;
+    fio_ary_unshift(&ary2, mem[i].obj);
+    mem[i].i = (TEST_LIMIT >> 1) - i;
+    fio_ary_unshift(&ary, mem[i].obj);
+  }
+  fio_ary_concat(&ary, &ary2);
+  fio_ary_free(&ary2);
+  TEST_ASSERT(fio_ary_count(&ary) == ((TEST_LIMIT >> 1) << 1),
+              "Wrong object count after fio_ary_concat %zu",
+              (size_t)fio_ary_count(&ary));
+  for (int i = 0; i < ((TEST_LIMIT >> 1) << 1); ++i) {
+    mem[0].obj = fio_ary_index(&ary, i);
+    TEST_ASSERT(
+        mem[0].i == (uintptr_t)(i + 1),
+        "Wrong object returned from fio_ary_index after concat - ary[%d] != %d",
+        i, i + 1);
+  }
+  mem[1].i = 0;
+  while ((mem[0].obj = fio_ary_pop(&ary))) {
+    ++mem[1].i;
+  }
+  TEST_ASSERT(mem[1].i == ((TEST_LIMIT >> 1) << 1),
+              "fio_ary_pop overflow (%zu)?", (size_t)mem[1].i);
   fio_ary_free(&ary);
 }
 #undef TEST_LIMIT

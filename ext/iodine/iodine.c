@@ -2,7 +2,8 @@
 
 #include <ruby/version.h>
 
-#include "facil.h"
+#define FIO_INCLUDE_LINKED_LIST
+#include "fio.h"
 /* *****************************************************************************
 OS specific patches
 ***************************************************************************** */
@@ -31,10 +32,8 @@ static ID call_id;
 /* *****************************************************************************
 Idling
 ***************************************************************************** */
-#include "fio_llist.h"
-#include "spnlock.inc"
 
-static spn_lock_i iodine_on_idle_lock = SPN_LOCK_INIT;
+static fio_lock_i iodine_on_idle_lock = FIO_LOCK_INIT;
 static fio_ls_s iodine_on_idle_list = FIO_LS_INIT(iodine_on_idle_list);
 
 static void iodine_perform_deferred(void *block, void *ignr) {
@@ -57,21 +56,22 @@ VALUE iodine_sched_on_idle(VALUE self) {
   rb_need_block();
   VALUE block = rb_block_proc();
   IodineStore.add(block);
-  spn_lock(&iodine_on_idle_lock);
+  fio_lock(&iodine_on_idle_lock);
   fio_ls_push(&iodine_on_idle_list, (void *)block);
-  spn_unlock(&iodine_on_idle_lock);
+  fio_unlock(&iodine_on_idle_lock);
   return block;
   (void)self;
 }
 
-static void iodine_on_idle(void) {
-  spn_lock(&iodine_on_idle_lock);
+static void iodine_on_idle(void *arg) {
+  (void)arg;
+  fio_lock(&iodine_on_idle_lock);
   while (fio_ls_any(&iodine_on_idle_list)) {
     VALUE block = (VALUE)fio_ls_shift(&iodine_on_idle_list);
-    defer(iodine_perform_deferred, (void *)block, NULL);
+    fio_defer(iodine_perform_deferred, (void *)block, NULL);
     IodineStore.remove(block);
   }
-  spn_unlock(&iodine_on_idle_lock);
+  fio_unlock(&iodine_on_idle_lock);
 }
 
 /* *****************************************************************************
@@ -85,8 +85,7 @@ typedef struct {
 
 static void *iodine_run_outside_GVL(void *params_) {
   iodine_start_params_s *params = params_;
-  facil_run(.threads = params->threads, .processes = params->workers,
-            .on_idle = iodine_on_idle, .on_finish = iodine_defer_on_finish);
+  fio_start(.threads = params->threads, .workers = params->workers);
   return NULL;
 }
 
@@ -166,7 +165,7 @@ static VALUE iodine_workers_set(VALUE self, VALUE val) {
 static void iodine_print_startup_message(iodine_start_params_s params) {
   VALUE iodine_version = rb_const_get(IodineModule, rb_intern("VERSION"));
   VALUE ruby_version = rb_const_get(IodineModule, rb_intern("RUBY_VERSION"));
-  facil_expected_concurrency(&params.threads, &params.workers);
+  fio_expected_concurrency(&params.threads, &params.workers);
   fprintf(stderr,
           "\nStarting up Iodine:\n"
           " * Ruby v.%s\n * Iodine v.%s\n"
@@ -193,13 +192,14 @@ static void iodine_print_startup_message(iodine_start_params_s params) {
  *
  */
 static VALUE iodine_start(VALUE self) {
-  if (facil_is_running()) {
+  if (fio_is_running()) {
     rb_raise(rb_eRuntimeError, "Iodine already running!");
   }
   VALUE threads_rb = iodine_threads_get(self);
   VALUE workers_rb = iodine_workers_get(self);
   iodine_start_params_s params = {
-      .threads = NUM2SHORT(threads_rb), .workers = NUM2SHORT(workers_rb),
+      .threads = NUM2SHORT(threads_rb),
+      .workers = NUM2SHORT(workers_rb),
   };
   iodine_print_startup_message(params);
   IodineCaller.leaveGVL(iodine_run_outside_GVL, &params);
@@ -256,4 +256,7 @@ void Init_iodine(void) {
 
   // initialize Pub/Sub extension (for Engines)
   iodine_pubsub_init();
+
+  // register idle and finish callbacks
+  fio_state_callback_add(FIO_CALL_ON_IDLE, iodine_on_idle, NULL);
 }

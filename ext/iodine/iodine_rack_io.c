@@ -30,7 +30,7 @@ read behaves like IO#read. Its signature is read([length, [buffer]]). If given,
 length must be a non-negative Integer (>= 0) or nil, and buffer must be a String
 and may not be nil. If length is given and not nil, then this method reads at
 most length bytes from the input stream. If length is not given or nil, then
-this method reads all data until EOF. When EOF is reached, this method returns
+this method reads all data until  EOF. When EOF is reached, this method returns
 nil if length is given and not nil, or “” if length is not given or is nil. If
 buffer is given, then the read data will be placed into buffer instead of a
 newly created String object.
@@ -98,7 +98,7 @@ static VALUE rio_gets(VALUE self) {
   FIOBJ io = get_data(self);
   if (!FIOBJ_TYPE_IS(io, FIOBJ_T_DATA))
     return Qnil;
-  fio_cstr_s line = fiobj_data_gets(io);
+  fio_str_info_s line = fiobj_data_gets(io);
   if (line.len) {
     VALUE buffer = rb_str_new(line.data, line.len);
     // make sure the buffer is binary encoded.
@@ -133,7 +133,7 @@ static VALUE rio_read(int argc, VALUE *argv, VALUE self) {
     ret_nil = 1;
   }
   // return if we're at the EOF.
-  fio_cstr_s buf = fiobj_data_read(io, len);
+  fio_str_info_s buf = fiobj_data_read(io, len);
   if (buf.len) {
     // create the buffer if we don't have one.
     if (buffer == Qnil) {
@@ -198,7 +198,7 @@ static VALUE rio_get_io(int argc, VALUE *argv, VALUE self) {
   set_handle(self, NULL);
   // hijack the IO object
   intptr_t uuid = http_hijack(h, NULL);
-  VALUE fd = INT2FIX(sock_uuid2fd(uuid));
+  VALUE fd = INT2FIX(fio_uuid2fd(uuid));
   // VALUE new_io = how the fuck do we create a new IO from the fd?
   VALUE new_io = IodineCaller.call2(TCPSOCKET_CLASS, for_fd_id, 1,
                                     &fd); // TCPSocket.for_fd(fd) ... cool...
@@ -260,5 +260,7 @@ static void init_rack_io(void) {
 ////////////////////////////////////////////////////////////////////////////
 // the API interface
 struct IodineRackIO IodineRackIO = {
-    .create = new_rack_io, .close = close_rack_io, .init = init_rack_io,
+    .create = new_rack_io,
+    .close = close_rack_io,
+    .init = init_rack_io,
 };

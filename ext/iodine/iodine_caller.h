@@ -3,6 +3,8 @@
 
 #include "ruby.h"
 
+#include <stdint.h>
+
 extern struct IodineCaller_s {
   /** Calls a C function within the GVL (unprotected). */
   void *(*enterGVL)(void *(*func)(void *), void *arg);
