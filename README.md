@@ -214,9 +214,9 @@ end
 The new Redis client can also be used for asynchronous Redis command execution. i.e.:
 
 ```ruby
-if(Iodine.default.is_a? Iodine::PubSub::Redis)
+if(Iodine::PubSub.default.is_a? Iodine::PubSub::Redis)
   # Ask Redis about all it's client connections and print out the reply.
-  Iodine.default.cmd("CLIENT LIST") { |reply| puts reply }
+  Iodine::PubSub.default.cmd("CLIENT LIST") { |reply| puts reply }
 end
 ```
 
