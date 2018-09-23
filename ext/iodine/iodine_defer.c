@@ -45,7 +45,7 @@ static void iodine_join_io_thread(void) {
   if (fio_atomic_sub(&sock_io_thread, 1) == 0) {
     sock_io_thread = 0;
     pthread_join(sock_io_pthread, NULL);
-    sock_io_pthread = NULL;
+    sock_io_pthread = (pthread_t)NULL;
   }
 }
 
