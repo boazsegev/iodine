@@ -162,8 +162,8 @@ JSON formatting
 
 /** Writes a JSON friendly version of the src String */
 static void write_safe_str(FIOBJ dest, const FIOBJ str) {
-  fio_cstr_s s = fiobj_obj2cstr(str);
-  fio_cstr_s t = fiobj_obj2cstr(dest);
+  fio_str_info_s s = fiobj_obj2cstr(str);
+  fio_str_info_s t = fiobj_obj2cstr(dest);
   t.data[t.len] = '"';
   t.len++;
   fiobj_str_resize(dest, t.len);
@@ -181,7 +181,7 @@ static void write_safe_str(FIOBJ dest, const FIOBJ str) {
     } else {
       capa = fiobj_str_capa_assert(dest, (end + s.len + 64));
     }
-    fio_cstr_s tmp = fiobj_obj2cstr(dest);
+    fio_str_info_s tmp = fiobj_obj2cstr(dest);
     t = tmp;
   }
   while (len) {
@@ -264,7 +264,7 @@ typedef struct {
   uint8_t pretty;
 } obj2json_data_s;
 
-static int fiobj_fiobj_obj2json_task(FIOBJ o, void *data_) {
+static int fiobj_obj2json_task(FIOBJ o, void *data_) {
   obj2json_data_s *data = data_;
   uint8_t add_seperator = 1;
   if (fiobj_hash_key_in_loop()) {
@@ -327,10 +327,10 @@ static int fiobj_fiobj_obj2json_task(FIOBJ o, void *data_) {
       uintptr_t indent = fio_ary_count(data->stack) - 1;
       fiobj_str_capa_assert(data->dest,
                             fiobj_obj2cstr(data->dest).len + (indent * 2));
-      fio_cstr_s buf = fiobj_obj2cstr(data->dest);
+      fio_str_info_s buf = fiobj_obj2cstr(data->dest);
       while (indent--) {
-        buf.bytes[buf.len++] = ' ';
-        buf.bytes[buf.len++] = ' ';
+        buf.data[buf.len++] = ' ';
+        buf.data[buf.len++] = ' ';
       }
       fiobj_str_resize(data->dest, buf.len);
     }
@@ -413,23 +413,26 @@ FIOBJ fiobj_obj2json2(FIOBJ dest, FIOBJ o, uint8_t pretty) {
     fiobj_str_write(dest, "null", 4);
     return 0;
   }
-  fio_ary_s stack;
+  fio_ary_s stack = FIO_ARY_INIT;
   obj2json_data_s data = {
-      .dest = dest, .stack = &stack, .pretty = pretty, .count = 1,
+      .dest = dest,
+      .stack = &stack,
+      .pretty = pretty,
+      .count = 1,
   };
   if (!o || !FIOBJ_IS_ALLOCATED(o) || !FIOBJECT2VTBL(o)->each) {
-    fiobj_fiobj_obj2json_task(o, &data);
+    fiobj_obj2json_task(o, &data);
     return dest;
   }
   fio_ary_new(&stack, 0);
-  fiobj_each2(o, fiobj_fiobj_obj2json_task, &data);
+  fiobj_each2(o, fiobj_obj2json_task, &data);
   fio_ary_free(&stack);
   return dest;
 }
 
 /* Formats an object into a JSON string. Remember to `fiobj_free`. */
 FIOBJ fiobj_obj2json(FIOBJ obj, uint8_t pretty) {
-  return fiobj_obj2json2(fiobj_str_buf(0), obj, pretty);
+  return fiobj_obj2json2(fiobj_str_buf(128), obj, pretty);
 }
 
 /* *****************************************************************************
@@ -442,7 +445,7 @@ void fiobj_test_json(void) {
 #define TEST_ASSERT(cond, ...)                                                 \
   if (!(cond)) {                                                               \
     fprintf(stderr, "* " __VA_ARGS__);                                         \
-    fprintf(stderr, "Testing failed.\n");                                      \
+    fprintf(stderr, "\n !!! Testing failed !!!\n");                            \
     exit(-1);                                                                  \
   }
   char json_str[] = "{\"array\":[1,2,3,\"boom\"],\"my\":{\"secret\":42},"
@@ -538,7 +541,7 @@ void fiobj_test_json(void) {
   fprintf(stderr, "* passed.\n");
   fprintf(stderr, "=== Testing JSON formatting (simple test)\n");
   tmp = fiobj_obj2json(o, 0);
-  fprintf(stderr, "* data (%p):\n%.*s\n", fiobj_obj2cstr(tmp).buffer,
+  fprintf(stderr, "* data (%p):\n%.*s\n", (void *)fiobj_obj2cstr(tmp).data,
           (int)fiobj_obj2cstr(tmp).len, fiobj_obj2cstr(tmp).data);
   if (!strcmp(fiobj_obj2cstr(tmp).data, json_str))
     fprintf(stderr, "* Stringify == Original.\n");

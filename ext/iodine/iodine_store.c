@@ -2,9 +2,12 @@
 
 #include "fio_hashmap.h"
 #include "iodine_store.h"
-#include "spnlock.inc"
 
-spn_lock_i lock = SPN_LOCK_INIT;
+#include <fio.h>
+#include <inttypes.h>
+#include <stdint.h>
+
+fio_lock_i lock = FIO_LOCK_INIT;
 fio_hash_s storage = FIO_HASH_INIT;
 
 #ifndef IODINE_DEBUG
@@ -19,12 +22,12 @@ API
 static VALUE storage_add(VALUE obj) {
   if (obj == Qnil || obj == Qtrue || obj == Qfalse)
     return obj;
-  spn_lock(&lock);
+  fio_lock(&lock);
   uintptr_t val = (uintptr_t)fio_hash_insert(&storage, obj, (void *)1);
   if (val) {
     fio_hash_insert(&storage, obj, (void *)(val + 1));
   }
-  spn_unlock(&lock);
+  fio_unlock(&lock);
   return obj;
 }
 /** Removes an object from the storage (or decreases it's reference count). */
@@ -32,7 +35,7 @@ static VALUE storage_remove(VALUE obj) {
   if (obj == Qnil || obj == Qtrue || obj == Qfalse || storage.map == NULL ||
       storage.count == 0)
     return obj;
-  spn_lock(&lock);
+  fio_lock(&lock);
   uintptr_t val = (uintptr_t)fio_hash_insert(&storage, obj, NULL);
   if (val > 1) {
     fio_hash_insert(&storage, obj, (void *)(val - 1));
@@ -41,16 +44,16 @@ static VALUE storage_remove(VALUE obj) {
       (storage.pos << 1) > storage.capa) {
     fio_hash_compact(&storage);
   }
-  spn_unlock(&lock);
+  fio_unlock(&lock);
   return obj;
 }
 /** Should be called after forking to reset locks */
-static void storage_after_fork(void) { lock = SPN_LOCK_INIT; }
+static void storage_after_fork(void) { lock = FIO_LOCK_INIT; }
 
 /** Prints debugging information to the console. */
 static void storage_print(void) {
   fprintf(stderr, "Ruby <=> C Memory storage stats (pid: %d):\n", getpid());
-  spn_lock(&lock);
+  fio_lock(&lock);
   uintptr_t index = 0;
   FIO_HASH_FOR_LOOP(&storage, pos) {
     if (pos->obj) {
@@ -62,7 +65,7 @@ static void storage_print(void) {
   fprintf(stderr,
           "Storage uses %" PRIuPTR " Hash bins for %" PRIuPTR " objects\n",
           storage.capa, storage.count);
-  spn_unlock(&lock);
+  fio_unlock(&lock);
 }
 
 /**
@@ -83,14 +86,14 @@ static void storage_mark(void *ignore) {
 #if IODINE_DEBUG
   storage_print();
 #endif
-  spn_lock(&lock);
+  fio_lock(&lock);
   // fio_hash_compact(&storage);
   FIO_HASH_FOR_LOOP(&storage, pos) {
     if (pos->obj) {
       rb_gc_mark((VALUE)pos->key);
     }
   }
-  spn_unlock(&lock);
+  fio_unlock(&lock);
 }
 
 /* clear the registry (end of lifetime) */
@@ -99,10 +102,10 @@ static void storage_clear(void *ignore) {
 #if IODINE_DEBUG == 1
   fprintf(stderr, "* INFO: Ruby<=>C Storage cleared.\n");
 #endif
-  spn_lock(&lock);
+  fio_lock(&lock);
   fio_hash_free(&storage);
   storage = (fio_hash_s)FIO_HASH_INIT;
-  spn_unlock(&lock);
+  fio_unlock(&lock);
 }
 
 /*

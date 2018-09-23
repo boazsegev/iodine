@@ -1,6 +1,6 @@
 #include "iodine_pubsub.h"
 #include "iodine_fiobj2rb.h"
-#include "pubsub.h"
+
 #include "redis_engine.h"
 
 /*
@@ -57,7 +57,7 @@ typedef struct {
 static void *iodine_pubsub_GIL_subscribe(void *tsk_) {
   iodine_pubsub_task_s *task = tsk_;
   VALUE args[2];
-  fio_cstr_s tmp = fiobj_obj2cstr(task->ch);
+  fio_str_info_s tmp = fiobj_obj2cstr(task->ch);
   args[0] = rb_str_new(tmp.data, tmp.len);
   args[1] = task->pattern ? Qtrue : Qnil; // TODO: Qtrue should be :redis
   IodineCaller.call2(task->eng->handler, subscribe_id, 2, args);
@@ -65,7 +65,7 @@ static void *iodine_pubsub_GIL_subscribe(void *tsk_) {
 }
 
 /** Must subscribe channel. Failures are ignored. */
-static void iodine_pubsub_on_subscribe(const pubsub_engine_s *eng,
+static void iodine_pubsub_on_subscribe(const fio_pubsub_engine_s *eng,
                                        FIOBJ channel, uint8_t use_pattern) {
   if (iodine_engine(eng)->handler == Qnil) {
     return;
@@ -79,7 +79,7 @@ static void iodine_pubsub_on_subscribe(const pubsub_engine_s *eng,
 static void *iodine_pubsub_GIL_unsubscribe(void *tsk_) {
   iodine_pubsub_task_s *task = tsk_;
   VALUE args[2];
-  fio_cstr_s tmp = fiobj_obj2cstr(task->ch);
+  fio_str_info_s tmp = fiobj_obj2cstr(task->ch);
   args[0] = rb_str_new(tmp.data, tmp.len);
   args[1] = task->pattern ? Qtrue : Qnil; // TODO: Qtrue should be :redis
   IodineCaller.call2(task->eng->handler, unsubscribe_id, 2, args);
@@ -87,7 +87,7 @@ static void *iodine_pubsub_GIL_unsubscribe(void *tsk_) {
 }
 
 /** Must unsubscribe channel. Failures are ignored. */
-static void iodine_pubsub_on_unsubscribe(const pubsub_engine_s *eng,
+static void iodine_pubsub_on_unsubscribe(const fio_pubsub_engine_s *eng,
                                          FIOBJ channel, uint8_t use_pattern) {
   if (iodine_engine(eng)->handler == Qnil) {
     return;
@@ -101,7 +101,7 @@ static void iodine_pubsub_on_unsubscribe(const pubsub_engine_s *eng,
 static void *iodine_pubsub_GIL_publish(void *tsk_) {
   iodine_pubsub_task_s *task = tsk_;
   VALUE args[2];
-  fio_cstr_s tmp = fiobj_obj2cstr(task->ch);
+  fio_str_info_s tmp = fiobj_obj2cstr(task->ch);
   args[0] = rb_str_new(tmp.data, tmp.len);
   tmp = fiobj_obj2cstr(task->msg);
   args[1] = rb_str_new(tmp.data, tmp.len);
@@ -110,8 +110,8 @@ static void *iodine_pubsub_GIL_publish(void *tsk_) {
 }
 
 /** Should return 0 on success and -1 on failure. */
-static int iodine_pubsub_on_publish(const pubsub_engine_s *eng, FIOBJ channel,
-                                    FIOBJ msg) {
+static int iodine_pubsub_on_publish(const fio_pubsub_engine_s *eng,
+                                    FIOBJ channel, FIOBJ msg) {
   if (iodine_engine(eng)->handler == Qnil) {
     return -1;
   }
@@ -127,7 +127,9 @@ static int iodine_pubsub_on_publish(const pubsub_engine_s *eng, FIOBJ channel,
  * but iodine engines should probably use the `before_fork` and `after_fork`
  * hooks.
  */
-static void iodine_pubsub_on_startup(const pubsub_engine_s *eng) { (void)eng; }
+static void iodine_pubsub_on_startup(const fio_pubsub_engine_s *eng) {
+  (void)eng;
+}
 
 /* *****************************************************************************
 Ruby methods
@@ -194,16 +196,9 @@ static VALUE iodine_pubsub_publish(VALUE self, VALUE to, VALUE message) {
     /* this is a Ruby engine, nothing to do. */
     return Qnil;
   }
-  FIOBJ ch, msg;
-  ch = fiobj_str_new(RSTRING_PTR(to), RSTRING_LEN(to));
-  msg = fiobj_str_new(RSTRING_PTR(message), RSTRING_LEN(message));
-  e->engine->publish(e->engine, ch, msg);
-  fiobj_free(ch);
-  fiobj_free(msg);
+  e->engine->publish(e->engine, IODINE_RSTRINFO(to), IODINE_RSTRINFO(message),
+                     0);
   return self;
-  (void)self;
-  (void)to;
-  (void)message;
 }
 
 /* *****************************************************************************
@@ -220,7 +215,7 @@ static void iodine_pubsub_data_mark(void *c_) {
 /* a callback for the GC (marking active objects) */
 static void iodine_pubsub_data_free(void *c_) {
   iodine_pubsub_s *data = c_;
-  pubsub_engine_deregister(data->engine);
+  fio_pubsub_detach(data->engine);
   IodineStore.remove(data->handler); /* redundant except during exit */
   if (data->dealloc) {
     data->dealloc(data->engine);
@@ -266,12 +261,12 @@ static VALUE iodine_pubsub_data_alloc_c(VALUE self) {
 C engines
 ***************************************************************************** */
 
-static VALUE iodine_pubsub_make_C_engine(const pubsub_engine_s *e) {
+static VALUE iodine_pubsub_make_C_engine(const fio_pubsub_engine_s *e) {
   VALUE engine = IodineCaller.call(EngineClass, rb_intern2("new", 3));
   if (engine == Qnil) {
     return Qnil;
   }
-  iodine_pubsub_CData(engine)->engine = (pubsub_engine_s *)e;
+  iodine_pubsub_CData(engine)->engine = (fio_pubsub_engine_s *)e;
   return engine;
 }
 
@@ -548,7 +543,7 @@ finish:
 }
 
 /** A callback for Redis commands. */
-static void iodine_pubsub_redis_callback(pubsub_engine_s *e, FIOBJ response,
+static void iodine_pubsub_redis_callback(fio_pubsub_engine_s *e, FIOBJ response,
                                          void *udata) {
   VALUE block = (VALUE)udata;
   if (block == Qnil) {
