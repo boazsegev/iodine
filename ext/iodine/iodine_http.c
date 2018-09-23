@@ -982,7 +982,7 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
           .ws_timeout = ping, .ws_max_msg_size = max_msg,
           .max_header_size = max_headers, .on_finish = free_iodine_http,
           .log = log_http, .max_body_size = max_body,
-          .public_folder = (www ? StringValueCStr(www) : NULL))) {
+          .public_folder = (www ? StringValueCStr(www) : NULL)) == -1) {
     fprintf(stderr,
             "ERROR: Failed to initialize a listening HTTP socket for port %s\n",
             port ? StringValueCStr(port) : "3000");
