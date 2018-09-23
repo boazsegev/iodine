@@ -23,11 +23,8 @@ typedef struct {
 
 static void *iodine_io_thread(void *arg) {
   (void)arg;
-  const size_t capa = fio_capa();
   while (sock_io_thread) {
-    for (size_t i = 0; i < capa; ++i) {
-      fio_flush(fio_fd2uuid(i));
-    }
+    fio_flush_all();
     fio_throttle_thread(100);
   }
   return NULL;
