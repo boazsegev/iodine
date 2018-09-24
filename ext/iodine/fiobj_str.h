@@ -20,37 +20,33 @@ API: Creating a String Object
 /** Creates a String object. Remember to use `fiobj_free`. */
 FIOBJ fiobj_str_new(const char *str, size_t len);
 
-/** Creates a buffer String object. capa includes NUL.
+/**
+ * Creates a String object with pre-allocation for Strings up to `capa` long.
+ *
+ * If `capa` is zero, a whole memory page will be allocated.
  *
  * Remember to use `fiobj_free`.
  */
 FIOBJ fiobj_str_buf(size_t capa);
 
-/**
- * Creates a static String object from a static C string. Remember `fiobj_free`.
- *
- * This variation avoids allocating memory for an existing static String.
- *
- * The object still needs to be frees, but the string isn't copied and isn't
- * freed.
- *
- * NOTICE: static strings can't be written to.
- */
-FIOBJ fiobj_str_static(const char *str, size_t len);
-
 /** Creates a copy from an existing String. Remember to use `fiobj_free`. */
 static inline __attribute__((unused)) FIOBJ fiobj_str_copy(FIOBJ src) {
-  fio_cstr_s s = fiobj_obj2cstr(src);
+  fio_str_info_s s = fiobj_obj2cstr(src);
   return fiobj_str_new(s.data, s.len);
 }
 
 /**
  * Creates a String object. Remember to use `fiobj_free`.
  *
- * The ownership of the memory indicated by `str` will now "move" to the object.
+ * It's possible to wrap a previosly allocated memory block in a FIOBJ String
+ * object, as long as it was allocated using `fio_malloc`.
  *
- * The original memory MUST be allocated using `fio_malloc` (NOT the system's
- * `malloc`) and it will be freed by the `fiobj` library using `fio_free`.
+ * The ownership of the memory indicated by `str` will "move" to the object and
+ * will be freed (using `fio_free`) once the object's reference count drops to
+ * zero.
+ *
+ * Note: The original memory MUST be allocated using `fio_malloc` (NOT the
+ *       system's `malloc`) and it will be freed using `fio_free`.
  */
 FIOBJ fiobj_str_move(char *str, size_t len, size_t capacity);
 
@@ -60,29 +56,6 @@ FIOBJ fiobj_str_move(char *str, size_t len, size_t capacity);
  */
 FIOBJ fiobj_str_tmp(void);
 
-/** Creates a String object using a printf like interface. */
-__attribute__((format(printf, 1, 0))) FIOBJ fiobj_strvprintf(const char *format,
-                                                             va_list argv);
-
-/** Creates a String object using a printf like interface. */
-__attribute__((format(printf, 1, 2))) FIOBJ fiobj_strprintf(const char *format,
-                                                            ...);
-
-/** Dumps the `filename` file's contents into a new String. If `limit == 0`,
- * than the data will be read until EOF.
- *
- * If the file can't be located, opened or read, or if `start_at` is out of
- * bounds (i.e., beyond the EOF position), FIOBJ_INVALID is returned.
- *
- * If `start_at` is negative, it will be computed from the end of the file.
- *
- * Remember to use `fiobj_free`.
- *
- * NOTE: Requires a UNIX system, otherwise always returns FIOBJ_INVALID.
- */
-FIOBJ fiobj_str_readfile(const char *filename, intptr_t start_at,
-                         intptr_t limit);
-
 /* *****************************************************************************
 API: Editing a String
 ***************************************************************************** */
@@ -90,11 +63,8 @@ API: Editing a String
 /**
  * Prevents the String object from being changed.
  *
- * When a String is used as a key for a Hash, it is automatically frozenn to
+ * When a String is used as a key for a Hash, it is automatically frozen to
  * prevent the Hash from becoming broken.
- *
- * A call to `fiobj_str_hash` or `fiobj_obj2hash` will automactically freeze the
- * String.
  */
 void fiobj_str_freeze(FIOBJ str);
 
@@ -105,14 +75,22 @@ void fiobj_str_freeze(FIOBJ str);
  */
 size_t fiobj_str_capa_assert(FIOBJ str, size_t size);
 
-/** Return's a String's capacity, if any. This should include the NUL byte. */
+/** Returns a String's capacity, if any. This should include the NUL byte. */
 size_t fiobj_str_capa(FIOBJ str);
 
 /** Resizes a String object, allocating more memory if required. */
 void fiobj_str_resize(FIOBJ str, size_t size);
 
-/** Deallocates any unnecessary memory (if supported by OS). */
-void fiobj_str_minimize(FIOBJ str);
+/**
+ * Performs a best attempt at minimizing memory consumption.
+ *
+ * Actual effects depend on the underlying memory allocator and it's
+ * implementation. Not all allocators will free any memory.
+ */
+void fiobj_str_compact(FIOBJ str);
+
+/** Alias for `fiobj_str_compact`. */
+#define fiobj_str_minimize(str) fiobj_str_compact((str))
 
 /** Empties a String's data. */
 void fiobj_str_clear(FIOBJ str);
@@ -124,11 +102,27 @@ void fiobj_str_clear(FIOBJ str);
 size_t fiobj_str_write(FIOBJ dest, const char *data, size_t len);
 
 /**
- * Writes data at the end of the string, resizing the string as required.
+ * Writes a number at the end of the String using normal base 10 notation.
+ *
  * Returns the new length of the String
  */
+size_t fiobj_str_write_i(FIOBJ dest, int64_t num);
+
+/**
+ * Writes data at the end of the string using a printf like interface, resizing
+ * the string as required. Returns the new length of the String
+ */
 __attribute__((format(printf, 2, 3))) size_t
-fiobj_str_write2(FIOBJ dest, const char *format, ...);
+fiobj_str_printf(FIOBJ dest, const char *format, ...);
+
+/**
+ * Writes data at the end of the string using a vprintf like interface, resizing
+ * the string as required.
+ *
+ * Returns the new length of the String
+ */
+__attribute__((format(printf, 2, 0))) size_t
+fiobj_str_vprintf(FIOBJ dest, const char *format, va_list argv);
 
 /**
  * Writes data at the end of the string, resizing the string as required.
@@ -137,7 +131,25 @@ fiobj_str_write2(FIOBJ dest, const char *format, ...);
  *
  * Returns the new length of the String.
  */
-size_t fiobj_str_join(FIOBJ dest, FIOBJ source);
+size_t fiobj_str_concat(FIOBJ dest, FIOBJ source);
+#define fiobj_str_join(dest, src) fiobj_str_concat((dest), (src))
+
+/**
+ * Dumps the `filename` file's contents at the end of the String.
+ *
+ * If `limit == 0`, than the data will be read until EOF.
+ *
+ * If the file can't be located, opened or read, or if `start_at` is out of
+ * bounds (i.e., beyond the EOF position), FIOBJ_INVALID is returned.
+ *
+ * If `start_at` is negative, it will be computed from the end of the file.
+ *
+ * Remember to use `fiobj_free`.
+ *
+ * NOTE: Requires a UNIX system, otherwise always returns FIOBJ_INVALID.
+ */
+size_t fiobj_str_readfile(FIOBJ dest, const char *filename, intptr_t start_at,
+                          intptr_t limit);
 
 /* *****************************************************************************
 API: String Values
@@ -145,9 +157,6 @@ API: String Values
 
 /**
  * Calculates a String's SipHash value for possible use as a HashMap key.
- *
- * Hashing the String's value automatically freezes the string, preventing
- * future changes.
  */
 uint64_t fiobj_str_hash(FIOBJ o);
 

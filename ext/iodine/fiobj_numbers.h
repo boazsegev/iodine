@@ -48,13 +48,13 @@ Numerical Helpers: not FIOBJ specific, but included as part of the library
  *
  * The pointer will be updated to point to the first byte after the number.
  */
-intptr_t fio_atol(char **pstr);
+int64_t fio_atol(char **pstr);
 
-/** A helper function that convers between String data to a signed double. */
+/** A helper function that converts between String data to a signed double. */
 double fio_atof(char **pstr);
 
 /**
- * A helper function that convers between a signed int64_t to a string.
+ * A helper function that converts between a signed int64_t to a string.
  *
  * No overflow guard is provided, make sure there's at least 66 bytes available
  * (for base 2).
@@ -68,7 +68,7 @@ double fio_atof(char **pstr);
 size_t fio_ltoa(char *dest, int64_t num, uint8_t base);
 
 /**
- * A helper function that convers between a double to a string.
+ * A helper function that converts between a double to a string.
  *
  * No overflow guard is provided, make sure there's at least 130 bytes available
  * (for base 2).
@@ -82,10 +82,10 @@ size_t fio_ltoa(char *dest, int64_t num, uint8_t base);
 size_t fio_ftoa(char *dest, double num, uint8_t base);
 
 /** Converts a number to a temporary, thread safe, C string object */
-fio_cstr_s fio_ltocstr(long);
+fio_str_info_s fio_ltocstr(long);
 
 /** Converts a float to a temporary, thread safe, C string object */
-fio_cstr_s fio_ftocstr(double);
+fio_str_info_s fio_ftocstr(double);
 
 /* *****************************************************************************
 Pointer Wrapping Helper MACROs (uses integers)

@@ -5,8 +5,8 @@
 #include <stdint.h>
 // clang-format on
 
-#include "facil.h"
-#include <spnlock.inc>
+#define FIO_INCLUDE_LINKED_LIST
+#include "fio.h"
 
 #include <pthread.h>
 
@@ -14,7 +14,7 @@
 IO flushing dedicated thread for protection against blocking code
 ***************************************************************************** */
 
-static spn_lock_i sock_io_thread = 0;
+static fio_lock_i sock_io_thread = 0;
 static pthread_t sock_io_pthread;
 typedef struct {
   size_t threads;
@@ -23,26 +23,29 @@ typedef struct {
 
 static void *iodine_io_thread(void *arg) {
   (void)arg;
-  struct timespec tm;
   while (sock_io_thread) {
-    sock_flush_all();
-    tm = (struct timespec){.tv_nsec = 0, .tv_sec = 1};
-    nanosleep(&tm, NULL);
+    fio_flush_all();
+    fio_throttle_thread(100);
   }
   return NULL;
 }
-static void iodine_start_io_thread(void *a_, void *b_) {
-  if (!spn_trylock(&sock_io_thread)) {
+static void iodine_start_io_thread(void *a_) {
+  if (!fio_atomic_add(&sock_io_thread, 1)) {
     pthread_create(&sock_io_pthread, NULL, iodine_io_thread, NULL);
   }
   (void)a_;
+}
+
+static void iodine_start_io_thread2(void *a_, void *b_) {
+  iodine_start_io_thread(a_);
   (void)b_;
 }
+
 static void iodine_join_io_thread(void) {
-  if (spn_unlock(&sock_io_thread)) {
+  if (fio_atomic_sub(&sock_io_thread, 1) == 0) {
     sock_io_thread = 0;
     pthread_join(sock_io_pthread, NULL);
-    sock_io_pthread = NULL;
+    sock_io_pthread = (pthread_t)NULL;
   }
 }
 
@@ -54,11 +57,14 @@ The Defer library overriding functions
 struct CreateThreadArgs {
   void *(*thread_func)(void *);
   void *arg;
-  spn_lock_i lock;
+  fio_lock_i lock;
 };
 
 /* used for GVL signalling */
-void call_async_signal(void *pool) { defer_pool_stop((pool_pt)pool); }
+void call_async_signal(void *pool) {
+  fio_stop();
+  (void)pool;
+}
 
 static void *defer_thread_start(void *args_) {
   struct CreateThreadArgs *args = args_;
@@ -72,7 +78,7 @@ static VALUE defer_thread_inGVL(void *args_) {
   struct CreateThreadArgs *old_args = args_;
   struct CreateThreadArgs args = *old_args;
   IodineCaller.set_GVL(1);
-  spn_unlock(&old_args->lock);
+  fio_unlock(&old_args->lock);
   rb_thread_call_without_gvl(defer_thread_start, &args,
                              (void (*)(void *))call_async_signal, args.arg);
   return Qnil;
@@ -108,7 +114,7 @@ static void *fork_using_ruby(void *ignr) {
   }
   iodine_perform_fork_callbacks(0);
   // re-initiate IO thread
-  defer(iodine_start_io_thread, NULL, NULL);
+  fio_defer(iodine_start_io_thread2, NULL, NULL);
   return (void *)pid;
   (void)ignr;
 }
@@ -116,17 +122,19 @@ static void *fork_using_ruby(void *ignr) {
 /**
 OVERRIDE THIS to replace the default pthread implementation.
 */
-void *defer_new_thread(void *(*thread_func)(void *), void *arg) {
+void *fio_thread_new(void *(*thread_func)(void *), void *arg) {
   struct CreateThreadArgs data = (struct CreateThreadArgs){
-      .thread_func = thread_func, .arg = arg, .lock = SPN_LOCK_INIT,
+      .thread_func = thread_func,
+      .arg = arg,
+      .lock = FIO_LOCK_INIT,
   };
-  spn_lock(&data.lock);
+  fio_lock(&data.lock);
   void *thr = IodineCaller.enterGVL(create_ruby_thread_gvl, &data);
   if (!thr || thr == (void *)Qnil || thr == (void *)Qfalse) {
     thr = NULL;
   } else {
     /* wait for thread to signal it's alive. */
-    spn_lock(&data.lock);
+    fio_lock(&data.lock);
   }
   return thr;
 }
@@ -134,7 +142,7 @@ void *defer_new_thread(void *(*thread_func)(void *), void *arg) {
 /**
 OVERRIDE THIS to replace the default pthread implementation.
 */
-int defer_join_thread(void *thr) {
+int fio_thread_join(void *thr) {
   if (!thr || (VALUE)thr == Qfalse || (VALUE)thr == Qnil)
     return -1;
   IodineCaller.call((VALUE)thr, rb_intern("join"));
@@ -143,7 +151,7 @@ int defer_join_thread(void *thr) {
 }
 
 // void defer_free_thread(void *thr) { (void)thr; }
-void defer_free_thread(void *thr) { IodineStore.remove((VALUE)thr); }
+void fio_thread_free(void *thr) { IodineStore.remove((VALUE)thr); }
 
 /**
 OVERRIDE THIS to replace the default `fork` implementation or to inject hooks
@@ -151,7 +159,7 @@ into the forking function.
 
 Behaves like the system's `fork`.
 */
-int facil_fork(void) {
+int fio_fork(void) {
   intptr_t pid = (intptr_t)IodineCaller.enterGVL(fork_using_ruby, NULL);
   return (int)pid;
 }
@@ -189,7 +197,7 @@ Defer API
 static VALUE iodine_defer_run(VALUE self) {
   rb_need_block();
   VALUE block = IodineStore.add(rb_block_proc());
-  defer(iodine_defer_performe_once, (void *)block, NULL);
+  fio_defer(iodine_defer_performe_once, (void *)block, NULL);
   return block;
   (void)self;
 }
@@ -221,8 +229,8 @@ static VALUE iodine_defer_run_after(VALUE self, VALUE milliseconds) {
   if (block == Qnil)
     return Qfalse;
   IodineStore.add(block);
-  if (facil_run_every(milli, 1, iodine_defer_run_timer, (void *)block,
-                      (void (*)(void *))IodineStore.remove) == -1) {
+  if (fio_run_every(milli, 1, iodine_defer_run_timer, (void *)block,
+                    (void (*)(void *))IodineStore.remove) == -1) {
     perror("ERROR: Iodine couldn't initialize timer");
     return Qnil;
   }
@@ -265,8 +273,8 @@ static VALUE iodine_defer_run_every(int argc, VALUE *argv, VALUE self) {
   // requires a block to be passed
   rb_need_block();
   IodineStore.add(block);
-  if (facil_run_every(milli, repeat, iodine_defer_run_timer, (void *)block,
-                      (void (*)(void *))IodineStore.remove) == -1) {
+  if (fio_run_every(milli, repeat, iodine_defer_run_timer, (void *)block,
+                    (void (*)(void *))IodineStore.remove) == -1) {
     perror("ERROR: Iodine couldn't initialize timer");
     return Qnil;
   }
@@ -276,14 +284,12 @@ static VALUE iodine_defer_run_every(int argc, VALUE *argv, VALUE self) {
 /* *****************************************************************************
 Pre/Post `fork`
 ***************************************************************************** */
-#include "fio_llist.h"
-#include "spnlock.inc"
 
-static spn_lock_i iodine_before_fork_lock = SPN_LOCK_INIT;
+static fio_lock_i iodine_before_fork_lock = FIO_LOCK_INIT;
 static fio_ls_s iodine_before_fork_list = FIO_LS_INIT(iodine_before_fork_list);
-static spn_lock_i iodine_after_fork_lock = SPN_LOCK_INIT;
+static fio_lock_i iodine_after_fork_lock = FIO_LOCK_INIT;
 static fio_ls_s iodine_after_fork_list = FIO_LS_INIT(iodine_after_fork_list);
-static spn_lock_i iodine_on_shutdown_lock = SPN_LOCK_INIT;
+static fio_lock_i iodine_on_shutdown_lock = FIO_LOCK_INIT;
 static fio_ls_s iodine_on_shutdown_list = FIO_LS_INIT(iodine_on_shutdown_list);
 
 /**
@@ -294,9 +300,9 @@ VALUE iodine_before_fork_add(VALUE self) {
   rb_need_block();
   VALUE block = rb_block_proc();
   IodineStore.add(block);
-  spn_lock(&iodine_before_fork_lock);
+  fio_lock(&iodine_before_fork_lock);
   fio_ls_push(&iodine_before_fork_list, (void *)block);
-  spn_unlock(&iodine_before_fork_lock);
+  fio_unlock(&iodine_before_fork_lock);
   return block;
   (void)self;
 }
@@ -309,9 +315,9 @@ VALUE iodine_after_fork_add(VALUE self) {
   rb_need_block();
   VALUE block = rb_block_proc();
   IodineStore.add(block);
-  spn_lock(&iodine_after_fork_lock);
+  fio_lock(&iodine_after_fork_lock);
   fio_ls_push(&iodine_after_fork_list, (void *)block);
-  spn_unlock(&iodine_after_fork_lock);
+  fio_unlock(&iodine_after_fork_lock);
   return block;
   (void)self;
 }
@@ -325,9 +331,9 @@ VALUE iodine_on_shutdown_add(VALUE self) {
   rb_need_block();
   VALUE block = rb_block_proc();
   IodineStore.add(block);
-  spn_lock(&iodine_on_shutdown_lock);
+  fio_lock(&iodine_on_shutdown_lock);
   fio_ls_push(&iodine_on_shutdown_list, (void *)block);
-  spn_unlock(&iodine_on_shutdown_lock);
+  fio_unlock(&iodine_on_shutdown_lock);
   return block;
   (void)self;
 }
@@ -335,37 +341,37 @@ VALUE iodine_on_shutdown_add(VALUE self) {
 /* Runs the before / after fork callbacks (if `before` is true, before runs) */
 static void iodine_perform_fork_callbacks(uint8_t before) {
   fio_ls_s *ls = before ? &iodine_before_fork_list : &iodine_after_fork_list;
-  spn_lock_i *lock =
+  fio_lock_i *lock =
       before ? &iodine_before_fork_lock : &iodine_after_fork_lock;
-  spn_lock(lock);
+  fio_lock(lock);
   FIO_LS_FOR(ls, pos) { IodineCaller.call((VALUE)(pos->obj), call_id); }
-  spn_unlock(lock);
+  fio_unlock(lock);
 }
 
 /* Performs any cleanup before worker dies */
-void iodine_defer_on_finish(void) {
+static void iodine_defer_on_finish(void *ignr) {
+  (void)ignr;
   iodine_join_io_thread();
   /* perform and clear away shutdown Procs */
-  spn_lock(&iodine_on_shutdown_lock);
+  fio_lock(&iodine_on_shutdown_lock);
   while (fio_ls_any(&iodine_on_shutdown_list)) {
     void *obj = fio_ls_shift(&iodine_on_shutdown_list);
     IodineCaller.call((VALUE)(obj), call_id);
     IodineStore.remove((VALUE)(obj));
   }
-  spn_unlock(&iodine_on_shutdown_lock);
+  fio_unlock(&iodine_on_shutdown_lock);
   /* clear away forking Procs */
-  spn_lock(&iodine_before_fork_lock);
+  fio_lock(&iodine_before_fork_lock);
   while (fio_ls_any(&iodine_before_fork_list)) {
     IodineStore.remove((VALUE)fio_ls_shift(&iodine_before_fork_list));
   }
-  spn_unlock(&iodine_before_fork_lock);
+  fio_unlock(&iodine_before_fork_lock);
 
-  spn_lock(&iodine_after_fork_lock);
+  fio_lock(&iodine_after_fork_lock);
   while (fio_ls_any(&iodine_after_fork_list)) {
     IodineStore.remove((VALUE)fio_ls_shift(&iodine_after_fork_list));
-    void *obj = fio_ls_shift(&iodine_after_fork_list);
   }
-  spn_unlock(&iodine_after_fork_lock);
+  fio_unlock(&iodine_after_fork_lock);
 }
 
 /* *****************************************************************************
@@ -387,5 +393,6 @@ void iodine_defer_initialize(void) {
                             0);
   rb_define_module_function(IodineModule, "on_shutdown", iodine_on_shutdown_add,
                             0);
-  defer(iodine_start_io_thread, NULL, NULL);
+  fio_state_callback_add(FIO_CALL_ON_FINISH, iodine_defer_on_finish, NULL);
+  fio_state_callback_add(FIO_CALL_PRE_START, iodine_start_io_thread, NULL);
 }

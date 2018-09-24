@@ -18,7 +18,9 @@ typedef struct {
   uint8_t str2sym;
 } fiobj2rb_s;
 
-typedef struct { uint8_t str2sym; } fiobj2rb_settings_s;
+typedef struct {
+  uint8_t str2sym;
+} fiobj2rb_settings_s;
 
 static inline VALUE fiobj2rb(FIOBJ o, uint8_t str2sym) {
   VALUE rb;
@@ -40,7 +42,7 @@ static inline VALUE fiobj2rb(FIOBJ o, uint8_t str2sym) {
   case FIOBJ_T_DATA:    /* fallthrough */
   case FIOBJ_T_UNKNOWN: /* fallthrough */
   case FIOBJ_T_STRING: {
-    fio_cstr_s tmp = fiobj_obj2cstr(o);
+    fio_str_info_s tmp = fiobj_obj2cstr(o);
     if (str2sym) {
       rb = rb_intern2(tmp.data, tmp.len);
       rb = ID2SYM(rb);

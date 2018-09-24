@@ -5,8 +5,11 @@ License: MIT
 */
 
 /**
- * A simple ordered Hash Table implementation, with a minimal API and zero hash
- * collision protection.
+ * A simple ordered Hash Table implementation, with a minimal API.
+ *
+ * Keys types are adjustable using macros. A single C file is limited to a
+ * single key type. Keys can be strings, integers, anything. By default, keys
+ * are uint64_t.
  *
  * Unique keys are required. Full key collisions aren't handled, instead the old
  * value is replaced and returned.
@@ -149,6 +152,11 @@ FIO_FUNC inline size_t fio_hash_count(const fio_hash_s *hash);
  * This could be used for testing performance and memory consumption.
  */
 FIO_FUNC inline size_t fio_hash_capa(const fio_hash_s *hash);
+
+/**
+ * Returns non-zero if the hash is fragmented (more than 50% holes).
+ */
+FIO_FUNC inline size_t fio_hash_is_fragmented(const fio_hash_s *hash);
 
 /**
  * Attempts to minimize memory usage by removing empty spaces caused by deleted
@@ -324,20 +332,21 @@ FIO_FUNC inline uintptr_t fio_hash_map_cuckoo_steps(uintptr_t step) {
 /* seeks the hash's position in the map */
 FIO_FUNC fio_hash_data_s *fio_hash_seek_pos_(fio_hash_s *hash,
                                              FIO_HASH_KEY_TYPE key) {
+  const uint64_t hashed_key = FIO_HASH_KEY2UINT(key);
   /* TODO: consider implementing Robing Hood reordering during seek? */
-  fio_hash_data_s *pos = hash->map + (FIO_HASH_KEY2UINT(key) & hash->mask);
+  fio_hash_data_s *pos = hash->map + (hashed_key & hash->mask);
   uintptr_t i = 0;
   const uintptr_t limit = hash->capa > FIO_HASH_MAX_MAP_SEEK
                               ? FIO_HASH_MAX_MAP_SEEK
                               : ((hash->capa >> 1) | 1);
   while (i < limit) {
     if (FIO_HASH_KEY_ISINVALID(pos->key) ||
-        (FIO_HASH_KEY2UINT(pos->key) == FIO_HASH_KEY2UINT(key) &&
+        (FIO_HASH_KEY2UINT(pos->key) == hashed_key &&
          FIO_HASH_COMPARE_KEYS(pos->key, key)))
       return pos;
-    pos = hash->map + (((FIO_HASH_KEY2UINT(key) & hash->mask) +
-                        fio_hash_map_cuckoo_steps(i++)) &
-                       hash->mask);
+    pos = hash->map +
+          (((hashed_key & hash->mask) + fio_hash_map_cuckoo_steps(i++)) &
+           hash->mask);
   }
   return NULL;
 }
@@ -357,9 +366,14 @@ FIO_FUNC inline void *fio_hash_find(fio_hash_s *hash, FIO_HASH_KEY_TYPE key) {
  */
 FIO_FUNC void *fio_hash_insert(fio_hash_s *hash, FIO_HASH_KEY_TYPE key,
                                void *obj) {
+  /* nothing to do if there's nothing to do. */
+  if (!obj && !hash->count) {
+    return NULL;
+  }
   /* ensure some space */
-  if (obj && hash->pos >= hash->capa)
+  if (obj && hash->pos >= hash->capa) {
     fio_hash_rehash(hash);
+  }
 
   /* find where the object belongs in the map */
   fio_hash_data_s *info = fio_hash_seek_pos_(hash, key);
@@ -603,12 +617,19 @@ FIO_FUNC inline size_t fio_hash_count(const fio_hash_s *hash) {
 
 /**
  * Returns a temporary theoretical Hash map capacity.
- * This could be used for testig performance and memory consumption.
+ * This could be used for testing performance and memory consumption.
  */
 FIO_FUNC inline size_t fio_hash_capa(const fio_hash_s *hash) {
   if (!hash)
     return 0;
   return hash->capa;
+}
+
+/**
+ * Returns non-zero if the hash is fragmented (more than 50% holes).
+ */
+FIO_FUNC inline size_t fio_hash_is_fragmented(const fio_hash_s *hash) {
+  return (hash->pos > (hash->count << 1));
 }
 
 /**
@@ -656,7 +677,7 @@ FIO_FUNC void fio_hash_test(void) {
 #define TEST_ASSERT(cond, ...)                                                 \
   if (!(cond)) {                                                               \
     fprintf(stderr, "* " __VA_ARGS__);                                         \
-    fprintf(stderr, "Testing failed.\n");                                      \
+    fprintf(stderr, "\n !!! Testing failed !!!\n");                            \
     exit(-1);                                                                  \
   }
   fio_hash_s h = {.capa = 0};
@@ -693,13 +714,13 @@ FIO_FUNC void fio_hash_test(void) {
     fio_hash_insert(&h, 1, (void *)1);
     TEST_ASSERT(
         count + 1 == h.count,
-        "Readding a removed item should increase count by 1 (%zu + 1 != %zu).",
+        "Re-adding a removed item should increase count by 1 (%zu + 1 != %zu).",
         count, (size_t)h.count);
     TEST_ASSERT(
         pos == h.pos,
-        "Readding a removed item shouldn't change the position marker!");
+        "Re-adding a removed item shouldn't change the position marker!");
     TEST_ASSERT(fio_hash_find(&h, 1) == (void *)1,
-                "Readding a removed item should update the item (%p != 1)!",
+                "Re-adding a removed item should update the item (%p != 1)!",
                 fio_hash_find(&h, 1));
     fio_hash_insert(&h, 1, NULL);
     TEST_ASSERT(count == h.count,
@@ -738,7 +759,7 @@ FIO_FUNC void fio_hash_test(void) {
   fprintf(stderr, "* Compacting Hash to %lu\n", FIO_HASHMAP_TEXT_COUNT >> 1);
   fio_hash_compact(&h);
   {
-    fprintf(stderr, "* Testing that %lu items are continues\n",
+    fprintf(stderr, "* Testing that %lu items are continuous\n",
             FIO_HASHMAP_TEXT_COUNT >> 1);
     uintptr_t i = 0;
     FIO_HASH_FOR_LOOP(&h, pos) {
@@ -748,12 +769,45 @@ FIO_FUNC void fio_hash_test(void) {
     }
     TEST_ASSERT(i == h.count, "count error (%lu != %lu).", i, h.count);
   }
+
   fio_hash_free(&h);
-  fprintf(stderr, "* passed... without testing that FIO_HASH_KEY_DESTROY is "
-                  "called only once.\n");
+  TEST_ASSERT(!h.map && !h.ordered && !h.pos && !h.capa,
+              "Hash not re-initialized after fio_hash_free");
+
+  fio_hash_new2(&h, FIO_HASHMAP_TEXT_COUNT);
+  for (unsigned long i = 1; i < FIO_HASHMAP_TEXT_COUNT; ++i) {
+    fio_hash_insert(&h, i, (void *)i);
+    TEST_ASSERT((i == (uintptr_t)fio_hash_find(&h, i)),
+                "insertion (2nd round) != find");
+  }
+  for (unsigned long i = 1; i < FIO_HASHMAP_TEXT_COUNT; i += 2) {
+    uintptr_t old = (uintptr_t)fio_hash_insert(&h, i, NULL);
+    TEST_ASSERT(old == i, "Removal didn't return old value.");
+    TEST_ASSERT(!(fio_hash_find(&h, i)), "Removal failed (still exists).");
+  }
+  fio_hash_rehash(&h);
+  {
+    fprintf(stderr,
+            "* Testing that %lu items are continuous (after rehashing)\n",
+            FIO_HASHMAP_TEXT_COUNT >> 1);
+    uintptr_t i = 0;
+    FIO_HASH_FOR_LOOP(&h, pos) {
+      TEST_ASSERT(pos->obj, "Found a hole after compact.");
+      TEST_ASSERT(pos->key == (uintptr_t)pos->obj, "Key and value mismatch.");
+      ++i;
+    }
+    TEST_ASSERT(i == h.count, "count error (%lu != %lu) post rehash.", i,
+                h.count);
+  }
+  fio_hash_free(&h);
 }
+
+#undef TEST_ASSERT
 #endif /* DEBUG Testing */
 
+#undef FIO_HASH_REALLOC
+#undef FIO_HASH_CALLOC
+#undef FIO_HASH_FREE
 #undef FIO_FUNC
 
 #endif /* H_FIO_SIMPLE_HASH_H */

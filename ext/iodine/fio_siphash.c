@@ -5,6 +5,17 @@ License: MIT
 #include "fio_siphash.h"
 
 /* *****************************************************************************
+
+                                    NOTICE
+
+This code won't be linked to the final application when using fio.h and fio.c.
+
+The code is here only to allow the FIOBJ library to be extracted from the
+facil.io framework library.
+
+***************************************************************************** */
+
+/* *****************************************************************************
 Hashing (SipHash implementation)
 ***************************************************************************** */
 
@@ -25,7 +36,8 @@ Hashing (SipHash implementation)
 #define lrot64(i, bits)                                                        \
   (((uint64_t)(i) << (bits)) | ((uint64_t)(i) >> (64 - (bits))))
 
-uint64_t fio_siphash(const void *data, size_t len) {
+static inline uint64_t fio_siphash_xy(const void *data, size_t len, size_t x,
+                                      size_t y) {
   /* initialize the 4 words */
   uint64_t v0 = (0x0706050403020100ULL ^ 0x736f6d6570736575ULL);
   uint64_t v1 = (0x0f0e0d0c0b0a0908ULL ^ 0x646f72616e646f6dULL);
@@ -56,8 +68,9 @@ uint64_t fio_siphash(const void *data, size_t len) {
     word.i = sip_local64(*w64);
     v3 ^= word.i;
     /* Sip Rounds */
-    hash_map_SipRound;
-    hash_map_SipRound;
+    for (size_t i = 0; i < x; ++i) {
+      hash_map_SipRound;
+    }
     v0 ^= word.i;
     w64 += 1;
     len -= 8;
@@ -97,6 +110,9 @@ uint64_t fio_siphash(const void *data, size_t len) {
   /* Finalization */
   v2 ^= 0xff;
   /* d iterations of SipRound */
+  for (size_t i = 0; i < y; ++i) {
+    hash_map_SipRound;
+  }
   hash_map_SipRound;
   hash_map_SipRound;
   hash_map_SipRound;
@@ -106,3 +122,87 @@ uint64_t fio_siphash(const void *data, size_t len) {
 #undef hash_map_SipRound
   return v0;
 }
+
+#pragma weak fio_siphash24
+uint64_t __attribute__((weak)) fio_siphash24(const void *data, size_t len) {
+  return fio_siphash_xy(data, len, 2, 4);
+}
+
+#pragma weak fio_siphash13
+uint64_t __attribute__((weak)) fio_siphash13(const void *data, size_t len) {
+  return fio_siphash_xy(data, len, 1, 3);
+}
+
+#if defined(DEBUG) && DEBUG == 1
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+
+#if 0
+static void fio_siphash_speed_test(void) {
+  /* test based on code from BearSSL with credit to Thomas Pornin */
+  uint8_t buffer[8192];
+  memset(buffer, 'T', sizeof(buffer));
+  /* warmup */
+  uint64_t hash = 0;
+  for (size_t i = 0; i < 4; i++) {
+    hash += fio_siphash(buffer, sizeof(buffer));
+    memcpy(buffer, &hash, sizeof(hash));
+  }
+  /* loop until test runs for more than 2 seconds */
+  for (uint64_t cycles = 8192;;) {
+    clock_t start, end;
+    start = clock();
+    for (size_t i = cycles; i > 0; i--) {
+      hash += fio_siphash(buffer, sizeof(buffer));
+      __asm__ volatile("" ::: "memory");
+    }
+    end = clock();
+    memcpy(buffer, &hash, sizeof(hash));
+    if ((end - start) >= (2 * CLOCKS_PER_SEC) ||
+        cycles >= ((uint64_t)1 << 62)) {
+      fprintf(stderr, "%-20s %8.2f MB/s\n", "fio SipHash24",
+              (double)(sizeof(buffer) * cycles) /
+                  (((end - start) * 1000000.0 / CLOCKS_PER_SEC)));
+      break;
+    }
+    cycles <<= 2;
+  }
+  /* loop until test runs for more than 2 seconds */
+  for (uint64_t cycles = 8192;;) {
+    clock_t start, end;
+    start = clock();
+    for (size_t i = cycles; i > 0; i--) {
+      hash += fio_siphash13(buffer, sizeof(buffer));
+      __asm__ volatile("" ::: "memory");
+    }
+    end = clock();
+    memcpy(buffer, &hash, sizeof(hash));
+    if ((end - start) >= (2 * CLOCKS_PER_SEC) ||
+        cycles >= ((uint64_t)1 << 62)) {
+      fprintf(stderr, "%-20s %8.2f MB/s\n", "fio SipHash13",
+              (double)(sizeof(buffer) * cycles) /
+                  (((end - start) * 1000000.0 / CLOCKS_PER_SEC)));
+      break;
+    }
+    cycles <<= 2;
+  }
+}
+
+#endif
+
+void fiobj_siphash_test(void) {
+  fprintf(stderr, "===================================\n");
+  // fio_siphash_speed_test();
+  uint64_t result = 0;
+  clock_t start;
+  start = clock();
+  for (size_t i = 0; i < 100000; i++) {
+    char *data = "The quick brown fox jumps over the lazy dog ";
+    __asm__ volatile("" ::: "memory");
+    result += fio_siphash_xy(data, 43, 1, 3);
+  }
+  fprintf(stderr, "fio 100K SipHash: %lf\n",
+          (double)(clock() - start) / CLOCKS_PER_SEC);
+}
+#endif

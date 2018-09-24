@@ -1,6 +1,6 @@
 #include "iodine_pubsub.h"
 #include "iodine_fiobj2rb.h"
-#include "pubsub.h"
+
 #include "redis_engine.h"
 
 /*
@@ -46,9 +46,9 @@ Ruby <=> C Callbacks
 
 typedef struct {
   iodine_pubsub_s *eng;
-  FIOBJ ch;
-  FIOBJ msg;
-  uint8_t pattern;
+  fio_str_info_s ch;
+  fio_str_info_s msg;
+  fio_match_fn pattern;
 } iodine_pubsub_task_s;
 
 #define iodine_engine(eng) ((iodine_pubsub_s *)(eng))
@@ -57,21 +57,21 @@ typedef struct {
 static void *iodine_pubsub_GIL_subscribe(void *tsk_) {
   iodine_pubsub_task_s *task = tsk_;
   VALUE args[2];
-  fio_cstr_s tmp = fiobj_obj2cstr(task->ch);
-  args[0] = rb_str_new(tmp.data, tmp.len);
+  args[0] = rb_str_new(task->ch.data, task->ch.len);
   args[1] = task->pattern ? Qtrue : Qnil; // TODO: Qtrue should be :redis
   IodineCaller.call2(task->eng->handler, subscribe_id, 2, args);
   return NULL;
 }
 
 /** Must subscribe channel. Failures are ignored. */
-static void iodine_pubsub_on_subscribe(const pubsub_engine_s *eng,
-                                       FIOBJ channel, uint8_t use_pattern) {
+static void iodine_pubsub_on_subscribe(const fio_pubsub_engine_s *eng,
+                                       fio_str_info_s channel,
+                                       fio_match_fn match) {
   if (iodine_engine(eng)->handler == Qnil) {
     return;
   }
   iodine_pubsub_task_s task = {
-      .eng = iodine_engine(eng), .ch = channel, .pattern = use_pattern};
+      .eng = iodine_engine(eng), .ch = channel, .pattern = match};
   IodineCaller.enterGVL(iodine_pubsub_GIL_subscribe, &task);
 }
 
@@ -79,21 +79,21 @@ static void iodine_pubsub_on_subscribe(const pubsub_engine_s *eng,
 static void *iodine_pubsub_GIL_unsubscribe(void *tsk_) {
   iodine_pubsub_task_s *task = tsk_;
   VALUE args[2];
-  fio_cstr_s tmp = fiobj_obj2cstr(task->ch);
-  args[0] = rb_str_new(tmp.data, tmp.len);
+  args[0] = rb_str_new(task->ch.data, task->ch.len);
   args[1] = task->pattern ? Qtrue : Qnil; // TODO: Qtrue should be :redis
   IodineCaller.call2(task->eng->handler, unsubscribe_id, 2, args);
   return NULL;
 }
 
 /** Must unsubscribe channel. Failures are ignored. */
-static void iodine_pubsub_on_unsubscribe(const pubsub_engine_s *eng,
-                                         FIOBJ channel, uint8_t use_pattern) {
+static void iodine_pubsub_on_unsubscribe(const fio_pubsub_engine_s *eng,
+                                         fio_str_info_s channel,
+                                         fio_match_fn match) {
   if (iodine_engine(eng)->handler == Qnil) {
     return;
   }
   iodine_pubsub_task_s task = {
-      .eng = iodine_engine(eng), .ch = channel, .pattern = use_pattern};
+      .eng = iodine_engine(eng), .ch = channel, .pattern = match};
   IodineCaller.enterGVL(iodine_pubsub_GIL_unsubscribe, &task);
 }
 
@@ -101,33 +101,24 @@ static void iodine_pubsub_on_unsubscribe(const pubsub_engine_s *eng,
 static void *iodine_pubsub_GIL_publish(void *tsk_) {
   iodine_pubsub_task_s *task = tsk_;
   VALUE args[2];
-  fio_cstr_s tmp = fiobj_obj2cstr(task->ch);
-  args[0] = rb_str_new(tmp.data, tmp.len);
-  tmp = fiobj_obj2cstr(task->msg);
-  args[1] = rb_str_new(tmp.data, tmp.len);
+  args[0] = rb_str_new(task->ch.data, task->ch.len);
+  args[1] = rb_str_new(task->msg.data, task->msg.len);
   IodineCaller.call2(task->eng->handler, publish_id, 2, args);
   return NULL;
 }
 
 /** Should return 0 on success and -1 on failure. */
-static int iodine_pubsub_on_publish(const pubsub_engine_s *eng, FIOBJ channel,
-                                    FIOBJ msg) {
+static void iodine_pubsub_on_publish(const fio_pubsub_engine_s *eng,
+                                     fio_str_info_s channel, fio_str_info_s msg,
+                                     uint8_t is_json) {
   if (iodine_engine(eng)->handler == Qnil) {
-    return -1;
+    return;
   }
   iodine_pubsub_task_s task = {
       .eng = iodine_engine(eng), .ch = channel, .msg = msg};
   IodineCaller.enterGVL(iodine_pubsub_GIL_publish, &task);
-  return 0;
+  (void)is_json;
 }
-/**
- * facil.io will call this callback whenever starting, or restarting, the
- * reactor.
- *
- * but iodine engines should probably use the `before_fork` and `after_fork`
- * hooks.
- */
-static void iodine_pubsub_on_startup(const pubsub_engine_s *eng) { (void)eng; }
 
 /* *****************************************************************************
 Ruby methods
@@ -194,16 +185,9 @@ static VALUE iodine_pubsub_publish(VALUE self, VALUE to, VALUE message) {
     /* this is a Ruby engine, nothing to do. */
     return Qnil;
   }
-  FIOBJ ch, msg;
-  ch = fiobj_str_new(RSTRING_PTR(to), RSTRING_LEN(to));
-  msg = fiobj_str_new(RSTRING_PTR(message), RSTRING_LEN(message));
-  e->engine->publish(e->engine, ch, msg);
-  fiobj_free(ch);
-  fiobj_free(msg);
+  e->engine->publish(e->engine, IODINE_RSTRINFO(to), IODINE_RSTRINFO(message),
+                     0);
   return self;
-  (void)self;
-  (void)to;
-  (void)message;
 }
 
 /* *****************************************************************************
@@ -220,7 +204,7 @@ static void iodine_pubsub_data_mark(void *c_) {
 /* a callback for the GC (marking active objects) */
 static void iodine_pubsub_data_free(void *c_) {
   iodine_pubsub_s *data = c_;
-  pubsub_engine_deregister(data->engine);
+  fio_pubsub_detach(data->engine);
   IodineStore.remove(data->handler); /* redundant except during exit */
   if (data->dealloc) {
     data->dealloc(data->engine);
@@ -254,7 +238,6 @@ static VALUE iodine_pubsub_data_alloc_c(VALUE self) {
               .subscribe = iodine_pubsub_on_subscribe,
               .unsubscribe = iodine_pubsub_on_unsubscribe,
               .publish = iodine_pubsub_on_publish,
-              .on_startup = iodine_pubsub_on_startup,
           },
       .handler = Qnil,
       .engine = &c->do_not_touch,
@@ -266,12 +249,12 @@ static VALUE iodine_pubsub_data_alloc_c(VALUE self) {
 C engines
 ***************************************************************************** */
 
-static VALUE iodine_pubsub_make_C_engine(const pubsub_engine_s *e) {
+static VALUE iodine_pubsub_make_C_engine(const fio_pubsub_engine_s *e) {
   VALUE engine = IodineCaller.call(EngineClass, rb_intern2("new", 3));
   if (engine == Qnil) {
     return Qnil;
   }
-  iodine_pubsub_CData(engine)->engine = (pubsub_engine_s *)e;
+  iodine_pubsub_CData(engine)->engine = (fio_pubsub_engine_s *)e;
   return engine;
 }
 
@@ -292,7 +275,7 @@ static VALUE iodine_pubsub_default_set(VALUE self, VALUE engine) {
   if (e->handler == Qnil) {
     e->handler = engine;
   }
-  PUBSUB_DEFAULT_ENGINE = e->engine;
+  FIO_PUBSUB_DEFAULT = e->engine;
   rb_ivar_set(self, rb_intern2("default_engine", 14), engine);
   return engine;
 }
@@ -325,7 +308,7 @@ static VALUE iodine_pubsub_attach(VALUE self, VALUE engine) {
     e->handler = engine;
   }
   IodineStore.add(engine);
-  pubsub_engine_register(e->engine);
+  fio_pubsub_attach(e->engine);
   return engine;
   (void)self;
 }
@@ -347,7 +330,7 @@ static VALUE iodine_pubsub_detach(VALUE self, VALUE engine) {
     e->handler = engine;
   }
   IodineStore.remove(engine);
-  pubsub_engine_deregister(e->engine);
+  fio_pubsub_detach(e->engine);
   return engine;
   (void)self;
 }
@@ -366,7 +349,7 @@ static VALUE iodine_pubsub_reset(VALUE self, VALUE engine) {
   if (e->handler == Qnil) {
     e->handler = engine;
   }
-  pubsub_engine_resubscribe(e->engine);
+  fio_pubsub_reattach(e->engine);
   return engine;
   (void)self;
 }
@@ -404,9 +387,6 @@ static VALUE iodine_pubsub_redis_new(int argc, VALUE *argv, VALUE self) {
   if (RSTRING_LEN(url) > 4096) {
     rb_raise(rb_eArgError, "Redis URL too long.");
   }
-  FIOBJ port = FIOBJ_INVALID;
-  FIOBJ address = FIOBJ_INVALID;
-  FIOBJ auth = FIOBJ_INVALID;
   uint8_t ping = 0;
 
   iodine_pubsub_s *e = iodine_pubsub_CData(self);
@@ -430,113 +410,23 @@ static VALUE iodine_pubsub_redis_new(int argc, VALUE *argv, VALUE self) {
   }
 
   /* parse URL assume redis://redis:password@localhost:6379 */
-  {
-    size_t l = RSTRING_LEN(url);
-    char *str = RSTRING_PTR(url);
-    char *pointers[5];
-    char *end = str + l;
-    uint8_t flag = 1;
-    uint8_t counter = 0;
-    for (size_t i = 0; i < l; i++) {
-      if (counter > 4)
-        goto finish;
-      if (str[i] == ':' && str[i + 1] == '/' && str[i + 2] == '/') {
-        pointers[counter++] = str + i + 3;
-        i = i + 2;
-        flag = 0;
-        continue;
-      }
-      if (str[i] == '@' && counter == 1 - flag) {
-        rb_raise(rb_eArgError, "malformed URL");
-      }
-      if (str[i] == ':' || str[i] == '@') {
-        pointers[counter++] = str + i + 1;
-        continue;
-      }
-      if (str[i] == '/') {
-        end = str + i;
-        break;
-      }
-    }
-    if (flag) {
-      if (counter > 3) {
-        rb_raise(rb_eArgError, "malformed URL");
-      }
-      /* move pointers one step forward and set 0 to str... */
-      char *pointers_2[5];
-      for (size_t i = 0; i < counter; ++i) {
-        pointers_2[i + 1] = pointers[i];
-      }
-      pointers_2[0] = str;
-      ++counter;
-      for (size_t i = 0; i < counter; ++i) {
-        pointers[i] = pointers_2[i];
-      }
-    }
-    /* review results */
-    switch (counter) {
-    case 1:
-      /* redis://localhost */
-      if (pointers[0] == end) {
-        goto finish;
-      }
-      address = fiobj_str_new(pointers[0], end - pointers[0]);
-      break;
-    case 2:
-      /* redis://localhost:6379 */
-      if (pointers[1] - pointers[0] - 1 == 0) {
-        goto finish;
-      }
-      address = fiobj_str_new(pointers[0], pointers[1] - pointers[0] - 1);
-      if (pointers[1] != end) {
-        port = fiobj_str_new(pointers[1], end - pointers[1]);
-      }
-      break;
-    case 3:
-      /* redis://redis:password@localhost */
-      if (pointers[2] - pointers[1] - 1 == 0 || end - pointers[2] == 0) {
-        goto finish;
-      }
-      address = fiobj_str_new(pointers[2], end - pointers[2]);
-      auth = fiobj_str_new(pointers[1], pointers[2] - pointers[1] - 1);
-      break;
-    case 4:
-      /* redis://redis:password@localhost:6379 */
-      if (pointers[2] - pointers[1] - 1 == 0 ||
-          pointers[3] - pointers[2] - 1 == 0 || end - pointers[3] == 0) {
-        goto finish;
-      }
-      port = fiobj_str_new(pointers[3], end - pointers[3]);
-      address = fiobj_str_new(pointers[2], pointers[3] - pointers[2] - 1);
-      auth = fiobj_str_new(pointers[1], pointers[2] - pointers[1] - 1);
-      break;
-    default:
-      goto finish;
-    }
-  }
+  http_url_s info = http_url_parse(RSTRING_PTR(url), RSTRING_LEN(url));
+
   fprintf(
       stderr,
       "INFO: Initializing Redis engine for address: %s - port: %s -  auth %s\n",
-      fiobj_obj2cstr(address).data, fiobj_obj2cstr(port).data,
-      fiobj_obj2cstr(auth).data);
+      info.host.data ? info.host.data : "-",
+      info.port.data ? info.port.data : "-",
+      info.password.data ? info.password.data : "-");
   /* create engine */
-  e->engine = redis_engine_create(
-          .address = fiobj_obj2cstr(address)
-          .data,
-          .port = (port == FIOBJ_INVALID ? "6379" : fiobj_obj2cstr(port).data),
-          .ping_interval = ping,
-          .auth = (auth == FIOBJ_INVALID ? NULL : fiobj_obj2cstr(auth).data),
-          .auth_len = (auth == FIOBJ_INVALID ? 0 : fiobj_obj2cstr(auth).len));
+  e->engine = redis_engine_create(.address = info.host, .port = info.port,
+                                  .auth = info.password, .ping_interval = ping);
   if (!e->engine) {
     e->engine = &e->do_not_touch;
   } else {
     e->dealloc = redis_engine_destroy;
   }
 
-finish:
-  fiobj_free(port);
-  fiobj_free(address);
-  fiobj_free(auth);
   if (e->engine == &e->do_not_touch) {
     rb_raise(rb_eArgError,
              "Error initializing the Redis engine - malformed URL?");
@@ -548,7 +438,7 @@ finish:
 }
 
 /** A callback for Redis commands. */
-static void iodine_pubsub_redis_callback(pubsub_engine_s *e, FIOBJ response,
+static void iodine_pubsub_redis_callback(fio_pubsub_engine_s *e, FIOBJ response,
                                          void *udata) {
   VALUE block = (VALUE)udata;
   if (block == Qnil) {
@@ -622,12 +512,10 @@ static VALUE iodine_pubsub_redis_cmd(int argc, VALUE *argv, VALUE self) {
       goto wrong_type;
     }
   }
-  FIOBJ cmd = fiobj_ary_shift(data);
-  if (redis_engine_send(e->engine, cmd, data, iodine_pubsub_redis_callback,
+  if (redis_engine_send(e->engine, data, iodine_pubsub_redis_callback,
                         (void *)block)) {
     iodine_pubsub_redis_callback(e->engine, fiobj_null(), (void *)block);
   }
-  fiobj_free(cmd);
   fiobj_free(data);
   return self;
 
@@ -688,10 +576,17 @@ void iodine_pubsub_init(void) {
 
   /* CLUSTER publishes data to all the subscribers in the process cluster. */
   rb_define_const(PubSubModule, "CLUSTER",
-                  iodine_pubsub_make_C_engine(PUBSUB_CLUSTER_ENGINE));
+                  iodine_pubsub_make_C_engine(FIO_PUBSUB_CLUSTER));
   /* PROCESS publishes data to all the subscribers in a single process. */
   rb_define_const(PubSubModule, "PROCESS",
-                  iodine_pubsub_make_C_engine(PUBSUB_PROCESS_ENGINE));
+                  iodine_pubsub_make_C_engine(FIO_PUBSUB_PROCESS));
+  /* SIBLINGS publishes data to all the subscribers in the *other* processes
+   * process. */
+  rb_define_const(PubSubModule, "SIBLINGS",
+                  iodine_pubsub_make_C_engine(FIO_PUBSUB_SIBLINGS));
+  /* PUBLISH2ROOT publishes data only to the root / master process. */
+  rb_define_const(PubSubModule, "PUBLISH2ROOT",
+                  iodine_pubsub_make_C_engine(FIO_PUBSUB_ROOT));
 
   VALUE RedisClass = rb_define_class_under(PubSubModule, "Redis", EngineClass);
   rb_define_method(RedisClass, "initialize", iodine_pubsub_redis_new, -1);
