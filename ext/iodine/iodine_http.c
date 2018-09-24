@@ -6,9 +6,8 @@ Feel free to copy, use and enjoy according to the license provided.
 */
 #include "iodine.h"
 
-#include "evio.h"
-#include "fio_mem.h"
 #include "http.h"
+
 #include <ruby/encoding.h>
 #include <ruby/io.h>
 // #include "iodine_websockets.h"
@@ -131,13 +130,13 @@ static void *iodine_ws_fire_message(void *msg_) {
   return NULL;
 }
 
-static void iodine_ws_on_message(ws_s *ws, char *data, size_t size,
+static void iodine_ws_on_message(ws_s *ws, fio_str_info_s data,
                                  uint8_t is_text) {
   iodine_msg2ruby_s msg = {
-      .data = data,
-      .size = size,
+      .data = data.data,
+      .size = data.len,
       .is_text = is_text,
-      .io = (VALUE)websocket_udata(ws),
+      .io = (VALUE)websocket_udata_get(ws),
   };
   IodineCaller.enterGVL(iodine_ws_fire_message, &msg);
 }
@@ -147,7 +146,7 @@ static void iodine_ws_on_message(ws_s *ws, char *data, size_t size,
  * `on_message` events are raised before `on_open` returns.
  */
 static void iodine_ws_on_open(ws_s *ws) {
-  VALUE h = (VALUE)websocket_udata(ws);
+  VALUE h = (VALUE)websocket_udata_get(ws);
   iodine_connection_s *c = iodine_connection_CData(h);
   c->arg = ws;
   c->uuid = websocket_uuid(ws);
@@ -160,7 +159,7 @@ static void iodine_ws_on_open(ws_s *ws) {
  * If the socket's buffer is never used, the callback is never called.
  */
 static void iodine_ws_on_ready(ws_s *ws) {
-  iodine_connection_fire_event((VALUE)websocket_udata(ws),
+  iodine_connection_fire_event((VALUE)websocket_udata_get(ws),
                                IODINE_CONNECTION_ON_DRAINED, Qnil);
 }
 /**
@@ -169,7 +168,7 @@ static void iodine_ws_on_ready(ws_s *ws) {
  * `on_close`).
  */
 static void iodine_ws_on_shutdown(ws_s *ws) {
-  iodine_connection_fire_event((VALUE)websocket_udata(ws),
+  iodine_connection_fire_event((VALUE)websocket_udata_get(ws),
                                IODINE_CONNECTION_ON_SHUTDOWN, Qnil);
 }
 /**
@@ -195,7 +194,7 @@ static void iodine_ws_attach(http_s *h, VALUE handler, VALUE env) {
   if (io == Qnil)
     return;
 
-  http_upgrade2ws(.http = h, .on_message = iodine_ws_on_message,
+  http_upgrade2ws(h, .on_message = iodine_ws_on_message,
                   .on_open = iodine_ws_on_open, .on_ready = iodine_ws_on_ready,
                   .on_shutdown = iodine_ws_on_shutdown,
                   .on_close = iodine_ws_on_close, .udata = (void *)io);
@@ -226,7 +225,7 @@ static void iodine_sse_on_open(http_sse_s *sse) {
   c->uuid = http_sse2uuid(sse);
   iodine_connection_fire_event(h, IODINE_CONNECTION_ON_OPEN, Qnil);
   sse->on_ready = iodine_sse_on_ready;
-  evio_add_write(sock_uuid2fd(c->uuid), (void *)c->uuid);
+  fio_force_event(c->uuid, FIO_EVENT_ON_READY);
 }
 
 static void iodine_sse_attach(http_s *h, VALUE handler, VALUE env) {
@@ -250,7 +249,7 @@ Copying data from the C request to the Rack's ENV
 int iodine_copy2env_task(FIOBJ o, void *env_) {
   VALUE env = (VALUE)env_;
   FIOBJ name = fiobj_hash_key_in_loop();
-  fio_cstr_s tmp = fiobj_obj2cstr(name);
+  fio_str_info_s tmp = fiobj_obj2cstr(name);
   VALUE hname = (VALUE)0;
   if (tmp.len > 59) {
     char *buf = fio_malloc(tmp.len + 5);
@@ -303,7 +302,7 @@ static inline VALUE copy2env(iodine_http_request_handle_s *handle) {
   }
   IodineStore.add(env);
 
-  fio_cstr_s tmp;
+  fio_str_info_s tmp;
   char *pos = NULL;
   /* Copy basic data */
   tmp = fiobj_obj2cstr(h->method);
@@ -330,17 +329,9 @@ static inline VALUE copy2env(iodine_http_request_handle_s *handle) {
   }
 
   { // Support for Ruby web-console.
-    char buf[64];
-    buf[63] = 0;
-    sock_peer_addr_s addrinfo = http_peer_addr(h);
-    if (addrinfo.addrlen &&
-        inet_ntop(
-            addrinfo.addr->sa_family,
-            addrinfo.addr->sa_family == AF_INET
-                ? (void *)&((struct sockaddr_in *)addrinfo.addr)->sin_addr
-                : (void *)&((struct sockaddr_in6 *)addrinfo.addr)->sin6_addr,
-            buf, 64)) {
-      rb_hash_aset(env, REMOTE_ADDR, rb_str_new(buf, strlen(buf)));
+    fio_str_info_s peer = http_peer_addr(h);
+    if (peer.len) {
+      rb_hash_aset(env, REMOTE_ADDR, rb_str_new(peer.data, peer.len));
     }
   }
 
@@ -477,7 +468,7 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
   // make the headers lowercase
   FIOBJ name = fiobj_str_new(key_s, key_len);
   {
-    fio_cstr_s tmp = fiobj_obj2cstr(name);
+    fio_str_info_s tmp = fiobj_obj2cstr(name);
     for (int i = 0; i < key_len; ++i) {
       tmp.data[i] = tolower(tmp.data[i]);
     }
@@ -719,7 +710,7 @@ static inline void
 iodine_perform_handle_action(iodine_http_request_handle_s handle) {
   switch (handle.type) {
   case IODINE_HTTP_SENDBODY: {
-    fio_cstr_s data = fiobj_obj2cstr(handle.body);
+    fio_str_info_s data = fiobj_obj2cstr(handle.body);
     http_send_body(handle.h, data.data, data.len);
     fiobj_free(handle.body);
     break;
@@ -732,7 +723,7 @@ iodine_perform_handle_action(iodine_http_request_handle_s handle) {
             .len == 7)
       fiobj_hash_delete2(handle.h->private_data.out_headers,
                          fiobj_obj2hash(HTTP_HEADER_CONTENT_ENCODING));
-    fio_cstr_s data = fiobj_obj2cstr(handle.body);
+    fio_str_info_s data = fiobj_obj2cstr(handle.body);
     if (http_sendfile2(handle.h, data.data, data.len, NULL, 0)) {
       http_send_error(handle.h, 404);
     }
@@ -754,7 +745,8 @@ iodine_perform_handle_action(iodine_http_request_handle_s handle) {
 }
 static void on_rack_request(http_s *h) {
   iodine_http_request_handle_s handle = (iodine_http_request_handle_s){
-      .h = h, .upgrade = IODINE_UPGRADE_NONE,
+      .h = h,
+      .upgrade = IODINE_UPGRADE_NONE,
   };
   IodineCaller.enterGVL((void *(*)(void *))iodine_handle_request_in_GVL,
                         &handle);
@@ -794,13 +786,14 @@ void *iodine_print_http_msg_in_gvl(void *d_) {
     fprintf(stderr,
             "Iodine HTTP Server on port %s:\n"
             " *    Serving static files from %s\n\n",
-            StringValueCStr(arg->port), StringValueCStr(arg->www));
+            (arg->port ? StringValueCStr(arg->port) : "----"),
+            StringValueCStr(arg->www));
   }
   return NULL;
 }
 
 static void iodine_print_http_msg(void *www, void *port) {
-  if (getpid() != facil_parent_pid())
+  if (!fio_is_master())
     goto finish;
   struct {
     void *www;
@@ -989,7 +982,7 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
           .ws_timeout = ping, .ws_max_msg_size = max_msg,
           .max_header_size = max_headers, .on_finish = free_iodine_http,
           .log = log_http, .max_body_size = max_body,
-          .public_folder = (www ? StringValueCStr(www) : NULL))) {
+          .public_folder = (www ? StringValueCStr(www) : NULL)) == -1) {
     fprintf(stderr,
             "ERROR: Failed to initialize a listening HTTP socket for port %s\n",
             port ? StringValueCStr(port) : "3000");
@@ -1002,7 +995,7 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
             "static files.\n",
             (port ? StringValueCStr(port) : "3000"));
   }
-  defer(iodine_print_http_msg, (www ? (void *)www : NULL), (void *)port);
+  fio_defer(iodine_print_http_msg, (www ? (void *)www : NULL), (void *)port);
 
   return Qtrue;
   (void)self;

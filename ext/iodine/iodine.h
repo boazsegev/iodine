@@ -20,4 +20,7 @@ Constants
 extern VALUE IodineModule;
 extern VALUE IodineBaseModule;
 
+#define IODINE_RSTRINFO(rstr)                                                  \
+  ((fio_str_info_s){.len = RSTRING_LEN(rstr), .data = RSTRING_PTR(rstr)})
+
 #endif

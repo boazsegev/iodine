@@ -11,13 +11,48 @@ types, abstracting some complexity and making dynamic type related tasks easier.
 
 #include "fio_ary.h"
 
-#define FIO_OVERRIDE_MALLOC 1
-#include "fio_mem.h"
-
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+/* *****************************************************************************
+Use the facil.io allocator when available
+***************************************************************************** */
+
+#pragma weak fio_malloc
+void *__attribute__((weak)) fio_malloc(size_t size) {
+  void *m = malloc(size);
+  if (m)
+    memset(m, 0, size);
+  return m;
+}
+
+#pragma weak fio_calloc
+void *__attribute__((weak)) fio_calloc(size_t size, size_t count) {
+  return calloc(size, count);
+}
+
+#pragma weak fio_free
+void __attribute__((weak)) fio_free(void *ptr) { free(ptr); }
+
+#pragma weak fio_realloc
+void *__attribute__((weak)) fio_realloc(void *ptr, size_t new_size) {
+  return realloc(ptr, new_size);
+}
+
+#pragma weak fio_realloc2
+void *__attribute__((weak))
+fio_realloc2(void *ptr, size_t new_size, size_t valid_len) {
+  return realloc(ptr, new_size);
+  (void)valid_len;
+}
+
+#pragma weak fio_mmap
+void *__attribute__((weak)) fio_mmap(size_t size) { return fio_malloc(size); }
+
+#define FIO_OVERRIDE_MALLOC 1
+#include "fiobj_mem.h"
 
 /* *****************************************************************************
 the `fiobj_each2` function
@@ -77,7 +112,10 @@ size_t fiobj_each2(FIOBJ o, int (*task)(FIOBJ obj, void *arg), void *arg) {
   uintptr_t pos = 0;
   fio_ary_s stack = FIO_ARY_INIT;
   struct task_packet_s packet = {
-      .task = task, .arg = arg, .stack = &stack, .counter = 1,
+      .task = task,
+      .arg = arg,
+      .stack = &stack,
+      .counter = 1,
   };
   do {
     if (!pos)
@@ -228,9 +266,9 @@ size_t fiobject___noop_is_eq(const FIOBJ o1, const FIOBJ o2) {
   return 0;
 }
 
-fio_cstr_s fiobject___noop_to_str(const FIOBJ o) {
+fio_str_info_s fiobject___noop_to_str(const FIOBJ o) {
   (void)o;
-  return (fio_cstr_s){.len = 0, .data = NULL};
+  return (fio_str_info_s){.len = 0, .data = NULL};
 }
 intptr_t fiobject___noop_to_i(const FIOBJ o) {
   (void)o;

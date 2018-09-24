@@ -2,8 +2,7 @@
 #include <ruby/encoding.h>
 #include <ruby/io.h>
 
-#include "evio.h"
-#include "facil.h"
+#include "fio.h"
 
 /* *****************************************************************************
 Static stuff
@@ -24,7 +23,7 @@ Raw TCP/IP Protocol
 #define IODINE_MAX_READ 8192
 
 typedef struct {
-  protocol_s p;
+  fio_protocol_s p;
   VALUE io;
 } iodine_protocol_s;
 
@@ -33,11 +32,6 @@ typedef struct {
   ssize_t len;
   char buffer[IODINE_MAX_READ];
 } iodine_buffer_s;
-
-/**
- * A string to identify the protocol's service.
- */
-static const char *iodine_tcp_service = "iodine TCP/IP raw connection";
 
 /**
  * Converts an iodine_buffer_s pointer to a Ruby string.
@@ -57,21 +51,21 @@ static void *iodine_tcp_on_data_in_GIL(void *b_) {
 }
 
 /** Called when a data is available, but will not run concurrently */
-static void iodine_tcp_on_data(intptr_t uuid, protocol_s *protocol) {
+static void iodine_tcp_on_data(intptr_t uuid, fio_protocol_s *protocol) {
   iodine_buffer_s buffer;
-  buffer.len = sock_read(uuid, buffer.buffer, IODINE_MAX_READ);
+  buffer.len = fio_read(uuid, buffer.buffer, IODINE_MAX_READ);
   if (buffer.len <= 0) {
     return;
   }
   buffer.io = ((iodine_protocol_s *)protocol)->io;
   IodineCaller.enterGVL(iodine_tcp_on_data_in_GIL, &buffer);
   if (buffer.len == IODINE_MAX_READ) {
-    facil_force_event(uuid, FIO_EVENT_ON_DATA);
+    fio_force_event(uuid, FIO_EVENT_ON_DATA);
   }
 }
 
 /** called when the socket is ready to be written to. */
-static void iodine_tcp_on_ready(intptr_t uuid, protocol_s *protocol) {
+static void iodine_tcp_on_ready(intptr_t uuid, fio_protocol_s *protocol) {
   iodine_protocol_s *p = (iodine_protocol_s *)protocol;
   iodine_connection_fire_event(p->io, IODINE_CONNECTION_ON_DRAINED, Qnil);
   (void)uuid;
@@ -81,15 +75,16 @@ static void iodine_tcp_on_ready(intptr_t uuid, protocol_s *protocol) {
  * Called when the server is shutting down, immediately before closing the
  * connection.
  */
-static void iodine_tcp_on_shutdown(intptr_t uuid, protocol_s *protocol) {
+static uint8_t iodine_tcp_on_shutdown(intptr_t uuid, fio_protocol_s *protocol) {
   iodine_protocol_s *p = (iodine_protocol_s *)protocol;
   iodine_connection_fire_event(p->io, IODINE_CONNECTION_ON_SHUTDOWN, Qnil);
+  return 0;
   (void)uuid;
 }
 
 /** Called when the connection was closed, but will not run concurrently */
 
-static void iodine_tcp_on_close(intptr_t uuid, protocol_s *protocol) {
+static void iodine_tcp_on_close(intptr_t uuid, fio_protocol_s *protocol) {
   iodine_protocol_s *p = (iodine_protocol_s *)protocol;
   iodine_connection_fire_event(p->io, IODINE_CONNECTION_ON_CLOSE, Qnil);
   free(p);
@@ -97,7 +92,7 @@ static void iodine_tcp_on_close(intptr_t uuid, protocol_s *protocol) {
 }
 
 /** called when a connection's timeout was reached */
-static void iodine_tcp_ping(intptr_t uuid, protocol_s *protocol) {
+static void iodine_tcp_ping(intptr_t uuid, fio_protocol_s *protocol) {
   iodine_protocol_s *p = (iodine_protocol_s *)protocol;
   iodine_connection_fire_event(p->io, IODINE_CONNECTION_PING, Qnil);
   (void)uuid;
@@ -121,7 +116,7 @@ static void iodine_tcp_on_finish(intptr_t uuid, void *udata) {
  * The `on_connect` callback should return a pointer to a protocol object
  * that will handle any connection related events.
  *
- * Should either call `facil_attach` or close the connection.
+ * Should either call `fio_attach` or close the connection.
  */
 static void iodine_tcp_on_connect(intptr_t uuid, void *udata) {
   VALUE handler = (VALUE)udata;
@@ -233,13 +228,12 @@ static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
   if (rb_port != Qnil) {
     Check_Type(rb_port, T_STRING);
   }
-  if (facil_listen(.port = (rb_port == Qnil ? NULL : StringValueCStr(rb_port)),
-                   .address =
-                       (rb_address == Qnil ? NULL
-                                           : StringValueCStr(rb_address)),
-                   .on_open = iodine_tcp_on_open,
-                   .on_finish = iodine_tcp_on_finish,
-                   .udata = (void *)rb_handler) == -1) {
+  if (fio_listen(.port = (rb_port == Qnil ? NULL : StringValueCStr(rb_port)),
+                 .address =
+                     (rb_address == Qnil ? NULL : StringValueCStr(rb_address)),
+                 .on_open = iodine_tcp_on_open,
+                 .on_finish = iodine_tcp_on_finish,
+                 .udata = (void *)rb_handler) == -1) {
     IodineStore.remove(rb_handler);
     rb_raise(rb_eRuntimeError,
              "failed to listen to requested address, unknown error.");
@@ -289,12 +283,12 @@ static VALUE iodine_tcp_connect(VALUE self, VALUE args) {
     Check_Type(rb_timeout, T_FIXNUM);
     timeout = NUM2USHORT(rb_timeout);
   }
-  facil_connect(.port = (rb_port == Qnil ? NULL : StringValueCStr(rb_port)),
-                .address =
-                    (rb_address == Qnil ? NULL : StringValueCStr(rb_address)),
-                .on_connect = iodine_tcp_on_connect,
-                .on_fail = iodine_tcp_on_fail, .timeout = timeout,
-                .udata = (void *)rb_handler);
+  fio_connect(.port = (rb_port == Qnil ? NULL : StringValueCStr(rb_port)),
+              .address =
+                  (rb_address == Qnil ? NULL : StringValueCStr(rb_address)),
+              .on_connect = iodine_tcp_on_connect,
+              .on_fail = iodine_tcp_on_fail, .timeout = timeout,
+              .udata = (void *)rb_handler);
   return rb_handler;
   (void)self;
 }
@@ -322,7 +316,7 @@ static VALUE iodine_tcp_attach_fd(VALUE self, VALUE fd, VALUE handler) {
   if (other == -1) {
     rb_raise(rb_eIOError, "invalid fd.");
   }
-  intptr_t uuid = sock_open(other);
+  intptr_t uuid = fio_fd2uuid(other);
   iodine_tcp_attch_uuid(uuid, handler);
   IodineStore.remove(handler);
   return handler;
@@ -355,7 +349,7 @@ Allow uuid attachment
 /** assigns a protocol and IO object to a handler */
 void iodine_tcp_attch_uuid(intptr_t uuid, VALUE handler) {
   if (handler == Qnil || handler == Qfalse || handler == Qtrue) {
-    sock_close(uuid);
+    fio_close(uuid);
     return;
   }
   /* temporary, in case `iodine_connection_new` invokes the GC */
@@ -367,7 +361,6 @@ void iodine_tcp_attch_uuid(intptr_t uuid, VALUE handler) {
   *p = (iodine_protocol_s){
       .p =
           {
-              .service = iodine_tcp_service,
               .on_data = iodine_tcp_on_data,
               .on_ready = NULL /* set only after the on_open callback */,
               .on_shutdown = iodine_tcp_on_shutdown,
@@ -378,8 +371,7 @@ void iodine_tcp_attch_uuid(intptr_t uuid, VALUE handler) {
                                   .arg = p, .handler = handler),
   };
   /* clear away (remember the connection object manages these concerns) */
-  facil_attach(uuid, &p->p);
+  fio_attach(uuid, &p->p);
   iodine_connection_fire_event(p->io, IODINE_CONNECTION_ON_OPEN, Qnil);
   p->p.on_ready = iodine_tcp_on_ready;
-  evio_add_write(sock_uuid2fd(uuid), (void *)uuid);
 }

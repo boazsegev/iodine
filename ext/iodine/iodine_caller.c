@@ -1,6 +1,7 @@
 #include "iodine_caller.h"
 
 #include <ruby/thread.h>
+#include <string.h>
 
 static __thread volatile uint8_t iodine_GVL_state;
 
@@ -91,7 +92,10 @@ static void *iodine_leaveGVL(void *(*func)(void *), void *arg) {
 /** Calls a Ruby method on a given object, protecting against exceptions. */
 static VALUE iodine_call(VALUE obj, ID method) {
   iodine_rb_task_s task = {
-      .obj = obj, .argc = 0, .argv = NULL, .method = method,
+      .obj = obj,
+      .argc = 0,
+      .argv = NULL,
+      .method = method,
   };
   void *rv = iodine_enterGVL(iodine_protect_ruby_call, &task);
   return (VALUE)rv;
@@ -100,7 +104,10 @@ static VALUE iodine_call(VALUE obj, ID method) {
 /** Calls a Ruby method on a given object, protecting against exceptions. */
 static VALUE iodine_call2(VALUE obj, ID method, int argc, VALUE *argv) {
   iodine_rb_task_s task = {
-      .obj = obj, .argc = argc, .argv = argv, .method = method,
+      .obj = obj,
+      .argc = argc,
+      .argv = argv,
+      .method = method,
   };
   void *rv = iodine_enterGVL(iodine_protect_ruby_call, &task);
   return (VALUE)rv;

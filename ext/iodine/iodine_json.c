@@ -1,8 +1,9 @@
 #include "iodine.h"
 
+#include "fio.h"
+
 #include "fio_ary.h"
 #include "fio_json_parser.h"
-#include "fio_mem.h"
 #include "fiobj.h"
 #include "iodine_fiobj2rb.h"
 #include "iodine_store.h"

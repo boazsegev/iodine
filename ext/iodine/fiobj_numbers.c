@@ -7,7 +7,7 @@ License: MIT
 #include "fiobject.h"
 
 #define FIO_OVERRIDE_MALLOC 1
-#include "fio_mem.h"
+#include "fiobj_mem.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -46,22 +46,24 @@ static double fio_f2f(const FIOBJ o) { return obj2float(o)->f; }
 static size_t fio_itrue(const FIOBJ o) { return (obj2num(o)->i != 0); }
 static size_t fio_ftrue(const FIOBJ o) { return (obj2float(o)->f != 0); }
 
-static fio_cstr_s fio_i2str(const FIOBJ o) {
-  return (fio_cstr_s){
-      .buffer = num_buffer, .len = fio_ltoa(num_buffer, obj2num(o)->i, 10),
+static fio_str_info_s fio_i2str(const FIOBJ o) {
+  return (fio_str_info_s){
+      .data = num_buffer,
+      .len = fio_ltoa(num_buffer, obj2num(o)->i, 10),
   };
 }
-static fio_cstr_s fio_f2str(const FIOBJ o) {
+static fio_str_info_s fio_f2str(const FIOBJ o) {
   if (isnan(obj2float(o)->f))
-    return (fio_cstr_s){.buffer = "NaN", .len = 3};
+    return (fio_str_info_s){.data = "NaN", .len = 3};
   else if (isinf(obj2float(o)->f)) {
     if (obj2float(o)->f > 0)
-      return (fio_cstr_s){.buffer = "Infinity", .len = 8};
+      return (fio_str_info_s){.data = "Infinity", .len = 8};
     else
-      return (fio_cstr_s){.buffer = "-Infinity", .len = 9};
+      return (fio_str_info_s){.data = "-Infinity", .len = 9};
   }
-  return (fio_cstr_s){
-      .buffer = num_buffer, .len = fio_ftoa(num_buffer, obj2float(o)->f, 10),
+  return (fio_str_info_s){
+      .data = num_buffer,
+      .len = fio_ftoa(num_buffer, obj2float(o)->f, 10),
   };
 }
 
@@ -111,7 +113,8 @@ FIOBJ fiobj_num_new_bignum(intptr_t num) {
   *o = (fiobj_num_s){
       .head =
           {
-              .type = FIOBJ_T_NUMBER, .ref = 1,
+              .type = FIOBJ_T_NUMBER,
+              .ref = 1,
           },
       .i = num,
   };
@@ -128,7 +131,8 @@ FIOBJ fiobj_num_new_bignum(intptr_t num) {
 FIOBJ fiobj_num_tmp(intptr_t num) {
   static __thread fiobj_num_s ret;
   ret = (fiobj_num_s){
-      .head = {.type = FIOBJ_T_NUMBER, .ref = ((~(uint32_t)0) >> 4)}, .i = num,
+      .head = {.type = FIOBJ_T_NUMBER, .ref = ((~(uint32_t)0) >> 4)},
+      .i = num,
   };
   return (FIOBJ)&ret;
 }
@@ -147,7 +151,8 @@ FIOBJ fiobj_float_new(double num) {
   *o = (fiobj_float_s){
       .head =
           {
-              .type = FIOBJ_T_FLOAT, .ref = 1,
+              .type = FIOBJ_T_FLOAT,
+              .ref = 1,
           },
       .f = num,
   };
@@ -166,7 +171,8 @@ FIOBJ fiobj_float_tmp(double num) {
   ret = (fiobj_float_s){
       .head =
           {
-              .type = FIOBJ_T_FLOAT, .ref = ((~(uint32_t)0) >> 4),
+              .type = FIOBJ_T_FLOAT,
+              .ref = ((~(uint32_t)0) >> 4),
           },
       .f = num,
   };
@@ -174,26 +180,28 @@ FIOBJ fiobj_float_tmp(double num) {
 }
 
 /* *****************************************************************************
-Number and Float Helpers
+Strings to Numbers
 ***************************************************************************** */
-static const char hex_notation[] = {'0', '1', '2', '3', '4', '5', '6', '7',
-                                    '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
 
 /**
  * A helper function that converts between String data to a signed int64_t.
  *
- * Numbers are assumed to be in base 10. `0x##` (or `x##`) and `0b##` (or
- * `b##`) are recognized as base 16 and base 2 (binary MSB first)
- * respectively.
+ * Numbers are assumed to be in base 10. Octal (`0###`), Hex (`0x##`/`x##`) and
+ * binary (`0b##`/ `b##`) are recognized as well. For binary Most Significant
+ * Bit must come first.
+ *
+ * The most significant differance between this function and `strtol` (aside of
+ * API design), is the added support for binary representations.
  */
-intptr_t fio_atol(char **pstr) {
-  /* use strtol ?*/
+#pragma weak fio_atol
+int64_t __attribute__((weak)) fio_atol(char **pstr) {
+  /* No binary representation in strtol */
   char *str = *pstr;
-  uintptr_t result = 0;
+  uint64_t result = 0;
   uint8_t invert = 0;
   while (str[0] == '-') {
     invert ^= 1;
-    str++;
+    ++str;
   }
   if (str[0] == 'B' || str[0] == 'b' ||
       (str[0] == '0' && (str[1] == 'b' || str[1] == 'B'))) {
@@ -212,7 +220,7 @@ intptr_t fio_atol(char **pstr) {
     if (str[0] == '0')
       str++;
     str++;
-    while (1) {
+    for (;;) {
       if (str[0] >= '0' && str[0] <= '9')
         tmp = str[0] - '0';
       else if (str[0] >= 'A' && str[0] <= 'F')
@@ -222,6 +230,19 @@ intptr_t fio_atol(char **pstr) {
       else
         goto finish;
       result = (result << 4) | tmp;
+      str++;
+    }
+  } else if (str[0] == '0') {
+    ++str;
+    /* base 8 */
+    const char *end = str;
+    while (end[0] >= '0' && end[0] <= '7' && (uintptr_t)(end - str) < 22)
+      end++;
+    if ((uintptr_t)(end - str) > 21) /* TODO: fix too large for a number */
+      return 0;
+
+    while (str < end) {
+      result = (result * 8) + (str[0] - '0');
       str++;
     }
   } else {
@@ -241,107 +262,184 @@ finish:
   if (invert)
     result = 0 - result;
   *pstr = str;
-  return (intptr_t)result;
+  return (int64_t)result;
 }
 
-/** A helper function that convers between String data to a signed double. */
-double fio_atof(char **pstr) { return strtold(*pstr, pstr); }
+/** A helper function that converts between String data to a signed double. */
+#pragma weak fio_atof
+double __attribute__((weak)) fio_atof(char **pstr) {
+  return strtold(*pstr, pstr);
+}
 
 /* *****************************************************************************
 Numbers to Strings
 ***************************************************************************** */
 
 /**
- * A helper function that convers between a signed int64_t to a string.
+ * A helper function that writes a signed int64_t to a string.
  *
- * No overflow guard is provided, make sure there's at least 66 bytes
+ * No overflow guard is provided, make sure there's at least 68 bytes
  * available (for base 2).
  *
- * Supports base 2, base 10 and base 16. An unsupported base will silently
- * default to base 10. Prefixes aren't added (i.e., no "0x" or "0b" at the
- * beginning of the string).
+ * Offers special support for base 2 (binary), base 8 (octal), base 10 and base
+ * 16 (hex). An unsupported base will silently default to base 10. Prefixes
+ * are automatically added (i.e., "0x" for hex and "0b" for base 2).
  *
  * Returns the number of bytes actually written (excluding the NUL
  * terminator).
  */
-size_t fio_ltoa(char *dest, int64_t num, uint8_t base) {
-  if (!num) {
-    *(dest++) = '0';
-    *(dest++) = 0;
-    return 1;
-  }
+#pragma weak fio_ltoa
+size_t __attribute__((weak)) fio_ltoa(char *dest, int64_t num, uint8_t base) {
+  const char notation[] = {'0', '1', '2', '3', '4', '5', '6', '7',
+                           '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
 
   size_t len = 0;
+  char buf[48]; /* we only need up to 20 for base 10, but base 3 needs 41... */
 
-  if (base == 2) {
-    uint64_t n = num; /* avoid bit shifting inconsistencies with signed bit */
-    uint8_t i = 0;    /* counting bits */
+  if (!num)
+    goto zero;
 
-    while ((i < 64) && (n & 0x8000000000000000) == 0) {
-      n = n << 1;
-      i++;
-    }
-    /* make sure the Binary representation doesn't appear signed. */
-    if (i) {
+  switch (base) {
+  case 1:
+  case 2:
+    /* Base 2 */
+    {
+      uint64_t n = num; /* avoid bit shifting inconsistencies with signed bit */
+      uint8_t i = 0;    /* counting bits */
       dest[len++] = '0';
+      dest[len++] = 'b';
+
+      while ((i < 64) && (n & 0x8000000000000000) == 0) {
+        n = n << 1;
+        i++;
+      }
+      /* make sure the Binary representation doesn't appear signed. */
+      if (i) {
+        dest[len++] = '0';
+      }
+      /* write to dest. */
+      while (i < 64) {
+        dest[len++] = ((n & 0x8000000000000000) ? '1' : '0');
+        n = n << 1;
+        i++;
+      }
+      dest[len] = 0;
+      return len;
     }
-    /* write to dest. */
-    while (i < 64) {
-      dest[len++] = ((n & 0x8000000000000000) ? '1' : '0');
-      n = n << 1;
-      i++;
+  case 8:
+    /* Base 8 */
+    {
+      uint64_t l = 0;
+      if (num < 0) {
+        dest[len++] = '-';
+        num = 0 - num;
+      }
+      dest[len++] = '0';
+
+      while (num) {
+        buf[l++] = '0' + (num & 7);
+        num = num >> 3;
+      }
+      while (l) {
+        --l;
+        dest[len++] = buf[l];
+      }
+      dest[len] = 0;
+      return len;
+    }
+
+  case 16:
+    /* Base 16 */
+    {
+      uint64_t n = num; /* avoid bit shifting inconsistencies with signed bit */
+      uint8_t i = 0;    /* counting bits */
+      dest[len++] = '0';
+      dest[len++] = 'x';
+      while (i < 8 && (n & 0xFF00000000000000) == 0) {
+        n = n << 8;
+        i++;
+      }
+      /* make sure the Hex representation doesn't appear signed. */
+      if (i && (n & 0x8000000000000000)) {
+        dest[len++] = '0';
+        dest[len++] = '0';
+      }
+      /* write the damn thing */
+      while (i < 8) {
+        uint8_t tmp = (n & 0xF000000000000000) >> 60;
+        dest[len++] = notation[tmp];
+        tmp = (n & 0x0F00000000000000) >> 56;
+        dest[len++] = notation[tmp];
+        i++;
+        n = n << 8;
+      }
+      dest[len] = 0;
+      return len;
+    }
+  case 3:
+  case 4:
+  case 5:
+  case 6:
+  case 7:
+  case 9:
+    /* rare bases */
+    if (num < 0) {
+      dest[len++] = '-';
+      num = 0 - num;
+    }
+    uint64_t l = 0;
+    while (num) {
+      uint64_t t = num / base;
+      buf[l++] = '0' + (num - (t * base));
+      num = t;
+    }
+    while (l) {
+      --l;
+      dest[len++] = buf[l];
     }
     dest[len] = 0;
     return len;
 
-  } else if (base == 16) {
-    uint64_t n = num; /* avoid bit shifting inconsistencies with signed bit */
-    uint8_t i = 0;    /* counting bytes */
-    while (i < 8 && (n & 0xFF00000000000000) == 0) {
-      n = n << 8;
-      i++;
-    }
-    /* make sure the Hex representation doesn't appear signed. */
-    if (i && (n & 0x8000000000000000)) {
-      dest[len++] = '0';
-      dest[len++] = '0';
-    }
-    /* write the damn thing */
-    while (i < 8) {
-      uint8_t tmp = (n & 0xF000000000000000) >> 60;
-      dest[len++] = hex_notation[tmp];
-      tmp = (n & 0x0F00000000000000) >> 56;
-      dest[len++] = hex_notation[tmp];
-      i++;
-      n = n << 8;
-    }
-    dest[len] = 0;
-    return len;
+  default:
+    break;
   }
+  /* Base 10, the default base */
 
-  /* fallback to base 10 */
-  uint64_t rem = 0;
-  uint64_t factor = 1;
   if (num < 0) {
     dest[len++] = '-';
     num = 0 - num;
   }
-
-  while (num / factor)
-    factor *= 10;
-
-  while (factor > 1) {
-    factor = factor / 10;
-    rem = (rem * 10);
-    dest[len++] = '0' + ((num / factor) - rem);
-    rem += ((num / factor) - rem);
+  uint64_t l = 0;
+  while (num) {
+    uint64_t t = num / 10;
+    buf[l++] = '0' + (num - (t * 10));
+    num = t;
   }
+  while (l) {
+    --l;
+    dest[len++] = buf[l];
+  }
+  dest[len] = 0;
+  return len;
+
+zero:
+  switch (base) {
+  case 1:
+  case 2:
+    dest[len++] = '0';
+    dest[len++] = 'b';
+  case 16:
+    dest[len++] = '0';
+    dest[len++] = 'x';
+    dest[len++] = '0';
+  }
+  dest[len++] = '0';
   dest[len] = 0;
   return len;
 }
 
 /**
- * A helper function that convers between a double to a string.
+ * A helper function that converts between a double to a string.
  *
  * No overflow guard is provided, make sure there's at least 130 bytes
  * available (for base 2).
@@ -353,7 +451,8 @@ size_t fio_ltoa(char *dest, int64_t num, uint8_t base) {
  * Returns the number of bytes actually written (excluding the NUL
  * terminator).
  */
-size_t fio_ftoa(char *dest, double num, uint8_t base) {
+#pragma weak fio_ftoa
+size_t __attribute__((weak)) fio_ftoa(char *dest, double num, uint8_t base) {
   if (base == 2 || base == 16) {
     /* handle the binary / Hex representation the same as if it were an
      * int64_t
@@ -381,13 +480,19 @@ size_t fio_ftoa(char *dest, double num, uint8_t base) {
   return written;
 }
 
+/* *****************************************************************************
+Numbers to Strings - Buffered
+***************************************************************************** */
+
 static __thread char num_buffer[512];
 
-fio_cstr_s fio_ltocstr(long i) {
-  return (fio_cstr_s){.buffer = num_buffer, .len = fio_ltoa(num_buffer, i, 10)};
+fio_str_info_s fio_ltocstr(long i) {
+  return (fio_str_info_s){.data = num_buffer,
+                          .len = fio_ltoa(num_buffer, i, 10)};
 }
-fio_cstr_s fio_ftocstr(double f) {
-  return (fio_cstr_s){.buffer = num_buffer, .len = fio_ftoa(num_buffer, f, 10)};
+fio_str_info_s fio_ftocstr(double f) {
+  return (fio_str_info_s){.data = num_buffer,
+                          .len = fio_ftoa(num_buffer, f, 10)};
 }
 
 /* *****************************************************************************

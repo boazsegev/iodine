@@ -8,6 +8,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.6.5
 
+**Update**: (facil.io) Updated to facil.io version 0.7.0 (edge). This could effect memory consumption behavior but otherwise shouldn't effect iodine all that much. 
+
+#### Change log v.0.6.5
+
 **Fix**: (facil.io - logging) Fix typo in log output. Credit to @bjeanes (Bo Jeanes) for PR #39.
 
 #### Change log v.0.6.4
