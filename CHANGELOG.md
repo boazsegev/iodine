@@ -6,7 +6,9 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
-#### Change log v.0.6.5
+#### Change log v.0.6.6
+
+**Fix**: Fixed a documentation error. Credit to @Fonsan (Erik Fonselius) for PR #41.
 
 **Update**: (facil.io) Updated to facil.io version 0.7.0 (edge). This could effect memory consumption behavior but otherwise shouldn't effect iodine all that much. 
 
