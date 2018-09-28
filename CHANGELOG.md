@@ -10,6 +10,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: Fixed a documentation error. Credit to @Fonsan (Erik Fonselius) for PR #41.
 
+**Feature**: (mustache) Added a bridge to facil.io's mustache template rendering engine. This isn't really a server concern, but [facil.io's C code](http://facil.io) includes this functionality anyway and it offers increased XSS protection by utilizing aggressive HTML escaping (and it's also faster than the Ruby canonical version).
+
 **Update**: (facil.io) Updated to facil.io version 0.7.0 (edge). This could effect memory consumption behavior but otherwise shouldn't effect iodine all that much. 
 
 #### Change log v.0.6.5
