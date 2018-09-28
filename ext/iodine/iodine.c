@@ -195,6 +195,7 @@ static VALUE iodine_start(VALUE self) {
   if (fio_is_running()) {
     rb_raise(rb_eRuntimeError, "Iodine already running!");
   }
+  IodineCaller.set_GVL(1);
   VALUE threads_rb = iodine_threads_get(self);
   VALUE workers_rb = iodine_workers_get(self);
   iodine_start_params_s params = {
