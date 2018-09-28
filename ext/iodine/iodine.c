@@ -206,6 +206,17 @@ static VALUE iodine_start(VALUE self) {
   return self;
 }
 
+/**
+ * This will stop the iodine server, shutting it down.
+ *
+ * If called within a worker process (rather than the root/master process), this
+ * will cause a hot-restart for the worker.
+ */
+static VALUE iodine_stop(VALUE self) {
+  fio_stop();
+  return self;
+}
+
 /* *****************************************************************************
 Ruby loads the library and invokes the Init_<lib_name> function...
 
@@ -230,6 +241,7 @@ void Init_iodine(void) {
   rb_define_module_function(IodineModule, "workers", iodine_workers_get, 0);
   rb_define_module_function(IodineModule, "workers=", iodine_workers_set, 1);
   rb_define_module_function(IodineModule, "start", iodine_start, 0);
+  rb_define_module_function(IodineModule, "stop", iodine_stop, 0);
   rb_define_module_function(IodineModule, "on_idle", iodine_sched_on_idle, 0);
 
   // initialize Object storage for GC protection
