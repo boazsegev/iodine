@@ -411,7 +411,10 @@ int fio_is_closed(intptr_t uuid) {
   return !uuid_is_valid(uuid) || !uuid_data(uuid).open || uuid_data(uuid).close;
 }
 
-void fio_stop(void) { fio_data->active = 0; }
+void fio_stop(void) {
+  if (fio_data)
+    fio_data->active = 0;
+}
 
 /* public API. */
 int16_t fio_is_running(void) { return fio_data && fio_data->active; }
@@ -3291,7 +3294,7 @@ static void fio_worker_startup(void) {
   }
 }
 
-/* TODO: fixme */
+/* performs all clean-up / shutdown requirements except for the exit sequence */
 static void fio_worker_cleanup(void) {
   /* switch to winding down */
   if (fio_data->is_worker)
@@ -3320,6 +3323,7 @@ static void fio_worker_cleanup(void) {
       ;
   }
   fio_defer_perform();
+  fio_signal_handler_reset();
   if (fio_data->parent == getpid()) {
     FIO_LOG_STATE("\n   ---  Shutdown Complete  ---\n");
   } else {
@@ -3440,7 +3444,6 @@ void fio_start FIO_IGNORE_MACRO(struct fio_start_args args) {
   }
   fio_worker_startup();
   fio_worker_cleanup();
-  fio_signal_handler_reset();
 }
 
 /* *****************************************************************************
