@@ -3,7 +3,7 @@ require 'socket'
 require 'iodine/version'
 require 'iodine/iodine'
 
-# Iodine is an HTTP / WebSocket server as well as an Evented Network Tool Library.
+# Iodine is an HTTP / WebSocket server as well as an Evented Network Tool Library. In essense, Iodine is a Ruby port for the [facil.io](http://facil.io) C library.
 #
 # Here is a simple telnet based echo server using Iodine (see full list at {Iodine::Connection}):
 #

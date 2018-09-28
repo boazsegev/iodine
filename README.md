@@ -19,11 +19,11 @@ Iodine is a fast concurrent web server for real-time Ruby applications, with nat
 * Custom protocol authoring;
 * and more!
 
-Iodine is an **evented** framework with a simple API that builds off the low level [C code library facil.io](https://github.com/boazsegev/facil.io) with support for **epoll** and **kqueue** - this means that:
+Iodine is an **evented** framework with a simple API that ports much of the [C facil.io framework](https://github.com/boazsegev/facil.io) to Ruby. This means that:
 
 * Iodine can handle **thousands of concurrent connections** (tested with more then 20K connections on Linux)!
 
-* Iodine supports only **Linux/Unix** based systems (i.e. macOS, Ubuntu, FreeBSD etc'), which are ideal for evented IO (while Windows and Solaris are better at IO *completion* events, which are totally different).
+* Iodine is ideal for **Linux/Unix** based systems (i.e. macOS, Ubuntu, FreeBSD etc'), which are ideal for evented IO (while Windows and Solaris are better at IO *completion* events, which are totally different).
 
 Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but Rack requires Ruby 2.2.2, and so iodine matches this requirement.
 
