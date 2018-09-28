@@ -250,6 +250,9 @@ void Init_iodine(void) {
   // initialize JSON helpers
   iodine_init_json();
 
+  // initialize Mustache engine
+  iodine_init_mustache();
+
   // initialize Rack helpers and IO
   iodine_init_helpers();
   IodineRackIO.init();

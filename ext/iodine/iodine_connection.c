@@ -787,8 +787,7 @@ void iodine_connection_init(void) {
   IodineStore.add(RAWSymbol);
 
   // define the Connection Class and it's methods
-  ConnectionKlass =
-      rb_define_class_under(IodineModule, "Connection", rb_cObject);
+  ConnectionKlass = rb_define_class_under(IodineModule, "Connection", rb_cData);
   rb_define_alloc_func(ConnectionKlass, iodine_connection_data_alloc_c);
   rb_define_method(ConnectionKlass, "write", iodine_connection_write, 1);
   rb_define_method(ConnectionKlass, "close", iodine_connection_close, 0);
