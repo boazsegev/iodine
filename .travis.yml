@@ -28,6 +28,4 @@ script:
   - gem uninstall -x iodine
   - CC=gcc find pkg/iodine-*.gem -exec gem install {} +
   - gem uninstall -x iodine
-  - CC=gcc-4 find pkg/iodine-*.gem -exec gem install {} +
-  - gem uninstall -x iodine
   - CC=gcc-5 find pkg/iodine-*.gem -exec gem install {} +
