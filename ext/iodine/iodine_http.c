@@ -776,37 +776,6 @@ Listenninng to HTTP
 *****************************************************************************
 */
 
-void *iodine_print_http_msg_in_gvl(void *d_) {
-  // Write message
-  struct {
-    VALUE www;
-    VALUE port;
-  } *arg = d_;
-  if (arg->www) {
-    fprintf(stderr,
-            "Iodine HTTP Server on port %s:\n"
-            " *    Serving static files from %s\n\n",
-            (arg->port ? StringValueCStr(arg->port) : "----"),
-            StringValueCStr(arg->www));
-  }
-  return NULL;
-}
-
-static void iodine_print_http_msg(void *www, void *port) {
-  if (!fio_is_master())
-    goto finish;
-  struct {
-    void *www;
-    void *port;
-  } data = {.www = www, .port = port};
-  IodineCaller.enterGVL(iodine_print_http_msg_in_gvl, (void *)&data);
-finish:
-  if (www) {
-    IodineStore.remove((VALUE)www);
-  }
-  IodineStore.remove((VALUE)port);
-}
-
 static void free_iodine_http(http_settings_s *s) {
   IodineStore.remove((VALUE)s->udata);
 }
@@ -995,7 +964,10 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
             "static files.\n",
             (port ? StringValueCStr(port) : "3000"));
   }
-  fio_defer(iodine_print_http_msg, (www ? (void *)www : NULL), (void *)port);
+  if (www) {
+    fprintf(stderr, " *    Serving static files from %s\n",
+            StringValueCStr(www));
+  }
 
   return Qtrue;
   (void)self;
