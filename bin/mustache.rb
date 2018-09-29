@@ -25,6 +25,7 @@ def benchmark_mustache
   """
 
   IO.write "test_template.mustache", template
+  filename = "test_template.mustache"
 
   data_1 = {
     products: [ {
@@ -33,31 +34,6 @@ def benchmark_mustache
       :image=>"products/product.jpg"
     } ]
   }
-
-  data_10 = {
-    products: []
-  }
-
-  10.times do
-    data_10[:products] << {
-      :external_index=>"product",
-      :url=>"/products/7",
-      :image=>"products/product.jpg"
-    }
-  end
-
-  data_100 = {
-    products: []
-  }
-
-  100.times do
-    data_100[:products] << {
-      :external_index=>"product",
-      :url=>"/products/7",
-      :image=>"products/product.jpg"
-    }
-  end
-
   data_1000 = {
     products: []
   }
@@ -85,30 +61,18 @@ def benchmark_mustache
   view = Mustache.new
   view.template = template
   view.render # Call render once so the template will be compiled
-  iodine_view = Iodine::Mustache.new("test_template")
+  iodine_view = Iodine::Mustache.new(filename)
 
   puts "Ruby Mustache rendering (and HTML escaping) results in:",
        view.render(data_1), "",
        "Notice that Iodine::Mustache rendering (and HTML escaping) results in agressive escaping:",
-       iodine_view.render(data_1), "", "----"
+       iodine_view.render(data_1), "", "----",
+       "Uncached -- Notice that Iodine::Mustache rendering (and HTML escaping) results in agressive escaping:",
+       Iodine::Mustache.render(filename, data_1), "", "----"
 
   # return;
 
   Benchmark.ips do |x|
-    x.report("Ruby Mustache render list of 10") do |times|
-      view.render(data_10)
-    end
-    x.report("Iodine::Mustache render list of 10") do |times|
-      iodine_view.render(data_10)
-    end
-
-    x.report("Ruby Mustache render list of 100") do |times|
-      view.render(data_100)
-    end
-    x.report("Iodine::Mustache render list of 100") do |times|
-      iodine_view.render(data_100)
-    end
-
     x.report("Ruby Mustache render list of 1000") do |times|
       view.render(data_1000)
     end
@@ -122,6 +86,16 @@ def benchmark_mustache
     x.report("Iodine::Mustache render list of 1000 with escaped data") do |times|
       iodine_view.render(data_1000_escaped)
     end
+
+    x.report("Ruby Mustache - no chaching - render list of 1000") do |times|
+      tmp = Mustache.new
+      tmp.template = template
+      tmp.render(data_1000)
+    end
+    x.report("Iodine::Mustache - no chaching - render list of 1000") do |times|
+      Iodine::Mustache.render(filename, data_1000)
+    end
+
   end
 end
 
