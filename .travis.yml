@@ -4,6 +4,7 @@ os:
   # - osx
 before_install:
   - gem install bundler -v 1.10.6
+  - bundle install
 rvm:
   - 2.5.0
   - 2.4.0
@@ -21,8 +22,9 @@ addons:
       - gcc-4.9
       - gcc-5
 script:
-  - CC=gcc-4.9 bundle install --jobs=3 --retry=3
   - gem uninstall iodine
-  - CC=gcc-5 bundle install --jobs=3 --retry=3
+  - CC=gcc-4.9 rake install --jobs=3 --retry=3
   - gem uninstall iodine
-  - bundle install --jobs=3 --retry=3
+  - CC=gcc-5 rake install --jobs=3 --retry=3
+  - gem uninstall iodine
+  - rake install --jobs=3 --retry=3
