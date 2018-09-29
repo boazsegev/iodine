@@ -66,9 +66,7 @@ def benchmark_mustache
   puts "Ruby Mustache rendering (and HTML escaping) results in:",
        view.render(data_1), "",
        "Notice that Iodine::Mustache rendering (and HTML escaping) results in agressive escaping:",
-       iodine_view.render(data_1), "", "----",
-       "Uncached -- Notice that Iodine::Mustache rendering (and HTML escaping) results in agressive escaping:",
-       Iodine::Mustache.render(filename, data_1), "", "----"
+       iodine_view.render(data_1), "", "----"
 
   # return;
 
@@ -93,7 +91,7 @@ def benchmark_mustache
       tmp.render(data_1000)
     end
     x.report("Iodine::Mustache - no chaching - render list of 1000") do |times|
-      Iodine::Mustache.render(filename, data_1000)
+      Iodine::Mustache.render(nil, data_1000, template)
     end
 
   end
