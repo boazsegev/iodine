@@ -338,7 +338,7 @@ Rendering
 /**
 Renders the mustache template using the data provided in the `data` argument.
 
-Returns a String.
+Returns a String with the rendered template.
 
 Raises an exception on error.
 
@@ -363,6 +363,93 @@ static VALUE iodine_mustache_render(VALUE self, VALUE data) {
   return ret;
 
 error:
+  fio_str_free(&str);
+  rb_raise(rb_eRuntimeError, "Couldn't build template frome data.");
+}
+
+/**
+Renders the mustache template found in `filename`, using the data provided in
+the `data` argument.
+
+Returns a String with the rendered template.
+
+Raises an exception on error.
+
+    filename = "templates/index"
+    data = {title: "Home"}
+    result = Iodine::Mustache.render(filename, data)
+
+NOTE 1:
+
+This function doesn't cache the template data.
+
+The more complext the template the higher the cost of the template parsing
+stage.
+
+Consider creating a persistent template object using {#new} and using the
+instance {#render} method.
+
+NOTE 2:
+
+As one might notice, no binding is provided. Instead, a `data` Hash is assumed.
+Iodine will search the Hash for any data while protecting against code
+execution.
+*/
+static VALUE iodine_mustache_render_klass(VALUE self, VALUE filename,
+                                          VALUE data) {
+  Check_Type(filename, T_STRING);
+  fio_str_s str = FIO_STR_INIT;
+
+  mustache_s *m = NULL;
+  mustache_error_en err;
+  m = mustache_load(.filename = RSTRING_PTR(filename),
+                    .filename_len = RSTRING_LEN(filename), .err = &err);
+  if (!m)
+    goto error;
+
+  int e = mustache_build(m, .udata1 = &str, .udata2 = (void *)data);
+  mustache_free(m);
+  if (e)
+    goto render_error;
+  fio_str_info_s i = fio_str_info(&str);
+  VALUE ret = rb_str_new(i.data, i.len);
+  fio_str_free(&str);
+  return ret;
+
+error:
+  switch (err) {
+  case MUSTACHE_OK:
+    rb_raise(rb_eRuntimeError, "Iodine::Mustache template ok, unknown error.");
+    break;
+  case MUSTACHE_ERR_TOO_DEEP:
+    rb_raise(rb_eRuntimeError, "Iodine::Mustache element nesting too deep.");
+    break;
+  case MUSTACHE_ERR_CLOSURE_MISMATCH:
+    rb_raise(rb_eRuntimeError,
+             "Iodine::Mustache template error, closure mismatch.");
+    break;
+  case MUSTACHE_ERR_FILE_NOT_FOUND:
+    rb_raise(rb_eRuntimeError, "Iodine::Mustache template not found.");
+    break;
+  case MUSTACHE_ERR_FILE_TOO_BIG:
+    rb_raise(rb_eRuntimeError, "Iodine::Mustache template too big.");
+    break;
+  case MUSTACHE_ERR_FILE_NAME_TOO_LONG:
+    rb_raise(rb_eRuntimeError, "Iodine::Mustache template name too long.");
+    break;
+  case MUSTACHE_ERR_EMPTY_TEMPLATE:
+    rb_raise(rb_eRuntimeError, "Iodine::Mustache template is empty.");
+    break;
+  case MUSTACHE_ERR_UNKNOWN:
+    rb_raise(rb_eRuntimeError, "Iodine::Mustache unknown error.");
+    break;
+  case MUSTACHE_ERR_USER_ERROR:
+    rb_raise(rb_eRuntimeError, "Iodine::Mustache internal error.");
+    break;
+  }
+  return Qnil;
+
+render_error:
   fio_str_free(&str);
   rb_raise(rb_eRuntimeError, "Couldn't build template frome data.");
 }
@@ -419,5 +506,6 @@ void iodine_init_mustache(void) {
   rb_define_alloc_func(tmp, iodine_mustache_data_alloc_c);
   rb_define_method(tmp, "initialize", iodine_mustache_new, 1);
   rb_define_method(tmp, "render", iodine_mustache_render, 1);
-  // rb_define_module_function(tmp, "parse", iodine_json_parse, -1);
+  rb_define_singleton_method(tmp, "render", iodine_mustache_render_klass, 2);
+  // rb_define_module_function(tmp, "render", iodine_mustache_render_klass, 2);
 }
