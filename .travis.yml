@@ -22,9 +22,9 @@ addons:
       - gcc-4.9
       - gcc-5
 script:
-  - gem uninstall iodine
+  - gem uninstall -x iodine
   - rake install
-  - gem uninstall iodine
+  - gem uninstall -x iodine
   - CC="gcc-4.9" rake install
-  - gem uninstall iodine
+  - gem uninstall -x iodine
   - CC="gcc-5" rake install
