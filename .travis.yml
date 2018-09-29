@@ -24,10 +24,10 @@ addons:
 script:
   - gem uninstall -x iodine
   - rake build
-  - find pkg/iodine-*.gem -exec gem install {} \;
+  - find pkg/iodine-*.gem -exec gem install {} +
   - gem uninstall -x iodine
-  - CC=gcc find pkg/iodine-*.gem -exec gem install {} \;
+  - CC=gcc find pkg/iodine-*.gem -exec gem install {} +
   - gem uninstall -x iodine
-  - CC=gcc-4 find pkg/iodine-*.gem -exec gem install {} \;
+  - CC=gcc-4 find pkg/iodine-*.gem -exec gem install {} +
   - gem uninstall -x iodine
-  - CC=gcc-5 find pkg/iodine-*.gem -exec gem install {} \;
+  - CC=gcc-5 find pkg/iodine-*.gem -exec gem install {} +
