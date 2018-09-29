@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.1
+
+**Fix**: Fixed compilation issues with older `gcc` compilers.
+
 #### Change log v.0.7.0
 
 This version bump is performed because the internal engine changed significantly and might be considered less mature. The public API remains unbroken. 
