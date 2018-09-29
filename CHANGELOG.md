@@ -6,6 +6,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.2
+
+**Updated**: updated the logging for HTTP services startup, to minimize log clutter.
+
+**Feature**: (mustache) added features to `Iodine::Mustache`, to expose more of the functionality offered by facil.io.
+
 #### Change log v.0.7.1
 
 **Fix**: Fixed compilation issues with older `gcc` compilers.

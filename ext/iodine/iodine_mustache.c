@@ -7,8 +7,11 @@
 #define FIO_INCLUDE_STR
 #include <fio.h>
 
-ID call_func_id;
-ID to_s_func_id;
+static ID call_func_id;
+static ID to_s_func_id;
+static ID filename_id;
+static ID data_id;
+static ID template_id;
 /* *****************************************************************************
 C <=> Ruby Data allocation
 ***************************************************************************** */
@@ -371,13 +374,22 @@ error:
 Renders the mustache template found in `filename`, using the data provided in
 the `data` argument.
 
+    Iodine::Mustache.render(filename, data, template = nil)
+
 Returns a String with the rendered template.
 
 Raises an exception on error.
 
+    template = "<h1>{{title}}</h1>"
     filename = "templates/index"
     data = {title: "Home"}
     result = Iodine::Mustache.render(filename, data)
+
+    # filename will be used to resolve the path to any partials:
+    result = Iodine::Mustache.render(filename, data, template)
+
+    # OR, if we don't need partial template path resolution
+    result = Iodine::Mustache.render(template: template, data: data)
 
 NOTE 1:
 
@@ -386,7 +398,7 @@ This function doesn't cache the template data.
 The more complext the template the higher the cost of the template parsing
 stage.
 
-Consider creating a persistent template object using {#new} and using the
+Consider creating a persistent template object using a new object and using the
 instance {#render} method.
 
 NOTE 2:
@@ -395,15 +407,43 @@ As one might notice, no binding is provided. Instead, a `data` Hash is assumed.
 Iodine will search the Hash for any data while protecting against code
 execution.
 */
-static VALUE iodine_mustache_render_klass(VALUE self, VALUE filename,
-                                          VALUE data) {
-  Check_Type(filename, T_STRING);
+static VALUE iodine_mustache_render_klass(int argc, VALUE *argv, VALUE self) {
+  VALUE filename = Qnil, data = Qnil, template = Qnil;
+  if (argc == 1) {
+    /* named arguments */
+    Check_Type(argv[0], T_HASH);
+    filename = rb_hash_aref(argv[0], filename_id);
+    data = rb_hash_aref(argv[0], data_id);
+    template = rb_hash_aref(argv[0], template_id);
+  } else {
+    /* regular arguments */
+    if (argc < 2 || argc > 3)
+      rb_raise(rb_eArgError, "expecting 2..3 arguments or named arguments.");
+    filename = argv[0];
+    data = argv[1];
+    if (argc > 2) {
+      template = argv[2];
+    }
+  }
+  if (filename == Qnil && template == Qnil)
+    rb_raise(rb_eArgError, "missing both template contents and file name.");
+
+  if (template != Qnil)
+    Check_Type(template, T_STRING);
+  if (filename != Qnil)
+    Check_Type(filename, T_STRING);
+
   fio_str_s str = FIO_STR_INIT;
 
   mustache_s *m = NULL;
   mustache_error_en err;
-  m = mustache_load(.filename = RSTRING_PTR(filename),
-                    .filename_len = RSTRING_LEN(filename), .err = &err);
+  m = mustache_load(.filename =
+                        (filename == Qnil ? NULL : RSTRING_PTR(filename)),
+                    .filename_len =
+                        (filename == Qnil ? 0 : RSTRING_LEN(filename)),
+                    .data = (template == Qnil ? NULL : RSTRING_PTR(template)),
+                    .data_len = (template == Qnil ? 0 : RSTRING_LEN(template)),
+                    .err = &err);
   if (!m)
     goto error;
 
@@ -461,6 +501,9 @@ Initialize Iodine::Mustache
 void iodine_init_mustache(void) {
   call_func_id = rb_intern2("call", 4);
   to_s_func_id = rb_intern2("to_s", 4);
+  filename_id = rb_intern2("filename", 8);
+  data_id = rb_intern2("data", 4);
+  template_id = rb_intern2("template", 8);
   /**
   Iodine::Mustache offers a logicless mustache template engine with strict HTML
   escaping (more than the basic `"<>'$`).
@@ -506,6 +549,6 @@ void iodine_init_mustache(void) {
   rb_define_alloc_func(tmp, iodine_mustache_data_alloc_c);
   rb_define_method(tmp, "initialize", iodine_mustache_new, 1);
   rb_define_method(tmp, "render", iodine_mustache_render, 1);
-  rb_define_singleton_method(tmp, "render", iodine_mustache_render_klass, 2);
+  rb_define_singleton_method(tmp, "render", iodine_mustache_render_klass, -1);
   // rb_define_module_function(tmp, "render", iodine_mustache_render_klass, 2);
 }
