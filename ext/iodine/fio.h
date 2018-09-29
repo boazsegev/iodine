@@ -190,7 +190,7 @@ Version and helper macros
 #define __has_include(...) 0
 #define __has_builtin(...) 0
 #define FIO_GNUC_BYPASS 1
-#elif !defined(__clang__) && __GNUC__ < 5
+#elif !defined(__clang__) && !defined(__has_builtin)
 #define __has_builtin(...) 0
 #define FIO_GNUC_BYPASS 1
 #endif
@@ -226,12 +226,6 @@ Version and helper macros
 
 #if DEBUG
 #define FIO_LOG_DEBUG(...) FIO_LOG_STATE("INFO [DEBUG]: " __VA_ARGS__)
-// #define FIO_ASSERT(cond, ...)                                                  \
-//   if (!(cond)) {                                                               \
-//     fprintf(stderr, "FATAL [DEBUG] (" __FILE__                                 \
-//                     ":" FIO_MACRO2STR(__LINE__) "): " __VA_ARGS__);            \
-//     exit(-1);                                                                  \
-//   }
 #define FIO_ASSERT(cond, ...)                                                  \
   if (!(cond)) {                                                               \
     fprintf(stderr, "FATAL [DEBUG] (" __FILE__                                 \

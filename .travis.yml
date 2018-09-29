@@ -20,6 +20,9 @@ addons:
     packages:
       - gcc-4.9
       - gcc-5
-# compiler:
-#   - clang
-#   - gcc
+script:
+  - CC=gcc-4.9 bundle install --jobs=3 --retry=3
+  - gem uninstall iodine
+  - CC=gcc-5 bundle install --jobs=3 --retry=3
+  - gem uninstall iodine
+  - bundle install --jobs=3 --retry=3
