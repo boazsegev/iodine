@@ -11,82 +11,83 @@ Feel free to copy, use and enjoy according to the license provided.
 #define H_FACIL_IO_H
 
 /* *****************************************************************************
-Table of contents:
-=================
-* Version and helper macros
-* Helper String Information Type
-* Memory pool / custom allocator for short lived objects
-*
-* Connection Callback (Protocol) Management
-* Listening to Incoming Connections
-* Connecting to remote servers as a client
-* Starting the IO reactor and reviewing it's state
-* Socket / Connection Functions
-* Connection Read / Write Hooks, for overriding the system calls
-* Concurrency overridable functions
-* Connection Task scheduling
-* Event / Task scheduling
-* Startup / State Callbacks (fork, start up, idle, etc')
-* Lower Level API - for special circumstances, use with care under
-*
-* Pub/Sub / Cluster Messages API
-* Cluster Messages and Pub/Sub
-* Cluster / Pub/Sub Middleware and Extensions ("Engines")
-*
-* Atomic Operations and Spin Locking Helper Functions
-* Byte Swapping and Network Order
-*
-* Converting Numbers to Strings (and back)
-* Strings to Numbers
-* Numbers to Strings* Random Generator Functions
-*
-* SipHash
-* SHA-1
-* SHA-2
-* Base64 (URL) encoding
-*
-* Memory Allocator Details
-*
-* Spin locking Implementation
-*
-******** facil.io Data Types (String, Set / Hash Map, Linked Lists, etc')
-*
-* These types can be included by defining the macros and (re)including fio.h.
-*
-*
-*
-*                      #ifdef FIO_INCLUDE_LINKED_LIST
-*
-* Linked List Helpers
-* Independent Linked List API
-* Embedded Linked List API* Independent Linked List Implementation
-* Embeded Linked List Implementation
-*
-*
-*
-*                      #ifdef FIO_INCLUDE_STR
-*
-* String Helpers
-* String API - Initialization and Destruction
-* String API - String state (data pointers, length, capacity, etc')
-* String API - Memory management
-* String API - UTF-8 State
-* String Implementation - state (data pointers, length, capacity, etc')
-* String Implementation - Memory management
-* String Implementation - UTF-8 State
-* String Implementation - Content Manipulation and Review
-*
-*
-*
-*            #ifdef FIO_SET_NAME - can be included more than once
-*
-* Set / Hash Map Data-Store
-* Set / Hash Map API
-* Set / Hash Map Internal Data Structures
-* Set / Hash Map Internal Helpers
-* Set / Hash Map Implementation
-*
-***************************************************************************** */
+ * Table of contents (find by subject):
+ * =================
+ * Version and helper macros
+ * Helper String Information Type
+ * Memory pool / custom allocator for short lived objects
+ *
+ * Connection Callback (Protocol) Management
+ * Listening to Incoming Connections
+ * Connecting to remote servers as a client
+ * Starting the IO reactor and reviewing it's state
+ * Socket / Connection Functions
+ * Connection Read / Write Hooks, for overriding the system calls
+ * Concurrency overridable functions
+ * Connection Task scheduling
+ * Event / Task scheduling
+ * Startup / State Callbacks (fork, start up, idle, etc')
+ * Lower Level API - for special circumstances, use with care under
+ *
+ * Pub/Sub / Cluster Messages API
+ * Cluster Messages and Pub/Sub
+ * Cluster / Pub/Sub Middleware and Extensions ("Engines")
+ *
+ * Atomic Operations and Spin Locking Helper Functions
+ * Byte Swapping and Network Order
+ *
+ * Converting Numbers to Strings (and back)
+ * Strings to Numbers
+ * Numbers to Strings* Random Generator Functions
+ *
+ * SipHash
+ * SHA-1
+ * SHA-2
+ * Base64 (URL) encoding
+ *
+ * Memory Allocator Details
+ *
+ * Spin locking Implementation
+ *
+ ******** facil.io Data Types (String, Set / Hash Map, Linked Lists, etc')
+ *
+ * These types can be included by defining the macros and (re)including fio.h.
+ *
+ *
+ *
+ *                      #ifdef FIO_INCLUDE_LINKED_LIST
+ *
+ * Linked List Helpers
+ * Independent Linked List API
+ * Embedded Linked List API* Independent Linked List Implementation
+ * Embeded Linked List Implementation
+ *
+ *
+ *
+ *                      #ifdef FIO_INCLUDE_STR
+ *
+ * String Helpers
+ * String API - Initialization and Destruction
+ * String API - String state (data pointers, length, capacity, etc')
+ * String API - Memory management
+ * String API - UTF-8 State
+ * String Implementation - state (data pointers, length, capacity, etc')
+ * String Implementation - Memory management
+ * String Implementation - UTF-8 State
+ * String Implementation - Content Manipulation and Review
+ *
+ *
+ *
+ *            #ifdef FIO_SET_NAME - can be included more than once
+ *
+ * Set / Hash Map Data-Store
+ * Set / Hash Map API
+ * Set / Hash Map Internal Data Structures
+ * Set / Hash Map Internal Helpers
+ * Set / Hash Map Implementation
+ *
+ *****************************************************************************
+ */
 
 /* *****************************************************************************
 Version and helper macros
@@ -308,10 +309,16 @@ void *fio_realloc2(void *ptr, size_t new_size, size_t copy_length);
  */
 void *fio_mmap(size_t size);
 
+/**
+ * When forking is called manually, call this function to reset the facil.io
+ * memory allocator's locks.
+ */
+void fio_malloc_after_fork(void);
+
 #if FIO_FORCE_MALLOC
-#define fio_malloc malloc
+#define fio_malloc(size) calloc(size, 1)
 #define fio_calloc calloc
-#define fio_mmap malloc
+#define fio_mmap(size) calloc(size, 1)
 #define fio_free free
 #define fio_realloc realloc
 #define fio_realloc2(ptr, new_size, old_data_len) realloc((ptr), (new_size))
@@ -2424,9 +2431,9 @@ C++ extern end
 #undef FIO_MEMORY_BLOCK_SIZE
 #undef FIO_MEMORY_BLOCK_MASK
 #undef FIO_MEMORY_BLOCK_SLICES
-#define FIO_MEMORY_BLOCK_MASK (FIO_MEMORY_BLOCK_SIZE - 1)    /* 0b111... */
-#define FIO_MEMORY_BLOCK_SLICES (FIO_MEMORY_BLOCK_SIZE >> 4) /* 16B slices */
 #define FIO_MEMORY_BLOCK_SIZE ((uintptr_t)1 << FIO_MEMORY_BLOCK_SIZE_LOG)
+#define FIO_MEMORY_BLOCK_MASK (FIO_MEMORY_BLOCK_SIZE - 1)    /* 0b0...1... */
+#define FIO_MEMORY_BLOCK_SLICES (FIO_MEMORY_BLOCK_SIZE >> 4) /* 16B slices */
 
 #ifndef FIO_MEMORY_BLOCK_ALLOC_LIMIT
 /* defaults to 37.5% of the block, after which `mmap` is used instead */
@@ -2834,10 +2841,16 @@ String API - Initialization and Destruction
  * used.
  */
 typedef struct {
+#if !FIO_STR_NO_REF
   volatile uint32_t ref; /* reference counter for fio_str_dup */
+#endif
   uint8_t small;  /* Flag indicating the String is small and self-contained */
   uint8_t frozen; /* Flag indicating the String is frozen (don't edit) */
-  uint8_t reserved[10];    /* Align struct on 16 byte allocator boundary */
+#if FIO_STR_NO_REF
+  uint8_t reserved[14]; /* Align struct on 16 byte allocator boundary */
+#else
+  uint8_t reserved[10]; /* Align struct on 16 byte allocator boundary */
+#endif
   uint64_t capa;           /* Known capacity for longer Strings */
   uint64_t len;            /* String length for longer Strings */
   void (*dealloc)(void *); /* Data deallocation function (NULL for static) */
@@ -2909,6 +2922,9 @@ inline FIO_FUNC fio_str_s *fio_str_new_copy2(fio_str_s *src);
 
 /**
  * Adds a references to the current String object and returns itself.
+ *
+ * If refecrence counting was disabled (FIO_STR_NO_REF was defined), returns a
+ * copy of the String (free with `fio_str_free2`).
  *
  * NOTE: Nothing is copied, reference Strings are referencing the same String.
  *       Editing one reference will effect the other.
@@ -3145,7 +3161,9 @@ String Implementation - state (data pointers, length, capacity, etc')
 ***************************************************************************** */
 
 typedef struct {
+#if !FIO_STR_NO_REF
   volatile uint32_t ref; /* reference counter for fio_str_dup */
+#endif
   uint8_t small;  /* Flag indicating the String is small and self-contained */
   uint8_t frozen; /* Flag indicating the String is frozen (don't edit) */
 } fio_str__small_s;
@@ -3199,6 +3217,9 @@ inline FIO_FUNC fio_str_s *fio_str_new_copy2(fio_str_s *src) {
 /**
  * Adds a references to the current String object and returns itself.
  *
+ * If refecrence counting was disabled (FIO_STR_NO_REF was defined), returns a
+ * copy of the String (free with `fio_str_free2`).
+ *
  * NOTE: Nothing is copied, reference Strings are referencing the same String.
  *       Editing one reference will effect the other.
  *
@@ -3207,9 +3228,15 @@ inline FIO_FUNC fio_str_s *fio_str_new_copy2(fio_str_s *src) {
  *       were freed using `fio_str_free` / `fio_str_free2` or discarded.
  */
 inline FIO_FUNC fio_str_s *fio_str_dup(fio_str_s *s) {
+#if FIO_STR_NO_REF
+  fio_str_s *s2 = fio_str_new2();
+  fio_str_concat(s2, s);
+  return s2;
+#else
   if (s)
     fio_atomic_add(&s->ref, 1);
   return s;
+#endif
 }
 
 /**
@@ -3222,7 +3249,11 @@ inline FIO_FUNC fio_str_s *fio_str_dup(fio_str_s *s) {
  * references (see fio_str_dup).
  */
 inline FIO_FUNC int fio_str_free(fio_str_s *s) {
+#if FIO_STR_NO_REF
+  if (1) {
+#else
   if (s && fio_atomic_sub(&s->ref, 1) == (uint32_t)-1) {
+#endif
     if (!s->small && s->dealloc)
       s->dealloc(s->data);
     *s = FIO_STR_INIT;
@@ -3373,6 +3404,15 @@ is_small:
   } else {
     tmp[0] = 0;
   }
+#if FIO_STR_NO_REF
+  *s = (fio_str_s){
+      .small = 0,
+      .capa = needed,
+      .len = existing_len,
+      .dealloc = fio_free,
+      .data = tmp,
+  };
+#else
   *s = (fio_str_s){
       .ref = s->ref,
       .small = 0,
@@ -3381,6 +3421,7 @@ is_small:
       .dealloc = fio_free,
       .data = tmp,
   };
+#endif
   return (fio_str_info_s){
       .capa = (s->frozen ? 0 : needed), .len = existing_len, .data = s->data};
 }
@@ -3845,11 +3886,9 @@ FIO_FUNC fio_str_info_s fio_str_readfile(fio_str_s *s, const char *filename,
   const size_t org_len = fio_str_len(s);
   state = fio_str_resize(s, org_len + limit);
   if (pread(file, state.data + org_len, limit, start_at) != (ssize_t)limit) {
-    close(file);
     fio_str_resize(s, org_len);
     state.data = NULL;
     state.len = state.capa = 0;
-    goto finish;
   }
   close(file);
 finish:
@@ -4139,7 +4178,7 @@ FIO_FUNC void FIO_NAME(free)(FIO_NAME(s) * set);
 #ifdef FIO_SET_KEY_TYPE
 
 /**
- *Locates an object in the Set, if it exists.
+ * Locates an object in the Hash Map, if it exists.
  *
  * NOTE: This is the function's Hash Map variant. See FIO_SET_KEY_TYPE.
  */
@@ -4148,13 +4187,15 @@ FIO_FUNC inline FIO_SET_OBJ_TYPE *
                    FIO_SET_KEY_TYPE key);
 
 /**
- * Inserts an object to the Set only if it's missing, rehashing if required,
- * returning the new (or old) object's pointer.
+ * Inserts an object to the Hash Map, rehashing if required, returning the new
+ * object's location using a pointer.
  *
- * If the object already exists in the set, no action is performed (the old
- * object is returned).
+ * If an object already exists in the Hash Map with the same key, it will be
+ * destroyed.
  *
- * NOTE: This is the function's Hash Map variant. See FIO_SET_KEY_TYPE.
+ * NOTE 1: This is the function's Hash Map variant. See FIO_SET_KEY_TYPE.
+ *
+ * NOTE 2: This is equivelant to calling the `insert2` with `old` set to NULL.
  */
 FIO_FUNC inline void FIO_NAME(insert)(FIO_NAME(s) * set,
                                       const FIO_SET_HASH_TYPE hash_value,
@@ -4162,7 +4203,24 @@ FIO_FUNC inline void FIO_NAME(insert)(FIO_NAME(s) * set,
                                       FIO_SET_OBJ_TYPE obj);
 
 /**
- * Removes an object from the Set, rehashing if required.
+ * Inserts an object to the Hash Map, rehashing if required, returning the new
+ * object's location using a pointer.
+ *
+ * If an object already exists in the Hash Map, it will be destroyed.
+ *
+ * If `old` is set, the existing object (if any) will be copied to the location
+ * pointed to by `old` before it is destroyed.
+ *
+ * NOTE: This is the function's Hash Map variant. See FIO_SET_KEY_TYPE.
+ */
+FIO_FUNC inline void FIO_NAME(insert2)(FIO_NAME(s) * set,
+                                       const FIO_SET_HASH_TYPE hash_value,
+                                       FIO_SET_KEY_TYPE key,
+                                       FIO_SET_OBJ_TYPE obj,
+                                       FIO_SET_OBJ_TYPE *old);
+
+/**
+ * Removes an object from the Hash Map, rehashing if required.
  *
  * Returns 0 on success and -1 if the object wasn't found.
  *
@@ -4209,6 +4267,17 @@ FIO_FUNC inline FIO_SET_OBJ_TYPE *
 FIO_FUNC inline FIO_SET_OBJ_TYPE *
     FIO_NAME(overwrite)(FIO_NAME(s) * set, const FIO_SET_HASH_TYPE hash_value,
                         FIO_SET_OBJ_TYPE obj);
+
+/**
+ * The same as `overwrite`, only it copies the old object (if any) to the
+ * location pointed to by `old`.
+ *
+ * When setting `old` to NULL, the function behaves the same as `overwrite`.
+ */
+FIO_FUNC FIO_SET_OBJ_TYPE *FIO_NAME(replace)(FIO_NAME(s) * set,
+                                             const FIO_SET_HASH_TYPE hash_value,
+                                             FIO_SET_OBJ_TYPE obj,
+                                             FIO_SET_OBJ_TYPE *old);
 
 /**
  * Removes an object from the Set, rehashing if required.
@@ -4407,10 +4476,9 @@ FIO_FUNC inline void FIO_NAME(_reallocate_set_mem_)(FIO_NAME(s) * set) {
  * If the object already exists in the set, it will be destroyed and
  * overwritten.
  */
-FIO_FUNC inline FIO_SET_TYPE *
-FIO_NAME(_insert_or_overwrite_)(FIO_NAME(s) * set,
-                                const FIO_SET_HASH_TYPE hash_value,
-                                FIO_SET_TYPE obj, int overwrite) {
+FIO_FUNC inline FIO_SET_TYPE *FIO_NAME(_insert_or_overwrite_)(
+    FIO_NAME(s) * set, const FIO_SET_HASH_TYPE hash_value, FIO_SET_TYPE obj,
+    int overwrite, FIO_SET_OBJ_TYPE *old) {
   if (FIO_SET_HASH_COMPARE(hash_value, FIO_SET_HASH_INVALID))
     return NULL;
 
@@ -4435,11 +4503,17 @@ FIO_NAME(_insert_or_overwrite_)(FIO_NAME(s) * set,
       return &pos->pos->obj;
     }
 #ifdef FIO_SET_KEY_TYPE
+    if (old) {
+      FIO_SET_OBJ_COPY((*old), pos->pos->obj.obj);
+    }
     /* no need to recreate the key object, just the value object */
     FIO_SET_OBJ_DESTROY(pos->pos->obj.obj);
     FIO_SET_OBJ_COPY(pos->pos->obj.obj, obj.obj);
     return &pos->pos->obj;
 #else
+    if (old) {
+      FIO_SET_COPY((*old), pos->pos->obj);
+    }
     FIO_SET_DESTROY(pos->pos->obj);
 #endif
   } else {
@@ -4484,9 +4558,9 @@ FIO_FUNC void FIO_NAME(free)(FIO_NAME(s) * s) {
  *
  * NOTE: This is the function's Hash Map variant. See FIO_SET_KEY_TYPE.
  */
-FIO_FUNC inline FIO_SET_OBJ_TYPE *
-FIO_NAME(find)(FIO_NAME(s) * set, const FIO_SET_HASH_TYPE hash_value,
-               FIO_SET_KEY_TYPE key) {
+FIO_FUNC FIO_SET_OBJ_TYPE *FIO_NAME(find)(FIO_NAME(s) * set,
+                                          const FIO_SET_HASH_TYPE hash_value,
+                                          FIO_SET_KEY_TYPE key) {
   FIO_NAME(_map_s_) *pos =
       FIO_NAME(_find_map_pos_)(set, hash_value, (FIO_SET_TYPE){.key = key});
   if (!pos || !pos->pos)
@@ -4495,28 +4569,45 @@ FIO_NAME(find)(FIO_NAME(s) * set, const FIO_SET_HASH_TYPE hash_value,
 }
 
 /**
- * Inserts an object to the Set only if it's missing, rehashing if required,
- * returning the new (or old) object's pointer.
+ * Inserts an object to the Hash Map, rehashing if required, returning the new
+ * object's location using a pointer.
  *
- * If the object already exists in the set, no action is performed (the old
- * object is returned).
+ * If the object already exists in the set, it will be destroyed.
  *
  * NOTE: This is the function's Hash Map variant. See FIO_SET_KEY_TYPE.
  */
-FIO_FUNC inline void FIO_NAME(insert)(FIO_NAME(s) * set,
-                                      const FIO_SET_HASH_TYPE hash_value,
-                                      FIO_SET_KEY_TYPE key,
-                                      FIO_SET_OBJ_TYPE obj) {
+FIO_FUNC void FIO_NAME(insert)(FIO_NAME(s) * set,
+                               const FIO_SET_HASH_TYPE hash_value,
+                               FIO_SET_KEY_TYPE key, FIO_SET_OBJ_TYPE obj) {
   FIO_NAME(_insert_or_overwrite_)
-  (set, hash_value, (FIO_SET_TYPE){.key = key, .obj = obj}, 1);
+  (set, hash_value, (FIO_SET_TYPE){.key = key, .obj = obj}, 1, NULL);
+}
+
+/**
+ * Inserts an object to the Hash Map, rehashing if required, returning the new
+ * object's location using a pointer.
+ *
+ * If an object already exists in the Hash Map, it will be destroyed.
+ *
+ * If `old` is set, the existing object (if any) will be copied to the location
+ * pointed to by `old` before it is destroyed.
+ *
+ * NOTE: This is the function's Hash Map variant. See FIO_SET_KEY_TYPE.
+ */
+FIO_FUNC void FIO_NAME(insert2)(FIO_NAME(s) * set,
+                                const FIO_SET_HASH_TYPE hash_value,
+                                FIO_SET_KEY_TYPE key, FIO_SET_OBJ_TYPE obj,
+                                FIO_SET_OBJ_TYPE *old) {
+  FIO_NAME(_insert_or_overwrite_)
+  (set, hash_value, (FIO_SET_TYPE){.key = key, .obj = obj}, 1, old);
 }
 
 #else
 
 /** Locates an object in the Set, if it exists. */
-FIO_FUNC inline FIO_SET_OBJ_TYPE *
-FIO_NAME(find)(FIO_NAME(s) * set, const FIO_SET_HASH_TYPE hash_value,
-               FIO_SET_OBJ_TYPE obj) {
+FIO_FUNC FIO_SET_OBJ_TYPE *FIO_NAME(find)(FIO_NAME(s) * set,
+                                          const FIO_SET_HASH_TYPE hash_value,
+                                          FIO_SET_OBJ_TYPE obj) {
   FIO_NAME(_map_s_) *pos = FIO_NAME(_find_map_pos_)(set, hash_value, obj);
   if (!pos || !pos->pos)
     return NULL;
@@ -4530,10 +4621,10 @@ FIO_NAME(find)(FIO_NAME(s) * set, const FIO_SET_HASH_TYPE hash_value,
  * If the object already exists in the set, than the new object will be
  * destroyed and the old object's address will be returned.
  */
-FIO_FUNC inline FIO_SET_OBJ_TYPE *
-FIO_NAME(insert)(FIO_NAME(s) * set, const FIO_SET_HASH_TYPE hash_value,
-                 FIO_SET_OBJ_TYPE obj) {
-  return FIO_NAME(_insert_or_overwrite_)(set, hash_value, obj, 0);
+FIO_FUNC FIO_SET_OBJ_TYPE *FIO_NAME(insert)(FIO_NAME(s) * set,
+                                            const FIO_SET_HASH_TYPE hash_value,
+                                            FIO_SET_OBJ_TYPE obj) {
+  return FIO_NAME(_insert_or_overwrite_)(set, hash_value, obj, 0, NULL);
 }
 
 /**
@@ -4543,10 +4634,23 @@ FIO_NAME(insert)(FIO_NAME(s) * set, const FIO_SET_HASH_TYPE hash_value,
  * If the object already exists in the set, it will be destroyed and
  * overwritten.
  */
-FIO_FUNC inline FIO_SET_OBJ_TYPE *
+FIO_FUNC FIO_SET_OBJ_TYPE *
 FIO_NAME(overwrite)(FIO_NAME(s) * set, const FIO_SET_HASH_TYPE hash_value,
                     FIO_SET_OBJ_TYPE obj) {
-  return FIO_NAME(_insert_or_overwrite_)(set, hash_value, obj, 1);
+  return FIO_NAME(_insert_or_overwrite_)(set, hash_value, obj, 1, NULL);
+}
+
+/**
+ * The same as `overwrite`, only it copies the old object (if any) to the
+ * location pointed to by `old`.
+ *
+ * When setting `old` to NULL, the function behaves the same as `overwrite`.
+ */
+FIO_FUNC FIO_SET_OBJ_TYPE *FIO_NAME(replace)(FIO_NAME(s) * set,
+                                             const FIO_SET_HASH_TYPE hash_value,
+                                             FIO_SET_OBJ_TYPE obj,
+                                             FIO_SET_OBJ_TYPE *old) {
+  return FIO_NAME(_insert_or_overwrite_)(set, hash_value, obj, 1, old);
 }
 
 #endif
@@ -4556,13 +4660,13 @@ FIO_NAME(overwrite)(FIO_NAME(s) * set, const FIO_SET_HASH_TYPE hash_value,
  */
 #ifdef FIO_SET_KEY_TYPE
 
-FIO_FUNC inline int FIO_NAME(remove)(FIO_NAME(s) * set,
-                                     const FIO_SET_HASH_TYPE hash_value,
-                                     FIO_SET_KEY_TYPE key) {
+FIO_FUNC int FIO_NAME(remove)(FIO_NAME(s) * set,
+                              const FIO_SET_HASH_TYPE hash_value,
+                              FIO_SET_KEY_TYPE key) {
 #else
-FIO_FUNC inline int FIO_NAME(remove)(FIO_NAME(s) * set,
-                                     const FIO_SET_HASH_TYPE hash_value,
-                                     FIO_SET_OBJ_TYPE obj) {
+FIO_FUNC int FIO_NAME(remove)(FIO_NAME(s) * set,
+                              const FIO_SET_HASH_TYPE hash_value,
+                              FIO_SET_OBJ_TYPE obj) {
 #endif
   if (FIO_SET_HASH_COMPARE(hash_value, FIO_SET_HASH_INVALID))
     return -1;
