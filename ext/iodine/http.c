@@ -824,7 +824,7 @@ static void http_on_upgrade_fallback(http_s *h, char *p, size_t i) {
 }
 static void http_on_response_fallback(http_s *h) { http_send_error(h, 400); }
 
-http_settings_s *http_settings_new(http_settings_s arg_settings) {
+static http_settings_s *http_settings_new(http_settings_s arg_settings) {
   /* TODO: improve locality by unifying malloc to a single call */
   if (!arg_settings.on_request)
     arg_settings.on_request = http_on_request_fallback;
@@ -923,7 +923,6 @@ static void http_on_finish(intptr_t uuid, void *set) {
 #undef http_listen
 intptr_t http_listen(const char *port, const char *binding,
                      struct http_settings_s arg_settings) {
-  http_lib_init();
   if (arg_settings.on_request == NULL) {
     fprintf(stderr, "ERROR: http_listen requires the .on_request parameter "
                     "to be set\n");
@@ -1030,7 +1029,6 @@ intptr_t http_connect(const char *address,
     errno = EINVAL;
     goto on_error;
   }
-  http_lib_init();
   size_t len;
   char *a, *p;
   uint8_t is_websocket = 0;
@@ -2634,29 +2632,37 @@ parse_path:
 /* *****************************************************************************
 Lookup Tables / functions
 ***************************************************************************** */
-#include <fio_hashmap.h>
 
-static fio_hash_s mime_types;
+static FIOBJ tmp_cpy_obj(FIOBJ o) { return fiobj_dup(o); }
+
+#define FIO_SET_NAME fio_mime_set
+#define FIO_SET_OBJ_TYPE FIOBJ
+#define FIO_SET_OBJ_COMPARE(o1, o2) (1)
+#define FIO_SET_OBJ_COPY(dest, o) (dest) = tmp_cpy_obj((o))
+#define FIO_SET_OBJ_DESTROY(o) fiobj_free((o))
+
+#include <fio.h>
+
+static fio_mime_set_s mime_types = FIO_SET_INIT;
 
 #define LONGEST_FILE_EXTENSION_LENGTH 15
-
-void http_lib_init(void); /* if library not initialized */
 
 /** Registers a Mime-Type to be associated with the file extension. */
 void http_mimetype_register(char *file_ext, size_t file_ext_len,
                             FIOBJ mime_type_str) {
-  if (!mime_types.map)
-    fio_hash_new(&mime_types);
   uintptr_t hash = fio_siphash(file_ext, file_ext_len);
-  FIOBJ old = (FIOBJ)fio_hash_insert(&mime_types, hash, (void *)mime_type_str);
-#if DEBUG
-  if (old) {
-    fprintf(stderr, "WARNING: mime-type collision: %.*s was %s, now %s\n",
-            (int)file_ext_len, file_ext, fiobj_obj2cstr(old).data,
-            fiobj_obj2cstr(mime_type_str).data);
+  if (mime_type_str == FIOBJ_INVALID) {
+    fio_mime_set_remove(&mime_types, hash, FIOBJ_INVALID);
+  } else {
+    FIOBJ old = FIOBJ_INVALID;
+    fio_mime_set_replace(&mime_types, hash, mime_type_str, &old);
+    if (old != FIOBJ_INVALID) {
+      fprintf(stderr, "WARNING: mime-type collision: %.*s was %s, now %s\n",
+              (int)file_ext_len, file_ext, fiobj_obj2cstr(old).data,
+              fiobj_obj2cstr(mime_type_str).data);
+      fiobj_free(old);
+    }
   }
-#endif
-  fiobj_free(old);
 }
 
 /**
@@ -2664,11 +2670,11 @@ void http_mimetype_register(char *file_ext, size_t file_ext_len,
  *  Remember to call `fiobj_free`.
  */
 FIOBJ http_mimetype_find(char *file_ext, size_t file_ext_len) {
-  if (!mime_types.map) {
-    http_lib_init();
-  }
   uintptr_t hash = fio_siphash(file_ext, file_ext_len);
-  return fiobj_dup((FIOBJ)fio_hash_find(&mime_types, hash));
+  FIOBJ *result = fio_mime_set_find(&mime_types, hash, FIOBJ_INVALID);
+  if (result)
+    return fiobj_dup(*result);
+  return FIOBJ_INVALID;
 }
 
 /**
@@ -2709,19 +2715,12 @@ finish:
   return mimetype;
 }
 
-/** Clears the Mime-Type registry (it will be emoty afterthis call). */
+/** Clears the Mime-Type registry (it will be empty afterthis call). */
 void http_mimetype_clear(void) {
-  if (!mime_types.map)
-    return;
-  /* rotate data and reinitialize state */
-  fio_hash_s old = mime_types;
-  mime_types = (fio_hash_s)FIO_HASH_INIT;
-  FIOBJ old_date = current_date;
+  fio_mime_set_free(&mime_types);
+  fiobj_free(current_date);
   current_date = FIOBJ_INVALID;
   last_date_added = 0;
-  /* free ols memory / objects */
-  FIO_HASH_FOR_FREE(&old, obj) { fiobj_free((FIOBJ)obj->obj); }
-  fiobj_free(old_date);
 }
 
 /**
@@ -2849,11 +2848,8 @@ fio_str_info_s http_status2str(uintptr_t status) {
 #if DEBUG
 void http_tests(void) {
   fprintf(stderr, "=== Testing HTTP helpers\n");
-#define TEST_ASSERT(cond, ...)                                                 \
-  if (!(cond)) {                                                               \
-    fprintf(stderr, "* " __VA_ARGS__);                                         \
-    fprintf(stderr, "Testing failed.\n");                                      \
-    exit(-1);                                                                  \
-  }
+  FIOBJ html_mime = http_mimetype_find("html", 4);
+  FIO_ASSERT(html_mime,
+             "HTML mime-type not found! Mime-Type registry invalid!\n");
 }
 #endif

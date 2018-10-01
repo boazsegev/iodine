@@ -12,6 +12,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Feature**: (mustache) added features to `Iodine::Mustache`, to expose more of the functionality offered by facil.io.
 
+**Fix**: (facil.io) updated from the facil.io edge (master) branch. This should fix some exposed symbols (that should have been private), minimizing name-collision risks, and fix an unknown issue with the mime-type registry cleanup.
+
 #### Change log v.0.7.1
 
 **Fix**: Fixed compilation issues with older `gcc` compilers.
