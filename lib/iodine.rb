@@ -121,6 +121,18 @@ if(!defined?(after_fork))
     Iodine.after_fork(*args, &block)
   end
 end
+if(!defined?(after_fork_in_worker))
+  # Performs a block of code whenever a new worker process spins up (performed once per worker).
+  def after_fork_in_worker(*args, &block)
+    Iodine.after_fork_in_worker(*args, &block)
+  end
+end
+if(!defined?(after_fork_in_master))
+  # Performs a block of code whenever a new worker process spins up (performed once per worker).
+  def after_fork_in_master(*args, &block)
+    Iodine.after_fork_in_master(*args, &block)
+  end
+end
 if(!defined?(on_worker_boot))
   # Performs a block of code whenever a new worker process spins up (performed once per worker).
   def on_worker_boot(*args, &block)
@@ -128,7 +140,7 @@ if(!defined?(on_worker_boot))
   end
 end
 if(!defined?(before_fork))
-  # Performs a block of code just before a new worker process spins up (performed once per worker).
+  # Performs a block of code just before a new worker process spins up (performed once per worker, in the master thread).
   def before_fork(*args, &block)
     Iodine.before_fork(*args, &block)
   end
