@@ -89,15 +89,11 @@ static void *create_ruby_thread_gvl(void *args) {
   return (void *)IodineStore.add(rb_thread_create(defer_thread_inGVL, args));
 }
 
-/* Runs the before / after fork callbacks (if `before` is true, before runs) */
-static void iodine_perform_fork_callbacks(uint8_t before);
-
 static void *fork_using_ruby(void *ignr) {
   // stop IO thread and call before_fork callbacks
   if (sock_io_pthread) {
     iodine_join_io_thread();
   }
-  iodine_perform_fork_callbacks(1);
   // fork
   const VALUE ProcessClass = rb_const_get(rb_cObject, rb_intern2("Process", 7));
   const VALUE rb_pid = IodineCaller.call(ProcessClass, rb_intern2("fork", 4));
@@ -112,7 +108,6 @@ static void *fork_using_ruby(void *ignr) {
   if (!pid) {
     IodineStore.after_fork();
   }
-  iodine_perform_fork_callbacks(0);
   // re-initiate IO thread
   fio_defer(iodine_start_io_thread2, NULL, NULL);
   return (void *)pid;
@@ -285,39 +280,76 @@ static VALUE iodine_defer_run_every(int argc, VALUE *argv, VALUE self) {
 Pre/Post `fork`
 ***************************************************************************** */
 
-static fio_lock_i iodine_before_fork_lock = FIO_LOCK_INIT;
-static fio_ls_s iodine_before_fork_list = FIO_LS_INIT(iodine_before_fork_list);
-static fio_lock_i iodine_after_fork_lock = FIO_LOCK_INIT;
-static fio_ls_s iodine_after_fork_list = FIO_LS_INIT(iodine_after_fork_list);
-static fio_lock_i iodine_on_shutdown_lock = FIO_LOCK_INIT;
-static fio_ls_s iodine_on_shutdown_list = FIO_LS_INIT(iodine_on_shutdown_list);
+/* performs a Ruby state callback without clearing the Ruby object's memory */
+static void iodine_perform_state_callback_persist(void *blk_) {
+  VALUE blk = blk_;
+  IodineCaller.call(blk, call_id);
+}
 
+// clang-format off
 /**
-Sets a block of code to run before a new worker process is forked (cluster mode
-only).
+Sets a block of code to run before a new worker process is forked (cluster mode only).
+
+Code runs within the master (root) process.
 */
 VALUE iodine_before_fork_add(VALUE self) {
+  // clang-format on
   rb_need_block();
   VALUE block = rb_block_proc();
   IodineStore.add(block);
-  fio_lock(&iodine_before_fork_lock);
-  fio_ls_push(&iodine_before_fork_list, (void *)block);
-  fio_unlock(&iodine_before_fork_lock);
+  fio_state_callback_add(FIO_CALL_BEFORE_FORK,
+                         iodine_perform_state_callback_persist, (void *)block);
   return block;
   (void)self;
 }
 
+// clang-format off
 /**
-Sets a block of code to run after a new worker process is forked (cluster mode
-only).
+Sets a block of code to run after a new worker process is forked (cluster mode only).
+
+Code runs in both the parent and the child.
 */
 VALUE iodine_after_fork_add(VALUE self) {
+  // clang-format on
   rb_need_block();
   VALUE block = rb_block_proc();
   IodineStore.add(block);
-  fio_lock(&iodine_after_fork_lock);
-  fio_ls_push(&iodine_after_fork_list, (void *)block);
-  fio_unlock(&iodine_after_fork_lock);
+  fio_state_callback_add(FIO_CALL_AFTER_FORK,
+                         iodine_perform_state_callback_persist, (void *)block);
+  return block;
+  (void)self;
+}
+
+// clang-format off
+/**
+Sets a block of code to run after a new worker process is forked (cluster mode only).
+
+Code runs in both the parent and the child.
+*/
+VALUE iodine_after_fork_in_worker_add(VALUE self) {
+  // clang-format on
+  rb_need_block();
+  VALUE block = rb_block_proc();
+  IodineStore.add(block);
+  fio_state_callback_add(FIO_CALL_IN_CHILD,
+                         iodine_perform_state_callback_persist, (void *)block);
+  return block;
+  (void)self;
+}
+
+// clang-format off
+/**
+Sets a block of code to run after a new worker process is forked (cluster mode only).
+
+Code runs in both the parent and the child.
+*/
+VALUE iodine_after_fork_in_master_add(VALUE self) {
+  // clang-format on
+  rb_need_block();
+  VALUE block = rb_block_proc();
+  IodineStore.add(block);
+  fio_state_callback_add(FIO_CALL_IN_MASTER,
+                         iodine_perform_state_callback_persist, (void *)block);
   return block;
   (void)self;
 }
@@ -331,47 +363,16 @@ VALUE iodine_on_shutdown_add(VALUE self) {
   rb_need_block();
   VALUE block = rb_block_proc();
   IodineStore.add(block);
-  fio_lock(&iodine_on_shutdown_lock);
-  fio_ls_push(&iodine_on_shutdown_list, (void *)block);
-  fio_unlock(&iodine_on_shutdown_lock);
+  fio_state_callback_add(FIO_CALL_ON_FINISH,
+                         iodine_perform_state_callback_persist, (void *)block);
   return block;
   (void)self;
-}
-
-/* Runs the before / after fork callbacks (if `before` is true, before runs) */
-static void iodine_perform_fork_callbacks(uint8_t before) {
-  fio_ls_s *ls = before ? &iodine_before_fork_list : &iodine_after_fork_list;
-  fio_lock_i *lock =
-      before ? &iodine_before_fork_lock : &iodine_after_fork_lock;
-  fio_lock(lock);
-  FIO_LS_FOR(ls, pos) { IodineCaller.call((VALUE)(pos->obj), call_id); }
-  fio_unlock(lock);
 }
 
 /* Performs any cleanup before worker dies */
 static void iodine_defer_on_finish(void *ignr) {
   (void)ignr;
   iodine_join_io_thread();
-  /* perform and clear away shutdown Procs */
-  fio_lock(&iodine_on_shutdown_lock);
-  while (fio_ls_any(&iodine_on_shutdown_list)) {
-    void *obj = fio_ls_shift(&iodine_on_shutdown_list);
-    IodineCaller.call((VALUE)(obj), call_id);
-    IodineStore.remove((VALUE)(obj));
-  }
-  fio_unlock(&iodine_on_shutdown_lock);
-  /* clear away forking Procs */
-  fio_lock(&iodine_before_fork_lock);
-  while (fio_ls_any(&iodine_before_fork_list)) {
-    IodineStore.remove((VALUE)fio_ls_shift(&iodine_before_fork_list));
-  }
-  fio_unlock(&iodine_before_fork_lock);
-
-  fio_lock(&iodine_after_fork_lock);
-  while (fio_ls_any(&iodine_after_fork_list)) {
-    IodineStore.remove((VALUE)fio_ls_shift(&iodine_after_fork_list));
-  }
-  fio_unlock(&iodine_after_fork_lock);
 }
 
 /* *****************************************************************************
@@ -391,6 +392,10 @@ void iodine_defer_initialize(void) {
                             0);
   rb_define_module_function(IodineModule, "after_fork", iodine_after_fork_add,
                             0);
+  rb_define_module_function(IodineModule, "after_fork_in_worker",
+                            iodine_after_fork_in_worker_add, 0);
+  rb_define_module_function(IodineModule, "after_fork_in_master",
+                            iodine_after_fork_in_master_add, 0);
   rb_define_module_function(IodineModule, "on_shutdown", iodine_on_shutdown_add,
                             0);
   fio_state_callback_add(FIO_CALL_ON_FINISH, iodine_defer_on_finish, NULL);

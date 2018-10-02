@@ -33,18 +33,19 @@ static ID call_id;
 Idling
 ***************************************************************************** */
 
-static fio_lock_i iodine_on_idle_lock = FIO_LOCK_INIT;
-static fio_ls_s iodine_on_idle_list = FIO_LS_INIT(iodine_on_idle_list);
-
-static void iodine_perform_deferred(void *block, void *ignr) {
-  IodineCaller.call((VALUE)block, call_id);
-  (void)ignr;
+/* performs a Ruby state callback and clears the Ruby object's memory */
+static void iodine_perform_on_idle_callback(void *blk_) {
+  VALUE blk = blk_;
+  IodineCaller.call(blk, call_id);
+  IodineStore.remove(blk);
+  fio_state_callback_remove(FIO_CALL_ON_IDLE, iodine_perform_on_idle_callback,
+                            blk_);
 }
 
 /**
 Schedules a single occuring event for the next idle cycle.
 
-To schedule a reoccuring event, simply reschedule the event at the end of it's
+To schedule a reoccuring event, reschedule the event at the end of it's
 run.
 
 i.e.
@@ -52,26 +53,15 @@ i.e.
       IDLE_PROC = Proc.new { puts "idle"; Iodine.on_idle &IDLE_PROC }
       Iodine.on_idle &IDLE_PROC
 */
-VALUE iodine_sched_on_idle(VALUE self) {
+static VALUE iodine_sched_on_idle(VALUE self) {
+  // clang-format on
   rb_need_block();
   VALUE block = rb_block_proc();
   IodineStore.add(block);
-  fio_lock(&iodine_on_idle_lock);
-  fio_ls_push(&iodine_on_idle_list, (void *)block);
-  fio_unlock(&iodine_on_idle_lock);
+  fio_state_callback_add(FIO_CALL_ON_IDLE, iodine_perform_on_idle_callback,
+                         (void *)block);
   return block;
   (void)self;
-}
-
-static void iodine_on_idle(void *arg) {
-  (void)arg;
-  fio_lock(&iodine_on_idle_lock);
-  while (fio_ls_any(&iodine_on_idle_list)) {
-    VALUE block = (VALUE)fio_ls_shift(&iodine_on_idle_list);
-    fio_defer(iodine_perform_deferred, (void *)block, NULL);
-    IodineStore.remove(block);
-  }
-  fio_unlock(&iodine_on_idle_lock);
 }
 
 /* *****************************************************************************
@@ -272,7 +262,4 @@ void Init_iodine(void) {
 
   // initialize Pub/Sub extension (for Engines)
   iodine_pubsub_init();
-
-  // register idle and finish callbacks
-  fio_state_callback_add(FIO_CALL_ON_IDLE, iodine_on_idle, NULL);
 }
