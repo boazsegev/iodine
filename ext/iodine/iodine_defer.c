@@ -282,7 +282,7 @@ Pre/Post `fork`
 
 /* performs a Ruby state callback without clearing the Ruby object's memory */
 static void iodine_perform_state_callback_persist(void *blk_) {
-  VALUE blk = blk_;
+  VALUE blk = (VALUE)blk_;
   IodineCaller.call(blk, call_id);
 }
 

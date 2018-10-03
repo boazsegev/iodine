@@ -16,6 +16,7 @@ Feel free to copy, use and enjoy according to the license provided.
  * Version and helper macros
  * Helper String Information Type
  * Memory pool / custom allocator for short lived objects
+ * Logging and testing helpers
  *
  * Connection Callback (Protocol) Management
  * Listening to Incoming Connections
@@ -200,42 +201,9 @@ Version and helper macros
 #define FIO_FUNC static __attribute__((unused))
 #endif
 
-#ifndef FIO_ASSERT_ALLOC
-/** Tests for an allocation failure. The behavior can be overridden. */
-#define FIO_ASSERT_ALLOC(ptr)                                                  \
-  if (!(ptr)) {                                                                \
-    fprintf(stderr,                                                            \
-            "FATAL ERROR: memory allocation error "__FILE__                    \
-            ":%d\n",                                                           \
-            __LINE__);                                                         \
-    perror("             Error details (errno)");                              \
-    kill(0, SIGINT);                                                           \
-    exit(errno);                                                               \
-  }
-#endif
-
 #if defined(__FreeBSD__)
 #include <netinet/in.h>
 #include <sys/socket.h>
-#endif
-
-#if FIO_PRINT_STATE
-#define FIO_LOG_STATE(...) fprintf(stderr, __VA_ARGS__)
-#else
-#define FIO_LOG_STATE(...)
-#endif
-
-#if DEBUG
-#define FIO_LOG_DEBUG(...) FIO_LOG_STATE("INFO [DEBUG]: " __VA_ARGS__)
-#define FIO_ASSERT(cond, ...)                                                  \
-  if (!(cond)) {                                                               \
-    fprintf(stderr, "FATAL [DEBUG] (" __FILE__                                 \
-                    ":" FIO_MACRO2STR(__LINE__) "): " __VA_ARGS__);            \
-    exit(-1);                                                                  \
-  }
-#else
-#define FIO_LOG_DEBUG(...)
-#define FIO_ASSERT(...)
 #endif
 
 /* *****************************************************************************
@@ -261,7 +229,31 @@ typedef struct fio_str_info_s {
 #endif
 
 /* *****************************************************************************
+
+
+
+
+
+
+
+
+
+
+
+
 Memory pool / custom allocator for short lived objects
+
+
+
+
+
+
+
+
+
+
+
+
 ***************************************************************************** */
 
 /**
@@ -324,6 +316,100 @@ void fio_malloc_after_fork(void);
 #define fio_realloc2(ptr, new_size, old_data_len) realloc((ptr), (new_size))
 #define fio_malloc_test()
 #define fio_malloc_after_fork()
+#endif
+
+/* *****************************************************************************
+
+
+
+
+
+
+
+
+
+
+
+
+Logging and testing helpers
+
+
+
+
+
+
+
+
+
+
+
+
+***************************************************************************** */
+
+/** Logging level of zero (no logging). */
+#define FIO_LOG_LEVEL_NONE 0
+/** Log fatal errors. */
+#define FIO_LOG_LEVEL_FATAL 1
+/** Log errors and fatal errors. */
+#define FIO_LOG_LEVEL_ERROR 2
+/** Log warnings, errors and fatal errors. */
+#define FIO_LOG_LEVEL_WARNING 3
+/** Log every message (info, warnings, errors and fatal errors). */
+#define FIO_LOG_LEVEL_INFO 4
+/** Log everything, including debug messages. */
+#define FIO_LOG_LEVEL_DEBUG 5
+
+/** The logging level */
+extern size_t FIO_LOG_LEVEL;
+
+#ifndef FIO_LOG_PRINT
+#define FIO_LOG_PRINT(level, ...)                                              \
+  do {                                                                         \
+    if (level <= FIO_LOG_LEVEL)                                                \
+      fprintf(stderr, "\n" __VA_ARGS__);                                       \
+  } while (0)
+#define FIO_LOG_DEBUG(...)                                                     \
+  FIO_LOG_PRINT(FIO_LOG_LEVEL_DEBUG,                                           \
+                "[DEBUG ("__FILE__                                             \
+                ":" FIO_MACRO2STR(__LINE__) ")] " __VA_ARGS__)
+#define FIO_LOG_INFO(...)                                                      \
+  FIO_LOG_PRINT(FIO_LOG_LEVEL_INFO, "[INFO] " __VA_ARGS__)
+#define FIO_LOG_WARNING(...)                                                   \
+  FIO_LOG_PRINT(FIO_LOG_LEVEL_WARNING, "[WARNING] " __VA_ARGS__)
+#define FIO_LOG_ERROR(...)                                                     \
+  FIO_LOG_PRINT(FIO_LOG_LEVEL_ERROR, "[ERROR] " __VA_ARGS__)
+#define FIO_LOG_FATAL(...)                                                     \
+  FIO_LOG_PRINT(FIO_LOG_LEVEL_FATAL, "[FATAL] " __VA_ARGS__)
+#endif
+
+#if FIO_PRINT_STATE
+#define FIO_LOG_STATE(...) fprintf(stderr, "\n" __VA_ARGS__)
+#else
+#define FIO_LOG_STATE(...)
+#endif
+
+#if DEBUG
+#define FIO_ASSERT(cond, ...)                                                  \
+  if (!(cond)) {                                                               \
+    FIO_LOG_DEBUG(__VA_ARGS__);                                                \
+    exit(-1);                                                                  \
+  }
+#else
+#define FIO_ASSERT(...)
+#endif
+
+#ifndef FIO_ASSERT_ALLOC
+/** Tests for an allocation failure. The behavior can be overridden. */
+#define FIO_ASSERT_ALLOC(ptr)                                                  \
+  if (!(ptr)) {                                                                \
+    fprintf(stderr,                                                            \
+            "FATAL ERROR: memory allocation error "__FILE__                    \
+            ":%d\n",                                                           \
+            __LINE__);                                                         \
+    perror("             Error details (errno)");                              \
+    kill(0, SIGINT);                                                           \
+    exit(errno);                                                               \
+  }
 #endif
 
 /* *****************************************************************************
@@ -2524,13 +2610,13 @@ FIO_FUNC inline void fio_lock_dbg(fio_lock_i *lock, const char *file,
   while (fio_trylock(lock)) {
     if (lock_cycle_count >= 8 &&
         (lock_cycle_count == 8 || !(lock_cycle_count & 511)))
-      fprintf(stderr, "INFO: fio-spinlock spin %s:%d round %zu\n", file, line,
+      fprintf(stderr, "[DEBUG] fio-spinlock spin %s:%d round %zu\n", file, line,
               lock_cycle_count);
     ++lock_cycle_count;
     fio_reschedule_thread();
   }
   if (lock_cycle_count >= 8)
-    fprintf(stderr, "INFO: fio-spinlock spin %s:%d total = %zu\n", file, line,
+    fprintf(stderr, "[DEBUG] fio-spinlock spin %s:%d total = %zu\n", file, line,
             lock_cycle_count);
 }
 #define fio_lock(lock) fio_lock_dbg((lock), __FILE__, __LINE__)
@@ -2546,7 +2632,7 @@ FIO_FUNC inline int fio_trylock_dbg(fio_lock_i *lock, const char *file,
   } else if (line == last_line) {
     ++count;
     if (count >= 2)
-      fprintf(stderr, "INFO: trying fio-spinlock %s:%d attempt %zu\n", file,
+      fprintf(stderr, "[DEBUG] trying fio-spinlock %s:%d attempt %zu\n", file,
               line, count);
   } else {
     count = 0;
@@ -2843,12 +2929,12 @@ String API - Initialization and Destruction
  * used.
  */
 typedef struct {
-#if !FIO_STR_NO_REF
+#ifndef FIO_STR_NO_REF
   volatile uint32_t ref; /* reference counter for fio_str_dup */
 #endif
   uint8_t small;  /* Flag indicating the String is small and self-contained */
   uint8_t frozen; /* Flag indicating the String is frozen (don't edit) */
-#if FIO_STR_NO_REF
+#ifdef FIO_STR_NO_REF
   uint8_t reserved[14]; /* Align struct on 16 byte allocator boundary */
 #else
   uint8_t reserved[10]; /* Align struct on 16 byte allocator boundary */
@@ -3163,7 +3249,7 @@ String Implementation - state (data pointers, length, capacity, etc')
 ***************************************************************************** */
 
 typedef struct {
-#if !FIO_STR_NO_REF
+#ifndef FIO_STR_NO_REF
   volatile uint32_t ref; /* reference counter for fio_str_dup */
 #endif
   uint8_t small;  /* Flag indicating the String is small and self-contained */
@@ -3230,7 +3316,7 @@ inline FIO_FUNC fio_str_s *fio_str_new_copy2(fio_str_s *src) {
  *       were freed using `fio_str_free` / `fio_str_free2` or discarded.
  */
 inline FIO_FUNC fio_str_s *fio_str_dup(fio_str_s *s) {
-#if FIO_STR_NO_REF
+#ifdef FIO_STR_NO_REF
   fio_str_s *s2 = fio_str_new2();
   fio_str_concat(s2, s);
   return s2;
@@ -3251,17 +3337,14 @@ inline FIO_FUNC fio_str_s *fio_str_dup(fio_str_s *s) {
  * references (see fio_str_dup).
  */
 inline FIO_FUNC int fio_str_free(fio_str_s *s) {
-#if FIO_STR_NO_REF
-  if (1) {
-#else
-  if (s && fio_atomic_sub(&s->ref, 1) == (uint32_t)-1) {
+#ifndef FIO_STR_NO_REF
+  if (!s || fio_atomic_sub(&s->ref, 1) != (uint32_t)-1)
+    return -1;
 #endif
-    if (!s->small && s->dealloc)
-      s->dealloc(s->data);
-    *s = FIO_STR_INIT;
-    return 0;
-  }
-  return -1;
+  if (!s->small && s->dealloc)
+    s->dealloc(s->data);
+  *s = FIO_STR_INIT;
+  return 0;
 }
 
 /**
@@ -3356,7 +3439,7 @@ String Implementation - Memory management
  * since it uses 16 byte alignment right up until allocations are routed
  * directly to `mmap` (due to their size, usually over 12KB).
  */
-#define ROUND_UP_CAPA_2WORDS(num)                                              \
+#define ROUND_UP_CAPA2WORDS(num)                                               \
   (((num + 1) & (sizeof(long double) - 1))                                     \
        ? ((num + 1) | (sizeof(long double) - 1))                               \
        : (num))
@@ -3372,7 +3455,7 @@ FIO_FUNC fio_str_info_s fio_str_capa_assert(fio_str_s *s, size_t needed) {
     goto is_small;
   }
   if (needed > s->capa) {
-    needed = ROUND_UP_CAPA_2WORDS(needed);
+    needed = ROUND_UP_CAPA2WORDS(needed);
     if (s->dealloc == fio_free) {
       tmp = (char *)fio_realloc2(s->data, needed + 1, s->len);
       FIO_ASSERT_ALLOC(tmp);
@@ -3397,7 +3480,7 @@ is_small:
                             .len = (size_t)(s->small >> 1),
                             .data = FIO_STR_SMALL_DATA(s)};
   }
-  needed = ROUND_UP_CAPA_2WORDS(needed);
+  needed = ROUND_UP_CAPA2WORDS(needed);
   tmp = (char *)fio_malloc(needed + 1);
   FIO_ASSERT_ALLOC(tmp);
   const size_t existing_len = (size_t)((s->small >> 1) & 0xFF);
@@ -3406,7 +3489,7 @@ is_small:
   } else {
     tmp[0] = 0;
   }
-#if FIO_STR_NO_REF
+#ifdef FIO_STR_NO_REF
   *s = (fio_str_s){
       .small = 0,
       .capa = needed,
@@ -3898,7 +3981,7 @@ finish:
   return state;
 #else
   /* TODO: consider adding non POSIX implementations. */
-  fprintf(stderr, "ERROR: File reading requires a posix system (ignored!).\n");
+  FIO_LOG_ERROR("File reading requires a posix system (ignored!).\n");
   return state;
 #endif
 }
@@ -3942,8 +4025,9 @@ inline FIO_FUNC ssize_t fio_str_send_free2(const intptr_t uuid,
                     .after.dealloc = (void (*)(void *))fio_str_free2);
 }
 
-#undef ROUND_UP_CAPA_2WORDS
+#undef ROUND_UP_CAPA2WORDS
 #undef FIO_STR_SMALL_DATA
+#undef FIO_STR_NO_REF
 
 #endif /* H_FIO_STR_H */
 /* *****************************************************************************
@@ -4232,6 +4316,21 @@ FIO_FUNC inline int FIO_NAME(remove)(FIO_NAME(s) * set,
                                      const FIO_SET_HASH_TYPE hash_value,
                                      FIO_SET_KEY_TYPE key);
 
+/**
+ * Removes an object from the Hash Map, rehashing if required.
+ *
+ * Returns 0 on success and -1 if the object wasn't found.
+ *
+ * If `old` is set, the existing object (if any) will be copied to the location
+ * pointed to by `old`.
+ *
+ * NOTE: This is the function's Hash Map variant. See FIO_SET_KEY_TYPE.
+ */
+FIO_FUNC inline int FIO_NAME(remove2)(FIO_NAME(s) * set,
+                                      const FIO_SET_HASH_TYPE hash_value,
+                                      FIO_SET_KEY_TYPE key,
+                                      FIO_SET_OBJ_TYPE *old);
+
 #else
 
 /**
@@ -4408,7 +4507,7 @@ FIO_FUNC inline FIO_NAME(_map_s_) *
     if (FIO_SET_HASH_COMPARE(FIO_SET_HASH_INVALID, pos->hash))
       return pos;
     if (FIO_SET_HASH_COMPARE(pos->hash, hash_value)) {
-      if (!pos->pos || FIO_SET_OBJ_COMPARE(pos->pos->obj, obj))
+      if (!pos->pos || FIO_SET_COMPARE(pos->pos->obj, obj))
         return pos;
       set->has_collisions = 1;
     }
@@ -4424,7 +4523,7 @@ FIO_FUNC inline FIO_NAME(_map_s_) *
       if (FIO_SET_HASH_COMPARE(FIO_SET_HASH_INVALID, pos->hash))
         return pos;
       if (FIO_SET_HASH_COMPARE(pos->hash, hash_value)) {
-        if (!pos->pos || FIO_SET_OBJ_COMPARE(pos->pos->obj, obj))
+        if (!pos->pos || FIO_SET_COMPARE(pos->pos->obj, obj))
           return pos;
         set->has_collisions = 1;
       }
@@ -4604,6 +4703,47 @@ FIO_FUNC void FIO_NAME(insert2)(FIO_NAME(s) * set,
   (set, hash_value, (FIO_SET_TYPE){.key = key, .obj = obj}, 1, old);
 }
 
+/**
+ * Removes an object from the Hash Map, rehashing if required.
+ *
+ * Returns 0 on success and -1 if the object wasn't found.
+ *
+ * If `old` is set, the existing object (if any) will be copied to the location
+ * pointed to by `old`.
+ *
+ * NOTE: This is the function's Hash Map variant. See FIO_SET_KEY_TYPE.
+ */
+FIO_FUNC inline int FIO_NAME(remove2)(FIO_NAME(s) * set,
+                                      const FIO_SET_HASH_TYPE hash_value,
+                                      FIO_SET_KEY_TYPE key,
+                                      FIO_SET_OBJ_TYPE *old) {
+  if (FIO_SET_HASH_COMPARE(hash_value, FIO_SET_HASH_INVALID))
+    return -1;
+  FIO_NAME(_map_s_) *pos =
+      FIO_NAME(_find_map_pos_)(set, hash_value, (FIO_SET_TYPE){.key = key});
+  if (!pos || !pos->pos)
+    return -1;
+  if (old)
+    FIO_SET_OBJ_COPY((*old), pos->pos->obj.obj);
+  FIO_SET_DESTROY(pos->pos->obj);
+  --set->count;
+  pos->pos->hash = FIO_SET_HASH_INVALID;
+  if (pos->pos == set->pos + set->ordered - 1) {
+    do {
+      --set->pos;
+    } while (set->pos && FIO_SET_HASH_COMPARE(set->ordered[set->pos - 1].hash,
+                                              FIO_SET_HASH_INVALID));
+  }
+  pos->pos = NULL; /* leave pos->hash set to mark "hole" */
+  return 0;
+}
+
+FIO_FUNC inline int FIO_NAME(remove)(FIO_NAME(s) * set,
+                                     const FIO_SET_HASH_TYPE hash_value,
+                                     FIO_SET_KEY_TYPE key) {
+  return FIO_NAME(remove2)(set, hash_value, key, NULL);
+}
+
 #else
 
 /** Locates an object in the Set, if it exists. */
@@ -4655,29 +4795,15 @@ FIO_FUNC FIO_SET_OBJ_TYPE *FIO_NAME(replace)(FIO_NAME(s) * set,
   return FIO_NAME(_insert_or_overwrite_)(set, hash_value, obj, 1, old);
 }
 
-#endif
-
 /**
  * Removes an object from the Set, rehashing if required.
  */
-#ifdef FIO_SET_KEY_TYPE
-
-FIO_FUNC int FIO_NAME(remove)(FIO_NAME(s) * set,
-                              const FIO_SET_HASH_TYPE hash_value,
-                              FIO_SET_KEY_TYPE key) {
-#else
 FIO_FUNC int FIO_NAME(remove)(FIO_NAME(s) * set,
                               const FIO_SET_HASH_TYPE hash_value,
                               FIO_SET_OBJ_TYPE obj) {
-#endif
   if (FIO_SET_HASH_COMPARE(hash_value, FIO_SET_HASH_INVALID))
     return -1;
-#ifdef FIO_SET_KEY_TYPE
-  FIO_NAME(_map_s_) *pos =
-      FIO_NAME(_find_map_pos_)(set, hash_value, (FIO_SET_TYPE){.key = key});
-#else
   FIO_NAME(_map_s_) *pos = FIO_NAME(_find_map_pos_)(set, hash_value, obj);
-#endif
   if (!pos || !pos->pos)
     return -1;
   FIO_SET_DESTROY(pos->pos->obj);
@@ -4692,6 +4818,8 @@ FIO_FUNC int FIO_NAME(remove)(FIO_NAME(s) * set,
   pos->pos = NULL; /* leave pos->hash set to mark "hole" */
   return 0;
 }
+
+#endif
 
 /**
  * Allows a peak at the Set's last element.
@@ -4744,7 +4872,7 @@ FIO_FUNC inline size_t FIO_NAME(capa_require)(FIO_NAME(s) * set,
   if (min_capa <= FIO_NAME(capa)(set))
     return FIO_NAME(capa)(set);
   set->mask = 1;
-  while (min_capa >= set->mask) {
+  while (min_capa > set->mask) {
     set->mask = (set->mask << 1) | 1;
   }
   FIO_NAME(rehash)(set);

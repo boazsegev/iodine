@@ -2,6 +2,7 @@
 Copyright: Boaz Segev, 2017-2018
 License: MIT
 */
+#include <fio.h>
 #include <fiobj_json.h>
 
 #include <fio_ary.h>
@@ -110,8 +111,8 @@ static int fio_json_on_start_object(json_parser_s *p) {
 static void fio_json_on_end_object(json_parser_s *p) {
   fiobj_json_parser_s *pr = (fiobj_json_parser_s *)p;
   if (pr->key) {
-    fprintf(stderr, "WARNING: (JSON parsing) malformed JSON, "
-                    "ignoring dangling Hash key.\n");
+    FIO_LOG_WARNING("(JSON parsing) malformed JSON, "
+                    "ignoring dangling Hash key.");
     fiobj_free(pr->key);
     pr->key = FIOBJ_INVALID;
   }
@@ -147,7 +148,7 @@ static void fio_json_on_json(json_parser_s *p) {
 static void fio_json_on_error(json_parser_s *p) {
   fiobj_json_parser_s *pr = (fiobj_json_parser_s *)p;
 #if DEBUG
-  fprintf(stderr, "ERROR: JSON on error called.\n");
+  FIO_LOG_DEBUG("JSON on error called.");
 #endif
   fiobj_free((FIOBJ)fio_ary_index(&pr->stack, 0));
   fiobj_free(pr->key);

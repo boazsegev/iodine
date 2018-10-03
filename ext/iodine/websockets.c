@@ -116,6 +116,7 @@ struct ws_s {
   size_t max_msg_size;
   /** active pub/sub subscriptions */
   fio_ls_s subscriptions;
+  fio_lock_i sub_lock;
   /** socket buffer. */
   struct buffer_s buffer;
   /** data length (how much of the buffer actually used). */
@@ -133,9 +134,11 @@ Create/Destroy the websocket subscription objects
 ***************************************************************************** */
 
 static inline void clear_subscriptions(ws_s *ws) {
+  fio_lock(&ws->sub_lock);
   while (fio_ls_any(&ws->subscriptions)) {
     fio_unsubscribe(fio_ls_pop(&ws->subscriptions));
   }
+  fio_unlock(&ws->sub_lock);
 }
 
 /* *****************************************************************************
@@ -325,7 +328,7 @@ void websocket_attach(intptr_t uuid, http_settings_s *http_settings,
                       websocket_settings_s *args, void *data, size_t length) {
   ws_s *ws = new_websocket(uuid);
   if (!ws) {
-    perror("FATAL ERROR: couldn't allocate Websocket protocol object");
+    FIO_LOG_FATAL("couldn't allocate Websocket protocol object");
     exit(errno);
   }
   // we have an active websocket connection - prep the connection buffer
@@ -615,10 +618,7 @@ uintptr_t websocket_subscribe(struct websocket_subscribe_s args) {
   if (!args.ws)
     goto error;
   websocket_sub_data_s *d = malloc(sizeof(*d));
-  if (!d) {
-    websocket_close(args.ws);
-    goto error;
-  }
+  FIO_ASSERT_ALLOC(d);
   *d = (websocket_sub_data_s){
       .udata = args.udata,
       .on_message = args.on_message,
@@ -640,7 +640,10 @@ uintptr_t websocket_subscribe(struct websocket_subscribe_s args) {
     /* don't free `d`, return (`d` freed by callback) */
     return 0;
   }
+  fio_lock(&args.ws->sub_lock);
   fio_ls_push(&args.ws->subscriptions, sub);
+  fio_unlock(&args.ws->sub_lock);
+
   return (uintptr_t)args.ws->subscriptions.prev;
 error:
   if (args.on_unsubscribe)
@@ -653,7 +656,10 @@ error:
  */
 void websocket_unsubscribe(ws_s *ws, uintptr_t subscription_id) {
   fio_unsubscribe((subscription_s *)((fio_ls_s *)subscription_id)->obj);
+  fio_lock(&ws->sub_lock);
   fio_ls_remove((fio_ls_s *)subscription_id);
+  fio_unlock(&ws->sub_lock);
+
   (void)ws;
 }
 
