@@ -222,6 +222,12 @@ typedef struct {
   fio_fd_data_s info[];
 } fio_data_s;
 
+/** The logging level */
+#if DEBUG
+size_t FIO_LOG_LEVEL = FIO_LOG_LEVEL_DEBUG;
+#else
+size_t FIO_LOG_LEVEL = FIO_LOG_LEVEL_INFO;
+#endif
 static fio_data_s *fio_data = NULL;
 
 /* used for protocol locking by task type. */
@@ -323,6 +329,7 @@ static inline int fio_clear_fd(intptr_t fd, uint8_t is_open) {
         pos->obj((void *)pos->hash);
     }
   }
+  fio_uuid_links_free(&links);
   if (protocol && protocol->on_close) {
     fio_defer(deferred_on_close, (void *)fd2uuid(fd), protocol);
   }
@@ -965,8 +972,7 @@ static fio_defer_thread_pool_s *fio_defer_thread_pool_new(size_t count) {
   }
   return pool;
 error:
-  fprintf(stderr, "CRITICAL ERROR: couldn't spawn threads for thread pool, "
-                  "attempting shutdown.\n");
+  FIO_LOG_FATAL("couldn't spawn threads for thread pool, attempting shutdown.");
   fio_stop();
   fio_defer_thread_pool_join(pool);
   return NULL;
@@ -1213,11 +1219,11 @@ static inline size_t fio_detect_cpu_cores(void) {
 #ifdef _SC_NPROCESSORS_ONLN
   cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
   if (cpu_count < 0) {
-    FIO_LOG_STATE("WARNING: CPU core count auto-detection failed.\n");
+    FIO_LOG_WARNING("CPU core count auto-detection failed.");
     return 0;
   }
 #else
-  FIO_LOG_STATE("WARNING: CPU core count auto-detection failed.\n");
+  FIO_LOG_WARNING("CPU core count auto-detection failed.");
 #endif
   return cpu_count;
 }
@@ -1240,13 +1246,11 @@ void fio_expected_concurrency(int16_t *threads, int16_t *processes) {
     if (cpu_count > FIO_CPU_CORES_LIMIT) {
       static int print_cores_warning = 1;
       if (print_cores_warning) {
-        fprintf(
-            stderr,
-            "INFO: Detected %zu cores. Capping auto-detection of cores "
-            "to %zu.\n"
+        FIO_LOG_WARNING(
+            "Detected %zu cores. Capping auto-detection of cores to %zu.\n"
             "      Avoid this message by setting threads / workers manually.\n"
             "      To increase auto-detection limit, recompile with:\n"
-            "             -DFIO_CPU_CORES_LIMIT=%zu \n",
+            "             -DFIO_CPU_CORES_LIMIT=%zu",
             (size_t)cpu_count, (size_t)FIO_CPU_CORES_LIMIT, (size_t)cpu_count);
         print_cores_warning = 0;
       }
@@ -1504,7 +1508,7 @@ static void fio_poll_init(void) {
   fio_poll_close();
   evio_fd = kqueue();
   if (evio_fd == -1) {
-    fprintf(stderr, "FATAL ERROR: couldn't open kqueue.\n");
+    FIO_LOG_FATAL("couldn't open kqueue.\n");
     exit(errno);
   }
 }
@@ -1719,22 +1723,22 @@ static size_t fio_poll(void) {
       touchfd(i);
       ++count;
       if (list[i].revents & FIO_POLL_READ_EVENTS) {
-        // fprintf(stderr, "Poll Read %zu => %p\n", i, (void *)fd2uuid(i));
+        // FIO_LOG_DEBUG("Poll Read %zu => %p", i, (void *)fd2uuid(i));
         fio_poll_remove_read(i);
         fio_defer(deferred_on_data, (void *)fd2uuid(i), NULL);
       }
       if (list[i].revents & FIO_POLL_WRITE_EVENTS) {
-        // fprintf(stderr, "Poll Write %zu => %p\n", i, (void *)fd2uuid(i));
+        // FIO_LOG_DEBUG("Poll Write %zu => %p", i, (void *)fd2uuid(i));
         fio_poll_remove_write(i);
         fio_defer(deferred_on_ready, (void *)fd2uuid(i), NULL);
       }
       if (list[i].revents & (POLLHUP | POLLERR)) {
-        // fprintf(stderr, "Poll Hangup %zu => %p\n", i, (void *)fd2uuid(i));
+        // FIO_LOG_DEBUG("Poll Hangup %zu => %p", i, (void *)fd2uuid(i));
         fio_poll_remove_fd(i);
         fio_force_close(fd2uuid(i));
       }
       if (list[i].revents & POLLNVAL) {
-        // fprintf(stderr, "Poll Invalid %zu => %p\n", i, (void *)fd2uuid(i));
+        // FIO_LOG_DEBUG("Poll Invalid %zu => %p", i, (void *)fd2uuid(i));
         fio_poll_remove_fd(i);
         fio_lock(&fd_data(i).protocol_lock);
         fio_clear_fd(i, 0);
@@ -2108,15 +2112,15 @@ static intptr_t fio_unix_socket(const char *address, uint8_t server) {
   /* Unix socket */
   if (!address) {
     errno = EINVAL;
-    fprintf(stderr,
-            "ERROR: (fio) a Unix socket requires a valid address."
-            "             Specify port for TCP/IP socket or change address.\n");
+    FIO_LOG_ERROR(
+        "(fio) a Unix socket requires a valid address.\n"
+        "             Specify port for TCP/IP socket or change address.");
     return -1;
   }
   struct sockaddr_un addr = {0};
   size_t addr_len = strlen(address);
   if (addr_len >= sizeof(addr.sun_path)) {
-    fprintf(stderr, "ERROR: (fio) a Unix socket address too long.\n");
+    FIO_LOG_ERROR("(fio) a Unix socket address too long.");
     errno = ENAMETOOLONG;
     return -1;
   }
@@ -2857,7 +2861,7 @@ typedef struct {
 static callback_collection_s callback_collection[FIO_CALL_NEVER + 1];
 
 static void fio_state_on_idle_perform(void *task, void *arg) {
-  ((void (*)(void *))task)(arg);
+  ((void (*)(void *))(uintptr_t)task)(arg);
 }
 
 static inline void fio_state_callback_ensure(callback_collection_s *c) {
@@ -3059,10 +3063,8 @@ static void __attribute__((destructor)) fio_lib_destroy(void) {
   fio_free(fio_data);
   /* memory library destruction must be last */
   fio_mem_destroy();
-#if DEBUG
-  FIO_LOG_STATE("* (%d) facil.io resources released, exit complete.\n",
-                getpid());
-#endif
+  FIO_LOG_DEBUG("(%d) facil.io resources released, exit complete.", getpid());
+  fprintf(stderr, "\n"); /* add EOL to logs (logging adds EOL before text */
 }
 
 /* Called within a child process after it starts. */
@@ -3112,7 +3114,7 @@ static void __attribute__((constructor)) fio_lib_init(void) {
     // try to maximize limits - collect max and set to max
     struct rlimit rlim = {.rlim_max = 0};
     if (getrlimit(RLIMIT_NOFILE, &rlim) == -1) {
-      fprintf(stderr, "WARNING: `getrlimit` failed in `sock_max_capacity`.\n");
+      FIO_LOG_WARNING("`getrlimit` failed in `sock_max_capacity`.");
     } else {
       // #if defined(__APPLE__) /* Apple's getrlimit is broken. */
       //     rlim.rlim_cur = rlim.rlim_max >= FOPEN_MAX ? FOPEN_MAX :
@@ -3133,7 +3135,7 @@ static void __attribute__((constructor)) fio_lib_init(void) {
     FIO_LOG_STATE("facil.io " FIO_VERSION_STRING " capacity initialization:\n"
                   "*    Meximum open files %zu out of %zu\n"
                   "*    Allocating %zu bytes for state handling.\n"
-                  "*    %zu bytes per connection + %zu for state handling.\n",
+                  "*    %zu bytes per connection + %zu for state handling.",
                   capa, (size_t)rlim.rlim_max,
                   (sizeof(*fio_data) + (capa * (sizeof(*fio_data->poll))) +
                    (capa * (sizeof(*fio_data->info)))),
@@ -3143,7 +3145,7 @@ static void __attribute__((constructor)) fio_lib_init(void) {
     FIO_LOG_STATE("facil.io " FIO_VERSION_STRING " capacity initialization:\n"
                   "*    Meximum open files %zu out of %zu\n"
                   "*    Allocating %zu bytes for state handling.\n"
-                  "*    %zu bytes per connection + %zu for state handling.\n",
+                  "*    %zu bytes per connection + %zu for state handling.",
                   capa, (size_t)rlim.rlim_max,
                   (sizeof(*fio_data) + (capa * (sizeof(*fio_data->info)))),
                   (sizeof(*fio_data->info)), sizeof(*fio_data));
@@ -3318,7 +3320,7 @@ static void fio_worker_startup(void) {
     fio_data->is_worker = 1;
   } else if (fio_data->is_worker) {
     /* Worker Process */
-    FIO_LOG_STATE("* %d is running.\n", getpid());
+    FIO_LOG_INFO("%d is running.", getpid());
   } else {
     /* Root Process should run in single thread mode */
     fio_data->threads = 1;
@@ -3339,9 +3341,9 @@ static void fio_worker_startup(void) {
 static void fio_worker_cleanup(void) {
   /* switch to winding down */
   if (fio_data->is_worker)
-    FIO_LOG_STATE("* (%d) detected exit signal.\n", getpid());
+    FIO_LOG_INFO("(%d) detected exit signal.", getpid());
   else
-    FIO_LOG_STATE("* Server Detected exit signal.\n");
+    FIO_LOG_INFO("Server Detected exit signal.");
   fio_state_callback_force(FIO_CALL_ON_SHUTDOWN);
   for (size_t i = 0; i <= fio_data->max_protocol_fd; ++i) {
     if (fd_data(i).protocol) {
@@ -3366,9 +3368,9 @@ static void fio_worker_cleanup(void) {
   fio_defer_perform();
   fio_signal_handler_reset();
   if (fio_data->parent == getpid()) {
-    FIO_LOG_STATE("\n   ---  Shutdown Complete  ---\n");
+    FIO_LOG_INFO("   ---  Shutdown Complete  ---\n");
   } else {
-    FIO_LOG_STATE("* (%d) cleanup complete.\n", getpid());
+    FIO_LOG_INFO("(%d) cleanup complete.", getpid());
   }
 }
 
@@ -3379,7 +3381,8 @@ static void *fio_sentinel_worker_thread(void *arg) {
   /* release fork lock. */
   fio_unlock(&fio_fork_lock);
   if (child == -1) {
-    perror("FATAL ERROR: couldn't spawn worker.");
+    FIO_LOG_FATAL("couldn't spawn worker.");
+    perror("\n           errno");
     kill(fio_parent_pid(), SIGINT);
     fio_stop();
     return NULL;
@@ -3389,17 +3392,10 @@ static void *fio_sentinel_worker_thread(void *arg) {
 #if DEBUG
     if (fio_data->active) { /* !WIFEXITED(status) || WEXITSTATUS(status) */
       if (!WIFEXITED(status) || WEXITSTATUS(status)) {
-        FIO_LOG_STATE(
-            "FATAL ERROR: Child worker (%d) crashed. Stopping services in "
-            "DEBUG mode.\n",
-            child);
+        FIO_LOG_FATAL("Child worker (%d) crashed. Stopping services.", child);
         fio_state_callback_force(FIO_CALL_ON_CHILD_CRUSH);
       } else {
-        fprintf(
-            stderr,
-            "INFO (FATAL): Child worker (%d) shutdown. Stopping services in "
-            "DEBUG mode.\n",
-            child);
+        FIO_LOG_FATAL("Child worker (%d) shutdown. Stopping services.", child);
       }
       kill(0, SIGINT);
     }
@@ -3408,13 +3404,11 @@ static void *fio_sentinel_worker_thread(void *arg) {
       /* don't call any functions while forking. */
       fio_lock(&fio_fork_lock);
       if (!WIFEXITED(status) || WEXITSTATUS(status)) {
-        fprintf(stderr,
-                "ERROR: Child worker (%d) crashed. Respawning worker.\n",
-                child);
+        FIO_LOG_ERROR("Child worker (%d) crashed. Respawning worker.", child);
         fio_state_callback_force(FIO_CALL_ON_CHILD_CRUSH);
       } else {
-        FIO_LOG_STATE("INFO: Child worker (%d) shutdown. Respawning worker.\n",
-                      child);
+        FIO_LOG_WARNING("Child worker (%d) shutdown. Respawning worker.",
+                        child);
       }
       fio_defer(fio_sentinel_task, NULL, NULL);
       fio_unlock(&fio_fork_lock);
@@ -3888,10 +3882,10 @@ static void fio_listen_on_startup(void *pr_) {
   fio_listen_protocol_s *pr = pr_;
   fio_attach(pr->uuid, &pr->pr);
   if (pr->port_len)
-    FIO_LOG_STATE("* (%d) started listening on port %s\n", getpid(), pr->port);
+    FIO_LOG_INFO("(%d) started listening on port %s", getpid(), pr->port);
   else
-    FIO_LOG_STATE("* (%d) started listening on Unix Socket at %s\n", getpid(),
-                  pr->addr);
+    FIO_LOG_INFO("(%d) started listening on Unix Socket at %s", getpid(),
+                 pr->addr);
 }
 
 static void fio_listen_on_close(intptr_t uuid, fio_protocol_s *pr_) {
@@ -3909,6 +3903,8 @@ static void fio_listen_on_data(intptr_t uuid, fio_protocol_s *pr_) {
   }
 }
 
+/* stub for editor - unused */
+void fio_listen____(void);
 /**
  * Schedule a network service on a listening socket.
  *
@@ -3964,9 +3960,9 @@ intptr_t fio_listen FIO_IGNORE_MACRO(struct fio_listen_args args) {
   }
 
   if (args.port)
-    FIO_LOG_STATE("* Listening on port %s\n", args.port);
+    FIO_LOG_INFO("Listening on port %s", args.port);
   else
-    FIO_LOG_STATE("* Listening on Unix Socket at %s\n", args.address);
+    FIO_LOG_INFO("Listening on Unix Socket at %s", args.address);
 
   return uuid;
 error:
@@ -4373,7 +4369,7 @@ static inline void fio_subscription_free(subscription_s *s) {
 /** Subscribes to a filter, pub/sub channle or patten */
 subscription_s *fio_subscribe FIO_IGNORE_MACRO(subscribe_args_s args) {
   if (!args.on_message)
-    return NULL;
+    goto error;
   channel_s *ch;
   subscription_s *s = fio_malloc(sizeof(*s));
   FIO_ASSERT_ALLOC(s);
@@ -4396,6 +4392,10 @@ subscription_s *fio_subscribe FIO_IGNORE_MACRO(subscribe_args_s args) {
   fio_ls_embd_push(&ch->subscriptions, &s->node);
   fio_unlock((&ch->lock));
   return s;
+error:
+  if (args.on_unsubscribe)
+    args.on_unsubscribe(args.udata1, args.udata2);
+  return NULL;
 }
 
 /** Unsubscribes from a filter, pub/sub channle or patten */
@@ -4417,6 +4417,7 @@ void fio_unsubscribe(subscription_s *s) {
     if (c == &fio_postoffice.patterns) {
       pattern_s *pat = (pattern_s *)ch;
       hashed ^= ((uintptr_t)pat->match);
+      match = ((pattern_s *)(ch))->match;
     }
     /* lock collection */
     fio_lock(&c->lock);
@@ -4429,9 +4430,6 @@ void fio_unsubscribe(subscription_s *s) {
   }
   fio_unlock(&ch->lock);
   if (removed) {
-    if (ch->parent == &fio_postoffice.patterns) {
-      match = ((pattern_s *)(ch))->match;
-    }
     pubsub_on_channel_destroy(ch, match);
   }
 
@@ -4792,6 +4790,7 @@ static void fio_publish2process(fio_msg_internal_s *m) {
 #define FIO_SET_KEY_COPY(k1, k2)                                               \
   (k1) = FIO_STR_INIT;                                                         \
   fio_str_concat(&(k1), &(k2))
+#define FIO_SET_KEY_COMPARE(k1, k2) fio_str_iseq(&(k1), &(k2))
 #define FIO_SET_KEY_DESTROY(key) fio_str_free(&(key))
 #define FIO_SET_OBJ_DESTROY(obj) fio_unsubscribe(obj)
 #include <fio.h>
@@ -4824,7 +4823,7 @@ static struct cluster_data_s {
 static void fio_cluster_data_cleanup(int delete_file) {
   if (delete_file && cluster_data.name[0]) {
 #if DEBUG
-    FIO_LOG_STATE("* INFO: (%d) unlinking cluster's Unix socket.\n", getpid());
+    FIO_LOG_DEBUG("(%d) unlinking cluster's Unix socket.", getpid());
 #endif
     unlink(cluster_data.name);
   }
@@ -4938,20 +4937,16 @@ static void fio_cluster_on_data(intptr_t uuid, fio_protocol_s *pr_) {
       c->filter = (int32_t)fio_str2u32(c->buffer + i + 12);
       if (c->exp_channel) {
         if (c->exp_channel >= (1024 * 1024 * 16)) {
-          fprintf(stderr,
-                  "FATAL ERROR: (%d) cluster message name too long (16Mb "
-                  "limit): %u\n",
-                  getpid(), (unsigned int)c->exp_channel);
+          FIO_LOG_FATAL("(%d) cluster message name too long (16Mb limit): %u\n",
+                        getpid(), (unsigned int)c->exp_channel);
           exit(1);
           return;
         }
       }
       if (c->exp_msg) {
         if (c->exp_msg >= (1024 * 1024 * 64)) {
-          fprintf(stderr,
-                  "FATAL ERROR: (%d) cluster message data too long (64Mb "
-                  "limit): %u\n",
-                  getpid(), (unsigned int)c->exp_msg);
+          FIO_LOG_FATAL("(%d) cluster message data too long (64Mb limit): %u\n",
+                        getpid(), (unsigned int)c->exp_msg);
           exit(1);
           return;
         }
@@ -5030,8 +5025,7 @@ static void fio_cluster_on_close(intptr_t uuid, fio_protocol_s *pr_) {
   } else if (fio_data->active) {
     /* no shutdown message received - parent crashed. */
     if (c->type != FIO_CLUSTER_MSG_SHUTDOWN && fio_is_running()) {
-      FIO_LOG_STATE("* FATAL ERROR: (%d) Parent Process crash detected!\n",
-                    getpid());
+      FIO_LOG_FATAL("(%d) Parent Process crash detected!", getpid());
       fio_state_callback_force(FIO_CALL_ON_PARENT_CRUSH);
       fio_state_callback_clear(FIO_CALL_ON_PARENT_CRUSH);
       fio_cluster_data_cleanup(1);
@@ -5051,7 +5045,7 @@ fio_cluster_protocol_alloc(intptr_t uuid,
                            void (*sender)(fio_str_s *data, intptr_t auuid)) {
   cluster_pr_s *p = fio_mmap(sizeof(*p));
   if (!p) {
-    FIO_LOG_STATE("FATAL ERROR: Cluster protocol allocation failed");
+    FIO_LOG_FATAL("Cluster protocol allocation failed.");
     exit(errno);
   }
   p->protocol = (fio_protocol_s){
@@ -5184,8 +5178,7 @@ static void fio_cluster_listen_on_close(intptr_t uuid,
   cluster_data.uuid = -1;
   if (fio_parent_pid() == getpid()) {
 #if DEBUG
-    FIO_LOG_STATE("* INFO: (%d) stopped listening for cluster connections\n",
-                  getpid());
+    FIO_LOG_DEBUG("(%d) stopped listening for cluster connections", getpid());
 #endif
     if (fio_data->active)
       kill(0, SIGINT);
@@ -5200,8 +5193,8 @@ static void fio_listen2cluster(void *ignore) {
   cluster_data.uuid = fio_socket(cluster_data.name, NULL, 1);
   fio_unlock(&cluster_data.lock);
   if (cluster_data.uuid < 0) {
-    perror("FATAL ERROR: (facil.io cluster) failed to open cluster socket.\n"
-           "             check file permissions");
+    FIO_LOG_FATAL("(facil.io cluster) failed to open cluster socket.");
+    perror("             check file permissions. errno:");
     exit(errno);
   }
   fio_protocol_s *p = malloc(sizeof(*p));
@@ -5213,8 +5206,7 @@ static void fio_listen2cluster(void *ignore) {
       .on_close = fio_cluster_listen_on_close,
   };
 #if DEBUG
-  FIO_LOG_STATE("* INFO: (%d) Listening to cluster: %s\n", getpid(),
-                cluster_data.name);
+  FIO_LOG_DEBUG("(%d) Listening to cluster: %s", getpid(), cluster_data.name);
 #endif
   fio_attach(cluster_data.uuid, p);
   (void)ignore;
@@ -5299,7 +5291,8 @@ static void fio_cluster_on_connect(intptr_t uuid, void *udata) {
  * is passed along.
  */
 static void fio_cluster_on_fail(intptr_t uuid, void *udata) {
-  perror("FATAL ERROR: (facil.io) unknown cluster connection error");
+  FIO_LOG_FATAL("(facil.io) unknown cluster connection error");
+  perror("       errno");
   kill(fio_parent_pid(), SIGINT);
   fio_stop();
   // exit(errno ? errno : 1);
@@ -5318,7 +5311,7 @@ static void fio_connect2cluster(void *ignore) {
 static void fio_send2cluster(int32_t filter, fio_str_info_s ch,
                              fio_str_info_s msg, uint8_t is_json) {
   if (!fio_is_running()) {
-    FIO_LOG_STATE("ERROR: cluster inactive, can't send message.\n");
+    FIO_LOG_ERROR("facio.io cluster inactive, can't send message.");
     return;
   }
   if (fio_data->workers == 1) {
@@ -5355,7 +5348,7 @@ static inline void fio_cluster_inform_root_about_channel(channel_s *ch,
   fio_str_info_s ch_name = fio_str_info(&ch->id);
   fio_str_info_s msg = {.data = NULL, .len = 0};
 #if DEBUG
-  FIO_LOG_STATE("* (%d) informing root about: %s (%zu) msg type %d\n", getpid(),
+  FIO_LOG_DEBUG("(%d) informing root about: %s (%zu) msg type %d", getpid(),
                 ch_name.data, ch_name.len,
                 (match ? (add ? FIO_CLUSTER_MSG_PATTERN_SUB
                               : FIO_CLUSTER_MSG_PATTERN_UNSUB)
@@ -5536,8 +5529,8 @@ void fio_publish FIO_IGNORE_MACRO(fio_publish_args_s args) {
     break;
   default:
     if (args.filter != 0) {
-      fprintf(stderr, "ERROR: (pub/sub) pub/sub engines can only be used for "
-                      "pub/sub messages (no filter).\n");
+      FIO_LOG_ERROR("(pub/sub) pub/sub engines can only be used for "
+                    "pub/sub messages (no filter).");
       return;
     }
     args.engine->publish(args.engine, args.channel, args.message, args.is_json);
@@ -6111,10 +6104,7 @@ static void fio_mem_init(void) {
   memory.cores = cpu_count;
   memory.count = 0 - (intptr_t)cpu_count;
   arenas = big_alloc(sizeof(*arenas) * cpu_count);
-  if (!arenas) {
-    perror("FATAL ERROR: Couldn't initialize memory allocator");
-    exit(errno);
-  }
+  FIO_ASSERT_ALLOC(arenas);
   size_t pre_pool = cpu_count > 32 ? 32 : cpu_count;
   for (size_t i = 0; i < pre_pool; ++i) {
     void *block = sys_alloc(FIO_MEMORY_BLOCK_SIZE, 0);
@@ -7001,7 +6991,7 @@ fio_sha2_s fio_sha2_init(fio_sha2_variant_e variant) {
         .digest.i64[7] = 0x0eb72ddc81c52ca2,
     };
   }
-  fprintf(stderr, "FATAL ERROR: SHA-2 ERROR - variant unknown\n");
+  FIO_LOG_FATAL("SHA-2 ERROR - variant unknown");
   exit(2);
 }
 
@@ -8398,114 +8388,159 @@ Set data-structure Testing
 
 #define FIO_SET_TEXT_COUNT 524288UL
 
-#define FIO_SET_NAME fio_hashmap_test
+#define FIO_SET_NAME fio_set_test
 #define FIO_SET_OBJ_TYPE uintptr_t
-
 #include <fio.h>
-#define FIO_SET_NAME(s) fio_hashmap_test_##s
+
+#define FIO_SET_NAME fio_hash_test
+#define FIO_SET_KEY_TYPE uintptr_t
+#define FIO_SET_OBJ_TYPE uintptr_t
+#include <fio.h>
 
 FIO_FUNC void fio_set_test(void) {
-  FIO_SET_NAME(s) s = FIO_SET_INIT;
+  fio_set_test_s s = FIO_SET_INIT;
+  fio_hash_test_s h = FIO_SET_INIT;
   fprintf(
       stderr,
       "=== Testing Core ordered Set (re-including fio.h with FIO_SET_NAME)\n");
   fprintf(stderr, "* Inserting %lu items\n", FIO_SET_TEXT_COUNT);
-  union {
-    uintptr_t obj;
-    uintptr_t i;
-  } obj_mem;
-  memset(&obj_mem, 0, sizeof(obj_mem));
 
-  FIO_ASSERT(FIO_SET_NAME(count)(&s) == 0,
-             "empty set should have zero objects");
-  FIO_ASSERT(FIO_SET_NAME(capa)(&s) == 0, "empty set should have no capacity");
-  FIO_ASSERT(!FIO_SET_NAME(is_fragmented)(&s),
+  FIO_ASSERT(fio_set_test_count(&s) == 0, "empty set should have zero objects");
+  FIO_ASSERT(fio_set_test_capa(&s) == 0, "empty set should have no capacity");
+  FIO_ASSERT(fio_hash_test_capa(&h) == 0, "empty hash should have no capacity");
+  FIO_ASSERT(!fio_set_test_is_fragmented(&s),
              "empty set shouldn't be considered fragmented");
-  FIO_ASSERT(!FIO_SET_NAME(last)(&s), "empty set shouldn't have a last object");
+  FIO_ASSERT(!fio_hash_test_is_fragmented(&h),
+             "empty hash shouldn't be considered fragmented");
+  FIO_ASSERT(!fio_set_test_last(&s), "empty set shouldn't have a last object");
+  FIO_ASSERT(!fio_hash_test_last(&h),
+             "empty hash shouldn't have a last object");
 
   for (uintptr_t i = 1; i < FIO_SET_TEXT_COUNT; ++i) {
-    obj_mem.i = i;
-    FIO_SET_NAME(insert)(&s, i, obj_mem.obj);
-    FIO_ASSERT(FIO_SET_NAME(find)(&s, i, obj_mem.obj),
-               "find failed after insert");
-    obj_mem.obj = *FIO_SET_NAME(find)(&s, i, obj_mem.obj);
-    FIO_ASSERT(i == obj_mem.i, "insertion != find");
+    fio_set_test_insert(&s, i, i);
+    fio_hash_test_insert(&h, i, i, i + 1);
+    FIO_ASSERT(fio_set_test_find(&s, i, i), "set find failed after insert");
+    FIO_ASSERT(fio_hash_test_find(&h, i, i), "hash find failed after insert");
+    FIO_ASSERT(i == *fio_set_test_find(&s, i, i), "set insertion != find");
+    FIO_ASSERT(i + 1 == *fio_hash_test_find(&h, i, i),
+               "hash insertion != find");
   }
   fprintf(stderr, "* Seeking %lu items\n", FIO_SET_TEXT_COUNT);
   for (unsigned long i = 1; i < FIO_SET_TEXT_COUNT; ++i) {
-    obj_mem.i = i;
-    obj_mem.obj = *FIO_SET_NAME(find)(&s, i, obj_mem.obj);
-    FIO_ASSERT((i == obj_mem.i), "insertion != find (seek)");
+    FIO_ASSERT((i == *fio_set_test_find(&s, i, i)),
+               "set insertion != find (seek)");
+    FIO_ASSERT((i + 1 == *fio_hash_test_find(&h, i, i)),
+               "hash insertion != find (seek)");
   }
   {
-    fprintf(stderr, "* Testing order for %lu items\n", FIO_SET_TEXT_COUNT);
+    fprintf(stderr, "* Testing order for %lu items in set\n",
+            FIO_SET_TEXT_COUNT);
     uintptr_t i = 1;
     FIO_SET_FOR_LOOP(&s, pos) {
-      obj_mem.obj = pos->obj;
-      FIO_ASSERT(obj_mem.i == i, "object order mismatch %lu != %lu.",
-                 (unsigned long)i, (unsigned long)obj_mem.i);
+      FIO_ASSERT(pos->obj == i, "object order mismatch %lu != %lu.",
+                 (unsigned long)i, (unsigned long)pos->obj);
+      ++i;
+    }
+  }
+  {
+    fprintf(stderr, "* Testing order for %lu items in hash\n",
+            FIO_SET_TEXT_COUNT);
+    uintptr_t i = 1;
+    FIO_SET_FOR_LOOP(&h, pos) {
+      FIO_ASSERT(pos->obj.obj == i + 1 && pos->obj.key == i,
+                 "object order mismatch %lu != %lu.", (unsigned long)i,
+                 (unsigned long)pos->obj.key);
       ++i;
     }
   }
 
   fprintf(stderr, "* Removing odd items from %lu items\n", FIO_SET_TEXT_COUNT);
   for (unsigned long i = 1; i < FIO_SET_TEXT_COUNT; i += 2) {
-    obj_mem.i = i;
-    FIO_SET_NAME(remove)(&s, i, obj_mem.obj);
-    FIO_ASSERT(!(FIO_SET_NAME(find)(&s, i, obj_mem.obj)),
-               "Removal failed (still exists).");
+    fio_set_test_remove(&s, i, i);
+    fio_hash_test_remove(&h, i, i);
+    FIO_ASSERT(!(fio_set_test_find(&s, i, i)),
+               "Removal failed in set (still exists).");
+    FIO_ASSERT(!(fio_hash_test_find(&h, i, i)),
+               "Removal failed in hash (still exists).");
   }
   {
     fprintf(stderr, "* Testing for %lu / 2 holes\n", FIO_SET_TEXT_COUNT);
     uintptr_t i = 1;
     FIO_SET_FOR_LOOP(&s, pos) {
-      obj_mem.obj = pos->obj;
       if (pos->hash == 0) {
         FIO_ASSERT((i & 1) == 1, "deleted object wasn't odd");
       } else {
-        FIO_ASSERT(obj_mem.i == i, "deleted object value mismatch %lu != %lu",
-                   (unsigned long)i, (unsigned long)obj_mem.i);
+        FIO_ASSERT(pos->obj == i, "deleted object value mismatch %lu != %lu",
+                   (unsigned long)i, (unsigned long)pos->obj);
+      }
+      ++i;
+    }
+    i = 1;
+    FIO_SET_FOR_LOOP(&h, pos) {
+      if (pos->hash == 0) {
+        FIO_ASSERT((i & 1) == 1, "deleted object wasn't odd");
+      } else {
+        FIO_ASSERT(pos->obj.key == i,
+                   "deleted object value mismatch %lu != %lu", (unsigned long)i,
+                   (unsigned long)pos->obj.key);
       }
       ++i;
     }
     {
       fprintf(stderr, "* Poping two elements (testing pop through holes)\n");
-      FIO_ASSERT(FIO_SET_NAME(last)(&s),
-                 "Pop `last` 1 failed - no last object");
-      obj_mem.obj = *FIO_SET_NAME(last)(&s);
-      uintptr_t tmp_i = obj_mem.i;
-      FIO_ASSERT(obj_mem.obj, "Pop `last` 1 failed to collect object");
-      FIO_SET_NAME(pop)(&s);
-      FIO_ASSERT(FIO_SET_NAME(last)(&s),
-                 "Pop `last` 2 failed - no last object");
-      obj_mem.obj = *FIO_SET_NAME(last)(&s);
-      FIO_ASSERT(obj_mem.i != tmp_i,
-                 "Pop `last` 2 same as `last` 1 - failed to collect object");
-      FIO_SET_NAME(pop)(&s);
+      FIO_ASSERT(fio_set_test_last(&s), "Pop `last` 1 failed - no last object");
+      uintptr_t tmp = *fio_set_test_last(&s);
+      FIO_ASSERT(tmp, "Pop set `last` 1 failed to collect object");
+      fio_set_test_pop(&s);
+      FIO_ASSERT(
+          *fio_set_test_last(&s) != tmp,
+          "Pop `last` 2 in set same as `last` 1 - failed to collect object");
+      tmp = fio_hash_test_last(&h)->key;
+      FIO_ASSERT(tmp, "Pop hash `last` 1 failed to collect object");
+      fio_hash_test_pop(&h);
+      FIO_ASSERT(
+          fio_hash_test_last(&h)->key != tmp,
+          "Pop `last` 2 in hash same as `last` 1 - failed to collect object");
+      FIO_ASSERT(fio_set_test_last(&s), "Pop `last` 2 failed - no last object");
+      FIO_ASSERT(fio_hash_test_last(&h),
+                 "Pop `last` 2 failed in hash - no last object");
+      fio_set_test_pop(&s);
+      fio_hash_test_pop(&h);
     }
     if (1) {
-      obj_mem.i = 1;
-      FIO_SET_NAME(remove)(&s, obj_mem.i, obj_mem.obj);
+      uintptr_t tmp = 1;
+      fio_set_test_remove(&s, tmp, tmp);
+      fio_hash_test_remove(&h, tmp, tmp);
       size_t count = s.count;
-      FIO_SET_NAME(overwrite)(&s, obj_mem.i, obj_mem.obj);
-      FIO_ASSERT(count + 1 == s.count,
-                 "Re-adding a removed item should increase count by 1 (%zu + "
-                 "1 != %zu).",
-                 count, (size_t)s.count);
-      obj_mem.obj = *FIO_SET_NAME(find)(&s, obj_mem.i, obj_mem.obj);
-      FIO_ASSERT(obj_mem.i == 1,
-                 "Re-adding a removed item should update the item (%p != 1)!",
-                 (void *)FIO_SET_NAME(find)(&s, obj_mem.i, obj_mem.obj));
-      FIO_SET_NAME(remove)(&s, obj_mem.i, obj_mem.obj);
-      FIO_ASSERT(count == s.count,
+      fio_set_test_overwrite(&s, tmp, tmp);
+      FIO_ASSERT(
+          count + 1 == s.count,
+          "Re-adding a removed item in set should increase count by 1 (%zu + "
+          "1 != %zu).",
+          count, (size_t)s.count);
+      count = h.count;
+      fio_hash_test_insert(&h, tmp, tmp, tmp);
+      FIO_ASSERT(
+          count + 1 == h.count,
+          "Re-adding a removed item in hash should increase count by 1 (%zu + "
+          "1 != %zu).",
+          count, (size_t)s.count);
+      tmp = *fio_set_test_find(&s, tmp, tmp);
+      FIO_ASSERT(tmp == 1,
+                 "Re-adding a removed item should update the item in the set "
+                 "(%lu != 1)!",
+                 (unsigned long)*fio_set_test_find(&s, tmp, tmp));
+      fio_set_test_remove(&s, tmp, tmp);
+      fio_hash_test_remove(&h, tmp, tmp);
+      FIO_ASSERT(count == h.count,
                  "Re-removing an item should decrease count (%zu != %zu).",
                  count, (size_t)s.count);
-      FIO_ASSERT(!FIO_SET_NAME(find)(&s, obj_mem.i, obj_mem.obj),
+      FIO_ASSERT(!fio_set_test_find(&s, tmp, tmp),
                  "Re-removing a re-added item should update the item!");
     }
   }
   fprintf(stderr, "* Compacting HashMap to %lu\n", FIO_SET_TEXT_COUNT >> 1);
-  FIO_SET_NAME(compact)(&s);
+  fio_set_test_compact(&s);
   {
     fprintf(stderr, "* Testing that %lu items are continuous\n",
             FIO_SET_TEXT_COUNT >> 1);
@@ -8517,11 +8552,12 @@ FIO_FUNC void fio_set_test(void) {
     FIO_ASSERT(i == s.count, "count error (%lu != %lu).", i, s.count);
   }
 
-  FIO_SET_NAME(free)(&s);
+  fio_set_test_free(&s);
+  fio_hash_test_free(&h);
   FIO_ASSERT(!s.map && !s.ordered && !s.pos && !s.capa,
              "HashMap not re-initialized after free.");
 
-  FIO_SET_NAME(capa_require)(&s, FIO_SET_TEXT_COUNT);
+  fio_set_test_capa_require(&s, FIO_SET_TEXT_COUNT);
 
   FIO_ASSERT(
       s.map && s.ordered && !s.pos && s.capa >= FIO_SET_TEXT_COUNT,
@@ -8529,16 +8565,15 @@ FIO_FUNC void fio_set_test(void) {
       (void *)s.map, (void *)s.ordered, s.pos, s.capa, FIO_SET_TEXT_COUNT);
 
   for (unsigned long i = 1; i < FIO_SET_TEXT_COUNT; ++i) {
-    obj_mem.i = i;
-    FIO_SET_NAME(insert)(&s, obj_mem.i, obj_mem.obj);
-    FIO_ASSERT(FIO_SET_NAME(find)(&s, obj_mem.i, obj_mem.obj),
+    fio_set_test_insert(&s, i, i);
+    FIO_ASSERT(fio_set_test_find(&s, i, i),
                "find failed after insert (2nd round)");
-    obj_mem.obj = *FIO_SET_NAME(find)(&s, obj_mem.i, obj_mem.obj);
-    FIO_ASSERT(i == obj_mem.i, "insertion (2nd round) != find");
+    FIO_ASSERT(i == *fio_set_test_find(&s, i, i),
+               "insertion (2nd round) != find");
     FIO_ASSERT(i == s.count, "count error (%lu != %lu) post insertion.", i,
                s.count);
   }
-  FIO_SET_NAME(free)(&s);
+  fio_set_test_free(&s);
 }
 #undef FIO_SET_NAME
 

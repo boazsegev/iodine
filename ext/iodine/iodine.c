@@ -35,7 +35,7 @@ Idling
 
 /* performs a Ruby state callback and clears the Ruby object's memory */
 static void iodine_perform_on_idle_callback(void *blk_) {
-  VALUE blk = blk_;
+  VALUE blk = (VALUE)blk_;
   IodineCaller.call(blk, call_id);
   IodineStore.remove(blk);
   fio_state_callback_remove(FIO_CALL_ON_IDLE, iodine_perform_on_idle_callback,

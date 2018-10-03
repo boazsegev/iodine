@@ -1,4 +1,4 @@
-
+#include <ruby.h>
 #define INCLUDE_MUSTACHE_IMPLEMENTATION 1
 #include "mustache_parser.h"
 
@@ -21,10 +21,9 @@ static size_t iodine_mustache_data_size(const void *c_) {
   (void)c_;
 }
 
-static size_t iodine_mustache_data_free(const void *c_) {
+static void iodine_mustache_data_free(void *c_) {
   mustache_free(((mustache_s **)c_)[0]);
   free((void *)c_);
-  return sizeof(mustache_s *);
   (void)c_;
 }
 
@@ -33,7 +32,7 @@ const rb_data_type_t iodine_mustache_data_type = {
     .function =
         {
             .dmark = NULL,
-            .dfree = free,
+            .dfree = iodine_mustache_data_free,
             .dsize = iodine_mustache_data_size,
         },
     .data = NULL,
@@ -45,14 +44,6 @@ static VALUE iodine_mustache_data_alloc_c(VALUE self) {
   void *m = malloc(sizeof(mustache_s *));
   ((mustache_s **)m)[0] = NULL;
   return TypedData_Wrap_Struct(self, &iodine_mustache_data_type, m);
-}
-
-static inline mustache_s *iodine_mustache_ruby2C(VALUE self) {
-  mustache_s **m = NULL;
-  TypedData_Get_Struct(self, mustache_s *, &iodine_mustache_data_type, m);
-  if (!m)
-    return NULL;
-  return m[0];
 }
 
 /* *****************************************************************************

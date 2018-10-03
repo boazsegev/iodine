@@ -1,14 +1,16 @@
 #include "iodine.h"
 
-#include "fio_hashmap.h"
 #include "iodine_store.h"
 
-#include <fio.h>
 #include <inttypes.h>
 #include <stdint.h>
 
+#define FIO_SET_NAME fio_hash
+#define FIO_SET_OBJ_TYPE uintptr_t
+#include <fio.h>
+
 fio_lock_i lock = FIO_LOCK_INIT;
-fio_hash_s storage = FIO_HASH_INIT;
+fio_hash_s storage = FIO_SET_INIT;
 
 #ifndef IODINE_DEBUG
 #define IODINE_DEBUG 0
@@ -23,10 +25,8 @@ static VALUE storage_add(VALUE obj) {
   if (obj == Qnil || obj == Qtrue || obj == Qfalse)
     return obj;
   fio_lock(&lock);
-  uintptr_t val = (uintptr_t)fio_hash_insert(&storage, obj, (void *)1);
-  if (val) {
-    fio_hash_insert(&storage, obj, (void *)(val + 1));
-  }
+  uintptr_t *val = fio_hash_insert(&storage, obj, 0);
+  ++val[0];
   fio_unlock(&lock);
   return obj;
 }
@@ -36,14 +36,9 @@ static VALUE storage_remove(VALUE obj) {
       storage.count == 0)
     return obj;
   fio_lock(&lock);
-  uintptr_t val = (uintptr_t)fio_hash_insert(&storage, obj, NULL);
-  if (val > 1) {
-    fio_hash_insert(&storage, obj, (void *)(val - 1));
-  }
-  if ((storage.count << 1) <= storage.pos &&
-      (storage.pos << 1) > storage.capa) {
-    fio_hash_compact(&storage);
-  }
+  uintptr_t *val = fio_hash_find(&storage, obj, 0);
+  if (val && *val <= 1)
+    fio_hash_remove(&storage, obj, 0);
   fio_unlock(&lock);
   return obj;
 }
@@ -55,10 +50,10 @@ static void storage_print(void) {
   fprintf(stderr, "Ruby <=> C Memory storage stats (pid: %d):\n", getpid());
   fio_lock(&lock);
   uintptr_t index = 0;
-  FIO_HASH_FOR_LOOP(&storage, pos) {
+  FIO_SET_FOR_LOOP(&storage, pos) {
     if (pos->obj) {
       fprintf(stderr, "[%" PRIuPTR "] => %" PRIuPTR " X obj %p type %d\n",
-              index++, (uintptr_t)pos->obj, (void *)pos->key, TYPE(pos->key));
+              index++, pos->obj, (void *)pos->hash, TYPE(pos->hash));
     }
   }
   fprintf(stderr, "Total of %" PRIuPTR " objects protected form GC\n", index);
@@ -88,9 +83,9 @@ static void storage_mark(void *ignore) {
 #endif
   fio_lock(&lock);
   // fio_hash_compact(&storage);
-  FIO_HASH_FOR_LOOP(&storage, pos) {
+  FIO_SET_FOR_LOOP(&storage, pos) {
     if (pos->obj) {
-      rb_gc_mark((VALUE)pos->key);
+      rb_gc_mark((VALUE)pos->hash);
     }
   }
   fio_unlock(&lock);
@@ -104,7 +99,7 @@ static void storage_clear(void *ignore) {
 #endif
   fio_lock(&lock);
   fio_hash_free(&storage);
-  storage = (fio_hash_s)FIO_HASH_INIT;
+  storage = (fio_hash_s)FIO_SET_INIT;
   fio_unlock(&lock);
 }
 
@@ -131,7 +126,7 @@ struct IodineStorage_s IodineStore = {
 
 /** Initializes the storage unit for first use. */
 void iodine_storage_init(void) {
-  fio_hash_new2(&storage, 512);
+  fio_hash_capa_require(&storage, 512);
   VALUE tmp =
       rb_define_class_under(rb_cObject, "IodineObjectStorage", rb_cData);
   VALUE storage_obj =

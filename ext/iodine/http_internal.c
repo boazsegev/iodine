@@ -27,8 +27,10 @@ void http_on_request_handler______internal(http_s *h,
   if (1) {
     /* test for Host header and avoid duplicates */
     FIOBJ tmp = fiobj_hash_get2(h->headers, host_hash);
-    if (!tmp)
+    if (!tmp) {
       http_send_error(h, 400);
+      return;
+    }
     if (FIOBJ_TYPE_IS(tmp, FIOBJ_T_ARRAY)) {
       fiobj_hash_set(h->headers, HTTP_HEADER_HOST, fiobj_ary_pop(tmp));
     }
@@ -94,7 +96,7 @@ int http_send_error2(size_t error, intptr_t uuid, http_settings_s *settings) {
     return -1;
   fio_protocol_s *pr = http1_new(uuid, settings, NULL, 0);
   http_s *r = fio_malloc(sizeof(*r));
-  HTTP_ASSERT(pr, "Couldn't allocate response object for error report.")
+  FIO_ASSERT(pr, "Couldn't allocate response object for error report.")
   http_s_new(r, (http_fio_protocol_s *)pr, http1_vtable());
   int ret = http_send_error(r, error);
   fio_close(uuid);
