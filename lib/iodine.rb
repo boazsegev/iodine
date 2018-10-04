@@ -106,6 +106,10 @@ if ARGV.index('-tout') && ARGV[ARGV.index('-tout') + 1]
 end
 Iodine::DEFAULT_HTTP_ARGS[:log] = true if ARGV.index('-v')
 
+if ARGV.index('-logging') && ARGV[ARGV.index('-logging') + 1] && ARGV[ARGV.index('-logging') + 1].to_s[0] >= '0' && ARGV[ARGV.index('-logging') + 1].to_s[0] <= '9'
+  Iodine.verbosity = ARGV[ARGV.index('-logging') + 1].to_i
+end
+
 if ARGV.index('-t') && ARGV[ARGV.index('-t') + 1].to_i != 0
   Iodine.threads = ARGV[ARGV.index('-t') + 1].to_i
 end

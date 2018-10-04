@@ -39,7 +39,7 @@ typedef struct {
 static void *iodine_tcp_on_data_in_GIL(void *b_) {
   iodine_buffer_s *b = b_;
   if (!b) {
-    fprintf(stderr, "FATAL ERROR: (iodine->tcp/ip->on_data->GIL) WTF?!\n");
+    FIO_LOG_FATAL("(iodine->tcp/ip->on_data->GIL) WTF?!\n");
   }
   VALUE data = IodineStore.add(rb_str_new(b->buffer, b->len));
   rb_enc_associate(data, IodineBinaryEncoding);

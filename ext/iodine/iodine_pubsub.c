@@ -412,9 +412,8 @@ static VALUE iodine_pubsub_redis_new(int argc, VALUE *argv, VALUE self) {
   /* parse URL assume redis://redis:password@localhost:6379 */
   http_url_s info = http_url_parse(RSTRING_PTR(url), RSTRING_LEN(url));
 
-  fprintf(
-      stderr,
-      "INFO: Initializing Redis engine for address: %s - port: %s -  auth %s\n",
+  FIO_LOG_INFO(
+      "Initializing Redis engine for address: %s - port: %s -  auth %s\n",
       info.host.data ? info.host.data : "-",
       info.port.data ? info.port.data : "-",
       info.password.data ? info.password.data : "-");

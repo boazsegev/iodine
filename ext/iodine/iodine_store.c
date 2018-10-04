@@ -22,23 +22,26 @@ API
 
 /** Adds an object to the storage (or increases it's reference count). */
 static VALUE storage_add(VALUE obj) {
-  if (obj == Qnil || obj == Qtrue || obj == Qfalse)
+  if (!obj || obj == Qnil || obj == Qtrue || obj == Qfalse)
     return obj;
   fio_lock(&lock);
-  uintptr_t *val = fio_hash_insert(&storage, obj, 0);
-  ++val[0];
+  uintptr_t old = 0;
+  fio_hash_overwrite(&storage, obj, 1, &old);
+  if (old)
+    fio_hash_overwrite(&storage, obj, old + 1, NULL);
   fio_unlock(&lock);
   return obj;
 }
 /** Removes an object from the storage (or decreases it's reference count). */
 static VALUE storage_remove(VALUE obj) {
-  if (obj == Qnil || obj == Qtrue || obj == Qfalse || storage.map == NULL ||
+  if (!obj || obj == Qnil || obj == Qtrue || obj == Qfalse ||
       storage.count == 0)
     return obj;
   fio_lock(&lock);
-  uintptr_t *val = fio_hash_find(&storage, obj, 0);
-  if (val && *val <= 1)
-    fio_hash_remove(&storage, obj, 0);
+  uintptr_t old = 0;
+  fio_hash_remove(&storage, obj, 0, &old);
+  if (old > 1)
+    fio_hash_overwrite(&storage, obj, old - 1, NULL);
   fio_unlock(&lock);
   return obj;
 }
@@ -47,7 +50,7 @@ static void storage_after_fork(void) { lock = FIO_LOCK_INIT; }
 
 /** Prints debugging information to the console. */
 static void storage_print(void) {
-  fprintf(stderr, "Ruby <=> C Memory storage stats (pid: %d):\n", getpid());
+  FIO_LOG_DEBUG("Ruby <=> C Memory storage stats (pid: %d):\n", getpid());
   fio_lock(&lock);
   uintptr_t index = 0;
   FIO_SET_FOR_LOOP(&storage, pos) {
@@ -58,7 +61,7 @@ static void storage_print(void) {
   }
   fprintf(stderr, "Total of %" PRIuPTR " objects protected form GC\n", index);
   fprintf(stderr,
-          "Storage uses %" PRIuPTR " Hash bins for %" PRIuPTR " objects\n",
+          "Storage uses %" PRIuPTR " Hash bins for %" PRIuPTR " objects",
           storage.capa, storage.count);
   fio_unlock(&lock);
 }
@@ -78,9 +81,8 @@ GC protection
 /* a callback for the GC (marking active objects) */
 static void storage_mark(void *ignore) {
   (void)ignore;
-#if IODINE_DEBUG
-  storage_print();
-#endif
+  if (FIO_LOG_LEVEL >= FIO_LOG_LEVEL_DEBUG)
+    storage_print();
   fio_lock(&lock);
   // fio_hash_compact(&storage);
   FIO_SET_FOR_LOOP(&storage, pos) {
@@ -94,9 +96,7 @@ static void storage_mark(void *ignore) {
 /* clear the registry (end of lifetime) */
 static void storage_clear(void *ignore) {
   (void)ignore;
-#if IODINE_DEBUG == 1
-  fprintf(stderr, "* INFO: Ruby<=>C Storage cleared.\n");
-#endif
+  FIO_LOG_DEBUG("Ruby<=>C Storage cleared.\n");
   fio_lock(&lock);
   fio_hash_free(&storage);
   storage = (fio_hash_s)FIO_SET_INIT;

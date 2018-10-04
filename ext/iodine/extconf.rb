@@ -29,7 +29,7 @@ else
   puts 'using an unknown (old?) compiler... who knows if this will work out... we hope.'
 end
 
-$CFLAGS = "-std=c11 -O2 -Wall #{ENV['CFLAGS']}"
+$CFLAGS = "-std=c11 -O2 -Wall -DFIO_PRINT_STATE=0 #{ENV['CFLAGS']}"
 RbConfig::MAKEFILE_CONFIG['CC'] = $CC = ENV['CC'] if ENV['CC']
 RbConfig::MAKEFILE_CONFIG['CPP'] = $CPP = ENV['CPP'] if ENV['CPP']
 

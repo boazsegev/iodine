@@ -32,6 +32,7 @@ Available options:
  -maxbd      Maximum Mb per HTTP message (max body size). Default: 50Mb.
  -maxms      Maximum Bytes per Websocket message. Default: 250Kb.
  -ping       WebSocket / SSE ping interval in seconds. Default: 40 seconds.
+ -logging    Server level logging (not HTTP), values between 0..5. Defaults to 4.
  <filename>  Defaults to: config.ru
 
 Example:

@@ -3,6 +3,8 @@
 #include <ruby/thread.h>
 #include <string.h>
 
+#include <fio.h>
+
 static __thread volatile uint8_t iodine_GVL_state;
 
 /* *****************************************************************************
@@ -28,18 +30,18 @@ static void *iodine_handle_exception(void *ignr) {
     VALUE bt = rb_funcall2(exc, rb_intern("backtrace"), 0, NULL);
     if (TYPE(bt) == T_ARRAY) {
       bt = rb_ary_join(bt, rb_str_new_literal("\n"));
-      fprintf(stderr, "Iodine caught an unprotected exception - %.*s: %.*s\n%s",
-              (int)RSTRING_LEN(exc_class), RSTRING_PTR(exc_class),
-              (int)RSTRING_LEN(msg), RSTRING_PTR(msg), StringValueCStr(bt));
+      FIO_LOG_ERROR("Iodine caught an unprotected exception - %.*s: %.*s\n%s",
+                    (int)RSTRING_LEN(exc_class), RSTRING_PTR(exc_class),
+                    (int)RSTRING_LEN(msg), RSTRING_PTR(msg),
+                    StringValueCStr(bt));
     } else {
-      fprintf(stderr,
-              "Iodine caught an unprotected exception - %.*s: %.*s\n"
-              "No backtrace available.\n",
-              (int)RSTRING_LEN(exc_class), RSTRING_PTR(exc_class),
-              (int)RSTRING_LEN(msg), RSTRING_PTR(msg));
+      FIO_LOG_ERROR("Iodine caught an unprotected exception - %.*s: %.*s\n"
+                    "No backtrace available.\n",
+                    (int)RSTRING_LEN(exc_class), RSTRING_PTR(exc_class),
+                    (int)RSTRING_LEN(msg), RSTRING_PTR(msg));
     }
     rb_backtrace();
-    fprintf(stderr, "\n\n");
+    FIO_LOG_ERROR("\n");
     rb_set_errinfo(Qnil);
   }
   return (void *)Qnil;
