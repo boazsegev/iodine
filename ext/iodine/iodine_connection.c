@@ -51,14 +51,14 @@ Pub/Sub storage
 
 static inline VALUE iodine_sub_unsubscribe(fio_subhash_s *store,
                                            fio_str_info_s channel) {
-  if (fio_subhash_remove(store, fio_siphash(channel.data, channel.len),
-                         channel))
+  if (fio_subhash_remove(store, fio_siphash(channel.data, channel.len), channel,
+                         NULL))
     return Qfalse;
   return Qtrue;
 }
 static inline void iodine_sub_add(fio_subhash_s *store, subscription_s *sub) {
   fio_str_info_s ch = fio_subscription_channel(sub);
-  fio_subhash_insert(store, fio_siphash(ch.data, ch.len), ch, sub);
+  fio_subhash_insert(store, fio_siphash(ch.data, ch.len), ch, sub, NULL);
 }
 static inline void iodine_sub_clear_all(fio_subhash_s *store) {
   fio_subhash_free(store);
@@ -404,8 +404,7 @@ static iodine_sub_args_s iodine_subscribe_args(int argc, VALUE *argv) {
         /* temporary backport support */
         ret.channel = rb_hash_aref(argv[0], channel_id);
         if (ret.channel != Qnil) {
-          fprintf(stderr,
-                  "WARNING: use of :channel in subscribe is deprecated.\n");
+          FIO_LOG_WARNING("use of :channel in subscribe is deprecated.");
         }
       }
     } else {
@@ -652,9 +651,7 @@ VALUE iodine_connection_new(iodine_connection_s args) {
   IodineStore.add(connection);
   iodine_connection_data_s *data = iodine_connection_ruby2C(connection);
   if (data == NULL) {
-    fprintf(
-        stderr,
-        "ERROR: (iodine) internal error, connection object has no C data!\n");
+    FIO_LOG_ERROR("(iodine) internal error, connection object has no C data!");
     return Qnil;
   }
   *data = (iodine_connection_data_s){
@@ -677,17 +674,15 @@ void iodine_connection_fire_event(VALUE connection,
                                   iodine_connection_event_type_e ev,
                                   VALUE msg) {
   if (connection == Qnil) {
-    fprintf(
-        stderr,
-        "ERROR: (iodine) nil connection handle used by an internal API call\n");
+    FIO_LOG_ERROR(
+        "(iodine) nil connection handle used by an internal API call");
     return;
   }
   iodine_connection_data_s *data = iodine_connection_validate_data(connection);
   if (!data) {
-    fprintf(stderr,
-            "ERROR: (iodine) invalid connection handle used by an "
-            "internal API call: %p\n",
-            (void *)connection);
+    FIO_LOG_ERROR("(iodine) invalid connection handle used by an "
+                  "internal API call: %p",
+                  (void *)connection);
     return;
   }
   VALUE args[2] = {connection, msg};

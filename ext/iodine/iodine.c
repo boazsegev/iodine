@@ -118,6 +118,49 @@ static VALUE iodine_threads_set(VALUE self, VALUE val) {
 }
 
 /**
+ * Gets the logging level used for Iodine messages.
+ *
+ * Levels range from 0-5, where:
+ *
+ * 0 == Quite (no messages)
+ * 1 == Fatal Errors only.
+ * 2 == Errors only (including fatal errors).
+ * 3 == Warnings and errors only.
+ * 4 == Informational messages, warnings and errors (default).
+ * 5 == Everything, including debug information.
+ *
+ * Logging is always performed to the process's STDERR and can be piped away.
+ *
+ * NOTE: this does NOT effect HTTP logging.
+ */
+static VALUE iodine_logging_get(VALUE self) {
+  return INT2FIX(FIO_LOG_LEVEL);
+  (void)self;
+}
+
+/**
+ * Gets the logging level used for Iodine messages.
+ *
+ * Levels range from 0-5, where:
+ *
+ * 0 == Quite (no messages)
+ * 1 == Fatal Errors only.
+ * 2 == Errors only (including fatal errors).
+ * 3 == Warnings and errors only.
+ * 4 == Informational messages, warnings and errors (default).
+ * 5 == Everything, including debug information.
+ *
+ * Logging is always performed to the process's STDERR and can be piped away.
+ *
+ * NOTE: this does NOT effect HTTP logging.
+ */
+static VALUE iodine_logging_set(VALUE self, VALUE val) {
+  Check_Type(val, T_FIXNUM);
+  FIO_LOG_LEVEL = FIX2ULONG(val);
+  return self;
+}
+
+/**
  *Returns the number of worker processes that will be used when {Iodine.start}
  * is called.
  *
@@ -156,13 +199,13 @@ static void iodine_print_startup_message(iodine_start_params_s params) {
   VALUE iodine_version = rb_const_get(IodineModule, rb_intern("VERSION"));
   VALUE ruby_version = rb_const_get(IodineModule, rb_intern("RUBY_VERSION"));
   fio_expected_concurrency(&params.threads, &params.workers);
-  fprintf(stderr,
-          "\nStarting up Iodine:\n"
-          " * Iodine %s\n * Ruby %s\n * facil.io " FIO_VERSION_STRING " (%s)\n"
-          " * %d Workers X %d Threads per worker.\n"
-          "\n",
-          StringValueCStr(iodine_version), StringValueCStr(ruby_version),
-          fio_engine(), params.workers, params.threads);
+  FIO_LOG_INFO("Starting up Iodine:\n"
+               " * Iodine %s\n * Ruby %s\n"
+               " * facil.io " FIO_VERSION_STRING " (%s)\n"
+               " * %d Workers X %d Threads per worker.\n"
+               " * Master (root) process: %d.\n",
+               StringValueCStr(iodine_version), StringValueCStr(ruby_version),
+               fio_engine(), params.workers, params.threads, fio_parent_pid());
   (void)params;
 }
 
@@ -229,6 +272,8 @@ void Init_iodine(void) {
   // register core methods
   rb_define_module_function(IodineModule, "threads", iodine_threads_get, 0);
   rb_define_module_function(IodineModule, "threads=", iodine_threads_set, 1);
+  rb_define_module_function(IodineModule, "verbosity", iodine_logging_get, 0);
+  rb_define_module_function(IodineModule, "verbosity=", iodine_logging_set, 1);
   rb_define_module_function(IodineModule, "workers", iodine_workers_get, 0);
   rb_define_module_function(IodineModule, "workers=", iodine_workers_set, 1);
   rb_define_module_function(IodineModule, "start", iodine_start, 0);

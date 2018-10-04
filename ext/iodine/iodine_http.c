@@ -952,21 +952,19 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
           .max_header_size = max_headers, .on_finish = free_iodine_http,
           .log = log_http, .max_body_size = max_body,
           .public_folder = (www ? StringValueCStr(www) : NULL)) == -1) {
-    fprintf(stderr,
-            "ERROR: Failed to initialize a listening HTTP socket for port %s\n",
-            port ? StringValueCStr(port) : "3000");
+    FIO_LOG_ERROR("Failed to initialize a listening HTTP socket for port %s",
+                  port ? StringValueCStr(port) : "3000");
     return Qfalse;
   }
 
   if ((app == Qnil || app == Qfalse)) {
-    fprintf(stderr,
-            "* Iodine: (no app) the HTTP service on port %s will only serve "
-            "static files.\n",
-            (port ? StringValueCStr(port) : "3000"));
+    FIO_LOG_WARNING(
+        "(listen2http) no app, the HTTP service on port %s will only serve "
+        "static files.",
+        (port ? StringValueCStr(port) : "3000"));
   }
   if (www) {
-    fprintf(stderr, " *    Serving static files from %s\n",
-            StringValueCStr(www));
+    FIO_LOG_INFO("Serving static files from %s\n", StringValueCStr(www));
   }
 
   return Qtrue;

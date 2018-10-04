@@ -114,8 +114,8 @@ static int fio_json_on_start_object(json_parser_s *p) {
 static void fio_json_on_end_object(json_parser_s *p) {
   iodine_json_parser_s *pr = (iodine_json_parser_s *)p;
   if (pr->key) {
-    fprintf(stderr, "WARNING: (JSON parsing) malformed JSON, "
-                    "ignoring dangling Hash key.\n");
+    FIO_LOG_WARNING("(JSON parsing) malformed JSON, "
+                    "ignoring dangling Hash key.");
     IodineStore.remove(pr->key);
     pr->key = (VALUE)0;
   }
@@ -146,7 +146,7 @@ static void fio_json_on_json(json_parser_s *p) { (void)p; /* do nothing */ }
 static void fio_json_on_error(json_parser_s *p) {
   iodine_json_parser_s *pr = (iodine_json_parser_s *)p;
 #if DEBUG
-  fprintf(stderr, "ERROR: JSON on error called.\n");
+  FIO_LOG_ERROR("JSON on error called.");
 #endif
   IodineStore.remove((VALUE)fio_ary_index(&pr->stack, 0));
   IodineStore.remove(pr->key);
@@ -192,20 +192,16 @@ static inline void iodine_json_update_settings(VALUE h,
                                                fiobj2rb_settings_s *s) {
   VALUE tmp;
   if (rb_hash_aref(h, max_nesting) != Qnil)
-    fprintf(stderr,
-            "WARNING: max_nesting ignored on this JSON implementation.\n");
+    FIO_LOG_WARNING("max_nesting ignored on this JSON implementation.");
   if (rb_hash_aref(h, allow_nan) != Qnil)
     fprintf(stderr, "WARNING: allow_nan ignored on this JSON implementation. "
                     "NaN always allowed.\n");
   if (rb_hash_aref(h, create_additions) != Qnil)
-    fprintf(stderr,
-            "WARNING: create_additions ignored on this JSON implementation.\n");
+    FIO_LOG_WARNING("create_additions ignored on this JSON implementation.");
   if (rb_hash_aref(h, object_class) != Qnil)
-    fprintf(stderr,
-            "WARNING: object_class ignored on this JSON implementation.\n");
+    FIO_LOG_WARNING("object_class ignored on this JSON implementation.");
   if (rb_hash_aref(h, array_class) != Qnil)
-    fprintf(stderr,
-            "WARNING: array_class ignored on this JSON implementation.\n");
+    FIO_LOG_WARNING("array_class ignored on this JSON implementation.");
   if ((tmp = rb_hash_aref(h, symbolize_names)) != Qnil) {
     if (tmp == Qtrue)
       s->str2sym = 1;
