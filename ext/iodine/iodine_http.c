@@ -964,7 +964,7 @@ VALUE iodine_http_listen(VALUE self, VALUE opt) {
         (port ? StringValueCStr(port) : "3000"));
   }
   if (www) {
-    FIO_LOG_INFO("Serving static files from %s\n", StringValueCStr(www));
+    FIO_LOG_INFO("Serving static files from %s", StringValueCStr(www));
   }
 
   return Qtrue;
