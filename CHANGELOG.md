@@ -6,6 +6,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.3
+
+**Fix**: (facil.io) updating facil.io fixes a channel name memory leak fixed in facil.io's edge version.
+
+**Updated**: Improved logging for server data, allowing for log silencing.
+
 #### Change log v.0.7.2
 
 **Updated**: updated the logging for HTTP services startup, to minimize log clutter.
