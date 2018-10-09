@@ -3595,28 +3595,22 @@ int64_t fio_atol(char **pstr) {
   } else if (str[0] == '0') {
     ++str;
     /* base 8 */
-    const char *end = str;
-    while (end[0] >= '0' && end[0] <= '7' && (uintptr_t)(end - str) < 22)
-      end++;
-    if ((uintptr_t)(end - str) > 21) /* TODO: fix too large for a number */
-      return 0;
-
-    while (str < end) {
+    const char *start = str;
+    while (str[0] >= '0' && str[0] <= '7' && (uintptr_t)(str - start) < 22) {
       result = (result * 8) + (str[0] - '0');
-      str++;
+      ++str;
     }
+    if ((uintptr_t)(str - start) > 22) /* too large for a number */
+      return 0;
   } else {
     /* base 10 */
-    const char *end = str;
-    while (end[0] >= '0' && end[0] <= '9' && (uintptr_t)(end - str) < 22)
-      end++;
-    if ((uintptr_t)(end - str) > 21) /* too large for a number */
-      return 0;
-
-    while (str < end) {
+    const char *start = str;
+    while (str[0] >= '0' && str[0] <= '9' && (uintptr_t)(str - start) < 22) {
       result = (result * 10) + (str[0] - '0');
-      str++;
+      ++str;
     }
+    if ((uintptr_t)(str - start) > 21) /* too large for a number */
+      return 0;
   }
 finish:
   if (invert)
@@ -5724,6 +5718,27 @@ Section Start Marker
 ***************************************************************************** */
 
 #if FIO_FORCE_MALLOC
+
+void *fio_malloc(size_t size) { return calloc(size, 1); }
+
+void *fio_calloc(size_t size_per_unit, size_t unit_count) {
+  return calloc(size_per_unit, unit_count);
+}
+
+void fio_free(void *ptr) { free(ptr); }
+
+void *fio_realloc(void *ptr, size_t new_size) {
+  return realloc((ptr), (new_size));
+}
+
+void *fio_realloc2(void *ptr, size_t new_size, size_t copy_length) {
+  return realloc((ptr), (new_size));
+  (void)copy_length;
+}
+
+void *fio_mmap(size_t size) { return calloc(size, 1); }
+
+void fio_malloc_after_fork(void) {}
 void fio_mem_destroy(void) {}
 void fio_mem_init(void) {}
 
@@ -7950,10 +7965,11 @@ Testing Memory Allocator
 ***************************************************************************** */
 
 #if FIO_FORCE_MALLOC
-#define fio_malloc_test()
+#define fio_malloc_test()                                                      \
+  fprintf(stderr, "\n=== SKIPPED facil.io memory allocator (bypassed)\n");
 #else
 void fio_malloc_test(void) {
-  fprintf(stderr, "=== Testing facil.io memory allocator's system calls\n");
+  fprintf(stderr, "\n=== Testing facil.io memory allocator's system calls\n");
   char *mem = sys_alloc(FIO_MEMORY_BLOCK_SIZE, 0);
   FIO_ASSERT(mem, "sys_alloc failed to allocate memory!\n");
   FIO_ASSERT(!((uintptr_t)mem & FIO_MEMORY_BLOCK_MASK),
@@ -8405,6 +8421,40 @@ static void fio_defer_test(void) {
   FIO_ASSERT(deferred.writer == &fio_defer_static_queue,
              "defer library didn't release dynamic queue (should be static)");
   fprintf(stderr, "\n* passed.\n");
+}
+
+/* *****************************************************************************
+Array data-structure Testing
+***************************************************************************** */
+
+typedef struct {
+  int i;
+  char c;
+} fio_ary_test_type_s;
+
+#define FIO_ARY_NAME fio_i_ary
+#define FIO_ARY_TYPE uintptr_t
+#include "fio.h"
+
+static intptr_t ary_alloc_counter = 0;
+static void copy_s(fio_ary_test_type_s *d, fio_ary_test_type_s *s) {
+  ++ary_alloc_counter;
+  *d = *s;
+}
+
+#define FIO_ARY_NAME fio_s_ary
+#define FIO_ARY_TYPE fio_ary_test_type_s
+#define FIO_ARY_COPY(dest, src) copy_s(&(dest), &(src))
+#define FIO_ARY_COMPARE(dest, src) ((dest).i == (src).i && (dest).c == (src).c)
+#define FIO_ARY_DESTROY(obj) (--ary_alloc_counter)
+#include "fio.h"
+
+void fio_ary_test(void) {
+  /* code */
+  fio_i_ary__test();
+  fio_s_ary__test();
+  FIO_ASSERT(!ary_alloc_counter, "array object deallocation error, %ld != 0",
+             ary_alloc_counter);
 }
 
 /* *****************************************************************************
@@ -9487,13 +9537,14 @@ void fio_test(void) {
   fio_atol_test();
   fio_str2u_test();
   fio_llist_test();
+  fio_ary_test();
+  fio_set_test();
   fio_defer_test();
   fio_timer_test();
   fio_poll_test();
   fio_socket_test();
   fio_uuid_link_test();
   fio_cycle_test();
-  fio_set_test();
   fio_siphash_test();
   fio_sha1_test();
   fio_sha2_test();

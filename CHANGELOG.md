@@ -8,9 +8,9 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.3
 
-**Fix**: (facil.io) updating facil.io fixes a channel name memory leak fixed in facil.io's edge version.
+**Fix**: (facil.io) updating facil.io fixes a channel name memory leak that was fixed in facil.io's edge version.
 
-**Updated**: Improved logging for server data, allowing for log silencing.
+**Updated**: Improved logging for server data, allowing for total log silencing - this doesn't effect HTTP logging, only iodine's core logging system.
 
 #### Change log v.0.7.2
 
