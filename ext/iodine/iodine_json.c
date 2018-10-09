@@ -2,7 +2,6 @@
 
 #include "fio.h"
 
-#include "fio_ary.h"
 #include "fio_json_parser.h"
 #include "fiobj.h"
 #include "iodine_fiobj2rb.h"
@@ -14,6 +13,9 @@ static VALUE symbolize_names;
 static VALUE create_additions;
 static VALUE object_class;
 static VALUE array_class;
+
+#define FIO_ARY_NAME fio_json_stack
+#include "fio.h"
 
 /* *****************************************************************************
 JSON Callacks - these must be implemented in the C file that uses the parser
@@ -28,7 +30,7 @@ typedef struct {
   VALUE key;
   VALUE top;
   VALUE target;
-  fio_ary_s stack;
+  fio_json_stack_s stack;
   uint8_t is_hash;
   uint8_t symbolize;
 } iodine_json_parser_s;
@@ -98,13 +100,13 @@ static int fio_json_on_start_object(json_parser_s *p) {
   iodine_json_parser_s *pr = (iodine_json_parser_s *)p;
   if (pr->target) {
     /* push NULL, don't free the objects */
-    fio_ary_push(&pr->stack, (void *)pr->top);
+    fio_json_stack_push(&pr->stack, (void *)pr->top);
     pr->top = pr->target;
     pr->target = 0;
   } else {
     VALUE h = rb_hash_new();
     iodine_json_add2parser(pr, h);
-    fio_ary_push(&pr->stack, (void *)pr->top);
+    fio_json_stack_push(&pr->stack, (void *)pr->top);
     pr->top = h;
   }
   pr->is_hash = 1;
@@ -119,7 +121,7 @@ static void fio_json_on_end_object(json_parser_s *p) {
     IodineStore.remove(pr->key);
     pr->key = (VALUE)0;
   }
-  pr->top = (VALUE)fio_ary_pop(&pr->stack);
+  fio_json_stack_pop(&pr->stack, &pr->top);
   pr->is_hash = (TYPE(pr->top) == T_HASH);
 }
 /** an array object was detected */
@@ -129,7 +131,7 @@ static int fio_json_on_start_array(json_parser_s *p) {
     return -1;
   VALUE ary = rb_ary_new();
   iodine_json_add2parser(pr, ary);
-  fio_ary_push(&pr->stack, (void *)pr->top);
+  fio_json_stack_push(&pr->stack, (void *)pr->top);
   pr->top = ary;
   pr->is_hash = 0;
   return 0;
@@ -137,7 +139,7 @@ static int fio_json_on_start_array(json_parser_s *p) {
 /** an array closure was detected */
 static void fio_json_on_end_array(json_parser_s *p) {
   iodine_json_parser_s *pr = (iodine_json_parser_s *)p;
-  pr->top = (VALUE)fio_ary_pop(&pr->stack);
+  fio_json_stack_pop(&pr->stack, &pr->top);
   pr->is_hash = (TYPE(pr->top) == T_HASH);
 }
 /** the JSON parsing is complete */
@@ -148,9 +150,9 @@ static void fio_json_on_error(json_parser_s *p) {
 #if DEBUG
   FIO_LOG_ERROR("JSON on error called.");
 #endif
-  IodineStore.remove((VALUE)fio_ary_index(&pr->stack, 0));
+  IodineStore.remove((VALUE)fio_json_stack_get(&pr->stack, 0));
   IodineStore.remove(pr->key);
-  fio_ary_free(&pr->stack);
+  fio_json_stack_free(&pr->stack);
   *pr = (iodine_json_parser_s){.top = 0};
 }
 
@@ -163,10 +165,10 @@ static inline VALUE iodine_json_convert(VALUE str, fiobj2rb_settings_s s) {
   iodine_json_parser_s p = {.top = 0, .symbolize = s.str2sym};
   size_t consumed = fio_json_parse(&p.p, RSTRING_PTR(str), RSTRING_LEN(str));
   if (!consumed || p.p.depth) {
-    IodineStore.remove((VALUE)fio_ary_index(&p.stack, 0));
+    IodineStore.remove((VALUE)fio_json_stack_get(&p.stack, 0));
     p.top = FIOBJ_INVALID;
   }
-  fio_ary_free(&p.stack);
+  fio_json_stack_free(&p.stack);
   if (p.key) {
     IodineStore.remove((VALUE)p.key);
   }
