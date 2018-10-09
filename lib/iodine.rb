@@ -138,9 +138,9 @@ if(!defined?(after_fork_in_master))
   end
 end
 if(!defined?(on_worker_boot))
-  # Performs a block of code whenever a new worker process spins up (performed once per worker).
+  # Performs a block of code before a new worker process spins up (performed once per worker).
   def on_worker_boot(*args, &block)
-    Iodine.after_fork(*args, &block)
+    Iodine.before_fork(*args, &block)
   end
 end
 if(!defined?(before_fork))

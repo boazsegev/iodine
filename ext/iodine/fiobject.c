@@ -7,20 +7,25 @@ License: MIT
 This facil.io core library provides wrappers around complex and (or) dynamic
 types, abstracting some complexity and making dynamic type related tasks easier.
 */
-#include <fiobject.h>
-#undef FIO_FORCE_MALLOC /* just in case */
-#include <fio.h>
 
-#include <fio_ary.h>
+#include <fiobject.h>
+
+#define FIO_ARY_NAME fiobj_stack
+#define FIO_ARY_TYPE FIOBJ
+#define FIO_ARY_INVALID FIOBJ_INVALID
+/* don't free or compare objects, this stack shouldn't have side-effects */
+#include <fio.h>
 
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* *****************************************************************************
-Use the facil.io allocator when available
+Use the facil.io features when available, but override when missing.
 ***************************************************************************** */
+#ifndef fd_data /* defined in fio.c */
 
 #pragma weak fio_malloc
 void *fio_malloc(size_t size) {
@@ -62,16 +67,308 @@ size_t __attribute__((weak)) FIO_LOG_LEVEL = FIO_LOG_LEVEL_DEBUG;
 size_t __attribute__((weak)) FIO_LOG_LEVEL = FIO_LOG_LEVEL_INFO;
 #endif
 
-#define FIO_OVERRIDE_MALLOC 1
-#include <fio.h>
+/**
+ * A helper function that converts between String data to a signed int64_t.
+ *
+ * Numbers are assumed to be in base 10. Octal (`0###`), Hex (`0x##`/`x##`) and
+ * binary (`0b##`/ `b##`) are recognized as well. For binary Most Significant
+ * Bit must come first.
+ *
+ * The most significant differance between this function and `strtol` (aside of
+ * API design), is the added support for binary representations.
+ */
+#pragma weak fio_atol
+int64_t __attribute__((weak)) fio_atol(char **pstr) {
+  /* No binary representation in strtol */
+  char *str = *pstr;
+  uint64_t result = 0;
+  uint8_t invert = 0;
+  while (str[0] == '-') {
+    invert ^= 1;
+    ++str;
+  }
+  if (str[0] == 'B' || str[0] == 'b' ||
+      (str[0] == '0' && (str[1] == 'b' || str[1] == 'B'))) {
+    /* base 2 */
+    if (str[0] == '0')
+      str++;
+    str++;
+    while (str[0] == '0' || str[0] == '1') {
+      result = (result << 1) | (str[0] == '1');
+      str++;
+    }
+  } else if (str[0] == 'x' || str[0] == 'X' ||
+             (str[0] == '0' && (str[1] == 'x' || str[1] == 'X'))) {
+    /* base 16 */
+    uint8_t tmp;
+    if (str[0] == '0')
+      str++;
+    str++;
+    for (;;) {
+      if (str[0] >= '0' && str[0] <= '9')
+        tmp = str[0] - '0';
+      else if (str[0] >= 'A' && str[0] <= 'F')
+        tmp = str[0] - ('A' - 10);
+      else if (str[0] >= 'a' && str[0] <= 'f')
+        tmp = str[0] - ('a' - 10);
+      else
+        goto finish;
+      result = (result << 4) | tmp;
+      str++;
+    }
+  } else if (str[0] == '0') {
+    ++str;
+    /* base 8 */
+    const char *end = str;
+    while (end[0] >= '0' && end[0] <= '7' && (uintptr_t)(end - str) < 22)
+      end++;
+    if ((uintptr_t)(end - str) > 21) /* TODO: fix too large for a number */
+      return 0;
 
+    while (str < end) {
+      result = (result * 8) + (str[0] - '0');
+      str++;
+    }
+  } else {
+    /* base 10 */
+    const char *end = str;
+    while (end[0] >= '0' && end[0] <= '9' && (uintptr_t)(end - str) < 22)
+      end++;
+    if ((uintptr_t)(end - str) > 21) /* too large for a number */
+      return 0;
+
+    while (str < end) {
+      result = (result * 10) + (str[0] - '0');
+      str++;
+    }
+  }
+finish:
+  if (invert)
+    result = 0 - result;
+  *pstr = str;
+  return (int64_t)result;
+}
+
+/** A helper function that converts between String data to a signed double. */
+#pragma weak fio_atof
+double __attribute__((weak)) fio_atof(char **pstr) {
+  return strtold(*pstr, pstr);
+}
+
+/**
+ * A helper function that writes a signed int64_t to a string.
+ *
+ * No overflow guard is provided, make sure there's at least 68 bytes
+ * available (for base 2).
+ *
+ * Offers special support for base 2 (binary), base 8 (octal), base 10 and base
+ * 16 (hex). An unsupported base will silently default to base 10. Prefixes
+ * are automatically added (i.e., "0x" for hex and "0b" for base 2).
+ *
+ * Returns the number of bytes actually written (excluding the NUL
+ * terminator).
+ */
+#pragma weak fio_ltoa
+size_t __attribute__((weak)) fio_ltoa(char *dest, int64_t num, uint8_t base) {
+  const char notation[] = {'0', '1', '2', '3', '4', '5', '6', '7',
+                           '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
+
+  size_t len = 0;
+  char buf[48]; /* we only need up to 20 for base 10, but base 3 needs 41... */
+
+  if (!num)
+    goto zero;
+
+  switch (base) {
+  case 1:
+  case 2:
+    /* Base 2 */
+    {
+      uint64_t n = num; /* avoid bit shifting inconsistencies with signed bit */
+      uint8_t i = 0;    /* counting bits */
+      dest[len++] = '0';
+      dest[len++] = 'b';
+
+      while ((i < 64) && (n & 0x8000000000000000) == 0) {
+        n = n << 1;
+        i++;
+      }
+      /* make sure the Binary representation doesn't appear signed. */
+      if (i) {
+        dest[len++] = '0';
+      }
+      /* write to dest. */
+      while (i < 64) {
+        dest[len++] = ((n & 0x8000000000000000) ? '1' : '0');
+        n = n << 1;
+        i++;
+      }
+      dest[len] = 0;
+      return len;
+    }
+  case 8:
+    /* Base 8 */
+    {
+      uint64_t l = 0;
+      if (num < 0) {
+        dest[len++] = '-';
+        num = 0 - num;
+      }
+      dest[len++] = '0';
+
+      while (num) {
+        buf[l++] = '0' + (num & 7);
+        num = num >> 3;
+      }
+      while (l) {
+        --l;
+        dest[len++] = buf[l];
+      }
+      dest[len] = 0;
+      return len;
+    }
+
+  case 16:
+    /* Base 16 */
+    {
+      uint64_t n = num; /* avoid bit shifting inconsistencies with signed bit */
+      uint8_t i = 0;    /* counting bits */
+      dest[len++] = '0';
+      dest[len++] = 'x';
+      while (i < 8 && (n & 0xFF00000000000000) == 0) {
+        n = n << 8;
+        i++;
+      }
+      /* make sure the Hex representation doesn't appear signed. */
+      if (i && (n & 0x8000000000000000)) {
+        dest[len++] = '0';
+        dest[len++] = '0';
+      }
+      /* write the damn thing */
+      while (i < 8) {
+        uint8_t tmp = (n & 0xF000000000000000) >> 60;
+        dest[len++] = notation[tmp];
+        tmp = (n & 0x0F00000000000000) >> 56;
+        dest[len++] = notation[tmp];
+        i++;
+        n = n << 8;
+      }
+      dest[len] = 0;
+      return len;
+    }
+  case 3:
+  case 4:
+  case 5:
+  case 6:
+  case 7:
+  case 9:
+    /* rare bases */
+    if (num < 0) {
+      dest[len++] = '-';
+      num = 0 - num;
+    }
+    uint64_t l = 0;
+    while (num) {
+      uint64_t t = num / base;
+      buf[l++] = '0' + (num - (t * base));
+      num = t;
+    }
+    while (l) {
+      --l;
+      dest[len++] = buf[l];
+    }
+    dest[len] = 0;
+    return len;
+
+  default:
+    break;
+  }
+  /* Base 10, the default base */
+
+  if (num < 0) {
+    dest[len++] = '-';
+    num = 0 - num;
+  }
+  uint64_t l = 0;
+  while (num) {
+    uint64_t t = num / 10;
+    buf[l++] = '0' + (num - (t * 10));
+    num = t;
+  }
+  while (l) {
+    --l;
+    dest[len++] = buf[l];
+  }
+  dest[len] = 0;
+  return len;
+
+zero:
+  switch (base) {
+  case 1:
+  case 2:
+    dest[len++] = '0';
+    dest[len++] = 'b';
+  case 16:
+    dest[len++] = '0';
+    dest[len++] = 'x';
+    dest[len++] = '0';
+  }
+  dest[len++] = '0';
+  dest[len] = 0;
+  return len;
+}
+
+/**
+ * A helper function that converts between a double to a string.
+ *
+ * No overflow guard is provided, make sure there's at least 130 bytes
+ * available (for base 2).
+ *
+ * Supports base 2, base 10 and base 16. An unsupported base will silently
+ * default to base 10. Prefixes aren't added (i.e., no "0x" or "0b" at the
+ * beginning of the string).
+ *
+ * Returns the number of bytes actually written (excluding the NUL
+ * terminator).
+ */
+#pragma weak fio_ftoa
+size_t __attribute__((weak)) fio_ftoa(char *dest, double num, uint8_t base) {
+  if (base == 2 || base == 16) {
+    /* handle the binary / Hex representation the same as if it were an
+     * int64_t
+     */
+    int64_t *i = (void *)&num;
+    return fio_ltoa(dest, *i, base);
+  }
+
+  size_t written = sprintf(dest, "%g", num);
+  uint8_t need_zero = 1;
+  char *start = dest;
+  while (*start) {
+    if (*start == ',') // locale issues?
+      *start = '.';
+    if (*start == '.' || *start == 'e') {
+      need_zero = 0;
+      break;
+    }
+    start++;
+  }
+  if (need_zero) {
+    dest[written++] = '.';
+    dest[written++] = '0';
+  }
+  return written;
+}
+
+#endif
 /* *****************************************************************************
 the `fiobj_each2` function
 ***************************************************************************** */
+
 struct task_packet_s {
   int (*task)(FIOBJ obj, void *arg);
   void *arg;
-  fio_ary_s *stack;
+  fiobj_stack_s *stack;
   FIOBJ next;
   uintptr_t counter;
   uint8_t stop;
@@ -121,7 +418,7 @@ size_t fiobj_each2(FIOBJ o, int (*task)(FIOBJ obj, void *arg), void *arg) {
   if (task(o, arg) == -1)
     return 1;
   uintptr_t pos = 0;
-  fio_ary_s stack = FIO_ARY_INIT;
+  fiobj_stack_s stack = FIO_ARY_INIT;
   struct task_packet_s packet = {
       .task = task,
       .arg = arg,
@@ -136,19 +433,20 @@ size_t fiobj_each2(FIOBJ o, int (*task)(FIOBJ obj, void *arg), void *arg) {
     if (packet.stop)
       goto finish;
     if (packet.incomplete) {
-      fio_ary_push(&stack, (void *)pos);
-      fio_ary_push(&stack, (void *)o);
+      fiobj_stack_push(&stack, pos);
+      fiobj_stack_push(&stack, o);
     }
 
     if (packet.next) {
-      fio_ary_push(&stack, (void *)0);
-      fio_ary_push(&stack, (void *)packet.next);
+      fiobj_stack_push(&stack, (FIOBJ)0);
+      fiobj_stack_push(&stack, packet.next);
     }
-    o = (FIOBJ)fio_ary_pop(&stack);
-    pos = (uintptr_t)fio_ary_pop(&stack);
+    o = FIOBJ_INVALID;
+    fiobj_stack_pop(&stack, &o);
+    fiobj_stack_pop(&stack, &pos);
   } while (o);
 finish:
-  fio_ary_free(&stack);
+  fiobj_stack_free(&stack);
   return packet.counter;
 }
 
@@ -169,8 +467,8 @@ static void fiobj_dealloc_task(FIOBJ o, void *stack_) {
     FIOBJECT2VTBL(o)->dealloc(o, NULL, NULL);
     return;
   }
-  fio_ary_s *s = stack_;
-  fio_ary_push(s, (void *)o);
+  fiobj_stack_s *s = stack_;
+  fiobj_stack_push(s, o);
 }
 /**
  * Decreases an object's reference count, releasing memory and
@@ -181,11 +479,11 @@ static void fiobj_dealloc_task(FIOBJ o, void *stack_) {
  * also freed.
  */
 void fiobj_free_complex_object(FIOBJ o) {
-  fio_ary_s stack = FIO_ARY_INIT;
+  fiobj_stack_s stack = FIO_ARY_INIT;
   do {
     FIOBJECT2VTBL(o)->dealloc(o, fiobj_dealloc_task, &stack);
-  } while ((o = (FIOBJ)fio_ary_pop(&stack)));
-  fio_ary_free(&stack);
+  } while (!fiobj_stack_pop(&stack, &o));
+  fiobj_stack_free(&stack);
 }
 
 /* *****************************************************************************
@@ -208,10 +506,10 @@ static inline int fiobj_iseq_simple(const FIOBJ o, const FIOBJ o2) {
 }
 
 static int fiobj_iseq____internal_complex__task(FIOBJ o, void *ary_) {
-  fio_ary_s *ary = ary_;
-  fio_ary_push(ary, (void *)o);
+  fiobj_stack_s *ary = ary_;
+  fiobj_stack_push(ary, o);
   if (fiobj_hash_key_in_loop())
-    fio_ary_push(ary, (void *)fiobj_hash_key_in_loop());
+    fiobj_stack_push(ary, fiobj_hash_key_in_loop());
   return 0;
 }
 
@@ -220,34 +518,38 @@ int fiobj_iseq____internal_complex__(FIOBJ o, FIOBJ o2) {
   // if (FIOBJECT2VTBL(o)->each && FIOBJECT2VTBL(o)->count(o))
   //   return int fiobj_iseq____internal_complex__(const FIOBJ o, const FIOBJ
   //   o2);
-  fio_ary_s left = FIO_ARY_INIT, right = FIO_ARY_INIT, queue = FIO_ARY_INIT;
+  fiobj_stack_s left = FIO_ARY_INIT, right = FIO_ARY_INIT, queue = FIO_ARY_INIT;
   do {
     fiobj_each1(o, 0, fiobj_iseq____internal_complex__task, &left);
     fiobj_each1(o2, 0, fiobj_iseq____internal_complex__task, &right);
-    while (fio_ary_count(&left)) {
-      o = (FIOBJ)fio_ary_pop(&left);
-      o2 = (FIOBJ)fio_ary_pop(&right);
+    while (fiobj_stack_count(&left)) {
+      o = FIOBJ_INVALID;
+      o2 = FIOBJ_INVALID;
+      fiobj_stack_pop(&left, &o);
+      fiobj_stack_pop(&right, &o2);
       if (!fiobj_iseq_simple(o, o2))
         goto unequal;
       if (FIOBJ_IS_ALLOCATED(o) && FIOBJECT2VTBL(o)->each &&
           FIOBJECT2VTBL(o)->count(o)) {
-        fio_ary_push(&queue, (void *)o);
-        fio_ary_push(&queue, (void *)o2);
+        fiobj_stack_push(&queue, o);
+        fiobj_stack_push(&queue, o2);
       }
     }
-    o2 = (FIOBJ)fio_ary_pop(&queue);
-    o = (FIOBJ)fio_ary_pop(&queue);
+    o = FIOBJ_INVALID;
+    o2 = FIOBJ_INVALID;
+    fiobj_stack_pop(&queue, &o2);
+    fiobj_stack_pop(&queue, &o);
     if (!fiobj_iseq_simple(o, o2))
       goto unequal;
   } while (o);
-  fio_ary_free(&left);
-  fio_ary_free(&right);
-  fio_ary_free(&queue);
+  fiobj_stack_free(&left);
+  fiobj_stack_free(&right);
+  fiobj_stack_free(&queue);
   return 1;
 unequal:
-  fio_ary_free(&left);
-  fio_ary_free(&right);
-  fio_ary_free(&queue);
+  fiobj_stack_free(&left);
+  fiobj_stack_free(&right);
+  fiobj_stack_free(&queue);
   return 0;
 }
 
@@ -262,7 +564,7 @@ void fiobject___noop_dealloc(FIOBJ o, void (*task)(FIOBJ, void *), void *arg) {
 }
 void fiobject___simple_dealloc(FIOBJ o, void (*task)(FIOBJ, void *),
                                void *arg) {
-  free(FIOBJ2PTR(o));
+  fio_free(FIOBJ2PTR(o));
   (void)task;
   (void)arg;
 }
