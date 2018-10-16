@@ -8,7 +8,11 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.4
 
+**Fix**: fixed a missing `static` keyword in the Ruby<=>C storage bridge which caused performance degradation and introduced namespace conflict risks.
+
 **Fix**: fixed the `on_worker_fork` callback timing, to be performed before forking the process (Puma compatibility).
+
+**Fix**: fixes to minor issues are included in the facil.io edge update.
 
 **Optimize**: minor optimization to memory use, included in facil.io edge updates.
 

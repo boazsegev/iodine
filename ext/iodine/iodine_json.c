@@ -43,9 +43,6 @@ static inline void iodine_json_add2parser(iodine_json_parser_s *p, VALUE o) {
         IodineStore.remove(p->key);
         p->key = (VALUE)0;
       } else {
-        // if (p->symbolize) {
-        //   o = rb_to_symbol(o);
-        // }
         p->key = o;
         IodineStore.add(o);
       }
