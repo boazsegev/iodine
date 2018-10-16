@@ -1,7 +1,9 @@
 module Iodine
   # Iodine includes a lenient JSON parser that attempts to ignore JSON errors when possible and adds some extensions such as Hex numerical representations and comments.
   #
-  # On my system, the Iodine JSON parser is more than 40% faster than the native Ruby parser. When using symbols the speed increase is even higher.
+  # Depending on content (specifically, the effects of float number parsing), the Iodine JSON parser speed varies.
+  #
+  # On my system, Iodine is about 20%-30% faster than Ruby MRI's parser (Ruby version 2.5.1 vs. Iodine version 0.7.4). When using symbols the speed increase is even higher (50%-90% faster).
   #
   # It's easy to monkey-patch the system's `JSON.parse` method (not the `JSON.parse!` method) by using `Iodine.patch_json`.
   #
