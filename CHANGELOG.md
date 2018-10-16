@@ -10,6 +10,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: fixed the `on_worker_fork` callback timing, to be performed before forking the process (Puma compatibility).
 
+**Optimize**: minor optimization to memory use, included in facil.io edge updates.
+
 #### Change log v.0.7.3
 
 **Fix**: (facil.io) updating facil.io fixes a channel name memory leak that was fixed in facil.io's edge version.
