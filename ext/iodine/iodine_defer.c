@@ -61,7 +61,7 @@ struct CreateThreadArgs {
 };
 
 /* used for GVL signalling */
-void call_async_signal(void *pool) {
+static void call_async_signal(void *pool) {
   fio_stop();
   (void)pool;
 }
@@ -292,7 +292,7 @@ Sets a block of code to run before a new worker process is forked (cluster mode 
 
 Code runs within the master (root) process.
 */
-VALUE iodine_before_fork_add(VALUE self) {
+static VALUE iodine_before_fork_add(VALUE self) {
   // clang-format on
   rb_need_block();
   VALUE block = rb_block_proc();
@@ -309,7 +309,7 @@ Sets a block of code to run after a new worker process is forked (cluster mode o
 
 Code runs in both the parent and the child.
 */
-VALUE iodine_after_fork_add(VALUE self) {
+static VALUE iodine_after_fork_add(VALUE self) {
   // clang-format on
   rb_need_block();
   VALUE block = rb_block_proc();
@@ -326,7 +326,7 @@ Sets a block of code to run after a new worker process is forked (cluster mode o
 
 Code runs in both the parent and the child.
 */
-VALUE iodine_after_fork_in_worker_add(VALUE self) {
+static VALUE iodine_after_fork_in_worker_add(VALUE self) {
   // clang-format on
   rb_need_block();
   VALUE block = rb_block_proc();
@@ -343,7 +343,7 @@ Sets a block of code to run after a new worker process is forked (cluster mode o
 
 Code runs in both the parent and the child.
 */
-VALUE iodine_after_fork_in_master_add(VALUE self) {
+static VALUE iodine_after_fork_in_master_add(VALUE self) {
   // clang-format on
   rb_need_block();
   VALUE block = rb_block_proc();
@@ -358,7 +358,7 @@ VALUE iodine_after_fork_in_master_add(VALUE self) {
 /**
 Sets a block of code to run once a Worker process shuts down (both in single process mode and cluster mode).
 */
-VALUE iodine_on_shutdown_add(VALUE self) {
+static VALUE iodine_on_shutdown_add(VALUE self) {
   // clang-format on
   rb_need_block();
   VALUE block = rb_block_proc();

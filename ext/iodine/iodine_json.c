@@ -15,6 +15,7 @@ static VALUE object_class;
 static VALUE array_class;
 
 #define FIO_ARY_NAME fio_json_stack
+#define FIO_ARY_TYPE VALUE
 #include "fio.h"
 
 /* *****************************************************************************

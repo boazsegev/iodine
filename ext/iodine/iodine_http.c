@@ -246,7 +246,7 @@ Copying data from the C request to the Rack's ENV
 
 #define to_upper(c) (((c) >= 'a' && (c) <= 'z') ? ((c) & ~32) : (c))
 
-int iodine_copy2env_task(FIOBJ o, void *env_) {
+static int iodine_copy2env_task(FIOBJ o, void *env_) {
   VALUE env = (VALUE)env_;
   FIOBJ name = fiobj_hash_key_in_loop();
   fio_str_info_s tmp = fiobj_obj2cstr(name);
@@ -285,6 +285,7 @@ int iodine_copy2env_task(FIOBJ o, void *env_) {
   }
   return 0;
 }
+
 static inline VALUE copy2env(iodine_http_request_handle_s *handle) {
   VALUE env;
   http_s *h = handle->h;
@@ -819,7 +820,7 @@ Once HTTP/2 is supported (planned, but probably very far away), HTTP/2
 timeouts will be dynamically managed by Iodine. The `timeout` option is only
 relevant to HTTP/1.x connections.
 */
-VALUE iodine_http_listen(VALUE self, VALUE opt) {
+static VALUE iodine_http_listen(VALUE self, VALUE opt) {
   // clang-format on
   uint8_t log_http = 0;
   size_t ping = 0;

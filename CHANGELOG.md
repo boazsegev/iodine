@@ -6,6 +6,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.5
+
+**Fix**: fixed more missing `static` keywords in the code. these should have little or no effect on the namespace (they were using long unique names with the `iodine` prefix).
+
+**Fix**: fixed possible Array overflow risk that could result in memory corruption in some cases.
+
 #### Change log v.0.7.4
 
 **Fix**: fixed a missing `static` keyword in the Ruby<=>C storage bridge which caused performance degradation and introduced namespace conflict risks.
