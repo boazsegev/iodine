@@ -130,17 +130,6 @@ CLUSTER (not just this process) subscribes to a stream / channel.
 */
 static VALUE iodine_pubsub_subscribe(VALUE self, VALUE to, VALUE match) {
   return Qnil;
-#if 0
-  iodine_pubsub_s *e = iodine_pubsub_CData(self);
-  if (e->engine == &e->do_not_touch) {
-    /* this is a Ruby engine, nothing to do. */
-    return Qnil;
-  }
-  FIOBJ ch = fiobj_str_new(RSTRING_PTR(to), RSTRING_LEN(to));
-  e->engine->subscribe(e->engine, ch, SYM2ID(match) == redis_id);
-  fiobj_free(ch);
-  return to;
-#endif
   (void)self;
   (void)to;
   (void)match;
@@ -152,17 +141,6 @@ process CLUSTER (not just this process) unsubscribes from a stream / channel.
 */
 static VALUE iodine_pubsub_unsubscribe(VALUE self, VALUE to, VALUE match) {
   return Qnil;
-#if 0
-  iodine_pubsub_s *e = iodine_pubsub_CData(self);
-  if (e->engine == &e->do_not_touch) {
-    /* this is a Ruby engine, nothing to do. */
-    return Qnil;
-  }
-  FIOBJ ch = fiobj_str_new(RSTRING_PTR(to), RSTRING_LEN(to));
-  e->engine->unsubscribe(e->engine, ch, SYM2ID(match) == redis_id);
-  fiobj_free(ch);
-  return to;
-#endif
   (void)self;
   (void)to;
   (void)match;
@@ -181,7 +159,7 @@ NOTE: this callback is called per process event (not per cluster event) and the
 */
 static VALUE iodine_pubsub_publish(VALUE self, VALUE to, VALUE message) {
   iodine_pubsub_s *e = iodine_pubsub_CData(self);
-  if (e->engine == &e->do_not_touch) {
+  if (!e || e->engine == &e->do_not_touch) {
     /* this is a Ruby engine, nothing to do. */
     return Qnil;
   }
