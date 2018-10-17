@@ -8,9 +8,11 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.5
 
-**Fix**: fixed more missing `static` keywords in the code. these should have little or no effect on the namespace (they were using long unique names with the `iodine` prefix).
+**Fix**: fixed issue with direct calls to `publish` in the pre-defined pub/sub engines. These direct calls are usually used by custom engines when the default engine was replaced.
 
 **Fix**: fixed possible Array overflow risk that could result in memory corruption in some cases.
+
+**Fix**: fixed more missing `static` keywords in the code. these should have little or no effect on the namespace (they were using long unique names with the `iodine` prefix).
 
 #### Change log v.0.7.4
 

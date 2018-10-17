@@ -7,7 +7,7 @@ require 'iodine'
 class PubSubReporter < Iodine::PubSub::Engine
   def initialize
     # make sure engine setup is complete
-    super 
+    super
     # register engine and make it into the new default
     @target = Iodine::PubSub.default
     Iodine::PubSub.default = self
@@ -20,7 +20,7 @@ class PubSubReporter < Iodine::PubSub::Engine
     puts "* Unsubscribing to \"#{to}\" (#{as || "exact match"})"
   end
   def publish to, msg
-    puts "* Publishing to \"#{to}\": #{msg.to_s[0..6]}..."
+    puts "* Publishing to \"#{to}\": #{msg.to_s[0..12]}..."
     # we need to forward the message to the actual engine (the previous default engine),
     # or it will never be received by any Pub/Sub client.
     @target.publish to, msg
