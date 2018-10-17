@@ -98,13 +98,13 @@ static int fio_json_on_start_object(json_parser_s *p) {
   iodine_json_parser_s *pr = (iodine_json_parser_s *)p;
   if (pr->target) {
     /* push NULL, don't free the objects */
-    fio_json_stack_push(&pr->stack, (void *)pr->top);
+    fio_json_stack_push(&pr->stack, pr->top);
     pr->top = pr->target;
     pr->target = 0;
   } else {
     VALUE h = rb_hash_new();
     iodine_json_add2parser(pr, h);
-    fio_json_stack_push(&pr->stack, (void *)pr->top);
+    fio_json_stack_push(&pr->stack, pr->top);
     pr->top = h;
   }
   pr->is_hash = 1;
@@ -129,7 +129,7 @@ static int fio_json_on_start_array(json_parser_s *p) {
     return -1;
   VALUE ary = rb_ary_new();
   iodine_json_add2parser(pr, ary);
-  fio_json_stack_push(&pr->stack, (void *)pr->top);
+  fio_json_stack_push(&pr->stack, pr->top);
   pr->top = ary;
   pr->is_hash = 0;
   return 0;
