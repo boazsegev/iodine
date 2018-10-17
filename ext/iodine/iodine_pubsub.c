@@ -185,8 +185,8 @@ static VALUE iodine_pubsub_publish(VALUE self, VALUE to, VALUE message) {
     /* this is a Ruby engine, nothing to do. */
     return Qnil;
   }
-  e->engine->publish(e->engine, IODINE_RSTRINFO(to), IODINE_RSTRINFO(message),
-                     0);
+  fio_publish(.engine = e->engine, .channel = IODINE_RSTRINFO(to),
+              .message = IODINE_RSTRINFO(message));
   return self;
 }
 
