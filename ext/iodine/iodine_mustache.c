@@ -27,7 +27,7 @@ static void iodine_mustache_data_free(void *c_) {
   (void)c_;
 }
 
-const rb_data_type_t iodine_mustache_data_type = {
+static const rb_data_type_t iodine_mustache_data_type = {
     .wrap_struct_name = "IodineMustacheData",
     .function =
         {

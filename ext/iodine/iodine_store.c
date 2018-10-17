@@ -111,7 +111,7 @@ static void storage_clear(void *ignore) {
 the data-type used to identify the registry
 this sets the callbacks.
 */
-static struct rb_data_type_struct storage_type_struct = {
+static const struct rb_data_type_struct storage_type_struct = {
     .wrap_struct_name = "RubyReferencesIn_C_Land",
     .function.dfree = (void (*)(void *))storage_clear,
     .function.dmark = (void (*)(void *))storage_mark,
