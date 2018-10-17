@@ -156,7 +156,7 @@ static VALUE iodine_logging_get(VALUE self) {
  */
 static VALUE iodine_logging_set(VALUE self, VALUE val) {
   Check_Type(val, T_FIXNUM);
-  FIO_LOG_LEVEL = FIX2ULONG(val);
+  FIO_LOG_LEVEL = FIX2INT(val);
   return self;
 }
 
