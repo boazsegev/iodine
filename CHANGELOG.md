@@ -6,6 +6,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.6
+
+**Fix**: (facil.io edge) timeout review was experiencing some errors that could cause timeouts to be ignored. This was fixed in the facil.io edge branch.
+
+**Fix**: `on_worker_boot` was mistakenly updated to a pre-fork callback (instead of a post fork callback) when attempting to fix the `on_worker_fork` behavior. This timing issue is now fixed and `on_worker_boot` is called **after** forking (both on the master process and the worker).
+
 #### Change log v.0.7.5
 
 **Fix**: fixed issue with direct calls to `publish` in the pre-defined pub/sub engines. These direct calls are used by custom engines when the default engine was replaced and would attempt (erroneously) direct engine access rather than use the `fio_publish` function.
