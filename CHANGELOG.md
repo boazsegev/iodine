@@ -10,6 +10,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: (facil.io edge) timeout review was experiencing some errors that could cause timeouts to be ignored. This was fixed in the facil.io edge branch.
 
+**Fix**: (Ruby 2.2) fixed a possible error with the Mustache parser on Ruby 2.2. I don't run Ruby 2.2, but this came up as a warning during CI tests.
+
 **Fix**: `on_worker_boot` was mistakenly updated to a pre-fork callback (instead of a post fork callback) when attempting to fix the `on_worker_fork` behavior. This timing issue is now fixed and `on_worker_boot` is called **after** forking (both on the master process and the worker).
 
 #### Change log v.0.7.5
