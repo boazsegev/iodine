@@ -231,7 +231,7 @@ static int32_t mustache_on_section_test(mustache_section_s *section,
     return 0;
   }
   if (RB_TYPE_P(o, T_ARRAY)) {
-    return rb_array_len(o);
+    return RARRAY_LEN(o);
   }
   return 1;
 }
