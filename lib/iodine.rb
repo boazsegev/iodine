@@ -140,6 +140,12 @@ end
 if(!defined?(on_worker_boot))
   # Performs a block of code before a new worker process spins up (performed once per worker).
   def on_worker_boot(*args, &block)
+    Iodine.after_fork(*args, &block)
+  end
+end
+if(!defined?(on_worker_fork))
+  # Performs a block of code before a new worker process spins up (performed once per worker).
+  def on_worker_fork(*args, &block)
     Iodine.before_fork(*args, &block)
   end
 end
@@ -149,5 +155,10 @@ if(!defined?(before_fork))
     Iodine.before_fork(*args, &block)
   end
 end
+
+Iodine.after_fork_in_worker do
+   ActiveRecord::Base.establish_connection if defined?(ActiveRecord)
+end
+
 
 

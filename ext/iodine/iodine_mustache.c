@@ -363,7 +363,8 @@ error:
 
 /**
 Renders the mustache template found in `filename`, using the data provided in
-the `data` argument.
+the `data` argument. If `template` is provided it will be used instead of
+reading the file's content.
 
     Iodine::Mustache.render(filename, data, template = nil)
 
