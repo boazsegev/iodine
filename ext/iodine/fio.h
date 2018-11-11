@@ -1226,7 +1226,10 @@ typedef struct fio_rw_hook_s {
    */
   ssize_t (*flush)(intptr_t uuid, void *udata);
   /**
-   * Called to perform cleanup after the socket was closed.
+   * Called to perform cleanup after the socket was closed or a new read/write
+   * hook was set using `fio_rw_hook_set`.
+   *
+   * This callback is always called, even if `fio_rw_hook_set` fails.
    * */
   void (*cleanup)(void *udata);
 } fio_rw_hook_s;
@@ -3023,7 +3026,8 @@ typedef struct {
  * The `capacity` value should exclude the NUL character (if exists).
  */
 #define FIO_STR_INIT_STATIC(buffer)                                            \
-  ((fio_str_s){.data = (buffer), .len = strlen((buffer)), .dealloc = NULL})
+  ((fio_str_s){                                                                \
+      .data = (char *)(buffer), .len = strlen((buffer)), .dealloc = NULL})
 
 /**
  * Allocates a new fio_str_s object on the heap and initializes it.
@@ -3085,6 +3089,20 @@ FIO_FUNC void fio_str_free2(fio_str_s *s);
  */
 inline FIO_FUNC ssize_t fio_str_send_free2(const intptr_t uuid,
                                            const fio_str_s *str);
+
+/**
+ * Returns a C string with the existing data, clearing the `fio_str_s` object's
+ * String.
+ *
+ * Note: the String data is removed from the container, but the container isn't
+ * freed.
+ *
+ * Returns NULL if there's no String data.
+ *
+ * Remember to `fio_free` the returned data and - if required - `fio_str_free2`
+ * the container.
+ */
+FIO_FUNC char *fio_str_detach(fio_str_s *s);
 
 /* *****************************************************************************
 String API - String state (data pointers, length, capacity, etc')
@@ -3394,6 +3412,58 @@ FIO_FUNC void fio_str_free2(fio_str_s *s) {
   FIO_FREE(s);
 }
 
+/**
+ * Returns a C string with the existing data, clearing the `fio_str_s` object's
+ * String.
+ *
+ * Note: the String data is removed from the container, but the container isn't
+ * freed.
+ *
+ * Returns NULL if there's no String data.
+ *
+ * Remember to `fio_free` the returned data and - if required - `fio_str_free2`
+ * the container.
+ */
+FIO_FUNC char *fio_str_detach(fio_str_s *s) {
+  if (!s)
+    return NULL;
+  fio_str_info_s i = fio_str_info(s);
+  if (s->small || !s->data) {
+    if (!i.len) {
+      i.data = NULL;
+      goto finish;
+    }
+    /* make a copy */
+    void *tmp = FIO_MALLOC(i.len + 1);
+    memcpy(tmp, i.data, i.len + 1);
+    i.data = tmp;
+  } else {
+    if (!i.len && s->data) {
+      if (s->dealloc)
+        s->dealloc(s->data);
+      i.data = NULL;
+    } else if (s->dealloc != FIO_FREE) {
+      /* make a copy */
+      void *tmp = FIO_MALLOC(i.len + 1);
+      memcpy(tmp, i.data, i.len + 1);
+      i.data = tmp;
+      if (s->dealloc)
+        s->dealloc(s->data);
+    }
+  }
+finish:
+#ifdef FIO_STR_NO_REF
+  *s = (fio_str_s){.small = 1};
+
+#else
+  *s = (fio_str_s){
+      .small = s->small,
+      .ref = s->ref,
+  };
+#endif
+  return i.data;
+}
+
 /** Returns the String's length in bytes. */
 inline FIO_FUNC size_t fio_str_len(fio_str_s *s) {
   return (s->small || !s->data) ? (s->small >> 1) : s->len;
@@ -3474,8 +3544,8 @@ String Implementation - Memory management
  * directly to `mmap` (due to their size, usually over 12KB).
  */
 #define ROUND_UP_CAPA2WORDS(num)                                               \
-  (((num + 1) & (sizeof(long double) - 1))                                     \
-       ? ((num + 1) | (sizeof(long double) - 1))                               \
+  ((((num) + 1) & (sizeof(long double) - 1))                                   \
+       ? (((num) + 1) | (sizeof(long double) - 1))                             \
        : (num))
 /**
  * Requires the String to have at least `needed` capacity. Returns the current
@@ -3499,6 +3569,7 @@ FIO_FUNC fio_str_info_s fio_str_capa_assert(fio_str_s *s, size_t needed) {
       memcpy(tmp, s->data, s->len);
       if (s->dealloc)
         s->dealloc(s->data);
+      s->dealloc = FIO_FREE;
     }
     s->capa = needed;
     s->data = tmp;
@@ -4184,9 +4255,14 @@ static FIO_ARY_TYPE const FIO_NAME(s___const_invalid_object);
 /* minimizes allocation "dead space" by alligning allocated length to 16bytes */
 #undef FIO_ARY_SIZE2WORDS
 #define FIO_ARY_SIZE2WORDS(size)                                               \
-  ((sizeof(FIO_ARY_TYPE) & 15) ? (((size) & ~(sizeof(FIO_ARY_TYPE) - 1)) +     \
-                                  (16 - (sizeof(FIO_ARY_TYPE) - 1)))           \
-                               : (size))
+  ((sizeof(FIO_ARY_TYPE) & 1)                                                  \
+       ? (((size) & (~15)) + 16)                                               \
+       : (sizeof(FIO_ARY_TYPE) & 2)                                            \
+             ? (((size) & (~7)) + 8)                                           \
+             : (sizeof(FIO_ARY_TYPE) & 4)                                      \
+                   ? (((size) & (~3)) + 4)                                     \
+                   : (sizeof(FIO_ARY_TYPE) & 8) ? (((size) & (~1)) + 2)        \
+                                                : (size))
 
 /* *****************************************************************************
 Array API

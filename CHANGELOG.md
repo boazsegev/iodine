@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.7
+
+**Fix**: (facil.io) fixed critical issue with cookies, where no more than a single cookie could be set (duplicate headers would be zeroed out before being set). Credit to @ojab for exposing the issue.
+
 #### Change log v.0.7.6
 
 **Fix**: (facil.io edge) timeout review was experiencing some errors that could cause timeouts to be ignored. This was fixed in the facil.io edge branch.

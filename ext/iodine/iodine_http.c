@@ -467,6 +467,7 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
   char *val_s = RSTRING_PTR(val);
   int val_len = RSTRING_LEN(val);
   // make the headers lowercase
+
   FIOBJ name = fiobj_str_new(key_s, key_len);
   {
     fio_str_info_s tmp = fiobj_obj2cstr(name);
@@ -475,16 +476,17 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
     }
   }
   // scan the value for newline (\n) delimiters
-  int pos_s = 0, pos_e = 0;
-  while (pos_e < val_len) {
+  char *pos_s = val_s;
+  char *pos_e = val_s + val_len;
+  while (pos_s < pos_e) {
     // scanning for newline (\n) delimiters
-    while (pos_e < val_len && val_s[pos_e] != '\n')
-      pos_e++;
-    http_set_header(h, name, fiobj_str_new(val_s + pos_s, pos_e - pos_s));
-    // fprintf(stderr, "For_each - headers: wrote header\n");
+    char *const start = pos_s;
+    pos_s = memchr(pos_s, '\n', pos_e - pos_s);
+    if (!pos_s)
+      pos_s = pos_e;
+    http_set_header(h, name, fiobj_str_new(start, (pos_s - start)));
     // move forward (skip the '\n' if exists)
-    ++pos_e;
-    pos_s = pos_e;
+    ++pos_s;
   }
   fiobj_free(name);
   // no errors, return 0
