@@ -9,6 +9,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.8
 
+**Fix**: `unsubscribe` possibly wouldn't unsubscribe from a connection-bound subscription when instructed to do so.
+
 **Fix**: Documentation typo fixed by @ojab in PR#46.
 
 **Fix**: Documentation errors exposed by @ojab regarding the pub/sub specification draft and the WebSocket/SSE specification draft.
