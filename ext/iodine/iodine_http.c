@@ -514,7 +514,7 @@ static inline int ruby2c_response_send(iodine_http_request_handle_s *handle,
   VALUE body = rb_ary_entry(rbresponse, 2);
   if (handle->h->status < 200 || handle->h->status == 204 ||
       handle->h->status == 304) {
-    if (rb_respond_to(body, close_method_id))
+    if (body && rb_respond_to(body, close_method_id))
       IodineCaller.call(body, close_method_id);
     body = Qnil;
     handle->type = IODINE_HTTP_NONE;
@@ -523,6 +523,7 @@ static inline int ruby2c_response_send(iodine_http_request_handle_s *handle,
   if (TYPE(body) == T_ARRAY) {
     if (RARRAY_LEN(body) == 0) { // only headers
       handle->type = IODINE_HTTP_EMPTY;
+      return 0;
     } else if (RARRAY_LEN(body) == 1) { // [String] is likely
       body = rb_ary_entry(body, 0);
       // fprintf(stderr, "Body was a single item array, unpacket to string\n");

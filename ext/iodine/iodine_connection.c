@@ -499,7 +499,7 @@ static VALUE iodine_pubsub_subscribe(int argc, VALUE *argv, VALUE self) {
       if (args.block) {
         IodineStore.remove(args.block);
       }
-      return Qnil; /* cannot subscribe a closed connection. */
+      return Qnil; /* cannot subscribe a closed / invalid connection. */
     }
     if (args.block == Qnil && args.binary) {
       args.block = Qtrue;
@@ -546,20 +546,20 @@ Returns `false` if the subscription didn't exist.
 static VALUE iodine_pubsub_unsubscribe(VALUE self, VALUE name) {
   // clang-format on
   iodine_connection_data_s *c = NULL;
+  fio_lock_i *s_lock = &sub_lock;
+  fio_subhash_s *subs = &sub_global;
   VALUE ret;
-  if (TYPE(self) == T_MODULE) {
-    fio_lock(&sub_lock);
-    ret = iodine_sub_unsubscribe(&sub_global, IODINE_RSTRINFO(name));
-    fio_unlock(&sub_lock);
-  } else {
+  if (TYPE(self) != T_MODULE) {
     c = iodine_connection_validate_data(self);
-    if (!c) {
+    if (!c || c->info.uuid == -1) {
       return Qnil; /* cannot unsubscribe a closed connection. */
     }
-    fio_lock(&sub_lock);
-    ret = iodine_sub_unsubscribe(&sub_global, IODINE_RSTRINFO(name));
-    fio_unlock(&sub_lock);
+    s_lock = &c->lock;
+    subs = &c->subscriptions;
   }
+  fio_lock(s_lock);
+  ret = iodine_sub_unsubscribe(subs, IODINE_RSTRINFO(name));
+  fio_unlock(s_lock);
   return ret;
 }
 
