@@ -14,15 +14,17 @@ This should simplify the idiomatic `subscribe` / `publish` approach to real-time
 
 ## Pub/Sub handling
 
-Conforming Pub/Sub implementations **MUST** extend the WebSocket and SSE callback objects to implement the following pub/sub related methods (this requires that either the Pub/Sub implementation has knowledge about the Server OR that the Server has knowledge about the Pub/Sub implementation):
+Conforming Pub/Sub implementations **MUST** implement the following pub/sub related methods within the WebSocket/SSE `client` object (as defined in the Rack WebSockets / EventSource specification draft):
 
-* `subscribe(to, opt = {}) { |from, message| optional_block }` where `opt` is a Hash object that supports the following possible keys (undefined keys *SHOULD* be ignored):
+* `subscribe(to, opt = {}) { |from, message| optional_block }` where `to` is a named *channel* and `opt` is a Hash object that *SHOULD* support the following possible keys (unsupported keys *MUST* be ignored):
 
-    * `:match` indicates a matching algorithm should be applied. Possible values should include [`:redis`](https://github.com/antirez/redis/blob/398b2084af067ae4d669e0ce5a63d3bc89c639d3/src/util.c#L46-L167), [`:nats`](https://nats.io/documentation/faq/#wildcards) or [`:rabbitmq`](https://www.rabbitmq.com/tutorials/tutorial-five-ruby.html). Pub/Sub implementations should support some or all of these common pattern resolution schemes.
+    * `:match` indicates a matching algorithm should be applied to the `to` variable (`to` is a pattern).
     
-    * `:handler` is an alternative to the optional block. It should accept Proc like objects (objects that answer to `call(from, msg)`).
+        Possible values should include [`:redis`](https://github.com/antirez/redis/blob/398b2084af067ae4d669e0ce5a63d3bc89c639d3/src/util.c#L46-L167), [`:nats`](https://nats.io/documentation/faq/#wildcards) or [`:rabbitmq`](https://www.rabbitmq.com/tutorials/tutorial-five-ruby.html). Pub/Sub implementations *MAY* support none, some or all of these common pattern resolution schemes.
+    
+    * `:handler` is an alternative to the optional block. It should accept Proc like objects (objects that answer to `.call(from, msg)`).
 
-    * If an optional `block` (or `:handler`) is provided, if will be called when a publication was received. Otherwise, the message alone (**not** the channel data) should be sent directly to the WebSocket / EventSource client.
+    * If an optional `block` (or `:handler`) is provided, if will be called when a publication was received. Otherwise, the message alone (**not** the channel data) **MUST** be sent directly to the WebSocket / EventSource client.
 
     * `:as` accepts either `:text` or `:binary` Symbol objects.
 
@@ -30,19 +32,17 @@ Conforming Pub/Sub implementations **MUST** extend the WebSocket and SSE callbac
 
         This will dictate the encoding for outgoing WebSocket message when publications are directly sent to the client (as a text message or a binary blob). `:text` will be the default value for a missing `:as` option.
     
-    If the `subscribe` method is called within a WebSocket / SSE Callback object, the subscription must be associated with the Callback object and closed automatically when the connection is closed.
+    If a subscription to `to` already exists, it should be *replaced* by the new subscription (the old subscription should be canceled / unsubscribed).
 
-    If the `subscribe` method isn't called from within a connection, it should be considered a global (non connection related) subscription and a `block` or `:handler` **MUST** be provided. 
+    When the `subscribe` method is called within a WebSocket / SSE Callback object, the subscription must be closed automatically when the connection is closed.
     
-    The `subscribe` method must return a subscription object if a subscription was scheduled (not necessarily performed). If it's already known that the subscription would fail, the method should return `nil`.
+    The `subscribe` method **MUST** return `nil` on a known failure (i.e., when the connection is already closed), or any truthful value on success.
 
-    The subscription object **MUST** support the method `close` (that will close the subscription).
+    A global variation for this method (allowing global subscriptions to be created) **SHOULD** be made available as `Rack::PubSub.subscribe`.
 
-    The subscription object **MAY** support the method `to_s` (that will return a String representing the stream / channel / pattern).
+    When the `subscribe` method isn't called from within a connection, it should be considered a global (non connection related) subscription and an exception should be raised if a `block` or `:handler` isn't provided by the user.
 
-    The subscription object **MUST** support the method `==(str)` where `str` is a String object (that will return true if the subscription matches the String.
-
-    A global variation for this method (allowing global subscriptions to be created) MUST be defined as `Rack::PubSub.subscribe`.
+* `unsubscribe(from)` should cancel a subscription to the `from` named channel / pattern.
 
 * `publish(to, message, engine = nil)` (preferably supporting named arguments) where:
 
