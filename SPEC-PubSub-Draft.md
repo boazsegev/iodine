@@ -20,7 +20,7 @@ Conforming Pub/Sub implementations **MUST** extend the WebSocket and SSE callbac
 
     * `:match` indicates a matching algorithm should be applied. Possible values should include [`:redis`](https://github.com/antirez/redis/blob/398b2084af067ae4d669e0ce5a63d3bc89c639d3/src/util.c#L46-L167), [`:nats`](https://nats.io/documentation/faq/#wildcards) or [`:rabbitmq`](https://www.rabbitmq.com/tutorials/tutorial-five-ruby.html). Pub/Sub implementations should support some or all of these common pattern resolution schemes.
     
-    * `:handler` is an alternative to the optional block. It should accept Proc like opbjects (objects that answer to `call(from, msg)`).
+    * `:handler` is an alternative to the optional block. It should accept Proc like objects (objects that answer to `call(from, msg)`).
 
     * If an optional `block` (or `:handler`) is provided, if will be called when a publication was received. Otherwise, the message alone (**not** the channel data) should be sent directly to the WebSocket / EventSource client.
 
