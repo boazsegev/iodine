@@ -634,7 +634,7 @@ static inline void *iodine_handle_request_in_GVL(void *handle_) {
   // close rack.io
   IodineRackIO.close(tmp);
   // test handler's return value
-  if (rbresponse == 0 || rbresponse == Qnil)
+  if (rbresponse == 0 || rbresponse == Qnil || TYPE(rbresponse) != T_ARRAY)
     goto internal_error;
   IodineStore.add(rbresponse);
 
