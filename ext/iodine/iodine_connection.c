@@ -518,9 +518,8 @@ static VALUE iodine_pubsub_subscribe(int argc, VALUE *argv, VALUE self) {
       fio_unsubscribe(sub);
       fio_unlock(&c->lock);
       return Qnil;
-    } else {
-      iodine_sub_add(&c->subscriptions, sub);
     }
+    iodine_sub_add(&c->subscriptions, sub);
     fio_unlock(&c->lock);
   } else {
     fio_lock(&sub_lock);
