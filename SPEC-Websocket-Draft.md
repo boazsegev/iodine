@@ -31,7 +31,7 @@ The historical use of `upgrade.websocket?` and `upgrade.websocket` (iodine 0.4.x
 
 WebSocket and EventSource connection upgrade and handling is performed using a Callback Object.
 
-The Callback Object should be a class (or an instance of such class) where **instances** implement any of the following callbacks:
+The Callback Object could be a any object which implements any of the following callbacks:
 
 * `on_open(client)` WILL be called once the connection had been established.
 
@@ -102,13 +102,11 @@ Server settings **MAY** (not required) be provided to allow for customization an
 
 * **Client**:
 
-    When a client decides to upgrade a request, they will place an appropriate Callback Object (either a class or an instance) in the `env['rack.upgrade']` Hash key.
+    When a client decides to upgrade a request, they will place an appropriate Callback Object in the `env['rack.upgrade']` Hash key.
 
 * **Server**:
 
     1. The server will review the `env` Hash *before* sending the response. If the `env['rack.upgrade']` was set, the server will perform the upgrade.
-
-        **If the callback handler is a Class object, the server will create a new instance of that class**.
 
     2. The server will send the correct response status and headers, as well as any headers present in the response object. The server will also perform any required housekeeping, such as closing the response body, if it exists.
 

@@ -6,6 +6,13 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+
+#### Change log v.0.7.8
+
+**Fix**: Documentation typo fixed by @ojab in PR#46.
+
+**Fix**: Documentation errors exposed by @ojab regarding the pub/sub specification draft and the WebSocket/SSE specification draft.
+
 #### Change log v.0.7.7
 
 **Fix**: (facil.io) fixed critical issue with cookies, where no more than a single cookie could be set (duplicate headers would be zeroed out before being set). Credit to @ojab for exposing the issue.
