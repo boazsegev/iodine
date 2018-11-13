@@ -6,6 +6,9 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.9
+
+**Feature**: added the `Iodine.worker?` and `Iodine.master?` methods, for process identification.
 
 #### Change log v.0.7.8
 

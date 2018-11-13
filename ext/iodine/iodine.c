@@ -161,13 +161,15 @@ static VALUE iodine_logging_set(VALUE self, VALUE val) {
 }
 
 /**
- *Returns the number of worker processes that will be used when {Iodine.start}
+ * Returns the number of worker processes that will be used when {Iodine.start}
  * is called.
  *
  * Negative numbers are translated as fractions of the number of CPU cores.
  * i.e., -2 == half the number of detected CPU cores.
  *
  * Zero values promise nothing (iodine will decide what to do with them).
+ *
+ * 1 == single process mode, the msater process acts as a worker process.
  */
 static VALUE iodine_workers_get(VALUE self) {
   VALUE i = rb_ivar_get(self, rb_intern2("@workers", 8));
@@ -184,6 +186,8 @@ static VALUE iodine_workers_get(VALUE self) {
  * i.e., -2 == half the number of detected CPU cores.
  *
  * Zero values promise nothing (iodine will decide what to do with them).
+ *
+ * 1 == single process mode, the msater process acts as a worker process.
  */
 static VALUE iodine_workers_set(VALUE self, VALUE val) {
   Check_Type(val, T_FIXNUM);
@@ -194,7 +198,7 @@ static VALUE iodine_workers_set(VALUE self, VALUE val) {
   return val;
 }
 
-/** Prints the Iodine startup message */
+/** Logs the Iodine startup message */
 static void iodine_print_startup_message(iodine_start_params_s params) {
   VALUE iodine_version = rb_const_get(IodineModule, rb_intern("VERSION"));
   VALUE ruby_version = rb_const_get(IodineModule, rb_intern("RUBY_VERSION"));
@@ -251,6 +255,25 @@ static VALUE iodine_stop(VALUE self) {
   return self;
 }
 
+/**
+ * Returns `true` if this process is the master / root process, `false`
+ * otherwise.
+ *
+ * Note that the master process might be a worker process as well, when running
+ * in single process mode (see {Iodine.workers}).
+ */
+static VALUE iodine_master_is(VALUE self) {
+  return fio_is_master() ? Qtrue : Qfalse;
+}
+
+/**
+ * Returns `true` if this process is a worker process or if iodine is running in
+ * a single process mode (the master is also a worker), `false` otherwise.
+ */
+static VALUE iodine_worker_is(VALUE self) {
+  return fio_is_master() ? Qtrue : Qfalse;
+}
+
 /* *****************************************************************************
 Ruby loads the library and invokes the Init_<lib_name> function...
 
@@ -279,6 +302,8 @@ void Init_iodine(void) {
   rb_define_module_function(IodineModule, "start", iodine_start, 0);
   rb_define_module_function(IodineModule, "stop", iodine_stop, 0);
   rb_define_module_function(IodineModule, "on_idle", iodine_sched_on_idle, 0);
+  rb_define_module_function(IodineModule, "master?", iodine_master_is, 0);
+  rb_define_module_function(IodineModule, "worker?", iodine_worker_is, 0);
 
   // initialize Object storage for GC protection
   iodine_storage_init();
