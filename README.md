@@ -235,6 +235,27 @@ end
 
 * The iodine Redis client will use a single Redis connection per process (for publishing data) and an extra Redis connection for subscriptions (owned by the master process). Connections will be automatically re-established if timeouts or errors occur.
 
+#### Hot Restart
+
+Iodine will "hot-restart" the application by shutting down and re-spawning the worker processes.
+
+This will clear away any memory fragmentation concerns and other issues that might plague a long running worker process or ruby application.
+
+To hot-restart iodine, send the `SIGUSR1` signal to the root process.
+
+The following code will hot-restart iodine every 4 hours:
+
+```ruby
+ROOT_PID = Process.pid
+Iodine.run_every(2 * 60 * 60 * 1000) do
+  Process.kill("SIGUSR1", ROOT_PID) if Process.pid == ROOT_PID
+end
+```
+
+Since the master / root process doesn't handle any requests (it only handles pub/sub and house-keeping), it's memory map and process data shouldn't be as affected and the new worker processes should be healthier and more performant.
+
+**Note**: This will **not** re-load the application (any changes to the Ruby code require an actual restart).
+
 #### Optimized HTTP logging
 
 By default, iodine is pretty quite. Some messages are logged to `stderr`, but not many.
