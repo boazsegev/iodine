@@ -17,6 +17,7 @@ Iodine is a fast concurrent web server for real-time Ruby applications, with nat
 * Hot Restart (using the USR1 signal);
 * Client connectivity (attach client sockets to make them evented);
 * Custom protocol authoring;
+* Optimized Logging to `stderr`.
 * and more!
 
 Iodine is an **evented** framework with a simple API that ports much of the [C facil.io framework](https://github.com/boazsegev/facil.io) to Ruby. This means that:
@@ -51,6 +52,12 @@ The common model of 16 threads and 4 processes can be easily adopted:
 
 ```bash
 bundler exec iodine -p $PORT -t 16 -w 4
+```
+
+During development, it's more common to use a single process and a few threads:
+
+```bash
+bundler exec iodine -p $PORT -t 16 -w 1
 ```
 
 ### Static file serving support
@@ -118,7 +125,9 @@ Go to [localhost:3000/source](http://localhost:3000/source) to experience the `X
 
 #### Pre-Compressed assets / files
 
-Simply `gzip` your static files and iodine will automatically recognize and send the `gz` version if the client (browser) supports the `gzip` transfer-encoding.
+Rails does this automatically when compiling assets - simply `gzip` your static files.
+
+Iodine will automatically recognize and send the `gz` version if the client (browser) supports the `gzip` transfer-encoding.
 
 For example, to offer a compressed version of `style.css`, run (in the terminal):
 
@@ -226,9 +235,33 @@ end
 
 * The iodine Redis client will use a single Redis connection per process (for publishing data) and an extra Redis connection for subscriptions (owned by the master process). Connections will be automatically re-established if timeouts or errors occur.
 
+#### Optimized HTTP logging
+
+By default, iodine is pretty quite. Some messages are logged to `stderr`, but not many.
+
+However, HTTP requests can be logged using iodine's optimized logger to `stderr`. Iodine will optimize the log output by caching the output time string which updates every second rather than every request.
+
+This can be performed by setting the `-v` flag during startup, i.e.:
+
+```bash
+bundler exec iodine -p $PORT -t 16 -w 4 -v -www /my/public/folder
+```
+
+The log output can be redirected to a file:
+
+```bash
+bundler exec iodine -p $PORT -v  2>my_log.log
+```
+
+The log output can also be redirected to a `stdout`:
+
+```bash
+bundler exec iodine -p $PORT -v  2>&1
+```
+
 #### TCP/IP (raw) sockets
 
-Upgrading to a custom protocol (i.e., in order to implement your own Websocket protocol with special extensions) is available when neither WebSockets nor SSE connection upgrades were requested. In the following (terminal) example, we'll use an echo server without direct socket echo:
+Upgrading to a custom protocol (i.e., in order to implement your own WebSocket protocol with special extensions) is available when neither WebSockets nor SSE connection upgrades were requested. In the following (terminal) example, we'll use an echo server without direct socket echo:
 
 ```ruby
 require 'iodine'
