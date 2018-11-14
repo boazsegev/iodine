@@ -10,6 +10,17 @@
 
 #include <pthread.h>
 
+static ID STATE_PRE_START;
+static ID STATE_BEFORE_FORK;
+static ID STATE_AFTER_FORK;
+static ID STATE_ENTER_CHILD;
+static ID STATE_ENTER_MASTER;
+static ID STATE_ON_START;
+static ID STATE_ON_PARENT_CRUSH;
+static ID STATE_ON_CHILD_CRUSH;
+static ID STATE_START_SHUTDOWN;
+static ID STATE_ON_FINISH;
+
 /* *****************************************************************************
 IO flushing dedicated thread for protection against blocking code
 ***************************************************************************** */
@@ -288,83 +299,78 @@ static void iodine_perform_state_callback_persist(void *blk_) {
 
 // clang-format off
 /**
-Sets a block of code to run before a new worker process is forked (cluster mode only).
+Sets a block of code to run when Iodine's core state is updated.
 
-Code runs within the master (root) process.
-*/
-static VALUE iodine_before_fork_add(VALUE self) {
-  // clang-format on
-  rb_need_block();
-  VALUE block = rb_block_proc();
-  IodineStore.add(block);
-  fio_state_callback_add(FIO_CALL_BEFORE_FORK,
-                         iodine_perform_state_callback_persist, (void *)block);
-  return block;
-  (void)self;
-}
+@param [Symbol] event the state event for which the block should run (see list).
+@since 0.7.9
 
-// clang-format off
-/**
-Sets a block of code to run after a new worker process is forked (cluster mode only).
+The state event Symbol can be any of the following:
 
-Code runs in both the parent and the child.
-*/
-static VALUE iodine_after_fork_add(VALUE self) {
-  // clang-format on
-  rb_need_block();
-  VALUE block = rb_block_proc();
-  IodineStore.add(block);
-  fio_state_callback_add(FIO_CALL_AFTER_FORK,
-                         iodine_perform_state_callback_persist, (void *)block);
-  return block;
-  (void)self;
-}
-
-// clang-format off
-/**
-Sets a block of code to run after a new worker process is forked (cluster mode only).
+:pre_start :: the block will be called once before starting up the IO reactor.
+:before_fork :: the block will be called before each time the IO reactor forks a new worker.
+:after_fork :: the block will be called after each fork (both in parent and workers).
+:enter_child :: the block will be called by a worker process right after forking.
+:enter_master :: the block will be called by the master process after spawning a worker (after forking).
+:on_start :: the block will be called every time a *worker* proceess starts. In single process mode, the master process is also a worker.
+:on_parent_crush :: the block will be called by each worker the moment it detects the master process crashed.
+:on_child_crush :: the block will be called by the parent (master) after a worker process crashed.
+:start_shutdown :: the block will be called before starting the shutdown sequence.
+:on_finish :: the block will be called just before finishing up (both on chlid and parent processes).
 
 Code runs in both the parent and the child.
 */
-static VALUE iodine_after_fork_in_worker_add(VALUE self) {
+static VALUE iodine_on_state(VALUE self, VALUE event) {
   // clang-format on
   rb_need_block();
+  Check_Type(event, T_SYMBOL);
   VALUE block = rb_block_proc();
   IodineStore.add(block);
-  fio_state_callback_add(FIO_CALL_IN_CHILD,
-                         iodine_perform_state_callback_persist, (void *)block);
-  return block;
-  (void)self;
-}
+  ID state = rb_sym2id(event);
 
-// clang-format off
-/**
-Sets a block of code to run after a new worker process is forked (cluster mode only).
-
-Code runs in both the parent and the child.
-*/
-static VALUE iodine_after_fork_in_master_add(VALUE self) {
-  // clang-format on
-  rb_need_block();
-  VALUE block = rb_block_proc();
-  IodineStore.add(block);
-  fio_state_callback_add(FIO_CALL_IN_MASTER,
-                         iodine_perform_state_callback_persist, (void *)block);
-  return block;
-  (void)self;
-}
-
-// clang-format off
-/**
-Sets a block of code to run once a Worker process shuts down (both in single process mode and cluster mode).
-*/
-static VALUE iodine_on_shutdown_add(VALUE self) {
-  // clang-format on
-  rb_need_block();
-  VALUE block = rb_block_proc();
-  IodineStore.add(block);
-  fio_state_callback_add(FIO_CALL_ON_FINISH,
-                         iodine_perform_state_callback_persist, (void *)block);
+  if (state == STATE_PRE_START) {
+    fio_state_callback_add(FIO_CALL_PRE_START,
+                           iodine_perform_state_callback_persist,
+                           (void *)block);
+  } else if (state == STATE_BEFORE_FORK) {
+    fio_state_callback_add(FIO_CALL_BEFORE_FORK,
+                           iodine_perform_state_callback_persist,
+                           (void *)block);
+  } else if (state == STATE_AFTER_FORK) {
+    fio_state_callback_add(FIO_CALL_AFTER_FORK,
+                           iodine_perform_state_callback_persist,
+                           (void *)block);
+  } else if (state == STATE_ENTER_CHILD) {
+    fio_state_callback_add(FIO_CALL_IN_CHILD,
+                           iodine_perform_state_callback_persist,
+                           (void *)block);
+  } else if (state == STATE_ENTER_MASTER) {
+    fio_state_callback_add(FIO_CALL_IN_MASTER,
+                           iodine_perform_state_callback_persist,
+                           (void *)block);
+  } else if (state == STATE_ON_START) {
+    fio_state_callback_add(FIO_CALL_ON_START,
+                           iodine_perform_state_callback_persist,
+                           (void *)block);
+  } else if (state == STATE_ON_PARENT_CRUSH) {
+    fio_state_callback_add(FIO_CALL_ON_PARENT_CRUSH,
+                           iodine_perform_state_callback_persist,
+                           (void *)block);
+  } else if (state == STATE_ON_CHILD_CRUSH) {
+    fio_state_callback_add(FIO_CALL_ON_CHILD_CRUSH,
+                           iodine_perform_state_callback_persist,
+                           (void *)block);
+  } else if (state == STATE_START_SHUTDOWN) {
+    fio_state_callback_add(FIO_CALL_ON_SHUTDOWN,
+                           iodine_perform_state_callback_persist,
+                           (void *)block);
+  } else if (state == STATE_ON_FINISH) {
+    fio_state_callback_add(FIO_CALL_ON_FINISH,
+                           iodine_perform_state_callback_persist,
+                           (void *)block);
+  } else {
+    IodineStore.remove(block);
+    rb_raise(rb_eTypeError, "unknown event in Iodine.on_state");
+  }
   return block;
   (void)self;
 }
@@ -388,16 +394,19 @@ void iodine_defer_initialize(void) {
                             1);
   rb_define_module_function(IodineModule, "run_every", iodine_defer_run_every,
                             -1);
-  rb_define_module_function(IodineModule, "before_fork", iodine_before_fork_add,
-                            0);
-  rb_define_module_function(IodineModule, "after_fork", iodine_after_fork_add,
-                            0);
-  rb_define_module_function(IodineModule, "after_fork_in_worker",
-                            iodine_after_fork_in_worker_add, 0);
-  rb_define_module_function(IodineModule, "after_fork_in_master",
-                            iodine_after_fork_in_master_add, 0);
-  rb_define_module_function(IodineModule, "on_shutdown", iodine_on_shutdown_add,
-                            0);
+  rb_define_module_function(IodineModule, "on_state", iodine_on_state, 1);
+
+  STATE_PRE_START = rb_intern("pre_start");
+  STATE_BEFORE_FORK = rb_intern("before_fork");
+  STATE_AFTER_FORK = rb_intern("after_fork");
+  STATE_ENTER_CHILD = rb_intern("enter_child");
+  STATE_ENTER_MASTER = rb_intern("enter_master");
+  STATE_ON_START = rb_intern("on_start");
+  STATE_ON_PARENT_CRUSH = rb_intern("on_parent_crush");
+  STATE_ON_CHILD_CRUSH = rb_intern("on_child_crush");
+  STATE_START_SHUTDOWN = rb_intern("start_shutdown");
+  STATE_ON_FINISH = rb_intern("on_finish");
+
   fio_state_callback_add(FIO_CALL_ON_FINISH, iodine_defer_on_finish, NULL);
   fio_state_callback_add(FIO_CALL_PRE_START, iodine_start_io_thread, NULL);
 }
