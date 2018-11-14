@@ -803,7 +803,7 @@ address:: the address to bind to. Default: binds to all possible addresses.
 log:: enable response logging (Hijacked sockets aren't logged). Default: off.
 public:: The root public folder for static file service. Default: none.
 timeout:: Timeout for inactive HTTP/1.x connections. Defaults: 40 seconds.
-max_body:: The maximum body size for incoming HTTP messages. Default: ~50Mib.
+max_body:: The maximum body size for incoming HTTP messages in bytes. Default: ~50Mib.
 max_headers:: The maximum total header length for incoming HTTP messages. Default: ~64Kib.
 max_msg:: The maximum Websocket message size allowed. Default: ~250Kib.
 ping:: The Websocket `ping` interval. Default: 40 seconds.
@@ -958,6 +958,7 @@ static VALUE iodine_http_listen(VALUE self, VALUE opt) {
           .public_folder = (www ? StringValueCStr(www) : NULL)) == -1) {
     FIO_LOG_ERROR("Failed to initialize a listening HTTP socket for port %s",
                   port ? StringValueCStr(port) : "3000");
+    rb_raise(rb_eRuntimeError, "Listening socket initialization failed");
     return Qfalse;
   }
 
