@@ -249,8 +249,10 @@ static VALUE iodine_connection_pending(VALUE self) {
   return SIZET2NUM((fio_pending(c->info.uuid)));
 }
 
-/** Returns the connection's protocol Symbol (`:sse`, `:websocket`, etc'). */
+// clang-format off
+/** Returns the connection's protocol Symbol (`:sse`, `:websocket`, etc'), if originated in HTTP (`rack.upgrade`). */
 static VALUE iodine_connection_protocol_name(VALUE self) {
+  // clang-format on
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
   if (c) {
     switch (c->info.type) {

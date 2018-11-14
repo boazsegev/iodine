@@ -75,7 +75,7 @@ module Iodine
     # @deprecated use {Iodine.on_state}.
     #
     # Sets a block of code to run before a new worker process is forked (cluster mode only).
-    def before_fork(&block)
+    def self.before_fork(&block)
       # warn "Iodine.before_fork is deprecated, use Iodine.on_state(:before_fork)."
       Iodine.on_state(:before_fork, &block)
     end
@@ -84,28 +84,28 @@ module Iodine
     # Sets a block of code to run after a new worker process is forked (cluster mode only).
     #
     # Code runs in both the parent and the child.
-    def after_fork(&block)
+    def self.after_fork(&block)
       # warn "Iodine.after_fork is deprecated, use Iodine.on_state(:after_fork)."
       Iodine.on_state(:after_fork, &block)
     end
     # @deprecated use {Iodine.on_state}.
     #
     # Sets a block of code to run in the worker process, after a new worker process is forked (cluster mode only).
-    def after_fork_in_worker(&block)
+    def self.after_fork_in_worker(&block)
       warn "Iodine.after_fork_in_worker is deprecated, use Iodine.on_state(:enter_child)."
       Iodine.on_state(:enter_child, &block)
     end
     # @deprecated use {Iodine.on_state}.
     #
     # Sets a block of code to run in the master / root process, after a new worker process is forked (cluster mode only).
-    def after_fork_in_master(&block)
+    def self.after_fork_in_master(&block)
       warn "Iodine.after_fork_in_master is deprecated, use Iodine.on_state(:enter_master)."
       Iodine.on_state(:enter_master, &block)
     end
     # @deprecated use {Iodine.on_state}.
     #
     # Sets a block of code to run once a Worker process shuts down (both in single process mode and cluster mode).
-    def on_shutdown(&block)
+    def self.on_shutdown(&block)
       warn "Iodine.on_shutdown is deprecated, use Iodine.on_state(:on_finish)."
       Iodine.on_state(:on_finish, &block)
     end
