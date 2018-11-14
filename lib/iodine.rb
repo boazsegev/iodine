@@ -115,11 +115,19 @@ end
 require 'rack/handler/iodine' unless defined? ::Iodine::Rack::IODINE_RACK_LOADED
 
 
-### Automatic ActiveRecord fix
+### Automatic ActiveRecord and Sequel fix
 Iodine.on_state(:before_fork)  do
   if defined?(ActiveRecord) && defined?(ActiveRecord::Base) && ActiveRecord::Base.respond_to?(:connection)
     begin
       ActiveRecord::Base.connection.disconnect!
+    rescue
+    end
+  end
+  if defined?(Sequel)
+    begin
+      Sequel.synchronize do
+        Sequel::DATABASES.each { |database| database.disconnect }
+      end
     rescue
     end
   end
@@ -133,49 +141,7 @@ Iodine.on_state(:after_fork)  do
   end
 end
 
-### Old CLI argument parsing - TODO: remove old code
-
-# if ARGV.index('-b') && ARGV[ARGV.index('-b') + 1]
-#   Iodine::DEFAULT_HTTP_ARGS[:address] = ARGV[ARGV.index('-b') + 1]
-# end
-# if ARGV.index('-p') && ARGV[ARGV.index('-p') + 1]
-#   Iodine::DEFAULT_HTTP_ARGS[:port] = ARGV[ARGV.index('-p') + 1]
-# end
-
-# if ARGV.index('-maxbd') && ARGV[ARGV.index('-maxbd') + 1]
-#   Iodine::DEFAULT_HTTP_ARGS[:max_body_size] = ARGV[ARGV.index('-maxbd') + 1].to_i
-# end
-# if ARGV.index('-maxms') && ARGV[ARGV.index('-maxms') + 1]
-#   Iodine::DEFAULT_HTTP_ARGS[:max_msg_size] = ARGV[ARGV.index('-maxms') + 1].to_i
-# end
-# if ARGV.index('-maxhead') && ARGV[ARGV.index('-maxhead') + 1]  && ARGV[ARGV.index('-maxhead') + 1].to_i > 0
-#   Iodine::DEFAULT_HTTP_ARGS[:max_headers] = ARGV[ARGV.index('-maxhead') + 1].to_i
-# end
-# if ARGV.index('-ping') && ARGV[ARGV.index('-ping') + 1]
-#   Iodine::DEFAULT_HTTP_ARGS[:ping] = ARGV[ARGV.index('-ping') + 1].to_i
-# end
-# if ARGV.index('-www') && ARGV[ARGV.index('-www') + 1]
-#   Iodine::DEFAULT_HTTP_ARGS[:public] = ARGV[ARGV.index('-www') + 1]
-# end
-# if ARGV.index('-tout') && ARGV[ARGV.index('-tout') + 1]
-#   Iodine::DEFAULT_HTTP_ARGS[:timeout] = ARGV[ARGV.index('-tout') + 1].to_i
-#   puts "WARNNING: timeout set to 0 (ignored, timeout will be ~5 seconds)." if (Iodine::DEFAULT_HTTP_ARGS[:timeout].to_i <= 0 || Iodine::DEFAULT_HTTP_ARGS[:timeout].to_i > 255)
-# end
-
-# Iodine::DEFAULT_HTTP_ARGS[:log] = true if ARGV.index('-v')
-
-# if ARGV.index('-logging') && ARGV[ARGV.index('-logging') + 1] && ARGV[ARGV.index('-logging') + 1].to_s[0] >= '0' && ARGV[ARGV.index('-logging') + 1].to_s[0] <= '9'
-#   Iodine.verbosity = ARGV[ARGV.index('-logging') + 1].to_i
-# end
-
-# if ARGV.index('-t') && ARGV[ARGV.index('-t') + 1].to_i != 0
-#   Iodine.threads = ARGV[ARGV.index('-t') + 1].to_i
-# end
-# if ARGV.index('-w') && ARGV[ARGV.index('-w') + 1].to_i != 0
-#   Iodine.workers = ARGV[ARGV.index('-w') + 1].to_i
-# end
-
-### Old CLI converter
+### Old CLI converter (backwards compatibility)
 
 ARGV[ARGV.index('-www')] = "--www" if ARGV.index('-www')
 ARGV[ARGV.index('-maxbd')] = "--maxbd" if ARGV.index('-maxbd')
