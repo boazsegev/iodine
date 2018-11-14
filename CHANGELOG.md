@@ -10,6 +10,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Feature**: added the `Iodine.worker?` and `Iodine.master?` methods, for process identification.
 
+**Update**: Updated the automatic ActiveRecord `fork` handling code and added automatic Sequel `fork` handling, to protect against possible database communication errors related to the risk of connection sharing across worker processes.
+
 **Update**: Updated the command line option parsing code, to leverage Ruby's `optparse`.
 
 **Deprecation**: deprecated the global namespace DSL (`after_fork`, etc'). Use the new `Iodine.on_state(:after_fork)` method instead.
