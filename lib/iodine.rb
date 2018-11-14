@@ -76,7 +76,7 @@ module Iodine
     #
     # Sets a block of code to run before a new worker process is forked (cluster mode only).
     def self.before_fork(&block)
-      # warn "Iodine.before_fork is deprecated, use Iodine.on_state(:before_fork)."
+      warn "Iodine.before_fork is deprecated, use Iodine.on_state(:before_fork)."
       Iodine.on_state(:before_fork, &block)
     end
     # @deprecated use {Iodine.on_state}.
@@ -85,7 +85,7 @@ module Iodine
     #
     # Code runs in both the parent and the child.
     def self.after_fork(&block)
-      # warn "Iodine.after_fork is deprecated, use Iodine.on_state(:after_fork)."
+      warn "Iodine.after_fork is deprecated, use Iodine.on_state(:after_fork)."
       Iodine.on_state(:after_fork, &block)
     end
     # @deprecated use {Iodine.on_state}.
