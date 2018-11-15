@@ -55,7 +55,7 @@ static rb_encoding *IodineBinaryEncoding;
 static uint8_t support_xsendfile = 0;
 
 /** Used by {listen2http} to set missing arguments. */
-static VALUE iodine_default_args;
+VALUE iodine_default_args;
 
 #define rack_declare(rack_name) static VALUE rack_name
 

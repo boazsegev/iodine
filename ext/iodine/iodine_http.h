@@ -12,7 +12,7 @@ Feel free to copy, use and enjoy according to the license provided.
 extern VALUE IODINE_R_HIJACK;
 extern VALUE IODINE_R_HIJACK_IO;
 extern VALUE IODINE_R_HIJACK_CB;
-
+extern VALUE iodine_default_args;
 void iodine_init_http(void);
 
 #endif

@@ -125,9 +125,7 @@ Iodine.on_state(:before_fork)  do
   end
   if defined?(Sequel)
     begin
-      Sequel.synchronize do
-        Sequel::DATABASES.each { |database| database.disconnect }
-      end
+      Sequel::DATABASES.each { |database| database.disconnect }
     rescue
     end
   end
@@ -141,82 +139,11 @@ Iodine.on_state(:after_fork)  do
   end
 end
 
-### Old CLI converter (backwards compatibility)
+### Parse CLI for default HTTP settings
+Iodine::Base::CLI.parse("Iodine's HTTP/WebSocket server version #{Iodine::VERSION}\r\n\r\nUse:\r\n    iodine <options> <filename>\r\n\r\nBoth <options> and <filename> are optional. i.e.,:\r\n    iodine -p 0 -b /tmp/my_unix_sock\r\n    iodine -p 8080 path/to/app/conf.ru\r\n    iodine -p 8080 -w 4 -t 16\r\n")
 
-ARGV[ARGV.index('-www')] = "--www" if ARGV.index('-www')
-ARGV[ARGV.index('-maxbd')] = "--maxbd" if ARGV.index('-maxbd')
-ARGV[ARGV.index('-maxms')] = "--maxms" if ARGV.index('-maxms')
-ARGV[ARGV.index('-maxhead')] = "--maxhead" if ARGV.index('-maxhead')
-ARGV[ARGV.index('-ping')] = "--ping" if ARGV.index('-ping')
-ARGV[ARGV.index('-tout')] = "--tout" if ARGV.index('-tout')
-ARGV[ARGV.index('-logging')] = "--logging" if ARGV.index('-logging')
-
-### CLI argument parsing
-
-require 'optparse'
-
-module Iodine
-  # The Iodine::Base namespace is reserved for internal use and is NOT part of the public API.
-  module Base
-    # Command line interface. The Ruby CLI might be changed in future versions.
-    module CLI
-      # initializes the CLI parser.
-      def self.cli_parser
-        @opt ||= OptionParser.new do |opts|
-          opts.banner = "Iodine's HTTP/WebSocket server version #{Iodine::VERSION}\r\n\r\nUse:\r\n    iodine <options> <filename>\r\n\r\nBoth <options> and <filename> are optional. i.e.,:\r\n    iodine -p 0 -b /tmp/my_unix_sock\r\n    iodine -p 8080 path/to/app/conf.ru\r\n    iodine -p 8080 -w 4 -t 16\r\n"
-          opts.on("-w", "--workers N", Integer, "Number of threads per worker. Default: machine specific.") do |o|
-            Iodine.workers = o.to_i
-          end
-          opts.on("-t", "--threads N", Integer, "Number of worker processes (using fork). Default: machine specific.") do |o|
-            Iodine.threads = o.to_i
-          end
-          opts.on("-p", "--port PORT", Integer, "HTTP to listen to (0 => Unix Socket). Defaults to 3000") do |o|
-            Iodine::DEFAULT_HTTP_ARGS[:port] = o.to_s
-          end
-          opts.on("-b", "--address ADDR", String, "HTTP address to listen to (IP / Unix Socket). Defaults to nil (all).") do |o|
-            Iodine::DEFAULT_HTTP_ARGS[:address] = o.to_s
-          end
-          opts.on("--www FOLDER", "--public FOLDER", String, "Public folder for static file serving. Default: nil (none).") do |o|
-            Iodine::DEFAULT_HTTP_ARGS[:public] = o.to_s
-          end
-          opts.on("-v", "--log", "Log HTTP requests to STDERR.") do
-            Iodine::DEFAULT_HTTP_ARGS[:log] = true
-          end
-          opts.on("--maxbd MB", Integer, "Maximum MegaBytes per HTTP message (max body size). Default: 50Mb.") do |o|
-            Iodine::DEFAULT_HTTP_ARGS[:max_body_size] = o.to_i * 1024 * 1024
-          end
-          opts.on("--maxhead BYTES", Integer, "Maximum total headers length per HTTP request. Default: 32Kb.") do |o|
-            Iodine::DEFAULT_HTTP_ARGS[:max_headers] = o.to_i
-          end
-          opts.on("--tout SEC", Integer, "HTTP inactivity connection timeout. Default: 40 seconds.") do |o|
-            Iodine::DEFAULT_HTTP_ARGS[:timeout] = o.to_i
-          end
-          opts.on("--maxms BYTES", Integer, "Maximum Bytes per WebSocket message. Default: 250Kb.") do |o|
-            Iodine::DEFAULT_HTTP_ARGS[:max_msg_size] = o.to_i
-          end
-          opts.on("--ping SEC", Integer, "WebSocket / SSE ping interval in seconds. Default: 40 seconds.") do |o|
-            Iodine::DEFAULT_HTTP_ARGS[:ping] = o.to_i
-          end
-          opts.on("-V", "--logging LEVEL", Integer, "Server level logging (not HTTP), values between 0..5. Defaults to 4.") do |o|
-            Iodine.verbosity = o.to_i
-          end
-        end
-      end
-
-      # Tests for the -?, -h or --help arguments
-      def self.cli_test4help
-        opt = cli_parser
-        opt.on_tail("-?", "-h", "--help", "Prints this help") do
-          puts opt
-          exit
-        end
-        opt
-      end
-    end
-  end
-end
-
-Iodine::Base::CLI.cli_parser.parse
+### Initialize Redis if set in CLI
+Iodine::PubSub.default = Iodine::PubSub::Redis.new(Iodine::DEFAULT_HTTP_ARGS[:redis_], ping: Iodine::DEFAULT_HTTP_ARGS[:redis_ping_]) if Iodine::DEFAULT_HTTP_ARGS[:redis_]
 
 ### Puma / Thin DSL compatibility - depracated (DSLs are evil)
 
