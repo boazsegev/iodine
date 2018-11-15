@@ -36,7 +36,7 @@ static void *iodine_io_thread(void *arg) {
   (void)arg;
   while (sock_io_thread_flag) {
     fio_flush_all();
-    fio_throttle_thread(100);
+    fio_throttle_thread(150000000UL);
   }
   return NULL;
 }
