@@ -25,7 +25,7 @@ static ID STATE_ON_FINISH;
 IO flushing dedicated thread for protection against blocking code
 ***************************************************************************** */
 
-static fio_lock_i sock_io_thread = 0;
+static fio_lock_i sock_io_thread_flag = 0;
 static pthread_t sock_io_pthread;
 typedef struct {
   size_t threads;
@@ -34,27 +34,21 @@ typedef struct {
 
 static void *iodine_io_thread(void *arg) {
   (void)arg;
-  while (sock_io_thread) {
+  while (sock_io_thread_flag) {
     fio_flush_all();
     fio_throttle_thread(100);
   }
   return NULL;
 }
 static void iodine_start_io_thread(void *a_) {
-  if (!fio_atomic_add(&sock_io_thread, 1)) {
+  if (!fio_atomic_add(&sock_io_thread_flag, 1)) {
     pthread_create(&sock_io_pthread, NULL, iodine_io_thread, NULL);
   }
   (void)a_;
 }
 
-static void iodine_start_io_thread2(void *a_, void *b_) {
-  iodine_start_io_thread(a_);
-  (void)b_;
-}
-
 static void iodine_join_io_thread(void) {
-  if (fio_atomic_sub(&sock_io_thread, 1) == 0) {
-    sock_io_thread = 0;
+  if (fio_atomic_sub(&sock_io_thread_flag, 1) == 0 && sock_io_pthread) {
     pthread_join(sock_io_pthread, NULL);
     sock_io_pthread = (pthread_t)NULL;
   }
@@ -119,8 +113,6 @@ static void *fork_using_ruby(void *ignr) {
   if (!pid) {
     IodineStore.after_fork();
   }
-  // re-initiate IO thread
-  fio_defer(iodine_start_io_thread2, NULL, NULL);
   return (void *)pid;
   (void)ignr;
 }
@@ -378,6 +370,7 @@ static VALUE iodine_on_state(VALUE self, VALUE event) {
 /* Performs any cleanup before worker dies */
 static void iodine_defer_on_finish(void *ignr) {
   (void)ignr;
+
   iodine_join_io_thread();
 }
 
@@ -409,4 +402,5 @@ void iodine_defer_initialize(void) {
 
   fio_state_callback_add(FIO_CALL_ON_FINISH, iodine_defer_on_finish, NULL);
   fio_state_callback_add(FIO_CALL_PRE_START, iodine_start_io_thread, NULL);
+  fio_state_callback_add(FIO_CALL_AFTER_FORK, iodine_start_io_thread, NULL);
 }
