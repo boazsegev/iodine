@@ -12,7 +12,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Update**: Updated the automatic ActiveRecord `fork` handling code and added automatic Sequel `fork` handling, to protect against possible database communication errors related to the risk of connection sharing across worker processes.
 
-**Update**: Updated the command line option parsing code, to leverage Ruby's `optparse`.
+**Update**: Moved the command line option parsing code, to leverage facil.io's `fio_cli`... It appears more flexible than Ruby's `optparse` (where command line naming is concerned).
 
 **Deprecation**: deprecated the global namespace DSL (`after_fork`, etc'). Use the new `Iodine.on_state(:after_fork)` method instead.
 

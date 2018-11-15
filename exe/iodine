@@ -15,7 +15,7 @@ module Iodine
 
       def self.get_app_opts
         app, opt = nil, nil
-        filename = ARGV.shift
+        filename = Iodine::DEFAULT_HTTP_ARGS[:filename_]
         if filename
           app, opt = try_file filename
           app, opt = try_file "#{filename}.ru" unless opt
@@ -59,9 +59,8 @@ module Iodine
       end
 
       def self.call
-        cli_test4help.parse!
         app, opt = get_app_opts
-        perform_warmup if ARGV.index('-warmup')
+        perform_warmup if Iodine::DEFAULT_HTTP_ARGS[:warmup_]
         Iodine::Rack.run(app, opt)
       end
     end

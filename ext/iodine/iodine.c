@@ -4,6 +4,7 @@
 
 #define FIO_INCLUDE_LINKED_LIST
 #include "fio.h"
+#include "fio_cli.h"
 /* *****************************************************************************
 OS specific patches
 ***************************************************************************** */
@@ -275,6 +276,156 @@ static VALUE iodine_worker_is(VALUE self) {
 }
 
 /* *****************************************************************************
+CLI parser (Ruby's OptParser is more limiting than I knew...)
+***************************************************************************** */
+
+/**
+ * Parses the CLI argnumnents, returning the Rack filename (if provided).
+ *
+ * Unknown arguments are ignored.
+ *
+ * @params [String] desc a String containg the iodine server's description.
+ */
+static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
+  (void)self;
+  Check_Type(desc, T_STRING);
+  VALUE ARGV = rb_get_argv();
+  VALUE ret = Qtrue;
+  VALUE defaults = iodine_default_args;
+  if (!defaults || !ARGV || TYPE(ARGV) != T_ARRAY || TYPE(defaults) != T_HASH) {
+    FIO_LOG_ERROR("CLI parsing initialization error "
+                  "ARGV=%p, Array?(%d), defaults == %p (%d)",
+                  (void *)ARGV, (int)(TYPE(ARGV) == T_ARRAY), (void *)defaults,
+                  (int)(TYPE(defaults) == T_HASH));
+    return Qnil;
+  }
+  /* Copy the Ruby ARGV to a C valid ARGV */
+  int argc = (int)rb_array_len(ARGV) + 1;
+  if (argc <= 1) {
+    FIO_LOG_DEBUG("CLI: No arguments to parse...\n");
+    return Qnil;
+  } else {
+    FIO_LOG_DEBUG("Iodine CLI parsing %d arguments", argc);
+  }
+  char **argv = calloc(argc, sizeof(*argv));
+  FIO_ASSERT_ALLOC(argv);
+  argv[0] = "iodine";
+  for (int i = 1; i < argc; ++i) {
+    VALUE tmp = rb_ary_entry(ARGV, (long)(i - 1));
+    if (TYPE(tmp) != T_STRING) {
+      FIO_LOG_ERROR("ARGV Array contains a non-String object.");
+      ret = Qnil;
+      goto finish;
+    }
+    fio_str_info_s s = IODINE_RSTRINFO(tmp);
+    argv[i] = malloc(s.len + 1);
+    FIO_ASSERT_ALLOC(argv[i]);
+    memcpy(argv[i], s.data, s.len);
+    argv[i][s.len] = 0;
+  }
+  /* Levarage the facil.io CLI library */
+  fio_cli_start(
+      argc, (const char **)argv, 0, -1, StringValueCStr(desc),
+      "-bind -b -address address to listen to. defaults any available.",
+      "-port -p port number to listen to. defaults port 3000", FIO_CLI_TYPE_INT,
+      "-workers -w number of processes to use.", FIO_CLI_TYPE_INT,
+      "-threads -t number of threads per process.", FIO_CLI_TYPE_INT,
+      "-public -www public folder, for static file service.",
+      "-log -v HTTP request logging.", FIO_CLI_TYPE_BOOL,
+      "-k -keep-alive -tout HTTP keep-alive timeout (0..255). Default: 40s",
+      FIO_CLI_TYPE_INT, "-ping websocket ping interval (0..255). Default: 40s",
+      FIO_CLI_TYPE_INT,
+      "-max-body -maxbd HTTP upload limit in Mega-Bytes. Default: 50Mb",
+      FIO_CLI_TYPE_INT,
+      "-max-message -maxms incoming websocket message size limit in Kb. "
+      "Default: 250Kb",
+      FIO_CLI_TYPE_INT,
+      "-max-headers -maxhd Maximum total headers length per HTTP request in "
+      "Kb. "
+      "Default: 32Kb."
+      "-warmup warm up the application. CAREFUL! iodine might fork.",
+      FIO_CLI_TYPE_BOOL,
+      "-V -logging 0..5 server logging level to stderr (debugging, not HTTP). "
+      "Default: 4",
+      FIO_CLI_TYPE_INT,
+      "-redis -r an optional Redis URL server address. i.e.: "
+      "redis://user:password@localhost:6379/",
+      "-redis-ping -rp websocket ping interval (0..255). Default: 5 minutes",
+      FIO_CLI_TYPE_INT);
+  /* copy values from CLI library to iodine */
+  if (fio_cli_get("-V")) {
+    int level = fio_cli_get_i("-V");
+    if (level > 0 && level < 100)
+      FIO_LOG_LEVEL = level;
+  }
+  if (fio_cli_get("-w")) {
+    iodine_workers_set(IodineModule, INT2NUM(fio_cli_get_i("-w")));
+  }
+  if (fio_cli_get("-t")) {
+    iodine_threads_set(IodineModule, INT2NUM(fio_cli_get_i("-t")));
+  }
+  if (fio_cli_get_bool("-v")) {
+    rb_hash_aset(defaults, ID2SYM(rb_intern("log")), Qtrue);
+  }
+  if (fio_cli_get_bool("-warmup")) {
+    rb_hash_aset(defaults, ID2SYM(rb_intern("warmup_")), Qtrue);
+  }
+  if (fio_cli_get("-p")) {
+    rb_hash_aset(defaults, ID2SYM(rb_intern("port")),
+                 rb_str_new_cstr(fio_cli_get("-p")));
+  }
+  if (fio_cli_get("-b")) {
+    rb_hash_aset(defaults, ID2SYM(rb_intern("address")),
+                 rb_str_new_cstr(fio_cli_get("-b")));
+  }
+  if (fio_cli_get("-www")) {
+    rb_hash_aset(defaults, ID2SYM(rb_intern("public")),
+                 rb_str_new_cstr(fio_cli_get("-www")));
+  }
+  if (fio_cli_get("-redis")) {
+    rb_hash_aset(defaults, ID2SYM(rb_intern("redis_")),
+                 rb_str_new_cstr(fio_cli_get("-redis")));
+  }
+  if (fio_cli_get("-k")) {
+    rb_hash_aset(defaults, ID2SYM(rb_intern("timeout")),
+                 INT2NUM(fio_cli_get_i("-k")));
+  }
+  if (fio_cli_get("-ping")) {
+    rb_hash_aset(defaults, ID2SYM(rb_intern("ping")),
+                 INT2NUM(fio_cli_get_i("-ping")));
+  }
+  if (fio_cli_get("-redis-ping")) {
+    rb_hash_aset(defaults, ID2SYM(rb_intern("redis_ping_")),
+                 INT2NUM(fio_cli_get_i("-redis-ping")));
+  }
+  if (fio_cli_get("-max-body")) {
+    rb_hash_aset(defaults, ID2SYM(rb_intern("max_body")),
+                 INT2NUM((fio_cli_get_i("-max-body") * 1024 * 1024)));
+  }
+  if (fio_cli_get("-max-message")) {
+    rb_hash_aset(defaults, ID2SYM(rb_intern("max_msg")),
+                 INT2NUM((fio_cli_get_i("-max-message") * 1024)));
+  }
+  if (fio_cli_get("-max-headers")) {
+    rb_hash_aset(defaults, ID2SYM(rb_intern("max_headers")),
+                 INT2NUM((fio_cli_get_i("-max-headers") * 1024)));
+  }
+  if (fio_cli_unnamed_count()) {
+    rb_hash_aset(defaults, ID2SYM(rb_intern("filename_")),
+                 rb_str_new_cstr(fio_cli_unnamed(0)));
+  }
+
+  /* create `filename` String, cleanup and return */
+  fio_cli_end();
+finish:
+  for (int i = 1; i < argc; ++i) {
+    free(argv[i]);
+  }
+  free(argv);
+  return ret;
+}
+
+/* *****************************************************************************
 Ruby loads the library and invokes the Init_<lib_name> function...
 
 Here we connect all the C code to the Ruby interface, completing the bridge
@@ -290,6 +441,7 @@ void Init_iodine(void) {
   // Create the Iodine module (namespace)
   IodineModule = rb_define_module("Iodine");
   IodineBaseModule = rb_define_module_under(IodineModule, "Base");
+  VALUE IodineCLIModule = rb_define_module_under(IodineBaseModule, "CLI");
   call_id = rb_intern2("call", 4);
 
   // register core methods
@@ -304,6 +456,9 @@ void Init_iodine(void) {
   rb_define_module_function(IodineModule, "on_idle", iodine_sched_on_idle, 0);
   rb_define_module_function(IodineModule, "master?", iodine_master_is, 0);
   rb_define_module_function(IodineModule, "worker?", iodine_worker_is, 0);
+
+  // register CLI methods
+  rb_define_module_function(IodineCLIModule, "parse", iodine_cli_parse, 1);
 
   // initialize Object storage for GC protection
   iodine_storage_init();
