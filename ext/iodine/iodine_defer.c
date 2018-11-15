@@ -41,16 +41,20 @@ static void *iodine_io_thread(void *arg) {
   return NULL;
 }
 static void iodine_start_io_thread(void *a_) {
-  if (!fio_atomic_add(&sock_io_thread_flag, 1)) {
-    pthread_create(&sock_io_pthread, NULL, iodine_io_thread, NULL);
+  if (!fio_trylock(&sock_io_thread_flag)) {
+    if (pthread_create(&sock_io_pthread, NULL, iodine_io_thread, NULL)) {
+      FIO_LOG_ERROR("Couldn't spawn IO thread.");
+    };
+    FIO_LOG_DEBUG("IO thread started.");
   }
   (void)a_;
 }
 
 static void iodine_join_io_thread(void) {
-  if (fio_atomic_sub(&sock_io_thread_flag, 1) == 0 && sock_io_pthread) {
+  if (fio_unlock(&sock_io_thread_flag) && sock_io_pthread) {
     pthread_join(sock_io_pthread, NULL);
     sock_io_pthread = (pthread_t)NULL;
+    FIO_LOG_DEBUG("IO thread stopped and joined.");
   }
 }
 
