@@ -326,31 +326,34 @@ static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
   /* Levarage the facil.io CLI library */
   fio_cli_start(
       argc, (const char **)argv, 0, -1, StringValueCStr(desc),
+      "\x1B[1m\x1B[4mAddress Binding:\x1B[0m", FIO_CLI_TYPE_PRINT,
       "-bind -b -address address to listen to. defaults any available.",
       "-port -p port number to listen to. defaults port 3000", FIO_CLI_TYPE_INT,
+      "\n\x1B[1m\x1B[4mConcurrency:\x1B[0m", FIO_CLI_TYPE_PRINT,
       "-workers -w number of processes to use.", FIO_CLI_TYPE_INT,
       "-threads -t number of threads per process.", FIO_CLI_TYPE_INT,
+      "\n\x1B[1m\x1B[4mHTTP Server:\x1B[0m", FIO_CLI_TYPE_PRINT,
       "-public -www public folder, for static file service.",
       "-log -v HTTP request logging.", FIO_CLI_TYPE_BOOL,
-      "-k -keep-alive -tout HTTP keep-alive timeout (0..255). Default: 40s",
+      "-keep-alive -k -tout HTTP keep-alive timeout (0..255). Default: 40s",
       FIO_CLI_TYPE_INT, "-ping websocket ping interval (0..255). Default: 40s",
       FIO_CLI_TYPE_INT,
       "-max-body -maxbd HTTP upload limit in Mega-Bytes. Default: 50Mb",
       FIO_CLI_TYPE_INT,
-      "-max-message -maxms incoming websocket message size limit in Kb. "
+      "-max-header -maxhd header limit per HTTP request in Kb."
+      " Default: 32Kb.",
+      FIO_CLI_TYPE_INT, "\n\x1B[1m\x1B[4mWebSocket Server:\x1B[0m",
+      FIO_CLI_TYPE_PRINT,
+      "-max-msg -maxms incoming WebSocket message limit in Kb. "
       "Default: 250Kb",
-      FIO_CLI_TYPE_INT,
-      "-max-headers -maxhd Maximum total headers length per HTTP request in "
-      "Kb. "
-      "Default: 32Kb."
+      FIO_CLI_TYPE_INT, "\n\x1B[1m\x1B[4mConnecting Iodine to Redis:\x1B[0m",
+      FIO_CLI_TYPE_PRINT,
+      "-redis -r an optional Redis URL server address. Default: none.",
+      "-redis-ping -rp websocket ping interval (0..255). Default: 5 minutes",
+      FIO_CLI_TYPE_INT, "\n\x1B[1m\x1B[4mMisc:\x1B[0m", FIO_CLI_TYPE_PRINT,
       "-warmup warm up the application. CAREFUL! iodine might fork.",
       FIO_CLI_TYPE_BOOL,
-      "-V -logging 0..5 server logging level to stderr (debugging, not HTTP). "
-      "Default: 4",
-      FIO_CLI_TYPE_INT,
-      "-redis -r an optional Redis URL server address. i.e.: "
-      "redis://user:password@localhost:6379/",
-      "-redis-ping -rp websocket ping interval (0..255). Default: 5 minutes",
+      "-verbosity -V 0..5 server verbosity level. Default: 4",
       FIO_CLI_TYPE_INT);
   /* copy values from CLI library to iodine */
   if (fio_cli_get("-V")) {
