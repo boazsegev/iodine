@@ -109,15 +109,23 @@ Version and helper macros
 #define FIO_VERSION_MAJOR 0
 #define FIO_VERSION_MINOR 7
 #define FIO_VERSION_PATCH 0
+#define FIO_VERSION_BETA 2
 
 /* Automatically convert version data to a string constant - ignore these two */
 #define FIO_MACRO2STR_STEP2(macro) #macro
 #define FIO_MACRO2STR(macro) FIO_MACRO2STR_STEP2(macro)
 
 /** The facil.io version as a String literal */
+#if FIO_VERSION_BETA
 #define FIO_VERSION_STRING                                                     \
   FIO_MACRO2STR(FIO_VERSION_MAJOR)                                             \
   "." FIO_MACRO2STR(FIO_VERSION_MINOR) "." FIO_MACRO2STR(FIO_VERSION_PATCH)
+#else
+#define FIO_VERSION_STRING                                                     \
+  FIO_MACRO2STR(FIO_VERSION_MAJOR)                                             \
+  "." FIO_MACRO2STR(FIO_VERSION_MINOR) "." FIO_MACRO2STR(                      \
+      FIO_VERSION_PATCH) ".beta" FIO_MACRO2STR(FIO_VERSION_BETA)
+#endif
 
 #ifndef FIO_MAX_SOCK_CAPACITY
 /**
@@ -1872,11 +1880,16 @@ typedef uint8_t volatile fio_lock_i;
 /** The initail value of an unlocked spinlock. */
 #define FIO_LOCK_INIT 0
 
-/** returns 0 if the lock was acquired and -1 on failure. */
+/** returns 0 if the lock was acquired and a non-zero value on failure. */
 FIO_FUNC inline int fio_trylock(fio_lock_i *lock);
 
-/** Releases a spinlock. Releasing an unacquired lock will break it. */
-FIO_FUNC inline void fio_unlock(fio_lock_i *lock);
+/**
+ * Releases a spinlock. Releasing an unacquired lock will break it.
+ *
+ * Returns a non-zero value on success, or 0 if the lock was in an unloacked
+ * state.
+ */
+FIO_FUNC inline int fio_unlock(fio_lock_i *lock);
 
 /** Returns a spinlock's state (non 0 == Busy). */
 FIO_FUNC inline int fio_is_locked(fio_lock_i *lock);
@@ -2611,7 +2624,7 @@ FIO_FUNC inline void fio_throttle_thread(size_t nano_sec) {
   nanosleep(&tm, NULL);
 }
 
-/** returns 0 if the lock was acquired and -1 on failure. */
+/** returns 0 if the lock was acquired and another value on failure. */
 FIO_FUNC inline int fio_trylock(fio_lock_i *lock) {
   __asm__ volatile("" ::: "memory");
   fio_lock_i ret = fio_atomic_xchange(lock, 1);
@@ -2619,10 +2632,16 @@ FIO_FUNC inline int fio_trylock(fio_lock_i *lock) {
   return ret;
 }
 
-/** Releases a spinlock. Releasing an unacquired lock will break it. */
-FIO_FUNC inline void fio_unlock(fio_lock_i *lock) {
+/**
+ * Releases a spinlock. Releasing an unacquired lock will break it.
+ *
+ * Returns a non-zero value on success, or 0 if the lock was in an unloacked
+ * state.
+ */
+FIO_FUNC inline int fio_unlock(fio_lock_i *lock) {
   __asm__ volatile("" ::: "memory");
-  fio_atomic_xchange(lock, 0);
+  fio_lock_i ret = fio_atomic_xchange(lock, 0);
+  return ret;
 }
 
 /** Returns a spinlock's state (non 0 == Busy). */
