@@ -8,6 +8,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.9
 
+**Fix**: fixed the background IO backup thread initialization and sleep interval. This thread isn't critical. It's only used to (slowly) flush sockets when all the actual threads are blocked by long running Ruby application code.
+
 **Feature**: added the `Iodine.worker?` and `Iodine.master?` methods, for process identification.
 
 **Update**: Updated the automatic ActiveRecord `fork` handling code and added automatic Sequel `fork` handling, to protect against possible database communication errors related to the risk of connection sharing across worker processes.

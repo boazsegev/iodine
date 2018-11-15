@@ -35,8 +35,10 @@ typedef struct {
 static void *iodine_io_thread(void *arg) {
   (void)arg;
   while (sock_io_thread_flag) {
-    fio_flush_all();
-    fio_throttle_thread(150000000UL);
+    if (fio_flush_all() > 1)
+      fio_throttle_thread(500000UL);
+    else
+      fio_throttle_thread(150000000UL);
   }
   return NULL;
 }
