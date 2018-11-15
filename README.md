@@ -193,8 +193,7 @@ APP = Proc.new do |env|
   end
 end
 # Pus/Sub can be server oriented as well as connection bound
-root_pid = Process.pid
-Iodine.subscribe(:chat) {|ch, msg| puts msg if Process.pid == root_pid }
+Iodine.subscribe(:chat) {|ch, msg| puts msg if Iodine.master? }
 # By default, Pub/Sub performs in process cluster mode.
 Iodine.workers = 4
 # # in irb:
@@ -243,12 +242,11 @@ This will clear away any memory fragmentation concerns and other issues that mig
 
 To hot-restart iodine, send the `SIGUSR1` signal to the root process.
 
-The following code will hot-restart iodine every 4 hours:
+The following code will hot-restart iodine every 4 hours when iodine is running in cluster mode:
 
 ```ruby
-ROOT_PID = Process.pid
 Iodine.run_every(2 * 60 * 60 * 1000) do
-  Process.kill("SIGUSR1", ROOT_PID) if Process.pid == ROOT_PID
+  Process.kill("SIGUSR1", Process.pid) unless Iodine.worker?
 end
 ```
 
@@ -279,6 +277,16 @@ The log output can also be redirected to a `stdout`:
 ```bash
 bundler exec iodine -p $PORT -v  2>&1
 ```
+
+#### Built-in support for Sequel and ActiveRecord
+
+It's a well known fact that Database connections require special attention when using `fork`-ing servers (multi-process servers) such as Puma, Passenger and iodine.
+
+However, it's also true that these issues go unnoticed by many developers, since application developers are (rightfully) focused on the application rather than the infrastructure.
+
+With iodine, there's no need to worry.
+
+Iodine provides built-in `fork` handling for both ActiveRecord and Sequel, in order to protect against these possible errors.
 
 #### TCP/IP (raw) sockets
 
