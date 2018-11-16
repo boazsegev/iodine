@@ -63,6 +63,10 @@ module Iodine
     #
     # This is recommended, see {Iodine::Rack::Utils} for details.
     def self.patch_rack
+      begin
+        require 'rack'
+      rescue LoadError => e
+      end
     ::Rack::Utils.class_eval do
       Iodine::Base::MonkeyPatch::RackUtils.methods(false).each do |m|
         ::Rack::Utils.define_singleton_method(m,
