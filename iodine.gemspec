@@ -31,8 +31,6 @@ Gem::Specification.new do |spec|
 
   spec.required_ruby_version = '>= 2.2.2' # Because earlier versions had been discontinued
 
-  spec.add_dependency 'rack', '>= 1.0', '< 3.0'
-
   spec.requirements << 'A Unix based system: Linux / macOS / BSD.'
   spec.requirements << 'An updated C compiler.'
   spec.requirements << 'Ruby >= 2.2.2 required for Rack 2.'
