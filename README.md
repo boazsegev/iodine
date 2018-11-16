@@ -205,9 +205,17 @@ run APP
 
 #### Native Pub/Sub with *optional* Redis scaling
 
-Iodine's core, `facil.io` offers a native Pub/Sub implementation. The implementation is totally native to iodine, it covers the whole process cluster and it can be easily scaled by using Redis (which isn't required except for horizontal scaling).
+Iodine's core, `facil.io` offers a native Pub/Sub implementation that can be scaled across machine boundaries using Redis.
 
-Here's an example that adds horizontal scaling to the chat application in the previous example, so that Pub/Sub messages are published across many machines at once:
+The default implementation covers the whole process cluster, so a single cluster doesn't need Redis
+
+However, once a single iodine process cluster isn't enough for your Application, horizontal scaling can be achieved easily, by adding the `-r <url>` option when starting the application using the `iodine` command line. i.e.:
+
+```bash
+$ iodine -w -1 -t 8 -r redis://localhost
+```
+
+It's also possible to initialize Redis using Ruby, directly from the application's code:
 
 ```ruby
 # initialize the Redis engine for each iodine process.
