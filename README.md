@@ -209,13 +209,13 @@ Iodine's core, `facil.io` offers a native Pub/Sub implementation that can be sca
 
 The default implementation covers the whole process cluster, so a single cluster doesn't need Redis
 
-However, once a single iodine process cluster isn't enough for your Application, horizontal scaling can be achieved easily, by adding the `-r <url>` option when starting the application using the `iodine` command line. i.e.:
+Once a single iodine process cluster isn't enough, horizontal scaling for the Pub/Sub layer is as simple as connecting iodine to Redis using the `-r <url>` from the command line. i.e.:
 
 ```bash
 $ iodine -w -1 -t 8 -r redis://localhost
 ```
 
-It's also possible to initialize Redis using Ruby, directly from the application's code:
+It's also possible to initialize the iodine<=>Redis link using Ruby, directly from the application's code:
 
 ```ruby
 # initialize the Redis engine for each iodine process.
@@ -227,7 +227,7 @@ end
 # ... the rest of the application remains unchanged.
 ```
 
-The new Redis client can also be used for asynchronous Redis command execution. i.e.:
+Iodine's Redis client can also be used for asynchronous Redis command execution. i.e.:
 
 ```ruby
 if(Iodine::PubSub.default.is_a? Iodine::PubSub::Redis)
@@ -327,11 +327,33 @@ run APP
 
 #### A few notes
 
-This design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems), etc. This also allows us to use middleware without interfering with connection upgrades and provides backwards compatibility.
+Iodine's upgrade / callback design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems), etc. This also allows us to use middleware without interfering with connection upgrades and provides backwards compatibility.
 
 Iodine's HTTP server imposes a few restrictions for performance and security reasons, such as limiting each header line to 8Kb. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache or Nginx.
 
 If you still want to use Rack's `hijack` API, iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack, as well as a socket buffer for non-blocking `write` operations (why do that when you can write a protocol object and have the main reactor manage the socket?).
+
+### Installation
+
+To install iodine, simply install the the `iodine` gem:
+
+```bash
+$ gem install iodine
+```
+
+Iodine is written in C and allows some compile-time customizations, such as:
+
+* `FIO_FORCE_MALLO` - avoids iodine's custom memory allocator and use malloc instead (mostly used when debugging iodine).
+
+* `FIO_MAX_SOCK_CAPACITY` - limits iodine's maximum client capacity. Defaults to 131,072 clients.
+
+* `HTTP_MAX_HEADER_COUNT` - limits the number of headers the HTTP server will accept before disconnecting a client (security). Defaults to 128 headers (permissive).
+
+* `HTTP_MAX_HEADER_LENGTH` - limits the number of bytes allowed for a single header (pre-allocated memory per connection + security). Defaults to 8Kb per header line (normal).
+
+* `HTTP_BUSY_UNLESS_HAS_FDS` - requires at least X number of free file descriptors (for new database connections, etc') before accepting a new HTTP client.
+
+The list possible compile time options can be found in the [facil.io documentation](http://facil.io).
 
 ### How does it compare to other servers?
 

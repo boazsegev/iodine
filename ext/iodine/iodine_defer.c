@@ -35,7 +35,7 @@ typedef struct {
 static void *iodine_io_thread(void *arg) {
   (void)arg;
   while (sock_io_thread_flag) {
-    if (fio_flush_all() > 1)
+    if (fio_flush_all())
       fio_throttle_thread(500000UL);
     else
       fio_throttle_thread(150000000UL);
@@ -101,11 +101,11 @@ static void *create_ruby_thread_gvl(void *args) {
 }
 
 static void *fork_using_ruby(void *ignr) {
-  // stop IO thread and call before_fork callbacks
+  // stop IO thread, if running (shouldn't occur)
   if (sock_io_pthread) {
     iodine_join_io_thread();
   }
-  // fork
+  // fork using Ruby
   const VALUE ProcessClass = rb_const_get(rb_cObject, rb_intern2("Process", 7));
   const VALUE rb_pid = IodineCaller.call(ProcessClass, rb_intern2("fork", 4));
   intptr_t pid = 0;
@@ -114,7 +114,7 @@ static void *fork_using_ruby(void *ignr) {
   } else {
     pid = 0;
   }
-  // manage post forking state
+  // manage post forking state for Iodine
   IodineCaller.set_GVL(1); /* enforce GVL state in thread storage */
   if (!pid) {
     IodineStore.after_fork();
@@ -376,7 +376,6 @@ static VALUE iodine_on_state(VALUE self, VALUE event) {
 /* Performs any cleanup before worker dies */
 static void iodine_defer_on_finish(void *ignr) {
   (void)ignr;
-
   iodine_join_io_thread();
 }
 
@@ -406,7 +405,8 @@ void iodine_defer_initialize(void) {
   STATE_START_SHUTDOWN = rb_intern("start_shutdown");
   STATE_ON_FINISH = rb_intern("on_finish");
 
+  /* start the IO thread is workrs (only starts in root if root is worker) */
+  fio_state_callback_add(FIO_CALL_ON_START, iodine_start_io_thread, NULL);
+  /* stop the IO thread before exit */
   fio_state_callback_add(FIO_CALL_ON_FINISH, iodine_defer_on_finish, NULL);
-  fio_state_callback_add(FIO_CALL_PRE_START, iodine_start_io_thread, NULL);
-  fio_state_callback_add(FIO_CALL_AFTER_FORK, iodine_start_io_thread, NULL);
 }

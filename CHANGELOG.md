@@ -6,6 +6,16 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.10
+
+**Fix**: fixed `CFLAGS` compilation value to allow for pre-existing values set by Ruby.
+
+**Optimization**: leverages facil.io broadcasting optimizations, minimizing memory allocations when broadcasting pub/sub messages directly to multiple WebSocket clients.
+
+**Update**: updated the facil.io code to leverage it's urgent task queue for outbound IO, which minimizes reliance on the IO backup thread.
+
+**Update**: minor tweaks to the IO backup thread and CLI output format.
+
 #### Change log v.0.7.9
 
 **Fix**: fixed the background IO backup thread initialization and sleep interval. This thread isn't critical. It's only used to (slowly) flush sockets when all the actual threads are blocked by long running Ruby application code.
