@@ -343,7 +343,7 @@ $ gem install iodine
 
 Iodine is written in C and allows some compile-time customizations, such as:
 
-* `FIO_FORCE_MALLO` - avoids iodine's custom memory allocator and use malloc instead (mostly used when debugging iodine).
+* `FIO_FORCE_MALLOC` - avoids iodine's custom memory allocator and use `malloc` instead (mostly used when debugging iodine or when using a different memory allocator).
 
 * `FIO_MAX_SOCK_CAPACITY` - limits iodine's maximum client capacity. Defaults to 131,072 clients.
 
@@ -353,7 +353,16 @@ Iodine is written in C and allows some compile-time customizations, such as:
 
 * `HTTP_BUSY_UNLESS_HAS_FDS` - requires at least X number of free file descriptors (for new database connections, etc') before accepting a new HTTP client.
 
-The list possible compile time options can be found in the [facil.io documentation](http://facil.io).
+* `FIO_ENGINE_POLL` - prefer the `poll` system call over `epoll` or `kqueue` (not recommended).
+
+These options can be used, for example, like so:
+
+```bash
+$ CFLAGS="-DFIO_FORCE_MALLOC=1 -DHTTP_MAX_HEADER_COUNT=64" \
+  gem install iodine
+```
+
+More possible compile time options can be found in the [facil.io documentation](http://facil.io).
 
 ### How does it compare to other servers?
 
@@ -505,7 +514,7 @@ Iodine.start
 
 ```
 
-## Why not EventMachine?
+#### Why not EventMachine?
 
 You can go ahead and use EventMachine if you like. They're doing amazing work on that one and it's been used a lot in Ruby-land... really, tons of good developers and people on that project.
 
