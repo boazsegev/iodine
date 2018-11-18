@@ -15,10 +15,10 @@ module ShootoutApp
     env.each { |k, v| out << "#{k}: #{v}\n" ; len += out[-1].length }
     request = Rack::Request.new(env)
     out << "\nRequest Path: #{request.path_info}\n"
-    len += out[-1].length 
+    len += out[-1].length
     unless request.params.empty?
       out << "Params:\n"
-      len += out[-1].length 
+      len += out[-1].length
       request.params.each { |k,v| out << "#{k}: #{v}\n" ; len += out[-1].length }
     end
     [200, { 'Content-Length' => len.to_s, 'Content-Type' => 'text/plain; charset=UTF-8;' }, out]

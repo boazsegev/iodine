@@ -1,3 +1,3 @@
 module Iodine
-  VERSION = '0.7.9'.freeze
+  VERSION = '0.7.10'.freeze
 end

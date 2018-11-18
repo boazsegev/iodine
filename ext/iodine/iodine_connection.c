@@ -250,7 +250,11 @@ static VALUE iodine_connection_pending(VALUE self) {
 }
 
 // clang-format off
-/** Returns the connection's protocol Symbol (`:sse`, `:websocket`, etc'), if originated in HTTP (`rack.upgrade`). */
+/**
+ * Returns the connection's protocol Symbol (`:sse`, `:websocket` or `:raw`).
+ *
+ * @Note For compatibility reasons (with ther `rack.upgrade` servers), it might be more prudent to use the data in the {#env} (`env['rack.upgrade?']`). However, this method is provided both as a faster alternative and for those cases where Raw / Custom (TCP/IP) data stream is a valid option.
+*/
 static VALUE iodine_connection_protocol_name(VALUE self) {
   // clang-format on
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
@@ -334,14 +338,23 @@ static void iodine_on_pubsub(fio_msg_s *msg) {
   iodine_connection_data_s *data = msg->udata1;
   VALUE block = (VALUE)msg->udata2;
   switch (block) {
-  case Qnil: /* fallthrough */
-  case Qtrue: {
+  case Qnil:    /* fallthrough */
+  case Qtrue: { /* Qtrue == binary WebSocket */
     if (data->info.handler == Qnil || data->info.uuid == -1 ||
         fio_is_closed(data->info.uuid))
       return;
     switch (data->info.type) {
     case IODINE_CONNECTION_WEBSOCKET: {
-      websocket_write(data->info.arg, msg->msg, (block == Qnil));
+      FIOBJ s = (FIOBJ)fio_message_metadata(
+          msg, (block == Qnil ? WEBSOCKET_OPTIMIZE_PUBSUB
+                              : WEBSOCKET_OPTIMIZE_PUBSUB_BINARY));
+      if (s) {
+        // fwrite(".", 1, 1, stderr);
+        fiobj_send_free(data->info.uuid, fiobj_dup(s));
+      } else {
+        fwrite("-", 1, 1, stderr);
+        websocket_write(data->info.arg, msg->msg, (block == Qnil));
+      }
       return;
     }
     case IODINE_CONNECTION_SSE:
@@ -364,7 +377,14 @@ static void iodine_on_unsubscribe(void *udata1, void *udata2) {
   VALUE block = (VALUE)udata2;
   switch (block) {
   case Qnil:
+    if (data && data->info.type == IODINE_CONNECTION_WEBSOCKET) {
+      websocket_optimize4broadcasts(WEBSOCKET_OPTIMIZE_PUBSUB, 0);
+    }
+    break;
   case Qtrue:
+    if (data && data->info.type == IODINE_CONNECTION_WEBSOCKET) {
+      websocket_optimize4broadcasts(WEBSOCKET_OPTIMIZE_PUBSUB_BINARY, 0);
+    }
     break;
   default:
     IodineStore.remove(block);
@@ -503,8 +523,15 @@ static VALUE iodine_pubsub_subscribe(int argc, VALUE *argv, VALUE self) {
       }
       return Qnil; /* cannot subscribe a closed / invalid connection. */
     }
-    if (args.block == Qnil && args.binary) {
-      args.block = Qtrue;
+    if (args.block == Qnil) {
+      if (c->info.type == IODINE_CONNECTION_WEBSOCKET)
+        websocket_optimize4broadcasts((args.binary
+                                           ? WEBSOCKET_OPTIMIZE_PUBSUB_BINARY
+                                           : WEBSOCKET_OPTIMIZE_PUBSUB),
+                                      1);
+      if (args.binary) {
+        args.block = Qtrue;
+      }
     }
     fio_atomic_add(&c->ref, 1);
   }
@@ -719,11 +746,11 @@ void iodine_connection_fire_event(VALUE connection,
       IodineCaller.call2(data->info.handler, on_close_id, 1, args);
     }
     fio_lock(&data->lock);
+    iodine_sub_clear_all(&data->subscriptions);
     data->info.handler = Qnil;
     data->info.env = Qnil;
     data->info.uuid = -1;
     data->info.arg = NULL;
-    iodine_sub_clear_all(&data->subscriptions);
     fio_unlock(&data->lock);
     IodineStore.remove(connection);
     break;
