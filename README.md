@@ -60,6 +60,16 @@ During development, it's more common to use a single process and a few threads:
 bundler exec iodine -p $PORT -t 16 -w 1
 ```
 
+### Heap Fragmentation Protection
+
+Iodine includes a network oriented custom memory allocator, with very high performance.
+
+This allows the heap to be divided, naturally, into long-living objects (allocated normally) and short living objects (allocated using the iodine allocator).
+
+This approach helps to minimize heap fragmentation for long running processes.
+
+It's still recommended to consider [jemalloc](http://jemalloc.net) or other allocators to mitigate the heap fragmentation that would be caused by Ruby's internal memory management.
+
 ### Static file serving support
 
 Iodine supports an internal static file service that bypasses the Ruby layer  and serves static files directly from "C-land".
@@ -95,11 +105,9 @@ bundler exec iodine -p $PORT -t 16 -w 4 -www /my/public/folder -v
 
 #### X-Sendfile
 
-Ruby can leverage static file support (if enabled) by using the `X-Sendfile` header in the Ruby application response.
+When a public folder is assigned (the static file server is active), iodine automatically adds support for the `X-Sendfile` header in any Ruby application response.
 
-To enable iodine's native X-Sendfile support, a static file service (a public folder) needs to be assigned (this informs iodine that static files aren't sent using a different layer, such as nginx).
-
-This allows Ruby to send very large files using a very small memory footprint, as well as (when possible) leveraging the `sendfile` system call.
+This allows Ruby to send very large files using a very small memory footprint and usually leverages the `sendfile` system call.
 
 i.e. (example `config.ru` for iodine):
 
@@ -121,19 +129,21 @@ end
 run app
 ```
 
-Go to [localhost:3000/source](http://localhost:3000/source) to experience the `X-Sendfile` extension at work.
+Benchmark [localhost:3000/source](http://localhost:3000/source) to experience the `X-Sendfile` extension at work.
 
 #### Pre-Compressed assets / files
 
-Rails does this automatically when compiling assets - simply `gzip` your static files.
+Rails does this automatically when compiling assets, which is: `gzip` your static files.
 
 Iodine will automatically recognize and send the `gz` version if the client (browser) supports the `gzip` transfer-encoding.
 
 For example, to offer a compressed version of `style.css`, run (in the terminal):
 
-      $  gzip -k -9 style.css
+```bash
+$  gzip -k -9 style.css
+```
 
-Now, you will have two files in your folder, `style.css` and `style.css.gz`.
+This results in both files, `style.css` (the original) and `style.css.gz` (the compressed).
 
 When a browser that supports compressed encoding (which is most browsers) requests the file, iodine will recognize that a pre-compressed option exists and will prefer the `gzip` compressed version.
 
@@ -203,7 +213,7 @@ Iodine.start
 run APP
 ```
 
-#### Native Pub/Sub with *optional* Redis scaling
+### Native Pub/Sub with *optional* Redis scaling
 
 Iodine's core, `facil.io` offers a native Pub/Sub implementation that can be scaled across machine boundaries using Redis.
 
@@ -238,11 +248,13 @@ end
 
 **Pub/Sub Details and Limitations:**
 
-* Iodine's Redis client does *not* support multiple databases. This is both because [database scoping is ignored by Redis during pub/sub](https://redis.io/topics/pubsub#database-amp-scoping) and because [Redis Cluster doesn't support multiple databases](https://redis.io/topics/cluster-spec). This indicated that multiple database support just isn't worth the extra effort.
+* Iodine's Redis client does *not* support multiple databases. This is both because [database scoping is ignored by Redis during pub/sub](https://redis.io/topics/pubsub#database-amp-scoping) and because [Redis Cluster doesn't support multiple databases](https://redis.io/topics/cluster-spec). This indicated that multiple database support just isn't worth the extra effort and performance hit.
 
-* The iodine Redis client will use a single Redis connection per process (for publishing data) and an extra Redis connection for subscriptions (owned by the master process). Connections will be automatically re-established if timeouts or errors occur.
+* The iodine Redis client will use two Redis connections for the whole process cluster (a single publishing connection and a single subscription connection), minimizing the Redis load and network bandwidth.
+* 
+Connections will be automatically re-established if timeouts or errors occur.
 
-#### Hot Restart
+### Hot Restart
 
 Iodine will "hot-restart" the application by shutting down and re-spawning the worker processes.
 
@@ -262,7 +274,7 @@ Since the master / root process doesn't handle any requests (it only handles pub
 
 **Note**: This will **not** re-load the application (any changes to the Ruby code require an actual restart).
 
-#### Optimized HTTP logging
+### Optimized HTTP logging
 
 By default, iodine is pretty quite. Some messages are logged to `stderr`, but not many.
 
@@ -286,7 +298,7 @@ The log output can also be redirected to a `stdout`:
 bundler exec iodine -p $PORT -v  2>&1
 ```
 
-#### Built-in support for Sequel and ActiveRecord
+### Built-in support for Sequel and ActiveRecord
 
 It's a well known fact that Database connections require special attention when using `fork`-ing servers (multi-process servers) such as Puma, Passenger and iodine.
 
@@ -296,7 +308,7 @@ With iodine, there's no need to worry.
 
 Iodine provides built-in `fork` handling for both ActiveRecord and Sequel, in order to protect against these possible errors.
 
-#### TCP/IP (raw) sockets
+### TCP/IP (raw) sockets
 
 Upgrading to a custom protocol (i.e., in order to implement your own WebSocket protocol with special extensions) is available when neither WebSockets nor SSE connection upgrades were requested. In the following (terminal) example, we'll use an echo server without direct socket echo:
 
@@ -324,45 +336,6 @@ Iodine.start
 # # or in config.ru
 run APP
 ```
-
-#### A few notes
-
-Iodine's upgrade / callback design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems), etc. This also allows us to use middleware without interfering with connection upgrades and provides backwards compatibility.
-
-Iodine's HTTP server imposes a few restrictions for performance and security reasons, such as limiting each header line to 8Kb. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache or Nginx.
-
-If you still want to use Rack's `hijack` API, iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack, as well as a socket buffer for non-blocking `write` operations (why do that when you can write a protocol object and have the main reactor manage the socket?).
-
-### Installation
-
-To install iodine, simply install the the `iodine` gem:
-
-```bash
-$ gem install iodine
-```
-
-Iodine is written in C and allows some compile-time customizations, such as:
-
-* `FIO_FORCE_MALLOC` - avoids iodine's custom memory allocator and use `malloc` instead (mostly used when debugging iodine or when using a different memory allocator).
-
-* `FIO_MAX_SOCK_CAPACITY` - limits iodine's maximum client capacity. Defaults to 131,072 clients.
-
-* `HTTP_MAX_HEADER_COUNT` - limits the number of headers the HTTP server will accept before disconnecting a client (security). Defaults to 128 headers (permissive).
-
-* `HTTP_MAX_HEADER_LENGTH` - limits the number of bytes allowed for a single header (pre-allocated memory per connection + security). Defaults to 8Kb per header line (normal).
-
-* `HTTP_BUSY_UNLESS_HAS_FDS` - requires at least X number of free file descriptors (for new database connections, etc') before accepting a new HTTP client.
-
-* `FIO_ENGINE_POLL` - prefer the `poll` system call over `epoll` or `kqueue` (not recommended).
-
-These options can be used, for example, like so:
-
-```bash
-$ CFLAGS="-DFIO_FORCE_MALLOC=1 -DHTTP_MAX_HEADER_COUNT=64" \
-  gem install iodine
-```
-
-More possible compile time options can be found in the [facil.io documentation](http://facil.io).
 
 ### How does it compare to other servers?
 
@@ -423,7 +396,46 @@ $ RACK_ENV=production puma -p 3000 -t 16 -w 4
 
 It's recommended that the servers (Iodine/Puma) and the client (`wrk`/`ab`) run on separate machines.
 
-### Performance oriented design - but safety first
+### A few notes
+
+Iodine's upgrade / callback design has a number of benefits, some of them related to better IO handling, resource optimization (no need for two IO polling systems), etc. This also allows us to use middleware without interfering with connection upgrades and provides backwards compatibility.
+
+Iodine's HTTP server imposes a few restrictions for performance and security reasons, such as limiting each header line to 8Kb. These restrictions shouldn't be an issue and are similar to limitations imposed by Apache or Nginx.
+
+If you still want to use Rack's `hijack` API, iodine will support you - but be aware that you will need to implement your own reactor and thread pool for any sockets you hijack, as well as a socket buffer for non-blocking `write` operations (why do that when you can write a protocol object and have the main reactor manage the socket?).
+
+## Installation
+
+To install iodine, simply install the the `iodine` gem:
+
+```bash
+$ gem install iodine
+```
+
+Iodine is written in C and allows some compile-time customizations, such as:
+
+* `FIO_FORCE_MALLOC` - avoids iodine's custom memory allocator and use `malloc` instead (mostly used when debugging iodine or when using a different memory allocator).
+
+* `FIO_MAX_SOCK_CAPACITY` - limits iodine's maximum client capacity. Defaults to 131,072 clients.
+
+* `HTTP_MAX_HEADER_COUNT` - limits the number of headers the HTTP server will accept before disconnecting a client (security). Defaults to 128 headers (permissive).
+
+* `HTTP_MAX_HEADER_LENGTH` - limits the number of bytes allowed for a single header (pre-allocated memory per connection + security). Defaults to 8Kb per header line (normal).
+
+* `HTTP_BUSY_UNLESS_HAS_FDS` - requires at least X number of free file descriptors (for new database connections, etc') before accepting a new HTTP client.
+
+* `FIO_ENGINE_POLL` - prefer the `poll` system call over `epoll` or `kqueue` (not recommended).
+
+These options can be used, for example, like so:
+
+```bash
+$ CFLAGS="-DFIO_FORCE_MALLOC=1 -DHTTP_MAX_HEADER_COUNT=64" \
+  gem install iodine
+```
+
+More possible compile time options can be found in the [facil.io documentation](http://facil.io).
+
+## Evented oriented design with extra safety
 
 Iodine is an evened server, similar in it's architecture to `nginx` and `puma`. It's different than the simple "thread-per-client" design that is often taught when we begin to learn about network programming.
 
@@ -456,11 +468,16 @@ The server events are fairly fast and fragmented (longer code is fragmented acro
 
 ...but single threaded mode should probably be avoided.
 
-The thread pool is there to help slow user code.
 
 It's very common that the application's code will run slower and require external resources (i.e., databases, a custom pub/sub service, etc'). This slow code could "starve" the server, which is patiently waiting to run it's tasks on the same thread.
 
+The thread pool is there to help slow user code.
+
 The slower your application code, the more threads you will need to keep the server running in a responsive manner (note that responsiveness and speed aren't always the same).
+
+To make a thread pool easier and safer to use, iodine makes sure that no connection task / callback is called concurrently for the same connection.
+
+For example, a is a WebSocket connection is already busy in it's `on_message` callback, no other messages will be forwarded to the callback until the current callback returns.
 
 ## Free, as in freedom (BYO beer)
 
@@ -514,7 +531,7 @@ Iodine.start
 
 ```
 
-#### Why not EventMachine?
+### Why not EventMachine?
 
 You can go ahead and use EventMachine if you like. They're doing amazing work on that one and it's been used a lot in Ruby-land... really, tons of good developers and people on that project.
 
