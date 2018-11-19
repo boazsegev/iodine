@@ -367,14 +367,16 @@ static void iodine_on_pubsub(fio_msg_s *msg) {
   }
   default:
     if (data->info.uuid != -1) {
-      fio_protocol_s *pr = fio_protocol_try_lock(data->info.arg, FIO_PR_TASK);
+      fio_protocol_s *pr =
+          fio_protocol_try_lock(data->info.uuid, FIO_PR_LOCK_TASK);
       if (!pr) {
+        // perror("Connection lock failed");
         if (errno != EBADF)
           fio_message_defer(msg);
         break;
       }
       IodineCaller.enterGVL(iodine_on_pubsub_call_block, msg);
-      fio_protocol_unlock(pr, FIO_PR_TASK);
+      fio_protocol_unlock(pr, FIO_PR_LOCK_TASK);
     } else {
       IodineCaller.enterGVL(iodine_on_pubsub_call_block, msg);
     }

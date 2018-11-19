@@ -8,13 +8,17 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.10
 
-**Fix**: fixed `CFLAGS` compilation value to allow for pre-existing values set by Ruby.
+**Fix**: (pub/sub) fixed connection lock for pub/sub tasks. Now pub/sub Ruby tasks will lock the connection, protecting the user's code against concurrent access to the connection's data.
 
-**Optimization**: leverages facil.io broadcasting optimizations, minimizing memory allocations when broadcasting pub/sub messages directly to multiple WebSocket clients.
+**Fix**: (installation) fixed `CFLAGS` compilation value to allow for pre-existing values set by Ruby.
 
-**Update**: updated the facil.io code to leverage it's urgent task queue for outbound IO, which minimizes reliance on the IO backup thread.
+**Fix**: (installation) fixed possible issues than could occur when installing iodine with  `FIO_FORCE_MALLOC`.
 
-**Update**: minor tweaks to the IO backup thread and CLI output format.
+**Optimization**: (pub/sub) leverages facil.io broadcasting optimizations, minimizing memory allocations when broadcasting pub/sub messages directly to multiple WebSocket clients.
+
+**Update**: (fio) updated the facil.io code to leverage it's urgent task queue for outbound IO, which minimizes reliance on the IO backup thread.
+
+**Update**: (IO) minor tweaks to the IO backup thread and CLI output format.
 
 #### Change log v.0.7.9
 

@@ -27,8 +27,8 @@ module ShootoutApp
   # It's slower than writing to every socket a pre-parsed message, but it's closer
   # to real-life implementations.
   def self.on_open client
-      client.subscribe :shootout_b, as: :binary
-      client.subscribe :shootout
+      client.subscribe(:shootout_b, as: :binary) # { |ch, msg| client.write(msg)}
+      client.subscribe(:shootout) # { |ch, msg| client.write(msg)}
   end
   def self.on_message client, data
     if data[0] == 'b' # binary
