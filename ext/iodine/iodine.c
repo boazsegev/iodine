@@ -309,7 +309,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
   }
   char **argv = calloc(argc, sizeof(*argv));
   FIO_ASSERT_ALLOC(argv);
-  argv[0] = "iodine";
+  argv[0] = (char *)"iodine";
   for (int i = 1; i < argc; ++i) {
     VALUE tmp = rb_ary_entry(ARGV, (long)(i - 1));
     if (TYPE(tmp) != T_STRING) {

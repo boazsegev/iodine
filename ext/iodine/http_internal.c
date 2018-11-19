@@ -68,7 +68,7 @@ upgrade:
     return;
   }
 eventsource:
-  settings->on_upgrade(h, "sse", 3);
+  settings->on_upgrade(h, (char *)"sse", 3);
   return;
 }
 
