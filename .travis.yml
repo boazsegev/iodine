@@ -22,6 +22,8 @@ addons:
       - gcc-4.9
       - gcc-5
 script:
+  - echo CFLAGS = $CFLAGS
+  - echo cflags = $cflags
   - gem uninstall -x iodine
   - rake build
   - find pkg/iodine-*.gem -exec gem install -V {} +
