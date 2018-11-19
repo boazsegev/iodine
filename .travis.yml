@@ -28,7 +28,7 @@ script:
   - rake build
   - find pkg/iodine-*.gem -exec gem install -V {} +
   - gem uninstall -x iodine
-  - export CFLAGS="-Wall -std=c99"
+  - export CFLAGS="-std=c99"
   - export CC=gcc
   - find pkg/iodine-*.gem -exec gem install -V {} +
   - gem uninstall -x iodine
