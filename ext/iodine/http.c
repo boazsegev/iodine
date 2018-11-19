@@ -2819,7 +2819,7 @@ static char invalid_cookie_value_char[256] = {
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
 
 // clang-format off
-#define HTTP_SET_STATUS_STR(status, str) [status-100] = { .data = (str), .len = (sizeof(str) - 1) }
+#define HTTP_SET_STATUS_STR(status, str) [status-100] = { .data = (char *)(str), .len = (sizeof(str) - 1) }
 // clang-format on
 
 /** Returns the status as a C string struct */
