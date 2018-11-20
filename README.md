@@ -265,7 +265,7 @@ To hot-restart iodine, send the `SIGUSR1` signal to the root process.
 The following code will hot-restart iodine every 4 hours when iodine is running in cluster mode:
 
 ```ruby
-Iodine.run_every(2 * 60 * 60 * 1000) do
+Iodine.run_every(4 * 60 * 60 * 1000) do
   Process.kill("SIGUSR1", Process.pid) unless Iodine.worker?
 end
 ```
