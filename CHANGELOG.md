@@ -6,6 +6,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.11
+
+**Fix**: (`fio`) Deletes Unix sockets once done listening. Fixes an issue where the files would remain intact.
+
+**Optimization**: (fio) significant memory allocation optimizations. The facil.io allocator (included with iodine) helps to protect against heap fragmentation and improves speed for concurrent memory allocations when forking / multi-threading.
+
 #### Change log v.0.7.10
 
 **Fix**: (pub/sub) fixed connection lock for pub/sub tasks. Now pub/sub Ruby tasks will lock the connection, protecting the user's code against concurrent access to the connection's data.

@@ -18,6 +18,7 @@ Iodine is a fast concurrent web server for real-time Ruby applications, with nat
 * Client connectivity (attach client sockets to make them evented);
 * Custom protocol authoring;
 * Optimized Logging to `stderr`.
+* [Sequel](https://github.com/jeremyevans/sequel) and ActiveRecord forking protection.
 * and more!
 
 Iodine is an **evented** framework with a simple API that ports much of the [C facil.io framework](https://github.com/boazsegev/facil.io) to Ruby. This means that:
@@ -306,7 +307,7 @@ However, it's also true that these issues go unnoticed by many developers, since
 
 With iodine, there's no need to worry.
 
-Iodine provides built-in `fork` handling for both ActiveRecord and Sequel, in order to protect against these possible errors.
+Iodine provides built-in `fork` handling for both ActiveRecord and [Sequel](https://github.com/jeremyevans/sequel), in order to protect against these possible errors.
 
 ### TCP/IP (raw) sockets
 
