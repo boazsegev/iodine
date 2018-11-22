@@ -8,9 +8,11 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.11
 
+**Fix**: (`http`) Fixes the request time value for HTTP requests/responses by starting the count once the first HTTP line arrives from a client.
+
 **Fix**: (`fio`) Deletes Unix sockets once done listening. Fixes an issue where the files would remain intact.
 
-**Optimization**: (fio) significant memory allocation optimizations. The facil.io allocator (included with iodine) helps to protect against heap fragmentation and improves speed for concurrent memory allocations when forking / multi-threading.
+**Optimization**: (`fio`) significant memory allocation optimizations. The facil.io allocator (included with iodine) helps to protect against heap fragmentation and improves speed for concurrent memory allocations when forking / multi-threading.
 
 #### Change log v.0.7.10
 
