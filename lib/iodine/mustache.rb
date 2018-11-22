@@ -102,7 +102,7 @@ module Iodine
   #         x.report("Iodine::Mustache - no chaching - render list of 1000") do |times|
   #           Iodine::Mustache.render(nil, data_1000, template)
   #         end
-  #
+  #         nil
   #       end
   #     end
   #
