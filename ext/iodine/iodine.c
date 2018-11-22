@@ -350,7 +350,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
       "-redis -r an optional Redis URL server address. Default: none.",
       "-redis-ping -rp websocket ping interval (0..255). Default: 5 minutes",
       FIO_CLI_TYPE_INT, "\n\x1B[4mMisc:\x1B[0m", FIO_CLI_TYPE_PRINT,
-      "-warmup warm up the application. CAREFUL! iodine might fork.",
+      "-warmup --preload warm up the application. CAREFUL! with workers.",
       FIO_CLI_TYPE_BOOL,
       "-verbosity -V 0..5 server verbosity level. Default: 4",
       FIO_CLI_TYPE_INT);
@@ -360,6 +360,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
     if (level > 0 && level < 100)
       FIO_LOG_LEVEL = level;
   }
+
   if (fio_cli_get("-w")) {
     iodine_workers_set(IodineModule, INT2NUM(fio_cli_get_i("-w")));
   }
@@ -372,13 +373,24 @@ static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
   if (fio_cli_get_bool("-warmup")) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("warmup_")), Qtrue);
   }
+  if (fio_cli_get("-b")) {
+    if (fio_cli_get("-b")[0] == '/' ||
+        (fio_cli_get("-b")[0] == '.' && fio_cli_get("-b")[1] == '/')) {
+      if (fio_cli_get("-p") &&
+          (fio_cli_get("-p")[0] != '0' || fio_cli_get("-p")[1])) {
+        FIO_LOG_WARNING(
+            "Detected a Unix socket binding (-b) conflicting with port.\n"
+            "            Port settings (-p %s) are ignored",
+            fio_cli_get("-p"));
+      }
+      fio_cli_set("-p", "0");
+    }
+    rb_hash_aset(defaults, ID2SYM(rb_intern("address")),
+                 rb_str_new_cstr(fio_cli_get("-b")));
+  }
   if (fio_cli_get("-p")) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("port")),
                  rb_str_new_cstr(fio_cli_get("-p")));
-  }
-  if (fio_cli_get("-b")) {
-    rb_hash_aset(defaults, ID2SYM(rb_intern("address")),
-                 rb_str_new_cstr(fio_cli_get("-b")));
   }
   if (fio_cli_get("-www")) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("public")),
