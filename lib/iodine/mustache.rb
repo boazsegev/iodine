@@ -3,7 +3,7 @@ module Iodine
   #
   # The Iodine Mustache templating engine provides increased XSS protection through agressive HTML escaping. It's also faster than the original (Ruby based) Mustache templating engine.
   #
-  # Another difference is that the Iodine Mustache templating engine always loads the templates from the disk, allowing for patial template path resolution.
+  # Another difference is that the Iodine Mustache templating engine makes it eady to load the templates from the disk (or specify a virtual filename), allowing for easy patial template path resolution.
   #
   # There's no monkey-patch for `mustache` Ruby gem since the API is incompatible.
   #
@@ -102,8 +102,8 @@ module Iodine
   #         x.report("Iodine::Mustache - no chaching - render list of 1000") do |times|
   #           Iodine::Mustache.render(nil, data_1000, template)
   #         end
-  #         nil
   #       end
+  #       nil
   #     end
   #
   #     benchmark_mustache
