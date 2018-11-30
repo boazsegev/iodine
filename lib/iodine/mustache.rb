@@ -94,12 +94,12 @@ module Iodine
   #           iodine_view.render(data_1000_escaped)
   #         end
   #
-  #         x.report("Ruby Mustache - no chaching - render list of 1000") do |times|
+  #         x.report("Ruby Mustache - no caching - render list of 1000") do |times|
   #           tmp = Mustache.new
   #           tmp.template = template
   #           tmp.render(data_1000)
   #         end
-  #         x.report("Iodine::Mustache - no chaching - render list of 1000") do |times|
+  #         x.report("Iodine::Mustache - no caching - render list of 1000") do |times|
   #           Iodine::Mustache.render(nil, data_1000, template)
   #         end
   #       end

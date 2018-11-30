@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.12
+
+**Fix**: (`mustache`) fixed lambda support for mustache templates.
+
 #### Change log v.0.7.11
 
 **Fix**: (`fio`) Deletes Unix sockets once done listening. Fixes an issue where the files would remain intact.
