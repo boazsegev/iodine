@@ -4,7 +4,7 @@
 #define FIO_INCLUDE_STR
 #include "fio.h"
 
-#include "fiobj4sock.h"
+#include "fiobj4fio.h"
 #include "websockets.h"
 
 #include <ruby/io.h>

@@ -182,8 +182,8 @@ Version and helper macros
 
 #ifndef FIO_IGNORE_MACRO
 /**
- * This is used internally to ignor macros that shadow functions (avoiding named
- * arguments when required.
+ * This is used internally to ignore macros that shadow functions (avoiding
+ * named arguments when required).
  */
 #define FIO_IGNORE_MACRO
 #endif
@@ -298,6 +298,18 @@ Memory pool / custom allocator for short lived objects
 
 ***************************************************************************** */
 
+/* inform the compiler that the returned value is aligned on 16 byte marker */
+#if FIO_FORCE_MALLOC
+#define FIO_ALIGN
+#define FIO_ALIGN_NEW
+#elif __clang__ || __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ > 8)
+#define FIO_ALIGN __attribute__((assume_aligned(16)))
+#define FIO_ALIGN_NEW __attribute__((malloc, assume_aligned(16)))
+#else
+#define FIO_ALIGN
+#define FIO_ALIGN_NEW
+#endif
+
 /**
  * Allocates memory using a per-CPU core block memory pool.
  * Memory is zeroed out.
@@ -305,7 +317,7 @@ Memory pool / custom allocator for short lived objects
  * Allocations above FIO_MEMORY_BLOCK_ALLOC_LIMIT (12,288 bytes when using 32Kb
  * blocks) will be redirected to `mmap`, as if `fio_mmap` was called.
  */
-void *fio_malloc(size_t size);
+void *FIO_ALIGN_NEW fio_malloc(size_t size);
 
 /**
  * same as calling `fio_malloc(size_per_unit * unit_count)`;
@@ -313,7 +325,7 @@ void *fio_malloc(size_t size);
  * Allocations above FIO_MEMORY_BLOCK_ALLOC_LIMIT (12,288 bytes when using 32Kb
  * blocks) will be redirected to `mmap`, as if `fio_mmap` was called.
  */
-void *fio_calloc(size_t size_per_unit, size_t unit_count);
+void *FIO_ALIGN_NEW fio_calloc(size_t size_per_unit, size_t unit_count);
 
 /** Frees memory that was allocated using this library. */
 void fio_free(void *ptr);
@@ -322,7 +334,7 @@ void fio_free(void *ptr);
  * Re-allocates memory. An attempt to avoid copying the data is made only for
  * big memory allocations (larger than FIO_MEMORY_BLOCK_ALLOC_LIMIT).
  */
-void *fio_realloc(void *ptr, size_t new_size);
+void *FIO_ALIGN fio_realloc(void *ptr, size_t new_size);
 
 /**
  * Re-allocates memory. An attempt to avoid copying the data is made only for
@@ -330,7 +342,7 @@ void *fio_realloc(void *ptr, size_t new_size);
  *
  * This variation is slightly faster as it might copy less data.
  */
-void *fio_realloc2(void *ptr, size_t new_size, size_t copy_length);
+void *FIO_ALIGN fio_realloc2(void *ptr, size_t new_size, size_t copy_length);
 
 /**
  * Allocates memory directly using `mmap`, this is prefered for objects that
@@ -341,13 +353,15 @@ void *fio_realloc2(void *ptr, size_t new_size, size_t copy_length);
  *
  * `fio_free` can be used for deallocating the memory.
  */
-void *fio_mmap(size_t size);
+void *FIO_ALIGN_NEW fio_mmap(size_t size);
 
 /**
  * When forking is called manually, call this function to reset the facil.io
  * memory allocator's locks.
  */
 void fio_malloc_after_fork(void);
+
+#undef FIO_ALIGN
 
 #if FIO_FORCE_MALLOC
 #define FIO_MALLOC(size) calloc((size), 1)
@@ -445,15 +459,12 @@ extern int FIO_LOG_LEVEL;
 #define FIO_LOG_STATE(...)
 #endif
 
-#if DEBUG
 #define FIO_ASSERT(cond, ...)                                                  \
   if (!(cond)) {                                                               \
-    FIO_LOG_DEBUG(__VA_ARGS__);                                                \
+    FIO_LOG_FATAL("(" __FILE__ ":" FIO_MACRO2STR(__LINE__) ") "__VA_ARGS__);   \
+    perror("     errno");                                                      \
     exit(-1);                                                                  \
   }
-#else
-#define FIO_ASSERT(...)
-#endif
 
 #ifndef FIO_ASSERT_ALLOC
 /** Tests for an allocation failure. The behavior can be overridden. */
@@ -464,6 +475,17 @@ extern int FIO_LOG_LEVEL;
     kill(0, SIGINT);                                                           \
     exit(errno);                                                               \
   }
+#endif
+
+#if DEBUG
+#define FIO_ASSERT_DEBUG(cond, ...)                                            \
+  if (!(cond)) {                                                               \
+    FIO_LOG_DEBUG(__VA_ARGS__);                                                \
+    perror("     errno");                                                      \
+    exit(-1);                                                                  \
+  }
+#else
+#define FIO_ASSERT_DEBUG(...)
 #endif
 
 /* *****************************************************************************
@@ -564,8 +586,23 @@ void fio_attach(intptr_t uuid, fio_protocol_s *protocol);
  * The old protocol's `on_close` (if any) will be scheduled.
  *
  * On error, the new protocol's `on_close` callback will be called immediately.
+ *
+ * NOTE: before attaching a file descriptor that was created outside of
+ * facil.io's library, make sure it is set to non-blocking mode (see
+ * `fio_set_non_block`). facil.io file descriptors are all non-blocking and it
+ * will assumes this is the case for the attached fd.
  */
 void fio_attach_fd(int fd, fio_protocol_s *protocol);
+
+/**
+ * Sets a socket to non blocking state.
+ *
+ * This will also set the O_CLOEXEC flag for the file descriptor.
+ *
+ * This function is called automatically for the new socket, when using
+ * `fio_accept` or `fio_connect`.
+ */
+int fio_set_non_block(int fd);
 
 /**
  * Returns the maximum number of open files facil.io can handle per worker
@@ -926,6 +963,9 @@ intptr_t fio_socket(const char *address, const char *port, uint8_t is_server);
  * `fio_accept` accepts a new socket connection from a server socket - see the
  * server flag on `fio_socket`.
  *
+ * Accepted connection are automatically set to non-blocking mode and the
+ * O_CLOEXEC flag is set.
+ *
  * NOTE: this function does NOT attach the socket to the IO reactor - see
  * `fio_attach`.
  */
@@ -1238,17 +1278,6 @@ typedef struct fio_rw_hook_s {
    */
   ssize_t (*write)(intptr_t uuid, void *udata, const void *buf, size_t count);
   /**
-   * The `before_close` callback is called only once before closing the `uuid`.
-   *
-   * If the function returns a non-zero value, than closure will be delayed
-   * until the `flush` returns 0 (or less). This allows a closure signal to be
-   * sent by the read/write hook when such a signal is required.
-   *
-   * Note: facil.io library functions MUST NEVER be called by any r/w hook, or a
-   * deadlock might occur.
-   * */
-  ssize_t (*before_close)(intptr_t uuid, void *udata);
-  /**
    * When implemented, this function will be called to flush any data remaining
    * in the internal buffer.
    *
@@ -1259,6 +1288,18 @@ typedef struct fio_rw_hook_s {
    * deadlock might occur.
    */
   ssize_t (*flush)(intptr_t uuid, void *udata);
+  /**
+   * The `before_close` callback is called only once before closing the `uuid`
+   * and it might not get called at all if an abnormal closure is detected.
+   *
+   * If the function returns a non-zero value, than closure will be delayed
+   * until the `flush` returns 0 (or less). This allows a closure signal to be
+   * sent by the read/write hook when such a signal is required.
+   *
+   * Note: facil.io library functions MUST NEVER be called by any r/w hook, or a
+   * deadlock might occur.
+   * */
+  ssize_t (*before_close)(intptr_t uuid, void *udata);
   /**
    * Called to perform cleanup after the socket was closed or a new read/write
    * hook was set using `fio_rw_hook_set`.
@@ -1498,14 +1539,6 @@ fio_protocol_s *fio_protocol_try_lock(intptr_t uuid, enum fio_protocol_lock_e);
 /** Don't unlock what you don't own... see `fio_protocol_try_lock` for
  * details. */
 void fio_protocol_unlock(fio_protocol_s *pr, enum fio_protocol_lock_e);
-
-/**
-Sets a socket to non blocking state.
-
-This function is called automatically for the new socket, when using
-`fio_accept` or `fio_connect`.
-*/
-int fio_set_non_block(int fd);
 
 /* *****************************************************************************
  * Pub/Sub / Cluster Messages API
@@ -2853,18 +2886,21 @@ Embeded Linked List Implementation
 
 /** Removes a node from the containing node. */
 FIO_FUNC inline fio_ls_embd_s *fio_ls_embd_remove(fio_ls_embd_s *node) {
-  if (node->next == node) {
+  if (!node->next || node->next == node) {
     /* never remove the list's head */
     return NULL;
   }
   node->next->prev = node->prev;
   node->prev->next = node->next;
+  node->prev = node->next = node;
   return node;
 }
 
 /** Adds a node to the list's head. */
 FIO_FUNC inline void fio_ls_embd_push(fio_ls_embd_s *dest,
                                       fio_ls_embd_s *node) {
+  if (!dest || !node)
+    return;
   node->prev = dest->prev;
   node->next = dest;
   dest->prev->next = node;
@@ -2907,7 +2943,7 @@ Independent Linked List Implementation
 
 /** Removes an object from the containing node. */
 FIO_FUNC inline void *fio_ls_remove(fio_ls_s *node) {
-  if (node->next == node) {
+  if (!node || node->next == node) {
     /* never remove the list's head */
     return NULL;
   }
@@ -2920,6 +2956,8 @@ FIO_FUNC inline void *fio_ls_remove(fio_ls_s *node) {
 
 /** Adds an object to the list's head. */
 FIO_FUNC inline fio_ls_s *fio_ls_push(fio_ls_s *pos, const void *obj) {
+  if (!pos)
+    return NULL;
   /* prepare item */
   fio_ls_s *item = (fio_ls_s *)malloc(sizeof(*item));
   if (!item) {

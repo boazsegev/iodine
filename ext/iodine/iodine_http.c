@@ -938,7 +938,14 @@ static VALUE iodine_http_listen(VALUE self, VALUE opt) {
     IodineStore.add(port);
   } else if (port == Qfalse)
     port = 0;
-  else {
+  else if (address &&
+           (StringValueCStr(address)[0] > '9' ||
+            StringValueCStr(address)[0] < '0') &&
+           StringValueCStr(address)[0] != ':' &&
+           (RSTRING_LEN(address) < 3 || StringValueCStr(address)[2] != ':')) {
+    /* address is likely a Unix domain socket address, not an IP address... */
+    port = Qnil;
+  } else {
     port = rb_str_new("3000", 4);
     IodineStore.add(port);
   }
@@ -948,14 +955,15 @@ static VALUE iodine_http_listen(VALUE self, VALUE opt) {
   else
     app = 0;
 
-  if (http_listen(
-          StringValueCStr(port), (address ? StringValueCStr(address) : NULL),
-          .on_request = on_rack_request, .on_upgrade = on_rack_upgrade,
-          .udata = (void *)app, .timeout = (tout ? FIX2INT(tout) : tout),
-          .ws_timeout = ping, .ws_max_msg_size = max_msg,
-          .max_header_size = max_headers, .on_finish = free_iodine_http,
-          .log = log_http, .max_body_size = max_body,
-          .public_folder = (www ? StringValueCStr(www) : NULL)) == -1) {
+  if (http_listen((port ? StringValueCStr(port) : NULL),
+                  (address ? StringValueCStr(address) : NULL),
+                  .on_request = on_rack_request, .on_upgrade = on_rack_upgrade,
+                  .udata = (void *)app,
+                  .timeout = (tout ? FIX2INT(tout) : tout), .ws_timeout = ping,
+                  .ws_max_msg_size = max_msg, .max_header_size = max_headers,
+                  .on_finish = free_iodine_http, .log = log_http,
+                  .max_body_size = max_body,
+                  .public_folder = (www ? StringValueCStr(www) : NULL)) == -1) {
     FIO_LOG_ERROR("Failed to initialize a listening HTTP socket for port %s",
                   port ? StringValueCStr(port) : "3000");
     rb_raise(rb_eRuntimeError, "Listening socket initialization failed");
