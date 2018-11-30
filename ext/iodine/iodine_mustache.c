@@ -228,7 +228,7 @@ static int32_t mustache_on_section_test(mustache_section_s *section,
                                         const char *name, uint32_t name_len,
                                         uint8_t callable) {
   VALUE o = fiobj_mustache_find_obj(section, name, name_len);
-  if (o == Qnil) {
+  if (o == Qnil || o == Qfalse) {
     return 0;
   }
   if (RB_TYPE_P(o, T_ARRAY)) {
@@ -266,11 +266,9 @@ static int mustache_on_section_start(mustache_section_s *section,
                                      char const *name, uint32_t name_len,
                                      uint32_t index) {
   VALUE o = fiobj_mustache_find_obj(section, name, name_len);
-  if (o == Qnil)
-    return 0;
   if (RB_TYPE_P(o, T_ARRAY))
     section->udata2 = (void *)rb_ary_entry(o, index);
-  else
+  else if (RB_TYPE_P(o, T_HASH))
     section->udata2 = (void *)o;
   return 0;
 }
