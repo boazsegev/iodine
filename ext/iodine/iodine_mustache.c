@@ -115,37 +115,73 @@ static uint8_t html_escape_len[] = {
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
 
+static inline VALUE fiobj_mustache_find_obj_absolute(VALUE udata,
+                                                     const char *name,
+                                                     uint32_t name_len) {
+  VALUE tmp;
+  if (!RB_TYPE_P(udata, T_HASH)) {
+    if (name_len == 1 && name[0] == '.')
+      return udata;
+    return Qnil;
+  }
+  /* search by String */
+  VALUE key = rb_str_new(name, name_len);
+  tmp = rb_hash_aref(udata, key);
+  if (tmp != Qnil)
+    return tmp;
+  /* search by Symbol */
+  key = rb_id2sym(rb_intern2(name, name_len));
+  tmp = rb_hash_aref(udata, key);
+  return tmp;
+}
+
+static inline VALUE fiobj_mustache_find_obj_tree(mustache_section_s *section,
+                                                 const char *name,
+                                                 uint32_t name_len) {
+  do {
+    VALUE tmp = fiobj_mustache_find_obj_absolute((VALUE)section->udata2, name,
+                                                 name_len);
+    if (tmp != Qnil) {
+      return tmp;
+    }
+  } while ((section = mustache_section_parent(section)));
+  return Qnil;
+}
+
 static inline VALUE fiobj_mustache_find_obj(mustache_section_s *section,
                                             const char *name,
                                             uint32_t name_len) {
-  do {
-    VALUE tmp;
-#if 0
-    /* test for Array indexing */
-    if (name[0] >= '0' && name[0] <= '9' &&
-        RB_TYPE_P((VALUE)section->udata2, T_ARRAY)) {
-      char **pos = (char **)&name;
-      tmp = rb_ary_entry((VALUE)section->udata2, fio_atol(pos));
-      if (tmp)
-        return tmp;
-    }
-#endif
-    if (!RB_TYPE_P((VALUE)section->udata2, T_HASH)) {
-      continue;
-    }
-    /* search by String */
-    VALUE key = rb_str_new(name, name_len);
-    tmp = rb_hash_aref((VALUE)section->udata2, key);
-    if (tmp != Qnil)
-      return tmp;
-    /* search by Symbol */
-    key = rb_id2sym(rb_intern2(name, name_len));
-    tmp = rb_hash_aref((VALUE)section->udata2, key);
-    if (tmp != Qnil)
-      return tmp;
-    section = mustache_section_parent(section);
-  } while (section);
-  return Qnil;
+  VALUE tmp = fiobj_mustache_find_obj_tree(section, name, name_len);
+  if (tmp != Qnil)
+    return tmp;
+  /* interpolate sections... */
+  uint32_t dot = 0;
+  while (dot < name_len && name[dot] != '.')
+    ++dot;
+  if (dot == name_len)
+    return Qnil;
+  tmp = fiobj_mustache_find_obj_tree(section, name, dot);
+  if (!tmp) {
+    return Qnil;
+  }
+  ++dot;
+  for (;;) {
+    VALUE obj =
+        fiobj_mustache_find_obj_absolute(tmp, name + dot, name_len - dot);
+    if (obj != Qnil)
+      return obj;
+    name += dot;
+    name_len -= dot;
+    dot = 0;
+    while (dot < name_len && name[dot] != '.')
+      ++dot;
+    if (dot == name_len)
+      return Qnil;
+    tmp = fiobj_mustache_find_obj_absolute(tmp, name, dot);
+    if (tmp == Qnil || !RB_TYPE_P(tmp, T_HASH))
+      return Qnil;
+    ++dot;
+  }
 }
 /**
  * Called when an argument name was detected in the current section.
@@ -162,8 +198,14 @@ static inline VALUE fiobj_mustache_find_obj(mustache_section_s *section,
 static int mustache_on_arg(mustache_section_s *section, const char *name,
                            uint32_t name_len, unsigned char escape) {
   VALUE o = fiobj_mustache_find_obj(section, name, name_len);
-  if (!o)
+  switch (o) {
+  case Qnil:
+  case Qfalse:
     return 0;
+  case Qtrue:
+    fio_str_write(section->udata1, "true", 4);
+    break;
+  }
   if (rb_respond_to(o, call_func_id))
     goto callable;
   if (!RB_TYPE_P(o, T_STRING))
@@ -192,7 +234,7 @@ static int mustache_on_arg(mustache_section_s *section, const char *name,
   (void)escape;
   return 0;
 callable:
-  o = rb_funcall2(o, call_func_id, 0, NULL);
+  o = IodineCaller.call(o, call_func_id);
   if (RB_TYPE_P(o, T_STRING))
     o = rb_funcall2(o, to_s_func_id, 0, NULL);
   fio_str_write(section->udata1, RSTRING_PTR(o), RSTRING_LEN(o));
@@ -241,10 +283,11 @@ static int32_t mustache_on_section_test(mustache_section_s *section,
     if (txt && len) {
       str = rb_str_new(txt, len);
     }
-    o = rb_funcall2(o, call_func_id, 1, &str);
-    if (RB_TYPE_P(o, T_STRING))
+    o = IodineCaller.call2(o, call_func_id, 1, &str);
+    if (!RB_TYPE_P(o, T_STRING))
       o = rb_funcall2(o, to_s_func_id, 0, NULL);
-    fio_str_write(section->udata1, RSTRING_PTR(o), RSTRING_LEN(o));
+    if (RB_TYPE_P(o, T_STRING) && RSTRING_LEN(o))
+      fio_str_write(section->udata1, RSTRING_PTR(o), RSTRING_LEN(o));
     return 0;
   }
   return 1;
@@ -344,6 +387,8 @@ error:
   case MUSTACHE_ERR_NAME_TOO_LONG:
     rb_raise(rb_eRuntimeError,
              "Iodine::Mustache section name in template is too long.");
+  default:
+    break;
   }
   return self;
 }
@@ -461,7 +506,6 @@ static VALUE iodine_mustache_render_klass(int argc, VALUE *argv, VALUE self) {
                     .err = &err);
   if (!m)
     goto error;
-
   int e = mustache_build(m, .udata1 = &str, .udata2 = (void *)data);
   mustache_free(m);
   if (e)
@@ -514,6 +558,8 @@ error:
     rb_raise(rb_eRuntimeError,
              "Iodine::Mustache section name in template is too long.");
 
+    break;
+  default:
     break;
   }
   return Qnil;
