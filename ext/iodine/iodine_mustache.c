@@ -359,10 +359,10 @@ error:
              "Iodine::Mustache template error, closure mismatch.");
     break;
   case MUSTACHE_ERR_FILE_NOT_FOUND:
-    rb_raise(rb_eRuntimeError, "Iodine::Mustache template not found.");
+    rb_raise(rb_eLoadError, "Iodine::Mustache template not found.");
     break;
   case MUSTACHE_ERR_FILE_TOO_BIG:
-    rb_raise(rb_eRuntimeError, "Iodine::Mustache template too big.");
+    rb_raise(rb_eLoadError, "Iodine::Mustache template too big.");
     break;
   case MUSTACHE_ERR_FILE_NAME_TOO_LONG:
     rb_raise(rb_eRuntimeError, "Iodine::Mustache template name too long.");
@@ -528,10 +528,10 @@ error:
              "Iodine::Mustache template error, closure mismatch.");
     break;
   case MUSTACHE_ERR_FILE_NOT_FOUND:
-    rb_raise(rb_eRuntimeError, "Iodine::Mustache template not found.");
+    rb_raise(rb_eLoadError, "Iodine::Mustache template not found.");
     break;
   case MUSTACHE_ERR_FILE_TOO_BIG:
-    rb_raise(rb_eRuntimeError, "Iodine::Mustache template too big.");
+    rb_raise(rb_eLoadError, "Iodine::Mustache template too big.");
     break;
   case MUSTACHE_ERR_FILE_NAME_TOO_LONG:
     rb_raise(rb_eRuntimeError, "Iodine::Mustache template name too long.");
