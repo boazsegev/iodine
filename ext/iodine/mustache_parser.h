@@ -71,7 +71,7 @@ Feel free to copy, use and enjoy according to the license provided.
 
 #if !defined(MUSTACHE_NESTING_LIMIT) || !MUSTACHE_NESTING_LIMIT
 #undef MUSTACHE_NESTING_LIMIT
-#define MUSTACHE_NESTING_LIMIT 96
+#define MUSTACHE_NESTING_LIMIT 82
 #endif
 
 #if !defined(__GNUC__) && !defined(__clang__) && !defined(FIO_GNUC_BYPASS)
@@ -89,7 +89,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #endif
 
 /* *****************************************************************************
-Mustache API Functions and Arguments
+Mustache API Argument types
 ***************************************************************************** */
 
 /** an opaque type for mustache template data (when caching). */
@@ -125,14 +125,26 @@ typedef struct {
   mustache_error_en *err;
 } mustache_load_args_s;
 
+/* *****************************************************************************
+REQUIRED: Define INCLUDE_MUSTACHE_IMPLEMENTATION only in the implementation file
+***************************************************************************** */
+
 /**
- * Allows this header to be included within another header while limiting
- * exposure.
+ * In non-implementation files, don't define the INCLUDE_MUSTACHE_IMPLEMENTATION
+ * macro.
  *
- * before including the header within an implementation faile, define
+ * Before including the header within an implementation faile, define
  * INCLUDE_MUSTACHE_IMPLEMENTATION as 1.
+ *
+ * When unset (or zero), this will expose the return error reporting and
+ * function argument types, allowing them to be exposed in a public facing API.
+ * exposure to the function return and argument types.
  */
 #if INCLUDE_MUSTACHE_IMPLEMENTATION
+
+/* *****************************************************************************
+Mustache API Functions and Arguments
+***************************************************************************** */
 
 MUSTACHE_FUNC mustache_s *mustache_load(mustache_load_args_s args);
 
@@ -328,6 +340,8 @@ typedef struct mustache__instruction_s {
     MUSTACHE_SECTION_START_INV,
     MUSTACHE_SECTION_END,
     MUSTACHE_SECTION_GOTO,
+    MUSTACHE_PADDING_PUSH,
+    MUSTACHE_PADDING_POP,
   } instruction;
   /** the data the instruction acts upon */
   struct {
@@ -353,15 +367,24 @@ typedef struct {
   uint16_t frame; /* the stack frame's index (zero based) */
 } mustache__section_stack_frame_s;
 
+/*
+ * The stack memory is placed in a structure to allow stack unrolling and
+ * avoiding recursion with it's stack overflow risks.
+ */
 typedef struct {
   mustache_s *data; /* the mustache template being built */
   uint32_t pos;     /* the instruction postision index */
+  uint32_t padding; /* padding instruction position */
   uint16_t index;   /* the stack postision index */
   mustache__section_stack_frame_s stack[MUSTACHE_NESTING_LIMIT];
 } mustache__builder_stack_s;
 
-#define MUSTACHE_DELIMITER_LENGTH_LIMIT 11
+#define MUSTACHE_DELIMITER_LENGTH_LIMIT 5
 
+/*
+ * The stack memory is placed in a structure to allow stack unrolling and
+ * avoiding recursion with it's stack overflow risks.
+ */
 typedef struct {
   mustache_s *m;
   mustache__instruction_s *i;
@@ -370,6 +393,7 @@ typedef struct {
   char *path;
   uint32_t i_capa;
   uint32_t data_len;
+  uint32_t padding;
   uint16_t path_len;
   uint16_t path_capa;
   uint16_t index; /* stack index */
@@ -517,6 +541,26 @@ mustache__data_segment_read(uint8_t *data) {
   return s;
 }
 
+static inline void mustache__stand_alone_adjust(mustache__loader_stack_s *s,
+                                                uint32_t stand_alone) {
+  if (!stand_alone)
+    return;
+  /* adjust reading position */
+  s->stack[s->index].data_pos +=
+      1 + (s->data[s->stack[s->index].data_pos] == '\r');
+  /* remove any padding from the beginning of the line */
+  if (s->m->u.read_only.intruction_count &&
+      s->i[s->m->u.read_only.intruction_count - 1].instruction ==
+          MUSTACHE_WRITE_TEXT) {
+    mustache__instruction_s *ins =
+        s->i + s->m->u.read_only.intruction_count - 1;
+    if (ins->data.name_len <= (stand_alone >> 1))
+      --s->m->u.read_only.intruction_count;
+    else
+      ins->data.name_len -= (stand_alone >> 1);
+  }
+}
+
 /* pushes an instruction to the instruction array */
 static inline int mustache__instruction_push(mustache__loader_stack_s *s,
                                              mustache__instruction_s inst) {
@@ -534,6 +578,61 @@ static inline int mustache__instruction_push(mustache__loader_stack_s *s,
 instructions_too_long:
   *s->err = MUSTACHE_ERR_TOO_DEEP;
   return -1;
+}
+
+/* pushes padding instructions */
+static inline int
+mustache__push_pudding_instructions(mustache__loader_stack_s *s) {
+  uint32_t padding = s->padding;
+  while (padding) {
+    if (mustache__instruction_push(s, (mustache__instruction_s){
+                                          .instruction = MUSTACHE_WRITE_TEXT,
+                                          .data = s->i[padding].data,
+                                      }) == -1)
+      return -1;
+    padding = s->i[padding].data.end;
+  }
+  return 0;
+}
+/* pushes an instruction to the instruction array */
+static inline int mustache__push_text_instruction(mustache__loader_stack_s *s,
+                                                  uint32_t pos, uint32_t len) {
+  if (!s->padding) {
+    return mustache__instruction_push(
+        s, (mustache__instruction_s){
+               .instruction = MUSTACHE_WRITE_TEXT,
+               .data = {.name_pos = pos, .name_len = len},
+           });
+  }
+  /* TODO: tokenize string using '\n' and insert padding after each new line */
+  for (;;) {
+    char *start = s->data + pos;
+    char *end = memchr(s->data + pos, '\n', len);
+    if (!end)
+      break;
+    const size_t offset = (end - start) + 1;
+    if (mustache__instruction_push(
+            s, (mustache__instruction_s){
+                   .instruction = MUSTACHE_WRITE_TEXT,
+                   .data = {.name_pos = pos, .name_len = offset},
+               }) == -1)
+      return -1;
+    mustache__push_pudding_instructions(s);
+    pos += offset;
+    len -= offset;
+  }
+  if (!len)
+    return 0;
+  return mustache__instruction_push(
+      s, (mustache__instruction_s){
+             .instruction = MUSTACHE_WRITE_TEXT,
+             .data = {.name_pos = pos, .name_len = len},
+         });
+
+  // for(;;) {
+  //   char *tmp = memchr(s->data + pos, '\n', len);
+  //   if()
+  // } while (len);
 }
 
 /*
@@ -554,9 +653,9 @@ static inline uint32_t mustache__file_is_loaded(mustache__loader_stack_s *s,
   return (uint32_t)-1;
 }
 
-static inline int mustache__load_data(mustache__loader_stack_s *s,
-                                      const char *name, size_t name_len,
-                                      const char *data, size_t data_len) {
+static inline ssize_t mustache__load_data(mustache__loader_stack_s *s,
+                                          const char *name, size_t name_len,
+                                          const char *data, size_t data_len) {
   const size_t old_len = s->data_len;
   if (old_len + data_len > UINT32_MAX)
     goto too_long;
@@ -608,14 +707,14 @@ static inline int mustache__load_data(mustache__loader_stack_s *s,
   s->stack[s->index].del_end[0] = s->stack[s->index].del_end[1] = '}';
   s->stack[s->index].del_end[2] = 0;
   s->stack[s->index].open_sections = 0;
-  return 0;
+  return data_len;
 too_long:
   *s->err = MUSTACHE_ERR_TOO_DEEP;
   return -1;
 }
 
-static inline int mustache__load_file(mustache__loader_stack_s *s,
-                                      const char *name, size_t name_len) {
+static inline ssize_t mustache__load_file(mustache__loader_stack_s *s,
+                                          const char *name, size_t name_len) {
   struct stat f_data;
   uint16_t i = s->index;
   uint32_t old_path_len = 0;
@@ -697,6 +796,9 @@ static inline int mustache__load_file(mustache__loader_stack_s *s,
 file_found:
   if (f_data.st_size >= INT32_MAX) {
     goto file_too_big;
+  } else if (f_data.st_size == 0) {
+    /* empty, do nothing */
+    return 0;
   } else {
     /* test if the file was previously loaded */
     uint32_t pre_existing = mustache__file_is_loaded(s, s->path, old_path_len);
@@ -715,7 +817,7 @@ file_found:
       return 0;
     }
   }
-  if (mustache__load_data(s, s->path, old_path_len, NULL, f_data.st_size))
+  if (mustache__load_data(s, s->path, old_path_len, NULL, f_data.st_size) == -1)
     goto unknown_error;
   int fd = open(s->path, O_RDONLY);
   if (fd == -1)
@@ -724,7 +826,7 @@ file_found:
       f_data.st_size)
     goto file_err;
   close(fd);
-  return 0;
+  return f_data.st_size;
 
 name_missing_error:
   *s->err = MUSTACHE_ERR_FILE_NAME_TOO_SHORT;
@@ -863,11 +965,20 @@ MUSTACHE_FUNC int(mustache_build)(mustache_build_args_s args) {
                                       instructions[s.pos].data.name_len,
                                       s.stack[s.index].index) == -1)
           goto user_error;
+        /* skip padding instructions in GOTO tags (recursive partials) */
+        if (instructions[s.pos].instruction == MUSTACHE_SECTION_GOTO)
+          ++s.pos;
         ++s.stack[s.index].index;
         break;
       }
       s.pos = s.stack[s.index].end;
       --s.index;
+      break;
+    case MUSTACHE_PADDING_PUSH:
+      s.padding = s.pos;
+      break;
+    case MUSTACHE_PADDING_POP:
+      s.padding = instructions[s.pos].data.end;
       break;
     default:
       /* not a valid engine */
@@ -907,6 +1018,7 @@ MUSTACHE_FUNC mustache_s *(mustache_load)(mustache_load_args_s args) {
   s.i = NULL;
   s.i_capa = 32;
   s.index = 0;
+  s.padding = 0;
   s.m = malloc(sizeof(*s.m) + (sizeof(*s.i) * 32));
   MUSTACHE_ASSERT(s.m, "failed to allocate memory for mustache data");
   s.m->u.read_only_pt = 0;
@@ -920,11 +1032,11 @@ MUSTACHE_FUNC mustache_s *(mustache_load)(mustache_load_args_s args) {
 
   if (args.data) {
     if (mustache__load_data(&s, args.filename, args.filename_len, args.data,
-                            args.data_len)) {
+                            args.data_len) == -1) {
       goto error;
     }
   } else {
-    if (mustache__load_file(&s, args.filename, args.filename_len)) {
+    if (mustache__load_file(&s, args.filename, args.filename_len) == -1) {
       goto error;
     }
   }
@@ -933,6 +1045,9 @@ MUSTACHE_FUNC mustache_s *(mustache_load)(mustache_load_args_s args) {
   while (s.index) {
     /* parsing loop */
     while (s.stack[s.index].data_pos < s.stack[s.index].data_end) {
+      /* stand-alone tag flag, also containes padding length after bit 1 */
+      uint32_t stand_alone = 0;
+      uint32_t stand_alone_pos = 0;
       /* start parsing at current position */
       const char *start = s.data + s.stack[s.index].data_pos;
       /* find the next instruction (beg == beginning) */
@@ -940,30 +1055,16 @@ MUSTACHE_FUNC mustache_s *(mustache_load)(mustache_load_args_s args) {
       const char *org_beg = beg;
       if (!beg || beg >= s.data + s.stack[s.index].data_end) {
         /* no instructions left, only text */
-        mustache__instruction_push(
-            &s, (mustache__instruction_s){
-                    .instruction = MUSTACHE_WRITE_TEXT,
-                    .data =
-                        {
-                            .name_pos = s.stack[s.index].data_pos,
-                            .name_len = s.stack[s.index].data_end -
-                                        s.stack[s.index].data_pos,
-                        },
-                });
+        mustache__push_text_instruction(&s, s.stack[s.index].data_pos,
+                                        s.stack[s.index].data_end -
+                                            s.stack[s.index].data_pos);
         s.stack[s.index].data_pos = s.stack[s.index].data_end;
         continue;
       }
       if (beg != start) {
         /* there's text before the instruction */
-        mustache__instruction_push(
-            &s, (mustache__instruction_s){
-                    .instruction = MUSTACHE_WRITE_TEXT,
-                    .data =
-                        {
-                            .name_pos = s.stack[s.index].data_pos,
-                            .name_len = beg - start,
-                        },
-                });
+        mustache__push_text_instruction(&s, s.stack[s.index].data_pos,
+                                        (uint32_t)(uintptr_t)(beg - start));
       }
       /* move beg (reading position) after the delimiter */
       beg += s.stack[s.index].del_start_len;
@@ -974,19 +1075,39 @@ MUSTACHE_FUNC mustache_s *(mustache_load)(mustache_load_args_s args) {
         *args.err = MUSTACHE_ERR_CLOSURE_MISMATCH;
         goto error;
       }
+
       /* update reading position in the stack */
       s.stack[s.index].data_pos = (end - s.data) + s.stack[s.index].del_end_len;
+
+      /* Test for stand-alone tags */
+      if (!end[s.stack[s.index].del_end_len] ||
+          end[s.stack[s.index].del_end_len] == '\n' ||
+          (end[s.stack[s.index].del_end_len] == '\r' &&
+           end[1 + s.stack[s.index].del_end_len] == '\n')) {
+        char *pad = beg - (s.stack[s.index].del_start_len + 1);
+        while (pad >= start && (pad[0] == ' ' || pad[0] == '\t'))
+          --pad;
+        if (pad[0] == '\n' || pad[0] == 0) {
+          /* Yes, this a stand-alone tag, store padding length + flag  */
+          ++pad;
+          stand_alone_pos = pad - s.data;
+          stand_alone =
+              ((beg - (pad + s.stack[s.index].del_start_len)) << 1) | 1;
+        }
+      }
 
       /* parse instruction content */
       uint8_t escape_str = 1;
 
       switch (beg[0]) {
       case '!':
-        /* comment, do nothing */
+        /* comment, do nothing... almost */
+        mustache__stand_alone_adjust(&s, stand_alone);
         break;
 
       case '=':
         /* define new seperators */
+        mustache__stand_alone_adjust(&s, stand_alone);
         ++beg;
         --end;
         if (end[0] != '=') {
@@ -1041,6 +1162,7 @@ MUSTACHE_FUNC mustache_s *(mustache_load)(mustache_load_args_s args) {
         escape_str = 0;
       case '#':
         /* start section (or inverted section) */
+        mustache__stand_alone_adjust(&s, stand_alone);
         ++beg;
         --end;
         MUSTACHE_IGNORE_WHITESPACE(beg, 1);
@@ -1071,17 +1193,51 @@ MUSTACHE_FUNC mustache_s *(mustache_load)(mustache_load_args_s args) {
 
       case '>':
         /* partial template - search data for loaded template or load new */
+        mustache__stand_alone_adjust(&s, stand_alone);
+        if ((stand_alone >> 1)) {
+          /* TODO: add padding markers */
+          if (mustache__instruction_push(
+                  &s, (mustache__instruction_s){
+                          .instruction = MUSTACHE_PADDING_PUSH,
+                          .data = {
+                              .name_pos = stand_alone_pos,
+                              .name_len = (stand_alone >> 1),
+                              .end = s.padding,
+                          }})) {
+            goto error;
+          }
+          s.padding = s.m->u.read_only.intruction_count - 1;
+        }
         ++beg;
         --end;
         MUSTACHE_IGNORE_WHITESPACE(beg, 1);
         MUSTACHE_IGNORE_WHITESPACE(end, -1);
         ++end;
-        if (mustache__load_file(&s, beg, end - beg))
+        ssize_t loaded = mustache__load_file(&s, beg, end - beg);
+        if (loaded == -1)
           goto error;
+        /* Add latest padding section to text */
+        if ((stand_alone >> 1)) {
+          if (loaded)
+            mustache__instruction_push(
+                &s, (mustache__instruction_s){
+                        .instruction = MUSTACHE_WRITE_TEXT,
+                        .data =
+                            {
+                                .name_pos = stand_alone_pos,
+                                .name_len = (stand_alone >> 1),
+                            },
+                    });
+          else if (mustache__instruction_push(
+                       &s, (mustache__instruction_s){.instruction =
+                                                         MUSTACHE_PADDING_POP}))
+            goto error;
+        }
         break;
 
       case '/':
         /* section end */
+        mustache__stand_alone_adjust(&s, stand_alone);
         ++beg;
         --end;
         MUSTACHE_IGNORE_WHITESPACE(beg, 1);
@@ -1166,12 +1322,21 @@ MUSTACHE_FUNC mustache_s *(mustache_load)(mustache_load_args_s args) {
       *args.err = MUSTACHE_ERR_CLOSURE_MISMATCH;
       goto error;
     }
-    /* add instruction closure */
+    /* mark section length */
     mustache__data_segment_s seg = mustache__data_segment_read(
         (uint8_t *)s.data + s.stack[s.index].data_start);
     s.i[seg.inst_start].data.end = s.m->u.read_only.intruction_count;
+    /* add instruction closure */
     mustache__instruction_push(
         &s, (mustache__instruction_s){.instruction = MUSTACHE_SECTION_END});
+    /* TODO: pop any padding (if exists) */
+    if (seg.inst_start &&
+        s.i[seg.inst_start - 1].instruction == MUSTACHE_PADDING_PUSH) {
+      s.padding = s.i[seg.inst_start + 1].data.end;
+      mustache__instruction_push(&s, (mustache__instruction_s){
+                                         .instruction = MUSTACHE_PADDING_POP,
+                                     });
+    }
     /* pop stack */
     --s.index;
   }
