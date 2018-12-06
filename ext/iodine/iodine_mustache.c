@@ -122,6 +122,11 @@ static inline VALUE fiobj_mustache_find_obj_absolute(VALUE udata,
   if (!RB_TYPE_P(udata, T_HASH)) {
     if (name_len == 1 && name[0] == '.')
       return udata;
+    /* search by method */
+    ID name_id = rb_intern2(name, name_len);
+    if (rb_respond_to(udata, name_id)) {
+      return IodineCaller.call(udata, name_id);
+    }
     return Qnil;
   }
   /* search by String */
@@ -130,8 +135,14 @@ static inline VALUE fiobj_mustache_find_obj_absolute(VALUE udata,
   if (tmp != Qnil)
     return tmp;
   /* search by Symbol */
-  key = rb_id2sym(rb_intern2(name, name_len));
+  ID name_id = rb_intern2(name, name_len);
+  key = rb_id2sym(name_id);
   tmp = rb_hash_aref(udata, key);
+  /* search by method */
+  if (tmp == Qnil && rb_respond_to(udata, name_id)) {
+    tmp = IodineCaller.call(udata, name_id);
+  }
+
   return tmp;
 }
 
@@ -175,10 +186,11 @@ static inline VALUE fiobj_mustache_find_obj(mustache_section_s *section,
     dot = 0;
     while (dot < name_len && name[dot] != '.')
       ++dot;
-    if (dot == name_len)
+    if (dot == name_len) {
       return Qnil;
+    }
     tmp = fiobj_mustache_find_obj_absolute(tmp, name, dot);
-    if (tmp == Qnil || !RB_TYPE_P(tmp, T_HASH))
+    if (tmp == Qnil)
       return Qnil;
     ++dot;
   }
