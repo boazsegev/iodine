@@ -6,6 +6,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.13
+
+**Fix**: (`mustache`) added support for padding in template partials.
+
+**Fix**: (`mustache`) added support for method names as keys (i.e., `{{user.to_json}}` or `{{#user}}{{to_json}}{{/user}}`). Note: no arguments may be passed (no Ruby code parsing, just testing against method names).
+
 #### Change log v.0.7.12
 
 **Fix**: (`mustache`) fixed multiple issues with `Iodine::Mustache` and added lambda support for mustache templates.
