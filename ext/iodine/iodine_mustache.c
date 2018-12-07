@@ -218,39 +218,15 @@ static int mustache_on_arg(mustache_section_s *section, const char *name,
     fio_str_write(section->udata1, "true", 4);
     break;
   }
-  if (rb_respond_to(o, call_func_id))
-    goto callable;
-  if (!RB_TYPE_P(o, T_STRING))
-    o = IodineCaller.call(o, to_s_func_id);
+  if (!RB_TYPE_P(o, T_STRING)) {
+    if (rb_respond_to(o, call_func_id))
+      o = IodineCaller.call(o, call_func_id);
+    if (!RB_TYPE_P(o, T_STRING))
+      o = IodineCaller.call(o, to_s_func_id);
+  }
   if (!RB_TYPE_P(o, T_STRING) || !RSTRING_LEN(o))
     return 0;
-  if (!escape) {
-    fio_str_write(section->udata1, RSTRING_PTR(o), RSTRING_LEN(o));
-    return 0;
-  }
-  /* HTML escape */
-  fio_str_info_s str = {.data = RSTRING_PTR(o), .len = RSTRING_LEN(o)};
-  fio_str_info_s i = fio_str_capa_assert(
-      section->udata1, fio_str_len(section->udata1) + str.len + 64);
-  do {
-    if (i.len + 6 >= i.capa)
-      i = fio_str_capa_assert(section->udata1, i.capa + 64);
-    i = fio_str_write(section->udata1, html_escape_strs[(uint8_t)str.data[0]],
-                      html_escape_len[(uint8_t)str.data[0]]);
-    --str.len;
-    ++str.data;
-  } while (str.len);
-  (void)section;
-  (void)name;
-  (void)name_len;
-  (void)escape;
-  return 0;
-callable:
-  o = IodineCaller.call(o, call_func_id);
-  if (RB_TYPE_P(o, T_STRING))
-    o = rb_funcall2(o, to_s_func_id, 0, NULL);
-  fio_str_write(section->udata1, RSTRING_PTR(o), RSTRING_LEN(o));
-  return 0;
+  return mustache_write_text(section, RSTRING_PTR(o), RSTRING_LEN(o), escape);
 }
 
 /**
@@ -299,7 +275,7 @@ static int32_t mustache_on_section_test(mustache_section_s *section,
     if (!RB_TYPE_P(o, T_STRING))
       o = rb_funcall2(o, to_s_func_id, 0, NULL);
     if (RB_TYPE_P(o, T_STRING) && RSTRING_LEN(o))
-      fio_str_write(section->udata1, RSTRING_PTR(o), RSTRING_LEN(o));
+      mustache_write_text(section, RSTRING_PTR(o), RSTRING_LEN(o), 0);
     return 0;
   }
   return 1;
