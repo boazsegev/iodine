@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.14
+
+**Fix**: (`iodine_store`) Fixed missing EOL marker in DEBUG messages when reporting iodine's GC guard activity.
+
 #### Change log v.0.7.13
 
 **Fix**: (`mustache`) added support for padding in template partials.
