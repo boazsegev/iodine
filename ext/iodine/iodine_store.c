@@ -65,7 +65,7 @@ static void storage_print(void) {
   fprintf(stderr, "Total of %" PRIuPTR " objects protected form GC\n", index);
   fprintf(stderr,
           "Storage uses %" PRIuPTR " Hash bins for %" PRIuPTR " objects\n"
-          "The largest collection was %zu objects.",
+          "The largest collection was %zu objects.\n",
           iodine_storage.capa, iodine_storage.count, iodine_storage_count_max);
   fio_unlock(&iodine_storage_lock);
 }
