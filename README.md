@@ -501,35 +501,31 @@ Iodine allows custom TCP/IP server authoring, for those cases where we need raw 
 Here's a short and sweet echo server - No HTTP, just use `telnet`:
 
 ```ruby
-
 require 'iodine'
 
 # an echo protocol with asynchronous notifications.
 class EchoProtocol
   # `on_message` is an optional alternative to the `on_data` callback.
   # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
-  def on_message buffer
+  def on_message client, buffer
     # writing will never block and will use a buffer written in C when needed.
-    write buffer
+    client.write buffer
     # close will be performed only once all the data in the write buffer
     # was sent. use `force_close` to close early.
-    close if buffer =~ /^bye[\r\n]/i
-    # use buffer.dup to save the data from being recycled once we return.
-    data = buffer.dup
-    # run asynchronous tasks with ease
-    run do
+    client.close if buffer =~ /^bye[\r\n]/i
+    # run asynchronous tasks using the thread pool
+    Iodine.run do
       sleep 1
-      puts "Echoed data: #{data}"
+      puts "Echoed data: #{buffer}"
     end
   end
 end
 
 # listen on port 3000 for the echo protocol.
-Iodine.listen 3000, EchoProtocol
-Iodine.threads = 1
-Iodine.processes = 1
+Iodine.listen(port: "3000") { EchoProtocol.new }
+Iodine.threads = 4
+Iodine.workers = 1
 Iodine.start
-
 ```
 
 ### Why not EventMachine?
