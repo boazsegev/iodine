@@ -319,6 +319,63 @@ static VALUE iodine_connection_env(VALUE self) {
   return Qnil;
 }
 
+/**
+ * Returns the client's current callback object.
+ */
+static VALUE iodine_connection_handler_get(VALUE self) {
+  iodine_connection_data_s *data = iodine_connection_validate_data(self);
+  if (!data) {
+    FIO_LOG_DEBUG("(iodine) requested connection handler for "
+                  "an invalid connection: %p",
+                  (void *)self);
+    return Qnil;
+  }
+  return data->info.handler;
+}
+
+// clang-format off
+/**
+ * Sets the client's callback object, so future events will use the new object's callbacks.
+ *
+ * @Note this will fire the `on_close` callback in the old handler and the `on_open` callback on the new handler. However, existing subscriptions will remain intact.
+ */
+static VALUE iodine_connection_handler_set(VALUE self, VALUE handler) {
+  // clang-format on
+  iodine_connection_data_s *data = iodine_connection_validate_data(self);
+  if (!data) {
+    FIO_LOG_DEBUG("(iodine) attempted to set a connection handler for "
+                  "an invalid connection: %p",
+                  (void *)self);
+    return Qnil;
+  }
+  if (handler == Qnil || handler == Qfalse) {
+    FIO_LOG_DEBUG(
+        "(iodine) called client.handler = nil, closing connection: %p",
+        (void *)self);
+    iodine_connection_close(self);
+    return Qnil;
+  }
+  if (data->info.handler != handler) {
+    uint8_t answers_on_open = (rb_respond_to(handler, on_open_id) != 0);
+    if(data->answers_on_close)
+      IodineCaller.call2(data->info.handler, on_close_id, 1, &self);
+    fio_lock(&data->lock);
+    data->info.handler = handler;
+    data->answers_on_open = answers_on_open,
+    data->answers_on_message = (rb_respond_to(handler, on_message_id) != 0),
+    data->answers_ping = (rb_respond_to(handler, ping_id) != 0),
+    data->answers_on_drained = (rb_respond_to(handler, on_drained_id) != 0),
+    data->answers_on_shutdown = (rb_respond_to(handler, on_shutdown_id) != 0),
+    data->answers_on_close = (rb_respond_to(handler, on_close_id) != 0),
+    fio_unlock(&data->lock);
+    if (answers_on_open) {
+      iodine_connection_fire_event(self, IODINE_CONNECTION_ON_OPEN, Qnil);
+    }
+    FIO_LOG_DEBUG("(iodine) switched handlers for connection: %p",
+                  (void *)self);
+  }
+  return handler;
+}
 /* *****************************************************************************
 Pub/Sub Callbacks (internal implementation)
 ***************************************************************************** */
@@ -837,6 +894,10 @@ void iodine_connection_init(void) {
                    1);
   rb_define_method(ConnectionKlass, "env", iodine_connection_env, 0);
 
+  rb_define_method(ConnectionKlass, "handler", iodine_connection_handler_get,
+                   0);
+  rb_define_method(ConnectionKlass, "handler=", iodine_connection_handler_set,
+                   1);
   rb_define_method(ConnectionKlass, "subscribe", iodine_pubsub_subscribe, -1);
   rb_define_method(ConnectionKlass, "unsubscribe", iodine_pubsub_unsubscribe,
                    1);

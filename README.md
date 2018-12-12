@@ -427,6 +427,8 @@ Iodine is written in C and allows some compile-time customizations, such as:
 
 * `FIO_ENGINE_POLL` - prefer the `poll` system call over `epoll` or `kqueue` (not recommended).
 
+* `FIO_LOG_LENGTH_LIMIT` - sets the limit on iodine's logging messages (uses stack memory, so limits must be reasonable. Defaults to 2048.
+
 These options can be used, for example, like so:
 
 ```bash
@@ -524,6 +526,74 @@ end
 # listen on port 3000 for the echo protocol.
 Iodine.listen(port: "3000") { EchoProtocol.new }
 Iodine.threads = 4
+Iodine.workers = 1
+Iodine.start
+```
+
+Or a nice plain text chat room (connect using `telnet` or `nc` ):
+
+```ruby
+require 'iodine'
+
+# a chat protocol with asynchronous notifications.
+class ChatProtocol
+  def initialize nickname = "guest"
+    @nickname = nickname
+  end
+  def on_open client
+    client.subscribe :chat
+    client.publish :chat, "#{@nickname} joined chat.\n"
+    client.timeout = 40
+  end
+  def on_close client
+    client.publish :chat, "#{@nickname} left chat.\n"
+  end
+  def on_shutdown client
+    client.write "Server is shutting down... try reconnecting later.\n"
+  end
+  def on_message client, buffer
+    if(buffer[-1] == "\n")
+      client.publish :chat, "#{@nickname}: #{buffer}"
+    else
+      client.publish :chat, "#{@nickname}: #{buffer}\n"
+    end
+    # close will be performed only once all the data in the outgoing buffer
+    client.close if buffer =~ /^bye[\r\n]/i
+  end
+  def ping client
+    client.write "(ping) Are you there, #{@nickname}...?\n"
+  end
+end
+
+#an initial login protocol
+class LoginProtocol
+  def on_open client
+    client.write "Enter nickname to log in to chat room:\n"
+    client.timeout = 10
+  end
+  def ping client
+    client.write "Time's up... goodbye.\n"
+    client.close
+  end
+  def on_message client, buffer
+    # validate nickname and switch connection callback to ChatProtocol
+    nickname = buffer.split("\n")[0]
+    while (nickname && nickname.length() > 0 && (nickname[-1] == '\n' || nickname[-1] == '\r'))
+      nickname = nickname.slice(0, nickname.length() -1)
+    end
+    if(nickname && nickname.length() > 0 && buffer.split("\n").length() == 1)
+      chat = ChatProtocol.new(nickname)
+      client.handler = chat
+    else
+      client.write "Nickname error, try again.\n"
+      on_open client
+    end
+  end
+end
+
+# listen on port 3000
+Iodine.listen(port: 3000) { LoginProtocol.new }
+Iodine.threads = 1
 Iodine.workers = 1
 Iodine.start
 ```
