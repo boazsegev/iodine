@@ -565,7 +565,7 @@ class ChatProtocol
   end
 end
 
-#an initial login protocol
+# an initial login protocol
 class LoginProtocol
   def on_open client
     client.write "Enter nickname to log in to chat room:\n"
