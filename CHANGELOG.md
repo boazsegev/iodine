@@ -8,7 +8,13 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.14
 
-**Fix**: (`iodine_store`) Fixed missing EOL marker in DEBUG messages when reporting iodine's GC guard activity.
+**Fix**: (`facil.io`) fixed superfluous ping event.
+
+**Fix**: (`iodine_tcp`) fixed responsiveness to the argument name `timeout` (a spelling mistake was testing for `timout`).
+
+**Fix**: (`iodine_store`) fixed missing EOL marker in DEBUG messages when reporting iodine's GC guard activity.
+
+**Update**: (`iodine`) added support for dynamic (hot) connection callback switching.
 
 #### Change log v.0.7.13
 

@@ -2,6 +2,7 @@
 #include <ruby/encoding.h>
 #include <ruby/io.h>
 
+#define FIO_INCLUDE_STR
 #include "fio.h"
 
 /* *****************************************************************************
@@ -40,6 +41,7 @@ static void *iodine_tcp_on_data_in_GIL(void *b_) {
   iodine_buffer_s *b = b_;
   if (!b) {
     FIO_LOG_FATAL("(iodine->tcp/ip->on_data->GIL) WTF?!\n");
+    exit(-1);
   }
   VALUE data = IodineStore.add(rb_str_new(b->buffer, b->len));
   rb_enc_associate(data, IodineBinaryEncoding);
@@ -148,7 +150,7 @@ The {listen} method instructs iodine to listen to incoming connections using eit
 
 The method accepts a single Hash argument with the following optional keys:
 
-:port :: The port to listen to, deafults to 0 (using a Unix socket)
+:port :: The port to listen to, deafults to nil (using a Unix socket)
 :address :: The address to listen to, which could be a Unix Socket path as well as an IPv4 / IPv6 address. Deafults to 0.0.0.0 (or the IPv6 equivelant).
 :handler :: An object that answers the `call` method (i.e., a Proc).
 
@@ -217,6 +219,7 @@ static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
   VALUE rb_port = rb_hash_aref(args, port_id);
   VALUE rb_address = rb_hash_aref(args, address_id);
   VALUE rb_handler = rb_hash_aref(args, handler_id);
+  fio_str_s port = FIO_STR_INIT;
   if (rb_handler == Qnil || rb_handler == Qfalse || rb_handler == Qtrue) {
     rb_need_block();
     rb_handler = rb_block_proc();
@@ -225,10 +228,19 @@ static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
   if (rb_address != Qnil) {
     Check_Type(rb_address, T_STRING);
   }
+
   if (rb_port != Qnil) {
-    Check_Type(rb_port, T_STRING);
+    if (rb_port == Qfalse) {
+      fio_str_write_i(&port, 0);
+    } else if (RB_TYPE_P(rb_port, T_STRING))
+      fio_str_write(&port, RSTRING_PTR(rb_port), RSTRING_LEN(rb_port));
+    else if (RB_TYPE_P(rb_port, T_FIXNUM))
+      fio_str_write_i(&port, FIX2LONG(rb_port));
+    else
+      rb_raise(rb_eTypeError,
+               "The `port` property MUST be either a String or a Number");
   }
-  if (fio_listen(.port = (rb_port == Qnil ? NULL : StringValueCStr(rb_port)),
+  if (fio_listen(.port = fio_str_info(&port).data,
                  .address =
                      (rb_address == Qnil ? NULL : StringValueCStr(rb_address)),
                  .on_open = iodine_tcp_on_open,
@@ -269,6 +281,7 @@ static VALUE iodine_tcp_connect(VALUE self, VALUE args) {
   VALUE rb_handler = rb_hash_aref(args, handler_id);
   VALUE rb_timeout = rb_hash_aref(args, timeout_id);
   uint8_t timeout = 0;
+  fio_str_s port = FIO_STR_INIT;
   if (rb_handler == Qnil || rb_handler == Qfalse || rb_handler == Qtrue) {
     rb_raise(rb_eArgError, "A callback object (:handler) must be provided.");
   }
@@ -277,13 +290,21 @@ static VALUE iodine_tcp_connect(VALUE self, VALUE args) {
     Check_Type(rb_address, T_STRING);
   }
   if (rb_port != Qnil) {
-    Check_Type(rb_port, T_STRING);
+    if (rb_port == Qfalse) {
+      fio_str_write_i(&port, 0);
+    } else if (RB_TYPE_P(rb_port, T_STRING))
+      fio_str_write(&port, RSTRING_PTR(rb_port), RSTRING_LEN(rb_port));
+    else if (RB_TYPE_P(rb_port, T_FIXNUM))
+      fio_str_write_i(&port, FIX2LONG(rb_port));
+    else
+      rb_raise(rb_eTypeError,
+               "The `port` property MUST be either a String or a Number");
   }
   if (rb_timeout != Qnil) {
     Check_Type(rb_timeout, T_FIXNUM);
     timeout = NUM2USHORT(rb_timeout);
   }
-  fio_connect(.port = (rb_port == Qnil ? NULL : StringValueCStr(rb_port)),
+  fio_connect(.port = fio_str_info(&port).data,
               .address =
                   (rb_address == Qnil ? NULL : StringValueCStr(rb_address)),
               .on_connect = iodine_tcp_on_connect,
@@ -332,7 +353,7 @@ void iodine_init_tcp_connections(void) {
   port_id = IodineStore.add(rb_id2sym(rb_intern("port")));
   address_id = IodineStore.add(rb_id2sym(rb_intern("address")));
   handler_id = IodineStore.add(rb_id2sym(rb_intern("handler")));
-  timeout_id = IodineStore.add(rb_id2sym(rb_intern("timout")));
+  timeout_id = IodineStore.add(rb_id2sym(rb_intern("timeout")));
   on_closed_id = rb_intern("on_closed");
 
   IodineBinaryEncoding = rb_enc_find("binary");
