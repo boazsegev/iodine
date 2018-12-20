@@ -335,7 +335,8 @@ static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
       "\n\x1B[4mHTTP Server:\x1B[0m", FIO_CLI_TYPE_PRINT,
       "-public -www public folder, for static file service.",
       "-log -v HTTP request logging.", FIO_CLI_TYPE_BOOL,
-      "-keep-alive -k -tout HTTP keep-alive timeout (0..255). Default: 40s",
+      "-keep-alive -k -tout HTTP keep-alive timeout in seconds (0..255). "
+      "Default: 40s",
       FIO_CLI_TYPE_INT, "-ping websocket ping interval (0..255). Default: 40s",
       FIO_CLI_TYPE_INT,
       "-max-body -maxbd HTTP upload limit in Mega-Bytes. Default: 50Mb",
@@ -348,7 +349,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
       FIO_CLI_TYPE_INT, "\n\x1B[4mConnecting Iodine to Redis:\x1B[0m",
       FIO_CLI_TYPE_PRINT,
       "-redis -r an optional Redis URL server address. Default: none.",
-      "-redis-ping -rp websocket ping interval (0..255). Default: 5 minutes",
+      "-redis-ping -rp websocket ping interval (0..255). Default: 300s",
       FIO_CLI_TYPE_INT, "\n\x1B[4mMisc:\x1B[0m", FIO_CLI_TYPE_PRINT,
       "-warmup --preload warm up the application. CAREFUL! with workers.",
       FIO_CLI_TYPE_BOOL,

@@ -114,12 +114,20 @@ module Iodine
       Iodine.on_state(:on_finish, &block)
     end
 
+    module PubSub
+      # @deprecated use {Iodine::PubSub.detach}.
+      def self.dettach(engine)
+        warn "Iodine::PubSub.dettach is deprecated (was a typo), use Iodine::PubSub.detach(engine)."
+        Iodine::PubSub.detach(engine)
+      end
+    end
+
 end
 
 require 'rack/handler/iodine' unless defined? ::Iodine::Rack::IODINE_RACK_LOADED
 
 
-### Automatic ActiveRecord and Sequel fix
+### Automatic ActiveRecord and Sequel support for forking (preventing connection sharing)
 Iodine.on_state(:before_fork)  do
   if defined?(ActiveRecord) && defined?(ActiveRecord::Base) && ActiveRecord::Base.respond_to?(:connection)
     begin

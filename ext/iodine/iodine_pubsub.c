@@ -524,7 +524,6 @@ void iodine_pubsub_init(void) {
   rb_define_module_function(PubSubModule, "default", iodine_pubsub_default_get,
                             0);
   rb_define_module_function(PubSubModule, "attach", iodine_pubsub_attach, 1);
-  rb_define_module_function(PubSubModule, "dettach", iodine_pubsub_detach, 1);
   rb_define_module_function(PubSubModule, "detach", iodine_pubsub_detach, 1);
   rb_define_module_function(PubSubModule, "reset", iodine_pubsub_reset, 1);
 
