@@ -13,9 +13,9 @@ The purpose of these specifications is:
 
     Simply put, when choosing between conforming servers, the application doesn’t need to have any knowledge about the chosen server.
 
-2. To Support “native" (server-side) WebSocket and EventSource (SSE) connections and using application side callbacks.
+2. To support “native" (server-side) WebSocket and EventSource (SSE) connections and using application side callbacks.
 
-    Simply put, to make it easy for applications to accept WebSocket and EventSource (SSE) connections from WebSocket and EventSource clients (commonly browsers).
+    Simply put, to make it easy for applications to accept WebSocket and EventSource (SSE) connections from WebSocket and EventSource clients (commonly browsers) while abstracting away any transport layer details.
 
 3. Allow applications to use WebSocket and EventSource (SSE) on HTTP/2 servers. Note: current `hijack` practices will break network connections when attempting to implement EventSource (SSE).
 
@@ -45,11 +45,11 @@ The Callback Object could be a any object which implements any of the following 
 
     Servers **MAY**, optionally, implement a **recyclable buffer** for the `on_message` callback. However, this is optional and it is *not* required.
 
-* `on_drained(client)` **MAY** be called when the the `write` buffer becomes empty. **If** `pending` returns a non-zero value, the `on_drained` callback **MUST** be called once the write buffer becomes empty.
+* `on_drained(client)` **MAY** be called when the the `client.write` buffer becomes empty. **If** `client.pending` returns a non-zero value, the `on_drained` callback **MUST** be called once the write buffer becomes empty.
 
 * `on_shutdown(client)` **MAY** be called during the server's graceful shutdown process, _before_ the connection is closed and in addition to the `on_close` function (which is called _after_ the connection is closed.
 
-* `on_close(client)` **MUST** be called _after_ the connection was closed for whatever reason (socket errors, parsing errors, timeouts, client disconnection, `close` being called, etc').
+* `on_close(client)` **MUST** be called _after_ the connection was closed for whatever reason (socket errors, parsing errors, timeouts, client disconnection, `client.close` being called, etc').
 
 
 The server **MUST** provide the Callback Object with a `client` object, that supports the following methods (this approach promises applications could be server agnostic):
