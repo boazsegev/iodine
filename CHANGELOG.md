@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.15
+
+**Fix**: fixed some errors in the documentation and added a missing deprecation notice.
+
 #### Change log v.0.7.14
 
 **Fix**: (`facil.io`) fixed superfluous ping event.
