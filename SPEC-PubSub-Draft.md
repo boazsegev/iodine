@@ -20,7 +20,7 @@ Conforming Pub/Sub implementations **MUST** implement the following pub/sub rela
 
     * `:match` indicates a matching algorithm should be applied to the `to` variable (`to` is a pattern).
     
-        Possible values should include [`:redis`](https://github.com/antirez/redis/blob/398b2084af067ae4d669e0ce5a63d3bc89c639d3/src/util.c#L46-L167), [`:nats`](https://nats.io/documentation/faq/#wildcards) or [`:rabbitmq`](https://www.rabbitmq.com/tutorials/tutorial-five-ruby.html). Pub/Sub implementations *MAY* support none, some or all of these common pattern resolution schemes.
+        Possible (suggested) values should include [`:redis`](https://github.com/antirez/redis/blob/398b2084af067ae4d669e0ce5a63d3bc89c639d3/src/util.c#L46-L167), [`:nats`](https://nats.io/documentation/faq/#wildcards) or [`:rabbitmq`](https://www.rabbitmq.com/tutorials/tutorial-five-ruby.html). Pub/Sub implementations *MAY* support none, some or all of these common pattern resolution schemes.
     
     * `:handler` is an alternative to the optional block. It should accept Proc like objects (objects that answer to `.call(from, msg)`).
 
@@ -31,7 +31,9 @@ Conforming Pub/Sub implementations **MUST** implement the following pub/sub rela
         This option is only valid if the optional `block` is missing and the connection is a WebSocket connection. Note that SSE connections are limited to text data by design.
 
         This will dictate the encoding for outgoing WebSocket message when publications are directly sent to the client (as a text message or a binary blob). `:text` will be the default value for a missing `:as` option.
-    
+
+        Servers *MAY* ignore this value if they set the message type (text/binary) based on UTF-8 validation.
+
     If a subscription to `to` already exists, it should be *replaced* by the new subscription (the old subscription should be canceled / unsubscribed).
 
     When the `subscribe` method is called within a WebSocket / SSE Callback object, the subscription must be closed automatically when the connection is closed.
@@ -50,64 +52,66 @@ Conforming Pub/Sub implementations **MUST** implement the following pub/sub rela
 
     * `message` a String with containing the data to be published.
 
-    * `engine` (optional) routed the publish method to the specified Pub/Sub Engine (see later on). If none is specified, the default engine should be used.
+    * `engine` routes the publish method to the specified Pub/Sub Engine (see later on). If none is specified, the default engine should be used. If `false` is specified, the message should be forwarded to all subscribed clients.
 
     The `publish` method must return `true` if a publication was scheduled (not necessarily performed). If it's already known that the publication would fail, the method should return `false`.
 
     An implementation **MUST** call the relevant PubSubEngine's `publish` method after performing any internal book keeping logic. If `engine` is `nil`, the default PubSubEngine should be called. If `engine` is `false`, the implementation **MUST** forward the published message to the actual clients (if any).
 
-    A global alias for this method (allowing it to be accessed from outside active connections) should be defined as `Rack::PubSub.publish`.
+    A global alias for this method (allowing it to be accessed from outside active connections) **MAY** be defined as `Rack::PubSub.publish`.
 
-Implementations **MUST** implement the following methods:
+Implementations **MUST** implement the following methods in one of their public classes / modules (iodine implements these under `Iodine::PubSub`):
 
-* `Rack::PubSub.register(engine)` where `engine` is a PubSubEngine object as described in this specification.
+* `attach(engine)` where `engine` is a `PubSubEngine` object, as described in this specification.
 
-    When a pub/sub engine is registered, the implementation **MUST** inform the engine of any existing or future subscriptions.
+    When a pub/sub engine is attached, the implementation **MUST** inform the engine of any existing or future subscriptions.
 
     The implementation **MUST** call the engine's `subscribe` callback for each existing (and future) subscription.
 
-* `Rack::PubSub.deregister(engine)` where `engine` is a PubSubEngine object as described in this specification.
+    The implementation **MUST** allow multiple "engines" to be attached when multiple calls to `attach` are made.
 
-    Removes an engine from the pub/sub registration. The opposit of 
+* `detach(engine)` where `engine` is a PubSubEngine object as described in this specification.
 
-* `Rack::PubSub.default_engine = engine` sets a default pub/sub engine, where `engine` is a PubSubEngine object as described in this specification.
+    Removes an engine from the pub/sub system. The opposite of `attach`.
 
-    Implementations **MUST** forward any `publish` method calls to the default pub/sub engine.
+* `default = engine` sets a default pub/sub engine, where `engine` is a PubSubEngine object as described in this specification.
 
-* `Rack::PubSub.default_engine` returns the current default pub/sub engine, where the engine is a PubSubEngine object as described in this specification.
+    Implementations **MUST** forward any `publish` method calls to the default pub/sub engine, unless an `engine` is specified in arguments passes to the `publish` method.
 
-* `Rack::PubSub.reset(engine)` where `engine` is a PubSubEngine object as described in this specification.
+* `default` returns the current default pub/sub engine, where the engine is a PubSubEngine object as described in this specification.
+
+* `reset(engine)` where `engine` is a PubSubEngine object as described in this specification.
 
     Implementations **MUST** behave as if the engine was newly registered and (re)inform the engine of any existing subscriptions by calling engine's `subscribe` callback for each existing subscription.
 
-Implementations **MAY** implement pub/sub internally (in which case the `pubsub_default` engine is the server itself or a server's module).
+Implementations **MAY** implement pub/sub internally (in which case the `default` engine is the server itself or a server's module).
 
 However, servers **MUST** support external pub/sub "engines" as described above, using PubSubEngine objects.
 
-PubSubEngine objects **MUST** implement the following methods:
+`PubSubEngine` objects **MUST** implement the following methods:
 
-* `subscribe(channel, as=nil)` this method performs the subscription to the specified channel.
+* `subscribe(channel, match=nil)` this method performs the subscription to the specified channel.
 
-    If `as` is a Symbol that the engine recognizes (i.e., `:redis`, `:nats`, etc'), the engine should behave accordingly. i.e., the value `:redis` on a Redis engine will invoke the PSUBSCRIBE Redis command.
+    If `match` is a Symbol that the engine recognizes (i.e., `:redis`, `:nats`, etc'), the engine should behave accordingly. i.e., the value `:redis` on a Redis engine will invoke the PSUBSCRIBE Redis command.
 
     The method must return `true` if a subscription was scheduled (or performed) or `false` if the subscription is known to fail.
 
     This method will be called by the server (for each registered engine). The engine may assume that the method would never be called directly by an application.
 
-* `unsubscribe(channel, as=nil)` this method performs closes the subscription to the specified channel.
+* `unsubscribe(channel, match=nil)` this method performs closes the subscription to the specified channel.
 
     The method's semantics are similar to `subscribe`.
 
     This method will be called by the server (for each registered engine). The engine may assume that the method would never be called directly by an application.
 
-* `publish(channel, message)` where both `channel` and `message` are String object.
+* `publish(channel, message)` where both `channel` and `message` are String objects.
 
     This method will be called by the server when a message is published using the engine.
 
-    The engine **MUST** assume that the method might called directly by an application.
+    The engine **MUST** assume that the method might get called directly by an application.
 
-When a PubSubEngine object receives a published message, it should call:
+When a PubSubEngine object receives a published message, it *should* call:
 
 ```ruby
-Rack::PubSub.publish channel: channel, message: message, engine: false
+Foo::PubSub.publish channel, message, false
 ```
