@@ -327,7 +327,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
   fio_cli_start(
       argc, (const char **)argv, 0, -1, StringValueCStr(desc),
       "\x1B[4mAddress Binding:\x1B[0m", FIO_CLI_TYPE_PRINT,
-      "-bind -b -address address to listen to. defaults any available.",
+      "-bind -b -address address to listen to. defaults to any available.",
       "-port -p port number to listen to. defaults port 3000", FIO_CLI_TYPE_INT,
       "\n\x1B[4mConcurrency:\x1B[0m", FIO_CLI_TYPE_PRINT,
       "-workers -w number of processes to use.", FIO_CLI_TYPE_INT,
