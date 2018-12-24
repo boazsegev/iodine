@@ -326,13 +326,13 @@ static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
   /* Levarage the facil.io CLI library */
   fio_cli_start(
       argc, (const char **)argv, 0, -1, StringValueCStr(desc),
-      "\x1B[4mAddress Binding:\x1B[0m", FIO_CLI_TYPE_PRINT,
+      "Address Binding:", FIO_CLI_TYPE_PRINT,
       "-bind -b -address address to listen to. defaults to any available.",
       "-port -p port number to listen to. defaults port 3000", FIO_CLI_TYPE_INT,
-      "\n\x1B[4mConcurrency:\x1B[0m", FIO_CLI_TYPE_PRINT,
+      "Concurrency:", FIO_CLI_TYPE_PRINT,
       "-workers -w number of processes to use.", FIO_CLI_TYPE_INT,
       "-threads -t number of threads per process.", FIO_CLI_TYPE_INT,
-      "\n\x1B[4mHTTP Server:\x1B[0m", FIO_CLI_TYPE_PRINT,
+      "HTTP Server:", FIO_CLI_TYPE_PRINT,
       "-public -www public folder, for static file service.",
       "-log -v HTTP request logging.", FIO_CLI_TYPE_BOOL,
       "-keep-alive -k -tout HTTP keep-alive timeout in seconds (0..255). "
@@ -343,14 +343,13 @@ static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
       FIO_CLI_TYPE_INT,
       "-max-header -maxhd header limit per HTTP request in Kb."
       " Default: 32Kb.",
-      FIO_CLI_TYPE_INT, "\n\x1B[4mWebSocket Server:\x1B[0m", FIO_CLI_TYPE_PRINT,
+      FIO_CLI_TYPE_INT, "WebSocket Server:", FIO_CLI_TYPE_PRINT,
       "-max-msg -maxms incoming WebSocket message limit in Kb. "
       "Default: 250Kb",
-      FIO_CLI_TYPE_INT, "\n\x1B[4mConnecting Iodine to Redis:\x1B[0m",
-      FIO_CLI_TYPE_PRINT,
+      FIO_CLI_TYPE_INT, "Connecting Iodine to Redis:", FIO_CLI_TYPE_PRINT,
       "-redis -r an optional Redis URL server address. Default: none.",
       "-redis-ping -rp websocket ping interval (0..255). Default: 300s",
-      FIO_CLI_TYPE_INT, "\n\x1B[4mMisc:\x1B[0m", FIO_CLI_TYPE_PRINT,
+      FIO_CLI_TYPE_INT, "Misc:", FIO_CLI_TYPE_PRINT,
       "-warmup --preload warm up the application. CAREFUL! with workers.",
       FIO_CLI_TYPE_BOOL,
       "-verbosity -V 0..5 server verbosity level. Default: 4",

@@ -196,7 +196,7 @@ error: /* handle errors*/
           (int)arg.len, arg.data, arg.len ? "with value" : "",
           value ? (value[0] ? value : "(empty)") : "(null)");
 print_help:
-  fprintf(stderr, "\n%s\n\n",
+  fprintf(stderr, "\n%s\n",
           parser->description ? parser->description
                               : "This application accepts any of the following "
                                 "possible arguments:");
@@ -214,7 +214,7 @@ print_help:
     type = FIO_CLI_TYPE_STRING;
     switch ((intptr_t)pos[1]) {
     case /* FIO_CLI_TYPE_PRINT */ 0x4:
-      fprintf(stderr, "%s\n", pos[0]);
+      fprintf(stderr, "\n\x1B[4m%s\x1B[0m\n", pos[0]);
       pos += 2;
       continue;
 

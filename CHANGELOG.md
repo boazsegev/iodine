@@ -8,7 +8,15 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.15
 
-**Fix**: fixed some errors in the documentation and added a missing deprecation notice.
+**Fix**: (`fio`) fixed a minor memory leak in cluster mode, caused by the root process not freeing the hash map used for child process subscription monitoring (only effected hot restarts).
+
+**Fix**: (`fio`) fixed superfluous and potentially erroneous pub/sub engine callback calls to `unsubscribe`, caused by (mistakingly) reporting filter channel closure.
+
+**Fix**: (`http/1.1`) avoid processing further requests if the connection was closed.
+
+**Fix**: (`iodine`) fixed some errors in the documentation and added a missing deprecation notice.
+
+**Update**: (`fio`) updated the automatic concurrency calculations to leave resources for the system when a negative value is provided (was only available for worker count calculations, now available for thread count as well).
 
 #### Change log v.0.7.14
 
