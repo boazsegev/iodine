@@ -507,25 +507,26 @@ require 'iodine'
 
 # an echo protocol with asynchronous notifications.
 class EchoProtocol
-  # `on_message` is an optional alternative to the `on_data` callback.
-  # `on_message` has a 1Kb buffer that recycles itself for memory optimization.
+  # `on_message` is called when data is available.
   def on_message client, buffer
     # writing will never block and will use a buffer written in C when needed.
     client.write buffer
     # close will be performed only once all the data in the write buffer
     # was sent. use `force_close` to close early.
     client.close if buffer =~ /^bye[\r\n]/i
-    # run asynchronous tasks using the thread pool
-    Iodine.run do
-      sleep 1
-      puts "Echoed data: #{buffer}"
+    # run asynchronous tasks... after a set number of milliseconds
+    Iodine.run_after(1000) do
+      # or schedule the task immediately
+      Iodine.run do
+        puts "Echoed data: #{buffer}"
+      end
     end
   end
 end
 
 # listen on port 3000 for the echo protocol.
 Iodine.listen(port: "3000") { EchoProtocol.new }
-Iodine.threads = 4
+Iodine.threads = 1
 Iodine.workers = 1
 Iodine.start
 ```
