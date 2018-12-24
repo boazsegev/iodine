@@ -65,12 +65,12 @@ module Iodine
     def self.patch_rack
       begin
         require 'rack'
-      rescue LoadError => e
+      rescue LoadError
       end
-    ::Rack::Utils.class_eval do
-      Iodine::Base::MonkeyPatch::RackUtils.methods(false).each do |m|
-        ::Rack::Utils.define_singleton_method(m,
-              Iodine::Base::MonkeyPatch::RackUtils.instance_method(m) )
+      ::Rack::Utils.class_eval do
+        Iodine::Base::MonkeyPatch::RackUtils.methods(false).each do |m|
+          ::Rack::Utils.define_singleton_method(m,
+                Iodine::Base::MonkeyPatch::RackUtils.instance_method(m) )
         end
       end
     end
