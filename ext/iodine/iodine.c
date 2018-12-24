@@ -300,7 +300,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
     return Qnil;
   }
   /* Copy the Ruby ARGV to a C valid ARGV */
-  int argc = (int)rb_array_len(ARGV) + 1;
+  int argc = (int)RARRAY_LEN(ARGV) + 1;
   if (argc <= 1) {
     FIO_LOG_DEBUG("CLI: No arguments to parse...\n");
     return Qnil;
