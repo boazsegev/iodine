@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.16
+
+**Optimization**: (`Iodine::Mustache`) optimized worst case scenario seeking by seeking Symbols before Strings, which improved seeking times.
+
 #### Change log v.0.7.15
 
 **Fix**: (`fio`) fixed a minor memory leak in cluster mode, caused by the root process not freeing the hash map used for child process subscription monitoring (only effected hot restarts).

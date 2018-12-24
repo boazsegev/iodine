@@ -1,7 +1,7 @@
 module Iodine
   # Iodine includes a safe and fast Mustache templating engine.
   #
-  # The engine is also faster and simpler than the official and feature richer Ruby engine.
+  # The engine is simpler and safer to use (and often faster) than the official and feature richer Ruby engine.
   #
   # Note: {Iodine::Mustache} behaves differently than the official Ruby templating engine in a number of ways:
   #
@@ -19,7 +19,7 @@ module Iodine
   #
   # Iodine Mustache's engine was designed to play best with basic data structures, such as results from the {Iodine::JSON} parser.
   #
-  # Hash data is tested for String keys before being tested for Symbol keys and methods. This means that `"key"` has precedence over `:key`.
+  # Hash data is tested for Symbol keys before being tested for String keys and methods. This means that `:key` has precedence over `"key"`.
   #
   # Note: Although using methods as "keys" (or argument names) is supported, no Ruby code is evaluated.
   #

@@ -64,17 +64,20 @@ static inline VALUE fiobj_mustache_find_obj_absolute(VALUE udata,
     }
     return Qnil;
   }
-  /* search by String */
-  VALUE key = rb_str_new(name, name_len);
-  tmp = rb_hash_aref(udata, key);
-  if (tmp != Qnil)
-    return tmp;
   /* search by Symbol */
   ID name_id = rb_intern2(name, name_len);
-  key = rb_id2sym(name_id);
-  tmp = rb_hash_aref(udata, key);
+  VALUE key = ID2SYM(name_id);
+  tmp = rb_hash_lookup2(udata, key, Qundef);
+  if (tmp != Qundef)
+    return tmp;
+  /* search by String */
+  key = rb_sym2str(key);
+  tmp = rb_hash_lookup2(udata, key, Qundef);
+  if (tmp != Qundef)
+    return tmp;
   /* search by method */
-  if (tmp == Qnil && rb_respond_to(udata, name_id)) {
+  tmp = Qnil;
+  if (rb_respond_to(udata, name_id)) {
     tmp = IodineCaller.call(udata, name_id);
   }
 
