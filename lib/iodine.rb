@@ -152,7 +152,7 @@ Iodine.on_state(:after_fork)  do
 end
 
 ### Parse CLI for default HTTP settings
-Iodine::Base::CLI.parse("Iodine's HTTP/WebSocket server version #{Iodine::VERSION}\r\n\r\nUse:\r\n    iodine <options> <filename>\r\n\r\nBoth <options> and <filename> are optional. i.e.,:\r\n    iodine -p 0 -b /tmp/my_unix_sock\r\n    iodine -p 8080 path/to/app/conf.ru\r\n    iodine -p 8080 -w 4 -t 16\r\n    iodine -w -1 -t 4 -r redis://usr:pass@localhost:6379/\r\n")
+Iodine::Base::CLI.parse("Iodine's HTTP/WebSocket server version #{Iodine::VERSION}\r\n\r\nUse:\r\n    iodine <options> <filename>\r\n\r\nBoth <options> and <filename> are optional. i.e.,:\r\n    iodine -p 0 -b /tmp/my_unix_sock\r\n    iodine -p 8080 path/to/app/conf.ru\r\n    iodine -p 8080 -w 4 -t 16\r\n    iodine -w -1 -t 4 -r redis://usr:pass@localhost:6379/")
 
 ### Initialize Redis if set in CLI
 Iodine::PubSub.default = Iodine::PubSub::Redis.new(Iodine::DEFAULT_HTTP_ARGS[:redis_], ping: Iodine::DEFAULT_HTTP_ARGS[:redis_ping_]) if Iodine::DEFAULT_HTTP_ARGS[:redis_]
