@@ -286,13 +286,15 @@ CLI parser (Ruby's OptParser is more limiting than I knew...)
  *
  * @params [String] desc a String containg the iodine server's description.
  */
-static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
+static VALUE iodine_cli_parse(VALUE self) {
   (void)self;
-  Check_Type(desc, T_STRING);
   VALUE ARGV = rb_get_argv();
   VALUE ret = Qtrue;
   VALUE defaults = iodine_default_args;
-  if (!defaults || !ARGV || TYPE(ARGV) != T_ARRAY || TYPE(defaults) != T_HASH) {
+  VALUE iodine_version = rb_const_get(IodineModule, rb_intern("VERSION"));
+  char desc[1024];
+  if (!defaults || !ARGV || TYPE(ARGV) != T_ARRAY || TYPE(defaults) != T_HASH ||
+      TYPE(iodine_version) != T_STRING || RSTRING_LEN(iodine_version) > 512) {
     FIO_LOG_ERROR("CLI parsing initialization error "
                   "ARGV=%p, Array?(%d), defaults == %p (%d)",
                   (void *)ARGV, (int)(TYPE(ARGV) == T_ARRAY), (void *)defaults,
@@ -324,15 +326,29 @@ static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
     argv[i][s.len] = 0;
   }
   /* Levarage the facil.io CLI library */
+  memcpy(desc, "Iodine's HTTP/WebSocket server version ", 39);
+  memcpy(desc + 39, StringValueCStr(iodine_version),
+         RSTRING_LEN(iodine_version));
+  memcpy(desc + 39 + RSTRING_LEN(iodine_version),
+         "\r\n\r\nUse:\r\n    iodine <options> <filename>\r\n\r\n"
+         "Both <options> and <filename> are optional. i.e.,:\r\n"
+         "    iodine -p 0 -b /tmp/my_unix_sock\r\n"
+         "    iodine -p 8080 path/to/app/conf.ru\r\n"
+         "    iodine -p 8080 -w 4 -t 16\r\n"
+         "    iodine -w -1 -t 4 -r redis://usr:pass@localhost:6379/",
+         263);
+  desc[39 + 263 + RSTRING_LEN(iodine_version)] = 0;
   fio_cli_start(
-      argc, (const char **)argv, 0, -1, StringValueCStr(desc),
-      "Address Binding:", FIO_CLI_TYPE_PRINT,
+      argc, (const char **)argv, 0, -1, desc,
+      "Address Binding:", FIO_CLI_TYPE_PRINT_HEADER,
       "-bind -b -address address to listen to. defaults to any available.",
       "-port -p port number to listen to. defaults port 3000", FIO_CLI_TYPE_INT,
-      "Concurrency:", FIO_CLI_TYPE_PRINT,
+      "\t\t\x1B[4mNote\x1B[0m: to bind to a Unix socket, "
+      "set \x1B[1mport\x1B[0m to 0.",
+      FIO_CLI_TYPE_PRINT, "Concurrency:", FIO_CLI_TYPE_PRINT_HEADER,
       "-workers -w number of processes to use.", FIO_CLI_TYPE_INT,
       "-threads -t number of threads per process.", FIO_CLI_TYPE_INT,
-      "HTTP Server:", FIO_CLI_TYPE_PRINT,
+      "HTTP Server:", FIO_CLI_TYPE_PRINT_HEADER,
       "-public -www public folder, for static file service.",
       "-log -v HTTP request logging.", FIO_CLI_TYPE_BOOL,
       "-keep-alive -k -tout HTTP keep-alive timeout in seconds (0..255). "
@@ -343,17 +359,19 @@ static VALUE iodine_cli_parse(VALUE self, VALUE desc) {
       FIO_CLI_TYPE_INT,
       "-max-header -maxhd header limit per HTTP request in Kb."
       " Default: 32Kb.",
-      FIO_CLI_TYPE_INT, "WebSocket Server:", FIO_CLI_TYPE_PRINT,
+      FIO_CLI_TYPE_INT, "WebSocket Server:", FIO_CLI_TYPE_PRINT_HEADER,
       "-max-msg -maxms incoming WebSocket message limit in Kb. "
       "Default: 250Kb",
-      FIO_CLI_TYPE_INT, "Connecting Iodine to Redis:", FIO_CLI_TYPE_PRINT,
+      FIO_CLI_TYPE_INT,
+      "Connecting Iodine to Redis:", FIO_CLI_TYPE_PRINT_HEADER,
       "-redis -r an optional Redis URL server address. Default: none.",
       "-redis-ping -rp websocket ping interval (0..255). Default: 300s",
-      FIO_CLI_TYPE_INT, "Misc:", FIO_CLI_TYPE_PRINT,
+      FIO_CLI_TYPE_INT, "Misc:", FIO_CLI_TYPE_PRINT_HEADER,
       "-warmup --preload warm up the application. CAREFUL! with workers.",
       FIO_CLI_TYPE_BOOL,
       "-verbosity -V 0..5 server verbosity level. Default: 4",
       FIO_CLI_TYPE_INT);
+
   /* copy values from CLI library to iodine */
   if (fio_cli_get("-V")) {
     int level = fio_cli_get_i("-V");
@@ -472,7 +490,7 @@ void Init_iodine(void) {
   rb_define_module_function(IodineModule, "worker?", iodine_worker_is, 0);
 
   // register CLI methods
-  rb_define_module_function(IodineCLIModule, "parse", iodine_cli_parse, 1);
+  rb_define_module_function(IodineCLIModule, "parse", iodine_cli_parse, 0);
 
   // initialize Object storage for GC protection
   iodine_storage_init();

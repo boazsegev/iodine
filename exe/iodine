@@ -33,7 +33,9 @@ module Iodine
             puts "         Running only static file service."
             opt = ::Rack::Server::Options.new.parse!([])
           else
-            puts cli_parser
+            puts "\nERROR: Couldn't run Ruby application, check command line arguments."
+            ARGV << "-?"
+            Iodine::Base::CLI.parse
             exit(0);
           end
         end
