@@ -340,37 +340,36 @@ static VALUE iodine_cli_parse(VALUE self) {
   desc[39 + 263 + RSTRING_LEN(iodine_version)] = 0;
   fio_cli_start(
       argc, (const char **)argv, 0, -1, desc,
-      "Address Binding:", FIO_CLI_TYPE_PRINT_HEADER,
+      FIO_CLI_PRINT_HEADER("Address Binding:"),
       "-bind -b -address address to listen to. defaults to any available.",
-      "-port -p port number to listen to. defaults port 3000", FIO_CLI_TYPE_INT,
-      "\t\t\x1B[4mNote\x1B[0m: to bind to a Unix socket, "
-      "set \x1B[1mport\x1B[0m to 0.",
-      FIO_CLI_TYPE_PRINT, "Concurrency:", FIO_CLI_TYPE_PRINT_HEADER,
-      "-workers -w number of processes to use.", FIO_CLI_TYPE_INT,
-      "-threads -t number of threads per process.", FIO_CLI_TYPE_INT,
-      "HTTP Server:", FIO_CLI_TYPE_PRINT_HEADER,
-      "-public -www public folder, for static file service.",
-      "-log -v HTTP request logging.", FIO_CLI_TYPE_BOOL,
-      "-keep-alive -k -tout HTTP keep-alive timeout in seconds (0..255). "
-      "Default: 40s",
-      FIO_CLI_TYPE_INT, "-ping websocket ping interval (0..255). Default: 40s",
-      FIO_CLI_TYPE_INT,
-      "-max-body -maxbd HTTP upload limit in Mega-Bytes. Default: 50Mb",
-      FIO_CLI_TYPE_INT,
-      "-max-header -maxhd header limit per HTTP request in Kb."
-      " Default: 32Kb.",
-      FIO_CLI_TYPE_INT, "WebSocket Server:", FIO_CLI_TYPE_PRINT_HEADER,
-      "-max-msg -maxms incoming WebSocket message limit in Kb. "
-      "Default: 250Kb",
-      FIO_CLI_TYPE_INT,
-      "Connecting Iodine to Redis:", FIO_CLI_TYPE_PRINT_HEADER,
-      "-redis -r an optional Redis URL server address. Default: none.",
-      "-redis-ping -rp websocket ping interval (0..255). Default: 300s",
-      FIO_CLI_TYPE_INT, "Misc:", FIO_CLI_TYPE_PRINT_HEADER,
-      "-warmup --preload warm up the application. CAREFUL! with workers.",
-      FIO_CLI_TYPE_BOOL,
-      "-verbosity -V 0..5 server verbosity level. Default: 4",
-      FIO_CLI_TYPE_INT);
+      FIO_CLI_INT("-port -p port number to listen to. defaults port 3000"),
+      FIO_CLI_PRINT("\t\t\x1B[4mNote\x1B[0m: to bind to a Unix socket, set "
+                    "\x1B[1mport\x1B[0m to 0."),
+      FIO_CLI_PRINT_HEADER("Concurrency:"),
+      FIO_CLI_INT("-workers -w number of processes to use."),
+      FIO_CLI_INT("-threads -t number of threads per process."),
+      FIO_CLI_PRINT_HEADER("HTTP Settings:"),
+      FIO_CLI_STRING("-public -www public folder, for static file service."),
+      FIO_CLI_BOOL("-log -v HTTP request logging."),
+      FIO_CLI_INT("-keep-alive -k -tout HTTP keep-alive timeout in seconds "
+                  "(0..255). Default: 40s"),
+      FIO_CLI_INT("-ping websocket ping interval (0..255). Default: 40s"),
+      FIO_CLI_INT(
+          "-max-body -maxbd HTTP upload limit in Mega-Bytes. Default: 50Mb"),
+      FIO_CLI_INT("-max-header -maxhd header limit per HTTP request in Kb. "
+                  "Default: 32Kb."),
+      FIO_CLI_PRINT_HEADER("WebSocket Settings:"),
+      FIO_CLI_INT("-max-msg -maxms incoming WebSocket message limit in Kb. "
+                  "Default: 250Kb"),
+      FIO_CLI_PRINT_HEADER("Connecting Iodine to Redis:"),
+      FIO_CLI_STRING(
+          "-redis -r an optional Redis URL server address. Default: none."),
+      FIO_CLI_INT(
+          "-redis-ping -rp websocket ping interval (0..255). Default: 300s"),
+      FIO_CLI_PRINT_HEADER("Misc:"),
+      FIO_CLI_BOOL(
+          "-warmup --preload warm up the application. CAREFUL! with workers."),
+      FIO_CLI_INT("-verbosity -V 0..5 server verbosity level. Default: 4"));
 
   /* copy values from CLI library to iodine */
   if (fio_cli_get("-V")) {
