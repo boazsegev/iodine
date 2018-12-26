@@ -7,9 +7,13 @@
 
 [![Logo](https://github.com/boazsegev/iodine/raw/master/logo.png)](https://github.com/boazsegev/iodine)
 
-Iodine is a fast concurrent web server for real-time Ruby applications, with native support for:
+I believe that network concerns should be separated from application concerns - application developers really shouldn't need to worry about the transport layer.
 
-* Websockets and EventSource (SSE);
+And I know that these network concerns are more than just about the web server. Which is why iodine is more than just an HTTP server.
+
+Iodine is a fast concurrent web server for real-time Ruby applications, but it's also so much more. Iodine includes native support for:
+
+* WebSockets and EventSource (SSE);
 * Pub/Sub (with optional Redis Pub/Sub scaling);
 * Static file service (with automatic `gzip` support for pre-compressed versions);
 * HTTP/1.1 keep-alive and pipelining;
@@ -25,9 +29,9 @@ Iodine is an **evented** framework with a simple API that ports much of the [C f
 
 * Iodine can handle **thousands of concurrent connections** (tested with more then 20K connections on Linux)!
 
-* Iodine is ideal for **Linux/Unix** based systems (i.e. macOS, Ubuntu, FreeBSD etc'), which are ideal for evented IO (while Windows and Solaris are better at IO *completion* events, which are totally different).
+* Iodine is ideal for **Linux/Unix** based systems (i.e. macOS, Ubuntu, FreeBSD etc'), which are ideal for evented IO (while Windows and Solaris are better at IO *completion* events, which are very different).
 
-Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but Rack requires Ruby 2.2.2, and so iodine matches this requirement.
+Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but CI tests start at Ruby 2.2.2.
 
 ## Iodine - a fast & powerful HTTP + Websockets server with native Pub/Sub
 
@@ -63,13 +67,11 @@ bundler exec iodine -p $PORT -t 16 -w 1
 
 ### Heap Fragmentation Protection
 
-Iodine includes a network oriented custom memory allocator, with very high performance.
+Iodine includes a fast, network oriented, custom memory allocator, optimizing away some of the work usually placed on the Ruby Garbage Collector (GC).
 
-This allows the heap to be divided, naturally, into long-living objects (allocated normally) and short living objects (allocated using the iodine allocator).
+This approach helps to minimize heap fragmentation for long running processes, by grouping many short-lived objects into a common memory space.
 
-This approach helps to minimize heap fragmentation for long running processes.
-
-It's still recommended to consider [jemalloc](http://jemalloc.net) or other allocators to mitigate the heap fragmentation that would be caused by Ruby's internal memory management.
+It's still recommended to consider [jemalloc](http://jemalloc.net) or other allocators that also help mitigate heap fragmentation issues.
 
 ### Static file serving support
 
@@ -301,9 +303,9 @@ bundler exec iodine -p $PORT -v  2>&1
 
 ### Built-in support for Sequel and ActiveRecord
 
-It's a well known fact that Database connections require special attention when using `fork`-ing servers (multi-process servers) such as Puma, Passenger and iodine.
+It's a well known fact that [Database connections require special attention when using `fork`-ing servers (multi-process servers)](https://devcenter.heroku.com/articles/concurrency-and-database-connections#multi-process-servers) such as Puma, Passenger (Pro) and iodine.
 
-However, it's also true that these issues go unnoticed by many developers, since application developers are (rightfully) focused on the application rather than the infrastructure.
+However, it's also true that [these issues go unnoticed by many developers](https://stackoverflow.com/a/45570999/4025095), since application developers are (rightfully) focused on the application rather than the infrastructure.
 
 With iodine, there's no need to worry.
 
