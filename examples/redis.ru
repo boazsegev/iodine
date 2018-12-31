@@ -2,8 +2,8 @@
 #
 # Run this applications on two ports, in two terminals to see the synchronization is action:
 #
-#      REDIS_URL=redis://localhost:6379/0 iodine -t 1 -p 3000 redis.ru
-#      REDIS_URL=redis://localhost:6379/0 iodine -t 1 -p 3030 redis.ru
+#      IODINE_REDIS_URL=redis://localhost:6379/0 iodine -t 1 -p 3000 redis.ru
+#      IODINE_REDIS_URL=redis://localhost:6379/0 iodine -t 1 -p 3030 redis.ru
 #
 # Or:
 #
