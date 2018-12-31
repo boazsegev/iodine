@@ -8,6 +8,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.16
 
+**Security**: (`fio`) security fixes from the facil.io core library (updated to 0.7.0.beta6).
+
+**Update**: (`iodine`) better Redis support from CLI and environment (by setting the `REDIS_URL` environment variable).
+
 **Optimization**: (`Iodine::Mustache`) optimized worst case scenario seeking by seeking Symbols before Strings, which improved seeking times.
 
 #### Change log v.0.7.15

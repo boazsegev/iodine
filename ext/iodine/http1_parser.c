@@ -382,8 +382,9 @@ re_eval:
   /* request / response line */
   case 0:
     /* clear out any leadinng white space */
-    while (*start == '\r' || *start == '\n' || *start == ' ' || *start == 0) {
-      start++;
+    while ((start < stop) &&
+           (*start == '\r' || *start == '\n' || *start == ' ' || *start == 0)) {
+      ++start;
     }
     end = start;
     /* make sure the whole line is available*/
@@ -407,7 +408,7 @@ re_eval:
   /* headers */
   case 1:
     do {
-      if (start + 1 >= stop)
+      if (start >= stop)
         return CONSUMED; /* buffer ended on header line */
       if (*start == '\r' || *start == '\n') {
         goto finished_headers; /* empty line, end of headers */

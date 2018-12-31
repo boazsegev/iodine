@@ -299,9 +299,18 @@ print_help:
   exit(0);
 }
 
+static void fio_cli_end_promise(void *ignr_) {
+  /* make sure fio_cli_end is called before facil.io exists. */
+  fio_cli_end();
+  (void)ignr_;
+}
+
 void fio_cli_start AVOID_MACRO(int argc, char const *argv[], int unnamed_min,
                                int unnamed_max, char const *description,
                                char const **names) {
+  static fio_lock_i run_once = FIO_LOCK_INIT;
+  if (!fio_trylock(&run_once))
+    fio_state_callback_add(FIO_CALL_AT_EXIT, fio_cli_end_promise, NULL);
   if (unnamed_max >= 0 && unnamed_max < unnamed_min)
     unnamed_max = unnamed_min;
   fio_cli_parser_data_s parser = {
@@ -388,6 +397,8 @@ char const *fio_cli_get(char const *name) {
 /** Returns the argument's value as an integer. */
 int fio_cli_get_i(char const *name) {
   char const *val = fio_cli_get(name);
+  if (!val)
+    return 0;
   int i = (int)fio_atol((char **)&val);
   return i;
 }

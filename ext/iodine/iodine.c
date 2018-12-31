@@ -413,6 +413,9 @@ static VALUE iodine_cli_parse(VALUE self) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("public")),
                  rb_str_new_cstr(fio_cli_get("-www")));
   }
+  if (!fio_cli_get("-redis") && getenv("REDIS_URL")) {
+    fio_cli_set("-redis", getenv("REDIS_URL"));
+  }
   if (fio_cli_get("-redis")) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("redis_")),
                  rb_str_new_cstr(fio_cli_get("-redis")));

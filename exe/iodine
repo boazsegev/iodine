@@ -1,5 +1,10 @@
 #!/usr/bin/env ruby
-require 'rack'
+begin
+  require 'rack'
+rescue LoadError
+  puts "ERROR: the iodine command-line utility requires the gem: rack."
+  exit(0)
+end
 require 'iodine'
 
 module Iodine
