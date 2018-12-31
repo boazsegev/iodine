@@ -255,20 +255,63 @@ Loading the template
 ***************************************************************************** */
 
 /**
-Loads a mustache template (and any partials).
+Loads the mustache template found in `:filename`. If `:template` is provided it
+will be used instead of reading the file's content.
+
+    Iodine::Mustache.new(filename, template = nil)
+
+When template data is provided, filename (if any) will only be used for partial
+template path resolution and the template data will be used for the template's
+content. This allows, for example, for front matter to be extracted before
+parsing the template.
 
 Once a template was loaded, it could be rendered using {render}.
+
+Accepts named arguments as well:
+
+    Iodine::Mustache.new(filename: "foo.mustache", template: "{{ bar }}")
+
 */
-static VALUE iodine_mustache_new(VALUE self, VALUE filename) {
+static VALUE iodine_mustache_new(int argc, VALUE *argv, VALUE self) {
+  VALUE filename = Qnil, template = Qnil;
+  if (argc == 1 && RB_TYPE_P(argv[0], T_HASH)) {
+    /* named arguments */
+    filename = rb_hash_aref(argv[0], filename_id);
+    template = rb_hash_aref(argv[0], template_id);
+  } else {
+    /* regular arguments */
+    if (argc == 0 || argc > 2)
+      rb_raise(rb_eArgError, "expecting 1..2 arguments or named arguments.");
+    filename = argv[0];
+    if (argc > 1) {
+      template = argv[1];
+    }
+  }
+  if (filename == Qnil && template == Qnil)
+    rb_raise(rb_eArgError, "missing both template contents and file name.");
+
+  if (template != Qnil)
+    Check_Type(template, T_STRING);
+  if (filename != Qnil)
+    Check_Type(filename, T_STRING);
+
+  fio_str_s str = FIO_STR_INIT;
+
   mustache_s **m = NULL;
   TypedData_Get_Struct(self, mustache_s *, &iodine_mustache_data_type, m);
   if (!m) {
     rb_raise(rb_eRuntimeError, "Iodine::Mustache allocation error.");
   }
-  Check_Type(filename, T_STRING);
+
   mustache_error_en err;
-  *m = mustache_load(.filename = RSTRING_PTR(filename),
-                     .filename_len = RSTRING_LEN(filename), .err = &err);
+  *m = mustache_load(.filename =
+                         (filename == Qnil ? NULL : RSTRING_PTR(filename)),
+                     .filename_len =
+                         (filename == Qnil ? 0 : RSTRING_LEN(filename)),
+                     .data = (template == Qnil ? NULL : RSTRING_PTR(template)),
+                     .data_len = (template == Qnil ? 0 : RSTRING_LEN(template)),
+                     .err = &err);
+
   if (!*m)
     goto error;
   return self;
@@ -548,7 +591,7 @@ void iodine_init_mustache(void) {
   */
   VALUE tmp = rb_define_class_under(IodineModule, "Mustache", rb_cData);
   rb_define_alloc_func(tmp, iodine_mustache_data_alloc_c);
-  rb_define_method(tmp, "initialize", iodine_mustache_new, 1);
+  rb_define_method(tmp, "initialize", iodine_mustache_new, -1);
   rb_define_method(tmp, "render", iodine_mustache_render, 1);
   rb_define_singleton_method(tmp, "render", iodine_mustache_render_klass, -1);
   // rb_define_module_function(tmp, "render", iodine_mustache_render_klass, 2);
