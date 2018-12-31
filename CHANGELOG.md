@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.17
+
+**Fix**: (`Iodine::Mustache`) fixed support for named argument, documentation and loading template from memory (rather than file) when creating a new `Iodine::Mustache` object.
+
 #### Change log v.0.7.16
 
 **Security**: (`fio`) security fixes from the facil.io core library (updated to 0.7.0.beta6).

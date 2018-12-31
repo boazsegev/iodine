@@ -29,9 +29,10 @@ module Iodine
   #     require 'mustache'
   #     require 'iodine'
   #
+  #     # Benchmark code was copied, in part, from:
+  #     #   https://github.com/mustache/mustache/blob/master/benchmarks/render_collection_benchmark.rb
+  #     # The test is, sadly, biased and doesn't test for missing elements, proc/method resolution or template partials.
   #     def benchmark_mustache
-  #       # benchmark code was copied, in part, from:
-  #       #   https://github.com/mustache/mustache/blob/master/benchmarks/render_collection_benchmark.rb
   #       template = """
   #       {{#products}}
   #         <div class='product_brick'>
@@ -52,14 +53,10 @@ module Iodine
   #       IO.write "test_template.mustache", template
   #       filename = "test_template.mustache"
   #
-  #       data_1 = {
-  #         products: [ {
-  #           :external_index=>"This <product> should've been \"properly\" escaped.",
-  #           :url=>"/products/7",
-  #           :image=>"products/product.jpg"
-  #         } ]
-  #       }
   #       data_1000 = {
+  #         products: []
+  #       }
+  #       data_1000_escaped = {
   #         products: []
   #       }
   #
@@ -69,13 +66,6 @@ module Iodine
   #           :url=>"/products/7",
   #           :image=>"products/product.jpg"
   #         }
-  #       end
-  #
-  #       data_1000_escaped = {
-  #         products: []
-  #       }
-  #
-  #       1000.times do
   #         data_1000_escaped[:products] << {
   #           :external_index=>"This <product> should've been \"properly\" escaped.",
   #           :url=>"/products/7",
@@ -86,14 +76,7 @@ module Iodine
   #       view = Mustache.new
   #       view.template = template
   #       view.render # Call render once so the template will be compiled
-  #       iodine_view = Iodine::Mustache.new(filename)
-  #
-  #       puts "Ruby Mustache rendering (and HTML escaping) results in:",
-  #            view.render(data_1), "",
-  #            "Notice that Iodine::Mustache rendering (and HTML escaping) results in agressive escaping:",
-  #            iodine_view.render(data_1), "", "----"
-  #
-  #       # return;
+  #       iodine_view = Iodine::Mustache.new(template: template)
   #
   #       Benchmark.ips do |x|
   #         x.report("Ruby Mustache render list of 1000") do |times|
