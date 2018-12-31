@@ -9,9 +9,9 @@
 
 static ID call_func_id;
 static ID to_s_func_id;
-static ID filename_id;
-static ID data_id;
-static ID template_id;
+static VALUE filename_id;
+static VALUE data_id;
+static VALUE template_id;
 /* *****************************************************************************
 C <=> Ruby Data allocation
 ***************************************************************************** */
@@ -288,7 +288,7 @@ static VALUE iodine_mustache_new(int argc, VALUE *argv, VALUE self) {
     }
   }
   if (filename == Qnil && template == Qnil)
-    rb_raise(rb_eArgError, "missing both template contents and file name.");
+    rb_raise(rb_eArgError, "need either template contents or file name.");
 
   if (template != Qnil)
     Check_Type(template, T_STRING);
@@ -455,7 +455,7 @@ static VALUE iodine_mustache_render_klass(int argc, VALUE *argv, VALUE self) {
     }
   }
   if (filename == Qnil && template == Qnil)
-    rb_raise(rb_eArgError, "missing both template contents and file name.");
+    rb_raise(rb_eArgError, "need either template contents or file name.");
 
   if (template != Qnil)
     Check_Type(template, T_STRING);
@@ -545,9 +545,12 @@ Initialize Iodine::Mustache
 void iodine_init_mustache(void) {
   call_func_id = rb_intern2("call", 4);
   to_s_func_id = rb_intern2("to_s", 4);
-  filename_id = rb_intern2("filename", 8);
-  data_id = rb_intern2("data", 4);
-  template_id = rb_intern2("template", 8);
+  filename_id = rb_id2sym(rb_intern2("filename", 8));
+  data_id = rb_id2sym(rb_intern2("data", 4));
+  template_id = rb_id2sym(rb_intern2("template", 8));
+  rb_global_variable(&filename_id);
+  rb_global_variable(&data_id);
+  rb_global_variable(&template_id);
   /**
   Iodine::Mustache offers a logicless mustache template engine with strict HTML
   escaping (more than the basic `"<>'$`).
