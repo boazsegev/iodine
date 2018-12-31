@@ -36,6 +36,7 @@ Feel free to copy, use and enjoy according to the license provided.
  * Cluster / Pub/Sub Middleware and Extensions ("Engines")
  *
  * Atomic Operations and Spin Locking Helper Functions
+ * Simple Constant Time Operations
  * Byte Swapping and Network Order
  *
  * Converting Numbers to Strings (and back)
@@ -109,7 +110,7 @@ Version and helper macros
 #define FIO_VERSION_MAJOR 0
 #define FIO_VERSION_MINOR 7
 #define FIO_VERSION_PATCH 0
-#define FIO_VERSION_BETA 4
+#define FIO_VERSION_BETA 6
 
 /* Automatically convert version data to a string constant - ignore these two */
 #define FIO_MACRO2STR_STEP2(macro) #macro
@@ -323,16 +324,16 @@ Memory pool / custom allocator for short lived objects
  * Allocates memory using a per-CPU core block memory pool.
  * Memory is zeroed out.
  *
- * Allocations above FIO_MEMORY_BLOCK_ALLOC_LIMIT (12,288 bytes when using 32Kb
- * blocks) will be redirected to `mmap`, as if `fio_mmap` was called.
+ * Allocations above FIO_MEMORY_BLOCK_ALLOC_LIMIT (16Kb when using 32Kb blocks)
+ * will be redirected to `mmap`, as if `fio_mmap` was called.
  */
 void *FIO_ALIGN_NEW fio_malloc(size_t size);
 
 /**
  * same as calling `fio_malloc(size_per_unit * unit_count)`;
  *
- * Allocations above FIO_MEMORY_BLOCK_ALLOC_LIMIT (12,288 bytes when using 32Kb
- * blocks) will be redirected to `mmap`, as if `fio_mmap` was called.
+ * Allocations above FIO_MEMORY_BLOCK_ALLOC_LIMIT (16Kb when using 32Kb blocks)
+ * will be redirected to `mmap`, as if `fio_mmap` was called.
  */
 void *FIO_ALIGN_NEW fio_calloc(size_t size_per_unit, size_t unit_count);
 
@@ -371,22 +372,6 @@ void *FIO_ALIGN_NEW fio_mmap(size_t size);
 void fio_malloc_after_fork(void);
 
 #undef FIO_ALIGN
-
-#if FIO_FORCE_MALLOC
-#define FIO_MALLOC(size) calloc((size), 1)
-#define FIO_CALLOC(size, units) calloc((size), (units))
-#define FIO_REALLOC(ptr, new_length, existing_data_length)                     \
-  realloc((ptr), (new_length))
-#define FIO_FREE free
-
-#else
-#define FIO_MALLOC(size) fio_malloc((size))
-#define FIO_CALLOC(size, units) fio_calloc((size), (units))
-#define FIO_REALLOC(ptr, new_length, existing_data_length)                     \
-  fio_realloc2((ptr), (new_length), (existing_data_length))
-#define FIO_FREE fio_free
-
-#endif
 
 /* *****************************************************************************
 
@@ -1128,12 +1113,12 @@ inline FIO_FUNC ssize_t fio_write(const intptr_t uuid, const void *buffer,
                                   const size_t length) {
   if (!length || !buffer)
     return 0;
-  void *cpy = FIO_MALLOC(length);
+  void *cpy = fio_malloc(length);
   if (!cpy)
     return -1;
   memcpy(cpy, buffer, length);
   return fio_write2(uuid, .data.buffer = cpy, .length = length,
-                    .after.dealloc = FIO_FREE);
+                    .after.dealloc = fio_free);
 }
 
 /**
@@ -1321,6 +1306,23 @@ typedef struct fio_rw_hook_s {
 
 /** Sets a socket hook state (a pointer to the struct). */
 int fio_rw_hook_set(intptr_t uuid, fio_rw_hook_s *rw_hooks, void *udata);
+
+/**
+ * Replaces an existing read/write hook with another from within a read/write
+ * hook callback.
+ *
+ * Does NOT call any cleanup callbacks.
+ *
+ * Replaces existing udata. Call with the existing udata to keep it.
+ *
+ * Returns -1 on error, 0 on success.
+ *
+ * Note: this function is marked as unsafe, since it should only be called from
+ *       within an existing read/write hook callback. Otherwise, data corruption
+ *       might occur.
+ */
+int fio_rw_hook_replace_unsafe(intptr_t uuid, fio_rw_hook_s *rw_hooks,
+                               void *udata);
 
 /** The default Read/Write hooks used for system Read/Write (udata == NULL). */
 extern const fio_rw_hook_s FIO_DEFAULT_RW_HOOKS;
@@ -1971,6 +1973,56 @@ FIO_FUNC inline void fio_reschedule_thread(void);
 
 /** Nanosleep the thread - a blocking throttle. */
 FIO_FUNC inline void fio_throttle_thread(size_t nano_sec);
+
+/* *****************************************************************************
+
+
+
+
+
+
+
+
+
+
+                         Simple Constant Time Operations
+                         ( boolean true / false and if )
+
+
+
+
+
+
+
+
+
+
+
+***************************************************************************** */
+
+/** Returns 1 if the expression is true (input isn't zero). */
+FIO_FUNC inline uintptr_t fio_ct_true(uintptr_t cond) {
+  // promise that the highest bit is set if any bits are set, than shift.
+  return ((cond | (0 - cond)) >> ((sizeof(cond) << 3) - 1));
+}
+
+/** Returns 1 if the expression is false (input is zero). */
+FIO_FUNC inline uintptr_t fio_ct_false(uintptr_t cond) {
+  // fio_ct_true returns only one bit, XOR will inverse that bit.
+  return fio_ct_true(cond) ^ 1;
+}
+
+/** Returns `a` if `cond` is boolean and true, returns b otherwise. */
+FIO_FUNC inline uintptr_t fio_ct_if(uint8_t cond, uintptr_t a, uintptr_t b) {
+  // b^(a^b) cancels b out. 0-1 => sets all bits.
+  return (b ^ ((0 - (cond & 1)) & (a ^ b)));
+}
+
+/** Returns `a` if `cond` isn't zero (uses fio_ct_true), returns b otherwise. */
+FIO_FUNC inline uintptr_t fio_ct_if2(uintptr_t cond, uintptr_t a, uintptr_t b) {
+  // b^(a^b) cancels b out. 0-1 => sets all bits.
+  return fio_ct_if(fio_ct_true(cond), a, b);
+}
 
 /* *****************************************************************************
 
@@ -2768,6 +2820,42 @@ FIO_FUNC inline int fio_trylock_dbg(fio_lock_i *lock, const char *file,
 
 
 
+                    Memory allocation macros for helper types
+
+
+
+
+
+
+***************************************************************************** */
+
+#undef FIO_MALLOC
+#undef FIO_CALLOC
+#undef FIO_REALLOC
+#undef FIO_FREE
+
+#if FIO_FORCE_MALLOC || FIO_FORCE_MALLOC_TMP
+#define FIO_MALLOC(size) calloc((size), 1)
+#define FIO_CALLOC(size, units) calloc((size), (units))
+#define FIO_REALLOC(ptr, new_length, existing_data_length)                     \
+  realloc((ptr), (new_length))
+#define FIO_FREE free
+
+#else
+#define FIO_MALLOC(size) fio_malloc((size))
+#define FIO_CALLOC(size, units) fio_calloc((size), (units))
+#define FIO_REALLOC(ptr, new_length, existing_data_length)                     \
+  fio_realloc2((ptr), (new_length), (existing_data_length))
+#define FIO_FREE fio_free
+#endif /* FIO_FORCE_MALLOC || FIO_FORCE_MALLOC_TMP */
+
+/* *****************************************************************************
+
+
+
+
+
+
                            Linked List Helpers
 
         exposes internally used inline helpers for linked lists
@@ -2960,7 +3048,7 @@ FIO_FUNC inline void *fio_ls_remove(fio_ls_s *node) {
   const void *ret = node->obj;
   node->next->prev = node->prev;
   node->prev->next = node->next;
-  free(node);
+  FIO_FREE(node);
   return (void *)ret;
 }
 
@@ -2969,11 +3057,8 @@ FIO_FUNC inline fio_ls_s *fio_ls_push(fio_ls_s *pos, const void *obj) {
   if (!pos)
     return NULL;
   /* prepare item */
-  fio_ls_s *item = (fio_ls_s *)malloc(sizeof(*item));
-  if (!item) {
-    perror("ERROR: simple list couldn't allocate memory");
-    exit(errno);
-  }
+  fio_ls_s *item = (fio_ls_s *)FIO_MALLOC(sizeof(*item));
+  FIO_ASSERT_ALLOC(item);
   *item = (fio_ls_s){.prev = pos->prev, .next = pos, .obj = obj};
   /* inject item */
   pos->prev->next = item;
@@ -3105,14 +3190,19 @@ typedef struct {
                .dealloc = FIO_FREE})
 
 /**
- * This macro allows the container to be initialized with existing data, as long
- * as it's memory was allocated using `fio_malloc`.
- *
- * The `capacity` value should exclude the NUL character (if exists).
+ * This macro allows the container to be initialized with existing static data,
+ * that shouldn't be freed.
  */
 #define FIO_STR_INIT_STATIC(buffer)                                            \
   ((fio_str_s){                                                                \
       .data = (char *)(buffer), .len = strlen((buffer)), .dealloc = NULL})
+
+/**
+ * This macro allows the container to be initialized with existing static data,
+ * that shouldn't be freed.
+ */
+#define FIO_STR_INIT_STATIC2(buffer, length)                                   \
+  ((fio_str_s){.data = (char *)(buffer), .len = (length), .dealloc = NULL})
 
 /**
  * Allocates a new fio_str_s object on the heap and initializes it.
@@ -3629,10 +3719,6 @@ String Implementation - Memory management
  * directly to `mmap` (due to their size, usually over 12KB).
  */
 #define ROUND_UP_CAPA2WORDS(num) (((num) + 1) | (sizeof(long double) - 1))
-// Smaller might be:
-//   ((((num) + 1) & (sizeof(long double) - 1))
-//        ? (((num) + 1) | (sizeof(long double) - 1))
-//        : (num))
 
 /**
  * Requires the String to have at least `needed` capacity. Returns the current
@@ -5908,5 +5994,6 @@ restart:
 #undef FIO_NAME_FROM_MACRO_STEP3
 #undef FIO_NAME_FREE
 #undef FIO_SET_NAME
+#undef FIO_FORCE_MALLOC_TMP
 
 #endif

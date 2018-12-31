@@ -1,14 +1,19 @@
 # This example implements a Redis pub/sub engine according to the Iodine::PubSub::Engine specifications.
 #
-# Run this applications on two ports, in two terminals to see the synchronization is action
+# Run this applications on two ports, in two terminals to see the synchronization is action:
 #
 #      REDIS_URL=redis://localhost:6379/0 iodine -t 1 -p 3000 redis.ru
 #      REDIS_URL=redis://localhost:6379/0 iodine -t 1 -p 3030 redis.ru
 #
+# Or:
+#
+#      iodine -t 1 -p 3000 redis.ru -redis redis://localhost:6379/0
+#      iodine -t 1 -p 3030 redis.ru -redis redis://localhost:6379/0
+#
 require 'iodine'
 # initialize the Redis engine for each Iodine process.
-if ENV["REDIS_URL"]
-  Iodine::PubSub.default = Iodine::PubSub::Redis.new(ENV["REDIS_URL"], ping: 10)
+if Iodine::DEFAULT_HTTP_ARGS[:redis_]
+  puts "* Redis support automatically detected."
 else
   puts "* No Redis, it's okay, pub/sub will support the process cluster."
 end
@@ -47,7 +52,7 @@ class WS_RedisPubSub
     client.publish "chat", "#{@name} entered the chat."
   end
   # send a message, letting the client know the server is suggunt down.
-  def on_shutdown client 
+  def on_shutdown client
     client.write "Server shutting down. Goodbye."
   end
   # perform the echo

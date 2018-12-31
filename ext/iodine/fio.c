@@ -5,9 +5,13 @@ License: MIT
 Feel free to copy, use and enjoy according to the license provided.
 ***************************************************************************** */
 
-#define FIO_INCLUDE_STR
-#define FIO_INCLUDE_LINKED_LIST
+#include <fio.h>
 
+#define FIO_INCLUDE_STR
+#include <fio.h>
+
+#define FIO_FORCE_MALLOC_TMP 1
+#define FIO_INCLUDE_LINKED_LIST
 #include <fio.h>
 
 #include <ctype.h>
@@ -2109,9 +2113,11 @@ static void deferred_on_ready(void *arg, void *arg2) {
 }
 
 static void deferred_on_data(void *uuid, void *arg2) {
-  if (!uuid_data(uuid).protocol || fio_is_closed((intptr_t)uuid)) {
+  if (fio_is_closed((intptr_t)uuid)) {
     return;
   }
+  if (!uuid_data(uuid).protocol)
+    goto no_protocol;
   fio_protocol_s *pr = protocol_try_lock(fio_uuid2fd(uuid), FIO_PR_LOCK_TASK);
   if (!pr) {
     if (errno == EBADF) {
@@ -2126,6 +2132,7 @@ static void deferred_on_data(void *uuid, void *arg2) {
     fio_poll_add_read(fio_uuid2fd((intptr_t)uuid));
   }
   return;
+
 postpone:
   if (arg2) {
     /* the event is being forced, so force rescheduling */
@@ -2134,6 +2141,11 @@ postpone:
     /* the protocol was locked, so there might not be any need for the event */
     fio_poll_add_read(fio_uuid2fd((intptr_t)uuid));
   }
+  return;
+
+no_protocol:
+  /* a missing protocol might still want to invoke the RW hook flush */
+  deferred_on_ready(uuid, arg2);
   return;
 }
 
@@ -2537,8 +2549,9 @@ static int fio_sock_write_buffer(int fd, fio_packet_s *packet) {
   if (written > 0) {
     packet->length -= written;
     packet->offset += written;
-    if (!packet->length)
+    if (!packet->length) {
       fio_sock_packet_rotate_unsafe(fd);
+    }
   }
   return written;
 }
@@ -2552,10 +2565,11 @@ static int fio_sock_write_from_fd(int fd, fio_packet_s *packet) {
     packet->offset += sent;
     packet->length -= sent;
   retry:
-    asked = (packet->length < BUFFER_FILE_READ_SIZE)
-                ? pread(packet->data.fd, buff, packet->length, packet->offset)
-                : pread(packet->data.fd, buff, BUFFER_FILE_READ_SIZE,
-                        packet->offset);
+    asked = pread(packet->data.fd, buff,
+                  ((packet->length < BUFFER_FILE_READ_SIZE)
+                       ? packet->length
+                       : BUFFER_FILE_READ_SIZE),
+                  packet->offset);
     if (asked <= 0)
       goto read_error;
     sent = fd_data(fd).rw_hooks->write(fd2uuid(fd), fd_data(fd).rw_udata, buff,
@@ -2784,7 +2798,7 @@ void fio_close(intptr_t uuid) {
     errno = EBADF;
     return;
   }
-  if (uuid_data(uuid).packet) {
+  if (uuid_data(uuid).packet || uuid_data(uuid).sock_lock) {
     uuid_data(uuid).close = 1;
     fio_poll_add_write(fio_uuid2fd(uuid));
     return;
@@ -2914,7 +2928,7 @@ size_t fio_flush_all(void) {
   if (!fio_data)
     return 0;
   size_t count = 0;
-  for (uintptr_t i = 0; i < fio_data->max_protocol_fd; ++i) {
+  for (uintptr_t i = 0; i <= fio_data->max_protocol_fd; ++i) {
     if ((fd_data(i).open || fd_data(i).packet) && fio_flush(fd2uuid(i)) > 0)
       ++count;
   }
@@ -2957,6 +2971,41 @@ const fio_rw_hook_s FIO_DEFAULT_RW_HOOKS = {
     .before_close = fio_hooks_default_before_close,
     .cleanup = fio_hooks_default_cleanup,
 };
+
+/**
+ * Replaces an existing read/write hook with another from within a read/write
+ * hook callback.
+ *
+ * Does NOT call any cleanup callbacks.
+ *
+ * Returns -1 on error, 0 on success.
+ */
+int fio_rw_hook_replace_unsafe(intptr_t uuid, fio_rw_hook_s *rw_hooks,
+                               void *udata) {
+  int replaced = -1;
+  uint8_t was_locked;
+  intptr_t fd = fio_uuid2fd(uuid);
+  if (!rw_hooks->read)
+    rw_hooks->read = fio_hooks_default_read;
+  if (!rw_hooks->write)
+    rw_hooks->write = fio_hooks_default_write;
+  if (!rw_hooks->flush)
+    rw_hooks->flush = fio_hooks_default_flush;
+  if (!rw_hooks->before_close)
+    rw_hooks->before_close = fio_hooks_default_before_close;
+  if (!rw_hooks->cleanup)
+    rw_hooks->cleanup = fio_hooks_default_cleanup;
+  /* protect against some fulishness... but not all of it. */
+  was_locked = fio_trylock(&fd_data(fd).sock_lock);
+  if (fd2uuid(fd) == uuid) {
+    fd_data(fd).rw_hooks = rw_hooks;
+    fd_data(fd).rw_udata = udata;
+    replaced = 0;
+  }
+  if (!was_locked)
+    fio_unlock(&fd_data(fd).sock_lock);
+  return replaced;
+}
 
 /** Sets a socket hook state (a pointer to the struct). */
 int fio_rw_hook_set(intptr_t uuid, fio_rw_hook_s *rw_hooks, void *udata) {
@@ -3060,10 +3109,18 @@ static int fio_attach__internal(void *uuid_, void *protocol_) {
   touchfd(fio_uuid2fd(uuid));
   fio_unlock(&uuid_data(uuid).protocol_lock);
   if (old_pr) {
+    /* protocol replacement */
     fio_defer_push_task(deferred_on_close, (void *)uuid, old_pr);
+    if (!protocol) {
+      /* hijacking */
+      fio_poll_remove_fd(fio_uuid2fd(uuid));
+      fio_poll_add_write(fio_uuid2fd(uuid));
+    }
   } else if (protocol) {
+    /* adding a new uuid to the reactor */
     fio_poll_add(fio_uuid2fd(uuid));
   }
+  fio_max_fd_min(fio_uuid2fd(uuid));
   return 0;
 
 invalid_uuid:
@@ -3313,23 +3370,6 @@ Initialize the library
 
 static void fio_pubsub_on_fork(void);
 
-static void fio_mem_destroy(void);
-static void __attribute__((destructor)) fio_lib_destroy(void) {
-  uint8_t add_eol = fio_is_master();
-  fio_data->active = 0;
-  fio_state_callback_force(FIO_CALL_AT_EXIT);
-  fio_state_callback_clear_all();
-  fio_defer_perform();
-  fio_poll_close();
-  fio_timer_clear_all();
-  fio_free(fio_data);
-  /* memory library destruction must be last */
-  fio_mem_destroy();
-  FIO_LOG_DEBUG("(%d) facil.io resources released, exit complete.", getpid());
-  if (add_eol)
-    fprintf(stderr, "\n"); /* add EOL to logs (logging adds EOL before text */
-}
-
 /* Called within a child process after it starts. */
 static void fio_on_fork(void) {
   fio_data->lock = FIO_LOCK_INIT;
@@ -3354,6 +3394,25 @@ static void fio_on_fork(void) {
   fio_defer_perform();
   fio_data->active = old_active;
   fio_data->is_worker = 1;
+}
+
+static void fio_mem_destroy(void);
+static void __attribute__((destructor)) fio_lib_destroy(void) {
+  uint8_t add_eol = fio_is_master();
+  fio_data->active = 0;
+  fio_on_fork();
+  fio_defer_perform();
+  fio_state_callback_force(FIO_CALL_AT_EXIT);
+  fio_state_callback_clear_all();
+  fio_defer_perform();
+  fio_poll_close();
+  fio_timer_clear_all();
+  fio_free(fio_data);
+  /* memory library destruction must be last */
+  fio_mem_destroy();
+  FIO_LOG_DEBUG("(%d) facil.io resources released, exit complete.", getpid());
+  if (add_eol)
+    fprintf(stderr, "\n"); /* add EOL to logs (logging adds EOL before text */
 }
 
 static void fio_mem_init(void);
@@ -4548,11 +4607,7 @@ static int fio_channel_cmp(channel_s *ch1, channel_s *ch2) {
          !memcmp(ch1->name, ch2->name, ch1->name_len);
 }
 /* pub/sub channels and core data sets have a long life, so avoid fio_malloc */
-#if !FIO_FORCE_MALLOC
-#define FIO_FORCE_MALLOC 1
-#define FIO_FORCE_MALLOC_IS_TMP 1
-#endif
-
+#define FIO_FORCE_MALLOC_TMP 1
 #define FIO_SET_NAME fio_ch_set
 #define FIO_SET_OBJ_TYPE channel_s *
 #define FIO_SET_OBJ_COMPARE(o1, o2) fio_channel_cmp((o1), (o2))
@@ -4560,18 +4615,16 @@ static int fio_channel_cmp(channel_s *ch1, channel_s *ch2) {
 #define FIO_SET_OBJ_COPY(dest, src) ((dest) = fio_channel_copy((src)))
 #include <fio.h>
 
+#define FIO_FORCE_MALLOC_TMP 1
 #define FIO_ARY_NAME fio_meta_ary
 #define FIO_ARY_TYPE fio_msg_metadata_fn
 #include <fio.h>
 
+#define FIO_FORCE_MALLOC_TMP 1
 #define FIO_SET_NAME fio_engine_set
 #define FIO_SET_OBJ_TYPE fio_pubsub_engine_s *
 #define FIO_SET_OBJ_COMPARE(k1, k2) ((k1) == (k2))
 #include <fio.h>
-
-#if FIO_FORCE_MALLOC_IS_TMP
-#undef FIO_FORCE_MALLOC
-#endif
 
 struct fio_collection_s {
   fio_ch_set_s channels;
@@ -6823,9 +6876,8 @@ void *fio_realloc2(void *ptr, size_t new_size, size_t copy_length) {
     return NULL;
   new_size = ((new_size >> 4) + (!!(new_size & 15)));
   copy_length = ((copy_length >> 4) + (!!(copy_length & 15)));
-  // memcpy(new_mem, ptr, (copy_length > new_size ? new_size : copy_length) <<
-  // 4);
-  fio_memcpy(new_mem, ptr, (copy_length > new_size ? new_size : copy_length));
+  fio_memcpy(new_mem, ptr, copy_length > new_size ? new_size : copy_length);
+
   block_slice_free(ptr);
   return new_mem;
 zero_size:
