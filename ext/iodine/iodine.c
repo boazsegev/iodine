@@ -509,6 +509,9 @@ void Init_iodine(void) {
   // initialize the HTTP module
   iodine_init_http();
 
+  // initialize SSL/TLS support module
+  iodine_init_tls();
+
   // initialize JSON helpers
   iodine_init_json();
 

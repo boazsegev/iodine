@@ -551,47 +551,6 @@ void iodine_init_mustache(void) {
   rb_global_variable(&filename_id);
   rb_global_variable(&data_id);
   rb_global_variable(&template_id);
-  /**
-  Iodine::Mustache offers a logicless mustache template engine with strict HTML
-  escaping (more than the basic `"<>'$`).
-
-  This offers more security against XSS and protects against the chance of
-  executing Ruby code within the template.
-
-  You can test the parser using:
-
-      TEMPLATE="my_template.mustache"
-
-      require 'json'
-      require 'iodine'
-      TIMES = 100
-      STR = IO.binread(JSON_FILENAME); nil
-
-      JSON.parse(STR) == Iodine::JSON.parse(STR) # => true
-      JSON.parse(STR,
-          symbolize_names: true) == Iodine::JSON.parse(STR,
-           symbolize_names: true) # => true
-      JSON.parse!(STR) == Iodine::JSON.parse!(STR) # => true/false (unknown)
-
-      # warm-up
-      TIMES.times { JSON.parse STR }
-      TIMES.times { Iodine::JSON.parse STR }
-
-      Benchmark.bm do |b|
-        sys = b.report("system") { TIMES.times { JSON.parse STR } }
-        sys_sym = b.report("system sym") { TIMES.times { JSON.parse STR,
-                                                 symbolize_names: true } }
-        iodine = b.report("iodine") { TIMES.times { Iodine::JSON.parse STR } }
-        iodine_sym = b.report("iodine sym") do
-                           TIMES.times { Iodine::JSON.parse STR,
-                                                  symbolize_names: true }
-                      end
-        puts "System    /    Iodine: #{sys/iodine}"
-        puts "System-sym/Iodine-sym: #{sys_sym/iodine_sym}"
-      end; nil
-
-
-  */
   VALUE tmp = rb_define_class_under(IodineModule, "Mustache", rb_cData);
   rb_define_alloc_func(tmp, iodine_mustache_data_alloc_c);
   rb_define_method(tmp, "initialize", iodine_mustache_new, -1);
