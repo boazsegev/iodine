@@ -29,6 +29,21 @@ else
   puts 'using an unknown (old?) compiler... who knows if this will work out... we hope.'
 end
 
+
+# Test for OpenSSL version equal to 1.0.0 or greater.
+unless ENV['NO_SSL']
+  begin
+    require 'openssl'
+    puts "Detected OpenSSL library, testing for version." if have_library('crypto') && have_library('ssl')
+  rescue LoadError
+  else
+    if try_compile("\#include <openssl/ssl.h>\r\#if OPENSSL_VERSION_AT_LEAST(1, 0)\r\#error \"OpenSSL version too small\"\r\#endif\rint main(void) { SSL_library_init(); }", "-lcrypto")
+      $defs << "-DHAVE_OPENSSL"
+      puts "Confirmed OpenSSL to be version 1.0.0 or above, compiling with HAVE_OPENSSL."
+    end
+  end
+end
+
 RbConfig::MAKEFILE_CONFIG['CFLAGS'] = $CFLAGS = "-std=c11 -DFIO_PRINT_STATE=0 #{$CFLAGS} #{$CFLAGS == ENV['CFLAGS'] ? "" : ENV['CFLAGS']}"
 RbConfig::MAKEFILE_CONFIG['CC'] = $CC = ENV['CC'] if ENV['CC']
 RbConfig::MAKEFILE_CONFIG['CPP'] = $CPP = ENV['CPP'] if ENV['CPP']

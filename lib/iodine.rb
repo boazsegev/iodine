@@ -1,4 +1,5 @@
-require 'socket' # TCPSocket is used internally for Hijack support
+require 'socket'  # TCPSocket is used internally for Hijack support
+# require 'openssl' # For SSL/TLS support using OpenSSL
 
 require 'iodine/version'
 require 'iodine/iodine'
