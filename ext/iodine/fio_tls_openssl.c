@@ -156,7 +156,7 @@ FIO_FUNC inline alpn_s *alpn_find(fio_tls_s *tls, char *name, size_t len) {
 }
 
 /** Adds an ALPN data object to the ALPN "list" (set) */
-FIO_FUNC inline void fio_tls_alpn_add(
+FIO_FUNC inline void alpn_add(
     fio_tls_s *tls, const char *protocol_name,
     void (*on_selected)(intptr_t uuid, void *udata_connection, void *udata_tls),
     void *udata_tls, void (*on_cleanup)(void *udata_tls)) {
@@ -180,6 +180,34 @@ FIO_FUNC inline alpn_s *alpn_default(fio_tls_s *tls) {
   if (!tls || !alpn_list_count(&tls->alpn) || !tls->alpn.ordered)
     return NULL;
   return &tls->alpn.ordered[0].obj;
+}
+
+typedef struct {
+  alpn_s alpn;
+  intptr_t uuid;
+  void *udata_connection;
+} alpn_task_s;
+
+FIO_FUNC inline void alpn_select___task(void *t_, void *ignr_) {
+  alpn_task_s *t = t_;
+  t->alpn.on_selected((fio_is_valid(t->uuid) ? t->uuid : -1),
+                      t->udata_connection, t->alpn.udata_tls);
+  fio_free(t);
+  (void)ignr_;
+}
+
+/** Schedules the ALPN protocol callback. */
+FIO_FUNC inline void alpn_select(alpn_s *alpn, intptr_t uuid,
+                                 void *udata_connection) {
+  if (!alpn || !alpn->on_selected)
+    return;
+  alpn_task_s *t = fio_malloc(sizeof(*t));
+  *t = (alpn_task_s){
+      .alpn = *alpn,
+      .uuid = uuid,
+      .udata_connection = udata_connection,
+  };
+  fio_defer(alpn_select___task, t, NULL);
 }
 
 /* *****************************************************************************
@@ -282,7 +310,7 @@ static void fio_tls_alpn_fallback(fio_tls_connection_s *c) {
   /* set protocol to default protocol */
   FIO_LOG_DEBUG("TLS ALPN handshake missing, falling back on %s for %p",
                 fio_str_info(&alpn->name).data, (void *)c->uuid);
-  alpn->on_selected(c->uuid, c->alpn_arg, alpn->udata_tls);
+  alpn_select(alpn, c->uuid, c->alpn_arg);
   c->alpn_ok = 1;
 }
 static int fio_tls_alpn_selector_cb(SSL *ssl, const unsigned char **out,
@@ -293,6 +321,7 @@ static int fio_tls_alpn_selector_cb(SSL *ssl, const unsigned char **out,
   alpn_s *alpn;
   /* TODO: select ALPN and call on_selected */
   fio_tls_connection_s *c = SSL_get_ex_data(ssl, 0);
+  c->alpn_ok = 1;
 
   if (alpn_list_count(&tls->alpn) == 0)
     return SSL_TLSEXT_ERR_NOACK;
@@ -307,15 +336,12 @@ static int fio_tls_alpn_selector_cb(SSL *ssl, const unsigned char **out,
     *out = (unsigned char *)info.data;
     *outlen = (unsigned char)info.len;
     FIO_LOG_DEBUG("TLS ALPN set to: %s for %p", info.data, (void *)c->uuid);
-    c->alpn_ok = 1;
-    if (alpn->on_selected)
-      alpn->on_selected(c->uuid, c->alpn_arg, alpn->udata_tls);
+    alpn_select(alpn, c->uuid, c->alpn_arg);
     return SSL_TLSEXT_ERR_OK;
   }
   /* set protocol to default protocol */
-  alpn = alpn_default(c->tls);
-  if (alpn->on_selected)
-    alpn->on_selected(c->uuid, c->alpn_arg, alpn->udata_tls);
+  alpn = alpn_default(tls);
+  alpn_select(alpn, c->uuid, c->alpn_arg);
   FIO_LOG_DEBUG(
       "TLS ALPN handshake failed, falling back on default (%s) for %p",
       fio_str_data(&alpn->name), (void *)c->uuid);
@@ -420,14 +446,22 @@ static void fio_tls_build_context(fio_tls_s *tls) {
   /* setup ALPN support */
   if (1) {
     size_t alpn_pos = 0;
+    /* looping twice is better than malloc fragmentation. */
     FIO_SET_FOR_LOOP(&tls->alpn, pos) {
       fio_str_info_s s = fio_str_info(&pos->obj.name);
       if (!s.len)
         continue;
-      tls->alpn_str = realloc(tls->alpn_str, alpn_pos + 1 + s.len);
-      tls->alpn_str[alpn_pos++] = s.len;
+      alpn_pos += s.len + 1;
+    }
+    tls->alpn_str = malloc((alpn_pos | 15) + 1); /* round up to 16 + padding */
+    alpn_pos = 0;
+    FIO_SET_FOR_LOOP(&tls->alpn, pos) {
+      fio_str_info_s s = fio_str_info(&pos->obj.name);
+      if (!s.len)
+        continue;
+      tls->alpn_str[alpn_pos++] = (uint8_t)s.len;
       memcpy(tls->alpn_str + alpn_pos, s.data, s.len);
-      alpn_pos += 1 + s.len;
+      alpn_pos += s.len;
     }
     tls->alpn_len = alpn_pos;
     SSL_CTX_set_alpn_select_cb(tls->ctx, fio_tls_alpn_selector_cb, tls);
@@ -583,6 +617,9 @@ static ssize_t fio_tls_before_close(intptr_t uuid, void *udata) {
  * */
 static void fio_tls_cleanup(void *udata) {
   fio_tls_connection_s *c = udata;
+  if (!c->alpn_ok) {
+    alpn_select(alpn_default(c->tls), -1, c->alpn_arg);
+  }
   SSL_free(c->ssl);
   FIO_LOG_DEBUG("TLS cleanup for %p", (void *)c->uuid);
   fio_tls_destroy(c->tls); /* manage reference count */
@@ -619,8 +656,8 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata, uint8_t schedule) {
       fio_defer(fio_tls_delayed_close, (void *)uuid, NULL);
       break;
     case SSL_ERROR_NONE:
-      FIO_LOG_DEBUG("SSL_accept/SSL_connect %p error: SSL_ERROR_NONE",
-                    (void *)uuid);
+      // FIO_LOG_DEBUG("SSL_accept/SSL_connect %p state: SSL_ERROR_NONE",
+      //               (void *)uuid);
       break;
     case SSL_ERROR_WANT_CONNECT:
       FIO_LOG_DEBUG("SSL_accept/SSL_connect %p error: SSL_ERROR_WANT_CONNECT",
@@ -639,6 +676,20 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata, uint8_t schedule) {
       FIO_LOG_DEBUG("SSL_accept/SSL_connect %p error: SSL_ERROR_WANT_ASYNC",
                     (void *)uuid);
       break;
+#ifdef SSL_ERROR_WANT_CLIENT_HELLO_CB
+    case SSL_ERROR_WANT_CLIENT_HELLO_CB:
+      FIO_LOG_DEBUG(
+          "SSL_accept/SSL_connect %p error: SSL_ERROR_WANT_CLIENT_HELLO_CB",
+          (void *)uuid);
+      break;
+#endif
+    case SSL_ERROR_SYSCALL:
+      FIO_LOG_DEBUG(
+          "SSL_accept/SSL_connect %p error: SSL_ERROR_SYSCALL, errno: %s",
+          (void *)uuid, strerror(errno));
+      // if (schedule)
+      //   fio_force_event(uuid, FIO_EVENT_ON_DATA);
+      break;
     case SSL_ERROR_WANT_WRITE:
       // FIO_LOG_DEBUG("SSL_accept/SSL_connect %p state: SSL_ERROR_WANT_WRITE",
       //               (void *)uuid);
@@ -652,14 +703,29 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata, uint8_t schedule) {
         fio_force_event(uuid, FIO_EVENT_ON_DATA);
       break;
     default:
-      FIO_LOG_DEBUG("SSL_accept/SSL_connect %p error: unknown.", (void *)uuid);
+      FIO_LOG_DEBUG("SSL_accept/SSL_connect %p error: unknown (%d).",
+                    (void *)uuid, ri);
       fio_defer(fio_tls_delayed_close, (void *)uuid, NULL);
       break;
     }
     return 0;
   }
-  if (!c->alpn_ok)
-    fio_tls_alpn_fallback(c);
+  if (!c->alpn_ok) {
+    if (c->is_server) {
+      fio_tls_alpn_fallback(c);
+    } else {
+      const unsigned char *proto;
+      unsigned int proto_len;
+      SSL_get0_alpn_selected(c->ssl, &proto, &proto_len);
+      alpn_s *alpn = NULL;
+      if (proto_len > 0) {
+        alpn = alpn_find(c->tls, (char *)proto, proto_len);
+      }
+      if (!alpn)
+        alpn = alpn_default(c->tls);
+      alpn_select(alpn, c->uuid, c->alpn_arg);
+    }
+  }
   if (fio_rw_hook_replace_unsafe(uuid, &FIO_TLS_HOOKS, udata) == 0) {
     FIO_LOG_DEBUG("Completed TLS handshake for %p", (void *)uuid);
   } else {
@@ -795,24 +861,38 @@ file_missing:
  *
  * The first protocol added will act as the default protocol to be selected.
  *
- * The callback should accept the `uuid`, the user data pointer passed to either
- * `fio_tls_accept` or `fio_tls_connect` (here: `udata_connetcion`) and the user
- * data pointer passed to the `fio_tls_proto_add` function (`udata_tls`).
+ * The callback should accept the `uuid`, the user data pointer passed to
+ * either `fio_tls_accept` or `fio_tls_connect` (here: `udata_connetcion`) and
+ * the user data pointer passed to the `fio_tls_alpn_add` function
+ * (`udata_tls`).
  *
- * The `on_cleanup` callback will be called when the TLS object is destroyed (or
- * `fio_tls_proto_add` is called again with the same protocol name). The
+ * The `on_cleanup` callback will be called when the TLS object is destroyed
+ * (or `fio_tls_alpn_add` is called again with the same protocol name). The
  * `udata_tls` argumrnt will be passed along, as is, to the callback (if set).
  *
  * Except for the `tls` and `protocol_name` arguments, all arguments can be
  * NULL.
  */
-void FIO_TLS_WEAK fio_tls_proto_add(
+void FIO_TLS_WEAK fio_tls_alpn_add(
     fio_tls_s *tls, const char *protocol_name,
     void (*on_selected)(intptr_t uuid, void *udata_connection, void *udata_tls),
     void *udata_tls, void (*on_cleanup)(void *udata_tls)) {
   REQUIRE_LIBRARY();
-  fio_tls_alpn_add(tls, protocol_name, on_selected, udata_tls, on_cleanup);
+  alpn_add(tls, protocol_name, on_selected, udata_tls, on_cleanup);
   fio_tls_build_context(tls);
+}
+
+/**
+ * Returns the number of registered ALPN protocol names.
+ *
+ * This could be used when deciding if protocol selection should be delegated
+ * to the ALPN mechanism, or whether a protocol should be immediately
+ * assigned.
+ *
+ * If no ALPN protocols are registered, zero (0) is returned.
+ */
+uintptr_t FIO_TLS_WEAK fio_tls_alpn_count(fio_tls_s *tls) {
+  return tls ? alpn_list_count(&tls->alpn) : 0;
 }
 
 /**
@@ -843,11 +923,11 @@ file_missing:
  * Establishes an SSL/TLS connection as an SSL/TLS Server, using the specified
  * context / settings object.
  *
- * The `uuid` should be a socket UUID that is already connected to a peer (i.e.,
- * the result of `fio_accept`).
+ * The `uuid` should be a socket UUID that is already connected to a peer
+ * (i.e., the result of `fio_accept`).
  *
  * The `udata` is an opaque user data pointer that is passed along to the
- * protocol selected (if any protocols were added using `fio_tls_proto_add`).
+ * protocol selected (if any protocols were added using `fio_tls_alpn_add`).
  */
 void FIO_TLS_WEAK fio_tls_accept(intptr_t uuid, fio_tls_s *tls, void *udata) {
   REQUIRE_LIBRARY();
@@ -858,11 +938,11 @@ void FIO_TLS_WEAK fio_tls_accept(intptr_t uuid, fio_tls_s *tls, void *udata) {
  * Establishes an SSL/TLS connection as an SSL/TLS Client, using the specified
  * context / settings object.
  *
- * The `uuid` should be a socket UUID that is already connected to a peer (i.e.,
- * one received by a `fio_connect` specified callback `on_connect`).
+ * The `uuid` should be a socket UUID that is already connected to a peer
+ * (i.e., one received by a `fio_connect` specified callback `on_connect`).
  *
  * The `udata` is an opaque user data pointer that is passed along to the
- * protocol selected (if any protocols were added using `fio_tls_proto_add`).
+ * protocol selected (if any protocols were added using `fio_tls_alpn_add`).
  */
 void FIO_TLS_WEAK fio_tls_connect(intptr_t uuid, fio_tls_s *tls, void *udata) {
   REQUIRE_LIBRARY();
