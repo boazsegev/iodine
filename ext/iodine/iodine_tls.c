@@ -6,6 +6,7 @@
 
 static VALUE server_name_sym = Qnil, certificate_sym = Qnil,
              private_key_sym = Qnil, password_sym = Qnil;
+static ID iodine_call_id;
 VALUE iodine_tls_sym;
 /* *****************************************************************************
 C <=> Ruby Data allocation
@@ -38,11 +39,34 @@ static VALUE iodine_tls_data_alloc_c(VALUE klass) {
 }
 
 /* *****************************************************************************
+ALPN selection callback
+***************************************************************************** */
+
+FIO_FUNC void iodine_tls_alpn_cb(intptr_t uuid, void *udata, void *block_) {
+  if (!fio_is_valid(uuid)) {
+    FIO_LOG_DEBUG("ALPN callback called for invalid connetion. SSL/TLS error?");
+    return;
+  }
+  VALUE new_handler = IodineCaller.call((VALUE)block_, iodine_call_id);
+  if (!new_handler || new_handler == Qnil || new_handler == Qtrue ||
+      new_handler == Qfalse) {
+    fio_close(uuid);
+    return;
+  }
+
+  iodine_tcp_attch_uuid(uuid, new_handler);
+
+  (void)udata; /* we can't use `udata`, since it's different in HTTP vs. TCP */
+}
+
+/* *****************************************************************************
 C API
 ***************************************************************************** */
 
 fio_tls_s *iodine_tls2c(VALUE self) {
   fio_tls_s *c = NULL;
+  if (self == Qnil || self == Qfalse)
+    return NULL;
   TypedData_Get_Struct(self, fio_tls_s, &iodine_tls_data_type, c);
   if (!c) {
     rb_raise(rb_eTypeError, "Iodine::TLS error - not an Iodine::TLS object?");
@@ -148,6 +172,42 @@ static VALUE iodine_tls_trust(VALUE self, VALUE certificate) {
   fio_tls_trust(t, pubcert);
   return self;
 }
+
+/**
+Adds an ALPN protocol callback for the named protocol, the required block must
+return the handler for that protocol.
+
+The first protocol added will be the default protocol in cases where ALPN
+failed.
+
+i.e.:
+
+     tls.on_protocol("http/1.1") { HTTPConnection.new }
+
+When implementing TLS clients, this identifies the protocol(s) that should be
+requested by the client.
+
+When implementing TLS servers, this identifies the protocol(s) offered by the
+server.
+
+More than a single protocol can be set, but iodine doesn't offer, at this
+moment, a way to handle these changes or to detect which protocol was selected
+except by assigning a different callback per protocol.
+
+This is implemented using the ALPN extension to TLS.
+*/
+static VALUE iodine_tls_alpn(VALUE self, VALUE protocol_name) {
+  Check_Type(protocol_name, T_STRING);
+  rb_need_block();
+  fio_tls_s *t = iodine_tls2c(self);
+  char *prname =
+      (protocol_name == Qnil ? NULL : IODINE_RSTRINFO(protocol_name).data);
+  VALUE block = IodineStore.add(rb_block_proc());
+  fio_tls_alpn_add(t, prname, iodine_tls_alpn_cb, (void *)block,
+                   (void (*)(void *))IodineStore.remove);
+  return self;
+}
+
 /**
 Loads the mustache template found in `:filename`. If `:template` is provided
 it will be used instead of reading the file's content.
@@ -190,12 +250,13 @@ void iodine_init_tls(void) {
   IODINE_MAKE_SYM(password);
   iodine_tls_sym = rb_id2sym(rb_intern("tls"));
   rb_global_variable(&iodine_tls_sym);
+  iodine_call_id = rb_intern2("call", 4);
 
   VALUE tmp = rb_define_class_under(IodineModule, "TLS", rb_cData);
   rb_define_alloc_func(tmp, iodine_tls_data_alloc_c);
   rb_define_method(tmp, "initialize", iodine_tls_new, -1);
   rb_define_method(tmp, "use_certificate", iodine_tls_use_certificate, -1);
   rb_define_method(tmp, "trust", iodine_tls_trust, 1);
-  // rb_define_method(tmp, "on_protocol", iodine_tls_alpn, 1);
+  rb_define_method(tmp, "on_protocol", iodine_tls_alpn, 1);
 }
 #undef IODINE_MAKE_SYM

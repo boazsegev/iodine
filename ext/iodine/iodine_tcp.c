@@ -16,6 +16,7 @@ static VALUE port_id;
 static VALUE address_id;
 static VALUE handler_id;
 static VALUE timeout_id;
+static VALUE tls_id;
 
 /* *****************************************************************************
 Raw TCP/IP Protocol
@@ -102,6 +103,8 @@ static void iodine_tcp_ping(intptr_t uuid, fio_protocol_s *protocol) {
 
 /** called when a connection opens */
 static void iodine_tcp_on_open(intptr_t uuid, void *udata) {
+  if (!fio_is_valid(uuid))
+    return;
   VALUE handler = IodineCaller.call((VALUE)udata, call_id);
   IodineStore.add(handler);
   iodine_tcp_attch_uuid(uuid, handler);
@@ -114,16 +117,26 @@ static void iodine_tcp_on_finish(intptr_t uuid, void *udata) {
   (void)uuid;
 }
 
+typedef struct {
+  VALUE handler;
+  fio_tls_s *tls;
+} iodine_tcp_init_data_s;
+
 /**
- * The `on_connect` callback should return a pointer to a protocol object
- * that will handle any connection related events.
- *
- * Should either call `fio_attach` or close the connection.
+ * The `on_connect` callback should either call `fio_attach` or close the
+ * connection.
  */
 static void iodine_tcp_on_connect(intptr_t uuid, void *udata) {
-  VALUE handler = (VALUE)udata;
-  iodine_tcp_attch_uuid(uuid, handler);
-  IodineStore.remove(handler);
+  iodine_tcp_init_data_s *d = udata;
+  if (d->tls) {
+    fio_tls_connect(uuid, d->tls, NULL);
+    if (!fio_tls_alpn_count(d->tls))
+      iodine_tcp_attch_uuid(uuid, d->handler);
+  } else {
+    iodine_tcp_attch_uuid(uuid, d->handler);
+  }
+  IodineStore.remove(d->handler);
+  fio_free(d);
 }
 
 /**
@@ -131,12 +144,9 @@ static void iodine_tcp_on_connect(intptr_t uuid, void *udata) {
  * is passed along.
  */
 static void iodine_tcp_on_fail(intptr_t uuid, void *udata) {
-  VALUE handler = (VALUE)udata;
-  if (rb_respond_to(handler, on_closed_id)) {
-    VALUE client = Qnil;
-    IodineCaller.call2(handler, on_closed_id, 1, &client);
-  }
-  IodineStore.remove(handler);
+  iodine_tcp_init_data_s *d = udata;
+  IodineStore.remove(d->handler);
+  fio_free(d);
   (void)uuid;
 }
 
@@ -203,7 +213,7 @@ Here's a telnet based chat-room example:
           self
         end
       end
-      # we can bothe the `handler` keuword or a block, anything that answers #call.
+      # we use can both the `handler` keyword or a block, anything that answers #call.
       Iodine.listen(port: "3000", handler: ChatHandler)
       # start the service
       Iodine.threads = 1
@@ -264,6 +274,7 @@ The method accepts a single Hash argument with the following optional keys:
 :address :: The address to listen to, which could be a Unix Socket path as well as an IPv4 / IPv6 address. Deafults to 0.0.0.0 (or the IPv6 equivelant).
 :handler :: A connection callback object that supports the following same callbacks listen in the {listen} method's documentation.
 :timeout :: An integer timeout for connection establishment (doen't effect the new connection's timeout. Should be in the rand of 0..255.
+:tls :: An {Iodine::TLS} object (optional) for secure connections.
 
 The method also accepts an optional block.
 
@@ -280,15 +291,23 @@ static VALUE iodine_tcp_connect(VALUE self, VALUE args) {
   VALUE rb_address = rb_hash_aref(args, address_id);
   VALUE rb_handler = rb_hash_aref(args, handler_id);
   VALUE rb_timeout = rb_hash_aref(args, timeout_id);
+  VALUE rb_tls = rb_hash_aref(args, tls_id);
   uint8_t timeout = 0;
   fio_str_s port = FIO_STR_INIT;
-  if (rb_handler == Qnil || rb_handler == Qfalse || rb_handler == Qtrue) {
-    rb_raise(rb_eArgError, "A callback object (:handler) must be provided.");
+  if ((rb_handler == Qnil || rb_handler == Qfalse || rb_handler == Qtrue) &&
+      (rb_tls == Qnil || !iodine_tls2c(rb_tls) ||
+       !fio_tls_alpn_count(iodine_tls2c(rb_tls)))) {
+    rb_raise(rb_eArgError, "A callback object (:handler) must be provided "
+                           "unless TLS object has a valid ALPN handler.");
   }
-  IodineStore.add(rb_handler);
+  if (rb_timeout != Qnil) {
+    Check_Type(rb_timeout, T_FIXNUM);
+    timeout = NUM2USHORT(rb_timeout);
+  }
   if (rb_address != Qnil) {
     Check_Type(rb_address, T_STRING);
   }
+  IodineStore.add(rb_handler);
   if (rb_port != Qnil) {
     if (rb_port == Qfalse) {
       fio_str_write_i(&port, 0);
@@ -296,20 +315,23 @@ static VALUE iodine_tcp_connect(VALUE self, VALUE args) {
       fio_str_write(&port, RSTRING_PTR(rb_port), RSTRING_LEN(rb_port));
     else if (RB_TYPE_P(rb_port, T_FIXNUM))
       fio_str_write_i(&port, FIX2LONG(rb_port));
-    else
+    else {
+      IodineStore.remove(rb_handler);
       rb_raise(rb_eTypeError,
                "The `port` property MUST be either a String or a Number");
+    }
   }
-  if (rb_timeout != Qnil) {
-    Check_Type(rb_timeout, T_FIXNUM);
-    timeout = NUM2USHORT(rb_timeout);
-  }
+  iodine_tcp_init_data_s *d = fio_malloc(sizeof(*d));
+  FIO_ASSERT_ALLOC(d);
+  *d = (iodine_tcp_init_data_s){
+      .handler = rb_handler,
+      .tls = iodine_tls2c(rb_tls),
+  };
   fio_connect(.port = fio_str_info(&port).data,
               .address =
                   (rb_address == Qnil ? NULL : StringValueCStr(rb_address)),
               .on_connect = iodine_tcp_on_connect,
-              .on_fail = iodine_tcp_on_fail, .timeout = timeout,
-              .udata = (void *)rb_handler);
+              .on_fail = iodine_tcp_on_fail, .timeout = timeout, .udata = d);
   return rb_handler;
   (void)self;
 }
@@ -354,6 +376,7 @@ void iodine_init_tcp_connections(void) {
   address_id = IodineStore.add(rb_id2sym(rb_intern("address")));
   handler_id = IodineStore.add(rb_id2sym(rb_intern("handler")));
   timeout_id = IodineStore.add(rb_id2sym(rb_intern("timeout")));
+  tls_id = IodineStore.add(rb_id2sym(rb_intern("tls")));
   on_closed_id = rb_intern("on_closed");
 
   IodineBinaryEncoding = rb_enc_find("binary");
@@ -369,16 +392,15 @@ Allow uuid attachment
 
 /** assigns a protocol and IO object to a handler */
 void iodine_tcp_attch_uuid(intptr_t uuid, VALUE handler) {
+  FIO_LOG_DEBUG("Iodine attaching handler %p to uuid %p", (void *)handler,
+                (void *)uuid);
   if (handler == Qnil || handler == Qfalse || handler == Qtrue) {
     fio_close(uuid);
     return;
   }
   /* temporary, in case `iodine_connection_new` invokes the GC */
   iodine_protocol_s *p = malloc(sizeof(*p));
-  if (!p) {
-    perror("FATAL ERROR: No Memory!");
-    exit(errno);
-  }
+  FIO_ASSERT_ALLOC(p);
   *p = (iodine_protocol_s){
       .p =
           {
@@ -393,6 +415,13 @@ void iodine_tcp_attch_uuid(intptr_t uuid, VALUE handler) {
   };
   /* clear away (remember the connection object manages these concerns) */
   fio_attach(uuid, &p->p);
-  iodine_connection_fire_event(p->io, IODINE_CONNECTION_ON_OPEN, Qnil);
-  p->p.on_ready = iodine_tcp_on_ready;
+  if (fio_is_valid(uuid)) {
+    iodine_connection_fire_event(p->io, IODINE_CONNECTION_ON_OPEN, Qnil);
+    p->p.on_ready = iodine_tcp_on_ready;
+    fio_force_event(uuid, FIO_EVENT_ON_READY);
+  } else {
+    FIO_LOG_DEBUG(
+        "Iodine couldn't attach handler %p to uuid %p - invalid uuid.",
+        (void *)handler, (void *)uuid);
+  }
 }
