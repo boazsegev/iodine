@@ -357,7 +357,7 @@ static VALUE iodine_connection_handler_set(VALUE self, VALUE handler) {
   }
   if (data->info.handler != handler) {
     uint8_t answers_on_open = (rb_respond_to(handler, on_open_id) != 0);
-    if(data->answers_on_close)
+    if (data->answers_on_close)
       IodineCaller.call2(data->info.handler, on_close_id, 1, &self);
     fio_lock(&data->lock);
     data->info.handler = handler;
