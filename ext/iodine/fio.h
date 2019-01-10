@@ -415,7 +415,7 @@ Logging and testing helpers
 #define FIO_LOG_LEVEL_DEBUG 5
 
 /** The logging level */
-extern int FIO_LOG_LEVEL;
+int __attribute__((weak)) FIO_LOG_LEVEL;
 
 #ifndef FIO_LOG_PRINT
 #define FIO_LOG_PRINT(level, ...)                                              \
@@ -658,6 +658,8 @@ struct fio_listen_args {
   const char *port;
   /** The socket binding address. Defaults to the recommended NULL. */
   const char *address;
+  /** a pointer to a `fio_tls_s` object, for SSL/TLS support (fio_tls.h). */
+  void *tls;
   /** Opaque user data. */
   void *udata;
   /**
@@ -796,6 +798,8 @@ struct fio_connect_args {
    * is passed along.
    */
   void (*on_fail)(intptr_t uuid, void *udata);
+  /** a pointer to a `fio_tls_s` object, for SSL/TLS support (fio_tls.h). */
+  void *tls;
   /** Opaque user data. */
   void *udata;
   /** A non-system timeout after which connection is assumed to have failed. */
@@ -2055,7 +2059,7 @@ FIO_FUNC inline uintptr_t fio_ct_if2(uintptr_t cond, uintptr_t a, uintptr_t b) {
 #endif
 /** inplace byte swap 32 bit integer */
 #if __has_builtin(__builtin_bswap32)
-#define fio_bswap32(i) __builtin_bswap32((uint32_t)(i));
+#define fio_bswap32(i) __builtin_bswap32((uint32_t)(i))
 #else
 #define fio_bswap32(i)                                                         \
   ((((i)&0xFFUL) << 24) | (((i)&0xFF00UL) << 8) | (((i)&0xFF0000UL) >> 8) |    \
@@ -2063,7 +2067,7 @@ FIO_FUNC inline uintptr_t fio_ct_if2(uintptr_t cond, uintptr_t a, uintptr_t b) {
 #endif
 /** inplace byte swap 64 bit integer */
 #if __has_builtin(__builtin_bswap64)
-#define fio_bswap64(i) __builtin_bswap64((uint64_t)(i));
+#define fio_bswap64(i) __builtin_bswap64((uint64_t)(i))
 #else
 #define fio_bswap64(i)                                                         \
   ((((i)&0xFFULL) << 56) | (((i)&0xFF00ULL) << 40) |                           \
@@ -2098,27 +2102,6 @@ FIO_FUNC inline uintptr_t fio_ct_if2(uintptr_t cond, uintptr_t a, uintptr_t b) {
 /** Network byte order to Local byte order, 62 bit integer */
 #define fio_ntol64(i) (i)
 
-/** Converts an unaligned network ordered byte stream to a 16 bit number. */
-#define fio_str2u16(c)                                                         \
-  ((uint16_t)((((uint16_t)0 + ((uint8_t *)(c))[1]) << 8) |                     \
-              ((uint16_t)0 + ((uint8_t *)(c))[0])))
-/** Converts an unaligned network ordered byte stream to a 32 bit number. */
-#define fio_str2u32(c)                                                         \
-  ((uint32_t)((((uint32_t)0 + ((uint8_t *)(c))[3]) << 24) |                    \
-              (((uint32_t)0 + ((uint8_t *)(c))[2]) << 16) |                    \
-              (((uint32_t)0 + ((uint8_t *)(c))[1]) << 8) |                     \
-              ((uint32_t)0 + ((uint8_t *)(c))[0])))
-/** Converts an unaligned network ordered byte stream to a 64 bit number. */
-#define fio_str2u64(c)                                                         \
-  ((uint64_t)((((uint64_t)0 + ((uint8_t *)(c))[7]) << 56) |                    \
-              (((uint64_t)0 + ((uint8_t *)(c))[6]) << 48) |                    \
-              (((uint64_t)0 + ((uint8_t *)(c))[5]) << 40) |                    \
-              (((uint64_t)0 + ((uint8_t *)(c))[4]) << 32) |                    \
-              (((uint64_t)0 + ((uint8_t *)(c))[3]) << 24) |                    \
-              (((uint64_t)0 + ((uint8_t *)(c))[2]) << 16) |                    \
-              (((uint64_t)0 + ((uint8_t *)(c))[1]) << 8) |                     \
-              ((uint64_t)0 + ((uint8_t *)(c))[0])))
-
 #else /* Little Endian */
 
 /** Local byte order to Network byte order, 16 bit integer */
@@ -2135,27 +2118,48 @@ FIO_FUNC inline uintptr_t fio_ct_if2(uintptr_t cond, uintptr_t a, uintptr_t b) {
 /** Network byte order to Local byte order, 62 bit integer */
 #define fio_ntol64(i) fio_bswap64((i))
 
+#endif
+
+/** 32Bit left rotation, inlined. */
+#define fio_lrot32(i, bits)                                                    \
+  (((uint32_t)(i) << ((bits)&31UL)) | ((uint32_t)(i) >> ((-(bits)) & 31UL)))
+/** 32Bit right rotation, inlined. */
+#define fio_rrot32(i, bits)                                                    \
+  (((uint32_t)(i) >> ((bits)&31UL)) | ((uint32_t)(i) << ((-(bits)) & 31UL)))
+/** 64Bit left rotation, inlined. */
+#define fio_lrot64(i, bits)                                                    \
+  (((uint64_t)(i) << ((bits)&63UL)) | ((uint64_t)(i) >> ((-(bits)) & 63UL)))
+/** 64Bit right rotation, inlined. */
+#define fio_rrot64(i, bits)                                                    \
+  (((uint64_t)(i) >> ((bits)&63UL)) | ((uint64_t)(i) << ((-(bits)) & 63UL)))
+/** unknown size element - left rotation, inlined. */
+#define fio_lrot(i, bits)                                                      \
+  (((i) << ((bits) & ((sizeof((i)) << 3) - 1))) |                              \
+   ((i) >> ((-(bits)) & ((sizeof((i)) << 3) - 1))))
+/** unknown size element - right rotation, inlined. */
+#define fio_rrot(i, bits)                                                      \
+  (((i) >> (bits)) | ((i) << ((-(bits)) & ((sizeof((i)) << 3) - 1))))
+
 /** Converts an unaligned network ordered byte stream to a 16 bit number. */
 #define fio_str2u16(c)                                                         \
-  ((uint16_t)((((uint16_t)0 + ((uint8_t *)(c))[0]) << 8) |                     \
-              ((uint16_t)0 + ((uint8_t *)(c))[1])))
+  ((uint16_t)(((uint16_t)(((uint8_t *)(c))[0]) << 8) |                         \
+              (uint16_t)(((uint8_t *)(c))[1])))
 /** Converts an unaligned network ordered byte stream to a 32 bit number. */
 #define fio_str2u32(c)                                                         \
-  ((uint32_t)((((uint32_t)0 + ((uint8_t *)(c))[0]) << 24) |                    \
-              (((uint32_t)0 + ((uint8_t *)(c))[1]) << 16) |                    \
-              (((uint32_t)0 + ((uint8_t *)(c))[2]) << 8) |                     \
-              ((uint32_t)0 + ((uint8_t *)(c))[3])))
+  ((uint32_t)(((uint32_t)(((uint8_t *)(c))[0]) << 24) |                        \
+              ((uint32_t)(((uint8_t *)(c))[1]) << 16) |                        \
+              ((uint32_t)(((uint8_t *)(c))[2]) << 8) |                         \
+              (uint32_t)(((uint8_t *)(c))[3])))
+
 /** Converts an unaligned network ordered byte stream to a 64 bit number. */
 #define fio_str2u64(c)                                                         \
-  ((uint64_t)((((uint64_t)0 + ((uint8_t *)(c))[0]) << 56) |                    \
-              (((uint64_t)0 + ((uint8_t *)(c))[1]) << 48) |                    \
-              (((uint64_t)0 + ((uint8_t *)(c))[2]) << 40) |                    \
-              (((uint64_t)0 + ((uint8_t *)(c))[3]) << 32) |                    \
-              (((uint64_t)0 + ((uint8_t *)(c))[4]) << 24) |                    \
-              (((uint64_t)0 + ((uint8_t *)(c))[5]) << 16) |                    \
-              (((uint64_t)0 + ((uint8_t *)(c))[6]) << 8) |                     \
-              ((uint64_t)0 + ((uint8_t *)(c))[7])))
-#endif
+  ((uint64_t)((((uint64_t)((uint8_t *)(c))[0]) << 56) |                        \
+              (((uint64_t)((uint8_t *)(c))[1]) << 48) |                        \
+              (((uint64_t)((uint8_t *)(c))[2]) << 40) |                        \
+              (((uint64_t)((uint8_t *)(c))[3]) << 32) |                        \
+              (((uint64_t)((uint8_t *)(c))[4]) << 24) |                        \
+              (((uint64_t)((uint8_t *)(c))[5]) << 16) |                        \
+              (((uint64_t)((uint8_t *)(c))[6]) << 8) | (((uint8_t *)(c))[7])))
 
 /** Writes a local 16 bit number to an unaligned buffer in network order. */
 #define fio_u2str16(buffer, i)                                                 \
@@ -2308,6 +2312,126 @@ void fio_rand_bytes(void *target, size_t length);
 
 ***************************************************************************** */
 
+/* defines the secret seed to be used by keyd hashing functions*/
+#ifndef FIO_HASH_SECRET_SEED64_1
+uint8_t __attribute__((weak)) fio_hash_secret_marker1;
+uint8_t __attribute__((weak)) fio_hash_secret_marker2;
+#define FIO_HASH_SECRET_SEED64_1 ((uintptr_t)&fio_hash_secret_marker1)
+#define FIO_HASH_SECRET_SEED64_2 ((uintptr_t)&fio_hash_secret_marker2)
+#endif
+
+#if FIO_USE_RISKY_HASH
+#define FIO_HASH_FN(data, length, key1, key2)                                  \
+  fio_risky_hash((data), (length),                                             \
+                 ((uint64_t)(key1) >> 19) | ((uint64_t)(key2) << 27))
+#else
+#define FIO_HASH_FN(data, length, key1, key2)                                  \
+  fio_siphash13((data), (length), (uint64_t)(key1), (uint64_t)(key2))
+#endif
+
+/* *****************************************************************************
+Risky Hash (always available, even if using only the fio.h header)
+***************************************************************************** */
+
+/**
+ * Computes a facil.io Risky Hash, modeled after the amazing
+ * [xxHash](https://github.com/Cyan4973/xxHash) (which has a BSD license)
+ * and named "Risky Hash" because writing your own hashing function is a risky
+ * business, full of pitfalls, hours of testing and security risks...
+ *
+ * Risky Hash isn't as battle tested as SipHash, but it did pass the
+ * [SMHasher](https://github.com/rurban/smhasher) tests with wonderful results,
+ * can be used for processing safe data and is easy (and short) to implement.
+ */
+inline FIO_FUNC uintptr_t fio_risky_hash(const void *data_, size_t len,
+                                         uint64_t seed) {
+  /* The primes used by Risky Hash */
+  const uint64_t primes[] = {
+      0xFBBA3FA15B22113B, // 1111101110111010001111111010000101011011001000100001000100111011
+      0xAB137439982B86C9, // 1010101100010011011101000011100110011000001010111000011011001001
+  };
+  /* The consumption vectors initialized state */
+  uint64_t v[4] = {
+      seed ^ primes[1],
+      ~seed + primes[1],
+      fio_lrot64(seed, 17) ^ primes[1],
+      fio_lrot64(seed, 33) + primes[1],
+  };
+
+/* Risky Hash consumption round */
+#define fio_risky_consume(w, i)                                                \
+  v[i] ^= (w);                                                                 \
+  v[i] = fio_lrot64(v[i], 33) + (w);                                           \
+  v[i] *= primes[0];
+
+/* compilers could, hopefully, optimize this code for SIMD */
+#define fio_risky_consume256(w0, w1, w2, w3)                                   \
+  fio_risky_consume(w0, 0);                                                    \
+  fio_risky_consume(w1, 1);                                                    \
+  fio_risky_consume(w2, 2);                                                    \
+  fio_risky_consume(w3, 3);
+
+  /* reading position */
+  const uint8_t *data = (uint8_t *)data_;
+
+  /* consume 256bit blocks */
+  for (size_t i = len >> 5; i; --i) {
+    fio_risky_consume256(fio_str2u64(data), fio_str2u64(data + 8),
+                         fio_str2u64(data + 16), fio_str2u64(data + 24));
+    data += 32;
+  }
+  /* Consume any remaining 64 bit words. */
+  switch (len & 24) {
+  case 24:
+    fio_risky_consume(fio_str2u64(data + 16), 2);
+  case 16: /* overflow */
+    fio_risky_consume(fio_str2u64(data + 8), 1);
+  case 8: /* overflow */
+    fio_risky_consume(fio_str2u64(data), 0);
+    data += len & 24;
+  }
+
+  uintptr_t tmp = 0;
+  /* consume leftover bytes, if any */
+  switch ((len & 7)) {
+  case 7: /* overflow */
+    tmp |= ((uint64_t)data[6]) << 56;
+  case 6: /* overflow */
+    tmp |= ((uint64_t)data[5]) << 48;
+  case 5: /* overflow */
+    tmp |= ((uint64_t)data[4]) << 40;
+  case 4: /* overflow */
+    tmp |= ((uint64_t)data[3]) << 32;
+  case 3: /* overflow */
+    tmp |= ((uint64_t)data[2]) << 24;
+  case 2: /* overflow */
+    tmp |= ((uint64_t)data[1]) << 16;
+  case 1: /* overflow */
+    tmp |= ((uint64_t)data[0]) << 8;
+    fio_risky_consume(tmp, 3);
+  }
+
+  /* merge and mix */
+  uint64_t result = fio_lrot64(v[0], 17) + fio_lrot64(v[1], 13) +
+                    fio_lrot64(v[2], 47) + fio_lrot64(v[3], 57);
+  result += len;
+  result += v[0] * primes[1];
+  result ^= fio_lrot64(result, 13);
+  result += v[1] * primes[1];
+  result ^= fio_lrot64(result, 29);
+  result += v[2] * primes[1];
+  result ^= fio_lrot64(result, 33);
+  result += v[3] * primes[1];
+  result ^= fio_lrot64(result, 51);
+
+  /* irreversible avalanche... I think */
+  result ^= (result >> 29) * primes[0];
+  return result;
+
+#undef fio_risky_consume256
+#undef fio_risky_consume
+}
+
 /* *****************************************************************************
 SipHash
 ***************************************************************************** */
@@ -2315,19 +2439,22 @@ SipHash
 /**
  * A SipHash variation (2-4).
  */
-uint64_t fio_siphash24(const void *data, size_t len);
+uint64_t fio_siphash24(const void *data, size_t len, uint64_t key1,
+                       uint64_t key2);
 
 /**
  * A SipHash 1-3 variation.
  */
-uint64_t fio_siphash13(const void *data, size_t len);
+uint64_t fio_siphash13(const void *data, size_t len, uint64_t key1,
+                       uint64_t key2);
 
 /**
  * The Hashing function used by dynamic facil.io objects.
  *
  * Currently implemented using SipHash 1-3.
  */
-#define fio_siphash(data, length) fio_siphash13((data), (length))
+#define fio_siphash(data, length, k1, k2)                                      \
+  fio_siphash13((data), (length), (k1), (k2))
 
 /* *****************************************************************************
 SHA-1
@@ -3320,17 +3447,11 @@ inline FIO_FUNC fio_str_info_s fio_str_resize(fio_str_s *s, size_t size);
 #define fio_str_clear(s) fio_str_resize((s), 0)
 
 /**
- * Returns the string's siphash value (Uses SipHash 1-3).
- */
-inline FIO_FUNC uint64_t fio_str_hash(const fio_str_s *s);
-
-/**
- * Returns an unsafe, quick and dirty, hash value that is very likely to
- * collide.
+ * Returns the string's Risky Hash value.
  *
- * (basically the first few bytes XOR'ed with the length)
+ * Note: Hash algorithm might change without notice.
  */
-inline FIO_FUNC uintptr_t fio_str_hash_risky(const fio_str_s *s);
+FIO_FUNC uint64_t fio_str_hash(const fio_str_s *s);
 
 /* *****************************************************************************
 String API - Memory management
@@ -3686,58 +3807,23 @@ inline FIO_FUNC fio_str_info_s fio_str_resize(fio_str_s *s, size_t size) {
   return (fio_str_info_s){.capa = s->capa, .len = size, .data = s->data};
 }
 
-/**
- * Returns the string's siphash value (Uses SipHash 1-3).
- */
-/** Returns the String's complete state (capacity, length and pointer).  */
-inline FIO_FUNC uint64_t fio_str_hash(const fio_str_s *s) {
-  fio_str_info_s state = fio_str_info(s);
-  return fio_siphash(state.data, state.len);
-}
+/* *****************************************************************************
+String Implementation - Hashing
+***************************************************************************** */
 
 /**
- * Returns an unsafe, quick and dirty, hash value that is very likely to
- * collide... basically the first few bytes XOR'ed with the length.
+ * Return's the String's Risky Hash (see fio_risky_hash).
  *
- * This is okay for very small hash maps that prefer fast lookups.
+ * This value is machine/instance specific (hash seed is a memory address).
+ *
+ * NOTE: the hashing function might be changed at any time without notice. It
+ * wasn't cryptographically analyzed and safety against malicious data can't be
+ * guaranteed. Use fio_siphash13 or fio_siphash24 when hashing data from
+ * external sources.
  */
-inline FIO_FUNC uintptr_t fio_str_hash_risky(const fio_str_s *s) {
-
-/* adds a minor amount of bit shuffling, signed bytes effect neighbor */
-#define fio_str_hash_risky_shuffle(data_i)                                     \
-  ((data_i) ^ (((data_i) & (uint64_t)0x8080808008080808ULL) << 1))
-
+FIO_FUNC uint64_t fio_str_hash(const fio_str_s *s) {
   fio_str_info_s state = fio_str_info(s);
-  uintptr_t hash = state.len;
-  uintptr_t tmp;
-  while (state.len >= sizeof(uintptr_t)) {
-    uintptr_t t = fio_str2u64(state.data);
-    hash ^= fio_str_hash_risky_shuffle(t);
-    state.len -= sizeof(uintptr_t);
-    state.data += sizeof(uintptr_t);
-  }
-  tmp = 0;
-  /* assumes sizeof(uintptr_t) <= 8 */
-  switch (state.len) {
-  case 7: /* overflow */
-    ((char *)(&tmp))[6] = state.data[6];
-  case 6: /* overflow */
-    ((char *)(&tmp))[5] = state.data[5];
-  case 5: /* overflow */
-    ((char *)(&tmp))[4] = state.data[4];
-  case 4: /* overflow */
-    ((char *)(&tmp))[3] = state.data[3];
-  case 3: /* overflow */
-    ((char *)(&tmp))[2] = state.data[2];
-  case 2: /* overflow */
-    ((char *)(&tmp))[1] = state.data[1];
-  case 1: /* overflow */
-    ((char *)(&tmp))[0] = state.data[0];
-  }
-  hash ^= fio_str_hash_risky_shuffle(tmp);
-  return hash;
-
-#undef fio_str_hash_risky_shuffle
+  return fio_risky_hash(state.data, state.len, FIO_HASH_SECRET_SEED64_1);
 }
 
 /* *****************************************************************************
@@ -5202,18 +5288,19 @@ Done
  *
  * To create a Set or a Hash Map, the macro FIO_SET_NAME must be defined. i.e.:
  *
- *         #define FIO_SET_NAME fio_cstr_set
+ *         #define FIO_SET_NAME cstr_set
  *         #define FIO_SET_OBJ_TYPE char *
  *         #define FIO_SET_OBJ_COMPARE(k1, k2) (!strcmp((k1), (k2)))
  *         #include <fio.h>
  *
- * To create a Hash Map, rather than a pure Set, the macro FIO_SET_KET_TYPE must
+ * To create a Hash Map, rather than a pure Set, the macro FIO_SET_KEY_TYPE must
  * be defined. i.e.:
  *
  *         #define FIO_SET_KEY_TYPE char *
  *
  * This allows the FIO_SET_KEY_* macros to be defined as well. For example:
  *
+ *         #define FIO_SET_NAME cstr_hashmap
  *         #define FIO_SET_KEY_TYPE char *
  *         #define FIO_SET_KEY_COMPARE(k1, k2) (!strcmp((k1), (k2)))
  *         #define FIO_SET_OBJ_TYPE char *
@@ -5227,7 +5314,10 @@ Done
  *         #include <fio.h> // adds the fio_str_s types and functions
  *
  *         #define FIO_SET_NAME fio_str_set
- *         #define FIO_SET_KEY_TYPE fio_str_s *
+ *         #define FIO_SET_OBJ_TYPE fio_str_s *
+ *         #define FIO_SET_OBJ_COMPARE(k1, k2) (fio_str_iseq((k1), (k2)))
+ *         #define FIO_SET_OBJ_COPY(key) fio_str_dup((key))
+ *         #define FIO_SET_OBJ_DESTROY(key) fio_str_free2((key))
  *         #include <fio.h> // creates the fio_str_set_s Set and functions
  *
  *         #define FIO_SET_NAME fio_str_hash
@@ -5244,9 +5334,10 @@ Done
  * The default integer Hash used is a pointer length type (uintptr_t). This can
  * be changed by defining ALL of the following macros:
  * * FIO_SET_HASH_TYPE              - the type of the hash value.
- * * FIO_SET_HASH2UINTPTR(hash)     - converts the hash value to a uintptr_t.
+ * * FIO_SET_HASH2UINTPTR(hash, i)  - converts the hash value to a uintptr_t.
  * * FIO_SET_HASH_COMPARE(h1, h2)   - compares two hash values (1 == equal).
  * * FIO_SET_HASH_INVALID           - an invalid Hash value, all bytes are 0.
+ * * FIO_SET_HASH_FORCE             - an always valid Hash value, all bytes 0xFF
  *
  *
  * Note: FIO_SET_HASH_TYPE should, normaly be left alone (uintptr_t is
@@ -5294,14 +5385,20 @@ Done
 #define FIO_SET_OBJ_DESTROY(obj) ((void)0)
 #endif
 
-/** test for a pre-defined hash value type */
+/** test for a pre-defined hash type, must be numerical (i.e. __int128_t)*/
 #ifndef FIO_SET_HASH_TYPE
 #define FIO_SET_HASH_TYPE uintptr_t
 #endif
 
 /** test for a pre-defined hash to integer conversion */
 #ifndef FIO_SET_HASH2UINTPTR
-#define FIO_SET_HASH2UINTPTR(hash) ((uintptr_t)(hash))
+#define FIO_SET_HASH2UINTPTR(hash, bits_used)                                  \
+  (fio_rrot(hash, bits_used) ^ fio_ct_if2(bits_used, hash, 0))
+#endif
+
+/** test for a pre-defined hash to integer conversion */
+#ifndef FIO_SET_HASH_FORCE
+#define FIO_SET_HASH_FORCE (~(uintptr_t)0)
 #endif
 
 /** test for a pre-defined invalid hash value (all bytes are 0) */
@@ -5328,9 +5425,14 @@ Done
 #define FIO_SET_FREE(ptr, size) FIO_FREE((ptr))
 #endif
 
-/* The maximum number of bins to rotate when partial collisions occure */
+/* The maximum number of bins to rotate when (partial/full) collisions occure */
 #ifndef FIO_SET_MAX_MAP_SEEK
 #define FIO_SET_MAX_MAP_SEEK (96)
+#endif
+
+/* The maximum number of full hash collisions that can be consumed */
+#ifndef FIO_SET_MAX_MAP_FULL_COLLISIONS
+#define FIO_SET_MAX_MAP_FULL_COLLISIONS (96)
 #endif
 
 /* Prime numbers are better */
@@ -5574,10 +5676,11 @@ struct FIO_NAME(s) {
   uintptr_t count;
   uintptr_t capa;
   uintptr_t pos;
-  uintptr_t mask;
   FIO_NAME(_ordered_s_) * ordered;
   FIO_NAME(_map_s_) * map;
   uint8_t has_collisions;
+  uint8_t used_bits;
+  uint8_t under_attack;
 };
 
 #undef FIO_SET_FOR_LOOP
@@ -5591,40 +5694,63 @@ Set / Hash Map Internal Helpers
 
 /** Locates an object's map position in the Set, if it exists. */
 FIO_FUNC inline FIO_NAME(_map_s_) *
-    FIO_NAME(_find_map_pos_)(FIO_NAME(s) * set,
-                             const FIO_SET_HASH_TYPE hash_value,
+    FIO_NAME(_find_map_pos_)(FIO_NAME(s) * set, FIO_SET_HASH_TYPE hash_value,
                              FIO_SET_TYPE obj) {
+  if (FIO_SET_HASH_COMPARE(hash_value, FIO_SET_HASH_INVALID))
+    hash_value = FIO_SET_HASH_FORCE;
   if (set->map) {
     /* make sure collisions don't effect seeking */
     if (set->has_collisions && set->pos != set->count) {
       FIO_NAME(rehash)(set);
     }
+    size_t full_collisions_counter = 0;
+    FIO_NAME(_map_s_) * pos;
+    /*
+     * Commonly, the hash is rotated, depending on it's state.
+     * Different bits are used for each mapping, instead of a single new bit.
+     */
+    const uintptr_t mask = (1ULL << set->used_bits) - 1;
+
+    uintptr_t i;
+    const uintptr_t hash_value_i = FIO_SET_HASH2UINTPTR(hash_value, 0);
+    uintptr_t hash_alt = FIO_SET_HASH2UINTPTR(hash_value, set->used_bits);
 
     /* O(1) access to object */
-    FIO_NAME(_map_s_) *pos =
-        set->map + (FIO_SET_HASH2UINTPTR(hash_value) & set->mask);
+    pos = set->map + (hash_alt & mask);
     if (FIO_SET_HASH_COMPARE(FIO_SET_HASH_INVALID, pos->hash))
       return pos;
-    if (FIO_SET_HASH_COMPARE(pos->hash, hash_value)) {
+    if (FIO_SET_HASH_COMPARE(pos->hash, hash_value_i)) {
       if (!pos->pos || FIO_SET_COMPARE(pos->pos->obj, obj))
         return pos;
+      /* full hash value collision detected */
       set->has_collisions = 1;
+      ++full_collisions_counter;
     }
 
     /* Handle partial / full collisions with cuckoo steps O(x) access time */
-    uintptr_t i = FIO_SET_CUCKOO_STEPS;
+    i = FIO_SET_CUCKOO_STEPS;
     const uintptr_t limit =
         FIO_SET_CUCKOO_STEPS * (set->capa > (FIO_SET_MAX_MAP_SEEK << 2)
                                     ? FIO_SET_MAX_MAP_SEEK
                                     : (set->capa >> 2));
     while (i < limit) {
-      pos = set->map + ((FIO_SET_HASH2UINTPTR(hash_value) + i) & set->mask);
+      pos = set->map + ((hash_alt + i) & mask);
       if (FIO_SET_HASH_COMPARE(FIO_SET_HASH_INVALID, pos->hash))
         return pos;
-      if (FIO_SET_HASH_COMPARE(pos->hash, hash_value)) {
+      if (FIO_SET_HASH_COMPARE(pos->hash, hash_value_i)) {
         if (!pos->pos || FIO_SET_COMPARE(pos->pos->obj, obj))
           return pos;
+        /* full hash value collision detected */
         set->has_collisions = 1;
+        if (++full_collisions_counter >= FIO_SET_MAX_MAP_FULL_COLLISIONS) {
+          /* is the hash under attack? */
+          FIO_LOG_WARNING(
+              "(fio hash map) too many full collisions - under attack?");
+          set->under_attack = 1;
+        }
+        if (set->under_attack) {
+          return pos;
+        }
       }
       i += FIO_SET_CUCKOO_STEPS;
     }
@@ -5655,18 +5781,17 @@ FIO_FUNC inline void FIO_NAME(_compact_ordered_array_)(FIO_NAME(s) * set) {
 
 /** (Re)allocates the set's internal, invalidatint the mapping (must rehash) */
 FIO_FUNC inline void FIO_NAME(_reallocate_set_mem_)(FIO_NAME(s) * set) {
+  const uintptr_t new_capa = 1ULL << set->used_bits;
   FIO_SET_FREE(set->map, set->capa * sizeof(*set->map));
-  set->map =
-      (FIO_NAME(_map_s_) *)FIO_SET_CALLOC(sizeof(*set->map), (set->mask + 1));
+  set->map = (FIO_NAME(_map_s_) *)FIO_SET_CALLOC(sizeof(*set->map), new_capa);
   set->ordered = (FIO_NAME(_ordered_s_) *)FIO_SET_REALLOC(
       set->ordered, (set->capa * sizeof(*set->ordered)),
-      ((set->mask + 1) * sizeof(*set->ordered)),
-      (set->pos * sizeof(*set->ordered)));
+      (new_capa * sizeof(*set->ordered)), (set->pos * sizeof(*set->ordered)));
   if (!set->map || !set->ordered) {
     perror("FATAL ERROR: couldn't allocate memory for Set data");
     exit(errno);
   }
-  set->capa = set->mask + 1;
+  set->capa = new_capa;
 }
 
 /**
@@ -5676,21 +5801,19 @@ FIO_FUNC inline void FIO_NAME(_reallocate_set_mem_)(FIO_NAME(s) * set) {
  * If the object already exists in the set, it will be destroyed and
  * overwritten.
  */
-FIO_FUNC inline FIO_SET_TYPE FIO_NAME(_insert_or_overwrite_)(
-    FIO_NAME(s) * set, const FIO_SET_HASH_TYPE hash_value, FIO_SET_TYPE obj,
-    int overwrite, FIO_SET_OBJ_TYPE *old) {
-  if (FIO_SET_HASH_COMPARE(hash_value, FIO_SET_HASH_INVALID)) {
-    FIO_SET_TYPE empty;
-    memset(&empty, 0, sizeof(empty));
-    return empty;
-  }
+FIO_FUNC inline FIO_SET_TYPE
+FIO_NAME(_insert_or_overwrite_)(FIO_NAME(s) * set, FIO_SET_HASH_TYPE hash_value,
+                                FIO_SET_TYPE obj, int overwrite,
+                                FIO_SET_OBJ_TYPE *old) {
+  if (FIO_SET_HASH_COMPARE(hash_value, FIO_SET_HASH_INVALID))
+    hash_value = FIO_SET_HASH_FORCE;
 
   /* automatic fragmentation protection */
   if (FIO_NAME(is_fragmented)(set))
     FIO_NAME(rehash)(set);
   /* automatic capacity validation (we can never be at 100% capacity) */
   else if (set->pos >= set->capa) {
-    set->mask = (set->mask << 1) | 3;
+    ++set->used_bits;
     FIO_NAME(rehash)(set);
   }
 
@@ -5818,8 +5941,6 @@ FIO_FUNC inline int FIO_NAME(remove)(FIO_NAME(s) * set,
                                      const FIO_SET_HASH_TYPE hash_value,
                                      FIO_SET_KEY_TYPE key,
                                      FIO_SET_OBJ_TYPE *old) {
-  if (FIO_SET_HASH_COMPARE(hash_value, FIO_SET_HASH_INVALID))
-    return -1;
   FIO_NAME(_map_s_) *pos =
       FIO_NAME(_find_map_pos_)(set, hash_value, (FIO_SET_TYPE){.key = key});
   if (!pos || !pos->pos)
@@ -5969,9 +6090,9 @@ FIO_FUNC inline size_t FIO_NAME(capa_require)(FIO_NAME(s) * set,
                                               size_t min_capa) {
   if (min_capa <= FIO_NAME(capa)(set))
     return FIO_NAME(capa)(set);
-  set->mask = 1;
-  while (min_capa > set->mask) {
-    set->mask = (set->mask << 1) | 3;
+  set->used_bits = 2;
+  while (min_capa > (1ULL << set->used_bits)) {
+    ++set->used_bits;
   }
   FIO_NAME(rehash)(set);
   return FIO_NAME(capa)(set);
@@ -5992,9 +6113,9 @@ FIO_FUNC inline size_t FIO_NAME(is_fragmented)(const FIO_NAME(s) * set) {
  */
 FIO_FUNC inline size_t FIO_NAME(compact)(FIO_NAME(s) * set) {
   FIO_NAME(_compact_ordered_array_)(set);
-  set->mask = 3;
-  while (set->count >= set->mask) {
-    set->mask = (set->mask << 1) | 1;
+  set->used_bits = 2;
+  while (set->count >= (1ULL << set->used_bits)) {
+    ++set->used_bits;
   }
   FIO_NAME(rehash)(set);
   return FIO_NAME(capa)(set);
@@ -6004,7 +6125,18 @@ FIO_FUNC inline size_t FIO_NAME(compact)(FIO_NAME(s) * set) {
 FIO_FUNC void FIO_NAME(rehash)(FIO_NAME(s) * set) {
   FIO_NAME(_compact_ordered_array_)(set);
   set->has_collisions = 0;
+  uint8_t attempts = 0;
 restart:
+  if (set->used_bits >= 16 && ++attempts >= 3 && set->has_collisions) {
+    FIO_LOG_FATAL(
+        "facil.io Set / Hash Map has too many collisions (%zu/%zu)."
+        "\n\t\tthis is a fatal implementation error,"
+        "please report this issue at facio.io's open source project"
+        "\n\t\tNote: hash maps and sets should never reach this point."
+        "\n\t\tThey should be guarded against collision attacks.",
+        set->pos, set->capa);
+    exit(-1);
+  }
   FIO_NAME(_reallocate_set_mem_)(set);
   {
     FIO_NAME(_ordered_s_) const *const end = set->ordered + set->pos;
@@ -6012,7 +6144,7 @@ restart:
       FIO_NAME(_map_s_) *mp =
           FIO_NAME(_find_map_pos_)(set, pos->hash, pos->obj);
       if (!mp) {
-        set->mask = (set->mask << 1) | 3;
+        ++set->used_bits;
         goto restart;
       }
       mp->pos = pos;
@@ -6038,6 +6170,7 @@ restart:
 #undef FIO_SET_COPY
 #undef FIO_SET_DESTROY
 #undef FIO_SET_MAX_MAP_SEEK
+#undef FIO_SET_MAX_MAP_FULL_COLLISIONS
 #undef FIO_SET_REALLOC
 #undef FIO_SET_CALLOC
 #undef FIO_SET_FREE

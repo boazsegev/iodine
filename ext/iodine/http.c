@@ -42,33 +42,6 @@ fio_tls_alpn_add(void *tls, const char *protocol_name,
 }
 #pragma weak fio_tls_alpn_add
 
-void __attribute__((weak))
-fio_tls_accept(intptr_t uuid, void *tls, void *udata) {
-  FIO_LOG_FATAL("HTTP SSL/TLS required but unavailable!");
-  exit(-1);
-  (void)uuid;
-  (void)tls;
-  (void)udata;
-}
-#pragma weak fio_tls_accept
-
-/**
- * Establishes an SSL/TLS connection as an SSL/TLS Server, using the specified
- * conetext / settings object.
- *
- * The `uuid` should be a socket UUID that is already connected to a peer (i.e.,
- * the result of `fio_accept`).
- */
-void __attribute__((weak))
-fio_tls_connect(intptr_t uuid, void *tls, void *udata) {
-  FIO_LOG_FATAL("HTTP SSL/TLS required but unavailable!");
-  exit(-1);
-  (void)uuid;
-  (void)tls;
-  (void)udata;
-}
-#pragma weak fio_tls_connect
-
 /* *****************************************************************************
 Small Helpers
 ***************************************************************************** */
@@ -77,7 +50,7 @@ static inline int hex2byte(uint8_t *dest, const uint8_t *source);
 static inline void add_content_length(http_s *r, uintptr_t length) {
   static uint64_t cl_hash = 0;
   if (!cl_hash)
-    cl_hash = fio_siphash("content-length", 14);
+    cl_hash = fiobj_hash_string("content-length", 14);
   if (!fiobj_hash_get2(r->private_data.out_headers, cl_hash)) {
     fiobj_hash_set(r->private_data.out_headers, HTTP_HEADER_CONTENT_LENGTH,
                    fiobj_num_new(length));
@@ -86,7 +59,7 @@ static inline void add_content_length(http_s *r, uintptr_t length) {
 static inline void add_content_type(http_s *r) {
   static uint64_t ct_hash = 0;
   if (!ct_hash)
-    ct_hash = fio_siphash("content-type", 12);
+    ct_hash = fiobj_hash_string("content-type", 12);
   if (!fiobj_hash_get2(r->private_data.out_headers, ct_hash)) {
     fiobj_hash_set(r->private_data.out_headers, HTTP_HEADER_CONTENT_TYPE,
                    http_mimetype_find2(r->path));
@@ -99,10 +72,10 @@ static fio_lock_i date_lock;
 static inline void add_date(http_s *r) {
   static uint64_t date_hash = 0;
   if (!date_hash)
-    date_hash = fio_siphash("date", 4);
+    date_hash = fiobj_hash_string("date", 4);
   static uint64_t mod_hash = 0;
   if (!mod_hash)
-    mod_hash = fio_siphash("last-modified", 13);
+    mod_hash = fiobj_hash_string("last-modified", 13);
 
   if (fio_last_tick().tv_sec > last_date_added) {
     fio_lock(&date_lock);
@@ -322,7 +295,7 @@ int http_set_cookie(http_s *h, http_cookie_args_s cookie) {
   if (h->status_str || !h->status) { /* on first request status == 0 */
     static uint64_t cookie_hash;
     if (!cookie_hash)
-      cookie_hash = fio_siphash("cookie", 6);
+      cookie_hash = fiobj_hash_string("cookie", 6);
     FIOBJ tmp = fiobj_hash_get2(h->private_data.out_headers, cookie_hash);
     if (!tmp) {
       set_header_add(h->private_data.out_headers, HTTP_HEADER_COOKIE, c);
@@ -423,10 +396,10 @@ int http_sendfile2(http_s *h, const char *prefix, size_t prefix_len,
   struct stat file_data = {.st_size = 0};
   static uint64_t accept_enc_hash = 0;
   if (!accept_enc_hash)
-    accept_enc_hash = fio_siphash("accept-encoding", 15);
+    accept_enc_hash = fiobj_hash_string("accept-encoding", 15);
   static uint64_t range_hash = 0;
   if (!range_hash)
-    range_hash = fio_siphash("range", 5);
+    range_hash = fiobj_hash_string("range", 5);
 
   /* create filename string */
   FIOBJ filename = fiobj_str_tmp();
@@ -507,7 +480,7 @@ found_file:
   /* set & test etag */
   uint64_t etag = (uint64_t)file_data.st_size;
   etag ^= (uint64_t)file_data.st_mtime;
-  etag = fio_siphash(&etag, sizeof(uint64_t));
+  etag = fiobj_hash_string(&etag, sizeof(uint64_t));
   FIOBJ etag_str = fiobj_str_buf(32);
   fiobj_str_resize(etag_str,
                    fio_base64_encode(fiobj_obj2cstr(etag_str).data,
@@ -518,7 +491,7 @@ found_file:
   {
     static uint64_t none_match_hash = 0;
     if (!none_match_hash)
-      none_match_hash = fio_siphash("if-none-match", 13);
+      none_match_hash = fiobj_hash_string("if-none-match", 13);
     FIOBJ tmp2 = fiobj_hash_get2(h->headers, none_match_hash);
     if (tmp2 && fiobj_iseq(tmp2, etag_str)) {
       h->status = 304;
@@ -532,7 +505,7 @@ found_file:
   {
     static uint64_t ifrange_hash = 0;
     if (!ifrange_hash)
-      ifrange_hash = fio_siphash("if-range", 8);
+      ifrange_hash = fiobj_hash_string("if-range", 8);
     FIOBJ tmp = fiobj_hash_get2(h->headers, ifrange_hash);
     if (tmp && fiobj_iseq(tmp, etag_str)) {
       fiobj_hash_delete2(h->headers, range_hash);
@@ -911,8 +884,20 @@ static void http_settings_free(http_settings_s *s) {
 Listening to HTTP connections
 ***************************************************************************** */
 
+static uint8_t fio_http_at_capa = 0;
+
 static void http_on_server_protocol_http1(intptr_t uuid, void *set,
                                           void *ignr_) {
+  fio_timeout_set(uuid, ((http_settings_s *)set)->timeout);
+  if (fio_uuid2fd(uuid) >= ((http_settings_s *)set)->max_clients) {
+    if (!fio_http_at_capa)
+      FIO_LOG_WARNING("HTTP server at capacity");
+    fio_http_at_capa = 1;
+    http_send_error2(uuid, 503, set);
+    fio_close(uuid);
+    return;
+  }
+  fio_http_at_capa = 0;
   fio_protocol_s *pr = http1_new(uuid, set, NULL, 0);
   if (!pr)
     fio_close(uuid);
@@ -920,21 +905,7 @@ static void http_on_server_protocol_http1(intptr_t uuid, void *set,
 }
 
 static void http_on_open(intptr_t uuid, void *set) {
-  static uint8_t at_capa;
-  fio_timeout_set(uuid, ((http_settings_s *)set)->timeout);
-  if (fio_uuid2fd(uuid) >= ((http_settings_s *)set)->max_clients) {
-    if (!at_capa)
-      FIO_LOG_WARNING("HTTP server at capacity");
-    at_capa = 1;
-    http_send_error2(uuid, 503, set);
-    fio_close(uuid);
-    return;
-  }
-  at_capa = 0;
-  if (((http_settings_s *)set)->tls)
-    fio_tls_accept(uuid, ((http_settings_s *)set)->tls, set);
-  else
-    http_on_server_protocol_http1(uuid, set, NULL);
+  http_on_server_protocol_http1(uuid, set, NULL);
 }
 
 static void http_on_finish(intptr_t uuid, void *set) {
@@ -971,7 +942,7 @@ intptr_t http_listen(const char *port, const char *binding,
                      NULL, NULL);
   }
 
-  return fio_listen(.port = port, .address = binding,
+  return fio_listen(.port = port, .address = binding, .tls = arg_settings.tls,
                     .on_finish = http_on_finish, .on_open = http_on_open,
                     .udata = settings);
 }
@@ -1019,6 +990,7 @@ static void http_on_open_client_http1(intptr_t uuid, void *set_,
                                       void *ignore_) {
   http_settings_s *set = set_;
   http_s *h = set->udata;
+  fio_timeout_set(uuid, set->timeout);
   fio_protocol_s *pr = http1_new(uuid, set, NULL, 0);
   if (!pr) {
     fio_close(uuid);
@@ -1037,12 +1009,7 @@ static void http_on_open_client_http1(intptr_t uuid, void *set_,
 }
 
 static void http_on_open_client(intptr_t uuid, void *set_) {
-  http_settings_s *set = set_;
-  fio_timeout_set(uuid, set->timeout);
-  if (set->tls)
-    fio_tls_connect(uuid, set->tls, set_);
-  // else
-  http_on_open_client_http1(uuid, set, NULL);
+  http_on_open_client_http1(uuid, set_, NULL);
 }
 
 static void http_on_client_failed(intptr_t uuid, void *set_) {
@@ -1169,18 +1136,21 @@ intptr_t http_connect(const char *address,
   h->status = 0;
   h->path = path;
   settings->udata = h;
+  settings->tls = arg_settings.tls;
   http_set_header2(h, (fio_str_info_s){.data = (char *)"host", .len = 4},
                    (fio_str_info_s){.data = a, .len = len});
   intptr_t ret;
   if (is_websocket) {
     /* force HTTP/1.1 */
     ret = fio_connect(.address = a, .port = p, .on_fail = http_on_client_failed,
-                      .on_connect = http_on_open_client, .udata = settings);
+                      .on_connect = http_on_open_client, .udata = settings,
+                      .tls = arg_settings.tls);
     (void)0;
   } else {
     /* Allow for any HTTP version */
     ret = fio_connect(.address = a, .port = p, .on_fail = http_on_client_failed,
-                      .on_connect = http_on_open_client, .udata = settings);
+                      .on_connect = http_on_open_client, .udata = settings,
+                      .tls = arg_settings.tls);
     (void)0;
   }
   fio_free(a);
@@ -1681,7 +1651,8 @@ rebase:
     /* ensure array exists and it's an array + set nested_ary */
     const size_t len = ((cut1[-1] == ']') ? (size_t)((cut1 - 1) - name)
                                           : (size_t)(cut1 - name));
-    const uint64_t hash = fio_siphash(name, len); /* hash the current name */
+    const uint64_t hash =
+        fiobj_hash_string(name, len); /* hash the current name */
     nested_ary = fiobj_hash_get2(dest, hash);
     if (!nested_ary) {
       /* create a new nested array */
@@ -1718,7 +1689,8 @@ rebase:
     /* we have name[key]... */
     const size_t len = ((cut1[-1] == ']') ? (size_t)((cut1 - 1) - name)
                                           : (size_t)(cut1 - name));
-    const uint64_t hash = fio_siphash(name, len); /* hash the current name */
+    const uint64_t hash =
+        fiobj_hash_string(name, len); /* hash the current name */
     FIOBJ tmp = fiobj_hash_get2(dest, hash);
     if (!tmp) {
       /* hash doesn't exist, create it */
@@ -1772,7 +1744,7 @@ place_in_array:
   if (name[name_len - 1] == ']')
     --name_len;
   {
-    uint64_t hash = fio_siphash(name, name_len);
+    uint64_t hash = fiobj_hash_string(name, name_len);
     FIOBJ ary = fiobj_hash_get2(dest, hash);
     if (!ary) {
       FIOBJ key = encoded ? http_urlstr2fiobj(name, name_len)
@@ -1958,7 +1930,7 @@ int http_parse_body(http_s *h) {
   if (!h->body)
     return -1;
   if (!content_type_hash)
-    content_type_hash = fio_siphash("content-type", 12);
+    content_type_hash = fiobj_hash_string("content-type", 12);
   FIOBJ ct = fiobj_hash_get2(h->headers, content_type_hash);
   fio_str_info_s content_type = fiobj_obj2cstr(ct);
   if (content_type.len < 16)
@@ -2729,7 +2701,7 @@ static fio_mime_set_s mime_types = FIO_SET_INIT;
 /** Registers a Mime-Type to be associated with the file extension. */
 void http_mimetype_register(char *file_ext, size_t file_ext_len,
                             FIOBJ mime_type_str) {
-  uintptr_t hash = fio_siphash(file_ext, file_ext_len);
+  uintptr_t hash = fiobj_hash_string(file_ext, file_ext_len);
   if (mime_type_str == FIOBJ_INVALID) {
     fio_mime_set_remove(&mime_types, hash, FIOBJ_INVALID, NULL);
   } else {
@@ -2749,7 +2721,7 @@ void http_mimetype_register(char *file_ext, size_t file_ext_len,
  *  Remember to call `fiobj_free`.
  */
 FIOBJ http_mimetype_find(char *file_ext, size_t file_ext_len) {
-  uintptr_t hash = fio_siphash(file_ext, file_ext_len);
+  uintptr_t hash = fiobj_hash_string(file_ext, file_ext_len);
   return fiobj_dup(fio_mime_set_find(&mime_types, hash, FIOBJ_INVALID));
 }
 

@@ -339,7 +339,7 @@ static inline VALUE copy2env(iodine_http_request_handle_s *handle) {
   /* handle the HOST header, including the possible host:#### format*/
   static uint64_t host_hash = 0;
   if (!host_hash)
-    host_hash = fio_siphash("host", 4);
+    host_hash = fiobj_hash_string("host", 4);
   tmp = fiobj_obj2cstr(fiobj_hash_get2(h->headers, host_hash));
   pos = tmp.data;
   while (*pos && *pos != ':')
@@ -362,7 +362,7 @@ static inline VALUE copy2env(iodine_http_request_handle_s *handle) {
   {
     static uint64_t content_length_hash = 0;
     if (!content_length_hash)
-      content_length_hash = fio_siphash("content-length", 14);
+      content_length_hash = fiobj_hash_string("content-length", 14);
     FIOBJ cl = fiobj_hash_get2(h->headers, content_length_hash);
     if (cl) {
       tmp = fiobj_obj2cstr(fiobj_hash_get2(h->headers, content_length_hash));
@@ -376,7 +376,7 @@ static inline VALUE copy2env(iodine_http_request_handle_s *handle) {
   {
     static uint64_t content_type_hash = 0;
     if (!content_type_hash)
-      content_type_hash = fio_siphash("content-type", 12);
+      content_type_hash = fiobj_hash_string("content-type", 12);
     FIOBJ ct = fiobj_hash_get2(h->headers, content_type_hash);
     if (ct) {
       tmp = fiobj_obj2cstr(ct);
@@ -393,10 +393,10 @@ static inline VALUE copy2env(iodine_http_request_handle_s *handle) {
     FIOBJ objtmp;
     static uint64_t xforward_hash = 0;
     if (!xforward_hash)
-      xforward_hash = fio_siphash("x-forwarded-proto", 27);
+      xforward_hash = fiobj_hash_string("x-forwarded-proto", 27);
     static uint64_t forward_hash = 0;
     if (!forward_hash)
-      forward_hash = fio_siphash("forwarded", 9);
+      forward_hash = fiobj_hash_string("forwarded", 9);
     if ((objtmp = fiobj_hash_get2(h->headers, xforward_hash))) {
       tmp = fiobj_obj2cstr(objtmp);
       if (tmp.len >= 5 && !strncasecmp(tmp.data, "https", 5)) {
