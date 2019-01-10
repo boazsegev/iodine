@@ -513,7 +513,6 @@ SSL/TLS RW Hooks
 ***************************************************************************** */
 
 static void fio_tls_delayed_close(void *uuid, void *ignr_) {
-  FIO_LOG_DEBUG("closing TLS connection (failure) %p", uuid);
   fio_close((intptr_t)uuid);
   (void)ignr_;
 }

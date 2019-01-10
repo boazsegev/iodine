@@ -9,5 +9,6 @@ void iodine_init_tls(void);
 fio_tls_s *iodine_tls2c(VALUE self);
 
 extern VALUE iodine_tls_sym;
+extern VALUE IodineTLSClass;
 
 #endif
