@@ -361,6 +361,13 @@ static VALUE iodine_cli_parse(VALUE self) {
       FIO_CLI_PRINT_HEADER("WebSocket Settings:"),
       FIO_CLI_INT("-max-msg -maxms incoming WebSocket message limit in Kb. "
                   "Default: 250Kb"),
+      FIO_CLI_PRINT_HEADER("SSL/TLS:"),
+      FIO_CLI_BOOL("-tls enable SSL/TLS using a self-signed certificate."),
+      FIO_CLI_STRING(
+          "-tls-cert -cert the SSL/TLS public certificate file name."),
+      FIO_CLI_STRING("-tls-key -key the SSL/TLS private key file name."),
+      FIO_CLI_STRING("-tls-password the password (if any) protecting the "
+                     "private key file."),
       FIO_CLI_PRINT_HEADER("Connecting Iodine to Redis:"),
       FIO_CLI_STRING(
           "-redis -r an optional Redis URL server address. Default: none."),
@@ -443,6 +450,30 @@ static VALUE iodine_cli_parse(VALUE self) {
   if (fio_cli_get("-max-headers")) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("max_headers")),
                  INT2NUM((fio_cli_get_i("-max-headers") * 1024)));
+  }
+  if (fio_cli_get_bool("-tls") || fio_cli_get("-key") || fio_cli_get("-cert")) {
+    VALUE rbtls = IodineCaller.call(IodineTLSClass, rb_intern2("new", 3));
+    if (rbtls == Qnil) {
+      FIO_LOG_FATAL("Iodine internal error, Ruby TLS object is nil.");
+      exit(-1);
+    }
+    fio_tls_s *tls = iodine_tls2c(rbtls);
+    if (!tls) {
+      FIO_LOG_FATAL("Iodine internal error, TLS object NULL.");
+      exit(-1);
+    }
+    if (fio_cli_get("-tls-key") && fio_cli_get("-tls-cert")) {
+      fio_tls_cert_add(tls, NULL, fio_cli_get("-tls-cert"),
+                       fio_cli_get("-tls-key"), fio_cli_get("-tls-password"));
+    } else {
+      if (!fio_cli_get_bool("-tls"))
+        FIO_LOG_ERROR("TLS support requires both key and certificate."
+                      "\r\n\t\tfalling back on a self signed certificate.");
+      char name[1024];
+      fio_local_addr(name, 1024);
+      fio_tls_cert_add(tls, name, NULL, NULL, NULL);
+    }
+    rb_hash_aset(defaults, iodine_tls_sym, rbtls);
   }
   if (fio_cli_unnamed_count()) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("filename_")),

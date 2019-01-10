@@ -8,6 +8,7 @@ static VALUE server_name_sym = Qnil, certificate_sym = Qnil,
              private_key_sym = Qnil, password_sym = Qnil;
 static ID iodine_call_id;
 VALUE iodine_tls_sym;
+VALUE IodineTLSClass;
 /* *****************************************************************************
 C <=> Ruby Data allocation
 ***************************************************************************** */
@@ -252,11 +253,12 @@ void iodine_init_tls(void) {
   rb_global_variable(&iodine_tls_sym);
   iodine_call_id = rb_intern2("call", 4);
 
-  VALUE tmp = rb_define_class_under(IodineModule, "TLS", rb_cData);
-  rb_define_alloc_func(tmp, iodine_tls_data_alloc_c);
-  rb_define_method(tmp, "initialize", iodine_tls_new, -1);
-  rb_define_method(tmp, "use_certificate", iodine_tls_use_certificate, -1);
-  rb_define_method(tmp, "trust", iodine_tls_trust, 1);
-  rb_define_method(tmp, "on_protocol", iodine_tls_alpn, 1);
+  IodineTLSClass = rb_define_class_under(IodineModule, "TLS", rb_cData);
+  rb_define_alloc_func(IodineTLSClass, iodine_tls_data_alloc_c);
+  rb_define_method(IodineTLSClass, "initialize", iodine_tls_new, -1);
+  rb_define_method(IodineTLSClass, "use_certificate",
+                   iodine_tls_use_certificate, -1);
+  rb_define_method(IodineTLSClass, "trust", iodine_tls_trust, 1);
+  rb_define_method(IodineTLSClass, "on_protocol", iodine_tls_alpn, 1);
 }
 #undef IODINE_MAKE_SYM

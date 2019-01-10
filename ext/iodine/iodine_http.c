@@ -838,6 +838,7 @@ static VALUE iodine_http_listen(VALUE self, VALUE opt) {
   VALUE port = rb_hash_aref(opt, ID2SYM(rb_intern("port")));
   VALUE address = rb_hash_aref(opt, ID2SYM(rb_intern("address")));
   VALUE tout = rb_hash_aref(opt, ID2SYM(rb_intern("timeout")));
+  VALUE rb_tls = rb_hash_aref(opt, iodine_tls_sym);
   if (www == Qnil) {
     www = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("public")));
   }
@@ -849,6 +850,9 @@ static VALUE iodine_http_listen(VALUE self, VALUE opt) {
   }
   if (tout == Qnil) {
     tout = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("timeout")));
+  }
+  if (rb_tls == Qnil) {
+    rb_tls = rb_hash_aref(iodine_default_args, iodine_tls_sym);
   }
 
   VALUE tmp = rb_hash_aref(opt, ID2SYM(rb_intern("max_msg")));
@@ -958,7 +962,7 @@ static VALUE iodine_http_listen(VALUE self, VALUE opt) {
   if (http_listen((port ? StringValueCStr(port) : NULL),
                   (address ? StringValueCStr(address) : NULL),
                   .on_request = on_rack_request, .on_upgrade = on_rack_upgrade,
-                  .udata = (void *)app,
+                  .udata = (void *)app, .tls = iodine_tls2c(rb_tls),
                   .timeout = (tout ? FIX2INT(tout) : tout), .ws_timeout = ping,
                   .ws_max_msg_size = max_msg, .max_header_size = max_headers,
                   .on_finish = free_iodine_http, .log = log_http,
