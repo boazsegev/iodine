@@ -239,7 +239,7 @@ static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
                  .address =
                      (rb_address == Qnil ? NULL : StringValueCStr(rb_address)),
                  .on_open = iodine_tcp_on_open,
-                 .on_finish = iodine_tcp_on_finish,
+                 .on_finish = iodine_tcp_on_finish, .tls = iodine_tls2c(rb_tls),
                  .udata = (void *)rb_handler) == -1) {
     rb_raise(rb_eRuntimeError,
              "failed to listen to requested address, unknown error.");
