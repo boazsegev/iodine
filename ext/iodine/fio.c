@@ -80,6 +80,10 @@ Feel free to copy, use and enjoy according to the license provided.
 #define __thread _Thread_value
 #endif
 
+#ifndef FIO_TLS_WEAK
+#define FIO_TLS_WEAK __attribute__((weak))
+#endif
+
 /* *****************************************************************************
 Event deferring (declarations)
 ***************************************************************************** */
@@ -4219,6 +4223,100 @@ Section Start Marker
 
 
 
+                       SSL/TLS Weak Symbols for TLS Support
+
+
+
+
+
+
+
+
+***************************************************************************** */
+
+/**
+ * Returns the number of registered ALPN protocol names.
+ *
+ * This could be used when deciding if protocol selection should be delegated to
+ * the ALPN mechanism, or whether a protocol should be immediately assigned.
+ *
+ * If no ALPN protocols are registered, zero (0) is returned.
+ */
+uintptr_t FIO_TLS_WEAK fio_tls_alpn_count(void *tls) {
+  return 0;
+  (void)tls;
+}
+
+/**
+ * Establishes an SSL/TLS connection as an SSL/TLS Server, using the specified
+ * context / settings object.
+ *
+ * The `uuid` should be a socket UUID that is already connected to a peer (i.e.,
+ * the result of `fio_accept`).
+ *
+ * The `udata` is an opaque user data pointer that is passed along to the
+ * protocol selected (if any protocols were added using `fio_tls_alpn_add`).
+ */
+void FIO_TLS_WEAK fio_tls_accept(intptr_t uuid, void *tls, void *udata) {
+  FIO_LOG_FATAL("No supported SSL/TLS library available.");
+  exit(-1);
+  return;
+  (void)uuid;
+  (void)tls;
+  (void)udata;
+}
+
+/**
+ * Establishes an SSL/TLS connection as an SSL/TLS Client, using the specified
+ * context / settings object.
+ *
+ * The `uuid` should be a socket UUID that is already connected to a peer (i.e.,
+ * one received by a `fio_connect` specified callback `on_connect`).
+ *
+ * The `udata` is an opaque user data pointer that is passed along to the
+ * protocol selected (if any protocols were added using `fio_tls_alpn_add`).
+ */
+void FIO_TLS_WEAK fio_tls_connect(intptr_t uuid, void *tls, void *udata) {
+  FIO_LOG_FATAL("No supported SSL/TLS library available.");
+  exit(-1);
+  return;
+  (void)uuid;
+  (void)tls;
+  (void)udata;
+}
+
+/**
+ * Increase the reference count for the TLS object.
+ *
+ * Decrease with `fio_tls_destroy`.
+ */
+void FIO_TLS_WEAK fio_tls_dup(void *tls) {
+  FIO_LOG_FATAL("No supported SSL/TLS library available.");
+  exit(-1);
+  return;
+  (void)tls;
+}
+
+/**
+ * Destroys the SSL/TLS context / settings object and frees any related
+ * resources / memory.
+ */
+void FIO_TLS_WEAK fio_tls_destroy(void *tls) {
+  FIO_LOG_FATAL("No supported SSL/TLS library available.");
+  exit(-1);
+  return;
+  (void)tls;
+}
+
+/* *****************************************************************************
+Section Start Marker
+
+
+
+
+
+
+
 
 
 
@@ -4261,10 +4359,13 @@ typedef struct {
   char *addr;
   size_t port_len;
   size_t addr_len;
+  void *tls;
 } fio_listen_protocol_s;
 
 static void fio_listen_cleanup_task(void *pr_) {
   fio_listen_protocol_s *pr = pr_;
+  if (pr->tls)
+    fio_tls_destroy(pr->tls);
   if (pr->on_finish) {
     pr->on_finish(pr->uuid, pr->udata);
   }
@@ -4305,6 +4406,27 @@ static void fio_listen_on_data(intptr_t uuid, fio_protocol_s *pr_) {
   }
 }
 
+static void fio_listen_on_data_tls(intptr_t uuid, fio_protocol_s *pr_) {
+  fio_listen_protocol_s *pr = (fio_listen_protocol_s *)pr_;
+  for (int i = 0; i < 4; ++i) {
+    intptr_t client = fio_accept(uuid);
+    if (client == -1)
+      return;
+    fio_tls_accept(client, pr->tls, pr->udata);
+    pr->on_open(client, pr->udata);
+  }
+}
+
+static void fio_listen_on_data_tls_alpn(intptr_t uuid, fio_protocol_s *pr_) {
+  fio_listen_protocol_s *pr = (fio_listen_protocol_s *)pr_;
+  for (int i = 0; i < 4; ++i) {
+    intptr_t client = fio_accept(uuid);
+    if (client == -1)
+      return;
+    fio_tls_accept(client, pr->tls, pr->udata);
+  }
+}
+
 /* stub for editor - unused */
 void fio_listen____(void);
 /**
@@ -4314,7 +4436,8 @@ void fio_listen____(void);
  */
 intptr_t fio_listen FIO_IGNORE_MACRO(struct fio_listen_args args) {
   // ...
-  if (!args.on_open || (!args.address && !args.port)) {
+  if ((!args.on_open && (!args.tls || !fio_tls_alpn_count(args.tls))) ||
+      (!args.address && !args.port)) {
     errno = EINVAL;
     goto error;
   }
@@ -4332,18 +4455,26 @@ intptr_t fio_listen FIO_IGNORE_MACRO(struct fio_listen_args args) {
   fio_listen_protocol_s *pr = malloc(sizeof(*pr) + addr_len + port_len +
                                      ((addr_len + port_len) ? 2 : 0));
   FIO_ASSERT_ALLOC(pr);
+
+  if (args.tls)
+    fio_tls_dup(args.tls);
+
   *pr = (fio_listen_protocol_s){
       .pr =
           {
               .on_close = fio_listen_on_close,
               .ping = mock_ping_eternal,
-              .on_data = fio_listen_on_data,
+              .on_data = (args.tls ? (fio_tls_alpn_count(args.tls)
+                                          ? fio_listen_on_data_tls_alpn
+                                          : fio_listen_on_data_tls)
+                                   : fio_listen_on_data),
           },
       .uuid = uuid,
       .udata = args.udata,
       .on_open = args.on_open,
       .on_start = args.on_start,
       .on_finish = args.on_finish,
+      .tls = args.tls,
       .addr_len = addr_len,
       .port_len = port_len,
       .addr = (char *)(pr + 1),
@@ -4419,6 +4550,7 @@ typedef struct {
   fio_protocol_s pr;
   intptr_t uuid;
   void *udata;
+  void *tls;
   void (*on_connect)(intptr_t uuid, void *udata);
   void (*on_fail)(intptr_t uuid, void *udata);
 } fio_connect_protocol_s;
@@ -4427,6 +4559,8 @@ static void fio_connect_on_close(intptr_t uuid, fio_protocol_s *pr_) {
   fio_connect_protocol_s *pr = (fio_connect_protocol_s *)pr_;
   if (pr->on_fail)
     pr->on_fail(uuid, pr->udata);
+  if (pr->tls)
+    fio_tls_destroy(pr->tls);
   fio_free(pr);
   (void)uuid;
 }
@@ -4442,8 +4576,35 @@ static void fio_connect_on_ready(intptr_t uuid, fio_protocol_s *pr_) {
   (void)uuid;
 }
 
+static void fio_connect_on_ready_tls(intptr_t uuid, fio_protocol_s *pr_) {
+  fio_connect_protocol_s *pr = (fio_connect_protocol_s *)pr_;
+  if (pr->pr.on_ready == mock_on_ev)
+    return; /* Don't call on_connect more than once */
+  pr->pr.on_ready = mock_on_ev;
+  pr->on_fail = NULL;
+  fio_tls_connect(uuid, pr->tls, pr->udata);
+  pr->on_connect(uuid, pr->udata);
+  fio_poll_add(fio_uuid2fd(uuid));
+  (void)uuid;
+}
+
+static void fio_connect_on_ready_tls_alpn(intptr_t uuid, fio_protocol_s *pr_) {
+  fio_connect_protocol_s *pr = (fio_connect_protocol_s *)pr_;
+  if (pr->pr.on_ready == mock_on_ev)
+    return; /* Don't call on_connect more than once */
+  pr->pr.on_ready = mock_on_ev;
+  pr->on_fail = NULL;
+  fio_tls_connect(uuid, pr->tls, pr->udata);
+  fio_poll_add(fio_uuid2fd(uuid));
+  (void)uuid;
+}
+
+/* stub for sublime text function navigation */
+intptr_t fio_connect___(struct fio_connect_args args);
+
 intptr_t fio_connect FIO_IGNORE_MACRO(struct fio_connect_args args) {
-  if (!args.on_connect || (!args.address && !args.port)) {
+  if ((!args.on_connect && (!args.tls || !fio_tls_alpn_count(args.tls))) ||
+      (!args.address && !args.port)) {
     errno = EINVAL;
     goto error;
   }
@@ -4454,13 +4615,21 @@ intptr_t fio_connect FIO_IGNORE_MACRO(struct fio_connect_args args) {
 
   fio_connect_protocol_s *pr = fio_malloc(sizeof(*pr));
   FIO_ASSERT_ALLOC(pr);
+
+  if (args.tls)
+    fio_tls_dup(args.tls);
+
   *pr = (fio_connect_protocol_s){
       .pr =
           {
-              .on_ready = fio_connect_on_ready,
+              .on_ready = (args.tls ? (fio_tls_alpn_count(args.tls)
+                                           ? fio_connect_on_ready_tls_alpn
+                                           : fio_connect_on_ready_tls)
+                                    : fio_connect_on_ready),
               .on_close = fio_connect_on_close,
           },
       .uuid = uuid,
+      .tls = args.tls,
       .udata = args.udata,
       .on_connect = args.on_connect,
       .on_fail = args.on_fail,
@@ -4904,7 +5073,8 @@ static channel_s *fio_channel_dup_lock(fio_str_info_s name) {
       .parent = &fio_postoffice.pubsub,
       .ref = 8, /* avoid freeing stack memory */
   };
-  uint64_t hashed_name = fio_siphash(name.data, name.len);
+  uint64_t hashed_name = FIO_HASH_FN(
+      name.data, name.len, &fio_postoffice.pubsub, &fio_postoffice.pubsub);
   channel_s *ch_p =
       fio_filter_dup_lock_internal(&ch, hashed_name, &fio_postoffice.pubsub);
   if (fio_ls_embd_is_empty(&ch_p->subscriptions)) {
@@ -4923,7 +5093,8 @@ static channel_s *fio_channel_match_dup_lock(fio_str_info_s name,
       .match = match,
       .ref = 8, /* avoid freeing stack memory */
   };
-  uint64_t hashed_name = fio_siphash(name.data, name.len);
+  uint64_t hashed_name = FIO_HASH_FN(
+      name.data, name.len, &fio_postoffice.pubsub, &fio_postoffice.pubsub);
   channel_s *ch_p =
       fio_filter_dup_lock_internal(&ch, hashed_name, &fio_postoffice.patterns);
   if (fio_ls_embd_is_empty(&ch_p->subscriptions)) {
@@ -4990,7 +5161,8 @@ void fio_unsubscribe(subscription_s *s) {
   /* check if channel is done for */
   if (fio_ls_embd_is_empty(&ch->subscriptions)) {
     fio_collection_s *c = ch->parent;
-    uint64_t hashed = fio_siphash(ch->name, ch->name_len);
+    uint64_t hashed = FIO_HASH_FN(
+        ch->name, ch->name_len, &fio_postoffice.pubsub, &fio_postoffice.pubsub);
     /* lock collection */
     fio_lock(&c->lock);
     /* test again within lock */
@@ -5189,7 +5361,8 @@ static channel_s *fio_filter_find_dup(uint32_t filter) {
 /** Finds a pubsub channel, increasing it's reference count if it exists. */
 static channel_s *fio_channel_find_dup(fio_str_info_s name) {
   channel_s tmp = {.name = name.data, .name_len = name.len};
-  uint64_t hashed_name = fio_siphash(name.data, name.len);
+  uint64_t hashed_name = FIO_HASH_FN(
+      name.data, name.len, &fio_postoffice.pubsub, &fio_postoffice.pubsub);
   channel_s *ch =
       fio_channel_find_dup_internal(&tmp, hashed_name, &fio_postoffice.pubsub);
   return ch;
@@ -5655,7 +5828,11 @@ static void fio_cluster_server_handler(struct cluster_pr_s *pr) {
     fio_str_s tmp = FIO_STR_INIT_EXISTING(
         pr->msg->channel.data, pr->msg->channel.len, 0); // don't free
     fio_lock(&pr->lock);
-    fio_sub_hash_insert(&pr->pubsub, fio_str_hash(&tmp), tmp, s, NULL);
+    fio_sub_hash_insert(&pr->pubsub,
+                        FIO_HASH_FN(pr->msg->channel.data, pr->msg->channel.len,
+                                    &fio_postoffice.pubsub,
+                                    &fio_postoffice.pubsub),
+                        tmp, s, NULL);
     fio_unlock(&pr->lock);
     break;
   }
@@ -5663,7 +5840,11 @@ static void fio_cluster_server_handler(struct cluster_pr_s *pr) {
     fio_str_s tmp = FIO_STR_INIT_EXISTING(
         pr->msg->channel.data, pr->msg->channel.len, 0); // don't free
     fio_lock(&pr->lock);
-    fio_sub_hash_remove(&pr->pubsub, fio_str_hash(&tmp), tmp, NULL);
+    fio_sub_hash_remove(&pr->pubsub,
+                        FIO_HASH_FN(pr->msg->channel.data, pr->msg->channel.len,
+                                    &fio_postoffice.pubsub,
+                                    &fio_postoffice.pubsub),
+                        tmp, NULL);
     fio_unlock(&pr->lock);
     break;
   }
@@ -5676,7 +5857,11 @@ static void fio_cluster_server_handler(struct cluster_pr_s *pr) {
     fio_str_s tmp = FIO_STR_INIT_EXISTING(
         pr->msg->channel.data, pr->msg->channel.len, 0); // don't free
     fio_lock(&pr->lock);
-    fio_sub_hash_insert(&pr->patterns, fio_str_hash(&tmp), tmp, s, NULL);
+    fio_sub_hash_insert(&pr->patterns,
+                        FIO_HASH_FN(pr->msg->channel.data, pr->msg->channel.len,
+                                    &fio_postoffice.pubsub,
+                                    &fio_postoffice.pubsub),
+                        tmp, s, NULL);
     fio_unlock(&pr->lock);
     break;
   }
@@ -5685,7 +5870,11 @@ static void fio_cluster_server_handler(struct cluster_pr_s *pr) {
     fio_str_s tmp = FIO_STR_INIT_EXISTING(
         pr->msg->channel.data, pr->msg->channel.len, 0); // don't free
     fio_lock(&pr->lock);
-    fio_sub_hash_remove(&pr->patterns, fio_str_hash(&tmp), tmp, NULL);
+    fio_sub_hash_remove(&pr->patterns,
+                        FIO_HASH_FN(pr->msg->channel.data, pr->msg->channel.len,
+                                    &fio_postoffice.pubsub,
+                                    &fio_postoffice.pubsub),
+                        tmp, NULL);
     fio_unlock(&pr->lock);
     break;
   }
@@ -7015,23 +7204,6 @@ Section Start Marker
 
 ***************************************************************************** */
 
-/** 32Bit left rotation, inlined. */
-#define fio_lrot32(i, bits)                                                    \
-  (((uint32_t)(i) << (bits)) | ((uint32_t)(i) >> (32 - (bits))))
-/** 32Bit right rotation, inlined. */
-#define fio_rrot32(i, bits)                                                    \
-  (((uint32_t)(i) >> (bits)) | ((uint32_t)(i) << (32 - (bits))))
-/** 64Bit left rotation, inlined. */
-#define fio_lrot64(i, bits)                                                    \
-  (((uint64_t)(i) << (bits)) | ((uint64_t)(i) >> (64 - (bits))))
-/** 64Bit right rotation, inlined. */
-#define fio_rrot64(i, bits)                                                    \
-  (((uint64_t)(i) >> (bits)) | ((uint64_t)(i) << (64 - (bits))))
-/** unknown size element - left rotation, inlined. */
-#define fio_lrot(i, bits) (((i) << (bits)) | ((i) >> (sizeof((i)) - (bits))))
-/** unknown size element - right rotation, inlined. */
-#define fio_rrot(i, bits) (((i) >> (bits)) | ((i) << (sizeof((i)) - (bits))))
-
 /* *****************************************************************************
 SipHash
 ***************************************************************************** */
@@ -7043,13 +7215,13 @@ SipHash
 #endif
 
 static inline uint64_t fio_siphash_xy(const void *data, size_t len, size_t x,
-                                      size_t y) {
+                                      size_t y, uint64_t key1, uint64_t key2) {
   /* initialize the 4 words */
-  uint64_t v0 = (0x0706050403020100ULL ^ 0x736f6d6570736575ULL);
-  uint64_t v1 = (0x0f0e0d0c0b0a0908ULL ^ 0x646f72616e646f6dULL);
-  uint64_t v2 = (0x0706050403020100ULL ^ 0x6c7967656e657261ULL);
-  uint64_t v3 = (0x0f0e0d0c0b0a0908ULL ^ 0x7465646279746573ULL);
-  const uint64_t *w64 = data;
+  uint64_t v0 = (0x0706050403020100ULL ^ 0x736f6d6570736575ULL) ^ key1;
+  uint64_t v1 = (0x0f0e0d0c0b0a0908ULL ^ 0x646f72616e646f6dULL) ^ key2;
+  uint64_t v2 = (0x0706050403020100ULL ^ 0x6c7967656e657261ULL) ^ key1;
+  uint64_t v3 = (0x0f0e0d0c0b0a0908ULL ^ 0x7465646279746573ULL) ^ key2;
+  const uint8_t *w8 = data;
   uint8_t len_mod = len & 255;
   union {
     uint64_t i;
@@ -7071,19 +7243,18 @@ static inline uint64_t fio_siphash_xy(const void *data, size_t len, size_t x,
   } while (0);
 
   while (len >= 8) {
-    word.i = sip_local64(*w64);
+    word.i = sip_local64(fio_str2u64(w8));
     v3 ^= word.i;
     /* Sip Rounds */
     for (size_t i = 0; i < x; ++i) {
       hash_map_SipRound;
     }
     v0 ^= word.i;
-    w64 += 1;
+    w8 += 8;
     len -= 8;
   }
   word.i = 0;
   uint8_t *pos = word.str;
-  uint8_t *w8 = (void *)w64;
   switch (len) { /* fallthrough is intentional */
   case 7:
     pos[6] = w8[6];
@@ -7129,12 +7300,14 @@ static inline uint64_t fio_siphash_xy(const void *data, size_t len, size_t x,
   return v0;
 }
 
-uint64_t fio_siphash24(const void *data, size_t len) {
-  return fio_siphash_xy(data, len, 2, 4);
+uint64_t fio_siphash24(const void *data, size_t len, uint64_t key1,
+                       uint64_t key2) {
+  return fio_siphash_xy(data, len, 2, 4, key1, key2);
 }
 
-uint64_t fio_siphash13(const void *data, size_t len) {
-  return fio_siphash_xy(data, len, 1, 3);
+uint64_t fio_siphash13(const void *data, size_t len, uint64_t key1,
+                       uint64_t key2) {
+  return fio_siphash_xy(data, len, 1, 3, key1, key2);
 }
 
 /* *****************************************************************************
@@ -9132,7 +9305,7 @@ FIO_FUNC void fio_ary_test(void) {
 Set data-structure Testing
 ***************************************************************************** */
 
-#define FIO_SET_TEXT_COUNT 524288UL
+#define FIO_SET_TEST_COUNT 524288UL
 
 #define FIO_SET_NAME fio_set_test
 #define FIO_SET_OBJ_TYPE uintptr_t
@@ -9143,13 +9316,18 @@ Set data-structure Testing
 #define FIO_SET_OBJ_TYPE uintptr_t
 #include <fio.h>
 
+#define FIO_SET_NAME fio_set_attack
+#define FIO_SET_OBJ_COMPARE(a, b) ((a) == (b))
+#define FIO_SET_OBJ_TYPE uintptr_t
+#include <fio.h>
+
 FIO_FUNC void fio_set_test(void) {
   fio_set_test_s s = FIO_SET_INIT;
   fio_hash_test_s h = FIO_SET_INIT;
   fprintf(
       stderr,
       "=== Testing Core ordered Set (re-including fio.h with FIO_SET_NAME)\n");
-  fprintf(stderr, "* Inserting %lu items\n", FIO_SET_TEXT_COUNT);
+  fprintf(stderr, "* Inserting %lu items\n", FIO_SET_TEST_COUNT);
 
   FIO_ASSERT(fio_set_test_count(&s) == 0, "empty set should have zero objects");
   FIO_ASSERT(fio_set_test_capa(&s) == 0, "empty set should have no capacity");
@@ -9162,7 +9340,7 @@ FIO_FUNC void fio_set_test(void) {
   FIO_ASSERT(!fio_hash_test_last(&h).key && !fio_hash_test_last(&h).obj,
              "empty hash shouldn't have a last object");
 
-  for (uintptr_t i = 1; i < FIO_SET_TEXT_COUNT; ++i) {
+  for (uintptr_t i = 1; i < FIO_SET_TEST_COUNT; ++i) {
     fio_set_test_insert(&s, i, i);
     fio_hash_test_insert(&h, i, i, i + 1, NULL);
     FIO_ASSERT(fio_set_test_find(&s, i, i), "set find failed after insert");
@@ -9170,8 +9348,8 @@ FIO_FUNC void fio_set_test(void) {
     FIO_ASSERT(i == fio_set_test_find(&s, i, i), "set insertion != find");
     FIO_ASSERT(i + 1 == fio_hash_test_find(&h, i, i), "hash insertion != find");
   }
-  fprintf(stderr, "* Seeking %lu items\n", FIO_SET_TEXT_COUNT);
-  for (unsigned long i = 1; i < FIO_SET_TEXT_COUNT; ++i) {
+  fprintf(stderr, "* Seeking %lu items\n", FIO_SET_TEST_COUNT);
+  for (unsigned long i = 1; i < FIO_SET_TEST_COUNT; ++i) {
     FIO_ASSERT((i == fio_set_test_find(&s, i, i)),
                "set insertion != find (seek)");
     FIO_ASSERT((i + 1 == fio_hash_test_find(&h, i, i)),
@@ -9179,7 +9357,7 @@ FIO_FUNC void fio_set_test(void) {
   }
   {
     fprintf(stderr, "* Testing order for %lu items in set\n",
-            FIO_SET_TEXT_COUNT);
+            FIO_SET_TEST_COUNT);
     uintptr_t i = 1;
     FIO_SET_FOR_LOOP(&s, pos) {
       FIO_ASSERT(pos->obj == i, "object order mismatch %lu != %lu.",
@@ -9189,7 +9367,7 @@ FIO_FUNC void fio_set_test(void) {
   }
   {
     fprintf(stderr, "* Testing order for %lu items in hash\n",
-            FIO_SET_TEXT_COUNT);
+            FIO_SET_TEST_COUNT);
     uintptr_t i = 1;
     FIO_SET_FOR_LOOP(&h, pos) {
       FIO_ASSERT(pos->obj.obj == i + 1 && pos->obj.key == i,
@@ -9199,8 +9377,8 @@ FIO_FUNC void fio_set_test(void) {
     }
   }
 
-  fprintf(stderr, "* Removing odd items from %lu items\n", FIO_SET_TEXT_COUNT);
-  for (unsigned long i = 1; i < FIO_SET_TEXT_COUNT; i += 2) {
+  fprintf(stderr, "* Removing odd items from %lu items\n", FIO_SET_TEST_COUNT);
+  for (unsigned long i = 1; i < FIO_SET_TEST_COUNT; i += 2) {
     fio_set_test_remove(&s, i, i, NULL);
     fio_hash_test_remove(&h, i, i, NULL);
     FIO_ASSERT(!(fio_set_test_find(&s, i, i)),
@@ -9209,7 +9387,7 @@ FIO_FUNC void fio_set_test(void) {
                "Removal failed in hash (still exists).");
   }
   {
-    fprintf(stderr, "* Testing for %lu / 2 holes\n", FIO_SET_TEXT_COUNT);
+    fprintf(stderr, "* Testing for %lu / 2 holes\n", FIO_SET_TEST_COUNT);
     uintptr_t i = 1;
     FIO_SET_FOR_LOOP(&s, pos) {
       if (pos->hash == 0) {
@@ -9284,11 +9462,11 @@ FIO_FUNC void fio_set_test(void) {
                  "Re-removing a re-added item should update the item!");
     }
   }
-  fprintf(stderr, "* Compacting HashMap to %lu\n", FIO_SET_TEXT_COUNT >> 1);
+  fprintf(stderr, "* Compacting HashMap to %lu\n", FIO_SET_TEST_COUNT >> 1);
   fio_set_test_compact(&s);
   {
     fprintf(stderr, "* Testing that %lu items are continuous\n",
-            FIO_SET_TEXT_COUNT >> 1);
+            FIO_SET_TEST_COUNT >> 1);
     uintptr_t i = 0;
     FIO_SET_FOR_LOOP(&s, pos) {
       FIO_ASSERT(pos->hash != 0, "Found a hole after compact.");
@@ -9302,14 +9480,14 @@ FIO_FUNC void fio_set_test(void) {
   FIO_ASSERT(!s.map && !s.ordered && !s.pos && !s.capa,
              "HashMap not re-initialized after free.");
 
-  fio_set_test_capa_require(&s, FIO_SET_TEXT_COUNT);
+  fio_set_test_capa_require(&s, FIO_SET_TEST_COUNT);
 
   FIO_ASSERT(
-      s.map && s.ordered && !s.pos && s.capa >= FIO_SET_TEXT_COUNT,
+      s.map && s.ordered && !s.pos && s.capa >= FIO_SET_TEST_COUNT,
       "capa_require changes state in a bad way (%p, %p, %zu, %zu ?>= %zu)",
-      (void *)s.map, (void *)s.ordered, s.pos, s.capa, FIO_SET_TEXT_COUNT);
+      (void *)s.map, (void *)s.ordered, s.pos, s.capa, FIO_SET_TEST_COUNT);
 
-  for (unsigned long i = 1; i < FIO_SET_TEXT_COUNT; ++i) {
+  for (unsigned long i = 1; i < FIO_SET_TEST_COUNT; ++i) {
     fio_set_test_insert(&s, i, i);
     FIO_ASSERT(fio_set_test_find(&s, i, i),
                "find failed after insert (2nd round)");
@@ -9319,6 +9497,32 @@ FIO_FUNC void fio_set_test(void) {
                s.count);
   }
   fio_set_test_free(&s);
+  /* attack set and test response */
+  if (1) {
+    fio_set_attack_s as = FIO_SET_INIT;
+    time_t start_ok = clock();
+    for (uintptr_t i = 0; i < FIO_SET_TEST_COUNT; ++i) {
+      fio_set_attack_insert(&as, i, i + 1);
+      FIO_ASSERT(fio_set_attack_find(&as, i, i + 1) == i + 1,
+                 "set attack verctor failed sanity test (seek != insert)");
+    }
+    time_t end_ok = clock();
+    FIO_ASSERT(fio_set_attack_count(&as) == FIO_SET_TEST_COUNT,
+               "set attack verctor failed sanity test (count error %zu != %zu)",
+               fio_set_attack_count(&as), FIO_SET_TEST_COUNT);
+    fio_set_attack_free(&as);
+    time_t start_bad = clock();
+    for (uintptr_t i = 0; i < FIO_SET_TEST_COUNT; ++i) {
+      fio_set_attack_insert(&as, 1, i + 1);
+    }
+    time_t end_bad = clock();
+    FIO_ASSERT(fio_set_attack_count(&as) != FIO_SET_TEST_COUNT,
+               "set attack success! full inserts!");
+    FIO_LOG_DEBUG("set attack final count = %zu", fio_set_attack_count(&as));
+    FIO_LOG_DEBUG("set attack timing impact (attack vs. normal) %zu vs. %zu",
+                  end_bad - start_bad, end_ok - start_ok);
+    fio_set_attack_free(&as);
+  }
 }
 
 /* *****************************************************************************
@@ -9329,11 +9533,10 @@ FIO_FUNC void fio_riskyhash_speed_test(void) {
   /* test based on code from BearSSL with credit to Thomas Pornin */
   uint8_t buffer[8192];
   memset(buffer, 'T', sizeof(buffer));
-  fio_str_s str = FIO_STR_INIT_STATIC2(buffer, 8192);
   /* warmup */
   uint64_t hash = 0;
   for (size_t i = 0; i < 4; i++) {
-    hash += fio_str_hash_risky(&str);
+    hash += fio_risky_hash(buffer, 8192, 1);
     memcpy(buffer, &hash, sizeof(hash));
   }
   /* loop until test runs for more than 2 seconds */
@@ -9341,14 +9544,14 @@ FIO_FUNC void fio_riskyhash_speed_test(void) {
     clock_t start, end;
     start = clock();
     for (size_t i = cycles; i > 0; i--) {
-      hash += fio_str_hash_risky(&str);
+      hash += fio_risky_hash(buffer, 8192, 1);
       __asm__ volatile("" ::: "memory");
     }
     end = clock();
     memcpy(buffer, &hash, sizeof(hash));
     if ((end - start) >= (2 * CLOCKS_PER_SEC) ||
         cycles >= ((uint64_t)1 << 62)) {
-      fprintf(stderr, "%-20s %8.2f MB/s\n", "fio_str_hash_risky",
+      fprintf(stderr, "%-20s %8.2f MB/s\n", "fio_risky_hash",
               (double)(sizeof(buffer) * cycles) /
                   (((end - start) * 1000000.0 / CLOCKS_PER_SEC)));
       break;
@@ -9362,15 +9565,18 @@ FIO_FUNC void fio_riskyhash_test(void) {
 #if NODEBUG
   fio_riskyhash_speed_test();
 #else
-  fprintf(stderr,
-          "fio_str_hash_risky speed test skipped (debug mode is slow)\n");
-  fio_str_s str1 = FIO_STR_INIT_STATIC("nothing_is_really_here1");
-  fio_str_s str2 = FIO_STR_INIT_STATIC("nothing_is_really_here2");
+  fprintf(stderr, "fio_risky_hash speed test skipped (debug mode is slow)\n");
+  fio_str_info_s str1 =
+      (fio_str_info_s){.data = "nothing_is_really_here1", .len = 23};
+  fio_str_info_s str2 =
+      (fio_str_info_s){.data = "nothing_is_really_here2", .len = 23};
   fio_str_s copy = FIO_STR_INIT;
-  FIO_ASSERT(fio_str_hash_risky(&str1) != fio_str_hash_risky(&str2),
+  FIO_ASSERT(fio_risky_hash(str1.data, str1.len, 1) !=
+                 fio_risky_hash(str2.data, str2.len, 1),
              "Different strings should have a different risky hash");
-  fio_str_concat(&copy, &str1);
-  FIO_ASSERT(fio_str_hash_risky(&str1) == fio_str_hash_risky(&copy),
+  fio_str_write(&copy, str1.data, str1.len);
+  FIO_ASSERT(fio_risky_hash(str1.data, str1.len, 1) ==
+                 fio_risky_hash(fio_str_data(&copy), fio_str_len(&copy), 1),
              "Same string values should have the same risky hash");
   fio_str_free(&copy);
   (void)fio_riskyhash_speed_test;
@@ -9388,7 +9594,7 @@ FIO_FUNC void fio_siphash_speed_test(void) {
   /* warmup */
   uint64_t hash = 0;
   for (size_t i = 0; i < 4; i++) {
-    hash += fio_siphash24(buffer, sizeof(buffer));
+    hash += fio_siphash24(buffer, sizeof(buffer), 0, 0);
     memcpy(buffer, &hash, sizeof(hash));
   }
   /* loop until test runs for more than 2 seconds */
@@ -9396,7 +9602,7 @@ FIO_FUNC void fio_siphash_speed_test(void) {
     clock_t start, end;
     start = clock();
     for (size_t i = cycles; i > 0; i--) {
-      hash += fio_siphash24(buffer, sizeof(buffer));
+      hash += fio_siphash24(buffer, sizeof(buffer), 0, 0);
       __asm__ volatile("" ::: "memory");
     }
     end = clock();
@@ -9415,7 +9621,7 @@ FIO_FUNC void fio_siphash_speed_test(void) {
     clock_t start, end;
     start = clock();
     for (size_t i = cycles; i > 0; i--) {
-      hash += fio_siphash13(buffer, sizeof(buffer));
+      hash += fio_siphash13(buffer, sizeof(buffer), 0, 0);
       __asm__ volatile("" ::: "memory");
     }
     end = clock();

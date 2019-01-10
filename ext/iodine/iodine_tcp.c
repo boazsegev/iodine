@@ -16,7 +16,6 @@ static VALUE port_id;
 static VALUE address_id;
 static VALUE handler_id;
 static VALUE timeout_id;
-static VALUE tls_id;
 
 /* *****************************************************************************
 Raw TCP/IP Protocol
@@ -101,7 +100,7 @@ static void iodine_tcp_ping(intptr_t uuid, fio_protocol_s *protocol) {
   (void)uuid;
 }
 
-/** called when a connection opens */
+/** fio_listen callback, called when a connection opens */
 static void iodine_tcp_on_open(intptr_t uuid, void *udata) {
   if (!fio_is_valid(uuid))
     return;
@@ -117,26 +116,13 @@ static void iodine_tcp_on_finish(intptr_t uuid, void *udata) {
   (void)uuid;
 }
 
-typedef struct {
-  VALUE handler;
-  fio_tls_s *tls;
-} iodine_tcp_init_data_s;
-
 /**
  * The `on_connect` callback should either call `fio_attach` or close the
  * connection.
  */
 static void iodine_tcp_on_connect(intptr_t uuid, void *udata) {
-  iodine_tcp_init_data_s *d = udata;
-  if (d->tls) {
-    fio_tls_connect(uuid, d->tls, NULL);
-    if (!fio_tls_alpn_count(d->tls))
-      iodine_tcp_attch_uuid(uuid, d->handler);
-  } else {
-    iodine_tcp_attch_uuid(uuid, d->handler);
-  }
-  IodineStore.remove(d->handler);
-  fio_free(d);
+  iodine_tcp_attch_uuid(uuid, (VALUE)udata);
+  IodineStore.remove((VALUE)udata);
 }
 
 /**
@@ -144,10 +130,7 @@ static void iodine_tcp_on_connect(intptr_t uuid, void *udata) {
  * is passed along.
  */
 static void iodine_tcp_on_fail(intptr_t uuid, void *udata) {
-  iodine_tcp_init_data_s *d = udata;
-  IodineStore.remove(d->handler);
-  fio_free(d);
-  (void)uuid;
+  IodineStore.remove((VALUE)udata);
 }
 
 /* *****************************************************************************
@@ -229,6 +212,7 @@ static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
   VALUE rb_port = rb_hash_aref(args, port_id);
   VALUE rb_address = rb_hash_aref(args, address_id);
   VALUE rb_handler = rb_hash_aref(args, handler_id);
+  VALUE rb_tls = rb_hash_aref(args, iodine_tls_sym);
   fio_str_s port = FIO_STR_INIT;
   if (rb_handler == Qnil || rb_handler == Qfalse || rb_handler == Qtrue) {
     rb_need_block();
@@ -250,13 +234,13 @@ static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
       rb_raise(rb_eTypeError,
                "The `port` property MUST be either a String or a Number");
   }
+
   if (fio_listen(.port = fio_str_info(&port).data,
                  .address =
                      (rb_address == Qnil ? NULL : StringValueCStr(rb_address)),
                  .on_open = iodine_tcp_on_open,
                  .on_finish = iodine_tcp_on_finish,
                  .udata = (void *)rb_handler) == -1) {
-    IodineStore.remove(rb_handler);
     rb_raise(rb_eRuntimeError,
              "failed to listen to requested address, unknown error.");
   }
@@ -291,7 +275,7 @@ static VALUE iodine_tcp_connect(VALUE self, VALUE args) {
   VALUE rb_address = rb_hash_aref(args, address_id);
   VALUE rb_handler = rb_hash_aref(args, handler_id);
   VALUE rb_timeout = rb_hash_aref(args, timeout_id);
-  VALUE rb_tls = rb_hash_aref(args, tls_id);
+  VALUE rb_tls = rb_hash_aref(args, iodine_tls_sym);
   uint8_t timeout = 0;
   fio_str_s port = FIO_STR_INIT;
   if ((rb_handler == Qnil || rb_handler == Qfalse || rb_handler == Qtrue) &&
@@ -321,17 +305,12 @@ static VALUE iodine_tcp_connect(VALUE self, VALUE args) {
                "The `port` property MUST be either a String or a Number");
     }
   }
-  iodine_tcp_init_data_s *d = fio_malloc(sizeof(*d));
-  FIO_ASSERT_ALLOC(d);
-  *d = (iodine_tcp_init_data_s){
-      .handler = rb_handler,
-      .tls = iodine_tls2c(rb_tls),
-  };
   fio_connect(.port = fio_str_info(&port).data,
               .address =
                   (rb_address == Qnil ? NULL : StringValueCStr(rb_address)),
-              .on_connect = iodine_tcp_on_connect,
-              .on_fail = iodine_tcp_on_fail, .timeout = timeout, .udata = d);
+              .on_connect = iodine_tcp_on_connect, .tls = iodine_tls2c(rb_tls),
+              .on_fail = iodine_tcp_on_fail, .timeout = timeout,
+              .udata = (void *)rb_handler);
   return rb_handler;
   (void)self;
 }
@@ -376,7 +355,6 @@ void iodine_init_tcp_connections(void) {
   address_id = IodineStore.add(rb_id2sym(rb_intern("address")));
   handler_id = IodineStore.add(rb_id2sym(rb_intern("handler")));
   timeout_id = IodineStore.add(rb_id2sym(rb_intern("timeout")));
-  tls_id = IodineStore.add(rb_id2sym(rb_intern("tls")));
   on_closed_id = rb_intern("on_closed");
 
   IodineBinaryEncoding = rb_enc_find("binary");
