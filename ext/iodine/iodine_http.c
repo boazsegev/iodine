@@ -776,6 +776,79 @@ static void on_rack_upgrade(http_s *h, char *proto, size_t len) {
 }
 
 /* *****************************************************************************
+Rack `env` Template Initialization
+***************************************************************************** */
+
+static void initialize_env_template(void) {
+  if (env_template_no_upgrade)
+    return;
+  env_template_no_upgrade = rb_hash_new();
+  IodineStore.add(env_template_no_upgrade);
+
+#define add_str_to_env(env, key, value)                                        \
+  {                                                                            \
+    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);      \
+    rb_obj_freeze(k);                                                          \
+    VALUE v = rb_enc_str_new((value), strlen((value)), IodineBinaryEncoding);  \
+    rb_obj_freeze(v);                                                          \
+    rb_hash_aset(env, k, v);                                                   \
+  }
+#define add_value_to_env(env, key, value)                                      \
+  {                                                                            \
+    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);      \
+    rb_obj_freeze(k);                                                          \
+    rb_hash_aset((env), k, value);                                             \
+  }
+
+  /* Set global template */
+  rb_hash_aset(env_template_no_upgrade, RACK_UPGRADE_Q, Qnil);
+  rb_hash_aset(env_template_no_upgrade, RACK_UPGRADE, Qnil);
+  {
+    /* add the rack.version */
+    static VALUE rack_version = 0;
+    if (!rack_version) {
+      rack_version = rb_ary_new(); // rb_ary_new is Ruby 2.0 compatible
+      rb_ary_push(rack_version, INT2FIX(1));
+      rb_ary_push(rack_version, INT2FIX(3));
+      rb_global_variable(&rack_version);
+      rb_ary_freeze(rack_version);
+    }
+    add_value_to_env(env_template_no_upgrade, "rack.version", rack_version);
+  }
+  add_str_to_env(env_template_no_upgrade, "SCRIPT_NAME", "");
+  add_value_to_env(env_template_no_upgrade, "rack.errors", rb_stderr);
+  add_value_to_env(env_template_no_upgrade, "rack.hijack?", Qtrue);
+  add_value_to_env(env_template_no_upgrade, "rack.multiprocess", Qtrue);
+  add_value_to_env(env_template_no_upgrade, "rack.multithread", Qtrue);
+  add_value_to_env(env_template_no_upgrade, "rack.run_once", Qfalse);
+  /* default schema to http, it might be updated later */
+  rb_hash_aset(env_template_no_upgrade, R_URL_SCHEME, HTTP_SCHEME);
+  /* placeholders... minimize rehashing*/
+  rb_hash_aset(env_template_no_upgrade, HTTP_VERSION, QUERY_STRING);
+  rb_hash_aset(env_template_no_upgrade, IODINE_R_HIJACK, QUERY_STRING);
+  rb_hash_aset(env_template_no_upgrade, PATH_INFO, QUERY_STRING);
+  rb_hash_aset(env_template_no_upgrade, QUERY_STRING, QUERY_STRING);
+  rb_hash_aset(env_template_no_upgrade, REMOTE_ADDR, QUERY_STRING);
+  rb_hash_aset(env_template_no_upgrade, REQUEST_METHOD, QUERY_STRING);
+  rb_hash_aset(env_template_no_upgrade, SERVER_NAME, QUERY_STRING);
+  rb_hash_aset(env_template_no_upgrade, SERVER_PORT, QUERY_ESTRING);
+  rb_hash_aset(env_template_no_upgrade, SERVER_PROTOCOL, QUERY_STRING);
+
+  /* WebSocket upgrade support */
+  env_template_websockets = rb_hash_dup(env_template_no_upgrade);
+  IodineStore.add(env_template_websockets);
+  rb_hash_aset(env_template_websockets, RACK_UPGRADE_Q, RACK_UPGRADE_WEBSOCKET);
+
+  /* SSE upgrade support */
+  env_template_sse = rb_hash_dup(env_template_no_upgrade);
+  IodineStore.add(env_template_sse);
+  rb_hash_aset(env_template_sse, RACK_UPGRADE_Q, RACK_UPGRADE_SSE);
+
+#undef add_value_to_env
+#undef add_str_to_env
+}
+
+/* *****************************************************************************
 Listenninng to HTTP
 *****************************************************************************
 */
@@ -988,73 +1061,86 @@ static VALUE iodine_http_listen(VALUE self, VALUE opt) {
   (void)self;
 }
 
-static void initialize_env_template(void) {
-  if (env_template_no_upgrade)
-    return;
-  env_template_no_upgrade = rb_hash_new();
-  IodineStore.add(env_template_no_upgrade);
+/* *****************************************************************************
+HTTP Websocket Connect
+***************************************************************************** */
 
-#define add_str_to_env(env, key, value)                                        \
-  {                                                                            \
-    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);      \
-    rb_obj_freeze(k);                                                          \
-    VALUE v = rb_enc_str_new((value), strlen((value)), IodineBinaryEncoding);  \
-    rb_obj_freeze(v);                                                          \
-    rb_hash_aset(env, k, v);                                                   \
-  }
-#define add_value_to_env(env, key, value)                                      \
-  {                                                                            \
-    VALUE k = rb_enc_str_new((key), strlen((key)), IodineBinaryEncoding);      \
-    rb_obj_freeze(k);                                                          \
-    rb_hash_aset((env), k, value);                                             \
-  }
+// static void on_websocket_http_connected(http_s *h) {
+//   websocket_settings_s *s = h->udata;
+//   h->udata = http_settings(h)->udata = NULL;
+//   if (!h->path) {
+//     FIO_LOG_WARNING("(websocket client) path not specified in "
+//                     "address, assuming root!");
+//     h->path = fiobj_str_new("/", 1);
+//   }
+//   http_upgrade2ws(h, *s);
+//   fio_free(s);
+// }
 
-  /* Set global template */
-  rb_hash_aset(env_template_no_upgrade, RACK_UPGRADE_Q, Qnil);
-  rb_hash_aset(env_template_no_upgrade, RACK_UPGRADE, Qnil);
-  {
-    /* add the rack.version */
-    static VALUE rack_version = 0;
-    if (!rack_version) {
-      rack_version = rb_ary_new(); // rb_ary_new is Ruby 2.0 compatible
-      rb_ary_push(rack_version, INT2FIX(1));
-      rb_ary_push(rack_version, INT2FIX(3));
-      rb_global_variable(&rack_version);
-      rb_ary_freeze(rack_version);
+// static void on_websocket_http_connection_finished(http_settings_s *settings)
+// {
+//   websocket_settings_s *s = settings->udata;
+//   if (s) {
+//     if (s->on_close)
+//       s->on_close(0, s->udata);
+//     fio_free(s);
+//   }
+// }
+
+/**
+Connects to a (remote) WebSocket service.
+
+      Iodine.connect2ws(handler, url, headers={}, cookies={})
+
+Use:
+
+      Iodine.connect2ws(handler, "wss://example.com",
+                        {"Foo-Header" => "bar"},
+                        {"foo_cookie" => "bar"})
+
+Or with named arguments:
+
+      Iodine.connect2ws(handler: handler,
+                        url: "wss://example.com",
+                        headers: {"Foo-Header" => "bar"},
+                        cookies: {"foo_cookie" => "bar"})
+
+
+*/
+static VALUE iodine_websocket_connect(int argc, VALUE *argv, VALUE self) {
+  VALUE url = Qnil, handler = Qnil, headers = Qnil, cookies = Qnil;
+  if (argc == 1) {
+    if (!RB_TYPE_P(argv[0], T_HASH))
+      goto arg_error;
+    url = rb_hash_aref(argv[0], ID2SYM(rb_intern2("url", 3)));
+    handler = rb_hash_aref(argv[0], ID2SYM(rb_intern2("handler", 7)));
+    headers = rb_hash_aref(argv[0], ID2SYM(rb_intern2("headers", 7)));
+    cookies = rb_hash_aref(argv[0], ID2SYM(rb_intern2("cookies", 7)));
+  } else if (argc > 1 && argc <= 4) {
+    switch (argc) {
+    case 4: /* overflow */
+      cookies = argv[3];
+    case 3: /* overflow */
+      headers = argv[2];
+    case 2: /* overflow */
+      url = argv[1];
+    case 1: /* overflow */
+      handler = argv[0];
     }
-    add_value_to_env(env_template_no_upgrade, "rack.version", rack_version);
+  } else {
+    goto arg_error;
   }
-  add_str_to_env(env_template_no_upgrade, "SCRIPT_NAME", "");
-  add_value_to_env(env_template_no_upgrade, "rack.errors", rb_stderr);
-  add_value_to_env(env_template_no_upgrade, "rack.hijack?", Qtrue);
-  add_value_to_env(env_template_no_upgrade, "rack.multiprocess", Qtrue);
-  add_value_to_env(env_template_no_upgrade, "rack.multithread", Qtrue);
-  add_value_to_env(env_template_no_upgrade, "rack.run_once", Qfalse);
-  /* default schema to http, it might be updated later */
-  rb_hash_aset(env_template_no_upgrade, R_URL_SCHEME, HTTP_SCHEME);
-  /* placeholders... minimize rehashing*/
-  rb_hash_aset(env_template_no_upgrade, HTTP_VERSION, QUERY_STRING);
-  rb_hash_aset(env_template_no_upgrade, IODINE_R_HIJACK, QUERY_STRING);
-  rb_hash_aset(env_template_no_upgrade, PATH_INFO, QUERY_STRING);
-  rb_hash_aset(env_template_no_upgrade, QUERY_STRING, QUERY_STRING);
-  rb_hash_aset(env_template_no_upgrade, REMOTE_ADDR, QUERY_STRING);
-  rb_hash_aset(env_template_no_upgrade, REQUEST_METHOD, QUERY_STRING);
-  rb_hash_aset(env_template_no_upgrade, SERVER_NAME, QUERY_STRING);
-  rb_hash_aset(env_template_no_upgrade, SERVER_PORT, QUERY_ESTRING);
-  rb_hash_aset(env_template_no_upgrade, SERVER_PROTOCOL, QUERY_STRING);
+  // websocket_settings_s *s = fio_malloc(sizeof(*s));
+  // *s = settings;
+  // http_connect(address, .on_request = on_websocket_http_connected,
+  //                     .on_response = on_websocket_http_connected,
+  //                     .on_finish = on_websocket_http_connection_finished,
+  //                     .udata = s);
+  (void)self;
 
-  /* WebSocket upgrade support */
-  env_template_websockets = rb_hash_dup(env_template_no_upgrade);
-  IodineStore.add(env_template_websockets);
-  rb_hash_aset(env_template_websockets, RACK_UPGRADE_Q, RACK_UPGRADE_WEBSOCKET);
-
-  /* SSE upgrade support */
-  env_template_sse = rb_hash_dup(env_template_no_upgrade);
-  IodineStore.add(env_template_sse);
-  rb_hash_aset(env_template_sse, RACK_UPGRADE_Q, RACK_UPGRADE_SSE);
-
-#undef add_value_to_env
-#undef add_str_to_env
+arg_error:
+  rb_raise(rb_eArgError, "expecting named arguments or (handler, url, "
+                         "headers = {}, cookies = {})");
 }
 
 /* *****************************************************************************

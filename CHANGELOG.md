@@ -10,6 +10,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: (`Iodine::Mustache`) fixed support for named argument, documentation and loading template from memory (rather than file) when creating a new `Iodine::Mustache` object.
 
+**Update**: (`iodine`) SSL/TLS support!
+
 #### Change log v.0.7.16
 
 **Security**: (`fio`) security fixes from the facil.io core library (updated to 0.7.0.beta6).
