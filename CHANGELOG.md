@@ -20,6 +20,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: (`iodione`) fixed logging message when listening to unix sockets.
 
+**Fix**: (`iodine`) fixed CLI argument recognition for WebSocket message limits and HTTP header limits. Typos in the CLI argument names prevented the CLI from effecting the default values.
+
 **Update**: (`iodine`) SSL/TLS support!
 
 **Fix**: (`fio`) fixed unaligned memory access in SipHash implementation and added secret randomization for each application restart.
