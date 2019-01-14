@@ -566,7 +566,7 @@ The options Hash supports the following possible keys (other keys are ignored, a
 
 :as :: (only for WebSocket connections) accepts the optional value `:binary`. default is `:text`. Note that binary transmissions are illegal for some connections (such as SSE) and an attempted binary subscription will fail for these connections.
 
-:handler :: Any object that answers `#call(source, msg)` where source is the stream / channel name.
+:handler :: Any object that answers `.call(source, msg)` where source is the stream / channel name.
 
 Note: if an existing subscription with the same name exists, it will be replaced by this new subscription.
 
