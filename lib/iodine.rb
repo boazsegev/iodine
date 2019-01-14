@@ -155,6 +155,12 @@ end
 ### Parse CLI for default HTTP settings
 Iodine::Base::CLI.parse
 
+### Set default port (if missing)
+Iodine::DEFAULT_HTTP_ARGS[:port] ||= (ENV["PORT"] || "3000")
+
+### Set default binding (if missing)
+Iodine::DEFAULT_HTTP_ARGS[:address] ||= nil
+
 ### Initialize Redis if set in CLI
 Iodine::PubSub.default = Iodine::PubSub::Redis.new(Iodine::DEFAULT_HTTP_ARGS[:redis_], ping: Iodine::DEFAULT_HTTP_ARGS[:redis_ping_]) if Iodine::DEFAULT_HTTP_ARGS[:redis_]
 

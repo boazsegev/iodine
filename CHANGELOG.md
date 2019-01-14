@@ -8,9 +8,15 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.17
 
+**Security**: (`fio`) Improved security against hash flooding attacks.
+
 **Fix**: (`Iodine::Mustache`) fixed support for named argument, documentation and loading template from memory (rather than file) when creating a new `Iodine::Mustache` object.
 
+**Fix**: (`redis`) fixed an issue where destroying the Redis engine and exiting pre-maturely, could cause a segmentation fault during cleanup.
+
 **Update**: (`iodine`) SSL/TLS support!
+
+**Fix**: (`fio`) fixed unaligned memory access in SipHash implementation and added secret randomization for each application restart.
 
 #### Change log v.0.7.16
 
