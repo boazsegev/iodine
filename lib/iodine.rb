@@ -77,6 +77,15 @@ module Iodine
     end
 
 
+    # @deprecated use {Iodine.listen} with `service: :http`.
+    #
+    # Sets a block of code to run once a Worker process shuts down (both in single process mode and cluster mode).
+    def self.listen2http(args, &block)
+      warn "Iodine.listen2http is deprecated, use Iodine.listen(service: :http)."
+      args[:service] = :http;
+      Iodine.listen(args, &block)
+    end
+
     # @deprecated use {Iodine.on_state}.
     #
     # Sets a block of code to run before a new worker process is forked (cluster mode only).
@@ -156,13 +165,13 @@ end
 Iodine::Base::CLI.parse
 
 ### Set default port (if missing)
-Iodine::DEFAULT_HTTP_ARGS[:port] ||= (ENV["PORT"] || "3000")
+Iodine::DEFAULT_SETTINGS[:port] ||= (ENV["PORT"] || "3000")
 
 ### Set default binding (if missing)
-Iodine::DEFAULT_HTTP_ARGS[:address] ||= nil
+Iodine::DEFAULT_SETTINGS[:address] ||= nil
 
 ### Initialize Redis if set in CLI
-Iodine::PubSub.default = Iodine::PubSub::Redis.new(Iodine::DEFAULT_HTTP_ARGS[:redis_], ping: Iodine::DEFAULT_HTTP_ARGS[:redis_ping_]) if Iodine::DEFAULT_HTTP_ARGS[:redis_]
+Iodine::PubSub.default = Iodine::PubSub::Redis.new(Iodine::DEFAULT_SETTINGS[:redis_], ping: Iodine::DEFAULT_SETTINGS[:redis_ping_]) if Iodine::DEFAULT_SETTINGS[:redis_]
 
 ### Puma / Thin DSL compatibility - depracated (DSLs are evil)
 

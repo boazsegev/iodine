@@ -12,7 +12,10 @@ Feel free to copy, use and enjoy according to the license provided.
 extern VALUE IODINE_R_HIJACK;
 extern VALUE IODINE_R_HIJACK_IO;
 extern VALUE IODINE_R_HIJACK_CB;
-extern VALUE iodine_default_args;
 void iodine_init_http(void);
+
+intptr_t iodine_http_listen(iodine_connection_args_s args);
+intptr_t iodine_http_connect(iodine_connection_args_s args);
+intptr_t iodine_ws_connect(iodine_connection_args_s args);
 
 #endif

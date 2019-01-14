@@ -54,9 +54,6 @@ static rb_encoding *IodineBinaryEncoding;
 
 static uint8_t support_xsendfile = 0;
 
-/** Used by {listen2http} to set missing arguments. */
-VALUE iodine_default_args;
-
 #define rack_declare(rack_name) static VALUE rack_name
 
 #define rack_set(rack_name, str)                                               \
@@ -896,169 +893,35 @@ Once HTTP/2 is supported (planned, but probably very far away), HTTP/2
 timeouts will be dynamically managed by Iodine. The `timeout` option is only
 relevant to HTTP/1.x connections.
 */
-static VALUE iodine_http_listen(VALUE self, VALUE opt) {
+intptr_t iodine_http_listen(iodine_connection_args_s args){
   // clang-format on
-  uint8_t log_http = 0;
-  size_t ping = 0;
-  size_t max_body = 0;
-  size_t max_headers = 0;
-  size_t max_msg = 0;
-  Check_Type(opt, T_HASH);
-  /* copy from deafult hash */
-  /* test arguments */
-  VALUE app = rb_hash_aref(opt, ID2SYM(rb_intern("app")));
-  VALUE www = rb_hash_aref(opt, ID2SYM(rb_intern("public")));
-  VALUE port = rb_hash_aref(opt, ID2SYM(rb_intern("port")));
-  VALUE address = rb_hash_aref(opt, ID2SYM(rb_intern("address")));
-  VALUE tout = rb_hash_aref(opt, ID2SYM(rb_intern("timeout")));
-  VALUE rb_tls = rb_hash_aref(opt, iodine_tls_sym);
-  if (www == Qnil) {
-    www = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("public")));
-  }
-  if (port == Qnil) {
-    port = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("port")));
-  }
-  if (address == Qnil) {
-    address = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("address")));
-  }
-  if (tout == Qnil) {
-    tout = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("timeout")));
-  }
-  if (rb_tls == Qnil) {
-    rb_tls = rb_hash_aref(iodine_default_args, iodine_tls_sym);
-  }
-
-  VALUE tmp = rb_hash_aref(opt, ID2SYM(rb_intern("max_msg")));
-  if (tmp == Qnil) {
-    tmp = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("max_msg")));
-  }
-  if (tmp != Qnil && tmp != Qfalse) {
-    Check_Type(tmp, T_FIXNUM);
-    max_msg = FIX2ULONG(tmp);
-  }
-
-  tmp = rb_hash_aref(opt, ID2SYM(rb_intern("max_body")));
-  if (tmp == Qnil) {
-    tmp = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("max_body")));
-  }
-  if (tmp != Qnil && tmp != Qfalse) {
-    Check_Type(tmp, T_FIXNUM);
-    max_body = FIX2ULONG(tmp);
-  }
-  tmp = rb_hash_aref(opt, ID2SYM(rb_intern("max_headers")));
-  if (tmp == Qnil) {
-    tmp = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("max_headers")));
-  }
-  if (tmp != Qnil && tmp != Qfalse) {
-    Check_Type(tmp, T_FIXNUM);
-    max_headers = FIX2ULONG(tmp);
-  }
-
-  tmp = rb_hash_aref(opt, ID2SYM(rb_intern("ping")));
-  if (tmp == Qnil) {
-    tmp = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("ping")));
-  }
-  if (tmp != Qnil && tmp != Qfalse) {
-    Check_Type(tmp, T_FIXNUM);
-    ping = FIX2ULONG(tmp);
-  }
-  if (ping > 255) {
-    fprintf(stderr, "Iodine Warning: Websocket timeout value "
-                    "is over 255 and will be ignored.\n");
-    ping = 0;
-  }
-
-  tmp = rb_hash_aref(opt, ID2SYM(rb_intern("log")));
-  if (tmp == Qnil) {
-    tmp = rb_hash_aref(iodine_default_args, ID2SYM(rb_intern("log")));
-  }
-  if (tmp != Qnil && tmp != Qfalse)
-    log_http = 1;
-
-  if ((app == Qnil || app == Qfalse) && (www == Qnil || www == Qfalse)) {
-    fprintf(stderr, "Iodine Warning: HTTP without application or public folder "
-                    "(ignored).\n");
-    return Qfalse;
-  }
-
-  if ((www != Qnil && www != Qfalse)) {
-    Check_Type(www, T_STRING);
-    IodineStore.add(www);
+  if (args.public.data) {
     rb_hash_aset(env_template_no_upgrade, XSENDFILE_TYPE, XSENDFILE);
     rb_hash_aset(env_template_no_upgrade, XSENDFILE_TYPE_HEADER, XSENDFILE);
     support_xsendfile = 1;
-  } else
-    www = 0;
+  }
+  IodineStore.add(args.handler);
+  intptr_t uuid = http_listen(
+      args.port.data, args.address.data, .on_request = on_rack_request,
+      .on_upgrade = on_rack_upgrade, .udata = (void *)args.handler,
+      .tls = args.tls, .timeout = args.timeout, .ws_timeout = args.ping,
+      .ws_max_msg_size = args.max_msg, .max_header_size = args.max_headers,
+      .on_finish = free_iodine_http, .log = args.log,
+      .max_body_size = args.max_body, .public_folder = args.public.data);
+  if (uuid == -1)
+    return uuid;
 
-  if ((address != Qnil && address != Qfalse))
-    Check_Type(address, T_STRING);
-  else
-    address = 0;
-
-  if ((tout != Qnil && tout != Qfalse)) {
-    Check_Type(tout, T_FIXNUM);
-    tout = FIX2ULONG(tout);
-  } else
-    tout = 0;
-  if (tout > 255) {
-    fprintf(stderr, "Iodine Warning: HTTP timeout value "
-                    "is over 255 and is silently ignored.\n");
-    tout = 0;
+  if ((args.handler == Qnil || args.handler == Qfalse)) {
+    FIO_LOG_WARNING("(listen) no handler / app, the HTTP service on port %s "
+                    "will only serve "
+                    "static files.",
+                    args.port.data ? args.port.data : args.address.data);
+  }
+  if (args.public.data) {
+    FIO_LOG_INFO("Serving static files from %s", args.public.data);
   }
 
-  if (port != Qnil && port != Qfalse) {
-    if (!RB_TYPE_P(port, T_STRING) && !RB_TYPE_P(port, T_FIXNUM))
-      rb_raise(rb_eTypeError,
-               "The `port` property MUST be either a String or a Number");
-    if (RB_TYPE_P(port, T_FIXNUM))
-      port = rb_funcall2(port, iodine_to_s_method_id, 0, NULL);
-    IodineStore.add(port);
-  } else if (port == Qfalse)
-    port = 0;
-  else if (address &&
-           (StringValueCStr(address)[0] > '9' ||
-            StringValueCStr(address)[0] < '0') &&
-           StringValueCStr(address)[0] != ':' &&
-           (RSTRING_LEN(address) < 3 || StringValueCStr(address)[2] != ':')) {
-    /* address is likely a Unix domain socket address, not an IP address... */
-    port = Qnil;
-  } else {
-    port = rb_str_new("3000", 4);
-    IodineStore.add(port);
-  }
-
-  if ((app != Qnil && app != Qfalse))
-    IodineStore.add(app);
-  else
-    app = 0;
-
-  if (http_listen((port ? StringValueCStr(port) : NULL),
-                  (address ? StringValueCStr(address) : NULL),
-                  .on_request = on_rack_request, .on_upgrade = on_rack_upgrade,
-                  .udata = (void *)app, .tls = iodine_tls2c(rb_tls),
-                  .timeout = (tout ? FIX2INT(tout) : tout), .ws_timeout = ping,
-                  .ws_max_msg_size = max_msg, .max_header_size = max_headers,
-                  .on_finish = free_iodine_http, .log = log_http,
-                  .max_body_size = max_body,
-                  .public_folder = (www ? StringValueCStr(www) : NULL)) == -1) {
-    FIO_LOG_ERROR("Failed to initialize a listening HTTP socket for port %s",
-                  port ? StringValueCStr(port) : "3000");
-    rb_raise(rb_eRuntimeError, "Listening socket initialization failed");
-    return Qfalse;
-  }
-
-  if ((app == Qnil || app == Qfalse)) {
-    FIO_LOG_WARNING(
-        "(listen2http) no app, the HTTP service on port %s will only serve "
-        "static files.",
-        (port ? StringValueCStr(port) : "3000"));
-  }
-  if (www) {
-    FIO_LOG_INFO("Serving static files from %s", StringValueCStr(www));
-  }
-
-  return Qtrue;
-  (void)self;
+  return uuid;
 }
 
 /* *****************************************************************************
@@ -1107,40 +970,9 @@ Or with named arguments:
 
 
 */
-static VALUE iodine_websocket_connect(int argc, VALUE *argv, VALUE self) {
-  VALUE url = Qnil, handler = Qnil, headers = Qnil, cookies = Qnil;
-  if (argc == 1) {
-    if (!RB_TYPE_P(argv[0], T_HASH))
-      goto arg_error;
-    url = rb_hash_aref(argv[0], ID2SYM(rb_intern2("url", 3)));
-    handler = rb_hash_aref(argv[0], ID2SYM(rb_intern2("handler", 7)));
-    headers = rb_hash_aref(argv[0], ID2SYM(rb_intern2("headers", 7)));
-    cookies = rb_hash_aref(argv[0], ID2SYM(rb_intern2("cookies", 7)));
-  } else if (argc > 1 && argc <= 4) {
-    switch (argc) {
-    case 4: /* overflow */
-      cookies = argv[3];
-    case 3: /* overflow */
-      headers = argv[2];
-    case 2: /* overflow */
-      url = argv[1];
-    case 1: /* overflow */
-      handler = argv[0];
-    }
-  } else {
-    goto arg_error;
-  }
-  // websocket_settings_s *s = fio_malloc(sizeof(*s));
-  // *s = settings;
-  // http_connect(address, .on_request = on_websocket_http_connected,
-  //                     .on_response = on_websocket_http_connected,
-  //                     .on_finish = on_websocket_http_connection_finished,
-  //                     .udata = s);
-  (void)self;
-
-arg_error:
-  rb_raise(rb_eArgError, "expecting named arguments or (handler, url, "
-                         "headers = {}, cookies = {})");
+intptr_t iodine_ws_connect(iodine_connection_args_s args) {
+  (void)args;
+  return -1;
 }
 
 /* *****************************************************************************
@@ -1148,15 +980,6 @@ Initialization
 ***************************************************************************** */
 
 void iodine_init_http(void) {
-
-  rb_define_module_function(IodineModule, "listen2http", iodine_http_listen, 1);
-
-  /** Used by {listen2http} to set missing arguments. */
-  iodine_default_args = rb_hash_new();
-
-  /** Used by {listen2http} to set missing arguments. */
-  rb_const_set(IodineModule, rb_intern2("DEFAULT_HTTP_ARGS", 17),
-               iodine_default_args);
 
   rack_autoset(REQUEST_METHOD);
   rack_autoset(PATH_INFO);

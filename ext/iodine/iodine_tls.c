@@ -6,8 +6,6 @@
 
 static VALUE server_name_sym = Qnil, certificate_sym = Qnil,
              private_key_sym = Qnil, password_sym = Qnil;
-static ID iodine_call_id;
-VALUE iodine_tls_sym;
 VALUE IodineTLSClass;
 /* *****************************************************************************
 C <=> Ruby Data allocation
@@ -249,9 +247,6 @@ void iodine_init_tls(void) {
   IODINE_MAKE_SYM(certificate);
   IODINE_MAKE_SYM(private_key);
   IODINE_MAKE_SYM(password);
-  iodine_tls_sym = rb_id2sym(rb_intern("tls"));
-  rb_global_variable(&iodine_tls_sym);
-  iodine_call_id = rb_intern2("call", 4);
 
   IodineTLSClass = rb_define_class_under(IodineModule, "TLS", rb_cData);
   rb_define_alloc_func(IodineTLSClass, iodine_tls_data_alloc_c);

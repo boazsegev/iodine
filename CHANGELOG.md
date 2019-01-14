@@ -8,11 +8,17 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.17
 
-**Security**: (`fio`) Improved security against hash flooding attacks.
+**Security**: (`fio`) improved security against hash flooding attacks.
+
+**Deprecation**: (`iodine`) deprecated `DEFAULT_HTTP_ARGS` in favor of `DEFAULT_SETTEINGS`.
+
+**Deprecation**: (`iodine`) deprecated `Iodine.listen2http` in favor of `Iodine.listen service: :http`.
 
 **Fix**: (`Iodine::Mustache`) fixed support for named argument, documentation and loading template from memory (rather than file) when creating a new `Iodine::Mustache` object.
 
 **Fix**: (`redis`) fixed an issue where destroying the Redis engine and exiting pre-maturely, could cause a segmentation fault during cleanup.
+
+**Fix**: (`iodione`) fixed logging message when listening to unix sockets.
 
 **Update**: (`iodine`) SSL/TLS support!
 
