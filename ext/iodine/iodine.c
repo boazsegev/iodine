@@ -532,7 +532,7 @@ Accepts:
 
      func(settings)
 
-Allowed Settigs:
+Supported Settigs:
 - `:url`
 - `:handler` (deprecated: `app`)
 - `:service` (raw / ws / wss / http / https )
@@ -554,7 +554,7 @@ Allowed Settigs:
 - `:max_msg` (WebSockets only)
 
 */
-FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s) {
+FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
   Check_Type(s, T_HASH);
   iodine_connection_args_s r = {.ping = 0}; /* set all to 0 */
   /* Collect argument values */
@@ -633,7 +633,7 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s) {
   }
 
   /* specific for HTTP */
-  if (handler == Qnil && rb_block_given_p()) {
+  if (is_srv && handler == Qnil && rb_block_given_p()) {
     handler = rb_block_proc();
   }
 
@@ -796,13 +796,29 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s) {
       /* http(s) */
       r.service = IODINE_SERVICE_HTTP;
       if (service_str.len == 5 && !r.tls) {
-        r.tls = fio_tls_new(NULL, NULL, NULL, NULL);
+        char *local = NULL;
+        char buf[1024];
+        buf[1023] = 0;
+        if (is_srv) {
+          local = buf;
+          if (fio_local_addr(buf, 1023) >= 1022)
+            local = NULL;
+        }
+        r.tls = fio_tls_new(local, NULL, NULL, NULL);
       }
     case 'w':
       /* ws(s) */
       r.service = IODINE_SERVICE_WS;
       if (service_str.len == 3 && !r.tls) {
-        r.tls = fio_tls_new(NULL, NULL, NULL, NULL);
+        char *local = NULL;
+        char buf[1024];
+        buf[1023] = 0;
+        if (is_srv) {
+          local = buf;
+          if (fio_local_addr(buf, 1023) >= 1022)
+            local = NULL;
+        }
+        r.tls = fio_tls_new(local, NULL, NULL, NULL);
       }
       break;
     }
@@ -820,36 +836,108 @@ Listen function routing
 
      Iodine.listen(settings)
 
-Supported connection settings include:
+Supported Settigs:
 
-- `:address`
-- `:body` (HTTP client, only if no params)
-- `:cookies` (HTTP/WebSocket client)
-- `:handler` (deprecated: `app`)
-- `:headers` (HTTP/WebSocket client)
-- `:log` (HTTP only)
-- `:max_body` (HTTP only)
-- `:max_headers` (HTTP only)
-- `:max_msg` (WebSockets only)
-- `:method` (HTTP client)
-- `:params` (HTTP client)
-- `:path` (HTTP/WebSocket client)
-- `:ping` (WebSockets, TCP/IP, Unix Sockets)
-- `:port`
-- `:public` (public folder, HTTP server only)
-- `:service` (raw / ws / wss / http / https )
-- `:timeout` (HTTP only)
-- `:tls`
 - `:url`
+- `:handler` (deprecated: `:app`)
+- `:service` (`:raw` / `:ws` / `:wss` / `:http` / `:https` )
+- `:address`
+- `:port`
+- `:tls`
+- `:log` (HTTP only)
+- `:public` (public folder, HTTP server only)
+- `:timeout` (HTTP only)
+- `:ping` (`:raw` clients and WebSockets only)
+- `:max_headers` (HTTP only)
+- `:max_body` (HTTP only)
+- `:max_msg` (WebSockets only)
 
-Some connection settings are only valid for HTTP / WebSocket connections.
+Some connection settings are only valid when listening to HTTP / WebSocket connections.
 
-If `:url` is provided, it will overwrite the `:address`, `:port` and `:path` settings (if provided).
+If `:url` is provided, it will overwrite the `:address` and `:port` settings (if provided).
 
+For HTTP connections, the `:handler` **must** be a valid Rack application object (answers `.call(env)`).
+
+Here's an example for an HTTP hello world application:
+
+      require 'iodine'
+      # a handler can be a block
+      Iodine.listen(service: :http, port: "3000") {|env| [200, {"Content-Length" => "12"}, ["Hello World!"]] }
+      # start the service
+      Iodine.threads = 1
+      Iodine.start
+
+
+Here's another example, using a Unix Socket instead of a TCP/IP socket for an HTTP hello world application.
+
+This example shows how the `:url` option can be used, but the `:address` settings could have been used for the same effect (with `port: 0`).
+
+      require 'iodine'
+      # a note that unix sockets in URL form use an absolute path.
+      Iodine.listen(url: "http://:0/tmp/sock.sock") {|env| [200, {"Content-Length" => "12"}, ["Hello World!"]] }
+      # start the service
+      Iodine.threads = 1
+      Iodine.start
+
+
+For raw connections, the `:handler` object should be an object that answer `.call` and returns a valid callback object that supports the following callbacks (see also {Iodine::Connection}):
+
+on_open(client) :: called after a connection was established
+on_message(client, data) :: called when incoming data is available. Data may be fragmented.
+on_drained(client) :: called when all the pending `client.write` events have been processed (see {Iodine::Connection#pending}).
+ping(client) :: called whenever a timeout has occured (see {Iodine::Connection#timeout=}).
+on_shutdown(client) :: called if the server is shutting down. This is called before the connection is closed.
+on_close(client) :: called when the connection with the client was closed.
+
+The `client` argument passed to the `:handler` callbacks is an {Iodine::Connection} instance that represents the connection / the client.
+
+Here's an example for a telnet based chat-room example:
+
+      require 'iodine'
+      # define the protocol for our service
+      module ChatHandler
+        def self.on_open(client)
+          # Set a connection timeout
+          client.timeout = 10
+          # subscribe to the chat channel.
+          client.subscribe :chat
+          # Write a welcome message
+          client.publish :chat, "new member entered the chat\r\n"
+        end
+        # this is called for incoming data - note data might be fragmented.
+        def self.on_message(client, data)
+          # publish the data we received
+          client.publish :chat, data
+          # close the connection when the time comes
+          client.close if data =~ /^bye[\n\r]/
+        end
+        # called whenever timeout occurs.
+        def self.ping(client)
+          client.write "System: quite, isn't it...?\r\n"
+        end
+        # called if the connection is still open and the server is shutting down.
+        def self.on_shutdown(client)
+          # write the data we received
+          client.write "Chat server going away. Try again later.\r\n"
+        end
+        # returns the callback object (self).
+        def self.call
+          self
+        end
+      end
+      # we use can both the `handler` keyword or a block, anything that answers #call.
+      Iodine.listen(service: :raw, port: "3000", handler: ChatHandler)
+      # start the service
+      Iodine.threads = 1
+      Iodine.start
+
+
+
+Returns the handler object used.
 */
 static VALUE iodine_listen(VALUE self, VALUE args) {
   // clang-format on
-  iodine_connection_args_s s = iodine_connect_args(args);
+  iodine_connection_args_s s = iodine_connect_args(args, 1);
   intptr_t uuid = -1;
   switch (s.service) {
   case IODINE_SERVICE_RAW:
@@ -871,14 +959,17 @@ static VALUE iodine_listen(VALUE self, VALUE args) {
 Connect function routing
 ***************************************************************************** */
 
+// clang-format off
 /*
-Accepts:
 
-     func(settings)
+The {connect} method instructs iodine to connect to a server using either TCP/IP or Unix sockets.
 
-Allowed Settigs:
+     Iodine.connect(settings)
+
+Supported Settigs:
+
 - `:url`
-- `:handler` (deprecated: `app`)
+- `:handler` (deprecated: `:app`)
 - `:service` (raw / ws / wss / http / https )
 - `:address`
 - `:port`
@@ -888,18 +979,90 @@ Allowed Settigs:
 - `:cookies` (HTTP/WebSocket client)
 - `:params` (HTTP client)
 - `:body` (HTTP client, only if no params)
-- `:tls`
+- `:tls` (an optional {Iodine::TLS} object)
 - `:log` (HTTP only)
 - `:public` (public folder, HTTP server only)
 - `:timeout` (HTTP only)
-- `:ping` (WebSockets, TCP/IP, Unix Sockets)
+- `:ping` (`:raw` clients and WebSockets only)
 - `:max_headers` (HTTP only)
 - `:max_body` (HTTP only)
 - `:max_msg` (WebSockets only)
 
+Some connection settings are only valid for HTTP / WebSocket connections.
+
+If `:url` is provided, it will overwrite the `:address`, `:port` and `:path` settings (if provided).
+
+Unlike {Iodine.listen}, a block can't be used and a `:handler` object **must** be provided.
+
+If the connection fails, only the `on_close` callback will be called (with a `nil` client).
+
+Here's an example TCP/IP client that sends a simple HTTP GET request:
+
+      # use a secure connection?
+      USE_TLS = false
+
+      # remote server details
+      $port = USE_TLS ? 443 : 80
+      $address = "google.com"
+
+
+      # require iodine
+      require 'iodine'
+
+      # Iodine runtime settings
+      Iodine.threads = 1
+      Iodine.workers = 1
+      Iodine.verbosity = 3 # warnings only
+
+
+      # a client callback handler
+      module Client
+
+        def self.on_open(connection)
+          # Set a connection timeout
+          connection.timeout = 10
+          # subscribe to the chat channel.
+          puts "* Sending request..."
+          connection.write "GET / HTTP/1.1\r\nHost: #{$address}\r\n\r\n"
+        end
+
+        def self.on_message(connection, data)
+          # publish the data we received
+          STDOUT.write data
+          # close the connection after a second... we're not really parsing anything, so it's a guess.
+          Iodine.run_after(1000) { connection.close }
+        end
+
+        def self.on_close(connection)
+          # stop iodine
+          Iodine.stop
+          puts "Done."
+        end
+
+        # returns the callback object (self).
+        def self.call
+          self
+        end
+      end
+
+
+
+      if(USE_TLS)
+        tls = Iodine::TLS.new
+        # ALPN blocks should return a valid calback object
+        tls.on_protocol("http/1.1") { Client }
+      end
+
+      Iodine.connect(address: $address, port: $port, handler: Client, tls: tls)
+
+      # start the iodine reactor
+      Iodine.start
+
+Returns the handler object used.
 */
 static VALUE iodine_connect(VALUE self, VALUE args) {
-  iodine_connection_args_s s = iodine_connect_args(args);
+  // clang-format on
+  iodine_connection_args_s s = iodine_connect_args(args, 0);
   intptr_t uuid = -1;
   switch (s.service) {
   case IODINE_SERVICE_RAW:

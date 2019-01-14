@@ -48,9 +48,7 @@ require 'iodine/iodine'
 #
 # Methods for application wide pub/sub include {subscribe}, {unsubscribe} and {publish}. Connection specific pub/sub methods are documented in the {Iodine::Connection} class).
 #
-# Methods for TCP/IP and Unix Sockets connections include {listen} and {connect}.
-#
-# Methods for HTTP connections include {listen2http}.
+# Methods for TCP/IP, Unix Sockets and HTTP connections include {listen} and {connect}.
 #
 # Note that the HTTP server supports both TCP/IP and Unix Sockets as well as SSE / WebSockets extensions.
 #
