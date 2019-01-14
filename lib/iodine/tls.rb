@@ -4,7 +4,7 @@ module Iodine
   # This allows both secure client connections and secure server connections to be established.
   #
   #     tls = Iodine::TLS.new "localhost" # self-signed certificate
-  #     Iodine.listen2http app: APP, tls: tls
+  #     Iodine.listen service: "http", handler: APP, tls: tls
   #
   # Iodine abstracts away the underlying SSL/TLS library to minimize the risk of misuse and insecure settings.
   #

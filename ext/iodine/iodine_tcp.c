@@ -206,46 +206,13 @@ Here's a telnet based chat-room example:
 
 Returns the handler object used.
 */
-static VALUE iodine_tcp_listen(VALUE self, VALUE args) {
+intptr_t iodine_tcp_listen(iodine_connection_args_s args) {
   // clang-format on
-  Check_Type(args, T_HASH);
-  VALUE rb_port = rb_hash_aref(args, port_id);
-  VALUE rb_address = rb_hash_aref(args, address_id);
-  VALUE rb_handler = rb_hash_aref(args, handler_id);
-  VALUE rb_tls = rb_hash_aref(args, iodine_tls_sym);
-  fio_str_s port = FIO_STR_INIT;
-  if (rb_handler == Qnil || rb_handler == Qfalse || rb_handler == Qtrue) {
-    rb_need_block();
-    rb_handler = rb_block_proc();
-  }
-  IodineStore.add(rb_handler);
-  if (rb_address != Qnil) {
-    Check_Type(rb_address, T_STRING);
-  }
-
-  if (rb_port != Qnil) {
-    if (rb_port == Qfalse) {
-      fio_str_write_i(&port, 0);
-    } else if (RB_TYPE_P(rb_port, T_STRING))
-      fio_str_write(&port, RSTRING_PTR(rb_port), RSTRING_LEN(rb_port));
-    else if (RB_TYPE_P(rb_port, T_FIXNUM))
-      fio_str_write_i(&port, FIX2LONG(rb_port));
-    else
-      rb_raise(rb_eTypeError,
-               "The `port` property MUST be either a String or a Number");
-  }
-
-  if (fio_listen(.port = fio_str_info(&port).data,
-                 .address =
-                     (rb_address == Qnil ? NULL : StringValueCStr(rb_address)),
-                 .on_open = iodine_tcp_on_open,
-                 .on_finish = iodine_tcp_on_finish, .tls = iodine_tls2c(rb_tls),
-                 .udata = (void *)rb_handler) == -1) {
-    rb_raise(rb_eRuntimeError,
-             "failed to listen to requested address, unknown error.");
-  }
-  return rb_handler;
-  (void)self;
+  IodineStore.add(args.handler);
+  return fio_listen(.port = args.port.data, .address = args.address.data,
+                    .on_open = iodine_tcp_on_open,
+                    .on_finish = iodine_tcp_on_finish, .tls = args.tls,
+                    .udata = (void *)args.handler);
 }
 
 // clang-format off
@@ -268,51 +235,13 @@ If the connection fails, only the `on_close` callback will be called (with a `ni
 
 Returns the handler object used.
 */
-static VALUE iodine_tcp_connect(VALUE self, VALUE args) {
+intptr_t iodine_tcp_connect(iodine_connection_args_s args){
   // clang-format on
-  Check_Type(args, T_HASH);
-  VALUE rb_port = rb_hash_aref(args, port_id);
-  VALUE rb_address = rb_hash_aref(args, address_id);
-  VALUE rb_handler = rb_hash_aref(args, handler_id);
-  VALUE rb_timeout = rb_hash_aref(args, timeout_id);
-  VALUE rb_tls = rb_hash_aref(args, iodine_tls_sym);
-  uint8_t timeout = 0;
-  fio_str_s port = FIO_STR_INIT;
-  if ((rb_handler == Qnil || rb_handler == Qfalse || rb_handler == Qtrue) &&
-      (rb_tls == Qnil || !iodine_tls2c(rb_tls) ||
-       !fio_tls_alpn_count(iodine_tls2c(rb_tls)))) {
-    rb_raise(rb_eArgError, "A callback object (:handler) must be provided "
-                           "unless TLS object has a valid ALPN handler.");
-  }
-  if (rb_timeout != Qnil) {
-    Check_Type(rb_timeout, T_FIXNUM);
-    timeout = NUM2USHORT(rb_timeout);
-  }
-  if (rb_address != Qnil) {
-    Check_Type(rb_address, T_STRING);
-  }
-  IodineStore.add(rb_handler);
-  if (rb_port != Qnil) {
-    if (rb_port == Qfalse) {
-      fio_str_write_i(&port, 0);
-    } else if (RB_TYPE_P(rb_port, T_STRING))
-      fio_str_write(&port, RSTRING_PTR(rb_port), RSTRING_LEN(rb_port));
-    else if (RB_TYPE_P(rb_port, T_FIXNUM))
-      fio_str_write_i(&port, FIX2LONG(rb_port));
-    else {
-      IodineStore.remove(rb_handler);
-      rb_raise(rb_eTypeError,
-               "The `port` property MUST be either a String or a Number");
-    }
-  }
-  fio_connect(.port = fio_str_info(&port).data,
-              .address =
-                  (rb_address == Qnil ? NULL : StringValueCStr(rb_address)),
-              .on_connect = iodine_tcp_on_connect, .tls = iodine_tls2c(rb_tls),
-              .on_fail = iodine_tcp_on_fail, .timeout = timeout,
-              .udata = (void *)rb_handler);
-  return rb_handler;
-  (void)self;
+  IodineStore.add(args.handler);
+  return fio_connect(.port = args.port.data, .address = args.address.data,
+                     .on_connect = iodine_tcp_on_connect, .tls = args.tls,
+                     .on_fail = iodine_tcp_on_fail, .timeout = args.ping,
+                     .udata = (void *)args.handler);
 }
 
 // clang-format off
@@ -359,8 +288,6 @@ void iodine_init_tcp_connections(void) {
 
   IodineBinaryEncoding = rb_enc_find("binary");
 
-  rb_define_module_function(IodineModule, "listen", iodine_tcp_listen, 1);
-  rb_define_module_function(IodineModule, "connect", iodine_tcp_connect, 1);
   rb_define_module_function(IodineModule, "attach_fd", iodine_tcp_attach_fd, 2);
 }
 

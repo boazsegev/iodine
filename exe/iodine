@@ -20,7 +20,7 @@ module Iodine
 
       def self.get_app_opts
         app, opt = nil, nil
-        filename = Iodine::DEFAULT_HTTP_ARGS[:filename_]
+        filename = Iodine::DEFAULT_SETTINGS[:filename_]
         if filename
           app, opt = try_file filename
           app, opt = try_file "#{filename}.ru" unless opt
@@ -34,7 +34,7 @@ module Iodine
 
         unless opt
           puts "WARNING: Ruby application not found#{ filename ? " - missing both #{filename} and config.ru" : " - missing config.ru"}."
-          if Iodine::DEFAULT_HTTP_ARGS[:public]
+          if Iodine::DEFAULT_SETTINGS[:public]
             puts "         Running only static file service."
             opt = ::Rack::Server::Options.new.parse!([])
           else
@@ -67,7 +67,7 @@ module Iodine
 
       def self.call
         app, opt = get_app_opts
-        perform_warmup if Iodine::DEFAULT_HTTP_ARGS[:warmup_]
+        perform_warmup if Iodine::DEFAULT_SETTINGS[:warmup_]
         Iodine::Rack.run(app, opt)
       end
     end

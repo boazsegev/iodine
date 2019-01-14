@@ -1,4 +1,17 @@
 module Iodine
+
+  # The default connection settings used by {Iodine.listen} and {Iodine.connect}.
+  #
+  # It's a Hash object that allows Iodine default values to be manipulated. i.e.:
+  #
+  #       DEFAULT_SETTINGS[:port] = "8080" # replaces the default port, which is `ENV["port"] || "3000"`.
+  DEFAULT_SETTINGS = {}
+
+  # @deprecated use {Iodine::DEFAULT_SETTINGS}.
+  #
+  # The default connection settings used by {Iodine.listen} and {Iodine.connect}.
+  DEFAULT_HTTP_ARGS = DEFAULT_SETTINGS
+
   # Iodine's {Iodine::Connection} class is the class that TCP/IP, WebSockets and SSE connections inherit from.
   #
   # Instances of this class are passed to the callback objects. i.e.:

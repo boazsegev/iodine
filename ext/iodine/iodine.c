@@ -28,7 +28,33 @@ Constants and State
 
 VALUE IodineModule;
 VALUE IodineBaseModule;
-static ID call_id;
+
+/** Default connection settings for {Iodine.listen} and {Iodine.connect}. */
+VALUE iodine_default_args;
+
+ID iodine_call_id;
+
+static VALUE address_sym;
+static VALUE app_sym;
+static VALUE body_sym;
+static VALUE cookies_sym;
+static VALUE handler_sym;
+static VALUE headers_sym;
+static VALUE log_sym;
+static VALUE max_body_sym;
+static VALUE max_clients_sym;
+static VALUE max_headers_sym;
+static VALUE max_msg_sym;
+static VALUE method_sym;
+static VALUE params_sym;
+static VALUE path_sym;
+static VALUE ping_sym;
+static VALUE port_sym;
+static VALUE public_sym;
+static VALUE service_sym;
+static VALUE timeout_sym;
+static VALUE tls_sym;
+static VALUE url_sym;
 
 /* *****************************************************************************
 Idling
@@ -37,7 +63,7 @@ Idling
 /* performs a Ruby state callback and clears the Ruby object's memory */
 static void iodine_perform_on_idle_callback(void *blk_) {
   VALUE blk = (VALUE)blk_;
-  IodineCaller.call(blk, call_id);
+  IodineCaller.call(blk, iodine_call_id);
   IodineStore.remove(blk);
   fio_state_callback_remove(FIO_CALL_ON_IDLE, iodine_perform_on_idle_callback,
                             blk_);
@@ -392,7 +418,7 @@ static VALUE iodine_cli_parse(VALUE self) {
     iodine_threads_set(IodineModule, INT2NUM(fio_cli_get_i("-t")));
   }
   if (fio_cli_get_bool("-v")) {
-    rb_hash_aset(defaults, ID2SYM(rb_intern("log")), Qtrue);
+    rb_hash_aset(defaults, log_sym, Qtrue);
   }
   if (fio_cli_get_bool("-warmup")) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("warmup_")), Qtrue);
@@ -409,16 +435,13 @@ static VALUE iodine_cli_parse(VALUE self) {
       }
       fio_cli_set("-p", "0");
     }
-    rb_hash_aset(defaults, ID2SYM(rb_intern("address")),
-                 rb_str_new_cstr(fio_cli_get("-b")));
+    rb_hash_aset(defaults, address_sym, rb_str_new_cstr(fio_cli_get("-b")));
   }
   if (fio_cli_get("-p")) {
-    rb_hash_aset(defaults, ID2SYM(rb_intern("port")),
-                 rb_str_new_cstr(fio_cli_get("-p")));
+    rb_hash_aset(defaults, port_sym, rb_str_new_cstr(fio_cli_get("-p")));
   }
   if (fio_cli_get("-www")) {
-    rb_hash_aset(defaults, ID2SYM(rb_intern("public")),
-                 rb_str_new_cstr(fio_cli_get("-www")));
+    rb_hash_aset(defaults, public_sym, rb_str_new_cstr(fio_cli_get("-www")));
   }
   if (!fio_cli_get("-redis") && getenv("IODINE_REDIS_URL")) {
     fio_cli_set("-redis", getenv("IODINE_REDIS_URL"));
@@ -428,28 +451,26 @@ static VALUE iodine_cli_parse(VALUE self) {
                  rb_str_new_cstr(fio_cli_get("-redis")));
   }
   if (fio_cli_get("-k")) {
-    rb_hash_aset(defaults, ID2SYM(rb_intern("timeout")),
-                 INT2NUM(fio_cli_get_i("-k")));
+    rb_hash_aset(defaults, timeout_sym, INT2NUM(fio_cli_get_i("-k")));
   }
   if (fio_cli_get("-ping")) {
-    rb_hash_aset(defaults, ID2SYM(rb_intern("ping")),
-                 INT2NUM(fio_cli_get_i("-ping")));
+    rb_hash_aset(defaults, ping_sym, INT2NUM(fio_cli_get_i("-ping")));
   }
   if (fio_cli_get("-redis-ping")) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("redis_ping_")),
                  INT2NUM(fio_cli_get_i("-redis-ping")));
   }
   if (fio_cli_get("-max-body")) {
-    rb_hash_aset(defaults, ID2SYM(rb_intern("max_body")),
-                 INT2NUM((fio_cli_get_i("-max-body") * 1024 * 1024)));
+    rb_hash_aset(defaults, max_body_sym,
+                 INT2NUM((fio_cli_get_i("-max-body") /* * 1024 * 1024 */)));
   }
   if (fio_cli_get("-max-message")) {
-    rb_hash_aset(defaults, ID2SYM(rb_intern("max_msg")),
-                 INT2NUM((fio_cli_get_i("-max-message") * 1024)));
+    rb_hash_aset(defaults, max_msg_sym,
+                 INT2NUM((fio_cli_get_i("-max-message") /* * 1024 */)));
   }
   if (fio_cli_get("-max-headers")) {
-    rb_hash_aset(defaults, ID2SYM(rb_intern("max_headers")),
-                 INT2NUM((fio_cli_get_i("-max-headers") * 1024)));
+    rb_hash_aset(defaults, max_headers_sym,
+                 INT2NUM((fio_cli_get_i("-max-headers") /* * 1024 */)));
   }
   if (fio_cli_get_bool("-tls") || fio_cli_get("-key") || fio_cli_get("-cert")) {
     VALUE rbtls = IodineCaller.call(IodineTLSClass, rb_intern2("new", 3));
@@ -473,7 +494,7 @@ static VALUE iodine_cli_parse(VALUE self) {
       fio_local_addr(name, 1024);
       fio_tls_cert_add(tls, name, NULL, NULL, NULL);
     }
-    rb_hash_aset(defaults, iodine_tls_sym, rbtls);
+    rb_hash_aset(defaults, tls_sym, rbtls);
   }
   if (fio_cli_unnamed_count()) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("filename_")),
@@ -491,12 +512,452 @@ finish:
 }
 
 /* *****************************************************************************
+Argument support for `connect` / `listen`
+***************************************************************************** */
+
+/* cleans up any resources used by the argument list processing */
+FIO_FUNC void iodine_connect_args_cleanup(iodine_connection_args_s *s) {
+  if (!s)
+    return;
+  if (s->port.capa)
+    fio_free(s->port.data);
+  if (s->address.capa)
+    fio_free(s->address.data);
+  if (s->tls)
+    fio_tls_destroy(s->tls);
+}
+
+/*
+Accepts:
+
+     func(settings)
+
+Allowed Settigs:
+- `:url`
+- `:handler` (deprecated: `app`)
+- `:service` (raw / ws / wss / http / https )
+- `:address`
+- `:port`
+- `:path` (HTTP/WebSocket client)
+- `:method` (HTTP client)
+- `:headers` (HTTP/WebSocket client)
+- `:cookies` (HTTP/WebSocket client)
+- `:params` (HTTP client)
+- `:body` (HTTP client, only if no params)
+- `:tls`
+- `:log` (HTTP only)
+- `:public` (public folder, HTTP server only)
+- `:timeout` (HTTP only)
+- `:ping` (`:raw` clients and WebSockets only)
+- `:max_headers` (HTTP only)
+- `:max_body` (HTTP only)
+- `:max_msg` (WebSockets only)
+
+*/
+FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s) {
+  Check_Type(s, T_HASH);
+  iodine_connection_args_s r = {.ping = 0}; /* set all to 0 */
+  /* Collect argument values */
+  VALUE address = rb_hash_aref(s, address_sym);
+  VALUE app = rb_hash_aref(s, app_sym);
+  VALUE body = rb_hash_aref(s, body_sym);
+  VALUE cookies = rb_hash_aref(s, cookies_sym);
+  VALUE handler = rb_hash_aref(s, handler_sym);
+  VALUE headers = rb_hash_aref(s, headers_sym);
+  VALUE log = rb_hash_aref(s, log_sym);
+  VALUE max_body = rb_hash_aref(s, max_body_sym);
+  VALUE max_clients = rb_hash_aref(s, max_clients_sym);
+  VALUE max_headers = rb_hash_aref(s, max_headers_sym);
+  VALUE max_msg = rb_hash_aref(s, max_msg_sym);
+  VALUE method = rb_hash_aref(s, method_sym);
+  VALUE params = rb_hash_aref(s, params_sym);
+  VALUE path = rb_hash_aref(s, path_sym);
+  VALUE ping = rb_hash_aref(s, ping_sym);
+  VALUE port = rb_hash_aref(s, port_sym);
+  VALUE r_public = rb_hash_aref(s, public_sym);
+  VALUE service = rb_hash_aref(s, service_sym);
+  VALUE timeout = rb_hash_aref(s, timeout_sym);
+  VALUE tls = rb_hash_aref(s, tls_sym);
+  VALUE r_url = rb_hash_aref(s, url_sym);
+  fio_str_info_s service_str = {.data = NULL};
+
+  /* Complete using default values */
+  if (address == Qnil)
+    address = rb_hash_aref(iodine_default_args, address_sym);
+  if (app == Qnil)
+    app = rb_hash_aref(iodine_default_args, app_sym);
+  if (body == Qnil)
+    body = rb_hash_aref(iodine_default_args, body_sym);
+  if (cookies == Qnil)
+    cookies = rb_hash_aref(iodine_default_args, cookies_sym);
+  if (handler == Qnil)
+    handler = rb_hash_aref(iodine_default_args, handler_sym);
+  if (headers == Qnil)
+    headers = rb_hash_aref(iodine_default_args, headers_sym);
+  if (log == Qnil)
+    log = rb_hash_aref(iodine_default_args, log_sym);
+  if (max_body == Qnil)
+    max_body = rb_hash_aref(iodine_default_args, max_body_sym);
+  if (max_clients == Qnil)
+    max_clients = rb_hash_aref(iodine_default_args, max_clients_sym);
+  if (max_headers == Qnil)
+    max_headers = rb_hash_aref(iodine_default_args, max_headers_sym);
+  if (max_msg == Qnil)
+    max_msg = rb_hash_aref(iodine_default_args, max_msg_sym);
+  if (method == Qnil)
+    method = rb_hash_aref(iodine_default_args, method_sym);
+  if (params == Qnil)
+    params = rb_hash_aref(iodine_default_args, params_sym);
+  if (path == Qnil)
+    path = rb_hash_aref(iodine_default_args, path_sym);
+  if (ping == Qnil)
+    ping = rb_hash_aref(iodine_default_args, ping_sym);
+  if (port == Qnil)
+    port = rb_hash_aref(iodine_default_args, port_sym);
+  if (r_public == Qnil) {
+    r_public = rb_hash_aref(iodine_default_args, public_sym);
+  }
+  // if (service == Qnil) // not supported by default settings...
+  //   service = rb_hash_aref(iodine_default_args, service_sym);
+  if (timeout == Qnil)
+    timeout = rb_hash_aref(iodine_default_args, timeout_sym);
+  if (tls == Qnil)
+    tls = rb_hash_aref(iodine_default_args, tls_sym);
+
+  /* TODO: deprecation */
+  if (handler == Qnil) {
+    handler = rb_hash_aref(s, app_sym);
+    if (handler != Qnil)
+      FIO_LOG_WARNING(":app is deprecated in Iodine.listen and Iodine.connect. "
+                      "Use :handler");
+  }
+
+  /* specific for HTTP */
+  if (handler == Qnil && rb_block_given_p()) {
+    handler = rb_block_proc();
+  }
+
+  /* Raise exceptions on errors (last chance) */
+  if (handler == Qnil) {
+    rb_raise(rb_eArgError, "a :handler is required.");
+  }
+
+  /* Set existing values */
+  if (handler != Qnil) {
+    r.handler = handler;
+  }
+  if (address != Qnil && RB_TYPE_P(address, T_STRING)) {
+    r.address = IODINE_RSTRINFO(address);
+  }
+  if (body != Qnil && RB_TYPE_P(body, T_STRING)) {
+    r.body = IODINE_RSTRINFO(body);
+  }
+  if (cookies != Qnil && RB_TYPE_P(cookies, T_HASH)) {
+    r.cookies = cookies;
+  }
+  if (headers != Qnil && RB_TYPE_P(headers, T_HASH)) {
+    r.headers = headers;
+  }
+  if (log != Qnil && log != Qfalse) {
+    r.log = 1;
+  }
+  if (max_body != Qnil && RB_TYPE_P(max_body, T_FIXNUM)) {
+    r.max_body = FIX2ULONG(max_body);
+  }
+  if (max_clients != Qnil && RB_TYPE_P(max_clients, T_FIXNUM)) {
+    r.max_clients = FIX2ULONG(max_clients);
+  }
+  if (max_headers != Qnil && RB_TYPE_P(max_headers, T_FIXNUM)) {
+    r.max_headers = FIX2ULONG(max_headers);
+  }
+  if (max_msg != Qnil && RB_TYPE_P(max_msg, T_FIXNUM)) {
+    r.max_msg = FIX2ULONG(max_msg);
+  }
+  if (method != Qnil && RB_TYPE_P(method, T_STRING)) {
+    r.method = IODINE_RSTRINFO(method);
+  }
+  if (params != Qnil && RB_TYPE_P(params, T_HASH)) {
+    r.params = params;
+  }
+  if (path != Qnil && RB_TYPE_P(path, T_STRING)) {
+    r.path = IODINE_RSTRINFO(path);
+  }
+  if (ping != Qnil && RB_TYPE_P(ping, T_FIXNUM)) {
+    if (FIX2ULONG(ping) > 255)
+      FIO_LOG_WARNING(":ping value over 255 will be silently ignored.");
+    else
+      r.ping = FIX2ULONG(ping);
+  }
+  if (port != Qnil) {
+    if (RB_TYPE_P(port, T_STRING)) {
+      char *tmp = RSTRING_PTR(port);
+      if (fio_atol(&tmp))
+        r.port = IODINE_RSTRINFO(port);
+    } else if (RB_TYPE_P(port, T_FIXNUM) && FIX2UINT(port)) {
+      if (FIX2UINT(port) >= 65536) {
+        FIO_LOG_WARNING("Port number %u is too high, quietly ignored.",
+                        FIX2UINT(port));
+      } else {
+        r.port = (fio_str_info_s){.data = fio_malloc(16), .len = 0, .capa = 1};
+        r.port.len = fio_ltoa(r.port.data, FIX2INT(port), 10);
+        r.port.data[r.port.len] = 0;
+      }
+    }
+  }
+
+  if (r_public != Qnil && RB_TYPE_P(r_public, T_STRING)) {
+    r.public = IODINE_RSTRINFO(r_public);
+  }
+  if (service != Qnil && RB_TYPE_P(service, T_STRING)) {
+    service_str = IODINE_RSTRINFO(service);
+  } else if (service != Qnil && RB_TYPE_P(service, T_SYMBOL)) {
+    service = rb_sym2str(service);
+    service_str = IODINE_RSTRINFO(service);
+  }
+  if (timeout != Qnil && RB_TYPE_P(ping, T_FIXNUM)) {
+    if (FIX2ULONG(timeout) > 255)
+      FIO_LOG_WARNING(":timeout value over 255 will be silently ignored.");
+    else
+      r.timeout = FIX2ULONG(timeout);
+  }
+  if (tls != Qnil) {
+    r.tls = iodine_tls2c(tls);
+    if (r.tls)
+      fio_tls_dup(r.tls);
+  }
+  /* URL parsing */
+  if (r_url != Qnil && RB_TYPE_P(r_url, T_STRING)) {
+    fio_url_s u = fio_url_parse(RSTRING_PTR(r_url), RSTRING_LEN(r_url));
+    /* set service string */
+    if (u.scheme.data) {
+      service_str = u.scheme;
+    }
+    /* copy port number */
+    if (u.port.data) {
+      char *tmp = u.port.data;
+      if (fio_atol(&tmp) == 0) {
+        if (r.port.capa)
+          fio_free(r.port.data);
+        r.port = (fio_str_info_s){.data = NULL};
+      } else {
+        if (u.port.len > 5)
+          FIO_LOG_WARNING("Port number error (%.*s too long to be valid).",
+                          (int)u.port.len, u.port.data);
+        if (r.port.capa && u.port.len >= 16) {
+          fio_free(r.port.data);
+          r.port = (fio_str_info_s){.data = NULL};
+        }
+        if (!r.port.capa)
+          r.port = (fio_str_info_s){
+              .data = fio_malloc(u.port.len + 1), .len = u.port.len, .capa = 1};
+        memcpy(r.port.data, u.port.data, u.port.len);
+        r.port.len = u.port.len;
+        r.port.data[r.port.len] = 0;
+      }
+    } else {
+      if (r.port.capa)
+        fio_free(r.port.data);
+      r.port = (fio_str_info_s){.data = NULL};
+    }
+    /* copy host / address */
+    if (u.host.data) {
+      r.address = (fio_str_info_s){
+          .data = fio_malloc(u.host.len + 1), .len = u.host.len, .capa = 1};
+      memcpy(r.address.data, u.host.data, u.host.len);
+      r.address.len = u.host.len;
+      r.address.data[r.address.len] = 0;
+    } else {
+      if (r.address.capa)
+        fio_free(r.address.data);
+      r.address = (fio_str_info_s){.data = NULL};
+    }
+    /* set path */
+    if (u.path.data) {
+      /* support possible Unix address as "raw://:0/my/sock.sock" */
+      if (r.address.data || r.port.data)
+        r.path = u.path;
+      else
+        r.address = u.path;
+    }
+  }
+  /* test/set service type */
+  r.service = IODINE_SERVICE_RAW;
+  if (service_str.data) {
+    switch (service_str.data[0]) {
+    case 'u': /* overflow */
+    /* unix */
+    case 't': /* overflow */
+    /* tcp */
+    case 'r':
+      /* raw */
+      r.service = IODINE_SERVICE_RAW;
+      break;
+    case 'h':
+      /* http(s) */
+      r.service = IODINE_SERVICE_HTTP;
+      if (service_str.len == 5 && !r.tls) {
+        r.tls = fio_tls_new(NULL, NULL, NULL, NULL);
+      }
+    case 'w':
+      /* ws(s) */
+      r.service = IODINE_SERVICE_WS;
+      if (service_str.len == 3 && !r.tls) {
+        r.tls = fio_tls_new(NULL, NULL, NULL, NULL);
+      }
+      break;
+    }
+  }
+  return r;
+}
+
+/* *****************************************************************************
+Listen function routing
+***************************************************************************** */
+
+// clang-format off
+/*
+{Iodine.listen} can be used to listen to any incoming connections, including HTTP and raw (tcp/ip and unix sockets) connections.
+
+     Iodine.listen(settings)
+
+Supported connection settings include:
+
+- `:address`
+- `:body` (HTTP client, only if no params)
+- `:cookies` (HTTP/WebSocket client)
+- `:handler` (deprecated: `app`)
+- `:headers` (HTTP/WebSocket client)
+- `:log` (HTTP only)
+- `:max_body` (HTTP only)
+- `:max_headers` (HTTP only)
+- `:max_msg` (WebSockets only)
+- `:method` (HTTP client)
+- `:params` (HTTP client)
+- `:path` (HTTP/WebSocket client)
+- `:ping` (WebSockets, TCP/IP, Unix Sockets)
+- `:port`
+- `:public` (public folder, HTTP server only)
+- `:service` (raw / ws / wss / http / https )
+- `:timeout` (HTTP only)
+- `:tls`
+- `:url`
+
+Some connection settings are only valid for HTTP / WebSocket connections.
+
+If `:url` is provided, it will overwrite the `:address`, `:port` and `:path` settings (if provided).
+
+*/
+static VALUE iodine_listen(VALUE self, VALUE args) {
+  // clang-format on
+  iodine_connection_args_s s = iodine_connect_args(args);
+  intptr_t uuid = -1;
+  switch (s.service) {
+  case IODINE_SERVICE_RAW:
+    uuid = iodine_tcp_listen(s);
+    break;
+  case IODINE_SERVICE_HTTP: /* overflow */
+  case IODINE_SERVICE_WS:
+    uuid = iodine_http_listen(s);
+    break;
+  }
+  iodine_connect_args_cleanup(&s);
+  if (uuid == -1)
+    rb_raise(rb_eRuntimeError, "Couldn't open listening socket.");
+  return s.handler;
+  (void)self;
+}
+
+/* *****************************************************************************
+Connect function routing
+***************************************************************************** */
+
+/*
+Accepts:
+
+     func(settings)
+
+Allowed Settigs:
+- `:url`
+- `:handler` (deprecated: `app`)
+- `:service` (raw / ws / wss / http / https )
+- `:address`
+- `:port`
+- `:path` (HTTP/WebSocket client)
+- `:method` (HTTP client)
+- `:headers` (HTTP/WebSocket client)
+- `:cookies` (HTTP/WebSocket client)
+- `:params` (HTTP client)
+- `:body` (HTTP client, only if no params)
+- `:tls`
+- `:log` (HTTP only)
+- `:public` (public folder, HTTP server only)
+- `:timeout` (HTTP only)
+- `:ping` (WebSockets, TCP/IP, Unix Sockets)
+- `:max_headers` (HTTP only)
+- `:max_body` (HTTP only)
+- `:max_msg` (WebSockets only)
+
+*/
+static VALUE iodine_connect(VALUE self, VALUE args) {
+  iodine_connection_args_s s = iodine_connect_args(args);
+  intptr_t uuid = -1;
+  switch (s.service) {
+  case IODINE_SERVICE_RAW:
+    uuid = iodine_tcp_connect(s);
+    break;
+  case IODINE_SERVICE_HTTP:
+    iodine_connect_args_cleanup(&s);
+    rb_raise(rb_eRuntimeError, "HTTP client connections aren't supported yet.");
+    return Qnil;
+    break;
+  case IODINE_SERVICE_WS:
+    iodine_connect_args_cleanup(&s);
+    rb_raise(rb_eRuntimeError,
+             "WebSocket client connections aren't supported yet.");
+    return Qnil;
+    break;
+  }
+  iodine_connect_args_cleanup(&s);
+  if (uuid == -1)
+    rb_raise(rb_eRuntimeError, "Couldn't open client socket.");
+  return self;
+}
+
+/* *****************************************************************************
 Ruby loads the library and invokes the Init_<lib_name> function...
 
 Here we connect all the C code to the Ruby interface, completing the bridge
 between Lib-Server and Ruby.
 ***************************************************************************** */
 void Init_iodine(void) {
+  /* common Symbol objects in use by Iodine */
+#define IODINE_MAKE_SYM(name)                                                  \
+  do {                                                                         \
+    name##_sym = rb_id2sym(rb_intern(#name));                                  \
+    rb_global_variable(&name##_sym);                                           \
+  } while (0)
+  IODINE_MAKE_SYM(address);
+  IODINE_MAKE_SYM(app);
+  IODINE_MAKE_SYM(body);
+  IODINE_MAKE_SYM(cookies);
+  IODINE_MAKE_SYM(handler);
+  IODINE_MAKE_SYM(headers);
+  IODINE_MAKE_SYM(log);
+  IODINE_MAKE_SYM(max_body);
+  IODINE_MAKE_SYM(max_clients);
+  IODINE_MAKE_SYM(max_headers);
+  IODINE_MAKE_SYM(max_msg);
+  IODINE_MAKE_SYM(method);
+  IODINE_MAKE_SYM(params);
+  IODINE_MAKE_SYM(path);
+  IODINE_MAKE_SYM(ping);
+  IODINE_MAKE_SYM(port);
+  IODINE_MAKE_SYM(public);
+  IODINE_MAKE_SYM(service);
+  IODINE_MAKE_SYM(timeout);
+  IODINE_MAKE_SYM(tls);
+  IODINE_MAKE_SYM(url);
+
   // load any environment specific patches
   patch_env();
 
@@ -507,7 +968,7 @@ void Init_iodine(void) {
   IodineModule = rb_define_module("Iodine");
   IodineBaseModule = rb_define_module_under(IodineModule, "Base");
   VALUE IodineCLIModule = rb_define_module_under(IodineBaseModule, "CLI");
-  call_id = rb_intern2("call", 4);
+  iodine_call_id = rb_intern2("call", 4);
 
   // register core methods
   rb_define_module_function(IodineModule, "threads", iodine_threads_get, 0);
@@ -521,9 +982,21 @@ void Init_iodine(void) {
   rb_define_module_function(IodineModule, "on_idle", iodine_sched_on_idle, 0);
   rb_define_module_function(IodineModule, "master?", iodine_master_is, 0);
   rb_define_module_function(IodineModule, "worker?", iodine_worker_is, 0);
+  rb_define_module_function(IodineModule, "listen", iodine_listen, 1);
+  rb_define_module_function(IodineModule, "connect", iodine_connect, 1);
 
   // register CLI methods
   rb_define_module_function(IodineCLIModule, "parse", iodine_cli_parse, 0);
+
+  /** Default connection settings for {listen} and {connect}. */
+  iodine_default_args = rb_hash_new();
+  /** Default connection settings for {listen} and {connect}. */
+  rb_const_set(IodineModule, rb_intern("DEFAULT_SETTINGS"),
+               iodine_default_args);
+
+  /** Depracated, use {Iodine::DEFAULT_SETTINGS}. */
+  rb_const_set(IodineModule, rb_intern("DEFAULT_HTTP_ARGS"),
+               iodine_default_args);
 
   // initialize Object storage for GC protection
   iodine_storage_init();
