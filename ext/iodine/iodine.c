@@ -464,13 +464,13 @@ static VALUE iodine_cli_parse(VALUE self) {
     rb_hash_aset(defaults, max_body_sym,
                  INT2NUM((fio_cli_get_i("-max-body") /* * 1024 * 1024 */)));
   }
-  if (fio_cli_get("-max-message")) {
+  if (fio_cli_get("-maxms")) {
     rb_hash_aset(defaults, max_msg_sym,
-                 INT2NUM((fio_cli_get_i("-max-message") /* * 1024 */)));
+                 INT2NUM((fio_cli_get_i("-maxms") /* * 1024 */)));
   }
-  if (fio_cli_get("-max-headers")) {
+  if (fio_cli_get("-maxhd")) {
     rb_hash_aset(defaults, max_headers_sym,
-                 INT2NUM((fio_cli_get_i("-max-headers") /* * 1024 */)));
+                 INT2NUM((fio_cli_get_i("-maxhd") /* * 1024 */)));
   }
   if (fio_cli_get_bool("-tls") || fio_cli_get("-key") || fio_cli_get("-cert")) {
     VALUE rbtls = IodineCaller.call(IodineTLSClass, rb_intern2("new", 3));
@@ -662,16 +662,16 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
     r.log = 1;
   }
   if (max_body != Qnil && RB_TYPE_P(max_body, T_FIXNUM)) {
-    r.max_body = FIX2ULONG(max_body);
+    r.max_body = FIX2ULONG(max_body) * 1024 * 1024;
   }
   if (max_clients != Qnil && RB_TYPE_P(max_clients, T_FIXNUM)) {
     r.max_clients = FIX2ULONG(max_clients);
   }
   if (max_headers != Qnil && RB_TYPE_P(max_headers, T_FIXNUM)) {
-    r.max_headers = FIX2ULONG(max_headers);
+    r.max_headers = FIX2ULONG(max_headers) * 1024;
   }
   if (max_msg != Qnil && RB_TYPE_P(max_msg, T_FIXNUM)) {
-    r.max_msg = FIX2ULONG(max_msg);
+    r.max_msg = FIX2ULONG(max_msg) * 1024;
   }
   if (method != Qnil && RB_TYPE_P(method, T_STRING)) {
     r.method = IODINE_RSTRINFO(method);
