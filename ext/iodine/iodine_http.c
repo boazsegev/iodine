@@ -937,7 +937,29 @@ typedef struct {
   FIOBJ headers;
   FIOBJ cookies;
   FIOBJ body;
+  VALUE handler;
 } request_data_s;
+
+static request_data_s *request_data_create(iodine_connection_args_s *args) {
+  request_data_s *r = fio_malloc(sizeof(*r));
+  *r = (request_data_s){
+      .method = fiobj_str_new(args->method.data, args->method.len),
+      .headers = fiobj_dup(args->headers),
+      .cookies = fiobj_dup(args->cookies),
+      .body = fiobj_str_new(args->body.data, args->body.len),
+      .handler = args->handler,
+  };
+  return r;
+}
+
+static void request_data_destroy(request_data_s *r) {
+  fiobj_free(r->method);
+  fiobj_free(r->body);
+  fiobj_free(r->headers);
+  fiobj_free(r->cookies);
+  IodineStore.remove(r->handler);
+  fio_free(r);
+}
 
 // static void on_websocket_http_connected(http_s *h) {
 //   websocket_settings_s *s = h->udata;
@@ -961,26 +983,7 @@ typedef struct {
 //   }
 // }
 
-/**
-Connects to a (remote) WebSocket service.
-
-      Iodine.connect2ws(handler, url, headers={}, cookies={})
-
-Use:
-
-      Iodine.connect2ws(handler, "wss://example.com",
-                        {"Foo-Header" => "bar"},
-                        {"foo_cookie" => "bar"})
-
-Or with named arguments:
-
-      Iodine.connect2ws(handler: handler,
-                        url: "wss://example.com",
-                        headers: {"Foo-Header" => "bar"},
-                        cookies: {"foo_cookie" => "bar"})
-
-
-*/
+/** Connects to a (remote) WebSocket service. */
 intptr_t iodine_ws_connect(iodine_connection_args_s args) {
   // http_connect(url, unixaddr, struct http_settings_s)
   if (memchr(args.address.data, '/', args.address.len)) {
@@ -988,7 +991,9 @@ intptr_t iodine_ws_connect(iodine_connection_args_s args) {
                   "the moment.");
     return -1;
   }
-  // fio_str_s url = FIO_STR_INIT;
+  FIOBJ url_tmp = FIOBJ_INVALID;
+  if (!args.url.data) {
+  }
   (void)args;
   return -1;
 }
