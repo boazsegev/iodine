@@ -34,12 +34,16 @@ end
 unless ENV['NO_SSL']
   begin
     require 'openssl'
-    puts "Detected OpenSSL library, testing for version." if have_library('crypto') && have_library('ssl')
   rescue LoadError
   else
-    if try_compile("\#include <openssl/ssl.h>\r\#if OPENSSL_VERSION_AT_LEAST(1, 0)\r\#error \"OpenSSL version too small\"\r\#endif\rint main(void) { SSL_library_init(); }", "-lcrypto")
-      $defs << "-DHAVE_OPENSSL"
-      puts "Confirmed OpenSSL to be version 1.0.0 or above, compiling with HAVE_OPENSSL."
+    if have_library('crypto') && have_library('ssl')
+      puts "Detected OpenSSL library, testing for version."
+      if try_compile("\#include <openssl/ssl.h>\r\#if OPENSSL_VERSION_AT_LEAST(1, 0)\r\#error \"OpenSSL version too small\"\r\#endif\rint main(void) { SSL_library_init(); }", "-lcrypto")
+        $defs << "-DHAVE_OPENSSL"
+        puts "Confirmed OpenSSL to be version 1.0.0 or above, compiling with HAVE_OPENSSL."
+      else
+        puts "FAILED: OpenSSL version not supported."
+      end
     end
   end
 end
