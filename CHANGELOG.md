@@ -18,7 +18,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: (`redis`) fixed an issue where destroying the Redis engine and exiting pre-maturely, could cause a segmentation fault during cleanup.
 
-**Fix**: (`iodione`) fixed logging message when listening to unix sockets.
+**Fix**: (`iodine`, `fio`) fixed logging message when listening to Unix Sockets.
 
 **Fix**: (`iodine`) fixed CLI argument recognition for WebSocket message limits and HTTP header limits. Typos in the CLI argument names prevented the CLI from effecting the default values.
 
