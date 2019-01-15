@@ -46,7 +46,6 @@ static VALUE max_clients_sym;
 static VALUE max_headers_sym;
 static VALUE max_msg_sym;
 static VALUE method_sym;
-static VALUE params_sym;
 static VALUE path_sym;
 static VALUE ping_sym;
 static VALUE port_sym;
@@ -542,8 +541,7 @@ Supported Settigs:
 - `:method` (HTTP client)
 - `:headers` (HTTP/WebSocket client)
 - `:cookies` (HTTP/WebSocket client)
-- `:params` (HTTP client)
-- `:body` (HTTP client, only if no params)
+- `:body` (HTTP client)
 - `:tls`
 - `:log` (HTTP only)
 - `:public` (public folder, HTTP server only)
@@ -570,7 +568,6 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
   VALUE max_headers = rb_hash_aref(s, max_headers_sym);
   VALUE max_msg = rb_hash_aref(s, max_msg_sym);
   VALUE method = rb_hash_aref(s, method_sym);
-  VALUE params = rb_hash_aref(s, params_sym);
   VALUE path = rb_hash_aref(s, path_sym);
   VALUE ping = rb_hash_aref(s, ping_sym);
   VALUE port = rb_hash_aref(s, port_sym);
@@ -586,8 +583,6 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
     address = rb_hash_aref(iodine_default_args, address_sym);
   if (app == Qnil)
     app = rb_hash_aref(iodine_default_args, app_sym);
-  if (body == Qnil)
-    body = rb_hash_aref(iodine_default_args, body_sym);
   if (cookies == Qnil)
     cookies = rb_hash_aref(iodine_default_args, cookies_sym);
   if (handler == Qnil)
@@ -606,8 +601,6 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
     max_msg = rb_hash_aref(iodine_default_args, max_msg_sym);
   if (method == Qnil)
     method = rb_hash_aref(iodine_default_args, method_sym);
-  if (params == Qnil)
-    params = rb_hash_aref(iodine_default_args, params_sym);
   if (path == Qnil)
     path = rb_hash_aref(iodine_default_args, path_sym);
   if (ping == Qnil)
@@ -675,9 +668,6 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
   }
   if (method != Qnil && RB_TYPE_P(method, T_STRING)) {
     r.method = IODINE_RSTRINFO(method);
-  }
-  if (params != Qnil && RB_TYPE_P(params, T_HASH)) {
-    r.params = params;
   }
   if (path != Qnil && RB_TYPE_P(path, T_STRING)) {
     r.path = IODINE_RSTRINFO(path);
@@ -838,19 +828,21 @@ Listen function routing
 
 Supported Settigs:
 
-- `:url`
-- `:handler` (deprecated: `:app`)
-- `:service` (`:raw` / `:ws` / `:wss` / `:http` / `:https` )
-- `:address`
-- `:port`
-- `:tls`
-- `:log` (HTTP only)
-- `:public` (public folder, HTTP server only)
-- `:timeout` (HTTP only)
-- `:ping` (`:raw` clients and WebSockets only)
-- `:max_headers` (HTTP only)
-- `:max_body` (HTTP only)
-- `:max_msg` (WebSockets only)
+|  |  |
+|---|---|
+| `:url` | URL indicating service type, host name and port. Path will be parsed as a Unix socket. |
+| `:handler` | (deprecated: `:app`) see details below. |
+| `:address` | an IP address or a unix socket address. Only relevant if `:url` is missing. |
+| `:log` |  (HTTP only) request logging. |
+| `:max_body` | (HTTP only) maximum upload size allowed per request before disconnection (in Mb). |
+| `:max_headers` |  (HTTP only) maximum total header length allowed per request (in Kb). |
+| `:max_msg` |  (WebSockets only) maximum message size pre message (in Kb). |
+| `:ping` |  (`:raw` clients and WebSockets only) ping interval (in seconds). Up to 255 seconds. |
+| `:port` | port number to listen to either a String or Number) |
+| `:public` | (HTTP server only) public folder for static file service. |
+| `:service` | (`:raw` / `:ws` / `:wss` / `:http` / `:https` ) a supported service this socket will listen to. |
+| `:timeout` |  (HTTP only) keep-alive timeout in seconds. Up to 255 seconds. |
+| `:tls` | an {Iodine::TLS} context object for encrypted connections. |
 
 Some connection settings are only valid when listening to HTTP / WebSocket connections.
 
@@ -873,7 +865,7 @@ Here's another example, using a Unix Socket instead of a TCP/IP socket for an HT
 This example shows how the `:url` option can be used, but the `:address` settings could have been used for the same effect (with `port: 0`).
 
       require 'iodine'
-      # a note that unix sockets in URL form use an absolute path.
+      # note that unix sockets in URL form use an absolute path.
       Iodine.listen(url: "http://:0/tmp/sock.sock") {|env| [200, {"Content-Length" => "12"}, ["Hello World!"]] }
       # start the service
       Iodine.threads = 1
@@ -882,12 +874,14 @@ This example shows how the `:url` option can be used, but the `:address` setting
 
 For raw connections, the `:handler` object should be an object that answer `.call` and returns a valid callback object that supports the following callbacks (see also {Iodine::Connection}):
 
-on_open(client) :: called after a connection was established
-on_message(client, data) :: called when incoming data is available. Data may be fragmented.
-on_drained(client) :: called when all the pending `client.write` events have been processed (see {Iodine::Connection#pending}).
-ping(client) :: called whenever a timeout has occured (see {Iodine::Connection#timeout=}).
-on_shutdown(client) :: called if the server is shutting down. This is called before the connection is closed.
-on_close(client) :: called when the connection with the client was closed.
+|  |  |
+|---|---|
+| `on_open(client)` | called after a connection was established |
+| `on_message(client,data)` | called when incoming data is available. Data may be fragmented. |
+| `on_drained(client)` | called after pending `client.write` events have been processed (see {Iodine::Connection#pending}). |
+| `ping(client)` | called whenever a timeout has occured (see {Iodine::Connection#timeout=}). |
+| `on_shutdown(client)` | called if the server is shutting down. This is called before the connection is closed. |
+| `on_close(client)` | called when the connection with the client was closed. |
 
 The `client` argument passed to the `:handler` callbacks is an {Iodine::Connection} instance that represents the connection / the client.
 
@@ -927,6 +921,8 @@ Here's an example for a telnet based chat-room example:
       end
       # we use can both the `handler` keyword or a block, anything that answers #call.
       Iodine.listen(service: :raw, port: "3000", handler: ChatHandler)
+      # we can listen to more than a single socket at a time.
+      Iodine.listen(url: "raw://:3030", handler: ChatHandler)
       # start the service
       Iodine.threads = 1
       Iodine.start
@@ -968,25 +964,27 @@ The {connect} method instructs iodine to connect to a server using either TCP/IP
 
 Supported Settigs:
 
-- `:url`
-- `:handler` (deprecated: `:app`)
-- `:service` (raw / ws / wss / http / https )
-- `:address`
-- `:port`
-- `:path` (HTTP/WebSocket client)
-- `:method` (HTTP client)
-- `:headers` (HTTP/WebSocket client)
-- `:cookies` (HTTP/WebSocket client)
-- `:params` (HTTP client)
-- `:body` (HTTP client, only if no params)
-- `:tls` (an optional {Iodine::TLS} object)
-- `:log` (HTTP only)
-- `:public` (public folder, HTTP server only)
-- `:timeout` (HTTP only)
-- `:ping` (`:raw` clients and WebSockets only)
-- `:max_headers` (HTTP only)
-- `:max_body` (HTTP only)
-- `:max_msg` (WebSockets only)
+
+|  |  |
+|---|---|
+| `:url` | URL indicating service type, host name, port and optional path. |
+| `:handler` | see details below. |
+| `:address` | an IP address or a unix socket address. Only relevant if `:url` is missing. |
+| `:body` | (HTTP client) the body to be sent. |
+| `:cookies` | (HTTP/WebSocket client) cookie data. |
+| `:headers` | (HTTP/WebSocket client) custom headers. |
+| `:log` | (HTTP only) - logging the requests. |
+| `:max_body` | (HTTP only) - limits HTTP body in the response, see {listen}. |
+| `:max_headers` | (HTTP only) - limits the header length in the response, see {listen}. |
+| `:max_msg` |  (WebSockets only) maximum incoming message size pre message (in Kb). |
+| `:method` | (HTTP client) a String such as "GET" or "POST". |
+| `:path` |HTTP/WebSocket client) the HTTP path to be used. |
+| `:ping` | ping interval (in seconds). Up to 255 seconds. |
+| `:port` | port number to listen to either a String or Number) |
+| `:public` | (public folder, HTTP server only) |
+| `:service` | (raw / ws / wss / http / https ) |
+| `:timeout` | (HTTP only) keep-alive timeout in seconds. Up to 255 seconds. |
+| `:tls` | an {Iodine::TLS} context object for encrypted connections. |
 
 Some connection settings are only valid for HTTP / WebSocket connections.
 
@@ -1111,7 +1109,6 @@ void Init_iodine(void) {
   IODINE_MAKE_SYM(max_headers);
   IODINE_MAKE_SYM(max_msg);
   IODINE_MAKE_SYM(method);
-  IODINE_MAKE_SYM(params);
   IODINE_MAKE_SYM(path);
   IODINE_MAKE_SYM(ping);
   IODINE_MAKE_SYM(port);
