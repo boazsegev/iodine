@@ -514,10 +514,65 @@ finish:
 Argument support for `connect` / `listen`
 ***************************************************************************** */
 
+static int for_each_header_value(VALUE key, VALUE val, VALUE h_) {
+  FIOBJ h = h_;
+  if (RB_TYPE_P(key, T_SYMBOL))
+    key = rb_sym2str(key);
+  if (!RB_TYPE_P(key, T_STRING)) {
+    FIO_LOG_WARNING("invalid key type in header hash, ignored.");
+    return ST_CONTINUE;
+  }
+  if (RB_TYPE_P(val, T_SYMBOL))
+    val = rb_sym2str(val);
+  if (RB_TYPE_P(val, T_STRING)) {
+    FIOBJ k = fiobj_str_new(RSTRING_PTR(key), RSTRING_LEN(key));
+    fiobj_hash_set(h, k, fiobj_str_new(RSTRING_PTR(val), RSTRING_LEN(val)));
+    fiobj_free(k);
+  } else if (RB_TYPE_P(val, T_ARRAY)) {
+    FIOBJ k = fiobj_str_new(RSTRING_PTR(key), RSTRING_LEN(key));
+    size_t len = rb_array_len(val);
+    FIOBJ v = fiobj_ary_new2(len);
+    fiobj_hash_set(h, k, v);
+    fiobj_free(k);
+    for (size_t i = 0; i < len; ++i) {
+      VALUE tmp = rb_ary_entry(val, i);
+      if (RB_TYPE_P(tmp, T_SYMBOL))
+        tmp = rb_sym2str(tmp);
+      if (RB_TYPE_P(tmp, T_STRING))
+        fiobj_ary_push(v, fiobj_str_new(RSTRING_PTR(tmp), RSTRING_LEN(tmp)));
+    }
+  } else {
+    FIO_LOG_WARNING("invalid header value type, ignored.");
+  }
+  return ST_CONTINUE;
+}
+
+static int for_each_cookie(VALUE key, VALUE val, VALUE h_) {
+  FIOBJ h = h_;
+  if (RB_TYPE_P(key, T_SYMBOL))
+    key = rb_sym2str(key);
+  if (!RB_TYPE_P(key, T_STRING)) {
+    FIO_LOG_WARNING("invalid key type in cookie hash, ignored.");
+    return ST_CONTINUE;
+  }
+  if (RB_TYPE_P(val, T_SYMBOL))
+    val = rb_sym2str(val);
+  if (RB_TYPE_P(val, T_STRING)) {
+    FIOBJ k = fiobj_str_new(RSTRING_PTR(key), RSTRING_LEN(key));
+    fiobj_hash_set(h, k, fiobj_str_new(RSTRING_PTR(val), RSTRING_LEN(val)));
+    fiobj_free(k);
+  } else {
+    FIO_LOG_WARNING("invalid cookie value type, ignored.");
+  }
+  return ST_CONTINUE;
+}
+
 /* cleans up any resources used by the argument list processing */
 FIO_FUNC void iodine_connect_args_cleanup(iodine_connection_args_s *s) {
   if (!s)
     return;
+  fiobj_free(s->cookies);
+  fiobj_free(s->headers);
   if (s->port.capa)
     fio_free(s->port.data);
   if (s->address.capa)
@@ -646,10 +701,12 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
     r.body = IODINE_RSTRINFO(body);
   }
   if (cookies != Qnil && RB_TYPE_P(cookies, T_HASH)) {
-    r.cookies = cookies;
+    r.cookies = fiobj_hash_new2(rb_hash_size(cookies));
+    rb_hash_foreach(cookies, for_each_cookie, r.cookies);
   }
   if (headers != Qnil && RB_TYPE_P(headers, T_HASH)) {
-    r.headers = headers;
+    r.headers = fiobj_hash_new2(rb_hash_size(headers));
+    rb_hash_foreach(headers, for_each_header_value, r.headers);
   }
   if (log != Qnil && log != Qfalse) {
     r.log = 1;
@@ -717,7 +774,8 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
   }
   /* URL parsing */
   if (r_url != Qnil && RB_TYPE_P(r_url, T_STRING)) {
-    fio_url_s u = fio_url_parse(RSTRING_PTR(r_url), RSTRING_LEN(r_url));
+    r.url = IODINE_RSTRINFO(r_url);
+    fio_url_s u = fio_url_parse(r.url.data, r.url.len);
     /* set service string */
     if (u.scheme.data) {
       service_str = u.scheme;

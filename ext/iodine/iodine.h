@@ -5,6 +5,7 @@
 
 #include "fio.h"
 #include "fio_tls.h"
+#include "fiobj.h"
 /* used for iodine_connect and iodine_listen routing */
 typedef struct {
   fio_str_info_s address;
@@ -13,11 +14,11 @@ typedef struct {
   fio_str_info_s path;
   fio_str_info_s body;
   fio_str_info_s public;
+  fio_str_info_s url;
   fio_tls_s *tls;
   VALUE handler;
-  VALUE headers;
-  VALUE cookies;
-  VALUE params;
+  FIOBJ headers;
+  FIOBJ cookies;
   size_t max_headers;
   size_t max_body;
   intptr_t max_clients;
