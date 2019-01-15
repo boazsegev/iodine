@@ -429,11 +429,15 @@ static inline VALUE copy2env(iodine_http_request_handle_s *handle) {
           }
         }
       }
+    } else if (http_settings(h)->tls) {
+      /* no forwarding information, but we do have TLS */
+      rb_hash_aset(env, R_URL_SCHEME, HTTPS_SCHEME);
     } else {
+      /* no TLS, no forwarding, assume `http`, which is the default */
     }
   }
 
-  /* add all remianing headers */
+  /* add all remaining headers */
   fiobj_each1(h->headers, 0, iodine_copy2env_task, (void *)env);
   return env;
 }
@@ -928,6 +932,13 @@ intptr_t iodine_http_listen(iodine_connection_args_s args){
 HTTP Websocket Connect
 ***************************************************************************** */
 
+typedef struct {
+  FIOBJ method;
+  FIOBJ headers;
+  FIOBJ cookies;
+  FIOBJ body;
+} request_data_s;
+
 // static void on_websocket_http_connected(http_s *h) {
 //   websocket_settings_s *s = h->udata;
 //   h->udata = http_settings(h)->udata = NULL;
@@ -971,6 +982,13 @@ Or with named arguments:
 
 */
 intptr_t iodine_ws_connect(iodine_connection_args_s args) {
+  // http_connect(url, unixaddr, struct http_settings_s)
+  if (memchr(args.address.data, '/', args.address.len)) {
+    FIO_LOG_ERROR("HTTP / WebSocket clients can't connect to a Unix socket at "
+                  "the moment.");
+    return -1;
+  }
+  // fio_str_s url = FIO_STR_INIT;
   (void)args;
   return -1;
 }

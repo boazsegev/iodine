@@ -560,13 +560,10 @@ The second, optional, argument must be a Hash (if given).
 
 The options Hash supports the following possible keys (other keys are ignored, all keys are Symbols):
 
-:match :: The channel / subject name matching type to be used. Valid value is: `:redis`. Future versions hope to support `:nats` and `:rabbit` patern matching as well.
-
-:to :: The channel / subject to subscribe to.
-
-:as :: (only for WebSocket connections) accepts the optional value `:binary`. default is `:text`. Note that binary transmissions are illegal for some connections (such as SSE) and an attempted binary subscription will fail for these connections.
-
-:handler :: Any object that answers `.call(source, msg)` where source is the stream / channel name.
+- `:match` - The channel / subject name matching type to be used. Valid value is: `:redis`. Future versions hope to support `:nats` and `:rabbit` patern matching as well.
+- `:to` - The channel / subject to subscribe to.
+- `:as` - (only for WebSocket connections) accepts the optional value `:binary`. default is `:text`. Note that binary transmissions are illegal for some connections (such as SSE) and an attempted binary subscription will fail for these connections.
+- `:handler` - Any object that answers `.call(source, msg)` where source is the stream / channel name.
 
 Note: if an existing subscription with the same name exists, it will be replaced by this new subscription.
 
@@ -676,11 +673,9 @@ The method accepts an optional `engine` argument:
 
 Alternatively, accepts the following named arguments:
 
-:to :: The channel to publish to (required).
-
-:message :: The message to be published (required).
-
-:engine :: If provided, the engine to use for pub/sub. Otherwise the default engine is used.
+- `:to` - The channel to publish to (required).
+- `:message` - The message to be published (required).
+- `:engine` - If provided, the engine to use for pub/sub. Otherwise the default engine is used.
 
 */
 static VALUE iodine_pubsub_publish(int argc, VALUE *argv, VALUE self) {
