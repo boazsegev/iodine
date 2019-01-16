@@ -38,6 +38,13 @@ static VALUE RACK_UPGRADE_SSE;
 static VALUE RACK_UPGRADE_WEBSOCKET;
 static VALUE UPGRADE_TCP;
 
+static VALUE HTTP_ACCEPT;
+static VALUE HTTP_USER_AGENT;
+static VALUE HTTP_ACCEPT_ENCODING;
+static VALUE HTTP_ACCEPT_LANGUAGE;
+static VALUE HTTP_CONNECTION;
+static VALUE HTTP_HOST;
+
 static VALUE hijack_func_sym;
 static ID close_method_id;
 static ID each_method_id;
@@ -248,7 +255,20 @@ static int iodine_copy2env_task(FIOBJ o, void *env_) {
   FIOBJ name = fiobj_hash_key_in_loop();
   fio_str_info_s tmp = fiobj_obj2cstr(name);
   VALUE hname = (VALUE)0;
-  if (tmp.len > 59) {
+  /* test for common header names, using pre-allocated memory */
+  if (tmp.len == 6 && !memcmp("accept", tmp.data, 6)) {
+    hname = HTTP_ACCEPT;
+  } else if (tmp.len == 10 && !memcmp("user-agent", tmp.data, 10)) {
+    hname = HTTP_USER_AGENT;
+  } else if (tmp.len == 15 && !memcmp("accept-encoding", tmp.data, 15)) {
+    hname = HTTP_ACCEPT_ENCODING;
+  } else if (tmp.len == 15 && !memcmp("accept-language", tmp.data, 15)) {
+    hname = HTTP_ACCEPT_LANGUAGE;
+  } else if (tmp.len == 10 && !memcmp("connection", tmp.data, 10)) {
+    hname = HTTP_CONNECTION;
+  } else if (tmp.len == 4 && !memcmp("host", tmp.data, 4)) {
+    hname = HTTP_HOST;
+  } else if (tmp.len > 59) {
     char *buf = fio_malloc(tmp.len + 5);
     memcpy(buf, "HTTP_", 5);
     for (size_t i = 0; i < tmp.len; ++i) {
@@ -1041,6 +1061,14 @@ void iodine_init_http(void) {
   rack_autoset(SERVER_PROTOCOL);
   rack_autoset(HTTP_VERSION);
   rack_autoset(REMOTE_ADDR);
+
+  rack_autoset(HTTP_ACCEPT);
+  rack_autoset(HTTP_USER_AGENT);
+  rack_autoset(HTTP_ACCEPT_ENCODING);
+  rack_autoset(HTTP_ACCEPT_LANGUAGE);
+  rack_autoset(HTTP_CONNECTION);
+  rack_autoset(HTTP_HOST);
+
   rack_set(HTTP_SCHEME, "http");
   rack_set(HTTPS_SCHEME, "https");
   rack_set(QUERY_ESTRING, "");
