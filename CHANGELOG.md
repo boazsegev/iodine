@@ -12,7 +12,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Update**: (`iodine`) SSL/TLS support!
 
-**Update**: (`iodine`) WebSocket client support (both `ws://` and `wss://`)!
+**Update**: (`iodine`) WebSocket client connections are now supported using `Iodine.connect` (both `ws://` and `wss://`)!
 
 **Deprecation**: (`iodine`) deprecated `DEFAULT_HTTP_ARGS` in favor of `DEFAULT_SETTEINGS`.
 
