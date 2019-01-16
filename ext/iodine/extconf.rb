@@ -47,6 +47,7 @@ unless ENV['NO_SSL']
     end
   end
 end
+# $defs << "-DFIO_USE_RISKY_HASH"
 
 RbConfig::MAKEFILE_CONFIG['CFLAGS'] = $CFLAGS = "-std=c11 -DFIO_PRINT_STATE=0 #{$CFLAGS} #{$CFLAGS == ENV['CFLAGS'] ? "" : ENV['CFLAGS']}"
 RbConfig::MAKEFILE_CONFIG['CC'] = $CC = ENV['CC'] if ENV['CC']
