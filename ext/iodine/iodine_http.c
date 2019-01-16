@@ -985,13 +985,33 @@ static void request_data_destroy(request_data_s *r) {
   fio_free(r);
 }
 
+static int each_header_ws_client_task(FIOBJ val, void *h_) {
+  http_s *h = h_;
+  FIOBJ key = fiobj_hash_key_in_loop();
+  http_set_header(h, key, fiobj_dup(val));
+  return 0;
+}
+static int each_cookie_ws_client_task(FIOBJ val, void *h_) {
+  http_s *h = h_;
+  FIOBJ key = fiobj_hash_key_in_loop();
+  fio_str_info_s n = fiobj_obj2cstr(key);
+  fio_str_info_s v = fiobj_obj2cstr(val);
+  http_set_cookie(h, .name = n.data, .name_len = n.len, .value = v.data,
+                  .value_len = v.len);
+  return 0;
+}
+
 static void ws_client_http_connected(http_s *h) {
   request_data_s *s = h->udata;
+  if (!s)
+    return;
   h->udata = http_settings(h)->udata = NULL;
   if (!h->path) {
     h->path = fiobj_str_new("/", 1);
   }
   /* TODO: add headers and cookies */
+  fiobj_each1(s->headers, 0, each_header_ws_client_task, h);
+  fiobj_each1(s->headers, 0, each_cookie_ws_client_task, h);
   if (s->io && s->io != Qnil)
     http_upgrade2ws(
         h, .on_message = iodine_ws_on_message, .on_open = iodine_ws_on_open,
@@ -1001,9 +1021,12 @@ static void ws_client_http_connected(http_s *h) {
 }
 
 static void ws_client_http_connection_finished(http_settings_s *settings) {
+  if (!settings)
+    return;
   request_data_s *s = settings->udata;
   if (s) {
-    iodine_connection_fire_event(s->io, IODINE_CONNECTION_ON_CLOSE, Qnil);
+    if (s->io && s->io != Qnil)
+      iodine_connection_fire_event(s->io, IODINE_CONNECTION_ON_CLOSE, Qnil);
     request_data_destroy(s);
   }
 }
