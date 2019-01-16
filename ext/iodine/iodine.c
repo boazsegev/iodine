@@ -1130,10 +1130,7 @@ static VALUE iodine_connect(VALUE self, VALUE args) {
     return Qnil;
     break;
   case IODINE_SERVICE_WS:
-    iodine_connect_args_cleanup(&s);
-    rb_raise(rb_eRuntimeError,
-             "WebSocket client connections aren't supported yet.");
-    return Qnil;
+    uuid = iodine_ws_connect(s);
     break;
   }
   iodine_connect_args_cleanup(&s);

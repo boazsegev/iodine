@@ -937,17 +937,22 @@ typedef struct {
   FIOBJ headers;
   FIOBJ cookies;
   FIOBJ body;
-  VALUE handler;
+  VALUE io;
 } request_data_s;
 
 static request_data_s *request_data_create(iodine_connection_args_s *args) {
   request_data_s *r = fio_malloc(sizeof(*r));
+  FIO_ASSERT_ALLOC(r);
+  VALUE io =
+      iodine_connection_new(.type = IODINE_CONNECTION_WEBSOCKET, .arg = NULL,
+                            .handler = args->handler, .env = Qnil, .uuid = 0);
+
   *r = (request_data_s){
       .method = fiobj_str_new(args->method.data, args->method.len),
       .headers = fiobj_dup(args->headers),
       .cookies = fiobj_dup(args->cookies),
       .body = fiobj_str_new(args->body.data, args->body.len),
-      .handler = args->handler,
+      .io = io,
   };
   return r;
 }
@@ -957,45 +962,67 @@ static void request_data_destroy(request_data_s *r) {
   fiobj_free(r->body);
   fiobj_free(r->headers);
   fiobj_free(r->cookies);
-  IodineStore.remove(r->handler);
   fio_free(r);
 }
 
-// static void on_websocket_http_connected(http_s *h) {
-//   websocket_settings_s *s = h->udata;
-//   h->udata = http_settings(h)->udata = NULL;
-//   if (!h->path) {
-//     FIO_LOG_WARNING("(websocket client) path not specified in "
-//                     "address, assuming root!");
-//     h->path = fiobj_str_new("/", 1);
-//   }
-//   http_upgrade2ws(h, *s);
-//   fio_free(s);
-// }
+static void ws_client_http_connected(http_s *h) {
+  request_data_s *s = h->udata;
+  h->udata = http_settings(h)->udata = NULL;
+  if (!h->path) {
+    h->path = fiobj_str_new("/", 1);
+  }
+  /* TODO: add headers and cookies */
+  if (s->io && s->io != Qnil)
+    http_upgrade2ws(
+        h, .on_message = iodine_ws_on_message, .on_open = iodine_ws_on_open,
+        .on_ready = iodine_ws_on_ready, .on_shutdown = iodine_ws_on_shutdown,
+        .on_close = iodine_ws_on_close, .udata = (void *)s->io);
+  request_data_destroy(s);
+}
 
-// static void on_websocket_http_connection_finished(http_settings_s *settings)
-// {
-//   websocket_settings_s *s = settings->udata;
-//   if (s) {
-//     if (s->on_close)
-//       s->on_close(0, s->udata);
-//     fio_free(s);
-//   }
-// }
+static void ws_client_http_connection_finished(http_settings_s *settings) {
+  request_data_s *s = settings->udata;
+  if (s) {
+    iodine_connection_fire_event(s->io, IODINE_CONNECTION_ON_CLOSE, Qnil);
+    request_data_destroy(s);
+  }
+}
 
 /** Connects to a (remote) WebSocket service. */
 intptr_t iodine_ws_connect(iodine_connection_args_s args) {
   // http_connect(url, unixaddr, struct http_settings_s)
+  uint8_t is_unix_socket = 0;
   if (memchr(args.address.data, '/', args.address.len)) {
-    FIO_LOG_ERROR("HTTP / WebSocket clients can't connect to a Unix socket at "
-                  "the moment.");
-    return -1;
+    is_unix_socket = 1;
   }
   FIOBJ url_tmp = FIOBJ_INVALID;
   if (!args.url.data) {
+    url_tmp = fiobj_str_buf(64);
+    if (args.tls)
+      fiobj_str_write(url_tmp, "wss://", 6);
+    else
+      fiobj_str_write(url_tmp, "ws://", 5);
+    if (!is_unix_socket) {
+      fiobj_str_write(url_tmp, args.address.data, args.address.len);
+      if (args.port.data) {
+        fiobj_str_write(url_tmp, ":", 1);
+        fiobj_str_write(url_tmp, args.port.data, args.port.len);
+      }
+    }
+    if (args.path.data)
+      fiobj_str_write(url_tmp, args.path.data, args.path.len);
+    else
+      fiobj_str_write(url_tmp, "/", 1);
+    args.url = fiobj_obj2cstr(url_tmp);
   }
-  (void)args;
-  return -1;
+
+  intptr_t uuid = http_connect(
+      args.url.data, (is_unix_socket ? args.address.data : NULL),
+      .udata = request_data_create(&args),
+      .on_response = ws_client_http_connected,
+      .on_finish = ws_client_http_connection_finished, .tls = args.tls);
+  fiobj_free(url_tmp);
+  return uuid;
 }
 
 /* *****************************************************************************
