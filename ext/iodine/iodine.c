@@ -1040,7 +1040,7 @@ Supported Settigs:
 | `:ping` | ping interval (in seconds). Up to 255 seconds. |
 | `:port` | port number to listen to either a String or Number) |
 | `:public` | (public folder, HTTP server only) |
-| `:service` | (raw / ws / wss / http / https ) |
+| `:service` | (raw / ws / wss ) |
 | `:timeout` | (HTTP only) keep-alive timeout in seconds. Up to 255 seconds. |
 | `:tls` | an {Iodine::TLS} context object for encrypted connections. |
 

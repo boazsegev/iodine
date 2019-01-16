@@ -766,7 +766,7 @@ VALUE iodine_connection_new(iodine_connection_s args) {
 void iodine_connection_fire_event(VALUE connection,
                                   iodine_connection_event_type_e ev,
                                   VALUE msg) {
-  if (connection == Qnil) {
+  if (!connection || connection == Qnil) {
     FIO_LOG_ERROR(
         "(iodine) nil connection handle used by an internal API call");
     return;
@@ -776,6 +776,11 @@ void iodine_connection_fire_event(VALUE connection,
     FIO_LOG_ERROR("(iodine) invalid connection handle used by an "
                   "internal API call: %p",
                   (void *)connection);
+    return;
+  }
+  if (!data->info.handler || data->info.handler == Qnil) {
+    FIO_LOG_DEBUG("(iodine) invalid connection handler, can't fire event %d",
+                  (int)ev);
     return;
   }
   VALUE args[2] = {connection, msg};

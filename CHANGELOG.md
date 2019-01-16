@@ -10,6 +10,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Security**: (`fio`) improved security against hash flooding attacks.
 
+**Update**: (`iodine`) SSL/TLS support!
+
+**Update**: (`iodine`) WebSocket client support (both `ws://` and `wss://`)!
+
 **Deprecation**: (`iodine`) deprecated `DEFAULT_HTTP_ARGS` in favor of `DEFAULT_SETTEINGS`.
 
 **Deprecation**: (`iodine`) deprecated `Iodine.listen2http` in favor of `Iodine.listen service: :http`.
@@ -22,9 +26,9 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: (`iodine`) fixed CLI argument recognition for WebSocket message limits and HTTP header limits. Typos in the CLI argument names prevented the CLI from effecting the default values.
 
-**Update**: (`iodine`) SSL/TLS support!
-
 **Fix**: (`fio`) fixed unaligned memory access in SipHash implementation and added secret randomization for each application restart.
+
+**Optimization**: (`iodine`) caching common header names to decrease Ruby memory allocations per request.
 
 #### Change log v.0.7.16
 
