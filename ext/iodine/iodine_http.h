@@ -15,7 +15,7 @@ extern VALUE IODINE_R_HIJACK_CB;
 void iodine_init_http(void);
 
 intptr_t iodine_http_listen(iodine_connection_args_s args);
-intptr_t iodine_http_connect(iodine_connection_args_s args);
+// intptr_t iodine_http_connect(iodine_connection_args_s args); // not yet...
 intptr_t iodine_ws_connect(iodine_connection_args_s args);
 
 #endif
