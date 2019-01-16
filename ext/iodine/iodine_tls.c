@@ -255,5 +255,13 @@ void iodine_init_tls(void) {
                    iodine_tls_use_certificate, -1);
   rb_define_method(IodineTLSClass, "trust", iodine_tls_trust, 1);
   rb_define_method(IodineTLSClass, "on_protocol", iodine_tls_alpn, 1);
+
+#if HAVE_OPENSSL
+  rb_const_set(IodineTLSClass, rb_intern("SUPPORTED"), Qtrue);
+#elif HAVE_BEARSSL
+  rb_const_set(IodineTLSClass, rb_intern("SUPPORTED"), Qfalse);
+#else
+  rb_const_set(IodineTLSClass, rb_intern("SUPPORTED"), Qfalse);
+#endif
 }
 #undef IODINE_MAKE_SYM
