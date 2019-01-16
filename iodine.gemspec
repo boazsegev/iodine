@@ -35,6 +35,7 @@ Gem::Specification.new do |spec|
   spec.requirements << 'An updated C compiler.'
   spec.requirements << 'Ruby >= 2.2.2 required for Rack 2.'
   spec.requirements << 'Ruby >= 2.5.0 recommended.'
+  spec.requirements << 'TLS requires OpenSSL >= 1.1.0'
 
   spec.add_development_dependency 'bundler', '>= 1.10', '< 2.0'
   spec.add_development_dependency 'rake', '~> 12.0', '< 13.0'
