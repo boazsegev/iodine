@@ -1114,6 +1114,56 @@ Here's an example TCP/IP client that sends a simple HTTP GET request:
       # start the iodine reactor
       Iodine.start
 
+Iodine also supports WebSocket client connections, using either the `url` property or the `ws` and `wss` service names.
+
+The following example establishes a secure (TLS) connects to the WebSocket echo testing server at `wss://echo.websocket.org`:
+
+      # require iodine
+      require 'iodine'
+
+      # The client class
+      class EchoClient
+
+        def on_open(connection)
+          @messages = [ "Hello World!",
+            "I'm alive and sending messages",
+            "I also receive messages",
+            "now that we all know this...",
+            "I can stop.",
+            "Goodbye." ]
+          send_one_message(connection)
+        end
+
+        def on_message(connection, message)
+          puts "Received: #{message}"
+          send_one_message(connection)
+        end
+
+        def on_close(connection)
+          # in this example, we stop iodine once the client is closed
+          puts "* Client closed."
+          Iodine.stop
+        end
+
+        # We use this method to pop messages from the queue and send them
+        #
+        # When the queue is empty, we disconnect the client.
+        def send_one_message(connection)
+          msg = @messages.shift
+          if(msg)
+            connection.write msg
+          else
+            connection.close
+          end
+        end
+      end
+
+      Iodine.threads = 1
+      Iodine.connect url: "wss://echo.websocket.org", handler: EchoClient.new, ping: 40
+      Iodine.start
+
+**Note**: the `on_close` callback is always called, even if a connection couldn't be established.
+
 Returns the handler object used.
 */
 static VALUE iodine_connect(VALUE self, VALUE args) {
