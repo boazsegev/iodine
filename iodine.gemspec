@@ -34,7 +34,7 @@ Gem::Specification.new do |spec|
   spec.requirements << 'A Unix based system: Linux / macOS / BSD.'
   spec.requirements << 'An updated C compiler.'
   spec.requirements << 'Ruby >= 2.2.2 required for Rack 2.'
-  spec.requirements << 'Ruby >= 2.4.0 recommended.'
+  spec.requirements << 'Ruby >= 2.5.0 recommended.'
 
   spec.add_development_dependency 'bundler', '>= 1.10', '< 2.0'
   spec.add_development_dependency 'rake', '~> 12.0', '< 13.0'
