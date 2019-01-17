@@ -38,8 +38,8 @@ unless ENV['NO_SSL']
   else
     if have_library('crypto') && have_library('ssl')
       puts "Detected OpenSSL library, testing for version."
-      # if try_compile("\#include <openssl/ssl.h>\r\#if OPENSSL_MAKE_VERSION(1, 1, 0, 0) > OPENSSL_VERSION_NUMBER\r\#error \"OpenSSL version too small\"\r\#endif\rint main(void) { SSL_library_init(); }")
-      if ((OpenSSL::OPENSSL_VERSION_NUMBER >> 24) > 16) || (((OpenSSL::OPENSSL_VERSION_NUMBER >> 24) == 16) && (((OpenSSL::OPENSSL_VERSION_NUMBER >> 16) & 255) >= 16))
+      if try_compile("\#include <openssl/ssl.h>\r\#if OPENSSL_VERSION_NUMBER < 0x10100000L\r\#error \"OpenSSL version too small\"\r\#endif\rint main(void) { SSL_library_init(); }")
+      # if ((OpenSSL::OPENSSL_VERSION_NUMBER >> 24) > 16) || (((OpenSSL::OPENSSL_VERSION_NUMBER >> 24) == 16) && (((OpenSSL::OPENSSL_VERSION_NUMBER >> 16) & 255) >= 16))
         $defs << "-DHAVE_OPENSSL"
         puts "Confirmed OpenSSL to be version 1.1.0 or above (#{OpenSSL::OPENSSL_LIBRARY_VERSION})...\n* Compiling with HAVE_OPENSSL."
       else
