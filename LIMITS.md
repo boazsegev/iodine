@@ -2,6 +2,12 @@
 
 I will, at some point, document these... here's the key points:
 
+## SSL/TLS
+
+* TLS support requires OpenSSL 1.1.0 and above. On Heroku, this requires `heroku-18`.
+
+* Iodine supports TLS 1.2 and above (depending on the OpenSSL version used).
+
 ## HTTP limits
 
 * Uploads are adjustable and limited to ~50Mib by default.
