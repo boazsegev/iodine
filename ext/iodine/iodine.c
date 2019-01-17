@@ -832,10 +832,22 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
   r.service = IODINE_SERVICE_RAW;
   if (service_str.data) {
     switch (service_str.data[0]) {
+    case 't': /* overflow */
+              /* tcp or tls */
+      if (service_str.data[1] == 'l') {
+        char *local = NULL;
+        char buf[1024];
+        buf[1023] = 0;
+        if (is_srv) {
+          local = buf;
+          if (fio_local_addr(buf, 1023) >= 1022)
+            local = NULL;
+        }
+        r.tls = fio_tls_new(local, NULL, NULL, NULL);
+      }
+      /* overflow */
     case 'u': /* overflow */
     /* unix */
-    case 't': /* overflow */
-    /* tcp */
     case 'r':
       /* raw */
       r.service = IODINE_SERVICE_RAW;
@@ -898,7 +910,7 @@ Supported Settigs:
 | `:ping` |  (`:raw` clients and WebSockets only) ping interval (in seconds). Up to 255 seconds. |
 | `:port` | port number to listen to either a String or Number) |
 | `:public` | (HTTP server only) public folder for static file service. |
-| `:service` | (`:raw` / `:ws` / `:wss` / `:http` / `:https` ) a supported service this socket will listen to. |
+| `:service` | (`:raw` / `:tls` / `:ws` / `:wss` / `:http` / `:https` ) a supported service this socket will listen to. |
 | `:timeout` |  (HTTP only) keep-alive timeout in seconds. Up to 255 seconds. |
 | `:tls` | an {Iodine::TLS} context object for encrypted connections. |
 
@@ -1040,7 +1052,7 @@ Supported Settigs:
 | `:ping` | ping interval (in seconds). Up to 255 seconds. |
 | `:port` | port number to listen to either a String or Number) |
 | `:public` | (public folder, HTTP server only) |
-| `:service` | (raw / ws / wss ) |
+| `:service` | (`:raw` / `:tls` / `:ws` / `:wss` ) |
 | `:timeout` | (HTTP only) keep-alive timeout in seconds. Up to 255 seconds. |
 | `:tls` | an {Iodine::TLS} context object for encrypted connections. |
 
