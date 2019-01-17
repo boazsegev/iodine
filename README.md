@@ -9,17 +9,20 @@
 
 I believe that network concerns should be separated from application concerns - application developers really shouldn't need to worry about the transport layer.
 
-And I know that these network concerns are more than just about the web server. Which is why iodine is more than just an HTTP server.
+And I know that these network concerns are more than just about the web server, which is why iodine is more than just an HTTP server.
 
 Iodine is a fast concurrent web server for real-time Ruby applications, but it's also so much more. Iodine includes native support for:
 
-* WebSockets and EventSource (SSE);
+* HTTP, WebSockets and EventSource (SSE) Services (server);
+* WebSocket connections (server / client);
 * Pub/Sub (with optional Redis Pub/Sub scaling);
 * Static file service (with automatic `gzip` support for pre-compressed versions);
 * HTTP/1.1 keep-alive and pipelining;
 * Asynchronous event scheduling and timers;
 * Hot Restart (using the USR1 signal);
-* Client connectivity (attach client sockets to make them evented);
+* TLS 1.2 and above (Requires OpenSSL >= 1.1.0);
+* TCP/IP server and client connectivity;
+* Unix Socket server and client connectivity;
 * Custom protocol authoring;
 * Optimized Logging to `stderr`.
 * [Sequel](https://github.com/jeremyevans/sequel) and ActiveRecord forking protection.
@@ -210,7 +213,7 @@ Iodine.subscribe(:chat) {|ch, msg| puts msg if Iodine.master? }
 # By default, Pub/Sub performs in process cluster mode.
 Iodine.workers = 4
 # # in irb:
-Iodine.listen2http public: "www/public", app: APP
+Iodine.listen service: :http, public: "www/public", handler: APP
 Iodine.start
 # # or in config.ru
 run APP
@@ -311,6 +314,73 @@ With iodine, there's no need to worry.
 
 Iodine provides built-in `fork` handling for both ActiveRecord and [Sequel](https://github.com/jeremyevans/sequel), in order to protect against these possible errors.
 
+### Client Support
+
+Iodine supports raw (TCP/IP and Unix Sockets) client connections as well as WebSocket connections.
+
+This can be utilized for communicating across micro services or taking advantage of persistent connection APIs such as ActionCable APIs, socket.io APIs etc'.
+
+Here is an example WebSocket client that will connect to the [WebSocket.org echo test service](https://www.websocket.org/echo.html) and send a number of pre-programmed messages.
+
+```ruby
+require 'iodine'
+
+# The client class
+class EchoClient
+
+  def on_open(connection)
+    @messages = [ "Hello World!",
+      "I'm alive and sending messages",
+      "I also receive messages",
+      "now that we all know this...",
+      "I can stop.",
+      "Goodbye." ]
+    send_one_message(connection)
+  end
+
+  def on_message(connection, message)
+    puts "Received: #{message}"
+    send_one_message(connection)
+  end
+
+  def on_close(connection)
+    # in this example, we stop iodine once the client is closed
+    puts "* Client closed."
+    Iodine.stop
+  end
+
+  # We use this method to pop messages from the queue and send them
+  #
+  # When the queue is empty, we disconnect the client.
+  def send_one_message(connection)
+    msg = @messages.shift
+    if(msg)
+      connection.write msg
+    else
+      connection.close
+    end
+  end
+end
+
+Iodine.threads = 1
+Iodine.connect url: "wss://echo.websocket.org", handler: EchoClient.new, ping: 40
+Iodine.start
+```
+
+### TLS 1.2 support
+
+>  Requires OpenSSL >= `1.1.0`. On Heroku, requires `heroku-18`.
+
+Iodine supports secure connections fore TLS version 1.2 and up (depending on the OpenSSL version).
+
+A self signed certificate is available using the `-tls` flag from the command-line.
+
+PEM encoded certificates (which is probably the most common format) can be loaded from the command-line (`-tls-cert` and `-tls-key`) or dynamically (using `Iodine::TLS`).
+
+The TLS API is simplified but powerful, supporting the ALPN extension and peer verification (which client connections really should leverage).
+
+When enabling peer verification for server connections (using `Iodine::TLS#trust`), clients will be required to submit a trusted certificate in order to connect to the server.
+
 ### TCP/IP (raw) sockets
 
 Upgrading to a custom protocol (i.e., in order to implement your own WebSocket protocol with special extensions) is available when neither WebSockets nor SSE connection upgrades were requested. In the following (terminal) example, we'll use an echo server without direct socket echo:
@@ -333,7 +403,7 @@ APP = Proc.new do |env|
   end
 end
 # # in irb:
-Iodine.listen2http public: "www/public", app: APP
+Iodine.listen service: :http, public: "www/public", handler: APP
 Iodine.threads = 1
 Iodine.start
 # # or in config.ru
@@ -421,6 +491,12 @@ Iodine is written in C and allows some compile-time customizations, such as:
 
 * `FIO_MAX_SOCK_CAPACITY` - limits iodine's maximum client capacity. Defaults to 131,072 clients.
 
+* `FIO_USE_RISKY_HASH` - replaces SipHash with RiskyHash for iodine's internal hash maps.
+ 
+    Since iodine hash maps have internal protection against collisions and hash flooding attacks, it's possible for iodine to leverage RiskyHash, which is faster than SipHash.
+
+    By default, SipHash will be used. This is a community related choice, since the community seems to believe a hash function should protect the hash map rather than it being enough for a hash map implementation to be attack resistance.
+
 * `HTTP_MAX_HEADER_COUNT` - limits the number of headers the HTTP server will accept before disconnecting a client (security). Defaults to 128 headers (permissive).
 
 * `HTTP_MAX_HEADER_LENGTH` - limits the number of bytes allowed for a single header (pre-allocated memory per connection + security). Defaults to 8Kb per header line (normal).
@@ -430,6 +506,8 @@ Iodine is written in C and allows some compile-time customizations, such as:
 * `FIO_ENGINE_POLL` - prefer the `poll` system call over `epoll` or `kqueue` (not recommended).
 
 * `FIO_LOG_LENGTH_LIMIT` - sets the limit on iodine's logging messages (uses stack memory, so limits must be reasonable. Defaults to 2048.
+
+* `FIO_TLS_PRINT_SECRET` - if true, the OpenSSL master key will be printed as debug message level log. Use only for testing (with WireShark etc'), never in production! Default: false.
 
 These options can be used, for example, like so:
 
@@ -467,14 +545,14 @@ def run_server
 end
 ```
 
-In pure Ruby (without using C extensions or Java), it's possible to do the same by using `select`... and although `select` has some issues, it works well for lighter loads.
+In pure Ruby (without using C extensions or Java), it's possible to do the same by using `select`... and although `select` has some issues, it could work well for lighter loads.
 
 The server events are fairly fast and fragmented (longer code is fragmented across multiple events), so one thread is enough to run the server including it's static file service and everything... 
 
 ...but single threaded mode should probably be avoided.
 
 
-It's very common that the application's code will run slower and require external resources (i.e., databases, a custom pub/sub service, etc'). This slow code could "starve" the server, which is patiently waiting to run it's tasks on the same thread.
+It's very common that the application's code will run slower and require external resources (i.e., databases, a custom pub/sub service, etc'). This slow code could "starve" the server, which is patiently waiting to run it's short tasks on the same thread.
 
 The thread pool is there to help slow user code.
 
@@ -505,6 +583,8 @@ Iodine allows custom TCP/IP server authoring, for those cases where we need raw 
 Here's a short and sweet echo server - No HTTP, just use `telnet`:
 
 ```ruby
+USE_TLS = false
+
 require 'iodine'
 
 # an echo protocol with asynchronous notifications.
@@ -526,8 +606,10 @@ class EchoProtocol
   end
 end
 
+tls = USE_TLS ? Iodine::TLS.new("localhost") : nil
+
 # listen on port 3000 for the echo protocol.
-Iodine.listen(port: "3000") { EchoProtocol.new }
+Iodine.listen(port: "3000", tls: tls) { EchoProtocol.new }
 Iodine.threads = 1
 Iodine.workers = 1
 Iodine.start
@@ -603,13 +685,11 @@ Iodine.start
 
 ### Why not EventMachine?
 
+EventMachine attempts to give the developer access to the network layer while Iodine attempts to abstract the network layer away and offer the developer a distraction free platform.
+
 You can go ahead and use EventMachine if you like. They're doing amazing work on that one and it's been used a lot in Ruby-land... really, tons of good developers and people on that project.
 
-EventMachine also offers some really great optimization features and it was vastly improved upon in the last few years (When I started Iodine, it was far more annoying to work with).
-
-But there's a distinct approach difference for me. EventMachine attempts to give the developer access to the network layer while Iodine attempts to abstract the network layer away.
-
-Besides, you're here - why not take iodine out for a spin and see for yourself?
+But why not take iodine out for a spin and see for yourself?
 
 ## Can I contribute?
 
