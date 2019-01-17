@@ -395,8 +395,13 @@ static void iodine_on_pubsub(fio_msg_s *msg) {
   iodine_connection_data_s *data = msg->udata1;
   VALUE block = (VALUE)msg->udata2;
   switch (block) {
+  case 0:       /* fallthrough */
   case Qnil:    /* fallthrough */
   case Qtrue: { /* Qtrue == binary WebSocket */
+    if (!data) {
+      FIO_LOG_ERROR("Pub/Sub direct called with no connection data!");
+      return;
+    }
     if (data->info.handler == Qnil || data->info.uuid == -1 ||
         fio_is_closed(data->info.uuid))
       return;
@@ -423,7 +428,7 @@ static void iodine_on_pubsub(fio_msg_s *msg) {
     }
   }
   default:
-    if (data->info.uuid != -1) {
+    if (data && data->info.uuid != -1) {
       fio_protocol_s *pr =
           fio_protocol_try_lock(data->info.uuid, FIO_PR_LOCK_TASK);
       if (!pr) {

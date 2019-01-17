@@ -18,6 +18,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Deprecation**: (`iodine`) deprecated `Iodine.listen2http` in favor of `Iodine.listen service: :http`.
 
+**Fix**: (`iodine` / `pubsub`) fixed possible issue with global subscriptions (non-connection bound subscriptions).
+
 **Fix**: (`Iodine::Mustache`) fixed support for named argument, documentation and loading template from memory (rather than file) when creating a new `Iodine::Mustache` object.
 
 **Fix**: (`redis`) fixed an issue where destroying the Redis engine and exiting pre-maturely, could cause a segmentation fault during cleanup.
