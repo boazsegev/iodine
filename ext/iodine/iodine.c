@@ -834,7 +834,7 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
     switch (service_str.data[0]) {
     case 't': /* overflow */
               /* tcp or tls */
-      if (service_str.data[1] == 'l') {
+      if (service_str.data[1] == 'l' && !r.tls) {
         char *local = NULL;
         char buf[1024];
         buf[1023] = 0;
