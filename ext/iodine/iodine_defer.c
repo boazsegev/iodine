@@ -240,17 +240,19 @@ static VALUE iodine_defer_run_after(VALUE self, VALUE milliseconds) {
   }
   return block;
 }
+
+// clang-format off
 /**
 Runs the required block after the specified number of milliseconds have passed.
 Time is counted only once Iodine started running (using {Iodine.start}).
 
 Accepts:
 
-milliseconds:: the number of milliseconds between event repetitions.
-
-repetitions:: the number of event repetitions. Defaults to 0 (never ending).
-
-block:: (required) a block is required, as otherwise there is nothing to
+|   |   |
+|---|---|
+| `:milliseconds` | the number of milliseconds between event repetitions.|
+| `:repetitions` | the number of event repetitions. Defaults to 0 (never ending).|
+| `:block` | (required) a block is required, as otherwise there is nothing to|
 perform.
 
 The event will repeat itself until the number of repetitions had been delpeted.
@@ -258,6 +260,7 @@ The event will repeat itself until the number of repetitions had been delpeted.
 Always returns a copy of the block object.
 */
 static VALUE iodine_defer_run_every(int argc, VALUE *argv, VALUE self) {
+  // clang-format on
   (void)(self);
   VALUE milliseconds, repetitions, block;
 
