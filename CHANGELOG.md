@@ -8,7 +8,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.18
 
-**Fix** (`pubsub`) fixed pub/sub for longer WebSocket messages. Issue where network byte ordering wasn't always respected.
+**Fix** (`pubsub`) fixed pub/sub for longer WebSocket messages. Issue where network byte ordering wasn't always respected and integer bit size was wrong for larger payloads. Credit to Marouane Elmidaoui (@moxgeek) for exposing the issue.
 
 #### Change log v.0.7.17
 
