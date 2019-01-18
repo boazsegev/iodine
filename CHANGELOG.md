@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.18
+
+**Fix** (`pubsub`) fixed pub/sub for longer WebSocket messages. Issue where network byte ordering wasn't always respected.
+
 #### Change log v.0.7.17
 
 **Security**: (`fio`) improved security against hash flooding attacks.
