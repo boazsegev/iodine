@@ -47,13 +47,13 @@ module Iodine
         return app, opt
       end
 
-      def self.perform_warmup
+      def self.perform_warmup(app)
         # load anything marked with `autoload`, since autoload isn't thread safe nor fork friendly.
-        Iodine.run do
+        Iodine.on_state(:on_start) do
           Module.constants.each do |n|
             begin
               Object.const_get(n)
-            rescue Exception => _e
+            rescue StandardError => _e
             end
           end
           ::Rack::Builder.new(app) do |r|
@@ -67,7 +67,7 @@ module Iodine
 
       def self.call
         app, opt = get_app_opts
-        perform_warmup if Iodine::DEFAULT_SETTINGS[:warmup_]
+        perform_warmup(app) if Iodine::DEFAULT_SETTINGS[:warmup_]
         Iodine::Rack.run(app, opt)
       end
     end

@@ -233,9 +233,11 @@ static void iodine_print_startup_message(iodine_start_params_s params) {
                " * Iodine %s\n * Ruby %s\n"
                " * facil.io " FIO_VERSION_STRING " (%s)\n"
                " * %d Workers X %d Threads per worker.\n"
+               " * Maximum %zu open files / sockets per worker.\n"
                " * Master (root) process: %d.\n",
                StringValueCStr(iodine_version), StringValueCStr(ruby_version),
-               fio_engine(), params.workers, params.threads, fio_parent_pid());
+               fio_engine(), params.workers, params.threads, fio_capa(),
+               fio_parent_pid());
   (void)params;
 }
 
@@ -391,8 +393,10 @@ static VALUE iodine_cli_parse(VALUE self) {
       FIO_CLI_STRING(
           "-tls-cert -cert the SSL/TLS public certificate file name."),
       FIO_CLI_STRING("-tls-key -key the SSL/TLS private key file name."),
-      FIO_CLI_STRING("-tls-password the password (if any) protecting the "
-                     "private key file."),
+      FIO_CLI_STRING(
+          "-tls-pass -tls-password the password (if any) protecting the "
+          "private key file."),
+      FIO_CLI_PRINT("\t\t-tls-password is deprecated, use -tls-pass"),
       FIO_CLI_PRINT_HEADER("Connecting Iodine to Redis:"),
       FIO_CLI_STRING(
           "-redis -r an optional Redis URL server address. Default: none."),
@@ -484,7 +488,7 @@ static VALUE iodine_cli_parse(VALUE self) {
     }
     if (fio_cli_get("-tls-key") && fio_cli_get("-tls-cert")) {
       fio_tls_cert_add(tls, NULL, fio_cli_get("-tls-cert"),
-                       fio_cli_get("-tls-key"), fio_cli_get("-tls-password"));
+                       fio_cli_get("-tls-key"), fio_cli_get("-tls-pass"));
     } else {
       if (!fio_cli_get_bool("-tls"))
         FIO_LOG_ERROR("TLS support requires both key and certificate."
