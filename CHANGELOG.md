@@ -6,6 +6,14 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.19
+
+**Deprecation**: (`iodine`) deprecated the CLI option `-tls-password`, use `-tls-pass` instead.
+
+**Fix**: (`iodine`) log open file / socket limit per worker on startup.
+
+**Fix**: (`iodine`) application warm-up error was fixed. Deprecation warnings will still print for deprecated symbols loaded due to the warm-up sequence.
+
 #### Change log v.0.7.18
 
 **Fix** (`pubsub`) fixed pub/sub for longer WebSocket messages. Issue where network byte ordering wasn't always respected and integer bit size was wrong for larger payloads. Credit to Marouane Elmidaoui (@moxgeek) for exposing the issue.
