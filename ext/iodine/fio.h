@@ -110,7 +110,7 @@ Version and helper macros
 #define FIO_VERSION_MAJOR 0
 #define FIO_VERSION_MINOR 7
 #define FIO_VERSION_PATCH 0
-#define FIO_VERSION_BETA 7
+#define FIO_VERSION_BETA 8
 
 /* Automatically convert version data to a string constant - ignore these two */
 #define FIO_MACRO2STR_STEP2(macro) #macro
@@ -264,6 +264,8 @@ C++ extern start
 /* support C++ */
 #ifdef __cplusplus
 extern "C" {
+/* C++ keyword was deprecated */
+#define register
 #endif
 
 /* *****************************************************************************
@@ -2206,7 +2208,8 @@ FIO_FUNC inline uintptr_t fio_ct_if2(uintptr_t cond, uintptr_t a, uintptr_t b) {
    ((i) >> ((-(bits)) & ((sizeof((i)) << 3) - 1))))
 /** unknown size element - right rotation, inlined. */
 #define fio_rrot(i, bits)                                                      \
-  (((i) >> (bits)) | ((i) << ((-(bits)) & ((sizeof((i)) << 3) - 1))))
+  (((i) >> ((bits) & ((sizeof((i)) << 3) - 1))) |                              \
+   ((i) << ((-(bits)) & ((sizeof((i)) << 3) - 1))))
 
 /** Converts an unaligned network ordered byte stream to a 16 bit number. */
 #define fio_str2u16(c)                                                         \
@@ -2401,104 +2404,108 @@ uint8_t __attribute__((weak)) fio_hash_secret_marker2;
 Risky Hash (always available, even if using only the fio.h header)
 ***************************************************************************** */
 
-/**
- * Computes a facil.io Risky Hash, modeled after the amazing
- * [xxHash](https://github.com/Cyan4973/xxHash) (which has a BSD license)
- * and named "Risky Hash" because writing your own hashing function is a risky
- * business, full of pitfalls, hours of testing and security risks...
- *
- * Risky Hash isn't as battle tested as SipHash, but it did pass the
- * [SMHasher](https://github.com/rurban/smhasher) tests with wonderful results,
- * can be used for processing safe data and is easy (and short) to implement.
- */
-inline FIO_FUNC uintptr_t fio_risky_hash(const void *data_, size_t len,
-                                         uint64_t seed) {
-  /* The primes used by Risky Hash */
-  const uint64_t primes[] = {
-      0xFBBA3FA15B22113B, // 1111101110111010001111111010000101011011001000100001000100111011
-      0xAB137439982B86C9, // 1010101100010011011101000011100110011000001010111000011011001001
-  };
-  /* The consumption vectors initialized state */
-  uint64_t v[4] = {
-      seed ^ primes[1],
-      ~seed + primes[1],
-      fio_lrot64(seed, 17) ^ primes[1],
-      fio_lrot64(seed, 33) + primes[1],
-  };
+/* Risky Hash primes */
+#define RISKY_PRIME_0 0xFBBA3FA15B22113B
+#define RISKY_PRIME_1 0xAB137439982B86C9
 
-/* Risky Hash consumption round */
-#define fio_risky_consume(w, i)                                                \
-  v[i] ^= (w);                                                                 \
-  v[i] = fio_lrot64(v[i], 33) + (w);                                           \
-  v[i] *= primes[0];
+/* Risky Hash consumption round, accepts a state word s and an input word w */
+#define fio_risky_consume(v, w)                                                \
+  (v) += (w);                                                                  \
+  (v) = fio_lrot64((v), 33);                                                   \
+  (v) += (w);                                                                  \
+  (v) *= RISKY_PRIME_0;
 
-/* compilers could, hopefully, optimize this code for SIMD */
-#define fio_risky_consume256(w0, w1, w2, w3)                                   \
-  fio_risky_consume(w0, 0);                                                    \
-  fio_risky_consume(w1, 1);                                                    \
-  fio_risky_consume(w2, 2);                                                    \
-  fio_risky_consume(w3, 3);
-
+/*  Computes a facil.io Risky Hash. */
+FIO_FUNC inline uint64_t fio_risky_hash(const void *data_, size_t len,
+                                        uint64_t seed) {
   /* reading position */
   const uint8_t *data = (uint8_t *)data_;
 
-  /* consume 256bit blocks */
+  /* The consumption vectors initialized state */
+  register uint64_t v0 = seed ^ RISKY_PRIME_1;
+  register uint64_t v1 = ~seed + RISKY_PRIME_1;
+  register uint64_t v2 =
+      fio_lrot64(seed, 17) ^ ((~RISKY_PRIME_1) + RISKY_PRIME_0);
+  register uint64_t v3 = fio_lrot64(seed, 33) + (~RISKY_PRIME_1);
+
+  /* consume 256 bit blocks */
   for (size_t i = len >> 5; i; --i) {
-    fio_risky_consume256(fio_str2u64(data), fio_str2u64(data + 8),
-                         fio_str2u64(data + 16), fio_str2u64(data + 24));
+    fio_risky_consume(v0, fio_str2u64(data));
+    fio_risky_consume(v1, fio_str2u64(data + 8));
+    fio_risky_consume(v2, fio_str2u64(data + 16));
+    fio_risky_consume(v3, fio_str2u64(data + 24));
     data += 32;
   }
+
   /* Consume any remaining 64 bit words. */
   switch (len & 24) {
   case 24:
-    fio_risky_consume(fio_str2u64(data + 16), 2);
+    fio_risky_consume(v2, fio_str2u64(data + 16));
   case 16: /* overflow */
-    fio_risky_consume(fio_str2u64(data + 8), 1);
+    fio_risky_consume(v1, fio_str2u64(data + 8));
   case 8: /* overflow */
-    fio_risky_consume(fio_str2u64(data), 0);
+    fio_risky_consume(v0, fio_str2u64(data));
     data += len & 24;
   }
 
-  uintptr_t tmp = 0;
+  uint64_t tmp = 0;
   /* consume leftover bytes, if any */
   switch ((len & 7)) {
   case 7: /* overflow */
-    tmp |= ((uint64_t)data[6]) << 56;
+    tmp |= ((uint64_t)data[6]) << 8;
   case 6: /* overflow */
-    tmp |= ((uint64_t)data[5]) << 48;
+    tmp |= ((uint64_t)data[5]) << 16;
   case 5: /* overflow */
-    tmp |= ((uint64_t)data[4]) << 40;
+    tmp |= ((uint64_t)data[4]) << 24;
   case 4: /* overflow */
     tmp |= ((uint64_t)data[3]) << 32;
   case 3: /* overflow */
-    tmp |= ((uint64_t)data[2]) << 24;
+    tmp |= ((uint64_t)data[2]) << 40;
   case 2: /* overflow */
-    tmp |= ((uint64_t)data[1]) << 16;
+    tmp |= ((uint64_t)data[1]) << 48;
   case 1: /* overflow */
-    tmp |= ((uint64_t)data[0]) << 8;
-    fio_risky_consume(tmp, 3);
+    tmp |= ((uint64_t)data[0]) << 56;
+    /* ((len >> 3) & 3) is a 0...3 value indicating consumption vector */
+    switch ((len >> 3) & 3) {
+    case 3:
+      fio_risky_consume(v3, tmp);
+      break;
+    case 2:
+      fio_risky_consume(v2, tmp);
+      break;
+    case 1:
+      fio_risky_consume(v1, tmp);
+      break;
+    case 0:
+      fio_risky_consume(v0, tmp);
+      break;
+    }
   }
 
   /* merge and mix */
-  uint64_t result = fio_lrot64(v[0], 17) + fio_lrot64(v[1], 13) +
-                    fio_lrot64(v[2], 47) + fio_lrot64(v[3], 57);
+  uint64_t result = fio_lrot64(v0, 17) + fio_lrot64(v1, 13) +
+                    fio_lrot64(v2, 47) + fio_lrot64(v3, 57);
+
+  len ^= (len << 33);
   result += len;
-  result += v[0] * primes[1];
+
+  result += v0 * RISKY_PRIME_1;
   result ^= fio_lrot64(result, 13);
-  result += v[1] * primes[1];
+  result += v1 * RISKY_PRIME_1;
   result ^= fio_lrot64(result, 29);
-  result += v[2] * primes[1];
+  result += v2 * RISKY_PRIME_1;
   result ^= fio_lrot64(result, 33);
-  result += v[3] * primes[1];
+  result += v3 * RISKY_PRIME_1;
   result ^= fio_lrot64(result, 51);
 
   /* irreversible avalanche... I think */
-  result ^= (result >> 29) * primes[0];
+  result ^= (result >> 29) * RISKY_PRIME_0;
   return result;
-
-#undef fio_risky_consume256
-#undef fio_risky_consume
 }
+
+#undef fio_risky_consume
+#undef FIO_RISKY_PRIME_0
+#undef FIO_RISKY_PRIME_1
 
 /* *****************************************************************************
 SipHash
