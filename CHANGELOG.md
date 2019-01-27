@@ -14,6 +14,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: (`iodine`) application warm-up error was fixed. Deprecation warnings will still print for deprecated symbols loaded due to the warm-up sequence.
 
+**Update**: (`iodine`, `cli`) Support the environment variables `"WORKERS"` and `"THREADS"` out of the box (jury is out regarding `"PORT"` and `"ADDRESS"`, just use CLI for now).
+
 #### Change log v.0.7.18
 
 **Fix** (`pubsub`) fixed pub/sub for longer WebSocket messages. Issue where network byte ordering wasn't always respected and integer bit size was wrong for larger payloads. Credit to Marouane Elmidaoui (@moxgeek) for exposing the issue.
