@@ -10,6 +10,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Deprecation**: (`iodine`) deprecated the CLI option `-tls-password`, use `-tls-pass` instead.
 
+**Security**: (`fio`) Slowloris mitigation is now part of the core library, where `FIO_SLOWLORIS_LIMIT` pending calls to `write` (currently 4,096 backlogged calls) will flag the connection as an attacker and close the connection. This protocol independent approach improves security.
+
 **Fix**: (`iodine`) log open file / socket limit per worker on startup.
 
 **Fix**: (`iodine`) application warm-up error was fixed. Deprecation warnings will still print for deprecated symbols loaded due to the warm-up sequence.
