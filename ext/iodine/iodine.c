@@ -413,9 +413,17 @@ static VALUE iodine_cli_parse(VALUE self) {
     if (level > 0 && level < 100)
       FIO_LOG_LEVEL = level;
   }
-
+  if (!fio_cli_get("-w") && getenv("WEB_CONCURRENCY")) {
+    fio_cli_set("-w", getenv("WEB_CONCURRENCY"));
+  }
+  if (!fio_cli_get("-w") && getenv("WORKERS")) {
+    fio_cli_set("-w", getenv("WORKERS"));
+  }
   if (fio_cli_get("-w")) {
     iodine_workers_set(IodineModule, INT2NUM(fio_cli_get_i("-w")));
+  }
+  if (!fio_cli_get("-t") && getenv("THREADS")) {
+    fio_cli_set("-t", getenv("THREADS"));
   }
   if (fio_cli_get("-t")) {
     iodine_threads_set(IodineModule, INT2NUM(fio_cli_get_i("-t")));
@@ -426,6 +434,9 @@ static VALUE iodine_cli_parse(VALUE self) {
   if (fio_cli_get_bool("-warmup")) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("warmup_")), Qtrue);
   }
+  // if (!fio_cli_get("-b") && getenv("ADDRESS")) {
+  //   fio_cli_set("-b", getenv("ADDRESS"));
+  // }
   if (fio_cli_get("-b")) {
     if (fio_cli_get("-b")[0] == '/' ||
         (fio_cli_get("-b")[0] == '.' && fio_cli_get("-b")[1] == '/')) {
@@ -437,6 +448,10 @@ static VALUE iodine_cli_parse(VALUE self) {
             fio_cli_get("-p"));
       }
       fio_cli_set("-p", "0");
+    } else {
+      // if (!fio_cli_get("-p") && getenv("PORT")) {
+      //   fio_cli_set("-p", getenv("PORT"));
+      // }
     }
     rb_hash_aset(defaults, address_sym, rb_str_new_cstr(fio_cli_get("-b")));
   }
