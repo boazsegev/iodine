@@ -78,7 +78,7 @@ Feel free to copy, use and enjoy according to the license provided.
 
 /* Slowloris mitigation  (must be less than 1<<16) */
 #ifndef FIO_SLOWLORIS_LIMIT
-#define FIO_SLOWLORIS_LIMIT (1 << 12)
+#define FIO_SLOWLORIS_LIMIT (1 << 10)
 #endif
 
 #if !defined(__clang__) && !defined(__GNUC__)
@@ -383,8 +383,7 @@ inline static void protocol_unlock(fio_protocol_s *pr,
 
 /** returns 1 if the UUID is valid and 0 if it isn't. */
 #define uuid_is_valid(uuid)                                                    \
-  ((intptr_t)(uuid) != -1 &&                                                   \
-   ((uint32_t)fio_uuid2fd((uuid))) < fio_data->capa &&                         \
+  ((intptr_t)(uuid) > 0 && ((uint32_t)fio_uuid2fd((uuid))) < fio_data->capa && \
    ((uintptr_t)(uuid)&0xFF) == uuid_data((uuid)).counter)
 
 /* public API. */
@@ -1620,9 +1619,7 @@ static void fio_poll_init(void) {
   }
   return;
 error:
-#if DEBUB
-  perror("ERROR: (evoid) failed to initialize");
-#endif
+  FIO_LOG_FATAL("couldn't initialize epoll.");
   fio_poll_close();
   exit(errno);
   return;
@@ -1807,7 +1804,6 @@ FIO_FUNC inline void fio_poll_remove_fd(intptr_t fd) {
   struct kevent chevent[3];
   EV_SET(chevent, fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
   EV_SET(chevent + 1, fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
-  EV_SET(chevent + 2, fd, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
   do {
     errno = 0;
     kevent(evio_fd, chevent, 3, NULL, 0, NULL);
@@ -1831,23 +1827,13 @@ static size_t fio_poll(void) {
     for (int i = 0; i < active_count; i++) {
       // test for event(s) type
       if (events[i].filter == EVFILT_WRITE) {
-        // we can only write if there's no error in the socket
         fio_defer_push_urgent(deferred_on_ready,
                               ((void *)fd2uuid(events[i].udata)), NULL);
       } else if (events[i].filter == EVFILT_READ) {
         fio_defer_push_task(deferred_on_data, (void *)fd2uuid(events[i].udata),
                             NULL);
       }
-      // connection errors should be reported after `read` in case there's data
-      // left in the buffer... not that the edge case matters.
       if (events[i].flags & (EV_EOF | EV_ERROR)) {
-        // errors are hendled as disconnections (on_close)
-        // FIO_LOG_DEBUG("%p: %s\n", events[i].udata,
-        //               (events[i].flags & EV_EOF)
-        //                   ? "EV_EOF"
-        //                   : (events[i].flags & EV_ERROR) ? "EV_ERROR" :
-        //                   "WTF?");
-        // uuid_data(events[i].udata).open = 0;
         fio_force_close_in_poll(fd2uuid(events[i].udata));
       }
     }
@@ -2920,16 +2906,15 @@ ssize_t fio_flush(intptr_t uuid) {
   }
   ssize_t flushed;
   int tmp;
+
+  if (uuid_data(uuid).packet_count >= FIO_SLOWLORIS_LIMIT) {
+    /* Slowloris attack assumed */
+    goto attacked;
+  }
   /* start critical section */
   if (fio_trylock(&uuid_data(uuid).sock_lock))
     goto would_block;
 
-  if (uuid_data(uuid).packet_count >= FIO_SLOWLORIS_LIMIT) {
-    /* Slowloris attack assumed */
-    fio_unlock(&uuid_data(uuid).sock_lock);
-    uuid_data(uuid).close = 1;
-    goto closed;
-  }
   if (uuid_data(uuid).packet) {
     tmp = uuid_data(uuid).packet->write_func(fio_uuid2fd(uuid),
                                              uuid_data(uuid).packet);
@@ -2980,6 +2965,20 @@ flushed:
   touchfd(fio_uuid2fd(uuid));
   fio_unlock(&uuid_data(uuid).sock_lock);
   return 1;
+attacked:
+
+  FIO_LOG_WARNING("(facil.io) possible Slowloris attack from %.*s",
+                  (int)fio_peer_addr(uuid).len, fio_peer_addr(uuid).data);
+#if defined(__APPLE__) && FIO_ENGINE_KQUEUE
+  /* kqueue for some reason can't handle dangling sockets on macOS...
+   * so we close the socket instead, ay least until it's fixed */
+  uuid_data(uuid).close = 1;
+  fio_force_close(uuid);
+#else
+  /* don't close, just detach from facil.io and mark uuid as invalid */
+  fio_clear_fd(fio_uuid2fd(uuid), 0);
+#endif
+  return -1;
 }
 
 /** `fio_flush_all` attempts flush all the open connections. */
