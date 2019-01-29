@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.20
+
+**Security**: (`fio`) lower Slowloris detection limits (backlog limit is now 1,024 responses / messages per client). 
+
 #### Change log v.0.7.19
 
 **Deprecation**: (`iodine`) deprecated the CLI option `-tls-password`, use `-tls-pass` instead.

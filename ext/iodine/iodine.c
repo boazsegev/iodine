@@ -375,6 +375,8 @@ static VALUE iodine_cli_parse(VALUE self) {
       FIO_CLI_PRINT_HEADER("Concurrency:"),
       FIO_CLI_INT("-workers -w number of processes to use."),
       FIO_CLI_INT("-threads -t number of threads per process."),
+      FIO_CLI_PRINT("Negative concurrency values "
+                    "map to fractions of available CPU cores."),
       FIO_CLI_PRINT_HEADER("HTTP Settings:"),
       FIO_CLI_STRING("-public -www public folder, for static file service."),
       FIO_CLI_BOOL("-log -v HTTP request logging."),
@@ -396,7 +398,8 @@ static VALUE iodine_cli_parse(VALUE self) {
       FIO_CLI_STRING(
           "-tls-pass -tls-password the password (if any) protecting the "
           "private key file."),
-      FIO_CLI_PRINT("\t\t-tls-password is deprecated, use -tls-pass"),
+      FIO_CLI_PRINT("\t\t\x1B[1m-tls-password\x1B[0m is deprecated, use "
+                    "\x1B[1m-tls-pass\x1B[0m"),
       FIO_CLI_PRINT_HEADER("Connecting Iodine to Redis:"),
       FIO_CLI_STRING(
           "-redis -r an optional Redis URL server address. Default: none."),
