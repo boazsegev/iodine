@@ -40,32 +40,65 @@ Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and
 
 Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the [Websocket draft extension](./SPEC-Websocket-Draft.md).
 
-With `Iodine.listen2http` it's possible to run multiple HTTP applications (please remember not to set more than a single application on a single TCP/IP port). 
+With `Iodine.listen service: :http` it's possible to run multiple HTTP applications (please remember not to set more than a single application on a single TCP/IP port). 
 
 Iodine also supports native process cluster Pub/Sub and a native RedisEngine to easily scale iodine's Pub/Sub horizontally.
 
-### Running the web server
+### Installing and Running Iodine
 
-Using the iodine server is easy, simply add iodine as a gem to your Rack application:
+Install iodine on any Linux / BSD / macOS system using:
 
-```ruby
-gem 'iodine', '~>0.6'
+```bash
+gem install iodine
 ```
 
-Iodine will calculate, when possible, a good enough default concurrency model for lightweight applications... this might not fit your application if you use heavier database access or other blocking calls.
+Using the iodine server is easy, simply add iodine as a gem to your Rails / Sinatra / Rack application's `Gemfile`:
+
+```ruby
+gem 'iodine', '~>0.7'
+```
+
+Then start your application from the command-line / terminal using iodine:
+
+```bash
+bundler exec iodine
+```
+
+### Running with Rails
+
+On Rails:
+
+1. Replace the `puma` gem with the `iodine` gem.
+
+1. Remove the `config/puma.rb` file (or comment out the code).
+
+1. Optionally, it's possible to add a `config/iodine.rb` file. For example:
+
+    ```ruby
+    # Iodine setup - use conditional setup to allow command-line arguments to override these:
+    Iodine.threads ||= ENV.fetch("RAILS_MAX_THREADS") { 5 }
+    Iodine.workers ||= ENV.fetch("WEB_CONCURRENCY") { 2 }
+    Iodine::DEFAULT_SETTINGS[:port] = ENV.fetch("PORT") if ENV.fetch("PORT")
+    ```
+
+### Optimizing Iodine's Concurrency
 
 To get the most out of iodine, consider the amount of CPU cores available and the concurrency level the application requires.
 
-The common model of 16 threads and 4 processes can be easily adopted:
+Iodine will calculate, when possible, a good enough default concurrency model. See if this works for your application or customize according to the application's needs.
+
+Command line arguments allow easy access to different options, including concurrency levels. i.e., to set up 16 threads and 4 processes:
 
 ```bash
 bundler exec iodine -p $PORT -t 16 -w 4
 ```
 
-During development, it's more common to use a single process and a few threads:
+The environment variables `THREADS` and `WORKERS` are automatically recognized when iodine is first required, allowing environment specific customization. i.e.:
 
 ```bash
-bundler exec iodine -p $PORT -t 16 -w 1
+export THREADS=16
+export WORKERS=-1 # negative values are fractions of CPU cores.
+bundler exec iodine -p $PORT
 ```
 
 ### Heap Fragmentation Protection
@@ -92,13 +125,13 @@ This can be done when starting the server from the command line:
 bundler exec iodine -p $PORT -t 16 -w 4 -www /my/public/folder
 ```
 
-Or by adding a single line to the application. i.e. (a `config.ru` example):
+Or using a simple Ruby script. i.e. (a `my_server.rb` example):
 
 ```ruby
 require 'iodine'
 # static file service
-Iodine.listen2http public: '/my/public/folder'
-# for static file service, we only need a single thread per worker.
+Iodine.listen, service: :http, public: '/my/public/folder'
+# for static file service, we only need a single thread and a single worker.
 Iodine.threads = 1
 Iodine.start
 ```
@@ -257,8 +290,8 @@ end
 * Iodine's Redis client does *not* support multiple databases. This is both because [database scoping is ignored by Redis during pub/sub](https://redis.io/topics/pubsub#database-amp-scoping) and because [Redis Cluster doesn't support multiple databases](https://redis.io/topics/cluster-spec). This indicated that multiple database support just isn't worth the extra effort and performance hit.
 
 * The iodine Redis client will use two Redis connections for the whole process cluster (a single publishing connection and a single subscription connection), minimizing the Redis load and network bandwidth.
-* 
-Connections will be automatically re-established if timeouts or errors occur.
+
+* Connections will be automatically re-established if timeouts or errors occur.
 
 ### Hot Restart
 
@@ -435,7 +468,6 @@ When benchmarking using a VM (crossing machine boundaries, single thread, single
 * Iodine performed at 18,444.31 req/sec, consuming ~25.6Mb of memory.
 
 * Puma performed at 2,521.56 req/sec, consuming ~27.5Mb of memory.
-
 
 I have doubts about my own benchmarks and I recommend benchmarking the performance for yourself using `wrk` or `ab`:
 
