@@ -1801,12 +1801,12 @@ static inline void fio_poll_add(intptr_t fd) {
 FIO_FUNC inline void fio_poll_remove_fd(intptr_t fd) {
   if (evio_fd < 0)
     return;
-  struct kevent chevent[3];
+  struct kevent chevent[2];
   EV_SET(chevent, fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
   EV_SET(chevent + 1, fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
   do {
     errno = 0;
-    kevent(evio_fd, chevent, 3, NULL, 0, NULL);
+    kevent(evio_fd, chevent, 2, NULL, 0, NULL);
   } while (errno == EINTR);
 }
 
@@ -1814,7 +1814,7 @@ static size_t fio_poll(void) {
   if (evio_fd < 0)
     return -1;
   int timeout_millisec = fio_timer_calc_first_interval();
-  struct kevent events[FIO_POLL_MAX_EVENTS];
+  struct kevent events[FIO_POLL_MAX_EVENTS] = {{0}};
 
   const struct timespec timeout = {
       .tv_sec = (timeout_millisec / 1000),
@@ -1937,7 +1937,7 @@ static inline void fio_poll_remove_write(int fd) {
 /** returns non-zero if events were scheduled, 0 if idle */
 static size_t fio_poll(void) {
   /* shrink fd poll range */
-  size_t end = fio_data->capa;
+  size_t end = fio_data->capa; // max_protocol_fd might break TLS
   size_t start = 0;
   struct pollfd *list = NULL;
   fio_lock(&fio_data->lock);
@@ -2969,7 +2969,7 @@ attacked:
 
   FIO_LOG_WARNING("(facil.io) possible Slowloris attack from %.*s",
                   (int)fio_peer_addr(uuid).len, fio_peer_addr(uuid).data);
-#if defined(__APPLE__) && FIO_ENGINE_KQUEUE
+#if 0 && defined(__APPLE__) && FIO_ENGINE_KQUEUE
   /* kqueue for some reason can't handle dangling sockets on macOS...
    * so we close the socket instead, ay least until it's fixed */
   uuid_data(uuid).close = 1;
@@ -10543,10 +10543,6 @@ Poll (not kqueue or epoll) tests
 FIO_FUNC void fio_poll_test(void) {
   fprintf(stderr, "=== Testing poll add / remove fd\n");
   fio_poll_add(5);
-  FIO_ASSERT(fio_data->start == 5,
-             "fio_poll_add didn't update start position (%u)", fio_data->start);
-  FIO_ASSERT(fio_data->end == 6, "fio_poll_add didn't update end position (%u)",
-             fio_data->end);
   FIO_ASSERT(fio_data->poll[5].fd == 5, "fio_poll_add didn't set used fd data");
   FIO_ASSERT(fio_data->poll[5].events ==
                  (FIO_POLL_READ_EVENTS | FIO_POLL_WRITE_EVENTS),
@@ -10577,9 +10573,6 @@ FIO_FUNC void fio_poll_test(void) {
              "fio_poll_remove (both) didn't reset unused fd data");
   FIO_ASSERT(fio_data->poll[7].events == 0,
              "fio_poll_remove (both) didn't reset unused fd flags");
-  FIO_ASSERT(fio_data->end == 6,
-             "fio_poll_remove (both) didn't update end position (%u)",
-             fio_data->end);
   fio_poll_remove_fd(5);
   fprintf(stderr, "\n* passed.\n");
 }
