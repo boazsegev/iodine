@@ -925,7 +925,7 @@ Supported Settigs:
 | `:url` | URL indicating service type, host name and port. Path will be parsed as a Unix socket. |
 | `:handler` | (deprecated: `:app`) see details below. |
 | `:address` | an IP address or a unix socket address. Only relevant if `:url` is missing. |
-| `:log` |  (HTTP only) request logging. |
+| `:log` |  (HTTP only) request logging. For global verbosity see {Iodine.verbosity} |
 | `:max_body` | (HTTP only) maximum upload size allowed per request before disconnection (in Mb). |
 | `:max_headers` |  (HTTP only) maximum total header length allowed per request (in Kb). |
 | `:max_msg` |  (WebSockets only) maximum message size pre message (in Kb). |
