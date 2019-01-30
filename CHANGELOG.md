@@ -14,6 +14,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: (`fio`) fix uninitialized `kqueue` message in `fio_poll_remove_fd`.
 
+**Fix**: (`docs`) @giovannibonetti (Giovanni Bonetti) fixed an error in the Rails README section, PR #52.
+
 #### Change log v.0.7.19
 
 **Deprecation**: (`iodine`) deprecated the CLI option `-tls-password`, use `-tls-pass` instead.
