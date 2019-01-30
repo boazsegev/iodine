@@ -72,7 +72,7 @@ On Rails:
 
 1. Remove the `config/puma.rb` file (or comment out the code).
 
-1. Optionally, it's possible to add a `config/iodine.rb` file. For example:
+1. Optionally, it's possible to add a `config/initializers/iodine.rb` file. For example:
 
     ```ruby
     # Iodine setup - use conditional setup to allow command-line arguments to override these:
@@ -80,6 +80,8 @@ On Rails:
     Iodine.workers ||= ENV.fetch("WEB_CONCURRENCY") { 2 }
     Iodine::DEFAULT_SETTINGS[:port] = ENV.fetch("PORT") if ENV.fetch("PORT")
     ```
+
+When using native WebSockets with Rails, middle-ware is probably the best approach. A guide for this approach will, hopefully, get published in the future.
 
 ### Optimizing Iodine's Concurrency
 
