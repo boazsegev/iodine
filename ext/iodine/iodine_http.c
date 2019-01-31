@@ -398,7 +398,6 @@ static inline VALUE copy2env(iodine_http_request_handle_s *handle) {
     if (ct) {
       tmp = fiobj_obj2cstr(ct);
       if (tmp.len && tmp.data) {
-        fprintf(stderr, "Content type: %s\n", tmp.data);
         rb_hash_aset(env, CONTENT_TYPE,
                      rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
         fiobj_hash_delete2(h->headers, content_type_hash);
@@ -519,8 +518,7 @@ static VALUE for_each_body_string(VALUE str, VALUE body_) {
   // fprintf(stderr, "For_each - body\n");
   // write body
   if (TYPE(str) != T_STRING) {
-    fprintf(stderr, "Iodine Server Error:"
-                    "response body was not a String\n");
+    FIO_LOG_ERROR("(Iodine) response body not a String\n");
     return Qfalse;
   }
   if (RSTRING_LEN(str) && RSTRING_PTR(str)) {
