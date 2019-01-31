@@ -12,6 +12,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Security**: (`http`) HTTP/1.1 slow client throttling - new requests will not be consumed until pending responses were sent. Since HTTP/1.1 is a response-request protocol, this protocol specific approach should protect the HTTP application against slow clients.
 
+**Fix**: (`iodine`) remove redundant Content-Type printout. Credit to @giovannibonetti (Giovanni Bonetti) for exposing the issue (#53).
+
 **Fix**: (`fio`) fix capacity maximization log to accommodate issues where `getrlimit` would return a `rlim_max` that's too high for `rlim_cur` (macOS).
 
 **Fix**: (`fio`) fix uninitialized `kqueue` message in `fio_poll_remove_fd`.
