@@ -32,7 +32,7 @@ module ShootoutApp
   end
   def self.on_message client, data
     if data[0] == 'b' # binary
-        client.publish :shootout_b, data
+      client.publish :shootout_b, data
       data[0] = 'r'
       client.write data
       return
