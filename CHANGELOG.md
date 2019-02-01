@@ -6,6 +6,14 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.21
+
+**Fix**: (`iodine`, `redis`) Redis response was attempting to create Ruby objects outside the GIL. This is now fixed by entering the GIL earlier (before objects are created). Credit to @moxgeek (Marouane Elmidaoui) for exposing this issue (plezi#31).
+
+**Fix**: (`redis`) fixed Redis reconnection. Address and port data was mistakingly written at the wrong address, causing it to be overwritten by incoming (non-pub/sub) data.
+
+**Fix**: (`redis`) fixed a race condition in the Redis reconnection logic which might have caused more then a single pub/sub connection to be established and the first pending command to be sent again.
+
 #### Change log v.0.7.20
 
 **Security**: (`fio`) lower and smarter Slowloris detection limits (backlog limit is now 1,024 responses / messages per client). 

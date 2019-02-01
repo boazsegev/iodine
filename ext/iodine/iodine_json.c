@@ -185,6 +185,7 @@ static inline VALUE iodine_json_convert(VALUE str, fiobj2rb_settings_s s) {
 //   }
 //   VALUE ret = fiobj2rb_deep(json, s.str2sym);
 //   fiobj_free(json);
+//   IodineStore.remove(ret);
 //   return ret;
 // }
 
