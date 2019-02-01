@@ -181,6 +181,7 @@ static void iodine_pubsub_data_mark(void *c_) {
 }
 /* a callback for the GC (marking active objects) */
 static void iodine_pubsub_data_free(void *c_) {
+  FIO_LOG_DEBUG("iodine destroying engine");
   iodine_pubsub_s *data = c_;
   fio_pubsub_detach(data->engine);
   IodineStore.remove(data->handler); /* redundant except during exit */
@@ -411,20 +412,32 @@ static VALUE iodine_pubsub_redis_new(int argc, VALUE *argv, VALUE self) {
   (void)argv;
 }
 
+struct redis_callback_data {
+  FIOBJ response;
+  VALUE block;
+};
+
+/** A callback for Redis commands. */
+static void *iodine_pubsub_redis_callback_in_gil(void *data_) {
+  struct redis_callback_data *d = data_;
+  VALUE rb = Qnil;
+  if (!FIOBJ_IS_NULL(d->response)) {
+    rb = fiobj2rb_deep(d->response, 0);
+  }
+  IodineCaller.call2(d->block, call_id, 1, &rb);
+  IodineStore.remove(rb);
+  return NULL;
+}
+
 /** A callback for Redis commands. */
 static void iodine_pubsub_redis_callback(fio_pubsub_engine_s *e, FIOBJ response,
                                          void *udata) {
-  VALUE block = (VALUE)udata;
-  if (block == Qnil) {
+  struct redis_callback_data d = {.response = response, .block = (VALUE)udata};
+  if (d.block == Qnil) {
     return;
   }
-  VALUE rb = Qnil;
-  if (!FIOBJ_IS_NULL(response)) {
-    rb = IodineStore.add(fiobj2rb_deep(response, 0));
-  }
-  IodineCaller.call2(block, call_id, 1, &rb);
-  IodineStore.remove(rb);
-  IodineStore.remove(block);
+  IodineCaller.enterGVL(iodine_pubsub_redis_callback_in_gil, &d);
+  IodineStore.remove(d.block);
   (void)e;
 }
 

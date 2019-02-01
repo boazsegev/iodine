@@ -110,7 +110,7 @@ static inline VALUE fiobj2rb_deep(FIOBJ obj, uint8_t str2sym) {
   while (fiobj_ary_pop(data.stack))
     ;
   fiobj_free(data.stack);
-  IodineStore.remove(data.rb);
+  // IodineStore.remove(data.rb); // don't remove data
   return data.rb;
 }
 
