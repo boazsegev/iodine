@@ -8,7 +8,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.20
 
-**Security**: (`fio`) lower Slowloris detection limits (backlog limit is now 1,024 responses / messages per client). 
+**Security**: (`fio`) lower and smarter Slowloris detection limits (backlog limit is now 1,024 responses / messages per client). 
 
 **Security**: (`http`) HTTP/1.1 slow client throttling - new requests will not be consumed until pending responses were sent. Since HTTP/1.1 is a response-request protocol, this protocol specific approach should protect the HTTP application against slow clients.
 
