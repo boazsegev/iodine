@@ -72,9 +72,9 @@ typedef struct {
 static inline void redis_internal_reset(struct redis_engine_internal_s *i) {
   i->buf_pos = 0;
   i->parser = (resp_parser_s){.obj_countdown = 0, .expecting = 0};
-  fiobj_free(i->str);
+  fiobj_free((FIOBJ)fio_ct_if(i->ary == FIOBJ_INVALID, (uintptr_t)i->str,
+                              (uintptr_t)i->ary));
   i->str = FIOBJ_INVALID;
-  fiobj_free(i->ary);
   i->ary = FIOBJ_INVALID;
   i->ary_count = 0;
   i->nesting = 0;
@@ -106,9 +106,7 @@ static inline void redis_free(redis_engine_s *r) {
 Simple RESP formatting
 ***************************************************************************** */
 
-inline static void fiobj2resp2(FIOBJ dest, FIOBJ obj) {
-  if (fiobj_hash_key_in_loop())
-    fiobj2resp2(dest, fiobj_hash_key_in_loop());
+inline static void fiobj2resp___internal(FIOBJ dest, FIOBJ obj) {
   fio_str_info_s s;
   switch (FIOBJ_TYPE(obj)) {
   case FIOBJ_T_NULL:
@@ -155,7 +153,9 @@ inline static void fiobj2resp2(FIOBJ dest, FIOBJ obj) {
 }
 
 static int fiobj2resp_task(FIOBJ o, void *dest_) {
-  fiobj2resp2((FIOBJ)dest_, o);
+  if (fiobj_hash_key_in_loop())
+    fiobj2resp___internal((FIOBJ)dest_, fiobj_hash_key_in_loop());
+  fiobj2resp___internal((FIOBJ)dest_, o);
   return 0;
 }
 
