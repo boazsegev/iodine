@@ -64,6 +64,12 @@ Then start your application from the command-line / terminal using iodine:
 bundler exec iodine
 ```
 
+**KNOWN ISSUE:** the installation script tests for OpenSSL 1.1.0 and above. However, this testing approach sometimes provides false positives. If TLS isn't required, install with `NO_SSL=1`. i.e.:
+
+```bash
+NO_SSL=1 bundler exec iodine
+```
+
 ### Running with Rails
 
 On Rails:
