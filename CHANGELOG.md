@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.23
+
+**Updates**: (`fio`) facil.io updates.
+
 #### Change log v.0.7.22
 
 **Fix**: (`fio`, `redis`) fixed IPC messages between redis connections (in the master process) and callback blocks (executed in the worker processes). Credit to @moxgeek (Marouane Elmidaoui) for exposing this issue (plezi#31).
