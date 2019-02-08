@@ -8,6 +8,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.23
 
+**Fix**: (`fio`): fixed logging message for overflowing log messages. Credit to @weskerfoot (Wesley Kerfoot) and @adam12 (Adam Daniels) for exposing the issue (issue #56).
+
 **Updates**: (`fio`) facil.io updates.
 
 #### Change log v.0.7.22
