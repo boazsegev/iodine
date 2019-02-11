@@ -64,7 +64,28 @@ Then start your application from the command-line / terminal using iodine:
 bundler exec iodine
 ```
 
-**KNOWN ISSUE:** the installation script tests for OpenSSL 1.1.0 and above. However, this testing approach sometimes provides false positives. If TLS isn't required, install with `NO_SSL=1`. i.e.:
+#### Installing with SSL/TLS
+
+Make sure to update OpenSSL to the latest version **before installing Ruby** (`rbenv` should do this automatically).
+
+To avoid name resolution conflicts, iodine will bind to the same OpenSSL version Ruby is bound to. To use SSL/TLS this should be OpenSSL >= 1.1.0 or LibreSSL >= 2.7.4.
+
+Verbose installation should provide a confirmation message, such as:
+
+```bash
+$ gem install iodine -f -V
+...
+checking for -lcrypto... yes
+checking for -lssl... yes
+Detected OpenSSL library, testing for version.
+Confirmed OpenSSL to be version 1.1.0 or above (OpenSSL 1.1.0j  20 Nov 2018)...
+* Compiling with HAVE_OPENSSL.
+...
+```
+
+**KNOWN ISSUE:**
+
+The installation script tests for OpenSSL 1.1.0 and above. However, this testing approach sometimes provides false positives. If TLS isn't required, install with `NO_SSL=1`. i.e.:
 
 ```bash
 NO_SSL=1 bundler exec iodine
