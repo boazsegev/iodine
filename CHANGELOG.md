@@ -6,6 +6,16 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.24
+
+**Fix**: (`fio`) fixed server shutdown on pub/sub stress, where internal pub/sub stress was mistakingly identified as a Slowloris attack. Credit to @moxgeek (Marouane Elmidaoui) for exposing this issue (plezi#32).
+
+**Fix**: (`fio`): fixed Slowloris detection for buffer attack variation.
+
+**Fix**: (`fio`): fixed `pending` result, where packet count wouldn't decrement until queue was drained.
+
+**Updates**: (`fio`) facil.io updates, including pub/sub memory improvements for cluster mode.
+
 #### Change log v.0.7.23
 
 **Fix**: (`fio`): fixed logging message for overflowing log messages. Credit to @weskerfoot (Wesley Kerfoot) and @adam12 (Adam Daniels) for exposing the issue (issue #56).
