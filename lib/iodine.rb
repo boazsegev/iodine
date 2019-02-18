@@ -130,6 +130,23 @@ module Iodine
       end
     end
 
+    ### trap some signals to avoid exception reports
+    begin
+      old_sigint = Signal.trap("SIGINT") { old_sigint.call if old_sigint.respond_to?(:call) }
+    rescue Exception
+    end
+    begin
+      old_sigterm = Signal.trap("SIGTERM") { old_sigterm.call if old_sigterm.respond_to?(:call) }
+    rescue Exception
+    end
+    begin
+      old_sigpipe = Signal.trap("SIGPIPE") { old_sigpipe.call if old_sigpipe.respond_to?(:call) }
+    rescue Exception
+    end
+    begin
+      old_sigusr1 = Signal.trap("SIGUSR1") { old_sigusr1.call if old_sigusr1.respond_to?(:call) }
+    rescue Exception
+    end
 end
 
 require 'rack/handler/iodine' unless defined? ::Iodine::Rack::IODINE_RACK_LOADED
