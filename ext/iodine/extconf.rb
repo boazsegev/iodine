@@ -1,7 +1,5 @@
 require 'mkmf'
 
-abort 'Missing a Linux/Unix OS evented API (epoll/kqueue).' unless have_func('kevent') || have_func('epoll_ctl')
-
 if ENV['CC']
   ENV['CPP'] ||= ENV['CC']
   puts "detected user prefered compiler (#{ENV['CC']}):", `#{ENV['CC']} -v`
@@ -29,6 +27,72 @@ else
   puts 'using an unknown (old?) compiler... who knows if this will work out... we hope.'
 end
 
+
+
+# Test polling
+def iodine_test_polling_support
+  iodine_poll_test_kqueue = <<EOS
+\#define _GNU_SOURCE
+\#include <stdlib.h>
+\#include <sys/event.h>
+int main(void) {
+  int fd = kqueue();
+}
+EOS
+
+  iodine_poll_test_epoll = <<EOS
+\#define _GNU_SOURCE
+\#include <stdlib.h>
+\#include <stdio.h>
+\#include <sys/types.h>
+\#include <sys/stat.h>
+\#include <fcntl.h>
+\#include <sys/epoll.h>
+int main(void) {
+  int fd = epoll_create1(EPOLL_CLOEXEC);
+}
+EOS
+
+  iodine_poll_test_poll = <<EOS
+\#define _GNU_SOURCE
+\#include <stdlib.h>
+\#include <poll.h>
+int main(void) {
+  struct pollfd plist[18];
+  memset(plist, 0, sizeof(plist[0]) * 18);
+  poll(plist, 1, 1);
+}
+EOS
+
+  # Test for manual selection and then TRY_COMPILE with each polling engine
+  if ENV['FIO_POLL']
+    puts "skipping polling tests, enforcing manual selection of: poll"
+    $defs << "-DFIO_ENGINE_POLL"
+  elsif ENV['FIO_FORCE_POLL']
+    puts "skipping polling tests, enforcing manual selection of: poll"
+    $defs << "-DFIO_ENGINE_POLL"
+  elsif ENV['FIO_FORCE_EPOLL']
+    puts "skipping polling tests, enforcing manual selection of: epoll"
+    $defs << "-DFIO_ENGINE_EPOLL"
+  elsif ENV['FIO_FORCE_KQUEUE']
+    puts "* Skipping polling tests, enforcing manual selection of: kqueue"
+    $defs << "-DFIO_ENGINE_KQUEUE"
+  elsif try_compile(iodine_poll_test_epoll)
+    puts "detected `epoll`"
+    $defs << "-DFIO_ENGINE_EPOLL"
+  elsif try_compile(iodine_poll_test_kqueue)
+    puts "detected `kqueue`"
+    $defs << "-DFIO_ENGINE_KQUEUE"
+  elsif try_compile(iodine_poll_test_poll)
+    puts "detected `poll` - this is suboptimal fallback!"
+    $defs << "-DFIO_ENGINE_POLL"
+  else
+    puts "* WARNING: No supported polling engine! expecting compilation to fail."
+  end
+end
+
+iodine_test_polling_support()
+
 # Test for OpenSSL version equal to 1.0.0 or greater.
 unless ENV['NO_SSL'] || ENV['NO_TLS'] || ENV["DISABLE_SSL"]
   OPENSSL_TEST_CODE = <<EOS
@@ -55,10 +119,10 @@ EOS
   rescue LoadError
   else
     if have_library('crypto') && have_library('ssl')
-      puts "Detected OpenSSL library, testing for version and required functions."
+      puts "detected OpenSSL library, testing for version and required functions."
       if try_compile(OPENSSL_TEST_CODE)
         $defs << "-DHAVE_OPENSSL"
-        puts "Confirmed OpenSSL to be version 1.1.0 or above (#{OpenSSL::OPENSSL_LIBRARY_VERSION})...\n* Compiling with HAVE_OPENSSL."
+        puts "confirmed OpenSSL to be version 1.1.0 or above (#{OpenSSL::OPENSSL_LIBRARY_VERSION})...\n* compiling with HAVE_OPENSSL."
       else
         puts "FAILED: OpenSSL version not supported (#{OpenSSL::OPENSSL_LIBRARY_VERSION} is too old)."
       end
