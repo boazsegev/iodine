@@ -6,6 +6,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.25
+
+**Fix**: (`iodine`) fixed host name binding when running `iodine` using `rackup` or through `Rack`. Credit to @adam12 (Adam Daniels) for PR #60.
+
+**Fix**: (`iodine`) removed bundler requirement in the `iodine.gemspec` file.
+
 #### Change log v.0.7.24
 
 **Fix**: (`fio`) fixed server shutdown on pub/sub stress, where internal pub/sub stress was mistakingly identified as a Slowloris attack. Credit to @moxgeek (Marouane Elmidaoui) for exposing this issue (plezi#32).

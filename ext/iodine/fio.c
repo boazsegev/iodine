@@ -44,7 +44,8 @@ Feel free to copy, use and enjoy according to the license provided.
 #if !FIO_ENGINE_POLL && !FIO_ENGINE_EPOLL && !FIO_ENGINE_KQUEUE
 #if defined(__linux__)
 #define FIO_ENGINE_EPOLL 1
-#elif defined(__APPLE__) || defined(__unix__)
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) ||     \
+    defined(__OpenBSD__) || defined(__bsdi__) || defined(__DragonFly__)
 #define FIO_ENGINE_KQUEUE 1
 #else
 #define FIO_ENGINE_POLL 1
@@ -1449,7 +1450,8 @@ static void fio_signal_handler_setup(void) {
     return;
   };
 }
-static void fio_signal_handler_reset(void) {
+
+void fio_signal_handler_reset(void) {
   struct sigaction old;
   if (!fio_old_sig_int.sa_handler)
     return;
@@ -2586,17 +2588,17 @@ Internal socket flushing related functions
 #define BUFFER_FILE_READ_SIZE 49152
 #endif
 
-#ifndef USE_SENDFILE
-
+#if !defined(USE_SENDFILE) && !defined(USE_SENDFILE_LINUX) &&                  \
+    !defined(USE_SENDFILE_BSD) && !defined(USE_SENDFILE_APPLE)
 #if defined(__linux__) /* linux sendfile works  */
 #include <sys/sendfile.h>
-#define USE_SENDFILE 1
-#elif defined(__unix__) /* BSD sendfile should work, but isn't tested */
+#define USE_SENDFILE_LINUX 1
+#elif defined(__FreeBSD__) /* FreeBSD sendfile should work - not tested */
 #include <sys/uio.h>
-#define USE_SENDFILE 1
+#define USE_SENDFILE_BSD 1
 #elif defined(__APPLE__) /* Is the apple sendfile still broken? */
 #include <sys/uio.h>
-#define USE_SENDFILE 1
+#define USE_SENDFILE_APPLE 2
 #else /* sendfile might not be available - always set to 0 */
 #define USE_SENDFILE 0
 #endif
@@ -2672,7 +2674,7 @@ read_error:
   return -1;
 }
 
-#if USE_SENDFILE && defined(__linux__) /* linux sendfile API */
+#if USE_SENDFILE_LINUX /* linux sendfile API */
 
 static int fio_sock_sendfile_from_fd(int fd, fio_packet_s *packet) {
   ssize_t sent;
@@ -2686,15 +2688,14 @@ static int fio_sock_sendfile_from_fd(int fd, fio_packet_s *packet) {
   return sent;
 }
 
-#elif USE_SENDFILE &&                                                          \
-    (defined(__APPLE__) || defined(__unix__)) /* BSD / Apple API */
+#elif USE_SENDFILE_LINUX_BSD || USE_SENDFILE_APPLE /* FreeBSD / Apple API */
 
 static int fio_sock_sendfile_from_fd(int fd, fio_packet_s *packet) {
   off_t act_sent = 0;
   ssize_t ret = 0;
   while (packet->length) {
     act_sent = packet->length;
-#if defined(__APPLE__)
+#if USE_SENDFILE_APPLE
     ret = sendfile(packet->data.fd, fd, packet->offset, &act_sent, NULL, 0);
 #else
     ret = sendfile(packet->data.fd, fd, packet->offset, (size_t)act_sent, NULL,
@@ -2716,8 +2717,8 @@ error:
 }
 
 #else
-static int (*sock_sendfile_from_fd)(int fd, struct packet_s *packet) =
-    sock_write_from_fd;
+static int (*fio_sock_sendfile_from_fd)(int fd, struct packet_s *packet) =
+    fio_sock_write_from_fd;
 
 #endif
 
@@ -3575,23 +3576,23 @@ static void __attribute__((constructor)) fio_lib_init(void) {
     fio_pubsub_initialize();
 #if DEBUG
 #if FIO_ENGINE_POLL
-    FIO_LOG_STATE("facil.io " FIO_VERSION_STRING " capacity initialization:\n"
-                  "*    Meximum open files %zu out of %zu\n"
-                  "*    Allocating %zu bytes for state handling.\n"
-                  "*    %zu bytes per connection + %zu for state handling.",
-                  capa, (size_t)rlim.rlim_max,
-                  (sizeof(*fio_data) + (capa * (sizeof(*fio_data->poll))) +
-                   (capa * (sizeof(*fio_data->info)))),
-                  (sizeof(*fio_data->poll) + sizeof(*fio_data->info)),
-                  sizeof(*fio_data));
+    FIO_LOG_INFO("facil.io " FIO_VERSION_STRING " capacity initialization:\n"
+                 "*    Meximum open files %zu out of %zu\n"
+                 "*    Allocating %zu bytes for state handling.\n"
+                 "*    %zu bytes per connection + %zu for state handling.",
+                 capa, (size_t)rlim.rlim_max,
+                 (sizeof(*fio_data) + (capa * (sizeof(*fio_data->poll))) +
+                  (capa * (sizeof(*fio_data->info)))),
+                 (sizeof(*fio_data->poll) + sizeof(*fio_data->info)),
+                 sizeof(*fio_data));
 #else
-    FIO_LOG_STATE("facil.io " FIO_VERSION_STRING " capacity initialization:\n"
-                  "*    Meximum open files %zu out of %zu\n"
-                  "*    Allocating %zu bytes for state handling.\n"
-                  "*    %zu bytes per connection + %zu for state handling.",
-                  capa, (size_t)rlim.rlim_max,
-                  (sizeof(*fio_data) + (capa * (sizeof(*fio_data->info)))),
-                  (sizeof(*fio_data->info)), sizeof(*fio_data));
+    FIO_LOG_INFO("facil.io " FIO_VERSION_STRING " capacity initialization:\n"
+                 "*    Meximum open files %zu out of %zu\n"
+                 "*    Allocating %zu bytes for state handling.\n"
+                 "*    %zu bytes per connection + %zu for state handling.",
+                 capa, (size_t)rlim.rlim_max,
+                 (sizeof(*fio_data) + (capa * (sizeof(*fio_data->info)))),
+                 (sizeof(*fio_data->info)), sizeof(*fio_data));
 #endif
 #endif
   }
@@ -3908,7 +3909,7 @@ void fio_start FIO_IGNORE_MACRO(struct fio_start_args args) {
 
   fio_state_callback_force(FIO_CALL_PRE_START);
 
-  FIO_LOG_STATE(
+  FIO_LOG_INFO(
       "Server is running %u %s X %u %s with facil.io " FIO_VERSION_STRING
       " (%s)\n"
       "* Detected capacity: %d open file limit\n"
