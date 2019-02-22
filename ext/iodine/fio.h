@@ -168,10 +168,10 @@ Version and helper macros
 
 #ifndef FIO_PRINT_STATE
 /**
- * Enables the FIO_LOG_STATE(msg,...) macro, which prints information level
- * messages to stderr.
+ * Enables the depraceted FIO_LOG_STATE(msg,...) macro, which prints information
+ * level messages to stderr.
  */
-#define FIO_PRINT_STATE 1
+#define FIO_PRINT_STATE 0
 #endif
 
 #ifndef FIO_PUBSUB_SUPPORT
@@ -463,7 +463,9 @@ int __attribute__((weak)) FIO_LOG_LEVEL;
 #endif
 
 #if FIO_PRINT_STATE
-#define FIO_LOG_STATE(...) FIO_LOG_PRINT(FIO_LOG_LEVEL_INFO, __VA_ARGS__)
+#define FIO_LOG_STATE(...)                                                     \
+  FIO_LOG_PRINT(FIO_LOG_LEVEL_INFO,                                            \
+                "WARNING: FIO_LOG_STATE is deprecated\n" __VA_ARGS__)
 #else
 #define FIO_LOG_STATE(...)
 #endif
@@ -986,6 +988,18 @@ pid_t fio_parent_pid(void);
  * global zombie reaping.
  */
 void fio_reap_children(void);
+
+/**
+ * Resets any existing signal handlers, restoring their state to before they
+ * were set by facil.io.
+ *
+ * This stops both child reaping (`fio_reap_children`) and the default facil.io
+ * signal handlers (i.e., CTRL-C).
+ *
+ * This function will be called automatically by facil.io whenever facil.io
+ * stops.
+ */
+void fio_signal_handler_reset(void);
 
 /**
  * Returns the last time the server reviewed any pending IO events.
@@ -2159,8 +2173,9 @@ FIO_FUNC inline uintptr_t fio_ct_if2(uintptr_t cond, uintptr_t a, uintptr_t b) {
 #endif
 
 /* Note: using BIG_ENDIAN invokes false positives on some systems */
-#if (defined(__BIG_ENDIAN__) && __BIG_ENDIAN__) ||                             \
-    (defined(__LITTLE_ENDIAN__) && !__LITTLE_ENDIAN__) ||                      \
+#if !defined(__BIG_ENDIAN__)
+/* nothing to do */
+#elif (defined(__LITTLE_ENDIAN__) && !__LITTLE_ENDIAN__) ||                    \
     (defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__))
 #define __BIG_ENDIAN__ 1
 #elif !defined(__BIG_ENDIAN__) && !defined(__BYTE_ORDER__) &&                  \
@@ -2208,12 +2223,14 @@ FIO_FUNC inline uintptr_t fio_ct_if2(uintptr_t cond, uintptr_t a, uintptr_t b) {
 /** 32Bit right rotation, inlined. */
 #define fio_rrot32(i, bits)                                                    \
   (((uint32_t)(i) >> ((bits)&31UL)) | ((uint32_t)(i) << ((-(bits)) & 31UL)))
+
 /** 64Bit left rotation, inlined. */
 #define fio_lrot64(i, bits)                                                    \
   (((uint64_t)(i) << ((bits)&63UL)) | ((uint64_t)(i) >> ((-(bits)) & 63UL)))
 /** 64Bit right rotation, inlined. */
 #define fio_rrot64(i, bits)                                                    \
   (((uint64_t)(i) >> ((bits)&63UL)) | ((uint64_t)(i) << ((-(bits)) & 63UL)))
+
 /** unknown size element - left rotation, inlined. */
 #define fio_lrot(i, bits)                                                      \
   (((i) << ((bits) & ((sizeof((i)) << 3) - 1))) |                              \
