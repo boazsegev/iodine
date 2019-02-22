@@ -7,7 +7,7 @@ module Iodine
     # Runs a Rack app, as par the Rack handler requirements.
     def self.run(app, options = {})
       # nested applications... is that a thing?
-      Iodine.listen(service: :http, handler: app, port: options[:Port], address: options[:Address])
+      Iodine.listen(service: :http, handler: app, port: options[:Port], address: options[:Host])
 
       # start Iodine
       Iodine.start
