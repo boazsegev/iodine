@@ -90,6 +90,13 @@ Feel free to copy, use and enjoy according to the license provided.
 #define FIO_TLS_WEAK __attribute__((weak))
 #endif
 
+/* Mitigates MAP_ANONYMOUS not being defined on older versions of MacOS */
+#if !defined(MAP_ANONYMOUS)
+  #if defined(MAP_ANON)
+    #define MAP_ANONYMOUS MAP_ANON
+  #endif
+#endif
+
 /* *****************************************************************************
 Event deferring (declarations)
 ***************************************************************************** */
