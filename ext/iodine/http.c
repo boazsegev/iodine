@@ -2201,16 +2201,10 @@ size_t http_date2str(char *target, struct tm *tmbuf) {
   pos[3] = ',';
   pos[4] = ' ';
   pos += 5;
-  if (tmbuf->tm_mday < 10) {
-    pos[0] = '0';
-    pos[1] = '0' + +tmbuf->tm_mday;
-    pos += 2;
-  } else {
-    tmp = tmbuf->tm_mday / 10;
-    pos[0] = '0' + tmp;
-    pos[1] = '0' + (tmbuf->tm_mday - (tmp * 10));
-    pos += 2;
-  }
+  tmp = tmbuf->tm_mday / 10;
+  pos[0] = '0' + tmp;
+  pos[1] = '0' + (tmbuf->tm_mday - (tmp * 10));
+  pos += 2;
   *(pos++) = ' ';
   pos[0] = MONTH_NAMES[tmbuf->tm_mon][0];
   pos[1] = MONTH_NAMES[tmbuf->tm_mon][1];
@@ -2301,16 +2295,10 @@ size_t http_date2rfc2109(char *target, struct tm *tmbuf) {
   pos[3] = ',';
   pos[4] = ' ';
   pos += 5;
-  if (tmbuf->tm_mday < 10) {
-    pos[0] = '0';
-    pos[1] = '0' + +tmbuf->tm_mday;
-    pos += 2;
-  } else {
-    tmp = tmbuf->tm_mday / 10;
-    pos[0] = '0' + tmp;
-    pos[1] = '0' + (tmbuf->tm_mday - (tmp * 10));
-    pos += 2;
-  }
+  tmp = tmbuf->tm_mday / 10;
+  pos[0] = '0' + tmp;
+  pos[1] = '0' + (tmbuf->tm_mday - (tmp * 10));
+  pos += 2;
   *(pos++) = ' ';
   pos[0] = MONTH_NAMES[tmbuf->tm_mon][0];
   pos[1] = MONTH_NAMES[tmbuf->tm_mon][1];
