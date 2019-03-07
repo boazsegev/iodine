@@ -130,7 +130,7 @@ module Iodine
       end
     end
 
-    ### trap some signals to avoid exception reports
+    ### trap some signals to avoid excessive exception reports
     begin
       old_sigint = Signal.trap("SIGINT") { old_sigint.call if old_sigint.respond_to?(:call) }
     rescue Exception

@@ -18,6 +18,21 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <sys/types.h>
 #include <unistd.h>
 
+#ifndef HAVE_TM_TM_ZONE
+#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) ||     \
+    defined(__DragonFly__) || defined(__bsdi__) || defined(__ultrix) ||        \
+    (defined(__APPLE__) && defined(__MACH__)) ||                               \
+    (defined(__sun) && !defined(__SVR4))
+/* Known BSD systems */
+#define HAVE_TM_TM_ZONE 1
+#elif defined(__GLIBC__) && defined(_BSD_SOURCE)
+/* GNU systems with _BSD_SOURCE */
+#define HAVE_TM_TM_ZONE 1
+#else
+#define HAVE_TM_TM_ZONE 0
+#endif
+#endif
+
 /* *****************************************************************************
 SSL/TLS patch
 ***************************************************************************** */
@@ -2073,11 +2088,20 @@ struct tm *http_gmtime(time_t timer, struct tm *tmbuf) {
   if (timer < 0)
     return gmtime_r(&timer, tmbuf);
   ssize_t a, b;
-  tmbuf->tm_gmtoff = 0;
-  tmbuf->tm_zone = "UTC";
-  tmbuf->tm_isdst = 0;
-  tmbuf->tm_year = 70; // tm_year == The number of years since 1900
-  tmbuf->tm_mon = 0;
+#if HAVE_TM_TM_ZONE
+  *tmbuf = (struct tm){
+      .tm_isdst = 0,
+      .tm_year = 70, // tm_year == The number of years since 1900
+      .tm_mon = 0,
+      .tm_zone = "UTC",
+  };
+#else
+  *tmbuf = (struct tm){
+      .tm_isdst = 0,
+      .tm_year = 70, // tm_year == The number of years since 1900
+      .tm_mon = 0,
+  };
+#endif
   // for seconds up to weekdays, we build up, as small values clean up
   // larger values.
   a = (ssize_t)timer;
@@ -2168,6 +2192,7 @@ static const char *MONTH_NAMES[] = {"Jan ", "Feb ", "Mar ", "Apr ",
 static const char *GMT_STR = "GMT";
 
 size_t http_date2str(char *target, struct tm *tmbuf) {
+  /* note: day of month is always 2 digits */
   char *pos = target;
   uint16_t tmp;
   pos[0] = DAY_NAMES[tmbuf->tm_wday][0];
@@ -2177,8 +2202,9 @@ size_t http_date2str(char *target, struct tm *tmbuf) {
   pos[4] = ' ';
   pos += 5;
   if (tmbuf->tm_mday < 10) {
-    *pos = '0' + tmbuf->tm_mday;
-    ++pos;
+    pos[0] = '0';
+    pos[1] = '0' + +tmbuf->tm_mday;
+    pos += 2;
   } else {
     tmp = tmbuf->tm_mday / 10;
     pos[0] = '0' + tmp;
@@ -2216,6 +2242,7 @@ size_t http_date2str(char *target, struct tm *tmbuf) {
 }
 
 size_t http_date2rfc2822(char *target, struct tm *tmbuf) {
+  /* note: day of month is either 1 or 2 digits */
   char *pos = target;
   uint16_t tmp;
   pos[0] = DAY_NAMES[tmbuf->tm_wday][0];
@@ -2263,7 +2290,9 @@ size_t http_date2rfc2822(char *target, struct tm *tmbuf) {
   return pos - target;
 }
 
+/* HTTP header format for Cookie ages */
 size_t http_date2rfc2109(char *target, struct tm *tmbuf) {
+  /* note: day of month is always 2 digits */
   char *pos = target;
   uint16_t tmp;
   pos[0] = DAY_NAMES[tmbuf->tm_wday][0];
@@ -2273,8 +2302,9 @@ size_t http_date2rfc2109(char *target, struct tm *tmbuf) {
   pos[4] = ' ';
   pos += 5;
   if (tmbuf->tm_mday < 10) {
-    *pos = '0' + tmbuf->tm_mday;
-    ++pos;
+    pos[0] = '0';
+    pos[1] = '0' + +tmbuf->tm_mday;
+    pos += 2;
   } else {
     tmp = tmbuf->tm_mday / 10;
     pos[0] = '0' + tmp;

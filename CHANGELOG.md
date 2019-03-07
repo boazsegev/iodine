@@ -6,6 +6,14 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.26
+
+**Fix**: (`http`) fixed HTTP date format to force the day of the month to use two digits. Credit to @ianks (Ian Ker-Seymer) for exposing this issue (issue #64).
+
+**Fix**: (`iodine`) fixed static file service without an application (when using iodine as a stand-alone static file server).
+
+**Fix**: (`fio`) miscellaneous compatibility updates.
+
 #### Change log v.0.7.25
 
 **Fix**: (`iodine`) fixed host name binding when running `iodine` using `rackup` or through `Rack`. Credit to @adam12 (Adam Daniels) for PR #60.
