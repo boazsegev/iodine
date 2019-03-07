@@ -110,7 +110,7 @@ Version and helper macros
 #define FIO_VERSION_MAJOR 0
 #define FIO_VERSION_MINOR 7
 #define FIO_VERSION_PATCH 0
-#define FIO_VERSION_BETA 8
+#define FIO_VERSION_BETA 9
 
 /* Automatically convert version data to a string constant - ignore these two */
 #define FIO_MACRO2STR_STEP2(macro) #macro
@@ -224,8 +224,14 @@ Version and helper macros
 #define __has_builtin(...) 0
 #define FIO_GNUC_BYPASS 1
 #elif !defined(__clang__) && !defined(__has_builtin)
+/* E.g: GCC < 6.0 doesn't support __has_builtin */
 #define __has_builtin(...) 0
 #define FIO_GNUC_BYPASS 1
+#endif
+
+#if defined(__GNUC__) && (__GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 5))
+/* GCC < 4.5 doesn't support deprecation reason string */
+#define deprecated(reason) deprecated
 #endif
 
 #ifndef FIO_FUNC
@@ -2022,7 +2028,8 @@ int fio_pubsub_is_attached(fio_pubsub_engine_s *engine);
 /* Select the correct compiler builtin method. */
 #elif __has_builtin(__sync_add_and_fetch)
 /** An atomic exchange operation, ruturns previous value */
-#define fio_atomic_xchange(p_obj, value) __sync_fetch_and_or((p_obj), (value))
+#define fio_atomic_xchange(p_obj, value)                                       \
+  __sync_val_compare_and_swap((p_obj), *(p_obj), (value))
 /** An atomic addition operation */
 #define fio_atomic_add(p_obj, value) __sync_add_and_fetch((p_obj), (value))
 /** An atomic subtraction operation */
@@ -2030,7 +2037,8 @@ int fio_pubsub_is_attached(fio_pubsub_engine_s *engine);
 
 #elif __GNUC__ > 3
 /** An atomic exchange operation, ruturns previous value */
-#define fio_atomic_xchange(p_obj, value) __sync_fetch_and_or((p_obj), (value))
+#define fio_atomic_xchange(p_obj, value)                                       \
+  __sync_val_compare_and_swap((p_obj), *(p_obj), (value))
 /** An atomic addition operation */
 #define fio_atomic_add(p_obj, value) __sync_add_and_fetch((p_obj), (value))
 /** An atomic subtraction operation */

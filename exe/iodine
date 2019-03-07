@@ -37,6 +37,7 @@ module Iodine
           if Iodine::DEFAULT_SETTINGS[:public]
             puts "         Running only static file service."
             opt = ::Rack::Server::Options.new.parse!([])
+            app = Proc.new { [404, {}, "Not Found!"] }
           else
             puts "\nERROR: Couldn't run Ruby application, check command line arguments."
             ARGV << "-?"
