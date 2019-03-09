@@ -16,3 +16,4 @@
 
 .DS_Store
 spec/examples.txt
+spec/log
