@@ -21,4 +21,11 @@ RSpec.describe 'Last-Modified Header' do
 
     expect(last_modified_str).to eql("foo")
   end
+
+  it 'overrides the header if the value is set to nil' do
+    response = HTTP.get("http://localhost:2222?last_modified=nil")
+    last_modified_str = response.headers['Last-Modified']
+
+    expect(Time.httpdate(last_modified_str)).to be_a(Time)
+  end
 end
