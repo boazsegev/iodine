@@ -23,6 +23,7 @@ module HelloWorld
      headers = {}
 
      headers['Last-Modified'] = req.params['last_modified'] if req.params['last_modified']
+     headers['Last-Modified'] = nil if req.params['last_modified'] == 'nil'
 
      [200, headers, [] ]
    end
