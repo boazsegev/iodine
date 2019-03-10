@@ -15,3 +15,5 @@
 .clang_complete
 
 .DS_Store
+spec/examples.txt
+spec/log
