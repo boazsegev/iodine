@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.27
+
+**Compatibility**: (`iodine`) fixed the HTTP request `SCRIPT_NAME` variable (in the Rack `env`) to default to the global environment variable `SCRIPT_NAME` when `SCRIPT_NAME` isn't root (`/`). Credit to @thexa4 (Max Maton) for exposing this compatibility concern (issue #68).
+
 #### Change log v.0.7.26
 
 **Fix**: (`http`) fixed HTTP date format to force the day of the month to use two digits. Credit to @ianks (Ian Ker-Seymer) for exposing this issue (issue #64).
