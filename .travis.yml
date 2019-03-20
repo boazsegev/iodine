@@ -37,3 +37,4 @@ script:
   - export CFLAGS="-Wall"
   - export CC="gcc-5"
   - find pkg/iodine-*.gem -exec gem install -V {} +
+  - bundle exec rspec --format documentation
