@@ -834,7 +834,14 @@ static void initialize_env_template(void) {
     }
     add_value_to_env(env_template_no_upgrade, "rack.version", rack_version);
   }
-  add_str_to_env(env_template_no_upgrade, "SCRIPT_NAME", "");
+
+  {
+    const char *sn = getenv("SCRIPT_NAME");
+    if (!sn || (sn[0] == '/' && sn[1] == 0)) {
+      sn = "";
+    }
+    add_str_to_env(env_template_no_upgrade, "SCRIPT_NAME", sn);
+  }
   add_value_to_env(env_template_no_upgrade, "rack.errors", rb_stderr);
   add_value_to_env(env_template_no_upgrade, "rack.hijack?", Qtrue);
   add_value_to_env(env_template_no_upgrade, "rack.multiprocess", Qtrue);
