@@ -20,21 +20,11 @@ addons:
     sources:
       - ubuntu-toolchain-r-test
     packages:
-      - gcc-4.9
-      - gcc-5
-      - clang
+      - gcc
 script:
   - echo CFLAGS = $CFLAGS
   - echo cflags = $cflags
   - gem uninstall -x iodine
   - rake build
-  - find pkg/iodine-*.gem -exec gem install -V {} +
-  - gem uninstall -x iodine
-  - export CFLAGS="-std=c99"
-  - export CC=gcc
-  - find pkg/iodine-*.gem -exec gem install -V {} +
-  - gem uninstall -x iodine
-  - export CFLAGS="-Wall"
-  - export CC="gcc-5"
   - find pkg/iodine-*.gem -exec gem install -V {} +
   - bundle exec rspec --format documentation
