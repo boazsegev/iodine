@@ -2191,7 +2191,7 @@ static const char *MONTH_NAMES[] = {"Jan ", "Feb ", "Mar ", "Apr ",
                                     "Sep ", "Oct ", "Nov ", "Dec "};
 static const char *GMT_STR = "GMT";
 
-size_t http_date2str(char *target, struct tm *tmbuf) {
+size_t http_date2rfc7231(char *target, struct tm *tmbuf) {
   /* note: day of month is always 2 digits */
   char *pos = target;
   uint16_t tmp;
@@ -2234,6 +2234,8 @@ size_t http_date2str(char *target, struct tm *tmbuf) {
   pos += 4;
   return pos - target;
 }
+
+size_t http_date2str(char *target, struct tm *tmbuf);
 
 size_t http_date2rfc2822(char *target, struct tm *tmbuf) {
   /* note: day of month is either 1 or 2 digits */
