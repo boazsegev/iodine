@@ -414,4 +414,6 @@ void iodine_defer_initialize(void) {
   fio_state_callback_add(FIO_CALL_ON_START, iodine_start_io_thread, NULL);
   /* stop the IO thread before exit */
   fio_state_callback_add(FIO_CALL_ON_FINISH, iodine_defer_on_finish, NULL);
+  /* kill IO thread even after a non-graceful iodine shutdown (force-quit) */
+  fio_state_callback_add(FIO_CALL_AT_EXIT, iodine_defer_on_finish, NULL);
 }
