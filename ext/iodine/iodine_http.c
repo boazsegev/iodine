@@ -514,7 +514,8 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
 }
 
 // writes the body to the response object
-static VALUE for_each_body_string(VALUE str, VALUE body_) {
+static VALUE for_each_body_string(VALUE str, VALUE body_, int argc,
+                                  VALUE *argv) {
   // fprintf(stderr, "For_each - body\n");
   // write body
   if (TYPE(str) != T_STRING) {
@@ -525,6 +526,8 @@ static VALUE for_each_body_string(VALUE str, VALUE body_) {
     fiobj_str_write((FIOBJ)body_, RSTRING_PTR(str), RSTRING_LEN(str));
   }
   return Qtrue;
+  (void)argc;
+  (void)argv;
 }
 
 static inline int ruby2c_response_send(iodine_http_request_handle_s *handle,
@@ -559,8 +562,8 @@ static inline int ruby2c_response_send(iodine_http_request_handle_s *handle,
     // fprintf(stderr, "Review body as for-each ...\n");
     handle->body = fiobj_str_buf(1);
     handle->type = IODINE_HTTP_SENDBODY;
-    rb_block_call(body, each_method_id, 0, NULL, for_each_body_string,
-                  (VALUE)handle->body);
+    IodineCaller.call_with_block(body, each_method_id, 0, NULL,
+                                 (VALUE)handle->body, for_each_body_string);
     // we need to call `close` in case the object is an IO / BodyProxy
     if (rb_respond_to(body, close_method_id))
       IodineCaller.call(body, close_method_id);
