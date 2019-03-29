@@ -18,6 +18,9 @@ typedef struct {
   VALUE *argv;
   ID method;
   int exception;
+  VALUE (*protected_task)(VALUE tsk_);
+  VALUE (*each_func)(VALUE block_arg, VALUE data, int argc, VALUE *argv);
+  VALUE each_udata;
 } iodine_rb_task_s;
 
 /* printout backtrace in case of exceptions */
@@ -47,6 +50,13 @@ static void *iodine_handle_exception(void *ignr) {
   return (void *)Qnil;
 }
 
+/* calls the Ruby each method within the protection block */
+static VALUE iodine_ruby_caller_perform_block(VALUE tsk_) {
+  iodine_rb_task_s *task = (void *)tsk_;
+  return rb_block_call(task->obj, task->method, task->argc, task->argv,
+                       task->each_func, task->each_udata);
+}
+
 /* calls the Ruby method within the protection block */
 static VALUE iodine_ruby_caller_perform(VALUE tsk_) {
   iodine_rb_task_s *task = (void *)tsk_;
@@ -56,7 +66,8 @@ static VALUE iodine_ruby_caller_perform(VALUE tsk_) {
 /* wrap the function call in exception handling block (uses longjmp) */
 static void *iodine_protect_ruby_call(void *task_) {
   int state = 0;
-  VALUE ret = rb_protect(iodine_ruby_caller_perform, (VALUE)(task_), &state);
+  VALUE ret = rb_protect(((iodine_rb_task_s *)task_)->protected_task,
+                         (VALUE)(task_), &state);
   if (state) {
     iodine_handle_exception(NULL);
   }
@@ -98,6 +109,7 @@ static VALUE iodine_call(VALUE obj, ID method) {
       .argc = 0,
       .argv = NULL,
       .method = method,
+      .protected_task = iodine_ruby_caller_perform,
   };
   void *rv = iodine_enterGVL(iodine_protect_ruby_call, &task);
   return (VALUE)rv;
@@ -110,6 +122,25 @@ static VALUE iodine_call2(VALUE obj, ID method, int argc, VALUE *argv) {
       .argc = argc,
       .argv = argv,
       .method = method,
+      .protected_task = iodine_ruby_caller_perform,
+  };
+  void *rv = iodine_enterGVL(iodine_protect_ruby_call, &task);
+  return (VALUE)rv;
+}
+
+/** Calls a Ruby method on a given object, protecting against exceptions. */
+static VALUE iodine_call_block(VALUE obj, ID method, int argc, VALUE *argv,
+                               VALUE udata,
+                               VALUE(each_func)(VALUE block_arg, VALUE udata,
+                                                int argc, VALUE *argv)) {
+  iodine_rb_task_s task = {
+      .obj = obj,
+      .argc = argc,
+      .argv = argv,
+      .method = method,
+      .protected_task = iodine_ruby_caller_perform,
+      .each_func = each_func,
+      .each_udata = udata,
   };
   void *rv = iodine_enterGVL(iodine_protect_ruby_call, &task);
   return (VALUE)rv;
@@ -130,6 +161,8 @@ struct IodineCaller_s IodineCaller = {
     .enterGVL = iodine_enterGVL,
     /** Calls a C function outside the GVL. */
     .leaveGVL = iodine_leaveGVL,
+    /** Calls a Ruby method on a given object, protecting against exceptions. */
+    .call_with_block = iodine_call_block,
     /** Calls a Ruby method on a given object, protecting against exceptions. */
     .call = iodine_call,
     /** Calls a Ruby method on a given object, protecting against exceptions. */
