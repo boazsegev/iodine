@@ -36,6 +36,8 @@ Iodine is an **evented** framework with a simple API that ports much of the [C f
 
 Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but CI tests start at Ruby 2.2.2.
 
+**Note**: iodine does **not** support the streaming when using Rack. Streaming over Rack should be avoided on any server, WebSockets, SSE and `Range` requests should always be preferred. On iodine no data will be sent before the whole of the data is available.
+
 ## Iodine - a fast & powerful HTTP + Websockets server with native Pub/Sub
 
 Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the [Websocket draft extension](./SPEC-Websocket-Draft.md).
