@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.28
+
+**Fix**: fixed an issue where iodine would crush (or hang) if unprotected exceptions were raised within a response body's `each` loop. This also fixes Fiber support when streaming with Roda (note: iodine will concat the body in a buffer before sending it). Credit to @adam12 (Adam Daniels) both for exposing the issue (#70) and testing possible solutions.
+
 #### Change log v.0.7.27
 
 **Compatibility**: (`iodine`) fixed the HTTP request `SCRIPT_NAME` variable (in the Rack `env`) to default to the global environment variable `SCRIPT_NAME` when `SCRIPT_NAME` isn't root (`/`). Credit to @thexa4 (Max Maton) for exposing this compatibility concern (issue #68).
