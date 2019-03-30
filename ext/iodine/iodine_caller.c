@@ -138,7 +138,7 @@ static VALUE iodine_call_block(VALUE obj, ID method, int argc, VALUE *argv,
       .argc = argc,
       .argv = argv,
       .method = method,
-      .protected_task = iodine_ruby_caller_perform,
+      .protected_task = iodine_ruby_caller_perform_block,
       .each_func = each_func,
       .each_udata = udata,
   };
