@@ -111,12 +111,14 @@ static VALUE rio_gets(VALUE self) {
 // Reads data from the IO, according to the Rack specifications for `#read`.
 static VALUE rio_read(int argc, VALUE *argv, VALUE self) {
   FIOBJ io = get_data(self);
-  if (!FIOBJ_TYPE_IS(io, FIOBJ_T_DATA))
-    return Qnil;
-
   VALUE buffer = Qnil;
-  char ret_nil = 0;
+  uint8_t ret_nil = 0;
   ssize_t len = 0;
+  if (!FIOBJ_TYPE_IS(io, FIOBJ_T_DATA)) {
+    FIO_LOG_ERROR("No OP object found");
+    return (argc > 0 && argv[0] != Qnil) ? Qnil : rb_str_buf_new(0);
+  }
+
   // get the buffer object if given
   if (argc == 2) {
     Check_Type(argv[1], T_STRING);
@@ -149,10 +151,7 @@ static VALUE rio_read(int argc, VALUE *argv, VALUE self) {
     }
     return buffer;
   }
-  if (ret_nil)
-    return Qnil;
-  else
-    return rb_str_buf_new(0);
+  return ret_nil ? Qnil : rb_str_buf_new(0);
 }
 
 // Does nothing - this is controlled by the server.

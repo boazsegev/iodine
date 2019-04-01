@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.29
+
+**Fix**: fixed an issue where `env['rack.input'].read(nil, nil)` would return `nil` instead of `""` on zero-content requests (i.e., an empty POST request). Credit to @thexa4 (Max Maton) for exposing this issue and providing a POC for debugging.
+
 #### Change log v.0.7.28
 
 **Fix**: fixed an issue where iodine would crush (or hang) if unprotected exceptions were raised within a response body's `each` loop. This also fixes Fiber support when streaming with Roda (note: iodine will concat the body in a buffer before sending it). Credit to @adam12 (Adam Daniels) both for exposing the issue (#70) and testing possible solutions.
