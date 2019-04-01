@@ -115,7 +115,6 @@ static VALUE rio_read(int argc, VALUE *argv, VALUE self) {
   uint8_t ret_nil = 0;
   ssize_t len = 0;
   if (!FIOBJ_TYPE_IS(io, FIOBJ_T_DATA)) {
-    FIO_LOG_ERROR("No OP object found");
     return (argc > 0 && argv[0] != Qnil) ? Qnil : rb_str_buf_new(0);
   }
 
