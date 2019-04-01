@@ -8,7 +8,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.29
 
-**Fix**: fixed an issue where `env['rack.input'].read(nil, nil)` would return `nil` instead of `""` on zero-content requests (i.e., an empty POST request). Credit to @thexa4 (Max Maton) for exposing this issue and providing a POC for debugging.
+**Fix**: fixed an issue where `env['rack.input'].read(nil, nil)` would return `nil` instead of `""` on zero-content requests (i.e., an empty POST request). Credit to @thexa4 (Max Maton) for exposing this issue and providing a POC for debugging (issue #71).
 
 #### Change log v.0.7.28
 
