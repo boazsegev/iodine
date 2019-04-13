@@ -373,16 +373,15 @@ static VALUE iodine_cli_parse(VALUE self) {
       FIO_CLI_PRINT("\t\t\x1B[4mNote\x1B[0m: to bind to a Unix socket, set "
                     "\x1B[1mport\x1B[0m to 0."),
       FIO_CLI_PRINT_HEADER("Concurrency:"),
-      FIO_CLI_INT("-workers -w number of processes to use."),
       FIO_CLI_INT("-threads -t number of threads per process."),
+      FIO_CLI_INT("-workers -w number of processes to use."),
       FIO_CLI_PRINT("Negative concurrency values "
                     "map to fractions of available CPU cores."),
       FIO_CLI_PRINT_HEADER("HTTP Settings:"),
       FIO_CLI_STRING("-public -www public folder, for static file service."),
-      FIO_CLI_BOOL("-log -v HTTP request logging."),
       FIO_CLI_INT("-keep-alive -k -tout HTTP keep-alive timeout in seconds "
                   "(0..255). Default: 40s"),
-      FIO_CLI_INT("-ping websocket ping interval (0..255). Default: 40s"),
+      FIO_CLI_BOOL("-log -v HTTP request logging."),
       FIO_CLI_INT(
           "-max-body -maxbd HTTP upload limit in Mega-Bytes. Default: 50Mb"),
       FIO_CLI_INT("-max-header -maxhd header limit per HTTP request in Kb. "
@@ -390,6 +389,7 @@ static VALUE iodine_cli_parse(VALUE self) {
       FIO_CLI_PRINT_HEADER("WebSocket Settings:"),
       FIO_CLI_INT("-max-msg -maxms incoming WebSocket message limit in Kb. "
                   "Default: 250Kb"),
+      FIO_CLI_INT("-ping websocket ping interval (0..255). Default: 40s"),
       FIO_CLI_PRINT_HEADER("SSL/TLS:"),
       FIO_CLI_BOOL("-tls enable SSL/TLS using a self-signed certificate."),
       FIO_CLI_STRING(
@@ -406,9 +406,10 @@ static VALUE iodine_cli_parse(VALUE self) {
       FIO_CLI_INT(
           "-redis-ping -rp websocket ping interval (0..255). Default: 300s"),
       FIO_CLI_PRINT_HEADER("Misc:"),
+      FIO_CLI_STRING("-pid -pidfile name for the pid file to be created."),
+      FIO_CLI_INT("-verbosity -V 0..5 server verbosity level. Default: 4"),
       FIO_CLI_BOOL(
-          "-warmup --preload warm up the application. CAREFUL! with workers."),
-      FIO_CLI_INT("-verbosity -V 0..5 server verbosity level. Default: 4"));
+          "-warmup --preload warm up the application. CAREFUL! with workers."));
 
   /* copy values from CLI library to iodine */
   if (fio_cli_get("-V")) {
@@ -520,6 +521,12 @@ static VALUE iodine_cli_parse(VALUE self) {
   if (fio_cli_unnamed_count()) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("filename_")),
                  rb_str_new_cstr(fio_cli_unnamed(0)));
+  }
+  if (fio_cli_get("-pid")) {
+    VALUE pid_filename = rb_str_new_cstr(fio_cli_get("-pid"));
+    rb_hash_aset(defaults, ID2SYM(rb_intern("pid_")), pid_filename);
+    rb_hash_aset(defaults, ID2SYM(rb_intern("pid")), pid_filename);
+    rb_hash_aset(defaults, ID2SYM(rb_intern("pidfile")), pid_filename);
   }
 
   /* create `filename` String, cleanup and return */
