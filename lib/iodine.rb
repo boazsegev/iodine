@@ -188,6 +188,22 @@ Iodine::DEFAULT_SETTINGS[:address] ||= nil
 ### Initialize Redis if set in CLI
 Iodine::PubSub.default = Iodine::PubSub::Redis.new(Iodine::DEFAULT_SETTINGS[:redis_], ping: Iodine::DEFAULT_SETTINGS[:redis_ping_]) if Iodine::DEFAULT_SETTINGS[:redis_]
 
+### PID file generation
+if Iodine::DEFAULT_SETTINGS[:pid_]
+  pid_filename = Iodine::DEFAULT_SETTINGS[:pid_]
+  pid_filename << "iodine.pid" if(pid_filename[-1] == '/')
+  if File.exist?(pid_filename)
+    raise "pid filename shold point to a valid file name (not a folder)!" if(!File.file?(pid_filename))
+    File.delete(pid_filename)
+  end
+  Iodine.on_state(:pre_start) do
+    IO.binwrite(pid_filename, "#{Process.pid}\r\n")
+  end
+  Iodine.on_state(:on_finish) do
+    File.delete(pid_filename)
+  end
+end
+
 ### Puma / Thin DSL compatibility - depracated (DSLs are evil)
 
 if(!defined?(after_fork))
