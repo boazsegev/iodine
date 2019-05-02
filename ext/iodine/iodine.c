@@ -406,6 +406,7 @@ static VALUE iodine_cli_parse(VALUE self) {
       FIO_CLI_INT(
           "-redis-ping -rp websocket ping interval (0..255). Default: 300s"),
       FIO_CLI_PRINT_HEADER("Misc:"),
+      FIO_CLI_STRING("-config -C configuration file to be loaded."),
       FIO_CLI_STRING("-pid -pidfile name for the pid file to be created."),
       FIO_CLI_INT("-verbosity -V 0..5 server verbosity level. Default: 4"),
       FIO_CLI_BOOL(
@@ -526,7 +527,10 @@ static VALUE iodine_cli_parse(VALUE self) {
     VALUE pid_filename = rb_str_new_cstr(fio_cli_get("-pid"));
     rb_hash_aset(defaults, ID2SYM(rb_intern("pid_")), pid_filename);
     rb_hash_aset(defaults, ID2SYM(rb_intern("pid")), pid_filename);
-    rb_hash_aset(defaults, ID2SYM(rb_intern("pidfile")), pid_filename);
+  }
+  if (fio_cli_get("-config")) {
+    VALUE conf_filename = rb_str_new_cstr(fio_cli_get("-config"));
+    rb_hash_aset(defaults, ID2SYM(rb_intern("conf_")), conf_filename);
   }
 
   /* create `filename` String, cleanup and return */

@@ -191,6 +191,7 @@ Iodine::PubSub.default = Iodine::PubSub::Redis.new(Iodine::DEFAULT_SETTINGS[:red
 ### PID file generation
 if Iodine::DEFAULT_SETTINGS[:pid_]
   pid_filename = Iodine::DEFAULT_SETTINGS[:pid_]
+  Iodine::DEFAULT_SETTINGS.delete :pid_
   pid_filename << "iodine.pid" if(pid_filename[-1] == '/')
   if File.exist?(pid_filename)
     raise "pid filename shold point to a valid file name (not a folder)!" if(!File.file?(pid_filename))
@@ -262,6 +263,11 @@ if(!defined?(before_fork))
 end
 
 
+#############
+## At end of loading
 
-
-
+### Load configuration filer
+if Iodine::DEFAULT_SETTINGS[:conf_]
+  require Iodine::DEFAULT_SETTINGS[:conf_]
+  Iodine::DEFAULT_SETTINGS.delete :conf_
+end
