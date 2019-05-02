@@ -6,6 +6,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.30
+
+**Update**: (`cli`) added support for the `-pid` flag - stores the master processes PID in a file.
+
+**Update**: (`cli`) added support for the `-config` (`-C`) flag - loads a configuration file immediately after loading iodine.
+
 #### Change log v.0.7.29
 
 **Fix**: fixed an issue where `env['rack.input'].read(nil, nil)` would return `nil` instead of `""` on zero-content requests (i.e., an empty POST request). Credit to @thexa4 (Max Maton) for exposing this issue and providing a POC for debugging (issue #71).
