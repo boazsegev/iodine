@@ -6,6 +6,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.31
+
+**Security**: a heap-overflow vulnerability was fixed in the WebSocket parser. This attack could have been triggered remotely by a maliciously crafted message-header. Credit to Dane (4cad@silvertoque) for exposing this issue and providing a Python script demonstrating the attack. 
+
+It's recommended that all iodine users update to the latest version.
+
 #### Change log v.0.7.30
 
 **Update**: (`cli`) added support for the `-pid` flag - stores the master processes PID in a file.
