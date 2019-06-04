@@ -25,6 +25,10 @@ Servers that publish WebSocket and/or EventSource (SSE) support using the `env['
 
 This document reserves the Rack `env` Hash keys of `rack.upgrade?` and `rack.upgrade`.
 
+A conforming server MUST set `env['rack.upgrade?']` to `:websocket` for incoming WebSocket connections and `:sse` for incoming EventSource (SSE) connections.
+
+If a connection is not "upgradable", a conforming server SHOULD set `env['rack.upgrade?']` to either `nil` or `false`. 
+
 The historical use of `upgrade.websocket?` and `upgrade.websocket` (iodine 0.4.x) will be gradually deprecated.
 
 ### The WebSocket / EventSource Callback Object
@@ -82,7 +86,7 @@ The server **MUST** provide the Callback Object with a `client` object, that sup
 
     \*Servers that divide large messages into a number of smaller messages (implement message fragmentation) MAY count each fragment separately, as if the fragmentation was performed by the user and `write` was called more than once per message.
 
-* `env` (iodine specific for now) returns the Rack `env` hash related to the originating HTTP request. Some changes to the `env` hash (such as removal of the IO hijacking support) might be required by the implementation.
+* `env` returns the Rack `env` hash related to the originating HTTP request. Some changes to the `env` hash (such as removal of the IO hijacking support) MAY be implemented by the server.
 
 WebSocket `ping` / `pong`, timeouts and network considerations should be implemented by the server. It is **RECOMMENDED** (but not required) that the server send `ping`s to prevent connection timeouts and detect network failure.
 
