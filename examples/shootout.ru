@@ -1,5 +1,6 @@
 require 'iodine'
 require 'json'
+require 'rack'
 
 module ShootoutApp
   # the default HTTP response
