@@ -27,7 +27,8 @@ typedef struct {
 static void *iodine_handle_exception(void *ignr) {
   (void)ignr;
   VALUE exc = rb_errinfo();
-  if (exc != Qnil) {
+  if (exc != Qnil && rb_respond_to(exc, rb_intern("message")) &&
+      rb_respond_to(exc, rb_intern("backtrace"))) {
     VALUE msg = rb_funcall2(exc, rb_intern("message"), 0, NULL);
     VALUE exc_class = rb_class_name(CLASS_OF(exc));
     VALUE bt = rb_funcall2(exc, rb_intern("backtrace"), 0, NULL);
@@ -46,6 +47,9 @@ static void *iodine_handle_exception(void *ignr) {
     rb_backtrace();
     FIO_LOG_ERROR("\n");
     rb_set_errinfo(Qnil);
+  } else if (exc != Qnil) {
+    FIO_LOG_ERROR(
+        "Iodine caught an unprotected exception - NO MESSAGE / DATA AVAILABLE");
   }
   return (void *)Qnil;
 }
