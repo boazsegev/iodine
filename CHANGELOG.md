@@ -6,6 +6,14 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.33
+
+**Fix**: (`iodine`) exception protection would fail and crash if the exception throws wasn't of type `Exception`. I'm not sure how this would happen, but on some Ruby versions it appeared to have occur, maybe where a custom `raise` would be called with a non-exception type. The issue was fixed by testing for the availability of the `message` and `backtrace` functions. Credit to Jan Biedermann (@janbiedermann) for exposing this issue (#76).
+
+**Fix**: (`cli`) the CLI interface no longer requires Rack to be installed. If Rack is installed, it will be used. Otherwise, a copy of the Rack::Builder code will execute, licensed under the MIT license from the Rack source code (Copyright (C) 2007-2019 [Leah Neukirchen](http://leahneukirchen.org/infopage.html)).
+
+**Compatibility**: (`facil`) iodine would raise the signal `SIGINT` when shutting down in cluster mode, even if shutdown was initiated using `Iodine.stop`. Although this was designed to ensure worker processes would stop, this approach caused RSpec to stop testing and report an error. A temporary fix was applied and might be upstreamed to the facil.io repo. Credit to Jan Biedermann (@janbiedermann) for exposing this issue (#76).
+
 #### Change log v.0.7.32
 
 **Fix**: (`http1`) fixes a race-condition between the `on_ready` and `on_data` events, that could result in the `on_data` event being called twice instead of once (only possible with some clients). On multi-threaded workers, this could result in the CPU spinning while the task lock remains busy. Credit to Néstor Coppi (@Shelvak) for exposing the issue and providing an example application with detailed reports. Issue #75.
