@@ -9,21 +9,23 @@ module Iodine
   #
   # * HTML escaping is more agressive, increasing XSS protection. Read why at: https://wonko.com/post/html-escaping .
   #
-  # * Partial template padding in Iodine is adds padding to dynamic text as well as static text. i.e., unlike the official Ruby mustache engine, if an argument contains a new line marker, the new line will be padded to match the partial template padding.
+  # * Partial template padding in Iodine adds padding to dynamic text as well as static text, unlike the official Ruby mustache engine. i.e., if an argument contains a new line marker, the new line will be padded to match the partial template padding.
   #
-  # * Lambda support is significantly different. For example, the resulting text isn't parsed (no lambda interpolation).
+  # * Lambda support is significantly different. For example, the text returned from a lambda isn't parsed (no lambda interpolation).
   #
   # * Dot notation is tested in whole as well as in part (i.e. `user.name.first` will be tested as is, than the couplet `"user","name.first"` and than as each `"use","name","first"`), allowing for the Hash data to contain keys with dots while still supporting dot notation shortcuts.
   #
-  # * Dot notation supports method names (even chained method names) as long as they don't have or require arguments. For example, `user.class.to_s` will behave differently on Iodine (returns `"String"`) than on the official mustache engine (returns empty string).
+  # * Dot notation supports method names (even chained method names) as long as they don't have or require arguments. For example, `user.class.to_s` will behave differently on Iodine (returns call name as `String`) than on the official mustache engine (fails / returns empty string).
   #
-  # Iodine Mustache's engine was designed to play best with basic data structures, such as results from the {Iodine::JSON} parser.
+  # Iodine Mustache's engine was designed to play best with basic data structures, such as results from the {Iodine::JSON} parser and doesn't require any special classes or types.
   #
   # Hash data is tested for Symbol keys before being tested for String keys and methods. This means that `:key` has precedence over `"key"`.
   #
-  # Note: Although using methods as "keys" (or argument names) is supported, no Ruby code is evaluated.
+  # Note: Although using methods as "keys" (or argument names) is supported, no Ruby code is evaluated. This means that only trusted (pre-existing) code will execute.
   #
-  # You can benchmark the Iodine Mustache performance and decide if you wish to switch from the Ruby implementation.
+  # Iodine's {Iodine::Mustache} engine performes about 5-7 times faster(!) than the official Ruby mustache engine. Tests performed with Ruby 2.6.0, comparing iodine 0.7.33 against mustache 1.1.0 using a 2.9 GHz Intel Core i9 CPU.
+  #
+  # You can benchmark the Iodine Mustache performance and decide if you wish to switch from the official Ruby implementation.
   #
   #     require 'benchmark/ips'
   #     require 'mustache'
