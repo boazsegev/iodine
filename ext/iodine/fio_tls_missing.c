@@ -19,7 +19,7 @@ Feel free to copy, use and enjoy according to the license provided.
  */
 #include "fio_tls.h"
 
-#if 1 /* TODO: place library compiler flags here */
+#if !defined(FIO_TLS_FOUND) /* Library compiler flags */
 
 #define REQUIRE_LIBRARY()
 #define FIO_TLS_WEAK
@@ -628,6 +628,7 @@ void FIO_TLS_WEAK fio_tls_destroy(fio_tls_s *tls) {
   fio_tls_destroy_context(tls);
   alpn_list_free(&tls->alpn);
   cert_ary_free(&tls->sni);
+  trust_ary_free(&tls->trust);
   free(tls);
 }
 
