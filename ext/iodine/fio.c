@@ -1178,12 +1178,13 @@ static inline void fio_mark_time(void) {
 /** Calculates the due time for a task, given it's interval */
 static struct timespec fio_timer_calc_due(size_t interval) {
   struct timespec now = fio_last_tick();
-  if (interval > 1000) {
-    now.tv_sec += interval / 1000;
-    interval -= interval / 1000;
+  if (interval >= 1000) {
+    unsigned long long secs = interval / 1000;
+    now.tv_sec += secs;
+    interval -= secs * 1000;
   }
   now.tv_nsec += (interval * 1000000UL);
-  if (now.tv_nsec > 1000000000L) {
+  if (now.tv_nsec >= 1000000000L) {
     now.tv_nsec -= 1000000000L;
     now.tv_sec += 1;
   }
@@ -1346,7 +1347,7 @@ Section Start Marker
 ***************************************************************************** */
 
 volatile uint8_t fio_signal_children_flag = 0;
-
+volatile fio_lock_i fio_signal_set_flag = 0;
 /* store old signal handlers to propegate signal handling */
 static struct sigaction fio_old_sig_chld;
 static struct sigaction fio_old_sig_pipe;
@@ -1415,7 +1416,7 @@ static void sig_int_handler(int sig) {
     break;
   }
   /* propagate signale handling to previous existing handler (if any) */
-  if (old->sa_handler != SIG_IGN && old->sa_handler != SIG_DFL)
+  if (old && old->sa_handler != SIG_IGN && old->sa_handler != SIG_DFL)
     old->sa_handler(sig);
 }
 
@@ -1423,7 +1424,7 @@ static void sig_int_handler(int sig) {
 static void fio_signal_handler_setup(void) {
   /* setup signal handling */
   struct sigaction act;
-  if (fio_old_sig_int.sa_handler)
+  if (fio_trylock(&fio_signal_set_flag))
     return;
 
   memset(&act, 0, sizeof(act));
@@ -1457,8 +1458,9 @@ static void fio_signal_handler_setup(void) {
 
 void fio_signal_handler_reset(void) {
   struct sigaction old;
-  if (!fio_old_sig_int.sa_handler)
+  if (fio_signal_set_flag)
     return;
+  fio_unlock(&fio_signal_set_flag);
   memset(&old, 0, sizeof(old));
   sigaction(SIGINT, &fio_old_sig_int, &old);
   sigaction(SIGTERM, &fio_old_sig_term, &old);
@@ -2968,7 +2970,7 @@ ssize_t fio_flush(intptr_t uuid) {
     goto test_errno;
   }
 
-  if (uuid_data(uuid).packet_count >= 1024 &&
+  if (uuid_data(uuid).packet_count >= FIO_SLOWLORIS_LIMIT &&
       uuid_data(uuid).packet == old_packet &&
       uuid_data(uuid).sent >= old_sent &&
       (uuid_data(uuid).sent - old_sent) < 32768) {
@@ -3533,11 +3535,12 @@ static void __attribute__((destructor)) fio_lib_destroy(void) {
   fio_data->active = 0;
   fio_on_fork();
   fio_defer_perform();
+  fio_timer_clear_all();
+  fio_defer_perform();
   fio_state_callback_force(FIO_CALL_AT_EXIT);
   fio_state_callback_clear_all();
   fio_defer_perform();
   fio_poll_close();
-  fio_timer_clear_all();
   fio_free(fio_data);
   /* memory library destruction must be last */
   fio_mem_destroy();
@@ -3811,14 +3814,15 @@ static void fio_worker_cleanup(void) {
       fio_force_close(fd2uuid(i));
     }
   }
-  fio_defer_perform();
-  fio_state_callback_force(FIO_CALL_ON_FINISH);
+  fio_timer_clear_all();
   fio_defer_perform();
   if (!fio_data->is_worker) {
-    fio_cluster_signal_children();
+    kill(0, SIGINT);
     while (wait(NULL) != -1)
       ;
   }
+  fio_defer_perform();
+  fio_state_callback_force(FIO_CALL_ON_FINISH);
   fio_defer_perform();
   fio_signal_handler_reset();
   if (fio_data->parent == getpid()) {
@@ -5125,7 +5129,7 @@ struct subscription_s {
   void *udata1;
   void *udata2;
   /** reference counter. */
-  uintptr_t ref;
+  volatile uintptr_t ref;
   /** prevents the callback from running concurrently for multiple messages. */
   fio_lock_i lock;
   fio_lock_i unsubscribed;
@@ -6202,7 +6206,7 @@ static void fio_cluster_listen_on_close(intptr_t uuid,
                   (int)getpid());
 #endif
     if (fio_data->active)
-      fio_stop();
+      kill(0, SIGINT);
   }
   (void)uuid;
 }
@@ -6244,6 +6248,7 @@ static void fio_cluster_client_handler(struct cluster_pr_s *pr) {
     break;
   case FIO_CLUSTER_MSG_SHUTDOWN:
     fio_stop();
+    kill(getpid(), SIGINT);
   case FIO_CLUSTER_MSG_ERROR:         /* fallthrough */
   case FIO_CLUSTER_MSG_PING:          /* fallthrough */
   case FIO_CLUSTER_MSG_ROOT:          /* fallthrough */
@@ -6498,7 +6503,7 @@ static void fio_pubsub_on_fork(void) {
 /** Signals children (or self) to shutdown) - NOT signal safe. */
 static void fio_cluster_signal_children(void) {
   if (fio_parent_pid() != getpid()) {
-    fio_stop();
+    kill(getpid(), SIGINT);
     return;
   }
   fio_cluster_server_sender(fio_msg_internal_create(0, FIO_CLUSTER_MSG_SHUTDOWN,

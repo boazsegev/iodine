@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.34
+
+**Security**: (`facil.io`, `http`) updated to facil.io 0.7.3, incorporating it's bug fixes and security updates.
+
 #### Change log v.0.7.33
 
 **Fix**: (`iodine`) exception protection would fail and crash if the exception throws wasn't of type `Exception`. I'm not sure how this would happen, but on some Ruby versions it appeared to have occur, maybe where a custom `raise` would be called with a non-exception type. The issue was fixed by testing for the availability of the `message` and `backtrace` functions. Credit to Jan Biedermann (@janbiedermann) for exposing this issue (#76).

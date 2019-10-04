@@ -73,6 +73,7 @@ static inline VALUE fiobj_mustache_find_obj_absolute(VALUE udata,
   /* search by String */
   key = rb_sym2str(key);
   tmp = rb_hash_lookup2(udata, key, Qundef);
+  rb_str_free(key);
   if (tmp != Qundef)
     return tmp;
   /* search by method */
@@ -294,8 +295,6 @@ static VALUE iodine_mustache_new(int argc, VALUE *argv, VALUE self) {
     Check_Type(template, T_STRING);
   if (filename != Qnil)
     Check_Type(filename, T_STRING);
-
-  fio_str_s str = FIO_STR_INIT;
 
   mustache_s **m = NULL;
   TypedData_Get_Struct(self, mustache_s *, &iodine_mustache_data_type, m);

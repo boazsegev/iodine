@@ -272,19 +272,19 @@ print_help:
       switch ((size_t)type) {
       case FIO_CLI_STRING__TYPE_I:
         fprintf(stderr,
-                " \x1B[1m%.*s\x1B[0m\x1B[2m <>\x1B[0m%*s\t\x1B[2msame as "
-                "%.*s\x1B[0m\n",
+                " \x1B[1m%.*s\x1B[0m\x1B[2m <>\x1B[0m%*s\t(same as "
+                "\x1B[1m%.*s\x1B[0m)\n",
                 (int)(tmp - start), p + start, padding, "", first_len, p);
         break;
       case FIO_CLI_BOOL__TYPE_I:
         fprintf(stderr,
-                " \x1B[1m%.*s\x1B[0m   %*s\t\x1B[2msame as %.*s\x1B[0m\n",
+                " \x1B[1m%.*s\x1B[0m   %*s\t(same as \x1B[1m%.*s\x1B[0m)\n",
                 (int)(tmp - start), p + start, padding, "", first_len, p);
         break;
       case FIO_CLI_INT__TYPE_I:
         fprintf(stderr,
-                " \x1B[1m%.*s\x1B[0m\x1B[2m ##\x1B[0m%*s\t\x1B[2msame as "
-                "%.*s\x1B[0m\n",
+                " \x1B[1m%.*s\x1B[0m\x1B[2m ##\x1B[0m%*s\t(same as "
+                "\x1B[1m%.*s\x1B[0m)\n",
                 (int)(tmp - start), p + start, padding, "", first_len, p);
         break;
       }

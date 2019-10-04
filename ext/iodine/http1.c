@@ -554,7 +554,7 @@ static int http1_on_request(http1_parser_s *parser) {
   if (p->request.method && !p->stop)
     http_finish(&p->request);
   h1_reset(p);
-  return !p->close && fio_is_closed(p->p.uuid);
+  return fio_is_closed(p->p.uuid);
 }
 /** called when a response was received. */
 static int http1_on_response(http1_parser_s *parser) {
@@ -563,7 +563,7 @@ static int http1_on_response(http1_parser_s *parser) {
   if (p->request.status_str && !p->stop)
     http_finish(&p->request);
   h1_reset(p);
-  return !p->close && fio_is_closed(p->p.uuid);
+  return fio_is_closed(p->p.uuid);
 }
 /** called when a request method is parsed. */
 static int http1_on_method(http1_parser_s *parser, char *method,
@@ -666,9 +666,9 @@ static int http1_on_body_chunk(http1_parser_s *parser, char *data,
 
 /** called when a protocol error occurred. */
 static int http1_on_error(http1_parser_s *parser) {
-  FIO_LOG_DEBUG("HTTP parser error at HTTP/1.1 buffer position %zu/%zu",
-                parser->state.next - parser2http(parser)->buf,
-                parser2http(parser)->buf_len);
+  if (parser2http(parser)->close)
+    return -1;
+  FIO_LOG_DEBUG("HTTP parser error.");
   fio_close(parser2http(parser)->p.uuid);
   return -1;
 }
@@ -723,8 +723,8 @@ static inline void http1_consume_data(intptr_t uuid, http1pr_s *p) {
 
 throttle:
   /* throttle busy clients (slowloris) */
-  fio_suspend(uuid);
   p->stop |= 4;
+  fio_suspend(uuid);
   FIO_LOG_DEBUG("(HTTP/1,1) throttling client at %.*s",
                 (int)fio_peer_addr(uuid).len, fio_peer_addr(uuid).data);
 }
@@ -756,8 +756,8 @@ static void http1_on_close(intptr_t uuid, fio_protocol_s *protocol) {
 static void http1_on_ready(intptr_t uuid, fio_protocol_s *protocol) {
   /* resume slow clients from suspension */
   http1pr_s *p = (http1pr_s *)protocol;
-  if ((p->stop & 4)) {
-    p->stop ^= 4;
+  if (p->stop & 4) {
+    p->stop ^= 4; /* flip back the bit, so it's zero */
     fio_force_event(uuid, FIO_EVENT_ON_DATA);
   }
   (void)protocol;
@@ -776,7 +776,6 @@ static void http1_on_data_first_time(intptr_t uuid, fio_protocol_s *protocol) {
 
   /* ensure future reads skip this first time HTTP/2.0 test */
   p->p.protocol.on_data = http1_on_data;
-  /* Test fot HTTP/2.0 pre-knowledge */
   if (i >= 24 && !memcmp(p->buf, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", 24)) {
     FIO_LOG_WARNING("client claimed unsupported HTTP/2 prior knowledge.");
     fio_close(uuid);

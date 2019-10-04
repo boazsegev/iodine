@@ -109,8 +109,8 @@ Version and helper macros
 
 #define FIO_VERSION_MAJOR 0
 #define FIO_VERSION_MINOR 7
-#define FIO_VERSION_PATCH 0
-#define FIO_VERSION_BETA 9
+#define FIO_VERSION_PATCH 3
+#define FIO_VERSION_BETA 0
 
 /* Automatically convert version data to a string constant - ignore these two */
 #define FIO_MACRO2STR_STEP2(macro) #macro
@@ -1250,7 +1250,7 @@ inline FIO_FUNC ssize_t fio_write(const intptr_t uuid, const void *buffer,
 inline FIO_FUNC ssize_t fio_sendfile(intptr_t uuid, intptr_t source_fd,
                                      off_t offset, size_t length) {
   return fio_write2(uuid, .data.fd = source_fd, .length = length, .is_fd = 1,
-                    .offset = offset);
+                    .offset = (uintptr_t)offset);
 }
 
 /**
@@ -2984,8 +2984,8 @@ FIO_FUNC inline void fio_reschedule_thread(void) {
 
 /** Nanosleep the thread - a blocking throttle. */
 FIO_FUNC inline void fio_throttle_thread(size_t nano_sec) {
-  const struct timespec tm = {.tv_nsec = (nano_sec % 1000000000),
-                              .tv_sec = (nano_sec / 1000000000)};
+  const struct timespec tm = {.tv_nsec = (long)(nano_sec % 1000000000),
+                              .tv_sec = (time_t)(nano_sec / 1000000000)};
   nanosleep(&tm, NULL);
 }
 
@@ -5494,10 +5494,10 @@ Done
  * Note: FIO_SET_HASH_TYPE should, normaly be left alone (uintptr_t is
  *       enough). Also, the hash value 0 is reserved to indicate an empty slot.
  *
- * Note: the FIO_SET_OBJ_COMPARE for Sets or the FIO_SET_KEY_COMPARE will be
- *       used to compare against invalid as well as valid objects. Invalid
- *       objects have their bytes all zero. FIO_SET_*_DESTROY should somehow
- *       mark them as invalid.
+ * Note: the FIO_SET_OBJ_COMPARE or the FIO_SET_KEY_COMPARE will be used to
+ *       compare against invalid as well as valid objects. Invalid objects have
+ *       their bytes all zero. FIO_SET_*_DESTROY should somehow mark them as
+ *       invalid.
  *
  * Note: Before freeing the Set, FIO_SET_OBJ_DESTROY will be automatically
  *       called for every existing object.
@@ -5610,16 +5610,16 @@ typedef struct {
 #endif
 
 /* The default Hash Map-Set has will use straight euqality operators */
-#if !defined(FIO_SET_KEY_COMPARE)
+#ifndef FIO_SET_KEY_COMPARE
 #define FIO_SET_KEY_COMPARE(o1, o2) ((o1) == (o2))
 #endif
 
 /** Internal macros for object actions in Hash mode */
 #define FIO_SET_COMPARE(o1, o2) FIO_SET_KEY_COMPARE((o1).key, (o2).key)
-#define FIO_SET_COPY(dest, org)                                                \
+#define FIO_SET_COPY(dest, src)                                                \
   do {                                                                         \
-    FIO_SET_OBJ_COPY((dest).obj, (org).obj);                                   \
-    FIO_SET_KEY_COPY((dest).key, (org).key);                                   \
+    FIO_SET_OBJ_COPY((dest).obj, (src).obj);                                   \
+    FIO_SET_KEY_COPY((dest).key, (src).key);                                   \
   } while (0);
 #define FIO_SET_DESTROY(couplet)                                               \
   do {                                                                         \
@@ -5871,7 +5871,7 @@ FIO_FUNC inline FIO_NAME(_map_s_) *
     if (FIO_SET_HASH_COMPARE(FIO_SET_HASH_INVALID, pos->hash))
       return pos;
     if (FIO_SET_HASH_COMPARE(pos->hash, hash_value_i)) {
-      if (!pos->pos || FIO_SET_COMPARE(pos->pos->obj, obj))
+      if (!pos->pos || (FIO_SET_COMPARE(pos->pos->obj, obj)))
         return pos;
       /* full hash value collision detected */
       set->has_collisions = 1;
@@ -5890,7 +5890,7 @@ FIO_FUNC inline FIO_NAME(_map_s_) *
       if (FIO_SET_HASH_COMPARE(FIO_SET_HASH_INVALID, pos->hash))
         return pos;
       if (FIO_SET_HASH_COMPARE(pos->hash, hash_value_i)) {
-        if (!pos->pos || FIO_SET_COMPARE(pos->pos->obj, obj))
+        if (!pos->pos || (FIO_SET_COMPARE(pos->pos->obj, obj)))
           return pos;
         /* full hash value collision detected */
         set->has_collisions = 1;
