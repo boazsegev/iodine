@@ -25,9 +25,7 @@ module Spec
       end
 
       def start_iodine_with_app(name)
-        pid = Bundler.with_clean_env do
-          spawn_with_test_log("exe/iodine -V 3 -port 2222 -w 1 -t 1 spec/support/apps/#{name}.ru")
-        end
+        pid = spawn_with_test_log("bundle exec exe/iodine -V 3 -port 2222 -w 1 -t 1 spec/support/apps/#{name}.ru")
 
         wait_until_iodine_ready
 
