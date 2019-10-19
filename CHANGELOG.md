@@ -10,6 +10,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 **Fix**: fix memory leak in the x-sendfile path where Ruby objects no longer in use would still be protected by iodine.
 
+**Update**: (`iodine`) add the `Iodine.running?` method. Credit to Ian Ker-Seymer (@ianks) for PR #78.
+
 #### Change log v.0.7.34
 
 **Security**: (`facil.io`, `http`) updated to facil.io 0.7.3, incorporating it's bug fixes and security updates.
