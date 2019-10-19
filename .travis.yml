@@ -24,7 +24,7 @@ addons:
 script:
   - echo CFLAGS = $CFLAGS
   - echo cflags = $cflags
+  - bundle exec rake compile && bundle exec rspec --format documentation
   - gem uninstall -x iodine
   - rake build
   - find pkg/iodine-*.gem -exec gem install -V {} +
-  - bundle exec rspec --format documentation
