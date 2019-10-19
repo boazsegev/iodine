@@ -268,7 +268,7 @@ static int iodine_copy2env_task(FIOBJ o, void *env_) {
     hname = HTTP_CONNECTION;
   } else if (tmp.len == 4 && !memcmp("host", tmp.data, 4)) {
     hname = HTTP_HOST;
-  } else if (tmp.len > 59) {
+  } else if (tmp.len > 123) {
     char *buf = fio_malloc(tmp.len + 5);
     memcpy(buf, "HTTP_", 5);
     for (size_t i = 0; i < tmp.len; ++i) {
@@ -277,7 +277,7 @@ static int iodine_copy2env_task(FIOBJ o, void *env_) {
     hname = rb_enc_str_new(buf, tmp.len + 5, IodineBinaryEncoding);
     fio_free(buf);
   } else {
-    char buf[64];
+    char buf[128];
     memcpy(buf, "HTTP_", 5);
     for (size_t i = 0; i < tmp.len; ++i) {
       buf[i + 5] = (tmp.data[i] == '-') ? '_' : to_upper(tmp.data[i]);
@@ -695,7 +695,7 @@ static inline void *iodine_handle_request_in_GVL(void *handle_) {
     rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(h));
     IodineStore.remove(response_headers);
     // send the file directly and finish
-    return NULL;
+    goto finish;
   }
   // review each header and write it to the response.
   rb_hash_foreach(response_headers, for_each_header_data, (VALUE)(h));
@@ -707,6 +707,7 @@ static inline void *iodine_handle_request_in_GVL(void *handle_) {
   if (ruby2c_response_send(handle, rbresponse, env))
     goto internal_error;
 
+finish:
   IodineStore.remove(rbresponse);
   IodineStore.remove(env);
   return NULL;
