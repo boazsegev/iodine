@@ -17,13 +17,20 @@ C <=> Ruby Data allocation
 ***************************************************************************** */
 
 static size_t iodine_mustache_data_size(const void *c_) {
-  return sizeof(mustache_s *);
+  return sizeof(mustache_s *) +
+         (((mustache_s **)c_)[0]
+              ? (((mustache_s **)c_)[0]->u.read_only.data_length +
+                 (((mustache_s **)c_)[0]->u.read_only.intruction_count *
+                  sizeof(struct mustache__instruction_s)))
+              : 0);
   (void)c_;
 }
 
 static void iodine_mustache_data_free(void *c_) {
   mustache_free(((mustache_s **)c_)[0]);
+  FIO_LOG_DEBUG("deallocated mustache data at: %p", ((void **)c_)[0]);
   free((void *)c_);
+  FIO_LOG_DEBUG("deallocated mustache pointer at: %p", c_);
   (void)c_;
 }
 
@@ -43,6 +50,7 @@ static const rb_data_type_t iodine_mustache_data_type = {
 static VALUE iodine_mustache_data_alloc_c(VALUE self) {
   void *m = malloc(sizeof(mustache_s *));
   ((mustache_s **)m)[0] = NULL;
+  FIO_LOG_DEBUG("allocated mustache pointer at: %p", m);
   return TypedData_Wrap_Struct(self, &iodine_mustache_data_type, m);
 }
 
@@ -310,9 +318,11 @@ static VALUE iodine_mustache_new(int argc, VALUE *argv, VALUE self) {
                      .data = (template == Qnil ? NULL : RSTRING_PTR(template)),
                      .data_len = (template == Qnil ? 0 : RSTRING_LEN(template)),
                      .err = &err);
-
   if (!*m)
     goto error;
+
+  FIO_LOG_DEBUG("allocated / loaded mustache data at: %p", (void *)*m);
+
   return self;
 error:
   switch (err) {
