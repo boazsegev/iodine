@@ -40,6 +40,8 @@ Gem::Specification.new do |spec|
   # spec.add_development_dependency 'bundler', '>= 1.10', '< 2.0'
   spec.add_development_dependency 'rake', '~> 12.0', '< 13.0'
   spec.add_development_dependency 'minitest', '>=5', '< 6.0'
+  spec.add_development_dependency 'rspec', '>=3.9.0', '< 4.0'
+  spec.add_development_dependency 'spec', '>=5.3.0', '< 6.0'
   spec.add_development_dependency 'rake-compiler', '>= 1', '< 2.0'
 
   spec.post_install_message = "Thank you for installing Iodine #{Iodine::VERSION}.\n" +
