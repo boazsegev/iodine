@@ -1,14 +1,13 @@
 require "bundler/gem_tasks"
-require "rake/testtask"
 require "rake/extensiontask"
 
-Rake::TestTask.new(:test) do |t|
-  t.libs << "test"
-  t.libs << "lib"
-  t.test_files = FileList['test/**/*_test.rb']
+begin
+  require 'rspec/core/rake_task'
+  RSpec::Core::RakeTask.new(:spec)
+rescue LoadError
 end
 
-task :default => [:compile, :test]
+task :default => [:compile, :spec]
 
 Rake::ExtensionTask.new "iodine" do |ext|
   ext.lib_dir = "lib/iodine"

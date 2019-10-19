@@ -302,6 +302,17 @@ static VALUE iodine_worker_is(VALUE self) {
   return fio_is_master() ? Qtrue : Qfalse;
 }
 
+/**
+ * Returns `true` if Iodine is currently running a server
+ */
+static VALUE iodine_running(VALUE self) {
+  if (fio_is_running()) {
+    return Qtrue;
+  } else {
+    return Qfalse;
+  }
+}
+
 /* *****************************************************************************
 CLI parser (Ruby's OptParser is more limiting than I knew...)
 ***************************************************************************** */
@@ -1292,6 +1303,7 @@ void Init_iodine(void) {
   rb_define_module_function(IodineModule, "on_idle", iodine_sched_on_idle, 0);
   rb_define_module_function(IodineModule, "master?", iodine_master_is, 0);
   rb_define_module_function(IodineModule, "worker?", iodine_worker_is, 0);
+  rb_define_module_function(IodineModule, "running?", iodine_running, 0);
   rb_define_module_function(IodineModule, "listen", iodine_listen, 1);
   rb_define_module_function(IodineModule, "connect", iodine_connect, 1);
 
