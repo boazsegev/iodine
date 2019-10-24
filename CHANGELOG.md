@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.36
+
+**Fix**: avoids clobbering the namespace when attempting to set Rack's default handler. Credit to Caleb Albritton ( @WA9ACE ) for issue #80 and PR #81.
+
 #### Change log v.0.7.35
 
 **Fix**: fix memory leak in the x-sendfile path where Ruby objects no longer in use would still be protected by iodine.
