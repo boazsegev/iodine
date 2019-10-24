@@ -18,14 +18,7 @@ module Iodine
   end
 end
 
-ENV['RACK_HANDLER'] = 'iodine'
-
-# make Iodine the default fallback position for Rack.
-begin
-  require 'rack/handler' unless defined?(Rack::Handler)
-  Rack::Handler::WEBrick = ::Iodine::Rack # Rack::Handler.get(:iodine)
-rescue LoadError
-end
+ENV['RACK_HANDLER'] ||= 'iodine'
 
 begin
   ::Rack::Handler.register('iodine', 'Iodine::Rack') if defined?(::Rack::Handler)
