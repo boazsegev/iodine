@@ -6249,7 +6249,6 @@ static void fio_cluster_client_handler(struct cluster_pr_s *pr) {
     break;
   case FIO_CLUSTER_MSG_SHUTDOWN:
     fio_stop();
-    kill(getpid(), SIGINT);
   case FIO_CLUSTER_MSG_ERROR:         /* fallthrough */
   case FIO_CLUSTER_MSG_PING:          /* fallthrough */
   case FIO_CLUSTER_MSG_ROOT:          /* fallthrough */
