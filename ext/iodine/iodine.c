@@ -117,6 +117,8 @@ Core API
  * i.e., -2 == half the number of detected CPU cores.
  *
  * Zero values promise nothing (iodine will decide what to do with them).
+ *
+ * @return [FixNum] Thread Count
  */
 static VALUE iodine_threads_get(VALUE self) {
   VALUE i = rb_ivar_get(self, rb_intern2("@threads", 8));
@@ -133,6 +135,8 @@ static VALUE iodine_threads_get(VALUE self) {
  * i.e., -2 == half the number of detected CPU cores.
  *
  * Zero values promise nothing (iodine will decide what to do with them).
+ *
+ * @param thread_count [FixNum] The number of worker threads to use
  */
 static VALUE iodine_threads_set(VALUE self, VALUE val) {
   Check_Type(val, T_FIXNUM);
@@ -157,6 +161,8 @@ static VALUE iodine_threads_set(VALUE self, VALUE val) {
  *
  * Logging is always performed to the process's STDERR and can be piped away.
  *
+ * @return [FixNum] Logging Level
+ *
  * NOTE: this does NOT effect HTTP logging.
  */
 static VALUE iodine_logging_get(VALUE self) {
@@ -178,6 +184,8 @@ static VALUE iodine_logging_get(VALUE self) {
  *
  * Logging is always performed to the process's STDERR and can be piped away.
  *
+ * @param log_level [FixNum] Sets the logging level
+ *
  * NOTE: this does NOT effect HTTP logging.
  */
 static VALUE iodine_logging_set(VALUE self, VALUE val) {
@@ -196,6 +204,8 @@ static VALUE iodine_logging_set(VALUE self, VALUE val) {
  * Zero values promise nothing (iodine will decide what to do with them).
  *
  * 1 == single process mode, the msater process acts as a worker process.
+ *
+ * @return [FixNum] Worker Count
  */
 static VALUE iodine_workers_get(VALUE self) {
   VALUE i = rb_ivar_get(self, rb_intern2("@workers", 8));
@@ -214,6 +224,8 @@ static VALUE iodine_workers_get(VALUE self) {
  * Zero values promise nothing (iodine will decide what to do with them).
  *
  * 1 == single process mode, the msater process acts as a worker process.
+ *
+ * @param worker_count [FixNum] Number of worker processes
  */
 static VALUE iodine_workers_set(VALUE self, VALUE val) {
   Check_Type(val, T_FIXNUM);
