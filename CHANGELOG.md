@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.37
+
+**Fix**: documentation improvements and corrections, credit to Caleb Albritton ( @WA9ACE ) and Don Morrison ( @elskwid ) for PRs #82 and #83.
+
 #### Change log v.0.7.36
 
 **Fix**: avoids clobbering the namespace when attempting to set Rack's default handler. Credit to Caleb Albritton ( @WA9ACE ) for issue #80 and PR #81.
