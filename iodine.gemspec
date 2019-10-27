@@ -45,5 +45,5 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency 'rake-compiler', '>= 1', '< 2.0'
 
   spec.post_install_message = "Thank you for installing Iodine #{Iodine::VERSION}.\n" +
-                              "Remember: if iodine supports your business, it's is only fair to give value back (code contributions / donations)."
+                              "Remember: if iodine supports your business, it's only fair to give value back (code contributions / donations)."
 end
