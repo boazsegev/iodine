@@ -348,7 +348,7 @@ Since the master / root process doesn't handle any requests (it only handles pub
 
 ### Optimized HTTP logging
 
-By default, iodine is pretty quite. Some messages are logged to `stderr`, but not many.
+By default, iodine is pretty quiet. Some messages are logged to `stderr`, but not many.
 
 However, HTTP requests can be logged using iodine's optimized logger to `stderr`. Iodine will optimize the log output by caching the output time string which updates every second rather than every request.
 
@@ -585,7 +585,7 @@ More possible compile time options can be found in the [facil.io documentation](
 
 ## Evented oriented design with extra safety
 
-Iodine is an evened server, similar in it's architecture to `nginx` and `puma`. It's different than the simple "thread-per-client" design that is often taught when we begin to learn about network programming.
+Iodine is an evented server, similar in its architecture to `nginx` and `puma`. It's different than the simple "thread-per-client" design that is often taught when we begin to learn about network programming.
 
 By leveraging `epoll` (on Linux) and `kqueue` (on BSD), iodine can listen to multiple network events on multiple sockets using a single thread.
 

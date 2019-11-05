@@ -8,7 +8,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.37
 
-**Fix**: documentation improvements and corrections, credit to Caleb Albritton ( @WA9ACE ) and Don Morrison ( @elskwid ) for PRs #82 and #83.
+**Fix**: documentation improvements and corrections, credit to Caleb Albritton ( @WA9ACE ) and Don Morrison ( @elskwid ) for PRs #82 and #83. Credit to Nir ( @Roko131 ) and Aurel Branzeanu ( @texpert ) for opening and commenting on issue #84.
 
 #### Change log v.0.7.36
 
