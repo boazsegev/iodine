@@ -47,6 +47,8 @@ static int seek2ch(uint8_t **buffer, register uint8_t *const limit,
   {
     const uint8_t *alignment =
         (uint8_t *)(((uintptr_t)(*buffer) & (~(uintptr_t)7)) + 8);
+    if (*buffer < alignment)
+      *buffer += 1; /* already tested this char */
     if (limit >= alignment) {
       while (*buffer < alignment) {
         if (**buffer == c) {
@@ -93,7 +95,7 @@ finish:
 inline static uint8_t seek2ch(uint8_t **pos, uint8_t *const limit, uint8_t ch) {
   /* This is library based alternative that is sometimes slower  */
   if (*pos >= limit || **pos == ch) {
-    return 0;
+    return 1;
   }
   uint8_t *tmp = memchr(*pos, ch, limit - (*pos));
   if (tmp) {
