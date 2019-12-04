@@ -1,3 +1,5 @@
+require 'http'
+
 module Spec
   module Support
     module IodineServer
@@ -18,17 +20,17 @@ module Spec
             Socket.tcp('localhost', 2222, connect_timeout: 1) {}
             break
           rescue Errno::ECONNREFUSED
-            raise 'Could not start iodine' if tries > 10
+            raise "Could not start iodine, please check spec/log/test.log for more info" if tries > 10
             tries += 1
           end
         end
       end
 
       def start_iodine_with_app(name)
-        pid = spawn_with_test_log("bundle exec exe/iodine -V 3 -port 2222 -w 1 -t 1 spec/support/apps/#{name}.ru")
-
+        filename = "spec/support/apps/#{name}.ru"
+        raise "test rack file (#{name}) does not exist" unless File.exist?(filename)
+        pid = spawn_with_test_log("bundle exec exe/iodine -p 2222 -w 1 -t 1 #{filename}")
         wait_until_iodine_ready
-
         pid
       end
 
