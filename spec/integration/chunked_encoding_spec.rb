@@ -4,7 +4,14 @@ RSpec.describe 'Transfer-Encoding Header' do
   around(:example) { |ex| with_app(:body_size) { ex.run } }
 
   let(:body_size) { 6 }
-  let(:io) { StringIO.new("a" * body_size) }
+  let(:body_string) { SecureRandom.hex(body_size).to_s[0...body_size] }
+  let(:io) do
+    # ensures theres no size sneaking in
+    reader, writer = IO.pipe
+    writer.write(body_string)
+    writer.close
+    reader
+  end
 
   shared_examples 'body size' do
     it 'returns the correct body size when chunked encoding is used' do
@@ -15,7 +22,7 @@ RSpec.describe 'Transfer-Encoding Header' do
   end
 
   context 'when the request is not chunked' do
-    let(:headers) { Hash[] }
+    let(:headers) { Hash['Content-Length' => body_size] }
 
     include_examples 'body size'
   end
@@ -32,9 +39,16 @@ RSpec.describe 'Transfer-Encoding Header' do
     include_examples 'body size'
   end
 
-  context 'when the body size is long' do
+  context 'when the body size is long and unevenly chunked' do
     let(:headers) { Hash['Transfer-Encoding' => 'chunked'] }
-    let(:body_size) { 60000 }
+    let(:body_size) { 0x4001 }
+
+    include_examples 'body size'
+  end
+
+  context 'when the body size is long and evenly chunked' do
+    let(:headers) { Hash['Transfer-Encoding' => 'chunked'] }
+    let(:body_size) { 0x4000  + 0x4000 }
 
     include_examples 'body size'
   end

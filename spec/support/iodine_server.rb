@@ -12,7 +12,7 @@ module Spec
       end
 
       def http_post(path, *args)
-        http_client.get("http://localhost:#{server_port}#{path}", *args)
+        http_client.post("http://localhost:#{server_port}#{path}", *args)
       end
 
       def spawn_with_test_log(cmd)
