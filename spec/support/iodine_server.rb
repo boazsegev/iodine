@@ -4,7 +4,7 @@ module Spec
   module Support
     module IodineServer
       def spawn_with_test_log(cmd)
-        test_log = File.open('spec/log/test.log', 'a+')
+        test_log = ENV.key?('VERBOSE') ? STDERR : File.open('spec/log/test.log', 'a+')
 
         Bundler.with_clean_env do
           Process.spawn(cmd, out: test_log, err: test_log)

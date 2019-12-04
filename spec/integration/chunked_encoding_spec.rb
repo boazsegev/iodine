@@ -27,4 +27,10 @@ RSpec.describe 'Transfer-Encoding Header' do
 
     include_examples 'body size'
   end
+
+  context 'when the header is downcased' do
+    let(:headers) { Hash['transfer-encoding' => 'chunked'] }
+
+    include_examples 'body size'
+  end
 end
