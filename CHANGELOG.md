@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.38
+
+**Fix**: (`http`) fixes an issue and improves support for chunked encoded payloads. Credit to Ian Ker-Seymer ( @ianks ) for exposing this, writing tests and opening both the issue #87 and the PR #88.
+
 #### Change log v.0.7.37
 
 **Fix**: requests will fail when the path contains a dangling `?` (empty query). Credit to @adam12 for exposing this and opening issue #86.
