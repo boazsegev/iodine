@@ -251,7 +251,7 @@ inline static int consume_header(struct http1_fio_parser_args_s *args,
     args->parser->state.content_length = atol((char *)start_value);
   } else if ((end_name - start) == 17 &&
              HEADER_NAME_IS_EQ((char *)start, "transfer-encoding", 17) &&
-             memcmp(start_value, "chunked", 7)) {
+             HEADER_VALUE_IS_EQ_CASE_SENSITIVE((char *)start_value, "chunked", 7)) {
     /* handle the special `transfer-encoding: chunked` header */
     args->parser->state.reserved |= 64;
   } else if ((end_name - start) == 7 &&

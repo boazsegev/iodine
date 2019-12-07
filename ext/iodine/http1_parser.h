@@ -48,6 +48,9 @@ to maintain and that could be used for an HTTP/1.x client as well.
   (!strncasecmp((var_name), (const_name), (len)))
 #endif
 
+#define HEADER_VALUE_IS_EQ_CASE_SENSITIVE(var_name, const_name, len)                           \
+  (!memcmp((var_name), (const_name), (len)))
+
 /** this struct contains the state of the parser. */
 typedef struct http1_parser_s {
   void *udata;
