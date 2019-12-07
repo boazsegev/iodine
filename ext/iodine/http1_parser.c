@@ -22,6 +22,10 @@ Seeking for characters in a string
 #define ALLOW_UNALIGNED_MEMORY_ACCESS 0
 #endif
 
+#ifndef HTTP_ADD_CONTENT_LENGTH_HEADER_IF_MISSING
+#define HTTP_ADD_CONTENT_LENGTH_HEADER_IF_MISSING 1
+#endif
+
 #if FIO_MEMCHAR
 
 /**
@@ -452,6 +456,22 @@ inline static int consume_body_chunked(struct http1_fio_parser_args_s *args,
         /* consume trailing EOL */
         if (*start + 2 <= stop)
           *start += 2;
+#ifdef HTTP_ADD_CONTENT_LENGTH_HEADER_IF_MISSING
+        { /* add virtual header ... ? */
+          char buf[512];
+          size_t buf_len = 512;
+          size_t tmp_len = args->parser->state.read;
+          buf[--buf_len] = 0;
+          while (tmp_len) {
+            size_t mod = tmp_len / 10;
+            buf[--buf_len] = '0' + (tmp_len - (mod * 10));
+            tmp_len = mod;
+          }
+          if (args->on_header(args->parser, "content-length", 14,
+                              (char *)buf + buf_len, 511 - buf_len))
+            return -1;
+        }
+#endif
         if (args->parser->state.reserved & 32) {
           /* remove the "headers complete" and "trailer" flags */
           args->parser->state.reserved &= 0xDD; /* 0xDD == ~2 & ~32 & 0xFF */

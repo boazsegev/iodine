@@ -22,6 +22,10 @@ module ShootoutApp
       len += out[-1].length
       request.params.each { |k,v| out << "#{k}: #{v}\n" ; len += out[-1].length }
     end
+    if(env['rack.input'])
+      out << env['rack.input'].read
+      len += out[-1].length
+    end
     [200, { 'Content-Length' => len.to_s, 'Content-Type' => 'text/plain; charset=UTF-8;' }, out]
   end
   # We'll base the shootout on the internal Pub/Sub service.
