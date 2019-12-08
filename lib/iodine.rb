@@ -1,3 +1,4 @@
+require 'stringio' # Used internally as a default RackIO
 require 'socket'  # TCPSocket is used internally for Hijack support
 # require 'openssl' # For SSL/TLS support using OpenSSL
 
