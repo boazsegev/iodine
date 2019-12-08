@@ -28,6 +28,8 @@ typedef struct {
 } iodine_http_settings_s;
 
 /* these three are used also by iodin_rack_io.c */
+VALUE IODINE_R_INPUT_DEFAULT;
+VALUE IODINE_R_INPUT;
 VALUE IODINE_R_HIJACK;
 VALUE IODINE_R_HIJACK_IO;
 VALUE IODINE_R_HIJACK_CB;
@@ -846,6 +848,7 @@ static void initialize_env_template(void) {
     }
     add_str_to_env(env_template_no_upgrade, "SCRIPT_NAME", sn);
   }
+  rb_hash_aset(env_template_no_upgrade, IODINE_R_INPUT, IODINE_R_INPUT_DEFAULT);
   add_value_to_env(env_template_no_upgrade, "rack.errors", rb_stderr);
   add_value_to_env(env_template_no_upgrade, "rack.hijack?", Qtrue);
   add_value_to_env(env_template_no_upgrade, "rack.multiprocess", Qtrue);
@@ -1111,6 +1114,7 @@ void iodine_init_http(void) {
   rack_set(XSENDFILE_TYPE_HEADER, "HTTP_X_SENDFILE_TYPE");
   rack_set(CONTENT_LENGTH_HEADER, "Content-Length");
 
+  rack_set(IODINE_R_INPUT, "rack.input");
   rack_set(IODINE_R_HIJACK_IO, "rack.hijack_io");
   rack_set(IODINE_R_HIJACK, "rack.hijack");
   rack_set(IODINE_R_HIJACK_CB, "iodine.hijack_cb");
@@ -1132,5 +1136,12 @@ void iodine_init_http(void) {
   IodineUTF8Encoding = rb_enc_find("UTF-8");
   IodineBinaryEncoding = rb_enc_find("binary");
 
+  {
+    VALUE STRIO_CLASS = rb_const_get(rb_cObject, rb_intern("StringIO"));
+    IODINE_R_INPUT_DEFAULT = rb_str_new_static("", 0);
+    IODINE_R_INPUT_DEFAULT =
+        rb_funcallv(STRIO_CLASS, rb_intern("new"), 1, &IODINE_R_INPUT_DEFAULT);
+    rb_global_variable(&IODINE_R_INPUT_DEFAULT);
+  }
   initialize_env_template();
 }

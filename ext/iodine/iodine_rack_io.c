@@ -216,7 +216,7 @@ static VALUE new_rack_io(http_s *h, VALUE env) {
   rb_ivar_set(rack_io, io_id, ULL2NUM(h->body));
   set_handle(rack_io, h);
   rb_ivar_set(rack_io, env_id, env);
-  rb_hash_aset(env, R_INPUT, rack_io);
+  rb_hash_aset(env, IODINE_R_INPUT, rack_io);
   rb_hash_aset(env, IODINE_R_HIJACK, rb_obj_method(rack_io, hijack_func_sym));
   return rack_io;
 }
@@ -239,10 +239,6 @@ static void init_rack_io(void) {
   iodine_fd_var_id = rb_intern("fd");
   iodine_new_func_id = rb_intern("new");
   hijack_func_sym = ID2SYM(rb_intern("_hijack"));
-
-  R_INPUT = rb_enc_str_new("rack.input", 10, rb_ascii8bit_encoding());
-  rb_obj_freeze(R_INPUT);
-  IodineStore.add(R_INPUT);
 
   TCPSOCKET_CLASS = rb_const_get(rb_cObject, rb_intern("TCPSocket"));
   // IO methods
