@@ -33,7 +33,7 @@ Gem::Specification.new do |spec|
 
   spec.requirements << 'A Unix based system: Linux / macOS / BSD.'
   spec.requirements << 'An updated C compiler.'
-  spec.requirements << 'Ruby >= 2.2.2 required for Rack 2.'
+  spec.requirements << 'Ruby >= 2.3.8 (Ruby EOL).'
   spec.requirements << 'Ruby >= 2.5.0 recommended.'
   spec.requirements << 'TLS requires OpenSSL >= 1.1.0'
 

@@ -4,7 +4,7 @@ RSpec.describe 'Transfer-Encoding: chunked', with_app: :echo do
   let(:body_string) { SecureRandom.hex(body_size).to_s[0...body_size] }
   let(:io) do
     # ensures theres no size sneaking in
-    f = Tempfile.new
+    f = Tempfile.new("body4test")
     f.write(body_string)
     f.rewind
     f
