@@ -1,12 +1,17 @@
+require 'tempfile'
 RSpec.describe 'Transfer-Encoding: chunked', with_app: :echo do
   let(:body_size) { 6 }
   let(:body_string) { SecureRandom.hex(body_size).to_s[0...body_size] }
   let(:io) do
     # ensures theres no size sneaking in
-    reader, writer = IO.pipe
-    writer.write(body_string)
-    writer.close
-    reader
+    f = Tempfile.new
+    f.write(body_string)
+    f.rewind
+    f
+    # reader, writer = IO.pipe
+    # writer.write(body_string)
+    # writer.close
+    # reader
   end
 
   shared_examples 'chunked body' do
