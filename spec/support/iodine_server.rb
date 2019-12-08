@@ -45,7 +45,7 @@ module Spec
       def start_iodine_with_app(name, **opts)
         filename = "spec/support/apps/#{name}.ru"
         raise "test rack file (#{name}) does not exist" unless File.exist?(filename)
-        cmd = "bundle exec exe/iodine -w 1 -t 1 -p #{server_port}"
+        cmd = "bundle exec exe/iodine -w 1 -t 1 -p #{server_port}".dup
         cmd += " -V 5 -log" if opts[:verbose]
         pid = spawn_with_test_log("#{cmd} #{filename}", **opts)
         wait_until_iodine_ready
