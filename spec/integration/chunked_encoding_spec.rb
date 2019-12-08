@@ -42,16 +42,30 @@ RSpec.describe 'Transfer-Encoding: chunked', with_app: :echo do
     include_examples 'chunked body'
   end
 
-  context 'when the body size is long and unevenly chunked', :verbose do
+  context 'when the body size is long and unevenly chunked' do
     let(:headers) { Hash['Transfer-Encoding' => 'chunked'] }
     let(:body_size) { 0x4001 }
 
     include_examples 'chunked body'
   end
 
-  context 'when the body size is long and evenly chunked', :verbose do
+  context 'when the body size is long and evenly chunked' do
     let(:headers) { Hash['Transfer-Encoding' => 'chunked'] }
     let(:body_size) { 0x4000  + 0x4000 }
+
+    include_examples 'chunked body'
+  end
+
+  context 'when the body size is small (includes Content-Length)' do
+    let(:body_size) { 32 }
+    let(:headers) { Hash['Content-Length' => body_size.to_s] }
+
+    include_examples 'chunked body'
+  end
+
+  context 'when the body size is long (includes Content-Length)' do
+    let(:body_size) { 0x4000  + 0x4000 }
+    let(:headers) { Hash['Content-Length' => body_size.to_s] }
 
     include_examples 'chunked body'
   end
