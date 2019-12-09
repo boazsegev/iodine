@@ -3,9 +3,11 @@ require "rake/extensiontask"
 
 begin
   require 'rspec/core/rake_task'
-  RSpec::Core::RakeTask.new(:spec)
+  RSpec::Core::RakeTask.new(:rspec)
 rescue LoadError
 end
+
+task :spec => [:compile, :rspec]
 
 task :default => [:compile, :spec]
 
