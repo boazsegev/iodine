@@ -770,6 +770,14 @@ Yes, please, here are some thoughts:
 
 * If you love the project or thought the code was nice, maybe helped you in your own project, drop me a line. I'd love to know.
 
+### Running the Tests
+
+Running this task will compile the C extensions then run RSpec tests:
+
+```sh
+bundle exec rake spec
+```
+
 ## License
 
 The gem is available as open source under the terms of the [MIT License](http://opensource.org/licenses/MIT).
