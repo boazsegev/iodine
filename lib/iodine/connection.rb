@@ -39,6 +39,11 @@ module Iodine
   #       def on_drained client
   #          client.is_a?(Iodine::Connection) # => true
   #       end
+  #       # called when timeout was reached, llowing a `ping` to be sent
+  #       def ping client
+  #          client.is_a?(Iodine::Connection) # => true
+  #          clint.close() # close connection on timeout is the default
+  #       end
   #       # Allows the module to be used as a static callback object (avoiding object allocation)
   #       extend self
   #     end
