@@ -1,4 +1,5 @@
-# iodine - a fast HTTP / Websocket Server with native Pub/Sub support for the new web
+# iodine - Why Settle for a fast HTTP / WebSocket Server with native Pub/Sub?
+
 [![Gem](https://img.shields.io/gem/dt/iodine.svg)](https://rubygems.org/gems/iodine)
 [![Build Status](https://travis-ci.org/boazsegev/iodine.svg?branch=master)](https://travis-ci.org/boazsegev/iodine)
 [![Gem Version](https://badge.fury.io/rb/iodine.svg)](https://badge.fury.io/rb/iodine)
@@ -7,28 +8,29 @@
 
 [![Logo](https://github.com/boazsegev/iodine/raw/master/logo.png)](https://github.com/boazsegev/iodine)
 
-I believe that network concerns should be separated from application concerns - application developers really shouldn't need to worry about the transport layer.
+Iodine is a fast concurrent web application server for real-time Ruby applications, with native support for WebSockets and Pub/Sub services - but it's also so much more.
 
-And I know that these network concerns are more than just about the web server, which is why iodine is more than just an HTTP server.
+Iodine is a Ruby wrapper for many of the [facil.io](https://facil.io) C framework, leveraging the speed of C for many common web application tasks. In addition, iodine abstracts away all network concerns, so you never need to worry about the transport layer, free to concentrate on your application logic.
 
-Iodine is a fast concurrent web server for real-time Ruby applications, but it's also so much more. Iodine includes native support for:
+Iodine includes native support for:
 
 * HTTP, WebSockets and EventSource (SSE) Services (server);
 * WebSocket connections (server / client);
 * Pub/Sub (with optional Redis Pub/Sub scaling);
-* Static file service (with automatic `gzip` support for pre-compressed versions);
-* HTTP/1.1 keep-alive and pipelining;
+* Fast(!) builtin Mustache template engine.
+* Static file service (with automatic `gzip` support for pre-compressed assets);
 * Asynchronous event scheduling and timers;
-* Hot Restart (using the USR1 signal);
+* HTTP/1.1 keep-alive and pipelining;
 * TLS 1.2 and above (Requires OpenSSL >= 1.1.0);
 * TCP/IP server and client connectivity;
 * Unix Socket server and client connectivity;
+* Hot Restart (using the USR1 signal);
 * Custom protocol authoring;
 * Optimized Logging to `stderr`.
 * [Sequel](https://github.com/jeremyevans/sequel) and ActiveRecord forking protection.
 * and more!
 
-Iodine is an **evented** framework with a simple API that ports much of the [C facil.io framework](https://github.com/boazsegev/facil.io) to Ruby. This means that:
+Since iodine wraps much of the [C facil.io framework](https://github.com/boazsegev/facil.io) to Ruby:
 
 * Iodine can handle **thousands of concurrent connections** (tested with more then 20K connections on Linux)!
 
@@ -36,9 +38,9 @@ Iodine is an **evented** framework with a simple API that ports much of the [C f
 
 Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but CI tests start at Ruby 2.2.2.
 
-**Note**: iodine does **not** support the streaming when using Rack. Streaming over Rack should be avoided on any server, WebSockets, SSE and `Range` requests should always be preferred. On iodine no data will be sent before the whole of the data is available.
+**Note**: iodine does **not** support streaming when using Rack. It's recommended to avoid blocking the server when using `body.each` since the `each` loop will block the iodine's thread until it's finished and iodine won't send any data before the loop is done.
 
-## Iodine - a fast & powerful HTTP + Websockets server with native Pub/Sub
+## Iodine - a fast & powerful HTTP + WebSockets server with native Pub/Sub
 
 Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the [Websocket draft extension](./SPEC-Websocket-Draft.md).
 
