@@ -181,6 +181,7 @@ static void iodine_defer_performe_once(void *block, void *ignr) {
 }
 
 static void iodine_defer_run_timer(void *block) {
+  /* TODO, update return value to allow timer cancellation */
   IodineCaller.call((VALUE)block, call_id);
 }
 
