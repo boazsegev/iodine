@@ -6,6 +6,14 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.39 (2020-05-18)
+
+**Security**: a request smuggling attack vector and Transfer Encoding attack vector in the HTTP/1.1 parser were exposed by Sam Sanoop from [the Snyk Security team (snyk.io)](https://snyk.io). The parser was updated to deal with these potential issues.
+
+**Fix**: (`http`) fixes an issue with date calculation - exposed by Franck Gille (@fgi) in issue #92.
+
+**Fix**: (`extconf`) fixes an installation concern raised by Benoit Daloze (@eregon), in issue #91. The default compiler is now used.
+
 #### Change log v.0.7.38
 
 **Fix**: (`http`) fixes an issue and improves support for chunked encoded payloads. Credit to Ian Ker-Seymer ( @ianks ) for exposing this, writing tests and opening both the issue #87 and the PR #88.
