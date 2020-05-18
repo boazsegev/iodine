@@ -3019,6 +3019,7 @@ test_errno:
   case ENOSPC:        /* fallthrough */
   case EADDRNOTAVAIL: /* fallthrough */
   case EINTR:
+  case 0:
     return 1;
   case EFAULT:
     FIO_LOG_ERROR("fio_flush EFAULT - possible memory address error sent to "
@@ -3032,8 +3033,8 @@ test_errno:
     fio_force_close(uuid);
     return -1;
   }
-  fprintf(stderr, "UUID error: %p (%d)\n", (void *)uuid, errno);
-  perror("No errno handler");
+  FIO_LOG_DEBUG("UUID error: %p (%d): %s\n", (void *)uuid, errno,
+                strerror(errno));
   return 0;
 
 invalid:
