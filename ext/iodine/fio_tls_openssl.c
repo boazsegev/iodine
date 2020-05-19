@@ -537,19 +537,21 @@ static ssize_t fio_tls_read(intptr_t uuid, void *udata, void *buf,
   case SSL_ERROR_SSL: /* overflow */
   case SSL_ERROR_ZERO_RETURN:
     return 0;                      /* EOF */
+  case SSL_ERROR_SYSCALL:          /* allow errno to inform us */
+    break;                         /* return -1 */
   case SSL_ERROR_NONE:             /* overflow */
   case SSL_ERROR_WANT_CONNECT:     /* overflow */
   case SSL_ERROR_WANT_ACCEPT:      /* overflow */
   case SSL_ERROR_WANT_X509_LOOKUP: /* overflow */
+  case SSL_ERROR_WANT_WRITE:       /* overflow */
+  case SSL_ERROR_WANT_READ:        /* overflow */
 #ifdef SSL_ERROR_WANT_ASYNC
   case SSL_ERROR_WANT_ASYNC: /* overflow */
 #endif
-  case SSL_ERROR_WANT_WRITE: /* overflow */
-  case SSL_ERROR_WANT_READ:
   default:
+    errno = EWOULDBLOCK;
     break;
   }
-  errno = EWOULDBLOCK;
   return -1;
   (void)uuid;
 }
@@ -591,19 +593,21 @@ static ssize_t fio_tls_write(intptr_t uuid, void *udata, const void *buf,
   case SSL_ERROR_SSL: /* overflow */
   case SSL_ERROR_ZERO_RETURN:
     return 0;                      /* EOF */
+  case SSL_ERROR_SYSCALL:          /* allow errno to inform us */
+    break;                         /* return -1 */
   case SSL_ERROR_NONE:             /* overflow */
   case SSL_ERROR_WANT_CONNECT:     /* overflow */
   case SSL_ERROR_WANT_ACCEPT:      /* overflow */
   case SSL_ERROR_WANT_X509_LOOKUP: /* overflow */
+  case SSL_ERROR_WANT_WRITE:       /* overflow */
+  case SSL_ERROR_WANT_READ:        /* overflow */
 #ifdef SSL_ERROR_WANT_ASYNC
   case SSL_ERROR_WANT_ASYNC: /* overflow */
 #endif
-  case SSL_ERROR_WANT_WRITE: /* overflow */
-  case SSL_ERROR_WANT_READ:
   default:
+    errno = EWOULDBLOCK;
     break;
   }
-  errno = EWOULDBLOCK;
   return -1;
   (void)uuid;
 }
@@ -675,7 +679,8 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata) {
           "SSL_accept/SSL_connect %p error: SSL_ERROR_SYSCALL, errno: %s",
           (void *)uuid, strerror(errno));
       // fio_force_event(uuid, FIO_EVENT_ON_DATA);
-      return 0;
+      // return 0;
+      break;
     case SSL_ERROR_SSL:
       FIO_LOG_DEBUG("SSL_accept/SSL_connect %p error: SSL_ERROR_SSL",
                     (void *)uuid);
