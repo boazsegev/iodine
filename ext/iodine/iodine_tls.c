@@ -208,22 +208,8 @@ static VALUE iodine_tls_alpn(VALUE self, VALUE protocol_name) {
 }
 
 /**
-Loads the mustache template found in `:filename`. If `:template` is provided
-it will be used instead of reading the file's content.
-
-    Iodine::Mustache.new(filename, template = nil)
-
-When template data is provided, filename (if any) will only be used for
-partial template path resolution and the template data will be used for the
-template's content. This allows, for example, for front matter to be extracted
-before parsing the template.
-
-Once a template was loaded, it could be rendered using {render}.
-
-Accepts named arguments as well:
-
-    Iodine::Mustache.new(filename: "foo.mustache", template: "{{ bar }}")
-
+Creates a new {Iodine::TLS} object and calles the {#use_certificate} method with
+the supplied arguments.
 */
 static VALUE iodine_tls_new(int argc, VALUE *argv, VALUE self) {
   if (argc) {
