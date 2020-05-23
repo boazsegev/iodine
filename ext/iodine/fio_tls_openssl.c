@@ -29,6 +29,10 @@ The SSL/TLS helper data types (can be left as is)
 #define FIO_FORCE_MALLOC_TMP 1
 #include <fio.h>
 
+#ifndef FIO_TLS_TIMEOUT
+#define FIO_TLS_TIMEOUT 4
+#endif
+
 typedef struct {
   fio_str_s private_key;
   fio_str_s public_key;
@@ -190,8 +194,12 @@ typedef struct {
 
 FIO_FUNC inline void alpn_select___task(void *t_, void *ignr_) {
   alpn_task_s *t = t_;
-  t->alpn.on_selected((fio_is_valid(t->uuid) ? t->uuid : -1),
-                      t->udata_connection, t->alpn.udata_tls);
+  if (fio_is_valid(t->uuid)) {
+    fio_timeout_set(t->uuid, 0); // remove TLS timeout
+    t->alpn.on_selected(t->uuid, t->udata_connection, t->alpn.udata_tls);
+  } else {
+    t->alpn.on_selected(-1, t->udata_connection, t->alpn.udata_tls);
+  }
   fio_free(t);
   (void)ignr_;
 }
@@ -644,13 +652,20 @@ static void fio_tls_cleanup(void *udata) {
 static fio_rw_hook_s FIO_TLS_HOOKS = {
     .read = fio_tls_read,
     .write = fio_tls_write,
-    .before_close = fio_tls_before_close,
     .flush = fio_tls_flush,
+    .before_close = fio_tls_before_close,
     .cleanup = fio_tls_cleanup,
 };
 
+#define FIO_TLS_HANDSHAKE_ERROR 0
+#define FIO_TLS_HANDSHAKE_OK 1
+#define FIO_TLS_HANDSHAKE_NEED_READ 2
+#define FIO_TLS_HANDSHAKE_NEED_WRITE 4
+
 static size_t fio_tls_handshake(intptr_t uuid, void *udata) {
+  size_t status = FIO_TLS_HANDSHAKE_ERROR;
   fio_tls_connection_s *c = udata;
+
   int ri;
   if (c->is_server) {
     ri = SSL_accept(c->ssl);
@@ -663,27 +678,29 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata) {
     case SSL_ERROR_NONE:
       // FIO_LOG_DEBUG("SSL_accept/SSL_connect %p state: SSL_ERROR_NONE",
       //               (void *)uuid);
-      return 0;
+      status = FIO_TLS_HANDSHAKE_NEED_READ | FIO_TLS_HANDSHAKE_NEED_WRITE;
+      return status;
     case SSL_ERROR_WANT_WRITE:
       // FIO_LOG_DEBUG("SSL_accept/SSL_connect %p state: SSL_ERROR_WANT_WRITE",
       //               (void *)uuid);
-      //   fio_force_event(uuid, FIO_EVENT_ON_READY);
-      return 0;
+      status = FIO_TLS_HANDSHAKE_NEED_WRITE;
+      return status;
     case SSL_ERROR_WANT_READ:
       // FIO_LOG_DEBUG("SSL_accept/SSL_connect %p state: SSL_ERROR_WANT_READ",
       //               (void *)uuid);
-      // fio_force_event(uuid, FIO_EVENT_ON_DATA);
-      return 0;
+      status = FIO_TLS_HANDSHAKE_NEED_READ;
+      return status;
     case SSL_ERROR_SYSCALL:
-      FIO_LOG_DEBUG(
-          "SSL_accept/SSL_connect %p error: SSL_ERROR_SYSCALL, errno: %s",
-          (void *)uuid, strerror(errno));
-      // fio_force_event(uuid, FIO_EVENT_ON_DATA);
-      // return 0;
+      if (errno) {
+        FIO_LOG_DEBUG(
+            "SSL_accept/SSL_connect %p error: SSL_ERROR_SYSCALL, errno: %s",
+            (void *)uuid, strerror(errno));
+      }
       break;
     case SSL_ERROR_SSL:
-      FIO_LOG_DEBUG("SSL_accept/SSL_connect %p error: SSL_ERROR_SSL",
-                    (void *)uuid);
+      FIO_LOG_DEBUG(
+          "SSL_accept/SSL_connect %p error: SSL_ERROR_SSL (non SSL attempt?)",
+          (void *)uuid);
       break;
     case SSL_ERROR_ZERO_RETURN:
       FIO_LOG_DEBUG("SSL_accept/SSL_connect %p error: SSL_ERROR_ZERO_RETURN",
@@ -720,8 +737,9 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata) {
                     (void *)uuid, ri);
       break;
     }
+    fio_rw_hook_replace_unsafe(uuid, &FIO_TLS_HOOKS, udata);
     fio_defer(fio_tls_delayed_close, (void *)uuid, NULL);
-    return 0;
+    return status;
   }
   if (!c->alpn_ok) {
     c->alpn_ok = 1;
@@ -750,7 +768,7 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata) {
   } else {
     FIO_LOG_DEBUG("Something went wrong during TLS handshake for %p",
                   (void *)uuid);
-    return 0;
+    return status;
   }
   /* make sure the connection is re-added to the reactor */
   fio_force_event(uuid, FIO_EVENT_ON_DATA);
@@ -773,14 +791,18 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata) {
                   buff2);
   }
 #endif
-  return 1;
+  status = FIO_TLS_HANDSHAKE_OK;
+  return status;
 }
 
 static ssize_t fio_tls_read4handshake(intptr_t uuid, void *udata, void *buf,
                                       size_t count) {
   // FIO_LOG_DEBUG("TLS handshake from read %p", (void *)uuid);
-  if (fio_tls_handshake(uuid, udata))
+  size_t s = fio_tls_handshake(uuid, udata);
+  if (s == FIO_TLS_HANDSHAKE_OK)
     return fio_tls_read(uuid, udata, buf, count);
+  if (!s)
+    return 0;
   errno = EWOULDBLOCK;
   return -1;
 }
@@ -788,20 +810,27 @@ static ssize_t fio_tls_read4handshake(intptr_t uuid, void *udata, void *buf,
 static ssize_t fio_tls_write4handshake(intptr_t uuid, void *udata,
                                        const void *buf, size_t count) {
   // FIO_LOG_DEBUG("TLS handshake from write %p", (void *)uuid);
-  if (fio_tls_handshake(uuid, udata))
+  size_t s = fio_tls_handshake(uuid, udata);
+  if (s == FIO_TLS_HANDSHAKE_OK)
     return fio_tls_write(uuid, udata, buf, count);
+  if (!s)
+    return 0;
   errno = EWOULDBLOCK;
   return -1;
 }
 
 static ssize_t fio_tls_flush4handshake(intptr_t uuid, void *udata) {
   // FIO_LOG_DEBUG("TLS handshake from flush %p", (void *)uuid);
-  if (fio_tls_handshake(uuid, udata)) {
+  size_t s = fio_tls_handshake(uuid, udata);
+  if (s == FIO_TLS_HANDSHAKE_OK) {
     return fio_tls_flush(uuid, udata);
   }
+  if (!s)
+    return 0;
   errno = 0;
-  return 1;
+  return s | FIO_TLS_HANDSHAKE_NEED_WRITE;
 }
+
 static fio_rw_hook_s FIO_TLS_HANDSHAKE_HOOKS = {
     .read = fio_tls_read4handshake,
     .write = fio_tls_write4handshake,
@@ -972,6 +1001,7 @@ file_missing:
  */
 void FIO_TLS_WEAK fio_tls_accept(intptr_t uuid, fio_tls_s *tls, void *udata) {
   REQUIRE_LIBRARY();
+  fio_timeout_set(uuid, FIO_TLS_TIMEOUT);
   fio_tls_attach2uuid(uuid, tls, udata, 1);
 }
 
@@ -1012,6 +1042,7 @@ void FIO_TLS_WEAK fio_tls_destroy(fio_tls_s *tls) {
   cert_ary_free(&tls->sni);
   trust_ary_free(&tls->trust);
   free(tls);
+  FIO_LOG_DEBUG("freed TLS context %p", (void *)tls);
 }
 
 #endif /* Library compiler flags */
