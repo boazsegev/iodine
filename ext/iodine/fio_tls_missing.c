@@ -33,6 +33,11 @@ Feel free to copy, use and enjoy according to the license provided.
   FIO_LOG_FATAL("No supported SSL/TLS library available.");                    \
   exit(-1);
 #endif
+
+#ifndef FIO_TLS_TIMEOUT
+#define FIO_TLS_TIMEOUT 4
+#endif
+
 /* STOP deleting after this line */
 
 /* *****************************************************************************
@@ -590,6 +595,7 @@ file_missing:
  */
 void FIO_TLS_WEAK fio_tls_accept(intptr_t uuid, fio_tls_s *tls, void *udata) {
   REQUIRE_LIBRARY();
+  fio_timeout_set(uuid, FIO_TLS_TIMEOUT);
   fio_tls_attach2uuid(uuid, tls, udata, 1);
 }
 

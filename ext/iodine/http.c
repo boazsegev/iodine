@@ -874,19 +874,23 @@ static uint8_t fio_http_at_capa = 0;
 
 static void http_on_server_protocol_http1(intptr_t uuid, void *set,
                                           void *ignr_) {
-  fio_timeout_set(uuid, ((http_settings_s *)set)->timeout);
-  if (fio_uuid2fd(uuid) >= ((http_settings_s *)set)->max_clients) {
-    if (!fio_http_at_capa)
-      FIO_LOG_WARNING("HTTP server at capacity");
-    fio_http_at_capa = 1;
-    http_send_error2(uuid, 503, set);
-    fio_close(uuid);
+  if ((unsigned int)fio_uuid2fd(uuid) >=
+      ((http_settings_s *)set)->max_clients) {
+    if (fio_uuid2fd(uuid) != -1) {
+      if (!fio_http_at_capa)
+        FIO_LOG_WARNING("HTTP server at capacity");
+      fio_http_at_capa = 1;
+      http_send_error2(uuid, 503, set);
+      fio_close(uuid);
+    }
     return;
   }
   fio_http_at_capa = 0;
   fio_protocol_s *pr = http1_new(uuid, set, NULL, 0);
   if (!pr)
     fio_close(uuid);
+  else
+    fio_timeout_set(uuid, ((http_settings_s *)set)->timeout);
   (void)ignr_;
 }
 
