@@ -6,9 +6,9 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
-#### Change log v.0.7.40
+#### Change log v.0.7.40 (2020-05-23)
 
-**Fix**: fixed TLS logging and performance issues. exposed by Franck Gille (@fgi) in issue #93.
+**Fix**: fixed TLS logging and performance issues exposed by Franck Gille (@fgi) in issue #93.
 
 #### Change log v.0.7.39 (2020-05-18)
 
