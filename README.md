@@ -70,6 +70,8 @@ bundler exec iodine
 
 #### Installing with SSL/TLS
 
+**Note**: Versions `>= 0.7.40` have known issues with the TLS/SSL support. TLS/SSL should **NOT** be used in production (see issues #95 and #94).
+
 Make sure to update OpenSSL to the latest version **before installing Ruby** (`rbenv` should do this automatically).
 
 To avoid name resolution conflicts, iodine will bind to the same OpenSSL version Ruby is bound to. To use SSL/TLS this should be OpenSSL >= 1.1.0 or LibreSSL >= 2.7.4.
@@ -435,11 +437,11 @@ Iodine.connect url: "wss://echo.websocket.org", handler: EchoClient.new, ping: 4
 Iodine.start
 ```
 
-### TLS 1.2 support
+### TLS >= 1.2 support
 
 >  Requires OpenSSL >= `1.1.0`. On Heroku, requires `heroku-18`.
 
-Iodine supports secure connections fore TLS version 1.2 and up (depending on the OpenSSL version).
+Iodine supports secure connections fore TLS version 1.2 **and up** (depending on the OpenSSL version).
 
 A self signed certificate is available using the `-tls` flag from the command-line.
 
@@ -480,31 +482,11 @@ run APP
 
 ### How does it compare to other servers?
 
-The honest answer is "I don't know". I recommend that you perform your own tests.
+In my tests, pitching Iodine against Puma, Iodine was anywhere between x1.5 and more than x10 faster than Puma (depending on use-case and settings).
 
-In my tests, pitching Iodine against Puma, Iodine was anywhere between x1.5 and x7 faster than Puma (depending on use-case). such a big difference is suspect and I recommend that you test it yourself.
+Such a big difference is suspect and I recommend that you test it yourself - even better if you test performance using your own application and a number of possible different settings (how many threads per CPU core? how many worker processes? middleware vs. server request logging, etc').
 
-Also, performing benchmarks on a single machine isn't very reliable... but it's all I've got.
-
-When benchmarking with `wrk`, on the same local machine with similar settings for both Puma and Iodine (4 workers, 16 threads each, 200 concurrent connections), I calculated Iodine to be x1.52 faster::
-
-* Iodine performed at 74,786.27 req/sec, consuming ~68.4Mb of memory.
-
-* Puma performed at 48,994.59 req/sec, consuming ~79.6Mb of memory.
-
-When benchmarking using a VM (crossing machine boundaries, 16 threads, 4 workers, 200 concurrent connections), I calculated Iodine to be x2.3 faster:
-
-* Iodine performed at 23,559.56 req/sec, consuming ~88.8Mb of memory.
-
-* Puma performed at 9,935.31 req/sec, consuming ~84.0Mb of memory.
-
-When benchmarking using a VM (crossing machine boundaries, single thread, single worker, 200 concurrent connections), I calculated Iodine to be x7.3 faster:
-
-* Iodine performed at 18,444.31 req/sec, consuming ~25.6Mb of memory.
-
-* Puma performed at 2,521.56 req/sec, consuming ~27.5Mb of memory.
-
-I have doubts about my own benchmarks and I recommend benchmarking the performance for yourself using `wrk` or `ab`:
+I recommend benchmarking the performance for yourself using `wrk` or `ab`:
 
 ```bash
 $ wrk -c200 -d4 -t2 http://localhost:3000/
@@ -512,7 +494,7 @@ $ wrk -c200 -d4 -t2 http://localhost:3000/
 $ ab -n 100000 -c 200 -k http://127.0.0.1:3000/
 ```
 
-Create a simple `config.ru` file with a hello world app:
+The best application to use for benchmarking is your actual application. Or, you could create a simple `config.ru` file with a __hello world__ app:
 
 ```ruby
 App = Proc.new do |env|
@@ -525,16 +507,20 @@ end
 run App
 ```
 
-Then start comparing servers. Here are the settings I used to compare iodine and Puma (4 processes, 16 threads):
+Then start comparing servers. Here are the settings I used to compare iodine and Puma (4 processes, 4 threads):
 
 ```bash
-$ RACK_ENV=production iodine -p 3000 -t 16 -w 4
+$ RACK_ENV=production iodine -p 3000 -t 4 -w 4
 # vs.
-$ RACK_ENV=production puma -p 3000 -t 16 -w 4
+$ RACK_ENV=production puma -p 3000 -t 4 -w 4
 # Review the `iodine -?` help for more command line options.
 ```
 
 It's recommended that the servers (Iodine/Puma) and the client (`wrk`/`ab`) run on separate machines.
+
+It is worth noting that iodine can also speed up logging by replacing the logging middleware with `iodine -v`. This approach uses less memory and improves performance at the expense of fuzzy timing and some string caching.
+
+On my machine, testing with the logging functionality enabled, iodine was more then 10 times faster than puma (60.9K req/sec vs. 5.3K req/sec)
 
 ### A few notes
 
