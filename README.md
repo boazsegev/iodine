@@ -22,6 +22,7 @@ Iodine includes native support for:
 * Optimized Logging to `stderr`.
 * Asynchronous event scheduling and timers;
 * HTTP/1.1 keep-alive and pipelining;
+* Heap Fragmentation Protection.
 * TLS 1.2 and above (Requires OpenSSL >= 1.1.0);
 * TCP/IP server and client connectivity;
 * Unix Socket server and client connectivity;
@@ -47,6 +48,10 @@ Iodine includes a light and fast HTTP and Websocket server written in C that was
 With `Iodine.listen service: :http` it's possible to run multiple HTTP applications (please remember not to set more than a single application on a single TCP/IP port). 
 
 Iodine also supports native process cluster Pub/Sub and a native RedisEngine to easily scale iodine's Pub/Sub horizontally.
+
+### Known Issues and Reporting Issues
+
+See the [GitHub Open Issues](https://github.com/boazsegev/iodine/issues) list for known issues and to report new issues.
 
 ### Installing and Running Iodine
 
@@ -89,9 +94,7 @@ Confirmed OpenSSL to be version 1.1.0 or above (OpenSSL 1.1.0j  20 Nov 2018)...
 ...
 ```
 
-**KNOWN ISSUE:**
-
-The installation script tests for OpenSSL 1.1.0 and above. However, this testing approach sometimes provides false positives. If TLS isn't required, install with `NO_SSL=1`. i.e.:
+The installation script tests for OpenSSL 1.1.0 and above. However, this testing approach sometimes provides false positives. **If TLS isn't required, install with `NO_SSL=1`**. i.e.:
 
 ```bash
 NO_SSL=1 bundler exec iodine
@@ -112,17 +115,19 @@ On Rails:
     if(defined?(Iodine))
       Iodine.threads = ENV.fetch("RAILS_MAX_THREADS", 5).to_i if Iodine.threads.zero?
       Iodine.workers = ENV.fetch("WEB_CONCURRENCY", 2).to_i if Iodine.workers.zero?
-      Iodine::DEFAULT_SETTINGS[:port] = ENV.fetch("PORT") if ENV.fetch("PORT")
+      Iodine::DEFAULT_SETTINGS[:port] ||= ENV.fetch("PORT") if ENV.fetch("PORT")
     end
     ```
 
 When using native WebSockets with Rails, middle-ware is probably the best approach. A guide for this approach will, hopefully, get published in the future.
 
+**Note**: command-line instructions (CLI) should be the preferred way for configuring iodine, allowing for code-less configuration updates.
+
 ### Optimizing Iodine's Concurrency
 
 To get the most out of iodine, consider the amount of CPU cores available and the concurrency level the application requires.
 
-Iodine will calculate, when possible, a good enough default concurrency model. See if this works for your application or customize according to the application's needs.
+Iodine will calculate, when possible, a good enough default concurrency model for fast applications. See if this works for your application or customize according to the application's needs.
 
 Command line arguments allow easy access to different options, including concurrency levels. i.e., to set up 16 threads and 4 processes:
 
@@ -138,13 +143,19 @@ export WORKERS=-1 # negative values are fractions of CPU cores.
 bundler exec iodine -p $PORT
 ```
 
+Negative values are evaluated as "CPU Cores / abs(Value)". i.e., on an 8 core CPU machine, this will produce 4 worker processes with 2 threads per worker:
+
+```bash
+bundler exec iodine -p $PORT -t 2 -w -2
+```
+
 ### Heap Fragmentation Protection
 
 Iodine includes a fast, network oriented, custom memory allocator, optimizing away some of the work usually placed on the Ruby Garbage Collector (GC).
 
 This approach helps to minimize heap fragmentation for long running processes, by grouping many short-lived objects into a common memory space.
 
-It's still recommended to consider [jemalloc](http://jemalloc.net) or other allocators that also help mitigate heap fragmentation issues.
+It is still recommended to consider [jemalloc](http://jemalloc.net) or other allocators that also help mitigate heap fragmentation issues.
 
 ### Static file serving support
 
