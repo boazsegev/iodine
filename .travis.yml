@@ -1,4 +1,7 @@
 language: ruby
+arch:
+  - amd64
+  - arm64
 os:
   - linux
   # - osx
@@ -6,6 +9,7 @@ before_install:
   - gem install bundler -v 1.10.6
   - bundle install
 rvm:
+  - 2.7.1
   - 2.6.5
   - 2.5.7
   - 2.4.9
@@ -14,7 +18,7 @@ rvm:
 notifications:
   email: false
 sudo: required
-dist: trusty
+dist: xenial
 addons:
   apt:
     sources:
@@ -24,8 +28,5 @@ addons:
 script:
   - echo CFLAGS = $CFLAGS
   - echo cflags = $cflags
-  - bundle exec rake compile
+  - bundle exec rake install
   - env VERBOSE=1 bundle exec rspec --format documentation
-  - gem uninstall -x iodine
-  - rake build
-  - find pkg/iodine-*.gem -exec gem install -V {} +
