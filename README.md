@@ -19,14 +19,14 @@ Iodine includes native support for:
 * Pub/Sub (with optional Redis Pub/Sub scaling);
 * Fast(!) builtin Mustache template engine.
 * Static file service (with automatic `gzip` support for pre-compressed assets);
+* Optimized Logging to `stderr`.
 * Asynchronous event scheduling and timers;
 * HTTP/1.1 keep-alive and pipelining;
 * TLS 1.2 and above (Requires OpenSSL >= 1.1.0);
 * TCP/IP server and client connectivity;
 * Unix Socket server and client connectivity;
-* Hot Restart (using the USR1 signal);
+* Hot Restart (using the USR1 signal and without hot deployment);
 * Custom protocol authoring;
-* Optimized Logging to `stderr`.
 * [Sequel](https://github.com/jeremyevans/sequel) and ActiveRecord forking protection.
 * and more!
 
@@ -70,7 +70,7 @@ bundler exec iodine
 
 #### Installing with SSL/TLS
 
-**Note**: Versions `>= 0.7.40` have known issues with the TLS/SSL support. TLS/SSL should **NOT** be used in production (see issues #95 and #94).
+**Note**: iodine has known issues with the TLS/SSL support. TLS/SSL should **NOT** be used in production (see issues #95 and #94).
 
 Make sure to update OpenSSL to the latest version **before installing Ruby** (`rbenv` should do this automatically).
 
