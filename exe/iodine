@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
+IODINE_PARSE_CLI = true
 require 'iodine'
 
 # Load Rack if available (assume it will be used).
