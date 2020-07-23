@@ -178,7 +178,7 @@ Iodine.on_state(:after_fork)  do
 end
 
 ### Parse CLI for default HTTP settings
-Iodine::Base::CLI.parse
+Iodine::Base::CLI.parse if defined?(IODINE_PARSE_CLI) && IODINE_PARSE_CLI
 
 ### Set default port (if missing)
 Iodine::DEFAULT_SETTINGS[:port] ||= (ENV["PORT"] || "3000")
