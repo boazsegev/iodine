@@ -3498,11 +3498,13 @@ static void fio_on_fork(void) {
   fio_poll_init();
   fio_state_callback_on_fork();
 
+  /* don't pass open connections belonging to the parent onto the child. */
   const size_t limit = fio_data->capa;
   for (size_t i = 0; i < limit; ++i) {
     fd_data(i).sock_lock = FIO_LOCK_INIT;
     fd_data(i).protocol_lock = FIO_LOCK_INIT;
-    if (fd_data(i).protocol) {
+    if (fd_data(i).protocol && fd_data(i).open) {
+      /* open without protocol might be waiting for the child (listening) */
       fd_data(i).protocol->rsv = 0;
       fio_force_close(fd2uuid(i));
     }
@@ -3684,8 +3686,9 @@ static void fio_review_timeout(void *arg, void *ignr) {
   unlock:
     protocol_unlock(tmp, FIO_PR_LOCK_STATE);
   } else {
-    /* open FD but no protocol? */
-    fio_close(fd2uuid(fd));
+    /* open FD but no protocol? RW hook thing or listening sockets? */
+    if (fd_data(fd).rw_hooks != &FIO_DEFAULT_RW_HOOKS)
+      fio_close(fd2uuid(fd));
   }
 finish:
   do {
