@@ -8,6 +8,8 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.41 (2020-07-24)
 
+**Fix**: Hot Restart failed because listening sockets were cleared away. Credit to Néstor Coppi (@Shelvak) for exposing issue #97.
+
 **Fix**: CLI argument parsing is now only active when using the iodine CLI (or if defining `IODINE_PARSE_CLI` before requiring `iodine`). Credit to Aldis Berjoza (@graudeejs) for exposing issue #96.
 
 #### Change log v.0.7.40 (2020-05-23)
