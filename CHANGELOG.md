@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.42 (2020-08-02)
+
+Fix: Implement fix suggested by @Shelvak (Néstor Coppi) in issue #98.
+
 #### Change log v.0.7.41 (2020-07-24)
 
 **Fix**: Hot Restart failed because listening sockets were cleared away. Credit to Néstor Coppi (@Shelvak) for exposing issue #97.
