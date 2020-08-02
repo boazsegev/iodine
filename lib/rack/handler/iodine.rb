@@ -14,6 +14,12 @@ module Iodine
 
       true
     end
+
+    # patches an assumption by Rack, issue #98 code donated by @Shelvak (Néstor Coppi)
+    def self.shutdown
+      Iodine.stop
+    end
+
     IODINE_RACK_LOADED = true
   end
 end
