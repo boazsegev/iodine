@@ -576,8 +576,8 @@ Iodine is written in C and allows some compile-time customizations, such as:
 These options can be used, for example, like so:
 
 ```bash
-$ CFLAGS="-DFIO_FORCE_MALLOC=1 -DHTTP_MAX_HEADER_COUNT=64" \
-  gem install iodine
+  gem install iodine -- \
+      --with-cflags=\"-DHTTP_MAX_HEADER_LENGTH=48000 -DFIO_FORCE_MALLOC=1 -DHTTP_MAX_HEADER_COUNT=64\"
 ```
 
 More possible compile time options can be found in the [facil.io documentation](http://facil.io).
