@@ -80,6 +80,22 @@ Conforming pub/sub implementations **MUST** implement the following pub/sub inst
 
     A global alias for this method (allowing it to be accessed from outside active connections) **MAY** be defined as `Rack::PubSub.publish`.
 
+## Integrating a Pub/Sub module into a WebSocket / EventSource (SSE) `client` object
+
+A conforming pub/sub module **MUST** be designed so that it can be integrated into WebSocket / EventSource (SSE) `client` objects be `include`-ing their class.
+
+This **MUST** result in a behavior where subscriptions are destroyed / canceled once the `client` object state changes to "closed" - i.e., either when the `on_close` callback is called, or the first time the method `client.open?` returns `false`.
+
+The idiomatic way to add a pub/sub module to a `client`'s class is:
+
+```ruby
+client.class.prepend MyPubSubModule unless client.pubsub?
+```
+
+The pub/sub module **MUST** expect and support this behavior.
+
+**Note**: the use of `prepend` (rather than `include`) is chosen so that it's possible to override the `client`'s instance method of `pubsub?`.
+
 ## Connecting to External Backends (pub/sub Engines)
 
 It is common for scaling applications to require an external message broker backend such as Redis, RabbitMQ, etc'. The following requirements set a common interface for such "engine" implementation and integration.
