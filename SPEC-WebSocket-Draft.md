@@ -208,7 +208,7 @@ The following example uses Push notifications for both WebSocket and SSE connect
 ```ruby
 module Chat
     def on_open(client)
-        client.class.extend MyPubSubModule unless client.pubsub?
+        client.class.prepend MyPubSubModule unless client.pubsub?
         client.subscribe "chat"
         client.publish "chat", "#{env[:nickname]} joined the chat."
     end
