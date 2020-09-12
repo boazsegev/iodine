@@ -45,7 +45,7 @@ WebSocket and EventSource connection upgrade and handling is performed using a C
 
 The Callback Object could be a any object which implements any (of none) of the following callbacks:
 
-* `on_open(client)` **MUST** be called once the connection had been established.
+* `on_open(client)` **MUST** be called once the connection had been established and/or the Callback Object had been linked to the `client` object.
 
 * `on_message(client, data)` **MUST** be called when incoming WebSocket data is received.
 
@@ -61,7 +61,7 @@ The Callback Object could be a any object which implements any (of none) of the 
 
 * `on_shutdown(client)` **MAY** be called during the server's graceful shutdown process, _before_ the connection is closed and in addition to the `on_close` function (which is called _after_ the connection is closed.
 
-* `on_close(client)` **MUST** be called _after_ the connection was closed for whatever reason (socket errors, parsing errors, timeouts, client disconnection, `client.close` being called, etc').
+* `on_close(client)` **MUST** be called _after_ the connection was closed for whatever reason (socket errors, parsing errors, timeouts, client disconnection, `client.close` being called, etc') or the Callback Object was replaced by another Callback Object.
 
 
 The server **MUST** provide the Callback Object with a `client` object, that supports the following methods (this approach promises applications could be server agnostic):
@@ -97,6 +97,31 @@ The server **MUST** provide the Callback Object with a `client` object, that sup
     Servers that return a positive number **MUST** call the `on_drained` callback when a call to `pending` would return the value `0`.
 
     \*Servers that divide large messages into a number of smaller messages (implement message fragmentation) **MAY** count each fragment separately, as if the fragmentation was performed by the user and `write` was called more than once per message.
+
+* `pubsub?` **MUST** return `false` **unless** the pub/sub extension is supported.
+
+   Pub/Sub patterns are idiomatic for WebSockets and EventSource connections but their API is out of scope for this extension.
+
+* `class` **MUST** return the client's Class, allowing it be extended with additional features (such as Pub/Sub, etc').
+
+    **Note**: Ruby adds this method automatically to every class, no need to do a thing.
+
+The server **MAY** support the following (optional) methods for the `client` object:
+
+* `handler` if implemented, **MUST** return the callback object linked to the `client` object.
+
+* `handler=` if implemented, **MUST** set a new Callback Object for `client`.
+
+    This allows applications to switch from one callback object to another (i.e., in case of credential upgrades).
+
+    Once a new Callback Object was set, the server **MUST** call the old handler's `on_close` callback and **afterwards** call the new handler's `on_open` callback.
+
+    It is **RECOMMENDED** (but not required) that this also updates the value for `env['rack.upgrade']`.
+
+* `timeout` / `timeout=` allows applications to get / set connection timeouts dynamically and separately for each connection. Servers **SHOULD** provide a global setting for the default connection timeout. It is **RECOMMENDED** (but not required) that a global / default timeout setting be available from the command line (CLI).
+
+* `protocol` if implemented, **MUST** return the same value that was originally set by `env['rack.upgrade?']`.
+
 
 WebSocket `ping` / `pong`, timeouts and network considerations **SHOULD** be implemented by the server. It is **RECOMMENDED** (but not required) that the server send `ping`s to prevent connection timeouts and to detect network failure. Clients **SHOULD** also consider sending `ping`s to detect network errors (dropped connections).
 
@@ -178,14 +203,12 @@ end
 run App
 ```
 
-The following example uses Push notifications for both WebSocket and SSE connections. The Pub/Sub API isn't part of this specification but it is supported by iodine:
+The following example uses Push notifications for both WebSocket and SSE connections. The Pub/Sub API is subject to a separate Pub/Sub API extension and isn't part of this specification (it is, however, supported by iodine):
 
 ```ruby
 module Chat
-    def initialize(nickname)
-        @nickname = nickname
-    end
     def on_open(client)
+        client.class.extend MyPubSubModule unless client.pubsub?
         client.subscribe "chat"
         client.publish "chat", "#{env[:nickname]} joined the chat."
     end
