@@ -234,6 +234,14 @@ static VALUE iodine_connection_is_open(VALUE self) {
   }
   return Qfalse;
 }
+
+/**
+ * Always returns true, since Iodine connections support the pub/sub extension.
+ */
+static VALUE iodine_connection_is_pubsub(VALUE self) {
+  return INT2NUM(0);
+  (void)self;
+}
 /**
  * Returns the number of pending `write` operations that need to complete
  * before the next `on_drained` callback is called.
@@ -903,6 +911,7 @@ void iodine_connection_init(void) {
                    0);
   rb_define_method(ConnectionKlass, "handler=", iodine_connection_handler_set,
                    1);
+  rb_define_method(ConnectionKlass, "pubsub?", iodine_connection_is_pubsub, 0);
   rb_define_method(ConnectionKlass, "subscribe", iodine_pubsub_subscribe, -1);
   rb_define_method(ConnectionKlass, "unsubscribe", iodine_pubsub_unsubscribe,
                    1);
