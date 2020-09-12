@@ -21,13 +21,13 @@ The purpose of these specifications is:
 
 ## Rack WebSockets / EventSource
 
-Servers that publish WebSocket and/or EventSource (SSE) support using the `env['rack.upgrade?']` value MUST follow the requirements set in this document.
+Servers that publish WebSocket and/or EventSource (SSE) support using the `env['rack.upgrade?']` value **MUST** follow the requirements set in this document.
 
 This document reserves the Rack `env` Hash keys of `rack.upgrade?` and `rack.upgrade`.
 
-A conforming server MUST set `env['rack.upgrade?']` to `:websocket` for incoming WebSocket connections and `:sse` for incoming EventSource (SSE) connections. 
+A conforming server **MUST** set `env['rack.upgrade?']` to `:websocket` for incoming WebSocket connections and `:sse` for incoming EventSource (SSE) connections. 
 
-If a connection is not "upgradeable", a conforming server SHOULD set `env['rack.upgrade?']` to either `nil` or `false`. Setting the `env['rack.upgrade?']` to either `false` or `nil` should make it easier for applications to test for server support during a normal HTTP request.
+If a connection is not "upgradeable", a conforming server **SHOULD** set `env['rack.upgrade?']` to either `nil` or `false`. Setting the `env['rack.upgrade?']` to either `false` or `nil` should make it easier for applications to test for server support during a normal HTTP request.
 
 If the connection is upgradeable and a client application set a value for `env['rack.upgrade']`:
 
@@ -96,7 +96,7 @@ The server **MUST** provide the Callback Object with a `client` object, that sup
 
     Servers **MAY** choose to always return the value `0` **ONLY IF** they never call the `on_drained` callback and the connection is open.
 
-    Servers that return a positive number MUST call the `on_drained` callback when a call to `pending` would return the value `0`.
+    Servers that return a positive number **MUST** call the `on_drained` callback when a call to `pending` would return the value `0`.
 
     \*Servers that divide large messages into a number of smaller messages (implement message fragmentation) **MAY** count each fragment separately, as if the fragmentation was performed by the user and `write` was called more than once per message.
 
