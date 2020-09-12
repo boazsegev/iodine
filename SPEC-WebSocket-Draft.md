@@ -27,7 +27,7 @@ This document reserves the Rack `env` Hash keys of `rack.upgrade?` and `rack.upg
 
 A conforming server MUST set `env['rack.upgrade?']` to `:websocket` for incoming WebSocket connections and `:sse` for incoming EventSource (SSE) connections. 
 
-If a connection is not "upgradeable", a conforming server SHOULD set `env['rack.upgrade?']` to either `nil` or `false`. Setting the `env['rack.upgrade?']` to `false` (rather than `nil`) might make it easier for applications to test for server support.
+If a connection is not "upgradeable", a conforming server SHOULD set `env['rack.upgrade?']` to either `nil` or `false`. Setting the `env['rack.upgrade?']` to either `false` or `nil` should make it easier for applications to test for server support during a normal HTTP request.
 
 If the connection is upgradeable and a client application set a value for `env['rack.upgrade']`:
 
