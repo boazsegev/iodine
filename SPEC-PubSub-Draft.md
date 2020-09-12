@@ -1,5 +1,11 @@
 # Ruby pub/sub API Specification Draft
 
+### Draft State
+
+This draft is under discussion and will be implemented by iodine starting with the 0.8.x versions.
+
+---
+
 ## Purpose
 
 This document details a Rack specification extension for publish/subscribe (pub/sub) modules that can extend WebSocket / EventSource Rack servers.
@@ -16,9 +22,13 @@ The purpose of this specification is:
 
 3. To provide common considerations and guidelines for pub/sub implementors to consider when implementing their pub/sub modules.
 
+    Some concerns are common for pub/sub implementors, such as integrating third party message brokers (Redis, RabbitMQ, Cassandra)
+
 ## Pub/Sub Instance Methods
 
 Conforming pub/sub implementations **MUST** implement the following pub/sub instance methods:
+
+* `pubsub?` **MUST** return the pub/sub API version as an integer number. Currently, set to `0` (development version).
 
 * `subscribe(to, is_pattern = false) { |from, message| optional_block }` where:
 
@@ -70,7 +80,11 @@ Conforming pub/sub implementations **MUST** implement the following pub/sub inst
 
     A global alias for this method (allowing it to be accessed from outside active connections) **MAY** be defined as `Rack::PubSub.publish`.
 
-Implementations **MUST** implement the following module / class methods in one of their public classes / modules (iodine implements these under `Iodine::PubSub`):
+## Connecting to External Backends (pub/sub Engines)
+
+It is common for scaling applications to require an external message broker backend such as Redis, RabbitMQ, etc'. The following requirements set a common interface for such "engine" implementation and integration.
+
+Pub/sub implementations **MUST** implement the following module / class methods in one of their public classes / modules (iodine implements these under `Iodine::PubSub`):
 
 * `attach(engine)` where `engine` is a `PubSubEngine` object, as described in this specification.
 
@@ -94,17 +108,21 @@ Implementations **MUST** implement the following module / class methods in one o
 
     Implementations **MUST** behave as if the engine was newly registered and (re)inform the engine of any existing subscriptions by calling engine's `subscribe` callback for each existing subscription.
 
-A `PubSubEngine` object **MUST** implement the following methods:
+A `PubSubEngine` instance object **MUST** implement the following methods:
 
-* `subscribe(to, is_pattern = false)` this method informs the engine that a subscription to the specified channel / pattern exists for the calling the process.
+* `subscribe(to, is_pattern = false)` this method informs the engine that a subscription to the specified channel / pattern exists for the calling the process. It **MUST ONLY** be called **once** for all existing and future subscriptions to that channel within the process.
 
     The method **MUST** return `true` if a subscription was scheduled (or performed) or `false` if the subscription is known to fail.
 
     This method will be called by the pub/sub implementation (for each registered engine). The engine **MAY** assume that the method would never be called directly by an application / client.
 
+    This method **MUST NOT** raise an exception.
+
 * `unsubscribe(from, is_pattern = false)` this method informs an engine that there are no more subscriptions to the named channel / pattern for the calling process.
 
-    The method's semantics are similar to `subscribe`.
+    The method's semantics are similar to `subscribe` only is performs the opposite action.
+
+    This method **MUST NOT** raise an exception.
 
     This method will be called by the pub/sub implementation (for each registered engine). The engine **MAY** assume that the method would never be called directly by an application / client.
 
@@ -116,7 +134,7 @@ A `PubSubEngine` object **MUST** implement the following methods:
 
     The engine **MUST** assume that the method **MAY** be called directly by an application / client.
 
-In order for a PubSubEngine object to publish messages to all subscribed clients on a particular process, it **SHOULD** call the implementation's global `publish` method with the engine set to `false`.
+In order for a PubSubEngine instance object to publish messages to all subscribed clients on a particular process, it **SHOULD** call the implementation's global `publish` method with the engine set to `false`.
 
 i.e., if the implementation's global `publish` method is in a class called `Iodine`:
 
