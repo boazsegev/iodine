@@ -5,19 +5,17 @@ This draft is also implemented by [the Agoo server](https://github.com/ohler55/a
 ---
 ## Purpose
 
-This document details WebSocket / EventSource connection support for Rack servers.
+This document details a Rack specification extension for WebSocket / EventSource servers.
 
-The purpose of these specifications is:
+The purpose of this specification is:
 
-1. To allow separation of concerns between the transport layer and the application, thereby allowing the application to be server agnostic.
+1. To improve application safety by phasing out the use of `hijack` and replacing it with the use of application object callbacks.
 
-    Simply put, when choosing between conforming servers, the application doesn’t need to have any knowledge about the chosen server.
+    This should make it easer for applications to accept WebSocket and EventSource (SSE) connections without exposing themselves to risks and errors related to IO / network logic (such as slow client attacks, buffer flooding, etc').
 
-2. To support “native" (server-side) WebSocket and EventSource (SSE) connections and using application side callbacks.
+2. To improve separation of concerns between servers and applications, moving the IO / network logic related to WebSocket and EventSource (SSE) back to the server.
 
-    Simply put, to make it easy for applications to accept WebSocket and EventSource (SSE) connections from WebSocket and EventSource clients (commonly browsers) while abstracting away any transport layer details.
-
-3. Allow applications to use WebSocket and EventSource (SSE) on HTTP/2 servers. Note: current `hijack` practices will break network connections when attempting to implement EventSource (SSE).
+    Simply put, when using a server that support this extension, the application / framework doesn’t need to have any knowledge about networking, transport protocols, IO streams, polling, etc'.
 
 ## Rack WebSockets / EventSource
 
