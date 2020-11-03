@@ -51,7 +51,6 @@ static VALUE hijack_func_sym;
 static ID close_method_id;
 static ID each_method_id;
 static ID attach_method_id;
-static ID iodine_to_s_method_id;
 static ID iodine_call_proc_id;
 
 static VALUE env_template_no_upgrade;
@@ -294,9 +293,9 @@ static int iodine_copy2env_task(FIOBJ o, void *env_) {
 
   } else {
     /* it's an array */
-    VALUE ary = rb_ary_new();
-    rb_hash_aset(env, hname, ary);
     size_t count = fiobj_ary_count(o);
+    VALUE ary = rb_ary_new2(count);
+    rb_hash_aset(env, hname, ary);
     for (size_t i = 0; i < count; ++i) {
       tmp = fiobj_obj2cstr(fiobj_ary_index(o, i));
       rb_ary_push(ary, rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
@@ -476,11 +475,11 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
   http_s *h = (http_s *)h_;
   // fprintf(stderr, "For_each - headers\n");
   if (TYPE(key) != T_STRING)
-    key = IodineCaller.call(key, iodine_to_s_method_id);
+    key = IodineCaller.call(key, iodine_to_s_id);
   if (TYPE(key) != T_STRING)
     return ST_CONTINUE;
   if (TYPE(val) != T_STRING) {
-    val = IodineCaller.call(val, iodine_to_s_method_id);
+    val = IodineCaller.call(val, iodine_to_s_id);
     if (TYPE(val) != T_STRING)
       return ST_STOP;
   }
@@ -1130,7 +1129,6 @@ void iodine_init_http(void) {
   close_method_id = rb_intern("close");
   each_method_id = rb_intern("each");
   attach_method_id = rb_intern("attach_fd");
-  iodine_to_s_method_id = rb_intern("to_s");
   iodine_call_proc_id = rb_intern("call");
 
   IodineUTF8Encoding = rb_enc_find("UTF-8");

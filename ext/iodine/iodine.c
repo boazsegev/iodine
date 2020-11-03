@@ -33,6 +33,7 @@ VALUE IodineBaseModule;
 VALUE iodine_default_args;
 
 ID iodine_call_id;
+ID iodine_to_s_id;
 
 static VALUE address_sym;
 static VALUE app_sym;
@@ -1302,6 +1303,7 @@ void Init_iodine(void) {
   IodineBaseModule = rb_define_module_under(IodineModule, "Base");
   VALUE IodineCLIModule = rb_define_module_under(IodineBaseModule, "CLI");
   iodine_call_id = rb_intern2("call", 4);
+  iodine_to_s_id = rb_intern("to_s");
 
   // register core methods
   rb_define_module_function(IodineModule, "threads", iodine_threads_get, 0);

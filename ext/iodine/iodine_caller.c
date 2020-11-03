@@ -5,7 +5,7 @@
 
 #include <fio.h>
 
-static __thread volatile uint8_t iodine_GVL_state;
+static __thread volatile uint8_t iodine_GVL_state = 1;
 
 /* *****************************************************************************
 Calling protected Ruby methods
