@@ -53,6 +53,7 @@ extern VALUE IodineModule;
 extern VALUE IodineBaseModule;
 extern VALUE iodine_default_args;
 extern ID iodine_call_id;
+extern ID iodine_to_s_id;
 
 #define IODINE_RSTRINFO(rstr)                                                  \
   ((fio_str_info_s){.len = RSTRING_LEN(rstr), .data = RSTRING_PTR(rstr)})

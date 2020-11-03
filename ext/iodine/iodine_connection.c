@@ -159,7 +159,7 @@ Ruby Connection Methods - write, close open? pending
 ***************************************************************************** */
 
 /**
- * Writes data to the connection asynchronously.
+ * Writes data to the connection asynchronously. `data` MUST be a String.
  *
  * In effect, the `write` call does nothing, it only schedules the data to be
  * sent and marks the data as pending.
@@ -174,6 +174,16 @@ static VALUE iodine_connection_write(VALUE self, VALUE data) {
     return Qnil;
     // rb_raise(rb_eIOError, "Connection closed or invalid.");
   }
+  if (!RB_TYPE_P(data, T_STRING)) {
+    VALUE tmp = data;
+    data = IodineCaller.call(data, iodine_to_s_id);
+    if (!RB_TYPE_P(data, T_STRING))
+      Check_Type(tmp, T_STRING);
+    rb_backtrace();
+    FIO_LOG_WARNING(
+        "`Iodine::Connection#write` was called with a non-String object.");
+  }
+
   switch (c->info.type) {
   case IODINE_CONNECTION_WEBSOCKET:
     /* WebSockets*/
@@ -682,13 +692,6 @@ Can be used using two Strings:
 The method accepts an optional `engine` argument:
 
       publish(to, message, my_pubsub_engine)
-
-
-Alternatively, accepts the following named arguments:
-
-- `:to` - The channel to publish to (required).
-- `:message` - The message to be published (required).
-- `:engine` - If provided, the engine to use for pub/sub. Otherwise the default engine is used.
 
 */
 static VALUE iodine_pubsub_publish(int argc, VALUE *argv, VALUE self) {

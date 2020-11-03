@@ -8,7 +8,6 @@
 #include <fio.h>
 
 static ID call_func_id;
-static ID to_s_func_id;
 static VALUE filename_id;
 static VALUE data_id;
 static VALUE template_id;
@@ -169,7 +168,7 @@ static int mustache_on_arg(mustache_section_s *section, const char *name,
     if (rb_respond_to(o, call_func_id))
       o = IodineCaller.call(o, call_func_id);
     if (!RB_TYPE_P(o, T_STRING))
-      o = IodineCaller.call(o, to_s_func_id);
+      o = IodineCaller.call(o, iodine_to_s_id);
   }
   if (!RB_TYPE_P(o, T_STRING) || !RSTRING_LEN(o))
     return 0;
@@ -220,7 +219,7 @@ static int32_t mustache_on_section_test(mustache_section_s *section,
     }
     o = IodineCaller.call2(o, call_func_id, 1, &str);
     if (!RB_TYPE_P(o, T_STRING))
-      o = rb_funcall2(o, to_s_func_id, 0, NULL);
+      o = rb_funcall2(o, iodine_to_s_id, 0, NULL);
     if (RB_TYPE_P(o, T_STRING) && RSTRING_LEN(o))
       mustache_write_text(section, RSTRING_PTR(o), RSTRING_LEN(o), 0);
     return 0;
@@ -553,7 +552,6 @@ Initialize Iodine::Mustache
 
 void iodine_init_mustache(void) {
   call_func_id = rb_intern2("call", 4);
-  to_s_func_id = rb_intern2("to_s", 4);
   filename_id = rb_id2sym(rb_intern2("filename", 8));
   data_id = rb_id2sym(rb_intern2("data", 4));
   template_id = rb_id2sym(rb_intern2("template", 8));

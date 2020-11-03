@@ -6,9 +6,15 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.43 (2020-11-03)
+
+**Fix**: Fixes an issue where the GVL state in user-spawned threads is inaccurate. This issue only occurs if spawning a new thread and calling certain Iodine methods from a user thread.
+
+**Fix**: validate that data passed by the user to `write` is a String object and print warnings / raise exceptions if t isn't. Credit to Vamsi Ambati for asking a question that exposed this issue.
+
 #### Change log v.0.7.42 (2020-08-02)
 
-Fix: Implement fix suggested by @Shelvak (Néstor Coppi) in issue #98.
+**Fix**: Implement fix suggested by @Shelvak (Néstor Coppi) in issue #98.
 
 #### Change log v.0.7.41 (2020-07-24)
 
