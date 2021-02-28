@@ -555,9 +555,11 @@ static inline int ruby2c_response_send(iodine_http_request_handle_s *handle,
 
   if (TYPE(body) == T_STRING) {
     // fprintf(stderr, "Review body as String\n");
-    if (RSTRING_LEN(body))
+    handle->type = IODINE_HTTP_NONE;
+    if (RSTRING_LEN(body)) {
       handle->body = fiobj_str_new(RSTRING_PTR(body), RSTRING_LEN(body));
-    handle->type = IODINE_HTTP_SENDBODY;
+      handle->type = IODINE_HTTP_SENDBODY;
+    }
     return 0;
   } else if (rb_respond_to(body, each_method_id)) {
     // fprintf(stderr, "Review body as for-each ...\n");
