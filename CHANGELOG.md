@@ -6,6 +6,14 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.44 (2021-02-28)
+
+**Fix**: Fixes issue #103 where an empty String response would result in the word "null" being returned (no String object was created, which routed the NULL object to facil.io's JSON interpreter). Credit to @waghanza (Marwan Rabbâa) for exposing the issue.
+
+**Fix**: Fixes a possible edge case race condition where the GC might free a channel name's String object before it's passed on to the user's callback.
+
+**Fix**: Fixes a typo in the CLI documentation.
+
 #### Change log v.0.7.43 (2020-11-03)
 
 **Fix**: Fixes an issue where the GVL state in user-spawned threads is inaccurate. This issue only occurs if spawning a new thread and calling certain Iodine methods from a user thread.
