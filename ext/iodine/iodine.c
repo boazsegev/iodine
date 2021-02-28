@@ -413,7 +413,7 @@ static VALUE iodine_cli_parse(VALUE self) {
       FIO_CLI_PRINT_HEADER("WebSocket Settings:"),
       FIO_CLI_INT("-max-msg -maxms incoming WebSocket message limit in Kb. "
                   "Default: 250Kb"),
-      FIO_CLI_INT("-ping websocket ping interval (0..255). Default: 40s"),
+      FIO_CLI_INT("-ping websocket ping interval (1..255). Default: 40s"),
       FIO_CLI_PRINT_HEADER("SSL/TLS:"),
       FIO_CLI_BOOL("-tls enable SSL/TLS using a self-signed certificate."),
       FIO_CLI_STRING(
