@@ -403,8 +403,12 @@ static void *iodine_on_pubsub_call_block(void *msg_) {
   fio_msg_s *msg = msg_;
   VALUE args[2];
   args[0] = rb_str_new(msg->channel.data, msg->channel.len);
+  IodineStore.add(args[0]);
   args[1] = rb_str_new(msg->msg.data, msg->msg.len);
+  IodineStore.add(args[1]);
   IodineCaller.call2((VALUE)msg->udata2, call_id, 2, args);
+  IodineStore.remove(args[1]);
+  IodineStore.remove(args[0]);
   return NULL;
 }
 
