@@ -36,7 +36,10 @@ int main(void) {
 EOS
 
   # Test for manual selection and then TRY_COMPILE with each polling engine
-  if ENV['FIO_POLL']
+  if Gem.win_platform?
+    puts "skipping polling tests, using WSAPOLL on Windows"
+    $defs << "-DFIO_ENGINE_WSAPOLL"
+  elsif ENV['FIO_POLL']
     puts "skipping polling tests, enforcing manual selection of: poll"
     $defs << "-DFIO_ENGINE_POLL"
   elsif ENV['FIO_FORCE_POLL']
@@ -64,9 +67,10 @@ end
 
 iodine_test_polling_support()
 
-# Test for OpenSSL version equal to 1.0.0 or greater.
-unless ENV['NO_SSL'] || ENV['NO_TLS'] || ENV["DISABLE_SSL"]
-  OPENSSL_TEST_CODE = <<EOS
+unless Gem.win_platform?
+  # Test for OpenSSL version equal to 1.0.0 or greater.
+  unless ENV['NO_SSL'] || ENV['NO_TLS'] || ENV["DISABLE_SSL"]
+    OPENSSL_TEST_CODE = <<EOS
 \#include <openssl/bio.h>
 \#include <openssl/err.h>
 \#include <openssl/ssl.h>
@@ -84,18 +88,19 @@ int main(void) {
 }
 EOS
 
-  dir_config("openssl")
-  begin
-    require 'openssl'
-  rescue LoadError
-  else
-    if have_library('crypto') && have_library('ssl')
-      puts "detected OpenSSL library, testing for version and required functions."
-      if try_compile(OPENSSL_TEST_CODE)
-        $defs << "-DHAVE_OPENSSL"
-        puts "confirmed OpenSSL to be version 1.1.0 or above (#{OpenSSL::OPENSSL_LIBRARY_VERSION})...\n* compiling with HAVE_OPENSSL."
-      else
-        puts "FAILED: OpenSSL version not supported (#{OpenSSL::OPENSSL_LIBRARY_VERSION} is too old)."
+    dir_config("openssl")
+    begin
+      require 'openssl'
+    rescue LoadError
+    else
+      if have_library('crypto') && have_library('ssl')
+        puts "detected OpenSSL library, testing for version and required functions."
+        if try_compile(OPENSSL_TEST_CODE)
+          $defs << "-DHAVE_OPENSSL"
+          puts "confirmed OpenSSL to be version 1.1.0 or above (#{OpenSSL::OPENSSL_LIBRARY_VERSION})...\n* compiling with HAVE_OPENSSL."
+        else
+          puts "FAILED: OpenSSL version not supported (#{OpenSSL::OPENSSL_LIBRARY_VERSION} is too old)."
+        end
       end
     end
   end
