@@ -33,6 +33,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #endif
 #endif
 
+#ifndef __MINGW32__
 /* *****************************************************************************
 SSL/TLS patch
 ***************************************************************************** */
@@ -56,6 +57,7 @@ fio_tls_alpn_add(void *tls, const char *protocol_name,
   (void)udata_tls;
 }
 #pragma weak fio_tls_alpn_add
+#endif
 
 /* *****************************************************************************
 Small Helpers
@@ -764,6 +766,7 @@ void http_pause(http_s *h, void (*task)(http_pause_handle_s *http)) {
   http_fio_protocol_s *p = (http_fio_protocol_s *)h->private_data.flag;
   http_vtable_s *vtbl = (http_vtable_s *)h->private_data.vtbl;
   http_pause_handle_s *http = fio_malloc(sizeof(*http));
+  FIO_ASSERT_ALLOC(http);
   *http = (http_pause_handle_s){
       .uuid = p->uuid,
       .h = h,
@@ -845,6 +848,7 @@ static http_settings_s *http_settings_new(http_settings_s arg_settings) {
       char *home = getenv("HOME");
       size_t home_len = strlen(home);
       char *tmp = malloc(settings->public_folder_length + home_len + 1);
+      FIO_ASSERT_ALLOC(tmp);
       memcpy(tmp, home, home_len);
       if (home[home_len - 1] == '/')
         --home_len;
@@ -854,6 +858,7 @@ static http_settings_s *http_settings_new(http_settings_s arg_settings) {
       settings->public_folder_length = strlen(settings->public_folder);
     } else {
       settings->public_folder = malloc(settings->public_folder_length + 1);
+      FIO_ASSERT_ALLOC(settings->public_folder);
       memcpy((void *)settings->public_folder, arg_settings.public_folder,
              settings->public_folder_length);
       ((uint8_t *)settings->public_folder)[settings->public_folder_length] = 0;
@@ -880,7 +885,7 @@ static void http_on_server_protocol_http1(intptr_t uuid, void *set,
       if (!fio_http_at_capa)
         FIO_LOG_WARNING("HTTP server at capacity");
       fio_http_at_capa = 1;
-      http_send_error2(uuid, 503, set);
+      http_send_error2(503, uuid, set);
       fio_close(uuid);
     }
     return;
@@ -927,10 +932,12 @@ intptr_t http_listen(const char *port, const char *binding,
 
   http_settings_s *settings = http_settings_new(arg_settings);
   settings->is_client = 0;
+#ifndef __MINGW32__
   if (settings->tls) {
     fio_tls_alpn_add(settings->tls, "http/1.1", http_on_server_protocol_http1,
                      NULL, NULL);
   }
+#endif
 
   return fio_listen(.port = port, .address = binding, .tls = arg_settings.tls,
                     .on_finish = http_on_finish, .on_open = http_on_open,
@@ -1187,6 +1194,7 @@ static void on_websocket_http_connection_finished(http_settings_s *settings) {
 #undef websocket_connect
 int websocket_connect(const char *address, websocket_settings_s settings) {
   websocket_settings_s *s = fio_malloc(sizeof(*s));
+  FIO_ASSERT_ALLOC(s);
   *s = settings;
   return http_connect(address, NULL, .on_request = on_websocket_http_connected,
                       .on_response = on_websocket_http_connected,
