@@ -15,7 +15,9 @@ typedef struct {
   fio_str_info_s body;
   fio_str_info_s public;
   fio_str_info_s url;
+#ifndef __MINGW32__
   fio_tls_s *tls;
+#endif
   VALUE handler;
   FIOBJ headers;
   FIOBJ cookies;

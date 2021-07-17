@@ -209,10 +209,17 @@ Returns the handler object used.
 intptr_t iodine_tcp_listen(iodine_connection_args_s args) {
   // clang-format on
   IodineStore.add(args.handler);
+#ifdef __MINGW32__
+  return fio_listen(.port = args.port.data, .address = args.address.data,
+                    .on_open = iodine_tcp_on_open,
+                    .on_finish = iodine_tcp_on_finish,
+                    .udata = (void *)args.handler);
+#else
   return fio_listen(.port = args.port.data, .address = args.address.data,
                     .on_open = iodine_tcp_on_open,
                     .on_finish = iodine_tcp_on_finish, .tls = args.tls,
                     .udata = (void *)args.handler);
+#endif
 }
 
 // clang-format off
@@ -238,10 +245,17 @@ Returns the handler object used.
 intptr_t iodine_tcp_connect(iodine_connection_args_s args){
   // clang-format on
   IodineStore.add(args.handler);
+#ifdef __MINGW32__
+  return fio_connect(.port = args.port.data, .address = args.address.data,
+                     .on_connect = iodine_tcp_on_connect,
+                     .on_fail = iodine_tcp_on_fail, .timeout = args.ping,
+                     .udata = (void *)args.handler);
+#else
   return fio_connect(.port = args.port.data, .address = args.address.data,
                      .on_connect = iodine_tcp_on_connect, .tls = args.tls,
                      .on_fail = iodine_tcp_on_fail, .timeout = args.ping,
                      .udata = (void *)args.handler);
+#endif
 }
 
 // clang-format off
