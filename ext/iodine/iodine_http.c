@@ -12,11 +12,15 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <ruby/io.h>
 // #include "iodine_websockets.h"
 
+#ifndef __MINGW32__
 #include <arpa/inet.h>
+#endif
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef __MINGW32__
 #include <sys/socket.h>
+#endif
 
 /* *****************************************************************************
 Available Globals
