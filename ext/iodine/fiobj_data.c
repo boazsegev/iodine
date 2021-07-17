@@ -1,5 +1,5 @@
 #if defined(__unix__) || defined(__APPLE__) || defined(__linux__) ||           \
-    defined(__CYGWIN__) /* require POSIX */
+    defined(__CYGWIN__) || defined(__MINGW32__) /* require POSIX */
 /*
 Copyright: Boaz Segev, 2017-2019
 License: MIT
@@ -78,6 +78,7 @@ static void fiobj_data_copy_parent(FIOBJ o) {
   switch (obj2io(obj2io(o)->source.parent)->fd) {
   case -1:
     obj2io(o)->buffer = fio_malloc(obj2io(o)->len + 1);
+    FIO_ASSERT_ALLOC(obj2io(o)->buffer);
     memcpy(obj2io(o)->buffer,
            obj2io(obj2io(o)->source.parent)->buffer + obj2io(o)->capa,
            obj2io(o)->len);
@@ -102,7 +103,11 @@ static void fiobj_data_copy_parent(FIOBJ o) {
       if (data.len + pos > obj2io(o)->len)
         data.len = obj2io(o)->len - pos;
     retry_int:
+#ifdef __MINGW32__
+      written = pwrite(obj2io(o)->fd, data.data, data.len, 0);
+#else
       written = write(obj2io(o)->fd, data.data, data.len);
+#endif
       if (written < 0) {
         if (errno == EINTR)
           goto retry_int;
