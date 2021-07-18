@@ -4280,6 +4280,9 @@ static void __attribute__((constructor)) fio_lib_init(void) {
 
   for (ssize_t i = 0; i < capa; ++i) {
     fio_clear_fd(i, 0);
+#ifdef __MINGW32__
+    fio_clear_handle(i);
+#endif
 #if FIO_ENGINE_POLL || FIO_ENGINE_WSAPOLL
     fio_data->poll[i].fd = -1;
 #endif
@@ -6240,11 +6243,11 @@ fio_str_info_s fio_subscription_channel(subscription_s *subscription) {
 /* *****************************************************************************
 Engine handling and Management
 ***************************************************************************** */
-
+#ifndef __MINGW32__
 /* implemented later, informs root process about pub/sub subscriptions */
 static inline void fio_cluster_inform_root_about_channel(channel_s *ch,
                                                          int add);
-
+#endif
 /* runs in lock(!) let'm all know */
 static void fio_pubsub_on_channel_create(channel_s *ch) {
   fio_lock(&fio_postoffice.engines.lock);
@@ -6256,7 +6259,9 @@ static void fio_pubsub_on_channel_create(channel_s *ch) {
                         ch->match);
   }
   fio_unlock(&fio_postoffice.engines.lock);
+#ifndef __MINGW32__
   fio_cluster_inform_root_about_channel(ch, 1);
+#endif
 }
 
 /* runs in lock(!) let'm all know */
@@ -6270,7 +6275,9 @@ static void fio_pubsub_on_channel_destroy(channel_s *ch) {
         ch->match);
   }
   fio_unlock(&fio_postoffice.engines.lock);
+#ifndef __MINGW32__
   fio_cluster_inform_root_about_channel(ch, 0);
+#endif
 }
 
 /**
@@ -6791,7 +6798,7 @@ fio_cluster_protocol_alloc(intptr_t uuid,
 /* *****************************************************************************
  * Master (server) IPC Connections
  **************************************************************************** */
-
+#ifndef __MINGW32__
 static void fio_cluster_server_sender(void *m_, intptr_t avoid_uuid) {
   fio_msg_internal_s *m = m_;
   fio_lock(&cluster_data.lock);
@@ -6948,11 +6955,11 @@ static void fio_listen2cluster(void *ignore) {
   fio_attach(cluster_data.uuid, p);
   (void)ignore;
 }
-
+#endif
 /* *****************************************************************************
  * Worker (client) IPC connections
  **************************************************************************** */
-
+#ifndef __MINGW32__
 static void fio_cluster_client_handler(struct cluster_pr_s *pr) {
   /* what to do? */
   switch ((fio_cluster_message_type_e)pr->type) {
@@ -7062,11 +7069,11 @@ static void fio_send2cluster(fio_msg_internal_s *m) {
     fio_cluster_client_sender(fio_msg_internal_dup(m), -1);
   }
 }
-
+#endif
 /* *****************************************************************************
  * Propagation
  **************************************************************************** */
-
+#ifndef __MINGW32__
 static inline void fio_cluster_inform_root_about_channel(channel_s *ch,
                                                          int add) {
   if (!fio_data->is_worker || fio_data->workers == 1 || !cluster_data.uuid ||
@@ -7099,14 +7106,16 @@ static inline void fio_cluster_inform_root_about_channel(channel_s *ch,
                               ch_name, msg, 0, 1),
       -1);
 }
-
+#endif
 /* *****************************************************************************
  * Initialization
  **************************************************************************** */
 
 static void fio_accept_after_fork(void *ignore) {
   /* prevent `accept` backlog in parent */
+#ifndef __MINGW32__
   fio_cluster_listen_accept(cluster_data.uuid, NULL);
+#endif
   (void)ignore;
 }
 
@@ -7163,12 +7172,14 @@ static void fio_cluster_at_exit(void *ignore) {
 }
 
 static void fio_pubsub_initialize(void) {
+#ifndef __MINGW32__
   fio_cluster_init();
   fio_state_callback_add(FIO_CALL_PRE_START, fio_listen2cluster, NULL);
   fio_state_callback_add(FIO_CALL_IN_MASTER, fio_accept_after_fork, NULL);
   fio_state_callback_add(FIO_CALL_IN_CHILD, fio_connect2cluster, NULL);
   fio_state_callback_add(FIO_CALL_ON_FINISH, fio_cluster_cleanup, NULL);
   fio_state_callback_add(FIO_CALL_AT_EXIT, fio_cluster_at_exit, NULL);
+#endif
 }
 
 /* *****************************************************************************
@@ -7219,11 +7230,13 @@ static void fio_cluster_signal_children(void) {
     fio_stop();
     return;
   }
+#ifndef __MINGW32__
   fio_cluster_server_sender(fio_msg_internal_create(0, FIO_CLUSTER_MSG_SHUTDOWN,
                                                     (fio_str_info_s){.len = 0},
                                                     (fio_str_info_s){.len = 0},
                                                     0, 1),
                             -1);
+#endif
 }
 
 /* Sublime Text marker */
@@ -7259,7 +7272,9 @@ void fio_publish FIO_IGNORE_MACRO(fio_publish_args_s args) {
         args.filter,
         (args.is_json ? FIO_CLUSTER_MSG_JSON : FIO_CLUSTER_MSG_FORWARD),
         args.channel, args.message, args.is_json, 1);
+#ifndef __MINGW32__
     fio_send2cluster(m);
+#endif
     fio_publish2process(m);
     break;
   case 2UL: // ((uintptr_t)FIO_PUBSUB_PROCESS):
@@ -7272,7 +7287,9 @@ void fio_publish FIO_IGNORE_MACRO(fio_publish_args_s args) {
         args.filter,
         (args.is_json ? FIO_CLUSTER_MSG_JSON : FIO_CLUSTER_MSG_FORWARD),
         args.channel, args.message, args.is_json, 1);
+#ifndef __MINGW32__
     fio_send2cluster(m);
+#endif
     fio_msg_internal_free(m);
     m = NULL;
     break;
@@ -7281,11 +7298,15 @@ void fio_publish FIO_IGNORE_MACRO(fio_publish_args_s args) {
         args.filter,
         (args.is_json ? FIO_CLUSTER_MSG_ROOT_JSON : FIO_CLUSTER_MSG_ROOT),
         args.channel, args.message, args.is_json, 1);
+#ifdef __MINGW32__
+    fio_publish2process(m);
+#else
     if (fio_data->is_worker == 0 || fio_data->workers == 1) {
       fio_publish2process(m);
     } else {
       fio_cluster_client_sender(m, -1);
     }
+#endif
     break;
   default:
     if (args.filter != 0) {
