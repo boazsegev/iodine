@@ -5,7 +5,7 @@ License: MIT
 Feel free to copy, use and enjoy according to the license provided.
 ***************************************************************************** */
 #ifdef __MINGW32__
-#define FD_SETSIZE 1024
+/** iodine/ruby specific, don use: #define FD_SETSIZE 1024 */
 #define FIO_FORCE_MALLOC 1
 #define FIO_DISABLE_HOT_RESTART 1
 #endif
@@ -142,7 +142,7 @@ int ioctl (int fd, u_long request, int* argp) {
   int error;
   u_long flags;
   flags = *argp;
-  error = ioctlsocket(fd, request, &flags);
+  error = ioctlsocket_ptr(fd, request, &flags);
   if (error > 0) { return -1; }
   else { return 0; }
 }
@@ -510,8 +510,8 @@ static inline int fio_clear_fd(intptr_t fd, uint8_t is_open) {
   if (protocol && protocol->on_close) {
     fio_defer(deferred_on_close, (void *)fd2uuid(fd), protocol);
   }
-  FIO_LOG_DEBUG("FD %d re-initialized (state: %p-%s).", (int)fd,
-                (void *)fd2uuid(fd), (is_open ? "open" : "closed"));
+  // FIO_LOG_DEBUG("FD %d re-initialized (state: %p-%s).", (int)fd,
+  //              (void *)fd2uuid(fd), (is_open ? "open" : "closed"));
   return 0;
 }
 
@@ -2441,7 +2441,7 @@ static size_t fio_poll(void) {
   size_t j = 0;
 
   for(i = start; i <= end; i++) {
-    if (fd_data(i).socket_handle != INVALID_SOCKET) {
+    if (fd_data(i).socket_handle != INVALID_SOCKET && fd_data(i).socket_handle > 0) {
       list[j].fd = fd_data(i).socket_handle;
       list[j].events = fio_data->poll[i].events;
       list[j].revents = fio_data->poll[i].revents;
@@ -2883,7 +2883,7 @@ intptr_t fio_accept(intptr_t srv_uuid) {
     return -1;
 #else
 #ifdef __MINGW32__
-  client = accept(fd_data(fio_uuid2fd(srv_uuid)).socket_handle, (struct sockaddr *)addrinfo, &addrlen);
+  client = accept_ptr(fd_data(fio_uuid2fd(srv_uuid)).socket_handle, (struct sockaddr *)addrinfo, &addrlen);
   if (client == INVALID_SOCKET)
     return -1;
 #else
@@ -2893,7 +2893,7 @@ intptr_t fio_accept(intptr_t srv_uuid) {
 #endif
   if (fio_set_non_block(client) == -1) {
 #ifdef __MINGW32__
-      closesocket(client);
+      closesocket_ptr(client);
 #else      
       close(client);
 #endif
@@ -2904,22 +2904,23 @@ intptr_t fio_accept(intptr_t srv_uuid) {
   {
   #ifdef __MINGW32__
     char optval = 1;
+    setsockopt_ptr(client, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));
   #else
     int optval = 1;
-  #endif
     setsockopt(client, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));
+#endif
   }
   // handle socket buffers.
   {
     int optval = 0;
     socklen_t size = (socklen_t)sizeof(optval);
 #ifdef __MINGW32__
-    if (!getsockopt(client, SOL_SOCKET, SO_SNDBUF, (char *)&optval, &size) &&
+    if (!getsockopt_ptr(client, SOL_SOCKET, SO_SNDBUF, (char *)&optval, &size) &&
         optval <= 131072) {
       optval = 131072;
-      setsockopt(client, SOL_SOCKET, SO_SNDBUF, (char *)&optval, sizeof(optval));
+      setsockopt_ptr(client, SOL_SOCKET, SO_SNDBUF, (char *)&optval, sizeof(optval));
       optval = 131072;
-      setsockopt(client, SOL_SOCKET, SO_RCVBUF, (char *)&optval, sizeof(optval));
+      setsockopt_ptr(client, SOL_SOCKET, SO_RCVBUF, (char *)&optval, sizeof(optval));
     }
 #else
     if (!getsockopt(client, SOL_SOCKET, SO_SNDBUF, &optval, &size) &&
@@ -2972,7 +2973,7 @@ static intptr_t fio_tcp_socket(const char *address, const char *port,
   // get the file descriptor
 #ifdef __MINGW32__
   SOCKET fd =
-      socket(addrinfo->ai_family, addrinfo->ai_socktype, addrinfo->ai_protocol);
+      socket_ptr(addrinfo->ai_family, addrinfo->ai_socktype, addrinfo->ai_protocol);
   if (fd == INVALID_SOCKET) {
     freeaddrinfo(addrinfo);
     return -1;
@@ -2989,7 +2990,7 @@ static intptr_t fio_tcp_socket(const char *address, const char *port,
   if (fio_set_non_block(fd) < 0) {
     freeaddrinfo(addrinfo);
 #ifdef __MINGW32__
-      closesocket(fd);
+      closesocket_ptr(fd);
 #else      
       close(fd); // socket
 #endif
@@ -3000,24 +3001,32 @@ static intptr_t fio_tcp_socket(const char *address, const char *port,
       // avoid the "address taken"
   #ifdef __MINGW32__
     char optval = 1;
+      setsockopt_ptr(fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
   #else
     int optval = 1;
-  #endif
       setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+#endif
     }
     // bind the address to the socket
     int bound = 0;
+#ifdef __MINGW32__
+    for (struct addrinfo *i = addrinfo; i != NULL; i = i->ai_next) {
+      if (!bind_ptr(fd, i->ai_addr, i->ai_addrlen))
+        bound = 1;
+    }
+#else
     for (struct addrinfo *i = addrinfo; i != NULL; i = i->ai_next) {
       if (!bind(fd, i->ai_addr, i->ai_addrlen))
         bound = 1;
     }
+#endif
     if (!bound) {
       // perror("bind err");
       freeaddrinfo(addrinfo);
 #ifdef __MINGW32__
-      closesocket(fd);
+      closesocket_ptr(fd);
 #else      
-      close(fd); // socket
+      close(fd);
 #endif
       return -1;
     }
@@ -3025,30 +3034,40 @@ static intptr_t fio_tcp_socket(const char *address, const char *port,
     {
       // support TCP Fast Open when available
       int optval = 128;
+#ifdef __MINGW32__
+      setsockopt_ptr(fd, addrinfo->ai_protocol, TCP_FASTOPEN, &optval,
+                 sizeof(optval));
+#else
       setsockopt(fd, addrinfo->ai_protocol, TCP_FASTOPEN, &optval,
                  sizeof(optval));
+#endif
     }
 #endif
-    if (listen(fd, SOMAXCONN) < 0) {
-      freeaddrinfo(addrinfo);
 #ifdef __MINGW32__
-      closesocket(fd);
-#else      
-      close(fd); // socket
-#endif
+    if (listen_ptr(fd, SOMAXCONN) < 0) {
+      freeaddrinfo(addrinfo);
+      closesocket_ptr(fd);
       return -1;
     }
+#else      
+    if (listen(fd, SOMAXCONN) < 0) {
+      freeaddrinfo(addrinfo);
+      close(fd);
+      return -1;
+    }
+#endif
   } else {
 #ifdef __MINGW32__
     char optval = 1;
+    setsockopt_ptr(fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));
 #else
     int optval = 1;
-#endif
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));
+#endif
     errno = 0;
     for (struct addrinfo *i = addrinfo; i; i = i->ai_next) {
 #ifdef __MINGW32__
-      int connres = connect(fd, i->ai_addr, i->ai_addrlen);
+      int connres = connect_ptr(fd, i->ai_addr, i->ai_addrlen);
       if (connres == SOCKET_ERROR) {
         int error = WSAGetLastError();
         if (error == WSAEISCONN || error == WSAEWOULDBLOCK || error == WSAEINPROGRESS) 
@@ -3061,7 +3080,7 @@ static intptr_t fio_tcp_socket(const char *address, const char *port,
     }
     freeaddrinfo(addrinfo);
 #ifdef __MINGW32__
-    closesocket(fd);
+    closesocket_ptr(fd);
 #else      
     close(fd); // socket
 #endif
@@ -3221,7 +3240,7 @@ Internal socket flushing related functions
 static void fio_sock_perform_close_fd(intptr_t fd) { 
   SOCKET s = fd_data(fd).socket_handle;
   fio_clear_handle(fd);
-  closesocket(s);
+  closesocket_ptr(s);
 }
 #else
 static void fio_sock_perform_close_fd(intptr_t fd) { close(fd); }
@@ -3685,7 +3704,7 @@ Connection Read / Write Hooks, for overriding the system calls
 static ssize_t fio_hooks_default_read(intptr_t uuid, void *udata, void *buf,
                                       size_t count) {
 #ifdef __MINGW32__
-  int len = recv(fd_data(fio_uuid2fd(uuid)).socket_handle, buf, count, 0);
+  int len = recv_ptr(fd_data(fio_uuid2fd(uuid)).socket_handle, buf, count, 0);
   if (len != SOCKET_ERROR)
     return len;
   int error = WSAGetLastError();
@@ -3711,7 +3730,7 @@ static ssize_t fio_hooks_default_read(intptr_t uuid, void *udata, void *buf,
 static ssize_t fio_hooks_default_write(intptr_t uuid, void *udata,
                                        const void *buf, size_t count) {
 #ifdef __MINGW32__
-  return send(fd_data(fio_uuid2fd(uuid)).socket_handle, buf, count, 0);
+  return send_ptr(fd_data(fio_uuid2fd(uuid)).socket_handle, buf, count, 0);
 #else
   return write(fio_uuid2fd(uuid), buf, count);
 #endif
@@ -4187,7 +4206,9 @@ static void __attribute__((destructor)) fio_lib_destroy(void) {
 }
 
 static void fio_mem_init(void);
+#ifndef __MINGW32__
 static void fio_cluster_init(void);
+#endif
 static void fio_pubsub_initialize(void);
 static void __attribute__((constructor)) fio_lib_init(void) {
   /* detect socket capacity - MUST be first...*/
@@ -4196,7 +4217,20 @@ static void __attribute__((constructor)) fio_lib_init(void) {
 #ifdef _SC_OPEN_MAX
     capa = sysconf(_SC_OPEN_MAX);
 #elif defined(__MINGW32__)
-    capa = FD_SETSIZE;
+    /** iodine/ruby specific */
+    capa = 1024;
+    HMODULE mh = GetModuleHandleA("ws2_32.dll");
+    accept_ptr      = GetProcAddress(mh, "accept");
+    bind_ptr        = GetProcAddress(mh, "bind");
+    closesocket_ptr = GetProcAddress(mh, "closesocket");
+    connect_ptr     = GetProcAddress(mh, "connect");
+    getsockopt_ptr  = GetProcAddress(mh, "getsockopt");
+    ioctlsocket_ptr = GetProcAddress(mh, "ioctlsocket");
+    listen_ptr      = GetProcAddress(mh, "listen");
+    recv_ptr        = GetProcAddress(mh, "recv");
+    send_ptr        = GetProcAddress(mh, "send");
+    setsockopt_ptr  = GetProcAddress(mh, "setsockopt");
+    socket_ptr      = GetProcAddress(mh, "socket");
 #elif defined(FOPEN_MAX)
     capa = FOPEN_MAX;
 #endif
@@ -6569,6 +6603,7 @@ static struct cluster_data_s {
 } cluster_data = {.clients = FIO_LS_INIT(cluster_data.clients),
                   .lock = FIO_LOCK_INIT};
 
+#ifndef __MINGW32__
 static void fio_cluster_data_cleanup(int delete_file) {
   if (delete_file && cluster_data.name[0]) {
 #if DEBUG
@@ -6629,7 +6664,7 @@ static void fio_cluster_init(void) {
   /* add cleanup callback */
   fio_state_callback_add(FIO_CALL_AT_EXIT, fio_cluster_cleanup, NULL);
 }
-
+#endif
 /* *****************************************************************************
  * Cluster Protocol callbacks
  **************************************************************************** */
@@ -6759,7 +6794,9 @@ static void fio_cluster_on_close(intptr_t uuid, fio_protocol_s *pr_) {
       FIO_LOG_FATAL("(%d) Parent Process crash detected!", (int)getpid());
       fio_state_callback_force(FIO_CALL_ON_PARENT_CRUSH);
       fio_state_callback_clear(FIO_CALL_ON_PARENT_CRUSH);
+#ifndef __MINGW32__
       fio_cluster_data_cleanup(1);
+#endif
       kill(getpid(), SIGINT);
     }
   }
@@ -7110,7 +7147,7 @@ static inline void fio_cluster_inform_root_about_channel(channel_s *ch,
 /* *****************************************************************************
  * Initialization
  **************************************************************************** */
-
+#ifndef __MINGW32__
 static void fio_accept_after_fork(void *ignore) {
   /* prevent `accept` backlog in parent */
 #ifndef __MINGW32__
@@ -7170,6 +7207,7 @@ static void fio_cluster_at_exit(void *ignore) {
   fio_defer_perform();
   (void)ignore;
 }
+#endif
 
 static void fio_pubsub_initialize(void) {
 #ifndef __MINGW32__
