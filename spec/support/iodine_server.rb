@@ -1,4 +1,5 @@
 require 'http'
+require 'bundler'
 
 module Spec
   module Support
@@ -18,7 +19,7 @@ module Spec
       def spawn_with_test_log(cmd, verbose: ENV.key?('VERBOSE'))
         test_log = verbose ? STDERR : File.open('spec/log/test.log', 'a+')
 
-        Bundler.with_clean_env do
+        Bundler.with_unbundled_env do
           Process.spawn(cmd, out: test_log, err: test_log)
         end
       end
@@ -45,7 +46,7 @@ module Spec
       def start_iodine_with_app(name, **opts)
         filename = "spec/support/apps/#{name}.ru"
         raise "test rack file (#{name}) does not exist" unless File.exist?(filename)
-        cmd = "bundle exec exe/iodine -w 1 -t 1 -p #{server_port}".dup
+        cmd = "#{Gem.win_platform? ? 'bundle.cmd' : 'bundle'} exec exe/iodine -w 1 -t 1 -p #{server_port}".dup
         cmd += " -V 5 -log" if opts[:verbose]
         pid = spawn_with_test_log("#{cmd} #{filename}", **opts)
         wait_until_iodine_ready
