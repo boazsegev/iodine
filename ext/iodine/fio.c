@@ -132,6 +132,18 @@ Windows support functions
 #define WIFEXITED(s)	(!((s)&0xFF))
 #define WEXITSTATUS(s)	(((s)>>8)&0xFF)
 
+FARPROC accept_ptr;
+FARPROC bind_ptr;
+FARPROC closesocket_ptr;
+FARPROC connect_ptr;
+FARPROC getsockopt_ptr;
+FARPROC ioctlsocket_ptr;
+FARPROC listen_ptr;
+FARPROC recv_ptr;
+FARPROC send_ptr;
+FARPROC setsockopt_ptr;
+FARPROC socket_ptr;
+
 int fork() {
   fprintf(stderr, "fork() is not supported on Windows.\n");
   errno = ENOSYS;
