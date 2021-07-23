@@ -5,7 +5,14 @@
 
 #include <fio.h>
 
-static __thread volatile uint8_t iodine_GVL_state = 1;
+#include <pthread.h>
+
+static pthread_key_t iodine_GVL_state_key;
+static pthread_once_t iodine_GVL_state_once = PTHREAD_ONCE_INIT;
+static void init_iodine_GVL_state_key(void) {
+  pthread_key_create(&iodine_GVL_state_key, NULL);
+  pthread_setspecific(iodine_GVL_state_key, (void *)1);
+}
 
 /* *****************************************************************************
 Calling protected Ruby methods
@@ -84,25 +91,27 @@ API
 
 /** Calls a C function within the GVL. */
 static void *iodine_enterGVL(void *(*func)(void *), void *arg) {
-  if (iodine_GVL_state) {
+  pthread_once(&iodine_GVL_state_once, init_iodine_GVL_state_key);
+  if (pthread_getspecific(iodine_GVL_state_key)) {
     return func(arg);
   }
   void *rv = NULL;
-  iodine_GVL_state = 1;
+  pthread_setspecific(iodine_GVL_state_key, (void *)1);
   rv = rb_thread_call_with_gvl(func, arg);
-  iodine_GVL_state = 0;
+  pthread_setspecific(iodine_GVL_state_key, (void *)0);
   return rv;
 }
 
 /** Calls a C function outside the GVL. */
 static void *iodine_leaveGVL(void *(*func)(void *), void *arg) {
-  if (!iodine_GVL_state) {
+  pthread_once(&iodine_GVL_state_once, init_iodine_GVL_state_key);
+  if (!pthread_getspecific(iodine_GVL_state_key)) {
     return func(arg);
   }
   void *rv = NULL;
-  iodine_GVL_state = 0;
+  pthread_setspecific(iodine_GVL_state_key, (void *)0);
   rv = rb_thread_call_without_gvl(func, arg, NULL, NULL);
-  iodine_GVL_state = 1;
+  pthread_setspecific(iodine_GVL_state_key, (void *)1);
   return rv;
 }
 
@@ -151,10 +160,16 @@ static VALUE iodine_call_block(VALUE obj, ID method, int argc, VALUE *argv,
 }
 
 /** Returns the GVL state flag. */
-static uint8_t iodine_in_GVL(void) { return iodine_GVL_state; }
+static uint8_t iodine_in_GVL(void) {
+  pthread_once(&iodine_GVL_state_once, init_iodine_GVL_state_key);
+  return (uint8_t)pthread_getspecific(iodine_GVL_state_key);
+}
 
 /** Forces the GVL state flag. */
-static void iodine_set_GVL(uint8_t state) { iodine_GVL_state = state; }
+static void iodine_set_GVL(uint8_t state) { 
+  pthread_once(&iodine_GVL_state_once, init_iodine_GVL_state_key);
+  pthread_setspecific(iodine_GVL_state_key, (void *)state);
+}
 
 /* *****************************************************************************
 Caller Initialization
