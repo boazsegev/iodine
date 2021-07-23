@@ -69,7 +69,11 @@ static rb_encoding *IodineBinaryEncoding;
 
 inline static http_s *get_handle(VALUE obj) {
   VALUE i = rb_ivar_get(obj, iodine_fd_var_id);
+#ifdef __MINGW32__
+  return (http_s *)NUM2ULL(i);
+#else
   return (http_s *)FIX2ULONG(i);
+#endif
 }
 
 /* *****************************************************************************
@@ -78,7 +82,11 @@ IO API
 
 static inline FIOBJ get_data(VALUE self) {
   VALUE i = rb_ivar_get(self, io_id);
+#ifdef __MINGW32__
+  return (FIOBJ)NUM2ULL(i);
+#else
   return (FIOBJ)FIX2ULONG(i);
+#endif
 }
 
 static VALUE rio_rewind(VALUE self) {
