@@ -107,10 +107,6 @@ Feel free to copy, use and enjoy according to the license provided.
 #define FIO_SLOWLORIS_LIMIT (1 << 10)
 #endif
 
-#if !defined(__clang__) && !defined(__GNUC__)
-#define __thread _Thread_value
-#endif
-
 #ifndef FIO_TLS_WEAK
 #define FIO_TLS_WEAK __attribute__((weak))
 #endif
@@ -866,14 +862,24 @@ typedef struct fio_thread_queue_s {
 fio_ls_embd_s fio_thread_queue = FIO_LS_INIT(fio_thread_queue);
 fio_lock_i fio_thread_lock = FIO_LOCK_INIT;
 
+static pthread_key_t fio_thread_data_key;
+static pthread_once_t fio_thread_data_once = PTHREAD_ONCE_INIT;
+static void init_fio_thread_data(void) {
+  fio_thread_queue_s *fio_thread_data = malloc(sizeof(fio_thread_queue_s));
+  FIO_ASSERT(fio_thread_data);
 #ifdef __MINGW32__
-static __thread fio_thread_queue_s fio_thread_data = {.handle = INVALID_HANDLE_VALUE };
+  fio_thread_data->handle = INVALID_HANDLE_VALUE;
 #else
-static __thread fio_thread_queue_s fio_thread_data = {.fd_wait = -1,
-                                                      .fd_signal = -1};
+  fio_thread_data->fd_wait = -1;
+  fio_thread_data->fd_signal = -1};
 #endif
+  pthread_key_create(&fio_thread_data_key, free);
+  pthread_setspecific(fio_thread_data_key, fio_thread_data);
+}
 
 FIO_FUNC inline void fio_thread_make_suspendable(void) {
+  pthread_once(&fio_thread_data_once, init_fio_thread_data);
+  fio_thread_queue_s fio_thread_data = *(fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
 #ifdef __MINGW32__
   /** create automatically reseting event */
   fio_thread_data.handle = CreateEvent(NULL, FALSE, FALSE, TEXT("thread signal"));
@@ -894,6 +900,7 @@ FIO_FUNC inline void fio_thread_make_suspendable(void) {
 }
 
 FIO_FUNC inline void fio_thread_cleanup(void) {
+  fio_thread_queue_s fio_thread_data = *(fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
 #ifdef __MINGW32__
   HANDLE h = fio_thread_data.handle;
   fio_thread_data.handle = INVALID_HANDLE_VALUE;
@@ -910,6 +917,7 @@ FIO_FUNC inline void fio_thread_cleanup(void) {
 
 /* suspend thread execution (might be resumed unexpectedly) */
 FIO_FUNC void fio_thread_suspend(void) {
+  fio_thread_queue_s fio_thread_data = *(fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
 #ifdef __MINGW32__
   fio_lock(&fio_thread_lock);
   /** don't add thread to queue if its already in there
@@ -981,6 +989,13 @@ FIO_FUNC void fio_thread_broadcast(void) {
   }
 }
 
+static pthread_key_t static_throttle_key;
+static pthread_once_t static_throttle_once = PTHREAD_ONCE_INIT;
+static void init_static_throttle_key(void) {
+  pthread_key_create(&static_throttle_key, NULL);
+  pthread_setspecific(static_throttle_key, (void *)262143UL);
+}
+
 static size_t fio_poll(void);
 /**
  * A thread entering this function should wait for new events.
@@ -994,12 +1009,13 @@ static void fio_defer_thread_wait(void) {
     fio_thread_suspend();
   } else {
     /* keeps threads active (concurrent), but reduces performance */
-    static __thread size_t static_throttle = 262143UL;
+    pthread_once(&static_throttle_once, init_static_throttle_key);
+    size_t static_throttle = (size_t)pthread_getspecific(static_throttle_key);
     fio_throttle_thread(static_throttle);
     if (fio_defer_has_queue())
-      static_throttle = 1;
+      pthread_setspecific(static_throttle_key, (void *)1);
     else if (static_throttle < FIO_DEFER_THROTTLE_LIMIT)
-      static_throttle = (static_throttle << 1);
+      pthread_setspecific(static_throttle_key, (void *)(static_throttle << 1));
   }
 }
 
@@ -7856,15 +7872,29 @@ static inline arena_s *arena_lock(arena_s *preffered) {
   } while (1);
 }
 
-static __thread arena_s *arena_last_used;
+static pthread_key_t arena_last_used_key;
+static pthread_once_t arena_last_used_once;
+static_void init_arena_last_used_key(void) {
+  pthread_key_create(&arena_last_used_key, NULL);
+}
 
-static void arena_enter(void) { arena_last_used = arena_lock(arena_last_used); }
+static void arena_enter(void) {
+  pthread_once(&arena_last_used_once, init_arena_last_used_key);
+  arena_s *arena_last_used = pthread_getspecific(arena_last_used_key);
+  arena_last_used = arena_lock(arena_last_used);
+  pthread_setspecific(arena_last_used_key, arena_last_used);
+}
 
-static inline void arena_exit(void) { fio_unlock(&arena_last_used->lock); }
+static inline void arena_exit(void) {
+  pthread_once(&arena_last_used_once, init_arena_last_used_key);
+  arena_s *arena_last_used = pthread_getspecific(arena_last_used_key);
+  fio_unlock(&arena_last_used->lock);
+}
 
 /** Clears any memory locks, in case of a system call to `fork`. */
 void fio_malloc_after_fork(void) {
-  arena_last_used = NULL;
+  pthread_once(&arena_last_used_once, init_arena_last_used_key);
+  pthread_setspecific(arena_last_used_key, NULL);
   if (!arenas) {
     return;
   }
@@ -7968,6 +7998,8 @@ static inline block_s *block_new(void) {
 
 /* allocates memory from within a block - called within an arena's lock */
 static inline void *block_slice(uint16_t units) {
+  pthread_once(&arena_last_used_once, init_arena_last_used_key);
+  arena_s *arena_last_used = pthread_getspecific(arena_last_used_key);
   block_s *blk = arena_last_used->block;
   if (!blk) {
     /* arena is empty */
@@ -8247,11 +8279,24 @@ void *realloc(void *ptr, size_t new_size) { return fio_realloc(ptr, new_size); }
 
 ***************************************************************************** */
 
+static pthread_key_t s_key;
+static pthread_key_t c_key;
+static pthread_once_t s_c_once = PTHREAD_ONCE_INIT;
+static void init_s_c_key(void) {
+  uint64_t *s = malloc(sizeof(uint64_t) * 2);
+  FIO_ASSERT_ALLOC(s);
+  uint16_t *c = malloc(sizeof(uint16_t));
+  FIO_ASSERT_ALLOC(c);
+  pthread_key_create(&s_key, free);
+  pthread_key_create(&c_key, free);
+}
+
 /* tested for randomness using code from: http://xoshiro.di.unimi.it/hwd.php */
 uint64_t fio_rand64(void) {
   /* modeled after xoroshiro128+, by David Blackman and Sebastiano Vigna */
-  static __thread uint64_t s[2]; /* random state */
-  static __thread uint16_t c;    /* seed counter */
+  pthread_once(&s_c_once, init_s_c_key);
+  uint64_t *s = (uint64_t *)pthread_getspecific(s_key); /* random state */
+  uint16_t c = *(uint16_t *)pthread_getspecific(c_key);    /* seed counter */
   const uint64_t P[] = {0x37701261ED6C16C7ULL, 0x764DBBB75F3B3E0DULL};
   if (c++ == 0) {
     /* re-seed state every 65,536 requests */
@@ -9994,6 +10039,8 @@ FIO_FUNC void fio_malloc_test(void) {
   mem = fio_realloc(mem, 1);
   FIO_ASSERT(mem, "fio_realloc failed!\n");
   FIO_ASSERT(mem[0] == 'a', "fio_realloc memory wasn't copied!\n");
+  pthread_once(&arena_last_used_once, init_arena_last_used_key);
+  arena_s *arena_last_used = pthread_getspecific(arena_last_used_key);
   FIO_ASSERT(arena_last_used, "arena_last_used wasn't initialized!\n");
   fio_free(mem);
   block_s *b = arena_last_used->block;
