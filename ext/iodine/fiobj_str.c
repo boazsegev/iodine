@@ -37,6 +37,8 @@ License: MIT
 #define PATH_MAX PAGE_SIZE
 #endif
 
+#include <pthread.h>
+
 /* *****************************************************************************
 String Type
 ***************************************************************************** */
@@ -176,22 +178,27 @@ FIOBJ fiobj_str_move(char *str, size_t len, size_t capacity) {
   return ((uintptr_t)s | FIOBJECT_STRING_FLAG);
 }
 
+static pthread_key_t str_tmp_key;
+static pthread_once_t str_tmp_once = PTHREAD_ONCE_INIT;
+static void init_str_tmp_key(void) {
+  fiobj_str_s *tmp = malloc(sizeof(fiobj_str_s));
+  FIO_ASSERT_ALLOC(tmp);
+  pthread_key_create(&str_tmp_key, free);
+  tmp->head.ref = ((~(uint32_t)0) >> 4);
+  tmp->head.type = FIOBJ_T_STRING;
+  tmp->str.small = 1;
+  pthread_setspecific(str_tmp_key, tmp);
+}
 /**
  * Returns a thread-static temporary string. Avoid calling `fiobj_dup` or
  * `fiobj_free`.
  */
 FIOBJ fiobj_str_tmp(void) {
-  static __thread fiobj_str_s tmp = {
-      .head =
-          {
-              .ref = ((~(uint32_t)0) >> 4),
-              .type = FIOBJ_T_STRING,
-          },
-      .str = {.small = 1},
-  };
-  tmp.str.frozen = 0;
-  fio_str_resize(&tmp.str, 0);
-  return ((uintptr_t)&tmp | FIOBJECT_STRING_FLAG);
+  pthread_once(&str_tmp_once, init_str_tmp_key);
+  fiobj_str_s *tmp = (fiobj_str_s *)pthread_getspecific(str_tmp_key);
+  tmp->str.frozen = 0;
+  fio_str_resize(&tmp->str, 0);
+  return ((uintptr_t)tmp | FIOBJECT_STRING_FLAG);
 }
 
 /** Prevents the String object from being changed. */
