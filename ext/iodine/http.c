@@ -18,6 +18,8 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <pthread.h>
+
 #ifndef HAVE_TM_TM_ZONE
 #if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) ||     \
     defined(__DragonFly__) || defined(__bsdi__) || defined(__ultrix) ||        \
@@ -2339,6 +2341,25 @@ size_t http_date2rfc2109(char *target, struct tm *tmbuf) {
   return pos - target;
 }
 
+static pthread_key_t cached_tick_key;
+static pthread_key_t cached_httpdate_key;
+static pthread_key_t cached_len_key;
+static pthread_once_t cached_once = PTHREAD_ONCE_INIT;
+static void init_cached_key(void) {
+  time_t *cached_tick = malloc(sizeof(time_t));
+  FIO_ASSERT_ALLOC(cached_tick);
+  char *cached_httpdate = malloc(sizeof(char)*48);
+  FIO_ASSERT_ALLOC(cached_tick);
+  size_t *cached_len = malloc(sizeof(size_t));
+  FIO_ASSERT_ALLOC(cached_len);
+  pthread_key_create(&cached_tick_key, free);
+  pthread_key_create(&cached_httpdate_key, free);
+  pthread_key_create(&cached_len_key, free);
+  pthread_setspecific(cached_tick_key, cached_tick);
+  pthread_setspecific(cached_httpdate_key, cached_httpdate);
+  pthread_setspecific(cached_len_key, cached_len);
+}
+
 /**
  * Prints Unix time to a HTTP time formatted string.
  *
@@ -2347,9 +2368,10 @@ size_t http_date2rfc2109(char *target, struct tm *tmbuf) {
  */
 size_t http_time2str(char *target, const time_t t) {
   /* pre-print time every 1 or 2 seconds or so. */
-  static __thread time_t cached_tick;
-  static __thread char cached_httpdate[48];
-  static __thread size_t cached_len;
+  pthread_once(&cached_once, init_cached_key);
+  time_t *cached_tick = pthread_getspecific(cached_tick_key);
+  char *cached_httpdate = pthread_getspecific(cached_httpdate_key);
+  size_t *cached_len = pthread_getspecific(cached_len_key);
   time_t last_tick = fio_last_tick().tv_sec;
   if ((t | 7) < last_tick) {
     /* this is a custom time, not "now", pass through */
@@ -2357,14 +2379,14 @@ size_t http_time2str(char *target, const time_t t) {
     http_gmtime(t, &tm);
     return http_date2str(target, &tm);
   }
-  if (last_tick > cached_tick) {
+  if (last_tick > *cached_tick) {
     struct tm tm;
-    cached_tick = last_tick; /* refresh every second */
+    *cached_tick = last_tick; /* refresh every second */
     http_gmtime(last_tick, &tm);
-    cached_len = http_date2str(cached_httpdate, &tm);
+    *cached_len = http_date2str(cached_httpdate, &tm);
   }
-  memcpy(target, cached_httpdate, cached_len);
-  return cached_len;
+  memcpy(target, cached_httpdate, *cached_len);
+  return *cached_len;
 }
 
 /* Credit to Jonathan Leffler for the idea of a unified conditional */
@@ -2527,12 +2549,22 @@ FIOBJ http_mimetype_find(char *file_ext, size_t file_ext_len) {
       fio_mime_set_find(&fio_http_mime_types, hash, FIOBJ_INVALID));
 }
 
+static pthread_key_t buffer_key;
+static pthread_once_t buffer_once = PTHREAD_ONCE_INIT;
+static void init_buffer_key(void) {
+  char *buffer = malloc(sizeof(char) * (LONGEST_FILE_EXTENSION_LENGTH + 1));
+  FIO_ASSERT_ALLOC(buffer);
+  pthread_key_create(&buffer_key, free);
+  pthread_setspecific(buffer_key, buffer);
+}
+
 /**
  * Finds the mime-type associated with the URL.
  *  Remember to call `fiobj_free`.
  */
 FIOBJ http_mimetype_find2(FIOBJ url) {
-  static __thread char buffer[LONGEST_FILE_EXTENSION_LENGTH + 1];
+  pthread_once(&buffer_once, init_buffer_key);
+  char *buffer = pthread_getspecific(buffer_key);
   fio_str_info_s ext = {.data = NULL};
   FIOBJ mimetype;
   if (!url)
