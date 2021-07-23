@@ -99,6 +99,7 @@ static inline void add_date(http_s *r) {
   if (fio_last_tick().tv_sec > last_date_added) {
     fio_lock(&date_lock);
     if (fio_last_tick().tv_sec > last_date_added) { /* retest inside lock */
+      /* 32 chars are ok for a while, but http_time2str below has a buffer sized 48 chars and does a memcpy ... */
       FIOBJ tmp = fiobj_str_buf(32);
       FIOBJ old = current_date;
       fiobj_str_resize(
@@ -2348,9 +2349,12 @@ static pthread_once_t cached_once = PTHREAD_ONCE_INIT;
 static void init_cached_key(void) {
   time_t *cached_tick = malloc(sizeof(time_t));
   FIO_ASSERT_ALLOC(cached_tick);
+  memset(cached_tick, 0, sizeof(time_t));
   char *cached_httpdate = malloc(sizeof(char)*48);
   FIO_ASSERT_ALLOC(cached_tick);
+  memset(cached_httpdate, 0, 48);
   size_t *cached_len = malloc(sizeof(size_t));
+  *cached_len = 0;
   FIO_ASSERT_ALLOC(cached_len);
   pthread_key_create(&cached_tick_key, free);
   pthread_key_create(&cached_httpdate_key, free);
@@ -2554,6 +2558,7 @@ static pthread_once_t buffer_once = PTHREAD_ONCE_INIT;
 static void init_buffer_key(void) {
   char *buffer = malloc(sizeof(char) * (LONGEST_FILE_EXTENSION_LENGTH + 1));
   FIO_ASSERT_ALLOC(buffer);
+  memset(buffer, 0, sizeof(char) * (LONGEST_FILE_EXTENSION_LENGTH + 1));
   pthread_key_create(&buffer_key, free);
   pthread_setspecific(buffer_key, buffer);
 }
