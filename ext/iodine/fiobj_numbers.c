@@ -40,6 +40,7 @@ static pthread_once_t num_vt_buffer_once = PTHREAD_ONCE_INIT;
 static void init_num_vt_buffer_key(void) {
   char *num_vt_buffer = malloc(sizeof(char)*512);
   FIO_ASSERT_ALLOC(num_vt_buffer);
+  memset(num_vt_buffer, 0, sizeof(char)*512);
   pthread_key_create(&num_vt_buffer_key, free);
   pthread_setspecific(num_vt_buffer_key, num_vt_buffer);
 }
@@ -144,6 +145,7 @@ static pthread_once_t num_ret_once = PTHREAD_ONCE_INIT;
 static void init_num_ret_key(void) {
   fiobj_num_s *ret = malloc(sizeof(fiobj_num_s));
   FIO_ASSERT_ALLOC(ret);
+  memset(ret, 0, sizeof(fiobj_num_s));
   pthread_key_create(&num_ret_key, free);
   pthread_setspecific(num_ret_key, ret);
 }
@@ -191,6 +193,7 @@ static pthread_once_t float_ret_once = PTHREAD_ONCE_INIT;
 static void init_float_ret_key(void) {
   fiobj_float_s *ret = malloc(sizeof(fiobj_float_s));
   FIO_ASSERT_ALLOC(ret);
+  memset(ret, 0, sizeof(fiobj_float_s));
   pthread_key_create(&float_ret_key, free);
   pthread_setspecific(float_ret_key, ret);
 }
@@ -218,6 +221,7 @@ static pthread_once_t num_str_buffer_once = PTHREAD_ONCE_INIT;
 static void init_num_str_buffer_key(void) {
   char *num_str_buffer = malloc(sizeof(char)*512);
   FIO_ASSERT_ALLOC(num_str_buffer);
+  memset(num_str_buffer, 0, sizeof(char)*512);
   pthread_key_create(&num_str_buffer_key, free);
   pthread_setspecific(num_str_buffer_key, num_str_buffer);
 }
