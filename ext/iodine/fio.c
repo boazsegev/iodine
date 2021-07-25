@@ -864,6 +864,9 @@ fio_lock_i fio_thread_lock = FIO_LOCK_INIT;
 
 static pthread_key_t fio_thread_data_key;
 static pthread_once_t fio_thread_data_once = PTHREAD_ONCE_INIT;
+static void init_fio_thread_data_key(void) {
+  pthread_key_create(&fio_thread_data_key, free);
+}
 static void init_fio_thread_data(void) {
   fio_thread_queue_s *fio_thread_data = malloc(sizeof(fio_thread_queue_s));
   FIO_ASSERT(fio_thread_data);
@@ -874,19 +877,22 @@ static void init_fio_thread_data(void) {
   fio_thread_data->fd_wait = -1;
   fio_thread_data->fd_signal = -1};
 #endif
-  pthread_key_create(&fio_thread_data_key, free);
   pthread_setspecific(fio_thread_data_key, fio_thread_data);
 }
 
 FIO_FUNC inline void fio_thread_make_suspendable(void) {
   pthread_once(&fio_thread_data_once, init_fio_thread_data);
-  fio_thread_queue_s fio_thread_data = *(fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
+  fio_thread_queue_s *fio_thread_data = (fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
+  if (!fio_thread_data) {
+    init_fio_thread_data();
+    fio_thread_data = (fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
+  }
 #ifdef __MINGW32__
   /** create automatically reseting event */
-  fio_thread_data.handle = CreateEvent(NULL, FALSE, FALSE, TEXT("thread signal"));
-  fio_thread_data.in_list = 0;
+  fio_thread_data->handle = CreateEvent(NULL, FALSE, FALSE, TEXT("thread signal"));
+  fio_thread_data->in_list = 0;
 #else
-  if (fio_thread_data.fd_signal >= 0)
+  if (fio_thread_data->fd_signal >= 0)
     return;
   int fd[2] = {0, 0};
   int ret = pipe(fd);
@@ -895,13 +901,12 @@ FIO_FUNC inline void fio_thread_make_suspendable(void) {
              "(fio) couldn't set internal pipe to non-blocking mode.");
   FIO_ASSERT(fio_set_non_block(fd[1]) == 0,
              "(fio) couldn't set internal pipe to non-blocking mode.");
-  fio_thread_data.fd_wait = fd[0];
-  fio_thread_data.fd_signal = fd[1];
+  fio_thread_data->fd_wait = fd[0];
+  fio_thread_data->fd_signal = fd[1];
 #endif
 }
 
 FIO_FUNC inline void fio_thread_cleanup(void) {
-  pthread_once(&fio_thread_data_once, init_fio_thread_data);
   fio_thread_queue_s fio_thread_data = *(fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
 #ifdef __MINGW32__
   HANDLE h = fio_thread_data.handle;
@@ -919,7 +924,6 @@ FIO_FUNC inline void fio_thread_cleanup(void) {
 
 /* suspend thread execution (might be resumed unexpectedly) */
 FIO_FUNC void fio_thread_suspend(void) {
-  pthread_once(&fio_thread_data_once, init_fio_thread_data);
   fio_thread_queue_s fio_thread_data = *(fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
 #ifdef __MINGW32__
   fio_lock(&fio_thread_lock);
@@ -8286,24 +8290,31 @@ static pthread_key_t s_key;
 static pthread_key_t c_key;
 static pthread_once_t s_c_once = PTHREAD_ONCE_INIT;
 static void init_s_c_key(void) {
-  uint64_t *s = malloc(sizeof(uint64_t) * 2);
+  pthread_key_create(&s_key, free);
+  pthread_key_create(&c_key, free);
+}
+static void init_s_c_ptr(void) {
+    uint64_t *s = malloc(sizeof(uint64_t) * 2);
   FIO_ASSERT_ALLOC(s);
   memset(s, 0, sizeof(uint64_t) * 2);
   uint16_t *c = malloc(sizeof(uint16_t));
   FIO_ASSERT_ALLOC(c);
   memset(c, 0, sizeof(uint16_t));
-  pthread_key_create(&s_key, free);
-  pthread_key_create(&c_key, free);
+  pthread_setspecific(s_key, s);
+  pthread_setspecific(c_key, c);
 }
-
 /* tested for randomness using code from: http://xoshiro.di.unimi.it/hwd.php */
 uint64_t fio_rand64(void) {
   /* modeled after xoroshiro128+, by David Blackman and Sebastiano Vigna */
   pthread_once(&s_c_once, init_s_c_key);
   uint64_t *s = (uint64_t *)pthread_getspecific(s_key); /* random state */
-  uint16_t c = *(uint16_t *)pthread_getspecific(c_key);    /* seed counter */
+  if (!s) {
+    init_s_c_ptr();
+    s = (uint64_t *)pthread_getspecific(s_key);
+  }
+  uint16_t *c = (uint16_t *)pthread_getspecific(c_key);    /* seed counter */
   const uint64_t P[] = {0x37701261ED6C16C7ULL, 0x764DBBB75F3B3E0DULL};
-  if (c++ == 0) {
+  if (*c++ == 0) {
     /* re-seed state every 65,536 requests */
 #ifdef RUSAGE_SELF
     struct rusage rusage;
