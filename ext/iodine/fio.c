@@ -375,6 +375,7 @@ typedef struct {
 #ifdef __MINGW32__
   /* Winsock operating system socket handle */
   SOCKET socket_handle;
+  int osffd;
 #endif
 } fio_fd_data_s;
 
@@ -481,6 +482,7 @@ static inline int fio_clear_fd(intptr_t fd, uint8_t is_open) {
   rw_udata = fd_data(fd).rw_udata;
 #ifdef __MINGW32__
   SOCKET socket_handle = fd_data(fd).socket_handle;
+  int osffd = fd_data(fd).osffd;
 #endif
   fd_data(fd) = (fio_fd_data_s){
       .open = is_open,
@@ -491,6 +493,7 @@ static inline int fio_clear_fd(intptr_t fd, uint8_t is_open) {
       .packet_last = &fd_data(fd).packet,
 #ifdef __MINGW32__
       .socket_handle = socket_handle,
+      .osffd = osffd,
 #endif
   };
   if (is_open && fio_data->max_protocol_fd < fd) {
@@ -2889,13 +2892,18 @@ int fio_fd4handle(SOCKET handle) {
   return -1;
 }
 
-SOCKET fio_handle4fd(unsigned int fd) {
-  return fd_data(fd).socket_handle;
+int fio_osffd4fd(unsigned int fd) {
+  if (fd_data(fd).osffd != -1)
+    return fd_data(fd).osffd;
+  int osffd = _open_osfhandle(fd_data(fd).socket_handle, _O_RDWR);
+  fd_data(fd).osffd = osffd;
+  return osffd;
 }
 
 void fio_clear_handle(int fd) {
   fio_lock(&(fd_data(fd).sock_lock));
   fd_data(fd).socket_handle = INVALID_SOCKET;
+  fd_data(fd).osffd = -1;
   fio_unlock(&(fd_data(fd).sock_lock));
 }
 #endif
@@ -3276,10 +3284,15 @@ Internal socket flushing related functions
 #endif
 
 #ifdef __MINGW32__
-static void fio_sock_perform_close_fd(intptr_t fd) { 
+static void fio_sock_perform_close_fd(intptr_t fd) {
   SOCKET s = fd_data(fd).socket_handle;
+  int osffd = fd_data(fd).osffd;
   fio_clear_handle(fd);
-  closesocket_ptr(s);
+  if (osffd != -1) {
+    _close(osffd);
+  } else {
+    closesocket_ptr(s);
+  }
 }
 #else
 static void fio_sock_perform_close_fd(intptr_t fd) { close(fd); }

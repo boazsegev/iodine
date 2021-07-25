@@ -168,12 +168,6 @@ static VALUE rio_read(int argc, VALUE *argv, VALUE self) {
 static VALUE rio_close(VALUE self) {
   // FIOBJ io = get_data(self);
   // fiobj_free(io); // we don't call fiobj_dup, do we?
-#ifdef __MINGW32__
-  VALUE fd = rb_ivar_get(self, iodine_osffd_id);
-  int osffd = FIX2INT(fd);
-  if (osffd)
-    _close(osffd);
-#endif
   rb_ivar_set(self, io_id, INT2NUM(0));
   (void)self;
   return Qnil;
@@ -214,12 +208,10 @@ static VALUE rio_get_io(int argc, VALUE *argv, VALUE self) {
   // hijack the IO object
   intptr_t uuid = http_hijack(h, NULL);
 #ifdef __MINGW32__
-  SOCKET handle = fio_handle4fd(fio_uuid2fd(uuid));
-  int osffd = _open_osfhandle((intptr_t)handle, _O_RDWR);
+  int osffd = fio_osffd4fd(fio_uuid2fd(uuid));
   if (osffd == -1)
     return Qfalse;
   VALUE fd = INT2FIX(osffd);
-  rb_ivar_set(self, iodine_osffd_id, fd);
 #else
   VALUE fd = INT2FIX(fio_uuid2fd(uuid));
 #endif
