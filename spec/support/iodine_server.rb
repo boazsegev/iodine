@@ -36,6 +36,9 @@ module Spec
             sleep 0.1
             Socket.tcp('localhost', server_port, connect_timeout: 1) {}
             break
+          rescue Errno::ETIMEDOUT
+            raise "Could not start iodine, please check spec/log/test.log for more info" if tries > 10
+            tries += 1
           rescue Errno::ECONNREFUSED
             raise "Could not start iodine, please check spec/log/test.log for more info" if tries > 10
             tries += 1
@@ -46,7 +49,11 @@ module Spec
       def start_iodine_with_app(name, **opts)
         filename = "spec/support/apps/#{name}.ru"
         raise "test rack file (#{name}) does not exist" unless File.exist?(filename)
-        cmd = "#{Gem.win_platform? ? 'bundle.cmd' : 'bundle'} exec exe/iodine -w 1 -t 1 -p #{server_port}".dup
+        if Gem.win_platform?
+          cmd = "bundle exec ruby exe/iodine -w 1 -t 1 -p #{server_port}".dup
+        else
+          cmd = "bundle exec exe/iodine -w 1 -t 1 -p #{server_port}".dup
+        end
         cmd += " -V 5 -log" if opts[:verbose]
         pid = spawn_with_test_log("#{cmd} #{filename}", **opts)
         wait_until_iodine_ready
@@ -60,7 +67,12 @@ module Spec
           yield if block_given?
         ensure
           if !pid.nil?
-            Process.kill 'SIGINT', pid
+            if Gem.win_platform?
+              # SIGINT or SIGILL are unreliable on Windows, try native taskkill first
+              Process.kill('KILL', pid) unless system("taskkill /f /t /pid #{pid} >NUL 2>NUL")
+            else
+              Process.kill 'SIGINT', pid
+            end
             Process.wait pid
           end
         end
