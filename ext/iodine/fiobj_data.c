@@ -955,24 +955,28 @@ void fiobj_data_assert_dynamic(FIOBJ io) {
  * Behaves and returns the same value as the system call `write`.
  */
 intptr_t fiobj_data_write(FIOBJ io, void *buffer, uintptr_t length) {
+  fprintf(stderr, "fiobj_data_write 1 io: %u buffer: %u length: %u\n", io, buffer, length);
   if (!io || !FIOBJ_TYPE_IS(io, FIOBJ_T_DATA) || (!buffer && length)) {
+    fprintf(stderr, "fiobj_data_write error\n");
     errno = EFAULT;
     return -1;
   }
+  fprintf(stderr, "fiobj_data_write 2\n");
   errno = 0;
   /* Unslice slices */
   if (obj2io(io)->fd == -2)
     fiobj_data_assert_dynamic(io);
-
+  fprintf(stderr, "fiobj_data_write 3\n");
   if (obj2io(io)->fd == -1) {
     /* String Code */
     fiobj_data_pre_write(io, length + 1);
     memcpy(obj2io(io)->buffer + obj2io(io)->len, buffer, length);
     obj2io(io)->len = obj2io(io)->len + length;
     obj2io(io)->buffer[obj2io(io)->len] = 0;
+    fprintf(stderr, "fiobj_data_write '%s'\n", obj2io(io)->buffer);
     return length;
   }
-
+  fprintf(stderr, "fiobj_data_write 4\n");
   /* File Code */
   return pwrite(obj2io(io)->fd, buffer, length, fiobj_data_get_fd_size(io));
 }
