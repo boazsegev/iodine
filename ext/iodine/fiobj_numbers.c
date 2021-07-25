@@ -38,10 +38,12 @@ Numbers VTable
 static pthread_key_t num_vt_buffer_key;
 static pthread_once_t num_vt_buffer_once = PTHREAD_ONCE_INIT;
 static void init_num_vt_buffer_key(void) {
+  pthread_key_create(&num_vt_buffer_key, free);
+}
+static void init_num_vt_buffer_ptr(void) {
   char *num_vt_buffer = malloc(sizeof(char)*512);
   FIO_ASSERT_ALLOC(num_vt_buffer);
   memset(num_vt_buffer, 0, sizeof(char)*512);
-  pthread_key_create(&num_vt_buffer_key, free);
   pthread_setspecific(num_vt_buffer_key, num_vt_buffer);
 }
 
@@ -58,6 +60,10 @@ static size_t fio_ftrue(const FIOBJ o) { return (obj2float(o)->f != 0); }
 static fio_str_info_s fio_i2str(const FIOBJ o) {
   pthread_once(&num_vt_buffer_once, init_num_vt_buffer_key);
   char *num_buffer = pthread_getspecific(num_vt_buffer_key);
+  if (!num_buffer) {
+    init_num_vt_buffer_ptr();
+    num_buffer = pthread_getspecific(num_vt_buffer_key);
+  }
   return (fio_str_info_s){
       .data = num_buffer,
       .len = fio_ltoa(num_buffer, obj2num(o)->i, 10),
@@ -74,6 +80,10 @@ static fio_str_info_s fio_f2str(const FIOBJ o) {
   }
   pthread_once(&num_vt_buffer_once, init_num_vt_buffer_key);
   char *num_buffer = pthread_getspecific(num_vt_buffer_key);
+  if (!num_buffer) {
+    init_num_vt_buffer_ptr();
+    num_buffer = pthread_getspecific(num_vt_buffer_key);
+  }
   return (fio_str_info_s){
       .data = num_buffer,
       .len = fio_ftoa(num_buffer, obj2float(o)->f, 10),
@@ -143,16 +153,22 @@ FIOBJ fiobj_num_new_bignum(intptr_t num) {
 static pthread_key_t num_ret_key;
 static pthread_once_t num_ret_once = PTHREAD_ONCE_INIT;
 static void init_num_ret_key(void) {
+  pthread_key_create(&num_ret_key, free);
+}
+static void init_num_ret_ptr(void) {
   fiobj_num_s *ret = malloc(sizeof(fiobj_num_s));
   FIO_ASSERT_ALLOC(ret);
   memset(ret, 0, sizeof(fiobj_num_s));
-  pthread_key_create(&num_ret_key, free);
   pthread_setspecific(num_ret_key, ret);
 }
 /** Creates a temporary Number object. This ignores `fiobj_free`. */
 FIOBJ fiobj_num_tmp(intptr_t num) {
   pthread_once(&num_ret_once, init_num_ret_key);
   fiobj_num_s *ret = pthread_getspecific(num_ret_key);
+  if (!ret) {
+    init_num_ret_ptr();
+    ret = pthread_getspecific(num_ret_key);
+  }
   *ret = (fiobj_num_s){
       .head = {.type = FIOBJ_T_NUMBER, .ref = ((~(uint32_t)0) >> 4)},
       .i = num,
@@ -191,16 +207,22 @@ void fiobj_float_set(FIOBJ obj, double num) {
 static pthread_key_t float_ret_key;
 static pthread_once_t float_ret_once = PTHREAD_ONCE_INIT;
 static void init_float_ret_key(void) {
+  pthread_key_create(&float_ret_key, free);
+}
+static void init_float_ret_ptr(void) {
   fiobj_float_s *ret = malloc(sizeof(fiobj_float_s));
   FIO_ASSERT_ALLOC(ret);
   memset(ret, 0, sizeof(fiobj_float_s));
-  pthread_key_create(&float_ret_key, free);
   pthread_setspecific(float_ret_key, ret);
 }
 /** Creates a temporary Number object. This ignores `fiobj_free`. */
 FIOBJ fiobj_float_tmp(double num) {
   pthread_once(&float_ret_once, init_float_ret_key);
   fiobj_float_s *ret = pthread_getspecific(float_ret_key);
+  if (!ret) {
+    init_float_ret_ptr();
+    ret = pthread_getspecific(float_ret_key);
+  }
   *ret = (fiobj_float_s){
       .head =
           {
@@ -219,22 +241,32 @@ Numbers to Strings - Buffered
 static pthread_key_t num_str_buffer_key;
 static pthread_once_t num_str_buffer_once = PTHREAD_ONCE_INIT;
 static void init_num_str_buffer_key(void) {
+  pthread_key_create(&num_str_buffer_key, free);
+}
+static void init_num_str_buffer_ptr(void) {
   char *num_str_buffer = malloc(sizeof(char)*512);
   FIO_ASSERT_ALLOC(num_str_buffer);
   memset(num_str_buffer, 0, sizeof(char)*512);
-  pthread_key_create(&num_str_buffer_key, free);
   pthread_setspecific(num_str_buffer_key, num_str_buffer);
 }
 
 fio_str_info_s fio_ltocstr(long i) {
   pthread_once(&num_str_buffer_once, init_num_str_buffer_key);
   char *num_buffer = pthread_getspecific(num_str_buffer_key);
+  if (!num_buffer) {
+    init_num_str_buffer_ptr();
+    num_buffer = pthread_getspecific(num_str_buffer_key);
+  }
   return (fio_str_info_s){.data = num_buffer,
                           .len = fio_ltoa(num_buffer, i, 10)};
 }
 fio_str_info_s fio_ftocstr(double f) {
   pthread_once(&num_str_buffer_once, init_num_str_buffer_key);
   char *num_buffer = pthread_getspecific(num_str_buffer_key);
+  if (!num_buffer) {
+    init_num_str_buffer_ptr();
+    num_buffer = pthread_getspecific(num_str_buffer_key);
+  }
   return (fio_str_info_s){.data = num_buffer,
                           .len = fio_ftoa(num_buffer, f, 10)};
 }
