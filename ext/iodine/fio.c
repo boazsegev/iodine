@@ -2889,6 +2889,10 @@ int fio_fd4handle(SOCKET handle) {
   return -1;
 }
 
+SOCKET fio_handle4fd(unsigned int fd) {
+  return fd_data(fd).socket_handle;
+}
+
 void fio_clear_handle(int fd) {
   fio_lock(&(fd_data(fd).sock_lock));
   fd_data(fd).socket_handle = INVALID_SOCKET;
