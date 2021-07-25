@@ -2347,6 +2347,11 @@ static pthread_key_t cached_httpdate_key;
 static pthread_key_t cached_len_key;
 static pthread_once_t cached_once = PTHREAD_ONCE_INIT;
 static void init_cached_key(void) {
+  pthread_key_create(&cached_tick_key, free);
+  pthread_key_create(&cached_httpdate_key, free);
+  pthread_key_create(&cached_len_key, free);
+}
+static void init_cached_key_ptr(void) {
   time_t *cached_tick = malloc(sizeof(time_t));
   FIO_ASSERT_ALLOC(cached_tick);
   memset(cached_tick, 0, sizeof(time_t));
@@ -2356,9 +2361,6 @@ static void init_cached_key(void) {
   size_t *cached_len = malloc(sizeof(size_t));
   *cached_len = 0;
   FIO_ASSERT_ALLOC(cached_len);
-  pthread_key_create(&cached_tick_key, free);
-  pthread_key_create(&cached_httpdate_key, free);
-  pthread_key_create(&cached_len_key, free);
   pthread_setspecific(cached_tick_key, cached_tick);
   pthread_setspecific(cached_httpdate_key, cached_httpdate);
   pthread_setspecific(cached_len_key, cached_len);
@@ -2373,8 +2375,12 @@ static void init_cached_key(void) {
 size_t http_time2str(char *target, const time_t t) {
   /* pre-print time every 1 or 2 seconds or so. */
   pthread_once(&cached_once, init_cached_key);
-  time_t *cached_tick = pthread_getspecific(cached_tick_key);
   char *cached_httpdate = pthread_getspecific(cached_httpdate_key);
+  if (!cached_httpdate) {
+    init_cached_key_ptr();
+    cached_httpdate = pthread_getspecific(cached_httpdate_key);
+  }
+  time_t *cached_tick = pthread_getspecific(cached_tick_key);
   size_t *cached_len = pthread_getspecific(cached_len_key);
   time_t last_tick = fio_last_tick().tv_sec;
   if ((t | 7) < last_tick) {
@@ -2556,13 +2562,14 @@ FIOBJ http_mimetype_find(char *file_ext, size_t file_ext_len) {
 static pthread_key_t buffer_key;
 static pthread_once_t buffer_once = PTHREAD_ONCE_INIT;
 static void init_buffer_key(void) {
+  pthread_key_create(&buffer_key, free);
+}
+static void init_buffer_ptr(void) {
   char *buffer = malloc(sizeof(char) * (LONGEST_FILE_EXTENSION_LENGTH + 1));
   FIO_ASSERT_ALLOC(buffer);
   memset(buffer, 0, sizeof(char) * (LONGEST_FILE_EXTENSION_LENGTH + 1));
-  pthread_key_create(&buffer_key, free);
   pthread_setspecific(buffer_key, buffer);
 }
-
 /**
  * Finds the mime-type associated with the URL.
  *  Remember to call `fiobj_free`.
@@ -2570,6 +2577,10 @@ static void init_buffer_key(void) {
 FIOBJ http_mimetype_find2(FIOBJ url) {
   pthread_once(&buffer_once, init_buffer_key);
   char *buffer = pthread_getspecific(buffer_key);
+  if (!buffer) {
+    init_buffer_ptr();
+    buffer = pthread_getspecific(buffer_key);
+  }
   fio_str_info_s ext = {.data = NULL};
   FIOBJ mimetype;
   if (!url)
