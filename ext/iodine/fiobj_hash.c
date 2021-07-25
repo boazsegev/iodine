@@ -74,9 +74,11 @@ static void fiobj_hash_dealloc(FIOBJ o, void (*task)(FIOBJ, void *),
 static pthread_key_t each_at_key;
 static pthread_once_t each_at_key_once = PTHREAD_ONCE_INIT;
 static void init_each_at_key(void) {
+  pthread_key_create(&each_at_key, free);
+}
+static void init_each_at_key_ptr(void) {
   FIOBJ *eak = malloc(sizeof(FIOBJ));
   FIO_ASSERT_ALLOC(eak);
-  pthread_key_create(&each_at_key, free);
   *eak = FIOBJ_INVALID;
   pthread_setspecific(each_at_key, eak);
 }
@@ -86,6 +88,10 @@ static size_t fiobj_hash_each1(FIOBJ o, size_t start_at,
   assert(o && FIOBJ_TYPE_IS(o, FIOBJ_T_HASH));
   pthread_once(&each_at_key_once, init_each_at_key);
   FIOBJ *each_at_key_ptr = (FIOBJ *)pthread_getspecific(each_at_key);
+  if (!each_at_key_ptr) {
+    init_each_at_key_ptr();
+    each_at_key_ptr = (FIOBJ *)pthread_getspecific(each_at_key);
+  }
   FIOBJ old_each_at_key = *each_at_key_ptr;
   fio_hash___s *hash = &obj2hash(o)->hash;
   size_t count = 0;
@@ -122,7 +128,15 @@ end:
   return count;
 }
 
-FIOBJ fiobj_hash_key_in_loop(void) { return each_at_key; }
+FIOBJ fiobj_hash_key_in_loop(void) {
+  pthread_once(&each_at_key_once, init_each_at_key);
+  FIOBJ *each_at_key_ptr = (FIOBJ *)pthread_getspecific(each_at_key);
+  if (!each_at_key_ptr) {
+    init_each_at_key_ptr();
+    each_at_key_ptr = (FIOBJ *)pthread_getspecific(each_at_key);
+  }
+  return *each_at_key_ptr;
+}
 
 static size_t fiobj_hash_is_eq(const FIOBJ self, const FIOBJ other) {
   if (fio_hash___count(&obj2hash(self)->hash) !=
