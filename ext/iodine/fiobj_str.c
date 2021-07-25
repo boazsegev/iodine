@@ -181,9 +181,11 @@ FIOBJ fiobj_str_move(char *str, size_t len, size_t capacity) {
 static pthread_key_t str_tmp_key;
 static pthread_once_t str_tmp_once = PTHREAD_ONCE_INIT;
 static void init_str_tmp_key(void) {
+  pthread_key_create(&str_tmp_key, free);
+}
+static void init_str_tmp_key_ptr(void) {
   fiobj_str_s *tmp = malloc(sizeof(fiobj_str_s));
   FIO_ASSERT_ALLOC(tmp);
-  pthread_key_create(&str_tmp_key, free);
   tmp->head.ref = ((~(uint32_t)0) >> 4);
   tmp->head.type = FIOBJ_T_STRING;
   tmp->str.small = 1;
@@ -196,6 +198,10 @@ static void init_str_tmp_key(void) {
 FIOBJ fiobj_str_tmp(void) {
   pthread_once(&str_tmp_once, init_str_tmp_key);
   fiobj_str_s *tmp = (fiobj_str_s *)pthread_getspecific(str_tmp_key);
+  if (!tmp) {
+    init_str_tmp_key_ptr();
+    tmp = (fiobj_str_s *)pthread_getspecific(str_tmp_key);
+  }
   tmp->str.frozen = 0;
   fio_str_resize(&tmp->str, 0);
   return ((uintptr_t)tmp | FIOBJECT_STRING_FLAG);
