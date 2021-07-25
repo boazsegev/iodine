@@ -10,8 +10,13 @@
 static pthread_key_t iodine_GVL_state_key;
 static pthread_once_t iodine_GVL_state_once = PTHREAD_ONCE_INIT;
 static void init_iodine_GVL_state_key(void) {
-  pthread_key_create(&iodine_GVL_state_key, NULL);
-  pthread_setspecific(iodine_GVL_state_key, (void *)1);
+  pthread_key_create(&iodine_GVL_state_key, NULL); 
+}
+static void init_iodine_GVL_state_init(void) {
+  uint8_t *gvl = malloc(sizeof(uint8_t));
+  FIO_ASSERT_ALLOC(gvl);
+  *gvl = 1;
+  pthread_setspecific(iodine_GVL_state_key, gvl);
 }
 
 /* *****************************************************************************
@@ -92,26 +97,36 @@ API
 /** Calls a C function within the GVL. */
 static void *iodine_enterGVL(void *(*func)(void *), void *arg) {
   pthread_once(&iodine_GVL_state_once, init_iodine_GVL_state_key);
-  if (pthread_getspecific(iodine_GVL_state_key)) {
+  uint8_t *iodine_GVL_state = pthread_getspecific(iodine_GVL_state_key);
+  if (!iodine_GVL_state) {
+    init_iodine_GVL_state_init();
+    iodine_GVL_state = pthread_getspecific(iodine_GVL_state_key);
+  }
+  if (*iodine_GVL_state) {
     return func(arg);
   }
   void *rv = NULL;
-  pthread_setspecific(iodine_GVL_state_key, (void *)1);
+  *iodine_GVL_state = 1;
   rv = rb_thread_call_with_gvl(func, arg);
-  pthread_setspecific(iodine_GVL_state_key, (void *)0);
+  *iodine_GVL_state = 0;
   return rv;
 }
 
 /** Calls a C function outside the GVL. */
 static void *iodine_leaveGVL(void *(*func)(void *), void *arg) {
   pthread_once(&iodine_GVL_state_once, init_iodine_GVL_state_key);
-  if (!pthread_getspecific(iodine_GVL_state_key)) {
+  uint8_t *iodine_GVL_state = pthread_getspecific(iodine_GVL_state_key);
+  if (!iodine_GVL_state) {
+    init_iodine_GVL_state_init();
+    iodine_GVL_state = pthread_getspecific(iodine_GVL_state_key);
+  }
+  if (!*iodine_GVL_state) {
     return func(arg);
   }
   void *rv = NULL;
-  pthread_setspecific(iodine_GVL_state_key, (void *)0);
+  *iodine_GVL_state = 0;
   rv = rb_thread_call_without_gvl(func, arg, NULL, NULL);
-  pthread_setspecific(iodine_GVL_state_key, (void *)1);
+  *iodine_GVL_state = 1;
   return rv;
 }
 
@@ -162,13 +177,23 @@ static VALUE iodine_call_block(VALUE obj, ID method, int argc, VALUE *argv,
 /** Returns the GVL state flag. */
 static uint8_t iodine_in_GVL(void) {
   pthread_once(&iodine_GVL_state_once, init_iodine_GVL_state_key);
-  return (uint8_t)pthread_getspecific(iodine_GVL_state_key);
+  uint8_t *iodine_GVL_state = pthread_getspecific(iodine_GVL_state_key);
+  if (!iodine_GVL_state) {
+    init_iodine_GVL_state_init();
+    iodine_GVL_state = pthread_getspecific(iodine_GVL_state_key);
+  }
+  return *iodine_GVL_state;
 }
 
 /** Forces the GVL state flag. */
 static void iodine_set_GVL(uint8_t state) { 
   pthread_once(&iodine_GVL_state_once, init_iodine_GVL_state_key);
-  pthread_setspecific(iodine_GVL_state_key, (void *)state);
+  uint8_t *iodine_GVL_state = pthread_getspecific(iodine_GVL_state_key);
+  if (!iodine_GVL_state) {
+    init_iodine_GVL_state_init();
+    iodine_GVL_state = pthread_getspecific(iodine_GVL_state_key);
+  }
+  *iodine_GVL_state = state;
 }
 
 /* *****************************************************************************
