@@ -266,6 +266,7 @@ int fork(void);
 int kill(int, int);
 ssize_t pread(int, void*, size_t, off_t);
 ssize_t pwrite(int, const void *, size_t, off_t);
+SOCKET fio_handle4fd(unsigned int);
 #endif
 
 /* *****************************************************************************
