@@ -872,7 +872,7 @@ static void init_fio_thread_data_key(void) {
 }
 static void init_fio_thread_data(void) {
   fio_thread_queue_s *fio_thread_data = malloc(sizeof(fio_thread_queue_s));
-  FIO_ASSERT(fio_thread_data);
+  FIO_ASSERT_ALLOC(fio_thread_data);
   memset(fio_thread_data, 0, sizeof(fio_thread_queue_s));
 #ifdef __MINGW32__
   fio_thread_data->handle = INVALID_HANDLE_VALUE;
@@ -910,52 +910,52 @@ FIO_FUNC inline void fio_thread_make_suspendable(void) {
 }
 
 FIO_FUNC inline void fio_thread_cleanup(void) {
-  fio_thread_queue_s fio_thread_data = *(fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
+  fio_thread_queue_s *fio_thread_data = (fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
 #ifdef __MINGW32__
-  HANDLE h = fio_thread_data.handle;
-  fio_thread_data.handle = INVALID_HANDLE_VALUE;
+  HANDLE h = fio_thread_data->handle;
+  fio_thread_data->handle = INVALID_HANDLE_VALUE;
   CloseHandle(h);
 #else
-  if (fio_thread_data.fd_signal < 0)
+  if (fio_thread_data->fd_signal < 0)
     return;
-  close(fio_thread_data.fd_wait);
-  close(fio_thread_data.fd_signal);
-  fio_thread_data.fd_wait = -1;
-  fio_thread_data.fd_signal = -1;
+  close(fio_thread_data->fd_wait);
+  close(fio_thread_data->fd_signal);
+  fio_thread_data->fd_wait = -1;
+  fio_thread_data->fd_signal = -1;
 #endif
 }
 
 /* suspend thread execution (might be resumed unexpectedly) */
 FIO_FUNC void fio_thread_suspend(void) {
-  fio_thread_queue_s fio_thread_data = *(fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
+  fio_thread_queue_s *fio_thread_data = (fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
 #ifdef __MINGW32__
   fio_lock(&fio_thread_lock);
   /** don't add thread to queue if its already in there
    * to prevent queue breakage
    * can happen if WaitForSingleObject returns for other reasons */
-  if (!fio_thread_data.in_list) {
-    fio_ls_embd_push(&fio_thread_queue, &fio_thread_data.node);
-    fio_thread_data.in_list = 1;
+  if (!fio_thread_data->in_list) {
+    fio_ls_embd_push(&fio_thread_queue, &fio_thread_data->node);
+    fio_thread_data->in_list = 1;
   }
   fio_unlock(&fio_thread_lock);
-  WaitForSingleObject(fio_thread_data.handle, INFINITE);
+  WaitForSingleObject(fio_thread_data->handle, INFINITE);
 #else
   fio_lock(&fio_thread_lock);
-  fio_ls_embd_push(&fio_thread_queue, &fio_thread_data.node);
+  fio_ls_embd_push(&fio_thread_queue, &fio_thread_data->node);
   fio_unlock(&fio_thread_lock);
   struct pollfd list = {
       .events = (POLLPRI | POLLIN),
-      .fd = fio_thread_data.fd_wait,
+      .fd = fio_thread_data->fd_wait,
   };
   if (poll(&list, 1, 5000) > 0) {
     /* thread was removed from the list through signal */
     uint64_t data;
-    int r = read(fio_thread_data.fd_wait, &data, sizeof(data));
+    int r = read(fio_thread_data->fd_wait, &data, sizeof(data));
     (void)r;
   } else {
     /* remove self from list */
     fio_lock(&fio_thread_lock);
-    fio_ls_embd_remove(&fio_thread_data.node);
+    fio_ls_embd_remove(&fio_thread_data->node);
     fio_unlock(&fio_thread_lock);
   }
 #endif
@@ -6170,10 +6170,27 @@ static inline channel_s *fio_filter_dup_lock_internal(channel_s *ch,
                                                       fio_collection_s *c) {
   fio_lock(&c->lock);
   ch = fio_ch_set_insert(&c->channels, hashed, ch);
-  fio_channel_dup(ch);
-  fio_lock(&ch->lock);
   fio_unlock(&c->lock);
-  return ch;
+  /* respect locking order to prevent deadlock with fio_unsubscribe */
+  fio_lock(&ch->lock);
+  fio_lock(&c->lock);
+  /* check again if channels is still in collection */
+  channel_s *found_ch = fio_ch_set_find(&c->channels, hashed, ch);
+  if (found_ch == ch) {
+    /* channel is still in collection:
+     * unlock the collection
+     * increase reference counter
+     * leave the channel locked and return it */
+    fio_unlock(&c->lock);
+    fio_channel_dup(ch);
+    return ch;
+  } else {
+    /* channel could not be found, it has been removed from the collection */
+    /* insert it again */
+    fio_unlock(&c->lock);
+    fio_unlock(&ch->lock);
+    return fio_filter_dup_lock_internal(ch, hashed, c);
+  }
 }
 
 /** Creates / finds a filter channel, adds a reference count and locks it. */
@@ -6291,11 +6308,8 @@ void fio_unsubscribe(subscription_s *s) {
     fio_collection_s *c = ch->parent;
     uint64_t hashed = FIO_HASH_FN(
         ch->name, ch->name_len, &fio_postoffice.pubsub, &fio_postoffice.pubsub);
-    /* lock collection,
-       need to try and throttle wait, to prevent deadlock with fio_subscribe */
-    while (fio_trylock(&c->lock)) {
-      fio_throttle_thread(100);
-    }
+    /* lock collection */
+    fio_lock(&c->lock);
     /* test again within lock */
     if (fio_ls_embd_is_empty(&ch->subscriptions)) {
       fio_ch_set_remove(&c->channels, hashed, ch, NULL);
