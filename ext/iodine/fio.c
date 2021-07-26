@@ -870,7 +870,7 @@ static pthread_once_t fio_thread_data_once = PTHREAD_ONCE_INIT;
 static void init_fio_thread_data_key(void) {
   pthread_key_create(&fio_thread_data_key, free);
 }
-static void init_fio_thread_data(void) {
+static void init_fio_thread_data_ptr(void) {
   fio_thread_queue_s *fio_thread_data = malloc(sizeof(fio_thread_queue_s));
   FIO_ASSERT_ALLOC(fio_thread_data);
   memset(fio_thread_data, 0, sizeof(fio_thread_queue_s));
@@ -884,10 +884,10 @@ static void init_fio_thread_data(void) {
 }
 
 FIO_FUNC inline void fio_thread_make_suspendable(void) {
-  pthread_once(&fio_thread_data_once, init_fio_thread_data);
+  pthread_once(&fio_thread_data_once, init_fio_thread_data_key);
   fio_thread_queue_s *fio_thread_data = (fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
   if (!fio_thread_data) {
-    init_fio_thread_data();
+    init_fio_thread_data_ptr();
     fio_thread_data = (fio_thread_queue_s *)pthread_getspecific(fio_thread_data_key);
   }
 #ifdef __MINGW32__
