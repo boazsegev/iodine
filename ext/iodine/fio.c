@@ -1701,7 +1701,10 @@ static void sig_int_handler(int sig) {
   default:
     break;
   }
-#ifndef __MINGW32__
+#ifdef __MINGW32__
+  if (old)
+    fio_old_sig_int(sig);
+#else
   /* propagate signale handling to previous existing handler (if any) */
   if (old && old->sa_handler != SIG_IGN && old->sa_handler != SIG_DFL)
     old->sa_handler(sig);
