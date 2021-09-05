@@ -10,6 +10,7 @@
 /old_stuff/
 *.bundle
 *.so
+*.gem
 
 .ruby-version
 .clang_complete
