@@ -938,7 +938,7 @@ FIO_FUNC void fio_thread_suspend(void) {
     fio_thread_data->in_list = 1;
   }
   fio_unlock(&fio_thread_lock);
-  WaitForSingleObject(fio_thread_data->handle, INFINITE);
+  WaitForSingleObject(fio_thread_data->handle, 500);
 #else
   fio_lock(&fio_thread_lock);
   fio_ls_embd_push(&fio_thread_queue, &fio_thread_data->node);
@@ -3293,7 +3293,7 @@ static void fio_sock_perform_close_fd(intptr_t fd) {
   fio_clear_handle(fd);
   if (osffd != -1) {
     _close(osffd);
-  } else {
+  } else if (s != -1) {
     closesocket_ptr(s);
   }
 }
@@ -4562,9 +4562,8 @@ static void fio_worker_cleanup(void) {
   while (0 < end && fio_data->poll[end-1].fd == (SOCKET)-1)
     --end;
   for (size_t i = 0; i <= fio_data->capa; ++i) {
-    if (fd_data(i).protocol || fd_data(i).open) {
-      fio_force_close(fd2uuid(i));
-    }
+    // ensure _all_ socket handles and fds are closed for good
+    fio_force_close(fd2uuid(i));
   }
 #else
   for (size_t i = 0; i <= fio_data->max_protocol_fd; ++i) {
