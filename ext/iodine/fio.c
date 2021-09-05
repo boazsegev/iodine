@@ -4557,11 +4557,22 @@ static void fio_worker_cleanup(void) {
   }
   fio_defer_push_task(fio_cycle_unwind, NULL, NULL);
   fio_defer_perform();
+#ifdef __MINGW32__
+  size_t end = fio_data->capa;
+  while (0 < end && fio_data->poll[end-1].fd == (SOCKET)-1)
+    --end;
+  for (size_t i = 0; i <= fio_data->capa; ++i) {
+    if (fd_data(i).protocol || fd_data(i).open) {
+      fio_force_close(fd2uuid(i));
+    }
+  }
+#else
   for (size_t i = 0; i <= fio_data->max_protocol_fd; ++i) {
     if (fd_data(i).protocol || fd_data(i).open) {
       fio_force_close(fd2uuid(i));
     }
   }
+#endif
   fio_timer_clear_all();
   fio_defer_perform();
   if (!fio_data->is_worker) {
