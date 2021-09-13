@@ -365,7 +365,6 @@ static inline VALUE copy2env(iodine_http_request_handle_s *handle) {
   if (*pos == 0) {
     rb_hash_aset(env, SERVER_NAME,
                  rb_enc_str_new(tmp.data, tmp.len, IodineBinaryEncoding));
-    rb_hash_aset(env, SERVER_PORT, QUERY_ESTRING);
   } else {
     rb_hash_aset(
         env, SERVER_NAME,
@@ -865,7 +864,6 @@ static void initialize_env_template(void) {
   rb_hash_aset(env_template_no_upgrade, REMOTE_ADDR, QUERY_STRING);
   rb_hash_aset(env_template_no_upgrade, REQUEST_METHOD, QUERY_STRING);
   rb_hash_aset(env_template_no_upgrade, SERVER_NAME, QUERY_STRING);
-  rb_hash_aset(env_template_no_upgrade, SERVER_PORT, QUERY_ESTRING);
   rb_hash_aset(env_template_no_upgrade, SERVER_PROTOCOL, QUERY_STRING);
 
   /* WebSocket upgrade support */
