@@ -234,7 +234,7 @@ void iodine_init_tls(void) {
   IODINE_MAKE_SYM(private_key);
   IODINE_MAKE_SYM(password);
 
-  IodineTLSClass = rb_define_class_under(IodineModule, "TLS", rb_cData);
+  IodineTLSClass = rb_define_class_under(IodineModule, "TLS", rb_cObject);
   rb_define_alloc_func(IodineTLSClass, iodine_tls_data_alloc_c);
   rb_define_method(IodineTLSClass, "initialize", iodine_tls_new, -1);
   rb_define_method(IodineTLSClass, "use_certificate",
