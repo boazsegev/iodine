@@ -26,6 +26,10 @@ Feel free to copy, use and enjoy according to the license provided.
 
 #include <websocket_parser.h>
 
+#include <websocket_deflate.h>
+
+#define MAX_SIZE_T (size_t)-1
+
 #if !defined(__BIG_ENDIAN__) && !defined(__LITTLE_ENDIAN__)
 #include <endian.h>
 #if !defined(__BIG_ENDIAN__) && !defined(__LITTLE_ENDIAN__) &&                 \
@@ -130,6 +134,10 @@ struct ws_s {
   uint8_t is_text;
   /** websocket connection type. */
   uint8_t is_client;
+
+  z_stream *inflator;
+  z_stream *deflator;
+  size_t deflate_min;
 };
 
 /* *****************************************************************************
@@ -152,7 +160,10 @@ static void websocket_on_unwrapped(void *ws_p, void *msg, uint64_t len,
                                    char first, char last, char text,
                                    unsigned char rsv) {
   ws_s *ws = ws_p;
-  if (last && first) {
+  static char ws_payload_tail[] = {0x00, 0x00, 0xFF, 0xFF};
+
+  // Shortcut only if not deflated
+  if (last && first && !(rsv & 4)) {
     ws->on_message(ws, (fio_str_info_s){.data = msg, .len = len},
                    (uint8_t)text);
     return;
@@ -165,7 +176,20 @@ static void websocket_on_unwrapped(void *ws_p, void *msg, uint64_t len,
   }
   fiobj_str_write(ws->msg, msg, len);
   if (last) {
-    ws->on_message(ws, fiobj_obj2cstr(ws->msg), ws->is_text);
+    if (rsv & 4) {
+      fiobj_str_write(ws->msg, ws_payload_tail, 4);
+      fio_str_info_s deflated = fiobj_obj2cstr(ws->msg);
+      FIOBJ inflated = fiobj_str_buf(deflated.len);
+
+      if (ws->inflator == NULL) {
+        ws->inflator = new_inflator();
+      }
+      int ret = inflate_message(deflated, inflated, ws->inflator);
+
+      ws->on_message(ws, fiobj_obj2cstr(inflated), ws->is_text);
+    } else {
+      ws->on_message(ws, fiobj_obj2cstr(ws->msg), ws->is_text);
+    }
   }
 
   (void)rsv;
@@ -296,7 +320,7 @@ static void on_data_first(intptr_t sockfd, fio_protocol_s *ws_) {
 
 /* later */
 static void websocket_write_impl(intptr_t fd, void *data, size_t len, char text,
-                                 char first, char last, char client);
+                                 char first, char last, char client, char rsv);
 
 /*******************************************************************************
 Create/Destroy the websocket object
@@ -314,6 +338,9 @@ static ws_s *new_websocket(intptr_t uuid) {
       .subscriptions = FIO_LS_INIT(ws->subscriptions),
       .is_client = 0,
       .fd = uuid,
+      .inflator = NULL,
+      .deflator = NULL,
+      .deflate_min = MAX_SIZE_T,
   };
   return ws;
 }
@@ -380,24 +407,30 @@ Writing to the Websocket
   (FIO_MEMORY_BLOCK_ALLOC_LIMIT - 4096) // should be less then `unsigned short`
 
 static void websocket_write_impl(intptr_t fd, void *data, size_t len, char text,
-                                 char first, char last, char client) {
+                                 char first, char last, char client, char rsv) {
   if (len <= WS_MAX_FRAME_SIZE) {
     void *buff = fio_malloc(len + 16);
     len = (client ? websocket_client_wrap(buff, data, len, (text ? 1 : 2),
-                                          first, last, 0)
+                                          first, last, rsv)
                   : websocket_server_wrap(buff, data, len, (text ? 1 : 2),
-                                          first, last, 0));
+                                          first, last, rsv));
     fio_write2(fd, .data.buffer = buff, .length = len,
                .after.dealloc = fio_free);
   } else {
+    int firstFrame = 1;
     /* frame fragmentation is better for large data then large frames */
     while (len > WS_MAX_FRAME_SIZE) {
-      websocket_write_impl(fd, data, WS_MAX_FRAME_SIZE, text, first, 0, client);
+      websocket_write_impl(fd, data, WS_MAX_FRAME_SIZE, text, first, 0, client, rsv);
+      if (firstFrame) {
+        firstFrame = 0;
+        // should only set compressed flag on first frame
+        rsv &= 3;
+      }
       data = ((uint8_t *)data) + WS_MAX_FRAME_SIZE;
       first = 0;
       len -= WS_MAX_FRAME_SIZE;
     }
-    websocket_write_impl(fd, data, len, text, first, 1, client);
+    websocket_write_impl(fd, data, len, text, first, 1, client, rsv);
   }
   return;
 }
@@ -715,9 +748,22 @@ uint8_t websocket_is_client(ws_s *ws) { return ws->is_client; }
 
 /** Writes data to the websocket. Returns -1 on failure (0 on success). */
 int websocket_write(ws_s *ws, fio_str_info_s msg, uint8_t is_text) {
+  char rsv = 0;
+  if (msg.len >= ws->deflate_min && is_text == 1) {
+    rsv |= 4;
+  }
+
+  if (rsv & 4) {
+    size_t orig_len = msg.len;
+    FIOBJ deflated = fiobj_str_buf(msg.len);
+    deflate_message(msg, deflated, ws->deflator);
+    msg = fiobj_obj2cstr(deflated);
+    msg.len -= 4;
+  }
+
   if (fio_is_valid(ws->fd)) {
     websocket_write_impl(ws->fd, msg.data, msg.len, is_text, 1, 1,
-                         ws->is_client);
+                         ws->is_client, rsv);
     return 0;
   }
   return -1;
@@ -728,4 +774,13 @@ void websocket_close(ws_s *ws) {
              .after.dealloc = FIO_DEALLOC_NOOP);
   fio_close(ws->fd);
   return;
+}
+
+void websocket_set_deflate_min_size(ws_s *ws, size_t deflate_min_size) {
+  if (deflate_min_size != MAX_SIZE_T) {
+    ws->deflate_min = deflate_min_size;
+    ws->deflator = new_deflator();
+  } else {
+    ws->deflator = NULL;
+  }
 }
