@@ -34,7 +34,9 @@ VALUE IODINE_R_HIJACK;
 VALUE IODINE_R_HIJACK_IO;
 VALUE IODINE_R_HIJACK_CB;
 
+static VALUE RACK_WS_EXTENSIONS;
 static VALUE RACK_UPGRADE;
+static VALUE RACK_UPGRADE_DEFLATE;
 static VALUE RACK_UPGRADE_Q;
 static VALUE RACK_UPGRADE_SSE;
 static VALUE RACK_UPGRADE_WEBSOCKET;
@@ -199,10 +201,24 @@ static void iodine_ws_attach(http_s *h, VALUE handler, VALUE env) {
   if (io == Qnil)
     return;
 
+  int deflate = 0;
+
+  // check if permessage-deflate allowed
+  // must have header from client for extensions
+  // must have the permessage-deflate extension requested
+  // must have server authorize deflation
+  VALUE extension_header = rb_hash_aref(env, RACK_WS_EXTENSIONS);
+  char *extensions = (extension_header == Qnil ? NULL : StringValueCStr(extension_header));
+  if (extensions != NULL && strcasestr(extensions, "permessage-deflate") != NULL &&
+      rb_hash_aref(env, RACK_UPGRADE_DEFLATE) == Qtrue) {
+    deflate = 1;
+  }
+
   http_upgrade2ws(h, .on_message = iodine_ws_on_message,
                   .on_open = iodine_ws_on_open, .on_ready = iodine_ws_on_ready,
                   .on_shutdown = iodine_ws_on_shutdown,
-                  .on_close = iodine_ws_on_close, .udata = (void *)io);
+                  .on_close = iodine_ws_on_close, .udata = (void *)io,
+                  .deflate = deflate);
 }
 
 /* *****************************************************************************
@@ -1120,7 +1136,9 @@ void iodine_init_http(void) {
   rack_set(IODINE_R_HIJACK, "rack.hijack");
   rack_set(IODINE_R_HIJACK_CB, "iodine.hijack_cb");
 
+  rack_set(RACK_WS_EXTENSIONS, "HTTP_SEC_WEBSOCKET_EXTENSIONS");
   rack_set(RACK_UPGRADE, "rack.upgrade");
+  rack_set(RACK_UPGRADE_DEFLATE, "rack.upgrade.deflate");
   rack_set(RACK_UPGRADE_Q, "rack.upgrade?");
   rack_set_sym(RACK_UPGRADE_SSE, "sse");
   rack_set_sym(RACK_UPGRADE_WEBSOCKET, "websocket");

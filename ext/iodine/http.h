@@ -543,6 +543,7 @@ typedef struct {
   void (*on_close)(intptr_t uuid, void *udata);
   /** Opaque user data. */
   void *udata;
+  int deflate;
 } websocket_settings_s;
 
 /**

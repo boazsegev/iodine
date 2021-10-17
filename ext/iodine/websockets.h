@@ -47,12 +47,17 @@ intptr_t websocket_uuid(ws_s *ws);
  */
 uint8_t websocket_is_client(ws_s *ws);
 
+/**
+ * Returns 1 if the WebSocket has a deflator (i.e. permessage-deflate is set)
+ */
+uint8_t websocket_has_deflator(ws_s *ws);
+
 /* *****************************************************************************
 Websocket Connection Management (write / close)
 ***************************************************************************** */
 
 /** Writes data to the websocket. Returns -1 on failure (0 on success). */
-int websocket_write(ws_s *ws, fio_str_info_s msg, uint8_t is_text);
+int websocket_write(ws_s *ws, fio_str_info_s msg, uint8_t is_text, char rsv);
 /** Closes a websocket connection. */
 void websocket_close(ws_s *ws);
 
