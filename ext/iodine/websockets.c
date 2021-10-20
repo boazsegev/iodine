@@ -135,6 +135,7 @@ struct ws_s {
 
   z_stream *inflator;
   z_stream *deflator;
+  size_t deflate_min;
 };
 
 /* *****************************************************************************
@@ -338,6 +339,7 @@ static ws_s *new_websocket(intptr_t uuid) {
       .fd = uuid,
       .inflator = NULL,
       .deflator = NULL,
+      .deflate_min = (size_t)-1,
   };
   return ws;
 }
@@ -354,7 +356,10 @@ static void destroy_ws(ws_s *ws) {
 void websocket_attach(intptr_t uuid, http_settings_s *http_settings,
                       websocket_settings_s *args, void *data, size_t length) {
   ws_s *ws = new_websocket(uuid);
-  if (args->deflate) { ws->deflator = new_deflator(); }
+  if (http_settings->deflate && http_settings->deflate != -1) {
+    ws->deflator = new_deflator();
+    ws->deflate_min = http_settings->deflate;
+  }
   FIO_ASSERT_ALLOC(ws);
   // we have an active websocket connection - prep the connection buffer
   ws->buffer = create_ws_buffer(ws);
@@ -602,7 +607,7 @@ static inline void websocket_on_pubsub_message_direct_internal(fio_msg_s *msg,
         FIO_STR_INIT_STATIC2(msg->msg.data, msg->msg.len); // don't free
     txt = (tmp.len >= (2 << 14) ? 0 : fio_str_utf8_valid(&tmp));
   }
-  websocket_write((ws_s *)pr, msg->msg, txt & 1, 0);
+  websocket_write((ws_s *)pr, msg->msg, txt & 1);
   fiobj_free(message);
 finish:
   fio_protocol_unlock(pr, FIO_PR_LOCK_WRITE);
@@ -744,14 +749,15 @@ void *websocket_udata_set(ws_s *ws, void *udata) {
  */
 uint8_t websocket_is_client(ws_s *ws) { return ws->is_client; }
 
-uint8_t websocket_has_deflator(ws_s *ws) {
-  return (ws->deflator != NULL);
-}
-
 /** Writes data to the websocket. Returns -1 on failure (0 on success). */
-int websocket_write(ws_s *ws, fio_str_info_s msg, uint8_t is_text, char rsv) {
+int websocket_write(ws_s *ws, fio_str_info_s msg, uint8_t is_text) {
+  char rsv = 0;
+  if (msg.len >= ws->deflate_min && is_text == 1) {
+    rsv |= 4;
+  }
 
   if (rsv & 4) {
+    size_t orig_len = msg.len;
     FIOBJ deflated = fiobj_str_buf(msg.len);
     deflate_message(msg, deflated, ws->deflator);
     msg = fiobj_obj2cstr(deflated);

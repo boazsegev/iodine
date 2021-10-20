@@ -26,6 +26,7 @@ typedef struct {
   uint8_t timeout;
   uint8_t ping;
   uint8_t log;
+  size_t deflate;
   enum {
     IODINE_SERVICE_RAW,
     IODINE_SERVICE_HTTP,

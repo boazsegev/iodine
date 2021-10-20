@@ -49,6 +49,7 @@ static VALUE max_msg_sym;
 static VALUE method_sym;
 static VALUE path_sym;
 static VALUE ping_sym;
+static VALUE deflate_sym;
 static VALUE port_sym;
 static VALUE public_sym;
 static VALUE service_sym;
@@ -414,6 +415,8 @@ static VALUE iodine_cli_parse(VALUE self) {
       FIO_CLI_INT("-max-msg -maxms incoming WebSocket message limit in Kb. "
                   "Default: 250Kb"),
       FIO_CLI_INT("-ping websocket ping interval (1..255). Default: 40s"),
+      FIO_CLI_INT("-deflate minimum size of outgoing message to deflate. Default: -1. "
+                  "-1 turns off deflation."),
       FIO_CLI_PRINT_HEADER("SSL/TLS:"),
       FIO_CLI_BOOL("-tls enable SSL/TLS using a self-signed certificate."),
       FIO_CLI_STRING(
@@ -502,6 +505,9 @@ static VALUE iodine_cli_parse(VALUE self) {
   }
   if (fio_cli_get("-ping")) {
     rb_hash_aset(defaults, ping_sym, INT2NUM(fio_cli_get_i("-ping")));
+  }
+  if (fio_cli_get("-deflate")) {
+    rb_hash_aset(defaults, deflate_sym, INT2NUM(fio_cli_get_i("-deflate")));
   }
   if (fio_cli_get("-redis-ping")) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("redis_ping_")),
@@ -659,6 +665,7 @@ Supported Settigs:
 - `:public` (public folder, HTTP server only)
 - `:timeout` (HTTP only)
 - `:ping` (`:raw` clients and WebSockets only)
+- `:deflate` (`:raw` WebSockets only)
 - `:max_headers` (HTTP only)
 - `:max_body` (HTTP only)
 - `:max_msg` (WebSockets only)
@@ -682,6 +689,7 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
   VALUE method = rb_hash_aref(s, method_sym);
   VALUE path = rb_hash_aref(s, path_sym);
   VALUE ping = rb_hash_aref(s, ping_sym);
+  VALUE deflate = rb_hash_aref(s, deflate_sym);
   VALUE port = rb_hash_aref(s, port_sym);
   VALUE r_public = rb_hash_aref(s, public_sym);
   VALUE service = rb_hash_aref(s, service_sym);
@@ -717,6 +725,8 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
     path = rb_hash_aref(iodine_default_args, path_sym);
   if (ping == Qnil)
     ping = rb_hash_aref(iodine_default_args, ping_sym);
+  if (deflate == Qnil)
+    deflate = rb_hash_aref(iodine_default_args, deflate_sym);
   if (port == Qnil)
     port = rb_hash_aref(iodine_default_args, port_sym);
   if (r_public == Qnil) {
@@ -791,6 +801,9 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
       FIO_LOG_WARNING(":ping value over 255 will be silently ignored.");
     else
       r.ping = FIX2ULONG(ping);
+  }
+  if (deflate != Qnil && RB_TYPE_P(deflate, T_FIXNUM)) {
+    r.deflate = FIX2LONG(deflate);
   }
   if (port != Qnil) {
     if (RB_TYPE_P(port, T_STRING)) {
@@ -1285,6 +1298,7 @@ void Init_iodine(void) {
   IODINE_MAKE_SYM(method);
   IODINE_MAKE_SYM(path);
   IODINE_MAKE_SYM(ping);
+  IODINE_MAKE_SYM(deflate);
   IODINE_MAKE_SYM(port);
   IODINE_MAKE_SYM(public);
   IODINE_MAKE_SYM(service);

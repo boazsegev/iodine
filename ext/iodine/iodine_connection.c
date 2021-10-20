@@ -167,27 +167,7 @@ Ruby Connection Methods - write, close open? pending
  * Use {pending} to test how many `write` operations are pending completion
  * (`on_drained(client)` will be called when they complete).
  */
-static VALUE iodine_connection_write(int argc, VALUE* argv, VALUE self) {
-  VALUE data, opts;
-
-  static ID keyword_ids[1];
-  VALUE kwargs[1];
-  VALUE deflate = Qnil;
-
-  ws_s *socket;
-  int rsv = 0;
-
-  if (!keyword_ids[0]) {
-    CONST_ID(keyword_ids[0], "deflate");
-  }
-
-  rb_scan_args(argc, argv, "1:", &data, &opts);
-
-  if (!NIL_P(opts)) {
-    rb_get_kwargs(opts, keyword_ids, 0, 1, kwargs);
-    if (kwargs[0] != Qundef) { deflate = kwargs[0]; }
-  }
-
+static VALUE iodine_connection_write(VALUE self, VALUE data) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
   if (!c || fio_is_closed(c->info.uuid)) {
     // don't throw exceptions - closed connections are unavoidable.
@@ -207,14 +187,8 @@ static VALUE iodine_connection_write(int argc, VALUE* argv, VALUE self) {
   switch (c->info.type) {
   case IODINE_CONNECTION_WEBSOCKET:
     /* WebSockets*/
-    socket = c->info.arg;
-
-    if (websocket_has_deflator(socket) && deflate) {
-      rsv = 4;
-    }
-
-    websocket_write(socket, IODINE_RSTRINFO(data),
-                    rb_enc_get(data) == IodineUTF8Encoding, rsv);
+    websocket_write(c->info.arg, IODINE_RSTRINFO(data),
+                    rb_enc_get(data) == IodineUTF8Encoding);
     return Qtrue;
     break;
   case IODINE_CONNECTION_SSE:
@@ -463,7 +437,7 @@ static void iodine_on_pubsub(fio_msg_s *msg) {
         fiobj_send_free(data->info.uuid, fiobj_dup(s));
       } else {
         fwrite("-", 1, 1, stderr);
-        websocket_write(data->info.arg, msg->msg, (block == Qnil), 0);
+        websocket_write(data->info.arg, msg->msg, (block == Qnil));
       }
       return;
     }
@@ -928,7 +902,7 @@ void iodine_connection_init(void) {
   // define the Connection Class and it's methods
   ConnectionKlass = rb_define_class_under(IodineModule, "Connection", rb_cObject);
   rb_define_alloc_func(ConnectionKlass, iodine_connection_data_alloc_c);
-  rb_define_method(ConnectionKlass, "write", iodine_connection_write, -1);
+  rb_define_method(ConnectionKlass, "write", iodine_connection_write, 1);
   rb_define_method(ConnectionKlass, "close", iodine_connection_close, 0);
   rb_define_method(ConnectionKlass, "open?", iodine_connection_is_open, 0);
   rb_define_method(ConnectionKlass, "pending", iodine_connection_pending, 0);
