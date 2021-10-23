@@ -42,6 +42,8 @@ module Iodine
         def create_response(env)
           super
 
+          return WS_RESPONSE unless env['HTTP_SEC_WEBSOCKET_EXTENSIONS']&.match?('permessage-deflate')
+
           env['rack.ws.deflate.min_size'] = WebSocket.deflate_min_size
 
           WS_DEFLATE_RESPONSE
