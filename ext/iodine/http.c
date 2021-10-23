@@ -834,6 +834,8 @@ static http_settings_s *http_settings_new(http_settings_s arg_settings) {
     if ((ssize_t)arg_settings.max_clients - HTTP_BUSY_UNLESS_HAS_FDS > 0)
       arg_settings.max_clients -= HTTP_BUSY_UNLESS_HAS_FDS;
   }
+  if (!arg_settings.deflate)
+    arg_settings.deflate = (size_t)-1;
 
   http_settings_s *settings = malloc(sizeof(*settings) + sizeof(void *));
   *settings = arg_settings;

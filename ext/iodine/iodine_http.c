@@ -7,6 +7,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #include "iodine.h"
 
 #include "http.h"
+#include "http_internal.h"
 
 #include <ruby/encoding.h>
 #include <ruby/io.h>
@@ -34,6 +35,7 @@ VALUE IODINE_R_HIJACK;
 VALUE IODINE_R_HIJACK_IO;
 VALUE IODINE_R_HIJACK_CB;
 
+static VALUE RACK_WS_EXTENSIONS;
 static VALUE RACK_UPGRADE;
 static VALUE RACK_UPGRADE_Q;
 static VALUE RACK_UPGRADE_SSE;
@@ -193,16 +195,31 @@ static void iodine_ws_on_close(intptr_t uuid, void *udata) {
 }
 
 static void iodine_ws_attach(http_s *h, VALUE handler, VALUE env) {
+  http_settings_s *http_settings = (http_settings_s *)((http_fio_protocol_s *)h->private_data.flag)->settings;
+
   VALUE io =
       iodine_connection_new(.type = IODINE_CONNECTION_WEBSOCKET, .arg = NULL,
                             .handler = handler, .env = env, .uuid = 0);
   if (io == Qnil)
     return;
 
+  size_t deflate = (size_t)-1;
+
+  // check if permessage-deflate allowed
+  // must have header from client for extensions
+  // must have the permessage-deflate extension requested
+  // must have server authorize deflation
+  VALUE extension_header = rb_hash_aref(env, RACK_WS_EXTENSIONS);
+  char *extensions = (extension_header == Qnil ? NULL : StringValueCStr(extension_header));
+  if (http_settings->deflate >= 0 && extensions != NULL && strcasestr(extensions, "permessage-deflate") != NULL) {
+    deflate = http_settings->deflate;
+  }
+
   http_upgrade2ws(h, .on_message = iodine_ws_on_message,
                   .on_open = iodine_ws_on_open, .on_ready = iodine_ws_on_ready,
                   .on_shutdown = iodine_ws_on_shutdown,
-                  .on_close = iodine_ws_on_close, .udata = (void *)io);
+                  .on_close = iodine_ws_on_close, .udata = (void *)io,
+                  .deflate = deflate);
 }
 
 /* *****************************************************************************
@@ -944,7 +961,8 @@ intptr_t iodine_http_listen(iodine_connection_args_s args){
       .tls = args.tls, .timeout = args.timeout, .ws_timeout = args.ping,
       .ws_max_msg_size = args.max_msg, .max_header_size = args.max_headers,
       .on_finish = free_iodine_http, .log = args.log,
-      .max_body_size = args.max_body, .public_folder = args.public.data);
+      .max_body_size = args.max_body, .public_folder = args.public.data,
+      .deflate = args.deflate);
   if (uuid == -1)
     return uuid;
 
@@ -1120,6 +1138,7 @@ void iodine_init_http(void) {
   rack_set(IODINE_R_HIJACK, "rack.hijack");
   rack_set(IODINE_R_HIJACK_CB, "iodine.hijack_cb");
 
+  rack_set(RACK_WS_EXTENSIONS, "HTTP_SEC_WEBSOCKET_EXTENSIONS");
   rack_set(RACK_UPGRADE, "rack.upgrade");
   rack_set(RACK_UPGRADE_Q, "rack.upgrade?");
   rack_set_sym(RACK_UPGRADE_SSE, "sse");

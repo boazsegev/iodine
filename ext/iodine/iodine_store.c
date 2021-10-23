@@ -132,7 +132,7 @@ struct IodineStorage_s IodineStore = {
 void iodine_storage_init(void) {
   fio_store_capa_require(&iodine_storage, 512);
   VALUE tmp =
-      rb_define_class_under(rb_cObject, "IodineObjectStorage", rb_cData);
+      rb_define_class_under(rb_cObject, "IodineObjectStorage", rb_cObject);
   VALUE storage_obj =
       TypedData_Wrap_Struct(tmp, &storage_type_struct, &iodine_storage);
   // rb_global_variable(&iodine_storage_obj);

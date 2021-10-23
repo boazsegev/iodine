@@ -403,6 +403,8 @@ struct http_settings_s {
   uint8_t log;
   /** a read only flag set automatically to indicate the protocol's mode. */
   uint8_t is_client;
+  /** minimum size of a message to deflate. Defaults to -1 bytes which means no deflation. */
+  size_t deflate;
 };
 
 /**
@@ -543,6 +545,7 @@ typedef struct {
   void (*on_close)(intptr_t uuid, void *udata);
   /** Opaque user data. */
   void *udata;
+  size_t deflate;
 } websocket_settings_s;
 
 /**

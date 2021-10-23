@@ -349,6 +349,10 @@ static int http1_http2websocket_server(http_s *h, websocket_settings_s *args) {
   stmp = fiobj_obj2cstr(tmp);
   fiobj_str_resize(tmp,
                    fio_base64_encode(stmp.data, fio_sha1_result(&sha1), 20));
+
+  if (args->deflate != (size_t)-1) {
+    http_set_header(h, HTTP_HEADER_WS_SEC_EXTENSIONS, fiobj_dup(HTTP_HVALUE_WS_DEFLATE));
+  }
   http_set_header(h, HTTP_HEADER_CONNECTION, fiobj_dup(HTTP_HVALUE_WS_UPGRADE));
   http_set_header(h, HTTP_HEADER_UPGRADE, fiobj_dup(HTTP_HVALUE_WEBSOCKET));
   http_set_header(h, HTTP_HEADER_WS_SEC_KEY, tmp);
