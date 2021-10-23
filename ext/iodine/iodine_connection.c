@@ -329,7 +329,7 @@ static VALUE iodine_connection_timeout_set(VALUE self, VALUE timeout) {
 /**
  * Returns the connection's `env` (if it originated from an HTTP request).
  */
-static VALUE iodine_connection_env(VALUE self) {
+VALUE iodine_connection_env(VALUE self) {
   iodine_connection_data_s *c = iodine_connection_validate_data(self);
   if (c && c->info.env) {
     return c->info.env;
@@ -900,7 +900,7 @@ void iodine_connection_init(void) {
   IodineStore.add(RAWSymbol);
 
   // define the Connection Class and it's methods
-  ConnectionKlass = rb_define_class_under(IodineModule, "Connection", rb_cData);
+  ConnectionKlass = rb_define_class_under(IodineModule, "Connection", rb_cObject);
   rb_define_alloc_func(ConnectionKlass, iodine_connection_data_alloc_c);
   rb_define_method(ConnectionKlass, "write", iodine_connection_write, 1);
   rb_define_method(ConnectionKlass, "close", iodine_connection_close, 0);

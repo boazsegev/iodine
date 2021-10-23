@@ -264,7 +264,7 @@ Here is a simple chat-room example we can run in the terminal (`irb`) or easily 
 
 ```ruby
 require 'iodine'
-module WebsocketChat
+module WebsocketChat < Iodine::Middleware::WebSocket::Handler
   def on_open client
     # Pub/Sub directly to the client (or use a block to process the messages)
     client.subscribe :chat
@@ -278,27 +278,43 @@ module WebsocketChat
   extend self
 end
 APP = Proc.new do |env|
-  if env['rack.upgrade?'.freeze] == :websocket 
-    env['rack.upgrade'.freeze] = WebsocketChat 
-    [0,{}, []] # It's possible to set cookies for the response.
-  elsif env['rack.upgrade?'.freeze] == :sse
-    puts "SSE connections can only receive data from the server, the can't write." 
-    env['rack.upgrade'.freeze] = WebsocketChat
-    [0,{}, []] # It's possible to set cookies for the response.
-  else
-    [200, {"Content-Length" => "12", "Content-Type" => "text/plain"}, ["Welcome Home"] ]
-  end
+  [200, {"Content-Length" => "12", "Content-Type" => "text/plain"}, ["Welcome Home"] ]
+end
+app = Rack::Builder.new do |builder|
+  builder.use Iodine::Middleware::WebSocket::Upgrader
+  builder.run APP
 end
 # Pus/Sub can be server oriented as well as connection bound
 Iodine.subscribe(:chat) {|ch, msg| puts msg if Iodine.master? }
 # By default, Pub/Sub performs in process cluster mode.
 Iodine.workers = 4
 # # in irb:
-Iodine.listen service: :http, public: "www/public", handler: APP
+Iodine.listen service: :http, public: "www/public", handler: app
 Iodine.start
 # # or in config.ru
-run APP
+run app
 ```
+
+##### Deflation/compression
+
+In order to use the deflation extension for websockets, one can simply change the following section of the above example.
+
+```
+app = Rack::Builder.new do |builder|
+  builder.use Iodine::Middleware::WebSocket::DeflateUpgrader
+  builder.run APP
+end
+```
+
+##### Websocket variables
+
+There are 2 options required for using websockets.
+
+1) Iodine::Middleware::WebSocket.rack_handler - this variable sets the handler for incoming messages. If one subclasses a simple class from Iodine::Middleware::WebSocket::Handler then
+Iodine will automatically set this variable for you. If you need to do anything more customized (i.e. a Module or a Class that requires parameters for its initialize method) then you
+can simply set the variable by hand.
+
+2) Iodine::Middleware::WebSocket.deflate_min_size - this variable is used for deflation/compression. It sets the minimum size of a message to have it deflated. The default value is 1024.
 
 ### Native Pub/Sub with *optional* Redis scaling
 

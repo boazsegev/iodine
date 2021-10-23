@@ -40,6 +40,11 @@ void iodine_connection_fire_event(VALUE connection,
                                   iodine_connection_event_type_e ev,
                                   VALUE data);
 
+/**
+ * Returns the connection environment.
+ */
+VALUE iodine_connection_env(VALUE connection);
+
 /** Initializes the Connection Ruby class. */
 void iodine_connection_init(void);
 

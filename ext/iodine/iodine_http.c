@@ -47,6 +47,8 @@ static VALUE HTTP_ACCEPT_LANGUAGE;
 static VALUE HTTP_CONNECTION;
 static VALUE HTTP_HOST;
 
+static VALUE ENV_WS_DEFLATE_MIN_SIZE;
+
 static VALUE hijack_func_sym;
 static ID close_method_id;
 static ID each_method_id;
@@ -56,6 +58,7 @@ static ID iodine_call_proc_id;
 static VALUE env_template_no_upgrade;
 static VALUE env_template_websockets;
 static VALUE env_template_sse;
+
 
 static rb_encoding *IodineUTF8Encoding;
 static rb_encoding *IodineBinaryEncoding;
@@ -156,6 +159,14 @@ static void iodine_ws_on_open(ws_s *ws) {
   c->arg = ws;
   c->uuid = websocket_uuid(ws);
   iodine_connection_fire_event(h, IODINE_CONNECTION_ON_OPEN, Qnil);
+
+  VALUE env = iodine_connection_env(h);
+  if (!NIL_P(env)) {
+    VALUE rb_deflate_min_size = rb_hash_aref(env, ENV_WS_DEFLATE_MIN_SIZE);
+    if (FIXNUM_P(rb_deflate_min_size)) {
+      websocket_set_deflate_min_size(ws, (size_t)FIX2LONG(rb_deflate_min_size));
+    }
+  }
 }
 /**
  * The (optional) on_ready callback will be after a the underlying socket's
@@ -1122,6 +1133,7 @@ void iodine_init_http(void) {
 
   rack_set(RACK_UPGRADE, "rack.upgrade");
   rack_set(RACK_UPGRADE_Q, "rack.upgrade?");
+  rack_set(ENV_WS_DEFLATE_MIN_SIZE, "rack.ws.deflate.min_size");
   rack_set_sym(RACK_UPGRADE_SSE, "sse");
   rack_set_sym(RACK_UPGRADE_WEBSOCKET, "websocket");
 

@@ -33,6 +33,12 @@ void *websocket_udata_get(ws_s *ws);
 void *websocket_udata_set(ws_s *ws, void *udata);
 
 /**
+ * Sets the minimum length of a message for deflation.
+ * -1 turns off deflation
+ */
+void websocket_set_deflate_min_size(ws_s *ws, size_t deflate_min_size);
+
+/**
  * Returns the underlying socket UUID.
  *
  * This is only relevant for collecting the protocol object from outside of
