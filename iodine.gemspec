@@ -36,7 +36,7 @@ Gem::Specification.new do |spec|
   spec.requirements << 'Ruby >= 2.3.8 (Ruby EOL).'
   spec.requirements << 'Ruby >= 2.5.0 recommended.'
   spec.requirements << 'TLS requires OpenSSL >= 1.1.0.'
-  spec.requirements << 'Or Windows with Ruby >= 3.0.0 nuild with MingW and MingW as compiler.'
+  spec.requirements << 'Or Windows with Ruby >= 3.0.0 build with MingW and MingW as compiler.'
 
   # spec.add_development_dependency 'bundler', '>= 1.10', '< 2.0'
   spec.add_development_dependency 'rake', '~> 13.0', '< 14.0'
