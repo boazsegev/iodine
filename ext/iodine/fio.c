@@ -850,7 +850,7 @@ Suspending and renewing thread execution (signaling events)
 #define FIO_DEFER_THROTTLE_POLL 0
 #endif
 #endif
-  
+
 typedef struct fio_thread_queue_s {
   fio_ls_embd_s node;
 #ifdef __MINGW32__
@@ -2944,7 +2944,7 @@ intptr_t fio_accept(intptr_t srv_uuid) {
   if (fio_set_non_block(client) == -1) {
 #ifdef __MINGW32__
       closesocket_ptr(client);
-#else      
+#else
       close(client);
 #endif
     return -1;
@@ -3028,6 +3028,9 @@ static intptr_t fio_tcp_socket(const char *address, const char *port,
     freeaddrinfo(addrinfo);
     return -1;
   }
+  // ensure dual-mode socket, enable IPV4
+  DWORD v6val = 0;
+  setsockopt_ptr(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6val, sizeof(v6val));
 #else
   int fd =
       socket(addrinfo->ai_family, addrinfo->ai_socktype, addrinfo->ai_protocol);
@@ -3040,20 +3043,20 @@ static intptr_t fio_tcp_socket(const char *address, const char *port,
   if (fio_set_non_block(fd) < 0) {
     freeaddrinfo(addrinfo);
 #ifdef __MINGW32__
-      closesocket_ptr(fd);
-#else      
-      close(fd); // socket
+    closesocket_ptr(fd);
+#else
+    close(fd); // socket
 #endif
     return -1;
   }
   if (server) {
     {
       // avoid the "address taken"
-  #ifdef __MINGW32__
-    char optval = 1;
+#ifdef __MINGW32__
+      char optval = 1;
       setsockopt_ptr(fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
-  #else
-    int optval = 1;
+#else
+      int optval = 1;
       setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
 #endif
     }
@@ -3075,7 +3078,7 @@ static intptr_t fio_tcp_socket(const char *address, const char *port,
       freeaddrinfo(addrinfo);
 #ifdef __MINGW32__
       closesocket_ptr(fd);
-#else      
+#else
       close(fd);
 #endif
       return -1;
@@ -3099,7 +3102,7 @@ static intptr_t fio_tcp_socket(const char *address, const char *port,
       closesocket_ptr(fd);
       return -1;
     }
-#else      
+#else
     if (listen(fd, SOMAXCONN) < 0) {
       freeaddrinfo(addrinfo);
       close(fd);
@@ -3120,7 +3123,7 @@ static intptr_t fio_tcp_socket(const char *address, const char *port,
       int connres = connect_ptr(fd, i->ai_addr, i->ai_addrlen);
       if (connres == SOCKET_ERROR) {
         int error = WSAGetLastError();
-        if (error == WSAEISCONN || error == WSAEWOULDBLOCK || error == WSAEINPROGRESS) 
+        if (error == WSAEISCONN || error == WSAEWOULDBLOCK || error == WSAEINPROGRESS)
           goto socket_okay;
       } else if (connres == 0) { goto socket_okay; }
 #else
@@ -3131,7 +3134,7 @@ static intptr_t fio_tcp_socket(const char *address, const char *port,
     freeaddrinfo(addrinfo);
 #ifdef __MINGW32__
     closesocket_ptr(fd);
-#else      
+#else
     close(fd); // socket
 #endif
     return -1;
@@ -3189,19 +3192,19 @@ static intptr_t fio_unix_socket(const char *address, uint8_t server) {
   if (fd == -1) {
     return -1;
   }
-  if (fio_set_non_block(fd) == -1) {   
+  if (fio_set_non_block(fd) == -1) {
       close(fd);
     return -1;
   }
   if (server) {
     unlink(addr.sun_path);
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
-      // perror("couldn't bind unix socket");   
+      // perror("couldn't bind unix socket");
       close(fd);
       return -1;
     }
     if (listen(fd, SOMAXCONN) < 0) {
-      // perror("couldn't start listening to unix socket");     
+      // perror("couldn't start listening to unix socket");
       close(fd);
       return -1;
     }
@@ -3209,7 +3212,7 @@ static intptr_t fio_unix_socket(const char *address, uint8_t server) {
     fchmod(fd, 0777);
   } else {
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1 &&
-        errno != EINPROGRESS) {    
+        errno != EINPROGRESS) {
       close(fd);
       return -1;
     }
@@ -4679,7 +4682,7 @@ void fio_start FIO_IGNORE_MACRO(struct fio_start_args args) {
   fio_data->threads = (uint16_t)args.threads;
   fio_data->active = 1;
   fio_data->is_worker = 0;
-  
+
   fio_state_callback_force(FIO_CALL_PRE_START);
 #if HAVE_OPENSSL
   FIO_LOG_INFO(
@@ -10622,7 +10625,7 @@ FIO_FUNC void fio_set_test(void) {
   FIO_ASSERT(!fio_set_test_last(&s), "empty set shouldn't have a last object");
   FIO_ASSERT(!fio_hash_test_last(&h).key && !fio_hash_test_last(&h).obj,
              "empty hash shouldn't have a last object");
-  
+
   for (uintptr_t i = 1; i < FIO_SET_TEST_COUNT; ++i) {
     fio_set_test_insert(&s, i, i);
     fio_hash_test_insert(&h, i, i, i + 1, NULL);
