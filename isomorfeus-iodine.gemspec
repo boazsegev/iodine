@@ -4,23 +4,15 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 require 'iodine/version'
 
 Gem::Specification.new do |spec|
-  spec.name          = 'iodine'
+  spec.name          = 'isomorfeus-iodine'
   spec.version       = Iodine::VERSION
-  spec.authors       = ['Boaz Segev']
-  spec.email         = ['bo@plezi.io']
+  spec.authors       = ['Jan Biedermann']
+  spec.email         = ['jan@kursator.de']
 
-  spec.summary       = 'iodine - a fast HTTP / Websocket Server with Pub/Sub support, optimized for Ruby MRI on Linux / BSD / Windows'
-  spec.description   = 'A fast HTTP / Websocket Server with built-in Pub/Sub support (with or without Redis), static file support and many other features, optimized for Ruby MRI on Linux / BSD / macOS / Windows'
-  spec.homepage      = 'https://github.com/boazsegev/iodine'
+  spec.summary       = 'iodine build for Isomorfeus'
+  spec.description   = 'iodine build for Isomorfeus'
+  spec.homepage      = 'https://github.com/janbiedermann/iodine'
   spec.license       = 'MIT'
-
-  # Prevent pushing this gem to RubyGems.org by setting 'allowed_push_host', or
-  # delete this section to allow pushing this gem to any host.
-  if spec.respond_to?(:metadata)
-    spec.metadata['allowed_push_host'] = 'https://rubygems.org'
-  else
-    raise 'RubyGems 2.0 or newer is required to protect against public gem pushes.'
-  end
 
   spec.files         = `git ls-files -z`.split("\x0").reject { |f| f.match(%r{^(test|spec|features)/}) }
   spec.bindir        = 'exe'
@@ -36,7 +28,7 @@ Gem::Specification.new do |spec|
   spec.requirements << 'Ruby >= 2.3.8 (Ruby EOL).'
   spec.requirements << 'Ruby >= 2.5.0 recommended.'
   spec.requirements << 'TLS requires OpenSSL >= 1.1.0.'
-  spec.requirements << 'Or Windows with Ruby >= 3.0.0 nuild with MingW and MingW as compiler.'
+  spec.requirements << 'Or Windows with Ruby >= 3.0.0 build with MingW and MingW as compiler.'
 
   # spec.add_development_dependency 'bundler', '>= 1.10', '< 2.0'
   spec.add_development_dependency 'rake', '~> 13.0', '< 14.0'
@@ -46,5 +38,5 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency 'rake-compiler', '>= 1', '< 2.0'
 
   spec.post_install_message = "Thank you for installing Iodine #{Iodine::VERSION}.\n" +
-                              "Remember: if iodine supports your business, it's only fair to give value back (code contributions / donations)."
+                              "Remember: if iodine supports your business, it's only fair to give value back (code contributions / donations) to Bo."
 end
