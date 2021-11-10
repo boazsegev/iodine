@@ -878,7 +878,7 @@ static void init_fio_thread_data_ptr(void) {
   fio_thread_data->handle = INVALID_HANDLE_VALUE;
 #else
   fio_thread_data->fd_wait = -1;
-  fio_thread_data->fd_signal = -1};
+  fio_thread_data->fd_signal = -1;
 #endif
   pthread_setspecific(fio_thread_data_key, fio_thread_data);
 }
