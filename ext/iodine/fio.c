@@ -7928,7 +7928,7 @@ static inline arena_s *arena_lock(arena_s *preffered) {
 
 static pthread_key_t arena_last_used_key;
 static pthread_once_t arena_last_used_once;
-static_void init_arena_last_used_key(void) {
+static void init_arena_last_used_key(void) {
   pthread_key_create(&arena_last_used_key, NULL);
 }
 
