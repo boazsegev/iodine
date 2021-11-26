@@ -8,7 +8,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.45 (2021-11-26)
 
-**Security**: Fixes a number of issues with the HTTP parser that could have leveraged in potential exploit attempts such as request smuggling. Credit to @dcepelik (David Čepelík).
+**Security**: Fixes a number of issues with the HTTP parser that could have been leveraged in potential exploit attempts such as request smuggling. Credit to @dcepelik (David Čepelík).
 
 **Compatibility**: This release adds experimental Windows support (I don't have Windows, nor Intel, I cannot test this). Credit for a lot of work by @janbiedermann (Jan Biedermann).
 
