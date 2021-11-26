@@ -519,6 +519,7 @@ static VALUE iodine_cli_parse(VALUE self) {
     rb_hash_aset(defaults, max_headers_sym,
                  INT2NUM((fio_cli_get_i("-maxhd") /* * 1024 */)));
   }
+#ifndef __MINGW32__
   if (fio_cli_get_bool("-tls") || fio_cli_get("-key") || fio_cli_get("-cert")) {
     VALUE rbtls = IodineCaller.call(IodineTLSClass, rb_intern2("new", 3));
     if (rbtls == Qnil) {
@@ -543,6 +544,7 @@ static VALUE iodine_cli_parse(VALUE self) {
     }
     rb_hash_aset(defaults, tls_sym, rbtls);
   }
+#endif
   if (fio_cli_unnamed_count()) {
     rb_hash_aset(defaults, ID2SYM(rb_intern("filename_")),
                  rb_str_new_cstr(fio_cli_unnamed(0)));
@@ -634,8 +636,10 @@ FIO_FUNC void iodine_connect_args_cleanup(iodine_connection_args_s *s) {
     fio_free(s->port.data);
   if (s->address.capa)
     fio_free(s->address.data);
+#ifndef __MINGW32__
   if (s->tls)
     fio_tls_destroy(s->tls);
+#endif
 }
 
 /*
@@ -686,7 +690,9 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
   VALUE r_public = rb_hash_aref(s, public_sym);
   VALUE service = rb_hash_aref(s, service_sym);
   VALUE timeout = rb_hash_aref(s, timeout_sym);
+#ifndef __MINGW32__
   VALUE tls = rb_hash_aref(s, tls_sym);
+#endif
   VALUE r_url = rb_hash_aref(s, url_sym);
   fio_str_info_s service_str = {.data = NULL};
 
@@ -726,8 +732,10 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
   //   service = rb_hash_aref(iodine_default_args, service_sym);
   if (timeout == Qnil)
     timeout = rb_hash_aref(iodine_default_args, timeout_sym);
+#ifndef __MINGW32__
   if (tls == Qnil)
     tls = rb_hash_aref(iodine_default_args, tls_sym);
+#endif
 
   /* TODO: deprecation */
   if (handler == Qnil) {
@@ -824,11 +832,13 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
     else
       r.timeout = FIX2ULONG(timeout);
   }
+#ifndef __MINGW32__
   if (tls != Qnil) {
     r.tls = iodine_tls2c(tls);
     if (r.tls)
       fio_tls_dup(r.tls);
   }
+#endif
   /* URL parsing */
   if (r_url != Qnil && RB_TYPE_P(r_url, T_STRING)) {
     r.url = IODINE_RSTRINFO(r_url);
@@ -888,6 +898,56 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
   /* test/set service type */
   r.service = IODINE_SERVICE_RAW;
   if (service_str.data) {
+#ifdef __MINGW32__
+    switch (service_str.data[0]) {
+    case 't': /* overflow */
+              /* tcp or tls */
+      if (service_str.data[1] == 'l') {
+        char *local = NULL;
+        char buf[1024];
+        buf[1023] = 0;
+        if (is_srv) {
+          local = buf;
+          if (fio_local_addr(buf, 1023) >= 1022)
+            local = NULL;
+        }
+      }
+      /* overflow */
+    case 'u': /* overflow */
+    /* unix */
+    case 'r':
+      /* raw */
+      r.service = IODINE_SERVICE_RAW;
+      break;
+    case 'h':
+      /* http(s) */
+      r.service = IODINE_SERVICE_HTTP;
+      if (service_str.len == 5) {
+        char *local = NULL;
+        char buf[1024];
+        buf[1023] = 0;
+        if (is_srv) {
+          local = buf;
+          if (fio_local_addr(buf, 1023) >= 1022)
+            local = NULL;
+        }
+      }
+    case 'w':
+      /* ws(s) */
+      r.service = IODINE_SERVICE_WS;
+      if (service_str.len == 3) {
+        char *local = NULL;
+        char buf[1024];
+        buf[1023] = 0;
+        if (is_srv) {
+          local = buf;
+          if (fio_local_addr(buf, 1023) >= 1022)
+            local = NULL;
+        }
+      }
+      break;
+    }
+#else
     switch (service_str.data[0]) {
     case 't': /* overflow */
               /* tcp or tls */
@@ -939,6 +999,7 @@ FIO_FUNC iodine_connection_args_s iodine_connect_args(VALUE s, uint8_t is_srv) {
       }
       break;
     }
+#endif
   }
   return r;
 }
@@ -1349,8 +1410,10 @@ void Init_iodine(void) {
   // initialize the HTTP module
   iodine_init_http();
 
+#ifndef __MINGW32__
   // initialize SSL/TLS support module
   iodine_init_tls();
+#endif
 
   // initialize JSON helpers
   iodine_init_json();

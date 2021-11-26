@@ -36,6 +36,8 @@ License: MIT
 
 #include <errno.h>
 
+#include <pthread.h>
+
 /* *****************************************************************************
 Hash types
 ***************************************************************************** */
@@ -69,18 +71,34 @@ static void fiobj_hash_dealloc(FIOBJ o, void (*task)(FIOBJ, void *),
   fio_free(FIOBJ2PTR(o));
 }
 
-static __thread FIOBJ each_at_key = FIOBJ_INVALID;
+static pthread_key_t each_at_key;
+static pthread_once_t each_at_key_once = PTHREAD_ONCE_INIT;
+static void init_each_at_key(void) {
+  pthread_key_create(&each_at_key, free);
+}
+static void init_each_at_key_ptr(void) {
+  FIOBJ *eak = malloc(sizeof(FIOBJ));
+  FIO_ASSERT_ALLOC(eak);
+  *eak = FIOBJ_INVALID;
+  pthread_setspecific(each_at_key, eak);
+}
 
 static size_t fiobj_hash_each1(FIOBJ o, size_t start_at,
                                int (*task)(FIOBJ obj, void *arg), void *arg) {
   assert(o && FIOBJ_TYPE_IS(o, FIOBJ_T_HASH));
-  FIOBJ old_each_at_key = each_at_key;
+  pthread_once(&each_at_key_once, init_each_at_key);
+  FIOBJ *each_at_key_ptr = (FIOBJ *)pthread_getspecific(each_at_key);
+  if (!each_at_key_ptr) {
+    init_each_at_key_ptr();
+    each_at_key_ptr = (FIOBJ *)pthread_getspecific(each_at_key);
+  }
+  FIOBJ old_each_at_key = *each_at_key_ptr;
   fio_hash___s *hash = &obj2hash(o)->hash;
   size_t count = 0;
   if (hash->count == hash->pos) {
     /* no holes in the hash, we can work as we please. */
     for (count = start_at; count < hash->count; ++count) {
-      each_at_key = hash->ordered[count].obj.key;
+      *each_at_key_ptr = hash->ordered[count].obj.key;
       if (task((FIOBJ)hash->ordered[count].obj.obj, arg) == -1) {
         ++count;
         goto end;
@@ -100,17 +118,25 @@ static size_t fiobj_hash_each1(FIOBJ o, size_t start_at,
       if (hash->ordered[pos].obj.key == FIOBJ_INVALID)
         continue;
       ++count;
-      each_at_key = hash->ordered[pos].obj.key;
+      *each_at_key_ptr = hash->ordered[pos].obj.key;
       if (task((FIOBJ)hash->ordered[pos].obj.obj, arg) == -1)
         break;
     }
   }
 end:
-  each_at_key = old_each_at_key;
+  *each_at_key_ptr = old_each_at_key;
   return count;
 }
 
-FIOBJ fiobj_hash_key_in_loop(void) { return each_at_key; }
+FIOBJ fiobj_hash_key_in_loop(void) {
+  pthread_once(&each_at_key_once, init_each_at_key);
+  FIOBJ *each_at_key_ptr = (FIOBJ *)pthread_getspecific(each_at_key);
+  if (!each_at_key_ptr) {
+    init_each_at_key_ptr();
+    each_at_key_ptr = (FIOBJ *)pthread_getspecific(each_at_key);
+  }
+  return *each_at_key_ptr;
+}
 
 static size_t fiobj_hash_is_eq(const FIOBJ self, const FIOBJ other) {
   if (fio_hash___count(&obj2hash(self)->hash) !=

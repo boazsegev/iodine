@@ -61,6 +61,9 @@ static VALUE TCPSOCKET_CLASS;
 static ID for_fd_id;
 static ID iodine_fd_var_id;
 static ID iodine_new_func_id;
+#ifdef __MINGW32__
+static ID iodine_osffd_id;
+#endif
 static rb_encoding *IodineUTF8Encoding;
 static rb_encoding *IodineBinaryEncoding;
 
@@ -69,7 +72,11 @@ static rb_encoding *IodineBinaryEncoding;
 
 inline static http_s *get_handle(VALUE obj) {
   VALUE i = rb_ivar_get(obj, iodine_fd_var_id);
+#ifdef __MINGW32__
+  return (http_s *)NUM2ULL(i);
+#else
   return (http_s *)FIX2ULONG(i);
+#endif
 }
 
 /* *****************************************************************************
@@ -78,7 +85,11 @@ IO API
 
 static inline FIOBJ get_data(VALUE self) {
   VALUE i = rb_ivar_get(self, io_id);
+#ifdef __MINGW32__
+  return (FIOBJ)NUM2ULL(i);
+#else
   return (FIOBJ)FIX2ULONG(i);
+#endif
 }
 
 static VALUE rio_rewind(VALUE self) {
@@ -196,7 +207,14 @@ static VALUE rio_get_io(int argc, VALUE *argv, VALUE self) {
   set_handle(self, NULL);
   // hijack the IO object
   intptr_t uuid = http_hijack(h, NULL);
+#ifdef __MINGW32__
+  int osffd = fio_osffd4fd(fio_uuid2fd(uuid));
+  if (osffd == -1)
+    return Qfalse;
+  VALUE fd = INT2FIX(osffd);
+#else
   VALUE fd = INT2FIX(fio_uuid2fd(uuid));
+#endif
   // VALUE new_io = how the fuck do we create a new IO from the fd?
   VALUE new_io = IodineCaller.call2(TCPSOCKET_CLASS, for_fd_id, 1,
                                     &fd); // TCPSocket.for_fd(fd) ... cool...
@@ -238,6 +256,9 @@ static void init_rack_io(void) {
   for_fd_id = rb_intern("for_fd");
   iodine_fd_var_id = rb_intern("fd");
   iodine_new_func_id = rb_intern("new");
+#ifdef __MINGW32__
+  iodine_osffd_id = rb_intern("osffd");
+#endif
   hijack_func_sym = ID2SYM(rb_intern("_hijack"));
 
   TCPSOCKET_CLASS = rb_const_get(rb_cObject, rb_intern("TCPSocket"));

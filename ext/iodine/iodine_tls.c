@@ -1,3 +1,10 @@
+#ifdef __MINGW32__
+// make pedantic compiler happy
+typedef struct {
+  int bogus;
+} bogus_s;
+
+#else
 #include <ruby.h>
 
 #include <fio.h>
@@ -251,3 +258,4 @@ void iodine_init_tls(void) {
 #endif
 }
 #undef IODINE_MAKE_SYM
+#endif

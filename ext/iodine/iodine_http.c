@@ -12,11 +12,15 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <ruby/io.h>
 // #include "iodine_websockets.h"
 
+#ifndef __MINGW32__
 #include <arpa/inet.h>
+#endif
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef __MINGW32__
 #include <sys/socket.h>
+#endif
 
 /* *****************************************************************************
 Available Globals
@@ -938,6 +942,15 @@ intptr_t iodine_http_listen(iodine_connection_args_s args){
     support_xsendfile = 1;
   }
   IodineStore.add(args.handler);
+  #ifdef __MINGW32__
+    intptr_t uuid = http_listen(
+      args.port.data, args.address.data, .on_request = on_rack_request,
+      .on_upgrade = on_rack_upgrade, .udata = (void *)args.handler,
+      .timeout = args.timeout, .ws_timeout = args.ping,
+      .ws_max_msg_size = args.max_msg, .max_header_size = args.max_headers,
+      .on_finish = free_iodine_http, .log = args.log,
+      .max_body_size = args.max_body, .public_folder = args.public.data);
+  #else
   intptr_t uuid = http_listen(
       args.port.data, args.address.data, .on_request = on_rack_request,
       .on_upgrade = on_rack_upgrade, .udata = (void *)args.handler,
@@ -945,6 +958,7 @@ intptr_t iodine_http_listen(iodine_connection_args_s args){
       .ws_max_msg_size = args.max_msg, .max_header_size = args.max_headers,
       .on_finish = free_iodine_http, .log = args.log,
       .max_body_size = args.max_body, .public_folder = args.public.data);
+  #endif
   if (uuid == -1)
     return uuid;
 
@@ -1054,9 +1068,11 @@ intptr_t iodine_ws_connect(iodine_connection_args_s args) {
   FIOBJ url_tmp = FIOBJ_INVALID;
   if (!args.url.data) {
     url_tmp = fiobj_str_buf(64);
+  #ifndef __MINGW32__
     if (args.tls)
       fiobj_str_write(url_tmp, "wss://", 6);
     else
+  #endif
       fiobj_str_write(url_tmp, "ws://", 5);
     if (!is_unix_socket) {
       fiobj_str_write(url_tmp, args.address.data, args.address.len);
@@ -1072,11 +1088,19 @@ intptr_t iodine_ws_connect(iodine_connection_args_s args) {
     args.url = fiobj_obj2cstr(url_tmp);
   }
 
+#ifdef __MINGW32__
+  intptr_t uuid = http_connect(
+      args.url.data, (is_unix_socket ? args.address.data : NULL),
+      .udata = request_data_create(&args),
+      .on_response = ws_client_http_connected,
+      .on_finish = ws_client_http_connection_finished);
+#else
   intptr_t uuid = http_connect(
       args.url.data, (is_unix_socket ? args.address.data : NULL),
       .udata = request_data_create(&args),
       .on_response = ws_client_http_connected,
       .on_finish = ws_client_http_connection_finished, .tls = args.tls);
+#endif
   fiobj_free(url_tmp);
   return uuid;
 }

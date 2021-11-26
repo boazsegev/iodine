@@ -493,6 +493,7 @@ static void redis_pub_ping(intptr_t uuid, fio_protocol_s *pr) {
     return;
   }
   redis_commands_s *cmd = fio_malloc(sizeof(*cmd) + 15);
+  FIO_ASSERT_ALLOC(cmd);
   *cmd = (redis_commands_s){.cmd_len = 14};
   memcpy(cmd->cmd, "*1\r\n$4\r\nPING\r\n\0", 15);
   redis_attach_cmd(r, cmd);
@@ -534,6 +535,7 @@ static void redis_on_connect(intptr_t uuid, void *i_) {
     r = pub2redis(i);
     if (r->auth_len) {
       redis_commands_s *cmd = fio_malloc(sizeof(*cmd) + r->auth_len);
+      FIO_ASSERT_ALLOC(cmd);
       *cmd =
           (redis_commands_s){.cmd_len = r->auth_len, .callback = redis_on_auth};
       memcpy(cmd->cmd, r->auth, r->auth_len);
@@ -638,6 +640,7 @@ static void redis_on_publish_root(const fio_pubsub_engine_s *eng,
                                   uint8_t is_json) {
   redis_engine_s *r = (redis_engine_s *)eng;
   redis_commands_s *cmd = fio_malloc(sizeof(*cmd) + channel.len + msg.len + 96);
+  FIO_ASSERT_ALLOC(cmd);
   *cmd = (redis_commands_s){.cmd_len = 0};
   memcpy(cmd->cmd, "*3\r\n$7\r\nPUBLISH\r\n$", 18);
   char *buf = (char *)cmd->cmd + 18;
@@ -684,7 +687,7 @@ static void redis_on_publish_child(const fio_pubsub_engine_s *eng,
   fio_str_s tmp = FIO_STR_INIT;
   /* by using fio_str_s, short names are allocated on the stack */
   fio_str_info_s tmp_info = fio_str_resize(&tmp, channel.len + 8);
-  fio_u2str64(tmp_info.data, (uint64_t)eng);
+  fio_u2str64(tmp_info.data, (uintptr_t)eng);
   memcpy(tmp_info.data + 8, channel.data, channel.len);
   /* forward publication request to Root */
   fio_publish(.filter = -1, .channel = tmp_info, .message = msg,
@@ -701,7 +704,7 @@ Root Publication Handler
 static void redis_on_internal_publish(fio_msg_s *msg) {
   if (msg->channel.len < 8)
     return; /* internal error, unexpected data */
-  void *en = (void *)fio_str2u64(msg->channel.data);
+  void *en = (void *)(uintptr_t)fio_str2u64(msg->channel.data);
   if (en != msg->udata1)
     return; /* should be delivered by a different engine */
   /* step after the engine data */
@@ -721,8 +724,8 @@ Sending commands using the Root connection
 static void redis_forward_reply(fio_pubsub_engine_s *e, FIOBJ reply,
                                 void *udata) {
   uint8_t *data = udata;
-  fio_pubsub_engine_s *engine = (fio_pubsub_engine_s *)fio_str2u64(data + 0);
-  void *callback = (void *)fio_str2u64(data + 8);
+  fio_pubsub_engine_s *engine = (fio_pubsub_engine_s *)(uintptr_t)fio_str2u64(data + 0);
+  void *callback = (void *)(uintptr_t)fio_str2u64(data + 8);
   if (engine != e || !callback) {
     FIO_LOG_DEBUG("Redis reply not forwarded (callback: %p)", callback);
     return;
@@ -738,7 +741,7 @@ static void redis_forward_reply(fio_pubsub_engine_s *e, FIOBJ reply,
 static void redis_on_internal_cmd(fio_msg_s *msg) {
   // void*(void *)fio_str2u64(msg->msg.data);
   fio_pubsub_engine_s *engine =
-      (fio_pubsub_engine_s *)fio_str2u64(msg->channel.data + 0);
+      (fio_pubsub_engine_s *)(uintptr_t)fio_str2u64(msg->channel.data + 0);
   if (engine != msg->udata1) {
     return;
   }
@@ -756,7 +759,7 @@ static void redis_on_internal_cmd(fio_msg_s *msg) {
 /* Listens on filter `-10 -getpid()` for incoming reply data */
 static void redis_on_internal_reply(fio_msg_s *msg) {
   fio_pubsub_engine_s *engine =
-      (fio_pubsub_engine_s *)fio_str2u64(msg->channel.data + 0);
+      (fio_pubsub_engine_s *)(uintptr_t)fio_str2u64(msg->channel.data + 0);
   if (engine != msg->udata1) {
     FIO_LOG_DEBUG("Redis reply not forwarded (engine mismatch: %p != %p)",
                   (void *)engine, msg->udata1);
@@ -765,8 +768,8 @@ static void redis_on_internal_reply(fio_msg_s *msg) {
   FIOBJ reply;
   fiobj_json2obj(&reply, msg->msg.data, msg->msg.len);
   void (*callback)(fio_pubsub_engine_s *, FIOBJ, void *) = (void (*)(
-      fio_pubsub_engine_s *, FIOBJ, void *))fio_str2u64(msg->channel.data + 8);
-  void *udata = (void *)fio_str2u64(msg->channel.data + 16);
+      fio_pubsub_engine_s *, FIOBJ, void *))(uintptr_t)fio_str2u64(msg->channel.data + 8);
+  void *udata = (void *)(uintptr_t)fio_str2u64(msg->channel.data + 16);
   callback(engine, reply, udata);
   fiobj_free(reply);
 }
@@ -788,9 +791,9 @@ intptr_t redis_engine_send(fio_pubsub_engine_s *engine, FIOBJ command,
   fio_str_s tmp = FIO_STR_INIT;
   fio_str_info_s ti = fio_str_resize(&tmp, 28);
   /* combine metadata */
-  fio_u2str64(ti.data + 0, (uint64_t)engine);
-  fio_u2str64(ti.data + 8, (uint64_t)callback);
-  fio_u2str64(ti.data + 16, (uint64_t)udata);
+  fio_u2str64(ti.data + 0, (uintptr_t)engine);
+  fio_u2str64(ti.data + 8, (uintptr_t)callback);
+  fio_u2str64(ti.data + 16, (uintptr_t)udata);
   fio_u2str32(ti.data + 24, (uint32_t)getpid());
   FIOBJ cmd = fiobj2resp_tmp(command);
   fio_publish(.filter = -2, .channel = ti, .message = fiobj_obj2cstr(cmd),

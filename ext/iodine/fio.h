@@ -215,8 +215,15 @@ Version and helper macros
 
 #include <fcntl.h>
 #include <sys/stat.h>
+#ifndef __MINGW32__
 #include <sys/time.h>
+#endif
 #include <unistd.h>
+#ifdef __MINGW32__
+#include <winsock2.h>
+#include <winsock.h>
+#include <ws2tcpip.h>
+#endif
 
 #if !defined(__GNUC__) && !defined(__clang__) && !defined(FIO_GNUC_BYPASS)
 #define __attribute__(...)
@@ -241,6 +248,25 @@ Version and helper macros
 #if defined(__FreeBSD__)
 #include <netinet/in.h>
 #include <sys/socket.h>
+#endif
+
+#ifdef __MINGW32__
+#define	__S_IFMT	              0170000
+#define __S_IFLNK               0120000
+#define	__S_ISTYPE(mode, mask)	(((mode) & __S_IFMT) == (mask))
+#define S_ISLNK(mode)	          __S_ISTYPE((mode), __S_IFLNK)
+
+#define SIGKILL 9
+#define SIGTERM 15
+#define SIGCONT 17
+
+#define pipe(fds) _pipe(fds, 65536, _O_BINARY)
+
+int fork(void);
+int kill(int, int);
+ssize_t pread(int, void*, size_t, off_t);
+ssize_t pwrite(int, const void *, size_t, off_t);
+int fio_osffd4fd(unsigned int);
 #endif
 
 /* *****************************************************************************
@@ -2068,7 +2094,7 @@ FIO_FUNC inline int fio_trylock(fio_lock_i *lock);
 /**
  * Releases a spinlock. Releasing an unacquired lock will break it.
  *
- * Returns a non-zero value on success, or 0 if the lock was in an unloacked
+ * Returns a non-zero value on success, or 0 if the lock was in an unlocked
  * state.
  */
 FIO_FUNC inline int fio_unlock(fio_lock_i *lock);
@@ -2539,8 +2565,9 @@ FIO_FUNC inline uint64_t fio_risky_hash(const void *data_, size_t len,
   uint64_t result = fio_lrot64(v0, 17) + fio_lrot64(v1, 13) +
                     fio_lrot64(v2, 47) + fio_lrot64(v3, 57);
 
-  len ^= (len << 33);
-  result += len;
+  uint64_t len64 = len;
+  len64 ^= (len64 << 33);
+  result += len64;
 
   result += v0 * RISKY_PRIME_1;
   result ^= fio_lrot64(result, 13);
@@ -2931,9 +2958,9 @@ C++ extern end
 /**
  * The logarithmic value for a memory block, 15 == 32Kb, 16 == 64Kb, etc'
  *
- * By default, a block of memory is 32Kb silce from an 8Mb allocation.
+ * By default, a block of memory is a 32Kb slice from an 8Mb allocation.
  *
- * A value of 16 will make this a 64Kb silce from a 16Mb allocation.
+ * A value of 16 will make this a 64Kb slice from a 16Mb allocation.
  */
 #define FIO_MEMORY_BLOCK_SIZE_LOG (15)
 #endif
@@ -3000,7 +3027,7 @@ FIO_FUNC inline int fio_trylock(fio_lock_i *lock) {
 /**
  * Releases a spinlock. Releasing an unacquired lock will break it.
  *
- * Returns a non-zero value on success, or 0 if the lock was in an unloacked
+ * Returns a non-zero value on success, or 0 if the lock was in an unlocked
  * state.
  */
 FIO_FUNC inline int fio_unlock(fio_lock_i *lock) {
@@ -3864,6 +3891,7 @@ FIO_FUNC char *fio_str_detach(fio_str_s *s) {
     }
     /* make a copy */
     void *tmp = FIO_MALLOC(i.len + 1);
+    FIO_ASSERT_ALLOC(tmp);
     memcpy(tmp, i.data, i.len + 1);
     i.data = tmp;
   } else {
@@ -3874,6 +3902,7 @@ FIO_FUNC char *fio_str_detach(fio_str_s *s) {
     } else if (s->dealloc != FIO_FREE) {
       /* make a copy */
       void *tmp = FIO_MALLOC(i.len + 1);
+      FIO_ASSERT_ALLOC(tmp);
       memcpy(tmp, i.data, i.len + 1);
       i.data = tmp;
       if (s->dealloc)
@@ -4338,7 +4367,7 @@ inline FIO_FUNC fio_str_info_s fio_str_write_i(fio_str_s *s, int64_t num) {
   fio_str_info_s i;
   if (!num)
     goto zero;
-  char buf[22];
+  char buf[22] = {0};
   uint64_t l = 0;
   uint8_t neg;
   if ((neg = (num < 0))) {
@@ -4472,7 +4501,7 @@ FIO_FUNC fio_str_info_s fio_str_readfile(fio_str_s *s, const char *filename,
                                          intptr_t start_at, intptr_t limit) {
   fio_str_info_s state = {.data = NULL};
 #if defined(__unix__) || defined(__linux__) || defined(__APPLE__) ||           \
-    defined(__CYGWIN__)
+    defined(__CYGWIN__) || defined(__MINGW32__)
   /* POSIX implementations. */
   if (filename == NULL || !s)
     return state;
@@ -4502,7 +4531,7 @@ FIO_FUNC fio_str_info_s fio_str_readfile(fio_str_s *s, const char *filename,
     }
   }
 
-  if (stat(filename, &f_data)) {
+  if (stat(filename, &f_data) == -1) {
     goto finish;
   }
 
@@ -4510,9 +4539,12 @@ FIO_FUNC fio_str_info_s fio_str_readfile(fio_str_s *s, const char *filename,
     state = fio_str_info(s);
     goto finish;
   }
-
+#ifdef __MINGW32__
+  file = _open(filename, O_RDONLY);
+#else
   file = open(filename, O_RDONLY);
-  if (-1 == file)
+#endif
+  if (file == -1)
     goto finish;
 
   if (start_at < 0) {
@@ -4531,7 +4563,11 @@ FIO_FUNC fio_str_info_s fio_str_readfile(fio_str_s *s, const char *filename,
     state.data = NULL;
     state.len = state.capa = 0;
   }
+#ifdef __MINGW32__
+  _close(file);
+#else
   close(file);
+#endif
 finish:
   FIO_FREE(path);
   return state;
@@ -6012,7 +6048,7 @@ FIO_NAME(_insert_or_overwrite_)(FIO_NAME(s) * set, FIO_SET_HASH_TYPE hash_value,
   pos->hash = hash_value;
   pos->pos->hash = hash_value;
   FIO_SET_COPY(pos->pos->obj, obj);
-
+  
   return pos->pos->obj;
 }
 
@@ -6282,7 +6318,7 @@ restart:
     FIO_LOG_FATAL(
         "facil.io Set / Hash Map has too many collisions (%zu/%zu)."
         "\n\t\tthis is a fatal implementation error,"
-        "please report this issue at facio.io's open source project"
+        "please report this issue at facil.io's open source project"
         "\n\t\tNote: hash maps and sets should never reach this point."
         "\n\t\tThey should be guarded against collision attacks.",
         set->pos, set->capa);
