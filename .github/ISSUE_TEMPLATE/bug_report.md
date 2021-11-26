@@ -21,7 +21,7 @@ A clear and concise description of what the bug is.
 ### Rack App to Reproduce
 
 ```ruby
-APP = proc {|env| [200, {}, "Hello World"] }
+APP = proc {|env| [200, {}, ["Hello World"]] }
 run APP
 ```
 
