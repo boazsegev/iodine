@@ -6,6 +6,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.45 (2021-11-26)
+
+**Security**: Fixes a number of issues with the HTTP parser that could have leveraged in potential exploit attempts such as request smuggling. Credit to @dcepelik (David Čepelík).
+
+**Compatibility**: This release adds experimental Windows support (I don't have Windows, nor Intel, I cannot test this). Credit for a lot of work by @janbiedermann (Jan Biedermann).
+
 #### Change log v.0.7.44 (2021-02-28)
 
 **Fix**: Fixes issue #103 where an empty String response would result in the word "null" being returned (no String object was created, which routed the NULL object to facil.io's JSON interpreter). Credit to @waghanza (Marwan Rabbâa) for exposing the issue.
