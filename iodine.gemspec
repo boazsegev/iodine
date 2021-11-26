@@ -9,8 +9,8 @@ Gem::Specification.new do |spec|
   spec.authors       = ['Boaz Segev']
   spec.email         = ['bo@plezi.io']
 
-  spec.summary       = 'iodine - a fast HTTP / Websocket Server with Pub/Sub support, optimized for Ruby MRI on Linux / BSD'
-  spec.description   = 'A fast HTTP / Websocket Server with built-in Pub/Sub support (with or without Redis), static file support and many other features, optimized for Ruby MRI on Linux / BSD / macOS'
+  spec.summary       = 'iodine - a fast HTTP / Websocket Server with Pub/Sub support, optimized for Ruby MRI on Linux / BSD / Windows'
+  spec.description   = 'A fast HTTP / Websocket Server with built-in Pub/Sub support (with or without Redis), static file support and many other features, optimized for Ruby MRI on Linux / BSD / macOS / Windows'
   spec.homepage      = 'https://github.com/boazsegev/iodine'
   spec.license       = 'MIT'
 
@@ -35,7 +35,8 @@ Gem::Specification.new do |spec|
   spec.requirements << 'An updated C compiler.'
   spec.requirements << 'Ruby >= 2.3.8 (Ruby EOL).'
   spec.requirements << 'Ruby >= 2.5.0 recommended.'
-  spec.requirements << 'TLS requires OpenSSL >= 1.1.0'
+  spec.requirements << 'TLS requires OpenSSL >= 1.1.0.'
+  spec.requirements << 'Or Windows with Ruby >= 3.0.0 build with MingW and MingW as compiler.'
 
   # spec.add_development_dependency 'bundler', '>= 1.10', '< 2.0'
   spec.add_development_dependency 'rake', '~> 12.0', '< 14.0'

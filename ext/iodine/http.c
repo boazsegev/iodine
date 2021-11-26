@@ -18,6 +18,8 @@ Feel free to copy, use and enjoy according to the license provided.
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <pthread.h>
+
 #ifndef HAVE_TM_TM_ZONE
 #if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) ||     \
     defined(__DragonFly__) || defined(__bsdi__) || defined(__ultrix) ||        \
@@ -33,6 +35,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #endif
 #endif
 
+#ifndef __MINGW32__
 /* *****************************************************************************
 SSL/TLS patch
 ***************************************************************************** */
@@ -56,6 +59,7 @@ fio_tls_alpn_add(void *tls, const char *protocol_name,
   (void)udata_tls;
 }
 #pragma weak fio_tls_alpn_add
+#endif
 
 /* *****************************************************************************
 Small Helpers
@@ -95,6 +99,7 @@ static inline void add_date(http_s *r) {
   if (fio_last_tick().tv_sec > last_date_added) {
     fio_lock(&date_lock);
     if (fio_last_tick().tv_sec > last_date_added) { /* retest inside lock */
+      /* 32 chars are ok for a while, but http_time2str below has a buffer sized 48 chars and does a memcpy ... */
       FIOBJ tmp = fiobj_str_buf(32);
       FIOBJ old = current_date;
       fiobj_str_resize(
@@ -764,6 +769,7 @@ void http_pause(http_s *h, void (*task)(http_pause_handle_s *http)) {
   http_fio_protocol_s *p = (http_fio_protocol_s *)h->private_data.flag;
   http_vtable_s *vtbl = (http_vtable_s *)h->private_data.vtbl;
   http_pause_handle_s *http = fio_malloc(sizeof(*http));
+  FIO_ASSERT_ALLOC(http);
   *http = (http_pause_handle_s){
       .uuid = p->uuid,
       .h = h,
@@ -845,6 +851,7 @@ static http_settings_s *http_settings_new(http_settings_s arg_settings) {
       char *home = getenv("HOME");
       size_t home_len = strlen(home);
       char *tmp = malloc(settings->public_folder_length + home_len + 1);
+      FIO_ASSERT_ALLOC(tmp);
       memcpy(tmp, home, home_len);
       if (home[home_len - 1] == '/')
         --home_len;
@@ -854,6 +861,7 @@ static http_settings_s *http_settings_new(http_settings_s arg_settings) {
       settings->public_folder_length = strlen(settings->public_folder);
     } else {
       settings->public_folder = malloc(settings->public_folder_length + 1);
+      FIO_ASSERT_ALLOC(settings->public_folder);
       memcpy((void *)settings->public_folder, arg_settings.public_folder,
              settings->public_folder_length);
       ((uint8_t *)settings->public_folder)[settings->public_folder_length] = 0;
@@ -880,7 +888,7 @@ static void http_on_server_protocol_http1(intptr_t uuid, void *set,
       if (!fio_http_at_capa)
         FIO_LOG_WARNING("HTTP server at capacity");
       fio_http_at_capa = 1;
-      http_send_error2(uuid, 503, set);
+      http_send_error2(503, uuid, set);
       fio_close(uuid);
     }
     return;
@@ -927,10 +935,12 @@ intptr_t http_listen(const char *port, const char *binding,
 
   http_settings_s *settings = http_settings_new(arg_settings);
   settings->is_client = 0;
+#ifndef __MINGW32__
   if (settings->tls) {
     fio_tls_alpn_add(settings->tls, "http/1.1", http_on_server_protocol_http1,
                      NULL, NULL);
   }
+#endif
 
   return fio_listen(.port = port, .address = binding, .tls = arg_settings.tls,
                     .on_finish = http_on_finish, .on_open = http_on_open,
@@ -1187,6 +1197,7 @@ static void on_websocket_http_connection_finished(http_settings_s *settings) {
 #undef websocket_connect
 int websocket_connect(const char *address, websocket_settings_s settings) {
   websocket_settings_s *s = fio_malloc(sizeof(*s));
+  FIO_ASSERT_ALLOC(s);
   *s = settings;
   return http_connect(address, NULL, .on_request = on_websocket_http_connected,
                       .on_response = on_websocket_http_connected,
@@ -2331,6 +2342,30 @@ size_t http_date2rfc2109(char *target, struct tm *tmbuf) {
   return pos - target;
 }
 
+static pthread_key_t cached_tick_key;
+static pthread_key_t cached_httpdate_key;
+static pthread_key_t cached_len_key;
+static pthread_once_t cached_once = PTHREAD_ONCE_INIT;
+static void init_cached_key(void) {
+  pthread_key_create(&cached_tick_key, free);
+  pthread_key_create(&cached_httpdate_key, free);
+  pthread_key_create(&cached_len_key, free);
+}
+static void init_cached_key_ptr(void) {
+  time_t *cached_tick = malloc(sizeof(time_t));
+  FIO_ASSERT_ALLOC(cached_tick);
+  memset(cached_tick, 0, sizeof(time_t));
+  char *cached_httpdate = malloc(sizeof(char)*48);
+  FIO_ASSERT_ALLOC(cached_tick);
+  memset(cached_httpdate, 0, 48);
+  size_t *cached_len = malloc(sizeof(size_t));
+  *cached_len = 0;
+  FIO_ASSERT_ALLOC(cached_len);
+  pthread_setspecific(cached_tick_key, cached_tick);
+  pthread_setspecific(cached_httpdate_key, cached_httpdate);
+  pthread_setspecific(cached_len_key, cached_len);
+}
+
 /**
  * Prints Unix time to a HTTP time formatted string.
  *
@@ -2339,9 +2374,14 @@ size_t http_date2rfc2109(char *target, struct tm *tmbuf) {
  */
 size_t http_time2str(char *target, const time_t t) {
   /* pre-print time every 1 or 2 seconds or so. */
-  static __thread time_t cached_tick;
-  static __thread char cached_httpdate[48];
-  static __thread size_t cached_len;
+  pthread_once(&cached_once, init_cached_key);
+  char *cached_httpdate = pthread_getspecific(cached_httpdate_key);
+  if (!cached_httpdate) {
+    init_cached_key_ptr();
+    cached_httpdate = pthread_getspecific(cached_httpdate_key);
+  }
+  time_t *cached_tick = pthread_getspecific(cached_tick_key);
+  size_t *cached_len = pthread_getspecific(cached_len_key);
   time_t last_tick = fio_last_tick().tv_sec;
   if ((t | 7) < last_tick) {
     /* this is a custom time, not "now", pass through */
@@ -2349,14 +2389,14 @@ size_t http_time2str(char *target, const time_t t) {
     http_gmtime(t, &tm);
     return http_date2str(target, &tm);
   }
-  if (last_tick > cached_tick) {
+  if (last_tick > *cached_tick) {
     struct tm tm;
-    cached_tick = last_tick; /* refresh every second */
+    *cached_tick = last_tick; /* refresh every second */
     http_gmtime(last_tick, &tm);
-    cached_len = http_date2str(cached_httpdate, &tm);
+    *cached_len = http_date2str(cached_httpdate, &tm);
   }
-  memcpy(target, cached_httpdate, cached_len);
-  return cached_len;
+  memcpy(target, cached_httpdate, *cached_len);
+  return *cached_len;
 }
 
 /* Credit to Jonathan Leffler for the idea of a unified conditional */
@@ -2519,12 +2559,28 @@ FIOBJ http_mimetype_find(char *file_ext, size_t file_ext_len) {
       fio_mime_set_find(&fio_http_mime_types, hash, FIOBJ_INVALID));
 }
 
+static pthread_key_t buffer_key;
+static pthread_once_t buffer_once = PTHREAD_ONCE_INIT;
+static void init_buffer_key(void) {
+  pthread_key_create(&buffer_key, free);
+}
+static void init_buffer_ptr(void) {
+  char *buffer = malloc(sizeof(char) * (LONGEST_FILE_EXTENSION_LENGTH + 1));
+  FIO_ASSERT_ALLOC(buffer);
+  memset(buffer, 0, sizeof(char) * (LONGEST_FILE_EXTENSION_LENGTH + 1));
+  pthread_setspecific(buffer_key, buffer);
+}
 /**
  * Finds the mime-type associated with the URL.
  *  Remember to call `fiobj_free`.
  */
 FIOBJ http_mimetype_find2(FIOBJ url) {
-  static __thread char buffer[LONGEST_FILE_EXTENSION_LENGTH + 1];
+  pthread_once(&buffer_once, init_buffer_key);
+  char *buffer = pthread_getspecific(buffer_key);
+  if (!buffer) {
+    init_buffer_ptr();
+    buffer = pthread_getspecific(buffer_key);
+  }
   fio_str_info_s ext = {.data = NULL};
   FIOBJ mimetype;
   if (!url)
