@@ -1,4 +1,3 @@
-#ifndef H_HTTP1_PARSER_H
 /*
 Copyright: Boaz Segev, 2017-2020
 License: MIT
@@ -9,8 +8,10 @@ Feel free to copy, use and enjoy according to the license provided.
 /**
 This is a callback based parser. It parses the skeleton of the HTTP/1.x protocol
 and leaves most of the work (validation, error checks, etc') to the callbacks.
+
+This is an attempt to replace the existing HTTP/1.x parser with something easier
+to maintain and that could be used for an HTTP/1.x client as well.
 */
-#define H_HTTP1_PARSER_H
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -38,17 +39,13 @@ Parser Settings
 #endif
 
 #ifndef FIO_MEMCHAR
-/** Prefer a custom memchr implementation. Usualy memchr is better. */
+/** Prefer a custom memchr implementation. Usually memchr is better. */
 #define FIO_MEMCHAR 0
 #endif
 
-#ifndef ALLOW_UNALIGNED_MEMORY_ACCESS
-/** Peforms some optimizations assuming unaligned memory access is okay. */
-#define ALLOW_UNALIGNED_MEMORY_ACCESS 0
-#endif
-
-#ifndef HTTP1_PARSER_CONVERT_EOL2NUL
-#define HTTP1_PARSER_CONVERT_EOL2NUL 0
+#ifndef HTTP1_UNALIGNED_MEMORY_ACCESS_ENABLED
+/** Preforms some optimizations assuming unaligned memory access is okay. */
+#define HTTP1_UNALIGNED_MEMORY_ACCESS_ENABLED 0
 #endif
 
 /* *****************************************************************************
@@ -87,37 +84,40 @@ typedef struct http1_parser_s {
  */
 static size_t http1_parse(http1_parser_s *parser, void *buffer, size_t length);
 
+/** Returns true if the parsing stopped after a complete request / response. */
+inline static int http1_complete(http1_parser_s *parser);
+
 /* *****************************************************************************
 Required Callbacks (MUST be implemented by including file)
 ***************************************************************************** */
+// clang-format off
 
 /** called when a request was received. */
 static int http1_on_request(http1_parser_s *parser);
 /** called when a response was received. */
 static int http1_on_response(http1_parser_s *parser);
 /** called when a request method is parsed. */
-static int http1_on_method(http1_parser_s *parser, char *method,
-                           size_t method_len);
+static int
+http1_on_method(http1_parser_s *parser, char *method, size_t method_len);
 /** called when a response status is parsed. the status_str is the string
  * without the prefixed numerical status indicator.*/
-static int http1_on_status(http1_parser_s *parser, size_t status,
-                           char *status_str, size_t len);
+static int http1_on_status(http1_parser_s *parser, size_t status, char *status_str, size_t len);
 /** called when a request path (excluding query) is parsed. */
 static int http1_on_path(http1_parser_s *parser, char *path, size_t path_len);
 /** called when a request path (excluding query) is parsed. */
-static int http1_on_query(http1_parser_s *parser, char *query,
-                          size_t query_len);
+static int
+http1_on_query(http1_parser_s *parser, char *query, size_t query_len);
 /** called when a the HTTP/1.x version is parsed. */
 static int http1_on_version(http1_parser_s *parser, char *version, size_t len);
 /** called when a header is parsed. */
-static int http1_on_header(http1_parser_s *parser, char *name, size_t name_len,
-                           char *data, size_t data_len);
+static int http1_on_header(http1_parser_s *parser, char *name, size_t name_len, char *data, size_t data_len);
 /** called when a body chunk is parsed. */
-static int http1_on_body_chunk(http1_parser_s *parser, char *data,
-                               size_t data_len);
+static int
+http1_on_body_chunk(http1_parser_s *parser, char *data, size_t data_len);
 /** called when a protocol error occurred. */
 static int http1_on_error(http1_parser_s *parser);
 
+// clang-format on
 /* *****************************************************************************
 
 
@@ -164,15 +164,18 @@ static int http1_on_error(http1_parser_s *parser);
   (!strncasecmp((var_name), (const_name), (len)))
 #endif
 
-#define HTTP1_P_FLAG_STATUS_LINE 1
+#define HTTP1_P_FLAG_STATUS_LINE     1
 #define HTTP1_P_FLAG_HEADER_COMPLETE 2
-#define HTTP1_P_FLAG_COMPLETE 4
-#define HTTP1_P_FLAG_CLENGTH 8
-#define HTTP1_PARSER_BIT_16 16
-#define HTTP1_PARSER_BIT_32 32
-#define HTTP1_P_FLAG_CHUNKED 64
-#define HTTP1_P_FLAG_RESPONSE 128
+#define HTTP1_P_FLAG_COMPLETE        4
+#define HTTP1_P_FLAG_CLENGTH         8
+#define HTTP1_PARSER_BIT_16          16
+#define HTTP1_PARSER_BIT_32          32
+#define HTTP1_P_FLAG_CHUNKED         64
+#define HTTP1_P_FLAG_RESPONSE        128
 
+#ifdef __cplusplus
+#define _Bool bool
+#endif
 /* *****************************************************************************
 Seeking for characters in a string
 ***************************************************************************** */
@@ -184,7 +187,8 @@ Seeking for characters in a string
  *
  * On newer systems, `memchr` should be faster.
  */
-static int seek2ch(uint8_t **buffer, register uint8_t *const limit,
+static int seek2ch(uint8_t **buffer,
+                   register uint8_t *const limit,
                    const uint8_t c) {
   if (*buffer >= limit)
     return 0;
@@ -264,14 +268,8 @@ inline static uint8_t seek2eol(uint8_t **pos, uint8_t *const limit) {
   if (!seek2ch(pos, limit, '\n'))
     return 0;
   if ((*pos)[-1] == '\r') {
-#if HTTP1_PARSER_CONVERT_EOL2NUL
-    (*pos)[-1] = (*pos)[0] = 0;
-#endif
     return 2;
   }
-#if HTTP1_PARSER_CONVERT_EOL2NUL
-  (*pos)[0] = 0;
-#endif
   return 1;
 }
 
@@ -280,7 +278,7 @@ Change a letter to lower case (latin only)
 ***************************************************************************** */
 
 static uint8_t http_tolower(uint8_t c) {
-  if (c >= 'A' && c <= 'Z')
+  if (((c >= 'A') & (c <= 'Z')))
     c |= 32;
   return c;
 }
@@ -317,7 +315,8 @@ static long long http1_atol16(const uint8_t *buf, const uint8_t **end) {
   register unsigned long long i = 0;
   uint8_t inv = 0;
   for (int limit_ = 0;
-       (*buf == ' ' || *buf == '\t' || *buf == '\f') && limit_ < 32; ++limit_)
+       (*buf == ' ' || *buf == '\t' || *buf == '\f') && limit_ < 32;
+       ++limit_)
     ++buf;
   for (int limit_ = 0; (*buf == '-' || *buf == '+') && limit_ < 32; ++limit_)
     inv ^= (*(buf++) == '-');
@@ -350,7 +349,8 @@ HTTP/1.1 parsre stages
 ***************************************************************************** */
 
 inline static int http1_consume_response_line(http1_parser_s *parser,
-                                              uint8_t *start, uint8_t *end) {
+                                              uint8_t *start,
+                                              uint8_t *end) {
   parser->state.reserved |= HTTP1_P_FLAG_RESPONSE;
   uint8_t *tmp = start;
   if (!seek2ch(&tmp, end, ' '))
@@ -360,14 +360,17 @@ inline static int http1_consume_response_line(http1_parser_s *parser,
   tmp = start = tmp + 1;
   if (!seek2ch(&tmp, end, ' '))
     return -1;
-  if (http1_on_status(parser, http1_atol(start, NULL), (char *)(tmp + 1),
+  if (http1_on_status(parser,
+                      http1_atol(start, NULL),
+                      (char *)(tmp + 1),
                       end - tmp))
     return -1;
   return 0;
 }
 
 inline static int http1_consume_request_line(http1_parser_s *parser,
-                                             uint8_t *start, uint8_t *end) {
+                                             uint8_t *start,
+                                             uint8_t *end) {
   uint8_t *tmp = start;
   uint8_t *host_start = NULL;
   uint8_t *host_end = NULL;
@@ -422,19 +425,24 @@ start_version:
   if (http1_on_version(parser, (char *)start, end - start))
     return -1;
   /* */
-  if (host_start && http1_on_header(parser, (char *)"host", 4,
-                                    (char *)host_start, host_end - host_start))
+  if (host_start && http1_on_header(parser,
+                                    (char *)"host",
+                                    4,
+                                    (char *)host_start,
+                                    host_end - host_start))
     return -1;
   return 0;
 }
 
 #ifndef HTTP1_ALLOW_CHUNKED_IN_MIDDLE_OF_HEADER
-inline /* inline the function of it's short enough */
+inline /* inline the function if it's short enough */
 #endif
     static int
     http1_consume_header_transfer_encoding(http1_parser_s *parser,
-                                           uint8_t *start, uint8_t *end_name,
-                                           uint8_t *start_value, uint8_t *end) {
+                                           uint8_t *start,
+                                           uint8_t *end_name,
+                                           uint8_t *start_value,
+                                           uint8_t *end) {
   /* this removes the `chunked` marker and prepares to "unchunk" the data */
   while (start_value < end && (end[-1] == ',' || end[-1] == ' '))
     --end;
@@ -445,9 +453,9 @@ inline /* inline the function of it's short enough */
       (((uint32_t *)(start_value + 3))[0] | 0x20202020) ==
           ((uint32_t *)"nked")[0]
 #else
-      ((start_value[0] | 32) == 'c' && (start_value[1] | 32) == 'h' &&
-       (start_value[2] | 32) == 'u' && (start_value[3] | 32) == 'n' &&
-       (start_value[4] | 32) == 'k' && (start_value[5] | 32) == 'e' &&
+      ((start_value[0] | 32) == 'c' & (start_value[1] | 32) == 'h' &
+       (start_value[2] | 32) == 'u' & (start_value[3] | 32) == 'n' &
+       (start_value[4] | 32) == 'k' & (start_value[5] | 32) == 'e' &
        (start_value[6] | 32) == 'd')
 #endif
   ) {
@@ -460,9 +468,9 @@ inline /* inline the function of it's short enough */
     if (!(end - start_value))
       return 0;
   } else if ((end - start_value) > 7 &&
-             ((end[(-7 + 0)] | 32) == 'c' && (end[(-7 + 1)] | 32) == 'h' &&
-              (end[(-7 + 2)] | 32) == 'u' && (end[(-7 + 3)] | 32) == 'n' &&
-              (end[(-7 + 4)] | 32) == 'k' && (end[(-7 + 5)] | 32) == 'e' &&
+             ((end[(-7 + 0)] | 32) == 'c' & (end[(-7 + 1)] | 32) == 'h' &
+              (end[(-7 + 2)] | 32) == 'u' & (end[(-7 + 3)] | 32) == 'n' &
+              (end[(-7 + 4)] | 32) == 'k' & (end[(-7 + 5)] | 32) == 'e' &
               (end[(-7 + 6)] | 32) == 'd')) {
     /* simple case,`chunked` at the end of list (RFC required) */
     parser->state.reserved |= HTTP1_P_FLAG_CHUNKED;
@@ -524,25 +532,33 @@ inline /* inline the function of it's short enough */
         val[val_len++] = *start_value;
         ++start_value;
       }
-      val[val_len] = 0;
+      if (val_len < 255)
+        val[val_len] = 0;
     }
     /* perform callback with `val` or indicate error */
-    if (val_len == 256 ||
-        (val_len && http1_on_header(parser, (char *)start, (end_name - start),
-                                    (char *)val, val_len)))
+    if (val_len == 256 || (val_len && http1_on_header(parser,
+                                                      (char *)start,
+                                                      (end_name - start),
+                                                      (char *)val,
+                                                      val_len)))
       return -1;
     return 0;
   }
 #endif /* HTTP1_ALLOW_CHUNKED_IN_MIDDLE_OF_HEADER */
   /* perform callback */
-  if (http1_on_header(parser, (char *)start, (end_name - start),
-                      (char *)start_value, end - start_value))
+  if (http1_on_header(parser,
+                      (char *)start,
+                      (end_name - start),
+                      (char *)start_value,
+                      end - start_value))
     return -1;
   return 0;
 }
 inline static int http1_consume_header_top(http1_parser_s *parser,
-                                           uint8_t *start, uint8_t *end_name,
-                                           uint8_t *start_value, uint8_t *end) {
+                                           uint8_t *start,
+                                           uint8_t *end_name,
+                                           uint8_t *start_value,
+                                           uint8_t *end) {
   if ((end_name - start) == 14 &&
 #if HTTP1_UNALIGNED_MEMORY_ACCESS_ENABLED && HTTP_HEADERS_LOWERCASE
       *((uint64_t *)start) == *((uint64_t *)"content-") &&
@@ -572,12 +588,18 @@ inline static int http1_consume_header_top(http1_parser_s *parser,
 #endif
   ) {
     /* handle the special `transfer-encoding: chunked` header */
-    return http1_consume_header_transfer_encoding(parser, start, end_name,
-                                                  start_value, end);
+    return http1_consume_header_transfer_encoding(parser,
+                                                  start,
+                                                  end_name,
+                                                  start_value,
+                                                  end);
   }
   /* perform callback */
-  if (http1_on_header(parser, (char *)start, (end_name - start),
-                      (char *)start_value, end - start_value))
+  if (http1_on_header(parser,
+                      (char *)start,
+                      (end_name - start),
+                      (char *)start_value,
+                      end - start_value))
     return -1;
   return 0;
 }
@@ -587,58 +609,82 @@ inline static int http1_consume_header_trailer(http1_parser_s *parser,
                                                uint8_t *end_name,
                                                uint8_t *start_value,
                                                uint8_t *end) {
-  if ((end_name - start) > 1 && start[0] == 'x') {
-    /* X- headers are allowed */
-    goto white_listed;
-  }
-
   /* white listed trailer names */
   const struct {
     char *name;
     long len;
-  } http1_trailer_white_list[] = {
-      {"server-timing", 13}, /* specific for client data... */
-      {NULL, 0},             /* end of list marker */
+  } http1_trailer_allowed_list[] = {
+      {(char *)"server-timing", 13}, /* specific for client data... */
+      {NULL, 0},                     /* end of list marker */
   };
-  for (size_t i = 0; http1_trailer_white_list[i].name; ++i) {
-    if ((long)(end_name - start) == http1_trailer_white_list[i].len &&
-        HEADER_NAME_IS_EQ((char *)start, http1_trailer_white_list[i].name,
-                          http1_trailer_white_list[i].len)) {
+  if ((end_name - start) > 1 && start[0] == 'x') {
+    /* X- headers are allowed */
+    goto allowed_list;
+  }
+  for (size_t i = 0; http1_trailer_allowed_list[i].name; ++i) {
+    if ((long)(end_name - start) == http1_trailer_allowed_list[i].len &&
+        HEADER_NAME_IS_EQ((char *)start,
+                          http1_trailer_allowed_list[i].name,
+                          http1_trailer_allowed_list[i].len)) {
       /* header disallowed here */
-      goto white_listed;
+      goto allowed_list;
     }
   }
   return 0;
-white_listed:
+allowed_list:
   /* perform callback */
-  if (http1_on_header(parser, (char *)start, (end_name - start),
-                      (char *)start_value, end - start_value))
+  if (http1_on_header(parser,
+                      (char *)start,
+                      (end_name - start),
+                      (char *)start_value,
+                      end - start_value))
     return -1;
   return 0;
 }
 
-inline static int http1_consume_header(http1_parser_s *parser, uint8_t *start,
+inline static int http1_consume_header(http1_parser_s *parser,
+                                       uint8_t *start,
                                        uint8_t *end) {
+  static const _Bool forbidden_name_chars[256] = {
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   uint8_t *end_name = start;
   /* divide header name from data */
   if (!seek2ch(&end_name, end, ':'))
     return -1;
   if (end_name[-1] == ' ' || end_name[-1] == '\t')
     return -1;
+  if (forbidden_name_chars[start[0] & 0xFF])
+    return -1;
 #if HTTP_HEADERS_LOWERCASE
-  for (uint8_t *t = start; t < end_name; t++) {
+  for (uint8_t *t = start; t < end_name; t++)
     *t = http_tolower(*t);
-  }
 #endif
   uint8_t *start_value = end_name + 1;
   // clear away leading white space from value.
   while (start_value < end &&
-         (start_value[0] == ' ' || start_value[0] == '\t')) {
+         ((start_value[0] == ' ') | (start_value[0] == '\t'))) {
     start_value++;
   };
+  // clear away added white space from value.
+  while (start_value < end && ((end[0] == ' ') | (end[0] == '\t'))) {
+    end++;
+  };
   return (parser->state.read ? http1_consume_header_trailer
-                             : http1_consume_header_top)(
-      parser, start, end_name, start_value, end);
+                             : http1_consume_header_top)(parser,
+                                                         start,
+                                                         end_name,
+                                                         start_value,
+                                                         end);
 }
 
 /* *****************************************************************************
@@ -646,7 +692,8 @@ HTTP/1.1 Body handling
 ***************************************************************************** */
 
 inline static int http1_consume_body_streamed(http1_parser_s *parser,
-                                              void *buffer, size_t length,
+                                              void *buffer,
+                                              size_t length,
                                               uint8_t **start) {
   uint8_t *end = *start + parser->state.content_length - parser->state.read;
   uint8_t *const stop = ((uint8_t *)buffer) + length;
@@ -663,7 +710,8 @@ inline static int http1_consume_body_streamed(http1_parser_s *parser,
 }
 
 inline static int http1_consume_body_chunked(http1_parser_s *parser,
-                                             void *buffer, size_t length,
+                                             void *buffer,
+                                             size_t length,
                                              uint8_t **start) {
   uint8_t *const stop = ((uint8_t *)buffer) + length;
   uint8_t *end = *start;
@@ -681,7 +729,7 @@ inline static int http1_consume_body_chunked(http1_parser_s *parser,
       long long chunk_len = http1_atol16(end, (const uint8_t **)&end);
       if (end + 2 > stop) /* overflowed? */
         return 0;
-      if ((end[0] != '\r' || end[1] != '\n'))
+      if ((end[0] != '\r') | (end[1] != '\n') | (chunk_len < 0))
         return -1; /* required EOL after content length */
       end += 2;
 
@@ -703,13 +751,16 @@ inline static int http1_consume_body_chunked(http1_parser_s *parser,
             tmp_len = mod;
           }
           if (!(parser->state.reserved & HTTP1_P_FLAG_CLENGTH) &&
-              http1_on_header(parser, "content-length", 14,
-                              (char *)buf + buf_len, 511 - buf_len)) {
+              http1_on_header(parser,
+                              (char *)"content-length",
+                              14,
+                              (char *)buf + buf_len,
+                              511 - buf_len)) {
             return -1;
           }
         }
 #endif
-        /* FIXME: consume trailing EOL */
+        /* consume trailing EOL */
         if (*start + 2 <= stop && (start[0][0] == '\r' || start[0][0] == '\n'))
           *start += 1 + (start[0][1] == '\r' || start[0][1] == '\n');
         else {
@@ -737,8 +788,10 @@ inline static int http1_consume_body_chunked(http1_parser_s *parser,
   return 0;
 }
 
-inline static int http1_consume_body(http1_parser_s *parser, void *buffer,
-                                     size_t length, uint8_t **start) {
+inline static int http1_consume_body(http1_parser_s *parser,
+                                     void *buffer,
+                                     size_t length,
+                                     uint8_t **start) {
   if (parser->state.content_length > 0 &&
       parser->state.content_length > parser->state.read) {
     /* normal, streamed data */
@@ -823,7 +876,8 @@ re_eval:
     do {
       if (start >= stop)
         return HTTP1_CONSUMED; /* buffer ended on header line */
-      if (*start == '\r' || *start == '\n') {
+      if (*start == '\n' ||
+          (start + 1 < stop && ((start[0] == '\r') & (start[1] == '\n')))) {
         goto finished_headers; /* empty line, end of headers */
       }
       end = start;
@@ -868,6 +922,873 @@ error:
   parser->state = (struct http1_parser_protected_read_only_state_s){0};
   return length;
 #undef HTTP1_CONSUMED
+}
+
+/** Returns true if the parsing stopped after a complete request / response. */
+inline static int http1_complete(http1_parser_s *parser) {
+  return !parser->state.reserved;
+}
+
+/* *****************************************************************************
+
+
+
+
+HTTP/1.1 TESTING
+
+
+
+
+***************************************************************************** */
+#ifdef HTTP1_TEST_PARSER
+#include "signal.h"
+
+#define HTTP1_TEST_ASSERT(cond, ...)                                           \
+  if (!(cond)) {                                                               \
+    fprintf(stderr, __VA_ARGS__);                                              \
+    fprintf(stderr, "\n");                                                     \
+    kill(0, SIGINT);                                                           \
+    exit(-1);                                                                  \
+  }
+
+static size_t http1_test_pos;
+static char http1_test_temp_buf[8092];
+static size_t http1_test_temp_buf_pos;
+static struct {
+  char *test_name;
+  char *request[16];
+  struct {
+    char body[1024];
+    size_t body_len;
+    const char *method;
+    ssize_t status;
+    const char *path;
+    const char *query;
+    const char *version;
+    struct http1_test_header_s {
+      const char *name;
+      size_t name_len;
+      const char *val;
+      size_t val_len;
+    } headers[12];
+  } result, expect;
+} http1_test_data[] = {
+    {
+        .test_name = "simple empty request",
+        .request = {"GET / HTTP/1.1\r\nHost:localhost\r\n\r\n"},
+        .expect =
+            {
+                .body = "",
+                .body_len = 0,
+                .method = "GET",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {.name = "host",
+                         .name_len = 4,
+                         .val = "localhost",
+                         .val_len = 9},
+                    },
+            },
+    },
+    {
+        .test_name = "space before header data",
+        .request = {"POST /my/path HTTP/1.2\r\nHost: localhost\r\n\r\n"},
+        .expect =
+            {
+                .body = "",
+                .body_len = 0,
+                .method = "POST",
+                .path = "/my/path",
+                .query = NULL,
+                .version = "HTTP/1.2",
+                .headers =
+                    {
+                        {.name = "host",
+                         .name_len = 4,
+                         .val = "localhost",
+                         .val_len = 9},
+                    },
+            },
+    },
+    {
+        .test_name = "simple request, fragmented header (in new line)",
+        .request = {"GET / HTTP/1.1\r\n", "Host:localhost\r\n\r\n"},
+        .expect =
+            {
+                .body = "",
+                .body_len = 0,
+                .method = "GET",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {.name = "host",
+                         .name_len = 4,
+                         .val = "localhost",
+                         .val_len = 9},
+                    },
+            },
+    },
+    {
+        .test_name = "request with query",
+        .request = {"METHOD /path?q=query HTTP/1.3\r\nHost:localhost\r\n\r\n"},
+        .expect =
+            {
+                .body = "",
+                .body_len = 0,
+                .method = "METHOD",
+                .path = "/path",
+                .query = "q=query",
+                .version = "HTTP/1.3",
+                .headers =
+                    {
+                        {.name = "host",
+                         .name_len = 4,
+                         .val = "localhost",
+                         .val_len = 9},
+                    },
+            },
+    },
+    {
+        .test_name = "mid-fragmented header",
+        .request = {"GET / HTTP/1.1\r\nHost: loca", "lhost\r\n\r\n"},
+        .expect =
+            {
+                .body = "",
+                .body_len = 0,
+                .method = "GET",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {.name = "host",
+                         .name_len = 4,
+                         .val = "localhost",
+                         .val_len = 9},
+                    },
+            },
+    },
+    {
+        .test_name = "simple with body",
+        .request = {"GET / HTTP/1.1\r\nHost:with body\r\n"
+                    "Content-lEnGth: 5\r\n\r\nHello"},
+        .expect =
+            {
+                .body = "Hello",
+                .body_len = 5,
+                .method = "GET",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {
+                            .name = "host",
+                            .name_len = 4,
+                            .val = "with body",
+                            .val_len = 9,
+                        },
+                        {
+                            .name = "content-length",
+                            .name_len = 14,
+                            .val = "5",
+                            .val_len = 1,
+                        },
+                    },
+            },
+    },
+    {
+        .test_name = "fragmented body",
+        .request = {"GET / HTTP/1.1\r\nHost:with body\r\n",
+                    "Content-lEnGth: 5\r\n\r\nHe",
+                    "llo"},
+        .expect =
+            {
+                .body = "Hello",
+                .body_len = 5,
+                .method = "GET",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {
+                            .name = "host",
+                            .name_len = 4,
+                            .val = "with body",
+                            .val_len = 9,
+                        },
+                        {
+                            .name = "content-length",
+                            .name_len = 14,
+                            .val = "5",
+                            .val_len = 1,
+                        },
+                    },
+            },
+    },
+    {
+        .test_name = "fragmented body 2 (cuts EOL)",
+        .request = {"POST / HTTP/1.1\r\nHost:with body\r\n",
+                    "Content-lEnGth: 5\r\n",
+                    "\r\n",
+                    "He",
+                    "llo"},
+        .expect =
+            {
+                .body = "Hello",
+                .body_len = 5,
+                .method = "POST",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {
+                            .name = "host",
+                            .name_len = 4,
+                            .val = "with body",
+                            .val_len = 9,
+                        },
+                        {
+                            .name = "content-length",
+                            .name_len = 14,
+                            .val = "5",
+                            .val_len = 1,
+                        },
+                    },
+            },
+    },
+    {
+        .test_name = "chunked body (simple)",
+        .request = {"POST / HTTP/1.1\r\nHost:with body\r\n"
+                    "Transfer-Encoding: chunked\r\n"
+                    "\r\n"
+                    "5\r\n"
+                    "Hello"
+                    "\r\n0\r\n\r\n"},
+        .expect =
+            {
+                .body = "Hello",
+                .body_len = 5,
+                .method = "POST",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {
+                            .name = "host",
+                            .name_len = 4,
+                            .val = "with body",
+                            .val_len = 9,
+                        },
+#ifdef HTTP_ADD_CONTENT_LENGTH_HEADER_IF_MISSING
+                        {
+                            .name = "content-length",
+                            .name_len = 14,
+                            .val = "5",
+                            .val_len = 1,
+                        },
+#endif
+                    },
+            },
+    },
+    {
+        .test_name = "chunked body (end of list)",
+        .request = {"POST / HTTP/1.1\r\nHost:with body\r\n"
+                    "Transfer-Encoding: gzip, foo, chunked\r\n"
+                    "\r\n"
+                    "5\r\n"
+                    "Hello"
+                    "\r\n0\r\n\r\n"},
+        .expect =
+            {
+                .body = "Hello",
+                .body_len = 5,
+                .method = "POST",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {
+                            .name = "host",
+                            .name_len = 4,
+                            .val = "with body",
+                            .val_len = 9,
+                        },
+                        {
+                            .name = "transfer-encoding",
+                            .name_len = 17,
+                            .val = "gzip, foo",
+                            .val_len = 9,
+                        },
+#ifdef HTTP_ADD_CONTENT_LENGTH_HEADER_IF_MISSING
+                        {
+                            .name = "content-length",
+                            .name_len = 14,
+                            .val = "5",
+                            .val_len = 1,
+                        },
+#endif
+                    },
+            },
+    },
+#ifdef HTTP1_ALLOW_CHUNKED_IN_MIDDLE_OF_HEADER
+    {
+        .test_name = "chunked body (middle of list)",
+        .request = {"POST / HTTP/1.1\r\nHost:with body\r\n"
+                    "Transfer-Encoding: gzip, chunked, foo\r\n"
+                    "\r\n",
+                    "5\r\n"
+                    "Hello"
+                    "\r\n0\r\n\r\n"},
+        .expect =
+            {
+                .body = "Hello",
+                .body_len = 5,
+                .method = "POST",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {
+                            .name = "host",
+                            .name_len = 4,
+                            .val = "with body",
+                            .val_len = 9,
+                        },
+                        {
+                            .name = "transfer-encoding",
+                            .name_len = 17,
+                            .val = "gzip,foo",
+                            .val_len = 8,
+                        },
+#ifdef HTTP_ADD_CONTENT_LENGTH_HEADER_IF_MISSING
+                        {
+                            .name = "content-length",
+                            .name_len = 14,
+                            .val = "5",
+                            .val_len = 1,
+                        },
+#endif
+                    },
+            },
+    },
+#endif /* HTTP1_ALLOW_CHUNKED_IN_MIDDLE_OF_HEADER */
+    {
+        .test_name = "chunked body (fragmented)",
+        .request =
+            {
+                "POST / HTTP/1.1\r\nHost:with body\r\n",
+                "Transfer-Encoding: chunked\r\n",
+                "\r\n"
+                "5\r\n",
+                "He",
+                "llo",
+                "\r\n0\r\n\r\n",
+            },
+        .expect =
+            {
+                .body = "Hello",
+                .body_len = 5,
+                .method = "POST",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {
+                            .name = "host",
+                            .name_len = 4,
+                            .val = "with body",
+                            .val_len = 9,
+                        },
+#ifdef HTTP_ADD_CONTENT_LENGTH_HEADER_IF_MISSING
+                        {
+                            .name = "content-length",
+                            .name_len = 14,
+                            .val = "5",
+                            .val_len = 1,
+                        },
+#endif
+                    },
+            },
+    },
+    {
+        .test_name = "chunked body (fragmented + multi-message)",
+        .request =
+            {
+                "POST / HTTP/1.1\r\nHost:with body\r\n",
+                "Transfer-Encoding: chunked\r\n",
+                "\r\n"
+                "2\r\n",
+                "He",
+                "3\r\nl",
+                "lo",
+                "\r\n0\r\n\r\n",
+            },
+        .expect =
+            {
+                .body = "Hello",
+                .body_len = 5,
+                .method = "POST",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {
+                            .name = "host",
+                            .name_len = 4,
+                            .val = "with body",
+                            .val_len = 9,
+                        },
+#ifdef HTTP_ADD_CONTENT_LENGTH_HEADER_IF_MISSING
+                        {
+                            .name = "content-length",
+                            .name_len = 14,
+                            .val = "5",
+                            .val_len = 1,
+                        },
+#endif
+                    },
+            },
+    },
+    {
+        .test_name = "chunked body (fragmented + broken-multi-message)",
+        .request =
+            {
+                "POST / HTTP/1.1\r\nHost:with body\r\n",
+                "Transfer-Encoding: chunked\r\n",
+                "\r\n",
+                "2\r\n",
+                "H",
+                "e",
+                "3\r\nl",
+                "l"
+                "o",
+                "\r\n0\r\n\r\n",
+            },
+        .expect =
+            {
+                .body = "Hello",
+                .body_len = 5,
+                .method = "POST",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {
+                            .name = "host",
+                            .name_len = 4,
+                            .val = "with body",
+                            .val_len = 9,
+                        },
+#ifdef HTTP_ADD_CONTENT_LENGTH_HEADER_IF_MISSING
+                        {
+                            .name = "content-length",
+                            .name_len = 14,
+                            .val = "5",
+                            .val_len = 1,
+                        },
+#endif
+                    },
+            },
+    },
+    {
+        .test_name = "chunked body (...longer + trailer + empty value...)",
+        .request =
+            {
+                "POST / HTTP/1.1\r\nHost:with body\r\n",
+                "Transfer-Encoding: chunked\r\n",
+                "\r\n",
+                "4\r\n",
+                "Wiki\r\n",
+                "5\r\n",
+                "pedia\r\n",
+                "E\r\n",
+                " in\r\n",
+                "\r\n",
+                "chunks.\r\n",
+                "0\r\n",
+                "X-Foo: trailer\r\n",
+                "sErvEr-tiMing:   \r\n",
+                "\r\n",
+            },
+        .expect =
+            {
+                .body = "Wikipedia in\r\n\r\nchunks.",
+                .body_len = 23,
+                .method = "POST",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {
+                            .name = "host",
+                            .name_len = 4,
+                            .val = "with body",
+                            .val_len = 9,
+                        },
+#ifdef HTTP_ADD_CONTENT_LENGTH_HEADER_IF_MISSING
+                        {
+                            .name = "content-length",
+                            .name_len = 14,
+                            .val = "23",
+                            .val_len = 2,
+                        },
+#endif
+                        {
+                            .name = "x-foo",
+                            .name_len = 5,
+                            .val = "trailer",
+                            .val_len = 7,
+                        },
+                        {
+                            .name = "server-timing",
+                            .name_len = 13,
+                            .val = "",
+                            .val_len = 0,
+                        },
+                    },
+            },
+    },
+    {
+        .test_name = "chunked body (fragmented + surprize trailer)",
+        .request =
+            {
+                "POST / HTTP/1.1\r\nHost:with body\r\n",
+                "Transfer-Encoding: chunked\r\n",
+                "\r\n"
+                "5\r\n",
+                "He",
+                "llo",
+                "\r\n0\r\nX-Foo: trailer\r\n\r\n",
+            },
+        .expect =
+            {
+                .body = "Hello",
+                .body_len = 5,
+                .method = "POST",
+                .path = "/",
+                .query = NULL,
+                .version = "HTTP/1.1",
+                .headers =
+                    {
+                        {
+                            .name = "host",
+                            .name_len = 4,
+                            .val = "with body",
+                            .val_len = 9,
+                        },
+#ifdef HTTP_ADD_CONTENT_LENGTH_HEADER_IF_MISSING
+                        {
+                            .name = "content-length",
+                            .name_len = 14,
+                            .val = "5",
+                            .val_len = 1,
+                        },
+#endif
+                        {
+                            .name = "x-foo",
+                            .name_len = 5,
+                            .val = "trailer",
+                            .val_len = 7,
+                        },
+                    },
+            },
+    },
+    /* stop marker */
+    {
+        .request = {NULL},
+    },
+};
+
+/** called when a request was received. */
+static int http1_on_request(http1_parser_s *parser) {
+  (void)parser;
+  return 0;
+}
+/** called when a response was received. */
+static int http1_on_response(http1_parser_s *parser) {
+  (void)parser;
+  return 0;
+}
+/** called when a request method is parsed. */
+static int http1_on_method(http1_parser_s *parser,
+                           char *method,
+                           size_t method_len) {
+  (void)parser;
+  http1_test_data[http1_test_pos].result.method = method;
+  HTTP1_TEST_ASSERT(method_len ==
+                        strlen(http1_test_data[http1_test_pos].expect.method),
+                    "method_len test error for: %s",
+                    http1_test_data[http1_test_pos].test_name);
+  return 0;
+}
+/** called when a response status is parsed. the status_str is the string
+ * without the prefixed numerical status indicator.*/
+static int http1_on_status(http1_parser_s *parser,
+                           size_t status,
+                           char *status_str,
+                           size_t len) {
+  (void)parser;
+  http1_test_data[http1_test_pos].result.status = status;
+  http1_test_data[http1_test_pos].result.method = status_str;
+  HTTP1_TEST_ASSERT(len ==
+                        strlen(http1_test_data[http1_test_pos].expect.method),
+                    "status length test error for: %s",
+                    http1_test_data[http1_test_pos].test_name);
+  return 0;
+}
+/** called when a request path (excluding query) is parsed. */
+static int http1_on_path(http1_parser_s *parser, char *path, size_t len) {
+  (void)parser;
+  http1_test_data[http1_test_pos].result.path = path;
+  HTTP1_TEST_ASSERT(len == strlen(http1_test_data[http1_test_pos].expect.path),
+                    "path length test error for: %s",
+                    http1_test_data[http1_test_pos].test_name);
+  return 0;
+}
+/** called when a request path (excluding query) is parsed. */
+static int http1_on_query(http1_parser_s *parser, char *query, size_t len) {
+  (void)parser;
+  http1_test_data[http1_test_pos].result.query = query;
+  HTTP1_TEST_ASSERT(len == strlen(http1_test_data[http1_test_pos].expect.query),
+                    "query length test error for: %s",
+                    http1_test_data[http1_test_pos].test_name);
+  return 0;
+}
+/** called when a the HTTP/1.x version is parsed. */
+static int http1_on_version(http1_parser_s *parser, char *version, size_t len) {
+  (void)parser;
+  http1_test_data[http1_test_pos].result.version = version;
+  HTTP1_TEST_ASSERT(len ==
+                        strlen(http1_test_data[http1_test_pos].expect.version),
+                    "version length test error for: %s",
+                    http1_test_data[http1_test_pos].test_name);
+  return 0;
+}
+/** called when a header is parsed. */
+static int http1_on_header(http1_parser_s *parser,
+                           char *name,
+                           size_t name_len,
+                           char *val,
+                           size_t val_len) {
+  (void)parser;
+  size_t pos = 0;
+  while (pos < 12 && http1_test_data[http1_test_pos].result.headers[pos].name)
+    ++pos;
+  HTTP1_TEST_ASSERT(pos < 12,
+                    "header result overflow for: %s",
+                    http1_test_data[http1_test_pos].test_name);
+  memcpy(http1_test_temp_buf + http1_test_temp_buf_pos, name, name_len);
+  name = http1_test_temp_buf + http1_test_temp_buf_pos;
+  http1_test_temp_buf_pos += name_len;
+  http1_test_temp_buf[http1_test_temp_buf_pos++] = 0;
+  memcpy(http1_test_temp_buf + http1_test_temp_buf_pos, val, val_len);
+  val = http1_test_temp_buf + http1_test_temp_buf_pos;
+  http1_test_temp_buf_pos += val_len;
+  http1_test_temp_buf[http1_test_temp_buf_pos++] = 0;
+  http1_test_data[http1_test_pos].result.headers[pos].name = name;
+  http1_test_data[http1_test_pos].result.headers[pos].name_len = name_len;
+  http1_test_data[http1_test_pos].result.headers[pos].val = val;
+  http1_test_data[http1_test_pos].result.headers[pos].val_len = val_len;
+  return 0;
+}
+/** called when a body chunk is parsed. */
+static int http1_on_body_chunk(http1_parser_s *parser,
+                               char *data,
+                               size_t data_len) {
+  (void)parser;
+  http1_test_data[http1_test_pos]
+      .result.body[http1_test_data[http1_test_pos].result.body_len] = 0;
+  HTTP1_TEST_ASSERT(data_len +
+                            http1_test_data[http1_test_pos].result.body_len <=
+                        http1_test_data[http1_test_pos].expect.body_len,
+                    "body overflow for: %s"
+                    "\r\n Expect:\n%s\nGot:\n%s%s\n",
+                    http1_test_data[http1_test_pos].test_name,
+                    http1_test_data[http1_test_pos].expect.body,
+                    http1_test_data[http1_test_pos].result.body,
+                    data);
+  memcpy(http1_test_data[http1_test_pos].result.body +
+             http1_test_data[http1_test_pos].result.body_len,
+         data,
+         data_len);
+  http1_test_data[http1_test_pos].result.body_len += data_len;
+  http1_test_data[http1_test_pos]
+      .result.body[http1_test_data[http1_test_pos].result.body_len] = 0;
+  return 0;
+}
+
+/** called when a protocol error occurred. */
+static int http1_on_error(http1_parser_s *parser) {
+  (void)parser;
+  http1_test_data[http1_test_pos].result.status = -1;
+  return 0;
+}
+
+#define HTTP1_TEST_STRING_FIELD(field, i)                                      \
+  HTTP1_TEST_ASSERT((!http1_test_data[i].expect.field &&                       \
+                     !http1_test_data[i].result.field) ||                      \
+                        http1_test_data[i].expect.field &&                     \
+                            http1_test_data[i].result.field &&                 \
+                            !memcmp(http1_test_data[i].expect.field,           \
+                                    http1_test_data[i].result.field,           \
+                                    strlen(http1_test_data[i].expect.field)),  \
+                    "string field error for %s\n%s\n%s",                       \
+                    http1_test_data[i].test_name,                              \
+                    http1_test_data[i].expect.field,                           \
+                    http1_test_data[i].result.field);
+static void http1_parser_test(void) {
+  http1_test_pos = 0;
+  struct {
+    const char *str;
+    long long num;
+    long long (*fn)(const uint8_t *, const uint8_t **);
+  } atol_test[] = {
+      {
+          .str = "0",
+          .num = 0,
+          .fn = http1_atol,
+      },
+      {
+          .str = "-0",
+          .num = 0,
+          .fn = http1_atol,
+      },
+      {
+          .str = "1",
+          .num = 1,
+          .fn = http1_atol,
+      },
+      {
+          .str = "-1",
+          .num = -1,
+          .fn = http1_atol,
+      },
+      {
+          .str = "123456789",
+          .num = 123456789,
+          .fn = http1_atol,
+      },
+      {
+          .str = "-123456789",
+          .num = -123456789,
+          .fn = http1_atol,
+      },
+      {
+          .str = "0x0",
+          .num = 0,
+          .fn = http1_atol16,
+      },
+      {
+          .str = "-0x0",
+          .num = 0,
+          .fn = http1_atol16,
+      },
+      {
+          .str = "-0x1",
+          .num = -1,
+          .fn = http1_atol16,
+      },
+      {
+          .str = "-f",
+          .num = -15,
+          .fn = http1_atol16,
+      },
+      {
+          .str = "-20",
+          .num = -32,
+          .fn = http1_atol16,
+      },
+      {
+          .str = "0xf0EAf9ff",
+          .num = 0xf0eaf9ff,
+          .fn = http1_atol16,
+      },
+      /* stop marker */
+      {
+          .str = NULL,
+      },
+  };
+  fprintf(stderr, "* testing string=>number conversion\n");
+  for (size_t i = 0; atol_test[i].str; ++i) {
+    const uint8_t *end;
+    fprintf(stderr, "  %s", atol_test[i].str);
+    HTTP1_TEST_ASSERT(atol_test[i].fn((const uint8_t *)atol_test[i].str,
+                                      &end) == atol_test[i].num,
+                      "\nhttp1_atol error: %s != %lld",
+                      atol_test[i].str,
+                      atol_test[i].num);
+    HTTP1_TEST_ASSERT((char *)end ==
+                          (atol_test[i].str + strlen(atol_test[i].str)),
+                      "\nhttp1_atol error: didn't end after (%s): %s",
+                      atol_test[i].str,
+                      (char *)end)
+  }
+  fprintf(stderr, "\n");
+  for (unsigned long long i = 1; i; i <<= 1) {
+    char tmp[128];
+    size_t tmp_len = sprintf(tmp, "%llx", i);
+    uint8_t *pos = (uint8_t *)tmp;
+    HTTP1_TEST_ASSERT(http1_atol16(pos, (const uint8_t **)&pos) ==
+                              (long long)i &&
+                          pos == (uint8_t *)(tmp + tmp_len),
+                      "http1_atol16 roundtrip error.");
+  }
+
+  for (size_t i = 0; http1_test_data[i].request[0]; ++i) {
+    fprintf(stderr, "* http1 parser test: %s\n", http1_test_data[i].test_name);
+    /* parse each request / response */
+    http1_parser_s parser = HTTP1_PARSER_INIT;
+    char buf[4096];
+    size_t r = 0;
+    size_t w = 0;
+    http1_test_temp_buf_pos = 0;
+    for (int j = 0; http1_test_data[i].request[j]; ++j) {
+      memcpy(buf + w,
+             http1_test_data[i].request[j],
+             strlen(http1_test_data[i].request[j]));
+      w += strlen(http1_test_data[i].request[j]);
+      size_t p = http1_parse(&parser, buf + r, w - r);
+      r += p;
+      HTTP1_TEST_ASSERT(r <= w, "parser consumed more than the buffer holds!");
+    }
+    /* test each request / response before overwriting the buffer */
+    HTTP1_TEST_STRING_FIELD(body, i);
+    HTTP1_TEST_STRING_FIELD(method, i);
+    HTTP1_TEST_STRING_FIELD(path, i);
+    HTTP1_TEST_STRING_FIELD(version, i);
+    r = 0;
+    while (http1_test_data[i].result.headers[r].name) {
+      HTTP1_TEST_STRING_FIELD(headers[r].name, i);
+      HTTP1_TEST_STRING_FIELD(headers[r].val, i);
+      HTTP1_TEST_ASSERT(http1_test_data[i].expect.headers[r].val_len ==
+                                http1_test_data[i].result.headers[r].val_len &&
+                            http1_test_data[i].expect.headers[r].name_len ==
+                                http1_test_data[i].result.headers[r].name_len,
+                        "--- name / value length error");
+      ++r;
+    }
+    HTTP1_TEST_ASSERT(!http1_test_data[i].expect.headers[r].name,
+                      "Expected header missing:\n\t%s: %s",
+                      http1_test_data[i].expect.headers[r].name,
+                      http1_test_data[i].expect.headers[r].val);
+    /* advance counter */
+    ++http1_test_pos;
+  }
 }
 
 #endif
