@@ -10,7 +10,7 @@
 static pthread_key_t iodine_GVL_state_key;
 static pthread_once_t iodine_GVL_state_once = PTHREAD_ONCE_INIT;
 static void init_iodine_GVL_state_key(void) {
-  pthread_key_create(&iodine_GVL_state_key, NULL); 
+  pthread_key_create(&iodine_GVL_state_key, NULL);
 }
 static void init_iodine_GVL_state_init(void) {
   uint8_t *gvl = malloc(sizeof(uint8_t));
@@ -31,7 +31,7 @@ typedef struct {
   ID method;
   int exception;
   VALUE (*protected_task)(VALUE tsk_);
-  VALUE (*each_func)(VALUE block_arg, VALUE data, int argc, VALUE *argv);
+  rb_block_call_func_t each_func;
   VALUE each_udata;
 } iodine_rb_task_s;
 
@@ -158,9 +158,7 @@ static VALUE iodine_call2(VALUE obj, ID method, int argc, VALUE *argv) {
 
 /** Calls a Ruby method on a given object, protecting against exceptions. */
 static VALUE iodine_call_block(VALUE obj, ID method, int argc, VALUE *argv,
-                               VALUE udata,
-                               VALUE(each_func)(VALUE block_arg, VALUE udata,
-                                                int argc, VALUE *argv)) {
+                               VALUE udata, rb_block_call_func_t each_func) {
   iodine_rb_task_s task = {
       .obj = obj,
       .argc = argc,
@@ -186,7 +184,7 @@ static uint8_t iodine_in_GVL(void) {
 }
 
 /** Forces the GVL state flag. */
-static void iodine_set_GVL(uint8_t state) { 
+static void iodine_set_GVL(uint8_t state) {
   pthread_once(&iodine_GVL_state_once, init_iodine_GVL_state_key);
   uint8_t *iodine_GVL_state = pthread_getspecific(iodine_GVL_state_key);
   if (!iodine_GVL_state) {

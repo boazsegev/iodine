@@ -520,7 +520,7 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
 
 // writes the body to the response object
 static VALUE for_each_body_string(VALUE str, VALUE body_, int argc,
-                                  VALUE *argv) {
+                                  const VALUE *argv, VALUE unused) {
   // fprintf(stderr, "For_each - body\n");
   // write body
   if (TYPE(str) != T_STRING) {
@@ -533,6 +533,7 @@ static VALUE for_each_body_string(VALUE str, VALUE body_, int argc,
   return Qtrue;
   (void)argc;
   (void)argv;
+  (void)unused;
 }
 
 static inline int ruby2c_response_send(iodine_http_request_handle_s *handle,

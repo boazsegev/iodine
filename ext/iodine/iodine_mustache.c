@@ -558,7 +558,7 @@ void iodine_init_mustache(void) {
   rb_global_variable(&filename_id);
   rb_global_variable(&data_id);
   rb_global_variable(&template_id);
-  VALUE tmp = rb_define_class_under(IodineModule, "Mustache", rb_cData);
+  VALUE tmp = rb_define_class_under(IodineModule, "Mustache", rb_cObject);
   rb_define_alloc_func(tmp, iodine_mustache_data_alloc_c);
   rb_define_method(tmp, "initialize", iodine_mustache_new, -1);
   rb_define_method(tmp, "render", iodine_mustache_render, 1);

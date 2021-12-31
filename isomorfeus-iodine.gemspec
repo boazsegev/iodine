@@ -36,6 +36,7 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency 'rspec', '>=3.9.0', '< 4.0'
   spec.add_development_dependency 'spec', '>=5.3.0', '< 6.0'
   spec.add_development_dependency 'rake-compiler', '>= 1', '< 2.0'
+  spec.required_ruby_version = '>= 3.1.0'
 
   spec.post_install_message = "Thank you for installing Iodine #{Iodine::VERSION}.\n" +
                               "Remember: if iodine supports your business, it's only fair to give value back (code contributions / donations) to Bo."
