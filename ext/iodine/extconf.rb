@@ -1,5 +1,19 @@
 require 'mkmf'
 
+WIN_PATTERNS = [
+  /bccwin/i,
+  /cygwin/i,
+  /djgpp/i,
+  /mingw/i,
+  /mswin/i,
+  /wince/i,
+].freeze
+
+def win_platform?
+  ruby_platform = RbConfig::CONFIG['host_os']
+  !!WIN_PATTERNS.find {|r| ruby_platform =~ r }
+end
+
 # Test polling
 def iodine_test_polling_support
   iodine_poll_test_kqueue = <<EOS
@@ -36,7 +50,7 @@ int main(void) {
 EOS
 
   # Test for manual selection and then TRY_COMPILE with each polling engine
-  if Gem.win_platform?
+  if win_platform?
     puts "skipping polling tests, using WSAPOLL on Windows"
     $defs << "-DFIO_ENGINE_WSAPOLL"
   elsif ENV['FIO_POLL']
@@ -67,7 +81,7 @@ end
 
 iodine_test_polling_support()
 
-unless Gem.win_platform?
+unless win_platform?
   # Test for OpenSSL version equal to 1.0.0 or greater.
   unless ENV['NO_SSL'] || ENV['NO_TLS'] || ENV["DISABLE_SSL"]
     OPENSSL_TEST_CODE = <<EOS
