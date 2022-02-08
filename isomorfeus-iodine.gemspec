@@ -13,7 +13,7 @@ Gem::Specification.new do |spec|
   spec.description   = 'iodine build for Isomorfeus, original iodine from Bo: https://github.com/boazsegev/iodine'
   spec.homepage      = 'https://isomorfeus.com'
   spec.license       = 'MIT'
-  s.metadata         = {
+  spec.metadata         = {
                          "github_repo" => "ssh://github.com/isomorfeus/gems",
                          "source_code_uri" => "https://github.com/isomorfeus/isomorfeus-iodine"
                        }
