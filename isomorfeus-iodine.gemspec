@@ -10,9 +10,13 @@ Gem::Specification.new do |spec|
   spec.email         = ['jan@kursator.de']
 
   spec.summary       = 'iodine build for Isomorfeus'
-  spec.description   = 'iodine build for Isomorfeus'
-  spec.homepage      = 'https://github.com/janbiedermann/iodine'
+  spec.description   = 'iodine build for Isomorfeus, original iodine from Bo: https://github.com/boazsegev/iodine'
+  spec.homepage      = 'https://isomorfeus.com'
   spec.license       = 'MIT'
+  s.metadata         = {
+                         "github_repo" => "ssh://github.com/isomorfeus/gems",
+                         "source_code_uri" => "https://github.com/isomorfeus/isomorfeus-iodine"
+                       }
 
   spec.files         = `git ls-files -z`.split("\x0").reject { |f| f.match(%r{^(test|spec|features)/}) }
   spec.bindir        = 'exe'
@@ -38,5 +42,5 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency 'rake-compiler', '>= 1', '< 2.0'
 
   spec.post_install_message = "Thank you for installing Iodine #{Iodine::VERSION}.\n" +
-                              "Remember: if iodine supports your business, it's only fair to give value back (code contributions / donations) to Bo."
+                              "Remember: if iodine supports your business, it's only fair to give value back (code contributions / donations) to Bo, see https://github.com/boazsegev/iodine"
 end
