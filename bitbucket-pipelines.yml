@@ -1,0 +1,9 @@
+image: ruby:3.1
+
+pipelines:
+  default:
+    - step:
+        name: specs
+        script:
+          - bundle install
+          - bundle exec rake
