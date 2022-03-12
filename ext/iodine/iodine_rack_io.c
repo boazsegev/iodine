@@ -85,11 +85,7 @@ IO API
 
 static inline FIOBJ get_data(VALUE self) {
   VALUE i = rb_ivar_get(self, io_id);
-#ifdef __MINGW32__
   return (FIOBJ)NUM2ULL(i);
-#else
-  return (FIOBJ)FIX2ULONG(i);
-#endif
 }
 
 static VALUE rio_rewind(VALUE self) {
