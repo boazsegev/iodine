@@ -3,7 +3,7 @@ require 'socket'  # TCPSocket is used internally for Hijack support
 # require 'openssl' # For SSL/TLS support using OpenSSL
 
 require 'iodine/version'
-require 'iodine/iodine' # loading a binary C extension
+require 'iodine_ext' # loading a binary C extension
 
 # Iodine is an HTTP / WebSocket server as well as an Evented Network Tool Library. In essense, Iodine is a Ruby port for the [facil.io](http://facil.io) C library.
 #

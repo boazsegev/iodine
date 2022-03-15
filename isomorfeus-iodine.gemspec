@@ -23,7 +23,7 @@ Gem::Specification.new do |spec|
   spec.executables   = spec.files.grep(%r{^exe/}) { |f| File.basename(f) }
   spec.require_paths = %w(lib ext)
 
-  spec.extensions = %w(ext/iodine/extconf.rb)
+  spec.extensions = %w(ext/iodine_ext/extconf.rb)
 
   spec.required_ruby_version = '>= 3.1.0'
 
@@ -34,7 +34,6 @@ Gem::Specification.new do |spec|
   spec.requirements << 'TLS requires OpenSSL >= 1.1.0.'
   spec.requirements << 'Or Windows with Ruby >= 3.0.0 build with MingW and MingW as compiler.'
 
-  # spec.add_development_dependency 'bundler', '>= 1.10', '< 2.0'
   spec.add_development_dependency 'rake', '~> 13.0', '< 14.0'
   spec.add_development_dependency 'minitest', '>=5', '< 6.0'
   spec.add_development_dependency 'rspec', '>=3.9.0', '< 4.0'
