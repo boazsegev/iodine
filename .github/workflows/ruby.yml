@@ -1,4 +1,4 @@
-name: Isomorfeus Project
+name: isomorfeus-iodine
 
 on:
   push:
