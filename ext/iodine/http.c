@@ -92,14 +92,12 @@ static inline void add_date(http_s *r) {
   static uint64_t date_hash = 0;
   if (!date_hash)
     date_hash = fiobj_hash_string("date", 4);
-  static uint64_t mod_hash = 0;
-  if (!mod_hash)
-    mod_hash = fiobj_hash_string("last-modified", 13);
 
   if (fio_last_tick().tv_sec > last_date_added) {
     fio_lock(&date_lock);
     if (fio_last_tick().tv_sec > last_date_added) { /* retest inside lock */
-      /* 32 chars are ok for a while, but http_time2str below has a buffer sized 48 chars and does a memcpy ... */
+      /* 32 chars are ok for a while, but http_time2str below has a buffer sized
+       * 48 chars and does a memcpy ... */
       FIOBJ tmp = fiobj_str_buf(32);
       FIOBJ old = current_date;
       fiobj_str_resize(
@@ -113,11 +111,6 @@ static inline void add_date(http_s *r) {
 
   if (!fiobj_hash_get2(r->private_data.out_headers, date_hash)) {
     fiobj_hash_set(r->private_data.out_headers, HTTP_HEADER_DATE,
-                   fiobj_dup(current_date));
-  }
-  if (r->status_str == FIOBJ_INVALID &&
-      !fiobj_hash_get2(r->private_data.out_headers, mod_hash)) {
-    fiobj_hash_set(r->private_data.out_headers, HTTP_HEADER_LAST_MODIFIED,
                    fiobj_dup(current_date));
   }
 }
@@ -2355,7 +2348,7 @@ static void init_cached_key_ptr(void) {
   time_t *cached_tick = malloc(sizeof(time_t));
   FIO_ASSERT_ALLOC(cached_tick);
   memset(cached_tick, 0, sizeof(time_t));
-  char *cached_httpdate = malloc(sizeof(char)*48);
+  char *cached_httpdate = malloc(sizeof(char) * 48);
   FIO_ASSERT_ALLOC(cached_tick);
   memset(cached_httpdate, 0, 48);
   size_t *cached_len = malloc(sizeof(size_t));
@@ -2401,14 +2394,13 @@ size_t http_time2str(char *target, const time_t t) {
 
 /* Credit to Jonathan Leffler for the idea of a unified conditional */
 #define hex_val(c)                                                             \
-  (((c) >= '0' && (c) <= '9')                                                  \
-       ? ((c)-48)                                                              \
-       : (((c) >= 'a' && (c) <= 'f') || ((c) >= 'A' && (c) <= 'F'))            \
-             ? (((c) | 32) - 87)                                               \
-             : ({                                                              \
-                 return -1;                                                    \
-                 0;                                                            \
-               }))
+  (((c) >= '0' && (c) <= '9') ? ((c)-48)                                       \
+   : (((c) >= 'a' && (c) <= 'f') || ((c) >= 'A' && (c) <= 'F'))                \
+       ? (((c) | 32) - 87)                                                     \
+       : ({                                                                    \
+           return -1;                                                          \
+           0;                                                                  \
+         }))
 static inline int hex2byte(uint8_t *dest, const uint8_t *source) {
   if (source[0] >= '0' && source[0] <= '9')
     *dest = (source[0] - '0');
@@ -2561,9 +2553,7 @@ FIOBJ http_mimetype_find(char *file_ext, size_t file_ext_len) {
 
 static pthread_key_t buffer_key;
 static pthread_once_t buffer_once = PTHREAD_ONCE_INIT;
-static void init_buffer_key(void) {
-  pthread_key_create(&buffer_key, free);
-}
+static void init_buffer_key(void) { pthread_key_create(&buffer_key, free); }
 static void init_buffer_ptr(void) {
   char *buffer = malloc(sizeof(char) * (LONGEST_FILE_EXTENSION_LENGTH + 1));
   FIO_ASSERT_ALLOC(buffer);
