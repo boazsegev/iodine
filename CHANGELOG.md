@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.46 (2022-05-06)
+
+**Fix**: Fixes the (erroneous) default insertion of the `last-modified` header in order to both better express the intent of RFC 2616 and prevent conflict with the `Rack::ETag` middleware. Credit to @raxoft (Patrik Rak) for opening issue #122.
+
 #### Change log v.0.7.45 (2021-11-26)
 
 **Security**: Fixes a number of issues with the HTTP parser that could have been leveraged in potential exploit attempts such as request smuggling. Credit to @dcepelik (David Čepelík).
