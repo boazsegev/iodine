@@ -2394,27 +2394,24 @@ size_t http_time2str(char *target, const time_t t) {
 
 /* Credit to Jonathan Leffler for the idea of a unified conditional */
 #define hex_val(c)                                                             \
-  (((c) >= '0' && (c) <= '9') ? ((c)-48)                                       \
-   : (((c) >= 'a' && (c) <= 'f') || ((c) >= 'A' && (c) <= 'F'))                \
-       ? (((c) | 32) - 87)                                                     \
-       : ({                                                                    \
-           return -1;                                                          \
-           0;                                                                  \
-         }))
+  (((c) >= '0' && (c) <= '9')                 ? ((c)-48)                       \
+   : (((c) | 32) >= 'a' && ((c) | 32) <= 'f') ? (((c) | 32) - 87)              \
+                                              : ({                             \
+                                                  return -1;                   \
+                                                  0;                           \
+                                                }))
 static inline int hex2byte(uint8_t *dest, const uint8_t *source) {
   if (source[0] >= '0' && source[0] <= '9')
     *dest = (source[0] - '0');
-  else if ((source[0] >= 'a' && source[0] <= 'f') ||
-           (source[0] >= 'A' && source[0] <= 'F'))
-    *dest = (source[0] | 32) - 87;
+  else if ((source[0] | 32) >= 'a' && (source[0] | 32) <= 'f')
+    *dest = (source[0] | 32) - ('a' - 10);
   else
     return -1;
   *dest <<= 4;
   if (source[1] >= '0' && source[1] <= '9')
     *dest |= (source[1] - '0');
-  else if ((source[1] >= 'a' && source[1] <= 'f') ||
-           (source[1] >= 'A' && source[1] <= 'F'))
-    *dest |= (source[1] | 32) - 87;
+  else if ((source[1] | 32) >= 'a' && (source[1] | 32) <= 'f')
+    *dest |= (source[1] | 32) - ('a' - 10);
   else
     return -1;
   return 0;
