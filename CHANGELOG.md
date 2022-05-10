@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.47 (2022-05-11)
+
+**Fix**: Fixes an issue that causes `Rack::Lint` to complain about `SERVER_PORT` being an empty string. Credit to @adam12 (Adam Daniels) for PR #108 and issue #107.
+
 #### Change log v.0.7.46 (2022-05-06)
 
 **Fix**: Fixes the (erroneous) default insertion of the `last-modified` header in order to both better express the intent of RFC 2616 and prevent conflict with the `Rack::ETag` middleware. Credit to @raxoft (Patrik Rak) for opening issue #122.
