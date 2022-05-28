@@ -6,6 +6,20 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.47 (2022-05-11)
+
+**Fix**: Fixes an issue that causes `Rack::Lint` to complain about `SERVER_PORT` being an empty string. Credit to @adam12 (Adam Daniels) for PR #108 and issue #107.
+
+#### Change log v.0.7.46 (2022-05-06)
+
+**Fix**: Fixes the (erroneous) default insertion of the `last-modified` header in order to both better express the intent of RFC 2616 and prevent conflict with the `Rack::ETag` middleware. Credit to @raxoft (Patrik Rak) for opening issue #122.
+
+#### Change log v.0.7.45 (2021-11-26)
+
+**Security**: Fixes a number of issues with the HTTP parser that could have been leveraged in potential exploit attempts such as request smuggling. Credit to @dcepelik (David Čepelík).
+
+**Compatibility**: This release adds experimental Windows support (I don't have Windows, nor Intel, I cannot test this). Credit for a lot of work by @janbiedermann (Jan Biedermann).
+
 #### Change log v.0.7.44 (2021-02-28)
 
 **Fix**: Fixes issue #103 where an empty String response would result in the word "null" being returned (no String object was created, which routed the NULL object to facil.io's JSON interpreter). Credit to @waghanza (Marwan Rabbâa) for exposing the issue.
@@ -82,7 +96,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.31
 
-**Security**: a heap-overflow vulnerability was fixed in the WebSocket parser. This attack could have been triggered remotely by a maliciously crafted message-header. Credit to Dane (4cad@silvertoque) for exposing this issue and providing a Python script demonstrating the attack. 
+**Security**: a heap-overflow vulnerability was fixed in the WebSocket parser. This attack could have been triggered remotely by a maliciously crafted message-header. Credit to Dane (4cad@silvertoque) for exposing this issue and providing a Python script demonstrating the attack.
 
 It's recommended that all iodine users update to the latest version.
 
@@ -148,7 +162,7 @@ It's recommended that all iodine users update to the latest version.
 
 #### Change log v.0.7.20
 
-**Security**: (`fio`) lower and smarter Slowloris detection limits (backlog limit is now 1,024 responses / messages per client). 
+**Security**: (`fio`) lower and smarter Slowloris detection limits (backlog limit is now 1,024 responses / messages per client).
 
 **Security**: (`http`) HTTP/1.1 slow client throttling - new requests will not be consumed until pending responses were sent. Since HTTP/1.1 is a response-request protocol, this protocol specific approach should protect the HTTP application against slow clients.
 
@@ -332,7 +346,7 @@ It's recommended that all iodine users update to the latest version.
 
 #### Change log v.0.7.0
 
-This version bump is performed because the internal engine changed significantly and might be considered less mature. The public API remains unbroken. 
+This version bump is performed because the internal engine changed significantly and might be considered less mature. The public API remains unbroken.
 
 **Fix**: Fixed a documentation error. Credit to @Fonsan (Erik Fonselius) for PR #41.
 
