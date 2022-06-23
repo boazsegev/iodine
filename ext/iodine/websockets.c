@@ -28,7 +28,8 @@ Feel free to copy, use and enjoy according to the license provided.
 
 #include <websocket_parser.h>
 
-#if !defined(__BIG_ENDIAN__) && !defined(__LITTLE_ENDIAN__) && !defined(__MINGW32__)
+#if !defined(__BIG_ENDIAN__) && !defined(__LITTLE_ENDIAN__) &&                 \
+    !defined(__MINGW32__)
 #include <endian.h>
 #if !defined(__BIG_ENDIAN__) && !defined(__LITTLE_ENDIAN__) &&                 \
     __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -183,15 +184,19 @@ static void websocket_on_protocol_ping(void *ws_p, void *msg_, uint64_t len) {
     fio_write2(ws->fd, .data.buffer = buff, .length = len);
   } else {
     if (((ws_s *)ws)->is_client) {
-      fio_write2(ws->fd, .data.buffer = "\x89\x80mask", .length = 2,
+      fio_write2(ws->fd, .data.buffer = "\x89\x80mask", .length = 6,
                  .after.dealloc = FIO_DEALLOC_NOOP);
     } else {
       fio_write2(ws->fd, .data.buffer = "\x89\x00", .length = 2,
                  .after.dealloc = FIO_DEALLOC_NOOP);
     }
   }
+  FIO_LOG_DEBUG("Received ping and sent pong for Websocket %p (%d)", ws_p,
+                (int)(((ws_s *)ws_p)->fd));
 }
 static void websocket_on_protocol_pong(void *ws_p, void *msg, uint64_t len) {
+  FIO_LOG_DEBUG("Received pong for Websocket %p (%d)", ws_p,
+                (int)(((ws_s *)ws_p)->fd));
   (void)len;
   (void)msg;
   (void)ws_p;
@@ -220,6 +225,7 @@ static void ws_ping(intptr_t fd, fio_protocol_s *ws) {
     fio_write2(fd, .data.buffer = "\x89\x00", .length = 2,
                .after.dealloc = FIO_DEALLOC_NOOP);
   }
+  FIO_LOG_DEBUG("Sent ping for Websocket %p (%d)", (void *)ws, (int)fd);
 }
 
 static void on_close(intptr_t uuid, fio_protocol_s *_ws) {
