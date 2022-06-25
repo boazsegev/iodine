@@ -187,7 +187,7 @@ static void websocket_on_protocol_ping(void *ws_p, void *msg_, uint64_t len) {
       fio_write2(ws->fd, .data.buffer = "\x89\x80mask", .length = 6,
                  .after.dealloc = FIO_DEALLOC_NOOP);
     } else {
-      fio_write2(ws->fd, .data.buffer = "\x89\x00", .length = 2,
+      fio_write2(ws->fd, .data.buffer = "\x8a\x00", .length = 2,
                  .after.dealloc = FIO_DEALLOC_NOOP);
     }
   }
