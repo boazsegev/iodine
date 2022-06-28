@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.48 (2022-06-28)
+
+**Fix**: Fixes an issue with `pong` WebSocket frames when a client sends a WebSocket `ping`. Credit to Lucas Kuan (@lucaskuan) for finding this issue and for PR #124.
+
 #### Change log v.0.7.47 (2022-05-11)
 
 **Fix**: Fixes an issue that causes `Rack::Lint` to complain about `SERVER_PORT` being an empty string. Credit to @adam12 (Adam Daniels) for PR #108 and issue #107.
