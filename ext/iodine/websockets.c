@@ -184,7 +184,7 @@ static void websocket_on_protocol_ping(void *ws_p, void *msg_, uint64_t len) {
     fio_write2(ws->fd, .data.buffer = buff, .length = len);
   } else {
     if (((ws_s *)ws)->is_client) {
-      fio_write2(ws->fd, .data.buffer = "\x89\x80mask", .length = 6,
+      fio_write2(ws->fd, .data.buffer = "\x8a\x80mask", .length = 6,
                  .after.dealloc = FIO_DEALLOC_NOOP);
     } else {
       fio_write2(ws->fd, .data.buffer = "\x8a\x00", .length = 2,
@@ -244,10 +244,10 @@ static uint8_t on_shutdown(intptr_t fd, fio_protocol_s *ws) {
   if (ws && ((ws_s *)ws)->on_shutdown)
     ((ws_s *)ws)->on_shutdown((ws_s *)ws);
   if (((ws_s *)ws)->is_client) {
-    fio_write2(fd, .data.buffer = "\x8a\x80MASK", .length = 6,
+    fio_write2(fd, .data.buffer = "\x88\x80MASK", .length = 6,
                .after.dealloc = FIO_DEALLOC_NOOP);
   } else {
-    fio_write2(fd, .data.buffer = "\x8a\x00", .length = 2,
+    fio_write2(fd, .data.buffer = "\x88\x00", .length = 2,
                .after.dealloc = FIO_DEALLOC_NOOP);
   }
   return 0;
@@ -734,8 +734,13 @@ int websocket_write(ws_s *ws, fio_str_info_s msg, uint8_t is_text) {
 }
 /** Closes a websocket connection. */
 void websocket_close(ws_s *ws) {
-  fio_write2(ws->fd, .data.buffer = "\x88\x00", .length = 2,
-             .after.dealloc = FIO_DEALLOC_NOOP);
+  if (ws->is_client) {
+    fio_write2(ws->fd, .data.buffer = "\x88\x80MASK", .length = 6,
+               .after.dealloc = FIO_DEALLOC_NOOP);
+  } else {
+    fio_write2(ws->fd, .data.buffer = "\x88\x00", .length = 2,
+               .after.dealloc = FIO_DEALLOC_NOOP);
+  }
   fio_close(ws->fd);
   return;
 }
