@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.49
+
+**Fix**: Fixes an issue where named arguments for `subscribe` might not be properly recognized.
+
 #### Change log v.0.7.48 (2022-06-28)
 
 **Fix**: Fixes an issue with `pong` WebSocket frames when a client sends a WebSocket `ping`. Credit to Lucas Kuan (@lucaskuan) for finding this issue and for PR #124.

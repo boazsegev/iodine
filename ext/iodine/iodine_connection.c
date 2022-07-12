@@ -518,10 +518,10 @@ static iodine_sub_args_s iodine_subscribe_args(int argc, VALUE *argv) {
     /* single argument must be a Hash / channel name */
     if (TYPE(argv[0]) == T_HASH) {
       rb_opt = argv[0];
-      ret.channel = rb_hash_aref(argv[0], to_id);
+      ret.channel = rb_hash_aref(argv[0], ID2SYM(to_id));
       if (ret.channel == Qnil || ret.channel == Qfalse) {
         /* temporary backport support */
-        ret.channel = rb_hash_aref(argv[0], channel_id);
+        ret.channel = rb_hash_aref(argv[0], ID2SYM(channel_id));
         if (ret.channel != Qnil) {
           FIO_LOG_WARNING("use of :channel in subscribe is deprecated.");
         }
@@ -546,13 +546,16 @@ static iodine_sub_args_s iodine_subscribe_args(int argc, VALUE *argv) {
   Check_Type(ret.channel, T_STRING);
 
   if (rb_opt) {
-    if (rb_hash_aref(rb_opt, as_id) == binary_id) {
+    VALUE tmp = Qnil;
+    if ((tmp = rb_hash_aref(rb_opt, ID2SYM(as_id))) != Qnil &&
+        TYPE(tmp) == T_SYMBOL && rb_sym2id(tmp) == binary_id) {
       ret.binary = 1;
     }
-    if (rb_hash_aref(rb_opt, match_id) == redis_id) {
+    if ((tmp = rb_hash_aref(rb_opt, ID2SYM(match_id))) != Qnil &&
+        TYPE(tmp) == T_SYMBOL && rb_sym2id(tmp) == redis_id) {
       ret.pattern = FIO_MATCH_GLOB;
     }
-    ret.block = rb_hash_aref(rb_opt, handler_id);
+    ret.block = rb_hash_aref(rb_opt, ID2SYM(handler_id));
     if (ret.block != Qnil) {
       IodineStore.add(ret.block);
     }
