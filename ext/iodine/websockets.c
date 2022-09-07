@@ -127,6 +127,8 @@ struct ws_s {
   struct buffer_s buffer;
   /** data length (how much of the buffer actually used). */
   size_t length;
+  /** total data length (including continuation frames). */
+  size_t total_length;
   /** message buffer. */
   FIOBJ msg;
   /** latest text state. */
@@ -155,20 +157,24 @@ static void websocket_on_unwrapped(void *ws_p, void *msg, uint64_t len,
                                    char first, char last, char text,
                                    unsigned char rsv) {
   ws_s *ws = ws_p;
+  if (!ws)
+    return;
   if (last && first) {
     ws->on_message(ws, (fio_str_info_s){.data = msg, .len = len},
                    (uint8_t)text);
     return;
   }
+  if (ws->msg == FIOBJ_INVALID)
+    ws->msg = fiobj_str_buf(len);
+  ws->total_length += len;
   if (first) {
     ws->is_text = (uint8_t)text;
-    if (ws->msg == FIOBJ_INVALID)
-      ws->msg = fiobj_str_buf(len);
-    fiobj_str_resize(ws->msg, 0);
   }
   fiobj_str_write(ws->msg, msg, len);
   if (last) {
     ws->on_message(ws, fiobj_obj2cstr(ws->msg), ws->is_text);
+    fiobj_str_resize(ws->msg, 0);
+    ws->total_length = 0;
   }
 
   (void)rsv;
@@ -261,7 +267,7 @@ static void on_data(intptr_t sockfd, fio_protocol_s *ws_) {
       websocket_buffer_peek(ws->buffer.data, ws->length);
   const uint64_t raw_length = info.packet_length + info.head_length;
   /* test expected data amount */
-  if (ws->max_msg_size < raw_length) {
+  if (ws->max_msg_size < raw_length + ws->total_length) {
     /* too big */
     websocket_close(ws);
     return;

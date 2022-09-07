@@ -453,6 +453,7 @@ static uint64_t websocket_consume(void *buffer, uint64_t len, void *udata,
       fprintf(stderr, "ERROR: WebSocket protocol error - unmasked data.\n");
 #endif
       websocket_on_protocol_error(udata);
+      return 0;
     }
     /* call callback */
     switch (pos[0] & 15) {
