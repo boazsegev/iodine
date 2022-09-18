@@ -6,9 +6,15 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.50
+
+**Fix**: Fixes compilation on Ruby 3.x - deprecation of `rc_cData`. Credit to Mohammad A. Ali (@oldmoe) for opening issue @128.
+
 #### Change log v.0.7.49
 
 **Fix**: Fixes an issue where named arguments for `subscribe` might not be properly recognized.
+
+**Security**: Fixes an issue where a malformed WebSocket continuation frame might crash a worker process. Credit to @fabio for exposing this issue and opening issue #127.
 
 #### Change log v.0.7.48 (2022-06-28)
 
