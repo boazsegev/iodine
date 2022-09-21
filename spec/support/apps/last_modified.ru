@@ -16,17 +16,21 @@
 module HelloWorld
   # This is the HTTP response object according to the Rack specification.
 
-   # this is function will be called by the Rack server (iodine) for every request.
-   def self.call env
-     req = Rack::Request.new(env)
+  # this is function will be called by the Rack server (iodine) for every request.
+  def self.call env
+    req = Rack::Request.new(env)
 
-     headers = {}
+    headers = Rack::Headers.new
 
-     headers['Last-Modified'] = req.params['last_modified'] if req.params['last_modified']
-     headers['Last-Modified'] = nil if req.params['last_modified'] == 'nil'
-
-     [200, headers, [] ]
-   end
+    if req.params['last_modified'] == 'foo'
+      headers['Last-Modified'] = req.params['last_modified']
+    elsif req.params['last_modified'] == 'nil'
+      headers['Last-Modified'] = nil
+    elsif req.params['last_modified']
+      headers['Last-Modified'] = Time.now.httpdate
+    end
+    [ 200, headers, [] ]
+  end
 end
 
 # this function call links our HelloWorld application with Rack
