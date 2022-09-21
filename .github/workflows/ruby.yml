@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ruby-version: ['2.3', '2.6', '2.7', '3.0', '3.2']
+        ruby-version: ['2.3', '2.7', '3.0', '3.2']
         os: [ubuntu-latest, macos-latest] # , windows-latest
     runs-on: ${{ matrix.os }}
     steps:
@@ -34,7 +34,9 @@ jobs:
       run: |
         echo CFLAGS = $CFLAGS
         echo cflags = $cflags
-        bundle exec rake install -v -- -v
+        bundle install
+        rake install -v
+#        bundle exec rake install
 #       env VERBOSE=1 bundle exec rspec --format documentation
 #    - name: Run tests
 #      run: bundle exec rake
