@@ -27,7 +27,9 @@ end
 ENV['RACK_HANDLER'] ||= 'iodine'
 
 begin
-  ::Rack::Handler.register('iodine', 'Iodine::Rack') if defined?(::Rack::Handler)
-  ::Rack::Handler.register('Iodine', 'Iodine::Rack') if defined?(::Rack::Handler)
+  if defined?(::Rackup::Handler)
+    ::Rackup::Handler.register('iodine', Iodine::Rack)
+    ::Rackup::Handler.register('Iodine', Iodine::Rack)
+  end
 rescue StandardError
 end
