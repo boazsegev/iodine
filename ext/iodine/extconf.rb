@@ -1,4 +1,5 @@
 require 'mkmf'
+require 'fileutils'
 
 # Test polling
 def iodine_test_polling_support
