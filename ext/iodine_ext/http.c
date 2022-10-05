@@ -922,7 +922,7 @@ intptr_t http_listen(const char *port, const char *binding,
   if (arg_settings.on_request == NULL) {
     FIO_LOG_ERROR("http_listen requires the .on_request parameter "
                   "to be set\n");
-    kill(0, SIGINT);
+    fio_kill(0, SIGINT);
     exit(11);
   }
 

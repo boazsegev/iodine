@@ -852,7 +852,7 @@ FIO_IGNORE_MACRO(struct redis_engine_create_args args) {
   if (getpid() != fio_parent_pid()) {
     FIO_LOG_FATAL("(redis) Redis engine initialization can only "
                   "be performed in the Root process.");
-    kill(0, SIGINT);
+    fio_kill(0, SIGINT);
     fio_stop();
     return NULL;
   }

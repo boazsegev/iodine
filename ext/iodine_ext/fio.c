@@ -155,7 +155,7 @@ int ioctl (int fd, u_long request, int* argp) {
   else { return 0; }
 }
 
-int kill(int pid, int sig) {
+int fio_kill(int pid, int sig) {
   /* Credit to Jan Biedermann (GitHub: @janbiedermann) */
   HANDLE handle;
   DWORD status;
@@ -987,7 +987,7 @@ FIO_FUNC void fio_thread_signal(void) {
     (void)r;
   } else if (fd == -1) {
     /* hardly the best way, but there's a thread sleeping on air */
-    kill(getpid(), SIGCONT);
+    fio_kill(getpid(), SIGCONT);
   }
 #endif
 }
@@ -1654,7 +1654,7 @@ void fio_reap_children(void) {
   sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
   if (sigaction(SIGCHLD, &sa, &fio_old_sig_chld) == -1) {
     perror("Child reaping initialization failed");
-    kill(0, SIGINT);
+    fio_kill(0, SIGINT);
     exit(errno);
   }
 }
@@ -4603,7 +4603,7 @@ static void *fio_sentinel_worker_thread(void *arg) {
   if (child == -1) {
     FIO_LOG_FATAL("couldn't spawn worker.");
     perror("\n           errno");
-    kill(fio_parent_pid(), SIGINT);
+    fio_kill(fio_parent_pid(), SIGINT);
     fio_stop();
     return NULL;
   } else if (child) {
@@ -4617,7 +4617,7 @@ static void *fio_sentinel_worker_thread(void *arg) {
       } else {
         FIO_LOG_FATAL("Child worker (%d) shutdown. Stopping services.", child);
       }
-      kill(0, SIGINT);
+      fio_kill(0, SIGINT);
     }
 #else
     if (fio_data->active) {
@@ -6879,7 +6879,7 @@ static void fio_cluster_on_close(intptr_t uuid, fio_protocol_s *pr_) {
 #ifndef __MINGW32__
       fio_cluster_data_cleanup(1);
 #endif
-      kill(getpid(), SIGINT);
+      fio_kill(getpid(), SIGINT);
     }
   }
   if (c->msg)
@@ -7155,7 +7155,7 @@ static void fio_cluster_on_connect(intptr_t uuid, void *udata) {
 static void fio_cluster_on_fail(intptr_t uuid, void *udata) {
   FIO_LOG_FATAL("(facil.io) unknown cluster connection error");
   perror("       errno");
-  kill(fio_parent_pid(), SIGINT);
+  fio_kill(fio_parent_pid(), SIGINT);
   fio_stop();
   // exit(errno ? errno : 1);
   (void)udata;

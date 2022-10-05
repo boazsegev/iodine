@@ -263,10 +263,12 @@ Version and helper macros
 #define pipe(fds) _pipe(fds, 65536, _O_BINARY)
 
 int fork(void);
-int kill(int, int);
+int fio_kill(int, int);
 ssize_t pread(int, void*, size_t, off_t);
 ssize_t pwrite(int, const void *, size_t, off_t);
 int fio_osffd4fd(unsigned int);
+#else
+#define fio_kill kill
 #endif
 
 /* *****************************************************************************
@@ -523,7 +525,7 @@ FIO_LOG2STDERR(const char *format, ...) {
   if (!(ptr)) {                                                                \
     FIO_LOG_FATAL("memory allocation error "__FILE__                           \
                   ":" FIO_MACRO2STR(__LINE__));                                \
-    kill(0, SIGINT);                                                           \
+    fio_kill(0, SIGINT);                                                           \
     exit(errno);                                                               \
   }
 #endif
@@ -6048,7 +6050,7 @@ FIO_NAME(_insert_or_overwrite_)(FIO_NAME(s) * set, FIO_SET_HASH_TYPE hash_value,
   pos->hash = hash_value;
   pos->pos->hash = hash_value;
   FIO_SET_COPY(pos->pos->obj, obj);
-  
+
   return pos->pos->obj;
 }
 
