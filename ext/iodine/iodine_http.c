@@ -477,8 +477,10 @@ Handling the HTTP response
 static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
   http_s *h = (http_s *)h_;
   // fprintf(stderr, "For_each - headers\n");
-  if (TYPE(key) == T_NIL)
+  if (TYPE(val) == T_NIL)
     return ST_CONTINUE;
+  if (TYPE(val) == T_ARRAY)
+    goto rack3_style_multi_value;
   if (TYPE(key) != T_STRING)
     key = IodineCaller.call(key, iodine_to_s_id);
   if (TYPE(key) != T_STRING)
@@ -516,6 +518,14 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
   }
   fiobj_free(name);
   // no errors, return 0
+  return ST_CONTINUE;
+
+rack3_style_multi_value:
+  for (size_t i = 0, end = RARRAY_LEN(val); i < end; ++i) {
+    if (for_each_header_data(key, RARRAY_AREF(val, i), h_) == ST_CONTINUE)
+      continue;
+    return ST_STOP;
+  }
   return ST_CONTINUE;
 }
 
