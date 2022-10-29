@@ -477,7 +477,7 @@ Handling the HTTP response
 static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
   http_s *h = (http_s *)h_;
   // fprintf(stderr, "For_each - headers\n");
-  if (TYPE(val) == T_NIL)
+  if (TYPE(val) == T_NIL || TYPE(key) == T_NIL)
     return ST_CONTINUE;
   if (TYPE(val) == T_ARRAY)
     goto array_style_multi_value;
