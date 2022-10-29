@@ -8,7 +8,9 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.50
 
-**Fix**: Fixes compilation on Ruby 3.x - deprecation of `rc_cData`. Credit to Mohammad A. Ali (@oldmoe) for opening issue @128.
+**Fix**: Fixes some compatibility issues with Rack 3.0. Credit to @taku0 for opening issue #131.
+
+**Fix**: Fixes compilation on Ruby 3.x - deprecation of `rc_cData`. Credit to Mohammad A. Ali (@oldmoe) for opening issue #128.
 
 #### Change log v.0.7.49
 

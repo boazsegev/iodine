@@ -16,6 +16,7 @@ begin
     end
   end
 rescue LoadError
+  puts "WARNING: The gam `rack` wasn't loaded before iodine started loading the rack app, using custom loader."
   module Iodine
     module Base
       module Rack
@@ -133,8 +134,9 @@ rescue LoadError
           #   end
           #
           #   run Heartbeat
-          def run(app)
-            @run = app
+          def run(app = nil, &block)
+            raise ArgumentError, "Both app and block given!" if app && block_given?
+            @run = app || block
           end
 
           # Takes a lambda or block that is used to warm-up the application.
@@ -214,28 +216,29 @@ module Iodine
 
       def self.try_file filename
         return nil unless File.exist? filename
-        return Iodine::Base::Rack::Builder.parse_file filename
+        result = Iodine::Base::Rack::Builder.parse_file filename
+        return result[0] if(result.is_a?(Array))
+        return result
       end
 
       def self.get_app_opts
-        app, opt = nil, nil
+        app, opt = nil, Hash.new
         filename = Iodine::DEFAULT_SETTINGS[:filename_]
         if filename
-          app, opt = try_file filename
-          app, opt = try_file "#{filename}.ru" unless opt
-          unless opt
+          app = try_file(filename)
+          app = try_file("#{filename}.ru") unless app
+          unless app
             puts "* Couldn't find #{filename}\n  testing for config.ru\n"
-            app, opt = try_file "config.ru"
+            app = try_file "config.ru"
           end
         else
-          app, opt = try_file "config.ru";
+          app = try_file "config.ru";
         end
 
-        unless opt
+        unless app
           puts "WARNING: Ruby application not found#{ filename ? " - missing both #{filename} and config.ru" : " - missing config.ru"}."
           if Iodine::DEFAULT_SETTINGS[:public]
             puts "         Running only static file service."
-            opt = Hash.new
             app = Proc.new { [404, {}, "Not Found!"] }
           else
             puts "\nERROR: Couldn't run Ruby application, check command line arguments."
