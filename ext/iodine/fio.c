@@ -1025,7 +1025,7 @@ static void fio_defer_thread_wait(void) {
     if (fio_defer_has_queue())
       pthread_setspecific(static_throttle_key, (void *)1);
     else if (static_throttle < FIO_DEFER_THROTTLE_LIMIT)
-      pthread_setspecific(static_throttle_key, (void *)(static_throttle << 1));
+      pthread_setspecific(static_throttle_key, (void *)((static_throttle << 1) | 1));
   }
 }
 
