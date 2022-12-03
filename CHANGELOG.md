@@ -6,7 +6,11 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
-#### Change log v.0.7.50
+#### Change log v.0.7.51 (2022-12-03)
+
+**Fix**: Fixes CPU spin error caused by an uncaught integer overflow. Credit to Alexander Pavlenko (@AlexanderPavlenko) for opening issue #132.
+
+#### Change log v.0.7.50 (2022-10-29)
 
 **Fix**: Fixes some compatibility issues with Rack 3.0. Credit to @taku0 for opening issue #131.
 
