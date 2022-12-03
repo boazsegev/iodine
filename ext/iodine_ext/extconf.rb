@@ -1,4 +1,5 @@
 require 'mkmf'
+require 'fileutils'
 
 WIN_PATTERNS = [
   /bccwin/i,

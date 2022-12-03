@@ -1025,7 +1025,7 @@ static void fio_defer_thread_wait(void) {
     if (fio_defer_has_queue())
       pthread_setspecific(static_throttle_key, (void *)1);
     else if (static_throttle < FIO_DEFER_THROTTLE_LIMIT)
-      pthread_setspecific(static_throttle_key, (void *)(static_throttle << 1));
+      pthread_setspecific(static_throttle_key, (void *)((static_throttle << 1) | 1));
   }
 }
 
@@ -3689,7 +3689,8 @@ closed:
   return -1;
 
 flush_rw_hook:
-  flushed = uuid_data(uuid).rw_hooks->flush(uuid, uuid_data(uuid).rw_udata);
+  if(uuid_data(uuid).rw_hooks)
+    flushed = uuid_data(uuid).rw_hooks->flush(uuid, uuid_data(uuid).rw_udata);
   fio_unlock(&uuid_data(uuid).sock_lock);
   if (!flushed)
     return 0;
@@ -3749,7 +3750,8 @@ size_t fio_flush_all(void) {
     return 0;
   size_t count = 0;
   for (uintptr_t i = 0; i <= fio_data->max_protocol_fd; ++i) {
-    if ((fd_data(i).open || fd_data(i).packet) && fio_flush(fd2uuid(i)) > 0)
+    if ((fd_data(i).open || fd_data(i).packet) &&
+        fd_data(i).rw_hooks && fio_flush(fd2uuid(i)) > 0)
       ++count;
   }
   return count;

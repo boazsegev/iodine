@@ -477,6 +477,10 @@ Handling the HTTP response
 static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
   http_s *h = (http_s *)h_;
   // fprintf(stderr, "For_each - headers\n");
+  if (TYPE(val) == T_NIL || TYPE(key) == T_NIL)
+    return ST_CONTINUE;
+  if (TYPE(val) == T_ARRAY)
+    goto array_style_multi_value;
   if (TYPE(key) != T_STRING)
     key = IodineCaller.call(key, iodine_to_s_id);
   if (TYPE(key) != T_STRING)
@@ -514,6 +518,14 @@ static int for_each_header_data(VALUE key, VALUE val, VALUE h_) {
   }
   fiobj_free(name);
   // no errors, return 0
+  return ST_CONTINUE;
+
+array_style_multi_value:
+  for (size_t i = 0, end = RARRAY_LEN(val); i < end; ++i) {
+    if (for_each_header_data(key, RARRAY_AREF(val, i), h_) == ST_CONTINUE)
+      continue;
+    return ST_STOP;
+  }
   return ST_CONTINUE;
 }
 
@@ -941,15 +953,15 @@ intptr_t iodine_http_listen(iodine_connection_args_s args){
     support_xsendfile = 1;
   }
   IodineStore.add(args.handler);
-  #ifdef __MINGW32__
-    intptr_t uuid = http_listen(
+#ifdef __MINGW32__
+  intptr_t uuid = http_listen(
       args.port.data, args.address.data, .on_request = on_rack_request,
       .on_upgrade = on_rack_upgrade, .udata = (void *)args.handler,
       .timeout = args.timeout, .ws_timeout = args.ping,
       .ws_max_msg_size = args.max_msg, .max_header_size = args.max_headers,
       .on_finish = free_iodine_http, .log = args.log,
       .max_body_size = args.max_body, .public_folder = args.public.data);
-  #else
+#else
   intptr_t uuid = http_listen(
       args.port.data, args.address.data, .on_request = on_rack_request,
       .on_upgrade = on_rack_upgrade, .udata = (void *)args.handler,
@@ -957,7 +969,7 @@ intptr_t iodine_http_listen(iodine_connection_args_s args){
       .ws_max_msg_size = args.max_msg, .max_header_size = args.max_headers,
       .on_finish = free_iodine_http, .log = args.log,
       .max_body_size = args.max_body, .public_folder = args.public.data);
-  #endif
+#endif
   if (uuid == -1)
     return uuid;
 
@@ -1067,11 +1079,11 @@ intptr_t iodine_ws_connect(iodine_connection_args_s args) {
   FIOBJ url_tmp = FIOBJ_INVALID;
   if (!args.url.data) {
     url_tmp = fiobj_str_buf(64);
-  #ifndef __MINGW32__
+#ifndef __MINGW32__
     if (args.tls)
       fiobj_str_write(url_tmp, "wss://", 6);
     else
-  #endif
+#endif
       fiobj_str_write(url_tmp, "ws://", 5);
     if (!is_unix_socket) {
       fiobj_str_write(url_tmp, args.address.data, args.address.len);
@@ -1088,11 +1100,11 @@ intptr_t iodine_ws_connect(iodine_connection_args_s args) {
   }
 
 #ifdef __MINGW32__
-  intptr_t uuid = http_connect(
-      args.url.data, (is_unix_socket ? args.address.data : NULL),
-      .udata = request_data_create(&args),
-      .on_response = ws_client_http_connected,
-      .on_finish = ws_client_http_connection_finished);
+  intptr_t uuid =
+      http_connect(args.url.data, (is_unix_socket ? args.address.data : NULL),
+                   .udata = request_data_create(&args),
+                   .on_response = ws_client_http_connected,
+                   .on_finish = ws_client_http_connection_finished);
 #else
   intptr_t uuid = http_connect(
       args.url.data, (is_unix_socket ? args.address.data : NULL),

@@ -28,7 +28,8 @@ Feel free to copy, use and enjoy according to the license provided.
 
 #include <websocket_parser.h>
 
-#if !defined(__BIG_ENDIAN__) && !defined(__LITTLE_ENDIAN__) && !defined(__MINGW32__)
+#if !defined(__BIG_ENDIAN__) && !defined(__LITTLE_ENDIAN__) &&                 \
+    !defined(__MINGW32__)
 #include <endian.h>
 #if !defined(__BIG_ENDIAN__) && !defined(__LITTLE_ENDIAN__) &&                 \
     __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -126,6 +127,8 @@ struct ws_s {
   struct buffer_s buffer;
   /** data length (how much of the buffer actually used). */
   size_t length;
+  /** total data length (including continuation frames). */
+  size_t total_length;
   /** message buffer. */
   FIOBJ msg;
   /** latest text state. */
@@ -154,20 +157,24 @@ static void websocket_on_unwrapped(void *ws_p, void *msg, uint64_t len,
                                    char first, char last, char text,
                                    unsigned char rsv) {
   ws_s *ws = ws_p;
+  if (!ws)
+    return;
   if (last && first) {
     ws->on_message(ws, (fio_str_info_s){.data = msg, .len = len},
                    (uint8_t)text);
     return;
   }
+  if (ws->msg == FIOBJ_INVALID)
+    ws->msg = fiobj_str_buf(len);
+  ws->total_length += len;
   if (first) {
     ws->is_text = (uint8_t)text;
-    if (ws->msg == FIOBJ_INVALID)
-      ws->msg = fiobj_str_buf(len);
-    fiobj_str_resize(ws->msg, 0);
   }
   fiobj_str_write(ws->msg, msg, len);
   if (last) {
     ws->on_message(ws, fiobj_obj2cstr(ws->msg), ws->is_text);
+    fiobj_str_resize(ws->msg, 0);
+    ws->total_length = 0;
   }
 
   (void)rsv;
@@ -183,15 +190,19 @@ static void websocket_on_protocol_ping(void *ws_p, void *msg_, uint64_t len) {
     fio_write2(ws->fd, .data.buffer = buff, .length = len);
   } else {
     if (((ws_s *)ws)->is_client) {
-      fio_write2(ws->fd, .data.buffer = "\x89\x80mask", .length = 2,
+      fio_write2(ws->fd, .data.buffer = "\x8a\x80mask", .length = 6,
                  .after.dealloc = FIO_DEALLOC_NOOP);
     } else {
-      fio_write2(ws->fd, .data.buffer = "\x89\x00", .length = 2,
+      fio_write2(ws->fd, .data.buffer = "\x8a\x00", .length = 2,
                  .after.dealloc = FIO_DEALLOC_NOOP);
     }
   }
+  FIO_LOG_DEBUG("Received ping and sent pong for Websocket %p (%d)", ws_p,
+                (int)(((ws_s *)ws_p)->fd));
 }
 static void websocket_on_protocol_pong(void *ws_p, void *msg, uint64_t len) {
+  FIO_LOG_DEBUG("Received pong for Websocket %p (%d)", ws_p,
+                (int)(((ws_s *)ws_p)->fd));
   (void)len;
   (void)msg;
   (void)ws_p;
@@ -220,6 +231,7 @@ static void ws_ping(intptr_t fd, fio_protocol_s *ws) {
     fio_write2(fd, .data.buffer = "\x89\x00", .length = 2,
                .after.dealloc = FIO_DEALLOC_NOOP);
   }
+  FIO_LOG_DEBUG("Sent ping for Websocket %p (%d)", (void *)ws, (int)fd);
 }
 
 static void on_close(intptr_t uuid, fio_protocol_s *_ws) {
@@ -238,10 +250,10 @@ static uint8_t on_shutdown(intptr_t fd, fio_protocol_s *ws) {
   if (ws && ((ws_s *)ws)->on_shutdown)
     ((ws_s *)ws)->on_shutdown((ws_s *)ws);
   if (((ws_s *)ws)->is_client) {
-    fio_write2(fd, .data.buffer = "\x8a\x80MASK", .length = 6,
+    fio_write2(fd, .data.buffer = "\x88\x80MASK", .length = 6,
                .after.dealloc = FIO_DEALLOC_NOOP);
   } else {
-    fio_write2(fd, .data.buffer = "\x8a\x00", .length = 2,
+    fio_write2(fd, .data.buffer = "\x88\x00", .length = 2,
                .after.dealloc = FIO_DEALLOC_NOOP);
   }
   return 0;
@@ -255,7 +267,7 @@ static void on_data(intptr_t sockfd, fio_protocol_s *ws_) {
       websocket_buffer_peek(ws->buffer.data, ws->length);
   const uint64_t raw_length = info.packet_length + info.head_length;
   /* test expected data amount */
-  if (ws->max_msg_size < raw_length) {
+  if (ws->max_msg_size < raw_length + ws->total_length) {
     /* too big */
     websocket_close(ws);
     return;
@@ -728,8 +740,13 @@ int websocket_write(ws_s *ws, fio_str_info_s msg, uint8_t is_text) {
 }
 /** Closes a websocket connection. */
 void websocket_close(ws_s *ws) {
-  fio_write2(ws->fd, .data.buffer = "\x88\x00", .length = 2,
-             .after.dealloc = FIO_DEALLOC_NOOP);
+  if (ws->is_client) {
+    fio_write2(ws->fd, .data.buffer = "\x88\x80MASK", .length = 6,
+               .after.dealloc = FIO_DEALLOC_NOOP);
+  } else {
+    fio_write2(ws->fd, .data.buffer = "\x88\x00", .length = 2,
+               .after.dealloc = FIO_DEALLOC_NOOP);
+  }
   fio_close(ws->fd);
   return;
 }

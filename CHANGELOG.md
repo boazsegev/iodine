@@ -6,6 +6,26 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.51 (2022-12-03)
+
+**Fix**: Fixes CPU spin error caused by an uncaught integer overflow. Credit to Alexander Pavlenko (@AlexanderPavlenko) for opening issue #132.
+
+#### Change log v.0.7.50 (2022-10-29)
+
+**Fix**: Fixes some compatibility issues with Rack 3.0. Credit to @taku0 for opening issue #131.
+
+**Fix**: Fixes compilation on Ruby 3.x - deprecation of `rc_cData`. Credit to Mohammad A. Ali (@oldmoe) for opening issue #128.
+
+#### Change log v.0.7.49
+
+**Fix**: Fixes an issue where named arguments for `subscribe` might not be properly recognized.
+
+**Security**: Fixes an issue where a malformed WebSocket continuation frame might crash a worker process. Credit to @fabio for exposing this issue and opening issue #127.
+
+#### Change log v.0.7.48 (2022-06-28)
+
+**Fix**: Fixes an issue with `pong` WebSocket frames when a client sends a WebSocket `ping`. Credit to Lucas Kuan (@lucaskuan) for finding this issue and for PR #124.
+
 #### Change log v.0.7.47 (2022-05-11)
 
 **Fix**: Fixes an issue that causes `Rack::Lint` to complain about `SERVER_PORT` being an empty string. Credit to @adam12 (Adam Daniels) for PR #108 and issue #107.

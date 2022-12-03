@@ -1,7 +1,7 @@
 # iodine - Why Settle for a fast HTTP / WebSocket Server with native Pub/Sub?
 
 [![Gem](https://img.shields.io/gem/dt/iodine.svg)](https://rubygems.org/gems/iodine)
-[![Build Status](https://travis-ci.org/boazsegev/iodine.svg?branch=master)](https://travis-ci.org/boazsegev/iodine)
+[![Build Status](https://github.com/boazsegev/iodine/actions/workflows/ruby.yml/badge.svg)](https://github.com/boazsegev/iodine/actions/workflows/ruby.yml)
 [![Gem Version](https://badge.fury.io/rb/iodine.svg)](https://badge.fury.io/rb/iodine)
 [![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
 [![GitHub](https://img.shields.io/badge/GitHub-Open%20Source-blue.svg)](https://github.com/boazsegev/iodine)
@@ -37,7 +37,7 @@ Since iodine wraps much of the [C facil.io framework](https://github.com/boazseg
 
 * Iodine is ideal for **Linux/Unix** based systems (i.e. macOS, Ubuntu, FreeBSD etc'), which are ideal for evented IO (while Windows and Solaris are better at IO *completion* events, which are very different).
 
-Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.2.2 and up... it should support the whole Ruby 2.0 MRI family, but CI tests start at Ruby 2.2.2.
+Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.3 and up... it should support the whole Ruby 2.x and 3.x MRI family, but CI tests start at Ruby 2.3.
 
 **Note**: iodine does **not** support streaming when using Rack. It's recommended to avoid blocking the server when using `body.each` since the `each` loop will block the iodine's thread until it's finished and iodine won't send any data before the loop is done.
 
