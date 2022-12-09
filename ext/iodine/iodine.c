@@ -312,7 +312,7 @@ static VALUE iodine_master_is(VALUE self) {
  * a single process mode (the master is also a worker), `false` otherwise.
  */
 static VALUE iodine_worker_is(VALUE self) {
-  return fio_is_master() ? Qtrue : Qfalse;
+  return fio_is_worker() ? Qtrue : Qfalse;
 }
 
 /**
