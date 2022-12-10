@@ -497,6 +497,7 @@ Ruby Connection Methods - Pub/Sub
 ***************************************************************************** */
 
 typedef struct {
+  VALUE channel_org;
   VALUE channel;
   VALUE block;
   fio_match_fn pattern;
@@ -506,7 +507,7 @@ typedef struct {
 /** Tests the `subscribe` Ruby arguments */
 static iodine_sub_args_s iodine_subscribe_args(int argc, VALUE *argv) {
 
-  iodine_sub_args_s ret = {.channel = Qnil, .block = Qnil};
+  iodine_sub_args_s ret = {.channel_org = Qnil, .channel = Qnil, .block = Qnil};
   VALUE rb_opt = 0;
 
   switch (argc) {
@@ -534,7 +535,7 @@ static iodine_sub_args_s iodine_subscribe_args(int argc, VALUE *argv) {
     rb_raise(rb_eArgError, "method accepts 1 or 2 arguments.");
     return ret;
   }
-
+  ret.channel_org = ret.channel;
   if (ret.channel == Qnil || ret.channel == Qfalse) {
     rb_raise(rb_eArgError,
              "a target (:to) subject / stream / channel is required.");
@@ -652,7 +653,7 @@ static VALUE iodine_pubsub_subscribe(int argc, VALUE *argv, VALUE self) {
     iodine_sub_add(&sub_global, sub);
     fio_unlock(&sub_lock);
   }
-  return args.channel;
+  return args.channel_org;
 }
 
 // clang-format off
@@ -682,6 +683,9 @@ static VALUE iodine_pubsub_unsubscribe(VALUE self, VALUE name) {
     s_lock = &c->lock;
     subs = &c->subscriptions;
   }
+  if (TYPE(name) == T_SYMBOL)
+    name = rb_sym2str(name);
+  Check_Type(name, T_STRING);
   fio_lock(s_lock);
   ret = iodine_sub_unsubscribe(subs, IODINE_RSTRINFO(name));
   fio_unlock(s_lock);
