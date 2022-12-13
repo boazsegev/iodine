@@ -9,9 +9,9 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.52 (2022-12-10)
 
-**Fix**: Fixes `Iodine.unsubscribe` which failed when a symbol was supplied. Credit to Alexander Pavlenko (@raxoft) for opening issue #134.
+**Fix**: Fixes `Iodine.unsubscribe` which failed when a symbol was supplied. Credit to Patrik Rak (@raxoft) for opening issue #134.
 
-**Fix**: Fixes `Iodine.is_worker` which gave an incorrect answer due to a copy & paste error. Credit to Alexander Pavlenko (@raxoft) for opening PR #133.
+**Fix**: Fixes `Iodine.is_worker` which gave an incorrect answer due to a copy & paste error. Credit to Patrik Rak (@raxoft) for opening PR #133.
 
 #### Change log v.0.7.51 (2022-12-03)
 
