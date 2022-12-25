@@ -27,10 +27,9 @@ task :push do
   system("git push github")
   system("git push gitlab")
   system("git push bitbucket")
-  system("git push star")
+  system("git push trabant")
 end
 
 task :default => [:compile, :spec]
 
 Rake::ExtensionTask.new :iodine_ext
-
