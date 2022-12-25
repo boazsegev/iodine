@@ -1,0 +1,2 @@
+windows:ci/prescient.bat
+linux:bash ci/prescient.sh
