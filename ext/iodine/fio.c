@@ -3203,13 +3203,14 @@ static intptr_t fio_unix_socket(const char *address, uint8_t server) {
       close(fd);
       return -1;
     }
+    /* chmod for foreign connections... if possible */
+    if(chmod(addr.sun_path, 0x1FF))
+      FIO_LOG_WARNING("chmod failed for %s (%d: %s)", address, errno, strerror(errno));
     if (listen(fd, SOMAXCONN) < 0) {
       // perror("couldn't start listening to unix socket");
       close(fd);
       return -1;
     }
-    /* chmod for foreign connections */
-    fchmod(fd, 0777);
   } else {
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1 &&
         errno != EINPROGRESS) {
