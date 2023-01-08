@@ -6,6 +6,9 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.53 (expected: 2023-01-10)
+
+**Fix**: Fixes Unix socket permission limitations, so unix sockets are not limited to the owner of the process. Credit to Patrik Rak (@raxoft) for opening issue #136.
 
 #### Change log v.0.7.52 (2022-12-10)
 
