@@ -6748,7 +6748,7 @@ static void fio_cluster_init(void) {
   tmp_folder_len += 10;
   tmp_folder_len +=
       snprintf(cluster_data.name + tmp_folder_len,
-               FIO_CLUSTER_NAME_LIMIT - tmp_folder_len, "%d", (int)getpid() + (int)(fio_rand64()) & 0xAFFF);
+               FIO_CLUSTER_NAME_LIMIT - tmp_folder_len, "%08x", (int)getpid() + (int)(fio_rand64() & 0xAFFFFFFF));
   cluster_data.name[tmp_folder_len] = 0;
 
   /* remove if existing */
