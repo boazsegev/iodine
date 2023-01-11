@@ -3198,8 +3198,15 @@ static intptr_t fio_unix_socket(const char *address, uint8_t server) {
   }
   if (server) {
     unlink(addr.sun_path);
-    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
-      // perror("couldn't bind unix socket");
+#ifndef FIO_SOCK_AVOID_UMASK
+    int org_umask = umask(0x1FF);
+    int btmp = bind(fd, (struct sockaddr *)&addr, sizeof(addr));
+    umask(org_umask);
+#else
+    int btmp = bind(fd, (struct sockaddr *)&addr, sizeof(addr));
+#endif
+    if (btmp == -1) {
+      // perror("couldn't bind unix socket");    
       close(fd);
       return -1;
     }
@@ -6737,11 +6744,11 @@ static void fio_cluster_init(void) {
     if (cluster_data.name[tmp_folder_len - 1] != '/')
       cluster_data.name[tmp_folder_len++] = '/';
   }
-  memcpy(cluster_data.name + tmp_folder_len, "facil-io-sock-", 14);
-  tmp_folder_len += 14;
+  memcpy(cluster_data.name + tmp_folder_len, "fio-usock-", 10);
+  tmp_folder_len += 10;
   tmp_folder_len +=
       snprintf(cluster_data.name + tmp_folder_len,
-               FIO_CLUSTER_NAME_LIMIT - tmp_folder_len, "%d", (int)getpid());
+               FIO_CLUSTER_NAME_LIMIT - tmp_folder_len, "%d", (int)getpid() + (int)(fio_rand64()) & 0xAFFF);
   cluster_data.name[tmp_folder_len] = 0;
 
   /* remove if existing */
