@@ -6,7 +6,11 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
-#### Change log v.0.7.53 2023-01-13
+#### Change log v.0.7.54 (2023-03-15)
+
+**Fix**: Fixes verbosity option in iodine's CLI where the value `0` was ignored. Credit to @jsaak for opening issue #139.
+
+#### Change log v.0.7.53 (2023-01-13)
 
 **Fix**: Fixes Unix socket permission limitations, so unix sockets are not limited to the owner of the process. Credit to Patrik Rak (@raxoft) for opening issue #136.
 

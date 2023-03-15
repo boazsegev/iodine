@@ -439,7 +439,7 @@ static VALUE iodine_cli_parse(VALUE self) {
   /* copy values from CLI library to iodine */
   if (fio_cli_get("-V")) {
     int level = fio_cli_get_i("-V");
-    if (level > 0 && level < 100)
+    if (level >= 0 && level < 100)
       FIO_LOG_LEVEL = level;
   }
   if (!fio_cli_get("-w") && getenv("WEB_CONCURRENCY")) {
