@@ -34,9 +34,9 @@ Gem::Specification.new do |spec|
   spec.requirements << 'TLS requires OpenSSL >= 1.1.0.'
   spec.requirements << 'Or Windows with Ruby >= 3.0.0 build with MingW and MingW as compiler.'
 
-  spec.add_dependency 'rackup', '~> 0.2.2'
-  spec.add_dependency 'rack', '~> 3.0.0'
-  spec.add_development_dependency 'rake', '~> 13.0', '< 14.0'
+  spec.add_dependency 'rackup', '>= 0.2.2', '< 3.0.0'
+  spec.add_dependency 'rack', '~> 3.0.7'
+  spec.add_development_dependency 'rake'
   spec.add_development_dependency 'minitest', '>=5', '< 6.0'
   spec.add_development_dependency 'rspec', '>=3.9.0', '< 4.0'
   spec.add_development_dependency 'spec', '>=5.3.0', '< 6.0'
