@@ -564,6 +564,8 @@ found_file:
       http_set_header(h, HTTP_HEADER_CONTENT_LENGTH, fiobj_num_new(length));
       http_finish(h);
       return 0;
+    } else if (!strncasecmp("post", s.data, 4)) {
+      goto open_file;
     }
     break;
   }
