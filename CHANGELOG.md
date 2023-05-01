@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.55 (2023-05-01)
+
+**Fix**: Fixes `X-SENDFILE` support so it works will `POST` requests. Credit to @fgoepel for PR #141.
+
 #### Change log v.0.7.54 (2023-03-15)
 
 **Fix**: Fixes verbosity option in iodine's CLI where the value `0` was ignored. Credit to @jsaak for opening issue #139.
