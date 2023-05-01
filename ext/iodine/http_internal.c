@@ -42,7 +42,8 @@ void http_on_request_handler______internal(http_s *h,
           fiobj_hash_get2(h->headers, fiobj_obj2hash(HTTP_HEADER_ACCEPT)),
           HTTP_HVALUE_SSE_MIME))
     goto eventsource;
-  if (settings->public_folder) {
+  if (settings->public_folder &&
+      (fiobj_obj2cstr(h->method).len != 4 || strncasecmp("post", fiobj_obj2cstr(h->method).data, 4))) {
     fio_str_info_s path_str = fiobj_obj2cstr(h->path);
     if (!http_sendfile2(h, settings->public_folder,
                         settings->public_folder_length, path_str.data,
