@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.56 (2023-07-07)
+
+**Support**: Adds teapot support (HTTP code 418). Credit to Aleksandar N. Kostadinov (@akostadinov) for issue #144 and PR #145.
+
 #### Change log v.0.7.55 (2023-05-01)
 
 **Fix**: Fixes `X-SENDFILE` support so it works will `POST` requests. Credit to @fgoepel for PR #141.
