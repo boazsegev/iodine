@@ -2696,6 +2696,7 @@ fio_str_info_s http_status2str(uintptr_t status) {
       HTTP_SET_STATUS_STR(415, "Unsupported Media Type"),
       HTTP_SET_STATUS_STR(416, "Range Not Satisfiable"),
       HTTP_SET_STATUS_STR(417, "Expectation Failed"),
+      HTTP_SET_STATUS_STR(418, "I'm a teapot"),
       HTTP_SET_STATUS_STR(421, "Misdirected Request"),
       HTTP_SET_STATUS_STR(422, "Unprocessable Entity"),
       HTTP_SET_STATUS_STR(423, "Locked"),
