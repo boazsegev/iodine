@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+  <title>Bates Numbering for Court</title>
+  <meta charset='utf-8'>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=no, minimal-ui=yes">
+  <style>
+    html, body {
+      height: 100%; width: 100%;
+      padding: 0; margin: 0;
+      color: #111;
+      background-color: #99A3CE;
+    }
+
+    h2, h3 {
+      font-size: 1.2em;
+      background-color: #44518E;
+      color: #C6CCE7;
+    }
+    h2 a, h3 a
+    {
+      color: inherit;
+      text-decoration: none;
+    }
+    h2 a:hover, h3 a:hover
+    {
+      color: #00f;
+    }
+
+    h1 {
+      font-size: 1.5em;
+      text-align: center;
+      background-color: #1B2864;
+      color: #99A3CE;
+      margin:0; padding: 0.5em;
+    }
+    h2 {
+      border-radius: 0.5em;
+      text-align: center;
+    }
+    h3 {
+      text-align: left;
+    }
+    .hide {
+      display: none !important;
+    }
+    span.en {
+      direction: ltr;
+      display: inline-block;
+      text-align: left;
+      width: auto;
+    }
+    #notice
+    {
+      z-index: 99999;
+      position: absolute;
+      top: 0; left: 0;
+      background-color: rgba(0, 0, 0, 0.75);
+      box-sizing: border-box;
+      padding: 1em 0;
+      text-align: center;
+      height: 100px;
+      width: 100%;
+      overflow-y: auto;
+      color: #fff; font-weight: bold;
+      transition:All 0.25s ease;
+      -webkit-transition:All 0.25s ease;
+      -moz-transition:All 0.25s ease;
+      -o-transition:All 0.25s ease;
+      -ms-transition:All 0.25s ease;
+      transform-origin: 0 50%;
+      -webkit-transform-origin: 50% 0; /* Chrome, Safari, Opera */
+      -ms-transform-origin: 50% 0; /* IE 9 */
+      -moz-transform-origin: 50% 0;
+      -o-transform-origin: 50% 0;
+      transform: scale(1, 1);
+      -webkit-transform: scale(1, 1);
+      -moz-transform: scale(1, 1);
+      -o-transform: scale(1, 1);
+      -ms-transform: scale(1, 1);
+    }
+    #notice.hidden
+    {
+      transform: scale(1, 0);
+      -webkit-transform: scale(1, 0);
+      -moz-transform: scale(1, 0);
+      -o-transform: scale(1, 0);
+      -ms-transform: scale(1, 0);
+    }
+    #notice .notice_close
+    {
+      display:block;
+      position: absolute;
+      top:0; left:0;
+      padding:0.5em;
+      height:100%;
+      width:5em;
+      text-align:left;
+      cursor: pointer;
+      border-right:1px solid #eee;
+      color: #ccc;
+    }
+    #notice .notice_close:hover
+    {
+      color: #eee;
+      background-color: rgba(255, 255, 255, 0.25);
+    }
+
+    #content {
+      background-color: #fff;
+      color: #111;
+      min-height: 100%;
+      padding: 4em 1.5em;
+      margin: 0 1em;
+      overflow-x: hidden;
+      box-sizing: border-box;
+    }
+    #content h1, #content h2, #content h3 {
+      background-color: #1B2864;
+      color: #99A3CE;
+      padding: 0.2em 1em;
+      margin: 0.2em 0;
+    }
+    #content h1 {
+      padding: 0.5em;
+      margin: 0;
+    }
+    #content p {
+      padding: 0.5em;
+      margin: 0;
+    }
+    #content a {
+      color: #0000aa;
+      text-decoration: none;
+    }
+    #content a:hover {
+      color: blue;
+      text-decoration: underline;
+      background: white;
+      position: relative;
+      top: 1px;
+      left: 2px;
+    }
+    #content h1 a, #content h2 a, #content h3 a, #content table th a {
+      color: #aaaaff;
+    }
+    #content h1 a:hover, #content h2 a:hover, #content h3 a:hover, #content table th a:hover {
+      background: inherit;
+      color: #ddddff;
+    }
+    #content #notice {
+      background: #ffaadd;
+      color: #551111;
+      margin: 0.3em 15%;
+      padding: 1em 0.5em;
+      text-align: center;
+      border-radius: 1em;
+      font-weight: bold;
+      font-size: 1.1em;
+    }
+
+    .desc, form {
+      text-align: justify;
+      display: block;
+      margin: 0.5em 15%; padding: 0 0 0.5em 0;
+      background: #eeeefa;
+      color: #111111;
+      border-radius: 1em;
+    }
+    .with_border
+    {
+      border: 1px solid #aab;
+    }
+    .desc p, form p {
+      padding: 0.2em;
+      margin: 0.5em 0;
+    }
+    form input[type='submit'] {
+      margin: 0.5em 20%;
+      width: 60%;
+      color: #000033;
+      background: #eeeeff;
+    }
+    form table {
+      width: 100%;
+      table-layout: fixed;
+      border-collapse: collapse;
+    }
+    form table th {
+      background: #bbb;
+      color: #111111;
+    }
+    form table td {
+      width: 2%;
+      border-collapse: collapse;
+      border-top: #bbbbcc dotted 1px;
+      border-bottom: #bbbbcc dotted 1px;
+      padding: 1px 2px;
+    }
+    form table tr {
+      border-collapse: collapse;
+    }
+    form table .en {
+      direction: ltr;
+    }
+    form table input, form table select {
+      width: 100%;
+      margin: 0.5em 0;
+      padding: 0;
+      color: #000033;
+      background: #eeeeff;
+    }
+    form table .no_resize input, form table .no_resize select {
+      width: auto;
+      margin: 0.5em 0;
+      padding: inherit;
+    }
+    form .field {
+      width: 100%;
+      display: block;
+      text-align: justify;
+      padding: 0.5em 0;
+      margin: 0;
+      margin-bottom: 0;
+      vertical-align: top;
+      border-collapse: collapse;
+      border-top: #bbbbcc dotted 1px;
+      border-bottom: #bbbbcc dotted 1px;
+    }
+    form .field label {
+      width: 34%;
+      margin: 0 2%;
+      padding: 0;
+      display: inline-block;
+      vertical-align: top;
+    }
+    form .field input {
+      width: 60%;
+      margin: 0;
+      padding: 0;
+      display: inline-block;
+      vertical-align: top;
+      color: #000033;
+      background: #eeeeff;
+    }
+    form .field select {
+      width: 60%;
+      margin: 0;
+      padding: 0;
+    }
+    form .field .no_resize input, form .field .no_resize select {
+      width: auto;
+      margin: inherit;
+      padding: inherit;
+      color: #000033;
+      background: #eeeeff;
+    }
+    form .field textarea {
+      width: 98%;
+      padding: 0;
+      margin: 0;
+      height: 5em;
+      display: block;
+      color: #000033;
+      background: #eeeeff;
+    }
+    form .en input, form .en textarea {
+      text-align: left;
+      direction: ltr;
+    }
+
+    table.one_liners {
+      table-layout: fixed !important;
+      max-width: 100% !important;
+      width: 100% !important;
+      text-overflow: ellipsis;
+      overflow: none;
+    }
+    table.one_liners td, table.one_liners th {
+      width: inherit;
+      max-width: 10%;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    h1#dropzone {
+      font-size: 2em;
+      text-align: center;
+      background-color: #44518E;
+      color: #C6CCE7;
+      padding: 0.5em 0;
+      background-image: url(/drop-pdf.png);
+      background-repeat: no-repeat;
+      background-position: 10% center;
+      background-size: auto 100%;
+      border-radius: 0.5em 0.5em 0 0;
+    }
+
+    ul.bates_file_table_list, ol.bates_file_table_list {
+      display: block;
+      margin: 0;
+      padding: 0;
+      list-style-position: inside;
+      width: 100%;
+    }
+    ul.bates_file_table_list li, ol.bates_file_table_list li {
+      border-top: 1px dotted #111111;
+      border-bottom: 1px dotted #111111;
+      border-collapse: collapse;
+    }
+    ul.bates_file_table_list li div, ol.bates_file_table_list li div {
+      display: inline-block;
+      width: 28%;
+    }
+    ul.bates_file_table_list input, ol.bates_file_table_list input {
+      width: 90%;
+      color: #000033;
+      background: #eeeeff;
+    }
+    ul.bates_file_table_list {
+      list-style-type: circle;
+    }
+    ul.bates_file_table_list li:first-child {
+      background: #aab;
+      color: #111111;
+    }
+    input[type=checkbox]:checked#bates_first_pdf_is_cover ~ ol.bates_file_table_list li:first-child {
+      background: #bbc;
+      color: #551111;
+    }
+    input[type=checkbox]
+    {
+      width: auto;
+      display: inline;
+    }
+    #file_remover {
+      float: left;
+    }
+
+    /* RESPONSIVE RELATED */
+    @media screen and (max-width: 46em) {
+      /* STYLING CONTENT (none at the moment)*/
+      /* line 800, /Users/2Be/Ruby/combine_pdf_demo/app/assets/stylesheets/welcome.css.scss */
+      body, html {
+        height: auto;
+      }
+
+      /* line 803, /Users/2Be/Ruby/combine_pdf_demo/app/assets/stylesheets/welcome.css.scss */
+      #content {
+        padding: 3em 0;
+        margin: 0;
+      }
+      #content #notice {
+        margin: 0.2em 1em;
+      }
+      /* line 814, /Users/2Be/Ruby/combine_pdf_demo/app/assets/stylesheets/welcome.css.scss */
+      #content .hide_when_small {
+        display: none;
+      }
+      form, .desc {
+        margin: 0.3em 1em;
+      }
+    }
+  </style>
+  <script>
+    function show_notice() { document.getElementById("notice").classList.remove('hidden'); }
+    function hide_notice() { document.getElementById("notice").classList.add('hidden'); }
+  </script>
+</head><body>
+<h1>Bates Numbering - PDF file merge and number</h1>
+<div id="notice" class="hidden"><a class='notice_close'onclick='hide_notice()'>X</a><div id="notice_text"></div></div>
+<div id="contents">
+  <ol class='bates_file_table_list' id='demo' style='display:none;'>
+    <li id='file_NUM'>
+        <div>
+          <input id="file_NUM_name" name="file[NUM][name]" readonly="readonly" type="text" value="FILE_NAME">
+          <input id="file_NUM_data" name="file[NUM][data]" type="hidden" value="NUM">
+        </div>
+        <div>
+          <input id="file_NUM_date" name="file[NUM][date]" type="text" value="DATE">
+        </div><div>
+          <input id="file_NUM_title" name="file[NUM][title]" type="text" value="TITLE">
+        </div>
+          |||
+          <a href="#" class="file_remover" onclick='this.parentNode.parentNode.removeChild(this.parentNode); return false;'>[x]</a>
+      </li>
+  </ol>
+  <form accept-charset="UTF-8" enctype="multipart/form-data" method="post" onsubmit="onSubmit()">
+    <h1 id='dropzone'>Drag PDF files here</h1>
+    <p>
+      <ul class='bates_file_table_list'>
+        <li>
+          <div>File Name</div>
+          <div>Date</div>
+          <div>Title</div>
+        </li>
+      </ul>
+      <input checked="checked" id="bates_first_pdf_is_cover" name="bates[first_pdf_is_cover]" type="checkbox" value="true">
+      <label for="bates_first_pdf_is_cover">Place the first PDF file before the Index page.</label>
+      <ol class='bates_file_table_list' id='file_list'></ol>
+      <input type="submit" value="Submit">
+    </p>
+    <h3>Settings</h3>
+      <table>
+        <tr><td>Output file name:</td><td><input type='text' id="output_filename" name='bates[output]' value="combined"></td></tr><tr><td>First page number:</td><td><input type='number' name='bates[first_page_number]' value="1">
+        </td></tr><tr><td>First index number:</td><td><input type='number' name='bates[first_index_number]' value="1">
+        </td></tr><tr><td>Numbering:</td><td><select id='numbering' name='bates[numbering]'>
+              <option value='0'>Center</option>
+              <option value='1'>Left</option>
+              <option value='2'>Right</option>
+              <option value='3'>None</option>
+        </select>
+        </td></tr><tr><td><input checked="checked" id="bates_should_index_files" name="bates[should_index]" type="checkbox" value="true"><label for='bates_should_index_files'>Index Files?</label></td><td><label for='bates_should_index_files'>un-check to avoid an index and title pages.</label>
+        </td></tr><tr><td><input id="bates_skip_cover" name="bates[skip_cover]" type="checkbox" value="true"><label for='bates_skip_cover'>Skip Cover?</label></td><td><label for='bates_skip_cover'>check to skip numbering the cover page.</label>
+        </td></tr><tr><td>Language:</td><td><select id='dir' name='bates[dir]'>
+              <option value='rtl'>עברית</option>
+              <option value='ltr'>English</option>
+            </select>
+        </td></tr><tr><td>Index Title:</td><td>
+            <input type='text' id='bates_index_title' name='bates[index_title]' value="Index">
+        </td></tr><tr><td>"Number" Header:</td><td>
+            <input type='text' id='bates_number_header' name='bates[number_header]' value="#">
+        </td></tr><tr><td>"Date" Header (Leave empty to ignore):</td><td>
+            <input type='text' id='bates_date_header' name='bates[date_header]' value="Date">
+        </td></tr><tr><td>"Title" Header:</td><td>
+            <input type='text' id='bates_title_header' name='bates[title_header]' value="Title">
+        </td></tr><tr><td> "Page Number" Header:</td><td>
+            <input type='text' id='bates_page_header' name='bates[page_header]' value="Page">
+        </td></tr><tr><td>Cover Page Title:</td><td>
+            <input type='text' id='bates_title_type' name='bates[title_type]' value="Exhibit">
+      <input type="submit" value="Submit">
+  </form>
+</div>
+<script>
+function onSubmit()
+{
+  return true;
+}
+file_i=0
+files_read = 0
+
+template = document.getElementById('demo').innerHTML
+
+function transform_file(file)
+{
+  // Get Time and Title if the name matches standard naming
+  obj_date_string = file.name.match("^[0-9\\-–]*") + ""
+  if(obj_date_string.length == 8) {
+    obj_date = obj_date_string.substr(6,2) + "." + obj_date_string.substr(4,2) + "." + obj_date_string.substr(0,4)
+    obj_description = file.name.substring(9, file.name.toLowerCase().search("\.pdf") )
+  } else if(obj_date_string.length == 10 && obj_date_string[4] == '-' && obj_date_string[7] == '-') {
+    obj_date = obj_date_string.substr(8,2) + "." + obj_date_string.substr(5,2) + "." + obj_date_string.substr(0,4)
+    obj_description = file.name.substring(11, file.name.toLowerCase().search("\.pdf") )
+  } else {
+    obj_date = ""
+    obj_description = file.name.substring(0, file.name.toLowerCase().search("\.pdf") )
+  }
+
+  // copy template and adjust details
+
+  document.getElementById('file_list').innerHTML += template.replace(RegExp("NUM", "g"), "" + file_i).replace(RegExp("FILE_NAME", "g"), file.name).replace(RegExp("DATE", "g"), obj_date).replace(RegExp("TITLE", "g"), obj_description)
+
+  // set reader for file
+  reader = new FileReader();
+  reader.futureObject = document.getElementById("file_" + file_i + "_data")
+
+  file_i += 1;
+
+  reader.onloadend = function(e)
+  {
+    //var id = this.futureObject.value
+    console.log("adding result to: " + this.futureObject.id )
+    document.getElementById(this.futureObject.id).value = e.target.result
+    files_read +=1
+  }
+  
+  //reader.readAsText(file)
+  reader.readAsDataURL(file)
+  true
+}
+
+// make drop_zone droppable and set callbacks
+var dropzone = document.getElementById('dropzone')
+
+dropzone.ondragend = function (event) {event.stopPropagation();return false; };
+dropzone.ondragover = function (event) {event.stopPropagation();return false; };
+dropzone.ondragenter = function (event) {event.stopPropagation();return false; };
+
+dropzone.ondrop = function(event) {
+  event.preventDefault()
+  event.stopPropagation();
+  var files = event.dataTransfer.files; // FileList object.
+  i = 0
+  while(files[i])
+  {
+    console.log('transforming:' + files[i] + ' name: ' + files[i].name.toLowerCase())
+    if( files[i].name.toLowerCase().search("\.pdf") != -1) transform_file(files[i])
+    i++
+  }
+
+  set_list_sotrable()
+  return false;
+}
+
+// make drag-drop and sortable list from file_list
+var Dragged_id = ''
+
+function start_drag_list_item(e) {
+  Dragged_id = this.id
+  e.dataTransfer.setData('text/plain', this.id)
+  this.style.opacity = '0.3'
+}
+function end_drag_list_item(e) {
+  this.style.opacity = '1'
+  Dragged_id = ''
+}
+function enter_drag_list_item(e) {
+  if(Dragged_id == '') return false;
+  if(this.id == Dragged_id) return false; //this.style.opacity = '0.7'
+  this.parentNode.insertBefore(this.parentNode.removeChild(document.getElementById(Dragged_id)), this);
+}
+function leave_drag_list_item(e) {
+  if(Dragged_id == '') return false;
+  if(this.id != Dragged_id) this.style.opacity = '1'
+}
+function drop_list_item(e)
+{
+  e.stopPropagation()
+  e.preventDefault()
+  alert('move ' + Dragged_id + ' before ' + this.id)
+  if (this.id == Dragged_id) return false;
+}
+function set_list_sotrable()
+{
+  all_list_items = document.querySelectorAll('#file_list li');
+  for(i=0; i < all_list_items.length; i++)
+  {
+    all_list_items[i].setAttribute("draggable","true");
+    all_list_items[i].ondragstart = start_drag_list_item
+    all_list_items[i].ondragenter = enter_drag_list_item
+    all_list_items[i].ondragleave = leave_drag_list_item
+    all_list_items[i].ondragend = end_drag_list_item
+    all_list_items[i].ondrop = drop_list_item
+  }
+}
+
+function get_today_as_str(){
+  const n = new Date();
+  return (n.getUTCFullYear().toString() + (n.getUTCMonth() < 10 ? ("0" + n.getUTCMonth().toString()) : n.getUTCMonth().toString()) + (n.getUTCMonth() < 10 ? ("0" + n.getUTCDate().toString()) : n.getUTCDate().toString()));
+}
+
+// set some initial values
+function set_common_values(o){
+  for (let [key, value] of Object.entries(o)) {
+    console.log(key, value);
+   var tmp = document.getElementById(key);
+   if(tmp){
+    if(tmp.value)
+      tmp.value = value;
+    else
+      tmp.innerHTML = value;
+    }
+  }
+}
+function set_en_values(){
+
+  set_common_values({
+    output_filename: get_today_as_str() + " name",
+    bates_index_title: "Index",
+    bates_number_header: "Ex.",
+    bates_date_header: "Date",
+    bates_title_header: "Title",
+    bates_page_header: "Page",
+    bates_title_type: "Exhibit",
+  });
+}
+function set_he_values(){
+  set_common_values({
+    output_filename: get_today_as_str() + " שם",
+    bates_index_title: "תוכן עניינים",
+    bates_number_header: "נספח",
+    bates_date_header: "תאריך",
+    bates_title_header: "כותרת",
+    bates_page_header: "עמוד",
+    bates_title_type: "נספח",
+  });
+}
+
+function update_defaults(e) {
+  if(e.target.value == 'ltr') set_en_values();
+  else set_he_values();
+}
+
+function init_page(e){
+  set_he_values();
+  var tmp = document.getElementById("dir");
+  tmp.onchange = update_defaults;
+}
+init_page();
+</script>
+</body></html>
