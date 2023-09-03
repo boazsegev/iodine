@@ -1325,7 +1325,7 @@ Ruby loads the library and invokes the Init_<lib_name> function...
 Here we connect all the C code to the Ruby interface, completing the bridge
 between Lib-Server and Ruby.
 ***************************************************************************** */
-void Init_iodine(void) {
+void Init_iodine_ext(void) {
   /* common Symbol objects in use by Iodine */
 #define IODINE_MAKE_SYM(name)                                                  \
   do {                                                                         \
