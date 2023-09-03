@@ -6,6 +6,10 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.57 (2023-09-04)
+
+**Fix**: Fixes possible name collision when loading gem (`.rb` vs. `.so` loading). Credit to @noraj (Alexandre ZANNI) for opening issue #148. Credit to @janbiedermann (Jan Biedermann) for discovering the root cause and offering a solution.
+
 #### Change log v.0.7.56 (2023-07-07)
 
 **Support**: Adds teapot support (HTTP code 418). Credit to Aleksandar N. Kostadinov (@akostadinov) for issue #144 and PR #145.
