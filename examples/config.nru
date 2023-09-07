@@ -1,0 +1,132 @@
+# This is both a NeoRack and a Rack application.
+#
+# Iodine can run both Rack and NeoRack applications.
+# 
+# In this case the `on_http` implementation will be prioritized over the `call` implementation.
+# 
+# Benchmark with keep-alive:
+#
+#     ab -c 200 -t 4 -n 1000000 -k http://127.0.0.1:3000/
+#     wrk -c200 -d4 -t2 http://localhost:3000/
+#
+# Connect to chat server with WebSockets:
+#
+#     ws = new WebSocket("ws://" + document.location.host + document.location.pathname);
+#     ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);};
+#     ws.onclose = function(e) {console.log("closed")};
+#     ws.onopen = function(e) {ws.send("hi");};
+#
+# Listen to chat messages with Server Sent Events (EventSource / SSE):
+#
+#     const listener = new EventSource(document.location.href);
+#     listener.onmessage = (e) => { console.log(e); }
+#     listener.onevent = (e) => { console.log(e); }
+#
+module App
+	def self.call(e)
+		txt = []
+		if e['rack.upgrade?']
+			e['rack.upgrade'] = self
+		else
+			e.each {|k,v| txt << "#{k}: #{v}\r\n" }
+		end
+		[200, {}, txt]
+	end
+	# this approach streams the data, adding HTTP overhead
+	# However, this show-cases the possibilities for longer responses.
+	def self.on_http_stream(e)
+		# we write without finishing and without setting the content-length header...
+		# servers should automatically stream the response (i.e., using chunked encoding)
+		e.write "path:    #{e.path}\r\n"
+		e.write "query:   #{e.query}\r\n"
+		e.write "method:  #{e.method}\r\n"
+		e.write "version: #{e.version}\r\n"
+		e.write "from:    #{e.from} (real: #{e.peer_addr})\r\n"
+		# e.write "thread:  #{Thread.current.to_s}\r\n"
+		e.headers.each {|k,v| e.write "#{k}: #{v}\r\n" }
+		# echo request body to the response
+		while(l = e.gets)
+			e.write l
+		end
+		e.finish
+	end
+	def self.on_http_single_packet(e)
+		# this is similar to Rack, compiling the whole response before sending it
+		# this should optimally result in `content-length` being set by the server
+		out =  "path:    #{e.path}\r\nquery:   #{e.query}\r\nmethod:  #{e.method}\r\nversion: #{e.version}\r\n"
+		out += "from:    #{e.from} (#{e.peer_addr})\r\n"
+		# out += "thread:  #{Thread.current.to_s}\r\n"
+		e.headers.each {|k,v| out += "#{k}: #{v}\r\n" }
+		# echo request body to the response
+		while(l = e.gets)
+			out += l
+		end
+		# finally we write the data.
+		# efficient servers will see this is the first `write` and set `content-length`
+		e.finish out 
+	end
+	def self.on_http(e)
+		# change here to see the difference.
+		e.write_header :server, 'iodine'
+		e.write_header :performs, [['echo', 'ws-chat'], 2]
+		e.headers['LAST-VISIT'] = "#{Time.now.to_i - e.cookie(:been).to_i}s ago" if(e.cookie(:been))
+		e.set_cookie :been, Time.now.to_i.to_s
+		on_http_single_packet(e)
+	end
+    # # Called after `on_http` (or `on_closed` when implementing the WebSocket/SSE extensions)
+    # def self.on_finish(e)
+    # 	# perform cleanup
+    # end
+
+
+	def self.on_open(e)
+		e.subscribe :broadcast
+	end
+	def self.on_message(e, m)
+		Iodine.publish :broadcast, m
+	end
+end
+
+
+class LogPubSub < Iodine::PubSub::Engine
+	def subscribe ch
+		puts "(#{Process.pid}) Someone subscribed to #{ch}"
+	end
+	def psubscribe ch
+		puts "(#{Process.pid}) Someone subscribed to #{ch} (pattern)"
+	end
+	def unsubscribe ch
+		puts "(#{Process.pid}) Someone unsubscribed to #{ch}"
+	end
+	def punsubscribe ch
+		puts "(#{Process.pid}) Someone unsubscribed to #{ch} (pattern)"
+	end
+	def publish m
+		puts "(#{Process.pid}) Someone published to #{m.channel}"
+		Iodine.publish channel: m.channel, message: m.message, filter: m.filter, engine: Iodine::PubSub::CLUSTER
+	end
+end
+
+Iodine::PubSub.default = LogPubSub.new
+
+run App
+
+# Benchmark with keep-alive:
+# 
+#     ab -c 200 -t 4 -n 1000000 -k http://127.0.0.1:3000/
+#     wrk -c200 -d4 -t2 http://localhost:3000/
+# 
+# Connect to chat server with WebSockets:
+# 
+#     ws = new WebSocket("ws://" + document.location.host + document.location.pathname);
+#     ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);};
+#     ws.onclose = function(e) {console.log("closed")};
+#     ws.onopen = function(e) {ws.send("hi");};
+# 
+# Listen to chat messages with Server Sent Events (EventSource / SSE):
+# 
+#     const listener = new EventSource(document.location.href);
+#     listener.onmessage = (e) => { console.log(e); }
+#     listener.addEventListener("time", (e) => { console.log(e); })
+#     listener.addEventListener("event", (e) => { console.log(e); })
+
