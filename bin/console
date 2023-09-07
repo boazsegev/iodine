@@ -1,13 +1,6 @@
 #!/usr/bin/env ruby
+# frozen_string_literal: true
 
-# this will compile Iodine and start a Ruby console with the Iodine gem loaded.
-
-Dir.chdir(File.expand_path(File.join('..', '..'), __FILE__))
-puts `rake clean`
-puts `rake compile`
-
-require 'benchmark'
-$LOAD_PATH.unshift File.expand_path(File.join('..', '..', 'lib'), __FILE__ )
 require "bundler/setup"
 require "iodine"
 
@@ -19,4 +12,4 @@ require "iodine"
 # Pry.start
 
 require "irb"
-IRB.start
+IRB.start(__FILE__)

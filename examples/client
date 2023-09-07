@@ -1,0 +1,74 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'iodine'
+
+Iodine.verbosity = 3 # only log warnings or worse
+
+# A demo client class
+module Client
+
+  # a helper to print response data
+  def self.print_response(h)
+    puts "#{h.version} #{h.status}"
+    h.headers.each {|k,v| puts("#{k}: #{v}\r") if k.is_a? String }
+    puts "\r"
+    while(s = h.gets)
+      puts s
+    end
+  end
+
+  # Called Once per HTTP request. Each HTTP request starts with a new HTTP handle / Event object (`h`).
+  def self.on_http(h)
+    print_response(h)
+  end
+
+  # Called when a long-running connection opens.
+  # 
+  # This will be called for Event Source, WebSocket, TCP/IP and Raw Unix Socket connections.
+  def self.on_open(ws)
+    print_response(ws)
+    puts "Opening #{ws.websocket? ? "WebSocket" : "SSE" } Connection"
+    ws.subscribe(:stdio) if ws.websocket? # SSE connections don't send stuff
+  end
+  # Called when incoming data arrives and its behavior depends on the underlying protocol.
+  def self.on_message(ws, data)
+    puts "Got WebSocket Message: #{data}"
+  end
+
+  # Called a long running connection was closed (WebSocket / SSE / TCP/IP / Raw Unix Socket).
+  def self.on_close(ws)
+    puts "Closed #{ws.websocket? ? "WebSocket" : "SSE" } Connection"
+  end
+  # Called after `on_http`/`on_closed` or if a client failed to connect.
+  def self.on_finish(h)
+    Server.stop
+  end
+  # Called when an Event Source (SSE) event has been received (when acting as an Event Source client).
+  def self.on_eventsource(sse, message)
+    puts "id: #{message.id}"
+    puts "event: #{message.event}"
+    puts "data: #{message.data}"
+  end
+end
+
+# I will cheat a little, using Iodine's CLI parser...
+opt = Iodine::Base::CLI.parse(false)
+opt[:bind] ||= opt[0] # allow the first unnamed parameter to be the URL to connect to
+raise "ERROR: this app requires a URL to connect to!" unless opt[:bind]
+
+Server.threads = 0
+Server.workers = 0
+
+# create the service instance, the block returns a connection handler.
+Iodine::Connection.new(opt[:bind], handler: Client)
+
+# Read STDIO while running
+Thread.new do
+  while true
+    Server.publish channel: :stdio, message: STDIN.readline
+  end
+end
+
+# Start the server
+Server.start

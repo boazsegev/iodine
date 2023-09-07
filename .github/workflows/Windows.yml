@@ -1,0 +1,42 @@
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support documentation.
+# This workflow will download a prebuilt Ruby version, install dependencies and run tests with Rake
+# For more information see: https://github.com/marketplace/actions/setup-ruby-jruby-and-truffleruby
+
+name: Windows CI
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby-version: ['3.2', '3.3']
+        os: [windows-2022] # , windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Ruby # see https://github.com/ruby/setup-ruby#versioning)
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ matrix.ruby-version }}
+    - name: Setup ENV
+      run: |
+        echo "CI=false" >> "$GITHUB_ENV"
+    - name: Install Gems
+      run: bundle install
+    - name: Compile and Install Iodine
+      run: |
+        echo CFLAGS = $CFLAGS
+        echo cflags = $cflags
+        echo HOME = $HOME
+        ruby -e 'puts Gem.default_dir'
+        env VERBOSE=1 bundle exec rake install --trace
+#       env VERBOSE=1 bundle exec rspec --format documentation
+#    - name: Run tests
+#      run: bundle exec rake

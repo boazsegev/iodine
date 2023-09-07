@@ -1,280 +1,157 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
-IODINE_PARSE_CLI = true
 require 'iodine'
 
-# Load Rack if available (assume it will be used).
-#
-# Remember, code costs memory. Duplicating the Rack::Builder module and functions can be avoided.
 begin
   require 'rack'
   module Iodine
-    module Base
-      module Rack
-        Builder = ::Rack::Builder
+    # Iodine's {Iodine::Rack} module provides a Rack compliant interface (connecting Iodine to Rack) for an HTTP and Websocket Server.
+    module RackHandler
+      # Runs a Rack app, as par the Rack handler requirements.
+      def self.run(app, options_ = {})
+        # nested applications... is that a thing?
+        Iodine.listen(nil, app)
+        # start Iodine
+        Iodine.start
+        true
+      end
+
+      # patches an assumption by Rack, issue #98 code donated by @Shelvak (Néstor Coppi)
+      def self.shutdown
+        Iodine.stop
       end
     end
+  end
+  ENV['RACK_HANDLER'] ||= 'iodine'
+  begin
+    Iodine::Utils.monkey_patch Rack::Utils
+    ::Rack::Handler.register('iodine', 'Iodine::RackHandler') if defined?(::Rack::Handler)
+    ::Rack::Handler.register('Iodine', 'Iodine::RackHandler') if defined?(::Rack::Handler)
+  rescue StandardError
   end
 rescue LoadError
-  puts "WARNING: The gam `rack` wasn't loaded before iodine started loading the rack app, using custom loader."
-  module Iodine
-    module Base
-      module Rack
-        # The Rack::Builder code is used when Rack isn't available.
-        #
-        # The code was copied (with minor adjustments) from the Rack source code and is licensed under the MIT license.
-        # Copyright (C) 2007-2019 Leah Neukirchen <http://leahneukirchen.org/infopage.html>
-        #
-        # ====
-        #
-        # Rack::Builder implements a small DSL to iteratively construct Rack
-        # applications.
-        #
-        # Example:
-        #
-        #  require 'rack/lobster'
-        #  app = Rack::Builder.new do
-        #    use Rack::CommonLogger
-        #    use Rack::ShowExceptions
-        #    map "/lobster" do
-        #      use Rack::Lint
-        #      run Rack::Lobster.new
-        #    end
-        #  end
-        #
-        #  run app
-        #
-        # Or
-        #
-        #  app = Rack::Builder.app do
-        #    use Rack::CommonLogger
-        #    run lambda { |env| [200, {'Content-Type' => 'text/plain'}, ['OK']] }
-        #  end
-        #
-        #  run app
-        #
-        # +use+ adds middleware to the stack, +run+ dispatches to an application.
-        # You can use +map+ to construct a Rack::URLMap in a convenient way.
-        class Builder
-          # https://stackoverflow.com/questions/2223882/whats-the-difference-between-utf-8-and-utf-8-without-bom
-          UTF_8_BOM = '\xef\xbb\xbf'
-
-          def self.parse_file(config, opts = Hash.new)
-            if config =~ /\.ru$/
-              return self.load_file(config, opts)
-            else
-              require config
-              app = Object.const_get(::File.basename(config, '.rb').split('_').map(&:capitalize).join(''))
-              return app, {}
-            end
-          end
-
-          def self.load_file(path, options = Hash.new)
-            cfgfile = ::File.read(path)
-            cfgfile.slice!(/\A#{UTF_8_BOM}/) if cfgfile.encoding == Encoding::UTF_8
-
-            cfgfile.sub!(/^__END__\n.*\Z/m, '')
-            app = new_from_string cfgfile, path
-
-            return app, options
-          end
-
-          def self.new_from_string(builder_script, file = "(rackup)")
-            eval "Iodine::Base::Rack::Builder.new {\n" + builder_script + "\n}.to_app",
-              TOPLEVEL_BINDING, file, 0
-          end
-
-          def initialize(default_app = nil, &block)
-            @use, @map, @run, @warmup, @freeze_app = [], nil, default_app, nil, false
-            instance_eval(&block) if block_given?
-          end
-
-          def self.app(default_app = nil, &block)
-            self.new(default_app, &block).to_app
-          end
-
-          # Specifies middleware to use in a stack.
-          #
-          #   class Middleware
-          #     def initialize(app)
-          #       @app = app
-          #     end
-          #
-          #     def call(env)
-          #       env["rack.some_header"] = "setting an example"
-          #       @app.call(env)
-          #     end
-          #   end
-          #
-          #   use Middleware
-          #   run lambda { |env| [200, { "Content-Type" => "text/plain" }, ["OK"]] }
-          #
-          # All requests through to this application will first be processed by the middleware class.
-          # The +call+ method in this example sets an additional environment key which then can be
-          # referenced in the application if required.
-          def use(middleware, *args, &block)
-            if @map
-              mapping, @map = @map, nil
-              @use << proc { |app| generate_map(app, mapping) }
-            end
-            @use << proc { |app| middleware.new(app, *args, &block) }
-          end
-
-          # Takes an argument that is an object that responds to #call and returns a Rack response.
-          # The simplest form of this is a lambda object:
-          #
-          #   run lambda { |env| [200, { "Content-Type" => "text/plain" }, ["OK"]] }
-          #
-          # However this could also be a class:
-          #
-          #   class Heartbeat
-          #     def self.call(env)
-          #      [200, { "Content-Type" => "text/plain" }, ["OK"]]
-          #     end
-          #   end
-          #
-          #   run Heartbeat
-          def run(app = nil, &block)
-            raise ArgumentError, "Both app and block given!" if app && block_given?
-            @run = app || block
-          end
-
-          # Takes a lambda or block that is used to warm-up the application.
-          #
-          #   warmup do |app|
-          #     client = Rack::MockRequest.new(app)
-          #     client.get('/')
-          #   end
-          #
-          #   use SomeMiddleware
-          #   run MyApp
-          def warmup(prc = nil, &block)
-            @warmup = prc || block
-          end
-
-          # Creates a route within the application.
-          #
-          #   Rack::Builder.app do
-          #     map '/' do
-          #       run Heartbeat
-          #     end
-          #   end
-          #
-          # The +use+ method can also be used here to specify middleware to run under a specific path:
-          #
-          #   Rack::Builder.app do
-          #     map '/' do
-          #       use Middleware
-          #       run Heartbeat
-          #     end
-          #   end
-          #
-          # This example includes a piece of middleware which will run before requests hit +Heartbeat+.
-          #
-          def map(path, &block)
-            @map ||= {}
-            @map[path] = block
-          end
-
-          # Freeze the app (set using run) and all middleware instances when building the application
-          # in to_app.
-          def freeze_app
-            @freeze_app = true
-          end
-
-          def to_app
-            app = @map ? generate_map(@run, @map) : @run
-            fail "missing run or map statement" unless app
-            app.freeze if @freeze_app
-            app = @use.reverse.inject(app) { |a, e| e[a].tap { |x| x.freeze if @freeze_app } }
-            @warmup.call(app) if @warmup
-            app
-          end
-
-          def call(env)
-            to_app.call(env)
-          end
-
-          private
-
-          def generate_map(default_app, mapping)
-            mapped = default_app ? { '/' => default_app } : {}
-            mapping.each { |r, b| mapped[r] = self.class.new(default_app, &b).to_app }
-            URLMap.new(mapped)
-          end
-        end
-      end
-    end
-  end
 end
 
 module Iodine
-  # The Iodine::Base namespace is reserved for internal use and is NOT part of the public API.
-  module Base
-    # Command line interface. The Ruby CLI might be changed in future versions.
-    module CLI
-
-      def self.try_file filename
-        return nil unless File.exist? filename
-        result = Iodine::Base::Rack::Builder.parse_file filename
-        return result[0] if(result.is_a?(Array))
-        return result
-      end
-
-      def self.get_app_opts
-        app, opt = nil, Hash.new
-        filename = Iodine::DEFAULT_SETTINGS[:filename_]
-        if filename
-          app = try_file(filename)
-          app = try_file("#{filename}.ru") unless app
-          unless app
-            puts "* Couldn't find #{filename}\n  testing for config.ru\n"
-            app = try_file "config.ru"
-          end
-        else
-          app = try_file "config.ru";
-        end
-
-        unless app
-          puts "WARNING: Ruby application not found#{ filename ? " - missing both #{filename} and config.ru" : " - missing config.ru"}."
-          if Iodine::DEFAULT_SETTINGS[:public]
-            puts "         Running only static file service."
-            app = Proc.new { [404, {}, "Not Found!"] }
-          else
-            puts "\nERROR: Couldn't run Ruby application, check command line arguments."
-            ARGV << "-?"
-            Iodine::Base::CLI.parse
-            exit(0);
-          end
-        end
-        return app, opt
-      end
-
-      def self.perform_warmup(app)
-        # load anything marked with `autoload`, since autoload is niether thread safe nor fork friendly.
-        Iodine.on_state(:on_start) do
-          Module.constants.each do |n|
-            begin
-              Object.const_get(n)
-            rescue StandardError => _e
-            end
-          end
-          Iodine::Base::Rack::Builder.new(app) do |r|
-            r.warmup do |a|
-              client = ::Rack::MockRequest.new(a)
-              client.get('/')
-            end
-          end
+  class Base
+    class NeoRackUp
+      module MiddleWare_Pre
+        def initialize(*args, &blk);                @app = args[0]; super; end
+      private
+        def method_missing(method_name, *arguments)
+            m = self.define_singleton_method(method_name) {|*args| @app.send(method_name, *args) }
+            m.call(*arguments)
         end
       end
-
-      def self.call
-        app, opt = get_app_opts
-        perform_warmup(app) if Iodine::DEFAULT_SETTINGS[:warmup_]
-        Iodine::Rack.run(app, opt)
+      module MiddleWare_Def
+        def on_http(e);                     @app.on_http(e); end
+        def on_finish(e);                   @app.on_finish(e); end
+        def call(env);                      @app.call(env); end
+        def on_authenticate(e);             @app.on_authenticate(e); end
+        def on_authenticate_sse(e);         @app.on_authenticate_sse(e); end
+        def on_authenticate_websocket(e);   @app.on_authenticate_websocket(e); end
+        def on_open(e);                     @app.on_open(e); end
+        def on_message(e, data);            @app.on_message(e, data); end
+        def on_drained(e);                  @app.on_drained(e); end
+        def on_timeout(e);                  @app.on_timeout(e); end
+        def on_shutdown(e);                 @app.on_shutdown(e); end
+        def on_close(e);                    @app.on_close(e); end
+        def on_eventsource(e, message);     @app.on_eventsource(e, message); end
+        def on_eventsource_reconnect(e,id); @app.on_eventsource_reconnect(e,id); end
+      end
+      UTF_8_BOM = '\xef\xbb\xbf'
+      def use(mw, *args, &block)
+        @middleware ||= []
+        mw.prepend ::Iodine::Base::NeoRackUp::MiddleWare_Pre
+        mw.include ::Iodine::Base::NeoRackUp::MiddleWare_Def
+        @middleware <<[mw, args, block]
+      end
+      def run(a, &block)
+        a = block if(!a)
+        raise "Missing either an application handler or a block for the `run` instruction." unless a
+        raise "Missing both `on_http(e)` and `call(env)` in provided App." unless (a.respond_to?(:on_http) || a.respond_to?(:call))
+        Iodine::Base.add_missing_handlar_methods(a)
+        while(@middleware && !@middleware.empty?)
+          m = @middleware.pop
+          a = m[0].new(a, *m[1], &m[2])
+        end
+        @app = a
+      end
+      def app
+        @app
+      end
+      # validate name of Web Application configuration file.
+      def self.iodine___detect_filename
+        file_name = Iodine::Base::CLI.parse(true)[0];
+        if(!file_name || File.directory?(file_name))
+          file_name ||= './'
+          file_name += '/' unless file_name.end_with?('/')
+          defaults = ["#{file_name}config.ru", "#{file_name}config.nru"]
+          file_name = nil;
+          defaults.each {|n| file_name = n if(File.exist?(n))}
+          file_name ||= defaults[-1]
+        end
+        file_name = nil if(!File.exist?(file_name))
+        raise("Web App not found: config.ru") unless file_name || Iodine::Base::CLI['-www']
+        file_name
+      end
+      def self.iodine___load_rack fn
+        return nil unless (File.extname(fn) == '.ru')
+        begin
+          require 'rack'
+        rescue LoadError => e
+          return nil
+        end
+        build = Rack::Builder.parse_file(fn)
+        build
+      end
+      def self.iodine___load_neorack fn
+        return nil unless fn
+        cfgfile = ::File.read(fn)
+        cfgfile.slice!(/\A#{UTF_8_BOM}/) if cfgfile.encoding == Encoding::UTF_8
+        cfgfile.sub!(/^__END__\n.*\Z/m, '')
+        builder = self.new
+        builder.instance_eval(cfgfile, fn, 0)
+        builder.app
+      end
+      def self.iodine___load_config
+        fn = ::Iodine::Base::NeoRackUp.iodine___detect_filename
+        app = ::Iodine::Base::NeoRackUp.iodine___load_rack(fn)
+        app ||= ::Iodine::Base::NeoRackUp.iodine___load_neorack(fn)
+        raise("Web App not found (no `run`?) in #{fn}") unless !fn || app
+        # read and execute configuration file using NeoRack DSL.
+        Iodine.listen nil, app
+        Iodine.start
       end
     end
   end
 end
 
-Iodine::Base::CLI.call
+### Load configuration file
+if Iodine::Base::CLI['--config']
+  p Iodine::Base::CLI['--config']
+  require Iodine::Base::CLI['--config']
+end
+### .pid file
+if Iodine::Base::CLI['-pid']
+  pid_filename = Iodine::Base::CLI['-pid']
+  pid_filename << "iodine.pid" if(pid_filename[-1] == '/')
+  if File.exist?(pid_filename)
+    raise "pid filename shold point to a valid file name (not a folder)!" if(!File.file?(pid_filename))
+    raise "pid filename error! (doesn't end with .pid)" if(File.extname(pid_filename) != '.pid')
+    File.delete(pid_filename)
+  end
+  Iodine.on_state(:pre_start) do
+    IO.binwrite(pid_filename, "#{Process.pid}\r\n")
+  end
+  Iodine.on_state(:on_finish) do
+    File.delete(pid_filename)
+  end
+end
+### TODO: Warmup
+if Iodine::Base::CLI['-warmup']
+end
+
+Iodine::Base::NeoRackUp.iodine___load_config
+
+
