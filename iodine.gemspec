@@ -12,7 +12,7 @@ Gem::Specification.new do |spec|
   spec.description = 'A fast HTTP / Websocket Server with built-in Pub/Sub support (with or without Redis), static file support and many other features, optimized for Ruby MRI on Linux / BSD / macOS / Windows'
   spec.homepage = "https://github.com/boazsegev/iodine"
   spec.license = "MIT"
-  spec.required_ruby_version = ">= 2.6.0"
+  spec.required_ruby_version = ">= 3.0.0"
 
   spec.metadata["allowed_push_host"] = "https://rubygems.org"
 
@@ -30,10 +30,11 @@ Gem::Specification.new do |spec|
   spec.bindir = "exe"
   spec.executables = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
   spec.require_paths = ["lib", "ext"]
-
+  
   # Development dependencies
   spec.add_development_dependency 'rake-compiler', '>= 1', '< 2.0'
 
+  spec.extensions = %w(ext/iodine/extconf.rb)
   spec.post_install_message = "Thank you for installing Iodine #{Iodine::VERSION}.\n" +
                               "Remember: if iodine supports your business, it's only fair to give value back (code contributions / donations)."
 

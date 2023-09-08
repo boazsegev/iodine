@@ -1,6 +1,21 @@
 #ifndef H___IODINE_STORE___H
 #define H___IODINE_STORE___H
 #include "iodine.h"
+/* *****************************************************************************
+Ruby Object Storage (GC management)
+
+Use:
+
+// Adds a Ruby Object from the store, holding it against GC cleanup
+STORE.hold(VALUE o);
+
+// Removed a Ruby Object from the store, releasing it's GC hold
+STORE.release(VALUE o);
+
+// Performs callback during every GC cycle
+STORE.on_gc(void (*fn)(void *), void *arg);
+
+***************************************************************************** */
 
 /* *****************************************************************************
 Ruby Garbage Collection Protection Object
@@ -11,14 +26,14 @@ typedef struct {
   void *arg;
 } store___task_s;
 
-#define FIO_ARRAY_NAME store___todo
-#define FIO_ARRAY_TYPE store___task_s
+#define FIO_ARRAY_NAME           store___todo
+#define FIO_ARRAY_TYPE           store___task_s
 #define FIO_ARRAY_TYPE_CMP(a, b) ((a).fn == (b).fn && (a).arg == (b).arg)
-#define FIO_ARRAY_EXPONENTIAL 1
-#define FIO_MAP_NAME iodine_reference_store_map
-#define FIO_MAP_KEY VALUE
-#define FIO_MAP_VALUE size_t
-#define FIO_MAP_HASH_FN(o) fio_risky_ptr((void *)(o))
+#define FIO_ARRAY_EXPONENTIAL    1
+#define FIO_MAP_NAME             iodine_reference_store_map
+#define FIO_MAP_KEY              VALUE
+#define FIO_MAP_VALUE            size_t
+#define FIO_MAP_HASH_FN(o)       fio_risky_ptr((void *)(o))
 #define FIO_THREADS
 #include FIO_INCLUDE_FILE
 
@@ -31,8 +46,11 @@ static struct value_reference_counter_store_s {
   iodine_reference_store_map_s map;
   store___todo_s todo;
   fio_thread_mutex_t lock;
+  /** Adds a VALUE to the store, protecting it from the GC. */
   void (*hold)(VALUE);
+  /** Removed a VALUE to the store, if it's `hold` count drops to zero. */
   void (*release)(VALUE);
+  /** Adds a task to be performed during the next GC cycle. */
   void (*on_gc)(void (*fn)(void *), void *arg);
 } STORE = {
     FIO_MAP_INIT,
@@ -46,7 +64,7 @@ static struct value_reference_counter_store_s {
 /**
  * Prints the number of object withheld from the GC (for debugging).
  *
- *     Musta::Base.print_debug
+ *     Iodine::Base.print_debug
  */
 FIO_SFUNC VALUE value_reference_counter_store_print_debug(VALUE self) {
   fprintf(
@@ -59,8 +77,8 @@ FIO_SFUNC VALUE value_reference_counter_store_print_debug(VALUE self) {
   return self;
 }
 
-FIO_IFUNC void
-store___todo_perform_tasks_unsafe(struct value_reference_counter_store_s *s) {
+FIO_IFUNC void store___todo_perform_tasks_unsafe(
+    struct value_reference_counter_store_s *s) {
   store___task_s tsk = {NULL};
   while (!store___todo_pop(&s->todo, &tsk))
     tsk.fn(tsk.arg);
@@ -128,10 +146,16 @@ static void iodine_setup_value_reference_counter(VALUE klass) {
   if (keep_alive)
     return;
   /** Container Class for Ruby-C bridge (GC protected objects). */
-  rb_define_singleton_method(klass, "print_debug",
-                             value_reference_counter_store_print_debug, 0);
+  rb_define_singleton_method(klass,
+                             "print_debug",
+                             value_reference_counter_store_print_debug,
+                             0);
   keep_alive = TypedData_Wrap_Struct(klass, &storage_type_struct, &STORE);
   rb_global_variable(&keep_alive);
+  fio_state_callback_add(
+      FIO_CALL_AT_EXIT,
+      (void (*)(void *))value_reference_counter_store_destroy,
+      (void *)&STORE);
 }
 
 #endif

@@ -4,6 +4,34 @@
 
 /* *****************************************************************************
 Ruby Multi-Argument Helper
+
+Reads and validates method arguments (either "splat" or Hash Map).
+
+  fio_rb_multi_arg(argc, argv,
+    FIO_RB_ARG(var0, 0, "named_var", 0, 1), // required
+    FIO_RB_ARG(var1, id_if_known, "named_var2", default_val2, 0),
+    FIO_RB_ARG(var2, id_if_known, "named_var3", default_val3, 0));
+
+The `FIO_RB_ARG` macro arguments are as follows:
+
+    FIO_RB_ARG(t_var, id_, name_, default_, required_)
+
+Example:
+
+    VALUE file_name = Qnil;
+    VALUE file_content = Qnil;
+    VALUE on_yaml_block = Qnil;
+    fio_rb_multi_arg(argc, argv,
+                     FIO_RB_ARG(file_name, 0, "file", Qnil, 0),
+                     FIO_RB_ARG(file_content, 0, "template", Qnil, 0),
+                     FIO_RB_ARG(on_yaml_block, 0, "on_yaml", Qnil, 0));
+
+
+For Ruby methods declared as:
+
+    static VALUE my_method(int argc, VALUE *argv, VALUE klass);
+    rb_define_singleton_method(klass, "method", my_method, -1);
+
 ***************************************************************************** */
 
 typedef struct {
@@ -15,7 +43,8 @@ typedef struct {
 } fio_rb_multi_arg_s;
 
 /** Reads and validates method arguments (either "splat" or Hash Map). */
-static int fio_rb_multi_arg(int argc, const VALUE *argv,
+static int fio_rb_multi_arg(int argc,
+                            const VALUE *argv,
                             fio_rb_multi_arg_s *a) {
   int i = 0;
   if (argc == 1 && TYPE((argv[0])) == RUBY_T_HASH) {
@@ -73,8 +102,8 @@ missing_required:
   fio_rb_multi_arg(argc, argv, (fio_rb_multi_arg_s[]){__VA_ARGS__, {0}})
 #define FIO_RB_ARG(t_var, id_, name_, default_, required_)                     \
   {                                                                            \
-    .target = &t_var, .id = id_, .name = FIO_BUF_INFO1(((char *)name_)),       \
-    .default_value = default_, .required = required_                           \
+    .target = &(t_var), .id = (id_), .name = FIO_BUF_INFO1(((char *)name_)),   \
+    .default_value = (default_), .required = (required_)                       \
   }
 
 #endif /* H___IODINE_ARG_HELPER___H */
