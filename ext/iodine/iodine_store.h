@@ -17,6 +17,9 @@ STORE.on_gc(void (*fn)(void *), void *arg);
 
 ***************************************************************************** */
 
+#define IODINE_STORE_IS_SKIP(o)                                                \
+  (!o || o == Qnil || o == Qtrue || o == Qfalse || TYPE(o) == RUBY_T_FIXNUM)
+
 /* *****************************************************************************
 Ruby Garbage Collection Protection Object
 ***************************************************************************** */
@@ -85,7 +88,7 @@ FIO_IFUNC void store___todo_perform_tasks_unsafe(
 }
 
 FIO_SFUNC void value_reference_counter_store_hold(VALUE o) {
-  if (!o || o == Qnil || o == Qtrue || o == Qfalse || TYPE(o) == RUBY_T_FIXNUM)
+  if (IODINE_STORE_IS_SKIP(o))
     return;
   fio_thread_mutex_lock(&STORE.lock);
   iodine_reference_store_map_node_s *n =
@@ -98,7 +101,7 @@ FIO_SFUNC void value_reference_counter_store_hold(VALUE o) {
   fio_thread_mutex_unlock(&STORE.lock);
 }
 FIO_SFUNC void value_reference_counter_store_release(VALUE o) {
-  if (!o || o == Qnil || o == Qtrue || o == Qfalse || TYPE(o) == RUBY_T_FIXNUM)
+  if (IODINE_STORE_IS_SKIP(o))
     return;
   fio_thread_mutex_lock(&STORE.lock);
   iodine_reference_store_map_node_s *n =

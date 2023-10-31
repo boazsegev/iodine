@@ -19,27 +19,40 @@ From outside the GVL call Ruby functions so:
 /* printout backtrace in case of exceptions */
 static void *iodine_handle_exception(void *ignr) {
   (void)ignr;
+  FIO_LOG_ERROR("iodine catching an exposed exception");
   VALUE exc = rb_errinfo();
   if (exc != Qnil && rb_respond_to(exc, rb_intern("message")) &&
       rb_respond_to(exc, rb_intern("backtrace"))) {
     VALUE msg = rb_funcall2(exc, rb_intern("message"), 0, NULL);
     VALUE exc_class = rb_class_name(CLASS_OF(exc));
     VALUE bt = rb_funcall2(exc, rb_intern("backtrace"), 0, NULL);
+    if (msg == Qnil)
+      msg = rb_str_new("Error message unavailable", 25);
+    if (exc_class == Qnil)
+      exc_class = rb_str_new("unknown exception class", 23);
     if (TYPE(bt) == RUBY_T_ARRAY) {
       bt = rb_ary_join(bt, rb_str_new_literal("\n"));
-      FIO_LOG_ERROR("Iodine caught an unprotected exception - %.*s: %.*s\n%s",
+      FIO_LOG_ERROR("Iodine caught an unprotected exception - %.*s: %.*s\n %s ",
                     (int)RSTRING_LEN(exc_class),
                     RSTRING_PTR(exc_class),
                     (int)RSTRING_LEN(msg),
                     RSTRING_PTR(msg),
                     StringValueCStr(bt));
-    } else {
+    } else if (TYPE(bt) == RUBY_T_STRING) {
       FIO_LOG_ERROR("Iodine caught an unprotected exception - %.*s: %.*s\n"
                     "No backtrace available.\n",
                     (int)RSTRING_LEN(exc_class),
                     RSTRING_PTR(exc_class),
                     (int)RSTRING_LEN(msg),
                     RSTRING_PTR(msg));
+    } else {
+      FIO_LOG_ERROR("Iodine caught an unprotected exception - %.*s: %.*s\n %s\n"
+                    "BACKTRACE UNAVAILABLE!\n",
+                    (int)RSTRING_LEN(exc_class),
+                    RSTRING_PTR(exc_class),
+                    (int)RSTRING_LEN(msg),
+                    RSTRING_PTR(msg));
+      FIO_LOG_ERROR("Backtrace missing.");
     }
     rb_backtrace();
     FIO_LOG_ERROR("\n");
@@ -111,6 +124,9 @@ inline static iodine_caller_result_s iodine_ruby_call_inside(
   iodine_caller_result_s r = {0};
   FIO_ASSERT_DEBUG(args.recv && args.mid,
                    "iodine_ruby_call requires an object and method name");
+  VALUE stub[1] = {Qnil};
+  if (!args.argv)
+    args.argv = stub;
   r.result = rb_protect(
       (args.proc ? iodine___func_caller_task_proc : iodine___func_caller_task),
       (VALUE)&args,
@@ -122,6 +138,9 @@ inline static iodine_caller_result_s iodine_ruby_call_inside(
 
 inline static iodine_caller_result_s iodine_ruby_call_outside(
     iodine_caller_args_s args) {
+  VALUE stub[1] = {Qnil};
+  if (!args.argv)
+    args.argv = stub;
   iodine___caller_s r = {args, {0}};
   FIO_ASSERT_DEBUG(args.recv && args.mid,
                    "iodine_ruby_call requires an object and method name");

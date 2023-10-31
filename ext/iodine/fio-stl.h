@@ -11066,6 +11066,8 @@ typedef enum {
   FIO_CLI_ARG_PRINT_HEADER,
 } fio_cli_arg_e;
 
+#define FIO_CLI_ARG_NONE FIO_CLI_ARG_PRINT_HEADER
+
 typedef struct {
   fio_cli_arg_e t;
   const char *l;
@@ -11225,6 +11227,10 @@ SFUNC size_t fio_cli_each(int (*task)(fio_buf_info_s name,
                                       fio_cli_arg_e arg_type,
                                       void *udata),
                           void *udata);
+
+/** Returns the argument's expected content type. */
+SFUNC fio_cli_arg_e fio_cli_type(char const *name);
+
 /* *****************************************************************************
 CLI Implementation
 ***************************************************************************** */
@@ -11479,6 +11485,17 @@ SFUNC void __attribute__((destructor)) fio_cli_end(void) {
 /* *****************************************************************************
 CLI Public Get/Set API
 ***************************************************************************** */
+
+/** Returns the argument's expected content type. */
+SFUNC fio_cli_arg_e fio_cli_type(char const *name) {
+  fio_cli_arg_e r = FIO_CLI_ARG_NONE;
+  fio___cli_aliases_s o = {.name =
+                               fio_cli_str_tmp(FIO_BUF_INFO1((char *)name))};
+  fio___cli_aliases_s *a = fio___cli_amap_get(&fio___cli_data.aliases, o);
+  if (a)
+    r = a->t;
+  return r;
+}
 
 /** Returns the argument's value as a NUL terminated C String. */
 SFUNC char const *fio_cli_get(char const *name) {
@@ -16336,7 +16353,7 @@ FIO_IFUNC uint8_t fio_stream_any(fio_stream_s *stream);
  *
  * Note: this isn't truly thread safe.
  */
-FIO_IFUNC uint32_t fio_stream_length(fio_stream_s *stream);
+FIO_IFUNC size_t fio_stream_length(fio_stream_s *stream);
 
 /* *****************************************************************************
 
@@ -16384,7 +16401,7 @@ FIO_IFUNC int fio_stream_free(fio_stream_s *s) {
 FIO_IFUNC uint8_t fio_stream_any(fio_stream_s *s) { return s && s->next; }
 
 /* Returns the number of bytes waiting in the stream */
-FIO_IFUNC uint32_t fio_stream_length(fio_stream_s *s) { return s->length; }
+FIO_IFUNC size_t fio_stream_length(fio_stream_s *s) { return s->length; }
 
 /* *****************************************************************************
 Stream Implementation - possibly externed functions.
@@ -17868,7 +17885,7 @@ FIO_IFUNC fio_keystr_s fio_keystr_tmp(const char *buf, uint32_t len) {
 FIO_SFUNC fio_keystr_s fio_keystr_init(fio_str_info_s str,
                                        void *(*alloc_func)(size_t len)) {
   fio_keystr_s r = {0};
-  if (!str.buf || !str.len)
+  if (!str.buf || !str.len || (str.len & (~(size_t)0xFFFFFFFF)))
     return r;
   if (str.len + 1 < sizeof(r)) {
     r.info = (uint8_t)str.len;
@@ -17877,12 +17894,12 @@ FIO_SFUNC fio_keystr_s fio_keystr_init(fio_str_info_s str,
   }
   if (str.capa == FIO_KEYSTR_CONST) {
     r.info = 0xFF;
-    r.len = str.len;
+    r.len = (uint32_t)str.len;
     r.buf = str.buf;
     return r;
   }
   char *buf;
-  r.len = str.len;
+  r.len = (uint32_t)str.len;
   r.buf = buf = (char *)alloc_func(str.len + 1);
   if (!buf)
     goto no_mem;
@@ -28308,7 +28325,11 @@ SFUNC void *fio_srv_listen(struct fio_srv_listen_args args);
 #define fio_srv_listen(...)                                                    \
   fio_srv_listen((struct fio_srv_listen_args){__VA_ARGS__})
 
+/** Notifies a listener to stop listening. */
 SFUNC void fio_srv_listen_stop(void *listener);
+
+/** Returns the URL on which the listener is listening. */
+SFUNC fio_buf_info_s fio_srv_listener_url(void *listener);
 
 /* *****************************************************************************
 Listening to Incoming Connections
@@ -29976,6 +29997,7 @@ static void fio___srv_spawn_worker(void *ignr_1, void *ignr_2) {
   if (fio_atomic_or_fetch(&fio___srvdata.stop, 2) != 2)
     return;
 
+  fio___srvdata.tick = FIO___SRV_GET_TIME_MILLI();
   fio_state_callback_force(FIO_CALL_BEFORE_FORK);
   /* do not allow master tasks to run in worker */
   fio_queue_perform_all(fio___srv_tasks);
@@ -30469,6 +30491,12 @@ SFUNC void fio_srv_listen_stop(void *listener) {
     fio___srv_listen_free(listener);
 }
 
+/** Returns the URL on which the listener is listening. */
+SFUNC fio_buf_info_s fio_srv_listener_url(void *listener) {
+  fio___srv_listen_s *l = (fio___srv_listen_s *)listener;
+  return FIO_BUF_INFO2(l->url, l->url_len);
+}
+
 static void fio___srv_listen_on_data_task(void *io_, void *ignr_) {
   (void)ignr_;
   fio_s *io = (fio_s *)io_;
@@ -30716,6 +30744,7 @@ Managing data after a fork
 FIO_SFUNC void fio___srv_after_fork(void *ignr_) {
   (void)ignr_;
   fio___srvdata.pid = fio_thread_getpid();
+  fio___srvdata.tick = FIO___SRV_GET_TIME_MILLI();
   fio_queue_perform_all(fio___srv_tasks);
   FIO_LIST_EACH(fio_protocol_s,
                 reserved.protocols,
@@ -30739,6 +30768,9 @@ FIO_SFUNC void fio___srv_cleanup_at_exit(void *ignr_) {
   fio_thread_mutex_destroy(&fio___srvdata.valid_lock);
 #endif
 #endif /* FIO_VALIDATE_IO_MUTEX / FIO_VALIDITY_MAP_USE */
+  fio___srvdata.tick = FIO___SRV_GET_TIME_MILLI();
+  fio_queue_perform_all(fio___srv_tasks);
+  fio_timer_destroy(fio___srv_timer);
   fio_queue_perform_all(fio___srv_tasks);
 }
 
@@ -34288,6 +34320,11 @@ typedef struct fio_http_cookie_args_s {
   unsigned secure : 1;
   /** Limit cookie to HTTP (intended to prevent JavaScript access/hijacking).*/
   unsigned http_only : 1;
+  /**
+   * Set the Partitioned (third party) cookie flag:
+   * https://developer.mozilla.org/en-US/docs/Web/Privacy/Partitioned_cookies
+   */
+  unsigned partitioned : 1;
 } fio_http_cookie_args_s;
 
 /**
@@ -34824,9 +34861,11 @@ static struct {
 #if FIO_HTTP_CACHE_STATIC_HEADERS
 
 #define FIO___HTTP_STATIC_CACHE_MASK       127
-#define FIO___HTTP_STATIC_CACHE_FOLD       22
+#define FIO___HTTP_STATIC_CACHE_FOLD       56
 #define FIO___HTTP_STATIC_CACHE_STEP       1
-#define FIO___HTTP_STATIC_CACHE_STEP_LIMIT 3
+#define FIO___HTTP_STATIC_CACHE_STEP_LIMIT 2
+#define FIO___HTTP_STATIC_CACHE_MASK_INV                                       \
+  (~(uint16_t)FIO___HTTP_STATIC_CACHE_MASK)
 
 static struct {
   fio___bstr_meta_s meta;
@@ -34926,7 +34965,8 @@ static void fio___http_str_cached_init(void) {
     while (FIO___HTTP_STATIC_CACHE_IMAP[hash & FIO___HTTP_STATIC_CACHE_MASK]) {
       FIO_ASSERT(
           (FIO___HTTP_STATIC_CACHE_IMAP[hash & FIO___HTTP_STATIC_CACHE_MASK] &
-           0xFF80) != (hash & 0xFF80),
+           FIO___HTTP_STATIC_CACHE_MASK_INV) !=
+              (hash & FIO___HTTP_STATIC_CACHE_MASK_INV),
           "full collision for HTTP static hash (%zu == %zu!",
           (size_t)(hash & FIO___HTTP_STATIC_CACHE_MASK),
           i);
@@ -34937,7 +34977,7 @@ static void fio___http_str_cached_init(void) {
                  FIO___HTTP_STATIC_CACHE[i].str);
     }
     FIO___HTTP_STATIC_CACHE_IMAP[hash & FIO___HTTP_STATIC_CACHE_MASK] =
-        (hash & 0xFF80) | i;
+        (hash & FIO___HTTP_STATIC_CACHE_MASK_INV) | i;
   }
 }
 
@@ -34948,13 +34988,14 @@ static char *fio___http_str_cached_static(char *str, size_t len) {
   for (size_t attempts = 0; attempts < FIO___HTTP_STATIC_CACHE_STEP_LIMIT;
        ++attempts) {
     if ((FIO___HTTP_STATIC_CACHE_IMAP[hash & FIO___HTTP_STATIC_CACHE_MASK] &
-         0xFF80) == (hash & 0xFF80))
+         FIO___HTTP_STATIC_CACHE_MASK_INV) ==
+        (hash & FIO___HTTP_STATIC_CACHE_MASK_INV))
       break;
     hash += hash >> FIO___HTTP_STATIC_CACHE_STEP;
   }
   size_t pos =
       FIO___HTTP_STATIC_CACHE_IMAP[hash & FIO___HTTP_STATIC_CACHE_MASK] &
-      0x007F;
+      FIO___HTTP_STATIC_CACHE_MASK;
   if (FIO___HTTP_STATIC_CACHE[pos].meta.len == len &&
       !FIO_MEMCMP(str, FIO___HTTP_STATIC_CACHE[pos].str, len)) {
     return FIO___HTTP_STATIC_CACHE[pos].str;
@@ -34962,8 +35003,9 @@ static char *fio___http_str_cached_static(char *str, size_t len) {
   return NULL;
 }
 
-#undef FIO___HTTP_STATIC_CACHE_MASK
 #undef FIO___HTTP_STATIC_CACHE_FOLD
+#undef FIO___HTTP_STATIC_CACHE_MASK
+#undef FIO___HTTP_STATIC_CACHE_MASK_INV
 #undef FIO___HTTP_STATIC_CACHE_STEP
 #undef FIO___HTTP_STATIC_CACHE_STEP_LIMIT
 #else
@@ -35663,6 +35705,13 @@ SFUNC int fio_http_cookie_set FIO_NOOP(fio_http_s *h,
         ((t.buf == tmp_buf) ? FIO_STRING_ALLOC_COPY : FIO_STRING_REALLOC),
         "secure; ",
         8);
+  }
+  if (cookie.partitioned) {
+    fio_string_write(
+        &t,
+        ((t.buf == tmp_buf) ? FIO_STRING_ALLOC_COPY : FIO_STRING_REALLOC),
+        "partitioned; ",
+        13);
   }
   switch (cookie.same_site) {
   case FIO_HTTP_COOKIE_SAME_SITE_BROWSER_DEFAULT: /* fall through */

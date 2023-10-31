@@ -89,7 +89,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
   fio_cli_end();
   fio_cli_start(
       len,
-      argv,
+      (const char **)argv,
       0,
       ((required == Qnil || required == Qfalse) ? -1 : 1),
       desc,
@@ -102,8 +102,8 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
           "Note: these are optional and supersede previous instructions."),
 
       FIO_CLI_PRINT_HEADER("Concurrency"),
-      FIO_CLI_INT("--threads -t number of worker threads to use."),
-      FIO_CLI_INT("--workers -w number of worker processes to use."),
+      FIO_CLI_INT("--threads (-4) -t number of worker threads to use."),
+      FIO_CLI_INT("--workers (-2) -w number of worker processes to use."),
 
       FIO_CLI_PRINT_HEADER("HTTP"),
       FIO_CLI_STRING("--public -www public folder for static file service."),
@@ -157,9 +157,71 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
           "Containers sometimes impose file-system restrictions, i.e.,"),
       FIO_CLI_PRINT("the IPC Unix Socket might need to be placed in `/tmp`."));
 
+  /* review CLI for logging */
+  if (fio_cli_get_bool("-V")) {
+    FIO_LOG_LEVEL = FIO_LOG_LEVEL_DEBUG;
+  }
+
+  if (fio_cli_get_bool("--contained")) { /* container - IPC url in tmp */
+    char *u = (char *)fio_pubsub_ipc_url();
+    memcpy((void *)(u + 7), "/tmp/", 5);
+  }
+
+  /* Clustering */
+  if (fio_cli_get_i("-bp") > 0) {
+    fio_buf_info_s scrt = FIO_BUF_INFO1((char *)fio_cli_get("-scrt"));
+    fio_pubsub_secret_set(scrt.buf, scrt.len);
+    fio_pubsub_broadcast_on_port(fio_cli_get_i("-bp"));
+  }
+
+  /* Test for TLS */
+  fio_tls_s *tls = (fio_cli_get("--tls-cert") && fio_cli_get("--tls-key"))
+                       ? fio_tls_cert_add(fio_tls_new(),
+                                          fio_cli_get("--tls-name"),
+                                          fio_cli_get("--tls-cert"),
+                                          fio_cli_get("--tls-key"),
+                                          fio_cli_get("-tls-pass"))
+                   : fio_cli_get("-tls")
+                       ? fio_tls_cert_add(fio_tls_new(),
+                                          fio_cli_get("-tls-name"),
+                                          NULL,
+                                          NULL,
+                                          NULL)
+                       : NULL;
+  /* support -b and -p for when a URL isn't provided */
+  if (fio_cli_get("-b"))
+    fio_cli_set_unnamed(0, fio_cli_get("-b"));
+  if (fio_cli_get("-p")) {
+    fio_buf_info_s tmp;
+    FIO_STR_INFO_TMP_VAR(url, 2048);
+    tmp.buf = (char *)fio_cli_unnamed(0);
+    if (!tmp.buf)
+      tmp.buf = (char *)"0.0.0.0";
+    tmp.len = strlen(tmp.buf);
+    FIO_ASSERT(tmp.len < 2000, "binding address / url too long.");
+    fio_url_s u = fio_url_parse(tmp.buf, tmp.len);
+    tmp.buf = (char *)fio_cli_get("-p");
+    tmp.len = strlen(tmp.buf);
+    FIO_ASSERT(tmp.len < 6, "port number too long.");
+    fio_string_write2(&url,
+                      NULL,
+                      FIO_STRING_WRITE_STR2(u.scheme.buf, u.scheme.len),
+                      (u.scheme.len ? FIO_STRING_WRITE_STR2("://", 3)
+                                    : FIO_STRING_WRITE_STR2(NULL, 0)),
+                      FIO_STRING_WRITE_STR2(u.host.buf, u.host.len),
+                      FIO_STRING_WRITE_STR2(":", 1),
+                      FIO_STRING_WRITE_STR2(tmp.buf, tmp.len),
+                      (u.query.len ? FIO_STRING_WRITE_STR2("?", 1)
+                                   : FIO_STRING_WRITE_STR2(NULL, 0)),
+                      FIO_STRING_WRITE_STR2(u.query.buf, u.query.len));
+    fio_cli_set_unnamed(0, url.buf);
+  }
+
+  /* Save data to Hash and return it... why? I don't know. */
   VALUE h = rb_hash_new();
   STORE.hold(h);
   fio_cli_each(iodine_cli_task, (void *)h);
+  /* cleanup */
   fio_state_callback_remove(FIO_CALL_AT_EXIT,
                             (void (*)(void *))fio_bstr_free,
                             (void *)desc);
@@ -174,10 +236,63 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
   return h;
 }
 
-/** Read CLI as required data. */
-static VALUE iodine_cli_ask(VALUE self) {
-  rb_raise(rb_eException, "Iodine::Connection.new shouldn't be called!");
-  return self;
+static VALUE iodine_cli_get(VALUE self, VALUE key) {
+  VALUE r = Qnil;
+  fio_cli_arg_e t = FIO_CLI_ARG_NONE;
+  const char *val = NULL;
+  if (RB_TYPE_P(key, RUBY_T_FIXNUM)) {
+    val = fio_cli_unnamed(NUM2UINT(key));
+    goto finish_string;
+  }
+  if (RB_TYPE_P(key, RUBY_T_SYMBOL))
+    key = rb_sym2str(key);
+  if (!RB_TYPE_P(key, RUBY_T_STRING))
+    rb_raise(rb_eArgError,
+             "key should be either an Integer, a String or a Symbol");
+  t = fio_cli_type(RSTRING_PTR(key));
+  if (t == FIO_CLI_ARG_INT || t == FIO_CLI_ARG_STRING)
+    r = LL2NUM(fio_cli_get_i(RSTRING_PTR(key)));
+  else
+    val = fio_cli_get(RSTRING_PTR(key));
+
+finish_string:
+  if (val)
+    r = rb_str_new(val, strlen(val));
+  return r;
+}
+
+static VALUE iodine_cli_set(VALUE self, VALUE key, VALUE value) {
+  if (fio_srv_is_running() || !fio_srv_is_master())
+    rb_raise(rb_eException,
+             "Setting CLI arguments can only be performed before Iodine.start "
+             "and in the master process.");
+  if (RB_TYPE_P(key, RUBY_T_FIXNUM)) {
+    if (!RB_TYPE_P(value, RUBY_T_STRING))
+      rb_raise(rb_eArgError,
+               "value for an indexed CLI argument should be a String");
+    fio_cli_set_unnamed(NUM2UINT(key), RSTRING_PTR(value));
+    return value;
+  }
+  if (RB_TYPE_P(key, RUBY_T_SYMBOL))
+    key = rb_sym2str(key);
+  if (!RB_TYPE_P(key, RUBY_T_STRING))
+    rb_raise(rb_eArgError,
+             "key should be either an Integer, a String or a Symbol");
+  fio_cli_arg_e t = fio_cli_type(RSTRING_PTR(key));
+  if (t == FIO_CLI_ARG_INT || t == FIO_CLI_ARG_STRING) {
+    if (!RB_TYPE_P(value, RUBY_T_FIXNUM))
+      rb_raise(rb_eArgError,
+               "value for %s should be an Integer",
+               RSTRING_PTR(key));
+    fio_cli_set_i(RSTRING_PTR(key), NUM2LL(value));
+  } else {
+    if (!RB_TYPE_P(value, RUBY_T_STRING))
+      rb_raise(rb_eArgError,
+               "value for %s should be a String",
+               RSTRING_PTR(key));
+    fio_cli_set(RSTRING_PTR(key), RSTRING_PTR(value));
+  }
+  return value;
 }
 
 /* *****************************************************************************
@@ -185,9 +300,11 @@ Initialize CLI API
 ***************************************************************************** */
 static void Init_iodine_cli(void) { // clang-format on
   /** The Iodine::Base module is for internal concerns. */
-  VALUE base = rb_define_class_under(iodine_rb_IODINE, "Base", rb_cObject);
-  VALUE cli = rb_define_module_under(base, "CLI");
+  VALUE cli = rb_define_module_under(iodine_rb_IODINE_BASE, "CLI");
   rb_define_singleton_method(cli, "parse", iodine_cli_parse, 1);
+  rb_define_singleton_method(cli, "[]", iodine_cli_get, 1);
+  rb_define_singleton_method(cli, "[]=", iodine_cli_set, 2);
+  iodine_cli_parse(cli, Qfalse);
 }
 
 /* *****************************************************************************

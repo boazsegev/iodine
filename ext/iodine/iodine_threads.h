@@ -89,7 +89,7 @@ FIO_IFUNC int fio_thread_create(fio_thread_t *t,
 /** Waits for the thread to finish. */
 FIO_IFUNC int fio_thread_join(fio_thread_t *t) {
   iodine_caller_result_s r =
-      iodine_ruby_call_outside(rb_cThread, rb_intern2("join", 4), 1, t);
+      iodine_ruby_call_outside(t[0], rb_intern2("join", 4), 0, NULL);
   STORE.release(t[0]);
   if (r.exeption)
     return -1;
