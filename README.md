@@ -10,28 +10,28 @@
 
 Iodine is a fast concurrent web application server for real-time Ruby applications, with native support for WebSockets and Pub/Sub services - but it's also so much more.
 
-Iodine is a Ruby wrapper for many of the [facil.io](https://facil.io) C framework, leveraging the speed of C for many common web application tasks. In addition, iodine abstracts away all network concerns, so you never need to worry about the transport layer, free to concentrate on your application logic.
+Iodine is a Ruby wrapper for much of the [facil.io](https://facil.io) C framework, leveraging the speed of C for many common web application tasks. In addition, iodine abstracts away all network concerns, so you never need to worry about the transport layer, leaving you free to concentrate on your application logic.
 
 Iodine includes native support for:
 
 * HTTP, WebSockets and EventSource (SSE) Services (server);
 * WebSocket connections (server / client);
 * Pub/Sub (with optional Redis Pub/Sub scaling);
-* Fast(!) builtin Mustache template engine.
+* Fast(!) builtin Mustache templating;
 * Static file service (with automatic `gzip` support for pre-compressed assets);
-* Optimized Logging to `stderr`.
+* Optimized Logging to `stderr`;
 * Asynchronous event scheduling and timers;
 * HTTP/1.1 keep-alive and pipelining;
-* Heap Fragmentation Protection.
-* TLS 1.2 and above (Requires OpenSSL >= 1.1.0);
+* Heap Fragmentation Protection;
+* TLS 1.2 and above (Requiring OpenSSL >= 1.1.0);
 * TCP/IP server and client connectivity;
 * Unix Socket server and client connectivity;
-* Hot Restart (using the USR1 signal and without hot deployment);
+* Hot Restarts (using the USR1 signal and without hot deployment);
 * Custom protocol authoring;
-* [Sequel](https://github.com/jeremyevans/sequel) and ActiveRecord forking protection.
+* [Sequel](https://github.com/jeremyevans/sequel) and ActiveRecord forking protection;
 * and more!
 
-Since iodine wraps much of the [C facil.io framework](https://github.com/boazsegev/facil.io) to Ruby:
+Since iodine wraps much of the [C facil.io framework](https://github.com/boazsegev/facil.io) for Ruby:
 
 * Iodine can handle **thousands of concurrent connections** (tested with more then 20K connections on Linux)!
 
@@ -39,13 +39,13 @@ Since iodine wraps much of the [C facil.io framework](https://github.com/boazseg
 
 Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.3 and up... it should support the whole Ruby 2.x and 3.x MRI family, but CI tests start at Ruby 2.3.
 
-**Note**: iodine does **not** support streaming when using Rack. It's recommended to avoid blocking the server when using `body.each` since the `each` loop will block the iodine's thread until it's finished and iodine won't send any data before the loop is done.
+**Note**: iodine does **not** support streaming when using Rack. It's recommended to avoid blocking the server when using `body.each` since the `each` loop will block  iodine's thread until it's finished and iodine won't send any data before the loop is done.
 
 ## Iodine - a fast & powerful HTTP + WebSockets server with native Pub/Sub
 
 Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the [Websocket draft extension](./SPEC-Websocket-Draft.md).
 
-With `Iodine.listen service: :http` it's possible to run multiple HTTP applications (please remember not to set more than a single application on a single TCP/IP port). 
+With `Iodine.listen service: :http` it's possible to run multiple HTTP applications (but please remember not to set more than a single application on a single TCP/IP port). 
 
 Iodine also supports native process cluster Pub/Sub and a native RedisEngine to easily scale iodine's Pub/Sub horizontally.
 
