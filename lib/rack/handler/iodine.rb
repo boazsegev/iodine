@@ -24,10 +24,19 @@ module Iodine
   end
 end
 
-ENV['RACK_HANDLER'] ||= 'iodine'
+# rackup was removed in Rack 3, it is now a separate gem
+if Object.const_defined? :Rackup
+  ENV['RACKUP_HANDLER'] ||= 'iodine'
 
-begin
-  ::Rack::Handler.register('iodine', 'Iodine::Rack') if defined?(::Rack::Handler)
-  ::Rack::Handler.register('Iodine', 'Iodine::Rack') if defined?(::Rack::Handler)
-rescue StandardError
+  ::Rackup::Handler.register(:iodine, Iodine::Rack) if defined?(::Rackup::Handler)
+elsif Object.const_defined?(:Rack) && Rack::RELEASE < '3'
+  ENV['RACK_HANDLER'] ||= 'iodine'
+
+  begin
+    ::Rack::Handler.register('iodine', 'Iodine::Rack') if defined?(::Rack::Handler)
+    ::Rack::Handler.register('Iodine', 'Iodine::Rack') if defined?(::Rack::Handler)
+  rescue StandardError
+  end
+else
+  raise "You must install the rackup gem when using Rack 3"
 end
