@@ -1,0 +1,24 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+require 'iodine'
+
+# Iodine.verbosity = 5
+# Iodine.threads = 0
+# Iodine.workers = 0
+
+
+# Define the protocol for our service
+module FakeHTTP
+  def on_message(client, data)
+    client.write "HTTP/1.1 200 OK\r\ndate: Mon, 22 Jul 2024 14:06:56 GMT\r\ncontent-length:#{data.bytesize}\r\n\r\n#{data}"
+  end
+  # We can use a singleton pattern,
+  # as the Protocol object doesn't contain any per-connection data.
+  extend self
+end
+
+# create the service instance, the block returns a connection handler.
+Iodine.listen(handler: FakeHTTP, service: :tcp)
+
+# Start the server
+Iodine.start

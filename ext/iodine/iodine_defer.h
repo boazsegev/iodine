@@ -20,8 +20,8 @@ static ID IODINE_STATE_ENTER_MASTER;
 static ID IODINE_STATE_ON_START;
 static ID IODINE_STATE_ON_PARENT_CRUSH;
 static ID IODINE_STATE_ON_CHILD_CRUSH;
-static ID IODINE_STATE_START_SHUTDOWN;
-static ID IODINE_STATE_ON_FINISH;
+static ID IODINE_STATE_ON_SHUTDOWN;
+static ID IODINE_STATE_ON_STOP;
 
 /* performs a Ruby state callback without clearing the Ruby object's memory */
 static void iodine_perform_state_callback_persist(void *blk_) {
@@ -94,12 +94,12 @@ static VALUE iodine_on_state(VALUE self, VALUE event) { // clang-format on
     fio_state_callback_add(FIO_CALL_ON_CHILD_CRUSH,
                            iodine_perform_state_callback_persist,
                            (void *)block);
-  } else if (state == IODINE_STATE_START_SHUTDOWN) {
+  } else if (state == IODINE_STATE_ON_SHUTDOWN) {
     fio_state_callback_add(FIO_CALL_ON_SHUTDOWN,
                            iodine_perform_state_callback_persist,
                            (void *)block);
-  } else if (state == IODINE_STATE_ON_FINISH) {
-    fio_state_callback_add(FIO_CALL_ON_FINISH,
+  } else if (state == IODINE_STATE_ON_STOP) {
+    fio_state_callback_add(FIO_CALL_ON_STOP,
                            iodine_perform_state_callback_persist,
                            (void *)block);
   } else {
@@ -123,7 +123,7 @@ static void iodine_defer_performe_once(void *block, void *ignr) {
 static int iodine_defer_run_timer(void *block, void *ignr) {
   iodine_caller_result_s r =
       iodine_ruby_call_outside((VALUE)block, IODINE_CALL_ID, 0, NULL);
-  return 0 - (r.exeption || (r.result == Qfalse));
+  return 0 - (r.exception || (r.result == Qfalse));
   (void)ignr;
 }
 
@@ -137,7 +137,7 @@ Defer API
 ***************************************************************************** */
 
 /**
- * Runs a block of code asyncronously (adds the code to the event queue).
+ * Runs a block of code asynchronously (adds the code to the event queue).
  *
  * Always returns the block of code to executed (Proc object).
  *
@@ -151,6 +151,25 @@ static VALUE iodine_defer_run(VALUE self) {
   VALUE block = rb_block_proc();
   STORE.hold(block);
   fio_srv_defer(iodine_defer_performe_once, (void *)block, NULL);
+  return block;
+  (void)self;
+}
+
+/**
+ * Runs a block of code asynchronously (adds the code to the event queue).
+ *
+ * Always returns the block of code to executed (Proc object).
+ *
+ * Code will be executed only while Iodine is running (after {Iodine.start}).
+ *
+ * Code blocks that where scheduled to run before Iodine enters cluster mode
+ * will run on all child processes.
+ */
+static VALUE iodine_defer_run_async(VALUE self) {
+  rb_need_block();
+  VALUE block = rb_block_proc();
+  STORE.hold(block);
+  IODINE_DEFER_BLOCK(block);
   return block;
   (void)self;
 }
@@ -176,62 +195,22 @@ Always returns a copy of the block object.
 static VALUE iodine_defer_run_after(int argc, VALUE *argv, VALUE self) {
   // clang-format on
   (void)(self);
-  VALUE milliseconds, repetitions, block;
-
-  fio_rb_multi_arg(argc,
-                   argv,
-                   FIO_RB_ARG(milliseconds, 0, "milliseconds", Qnil, 1),
-                   FIO_RB_ARG(repetitions, 0, "repetitions", Qnil, 0),
-                   FIO_RB_ARG(block, 0, "block", Qnil, 0));
-  if (TYPE(milliseconds) != T_FIXNUM) {
-    rb_raise(rb_eTypeError, "milliseconds must be a number.");
-    return Qnil;
-  }
-  if (repetitions != Qnil && TYPE(repetitions) != RUBY_T_FIXNUM) {
-    rb_raise(rb_eTypeError, "repetitions must be either a number or `nil`.");
-    return Qnil;
-  }
-  if (block == Qnil) {
-    rb_need_block();
-    block = rb_block_proc();
-  }
-
+  int64_t milli = 0;
+  int64_t repeat = 1;
+  VALUE block = Qnil;
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_NUM(milli, 0, "milliseconds", 1), // required
+                  IODINE_ARG_NUM(repeat, 0, "repetitions", 0),
+                  IODINE_ARG_PROC(block, 0, "block", 1));
   STORE.hold(block);
-  uint32_t milli = FIX2INT(milliseconds);
-  int32_t repeat = (repetitions == Qnil) ? 0 : (FIX2INT(repetitions) - 1);
-
-  fio_srv_run_every(.every = milli,
-                    .repetitions = repeat,
+  repeat -= 1;
+  fio_srv_run_every(.every = (uint32_t)milli,
+                    .repetitions = (int32_t)repeat,
                     .fn = iodine_defer_run_timer,
                     .udata1 = (void *)block,
                     .on_finish = iodine_defer_after_timer);
   return block;
-}
-
-/* *****************************************************************************
-Initialize Iodine Defers
-***************************************************************************** */
-
-static void Init_iodine_defer(void) {
-  rb_define_module_function(iodine_rb_IODINE, "run", iodine_defer_run, 0);
-  rb_define_module_function(iodine_rb_IODINE, "defer", iodine_defer_run, 0);
-
-  rb_define_module_function(iodine_rb_IODINE,
-                            "run_after",
-                            iodine_defer_run_after,
-                            -1);
-  rb_define_module_function(iodine_rb_IODINE, "on_state", iodine_on_state, 1);
-
-  IODINE_STATE_PRE_START = rb_intern("pre_start");
-  IODINE_STATE_BEFORE_FORK = rb_intern("before_fork");
-  IODINE_STATE_AFTER_FORK = rb_intern("after_fork");
-  IODINE_STATE_ENTER_CHILD = rb_intern("enter_child");
-  IODINE_STATE_ENTER_MASTER = rb_intern("enter_master");
-  IODINE_STATE_ON_START = rb_intern("on_start");
-  IODINE_STATE_ON_PARENT_CRUSH = rb_intern("on_parent_crush");
-  IODINE_STATE_ON_CHILD_CRUSH = rb_intern("on_child_crush");
-  IODINE_STATE_START_SHUTDOWN = rb_intern("start_shutdown");
-  IODINE_STATE_ON_FINISH = rb_intern("on_finish");
 }
 
 #endif /* H___IODINE_DEFER___H */

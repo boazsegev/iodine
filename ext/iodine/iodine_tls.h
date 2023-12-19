@@ -1,5 +1,5 @@
-#ifndef H___IODINE_TLS___
-#define H___IODINE_TLS___
+#ifndef H___IODINE_TLS___H
+#define H___IODINE_TLS___H
 #include "iodine.h"
 /* *****************************************************************************
 TLS Wrapper
@@ -136,52 +136,73 @@ SFUNC fio_io_functions_s fio_tls_default_io_functions(fio_io_functions_s *);
 /* *****************************************************************************
 Wrapper API
 ***************************************************************************** */
+
+// clang-format off
+/**
+Assigns the TLS context a public certificate, allowing remote parties to
+validate the connection's identity.
+
+A self signed certificate is automatically created if the `name` argument
+is specified and either (or both) of the `cert` (public certificate) or `key`
+(private key) arguments are missing.
+
+Some implementations allow servers to have more than a single certificate, which
+will be selected using the SNI extension. I believe the existing OpenSSL
+implementation supports this option (untested).
+
+     Iodine::TLS#add_cert(name = nil,
+                          cert = nil,
+                          key = nil,
+                          password = nil)
+
+Certificates and keys should be String objects leading to a PEM file.
+
+This method also accepts named arguments. i.e.:
+
+     tls = Iodine::TLS.new
+     tls.add_cert name: "example.com"
+     tls.add_cert cert: "my_cert.pem", key: "my_key.pem"
+     tls.add_cert cert: "my_cert.pem", key: "my_key.pem", password: ENV['TLS_PASS']
+
+Since TLS setup is crucial for security, an initialization error will result in
+Iodine crashing with an error message. This is expected behavior.
+*/ // clang-format on
 static VALUE iodine_tls_cert_add(int argc, VALUE *argv, VALUE self) {
   fio_tls_s *tls = iodine_tls_get(self);
-  VALUE server_name_rb;
-  VALUE public_cert_file_rb;
-  VALUE private_key_file_rb;
-  VALUE pk_password_rb;
-  char *server_name = NULL;
-  char *public_cert_file = NULL;
-  char *private_key_file = NULL;
-  char *pk_password = NULL;
-  fio_rb_multi_arg(argc,
-                   argv,
-                   FIO_RB_ARG(server_name_rb, 0, "name", Qnil, 0),
-                   FIO_RB_ARG(public_cert_file_rb, 0, "cert", Qnil, 0),
-                   FIO_RB_ARG(private_key_file_rb, 0, "key", Qnil, 0),
-                   FIO_RB_ARG(pk_password_rb, 0, "password", Qnil, 0));
-  if (server_name_rb != Qnil) {
-    rb_check_type(server_name_rb, RUBY_T_STRING);
-    server_name = RSTRING_PTR(server_name_rb);
-  }
-  if (public_cert_file_rb != Qnil) {
-    rb_check_type(public_cert_file_rb, RUBY_T_STRING);
-    public_cert_file = RSTRING_PTR(public_cert_file_rb);
-  }
-  if (private_key_file_rb != Qnil) {
-    rb_check_type(private_key_file_rb, RUBY_T_STRING);
-    private_key_file = RSTRING_PTR(private_key_file_rb);
-  }
-  if (pk_password_rb != Qnil) {
-    rb_check_type(pk_password_rb, RUBY_T_STRING);
-    pk_password = RSTRING_PTR(pk_password_rb);
-  }
+  fio_buf_info_s server_name = FIO_BUF_INFO1((char *)"localhost");
+  fio_buf_info_s public_cert_file = FIO_BUF_INFO0;
+  fio_buf_info_s private_key_file = FIO_BUF_INFO0;
+  fio_buf_info_s pk_password = FIO_BUF_INFO0;
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(server_name, 0, "name", 0),
+                  IODINE_ARG_BUF(public_cert_file, 0, "cert", 0),
+                  IODINE_ARG_BUF(private_key_file, 0, "key", 0),
+                  IODINE_ARG_BUF(pk_password, 0, "password", 0));
   fio_tls_cert_add(tls,
-                   server_name,
-                   public_cert_file,
-                   private_key_file,
-                   pk_password);
+                   server_name.buf,
+                   public_cert_file.buf,
+                   private_key_file.buf,
+                   pk_password.buf);
   return self;
 }
 
-/* *****************************************************************************
-TLS Object Initialization
-***************************************************************************** */
-static void iodine_tls_init(void) {
-  VALUE m = rb_define_class_under(iodine_rb_IODINE, "TLS", rb_cObject);
-  rb_define_alloc_func(m, iodine_tls_alloc);
+/** @deprecated use {Iodine::TLS.add_cert}. */
+static VALUE iodine_tls_cert_add_old_name(int argc, VALUE *argv, VALUE self) {
+  return iodine_tls_cert_add(argc, argv, self);
 }
 
+static void Init_Iodine_TLS(void) { /** Initialize Iodine::TLS */
+  /** Used to setup a TLS contexts for connections (incoming / outgoing). */
+  VALUE m = rb_define_class_under(iodine_rb_IODINE, "TLS", rb_cObject);
+  rb_define_alloc_func(m, iodine_tls_alloc);
+  rb_define_method(m, "add_cert", iodine_tls_cert_add, -1);
+  rb_define_method(m, "use_certificate", iodine_tls_cert_add_old_name, -1);
+#if HAVE_OPENSSL
+  rb_const_set(m, rb_intern("SUPPORTED"), Qtrue);
+#else
+  rb_const_set(m, rb_intern("SUPPORTED"), Qfalse);
 #endif
+}
+
+#endif /* H___IODINE_TLS___H */

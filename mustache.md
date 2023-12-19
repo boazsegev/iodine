@@ -29,97 +29,20 @@ results = Array.new(100) {|i| view.render(foo: "bar#{i}") } # => ["bar0", "bar1"
 
 ## Performance
 
-Performance on my machine seems very fast
+Performance testing requires the main Ruby `mustache` gem as well as the `benchmark-ips` gem.
+
+Test using:
 
 ```ruby
-require 'benchmark/ips'
-require 'mustache'
-require 'iodine'
-
-# Benchmark code was copied, in part, from:
-#   https://github.com/mustache/mustache/blob/master/benchmarks/render_collection_benchmark.rb
-# The test is, sadly, biased and doesn't test for missing elements, proc/method resolution or template partials.
-def benchmark_mustache
-  template = """
-  {{#products}}
-    <div class='product_brick'>
-      <div class='container'>
-        <div class='element'>
-          <img src='images/{{image}}' class='product_miniature' />
-        </div>
-        <div class='element description'>
-          <a href={{url}} class='product_name block bold'>
-            {{external_index}}
-          </a>
-        </div>
-      </div>
-    </div>
-  {{/products}}
-  """
-  
-  # fill Hash objects with values for template rendering
-  data_1000 = {
-    products: []
-  }
-  data_1000_escaped = {
-    products: []
-  }
-
-  1000.times do
-    data_1000[:products] << {
-      :external_index=>"product",
-      :url=>"/products/7",
-      :image=>"products/product.jpg"
-    }
-    data_1000_escaped[:products] << {
-      :external_index=>"This <product> should've been \"properly\" escaped.",
-      :url=>"/products/7",
-      :image=>"products/product.jpg"
-    }
-  end
-
-  # prepare Iodine::Mustache reduced Mustache template engine
-  mus_view = Iodine::Mustache.new(template: template)
-
-  # prepare official Mustache template engine
-  view = Mustache.new
-  view.template = template
-  view.render # Call render once so the template will be compiled
-
-  # benchmark different use cases
-  Benchmark.ips do |x|
-    x.report("Ruby Mustache render list of 1000") do |times|
-      view.render(data_1000)
-    end
-    x.report("Iodine::Mustache render list of 1000") do |times|
-      mus_view.render(data_1000)
-    end
-
-    x.report("Ruby Mustache render list of 1000 with escaped data") do |times|
-      view.render(data_1000_escaped)
-    end
-    x.report("Iodine::Mustache render list of 1000 with escaped data") do |times|
-      mus_view.render(data_1000_escaped)
-    end
-
-    x.report("Ruby Mustache - no caching - render list of 1000") do |times|
-      tmp = Mustache.new
-      tmp.template = template
-      tmp.render(data_1000)
-    end
-    x.report("Iodine::Mustache - no caching - render list of 1000") do |times|
-      Iodine::Mustache.render(nil, template, data_1000)
-    end
-    x.compare!
-  end ; nil
-end
-
-benchmark_mustache
+require 'iodine/benchmark'
+Iodine::Benchmark.mustache
 ```
+
+On my machine this benchmark indicates about an x10 performance boost.
 
 ## Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/boazsegev/Iodine::Mustache.
+Bug reports and pull requests are welcome on GitHub at https://github.com/boazsegev/iodine.
 
 This gem is a C extension, so you will need to know C to use it.
 

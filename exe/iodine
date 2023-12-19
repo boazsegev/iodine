@@ -1,0 +1,151 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+require 'iodine'
+
+begin
+  require 'rack'
+  module Iodine
+    # Iodine's {Iodine::Rack} module provides a Rack compliant interface (connecting Iodine to Rack) for an HTTP and Websocket Server.
+    module RackHandler
+      # Runs a Rack app, as par the Rack handler requirements.
+      def self.run(app, options_ = {})
+        # nested applications... is that a thing?
+        Iodine.listen(nil, app)
+        # start Iodine
+        Iodine.start
+        true
+      end
+
+      # patches an assumption by Rack, issue #98 code donated by @Shelvak (Néstor Coppi)
+      def self.shutdown
+        Iodine.stop
+      end
+    end
+  end
+  ENV['RACK_HANDLER'] ||= 'iodine'
+  begin
+    Iodine::Utils.monkey_patch Rack::Utils
+    ::Rack::Handler.register('iodine', 'Iodine::RackHandler') if defined?(::Rack::Handler)
+    ::Rack::Handler.register('Iodine', 'Iodine::RackHandler') if defined?(::Rack::Handler)
+  rescue StandardError
+  end
+rescue LoadError
+end
+
+module Iodine
+  class Base
+    class NeoRackUp
+      module MiddleWare
+        def initialize(app);                @app = app; end
+        def on_http(event);                 @app.on_http(event); end
+        def on_finish(event);               @app.on_finish(event); end
+        def call(env);                      @app.call(env); end
+        def on_authenticate(e);             @app.on_authenticate(e); end
+        def on_authenticate_sse(e);         @app.on_authenticate_sse(e); end
+        def on_authenticate_websocket(e);   @app.on_authenticate_websocket(e); end
+        def on_open(e);                     @app.on_open(e); end
+        def on_message(e, data);            @app.on_message(e, data); end
+        def on_drained(e);                  @app.on_drained(e); end
+        def on_timeout(e);                  @app.on_timeout(e); end
+        def on_shutdown(e);                 @app.on_shutdown(e); end
+        def on_close(e);                    @app.on_close(e); end
+        def on_eventsource(e, message);     @app.on_eventsource(e, message); end
+        def on_eventsource_reconnect(e,id); @app.on_eventsource_reconnect(e,id); end
+      private
+        def method_missing(method_name, *arguments)
+            m = self.define_singleton_method(method_name) {|*args| @app.send(method_name, *args) }
+            m.call(*arguments)
+        end
+      end
+      UTF_8_BOM = '\xef\xbb\xbf'
+      def use(mw, *args, &block)
+        @middleware ||= []
+        mw.prepend ::Iodine::Base::NeoRackUp::MiddleWare
+        @middleware <<[mw, args, block]
+      end
+      def run(app, &block)
+        app = block if(!app)
+        raise "Missing either an application handler or a block for the `run` instruction." unless app
+        Iodine::Base.add_missing_handlar_methods(app)
+        while(@middleware && !@middleware.empty?)
+          m = @middleware.pop
+          app = m[0].new(app, *m[1], &m[2])
+        end
+        Iodine.listen(handler: app, service: :http)
+        Iodine.start
+      end
+      # validate name of Web Application configuration file.
+      def self.iodine___detect_filename
+        file_name = Iodine::Base::CLI.parse(true)[0];
+        if(!file_name || File.directory?(file_name))
+          file_name ||= './'
+          file_name += '/' unless file_name.end_with?('/')
+          defaults = ["#{file_name}config.ru", "#{file_name}config.nru"]
+          file_name = nil;
+          defaults.each {|n| file_name = n if(File.exist?(n))}
+          file_name ||= defaults[-1]
+        end
+        file_name = nil if(!File.exist?(file_name))
+        raise("Web App not found: config.ru") unless (file_name || Iodine::Base::CLI['-www'])
+        file_name
+      end
+      def iodine___load_neorack_config
+        file_name = ::Iodine::Base::NeoRackUp.iodine___detect_filename
+        # read and execute configuration file in root scope, while using DSL provided herein.
+        if(file_name)
+          cfgfile = ::File.read(file_name)
+          cfgfile.slice!(/\A#{UTF_8_BOM}/) if cfgfile.encoding == Encoding::UTF_8
+          cfgfile.sub!(/^__END__\n.*\Z/m, '')
+          self.instance_eval(cfgfile, file_name, 0)
+        else
+          Iodine.listen
+          Iodine.start
+        end
+      end
+      if(defined?(::Rack))
+        def self.iodine___rack_builder
+          file_name = ::Iodine::Base::NeoRackUp.iodine___detect_filename
+          if(file_name && File.extname(file_name) == '.nru') # fallback to NeoRack
+            Iodine::Base::NeoRackUp.new.iodine___load_neorack_config
+            return
+          end
+          Iodine.listen(nil, Rack::Builder.parse_file(file_name))
+          Iodine.start
+        end
+      end
+    end
+  end
+end
+
+### Load configuration file
+if Iodine::Base::CLI['--config']
+  p Iodine::Base::CLI['--config']
+  require Iodine::Base::CLI['--config']
+end
+### .pid file
+if Iodine::Base::CLI['-pid']
+  pid_filename = Iodine::Base::CLI['-pid']
+  pid_filename << "iodine.pid" if(pid_filename[-1] == '/')
+  if File.exist?(pid_filename)
+    raise "pid filename shold point to a valid file name (not a folder)!" if(!File.file?(pid_filename))
+    raise "pid filename error! (doesn't end with .pid)" if(File.extname(pid_filename) != '.pid')
+    File.delete(pid_filename)
+  end
+  Iodine.on_state(:pre_start) do
+    IO.binwrite(pid_filename, "#{Process.pid}\r\n")
+  end
+  Iodine.on_state(:on_finish) do
+    File.delete(pid_filename)
+  end
+end
+### TODO: Warmup
+if Iodine::Base::CLI['-warmup']
+end
+
+if(Iodine::Base::CLI["-R"] && defined?(::Rack))
+  Iodine::Base::NeoRackUp.iodine___rack_builder
+else
+  Iodine::Base::NeoRackUp.new.iodine___load_neorack_config
+end
+
+

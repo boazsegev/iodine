@@ -1,10 +1,37 @@
 # Iodine
+
 [![Gem Version](https://badge.fury.io/rb/iodine.svg)](https://badge.fury.io/rb/iodine)
 [![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
 
-Please notice that this change log contains changes for upcoming releases as well. Please refer to the current gem version to review the current release.
+Please notice that this change log contains updates for upcoming releases as well as previous releases.
 
-## Changes:
+Please refer to the current gem version to review the relevant changes for your release.
+
+## Changes
+
+#### Change log v.0.8.0.rc (2024----)
+
+**Update**: updated to facil.io 0.8.0, using the latest version of the [facil.io C STL](https://github.com/facil-io/cstl).
+
+**Update**: totally re-written both the C extension and the Ruby code.
+
+**TODO**: this version is still missing Pub/Sub engines and Redis support, which will be added (hopefully) soon.
+
+------------------------
+
+## Total Rewrite
+
+The new version is a complete rewrite, with a new architecture and a new API. Backwards compatibility was kept where possible.
+
+All previous changes influenced the architecture of the new version. 
+
+------------------------
+
+#### Change log v.0.7.58 (2024-04-28)
+
+**Fix**: possible fix for compilation issues on Fedora. Credit to @garytaylor for opening issue #155.
+
+**Fix**: possible fix for an OpenSSL certificate chain import issue that would cause certificate chains to be imported incorrectly. Credit to @dwolrdcojp for opening the facil.io repo PR #151.
 
 #### Change log v.0.7.57 (2023-09-04)
 
@@ -142,7 +169,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.31
 
-**Security**: a heap-overflow vulnerability was fixed in the WebSocket parser. This attack could have been triggered remotely by a maliciously crafted message-header. Credit to Dane (4cad@silvertoque) for exposing this issue and providing a Python script demonstrating the attack. 
+**Security**: a heap-overflow vulnerability was fixed in the WebSocket parser. This attack could have been triggered remotely by a maliciously crafted message-header. Credit to Dane (4cad@silvertoque) for exposing this issue and providing a Python script demonstrating the attack.
 
 It's recommended that all iodine users update to the latest version.
 
@@ -208,7 +235,7 @@ It's recommended that all iodine users update to the latest version.
 
 #### Change log v.0.7.20
 
-**Security**: (`fio`) lower and smarter Slowloris detection limits (backlog limit is now 1,024 responses / messages per client). 
+**Security**: (`fio`) lower and smarter Slowloris detection limits (backlog limit is now 1,024 responses / messages per client).
 
 **Security**: (`http`) HTTP/1.1 slow client throttling - new requests will not be consumed until pending responses were sent. Since HTTP/1.1 is a response-request protocol, this protocol specific approach should protect the HTTP application against slow clients.
 
@@ -392,14 +419,13 @@ It's recommended that all iodine users update to the latest version.
 
 #### Change log v.0.7.0
 
-This version bump is performed because the internal engine changed significantly and might be considered less mature. The public API remains unbroken. 
+This version bump is performed because the internal engine changed significantly and might be considered less mature. The public API remains unbroken.
 
 **Fix**: Fixed a documentation error. Credit to @Fonsan (Erik Fonselius) for PR #41.
 
 **Feature**: (mustache) Added a bridge to facil.io's mustache template rendering engine. This isn't really a server concern, but [facil.io's C code](http://facil.io) includes this functionality anyway and it offers increased XSS protection by utilizing aggressive HTML escaping (and it's also faster than the Ruby canonical version).
 
 **Update**: (facil.io) Updated to facil.io version 0.7.0 (edge). This could effect memory consumption behavior but otherwise shouldn't effect iodine all that much.
-
 
 #### Change log v.0.6.5
 
@@ -685,7 +711,7 @@ Iodine.start
 
 **Compatibility**: (from `facil.io`) Now checks for HTTP/1.0 clients to determine connection persistence.
 
-**Compatibility**: (from `facil.io`) Added spaces after header names (`:` => `: `), since some parsers don't seem to read the RFC.
+**Compatibility**: (from `facil.io`) Added spaces after header names (`:` => `:`), since some parsers don't seem to read the RFC.
 
 ---
 
@@ -699,7 +725,7 @@ Iodine.start
 
 #### Change log v.0.3.1
 
-**Update**: Follow `facil.io`'s update for healthier thread throttling and energy consumption.
+**Update**: Follow `facil.io`'s update for healthier thread throttling and energy consumption
 ---
 
 #### Change log v.0.3.1
@@ -791,7 +817,6 @@ Iodine.start
 * Fixed a possible Linux `sendfile` implementation issue where sometimes errors wouldn't be caught or `sendfile` would be called past a file's limit (edge case handling).
 
 * `bscrypt` random generator (where `dev/random` is unavailable) should now provide more entropy.
-
 
 ---
 
@@ -1090,8 +1115,6 @@ This allows objects to manage their data as if they were in a single thread envi
 Another example is that real-life deployment preferences were favored over adjustability or features. This means that some command-line arguments are automatically recognized (such as the `-p <port>` argument) and that Iodine assumes a single web service per script/process (whereas GReactor and GRHTTP allowed multiple listening sockets).
 
 I tested this new gem during the 0.0.x version releases, and I feel that version 0.1.0 is stable enough to work with. For instance, I left the Iodine server running all night under stress (repeatedly benchmarking it)... millions of requests later, under heavy load, a restart wasn't required and memory consumption didn't show any increase after the warmup period.
-
-
 
 ## License
 

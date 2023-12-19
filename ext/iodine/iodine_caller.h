@@ -23,9 +23,9 @@ static void *iodine_handle_exception(void *ignr) {
   VALUE exc = rb_errinfo();
   if (exc != Qnil && rb_respond_to(exc, rb_intern("message")) &&
       rb_respond_to(exc, rb_intern("backtrace"))) {
-    VALUE msg = rb_funcall2(exc, rb_intern("message"), 0, NULL);
+    VALUE msg = rb_funcallv(exc, rb_intern("message"), 0, NULL);
     VALUE exc_class = rb_class_name(CLASS_OF(exc));
-    VALUE bt = rb_funcall2(exc, rb_intern("backtrace"), 0, NULL);
+    VALUE bt = rb_funcallv(exc, rb_intern("backtrace"), 0, NULL);
     if (msg == Qnil)
       msg = rb_str_new("Error message unavailable", 25);
     if (exc_class == Qnil)
@@ -74,7 +74,7 @@ typedef struct {
 
 typedef struct {
   VALUE result;
-  int exeption;
+  int exception;
 } iodine_caller_result_s;
 
 typedef struct {
@@ -100,8 +100,8 @@ static void *iodine_ruby____outside_task_proc(void *c_) {
   iodine___caller_s *c = (iodine___caller_s *)c_;
   c->out.result = rb_protect(iodine___func_caller_task_proc,
                              (VALUE)&c->in,
-                             &c->out.exeption);
-  if (c->out.exeption)
+                             &c->out.exception);
+  if (c->out.exception)
     iodine_handle_exception(NULL);
   return NULL;
 }
@@ -109,8 +109,8 @@ static void *iodine_ruby____outside_task_proc(void *c_) {
 static void *iodine_ruby____outside_task(void *c_) {
   iodine___caller_s *c = (iodine___caller_s *)c_;
   c->out.result =
-      rb_protect(iodine___func_caller_task, (VALUE)&c->in, &c->out.exeption);
-  if (c->out.exeption)
+      rb_protect(iodine___func_caller_task, (VALUE)&c->in, &c->out.exception);
+  if (c->out.exception)
     iodine_handle_exception(NULL);
   return NULL;
 }
@@ -130,8 +130,8 @@ inline static iodine_caller_result_s iodine_ruby_call_inside(
   r.result = rb_protect(
       (args.proc ? iodine___func_caller_task_proc : iodine___func_caller_task),
       (VALUE)&args,
-      &r.exeption);
-  if (r.exeption)
+      &r.exception);
+  if (r.exception)
     iodine_handle_exception(NULL);
   return r;
 }

@@ -68,7 +68,7 @@ supports macros that will help detect and validate it's version.
 /** PATCH version: Bug fixes, minor features may be added. */
 #define FIO_VERSION_PATCH 0
 /** Build version: optional build info (string), i.e. "beta.02" */
-#define FIO_VERSION_BUILD "alpha.06"
+#define FIO_VERSION_BUILD "alpha.07"
 
 #ifdef FIO_VERSION_BUILD
 /** Version as a String literal (MACRO). */
@@ -192,6 +192,11 @@ Compiler Helpers - Deprecation, Alignment, Inlining, Memory Barriers
 #endif
 
 #if _MSC_VER
+
+#undef _CRT_SECURE_NO_WARNINGS
+/** We define this because Microsoft's naming scheme isn't portable */
+#define _CRT_SECURE_NO_WARNINGS 1
+
 #define inline   __inline
 #define __thread __declspec(thread)
 #elif !defined(__clang__) && !defined(__GNUC__)
@@ -241,11 +246,18 @@ Address Sanitizer Detection
 /* *****************************************************************************
 Intrinsic Availability Flags
 ***************************************************************************** */
+#if 1 /* Allow Intrinsic / SIMD / Neon ? */
 #if defined(__ARM_FEATURE_CRYPTO) &&                                           \
-    (defined(__ARM_NEON) || defined(__ARM_NEON__))
+    (defined(__ARM_NEON) || defined(__ARM_NEON__)) &&                          \
+    __has_include("arm_acle.h") && __has_include("arm_neon.h")
 #include <arm_acle.h>
 #include <arm_neon.h>
 #define FIO___HAS_ARM_INTRIN 1
+#elif defined(__x86_64) && __has_include("immintrin.h") /* x64 Intrinsics? */
+#define FIO___HAS_X86_INTRIN 1
+#include <immintrin.h>
+#endif
+
 #endif
 
 /* *****************************************************************************
@@ -271,6 +283,7 @@ OS Specific includes and Macros
 #define FIO_HAVE_UNIX_TOOLS 1
 #define FIO_OS_POSIX        1
 #define FIO___KILL_SELF()   kill(0, SIGINT)
+#define fio_getpid          getpid
 
 #elif defined(_WIN32) || defined(_WIN64) || defined(WIN32) ||                  \
     defined(__CYGWIN__) || defined(__MINGW32__) || defined(__BORLANDC__)
@@ -298,6 +311,8 @@ OS Specific includes and Macros
 #include <time.h>
 #include <winsock2.h> /* struct timeval is here... why? Microsoft. */
 
+#define fio_getpid _getpid
+
 #define FIO___KILL_SELF() TerminateProcess(GetCurrentProcess(), 1)
 
 #if defined(__MINGW32__)
@@ -318,7 +333,7 @@ typedef SSIZE_T ssize_t;
 #endif /* __CYGWIN__ __MINGW32__ */
 
 #if _MSC_VER
-#pragma message("Warning: some functionality is enabled by patchwork.")
+#pragma message("Warning: (Windows) some functionality enabled by patchwork.")
 #else
 #warning some functionality is enabled by patchwork.
 #endif
@@ -332,6 +347,7 @@ typedef SSIZE_T ssize_t;
 #include <errno.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -371,6 +387,10 @@ Function Attributes
 #define FIO_IFUNC FIO_SFUNC inline
 #endif
 
+#ifndef FIO_MIFN
+#define FIO_MIFN FIO_IFUNC __attribute__((warn_unused_result))
+#endif
+
 #ifndef FIO_WEAK
 /** Marks a function as weak */
 #define FIO_WEAK __attribute__((weak))
@@ -386,12 +406,12 @@ Constructors and Destructors
   __COUNTER__ + __COUNTER__ + __COUNTER__ + __COUNTER__ + __COUNTER__ +        \
       __COUNTER__ + __COUNTER__ + __COUNTER__ + __COUNTER__ + __COUNTER__
 /* counter is used for ordering, so we need a consistent number of digits */
-FIO_SFUNC void fio___msv_run_counter_macro_to_3_digits(void) {
-  int i = __COUNTER__;
-  i += FIO___COUNTER_RUNNER() + FIO___COUNTER_RUNNER() +
-       FIO___COUNTER_RUNNER() + FIO___COUNTER_RUNNER() + FIO___COUNTER_RUNNER();
-  i += FIO___COUNTER_RUNNER() + FIO___COUNTER_RUNNER() +
-       FIO___COUNTER_RUNNER() + FIO___COUNTER_RUNNER() + FIO___COUNTER_RUNNER();
+FIO_SFUNC int fio___msv_run_counter_macro_to_3_digits(void) {
+  return FIO___COUNTER_RUNNER() + FIO___COUNTER_RUNNER() +
+         FIO___COUNTER_RUNNER() + FIO___COUNTER_RUNNER() +
+         FIO___COUNTER_RUNNER() + FIO___COUNTER_RUNNER() +
+         FIO___COUNTER_RUNNER() + FIO___COUNTER_RUNNER() +
+         FIO___COUNTER_RUNNER() + FIO___COUNTER_RUNNER();
 }
 #undef FIO___COUNTER_RUNNER
 
@@ -535,10 +555,18 @@ Logging Defaults (no-op)
 #ifdef DEBUG
 #define FIO_LOG_DDEBUG(...)           FIO_LOG_DEBUG(__VA_ARGS__)
 #define FIO_LOG_DDEBUG2(...)          FIO_LOG_DEBUG2(__VA_ARGS__)
+#define FIO_LOG_DERROR(...)           FIO_LOG_ERROR(__VA_ARGS__)
+#define FIO_LOG_DSECURITY(...)        FIO_LOG_SECURITY(__VA_ARGS__)
+#define FIO_LOG_DWARNING(...)         FIO_LOG_WARNING(__VA_ARGS__)
+#define FIO_LOG_DINFO(...)            FIO_LOG_INFO(__VA_ARGS__)
 #define FIO_ASSERT___PERFORM_SIGNAL() FIO___KILL_SELF();
 #else
-#define FIO_LOG_DDEBUG(...)  ((void)(0))
-#define FIO_LOG_DDEBUG2(...) ((void)(0))
+#define FIO_LOG_DDEBUG(...)    ((void)(0))
+#define FIO_LOG_DDEBUG2(...)   ((void)(0))
+#define FIO_LOG_DERROR(...)    ((void)(0))
+#define FIO_LOG_DSECURITY(...) ((void)(0))
+#define FIO_LOG_DWARNING(...)  ((void)(0))
+#define FIO_LOG_DINFO(...)     ((void)(0))
 #define FIO_ASSERT___PERFORM_SIGNAL()
 #endif /* DEBUG */
 
@@ -561,7 +589,7 @@ Assertions
       FIO_LOG_FATAL(__VA_ARGS__);                                              \
       FIO_LOG_FATAL("     errno(%d): %s\n", errno, strerror(errno));           \
       FIO_ASSERT___PERFORM_SIGNAL();                                           \
-      exit(-1);                                                                \
+      abort();                                                                 \
     }                                                                          \
   } while (0)
 
@@ -710,257 +738,6 @@ Sleep / Thread Scheduling Macros
  * In practice, the thread will probably sleep for 60ns or more.
  */
 #define FIO_THREAD_RESCHEDULE() FIO_THREAD_WAIT(4)
-#endif
-
-/* *****************************************************************************
-String and Buffer Information Containers + Helper Macros
-***************************************************************************** */
-
-/** An information type for reporting the string's state. */
-typedef struct fio_str_info_s {
-  /** The string's length, if any. */
-  size_t len;
-  /** The string's buffer (pointer to first byte) or NULL on error. */
-  char *buf;
-  /** The buffer's capacity. Zero (0) indicates the buffer is read-only. */
-  size_t capa;
-} fio_str_info_s;
-
-/** An information type for reporting/storing buffer data (no `capa`). */
-typedef struct fio_buf_info_s {
-  /** The buffer's length, if any. */
-  size_t len;
-  /** The buffer's address (may be NULL if no buffer). */
-  char *buf;
-} fio_buf_info_s;
-
-/** Compares two `fio_str_info_s` objects for content equality. */
-#define FIO_STR_INFO_IS_EQ(s1, s2)                                             \
-  ((s1).len == (s2).len &&                                                     \
-   (!(s1).len || (s1).buf == (s2).buf ||                                       \
-    ((s1).buf && (s2).buf && (s1).buf[0] == (s2).buf[0] &&                     \
-     !FIO_MEMCMP((s1).buf, (s2).buf, (s1).len))))
-
-/** Compares two `fio_buf_info_s` objects for content equality. */
-#define FIO_BUF_INFO_IS_EQ(s1, s2) FIO_STR_INFO_IS_EQ((s1), (s2))
-
-/** A NULL fio_str_info_s. */
-#define FIO_STR_INFO0 ((fio_str_info_s){0})
-
-/** Converts a C String into a fio_str_info_s. */
-#define FIO_STR_INFO1(str)                                                     \
-  ((fio_str_info_s){.len = ((str) ? FIO_STRLEN((str)) : 0), .buf = (str)})
-
-/** Converts a String with a known length into a fio_str_info_s. */
-#define FIO_STR_INFO2(str, length)                                             \
-  ((fio_str_info_s){.len = (length), .buf = (str)})
-
-/** Converts a String with a known length and capacity into a fio_str_info_s. */
-#define FIO_STR_INFO3(str, length, capacity)                                   \
-  ((fio_str_info_s){.len = (length), .buf = (str), .capa = (capacity)})
-
-/** A NULL fio_buf_info_s. */
-#define FIO_BUF_INFO0 ((fio_buf_info_s){0})
-
-/** Converts a C String into a fio_buf_info_s. */
-#define FIO_BUF_INFO1(str)                                                     \
-  ((fio_buf_info_s){.len = ((str) ? FIO_STRLEN((str)) : 0), .buf = (str)})
-
-/** Converts a String with a known length into a fio_buf_info_s. */
-#define FIO_BUF_INFO2(str, length)                                             \
-  ((fio_buf_info_s){.len = (length), .buf = (str)})
-
-/** Converts a fio_buf_info_s into a fio_str_info_s. */
-#define FIO_BUF2STR_INFO(buf_info)                                             \
-  ((fio_str_info_s){.len = (buf_info).len, .buf = (buf_info).buf})
-
-/** Converts a fio_buf_info_s into a fio_str_info_s. */
-#define FIO_STR2BUF_INFO(str_info)                                             \
-  ((fio_buf_info_s){.len = (str_info).len, .buf = (str_info).buf})
-
-/** Creates a stack fio_str_info_s variable `name` with `capacity` bytes. */
-#define FIO_STR_INFO_TMP_VAR(name, capacity)                                   \
-  char fio___stack_mem___##name[(capacity) + 1];                               \
-  fio___stack_mem___##name[(capacity)] = 0; /* guard */                        \
-  fio_str_info_s name = (fio_str_info_s) {                                     \
-    .buf = fio___stack_mem___##name, .capa = (capacity)                        \
-  }
-
-/* *****************************************************************************
-Linked Lists Persistent Macros and Types
-***************************************************************************** */
-
-/** A linked list arch-type */
-typedef struct fio_list_node_s {
-  struct fio_list_node_s *next;
-  struct fio_list_node_s *prev;
-} fio_list_node_s;
-
-/** A linked list node type */
-#define FIO_LIST_NODE fio_list_node_s
-/** A linked list head type */
-#define FIO_LIST_HEAD fio_list_node_s
-
-/** Allows initialization of FIO_LIST_HEAD objects. */
-#define FIO_LIST_INIT(obj)                                                     \
-  (fio_list_node_s) { .next = &(obj), .prev = &(obj) }
-
-#ifndef FIO_LIST_EACH
-/** Loops through every node in the linked list except the head. */
-#define FIO_LIST_EACH(type, node_name, head, pos)                              \
-  for (type *pos = FIO_PTR_FROM_FIELD(type, node_name, (head)->next),          \
-            *next____p_ls_##pos =                                              \
-                FIO_PTR_FROM_FIELD(type, node_name, (head)->next->next);       \
-       pos != FIO_PTR_FROM_FIELD(type, node_name, (head));                     \
-       (pos = next____p_ls_##pos),                                             \
-            (next____p_ls_##pos =                                              \
-                 FIO_PTR_FROM_FIELD(type,                                      \
-                                    node_name,                                 \
-                                    next____p_ls_##pos->node_name.next)))
-/** Loops through every node in the linked list except the head. */
-#define FIO_LIST_EACH_REVERSED(type, node_name, head, pos)                     \
-  for (type *pos = FIO_PTR_FROM_FIELD(type, node_name, (head)->prev),          \
-            *next____p_ls_##pos =                                              \
-                FIO_PTR_FROM_FIELD(type, node_name, (head)->next->prev);       \
-       pos != FIO_PTR_FROM_FIELD(type, node_name, (head));                     \
-       (pos = next____p_ls_##pos),                                             \
-            (next____p_ls_##pos =                                              \
-                 FIO_PTR_FROM_FIELD(type,                                      \
-                                    node_name,                                 \
-                                    next____p_ls_##pos->node_name.prev)))
-#endif
-
-/** UNSAFE macro for pushing a node to a list. */
-#define FIO_LIST_PUSH(head, n)                                                 \
-  do {                                                                         \
-    (n)->prev = (head)->prev;                                                  \
-    (n)->next = (head);                                                        \
-    (head)->prev->next = (n);                                                  \
-    (head)->prev = (n);                                                        \
-  } while (0)
-
-/** UNSAFE macro for removing a node from a list. */
-#define FIO_LIST_REMOVE(n)                                                     \
-  do {                                                                         \
-    (n)->prev->next = (n)->next;                                               \
-    (n)->next->prev = (n)->prev;                                               \
-  } while (0)
-
-/** UNSAFE macro for removing a node from a list. Resets node data. */
-#define FIO_LIST_REMOVE_RESET(n)                                               \
-  do {                                                                         \
-    (n)->prev->next = (n)->next;                                               \
-    (n)->next->prev = (n)->prev;                                               \
-    (n)->next = (n)->prev = (n);                                               \
-  } while (0)
-
-/** UNSAFE macro for popping a node to a list. */
-#define FIO_LIST_POP(type, node_name, dest_ptr, head)                          \
-  do {                                                                         \
-    (dest_ptr) = FIO_PTR_FROM_FIELD(type, node_name, ((head)->next));          \
-    FIO_LIST_REMOVE(&(dest_ptr)->node_name);                                   \
-  } while (0)
-
-/** UNSAFE macro for testing if a list is empty. */
-#define FIO_LIST_IS_EMPTY(head)                                                \
-  ((!(head)) || ((!(head)->next) | ((head)->next == (head))))
-
-/* *****************************************************************************
-Indexed Linked Lists Persistent Macros and Types
-
-Indexed Linked Lists can be used to create a linked list that uses is always
-relative to some root pointer (usually the root of an array). This:
-
-1. Allows easy reallocation of the list without requiring pointer updates.
-
-2. Could be used for memory optimization if the array limits are known.
-
-The "head" index is usually validated by reserving the value of `-1` to indicate
-an empty list.
-***************************************************************************** */
-#ifndef FIO_INDEXED_LIST_EACH
-
-/** A 32 bit indexed linked list node type */
-typedef struct fio_index32_node_s {
-  uint32_t next;
-  uint32_t prev;
-} fio_index32_node_s;
-
-/** A 16 bit indexed linked list node type */
-typedef struct fio_index16_node_s {
-  uint16_t next;
-  uint16_t prev;
-} fio_index16_node_s;
-
-/** An 8 bit indexed linked list node type */
-typedef struct fio_index8_node_s {
-  uint8_t next;
-  uint8_t prev;
-} fio_index8_node_s;
-
-/** A 32 bit indexed linked list node type */
-#define FIO_INDEXED_LIST32_NODE fio_index32_node_s
-#define FIO_INDEXED_LIST32_HEAD uint32_t
-/** A 16 bit indexed linked list node type */
-#define FIO_INDEXED_LIST16_NODE fio_index16_node_s
-#define FIO_INDEXED_LIST16_HEAD uint16_t
-/** An 8 bit indexed linked list node type */
-#define FIO_INDEXED_LIST8_NODE fio_index8_node_s
-#define FIO_INDEXED_LIST8_HEAD uint8_t
-
-/** UNSAFE macro for pushing a node to a list. */
-#define FIO_INDEXED_LIST_PUSH(root, node_name, head, i)                        \
-  do {                                                                         \
-    register const size_t n__ = (i);                                           \
-    (root)[n__].node_name.prev = (root)[(head)].node_name.prev;                \
-    (root)[n__].node_name.next = (head);                                       \
-    (root)[(root)[(head)].node_name.prev].node_name.next = n__;                \
-    (root)[(head)].node_name.prev = n__;                                       \
-  } while (0)
-
-/** UNSAFE macro for adding a node to the begging of the list. */
-#define FIO_INDEXED_LIST_UNSHIFT(root, node_name, head, i)                     \
-  do {                                                                         \
-    register const size_t n__ = (i);                                           \
-    (root)[n__].node_name.next = (root)[(head)].node_name.next;                \
-    (root)[n__].node_name.prev = (head);                                       \
-    (root)[(root)[(head)].node_name.next].node_name.prev = n__;                \
-    (root)[(head)].node_name.next = n__;                                       \
-    (head) = n__;                                                              \
-  } while (0)
-
-/** UNSAFE macro for removing a node from a list. */
-#define FIO_INDEXED_LIST_REMOVE(root, node_name, i)                            \
-  do {                                                                         \
-    register const size_t n__ = (i);                                           \
-    (root)[(root)[n__].node_name.prev].node_name.next =                        \
-        (root)[n__].node_name.next;                                            \
-    (root)[(root)[n__].node_name.next].node_name.prev =                        \
-        (root)[n__].node_name.prev;                                            \
-  } while (0)
-
-/** UNSAFE macro for removing a node from a list. Resets node data. */
-#define FIO_INDEXED_LIST_REMOVE_RESET(root, node_name, i)                      \
-  do {                                                                         \
-    register const size_t n__ = (i);                                           \
-    (root)[(root)[n__].node_name.prev].node_name.next =                        \
-        (root)[n__].node_name.next;                                            \
-    (root)[(root)[n__].node_name.next].node_name.prev =                        \
-        (root)[n__].node_name.prev;                                            \
-    (root)[n__].node_name.next = (root)[n__].node_name.prev = n__;             \
-  } while (0)
-
-/** Loops through every index in the indexed list, assuming `head` is valid. */
-#define FIO_INDEXED_LIST_EACH(root, node_name, head, pos)                      \
-  for (size_t pos = (head), stopper___ils___ = 0; !stopper___ils___;           \
-       stopper___ils___ = ((pos = (root)[pos].node_name.next) == (head)))
-
-/** Loops through every index in the indexed list, assuming `head` is valid. */
-#define FIO_INDEXED_LIST_EACH_REVERSED(root, node_name, head, pos)             \
-  for (size_t pos = ((root)[head].node_name.prev), stopper___ils___ = 0;       \
-       !stopper___ils___;                                                      \
-       ((stopper___ils___ = (pos == head)),                                    \
-        (pos = (root)[pos].node_name.prev)))
 #endif
 
 /* *****************************************************************************
@@ -1124,10 +901,10 @@ FIO_IFUNC void *fio___memcpy_unsafe_63x(void *restrict d_,
   const char *restrict s = (const char *restrict)s_;
 #define FIO___MEMCPY_XX_GROUP(bytes)                                           \
   do {                                                                         \
-    fio_memcpy##bytes(d, s);                                                   \
+    fio_memcpy##bytes((void *)d, (void *)s);                                   \
     d += l & (bytes - 1);                                                      \
     s += l & (bytes - 1);                                                      \
-    fio_memcpy##bytes(d, s);                                                   \
+    fio_memcpy##bytes((void *)d, (void *)s);                                   \
     return (void *)(d += bytes);                                               \
   } while (0)
   if (l > 31)
@@ -1159,7 +936,7 @@ FIO_SFUNC void *fio___memcpy_unsafe_x(void *restrict d_,
     return fio___memcpy_unsafe_63x(d_, s_, l);
 #define FIO___MEMCPY_UNSAFE_STEP(bytes)                                        \
   do {                                                                         \
-    fio_memcpy##bytes(d, s);                                                   \
+    fio_memcpy##bytes((void *)d, (void *)s);                                   \
     (l -= bytes), (d += bytes), (s += bytes);                                  \
   } while (0)
 
@@ -1179,12 +956,12 @@ FIO_SFUNC void *fio___memcpy_unsafe_x(void *restrict d_,
   s -= 64;
   d += l & 63U;
   s += l & 63U;
-  fio_memcpy64(d, s);
+  fio_memcpy64((void *)d, (void *)s);
   return (void *)(d += 64);
 }
 
 #define FIO___MEMCPYX_MAKER(lim, fn)                                           \
-  FIO_SFUNC void *fio_memcpy##lim##x(void *restrict d,                         \
+  FIO_IFUNC void *fio_memcpy##lim##x(void *restrict d,                         \
                                      const void *restrict s,                   \
                                      size_t l) {                               \
     return fn(d, s, (l & lim));                                                \
@@ -1435,39 +1212,832 @@ FIO_IFUNC void fio_u2buf24_be(void *buf, uint32_t i) {
 }
 
 /* *****************************************************************************
+String and Buffer Information Containers + Helper Macros
+***************************************************************************** */
+
+/** An information type for reporting the string's state. */
+typedef struct fio_str_info_s {
+  /** The string's length, if any. */
+  size_t len;
+  /** The string's buffer (pointer to first byte) or NULL on error. */
+  char *buf;
+  /** The buffer's capacity. Zero (0) indicates the buffer is read-only. */
+  size_t capa;
+} fio_str_info_s;
+
+/** An information type for reporting/storing buffer data (no `capa`). */
+typedef struct fio_buf_info_s {
+  /** The buffer's length, if any. */
+  size_t len;
+  /** The buffer's address (may be NULL if no buffer). */
+  char *buf;
+} fio_buf_info_s;
+
+/** Compares two `fio_str_info_s` objects for content equality. */
+#define FIO_STR_INFO_IS_EQ(s1, s2)                                             \
+  ((s1).len == (s2).len &&                                                     \
+   (!(s1).len || (s1).buf == (s2).buf ||                                       \
+    ((s1).buf && (s2).buf && (s1).buf[0] == (s2).buf[0] &&                     \
+     !FIO_MEMCMP((s1).buf, (s2).buf, (s1).len))))
+
+/** Compares two `fio_buf_info_s` objects for content equality. */
+#define FIO_BUF_INFO_IS_EQ(s1, s2) FIO_STR_INFO_IS_EQ((s1), (s2))
+
+/** A NULL fio_str_info_s. */
+#define FIO_STR_INFO0 ((fio_str_info_s){0})
+
+/** Converts a C String into a fio_str_info_s. */
+#define FIO_STR_INFO1(str)                                                     \
+  ((fio_str_info_s){.len = ((str) ? FIO_STRLEN((str)) : 0), .buf = (str)})
+
+/** Converts a String with a known length into a fio_str_info_s. */
+#define FIO_STR_INFO2(str, length)                                             \
+  ((fio_str_info_s){.len = (length), .buf = (str)})
+
+/** Converts a String with a known length and capacity into a fio_str_info_s. */
+#define FIO_STR_INFO3(str, length, capacity)                                   \
+  ((fio_str_info_s){.len = (length), .buf = (str), .capa = (capacity)})
+
+/** A NULL fio_buf_info_s. */
+#define FIO_BUF_INFO0 ((fio_buf_info_s){0})
+
+/** Converts a C String into a fio_buf_info_s. */
+#define FIO_BUF_INFO1(str)                                                     \
+  ((fio_buf_info_s){.len = ((str) ? FIO_STRLEN((str)) : 0), .buf = (str)})
+
+/** Converts a String with a known length into a fio_buf_info_s. */
+#define FIO_BUF_INFO2(str, length)                                             \
+  ((fio_buf_info_s){.len = (length), .buf = (str)})
+
+/** Converts a fio_buf_info_s into a fio_str_info_s. */
+#define FIO_BUF2STR_INFO(buf_info)                                             \
+  ((fio_str_info_s){.len = (buf_info).len, .buf = (buf_info).buf})
+
+/** Converts a fio_buf_info_s into a fio_str_info_s. */
+#define FIO_STR2BUF_INFO(str_info)                                             \
+  ((fio_buf_info_s){.len = (str_info).len, .buf = (str_info).buf})
+
+/** Creates a stack fio_str_info_s variable `name` with `capacity` bytes. */
+#define FIO_STR_INFO_TMP_VAR(name, capacity)                                   \
+  char fio___stack_mem___##name[(capacity) + 1];                               \
+  fio___stack_mem___##name[(capacity)] = 0; /* guard */                        \
+  fio_str_info_s name = (fio_str_info_s) {                                     \
+    .buf = fio___stack_mem___##name, .capa = (capacity)                        \
+  }
+
+/** Tests to see if memory reallocation happened. */
+#define FIO_STR_INFO_TMP_IS_REALLOCATED(name)                                  \
+  (fio___stack_mem___##name != name.buf)
+
+/* *****************************************************************************
+UTF-8 Support (basic)
+***************************************************************************** */
+
+#ifndef FIO_UTF8_ALLOW_IF
+/* UTF-8 Constant Time? (0 = avoid mis-predictions; 1 = mostly ascii) */
+#define FIO_UTF8_ALLOW_IF 1
+
+#endif
+
+/* Returns the number of bytes required to UTF-8 encoded a code point `u` */
+FIO_IFUNC unsigned fio_utf8_code_len(uint32_t u) {
+  uint32_t len = (1U + ((uint32_t)(u) > 127) + ((uint32_t)(u) > 2047) +
+                  ((uint32_t)(u) > 65535));
+  len &= (uint32_t)((uint32_t)(u) > ((1U << 21) - 1)) - 1;
+  return len;
+}
+
+/** Returns 1-4 (UTF-8 char length), 8 (middle of a char) or 0 (invalid). */
+FIO_IFUNC unsigned fio_utf8_char_len_unsafe(uint8_t c) {
+  /* Ruby script for map:
+  map = [];
+  32.times { | i |
+    map << (((i & 0b10000) == 0b00000) ? 1
+        :   ((i & 0b11000) == 0b10000) ? 8
+        :   ((i & 0b11100) == 0b11000) ? 2
+        :   ((i & 0b11110) == 0b11100) ? 3
+        :   ((i & 0b11111) == 0b11110) ? 4
+                               : 0)
+  }; puts "static const uint8_t map[32] = {#{ map.join(', ')} };"
+  */
+  static const uint8_t map[32] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                  1, 1, 1, 1, 1, 8, 8, 8, 8, 8, 8,
+                                  8, 8, 2, 2, 2, 2, 3, 3, 4, 0};
+  return map[c >> 3];
+}
+
+/** Returns the number of valid UTF-8 bytes used by first char at `str`. */
+FIO_IFUNC unsigned fio_utf8_char_len(const void *str_) {
+  unsigned r, tst;
+  const uint8_t *s = (uint8_t *)str_;
+  r = fio_utf8_char_len_unsafe(*s) & 7;
+#if FIO_UTF8_ALLOW_IF
+  if (r < 2)
+    return r;
+  tst = 1;
+  tst += (fio_utf8_char_len_unsafe(s[tst]) >> 3) & (r > 3);
+  tst += (fio_utf8_char_len_unsafe(s[tst]) >> 3) & (r > 2);
+  tst += (fio_utf8_char_len_unsafe(s[tst]) >> 3);
+  if (r != tst)
+    r = 0;
+#else
+  tst = (r > 0);
+  tst += ((fio_utf8_char_len_unsafe(s[tst]) >> 3) & (r > 3));
+  tst += ((fio_utf8_char_len_unsafe(s[tst]) >> 3) & (r > 2));
+  tst += (fio_utf8_char_len_unsafe(s[tst]) >> 3);
+  r &= 0U - (r == tst);
+#endif
+
+  return r;
+}
+
+/** Writes code point to `dest` using UFT-8. Returns number of bytes written. */
+FIO_IFUNC unsigned fio_utf8_write(void *dest_, uint32_t u) {
+  const uint8_t len = fio_utf8_code_len(u);
+  uint8_t *dest = (uint8_t *)dest_;
+#if FIO_UTF8_ALLOW_IF
+  if (len < 2) { /* writes, but doesn't report on len == 0 */
+    *dest = u;
+    return len;
+  }
+  const uint8_t offset = 0xF0U << (4U - len);
+  const uint8_t head = 0x80U << (len < 2);
+  const uint8_t mask = 63U;
+  *(dest) = offset | ((u) >> (((len - 1) << 3) - ((len - 1) << 1)));
+  (dest) += 1;
+  *(dest) = head | (((u) >> 12) & mask);
+  (dest) += (len > 3);
+  *(dest) = head | (((u) >> 6) & mask);
+  (dest) += (len > 2);
+  *(dest) = head | ((u)&mask);
+  return len;
+#else
+  const uint8_t offset = 0xF0U << (4U - len);
+  const uint8_t head = 0x80U << (len < 2);
+  const uint8_t mask = 63U;
+  *dest = (uint8_t)u;
+  dest += (len == 1);
+  *dest = offset | ((u) >> (((len - 1) << 3) - ((len - 1) << 1)));
+  dest += (len > 1);
+  *dest = head | (((u) >> 12) & mask);
+  dest += (len > 3);
+  *dest = head | (((u) >> 6) & mask);
+  dest += (len > 2);
+  *dest = head | ((u)&mask);
+  return len;
+#endif
+}
+
+/**
+ * Decodes the first UTF-8 char at `str` and returns its code point value.
+ *
+ * Advances the pointer at `str` by the number of bytes consumed (read).
+ */
+FIO_IFUNC uint32_t fio_utf8_read(char **str) {
+  const uint8_t *s = *(const uint8_t **)str;
+  unsigned len = fio_utf8_char_len(s);
+  *str += len;
+#if FIO_UTF8_ALLOW_IF
+  if (!len)
+    return 0;
+  if (len == 1)
+    return *s;
+  const uint32_t t2 = (len > 2);
+  const uint32_t t3 = 1 + (len > 3);
+  const uint32_t t3a = (len > 2) + (len > 3);
+  const uint32_t t4 = len - 1;
+  return ((uint32_t)(s[0] & (63 >> t4)) << ((t4 << 3) - (t4 << 1))) |
+         ((uint32_t)(s[1] & 63) << ((t3a << 3) - (t3a << 1))) |
+         ((uint32_t)(s[t3] & 63) << ((t2 << 3) - (t2 << 1))) |
+         ((uint32_t)(s[t4] & 63));
+#else
+  const uint32_t t1 = (len > 1);
+  const uint32_t t2 = (len > 2);
+  const uint32_t t3 = t2 + (len > 3);
+  const uint32_t t3a = (len > 2) + (len > 3);
+  const uint32_t t4 = len - t1;
+  uint32_t r1 = *s & ((uint32_t)0UL - (len == 1));
+  uint32_t r2 = ((uint32_t)(s[0] & (63 >> t4)) << ((t4 << 3) - (t4 << 1))) |
+                ((uint32_t)(s[t1] & 63) << ((t3a << 3) - (t3a << 1))) |
+                ((uint32_t)(s[t3] & 63) << ((t2 << 3) - (t2 << 1))) |
+                ((uint32_t)(s[t4] & 63));
+  r2 &= (uint32_t)0UL - t1;
+  return (r1 | r2);
+#endif
+}
+
+/** Decodes the first UTF-8 char at `str` and returns its code point value. */
+FIO_IFUNC uint32_t fio_utf8_peek(const char *str) {
+  return fio_utf8_read((char **)&str);
+}
+
+/* *****************************************************************************
+Byte Shuffle & Reduction (on native types, up to 2048 bits == 256 bytes)
+***************************************************************************** */
+#define FIO____SHFL_FN(T, prefx, len)                                          \
+  FIO_IFUNC void fio_##prefx##x##len##_reshuffle(T *v, uint8_t indx[len]) {    \
+    T tmp[len];                                                                \
+    for (size_t i = 0; i < len; ++i) {                                         \
+      tmp[i] = v[indx[i] & (len - 1)];                                         \
+    }                                                                          \
+    for (size_t i = 0; i < len; ++i) {                                         \
+      v[i] = tmp[i];                                                           \
+    }                                                                          \
+  }
+#define FIO____REDUCE_FN(T, prefx, len, opnm, op)                              \
+  FIO_MIFN T fio_##prefx##x##len##_reduce_##opnm(T *v) {                       \
+    T r = v[0];                                                                \
+    for (size_t i = 1; i < len; ++i) {                                         \
+      r = r op v[i];                                                           \
+    }                                                                          \
+    return r;                                                                  \
+  }                                                                            \
+  FIO_IFUNC void fio_##prefx##x##len##_##opnm(T *dest, T *a, T *b) {           \
+    for (size_t i = 0; i < len; ++i)                                           \
+      dest[i] = a[i] op b[i];                                                  \
+  }
+#define FIO____REDUCE_MINMAX(T, prefx, len)                                    \
+  FIO_MIFN T fio_##prefx##x##len##_reduce_max(T *v) {                          \
+    T r = v[0];                                                                \
+    for (size_t i = 1; i < len; ++i) {                                         \
+      r = r < v[i] ? v[i] : r;                                                 \
+    }                                                                          \
+    return r;                                                                  \
+  }                                                                            \
+  FIO_MIFN T fio_##prefx##x##len##_reduce_min(T *v) {                          \
+    T r = v[0];                                                                \
+    for (size_t i = 1; i < len; ++i) {                                         \
+      r = r > v[i] ? v[i] : r;                                                 \
+    }                                                                          \
+    return r;                                                                  \
+  }
+
+#define FIO____SHFL_REDUCE(T, prefx, len)                                      \
+  FIO____SHFL_FN(T, prefx, len)                                                \
+  FIO____REDUCE_FN(T, prefx, len, add, +)                                      \
+  FIO____REDUCE_FN(T, prefx, len, mul, *)                                      \
+  FIO____REDUCE_FN(T, prefx, len, and, &)                                      \
+  FIO____REDUCE_FN(T, prefx, len, or, |)                                       \
+  FIO____REDUCE_FN(T, prefx, len, xor, ^)                                      \
+  FIO____REDUCE_MINMAX(T, prefx, len)
+
+FIO____SHFL_REDUCE(uint8_t, u8, 4)
+FIO____SHFL_REDUCE(uint8_t, u8, 8)
+FIO____SHFL_REDUCE(uint8_t, u8, 16)
+FIO____SHFL_REDUCE(uint8_t, u8, 32)
+FIO____SHFL_REDUCE(uint8_t, u8, 64)
+FIO____SHFL_REDUCE(uint8_t, u8, 128)
+FIO____SHFL_REDUCE(uint8_t, u8, 256)
+FIO____SHFL_REDUCE(uint16_t, u16, 2)
+FIO____SHFL_REDUCE(uint16_t, u16, 4)
+FIO____SHFL_REDUCE(uint16_t, u16, 8)
+FIO____SHFL_REDUCE(uint16_t, u16, 16)
+FIO____SHFL_REDUCE(uint16_t, u16, 32)
+FIO____SHFL_REDUCE(uint16_t, u16, 64)
+FIO____SHFL_REDUCE(uint16_t, u16, 128)
+FIO____SHFL_REDUCE(uint32_t, u32, 2)
+FIO____SHFL_REDUCE(uint32_t, u32, 4)
+FIO____SHFL_REDUCE(uint32_t, u32, 8)
+FIO____SHFL_REDUCE(uint32_t, u32, 16)
+FIO____SHFL_REDUCE(uint32_t, u32, 32)
+FIO____SHFL_REDUCE(uint32_t, u32, 64)
+FIO____SHFL_REDUCE(uint64_t, u64, 2)
+FIO____SHFL_REDUCE(uint64_t, u64, 4)
+FIO____SHFL_REDUCE(uint64_t, u64, 8)
+FIO____SHFL_REDUCE(uint64_t, u64, 16)
+FIO____SHFL_REDUCE(uint64_t, u64, 32)
+
+#undef FIO____SHFL_REDUCE
+#define FIO____SHFL_REDUCE(T, prefx, len)                                      \
+  FIO____SHFL_FN(T, prefx, len)                                                \
+  FIO____REDUCE_FN(T, prefx, len, add, +)                                      \
+  FIO____REDUCE_FN(T, prefx, len, mul, *)                                      \
+  FIO____REDUCE_MINMAX(T, prefx, len)
+
+FIO____SHFL_REDUCE(float, float, 2)
+FIO____SHFL_REDUCE(float, float, 4)
+FIO____SHFL_REDUCE(float, float, 8)
+FIO____SHFL_REDUCE(float, float, 16)
+FIO____SHFL_REDUCE(float, float, 32)
+FIO____SHFL_REDUCE(float, float, 64)
+FIO____SHFL_REDUCE(double, dbl, 2)
+FIO____SHFL_REDUCE(double, dbl, 4)
+FIO____SHFL_REDUCE(double, dbl, 8)
+FIO____SHFL_REDUCE(double, dbl, 16)
+FIO____SHFL_REDUCE(double, dbl, 32)
+#undef FIO____REDUCE_FN
+#undef FIO____REDUCE_MINMAX
+#undef FIO____SHFL_FN
+#undef FIO____SHFL_REDUCE
+
+/* clang-format off */
+#define fio_u8x4_reshuffle(v, ...)     fio_u8x4_reshuffle(v,     (uint8_t[4]){__VA_ARGS__})
+#define fio_u8x8_reshuffle(v, ...)     fio_u8x8_reshuffle(v,     (uint8_t[8]){__VA_ARGS__})
+#define fio_u8x16_reshuffle(v, ...)    fio_u8x16_reshuffle(v,    (uint8_t[16]){__VA_ARGS__})
+#define fio_u8x32_reshuffle(v, ...)    fio_u8x32_reshuffle(v,    (uint8_t[32]){__VA_ARGS__})
+#define fio_u8x64_reshuffle(v, ...)    fio_u8x64_reshuffle(v,    (uint8_t[64]){__VA_ARGS__})
+#define fio_u8x128_reshuffle(v, ...)   fio_u8x128_reshuffle(v,   (uint8_t[128]){__VA_ARGS__})
+#define fio_u8x256_reshuffle(v, ...)   fio_u8x256_reshuffle(v,   (uint8_t[256]){__VA_ARGS__})
+#define fio_u16x2_reshuffle(v, ...)    fio_u16x2_reshuffle(v,    (uint8_t[2]){__VA_ARGS__})
+#define fio_u16x4_reshuffle(v, ...)    fio_u16x4_reshuffle(v,    (uint8_t[4]){__VA_ARGS__})
+#define fio_u16x8_reshuffle(v, ...)    fio_u16x8_reshuffle(v,    (uint8_t[8]){__VA_ARGS__})
+#define fio_u16x16_reshuffle(v, ...)   fio_u16x16_reshuffle(v,   (uint8_t[16]){__VA_ARGS__})
+#define fio_u16x32_reshuffle(v, ...)   fio_u16x32_reshuffle(v,   (uint8_t[32]){__VA_ARGS__})
+#define fio_u16x64_reshuffle(v, ...)   fio_u16x64_reshuffle(v,   (uint8_t[64]){__VA_ARGS__})
+#define fio_u16x128_reshuffle(v,...)   fio_u16x128_reshuffle(v,  (uint8_t[128]){__VA_ARGS__})
+#define fio_u32x2_reshuffle(v, ...)    fio_u32x2_reshuffle(v,    (uint8_t[2]){__VA_ARGS__})
+#define fio_u32x4_reshuffle(v, ...)    fio_u32x4_reshuffle(v,    (uint8_t[4]){__VA_ARGS__})
+#define fio_u32x8_reshuffle(v, ...)    fio_u32x8_reshuffle(v,    (uint8_t[8]){__VA_ARGS__})
+#define fio_u32x16_reshuffle(v, ...)   fio_u32x16_reshuffle(v,   (uint8_t[16]){__VA_ARGS__})
+#define fio_u32x32_reshuffle(v, ...)   fio_u32x32_reshuffle(v,   (uint8_t[32]){__VA_ARGS__})
+#define fio_u32x64_reshuffle(v, ...)   fio_u32x64_reshuffle(v,   (uint8_t[64]){__VA_ARGS__})
+#define fio_u64x2_reshuffle(v, ...)    fio_u64x2_reshuffle(v,    (uint8_t[2]){__VA_ARGS__})
+#define fio_u64x4_reshuffle(v, ...)    fio_u64x4_reshuffle(v,    (uint8_t[4]){__VA_ARGS__})
+#define fio_u64x8_reshuffle(v, ...)    fio_u64x8_reshuffle(v,    (uint8_t[8]){__VA_ARGS__})
+#define fio_u64x16_reshuffle(v, ...)   fio_u64x16_reshuffle(v,   (uint8_t[16]){__VA_ARGS__})
+#define fio_u64x32_reshuffle(v, ...)   fio_u64x32_reshuffle(v,   (uint8_t[32]){__VA_ARGS__})
+#define fio_floatx2_reshuffle(v, ...)  fio_floatx2_reshuffle(v,  (uint8_t[2]){__VA_ARGS__})
+#define fio_floatx4_reshuffle(v, ...)  fio_floatx4_reshuffle(v,  (uint8_t[4]){__VA_ARGS__})
+#define fio_floatx8_reshuffle(v, ...)  fio_floatx8_reshuffle(v,  (uint8_t[8]){__VA_ARGS__})
+#define fio_floatx16_reshuffle(v, ...) fio_floatx16_reshuffle(v, (uint8_t[16]){__VA_ARGS__})
+#define fio_floatx32_reshuffle(v, ...) fio_floatx32_reshuffle(v, (uint8_t[32]){__VA_ARGS__})
+#define fio_floatx64_reshuffle(v, ...) fio_floatx64_reshuffle(v, (uint8_t[64]){__VA_ARGS__})
+#define fio_dblx2_reshuffle(v, ...)    fio_dblx2_reshuffle(v,    (uint8_t[2]){__VA_ARGS__})
+#define fio_dblx4_reshuffle(v, ...)    fio_dblx4_reshuffle(v,    (uint8_t[4]){__VA_ARGS__})
+#define fio_dblx8_reshuffle(v, ...)    fio_dblx8_reshuffle(v,    (uint8_t[8]){__VA_ARGS__})
+#define fio_dblx16_reshuffle(v, ...)   fio_dblx16_reshuffle(v,   (uint8_t[16]){__VA_ARGS__})
+#define fio_dblx32_reshuffle(v, ...)   fio_dblx32_reshuffle(v,   (uint8_t[32]){__VA_ARGS__})
+/* clang-format on */
+
+/* *****************************************************************************
+Vector Types (SIMD / Math)
+***************************************************************************** */
+/** An unsigned 128bit union type. */
+typedef union {
+  size_t uz[16 / sizeof(size_t)];
+  uint64_t u64[2];
+  uint32_t u32[4];
+  uint16_t u16[8];
+  uint8_t u8[16];
+#if FIO___HAS_ARM_INTRIN
+  uint64x2_t x64[1];
+  uint32x4_t x32[1];
+  uint16x8_t x16[1];
+  uint8x16_t x8[1];
+#elif __has_attribute(vector_size)
+  uint64_t x64 __attribute__((vector_size(16)));
+  uint64_t x32 __attribute__((vector_size(16)));
+  uint64_t x16 __attribute__((vector_size(16)));
+  uint64_t x8 __attribute__((vector_size(16)));
+#endif
+#if defined(__SIZEOF_INT128__)
+  __uint128_t alignment_for_u128_[1];
+#endif
+} fio_u128 FIO_ALIGN(16);
+
+/** An unsigned 256bit union type. */
+typedef union {
+  size_t uz[32 / sizeof(size_t)];
+  uint64_t u64[4];
+  uint32_t u32[8];
+  uint16_t u16[16];
+  uint8_t u8[32];
+  fio_u128 u128[2];
+#if FIO___HAS_ARM_INTRIN
+  uint64x2_t x64[2];
+  uint32x4_t x32[2];
+  uint16x8_t x16[2];
+  uint8x16_t x8[2];
+#elif __has_attribute(vector_size)
+  uint64_t x64 __attribute__((vector_size(32)));
+  uint64_t x32 __attribute__((vector_size(32)));
+  uint64_t x16 __attribute__((vector_size(32)));
+  uint64_t x8 __attribute__((vector_size(32)));
+#endif
+#if defined(__SIZEOF_INT128__)
+  __uint128_t alignment_for_u128_[2];
+#endif
+#if defined(__SIZEOF_INT256__)
+  __uint256_t alignment_for_u256_[1];
+#endif
+} fio_u256 FIO_ALIGN(16);
+
+/** An unsigned 512bit union type. */
+typedef union {
+  size_t uz[64 / sizeof(size_t)];
+  uint64_t u64[8];
+  uint32_t u32[16];
+  uint16_t u16[32];
+  uint8_t u8[64];
+  fio_u128 u128[4];
+  fio_u256 u256[2];
+#if FIO___HAS_ARM_INTRIN
+  uint64x2_t x64[4];
+  uint32x4_t x32[4];
+  uint16x8_t x16[4];
+  uint8x16_t x8[4];
+#elif __has_attribute(vector_size)
+  uint64_t x64 __attribute__((vector_size(64)));
+  uint64_t x32 __attribute__((vector_size(64)));
+  uint64_t x16 __attribute__((vector_size(64)));
+  uint64_t x8 __attribute__((vector_size(64)));
+#endif
+} fio_u512 FIO_ALIGN(16);
+
+/** An unsigned 1024bit union type. */
+typedef union {
+  size_t uz[128 / sizeof(size_t)];
+  uint64_t u64[16];
+  uint32_t u32[32];
+  uint16_t u16[64];
+  uint8_t u8[128];
+  fio_u128 u128[8];
+  fio_u256 u256[4];
+  fio_u512 u512[2];
+#if FIO___HAS_ARM_INTRIN
+  uint64x2_t x64[8];
+  uint32x4_t x32[8];
+  uint16x8_t x16[8];
+  uint8x16_t x8[8];
+#elif __has_attribute(vector_size)
+  uint64_t x64 __attribute__((vector_size(128)));
+  uint64_t x32 __attribute__((vector_size(128)));
+  uint64_t x16 __attribute__((vector_size(128)));
+  uint64_t x8 __attribute__((vector_size(128)));
+#endif
+} fio_u1024 FIO_ALIGN(16);
+
+/** An unsigned 2048bit union type. */
+typedef union {
+  size_t uz[256 / sizeof(size_t)];
+  uint64_t u64[32];
+  uint32_t u32[64];
+  uint16_t u16[128];
+  uint8_t u8[256];
+  fio_u128 u128[16];
+  fio_u256 u256[8];
+  fio_u512 u512[4];
+  fio_u1024 u1024[2];
+#if FIO___HAS_ARM_INTRIN
+  uint64x2_t x64[16];
+  uint32x4_t x32[16];
+  uint16x8_t x16[16];
+  uint8x16_t x8[16];
+#elif __has_attribute(vector_size)
+  uint64_t x64 __attribute__((vector_size(256)));
+  uint64_t x32 __attribute__((vector_size(256)));
+  uint64_t x16 __attribute__((vector_size(256)));
+  uint64_t x8 __attribute__((vector_size(256)));
+#endif
+} fio_u2048 FIO_ALIGN(16);
+
+/** An unsigned 4096bit union type. */
+typedef union {
+  size_t uz[512 / sizeof(size_t)];
+  uint64_t u64[64];
+  uint32_t u32[128];
+  uint16_t u16[256];
+  uint8_t u8[512];
+  fio_u128 u128[32];
+  fio_u256 u256[16];
+  fio_u512 u512[8];
+  fio_u1024 u1024[4];
+  fio_u2048 u2048[2];
+#if FIO___HAS_ARM_INTRIN
+  uint64x2_t x64[32];
+  uint32x4_t x32[32];
+  uint16x8_t x16[32];
+  uint8x16_t x8[32];
+#elif __has_attribute(vector_size)
+  uint64_t x64 __attribute__((vector_size(512)));
+  uint64_t x32 __attribute__((vector_size(512)));
+  uint64_t x16 __attribute__((vector_size(512)));
+  uint64_t x8 __attribute__((vector_size(512)));
+#endif
+} fio_u4096 FIO_ALIGN(16);
+
+FIO_ASSERT_STATIC(sizeof(fio_u4096) == 512, "Math type size error!");
+
+#define fio_u128_init8(...)  ((fio_u128){.u8 = {__VA_ARGS__}})
+#define fio_u128_init16(...) ((fio_u128){.u16 = {__VA_ARGS__}})
+#define fio_u128_init32(...) ((fio_u128){.u32 = {__VA_ARGS__}})
+#define fio_u128_init64(...) ((fio_u128){.u64 = {__VA_ARGS__}})
+#define fio_u256_init8(...)  ((fio_u256){.u8 = {__VA_ARGS__}})
+#define fio_u256_init16(...) ((fio_u256){.u16 = {__VA_ARGS__}})
+#define fio_u256_init32(...) ((fio_u256){.u32 = {__VA_ARGS__}})
+#define fio_u256_init64(...) ((fio_u256){.u64 = {__VA_ARGS__}})
+#define fio_u512_init8(...)  ((fio_u512){.u8 = {__VA_ARGS__}})
+#define fio_u512_init16(...) ((fio_u512){.u16 = {__VA_ARGS__}})
+#define fio_u512_init32(...) ((fio_u512){.u32 = {__VA_ARGS__}})
+#define fio_u512_init64(...) ((fio_u512){.u64 = {__VA_ARGS__}})
+
+#define fio_u1024_init8(...)  ((fio_u1024){.u8 = {__VA_ARGS__}})
+#define fio_u1024_init16(...) ((fio_u1024){.u16 = {__VA_ARGS__}})
+#define fio_u1024_init32(...) ((fio_u1024){.u32 = {__VA_ARGS__}})
+#define fio_u1024_init64(...) ((fio_u1024){.u64 = {__VA_ARGS__}})
+#define fio_u2048_init8(...)  ((fio_u2048){.u8 = {__VA_ARGS__}})
+#define fio_u2048_init16(...) ((fio_u2048){.u16 = {__VA_ARGS__}})
+#define fio_u2048_init32(...) ((fio_u2048){.u32 = {__VA_ARGS__}})
+#define fio_u2048_init64(...) ((fio_u2048){.u64 = {__VA_ARGS__}})
+#define fio_u4096_init8(...)  ((fio_u4096){.u8 = {__VA_ARGS__}})
+#define fio_u4096_init16(...) ((fio_u4096){.u16 = {__VA_ARGS__}})
+#define fio_u4096_init32(...) ((fio_u4096){.u32 = {__VA_ARGS__}})
+#define fio_u4096_init64(...) ((fio_u4096){.u64 = {__VA_ARGS__}})
+
+/* *****************************************************************************
+Vector Helpers - memory load operations (implementation starts here)
+***************************************************************************** */
+
+#define FIO_MATH_TYPE_LOADER(bits, bytes)                                      \
+  /** Loads from memory using local-endian. */                                 \
+  FIO_MIFN fio_u##bits fio_u##bits##_load(const void *buf) {                   \
+    fio_u##bits r;                                                             \
+    fio_memcpy##bytes(&r, buf);                                                \
+    return r;                                                                  \
+  }                                                                            \
+  /** Stores to memory using local-endian. */                                  \
+  FIO_IFUNC void fio_u##bits##_store(void *buf, const fio_u##bits a) {         \
+    fio_memcpy##bytes(buf, &a);                                                \
+  }                                                                            \
+  FIO_VECTOR_LOADER_ENDIAN_FUNC(bits, 16)                                      \
+  FIO_VECTOR_LOADER_ENDIAN_FUNC(bits, 32)                                      \
+  FIO_VECTOR_LOADER_ENDIAN_FUNC(bits, 64)
+
+#define FIO_VECTOR_LOADER_ENDIAN_FUNC(total_bits, bits)                        \
+  /** Loads vector from memory, reading from little-endian.  */                \
+  FIO_MIFN fio_u##total_bits fio_u##total_bits##_load_le##bits(                \
+      const void *buf) {                                                       \
+    fio_u##total_bits r = fio_u##total_bits##_load(buf);                       \
+    for (size_t i = 0; i < (total_bits / bits); ++i) {                         \
+      r.u##bits[i] = fio_ltole##bits(r.u##bits[i]);                            \
+    }                                                                          \
+    return r;                                                                  \
+  }                                                                            \
+  /** Loads vector from memory, reading from big-endian.  */                   \
+  FIO_MIFN fio_u##total_bits fio_u##total_bits##_load_be##bits(                \
+      const void *buf) {                                                       \
+    fio_u##total_bits r = fio_u##total_bits##_load(buf);                       \
+    for (size_t i = 0; i < (total_bits / bits); ++i) {                         \
+      r.u##bits[i] = fio_lton##bits(r.u##bits[i]);                             \
+    }                                                                          \
+    return r;                                                                  \
+  }                                                                            \
+  FIO_MIFN fio_u##total_bits fio_u##total_bits##_bswap##bits(                  \
+      fio_u##total_bits a) {                                                   \
+    fio_u##total_bits r;                                                       \
+    for (size_t i = 0; i < (total_bits / bits); ++i)                           \
+      r.u##bits[i] = fio_bswap##bits(a.u##bits[i]);                            \
+    return r;                                                                  \
+  }
+
+FIO_MATH_TYPE_LOADER(128, 16)
+FIO_MATH_TYPE_LOADER(256, 32)
+FIO_MATH_TYPE_LOADER(512, 64)
+FIO_MATH_TYPE_LOADER(1024, 128)
+FIO_MATH_TYPE_LOADER(2048, 256)
+FIO_MATH_TYPE_LOADER(4096, 512)
+
+#undef FIO_MATH_TYPE_LOADER
+#undef FIO_VECTOR_LOADER_ENDIAN_FUNC
+#undef FIO_VECTOR_LOADER_ENDIAN
+
+/* *****************************************************************************
+Linked Lists Persistent Macros and Types
+***************************************************************************** */
+
+/** A linked list arch-type */
+typedef struct fio_list_node_s {
+  struct fio_list_node_s *next;
+  struct fio_list_node_s *prev;
+} fio_list_node_s;
+
+/** A linked list node type */
+#define FIO_LIST_NODE fio_list_node_s
+/** A linked list head type */
+#define FIO_LIST_HEAD fio_list_node_s
+
+/** Allows initialization of FIO_LIST_HEAD objects. */
+#define FIO_LIST_INIT(obj)                                                     \
+  (fio_list_node_s) { .next = &(obj), .prev = &(obj) }
+
+#ifndef FIO_LIST_EACH
+/** Loops through every node in the linked list except the head. */
+#define FIO_LIST_EACH(type, node_name, head, pos)                              \
+  for (type *pos = FIO_PTR_FROM_FIELD(type, node_name, (head)->next),          \
+            *next____p_ls_##pos =                                              \
+                FIO_PTR_FROM_FIELD(type, node_name, (head)->next->next);       \
+       pos != FIO_PTR_FROM_FIELD(type, node_name, (head));                     \
+       (pos = next____p_ls_##pos),                                             \
+            (next____p_ls_##pos =                                              \
+                 FIO_PTR_FROM_FIELD(type,                                      \
+                                    node_name,                                 \
+                                    next____p_ls_##pos->node_name.next)))
+/** Loops through every node in the linked list except the head. */
+#define FIO_LIST_EACH_REVERSED(type, node_name, head, pos)                     \
+  for (type *pos = FIO_PTR_FROM_FIELD(type, node_name, (head)->prev),          \
+            *next____p_ls_##pos =                                              \
+                FIO_PTR_FROM_FIELD(type, node_name, (head)->next->prev);       \
+       pos != FIO_PTR_FROM_FIELD(type, node_name, (head));                     \
+       (pos = next____p_ls_##pos),                                             \
+            (next____p_ls_##pos =                                              \
+                 FIO_PTR_FROM_FIELD(type,                                      \
+                                    node_name,                                 \
+                                    next____p_ls_##pos->node_name.prev)))
+#endif
+
+/** UNSAFE macro for pushing a node to a list. */
+#define FIO_LIST_PUSH(head, n)                                                 \
+  do {                                                                         \
+    (n)->prev = (head)->prev;                                                  \
+    (n)->next = (head);                                                        \
+    (head)->prev->next = (n);                                                  \
+    (head)->prev = (n);                                                        \
+  } while (0)
+
+/** UNSAFE macro for removing a node from a list. */
+#define FIO_LIST_REMOVE(n)                                                     \
+  do {                                                                         \
+    (n)->prev->next = (n)->next;                                               \
+    (n)->next->prev = (n)->prev;                                               \
+  } while (0)
+
+/** UNSAFE macro for removing a node from a list. Resets node data. */
+#define FIO_LIST_REMOVE_RESET(n)                                               \
+  do {                                                                         \
+    (n)->prev->next = (n)->next;                                               \
+    (n)->next->prev = (n)->prev;                                               \
+    (n)->next = (n)->prev = (n);                                               \
+  } while (0)
+
+/** UNSAFE macro for popping a node to a list. */
+#define FIO_LIST_POP(type, node_name, dest_ptr, head)                          \
+  do {                                                                         \
+    (dest_ptr) = FIO_PTR_FROM_FIELD(type, node_name, ((head)->next));          \
+    FIO_LIST_REMOVE(&(dest_ptr)->node_name);                                   \
+  } while (0)
+
+/** UNSAFE macro for testing if a list is empty. */
+#define FIO_LIST_IS_EMPTY(head)                                                \
+  ((!(head)) || ((!(head)->next) | ((head)->next == (head))))
+
+/* *****************************************************************************
+Indexed Linked Lists Persistent Macros and Types
+
+Indexed Linked Lists can be used to create a linked list that uses is always
+relative to some root pointer (usually the root of an array). This:
+
+1. Allows easy reallocation of the list without requiring pointer updates.
+
+2. Could be used for memory optimization if the array limits are known.
+
+The "head" index is usually validated by reserving the value of `-1` to indicate
+an empty list.
+***************************************************************************** */
+#ifndef FIO_INDEXED_LIST_EACH
+
+/** A 32 bit indexed linked list node type */
+typedef struct fio_index32_node_s {
+  uint32_t next;
+  uint32_t prev;
+} fio_index32_node_s;
+
+/** A 16 bit indexed linked list node type */
+typedef struct fio_index16_node_s {
+  uint16_t next;
+  uint16_t prev;
+} fio_index16_node_s;
+
+/** An 8 bit indexed linked list node type */
+typedef struct fio_index8_node_s {
+  uint8_t next;
+  uint8_t prev;
+} fio_index8_node_s;
+
+/** A 32 bit indexed linked list node type */
+#define FIO_INDEXED_LIST32_NODE fio_index32_node_s
+#define FIO_INDEXED_LIST32_HEAD uint32_t
+/** A 16 bit indexed linked list node type */
+#define FIO_INDEXED_LIST16_NODE fio_index16_node_s
+#define FIO_INDEXED_LIST16_HEAD uint16_t
+/** An 8 bit indexed linked list node type */
+#define FIO_INDEXED_LIST8_NODE fio_index8_node_s
+#define FIO_INDEXED_LIST8_HEAD uint8_t
+
+/** UNSAFE macro for pushing a node to a list. */
+#define FIO_INDEXED_LIST_PUSH(root, node_name, head, i)                        \
+  do {                                                                         \
+    register const size_t n__ = (i);                                           \
+    (root)[n__].node_name.prev = (root)[(head)].node_name.prev;                \
+    (root)[n__].node_name.next = (head);                                       \
+    (root)[(root)[(head)].node_name.prev].node_name.next = (n__);              \
+    (root)[(head)].node_name.prev = (n__);                                     \
+  } while (0)
+
+/** UNSAFE macro for adding a node to the begging of the list. */
+#define FIO_INDEXED_LIST_UNSHIFT(root, node_name, head, i)                     \
+  do {                                                                         \
+    register const size_t n__ = (i);                                           \
+    (root)[n__].node_name.next = (root)[(head)].node_name.next;                \
+    (root)[n__].node_name.prev = (head);                                       \
+    (root)[(root)[(head)].node_name.next].node_name.prev = (n__);              \
+    (root)[(head)].node_name.next = (n__);                                     \
+    (head) = (n__);                                                            \
+  } while (0)
+
+/** UNSAFE macro for removing a node from a list. */
+#define FIO_INDEXED_LIST_REMOVE(root, node_name, i)                            \
+  do {                                                                         \
+    register const size_t n__ = (i);                                           \
+    (root)[(root)[n__].node_name.prev].node_name.next =                        \
+        (root)[n__].node_name.next;                                            \
+    (root)[(root)[n__].node_name.next].node_name.prev =                        \
+        (root)[n__].node_name.prev;                                            \
+  } while (0)
+
+/** UNSAFE macro for removing a node from a list. Resets node data. */
+#define FIO_INDEXED_LIST_REMOVE_RESET(root, node_name, i)                      \
+  do {                                                                         \
+    register const size_t n__ = (i);                                           \
+    (root)[(root)[n__].node_name.prev].node_name.next =                        \
+        (root)[n__].node_name.next;                                            \
+    (root)[(root)[n__].node_name.next].node_name.prev =                        \
+        (root)[n__].node_name.prev;                                            \
+    (root)[n__].node_name.next = (root)[n__].node_name.prev = (n__);           \
+  } while (0)
+
+/** Loops through every index in the indexed list, assuming `head` is valid. */
+#define FIO_INDEXED_LIST_EACH(root, node_name, head, pos)                      \
+  for (size_t pos = (head),                                                    \
+              stooper___hd = (head),                                           \
+              stopper___ils___ = 0,                                            \
+              pos##___nxt = (root)[(head)].node_name.next;                     \
+       !stopper___ils___;                                                      \
+       (stopper___ils___ = ((pos = pos##___nxt) == stooper___hd)),             \
+              pos##___nxt = (root)[pos].node_name.next)
+
+/** Loops through every index in the indexed list, assuming `head` is valid. */
+#define FIO_INDEXED_LIST_EACH_REVERSED(root, node_name, head, pos)             \
+  for (size_t pos = ((root)[(head)].node_name.prev),                           \
+              pos##___nxt =                                                    \
+                  ((root)[((root)[(head)].node_name.prev)].node_name.prev),    \
+              stooper___hd = (head),                                           \
+              stopper___ils___ = 0;                                            \
+       !stopper___ils___;                                                      \
+       ((stopper___ils___ = (pos == stooper___hd)),                            \
+        (pos = pos##___nxt),                                                   \
+        (pos##___nxt = (root)[pos##___nxt].node_name.prev)))
+#endif
+
+/* *****************************************************************************
 Constant-Time Selectors
 ***************************************************************************** */
 
 /** Returns 1 if the expression is true (input isn't zero). */
-FIO_IFUNC uintptr_t fio_ct_true(uintptr_t cond) {
+FIO_IFUNC uintmax_t fio_ct_true(uintmax_t cond) {
   // promise that the highest bit is set if any bits are set, than shift.
   return ((cond | (0 - cond)) >> ((sizeof(cond) << 3) - 1));
 }
 
 /** Returns 1 if the expression is false (input is zero). */
-FIO_IFUNC uintptr_t fio_ct_false(uintptr_t cond) {
+FIO_IFUNC uintmax_t fio_ct_false(uintmax_t cond) {
   // fio_ct_true returns only one bit, XOR will inverse that bit.
   return fio_ct_true(cond) ^ 1;
 }
 
 /** Returns `a` if `cond` is boolean and true, returns b otherwise. */
-FIO_IFUNC uintptr_t fio_ct_if_bool(uint8_t cond, uintptr_t a, uintptr_t b) {
+FIO_IFUNC uintmax_t fio_ct_if_bool(uintmax_t cond, uintmax_t a, uintmax_t b) {
   // b^(a^b) cancels b out. 0-1 => sets all bits.
-  return (b ^ ((0 - (cond & 1)) & (a ^ b)));
+  return (b ^ (((uintmax_t)0ULL - (cond & 1)) & (a ^ b)));
 }
 
-/** Returns `a` if `cond` isn't zero (uses fio_ct_true), returns b otherwise. */
-FIO_IFUNC uintptr_t fio_ct_if(uintptr_t cond, uintptr_t a, uintptr_t b) {
+/** Returns `a` if `cond` isn't zero (uses fio_ct_true), returns b otherwise.
+ */
+FIO_IFUNC uintmax_t fio_ct_if(uintmax_t cond, uintmax_t a, uintmax_t b) {
   // b^(a^b) cancels b out. 0-1 => sets all bits.
   return fio_ct_if_bool(fio_ct_true(cond), a, b);
 }
 
 /** Returns `a` if a >= `b`. */
-FIO_IFUNC intptr_t fio_ct_max(intptr_t a_, intptr_t b_) {
+FIO_IFUNC intmax_t fio_ct_max(intmax_t a_, intmax_t b_) {
   // if b - a is negative, a > b, unless both / one are negative.
-  const uintptr_t a = a_, b = b_;
+  const uintmax_t a = a_, b = b_;
   return (
-      intptr_t)fio_ct_if_bool(((a - b) >> ((sizeof(a) << 3) - 1)) & 1, b, a);
+      intmax_t)fio_ct_if_bool(((a - b) >> ((sizeof(a) << 3) - 1)) & 1, b, a);
+}
+
+/** Returns `a` if a >= `b`. */
+FIO_IFUNC intmax_t fio_ct_min(intmax_t a_, intmax_t b_) {
+  // if b - a is negative, a > b, unless both / one are negative.
+  const uintmax_t a = a_, b = b_;
+  return (
+      intmax_t)fio_ct_if_bool(((a - b) >> ((sizeof(a) << 3) - 1)) & 1, a, b);
+}
+
+/** Returns absolute value. */
+FIO_IFUNC uintmax_t fio_ct_abs(intmax_t i_) {
+  // if b - a is negative, a > b, unless both / one are negative.
+  const uintmax_t i = i_;
+  return (intmax_t)fio_ct_if_bool((i >> ((sizeof(i) << 3) - 1)), 0 - i, i);
 }
 
 /* *****************************************************************************
@@ -1476,14 +2046,15 @@ Constant-Time Comparison Test
 
 /** A timing attack resistant memory comparison function. */
 FIO_SFUNC _Bool fio_ct_is_eq(const void *a_, const void *b_, size_t bytes) {
-  uint64_t ua[8] FIO_ALIGN(16);
-  uint64_t ub[8] FIO_ALIGN(16);
   uint64_t flag = 0;
   const char *a = (const char *)a_;
   const char *b = (const char *)b_;
+  const char *e = a + bytes;
+  /* any uneven bytes? */
   if (bytes & 63) {
-    for (size_t i = 0; i < 8; ++i)
-      ua[i] = ub[i] = 0;
+    /* consume uneven byte head */
+    uint64_t ua[8] FIO_ALIGN(16) = {0};
+    uint64_t ub[8] FIO_ALIGN(16) = {0};
     /* all these if statements can run in parallel */
     if (bytes & 32) {
       fio_memcpy32(ua, a);
@@ -1511,8 +2082,12 @@ FIO_SFUNC _Bool fio_ct_is_eq(const void *a_, const void *b_, size_t bytes) {
     }
     for (size_t i = 0; i < 8; ++i)
       flag |= ua[i] ^ ub[i];
+    a += bytes & 63;
+    b += bytes & 63;
   }
-  for (size_t consumes = 63; consumes < bytes; consumes += 64) {
+  while (a < e) {
+    uint64_t ua[8] FIO_ALIGN(16);
+    uint64_t ub[8] FIO_ALIGN(16);
     fio_memcpy64(ua, a);
     fio_memcpy64(ub, b);
     for (size_t i = 0; i < 8; ++i)
@@ -1679,8 +2254,8 @@ FIO_IFUNC void fio_xmask(char *buf_, size_t len, uint64_t mask) {
     fio_u2buf64u(buf, (fio_buf2u64u(buf) ^ mask));
     buf += 8;
   }
-  if (len & 7) {
-    uint64_t tmp;
+  {
+    uint64_t tmp = 0;
     fio_memcpy7x(&tmp, buf, len);
     tmp ^= mask;
     fio_memcpy7x(buf, &tmp, len);
@@ -1855,16 +2430,6 @@ Byte Value helpers
 ***************************************************************************** */
 
 /**
- * Detects a byte where all the bits are set (255) within a 4 byte vector.
- *
- * The full byte will be be set to 0x80, all other bytes will be 0x0.
- */
-FIO_IFUNC uint32_t fio_has_full_byte32(uint32_t row) {
-  return ((row & UINT32_C(0x7F7F7F7F)) + UINT32_C(0x01010101)) &
-         (row & UINT32_C(0x80808080));
-}
-
-/**
  * Detects a byte where no bits are set (0) within a 4 byte vector.
  *
  * The zero byte will be be set to 0x80, all other bytes will be 0x0.
@@ -1883,13 +2448,14 @@ FIO_IFUNC uint32_t fio_has_byte32(uint32_t row, uint8_t byte) {
 }
 
 /**
- * Detects a byte where all the bits are set (255) within an 8 byte vector.
+ * Detects a byte where all the bits are set (255) within a 4 byte vector.
  *
  * The full byte will be be set to 0x80, all other bytes will be 0x0.
  */
-FIO_IFUNC uint64_t fio_has_full_byte64(uint64_t row) {
-  return ((row & UINT64_C(0x7F7F7F7F7F7F7F7F)) + UINT64_C(0x0101010101010101)) &
-         (row & UINT64_C(0x8080808080808080));
+FIO_IFUNC uint32_t fio_has_full_byte32(uint32_t row) {
+  return fio_has_zero_byte32(row);
+  // return ((row & UINT32_C(0x7F7F7F7F)) + UINT32_C(0x01010101)) &
+  //        (row & UINT32_C(0x80808080));
 }
 
 /**
@@ -1898,8 +2464,23 @@ FIO_IFUNC uint64_t fio_has_full_byte64(uint64_t row) {
  * The zero byte will be be set to 0x80, all other bytes will be 0x0.
  */
 FIO_IFUNC uint64_t fio_has_zero_byte64(uint64_t row) {
-  return (row - UINT64_C(0x0101010101010101)) &
-         ((~row) & UINT64_C(0x8080808080808080));
+#define FIO_HAS_ZERO_BYTE64(row)                                               \
+  (((row)-UINT64_C(0x0101010101010101)) &                                      \
+   ((~(row)) & UINT64_C(0x8080808080808080)))
+  return FIO_HAS_ZERO_BYTE64(row);
+}
+
+/**
+ * Detects a byte where no bits are set (0) within an 8 byte vector.
+ *
+ * This variation should NOT be used to build a bitmap, but May be used to
+ * detect the first occurrence.
+ */
+FIO_IFUNC uint64_t fio_has_zero_byte_alt64(uint64_t row) {
+#define FIO_HAS_ZERO_BYTE64(row)                                               \
+  (((row)-UINT64_C(0x0101010101010101)) &                                      \
+   ((~(row)) & UINT64_C(0x8080808080808080)))
+  return FIO_HAS_ZERO_BYTE64(row);
 }
 
 /**
@@ -1911,14 +2492,31 @@ FIO_IFUNC uint64_t fio_has_byte64(uint64_t row, uint8_t byte) {
   return fio_has_zero_byte64((row ^ (UINT64_C(0x0101010101010101) * byte)));
 }
 
+/**
+ * Detects a byte where all the bits are set (255) within an 8 byte vector.
+ *
+ * The full byte will be be set to 0x80, all other bytes will be 0x0.
+ */
+FIO_IFUNC uint64_t fio_has_full_byte64(uint64_t row) {
+#define FIO_HAS_FULL_BYTE64(row)                                               \
+  ((((row)&UINT64_C(0x7F7F7F7F7F7F7F7F)) + UINT64_C(0x0101010101010101)) &     \
+   (row)&UINT64_C(0x8080808080808080))
+  return FIO_HAS_FULL_BYTE64(row);
+}
+
 /** Converts a `fio_has_byteX` result to a bitmap. */
 FIO_IFUNC uint64_t fio_has_byte2bitmap(uint64_t result) {
-  result = fio_ltole64(result); /* map little endian to bitmap */
-  result >>= 7;                 /* move all 0x80 to 0x01 */
-  result |= result >> 7;        /* pack all 0x80 bits into one byte */
-  result |= result >> 14;
-  result |= result >> 28;
-  result &= 0xFFU;
+/** Converts a FIO_HAS_FULL_BYTE64 result to relative position bitmap. */
+#define FIO_HAS_BYTE2BITMAP(result, bit_index)                                 \
+  do {                                                                         \
+    (result) = fio_ltole64((result)); /* map little endian to bitmap */        \
+    (result) >>= bit_index;           /* move bit index to 0x01 */             \
+    (result) |= (result) >> 7;        /* pack all 0x80 bits into one byte */   \
+    (result) |= (result) >> 14;                                                \
+    (result) |= (result) >> 28;                                                \
+    (result) &= 0xFFU;                                                         \
+  } while (0)
+  FIO_HAS_BYTE2BITMAP(result, 7);
   return result;
 }
 
@@ -2131,13 +2729,13 @@ Everything Inclusion
 #define FIO_CRYPT
 #define FIO_SIGNAL
 #define FIO_SOCK
-#define FIO_STATE
 #define FIO_THREADS
 
 #else
 #undef H___FIO_EVERYTHING1___H
 #undef FIO_EVERYTHING
 #define H___FIO_EVERYTHING___H
+#undef FIO_MEMALT
 #define FIO_FIOBJ
 #define FIO_HTTP
 #define FIO_MALLOC
@@ -2164,13 +2762,11 @@ Basics Inclusion
 #undef FIO_FIOBJ
 #undef FIO_MALLOC
 #undef FIO_MUSTACHE
-#undef FIO_STATE
 #undef FIO_THREADS
 #undef FIOBJ_MALLOC
 #define FIO_CLI
 #define FIO_CORE
 #define FIO_CRYPT
-#define FIO_STATE
 #define FIO_THREADS
 
 #elif !defined(H___FIO_BASIC_ROUND2___H)
@@ -2215,8 +2811,10 @@ Core Inclusion
 #undef FIO_LOG
 #undef FIO_MATH
 #undef FIO_RAND
+#undef FIO_STATE
 #undef FIO_TIME
 #undef FIO_URL
+#undef FIO_CORE
 #define FIO_ATOL
 #define FIO_ATOMIC
 #define FIO_FILES
@@ -2224,9 +2822,9 @@ Core Inclusion
 #define FIO_LOG
 #define FIO_MATH
 #define FIO_RAND
+#define FIO_STATE
 #define FIO_TIME
 #define FIO_URL
-#undef FIO_CORE
 #endif
 
 /* *****************************************************************************
@@ -2244,6 +2842,7 @@ Memory Allocation - FIO_MALLOC as a "global" default memory allocator
 ***************************************************************************** */
 /* FIO_MALLOC defines a "global" default memory allocator */
 #if defined(FIO_MALLOC) && !defined(H___FIO_MALLOC___H)
+#define H___FIO_MALLOC___H
 #ifndef FIO_MEMORY_NAME
 #define FIO_MEMORY_NAME fio
 #endif
@@ -2284,16 +2883,14 @@ Memory Allocation - FIO_MALLOC defines a FIOBJ dedicated memory allocator
 /* fight fragmentation */
 #define FIO_MEMORY_BLOCKS_PER_ALLOCATION_LOG 4
 #endif
-#ifndef FIO_MEMORY_ALIGN_LOG
-/* align on 8 bytes, it's enough for FIOBJ types */
-#define FIO_MEMORY_ALIGN_LOG 3
-#endif
 #ifndef FIO_MEMORY_CACHE_SLOTS
 /* cache up to 64Mb */
 #define FIO_MEMORY_CACHE_SLOTS 16
 #endif
-#endif /* FIOBJ_MALLOC */
+#endif /* FIOBJ_MALLOC / FIO_MALLOC*/
 
+#undef FIOBJ_MALLOC
+#undef FIO_MALLOC
 /* *****************************************************************************
 FIO_SORT_NAME naming
 ***************************************************************************** */
@@ -2357,6 +2954,7 @@ FIO_MAP Ordering & Naming Shortcut
 
 #if defined(FIO_FIOBJ)
 #define FIO_MUSTACHE
+#define FIO_JSON
 #endif
 
 #if defined(FIO_HTTP)
@@ -2383,7 +2981,8 @@ FIO_MAP Ordering & Naming Shortcut
 #if defined(FIO_HTTP_HANDLE) || defined(FIO_STR_NAME) ||                       \
     defined(FIO_STR_SMALL) || defined(FIO_ARRAY_TYPE_STR) ||                   \
     defined(FIO_MAP_KEY_KSTR) || defined(FIO_MAP_KEY_BSTR) ||                  \
-    (defined(FIO_MAP_NAME) && !defined(FIO_MAP_KEY)) || defined(FIO_MUSTACHE)
+    (defined(FIO_MAP_NAME) && !defined(FIO_MAP_KEY)) ||                        \
+    defined(FIO_MUSTACHE) || defined(FIO_MAP2_NAME)
 #undef FIO_STR
 #define FIO_STR
 #endif
@@ -2537,7 +3136,7 @@ Memory allocation macros
 /** Frees allocated memory. */
 #define FIO_MEM_FREE(ptr, size) fio_free((ptr))
 /** Set to true of internall allocator is used (memory returned set to zero). */
-#define FIO_MEM_REALLOC_IS_SAFE 1
+#define FIO_MEM_REALLOC_IS_SAFE fio_realloc_is_safe()
 
 #else /* H___FIO_MALLOC___H */
 /** Reallocates memory, copying (at least) `copy_len` if necessary. */
@@ -2669,23 +3268,29 @@ Leak Counter Helpers
   FIO_IFUNC size_t FIO_NAME(fio___leak_counter, name)(size_t i) {              \
     static volatile size_t counter;                                            \
     size_t tmp = fio_atomic_add_fetch(&counter, i);                            \
-    if (tmp == ((size_t)-1))                                                   \
+    if (FIO_UNLIKELY(tmp == ((size_t)-1)))                                     \
       goto error_double_free;                                                  \
     return tmp;                                                                \
   error_double_free:                                                           \
-    FIO_ASSERT(0, FIO_MACRO2STR(name) " `free` after `free` detected!");       \
+    FIO_ASSERT(0,                                                              \
+               "(%d) " FIO_MACRO2STR(name) " `free` after `free` detected!",   \
+               fio_getpid());                                                  \
   }                                                                            \
   static void FIO_NAME(fio___leak_counter_cleanup, name)(void *i) {            \
     size_t counter = FIO_NAME(fio___leak_counter, name)((size_t)(uintptr_t)i); \
-    FIO_LOG_DDEBUG2("testing leaks for " FIO_MACRO2STR(name));                 \
+    FIO_LOG_DEBUG2("(%d) testing leaks for " FIO_MACRO2STR(name),              \
+                   fio_getpid());                                              \
     if (counter)                                                               \
-      FIO_LOG_ERROR("%zu leaks detected for " FIO_MACRO2STR(name), counter);   \
+      FIO_LOG_ERROR("(%d) %zu leaks detected for " FIO_MACRO2STR(name),        \
+                    fio_getpid(),                                              \
+                    counter);                                                  \
   }                                                                            \
   FIO_CONSTRUCTOR(FIO_NAME(fio___leak_counter_const, name)) {                  \
     fio_state_callback_add(FIO_CALL_AT_EXIT,                                   \
                            FIO_NAME(fio___leak_counter_cleanup, name),         \
                            NULL);                                              \
   }
+#define FIO_LEAK_COUNTER_COUNT(name)    FIO_NAME(fio___leak_counter, name)(0)
 #define FIO_LEAK_COUNTER_ON_ALLOC(name) FIO_NAME(fio___leak_counter, name)(1)
 #define FIO_LEAK_COUNTER_ON_FREE(name)                                         \
   FIO_NAME(fio___leak_counter, name)(((size_t)-1))
@@ -3008,7 +3613,8 @@ SFUNC void *fio_memcpy(void *dest_, const void *src_, size_t bytes) {
   const char *s = (const char *)src_;
 
   if ((d == s) | !bytes | !d | !s) {
-    FIO_LOG_DEBUG2("fio_memcpy null error - ignored instruction");
+    if (bytes && (d != s))
+      FIO_LOG_DEBUG2("fio_memcpy null error - ignored instruction");
     return d;
   }
 
@@ -3076,237 +3682,98 @@ small_memset:
 FIO_MEMCHR / fio_memchr - memchr fallbacks
 ***************************************************************************** */
 
-#define FIO___MEMCHR_BITMAP_TEST(group_size)                                   \
-  do {                                                                         \
-    uint64_t flag = 0, v, u[group_size];                                       \
-    for (size_t i = 0; i < group_size; ++i) { /* partial math */               \
-      fio_memcpy8(u + i, r + (i << 3));                                        \
-      u[i] ^= umsk;                            /* byte match == 0x00 */        \
-      v = u[i] - UINT64_C(0x0101010101010101); /* v: less than 0x80 => 0x80 */ \
-      u[i] = ~u[i]; /* u[i]: if the MSB was zero (less than 0x80) */           \
-      u[i] &= UINT64_C(0x8080808080808080);                                    \
-      u[i] &= v; /* only 0x00 will now be 0x80  */                             \
-      flag |= u[i];                                                            \
-    }                                                                          \
-    if (FIO_LIKELY(!flag)) {                                                   \
-      r += (group_size << 3);                                                  \
-      break; /* from do..while macro */                                        \
-    }                                                                          \
-    flag = 0;                                                                  \
-    for (size_t i = 0; i < group_size; ++i) { /* combine group to bitmap  */   \
-      u[i] = fio_has_byte2bitmap(u[i]);                                        \
-      flag |= (u[i] << (i << 3)); /* placed packed bitmap in u64 */            \
-    }                                                                          \
-    return (void *)(r + fio_lsb_index_unsafe(flag));                           \
-  } while (0)
-
-/* the small fio_memchr - poor SIMD, used for up to 64 bytes */
-FIO_SFUNC void *fio_memchr_small(const void *buffer,
-                                 const char token,
-                                 size_t len) {
-  const char *r = (const char *)buffer;
-  uint64_t umsk = ((uint64_t)((uint8_t)token));
-  umsk |= (umsk << 32); /* make each byte in umsk == token */
-  umsk |= (umsk << 16);
-  umsk |= (umsk << 8);
-  if (len > 15) {
-    for (;;) {
-      len -= 16;
-      FIO___MEMCHR_BITMAP_TEST(2);
-      if (!len)
-        return NULL;
-      if (len > 15)
-        continue;
-      r -= 16;
-      r += len & 15;
-      len = 16;
-    }
-  }
-  if (len > 7) {
-    FIO___MEMCHR_BITMAP_TEST(1);
-    r -= 8;
-    r += len & 7;
-    FIO___MEMCHR_BITMAP_TEST(1);
-    return NULL;
-  }
-  /* clang-format off */
-  switch(len) {
-  case 7: if (*r == token) return (void *)r; ++r; /* fall through */
-  case 6: if (*r == token) return (void *)r; ++r; /* fall through */
-  case 5: if (*r == token) return (void *)r; ++r; /* fall through */
-  case 4: if (*r == token) return (void *)r; ++r; /* fall through */
-  case 3: if (*r == token) return (void *)r; ++r; /* fall through */
-  case 2: if (*r == token) return (void *)r; ++r; /* fall through */
-  case 1: if (*r == token) return (void *)r; ++r;
-  }
-  /* clang-format on */
-  return NULL;
-}
 /**
  * A token seeking function. This is a fallback for `memchr`, but `memchr`
  * should be faster.
  */
 SFUNC void *fio_memchr(const void *buffer, const char token, size_t len) {
-  if (!buffer || !len)
-    return NULL;
-  if (len < 64)
-    return fio_memchr_small(buffer, token, len);
+  // return (void *)memchr(buffer, token, len); /* FIXME */
   const char *r = (const char *)buffer;
+  const char *e = r + (len - 127);
+  uint64_t u[16] FIO_ALIGN(16) = {0};
+  uint64_t flag = 0;
+  size_t i;
   uint64_t umsk = ((uint64_t)((uint8_t)token));
   umsk |= (umsk << 32); /* make each byte in umsk == token */
   umsk |= (umsk << 16);
   umsk |= (umsk << 8);
-
-#if FIO_LIMIT_INTRINSIC_BUFFER
-  for (const char *const e = r + (len & (~UINT64_C(127))); r < e;) {
-    FIO___MEMCHR_BITMAP_TEST(8);
-    FIO___MEMCHR_BITMAP_TEST(8);
+  if (len < 8)
+    goto small_memchr;
+  while (r < e) {
+    fio_memcpy128(u, r);
+    for (i = 0; i < 16; ++i) {
+      u[i] ^= umsk;
+      flag |= (u[i] = fio_has_zero_byte64(u[i]));
+    }
+    if (flag)
+      goto found_in_map;
+    r += 128;
   }
-#else
-  for (const char *const e = r + (len & (~UINT64_C(255))); r < e;) {
-    FIO___MEMCHR_BITMAP_TEST(8);
-    FIO___MEMCHR_BITMAP_TEST(8);
-    FIO___MEMCHR_BITMAP_TEST(8);
-    FIO___MEMCHR_BITMAP_TEST(8);
+  e += 120;
+  i = 0;
+  while (r < e) {
+    fio_memcpy8(u, r);
+    u[0] ^= umsk;
+    flag = fio_has_zero_byte64(u[0]);
+    if (flag)
+      goto found_in_8;
+    r += 8;
   }
-  if ((len & 128)) {
-    FIO___MEMCHR_BITMAP_TEST(8);
-    FIO___MEMCHR_BITMAP_TEST(8);
-  }
-#endif
-  if ((len & 64)) {
-    FIO___MEMCHR_BITMAP_TEST(8);
-  }
-  if ((len & 32)) {
-    FIO___MEMCHR_BITMAP_TEST(4);
-  }
-  r -= 32;
-  r += len & 31;
-  FIO___MEMCHR_BITMAP_TEST(4);
+small_memchr:
+  switch ((len & 7)) { /* clang-format off */
+    case 7: if (*r == token) return (void *)r; ++r; /* fall through */
+    case 6: if (*r == token) return (void *)r; ++r; /* fall through */
+    case 5: if (*r == token) return (void *)r; ++r; /* fall through */
+    case 4: if (*r == token) return (void *)r; ++r; /* fall through */
+    case 3: if (*r == token) return (void *)r; ++r; /* fall through */
+    case 2: if (*r == token) return (void *)r; ++r; /* fall through */
+    case 1: if (*r == token) return (void *)r; ++r;
+    } /* clang-format on */
   return NULL;
+found_in_map:
+  flag = 0;
+  for (i = 0; !u[i]; ++i)
+    ;
+  flag = u[i];
+  r += i << 3;
+found_in_8:
+  flag = fio_has_byte2bitmap(flag);
+  return (void *)(r + fio_lsb_index_unsafe(flag));
 }
-
-#undef FIO___MEMCHR_BITMAP_TEST
-#define FIO___MEMCHR_BITMAP_TEST(group_size)                                   \
-  do {                                                                         \
-    uint64_t flag = 0, v, u[group_size];                                       \
-    for (size_t i = 0; i < group_size; ++i) {  /* per 8 byte group */          \
-      u[i] = uptr.u64[i];                      /* avoid fio_memcpy8 (ASAN) */  \
-      u[i] ^= umsk;                            /* byte match == 0x00 */        \
-      v = u[i] - UINT64_C(0x0101010101010101); /* v: less than 0x80 => 0x80 */ \
-      u[i] = ~u[i]; /* u[i]: if the MSB was zero (less than 0x80) */           \
-      u[i] &= UINT64_C(0x8080808080808080);                                    \
-      u[i] &= v; /* only 0x00 will now be 0x80  */                             \
-      flag |= u[i];                                                            \
-    }                                                                          \
-    if (FIO_LIKELY(!flag)) {                                                   \
-      uptr.u64 += group_size;                                                  \
-      break; /* from do..while macro */                                        \
-    }                                                                          \
-    flag = 0;                                                                  \
-    for (size_t i = 0; i < group_size; ++i) { /* combine group to bitmap  */   \
-      u[i] = fio_has_byte2bitmap(u[i]);                                        \
-      flag |= (u[i] << (i << 3)); /* placed packed bitmap in u64 */            \
-    }                                                                          \
-    return (void *)(uptr.i8 + fio_lsb_index_unsafe(flag));                     \
-  } while (0)
-
-/** A token seeking function. */
-FIO_SFUNC FIO___ASAN_AVOID void *fio_rawmemchr(const void *buffer,
-                                               const char token) {
-  if (!buffer)
-    return NULL;
-
-  union {
-    const char *i8;
-    const uint64_t *u64;
-  } uptr = {.i8 = (const char *)buffer};
-
-  /* we must align memory, to avoid crushing when nearing last page boundary */
-  switch (((uintptr_t)uptr.i8 & 7)) {
-#define FIO___MEMCHR_UNSAFE_STEP()                                             \
-  if (*uptr.i8 == token)                                                       \
-    return (void *)uptr.i8;                                                    \
-  ++uptr.i8
-  case 1: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-  case 2: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-  case 3: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-  case 4: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-  case 5: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-  case 6: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-  case 7: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-#undef FIO___MEMCHR_UNSAFE_STEP
-  }
-  uint64_t umsk = ((uint64_t)((uint8_t)token));
-  umsk |= (umsk << 32); /* make each byte in umsk == token */
-  umsk |= (umsk << 16);
-  umsk |= (umsk << 8);
-
-  for (size_t aligner = 0; aligner < 8; ++aligner)
-    FIO___MEMCHR_BITMAP_TEST(1);
-  uptr.i8 = FIO_PTR_MATH_RMASK(const char, uptr.i8, 5); /* loop alignment */
-  for (size_t aligner = 0; aligner < 5; ++aligner)
-    FIO___MEMCHR_BITMAP_TEST(4);
-  uptr.i8 = FIO_PTR_MATH_RMASK(const char, uptr.i8, 7); /* loop alignment */
-  for (;;) {
-    FIO___MEMCHR_BITMAP_TEST(8);
-    FIO___MEMCHR_BITMAP_TEST(8);
-  }
-}
-#undef FIO___MEMCHR_BITMAP_TEST
 
 /* *****************************************************************************
 fio_strlen
 ***************************************************************************** */
 
 SFUNC FIO___ASAN_AVOID size_t fio_strlen(const char *str) {
-  // const char *nul = (const char *)fio_rawmemchr(str, 0);
-  // return (size_t)(nul - str);
   if (!str)
     return 0;
   uintptr_t start = (uintptr_t)str;
   /* we must align memory, to avoid crushing when nearing last page boundary */
-  switch ((start & 7)) {
-#define FIO___MEMCHR_UNSAFE_STEP()                                             \
-  if (!str[0])                                                                 \
-    return (uintptr_t)str - start;                                             \
-  ++str
-  case 1: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-  case 2: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-  case 3: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-  case 4: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-  case 5: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-  case 6: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-  case 7: FIO___MEMCHR_UNSAFE_STEP(); /* fall through */
-#undef FIO___MEMCHR_UNSAFE_STEP
-  }
-
-  /* 8 byte aligned */
   uint64_t flag = 0;
-  uint64_t map[8] FIO_ALIGN(16) = {0};
-  uint64_t tmp[8] FIO_ALIGN(16) = {0};
-
-#define FIO___STRLEN_CYCLE(i)                                                  \
-  do {                                                                         \
-    map[i] = (*(const uint64_t *)(str + (i << 3)));                            \
-    tmp[i] =                                                                   \
-        map[i] - UINT64_C(0x0101010101010101); /* is 0 or >= 0x80 --> 0x8X */  \
-    map[i] = ~map[i];                          /* is < 0x80) --> 0x8X */       \
-    map[i] &= UINT64_C(0x8080808080808080);                                    \
-    map[i] &= tmp[i]; /* only 0x00 will now be 0x80  */                        \
-    flag |= map[i];                                                            \
-  } while (0)
-
-  for (size_t aligner = 0; aligner < 8; ++aligner) {
-    FIO___STRLEN_CYCLE(0);
-    if (flag)
+  uint64_t map[8] FIO_ALIGN(16);
+  /* align to 8 bytes - most likely skipped */
+  switch (start & 7) { // clang-format off
+  case 1: if(*str == 0) return (uintptr_t)str - start; ++str; /* fall through */
+  case 2: if(*str == 0) return (uintptr_t)str - start; ++str; /* fall through */
+  case 3: if(*str == 0) return (uintptr_t)str - start; ++str; /* fall through */
+  case 4: if(*str == 0) return (uintptr_t)str - start; ++str; /* fall through */
+  case 5: if(*str == 0) return (uintptr_t)str - start; ++str; /* fall through */
+  case 6: if(*str == 0) return (uintptr_t)str - start; ++str; /* fall through */
+  case 7: if(*str == 0) return (uintptr_t)str - start; ++str;
+  } // clang-format on
+  /* align to 64 bytes */
+  for (size_t i = 0; i < 9; ++i) {
+    if ((flag = fio_has_zero_byte64(*(uint64_t *)str)))
       goto found_nul_byte0;
     str += 8;
   }
-  str = FIO_PTR_MATH_RMASK(const char, str, 6); /* new loop alignment */
-  for (;;) { /* loop while aligned on 64 byte boundary */
-    for (size_t i = 0; i < 8; ++i)
-      FIO___STRLEN_CYCLE(i);
+  str = FIO_PTR_MATH_RMASK(const char, str, 6); /* compiler hint */
+  /* loop endlessly */
+  for (;;) {
+    for (size_t i = 0; i < 8; ++i) {
+      flag |= (map[i] = fio_has_zero_byte64(((uint64_t *)str)[i]));
+    }
     if (flag)
       goto found_nul_byte8;
     str += 64;
@@ -3322,102 +3789,99 @@ found_nul_byte8:
   return (uintptr_t)str - start;
 
 found_nul_byte0:
-  flag = fio_has_byte2bitmap(map[0]);
-  str += fio_lsb_index_unsafe(flag);
+  str += fio_lsb_index_unsafe(fio_has_byte2bitmap(flag));
   return (uintptr_t)str - start;
 }
 
 /* *****************************************************************************
 fio_memcmp
 ***************************************************************************** */
-FIO_SFUNC int fio___memcmp_mini(char *restrict a,
-                                char *restrict b,
-                                size_t len) {
-  uint64_t ua = 0, ub = 0;
-  fio_memcpy7x(&ua, a, len);
-  fio_memcpy7x(&ub, b, len);
-  ua = fio_lton64(ua); /* fix cmp order */
-  ub = fio_lton64(ub);
-  if (ua != ub)
-    return (int)1 - (int)((ub > ua) << 1);
-  return 0;
-}
-
-#define FIO___MEMCMP_BYTES(bytes, test_for_non_even)                           \
-  /** Compares at least bytes and no more than `len` byte long buffers. */     \
-  FIO_IFUNC int fio___memcmp##bytes(char *restrict a,                          \
-                                    char *restrict b,                          \
-                                    size_t len) {                              \
-    uint64_t ua[bytes / 8] FIO_ALIGN(16);                                      \
-    uint64_t ub[bytes / 8] FIO_ALIGN(16);                                      \
-    uint64_t flag = 0;                                                         \
-    if (!test_for_non_even || (len & (bytes - 1))) {                           \
-      for (size_t i = 0; i < (bytes / 8); ++i) {                               \
-        fio_memcpy8(ua + i, a + (i << 3));                                     \
-        fio_memcpy8(ub + i, b + (i << 3));                                     \
-        flag |= (ua[i] ^ ub[i]);                                               \
-      }                                                                        \
-      if (flag)                                                                \
-        goto review_diff;                                                      \
-      a += len & (bytes - 1);                                                  \
-      b += len & (bytes - 1);                                                  \
-      len -= len & (bytes - 1);                                                \
-    }                                                                          \
-    do {                                                                       \
-      for (size_t i = 0; i < (bytes / 8); ++i) {                               \
-        fio_memcpy8(ua + i, a + (i << 3));                                     \
-        fio_memcpy8(ub + i, b + (i << 3));                                     \
-        flag |= (ua[i] ^ ub[i]);                                               \
-      }                                                                        \
-      if (flag)                                                                \
-        goto review_diff;                                                      \
-      len -= bytes;                                                            \
-      a += bytes;                                                              \
-      b += bytes;                                                              \
-    } while (len);                                                             \
-    return 0;                                                                  \
-  review_diff:                                                                 \
-    for (size_t i = ((bytes / 8) - 1); i--;) {                                 \
-      if (ua[i] != ub[i]) {                                                    \
-        ua[(bytes / 8) - 1] = ua[i];                                           \
-        ub[(bytes / 8) - 1] = ub[i];                                           \
-      }                                                                        \
-    }                                                                          \
-    ua[(bytes / 8) - 1] = fio_lton64(ua[(bytes / 8) - 1]); /* fix cmp order */ \
-    ub[(bytes / 8) - 1] = fio_lton64(ub[(bytes / 8) - 1]);                     \
-    return (int)1 - (int)((ub[(bytes / 8) - 1] > ua[(bytes / 8) - 1]) << 1);   \
-  }
-
-FIO___MEMCMP_BYTES(8, 0)
-FIO___MEMCMP_BYTES(16, 0)
-FIO___MEMCMP_BYTES(32, 0)
-FIO___MEMCMP_BYTES(64, 1)
-FIO___MEMCMP_BYTES(128, 1)
-FIO___MEMCMP_BYTES(256, 1)
 
 /** Same as `memcmp`. Returns 1 if `a > b`, -1 if `a < b` and 0 if `a == b`. */
 SFUNC int fio_memcmp(const void *a_, const void *b_, size_t len) {
   if (a_ == b_ || !len)
     return 0;
+  uint64_t ua[8] FIO_ALIGN(16);
+  uint64_t ub[8] FIO_ALIGN(16);
+  size_t flag = 0;
   char *a = (char *)a_;
   char *b = (char *)b_;
+  char *e;
+  if (*a != *b)
+    return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1);
   if (len < 8)
-    return fio___memcmp_mini(a, b, len);
-  if (len < 16)
-    return fio___memcmp8(a, b, len);
-  if (len < 32)
-    return fio___memcmp16(a, b, len);
-  if (len < 1024)
-    return fio___memcmp32(a, b, len);
-  if (len < 2048)
-    return fio___memcmp64(a, b, len);
-#if FIO_LIMIT_INTRINSIC_BUFFER
-  return fio___memcmp128(a, b, len);
-#else
-  if (len < 4096)
-    return fio___memcmp128(a, b, len);
-  return fio___memcmp256(a, b, len);
-#endif /* FIO_LIMIT_INTRINSIC_BUFFER */
+    goto fio_memcmp_mini;
+  if (len < 64)
+    goto fio_memcmp_small;
+
+  e = a + len - 63;
+  do {
+    fio_memcpy64(ua, a);
+    fio_memcpy64(ub, b);
+    for (size_t i = 0; i < 8; ++i)
+      flag |= (ua[i] ^ ub[i]);
+    if (flag)
+      goto fio_memcmp_found;
+    a += 64;
+    b += 64;
+  } while (a < e);
+  a += len & 63;
+  b += len & 63;
+  a -= 64;
+  b -= 64;
+  fio_memcpy64(ua, a);
+  fio_memcpy64(ub, b);
+  for (size_t i = 0; i < 8; ++i)
+    flag |= (ua[i] ^ ub[i]);
+  if (flag)
+    goto fio_memcmp_found;
+  return 0;
+
+fio_memcmp_found:
+  if (ua[0] == ub[0])
+    for (size_t i = 8; --i;)
+      if (ua[i] != ub[i]) {
+        ua[0] = ua[i];
+        ub[0] = ub[i];
+      }
+  goto fio_memcmp_small_found;
+
+fio_memcmp_small:
+  e = a + len - 7;
+  do {
+    fio_memcpy8(ua, a);
+    fio_memcpy8(ub, b);
+    if (ua[0] != ub[0])
+      goto fio_memcmp_small_found;
+    a += 8;
+    b += 8;
+  } while (a < e);
+  a += len & 7;
+  b += len & 7;
+  a -= 8;
+  b -= 8;
+  fio_memcpy8(ua, a);
+  fio_memcpy8(ub, b);
+  if (ua[0] != ub[0])
+    goto fio_memcmp_small_found;
+  return 0;
+
+fio_memcmp_small_found:
+  ua[0] = fio_lton64(ua[0]);
+  ub[0] = fio_lton64(ub[0]);
+  return (int)1 - (int)((ub[0] > ua[0]) << 1);
+
+fio_memcmp_mini:
+  switch ((len & 7)) { /* clang-format off */
+    case 7: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b; /* fall through */
+    case 6: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b; /* fall through */
+    case 5: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b; /* fall through */
+    case 4: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b; /* fall through */
+    case 3: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b; /* fall through */
+    case 2: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b; /* fall through */
+    case 1: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b;
+    } /* clang-format on */
+  return 0;
 }
 
 /* *****************************************************************************
@@ -3720,6 +4184,44 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #include <inttypes.h>
 #include <math.h>
 
+#ifndef FIO_ATOL_ALLOW_UNDERSCORE_DIVIDER
+#define FIO_ATOL_ALLOW_UNDERSCORE_DIVIDER 1
+#endif
+
+/* *****************************************************************************
+Strings to Signed Numbers - The fio_aton function
+***************************************************************************** */
+
+/** Result type for fio_aton */
+typedef struct {
+  union {
+    int64_t i;
+    double f;
+    uint64_t u;
+  };
+  int is_float;
+  int err;
+} fio_aton_s;
+
+/**
+ * Converts a String to a number - either an integer or a float (double).
+ *
+ * Skips white space at the beginning of the string.
+ *
+ * Auto detects binary and hex formats when prefix is provided (0x / 0b).
+ *
+ * Auto detects octal when number starts with zero.
+ *
+ * Auto detects the Strings "inf", "infinity" and "nan" as float values.
+ *
+ * The number's format and type are returned in the return type.
+ *
+ * If a numerical overflow or format error occurred, the `.err` flag is set.
+ *
+ * Note: rounding errors may occur, as this is not an `strtod` exact match.
+ */
+FIO_SFUNC fio_aton_s fio_aton(char **pstr);
+
 /* *****************************************************************************
 Strings to Signed Numbers - API
 ***************************************************************************** */
@@ -3849,7 +4351,10 @@ IEEE 754 Floating Points, Building Blocks and Helpers
 ***************************************************************************** */
 
 /** Converts a 64 bit integer to an IEEE 754 formatted double. */
-FIO_IFUNC double fio_i2d(int64_t mant, int64_t exponent);
+FIO_IFUNC double fio_i2d(int64_t mant, int64_t exponent_in_base_2);
+
+/** Converts a 64 bit unsigned integer to an IEEE 754 formatted double. */
+FIO_IFUNC double fio_u2d(uint64_t mant, int64_t exponent_in_base_2);
 
 /* *****************************************************************************
 
@@ -4003,20 +4508,27 @@ FIO_IFUNC void fio_ltoa16u(char *dest, uint64_t i, size_t digits) {
 
 FIO_IFUNC void fio_ltoa_bin(char *dest, uint64_t i, size_t digits) {
   dest += digits;
-  *dest-- = 0;
-  switch (digits & 7) { /* last use of `digits` */
-    while (i) {
-      *dest-- = '0' + (i & 1);
-      i >>= 1;                                /* fall through */
-    case 7: *dest-- = '0' + (i & 1); i >>= 1; /* fall through */
-    case 6: *dest-- = '0' + (i & 1); i >>= 1; /* fall through */
-    case 5: *dest-- = '0' + (i & 1); i >>= 1; /* fall through */
-    case 4: *dest-- = '0' + (i & 1); i >>= 1; /* fall through */
-    case 3: *dest-- = '0' + (i & 1); i >>= 1; /* fall through */
-    case 2: *dest-- = '0' + (i & 1); i >>= 1; /* fall through */
-    case 1: *dest-- = '0' + (i & 1); i >>= 1; /* fall through */
-    case 0:;
-    }
+  *dest = 0;
+  switch (digits & 7) {
+  case 7: *--dest = '0' + (i & 1); i >>= 1; /* fall through */
+  case 6: *--dest = '0' + (i & 1); i >>= 1; /* fall through */
+  case 5: *--dest = '0' + (i & 1); i >>= 1; /* fall through */
+  case 4: *--dest = '0' + (i & 1); i >>= 1; /* fall through */
+  case 3: *--dest = '0' + (i & 1); i >>= 1; /* fall through */
+  case 2: *--dest = '0' + (i & 1); i >>= 1; /* fall through */
+  case 1: *--dest = '0' + (i & 1); i >>= 1; /* fall through */
+  case 0:;
+  }
+  digits &= ~(uint64_t)7ULL;
+  while (digits > 7) {
+    uint64_t tmp = (i & 0xFFULL);
+    dest -= 8;
+    digits -= 8;
+    i >>= 8;
+    tmp = ((tmp & 0x7F) * 0x02040810204081ULL) | ((tmp & 0x80) << 49);
+    tmp &= 0x0101010101010101ULL;
+    tmp += (0x0101010101010101ULL * '0');
+    fio_u2buf64_be(dest, tmp);
   }
 }
 
@@ -4063,40 +4575,85 @@ IEEE 754 Floating Points, Building Blocks and Helpers
 #define FIO_MATH_DBL_SIGN_MASK ((uint64_t)1ULL << 63)
 #endif
 
+FIO_IFUNC int fio_d2expo(double d) {
+  int r;
+  union {
+    uint64_t u64;
+    double d;
+  } u = {.d = d};
+  u.u64 &= FIO_MATH_DBL_EXPO_MASK;
+  r = (int)(u.u64 >> 52);
+  r -= 1023;
+  r *= -1;
+  return r;
+}
+
+/** Converts a 64 bit integer to an IEEE 754 formatted double. */
+FIO_IFUNC double fio_u2d(uint64_t mant, int64_t exponent) {
+#ifndef FIO___ATON_TIE2EVEN
+  /* If set, performs a rounding attempt with tie to even */
+#define FIO___ATON_TIE2EVEN 0
+#endif
+  union {
+    uint64_t u64;
+    double d;
+  } u = {0};
+  size_t msbi;
+  if (!mant)
+    return u.d;
+  msbi = fio_msb_index_unsafe(mant);
+  if (FIO___ATON_TIE2EVEN && FIO_UNLIKELY(msbi > 52)) { /* losing precision */
+    bool not53 = (msbi != 53);
+    bool far_set = ((mant >> (53 + not53)) != 0);
+    mant = mant >> (msbi - (53 + not53));
+    mant |= far_set;
+    mant |= (mant >> (1U + not53)) & 1; /* set the non-even bit as rounder */
+    mant += 1; /* 1 will propagate if rounding is necessary. */
+    bool add_to_expo = (mant >> (53U + not53)) & 1;
+    mant >>= (1U + not53 + add_to_expo);
+    exponent += add_to_expo;
+  }
+  /* normalize exponent */
+  exponent += msbi + 1023;
+  if (FIO_UNLIKELY(exponent > 2047))
+    goto is_inifinity_or_nan;
+  if (FIO_UNLIKELY(exponent <= 0))
+    goto is_subnormal;
+  exponent = (uint64_t)exponent << 52;
+  u.u64 |= exponent;
+  /* reposition mant bits so we "hide" the fist set bit in bit[52] */
+  if (msbi < 52)
+    mant = mant << (52 - msbi);
+  else if (!FIO___ATON_TIE2EVEN &&
+           FIO_UNLIKELY(msbi > 52)) /* losing precision */
+    mant = mant >> (msbi - 52);
+  u.u64 |= mant & FIO_MATH_DBL_MANT_MASK; /* remove the 1 set bit */
+  return u.d;
+
+is_inifinity_or_nan:
+  u.u64 = FIO_MATH_DBL_EXPO_MASK;
+  return u.d;
+
+is_subnormal:
+  exponent += 51 - msbi;
+  if (exponent < 0)
+    return u.d;
+  u.u64 = mant >> exponent;
+  return u.d;
+}
+
 /** Converts a 64 bit integer to an IEEE 754 formatted double. */
 FIO_IFUNC double fio_i2d(int64_t mant, int64_t exponent) {
   union {
     uint64_t u64;
+    int64_t i64;
     double d;
-  } u = {.u64 = ((uint64_t)(mant)&FIO_MATH_DBL_SIGN_MASK)};
-  size_t tmp;
-  if (!mant)
-    goto is_zero;
-  /* convert `mant` to absolute value - constant time */
-  tmp = u.u64 >> 63;
-  mant =
-      (int64_t)(uint64_t)mant ^
-      (((uint64_t)0 - tmp) & ((uint64_t)mant ^ (uint64_t)((int64_t)0 - mant)));
-  // mant = (int64_t)(((uint64_t)mant ^ ((uint64_t)0 - tmp)) + tmp); // slower
-  /* normalize exponent */
-  tmp = fio_msb_index_unsafe(mant);
-  exponent += tmp + 1023;
-  if (FIO_UNLIKELY(exponent < 0))
-    goto is_zero;
-  if (FIO_UNLIKELY(exponent > 2047))
-    goto is_inifinity_or_nan;
-  exponent = (uint64_t)exponent << 52;
-  u.u64 |= exponent;
-  /* reposition mant bits so we "hide" the fist set bit in bit[52] */
-  if (tmp < 52)
-    mant = mant << (52 - tmp);
-  else if (FIO_UNLIKELY(tmp > 52)) /* losing precision */
-    mant = mant >> (tmp - 52);
-  u.u64 |= mant & FIO_MATH_DBL_MANT_MASK; /* remove the 1 set bit */
-is_zero:
-  return u.d;
-is_inifinity_or_nan:
-  u.u64 |= FIO_MATH_DBL_EXPO_MASK | (mant & FIO_MATH_DBL_MANT_MASK);
+  } u = {.i64 = mant};
+  bool sign = (u.i64 < 0);
+  if (sign)
+    u.i64 = -u.i64;
+  u.d = fio_u2d(u.u64, exponent);
+  u.u64 |= ((uint64_t)sign) << 63;
   return u.d;
 }
 
@@ -4104,12 +4661,6 @@ is_inifinity_or_nan:
 Implementation - possibly externed
 ***************************************************************************** */
 #if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
-
-typedef struct {
-  uint64_t val;
-  int64_t expo;
-  uint8_t sign;
-} fio___number_s;
 
 /* *****************************************************************************
 Unsigned core and helpers
@@ -4163,26 +4714,6 @@ IFUNC uint8_t fio_i2c(unsigned char i) {
   return fio___alphanumeric_map[i & 63];
 }
 
-/** Reads a signed base 10 formatted number. */
-SFUNC int64_t fio_atol10(char **pstr) {
-  const uint64_t add_limit = (~(uint64_t)0ULL) - 9;
-  char *pos = *pstr;
-  const size_t inv = (pos[0] == '-');
-  pos += inv;
-  uint64_t val = 0;
-  uint64_t r0;
-  while (((r0 = pos[0] - '0') < 10ULL) & (val < add_limit)) {
-    val *= 10;
-    val += r0;
-    ++pos;
-  }
-  if (((size_t)(pos[0] - '0') < 10ULL)) {
-    errno = E2BIG;
-  }
-  *pstr = pos;
-  return fio_u2i_limit(val, inv);
-}
-
 /** Reads a signed base 8 formatted number. */
 SFUNC uint64_t fio_atol8u(char **pstr) {
   uint64_t r = 0;
@@ -4193,6 +4724,9 @@ SFUNC uint64_t fio_atol8u(char **pstr) {
     ++*pstr;
     if ((r & UINT64_C(0xE000000000000000)))
       break;
+#if FIO_ATOL_ALLOW_UNDERSCORE_DIVIDER
+    *pstr += (**pstr == '_'); /* allow '_' as a divider. */
+#endif
   }
   if ((fio_c2i(**pstr)) < 8)
     errno = E2BIG;
@@ -4201,20 +4735,110 @@ SFUNC uint64_t fio_atol8u(char **pstr) {
 
 /** Reads an unsigned base 10 formatted number. */
 SFUNC uint64_t fio_atol10u(char **pstr) {
-  uint64_t r = 0;
-  const uint64_t add_limit = (~(uint64_t)0ULL) - 9;
+  uint64_t r = 0, u0 = 0, u1 = 0;
   char *pos = *pstr;
-  uint64_t r0;
-  while (((r0 = (uint64_t)(pos[0] - '0')) < 10ULL) & (r < add_limit)) {
-    r *= 10;
-    r += r0;
-    ++pos;
+  /* can't use SIMD, as we don't want to overflow. */
+  for (size_t i = 0; i < 8; ++i)
+    u0 += ((pos[u0] >= '0') & (pos[u0] <= '9'));
+  switch ((u0 & 12)) { /* now we are safe to copy all bytes validated */
+  case 8:
+    r = fio_buf2u64_le(pos);
+    *pstr = (pos += 8); /* credit Johnny Lee, not mine... */
+    r = ((r & 0x0F0F0F0F0F0F0F0FULL) * 2561ULL) >> 8;
+    r = ((r & 0x00FF00FF00FF00FFULL) * 6553601ULL) >> 16;
+    r = ((r & 0x0000FFFF0000FFFFULL) * 42949672960001ULL) >> 32;
+    u1 = r; /* https://johnnylee-sde.github.io/Fast-numeric-string-to-int/ */
+    break;
+  case 4:
+    r = ((unsigned)(pos[0] - '0') * 1000) + ((unsigned)(pos[1] - '0') * 100) +
+        ((unsigned)(pos[2] - '0') * 10) + (unsigned)(pos[3] - '0');
+    *pstr = (pos += 4);
+    u1 = r;
+    break;
   }
-  while (((size_t)(pos[0] - '0') < 10ULL)) {
-    errno = E2BIG;
+
+  u0 = (uint64_t)(pos[0] - '0');
+  if (u0 > 9ULL)
+    return r;
+  r *= 10;
+  for (;;) {
+    r += u0;
+    if (r < u1)
+      goto value_overflow;
     ++pos;
+#if FIO_ATOL_ALLOW_UNDERSCORE_DIVIDER
+    pos += (*pos == '_'); /* allow '_' as a divider. */
+#endif
+    u0 = (uint64_t)(pos[0] - '0');
+    if (u0 > 9ULL)
+      break;
+    if (r > ((~(uint64_t)0ULL) / 10))
+      goto value_overflow_stepback;
+    u1 = r;
+    r *= 10;
   }
   *pstr = pos;
+  return r;
+
+value_overflow_stepback:
+  --pos;
+value_overflow:
+  r = u1;
+  errno = E2BIG;
+  *pstr = pos;
+  return r;
+}
+
+/** Reads a signed base 10 formatted number. */
+SFUNC int64_t fio_atol10(char **pstr) {
+  // const uint64_t add_limit = (~(uint64_t)0ULL) - 9;
+  char *pos = *pstr;
+  const size_t inv = (pos[0] == '-');
+  pos += inv;
+  // uint64_t val = 0;
+  // uint64_t r0;
+  // while (((r0 = pos[0] - '0') < 10ULL) & (val < add_limit)) {
+  //   val *= 10;
+  //   val += r0;
+  //   ++pos;
+  // }
+  // if (((size_t)(pos[0] - '0') < 10ULL)) {
+  //   errno = E2BIG;
+  // }
+  *pstr = pos;
+  uint64_t val = fio_atol10u(pstr);
+  if (((size_t)(**pstr - '0') < 10ULL))
+    errno = E2BIG;
+  return fio_u2i_limit(val, inv);
+}
+
+/** Reads an unsigned hex formatted number (possibly prefixed with "0x"). */
+FIO_IFUNC uint64_t fio___atol16u_with_prefix(uint64_t r, char **pstr) {
+  size_t d;
+  unsigned char *p = (unsigned char *)*pstr;
+  p += ((p[0] == '0') & ((p[1] | 32) == 'x')) << 1;
+  if ((d = fio_c2i(*p)) > 15)
+    goto possible_misread;
+  for (;;) {
+    r |= d;
+    ++p;
+    d = (size_t)fio_c2i(*p);
+    if (d > 15)
+      break;
+    if ((r & UINT64_C(0xF000000000000000))) {
+      errno = E2BIG;
+      break;
+    }
+    r <<= 4;
+#if FIO_ATOL_ALLOW_UNDERSCORE_DIVIDER
+    p += (*p == '_'); /* allow '_' as a divider. */
+#endif
+  }
+  *pstr = (char *)p;
+  return r;
+possible_misread:
+  /* if 0x was read, move to X. */
+  *pstr += ((pstr[0][0] == '0') & ((pstr[0][1] | 32) == 'x'));
   return r;
 }
 
@@ -4237,6 +4861,9 @@ SFUNC uint64_t fio_atol16u(char **pstr) {
       break;
     }
     r <<= 4;
+#if FIO_ATOL_ALLOW_UNDERSCORE_DIVIDER
+    p += (*p == '_'); /* allow '_' as a divider. */
+#endif
   }
   *pstr = (char *)p;
   return r;
@@ -4247,19 +4874,95 @@ possible_misread:
 }
 
 /** Reads an unsigned binary formatted number (possibly prefixed with "0b"). */
-SFUNC uint64_t fio_atol_bin(char **pstr) {
+SFUNC FIO___ASAN_AVOID uint64_t fio_atol_bin(char **pstr) {
   uint64_t r = 0;
-  size_t d;
   *pstr += (**pstr == '0');
-  *pstr += (**pstr | 32) == 'b' && ((size_t)(pstr[0][1]) - (size_t)'0') < 2;
+  *pstr += (**pstr | 32) == 'b' && (((size_t)(pstr[0][1]) - (size_t)'0') < 2);
+#if FIO___ASAN_DETECTED || 1
+  for (;;) { /* Prevent safe overflow of allocated memory region */
+    if ((r & UINT64_C(0x8000000000000000)))
+      break;
+    size_t len = 0;
+    union {
+      uint64_t u64;
+      uint32_t u32;
+    } u;
+    for (size_t i = 0; i < 8; ++i)
+      len += (((size_t)pstr[0][len] - (size_t)'0') < 2);
+    if (!len)
+      goto done;
+    switch (len & 12) {
+    case 8:
+      if ((r & UINT64_C(0xFF00000000000000)))
+        break; /* from switch */
+      u.u64 = fio_buf2u64_be(*pstr);
+      u.u64 -= 0x0101010101010101ULL * '0';
+      u.u64 |= u.u64 >> 7;
+      u.u64 |= u.u64 >> 14;
+      u.u64 |= u.u64 >> 28;
+      u.u64 &= 0xFF;
+      r <<= 8;
+      r |= u.u64;
+      *pstr += 8;
+      continue;
+    case 4:
+      if ((r & UINT64_C(0xF000000000000000)))
+        break; /* from switch */
+      u.u32 = fio_buf2u32_be(*pstr);
+      u.u32 -= (0x01010101UL * '0');
+      u.u32 |= u.u32 >> 7;
+      u.u32 |= u.u32 >> 14;
+      u.u32 &= 0x0F;
+      r <<= 4;
+      r |= u.u32;
+      *pstr += 4;
+      continue;
+    }
+    while ((len = (size_t)((unsigned char)(**pstr)) - (size_t)'0') < 2) {
+      r <<= 1;
+      r |= len;
+      ++*pstr;
+      if ((r & UINT64_C(0x8000000000000000)))
+        break;
+    }
+#if FIO_ATOL_ALLOW_UNDERSCORE_DIVIDER
+    if ((**pstr == '_') | (**pstr == '.')) { /* allow as a dividers */
+      ++*pstr;
+      continue;
+    }
+#endif
+    break;
+  }
+done:
+#else
+  size_t d;
+  for (; (((uintptr_t)*pstr & 4095) < 4089);) { /* respect page boundary */
+    uint64_t tmp = fio_buf2u64_be(*pstr);       /* may overflow */
+    tmp -= 0x0101010101010101ULL * '0';         /* was it all `0`s and `1`s? */
+    if (tmp & (~0x0101010101010101ULL))         /* if note, break. */
+      break;
+    tmp |= tmp >> 7;
+    tmp |= tmp >> 14;
+    tmp |= tmp >> 28;
+    tmp &= 0xFF;
+    r <<= 8;
+    r |= tmp;
+    *pstr += 8;
+    if ((r & UINT64_C(0xFF00000000000000)))
+      break;
+  }
   while ((d = (size_t)((unsigned char)(**pstr)) - (size_t)'0') < 2) {
     r <<= 1;
     r |= d;
     ++*pstr;
     if ((r & UINT64_C(0x8000000000000000)))
       break;
+#if FIO_ATOL_ALLOW_UNDERSCORE_DIVIDER
+    *pstr += (**pstr == '_') | (**pstr == '.'); /* allow as a dividers */
+#endif
   }
-  if ((d = (size_t)(**pstr) - (size_t)'0') < 2)
+#endif
+  if (((size_t)(**pstr) - (size_t)'0') < 2)
     errno = E2BIG;
   return r;
 }
@@ -4293,45 +4996,38 @@ SFUNC uint64_t fio_atol_xbase(char **pstr, size_t base) {
 fio_atol
 ***************************************************************************** */
 
-SFUNC int64_t fio_atol(char **pstr) {
+SFUNC int64_t FIO___ASAN_AVOID fio_atol(char **pstr) {
+  /* note: sanitizer avoided due to possible 8 byte overflow within mem-page */
+  static uint64_t (*const fn[])(char **) = {
+      fio_atol10u,
+      fio_atol8u,
+      fio_atol_bin,
+      fio_atol16u,
+  };
   if (!pstr || !(*pstr))
     return 0;
-  uint64_t v = 0;
-  uint64_t (*fn)(char **) = fio_atol10u;
+  union {
+    uint64_t u64;
+    int64_t i64;
+  } u = {0};
   char *p = *pstr;
-  unsigned inv = (p[0] == '-');
-  p += inv;
-  char *const s = p;
-  switch (*p) {
-  case 'x': /* fall through */
-  case 'X': fn = fio_atol16u; goto compute;
-  case 'b': /* fall through */
-  case 'B': fn = fio_atol_bin; goto compute;
-  case '0':
-    switch (p[1]) {
-    case 'x': /* fall through */
-    case 'X': fn = fio_atol16u; goto compute;
-    case 'b': /* fall through */
-    case 'B': fn = fio_atol_bin; goto compute;
-    case '0': /* fall through */
-    case '1': /* fall through */
-    case '2': /* fall through */
-    case '3': /* fall through */
-    case '4': /* fall through */
-    case '5': /* fall through */
-    case '6': /* fall through */
-    case '7': fn = fio_atol8u;
-    }
-  }
-compute:
-  v = fn(&p);
-  if (p != s)
+
+  uint32_t neg = 0, base = 0;
+  neg = (p[0] == '-');
+  p += (neg | (p[0] == '+'));
+
+  base += (p[0] == '0');             /* starts with zero? - oct */
+  p += base;                         /* consume the possible '0' */
+  base += ((p[0] | 32) == 'b');      /* binary */
+  base += ((p[0] | 32) == 'x') << 1; /* hex */
+  p += (base > 1);                   /* consume 'b' or 'x' */
+  char *const s = p;                 /* mark starting point */
+  u.u64 = fn[base](&p);              /* convert string to unsigned long long */
+  if (p != s || base == 1)           /* false oct base, a single '0'? */
     *pstr = p;
-  if (fn == fio_atol10u)
-    return fio_u2i_limit(v, inv);
-  if (!inv) /* sign embedded in the representation */
-    return (int64_t)v;
-  return fio_u2i_limit(v, inv);
+  if ((neg | !base)) /* if base 10 or negative, treat signed bit as overflow */
+    return fio_u2i_limit(u.u64, neg);
+  return u.i64;
 }
 
 /* *****************************************************************************
@@ -4400,7 +5096,7 @@ fio_atof
 SFUNC double fio_atof(char **pstr) {
   if (!pstr || !(*pstr))
     return 0;
-  if ((*pstr)[1] == 'b' || ((*pstr)[1] == '0' && (*pstr)[1] == 'b'))
+  if ((*pstr)[0] == 'b' || ((*pstr)[1] == '0' && (*pstr)[1] == 'b'))
     goto binary_raw;
   return strtod(*pstr, pstr);
 binary_raw:
@@ -4409,7 +5105,8 @@ binary_raw:
   union {
     uint64_t i;
     double d;
-  } punned = {.i = (uint64_t)fio_atol(pstr)};
+  } punned = {.i = (uint64_t)fio_atol_bin(pstr)};
+  *pstr += ((**pstr | 32) == 'f'); /* support 0b1111111F */
   return punned.d;
 }
 
@@ -4466,6 +5163,180 @@ is_inifinity:
 is_nan:
   fio_memcpy4(dest, "NaN");
   return 3;
+}
+
+/* *****************************************************************************
+fio_aton
+***************************************************************************** */
+/** Returns a power of 10. Supports values up to 1.0e308. */
+FIO_IFUNC long double fio___aton_pow10(uint64_t e10) {
+  // clang-format off
+#define fio___aton_pow10_map_row(i) 1.0e##i##0L, 1.0e##i##1L, 1.0e##i##2L, 1.0e##i##3L, 1.0e##i##4L, 1.0e##i##5L, 1.0e##i##6L, 1.0e##i##7L, 1.0e##i##8L, 1.0e##i##9L
+  static const long double pow_map[] = {
+      fio___aton_pow10_map_row(0),  fio___aton_pow10_map_row(1),  fio___aton_pow10_map_row(2),  fio___aton_pow10_map_row(3),  fio___aton_pow10_map_row(4),
+      fio___aton_pow10_map_row(5),  fio___aton_pow10_map_row(6),  fio___aton_pow10_map_row(7),  fio___aton_pow10_map_row(8),  fio___aton_pow10_map_row(9),
+      fio___aton_pow10_map_row(10), fio___aton_pow10_map_row(11), fio___aton_pow10_map_row(12), fio___aton_pow10_map_row(13), fio___aton_pow10_map_row(14),
+      fio___aton_pow10_map_row(15), fio___aton_pow10_map_row(16), fio___aton_pow10_map_row(17), fio___aton_pow10_map_row(18), fio___aton_pow10_map_row(19),
+      fio___aton_pow10_map_row(20), fio___aton_pow10_map_row(21), fio___aton_pow10_map_row(22), fio___aton_pow10_map_row(23), fio___aton_pow10_map_row(24),
+      fio___aton_pow10_map_row(25), fio___aton_pow10_map_row(26), fio___aton_pow10_map_row(27), fio___aton_pow10_map_row(28), fio___aton_pow10_map_row(29),
+      1.0e300L, 1.0e301L, 1.0e302L, 1.0e303L, 1.0e304L, 1.0e305L, 1.0e306L, 1.0e307L, 1.0e308L, // clang-format on
+  };
+#undef fio___aton_pow10_map_row
+  if (e10 < sizeof(pow_map) / sizeof(pow_map[0]))
+    return pow_map[e10];
+  return powl(10, e10); /* return infinity? */
+}
+
+/** Returns a power of 10. Supports values up to 1.0e-308. */
+FIO_IFUNC long double fio___aton_pow10n(uint64_t e10) {
+  // clang-format off
+#define fio___aton_pow10_map_row(i) 1.0e-##i##0L, 1.0e-##i##1L, 1.0e-##i##2L, 1.0e-##i##3L, 1.0e-##i##4L, 1.0e-##i##5L, 1.0e-##i##6L, 1.0e-##i##7L, 1.0e-##i##8L, 1.0e-##i##9L
+  static const long double pow_map[] = {
+      fio___aton_pow10_map_row(0),  fio___aton_pow10_map_row(1),  fio___aton_pow10_map_row(2),  fio___aton_pow10_map_row(3),  fio___aton_pow10_map_row(4),
+      fio___aton_pow10_map_row(5),  fio___aton_pow10_map_row(6),  fio___aton_pow10_map_row(7),  fio___aton_pow10_map_row(8),  fio___aton_pow10_map_row(9),
+      fio___aton_pow10_map_row(10), fio___aton_pow10_map_row(11), fio___aton_pow10_map_row(12), fio___aton_pow10_map_row(13), fio___aton_pow10_map_row(14),
+      fio___aton_pow10_map_row(15), fio___aton_pow10_map_row(16), fio___aton_pow10_map_row(17), fio___aton_pow10_map_row(18), fio___aton_pow10_map_row(19),
+      fio___aton_pow10_map_row(20), fio___aton_pow10_map_row(21), fio___aton_pow10_map_row(22), fio___aton_pow10_map_row(23), fio___aton_pow10_map_row(24),
+      fio___aton_pow10_map_row(25), fio___aton_pow10_map_row(26), fio___aton_pow10_map_row(27), fio___aton_pow10_map_row(28), fio___aton_pow10_map_row(29),
+      1.0e-300L, 1.0e-301L, 1.0e-302L, 1.0e-303L, 1.0e-304L, 1.0e-305L, 1.0e-306L, 1.0e-307L, 1.0e-308L, // clang-format on
+  };
+#undef fio___aton_pow10_map_row
+  if (e10 < sizeof(pow_map) / sizeof(pow_map[0]))
+    return pow_map[e10];
+  return powl(10, (int64_t)(0 - e10)); /* return zero? */
+}
+
+FIO_SFUNC FIO___ASAN_AVOID fio_aton_s fio_aton(char **pstr) {
+  /* note: sanitizer avoided due to possible 8 byte overflow within mem-page */
+  static uint64_t (*const fn[])(char **) = {
+      fio_atol10u,
+      fio_atol8u,
+      fio_atol_bin,
+      fio_atol16u,
+  };
+  static uint32_t base_limit[] = {10, 8, 1, 16};
+  static char exponent_char[] = "eepp";
+  fio_aton_s r = {0};
+  long double dbl = 0, dbl_dot = 0;
+  if (!pstr || !(*pstr))
+    return r;
+  char *start, *head, *p = *pstr;
+  uint64_t before_dot = 0, after_dot = 0, expo = 0;
+  size_t head_expo = 0, dot_expo = 0;
+  while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
+    ++p;
+
+  uint16_t neg = 0, expo_neg = 0, base = 0, force_float = 0;
+  neg = (p[0] == '-');
+  p += (neg | (p[0] == '+'));
+
+  if ((p[0] | 32) == 'i')
+    goto is_infinity;
+  if ((p[0] | 32) == 'n')
+    goto is_nan;
+
+  base += (p[0] == '0');             /* oct */
+  p += base;                         /* consume '0' */
+  base += ((p[0] | 32) == 'b');      /* binary */
+  base += ((p[0] | 32) == 'x') << 1; /* hex */
+  base -= (base & (p[0] == '.'));    /* 0. isn't oct...  */
+  p += (base > 1);                   /* consume 'b' or 'x' */
+  start = p;                         /* mark starting point */
+
+  // FIO_LOG_INFO("Start Unsigned: %s", p);
+  before_dot = fn[base]((char **)&p);
+  if (base == 2)
+    goto is_binary;
+  head = p;
+  while (fio_c2i(p[0]) < base_limit[base])
+    ++p;
+  head_expo = p - head;
+  force_float |= !!(head_expo);
+  if (p[0] == '.') {
+    ++p;
+    force_float = 1;
+    head = p;
+    after_dot = fn[base]((char **)&p);
+    dot_expo = p - head;
+    while (fio_c2i(p[0]) < base_limit[base])
+      ++p;
+  }
+  if ((p[0] | 32) == exponent_char[base]) {
+    force_float = 1;
+    ++p;
+    expo_neg = (p[0] == '-');
+    p += (expo_neg | (p[0] == '+'));
+    expo = fio_atol10u((char **)&p);
+    while ((uint8_t)(p[0] - '0') < 10)
+      ++p;
+  }
+  if (p != start || base == 1) /* false oct base, a single '0'? */
+    *pstr = p;
+  // FIO_LOG_INFO("Start Tail: %s", p);
+  if (!force_float && (!(before_dot & ((uint64_t)1ULL << 63)) ||
+                       (!neg && base))) { /* is integer */
+    r.u = before_dot;
+    if (neg)
+      r.i = 0 - r.u;
+    return r;
+  }
+  dbl = (long double)before_dot;
+  dbl_dot = (long double)after_dot;
+  if (!base) {
+    dbl *= fio___aton_pow10(head_expo);
+    if (after_dot)
+      dbl_dot *= fio___aton_pow10n(dot_expo);
+  } else if (base == 3) {
+    dbl *= fio_u2d(1, (head_expo << 2));
+    dbl_dot *= fio_u2d(1, 0 - (dot_expo << 2));
+  } else { /* if (base == 1) */
+    dbl *= fio_u2d(1, (head_expo * 3));
+    dbl_dot *= fio_u2d(1, 0 - (dot_expo * 3));
+  }
+  dbl += dbl_dot;
+  if (expo) {
+    if (base < 2) { /* base 10 / Oct */
+      dbl *= (expo_neg ? fio___aton_pow10n : fio___aton_pow10)(expo);
+    } else {
+      dbl *= fio_u2d(1, (int64_t)(expo_neg ? 0 - expo : expo));
+    }
+  }
+  r.is_float = 1;
+  r.f = (double)dbl;
+  r.u |= (uint64_t)neg << 63;
+  return r;
+
+is_infinity:
+  if ((p[1] | 32) == 'n' && (p[2] | 32) == 'f') { /* inf */
+    r.is_float = 1;
+    r.u = ((uint64_t)neg << 63) | ((uint64_t)2047ULL << 52);
+    p += 3 + (((p[3] | 32) == 'i' &&
+               fio_buf2u64u("infinity") ==
+                   (fio_buf2u64u(p) | 0x2020202020202020ULL)) *
+              5);
+    *pstr = (char *)p;
+  } else
+    r.err = 1;
+  return r;
+
+is_nan:
+  if ((p[1] | 32) == 'a' && (p[2] | 32) == 'n') { /* nan */
+    r.is_float = 1;
+    r.i = ((~(uint64_t)0) >> (!neg));
+    p += 3;
+    *pstr = (char *)p;
+  } else
+    r.err = 1;
+  return r;
+
+is_binary:
+  if (p == start)
+    return r;
+  r.u = before_dot;
+  r.is_float = ((p[0] | 32) == 'f');
+  p += r.is_float;
+  *pstr = (char *)p;
+  return r;
 }
 
 /* *****************************************************************************
@@ -5028,8 +5899,8 @@ iMap Creation Macro
  * almost-hash map, allowing for easy seeking while also enjoying an array's
  * advantages.
  *
- * The index map uses one `imap_type` (i.e., `uint64_t`) to store both the index
- * in array and any leftover hash data (the first half being tested during the
+ * The index map uses one `imap_type` (i.e., `uint64_t`) to store both the array
+ * index and any leftover hash data (the first half being tested during the
  * random access and the leftover during comparison). The reserved value `0`
  * indicates a free slot. The reserved value `~0` indicates a freed item (a free
  * slot that was previously used).
@@ -5334,119 +6205,6 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #if defined(FIO_MATH) && !defined(H___FIO_MATH___H)
 #define H___FIO_MATH___H 1
 
-#ifndef FIO_MIFN
-#define FIO_MIFN FIO_IFUNC __attribute__((warn_unused_result))
-#endif
-
-/* *****************************************************************************
-Useful math unions.
-***************************************************************************** */
-/** An unsigned 128bit union type. */
-typedef union {
-  size_t uz[16 / sizeof(size_t)];
-  uint64_t u64[2];
-  uint32_t u32[4];
-  uint16_t u16[8];
-  uint8_t u8[16];
-#if defined(__SIZEOF_INT128__)
-  __uint128_t alignment_for_u128_[1];
-#endif
-} fio_u128 FIO_ALIGN(16);
-
-/** An unsigned 256bit union type. */
-typedef union {
-  size_t uz[32 / sizeof(size_t)];
-  uint64_t u64[4];
-  uint32_t u32[8];
-  uint16_t u16[16];
-  uint8_t u8[32];
-  fio_u128 u128[2];
-#if defined(__SIZEOF_INT128__)
-  __uint128_t alignment_for_u128_[2];
-#endif
-#if defined(__SIZEOF_INT256__)
-  __uint256_t alignment_for_u256_[1];
-#endif
-} fio_u256 FIO_ALIGN(16);
-
-/** An unsigned 512bit union type. */
-typedef union {
-  size_t uz[64 / sizeof(size_t)];
-  uint64_t u64[8];
-  uint32_t u32[16];
-  uint16_t u16[32];
-  uint8_t u8[64];
-  fio_u128 u128[4];
-  fio_u256 u256[2];
-} fio_u512 FIO_ALIGN(16);
-
-/** An unsigned 1024bit union type. */
-typedef union {
-  size_t uz[128 / sizeof(size_t)];
-  uint64_t u64[16];
-  uint32_t u32[32];
-  uint16_t u16[64];
-  uint8_t u8[128];
-  fio_u128 u128[8];
-  fio_u256 u256[4];
-  fio_u512 u512[2];
-} fio_u1024 FIO_ALIGN(16);
-
-/** An unsigned 2048bit union type. */
-typedef union {
-  size_t uz[256 / sizeof(size_t)];
-  uint64_t u64[32];
-  uint32_t u32[64];
-  uint16_t u16[128];
-  uint8_t u8[256];
-  fio_u128 u128[16];
-  fio_u256 u256[8];
-  fio_u512 u512[4];
-  fio_u1024 u1024[2];
-} fio_u2048 FIO_ALIGN(16);
-
-/** An unsigned 4096bit union type. */
-typedef union {
-  size_t uz[512 / sizeof(size_t)];
-  uint64_t u64[64];
-  uint32_t u32[128];
-  uint16_t u16[256];
-  uint8_t u8[512];
-  fio_u128 u128[32];
-  fio_u256 u256[16];
-  fio_u512 u512[8];
-  fio_u1024 u1024[4];
-  fio_u2048 u2048[2];
-} fio_u4096 FIO_ALIGN(16);
-
-FIO_ASSERT_STATIC(sizeof(fio_u4096) == 512, "Math type size error!");
-
-#define fio_u128_init8(...)  ((fio_u128){.u8 = {__VA_ARGS__}})
-#define fio_u128_init16(...) ((fio_u128){.u16 = {__VA_ARGS__}})
-#define fio_u128_init32(...) ((fio_u128){.u32 = {__VA_ARGS__}})
-#define fio_u128_init64(...) ((fio_u128){.u64 = {__VA_ARGS__}})
-#define fio_u256_init8(...)  ((fio_u256){.u8 = {__VA_ARGS__}})
-#define fio_u256_init16(...) ((fio_u256){.u16 = {__VA_ARGS__}})
-#define fio_u256_init32(...) ((fio_u256){.u32 = {__VA_ARGS__}})
-#define fio_u256_init64(...) ((fio_u256){.u64 = {__VA_ARGS__}})
-#define fio_u512_init8(...)  ((fio_u512){.u8 = {__VA_ARGS__}})
-#define fio_u512_init16(...) ((fio_u512){.u16 = {__VA_ARGS__}})
-#define fio_u512_init32(...) ((fio_u512){.u32 = {__VA_ARGS__}})
-#define fio_u512_init64(...) ((fio_u512){.u64 = {__VA_ARGS__}})
-
-#define fio_u1024_init8(...)  ((fio_u1024){.u8 = {__VA_ARGS__}})
-#define fio_u1024_init16(...) ((fio_u1024){.u16 = {__VA_ARGS__}})
-#define fio_u1024_init32(...) ((fio_u1024){.u32 = {__VA_ARGS__}})
-#define fio_u1024_init64(...) ((fio_u1024){.u64 = {__VA_ARGS__}})
-#define fio_u2048_init8(...)  ((fio_u2048){.u8 = {__VA_ARGS__}})
-#define fio_u2048_init16(...) ((fio_u2048){.u16 = {__VA_ARGS__}})
-#define fio_u2048_init32(...) ((fio_u2048){.u32 = {__VA_ARGS__}})
-#define fio_u2048_init64(...) ((fio_u2048){.u64 = {__VA_ARGS__}})
-#define fio_u4096_init8(...)  ((fio_u4096){.u8 = {__VA_ARGS__}})
-#define fio_u4096_init16(...) ((fio_u4096){.u16 = {__VA_ARGS__}})
-#define fio_u4096_init32(...) ((fio_u4096){.u32 = {__VA_ARGS__}})
-#define fio_u4096_init64(...) ((fio_u4096){.u64 = {__VA_ARGS__}})
-
 /* *****************************************************************************
 Multi-precision, little endian helpers.
 
@@ -5507,205 +6265,6 @@ FIO_MIFN size_t fio_math_msb_index(uint64_t *n, const size_t len);
 /** Multi-precision - returns the index for the least significant bit or -1. */
 FIO_MIFN size_t fio_math_lsb_index(uint64_t *n, const size_t len);
 
-/* *****************************************************************************
-Byte Shuffle & Reduction (on native types, up to 2048 bits == 256 bytes)
-***************************************************************************** */
-#define FIO____SHFL_FN(T, prefx, len)                                          \
-  FIO_IFUNC void fio_##prefx##x##len##_reshuffle(T *v, uint8_t indx[len]) {    \
-    T tmp[len];                                                                \
-    for (size_t i = 0; i < len; ++i) {                                         \
-      tmp[i] = v[indx[i] & (len - 1)];                                         \
-    }                                                                          \
-    for (size_t i = 0; i < len; ++i) {                                         \
-      v[i] = tmp[i];                                                           \
-    }                                                                          \
-  }
-
-#define FIO____REDUCE_FN(T, prefx, len, opnm, op)                              \
-  FIO_IFUNC T fio_##prefx##x##len##_reduce_##opnm(T *v) {                      \
-    T r = v[0];                                                                \
-    for (size_t i = 1; i < len; ++i) {                                         \
-      r = r op v[i];                                                           \
-    }                                                                          \
-    return r;                                                                  \
-  }
-#define FIO____REDUCE_MINMAX(T, prefx, len)                                    \
-  FIO_IFUNC T fio_##prefx##x##len##_reduce_max(T *v) {                         \
-    T r = v[0];                                                                \
-    for (size_t i = 1; i < len; ++i) {                                         \
-      r = r < v[i] ? v[i] : r;                                                 \
-    }                                                                          \
-    return r;                                                                  \
-  }                                                                            \
-  FIO_IFUNC T fio_##prefx##x##len##_reduce_min(T *v) {                         \
-    T r = v[0];                                                                \
-    for (size_t i = 1; i < len; ++i) {                                         \
-      r = r > v[i] ? v[i] : r;                                                 \
-    }                                                                          \
-    return r;                                                                  \
-  }
-
-#define FIO____SHFL_REDUCE(T, prefx, len)                                      \
-  FIO____SHFL_FN(T, prefx, len)                                                \
-  FIO____REDUCE_FN(T, prefx, len, add, +)                                      \
-  FIO____REDUCE_FN(T, prefx, len, mul, *)                                      \
-  FIO____REDUCE_FN(T, prefx, len, and, &)                                      \
-  FIO____REDUCE_FN(T, prefx, len, or, |)                                       \
-  FIO____REDUCE_FN(T, prefx, len, xor, ^)                                      \
-  FIO____REDUCE_MINMAX(T, prefx, len)
-
-FIO____SHFL_REDUCE(uint8_t, u8, 4)
-FIO____SHFL_REDUCE(uint8_t, u8, 8)
-FIO____SHFL_REDUCE(uint8_t, u8, 16)
-FIO____SHFL_REDUCE(uint8_t, u8, 32)
-FIO____SHFL_REDUCE(uint8_t, u8, 64)
-FIO____SHFL_REDUCE(uint8_t, u8, 128)
-FIO____SHFL_REDUCE(uint8_t, u8, 256)
-FIO____SHFL_REDUCE(uint16_t, u16, 2)
-FIO____SHFL_REDUCE(uint16_t, u16, 4)
-FIO____SHFL_REDUCE(uint16_t, u16, 8)
-FIO____SHFL_REDUCE(uint16_t, u16, 16)
-FIO____SHFL_REDUCE(uint16_t, u16, 32)
-FIO____SHFL_REDUCE(uint16_t, u16, 64)
-FIO____SHFL_REDUCE(uint16_t, u16, 128)
-FIO____SHFL_REDUCE(uint32_t, u32, 2)
-FIO____SHFL_REDUCE(uint32_t, u32, 4)
-FIO____SHFL_REDUCE(uint32_t, u32, 8)
-FIO____SHFL_REDUCE(uint32_t, u32, 16)
-FIO____SHFL_REDUCE(uint32_t, u32, 32)
-FIO____SHFL_REDUCE(uint32_t, u32, 64)
-FIO____SHFL_REDUCE(uint64_t, u64, 2)
-FIO____SHFL_REDUCE(uint64_t, u64, 4)
-FIO____SHFL_REDUCE(uint64_t, u64, 8)
-FIO____SHFL_REDUCE(uint64_t, u64, 16)
-FIO____SHFL_REDUCE(uint64_t, u64, 32)
-
-#undef FIO____SHFL_REDUCE
-#define FIO____SHFL_REDUCE(T, prefx, len)                                      \
-  FIO____SHFL_FN(T, prefx, len)                                                \
-  FIO____REDUCE_FN(T, prefx, len, add, +)                                      \
-  FIO____REDUCE_FN(T, prefx, len, mul, *)                                      \
-  FIO____REDUCE_MINMAX(T, prefx, len)
-
-FIO____SHFL_REDUCE(float, float, 2)
-FIO____SHFL_REDUCE(float, float, 4)
-FIO____SHFL_REDUCE(float, float, 8)
-FIO____SHFL_REDUCE(float, float, 16)
-FIO____SHFL_REDUCE(float, float, 32)
-FIO____SHFL_REDUCE(float, float, 64)
-FIO____SHFL_REDUCE(double, dbl, 2)
-FIO____SHFL_REDUCE(double, dbl, 4)
-FIO____SHFL_REDUCE(double, dbl, 8)
-FIO____SHFL_REDUCE(double, dbl, 16)
-FIO____SHFL_REDUCE(double, dbl, 32)
-#undef FIO____SHFL_REDUCE
-#undef FIO____REDUCE_FN
-#undef FIO____SHFL_FN
-
-/* clang-format off */
-#define fio_u8x4_reshuffle(v, ...)     fio_u8x4_reshuffle(v,     (uint8_t[4]){__VA_ARGS__})
-#define fio_u8x8_reshuffle(v, ...)     fio_u8x8_reshuffle(v,     (uint8_t[8]){__VA_ARGS__})
-#define fio_u8x16_reshuffle(v, ...)    fio_u8x16_reshuffle(v,    (uint8_t[16]){__VA_ARGS__})
-#define fio_u8x32_reshuffle(v, ...)    fio_u8x32_reshuffle(v,    (uint8_t[32]){__VA_ARGS__})
-#define fio_u8x64_reshuffle(v, ...)    fio_u8x64_reshuffle(v,    (uint8_t[64]){__VA_ARGS__})
-#define fio_u8x128_reshuffle(v, ...)   fio_u8x128_reshuffle(v,   (uint8_t[128]){__VA_ARGS__})
-#define fio_u8x256_reshuffle(v, ...)   fio_u8x256_reshuffle(v,   (uint8_t[256]){__VA_ARGS__})
-#define fio_u16x2_reshuffle(v, ...)    fio_u16x2_reshuffle(v,    (uint8_t[2]){__VA_ARGS__})
-#define fio_u16x4_reshuffle(v, ...)    fio_u16x4_reshuffle(v,    (uint8_t[4]){__VA_ARGS__})
-#define fio_u16x8_reshuffle(v, ...)    fio_u16x8_reshuffle(v,    (uint8_t[8]){__VA_ARGS__})
-#define fio_u16x16_reshuffle(v, ...)   fio_u16x16_reshuffle(v,   (uint8_t[16]){__VA_ARGS__})
-#define fio_u16x32_reshuffle(v, ...)   fio_u16x32_reshuffle(v,   (uint8_t[32]){__VA_ARGS__})
-#define fio_u16x64_reshuffle(v, ...)   fio_u16x64_reshuffle(v,   (uint8_t[64]){__VA_ARGS__})
-#define fio_u16x128_reshuffle(v,...)   fio_u16x128_reshuffle(v,  (uint8_t[128]){__VA_ARGS__})
-#define fio_u32x2_reshuffle(v, ...)    fio_u32x2_reshuffle(v,    (uint8_t[2]){__VA_ARGS__})
-#define fio_u32x4_reshuffle(v, ...)    fio_u32x4_reshuffle(v,    (uint8_t[4]){__VA_ARGS__})
-#define fio_u32x8_reshuffle(v, ...)    fio_u32x8_reshuffle(v,    (uint8_t[8]){__VA_ARGS__})
-#define fio_u32x16_reshuffle(v, ...)   fio_u32x16_reshuffle(v,   (uint8_t[16]){__VA_ARGS__})
-#define fio_u32x32_reshuffle(v, ...)   fio_u32x32_reshuffle(v,   (uint8_t[32]){__VA_ARGS__})
-#define fio_u32x64_reshuffle(v, ...)   fio_u32x64_reshuffle(v,   (uint8_t[64]){__VA_ARGS__})
-#define fio_u64x2_reshuffle(v, ...)    fio_u64x2_reshuffle(v,    (uint8_t[2]){__VA_ARGS__})
-#define fio_u64x4_reshuffle(v, ...)    fio_u64x4_reshuffle(v,    (uint8_t[4]){__VA_ARGS__})
-#define fio_u64x8_reshuffle(v, ...)    fio_u64x8_reshuffle(v,    (uint8_t[8]){__VA_ARGS__})
-#define fio_u64x16_reshuffle(v, ...)   fio_u64x16_reshuffle(v,   (uint8_t[16]){__VA_ARGS__})
-#define fio_u64x32_reshuffle(v, ...)   fio_u64x32_reshuffle(v,   (uint8_t[32]){__VA_ARGS__})
-#define fio_floatx2_reshuffle(v, ...)  fio_floatx2_reshuffle(v,  (uint8_t[2]){__VA_ARGS__})
-#define fio_floatx4_reshuffle(v, ...)  fio_floatx4_reshuffle(v,  (uint8_t[4]){__VA_ARGS__})
-#define fio_floatx8_reshuffle(v, ...)  fio_floatx8_reshuffle(v,  (uint8_t[8]){__VA_ARGS__})
-#define fio_floatx16_reshuffle(v, ...) fio_floatx16_reshuffle(v, (uint8_t[16]){__VA_ARGS__})
-#define fio_floatx32_reshuffle(v, ...) fio_floatx32_reshuffle(v, (uint8_t[32]){__VA_ARGS__})
-#define fio_floatx64_reshuffle(v, ...) fio_floatx64_reshuffle(v, (uint8_t[64]){__VA_ARGS__})
-#define fio_dblx2_reshuffle(v, ...)    fio_dblx2_reshuffle(v,    (uint8_t[2]){__VA_ARGS__})
-#define fio_dblx4_reshuffle(v, ...)    fio_dblx4_reshuffle(v,    (uint8_t[4]){__VA_ARGS__})
-#define fio_dblx8_reshuffle(v, ...)    fio_dblx8_reshuffle(v,    (uint8_t[8]){__VA_ARGS__})
-#define fio_dblx16_reshuffle(v, ...)   fio_dblx16_reshuffle(v,   (uint8_t[16]){__VA_ARGS__})
-#define fio_dblx32_reshuffle(v, ...)   fio_dblx32_reshuffle(v,   (uint8_t[32]){__VA_ARGS__})
-/* clang-format on */
-
-/* *****************************************************************************
-Vector Helpers - memory load operations (implementation starts here)
-***************************************************************************** */
-
-#define FIO_MATH_TYPE_LOADER(bits, bytes)                                      \
-  /** Loads from memory using local-endian. */                                 \
-  FIO_MIFN fio_u##bits fio_u##bits##_load(const void *buf) {                   \
-    fio_u##bits r;                                                             \
-    fio_memcpy##bytes(&r, buf);                                                \
-    return r;                                                                  \
-  }                                                                            \
-  /** Stores to memory using local-endian. */                                  \
-  FIO_IFUNC void fio_u##bits##_store(void *buf, const fio_u##bits a) {         \
-    fio_memcpy##bytes(buf, &a);                                                \
-  }
-
-#define FIO_VECTOR_LOADER_ENDIAN_FUNC(total_bits, bits)                        \
-  /** Loads vector from memory, reading from little-endian.  */                \
-  FIO_MIFN fio_u##total_bits fio_u##total_bits##_load_le##bits(                \
-      const void *buf) {                                                       \
-    fio_u##total_bits r = fio_u##total_bits##_load(buf);                       \
-    for (size_t i = 0; i < (total_bits / bits); ++i) {                         \
-      r.u##bits[i] = fio_ltole##bits(r.u##bits[i]);                            \
-    }                                                                          \
-    return r;                                                                  \
-  }                                                                            \
-  /** Loads vector from memory, reading from big-endian.  */                   \
-  FIO_MIFN fio_u##total_bits fio_u##total_bits##_load_be##bits(                \
-      const void *buf) {                                                       \
-    fio_u##total_bits r = fio_u##total_bits##_load(buf);                       \
-    for (size_t i = 0; i < (total_bits / bits); ++i) {                         \
-      r.u##bits[i] = fio_lton##bits(r.u##bits[i]);                             \
-    }                                                                          \
-    return r;                                                                  \
-  }                                                                            \
-  FIO_MIFN fio_u##total_bits fio_u##total_bits##_bswap##bits(                  \
-      fio_u##total_bits a) {                                                   \
-    fio_u##total_bits r;                                                       \
-    for (size_t i = 0; i < (total_bits / bits); ++i)                           \
-      r.u##bits[i] = fio_bswap##bits(a.u##bits[i]);                            \
-    return r;                                                                  \
-  }
-
-FIO_MATH_TYPE_LOADER(128, 16)
-FIO_MATH_TYPE_LOADER(256, 32)
-FIO_MATH_TYPE_LOADER(512, 64)
-FIO_MATH_TYPE_LOADER(1024, 128)
-FIO_MATH_TYPE_LOADER(2048, 256)
-FIO_MATH_TYPE_LOADER(4096, 512)
-
-#define FIO_VECTOR_LOADER_ENDIAN(total_bits)                                   \
-  FIO_VECTOR_LOADER_ENDIAN_FUNC(total_bits, 16)                                \
-  FIO_VECTOR_LOADER_ENDIAN_FUNC(total_bits, 32)                                \
-  FIO_VECTOR_LOADER_ENDIAN_FUNC(total_bits, 64)
-
-FIO_VECTOR_LOADER_ENDIAN(128)
-FIO_VECTOR_LOADER_ENDIAN(256)
-FIO_VECTOR_LOADER_ENDIAN(512)
-FIO_VECTOR_LOADER_ENDIAN(1024)
-FIO_VECTOR_LOADER_ENDIAN(2048)
-FIO_VECTOR_LOADER_ENDIAN(4096)
-
-#undef FIO_MATH_TYPE_LOADER
-#undef FIO_VECTOR_LOADER_ENDIAN_FUNC
-#undef FIO_VECTOR_LOADER_ENDIAN
 /* *****************************************************************************
 Vector Helpers - Simple Math functions
 ***************************************************************************** */
@@ -8119,6 +8678,61 @@ FIO_SFUNC fio_url_query_each_s fio_url_query_each_next(fio_url_query_each_s);
        i.name.buf;                                                             \
        i = fio_url_query_each_next(i))
 
+/* Return type for  `fio_url_is_tls` */
+typedef struct {
+  fio_buf_info_s key;
+  fio_buf_info_s cert;
+  fio_buf_info_s pass;
+  bool tls;
+} fio_url_tls_info_s;
+
+/**
+ * Returns TLS data associated with the URL.
+ *
+ * This function supports implicit TLS by scheme data for the following possible
+ * values:
+ *
+ * - `wss`   - Secure WebSockets.
+ * - `sses`  - Secure SSE (Server Sent Events).
+ * - `https` - Secure HTTP.
+ * - `tcps`  - Secure TCP/IP.
+ * - `tls`   - Secure TCP/IP.
+ * - `udps`  - Secure UDP.
+ *
+ * i.e.:
+ *     tls://example.com/
+ *     tcps://example.com/
+ *     udps://example.com/
+ *
+ *     wss://example.com/
+ *     https://example.com/
+ *     sses://example.com/
+ *
+ * This function also supports explicit TLS by query data for the following
+ * possible key-pair values:
+ *
+ * - `tls`                   - self-signed TLS (unless key / cert are provided).
+ * - `tls=true`              - self-signed TLS (unless key / cert are provided).
+ * - `tls=<file>`            - key and certificate files (same path, different
+ *                             file extensions).
+ * - `key=<file/env_data>`   - path or env variable name for the private key.
+ * - `cert=<file/env_data>`  - path or env variable name for the public
+ *                             certificate.
+ *
+ * - `pass`                  - password for decrypting key / cert data.
+ *
+ *i.e.:
+ *
+ *     tcp://example.com/?tls          (anonymous TLS)
+ *     udp://example.com/?tls=true
+ *
+ *     https://example.com/?tls=key_cert_folder_or_prefix&pass=key_password
+ *
+ *     https://example.com/?key=key_file_or_env_var&cert=cert_file_or_env_var&pass=key_password
+ *     wss://example.com/?key=key_file_or_env_var&cert=cert_file_or_env_var&pass=key_password
+ *     tcp://example.com/?key=key_file_or_env_var&cert=cert_file_or_env_var&pass=key_password
+ */
+SFUNC fio_url_tls_info_s fio_url_is_tls(fio_url_s u);
 /* *****************************************************************************
 FIO_URL - Implementation (static)
 ***************************************************************************** */
@@ -8383,7 +8997,7 @@ start_target:
 
 finish:
 
-  if (r.scheme.len == 4 && r.host.buf) {
+  if (r.scheme.len == 4 && r.host.buf) { /* recognize file paths */
     uint32_t s, file_str, unix_str, priv_str;
     fio_memcpy4(&file_str, "file");
     fio_memcpy4(&unix_str, "unix");
@@ -8426,6 +9040,92 @@ finish:
   return r;
 }
 
+/* Returns TLS data associated with the URL. */
+SFUNC fio_url_tls_info_s fio_url_is_tls(fio_url_s u) {
+  fio_url_tls_info_s r = {0};
+  switch (u.scheme.len) {
+  case 3: /* wss || tls || ssl */
+    r.tls =
+        ((fio_buf2u32u(u.scheme.buf) | 0x20202020) == fio_buf2u32u("wss:") ||
+         (fio_buf2u32u(u.scheme.buf) | 0x20202020) == fio_buf2u32u("tls:") ||
+         (fio_buf2u32u(u.scheme.buf) | 0x20202020) == fio_buf2u32u("ssl:"));
+
+    break;
+  case 4: /* ssse || sses || tcps || stcp || udps || sudp */
+    r.tls =
+        ((fio_buf2u32u(u.scheme.buf) | 0x20202020) == fio_buf2u32u("sses") ||
+         (fio_buf2u32u(u.scheme.buf) | 0x20202020) == fio_buf2u32u("ssse") ||
+         (fio_buf2u32u(u.scheme.buf) | 0x20202020) == fio_buf2u32u("tcps") ||
+         (fio_buf2u32u(u.scheme.buf) | 0x20202020) == fio_buf2u32u("stcp") ||
+         (fio_buf2u32u(u.scheme.buf) | 0x20202020) == fio_buf2u32u("udps") ||
+         (fio_buf2u32u(u.scheme.buf) | 0x20202020) == fio_buf2u32u("sudp"));
+    break;
+  case 5: /* https */
+    r.tls = ((u.scheme.buf[4] | 32) == 's' &&
+             (fio_buf2u32u(u.scheme.buf) | 0x20202020) == fio_buf2u32u("http"));
+    break;
+  }
+  if (u.query.len) { /* key=, cert=, pass=, password=*/
+    fio_buf_info_s key = {0};
+    fio_buf_info_s cert = {0};
+    fio_buf_info_s pass = {0};
+    uint32_t name;
+    const uint32_t wrd_key = fio_buf2u32u("key="); /* keyword's value */
+    const uint32_t wrd_tls = fio_buf2u32u("tls=");
+    const uint32_t wrd_ssl = fio_buf2u32u("ssl=");
+    const uint32_t wrd_cert = fio_buf2u32u("cert");
+    const uint32_t wrd_true = fio_buf2u32u("true");
+    const uint32_t wrd_pass = fio_buf2u32u("pass");
+    const uint64_t wrd_password = fio_buf2u64u("password");
+    FIO_URL_QUERY_EACH(u.query, i) { /* iterates each name=value pair */
+      switch (i.name.len) {
+      case 8:
+        if ((fio_buf2u64u(i.name.buf) | 0x2020202020202020ULL) == wrd_password)
+          pass = i.value;
+        break;
+      case 3:
+        name = fio_buf2u32u(i.name.buf) | 0x20202020UL; /* '=' stays the same */
+        name &= fio_buf2u32u("\xFF\xFF\xFF\x00");
+        name |= fio_buf2u32u("\x00\x00\x00="); /* in case there was no = sign */
+        if (name == wrd_key) {
+          if (i.value.len)
+            key = i.value;
+        } else if (name == wrd_tls || name == wrd_ssl) {
+          r.tls = 1;
+          if (i.value.len && !(i.value.len == 1 && i.value.buf[0] == '1') &&
+              !(i.value.len == 4 &&
+                (fio_buf2u32u(i.value.buf) | 0x20202020UL) == wrd_true))
+            cert = key = i.value;
+        }
+        break;
+      case 4:
+        name = fio_buf2u32u(i.name.buf) | 0x20202020UL;
+        if (name == wrd_cert)
+          cert = i.value;
+        else if (name == wrd_pass)
+          pass = i.value;
+        break;
+      }
+    }
+    if (key.len && cert.len) {
+      r.key = key;
+      r.cert = cert;
+      if (pass.len)
+        r.pass = pass;
+      r.tls = 1;
+    }
+  }
+  FIO_LOG_DDEBUG2(
+      "URL TLS detection:\n\t%s\n\tkey: %.*s\n\tcert: %.*s\n\tpass: %.*s",
+      (r.tls ? "Secure" : "plaintext"),
+      (int)r.key.len,
+      r.key.buf,
+      (int)r.cert.len,
+      r.cert.buf,
+      (int)r.pass.len,
+      r.pass.buf);
+  return r;
+}
 /* *****************************************************************************
 FIO_URL - Cleanup
 ***************************************************************************** */
@@ -8573,9 +9273,13 @@ SFUNC size_t fio_fd_find_next(int fd, char token, size_t start_at);
 
 #if FIO_OS_WIN
 #define FIO_FOLDER_SEPARATOR '\\'
+/** Duplicates the file handle (int)*/
+#define fio_file_dup(fd) _dup(fd)
 #else
 #define FIO_FOLDER_SEPARATOR '/'
-#endif
+/** Duplicates the file handle (int)*/
+#define fio_file_dup(fd)     dup(fd)
+#endif /* FIO_OS_WIN */
 
 /* *****************************************************************************
 File Helper Inline Implementation
@@ -9001,6 +9705,7 @@ Module Cleanup
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_ATOL               /* Development inclusion - ignore line */
 #define FIO_JSON               /* Development inclusion - ignore line */
 #include "./include.h"         /* Development inclusion - ignore line */
 #endif                         /* Development inclusion - ignore line */
@@ -9014,26 +9719,62 @@ Module Cleanup
 
 Copyright and License: see header file (000 copyright.h) or top of file
 ***************************************************************************** */
-#if defined(FIO_JSON) && !defined(H___FIO_JSON_H)
-#define H___FIO_JSON_H
+#if defined(FIO_JSON) && !defined(H___FIO_JSON___H)
+#define H___FIO_JSON___H
 
 #ifndef FIO_JSON_MAX_DEPTH
 /** Maximum allowed JSON nesting level. Values above 64K might fail. */
 #define FIO_JSON_MAX_DEPTH 512
 #endif
 
-/** The JSON parser type. Memory must be initialized to 0 before first uses. */
-typedef struct {
-  /** level of nesting. */
-  uint32_t depth;
-  /** expectation bit flag: 0=key, 1=colon, 2=value, 4=comma/closure . */
-  uint8_t expect;
-  /** nesting bit flags - dictionary bit = 0, array bit = 1. */
-  uint8_t nesting[(FIO_JSON_MAX_DEPTH + 7) >> 3];
-} fio_json_parser_s;
+#ifndef FIO_JSON_USE_FIO_ATON
+#define FIO_JSON_USE_FIO_ATON 0
+#endif
 
-#define FIO_JSON_INIT                                                          \
-  { .depth = 0 }
+/** The JSON parser settings. */
+typedef struct {
+  /** NULL object was detected. Returns new object as `void *`. */
+  void *(*on_null)(void);
+  /** TRUE object was detected. Returns new object as `void *`. */
+  void *(*on_true)(void);
+  /** FALSE object was detected. Returns new object as `void *`. */
+  void *(*on_false)(void);
+  /** Number was detected (long long). Returns new object as `void *`. */
+  void *(*on_number)(int64_t i);
+  /** Float was detected (double).Returns new object as `void *`.  */
+  void *(*on_float)(double f);
+  /** (escaped) String was detected. Returns a new String as `void *`. */
+  void *(*on_string)(const void *start, size_t len);
+  /** (unescaped) String was detected. Returns a new String as `void *`. */
+  void *(*on_string_simple)(const void *start, size_t len);
+  /** Dictionary was detected. Returns ctx to hash map or NULL on error. */
+  void *(*on_map)(void *ctx, void *at);
+  /** Array was detected. Returns ctx to array or NULL on error. */
+  void *(*on_array)(void *ctx, void *at);
+  /** Array was detected. Returns non-zero on error. */
+  int (*map_push)(void *ctx, void *key, void *value);
+  /** Array was detected. Returns non-zero on error. */
+  int (*array_push)(void *ctx, void *value);
+  /** Called when an array object (`ctx`) appears done. */
+  int (*array_finished)(void *ctx);
+  /** Called when a map object (`ctx`) appears done. */
+  int (*map_finished)(void *ctx);
+  /** Called when context is expected to be an array (i.e., fio_json_update). */
+  int (*is_array)(void *ctx);
+  /** Called when context is expected to be a map (i.e., fio_json_update). */
+  int (*is_map)(void *ctx);
+  /** Called for the `key` element in case of error or NULL value. */
+  void (*free_unused_object)(void *ctx);
+  /** the JSON parsing encountered an error - what to do with ctx? */
+  void *(*on_error)(void *ctx);
+} fio_json_parser_callbacks_s;
+
+/** The JSON return type. */
+typedef struct {
+  void *ctx;
+  size_t stop_pos;
+  int err;
+} fio_json_result_s;
 
 /**
  * The facil.io JSON parser is a non-strict parser, with support for trailing
@@ -9048,9 +9789,9 @@ typedef struct {
  * error or end of data). Stops as close as possible to the end of the buffer or
  * once an object parsing was completed.
  */
-SFUNC size_t fio_json_parse(fio_json_parser_s *parser,
-                            const char *buffer,
-                            const size_t len);
+SFUNC fio_json_result_s fio_json_parse(fio_json_parser_callbacks_s *settings,
+                                       const char *json_string,
+                                       const size_t len);
 
 /* *****************************************************************************
 JSON Parsing - Implementation - Helpers and Callbacks
@@ -9062,427 +9803,575 @@ Note: a Helper API is provided for the parsing implementation.
 ***************************************************************************** */
 #if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
 
-/** common FIO_JSON callback function properties */
-#define FIO_JSON_CB static inline __attribute__((unused))
+// typedef struct {
+//   struct {
+//     uintptr_t start;
+//     uintptr_t end;
+//   } instructions[16];
+//   uint32_t count;
+// } fio___json_cb_queue_s;
 
-/* *****************************************************************************
-JSON Parsing - Helpers API
-***************************************************************************** */
+typedef struct {
+  fio_json_parser_callbacks_s cb;
+  void *ctx;
+  void *key;
+  const char *pos;
+  const char *end;
+  uint32_t depth;
+  int32_t error;
+} fio___json_state_s;
 
-/** Tests the state of the JSON parser. Returns 1 for true and 0 for false. */
-FIO_JSON_CB uint8_t fio_json_parser_is_in_array(fio_json_parser_s *parser);
+FIO_SFUNC void *fio___json_consume(fio___json_state_s *s);
 
-/** Tests the state of the JSON parser. Returns 1 for true and 0 for false. */
-FIO_JSON_CB uint8_t fio_json_parser_is_in_object(fio_json_parser_s *parser);
+#if 0 /* Used for Debugging */
+#define FIO_JSON___PRINT_STEP(s, step_name)                                    \
+  FIO_LOG_DEBUG2("JSON " step_name " starting at: %.*s",                       \
+                 (int)((s->end - s->pos) > 16 ? 16 : (s->end - s->pos)),       \
+                 s->pos)
+#else
+#define FIO_JSON___PRINT_STEP(s, step_name)
+#endif
 
-/** Tests the state of the JSON parser. Returns 1 for true and 0 for false. */
-FIO_JSON_CB uint8_t fio_json_parser_is_key(fio_json_parser_s *parser);
-
-/** Tests the state of the JSON parser. Returns 1 for true and 0 for false. */
-FIO_JSON_CB uint8_t fio_json_parser_is_value(fio_json_parser_s *parser);
-
-/* *****************************************************************************
-JSON Parsing - Implementation - Callbacks
-***************************************************************************** */
-
-/** a NULL object was detected */
-FIO_JSON_CB void fio_json_on_null(fio_json_parser_s *p);
-/** a TRUE object was detected */
-static inline void fio_json_on_true(fio_json_parser_s *p);
-/** a FALSE object was detected */
-FIO_JSON_CB void fio_json_on_false(fio_json_parser_s *p);
-/** a Number was detected (long long). */
-FIO_JSON_CB void fio_json_on_number(fio_json_parser_s *p, long long i);
-/** a Float was detected (double). */
-FIO_JSON_CB void fio_json_on_float(fio_json_parser_s *p, double f);
-/** a String was detected (int / float). update `pos` to point at ending */
-FIO_JSON_CB void fio_json_on_string(fio_json_parser_s *p,
-                                    const void *start,
-                                    size_t len);
-/** a dictionary object was detected, should return 0 unless error occurred. */
-FIO_JSON_CB int fio_json_on_start_object(fio_json_parser_s *p);
-/** a dictionary object closure detected */
-FIO_JSON_CB void fio_json_on_end_object(fio_json_parser_s *p);
-/** an array object was detected, should return 0 unless error occurred. */
-FIO_JSON_CB int fio_json_on_start_array(fio_json_parser_s *p);
-/** an array closure was detected */
-FIO_JSON_CB void fio_json_on_end_array(fio_json_parser_s *p);
-/** the JSON parsing is complete */
-FIO_JSON_CB void fio_json_on_json(fio_json_parser_s *p);
-/** the JSON parsing encountered an error */
-FIO_JSON_CB void fio_json_on_error(fio_json_parser_s *p);
-
-/* *****************************************************************************
-JSON Parsing - Implementation - Helpers and Parsing
-
-
-Note: static Callacks must be implemented in the C file that uses the parser
-***************************************************************************** */
-
-/** Tests the state of the JSON parser. Returns 1 for true and 0 for false. */
-FIO_JSON_CB uint8_t fio_json_parser_is_in_array(fio_json_parser_s *p) {
-  return p->depth && fio_bit_get(p->nesting, p->depth);
-}
-
-/** Tests the state of the JSON parser. Returns 1 for true and 0 for false. */
-FIO_JSON_CB uint8_t fio_json_parser_is_in_object(fio_json_parser_s *p) {
-  return p->depth && !fio_bit_get(p->nesting, p->depth);
-}
-
-/** Tests the state of the JSON parser. Returns 1 for true and 0 for false. */
-FIO_JSON_CB uint8_t fio_json_parser_is_key(fio_json_parser_s *p) {
-  return fio_json_parser_is_in_object(p) && !p->expect;
-}
-
-/** Tests the state of the JSON parser. Returns 1 for true and 0 for false. */
-FIO_JSON_CB uint8_t fio_json_parser_is_value(fio_json_parser_s *p) {
-  return !fio_json_parser_is_key(p);
-}
-
-FIO_IFUNC const char *fio___json_skip_comments(const char *buffer,
-                                               const char *stop) {
-  if (*buffer == '#' ||
-      ((stop - buffer) > 2 && buffer[0] == '/' && buffer[1] == '/')) {
-    /* EOL style comment, C style or Bash/Ruby style*/
-    buffer = (const char *)FIO_MEMCHR(buffer + 1, '\n', stop - (buffer + 1));
-    return buffer;
+FIO_IFUNC int fio___json_consume_whitespace(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "white space");
+  while (s->pos < s->end) {
+    if (!(((uint8_t)*s->pos == 0x09U) | ((uint8_t)*s->pos == 0x0AU) |
+          ((uint8_t)*s->pos == 0x0DU) | ((uint8_t)*s->pos == 0x20U)))
+      return 0;
+    ++s->pos;
   }
-  if (((stop - buffer) > 3 && buffer[0] == '/' && buffer[1] == '*')) {
-    while ((buffer = (const char *)FIO_MEMCHR(buffer, '/', stop - buffer)) &&
-           buffer && ++buffer && buffer[-2] != '*')
-      ;
-    return buffer;
+  return (s->error = -1);
+}
+FIO_IFUNC int fio___json_consume_comma(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "comma");
+  fio___json_consume_whitespace(s);
+  if (*s->pos != ',')
+    return -1;
+  fio___json_consume_whitespace(s);
+  return 0;
+}
+FIO_IFUNC int fio___json_consume_colon(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "colon");
+  fio___json_consume_whitespace(s);
+  if (*s->pos != ':')
+    return -1;
+  fio___json_consume_whitespace(s);
+  return 0;
+}
+
+FIO_SFUNC void *fio___json_consume_infinit(fio___json_state_s *s,
+                                           _Bool negative) {
+  FIO_JSON___PRINT_STEP(s, "infinity");
+  const uint64_t inf64 = fio_buf2u64u("infinity");
+  const uint16_t inf16 = fio_buf2u16u("nf");
+  uint64_t tst64;
+  uint16_t tst16;
+  if (s->pos + 3 > s->end)
+    goto buffer_error;
+  tst16 = (fio_buf2u16u(s->pos + 1) | (uint16_t)0x2020U);
+  if (tst16 == inf16) {
+    if (s->pos + 7 < s->end) {
+      tst64 = (fio_buf2u64u(s->pos) | (uint64_t)0x2020202020202020ULL);
+      s->pos += (tst64 == inf64) * 5;
+    }
+    s->pos += 3;
+    return s->cb.on_float(negative ? (INFINITY * -1) : INFINITY);
   }
+buffer_error:
+  s->error = 1;
   return NULL;
 }
 
-FIO_IFUNC const char *fio___json_consume_string(fio_json_parser_s *p,
-                                                const char *buffer,
-                                                const char *stop) {
-  const char *start = ++buffer;
-  for (;;) {
-    buffer = (const char *)FIO_MEMCHR(buffer, '\"', stop - buffer);
-    if (!buffer)
-      return NULL;
-    int escaped = 1;
-    while (buffer[0 - escaped] == '\\')
-      ++escaped;
-    if (escaped & 1)
-      break;
-    ++buffer;
-  }
-  fio_json_on_string(p, start, buffer - start);
-  return buffer + 1;
-}
-
-FIO_IFUNC const char *fio___json_consume_number(fio_json_parser_s *p,
-                                                const char *buffer,
-                                                const char *stop) {
-
-  const char *const was = buffer;
-  errno = 0; /* testo for E2BIG on number parsing */
-  long long i = fio_atol((char **)&buffer);
-
-  if (buffer < stop &&
-      ((*buffer) == '.' || (*buffer | 32) == 'e' || (*buffer | 32) == 'x' ||
-       (*buffer | 32) == 'p' || (*buffer | 32) == 'i' || errno)) {
-    buffer = was;
-    double f = fio_atof((char **)&buffer);
-    fio_json_on_float(p, f);
+FIO_SFUNC void *fio___json_consume_number(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "number");
+#if FIO_JSON_USE_FIO_ATON
+  fio_aton_s aton = fio_aton((char **)&s->pos);
+  return aton.is_float ? s->cb.on_float(aton.f) : s->cb.on_number(aton.i);
+#else
+  const char *tst = s->pos;
+  uint64_t i;
+  double f;
+  _Bool negative = (tst[0] == '-') | (tst[0] == '+');
+  _Bool hex = 0;
+  _Bool binary = 0;
+  long ilimit = 19 + negative;
+  tst += negative;
+  if (tst + 1 > s->end)
+    goto buffer_overflow;
+  if ((tst[0] | 0x20) == 'i')
+    goto is_inifinity;
+  tst += (tst[0] == '0' && tst + 2 < s->end);
+  if ((tst[0] | 32) == 'x') {
+    hex = 1;
+    while ((tst < s->end) & (((tst[0] >= '0') & (tst[0] <= '9')) |
+                             (((tst[0] | 32) >= 'a') & ((tst[0] | 32) <= 'f'))))
+      ++tst;
+  } else if ((tst[0] | 32) == 'b') {
+    binary = 1;
+    ilimit = 66 + negative;
+    while (((tst < s->end) & (tst[0] >= '0') & (tst[0] <= '1')))
+      ++tst;
   } else {
-    fio_json_on_number(p, i);
+    while (((tst < s->end) & (tst[0] >= '0') & (tst[0] <= '9')))
+      ++tst;
   }
-  return buffer;
+  if (tst > (s->pos + ilimit) ||
+      ((tst < s->end) &&
+       (tst[0] == '.' || (tst[0] | 32) == 'e' || (tst[0] | 32) == 'p')))
+    goto is_float;
+  tst = s->pos;
+  s->pos += negative;
+  errno = 0;
+  i = (hex              ? fio_atol16u((char **)&s->pos)
+       : binary         ? fio_atol_bin((char **)&s->pos)
+       : *s->pos == '0' ? fio_atol8u((char **)&s->pos)
+                        : fio_atol10u((char **)&s->pos));
+  if (errno == E2BIG || (((uint64_t)(1 ^ hex ^ binary) << 63) & i))
+    goto is_float_from_error;
+  // s->error = (errno == E2BIG);
+  return s->cb.on_number(fio_u2i_limit(i, negative));
+is_float_from_error:
+  s->pos = tst;
+  errno = 0;
+
+is_float:
+  f = fio_atof((char **)&s->pos);
+  s->error = (errno == E2BIG);
+  return s->cb.on_float(f);
+
+buffer_overflow:
+  s->error = 1;
+  return NULL;
+is_inifinity:
+  ++s->pos;
+  return fio___json_consume_infinit(s, negative);
+#endif /* FIO_JSON_USE_FIO_ATON */
 }
 
-FIO_IFUNC const char *fio___json_identify(fio_json_parser_s *p,
-                                          const char *buffer,
-                                          const char *stop) {
-  /* Use `break` to change separator requirement status.
-   * Use `continue` to keep separator requirement the same.
-   */
-  switch (*buffer) {
-  case 0x09: /* fall through */
-  case 0x0A: /* fall through */
-  case 0x0D: /* fall through */
-  case 0x20:
-    /* consume whitespace */
-    ++buffer;
-    while (buffer + 8 < stop && (buffer[0] == 0x20 || buffer[0] == 0x09 ||
-                                 buffer[0] == 0x0A || buffer[0] == 0x0D)) {
-      const uint64_t w = fio_buf2u64u(buffer);
-      const uint64_t w1 = 0x0101010101010101 * 0x09; /* '\t' (tab) */
-      const uint64_t w2 = 0x0101010101010101 * 0x0A; /* '\n' (new line) */
-      const uint64_t w3 = 0x0101010101010101 * 0x0D; /* '\r' (CR) */
-      const uint64_t w4 = 0x0101010101010101 * 0x20; /* ' '  (space) */
-      uint64_t b = fio_has_zero_byte64(w1 ^ w) | fio_has_zero_byte64(w2 ^ w) |
-                   fio_has_zero_byte64(w3 ^ w) | fio_has_zero_byte64(w4 ^ w);
-      if (b == 0x8080808080808080ULL) {
-        buffer += 8;
-        continue;
-      }
-      while ((b & UINT64_C(0x80))) {
-        b >>= 8;
-        ++buffer;
-      }
-      break;
-    }
+FIO_SFUNC void *fio___json_consume_string(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "string");
+  void *(*cb)(const void *start, size_t len) = s->cb.on_string_simple;
+  const char *start = ++s->pos;
+  for (; s->pos < s->end; ++s->pos) {
+    if (*s->pos == '"')
+      return cb(start, (s->pos++) - start);
+    if (*s->pos == '\\')
+      cb = s->cb.on_string;
+    s->pos += (*s->pos == '\\');
+  }
+  s->error = 1;
+  return NULL;
+}
 
-    return buffer;
-  case ',': /* comma separator */
-    if (!p->depth || !(p->expect & 4))
-      goto unexpected_separator;
-    ++buffer;
-    p->expect = (fio_bit_get(p->nesting, p->depth) << 1);
-    return buffer;
-  case ':': /* colon separator */
-    if (!p->depth || !(p->expect & 1))
-      goto unexpected_separator;
-    ++buffer;
-    p->expect = 2;
-    return buffer;
-    /*
-     *
-     * JSON Strings
-     *
-     */
-  case '"':
-    if (p->depth && (p->expect & ((uint8_t)5)))
-      goto missing_separator;
-    buffer = fio___json_consume_string(p, buffer, stop);
-    if (!buffer)
-      goto unterminated_string;
-    break;
-    /*
-     *
-     * JSON Objects
-     *
-     */
-  case '{':
-    if (p->depth && !(p->expect & 2))
-      goto missing_separator;
-    if (p->depth == FIO_JSON_MAX_DEPTH)
-      goto too_deep;
-    ++p->depth;
-    fio_bit_unset(p->nesting, p->depth);
-    fio_json_on_start_object(p);
-    p->expect = 0;
-    return buffer + 1;
-  case '}':
-    if (fio_bit_get(p->nesting, p->depth) || !p->depth || (p->expect & 3))
-      goto object_closure_unexpected;
-    fio_bit_unset(p->nesting, p->depth);
-    p->expect = 4; /* expect comma */
-    --p->depth;
-    fio_json_on_end_object(p);
-    return buffer + 1;
-    /*
-     *
-     * JSON Arrays
-     *
-     */
-  case '[':
-    if (p->depth && !(p->expect & 2))
-      goto missing_separator;
-    if (p->depth == FIO_JSON_MAX_DEPTH)
-      goto too_deep;
-    ++p->depth;
-    fio_json_on_start_array(p);
-    fio_bit_set(p->nesting, p->depth);
-    p->expect = 2;
-    return buffer + 1;
-  case ']':
-    if (!fio_bit_get(p->nesting, p->depth) || !p->depth)
-      goto array_closure_unexpected;
-    fio_bit_unset(p->nesting, p->depth);
-    p->expect = 4; /* expect comma */
-    --p->depth;
-    fio_json_on_end_array(p);
-    return buffer + 1;
-    /*
-     *
-     * JSON Primitives (true / false / null (NaN))
-     *
-     */
-  case 'N': /* NaN or null? - fall through */
-  case 'n':
-    if (p->depth && !(p->expect & 2))
-      goto missing_separator;
-    if (buffer + 4 > stop || buffer[1] != 'u' || buffer[2] != 'l' ||
-        buffer[3] != 'l') {
-      if (buffer + 3 > stop || (buffer[1] | 32) != 'a' ||
-          (buffer[2] | 32) != 'n')
-        return NULL;
-      char *nan_str = (char *)"NaN";
-      fio_json_on_float(p, fio_atof(&nan_str));
-      buffer += 3;
+FIO_SFUNC void *fio___json_consume_map(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "map");
+  void *old = s->ctx;
+  void *old_key = s->key;
+  void *map = s->cb.on_map(s, s->key);
+  s->ctx = map;
+  s->key = NULL;
+  if (++s->depth == FIO_JSON_MAX_DEPTH)
+    goto too_deep;
+  for (;;) {
+    ++s->pos;
+    s->key = fio___json_consume(s);
+    if (s->error || !s->key)
       break;
+    if (*s->pos != ':')
+      break;
+    ++s->pos;
+    if (fio___json_consume_whitespace(s))
+      break;
+    void *value = fio___json_consume(s);
+    s->error |= s->cb.map_push(s->ctx, s->key, value);
+    s->key = NULL;
+    if (s->error || fio___json_consume_whitespace(s))
+      break;
+    if (*s->pos != ',')
+      break;
+  }
+  if (s->key) {
+    s->error = 1;
+    s->cb.free_unused_object(s->key);
+  } else if (*s->pos != '}' || s->error) {
+    s->error = 1;
+  } else {
+    ++s->pos;
+  }
+  --s->depth;
+  s->ctx = old;
+  s->key = old_key;
+  s->error |= s->cb.map_finished(map);
+  return map;
+too_deep:
+  s->ctx = old;
+  s->key = old_key;
+  s->error = 1;
+  --s->depth;
+  return map;
+}
+FIO_SFUNC void *fio___json_consume_array(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "array");
+  void *old = s->ctx;
+  void *array = s->ctx = s->cb.on_array(s, s->key);
+  if (++s->depth == FIO_JSON_MAX_DEPTH)
+    goto too_deep;
+  for (;;) {
+    ++s->pos;
+    if (fio___json_consume_whitespace(s))
+      break;
+    if (*s->pos == ']')
+      break;
+    void *value = fio___json_consume(s);
+    if (value)
+      s->error |= s->cb.array_push(s->ctx, value);
+    if (s->error || fio___json_consume_comma(s))
+      break;
+    if (*s->pos != ',')
+      break;
+  }
+  if (*s->pos != ']' || s->error) {
+    s->error = 1;
+  } else {
+    ++s->pos;
+  }
+  s->ctx = old;
+  --s->depth;
+  s->error |= s->cb.array_finished(array);
+  return array;
+too_deep:
+  s->ctx = old;
+  s->error = 1;
+  --s->depth;
+  return array;
+}
+FIO_SFUNC void *fio___json_consume_null(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "null");
+  const uint32_t wrd = fio_buf2u32u("null");
+  uint32_t data;
+  if (s->end - s->pos < 4)
+    goto on_error;
+  data = fio_buf2u32u(s->pos) | (uint32_t)0x20202020;
+  if (data != wrd)
+    goto on_error;
+  s->pos += 4;
+  return s->cb.on_null();
+on_error:
+  s->error = 1;
+  return NULL;
+}
+FIO_SFUNC void *fio___json_consume_true(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "true");
+  const uint32_t wrd = fio_buf2u32u("true");
+  uint32_t data;
+  if (s->end - s->pos < 4)
+    goto on_error;
+  data = fio_buf2u32u(s->pos) | (uint32_t)0x20202020;
+  if (data != wrd)
+    goto on_error;
+  s->pos += 4;
+  return s->cb.on_true();
+on_error:
+  s->error = 1;
+  return NULL;
+}
+FIO_SFUNC void *fio___json_consume_false(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "false");
+  const uint32_t wrd = fio_buf2u32u("alse");
+  uint32_t data;
+  if (s->end - s->pos < 5)
+    goto on_error;
+  data = fio_buf2u32u(s->pos + 1) | (uint32_t)0x20202020;
+  if (data != wrd)
+    goto on_error;
+  s->pos += 5;
+  return s->cb.on_false();
+on_error:
+  s->error = 1;
+  return NULL;
+}
+FIO_SFUNC void *fio___json_consume_nan(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "nan");
+  const uint16_t wrd = fio_buf2u16u("an");
+  uint16_t data;
+  if (s->end - s->pos < 3)
+    goto on_error;
+  data = fio_buf2u16u(s->pos + 1) | (uint16_t)0x2020;
+  if (data != wrd)
+    goto on_error;
+  s->pos += 3;
+  return s->cb.on_float(NAN);
+on_error:
+  s->error = 1;
+  return NULL;
+}
+FIO_SFUNC int fio___json_consume_comment(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "comment");
+  const size_t len = (size_t)(s->end - s->pos);
+  if (*s->pos == '#' || (len > 2 && s->pos[0] == '/' && s->pos[1] == '/')) {
+    /* EOL style comment, C style or Bash/Ruby style*/
+    const char *tmp = (const char *)FIO_MEMCHR(s->pos, '\n', len);
+    if (tmp) {
+      s->pos = tmp;
+      return 0;
     }
-    fio_json_on_null(p);
-    buffer += 4;
-    break;
-  case 't': /* true */
-    if (p->depth && !(p->expect & 2))
-      goto missing_separator;
-    if (buffer + 4 > stop || buffer[1] != 'r' || buffer[2] != 'u' ||
-        buffer[3] != 'e')
-      return NULL;
-    fio_json_on_true(p);
-    buffer += 4;
-    break;
-  case 'f': /* false */
-    if (p->depth && !(p->expect & 2))
-      goto missing_separator;
-    if (buffer + 5 > stop || buffer[1] != 'a' || buffer[2] != 'l' ||
-        buffer[3] != 's' || buffer[4] != 'e')
-      return NULL;
-    fio_json_on_false(p);
-    buffer += 5;
-    break;
-    /*
-     *
-     * JSON Numbers (Integers / Floats)
-     *
-     */
-  case '+': /* fall through */
-  case '-': /* fall through */
-  case '0': /* fall through */
-  case '1': /* fall through */
-  case '2': /* fall through */
-  case '3': /* fall through */
-  case '4': /* fall through */
-  case '5': /* fall through */
-  case '6': /* fall through */
-  case '7': /* fall through */
-  case '8': /* fall through */
-  case '9': /* fall through */
-  case 'x': /* fall through */
-  case '.': /* fall through */
-  case 'e': /* fall through */
-  case 'E': /* fall through */
-  case 'i': /* fall through */
-  case 'I':
-    if (p->depth && !(p->expect & 2))
-      goto missing_separator;
-    buffer = fio___json_consume_number(p, buffer, stop);
-    if (!buffer)
-      goto bad_number_format;
-    break;
-    /*
-     *
-     * Comments
-     *
-     */
-  case '#': /* fall through */
-  case '/': /* fall through */
-    return fio___json_skip_comments(buffer, stop);
-    /*
-     *
-     * Unrecognized Data Handling
-     *
-     */
-  default:
-    FIO_LOG_DEBUG("unrecognized JSON identifier at:\n%.*s",
-                  ((stop - buffer > 48) ? (int)48 : ((int)(stop - buffer))),
-                  buffer);
+    s->error = 1;
+    return -1;
+  }
+  if ((len > 3 && s->pos[0] == '/' && s->pos[1] == '*')) {
+    const char *tmp = s->pos;
+    while (tmp < s->end &&
+           (tmp = (const char *)FIO_MEMCHR(s->pos, '/', s->end - tmp))) {
+      s->pos = ++tmp;
+      if (tmp[-2] == '*')
+        return 0;
+    }
+    s->error = 1;
+    return -1;
+  }
+  s->error = 1;
+  return -1;
+}
+
+void *fio___json_consume(fio___json_state_s *s) {
+  for (;;) {
+    FIO_JSON___PRINT_STEP(s, "consumption type test");
+    switch (*s->pos) {
+    case 0x09: /* fall through */
+    case 0x0A: /* fall through */
+    case 0x0D: /* fall through */
+    case 0x20:
+      ++s->pos;
+      if (fio___json_consume_whitespace(s))
+        goto set_error;
+      continue;
+    case '+': /* fall through */
+    case '-': /* fall through */
+    case '0': /* fall through */
+    case '1': /* fall through */
+    case '2': /* fall through */
+    case '3': /* fall through */
+    case '4': /* fall through */
+    case '5': /* fall through */
+    case '6': /* fall through */
+    case '7': /* fall through */
+    case '8': /* fall through */
+    case '9': /* fall through */
+    case 'x': /* fall through */
+    case '.': /* fall through */
+    case 'e': /* fall through */
+    case 'E': return fio___json_consume_number(s);
+    case 'i': /* fall through */
+    case 'I': return fio___json_consume_infinit(s, 0);
+    case '"': return fio___json_consume_string(s);
+    case '{': return fio___json_consume_map(s);
+    case '}': return NULL; /* don't progress, just stop. */
+    case '[': return fio___json_consume_array(s);
+    case ']': return NULL; /* don't progress, just stop. */
+    case 'T':              /* fall through */
+    case 't': return fio___json_consume_true(s);
+    case 'F': /* fall through */
+    case 'f': return fio___json_consume_false(s);
+    case 'N': /* fall through */
+    case 'n':
+      return (((s->pos[1] | 32) == 'u') ? fio___json_consume_null
+                                        : fio___json_consume_nan)(s);
+    case '#':
+    case '/':
+      if (fio___json_consume_comment(s))
+        goto set_error;
+      continue;
+    }
+  set_error:
+    s->error = 1;
     return NULL;
   }
-  /* p->expect should be either 0 (key) or 2 (value) */
-  p->expect = (p->expect << 1) + ((p->expect ^ 2) >> 1);
-  return buffer;
-
-missing_separator:
-  FIO_LOG_DEBUG("missing JSON separator '%c' at (%d):\n%.*s",
-                (p->expect == 2 ? ':' : ','),
-                p->expect,
-                ((stop - buffer > 48) ? 48 : ((int)(stop - buffer))),
-                buffer);
-  fio_json_on_error(p);
-  return NULL;
-unexpected_separator:
-  FIO_LOG_DEBUG("unexpected JSON separator at:\n%.*s",
-                ((stop - buffer > 48) ? 48 : ((int)(stop - buffer))),
-                buffer);
-  fio_json_on_error(p);
-  return NULL;
-unterminated_string:
-  FIO_LOG_DEBUG("unterminated JSON string at:\n%.*s",
-                ((stop - buffer > 48) ? 48 : ((int)(stop - buffer))),
-                buffer);
-  fio_json_on_error(p);
-  return NULL;
-bad_number_format:
-  FIO_LOG_DEBUG("bad JSON numeral format at:\n%.*s",
-                ((stop - buffer > 48) ? 48 : ((int)(stop - buffer))),
-                buffer);
-  fio_json_on_error(p);
-  return NULL;
-array_closure_unexpected:
-  FIO_LOG_DEBUG("JSON array closure unexpected at:\n%.*s",
-                ((stop - buffer > 48) ? 48 : ((int)(stop - buffer))),
-                buffer);
-  fio_json_on_error(p);
-  return NULL;
-object_closure_unexpected:
-  FIO_LOG_DEBUG("JSON object closure unexpected at (%d):\n%.*s",
-                p->expect,
-                ((stop - buffer > 48) ? 48 : ((int)(stop - buffer))),
-                buffer);
-  fio_json_on_error(p);
-  return NULL;
-too_deep:
-  FIO_LOG_DEBUG("JSON object nesting too deep at:\n%.*s",
-                p->expect,
-                ((stop - buffer > 48) ? 48 : ((int)(stop - buffer))),
-                buffer);
-  fio_json_on_error(p);
-  return NULL;
 }
 
+static int fio___json_callback_noop(void *ctx) {
+  return 0;
+  (void)ctx;
+}
+static void *fio___json_callback_noop2(void *ctx) { return ctx; }
+
+FIO_SFUNC int fio___json_callbacks_validate(fio_json_parser_callbacks_s *cb) {
+  if (!cb)
+    goto is_invalid;
+
+  if (!cb->on_string)
+    cb->on_string = cb->on_string_simple;
+  if (!cb->on_string_simple)
+    cb->on_string_simple = cb->on_string;
+
+  if (!cb->on_null)
+    goto is_invalid;
+  if (!cb->on_true)
+    goto is_invalid;
+  if (!cb->on_false)
+    goto is_invalid;
+  if (!cb->on_number)
+    goto is_invalid;
+  if (!cb->on_float)
+    goto is_invalid;
+  if (!cb->on_string)
+    goto is_invalid;
+  if (!cb->on_map)
+    goto is_invalid;
+  if (!cb->on_array)
+    goto is_invalid;
+  if (!cb->map_push)
+    goto is_invalid;
+  if (!cb->array_push)
+    goto is_invalid;
+  if (!cb->free_unused_object)
+    goto is_invalid;
+  if (!cb->array_finished)
+    cb->array_finished = fio___json_callback_noop;
+  if (!cb->map_finished)
+    cb->map_finished = fio___json_callback_noop;
+  if (!cb->is_array)
+    cb->is_array = fio___json_callback_noop;
+  if (!cb->is_map)
+    cb->is_map = fio___json_callback_noop;
+  if (!cb->on_error)
+    cb->on_error = fio___json_callback_noop2;
+  return 0;
+is_invalid:
+  return -1;
+}
 /**
  * Returns the number of bytes consumed. Stops as close as possible to the end
  * of the buffer or once an object parsing was completed.
  */
-SFUNC size_t fio_json_parse(fio_json_parser_s *p,
-                            const char *buffer,
-                            const size_t len) {
-  const char *start = buffer;
-  const char *stop = buffer + len;
-  const char *last;
+SFUNC fio_json_result_s fio_json_parse(fio_json_parser_callbacks_s *callbacks,
+                                       const char *start,
+                                       const size_t len) {
+  fio_json_result_s r = {.stop_pos = 0, .err = 0};
+  fio___json_state_s state;
+  if (fio___json_callbacks_validate(callbacks))
+    goto missing_callback;
+
+  state = (fio___json_state_s){
+      .cb = callbacks[0],
+      .pos = start,
+      .end = start + len,
+  };
+
   /* skip BOM, if exists */
-  if (len >= 3 && buffer[0] == (char)0xEF && buffer[1] == (char)0xBB &&
-      buffer[2] == (char)0xBF) {
-    buffer += 3;
+  if (len >= 3 && state.pos[0] == (char)0xEF && state.pos[1] == (char)0xBB &&
+      state.pos[2] == (char)0xBF) {
+    state.pos += 3;
     if (len == 3)
       goto finish;
   }
-  /* loop until the first JSON data was read */
-  do {
-    last = buffer;
-    buffer = fio___json_identify(p, buffer, stop);
-    if (!buffer)
-      goto failed;
-  } while (!p->expect && buffer < stop);
-  /* loop until the JSON object (nesting) is closed */
-  while (p->depth && buffer < stop) {
-    last = buffer;
-    buffer = fio___json_identify(p, buffer, stop);
-    if (!buffer)
-      goto failed;
-  }
-  if (!p->depth) {
-    p->expect = 0;
-    fio_json_on_json(p);
-  }
+  r.ctx = fio___json_consume(&state);
+  r.err = state.error;
+  r.stop_pos = state.pos - start;
+  if (state.error)
+    goto failed;
 finish:
-  return buffer - start;
+  return r;
 failed:
-  FIO_LOG_DEBUG("JSON parsing failed after:\n%.*s",
-                ((stop - last > 48) ? 48 : ((int)(stop - last))),
-                last);
-  return last - start;
+  FIO_LOG_DEBUG(
+      "JSON parsing failed after:\n%.*s",
+      ((state.end - state.pos > 48) ? 48 : ((int)(state.end - state.pos))),
+      state.pos);
+  r.ctx = callbacks->on_error(r.ctx);
+  return r;
+
+missing_callback:
+  FIO_LOG_ERROR("JSON parser missing a critical callback!");
+  r.err = 1;
+  return r;
 }
 
+/** Dictionary was detected. Returns ctx to hash map or NULL on error. */
+FIO_SFUNC void *fio___json_parse_update_on_map(void *ctx, void *at) {
+  void **ex_data = (void **)ctx;
+  fio_json_parser_callbacks_s *cb = (fio_json_parser_callbacks_s *)ex_data[0];
+  ctx = ex_data[1];
+  fio___json_state_s *s = (fio___json_state_s *)ex_data[2];
+  s->cb.on_map = cb->on_map;
+  s->cb.on_array = cb->on_array;
+  if (ctx && !s->cb.is_map(ctx))
+    return NULL;
+  else if (!ctx)
+    ctx = cb->on_map(ctx, at);
+  return ctx;
+}
+/** Array was detected. Returns ctx to array or NULL on error. */
+FIO_SFUNC void *fio___json_parse_update_on_array(void *ctx, void *at) {
+  void **ex_data = (void **)ctx;
+  fio_json_parser_callbacks_s *cb = (fio_json_parser_callbacks_s *)ex_data[0];
+  ctx = ex_data[1];
+  fio___json_state_s *s = (fio___json_state_s *)ex_data[2];
+  s->cb.on_map = cb->on_map;
+  s->cb.on_array = cb->on_array;
+  if (ctx && !s->cb.is_array(ctx))
+    return NULL;
+  else if (!ctx)
+    ctx = cb->on_array(ctx, at);
+
+  return ctx;
+}
+
+/**
+ * Use only when `ctx` is an object and JSON data is wrapped in an object (of
+ * the same type).
+ *
+ * i.e., update an array or hash map.
+ */
+SFUNC fio_json_result_s fio_json_parse_update(fio_json_parser_callbacks_s *s,
+                                              void *ctx,
+                                              const char *start,
+                                              const size_t len) {
+  fio_json_result_s r = {.stop_pos = 0, .err = 0};
+  fio_json_parser_callbacks_s callbacks;
+  callbacks.on_map = fio___json_parse_update_on_map;
+  callbacks.on_array = fio___json_parse_update_on_array;
+  fio___json_state_s state;
+  void *ex_data[3] = {s, ctx, &state};
+
+  if (!s->is_array)
+    goto missing_callback;
+  if (!s->is_map)
+    goto missing_callback;
+  if (fio___json_callbacks_validate(s))
+    goto missing_callback;
+
+  callbacks = *s;
+  state = (fio___json_state_s){
+      .cb = callbacks,
+      .pos = start,
+      .end = start + len,
+  };
+  state.ctx = (void *)ex_data;
+  /* skip BOM, if exists */
+  if (len >= 3 && state.pos[0] == (char)0xEF && state.pos[1] == (char)0xBB &&
+      state.pos[2] == (char)0xBF) {
+    state.pos += 3;
+    if (len == 3)
+      goto finish;
+  }
+  r.ctx = fio___json_consume(&state);
+  r.err = state.error;
+  r.stop_pos = state.pos - start;
+  if (state.error)
+    goto failed;
+finish:
+  return r;
+failed:
+  FIO_LOG_DEBUG(
+      "JSON parsing failed after:\n%.*s",
+      ((state.end - state.pos > 48) ? 48 : ((int)(state.end - state.pos))),
+      state.pos);
+  r.ctx = s->on_error(r.ctx);
+  return r;
+missing_callback:
+  FIO_LOG_ERROR("JSON parser missing a critical callback!");
+  r.err = 1;
+  return r;
+}
 #endif /* FIO_EXTERN_COMPLETE */
 #undef FIO_JSON
 #endif /* FIO_JSON */
@@ -9578,16 +10467,30 @@ FIO_IFUNC int fio_sock_dup(int original) {
 #define FIO_SOCK_FD_ISVALID(fd) ((int)fd != (int)-1)
 #endif
 /** Acts as POSIX write. Use this macro for portability with WinSock2. */
-#define fio_sock_write(fd, data, len) write((fd), (data), (len))
+#define fio_sock_write(fd, data, len)      write((fd), (data), (len))
 /** Acts as POSIX read. Use this macro for portability with WinSock2. */
-#define fio_sock_read(fd, buf, len)   read((fd), (buf), (len))
-/** Acts as POSIX close. Use this macro for portability with WinSock2. */
-#define fio_sock_close(fd)            close(fd)
+#define fio_sock_read(fd, buf, len)        read((fd), (buf), (len))
 /** Acts as POSIX dup. Use this macro for portability with WinSock2. */
-#define fio_sock_dup(fd)              dup(fd)
+#define fio_sock_dup(fd)                   dup(fd)
+/** Acts as POSIX close. Use this macro for portability with WinSock2. */
+#define fio_sock_close(fd)                 close(fd)
+/** Acts as POSIX accept. Use this macro for portability with WinSock2. */
+#define fio_sock_accept(fd, addr, addrlen) accept(fd, addr, addrlen)
 #else
 #error FIO_SOCK requires a supported OS (Windows / POSIX).
 #endif
+
+/* Set to 1 if in need to debug unexpected IO closures. */
+#if defined(DEBUG) && 0
+#define close(fd)                                                              \
+  do {                                                                         \
+    FIO_LOG_DWARNING("(%d) (" FIO__FILE__ ":" FIO_MACRO2STR(                   \
+                         __LINE__) ") fio_sock_close called for fd %d",        \
+                     fio_getpid(),                                             \
+                     (int)fd);                                                 \
+    close(fd);                                                                 \
+  } while (0)
+#endif /* DEBUG */
 
 /* *****************************************************************************
 Socket OS abstraction - API
@@ -9639,6 +10542,17 @@ FIO_IFUNC struct addrinfo *fio_sock_address_new(const char *restrict address,
 
 /** Frees the pointer returned by `fio_sock_address_new`. */
 FIO_IFUNC void fio_sock_address_free(struct addrinfo *a);
+
+/**
+ * Returns a human readable address representation of the socket's peer address.
+ *
+ * On error, returns a NULL buffer with zero length.
+ *
+ * Buffer lengths are limited to 63 bytes.
+ *
+ * This function is limited in its thread safety to 128 threads / calls.
+ */
+SFUNC fio_buf_info_s fio_sock_peer_addr(int s);
 
 /** Creates a new network socket and binds it to a local address. */
 SFUNC int fio_sock_open_local(struct addrinfo *addr, int nonblock);
@@ -9742,6 +10656,48 @@ FIO_IFUNC struct addrinfo *fio_sock_address_new(
   addr_hints.ai_socktype = sock_type;
   addr_hints.ai_flags = AI_PASSIVE; // use my IP
 
+  size_t port_len = (port ? FIO_STRLEN(port) : 0U);
+  switch (port_len) { /* skip system service lookup for common web stuff */
+  case 2:
+    if ((port[0] | 32) == 'w' && (port[1] | 32) == 's')
+      port = "80";
+    break;
+  case 3:
+    if ((port[0] | 32) == 'w' && (port[1] | 32) == 's' && (port[2] | 32) == 's')
+      port = "443";
+    else if ((port[0] | 32) == 's' && (port[1] | 32) == 's' &&
+             (port[2] | 32) == 'e')
+      port = "80";
+    break;
+  case 4:
+    if ((port[0] | 32) == 'h' && (port[1] | 32) == 't' &&
+        (port[2] | 32) == 't' && (port[3] | 32) == 'p')
+      port = "80";
+    else if ((port[0] | 32) == 's' && (port[1] | 32) == 's' &&
+             (port[2] | 32) == 'e' && (port[3] | 32) == 's')
+      port = "443";
+    break;
+  case 5:
+    if ((port[0] | 32) == 'h' && (port[1] | 32) == 't' &&
+        (port[2] | 32) == 't' && (port[3] | 32) == 'p' && (port[4] | 32) == 's')
+      port = "443";
+    break;
+  }
+
+#if 1 /* override system resolution for localhost ? */
+  size_t address_len = (address ? FIO_STRLEN(address) : 0U);
+  if (address && address_len == 9 && (address[0] | 32) == 'l' &&
+      (fio_buf2u64u(address + 1) | (uint64_t)0x2020202020202020ULL) ==
+          fio_buf2u64u("ocalhost"))
+    address = "127.0.0.1";
+  else if (sock_type != SOCK_DGRAM && address_len == 7 &&
+           (fio_buf2u64u("0.0.0.0") |
+            fio_buf2u64u("\x00\x00\x00\x00\x00\x00\x00\xFF")) ==
+               (fio_buf2u64u(address) |
+                fio_buf2u64u("\x00\x00\x00\x00\x00\x00\x00\xFF")))
+    address = NULL; /* bind to everything INADDR_ANY */
+#endif
+  /* call for OS address resolution */
   if ((e = getaddrinfo(address, (port ? port : "0"), &addr_hints, &a)) != 0) {
     FIO_LOG_ERROR("(fio_sock_address_new(\"%s\", \"%s\")) error: %s",
                   (address ? address : "NULL"),
@@ -9835,12 +10791,12 @@ SFUNC int fio_sock_open2(const char *url, uint16_t flags) {
 /** Sets a file descriptor / socket to non blocking state. */
 SFUNC int fio_sock_set_non_block(int fd) {
 /* If they have O_NONBLOCK, use the Posix way to do it */
-#if defined(O_NONBLOCK)
+#if defined(O_NONBLOCK) && defined(F_GETFL) && defined(F_SETFL)
   /* Fixme: O_NONBLOCK is defined but broken on SunOS 4.1.x and AIX 3.2.5. */
   int flags;
   if (-1 == (flags = fcntl(fd, F_GETFL, 0)))
     flags = 0;
-#ifdef O_CLOEXEC
+#if defined(O_CLOEXEC)
   return fcntl(fd, F_SETFL, flags | O_NONBLOCK | O_CLOEXEC);
 #else
   return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
@@ -10147,6 +11103,39 @@ SFUNC int fio_sock_open_unix(const char *address, uint16_t flags) {
 #endif /* AF_UNIX */
 
 /* *****************************************************************************
+Peer Address
+***************************************************************************** */
+
+/**
+ * Returns a human readable address representation of the socket's peer address.
+ *
+ * On error, returns a NULL buffer with zero length.
+ *
+ * Buffer lengths are limited to 63 bytes.
+ *
+ * This function is limited in its thread safety to 128 threads / calls.
+ */
+SFUNC fio_buf_info_s fio_sock_peer_addr(int s) {
+  static char buffer[8129]; /* 64 byte per buffer x 128 threads */
+  static unsigned pos = 0;
+  fio_buf_info_s r =
+      FIO_BUF_INFO2(buffer + (fio_atomic_add(&pos, 63) & 127), 0);
+  struct sockaddr addr[8] = {0};
+  socklen_t len = sizeof(addr);
+  if (!FIO_SOCK_FD_ISVALID(s))
+    goto finish;
+  if (getpeername(s, addr, &len))
+    goto finish;
+  if (getnameinfo(addr, len, r.buf, 64, NULL, 0, NI_NUMERICHOST))
+    goto finish;
+  r.len = FIO_STRLEN(r.buf);
+finish:
+  if (!r.len)
+    r.buf = NULL;
+  return r;
+}
+
+/* *****************************************************************************
 WinSock initialization
 ***************************************************************************** */
 #if FIO_OS_WIN
@@ -10242,8 +11231,8 @@ typedef enum {
   FIO_CALL_ON_CHILD_CRUSH,
   /** Called by each worker thread in a Server Async queue as it ends. */
   FIO_CALL_ON_WORKER_THREAD_END,
-  /** Called just before finishing up (both on child and parent processes). */
-  FIO_CALL_ON_FINISH,
+  /** Called when wither a *Worker* or *Master* stopped. */
+  FIO_CALL_ON_STOP,
   /** An alternative to the system's at_exit. */
   FIO_CALL_AT_EXIT,
   /** used for testing and array allocation - must be last. */
@@ -10308,6 +11297,37 @@ FIO_TYPEDEF_IMAP_ARRAY(fio___state_map,
 #undef FIO_STATE_CALLBACK_IS_VALID
 
 /* *****************************************************************************
+Names.
+***************************************************************************** */
+
+static const char *FIO___STATE_TASKS_NAMES[FIO_CALL_NEVER + 1] = {
+    [FIO_CALL_ON_INITIALIZE] = "ON_INITIALIZE",
+    [FIO_CALL_PRE_START] = "PRE_START",
+    [FIO_CALL_BEFORE_FORK] = "BEFORE_FORK",
+    [FIO_CALL_AFTER_FORK] = "AFTER_FORK",
+    [FIO_CALL_IN_CHILD] = "IN_CHILD",
+    [FIO_CALL_IN_MASTER] = "IN_MASTER",
+    [FIO_CALL_ON_WORKER_THREAD_START] = "ON_WORKER_THREAD_START",
+    [FIO_CALL_ON_START] = "ON_START",
+    [FIO_CALL_RESERVED1] = "RESERVED1",
+    [FIO_CALL_RESERVED2] = "RESERVED2",
+    [FIO_CALL_ON_USER1] = "ON_USER1",
+    [FIO_CALL_ON_USER2] = "ON_USER2",
+    [FIO_CALL_ON_IDLE] = "ON_IDLE",
+    [FIO_CALL_ON_USER1_REVERSE] = "ON_USER1_REVERSE",
+    [FIO_CALL_ON_USER2_REVERSE] = "ON_USER2_REVERSE",
+    [FIO_CALL_RESERVED1_REVERSED] = "RESERVED1_REVERSED",
+    [FIO_CALL_RESERVED2_REVERSED] = "RESERVED2_REVERSED",
+    [FIO_CALL_ON_SHUTDOWN] = "ON_SHUTDOWN",
+    [FIO_CALL_ON_PARENT_CRUSH] = "ON_PARENT_CRUSH",
+    [FIO_CALL_ON_CHILD_CRUSH] = "ON_CHILD_CRUSH",
+    [FIO_CALL_ON_WORKER_THREAD_END] = "ON_WORKER_THREAD_END",
+    [FIO_CALL_ON_STOP] = "ON_FINISH",
+    [FIO_CALL_AT_EXIT] = "AT_EXIT",
+    [FIO_CALL_NEVER] = "NEVER",
+};
+
+/* *****************************************************************************
 State Callback Global State and Locks
 ***************************************************************************** */
 /* use `weak` instead of `static` to make sure state callbacks are global. */
@@ -10318,7 +11338,8 @@ FIO_IFUNC void fio_state_callback_clear_all(void) {
   for (size_t i = 0; i < FIO_CALL_NEVER; ++i) {
     fio___state_map_destroy(FIO___STATE_TASKS_ARRAY + i);
   }
-  FIO_LOG_DEBUG2("fio_state_callback maps have been cleared.");
+  FIO_LOG_DEBUG2("(%d) fio_state_callback maps have been cleared.",
+                 fio_getpid());
 }
 
 /** Adds a callback to the list of callbacks to be called for the event. */
@@ -10378,30 +11399,6 @@ FIO_SFUNC void fio_state_callback_force___task(void *fn_p, void *arg) {
  */
 SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
   /** a type-to-string map for callback types */
-  static const char *fio___state_tasks_names[FIO_CALL_NEVER + 1] = {
-      [FIO_CALL_ON_INITIALIZE] = "ON_INITIALIZE",
-      [FIO_CALL_PRE_START] = "PRE_START",
-      [FIO_CALL_BEFORE_FORK] = "BEFORE_FORK",
-      [FIO_CALL_AFTER_FORK] = "AFTER_FORK",
-      [FIO_CALL_IN_CHILD] = "IN_CHILD",
-      [FIO_CALL_IN_MASTER] = "IN_MASTER",
-      [FIO_CALL_ON_START] = "ON_START",
-      [FIO_CALL_RESERVED1] = "RESERVED1",
-      [FIO_CALL_RESERVED2] = "RESERVED2",
-      [FIO_CALL_ON_USER1] = "ON_USER1",
-      [FIO_CALL_ON_USER2] = "ON_USER2",
-      [FIO_CALL_ON_IDLE] = "ON_IDLE",
-      [FIO_CALL_ON_USER1_REVERSE] = "ON_USER1_REVERSE",
-      [FIO_CALL_ON_USER2_REVERSE] = "ON_USER2_REVERSE",
-      [FIO_CALL_RESERVED1_REVERSED] = "RESERVED1_REVERSED",
-      [FIO_CALL_RESERVED2_REVERSED] = "RESERVED2_REVERSED",
-      [FIO_CALL_ON_SHUTDOWN] = "ON_SHUTDOWN",
-      [FIO_CALL_ON_PARENT_CRUSH] = "ON_PARENT_CRUSH",
-      [FIO_CALL_ON_CHILD_CRUSH] = "ON_CHILD_CRUSH",
-      [FIO_CALL_ON_FINISH] = "ON_FINISH",
-      [FIO_CALL_AT_EXIT] = "AT_EXIT",
-      [FIO_CALL_NEVER] = "NEVER",
-  };
 
   if ((uintptr_t)e >= FIO_CALL_NEVER)
     return;
@@ -10420,10 +11417,12 @@ SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
     fio_trylock(FIO___STATE_TASKS_ARRAY_LOCK + FIO_CALL_NEVER);
   }
 
-  FIO_LOG_DDEBUG2("%d scheduling %s callbacks.",
+  FIO_LOG_DDEBUG2("(%d) scheduling %s callbacks (%zu tasks).",
                   (int)(fio_thread_getpid()),
-                  fio___state_tasks_names[e]);
-
+                  FIO___STATE_TASKS_NAMES[e],
+                  (size_t)FIO___STATE_TASKS_ARRAY[e].count);
+  if (!FIO___STATE_TASKS_ARRAY[e].count)
+    return;
   /* copy task queue */
   fio_lock(FIO___STATE_TASKS_ARRAY_LOCK + (uintptr_t)e);
   if (FIO___STATE_TASKS_ARRAY[e].w) {
@@ -10452,8 +11451,24 @@ SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
   }
   /* cleanup */
   FIO_MEM_FREE(ary, ary_capa);
-  (void)fio___state_tasks_names; /* if unused */
+  (void)FIO___STATE_TASKS_NAMES; /* if unused */
 }
+
+/* *****************************************************************************
+Debug Helpers
+***************************************************************************** */
+
+FIO_IFUNC void fio_state_callback_print_state(void) {
+  FIO_LOG2STDERR("DEBUG:    fio_state_callback maps state:");
+  for (size_t i = 0; i < FIO_CALL_NEVER; ++i) {
+    fprintf(stderr,
+            "\t%-32s %-4zu out of %-4zu\n",
+            FIO___STATE_TASKS_NAMES[i],
+            (size_t)FIO___STATE_TASKS_ARRAY[i].count,
+            fio___state_map_capa(FIO___STATE_TASKS_ARRAY + i));
+  }
+}
+
 /* *****************************************************************************
 State constructor / destructor
 ***************************************************************************** */
@@ -11184,6 +12199,9 @@ SFUNC void fio_cli_end(void);
 /** Returns the argument's value as a NUL terminated C String. */
 SFUNC char const *fio_cli_get(char const *name);
 
+/** Returns the argument's value as a NUL terminated `fio_buf_info_s`. */
+SFUNC fio_buf_info_s fio_cli_get_str(char const *name);
+
 /** Returns the argument's value as an integer. */
 SFUNC int64_t fio_cli_get_i(char const *name);
 
@@ -11195,6 +12213,9 @@ SFUNC unsigned int fio_cli_unnamed_count(void);
 
 /** Returns the unnamed argument using a 0 based `index`. */
 SFUNC char const *fio_cli_unnamed(unsigned int index);
+
+/** Returns the unnamed argument using a 0 based `index`. */
+SFUNC fio_buf_info_s fio_cli_unnamed_str(unsigned int index);
 
 /**
  * Sets the argument's value as a NUL terminated C String.
@@ -11236,13 +12257,10 @@ CLI Implementation
 ***************************************************************************** */
 #if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
 
-FIO_LEAK_COUNTER_DEF(fio_cli_str)
-FIO_LEAK_COUNTER_DEF(fio_cli_ary)
-FIO_LEAK_COUNTER_DEF(fio_cli_help_writer)
-
 /* *****************************************************************************
 String for CLI
 ***************************************************************************** */
+FIO_LEAK_COUNTER_DEF(fio_cli_str)
 
 typedef struct {
   uint8_t em;     /* embedded? const? how long? */
@@ -11270,11 +12288,12 @@ FIO_IFUNC fio_buf_info_s fio_cli_str_buf(fio_cli_str_s *s) {
 }
 
 /** CLI String copy */
-FIO_SFUNC fio_cli_str_s fio_cli_str_init(fio_buf_info_s s) {
+FIO_SFUNC fio_cli_str_s fio_cli_str_new(fio_buf_info_s s) {
   fio_cli_str_s r = {0};
   if (s.len < sizeof(r) - 1) {
     r.em = s.len;
-    FIO_MEMCPY(r.pad, s.buf, s.len);
+    if (s.len)
+      FIO_MEMCPY(r.pad, s.buf, s.len);
     return r;
   }
   r.len = (uint32_t)s.len;
@@ -11303,6 +12322,7 @@ FIO_SFUNC fio_cli_str_s fio_cli_str_tmp(fio_buf_info_s s) {
 /* *****************************************************************************
 String array for CLI
 ***************************************************************************** */
+FIO_LEAK_COUNTER_DEF(fio_cli_ary)
 
 typedef struct {
   fio_cli_str_s *ary;
@@ -11326,6 +12346,7 @@ FIO_SFUNC uint32_t fio___cli_ary_new_index(fio___cli_ary_s *a) {
     if (!a->ary)
       FIO_LEAK_COUNTER_ON_ALLOC(fio_cli_ary);
     size_t new_capa = a->capa + 8;
+    FIO_ASSERT(new_capa < 0xFFFFFFFFU, "fio_cli data overflow");
     fio_cli_str_s *tmp =
         (fio_cli_str_s *)FIO_MEM_REALLOC_(a->ary,
                                           sizeof(*a->ary) * a->capa,
@@ -11333,11 +12354,11 @@ FIO_SFUNC uint32_t fio___cli_ary_new_index(fio___cli_ary_s *a) {
                                           a->capa);
     FIO_ASSERT_ALLOC(tmp);
     a->ary = tmp;
-    a->capa = new_capa;
+    a->capa = (uint32_t)new_capa;
     if (!(FIO_MEM_REALLOC_IS_SAFE_))
       FIO_MEMSET(a->ary + a->w, 0, sizeof(*a->ary) * (new_capa - a->w));
   }
-  FIO_ASSERT_DEBUG(a->w < a->capa, "CLI array index error!");
+  FIO_ASSERT_DEBUG(a->w < (uint32_t)a->capa, "CLI array index error!");
   return a->w++;
 }
 
@@ -11354,7 +12375,7 @@ FIO_IFUNC void fio___cli_ary_set(fio___cli_ary_s *a,
   if (index >= a->w)
     return;
   fio_cli_str_destroy(a->ary + index);
-  a->ary[index] = fio_cli_str_init(str);
+  a->ary[index] = fio_cli_str_new(str);
 }
 
 /* *****************************************************************************
@@ -11411,7 +12432,7 @@ FIO_SFUNC void fio___cli_data_alias(fio_buf_info_s key,
   fio___cli_aliases_s o = {.name = fio_cli_str_tmp(key)};
   fio___cli_aliases_s *a = fio___cli_amap_get(&fio___cli_data.aliases, o);
   if (!a) {
-    o.name = fio_cli_str_init(key);
+    o.name = fio_cli_str_new(key);
     o.index = fio___cli_ary_new_index(&fio___cli_data.indexed);
     o.t = t;
     fio___cli_amap_set(&fio___cli_data.aliases, o, 1);
@@ -11425,7 +12446,7 @@ FIO_SFUNC void fio___cli_data_alias(fio_buf_info_s key,
                     fio_cli_str_buf(&o.name).buf);
     old->index = a->index;
   } else {
-    o.name = fio_cli_str_init(alias);
+    o.name = fio_cli_str_new(alias);
     o.index = a->index;
     o.t = a->t;
     fio___cli_amap_set(&fio___cli_data.aliases, o, 1);
@@ -11462,6 +12483,8 @@ FIO_SFUNC fio_buf_info_s fio___cli_data_get(fio_buf_info_s key) {
   fio___cli_aliases_s *a = fio___cli_amap_get(&fio___cli_data.aliases, o);
   if (a)
     r = fio___cli_ary_get(&fio___cli_data.indexed, a->index);
+  if (!r.len)
+    r.buf = NULL;
   return r;
 }
 
@@ -11505,6 +12528,17 @@ SFUNC char const *fio_cli_get(char const *name) {
   return fio___cli_data_get(key).buf;
 }
 
+/** Returns the argument's value as a NUL terminated C String. */
+SFUNC fio_buf_info_s fio_cli_get_str(char const *name) {
+  if (!name)
+    goto unnamed_zero;
+  return fio___cli_data_get(FIO_BUF_INFO1((char *)name));
+unnamed_zero:
+  if (!fio___cli_data.unnamed.w)
+    return FIO_BUF_INFO0;
+  return fio___cli_ary_get(&fio___cli_data.unnamed, 0);
+}
+
 /** Returns the argument's value as an integer. */
 SFUNC int64_t fio_cli_get_i(char const *name) {
   char *val = (char *)fio_cli_get(name);
@@ -11523,6 +12557,13 @@ SFUNC char const *fio_cli_unnamed(unsigned int index) {
   if (index >= fio___cli_data.unnamed.w)
     return NULL;
   return fio___cli_ary_get(&fio___cli_data.unnamed, (uint32_t)index).buf;
+}
+
+/** Returns the unnamed argument using a 0 based `index`. */
+SFUNC fio_buf_info_s fio_cli_unnamed_str(unsigned int index) {
+  if (index >= fio___cli_data.unnamed.w)
+    return FIO_BUF_INFO0;
+  return fio___cli_ary_get(&fio___cli_data.unnamed, (uint32_t)index);
 }
 
 /**
@@ -11897,6 +12938,7 @@ SFUNC void fio_cli_start FIO_NOOP(int argc,
 /* *****************************************************************************
 CLI Help Output
 ***************************************************************************** */
+FIO_LEAK_COUNTER_DEF(fio_cli_help_writer)
 
 FIO_IFUNC fio_str_info_s fio___cli_write2line(fio_str_info_s d,
                                               fio_buf_info_s s,
@@ -12126,16 +13168,17 @@ Memory Allocation - Setup Alignment Info
 /** Allocation alignment, MUST be >= 3 and <= 10*/
 #define FIO_MEMORY_ALIGN_LOG 4
 
-#elif FIO_MEMORY_ALIGN_LOG < 3 || FIO_MEMORY_ALIGN_LOG > 10
+#elif FIO_MEMORY_ALIGN_LOG < 3
 #undef FIO_MEMORY_ALIGN_LOG
-#define FIO_MEMORY_ALIGN_LOG 4
+#define FIO_MEMORY_ALIGN_LOG 3
+#elif FIO_MEMORY_ALIGN_LOG > 10
+#undef FIO_MEMORY_ALIGN_LOG
+#define FIO_MEMORY_ALIGN_LOG 10
 #endif
 
 /* Helper macro, don't change this */
 #undef FIO_MEMORY_ALIGN_SIZE
-/**
- * The maximum allocation size, after which a direct system allocation is used.
- */
+/** The minimal allocation size & alignment. */
 #define FIO_MEMORY_ALIGN_SIZE (1UL << FIO_MEMORY_ALIGN_LOG)
 
 /* inform the compiler that the returned value is aligned on 16 byte marker */
@@ -12188,7 +13231,7 @@ SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME, realloc)(void *ptr,
  * Re-allocates memory. An attempt to avoid copying the data is made only for
  * big memory allocations (larger than FIO_MEMORY_BLOCK_ALLOC_LIMIT).
  *
- * This variation is slightly faster as it might copy less data.
+ * This variation can perform better, as it might copy less data.
  */
 SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME, realloc2)(void *ptr,
                                                               size_t new_size,
@@ -12319,7 +13362,7 @@ NOTE: most configuration values should be a power of 2 or a logarithmic value.
 
 #ifndef FIO_MEMORY_USE_THREAD_MUTEX
 #if FIO_USE_THREAD_MUTEX_TMP
-#define FIO_MEMORY_USE_THREAD_MUTEX 1
+#define FIO_MEMORY_USE_THREAD_MUTEX FIO_USE_THREAD_MUTEX
 #else
 #if FIO_MEMORY_ARENA_COUNT > 0
 /**
@@ -12890,20 +13933,20 @@ static volatile size_t FIO_NAME(FIO_MEMORY_NAME, __malloc_total);
 #define FIO_MEMORY_ON_CHUNK_ALLOC(ptr)                                         \
   do {                                                                         \
     FIO_LEAK_COUNTER_ON_ALLOC(FIO_NAME(FIO_MEMORY_NAME, __malloc_chunk));      \
-    FIO_LOG_DEBUG2("MEMORY CACHE-ALLOC allocated %p", ptr);                    \
+    FIO_LOG_DEBUG2("MEMORY CHUNK-ALLOC allocated      %p", ptr);               \
   } while (0);
 #define FIO_MEMORY_ON_CHUNK_FREE(ptr)                                          \
   do {                                                                         \
     FIO_LEAK_COUNTER_ON_FREE(FIO_NAME(FIO_MEMORY_NAME, __malloc_chunk));       \
-    FIO_LOG_DEBUG2("MEMORY CACHE-DEALLOC de-allocated %p", ptr);               \
+    FIO_LOG_DEBUG2("MEMORY CHUNK-DEALLOC de-allocated %p", ptr);               \
   } while (0);
 #define FIO_MEMORY_ON_CHUNK_CACHE(ptr)                                         \
   do {                                                                         \
-    FIO_LOG_DEBUG2("MEMORY CACHE-DEALLOC placed %p in cache", ptr);            \
+    FIO_LOG_DEBUG2("MEMORY CACHE-PUSH placed          %p in cache", ptr);      \
   } while (0);
 #define FIO_MEMORY_ON_CHUNK_UNCACHE(ptr)                                       \
   do {                                                                         \
-    FIO_LOG_DEBUG2("MEMORY CACHE-ALLOC retrieved %p from cache", ptr);         \
+    FIO_LOG_DEBUG2("MEMORY CACHE-POP retrieved        %p from cache", ptr);    \
   } while (0);
 
 #define FIO_MEMORY_ON_BLOCK_RESET_IN_LOCK(ptr, blk)                            \
@@ -13076,7 +14119,7 @@ FIO_SFUNC FIO_NAME(FIO_MEMORY_NAME, __mem_arena_s) *
                    "          Consider recompiling with more arenas.");        \
     warning_printed = 1;                                                       \
   } while (0)
-#else
+#else /* !DEBUG || FIO_MEMORY_ARENA_COUNT <= 0 */
 #define FIO___MEMORY_ARENA_LOCK_WARNING()
 #endif
   /** thread arena value */
@@ -13088,9 +14131,9 @@ FIO_SFUNC FIO_NAME(FIO_MEMORY_NAME, __mem_arena_s) *
       void *p;
       fio_thread_t t;
     } u = {.t = fio_thread_current()};
-    arena_index = fio_risky_ptr(u.p) %
+    arena_index = (fio_risky_ptr(u.p) & 127) %
                   FIO_NAME(FIO_MEMORY_NAME, __mem_state)->arena_count;
-#if defined(DEBUG) && 0
+#if (defined(DEBUG) && 0)
     static void *pthread_last = NULL;
     if (pthread_last != u.p) {
       FIO_LOG_DEBUG(
@@ -13190,10 +14233,10 @@ FIO_IFUNC size_t FIO_NAME(FIO_MEMORY_NAME, __mem_ptr2index)(
 /* *****************************************************************************
 Allocator State Initialization & Cleanup
 ***************************************************************************** */
-#define FIO_MEMORY_STATE_SIZE(arean_count)                                     \
+#define FIO_MEMORY_STATE_SIZE(arena_count)                                     \
   FIO_MEM_BYTES2PAGES(                                                         \
       (sizeof(*FIO_NAME(FIO_MEMORY_NAME, __mem_state)) +                       \
-       (sizeof(FIO_NAME(FIO_MEMORY_NAME, __mem_arena_s)) * (arean_count))))
+       (sizeof(FIO_NAME(FIO_MEMORY_NAME, __mem_arena_s)) * (arena_count))))
 
 /* function declarations for functions called during cleanup */
 FIO_IFUNC void FIO_NAME(FIO_MEMORY_NAME, __mem_chunk_dealloc)(
@@ -13320,37 +14363,41 @@ FIO_CONSTRUCTOR(FIO_NAME(FIO_MEMORY_NAME, __mem_state_setup)) {
   /* allocate the state machine */
   {
 #if FIO_MEMORY_ARENA_COUNT > 0
-    size_t const arean_count = FIO_MEMORY_ARENA_COUNT;
+    size_t const arena_count = FIO_MEMORY_ARENA_COUNT;
 #else
-    size_t arean_count = FIO_MEMORY_ARENA_COUNT_FALLBACK;
+    size_t arena_count = FIO_MEMORY_ARENA_COUNT_FALLBACK;
 #ifdef _SC_NPROCESSORS_ONLN
-    arean_count = sysconf(_SC_NPROCESSORS_ONLN);
-    if (arean_count == (size_t)-1UL)
-      arean_count = FIO_MEMORY_ARENA_COUNT_FALLBACK;
+    arena_count = sysconf(_SC_NPROCESSORS_ONLN);
+    if (arena_count == (size_t)-1UL)
+      arena_count = FIO_MEMORY_ARENA_COUNT_FALLBACK;
     else /* arenas !> threads (birthday) */
-      arean_count = (arean_count << 1) + 2;
-#else
+      arena_count = (arena_count << 1) + 2;
+#else /* FIO_MEMORY_ARENA_COUNT <= 0 */
 #if _MSC_VER || __MINGW32__
     /* https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/ns-sysinfoapi-system_info
      */
     SYSTEM_INFO win_system_info;
     GetSystemInfo(&win_system_info);
-    arean_count = (size_t)win_system_info.dwNumberOfProcessors;
+    arena_count = (size_t)win_system_info.dwNumberOfProcessors;
 #else
 #warning Dynamic CPU core count is unavailable - assuming FIO_MEMORY_ARENA_COUNT_FALLBACK cores.
 #endif
 #endif /* _SC_NPROCESSORS_ONLN */
+#if FIO_MEMORY_ARENA_COUNT < -1
+    arena_count = arena_count / (0 - FIO_MEMORY_ARENA_COUNT);
+#endif
+    if (arena_count >= FIO_MEMORY_ARENA_COUNT_MAX)
+      arena_count = FIO_MEMORY_ARENA_COUNT_MAX;
+    if (!arena_count)
+      arena_count = 1;
 
-    if (arean_count >= FIO_MEMORY_ARENA_COUNT_MAX)
-      arean_count = FIO_MEMORY_ARENA_COUNT_MAX;
+#endif /* FIO_MEMORY_ARENA_COUNT <= 0 */
 
-#endif /* FIO_MEMORY_ARENA_COUNT > 0 */
-
-    const size_t s = FIO_MEMORY_STATE_SIZE(arean_count);
+    const size_t s = FIO_MEMORY_STATE_SIZE(arena_count);
     FIO_NAME(FIO_MEMORY_NAME, __mem_state) =
         (FIO_NAME(FIO_MEMORY_NAME, __mem_state_s *))FIO_MEM_SYS_ALLOC(s, 0);
     FIO_ASSERT_ALLOC(FIO_NAME(FIO_MEMORY_NAME, __mem_state));
-    FIO_NAME(FIO_MEMORY_NAME, __mem_state)->arena_count = arean_count;
+    FIO_NAME(FIO_MEMORY_NAME, __mem_state)->arena_count = arena_count;
   }
   FIO_NAME(FIO_MEMORY_NAME, __mem_state)->blocks =
       FIO_LIST_INIT(FIO_NAME(FIO_MEMORY_NAME, __mem_state)->blocks);
@@ -13991,6 +15038,7 @@ SFUNC void FIO_NAME(FIO_MEMORY_NAME, malloc_print_settings)(void) {
                    "\t* allocation units per block:               %zu units\n"
                    "\t* arena per-allocation limit:               %zu bytes\n"
                    "\t* local per-allocation limit (before mmap): %zu bytes\n"
+                   "\t* allocation alignment (non-zero):          %zu bytes\n"
                    "\t* malloc(0) pointer:                        %p\n"
                    "\t* always initializes memory  (zero-out):    %s\n"
                    "\t* " FIO_MEMORY_LOCK_NAME " locking system\n",
@@ -14004,6 +15052,7 @@ SFUNC void FIO_NAME(FIO_MEMORY_NAME, malloc_print_settings)(void) {
       (size_t)FIO_MEMORY_UNITS_PER_BLOCK,
       (size_t)FIO_MEMORY_BLOCK_ALLOC_LIMIT,
       (size_t)FIO_MEMORY_ALLOC_LIMIT,
+      (size_t)FIO_MEMORY_ALIGN_SIZE,
       FIO_MEMORY_MALLOC_ZERO_POINTER,
       (FIO_MEMORY_INITIALIZE_ALLOCATIONS ? "true" : "false"));
 }
@@ -14635,8 +15684,8 @@ Memory pool cleanup
 #undef FIO_MEMORY_BLOCKS_PER_ALLOCATION_LOG
 #undef FIO_MEMORY_BLOCKS_PER_ALLOCATION
 #undef FIO_MEMORY_ENABLE_BIG_ALLOC
-#undef FIO_MEMORY_ARENA_COUNT_FALLBACK
-#undef FIO_MEMORY_ARENA_COUNT_MAX
+// #undef FIO_MEMORY_ARENA_COUNT_FALLBACK
+// #undef FIO_MEMORY_ARENA_COUNT_MAX
 #undef FIO_MEMORY_WARMUP
 
 #undef FIO_MEMORY_LOCK_NAME
@@ -14731,7 +15780,7 @@ Polling API
 typedef struct fio_poll_s fio_poll_s;
 
 typedef struct {
-  /** callback for when data is availabl in the incoming buffer. */
+  /** callback for when data is available in the incoming buffer. */
   void (*on_data)(void *udata);
   /** callback for when the outgoing buffer allows a call to `write`. */
   void (*on_ready)(void *udata);
@@ -16381,18 +17430,21 @@ Stream Implementation - inlined static functions
 
 /* do we have a constructor? */
 #ifndef FIO_REF_CONSTRUCTOR_ONLY
+FIO_LEAK_COUNTER_DEF(fio_stream)
 /* Allocates a new object on the heap and initializes it's memory. */
 FIO_IFUNC fio_stream_s *fio_stream_new(void) {
   fio_stream_s *s = (fio_stream_s *)FIO_MEM_REALLOC_(NULL, 0, sizeof(*s), 0);
   if (s) {
     *s = (fio_stream_s)FIO_STREAM_INIT(s[0]);
   }
+  FIO_LEAK_COUNTER_ON_ALLOC(fio_stream);
   return s;
 }
 /* Frees any internal data AND the object's container! */
 FIO_IFUNC int fio_stream_free(fio_stream_s *s) {
   fio_stream_destroy(s);
   FIO_MEM_FREE_(s, sizeof(*s));
+  FIO_LEAK_COUNTER_ON_FREE(fio_stream);
   return 0;
 }
 #endif /* FIO_REF_CONSTRUCTOR_ONLY */
@@ -16541,7 +17593,7 @@ SFUNC fio_stream_packet_s *fio_stream_pack_data(void *buf,
       tmp->next = p;
       em = (fio_stream_packet_embd_s *)(tmp + 1);
       em->type = FIO_PACKET_TYPE_EMBEDDED;
-      em->length = slice;
+      em->length = (uint32_t)slice;
       FIO_MEMCPY(em->buf, (char *)buf + offset + (len - slice), slice);
       p = tmp;
       len -= slice;
@@ -16581,7 +17633,7 @@ SFUNC fio_stream_packet_s *fio_stream_pack_fd(int fd,
                                               uint8_t keep_open) {
   fio_stream_packet_s *p = NULL;
   fio_stream_packet_fd_s *f;
-  if (fd < 0)
+  if ((unsigned)(fd + 1) < 2)
     goto no_file;
 
   if (!len) {
@@ -16973,7 +18025,7 @@ SFUNC int fio_string_write2(fio_str_info_s *restrict dest,
 #define FIO_STRING_WRITE_STR1(str_)                                            \
   ((fio_string_write_s){                                                       \
       .klass = 1,                                                              \
-      .info.str = {.len = FIO_STRLEN((str_)), .buf = (str_)}})
+      .info.str = {.len = (size_t)FIO_STRLEN((str_)), .buf = (str_)}})
 
 /** A macro to add a String with known length to `fio_string_write2`. */
 #define FIO_STRING_WRITE_STR2(str_, len_)                                      \
@@ -17196,7 +18248,7 @@ FIO_IFUNC size_t fio_string_capa4len(size_t new_len);
 /** Default reallocation callback implementation using the default allocator */
 #define FIO_STRING_REALLOC fio_string_default_reallocate
 /** Default reallocation callback for memory that mustn't be freed. */
-#define FIO_STRING_ALLOC_COPY fio_string_default_copy_and_reallocate
+#define FIO_STRING_ALLOC_COPY fio_string_default_allocate_copy
 /** default allocator for the fio_keystr_s string data.. */
 #define FIO_STRING_ALLOC_KEY fio_string_default_key_alloc
 /** Frees memory that was allocated with the default callbacks. */
@@ -17213,8 +18265,8 @@ FIO_IFUNC size_t fio_string_capa4len(size_t new_len);
 /** default reallocation callback implementation. */
 SFUNC int fio_string_default_reallocate(fio_str_info_s *dst, size_t len);
 /** default reallocation callback for memory that mustn't be freed. */
-SFUNC int fio_string_default_copy_and_reallocate(fio_str_info_s *dest,
-                                                 size_t new_capa);
+SFUNC int fio_string_default_allocate_copy(fio_str_info_s *dest,
+                                           size_t new_capa);
 /** frees memory that was allocated with the default callbacks. */
 SFUNC void fio_string_default_free(void *);
 /** frees memory that was allocated with the default callbacks. */
@@ -17228,12 +18280,13 @@ SFUNC void fio_string_default_free_noop2(fio_str_info_s str);
 SFUNC void *fio_string_default_key_alloc(size_t len);
 /** frees a fio_keystr_s memory that was allocated with the default callback. */
 SFUNC void fio_string_default_free_key(void *, size_t);
+
 /* *****************************************************************************
 UTF-8 Support
 ***************************************************************************** */
 
 /** Returns 1 if the String is UTF-8 valid and 0 if not. */
-SFUNC size_t fio_string_utf8_valid(fio_str_info_s str);
+SFUNC bool fio_string_utf8_valid(fio_str_info_s str);
 
 /** Returns the String's length in UTF-8 characters or 0 if invalid. */
 SFUNC size_t fio_string_utf8_len(fio_str_info_s str);
@@ -17433,6 +18486,8 @@ FIO_SFUNC void fio_keystr_destroy(fio_keystr_s *key,
 FIO_IFUNC int fio_keystr_is_eq(fio_keystr_s a, fio_keystr_s b);
 /** Compares a Key String to any String - used internally by the hash map. */
 FIO_IFUNC int fio_keystr_is_eq2(fio_keystr_s a_, fio_str_info_s b);
+/** Compares a Key String to any String - used internally by the hash map. */
+FIO_IFUNC int fio_keystr_is_eq3(fio_keystr_s a_, fio_buf_info_s b);
 /** Returns a good-enough `fio_keystr_s` risky hash. */
 FIO_IFUNC uint64_t fio_keystr_hash(fio_keystr_s a);
 
@@ -17543,34 +18598,16 @@ FIO_IFUNC void fio_bstr_free(char *bstr) {
 
 /** internal helper - sets the length of the fio_bstr. */
 FIO_IFUNC char *fio_bstr___len_set(char *bstr, size_t len) {
-  if (!bstr)
+  if (FIO_UNLIKELY(!bstr))
     return bstr;
-  if (len >= 0xFFFFFFFFULL)
-    return bstr;
+  // if (FIO_UNLIKELY(len >= 0xFFFFFFFFULL))
+  //   return bstr;
   bstr[(FIO___BSTR_META(bstr)->len = (uint32_t)len)] = 0;
   return bstr;
 }
 
-/** internal helper to make unique before mutation */
-FIO_SFUNC char *fio_bstr___make_unique(char *bstr) {
-  if (!bstr)
-    return bstr;
-  fio___bstr_meta_s *meta = FIO___BSTR_META(bstr);
-  if (!meta->ref)
-    return bstr;
-  fio_str_info_s i = fio_bstr_info(bstr);
-  i.capa = 0;
-  if (i.len)
-    fio_bstr_reallocate(&i, i.len);
-  else
-    i.buf = NULL;
-  fio_bstr_free(bstr);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
 /** Reserves `len` for future `write` operations (used to minimize realloc). */
 FIO_IFUNC char *fio_bstr_reserve(char *bstr, size_t len) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   if (i.len + len < i.capa)
     return bstr;
@@ -17580,10 +18617,16 @@ FIO_IFUNC char *fio_bstr_reserve(char *bstr, size_t len) {
 
 /** Returns information about the fio_bstr. */
 FIO_IFUNC fio_str_info_s fio_bstr_info(const char *bstr) {
-  fio___bstr_meta_s mem[1] = {{0}};
-  fio___bstr_meta_s *meta_map[2] = {FIO___BSTR_META(bstr), mem};
-  fio___bstr_meta_s *meta = meta_map[!bstr];
-  return FIO_STR_INFO3((char *)bstr, meta->len, meta->capa);
+  fio_str_info_s r = {0};
+  r.buf = (char *)bstr;
+  /* please emit conditional mov and not an if branches */
+  if (bstr)
+    r.len = FIO___BSTR_META(bstr)->len;
+  if (bstr)
+    r.capa = FIO___BSTR_META(bstr)->capa;
+  if (bstr && FIO___BSTR_META(bstr)->ref)
+    r.capa = 1;
+  return r;
 }
 
 /** Returns information about the fio_bstr. */
@@ -17604,11 +18647,15 @@ FIO_IFUNC size_t fio_bstr_len(const char *bstr) {
 
 /** Sets the length of the fio_bstr. `bstr` MUST NOT be NULL. */
 FIO_IFUNC char *fio_bstr_len_set(char *bstr, size_t len) {
-  bstr = fio_bstr___make_unique(bstr);
-  if (!bstr)
-    return bstr;
+  fio___bstr_meta_s m[2] = {0};
   fio___bstr_meta_s *meta = FIO___BSTR_META(bstr);
-  meta->len = len < ((size_t)(meta->capa)) ? (uint32_t)len : meta->len;
+  if (!bstr)
+    meta = m;
+  if (FIO_UNLIKELY(meta->ref || meta->capa <= len)) {
+    fio_str_info_s i = fio_bstr_info(bstr);
+    fio_bstr_reallocate(&i, len);
+    bstr = i.buf;
+  }
   return fio_bstr___len_set(bstr, len);
 }
 
@@ -17616,7 +18663,6 @@ FIO_IFUNC char *fio_bstr_len_set(char *bstr, size_t len) {
 FIO_IFUNC char *fio_bstr_write(char *bstr,
                                const void *restrict src,
                                size_t len) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write(&i, fio_bstr_reallocate, src, len);
   return fio_bstr___len_set(i.buf, i.len);
@@ -17628,7 +18674,6 @@ FIO_IFUNC char *fio_bstr_replace(char *bstr,
                                  size_t overwrite_len,
                                  const void *src,
                                  size_t len) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_replace(&i,
                      fio_bstr_reallocate,
@@ -17642,7 +18687,6 @@ FIO_IFUNC char *fio_bstr_replace(char *bstr,
 /** Writes data to a fio_bstr, returning the address of the new fio_bstr. */
 FIO_IFUNC char *fio_bstr_write2 FIO_NOOP(char *bstr,
                                          const fio_string_write_s srcs[]) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write2 FIO_NOOP(&i, fio_bstr_reallocate, srcs);
   return fio_bstr___len_set(i.buf, i.len);
@@ -17650,35 +18694,30 @@ FIO_IFUNC char *fio_bstr_write2 FIO_NOOP(char *bstr,
 
 /** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
 FIO_IFUNC char *fio_bstr_write_i(char *bstr, int64_t num) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write_i(&i, fio_bstr_reallocate, num);
   return fio_bstr___len_set(i.buf, i.len);
 }
 /** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
 FIO_IFUNC char *fio_bstr_write_u(char *bstr, uint64_t num) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write_u(&i, fio_bstr_reallocate, num);
   return fio_bstr___len_set(i.buf, i.len);
 }
 /** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
 FIO_IFUNC char *fio_bstr_write_hex(char *bstr, uint64_t num) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write_hex(&i, fio_bstr_reallocate, num);
   return fio_bstr___len_set(i.buf, i.len);
 }
 /** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
 FIO_IFUNC char *fio_bstr_write_bin(char *bstr, uint64_t num) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write_bin(&i, fio_bstr_reallocate, num);
   return fio_bstr___len_set(i.buf, i.len);
 }
 /** Writes escaped data to a fio_bstr, returning its new address. */
 FIO_IFUNC char *fio_bstr_write_escape(char *bstr, const void *src, size_t len) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write_escape(&i, fio_bstr_reallocate, src, len);
   return fio_bstr___len_set(i.buf, i.len);
@@ -17688,7 +18727,6 @@ FIO_IFUNC char *fio_bstr_write_escape(char *bstr, const void *src, size_t len) {
 FIO_IFUNC char *fio_bstr_write_unescape(char *bstr,
                                         const void *src,
                                         size_t len) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write_unescape(&i, fio_bstr_reallocate, src, len);
   return fio_bstr___len_set(i.buf, i.len);
@@ -17699,7 +18737,6 @@ FIO_IFUNC char *fio_bstr_write_base64enc(char *bstr,
                                          const void *src,
                                          size_t len,
                                          uint8_t url_encoded) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write_base64enc(&i, fio_bstr_reallocate, src, len, url_encoded);
   return fio_bstr___len_set(i.buf, i.len);
@@ -17709,7 +18746,6 @@ FIO_IFUNC char *fio_bstr_write_base64enc(char *bstr,
 FIO_IFUNC char *fio_bstr_write_base64dec(char *bstr,
                                          const void *src,
                                          size_t len) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write_base64dec(&i, fio_bstr_reallocate, src, len);
   return fio_bstr___len_set(i.buf, i.len);
@@ -17719,7 +18755,6 @@ FIO_IFUNC char *fio_bstr_write_base64dec(char *bstr,
 FIO_IFUNC char *fio_bstr_write_url_enc(char *bstr,
                                        const void *src,
                                        size_t len) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write_url_enc(&i, fio_bstr_reallocate, src, len);
   return fio_bstr___len_set(i.buf, i.len);
@@ -17729,7 +18764,6 @@ FIO_IFUNC char *fio_bstr_write_url_enc(char *bstr,
 FIO_IFUNC char *fio_bstr_write_url_dec(char *bstr,
                                        const void *src,
                                        size_t len) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write_url_dec(&i, fio_bstr_reallocate, src, len);
   return fio_bstr___len_set(i.buf, i.len);
@@ -17739,7 +18773,6 @@ FIO_IFUNC char *fio_bstr_write_url_dec(char *bstr,
 FIO_IFUNC char *fio_bstr_write_html_escape(char *bstr,
                                            const void *src,
                                            size_t len) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write_html_escape(&i, fio_bstr_reallocate, src, len);
   return fio_bstr___len_set(i.buf, i.len);
@@ -17748,7 +18781,6 @@ FIO_IFUNC char *fio_bstr_write_html_escape(char *bstr,
 FIO_IFUNC char *fio_bstr_write_html_unescape(char *bstr,
                                              const void *src,
                                              size_t len) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_write_html_unescape(&i, fio_bstr_reallocate, src, len);
   return fio_bstr___len_set(i.buf, i.len);
@@ -17757,7 +18789,6 @@ FIO_IFUNC char *fio_bstr_write_html_unescape(char *bstr,
 FIO_IFUNC FIO___PRINTF_STYLE(2, 0) char *fio_bstr_printf(char *bstr,
                                                          const char *format,
                                                          ...) {
-  bstr = fio_bstr___make_unique(bstr);
   va_list argv;
   va_start(argv, format);
   fio_str_info_s i = fio_bstr_info(bstr);
@@ -17771,7 +18802,6 @@ FIO_IFUNC char *fio_bstr_readfd(char *bstr,
                                 int fd,
                                 intptr_t start_at,
                                 intptr_t limit) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_readfd(&i, fio_bstr_reallocate, fd, start_at, limit);
   return fio_bstr___len_set(i.buf, i.len);
@@ -17781,7 +18811,6 @@ FIO_IFUNC char *fio_bstr_readfile(char *bstr,
                                   const char *filename,
                                   intptr_t start_at,
                                   intptr_t limit) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_readfile(&i, fio_bstr_reallocate, filename, start_at, limit);
   return fio_bstr___len_set(i.buf, i.len);
@@ -17793,7 +18822,6 @@ FIO_IFUNC char *fio_bstr_getdelim_file(char *bstr,
                                        intptr_t start_at,
                                        char delim,
                                        size_t limit) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_getdelim_file(&i,
                            fio_bstr_reallocate,
@@ -17810,7 +18838,6 @@ FIO_IFUNC char *fio_bstr_getdelim_fd(char *bstr,
                                      intptr_t start_at,
                                      char delim,
                                      size_t limit) {
-  bstr = fio_bstr___make_unique(bstr);
   fio_str_info_s i = fio_bstr_info(bstr);
   fio_string_getdelim_fd(&i, fio_bstr_reallocate, fd, start_at, delim, limit);
   return fio_bstr___len_set(i.buf, i.len);
@@ -17835,7 +18862,6 @@ FIO_SFUNC int fio_bstr_is_eq2buf(const char *a_, fio_buf_info_s b) {
 /* *****************************************************************************
 Key String Type - binary String container for Hash Maps and Arrays
 ***************************************************************************** */
-
 FIO_LEAK_COUNTER_DEF(fio_keystr_s)
 
 /* key string type implementation */
@@ -17846,7 +18872,7 @@ struct fio_keystr_s {
   const char *buf;
 };
 
-/** returns the Key String. NOTE: Key Strings are NOT NUL TERMINATED! */
+/** returns the Key String. */
 FIO_IFUNC fio_buf_info_s fio_keystr_buf(fio_keystr_s *str) {
   fio_buf_info_s r;
   if ((str->info + 1) > 1) {
@@ -17856,7 +18882,7 @@ FIO_IFUNC fio_buf_info_s fio_keystr_buf(fio_keystr_s *str) {
   r = (fio_buf_info_s){.len = str->len, .buf = (char *)str->buf};
   return r;
 }
-/** returns the Key String. NOTE: Key Strings are NOT NUL TERMINATED! */
+/** returns the Key String. */
 FIO_IFUNC fio_str_info_s fio_keystr_info(fio_keystr_s *str) {
   fio_str_info_s r;
   if ((str->info + 1) > 1) {
@@ -17881,7 +18907,7 @@ FIO_IFUNC fio_keystr_s fio_keystr_tmp(const char *buf, uint32_t len) {
   return r;
 }
 
-/** Returns a copy of `fio_keystr_s` - used internally by the hash map. */
+/** Returns a copy of `fio_keystr_s`. */
 FIO_SFUNC fio_keystr_s fio_keystr_init(fio_str_info_s str,
                                        void *(*alloc_func)(size_t len)) {
   fio_keystr_s r = {0};
@@ -17909,7 +18935,7 @@ FIO_SFUNC fio_keystr_s fio_keystr_init(fio_str_info_s str,
   return r;
 no_mem:
   FIO_LOG_FATAL("fio_keystr_init allocation failed - results undefined!!!");
-  r = fio_keystr_tmp(str.buf, str.len);
+  r = fio_keystr_tmp(str.buf, (uint32_t)str.len);
   return r;
 }
 /** Destroys a copy of `fio_keystr_s` - used internally by the hash map. */
@@ -17932,6 +18958,11 @@ FIO_IFUNC int fio_keystr_is_eq(fio_keystr_s a_, fio_keystr_s b_) {
 FIO_IFUNC int fio_keystr_is_eq2(fio_keystr_s a_, fio_str_info_s b) {
   fio_str_info_s a = fio_keystr_info(&a_);
   return FIO_STR_INFO_IS_EQ(a, b);
+}
+/** Compares a Key String to any String - used internally by the hash map. */
+FIO_IFUNC int fio_keystr_is_eq3(fio_keystr_s a_, fio_buf_info_s b) {
+  fio_buf_info_s a = fio_keystr_buf(&a_);
+  return FIO_BUF_INFO_IS_EQ(a, b);
 }
 
 /** Returns a good-enough `fio_keystr_s` risky hash. */
@@ -17973,8 +19004,7 @@ SFUNC int fio_string_default_reallocate(fio_str_info_s *dest, size_t len) {
   return 0;
 }
 
-SFUNC int fio_string_default_copy_and_reallocate(fio_str_info_s *dest,
-                                                 size_t len) {
+SFUNC int fio_string_default_allocate_copy(fio_str_info_s *dest, size_t len) {
   len = fio_string_capa4len(len);
   void *tmp = FIO_MEM_REALLOC_(NULL, 0, len, 0);
   if (!tmp)
@@ -18117,146 +19147,23 @@ SFUNC int FIO___PRINTF_STYLE(3, 4)
 /* *****************************************************************************
 UTF-8 Support
 ***************************************************************************** */
-/**
- * Maps the first 5 bits in a byte (0b11111xxx) to a UTF-8 codepoint length.
- *
- * Codepoint length 0 == error.
- *
- * The first valid length can be any value between 1 to 4.
- *
- * A continuation byte (second, third or forth) valid length marked as 5.
- *
- * To map was populated using the following Ruby script:
- *
- *      map = []; 32.times { map << 0 }; (0..0b1111).each {|i| map[i] = 1} ;
- *      (0b10000..0b10111).each {|i| map[i] = 5} ;
- *      (0b11000..0b11011).each {|i| map[i] = 2} ;
- *      (0b11100..0b11101).each {|i| map[i] = 3} ;
- *      map[0b11110] = 4; map;
- */
-static __attribute__((unused)) uint8_t fio__string_utf8_map[] = {
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    5, 5, 5, 5, 5, 5, 5, 5, 2, 2, 2, 2, 3, 3, 4, 0};
 
 /** Returns 0 if non-UTF-8 or returns 1-4 (UTF-8 if a valid char). */
 SFUNC size_t fio_string_utf8_valid_code_point(const void *c, size_t buf_len) {
-  uint8_t l = fio__string_utf8_map[(*(uint8_t *)c) >> 3];
-  if (buf_len < l)
-    return 0;
-  switch (l) {
-  case 4:
-    if (fio__string_utf8_map[(*((uint8_t *)c + 3)) >> 3] != 5)
-      return 0; /* fall through */
-  case 3:
-    if (fio__string_utf8_map[(*((uint8_t *)c + 2)) >> 3] != 5)
-      return 0; /* fall through */
-  case 2:
-    if (fio__string_utf8_map[(*((uint8_t *)c + 1)) >> 3] != 5)
-      return 0; /* fall through */
-  case 1: return l;
-  }
-  return 0;
+  size_t l = fio_utf8_char_len((uint8_t *)c);
+  l &= 0U - (buf_len >= l);
+  return l;
 }
-
-/** Encodes `u` in UTF-8 format, writing it to `dest`. */
-FIO_IFUNC size_t fio___string_utf8_code_point_len(size_t u) {
-  if (u < 128) {
-    return 1;
-  } else if (u < 2048) {
-    return 2;
-  } else if (u < 65536) {
-    return 3;
-  } else {
-    return 4;
-  }
-}
-
-/** Encodes `u` in UTF-8 format, writing it to `dest`. */
-FIO_IFUNC size_t fio___string_utf8_write(uint8_t *dest, size_t u) {
-  size_t at = 0;
-  if (u < 128) {
-    dest[at++] = u;
-  } else if (u < 2048) {
-    dest[at++] = 192 | (u >> 6);
-    dest[at++] = 128 | (u & 63);
-  } else if (u < 65536) {
-    dest[at++] = 224 | (u >> 12);
-    dest[at++] = 128 | ((u >> 6) & 63);
-    dest[at++] = 128 | (u & 63);
-  } else {
-    dest[at++] = 240 | ((u >> 18) & 7);
-    dest[at++] = 128 | ((u >> 12) & 63);
-    dest[at++] = 128 | ((u >> 6) & 63);
-    dest[at++] = 128 | (u & 63);
-  }
-  return at;
-}
-
-/**
- * Advances the `ptr` by one utf-8 character, placing the value of the UTF-8
- * character into the i32 variable (which must be a signed integer with 32bits
- * or more). On error, `i32` will be equal to `-1` and `ptr` will not step
- * forwards.
- *
- * The `end` value provides overflow protection.
- */
-#define FIO_STR_UTF8_CODE_POINT(ptr, end, i32)                                 \
-  do {                                                                         \
-    switch (fio__string_utf8_map[((uint8_t *)(ptr))[0] >> 3]) {                \
-    case 1:                                                                    \
-      (i32) = ((uint8_t *)(ptr))[0];                                           \
-      ++(ptr);                                                                 \
-      break;                                                                   \
-    case 2:                                                                    \
-      if (((ptr) + 2 > (end)) ||                                               \
-          fio__string_utf8_map[((uint8_t *)(ptr))[1] >> 3] != 5) {             \
-        (i32) = -1;                                                            \
-        break;                                                                 \
-      }                                                                        \
-      (i32) =                                                                  \
-          ((((uint8_t *)(ptr))[0] & 31) << 6) | (((uint8_t *)(ptr))[1] & 63);  \
-      (ptr) += 2;                                                              \
-      break;                                                                   \
-    case 3:                                                                    \
-      if (((ptr) + 3 > (end)) ||                                               \
-          fio__string_utf8_map[((uint8_t *)(ptr))[1] >> 3] != 5 ||             \
-          fio__string_utf8_map[((uint8_t *)(ptr))[2] >> 3] != 5) {             \
-        (i32) = -1;                                                            \
-        break;                                                                 \
-      }                                                                        \
-      (i32) = ((((uint8_t *)(ptr))[0] & 15) << 12) |                           \
-              ((((uint8_t *)(ptr))[1] & 63) << 6) |                            \
-              (((uint8_t *)(ptr))[2] & 63);                                    \
-      (ptr) += 3;                                                              \
-      break;                                                                   \
-    case 4:                                                                    \
-      if (((ptr) + 4 > (end)) ||                                               \
-          fio__string_utf8_map[((uint8_t *)(ptr))[1] >> 3] != 5 ||             \
-          fio__string_utf8_map[((uint8_t *)(ptr))[2] >> 3] != 5 ||             \
-          fio__string_utf8_map[((uint8_t *)(ptr))[3] >> 3] != 5) {             \
-        (i32) = -1;                                                            \
-        break;                                                                 \
-      }                                                                        \
-      (i32) = ((((uint8_t *)(ptr))[0] & 7) << 18) |                            \
-              ((((uint8_t *)(ptr))[1] & 63) << 12) |                           \
-              ((((uint8_t *)(ptr))[2] & 63) << 6) |                            \
-              (((uint8_t *)(ptr))[3] & 63);                                    \
-      (ptr) += 4;                                                              \
-      break;                                                                   \
-    default: (i32) = -1; break;                                                \
-    }                                                                          \
-  } while (0);
 
 /** Returns 1 if the String is UTF-8 valid and 0 if not. */
-SFUNC size_t fio_string_utf8_valid(fio_str_info_s str) {
+SFUNC bool fio_string_utf8_valid(fio_str_info_s str) {
   if (!str.len)
     return 1;
   char *const end = str.buf + str.len;
-  int32_t c = 0;
-  do {
-    FIO_STR_UTF8_CODE_POINT(str.buf, end, c);
-  } while (c > 0 && str.buf < end);
-  return str.buf == end && c >= 0;
+  size_t tmp;
+  while ((tmp = fio_utf8_char_len(str.buf)) && ((str.buf += tmp) < end))
+    ;
+  return str.buf == end;
 }
 
 /** Returns the String's length in UTF-8 characters. */
@@ -18264,16 +19171,13 @@ SFUNC size_t fio_string_utf8_len(fio_str_info_s str) {
   if (!str.len)
     return 0;
   char *end = str.buf + str.len;
-  size_t utf8len = 0;
-  int32_t c = 0;
+  size_t utf8len = 0, tmp;
   do {
+    tmp = fio_utf8_char_len(str.buf);
+    str.buf += tmp;
     ++utf8len;
-    FIO_STR_UTF8_CODE_POINT(str.buf, end, c);
-  } while (c > 0 && str.buf < end);
-  if (str.buf != end || c == -1) {
-    /* invalid */
-    return 0;
-  }
+  } while (tmp && str.buf < end);
+  utf8len &= 0U - (str.buf == end);
   return utf8len;
 }
 
@@ -18294,79 +19198,48 @@ SFUNC size_t fio_string_utf8_len(fio_str_info_s str) {
 SFUNC int fio_string_utf8_select(fio_str_info_s str,
                                  intptr_t *pos,
                                  size_t *len) {
-  int32_t c = 0;
-  char *p = str.buf;
-  char *const end = str.buf + str.len;
-  size_t start;
-
-  if (!str.buf)
-    goto error;
-  if (!str.len || *pos == -1)
+  if (!pos || !len)
+    return -1;
+  const uint8_t *p = (uint8_t *)str.buf;
+  const uint8_t *const end = p + str.len;
+  size_t start, clen;
+  if (!str.len)
     goto at_end;
-
-  if (*pos) {
-    if ((*pos) > 0) {
-      start = *pos;
-      while (start && p < end && c >= 0) {
-        FIO_STR_UTF8_CODE_POINT(p, end, c);
-        --start;
-      }
-      if (c == -1)
-        goto error;
-      if (start || p >= end)
-        goto at_end;
-      *pos = p - str.buf;
-    } else {
-      /* walk backwards */
-      p = str.buf + str.len - 1;
-      c = 0;
-      ++*pos;
-      do {
-        switch (fio__string_utf8_map[((uint8_t *)p)[0] >> 3]) {
-        case 5: ++c; break;
-        case 4:
-          if (c != 3)
-            goto error;
-          c = 0;
-          ++(*pos);
-          break;
-        case 3:
-          if (c != 2)
-            goto error;
-          c = 0;
-          ++(*pos);
-          break;
-        case 2:
-          if (c != 1)
-            goto error;
-          c = 0;
-          ++(*pos);
-          break;
-        case 1:
-          if (c)
-            goto error;
-          ++(*pos);
-          break;
-        default: goto error;
-        }
+  if ((*pos) > 0) {
+    start = *pos;
+    do {
+      clen = fio_utf8_char_len(p);
+      p += clen;
+      --start;
+    } while (clen && start && p < end);
+    if (!clen || p > end)
+      goto error;
+    if (p == end)
+      goto at_end;
+  } else if (*pos < 0) { /* walk backwards */
+    p += str.len;
+    start = 0 - *pos;
+    do {
+      const uint8_t *was = p;
+      --p;
+      while ((*p & 0xC0U) == 0x80U && p > (uint8_t *)str.buf)
         --p;
-      } while (p > str.buf && *pos);
-      if (c)
+      if ((size_t)fio_utf8_char_len_unsafe(*p) != (size_t)(was - p))
         goto error;
-      ++p; /* There's always an extra back-step */
-      *pos = (p - str.buf);
-    }
+    } while (--start && p > (uint8_t *)str.buf);
   }
+  *pos = p - (uint8_t *)str.buf;
 
   /* find end */
   start = *len;
-  while (start && p < end && c >= 0) {
-    FIO_STR_UTF8_CODE_POINT(p, end, c);
+  clen = 1;
+  while (start && p < end && (clen = fio_utf8_char_len(p))) {
+    p += clen;
     --start;
   }
-  if (c == -1 || p > end)
+  if (!clen || p > end)
     goto error;
-  *len = p - (str.buf + (*pos));
+  *len = p - ((uint8_t *)str.buf + (*pos));
   return 0;
 
 at_end:
@@ -18389,7 +19262,7 @@ fio_string_is_greater
  * Note: returns 0 if data in b is bigger than or equal(!).
  */
 SFUNC int fio_string_is_greater_buf(fio_buf_info_s a, fio_buf_info_s b) {
-  const size_t a_len_is_bigger = a.len > b.len;
+  const int a_len_is_bigger = a.len > b.len;
   size_t len = a_len_is_bigger ? b.len : a.len; /* shared length */
   if (a.buf == b.buf)
     return a_len_is_bigger;
@@ -18601,6 +19474,130 @@ truncate:
 }
 
 /* *****************************************************************************
+Escaping / Un-Escaping Primitives (not for encoding)
+***************************************************************************** */
+
+typedef struct {
+  fio_str_info_s *restrict dest;
+  fio_string_realloc_fn reallocate;
+  const void *restrict src;
+  const size_t len;
+  /* moves to the next character (or character sequence) to alter. */
+  const uint8_t *(*next)(const uint8_t *restrict s, const uint8_t *restrict e);
+  /*
+   * `dest` will be NULL when calculating length to be written.
+   *
+   * `*s` is the source data.
+   *
+   * `e` is the end-of-bounds position (src + len).
+   *
+   * Returns the number of characters that would have been written.
+   *
+   * Note: must update `s` to point to the next character after the altered
+   * sequence.
+   */
+  size_t (*diff)(uint8_t *restrict dest,
+                 const uint8_t *restrict *restrict s,
+                 const uint8_t *restrict e);
+  /*
+   * Writes (un)escaped data to `dest`.
+   *
+   * Behaves the same as `diff` only writes data to `dest`.
+   *
+   * `dest` is the same number of bytes as reported by `diff` (or more).
+   */
+  size_t (*write)(uint8_t *restrict dest,
+                  const uint8_t *restrict *restrict s,
+                  const uint8_t *restrict e);
+  /* If `len` of `src` is less then `skip_diff_len`, skips the test. */
+  uint32_t skip_diff_len;
+  /* If set, will not allow a partial write when memory allocation fails. */
+  uint32_t refuse_partial;
+} fio___string_altering_args_s;
+
+/**
+ * Writes an escaped data into the string after un-escaping the data.
+ */
+FIO_IFUNC int fio___string_altering_cycle(
+    const fio___string_altering_args_s args) {
+  int r = 0;
+  if (((long long)args.len < 1) | !args.src | !args.dest)
+    return r;
+  const uint8_t *s = (const uint8_t *)args.src;
+  const uint8_t *e = s + args.len;
+  const uint8_t *p = s;
+  fio_str_info_s d = *args.dest;
+  size_t first_stop = 0;
+  size_t updater = 0;
+  /* we need to allocate memory - limit to result's length */
+  if (d.len + args.len >= d.capa) {
+    updater = (args.len > args.skip_diff_len);
+    size_t written_length = args.len;
+    if (updater) { /* skip memory reduction for small strings */
+      written_length = 0;
+      p = s;
+      for (;;) {
+        const uint8_t *p2 = args.next(p, e);
+        if (!p2)
+          break;
+        written_length += p2 - p;
+        p = p2;
+        first_stop |= (0ULL - updater) & ((p - s) + 1);
+        updater = 0;
+        written_length += args.diff(NULL, &p, e);
+        if (p + 1 > e)
+          break;
+      }
+    }
+    written_length += e - p;
+    /* allocate extra required space. */
+    FIO_ASSERT_DEBUG(written_length > 0, "string (un)escape reduced too much");
+    if (d.len + written_length >= d.capa &&
+        fio_string___write_validate_len(&d, args.reallocate, &written_length)) {
+      r = -1;
+      if (args.refuse_partial)
+        goto finish;
+      e = (const uint8_t *)d.capa - (d.len + 1);
+    }
+  }
+
+  /* copy unescaped head of string (if it's worth our time), saves one memchr */
+  if (((!first_stop) & updater) | (first_stop > 16)) {
+    if (!first_stop)
+      first_stop = (e - s) + 1;
+    --first_stop;
+    FIO_MEMMOVE(d.buf + d.len, s, first_stop);
+    d.len += first_stop;
+    s += first_stop;
+  }
+  p = s;
+
+  /* start copying and un-escaping as needed */
+  while (p < e) {
+    const uint8_t *p2 = args.next(p, e);
+    if (!p2)
+      break;
+    if (p2 - p) {
+      updater = p2 - p;
+      FIO_MEMMOVE(d.buf + d.len, p, updater);
+      d.len += updater;
+    }
+    p = p2;
+    d.len += args.write((uint8_t *)d.buf + d.len, &p, e);
+  }
+  if (p < e) {
+    updater = e - p;
+    FIO_MEMCPY(d.buf + d.len, p, updater);
+    d.len += updater;
+  }
+
+finish:
+  d.buf[d.len] = 0;
+  *args.dest = d;
+  return r;
+}
+
+/* *****************************************************************************
 String C / JSON escaping
 ***************************************************************************** */
 
@@ -18612,264 +19609,262 @@ String C / JSON escaping
  */
 SFUNC int fio_string_write_escape(fio_str_info_s *restrict dest,
                                   fio_string_realloc_fn reallocate,
-                                  const void *src_,
+                                  const void *restrict src,
                                   size_t len) {
+  /* Escaping map, test if bit 64 is set or not. Created using Ruby Script:
+  map = []; 256.times { |i| map << ((i > 126 || i < 35) ? 48.chr : 64.chr)  };
+  map[' '.ord] = 64.chr; map['!'.ord] = 64.chr;
+  ["\b","\f","\n","\r","\t",'\\','"'].each {|c| map[c.ord] = 49.chr };
+  str = map.join(''); puts "static const uint8_t escape_map[256]= " +
+          "\"#{str.slice(0,64)}\"" +
+          "\"#{str.slice(64,64)}\"" +
+          "\"#{str.slice(128,64)}\"" +
+          "\"#{str.slice(192,64)}\";"
+   */
+  static const uint8_t escape_map[256] =
+      "00000000111011000000000000000000@@1@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+      "@@@@@@@@@@@@@@@@@@@@@@@@@@@@1@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@0"
+      "0000000000000000000000000000000000000000000000000000000000000000"
+      "0000000000000000000000000000000000000000000000000000000000000000";
   int r = 0;
-  if ((!len | !src_ | !dest))
+  if ((!len | !src | !dest))
     return r;
-  if (dest->buf + dest->len == (char *)src_)
-    return (r = -1);
-  const uint8_t *src = (const uint8_t *)src_;
-  size_t at = 0;
-  uint8_t set_at = 1;
-  size_t escaped_len = len;
+  size_t extra_space = 0;
+  size_t first_stop = 0;
+  size_t updater = 1;
+  const uint8_t *s = (const uint8_t *)src;
+  const uint8_t *e = s + len;
+  const uint8_t *p = s;
 
-  /* collect escaping requirements */
-  for (size_t i = 0; i < len; ++i) {
-    /* skip valid ascii */
-    if ((src[i] > 34 && src[i] < 127 && src[i] != '\\') || src[i] == '!' ||
-        src[i] == ' ')
+  /* test memory length requirements – unlikely to be avoided (len * 5) */
+  for (; (p < e); ++p) {
+    if ((escape_map[*p] & 64)) /* hope for compiler magic */
       continue;
-    /* skip if valid UTF-8 */
-    {
-      size_t utf_8_valid_len =
-          fio_string_utf8_valid_code_point((void *)(src + i), len - i);
-      if (utf_8_valid_len > 1) {
-        i += utf_8_valid_len - 1;
-        continue;
-      }
+    size_t valid_utf8_len = fio_utf8_char_len(p);
+    if (valid_utf8_len > 1) {
+      p += valid_utf8_len - 1;
+      continue;
     }
-    /* store first instance of character that needs escaping */
-    /* constant time (non-branching) alternative to if(`set_at`) */
-    at ^= ((set_at | (0 - set_at)) & (i ^ at));
-    set_at = 0;
+    first_stop |= (0ULL - updater) & (p - s);
+    updater = 0;
     /* count extra bytes */
-    switch (src[i]) {
-    case '\b': /* fall through */
-    case '\f': /* fall through */
-    case '\n': /* fall through */
-    case '\r': /* fall through */
-    case '\t': /* fall through */
-    case '"':  /* fall through */
-    case '\\': /* fall through */
-    case '/': ++escaped_len; break;
-    default:
-      /* escaping all control characters and non-UTF-8 characters */
-      escaped_len += 3 + ((src[i] < 127) << 1);
-    }
+    ++extra_space; /* the '\' character followed by escape sequence */
+    /* constant-time "if" (bit mask) – known escape or \xFF / \uFFFF escaping */
+    extra_space += (escape_map[*p] - 1) & (3 + ((*p < 127) << 1));
   }
-  /* reserve space and copy any valid "head" */
-  /* the +4 adds room for the usual use case of a following "\", \"" */
-  if ((dest->capa < dest->len + escaped_len + 1) &&
+
+  /* reserve space and copy any valid first_stop */
+  /* the + 3 adds room for the likely use case of JSON: "\",\"" */
+  if ((dest->capa < dest->len + extra_space + len + 1) &&
       (!reallocate ||
-       reallocate(dest, fio_string_capa4len(dest->len + escaped_len + 4)))) {
+       reallocate(dest,
+                  fio_string_capa4len(dest->len + extra_space + len + 3)))) {
     r = -1;
-    len = (dest->capa + len) - (dest->len + escaped_len + 2);
-    if (dest->capa < len + 2)
+    len = dest->capa - (dest->len + 6);
+    if (dest->capa < len + 6)
       return r;
   }
 
-  uint8_t *writer = (uint8_t *)dest->buf + dest->len;
-  /* is escaping required? - simple memcpy if we don't need to escape */
-  if (set_at) {
-    FIO_MEMCPY(writer, src, len);
-    dest->len += len;
-    return r;
+  /* copy unescaped head of string (if it's worth our time) */
+  if (((!first_stop) & updater & (escape_map[*s] == 64)) || first_stop > 16) {
+    if (!first_stop)
+      first_stop = len;
+    FIO_MEMMOVE(dest->buf + dest->len, s, first_stop);
+    dest->len += first_stop;
+    s += first_stop;
   }
-  /* simple memcpy until first char that needs escaping */
-  if (at >= 8) {
-    FIO_MEMCPY(writer, src, at);
-  } else {
-    at = 0;
-  }
-  /* start escaping */
-  for (size_t i = at; i < len; ++i) {
-    /* skip valid ascii */
-    if ((src[i] > 34 && src[i] < 127 && src[i] != '\\') || src[i] == '!' ||
-        src[i] == ' ') {
-      writer[at++] = src[i];
-      continue;
+  p = s;
+
+  /* start copying and escaping as needed */
+  for (;;) {
+    if ((escape_map[*p] & 64)) {
+      for (s = p; (s < e) && (escape_map[*s] & 64); ++s)
+        ; /* hope for compiler magic */
+      updater = s - p;
+      FIO_MEMMOVE(dest->buf + dest->len, p, updater);
+      dest->len += updater;
+      p = s;
     }
-    /* skip valid UTF-8 */
-    switch (fio_string_utf8_valid_code_point((void *)(src + i), len - i)) {
-    case 4: writer[at++] = src[i++]; /* fall through */
-    case 3: writer[at++] = src[i++]; /* fall through */
+    if (p >= e)
+      break;
+    size_t valid_utf8_len = fio_utf8_char_len(p);
+    size_t limit = e - p;
+    if (valid_utf8_len > limit)
+      valid_utf8_len = limit;
+    switch (valid_utf8_len) {
+    case 4: dest->buf[dest->len++] = *p++; /* fall through */
+    case 3: dest->buf[dest->len++] = *p++; /* fall through */
     case 2:
-      writer[at++] = src[i++];
-      writer[at++] = src[i];
+      dest->buf[dest->len++] = *p++; /* fall through */
+      dest->buf[dest->len++] = *p++; /* fall through */
       continue;
+    default: break;
     }
-    /* write escape sequence */
-    writer[at++] = '\\';
-    switch (src[i]) {
-    case '\b': writer[at++] = 'b'; break;
-    case '\f': writer[at++] = 'f'; break;
-    case '\n': writer[at++] = 'n'; break;
-    case '\r': writer[at++] = 'r'; break;
-    case '\t': writer[at++] = 't'; break;
-    case '"': writer[at++] = '"'; break;
-    case '\\': writer[at++] = '\\'; break;
-    case '/': writer[at++] = '/'; break;
+    // FIO_ASSERT(valid_utf8_len < 2, "valid_utf8_len error!");
+    dest->buf[dest->len++] = '\\';
+    uint8_t ec = *p++;
+    switch (ec) {
+    case '\b': dest->buf[dest->len++] = 'b'; continue;
+    case '\f': dest->buf[dest->len++] = 'f'; continue;
+    case '\n': dest->buf[dest->len++] = 'n'; continue;
+    case '\r': dest->buf[dest->len++] = 'r'; continue;
+    case '\t': dest->buf[dest->len++] = 't'; continue;
+    case '\\': dest->buf[dest->len++] = '\\'; continue;
+    case ' ': dest->buf[dest->len++] = ' '; continue;
+    case '"': dest->buf[dest->len++] = '"'; continue;
     default:
+      /* pass through character */
+      first_stop = (ec > 34);
+      dest->buf[dest->len - first_stop] = ec;
       /* escaping all control characters and non-UTF-8 characters */
-      if (src[i] < 127) {
-        writer[at++] = 'u';
-        writer[at++] = '0';
-        writer[at++] = '0';
-        writer[at++] = fio_i2c(src[i] >> 4);
-        writer[at++] = fio_i2c(src[i] & 15);
-      } else {
-        /* non UTF-8 data... encode as hex */
-        writer[at++] = 'x';
-        writer[at++] = fio_i2c(src[i] >> 4);
-        writer[at++] = fio_i2c(src[i] & 15);
-      }
+      first_stop = (ec < 127);
+      const char in_hex[2] = {(char)fio_i2c(ec >> 4), (char)fio_i2c(ec & 15)};
+      dest->buf[dest->len] = 'u'; /* UTF-8 encoding (remains valid) */
+      dest->buf[dest->len += first_stop] = '0';
+      dest->buf[dest->len += first_stop] = '0';
+      dest->buf[dest->len += first_stop] = in_hex[0];
+      dest->buf[dest->len += first_stop] = in_hex[1];
+      dest->len += first_stop;
     }
   }
-  dest->len += at;
   dest->buf[dest->len] = 0;
   return r;
 }
 
-/**
- * Writes an escaped data into the string after unescaping the data.
- */
-SFUNC int fio_string_write_unescape(fio_str_info_s *dest,
-                                    fio_string_realloc_fn reallocate,
-                                    const void *src_,
-                                    size_t len) {
-  int r = 0;
-  size_t at = 0;
-  size_t reduced = len;
-  if ((!len | !src_ | !dest))
-    return r;
-  if (dest->len + len >= dest->capa) { /* reserve only what we need */
-    reduced = 0;
-    const char *tmp = (const char *)src_;
-    const char *stop = tmp + len - 1; /* avoid overflow for tmp[1] */
-    for (;;) {
-      tmp = (const char *)FIO_MEMCHR(tmp, '\\', (size_t)(stop - tmp));
-      if (!tmp)
-        break;
-      size_t step = 1;
-      step += ((tmp[1] == 'x') << 1); /* step == 3 */
-      step += (tmp[1] == 'u');        /* UTF-8 output <= 3 */
-      reduced += step;
-      tmp += step + 1;
-      if (tmp + 1 > stop)
-        break;
-    }
-    FIO_ASSERT_DEBUG(reduced < len, "string unescape reduced too long");
-    reduced = len - reduced;
-    if (fio_string___write_validate_len(dest, reallocate, &reduced)) {
-      r = -1;
-      len = dest->capa - (dest->len + 1);
-    }
-  }
-  const uint8_t *src = (const uint8_t *)src_;
-  const uint8_t *end = src + len;
-  uint8_t *writer = (uint8_t *)dest->buf + dest->len;
-  while (src < end) {
-    if (*src != '\\') {
-      const uint8_t *escape_pos =
-          (const uint8_t *)FIO_MEMCHR(src, '\\', end - src);
-      if (!escape_pos)
-        escape_pos = end;
-      const size_t valid_len = escape_pos - src;
-      if (writer + at != src && valid_len)
-        FIO_MEMMOVE(writer + at, src, valid_len);
-      at += valid_len;
-      src = escape_pos;
-    }
-    if (end - src == 1) {
-      writer[at++] = *(src++);
-    }
-    if (src >= end)
-      break;
-    /* escaped data - src[0] == '\\' */
-    ++src;
-    switch (src[0]) {
-    case 'b':
-      writer[at++] = '\b';
-      ++src;
-      break; /* from switch */
-    case 'f':
-      writer[at++] = '\f';
-      ++src;
-      break; /* from switch */
-    case 'n':
-      writer[at++] = '\n';
-      ++src;
-      break; /* from switch */
-    case 'r':
-      writer[at++] = '\r';
-      ++src;
-      break; /* from switch */
-    case 't':
-      writer[at++] = '\t';
-      ++src;
-      break; /* from switch */
-    case 'u': {
-      /* test UTF-8 notation */
-      if (fio_c2i(src[1]) < 16 && fio_c2i(src[2]) < 16 &&
-          fio_c2i(src[3]) < 16 && fio_c2i(src[4]) < 16) {
-        uint32_t u = (((fio_c2i(src[1]) << 4) | fio_c2i(src[2])) << 8) |
-                     ((fio_c2i(src[3]) << 4) | fio_c2i(src[4]));
-        if (((fio_c2i(src[1]) << 4) | fio_c2i(src[2])) == 0xD8U &&
-            src[5] == '\\' && src[6] == 'u' && fio_c2i(src[7]) < 16 &&
-            fio_c2i(src[8]) < 16 && fio_c2i(src[9]) < 16 &&
-            fio_c2i(src[10]) < 16) {
-          /* surrogate-pair (high/low code points) */
-          u = (u & 0x03FF) << 10;
-          u |= (((((fio_c2i(src[7]) << 4) | fio_c2i(src[8])) << 8) |
-                 ((fio_c2i(src[9]) << 4) | fio_c2i(src[10]))) &
-                0x03FF);
-          u += 0x10000;
-          src += 6;
-        }
-        at += fio___string_utf8_write(writer + at, u);
-        src += 5;
-        break; /* from switch */
-      } else
-        goto invalid_escape;
-    }
-    case 'x': { /* test for hex notation */
-      if (fio_c2i(src[1]) < 16 && fio_c2i(src[2]) < 16) {
-        writer[at++] = (fio_c2i(src[1]) << 4) | fio_c2i(src[2]);
-        src += 3;
-        break; /* from switch */
-      } else
-        goto invalid_escape;
-    }
-    case '0':
-    case '1':
-    case '2':
-    case '3':
-    case '4':
-    case '5':
-    case '6':
-    case '7': { /* test for octal notation */
-      if (src[0] >= '0' && src[0] <= '7' && src[1] >= '0' && src[1] <= '7') {
-        writer[at++] = ((src[0] - '0') << 3) | (src[1] - '0');
-        src += 2;
-        break; /* from switch */
-      } else
-        goto invalid_escape;
-    }
-    case '"':
-    case '\\':
-    case '/':
-    /* fall through */
-    default:
-    invalid_escape:
-      writer[at++] = *(src++);
-    }
-  }
-  dest->len += at;
-  dest->buf[dest->len] = 0;
-  FIO_ASSERT_DEBUG(r || (at < reduced + 1),
-                   "string unescape reduced calculation error");
+const uint8_t *fio___string_write_unescape_next(const uint8_t *restrict s,
+                                                const uint8_t *restrict e) {
+  if (*s == '\\')
+    return s;
+  return (const uint8_t *)FIO_MEMCHR(s, '\\', e - s);
+}
+
+size_t fio___string_write_unescape_diff(uint8_t *restrict dest,
+                                        const uint8_t *restrict *restrict ps,
+                                        const uint8_t *restrict e) {
+  size_t r = 1;
+  unsigned step = 1;
+  const uint8_t *s = *ps;
+  ++s;
+  unsigned peek = ((*s == 'x') & (e - s > 2));
+  peek &= (unsigned)(fio_c2i(s[peek]) < 16) & (fio_c2i(s[peek + peek]) < 16);
+  step |= (peek << 1);
+  // peek &= (fio_c2i(s[peek]) > 7);
+  r += peek; /* assumes \xFF is unescaped as UTF-8, up to 2 bytes */
+
+  peek = ((*s == 'u') & (e - s > 4));
+  peek &= (unsigned)(fio_c2i(s[peek]) < 16) & (fio_c2i(s[peek + peek]) < 16) &
+          (fio_c2i(s[peek + peek + peek]) < 16) &
+          (fio_c2i(s[peek + peek + peek + peek]) < 16);
+  r |= (peek << 1); /* assumes \uFFFF in maximum length, ignores UTF-16 pairs */
+  step |= (peek << 2);
+
+  s += step;
+  *ps = s;
   return r;
+  (void)dest;
+}
+FIO_IFUNC size_t
+fio___string_write_unescape_write(uint8_t *restrict dest,
+                                  const uint8_t *restrict *restrict ps,
+                                  const uint8_t *restrict e) {
+  unsigned r = 1;
+  const uint8_t *restrict s = *ps;
+  s += ((s + 1) < e); /* skip '\\' byte */
+  switch (*s) {
+  case 'b':
+    *dest = '\b';
+    ++s;
+    break; /* from switch */
+  case 'f':
+    *dest = '\f';
+    ++s;
+    break; /* from switch */
+  case 'n':
+    *dest = '\n';
+    ++s;
+    break; /* from switch */
+  case 'r':
+    *dest = '\r';
+    ++s;
+    break; /* from switch */
+  case 't':
+    *dest = '\t';
+    ++s;
+    break; /* from switch */
+  case 'u': {
+    /* test UTF-8 notation */
+    if ((s + 4 < e) && ((unsigned)(fio_c2i(s[1]) < 16) & (fio_c2i(s[2]) < 16) &
+                        (fio_c2i(s[3]) < 16) & (fio_c2i(s[4]) < 16))) {
+      uint32_t u = (((fio_c2i(s[1]) << 4) | fio_c2i(s[2])) << 8) |
+                   ((fio_c2i(s[3]) << 4) | fio_c2i(s[4]));
+      if ((s + 10 < e) &&
+          (((fio_c2i(s[1]) << 4) | fio_c2i(s[2])) == 0xD8U && s[5] == '\\' &&
+           s[6] == 'u' &&
+           ((unsigned)(fio_c2i(s[7]) < 16) & (fio_c2i(s[8]) < 16) &
+            (fio_c2i(s[9]) < 16) & (fio_c2i(s[10]) < 16)))) {
+        /* surrogate-pair (high/low code points) */
+        u = (u & 0x03FF) << 10;
+        u |= (((((fio_c2i(s[7]) << 4) | fio_c2i(s[8])) << 8) |
+               ((fio_c2i(s[9]) << 4) | fio_c2i(s[10]))) &
+              0x03FF);
+        u += 0x10000;
+        s += 6;
+      }
+      r = fio_utf8_write(dest, u);
+      s += 5;
+      break; /* from switch */
+    } else
+      goto invalid_escape;
+  }
+  case 'x': { /* test for hex notation */
+    if (fio_c2i(s[1]) < 16 && fio_c2i(s[2]) < 16) {
+      *dest = (fio_c2i(s[1]) << 4) | fio_c2i(s[2]);
+      s += 3;
+      break; /* from switch */
+    } else
+      goto invalid_escape;
+  }
+  case '0':
+  case '1':
+  case '2':
+  case '3':
+  case '4':
+  case '5':
+  case '6':
+  case '7': { /* test for octal notation */
+    if (s[0] >= '0' && s[0] <= '7' && s[1] >= '0' && s[1] <= '7') {
+      *dest = ((s[0] - '0') << 3) | (s[1] - '0');
+      s += 2;
+      break; /* from switch */
+    } else
+      goto invalid_escape;
+  }
+  case '"':
+  case '\\':
+  case '/':
+  /* fall through */
+  default:
+  invalid_escape:
+    *dest = *s++;
+  }
+  *ps = s;
+  return r;
+}
+FIO_IFUNC int fio_string_write_unescape(fio_str_info_s *restrict dest,
+                                        fio_string_realloc_fn alloc,
+                                        const void *src,
+                                        size_t len) {
+  return fio___string_altering_cycle((fio___string_altering_args_s){
+      .dest = dest,
+      .reallocate = alloc,
+      .src = src,
+      .len = len,
+      .next = fio___string_write_unescape_next,
+      .diff = fio___string_write_unescape_diff,
+      .write = fio___string_write_unescape_write,
+      .skip_diff_len = 127,
+      .refuse_partial = 1,
+  });
 }
 
 /* *****************************************************************************
@@ -19156,7 +20151,7 @@ FIO_IFUNC int fio_string_write_url_dec_internal(
         u += 0x10000;
         last += 6;
       }
-      dest->len += fio___string_utf8_write((uint8_t *)dest->buf + dest->len, u);
+      dest->len += fio_utf8_write((uint8_t *)dest->buf + dest->len, u);
       last += 5;
     } else {
       dest->buf[dest->len++] = '%';
@@ -19219,16 +20214,16 @@ SFUNC int fio_string_write_html_escape(fio_str_info_s *dest,
     a = (0..255).to_a.map {|i| "&#x#{i.to_s(16)};" }
     must_escape = ['&', '<', '>', '"', "'", '`', '!', '@', '$', '%',
                    '(', ')', '=', '+', '{', '}', '[', ']'] # space?
+    ["\b","\f","\n","\r","\t",'\\'].each {|i| a[i.ord] = i }
     (32..123).each {|i| a[i] = i.chr unless must_escape.include?(i.chr) }
-    a['<'.ord] = "&lt;"
-    a['>'.ord] = "&gt;"
-    a['"'.ord] = "&qout;"
-    a['&'.ord] = "&amp;"
+    {'<': "&lt;", '>': "&gt;", '"': "&qout;", '&': "&amp;"}.each {|k,v|
+       a[k.to_s.ord] = v
+    }
     b = a.map {|s| s.length }
-    puts "static uint8_t html_escape_len[] = {", b.to_s.slice(1..-2), "};"
+    puts "static const uint8_t html_escape_len[] = {", b.to_s.slice(1..-2), "};"
   */
-  static uint8_t html_escape_len[] = {
-      5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6,
+  static const uint8_t html_escape_len[] = {
+      5, 5, 5, 5, 5, 5, 5, 5, 1, 1, 1, 5, 1, 1, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6,
       6, 6, 6, 6, 6, 6, 6, 6, 1, 6, 6, 1, 6, 6, 5, 6, 6, 6, 1, 6, 1, 1, 1, 1,
       1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 6, 4, 1, 6, 1, 1, 1, 1, 1, 1, 1,
       1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 6, 1, 6, 1, 1,
@@ -19387,7 +20382,7 @@ SFUNC int fio_string_write_html_unescape(fio_str_info_s *dest,
           continue;
         del += (*del == ';');
         reduced -= (del - tmp);
-        reduced += fio___string_utf8_code_point_len(num);
+        reduced += fio_utf8_code_len((uint32_t)num);
         continue;
       }
       union {
@@ -19440,7 +20435,7 @@ SFUNC int fio_string_write_html_unescape(fio_str_info_s *dest,
         if (*del != ';' || num > 65535)
           goto untrusted_no_encode;
         dest->len +=
-            fio___string_utf8_write((uint8_t *)dest->buf + dest->len, num);
+            fio_utf8_write((uint8_t *)dest->buf + dest->len, (uint32_t)num);
         del += (del < end && del[0] == ';');
         continue;
       }
@@ -19554,8 +20549,8 @@ SFUNC int fio_string_readfile(fio_str_info_s *dest,
 }
 
 /**
- * Writes up to `limit` bytes from `fd` into `dest`, starting at `start_at` and
- * ending at the first occurrence of `token`.
+ * Writes up to `limit` bytes from `fd` into `dest`, starting at `start_at`
+ * and ending at the first occurrence of `token`.
  *
  * If `limit` is 0 (or less than 0) as much data as may be required will be
  * written.
@@ -19620,19 +20615,22 @@ Binary String Type - Embedded Strings
 /** default reallocation callback implementation */
 SFUNC int fio_bstr_reallocate(fio_str_info_s *dest, size_t len) {
   fio___bstr_meta_s *bstr_m = NULL;
-  const size_t new_capa = fio_string_capa4len(len + sizeof(bstr_m[0]));
-  if (!dest->capa)
+  size_t new_capa = fio_string_capa4len(len + sizeof(bstr_m[0]));
+  if (FIO_UNLIKELY(new_capa > (size_t)0xFFFFFFFFULL))
+    new_capa = (size_t)0x0FFFFFFFFULL + sizeof(bstr_m[0]);
+  if (dest->capa < fio_string_capa4len(sizeof(bstr_m[0])) - 1)
     goto copy_the_string;
   bstr_m = (fio___bstr_meta_s *)FIO_MEM_REALLOC_(
       ((fio___bstr_meta_s *)dest->buf - 1),
       sizeof(bstr_m[0]) + dest->capa,
       new_capa,
-      ((fio___bstr_meta_s *)dest->buf)[-1].len + sizeof(bstr_m[0]));
+      FIO___BSTR_META(dest->buf)->len + sizeof(bstr_m[0]));
   if (!bstr_m)
     return -1;
 update_metadata:
   dest->buf = (char *)(bstr_m + 1);
-  bstr_m->capa = dest->capa = new_capa - sizeof(bstr_m[0]);
+  dest->capa = new_capa - sizeof(bstr_m[0]);
+  bstr_m->capa = (uint32_t)dest->capa;
   return 0;
 
 copy_the_string:
@@ -19644,8 +20642,10 @@ copy_the_string:
   FIO_LEAK_COUNTER_ON_ALLOC(fio_bstr_s);
   if (dest->len) {
     FIO_MEMCPY((bstr_m + 1), dest->buf, dest->len + 1);
-    bstr_m->len = dest->len;
+    bstr_m->len = (uint32_t)dest->len;
   }
+  if (dest->capa)
+    fio_bstr_free(dest->buf);
   goto update_metadata;
 }
 
@@ -20368,7 +21368,7 @@ FIO_IFUNC int fio___mustache_parse_section_end(fio___mustache_parser_s *p,
   if (!FIO_BUF_INFO_IS_EQ(old_var_name, var))
     goto value_name_mismatch;
 
-  fio_u2buf32u(prev + 3, fio_bstr_len(p->root) + 1);
+  fio_u2buf32u(prev + 3, (uint32_t)(fio_bstr_len(p->root) + 1));
   fio___mustache_stand_alone_skip_eol(p);
 
 #if FIO_MUSTACHE_LAMBDA_SUPPORT
@@ -20495,7 +21495,7 @@ FIO_IFUNC int fio___mustache_parse_partial(fio___mustache_parser_s *p,
   int r = fio___mustache_parse_template_file(&new_section);
   buf.u8[0] = FIO___MUSTACHE_I_STACK_POP;
   p->root = fio_bstr_write(new_section.root, buf.u8, 1);
-  fio_u2buf32u(p->root + ipos, fio_bstr_len(p->root));
+  fio_u2buf32u(p->root + ipos, (uint32_t)fio_bstr_len(p->root));
   fio___mustache_free_template(p, file_content);
   return r;
 }
@@ -20869,18 +21869,23 @@ SFUNC fio_mustache_s *fio_mustache_load FIO_NOOP(fio_mustache_load_args_s a) {
   /* No need to write FIO___MUSTACHE_I_STACK_POP, as the string ends with NUL */
   if (should_free_data)
     a.free_file_data(a.data, a.udata);
-  FIO_LEAK_COUNTER_ON_ALLOC(fio_mustache_s);
+  if (parser.root)
+    FIO_LEAK_COUNTER_ON_ALLOC(fio_mustache_s);
   return (fio_mustache_s *)parser.root;
 }
 
 /* Frees the mustache template object (or reduces it's reference count). */
 SFUNC void fio_mustache_free(fio_mustache_s *m) {
+  if (!m)
+    return;
   FIO_LEAK_COUNTER_ON_FREE(fio_mustache_s);
   fio_bstr_free((char *)m);
 }
 
 /** Increases the mustache template's reference count. */
 SFUNC fio_mustache_s *fio_mustache_dup(fio_mustache_s *m) {
+  if (!m)
+    return m;
   FIO_LEAK_COUNTER_ON_ALLOC(fio_mustache_s);
   return (fio_mustache_s *)fio_bstr_copy((char *)m);
 }
@@ -22656,7 +23661,7 @@ SFUNC void FIO_NAME_TEST(stl, FIO_STR_NAME)(void) {
 
     if (1) {
       /* String content == whole file (this file) */
-      intptr_t pos = -11;
+      intptr_t pos = -10;
       size_t len = 20;
       fprintf(stderr, "* Testing UTF-8 positioning.\n");
 
@@ -22907,8 +23912,11 @@ String Cleanup
 
 Copyright and License: see header file (000 copyright.h) or top of file
 ***************************************************************************** */
-
 #ifdef FIO_ARRAY_NAME
+
+#ifndef FIO_ARRAY_NOT_FOUND
+#define FIO_ARRAY_NOT_FOUND ((uint32_t)-1)
+#endif
 
 #ifdef FIO_ARRAY_TYPE_STR
 #ifndef FIO_ARRAY_TYPE
@@ -23034,7 +24042,7 @@ typedef struct FIO_NAME(FIO_ARRAY_NAME, s) {
   uint32_t end;
   /* end common header (with embedded array type) */
   /** The array's capacity - limited to 32bits, but we use the extra padding. */
-  uintptr_t capa;
+  uint32_t capa;
   /** a pointer to the array's memory (if not embedded) */
   FIO_ARRAY_TYPE *ary;
 #if FIO_ARRAY_ENABLE_EMBEDDED > 1
@@ -23099,7 +24107,7 @@ FIO_IFUNC FIO_ARRAY_TYPE *FIO_NAME2(FIO_ARRAY_NAME, ptr)(FIO_ARRAY_PTR ary);
  * Returns the array's new capacity.
  */
 SFUNC uint32_t FIO_NAME(FIO_ARRAY_NAME, reserve)(FIO_ARRAY_PTR ary,
-                                                 int32_t capa);
+                                                 int64_t capa);
 
 /**
  * Adds all the items in the `src` Array to the end of the `dest` Array.
@@ -23123,7 +24131,7 @@ SFUNC FIO_ARRAY_PTR FIO_NAME(FIO_ARRAY_NAME, concat)(FIO_ARRAY_PTR dest,
  * Returns a pointer to the new object, or NULL on error.
  */
 SFUNC FIO_ARRAY_TYPE *FIO_NAME(FIO_ARRAY_NAME, set)(FIO_ARRAY_PTR ary,
-                                                    int32_t index,
+                                                    int64_t index,
                                                     FIO_ARRAY_TYPE data,
                                                     FIO_ARRAY_TYPE *old);
 
@@ -23134,17 +24142,17 @@ SFUNC FIO_ARRAY_TYPE *FIO_NAME(FIO_ARRAY_NAME, set)(FIO_ARRAY_PTR ary,
  * last element).
  */
 FIO_IFUNC FIO_ARRAY_TYPE FIO_NAME(FIO_ARRAY_NAME, get)(FIO_ARRAY_PTR ary,
-                                                       int32_t index);
+                                                       int64_t index);
 
 /**
- * Returns the index of the object or -1 if the object wasn't found.
+ * Returns the index of the object or (uint32_t)-1 if the object wasn't found.
  *
  * If `start_at` is negative (i.e., -1), than seeking will be performed in
  * reverse, where -1 == last index (-2 == second to last, etc').
  */
-SFUNC int32_t FIO_NAME(FIO_ARRAY_NAME, find)(FIO_ARRAY_PTR ary,
-                                             FIO_ARRAY_TYPE data,
-                                             int32_t start_at);
+SFUNC uint32_t FIO_NAME(FIO_ARRAY_NAME, find)(FIO_ARRAY_PTR ary,
+                                              FIO_ARRAY_TYPE data,
+                                              int64_t start_at);
 
 /**
  * Removes an object from the array, MOVING all the other objects to prevent
@@ -23159,7 +24167,7 @@ SFUNC int32_t FIO_NAME(FIO_ARRAY_NAME, find)(FIO_ARRAY_PTR ary,
  * It could get expensive.
  */
 SFUNC int FIO_NAME(FIO_ARRAY_NAME, remove)(FIO_ARRAY_PTR ary,
-                                           int32_t index,
+                                           int64_t index,
                                            FIO_ARRAY_TYPE *old);
 
 /**
@@ -23245,7 +24253,7 @@ IFUNC uint32_t FIO_NAME(FIO_ARRAY_NAME,
                               int (*task)(FIO_NAME(FIO_ARRAY_NAME, each_s) *
                                           info),
                               void *udata,
-                              int32_t start_at);
+                              int64_t start_at);
 
 #ifndef FIO_ARRAY_EACH
 /**
@@ -23394,7 +24402,7 @@ FIO_IFUNC int FIO_NAME_BL(FIO_ARRAY_NAME, embedded)(FIO_ARRAY_PTR ary_) {
  * last element).
  */
 FIO_IFUNC FIO_ARRAY_TYPE FIO_NAME(FIO_ARRAY_NAME, get)(FIO_ARRAY_PTR ary_,
-                                                       int32_t index) {
+                                                       int64_t index) {
   FIO_PTR_TAG_VALID_OR_RETURN(ary_, FIO_ARRAY_TYPE_INVALID);
   FIO_NAME(FIO_ARRAY_NAME, s) *ary =
       FIO_PTR_TAG_GET_UNTAGGED(FIO_NAME(FIO_ARRAY_NAME, s), ary_);
@@ -23430,7 +24438,7 @@ FIO_IFUNC FIO_ARRAY_TYPE *FIO_NAME(FIO_ARRAY_NAME,
   FIO_PTR_TAG_VALID_OR_RETURN(ary_, NULL);
   FIO_NAME(FIO_ARRAY_NAME, s) *ary =
       FIO_PTR_TAG_GET_UNTAGGED(FIO_NAME(FIO_ARRAY_NAME, s), ary_);
-  int32_t count;
+  int64_t count;
   FIO_ARRAY_TYPE *a;
   switch (FIO_NAME_BL(FIO_ARRAY_NAME, embedded)(ary_)) {
   case 0:
@@ -23547,10 +24555,12 @@ SFUNC void FIO_NAME(FIO_ARRAY_NAME, destroy)(FIO_ARRAY_PTR ary_) {
 
 /** Reserves a minimal capacity for the array. */
 SFUNC uint32_t FIO_NAME(FIO_ARRAY_NAME, reserve)(FIO_ARRAY_PTR ary_,
-                                                 int32_t capa_) {
+                                                 int64_t capa_) {
   FIO_PTR_TAG_VALID_OR_RETURN(ary_, 0);
   FIO_NAME(FIO_ARRAY_NAME, s) *ary =
       FIO_PTR_TAG_GET_UNTAGGED(FIO_NAME(FIO_ARRAY_NAME, s), ary_);
+  if (capa_ > UINT32_MAX || capa_ < ((int64_t)0LL - UINT32_MAX))
+    return ary->capa;
   uint32_t abs_capa = ((capa_ >= 0) ? (uint32_t)capa_ : (uint32_t)(0 - capa_));
   uint32_t capa;
   FIO_ARRAY_TYPE *tmp;
@@ -23720,7 +24730,7 @@ SFUNC FIO_ARRAY_PTR FIO_NAME(FIO_ARRAY_NAME, concat)(FIO_ARRAY_PTR dest_,
  * Returns a pointer to the new object, or NULL on error.
  */
 SFUNC FIO_ARRAY_TYPE *FIO_NAME(FIO_ARRAY_NAME, set)(FIO_ARRAY_PTR ary_,
-                                                    int32_t index,
+                                                    int64_t index,
                                                     FIO_ARRAY_TYPE data,
                                                     FIO_ARRAY_TYPE *old) {
   FIO_ARRAY_TYPE *a = NULL;
@@ -23738,6 +24748,9 @@ SFUNC FIO_ARRAY_TYPE *FIO_NAME(FIO_ARRAY_NAME, set)(FIO_ARRAY_PTR ary_,
     if (index < 0)
       goto negative_expansion;
   }
+
+  if ((size_t)index > 0xFFFFFFFFULL)
+    goto invalid;
 
   if ((uint32_t)index >= count) {
     if ((uint32_t)index == count)
@@ -23777,30 +24790,30 @@ expansion:
   {
     uint8_t was_moved = 0;
     /* test if we need to move objects to make room at the end */
-    if (ary->start + index >= ary->capa) {
+    if (ary->start + (uint32_t)index >= ary->capa) {
       FIO_MEMMOVE(ary->ary, ary->ary + ary->start, (count) * sizeof(*ary->ary));
       ary->start = 0;
-      ary->end = index + 1;
+      ary->end = (uint32_t)index + 1;
       was_moved = 1;
     }
     /* initialize memory in between objects */
     if (was_moved || !FIO_MEM_REALLOC_IS_SAFE_ ||
         !FIO_ARRAY_TYPE_INVALID_SIMPLE) {
 #if FIO_ARRAY_TYPE_INVALID_SIMPLE
-      FIO_MEMSET(a + count, 0, (index - count) * sizeof(*ary->ary));
+      FIO_MEMSET(a + count, 0, ((uint32_t)index - count) * sizeof(*ary->ary));
 #else
       for (size_t i = count; i <= (size_t)index; ++i) {
         FIO_ARRAY_TYPE_COPY(a[i], FIO_ARRAY_TYPE_INVALID);
       }
 #endif
     }
-    ary->end = index + 1;
+    ary->end = (uint32_t)index + 1;
   }
   goto done;
 
 expand_embedded:
   pre_existing = 0;
-  ary->start = index + 1;
+  ary->start = (uint32_t)index + 1;
   a = FIO_ARRAY2EMBEDDED(ary)->embedded;
   goto done;
 
@@ -23808,16 +24821,17 @@ negative_expansion:
   pre_existing = 0;
   FIO_NAME(FIO_ARRAY_NAME, reserve)(ary_, (index - count));
   index = 0 - index;
-
+  if (index > ary->capa)
+    goto invalid;
   if ((FIO_ARRAY_IS_EMBEDDED(ary)))
     goto negative_expansion_embedded;
   a = ary->ary;
   if (index > (int32_t)ary->start) {
     FIO_MEMMOVE(a + index, a + ary->start, count * sizeof(*a));
-    ary->end = index + count;
-    ary->start = index;
+    ary->end = (uint32_t)index + count;
+    ary->start = (uint32_t)index;
   }
-  index = ary->start - index;
+  index = ary->start - (uint32_t)index;
   if ((uint32_t)(index + 1) < ary->start) {
 #if FIO_ARRAY_TYPE_INVALID_SIMPLE
     FIO_MEMSET(a + index, 0, (ary->start - index) * (sizeof(*a)));
@@ -23827,7 +24841,7 @@ negative_expansion:
     }
 #endif
   }
-  ary->start = index;
+  ary->start = (uint32_t)index;
   goto done;
 
 negative_expansion_embedded:
@@ -23853,14 +24867,14 @@ invalid:
 }
 
 /**
- * Returns the index of the object or -1 if the object wasn't found.
+ * Returns the index of the object or (uint32_t)-1 if the object wasn't found.
  *
  * If `start_at` is negative (i.e., -1), than seeking will be performed in
  * reverse, where -1 == last index (-2 == second to last, etc').
  */
-SFUNC int32_t FIO_NAME(FIO_ARRAY_NAME, find)(FIO_ARRAY_PTR ary_,
-                                             FIO_ARRAY_TYPE data,
-                                             int32_t start_at) {
+SFUNC uint32_t FIO_NAME(FIO_ARRAY_NAME, find)(FIO_ARRAY_PTR ary_,
+                                              FIO_ARRAY_TYPE data,
+                                              int64_t start_at) {
   FIO_ARRAY_TYPE *a = FIO_NAME2(FIO_ARRAY_NAME, ptr)(ary_);
   if (!a)
     return -1;
@@ -23871,7 +24885,7 @@ SFUNC int32_t FIO_NAME(FIO_ARRAY_NAME, find)(FIO_ARRAY_PTR ary_,
       start_at = (int32_t)count;
     while ((uint32_t)start_at < count) {
       if (FIO_ARRAY_TYPE_CMP(a[start_at], data))
-        return start_at;
+        return (uint32_t)start_at;
       ++start_at;
     }
   } else {
@@ -23882,7 +24896,7 @@ SFUNC int32_t FIO_NAME(FIO_ARRAY_NAME, find)(FIO_ARRAY_PTR ary_,
     count += 1;
     while (count--) {
       if (FIO_ARRAY_TYPE_CMP(a[count], data))
-        return count;
+        return (uint32_t)count;
     }
   }
   return -1;
@@ -23898,7 +24912,7 @@ SFUNC int32_t FIO_NAME(FIO_ARRAY_NAME, find)(FIO_ARRAY_PTR ary_,
  * Returns 0 on success and -1 on error.
  */
 SFUNC int FIO_NAME(FIO_ARRAY_NAME, remove)(FIO_ARRAY_PTR ary_,
-                                           int32_t index,
+                                           int64_t index,
                                            FIO_ARRAY_TYPE *old) {
   FIO_ARRAY_TYPE *a = FIO_NAME2(FIO_ARRAY_NAME, ptr)(ary_);
   FIO_NAME(FIO_ARRAY_NAME, s) *ary =
@@ -24270,7 +25284,7 @@ IFUNC uint32_t FIO_NAME(FIO_ARRAY_NAME,
                               int (*task)(FIO_NAME(FIO_ARRAY_NAME, each_s) *
                                           info),
                               void *udata,
-                              int32_t start_at) {
+                              int64_t start_at) {
   FIO_ARRAY_TYPE *a = FIO_NAME2(FIO_ARRAY_NAME, ptr)(ary_);
   if (!a)
     return (uint32_t)-1;
@@ -24406,7 +25420,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, FIO_ARRAY_NAME)(void) {
       FIO_ASSERT(FIO_ARRAY_TEST_OBJ_IS(i + 1),
                  "unshift-get cycle failed (%d)",
                  i);
-      int32_t negative_index = 0 - (((int)(FIO_ARRAY_EMBEDDED_CAPA) + 3) - i);
+      int64_t negative_index = 0 - (((int)(FIO_ARRAY_EMBEDDED_CAPA) + 3) - i);
       o = FIO_NAME(FIO_ARRAY_NAME, get)(a, negative_index);
       FIO_ASSERT(FIO_ARRAY_TEST_OBJ_IS(i + 1),
                  "get with %d returned wrong result.",
@@ -24489,8 +25503,8 @@ FIO_SFUNC void FIO_NAME_TEST(stl, FIO_ARRAY_NAME)(void) {
     if (FIO_ARRAY_TYPE_CMP(o, FIO_ARRAY_TYPE_INVALID)) {
       FIO_ARRAY_TEST_OBJ_SET(o, 100);
     }
-    int found = FIO_NAME(FIO_ARRAY_NAME, find)(a, o, 0);
-    FIO_ASSERT(found == -1,
+    uint32_t found = FIO_NAME(FIO_ARRAY_NAME, find)(a, o, 0);
+    FIO_ASSERT(found == (uint32_t)-1,
                "seeking for an object that doesn't exist should fail.");
     FIO_ARRAY_TEST_OBJ_SET(o, 1);
     found = FIO_NAME(FIO_ARRAY_NAME, find)(a, o, 1);
@@ -24719,10 +25733,12 @@ Dynamic Arrays - cleanup
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
 #define FIO_MAP_NAME map       /* Development inclusion - ignore line */
-#define FIO_MAP_TEST           /* Development inclusion - ignore line */
 #define FIO_MAP_KEY  size_t    /* Development inclusion - ignore line */
-#include "./include.h"         /* Development inclusion - ignore line */
-#endif                         /* Development inclusion - ignore line */
+// #define FIO_MAP_VALUE_BSTR     /* Development inclusion - ignore line */
+// #define FIO_MAP_ORDERED        /* Development inclusion - ignore line */
+#define FIO_MAP_TEST   /* Development inclusion - ignore line */
+#include "./include.h" /* Development inclusion - ignore line */
+#endif                 /* Development inclusion - ignore line */
 /* *****************************************************************************
 
 
@@ -24882,6 +25898,12 @@ Pointer Tagging Support
 Map Types
 ***************************************************************************** */
 
+#ifndef FIO_MAP_INIT
+/* Initialization macro. */
+#define FIO_MAP_INIT                                                           \
+  { 0 }
+#endif
+
 /** internal object data representation */
 typedef struct FIO_NAME(FIO_MAP_NAME, node_s) FIO_NAME(FIO_MAP_NAME, node_s);
 
@@ -24930,14 +25952,6 @@ typedef struct {
   } private_;
 } FIO_NAME(FIO_MAP_NAME, iterator_s);
 
-#ifndef FIO_MAP_INIT
-/* Initialization macro. */
-#define FIO_MAP_INIT                                                           \
-  { 0 }
-#define FIO_MAP_INIT                                                           \
-  { 0 }
-#endif
-
 /* *****************************************************************************
 Construction / Deconstruction
 ***************************************************************************** */
@@ -24953,7 +25967,7 @@ SFUNC void FIO_NAME(FIO_MAP_NAME, free)(FIO_MAP_PTR map);
 
 #endif /* FIO_REF_CONSTRUCTOR_ONLY */
 
-/** Destroys the object, reinitializing its container. */
+/** Destroys the object, re-initializing its container. */
 SFUNC void FIO_NAME(FIO_MAP_NAME, destroy)(FIO_MAP_PTR map);
 
 /* *****************************************************************************
@@ -25004,7 +26018,7 @@ SFUNC int FIO_NAME(FIO_MAP_NAME, remove)(FIO_MAP_PTR map,
                                          uint64_t hash,
 #endif
                                          FIO_MAP_KEY key,
-#ifdef FIO_MAP_VALUE
+#if defined(FIO_MAP_VALUE)
                                          FIO_MAP_VALUE_INTERNAL *old
 #else
                                          FIO_MAP_KEY_INTERNAL *old
@@ -25095,6 +26109,40 @@ SFUNC FIO_NAME(FIO_MAP_NAME, node_s) *
 Map Iteration and Traversal
 ***************************************************************************** */
 
+/** Iteration information structure passed to the callback. */
+typedef struct FIO_NAME(FIO_MAP_NAME, each_s) {
+  /** The being iterated. Once set, cannot be safely changed. */
+  FIO_MAP_PTR const parent;
+  /** The current object's index */
+  uint64_t index;
+  /** The callback / task called for each index, may be updated mid-cycle. */
+  int (*task)(struct FIO_NAME(FIO_MAP_NAME, each_s) * info);
+  /** Opaque user data. */
+  void *udata;
+#ifdef FIO_MAP_VALUE
+  /** The object's value at the current index. */
+  FIO_MAP_VALUE value;
+#endif
+  /** The object's key the current index. */
+  FIO_MAP_KEY key;
+} FIO_NAME(FIO_MAP_NAME, each_s);
+
+/**
+ * Iteration using a callback for each element in the map.
+ *
+ * The callback task function must accept an each_s pointer, see above.
+ *
+ * If the callback returns -1, the loop is broken. Any other value is ignored.
+ *
+ * Returns the relative "stop" position, i.e., the number of items processed +
+ * the starting point.
+ */
+SFUNC uint32_t FIO_NAME(FIO_MAP_NAME,
+                        each)(FIO_MAP_PTR map,
+                              int (*task)(FIO_NAME(FIO_MAP_NAME, each_s) *),
+                              void *udata,
+                              ssize_t start_at);
+
 /**
  * Returns the next iterator object after `current_pos` or the first if `NULL`.
  *
@@ -25133,53 +26181,22 @@ FIO_IFUNC FIO_NAME(FIO_MAP_NAME, node_s) *
                             FIO_NAME(FIO_MAP_NAME, iterator_s) * iterator);
 
 #ifndef FIO_MAP_EACH
+
 /** Iterates through the map using an iterator object. */
 #define FIO_MAP_EACH(map_name, map_ptr, i)                                     \
   for (FIO_NAME(map_name, iterator_s)                                          \
            i = FIO_NAME(map_name, get_next)(map_ptr, NULL);                    \
        FIO_NAME(map_name, iterator_is_valid)(&i);                              \
        i = FIO_NAME(map_name, get_next)(map_ptr, &i))
+
 /** Iterates through the map using an iterator object. */
 #define FIO_MAP_EACH_REVERSED(map_name, map_ptr, i)                            \
   for (FIO_NAME(map_name, iterator_s)                                          \
            i = FIO_NAME(map_name, get_prev)(map_ptr, NULL);                    \
        FIO_NAME(map_name, iterator_is_valid)(&i);                              \
        i = FIO_NAME(map_name, get_prev)(map_ptr, &i))
-#endif
 
-/** Iteration information structure passed to the callback. */
-typedef struct FIO_NAME(FIO_MAP_NAME, each_s) {
-  /** The being iterated. Once set, cannot be safely changed. */
-  FIO_MAP_PTR const parent;
-  /** The current object's index */
-  uint64_t index;
-  /** The callback / task called for each index, may be updated mid-cycle. */
-  int (*task)(struct FIO_NAME(FIO_MAP_NAME, each_s) * info);
-  /** Opaque user data. */
-  void *udata;
-#ifdef FIO_MAP_VALUE
-  /** The object's value at the current index. */
-  FIO_MAP_VALUE value;
-#endif
-  /** The object's key the current index. */
-  FIO_MAP_KEY key;
-} FIO_NAME(FIO_MAP_NAME, each_s);
-
-/**
- * Iteration using a callback for each element in the map.
- *
- * The callback task function must accept an each_s pointer, see above.
- *
- * If the callback returns -1, the loop is broken. Any other value is ignored.
- *
- * Returns the relative "stop" position, i.e., the number of items processed +
- * the starting point.
- */
-SFUNC uint32_t FIO_NAME(FIO_MAP_NAME,
-                        each)(FIO_MAP_PTR map,
-                              int (*task)(FIO_NAME(FIO_MAP_NAME, each_s) *),
-                              void *udata,
-                              ssize_t start_at);
+#endif /* FIO_MAP_EACH */
 
 /* *****************************************************************************
 Optional Sorting Support - TODO? (convert to array, sort, rehash)
@@ -25211,7 +26228,7 @@ FIO_IFUNC uint32_t FIO_NAME(FIO_MAP_NAME, capa)(FIO_MAP_PTR map) {
 /* The number of objects in the map capacity. */
 FIO_IFUNC uint32_t FIO_NAME(FIO_MAP_NAME, count)(FIO_MAP_PTR map) {
   FIO_PTR_TAG_VALID_OR_RETURN(map, 0);
-  return ((FIO_NAME(FIO_MAP_NAME, s) *)FIO_PTR_UNTAG(map))->count;
+  return FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map)->count;
 }
 
 /** Returns 1 if the iterator points to a valid object, otherwise returns 0. */
@@ -25258,7 +26275,9 @@ FIO_IFUNC FIO_MAP_VALUE FIO_NAME(FIO_MAP_NAME,
   return FIO_MAP_VALUE_FROM_INTERNAL(node->value);
 }
 #else
-/* If called for a node without a value, returns the key (simplifies stuff). */
+/* If called for a node without a
+ * value, returns the key (simplifies
+ * stuff). */
 FIO_IFUNC FIO_MAP_KEY FIO_NAME(FIO_MAP_NAME,
                                node2val)(FIO_NAME(FIO_MAP_NAME, node_s) *
                                          node) {
@@ -25283,7 +26302,9 @@ FIO_IFUNC FIO_MAP_VALUE_INTERNAL *FIO_NAME(FIO_MAP_NAME, node2val_ptr)(
   return &(node->value);
 }
 #else
-/* If called for a node without a value, returns the key (simplifies stuff). */
+/* If called for a node without a
+ * value, returns the key (simplifies
+ * stuff). */
 FIO_IFUNC FIO_MAP_KEY_INTERNAL *FIO_NAME(FIO_MAP_NAME, node2val_ptr)(
     FIO_NAME(FIO_MAP_NAME, node_s) * node) {
   return FIO_NAME(FIO_MAP_NAME, node2key_ptr)(node);
@@ -25374,7 +26395,6 @@ Map Implementation - possibly externed functions.
 ***************************************************************************** */
 #if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
 
-FIO_LEAK_COUNTER_DEF(FIO_NAME(FIO_MAP_NAME, s))
 FIO_LEAK_COUNTER_DEF(FIO_NAME(FIO_MAP_NAME, destroy))
 /* *****************************************************************************
 Constructors
@@ -25382,6 +26402,7 @@ Constructors
 
 /* do we have a constructor? */
 #ifndef FIO_REF_CONSTRUCTOR_ONLY
+FIO_LEAK_COUNTER_DEF(FIO_NAME(FIO_MAP_NAME, s))
 /* Allocates a new object on the heap and initializes it's memory. */
 FIO_IFUNC FIO_MAP_PTR FIO_NAME(FIO_MAP_NAME, new)(void) {
   FIO_NAME(FIO_MAP_NAME, s) *o =
@@ -25404,11 +26425,27 @@ FIO_IFUNC void FIO_NAME(FIO_MAP_NAME, free)(FIO_MAP_PTR map) {
 #endif /* FIO_REF_CONSTRUCTOR_ONLY */
 
 /* *****************************************************************************
-Internal Helpers
+
+
+
+
+Internal Helpers (Core)
+
+
+
+
 ***************************************************************************** */
+
+/** internal object data representation */
+struct FIO_NAME(FIO_MAP_NAME, __imap_s) {
+  uint8_t h[64];
+};
 
 #ifndef FIO_MAP_ATTACK_LIMIT
 #define FIO_MAP_ATTACK_LIMIT 16
+#endif
+#ifndef FIO_MAP_MINIMAL_BITS
+#define FIO_MAP_MINIMAL_BITS 1
 #endif
 #ifndef FIO_MAP_CUCKOO_STEPS
 /* Prime numbers are better */
@@ -25421,7 +26458,7 @@ Internal Helpers
 #define FIO_MAP_ARRAY_LOG_LIMIT 3
 #endif
 #ifndef FIO_MAP_CAPA
-#define FIO_MAP_CAPA(bits) ((size_t)1ULL << bits)
+#define FIO_MAP_CAPA(bits) ((size_t)1ULL << (bits))
 #endif
 
 #ifndef FIO_MAP_IS_SPARSE
@@ -25429,17 +26466,34 @@ Internal Helpers
   (o->bits > FIO_MAP_ARRAY_LOG_LIMIT && ((capa >> 2) > o->count))
 #endif
 
+/* Allocates resources for a new (clean) map. */
+FIO_IFUNC int FIO_NAME(FIO_MAP_NAME,
+                       __allocate_map)(FIO_NAME(FIO_MAP_NAME, s) * o,
+                                       uint32_t bits) {
+  if (bits < FIO_MAP_MINIMAL_BITS)
+    bits = FIO_MAP_MINIMAL_BITS;
+  if (bits > FIO_MAP_CAPA_BITS_LIMIT)
+    return -1;
+  size_t s = (sizeof(o->map[0]) + 1) << bits;
+  FIO_NAME(FIO_MAP_NAME, node_s) *n =
+      (FIO_NAME(FIO_MAP_NAME, node_s) *)FIO_MEM_REALLOC_(NULL, 0, s, 0);
+  if (!n)
+    return -1;
+  if (!FIO_MEM_REALLOC_IS_SAFE_) /* set only imap to zero */
+    FIO_MEMSET((n + (1ULL << bits)), 0, (1ULL << bits));
+  *o = (FIO_NAME(FIO_MAP_NAME, s)){.map = n, .bits = bits};
+  FIO_LEAK_COUNTER_ON_ALLOC(FIO_NAME(FIO_MAP_NAME, destroy));
+  return 0;
+}
+
 /* The number of objects in the map capacity. */
 FIO_IFUNC uint8_t *FIO_NAME(FIO_MAP_NAME,
-                            __imap)(FIO_NAME(FIO_MAP_NAME, s) * o) {
-  // FIO_ASSERT(o && o->map, "shouldn't have been called.");
+                            __imap)(FIO_NAME(FIO_MAP_NAME, s) const *o) {
   return (uint8_t *)(o->map + FIO_MAP_CAPA(o->bits));
 }
 
-FIO_IFUNC uint64_t FIO_NAME(FIO_MAP_NAME,
-                            __byte_hash)(FIO_NAME(FIO_MAP_NAME, s) * o,
-                                         uint64_t hash) {
-  hash = (hash >> o->bits);
+FIO_IFUNC uint64_t FIO_NAME(FIO_MAP_NAME, __byte_hash)(uint64_t hash) {
+  hash = (hash >> 48) ^ (hash >> 56);
   hash &= 0xFF;
   hash += !(hash);
   hash -= (hash == 255);
@@ -25458,287 +26512,736 @@ FIO_IFUNC uint64_t FIO_NAME(FIO_MAP_NAME,
   return (khash == hash);
 }
 
-FIO_SFUNC uint32_t FIO_NAME(FIO_MAP_NAME,
-                            __index)(FIO_NAME(FIO_MAP_NAME, s) * o,
-                                     FIO_MAP_KEY key,
-                                     uint64_t hash) {
-  uint32_t r = (uint32_t)-1;
-  if (!o->map)
-    return r;
-  static int guard_print = 0;
-  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
-  size_t capa = FIO_MAP_CAPA(o->bits);
-  size_t bhash = FIO_NAME(FIO_MAP_NAME, __byte_hash)(o, hash);
-  size_t guard = FIO_MAP_ATTACK_LIMIT + 1;
-  if (o->bits > FIO_MAP_ARRAY_LOG_LIMIT) { /* treat as map */
-    uint64_t bhash64 = bhash | (bhash << 8);
-    bhash64 |= bhash64 << 16;
-    bhash64 |= bhash64 << 32;
-    bhash64 = ~bhash64;
-    const uintptr_t pos_mask = capa - 1;
-    const uint_fast8_t offsets[8] = {0, 3, 8, 17, 28, 41, 58, 60};
-    for (uintptr_t pos = hash, c = 0; c < FIO_MAP_SEEK_LIMIT;
-         (pos += FIO_MAP_CUCKOO_STEPS), ++c) {
-      uint64_t comb = imap[(pos + offsets[0]) & pos_mask];
-      comb |= ((uint64_t)imap[(pos + offsets[1]) & pos_mask]) << (1 * 8);
-      comb |= ((uint64_t)imap[(pos + offsets[2]) & pos_mask]) << (2 * 8);
-      comb |= ((uint64_t)imap[(pos + offsets[3]) & pos_mask]) << (3 * 8);
-      comb |= ((uint64_t)imap[(pos + offsets[4]) & pos_mask]) << (4 * 8);
-      comb |= ((uint64_t)imap[(pos + offsets[5]) & pos_mask]) << (5 * 8);
-      comb |= ((uint64_t)imap[(pos + offsets[6]) & pos_mask]) << (6 * 8);
-      comb |= ((uint64_t)imap[(pos + offsets[7]) & pos_mask]) << (7 * 8);
-      const uint64_t has_possible_match =
-          (((comb ^ bhash64) & 0x7F7F7F7F7F7F7F7FULL) + 0x0101010101010101ULL) &
-          0x8080808080808080ULL;
-      if (has_possible_match) {
-        /* there was a 7 bit match in one of the bytes in this 8 byte group */
-        for (size_t i = 0; i < 8; ++i) {
-          const uint32_t tmp = (uint32_t)((pos + offsets[i]) & pos_mask);
-          if (imap[tmp] != bhash)
-            continue;
-          /* test key and hash equality */
-          if (FIO_NAME(FIO_MAP_NAME, __is_eq_hash)(o->map + tmp, hash)) {
-            if (FIO_MAP_KEY_CMP(o->map[tmp].key, key)) {
-              guard_print = 0;
-              return (r = tmp);
-            }
-            if (!(--guard)) {
-              if (!guard_print)
-                FIO_LOG_SECURITY("hash map " FIO_MACRO2STR(
-                    FIO_NAME(FIO_MAP_NAME, s)) " under attack?");
-              guard_print = 1;
-              return (r = tmp);
-            }
-          }
-        }
-      }
-      const uint64_t has_possible_full_byte =
-          (((comb)&0x7F7F7F7F7F7F7F7FULL) + 0x0101010101010101ULL) &
-          0x8080808080808080ULL;
-      const uint64_t has_possible_empty_byte =
-          (((~comb) & 0x7F7F7F7F7F7F7F7FULL) + 0x0101010101010101ULL) &
-          0x8080808080808080ULL;
-      if (!(has_possible_full_byte | has_possible_empty_byte))
-        continue;
-      /* there was a 7 bit match for a possible free space in this group */
-      for (int i = 0; i < 8; ++i) {
-        const uint32_t tmp = (uint32_t)((pos + offsets[i]) & pos_mask);
-        if (!imap[tmp])
-          return (r = tmp); /* empty slot always ends search */
-        if (r > pos_mask && imap[tmp] == 255)
-          r = tmp; /* mark hole to be filled */
-      }
-    }
-    return r;
-  } /* treat as array */
-  for (size_t i = 0; i < capa; ++i) {
-    if (!imap[i])
-      return (r = (uint32_t)i);
-    if (imap[i] == bhash) {
-      /* test key and hash equality */
-      if (FIO_NAME(FIO_MAP_NAME, __is_eq_hash)(o->map + i, hash)) {
-        if (FIO_MAP_KEY_CMP(o->map[i].key, key)) {
-          guard_print = 0;
-          return (r = (uint32_t)i);
-        }
-        if (!(--guard)) {
-          if (!guard_print)
-            FIO_LOG_SECURITY("hash map " FIO_MACRO2STR(
-                FIO_NAME(FIO_MAP_NAME, s)) " under attack?");
-          guard_print = 1;
-          return (r = (uint32_t)i);
-        }
-      }
-    }
-    if (imap[i] == 0xFF)
-      r = (uint32_t)i; /* a free spot is available*/
-  }
-  return r;
-}
-/* deallocate the map's memory. */
-FIO_SFUNC void FIO_NAME(FIO_MAP_NAME,
-                        __dealloc_map)(FIO_NAME(FIO_MAP_NAME, s) * o) {
-  if (!o->map)
-    return;
-  const size_t capa = FIO_MAP_CAPA(o->bits);
-  FIO_LEAK_COUNTER_ON_FREE(FIO_NAME(FIO_MAP_NAME, destroy));
-  FIO_MEM_FREE_(o->map, (capa * sizeof(*o->map)) + capa);
-  (void)capa;
-}
+typedef struct FIO_NAME(FIO_MAP_NAME, __each_node_s) {
+  FIO_NAME(FIO_MAP_NAME, s) * map;
+  FIO_NAME(FIO_MAP_NAME, node_s) * node;
+  int (*fn)(struct FIO_NAME(FIO_MAP_NAME, __each_node_s) *);
+  void *udata;
+} FIO_NAME(FIO_MAP_NAME, __each_node_s);
 
-/** duplicates an objects between two maps. */
+/* perform task for each node. */
 FIO_IFUNC int FIO_NAME(FIO_MAP_NAME,
-                       __copy_obj)(FIO_NAME(FIO_MAP_NAME, s) * dest,
-                                   FIO_NAME(FIO_MAP_NAME, node_s) * o,
-                                   uint32_t internal) {
-  FIO_MAP_KEY key = FIO_MAP_KEY_FROM_INTERNAL(o->key);
-  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(dest);
-#if FIO_MAP_RECALC_HASH
-  uint64_t ohash = FIO_MAP_HASH_FN(key);
-  ohash += !ohash;
-#else
-  const uint64_t ohash = o->hash;
-#endif
-  uint32_t i = FIO_NAME(FIO_MAP_NAME, __index)(dest, key, ohash);
-  if (i == (uint32_t)-1 || (imap[i] + 1) > 1)
-    return -1;
-  if (internal) {
-    dest->map[i] = *o;
-    imap[i] = FIO_NAME(FIO_MAP_NAME, __byte_hash)(dest, ohash);
-#if FIO_MAP_ORDERED
-    if (dest->count) { /* update ordering */
-      FIO_INDEXED_LIST_PUSH(dest->map, node, dest->head, i);
-    } else { /* set first order */
-      dest->map[i].node.next = dest->map[i].node.prev = i;
-      dest->head = i;
-    }
-#endif
-    ++dest->count;
+                       __each_node)(FIO_NAME(FIO_MAP_NAME, s) * o,
+                                    int (*fn)(FIO_NAME(FIO_MAP_NAME,
+                                                       __each_node_s) *),
+                                    void *udata) {
+  FIO_NAME(FIO_MAP_NAME, __each_node_s)
+  each = {.map = o, .fn = fn, .udata = udata};
+  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
+  size_t counter = o->count;
+  if (!counter)
     return 0;
-  }
-  imap[i] = FIO_NAME(FIO_MAP_NAME, __byte_hash)(dest, ohash);
-  FIO_MAP_KEY_COPY(dest->map[i].key, FIO_MAP_KEY_FROM_INTERNAL(o->key));
-  FIO_MAP_VALUE_COPY(dest->map[i].value, FIO_MAP_VALUE_FROM_INTERNAL(o->value));
-#if !FIO_MAP_RECALC_HASH
-  dest->map[i].hash = o->hash;
-#endif
 #if FIO_MAP_ORDERED
-  if (dest->count) { /* update ordering */
-    FIO_INDEXED_LIST_PUSH(dest->map, node, dest->head, i);
-  } else { /* set first order */
-    dest->map[i].node.next = dest->map[i].node.prev = i;
-    dest->head = i;
+  FIO_INDEXED_LIST_EACH(o->map, node, o->head, pos) {
+    each.node = o->map + pos;
+    if (each.fn(&each))
+      return -1;
+    --counter;
+    if (FIO_UNLIKELY(imap != FIO_NAME(FIO_MAP_NAME, __imap)(o)))
+      return -1;
+  }
+#else
+  const size_t len = FIO_MAP_CAPA(o->bits);
+  if (FIO_UNLIKELY(o->bits > 5 && (FIO_MAP_CAPA(o->bits) >> 2) > o->count))
+    goto sparse_map;
+  for (size_t i = 0; counter; ++i) {
+    if (!imap[i] || imap[i] == 255)
+      continue;
+    each.node = o->map + i;
+    if (FIO_UNLIKELY(each.fn(&each)))
+      return -1;
+    --counter;
+    if (FIO_UNLIKELY(imap != FIO_NAME(FIO_MAP_NAME, __imap)(o)))
+      return -1;
+  }
+  FIO_ASSERT_DEBUG(
+      !counter,
+      "detected error while looping over all elements in map (%zu/%zu)",
+      counter,
+      (size_t)FIO_MAP_CAPA(o->bits));
+  return 0;
+
+sparse_map:
+  for (size_t i = 0; counter && i < len; i += 64) {
+    uint64_t bitmap = 0;
+    for (size_t j = 0; j < 64; j += 8) {
+      uint64_t tmp = *((uint64_t *)(imap + i + j));
+      uint64_t inv = ~tmp;
+      tmp = FIO_HAS_FULL_BYTE64(tmp);
+      inv = FIO_HAS_FULL_BYTE64(inv);
+      tmp |= inv;
+      FIO_HAS_BYTE2BITMAP(tmp, 7);
+      bitmap |= (tmp << j);
+    }
+    bitmap = ~bitmap; /* where 1 was a free slot, now it's an occupied one */
+    for (size_t j = 0; bitmap; ++j) {
+      if ((bitmap & 1)) {
+        each.node = o->map + i + j;
+        if (each.fn(&each))
+          return -1;
+        --counter;
+        if (imap != FIO_NAME(FIO_MAP_NAME, __imap)(o))
+          return -1;
+      }
+      bitmap >>= 1;
+    }
   }
 #endif
-  ++dest->count;
+  FIO_ASSERT_DEBUG(
+      !counter,
+      "detected error while looping over all elements in map (%zu/%zu)",
+      counter,
+      (size_t)FIO_MAP_CAPA(o->bits));
   return 0;
 }
 
-/** duplicates a map to a new copy (usually for rehashing / reserving space). */
-FIO_IFUNC FIO_NAME(FIO_MAP_NAME, s)
-    FIO_NAME(FIO_MAP_NAME, __duplicate)(FIO_NAME(FIO_MAP_NAME, s) * o,
-                                        uint32_t bits,
-                                        uint32_t internal) {
-  FIO_NAME(FIO_MAP_NAME, s) cpy = {0};
-  if (bits > FIO_MAP_CAPA_BITS_LIMIT)
-    return cpy;
-  size_t capa = FIO_MAP_CAPA(bits);
-  cpy.map = (FIO_NAME(FIO_MAP_NAME, node_s) *)
-      FIO_MEM_REALLOC_(NULL, 0, ((capa * sizeof(*cpy.map)) + capa), 0);
-  if (!cpy.map)
-    return cpy;
-  FIO_LEAK_COUNTER_ON_ALLOC(FIO_NAME(FIO_MAP_NAME, destroy));
-  if (!FIO_MEM_REALLOC_IS_SAFE_) {
-    /* set only the imap, the rest can be junk data */
-    FIO_MEMSET((cpy.map + capa), 0, capa);
-  }
-  cpy.bits = bits;
-  if (!o->count)
-    return cpy;
-#if FIO_MAP_ORDERED
-  /* copy objects in order */
-  FIO_INDEXED_LIST_EACH(o->map, node, o->head, i) {
-    if (FIO_NAME(FIO_MAP_NAME, __copy_obj)(&cpy, o->map + i, internal))
-      goto error;
-  }
-#else
-  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
-  capa = FIO_MAP_CAPA(o->bits);
-  if (FIO_MAP_IS_SPARSE(o)) { /* sparsely populated */
-    for (size_t i = 0; i < capa; i += 8) {
-      uint64_t comb = *((uint64_t *)(imap + i));
-      if (!comb || comb == 0xFFFFFFFFFFFFFFFFULL)
-        continue;
-      for (size_t j = 0; j < 8; ++j) {
-        const size_t tmp = j + i;
-        if (!imap[tmp] || imap[tmp] == 0xFF)
-          continue;
-        if (FIO_NAME(FIO_MAP_NAME, __copy_obj)(&cpy, o->map + tmp, internal))
-          goto error;
-      }
-    }
-    return cpy;
-  } /* review as array */
-  for (size_t i = 0; i < capa; ++i) {
-    if (!imap[i] || imap[i] == 0xFF)
-      continue;
-    if (FIO_NAME(FIO_MAP_NAME, __copy_obj)(&cpy, o->map + i, internal))
-      goto error;
-  }
+#if !FIO_MAP_KEY_DESTROY_SIMPLE || !FIO_MAP_VALUE_DESTROY_SIMPLE
+static int FIO_NAME(FIO_MAP_NAME,
+                    __destroy_map_task)(FIO_NAME(FIO_MAP_NAME, __each_node_s) *
+                                        e) {
+  FIO_MAP_KEY_DESTROY(e->node->key);
+  FIO_MAP_VALUE_DESTROY(e->node->value);
+  return 0;
+}
 #endif
-  return cpy;
-error:
-  FIO_NAME(FIO_MAP_NAME, __dealloc_map)(&cpy);
-  cpy = (FIO_NAME(FIO_MAP_NAME, s)){0};
-  return cpy;
+
+/* Destroys and exsiting map. */
+FIO_IFUNC void FIO_NAME(FIO_MAP_NAME,
+                        __destroy_map)(FIO_NAME(FIO_MAP_NAME, s) * o,
+                                       _Bool should_zero) {
+#if !FIO_MAP_KEY_DESTROY_SIMPLE || !FIO_MAP_VALUE_DESTROY_SIMPLE
+  FIO_NAME(FIO_MAP_NAME, __each_node)
+  (o, FIO_NAME(FIO_MAP_NAME, __destroy_map_task), NULL);
+#endif
+  if (should_zero) /* set only imap to zero */
+    FIO_MEMSET((o->map + (1ULL << o->bits)), 0, (1ULL << o->bits));
+  o->count = 0;
 }
 
-/* destroys all objects in the map, without(!) resetting the `imap`. */
-FIO_SFUNC void FIO_NAME(FIO_MAP_NAME,
-                        __destroy_objects)(FIO_NAME(FIO_MAP_NAME, s) * o) {
-#if FIO_MAP_VALUE_DESTROY_SIMPLE && FIO_MAP_KEY_DESTROY_SIMPLE
-  (void)o;
-  return;
-#else
-  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
-  const size_t capa = FIO_MAP_CAPA(o->bits);
-  if (FIO_MAP_IS_SPARSE(o)) {
-    for (size_t i = 0; i < capa; i += 8) {
-      uint64_t comb = *((uint64_t *)(imap + i));
-      if (!comb || comb == 0xFFFFFFFFFFFFFFFFULL)
-        continue;
-      for (size_t j = i; j < i + 8; ++j) {
-        FIO_MAP_KEY_DESTROY(o->map[j].key);
-        FIO_MAP_VALUE_DESTROY(o->map[j].value);
-      }
-    }
-  } else { /* review as array */
-    for (size_t i = 0; i < capa; ++i) {
-      if (!imap[i] || imap[i] == 0xFF)
-        continue;
-      FIO_MAP_KEY_DESTROY(o->map[i].key);
-      FIO_MAP_VALUE_DESTROY(o->map[i].value);
+/* Destroys and exsiting map. */
+FIO_IFUNC void FIO_NAME(FIO_MAP_NAME, __free_map)(FIO_NAME(FIO_MAP_NAME, s) * o,
+                                                  _Bool should_destroy) {
+  if (!o->map)
+    return;
+  if (should_destroy)
+    FIO_NAME(FIO_MAP_NAME, __destroy_map)(o, 0);
+  FIO_MEM_FREE_(o->map, ((sizeof(o->map[0]) + 1) << o->bits));
+  FIO_LEAK_COUNTER_ON_FREE(FIO_NAME(FIO_MAP_NAME, destroy));
+  *o = (FIO_NAME(FIO_MAP_NAME, s)){0};
+}
+
+#ifndef H___FIO_MAP_INDEX_TYPE___H
+#define H___FIO_MAP_INDEX_TYPE___H
+typedef struct {
+  uint32_t home;
+  uint32_t act;
+  uint32_t alt;
+  uint32_t bhash;
+} fio___map_node_info_s;
+#endif
+
+/** internal object data representation */
+typedef struct FIO_NAME(FIO_MAP_NAME, __o_node_s) {
+  uint64_t hash;
+  FIO_MAP_KEY key;
+#ifdef FIO_MAP_VALUE
+  FIO_MAP_VALUE value;
+#endif
+} FIO_NAME(FIO_MAP_NAME, __o_node_s);
+
+/* seek a node for very small collections 8 item capacity at most */
+FIO_SFUNC fio___map_node_info_s FIO_NAME(FIO_MAP_NAME, __node_info_mini)(
+    FIO_NAME(FIO_MAP_NAME, s) * o,
+    FIO_NAME(FIO_MAP_NAME, __o_node_s) * node) {
+  // FIO_LOG_INFO("seek as linear array for h %llu", node->hash);
+  fio___map_node_info_s r = {
+      (uint32_t)-1,
+      (uint32_t)-1,
+      (uint32_t)-1,
+      (uint32_t)FIO_NAME(FIO_MAP_NAME, __byte_hash)(node->hash)};
+  if (!o->bits)
+    return r;
+  const uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
+  const uint32_t capa = (uint32_t)FIO_MAP_CAPA(o->bits);
+  const uint32_t mask = capa - 1;
+  size_t pos = node->hash & 0xFF;
+  for (uint32_t i = 0; i < capa; ++i) {
+    pos = (pos + i) & mask;
+    if (imap[pos] == r.bhash &&
+        FIO_NAME(FIO_MAP_NAME, __is_eq_hash)(o->map + pos, node->hash) &&
+        FIO_MAP_KEY_CMP(o->map[pos].key, node->key)) {
+      r.act = (uint32_t)pos;
+      return r;
+    } else if (!imap[pos]) {
+      r.alt = r.home = (uint32_t)pos;
+      return r;
+    } else if (imap[pos] == 255U) { /* "home" has been occupied before */
+      r.alt = r.home = (uint32_t)pos;
     }
   }
-#endif /* FIO_MAP_VALUE_DESTROY_SIMPLE */
+  return r;
+}
+
+/* seek a node for medium sized collections, 16-512 item capacity. */
+FIO_SFUNC fio___map_node_info_s FIO_NAME(FIO_MAP_NAME, __node_info_med)(
+    FIO_NAME(FIO_MAP_NAME, s) * o,
+    FIO_NAME(FIO_MAP_NAME, __o_node_s) * node) {
+  // FIO_LOG_INFO("seek as linear array for h %llu", node->hash);
+  static int guard_print = 0;
+  fio___map_node_info_s r = {
+      (uint32_t)-1,
+      (uint32_t)-1,
+      (uint32_t)-1,
+      (uint32_t)FIO_NAME(FIO_MAP_NAME, __byte_hash)(node->hash)};
+  const uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
+  const uint32_t mask = (uint32_t)(FIO_MAP_CAPA(o->bits) - 1);
+  uint32_t guard = FIO_MAP_ATTACK_LIMIT + 1;
+  uint32_t pos = r.home = (node->hash & mask);
+  uint32_t step = 2;
+  uint32_t attempts = (mask < 511) ? ((mask >> 2) | 8) : 127;
+  for (; r.alt == (uint32_t)-1 && attempts; --attempts) {
+    if (!imap[pos]) {
+      r.alt = pos;
+      return r;
+    } else if (imap[pos] == 255U) { /* "home" has been occupied before */
+      r.alt = pos;
+    } else if (imap[pos] == r.bhash &&
+               FIO_NAME(FIO_MAP_NAME, __is_eq_hash)(o->map + pos, node->hash)) {
+      if (FIO_MAP_KEY_CMP(o->map[pos].key, node->key)) {
+        r.act = pos;
+        return r;
+      }
+      if (!--guard) {
+        r.act = pos;
+        goto possible_attack;
+      }
+    }
+    pos = ((pos + (step++)) & mask);
+  }
+  for (; attempts; --attempts) {
+    if (imap[pos] == r.bhash &&
+        FIO_NAME(FIO_MAP_NAME, __is_eq_hash)(o->map + pos, node->hash)) {
+      if (FIO_MAP_KEY_CMP(o->map[pos].key, node->key)) {
+        r.act = pos;
+        return r;
+      }
+      if (!--guard) {
+        r.act = pos;
+        goto possible_attack;
+      }
+    }
+    if (!imap[pos])
+      return r;
+    pos = ((pos + (step++)) & mask);
+  }
+  if (r.alt == (uint32_t)-1)
+    r.home = r.alt;
+  return r;
+
+possible_attack:
+  if (!guard_print) {
+    guard_print = 1;
+    FIO_LOG_SECURITY("hash map " FIO_MACRO2STR(
+        FIO_NAME(FIO_MAP_NAME, s)) " under attack? (full collision guard)");
+  }
+  return r;
+}
+
+/* seek a node for larger collections, where 8 byte grouping is meaningless */
+FIO_SFUNC fio___map_node_info_s FIO_NAME(FIO_MAP_NAME, __node_info_full)(
+    FIO_NAME(FIO_MAP_NAME, s) * o,
+    FIO_NAME(FIO_MAP_NAME, __o_node_s) * node) {
+  // FIO_LOG_INFO("seek as linear array for h %llu", node->hash);
+  static int guard_print = 0;
+  fio___map_node_info_s r = {
+      (uint32_t)-1,
+      (uint32_t)-1,
+      (uint32_t)-1,
+      (uint32_t)FIO_NAME(FIO_MAP_NAME, __byte_hash)(node->hash)};
+  const uint32_t mask = (FIO_MAP_CAPA(o->bits) - 1) & (~(uint32_t)7ULL);
+  const uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
+  const size_t attempt_limit = o->bits + 7;
+  const uint64_t mbyte64 = ~(UINT64_C(0x0101010101010101) * (uint64_t)r.bhash);
+  uint32_t guard = FIO_MAP_ATTACK_LIMIT + 1;
+  uint32_t pos = r.home = (node->hash & mask);
+  size_t attempt = 0;
+  for (; r.alt == (uint32_t)-1 && attempt < attempt_limit; ++attempt) {
+    uint64_t group = fio_buf2u64_le(imap + pos);
+    group ^= mbyte64;
+    group &= UINT64_C(0x7F7F7F7F7F7F7F7F);
+    group += UINT64_C(0x0101010101010101);
+    group &= UINT64_C(0x8080808080808080);
+    while (group) {
+      uint32_t offset = (uint32_t)fio_lsb_index_unsafe(group);
+      group ^= (uint64_t)1ULL << offset;
+      offset >>= 3;
+      offset += pos;
+      if (imap[offset] == r.bhash &&
+          FIO_NAME(FIO_MAP_NAME, __is_eq_hash)(o->map + offset, node->hash)) {
+        if (FIO_MAP_KEY_CMP(o->map[offset].key, node->key)) {
+          r.act = offset;
+          return r;
+        }
+        if (!--guard) {
+          r.act = offset;
+          goto possible_attack;
+        }
+      }
+    }
+    group = fio_buf2u64_le(imap + pos);
+    group &= UINT64_C(0x7F7F7F7F7F7F7F7F);
+    group += UINT64_C(0x0101010101010101);
+    group &= UINT64_C(0x8080808080808080);
+    while (group) {
+      uint32_t offset = (uint32_t)fio_lsb_index_unsafe(group);
+      group ^= (uint64_t)1ULL << offset;
+      offset >>= 3;
+      offset += pos;
+      if (imap[offset] == 255U) {
+        r.alt = offset;
+        break;
+      }
+    }
+    group = ~fio_buf2u64_le(imap + pos);
+    group &= UINT64_C(0x7F7F7F7F7F7F7F7F);
+    group += UINT64_C(0x0101010101010101);
+    group &= UINT64_C(0x8080808080808080);
+    while (group) {
+      uint32_t offset = (uint32_t)fio_lsb_index_unsafe(group);
+      group ^= (uint64_t)1ULL << offset;
+      offset >>= 3;
+      offset += pos;
+      if (!imap[offset]) {
+        r.alt = offset;
+        return r;
+      }
+    }
+    pos += (attempt + 2) << 3;
+    pos &= mask;
+  }
+  for (; attempt < attempt_limit; ++attempt) {
+    uint64_t group = fio_buf2u64_le(imap + pos);
+    group ^= mbyte64;
+    group &= UINT64_C(0x7F7F7F7F7F7F7F7F);
+    group += UINT64_C(0x0101010101010101);
+    group &= UINT64_C(0x8080808080808080);
+    while (group) {
+      uint32_t offset = (uint32_t)fio_lsb_index_unsafe(group);
+      group ^= (uint64_t)1ULL << offset;
+      offset >>= 3;
+      offset += pos;
+      if (imap[offset] == r.bhash &&
+          FIO_NAME(FIO_MAP_NAME, __is_eq_hash)(o->map + offset, node->hash)) {
+        if (FIO_MAP_KEY_CMP(o->map[offset].key, node->key)) {
+          r.act = offset;
+          return r;
+        }
+        if (!--guard) {
+          r.act = offset;
+          goto possible_attack;
+        }
+      }
+    }
+    group = ~fio_buf2u64_le(imap + pos);
+    group &= UINT64_C(0x7F7F7F7F7F7F7F7F);
+    group += UINT64_C(0x0101010101010101);
+    group &= UINT64_C(0x8080808080808080);
+    while (group) {
+      uint32_t offset = (uint32_t)fio_lsb_index_unsafe(group);
+      group ^= (uint64_t)1ULL << offset;
+      offset >>= 3;
+      offset += pos;
+      if (!imap[offset]) {
+        return r;
+      }
+    }
+    pos += (attempt + 2) << 3;
+    pos &= mask;
+  }
+  if (r.alt == (uint32_t)-1)
+    r.home = r.alt;
+  return r;
+possible_attack:
+  if (!guard_print) {
+    guard_print = 1;
+    FIO_LOG_SECURITY("hash map " FIO_MACRO2STR(
+        FIO_NAME(FIO_MAP_NAME, s)) " under attack? (full collision guard)");
+  }
+  return r;
+}
+
+FIO_IFUNC fio___map_node_info_s
+FIO_NAME(FIO_MAP_NAME, __node_info)(FIO_NAME(FIO_MAP_NAME, s) * o,
+                                    FIO_NAME(FIO_MAP_NAME, __o_node_s) * node) {
+#if defined(FIO_MAP_HASH_FN)
+  if (!node->hash)
+    node->hash = FIO_MAP_HASH_FN(node->key);
+#endif
+  node->hash += !node->hash;
+  if (o->bits < 4)
+    return FIO_NAME(FIO_MAP_NAME, __node_info_mini)(o, node);
+  else if (o->bits < 9)
+    return FIO_NAME(FIO_MAP_NAME, __node_info_med)(o, node);
+  else
+    return FIO_NAME(FIO_MAP_NAME, __node_info_full)(o, node);
+}
+
+#if FIO_MAP_ORDERED
+FIO_IFUNC void FIO_NAME(FIO_MAP_NAME,
+                        __update_order)(FIO_NAME(FIO_MAP_NAME, s) * o,
+                                        uint32_t i) {
+  if (o->count == 1) {
+    o->head = i;
+    o->map[i].node.next = o->map[i].node.prev = i;
+  } else {
+    FIO_INDEXED_LIST_PUSH(o->map, node, o->head, i);
+  }
+}
+#define FIO___MAP_UPDATE_ORDER(map, at)                                        \
+  FIO_NAME(FIO_MAP_NAME, __update_order)(map, at)
+#else
+#define FIO___MAP_UPDATE_ORDER(map, at)
+#endif
+
+static int FIO_NAME(FIO_MAP_NAME,
+                    __move2map_task)(FIO_NAME(FIO_MAP_NAME, __each_node_s) *
+                                     e) {
+  FIO_NAME(FIO_MAP_NAME, s) *dest = (FIO_NAME(FIO_MAP_NAME, s) *)e->udata;
+  FIO_NAME(FIO_MAP_NAME, __o_node_s)
+  n = {
+    .key = FIO_MAP_KEY_FROM_INTERNAL(e->node->key),
+#if !FIO_MAP_RECALC_HASH
+    .hash = e->node->hash,
+#endif
+  };
+  fio___map_node_info_s i = FIO_NAME(FIO_MAP_NAME, __node_info)(dest, &n);
+  if (i.home == (uint32_t)-1) {
+    FIO_LOG_ERROR("move2map FAILED (%zu/%zu)!",
+                  e->node - e->map->map,
+                  FIO_MAP_CAPA(dest->bits));
+    return -1;
+  }
+  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(dest);
+  ++dest->count;
+  /* insert at best position */
+  imap[i.alt] = i.bhash;
+  dest->map[i.alt] = e->node[0];
+  FIO___MAP_UPDATE_ORDER(dest, i.alt);
+  return 0;
+}
+
+FIO_IFUNC int FIO_NAME(FIO_MAP_NAME,
+                       __move2map)(FIO_NAME(FIO_MAP_NAME, s) * dest,
+                                   FIO_NAME(FIO_MAP_NAME, s) * src) {
+  return FIO_NAME(
+      FIO_MAP_NAME,
+      __each_node)(src, FIO_NAME(FIO_MAP_NAME, __move2map_task), dest);
+}
+
+/* Inserts a node to the map. */
+FIO_IFUNC uint32_t FIO_NAME(FIO_MAP_NAME,
+                            __node_insert)(FIO_NAME(FIO_MAP_NAME, s) * o,
+#ifndef FIO_MAP_HASH_FN
+                                           uint64_t hash,
+#endif
+                                           FIO_MAP_KEY key,
+#ifdef FIO_MAP_VALUE
+                                           FIO_MAP_VALUE value,
+#endif
+#ifdef FIO_MAP_VALUE
+                                           FIO_MAP_VALUE_INTERNAL *old,
+#else
+                                           FIO_MAP_KEY_INTERNAL *old,
+#endif
+                                           _Bool overwrite) {
+  static FIO_NAME(FIO_MAP_NAME, s) *last_collision = NULL;
+  uint32_t r = -1;
+  FIO_NAME(FIO_MAP_NAME, s) tmp;
+  FIO_NAME(FIO_MAP_NAME, __o_node_s)
+  node = {
+      .key = key,
+#ifdef FIO_MAP_VALUE
+      .value = value,
+#endif
+#ifndef FIO_MAP_HASH_FN
+      .hash = hash,
+#endif
+  };
+  fio___map_node_info_s info;
+  info = FIO_NAME(FIO_MAP_NAME, __node_info)(o, &node);
+  if (info.act != r)
+    goto perform_overwrite;
+  if (info.home == r)
+    goto reallocate_map;
+
+insert:
+  ++o->count;
+  r = info.alt;
+  FIO_NAME(FIO_MAP_NAME, __imap)(o)[r] = info.bhash;
+#if !FIO_MAP_RECALC_HASH
+  o->map[r].hash = node.hash,
+#endif
+  FIO_MAP_KEY_COPY(o->map[r].key, node.key);
+  FIO_MAP_VALUE_COPY(o->map[r].value, node.value);
+  FIO___MAP_UPDATE_ORDER(o, r);
+  return r;
+
+perform_overwrite:
+  r = info.act;
+  FIO_MAP_KEY_DISCARD(node.key);
+  if (!overwrite) {
+    FIO_MAP_VALUE_DISCARD(value);
+    return r;
+  }
+#ifdef FIO_MAP_VALUE
+  if (old)
+    *old = o->map[r].value;
+  else {
+    FIO_MAP_VALUE_DESTROY(o->map[r].value);
+  }
+  FIO_MAP_VALUE_COPY(o->map[r].value, node.value);
+#else
+  (void)old;
+#endif
+#if FIO_MAP_ORDERED
+  if (o->head == r)
+    o->head = o->map[o->head].node.prev;
+  FIO_INDEXED_LIST_REMOVE(o->map, node, r);
+  FIO___MAP_UPDATE_ORDER(o, r);
+#endif
+  return r;
+
+reallocate_map:
+  /* reallocate map */
+  if (FIO_NAME(FIO_MAP_NAME, __allocate_map)(&tmp, o->bits + 1))
+    goto no_memory;
+  if (FIO_NAME(FIO_MAP_NAME, __move2map)(&tmp, o)) {
+    FIO_NAME(FIO_MAP_NAME, __free_map)(&tmp, 0);
+    goto security_partial;
+  }
+  info = FIO_NAME(FIO_MAP_NAME, __node_info)(&tmp, &node);
+  if (info.home != r) {
+    FIO_NAME(FIO_MAP_NAME, __free_map)(o, 0);
+    *o = tmp;
+    goto insert;
+  }
+  FIO_NAME(FIO_MAP_NAME, __free_map)(&tmp, 0);
+  goto security_partial;
+
+no_memory:
+  FIO_MAP_KEY_DISCARD(key);
+  FIO_MAP_VALUE_DISCARD(value);
+  FIO_LOG_ERROR(
+      "unknown error occurred trying to add an entry to the map (capa: %zu)",
+      (size_t)FIO_MAP_CAPA(o->bits));
+  FIO_ASSERT_DEBUG(0, "these errors shouldn't happen - no memory?");
+  return r;
+
+security_partial:
+  if (last_collision != o) {
+    FIO_LOG_SECURITY(
+        "hash map " FIO_MACRO2STR(FIO_NAME(
+            FIO_MAP_NAME,
+            s)) " under attack? (partial/full collision guard) - capa: %zu.",
+        (size_t)FIO_MAP_CAPA(o->bits));
+    last_collision = o;
+  }
+  return r;
+}
+
+/* Inserts a node to the map. */
+FIO_IFUNC uint32_t FIO_NAME(FIO_MAP_NAME,
+                            __node_find)(FIO_NAME(FIO_MAP_NAME, s) * o,
+#ifndef FIO_MAP_HASH_FN
+                                         uint64_t hash,
+#endif
+                                         FIO_MAP_KEY key) {
+  uint32_t r = -1;
+  fio___map_node_info_s info;
+  FIO_NAME(FIO_MAP_NAME, __o_node_s)
+  node = {
+      .key = key,
+#ifndef FIO_MAP_HASH_FN
+      .hash = hash,
+#endif
+  };
+  if (!o->map)
+    return r;
+  info = FIO_NAME(FIO_MAP_NAME, __node_info)(o, &node);
+  return (r = info.act);
+}
+
+/* Deletes a known node from the map. */
+FIO_IFUNC void FIO_NAME(FIO_MAP_NAME,
+                        __node_delete_at)(FIO_NAME(FIO_MAP_NAME, s) * o,
+                                          uint32_t at,
+#ifdef FIO_MAP_VALUE
+                                          FIO_MAP_VALUE_INTERNAL *old
+#else
+                                          FIO_MAP_KEY_INTERNAL *old
+#endif
+) {
+  --o->count;
+  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
+  imap[at] = 255U; /* mark as deleted */
+  if (old) {
+#ifdef FIO_MAP_VALUE
+    FIO_MAP_KEY_DESTROY(o->map[at].key);
+    *old = o->map[at].value;
+#else
+    *old = o->map[at].key;
+#endif
+  } else {
+    FIO_MAP_KEY_DESTROY(o->map[at].key);
+    FIO_MAP_VALUE_DESTROY(o->map[at].value);
+  }
+
+#if FIO_MAP_ORDERED
+  if (o->head == at) {
+    o->head = (o->count ? o->map[o->head].node.next : 0);
+  }
+  FIO_INDEXED_LIST_REMOVE(o->map, node, at);
+#endif
+}
+
+/* Deletes a node from the map. */
+FIO_IFUNC uint32_t FIO_NAME(FIO_MAP_NAME,
+                            __node_delete)(FIO_NAME(FIO_MAP_NAME, s) * o,
+                                           FIO_MAP_KEY key,
+#ifndef FIO_MAP_HASH_FN
+                                           uint64_t hash,
+#endif
+#ifdef FIO_MAP_VALUE
+                                           FIO_MAP_VALUE_INTERNAL *old
+#else
+                                           FIO_MAP_KEY_INTERNAL *old
+#endif
+) {
+  uint32_t r = (uint32_t)-1;
+  if (!o->map)
+    return r;
+  fio___map_node_info_s info;
+  FIO_NAME(FIO_MAP_NAME, __o_node_s)
+  node = {
+      .key = key,
+#ifndef FIO_MAP_HASH_FN
+      .hash = hash,
+#endif
+  };
+  info = FIO_NAME(FIO_MAP_NAME, __node_info)(o, &node);
+  if (info.act == r)
+    return r;
+  r = 0;
+  FIO_NAME(FIO_MAP_NAME, __node_delete_at)(o, info.act, old);
+  return r;
 }
 
 /* *****************************************************************************
-API implementation
+
+
+
+
+
+
+Map API
+
+
+
+
+
+
 ***************************************************************************** */
+
+/** Destroys the object, re-initializing its container. */
+SFUNC void FIO_NAME(FIO_MAP_NAME, destroy)(FIO_MAP_PTR map) {
+  // FIO_PTR_TAG_VALID_OR_RETURN(map, 0);
+  FIO_PTR_TAG_VALID_OR_RETURN_VOID(map);
+  FIO_NAME(FIO_MAP_NAME, s) *m = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
+  FIO_NAME(FIO_MAP_NAME, __free_map)(m, 1);
+  *m = (FIO_NAME(FIO_MAP_NAME, s)){0};
+}
 
 /** Reserves at minimum the capacity requested. */
 SFUNC void FIO_NAME(FIO_MAP_NAME, reserve)(FIO_MAP_PTR map, size_t capa) {
   FIO_PTR_TAG_VALID_OR_RETURN_VOID(map);
-  FIO_NAME(FIO_MAP_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
-  capa += o->count;
-  if (FIO_MAP_CAPA(o->bits) >= capa || (capa >> FIO_MAP_CAPA_BITS_LIMIT))
+  FIO_NAME(FIO_MAP_NAME, s) *m = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
+  if (capa <= FIO_MAP_CAPA(m->bits))
     return;
-  uint_fast8_t bits = o->bits + 1;
-  while (FIO_MAP_CAPA(bits) < capa)
-    ++bits;
-  FIO_NAME(FIO_MAP_NAME, s)
-  cpy = FIO_NAME(FIO_MAP_NAME, __duplicate)(o, bits, 1);
-  if (!cpy.map)
-    return;
-  FIO_NAME(FIO_MAP_NAME, __dealloc_map)(o);
-  *o = cpy;
+  uint32_t bits = m->bits;
+  for (; capa > FIO_MAP_CAPA(bits); ++bits)
+    ;
+  FIO_NAME(FIO_MAP_NAME, s) tmp;
+  if (FIO_NAME(FIO_MAP_NAME, __allocate_map)(&tmp, bits))
+    goto no_memory;
+  if (m->count && FIO_NAME(FIO_MAP_NAME, __move2map)(&tmp, m)) {
+    FIO_NAME(FIO_MAP_NAME, __free_map)(&tmp, 0);
+    goto no_memory;
+  }
+  FIO_NAME(FIO_MAP_NAME, __free_map)(m, 0);
+  *m = tmp;
+  return;
+no_memory:
+  FIO_LOG_ERROR("unknown error occurred trying to rehash the map");
+  FIO_ASSERT_DEBUG(0, "these errors shouldn't happen - no memory?");
+  return;
 }
 
-/* Removes all objects from the map, without releasing the map's resources. */
+/** Removes an object in the map, returning a pointer to the map data. */
+SFUNC int FIO_NAME(FIO_MAP_NAME, remove)(FIO_MAP_PTR map,
+#if !defined(FIO_MAP_HASH_FN)
+                                         uint64_t hash,
+#endif
+                                         FIO_MAP_KEY key,
+#if defined(FIO_MAP_VALUE)
+                                         FIO_MAP_VALUE_INTERNAL *old
+#else
+                                         FIO_MAP_KEY_INTERNAL *old
+#endif
+) {
+  FIO_PTR_TAG_VALID_OR_RETURN(map, -1);
+  FIO_NAME(FIO_MAP_NAME, s) *m = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
+  if (!m->count)
+    return -1;
+  return FIO_NAME(FIO_MAP_NAME, __node_delete)(m,
+                                               key,
+#if !defined(FIO_MAP_HASH_FN)
+                                               hash,
+#endif
+                                               old);
+}
+
+FIO_SFUNC int FIO_NAME(FIO_MAP_NAME,
+                       __evict_task)(FIO_NAME(FIO_MAP_NAME, __each_node_s) *
+                                     e) {
+  size_t *counter = (size_t *)e->udata;
+  FIO_NAME(FIO_MAP_NAME, __node_delete_at)
+  (e->map, (uint32_t)(e->node - e->map->map), NULL);
+  if ((counter[0] -= 1))
+    return 0;
+  return -1;
+}
+/** Evicts elements in order least recently used (LRU), FIFO or undefined. */
+SFUNC void FIO_NAME(FIO_MAP_NAME, evict)(FIO_MAP_PTR map,
+                                         size_t number_of_elements) {
+  FIO_PTR_TAG_VALID_OR_RETURN_VOID(map);
+  if (!number_of_elements)
+    return;
+  FIO_NAME(FIO_MAP_NAME, s) *m = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
+  if (m->count <= number_of_elements) {
+    FIO_NAME(FIO_MAP_NAME, __destroy_map)(m, 1);
+    return;
+  }
+  FIO_NAME(FIO_MAP_NAME, __each_node)
+  (m, FIO_NAME(FIO_MAP_NAME, __evict_task), &number_of_elements);
+}
+
+/** Removes all objects from the map, without releasing the map's resources.
+ */
 SFUNC void FIO_NAME(FIO_MAP_NAME, clear)(FIO_MAP_PTR map) {
   FIO_PTR_TAG_VALID_OR_RETURN_VOID(map);
-  FIO_NAME(FIO_MAP_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
-  if (!o->map || !o->count)
-    return;
-  FIO_NAME(FIO_MAP_NAME, __destroy_objects)(o);
-  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
-  const size_t capa = FIO_MAP_CAPA(o->bits);
-  FIO_MEMSET(imap, 0, capa);
-  o->count = 0;
-#if FIO_MAP_ORDERED
-  o->head = 0;
-#endif
+  FIO_NAME(FIO_MAP_NAME, s) *m = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
+  if (m->map)
+    FIO_NAME(FIO_MAP_NAME, __destroy_map)(m, 1);
 }
 
 /** Attempts to minimize memory use. */
@@ -25747,145 +27250,29 @@ SFUNC void FIO_NAME(FIO_MAP_NAME, compact)(FIO_MAP_PTR map) {
   FIO_NAME(FIO_MAP_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
   if (!o->map || !o->count)
     return;
+  FIO_NAME(FIO_MAP_NAME, s) cpy = {0};
   uint32_t bits = o->bits;
-  while ((bits >> 1) > o->count)
+  while (FIO_MAP_CAPA(bits >> 1) > o->count)
     bits >>= 1;
-  for (;;) {
-    if (bits == o->bits)
-      return;
-    FIO_NAME(FIO_MAP_NAME, s)
-    cpy = FIO_NAME(FIO_MAP_NAME, __duplicate)(o, bits, 1);
-    if (!cpy.map) {
-      ++bits;
-      continue;
-    }
-    FIO_NAME(FIO_MAP_NAME, __dealloc_map)(o);
-    *o = cpy;
+  ++bits;
+  if (bits >= o->bits)
     return;
+  for (size_t i = 0; i < 2; ++i) {
+    if (FIO_NAME(FIO_MAP_NAME, __allocate_map)(&cpy, bits))
+      return;
+    if (!FIO_NAME(FIO_MAP_NAME, __move2map)(&cpy, o))
+      goto finish;
+    FIO_NAME(FIO_MAP_NAME, __free_map)(&cpy, 0);
+    ++bits;
   }
-}
+  return;
 
-/* Frees any internal data AND the object's container! */
-SFUNC void FIO_NAME(FIO_MAP_NAME, destroy)(FIO_MAP_PTR map) {
-  FIO_PTR_TAG_VALID_OR_RETURN_VOID(map);
-  FIO_NAME(FIO_MAP_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
-  if (o->map && o->count)
-    FIO_NAME(FIO_MAP_NAME, __destroy_objects)(o);
-  FIO_NAME(FIO_MAP_NAME, __dealloc_map)(o);
-  *o = (FIO_NAME(FIO_MAP_NAME, s))FIO_MAP_INIT;
+finish:
+  FIO_NAME(FIO_MAP_NAME, __free_map)(o, 0);
+  o[0] = cpy;
   return;
 }
 
-/** Evicts elements least recently used (LRU), FIFO or undefined. */
-SFUNC void FIO_NAME(FIO_MAP_NAME, evict)(FIO_MAP_PTR map,
-                                         size_t number_of_elements) {
-  FIO_PTR_TAG_VALID_OR_RETURN_VOID(map);
-  FIO_NAME(FIO_MAP_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
-  if (!o->count)
-    return;
-  if (number_of_elements >= o->count) {
-    FIO_NAME(FIO_MAP_NAME, clear)(map);
-    return;
-  }
-  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
-#ifdef FIO_MAP_LRU /* remove last X elements from the list */
-  FIO_INDEXED_LIST_EACH_REVERSED(o->map, node, o->head, i) {
-    FIO_MAP_KEY_DESTROY(o->map[i].key);
-    FIO_MAP_VALUE_DESTROY(o->map[i].value);
-    FIO_INDEXED_LIST_REMOVE(o->map, node, i);
-    imap[i] = 0xFF;
-    --o->count;
-    if (!(--number_of_elements))
-      return;
-  }
-#elif FIO_MAP_ORDERED /* remove first X elements from the list */
-  FIO_INDEXED_LIST_EACH(o->map, node, o->head, i) {
-    FIO_MAP_KEY_DESTROY(o->map[i].key);
-    FIO_MAP_VALUE_DESTROY(o->map[i].value);
-    FIO_INDEXED_LIST_REMOVE(o->map, node, i);
-    imap[i] = 0xFF;
-    --o->count;
-    if (!(--number_of_elements)) {
-      o->head = o->map[i].node.next;
-      return;
-    }
-  }
-#else                 /* remove whatever... */
-  if (o->bits > FIO_MAP_ARRAY_LOG_LIMIT) {
-    /* map is scattered */
-    uint32_t pos_mask = (uint32_t)(FIO_MAP_CAPA(o->bits) - 1);
-    uint32_t pos = *(uint32_t *)o->map;
-    for (int i = 0; i < 3; ++i) {
-      struct timespec t = {0};
-      clock_gettime(CLOCK_MONOTONIC, &t);
-      pos *= t.tv_nsec ^ t.tv_sec ^ (uintptr_t)imap;
-      pos ^= pos >> 7;
-    }
-    for (;;) { /* a bit of non-random randomness... */
-      uint32_t offset = ((pos << 3)) & pos_mask;
-      for (uint_fast8_t i = 0; i < 8; ++i) { /* ordering bias? vs performance */
-        const uint32_t tmp = offset + i;
-        if (!imap[tmp] || imap[tmp] == 0xFF)
-          continue;
-        FIO_MAP_KEY_DESTROY(o->map[tmp].key);
-        FIO_MAP_VALUE_DESTROY(o->map[tmp].value);
-        imap[tmp] = 0xFF;
-        --o->count;
-        if (!(--number_of_elements))
-          return;
-      }
-      pos += FIO_MAP_CUCKOO_STEPS;
-    }
-  }
-  /* map is a simple array */
-  while (number_of_elements--) {
-    FIO_MAP_KEY_DESTROY(o->map[number_of_elements].key);
-    FIO_MAP_VALUE_DESTROY(o->map[number_of_elements].value);
-    imap[number_of_elements] = 0xFF;
-  }
-#endif                /* FIO_MAP_LRU / FIO_MAP_ORDERED */
-}
-
-/* *****************************************************************************
-The Map set/get functions
-***************************************************************************** */
-
-/**
- * The core get function. This function returns NULL if item is missing.
- *
- * NOTE: the function returns the internal representation of objects.
- */
-SFUNC FIO_NAME(FIO_MAP_NAME, node_s) *
-    FIO_NAME(FIO_MAP_NAME, get_ptr)(FIO_MAP_PTR map,
-#if !defined(FIO_MAP_HASH_FN)
-                                    uint64_t hash,
-#endif
-                                    FIO_MAP_KEY key) {
-  FIO_NAME(FIO_MAP_NAME, node_s) *r = NULL;
-  FIO_PTR_TAG_VALID_OR_RETURN(map, r);
-  FIO_NAME(FIO_MAP_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
-  if (!o->count)
-    return r;
-#if defined(FIO_MAP_HASH_FN)
-  uint64_t hash = FIO_MAP_HASH_FN(key);
-#endif
-  hash += !hash;
-  uint32_t pos = FIO_NAME(FIO_MAP_NAME, __index)(o, key, hash);
-  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
-  if (pos == (uint32_t)-1 || !imap[pos] || imap[pos] == 0xFF)
-    return r;
-#ifdef FIO_MAP_LRU
-  if (o->head != pos) {
-    FIO_INDEXED_LIST_REMOVE(o->map, node, pos);
-    FIO_INDEXED_LIST_PUSH(o->map, node, o->head, pos);
-    o->head = pos;
-  }
-#endif
-  r = o->map + pos;
-  return r;
-}
-
-/** sets / removes an object in the map, returning a pointer to the map data. */
 SFUNC FIO_NAME(FIO_MAP_NAME, node_s) *
     FIO_NAME(FIO_MAP_NAME, set_ptr)(FIO_MAP_PTR map,
 #if !defined(FIO_MAP_HASH_FN)
@@ -25900,452 +27287,278 @@ SFUNC FIO_NAME(FIO_MAP_NAME, node_s) *
                                     FIO_MAP_KEY key
 #endif
     ) {
-  FIO_NAME(FIO_MAP_NAME, node_s) *r = NULL;
+  FIO_PTR_TAG_VALID_OR_RETURN(map, NULL);
+  FIO_NAME(FIO_MAP_NAME, s) *m = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
+  uint32_t i = FIO_NAME(FIO_MAP_NAME, __node_insert)(m,
+#ifndef FIO_MAP_HASH_FN
+                                                     hash,
+#endif
+                                                     key,
 #ifdef FIO_MAP_VALUE
-  if (old)
-    *old = (FIO_MAP_VALUE_INTERNAL){0};
+                                                     val,
+                                                     old,
+                                                     overwrite
+#else
+                                                     NULL,
+                                                     1
 #endif
-  FIO_NAME(FIO_MAP_NAME, s) * o;
-#if defined(FIO_MAP_HASH_FN)
-  uint64_t hash;
-#endif
-  uint32_t pos;
-  uint8_t *imap = NULL;
-
-  FIO_PTR_TAG_VALID_OR_GOTO(map, relinquish_attempt);
-  o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
-#if defined(FIO_MAP_HASH_FN)
-  hash = FIO_MAP_HASH_FN(key);
-#endif
-  hash += !hash; /* hash is never zero */
-  /* find the object's (potential) position in the array */
-  for (int i = 0;;) {
-    pos = FIO_NAME(FIO_MAP_NAME, __index)(o, key, hash);
-    if (pos != (uint32_t)-1)
-      break;
-    if (i == 2)
-      goto internal_error;
-    FIO_NAME(FIO_MAP_NAME, s)
-    tmp = FIO_NAME(FIO_MAP_NAME, __duplicate)(o, o->bits + (++i), 1);
-    if (!tmp.map) /* no memory? something bad? */
-      goto internal_error;
-    FIO_NAME(FIO_MAP_NAME, __dealloc_map)(o);
-    *o = tmp;
-  }
-  /* imap may have been reallocated, collect info now. */
-  imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
-  /* set return value */
-  r = o->map + pos;
-
-  if (!imap[pos] || imap[pos] == 0xFF) {
-    /* insert new object */
-    imap[pos] = FIO_NAME(FIO_MAP_NAME, __byte_hash)(o, hash);
-#if !FIO_MAP_RECALC_HASH
-    r->hash = hash;
-#endif
-    FIO_MAP_KEY_COPY(r->key, key);
-    FIO_MAP_VALUE_COPY(r->value, val);
-#if FIO_MAP_ORDERED
-    if (o->count) { /* update ordering */
-      FIO_INDEXED_LIST_PUSH(o->map, node, o->head, pos);
-#ifdef FIO_MAP_LRU
-      o->head = pos;                 /* update LRU head */
-      if (FIO_MAP_LRU == o->count) { /* limit reached - evict 1 LRU element */
-        uint32_t to_evict = o->map[pos].node.prev;
-        FIO_MAP_KEY_DESTROY(o->map[to_evict].key);
-        FIO_MAP_VALUE_DESTROY(o->map[to_evict].value);
-        FIO_INDEXED_LIST_REMOVE(o->map, node, to_evict);
-        imap[to_evict] = 0xFF;
-        --o->count;
-      }
-#endif       /* FIO_MAP_LRU */
-    } else { /* set first order */
-      o->map[pos].node.next = o->map[pos].node.prev = pos;
-      o->head = pos;
-    }
-#endif /* FIO_MAP_ORDERED */
-    ++o->count;
-    return r;
-  }
-
-#ifdef FIO_MAP_LRU
-  /* update ordering (even if not overwriting) */
-  if (o->head != pos) {
-    FIO_INDEXED_LIST_REMOVE(o->map, node, pos);
-    FIO_INDEXED_LIST_PUSH(o->map, node, o->head, pos);
-    o->head = pos;
-  }
-#endif
-
-#ifdef FIO_MAP_VALUE
-  if (overwrite) {
-    /* overwrite existing object (only relevant for hash maps) */
-    FIO_MAP_KEY_DISCARD(key);
-    if (!old) {
-      FIO_MAP_VALUE_DESTROY(o->map[pos].value);
-      FIO_MAP_VALUE_COPY(o->map[pos].value, val);
-      return r;
-    }
-    *old = o->map[pos].value;
-    o->map[pos].value = (FIO_MAP_VALUE_INTERNAL){0};
-    FIO_MAP_VALUE_COPY(o->map[pos].value, val);
-    return r;
-  }
-#endif
-relinquish_attempt:
-  /* discard attempt */
-  FIO_MAP_KEY_DISCARD(key);
-  FIO_MAP_VALUE_DISCARD(val);
-  return r;
-internal_error:
-  FIO_MAP_KEY_DISCARD(key);
-  FIO_MAP_VALUE_DISCARD(val);
-  FIO_LOG_ERROR("unknown error occurred trying to add an entry to the map");
-  FIO_ASSERT_DEBUG(0, "these errors shouldn't happen");
-  return r;
+  );
+  if (i == (uint32_t)-1)
+    return NULL;
+  return m->map + i;
 }
 
-/* *****************************************************************************
-The Map remove function
-***************************************************************************** */
-
-/** Removes an object in the map, returning a pointer to the map data. */
-SFUNC int FIO_NAME(FIO_MAP_NAME, remove)(FIO_MAP_PTR map,
+/**
+ * The core get function. This function returns NULL if item is missing.
+ *
+ * NOTE: the function returns a pointer to the map's internal storage.
+ */
+SFUNC FIO_NAME(FIO_MAP_NAME, node_s) *
+    FIO_NAME(FIO_MAP_NAME, get_ptr)(FIO_MAP_PTR map,
 #if !defined(FIO_MAP_HASH_FN)
-                                         uint64_t hash,
+                                    uint64_t hash,
 #endif
-                                         FIO_MAP_KEY key,
-#ifdef FIO_MAP_VALUE
-                                         FIO_MAP_VALUE_INTERNAL *old
-#else
-                                         FIO_MAP_KEY_INTERNAL *old
+                                    FIO_MAP_KEY key) {
+  FIO_PTR_TAG_VALID_OR_RETURN(map, NULL);
+  FIO_NAME(FIO_MAP_NAME, s) *m = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
+  uint32_t i = FIO_NAME(FIO_MAP_NAME, __node_find)(m,
+#ifndef FIO_MAP_HASH_FN
+                                                   hash,
 #endif
-) {
-#ifdef FIO_MAP_VALUE
-  if (old)
-    *old = (FIO_MAP_VALUE_INTERNAL){0};
-#else
-  if (old)
-    *old = (FIO_MAP_KEY_INTERNAL){0};
-#endif
-
-  FIO_PTR_TAG_VALID_OR_RETURN(map, -1);
-  FIO_NAME(FIO_MAP_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
-#if defined(FIO_MAP_HASH_FN)
-  uint64_t hash = FIO_MAP_HASH_FN(key);
-#endif
-  hash += !hash; /* hash is never zero */
-  uint32_t pos = FIO_NAME(FIO_MAP_NAME, __index)(o, key, hash);
-  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
-
-  if (pos == (uint32_t)-1 || !imap[pos] || imap[pos] == 0xFF)
-    return -1;
-
-  imap[pos] = 0xFF; /* mark hole and update count */
-  --o->count;
-
-#if FIO_MAP_ORDERED
-  /* update ordering */
-  if (o->head == pos)
-    o->head = o->map[pos].node.next;
-  if (o->head == pos)
-    o->head = 0;
-  else {
-    FIO_INDEXED_LIST_REMOVE(o->map, node, pos);
-  }
-#endif
-
-/* destroy data, copy to `old` pointer if necessary. */
-#ifdef FIO_MAP_VALUE
-  FIO_MAP_KEY_DESTROY(o->map[pos].key);
-  o->map[pos].key = (FIO_MAP_KEY_INTERNAL){0};
-  if (!old) {
-    FIO_MAP_VALUE_DESTROY(o->map[pos].value);
-  } else {
-    *old = o->map[pos].value;
-  }
-  o->map[pos].value = (FIO_MAP_VALUE_INTERNAL){0};
-#else
-  if (!old) {
-    FIO_MAP_KEY_DESTROY(o->map[pos].key);
-  } else {
-    *old = o->map[pos].key;
-  }
-  o->map[pos].key = (FIO_MAP_KEY_INTERNAL){0};
-#endif
-#if !FIO_MAP_RECALC_HASH && defined(DEBUG)
-  o->map[pos].hash = 0; /* not necessary, but ... good for debugging? */
-#endif
-  return 0;
+                                                   key);
+  if (i == (uint32_t)-1)
+    return NULL;
+  return m->map + i;
 }
 
 /* *****************************************************************************
-Map Iteration
+
+
+
+Map Iterators
+
+
+
 ***************************************************************************** */
 
-/** Returns the next iterator position after `current_pos`, first if `NULL`. */
 SFUNC FIO_NAME(FIO_MAP_NAME, iterator_s)
     FIO_NAME(FIO_MAP_NAME,
              get_next)(FIO_MAP_PTR map,
                        FIO_NAME(FIO_MAP_NAME, iterator_s) * current_pos) {
-  FIO_NAME(FIO_MAP_NAME, iterator_s) r = {.private_ = {.pos = 0}};
+  FIO_NAME(FIO_MAP_NAME, iterator_s) r = {0};
   FIO_PTR_TAG_VALID_OR_RETURN(map, r);
-  FIO_NAME(FIO_MAP_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
-  if (!o->count)
+  FIO_NAME(FIO_MAP_NAME, s) *m = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
+  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(m);
+  if (!m->count)
     return r;
-  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
-  size_t capa = FIO_MAP_CAPA(o->bits);
-  size_t pos_counter = 0;
-  if (!current_pos || !current_pos->private_.map_validator) {
-    goto find_pos;
-  }
-  if (current_pos->private_.pos + 1 == o->count)
+  if (!current_pos)
+    goto empty;
+  if (current_pos->private_.pos + 1 == m->count)
     return r;
-  r.private_.pos = current_pos->private_.pos + 1;
-  if (current_pos->private_.map_validator != (uintptr_t)o) {
-    goto refind_pos;
-  }
-  r.private_.index = current_pos->private_.index;
-
-#if !FIO_MAP_RECALC_HASH
-#define FIO_MAP___EACH_COPY_HASH() r.hash = o->map[r.private_.index].hash
+  if (current_pos->private_.map_validator != (uintptr_t)(m->map))
+    return r; /* mutation stops iteration */
+#if FIO_MAP_ORDERED
+  if (current_pos->node->node.next == m->head)
+    return r;
+  r.node = m->map + current_pos->node->node.next;
 #else
-#define FIO_MAP___EACH_COPY_HASH()
+  for (size_t i = current_pos->node - m->map + 1; i < FIO_MAP_CAPA(m->bits);
+       ++i) {
+    if (!imap[i] || imap[i] == 0xFFU)
+      continue;
+    r.node = m->map + i;
+    break;
+  }
+  if (!r.node)
+    return r;
 #endif
 
+  r = (FIO_NAME(FIO_MAP_NAME, iterator_s)) {
+    .node = r.node, .key = FIO_MAP_KEY_FROM_INTERNAL(r.node->key),
 #ifdef FIO_MAP_VALUE
-#define FIO_MAP___EACH_COPY_DATA()                                             \
-  FIO_MAP___EACH_COPY_HASH();                                                  \
-  r.private_.map_validator = (uintptr_t)o;                                     \
-  r.node = o->map + r.private_.index;                                          \
-  r.key = FIO_MAP_KEY_FROM_INTERNAL(o->map[r.private_.index].key);             \
-  r.value = FIO_MAP_VALUE_FROM_INTERNAL(o->map[r.private_.index].value)
-#else
-#define FIO_MAP___EACH_COPY_DATA()                                             \
-  FIO_MAP___EACH_COPY_HASH();                                                  \
-  r.private_.map_validator = (uintptr_t)o;                                     \
-  r.node = o->map + r.private_.index;                                          \
-  r.key = FIO_MAP_KEY_FROM_INTERNAL(o->map[r.private_.index].key)
+    .value = FIO_MAP_VALUE_FROM_INTERNAL(r.node->value),
 #endif
-
-/* start seeking at the position inherited from current_pos */
-#if FIO_MAP_ORDERED
-  (void)imap; /* unused in ordered maps */
-  (void)capa; /* unused in ordered maps */
-  r.private_.index = o->map[r.private_.index].node.next;
-  if (r.private_.index == o->head)
-    goto not_found;
-  FIO_MAP___EACH_COPY_DATA();
+#if !FIO_MAP_RECALC_HASH
+    .hash = r.node->hash,
+#endif
+    .private_ = {.index = (uint32_t)(r.node - m->map),
+                 .pos = current_pos->private_.pos + 1,
+                 .map_validator = (uintptr_t)m->map},
+  };
   return r;
-#else
-  if (FIO_MAP_IS_SPARSE(o)) { /* sparsely populated */
-    while ((++r.private_.index) & 7) {
-      if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
-        continue;
-      FIO_MAP___EACH_COPY_DATA();
-      return r;
-    }
-    while (r.private_.index < capa) {
-      uint64_t simd = *(uint64_t *)(imap + r.private_.index);
-      if (!simd || simd == 0xFFFFFFFFFFFFFFFFULL) {
-        r.private_.index += 8;
-        continue;
-      }
-      for (int i = 0; i < 8; (++i), (++r.private_.index)) {
-        if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
-          continue;
-        FIO_MAP___EACH_COPY_DATA();
-        return r;
-      }
-    }
-    goto not_found;
-  }
-  /* review as array */
-  while ((++r.private_.index) < capa) {
-    if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
-      continue;
-    FIO_MAP___EACH_COPY_DATA();
-    return r;
-  }
-  goto not_found;
-#endif /* FIO_MAP_ORDERED */
+empty:
 
-refind_pos:
-  if (current_pos->private_.index)
-    goto not_found;
-find_pos:
-/* first seek... re-start seeking */
 #if FIO_MAP_ORDERED
-  FIO_INDEXED_LIST_EACH(o->map, node, o->head, i) {
-    if (pos_counter != r.private_.pos) {
-      ++pos_counter;
-      continue;
-    }
-    r.private_.index = (uint32_t)i;
-    FIO_MAP___EACH_COPY_DATA();
-    return r;
-  }
-  goto not_found;
+  r = (FIO_NAME(FIO_MAP_NAME, iterator_s)) {
+    .node = m->map + m->head,
+    .key = FIO_MAP_KEY_FROM_INTERNAL(m->map[m->head].key),
+#ifdef FIO_MAP_VALUE
+    .value = FIO_MAP_VALUE_FROM_INTERNAL(m->map[m->head].value),
+#endif
+#if !FIO_MAP_RECALC_HASH
+    .hash = m->map[m->head].hash,
+#endif
+    .private_ = {.index = m->head,
+                 .pos = 0,
+                 .map_validator = (uintptr_t)m->map},
+  };
 #else
-  if (FIO_MAP_IS_SPARSE(o)) { /* sparsely populated */
-    while (r.private_.index < capa) {
-      uint64_t simd = *(uint64_t *)(imap + r.private_.index);
-      if (!simd || simd == 0xFFFFFFFFFFFFFFFFULL) {
-        r.private_.index += 8;
-        continue;
-      }
-      for (int i = 0; i < 8; (++i), (++r.private_.index)) {
-        if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
-          continue;
-        if (pos_counter != r.private_.pos) {
-          ++pos_counter;
-          continue;
-        }
-        FIO_MAP___EACH_COPY_DATA();
-        return r;
-      }
-    }
-    goto not_found;
-  }
-  /* review as array */
-  while (r.private_.index < capa) {
-    if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF) {
-      ++r.private_.index;
+  for (size_t i = 0; i < FIO_MAP_CAPA(m->bits); ++i) {
+    if (!imap[i] || imap[i] == 0xFFU)
       continue;
-    }
-    FIO_MAP___EACH_COPY_DATA();
-    return r;
+    r.node = m->map + i;
+    break;
   }
-#endif /* FIO_MAP_ORDERED */
 
-not_found:
-  return (r = (FIO_NAME(FIO_MAP_NAME, iterator_s)){.private_ = {.pos = 0}});
-  FIO_ASSERT_DEBUG(0, "should this happen? ever?");
+  r = (FIO_NAME(FIO_MAP_NAME, iterator_s)) {
+    .node = r.node, .key = FIO_MAP_KEY_FROM_INTERNAL(r.node->key),
+#ifdef FIO_MAP_VALUE
+    .value = FIO_MAP_VALUE_FROM_INTERNAL(r.node->value),
+#endif
+#if !FIO_MAP_RECALC_HASH
+    .hash = r.node->hash,
+#endif
+    .private_ = {.index = (uint32_t)(r.node - m->map),
+                 .pos = 0,
+                 .map_validator = (uintptr_t)m->map},
+  };
+
+#endif
+  return r;
+  (void)imap; /* if unused */
 }
 
-/** Returns the next iterator position after `current_pos`, first if `NULL`. */
 SFUNC FIO_NAME(FIO_MAP_NAME, iterator_s)
-    FIO_NAME(FIO_MAP_NAME,
-             get_prev)(FIO_MAP_PTR map,
-                       FIO_NAME(FIO_MAP_NAME, iterator_s) * current_pos) {
-  FIO_NAME(FIO_MAP_NAME, iterator_s) r = {.private_ = {.pos = 0}};
+    FIO_NAME(FIO_MAP_NAME, get_prev)(FIO_MAP_PTR map,
+                                     FIO_NAME(FIO_MAP_NAME, iterator_s) *
+                                         current_pos) { // TODO!
+  FIO_NAME(FIO_MAP_NAME, iterator_s) r = {0};
   FIO_PTR_TAG_VALID_OR_RETURN(map, r);
-  FIO_NAME(FIO_MAP_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
-  if (!o->count)
-    return r;
-#if !FIO_MAP_ORDERED
-  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
-  size_t capa = FIO_MAP_CAPA(o->bits);
+  FIO_NAME(FIO_MAP_NAME, s) *m = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
+#if FIO_MAP_ORDERED
+  uint32_t ipos;
+#else
+  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(m);
 #endif
-  size_t pos_counter = o->count;
-  if (!current_pos || !current_pos->private_.map_validator) {
-    r.private_.map_validator = (uintptr_t)o;
-    r.private_.pos = o->count;
-    goto find_pos;
-  }
+  if (!m->count)
+    return r;
+  if (!current_pos)
+    goto empty;
   if (!current_pos->private_.pos)
     return r;
-  r.private_.pos = current_pos->private_.pos - 1;
-  r.private_.map_validator = (uintptr_t)o;
-  if (current_pos->private_.map_validator != (uintptr_t)o) {
-    goto refind_pos;
-  }
-  r.private_.index = current_pos->private_.index;
-
-/* start seeking at the position inherited from current_pos */
+  if (current_pos->private_.map_validator != (uintptr_t)(m->map))
+    return r; /* mutation stops iteration */
 #if FIO_MAP_ORDERED
-  if (r.private_.index == o->head)
-    goto not_found;
-  r.private_.index = o->map[r.private_.index].node.prev;
-  FIO_MAP___EACH_COPY_DATA();
+  if (current_pos->private_.index == m->head)
+    return r;
+  r.node = m->map + current_pos->node->node.prev;
+#else
+  for (size_t i = current_pos->node - m->map; i;) {
+    --i;
+    if (!imap[i] || imap[i] == 0xFFU)
+      continue;
+    r.node = m->map + i;
+    break;
+  }
+#endif
+
+  r = (FIO_NAME(FIO_MAP_NAME, iterator_s)) {
+    .node = r.node, .key = FIO_MAP_KEY_FROM_INTERNAL(r.node->key),
+#ifdef FIO_MAP_VALUE
+    .value = FIO_MAP_VALUE_FROM_INTERNAL(r.node->value),
+#endif
+#if !FIO_MAP_RECALC_HASH
+    .hash = r.node->hash,
+#endif
+    .private_ = {.index = (uint32_t)(r.node - m->map),
+                 .pos = current_pos->private_.pos - 1,
+                 .map_validator = (uintptr_t)m->map},
+  };
   return r;
-#else
-  if (FIO_MAP_IS_SPARSE(o)) { /* sparsely populated */
-    while ((--r.private_.index) & 7) {
-      if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
-        continue;
-      FIO_MAP___EACH_COPY_DATA();
-      return r;
-    }
-    while (r.private_.index) {
-      uint64_t simd = *(uint64_t *)(imap + (r.private_.index - 8));
-      if (!simd || simd == 0xFFFFFFFFFFFFFFFFULL) {
-        r.private_.index -= 8;
-        continue;
-      }
-      for (int i = 0; i < 8; ++i) {
-        --r.private_.index;
-        if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
-          continue;
-        FIO_MAP___EACH_COPY_DATA();
-        return r;
-      }
-    }
-    goto not_found;
-  }
-  /* review as array */
-  while (r.private_.index--) {
-    if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
-      continue;
-    FIO_MAP___EACH_COPY_DATA();
-    return r;
-  }
-  goto not_found;
-#endif /* FIO_MAP_ORDERED */
+empty:
 
-refind_pos:
-  if (current_pos->private_.index)
-    goto not_found;
-find_pos:
-/* first seek... re-start seeking */
 #if FIO_MAP_ORDERED
-  FIO_INDEXED_LIST_EACH_REVERSED(o->map, node, o->head, i) {
-    if (pos_counter != r.private_.pos) {
-      --pos_counter;
-      continue;
-    }
-    r.private_.index = (uint32_t)i;
-    FIO_MAP___EACH_COPY_DATA();
-    return r;
-  }
-  goto not_found;
-#else
-  r.private_.index = (uint32_t)capa;
-  if (FIO_MAP_IS_SPARSE(o)) { /* sparsely populated */
-    while (r.private_.index) {
-      uint64_t simd = *(uint64_t *)(imap + r.private_.index);
-      if (!simd || simd == 0xFFFFFFFFFFFFFFFFULL) {
-        r.private_.index -= 8;
-        continue;
-      }
-      for (int i = 0; i < 8; (++i), (--r.private_.index)) {
-        if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
-          continue;
-        if (pos_counter != r.private_.pos) {
-          ++pos_counter;
-          continue;
-        }
-        FIO_MAP___EACH_COPY_DATA();
-        return r;
-      }
-    }
-    goto not_found;
-  }
-  /* review as array */
-  while ((r.private_.index--)) {
-    if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
-      continue;
-    FIO_MAP___EACH_COPY_DATA();
-    return r;
-  }
-#endif /* FIO_MAP_ORDERED */
 
-not_found:
-  return (r = (FIO_NAME(FIO_MAP_NAME, iterator_s)){.private_ = {.pos = 0}});
-  FIO_ASSERT_DEBUG(0, "should this happen? ever?");
+  ipos = m->map[m->head].node.prev;
+  r = (FIO_NAME(FIO_MAP_NAME, iterator_s)) {
+    .node = m->map + ipos, .key = FIO_MAP_KEY_FROM_INTERNAL(m->map[ipos].key),
+#ifdef FIO_MAP_VALUE
+    .value = FIO_MAP_VALUE_FROM_INTERNAL(m->map[ipos].value),
+#endif
+#if !FIO_MAP_RECALC_HASH
+    .hash = m->map[ipos].hash,
+#endif
+    .private_ = {.index = ipos,
+                 .pos = m->count - 1,
+                 .map_validator = (uintptr_t)m->map},
+  };
+
+#else
+  for (size_t i = FIO_MAP_CAPA(m->bits); i;) {
+    --i;
+    if (!imap[i] || imap[i] == 0xFFU)
+      continue;
+    r.node = m->map + i;
+    break;
+  }
+
+  r = (FIO_NAME(FIO_MAP_NAME, iterator_s)) {
+    .node = r.node, .key = FIO_MAP_KEY_FROM_INTERNAL(r.node->key),
+#ifdef FIO_MAP_VALUE
+    .value = FIO_MAP_VALUE_FROM_INTERNAL(r.node->value),
+#endif
+#if !FIO_MAP_RECALC_HASH
+    .hash = r.node->hash,
+#endif
+    .private_ = {.index = (uint32_t)(r.node - m->map),
+                 .pos = m->count - 1,
+                 .map_validator = (uintptr_t)m->map},
+  };
+
+#endif
+
+  return r;
 }
-#undef FIO_MAP___EACH_COPY_HASH
-#undef FIO_MAP___EACH_COPY_DATA
+
+/* *****************************************************************************
+
+
+
+Map Each
+
+
+
+***************************************************************************** */
+
+typedef struct {
+  FIO_NAME(FIO_MAP_NAME, each_s) each;
+  ssize_t start_at;
+} FIO_NAME(FIO_MAP_NAME, __each_info_s);
+
+FIO_SFUNC int FIO_NAME(FIO_MAP_NAME,
+                       __each_task)(FIO_NAME(FIO_MAP_NAME, __each_node_s) * e) {
+  int r;
+  FIO_NAME(FIO_MAP_NAME, __each_info_s) *info =
+      (FIO_NAME(FIO_MAP_NAME, __each_info_s) *)e->udata;
+  info->each.key = FIO_MAP_KEY_FROM_INTERNAL(e->node->key);
+#ifdef FIO_MAP_VALUE
+  info->each.value = FIO_MAP_VALUE_FROM_INTERNAL(e->node->value);
+#endif
+  r = info->each.task(&info->each);
+  ++info->each.index;
+  return r;
+}
+
+FIO_SFUNC int FIO_NAME(FIO_MAP_NAME, __each_task_offset)(
+    FIO_NAME(FIO_MAP_NAME, __each_node_s) * e) {
+  FIO_NAME(FIO_MAP_NAME, __each_info_s) *info =
+      (FIO_NAME(FIO_MAP_NAME, __each_info_s) *)e->udata;
+  if (FIO_LIKELY(info->each.index < (uint64_t)info->start_at)) {
+    ++info->each.index;
+    return 0;
+  }
+  return (e->fn = FIO_NAME(FIO_MAP_NAME, __each_task))(e);
+}
 
 /**
  * Iteration using a callback for each element in the map.
@@ -26362,40 +27575,32 @@ SFUNC uint32_t FIO_NAME(FIO_MAP_NAME,
                               int (*task)(FIO_NAME(FIO_MAP_NAME, each_s) *),
                               void *udata,
                               ssize_t start_at) {
-  FIO_PTR_TAG_VALID_OR_RETURN(map, 1);
-  FIO_NAME(FIO_MAP_NAME, each_s)
+  uint32_t r = (uint32_t)-1;
+  FIO_PTR_TAG_VALID_OR_RETURN(map, r);
+  FIO_NAME(FIO_MAP_NAME, s) *m = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP_T, map);
+  if (start_at < 0)
+    start_at += m->count;
+  if (start_at < 0)
+    return m->count;
+  FIO_NAME(FIO_MAP_NAME, __each_info_s)
   e = {
-      .parent = map,
-      .task = task,
-      .udata = udata,
+      .each =
+          {
+              .parent = map,
+              .index = 0,
+              .task = task,
+              .udata = udata,
+          },
+      .start_at = start_at,
   };
-  FIO_NAME(FIO_MAP_NAME, s) *o =
-      FIO_PTR_TAG_GET_UNTAGGED(FIO_NAME(FIO_MAP_NAME, s), map);
-  if (start_at < 0) {
-    start_at += o->count;
-    if (start_at < 0)
-      start_at = 0;
-  } else if (start_at > o->count)
-    return o->count;
-  FIO_NAME(FIO_MAP_NAME, iterator_s) i = {.private_ = {.pos = 0}};
-  for (;;) {
-    i = FIO_NAME(FIO_MAP_NAME, get_next)(map, &i);
-    if (!FIO_NAME(FIO_MAP_NAME, iterator_is_valid)(&i))
-      return o->count;
-    e.index = i.private_.pos;
-    e.key = i.key;
-#ifdef FIO_MAP_VALUE
-    e.value = i.value;
-#endif
-    if (e.task(&e))
-      return (uint32_t)(e.index + 1);
-  }
-  return o->count;
-}
 
-/* *****************************************************************************
-Speed Testing
-***************************************************************************** */
+  FIO_NAME(FIO_MAP_NAME, __each_node)
+  (m,
+   !start_at ? FIO_NAME(FIO_MAP_NAME, __each_task)
+             : FIO_NAME(FIO_MAP_NAME, __each_task_offset),
+   &e);
+  return (uint32_t)e.each.index;
+}
 
 /* *****************************************************************************
 Map Testing
@@ -26417,12 +27622,14 @@ Map Testing
 
 FIO_SFUNC void FIO_NAME_TEST(stl, FIO_MAP_NAME)(void) {
   /* testing only only works with integer external types */
-  fprintf(stderr,
-          "* Testing maps with key " FIO_MACRO2STR(
-              FIO_MAP_KEY) " (=> " FIO_MACRO2STR(FIO_MAP_VALUE) ").\n");
+  fprintf(
+      stderr,
+      "* Testing map " FIO_MACRO2STR(FIO_MAP_NAME) " with key " FIO_MACRO2STR(
+          FIO_MAP_KEY) " (=> " FIO_MACRO2STR(FIO_MAP_VALUE) ").\n");
+  size_t test_len_limit = (1UL << (FIO_MAP_ARRAY_LOG_LIMIT + 15));
   { /* test set / get overwrite , FIO_MAP_EACH and evict */
     FIO_NAME(FIO_MAP_NAME, s) map = FIO_MAP_INIT;
-    for (size_t i = 1; i < (1UL << (FIO_MAP_ARRAY_LOG_LIMIT + 5)); ++i) {
+    for (size_t i = 1; i < test_len_limit; ++i) {
       FIO_NAME(FIO_MAP_NAME, set)
       (&map, FIO___M_HASH(i) i FIO___M_VAL(i) FIO___M_OLD);
       FIO_ASSERT(FIO_NAME(FIO_MAP_NAME, count)(&map) == i,
@@ -26451,27 +27658,43 @@ FIO_SFUNC void FIO_NAME_TEST(stl, FIO_MAP_NAME)(void) {
     uint32_t loop_test = 0;
     FIO_MAP_EACH(FIO_MAP_NAME, &map, i) {
       /* test ordering */
+      ++loop_test;
 #ifdef FIO_MAP_LRU
-      FIO_ASSERT(i.key == (count - loop_test),
-                 "map FIO_MAP_EACH LRU ordering broken? %zu != %zu",
-                 (size_t)(i.key),
-                 (size_t)(count - loop_test));
-      ++loop_test;
-#elif FIO_MAP_ORDERED
-      ++loop_test;
       FIO_ASSERT(i.key == loop_test,
                  "map FIO_MAP_EACH LRU ordering broken? %zu != %zu",
                  (size_t)(i.key),
+                 (size_t)(count - loop_test));
+#elif FIO_MAP_ORDERED
+      FIO_ASSERT(i.key == loop_test,
+                 "map FIO_MAP_EACH ordering broken? %zu != %zu",
+                 (size_t)(i.key),
                  (size_t)(loop_test));
 #else
-      ++loop_test;
+      FIO_ASSERT(i.key < test_len_limit,
+                 "map FIO_MAP_EACH invalid data? %zu !< %zu",
+                 (size_t)(i.key),
+                 (size_t)(test_len_limit));
 #endif
     }
     FIO_ASSERT(loop_test == count,
                "FIO_MAP_EACH failed to iterate all elements? (%zu != %zu",
                (size_t)loop_test != (size_t)count);
     loop_test = 0;
-    FIO_MAP_EACH_REVERSED(FIO_MAP_NAME, &map, i) { ++loop_test; }
+    FIO_MAP_EACH_REVERSED(FIO_MAP_NAME, &map, i) {
+      /* test reversed ordering */
+      ++loop_test;
+#ifdef FIO_MAP_LRU
+      FIO_ASSERT(i.key == (count - (loop_test - 1)),
+                 "map FIO_MAP_EACH_REVERSED LRU ordering broken? %zu != %zu",
+                 (size_t)(i.key),
+                 (size_t)(count - loop_test));
+#elif FIO_MAP_ORDERED
+      FIO_ASSERT(i.key == (count - (loop_test - 1)),
+                 "map FIO_MAP_EACH_REVERSED ordering broken? %zu != %zu",
+                 (size_t)(i.key),
+                 (size_t)(loop_test));
+#endif
+    }
     FIO_ASSERT(
         loop_test == count,
         "FIO_MAP_EACH_REVERSED failed to iterate all elements? (%zu != %zu",
@@ -26485,7 +27708,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, FIO_MAP_NAME)(void) {
     /* cleanup */
     FIO_NAME(FIO_MAP_NAME, destroy)(&map);
   }
-#ifndef FIO_MAP_HASH_FN
+#if !FIO_MAP_RECALC_HASH
   { /* test full collision guard and zero hash*/
     FIO_NAME(FIO_MAP_NAME, s) map = FIO_MAP_INIT;
     fprintf(
@@ -26512,22 +27735,25 @@ FIO_SFUNC void FIO_NAME_TEST(stl, FIO_MAP_NAME)(void) {
                "map reserve error? %zu != %zu",
                (size_t)FIO_NAME(FIO_MAP_NAME, capa)(&map),
                4096);
-    for (size_t i = 1; i < 4096; ++i) {
+    for (size_t i = 1; i < test_len_limit; ++i) {
       FIO_NAME(FIO_MAP_NAME, set)
       (&map, FIO___M_HASH(i) i FIO___M_VAL(i) FIO___M_OLD);
       FIO_ASSERT(FIO_NAME(FIO_MAP_NAME, count)(&map) == i, "insertion failed?");
     }
-    for (size_t i = 1; i < 4096; ++i) {
+    for (size_t i = 1; i < test_len_limit; ++i) {
       FIO_ASSERT(FIO_NAME(FIO_MAP_NAME, get)(&map, FIO___M_HASH(i) i),
                  "key missing?");
+      size_t count = FIO_NAME(FIO_MAP_NAME, count)(&map);
       FIO_NAME(FIO_MAP_NAME, remove)
       (&map, FIO___M_HASH(i) i, NULL);
       FIO_ASSERT(!FIO_NAME(FIO_MAP_NAME, get)(&map, FIO___M_HASH(i) i),
                  "map_remove error?");
-      FIO_ASSERT(FIO_NAME(FIO_MAP_NAME, count)(&map) == 4095 - i,
+      FIO_ASSERT(FIO_NAME(FIO_MAP_NAME, count)(&map) == count - 1,
                  "map count error after removal? %zu != %zu",
                  (size_t)FIO_NAME(FIO_MAP_NAME, count)(&map),
-                 i);
+                 count - 1);
+      /* see if removal produces errors while rehashing */
+      FIO_NAME(FIO_MAP_NAME, compact)(&map);
     }
     FIO_NAME(FIO_MAP_NAME, destroy)(&map);
   }
@@ -26576,10 +27802,1929 @@ Map Cleanup
 #undef FIO_MAP_VALUE_DISCARD
 #undef FIO_MAP_VALUE_FROM_INTERNAL
 #undef FIO_MAP_VALUE_INTERNAL
+
+#undef FIO_MAP___MAKE_BITMAP
+#undef FIO_MAP___STEP_POS
+#undef FIO_MAP___TEST_MATCH
+#undef FIO___MAP_UPDATE_ORDER
+#undef FIO_MAP_ARRAY_LOG_LIMIT
+#undef FIO_MAP_ATTACK_LIMIT
+#undef FIO_MAP_CAPA
+#undef FIO_MAP_CAPA_BITS_LIMIT
+#undef FIO_MAP_CUCKOO_STEPS
+#undef FIO_MAP_GET_T
+#undef FIO_MAP_HASH_FN
+#undef FIO_MAP_IS_SPARSE
+#undef FIO_MAP_KEY
+#undef FIO_MAP_KEY_BSTR
+#undef FIO_MAP_KEY_CMP
+#undef FIO_MAP_KEY_COPY
+#undef FIO_MAP_KEY_DESTROY
+#undef FIO_MAP_KEY_DESTROY_SIMPLE
+#undef FIO_MAP_KEY_DISCARD
+#undef FIO_MAP_KEY_FROM_INTERNAL
+#undef FIO_MAP_KEY_INTERNAL
+#undef FIO_MAP_KEY_IS_GREATER_THAN
+#undef FIO_MAP_KEY_KSTR
+#undef FIO_MAP_LRU
+#undef FIO_MAP_MINIMAL_BITS
+#undef FIO_MAP_NAME
+#undef FIO_MAP_ORDERED
+#undef FIO_MAP_PTR
+#undef FIO_MAP_RECALC_HASH
+#undef FIO_MAP_SEEK_LIMIT
+#undef FIO_MAP_T
+#undef FIO_MAP_TEST
+#undef FIO_MAP_VALUE
+#undef FIO_MAP_VALUE_BSTR
+#undef FIO_MAP_VALUE_COPY
+#undef FIO_MAP_VALUE_DESTROY
+#undef FIO_MAP_VALUE_DESTROY_SIMPLE
+#undef FIO_MAP_VALUE_DISCARD
+#undef FIO_MAP_VALUE_FROM_INTERNAL
+#undef FIO_MAP_VALUE_INTERNAL
+
 #undef FIO_OMAP_NAME
 #undef FIO_UMAP_NAME
 
 #endif /* FIO_MAP_NAME */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_MAP2_NAME map      /* Development inclusion - ignore line */
+#define FIO_MAP2_TEST          /* Development inclusion - ignore line */
+#define FIO_MAP2_KEY  size_t   /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                  Unordered/Ordered Map Implementation
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_MAP2_NAME)
+/* *****************************************************************************
+Map Settings - Sets have only keys (value == key) - Hash Maps have values
+***************************************************************************** */
+
+/* if FIO_MAP2_KEY_KSTR is defined, use fio_keystr_s keys */
+#ifdef FIO_MAP2_KEY_KSTR
+#define FIO_MAP2_KEY                  fio_str_info_s
+#define FIO_MAP2_KEY_INTERNAL         fio_keystr_s
+#define FIO_MAP2_KEY_FROM_INTERNAL(k) fio_keystr_info(&(k))
+#define FIO_MAP2_KEY_COPY(dest, src)                                           \
+  (dest) = fio_keystr_init((src), FIO_NAME(FIO_MAP2_NAME, __key_alloc))
+#define FIO_MAP2_KEY_CMP(a, b) fio_keystr_is_eq2((a), (b))
+#define FIO_MAP2_KEY_DESTROY(key)                                              \
+  fio_keystr_destroy(&(key), FIO_NAME(FIO_MAP2_NAME, __key_free))
+#define FIO_MAP2_KEY_DISCARD(key)
+FIO_SFUNC void *FIO_NAME(FIO_MAP2_NAME, __key_alloc)(size_t len) {
+  return FIO_MEM_REALLOC_(NULL, 0, len, 0);
+}
+FIO_SFUNC void FIO_NAME(FIO_MAP2_NAME, __key_free)(void *ptr, size_t len) {
+  FIO_MEM_FREE_(ptr, len);
+  (void)len; /* if unused */
+}
+#undef FIO_MAP2_KEY_KSTR
+
+/* if FIO_MAP2_KEY is undefined, assume String keys (using `fio_bstr`). */
+#elif !defined(FIO_MAP2_KEY) || defined(FIO_MAP2_KEY_BSTR)
+#define FIO_MAP2_KEY                  fio_str_info_s
+#define FIO_MAP2_KEY_INTERNAL         char *
+#define FIO_MAP2_KEY_FROM_INTERNAL(k) fio_bstr_info((k))
+#define FIO_MAP2_KEY_COPY(dest, src)                                           \
+  (dest) = fio_bstr_write(NULL, (src).buf, (src).len)
+#define FIO_MAP2_KEY_CMP(a, b)    fio_bstr_is_eq2info((a), (b))
+#define FIO_MAP2_KEY_DESTROY(key) fio_bstr_free((key))
+#define FIO_MAP2_KEY_DISCARD(key)
+#endif
+#undef FIO_MAP2_KEY_BSTR
+
+#ifndef FIO_MAP2_KEY_INTERNAL
+#define FIO_MAP2_KEY_INTERNAL FIO_MAP2_KEY
+#endif
+
+#ifndef FIO_MAP2_KEY_FROM_INTERNAL
+#define FIO_MAP2_KEY_FROM_INTERNAL(o) o
+#endif
+
+#ifndef FIO_MAP2_KEY_COPY
+#define FIO_MAP2_KEY_COPY(dest, src) ((dest) = (src))
+#endif
+
+#ifndef FIO_MAP2_KEY_CMP
+#define FIO_MAP2_KEY_CMP(a, b) ((a) == (b))
+#endif
+
+#ifndef FIO_MAP2_KEY_DESTROY
+#define FIO_MAP2_KEY_DESTROY(o)
+#define FIO_MAP2_KEY_DESTROY_SIMPLE 1
+#endif
+
+#ifndef FIO_MAP2_KEY_DISCARD
+#define FIO_MAP2_KEY_DISCARD(o)
+#endif
+
+/* FIO_MAP2_HASH_FN(key) - used instead of providing a hash value. */
+#ifndef FIO_MAP2_HASH_FN
+#undef FIO_MAP2_RECALC_HASH
+#endif
+
+/* FIO_MAP2_RECALC_HASH - if true, hash values won't be cached. */
+#ifndef FIO_MAP2_RECALC_HASH
+#define FIO_MAP2_RECALC_HASH 0
+#endif
+
+#ifdef FIO_MAP2_VALUE_BSTR
+#define FIO_MAP2_VALUE                  fio_str_info_s
+#define FIO_MAP2_VALUE_INTERNAL         char *
+#define FIO_MAP2_VALUE_FROM_INTERNAL(v) fio_bstr_info((v))
+#define FIO_MAP2_VALUE_COPY(dest, src)                                         \
+  (dest) = fio_bstr_write(NULL, (src).buf, (src).len)
+#define FIO_MAP2_VALUE_DESTROY(v) fio_bstr_free((v))
+#define FIO_MAP2_VALUE_DISCARD(v)
+#endif
+
+#ifdef FIO_MAP2_VALUE
+#define FIO_MAP2_GET_T FIO_MAP2_VALUE
+#else
+#define FIO_MAP2_GET_T FIO_MAP2_KEY
+#endif
+
+#ifndef FIO_MAP2_VALUE_INTERNAL
+#define FIO_MAP2_VALUE_INTERNAL FIO_MAP2_VALUE
+#endif
+
+#ifndef FIO_MAP2_VALUE_FROM_INTERNAL
+#ifdef FIO_MAP2_VALUE
+#define FIO_MAP2_VALUE_FROM_INTERNAL(o) o
+#else
+#define FIO_MAP2_VALUE_FROM_INTERNAL(o)
+#endif
+#endif
+
+#ifndef FIO_MAP2_VALUE_COPY
+#ifdef FIO_MAP2_VALUE
+#define FIO_MAP2_VALUE_COPY(dest, src) (dest) = (src)
+#else
+#define FIO_MAP2_VALUE_COPY(dest, src)
+#endif
+#endif
+
+#ifndef FIO_MAP2_VALUE_DESTROY
+#define FIO_MAP2_VALUE_DESTROY(o)
+#define FIO_MAP2_VALUE_DESTROY_SIMPLE 1
+#endif
+
+#ifndef FIO_MAP2_VALUE_DISCARD
+#define FIO_MAP2_VALUE_DISCARD(o)
+#endif
+
+#ifdef FIO_MAP2_LRU
+#undef FIO_MAP2_ORDERED
+#define FIO_MAP2_ORDERED 1 /* required for least recently used order */
+#endif
+
+/* test if FIO_MAP2_ORDERED was defined as an empty macro */
+#if defined(FIO_MAP2_ORDERED) && ((0 - FIO_MAP2_ORDERED - 1) == 1)
+#undef FIO_MAP2_ORDERED
+#define FIO_MAP2_ORDERED 1 /* assume developer's intention */
+#endif
+
+#ifndef FIO_MAP2_ORDERED
+#define FIO_MAP2_ORDERED 0
+#endif
+
+/* *****************************************************************************
+Pointer Tagging Support
+***************************************************************************** */
+
+#ifdef FIO_PTR_TAG_TYPE
+#define FIO_MAP2_PTR FIO_PTR_TAG_TYPE
+#else
+#define FIO_MAP2_PTR FIO_NAME(FIO_MAP2_NAME, s) *
+#endif
+#define FIO_MAP2_T FIO_NAME(FIO_MAP2_NAME, s)
+
+/* *****************************************************************************
+Map Types
+***************************************************************************** */
+
+/** internal object data representation */
+typedef struct FIO_NAME(FIO_MAP2_NAME, node_s) FIO_NAME(FIO_MAP2_NAME, node_s);
+
+/** A Hash Map / Set type */
+typedef struct FIO_NAME(FIO_MAP2_NAME, s) {
+  uint32_t bits;
+  uint32_t count;
+  FIO_NAME(FIO_MAP2_NAME, node_s) * map;
+#if FIO_MAP2_ORDERED
+  FIO_INDEXED_LIST32_HEAD head;
+#endif
+} FIO_NAME(FIO_MAP2_NAME, s);
+
+/** internal object data representation */
+struct FIO_NAME(FIO_MAP2_NAME, node_s) {
+#if !FIO_MAP2_RECALC_HASH
+  uint64_t hash;
+#endif
+  FIO_MAP2_KEY_INTERNAL key;
+#ifdef FIO_MAP2_VALUE
+  FIO_MAP2_VALUE_INTERNAL value;
+#endif
+#if FIO_MAP2_ORDERED
+  FIO_INDEXED_LIST32_NODE node;
+#endif
+};
+
+/** Map iterator type */
+typedef struct {
+  /** the node in the internal map */
+  FIO_NAME(FIO_MAP2_NAME, node_s) * node;
+  /** the key in the current position */
+  FIO_MAP2_KEY key;
+#ifdef FIO_MAP2_VALUE
+  /** the value in the current position */
+  FIO_MAP2_VALUE value;
+#endif
+#if !FIO_MAP2_RECALC_HASH
+  /** the hash for the current position */
+  uint64_t hash;
+#endif
+  struct {                   /* internal usage, do not access */
+    uint32_t index;          /* the index in the internal map */
+    uint32_t pos;            /* the position in the ordering scheme */
+    uintptr_t map_validator; /* map mutation guard */
+  } private_;
+} FIO_NAME(FIO_MAP2_NAME, iterator_s);
+
+#ifndef FIO_MAP2_INIT
+/* Initialization macro. */
+#define FIO_MAP2_INIT                                                          \
+  { 0 }
+#endif
+
+/* *****************************************************************************
+Construction / Deconstruction
+***************************************************************************** */
+
+/* do we have a constructor? */
+#ifndef FIO_REF_CONSTRUCTOR_ONLY
+
+/* Allocates a new object on the heap and initializes it's memory. */
+SFUNC FIO_MAP2_PTR FIO_NAME(FIO_MAP2_NAME, new)(void);
+
+/* Frees any internal data AND the object's container! */
+SFUNC void FIO_NAME(FIO_MAP2_NAME, free)(FIO_MAP2_PTR map);
+
+#endif /* FIO_REF_CONSTRUCTOR_ONLY */
+
+/** Destroys the object, reinitializing its container. */
+SFUNC void FIO_NAME(FIO_MAP2_NAME, destroy)(FIO_MAP2_PTR map);
+
+/* *****************************************************************************
+Map State
+***************************************************************************** */
+
+/** Theoretical map capacity. */
+FIO_IFUNC uint32_t FIO_NAME(FIO_MAP2_NAME, capa)(FIO_MAP2_PTR map);
+
+/** The number of objects in the map capacity. */
+FIO_IFUNC uint32_t FIO_NAME(FIO_MAP2_NAME, count)(FIO_MAP2_PTR map);
+
+/** Reserves at minimum the capacity requested. */
+SFUNC void FIO_NAME(FIO_MAP2_NAME, reserve)(FIO_MAP2_PTR map, size_t capa);
+
+/** Returns the key value associated with the node's pointer (see set_ptr). */
+FIO_IFUNC FIO_MAP2_KEY FIO_NAME(FIO_MAP2_NAME,
+                                node2key)(FIO_NAME(FIO_MAP2_NAME, node_s) *
+                                          node);
+
+/** Returns the hash value associated with the node's pointer (see set_ptr). */
+FIO_IFUNC uint64_t FIO_NAME(FIO_MAP2_NAME,
+                            node2hash)(FIO_NAME(FIO_MAP2_NAME, node_s) * node);
+
+#ifdef FIO_MAP2_VALUE
+/** Returns the value associated with the node's pointer (see set_ptr). */
+FIO_IFUNC FIO_MAP2_VALUE FIO_NAME(FIO_MAP2_NAME,
+                                  node2val)(FIO_NAME(FIO_MAP2_NAME, node_s) *
+                                            node);
+#endif
+
+/** Returns the key value associated with the node's pointer (see set_ptr). */
+FIO_IFUNC FIO_MAP2_KEY_INTERNAL *FIO_NAME(FIO_MAP2_NAME, node2key_ptr)(
+    FIO_NAME(FIO_MAP2_NAME, node_s) * node);
+
+#ifdef FIO_MAP2_VALUE
+/** Returns the value associated with the node's pointer (see set_ptr). */
+FIO_IFUNC FIO_MAP2_VALUE_INTERNAL *FIO_NAME(FIO_MAP2_NAME, node2val_ptr)(
+    FIO_NAME(FIO_MAP2_NAME, node_s) * node);
+#endif
+
+/* *****************************************************************************
+Adding / Removing Elements from the Map
+***************************************************************************** */
+
+/** Removes an object in the map, returning a pointer to the map data. */
+SFUNC int FIO_NAME(FIO_MAP2_NAME, remove)(FIO_MAP2_PTR map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                          uint64_t hash,
+#endif
+                                          FIO_MAP2_KEY key,
+#ifdef FIO_MAP2_VALUE
+                                          FIO_MAP2_VALUE_INTERNAL *old
+#else
+                                          FIO_MAP2_KEY_INTERNAL *old
+#endif
+);
+
+/** Evicts elements in order least recently used (LRU), FIFO or undefined. */
+SFUNC void FIO_NAME(FIO_MAP2_NAME, evict)(FIO_MAP2_PTR map,
+                                          size_t number_of_elements);
+
+/** Removes all objects from the map, without releasing the map's resources. */
+SFUNC void FIO_NAME(FIO_MAP2_NAME, clear)(FIO_MAP2_PTR map);
+
+/** Attempts to minimize memory use. */
+SFUNC void FIO_NAME(FIO_MAP2_NAME, compact)(FIO_MAP2_PTR map);
+
+/** Gets a value from the map, if exists. */
+FIO_IFUNC FIO_MAP2_GET_T FIO_NAME(FIO_MAP2_NAME, get)(FIO_MAP2_PTR map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                                      uint64_t hash,
+#endif
+                                                      FIO_MAP2_KEY key);
+
+/** Sets a value in the map, hash maps will overwrite existing data if any. */
+FIO_IFUNC FIO_MAP2_GET_T FIO_NAME(FIO_MAP2_NAME,
+                                  set)(FIO_MAP2_PTR map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                       uint64_t hash,
+#endif
+#ifdef FIO_MAP2_VALUE
+                                       FIO_MAP2_KEY key,
+                                       FIO_MAP2_VALUE obj,
+                                       FIO_MAP2_VALUE_INTERNAL *old
+#else
+                                       FIO_MAP2_KEY key
+#endif
+);
+
+/** Sets a value in the map if not set previously. */
+FIO_IFUNC FIO_MAP2_GET_T FIO_NAME(FIO_MAP2_NAME,
+                                  set_if_missing)(FIO_MAP2_PTR map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                                  uint64_t hash,
+#endif
+                                                  FIO_MAP2_KEY key
+#ifdef FIO_MAP2_VALUE
+                                                  ,
+                                                  FIO_MAP2_VALUE obj
+#endif
+);
+
+/**
+ * The core set function.
+ *
+ * This function returns `NULL` on error (errors are logged).
+ *
+ * If the map is a hash map, overwriting the value (while keeping the key) is
+ * possible. In this case the `old` pointer is optional, and if set than the old
+ * data will be copied to over during an overwrite.
+ *
+ * NOTE: the function returns a pointer to the map's internal storage.
+ */
+SFUNC FIO_NAME(FIO_MAP2_NAME, node_s) *
+    FIO_NAME(FIO_MAP2_NAME, set_ptr)(FIO_MAP2_PTR map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                     uint64_t hash,
+#endif
+#ifdef FIO_MAP2_VALUE
+                                     FIO_MAP2_KEY key,
+                                     FIO_MAP2_VALUE val,
+                                     FIO_MAP2_VALUE_INTERNAL *old,
+                                     int overwrite
+#else
+                                     FIO_MAP2_KEY key
+#endif
+    );
+
+/**
+ * The core get function. This function returns NULL if item is missing.
+ *
+ * NOTE: the function returns a pointer to the map's internal storage.
+ */
+SFUNC FIO_NAME(FIO_MAP2_NAME, node_s) *
+    FIO_NAME(FIO_MAP2_NAME, get_ptr)(FIO_MAP2_PTR map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                     uint64_t hash,
+#endif
+                                     FIO_MAP2_KEY key);
+/* *****************************************************************************
+Map Iteration and Traversal
+***************************************************************************** */
+
+/**
+ * Returns the next iterator object after `current_pos` or the first if `NULL`.
+ *
+ * Note that adding objects to the map or rehashing between iterations could
+ * incur performance penalties when re-setting and re-seeking the previous
+ * iterator position.
+ *
+ * Adding objects to, or rehashing, an unordered maps could invalidate the
+ * iterator object completely as the ordering may have changed and so the "next"
+ * object might be any object in the map.
+ */
+SFUNC FIO_NAME(FIO_MAP2_NAME, iterator_s)
+    FIO_NAME(FIO_MAP2_NAME,
+             get_next)(FIO_MAP2_PTR map,
+                       FIO_NAME(FIO_MAP2_NAME, iterator_s) * current_pos);
+
+/**
+ * Returns the next iterator object after `current_pos` or the last if `NULL`.
+ *
+ * See notes in `get_next`.
+ */
+SFUNC FIO_NAME(FIO_MAP2_NAME, iterator_s)
+    FIO_NAME(FIO_MAP2_NAME,
+             get_prev)(FIO_MAP2_PTR map,
+                       FIO_NAME(FIO_MAP2_NAME, iterator_s) * current_pos);
+
+/** Returns 1 if the iterator is out of bounds, otherwise returns 0. */
+FIO_IFUNC int FIO_NAME(FIO_MAP2_NAME,
+                       iterator_is_valid)(FIO_NAME(FIO_MAP2_NAME, iterator_s) *
+                                          iterator);
+
+/** Returns a pointer to the node object in the internal map. */
+FIO_IFUNC FIO_NAME(FIO_MAP2_NAME, node_s) *
+    FIO_NAME(FIO_MAP2_NAME,
+             iterator2node)(FIO_MAP2_PTR map,
+                            FIO_NAME(FIO_MAP2_NAME, iterator_s) * iterator);
+
+#ifndef FIO_MAP2_EACH
+/** Iterates through the map using an iterator object. */
+#define FIO_MAP2_EACH(map_name, map_ptr, i)                                    \
+  for (FIO_NAME(map_name, iterator_s)                                          \
+           i = FIO_NAME(map_name, get_next)(map_ptr, NULL);                    \
+       FIO_NAME(map_name, iterator_is_valid)(&i);                              \
+       i = FIO_NAME(map_name, get_next)(map_ptr, &i))
+/** Iterates through the map using an iterator object. */
+#define FIO_MAP2_EACH_REVERSED(map_name, map_ptr, i)                           \
+  for (FIO_NAME(map_name, iterator_s)                                          \
+           i = FIO_NAME(map_name, get_prev)(map_ptr, NULL);                    \
+       FIO_NAME(map_name, iterator_is_valid)(&i);                              \
+       i = FIO_NAME(map_name, get_prev)(map_ptr, &i))
+#endif
+
+/** Iteration information structure passed to the callback. */
+typedef struct FIO_NAME(FIO_MAP2_NAME, each_s) {
+  /** The being iterated. Once set, cannot be safely changed. */
+  FIO_MAP2_PTR const parent;
+  /** The current object's index */
+  uint64_t index;
+  /** The callback / task called for each index, may be updated mid-cycle. */
+  int (*task)(struct FIO_NAME(FIO_MAP2_NAME, each_s) * info);
+  /** Opaque user data. */
+  void *udata;
+#ifdef FIO_MAP2_VALUE
+  /** The object's value at the current index. */
+  FIO_MAP2_VALUE value;
+#endif
+  /** The object's key the current index. */
+  FIO_MAP2_KEY key;
+} FIO_NAME(FIO_MAP2_NAME, each_s);
+
+/**
+ * Iteration using a callback for each element in the map.
+ *
+ * The callback task function must accept an each_s pointer, see above.
+ *
+ * If the callback returns -1, the loop is broken. Any other value is ignored.
+ *
+ * Returns the relative "stop" position, i.e., the number of items processed +
+ * the starting point.
+ */
+SFUNC uint32_t FIO_NAME(FIO_MAP2_NAME,
+                        each)(FIO_MAP2_PTR map,
+                              int (*task)(FIO_NAME(FIO_MAP2_NAME, each_s) *),
+                              void *udata,
+                              ssize_t start_at);
+
+/* *****************************************************************************
+Optional Sorting Support - TODO? (convert to array, sort, rehash)
+***************************************************************************** */
+
+#if defined(FIO_MAP2_KEY_IS_GREATER_THAN) && !defined(FIO_SORT_TYPE) &&        \
+    FIO_MAP2_ORDERED
+#undef FIO_SORT_NAME
+#endif
+
+/* *****************************************************************************
+Map Implementation - inlined static functions
+***************************************************************************** */
+
+#ifndef FIO_MAP2_CAPA_BITS_LIMIT
+/* Note: cannot be more than 31 bits unless some of the code is rewritten. */
+#define FIO_MAP2_CAPA_BITS_LIMIT 31
+#endif
+
+/* Theoretical map capacity. */
+FIO_IFUNC uint32_t FIO_NAME(FIO_MAP2_NAME, capa)(FIO_MAP2_PTR map) {
+  FIO_PTR_TAG_VALID_OR_RETURN(map, 0);
+  FIO_MAP2_T *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP2_T, map);
+  if (o->map)
+    return (uint32_t)((size_t)1ULL << o->bits);
+  return 0;
+}
+
+/* The number of objects in the map capacity. */
+FIO_IFUNC uint32_t FIO_NAME(FIO_MAP2_NAME, count)(FIO_MAP2_PTR map) {
+  FIO_PTR_TAG_VALID_OR_RETURN(map, 0);
+  return ((FIO_NAME(FIO_MAP2_NAME, s) *)FIO_PTR_UNTAG(map))->count;
+}
+
+/** Returns 1 if the iterator points to a valid object, otherwise returns 0. */
+FIO_IFUNC int FIO_NAME(FIO_MAP2_NAME,
+                       iterator_is_valid)(FIO_NAME(FIO_MAP2_NAME, iterator_s) *
+                                          iterator) {
+  return (iterator && iterator->private_.map_validator);
+}
+
+/** Returns the key value associated with the node's pointer. */
+FIO_IFUNC FIO_MAP2_KEY FIO_NAME(FIO_MAP2_NAME,
+                                node2key)(FIO_NAME(FIO_MAP2_NAME, node_s) *
+                                          node) {
+  FIO_MAP2_KEY r = (FIO_MAP2_KEY){0};
+  if (!node)
+    return r;
+  return FIO_MAP2_KEY_FROM_INTERNAL(node->key);
+}
+
+/** Returns the hash value associated with the node's pointer. */
+FIO_IFUNC uint64_t FIO_NAME(FIO_MAP2_NAME,
+                            node2hash)(FIO_NAME(FIO_MAP2_NAME, node_s) * node) {
+  uint32_t r = (uint32_t){0};
+  if (!node)
+    return r;
+#if FIO_MAP2_RECALC_HASH
+  FIO_MAP2_KEY k = FIO_MAP2_KEY_FROM_INTERNAL(node->key);
+  uint64_t hash = FIO_MAP2_HASH_FN(k);
+  hash += !hash;
+  return hash;
+#else
+  return node->hash;
+#endif
+}
+
+#ifdef FIO_MAP2_VALUE
+/** Returns the value associated with the node's pointer. */
+FIO_IFUNC FIO_MAP2_VALUE FIO_NAME(FIO_MAP2_NAME,
+                                  node2val)(FIO_NAME(FIO_MAP2_NAME, node_s) *
+                                            node) {
+  FIO_MAP2_VALUE r = (FIO_MAP2_VALUE){0};
+  if (!node)
+    return r;
+  return FIO_MAP2_VALUE_FROM_INTERNAL(node->value);
+}
+#else
+/* If called for a node without a value, returns the key (simplifies stuff). */
+FIO_IFUNC FIO_MAP2_KEY FIO_NAME(FIO_MAP2_NAME,
+                                node2val)(FIO_NAME(FIO_MAP2_NAME, node_s) *
+                                          node) {
+  return FIO_NAME(FIO_MAP2_NAME, node2key)(node);
+}
+#endif
+
+/** Returns the key value associated with the node's pointer. */
+FIO_IFUNC FIO_MAP2_KEY_INTERNAL *FIO_NAME(FIO_MAP2_NAME, node2key_ptr)(
+    FIO_NAME(FIO_MAP2_NAME, node_s) * node) {
+  if (!node)
+    return NULL;
+  return &(node->key);
+}
+
+#ifdef FIO_MAP2_VALUE
+/** Returns the value associated with the node's pointer. */
+FIO_IFUNC FIO_MAP2_VALUE_INTERNAL *FIO_NAME(FIO_MAP2_NAME, node2val_ptr)(
+    FIO_NAME(FIO_MAP2_NAME, node_s) * node) {
+  if (!node)
+    return NULL;
+  return &(node->value);
+}
+#else
+/* If called for a node without a value, returns the key (simplifies stuff). */
+FIO_IFUNC FIO_MAP2_KEY_INTERNAL *FIO_NAME(FIO_MAP2_NAME, node2val_ptr)(
+    FIO_NAME(FIO_MAP2_NAME, node_s) * node) {
+  return FIO_NAME(FIO_MAP2_NAME, node2key_ptr)(node);
+}
+#endif
+
+/** Gets a value from the map, if exists. */
+FIO_IFUNC FIO_MAP2_GET_T FIO_NAME(FIO_MAP2_NAME, get)(FIO_MAP2_PTR map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                                      uint64_t hash,
+#endif
+                                                      FIO_MAP2_KEY key) {
+  return FIO_NAME(FIO_MAP2_NAME,
+                  node2val)(FIO_NAME(FIO_MAP2_NAME, get_ptr)(map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                                             hash,
+#endif
+                                                             key));
+}
+
+/** Sets a value in the map, hash maps will overwrite existing data if any. */
+FIO_IFUNC FIO_MAP2_GET_T FIO_NAME(FIO_MAP2_NAME,
+                                  set)(FIO_MAP2_PTR map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                       uint64_t hash,
+#endif
+#ifdef FIO_MAP2_VALUE
+                                       FIO_MAP2_KEY key,
+                                       FIO_MAP2_VALUE obj,
+                                       FIO_MAP2_VALUE_INTERNAL *old
+#else
+                                       FIO_MAP2_KEY key
+#endif
+) {
+  return FIO_NAME(FIO_MAP2_NAME,
+                  node2val)(FIO_NAME(FIO_MAP2_NAME, set_ptr)(map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                                             hash,
+#endif
+                                                             key
+#ifdef FIO_MAP2_VALUE
+                                                             ,
+                                                             obj,
+                                                             old,
+                                                             1
+#endif
+                                                             ));
+}
+
+/** Sets a value in the map if not set previously. */
+FIO_IFUNC FIO_MAP2_GET_T FIO_NAME(FIO_MAP2_NAME,
+                                  set_if_missing)(FIO_MAP2_PTR map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                                  uint64_t hash,
+#endif
+                                                  FIO_MAP2_KEY key
+#ifdef FIO_MAP2_VALUE
+                                                  ,
+                                                  FIO_MAP2_VALUE obj
+#endif
+) {
+  return FIO_NAME(FIO_MAP2_NAME,
+                  node2val)(FIO_NAME(FIO_MAP2_NAME, set_ptr)(map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                                             hash,
+#endif
+                                                             key
+#ifdef FIO_MAP2_VALUE
+                                                             ,
+                                                             obj,
+                                                             NULL,
+                                                             0
+#endif
+                                                             ));
+}
+
+/** Returns a pointer to the node object in the internal map. */
+FIO_IFUNC FIO_NAME(FIO_MAP2_NAME, node_s) *
+    FIO_NAME(FIO_MAP2_NAME,
+             iterator2node)(FIO_MAP2_PTR map,
+                            FIO_NAME(FIO_MAP2_NAME, iterator_s) * iterator) {
+  FIO_NAME(FIO_MAP2_NAME, node_s) *node = NULL;
+  if (!iterator || !iterator->private_.map_validator)
+    return node;
+  FIO_PTR_TAG_VALID_OR_RETURN(map, node);
+  FIO_NAME(FIO_MAP2_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP2_T, map);
+  node = o->map + iterator->private_.index;
+  return node;
+}
+
+/* *****************************************************************************
+Map Implementation - possibly externed functions.
+***************************************************************************** */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
+FIO_LEAK_COUNTER_DEF(FIO_NAME(FIO_MAP2_NAME, s))
+FIO_LEAK_COUNTER_DEF(FIO_NAME(FIO_MAP2_NAME, destroy))
+/* *****************************************************************************
+Constructors
+***************************************************************************** */
+
+/* do we have a constructor? */
+#ifndef FIO_REF_CONSTRUCTOR_ONLY
+/* Allocates a new object on the heap and initializes it's memory. */
+FIO_IFUNC FIO_MAP2_PTR FIO_NAME(FIO_MAP2_NAME, new)(void) {
+  FIO_NAME(FIO_MAP2_NAME, s) *o =
+      (FIO_NAME(FIO_MAP2_NAME, s) *)FIO_MEM_REALLOC_(NULL, 0, sizeof(*o), 0);
+  if (!o)
+    return (FIO_MAP2_PTR)NULL;
+  FIO_LEAK_COUNTER_ON_ALLOC(FIO_NAME(FIO_MAP2_NAME, s));
+  *o = (FIO_NAME(FIO_MAP2_NAME, s))FIO_MAP2_INIT;
+  return (FIO_MAP2_PTR)FIO_PTR_TAG(o);
+}
+/* Frees any internal data AND the object's container! */
+FIO_IFUNC void FIO_NAME(FIO_MAP2_NAME, free)(FIO_MAP2_PTR map) {
+  FIO_PTR_TAG_VALID_OR_RETURN_VOID(map);
+  FIO_NAME(FIO_MAP2_NAME, destroy)(map);
+  FIO_NAME(FIO_MAP2_NAME, s) *o =
+      FIO_PTR_TAG_GET_UNTAGGED(FIO_NAME(FIO_MAP2_NAME, s), map);
+  FIO_LEAK_COUNTER_ON_FREE(FIO_NAME(FIO_MAP2_NAME, s));
+  FIO_MEM_FREE_(o, sizeof(*o));
+}
+#endif /* FIO_REF_CONSTRUCTOR_ONLY */
+
+/* *****************************************************************************
+Internal Helpers
+***************************************************************************** */
+
+#ifndef FIO_MAP2_ATTACK_LIMIT
+#define FIO_MAP2_ATTACK_LIMIT 16
+#endif
+#ifndef FIO_MAP2_CUCKOO_STEPS
+/* Prime numbers are better */
+#define FIO_MAP2_CUCKOO_STEPS (0x43F82D0BUL) /* a big high prime */
+#endif
+#ifndef FIO_MAP2_SEEK_LIMIT
+#define FIO_MAP2_SEEK_LIMIT 13U
+#endif
+#ifndef FIO_MAP2_ARRAY_LOG_LIMIT
+#define FIO_MAP2_ARRAY_LOG_LIMIT 3
+#endif
+#ifndef FIO_MAP2_CAPA
+#define FIO_MAP2_CAPA(bits) ((size_t)1ULL << (bits))
+#endif
+
+#ifndef FIO_MAP2_IS_SPARSE
+#define FIO_MAP2_IS_SPARSE(map)                                                \
+  (o->bits > FIO_MAP2_ARRAY_LOG_LIMIT && ((capa >> 2) > o->count))
+#endif
+
+/* The number of objects in the map capacity. */
+FIO_IFUNC uint8_t *FIO_NAME(FIO_MAP2_NAME,
+                            __imap)(FIO_NAME(FIO_MAP2_NAME, s) * o) {
+  // FIO_ASSERT(o && o->map, "shouldn't have been called.");
+  return (uint8_t *)(o->map + FIO_MAP2_CAPA(o->bits));
+}
+
+FIO_IFUNC uint64_t FIO_NAME(FIO_MAP2_NAME,
+                            __byte_hash)(FIO_NAME(FIO_MAP2_NAME, s) * o,
+                                         uint64_t hash) {
+  hash = (hash >> o->bits);
+  hash &= 0xFF;
+  hash += !(hash);
+  hash -= (hash == 255);
+  return hash;
+}
+
+FIO_IFUNC uint64_t FIO_NAME(FIO_MAP2_NAME,
+                            __is_eq_hash)(FIO_NAME(FIO_MAP2_NAME, node_s) * o,
+                                          uint64_t hash) {
+#if FIO_MAP2_RECALC_HASH && defined(FIO_MAP2_HASH_FN)
+  uint64_t khash = FIO_MAP2_HASH_FN(FIO_MAP2_KEY_FROM_INTERNAL(o->key));
+  khash += !khash;
+#else
+  const uint64_t khash = o->hash;
+#endif
+  return (khash == hash);
+}
+
+FIO_SFUNC uint32_t FIO_NAME(FIO_MAP2_NAME,
+                            __index)(FIO_NAME(FIO_MAP2_NAME, s) * o,
+                                     FIO_MAP2_KEY key,
+                                     uint64_t hash) {
+  uint32_t r = (uint32_t)-1;
+  if (!o->map)
+    return r;
+  static int guard_print = 0;
+  uint8_t *imap = FIO_NAME(FIO_MAP2_NAME, __imap)(o);
+  size_t capa = FIO_MAP2_CAPA(o->bits);
+  size_t bhash = FIO_NAME(FIO_MAP2_NAME, __byte_hash)(o, hash);
+  size_t guard = FIO_MAP2_ATTACK_LIMIT + 1;
+  if (o->bits > FIO_MAP2_ARRAY_LOG_LIMIT) { /* treat as map */
+    uint64_t bhash64 = bhash | (bhash << 8);
+    bhash64 |= bhash64 << 16;
+    bhash64 |= bhash64 << 32;
+    bhash64 = ~bhash64;
+    const uintptr_t pos_mask = capa - 1;
+    const uint_fast8_t offsets[8] = {0, 3, 8, 17, 28, 41, 58, 60};
+    for (uintptr_t pos = hash, c = 0; c < FIO_MAP2_SEEK_LIMIT;
+         (pos += FIO_MAP2_CUCKOO_STEPS), ++c) {
+      uint64_t comb = imap[(pos + offsets[0]) & pos_mask];
+      comb |= ((uint64_t)imap[(pos + offsets[1]) & pos_mask]) << (1 * 8);
+      comb |= ((uint64_t)imap[(pos + offsets[2]) & pos_mask]) << (2 * 8);
+      comb |= ((uint64_t)imap[(pos + offsets[3]) & pos_mask]) << (3 * 8);
+      comb |= ((uint64_t)imap[(pos + offsets[4]) & pos_mask]) << (4 * 8);
+      comb |= ((uint64_t)imap[(pos + offsets[5]) & pos_mask]) << (5 * 8);
+      comb |= ((uint64_t)imap[(pos + offsets[6]) & pos_mask]) << (6 * 8);
+      comb |= ((uint64_t)imap[(pos + offsets[7]) & pos_mask]) << (7 * 8);
+      const uint64_t has_possible_match =
+          (((comb ^ bhash64) & 0x7F7F7F7F7F7F7F7FULL) + 0x0101010101010101ULL) &
+          0x8080808080808080ULL;
+      if (has_possible_match) {
+        /* there was a 7 bit match in one of the bytes in this 8 byte group */
+        for (size_t i = 0; i < 8; ++i) {
+          const uint32_t tmp = (uint32_t)((pos + offsets[i]) & pos_mask);
+          if (imap[tmp] != bhash)
+            continue;
+          /* test key and hash equality */
+          if (FIO_NAME(FIO_MAP2_NAME, __is_eq_hash)(o->map + tmp, hash)) {
+            if (FIO_MAP2_KEY_CMP(o->map[tmp].key, key)) {
+              guard_print = 0;
+              return (r = tmp);
+            }
+            if (!(--guard)) {
+              if (!guard_print)
+                FIO_LOG_SECURITY("hash map " FIO_MACRO2STR(
+                    FIO_NAME(FIO_MAP2_NAME, s)) " under attack?");
+              guard_print = 1;
+              return (r = tmp);
+            }
+          }
+        }
+      }
+      const uint64_t has_possible_full_byte =
+          (((comb)&0x7F7F7F7F7F7F7F7FULL) + 0x0101010101010101ULL) &
+          0x8080808080808080ULL;
+      const uint64_t has_possible_empty_byte =
+          (((~comb) & 0x7F7F7F7F7F7F7F7FULL) + 0x0101010101010101ULL) &
+          0x8080808080808080ULL;
+      if (!(has_possible_full_byte | has_possible_empty_byte))
+        continue;
+      /* there was a 7 bit match for a possible free space in this group */
+      for (int i = 0; i < 8; ++i) {
+        const uint32_t tmp = (uint32_t)((pos + offsets[i]) & pos_mask);
+        if (!imap[tmp])
+          return (r = tmp); /* empty slot always ends search */
+        if (r > pos_mask && imap[tmp] == 255)
+          r = tmp; /* mark hole to be filled */
+      }
+    }
+    return r;
+  } /* treat as array */
+  for (size_t i = 0; i < capa; ++i) {
+    if (!imap[i])
+      return (r = (uint32_t)i);
+    if (imap[i] == bhash) {
+      /* test key and hash equality */
+      if (FIO_NAME(FIO_MAP2_NAME, __is_eq_hash)(o->map + i, hash)) {
+        if (FIO_MAP2_KEY_CMP(o->map[i].key, key)) {
+          guard_print = 0;
+          return (r = (uint32_t)i);
+        }
+        if (!(--guard)) {
+          if (!guard_print)
+            FIO_LOG_SECURITY("hash map " FIO_MACRO2STR(
+                FIO_NAME(FIO_MAP2_NAME, s)) " under attack?");
+          guard_print = 1;
+          return (r = (uint32_t)i);
+        }
+      }
+    }
+    if (imap[i] == 0xFF)
+      r = (uint32_t)i; /* a free spot is available*/
+  }
+  return r;
+}
+/* deallocate the map's memory. */
+FIO_SFUNC void FIO_NAME(FIO_MAP2_NAME,
+                        __dealloc_map)(FIO_NAME(FIO_MAP2_NAME, s) * o) {
+  if (!o->map)
+    return;
+  const size_t capa = FIO_MAP2_CAPA(o->bits);
+  FIO_LEAK_COUNTER_ON_FREE(FIO_NAME(FIO_MAP2_NAME, destroy));
+  FIO_MEM_FREE_(o->map, (capa * sizeof(*o->map)) + capa);
+  (void)capa;
+}
+
+/** duplicates an objects between two maps. */
+FIO_IFUNC int FIO_NAME(FIO_MAP2_NAME,
+                       __copy_obj)(FIO_NAME(FIO_MAP2_NAME, s) * dest,
+                                   FIO_NAME(FIO_MAP2_NAME, node_s) * o,
+                                   uint32_t internal) {
+  FIO_MAP2_KEY key = FIO_MAP2_KEY_FROM_INTERNAL(o->key);
+  uint8_t *imap = FIO_NAME(FIO_MAP2_NAME, __imap)(dest);
+#if FIO_MAP2_RECALC_HASH
+  uint64_t ohash = FIO_MAP2_HASH_FN(key);
+  ohash += !ohash;
+#else
+  const uint64_t ohash = o->hash;
+#endif
+  uint32_t i = FIO_NAME(FIO_MAP2_NAME, __index)(dest, key, ohash);
+  if (i == (uint32_t)-1 || (imap[i] + 1) > 1)
+    return -1;
+  if (internal) {
+    dest->map[i] = *o;
+    imap[i] = FIO_NAME(FIO_MAP2_NAME, __byte_hash)(dest, ohash);
+#if FIO_MAP2_ORDERED
+    if (dest->count) { /* update ordering */
+      FIO_INDEXED_LIST_PUSH(dest->map, node, dest->head, i);
+    } else { /* set first order */
+      dest->map[i].node.next = dest->map[i].node.prev = i;
+      dest->head = i;
+    }
+#endif
+    ++dest->count;
+    return 0;
+  }
+  imap[i] = FIO_NAME(FIO_MAP2_NAME, __byte_hash)(dest, ohash);
+  FIO_MAP2_KEY_COPY(dest->map[i].key, FIO_MAP2_KEY_FROM_INTERNAL(o->key));
+  FIO_MAP2_VALUE_COPY(dest->map[i].value,
+                      FIO_MAP2_VALUE_FROM_INTERNAL(o->value));
+#if !FIO_MAP2_RECALC_HASH
+  dest->map[i].hash = o->hash;
+#endif
+#if FIO_MAP2_ORDERED
+  if (dest->count) { /* update ordering */
+    FIO_INDEXED_LIST_PUSH(dest->map, node, dest->head, i);
+  } else { /* set first order */
+    dest->map[i].node.next = dest->map[i].node.prev = i;
+    dest->head = i;
+  }
+#endif
+  ++dest->count;
+  return 0;
+}
+
+/** duplicates a map to a new copy (usually for rehashing / reserving space). */
+FIO_IFUNC FIO_NAME(FIO_MAP2_NAME, s)
+    FIO_NAME(FIO_MAP2_NAME, __duplicate)(FIO_NAME(FIO_MAP2_NAME, s) * o,
+                                         uint32_t bits,
+                                         uint32_t internal) {
+  FIO_NAME(FIO_MAP2_NAME, s) cpy = {0};
+  if (bits > FIO_MAP2_CAPA_BITS_LIMIT)
+    return cpy;
+  size_t capa = FIO_MAP2_CAPA(bits);
+  cpy.map = (FIO_NAME(FIO_MAP2_NAME, node_s) *)
+      FIO_MEM_REALLOC_(NULL, 0, ((capa * sizeof(*cpy.map)) + capa), 0);
+  if (!cpy.map)
+    return cpy;
+  FIO_LEAK_COUNTER_ON_ALLOC(FIO_NAME(FIO_MAP2_NAME, destroy));
+  if (!FIO_MEM_REALLOC_IS_SAFE_) {
+    /* set only the imap, the rest can be junk data */
+    FIO_MEMSET((cpy.map + capa), 0, capa);
+  }
+  cpy.bits = bits;
+  if (!o->count)
+    return cpy;
+#if FIO_MAP2_ORDERED
+  /* copy objects in order */
+  FIO_INDEXED_LIST_EACH(o->map, node, o->head, i) {
+    if (FIO_NAME(FIO_MAP2_NAME, __copy_obj)(&cpy, o->map + i, internal))
+      goto error;
+  }
+#else
+  uint8_t *imap = FIO_NAME(FIO_MAP2_NAME, __imap)(o);
+  capa = FIO_MAP2_CAPA(o->bits);
+  if (FIO_MAP2_IS_SPARSE(o)) { /* sparsely populated */
+    for (size_t i = 0; i < capa; i += 8) {
+      uint64_t comb = *((uint64_t *)(imap + i));
+      if (!comb || comb == 0xFFFFFFFFFFFFFFFFULL)
+        continue;
+      for (size_t j = 0; j < 8; ++j) {
+        const size_t tmp = j + i;
+        if (!imap[tmp] || imap[tmp] == 0xFF)
+          continue;
+        if (FIO_NAME(FIO_MAP2_NAME, __copy_obj)(&cpy, o->map + tmp, internal))
+          goto error;
+      }
+    }
+    return cpy;
+  } /* review as array */
+  for (size_t i = 0; i < capa; ++i) {
+    if (!imap[i] || imap[i] == 0xFF)
+      continue;
+    if (FIO_NAME(FIO_MAP2_NAME, __copy_obj)(&cpy, o->map + i, internal))
+      goto error;
+  }
+#endif
+  return cpy;
+error:
+  FIO_NAME(FIO_MAP2_NAME, __dealloc_map)(&cpy);
+  cpy = (FIO_NAME(FIO_MAP2_NAME, s)){0};
+  return cpy;
+}
+
+/* destroys all objects in the map, without(!) resetting the `imap`. */
+FIO_SFUNC void FIO_NAME(FIO_MAP2_NAME,
+                        __destroy_objects)(FIO_NAME(FIO_MAP2_NAME, s) * o) {
+#if FIO_MAP2_VALUE_DESTROY_SIMPLE && FIO_MAP2_KEY_DESTROY_SIMPLE
+  (void)o;
+  return;
+#else
+  uint8_t *imap = FIO_NAME(FIO_MAP2_NAME, __imap)(o);
+  const size_t capa = FIO_MAP2_CAPA(o->bits);
+  if (FIO_MAP2_IS_SPARSE(o)) {
+    for (size_t i = 0; i < capa; i += 8) {
+      uint64_t comb = *((uint64_t *)(imap + i));
+      if (!comb || comb == 0xFFFFFFFFFFFFFFFFULL)
+        continue;
+      for (size_t j = i; j < i + 8; ++j) {
+        FIO_MAP2_KEY_DESTROY(o->map[j].key);
+        FIO_MAP2_VALUE_DESTROY(o->map[j].value);
+      }
+    }
+  } else { /* review as array */
+    for (size_t i = 0; i < capa; ++i) {
+      if (!imap[i] || imap[i] == 0xFF)
+        continue;
+      FIO_MAP2_KEY_DESTROY(o->map[i].key);
+      FIO_MAP2_VALUE_DESTROY(o->map[i].value);
+    }
+  }
+#endif /* FIO_MAP2_VALUE_DESTROY_SIMPLE */
+}
+
+/* *****************************************************************************
+API implementation
+***************************************************************************** */
+
+/** Reserves at minimum the capacity requested. */
+SFUNC void FIO_NAME(FIO_MAP2_NAME, reserve)(FIO_MAP2_PTR map, size_t capa) {
+  FIO_PTR_TAG_VALID_OR_RETURN_VOID(map);
+  FIO_NAME(FIO_MAP2_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP2_T, map);
+  capa += o->count;
+  if (FIO_MAP2_CAPA(o->bits) >= capa || (capa >> FIO_MAP2_CAPA_BITS_LIMIT))
+    return;
+  uint_fast8_t bits = o->bits + 1;
+  while (FIO_MAP2_CAPA(bits) < capa)
+    ++bits;
+  FIO_NAME(FIO_MAP2_NAME, s)
+  cpy = FIO_NAME(FIO_MAP2_NAME, __duplicate)(o, bits, 1);
+  if (!cpy.map)
+    return;
+  FIO_NAME(FIO_MAP2_NAME, __dealloc_map)(o);
+  *o = cpy;
+}
+
+/* Removes all objects from the map, without releasing the map's resources. */
+SFUNC void FIO_NAME(FIO_MAP2_NAME, clear)(FIO_MAP2_PTR map) {
+  FIO_PTR_TAG_VALID_OR_RETURN_VOID(map);
+  FIO_NAME(FIO_MAP2_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP2_T, map);
+  if (!o->map || !o->count)
+    return;
+  FIO_NAME(FIO_MAP2_NAME, __destroy_objects)(o);
+  uint8_t *imap = FIO_NAME(FIO_MAP2_NAME, __imap)(o);
+  const size_t capa = FIO_MAP2_CAPA(o->bits);
+  FIO_MEMSET(imap, 0, capa);
+  o->count = 0;
+#if FIO_MAP2_ORDERED
+  o->head = 0;
+#endif
+}
+
+/** Attempts to minimize memory use. */
+SFUNC void FIO_NAME(FIO_MAP2_NAME, compact)(FIO_MAP2_PTR map) {
+  FIO_PTR_TAG_VALID_OR_RETURN_VOID(map);
+  FIO_NAME(FIO_MAP2_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP2_T, map);
+  if (!o->map || !o->count)
+    return;
+  uint32_t bits = o->bits;
+  while (FIO_MAP2_CAPA(bits >> 1) > o->count)
+    bits >>= 1;
+  ++bits;
+  for (;;) {
+    if (bits >= o->bits)
+      return;
+    FIO_NAME(FIO_MAP2_NAME, s)
+    cpy = FIO_NAME(FIO_MAP2_NAME, __duplicate)(o, bits, 1);
+    if (!cpy.map) {
+      ++bits;
+      continue;
+    }
+    FIO_NAME(FIO_MAP2_NAME, __dealloc_map)(o);
+    *o = cpy;
+    return;
+  }
+}
+
+/* Frees any internal data AND the object's container! */
+SFUNC void FIO_NAME(FIO_MAP2_NAME, destroy)(FIO_MAP2_PTR map) {
+  FIO_PTR_TAG_VALID_OR_RETURN_VOID(map);
+  FIO_NAME(FIO_MAP2_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP2_T, map);
+  if (o->map && o->count)
+    FIO_NAME(FIO_MAP2_NAME, __destroy_objects)(o);
+  FIO_NAME(FIO_MAP2_NAME, __dealloc_map)(o);
+  *o = (FIO_NAME(FIO_MAP2_NAME, s))FIO_MAP2_INIT;
+  return;
+}
+
+/** Evicts elements least recently used (LRU), FIFO or undefined. */
+SFUNC void FIO_NAME(FIO_MAP2_NAME, evict)(FIO_MAP2_PTR map,
+                                          size_t number_of_elements) {
+  FIO_PTR_TAG_VALID_OR_RETURN_VOID(map);
+  FIO_NAME(FIO_MAP2_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP2_T, map);
+  if (!o->count)
+    return;
+  if (number_of_elements >= o->count) {
+    FIO_NAME(FIO_MAP2_NAME, clear)(map);
+    return;
+  }
+  uint8_t *imap = FIO_NAME(FIO_MAP2_NAME, __imap)(o);
+#ifdef FIO_MAP2_LRU /* remove last X elements from the list */
+  FIO_INDEXED_LIST_EACH_REVERSED(o->map, node, o->head, i) {
+    FIO_MAP2_KEY_DESTROY(o->map[i].key);
+    FIO_MAP2_VALUE_DESTROY(o->map[i].value);
+    FIO_INDEXED_LIST_REMOVE(o->map, node, i);
+    imap[i] = 0xFF;
+    --o->count;
+    if (!(--number_of_elements))
+      return;
+  }
+#elif FIO_MAP2_ORDERED /* remove first X elements from the list */
+  FIO_INDEXED_LIST_EACH(o->map, node, o->head, i) {
+    FIO_MAP2_KEY_DESTROY(o->map[i].key);
+    FIO_MAP2_VALUE_DESTROY(o->map[i].value);
+    FIO_INDEXED_LIST_REMOVE(o->map, node, i);
+    imap[i] = 0xFF;
+    --o->count;
+    if (!(--number_of_elements)) {
+      o->head = o->map[i].node.next;
+      return;
+    }
+  }
+#else                  /* remove whatever... */
+  if (o->bits > FIO_MAP2_ARRAY_LOG_LIMIT) {
+    /* map is scattered */
+    uint32_t pos_mask = (uint32_t)(FIO_MAP2_CAPA(o->bits) - 1);
+    uint32_t pos = *(uint32_t *)o->map;
+    for (int i = 0; i < 3; ++i) {
+      struct timespec t = {0};
+      clock_gettime(CLOCK_MONOTONIC, &t);
+      pos *= t.tv_nsec ^ t.tv_sec ^ (uintptr_t)imap;
+      pos ^= pos >> 7;
+    }
+    for (;;) { /* a bit of non-random randomness... */
+      uint32_t offset = ((pos << 3)) & pos_mask;
+      for (uint_fast8_t i = 0; i < 8; ++i) { /* ordering bias? vs performance */
+        const uint32_t tmp = offset + i;
+        if (!imap[tmp] || imap[tmp] == 0xFF)
+          continue;
+        FIO_MAP2_KEY_DESTROY(o->map[tmp].key);
+        FIO_MAP2_VALUE_DESTROY(o->map[tmp].value);
+        imap[tmp] = 0xFF;
+        --o->count;
+        if (!(--number_of_elements))
+          return;
+      }
+      pos += FIO_MAP2_CUCKOO_STEPS;
+    }
+  }
+  /* map is a simple array */
+  while (number_of_elements--) {
+    FIO_MAP2_KEY_DESTROY(o->map[number_of_elements].key);
+    FIO_MAP2_VALUE_DESTROY(o->map[number_of_elements].value);
+    imap[number_of_elements] = 0xFF;
+  }
+#endif                 /* FIO_MAP2_LRU / FIO_MAP2_ORDERED */
+}
+
+/* *****************************************************************************
+The Map set/get functions
+***************************************************************************** */
+
+/**
+ * The core get function. This function returns NULL if item is missing.
+ *
+ * NOTE: the function returns the internal representation of objects.
+ */
+SFUNC FIO_NAME(FIO_MAP2_NAME, node_s) *
+    FIO_NAME(FIO_MAP2_NAME, get_ptr)(FIO_MAP2_PTR map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                     uint64_t hash,
+#endif
+                                     FIO_MAP2_KEY key) {
+  FIO_NAME(FIO_MAP2_NAME, node_s) *r = NULL;
+  FIO_PTR_TAG_VALID_OR_RETURN(map, r);
+  FIO_NAME(FIO_MAP2_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP2_T, map);
+  if (!o->count)
+    return r;
+#if defined(FIO_MAP2_HASH_FN)
+  uint64_t hash = FIO_MAP2_HASH_FN(key);
+#endif
+  hash += !hash;
+  uint32_t pos = FIO_NAME(FIO_MAP2_NAME, __index)(o, key, hash);
+  uint8_t *imap = FIO_NAME(FIO_MAP2_NAME, __imap)(o);
+  if (pos == (uint32_t)-1 || !imap[pos] || imap[pos] == 0xFF)
+    return r;
+#ifdef FIO_MAP2_LRU
+  if (o->head != pos) {
+    FIO_INDEXED_LIST_REMOVE(o->map, node, pos);
+    FIO_INDEXED_LIST_PUSH(o->map, node, o->head, pos);
+    o->head = pos;
+  }
+#endif
+  r = o->map + pos;
+  return r;
+}
+
+/** sets / removes an object in the map, returning a pointer to the map data. */
+SFUNC FIO_NAME(FIO_MAP2_NAME, node_s) *
+    FIO_NAME(FIO_MAP2_NAME, set_ptr)(FIO_MAP2_PTR map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                     uint64_t hash,
+#endif
+#ifdef FIO_MAP2_VALUE
+                                     FIO_MAP2_KEY key,
+                                     FIO_MAP2_VALUE val,
+                                     FIO_MAP2_VALUE_INTERNAL *old,
+                                     int overwrite
+#else
+                                     FIO_MAP2_KEY key
+#endif
+    ) {
+  FIO_NAME(FIO_MAP2_NAME, node_s) *r = NULL;
+#ifdef FIO_MAP2_VALUE
+  if (old)
+    *old = (FIO_MAP2_VALUE_INTERNAL){0};
+#endif
+  FIO_NAME(FIO_MAP2_NAME, s) * o;
+#if defined(FIO_MAP2_HASH_FN)
+  uint64_t hash;
+#endif
+  uint32_t pos;
+  uint8_t *imap = NULL;
+
+  FIO_PTR_TAG_VALID_OR_GOTO(map, relinquish_attempt);
+  o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP2_T, map);
+#if defined(FIO_MAP2_HASH_FN)
+  hash = FIO_MAP2_HASH_FN(key);
+#endif
+  hash += !hash;  /* hash is never zero */
+  if (!o->bits) { /* minimal space is 8 objects... */
+    *o = FIO_NAME(FIO_MAP2_NAME, __duplicate)(o, 3, 1);
+  }
+  /* find the object's (potential) position in the array */
+  for (int i = 0;;) {
+    pos = FIO_NAME(FIO_MAP2_NAME, __index)(o, key, hash);
+    if (pos != (uint32_t)-1)
+      break;
+    if (i == 2)
+      goto internal_error;
+    FIO_NAME(FIO_MAP2_NAME, s)
+    tmp = FIO_NAME(FIO_MAP2_NAME, __duplicate)(o, o->bits + (++i), 1);
+    if (!tmp.map) /* no memory? something bad? */
+      goto internal_error;
+    FIO_NAME(FIO_MAP2_NAME, __dealloc_map)(o);
+    *o = tmp;
+  }
+  /* imap may have been reallocated, collect info now. */
+  imap = FIO_NAME(FIO_MAP2_NAME, __imap)(o);
+  /* set return value */
+  r = o->map + pos;
+
+  if (!imap[pos] || imap[pos] == 0xFF) {
+    /* insert new object */
+    imap[pos] = FIO_NAME(FIO_MAP2_NAME, __byte_hash)(o, hash);
+#if !FIO_MAP2_RECALC_HASH
+    r->hash = hash;
+#endif
+    FIO_MAP2_KEY_COPY(r->key, key);
+    FIO_MAP2_VALUE_COPY(r->value, val);
+#if FIO_MAP2_ORDERED
+    if (o->count) { /* update ordering */
+      FIO_INDEXED_LIST_PUSH(o->map, node, o->head, pos);
+#ifdef FIO_MAP2_LRU
+      o->head = pos;                  /* update LRU head */
+      if (FIO_MAP2_LRU == o->count) { /* limit reached - evict 1 LRU element */
+        uint32_t to_evict = o->map[pos].node.prev;
+        FIO_MAP2_KEY_DESTROY(o->map[to_evict].key);
+        FIO_MAP2_VALUE_DESTROY(o->map[to_evict].value);
+        FIO_INDEXED_LIST_REMOVE(o->map, node, to_evict);
+        imap[to_evict] = 0xFF;
+        --o->count;
+      }
+#endif       /* FIO_MAP2_LRU */
+    } else { /* set first order */
+      o->map[pos].node.next = o->map[pos].node.prev = pos;
+      o->head = pos;
+    }
+#endif /* FIO_MAP2_ORDERED */
+    ++o->count;
+    return r;
+  }
+
+#ifdef FIO_MAP2_LRU
+  /* update ordering (even if not overwriting) */
+  if (o->head != pos) {
+    FIO_INDEXED_LIST_REMOVE(o->map, node, pos);
+    FIO_INDEXED_LIST_PUSH(o->map, node, o->head, pos);
+    o->head = pos;
+  }
+#endif
+
+#ifdef FIO_MAP2_VALUE
+  if (overwrite) {
+    /* overwrite existing object (only relevant for hash maps) */
+    FIO_MAP2_KEY_DISCARD(key);
+    if (!old) {
+      FIO_MAP2_VALUE_DESTROY(o->map[pos].value);
+      FIO_MAP2_VALUE_COPY(o->map[pos].value, val);
+      return r;
+    }
+    *old = o->map[pos].value;
+    o->map[pos].value = (FIO_MAP2_VALUE_INTERNAL){0};
+    FIO_MAP2_VALUE_COPY(o->map[pos].value, val);
+    return r;
+  }
+#endif
+relinquish_attempt:
+  /* discard attempt */
+  FIO_MAP2_KEY_DISCARD(key);
+  FIO_MAP2_VALUE_DISCARD(val);
+  return r;
+internal_error:
+  FIO_MAP2_KEY_DISCARD(key);
+  FIO_MAP2_VALUE_DISCARD(val);
+  FIO_LOG_ERROR("unknown error occurred trying to add an entry to the map");
+  FIO_ASSERT_DEBUG(0, "these errors shouldn't happen");
+  return r;
+}
+
+/* *****************************************************************************
+The Map remove function
+***************************************************************************** */
+
+/** Removes an object in the map, returning a pointer to the map data. */
+SFUNC int FIO_NAME(FIO_MAP2_NAME, remove)(FIO_MAP2_PTR map,
+#if !defined(FIO_MAP2_HASH_FN)
+                                          uint64_t hash,
+#endif
+                                          FIO_MAP2_KEY key,
+#ifdef FIO_MAP2_VALUE
+                                          FIO_MAP2_VALUE_INTERNAL *old
+#else
+                                          FIO_MAP2_KEY_INTERNAL *old
+#endif
+) {
+#ifdef FIO_MAP2_VALUE
+  if (old)
+    *old = (FIO_MAP2_VALUE_INTERNAL){0};
+#else
+  if (old)
+    *old = (FIO_MAP2_KEY_INTERNAL){0};
+#endif
+
+  FIO_PTR_TAG_VALID_OR_RETURN(map, -1);
+  FIO_NAME(FIO_MAP2_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP2_T, map);
+#if defined(FIO_MAP2_HASH_FN)
+  uint64_t hash = FIO_MAP2_HASH_FN(key);
+#endif
+  hash += !hash; /* hash is never zero */
+  uint32_t pos = FIO_NAME(FIO_MAP2_NAME, __index)(o, key, hash);
+  uint8_t *imap = FIO_NAME(FIO_MAP2_NAME, __imap)(o);
+
+  if (pos == (uint32_t)-1 || !imap[pos] || imap[pos] == 0xFF)
+    return -1;
+
+  imap[pos] = 0xFF; /* mark hole and update count */
+  --o->count;
+
+#if FIO_MAP2_ORDERED
+  /* update ordering */
+  if (o->head == pos)
+    o->head = o->map[pos].node.next;
+  if (o->head == pos)
+    o->head = 0;
+  else {
+    FIO_INDEXED_LIST_REMOVE(o->map, node, pos);
+  }
+#endif
+
+/* destroy data, copy to `old` pointer if necessary. */
+#ifdef FIO_MAP2_VALUE
+  FIO_MAP2_KEY_DESTROY(o->map[pos].key);
+  o->map[pos].key = (FIO_MAP2_KEY_INTERNAL){0};
+  if (!old) {
+    FIO_MAP2_VALUE_DESTROY(o->map[pos].value);
+  } else {
+    *old = o->map[pos].value;
+  }
+  o->map[pos].value = (FIO_MAP2_VALUE_INTERNAL){0};
+#else
+  if (!old) {
+    FIO_MAP2_KEY_DESTROY(o->map[pos].key);
+  } else {
+    *old = o->map[pos].key;
+  }
+  o->map[pos].key = (FIO_MAP2_KEY_INTERNAL){0};
+#endif
+#if !FIO_MAP2_RECALC_HASH && defined(DEBUG)
+  o->map[pos].hash = 0; /* not necessary, but ... good for debugging? */
+#endif
+  return 0;
+}
+
+/* *****************************************************************************
+Map Iteration
+***************************************************************************** */
+
+/** Returns the next iterator position after `current_pos`, first if `NULL`. */
+SFUNC FIO_NAME(FIO_MAP2_NAME, iterator_s)
+    FIO_NAME(FIO_MAP2_NAME,
+             get_next)(FIO_MAP2_PTR map,
+                       FIO_NAME(FIO_MAP2_NAME, iterator_s) * current_pos) {
+  FIO_NAME(FIO_MAP2_NAME, iterator_s) r = {.private_ = {.pos = 0}};
+  FIO_PTR_TAG_VALID_OR_RETURN(map, r);
+  FIO_NAME(FIO_MAP2_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP2_T, map);
+  if (!o->count)
+    return r;
+  uint8_t *imap = FIO_NAME(FIO_MAP2_NAME, __imap)(o);
+  size_t capa = FIO_MAP2_CAPA(o->bits);
+  size_t pos_counter = 0;
+  if (!current_pos || !current_pos->private_.map_validator) {
+    goto find_pos;
+  }
+  if (current_pos->private_.pos + 1 == o->count)
+    return r;
+  r.private_.pos = current_pos->private_.pos + 1;
+  if (current_pos->private_.map_validator != (uintptr_t)o) {
+    goto refind_pos;
+  }
+  r.private_.index = current_pos->private_.index;
+
+#if !FIO_MAP2_RECALC_HASH
+#define FIO_MAP2___EACH_COPY_HASH() r.hash = o->map[r.private_.index].hash
+#else
+#define FIO_MAP2___EACH_COPY_HASH()
+#endif
+
+#ifdef FIO_MAP2_VALUE
+#define FIO_MAP2___EACH_COPY_DATA()                                            \
+  FIO_MAP2___EACH_COPY_HASH();                                                 \
+  r.private_.map_validator = (uintptr_t)o;                                     \
+  r.node = o->map + r.private_.index;                                          \
+  r.key = FIO_MAP2_KEY_FROM_INTERNAL(o->map[r.private_.index].key);            \
+  r.value = FIO_MAP2_VALUE_FROM_INTERNAL(o->map[r.private_.index].value)
+#else
+#define FIO_MAP2___EACH_COPY_DATA()                                            \
+  FIO_MAP2___EACH_COPY_HASH();                                                 \
+  r.private_.map_validator = (uintptr_t)o;                                     \
+  r.node = o->map + r.private_.index;                                          \
+  r.key = FIO_MAP2_KEY_FROM_INTERNAL(o->map[r.private_.index].key)
+#endif
+
+/* start seeking at the position inherited from current_pos */
+#if FIO_MAP2_ORDERED
+  (void)imap; /* unused in ordered maps */
+  (void)capa; /* unused in ordered maps */
+  r.private_.index = o->map[r.private_.index].node.next;
+  if (r.private_.index == o->head)
+    goto not_found;
+  FIO_MAP2___EACH_COPY_DATA();
+  return r;
+#else
+  if (FIO_MAP2_IS_SPARSE(o)) { /* sparsely populated */
+    while ((++r.private_.index) & 7) {
+      if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
+        continue;
+      FIO_MAP2___EACH_COPY_DATA();
+      return r;
+    }
+    while (r.private_.index < capa) {
+      uint64_t simd = *(uint64_t *)(imap + r.private_.index);
+      if (!simd || simd == 0xFFFFFFFFFFFFFFFFULL) {
+        r.private_.index += 8;
+        continue;
+      }
+      for (int i = 0; i < 8; (++i), (++r.private_.index)) {
+        if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
+          continue;
+        FIO_MAP2___EACH_COPY_DATA();
+        return r;
+      }
+    }
+    goto not_found;
+  }
+  /* review as array */
+  while ((++r.private_.index) < capa) {
+    if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
+      continue;
+    FIO_MAP2___EACH_COPY_DATA();
+    return r;
+  }
+  goto not_found;
+#endif /* FIO_MAP2_ORDERED */
+
+refind_pos:
+  if (current_pos->private_.index)
+    goto not_found;
+find_pos:
+/* first seek... re-start seeking */
+#if FIO_MAP2_ORDERED
+  FIO_INDEXED_LIST_EACH(o->map, node, o->head, i) {
+    if (pos_counter != r.private_.pos) {
+      ++pos_counter;
+      continue;
+    }
+    r.private_.index = (uint32_t)i;
+    FIO_MAP2___EACH_COPY_DATA();
+    return r;
+  }
+  goto not_found;
+#else
+  if (FIO_MAP2_IS_SPARSE(o)) { /* sparsely populated */
+    while (r.private_.index < capa) {
+      uint64_t simd = *(uint64_t *)(imap + r.private_.index);
+      if (!simd || simd == 0xFFFFFFFFFFFFFFFFULL) {
+        r.private_.index += 8;
+        continue;
+      }
+      for (int i = 0; i < 8; (++i), (++r.private_.index)) {
+        if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
+          continue;
+        if (pos_counter != r.private_.pos) {
+          ++pos_counter;
+          continue;
+        }
+        FIO_MAP2___EACH_COPY_DATA();
+        return r;
+      }
+    }
+    goto not_found;
+  }
+  /* review as array */
+  while (r.private_.index < capa) {
+    if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF) {
+      ++r.private_.index;
+      continue;
+    }
+    FIO_MAP2___EACH_COPY_DATA();
+    return r;
+  }
+#endif /* FIO_MAP2_ORDERED */
+
+not_found:
+  return (r = (FIO_NAME(FIO_MAP2_NAME, iterator_s)){.private_ = {.pos = 0}});
+  FIO_ASSERT_DEBUG(0, "should this happen? ever?");
+}
+
+/** Returns the next iterator position after `current_pos`, first if `NULL`. */
+SFUNC FIO_NAME(FIO_MAP2_NAME, iterator_s)
+    FIO_NAME(FIO_MAP2_NAME,
+             get_prev)(FIO_MAP2_PTR map,
+                       FIO_NAME(FIO_MAP2_NAME, iterator_s) * current_pos) {
+  FIO_NAME(FIO_MAP2_NAME, iterator_s) r = {.private_ = {.pos = 0}};
+  FIO_PTR_TAG_VALID_OR_RETURN(map, r);
+  FIO_NAME(FIO_MAP2_NAME, s) *o = FIO_PTR_TAG_GET_UNTAGGED(FIO_MAP2_T, map);
+  if (!o->count)
+    return r;
+#if !FIO_MAP2_ORDERED
+  uint8_t *imap = FIO_NAME(FIO_MAP2_NAME, __imap)(o);
+  size_t capa = FIO_MAP2_CAPA(o->bits);
+#endif
+  size_t pos_counter = o->count;
+  if (!current_pos || !current_pos->private_.map_validator) {
+    r.private_.map_validator = (uintptr_t)o;
+    r.private_.pos = o->count;
+    goto find_pos;
+  }
+  if (!current_pos->private_.pos)
+    return r;
+  r.private_.pos = current_pos->private_.pos - 1;
+  r.private_.map_validator = (uintptr_t)o;
+  if (current_pos->private_.map_validator != (uintptr_t)o) {
+    goto refind_pos;
+  }
+  r.private_.index = current_pos->private_.index;
+
+/* start seeking at the position inherited from current_pos */
+#if FIO_MAP2_ORDERED
+  if (r.private_.index == o->head)
+    goto not_found;
+  r.private_.index = o->map[r.private_.index].node.prev;
+  FIO_MAP2___EACH_COPY_DATA();
+  return r;
+#else
+  if (FIO_MAP2_IS_SPARSE(o)) { /* sparsely populated */
+    while ((--r.private_.index) & 7) {
+      if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
+        continue;
+      FIO_MAP2___EACH_COPY_DATA();
+      return r;
+    }
+    while (r.private_.index) {
+      uint64_t simd = *(uint64_t *)(imap + (r.private_.index - 8));
+      if (!simd || simd == 0xFFFFFFFFFFFFFFFFULL) {
+        r.private_.index -= 8;
+        continue;
+      }
+      for (int i = 0; i < 8; ++i) {
+        --r.private_.index;
+        if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
+          continue;
+        FIO_MAP2___EACH_COPY_DATA();
+        return r;
+      }
+    }
+    goto not_found;
+  }
+  /* review as array */
+  while (r.private_.index--) {
+    if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
+      continue;
+    FIO_MAP2___EACH_COPY_DATA();
+    return r;
+  }
+  goto not_found;
+#endif /* FIO_MAP2_ORDERED */
+
+refind_pos:
+  if (current_pos->private_.index)
+    goto not_found;
+find_pos:
+/* first seek... re-start seeking */
+#if FIO_MAP2_ORDERED
+  FIO_INDEXED_LIST_EACH_REVERSED(o->map, node, o->head, i) {
+    if (pos_counter != r.private_.pos) {
+      --pos_counter;
+      continue;
+    }
+    r.private_.index = (uint32_t)i;
+    FIO_MAP2___EACH_COPY_DATA();
+    return r;
+  }
+  goto not_found;
+#else
+  r.private_.index = (uint32_t)capa;
+  if (FIO_MAP2_IS_SPARSE(o)) { /* sparsely populated */
+    while (r.private_.index) {
+      uint64_t simd = *(uint64_t *)(imap + r.private_.index);
+      if (!simd || simd == 0xFFFFFFFFFFFFFFFFULL) {
+        r.private_.index -= 8;
+        continue;
+      }
+      for (int i = 0; i < 8; (++i), (--r.private_.index)) {
+        if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
+          continue;
+        if (pos_counter != r.private_.pos) {
+          ++pos_counter;
+          continue;
+        }
+        FIO_MAP2___EACH_COPY_DATA();
+        return r;
+      }
+    }
+    goto not_found;
+  }
+  /* review as array */
+  while ((r.private_.index--)) {
+    if (!imap[r.private_.index] || imap[r.private_.index] == 0xFF)
+      continue;
+    FIO_MAP2___EACH_COPY_DATA();
+    return r;
+  }
+#endif /* FIO_MAP2_ORDERED */
+
+not_found:
+  return (r = (FIO_NAME(FIO_MAP2_NAME, iterator_s)){.private_ = {.pos = 0}});
+  FIO_ASSERT_DEBUG(0, "should this happen? ever?");
+}
+#undef FIO_MAP2___EACH_COPY_HASH
+#undef FIO_MAP2___EACH_COPY_DATA
+
+/**
+ * Iteration using a callback for each element in the map.
+ *
+ * The callback task function must accept an each_s pointer, see above.
+ *
+ * If the callback returns -1, the loop is broken. Any other value is ignored.
+ *
+ * Returns the relative "stop" position, i.e., the number of items processed +
+ * the starting point.
+ */
+SFUNC uint32_t FIO_NAME(FIO_MAP2_NAME,
+                        each)(FIO_MAP2_PTR map,
+                              int (*task)(FIO_NAME(FIO_MAP2_NAME, each_s) *),
+                              void *udata,
+                              ssize_t start_at) {
+  FIO_PTR_TAG_VALID_OR_RETURN(map, 1);
+  FIO_NAME(FIO_MAP2_NAME, each_s)
+  e = {
+      .parent = map,
+      .task = task,
+      .udata = udata,
+  };
+  FIO_NAME(FIO_MAP2_NAME, s) *o =
+      FIO_PTR_TAG_GET_UNTAGGED(FIO_NAME(FIO_MAP2_NAME, s), map);
+  if (start_at < 0) {
+    start_at += o->count;
+    if (start_at < 0)
+      start_at = 0;
+  } else if (start_at > o->count)
+    return o->count;
+  FIO_NAME(FIO_MAP2_NAME, iterator_s) i = {.private_ = {.pos = 0}};
+  for (;;) {
+    i = FIO_NAME(FIO_MAP2_NAME, get_next)(map, &i);
+    if (!FIO_NAME(FIO_MAP2_NAME, iterator_is_valid)(&i))
+      return o->count;
+    e.index = i.private_.pos;
+    e.key = i.key;
+#ifdef FIO_MAP2_VALUE
+    e.value = i.value;
+#endif
+    if (e.task(&e))
+      return (uint32_t)(e.index + 1);
+  }
+  return o->count;
+}
+
+/* *****************************************************************************
+Speed Testing
+***************************************************************************** */
+
+/* *****************************************************************************
+Map Testing
+***************************************************************************** */
+#ifdef FIO_MAP2_TEST
+
+#ifdef FIO_MAP2_HASH_FN
+#define FIO___M_HASH(k)
+#else
+#define FIO___M_HASH(k) (k),
+#endif
+#ifdef FIO_MAP2_VALUE
+#define FIO___M_VAL(v) , (v)
+#define FIO___M_OLD    , NULL
+#else
+#define FIO___M_VAL(v)
+#define FIO___M_OLD
+#endif
+
+FIO_SFUNC void FIO_NAME_TEST(stl, FIO_MAP2_NAME)(void) {
+  /* testing only only works with integer external types */
+  fprintf(stderr,
+          "* Testing maps with key " FIO_MACRO2STR(
+              FIO_MAP2_KEY) " (=> " FIO_MACRO2STR(FIO_MAP2_VALUE) ").\n");
+  { /* test set / get overwrite , FIO_MAP2_EACH and evict */
+    FIO_NAME(FIO_MAP2_NAME, s) map = FIO_MAP2_INIT;
+    for (size_t i = 1; i < (1UL << (FIO_MAP2_ARRAY_LOG_LIMIT + 5)); ++i) {
+      FIO_NAME(FIO_MAP2_NAME, set)
+      (&map, FIO___M_HASH(i) i FIO___M_VAL(i) FIO___M_OLD);
+      FIO_ASSERT(FIO_NAME(FIO_MAP2_NAME, count)(&map) == i,
+                 "map `set` failed? %zu != %zu",
+                 (size_t)FIO_NAME(FIO_MAP2_NAME, count)(&map),
+                 i);
+      for (size_t j = ((i << 2) + 1); j < i; ++j) { /* effects LRU ordering */
+        FIO_ASSERT(FIO_NAME(FIO_MAP2_NAME, get_ptr)(&map, FIO___M_HASH(j) j) &&
+                       FIO_NAME(FIO_MAP2_NAME, node2val)(
+                           FIO_NAME(FIO_MAP2_NAME,
+                                    get_ptr)(&map, FIO___M_HASH(j) j)) == j,
+                   "map `get` failed? %zu/%zu (%p)",
+                   j,
+                   i,
+                   FIO_NAME(FIO_MAP2_NAME, get_ptr)(&map, FIO___M_HASH(j) j));
+        FIO_NAME(FIO_MAP2_NAME, set)
+        (&map, FIO___M_HASH(j) j FIO___M_VAL(j) FIO___M_OLD);
+        FIO_ASSERT(FIO_NAME(FIO_MAP2_NAME, count)(&map) == i,
+                   "map `set` added an item that already exists? %zu != %zu",
+                   (size_t)FIO_NAME(FIO_MAP2_NAME, count)(&map),
+                   i);
+      }
+    }
+    /* test FIO_MAP2_EACH and ordering */
+    uint32_t count = FIO_NAME(FIO_MAP2_NAME, count)(&map);
+    uint32_t loop_test = 0;
+    FIO_MAP2_EACH(FIO_MAP2_NAME, &map, i) {
+      /* test ordering */
+#ifdef FIO_MAP2_LRU
+      FIO_ASSERT(i.key == (count - loop_test),
+                 "map FIO_MAP2_EACH LRU ordering broken? %zu != %zu",
+                 (size_t)(i.key),
+                 (size_t)(count - loop_test));
+      ++loop_test;
+#elif FIO_MAP2_ORDERED
+      ++loop_test;
+      FIO_ASSERT(i.key == loop_test,
+                 "map FIO_MAP2_EACH LRU ordering broken? %zu != %zu",
+                 (size_t)(i.key),
+                 (size_t)(loop_test));
+#else
+      ++loop_test;
+#endif
+    }
+    FIO_ASSERT(loop_test == count,
+               "FIO_MAP2_EACH failed to iterate all elements? (%zu != %zu",
+               (size_t)loop_test != (size_t)count);
+    loop_test = 0;
+    FIO_MAP2_EACH_REVERSED(FIO_MAP2_NAME, &map, i) { ++loop_test; }
+    FIO_ASSERT(
+        loop_test == count,
+        "FIO_MAP2_EACH_REVERSED failed to iterate all elements? (%zu != %zu",
+        (size_t)loop_test != (size_t)count);
+    /* test `evict` while we're here */
+    FIO_NAME(FIO_MAP2_NAME, evict)(&map, (count >> 1));
+    FIO_ASSERT(FIO_NAME(FIO_MAP2_NAME, count)(&map) == (count - (count >> 1)),
+               "map `evict` count error %zu != %zu",
+               (size_t)FIO_NAME(FIO_MAP2_NAME, count)(&map),
+               (size_t)(count - (count >> 1)));
+    /* cleanup */
+    FIO_NAME(FIO_MAP2_NAME, destroy)(&map);
+  }
+#ifndef FIO_MAP2_HASH_FN
+  { /* test full collision guard and zero hash*/
+    FIO_NAME(FIO_MAP2_NAME, s) map = FIO_MAP2_INIT;
+    fprintf(
+        stderr,
+        "* Testing full collision guard for " FIO_MACRO2STR(
+            FIO_NAME(FIO_MAP2_NAME, s)) " - expect SECURITY log messages.\n");
+    for (size_t i = 1; i < 4096; ++i) {
+      FIO_NAME(FIO_MAP2_NAME, set)
+      (&map, FIO___M_HASH(0) i FIO___M_VAL(i) FIO___M_OLD);
+    }
+    FIO_ASSERT(FIO_NAME(FIO_MAP2_NAME, count)(&map),
+               "zero hash fails insertion?");
+    FIO_ASSERT(FIO_NAME(FIO_MAP2_NAME, count)(&map) <= FIO_MAP2_ATTACK_LIMIT,
+               "map attack guard failed? %zu != %zu",
+               (size_t)FIO_NAME(FIO_MAP2_NAME, count)(&map),
+               (size_t)FIO_MAP2_ATTACK_LIMIT);
+    FIO_NAME(FIO_MAP2_NAME, destroy)(&map);
+  }
+#endif
+  { /* test reserve, remove */
+    FIO_NAME(FIO_MAP2_NAME, s) map = FIO_MAP2_INIT;
+    FIO_NAME(FIO_MAP2_NAME, reserve)(&map, 4096);
+    FIO_ASSERT(FIO_NAME(FIO_MAP2_NAME, capa)(&map) == 4096,
+               "map reserve error? %zu != %zu",
+               (size_t)FIO_NAME(FIO_MAP2_NAME, capa)(&map),
+               4096);
+    for (size_t i = 1; i < 4096; ++i) {
+      FIO_NAME(FIO_MAP2_NAME, set)
+      (&map, FIO___M_HASH(i) i FIO___M_VAL(i) FIO___M_OLD);
+      FIO_ASSERT(FIO_NAME(FIO_MAP2_NAME, count)(&map) == i,
+                 "insertion failed?");
+    }
+    for (size_t i = 1; i < 4096; ++i) {
+      FIO_ASSERT(FIO_NAME(FIO_MAP2_NAME, get)(&map, FIO___M_HASH(i) i),
+                 "key missing?");
+      FIO_NAME(FIO_MAP2_NAME, remove)
+      (&map, FIO___M_HASH(i) i, NULL);
+      FIO_ASSERT(!FIO_NAME(FIO_MAP2_NAME, get)(&map, FIO___M_HASH(i) i),
+                 "map_remove error?");
+      FIO_ASSERT(FIO_NAME(FIO_MAP2_NAME, count)(&map) == 4095 - i,
+                 "map count error after removal? %zu != %zu",
+                 (size_t)FIO_NAME(FIO_MAP2_NAME, count)(&map),
+                 i);
+    }
+    FIO_NAME(FIO_MAP2_NAME, destroy)(&map);
+  }
+}
+#undef FIO___M_HASH
+#undef FIO___M_VAL
+#undef FIO___M_OLD
+
+#endif /* FIO_MAP2_TEST */
+/* *****************************************************************************
+Map Cleanup
+***************************************************************************** */
+
+#endif /* FIO_EXTERN_COMPLETE */
+
+#undef FIO_MAP2_ARRAY_LOG_LIMIT
+#undef FIO_MAP2_ATTACK_LIMIT
+#undef FIO_MAP2_CAPA
+#undef FIO_MAP2_CAPA_BITS_LIMIT
+#undef FIO_MAP2_CUCKOO_STEPS
+#undef FIO_MAP2_GET_T
+#undef FIO_MAP2_HASH_FN
+#undef FIO_MAP2_IS_SPARSE
+#undef FIO_MAP2_KEY
+#undef FIO_MAP2_KEY_CMP
+#undef FIO_MAP2_KEY_COPY
+#undef FIO_MAP2_KEY_DESTROY
+#undef FIO_MAP2_KEY_DESTROY_SIMPLE
+#undef FIO_MAP2_KEY_DISCARD
+#undef FIO_MAP2_KEY_FROM_INTERNAL
+#undef FIO_MAP2_KEY_INTERNAL
+#undef FIO_MAP2_KEY_IS_GREATER_THAN
+#undef FIO_MAP2_LRU
+#undef FIO_MAP2_NAME
+#undef FIO_MAP2_ORDERED
+#undef FIO_MAP2_PTR
+#undef FIO_MAP2_RECALC_HASH
+#undef FIO_MAP2_SEEK_LIMIT
+#undef FIO_MAP2_T
+#undef FIO_MAP2_TEST
+#undef FIO_MAP2_VALUE
+#undef FIO_MAP2_VALUE_BSTR
+#undef FIO_MAP2_VALUE_COPY
+#undef FIO_MAP2_VALUE_DESTROY
+#undef FIO_MAP2_VALUE_DESTROY_SIMPLE
+#undef FIO_MAP2_VALUE_DISCARD
+#undef FIO_MAP2_VALUE_FROM_INTERNAL
+#undef FIO_MAP2_VALUE_INTERNAL
+#undef FIO_OMAP_NAME
+#undef FIO_UMAP_NAME
+
+#endif /* FIO_MAP2_NAME */
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -26695,10 +29840,10 @@ Inline Implementation
 FIO_IFUNC FIO_REF_TYPE_PTR
 FIO_NAME(FIO_REF_NAME, FIO_REF_DUPNAME)(FIO_REF_TYPE_PTR wrapped_) {
   FIO_REF_TYPE *wrapped = (FIO_REF_TYPE *)(FIO_PTR_UNTAG(wrapped_));
+  if (!wrapped || !wrapped_)
+    return 0;
   FIO_NAME(FIO_REF_NAME, _wrapper_s) *o =
       ((FIO_NAME(FIO_REF_NAME, _wrapper_s) *)wrapped) - 1;
-  if (!o)
-    return wrapped_;
   fio_atomic_add(&o->ref, 1);
   return wrapped_;
 }
@@ -26706,10 +29851,10 @@ FIO_NAME(FIO_REF_NAME, FIO_REF_DUPNAME)(FIO_REF_TYPE_PTR wrapped_) {
 /** Debugging helper, do not use for data, as returned value is unstable. */
 FIO_IFUNC size_t FIO_NAME(FIO_REF_NAME, references)(FIO_REF_TYPE_PTR wrapped_) {
   FIO_REF_TYPE *wrapped = (FIO_REF_TYPE *)(FIO_PTR_UNTAG(wrapped_));
+  if (!wrapped || !wrapped_)
+    return 0;
   FIO_NAME(FIO_REF_NAME, _wrapper_s) *o =
       ((FIO_NAME(FIO_REF_NAME, _wrapper_s) *)wrapped) - 1;
-  if (!o)
-    return 0;
   return o->ref;
 }
 
@@ -27606,12 +30751,11 @@ FIO_IFUNC void fio___sha1_round512(uint32_t *old, /* state */
   vst1q_u32(old, v0);
   old[4] = e0;
 
-#else /* portable implementation */
+#else /* !FIO___HAS_ARM_INTRIN portable implementation */
 
-  uint32_t v[8]; /* copy old state to new + reserve registers (8 not 6) */
-  for (size_t i = 0; i < 5; ++i) {
+  uint32_t v[8] = {0}; /* copy old state to new + reserve registers (8 not 6) */
+  for (size_t i = 0; i < 5; ++i)
     v[i] = old[i];
-  }
 
   for (size_t i = 0; i < 16; ++i) /* convert read buffer to Big Endian */
     w[i] = fio_ntol32(w[i]);
@@ -27630,13 +30774,18 @@ FIO_IFUNC void fio___sha1_round512(uint32_t *old, /* state */
   FIO___SHA1_ROUND16(K, F, i);                                                 \
   FIO___SHA1_ROUND4((K), (F), i + 16);
 
-#define FIO___SHA1_ROTATE(K, F, i)                                             \
+#define FIO___SHA1_ROTATE_OLD(K, F, i)                                         \
   v[5] = fio_lrot32(v[0], 5) + v[4] + F + (uint32_t)K + w[(i)&15];             \
   v[4] = v[3];                                                                 \
   v[3] = v[2];                                                                 \
   v[2] = fio_lrot32(v[1], 30);                                                 \
   v[1] = v[0];                                                                 \
   v[0] = v[5];
+
+#define FIO___SHA1_ROTATE(K, F, i)                                             \
+  v[5] = fio_lrot32(v[0], 5) + v[4] + F + (uint32_t)K + w[(i)&15];             \
+  v[1] = fio_lrot32(v[1], 30);                                                 \
+  fio_u32x8_reshuffle(v, 5, 0, 1, 2, 3, 5, 6, 7);
 
 #define FIO___SHA1_CALC_WORD(i)                                                \
   fio_lrot32(                                                                  \
@@ -27661,11 +30810,11 @@ FIO_IFUNC void fio___sha1_round512(uint32_t *old, /* state */
   FIO___SHA1_ROUND20(0x8F1BBCDC, ((v[1] & (v[2] | v[3])) | (v[2] & v[3])), 40);
   FIO___SHA1_ROUND20(0xCA62C1D6, (v[1] ^ v[2] ^ v[3]), 60);
   /* sum and store */
-  for (size_t i = 0; i < 5; ++i) {
+  for (size_t i = 0; i < 5; ++i)
     old[i] += v[i];
-  }
 
 #undef FIO___SHA1_ROTATE
+#undef FIO___SHA1_ROTATE_OLD
 #undef FIO___SHA1_CALC_WORD
 #undef FIO___SHA1_ROUND
 #undef FIO___SHA1_ROUND4
@@ -28055,7 +31204,9 @@ FIO_IFUNC void fio___sha512_round(fio_u512 *h, const uint8_t *block) {
 }
 
 /** Feed data into the hash */
-SFUNC void fio_sha512_consume(fio_sha512_s *h, const void *data, uint64_t len) {
+SFUNC void fio_sha512_consume(fio_sha512_s *restrict h,
+                              const void *restrict data,
+                              uint64_t len) {
   const uint8_t *r = (const uint8_t *)data;
   const size_t old_total = h->total_len;
   const size_t new_total = len + h->total_len;
@@ -28232,12 +31383,18 @@ typedef struct fio_tls_s fio_tls_s;
 /** Message structure, as received by the `on_message` subscription callback. */
 typedef struct fio_msg_s fio_msg_s;
 
+/** The Server Async Queue type. */
+typedef struct fio_srv_async_s fio_srv_async_s;
+
 /* *****************************************************************************
 Starting / Stopping the Server
 ***************************************************************************** */
 
 /** Stopping the server. */
 SFUNC void fio_srv_stop(void);
+
+/** Adds `workers` amount of workers to the root server process. */
+SFUNC void fio_srv_add_workers(int workers);
 
 /** Starts the server, using optional `workers` processes. This will BLOCK! */
 SFUNC void fio_srv_start(int workers);
@@ -28265,7 +31422,7 @@ Listening to Incoming Connections
 ***************************************************************************** */
 
 /** Arguments for the fio_listen function */
-struct fio_srv_listen_args {
+typedef struct fio_srv_listen_args {
   /**
    * The binding address in URL format. Defaults to: tcp://0.0.0.0:3000
    *
@@ -28304,26 +31461,25 @@ struct fio_srv_listen_args {
    *
    * This will be called separately for every process before exiting.
    */
-  void (*on_finish)(fio_protocol_s *protocol, void *udata);
+  void (*on_stop)(fio_protocol_s *protocol, void *udata);
   /**
    * Selects a queue that will be used to schedule a pre-accept task.
    * May be used to test user thread stress levels before accepting connections.
    */
-  fio_queue_s *queue_for_accept;
+  fio_srv_async_s *queue_for_accept;
   /** If the server is forked - listen on the root process instead of workers */
   uint8_t on_root;
   /** Hides "started/stopped listening" messages from log (if set). */
   uint8_t hide_from_log;
-};
+} fio_srv_listen_args;
 
 /**
  * Sets up a network service on a listening socket.
  *
  * Returns a self-destructible listener handle on success or NULL on error.
  */
-SFUNC void *fio_srv_listen(struct fio_srv_listen_args args);
-#define fio_srv_listen(...)                                                    \
-  fio_srv_listen((struct fio_srv_listen_args){__VA_ARGS__})
+SFUNC void *fio_srv_listen(fio_srv_listen_args args);
+#define fio_srv_listen(...) fio_srv_listen((fio_srv_listen_args){__VA_ARGS__})
 
 /** Notifies a listener to stop listening. */
 SFUNC void fio_srv_listen_stop(void *listener);
@@ -28331,52 +31487,9 @@ SFUNC void fio_srv_listen_stop(void *listener);
 /** Returns the URL on which the listener is listening. */
 SFUNC fio_buf_info_s fio_srv_listener_url(void *listener);
 
-/* *****************************************************************************
-Listening to Incoming Connections
-***************************************************************************** */
-#if 0
-/** Arguments for the fio_listen function */
-struct fio_srv_listen2_args {
-  /** The binding address in URL format. Defaults to: tcp://0.0.0.0:3000 */
-  const char *url;
-  /**
-   * Called whenever a new connection is accepted (required).
-   *
-   * Should either call `fio_attach` or close the connection.
-   */
-  void (*on_open)(int fd, void *udata);
-  /** Called when the a listening socket starts to listen (update state). */
-  void (*on_start)(void *udata);
-  /**
-   * Called when the server is done, usable for cleanup.
-   *
-   * This will be called separately for every process before exiting.
-   */
-  void (*on_finish)(void *udata);
-  /** Opaque user data. */
-  void *udata;
-  /**
-   * Selects a queue that will be used to schedule a pre-accept task.
-   * May be used to test user thread stress levels before accepting connections.
-   */
-  fio_queue_s *queue_for_accept;
-  /** If the server is forked - listen on the root process or the workers? */
-  uint8_t on_root;
-  /** Hides "started/stopped listening" messages from log (if set). */
-  uint8_t hide_from_log;
-};
+/** Returns true if the listener protocol has an attached TLS context. */
+SFUNC int fio_srv_listener_is_tls(void *listener);
 
-/**
- * Sets up a network service on a listening socket.
- *
- * Returns 0 on success or -1 on error.
- *
- * See the `fio_srv_listen2` Macro for details.
- */
-SFUNC int fio_srv_listen2(struct fio_srv_listen2_args args);
-#define fio_srv_listen2(...)                                                   \
-  fio_srv_listen2((struct fio_srv_listen2_args){__VA_ARGS__})
-#endif
 /* *****************************************************************************
 Connecting as a Client
 ***************************************************************************** */
@@ -28388,7 +31501,7 @@ typedef struct {
   /** Connection protocol (once connection established). */
   fio_protocol_s *protocol;
   /** Called in case of a failed connection, use for cleanup. */
-  void (*on_failed)(void *udata);
+  void (*on_failed)(fio_protocol_s *protocol, void *udata);
   /** Opaque user data (set only once connection was established). */
   void *udata;
   /** TLS builder object for TLS connections. */
@@ -28550,6 +31663,9 @@ SFUNC int fio_srv_is_suspended(fio_s *io);
 /** Returns 1 if the IO handle is marked as open. */
 SFUNC int fio_srv_is_open(fio_s *io);
 
+/** Returns the approximate number of bytes in the outgoing buffer. */
+SFUNC size_t fio_srv_backlog(fio_s *io);
+
 /* *****************************************************************************
 Task Scheduling
 ***************************************************************************** */
@@ -28573,7 +31689,7 @@ SFUNC void fio_srv_run_every(fio_timer_schedule_args_s args);
  * * Opaque user data:
  *        void *udata2
  * * Called when the timer is done (finished):
- *        void (*on_finish)(void *, void *)
+ *        void (*on_stop)(void *, void *)
  * * Timer interval, in milliseconds:
  *        uint32_t every
  * * The number of times the timer should be performed. -1 == infinity:
@@ -28682,7 +31798,7 @@ struct fio_protocol_s {
    */
   fio_io_functions_s io_functions;
   /**
-   * The timeout value in seconds for all connections using this protocol.
+   * The timeout value in milliseconds for all connections using this protocol.
    *
    * Limited to FIO_SRV_TIMEOUT_MAX seconds. Zero (0) == FIO_SRV_TIMEOUT_MAX
    */
@@ -28909,12 +32025,12 @@ Server Async - Worker Threads for non-IO tasks
 ***************************************************************************** */
 
 /** The Server Async Queue type. */
-typedef struct {
+struct fio_srv_async_s {
   fio_queue_s *q;
   uint32_t count;
   fio_queue_s queue;
   FIO_LIST_NODE node;
-} fio_srv_async_s;
+};
 
 /**
  * Initializes a server - async (multi-threaded) task queue.
@@ -28935,6 +32051,9 @@ FIO_IFUNC fio_queue_s *fio_srv_async_queue(fio_srv_async_s *q) { return q->q; }
  * will eventually run the server).
  */
 SFUNC void fio_srv_async_init(fio_srv_async_s *q, uint32_t threads);
+
+/** Initializes an async server queue for multo-threaded (non IO) tasks. */
+SFUNC void fio_srv_async_update(fio_srv_async_s *q, uint32_t threads);
 
 #define fio_srv_async(q_, ...) fio_queue_push((q_)->q, __VA_ARGS__)
 
@@ -29289,24 +32408,21 @@ FIO_SFUNC void fio___srv_wakeup_cb(fio_s *io) {
   char buf[512];
   ssize_t r = fio_sock_read(fio_fd_get(io), buf, 512);
   (void)r;
+  FIO_LOG_DDEBUG2("(%d) fio___srv_wakeup called", fio___srvdata.pid);
   fio___srvdata.wakeup_wait = 0;
-#if DEBUG
-  FIO_LOG_DEBUG2("%d fio___srv_wakeup called", fio___srvdata.pid);
-#endif
 }
 FIO_SFUNC void fio___srv_wakeup_on_close(void *ignr_) {
   (void)ignr_;
   fio_sock_close(fio___srvdata.wakeup_fd);
   fio___srvdata.wakeup = NULL;
   fio___srvdata.wakeup_fd = -1;
-  FIO_LOG_DEBUG2("%d fio___srv_wakeup destroyed", fio___srvdata.pid);
+  FIO_LOG_DEBUG2("(%d) fio___srv_wakeup destroyed", fio___srvdata.pid);
 }
 
 FIO_SFUNC void fio___srv_wakeup(void) {
   if (!fio___srvdata.wakeup || fio_queue_count(fio_srv_queue()) > 3 ||
       fio_atomic_or(&fio___srvdata.wakeup_wait, 1))
     return;
-  fio___srvdata.wakeup_wait = 1;
   char buf[1] = {(char)~0};
   ssize_t ignr = fio_sock_write(fio___srvdata.wakeup_fd, buf, 1);
   (void)ignr;
@@ -29323,7 +32439,7 @@ FIO_SFUNC void fio___srv_wakeup_init(void) {
     return;
   int fds[2];
   if (pipe(fds)) {
-    FIO_LOG_ERROR("%d couldn't open wakeup pipes, fio___srv_wakeup disabled.",
+    FIO_LOG_ERROR("(%d) couldn't open wakeup pipes, fio___srv_wakeup disabled.",
                   fio___srvdata.pid);
     return;
   }
@@ -29334,7 +32450,7 @@ FIO_SFUNC void fio___srv_wakeup_init(void) {
                                            &FIO___SRV_WAKEUP_PROTOCOL,
                                            (void *)(uintptr_t)fds[1],
                                            NULL);
-  FIO_LOG_DEBUG2("%d fio___srv_wakeup initialized", fio___srvdata.pid);
+  FIO_LOG_DEBUG2("(%d) fio___srv_wakeup initialized", fio___srvdata.pid);
 }
 
 /* *****************************************************************************
@@ -29355,6 +32471,7 @@ SFUNC void fio_srv_defer(void (*task)(void *, void *),
   fio___srv_wakeup();
 }
 
+void fio_srv_run_every___(void); /* IDE marker */
 /** Schedules a timer bound task, see `fio_timer_schedule` in the CSTL. */
 SFUNC void fio_srv_run_every FIO_NOOP(fio_timer_schedule_args_s args) {
   args.start_at += ((uint64_t)0 - !args.start_at) & fio___srvdata.tick;
@@ -29392,26 +32509,26 @@ FIO_IFUNC void fio_set_valid(fio_s *io) {
   fio_validity_map_set(&fio___srvdata.valid, fio_risky_ptr(io), io, NULL);
   FIO_VALIDATE_UNLOCK();
   FIO_ASSERT_DEBUG(fio_is_valid(io),
-                   "%d IO validity set, but map reported as invalid!",
+                   "(%d) IO validity set, but map reported as invalid!",
                    (int)fio___srvdata.pid);
-  FIO_LOG_DEBUG2("%d IO %p is now valid", (int)fio___srvdata.pid, (void *)io);
+  FIO_LOG_DEBUG2("(%d) IO %p is now valid", (int)fio___srvdata.pid, (void *)io);
 }
 
 FIO_IFUNC void fio_set_invalid(fio_s *io) {
   fio_s *old = NULL;
-  FIO_LOG_DEBUG2("%d IO %p is no longer valid",
+  FIO_LOG_DEBUG2("(%d) IO %p is no longer valid",
                  (int)fio___srvdata.pid,
                  (void *)io);
   FIO_VALIDATE_LOCK();
   fio_validity_map_remove(&fio___srvdata.valid, fio_risky_ptr(io), io, &old);
   FIO_VALIDATE_UNLOCK();
   FIO_ASSERT_DEBUG(!old || old == io,
-                   "%d invalidity map corruption (%p != %p)!",
+                   "(%d) invalidity map corruption (%p != %p)!",
                    (int)fio___srvdata.pid,
                    io,
                    old);
   FIO_ASSERT_DEBUG(!fio_is_valid(io),
-                   "%d IO validity removed, but map reported as valid!",
+                   "(%d) IO validity removed, but map reported as valid!",
                    (int)fio___srvdata.pid);
 }
 
@@ -29451,18 +32568,22 @@ struct fio_s {
   size_t total_sent;
 #endif
   int64_t active;
-  uint32_t state;
+  uint16_t state;
+  uint16_t pflags;
   int fd;
   /* TODO? peer address buffer */
 };
 
-#define FIO_STATE_OPEN         ((uint32_t)1U)
-#define FIO_STATE_SUSPENDED    ((uint32_t)2U)
-#define FIO_STATE_THROTTLED    ((uint32_t)4U)
-#define FIO_STATE_CLOSING      ((uint32_t)8U)
-#define FIO_STATE_CLOSE_LOCAL  ((uint32_t)16U)
-#define FIO_STATE_CLOSE_REMOTE ((uint32_t)32U)
-#define FIO_STATE_CLOSE_ERROR  ((uint32_t)64U)
+#define FIO___IO_STATE_OPEN         ((uint16_t)1U)
+#define FIO___IO_STATE_SUSPENDED    ((uint16_t)2U)
+#define FIO___IO_STATE_THROTTLED    ((uint16_t)4U)
+#define FIO___IO_STATE_CLOSING      ((uint16_t)8U)
+#define FIO___IO_STATE_CLOSE_LOCAL  ((uint16_t)16U)
+#define FIO___IO_STATE_CLOSE_REMOTE ((uint16_t)32U)
+#define FIO___IO_STATE_CLOSE_ERROR  ((uint16_t)64U)
+
+#define FIO___IO_STATE_POLLIN_SET  ((uint16_t)1U)
+#define FIO___IO_STATE_POLLOUT_SET ((uint16_t)2U)
 
 FIO_SFUNC void fio_s_init(fio_s *io) {
   *io = (fio_s){
@@ -29471,7 +32592,7 @@ FIO_SFUNC void fio_s_init(fio_s *io) {
       .stream = FIO_STREAM_INIT(io->stream),
       .env = FIO___SRV_ENV_SAFE_INIT,
       .active = fio___srvdata.tick,
-      .state = FIO_STATE_OPEN,
+      .state = FIO___IO_STATE_OPEN,
       .fd = -1,
   };
   FIO_LIST_PUSH(&io->pr->reserved.ios, &io->node);
@@ -29481,21 +32602,31 @@ FIO_SFUNC void fio_s_init(fio_s *io) {
   fio_set_valid(io);
 }
 
+FIO_IFUNC void fio___s_monitor_in(fio_s *io) {
+  if ((fio_atomic_or(&io->pflags, FIO___IO_STATE_POLLIN_SET) &
+       FIO___IO_STATE_POLLIN_SET) == FIO___IO_STATE_POLLIN_SET)
+    return;
+  fio_poll_monitor(&fio___srvdata.poll_data, io->fd, (void *)io, POLLIN);
+}
+FIO_IFUNC void fio___s_monitor_out(fio_s *io) {
+  if ((fio_atomic_or(&io->pflags, FIO___IO_STATE_POLLOUT_SET) &
+       FIO___IO_STATE_POLLOUT_SET) == FIO___IO_STATE_POLLOUT_SET)
+    return;
+  fio_poll_monitor(&fio___srvdata.poll_data, io->fd, (void *)io, POLLOUT);
+}
+
 FIO_SFUNC void fio_s_destroy(fio_s *io) {
   fio_set_invalid(io);
   FIO_LIST_REMOVE(&io->node);
-#ifdef DEBUG
-  FIO_LOG_DDEBUG2("detaching and destroying %p (fd %d): %zu bytes total",
+  FIO_LOG_DDEBUG2("(%d) detaching and destroying %p (fd %d): %zu bytes total",
+                  fio___srvdata.pid,
                   (void *)io,
                   io->fd,
                   io->total_sent);
-#else
-  FIO_LOG_DDEBUG2("detaching and destroying %p (fd %d)", (void *)io, io->fd);
-#endif
   /* store info, as it might be freed if the protocol is freed. */
   if (FIO_LIST_IS_EMPTY(&io->pr->reserved.ios))
     FIO_LIST_REMOVE_RESET(&io->pr->reserved.protocols);
-  /* call on_finish / free callbacks . */
+  /* call on_stop / free callbacks . */
   io->pr->io_functions.cleanup(io->tls);
   io->pr->on_close(io->udata); /* may destroy protocol object! */
   fio___srv_env_safe_destroy(&io->env);
@@ -29520,6 +32651,7 @@ static void fio___protocol_set_task(void *io_, void *old_) {
   if (io->node.next == io->node.prev) /* list was empty before IO was added */
     FIO_LIST_PUSH(&fio___srvdata.protocols, &io->pr->reserved.protocols);
   io->pr->on_attach(io);
+  io->pflags = (FIO___IO_STATE_POLLIN_SET | FIO___IO_STATE_POLLOUT_SET);
   fio_poll_monitor(&fio___srvdata.poll_data,
                    io->fd,
                    (void *)io,
@@ -29559,7 +32691,7 @@ SFUNC fio_s *fio_srv_attach_fd(int fd,
     goto error;
   io = fio_new2();
   FIO_ASSERT_ALLOC(io);
-  FIO_LOG_DDEBUG2("%d attaching fd %d to IO object %p",
+  FIO_LOG_DDEBUG2("(%d) attaching fd %d to IO object %p",
                   fio___srvdata.pid,
                   fd,
                   (void *)io);
@@ -29603,7 +32735,7 @@ FIO_SFUNC size_t fio_protocol_each(fio_protocol_s *protocol,
   if (!protocol || !protocol->reserved.ios.next || !protocol->reserved.ios.prev)
     return count;
   FIO_LIST_EACH(fio_s, node, &protocol->reserved.ios, io) {
-    if (!(io->state & FIO_STATE_OPEN))
+    if (!(io->state & FIO___IO_STATE_OPEN))
       continue;
     task(io, udata);
     ++count;
@@ -29665,20 +32797,75 @@ SFUNC int fio_env_remove FIO_NOOP(fio_s *io, fio_env_get_args_s args) {
 }
 
 /* *****************************************************************************
+Writing from the stream
+***************************************************************************** */
+
+static void fio___srv_try_to_write_to_io(fio_s *io) {
+  char buf_mem[FIO_SRV_BUFFER_PER_WRITE];
+  size_t total = 0;
+  if (!(io->state & FIO___IO_STATE_OPEN))
+    return;
+  for (;;) {
+    size_t len = FIO_SRV_BUFFER_PER_WRITE;
+    char *buf = buf_mem;
+    fio_stream_read(&io->stream, &buf, &len);
+    if (!len)
+      break;
+    ssize_t r = io->pr->io_functions.write(io->fd, buf, len, io->tls);
+    if (r > 0) {
+      FIO_LOG_DDEBUG2("(%d) written %zu bytes to fd %d",
+                      fio___srvdata.pid,
+                      (size_t)r,
+                      io->fd);
+      total += r;
+      fio_stream_advance(&io->stream, r);
+      continue;
+    }
+    if (r == -1) {
+      if ((errno == EWOULDBLOCK) || (errno == EAGAIN))
+        break;
+      if (errno == EINTR)
+        continue;
+    }
+    goto connection_error;
+  }
+  if (total) {
+    fio_touch(io);
+#ifdef DEBUG
+    io->total_sent += total;
+#endif
+  }
+  return;
+
+connection_error:
+#if DEBUG
+  if (fio_stream_any(&io->stream))
+    FIO_LOG_DERROR(
+        "(%d) IO write failed (%d), disconnecting: %p (fd %d)\n\tError: %s",
+        fio___srvdata.pid,
+        errno,
+        (void *)io,
+        io->fd,
+        strerror(errno));
+#endif
+  fio_close_now(io);
+}
+/* *****************************************************************************
 Event handling
 ***************************************************************************** */
 
 static void fio___srv_poll_on_data(void *io_, void *ignr_) {
   (void)ignr_;
   fio_s *io = (fio_s *)io_;
-  if (io->state == FIO_STATE_OPEN) {
+  fio_atomic_and(&io->pflags, ~FIO___IO_STATE_POLLIN_SET);
+  if (io->state == FIO___IO_STATE_OPEN) {
     /* this also tests for the suspended / throttled / closing flags */
     io->pr->on_data(io);
-    if (io->state == FIO_STATE_OPEN) {
-      fio_poll_monitor(&fio___srvdata.poll_data, io->fd, io, POLLIN);
+    if (io->state == FIO___IO_STATE_OPEN) {
+      fio___s_monitor_in(io);
     }
-  } else if ((io->state & FIO_STATE_OPEN)) {
-    fio_poll_monitor(&fio___srvdata.poll_data, io->fd, io, POLLOUT);
+  } else if ((io->state & FIO___IO_STATE_OPEN)) {
+    fio___s_monitor_out(io);
   }
   fio_free2(io);
   return;
@@ -29690,73 +32877,44 @@ static void fio___srv_poll_on_ready(void *io_, void *ignr_) {
   errno = 0;
 #endif
   fio_s *io = (fio_s *)io_;
-  char buf_mem[FIO_SRV_BUFFER_PER_WRITE];
-  size_t total = 0;
-  if (!(io->state & FIO_STATE_OPEN))
-    goto finish;
-  for (;;) {
-    size_t len = FIO_SRV_BUFFER_PER_WRITE;
-    char *buf = buf_mem;
-    fio_stream_read(&io->stream, &buf, &len);
-    if (!len)
-      break;
-    ssize_t r = io->pr->io_functions.write(io->fd, buf, len, io->tls);
-    if (r > 0) {
-      total += r;
-      fio_stream_advance(&io->stream, r);
-      continue;
-    } else if ((r == -1) & ((errno == EWOULDBLOCK) || (errno == EAGAIN) ||
-                            (errno == EINTR))) {
-      break;
-    } else {
-#if DEBUG
-      if (fio_stream_any(&io->stream))
-        FIO_LOG_DDEBUG2(
-            "IO write failed (%d), disconnecting: %p (fd %d)\n\tError: %s",
-            errno,
-            (void *)io,
-            io->fd,
-            strerror(errno));
-#endif
-      fio_close_now(io);
-      goto finish;
-    }
-  }
-  if (total) {
-    fio_touch(io);
-#ifdef DEBUG
-    io->total_sent += total;
-#endif
-  }
+  fio_atomic_and(&io->pflags, ~FIO___IO_STATE_POLLOUT_SET);
+  fio___srv_try_to_write_to_io(io);
   if (!fio_stream_any(&io->stream) &&
       !io->pr->io_functions.flush(io->fd, io->tls)) {
-    if ((io->state & FIO_STATE_CLOSING)) {
+    if ((io->state & FIO___IO_STATE_CLOSING)) {
       io->pr->io_functions.finish(io->fd, io->tls);
       fio_close_now(io);
     } else {
-      if ((io->state & FIO_STATE_THROTTLED)) {
-        fio_atomic_and(&io->state, ~FIO_STATE_THROTTLED);
-        fio_poll_monitor(&fio___srvdata.poll_data, io->fd, io, POLLIN);
+      if ((io->state & FIO___IO_STATE_THROTTLED)) {
+        fio_atomic_and(&io->state, ~FIO___IO_STATE_THROTTLED);
+        fio___s_monitor_in(io);
       }
-      FIO_LOG_DDEBUG2("calling on_ready for %p (fd %d)", (void *)io, io->fd);
+      FIO_LOG_DDEBUG2("(%d) calling on_ready for %p (fd %d) - %zu data left.",
+                      fio___srvdata.pid,
+                      (void *)io,
+                      io->fd,
+                      fio_stream_length(&io->stream));
       io->pr->on_ready(io);
     }
   } else {
     if (fio_stream_length(&io->stream) >= FIO_SRV_THROTTLE_LIMIT) {
-      if (!(io->state & FIO_STATE_THROTTLED))
-        FIO_LOG_DDEBUG2("throttled IO %p (fd %d)", (void *)io, io->fd);
-      fio_atomic_or(&io->state, FIO_STATE_THROTTLED);
+      if (!(io->state & FIO___IO_STATE_THROTTLED))
+        FIO_LOG_DDEBUG2("(%d), throttled IO %p (fd %d)",
+                        fio___srvdata.pid,
+                        (void *)io,
+                        io->fd);
+      fio_atomic_or(&io->state, FIO___IO_STATE_THROTTLED);
     }
-    fio_poll_monitor(&fio___srvdata.poll_data, io->fd, io, POLLOUT);
+    fio___s_monitor_out(io);
   }
-finish:
   fio_free2(io);
 }
 
 static void fio___srv_poll_on_close(void *io_, void *ignr_) {
   (void)ignr_;
   fio_s *io = (fio_s *)io_;
-  fio_atomic_or(&io->state, FIO_STATE_CLOSE_REMOTE);
+  fio_atomic_or(&io->state, FIO___IO_STATE_CLOSE_REMOTE);
+  FIO_LOG_DEBUG2("(%d) fd %d closed by remote peer", fio___srvdata.pid, io->fd);
   fio_close_now(io);
   fio_free2(io);
 }
@@ -29820,7 +32978,10 @@ static int fio___srv_review_timeouts(void) {
       FIO_ASSERT_DEBUG(io->pr == pr, "IO protocol ownership error");
       if (io->active >= limit)
         break;
-      FIO_LOG_DDEBUG2("scheduling timeout for %p (fd %d)", (void *)io, io->fd);
+      FIO_LOG_DDEBUG2("(%d) scheduling timeout for %p (fd %d)",
+                      fio___srvdata.pid,
+                      (void *)io,
+                      io->fd);
       fio_queue_push(fio___srv_tasks, fio___srv_poll_on_timeout, fio_dup2(io));
       ++c;
     }
@@ -29841,7 +33002,7 @@ FIO_SFUNC void fio___srv_tick(int timeout) {
   if (fio_poll_review(&fio___srvdata.poll_data, timeout) > 0) {
     performed_idle = 0;
   } else if (timeout) {
-    if (!performed_idle)
+    if (!performed_idle && !fio___srvdata.stop)
       fio_state_callback_force(FIO_CALL_ON_IDLE);
     performed_idle = 1;
   }
@@ -29897,7 +33058,9 @@ FIO_SFUNC void fio___srv_shutdown(void) {
       ++connected;
     }
   }
-  FIO_LOG_DEBUG2("Server shutting down with %zu connected clients", connected);
+  FIO_LOG_DEBUG2("(%d) Server shutting down with %zu connected clients",
+                 fio___srvdata.pid,
+                 connected);
   /* cycle while connections exist. */
   fio_queue_push(fio___srv_tasks,
                  fio___srv_shutdown_task,
@@ -29915,7 +33078,9 @@ FIO_SFUNC void fio___srv_shutdown(void) {
       ++connected;
     }
   }
-  FIO_LOG_DEBUG("Server shutdown timed out with %zu clients", connected);
+  FIO_LOG_DEBUG2("(%d) Server shutdown timeout/done with %zu clients",
+                 fio___srvdata.pid,
+                 connected);
   /* perform remaining tasks. */
   fio_queue_perform_all(fio___srv_tasks);
 }
@@ -29927,8 +33092,14 @@ FIO_SFUNC void fio___srv_work_task(void *ignr_1, void *ignr_2) {
   fio_queue_push(fio___srv_tasks, fio___srv_work_task, ignr_1, ignr_2);
 }
 
+FIO_SFUNC void fio___srv_async_start(fio_srv_async_s *q);
+FIO_SFUNC void fio___srv_async_stop(fio_srv_async_s *q);
 FIO_SFUNC void fio___srv_work(int is_worker) {
   fio___srvdata.is_worker = is_worker;
+  FIO_LIST_EACH(fio_srv_async_s, node, &fio___srvdata.async, q) {
+    fio___srv_async_start(q);
+  }
+
   fio_queue_perform_all(fio___srv_tasks);
   if (is_worker) {
     fio_state_callback_force(FIO_CALL_ON_START);
@@ -29936,9 +33107,16 @@ FIO_SFUNC void fio___srv_work(int is_worker) {
   fio___srv_wakeup_init();
   fio_queue_push(fio___srv_tasks, fio___srv_work_task);
   fio_queue_perform_all(fio___srv_tasks);
+  FIO_LIST_EACH(fio_srv_async_s, node, &fio___srvdata.async, q) {
+    fio___srv_async_stop(q);
+  }
   fio___srv_shutdown();
+  FIO_LIST_EACH(fio_srv_async_s, node, &fio___srvdata.async, q) {
+    fio___srv_async_stop(q);
+  }
   fio_queue_perform_all(fio___srv_tasks);
-  fio_state_callback_force(FIO_CALL_ON_FINISH);
+  fio_queue_perform_all(fio___srv_tasks);
+  fio_state_callback_force(FIO_CALL_ON_STOP);
   fio_queue_perform_all(fio___srv_tasks);
   fio___srvdata.workers = 0;
 }
@@ -29960,7 +33138,7 @@ static void *fio___srv_worker_sentinel(void *pid_data) {
   int status = 0;
   (void)status;
   fio_thread_t thr = fio_thread_current();
-  fio_state_callback_add(FIO_CALL_ON_FINISH,
+  fio_state_callback_add(FIO_CALL_ON_STOP,
                          fio___srv_wait_for_worker,
                          (void *)thr);
   if (fio_thread_waitpid(pid, &status, 0) != pid && !fio___srvdata.stop)
@@ -29973,7 +33151,7 @@ static void *fio___srv_worker_sentinel(void *pid_data) {
     FIO_ASSERT_DEBUG(
         0,
         "DEBUG mode prevents worker re-spawning, now crashing parent.");
-    fio_state_callback_remove(FIO_CALL_ON_FINISH,
+    fio_state_callback_remove(FIO_CALL_ON_STOP,
                               fio___srv_wait_for_worker,
                               (void *)thr);
     fio_thread_detach(&thr);
@@ -29996,7 +33174,9 @@ static void fio___srv_spawn_worker(void *ignr_1, void *ignr_2) {
     return;
   if (fio_atomic_or_fetch(&fio___srvdata.stop, 2) != 2)
     return;
-
+  FIO_LIST_EACH(fio_srv_async_s, node, &fio___srvdata.async, q) {
+    fio___srv_async_stop(q);
+  }
   fio___srvdata.tick = FIO___SRV_GET_TIME_MILLI();
   fio_state_callback_force(FIO_CALL_BEFORE_FORK);
   /* do not allow master tasks to run in worker */
@@ -30022,12 +33202,12 @@ static void fio___srv_spawn_worker(void *ignr_1, void *ignr_2) {
 is_worker_process:
   fio___srvdata.pid = fio_thread_getpid();
   fio___srvdata.is_worker = 1;
-  FIO_LOG_INFO("%d worker starting up.", (int)fio___srvdata.pid);
+  FIO_LOG_INFO("(%d) worker starting up.", (int)fio___srvdata.pid);
   fio_state_callback_force(FIO_CALL_AFTER_FORK);
   fio_state_callback_force(FIO_CALL_IN_CHILD);
   if (!fio_atomic_xor_fetch(&fio___srvdata.stop, 2))
     fio___srv_work(1);
-  FIO_LOG_INFO("%d worker exiting.", (int)fio___srvdata.pid);
+  FIO_LOG_INFO("(%d) worker exiting.", (int)fio___srvdata.pid);
   exit(0);
 }
 
@@ -30052,20 +33232,29 @@ SFUNC int fio_srv_is_worker(void) { return fio___srvdata.is_worker; }
 /* Returns the number or workers the server will actually run. */
 SFUNC uint16_t fio_srv_workers(int workers) {
   if (workers < 0) {
-    int cores = -1;
+    long cores = -1;
 #ifdef _SC_NPROCESSORS_ONLN
     cores = sysconf(_SC_NPROCESSORS_ONLN);
 #endif /* _SC_NPROCESSORS_ONLN */
-    if (cores == -1) {
+    if (cores == -1L) {
       cores = 8;
       FIO_LOG_WARNING("fio_srv_start called with negative value for worker "
                       "count, but auto-detect failed, assuming %d CPU cores",
                       cores);
     }
-    workers = cores / (0 - workers);
+    workers = (int)(cores / (0 - workers));
     workers += !workers;
   }
-  return workers;
+  return (uint16_t)workers;
+}
+
+/** Adds `workers` amount of workers to the root server process. */
+SFUNC void fio_srv_add_workers(int workers) {
+  if (!workers || fio___srvdata.root_pid != fio___srvdata.pid)
+    return;
+  FIO_LOG_INFO("(%d) spawning %d workers.", fio___srvdata.root_pid, workers);
+  for (int i = 0; i < workers; ++i)
+    fio_queue_push(fio___srv_tasks, fio___srv_spawn_worker);
 }
 
 /* Starts the server, using optional `workers` processes. This will BLOCK! */
@@ -30075,6 +33264,11 @@ SFUNC void fio_srv_start(int workers) {
   workers = (int)fio___srvdata.workers;
   fio___srvdata.is_worker = !workers;
   fio_sock_maximize_limits(0);
+
+  FIO_LIST_EACH(fio_srv_async_s, node, &fio___srvdata.async, q) {
+    fio___srv_async_start(q);
+  }
+
   fio_state_callback_force(FIO_CALL_PRE_START);
   fio_queue_perform_all(fio___srv_tasks);
   fio_signal_monitor(SIGINT,
@@ -30088,12 +33282,12 @@ SFUNC void fio_srv_start(int workers) {
 #endif
   fio___srvdata.tick = FIO___SRV_GET_TIME_MILLI();
   if (workers) {
-    FIO_LOG_INFO("%d spawning %d workers.", fio___srvdata.root_pid, workers);
+    FIO_LOG_INFO("(%d) spawning %d workers.", fio___srvdata.root_pid, workers);
     for (int i = 0; i < workers; ++i) {
       fio___srv_spawn_worker(NULL, NULL);
     }
   } else {
-    FIO_LOG_DEBUG2("%d starting facil.io server in single process mode.",
+    FIO_LOG_DEBUG2("(%d) starting facil.io IO reactor in single process mode.",
                    fio___srvdata.root_pid);
   }
   fio___srv_work(!workers);
@@ -30110,7 +33304,7 @@ IO API
 ***************************************************************************** */
 
 /** Returns the socket file descriptor (fd) associated with the IO. */
-SFUNC int fio_fd_get(fio_s *io) { return io->fd; }
+SFUNC int fio_fd_get(fio_s *io) { return io ? io->fd : -1; }
 
 FIO_SFUNC void fio_touch___task(void *io_, void *ignr_) {
   (void)ignr_;
@@ -30138,8 +33332,9 @@ SFUNC size_t fio_read(fio_s *io, void *buf, size_t len) {
     fio_touch(io);
     return r;
   }
-  if ((!len) | ((r == -1) & ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
-                             (errno == EINTR))))
+  if ((unsigned)(!len) |
+      ((unsigned)(r == -1) & ((unsigned)(errno == EAGAIN) |
+                              (errno == EWOULDBLOCK) | (errno == EINTR))))
     return 0;
   fio_close(io);
   return 0;
@@ -30156,12 +33351,11 @@ FIO_SFUNC void fio_write2___dealloc_task(void *fn, void *data) {
 FIO_SFUNC void fio_write2___task(void *io_, void *packet_) {
   fio_s *io = (fio_s *)io_;
   fio_stream_packet_s *packet = (fio_stream_packet_s *)packet_;
-  if (!(io->state & FIO_STATE_OPEN))
+  if (!(io->state & FIO___IO_STATE_OPEN))
     goto io_error;
   fio_stream_add(&io->stream, packet);
-  fio_queue_push(fio___srv_tasks,
-                 fio___srv_poll_on_ready,
-                 io); /* no dup/undup, already done.*/
+  fio___s_monitor_out(io);
+  fio_free2(io); /* undup the IO object since it isn't moved to on_ready */
   return;
 io_error:
   fio_stream_pack_free(packet);
@@ -30182,12 +33376,12 @@ SFUNC void fio_write2 FIO_NOOP(fio_s *io, fio_write_args_s args) {
                                   args.offset,
                                   args.copy,
                                   args.dealloc);
-  } else if (args.fd != -1) {
-    packet = fio_stream_pack_fd(args.fd, args.len, args.offset, args.copy);
+  } else if ((unsigned)(args.fd + 1) > 1) {
+    packet = fio_stream_pack_fd((int)args.fd, args.len, args.offset, args.copy);
   }
   if (!packet)
     goto error;
-  if ((io->state & FIO_STATE_CLOSING))
+  if ((io->state & FIO___IO_STATE_CLOSING))
     goto write_called_after_close;
   fio_srv_defer(fio_write2___task, fio_dup2(io), packet);
   return;
@@ -30198,7 +33392,7 @@ error: /* note: `dealloc` is called by the `fio_stream` API error handler. */
                 (io ? io->fd : -1));
   return;
 write_called_after_close:
-  FIO_LOG_WARNING("`write` called after `close` was called for IO.");
+  FIO_LOG_DEBUG2("`write` called after `close` was called for IO.");
   {
     union {
       void *ptr;
@@ -30209,7 +33403,7 @@ write_called_after_close:
   }
   return;
 io_error_null:
-  FIO_LOG_ERROR("%d `fio_write2` called for invalid IO (NULL)",
+  FIO_LOG_ERROR("(%d) `fio_write2` called for invalid IO (NULL)",
                 fio___srvdata.pid);
   if (args.dealloc) {
     union {
@@ -30218,14 +33412,17 @@ io_error_null:
     } u = {.fn = args.dealloc};
     // u.fn(args.buf);
     fio_queue_push(fio___srv_tasks, fio_write2___dealloc_task, u.ptr, args.buf);
+    if ((unsigned)(args.fd + 1) > 1)
+      close((int)args.fd);
   }
 }
 
 /** Marks the IO for closure as soon as scheduled data was sent. */
 SFUNC void fio_close(fio_s *io) {
-  if (io && (io->state & FIO_STATE_OPEN) &&
-      !(fio_atomic_or(&io->state, (FIO_STATE_CLOSING | FIO_STATE_CLOSE_LOCAL)) &
-        FIO_STATE_CLOSING)) {
+  if (io && (io->state & FIO___IO_STATE_OPEN) &&
+      !(fio_atomic_or(&io->state,
+                      (FIO___IO_STATE_CLOSING | FIO___IO_STATE_CLOSE_LOCAL)) &
+        FIO___IO_STATE_CLOSING)) {
     FIO_LOG_DDEBUG2("scheduling IO %p (fd %d) for closure", (void *)io, io->fd);
     fio_queue_push(fio___srv_tasks,
                    fio___srv_poll_on_ready,
@@ -30235,185 +33432,37 @@ SFUNC void fio_close(fio_s *io) {
 
 /** Marks the IO for immediate closure. */
 SFUNC void fio_close_now(fio_s *io) {
-  fio_atomic_or(&io->state, FIO_STATE_CLOSING);
-  if ((fio_atomic_and(&io->state, ~FIO_STATE_OPEN) & FIO_STATE_OPEN))
+  fio_atomic_or(&io->state, FIO___IO_STATE_CLOSING);
+  if ((fio_atomic_and(&io->state, ~FIO___IO_STATE_OPEN) & FIO___IO_STATE_OPEN))
     fio_free2(io);
 }
 
 /** Suspends future "on_data" events for the IO. */
-SFUNC void fio_srv_suspend(fio_s *io) { io->state |= FIO_STATE_SUSPENDED; }
+SFUNC void fio_srv_suspend(fio_s *io) { io->state |= FIO___IO_STATE_SUSPENDED; }
 
 /** Listens for future "on_data" events related to the IO. */
 SFUNC void fio_srv_unsuspend(fio_s *io) {
-  if ((fio_atomic_and(&io->state, ~FIO_STATE_SUSPENDED) &
-       FIO_STATE_SUSPENDED)) {
-    fio_poll_monitor(&fio___srvdata.poll_data, io->fd, (void *)io, POLLIN);
+  if ((fio_atomic_and(&io->state, ~FIO___IO_STATE_SUSPENDED) &
+       FIO___IO_STATE_SUSPENDED)) {
+    fio___s_monitor_in(io);
   }
 }
 
 /** Returns 1 if the IO handle was suspended. */
 SFUNC int fio_srv_is_suspended(fio_s *io) {
-  return (io->state & FIO_STATE_SUSPENDED);
+  return (io->state & FIO___IO_STATE_SUSPENDED);
 }
 
 /** Returns 1 if the IO handle is marked as open. */
 SFUNC int fio_srv_is_open(fio_s *io) {
-  return (io->state & FIO_STATE_OPEN) && !(io->state & FIO_STATE_CLOSING);
+  return io && (io->state & FIO___IO_STATE_OPEN) &&
+         !(io->state & FIO___IO_STATE_CLOSING);
 }
 
-/* *****************************************************************************
-Listening
-***************************************************************************** */
-#if 0
-static void fio___srv_listen2_on_data_task(void *io_, void *ignr_) {
-  (void)ignr_;
-  fio_s *io = (fio_s *)io_;
-  int fd;
-  struct fio_srv_listen2_args *l = (struct fio_srv_listen2_args *)(io->udata);
-  while ((fd = accept(fio_fd_get(io), NULL, NULL)) != -1) {
-    l->on_open(fd, l->udata);
-  }
-  fio_free2(io);
+/** Returns the approximate number of bytes in the outgoing buffer. */
+SFUNC size_t fio_srv_backlog(fio_s *io) {
+  return io ? fio_stream_length(&io->stream) : 0;
 }
-static void fio___srv_listen_on_data_task_reschd(void *io_, void *ignr_) {
-  fio_queue_push(fio___srv_tasks, fio___srv_listen2_on_data_task, io_, ignr_);
-}
-
-static void fio___srv_listen2_on_data(fio_s *io) {
-  int fd;
-  struct fio_srv_listen2_args *l = (struct fio_srv_listen2_args *)(io->udata);
-  if (l->queue_for_accept) {
-    fio_queue_push(l->queue_for_accept,
-                   fio___srv_listen_on_data_task_reschd,
-                   fio_dup2(io));
-    return;
-  }
-  while ((fd = accept(fio_fd_get(io), NULL, NULL)) != -1) {
-    l->on_open(fd, l->udata);
-  }
-}
-static void fio___srv_listen2_on_close(void *settings_) {
-  struct fio_srv_listen2_args *l = (struct fio_srv_listen2_args *)settings_;
-  if (((!l->on_root && fio_srv_is_worker()) ||
-       (l->on_root && fio_srv_is_master()))) {
-    if (l->hide_from_log)
-      FIO_LOG_DEBUG2("%d stopped listening on %s", fio___srvdata.pid, l->url);
-    else
-      FIO_LOG_INFO("%d stopped listening on %s", fio___srvdata.pid, l->url);
-  }
-}
-
-FIO_SFUNC void fio___srv_listen2_cleanup_task(void *udata) {
-  struct fio_srv_listen2_args *l = (struct fio_srv_listen2_args *)udata;
-  int *pfd = (int *)(l + 1);
-  if (l->on_finish)
-    l->on_finish(l->udata);
-  fio_sock_close(*pfd);
-#ifdef AF_UNIX
-  /* delete the unix socket file, if any. */
-  fio_url_s u = fio_url_parse(l->url, FIO_STRLEN(l->url));
-  if (fio_srv_is_master() && !u.host.buf && !u.port.buf && u.path.buf) {
-    unlink(u.path.buf);
-  }
-#endif
-  fio_state_callback_remove(FIO_CALL_AT_EXIT,
-                            fio___srv_listen2_cleanup_task,
-                            udata);
-  FIO_MEM_FREE_(l, sizeof(*l) + sizeof(int) + FIO_STRLEN(l->url) + 1);
-}
-
-static fio_protocol_s FIO___LISTEN2_PROTOCOL = {
-    .on_data = fio___srv_listen2_on_data,
-    .on_close = fio___srv_listen2_on_close,
-    .on_timeout = fio___srv_on_timeout_never,
-};
-
-FIO_SFUNC void fio___srv_listen2_attach_task(void *udata) {
-  struct fio_srv_listen2_args *l = (struct fio_srv_listen2_args *)udata;
-  int *pfd = (int *)(l + 1);
-  int fd = fio_sock_dup(*pfd);
-  FIO_ASSERT(fd != -1, "listening socket failed to `dup`");
-  FIO_LOG_DEBUG2("%d Called dup(%d) to attach %d as a listening socket.",
-                 (int)fio___srvdata.pid,
-                 *pfd,
-                 fd);
-  fio_srv_attach_fd(fd, &FIO___LISTEN2_PROTOCOL, l, NULL);
-  if (l->on_start)
-    l->on_start(l->udata);
-  if (l->hide_from_log)
-    FIO_LOG_DEBUG2("%d started listening on %s", fio___srvdata.pid, l->url);
-  else
-    FIO_LOG_INFO("%d started listening on %s", fio___srvdata.pid, l->url);
-}
-
-FIO_SFUNC void fio___srv_listen_attach_task_deferred(void *udata, void *ignr_) {
-  (void)ignr_;
-  fio___srv_listen2_attach_task(udata);
-}
-
-void fio_srv_listen2___(void); /* IDE Marker */
-SFUNC int fio_srv_listen2 FIO_NOOP(struct fio_srv_listen2_args args) {
-  static int64_t port = 0;
-  size_t len = args.url ? FIO_STRLEN(args.url) + 1 : 0;
-  struct fio_srv_listen2_args *cpy = NULL;
-  fio_str_info_s adr, tmp;
-  int *fd_store;
-  int fd;
-  if (!args.on_open) {
-    FIO_LOG_ERROR("fio_listen missing `on_open` callback.");
-    goto other_error;
-  }
-  len += (!len) << 6;
-  cpy = (struct fio_srv_listen2_args *)
-      FIO_MEM_REALLOC_(NULL, 0, (sizeof(*cpy) + sizeof(int) + len), 0);
-  FIO_ASSERT_ALLOC(cpy);
-  *cpy = args;
-  cpy->url = (char *)(cpy + 1) + sizeof(int);
-  fd_store = (int *)(cpy + 1);
-  if (args.url) {
-    FIO_MEMCPY((void *)(cpy->url), args.url, len);
-  } else {
-    if (!port) {
-      char *port_env = getenv("PORT");
-      if (port_env)
-        port = fio_atol10(&port_env);
-      if (!port | ((uint64_t)port > 65535))
-        port = 3000;
-    }
-    tmp = FIO_STR_INFO3((char *)cpy->url, 0, len);
-    if (!(adr.buf = getenv("ADDRESS")) ||
-        (adr.len = FIO_STRLEN(adr.buf)) > 58) {
-      adr = FIO_STR_INFO2((char *)"0.0.0.0", 7);
-    }
-    fio_string_write2(&tmp,
-                      NULL,
-                      FIO_STRING_WRITE_STR2(adr.buf, adr.len),
-                      FIO_STRING_WRITE_STR2(":", 1),
-                      FIO_STRING_WRITE_UNUM(port));
-    ++port;
-  }
-  fd = fio_sock_open2(cpy->url, FIO_SOCK_SERVER | FIO_SOCK_TCP);
-  if (fd == -1)
-    goto fd_error;
-  *fd_store = fd;
-  if (fio_srv_is_running()) {
-    fio_srv_defer(fio___srv_listen_attach_task_deferred, cpy, NULL);
-  } else {
-    fio_state_callback_add(
-        (args.on_root ? FIO_CALL_PRE_START : FIO_CALL_ON_START),
-        fio___srv_listen2_attach_task,
-        (void *)cpy);
-  }
-  fio_state_callback_add(FIO_CALL_AT_EXIT, fio___srv_listen2_cleanup_task, cpy);
-  return 0;
-fd_error:
-  FIO_MEM_FREE_(cpy, (sizeof(*cpy) + len));
-other_error:
-  if (args.on_finish)
-    args.on_finish(args.udata);
-  return -1;
-}
-#endif
 
 /* *****************************************************************************
 Listening to Incoming Connections
@@ -30423,10 +33472,11 @@ typedef struct {
   fio_protocol_s *protocol;
   void *udata;
   void *tls_ctx;
-  fio_queue_s *queue_for_accept;
+  fio_srv_async_s *queue_for_accept;
+  fio_queue_s *queue;
   fio_s *io;
   void (*on_start)(fio_protocol_s *protocol, void *udata);
-  void (*on_finish)(fio_protocol_s *protocol, void *udata);
+  void (*on_stop)(fio_protocol_s *protocol, void *udata);
   int owner;
   int fd;
   size_t ref_count;
@@ -30468,16 +33518,16 @@ static void fio___srv_listen_free(void *l_) {
   }
 #endif
 
-  if (l->on_finish)
-    l->on_finish(l->protocol, l->udata);
+  if (l->on_stop)
+    l->on_stop(l->protocol, l->udata);
 
   if (l->hide_from_log)
-    FIO_LOG_DEBUG2("%d stopped listening @ %.*s",
+    FIO_LOG_DEBUG2("(%d) stopped listening @ %.*s",
                    getpid(),
                    (int)l->url_len,
                    l->url);
   else
-    FIO_LOG_INFO("%d stopped listening @ %.*s",
+    FIO_LOG_INFO("(%d) stopped listening @ %.*s",
                  getpid(),
                  (int)l->url_len,
                  l->url);
@@ -30497,12 +33547,19 @@ SFUNC fio_buf_info_s fio_srv_listener_url(void *listener) {
   return FIO_BUF_INFO2(l->url, l->url_len);
 }
 
+/** Returns true if the listener protocol has an attached TLS context. */
+SFUNC int fio_srv_listener_is_tls(void *listener) {
+  fio___srv_listen_s *l = (fio___srv_listen_s *)listener;
+  return !!l->tls_ctx;
+}
+
 static void fio___srv_listen_on_data_task(void *io_, void *ignr_) {
   (void)ignr_;
   fio_s *io = (fio_s *)io_;
   int fd;
   fio___srv_listen_s *l = (fio___srv_listen_s *)(io->udata);
-  while ((fd = accept(fio_fd_get(io), NULL, NULL)) != -1) {
+  fio_srv_unsuspend(io);
+  while ((fd = fio_sock_accept(fio_fd_get(io), NULL, NULL)) != -1) {
     fio_srv_attach_fd(fd, l->protocol, l->udata, l->tls_ctx);
   }
   fio_free2(io);
@@ -30510,11 +33567,21 @@ static void fio___srv_listen_on_data_task(void *io_, void *ignr_) {
 static void fio___srv_listen_on_data_task_reschd(void *io_, void *ignr_) {
   fio_srv_defer(fio___srv_listen_on_data_task, io_, ignr_);
 }
-
+static void fio___srv_listen_on_attach(fio_s *io) {
+  fio___srv_listen_s *l = (fio___srv_listen_s *)(io->udata);
+  l->queue = (l->queue_for_accept && l->queue_for_accept->q != fio___srv_tasks)
+                 ? l->queue_for_accept->q
+                 : NULL;
+}
+static void fio___srv_listen_on_shutdown(fio_s *io) {
+  fio___srv_listen_s *l = (fio___srv_listen_s *)(io->udata);
+  l->queue = fio_srv_queue();
+}
 static void fio___srv_listen_on_data(fio_s *io) {
   fio___srv_listen_s *l = (fio___srv_listen_s *)(io->udata);
-  if (l->queue_for_accept) {
-    fio_queue_push(l->queue_for_accept,
+  if (l->queue) {
+    fio_srv_suspend(io);
+    fio_queue_push(l->queue,
                    fio___srv_listen_on_data_task_reschd,
                    fio_dup2(io));
     return;
@@ -30527,9 +33594,11 @@ static void fio___srv_listen_on_close(void *l) {
 }
 
 static fio_protocol_s FIO___LISTEN_PROTOCOL = {
+    .on_attach = fio___srv_listen_on_attach,
     .on_data = fio___srv_listen_on_data,
     .on_close = fio___srv_listen_on_close,
     .on_timeout = fio___srv_on_timeout_never,
+    .on_shutdown = fio___srv_listen_on_shutdown,
 };
 
 FIO_SFUNC void fio___srv_listen_attach_task_deferred(void *l_, void *ignr_) {
@@ -30537,7 +33606,7 @@ FIO_SFUNC void fio___srv_listen_attach_task_deferred(void *l_, void *ignr_) {
   l = fio___srv_listen_dup(l);
   int fd = fio_sock_dup(l->fd);
   FIO_ASSERT(fd != -1, "listening socket failed to `dup`");
-  FIO_LOG_DEBUG2("%d Called dup(%d) to attach %d as a listening socket.",
+  FIO_LOG_DEBUG2("(%d) Called dup(%d) to attach %d as a listening socket.",
                  (int)fio___srvdata.pid,
                  l->fd,
                  fd);
@@ -30545,9 +33614,9 @@ FIO_SFUNC void fio___srv_listen_attach_task_deferred(void *l_, void *ignr_) {
   if (l->on_start)
     l->on_start(l->protocol, l->udata);
   if (l->hide_from_log)
-    FIO_LOG_DEBUG2("%d started listening @ %s", fio___srvdata.pid, l->url);
+    FIO_LOG_DEBUG2("(%d) started listening @ %s", fio___srvdata.pid, l->url);
   else
-    FIO_LOG_INFO("%d started listening @ %s", fio___srvdata.pid, l->url);
+    FIO_LOG_INFO("(%d) started listening @ %s", fio___srvdata.pid, l->url);
   (void)ignr_;
 }
 
@@ -30568,7 +33637,7 @@ SFUNC void *fio_srv_listen FIO_NOOP(struct fio_srv_listen_args args) {
   fio___srv_listen_s *l = NULL;
   void *built_tls = NULL;
   int should_free_tls = !args.tls;
-  FIO_STR_INFO_TMP_VAR(url_alt, 64);
+  FIO_STR_INFO_TMP_VAR(url_alt, 2048);
   if (!args.protocol) {
     FIO_LOG_ERROR("fio_srv_listen requires a protocol to be assigned.");
     return l;
@@ -30577,9 +33646,24 @@ SFUNC void *fio_srv_listen FIO_NOOP(struct fio_srv_listen_args args) {
     FIO_LOG_ERROR("fio_srv_listen called with `on_root` by a non-root worker.");
     return l;
   }
-
-  if (!args.url ||
-      args.url[0] == '?') { /* if no URL is given use 0.0.0.0:3000 as default */
+  if (!args.url) {
+    args.url = getenv("ADDRESS");
+    if (!args.url)
+      args.url = "0.0.0.0";
+  }
+  url_alt.len = strlen(args.url);
+  if (url_alt.len > 2024) {
+    FIO_LOG_ERROR("binding address / url too long.");
+    args.url = NULL;
+  }
+  fio_url_s url = fio_url_parse(args.url, url_alt.len);
+  if (url.scheme.buf &&
+      (url.scheme.len > 2 && url.scheme.len < 5 &&
+       (url.scheme.buf[0] | (char)0x20) == 't' &&
+       (url.scheme.buf[1] | (char)0x20) == 'c') &&
+      (url.scheme.buf[2] | (char)0x20) == 'p')
+    url.scheme = FIO_BUF_INFO0;
+  if (!url.port.buf && !url.scheme.buf) {
     static size_t port_counter = 3000;
     size_t port = fio_atomic_add(&port_counter, 1);
     if (port == 3000 && getenv("PORT")) {
@@ -30588,23 +33672,19 @@ SFUNC void *fio_srv_listen FIO_NOOP(struct fio_srv_listen_args args) {
       if (!port | (port > 65535ULL))
         port = 3000;
     }
-    fio_buf_info_s root_addr = FIO_BUF_INFO1((char *)"0.0.0.0");
-    if (getenv("ADDRESS")) {
-      fio_buf_info_s tmp = FIO_BUF_INFO1((char *)getenv("ADDRESS"));
-      if (tmp.len < 56)
-        root_addr = tmp;
-    }
+    url_alt.len = 0;
     fio_string_write2(&url_alt,
                       NULL,
-                      FIO_STRING_WRITE_STR2(root_addr.buf, root_addr.len),
+                      FIO_STRING_WRITE_STR2(url.scheme.buf, url.scheme.len),
+                      (url.scheme.len ? FIO_STRING_WRITE_STR2("://", 3)
+                                      : FIO_STRING_WRITE_STR2(NULL, 0)),
+                      FIO_STRING_WRITE_STR2(url.host.buf, url.host.len),
                       FIO_STRING_WRITE_STR2(":", 1),
                       FIO_STRING_WRITE_NUM(port));
-    if (args.url)
-      fio_string_write(&url_alt, NULL, args.url, strlen(args.url));
     args.url = url_alt.buf;
-  } else
-    url_alt.len = strlen(args.url);
-  fio_url_s url = fio_url_parse(args.url, url_alt.len);
+    url = fio_url_parse(args.url, url_alt.len);
+  }
+
   args.tls = fio_tls_from_url(args.tls, url);
   fio___srv_init_protocol_test(args.protocol, !!args.tls);
   built_tls = args.protocol->io_functions.build_context(args.tls, 0);
@@ -30624,7 +33704,7 @@ SFUNC void *fio_srv_listen FIO_NOOP(struct fio_srv_listen_args args) {
       .tls_ctx = built_tls,
       .queue_for_accept = args.queue_for_accept,
       .on_start = args.on_start,
-      .on_finish = args.on_finish,
+      .on_stop = args.on_stop,
       .owner = fio___srvdata.pid,
       .url_len = url_buf.len,
       .hide_from_log = args.hide_from_log,
@@ -30658,7 +33738,7 @@ Establishing New Connections
 typedef struct {
   fio_protocol_s protocol;
   fio_protocol_s *upr;
-  void (*on_failed)(void *udata);
+  void (*on_failed)(fio_protocol_s *protocol, void *udata);
   void *udata;
   void *tls_ctx;
   size_t url_len;
@@ -30674,14 +33754,14 @@ FIO_SFUNC void fio___connecting_cleanup(fio___connecting_s *c) {
 FIO_SFUNC void fio___connecting_on_close(void *udata) {
   fio___connecting_s *c = (fio___connecting_s *)udata;
   if (c->on_failed)
-    c->on_failed(c->udata);
+    c->on_failed(c->upr, c->udata);
   fio___connecting_cleanup(c);
 }
 FIO_SFUNC void fio___connecting_on_ready(fio_s *io) {
   if (!fio_srv_is_open(io))
     return;
   fio___connecting_s *c = (fio___connecting_s *)fio_udata_get(io);
-  FIO_LOG_DEBUG2("%d established client connection to %s",
+  FIO_LOG_DEBUG2("(%d) established client connection to %s",
                  (int)fio___srvdata.pid,
                  c->url);
   fio_udata_set(io, c->udata);
@@ -30696,7 +33776,7 @@ SFUNC fio_s *fio_srv_connect FIO_NOOP(fio_srv_connect_args_s args) {
     return NULL;
   if (!args.url) {
     if (args.on_failed)
-      args.on_failed(args.udata);
+      args.on_failed(args.protocol, args.udata);
     return NULL;
   }
   if (!args.timeout)
@@ -30905,101 +33985,82 @@ SFUNC void fio_tls_free(fio_tls_s *tls) {
 
 /** Takes a parsed URL and optional TLS target and returns a TLS if needed. */
 SFUNC fio_tls_s *fio_tls_from_url(fio_tls_s *tls, fio_url_s url) {
-  /* test for schemes `tls` / `wss` / `https` / `sses` / `tcps` / `udps` */
-  if (!tls &&
-      ((url.scheme.len == 3 && /* tls:// or wss:// */
-        (fio_buf2u16u("ws") == (fio_buf2u16u(url.scheme.buf) | 0x2020U) ||
-         fio_buf2u16u("tl") == (fio_buf2u16u(url.scheme.buf) | 0x2020U)) &&
-        (url.scheme.buf[2] | 0x20U) == 's') ||
-       (url.scheme.len == 4 && /* server sent events secure scheme sses:// */
-        (fio_buf2u32u("sses") == (fio_buf2u32u(url.scheme.buf) | 0x20202020U) ||
-         fio_buf2u32u("tcps") == (fio_buf2u32u(url.scheme.buf) | 0x20202020U) ||
-         fio_buf2u32u("udps") ==
-             (fio_buf2u32u(url.scheme.buf) | 0x20202020U))) ||
-       (url.scheme.len == 5 && /* https:// */
-        fio_buf2u32u("http") == (fio_buf2u32u(url.scheme.buf) | 0x20202020U) &&
-        (url.scheme.buf[4] | 0x20) == 's')))
+  /* test for TLS info in URL */
+  fio_url_tls_info_s tls_info = fio_url_is_tls(url);
+  if (!tls_info.tls)
+    return tls;
+
+  if (!tls && tls_info.tls)
     tls = fio_tls_new();
-  /* test for TLS keywords in URL query */
-  if (url.query.len) {
-    fio_buf_info_s key = {0};
-    fio_buf_info_s cert = {0};
-    fio_buf_info_s pass = {0};
-    const uint32_t wrd_key = fio_buf2u32u("key\xFF"); /* keyword's value */
-    const uint32_t wrd_tls = fio_buf2u32u("tls\xFF");
-    const uint32_t wrd_ssl = fio_buf2u32u("ssl\xFF");
-    const uint32_t wrd_cert = fio_buf2u32u("cert");
-    const uint64_t wrd_password = fio_buf2u64u("password");
-    _Bool btls = 0;
-    FIO_URL_QUERY_EACH(url.query, i) { /* iterates each name=value pair */
-      if (i.name.len == 8 && i.value.len &&
-          (fio_buf2u64u(i.name.buf) | 0x2020202020202020ULL) == wrd_password)
-        pass = i.value;
-      if (i.name.len < 3 || i.name.len > 4)
-        continue; /* not one of the keywords used */
-      uint32_t name = fio_buf2u32u(i.name.buf);
-      if (i.value.buf) { /* value given (may be empty) */
-        if (i.name.len == 4) {
-          name |= 0x20202020UL;
-          if (name == wrd_cert)
-            cert = i.value;
-          else if (name == (uint32_t)wrd_password)
-            pass = i.value;
-        } else if (i.name.len == 3) {
-          name |= fio_buf2u32u("\x20\x20\x20\xFF"); /* any endieness */
-          if (name == wrd_key) {
-            key = i.value;
-          } else if (name == wrd_tls || name == wrd_ssl) {
-            cert = key = i.value;
+
+  if (tls_info.key.buf && tls_info.cert.buf) {
+    const char *tmp = NULL;
+    FIO_STR_INFO_TMP_VAR(host_tmp, 512);
+    FIO_STR_INFO_TMP_VAR(key_tmp, 128);
+    FIO_STR_INFO_TMP_VAR(cert_tmp, 128);
+    FIO_STR_INFO_TMP_VAR(pass_tmp, 128);
+    if (url.host.len < 512 && url.host.buf)
+      fio_string_write(&host_tmp, NULL, url.host.buf, url.host.len);
+    else
+      host_tmp.buf = NULL;
+
+    if (tls_info.key.len < 124 && tls_info.cert.len < 124 &&
+        tls_info.pass.len < 124) {
+      fio_string_write(&key_tmp, NULL, tls_info.key.buf, tls_info.key.len);
+      fio_string_write(&cert_tmp, NULL, tls_info.cert.buf, tls_info.cert.len);
+      if (tls_info.pass.len)
+        fio_string_write(&pass_tmp, NULL, tls_info.pass.buf, tls_info.pass.len);
+      else
+        pass_tmp.buf = NULL;
+
+      if (tls_info.key.buf ==
+          tls_info.cert.buf) { /* assume value is prefix / folder */
+        if ((tmp = getenv(cert_tmp.buf))) {
+          fio_buf_info_s buf_tmp = FIO_BUF_INFO1((char *)tmp);
+          if (buf_tmp.len < 124) {
+            key_tmp.len = cert_tmp.len = buf_tmp.len;
+            FIO_MEMCPY(key_tmp.buf, buf_tmp.buf, buf_tmp.len);
+            FIO_MEMCPY(cert_tmp.buf, buf_tmp.buf, buf_tmp.len);
           }
         }
-      } else if (i.name.len == 3) { /* value not given */
-        name |= fio_buf2u32u("\x20\x20\x20\xFF");
-        if (name == wrd_tls || name == wrd_ssl)
-          btls = 1;
-      }
-    }
-
-    if (!tls && (btls || (key.buf && cert.buf)))
-      tls = fio_tls_new();
-
-    if (key.buf && cert.buf) {
-      FIO_STR_INFO_TMP_VAR(host_tmp, 512);
-      FIO_STR_INFO_TMP_VAR(key_tmp, 128);
-      FIO_STR_INFO_TMP_VAR(cert_tmp, 128);
-      FIO_STR_INFO_TMP_VAR(pass_tmp, 128);
-      if (url.host.len < 512 && url.host.buf)
-        fio_string_write(&host_tmp, NULL, url.host.buf, url.host.len);
-      else
-        host_tmp.buf = NULL;
-
-      if (key.len < 124 && cert.len < 124 && pass.len < 124) {
-        fio_string_write(&key_tmp, NULL, key.buf, key.len);
-        fio_string_write(&cert_tmp, NULL, cert.buf, cert.len);
-        if (pass.len)
-          fio_string_write(&pass_tmp, NULL, pass.buf, pass.len);
-        else
-          pass_tmp.buf = NULL;
-        if (key.buf == cert.buf) { /* assume value is prefix / folder */
-          fio_string_write(&key_tmp, NULL, "key.pem", 7);
-          fio_string_write(&cert_tmp, NULL, "cert.pem", 8);
-        } else {
-          if (key.len < 5 || (fio_buf2u32u(key.buf + (key.len - 4)) |
-                              0x20202020UL) != fio_buf2u32u(".pem"))
-            fio_string_write(&key_tmp, NULL, ".pem", 4);
-          if (cert.len < 5 || (fio_buf2u32u(cert.buf + (cert.len - 4)) |
-                               0x20202020UL) != fio_buf2u32u(".pem"))
-            fio_string_write(&cert_tmp, NULL, ".pem", 4);
-        }
-        fio_tls_cert_add(tls,
-                         host_tmp.buf,
-                         cert_tmp.buf,
-                         key_tmp.buf,
-                         pass_tmp.buf);
+        fio_string_write(&key_tmp, NULL, "key.pem", 7);
+        fio_string_write(&cert_tmp, NULL, "cert.pem", 8);
       } else {
-        FIO_LOG_ERROR("TLS files in `fio_srv_listen` URL too long, "
-                      "construct TLS object separately");
+        if ((tmp = getenv(key_tmp.buf))) {
+          fio_buf_info_s buf_tmp = FIO_BUF_INFO1((char *)tmp);
+          if (buf_tmp.len < 124) {
+            key_tmp.len = buf_tmp.len;
+            FIO_MEMCPY(key_tmp.buf, buf_tmp.buf, buf_tmp.len);
+          }
+        }
+
+        if ((tmp = getenv(cert_tmp.buf))) {
+          fio_buf_info_s buf_tmp = FIO_BUF_INFO1((char *)tmp);
+          if (buf_tmp.len < 124) {
+            cert_tmp.len = buf_tmp.len;
+            FIO_MEMCPY(cert_tmp.buf, buf_tmp.buf, buf_tmp.len);
+          }
+        }
+
+        if (tls_info.key.len < 5 ||
+            (fio_buf2u32u(tls_info.key.buf + (tls_info.key.len - 4)) |
+             0x20202020UL) != fio_buf2u32u(".pem")) {
+          fio_string_write(&key_tmp, NULL, ".pem", 4);
+        }
+        if (tls_info.cert.len < 5 ||
+            (fio_buf2u32u(tls_info.cert.buf + (tls_info.cert.len - 4)) |
+             0x20202020UL) != fio_buf2u32u(".pem")) {
+          fio_string_write(&cert_tmp, NULL, ".pem", 4);
+        }
       }
+      fio_tls_cert_add(tls,
+                       host_tmp.buf,
+                       cert_tmp.buf,
+                       key_tmp.buf,
+                       pass_tmp.buf);
+    } else {
+      FIO_LOG_ERROR("TLS files in `fio_srv_listen` URL too long, "
+                    "construct TLS object separately");
     }
   }
   return tls;
@@ -31232,19 +34293,24 @@ SFUNC fio_io_functions_s fio_tls_default_io_functions(fio_io_functions_s *f) {
 Server Async - Worker Threads for non-IO tasks
 ***************************************************************************** */
 
-FIO_SFUNC void fio___srv_async_start(void *q_) {
-  fio_srv_async_s *q = (fio_srv_async_s *)q_;
+FIO_SFUNC void fio___srv_async_start(fio_srv_async_s *q) {
+  if (!q->count)
+    goto no_worker_threads;
   q->q = &q->queue;
+  if (q->count > 4095)
+    goto failed;
+  fio_queue_workers_stop(&q->queue);
   if (fio_queue_workers_add(&q->queue, (size_t)q->count))
     goto failed;
   return;
 
 failed:
   FIO_LOG_ERROR("Server Async Queue couldn't spawn threads!");
+no_worker_threads:
   q->q = fio_srv_queue();
+  fio_queue_perform_all(&q->queue);
 }
-FIO_SFUNC void fio___srv_async_finish(void *q_) {
-  fio_srv_async_s *q = (fio_srv_async_s *)q_;
+FIO_SFUNC void fio___srv_async_stop(fio_srv_async_s *q) {
   q->q = fio___srv_tasks;
   fio_queue_workers_stop(&q->queue);
   fio_queue_perform_all(&q->queue);
@@ -31259,12 +34325,14 @@ SFUNC void fio_srv_async_init(fio_srv_async_s *q, uint32_t threads) {
       .queue = FIO_QUEUE_STATIC_INIT(q->queue),
       .node = FIO_LIST_INIT(q->node),
   };
-  if (!threads || threads > 4095)
-    return;
-  q->q = &q->queue;
   FIO_LIST_PUSH(&fio___srvdata.async, &q->node);
-  fio_state_callback_add(FIO_CALL_ON_START, fio___srv_async_start, q);
-  fio_state_callback_add(FIO_CALL_ON_SHUTDOWN, fio___srv_async_finish, q);
+}
+
+/** Updates an async server queue for multi-threaded (non IO) tasks. */
+SFUNC void fio_srv_async_update(fio_srv_async_s *q, uint32_t threads) {
+  q->count = threads;
+  if (fio_srv_is_running())
+    fio___srv_async_start(q);
 }
 
 /* *****************************************************************************
@@ -31356,25 +34424,27 @@ static X509 *fio_tls_create_self_signed(const char *server_name) {
   /* set identity details */
   X509_NAME *s = X509_get_subject_name(cert);
   size_t srv_name_len = FIO_STRLEN(server_name);
+  FIO_ASSERT(srv_name_len < (size_t)((int)0 - 1),
+             "fio_tls_create_self_signed server_name too long");
   X509_NAME_add_entry_by_txt(s,
                              "O",
                              MBSTRING_ASC,
                              (unsigned char *)server_name,
-                             srv_name_len,
+                             (int)srv_name_len,
                              -1,
                              0);
   X509_NAME_add_entry_by_txt(s,
                              "CN",
                              MBSTRING_ASC,
                              (unsigned char *)server_name,
-                             srv_name_len,
+                             (int)srv_name_len,
                              -1,
                              0);
   X509_NAME_add_entry_by_txt(s,
                              "CA",
                              MBSTRING_ASC,
                              (unsigned char *)server_name,
-                             srv_name_len,
+                             (int)srv_name_len,
                              -1,
                              0);
   X509_set_issuer_name(cert, s);
@@ -31597,13 +34667,15 @@ FIO_SFUNC ssize_t fio___openssl_read(int fd,
   ssize_t r;
   SSL *ssl = (SSL *)tls_ctx;
   errno = 0;
-  r = SSL_read(ssl, buf, len);
+  if (len > INT_MAX)
+    len = INT_MAX;
+  r = SSL_read(ssl, buf, (int)len);
   if (r > 0)
     return r;
   if (errno == EWOULDBLOCK || errno == EAGAIN)
-    return -1;
+    return (ssize_t)-1;
 
-  switch ((r = SSL_get_error(ssl, r))) {
+  switch ((r = (ssize_t)SSL_get_error(ssl, (int)r))) {
   case SSL_ERROR_SSL:                                   /* fall through */
   case SSL_ERROR_SYSCALL:                               /* fall through */
   case SSL_ERROR_ZERO_RETURN: return (r = 0);           /* EOF */
@@ -31665,13 +34737,15 @@ FIO_SFUNC ssize_t fio___openssl_write(int fd,
     return r;
   SSL *ssl = (SSL *)tls_ctx;
   errno = 0;
-  r = SSL_write(ssl, buf, len);
+  if (len > INT_MAX)
+    len = INT_MAX;
+  r = SSL_write(ssl, buf, (int)len);
   if (r > 0)
     return r;
   if (errno == EWOULDBLOCK || errno == EAGAIN)
     return -1;
 
-  switch ((r = SSL_get_error(ssl, r))) {
+  switch ((r = (ssize_t)SSL_get_error(ssl, (int)r))) {
   case SSL_ERROR_SSL:                         /* fall through */
   case SSL_ERROR_SYSCALL:                     /* fall through */
   case SSL_ERROR_ZERO_RETURN: return (r = 0); /* EOF */
@@ -31968,7 +35042,8 @@ typedef struct fio_pubsub_engine_s fio_pubsub_engine_s;
 typedef struct fio_publish_args_s {
   /** The pub/sub engine that should be used to forward this message. */
   fio_pubsub_engine_s const *engine;
-  /** If `from` is specified, it will be skipped (won't receive message). */
+  /** If `from` is specified, it will be skipped (won't receive message)
+   *  UNLESS a non-native `engine` is specified. */
   fio_s *from;
   /** Message ID (if missing, a random ID will be generated). */
   uint64_t id;
@@ -32050,16 +35125,16 @@ typedef enum {
   FIO___PUBSUB_CLUSTER = (16 | 8 | 4 | 2),
   FIO___PUBSUB_REPLAY = 32, /* history replay message */
 
-  /* internal subscribe / unsubscribe messages */
-  FIO___PUBSUB_INTERNAL_MESSAGE = 128,
+  /* internal messages */
+  FIO___PUBSUB_SPECIAL = 128,
   FIO___PUBSUB_SUB = (128 | 1),
   FIO___PUBSUB_UNSUB = (128 | 2),
-  FIO___PUBSUB_IDENTIFY = (128 | 4),
-  FIO___PUBSUB_FORWARDER = (128 | 8),
+  FIO___PUBSUB_IDENTIFY = (128 | 4),  /* identify remote connection */
+  FIO___PUBSUB_FORWARDER = (128 | 8), /* forward to external engine */
   FIO___PUBSUB_PING = (128 | 16),
 
-  FIO___PUBSUB_HISTORY_START = (128 | 16),
-  FIO___PUBSUB_HISTORY_END = (128 | 32),
+  FIO___PUBSUB_HISTORY_START = (128 | 32),
+  FIO___PUBSUB_HISTORY_END = (128 | 64),
 } fio___pubsub_msg_flags_e;
 
 /** Used to publish the message exclusively to the root / master process. */
@@ -32560,6 +35635,7 @@ FIO_SFUNC void fio___pubsub_protocol_on_data_master(fio_s *io);
 FIO_SFUNC void fio___pubsub_protocol_on_data_worker(fio_s *io);
 FIO_SFUNC void fio___pubsub_protocol_on_data_remote(fio_s *io);
 FIO_SFUNC void fio___pubsub_protocol_on_close(void *udata);
+FIO_SFUNC void fio___pubsub_protocol_on_timeout(fio_s *io);
 
 static struct FIO___PUBSUB_POSTOFFICE {
   fio_u128 uuid;
@@ -32572,6 +35648,7 @@ static struct FIO___PUBSUB_POSTOFFICE {
     uint8_t remote;
   } filter;
   uint8_t secret_is_random;
+  FIO___LOCK_TYPE lock;
   fio___pubsub_engines_s engines;
   FIO_LIST_NODE history_active;
   FIO_LIST_NODE history_waiting;
@@ -32598,6 +35675,7 @@ static struct FIO___PUBSUB_POSTOFFICE {
             .local = (FIO___PUBSUB_SIBLINGS),
             .remote = FIO___PUBSUB_REMOTE,
         },
+    .lock = FIO___LOCK_INIT,
     .protocol =
         {
             .ipc =
@@ -32612,7 +35690,7 @@ static struct FIO___PUBSUB_POSTOFFICE {
                     .on_attach = fio___pubsub_protocol_on_attach,
                     .on_data = fio___pubsub_protocol_on_data_remote,
                     .on_close = fio___pubsub_protocol_on_close,
-                    .on_timeout = NULL,
+                    .on_timeout = fio___pubsub_protocol_on_timeout,
                 },
         },
 };
@@ -32760,14 +35838,16 @@ Listening to Local Connections (IPC)
 FIO_IFUNC void fio___pubsub_ipc_listen(void *ignr_) {
   (void)ignr_;
   if (fio_srv_is_worker()) {
-    FIO_LOG_DEBUG2("(pub/sub) IPC socket skipped - no workers are spawned.");
+    FIO_LOG_DEBUG2("(%d) pub/sub IPC socket skipped - no workers are spawned.",
+                   fio_srv_pid());
     return;
   }
   FIO_ASSERT(fio_srv_listen(.url = FIO___PUBSUB_POSTOFFICE.ipc_url,
                             .protocol = &FIO___PUBSUB_POSTOFFICE.protocol.ipc,
                             .on_root = 1,
                             .hide_from_log = FIO___PUBSUB_HIDE_FROM_LOG),
-             "(pub/sub) couldn't open a socket for IPC\n\t\t%s",
+             "(%d) pub/sub couldn't open a socket for IPC\n\t\t%s",
+             fio_srv_pid(),
              FIO___PUBSUB_POSTOFFICE.ipc_url);
 }
 #undef FIO___PUBSUB_HIDE_FROM_LOG
@@ -32795,6 +35875,7 @@ FIO_SFUNC void fio___pubsub_at_exit(void *ignr_) {
   fio___pubsub_message_map_destroy(&FIO___PUBSUB_POSTOFFICE.remote_messages);
   fio___pubsub_message_map_destroy(&FIO___PUBSUB_POSTOFFICE.history_messages);
   fio___pubsub_engines_destroy(&FIO___PUBSUB_POSTOFFICE.engines);
+  FIO___LOCK_DESTROY(FIO___PUBSUB_POSTOFFICE.lock);
   fio_queue_perform_all(fio_srv_queue());
 }
 
@@ -32815,7 +35896,7 @@ FIO_SFUNC void fio___pubsub_on_enter_child(void *ignr_) {
                          &FIO___PUBSUB_POSTOFFICE.protocol.ipc,
                          NULL,
                          NULL)) {
-    FIO_LOG_FATAL("%d couldn't connect to pub/sub socket @ %s",
+    FIO_LOG_FATAL("(%d) couldn't connect to pub/sub socket @ %s",
                   fio_srv_pid(),
                   FIO___PUBSUB_POSTOFFICE.ipc_url);
     fio_thread_kill(fio_srv_root_pid(), SIGINT);
@@ -32980,18 +36061,24 @@ has_handle:
   return;
 
 is_master_only:
-  if (fio_srv_is_master())
+  if (!fio_srv_is_master())
     goto error_not_on_master;
 is_global:
-  fio_srv_defer(fio___pubsub_subscribe_task, (void *)s, NULL);
-  fio___postoffice_msmap_set(
-      &FIO___PUBSUB_POSTOFFICE.master_subscriptions + (!args.master_only),
-      fio_risky_hash(args.channel.buf,
-                     args.channel.len,
-                     args.filter | ((size_t)args.is_pattern << 20)),
-      FIO_STR_INFO2(args.channel.buf, args.channel.len),
-      s,
-      NULL);
+  if (1) { /* so C++ can jump even though there's a new var here */
+    fio_srv_defer(fio___pubsub_subscribe_task, (void *)s, NULL);
+    uint64_t hashed_value =
+        fio_risky_hash(args.channel.buf,
+                       args.channel.len,
+                       args.filter | ((size_t)args.is_pattern << 20));
+    FIO___LOCK_LOCK(FIO___PUBSUB_POSTOFFICE.lock);
+    fio___postoffice_msmap_set(
+        &FIO___PUBSUB_POSTOFFICE.master_subscriptions + (!args.master_only),
+        hashed_value,
+        FIO_STR_INFO2(args.channel.buf, args.channel.len),
+        s,
+        NULL);
+    FIO___LOCK_UNLOCK(FIO___PUBSUB_POSTOFFICE.lock);
+  }
   return;
 
 error_not_on_master:
@@ -33000,14 +36087,14 @@ error_not_on_master:
   s->history = FIO_LIST_INIT(s->history);
   fio_subscription_free(s);
   FIO_LOG_WARNING(
-      "%d master-only subscription attempt on a non-master process: %.*s",
+      "(%d) master-only subscription attempt on a non-master process: %.*s",
       fio_srv_pid(),
       (int)args.channel.len,
       args.channel.buf);
   return;
 
 sub_error:
-  FIO_LOG_ERROR("%d (pubsub) subscription/channel cannot be created?"
+  FIO_LOG_ERROR("(%d) pub/sub subscription/channel cannot be created?"
                 "\n\t%zu bytes long\n\t%.*s...",
                 fio_srv_pid(),
                 args.channel.len,
@@ -33047,13 +36134,21 @@ has_handle:
   return 0;
 
 is_global:
-  return fio___postoffice_msmap_remove(
-      &FIO___PUBSUB_POSTOFFICE.master_subscriptions + (!args.master_only),
-      fio_risky_hash(args.channel.buf,
-                     args.channel.len,
-                     args.filter | ((size_t)args.is_pattern << 20)),
-      FIO_STR_INFO3(args.channel.buf, args.channel.len, (size_t)-1),
-      NULL);
+  if (1) {
+    int r;
+    uint64_t hashed_value =
+        fio_risky_hash(args.channel.buf,
+                       args.channel.len,
+                       args.filter | ((size_t)args.is_pattern << 20));
+    FIO___LOCK_LOCK(FIO___PUBSUB_POSTOFFICE.lock);
+    r = fio___postoffice_msmap_remove(
+        &FIO___PUBSUB_POSTOFFICE.master_subscriptions + (!args.master_only),
+        hashed_value,
+        FIO_STR_INFO3(args.channel.buf, args.channel.len, (size_t)-1),
+        NULL);
+    FIO___LOCK_UNLOCK(FIO___PUBSUB_POSTOFFICE.lock);
+    return r;
+  }
 }
 
 /* *****************************************************************************
@@ -33269,11 +36364,11 @@ FIO_SFUNC void fio___pubsub_message_encrypt(fio___pubsub_message_s *m) {
   pos += 8;
   fio_u2buf64_le(pos, m->data.published);
   pos += 8;
-  fio_u2buf16_le(pos, m->data.filter);
+  fio_u2buf16_le(pos, (uint16_t)m->data.filter);
   pos += 2;
-  fio_u2buf16_le(pos, m->data.channel.len);
+  fio_u2buf16_le(pos, (uint16_t)m->data.channel.len);
   pos += 2;
-  fio_u2buf24_le(pos, m->data.message.len);
+  fio_u2buf24_le(pos, (uint32_t)m->data.message.len);
   pos += 3;
   *(pos++) = m->data.is_json;
   const size_t enc_len = m->data.channel.len + m->data.message.len + 2;
@@ -33338,7 +36433,7 @@ FIO_IFUNC void fio___pubsub_message_write2io(fio_s *io, void *m_) {
   fio___pubsub_message_s *m = (fio___pubsub_message_s *)m_;
   if (io == m->data.io)
     return;
-  FIO_LOG_DDEBUG2("%d (pubsub) sending IPC/peer message.", fio_srv_pid());
+  FIO_LOG_DDEBUG2("(%d) pub/sub sending IPC/peer message.", fio_srv_pid());
   fio___pubsub_message_encrypt(m);
   fio_write2(io,
              .buf = fio___pubsub_message_dup(m),
@@ -33367,11 +36462,11 @@ Pub/Sub Message Routing
 FIO_SFUNC void fio___pubsub_message_route(fio___pubsub_message_s *m) {
   fio___pubsub_message_parser_s *p;
   unsigned flags = m->data.is_json;
-  FIO_LOG_DDEBUG2("%d (pubsub) routing message (%x)",
+  FIO_LOG_DDEBUG2("(%d) pub/sub routing message (%x)",
                   fio_srv_pid(),
                   (int)m->data.is_json);
 
-  if (flags & FIO___PUBSUB_INTERNAL_MESSAGE)
+  if (flags & FIO___PUBSUB_SPECIAL)
     goto is_special_message;
 
   if ((FIO___PUBSUB_POSTOFFICE.filter.publish & flags))
@@ -33391,9 +36486,10 @@ FIO_SFUNC void fio___pubsub_message_route(fio___pubsub_message_s *m) {
   return;
 
 is_special_message:
-  FIO_LOG_DDEBUG2("%d (pubsub) internal subscription/ID message received",
+  FIO_LOG_DDEBUG2("(%d) pub/sub internal subscription/ID message received",
                   fio_srv_pid());
   switch (flags) {
+  case FIO___PUBSUB_SPECIAL: /* TODO: run generic command on root */ break;
   case FIO___PUBSUB_SUB:
     fio_subscribe(.io = m->data.io,
                   .channel = m->data.channel,
@@ -33441,12 +36537,12 @@ is_special_message:
     return;
 
   case FIO___PUBSUB_HISTORY_START:
-    FIO_LOG_DDEBUG2("%d (pubsub) internal history start message received",
+    FIO_LOG_DDEBUG2("(%d) pub/sub internal history start message received",
                     fio_srv_pid());
     /* TODO! */
     return;
   case FIO___PUBSUB_HISTORY_END:
-    FIO_LOG_DDEBUG2("%d (pubsub) internal history end message received",
+    FIO_LOG_DDEBUG2("(%d) pub/sub internal history end message received",
                     fio_srv_pid());
     /* TODO! */
     return;
@@ -33469,13 +36565,13 @@ FIO_SFUNC void fio___publish_message_task(void *m_, void *ignr_) {
 void fio_publish___(void); /* SublimeText marker*/
 void fio_publish FIO_NOOP(fio_publish_args_s args) {
   if (FIO_UNLIKELY(args.channel.len > 0xFFFFUL)) {
-    FIO_LOG_ERROR("%d (pubsub) channel name too long (%zu bytes)",
+    FIO_LOG_ERROR("(%d) pub/sub channel name too long (%zu bytes)",
                   fio_srv_pid(),
                   args.channel.len);
     return;
   }
   if (FIO_UNLIKELY(args.message.len > 0xFFFFFFUL)) {
-    FIO_LOG_ERROR("%d (pubsub) message payload too large (%zu bytes)",
+    FIO_LOG_ERROR("(%d) pub/sub message payload too large (%zu bytes)",
                   fio_srv_pid(),
                   args.message.len);
     return;
@@ -33542,7 +36638,7 @@ FIO_IFUNC void fio___pubsub_message_parse(
   fio___pubsub_message_s *m = parser->msg;
   const size_t needed = m->data.channel.len + m->data.message.len +
                         FIO___PUBSUB_MESSAGE_OVERHEAD_NET;
-  FIO_LOG_DDEBUG2("%d (pubsub) parsing IPC/peer message (%zu/%zu bytes)",
+  FIO_LOG_DDEBUG2("(%d) pub/sub parsing IPC/peer message (%zu/%zu bytes)",
                   fio_srv_pid(),
                   existing,
                   needed);
@@ -33559,7 +36655,7 @@ FIO_IFUNC void fio___pubsub_message_parse(
   parser->len = 0;
   m->data.io = io;
   if (fio___pubsub_message_decrypt(m)) {
-    FIO_LOG_SECURITY("%d (pubsub) message decryption error", fio_srv_pid());
+    FIO_LOG_SECURITY("(%d) pub/sub message decryption error", fio_srv_pid());
     fio_close_now(io);
   } else {
     cb(io, m);
@@ -33624,7 +36720,7 @@ FIO_SFUNC void fio___pubsub_protocol_on_close(void *udata) {
   fio___pubsub_message_parser_free(p);
 }
 
-void fio___pubsub_protocol_on_timeout(fio_s *io) {
+static void fio___pubsub_protocol_on_timeout(fio_s *io) {
   static const uint8_t ping_msg[FIO___PUBSUB_MESSAGE_OVERHEAD] = {
       [23] = FIO___PUBSUB_PING};
   fio_write2(io, .buf = (void *)ping_msg, .len = FIO___PUBSUB_MESSAGE_OVERHEAD);
@@ -33644,7 +36740,7 @@ static void fio___pubsub_mock_sub_unsub(const fio_pubsub_engine_s *eng,
 }
 static void fio___pubsub_mock_publish(const fio_pubsub_engine_s *eng,
                                       fio_msg_s *msg) {
-  (void)eng, (void)msg;
+  (void)eng, (void)msg; /* TODO:? sensible default? publish to cluster? */
 }
 
 static void fio___pubsub_attach_task(void *engine_, void *ignr_) {
@@ -33700,7 +36796,7 @@ Channel Creation / Destruction Callback (notifying engines)
 /** Callback for when a channel is created. */
 FIO_IFUNC void fio___channel_on_create(fio_channel_s *ch) {
   fio_buf_info_s name = FIO_BUF_INFO2(ch->name, ch->name_len);
-  FIO_LOG_DDEBUG2("%d (pubsub) %s created, filter %d, length %zu bytes: %s",
+  FIO_LOG_DDEBUG2("(%d) pub/sub %s created, filter %d, length %zu bytes: %s",
                   fio_srv_pid(),
                   (ch->is_pattern ? "pattern" : "channel"),
                   (int)ch->filter,
@@ -33750,7 +36846,7 @@ FIO_IFUNC void fio___channel_on_destroy(fio_channel_s *ch) {
     }
   }
 
-  FIO_LOG_DDEBUG2("%d (pubsub) %s destroyed, filter %d, length %zu bytes: %s",
+  FIO_LOG_DDEBUG2("(%d) pub/sub %s destroyed, filter %d, length %zu bytes: %s",
                   fio_srv_pid(),
                   (ch->is_pattern ? "pattern" : "channel"),
                   (int)ch->filter,
@@ -33793,7 +36889,7 @@ FIO_SFUNC void fio___pubsub_broadcast_hello(fio_s *io) {
       .sin_port = fio_lton16((uint16_t)(uintptr_t)fio_udata_get(io)),
       .sin_addr.s_addr = INADDR_BROADCAST, // inet_addr("255.255.255.255"),
   };
-  FIO_LOG_DEBUG2("(pub/sub) sending broadcast.");
+  FIO_LOG_DEBUG2("(%d) pub/sub sending broadcast.", fio_srv_pid());
   sendto(fio_fd_get(io),
          (const char *)u.u8,
          48,
@@ -33821,7 +36917,8 @@ FIO_SFUNC int fio___pubsub_broadcast_hello_validate(uint64_t *hello) {
   if (mac[0] > fio_ltole64(hello[3]) + 8192 ||
       mac[0] + 8192 < fio_ltole64(hello[3])) {
     FIO_LOG_SECURITY(
-        "(pubsub-broadcast) timing error - possible replay attack?");
+        "(%d) pub/sub-broadcast timing error - possible replay attack?",
+        fio_srv_pid());
     return -1;
   }
   /* test for duplicate connections */
@@ -33829,14 +36926,16 @@ FIO_SFUNC int fio___pubsub_broadcast_hello_validate(uint64_t *hello) {
           &FIO___PUBSUB_POSTOFFICE.remote_uuids,
           hello[0],
           hello[1])) {
-    FIO_LOG_DEBUG2("(pubsub-broadcast) Prevented duplicate connection!");
+    FIO_LOG_DEBUG2("(%d) pub/sub-broadcast Prevented duplicate connection!",
+                   fio_srv_pid());
     return -1;
   }
   /* test MAC */
   const void *k = fio___pubsub_secret_key(fio_ltole64(hello[2]));
   fio_poly1305_auth(mac, k, NULL, 0, hello, 32);
   if (mac[0] != hello[4] || mac[1] != hello[5]) {
-    FIO_LOG_SECURITY("(pubsub-broadcast) MAC failure - under attack?");
+    FIO_LOG_SECURITY("(%d) pub/sub-broadcast MAC failure - under attack?",
+                     fio_srv_pid());
     return -1;
   }
   return 0;
@@ -33875,13 +36974,15 @@ FIO_SFUNC void fio___pubsub_broadcast_on_data(fio_s *io) {
       0) {
     if (len != 48) {
       FIO_LOG_WARNING(
-          "pub/sub peer detection received invalid packet (%zu bytes)!",
+          "(%d) pub/sub peer detection received invalid packet (%zu bytes)!",
+          fio_srv_pid(),
           len);
       continue;
     }
     if (fio___pubsub_broadcast_hello_validate(buf)) {
       FIO_LOG_WARNING(
-          "pub/sub peer detection received invalid packet payload!");
+          "(%d) pub/sub peer detection received invalid packet payload!",
+          fio_srv_pid());
       continue;
     }
     if (fio___pubsub_broadcast_connected_get(
@@ -33903,7 +37004,7 @@ FIO_SFUNC void fio___pubsub_broadcast_on_data(fio_s *io) {
                     addr_buf + 64,
                     64,
                     (NI_NUMERICHOST | NI_NUMERICHOST))) {
-      FIO_LOG_ERROR("couldn't resolve peer address");
+      FIO_LOG_ERROR("(%d) couldn't resolve peer address", fio_srv_pid());
       continue;
     }
     int fd = fio_sock_open(addr_buf,
@@ -33921,7 +37022,8 @@ FIO_SFUNC void fio___pubsub_broadcast_on_data(fio_s *io) {
                                     NULL,
                                     NULL);
     fio___pubsub_message_write2io(peer, m);
-    FIO_LOG_INFO("(cluster) connecting to peer (%zu connections).",
+    FIO_LOG_INFO("(%d) pub/sub-cluster connecting to peer (%zu connections).",
+                 fio_srv_pid(),
                  fio___pubsub_broadcast_connected_count(
                      &FIO___PUBSUB_POSTOFFICE.remote_uuids));
   }
@@ -33982,7 +37084,11 @@ SFUNC void fio___pubsub_broadcast_on_port(void *port_) {
                     FIO_SOCK_TCP | FIO_SOCK_NONBLOCK | FIO_SOCK_SERVER);
   FIO_ASSERT(fd_tcp != -1, "couldn't open cluster-peer listening socket!");
   {
+#if FIO_OS_WIN
+    char enabled = 1;
+#else
     int enabled = 1;
+#endif
     setsockopt(fd_udp, SOL_SOCKET, SO_BROADCAST, &enabled, sizeof(enabled));
     enabled = 1;
     setsockopt(fd_udp, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
@@ -34095,6 +37201,9 @@ HTTP Handle Settings
 #define FIO_HTTP_STATIC_FILE_COMPLETION 1
 #endif
 
+#ifndef FIO_HTTP_LOG_X_REQUEST_START
+#define FIO_HTTP_LOG_X_REQUEST_START 1
+#endif
 /* *****************************************************************************
 HTTP Handle Type
 ***************************************************************************** */
@@ -34138,6 +37247,9 @@ SFUNC fio_http_s *fio_http_destroy(fio_http_s *h);
 
 /** Collects an updated timestamp for logging purposes. */
 SFUNC void fio_http_start_time_set(fio_http_s *);
+
+/** Clears any response data. */
+SFUNC fio_http_s *fio_http_clear_response(fio_http_s *h, bool clear_body);
 
 /* *****************************************************************************
 Opaque User and Controller Data
@@ -34216,6 +37328,14 @@ SFUNC fio_str_info_s fio_http_request_header(fio_http_s *,
                                              fio_str_info_s name,
                                              size_t index);
 
+/**
+ * Returns the number of headers named `name` that were received.
+ *
+ * If `name` buffer is `NULL`, returns the number of unique headers (not the
+ * number of unique values).
+ */
+SFUNC size_t fio_http_request_header_count(fio_http_s *, fio_str_info_s name);
+
 /** Sets the header information associated with the HTTP handle. */
 SFUNC fio_str_info_s fio_http_request_header_set(fio_http_s *,
                                                  fio_str_info_s name,
@@ -34236,6 +37356,9 @@ SFUNC fio_str_info_s fio_http_request_header_add(fio_http_s *,
  * Iterates through all request headers (except cookies!).
  *
  * A non-zero return will stop iteration.
+ *
+ * Returns the number of iterations performed. If `callback` is `NULL`, returns
+ * the number of headers available (multi-value headers are counted as 1).
  * */
 SFUNC size_t fio_http_request_header_each(fio_http_s *,
                                           int (*callback)(fio_http_s *,
@@ -34256,7 +37379,8 @@ SFUNC fio_str_info_s fio_http_body_read(fio_http_s *, size_t length);
 /**
  * Reads from the body until finding `token`, reaching `limit` or EOF.
  *
- * Note: `limit` is ignored if the
+ * Note: `limit` is ignored if zero or if the remaining data is lower than
+ * limit.
  */
 SFUNC fio_str_info_s fio_http_body_read_until(fio_http_s *,
                                               char token,
@@ -34267,6 +37391,13 @@ SFUNC void fio_http_body_expect(fio_http_s *, size_t expected_length);
 
 /** Writes `data` to the body (payload) associated with the HTTP handle. */
 SFUNC void fio_http_body_write(fio_http_s *, const void *data, size_t len);
+
+/**
+ * If the body is stored in a temporary file, returns the file's handle.
+ *
+ * Otherwise returns -1.
+ */
+SFUNC int fio_http_body_fd(fio_http_s *);
 
 /* *****************************************************************************
 Cookies
@@ -34299,8 +37430,8 @@ typedef enum fio_http_cookie_same_site_e {
  * This struct is used together with the `fio_http_cookie_set` macro. i.e.:
  *
  *       fio_http_set_cookie(h,
- *                      .name = "my_cookie",
- *                      .value = "data");
+ *                      .name = FIO_STR_INFO1("my_cookie"),
+ *                      .value = FIO_STR_INFO1("data"));
  *
  */
 typedef struct fio_http_cookie_args_s {
@@ -34339,11 +37470,9 @@ typedef struct fio_http_cookie_args_s {
  */
 SFUNC int fio_http_cookie_set(fio_http_s *h, fio_http_cookie_args_s);
 
-#ifndef __cplusplus
 /** Named arguments helper. See fio_http_cookie_args_s for details. */
 #define fio_http_cookie_set(http___handle, ...)                                \
   fio_http_cookie_set((http___handle), (fio_http_cookie_args_s){__VA_ARGS__})
-#endif
 
 /** Returns a cookie value (either received of newly set), if any. */
 SFUNC fio_str_info_s fio_http_cookie(fio_http_s *,
@@ -34375,6 +37504,9 @@ fio_http_set_cookie_each(fio_http_s *h,
 Responding to an HTTP event.
 ***************************************************************************** */
 
+/** Returns true if no HTTP headers / data was sent (a clean slate). */
+SFUNC int fio_http_is_clean(fio_http_s *);
+
 /** Returns true if the HTTP handle's response was sent. */
 SFUNC int fio_http_is_finished(fio_http_s *);
 
@@ -34384,11 +37516,14 @@ SFUNC int fio_http_is_streaming(fio_http_s *);
 /** Returns true if the HTTP connection was (or should have been) upgraded. */
 SFUNC int fio_http_is_upgraded(fio_http_s *h);
 
-/** Returns true if the HTTP handle establishes a WebSocket Upgrade. */
+/** Returns true if the HTTP handle refers to a WebSocket connection. */
 SFUNC int fio_http_is_websocket(fio_http_s *);
 
-/** Returns true if the HTTP handle establishes an EventSource connection. */
+/** Returns true if the HTTP handle refers to an EventSource connection. */
 SFUNC int fio_http_is_sse(fio_http_s *);
+
+/** Returns true if handle is in the process of freeing itself. */
+SFUNC int fio_http_is_freeing(fio_http_s *);
 
 /**
  * Gets the header information associated with the HTTP handle.
@@ -34405,6 +37540,13 @@ SFUNC int fio_http_is_sse(fio_http_s *);
 SFUNC fio_str_info_s fio_http_response_header(fio_http_s *,
                                               fio_str_info_s name,
                                               size_t index);
+/**
+ * Returns the number of headers named `name` in the response.
+ *
+ * If `name` buffer is `NULL`, returns the number of unique headers (not the
+ * number of unique values).
+ */
+SFUNC size_t fio_http_response_header_count(fio_http_s *, fio_str_info_s name);
 
 /**
  * Sets the header information associated with the HTTP handle.
@@ -34481,7 +37623,7 @@ SFUNC void fio_http_write(fio_http_s *, fio_http_write_args_s args);
   fio_http_write(http_handle, (fio_http_write_args_s){__VA_ARGS__})
 #define fio_http_finish(http_handle) fio_http_write(http_handle, .finish = 1)
 
-/** Closes a persistent HTTP connection (i.s., if upgraded). */
+/** Closes a persistent HTTP connection (i.e., if upgraded). */
 SFUNC void fio_http_close(fio_http_s *h);
 
 /* *****************************************************************************
@@ -34489,16 +37631,22 @@ WebSocket / SSE Helpers
 ***************************************************************************** */
 
 /** Returns non-zero if request headers ask for a WebSockets Upgrade.*/
-SFUNC int fio_http_websockets_requested(fio_http_s *);
+SFUNC int fio_http_websocket_requested(fio_http_s *);
+
+/** Returns non-zero if the response accepts a WebSocket upgrade request. */
+SFUNC int fio_http_websocket_accepted(fio_http_s *h);
 
 /** Sets response data to agree to a WebSockets Upgrade.*/
-SFUNC void fio_http_upgrade_websockets(fio_http_s *);
+SFUNC void fio_http_upgrade_websocket(fio_http_s *);
 
 /** Sets request data to request a WebSockets Upgrade.*/
-SFUNC void fio_http_websockets_set_request(fio_http_s *);
+SFUNC void fio_http_websocket_set_request(fio_http_s *);
 
 /** Returns non-zero if request headers ask for an EventSource (SSE) Upgrade.*/
 SFUNC int fio_http_sse_requested(fio_http_s *);
+
+/** Returns non-zero if the response accepts an SSE request. */
+SFUNC int fio_http_sse_accepted(fio_http_s *h);
 
 /** Sets response data to agree to an EventSource (SSE) Upgrade.*/
 SFUNC void fio_http_upgrade_sse(fio_http_s *);
@@ -34628,7 +37776,7 @@ General Helpers
 ***************************************************************************** */
 
 /** Sends the requested error message and finishes the response. */
-SFUNC void fio_http_send_error_response(fio_http_s *h, size_t status);
+SFUNC int fio_http_send_error_response(fio_http_s *h, size_t status);
 
 /** Returns true (1) if the ETag response matches an if-none-match request. */
 SFUNC int fio_http_etag_is_match(fio_http_s *h);
@@ -34646,7 +37794,18 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
 SFUNC fio_str_info_s fio_http_status2str(size_t status);
 
 /** Logs an HTTP (response) to STDOUT. */
-SFUNC void fio_http_write_log(fio_http_s *h, fio_buf_info_s peer_addr);
+SFUNC void fio_http_write_log(fio_http_s *h);
+
+/**
+ * Writes peer address to `dest` starting with the `forwarded` header, with a
+ * fallback to actual socket address and a final fallback to `"[unknown]"`.
+ *
+ * If `unknown` is returned, the function returns -1. if `dest` capacity is too
+ * small, the number of bytes required will be returned.
+ *
+ * If all goes well, this function returns 0.
+ */
+SFUNC int fio_http_from(fio_str_info_s *dest, const fio_http_s *h);
 
 /* *****************************************************************************
 The HTTP Controller
@@ -34668,7 +37827,9 @@ struct fio_http_controller_s {
   /** called once a request / response had finished */
   void (*on_finish)(fio_http_s *h);
   /** called to close an HTTP connection */
-  void (*close)(fio_http_s *h);
+  void (*close_io)(fio_http_s *h);
+  /** called when the file descriptor is directly required */
+  int (*get_fd)(fio_http_s *h);
 };
 
 /* *****************************************************************************
@@ -34834,7 +37995,7 @@ FIO_SFUNC fio_str_info_s fio_http_date(uint64_t now_in_seconds) {
   static uint64_t date_buf_val;
   if (date_buf_val == now_in_seconds)
     return FIO_STR_INFO2(date_buf, date_len);
-  date_len = fio_time2rfc7231(date_buf, now_in_seconds);
+  date_len = fio_time2log(date_buf, now_in_seconds);
   date_buf[date_len] = 0;
   date_buf_val = now_in_seconds;
   return FIO_STR_INFO2(date_buf, date_len);
@@ -35153,6 +38314,17 @@ FIO_IFUNC fio_str_info_s fio___http_hmap_get2(fio___http_hmap_s *map,
   return r;
 }
 
+FIO_IFUNC size_t fio___http_hmap_count2(fio___http_hmap_s *map,
+                                        fio_str_info_s key) {
+  size_t r = 0;
+  fio___http_sary_s *a =
+      fio___http_hmap_node2val_ptr(fio___http_hmap_get_ptr(map, key));
+  if (!a)
+    return r;
+  r = fio___http_sary_count(a);
+  return r;
+}
+
 /* *****************************************************************************
 Header iteration Task
 ***************************************************************************** */
@@ -35195,13 +38367,18 @@ Cookie Maps
 Controller Validation
 ***************************************************************************** */
 
+FIO_SFUNC int fio___mock_controller_get_fd_cb(fio_http_s *h) {
+  return -1;
+  (void)h;
+}
 FIO_SFUNC void fio___mock_controller_cb(fio_http_s *h) { (void)h; }
 FIO_SFUNC void fio___mock_c_write_body(fio_http_s *h,
                                        fio_http_write_args_s args) {
   if (args.buf) {
     if (args.dealloc)
       args.dealloc((void *)args.buf);
-  } else if (args.fd != -1) {
+  } else if ((unsigned)(args.fd + 1) > 1U && !args.copy &&
+             args.fd != fio_http_body_fd(h)) {
     close(args.fd);
   }
   (void)h;
@@ -35212,7 +38389,8 @@ static fio_http_controller_s FIO___MOCK_CONTROLLER = {
     .send_headers = fio___mock_controller_cb,
     .write_body = fio___mock_c_write_body,
     .on_finish = fio___mock_controller_cb,
-    .close = fio___mock_controller_cb,
+    .close_io = fio___mock_controller_cb,
+    .get_fd = fio___mock_controller_get_fd_cb,
 };
 
 SFUNC fio_http_controller_s *fio___http_controller_validate(
@@ -35229,8 +38407,10 @@ SFUNC fio_http_controller_s *fio___http_controller_validate(
     c->write_body = fio___mock_c_write_body;
   if (!c->on_finish)
     c->on_finish = fio___mock_controller_cb;
-  if (!c->close)
-    c->close = fio___mock_controller_cb;
+  if (!c->close_io)
+    c->close_io = fio___mock_controller_cb;
+  if (!c->get_fd)
+    c->get_fd = fio___mock_controller_get_fd_cb;
   return c;
 }
 
@@ -35244,6 +38424,7 @@ HTTP Handle Type
 #define FIO_HTTP_STATE_WEBSOCKET      8
 #define FIO_HTTP_STATE_SSE            16
 #define FIO_HTTP_STATE_COOKIES_PARSED 32
+#define FIO_HTTP_STATE_FREEING        64
 
 FIO_SFUNC int fio____http_write_start(fio_http_s *, fio_http_write_args_s *);
 FIO_SFUNC int fio____http_write_cont(fio_http_s *, fio_http_write_args_s *);
@@ -35285,6 +38466,7 @@ struct fio_http_s {
 SFUNC fio_http_s *fio_http_destroy(fio_http_s *h) {
   if (!h)
     return h;
+  h->state |= FIO_HTTP_STATE_FREEING;
   h->controller->on_destroyed(h);
 
   fio_keystr_destroy(&h->method, fio___http_keystr_free);
@@ -35303,6 +38485,24 @@ SFUNC fio_http_s *fio_http_destroy(fio_http_s *h) {
 }
 #include FIO_INCLUDE_FILE
 
+/** Clears any response data. */
+SFUNC fio_http_s *fio_http_clear_response(fio_http_s *h, bool clear_body) {
+  fio___http_hmap_destroy(HTTP_HDR_RESPONSE(h));
+  h->state = 0;
+  h->writer = fio____http_write_start;
+  h->received_at = fio_http_get_timestump();
+  h->status = 0;
+  if (!clear_body)
+    return h;
+  fio_bstr_free(h->body.buf);
+  if (h->body.fd != -1)
+    close(h->body.fd);
+  h->body.buf = NULL;
+  h->body.len = h->body.pos = 0;
+  h->body.fd = -1;
+  return h;
+}
+
 /** Create a new http_s handle. */
 SFUNC fio_http_s *fio_http_new(void) { return fio_http_new2(); }
 
@@ -35317,8 +38517,8 @@ SFUNC void fio_http_start_time_set(fio_http_s *h) {
   h->received_at = fio_http_get_timestump();
 }
 
-/** Closes a persistent HTTP connection (i.s., if upgraded). */
-SFUNC void fio_http_close(fio_http_s *h) { h->controller->close(h); }
+/** Closes a persistent HTTP connection (i.e., if upgraded). */
+SFUNC void fio_http_close(fio_http_s *h) { h->controller->close_io(h); }
 
 /** Creates a copy of an existing handle, copying only its request data. */
 SFUNC fio_http_s *fio_http_new_copy_request(fio_http_s *o) {
@@ -35390,10 +38590,21 @@ SFUNC size_t fio_http_status_set(fio_http_s *h, size_t status) {
 Handler State
 ***************************************************************************** */
 
+SFUNC int fio_http_is_clean(fio_http_s *h) {
+  FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");
+  return !h->state;
+}
+
 /** Returns true if the HTTP handle's response was sent. */
 SFUNC int fio_http_is_finished(fio_http_s *h) {
   FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");
   return (!!(h->state & FIO_HTTP_STATE_FINISHED));
+}
+
+/** Returns true if handle is in the process of freeing itself. */
+SFUNC int fio_http_is_freeing(fio_http_s *h) {
+  FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");
+  return (!!(h->state & FIO_HTTP_STATE_FREEING));
 }
 
 /** Returns true if the HTTP handle's response is streaming. */
@@ -35424,16 +38635,6 @@ SFUNC int fio_http_is_sse(fio_http_s *h) {
 Header Data Management
 ***************************************************************************** */
 
-/**
- * Gets the header information associated with the HTTP handle.
- *
- * Since more than a single value may be associated with a header name, the
- * index may be used to collect subsequent values.
- *
- * An empty value is returned if no header value is available (or index is
- * exceeded).
- */
-
 #define FIO___HTTP_HEADER_SET_FN(category, name_, headers, add_val)            \
   /** Sets the header information associated with the HTTP handle. */          \
   fio_str_info_s fio_http_##category##_header_##name_(fio_http_s *h,           \
@@ -35461,6 +38662,22 @@ fio_str_info_s fio_http_response_header(fio_http_s *h,
                                         size_t index) {
   FIO_ASSERT_DEBUG(h, "NULL HTTP Handle!");
   return fio___http_hmap_get2(HTTP_HDR_RESPONSE(h), name, (int32_t)index);
+}
+
+/** Returns the number of headers named `name` that were received. */
+SFUNC size_t fio_http_request_header_count(fio_http_s *h, fio_str_info_s name) {
+  FIO_ASSERT_DEBUG(h, "NULL HTTP Handle!");
+  if (!name.buf)
+    return fio___http_hmap_count(HTTP_HDR_REQUEST(h));
+  return fio___http_hmap_count2(HTTP_HDR_REQUEST(h), name);
+}
+/** Returns the number of headers named `name` that were received. */
+SFUNC size_t fio_http_response_header_count(fio_http_s *h,
+                                            fio_str_info_s name) {
+  FIO_ASSERT_DEBUG(h, "NULL HTTP Handle!");
+  if (!name.buf)
+    return fio___http_hmap_count(HTTP_HDR_RESPONSE(h));
+  return fio___http_hmap_count2(HTTP_HDR_RESPONSE(h), name);
 }
 
 /** Iterates through all headers. A non-zero return will stop iteration. */
@@ -35536,17 +38753,70 @@ FIO_IFUNC void fio___http_cookie_parse_cookie(fio_http_s *h, fio_str_info_s s) {
   }
 }
 
+/** (Helper) HTTP Cookie Parser */
+FIO_IFUNC void fio___http_cookie_parse_set_cookie(fio_http_s *h,
+                                                  fio_str_info_s s) {
+  /* TODO! */
+  fio_str_info_s k = {0}, v = {0};
+  /* remove white-space */
+  while ((s.buf[0] == ' ' || s.buf[0] == '\t') && s.len) {
+    ++s.buf;
+    --s.len;
+  }
+  if (!s.len)
+    return;
+  char *div = (char *)FIO_MEMCHR(s.buf, '=', s.len);
+  char *end = (char *)FIO_MEMCHR(s.buf, ';', s.len);
+  if (div == s.buf || !div)
+    return;
+  if (!end)
+    end = s.buf + s.len;
+  const uint64_t prefix_secure = fio_buf2u64u("_Secure-");
+  const uint32_t prefix_host = fio_buf2u32u("Host");
+  uint32_t cont;
+  k.buf = s.buf;
+  k.len = div - s.buf;
+  v.buf = div + 1;
+  v.len = end - v.buf;
+  do { /* loop to clear away cookie prefixes in any order */
+    cont = 0;
+    if (k.len > 8 && k.buf[0] == '_' &&
+        fio_buf2u64u(k.buf + 1) == prefix_secure) {
+      cont = 1;
+      k.len -= 9;
+      k.buf += 9;
+    }
+    if (k.len > 6 && k.buf[0] == '_' && k.buf[1] == '_' && k.buf[6] == '-' &&
+        fio_buf2u32u(k.buf + 2) == prefix_host) {
+      cont = 1;
+      k.len -= 7;
+      k.buf += 7;
+    }
+  } while (cont);
+  if (k.len)
+    fio___http_cmap_set_if_missing(h->cookies, k, v);
+}
+
 /** (Helper) Parses all HTTP Cookies */
 FIO_SFUNC void fio___http_cookie_collect(fio_http_s *h) {
   fio___http_sary_s *header = NULL;
-  {
-    header = fio___http_hmap_node2val_ptr(
-        fio___http_hmap_get_ptr(h->headers, FIO_STR_INFO1((char *)"cookie")));
+  header = fio___http_hmap_node2val_ptr(
+      fio___http_hmap_get_ptr(h->headers, FIO_STR_INFO1((char *)"cookie")));
+  if (header) {
+    FIO_ARRAY_EACH(fio___http_sary, header, pos) {
+      fio___http_cookie_parse_cookie(h, fio_bstr_info(*pos));
+    }
   }
+  /* if headers were sent, set-cookie data might belong to the handle */
+  if (h->writer != fio____http_write_start)
+    return;
+  header = fio___http_hmap_node2val_ptr(
+      fio___http_hmap_get_ptr(h->headers + 1,
+                              FIO_STR_INFO1((char *)"set-cookie")));
   if (!header)
     return;
   FIO_ARRAY_EACH(fio___http_sary, header, pos) {
-    fio___http_cookie_parse_cookie(h, fio_bstr_info(*pos));
+    fio___http_cookie_parse_set_cookie(h, fio_bstr_info(*pos));
   }
   return;
 }
@@ -35769,6 +39039,9 @@ SFUNC size_t fio_http_cookie_each(fio_http_s *h,
                                                   fio_str_info_s value,
                                                   void *udata),
                                   void *udata) {
+  if (!(fio_atomic_or(&h->state, FIO_HTTP_STATE_COOKIES_PARSED) &
+        FIO_HTTP_STATE_COOKIES_PARSED))
+    fio___http_cookie_collect(h);
   size_t i = 0;
   FIO_MAP_EACH(fio___http_cmap, h->cookies, pos) {
     ++i;
@@ -35799,6 +39072,72 @@ fio_http_set_cookie_each(fio_http_s *h,
       return i;
   }
   return i;
+}
+
+/* *****************************************************************************
+Peer Address
+***************************************************************************** */
+
+/**
+ * Writes peer address to `dest` starting with the `forwarded` header, with a
+ * fallback to actual socket address and a final fallback to `"[unknown]"`.
+ *
+ * If `unknown` is returned, the function returns -1. if `dest` capacity is too
+ * small, the number of bytes required will be returned.
+ *
+ * If all goes well, this function returns 0.
+ */
+SFUNC int fio_http_from(fio_str_info_s *dest, const fio_http_s *h) {
+  int r = 0;
+  /* Guess IP address from headers (forwarded) where possible */
+  fio_str_info_s forwarded =
+      fio_http_request_header((fio_http_s *)h,
+                              FIO_STR_INFO2((char *)"forwarded", 9),
+                              -1);
+  fio_buf_info_s buf;
+  char *end;
+  if (forwarded.len) {
+    forwarded.len &= 1023; /* limit possible attack surface */
+    for (; forwarded.len > 5;) {
+      if ((forwarded.buf[0] | 32) != 'f' || (forwarded.buf[1] | 32) != 'o' ||
+          (forwarded.buf[2] | 32) != 'r' || forwarded.buf[3] != '=') {
+        ++forwarded.buf;
+        --forwarded.len;
+        continue;
+      }
+      forwarded.buf += 4 + (forwarded.buf[4] == '"');
+      break;
+    }
+  client_address_found:
+    buf.buf = end = forwarded.buf;
+    while (*end && *end != '"' && *end != ',' && *end != ' ' && *end != ';' &&
+           (end - forwarded.buf) < 48)
+      ++end;
+    buf.len = (size_t)(end - forwarded.buf);
+  } else {
+    forwarded =
+        fio_http_request_header((fio_http_s *)h,
+                                FIO_STR_INFO2((char *)"x-forwarded-for", 15),
+                                -1);
+    if (forwarded.len) {
+      forwarded.buf += (forwarded.buf[0] == '"');
+      goto client_address_found;
+    }
+#if defined(H___FIO_SOCK___H)
+    if (!(buf = fio_sock_peer_addr(
+              fio_http_controller((fio_http_s *)h)->get_fd((fio_http_s *)h)))
+             .len)
+#endif
+      buf = FIO_BUF_INFO1((char *)"[unknown]");
+    r = -1;
+  }
+  if (dest->capa > dest->len + buf.len) { /* enough space? */
+    FIO_MEMCPY(dest->buf + dest->len, buf.buf, buf.len);
+    dest->len += buf.len;
+    dest->buf[dest->len] = 0;
+  } else
+    r = (int)buf.len - (!buf.len);
+  return r;
 }
 
 /* *****************************************************************************
@@ -35874,8 +39213,11 @@ FIO_SFUNC fio_str_info_s fio___http_body_read_until_buf(fio_http_s *h,
                                                         size_t limit) {
   fio_str_info_s r = FIO_STR_INFO2((h->body.buf + h->body.pos), limit);
   char *end = (char *)FIO_MEMCHR(r.buf, token, limit);
-  if (end)
-    r.len = (end - r.buf) + 1;
+  if (end) {
+    ++end;
+    r.len = end - r.buf;
+    h->body.pos = end - h->body.buf;
+  }
   return r;
 }
 FIO_SFUNC void fio___http_body_expect_buf(fio_http_s *h, size_t len) {
@@ -35907,6 +39249,13 @@ Body Management - Public API
 /** Gets the body (payload) length associated with the HTTP handle. */
 SFUNC size_t fio_http_body_length(fio_http_s *h) { return h->body.len; }
 
+/**
+ * If the body is stored in a temporary file, returns the file's handle.
+ *
+ * Otherwise returns -1.
+ */
+SFUNC int fio_http_body_fd(fio_http_s *h) { return h->body.fd; }
+
 /** Adjusts the body's reading position. Negative values start at the end. */
 SFUNC size_t fio_http_body_seek(fio_http_s *h, ssize_t pos) {
   if (pos < 0) {
@@ -35935,7 +39284,7 @@ SFUNC fio_str_info_s fio_http_body_read(fio_http_s *h, size_t length) {
 /**
  * Reads from the body until finding `token`, reaching `limit` or EOF.
  *
- * Note: `limit` is ignored if the
+ * Note: `limit` is ignored if zero or larger than remaining data.
  */
 SFUNC fio_str_info_s fio_http_body_read_until(fio_http_s *h,
                                               char token,
@@ -35999,8 +39348,20 @@ FIO_SFUNC int fio____http_write_start(fio_http_s *h,
                                       fio_http_write_args_s *args) {
   /* if response has an `etag` header matching `if-none-match`, skip */
   fio___http_hmap_s *hdrs = h->headers + (!!h->status);
-  if (h->status && args->len && fio___http_response_etag_if_none_match(h))
-    return -1;
+  if (h->status) {
+    if (args->len && fio___http_response_etag_if_none_match(h))
+      return -1;
+    if (!args->len && args->finish && h->status >= 400) {
+      fio_http_send_error_response(h, h->status);
+      return 0;
+    }
+    /* validate Date header */
+    fio___http_hmap_set2(
+        hdrs,
+        FIO_STR_INFO2((char *)"date", 4),
+        fio_http_date(fio_http_get_timestump() / FIO___HTTP_TIME_DIV),
+        0);
+  }
   /* test if streaming / single body response */
   if (!fio___http_hmap_get_ptr(hdrs,
                                FIO_STR_INFO2((char *)"content-length", 14))) {
@@ -36016,17 +39377,12 @@ FIO_SFUNC int fio____http_write_start(fio_http_s *h,
       h->state |= FIO_HTTP_STATE_STREAMING;
     }
   }
-  /* validate Date header */
-  fio___http_hmap_set2(
-      hdrs,
-      FIO_STR_INFO2((char *)"date", 4),
-      fio_http_date(fio_http_get_timestump() / FIO___HTTP_TIME_DIV),
-      0);
 
   /* start a response, unless status == 0 (which starts a request). */
   h->controller->send_headers(h);
   return (h->writer = fio____http_write_cont)(h, args);
 }
+
 FIO_SFUNC int fio____http_write_cont(fio_http_s *h,
                                      fio_http_write_args_s *args) {
   if (args->buf || args->fd) {
@@ -36067,7 +39423,7 @@ WebSocket / SSE Helpers
 ***************************************************************************** */
 
 /** Returns non-zero if request headers ask for a WebSockets Upgrade.*/
-SFUNC int fio_http_websockets_requested(fio_http_s *h) {
+SFUNC int fio_http_websocket_requested(fio_http_s *h) {
   fio_str_info_s val =
       fio_http_request_header(h, FIO_STR_INFO2((char *)"connection", 10), 0);
   /* test for "Connection: Upgrade" (TODO? allow for multi-value?) */
@@ -36087,11 +39443,31 @@ SFUNC int fio_http_websockets_requested(fio_http_s *h) {
                                 0);
   if (val.len != 24)
     return 0;
+  /* test for version value */
+  val = fio_http_request_header(
+      h,
+      FIO_STR_INFO2((char *)"sec-websocket-version", 21),
+      0);
+  if (val.len != 2 || (val.buf[0] != '1' || val.buf[1] != '3'))
+    return -1; /* note the error value is still true, requested WebSocket... */
   return 1;
 }
 
 /** Sets response data to agree to a WebSockets Upgrade.*/
-SFUNC void fio_http_upgrade_websockets(fio_http_s *h) {
+SFUNC void fio_http_upgrade_websocket(fio_http_s *h) {
+  { /* validate WebSocket version */
+    fio_str_info_s val = fio_http_request_header(
+        h,
+        FIO_STR_INFO2((char *)"sec-websocket-version", 21),
+        0);
+    if (val.len != 2 || (val.buf[0] != '1' || val.buf[1] != '3')) {
+      fio_http_response_header_set(
+          h,
+          FIO_STR_INFO2((char *)"sec-websocket-version", 21),
+          FIO_STR_INFO2((char *)"13", 2));
+      fio_http_send_error_response(h, 400);
+    }
+  }
   h->status = 101;
   fio_http_response_header_set(h,
                                FIO_STR_INFO2((char *)"connection", 10),
@@ -36099,11 +39475,6 @@ SFUNC void fio_http_upgrade_websockets(fio_http_s *h) {
   fio_http_response_header_set(h,
                                FIO_STR_INFO2((char *)"upgrade", 7),
                                FIO_STR_INFO2((char *)"websocket", 9));
-  /* we ignore client version and force the RFC final version instead */
-  fio_http_response_header_set(
-      h,
-      FIO_STR_INFO2((char *)"sec-websocket-version", 21),
-      FIO_STR_INFO2((char *)"13", 2));
   { /* Sec-WebSocket-Accept */
     fio_str_info_s k =
         fio_http_request_header(h,
@@ -36142,7 +39513,7 @@ handshake_error:
 }
 
 /** Sets request data to request a WebSockets Upgrade.*/
-SFUNC void fio_http_websockets_set_request(fio_http_s *h) {
+SFUNC void fio_http_websocket_set_request(fio_http_s *h) {
   fio_http_request_header_set(h,
                               FIO_STR_INFO2((char *)"connection", 10),
                               FIO_STR_INFO2((char *)"Upgrade", 7));
@@ -36153,11 +39524,14 @@ SFUNC void fio_http_websockets_set_request(fio_http_s *h) {
                               FIO_STR_INFO2((char *)"cache-control", 13),
                               FIO_STR_INFO2((char *)"no-cache", 8));
   fio_http_request_header_set(h,
-                              FIO_STR_INFO2((char *)"connection", 10),
-                              FIO_STR_INFO2((char *)"keep-alive", 10));
-  fio_http_request_header_set(h,
                               FIO_STR_INFO2((char *)"upgrade", 7),
                               FIO_STR_INFO2((char *)"websocket", 9));
+  {
+    fio_http_request_header_set_if_missing(
+        h,
+        FIO_STR_INFO2((char *)"origin", 6),
+        fio_http_request_header(h, FIO_STR_INFO2((char *)"host", 4), 0));
+  }
   fio_http_request_header_set(
       h,
       FIO_STR_INFO2((char *)"sec-websocket-version", 21),
@@ -36169,23 +39543,116 @@ SFUNC void fio_http_websockets_set_request(fio_http_s *h) {
     fio_string_write_base64enc(&key, NULL, tmp, 16, 0);
     fio_http_request_header_set(h,
                                 FIO_STR_INFO2((char *)"sec-websocket-key", 17),
-                                FIO_STR_INFO2((char *)"13", 2));
+                                key);
   }
   /* sec-websocket-extensions ? */
   /* send request? */
+}
+
+/** Returns non-zero if the response accepts a WebSocket upgrade request. */
+SFUNC int fio_http_websocket_accepted(fio_http_s *h) {
+  if (h->status != 101)
+    return 0;
+  if (!fio_http_websocket_requested(h))
+    return 0;
+  fio_str_info_s tst =
+      fio_http_response_header(h, FIO_STR_INFO2((char *)"connection", 10), 0);
+  if (tst.len < 7 ||
+      (fio_buf2u64_le(tst.buf) | (uint64_t)0x20202020202020FFULL) !=
+          (fio_buf2u64_le("upgrade") | (uint64_t)0x20202020202020FFULL))
+    return 0;
+  tst = fio_http_response_header(h, FIO_STR_INFO2((char *)"upgrade", 7), 0);
+  if (tst.len < 9 || (tst.buf[0] | 32) != 'w' ||
+      (fio_buf2u64u(tst.buf + 1) | (uint64_t)0x2020202020202020ULL) !=
+          fio_buf2u64u("ebsocket"))
+    return 0;
+  { /* Sec-WebSocket-Accept */
+    tst = fio_http_response_header(
+        h,
+        FIO_STR_INFO2((char *)"sec-websocket-accept", 20),
+        0);
+    if (!tst.len)
+      return 0;
+
+    fio_str_info_s k =
+        fio_http_request_header(h,
+                                FIO_STR_INFO2((char *)"sec-websocket-key", 17),
+                                0);
+    FIO_STR_INFO_TMP_VAR(accept_val, 63);
+    if (k.len != 24)
+      return 0;
+    fio_string_write(&accept_val, NULL, k.buf, k.len);
+    fio_string_write(&accept_val,
+                     NULL,
+                     "258EAFA5-E914-47DA-95CA-C5AB0DC85B11",
+                     36);
+    fio_sha1_s sha = fio_sha1(accept_val.buf, accept_val.len);
+    fio_sha1_digest(&sha);
+    accept_val.len = 0;
+    fio_string_write_base64enc(&accept_val,
+                               NULL,
+                               fio_sha1_digest(&sha),
+                               fio_sha1_len(),
+                               0);
+    if (!FIO_STR_INFO_IS_EQ(tst, accept_val)) {
+      FIO_LOG_DDEBUG2(
+          "(%d) sec-websocket-key invalid, WebSocket handshake failed.\n\t"
+          "%s != %s",
+          getpid(),
+          tst.buf,
+          accept_val.buf);
+      return 0;
+    }
+  }
+  h->state |= (FIO_HTTP_STATE_UPGRADED | FIO_HTTP_STATE_WEBSOCKET |
+               FIO_HTTP_STATE_FINISHED);
+  h->writer = fio____http_write_upgraded;
+  return 1;
 }
 
 /** Returns non-zero if request headers ask for an EventSource (SSE) Upgrade.*/
 SFUNC int fio_http_sse_requested(fio_http_s *h) {
   fio_str_info_s val =
       fio_http_request_header(h, FIO_STR_INFO2((char *)"accept", 6), 0);
-  if (val.len == 17 && fio_buf2u64u(val.buf) == fio_buf2u64u("text/eve") &&
-      fio_buf2u64u(val.buf + 8) == fio_buf2u64u("nt-strea") &&
-      val.buf[16] == 'm') {
-    FIO_LOG_DDEBUG("EventSource connection requested.");
-    return 1;
+  if (val.len < 17)
+    return 0;
+  if ((val.buf[0] | 32) != 't')
+    return 0;
+  uint64_t t0 = fio_buf2u64u(val.buf + 1) | (uint64_t)0x2020202020202020ULL;
+  uint64_t t1 = fio_buf2u64u(val.buf + 9) | (uint64_t)0x2020202020202020ULL;
+  if ((t0 != fio_buf2u64u("ext/even")) || (t1 != fio_buf2u64u("t-stream")))
+    return 0; /* note that '/' and '-' both have 32 (bit[5]) set */
+  FIO_LOG_DDEBUG2("(%d) EventSource connection requested.",
+                  fio_thread_getpid());
+  return 1;
+}
+
+/** Returns non-zero if the response accepts an SSE request. */
+SFUNC int fio_http_sse_accepted(fio_http_s *h) {
+  if (!fio_http_sse_requested(h))
+    return 0;
+  if (h->status != 200)
+    return 0;
+  fio_str_info_s val =
+      fio_http_request_header(h, FIO_STR_INFO2((char *)"accept", 6), 0);
+  for (size_t i = 0; i < 2; ++i) {
+    if (val.len < 17)
+      return 0;
+    if ((val.buf[0] | 32) != 't')
+      return 0;
+    uint64_t t0 = fio_buf2u64u(val.buf + 1) | (uint64_t)0x2020202020202020ULL;
+    uint64_t t1 = fio_buf2u64u(val.buf + 9) | (uint64_t)0x2020202020202020ULL;
+    if ((t0 != fio_buf2u64u("ext/even")) || (t1 != fio_buf2u64u("t-stream")))
+      return 0; /* note that '/' and '-' both have 32 (bit[5]) set */
+    val = fio_http_response_header(h,
+                                   FIO_STR_INFO2((char *)"content-type", 12),
+                                   0);
   }
-  return 0;
+  h->state |=
+      (FIO_HTTP_STATE_UPGRADED | FIO_HTTP_STATE_SSE | FIO_HTTP_STATE_FINISHED);
+  h->writer = fio____http_write_upgraded;
+  FIO_LOG_DDEBUG2("EventSource connection accepted.");
+  return 1;
 }
 
 /** Sets response data to agree to an EventSource (SSE) Upgrade.*/
@@ -36219,7 +39686,6 @@ SFUNC void fio_http_sse_set_request(fio_http_s *h) {
   fio_http_request_header_set(h,
                               FIO_STR_INFO2((char *)"cache-control", 13),
                               FIO_STR_INFO2((char *)"no-cache", 8));
-  /* TODO: send request? */
 }
 
 /* *****************************************************************************
@@ -36358,9 +39824,9 @@ Error Handling
 ***************************************************************************** */
 
 /** Sends the requested error message and finishes the response. */
-SFUNC void fio_http_send_error_response(fio_http_s *h, size_t status) {
+SFUNC int fio_http_send_error_response(fio_http_s *h, size_t status) {
   if (!h || h->writer != fio____http_write_start)
-    return;
+    return -1;
   if (!status || status > 1000)
     status = 404;
   h->status = (uint32_t)status;
@@ -36395,62 +39861,50 @@ SFUNC void fio_http_send_error_response(fio_http_s *h, size_t status) {
     args.dealloc = NULL;
   }
   fio_http_write FIO_NOOP(h, args);
+  return 0;
 }
 
 /* *****************************************************************************
 HTTP Logging
 ***************************************************************************** */
 
+SFUNC void fio___http_write_pid(fio_str_info_s *dest) {
+  static int last_pid = 0;
+  static char buf[64];
+  static size_t len = 0;
+#ifdef H___FIO_SERVER___H
+  int pid = fio_srv_pid();
+#else
+  int pid = fio_thread_getpid();
+#endif
+  if (last_pid != pid)
+    goto rewrite;
+copy:
+  if (len)
+    FIO_MEMCPY(dest->buf + dest->len, buf, len);
+  dest->len += len;
+  return;
+rewrite:
+  len = 0;
+  buf[len++] = '[';
+  if (pid > 0) {
+    size_t d = fio_digits10u((uint64_t)pid);
+    fio_ltoa10u(buf + 1, (uint64_t)pid, d);
+    len += d;
+  }
+  buf[len++] = ']';
+  last_pid = pid;
+  goto copy;
+}
 /** Logs an HTTP (response) to STDOUT. */
-SFUNC void fio_http_write_log(fio_http_s *h, fio_buf_info_s peer_addr) {
+SFUNC void fio_http_write_log(fio_http_s *h) {
   FIO_STR_INFO_TMP_VAR(buf, 1023);
   intptr_t bytes_sent = h->sent;
-  uint64_t time_start, time_end;
+  uint64_t time_start, time_end, time_proxy = 0;
   time_start = h->received_at;
   time_end = fio_http_get_timestump();
   fio_str_info_s date = fio_http_date(time_end / FIO___HTTP_TIME_DIV);
-
-  { /* try to gather address from request headers */
-    /* Guess IP address from headers (forwarded) where possible */
-    fio_str_info_s forwarded =
-        fio_http_request_header(h, FIO_STR_INFO2((char *)"forwarded", 9), -1);
-    if (forwarded.len) {
-      forwarded.len &= 1023; /* limit possible attack surface */
-      for (; forwarded.len > 5;) {
-        if ((forwarded.buf[0] | 32) != 'f' || (forwarded.buf[1] | 32) != 'o' ||
-            (forwarded.buf[2] | 32) != 'r' || forwarded.buf[3] != '=') {
-          ++forwarded.buf;
-          --forwarded.len;
-          continue;
-        }
-        forwarded.buf += 4 + (forwarded.buf[4] == '"');
-        char *end = forwarded.buf;
-        while (*end && *end != '"' && *end != ',' && *end != ' ' &&
-               *end != ';' && (end - forwarded.buf) < 48)
-          ++end;
-        buf.len = (size_t)(end - forwarded.buf);
-        if (buf.len)
-          FIO_MEMCPY(buf.buf, forwarded.buf, buf.len);
-        break;
-      }
-    }
-    if (!buf.len) { /* if we failed, use peer_addr */
-      if (peer_addr.len) {
-        FIO_MEMCPY(buf.buf, peer_addr.buf, peer_addr.len);
-        buf.len = peer_addr.len;
-      } else {
-        FIO_MEMCPY(buf.buf, "[unknown]", 9);
-        buf.len = 9;
-      }
-    }
-  }
-  FIO_MEMCPY(buf.buf + buf.len, " - - [", 6);
-  FIO_MEMCPY(buf.buf + buf.len + 6, date.buf, date.len);
-  buf.len += date.len + 6;
-  fio_string_write2(
-      &buf,
-      NULL,
-      FIO_STRING_WRITE_STR2((const char *)"] \"", 3),
+  fio_string_write_s to_write[16] = {
       FIO_STRING_WRITE_STR_INFO(fio_keystr_info(&h->method)),
       FIO_STRING_WRITE_STR2((const char *)" ", 1),
       FIO_STRING_WRITE_STR_INFO(fio_keystr_info(&h->path)),
@@ -36463,11 +39917,48 @@ SFUNC void fio_http_write_log(fio_http_s *h, fio_buf_info_s peer_addr) {
                         : (FIO_STRING_WRITE_STR2((const char *)"---", 3))),
       FIO_STRING_WRITE_STR2((const char *)" ", 1),
       FIO_STRING_WRITE_NUM(time_end - time_start),
-      FIO_STRING_WRITE_STR2((const char *)(FIO___HTTP_TIME_UNIT "\r\n"), 4));
+      FIO_STRING_WRITE_STR2((const char *)(FIO___HTTP_TIME_UNIT "\r\n"), 4),
+  };
+  if (FIO_HTTP_LOG_X_REQUEST_START) {
+    /* log request wait time using x-request-start header */
+    fio_str_info_s xstart =
+        fio_http_request_header(h,
+                                FIO_STR_INFO2((char *)"x-request-start", 15),
+                                0);
+    unsigned step =
+        (xstart.len > 1 && (xstart.buf[0] | 32) == 't' && xstart.buf[1] == '=');
+    step <<= 1;
+    xstart.buf += step;
+    xstart.len -= step;
+    time_proxy = fio_atol(&xstart.buf);
+    time_proxy *= (FIO___HTTP_TIME_DIV / 1000); /* assumes info in ms */
+    time_proxy = time_start - time_proxy;
+    if (time_proxy < (512 * FIO___HTTP_TIME_DIV)) { /* was ms? */
+      to_write[11] =
+          FIO_STRING_WRITE_STR2((const char *)(FIO___HTTP_TIME_UNIT " (wait "),
+                                9);
+      to_write[12] = FIO_STRING_WRITE_NUM(time_proxy);
+      to_write[13] =
+          FIO_STRING_WRITE_STR2((const char *)(FIO___HTTP_TIME_UNIT ")\r\n"),
+                                5);
+    }
+  }
+
+  /* Write log line to buffer */
+  fio___http_write_pid(&buf);
+  buf.buf[buf.len++] = ' ';
+  fio_http_from(&buf, h);
+  FIO_MEMCPY(buf.buf + buf.len, " - - ", 5);
+  FIO_MEMCPY(buf.buf + buf.len + 5, date.buf, date.len);
+  buf.len += date.len + 6;
+  buf.buf[buf.len++] = ' ';
+  buf.buf[buf.len++] = '\"';
+  fio_string_write2 FIO_NOOP(&buf, NULL, to_write);
 
   if (buf.buf[buf.len - 1] != '\n')
     buf.buf[buf.len++] = '\n'; /* log was truncated, data too long */
 
+  /* Write log line to STDOUT */
   fwrite(buf.buf, 1, buf.len, stdout);
   h->received_at = time_end;
 }
@@ -37116,7 +40607,8 @@ FIO_SFUNC void fio___http_cleanup(void *ignr_) {
     (void)names; /* if unused */
   }
 #endif /* FIO_HTTP_CACHE_LIMIT */
-  FIO_LOG_DEBUG2("HTTP MIME hash storage count/capa: %zu / %zu",
+  FIO_LOG_DEBUG2("(%d) HTTP MIME hash storage count/capa: %zu / %zu",
+                 fio_getpid(),
                  FIO___HTTP_MIMETYPES.count,
                  fio___http_mime_map_capa(&FIO___HTTP_MIMETYPES));
   fio___http_mime_map_destroy(&FIO___HTTP_MIMETYPES);
@@ -37311,6 +40803,7 @@ static int fio_http1___start(fio_http1_parser_s *p,
                              fio_buf_info_s *buf,
                              void *udata) {
   /* find line start/end and test */
+  fio_buf_info_s wrd[3];
   char *start = buf->buf;
   char *tmp;
   while ((start[0] == ' ' || start[0] == '\r' || start[0] == '\n') &&
@@ -37332,40 +40825,36 @@ static int fio_http1___start(fio_http1_parser_s *p,
   eol -= eol[-1] == '\r';
 
   /* parse first line */
-  if (start[0] > ('0' - 1) && start[0] < ('9' + 1))
-    goto parse_response_line;
-  /* request: method path version */
+  /* request: method path version ; response: version code txt */
   if (!(tmp = (char *)FIO_MEMCHR(start, ' ', (size_t)(eol - start))))
     return -1;
-  if (fio_http1_on_method(FIO_BUF_INFO2(start, (size_t)(tmp - start)), udata))
-    return -1;
+  wrd[0] = FIO_BUF_INFO2(start, (size_t)(tmp - start));
   start = tmp + 1;
   if (!(tmp = (char *)FIO_MEMCHR(start, ' ', eol - start)))
     return -1;
-  if (fio_http1_on_url(FIO_BUF_INFO2(start, (size_t)(tmp - start)), udata))
-    return -1;
+  wrd[1] = FIO_BUF_INFO2(start, (size_t)(tmp - start));
   start = tmp + 1;
   if (start >= eol)
     return -1;
-  if (fio_http1_on_version(
-          FIO_BUF_INFO2(start,
-                        (size_t)(((eol - start) > 14) ? 14 : (eol - start))),
-          udata))
+  wrd[2] = FIO_BUF_INFO2(start, (size_t)(eol - start));
+  if (fio_c2i(wrd[1].buf[0]) < 10) /* test if path or code */
+    goto parse_response_line;
+  if (wrd[2].len > 14)
+    wrd[2].len = 14;
+  if (fio_http1_on_method(wrd[0], udata))
+    return -1;
+  if (fio_http1_on_url(wrd[1], udata))
+    return -1;
+  if (fio_http1_on_version(wrd[2], udata))
     return -1;
   return (p->fn = fio_http1___read_header)(p, buf, udata);
 
 parse_response_line:
-  /* response: version code text */
-  if (!(tmp = (char *)FIO_MEMCHR(start, ' ', eol - start)))
+  if (wrd[0].len > 14)
+    wrd[0].len = 14;
+  if (fio_http1_on_version(wrd[0], udata))
     return -1;
-  if (fio_http1_on_version(FIO_BUF_INFO2(start, (size_t)(tmp - start)), udata))
-    return -1;
-  start = tmp + 1;
-  if (!(tmp = (char *)FIO_MEMCHR(start, ' ', eol - start)))
-    return -1;
-  if (fio_http1_on_status(fio_atol10(&start),
-                          FIO_BUF_INFO2((tmp + 1), (size_t)(eol - tmp)),
-                          udata))
+  if (fio_http1_on_status(fio_atol10u(&wrd[1].buf), wrd[2], udata))
     return -1;
   return (p->fn = fio_http1___read_header)(p, buf, udata);
 }
@@ -37508,7 +40997,6 @@ static inline int fio_http1___read_header_line(
                    fio_buf_info_s,
                    fio_buf_info_s,
                    void *)) {
-  int r;
   for (;;) {
     char *start = buf->buf;
     char *eol = (char *)FIO_MEMCHR(start, '\n', buf->len);
@@ -37535,19 +41023,20 @@ static inline int fio_http1___read_header_line(
       while (eol[-1] == ' ' || eol[-1] == '\t')
         --eol;
     value = FIO_BUF_INFO2((div == eol) ? NULL : div, (size_t)(eol - div));
-    r = handler(p, name, value, udata);
+    int r = handler(p, name, value, udata);
     if (FIO_UNLIKELY(r))
       return r;
   }
 
 headers_finished:
-  if (p->fn == fio_http1___read_header_post_expect &&
+  if (p->fn == fio_http1___read_header_post_expect && p->expected &&
       fio_http1_on_expect(udata))
     goto expect_failed;
   p->fn = (!p->expected)         ? fio_http1___finish
           : (!(p->expected + 1)) ? fio_http1___read_body_chunked
                                  : fio_http1___read_body;
   return p->fn(p, buf, udata);
+
 expect_failed:
   *p = (fio_http1_parser_s){0};
   return 1;
@@ -37705,14 +41194,6 @@ The parser provides static functions only, always as part or implementation.
 #define H___FIO_WEBSOCKET_PARSER___H
 
 /* *****************************************************************************
-WebSocket Parser Settings
-***************************************************************************** */
-#ifndef WEBSOCKET_CLIENT_MUST_MASK
-/** According to the RFC, a client WebSocket MUST mask messages. */
-#define WEBSOCKET_CLIENT_MUST_MASK 1
-#endif
-
-/* *****************************************************************************
 WebSocket Parsing API
 ***************************************************************************** */
 
@@ -37768,7 +41249,11 @@ FIO_SFUNC void fio_websocket_on_protocol_close(void *udata, fio_buf_info_s msg);
 /* *****************************************************************************
 WebSocket Formatting API
 ***************************************************************************** */
-/** returns the length of the buffer required to wrap a message `len` long */
+/**
+ * Returns the length of the buffer required to wrap a message `len` long
+ *
+ * Client connections should add 4 to this number to accommodate for the mask.
+ */
 FIO_IFUNC uint64_t fio_websocket_wrapped_len(uint64_t len);
 
 /**
@@ -37861,20 +41346,20 @@ FIO_IFUNC uint64_t fio_websocket_header(void *target,
   ((uint8_t *)target)[1] = ((!!mask) << 7U);
   size_t mask_l = ((!!mask) << 2);
   if (message_len < 126) {
-    ((uint8_t *)target)[1] = message_len;
+    ((uint8_t *)target)[1] |= message_len;
     if (mask)
       fio_u2buf32u(((uint8_t *)target + 2), mask);
     return 2 + mask_l;
   } else if (message_len < (1UL << 16)) {
     /* head is 4 bytes */
-    ((uint8_t *)target)[1] = 126;
+    ((uint8_t *)target)[1] |= 126;
     fio_u2buf16_be(((uint8_t *)target + 2), message_len);
     if (mask)
       fio_u2buf32u(((uint8_t *)target + 4), mask);
     return 4 + mask_l;
   } else {
     /* Really Long Message  */
-    ((uint8_t *)target)[1] = 127;
+    ((uint8_t *)target)[1] |= 127;
     fio_u2buf64_be(((uint8_t *)target + 2), message_len);
     if (mask)
       fio_u2buf32u(((uint8_t *)target + 10), mask);
@@ -38046,24 +41531,24 @@ FIO_SFUNC int fio___websocket_consume_header(fio_websocket_parser_s *p,
   const uint8_t mask_f = (((uint8_t *)buf->buf)[1] >> 7) & 1;
   const uint8_t mask_l = (mask_f << 2);
   const uint8_t info = (uint8_t)(buf->buf[0]);
-  uint8_t len_indicator = ((((uint8_t *)buf->buf)[1]) & 127);
+  uint8_t len_indicator = ((((uint8_t *)buf->buf)[1]) & 127U);
   switch (len_indicator) {
   case 126:
-    if (buf->len < (4ULL + mask_l))
+    if (buf->len < 8UL)
       return 1;
     p->expect = fio_buf2u16_be(buf->buf + 2);
-    p->mask = mask_f ? fio_buf2u32u(buf->buf + 4) : 0;
+    p->mask = (0ULL - mask_f) & fio_buf2u32u(buf->buf + 4);
     buf->buf += 4 + mask_l;
     buf->len -= 4 + mask_l;
     break;
 
   case 127:
-    if (buf->len < (10ULL + mask_l))
+    if (buf->len < 14UL)
       return 1;
     p->expect = fio_buf2u64_be(buf->buf + 2);
     if (p->expect & 0xFF00000000000000ULL)
       return -1; /* really?! */
-    p->mask = mask_f ? fio_buf2u32u(buf->buf + 10) : 0;
+    p->mask = (0ULL - mask_f) & fio_buf2u32u(buf->buf + 10);
     buf->buf += 10 + mask_l;
     buf->len -= 10 + mask_l;
     break;
@@ -38188,8 +41673,10 @@ typedef struct fio_http_settings_s {
   void (*pre_http_body)(fio_http_s *h);
   /** Callback for HTTP requests (server) or responses (client). */
   void (*on_http)(fio_http_s *h);
+  /** Called when a request / response cycle is finished with no Upgrade. */
+  void (*on_finish)(fio_http_s *h);
   /** (optional) the callback to be performed when the HTTP service closes. */
-  void (*on_finish)(struct fio_http_settings_s *settings);
+  void (*on_stop)(struct fio_http_settings_s *settings);
 
   /** Authenticate EventSource (SSE) requests, return non-zero to deny.*/
   int (*on_authenticate_sse)(fio_http_s *h);
@@ -38275,21 +41762,27 @@ typedef struct fio_http_settings_s {
    */
   uint8_t timeout;
   /**
-   * Timeout for the WebSocket connections, a ping will be sent whenever the
-   * timeout is reached. Defaults to FIO_HTTP_DEFAULT_TIMEOUT_LONG seconds.
+   * Timeout for the WebSocket connections in seconds. Defaults to
+   * FIO_HTTP_DEFAULT_TIMEOUT_LONG seconds.
+   *
+   * A ping will be sent whenever the timeout is reached.
    *
    * Connections are only closed when a ping cannot be sent (the network layer
    * fails). Pongs are ignored.
    */
   uint8_t ws_timeout;
   /**
-   * Timeout for EventSource (SSE) connections, a ping will be sent whenever the
-   * timeout is reached. Defaults to FIO_HTTP_DEFAULT_TIMEOUT_LONG seconds.
+   * Timeout for EventSource (SSE) connections in seconds. Defaults to
+   * FIO_HTTP_DEFAULT_TIMEOUT_LONG seconds.
+   *
+   * A ping will be sent whenever the timeout is reached.
    *
    * Connections are only closed when a ping cannot be sent (the network layer
    * fails).
    */
   uint8_t sse_timeout;
+  /** Timeout for client connections (only relevant in client mode). */
+  uint8_t connect_timeout;
   /** Logging flag - set to TRUE to log HTTP requests. */
   uint8_t log;
 } fio_http_settings_s;
@@ -38311,7 +41804,7 @@ SFUNC fio_s *fio_http_io(fio_http_s *);
 #define fio_http_subscribe(h, ...)                                             \
   fio_subscribe(.io = fio_http_io(h), __VA_ARGS__)
 
-/** TODO: Connects to HTTP / WebSockets / SSE connections on `url`. */
+/** Connects to HTTP / WebSockets / SSE connections on `url`. */
 SFUNC fio_s *fio_http_connect(const char *url,
                               fio_http_s *h,
                               fio_http_settings_s settings);
@@ -38319,6 +41812,9 @@ SFUNC fio_s *fio_http_connect(const char *url,
 /** Connects to HTTP / WebSockets / SSE connections on `url`. */
 #define fio_http_connect(url, h, ...)                                          \
   fio_http_connect(url, h, (fio_http_settings_s){__VA_ARGS__})
+
+/** Returns the HTTP settings associated with the HTTP object, if any. */
+SFUNC fio_http_settings_s *fio_http_settings(fio_http_s *);
 
 /* *****************************************************************************
 WebSocket Helpers - HTTP Upgraded Connections
@@ -38400,7 +41896,7 @@ static int fio___http_default_authenticate(fio_http_s *h) {
 }
 
 // on_queue
-static void fio___http_default_on_finish(struct fio_http_settings_s *settings) {
+static void fio___http_default_on_stop(struct fio_http_settings_s *settings) {
   ((void)settings);
 }
 
@@ -38421,6 +41917,12 @@ static void fio___http_default_on_eventsource(fio_http_s *h,
                                               fio_buf_info_s data) {
   (void)h, (void)id, (void)event, (void)data;
 }
+/** Called when an EventSource event is received. */
+static void fio___http_default_on_eventsource_redirect(fio_http_s *h,
+                                                       fio_buf_info_s id,
+                                                       fio_buf_info_s event,
+                                                       fio_buf_info_s data);
+
 /** Called when an EventSource reconnect event requests an ID. */
 static void fio___http_default_on_eventsource_reconnect(fio_http_s *h,
                                                         fio_buf_info_s id) {
@@ -38435,7 +41937,9 @@ static void http_settings_validate(fio_http_settings_s *s, int is_client) {
     s->on_http = is_client ? fio___http_default_noop
                            : fio___http_default_on_http_request;
   if (!s->on_finish)
-    s->on_finish = fio___http_default_on_finish;
+    s->on_finish = fio___http_default_noop;
+  if (!s->on_stop)
+    s->on_stop = fio___http_default_on_stop;
   if (!s->on_authenticate_sse)
     s->on_authenticate_sse = is_client ? FIO_HTTP_AUTHENTICATE_ALLOW
                                        : fio___http_default_authenticate;
@@ -38449,7 +41953,9 @@ static void http_settings_validate(fio_http_settings_s *s, int is_client) {
   if (!s->on_message)
     s->on_message = fio___http_default_on_message;
   if (!s->on_eventsource)
-    s->on_eventsource = fio___http_default_on_eventsource;
+    s->on_eventsource = (s->on_message == fio___http_default_on_message
+                             ? fio___http_default_on_eventsource
+                             : fio___http_default_on_eventsource_redirect);
   if (!s->on_eventsource_reconnect)
     s->on_eventsource_reconnect = fio___http_default_on_eventsource_reconnect;
   if (!s->on_ready)
@@ -38470,6 +41976,8 @@ static void http_settings_validate(fio_http_settings_s *s, int is_client) {
     s->timeout = FIO_HTTP_DEFAULT_TIMEOUT;
   if (!s->ws_timeout)
     s->ws_timeout = FIO_HTTP_DEFAULT_TIMEOUT_LONG;
+  if (!s->sse_timeout)
+    s->sse_timeout = s->ws_timeout;
 
   if (s->max_header_size < s->max_line_len)
     s->max_header_size = s->max_line_len;
@@ -38532,11 +42040,66 @@ typedef struct {
   do {                                                                         \
     if (o.settings.tls)                                                        \
       fio_tls_free(o.settings.tls);                                            \
-    if (o.settings.on_finish)                                                  \
-      o.settings.on_finish(&o.settings);                                       \
+    if (o.settings.on_stop)                                                    \
+      o.settings.on_stop(&o.settings);                                         \
   } while (0)
 #include FIO_INCLUDE_FILE
 
+FIO_SFUNC void fio___http_on_http_direct(void *h_, void *ignr);
+FIO_SFUNC void fio___http_on_http_with_public_folder(void *h_, void *ignr);
+FIO_SFUNC void fio___http_on_http_client(void *h_, void *ignr);
+/* move init code here*/
+FIO_IFUNC fio___http_protocol_s *fio___http_protocol_init(
+    fio___http_protocol_s *p,
+    const char *url,
+    fio_http_settings_s s,
+    bool is_client) {
+  int should_free_tls = !s.tls;
+  FIO_ASSERT_ALLOC(p);
+  for (size_t i = 0; i < FIO___HTTP_PROTOCOL_NONE + 1; ++i) {
+    p->state[i].protocol =
+        fio___http_protocol_get((fio___http_protocol_selector_e)i, is_client);
+    p->state[i].controller =
+        fio___http_controller_get((fio___http_protocol_selector_e)i, is_client);
+  }
+  for (size_t i = 0; i < FIO___HTTP_PROTOCOL_NONE; ++i)
+    p->state[i].protocol.timeout = (unsigned)s.ws_timeout * 1000U;
+  p->state[FIO___HTTP_PROTOCOL_SSE].protocol.timeout =
+      (unsigned)s.sse_timeout * 1000U;
+  p->state[FIO___HTTP_PROTOCOL_ACCEPT].protocol.timeout =
+      (unsigned)s.timeout * 1000U;
+  p->state[FIO___HTTP_PROTOCOL_HTTP1].protocol.timeout =
+      (unsigned)s.timeout * 1000U;
+  p->state[FIO___HTTP_PROTOCOL_NONE].protocol.timeout =
+      (unsigned)s.timeout * 1000U;
+  if (url) {
+    fio_url_s u = fio_url_parse(url, strlen(url));
+    s.tls = fio_tls_from_url(s.tls, u);
+    if (s.tls) {
+      s.tls = fio_tls_dup(s.tls);
+      /* fio_tls_alpn_add(s.tls, "h2", fio___http_on_select_h2); // not yet */
+      // fio_tls_alpn_add(s.tls, "http/1.1", fio___http_on_select_h1);
+      fio_io_functions_s tmp_fn = fio_tls_default_io_functions(NULL);
+      if (!s.tls_io_func)
+        s.tls_io_func = &tmp_fn;
+      for (size_t i = 0; i < FIO___HTTP_PROTOCOL_NONE + 1; ++i)
+        p->state[i].protocol.io_functions = *s.tls_io_func;
+      if (should_free_tls)
+        fio_tls_free(s.tls);
+    }
+  }
+  p->settings = s;
+  p->on_http_callback = is_client ? fio___http_on_http_client
+                        : (p->settings.public_folder.len)
+                            ? fio___http_on_http_with_public_folder
+                            : fio___http_on_http_direct;
+  p->settings.public_folder.buf = p->public_folder_buf;
+  p->queue = fio_srv_queue();
+
+  if (s.public_folder.len)
+    FIO_MEMCPY(p->public_folder_buf, s.public_folder.buf, s.public_folder.len);
+  return p;
+}
 /* *****************************************************************************
 HTTP Connection Container
 ***************************************************************************** */
@@ -38544,20 +42107,26 @@ HTTP Connection Container
 struct fio___http_connection_http_s {
   void (*on_http_callback)(void *, void *);
   void (*on_http)(fio_http_s *h);
+  void (*on_finish)(fio_http_s *h);
   fio_http1_parser_s parser;
   uint32_t max_header;
 };
 struct fio___http_connection_ws_s {
   void (*on_message)(fio_http_s *h, fio_buf_info_s msg, uint8_t is_text);
+  void (*on_ready)(fio_http_s *h);
   fio_websocket_parser_s parser;
   char *msg;
   uint16_t code;
 };
 struct fio___http_connection_sse_s {
-  void (*on_message)(fio_http_s *h, fio_buf_info_s msg, uint8_t is_text);
+  void (*on_message)(fio_http_s *h,
+                     fio_buf_info_s id,
+                     fio_buf_info_s event,
+                     fio_buf_info_s data);
   void (*on_ready)(fio_http_s *h);
-  void (*on_shutdown)(fio_http_s *h);
-  void (*on_close)(fio_http_s *h);
+  fio_buf_info_s id;
+  fio_buf_info_s event;
+  char *data;
 };
 
 /** Connection objects for managing HTTP / WebSocket connection state. */
@@ -38593,6 +42162,20 @@ typedef struct {
 #undef FIO___RECURSIVE_INCLUDE
 
 /* *****************************************************************************
+Revisit defaults
+***************************************************************************** */
+
+/** Called when an EventSource event is received. */
+static void fio___http_default_on_eventsource_redirect(fio_http_s *h,
+                                                       fio_buf_info_s id,
+                                                       fio_buf_info_s event,
+                                                       fio_buf_info_s data) {
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
+  c->settings->on_message(h, data, 1);
+  (void)h, (void)id, (void)event, (void)data;
+}
+
+/* *****************************************************************************
 HTTP Request handling / handling
 ***************************************************************************** */
 
@@ -38608,8 +42191,8 @@ FIO_SFUNC void fio___http_perform_user_callback(void *cb_, void *h_) {
   fio_http_free(h);
 }
 
-FIO_SFUNC void fio___http_perform_user_upgrade_callback_websockets(void *cb_,
-                                                                   void *h_) {
+FIO_SFUNC void fio___http_perform_user_upgrade_callback_websocket(void *cb_,
+                                                                  void *h_) {
   union {
     int (*fn)(fio_http_s *);
     void *ptr;
@@ -38665,12 +42248,13 @@ FIO_SFUNC void fio___http_perform_user_upgrade_callback_websockets(void *cb_,
     break;
   } /* HAVE_ZLIB */
 #endif
-  fio_http_upgrade_websockets(h);
+  fio_http_upgrade_websocket(h);
   return;
 
 refuse_upgrade:
   c->state.http = old;
-  fio_http_send_error_response(h, 403);
+  if (fio_http_send_error_response(h, 403))
+    fio_undup(c->io);
   fio_http_free(h);
 }
 
@@ -38681,17 +42265,17 @@ FIO_SFUNC void fio___http_perform_user_upgrade_callback_sse(void *cb_,
     void *ptr;
   } cb = {.ptr = cb_};
   fio_http_s *h = (fio_http_s *)h_;
-  fio___http_connection_s *c;
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
   if (cb.fn(h))
     goto refuse_upgrade;
-  c = (fio___http_connection_s *)fio_http_cdata(h);
   if (c->h) /* request after eventsource? an attack vector? */
     goto refuse_upgrade;
   fio_http_upgrade_sse(h);
   return;
 
 refuse_upgrade:
-  fio_http_send_error_response(h, 403);
+  if (fio_http_send_error_response(h, 403))
+    fio_undup(c->io);
   fio_http_free(h);
 }
 
@@ -38701,7 +42285,7 @@ FIO_IFUNC int fio___http_on_http_test4upgrade(fio_http_s *h,
     int (*fn)(fio_http_s *);
     void *ptr;
   } cb;
-  if (fio_http_websockets_requested(h))
+  if (fio_http_websocket_requested(h))
     goto websocket_requested;
   if (fio_http_sse_requested(h))
     goto sse_requested;
@@ -38709,10 +42293,11 @@ FIO_IFUNC int fio___http_on_http_test4upgrade(fio_http_s *h,
 websocket_requested:
   cb.fn = c->settings->on_authenticate_websocket;
   fio_queue_push(c->queue,
-                 fio___http_perform_user_upgrade_callback_websockets,
+                 fio___http_perform_user_upgrade_callback_websocket,
                  cb.ptr,
                  (void *)h);
   return -1;
+
 sse_requested:
   cb.fn = c->settings->on_authenticate_sse;
   fio_queue_push(c->queue,
@@ -38720,6 +42305,7 @@ sse_requested:
                  cb.ptr,
                  (void *)h);
   return -1;
+
 #if 0
 http2_requested:
   // Connection: Upgrade, HTTP2-Settings
@@ -38766,17 +42352,58 @@ FIO_SFUNC void fio___http_on_http_with_public_folder(void *h_, void *ignr) {
   (void)ignr;
 }
 
+FIO_SFUNC void fio___http_perform_user_callback_client(void *cb_, void *h_) {
+  fio_http_s *h = (fio_http_s *)h_;
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
+  fio___http_perform_user_callback(cb_, h_);
+  fio_undup(c->io);
+}
+
 FIO_SFUNC void fio___http_on_http_client(void *h_, void *ignr) {
   fio_http_s *h = (fio_http_s *)h_;
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  if (fio___http_on_http_test4upgrade(h, c))
-    return;
+  size_t pr = FIO___HTTP_PROTOCOL_WS;
   union {
     void (*fn)(fio_http_s *);
     void *ptr;
   } cb = {.fn = c->state.http.on_http};
-  fio_queue_push(c->queue, fio___http_perform_user_callback, cb.ptr, (void *)h);
+
+  /* TODO! review WS and SSE responses. */
+  if (fio_http_websocket_accepted(h))
+    goto websocket_accepted;
+  if (fio_http_sse_accepted(h))
+    goto sse_accepted;
+  fio_queue_push(c->queue,
+                 fio___http_perform_user_callback_client,
+                 cb.ptr,
+                 (void *)h);
+  return;
   (void)ignr;
+
+sse_accepted:
+  pr = FIO___HTTP_PROTOCOL_SSE;
+
+websocket_accepted:
+  c->h = h; /* was set to NULL in `on_http_complete` */
+  fio_http_controller_set(
+      c->h,
+      &(FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, c->settings)
+            ->state[pr]
+            .controller));
+  fio_protocol_set(
+      c->io,
+      &(FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, c->settings)
+            ->state[pr]
+            .protocol));
+
+  FIO_LOG_DDEBUG2("(%d) Client %s upgrade complete for fd %d",
+                  fio_srv_pid(),
+                  (fio_http_is_websocket(h) ? "WebSocket" : "SSE"),
+                  fio_fd_get(c->io));
+
+  fio_undup(c->io); /* fio_dup called by fio_http1_on_complete */
+  c->suspend = 0;
+  fio_srv_unsuspend(c->io);
 }
 
 /* *****************************************************************************
@@ -38801,7 +42428,14 @@ FIO_SFUNC void fio___http_on_select_h2(fio_s *io) {
 HTTP Listen
 ***************************************************************************** */
 
-static void fio___http_listen_on_finished(fio_protocol_s *p, void *u) {
+static void fio___http_listen_on_start(fio_protocol_s *protocol, void *u) {
+  (void)u;
+  fio___http_protocol_s *p = (fio___http_protocol_s *)protocol;
+  p->queue = ((p->settings.queue && p->settings.queue->q) ? p->settings.queue->q
+                                                          : fio_srv_queue());
+}
+
+static void fio___http_listen_on_stop(fio_protocol_s *p, void *u) {
   (void)u;
   fio___http_protocol_free(
       FIO_PTR_FROM_FIELD(fio___http_protocol_s,
@@ -38813,50 +42447,14 @@ void fio_http_listen___(void); /* IDE marker */
 SFUNC void *fio_http_listen FIO_NOOP(const char *url, fio_http_settings_s s) {
   http_settings_validate(&s, 0);
   fio___http_protocol_s *p = fio___http_protocol_new(s.public_folder.len + 1);
-  int should_free_tls = !s.tls;
-  FIO_ASSERT_ALLOC(p);
-  for (size_t i = 0; i < FIO___HTTP_PROTOCOL_NONE + 1; ++i) {
-    p->state[i].protocol =
-        fio___http_protocol_get((fio___http_protocol_selector_e)i, 0);
-    p->state[i].controller =
-        fio___http_controller_get((fio___http_protocol_selector_e)i, 0);
-  }
-  for (size_t i = 0; i < FIO___HTTP_PROTOCOL_NONE; ++i)
-    p->state[i].protocol.timeout = s.ws_timeout * 1000;
-  p->state[FIO___HTTP_PROTOCOL_ACCEPT].protocol.timeout = s.timeout * 1000;
-  p->state[FIO___HTTP_PROTOCOL_HTTP1].protocol.timeout = s.timeout * 1000;
-  p->state[FIO___HTTP_PROTOCOL_NONE].protocol.timeout = s.timeout * 1000;
-  if (url) {
-    fio_url_s u = fio_url_parse(url, strlen(url));
-    s.tls = fio_tls_from_url(s.tls, u);
-    if (s.tls) {
-      s.tls = fio_tls_dup(s.tls);
-      /* fio_tls_alpn_add(s.tls, "h2", fio___http_on_select_h2); // not yet */
-      // fio_tls_alpn_add(s.tls, "http/1.1", fio___http_on_select_h1);
-      fio_io_functions_s tmp_fn = fio_tls_default_io_functions(NULL);
-      if (!s.tls_io_func)
-        s.tls_io_func = &tmp_fn;
-      for (size_t i = 0; i < FIO___HTTP_PROTOCOL_NONE + 1; ++i)
-        p->state[i].protocol.io_functions = *s.tls_io_func;
-    }
-    if (should_free_tls)
-      fio_tls_free(s.tls);
-  }
-  p->settings = s;
-  p->on_http_callback = (p->settings.public_folder.len)
-                            ? fio___http_on_http_with_public_folder
-                            : fio___http_on_http_direct;
-  p->settings.public_folder.buf = p->public_folder_buf;
-  p->queue = p->settings.queue ? p->settings.queue->q : fio_srv_queue();
-  if (s.public_folder.len)
-    FIO_MEMCPY(p->public_folder_buf, s.public_folder.buf, s.public_folder.len);
+  fio___http_protocol_init(p, url, s, 0);
   void *listener =
       fio_srv_listen(.url = url,
                      .protocol = &p->state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
                      .tls = s.tls,
-                     // .on_open = fio___http_on_open,
-                     .on_finish = fio___http_listen_on_finished,
-                     .queue_for_accept = p->queue ? p->queue : NULL);
+                     .on_start = fio___http_listen_on_start,
+                     .on_stop = fio___http_listen_on_stop,
+                     .queue_for_accept = p->settings.queue);
   return listener;
 }
 
@@ -38864,13 +42462,20 @@ SFUNC void *fio_http_listen FIO_NOOP(const char *url, fio_http_settings_s s) {
 HTTP Connect
 ***************************************************************************** */
 
-void fio___http_connect_on_failed(void *udata);
+void fio___http_connect_on_failed(fio_protocol_s *p, void *udata) {
+  fio___http_connection_s *c = (fio___http_connection_s *)udata;
+  fio_http_free(c->h);
+  c->h = NULL;
+  fio___http_connection_free(c);
+  (void)p;
+}
 
 void fio_http_connect___(void); /* IDE Marker */
 /** Connects to HTTP / WebSockets / SSE connections on `url`. */
 SFUNC fio_s *fio_http_connect FIO_NOOP(const char *url,
                                        fio_http_s *h,
                                        fio_http_settings_s s) {
+  FIO_STR_INFO_TMP_VAR(origin, 4096);
   http_settings_validate(&s, 1);
   fio_url_s u = (fio_url_s){0};
   if (url)
@@ -38886,61 +42491,46 @@ SFUNC fio_s *fio_http_connect FIO_NOOP(const char *url,
     fio_http_query_set(h, FIO_BUF2STR_INFO(u.query));
   if (!fio_http_method(h).len)
     fio_http_method_set(h, FIO_STR_INFO2((char *)"GET", 3));
-  if (u.host.len)
+  if (u.host.len) {
     fio_http_request_header_set_if_missing(h,
                                            FIO_STR_INFO2((char *)"host", 4),
                                            FIO_BUF2STR_INFO(u.host));
+    /* Origin header */
+    fio_string_write2(
+        &origin,
+        NULL,
+        FIO_STRING_WRITE_STR2("https", (size_t)(4 + fio_url_is_tls(u).tls)),
+        FIO_STRING_WRITE_STR2("://", 3U),
+        FIO_STRING_WRITE_STR_INFO(u.host),
+        FIO_STRING_WRITE_STR2(":", (size_t)(!!u.port.len)),
+        FIO_STRING_WRITE_STR_INFO(u.port));
+  }
+
   /* test for ws:// or wss:// - WebSocket scheme */
   if ((u.scheme.len == 2 ||
        (u.scheme.len == 3 && ((u.scheme.buf[2] | 0x20) == 's'))) &&
-      (fio_buf2u16u(u.scheme.buf) | 0x2020) == fio_buf2u16u("ws"))
-    fio_http_websockets_set_request(h);
+      (fio_buf2u16u(u.scheme.buf) | 0x2020) == fio_buf2u16u("ws")) {
+    fio_http_request_header_set_if_missing(h,
+                                           FIO_STR_INFO2((char *)"origin", 6),
+                                           origin);
+    fio_http_websocket_set_request(h);
+  }
   /* test for sse:// or sses:// - Server Sent Events scheme */
   else if ((u.scheme.len == 3 ||
             (u.scheme.len == 4 && ((u.scheme.buf[3] | 0x20) == 's'))) &&
            (fio_buf2u32u(u.scheme.buf) | fio_buf2u32u("\x20\x20\x20\xFF")) ==
-               fio_buf2u32u("sse\xFF"))
+               fio_buf2u32u("sse\xFF")) {
+    fio_http_request_header_set_if_missing(h,
+                                           FIO_STR_INFO2((char *)"origin", 6),
+                                           origin);
     fio_http_sse_set_request(h);
+  }
 
   /* TODO: test for and attempt to re-use connection */
-  if (fio_http_cdata(h)) {
-  }
+  // if (fio_http_cdata(h)) { }
 
   fio___http_protocol_s *p = fio___http_protocol_new(u.host.len);
-  int should_free_tls = !s.tls;
-  FIO_ASSERT_ALLOC(p);
-  FIO_MEMCPY(p->public_folder_buf, url, (u.host.buf + u.host.len) - url);
-  for (size_t i = 0; i < FIO___HTTP_PROTOCOL_NONE + 1; ++i) {
-    p->state[i].protocol =
-        fio___http_protocol_get((fio___http_protocol_selector_e)i, 1);
-    p->state[i].controller =
-        fio___http_controller_get((fio___http_protocol_selector_e)i, 1);
-  }
-  for (size_t i = 0; i < FIO___HTTP_PROTOCOL_NONE; ++i)
-    p->state[i].protocol.timeout = s.ws_timeout * 1000;
-  p->state[FIO___HTTP_PROTOCOL_ACCEPT].protocol.timeout = s.timeout * 1000;
-  p->state[FIO___HTTP_PROTOCOL_HTTP1].protocol.timeout = s.timeout * 1000;
-  p->state[FIO___HTTP_PROTOCOL_NONE].protocol.timeout = s.timeout * 1000;
-
-  s.tls = fio_tls_from_url(s.tls, u);
-  if (s.tls) {
-    s.tls = fio_tls_dup(s.tls);
-    /* fio_tls_alpn_add(s.tls, "h2", fio___http_on_select_h2); // not yet */
-    // fio_tls_alpn_add(s.tls, "http/1.1", fio___http_on_select_h1);
-    fio_io_functions_s tmp_fn = fio_tls_default_io_functions(NULL);
-    if (!s.tls_io_func)
-      s.tls_io_func = &tmp_fn;
-    for (size_t i = 0; i < FIO___HTTP_PROTOCOL_NONE + 1; ++i)
-      p->state[i].protocol.io_functions = *s.tls_io_func;
-  }
-  if (should_free_tls)
-    fio_tls_free(s.tls);
-  p->settings = s;
-  p->settings.public_folder.buf = p->public_folder_buf;
-  p->settings.public_folder.len = 0;
-  p->settings.public_folder.buf[0] = 0;
-  p->queue = p->settings.queue ? p->settings.queue->q : fio_srv_queue();
-  p->on_http_callback = fio___http_on_http_client;
+  fio___http_protocol_init(p, url, s, 1);
   fio___http_connection_s *c =
       fio___http_connection_new(p->settings.max_line_len);
   FIO_ASSERT_ALLOC(c);
@@ -38954,18 +42544,23 @@ SFUNC fio_s *fio_http_connect FIO_NOOP(const char *url,
           {
               .on_http_callback = p->on_http_callback,
               .on_http = p->settings.on_http,
+              .on_finish = p->settings.on_finish,
               .max_header = p->settings.max_header_size,
           },
       .capa = p->settings.max_line_len,
       .log = p->settings.log,
+      .is_client = 1,
   };
+  fio_http_controller_set(h, &p->state[FIO___HTTP_PROTOCOL_HTTP1].controller);
+  fio_http_udata_set(h, c->udata);
+  fio_http_cdata_set(h, fio___http_connection_dup(c));
   return fio_srv_connect(url,
                          .protocol =
-                             &p->state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
-                         .on_failed = NULL,
+                             &p->state[FIO___HTTP_PROTOCOL_HTTP1].protocol,
+                         .on_failed = fio___http_connect_on_failed,
                          .udata = c,
                          .tls = s.tls,
-                         .timeout = s.timeout);
+                         .timeout = s.connect_timeout);
 }
 
 /* *****************************************************************************
@@ -38975,11 +42570,12 @@ HTTP/1.1 Request / Response Completed
 /** called when either a request or a response was received. */
 static void fio_http1_on_complete(void *udata) {
   fio___http_connection_s *c = (fio___http_connection_s *)udata;
-  fio_dup(c->io);
+  fio_dup(c->io); /* make sure the IO and its data are valid in callback */
   fio_srv_suspend(c->io);
   fio_http_s *h = c->h;
   c->h = NULL;
   c->suspend = 1;
+  // fio_srv_defer(c->state.http.on_http_callback, h, NULL);
   fio_queue_push(fio_srv_queue(), c->state.http.on_http_callback, h);
 }
 
@@ -38989,11 +42585,12 @@ HTTP/1.1 Parser callbacks
 
 FIO_IFUNC void fio___http_request_too_big(fio___http_connection_s *c) {
   fio_http_s *h = c->h;
-  fio_dup(c->io);
+  fio_dup(c->io); /* sending the response will result in fio_undup */
   fio_srv_suspend(c->io);
   c->h = NULL;
   c->suspend = 1;
-  fio_http_send_error_response(h, 413);
+  if (fio_http_send_error_response(h, 413))
+    fio_undup(c->io); /* response not sent, we need to fio_undup */
   fio_http_free(h);
 }
 
@@ -39024,9 +42621,7 @@ static int fio_http1_on_status(size_t istatus,
                                fio_buf_info_s status,
                                void *udata) {
   fio___http_connection_s *c = (fio___http_connection_s *)udata;
-  if (c->h) /* TODO! is this the way it goes, or do we have a request obj? */
-    return -1;
-  fio_http1_attach_handle(c);
+  fio_http_clear_response(c->h, istatus != 301 && istatus != 302);
   fio_http_status_set(c->h, istatus);
   return 0;
   (void)status;
@@ -39050,6 +42645,9 @@ static int fio_http1_on_url(fio_buf_info_s url, void *udata) {
 /** called when a the HTTP/1.x version is parsed. */
 static int fio_http1_on_version(fio_buf_info_s version, void *udata) {
   fio___http_connection_s *c = (fio___http_connection_s *)udata;
+  FIO_ASSERT_DEBUG(c->h, "on_version called without a pre-existing handle!");
+  if (!c->h)
+    return -1;
   fio_http_version_set(c->h, FIO_BUF2STR_INFO(version));
   return 0;
 }
@@ -39100,16 +42698,24 @@ static int fio_http1_on_expect(void *udata) {
   fio_http_s *h = c->h;
   if (!h)
     return 1;
-  fio_dup(c->io);
   c->h = NULL;
+  /* TODO: test for body size violation and deny request if payload too big. */
+  if (FIO_HTTP1_EXPECTED_CHUNKED != fio_http1_expected(&c->state.http.parser) &&
+      c->settings->max_body_size > fio_http1_expected(&c->state.http.parser))
+    goto payload_too_big;
   c->settings->pre_http_body(h);
   if (fio_http_status(h))
     goto response_sent;
   c->h = h;
-  fio_undup(c->io);
   fio_write2(c->io, .buf = response.buf, .len = response.len, .copy = 0);
   return 0; /* TODO?: improve support for `expect` headers? */
+payload_too_big:
+  fio_dup(c->io);
+  if (fio_http_send_error_response(h, 413))
+    fio_undup(c->io); /* response not sent, we need to fio_undup */
+                      /* fall through */
 response_sent:
+  // c->h = NULL;
   fio_http_free(h);
   return 1;
 }
@@ -39119,6 +42725,9 @@ static int fio_http1_on_body_chunk(fio_buf_info_s chunk, void *udata) {
   fio___http_connection_s *c = (fio___http_connection_s *)udata;
   if (!c->h)
     return -1; /* close connection if a large payload is unstoppable */
+  if (c->is_client &&
+      (fio_http_status(c->h) == 301 || fio_http_status(c->h) == 302))
+    return 0; /* don't overwrite client payload on redirect */
   if (chunk.len + fio_http_body_length(c->h) > c->settings->max_body_size)
     goto too_big;
   fio_http_body_write(c->h, chunk.buf, chunk.len);
@@ -39140,18 +42749,23 @@ FIO_SFUNC void fio___http_on_attach_accept(fio_s *io) {
                          state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
                          fio_protocol_get(io));
   fio___http_protocol_dup(p);
+  // p->queue = fio_srv_queue();
+
   const uint32_t capa = p->settings.max_line_len;
   fio___http_connection_s *c = fio___http_connection_new(capa);
   FIO_ASSERT_ALLOC(c);
   *c = (fio___http_connection_s){
       .io = io,
       .settings = &(p->settings),
-      .queue = p->queue,
+      .queue =
+          ((p->settings.queue && p->settings.queue->q) ? p->settings.queue->q
+                                                       : fio_srv_queue()),
       .udata = p->settings.udata,
       .state.http =
           {
               .on_http_callback = p->on_http_callback,
               .on_http = p->settings.on_http,
+              .on_finish = p->settings.on_finish,
               .max_header = p->settings.max_header_size,
           },
       .capa = capa,
@@ -39241,11 +42855,16 @@ FIO_SFUNC int fio___http1_process_data(fio_s *io, fio___http_connection_s *c) {
   return 0;
 
 http1_error:
+  FIO_LOG_DDEBUG2("HTTP/1.1 parser error! disconnecting client at %d",
+                  fio_fd_get(io));
   if (c->h) {
     fio_http_s *h = c->h;
     c->h = NULL;
-    fio_dup(c->io);
-    fio_http_send_error_response(h, 400);
+    if (!c->is_client) {
+      fio_dup(c->io);
+      if (fio_http_send_error_response(h, 400))
+        fio_undup(c->io);
+    }
     fio_http_free(h);
   }
   fio_close(io);
@@ -39276,8 +42895,25 @@ FIO_SFUNC void fio___http1_on_attach(fio_s *io) {
 }
 
 /* *****************************************************************************
-HTTP/1 Controller
+HTTP/1.1 Client Protocol
 ***************************************************************************** */
+
+/** Iterates through all cookies. A non-zero return will stop iteration. */
+FIO_SFUNC int fio_http1___write_client_cookie_callback(fio_http_s *h,
+                                                       fio_str_info_s name,
+                                                       fio_str_info_s value,
+                                                       void *udata) {
+  fio_str_info_s *buf = (fio_str_info_s *)udata;
+  fio_string_write2(buf,
+                    FIO_STRING_REALLOC,
+                    FIO_STRING_WRITE_STR2("cookie:", 7),
+                    FIO_STRING_WRITE_STR_INFO(name),
+                    FIO_STRING_WRITE_STR2("=", 1),
+                    FIO_STRING_WRITE_STR_INFO(value),
+                    FIO_STRING_WRITE_STR2("\r\n", 2));
+  return 0;
+  (void)h;
+}
 
 /** called by the HTTP handle for each header. */
 FIO_SFUNC int fio_http1___write_header_callback(fio_http_s *h,
@@ -39293,6 +42929,96 @@ FIO_SFUNC int fio_http1___write_header_callback(fio_http_s *h,
                            FIO_STRING_WRITE_STR2(":", 1),
                            FIO_STRING_WRITE_STR2(value.buf, value.len),
                            FIO_STRING_WRITE_STR2("\r\n", 2));
+}
+
+FIO_SFUNC void fio___http1_send_request(fio_http_s *h) {
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
+  if (!c->io || !fio_srv_is_open(c->io))
+    return;
+  fio_str_info_s buf = FIO_STR_INFO2(NULL, 0);
+  /* set Content-Length (client is never streaming) */
+  if (fio_http_body_length(h)) {
+    char ibuf[32];
+    fio_str_info_s k = FIO_STR_INFO2((char *)"content-length", 14);
+    fio_str_info_s v = FIO_STR_INFO3(ibuf, 0, 32);
+    v.len = fio_digits10u(fio_http_body_length(h));
+    fio_ltoa10u(v.buf, fio_http_body_length(h), v.len);
+    fio_http_request_header_set(h, k, v);
+  }
+  { /* set sensible defaults for common headers (Accept, User-Agent) */
+    fio_http_request_header_set_if_missing(h,
+                                           FIO_STR_INFO1((char *)"accept"),
+                                           FIO_STR_INFO1((char *)"*/*"));
+    fio_http_request_header_set_if_missing(
+        h,
+        FIO_STR_INFO1((char *)"user-agent"),
+        FIO_STR_INFO1((char *)"facil.io/" FIO_VERSION_STRING));
+  }
+  { /* write status string */
+    fio_str_info_s method = fio_http_method(h);
+    fio_str_info_s path = fio_http_path(h);
+    fio_str_info_s version = fio_http_version(h);
+    if (!path.len)
+      path = FIO_STR_INFO1((char *)"/");
+    if ((version.len - 1) > 15)
+      version = FIO_STR_INFO1((char *)"HTTP/1.1");
+    fio_string_write2(&buf,
+                      FIO_STRING_REALLOC,
+                      FIO_STRING_WRITE_STR_INFO(method),
+                      FIO_STRING_WRITE_STR2(" ", 1),
+                      FIO_STRING_WRITE_STR_INFO(path),
+                      FIO_STRING_WRITE_STR2(" ", 1),
+                      FIO_STRING_WRITE_STR_INFO(version),
+                      FIO_STRING_WRITE_STR2("\r\n", 2));
+  }
+  /* write headers */
+  fio_http_request_header_each(h, fio_http1___write_header_callback, &buf);
+  /* write cookies */
+  fio_http_cookie_each(h, fio_http1___write_client_cookie_callback, &buf);
+  fio_string_write(&buf, FIO_STRING_REALLOC, "\r\n", 2);
+  /* send data (moves memory ownership) */
+  fio_write2(c->io,
+             .buf = buf.buf,
+             .len = buf.len,
+             .dealloc = FIO_STRING_FREE,
+             .copy = 0);
+  /* make sure we listen to incoming data */
+  c->suspend = 0;
+  fio_srv_unsuspend(c->io);
+  /* Write Body */
+  if (!fio_http_body_length(h))
+    return;
+  fio_http_body_seek(h, 0);
+  if (fio_http_body_fd(h) == -1) {
+    buf = fio_http_body_read(h, (size_t)-1);
+    fio_write2(c->io,
+               .buf = (char *)fio_http_dup(h),
+               .len = buf.len,
+               .offset = (size_t)((char *)h - buf.buf),
+               .dealloc = (void (*)(void *))fio_http_free);
+  } else {
+    fio_write2(c->io,
+               .fd = fio_http_body_fd(h),
+               .len = fio_http_body_length(h),
+               .copy = 1);
+  }
+}
+
+FIO_SFUNC void fio___http1_on_attach_client(fio_s *io) {
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_udata_get(io);
+  // c->io = fio_dup(io);
+  c->io = io;
+  fio___http1_send_request(c->h);
+  if (c->len)
+    fio___http1_process_data(io, c);
+  return;
+}
+
+/* *****************************************************************************
+HTTP/1 Controller
+***************************************************************************** */
+FIO_SFUNC int fio___http_controller_get_fd(fio_http_s *h) {
+  return fio_fd_get(fio_http_io(h));
 }
 
 /** Informs the controller that request / response headers must be sent. */
@@ -39317,6 +43043,7 @@ FIO_SFUNC void fio___http_controller_http1_send_headers(fio_http_s *h) {
                       FIO_STRING_WRITE_STR2(status.buf, status.len),
                       FIO_STRING_WRITE_STR2("\r\n", 2));
   }
+
   /* write headers */
   fio_http_response_header_each(h, fio_http1___write_header_callback, &buf);
   /* write cookies */
@@ -39352,6 +43079,7 @@ FIO_SFUNC void fio___http_controller_http1_write_body(
              .dealloc = args.dealloc,
              .copy = (uint8_t)args.copy);
   return;
+
 stream_chunk:
   if (args.len) { /* print chunk header */
     char buf[24];
@@ -39391,6 +43119,7 @@ FIO_SFUNC void fio___http_controller_http1_on_finish_task(void *c_,
   c->suspend = 0;
   if (upgraded)
     goto upgraded;
+
   if (fio_srv_is_open(c->io)) {
     /* TODO: test for connection:close header and h->status values */
     fio___http1_process_data(c->io, c);
@@ -39431,6 +43160,10 @@ upgraded:
   return;
 
 something_is_wrong:
+  if (fio_srv_is_open(c->io))
+    FIO_LOG_DEBUG2("(%d) Connection upgrade went wrong for fd %d - closing",
+                   fio_srv_pid(),
+                   fio_fd_get(c->io));
   fio_protocol_set(c->io, NULL); /* make zombie, timeout will clear it. */
   fio_undup(c->io);
   fio___http_connection_free(c); /* free HTTP connection element */
@@ -39442,10 +43175,18 @@ FIO_SFUNC void fio___http_controller_http1_on_finish(fio_http_s *h) {
   if (fio_http_is_streaming(h))
     fio_write2(c->io, .buf = (char *)"0\r\n\r\n", .len = 5, .copy = 1);
   if (c->log)
-    fio_http_write_log(h, FIO_BUF_INFO2(NULL, 0)); /* TODO: get_peer_addr */
+    fio_http_write_log(h);
+  if (fio_http_is_upgraded(h))
+    goto upgraded;
+  /* once the function returns, `h` may be freed (auto-finish on free). */
+  c->state.http.on_finish(h);
+  fio_srv_defer(fio___http_controller_http1_on_finish_task, (void *)(c), NULL);
+  return;
+
+upgraded:
   fio_srv_defer(fio___http_controller_http1_on_finish_task,
                 (void *)(c),
-                fio_http_is_upgraded(h) ? (void *)h : NULL);
+                (void *)h);
 }
 
 /* *****************************************************************************
@@ -39496,13 +43237,13 @@ FIO_SFUNC int fio___websocket_process_data(fio_s *io,
 
 FIO_SFUNC void fio___websocket_on_message_finalize(void *c_, void *ignr_) {
   fio___http_connection_s *c = (fio___http_connection_s *)c_;
-  fio_bstr_free(c->state.ws.msg);
-  c->state.ws.msg = NULL;
   c->suspend = 0;
-  fio___websocket_process_data(c->io, c);
+  if (c->len)
+    fio___websocket_process_data(c->io, c);
   if (!c->suspend)
     fio_srv_unsuspend(c->io);
   fio_undup(c->io);
+  fio___http_connection_free(c);
   (void)ignr_;
 }
 
@@ -39511,6 +43252,8 @@ FIO_SFUNC void fio___websocket_on_message_task(void *c_, void *is_text) {
   c->state.ws.on_message(c->h,
                          fio_bstr_buf(c->state.ws.msg),
                          (uint8_t)(uintptr_t)is_text);
+  fio_bstr_free(c->state.ws.msg);
+  c->state.ws.msg = NULL;
   fio_srv_defer(fio___websocket_on_message_finalize, c, NULL);
 }
 
@@ -39518,14 +43261,20 @@ FIO_SFUNC void fio___websocket_on_message_task(void *c_, void *is_text) {
 FIO_SFUNC void fio_websocket_on_message(void *udata,
                                         fio_buf_info_s msg,
                                         unsigned char is_text) {
+  /* TODO: suspend IO and queue in async queue? */
   fio___http_connection_s *c = (fio___http_connection_s *)udata;
-  c->state.ws.on_message(c->h,
-                         fio_bstr_buf(c->state.ws.msg),
-                         (uint8_t)(uintptr_t)is_text);
-  fio_bstr_free(c->state.ws.msg);
-  c->state.ws.msg = NULL;
-  return; /* TODO: FIXME! */
+  // c->state.ws.on_message(c->h,
+  //                        fio_bstr_buf(c->state.ws.msg),
+  //                        (uint8_t)(uintptr_t)is_text);
+  // fio_bstr_free(c->state.ws.msg);
+  // c->state.ws.msg = NULL;
+  // c->suspend = 0;
+  // fio___websocket_process_data(c->io, c);
+  // if (!c->suspend)
+  //   fio_srv_unsuspend(c->io);
+  // return; /* TODO: FIXME! */
   fio_dup(c->io);
+  fio___http_connection_dup(c);
   fio_srv_suspend(c->io);
   c->suspend = 1;
   fio_queue_push(c->queue,
@@ -39564,15 +43313,23 @@ FIO_SFUNC fio_buf_info_s fio_websocket_decompress(void *udata,
 /** Called when a `ping` message was received. */
 FIO_SFUNC void fio_websocket_on_protocol_ping(void *udata, fio_buf_info_s msg) {
   fio___http_connection_s *c = (fio___http_connection_s *)udata;
-  if (msg.len < 252) {
+  if (msg.len < 248) {
     char buf[256];
     size_t len =
-        fio_websocket_server_wrap(buf, msg.buf, msg.len, 0x0A, 1, 1, 0);
+        (c->is_client
+             ? fio_websocket_client_wrap
+             : fio_websocket_server_wrap)(buf, msg.buf, msg.len, 0x0A, 1, 1, 0);
     fio_write2(c->io, .buf = buf, .len = len, .copy = 1);
   } else {
     char *pong = fio_bstr_reserve(NULL, msg.len + 11);
-    size_t len =
-        fio_websocket_server_wrap(pong, msg.buf, msg.len, 0x0A, 1, 1, 0);
+    size_t len = (c->is_client ? fio_websocket_client_wrap
+                               : fio_websocket_server_wrap)(pong,
+                                                            msg.buf,
+                                                            msg.len,
+                                                            0x0A,
+                                                            1,
+                                                            1,
+                                                            0);
     pong = fio_bstr_len_set(pong, len);
     fio_write2(c->io,
                .buf = pong,
@@ -39648,7 +43405,7 @@ ws_error:
   return -1;
 }
 
-// /** Called when a data is available. */
+/** Called when a data is available. */
 FIO_SFUNC void fio___websocket_on_data(fio_s *io) {
   fio___http_connection_s *c = (fio___http_connection_s *)fio_udata_get(io);
   size_t r;
@@ -39661,6 +43418,14 @@ FIO_SFUNC void fio___websocket_on_data(fio_s *io) {
     if (fio___websocket_process_data(io, c))
       return;
   }
+}
+
+FIO_SFUNC void fio___websocket_on_ready(fio_s *io) {
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_udata_get(io);
+  fio_http_s *h = c->h;
+  if (!h)
+    return;
+  c->state.ws.on_ready(h);
 }
 
 FIO_SFUNC void fio___websocket_on_timeout(fio_s *io) {
@@ -39683,6 +43448,8 @@ FIO_SFUNC void fio___websocket_on_attach(fio_s *io) {
   fio_http_s *h = c->h;
   c->state.ws = (struct fio___http_connection_ws_s){
       .on_message = c->settings->on_message,
+      .on_ready = c->settings->on_ready,
+      .parser = {.must_mask = !c->is_client},
   };
   c->settings->on_open(h);
   fio___websocket_process_data(io, c);
@@ -39696,9 +43463,12 @@ FIO_SFUNC void fio___websocket_on_close(void *udata) {
   fio___http_connection_s *c = (fio___http_connection_s *)udata;
   c->io = NULL;
   fio_bstr_free(c->state.ws.msg);
-  fio_http_status_set(c->h, (size_t)(c->state.ws.code));
-  c->settings->on_close(c->h);
-  fio_http_free(c->h);
+  if (c->h) {
+    fio_http_status_set(c->h, (size_t)(c->state.ws.code));
+    c->settings->on_close(c->h);
+    c->settings->on_finish(c->h);
+    fio_http_free(c->h);
+  }
   fio___http_connection_free(c);
 }
 
@@ -39780,18 +43550,18 @@ SFUNC int fio_http_sse_write FIO_NOOP(fio_http_s *h,
                         FIO_STRING_WRITE_STR2(args.event.buf, args.event.len),
                         FIO_STRING_WRITE_STR2("\r\n", 2));
   { /* separate lines (add "data:" at beginning of each new line) */
-    char *pos = (char *)FIO_MEMCHR(args.data.buf, '\n', args.data.len);
-    while (pos) {
-      size_t len = pos - args.data.buf;
-      args.data.buf += len + 1;
-      args.data.len -= len + 1;
-      --len;
-      len -= (pos > args.data.buf && pos[-1] == '\r');
-      payload =
-          fio_bstr_write2(payload,
-                          FIO_STRING_WRITE_STR2("data:", 5),
-                          FIO_STRING_WRITE_STR2(args.data.buf, args.data.len),
-                          FIO_STRING_WRITE_STR2("\r\n", 2));
+    char *pos;
+    while (args.data.len &&
+           (pos = (char *)FIO_MEMCHR(args.data.buf, '\n', args.data.len))) {
+      const size_t len = (pos + 1) - args.data.buf;
+      pos -= (pos[-1] == '\r');
+      payload = fio_bstr_write2(
+          payload,
+          FIO_STRING_WRITE_STR2("data:", 5),
+          FIO_STRING_WRITE_STR2(args.data.buf, (size_t)(pos - args.data.buf)),
+          FIO_STRING_WRITE_STR2("\r\n", 2));
+      args.data.buf += len;
+      args.data.len -= len;
     }
   }
   /* write reminder */
@@ -39816,7 +43586,10 @@ SFUNC void FIO_HTTP_SSE_SUBSCRIBE_DIRECT(fio_msg_s *msg) {
       (fio___http_connection_s *)fio_udata_get(msg->io);
   if (!c)
     return;
+  FIO_STR_INFO_TMP_VAR(id_str, 64);
+  fio_string_write_hex(&id_str, NULL, msg->id);
   fio_http_sse_write(c->h,
+                     .id = FIO_STR2BUF_INFO(id_str),
                      .event = FIO_STR2BUF_INFO(msg->channel),
                      .data = FIO_STR2BUF_INFO(msg->message));
 }
@@ -39829,7 +43602,7 @@ SFUNC int fio_http_websocket_write(fio_http_s *h,
                                    const void *buf,
                                    size_t len,
                                    uint8_t is_text) {
-  if (!h || !(h->state & FIO_HTTP_STATE_WEBSOCKET))
+  if (!h || !fio_http_is_websocket(h))
     return -1;
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
   if (!c)
@@ -39837,7 +43610,7 @@ SFUNC int fio_http_websocket_write(fio_http_s *h,
   is_text = (!!is_text);
   is_text |= (!is_text) << 1;
   uint8_t rsv = 0;
-  if (len < 512) {
+  if (len < 512) { /* fast-path: no allocation, no compression */
     char tmp[520];
     size_t wlen =
         (c->is_client
@@ -39847,7 +43620,7 @@ SFUNC int fio_http_websocket_write(fio_http_s *h,
     return 0;
   }
 #if HAVE_ZLIB /* TODO: compress? */
-  // if(len > 512 && c->state.ws.deflate) ;
+  // if(c->state.ws.deflate) ;
 #endif
   char *payload =
       fio_bstr_reserve(NULL,
@@ -39868,20 +43641,7 @@ SFUNC int fio_http_websocket_write(fio_http_s *h,
 WebSocket Controller
 ***************************************************************************** */
 
-FIO_SFUNC void fio___http_controller_ws_on_finish_task(void *h_, void *ignr_) {
-  fio_http_s *h = (fio_http_s *)h_;
-  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  fio_protocol_set(c->io, NULL); /* make zombie, timeout will clear it. */
-  fio___http_connection_free(c);
-  (void)ignr_;
-}
-
-/** called once a request / response had finished */
-FIO_SFUNC void fio___http_controller_ws_on_finish(fio_http_s *h) {
-  fio_srv_defer(fio___http_controller_ws_on_finish_task, (void *)(h), NULL);
-}
-
-/* called by the HTTP handle for each body chunk (or to finish a response. */
+/* Called by the HTTP handle for each body chunk (or to finish a response). */
 FIO_SFUNC void fio___http_controller_ws_write_body(fio_http_s *h,
                                                    fio_http_write_args_s args) {
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
@@ -39922,15 +43682,114 @@ FIO_SFUNC void fio___http_controller_ws_write_body(fio_http_s *h,
 EventSource / SSE Protocol (TODO!)
 ***************************************************************************** */
 
+FIO_SFUNC void fio___sse_consume_data(fio___http_connection_s *c) {
+  /* TODO: Fix Me! parse and process SSE data */
+  FIO_LOG_DEBUG2("SSE data processing:\n%.*s", (int)c->len, c->buf);
+  struct fio___http_connection_sse_s *sse = &c->state.sse;
+  const char *next_line = c->buf;
+  const char *stop = c->buf + c->len;
+  for (; next_line < stop;) {
+    char *line = (char *)next_line;
+    const char *eol =
+        (const char *)FIO_MEMCHR(next_line, '\n', stop - next_line);
+    if (!eol)
+      break;
+    next_line = eol + 1;
+    eol -= (eol > c->buf && eol[-1] == '\n');
+    eol -= (eol > c->buf && eol[-1] == '\r');
+    if (eol == line) { /* empty line, end of input? */
+      if (sse->data || sse->event.buf || sse->id.buf) {
+        sse->on_message(c->h, sse->id, sse->event, fio_bstr_buf(sse->data));
+        fio_bstr_free(sse->data);
+        sse->data = NULL;
+        sse->event = sse->id = FIO_BUF_INFO0;
+      }
+      continue;
+    }
+    if (line[0] == ':') /* comment */
+      continue;
+    const size_t line_len = (size_t)(eol - line);
+    if (line_len > 2 && line[2] == ':') { /* id */
+      const char *start = line + 3;
+      start += (start[0] == ' ' || start[0] == '\t');
+      if ((line[0] |= 32) == 'i' && (line[1] |= 32) == 'd')
+        sse->id = FIO_BUF_INFO2((char *)start, (size_t)(eol - start));
+
+    } else if (line_len > 4 && line[4] == ':') { /* data */
+      const char *start = line + 5;
+      start += (start[0] == ' ' || start[0] == '\t');
+      if ((fio_buf2u32u(line) | 0x20202020U) == fio_buf2u32u("data")) {
+        if (fio_bstr_len(sse->data) + (size_t)(eol - start) >
+            c->settings->ws_max_msg_size)
+          goto breach;
+        sse->data = fio_bstr_write2(
+            sse->data,
+            FIO_STRING_WRITE_STR2("\r\n", ((size_t) !!sse->data << 1)),
+            FIO_STRING_WRITE_STR2(start, (size_t)(eol - start)));
+      }
+
+    } else if (line_len > 5 && line[5] == ':') { /* event */
+      const char *start = line + 3;
+      start += (start[0] == ' ' || start[0] == '\t');
+      if ((line[0] |= 32) == 'e' &&
+          (fio_buf2u32u(line + 1) | 0x20202020U) == fio_buf2u32u("vent"))
+        sse->event = FIO_BUF_INFO2((char *)start, (size_t)(eol - start));
+
+    } else if (!FIO_MEMCHR(line, ':', line_len))
+      goto error;
+  }
+  FIO_ASSERT(next_line <= stop, "overflow on next line read");
+  if (next_line > stop)
+    next_line = stop;
+  c->len -= next_line - c->buf;
+  if (c->len)
+    FIO_MEMMOVE(c->buf, next_line, c->len);
+  return;
+
+error:
+  FIO_LOG_ERROR("SSE incoming data malformed!");
+  FIO_LOG_DEBUG2("data dump:\n%.*s", (int)c->len, c->buf);
+  fio_close(c->io);
+  return;
+
+breach:
+  FIO_LOG_SECURITY("SSE incoming data payload too large!");
+  fio_close(c->io);
+}
+
+/** Called when a data is available. */
+FIO_SFUNC void fio___sse_on_data(fio_s *io) {
+  FIO_LOG_DDEBUG2("(%d) Reading SSE data from socket", fio_srv_pid());
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_udata_get(io);
+  size_t r;
+  for (;;) {
+    if (c->len + 2 > c->capa)
+      goto error;
+    if (!(r = fio_read(io, c->buf + c->len, c->capa - c->len)))
+      return;
+    c->len += r;
+    fio___sse_consume_data(c);
+  }
+error:
+  FIO_LOG_ERROR("Incoming SSE data too long (HTTP line limit set at %zu)!",
+                c->capa);
+  fio_close(io);
+}
+
 /** Called when an IO is attached to a protocol. */
 static void fio___sse_on_attach(fio_s *io) {
   fio___http_connection_s *c = (fio___http_connection_s *)fio_udata_get(io);
   fio_http_s *h = c->h;
   c->state.sse = (struct fio___http_connection_sse_s){
-      .on_message = c->settings->on_message,
+      .on_message = c->settings->on_eventsource,
+      .on_ready = c->settings->on_ready,
   };
   c->settings->on_open(h);
-  // fio___websocket_process_data(io, c); /* TODO: SSE client mode */
+  FIO_LOG_DDEBUG2("(%d) SSE attached; buffer length (unread): %zu",
+                  fio_srv_pid(),
+                  c->len);
+  if (c->len && c->is_client)
+    fio___sse_consume_data(c);
 }
 
 FIO_SFUNC void fio___sse_on_timeout(fio_s *io) {
@@ -39948,13 +43807,15 @@ FIO_SFUNC void fio___sse_on_shutdown(fio_s *io) {
 
 /** Called after the connection was closed, and pending tasks completed. */
 FIO_SFUNC void fio___sse_on_close(void *udata) {
-  FIO_LOG_DDEBUG2("(%d) SSE connection closed for %p",
-                  (int)fio_thread_getpid(),
-                  udata);
   fio___http_connection_s *c = (fio___http_connection_s *)udata;
+  FIO_LOG_DDEBUG2("(%d) SSE connection closed for %p", fio_srv_pid(), c->io);
   c->io = NULL;
-  // fio_bstr_free(c->state.sse.msg);
-  fio_http_free(c->h);
+  fio_bstr_free(c->state.sse.data);
+  if (c->h) {
+    c->settings->on_close(c->h);
+    c->settings->on_finish(c->h);
+    fio_http_free(c->h);
+  }
   fio___http_connection_free(c);
 }
 
@@ -39972,7 +43833,7 @@ FIO_SFUNC void fio___http_controller_sse_write_body(
   }
   if (args.dealloc && args.buf)
     args.dealloc((void *)args.buf);
-  if (args.fd != -1)
+  if (!args.buf && (unsigned)(args.fd + 1) > 1)
     close(args.fd);
 }
 /* *****************************************************************************
@@ -39983,6 +43844,26 @@ FIO_SFUNC void fio___http_controller_on_destroyed_task(void *c_, void *ignr_) {
   fio___http_connection_s *c = (fio___http_connection_s *)c_;
   fio___http_connection_free(c);
   (void)ignr_;
+}
+
+FIO_SFUNC void fio___http_controller_http1_on_finish_client_task(void *c_,
+                                                                 void *h_) {
+  fio___http_connection_s *c = (fio___http_connection_s *)c_;
+  fio_http_s *h = (fio_http_s *)h_;
+  c->settings->on_finish(h);
+  fio_http_free(h);
+  fio___http_connection_free(c);
+}
+
+FIO_SFUNC void fio___http_controller_http1_on_finish_client(fio_http_s *h) {
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
+  /* on_finish should be called after the `on_close` or after on_http */
+  if (!fio_http_is_upgraded(h)) {
+    /* on_finish always manually called here */
+    fio_srv_defer(fio___http_controller_http1_on_finish_client_task,
+                  (void *)fio___http_connection_dup(c),
+                  (void *)fio_http_dup(h));
+  }
 }
 
 /** Called when an HTTP handle is freed. */
@@ -39999,11 +43880,24 @@ FIO_SFUNC void fio__http_controller_on_destroyed(fio_http_s *h) {
                  fio_http_cdata(h));
 }
 
-/** Called when an HTTP handle is freed. */
+/** Called when an HTTP handle is freed (no auto-finish, post upgrade). */
 FIO_SFUNC void fio__http_controller_on_destroyed2(fio_http_s *h) {
   fio_queue_push(fio_srv_queue(),
                  fio___http_controller_on_destroyed_task,
                  fio_http_cdata(h));
+}
+
+/** Called when an HTTP handle is freed. */
+FIO_SFUNC void fio__http_controller_on_destroyed_client(fio_http_s *h) {
+  fio_queue_push(fio_srv_queue(),
+                 fio___http_controller_on_destroyed_task,
+                 fio_http_cdata(h));
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
+  c->state.http.on_finish(h);
+  c->h = NULL;
+  if (c->io)
+    fio_close(c->io);
+  fio_queue_push(fio_srv_queue(), fio___http_controller_on_destroyed_task, c);
 }
 
 /* *****************************************************************************
@@ -40022,9 +43916,15 @@ fio___http_protocol_get(fio___http_protocol_selector_e s, int is_client) {
                          .on_close = fio___http_on_close};
     return r;
   case FIO___HTTP_PROTOCOL_HTTP1:
-    r = (fio_protocol_s){.on_attach = fio___http1_on_attach,
-                         .on_data = fio___http1_on_data,
-                         .on_close = fio___http_on_close};
+    if (is_client) {
+      r = (fio_protocol_s){.on_attach = fio___http1_on_attach_client,
+                           .on_data = fio___http1_on_data,
+                           .on_close = fio___http_on_close};
+    } else {
+      r = (fio_protocol_s){.on_attach = fio___http1_on_attach,
+                           .on_data = fio___http1_on_data,
+                           .on_close = fio___http_on_close};
+    }
     return r;
   case FIO___HTTP_PROTOCOL_HTTP2:
     r = (fio_protocol_s){.on_close = fio___http_on_close};
@@ -40033,6 +43933,7 @@ fio___http_protocol_get(fio___http_protocol_selector_e s, int is_client) {
     r = (fio_protocol_s){
         .on_attach = fio___websocket_on_attach,
         .on_data = fio___websocket_on_data,
+        .on_ready = fio___websocket_on_ready,
         .on_close = fio___websocket_on_close,
         .on_shutdown = fio___websocket_on_shutdown,
         .on_timeout = fio___websocket_on_timeout,
@@ -40042,6 +43943,8 @@ fio___http_protocol_get(fio___http_protocol_selector_e s, int is_client) {
   case FIO___HTTP_PROTOCOL_SSE:
     r = (fio_protocol_s){
         .on_attach = fio___sse_on_attach,
+        .on_data = (is_client ? fio___sse_on_data : NULL),
+        .on_ready = fio___websocket_on_ready,
         .on_close = fio___sse_on_close,
         .on_shutdown = fio___sse_on_shutdown,
         .on_timeout = fio___sse_on_timeout,
@@ -40070,44 +43973,57 @@ fio___http_controller_get(fio___http_protocol_selector_e s, int is_client) {
         .send_headers = fio___http_controller_http1_send_headers,
         .write_body = fio___http_controller_http1_write_body,
         .on_finish = fio___http_controller_http1_on_finish,
-        .close = fio___http_default_close,
+        .close_io = fio___http_default_close,
+        .get_fd = fio___http_controller_get_fd,
     };
     return r;
   case FIO___HTTP_PROTOCOL_HTTP1:
-    r = (fio_http_controller_s){
-        .on_destroyed = fio__http_controller_on_destroyed,
-        .send_headers = fio___http_controller_http1_send_headers,
-        .write_body = fio___http_controller_http1_write_body,
-        .on_finish = fio___http_controller_http1_on_finish,
-        .close = fio___http_default_close,
-    };
+    if (is_client) {
+      r = (fio_http_controller_s){
+          .on_destroyed = fio__http_controller_on_destroyed_client,
+          .on_finish = fio___http_controller_http1_on_finish_client,
+          .close_io = fio___http_default_close,
+          .get_fd = fio___http_controller_get_fd,
+      };
+    } else {
+      r = (fio_http_controller_s){
+          .on_destroyed = fio__http_controller_on_destroyed,
+          .send_headers = fio___http_controller_http1_send_headers,
+          .write_body = fio___http_controller_http1_write_body,
+          .on_finish = fio___http_controller_http1_on_finish,
+          .close_io = fio___http_default_close,
+          .get_fd = fio___http_controller_get_fd,
+      };
+    }
     return r;
   case FIO___HTTP_PROTOCOL_HTTP2:
     r = (fio_http_controller_s){
         .on_destroyed = fio__http_controller_on_destroyed,
-        .close = fio___http_default_close,
+        .close_io = fio___http_default_close,
+        .get_fd = fio___http_controller_get_fd,
     };
     return r;
   case FIO___HTTP_PROTOCOL_WS:
     r = (fio_http_controller_s){
         .on_destroyed = fio__http_controller_on_destroyed2,
         .write_body = fio___http_controller_ws_write_body,
-        .on_finish = fio___http_controller_ws_on_finish,
-        .close = fio___http_default_close,
+        .close_io = fio___http_default_close,
+        .get_fd = fio___http_controller_get_fd,
     };
     return r;
   case FIO___HTTP_PROTOCOL_SSE:
     r = (fio_http_controller_s){
         .on_destroyed = fio__http_controller_on_destroyed2,
         .write_body = fio___http_controller_sse_write_body,
-        .on_finish = fio___http_controller_ws_on_finish,
-        .close = fio___http_default_close,
+        .close_io = fio___http_default_close,
+        .get_fd = fio___http_controller_get_fd,
     };
     return r;
   case FIO___HTTP_PROTOCOL_NONE:
     r = (fio_http_controller_s){
         .on_destroyed = fio__http_controller_on_destroyed2,
-        .close = fio___http_default_close,
+        .close_io = fio___http_default_close,
+        .get_fd = fio___http_controller_get_fd,
     };
     return r;
   default:
@@ -40127,6 +44043,14 @@ SFUNC fio_s *fio_http_io(fio_http_s *h) {
     return NULL;
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
   return c->io;
+}
+
+/** Returns the HTTP settings associated with the HTTP object, if any. */
+SFUNC fio_http_settings_s *fio_http_settings(fio_http_s *h) {
+  if (!h)
+    return NULL;
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
+  return c->settings;
 }
 
 /* *****************************************************************************
@@ -40346,6 +44270,9 @@ FIO_IFUNC intptr_t FIO_NAME2(fiobj, i)(FIOBJ o);
 
 /** Returns a float (double) representation for any FIOBJ object. */
 FIO_IFUNC double FIO_NAME2(fiobj, f)(FIOBJ o);
+
+/** Calculates an object's hash value for a specific hash map object. */
+FIO_IFUNC uint64_t FIO_NAME2(fiobj, hash)(FIOBJ object_key);
 
 /* *****************************************************************************
 FIOBJ Containers (iteration)
@@ -40668,7 +44595,6 @@ FIOBJ Arrays
 FIOBJ Hash Maps
 ***************************************************************************** */
 
-#define FIO_OMAP_NAME            FIO_NAME(fiobj, FIOBJ___NAME_HASH)
 #define FIO_REF_NAME             FIO_NAME(fiobj, FIOBJ___NAME_HASH)
 #define FIO_REF_CONSTRUCTOR_ONLY 1
 #define FIO_REF_DESTROY(a)                                                     \
@@ -40685,62 +44611,43 @@ FIOBJ Hash Maps
 #if SIZE_T_MAX == 0xFFFFFFFF /* for 32bit system pointer alignment */
 #define FIO_REF_METADATA uint32_t
 #endif
+#define FIO_MAP_NAME              FIO_NAME(fiobj, FIOBJ___NAME_HASH)
+#define FIO_MAP_ORDERED           1
 #define FIO_MAP_KEY               FIOBJ
 #define FIO_MAP_KEY_CMP(a, b)     FIO_NAME_BL(fiobj, eq)((a), (b))
 #define FIO_MAP_KEY_COPY(dest, o) (dest = fiobj_dup(o))
 #define FIO_MAP_KEY_DESTROY(o)    fiobj_free(o)
 #define FIO_MAP_VALUE             FIOBJ
+#define FIO_MAP_HASH_FN(o)        FIO_NAME2(fiobj, hash)(o)
 #define FIO_MAP_VALUE_DESTROY(o)  fiobj_free(o)
 #define FIO_MAP_VALUE_DISCARD(o)  fiobj_free(o)
 #define FIO_PTR_TAG(p)            FIOBJ_PTR_TAG(p, FIOBJ_T_HASH)
 #define FIO_PTR_UNTAG(p)          FIOBJ_PTR_UNTAG(p)
 #define FIO_PTR_TAG_VALIDATE(p)   (FIOBJ_TYPE_CLASS(p) == FIOBJ_T_HASH)
 #define FIO_PTR_TAG_TYPE          FIOBJ
+/* TODO! auto-hash object value */
 #include FIO_INCLUDE_FILE
-/** Calculates an object's hash value for a specific hash map object. */
-FIO_IFUNC uint64_t FIO_NAME2(fiobj, hash)(FIOBJ target_hash, FIOBJ object_key);
-
-/** Inserts a value to a hash map, with a default hash value calculation. */
-FIO_IFUNC FIOBJ FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                         set2)(FIOBJ hash, FIOBJ key, FIOBJ value);
-
-/**
- * Inserts a value to a hash map, with a default hash value calculation.
- *
- * If the key already exists in the Hash Map, the value will be freed instead.
- */
-FIO_IFUNC FIOBJ FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                         set_if_missing2)(FIOBJ hash, FIOBJ key, FIOBJ value);
-
-/** Finds a value in a hash map, with a default hash value calculation. */
-FIO_IFUNC FIOBJ FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get2)(FIOBJ hash,
-                                                                   FIOBJ key);
-
-/** Removes a value from a hash map, with a default hash value calculation. */
-FIO_IFUNC int FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                       remove2)(FIOBJ hash, FIOBJ key, FIOBJ *old);
-
 /**
  * Sets a value in a hash map, allocating the key String and automatically
  * calculating the hash value.
  */
 FIO_IFUNC
 FIOBJ FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-               set3)(FIOBJ hash, const char *key, size_t len, FIOBJ value);
+               set2)(FIOBJ hash, const char *key, size_t len, FIOBJ value);
 
 /**
  * Finds a value in the hash map, using a temporary String and automatically
  * calculating the hash value.
  */
 FIO_IFUNC FIOBJ FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                         get3)(FIOBJ hash, const char *buf, size_t len);
+                         get2)(FIOBJ hash, const char *buf, size_t len);
 
 /**
  * Removes a value in a hash map, using a temporary String and automatically
  * calculating the hash value.
  */
 FIO_IFUNC int FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                       remove3)(FIOBJ hash,
+                       remove2)(FIOBJ hash,
                                 const char *buf,
                                 size_t len,
                                 FIOBJ *old);
@@ -41241,35 +45148,31 @@ FIOBJ Hash Maps
 ***************************************************************************** */
 
 /** Calculates an object's hash value for a specific hash map object. */
-FIO_IFUNC uint64_t FIO_NAME2(fiobj, hash)(FIOBJ target_hash, FIOBJ o) {
+FIO_IFUNC uint64_t FIO_NAME2(fiobj, hash)(FIOBJ o) {
+  uint64_t seed = (uint64_t)(uintptr_t)&FIO_NAME2(fiobj, hash);
   switch (FIOBJ_TYPE_CLASS(o)) {
   case FIOBJ_T_PRIMITIVE:
-    return fio_risky_hash(&o,
-                          sizeof(o),
-                          (uint64_t)(uintptr_t)target_hash + (uintptr_t)o);
+    return fio_risky_hash(&o, sizeof(o), seed + (uintptr_t)o);
   case FIOBJ_T_NUMBER: {
     uintptr_t tmp = FIO_NAME2(fiobj, i)(o);
-    return fio_risky_hash(&tmp, sizeof(tmp), (uint64_t)(uintptr_t)target_hash);
+    return fio_risky_hash(&tmp, sizeof(tmp), seed);
   }
   case FIOBJ_T_FLOAT: {
     double tmp = FIO_NAME2(fiobj, f)(o);
-    return fio_risky_hash(&tmp, sizeof(tmp), (uint64_t)(uintptr_t)target_hash);
+    return fio_risky_hash(&tmp, sizeof(tmp), seed);
   }
   case FIOBJ_T_STRING: /* fall through */
-    return FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_STRING),
-                    hash)(o, (uint64_t)(uintptr_t)target_hash);
+    return FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_STRING), hash)(o, seed);
   case FIOBJ_T_ARRAY: {
     uint64_t h = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_ARRAY), count)(o);
-    h += fio_risky_hash(&h,
-                        sizeof(h),
-                        (uint64_t)(uintptr_t)target_hash + FIOBJ_T_ARRAY);
+    h += fio_risky_hash(&h, sizeof(h), seed + FIOBJ_T_ARRAY);
     {
       FIOBJ *a = FIO_NAME2(FIO_NAME(fiobj, FIOBJ___NAME_ARRAY), ptr)(o);
       const size_t count =
           FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_ARRAY), count)(o);
       if (a) {
         for (size_t i = 0; i < count; ++i) {
-          h += FIO_NAME2(fiobj, hash)(target_hash + FIOBJ_T_ARRAY + i, a[i]);
+          h += FIO_NAME2(fiobj, hash)(a[i]);
         }
       }
     }
@@ -41277,59 +45180,20 @@ FIO_IFUNC uint64_t FIO_NAME2(fiobj, hash)(FIOBJ target_hash, FIOBJ o) {
   }
   case FIOBJ_T_HASH: {
     uint64_t h = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), count)(o);
-    size_t c = 0;
-    h += fio_risky_hash(&h,
-                        sizeof(h),
-                        (uint64_t)(uintptr_t)target_hash + FIOBJ_T_HASH);
+    h += fio_risky_hash(&h, sizeof(h), seed + FIOBJ_T_HASH);
     FIO_MAP_EACH(FIO_NAME(fiobj, FIOBJ___NAME_HASH), o, i) {
       h += i.hash;
-      h += FIO_NAME2(fiobj, hash)(target_hash + FIOBJ_T_HASH + (c++), i.value);
+      h += FIO_NAME2(fiobj, hash)(i.value);
     }
     return h;
   }
   case FIOBJ_T_OTHER: {
     /* TODO: can we avoid "stringifying" the object? */
     fio_str_info_s tmp = (*fiobj_object_metadata(o))->to_s(o);
-    return fio_risky_hash(tmp.buf, tmp.len, (uint64_t)(uintptr_t)target_hash);
+    return fio_risky_hash(tmp.buf, tmp.len, seed);
   }
   }
   return 0;
-}
-
-/** Inserts a value to a hash map, with a default hash value calculation. */
-FIO_IFUNC FIOBJ FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                         set2)(FIOBJ hash, FIOBJ key, FIOBJ value) {
-  return FIO_NAME(
-      FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-      set)(hash, FIO_NAME2(fiobj, hash)(hash, key), key, value, NULL);
-}
-
-/**
- * Inserts a value to a hash map, with a default hash value calculation.
- *
- * If the key already exists in the Hash Map, the value will be freed instead.
- */
-FIO_IFUNC FIOBJ FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                         set_if_missing2)(FIOBJ hash, FIOBJ key, FIOBJ value) {
-  return FIO_NAME(
-      FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-      set_if_missing)(hash, FIO_NAME2(fiobj, hash)(hash, key), key, value);
-}
-
-/** Finds a value in a hash map, automatically calculating the hash value. */
-FIO_IFUNC FIOBJ FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get2)(FIOBJ hash,
-                                                                   FIOBJ key) {
-  if (FIOBJ_TYPE_CLASS(hash) != FIOBJ_T_HASH)
-    return FIOBJ_INVALID;
-  return FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                  get)(hash, FIO_NAME2(fiobj, hash)(hash, key), key);
-}
-
-/** Removes a value from a hash map, with a default hash value calculation. */
-FIO_IFUNC int FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                       remove2)(FIOBJ hash, FIOBJ key, FIOBJ *old) {
-  return FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                  remove)(hash, FIO_NAME2(fiobj, hash)(hash, key), key, old);
 }
 
 /**
@@ -41337,18 +45201,14 @@ FIO_IFUNC int FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
  * calculating the hash value.
  */
 FIO_IFUNC FIOBJ FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                         set3)(FIOBJ hash,
+                         set2)(FIOBJ hash,
                                const char *key,
                                size_t len,
                                FIOBJ value) {
   FIOBJ tmp = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_STRING), new)();
   FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_STRING), write)(tmp, (char *)key, len);
-  FIOBJ v = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                     set)(hash,
-                          fio_risky_hash(key, len, (uint64_t)(uintptr_t)hash),
-                          tmp,
-                          value,
-                          NULL);
+  FIOBJ v =
+      FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), set)(hash, tmp, value, NULL);
   fiobj_free(tmp);
   return v;
 }
@@ -41358,13 +45218,11 @@ FIO_IFUNC FIOBJ FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
  * automatically calculating the hash value.
  */
 FIO_IFUNC FIOBJ FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                         get3)(FIOBJ hash, const char *buf, size_t len) {
+                         get2)(FIOBJ hash, const char *buf, size_t len) {
   if (FIOBJ_TYPE_CLASS(hash) != FIOBJ_T_HASH)
     return FIOBJ_INVALID;
   FIOBJ_STR_TEMP_VAR_STATIC(tmp, buf, len);
-  FIOBJ v = FIO_NAME(
-      FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-      get)(hash, fio_risky_hash(buf, len, (uint64_t)(uintptr_t)hash), tmp);
+  FIOBJ v = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get)(hash, tmp);
   return v;
 }
 
@@ -41373,16 +45231,12 @@ FIO_IFUNC FIOBJ FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
  * automatically calculating the hash value.
  */
 FIO_IFUNC int FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                       remove3)(FIOBJ hash,
+                       remove2)(FIOBJ hash,
                                 const char *buf,
                                 size_t len,
                                 FIOBJ *old) {
   FIOBJ_STR_TEMP_VAR_STATIC(tmp, buf, len);
-  int r = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
-                   remove)(hash,
-                           fio_risky_hash(buf, len, (uint64_t)(uintptr_t)hash),
-                           tmp,
-                           old);
+  int r = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), remove)(hash, tmp, old);
   FIOBJ_STR_TEMP_DESTROY(tmp);
   return r;
 }
@@ -41395,15 +45249,14 @@ FIO_IFUNC void FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), update)(FIOBJ dest,
     return;
   FIO_MAP_EACH(FIO_NAME(fiobj, FIOBJ___NAME_HASH), src, i) {
     if (i.key == FIOBJ_INVALID || FIOBJ_TYPE_CLASS(i.key) == FIOBJ_T_NULL) {
-      FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), remove2)
-      (dest, i.key, NULL);
+      FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), remove)(dest, i.key, NULL);
       continue;
     }
     register FIOBJ tmp;
     switch (FIOBJ_TYPE_CLASS(i.value)) {
     case FIOBJ_T_ARRAY:
       /* TODO? decide if we should merge elements or overwrite...? */
-      tmp = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get2)(dest, i.key);
+      tmp = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get)(dest, i.key);
       if (FIOBJ_TYPE_CLASS(tmp) == FIOBJ_T_ARRAY) {
         FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_ARRAY), concat)
         (tmp, i.value);
@@ -41411,7 +45264,7 @@ FIO_IFUNC void FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), update)(FIOBJ dest,
       }
       break;
     case FIOBJ_T_HASH:
-      tmp = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get2)(dest, i.key);
+      tmp = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get)(dest, i.key);
       if (FIOBJ_TYPE_CLASS(tmp) == FIOBJ_T_HASH)
         FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), update)
       (dest, i.value);
@@ -41423,8 +45276,8 @@ FIO_IFUNC void FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), update)(FIOBJ dest,
     case FIOBJ_T_FLOAT:     /* fall through */
     case FIOBJ_T_OTHER: break;
     }
-    FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), set2)
-    (dest, i.key, fiobj_dup(i.value));
+    FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), set)
+    (dest, i.key, fiobj_dup(i.value), NULL);
   }
 }
 
@@ -41554,7 +45407,7 @@ FIO_SFUNC void *fiobj___mustache_get_var(void *ctx, fio_buf_info_s name) {
     return NULL;
   if (!FIOBJ_TYPE_IS((FIOBJ)ctx, FIOBJ_T_HASH))
     return NULL;
-  return fiobj_hash_get3((FIOBJ)ctx, name.buf, name.len);
+  return fiobj_hash_get2((FIOBJ)ctx, name.buf, name.len);
 }
 /* if context is an Array, should return its length. */
 FIO_SFUNC size_t fiobj___mustache_array_length(void *ctx) {
@@ -41564,9 +45417,9 @@ FIO_SFUNC size_t fiobj___mustache_array_length(void *ctx) {
 }
 /* if context is an Array, should return a context pointer @ index. */
 FIO_SFUNC void *fiobj___mustache_get_var_index(void *ctx, size_t index) {
-  if (!FIOBJ_TYPE_IS((FIOBJ)ctx, FIOBJ_T_ARRAY))
+  if (!FIOBJ_TYPE_IS((FIOBJ)ctx, FIOBJ_T_ARRAY) || index > 0xFFFFFFFFUL)
     return NULL;
-  return fiobj_array_get((FIOBJ)ctx, index);
+  return fiobj_array_get((FIOBJ)ctx, (uint32_t)index);
 }
 /* should return the String value of context `var` as a `fio_buf_info_s`. */
 FIO_SFUNC fio_buf_info_s fiobj___mustache_var2str(void *var) {
@@ -41621,6 +45474,7 @@ typedef struct {
 #define FIO___RECURSIVE_INCLUDE  1
 #include FIO_INCLUDE_FILE
 #undef FIO___RECURSIVE_INCLUDE
+
 #define FIO_ARRAY_TYPE_CMP(a, b) (a).obj == (b).obj
 #define FIO_ARRAY_NAME           fiobj___stack
 #define FIO_ARRAY_TYPE           fiobj___stack_element_s
@@ -41705,7 +45559,8 @@ SFUNC uint32_t fiobj_each2(FIOBJ o, int (*task)(fiobj_each_s *), void *udata) {
   uint32_t end = fiobj____each2_element_count(o);
   fiobj____each2_wrapper_task((fiobj_each_s *)&e_tmp);
   while (!d.stop && i.obj && i.pos < end) {
-    i.pos = fiobj_each1(i.obj, fiobj____each2_wrapper_task, &d, i.pos);
+    i.pos =
+        fiobj_each1(i.obj, fiobj____each2_wrapper_task, &d, (uint32_t)i.pos);
     if (d.next != FIOBJ_INVALID) {
       if (fiobj___stack_count(&d.stack) + 1 > FIOBJ_MAX_NESTING) {
         FIO_LOG_ERROR("FIOBJ nesting level too deep (%u)."
@@ -41729,7 +45584,7 @@ SFUNC uint32_t fiobj_each2(FIOBJ o, int (*task)(fiobj_each_s *), void *udata) {
     }
   };
   fiobj___stack_destroy(&d.stack);
-  return d.count;
+  return (uint32_t)d.count;
 }
 
 /* *****************************************************************************
@@ -41766,8 +45621,10 @@ SFUNC unsigned char fiobj___test_eq_nested(FIOBJ restrict a,
       const size_t count = fiobj____each2_element_count(a);
       for (size_t i = 0; i < count; ++i) {
         if (!fiobj___test_eq_nested(
-                FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_ARRAY), get)(a, i),
-                FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_ARRAY), get)(b, i),
+                FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_ARRAY), get)(a,
+                                                                   (int32_t)i),
+                FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_ARRAY), get)(b,
+                                                                   (int32_t)i),
                 nesting))
           return 0;
       }
@@ -41778,7 +45635,7 @@ SFUNC unsigned char fiobj___test_eq_nested(FIOBJ restrict a,
     if (!fiobj____each2_element_count(a))
       return 1;
     FIO_MAP_EACH(FIO_NAME(fiobj, FIOBJ___NAME_HASH), a, pos) {
-      FIOBJ val = fiobj_hash_get2(b, pos.key);
+      FIOBJ val = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get)(b, pos.key);
       if (!fiobj___test_eq_nested(val, pos.value, nesting))
         return 0;
     }
@@ -42054,7 +45911,139 @@ log_nesting_error:
 /* *****************************************************************************
 FIOBJ JSON parsing
 ***************************************************************************** */
+#if 1
 
+FIO_SFUNC void *fiobj___json_on_null(void) {
+  return FIO_NAME(fiobj, FIOBJ___NAME_NULL)();
+}
+FIO_SFUNC void *fiobj___json_on_true(void) { return fiobj_true(); }
+FIO_SFUNC void *fiobj___json_on_false(void) { return fiobj_false(); }
+FIO_SFUNC void *fiobj___json_on_number(int64_t i) {
+  return FIO_NAME(fiobj, FIO_NAME(FIOBJ___NAME_NUMBER, new))(i);
+}
+FIO_SFUNC void *fiobj___json_on_float(double f) {
+  return FIO_NAME(fiobj, FIO_NAME(FIOBJ___NAME_FLOAT, new))(f);
+}
+FIO_SFUNC void *fiobj___json_on_string(const void *start, size_t len) {
+  FIOBJ str = FIO_NAME(fiobj, FIO_NAME(FIOBJ___NAME_STRING, new))();
+  FIO_NAME(fiobj, FIO_NAME(FIOBJ___NAME_STRING, write_unescape))
+  (str, (const char *)start, len);
+  return str;
+}
+FIO_SFUNC void *fiobj___json_on_string_simple(const void *start, size_t len) {
+  FIOBJ str = FIO_NAME(fiobj, FIO_NAME(FIOBJ___NAME_STRING, new))();
+  FIO_NAME(fiobj, FIO_NAME(FIOBJ___NAME_STRING, write))
+  (str, (const char *)start, len);
+  return str;
+}
+FIO_SFUNC void *fiobj___json_on_map(void *ctx, void *at) {
+  FIOBJ m = FIOBJ_INVALID;
+  if (ctx && at && FIOBJ_TYPE_CLASS(ctx) == FIOBJ_T_HASH)
+    m = FIO_NAME(fiobj, FIO_NAME(FIOBJ___NAME_HASH, get))((FIOBJ)ctx,
+                                                          (FIOBJ)at);
+  if (!m || m == FIOBJ_INVALID || FIOBJ_TYPE_CLASS(m) != FIOBJ_T_ARRAY)
+    m = FIO_NAME(fiobj, FIO_NAME(FIOBJ___NAME_HASH, new))();
+  return m;
+}
+FIO_SFUNC void *fiobj___json_on_array(void *ctx, void *at) {
+  FIOBJ m = FIOBJ_INVALID;
+  if (ctx && at && FIOBJ_TYPE_CLASS(ctx) == FIOBJ_T_HASH)
+    m = FIO_NAME(fiobj, FIO_NAME(FIOBJ___NAME_HASH, get))((FIOBJ)ctx,
+                                                          (FIOBJ)at);
+  if (!m || m == FIOBJ_INVALID || FIOBJ_TYPE_CLASS(m) != FIOBJ_T_ARRAY)
+    m = FIO_NAME(fiobj, FIO_NAME(FIOBJ___NAME_ARRAY, new))();
+  return m;
+}
+FIO_SFUNC int fiobj___json_map_push(void *ctx, void *key, void *value) {
+  FIO_NAME(fiobj, FIO_NAME(FIOBJ___NAME_HASH, set))
+  ((FIOBJ)ctx, (FIOBJ)key, (FIOBJ)value, NULL);
+  fiobj_free((FIOBJ)key);
+  return 0;
+}
+FIO_SFUNC int fiobj___json_array_push(void *ctx, void *value) {
+  FIO_NAME(fiobj, FIO_NAME(FIOBJ___NAME_ARRAY, push))((FIOBJ)ctx, (FIOBJ)value);
+  return 0;
+}
+FIO_SFUNC void fiobj___json_free_unused_object(void *ctx) {
+  fiobj_free((FIOBJ)ctx);
+}
+FIO_SFUNC void *fiobj___json_on_error(void *ctx) {
+  fiobj_free((FIOBJ)ctx);
+  return FIOBJ_INVALID;
+}
+static fio_json_parser_callbacks_s FIOBJ_JSON_PARSER_CALLBACKS = {
+    .on_null = fiobj___json_on_null,
+    .on_true = fiobj___json_on_true,
+    .on_false = fiobj___json_on_false,
+    .on_number = fiobj___json_on_number,
+    .on_float = fiobj___json_on_float,
+    .on_string = fiobj___json_on_string,
+    .on_string_simple = fiobj___json_on_string_simple,
+    .on_map = fiobj___json_on_map,
+    .on_array = fiobj___json_on_array,
+    .map_push = fiobj___json_map_push,
+    .array_push = fiobj___json_array_push,
+    .free_unused_object = fiobj___json_free_unused_object,
+    .on_error = fiobj___json_on_error,
+};
+
+/** Returns a JSON valid FIOBJ String, representing the object. */
+SFUNC FIOBJ fiobj_json_parse(fio_str_info_s str, size_t *consumed_p) {
+  fio_json_result_s result =
+      fio_json_parse(&FIOBJ_JSON_PARSER_CALLBACKS, str.buf, str.len);
+  if (consumed_p)
+    *consumed_p = result.stop_pos;
+  if (result.err) {
+#ifdef DEBUG
+    FIOBJ s = FIO_NAME2(fiobj, json)(FIOBJ_INVALID, (FIOBJ)result.ctx, 0);
+    FIO_LOG_DEBUG("JSON data being deleted:\n%s",
+                  FIO_NAME2(fiobj, cstr)(s).buf);
+    fiobj_free(s);
+#endif
+    fiobj_free((FIOBJ)result.ctx);
+    result.ctx = FIOBJ_INVALID;
+  }
+  return (FIOBJ)result.ctx;
+}
+
+/**
+ * Updates a Hash using JSON data.
+ *
+ * Parsing errors and non-dictionary object JSON data are silently ignored,
+ * attempting to update the Hash as much as possible before any errors
+ * encountered.
+ *
+ * Conflicting Hash data is overwritten (preferring the new over the old).
+ *
+ * Returns the number of bytes consumed. On Error, 0 is returned and no data is
+ * consumed.
+ */
+SFUNC size_t FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
+                      update_json)(FIOBJ hash, fio_str_info_s str) {
+  /* TODO! FIXME! this will leak memory on NULL hash and break on Arrays */
+  fio_json_result_s result = fio_json_parse_update(&FIOBJ_JSON_PARSER_CALLBACKS,
+                                                   hash,
+                                                   str.buf,
+                                                   str.len);
+  // if (consumed_p)
+  //   *consumed_p = result.stop_pos;
+  if (result.err) {
+#ifdef DEBUG
+    FIOBJ s = FIO_NAME2(fiobj, json)(FIOBJ_INVALID, (FIOBJ)result.ctx, 0);
+    FIO_LOG_DEBUG("JSON data being deleted:\n%s",
+                  FIO_NAME2(fiobj, cstr)(s).buf);
+    fiobj_free(s);
+#endif
+    fiobj_free((FIOBJ)result.ctx);
+    result.ctx = FIOBJ_INVALID;
+  }
+  return result.stop_pos;
+  FIO_LOG_ERROR("fiobj_hash_update_json note yet implemented");
+  return 0;
+  (void)str;
+}
+
+#else
 #define FIO_JSON
 #define FIO___RECURSIVE_INCLUDE 1
 #include FIO_INCLUDE_FILE
@@ -42063,18 +46052,19 @@ FIOBJ JSON parsing
 /* FIOBJ JSON parser */
 typedef struct {
   fio_json_parser_s p;
+  size_t so; /* stack offset */
   FIOBJ key;
   FIOBJ top;
   FIOBJ target;
   FIOBJ stack[JSON_MAX_DEPTH + 1];
-  uint8_t so; /* stack offset */
 } fiobj_json_parser_s;
 
 static inline void fiobj_json_add2parser(fiobj_json_parser_s *p, FIOBJ o) {
   if (p->top) {
     if (FIOBJ_TYPE_CLASS(p->top) == FIOBJ_T_HASH) {
       if (p->key) {
-        FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), set2)(p->top, p->key, o);
+        FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), set)
+        (p->top, p->key, o, NULL);
         fiobj_free(p->key);
         p->key = FIOBJ_INVALID;
       } else {
@@ -42134,7 +46124,7 @@ static inline int fio_json_on_start_object(fio_json_parser_s *p) {
     hash = FIOBJ_INVALID;
     if (pr->key && FIOBJ_TYPE_CLASS(pr->top) == FIOBJ_T_HASH) {
       hash =
-          FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get2)(pr->top, pr->key);
+          FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get)(pr->top, pr->key);
     }
     if (FIOBJ_TYPE_CLASS(hash) != FIOBJ_T_HASH) {
       hash = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), new)();
@@ -42177,7 +46167,7 @@ static int fio_json_on_start_array(fio_json_parser_s *p) {
   }
 #if FIOBJ_JSON_APPEND
   if (pr->key && FIOBJ_TYPE_CLASS(pr->top) == FIOBJ_T_HASH) {
-    ary = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get2)(pr->top, pr->key);
+    ary = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get)(pr->top, pr->key);
   }
   if (FIOBJ_TYPE_CLASS(ary) != FIOBJ_T_ARRAY) {
     ary = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_ARRAY), new)();
@@ -42262,6 +46252,7 @@ SFUNC FIOBJ fiobj_json_parse(fio_str_info_s str, size_t *consumed_p) {
   fiobj_free(p.key);
   return p.top;
 }
+#endif
 
 /** Uses JSON (JavaScript) notation to find data in an object structure. Returns
  * a temporary object. */
@@ -42282,9 +46273,9 @@ SFUNC FIOBJ fiobj_json_find(FIOBJ o, fio_str_info_s n) {
         ++n.buf;
         --n.len;
       }
-      if (!n.len || n.buf[0] != ']')
+      if (!n.len || n.buf[0] != ']' || i > 0xFFFFFFFFU)
         return FIOBJ_INVALID;
-      o = fiobj_array_get(o, i);
+      o = fiobj_array_get(o, (uint32_t)i);
       ++n.buf;
       --n.len;
       if (n.len) {
@@ -42299,7 +46290,7 @@ SFUNC FIOBJ fiobj_json_find(FIOBJ o, fio_str_info_s n) {
       return o;
     }
     case FIOBJ_T_HASH: {
-      FIOBJ tmp = fiobj_hash_get3(o, n.buf, n.len);
+      FIOBJ tmp = fiobj_hash_get2(o, n.buf, n.len);
       if (tmp != FIOBJ_INVALID)
         return tmp;
       char *end = n.buf + n.len - 1;
@@ -42309,7 +46300,7 @@ SFUNC FIOBJ fiobj_json_find(FIOBJ o, fio_str_info_s n) {
         if (end == n.buf)
           return FIOBJ_INVALID;
         const size_t t_len = end - n.buf;
-        tmp = fiobj_hash_get3(o, n.buf, t_len);
+        tmp = fiobj_hash_get2(o, n.buf, t_len);
         if (tmp != FIOBJ_INVALID) {
           o = tmp;
           n.len -= t_len + (end[0] == '.');
@@ -42323,7 +46314,6 @@ SFUNC FIOBJ fiobj_json_find(FIOBJ o, fio_str_info_s n) {
     }
   }
 }
-
 /* *****************************************************************************
 FIOBJ cleanup
 ***************************************************************************** */
@@ -42793,6 +46783,124 @@ FIO_IFUNC int64_t FIO_NAME_TEST(stl, atol_time)(void) {
   return ((int64_t)t.tv_sec * 1000000) + (int64_t)t.tv_nsec / 1000;
 }
 
+FIO_SFUNC double fio___aton_float_wrapper(char **pstr) {
+  fio_aton_s r = fio_aton(pstr);
+  if (r.is_float)
+    return r.f;
+  return (double)r.i;
+}
+
+FIO_SFUNC double fio___strtod_wrapper(char **pstr) {
+  return strtod(*pstr, pstr);
+}
+
+FIO_SFUNC void FIO_NAME_TEST(stl, aton_speed)(void) {
+  struct {
+    const char *n;
+    double (*fn)(char **);
+  } to_test[] = {
+      {.n = "fio_aton", .fn = fio___aton_float_wrapper},
+      {.n = "strtod  ", .fn = fio___strtod_wrapper},
+  };
+  const char *floats[] = {
+      "inf",
+      "nan",
+      "-inf",
+      "-nan",
+      "infinity",
+      "1E+1000",
+      "1E-1000",
+      "1E+10",
+      "1E-10",
+      "-1E10",
+      "-1e10",
+      "-1E+10",
+      "-1E-10",
+      "1.234E+10",
+      "1.234E-10",
+      "1.79769e+308",
+      "2.22507e-308",
+      "1.79769e+308",
+      "2.22507e-308",
+      "4.9406564584124654e-324",
+      "2.2250738585072009e-308",
+      "2.2250738585072014e-308",
+      "1.7976931348623157e+308",
+      "2.171e-308",
+      "2.2250738585072012e-308", /* possible infinit loop bug for strtod */
+      "1.0020284025808569e-134",
+      "1.00000000000000011102230246251565404236316680908203124",
+      "72057594037927928.0",
+      "7205759403792793200001e-5",
+      "5708990770823839207320493820740630171355185152001e-3",
+      "0x10.1p0",
+      "0x1.8p1",
+      "0x1.8p5",
+      "0x4.0p5",
+      "0x1.0p50a",
+      "0x1.0p500",
+      "0x1.0P-1074",
+      "0x3a.0P-1074",
+      "0x0.f9c7573d7fe52p-1022",
+  };
+  printf("* Testing fio_aton/strtod performance:\n");
+  /* Sanity Test */
+  bool rounding_errors_detected = 0;
+  for (size_t n_i = 0; n_i < sizeof(floats) / sizeof(floats[0]); ++n_i) {
+    union {
+      double f;
+      uint64_t u64;
+    } u1, u2;
+    char *tmp = (char *)floats[n_i];
+    u1.f = to_test[0].fn(&tmp);
+    for (size_t fn_i = 1; fn_i < sizeof(to_test) / sizeof(to_test[0]); ++fn_i) {
+      char *tmp2 = (char *)floats[n_i];
+      u2.f = to_test[fn_i].fn(&tmp2);
+      if (tmp2 == tmp) {
+        if ((isnan(u1.f) && isnan(u2.f)) || u1.u64 == u2.u64)
+          continue;
+        rounding_errors_detected = 1;
+#ifdef DEBUG
+        FIO_LOG_WARNING("Rounding error for %s:\n\t%.17g ?= %.17g",
+                        floats[n_i],
+                        u1.f,
+                        u2.f);
+#endif
+        if (u1.u64 + 1 == u2.u64)
+          continue;
+        if (u2.u64 + 1 == u1.u64)
+          continue;
+      }
+      FIO_ASSERT(tmp2 == tmp && u1.u64 == u2.u64,
+                 "Sanity test failed for %s\n\t %.17g ?!= %.17g\n\t %s ?!= %s",
+                 (char *)floats[n_i],
+                 u1.f,
+                 u2.f,
+                 tmp,
+                 tmp2);
+    }
+  }
+  /* Speed Test */
+  for (size_t fn_i = 0; fn_i < sizeof(to_test) / sizeof(to_test[0]); ++fn_i) {
+    double unused;
+    printf("\t%s\t", to_test[fn_i].n);
+    int64_t start = FIO_NAME_TEST(stl, atol_time)();
+    for (size_t i = 0; i < (FIO_ATOL_TEST_MAX / 10); ++i) {
+      for (size_t n_i = 0; n_i < sizeof(floats) / sizeof(floats[0]); ++n_i) {
+        char *tmp = (char *)floats[n_i];
+        unused = to_test[fn_i].fn(&tmp);
+        FIO_COMPILER_GUARD;
+      }
+    }
+    (void)unused;
+    int64_t end = FIO_NAME_TEST(stl, atol_time)();
+    printf("%lld us\n", (long long int)(end - start));
+  }
+  if (rounding_errors_detected)
+    FIO_LOG_WARNING("Single bit rounding errors detected when comparing "
+                    "`fio_aton` to `strtod`.\n");
+}
+
 FIO_SFUNC size_t sprintf_wrapper(char *dest, int64_t num, uint8_t base) {
   switch (base) {
   case 2: /* overflow - unsupported */
@@ -42808,6 +46916,12 @@ FIO_SFUNC size_t sprintf_wrapper(char *dest, int64_t num, uint8_t base) {
 
 FIO_SFUNC int64_t strtoll_wrapper(char **pstr) {
   return strtoll(*pstr, pstr, 0);
+}
+FIO_SFUNC int64_t fio_aton_wrapper(char **pstr) {
+  fio_aton_s r = fio_aton(pstr);
+  if (r.is_float)
+    return (int64_t)r.f;
+  return r.i;
 }
 
 FIO_SFUNC void FIO_NAME_TEST(stl, atol_speed)(const char *name,
@@ -42862,11 +46976,12 @@ FIO_SFUNC void FIO_NAME_TEST(stl, atol_speed)(const char *name,
       int64_t n = a2l(&bf);
       bf = buf;
       FIO_ASSERT(n == i,
-                 "roundtrip error for %s: %s != %lld (got %lld)",
+                 "roundtrip error for %s: %s != %lld (got %lld stopped: %s)",
                  name,
                  buf,
                  i,
-                 a2l(&bf));
+                 a2l(&bf),
+                 bf);
     }
     trt = FIO_NAME_TEST(stl, atol_time)() - start;
     start = FIO_NAME_TEST(stl, atol_time)();
@@ -42909,8 +47024,8 @@ FIO_SFUNC void FIO_NAME_TEST(stl, atol)(void) {
     size_t tmp = fio_ltoa(buffer, i, 0);
     FIO_ASSERT(tmp > 0, "fio_ltoa returned length error");
     char *tmp2 = buffer;
-    int i2 = fio_atol(&tmp2);
-    FIO_ASSERT(tmp2 > buffer, "fio_atol pointer motion error");
+    int i2 = (int)fio_atol(&tmp2);
+    FIO_ASSERT(tmp2 > buffer, "fio_atol pointer motion error (1:%i)", i);
     FIO_ASSERT(i == i2,
                "fio_ltoa-fio_atol roundtrip error %lld != %lld",
                i,
@@ -42923,7 +47038,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, atol)(void) {
     buffer[tmp] = 0;
     char *tmp2 = buffer;
     int64_t i2 = fio_atol(&tmp2);
-    FIO_ASSERT(tmp2 > buffer, "fio_atol pointer motion error");
+    FIO_ASSERT(tmp2 > buffer, "fio_atol pointer motion error (2:%zu)", bit);
     FIO_ASSERT((int64_t)i == i2,
                "fio_ltoa-fio_atol roundtrip error %lld != %lld",
                i,
@@ -42956,6 +47071,25 @@ FIO_SFUNC void FIO_NAME_TEST(stl, atol)(void) {
                e[1].p,
                r[1].p);
   }
+  for (size_t i = 1; i < (~0ULL); i = ((i << 1U) | 1U)) {
+    union {
+      double d;
+      void *p;
+    } tst[2];
+    tst[0].d = fio_u2d(i, 0);
+    tst[1].d = (double)i;
+    char buf[128];
+    buf[0] = 'x';
+    fio_ltoa16u(buf + 1, i, 16);
+    buf[17] = 0;
+    FIO_ASSERT(tst[0].d == tst[0].d,
+               "fio_u2d failed (%s) %g != %g\n\t%p != %p",
+               buf,
+               tst[0].d,
+               tst[1].d,
+               tst[0].p,
+               tst[1].p);
+  }
 #if 1 || !(DEBUG - 1 + 1)
   {
     uint64_t start, end, rep = (1ULL << 22);
@@ -42985,6 +47119,15 @@ FIO_SFUNC void FIO_NAME_TEST(stl, atol)(void) {
     end = fio_time_micro();
     fprintf(stderr, "\t- fio_i2d: %zuus\n", (size_t)(end - start));
     FIO_ASSERT(rtest == dbl[127], "fio_i2d results not the same as C cast?");
+    start = fio_time_micro();
+    for (size_t i = 0; i < rep; ++i) {
+      u64[i & 127] -= i;
+      FIO_COMPILER_GUARD;
+      dbl[i & 127] += fio_u2d((int64_t)u64[i & 127], 1);
+      FIO_COMPILER_GUARD;
+    }
+    end = fio_time_micro();
+    fprintf(stderr, "\t- fio_u2d: %zuus\n", (size_t)(end - start));
   }
 #endif
   fprintf(stderr, "* Testing fio_atol samples.\n");
@@ -43146,51 +47289,85 @@ FIO_SFUNC void FIO_NAME_TEST(stl, atol)(void) {
 
   FIO_NAME_TEST(stl, atol_speed)("fio_atol/fio_ltoa", fio_atol, fio_ltoa);
   FIO_NAME_TEST(stl, atol_speed)
-  ("system strtoll/sprintf", strtoll_wrapper, sprintf_wrapper);
+  ("fio_aton/fio_ltoa", fio_aton_wrapper, fio_ltoa);
 
-#ifdef FIO_ATOF_ALT
+  FIO_NAME_TEST(stl, atol_speed)
+  ("system strtoll/sprintf", strtoll_wrapper, sprintf_wrapper);
+  FIO_NAME_TEST(stl, aton_speed)();
+
 #define TEST_DOUBLE(s, d, stop)                                                \
   do {                                                                         \
     union {                                                                    \
       double d_;                                                               \
       uint64_t as_i;                                                           \
-    } pn, pn2;                                                                 \
-    pn2.d_ = d;                                                                \
+    } pn, pn1, pn2;                                                            \
+    pn2.d_ = (double)d;                                                        \
     char *p = (char *)(s);                                                     \
+    char *p1 = (char *)(s);                                                    \
     char *p2 = (char *)(s);                                                    \
     double r = fio_atof(&p);                                                   \
+    fio_aton_s num_result = fio_aton(&p1);                                     \
+    double r2 = num_result.is_float ? num_result.f : (double)num_result.i;     \
     double std = strtod(p2, &p2);                                              \
     (void)std;                                                                 \
     pn.d_ = r;                                                                 \
-    FIO_ASSERT(*p == stop || p == p2,                                          \
-               "float parsing didn't stop at correct possition! %x != %x",     \
-               *p,                                                             \
+    pn1.d_ = r2;                                                               \
+    FIO_ASSERT(                                                                \
+        *p == stop || p == p2,                                                 \
+        "atof float parsing didn't stop at correct position! %x != %x\n%s",    \
+        *p,                                                                    \
+        stop,                                                                  \
+        (s));                                                                  \
+    FIO_ASSERT(*p1 == stop || p1 == p2,                                        \
+               "aton float parsing didn't stop at correct position!\n\t%s"     \
+               "\n\t%x != %x",                                                 \
+               s,                                                              \
+               *p1,                                                            \
                stop);                                                          \
-    if ((double)d == r || r == std) {                                          \
+    if (((double)d == r && (double)d == r2) || (r == std && r2 == std)) {      \
       /** fprintf(stderr, "Okay for %s\n", s); */                              \
     } else if ((pn2.as_i + 1) == (pn.as_i) || (pn.as_i + 1) == pn2.as_i) {     \
-      fprintf(stderr,                                                          \
-              "* WARNING: Single bit rounding error detected: %s\n",           \
-              s);                                                              \
-    } else if (r == 0.0 && d != 0.0) {                                         \
-      fprintf(stderr, "* WARNING: float range limit marked before: %s\n", s);  \
+      if (FIO_LOG_LEVEL == FIO_LOG_LEVEL_DEBUG)                                \
+        FIO_LOG_WARNING("Single bit rounding error detected (%s1): %s\n",      \
+                        ((pn2.as_i + 1) == (pn.as_i) ? "-" : "+"),             \
+                        s);                                                    \
+    } else if ((pn1.as_i + 1) == (pn.as_i) || (pn.as_i + 1) == pn1.as_i) {     \
+      if (FIO_LOG_LEVEL == FIO_LOG_LEVEL_DEBUG)                                \
+        FIO_LOG_WARNING("aton Single bit rounding error detected (%s1): %s\n"  \
+                        "\t%g != %g",                                          \
+                        ((pn1.as_i + 1) == (pn.as_i) ? "-" : "+"),             \
+                        s,                                                     \
+                        r2,                                                    \
+                        std);                                                  \
+    } else if (r == 0.0 && (double)d != 0.0 && !isnan((double)d)) {            \
+      if (FIO_LOG_LEVEL == FIO_LOG_LEVEL_DEBUG)                                \
+        FIO_LOG_WARNING("float range limit marked before: %s\n", s);           \
+    } else if (r2 == 0.0 && (double)d != 0.0 && !isnan((double)d)) {           \
+      if (FIO_LOG_LEVEL == FIO_LOG_LEVEL_DEBUG)                                \
+        FIO_LOG_WARNING("aton float range limit marked before: %s\n", s);      \
     } else {                                                                   \
-      char f_buf[164];                                                         \
+      char f_buf[256];                                                         \
       pn.d_ = std;                                                             \
       pn2.d_ = r;                                                              \
-      size_t tmp_pos = fio_ltoa(f_buf, pn.as_i, 2);                            \
-      f_buf[tmp_pos] = '\n';                                                   \
-      fio_ltoa(f_buf + tmp_pos + 1, pn2.as_i, 2);                              \
+      size_t tmp_pos = fio_ltoa(f_buf, pn2.as_i, 2);                           \
+      f_buf[tmp_pos++] = '\n';                                                 \
+      tmp_pos += fio_ltoa(f_buf + tmp_pos, pn.as_i, 2);                        \
+      f_buf[tmp_pos++] = '\n';                                                 \
+      fio_ltoa(f_buf + tmp_pos, pn1.as_i, 2);                                  \
       FIO_ASSERT(0,                                                            \
-                 "Float error bigger than a single bit rounding error. exp. "  \
-                 "vs. act.:\n%.19g\n%.19g\nBinary:\n%s",                       \
+                 "Float error bigger than a single bit rounding error."        \
+                 "\n\tString: %s"                                              \
+                 "\n\texp. "                                                   \
+                 "vs. act.:\nstd %.19g\natof %.19g\naton %.19g\nBinary:\n%s",  \
+                 s,                                                            \
                  std,                                                          \
                  r,                                                            \
+                 r2,                                                           \
                  f_buf);                                                       \
     }                                                                          \
   } while (0)
 
-  fprintf(stderr, "* Testing fio_atof samples.\n");
+  fprintf(stderr, "* Testing fio_atof & fio_aton samples.\n");
 
   /* A few hex-float examples  */
   TEST_DOUBLE("0x10.1p0", 0x10.1p0, 0);
@@ -43229,7 +47406,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, atol)(void) {
   TEST_DOUBLE(" -e", 0, 0);
   TEST_DOUBLE(" .9", 0.9, 0);
   TEST_DOUBLE(" ..9", 0, '.');
-  TEST_DOUBLE("009", 9, 0);
+  TEST_DOUBLE("007", 7, 0);
   TEST_DOUBLE("0.09e02", 9, 0);
   /* http://thread.gmane.org/gmane.editors.vim.devel/19268/ */
   TEST_DOUBLE("0.9999999999999999999999999999999999", 1, 0);
@@ -43340,7 +47517,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, atol)(void) {
     clock_t start, stop;
     fio_memcpy15x(buffer, "1234567890.123", 14);
     buffer[14] = 0;
-    size_t r = 0;
+    volatile size_t r = 0;
     start = clock();
     for (int i = 0; i < (FIO_ATOL_TEST_MAX << 3); ++i) {
       char *pos = buffer;
@@ -43351,7 +47528,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, atol)(void) {
     stop = clock();
     fprintf(stderr,
             "* fio_atol speed test completed in %zu cycles\n",
-            stop - start);
+            (size_t)(stop - start));
     r = 0;
 
     start = clock();
@@ -43364,10 +47541,9 @@ FIO_SFUNC void FIO_NAME_TEST(stl, atol)(void) {
     stop = clock();
     fprintf(stderr,
             "* system atol speed test completed in %zu cycles\n",
-            stop - start);
+            (size_t)(stop - start));
   }
 #endif /* !DEBUG */
-#endif /* FIO_ATOF_ALT */
 }
 #undef FIO_ATOL_TEST_MAX
 
@@ -43718,10 +47894,10 @@ FIO_SFUNC void FIO_NAME_TEST(stl, core)(void) {
     FIO_COMPILER_GUARD;
     FIO_ASSERT(tmp == ((uint64_t)1 << 2), "fio_lrot failed");
     tmp = 1;
-    tmp = fio_rrot32(tmp, 1);
+    tmp = fio_rrot32((uint32_t)tmp, 1);
     FIO_COMPILER_GUARD;
     FIO_ASSERT(tmp == ((uint64_t)1 << 31), "fio_rrot32 failed");
-    tmp = fio_lrot32(tmp, 3);
+    tmp = fio_lrot32((uint32_t)tmp, 3);
     FIO_COMPILER_GUARD;
     FIO_ASSERT(tmp == ((uint64_t)1 << 2), "fio_lrot32 failed");
     tmp = 1;
@@ -43934,6 +48110,101 @@ FIO_SFUNC void FIO_NAME_TEST(stl, core)(void) {
       fio_xmask(buf + i + 1, len, mask);
       FIO_ASSERT(!memcmp(buf + i + 1, data, len),
                  "fio_xmask rountrip (with move) error");
+    }
+  }
+  {
+    fprintf(stderr, "* Testing Core UTF-8 Support (Macros).\n");
+    struct {
+      const char *buf;
+      size_t clen;
+      bool expect_fail;
+    } utf8_core_tests[] = {
+        {"\xf0\x9f\x92\x85", 4},
+        {"\xf0\x9f\x92\x95", 4},
+        {"\xe2\x9d\xa4", 3},
+        {"\xE1\x9A\x80", 3},
+        {"\xE2\x80\x80", 3},
+        {"\xE2\x80\x81", 3},
+        {"\xE2\x80\x82", 3},
+        {"\xE2\x80\x83", 3},
+        {"\xE2\x80\x84", 3},
+        {"\xE2\x80\x85", 3},
+        {"\xE2\x80\x86", 3},
+        {"\xE2\x80\x87", 3},
+        {"\xE2\x80\x88", 3},
+        {"\xE2\x80\x89", 3},
+        {"\xE2\x80\x8A", 3},
+        {"\xE2\x80\xA8", 3},
+        {"\xE2\x80\xA9", 3},
+        {"\xE2\x80\xAF", 3},
+        {"\xE2\x81\x9F", 3},
+        {"\xE3\x80\x80", 3},
+        {"\xEF\xBB\xBF", 3},
+        {"\xc6\x92", 2},
+        {"\xC2\xA0", 2},
+        {"\x09", 1},
+        {"\x0A", 1},
+        {"\x0B", 1},
+        {"\x0C", 1},
+        {"\x0D", 1},
+        {"\x20", 1},
+        {"Z", 1},
+        {"\0", 1},
+        {"\xf0\x9f\x92\x35", 4, 1},
+        {"\xf0\x9f\x32\x95", 4, 1},
+        {"\xf0\x3f\x92\x95", 4, 1},
+        {"\xFE\x9f\x92\x95", 4, 1},
+        {"\xE1\x9A\x30", 3, 1},
+        {"\xE1\x3A\x80", 3, 1},
+        {"\xf0\x9A\x80", 3, 1},
+        {"\xc6\x32", 2, 1},
+        {"\xf0\x92", 2, 1},
+        {0},
+    };
+    for (size_t i = 0; utf8_core_tests[i].buf; ++i) {
+      char *pos = (char *)utf8_core_tests[i].buf;
+      FIO_ASSERT(utf8_core_tests[i].expect_fail ||
+                     (size_t)fio_utf8_char_len(pos) == utf8_core_tests[i].clen,
+                 "fio_utf8_char_len failed on %s ([%zu] == %X), %d != %u",
+                 utf8_core_tests[i].buf,
+                 i,
+                 (unsigned)(uint8_t)utf8_core_tests[i].buf[0],
+                 (int)fio_utf8_char_len(pos),
+                 (unsigned)utf8_core_tests[i].clen);
+      uint32_t value = 0, validate = 0;
+      void *tst_str = NULL;
+      fio_memcpy7x(&tst_str, utf8_core_tests[i].buf, utf8_core_tests[i].clen);
+#if __LITTLE_ENDIAN__
+      tst_str = (void *)(uintptr_t)fio_lton32((uint32_t)(uintptr_t)tst_str);
+#endif
+      value = fio_utf8_read(&pos);
+      uint32_t val_len = fio_utf8_code_len(value); /* val_len 0 (fail) == 1 */
+      FIO_ASSERT(!utf8_core_tests[i].expect_fail ||
+                     (!value && pos == utf8_core_tests[i].buf &&
+                      !fio_utf8_char_len(utf8_core_tests[i].buf)),
+                 "Failed to detect invalid UTF-8");
+      if (utf8_core_tests[i].expect_fail)
+        continue;
+      char output[32];
+      pos = output;
+      pos += fio_utf8_write(pos, value);
+      FIO_ASSERT(val_len == utf8_core_tests[i].clen,
+                 "fio_utf8_read + fio_utf8_code_len failed on %s / %p (%zu "
+                 "len => %zu != %zu)",
+                 utf8_core_tests[i].buf,
+                 tst_str,
+                 (size_t)value,
+                 val_len,
+                 utf8_core_tests[i].clen);
+      pos = output;
+      validate = fio_utf8_read(&pos);
+      FIO_ASSERT(validate == value && (value > 0 || !utf8_core_tests[i].buf[0]),
+                 "fio_utf8_read + fio_utf8_write roundtrip failed on [%zu] %s\n"
+                 "\t %zu != %zu",
+                 i,
+                 utf8_core_tests[i].buf,
+                 validate,
+                 value);
     }
   }
 }
@@ -44263,7 +48534,11 @@ FIO_SFUNC void FIO_NAME_TEST(stl, fiobj)(void) {
 #endif
     FIO_ASSERT(FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_STRING), len)(j) ==
                    FIO_STRLEN(json + 61),
-               "JSON roundtrip failed (length error).");
+               "JSON roundtrip failed (length error %zu != %zu).\n%s\n%s",
+               (size_t)FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_STRING), len)(j),
+               (size_t)FIO_STRLEN(json + 61),
+               FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_STRING), ptr)(j),
+               json + 61);
     FIO_ASSERT(!memcmp(json + 61,
                        FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_STRING), ptr)(j),
                        FIO_STRLEN(json + 61)),
@@ -44400,24 +48675,23 @@ FIO_SFUNC void FIO_NAME_TEST(stl, fiobj)(void) {
                            new_cstr)("number: ", 8);
       FIOBJ k = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_NUMBER), new)(i);
       FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_STRING), write_i)(tmp, i);
-      FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), set2)(o, k, tmp);
-      FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), set_if_missing2)
-      (o, k, fiobj_dup(tmp));
+      FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), set)
+      (o, k, fiobj_dup(tmp), NULL);
+      FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), set_if_missing)(o, k, tmp);
       fiobj_free(k);
     }
 
     FIOBJ set = FIOBJ_INVALID;
     FIOBJ removed = FIOBJ_INVALID;
     FIOBJ k = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_NUMBER), new)(1);
-    FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), remove2)(o, k, &removed);
+    FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), remove)(o, k, &removed);
     fiobj_free(k);
     k = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_NUMBER), new)(2);
-    FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), set)
-    (o, fiobj2hash(o, k), k, fiobj_true(), &set);
+    FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), set)(o, k, fiobj_true(), &set);
     fiobj_free(k);
-    FIO_ASSERT(set, "fiobj_hash_set2 didn't copy information to old pointer?");
+    FIO_ASSERT(set, "fiobj_hash_set didn't copy information to old pointer?");
     FIO_ASSERT(removed,
-               "fiobj_hash_remove2 didn't copy information to old pointer?");
+               "fiobj_hash_remove didn't copy information to old pointer?");
     // fiobj_hash_set(o, uintptr_t hash, FIOBJ key, FIOBJ value, FIOBJ *old)
     FIO_ASSERT(
         FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_STRING), len)(removed) ==
@@ -44455,8 +48729,8 @@ FIO_SFUNC void FIO_NAME_TEST(stl, fiobj)(void) {
     FIOBJ h = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), new)();
     FIOBJ key = FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_STRING), new)();
     FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_STRING), write)(key, "array", 5);
-    FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), set2)(h, key, a);
-    FIO_ASSERT(FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get2)(h, key) == a,
+    FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), set)(h, key, a);
+    FIO_ASSERT(FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH), get)(h, key) == a,
                "FIOBJ Hash retrieval failed");
     FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_ARRAY), push)(a, key);
     if (0) {
@@ -45234,7 +49508,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, memalt)(void) {
       size_t len = fio_strlen(membuf);
       membuf[i] = (char)((i & 0xFFU) | 1U);
       FIO_ASSERT(result == membuf + i, "fio_memchr failed.");
-      FIO_ASSERT(len == i, "fio_strlen failed.");
+      FIO_ASSERT(len == i, "fio_strlen failed (%zu != %zu).", len, i);
     }
   }
 #ifndef DEBUG
@@ -45337,6 +49611,18 @@ FIO_SFUNC void FIO_NAME_TEST(stl, memalt)(void) {
     for (size_t rlen = mem_len - 1; rlen < mem_len + 2; ++rlen) {
       start = fio_time_micro();
       for (size_t i = 0; i < repetitions; ++i) {
+        memset(mem, (int)sig, rlen);
+        FIO_COMPILER_GUARD;
+      }
+      end = fio_time_micro();
+      fprintf(stderr,
+              "\tsystem memset\t(%zu bytes):\t%zuus\t/ %zu\n",
+              rlen,
+              (size_t)(end - start),
+              repetitions);
+
+      start = fio_time_micro();
+      for (size_t i = 0; i < repetitions; ++i) {
         fio_memset(mem, sig, rlen);
         FIO_COMPILER_GUARD;
       }
@@ -45347,17 +49633,6 @@ FIO_SFUNC void FIO_NAME_TEST(stl, memalt)(void) {
                                 "fio_memset sanity test FAILED");
       fprintf(stderr,
               "\tfio_memset\t(%zu bytes):\t%zuus\t/ %zu\n",
-              rlen,
-              (size_t)(end - start),
-              repetitions);
-      start = fio_time_micro();
-      for (size_t i = 0; i < repetitions; ++i) {
-        memset(mem, (int)sig, rlen);
-        FIO_COMPILER_GUARD;
-      }
-      end = fio_time_micro();
-      fprintf(stderr,
-              "\tsystem memset\t(%zu bytes):\t%zuus\t/ %zu\n",
               rlen,
               (size_t)(end - start),
               repetitions);
@@ -45380,6 +49655,18 @@ FIO_SFUNC void FIO_NAME_TEST(stl, memalt)(void) {
       sig ^= sig << 29;
       sig ^= sig << 31;
       fio_memset(mem, sig, mem_len);
+
+      start = fio_time_micro();
+      for (size_t i = 0; i < repetitions; ++i) {
+        memcpy((char *)mem + mem_len, mem, mem_len);
+        FIO_COMPILER_GUARD;
+      }
+      end = fio_time_micro();
+      fprintf(stderr,
+              "\tsystem memcpy\t(%zu bytes):\t%zuus\t/ %zu\n",
+              mem_len,
+              (size_t)(end - start),
+              repetitions);
 
       start = fio_time_micro();
       for (size_t i = 0; i < repetitions; ++i) {
@@ -45415,17 +49702,6 @@ FIO_SFUNC void FIO_NAME_TEST(stl, memalt)(void) {
       //         "us\t/ %zu\n", threads_used, mem_len, (size_t)(end
       //         - start), repetitions);
 
-      start = fio_time_micro();
-      for (size_t i = 0; i < repetitions; ++i) {
-        memcpy((char *)mem + mem_len, mem, mem_len);
-        FIO_COMPILER_GUARD;
-      }
-      end = fio_time_micro();
-      fprintf(stderr,
-              "\tsystem memcpy\t(%zu bytes):\t%zuus\t/ %zu\n",
-              mem_len,
-              (size_t)(end - start),
-              repetitions);
       free(mem);
     }
   }
@@ -45437,9 +49713,10 @@ FIO_SFUNC void FIO_NAME_TEST(stl, memalt)(void) {
                                << (len_i < 15 ? (15 - (len_i & 15)) : 0);
     const size_t mem_len = (1ULL << len_i) - 1;
     size_t token_index = ((mem_len >> 1) + (mem_len >> 2)) + 1;
-    void *mem = malloc(mem_len + 1);
+    void *mem = malloc(mem_len + 2);
     FIO_ASSERT_ALLOC(mem);
     fio_memset(mem, ((uint64_t)0x0101010101010101ULL * 0x80), mem_len + 1);
+    ((uint8_t *)mem)[mem_len + 1] = 0;
     ((uint8_t *)mem)[token_index >> 1] = 0xFFU;       /* edge case? */
     ((uint8_t *)mem)[(token_index >> 1) + 1] = 0x01U; /* edge case? */
     ((uint8_t *)mem)[(token_index >> 1) + 2] = 0x7FU; /* edge case? */
@@ -45450,27 +49727,6 @@ FIO_SFUNC void FIO_NAME_TEST(stl, memalt)(void) {
                "fio_memchr != memchr");
     ((uint8_t *)mem)[token_index] = (char)0x80;
     ((uint8_t *)mem)[token_index + 1] = (char)0x80;
-
-    token_index = mem_len;
-    start = fio_time_micro();
-    for (size_t i = 0; i < repetitions; ++i) {
-      char *result = (char *)fio_memchr((char *)mem, 0, mem_len);
-      FIO_ASSERT(result == ((char *)mem + token_index) ||
-                     (!result && token_index == mem_len),
-                 "fio_memchr failed? @ %zu",
-                 token_index);
-      FIO_COMPILER_GUARD;
-      ((uint8_t *)mem)[token_index] = 0x80;
-      token_index = (token_index - 1) & ((1ULL << len_i) - 1);
-      ((uint8_t *)mem)[token_index] = 0;
-    }
-    end = fio_time_micro();
-    ((uint8_t *)mem)[token_index] = 0x80;
-    fprintf(stderr,
-            "\tfio_memchr\t(up to %zu bytes):\t%zuus\t/ %zu\n",
-            mem_len,
-            (size_t)(end - start),
-            repetitions);
 
     token_index = mem_len;
     start = fio_time_micro();
@@ -45493,6 +49749,27 @@ FIO_SFUNC void FIO_NAME_TEST(stl, memalt)(void) {
             (size_t)(end - start),
             repetitions);
 
+    token_index = mem_len;
+    start = fio_time_micro();
+    for (size_t i = 0; i < repetitions; ++i) {
+      char *result = (char *)fio_memchr((char *)mem, 0, mem_len);
+      FIO_ASSERT(result == ((char *)mem + token_index) ||
+                     (!result && token_index == mem_len),
+                 "fio_memchr failed? @ %zu",
+                 token_index);
+      FIO_COMPILER_GUARD;
+      ((uint8_t *)mem)[token_index] = 0x80;
+      token_index = (token_index - 1) & ((1ULL << len_i) - 1);
+      ((uint8_t *)mem)[token_index] = 0;
+    }
+    end = fio_time_micro();
+    ((uint8_t *)mem)[token_index] = 0x80;
+    fprintf(stderr,
+            "\tfio_memchr\t(up to %zu bytes):\t%zuus\t/ %zu\n",
+            mem_len,
+            (size_t)(end - start),
+            repetitions);
+
     free(mem);
   }
 
@@ -45502,63 +49779,69 @@ FIO_SFUNC void FIO_NAME_TEST(stl, memalt)(void) {
     const size_t repetitions = base_repetitions
                                << (len_i < 13 ? (15 - (len_i & 15)) : 2);
     const size_t mem_len = (1ULL << len_i);
-    char *mem = (char *)malloc(mem_len << 1);
+    char *mem = (char *)malloc((mem_len << 1) + 128);
     FIO_ASSERT_ALLOC(mem);
     uint64_t sig = (uintptr_t)mem;
     sig ^= sig >> 13;
     sig ^= sig << 17;
     sig ^= sig << 29;
     sig ^= sig << 31;
-    fio_memset(mem, sig, mem_len);
-    fio_memset(mem + mem_len, sig, mem_len);
+    char *a = mem;
+    char *b = mem + mem_len + 32;
+    fio_memset(a, sig, mem_len);
+    a[mem_len] = 'A';
+    fio_memset(b, sig, mem_len);
+    b[mem_len] = 'B';
     size_t twister = 0;
 
-    FIO_ASSERT(!fio_memcmp(mem + mem_len, mem, mem_len),
-               "fio_memcmp sanity test FAILED (%zu eq)",
-               mem_len);
-    FIO_ASSERT(fio_ct_is_eq(mem + mem_len, mem, mem_len),
-               "fio_ct_is_eq sanity test FAILED (%zu eq)",
-               mem_len);
+    if (mem_len > 64) {
+      for (size_t i = 0; i < 64; ++i) {
+        FIO_ASSERT(!fio_memcmp(a + i, b + i, mem_len - i),
+                   "fio_memcmp sanity test FAILED (%zu eq)",
+                   mem_len);
+        FIO_ASSERT(fio_ct_is_eq(a + i, b + i, mem_len - i),
+                   "fio_ct_is_eq sanity test FAILED (%zu eq)",
+                   mem_len);
+      }
+    } else {
+      FIO_ASSERT(!fio_memcmp(a, b, mem_len),
+                 "fio_memcmp sanity test FAILED (%zu eq)",
+                 mem_len);
+      FIO_ASSERT(fio_ct_is_eq(a, b, mem_len),
+                 "fio_ct_is_eq sanity test FAILED (%zu eq)",
+                 mem_len);
+    }
     {
       mem[mem_len - 2]--;
-      int r1 = fio_memcmp(mem + mem_len, mem, mem_len);
-      int r2 = memcmp(mem + mem_len, mem, mem_len);
-      FIO_ASSERT((r1 > 0 && r2 > 0) | (r1 < 0 && r2 < 0),
-                 "fio_memcmp sanity test FAILED (%zu !eq)",
-                 mem_len);
-      FIO_ASSERT(!fio_ct_is_eq(mem + mem_len, mem, mem_len),
-                 "fio_ct_is_eq sanity test FAILED (%zu !eq)",
-                 mem_len);
+      if (mem_len > 64) {
+        for (size_t i = 0; i < 64; ++i) {
+          int r1 = fio_memcmp(a + i, b + i, mem_len - i);
+          int r2 = memcmp(a + i, b + i, mem_len - i);
+          FIO_ASSERT((r1 > 0 && r2 > 0) | (r1 < 0 && r2 < 0),
+                     "fio_memcmp sanity test FAILED (%zu !eq)",
+                     mem_len);
+          FIO_ASSERT(!fio_ct_is_eq(a, b, mem_len),
+                     "fio_ct_is_eq sanity test FAILED (%zu !eq)",
+                     mem_len);
+        }
+      } else {
+        int r1 = fio_memcmp(a, b, mem_len);
+        int r2 = memcmp(a, b, mem_len);
+        FIO_ASSERT((r1 > 0 && r2 > 0) | (r1 < 0 && r2 < 0),
+                   "fio_memcmp sanity test FAILED (%zu !eq)",
+                   mem_len);
+        FIO_ASSERT(!fio_ct_is_eq(a, b, mem_len),
+                   "fio_ct_is_eq sanity test FAILED (%zu !eq)",
+                   mem_len);
+      }
       mem[mem_len - 2]++;
     }
 
+    FIO_MEMCPY(b, a, mem_len); /* shouldn't be needed, but anyway */
     twister = mem_len - 3;
     start = fio_time_micro();
     for (size_t i = 0; i < repetitions; ++i) {
-      int cmp = fio_memcmp(mem + mem_len, mem, mem_len);
-      FIO_COMPILER_GUARD;
-      if (cmp) {
-        ++mem[twister--];
-        twister &= ((1ULL << (len_i - 1)) - 1);
-      } else {
-        --mem[twister];
-      }
-    }
-    end = fio_time_micro();
-    fprintf(stderr,
-            "\tfio_memcmp\t(up to %zu bytes):\t%zuus\t/ %zu\n",
-            mem_len,
-            (size_t)(end - start),
-            repetitions);
-
-    FIO_MEMCPY(mem,
-               mem + mem_len,
-               mem_len); /* shouldn't be needed, but anyway */
-
-    twister = mem_len - 3;
-    start = fio_time_micro();
-    for (size_t i = 0; i < repetitions; ++i) {
-      int cmp = memcmp(mem + mem_len, mem, mem_len);
+      int cmp = memcmp(a, b, mem_len);
       FIO_COMPILER_GUARD;
       if (cmp) {
         ++mem[twister--];
@@ -45574,10 +49857,31 @@ FIO_SFUNC void FIO_NAME_TEST(stl, memalt)(void) {
             (size_t)(end - start),
             repetitions);
 
+    FIO_MEMCPY(b, a, mem_len); /* shouldn't be needed, but anyway */
     twister = mem_len - 3;
     start = fio_time_micro();
     for (size_t i = 0; i < repetitions; ++i) {
-      int cmp = fio_ct_is_eq(mem + mem_len, mem, mem_len);
+      int cmp = fio_memcmp(a, b, mem_len);
+      FIO_COMPILER_GUARD;
+      if (cmp) {
+        ++mem[twister--];
+        twister &= ((1ULL << (len_i - 1)) - 1);
+      } else {
+        --mem[twister];
+      }
+    }
+    end = fio_time_micro();
+    fprintf(stderr,
+            "\tfio_memcmp\t(up to %zu bytes):\t%zuus\t/ %zu\n",
+            mem_len,
+            (size_t)(end - start),
+            repetitions);
+
+    FIO_MEMCPY(b, a, mem_len); /* shouldn't be needed, but anyway */
+    twister = mem_len - 3;
+    start = fio_time_micro();
+    for (size_t i = 0; i < repetitions; ++i) {
+      int cmp = fio_ct_is_eq(a, b, mem_len);
       FIO_COMPILER_GUARD;
       if (!cmp) {
         ++mem[twister--];
@@ -45626,6 +49930,26 @@ FIO_SFUNC void FIO_NAME_TEST(stl, memalt)(void) {
     ((uint8_t *)mem)[token_index] = 0;
     start = fio_time_micro();
     for (size_t i = 0; i < repetitions; ++i) {
+      size_t result = strlen((char *)mem);
+      FIO_ASSERT(result == token_index, "strlen failed? @ %zu", token_index);
+      FIO_COMPILER_GUARD;
+      ((uint8_t *)mem)[token_index] = 0x80;
+      token_index = (token_index - 1) & ((1ULL << len_i) - 1);
+      token_index -= (token_index == mem_len);
+      ((uint8_t *)mem)[token_index] = 0;
+    }
+    end = fio_time_micro();
+    ((uint8_t *)mem)[token_index] = 0x80;
+    fprintf(stderr,
+            "\tsystem strlen\t(up to %zu bytes):\t%zuus\t/ %zu\n",
+            mem_len,
+            (size_t)(end - start),
+            repetitions);
+
+    token_index = mem_len - 1;
+    ((uint8_t *)mem)[token_index] = 0;
+    start = fio_time_micro();
+    for (size_t i = 0; i < repetitions; ++i) {
       size_t result = fio_strlen((char *)mem);
       FIO_ASSERT(result == token_index,
                  "fio_strlen failed? @ %zu",
@@ -45640,26 +49964,6 @@ FIO_SFUNC void FIO_NAME_TEST(stl, memalt)(void) {
     ((uint8_t *)mem)[token_index] = 0x80;
     fprintf(stderr,
             "\tfio_strlen\t(up to %zu bytes):\t%zuus\t/ %zu\n",
-            mem_len,
-            (size_t)(end - start),
-            repetitions);
-
-    token_index = mem_len - 1;
-    ((uint8_t *)mem)[token_index] = 0;
-    start = fio_time_micro();
-    for (size_t i = 0; i < repetitions; ++i) {
-      size_t result = strlen((char *)mem);
-      FIO_ASSERT(result == token_index, "strlen failed? @ %zu", token_index);
-      FIO_COMPILER_GUARD;
-      ((uint8_t *)mem)[token_index] = 0x80;
-      token_index = (token_index - 1) & ((1ULL << len_i) - 1);
-      token_index -= (token_index == mem_len);
-      ((uint8_t *)mem)[token_index] = 0;
-    }
-    end = fio_time_micro();
-    ((uint8_t *)mem)[token_index] = 0x80;
-    fprintf(stderr,
-            "\tsystem strlen\t(up to %zu bytes):\t%zuus\t/ %zu\n",
             mem_len,
             (size_t)(end - start),
             repetitions);
@@ -46648,6 +50952,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, risky)(void) {
                          3,
                          2);
   fprintf(stderr, "\n");
+#if 0  /* speed test num and ptr hashing */
   fio_test_hash_function(FIO_NAME_TEST(stl, risky_ptr_wrapper),
                          (char *)"fio_risky_ptr (emulated)",
                          7,
@@ -46674,6 +50979,8 @@ FIO_SFUNC void FIO_NAME_TEST(stl, risky)(void) {
                          5,
                          3,
                          2);
+#endif /* speed test num and ptr hashing */
+
   /* xmask speed testing */
   fprintf(stderr, "\n");
   fio_test_hash_function(FIO_NAME_TEST(stl, xmask_wrapper),
@@ -46687,6 +50994,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, risky)(void) {
                          1,
                          2);
 
+#if 0  /* speed test playground */
   /* playground speed testing */
   fprintf(stderr, "\n");
   fio_test_hash_function(FIO_NAME_TEST(stl, risky2_wrapper),
@@ -46709,8 +51017,9 @@ FIO_SFUNC void FIO_NAME_TEST(stl, risky)(void) {
                          5,
                          3,
                          2);
+#endif /* speed test playground */
   fprintf(stderr, "\n");
-#endif
+#endif /* DEBUG */
 }
 
 FIO_SFUNC void FIO_NAME_TEST(stl, random_buffer)(uint64_t *stream,
@@ -47269,7 +51578,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, sock)(void) {
                "incoming connection should have been detected (%d : %u)",
                srv,
                (unsigned)ev);
-    intptr_t accepted = accept(srv, NULL, NULL);
+    int accepted = fio_sock_accept(srv, NULL, NULL);
     FIO_ASSERT(FIO_SOCK_FD_ISVALID(accepted),
                "accepted socket failed to open (%zd)",
                (ssize_t)accepted);
@@ -47323,7 +51632,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, sock)(void) {
     fprintf(stderr, "* Testing UDP socket (abbreviated test)\n");
     int srv =
         fio_sock_open("127.0.0.1", "9437", FIO_SOCK_UDP | FIO_SOCK_SERVER);
-    int n = 0; /* try for 32Mb */
+    int n = 0;
     socklen_t sn = sizeof(n);
     if (-1 != getsockopt(srv, SOL_SOCKET, SO_RCVBUF, (void *)&n, &sn) &&
         sizeof(n) == sn)
@@ -47337,6 +51646,11 @@ FIO_SFUNC void FIO_NAME_TEST(stl, sock)(void) {
       else
         break;
     }
+    do {
+      n += 16 * 1024; /* at 16Kb at a time */
+      if (n >= 32 * 1024 * 1024)
+        break;
+    } while (setsockopt(srv, SOL_SOCKET, SO_RCVBUF, (void *)&n, sn) != -1);
     if (-1 != getsockopt(srv, SOL_SOCKET, SO_RCVBUF, (void *)&n, &sn) &&
         sizeof(n) == sn)
       fprintf(stderr, "\t- UDP receive buffer could be set to %d bytes\n", n);
@@ -47964,21 +52278,28 @@ FIO_SFUNC void FIO_NAME_TEST(stl, string_core_helpers)(void) {
   }
   { /* Testing UTF-8 */
     fprintf(stderr, "* Testing UTF-8 support.\n");
-    const char *utf8_sample = /* three hearts, small-big-small*/
-        "\xf0\x9f\x92\x95\xe2\x9d\xa4\xef\xb8\x8f\xf0\x9f\x92\x95";
+    /* 4B heart, 3B heart, 3B heart resizer, 4B heart, 2B f, 1B Z */
+    const char *utf8_sample =
+        "\xf0\x9f\x92\x95\xe2\x9d\xa4\xef\xb8\x8f\xf0\x9f\x92\x95\xc6\x92Z\0";
     fio_str_info_s utf8 = FIO_STR_INFO1((char *)utf8_sample);
-    intptr_t pos = -2;
+
+    FIO_ASSERT(fio_string_utf8_valid(utf8),
+               "fio_string_utf8_valid failed on valid code");
+    FIO_ASSERT(fio_string_utf8_len(utf8) == 6, /* manual knowledge */
+               "fio_string_utf8_len failed with valid UTF-8 %zu != 6",
+               fio_string_utf8_len(utf8));
+    intptr_t pos = -4;
     size_t len = 2;
     FIO_ASSERT(fio_string_utf8_select(utf8, &pos, &len) == 0,
                "`fio_string_utf8_select` returned error for negative pos on "
                "UTF-8 data! (%zd, %zu)",
                (ssize_t)pos,
                len);
-    FIO_ASSERT(pos == (intptr_t)utf8.len - 4, /* 4 byte emoji */
+    FIO_ASSERT(pos == (intptr_t)utf8.len - 10,
                "`fio_string_utf8_select` error, negative position invalid on "
                "UTF-8 data! (%zd)",
                (ssize_t)pos);
-    FIO_ASSERT(len == 4, /* last utf-8 char is 4 byte long */
+    FIO_ASSERT(len == 7, /* heart + math 'f' */
                "`fio_string_utf8_select` error, truncated length invalid on "
                "UTF-8 data! (%zd)",
                (ssize_t)len);
@@ -47993,10 +52314,11 @@ FIO_SFUNC void FIO_NAME_TEST(stl, string_core_helpers)(void) {
                "`fio_string_utf8_select` error, position invalid on "
                "UTF-8 data! (%zd)",
                (ssize_t)pos);
-    FIO_ASSERT(len == 10,
+    FIO_ASSERT(len == utf8.len - 4,
                "`fio_string_utf8_select` error, length invalid on "
-               "UTF-8 data! (%zd)",
-               (ssize_t)len);
+               "UTF-8 data! (%zd != %zu)",
+               (ssize_t)len,
+               utf8.len - 4);
     pos = 1;
     len = 3;
     FIO_ASSERT(fio_string_utf8_select(utf8, &pos, &len) == 0,
@@ -48004,11 +52326,11 @@ FIO_SFUNC void FIO_NAME_TEST(stl, string_core_helpers)(void) {
                "(2)! (%zd, %zu)",
                (ssize_t)pos,
                len);
-    FIO_ASSERT(len ==
-                   10, /* 3 UTF-8 chars: 4 byte + 4 byte + 2 byte codes == 10 */
+    FIO_ASSERT(len == 10, /* 3 UTF-8 chars: 4 byte + 4 byte + 2 byte == 10 */
                "`fio_string_utf8_select` error, length invalid on UTF-8 data! "
                "(%zd)",
                (ssize_t)len);
+    /* TODO! test fio_string_utf8_valid speed. */
   }
   { /* testing C / JSON style escaping */
     fprintf(stderr, "* Testing C / JSON style character (un)escaping.\n");
@@ -48017,13 +52339,14 @@ FIO_SFUNC void FIO_NAME_TEST(stl, string_core_helpers)(void) {
     fio_str_info_s decoded = FIO_STR_INFO3(mem + 512, 0, 512);
     fio_str_info_s encoded = FIO_STR_INFO3(mem + 1024, 0, 1024);
     const char *utf8_sample = /* three hearts, small-big-small*/
-        "\xf0\x9f\x92\x95\xe2\x9d\xa4\xef\xb8\x8f\xf0\x9f\x92\x95";
+        "\xf0\x9f\x92\x95\xe2\x9d\xa4\xef\xb8\x8f\xf0\x9f\x92\x95\xc6\x92Z";
+    // "\xf0\x9f\x92\x95\xe2\x9d\xa4\xef\xb8\x8f\xf0\x9f\x92\x95";
     FIO_ASSERT(!fio_string_write(&unescaped,
                                  NULL,
                                  utf8_sample,
                                  FIO_STRLEN(utf8_sample)),
                "Couldn't write UTF-8 example.");
-    for (int i = 0; i < 256; ++i) {
+    for (int i = 1; i < 256; ++i) {
       uint8_t c = i;
       FIO_ASSERT(!fio_string_write(&unescaped, NULL, &c, 1),
                  "write returned an error");
@@ -48035,19 +52358,22 @@ FIO_SFUNC void FIO_NAME_TEST(stl, string_core_helpers)(void) {
         !fio_string_write_unescape(&decoded, NULL, encoded.buf, encoded.len),
         "write unescape returned an error");
     FIO_ASSERT(encoded.len, "JSON encoding failed");
+    FIO_ASSERT(decoded.buf == mem + 512 && encoded.buf == mem + 1024,
+               "C escaping unexpected side-effects!");
     FIO_ASSERT(!memcmp(encoded.buf, utf8_sample, FIO_STRLEN(utf8_sample)),
                "valid UTF-8 data shouldn't be escaped:\n%.*s\n%s",
                (int)encoded.len,
                encoded.buf,
                decoded.buf);
-    FIO_ASSERT(
-        unescaped.len == decoded.len,
-        "C escaping roundtrip length error, %zu != %zu (%zu - %zu):\n %s",
-        unescaped.len,
-        decoded.len,
-        decoded.len,
-        encoded.len,
-        decoded.buf);
+    FIO_ASSERT(unescaped.len == decoded.len,
+               "C escaping roundtrip length error, %zu != %zu (%zu - "
+               "%zu):\n%.127s\n\n!=>\n\n%.127s",
+               unescaped.len,
+               decoded.len,
+               decoded.len,
+               encoded.len,
+               encoded.buf,
+               decoded.buf);
     FIO_ASSERT(!memcmp(unescaped.buf, decoded.buf, unescaped.len),
                "C escaping round-trip failed:\n %s",
                decoded.buf);
@@ -48295,7 +52621,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, string_core_helpers)(void) {
       }
       end = clock();
       fprintf(stderr,
-              "\t* memcmp libc test cycles:            %zu\n",
+              "\t* memcmp libc test cycles:             %zu\n",
               (size_t)(end - start));
       start = clock();
       for (size_t i = 0; i < test_repetitions; ++i) {
@@ -48305,7 +52631,20 @@ FIO_SFUNC void FIO_NAME_TEST(stl, string_core_helpers)(void) {
       }
       end = clock();
       fprintf(stderr,
-              "\t* strcmp libc test cycles:            %zu\n",
+              "\t* strcmp libc test cycles:             %zu\n",
+              (size_t)(end - start));
+      start = clock();
+      for (size_t i = 0; i < test_repetitions; ++i) {
+        FIO_COMPILER_GUARD;
+        int r =
+            !fio_ct_is_eq(sa.buf, sb.buf, sa.len > sb.len ? sb.len : sa.len);
+        if (!r)
+          r = sa.len > sb.len;
+        FIO_ASSERT(r, "fio_ct_is_eq error?!");
+      }
+      end = clock();
+      fprintf(stderr,
+              "\t* fio_ct_is_eq test cycles:            %zu (only equality)\n",
               (size_t)(end - start));
     }
 
@@ -48575,183 +52914,265 @@ FIO_SFUNC void FIO_NAME_TEST(stl, url)(void) {
     char *url;
     size_t len;
     fio_url_s expected;
+    fio_url_tls_info_s tls;
   } tests[] = {
       {
           .url = (char *)"file://go/home/",
-          .len = 15,
+          5,
           .expected =
               {
-                  .scheme = FIO_BUF_INFO2((char *)"file", 4),
-                  .path = FIO_BUF_INFO2((char *)"go/home/", 8),
+                  .scheme = FIO_BUF_INFO1((char *)"file"),
+                  .path = FIO_BUF_INFO1((char *)"go/home/"),
               },
       },
       {
           .url = (char *)"unix:///go/home/",
-          .len = 16,
           .expected =
               {
-                  .scheme = FIO_BUF_INFO2((char *)"unix", 4),
-                  .path = FIO_BUF_INFO2((char *)"/go/home/", 9),
+                  .scheme = FIO_BUF_INFO1((char *)"unix"),
+                  .path = FIO_BUF_INFO1((char *)"/go/home/"),
               },
       },
       {
           .url = (char *)"unix:///go/home/?query#target",
-          .len = 29,
           .expected =
               {
-                  .scheme = FIO_BUF_INFO2((char *)"unix", 4),
-                  .path = FIO_BUF_INFO2((char *)"/go/home/", 9),
-                  .query = FIO_BUF_INFO2((char *)"query", 5),
-                  .target = FIO_BUF_INFO2((char *)"target", 6),
+                  .scheme = FIO_BUF_INFO1((char *)"unix"),
+                  .path = FIO_BUF_INFO1((char *)"/go/home/"),
+                  .query = FIO_BUF_INFO1((char *)"query"),
+                  .target = FIO_BUF_INFO1((char *)"target"),
               },
       },
       {
           .url = (char *)"schema://user:password@host:port/path?query#target",
-          .len = 50,
           .expected =
               {
-                  .scheme = FIO_BUF_INFO2((char *)"schema", 6),
-                  .user = FIO_BUF_INFO2((char *)"user", 4),
-                  .password = FIO_BUF_INFO2((char *)"password", 8),
-                  .host = FIO_BUF_INFO2((char *)"host", 4),
-                  .port = FIO_BUF_INFO2((char *)"port", 4),
-                  .path = FIO_BUF_INFO2((char *)"/path", 5),
-                  .query = FIO_BUF_INFO2((char *)"query", 5),
-                  .target = FIO_BUF_INFO2((char *)"target", 6),
+                  .scheme = FIO_BUF_INFO1((char *)"schema"),
+                  .user = FIO_BUF_INFO1((char *)"user"),
+                  .password = FIO_BUF_INFO1((char *)"password"),
+                  .host = FIO_BUF_INFO1((char *)"host"),
+                  .port = FIO_BUF_INFO1((char *)"port"),
+                  .path = FIO_BUF_INFO1((char *)"/path"),
+                  .query = FIO_BUF_INFO1((char *)"query"),
+                  .target = FIO_BUF_INFO1((char *)"target"),
               },
       },
       {
           .url = (char *)"schema://user@host:port/path?query#target",
-          .len = 41,
           .expected =
               {
-                  .scheme = FIO_BUF_INFO2((char *)"schema", 6),
-                  .user = FIO_BUF_INFO2((char *)"user", 4),
-                  .host = FIO_BUF_INFO2((char *)"host", 4),
-                  .port = FIO_BUF_INFO2((char *)"port", 4),
-                  .path = FIO_BUF_INFO2((char *)"/path", 5),
-                  .query = FIO_BUF_INFO2((char *)"query", 5),
-                  .target = FIO_BUF_INFO2((char *)"target", 6),
+                  .scheme = FIO_BUF_INFO1((char *)"schema"),
+                  .user = FIO_BUF_INFO1((char *)"user"),
+                  .host = FIO_BUF_INFO1((char *)"host"),
+                  .port = FIO_BUF_INFO1((char *)"port"),
+                  .path = FIO_BUF_INFO1((char *)"/path"),
+                  .query = FIO_BUF_INFO1((char *)"query"),
+                  .target = FIO_BUF_INFO1((char *)"target"),
               },
       },
       {
           .url = (char *)"http://localhost.com:3000/home?is=1",
-          .len = 35,
           .expected =
               {
-                  .scheme = FIO_BUF_INFO2((char *)"http", 4),
-                  .host = FIO_BUF_INFO2((char *)"localhost.com", 13),
-                  .port = FIO_BUF_INFO2((char *)"3000", 4),
-                  .path = FIO_BUF_INFO2((char *)"/home", 5),
-                  .query = FIO_BUF_INFO2((char *)"is=1", 4),
+                  .scheme = FIO_BUF_INFO1((char *)"http"),
+                  .host = FIO_BUF_INFO1((char *)"localhost.com"),
+                  .port = FIO_BUF_INFO1((char *)"3000"),
+                  .path = FIO_BUF_INFO1((char *)"/home"),
+                  .query = FIO_BUF_INFO1((char *)"is=1"),
               },
       },
       {
           .url = (char *)"/complete_path?query#target",
-          .len = 27,
           .expected =
               {
-                  .path = FIO_BUF_INFO2((char *)"/complete_path", 14),
-                  .query = FIO_BUF_INFO2((char *)"query", 5),
-                  .target = FIO_BUF_INFO2((char *)"target", 6),
+                  .path = FIO_BUF_INFO1((char *)"/complete_path"),
+                  .query = FIO_BUF_INFO1((char *)"query"),
+                  .target = FIO_BUF_INFO1((char *)"target"),
               },
       },
       {
           .url = (char *)"/index.html?page=1#list",
-          .len = 23,
           .expected =
               {
-                  .path = FIO_BUF_INFO2((char *)"/index.html", 11),
-                  .query = FIO_BUF_INFO2((char *)"page=1", 6),
-                  .target = FIO_BUF_INFO2((char *)"list", 4),
+                  .path = FIO_BUF_INFO1((char *)"/index.html"),
+                  .query = FIO_BUF_INFO1((char *)"page=1"),
+                  .target = FIO_BUF_INFO1((char *)"list"),
               },
       },
       {
           .url = (char *)"example.com",
-          .len = 11,
           .expected =
               {
-                  .host = FIO_BUF_INFO2((char *)"example.com", 11),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
               },
       },
 
       {
           .url = (char *)"example.com:8080",
-          .len = 16,
           .expected =
               {
-                  .host = FIO_BUF_INFO2((char *)"example.com", 11),
-                  .port = FIO_BUF_INFO2((char *)"8080", 4),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .port = FIO_BUF_INFO1((char *)"8080"),
               },
       },
       {
           .url = (char *)"example.com:8080?q=true",
-          .len = 23,
           .expected =
               {
-                  .host = FIO_BUF_INFO2((char *)"example.com", 11),
-                  .port = FIO_BUF_INFO2((char *)"8080", 4),
-                  .query = FIO_BUF_INFO2((char *)"q=true", 6),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .port = FIO_BUF_INFO1((char *)"8080"),
+                  .query = FIO_BUF_INFO1((char *)"q=true"),
               },
       },
       {
           .url = (char *)"example.com/index.html",
-          .len = 22,
           .expected =
               {
-                  .host = FIO_BUF_INFO2((char *)"example.com", 11),
-                  .path = FIO_BUF_INFO2((char *)"/index.html", 11),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .path = FIO_BUF_INFO1((char *)"/index.html"),
               },
       },
       {
           .url = (char *)"example.com:8080/index.html",
-          .len = 27,
           .expected =
               {
-                  .host = FIO_BUF_INFO2((char *)"example.com", 11),
-                  .port = FIO_BUF_INFO2((char *)"8080", 4),
-                  .path = FIO_BUF_INFO2((char *)"/index.html", 11),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .port = FIO_BUF_INFO1((char *)"8080"),
+                  .path = FIO_BUF_INFO1((char *)"/index.html"),
               },
       },
       {
           .url = (char *)"example.com:8080/index.html?key=val#target",
-          .len = 42,
           .expected =
               {
-                  .host = FIO_BUF_INFO2((char *)"example.com", 11),
-                  .port = FIO_BUF_INFO2((char *)"8080", 4),
-                  .path = FIO_BUF_INFO2((char *)"/index.html", 11),
-                  .query = FIO_BUF_INFO2((char *)"key=val", 7),
-                  .target = FIO_BUF_INFO2((char *)"target", 6),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .port = FIO_BUF_INFO1((char *)"8080"),
+                  .path = FIO_BUF_INFO1((char *)"/index.html"),
+                  .query = FIO_BUF_INFO1((char *)"key=val"),
+                  .target = FIO_BUF_INFO1((char *)"target"),
               },
       },
       {
           .url = (char *)"user:1234@example.com:8080/index.html",
-          .len = 37,
           .expected =
               {
-                  .user = FIO_BUF_INFO2((char *)"user", 4),
-                  .password = FIO_BUF_INFO2((char *)"1234", 4),
-                  .host = FIO_BUF_INFO2((char *)"example.com", 11),
-                  .port = FIO_BUF_INFO2((char *)"8080", 4),
-                  .path = FIO_BUF_INFO2((char *)"/index.html", 11),
+                  .user = FIO_BUF_INFO1((char *)"user"),
+                  .password = FIO_BUF_INFO1((char *)"1234"),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .port = FIO_BUF_INFO1((char *)"8080"),
+                  .path = FIO_BUF_INFO1((char *)"/index.html"),
               },
       },
       {
           .url = (char *)"user@example.com:8080/index.html",
-          .len = 32,
           .expected =
               {
-                  .user = FIO_BUF_INFO2((char *)"user", 4),
-                  .host = FIO_BUF_INFO2((char *)"example.com", 11),
-                  .port = FIO_BUF_INFO2((char *)"8080", 4),
-                  .path = FIO_BUF_INFO2((char *)"/index.html", 11),
+                  .user = FIO_BUF_INFO1((char *)"user"),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .port = FIO_BUF_INFO1((char *)"8080"),
+                  .path = FIO_BUF_INFO1((char *)"/index.html"),
+              },
+      },
+      {
+          .url = (char *)"https://example.com/path",
+          .expected =
+              {
+                  .scheme = FIO_BUF_INFO1((char *)"https"),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .path = FIO_BUF_INFO1((char *)"/path"),
+              },
+          .tls = {.tls = 1},
+      },
+      {
+          .url = (char *)"wss://example.com/path",
+          .expected =
+              {
+                  .scheme = FIO_BUF_INFO1((char *)"wss"),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .path = FIO_BUF_INFO1((char *)"/path"),
+              },
+          .tls = {.tls = 1},
+      },
+      {
+          .url = (char *)"sses://example.com/path",
+          .expected =
+              {
+                  .scheme = FIO_BUF_INFO1((char *)"sses"),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .path = FIO_BUF_INFO1((char *)"/path"),
+              },
+          .tls = {.tls = 1},
+      },
+      {
+          .url = (char *)"sses://example.com/path",
+          .expected =
+              {
+                  .scheme = FIO_BUF_INFO1((char *)"sses"),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .path = FIO_BUF_INFO1((char *)"/path"),
+              },
+          .tls = {.tls = 1},
+      },
+      {
+          .url = (char *)"http://example.com/path?tls=true",
+          .expected =
+              {
+                  .scheme = FIO_BUF_INFO1((char *)"http"),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .path = FIO_BUF_INFO1((char *)"/path"),
+                  .query = FIO_BUF_INFO1((char *)"tls=true"),
+              },
+          .tls = {.tls = 1},
+      },
+      {
+          .url = (char *)"http://example.com/path?tls",
+          .expected =
+              {
+                  .scheme = FIO_BUF_INFO1((char *)"http"),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .path = FIO_BUF_INFO1((char *)"/path"),
+                  .query = FIO_BUF_INFO1((char *)"tls"),
+              },
+          .tls = {.tls = 1},
+      },
+      {
+          .url = (char *)"http://example.com/path?tls=something",
+          .expected =
+              {
+                  .scheme = FIO_BUF_INFO1((char *)"http"),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .path = FIO_BUF_INFO1((char *)"/path"),
+                  .query = FIO_BUF_INFO1((char *)"tls=something"),
+              },
+          .tls =
+              {
+                  .key = FIO_BUF_INFO1((char *)"something"),
+                  .cert = FIO_BUF_INFO1((char *)"something"),
+                  .tls = 1,
+              },
+      },
+      {
+          .url = (char *)"http://example.com/path?key=something&cert=pubthing",
+          .expected =
+              {
+                  .scheme = FIO_BUF_INFO1((char *)"http"),
+                  .host = FIO_BUF_INFO1((char *)"example.com"),
+                  .path = FIO_BUF_INFO1((char *)"/path"),
+                  .query = FIO_BUF_INFO1((char *)"key=something&cert=pubthing"),
+              },
+          .tls =
+              {
+                  .key = FIO_BUF_INFO1((char *)"something"),
+                  .cert = FIO_BUF_INFO1((char *)"pubthing"),
+                  .tls = 1,
               },
       },
       {.url = NULL},
   };
   for (size_t i = 0; tests[i].url; ++i) {
+    tests[i].len = strlen(tests[i].url);
     fio_url_s result = fio_url_parse(tests[i].url, tests[i].len);
+    fio_url_tls_info_s tls = fio_url_is_tls(result);
     FIO_LOG_DEBUG2("Result for: %s"
                    "\n\t     scheme   (%zu bytes):  %.*s"
                    "\n\t     user     (%zu bytes):  %.*s"
@@ -48877,6 +53298,24 @@ FIO_SFUNC void FIO_NAME_TEST(stl, url)(void) {
         tests[i].expected.target.buf,
         (int)result.target.len,
         result.target.buf);
+
+    FIO_ASSERT(
+        1,
+        "TSL detection result failed for:\n\ttest[%zu]: %s\n\texpected: "
+        "%s key:%s, cert:%s, pass%s\n\tgot: %s key:%.*s, cert:%.*s, pass%.*s",
+        i,
+        tests[i].url,
+        tests[i].tls.tls ? "TLS" : "none",
+        tests[i].tls.key.buf,
+        tests[i].tls.cert.buf,
+        tests[i].tls.pass.buf,
+        tls.tls ? "TLS" : "none",
+        (int)tls.key.len,
+        tls.key.buf,
+        (int)tls.cert.len,
+        tls.cert.buf,
+        (int)tls.pass.len,
+        tls.pass.buf);
   }
 }
 /* *****************************************************************************
@@ -50000,9 +54439,8 @@ FIO_SFUNC void fio_test_dynamic_types(void) {
   fprintf(stderr,
           "\nThe facil.io library was originally coded by \x1B[1mBoaz "
           "Segev\x1B[0m.\n"
-          "Please give credit where credit is due.\n"
-          "\x1B[1mYour support is only fair\x1B[0m - give value for value.\n"
-          "(code contributions / donations)\n\n");
+          "\x1B[1mValue deserves to be valued.\x1B[0m\n"
+          "(please consider code contributions / donations)\n\n");
 }
 
 /* *****************************************************************************
@@ -50133,6 +54571,10 @@ Finish testing segment
 #endif
 #if defined(FIO_UMAP_NAME) || defined(FIO_OMAP_NAME) || defined(FIO_MAP_NAME)
 #include "210 map.h"
+#endif
+
+#if defined(FIO_MAP2_NAME)
+#include "210 map2.h"
 #endif
 
 #include "299 reference counter.h" /* required: pointer tagging cleanup is here */

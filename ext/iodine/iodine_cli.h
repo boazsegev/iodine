@@ -1,3 +1,5 @@
+#ifndef H___IODINE_CLI___H
+#define H___IODINE_CLI___H
 #include "iodine.h"
 
 #define IODINE_CLI_LIMIT 256
@@ -24,18 +26,19 @@ static int iodine_cli_task(fio_buf_info_s name,
       --name.len;
     }
     n = rb_str_new(name.buf, name.len);
+    STORE.hold(n);
   } else {
     n = RB_INT2FIX(at);
     ++at;
   }
-  STORE.hold(n);
   rb_hash_aset(h, n, v);
-  tmp = rb_str_intern(n);
-  STORE.release(n);
-  n = tmp;
-  STORE.hold(n);
-  rb_hash_aset(h, n, v);
-  STORE.release(n);
+  if (RB_TYPE_P(n, RUBY_T_STRING)) {
+    tmp = rb_str_intern(n);
+    STORE.release(n);
+    STORE.hold((n = tmp));
+    rb_hash_aset(h, n, v);
+    STORE.release(n);
+  }
   STORE.release(v);
   return 0;
 }
@@ -48,33 +51,56 @@ Ruby Public API.
 static VALUE iodine_cli_parse(VALUE self, VALUE required) {
   if (!RB_TYPE_P(rb_argv, RUBY_T_ARRAY))
     rb_raise(rb_eException, "ARGV should be an Array!");
+  FIO_STR_INFO_TMP_VAR(desc, 2048);
+  FIO_STR_INFO_TMP_VAR(threads, 128);
+  FIO_STR_INFO_TMP_VAR(workers, 128);
+  const char *argv[IODINE_CLI_LIMIT];
   long len = 0;
-  char *argv[IODINE_CLI_LIMIT];
+  VALUE iodine_version = rb_const_get(iodine_rb_IODINE, rb_intern("VERSION"));
+
+  /* I don't know if Ruby promises a NUL separator, but fio_bstr does. */
   if (rb_argv0 && RB_TYPE_P(rb_argv0, RUBY_T_STRING)) {
-    argv[len++] = fio_bstr_write(NULL,
-                                 RSTRING_PTR(rb_argv0),
-                                 (size_t)RSTRING_LEN(rb_argv0));
-  }
+    argv[len++] =
+        fio_bstr_write(NULL, RSTRING_PTR(rb_argv0), RSTRING_LEN(rb_argv0));
+  } else
+    argv[len++] = (const char *)"iodine";
   for (long i = 0; len < IODINE_CLI_LIMIT && i < rb_array_len(rb_argv); ++i) {
     VALUE o = rb_ary_entry(rb_argv, i);
     if (!RB_TYPE_P(o, RUBY_T_STRING)) {
       FIO_LOG_WARNING("ARGV member skipped - not a String!");
       continue;
     }
-    argv[len] = fio_bstr_write(NULL, RSTRING_PTR(o), (size_t)RSTRING_LEN(o));
-    fio_state_callback_add(FIO_CALL_AT_EXIT,
-                           (void (*)(void *))fio_bstr_free,
-                           (void *)(argv[len]));
-    ++len;
+    argv[len++] = fio_bstr_write(NULL, RSTRING_PTR(o), RSTRING_LEN(o));
   }
 
-  VALUE iodine_version = rb_const_get(iodine_rb_IODINE, rb_intern("VERSION"));
-  char *desc = fio_bstr_write2(
+  /* in case of `-h` or error, make sure we clean up */
+  for (long i = 0; i < len; ++i)
+    fio_state_callback_add(FIO_CALL_AT_EXIT,
+                           (void (*)(void *))fio_bstr_free,
+                           (void *)argv[i]);
+
+  fio_string_write2(
+      &threads,
+      NULL,
+      FIO_STRING_WRITE_STR1("--threads -t ("),
+      (getenv("THREADS") ? FIO_STRING_WRITE_STR1(getenv("THREADS"))
+                         : FIO_STRING_WRITE_STR1("-4")),
+      FIO_STRING_WRITE_STR1(") number of worker threads to use."));
+  fio_string_write2(
+      &workers,
+      NULL,
+      FIO_STRING_WRITE_STR1("--workers -w ("),
+      (getenv("WORKERS") ? FIO_STRING_WRITE_STR1(getenv("WORKERS"))
+                         : FIO_STRING_WRITE_STR1("-2")),
+      FIO_STRING_WRITE_STR1(") number of worker processes to use."));
+
+  fio_string_write2(
+      &desc,
       NULL,
       FIO_STRING_WRITE_STR1("Iodine's (" FIO_POLL_ENGINE_STR
                             ") HTTP/WebSocket server version "),
       FIO_STRING_WRITE_STR2(RSTRING_PTR(iodine_version),
-                            RSTRING_LEN(iodine_version)),
+                            (size_t)RSTRING_LEN(iodine_version)),
       FIO_STRING_WRITE_STR1(
           "\r\n\r\nUse:\r\n    iodine <options> <filename>\r\n\r\n"
           "Both <options> and <filename> are optional. i.e.,:\r\n"
@@ -82,28 +108,31 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
           "    iodine -p 8080 path/to/app/conf.ru\r\n"
           "    iodine -p 8080 -w 4 -t 16\r\n"
           "    iodine -w -1 -t 4 -r redis://usr:pass@localhost:6379/"));
-  fio_state_callback_add(FIO_CALL_AT_EXIT,
-                         (void (*)(void *))fio_bstr_free,
-                         (void *)desc);
 
   fio_cli_end();
   fio_cli_start(
-      len,
+      (int)len,
       (const char **)argv,
       0,
       ((required == Qnil || required == Qfalse) ? -1 : 1),
-      desc,
+      desc.buf,
       FIO_CLI_PRINT_HEADER("Address Binding"),
       FIO_CLI_PRINT_LINE(
           "NOTE: also controlled by the ADDRESS or PORT environment vars."),
-      FIO_CLI_STRING("-bind -b address to listen to in URL format."),
-      FIO_CLI_INT("-port -p port number to listen to if URL is missing."),
+      FIO_CLI_STRING(
+          "-bind -b address to listen to in URL format (MAY include PORT)."),
+      FIO_CLI_PRINT(
+          "It's possible to add TLS/SSL data to the binding URL. i.e.:"),
+      FIO_CLI_PRINT("\t iodine -b https://0.0.0.0/tls=./cert_path/"),
+      FIO_CLI_PRINT(
+          "\t iodine -b https://0.0.0.0/key=./key.pem&cert=./cert.pem"),
+      FIO_CLI_INT("-port -p default port number to listen to."),
       FIO_CLI_PRINT(
           "Note: these are optional and supersede previous instructions."),
 
       FIO_CLI_PRINT_HEADER("Concurrency"),
-      FIO_CLI_INT("--threads (-4) -t number of worker threads to use."),
-      FIO_CLI_INT("--workers (-2) -w number of worker processes to use."),
+      FIO_CLI_INT(threads.buf),
+      FIO_CLI_INT(workers.buf),
 
       FIO_CLI_PRINT_HEADER("HTTP"),
       FIO_CLI_STRING("--public -www public folder for static file service."),
@@ -114,6 +143,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
       FIO_CLI_INT("--keep-alive -k (" FIO_MACRO2STR(
           FIO_HTTP_DEFAULT_TIMEOUT) ") HTTP keep-alive timeout in seconds "
                                     "(0..255)"),
+      FIO_CLI_BOOL("--max-age -maxage default Max-Age header value."),
       FIO_CLI_BOOL("--log -v log HTTP messages."),
 
       FIO_CLI_PRINT_HEADER("WebSocket / SSE"),
@@ -122,7 +152,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
       FIO_CLI_INT("--timeout -ping WebSocket / SSE timeout, in seconds."),
 
       FIO_CLI_PRINT_HEADER("TLS / SSL"),
-      FIO_CLI_PRINT_LINE(
+      FIO_CLI_PRINT(
           "NOTE: crashes if no crypto library implementation is found."),
       FIO_CLI_BOOL(
           "--tls-self -tls uses SSL/TLS with a self signed certificate."),
@@ -146,6 +176,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
 
       FIO_CLI_PRINT_HEADER("Misc"),
       FIO_CLI_BOOL("--verbose -V -d print out debugging messages."),
+      FIO_CLI_BOOL("--rack -R -rack prefer Rack::Builder over NeoRack."),
       FIO_CLI_STRING("--config -C configuration file to be loaded."),
       FIO_CLI_STRING(
           "--pid -pidfile -pid name for the pid file to be created."),
@@ -174,47 +205,35 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
     fio_pubsub_broadcast_on_port(fio_cli_get_i("-bp"));
   }
 
-  /* Test for TLS */
-  fio_tls_s *tls = (fio_cli_get("--tls-cert") && fio_cli_get("--tls-key"))
-                       ? fio_tls_cert_add(fio_tls_new(),
-                                          fio_cli_get("--tls-name"),
-                                          fio_cli_get("--tls-cert"),
-                                          fio_cli_get("--tls-key"),
-                                          fio_cli_get("-tls-pass"))
-                   : fio_cli_get("-tls")
-                       ? fio_tls_cert_add(fio_tls_new(),
-                                          fio_cli_get("-tls-name"),
-                                          NULL,
-                                          NULL,
-                                          NULL)
-                       : NULL;
   /* support -b and -p for when a URL isn't provided */
-  if (fio_cli_get("-b"))
-    fio_cli_set_unnamed(0, fio_cli_get("-b"));
   if (fio_cli_get("-p")) {
-    fio_buf_info_s tmp;
-    FIO_STR_INFO_TMP_VAR(url, 2048);
-    tmp.buf = (char *)fio_cli_unnamed(0);
-    if (!tmp.buf)
-      tmp.buf = (char *)"0.0.0.0";
-    tmp.len = strlen(tmp.buf);
-    FIO_ASSERT(tmp.len < 2000, "binding address / url too long.");
-    fio_url_s u = fio_url_parse(tmp.buf, tmp.len);
-    tmp.buf = (char *)fio_cli_get("-p");
-    tmp.len = strlen(tmp.buf);
-    FIO_ASSERT(tmp.len < 6, "port number too long.");
-    fio_string_write2(&url,
-                      NULL,
-                      FIO_STRING_WRITE_STR2(u.scheme.buf, u.scheme.len),
-                      (u.scheme.len ? FIO_STRING_WRITE_STR2("://", 3)
-                                    : FIO_STRING_WRITE_STR2(NULL, 0)),
-                      FIO_STRING_WRITE_STR2(u.host.buf, u.host.len),
-                      FIO_STRING_WRITE_STR2(":", 1),
-                      FIO_STRING_WRITE_STR2(tmp.buf, tmp.len),
-                      (u.query.len ? FIO_STRING_WRITE_STR2("?", 1)
-                                   : FIO_STRING_WRITE_STR2(NULL, 0)),
-                      FIO_STRING_WRITE_STR2(u.query.buf, u.query.len));
-    fio_cli_set_unnamed(0, url.buf);
+    fio_buf_info_s tmp = fio_cli_get_str("-b");
+    if (tmp.buf) {
+      FIO_STR_INFO_TMP_VAR(url, 2048);
+      FIO_ASSERT(tmp.len < 2000, "binding address / url too long.");
+      fio_url_s u = fio_url_parse(tmp.buf, tmp.len);
+      tmp.buf = (char *)fio_cli_get("-p");
+      tmp.len = strlen(tmp.buf);
+      FIO_ASSERT(tmp.len < 6, "port number too long.");
+      fio_string_write2(&url,
+                        NULL,
+                        FIO_STRING_WRITE_STR2(u.scheme.buf, u.scheme.len),
+                        (u.scheme.len ? FIO_STRING_WRITE_STR2("://", 3)
+                                      : FIO_STRING_WRITE_STR2(NULL, 0)),
+                        FIO_STRING_WRITE_STR2(u.host.buf, u.host.len),
+                        FIO_STRING_WRITE_STR2(":", 1),
+                        FIO_STRING_WRITE_STR2(tmp.buf, tmp.len),
+                        (u.query.len ? FIO_STRING_WRITE_STR2("?", 1)
+                                     : FIO_STRING_WRITE_STR2(NULL, 0)),
+                        FIO_STRING_WRITE_STR2(u.query.buf, u.query.len));
+      fio_cli_set("-b", url.buf);
+    } else {
+#if FIO_OS_WIN
+      SetEnvironmentVariable("PORT", fio_cli_get("-p"));
+#else
+      setenv("PORT", fio_cli_get("-p"), 1);
+#endif
+    }
   }
 
   /* Save data to Hash and return it... why? I don't know. */
@@ -222,15 +241,11 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
   STORE.hold(h);
   fio_cli_each(iodine_cli_task, (void *)h);
   /* cleanup */
-  fio_state_callback_remove(FIO_CALL_AT_EXIT,
-                            (void (*)(void *))fio_bstr_free,
-                            (void *)desc);
-  fio_bstr_free(desc);
   for (long i = 0; i < len; ++i) {
     fio_state_callback_remove(FIO_CALL_AT_EXIT,
                               (void (*)(void *))fio_bstr_free,
-                              (void *)(argv[i]));
-    fio_bstr_free(argv[i]);
+                              (void *)argv[i]);
+    fio_bstr_free((char *)argv[i]);
   }
   STORE.release(h);
   return h;
@@ -238,26 +253,28 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
 
 static VALUE iodine_cli_get(VALUE self, VALUE key) {
   VALUE r = Qnil;
-  fio_cli_arg_e t = FIO_CLI_ARG_NONE;
-  const char *val = NULL;
+  fio_buf_info_s val;
+  int64_t ival = 0;
+  char *tmp;
   if (RB_TYPE_P(key, RUBY_T_FIXNUM)) {
-    val = fio_cli_unnamed(NUM2UINT(key));
-    goto finish_string;
+    val = fio_cli_unnamed_str(NUM2UINT(key));
+    r = rb_str_new(val.buf, val.len);
+    return r;
   }
   if (RB_TYPE_P(key, RUBY_T_SYMBOL))
     key = rb_sym2str(key);
   if (!RB_TYPE_P(key, RUBY_T_STRING))
     rb_raise(rb_eArgError,
              "key should be either an Integer, a String or a Symbol");
-  t = fio_cli_type(RSTRING_PTR(key));
-  if (t == FIO_CLI_ARG_INT || t == FIO_CLI_ARG_STRING)
-    r = LL2NUM(fio_cli_get_i(RSTRING_PTR(key)));
+  val = fio_cli_get_str(RSTRING_PTR(key));
+  if (!val.len)
+    return r;
+  tmp = val.buf;
+  ival = fio_atol(&tmp);
+  if (tmp == val.buf + val.len)
+    r = LL2NUM(ival);
   else
-    val = fio_cli_get(RSTRING_PTR(key));
-
-finish_string:
-  if (val)
-    r = rb_str_new(val, strlen(val));
+    r = rb_str_new(val.buf, val.len);
   return r;
 }
 
@@ -295,29 +312,15 @@ static VALUE iodine_cli_set(VALUE self, VALUE key, VALUE value) {
   return value;
 }
 
-/* *****************************************************************************
-Initialize CLI API
-***************************************************************************** */
-static void Init_iodine_cli(void) { // clang-format on
-  /** The Iodine::Base module is for internal concerns. */
+/** Initialize Iodine::Base::CLI */
+/**
+ * The Iodine::Base::CLI module is used internally to manage CLI options.
+ */
+static void Init_Iodine_Base_CLI(void) {
   VALUE cli = rb_define_module_under(iodine_rb_IODINE_BASE, "CLI");
   rb_define_singleton_method(cli, "parse", iodine_cli_parse, 1);
   rb_define_singleton_method(cli, "[]", iodine_cli_get, 1);
   rb_define_singleton_method(cli, "[]=", iodine_cli_set, 2);
   iodine_cli_parse(cli, Qfalse);
 }
-
-/* *****************************************************************************
-
-Iodine's HTTP/WebSocket server version 0.7.56
-
-Use:
-    iodine <options> <filename>
-
-Both <options> and <filename> are optional. i.e.,:
-    iodine -p 0 -b /tmp/my_unix_sock
-    iodine -p 8080 path/to/app/conf.ru
-    iodine -p 8080 -w 4 -t 16
-    iodine -w -1 -t 4 -r redis://usr:pass@localhost:6379/
-
-***************************************************************************** */
+#endif /* H___IODINE_CLI___H */

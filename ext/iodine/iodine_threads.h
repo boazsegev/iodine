@@ -4,16 +4,11 @@
 API for forking processes
 ***************************************************************************** */
 
-static void *iodine_call_ruby_fork(void *r) {
-  return (void *)rb_funcallv(rb_mProcess, rb_intern2("fork", 4), 0, NULL);
-  (void)r;
-}
-
 /** Should behave the same as the POSIX system call `fork`. */
 FIO_IFUNC fio_thread_pid_t fio_thread_fork(void) {
   iodine_caller_result_s r =
       iodine_ruby_call_outside(rb_mProcess, rb_intern2("fork", 4), 0, NULL);
-  if (r.exeption)
+  if (r.exception)
     return -1;
   if (r.result == Qnil)
     return 0;
@@ -30,7 +25,7 @@ FIO_IFUNC int fio_thread_kill(fio_thread_pid_t i, int s) {
   VALUE args[] = {INT2NUM(((int)i)), INT2NUM(s)};
   iodine_caller_result_s r =
       iodine_ruby_call_outside(rb_mProcess, rb_intern2("kill", 4), 2, args);
-  if (r.exeption)
+  if (r.exception)
     return -1;
   return 0;
 }
@@ -91,7 +86,7 @@ FIO_IFUNC int fio_thread_join(fio_thread_t *t) {
   iodine_caller_result_s r =
       iodine_ruby_call_outside(t[0], rb_intern2("join", 4), 0, NULL);
   STORE.release(t[0]);
-  if (r.exeption)
+  if (r.exception)
     return -1;
   return 0;
 }

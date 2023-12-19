@@ -2,187 +2,17 @@
 #include "iodine.h"
 
 /* *****************************************************************************
-Starting / Stooping the IO Reactor
+Deprecation Warnings
 ***************************************************************************** */
 
-static fio_srv_async_s IODINE_THREAD_POOL;
-
-static void iodine_stop___(void *ignr_) {
-  fio_srv_stop();
-  (void)ignr_;
-}
-
-static void *iodine___run(void *ignr_) {
-  fio_srv_async_init(&IODINE_THREAD_POOL, (uint32_t)fio_cli_get_i("-t"));
-  VALUE ver = rb_const_get(iodine_rb_IODINE, rb_intern2("VERSION", 7));
-  FIO_LOG_INFO("\n\tStarting the iodine server."
-               "\n\tVersion: %s"
-               "\n\tEngine: " FIO_POLL_ENGINE_STR "\n\tWorkers: %d\t(%s)"
-               "\n\tThreads: 1+%d\t(per worker)"
-               "\n\tPress ^C to exit.",
-               (ver == Qnil ? "unknown" : RSTRING_PTR(ver)),
-               fio_srv_workers(fio_cli_get_i("-w")),
-               (fio_srv_workers(fio_cli_get_i("-w")) ? "cluster mode"
-                                                     : "single process"),
-               (int)IODINE_THREAD_POOL.count);
-
-  fio_srv_start((int)fio_cli_get_i("-w"));
-  return ignr_;
-}
-
-/** Starts the Iodine IO reactor. */
-static VALUE iodine_start(VALUE self) { // clang-format on
-  rb_thread_call_without_gvl(iodine___run, NULL, iodine_stop___, NULL);
-  return self;
-}
-
-/**
- * Stops the current process' IO reactor.
- *
- * If this is a worker process, the process will exit and if Iodine is running a
- * new worker will be spawned.
- */
-static VALUE iodine_stop(VALUE klass) {
-  fio_srv_stop();
-  return klass;
-}
-
-/** Return `true` if reactor is running */
-static VALUE iodine_is_running(VALUE klass) {
-  return fio_srv_is_running() ? Qtrue : Qfalse;
-}
-
-/** Return `true` if this is the master process. */
-static VALUE iodine_is_master(VALUE klass) {
-  return fio_srv_is_master() ? Qtrue : Qfalse;
-}
-
-/** Return `true` if this is a worker process. */
-static VALUE iodine_is_worker(VALUE klass) {
-  return fio_srv_is_worker() ? Qtrue : Qfalse;
-}
-
-/* *****************************************************************************
-Workers
-***************************************************************************** */
-
-/** Returns the number of process workers that the reactor (will) use. */
-static VALUE iodine_workers(VALUE klass) {
-  return LL2NUM(fio_cli_get_i("-w"));
-  (void)klass;
-}
-
-/**
- * Sets the number of process workers that the reactor will use.
- *
- * Settable only in the root / master process.
- */
-static VALUE iodine_workers_set(VALUE klass, VALUE workers) {
-  if (workers != Qnil && fio_srv_is_master()) {
-    if (TYPE(workers) != T_FIXNUM) {
-      rb_raise(rb_eTypeError, "workers must be a number.");
-      return Qnil;
-    }
-    fio_cli_set_i("-w", NUM2LL(workers));
-  } else {
-    FIO_LOG_ERROR(
-        "cannot set workers except as a numeral value in the master process");
-  }
-  workers = LL2NUM(fio_cli_get_i("-w"));
-  return workers;
-}
-
-/* *****************************************************************************
-Threads
-***************************************************************************** */
-
-/** Returns the number of threads that the reactor (will) use. */
-static VALUE iodine_threads(VALUE klass) {
-  return LL2NUM(fio_cli_get_i("-w"));
-  (void)klass;
-}
-
-/**
- * Sets the number of threads that the reactor will use.
- *
- * Settable only in the root / master process.
- */
-static VALUE iodine_threads_set(VALUE klass, VALUE threads) {
-  if (threads != Qnil && fio_srv_is_master()) {
-    if (TYPE(threads) != T_FIXNUM) {
-      rb_raise(rb_eTypeError, "threads must be a number.");
-      return Qnil;
-    }
-    fio_cli_set_i("-t", NUM2LL(threads));
-  } else {
-    FIO_LOG_ERROR(
-        "cannot set threads except as a numeral value in the master process");
-  }
-  threads = LL2NUM(fio_cli_get_i("-t"));
-  return threads;
-}
-
-/* *****************************************************************************
-Verbosity
-***************************************************************************** */
-
-/** Returns the current verbosity (logging) level.*/
-static VALUE iodine_verbosity(VALUE klass) {
-  return RB_INT2FIX(((long)FIO_LOG_LEVEL_GET()));
-  (void)klass;
-}
-
-/** Sets the current verbosity (logging) level. */
-static VALUE iodine_verbosity_set(VALUE klass, VALUE num) {
-  FIO_LOG_LEVEL_SET(RB_FIX2INT(num));
-  return num;
-}
+/** @deprecated use {Iodine::TLS.add_cert}. */
+static VALUE iodine_tls_cert_add_old_name(int argc, VALUE *argv, VALUE self);
 
 /* *****************************************************************************
 Initialize module
 ***************************************************************************** */
 
-void Init_iodine_ext(void) {
-  fio_state_callback_force(FIO_CALL_ON_INITIALIZE);
-
-  IodineUTF8Encoding = rb_enc_find("UTF-8");
-  IodineBinaryEncoding = rb_enc_find("binary");
-
-  /** The Iodine module is where it all happens. */
-  iodine_rb_IODINE = rb_define_module("Iodine");
-  /** The PubSub module contains Pub/Sub related classes / data. */
-  iodine_rb_IODINE_PUBSUB = rb_define_module_under(iodine_rb_IODINE, "PubSub");
-  /** The Iodine::Base module is for internal concerns. */
-  iodine_rb_IODINE_BASE =
-      rb_define_class_under(iodine_rb_IODINE, "Base", rb_cObject);
-  /** Initialize `STORE` and object reference counting. */
-  iodine_setup_value_reference_counter(iodine_rb_IODINE_BASE);
-
-  /* Setup some constants and don't move them around in memory */
-  STORE.hold(iodine_rb_IODINE);
-  STORE.hold(iodine_rb_IODINE_BASE);
-  STORE.hold(iodine_rb_IODINE_PUBSUB);
-
-  IODINE_CONST_ID_STORE(IODINE_CALL_ID, "call");
-  IODINE_CONST_ID_STORE(IODINE_NEW_ID, "new");
-  IODINE_CONST_ID_STORE(IODINE_ON_ATTACH_ID, "on_attach");
-  IODINE_CONST_ID_STORE(IODINE_ON_AUTHENTICATE_SSE_ID, "on_authenticate_sse");
-  IODINE_CONST_ID_STORE(IODINE_ON_AUTHENTICATE_WEBSOCKET_ID,
-                        "on_authenticate_websocket");
-  IODINE_CONST_ID_STORE(IODINE_ON_CLOSE_ID, "on_close");
-  IODINE_CONST_ID_STORE(IODINE_ON_DATA_ID, "on_data");
-  IODINE_CONST_ID_STORE(IODINE_ON_EVENTSOURCE_ID, "on_eventsource");
-  IODINE_CONST_ID_STORE(IODINE_ON_EVENTSOURCE_RECONNECT_ID,
-                        "on_eventsource_reconnect");
-  IODINE_CONST_ID_STORE(IODINE_ON_FINISH_ID, "on_finish");
-  IODINE_CONST_ID_STORE(IODINE_ON_HTTP_ID, "on_http");
-  IODINE_CONST_ID_STORE(IODINE_ON_MESSAGE_ID, "on_message");
-  IODINE_CONST_ID_STORE(IODINE_ON_OPEN_ID, "on_open");
-  IODINE_CONST_ID_STORE(IODINE_ON_READY_ID, "on_ready");
-  IODINE_CONST_ID_STORE(IODINE_ON_SHUTDOWN_ID, "on_shutdown");
-  IODINE_CONST_ID_STORE(IODINE_ON_TIMEOUT_ID, "on_timeout");
-  IODINE_CONST_ID_STORE(IODINE_PRE_HTTP_BODY_ID, "pre_http_body");
-
+static void Init_Iodine(void) {
   rb_define_singleton_method(iodine_rb_IODINE, "start", iodine_start, 0);
   rb_define_singleton_method(iodine_rb_IODINE, "stop", iodine_stop, 0);
 
@@ -213,11 +43,110 @@ void Init_iodine_ext(void) {
                              "verbosity=",
                              iodine_verbosity_set,
                              1);
-  Init_iodine_cli();
-  Init_iodine_musta();
-  Init_iodine_utils();
-  Init_iodine_json();
-  iodine_pubsub_msg_init();
-  Init_iodine_connection();
-  Init_iodine_defer();
+
+  rb_define_module_function(iodine_rb_IODINE, "run", iodine_defer_run_async, 0);
+  rb_define_module_function(iodine_rb_IODINE, "defer", iodine_defer_run, 0);
+
+  rb_define_module_function(iodine_rb_IODINE,
+                            "run_after",
+                            iodine_defer_run_after,
+                            -1);
+  rb_define_module_function(iodine_rb_IODINE, "on_state", iodine_on_state, 1);
+
+  rb_define_singleton_method(iodine_rb_IODINE, "listen", iodine_listen_rb, -1);
+}
+
+/* *****************************************************************************
+Initialize Extension
+***************************************************************************** */
+
+void Init_iodine_ext(void) {
+  fio_state_callback_force(FIO_CALL_ON_INITIALIZE);
+
+  IodineUTF8Encoding = rb_enc_find("UTF-8");
+  IodineBinaryEncoding = rb_enc_find("binary");
+
+  /** The Iodine module is where it all happens. */
+  iodine_rb_IODINE = rb_define_module("Iodine");
+  STORE.hold(iodine_rb_IODINE);
+  /** The PubSub module contains Pub/Sub related classes / data. */
+  iodine_rb_IODINE_PUBSUB = rb_define_module_under(iodine_rb_IODINE, "PubSub");
+  STORE.hold(iodine_rb_IODINE_PUBSUB);
+  /** The Iodine::Base module is for internal concerns. */
+  iodine_rb_IODINE_BASE =
+      rb_define_class_under(iodine_rb_IODINE, "Base", rb_cObject);
+  STORE.hold(iodine_rb_IODINE_BASE);
+  /** The Iodine::Base::App404 module is for static file only. */
+  iodine_rb_IODINE_BASE_APP404 =
+      rb_define_module_under(iodine_rb_IODINE_BASE, "App404");
+  STORE.hold(iodine_rb_IODINE_BASE_APP404);
+  { /** Initialize `STORE` and object reference counting. */
+    iodine_setup_value_reference_counter(iodine_rb_IODINE_BASE);
+    rb_define_singleton_method(iodine_rb_IODINE_BASE,
+                               "print_debug",
+                               iodine_store___print_debug,
+                               0);
+  }
+
+  IODINE_CONST_ID_STORE(IODINE_CALL_ID, "call");
+  IODINE_CONST_ID_STORE(IODINE_CLOSE_ID, "close");
+  IODINE_CONST_ID_STORE(IODINE_EACH_ID, "each");
+  IODINE_CONST_ID_STORE(IODINE_FILENO_ID, "fileno");
+  IODINE_CONST_ID_STORE(IODINE_NEW_ID, "new");
+  IODINE_CONST_ID_STORE(IODINE_TO_PATH_ID, "to_path");
+  IODINE_CONST_ID_STORE(IODINE_TO_S_ID, "to_s");
+
+  IODINE_CONST_ID_STORE(IODINE_RACK_HIJACK_ID, "rack_hijack");
+  IODINE_CONST_ID_STORE(IODINE_ON_AUTHENTICATE_ID, "on_authenticate");
+  IODINE_CONST_ID_STORE(IODINE_ON_AUTHENTICATE_SSE_ID, "on_authenticate_sse");
+  IODINE_CONST_ID_STORE(IODINE_ON_AUTHENTICATE_WEBSOCKET_ID,
+                        "on_authenticate_websocket");
+  IODINE_CONST_ID_STORE(IODINE_ON_CLOSE_ID, "on_close");
+  IODINE_CONST_ID_STORE(IODINE_ON_DATA_ID, "on_data");
+  IODINE_CONST_ID_STORE(IODINE_ON_DRAINED_ID, "on_drained");
+  IODINE_CONST_ID_STORE(IODINE_ON_EVENTSOURCE_ID, "on_eventsource");
+  IODINE_CONST_ID_STORE(IODINE_ON_EVENTSOURCE_RECONNECT_ID,
+                        "on_eventsource_reconnect");
+  IODINE_CONST_ID_STORE(IODINE_ON_FINISH_ID, "on_finish");
+  IODINE_CONST_ID_STORE(IODINE_ON_HTTP_ID, "on_http");
+  IODINE_CONST_ID_STORE(IODINE_ON_MESSAGE_ID, "on_message");
+  IODINE_CONST_ID_STORE(IODINE_ON_OPEN_ID, "on_open");
+  IODINE_CONST_ID_STORE(IODINE_ON_SHUTDOWN_ID, "on_shutdown");
+  IODINE_CONST_ID_STORE(IODINE_ON_TIMEOUT_ID, "on_timeout");
+
+  IODINE_CONST_ID_STORE(IODINE_STATE_PRE_START, "pre_start");
+  IODINE_CONST_ID_STORE(IODINE_STATE_BEFORE_FORK, "before_fork");
+  IODINE_CONST_ID_STORE(IODINE_STATE_AFTER_FORK, "after_fork");
+  IODINE_CONST_ID_STORE(IODINE_STATE_ENTER_CHILD, "enter_child");
+  IODINE_CONST_ID_STORE(IODINE_STATE_ENTER_MASTER, "enter_master");
+  IODINE_CONST_ID_STORE(IODINE_STATE_ON_START, "on_start");
+  IODINE_CONST_ID_STORE(IODINE_STATE_ON_PARENT_CRUSH, "on_parent_crush");
+  IODINE_CONST_ID_STORE(IODINE_STATE_ON_CHILD_CRUSH, "on_child_crush");
+  IODINE_CONST_ID_STORE(IODINE_STATE_ON_SHUTDOWN, "on_shutdown");
+  IODINE_CONST_ID_STORE(IODINE_STATE_ON_STOP, "on_stop");
+
+  STORE.hold(IODINE_RACK_HIJACK_SYM = rb_id2sym(IODINE_RACK_HIJACK_ID));
+  STORE.hold(IODINE_RACK_HIJACK_STR = rb_str_new_static("rack.hijack", 11));
+
+  IODINE_RACK_UPGRADE_STR =
+      STORE.frozen_str(FIO_STR_INFO1((char *)"rack.upgrade"));
+  IODINE_RACK_UPGRADE_Q_STR =
+      STORE.frozen_str(FIO_STR_INFO1((char *)"rack.upgrade?"));
+  STORE.hold(IODINE_RACK_UPGRADE_WS_SYM = rb_id2sym(rb_intern("websocket")));
+  STORE.hold(IODINE_RACK_UPGRADE_SSE_SYM = rb_id2sym(rb_intern("sse")));
+  STORE.hold(IODINE_RACK_AFTER_RPLY_STR =
+                 rb_str_new_static("rack.after_reply", 16));
+
+  Init_Iodine();
+  Init_Iodine_Base_CLI();
+  Init_Iodine_Mustache();
+  Init_Iodine_Utils();
+  Init_Iodine_JSON();
+  Init_Iodine_MiniMap();
+  Init_Iodine_PubSub_Engine();
+  Init_Iodine_PubSub_Message();
+  Init_Iodine_TLS();
+  Init_Iodine_Connection();
+
+  fio_srv_async_init(&IODINE_THREAD_POOL, (uint32_t)fio_cli_get_i("-t"));
 }
