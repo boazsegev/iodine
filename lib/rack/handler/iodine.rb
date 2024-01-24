@@ -37,6 +37,4 @@ elsif Object.const_defined?(:Rack) && Rack::RELEASE < '3'
     ::Rack::Handler.register('Iodine', 'Iodine::Rack') if defined?(::Rack::Handler)
   rescue StandardError
   end
-else
-  raise "You must install the rackup gem when using Rack 3"
 end
