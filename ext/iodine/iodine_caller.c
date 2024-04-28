@@ -10,7 +10,7 @@
 static pthread_key_t iodine_GVL_state_key;
 static pthread_once_t iodine_GVL_state_once = PTHREAD_ONCE_INIT;
 static void init_iodine_GVL_state_key(void) {
-  pthread_key_create(&iodine_GVL_state_key, NULL); 
+  pthread_key_create(&iodine_GVL_state_key, NULL);
 }
 static void init_iodine_GVL_state_init(void) {
   uint8_t *gvl = malloc(sizeof(uint8_t));
@@ -47,14 +47,18 @@ static void *iodine_handle_exception(void *ignr) {
     if (TYPE(bt) == T_ARRAY) {
       bt = rb_ary_join(bt, rb_str_new_literal("\n"));
       FIO_LOG_ERROR("Iodine caught an unprotected exception - %.*s: %.*s\n%s",
-                    (int)RSTRING_LEN(exc_class), RSTRING_PTR(exc_class),
-                    (int)RSTRING_LEN(msg), RSTRING_PTR(msg),
+                    (int)RSTRING_LEN(exc_class),
+                    RSTRING_PTR(exc_class),
+                    (int)RSTRING_LEN(msg),
+                    RSTRING_PTR(msg),
                     StringValueCStr(bt));
     } else {
       FIO_LOG_ERROR("Iodine caught an unprotected exception - %.*s: %.*s\n"
                     "No backtrace available.\n",
-                    (int)RSTRING_LEN(exc_class), RSTRING_PTR(exc_class),
-                    (int)RSTRING_LEN(msg), RSTRING_PTR(msg));
+                    (int)RSTRING_LEN(exc_class),
+                    RSTRING_PTR(exc_class),
+                    (int)RSTRING_LEN(msg),
+                    RSTRING_PTR(msg));
     }
     rb_backtrace();
     FIO_LOG_ERROR("\n");
@@ -69,8 +73,12 @@ static void *iodine_handle_exception(void *ignr) {
 /* calls the Ruby each method within the protection block */
 static VALUE iodine_ruby_caller_perform_block(VALUE tsk_) {
   iodine_rb_task_s *task = (void *)tsk_;
-  return rb_block_call(task->obj, task->method, task->argc, task->argv,
-                       task->each_func, task->each_udata);
+  return rb_block_call(task->obj,
+                       task->method,
+                       task->argc,
+                       task->argv,
+                       (rb_block_call_func_t)(task->each_func),
+                       task->each_udata);
 }
 
 /* calls the Ruby method within the protection block */
@@ -83,7 +91,8 @@ static VALUE iodine_ruby_caller_perform(VALUE tsk_) {
 static void *iodine_protect_ruby_call(void *task_) {
   int state = 0;
   VALUE ret = rb_protect(((iodine_rb_task_s *)task_)->protected_task,
-                         (VALUE)(task_), &state);
+                         (VALUE)(task_),
+                         &state);
   if (state) {
     iodine_handle_exception(NULL);
   }
@@ -157,10 +166,13 @@ static VALUE iodine_call2(VALUE obj, ID method, int argc, VALUE *argv) {
 }
 
 /** Calls a Ruby method on a given object, protecting against exceptions. */
-static VALUE iodine_call_block(VALUE obj, ID method, int argc, VALUE *argv,
-                               VALUE udata,
-                               VALUE(each_func)(VALUE block_arg, VALUE udata,
-                                                int argc, VALUE *argv)) {
+static VALUE iodine_call_block(
+    VALUE obj,
+    ID method,
+    int argc,
+    VALUE *argv,
+    VALUE udata,
+    VALUE(each_func)(VALUE block_arg, VALUE udata, int argc, VALUE *argv)) {
   iodine_rb_task_s task = {
       .obj = obj,
       .argc = argc,
@@ -186,7 +198,7 @@ static uint8_t iodine_in_GVL(void) {
 }
 
 /** Forces the GVL state flag. */
-static void iodine_set_GVL(uint8_t state) { 
+static void iodine_set_GVL(uint8_t state) {
   pthread_once(&iodine_GVL_state_once, init_iodine_GVL_state_key);
   uint8_t *iodine_GVL_state = pthread_getspecific(iodine_GVL_state_key);
   if (!iodine_GVL_state) {

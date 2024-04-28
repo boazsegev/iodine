@@ -6,6 +6,12 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 ## Changes:
 
+#### Change log v.0.7.58 (2024-04-28)
+
+**Fix**: possible fix for compilation issues on Fedora. Credit to @garytaylor for opening issue #155.
+
+**Fix**: possible fix for an OpenSSL certificate chain import issue that would cause certificate chains to be imported incorrectly. Credit to @dwolrdcojp for opening the facil.io repo PR #151.
+
 #### Change log v.0.7.57 (2023-09-04)
 
 **Fix**: Fixes possible name collision when loading gem (`.rb` vs. `.so` loading). Credit to @noraj (Alexandre ZANNI) for opening issue #148. Credit to @janbiedermann (Jan Biedermann) for discovering the root cause and offering a solution.
