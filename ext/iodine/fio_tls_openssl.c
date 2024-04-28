@@ -32,7 +32,7 @@ typedef struct {
 /* *****************************************************************************
 The SSL/TLS helper data types (can be left as is)
 ***************************************************************************** */
-#define FIO_INCLUDE_STR 1
+#define FIO_INCLUDE_STR      1
 #define FIO_FORCE_MALLOC_TMP 1
 #include <fio.h>
 
@@ -65,12 +65,12 @@ static inline void fio_tls_cert_destroy(cert_s *obj) {
   fio_str_free(&obj->password);
 }
 
-#define FIO_ARY_NAME cert_ary
-#define FIO_ARY_TYPE cert_s
+#define FIO_ARY_NAME            cert_ary
+#define FIO_ARY_TYPE            cert_s
 #define FIO_ARY_COMPARE(k1, k2) (fio_tls_cert_cmp(&(k1), &(k2)))
 #define FIO_ARY_COPY(dest, obj) fio_tls_cert_copy(&(dest), &(obj))
-#define FIO_ARY_DESTROY(key) fio_tls_cert_destroy(&(key))
-#define FIO_FORCE_MALLOC_TMP 1
+#define FIO_ARY_DESTROY(key)    fio_tls_cert_destroy(&(key))
+#define FIO_FORCE_MALLOC_TMP    1
 #include <fio.h>
 
 typedef struct {
@@ -90,12 +90,12 @@ static inline void fio_tls_trust_destroy(trust_s *obj) {
   fio_str_free(&obj->pem);
 }
 
-#define FIO_ARY_NAME trust_ary
-#define FIO_ARY_TYPE trust_s
+#define FIO_ARY_NAME            trust_ary
+#define FIO_ARY_TYPE            trust_s
 #define FIO_ARY_COMPARE(k1, k2) (fio_tls_trust_cmp(&(k1), &(k2)))
 #define FIO_ARY_COPY(dest, obj) fio_tls_trust_copy(&(dest), &(obj))
-#define FIO_ARY_DESTROY(key) fio_tls_trust_destroy(&(key))
-#define FIO_FORCE_MALLOC_TMP 1
+#define FIO_ARY_DESTROY(key)    fio_tls_trust_destroy(&(key))
+#define FIO_FORCE_MALLOC_TMP    1
 #include <fio.h>
 
 typedef struct {
@@ -123,12 +123,12 @@ static inline void fio_alpn_destroy(alpn_s *obj) {
   fio_str_free(&obj->name);
 }
 
-#define FIO_SET_NAME alpn_list
-#define FIO_SET_OBJ_TYPE alpn_s
+#define FIO_SET_NAME                alpn_list
+#define FIO_SET_OBJ_TYPE            alpn_s
 #define FIO_SET_OBJ_COMPARE(k1, k2) fio_alpn_cmp(&(k1), &(k2))
 #define FIO_SET_OBJ_COPY(dest, obj) fio_alpn_copy(&(dest), &(obj))
-#define FIO_SET_OBJ_DESTROY(key) fio_alpn_destroy(&(key))
-#define FIO_FORCE_MALLOC_TMP 1
+#define FIO_SET_OBJ_DESTROY(key)    fio_alpn_destroy(&(key))
+#define FIO_FORCE_MALLOC_TMP        1
 #include <fio.h>
 
 /* *****************************************************************************
@@ -167,10 +167,13 @@ FIO_FUNC inline alpn_s *alpn_find(fio_tls_s *tls, char *name, size_t len) {
 }
 
 /** Adds an ALPN data object to the ALPN "list" (set) */
-FIO_FUNC inline void alpn_add(
-    fio_tls_s *tls, const char *protocol_name,
-    void (*on_selected)(intptr_t uuid, void *udata_connection, void *udata_tls),
-    void *udata_tls, void (*on_cleanup)(void *udata_tls)) {
+FIO_FUNC inline void alpn_add(fio_tls_s *tls,
+                              const char *protocol_name,
+                              void (*on_selected)(intptr_t uuid,
+                                                  void *udata_connection,
+                                                  void *udata_tls),
+                              void *udata_tls,
+                              void (*on_cleanup)(void *udata_tls)) {
   alpn_s tmp = {
       .name = FIO_STR_INIT_STATIC(protocol_name),
       .on_selected = on_selected,
@@ -212,7 +215,8 @@ FIO_FUNC inline void alpn_select___task(void *t_, void *ignr_) {
 }
 
 /** Schedules the ALPN protocol callback. */
-FIO_FUNC inline void alpn_select(alpn_s *alpn, intptr_t uuid,
+FIO_FUNC inline void alpn_select(alpn_s *alpn,
+                                 intptr_t uuid,
                                  void *udata_connection) {
   if (!alpn || !alpn->on_selected)
     return;
@@ -257,7 +261,8 @@ static void fio_tls_make_root_key(void) {
              "OpenSSL failed to create RSA key.");
   BN_free(e);
   EVP_PKEY_assign_RSA(fio_tls_pkey, rsa);
-  fio_state_callback_add(FIO_CALL_AT_EXIT, fio_tls_clear_root_key,
+  fio_state_callback_add(FIO_CALL_AT_EXIT,
+                         fio_tls_clear_root_key,
                          fio_tls_pkey);
 finish:
   fio_unlock(&lock);
@@ -284,12 +289,27 @@ static X509 *fio_tls_create_self_signed(char *server_name) {
   /* set identity details */
   X509_NAME *s = X509_get_subject_name(cert);
   size_t srv_name_len = strlen(server_name);
-  X509_NAME_add_entry_by_txt(s, "O", MBSTRING_ASC, (unsigned char *)server_name,
-                             srv_name_len, -1, 0);
-  X509_NAME_add_entry_by_txt(s, "CN", MBSTRING_ASC,
-                             (unsigned char *)server_name, srv_name_len, -1, 0);
-  X509_NAME_add_entry_by_txt(s, "CA", MBSTRING_ASC,
-                             (unsigned char *)server_name, srv_name_len, -1, 0);
+  X509_NAME_add_entry_by_txt(s,
+                             "O",
+                             MBSTRING_ASC,
+                             (unsigned char *)server_name,
+                             srv_name_len,
+                             -1,
+                             0);
+  X509_NAME_add_entry_by_txt(s,
+                             "CN",
+                             MBSTRING_ASC,
+                             (unsigned char *)server_name,
+                             srv_name_len,
+                             -1,
+                             0);
+  X509_NAME_add_entry_by_txt(s,
+                             "CA",
+                             MBSTRING_ASC,
+                             (unsigned char *)server_name,
+                             srv_name_len,
+                             -1,
+                             0);
   X509_set_issuer_name(cert, s);
 
   /* sign certificate */
@@ -324,12 +344,15 @@ static void fio_tls_alpn_fallback(fio_tls_connection_s *c) {
     return;
   /* set protocol to default protocol */
   FIO_LOG_DEBUG("TLS ALPN handshake missing, falling back on %s for %p",
-                fio_str_info(&alpn->name).data, (void *)c->uuid);
+                fio_str_info(&alpn->name).data,
+                (void *)c->uuid);
   alpn_select(alpn, c->uuid, c->alpn_arg);
 }
-static int fio_tls_alpn_selector_cb(SSL *ssl, const unsigned char **out,
+static int fio_tls_alpn_selector_cb(SSL *ssl,
+                                    const unsigned char **out,
                                     unsigned char *outlen,
-                                    const unsigned char *in, unsigned int inlen,
+                                    const unsigned char *in,
+                                    unsigned int inlen,
                                     void *tls_) {
   fio_tls_s *tls = tls_;
   alpn_s *alpn;
@@ -358,7 +381,8 @@ static int fio_tls_alpn_selector_cb(SSL *ssl, const unsigned char **out,
   alpn_select(alpn, c->uuid, c->alpn_arg);
   FIO_LOG_DEBUG(
       "TLS ALPN handshake failed, falling back on default (%s) for %p",
-      fio_str_data(&alpn->name), (void *)c->uuid);
+      fio_str_data(&alpn->name),
+      (void *)c->uuid);
   return SSL_TLSEXT_ERR_NOACK;
   (void)ssl;
   (void)out;
@@ -380,7 +404,9 @@ static void fio_tls_destroy_context(fio_tls_s *tls) {
   FIO_LOG_DEBUG("destroyed TLS context for OpenSSL %p", (void *)tls);
 }
 
-static int fio_tls_pem_passwd_cb(char *buf, int size, int rwflag,
+static int fio_tls_pem_passwd_cb(char *buf,
+                                 int size,
+                                 int rwflag,
                                  void *password) {
   fio_str_info_s *p = password;
   if (!p || !p->len || !size)
@@ -407,7 +433,8 @@ static void fio_tls_build_context(fio_tls_s *tls) {
   /* attach certificates */
   FIO_ARY_FOR(&tls->sni, pos) {
     fio_str_info_s keys[4] = {
-        fio_str_info(&pos->private_key), fio_str_info(&pos->public_key),
+        fio_str_info(&pos->private_key),
+        fio_str_info(&pos->public_key),
         fio_str_info(&pos->password),
         /* empty password slot for public key */
     };
@@ -416,8 +443,10 @@ static void fio_tls_build_context(fio_tls_s *tls) {
         /* Extract private key from private key file */
         BIO *bio = BIO_new_mem_buf(keys[0].data, keys[0].len);
         if (bio) {
-          EVP_PKEY *k = PEM_read_bio_PrivateKey(
-              bio, NULL, fio_tls_pem_passwd_cb, keys + 2);
+          EVP_PKEY *k = PEM_read_bio_PrivateKey(bio,
+                                                NULL,
+                                                fio_tls_pem_passwd_cb,
+                                                keys + 2);
           if (k) {
             FIO_LOG_DEBUG("TLS read private key from PEM file.");
             SSL_CTX_use_PrivateKey(tls->ctx, k);
@@ -430,15 +459,21 @@ static void fio_tls_build_context(fio_tls_s *tls) {
         /* Extract as much data as possible from each file */
         BIO *bio = BIO_new_mem_buf(keys[ki].data, keys[ki].len);
         FIO_ASSERT(bio, "OpenSSL error allocating BIO.");
-        STACK_OF(X509_INFO) *inf = PEM_X509_INFO_read_bio(
-            bio, NULL, fio_tls_pem_passwd_cb, keys + ki + 2);
+        STACK_OF(X509_INFO) *inf = PEM_X509_INFO_read_bio(bio,
+                                                          NULL,
+                                                          fio_tls_pem_passwd_cb,
+                                                          keys + ki + 2);
         if (inf) {
           for (int i = 0; i < sk_X509_INFO_num(inf); ++i) {
             /* for each element in PEM */
             X509_INFO *tmp = sk_X509_INFO_value(inf, i);
             if (tmp->x509) {
               FIO_LOG_DEBUG("TLS adding certificate from PEM file.");
-              SSL_CTX_use_certificate(tls->ctx, tmp->x509);
+              if (i == 0) {
+                SSL_CTX_use_certificate(tls->ctx, tmp->x509);
+              } else {
+                SSL_CTX_add1_chain_cert(tls->ctx, tmp->x509);
+              }
             }
             if (tmp->x_pkey) {
               FIO_LOG_DEBUG("TLS adding private key from PEM file.");
@@ -541,7 +576,9 @@ static void fio_tls_delayed_close(void *uuid, void *ignr_) {
  * Note: facil.io library functions MUST NEVER be called by any r/w hook, or a
  * deadlock might occur.
  */
-static ssize_t fio_tls_read(intptr_t uuid, void *udata, void *buf,
+static ssize_t fio_tls_read(intptr_t uuid,
+                            void *udata,
+                            void *buf,
                             size_t count) {
   fio_tls_connection_s *c = udata;
   ssize_t ret = SSL_read(c->ssl, buf, count);
@@ -549,23 +586,19 @@ static ssize_t fio_tls_read(intptr_t uuid, void *udata, void *buf,
     return ret;
   ret = SSL_get_error(c->ssl, ret);
   switch (ret) {
-  case SSL_ERROR_SSL: /* overflow */
-  case SSL_ERROR_ZERO_RETURN:
-    return 0;                      /* EOF */
-  case SSL_ERROR_SYSCALL:          /* allow errno to inform us */
-    break;                         /* return -1 */
-  case SSL_ERROR_NONE:             /* overflow */
-  case SSL_ERROR_WANT_CONNECT:     /* overflow */
-  case SSL_ERROR_WANT_ACCEPT:      /* overflow */
-  case SSL_ERROR_WANT_X509_LOOKUP: /* overflow */
-  case SSL_ERROR_WANT_WRITE:       /* overflow */
-  case SSL_ERROR_WANT_READ:        /* overflow */
+  case SSL_ERROR_SSL:                                           /* overflow */
+  case SSL_ERROR_ZERO_RETURN: return 0;                         /* EOF */
+  case SSL_ERROR_SYSCALL: /* allow errno to inform us */ break; /* return -1 */
+  case SSL_ERROR_NONE:                                          /* overflow */
+  case SSL_ERROR_WANT_CONNECT:                                  /* overflow */
+  case SSL_ERROR_WANT_ACCEPT:                                   /* overflow */
+  case SSL_ERROR_WANT_X509_LOOKUP:                              /* overflow */
+  case SSL_ERROR_WANT_WRITE:                                    /* overflow */
+  case SSL_ERROR_WANT_READ:                                     /* overflow */
 #ifdef SSL_ERROR_WANT_ASYNC
-  case SSL_ERROR_WANT_ASYNC: /* overflow */
+  case SSL_ERROR_WANT_ASYNC:                                    /* overflow */
 #endif
-  default:
-    errno = EWOULDBLOCK;
-    break;
+  default: errno = EWOULDBLOCK; break;
   }
   return -1;
   (void)uuid;
@@ -597,7 +630,9 @@ static ssize_t fio_tls_flush(intptr_t uuid, void *udata) {
  * Note: facil.io library functions MUST NEVER be called by any r/w hook, or a
  * deadlock might occur.
  */
-static ssize_t fio_tls_write(intptr_t uuid, void *udata, const void *buf,
+static ssize_t fio_tls_write(intptr_t uuid,
+                             void *udata,
+                             const void *buf,
                              size_t count) {
   fio_tls_connection_s *c = udata;
   ssize_t ret = SSL_write(c->ssl, buf, count);
@@ -605,23 +640,19 @@ static ssize_t fio_tls_write(intptr_t uuid, void *udata, const void *buf,
     return ret;
   ret = SSL_get_error(c->ssl, ret);
   switch (ret) {
-  case SSL_ERROR_SSL: /* overflow */
-  case SSL_ERROR_ZERO_RETURN:
-    return 0;                      /* EOF */
-  case SSL_ERROR_SYSCALL:          /* allow errno to inform us */
-    break;                         /* return -1 */
-  case SSL_ERROR_NONE:             /* overflow */
-  case SSL_ERROR_WANT_CONNECT:     /* overflow */
-  case SSL_ERROR_WANT_ACCEPT:      /* overflow */
-  case SSL_ERROR_WANT_X509_LOOKUP: /* overflow */
-  case SSL_ERROR_WANT_WRITE:       /* overflow */
-  case SSL_ERROR_WANT_READ:        /* overflow */
+  case SSL_ERROR_SSL:                                           /* overflow */
+  case SSL_ERROR_ZERO_RETURN: return 0;                         /* EOF */
+  case SSL_ERROR_SYSCALL: /* allow errno to inform us */ break; /* return -1 */
+  case SSL_ERROR_NONE:                                          /* overflow */
+  case SSL_ERROR_WANT_CONNECT:                                  /* overflow */
+  case SSL_ERROR_WANT_ACCEPT:                                   /* overflow */
+  case SSL_ERROR_WANT_X509_LOOKUP:                              /* overflow */
+  case SSL_ERROR_WANT_WRITE:                                    /* overflow */
+  case SSL_ERROR_WANT_READ:                                     /* overflow */
 #ifdef SSL_ERROR_WANT_ASYNC
-  case SSL_ERROR_WANT_ASYNC: /* overflow */
+  case SSL_ERROR_WANT_ASYNC:                                    /* overflow */
 #endif
-  default:
-    errno = EWOULDBLOCK;
-    break;
+  default: errno = EWOULDBLOCK; break;
   }
   return -1;
   (void)uuid;
@@ -664,9 +695,9 @@ static fio_rw_hook_s FIO_TLS_HOOKS = {
     .cleanup = fio_tls_cleanup,
 };
 
-#define FIO_TLS_HANDSHAKE_ERROR 0
-#define FIO_TLS_HANDSHAKE_OK 1
-#define FIO_TLS_HANDSHAKE_NEED_READ 2
+#define FIO_TLS_HANDSHAKE_ERROR      0
+#define FIO_TLS_HANDSHAKE_OK         1
+#define FIO_TLS_HANDSHAKE_NEED_READ  2
 #define FIO_TLS_HANDSHAKE_NEED_WRITE 4
 
 static size_t fio_tls_handshake(intptr_t uuid, void *udata) {
@@ -701,7 +732,8 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata) {
       if (errno) {
         FIO_LOG_DEBUG(
             "SSL_accept/SSL_connect %p error: SSL_ERROR_SYSCALL, errno: %s",
-            (void *)uuid, strerror(errno));
+            (void *)uuid,
+            strerror(errno));
       }
       break;
     case SSL_ERROR_SSL:
@@ -741,7 +773,8 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata) {
 #endif
     default:
       FIO_LOG_DEBUG("SSL_accept/SSL_connect %p error: unknown (%d).",
-                    (void *)uuid, ri);
+                    (void *)uuid,
+                    ri);
       break;
     }
     fio_rw_hook_replace_unsafe(uuid, &FIO_TLS_HOOKS, udata);
@@ -766,7 +799,8 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata) {
       }
       if (alpn)
         FIO_LOG_DEBUG("setting ALPN %s for TLS client %p",
-                      fio_str_data(&alpn->name), (void *)uuid);
+                      fio_str_data(&alpn->name),
+                      (void *)uuid);
       alpn_select(alpn, c->uuid, c->alpn_arg);
     }
   }
@@ -783,7 +817,8 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata) {
 #if FIO_TLS_PRINT_SECRET
   if (FIO_LOG_LEVEL >= FIO_LOG_LEVEL_DEBUG) {
     unsigned char buff[SSL_MAX_MASTER_KEY_LENGTH + 2];
-    size_t ret = SSL_SESSION_get_master_key(SSL_get_session(c->ssl), buff,
+    size_t ret = SSL_SESSION_get_master_key(SSL_get_session(c->ssl),
+                                            buff,
                                             SSL_MAX_MASTER_KEY_LENGTH + 1);
     buff[ret] = 0;
     unsigned char buff2[(SSL_MAX_MASTER_KEY_LENGTH + 2) << 1];
@@ -794,7 +829,8 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata) {
                                             : ('0' + (buff[i] & 15));
     }
     buff2[(ret << 1)] = 0;
-    FIO_LOG_DEBUG("OpenSSL Master Key for uuid %p:\n\t\t%s", (void *)uuid,
+    FIO_LOG_DEBUG("OpenSSL Master Key for uuid %p:\n\t\t%s",
+                  (void *)uuid,
                   buff2);
   }
 #endif
@@ -802,7 +838,9 @@ static size_t fio_tls_handshake(intptr_t uuid, void *udata) {
   return status;
 }
 
-static ssize_t fio_tls_read4handshake(intptr_t uuid, void *udata, void *buf,
+static ssize_t fio_tls_read4handshake(intptr_t uuid,
+                                      void *udata,
+                                      void *buf,
                                       size_t count) {
   // FIO_LOG_DEBUG("TLS handshake from read %p", (void *)uuid);
   size_t s = fio_tls_handshake(uuid, udata);
@@ -814,8 +852,10 @@ static ssize_t fio_tls_read4handshake(intptr_t uuid, void *udata, void *buf,
   return -1;
 }
 
-static ssize_t fio_tls_write4handshake(intptr_t uuid, void *udata,
-                                       const void *buf, size_t count) {
+static ssize_t fio_tls_write4handshake(intptr_t uuid,
+                                       void *udata,
+                                       const void *buf,
+                                       size_t count) {
   // FIO_LOG_DEBUG("TLS handshake from write %p", (void *)uuid);
   size_t s = fio_tls_handshake(uuid, udata);
   if (s == FIO_TLS_HANDSHAKE_OK)
@@ -845,8 +885,10 @@ static fio_rw_hook_s FIO_TLS_HANDSHAKE_HOOKS = {
     .flush = fio_tls_flush4handshake,
     .cleanup = fio_tls_cleanup,
 };
-static inline void fio_tls_attach2uuid(intptr_t uuid, fio_tls_s *tls,
-                                       void *udata, uint8_t is_server) {
+static inline void fio_tls_attach2uuid(intptr_t uuid,
+                                       fio_tls_s *tls,
+                                       void *udata,
+                                       uint8_t is_server) {
   fio_atomic_add(&tls->ref, 1);
   /* create SSL connection context from global context */
   fio_tls_connection_s *c = malloc(sizeof(*c));
@@ -891,8 +933,10 @@ SSL/TLS API implementation - this can be pretty much used as is...
  * Creates a new SSL/TLS context / settings object with a default certificate
  * (if any).
  */
-fio_tls_s *FIO_TLS_WEAK fio_tls_new(const char *server_name, const char *cert,
-                                    const char *key, const char *pk_password) {
+fio_tls_s *FIO_TLS_WEAK fio_tls_new(const char *server_name,
+                                    const char *cert,
+                                    const char *key,
+                                    const char *pk_password) {
   REQUIRE_LIBRARY();
   fio_tls_s *tls = calloc(sizeof(*tls), 1);
   tls->ref = 1;
@@ -903,8 +947,10 @@ fio_tls_s *FIO_TLS_WEAK fio_tls_new(const char *server_name, const char *cert,
 /**
  * Adds a certificate  a new SSL/TLS context / settings object.
  */
-void FIO_TLS_WEAK fio_tls_cert_add(fio_tls_s *tls, const char *server_name,
-                                   const char *cert, const char *key,
+void FIO_TLS_WEAK fio_tls_cert_add(fio_tls_s *tls,
+                                   const char *server_name,
+                                   const char *cert,
+                                   const char *key,
                                    const char *pk_password) {
   REQUIRE_LIBRARY();
   cert_s c = {
@@ -929,7 +975,8 @@ void FIO_TLS_WEAK fio_tls_cert_add(fio_tls_s *tls, const char *server_name,
   return;
 file_missing:
   FIO_LOG_FATAL("TLS certificate file missing for either %s or %s or both.",
-                key, cert);
+                key,
+                cert);
   exit(-1);
 }
 
@@ -950,10 +997,13 @@ file_missing:
  * Except for the `tls` and `protocol_name` arguments, all arguments can be
  * NULL.
  */
-void FIO_TLS_WEAK fio_tls_alpn_add(
-    fio_tls_s *tls, const char *protocol_name,
-    void (*on_selected)(intptr_t uuid, void *udata_connection, void *udata_tls),
-    void *udata_tls, void (*on_cleanup)(void *udata_tls)) {
+void FIO_TLS_WEAK fio_tls_alpn_add(fio_tls_s *tls,
+                                   const char *protocol_name,
+                                   void (*on_selected)(intptr_t uuid,
+                                                       void *udata_connection,
+                                                       void *udata_tls),
+                                   void *udata_tls,
+                                   void (*on_cleanup)(void *udata_tls)) {
   REQUIRE_LIBRARY();
   alpn_add(tls, protocol_name, on_selected, udata_tls, on_cleanup);
   fio_tls_build_context(tls);
