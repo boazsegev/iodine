@@ -6,11 +6,7 @@
 
 name: POSIX CI
 
-on:
-  push:
-    branches: [ "master", "rw8.0"]
-  pull_request:
-    branches: [ "master" ]
+on: [push, pull_request]
 
 permissions:
   contents: read
@@ -31,13 +27,15 @@ jobs:
         ruby-version: ${{ matrix.ruby-version }}
     - name: Install Gems
       run: bundle install
+    - name: Make sure the folder exists
+      run: mkdir -p ../../../../lib/iodine
     - name: Compile Iodine
       run: |
         echo CFLAGS = $CFLAGS
         echo cflags = $cflags
         echo HOME = $HOME
         ruby -e 'puts Gem.default_dir'
-        bundle exec rake compile --trace
+        bundle exec rake compile
 #       env VERBOSE=1 bundle exec rspec --format documentation
 #    - name: Run tests
 #      run: bundle exec rake
