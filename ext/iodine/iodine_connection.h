@@ -1919,7 +1919,7 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
     r.hint = r.url_data.scheme;
   if (r.hint.len > 8)
     rb_raise(rb_eArgError, "service hint too long");
-
+  FIO_LOG_DDEBUG("iodine connection hint: %.*s", (int)r.hint.len, r.hint.buf);
   if (!r.hint.buf || !r.hint.len ||
       FIO_BUF_INFO_IS_EQ(r.hint, FIO_BUF_INFO2((char *)"sses", 3)) ||
       FIO_BUF_INFO_IS_EQ(r.hint, FIO_BUF_INFO2((char *)"sses", 4)) ||
@@ -2268,6 +2268,8 @@ FIO_IFUNC VALUE iodine_connection_write_internal(VALUE self,
     to_write = FIO_STR_INFO2(RSTRING_PTR(data), (size_t)RSTRING_LEN(data));
     // TODO: use Ruby encoding info for WebSocket?
     // fio_http_websocket_write(c->http, to_write.buf, len, is_text)
+  } else if (data == Qnil) {
+    to_write = FIO_STR_INFO0;
   } else if (rb_respond_to(data, IODINE_FILENO_ID)) {
     goto is_file;
   } else {
@@ -2658,7 +2660,9 @@ static void *iodine_tcp_listen(iodine_connection_args_s args) {
   STORE.hold((VALUE)args.settings.udata);
   *protocol = IODINE_RAW_PROTOCOL;
   protocol->timeout = 1000UL * (uint32_t)args.settings.ws_timeout;
-
+  FIO_LOG_DEBUG("iodine will listen for raw connections on %.*s",
+                (int)args.url.len,
+                args.url.buf);
   return fio_io_listen(.url = args.url.buf,
                        .protocol = protocol,
                        .udata = args.settings.udata,
