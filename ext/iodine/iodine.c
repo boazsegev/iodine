@@ -44,8 +44,11 @@ static void Init_Iodine(void) {
                              iodine_verbosity_set,
                              1);
 
-  rb_define_module_function(iodine_rb_IODINE, "run", iodine_defer_run_async, 0);
-  rb_define_module_function(iodine_rb_IODINE, "defer", iodine_defer_run, 0);
+  rb_define_module_function(iodine_rb_IODINE, "run", iodine_defer_run, 0);
+  rb_define_module_function(iodine_rb_IODINE,
+                            "async",
+                            iodine_defer_run_async,
+                            0);
 
   rb_define_module_function(iodine_rb_IODINE,
                             "run_after",

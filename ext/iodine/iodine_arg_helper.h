@@ -232,6 +232,7 @@ static int iodine_rb2c_arg(int argc, const VALUE *argv, iodine_rb2c_arg_s *a) {
     /* last parameter is special, as it may be a named parameter Hash */
     tmp = argv[argc];
     i = argc; /* does `for` add even after condition breaks loop? no, so why? */
+
     if (RB_TYPE_P(tmp, RUBY_T_HASH)) { /* named parameters (hash table) */
       VALUE tbl = tmp;
       if (a[i].expected_type == 0)
@@ -245,9 +246,12 @@ static int iodine_rb2c_arg(int argc, const VALUE *argv, iodine_rb2c_arg_s *a) {
       }
       return 0;
     }
-    do {
-      IODINE_RB2C_STORE_ARG();
-    } while (0);
+    if (a[i].rb) {
+      do {
+        IODINE_RB2C_STORE_ARG();
+      } while (0);
+      ++i;
+    }
     tmp = Qnil;
   }
   for (; a[i].rb; ++i) {

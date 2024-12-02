@@ -182,7 +182,6 @@ module Iodine
   # Code runs in both the parent and the child.
   def self.on_state(state, &block); end
 
-
   # Runs a block of code in the main IO thread (adds the code to the event queue).
   # 
   # Always returns the block of code to executed (Proc object).
@@ -197,7 +196,7 @@ module Iodine
   # or Iodine's IO will hang while waiting for the blocking code to finish.
   # 
   # Note: method also accepts a method object if passed as a parameter.
-  def self.defer(&block); end 
+  def self.run(&block); end 
 
   # Runs a block of code in the a worker thread (adds the code to the event queue).
   # 
@@ -210,7 +209,7 @@ module Iodine
   # The code may run in parallel with other calls to `run` or `defer`, as it will run in one of the worker threads.
   # 
   # Note: method also accepts a method object if passed as a parameter.
-  def self.run(&block); end 
+  def self.async(&block); end 
 
   # Runs the required block after the specified number of milliseconds have passed.
   # 
@@ -227,7 +226,7 @@ module Iodine
   # | `:block` | (required) a block is required, as otherwise there is nothing to perform. |
   # 
   # 
-  # The event will repeat itself until the number of repetitions had been depleted.
+  # The event will repeat itself until the number of repetitions had been depleted or until the event returns `false`.
   # 
   # Always returns a copy of the block object.
   def self.run_after(milliseconds, repetitions = 1, &block); end 

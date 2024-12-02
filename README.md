@@ -19,7 +19,7 @@ Iodine includes native support for:
 * Event-Stream Pub/Sub (with optional Redis Pub/Sub scaling);
 * Fast(!) builtin Mustache template render engine;
 * Static File Service (with automatic `.gz`, `.br` and `.zip` support for pre-compressed assets);
-* Performant Request Logging to `stderr`;
+* Performant Request Logging;
 * Asynchronous Tasks and Timers (memory cached);
 * HTTP/1.1 keep-alive and pipeline throttling;
 * Separate Memory Allocators for Heap Fragmentation Protection;
@@ -133,13 +133,13 @@ On Rails:
 
 ### Logging
 
-To enable performant logging from the command line, use the `-v` (verbose) option:
+To enable performant HTTP request logging from the command line, use the `-v` (verbose) option:
 
 ```bash
 bundler exec iodine -p $PORT -t 16 -w -2 -www /my/public/folder -v
 ```
 
-Iodine will cache the date and time String data when answering multiple requests during the same time frame, improving performance.
+Iodine will cache the date and time String data when answering multiple requests during the same time frame, improving performance by minimizing system calls.
 
 ### Static Files and Assets
 
@@ -151,24 +151,13 @@ Since the Ruby layer is unaware of these requests, logging can be performed by t
 
 To use native static file service, setup the public folder's address **before** starting the server.
 
-This can be done when starting the server from the command line:
+This can be done when starting the server either using the Ruby API or from the command line:
 
 ```bash
 bundler exec iodine -t 16 -w 4 -www /my/public/folder
 ```
 
-Or using a simple Ruby script. i.e. (a `my_server.rb` example):
-
-```ruby
-require 'iodine'
-# static file service
-Iodine.listen, service: :http, public: '/my/public/folder'
-# for static file service, we need no worker processes nor worker threads.
-# However, it is good practice to use at least one worker for hot restarts
-Iodine.threads = 0
-Iodine.workers = 1
-Iodine.start
-```
+Iodine will automatically test for missing extension file names, such as `.html`, `.htm`, `.txt`, and `.md`, as well as a missing `index` file name when `path` points to a folder.
 
 #### Pre-Compressed assets / files
 
@@ -182,7 +171,7 @@ gzip -k -9 style.css
 
 This results in both files, `style.css` (the original) and `style.css.gz` (the compressed).
 
-When a browser that supports compressed encoding (which is most browsers) requests the file, iodine will recognize that a pre-compressed option exists and will prefer the `gzip` compressed version.
+When a browser that supports compressed encoding requests the file (and most browsers do), iodine will recognize that a pre-compressed option exists and will prefer the `gzip` compressed version.
 
 It's as easy as that. No extra code required.
 
@@ -335,7 +324,7 @@ Redis Support Limitations:
 
 * Iodine's Redis client does *not* support multiple databases. This is both because [database scoping is ignored by Redis during pub/sub](https://redis.io/topics/pubsub#database-amp-scoping) and because [Redis Cluster doesn't support multiple databases](https://redis.io/topics/cluster-spec). This indicated that multiple database support just isn't worth the extra effort and performance hit.
 
-* The iodine Redis client will use two Redis connections for the whole process cluster (a single publishing connection and a single subscription connection), minimizing the Redis load and network bandwidth.
+* The iodine Redis client will use two Redis connections for each process cluster (a single publishing connection and a single subscription connection), minimizing the Redis load and network bandwidth.
 
 * Connections will be automatically re-established if timeouts or errors occur.
 
@@ -345,9 +334,9 @@ Iodine will "hot-restart" the application by shutting down and re-spawning the w
 
 This will clear away any memory fragmentation concerns and other issues that might plague a long running worker process or ruby application.
 
-This could be used for hot-reloading or hot-swapping of the Web Application code itself, but only if the code is lazily in worker processes (never loaded by the root process).
+This could be used for hot-reloading or hot-swapping the Web Application code itself – but only if the code is lazily loaded by each worker processes (never loaded by the root process).
 
-To hot-restart iodine, send the `SIGUSR1` signal to the root process.
+To hot-restart iodine, send the `SIGUSR1` signal to the root process or `SIGINT` to a worker process.
 
 The following code will hot-restart iodine every 4 hours when iodine is running in cluster mode:
 
@@ -567,7 +556,7 @@ require 'iodine'
 # an echo protocol with asynchronous notifications.
 class EchoProtocol
   # `on_message` is called when data is available.
-  def on_message client, buffer
+  def self.on_message client, buffer
     # writing will never block and will use a buffer written in C when needed.
     client.write buffer
     # close will be performed only once all the data in the write buffer
@@ -586,7 +575,7 @@ end
 tls = USE_TLS ? Iodine::TLS.new("localhost") : nil
 
 # listen on port 3000 for the echo protocol.
-Iodine.listen(port: "3000", tls: tls) { EchoProtocol.new }
+Iodine.listen(service: :raw, tls: tls, handler: EchoProtocol)
 Iodine.threads = 1
 Iodine.workers = 1
 Iodine.start
@@ -598,54 +587,53 @@ Or a nice plain text chat room (connect using `telnet` or `nc` ):
 require 'iodine'
 
 # a chat protocol with asynchronous notifications.
-class ChatProtocol
-  def initialize nickname = "guest"
-    @nickname = nickname
-  end
-  def on_open client
+module ChatProtocol
+  def self.on_open client
+    puts "Connecting #{client[:nickname]} to Chat"
     client.subscribe :chat
-    client.publish :chat, "#{@nickname} joined chat.\n"
-    client.timeout = 40
+    client.publish :chat, "#{client[:nickname]} joined chat.\n"
   end
-  def on_close client
-    client.publish :chat, "#{@nickname} left chat.\n"
+  def self.on_close client
+    client.publish :chat, "#{client[:nickname]} left chat.\n"
+    puts "Disconnecting #{client[:nickname]}."
   end
-  def on_shutdown client
+  def self.on_shutdown client
     client.write "Server is shutting down... try reconnecting later.\n"
   end
-  def on_message client, buffer
+  def self.on_message client, buffer
     if(buffer[-1] == "\n")
-      client.publish :chat, "#{@nickname}: #{buffer}"
+      client.publish :chat, "#{client[:nickname]}: #{buffer}"
     else
-      client.publish :chat, "#{@nickname}: #{buffer}\n"
+      client.publish :chat, "#{client[:nickname]}: #{buffer}\n"
     end
     # close will be performed only once all the data in the outgoing buffer
     client.close if buffer =~ /^bye[\r\n]/i
   end
-  def ping client
-    client.write "(ping) Are you there, #{@nickname}...?\n"
+  def self.on_timeout client
+    client.write "(ping) Are you there, #{client[:nickname]}...?\n"
   end
 end
 
 # an initial login protocol
-class LoginProtocol
-  def on_open client
+module LoginProtocol
+  def self.on_open client
+    puts "Accepting new Client"
     client.write "Enter nickname to log in to chat room:\n"
-    client.timeout = 10
   end
-  def ping client
+  def self.on_timeout client
     client.write "Time's up... goodbye.\n"
     client.close
   end
-  def on_message client, buffer
+  def self.on_message client, buffer
     # validate nickname and switch connection callback to ChatProtocol
     nickname = buffer.split("\n")[0]
     while (nickname && nickname.length() > 0 && (nickname[-1] == '\n' || nickname[-1] == '\r'))
       nickname = nickname.slice(0, nickname.length() -1)
     end
     if(nickname && nickname.length() > 0 && buffer.split("\n").length() == 1)
-      chat = ChatProtocol.new(nickname)
-      client.handler = chat
+      client[:nickname] = nickname
+      client.handler = ChatProtocol
+      client.handler.on_open(client)
     else
       client.write "Nickname error, try again.\n"
       on_open client
@@ -654,9 +642,9 @@ class LoginProtocol
 end
 
 # listen on port 3000
-Iodine.listen(port: 3000) { LoginProtocol.new }
+Iodine.listen(url: 'tcp://0.0.0.0:3000', handler: LoginProtocol, timeout: 40)
 Iodine.threads = 1
-Iodine.workers = 1
+Iodine.workers = 0
 Iodine.start
 ```
 
