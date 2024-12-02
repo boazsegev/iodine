@@ -2649,6 +2649,16 @@ Listen to incoming TCP/IP Connections
 ***************************************************************************** */
 
 static void iodine_tcp_on_stop(fio_io_protocol_s *p, void *udata) {
+  /* TODO! call on_close */
+  // VALUE connection = rb_obj_alloc(iodine_rb_IODINE_CONNECTION);
+  // STORE.hold(connection);
+  // iodine_connection_s *c = iodine_connection_ptr(m);
+  // c->store[IODINE_CONNECTION_STORE_handler] = (VALUE)udata;
+  // c->io = NULL;
+  // c->http = NULL;
+  // iodine_ruby_call_outside((VALUE)udata, IODINE_CLOSE_ID, 1, &connection);
+  // STORE.release(connection);
+
   STORE.release((VALUE)udata);
   FIO_MEM_FREE(p, sizeof(*p));
 }

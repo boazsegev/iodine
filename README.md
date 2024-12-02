@@ -485,49 +485,6 @@ These options can be used, for example, like so:
 
 More possible compile time options can be found in the [facil.io documentation](http://facil.io).
 
-## Evented oriented design with extra safety
-
-Iodine is an evented server, similar in its architecture to `nginx` and `puma`. It's different than the simple "thread-per-client" design that is often taught when we begin to learn about network programming.
-
-By leveraging `epoll` (on Linux) and `kqueue` (on BSD), iodine can listen to multiple network events on multiple sockets using a single thread.
-
-All these events go into a task queue, together with the application events and any user generated tasks, such as ones scheduled by [`Iodine.run`](http://www.rubydoc.info/github/boazsegev/iodine/Iodine#run-class_method).
-
-In pseudo-code, this might look like this
-
-```ruby
-QUEUE = Queue.new
-
-def server_cycle
-    if(QUEUE.empty?)
-      QUEUE << get_next_32_socket_events # these events schedule the proper user code to run
-    end
-    QUEUE << server_cycle
-end
-
-def run_server
-      while ((event = QUEUE.pop))
-            event.shift.call(*event)
-      end
-end
-```
-
-In pure Ruby (without using C extensions or Java), it's possible to do the same by using `select`... and although `select` has some issues, it could work well for lighter loads.
-
-The server events are fairly fast and fragmented (longer code is fragmented across multiple events), so one thread is enough to run the server including it's static file service and everything...
-
-...but single threaded mode should probably be avoided.
-
-It's very common that the application's code will run slower and require external resources (i.e., databases, a custom pub/sub service, etc'). This slow code could "starve" the server, which is patiently waiting to run it's short tasks on the same thread.
-
-The thread pool is there to help slow user code.
-
-The slower your application code, the more threads you will need to keep the server running in a responsive manner (note that responsiveness and speed aren't always the same).
-
-To make a thread pool easier and safer to use, iodine makes sure that no connection task / callback is called concurrently for the same connection.
-
-For example, a is a WebSocket connection is already busy in it's `on_message` callback, no other messages will be forwarded to the callback until the current callback returns.
-
 ## Free, as in freedom (BYO beer)
 
 Iodine is **free** and **open source**, so why not take it out for a spin?
