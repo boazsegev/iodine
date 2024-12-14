@@ -54,6 +54,9 @@ Please refer to the core documentation in the Markdown File.
 /** An empty macro, adding white space. Used to avoid function like macros. */
 #define FIO_NOOP
 
+/** An empty macro, adding white space. Used to avoid function like macros. */
+#define FIO_NOOP_FN(...)
+
 /* *****************************************************************************
 Version Macros
 
@@ -84,6 +87,10 @@ supports macros that will help detect and validate it's version.
 #define FIO_VERSION_BUILD ""
 #endif
 
+#ifndef FIO_LEAK_COUNTER
+/** Enables memory leak detection. Disable by setting this to zero. */
+#define FIO_LEAK_COUNTER 1
+#endif
 /* *****************************************************************************
 Settings - Behavioral defaults
 ***************************************************************************** */
@@ -397,30 +404,62 @@ Function Attributes
 #define FIO_WEAK __attribute__((weak))
 #endif
 
-#ifndef FIO_IFUNC_DEF_GETSET
+#ifndef FIO_DEF_GET_SET
 /** Defines a "get" function for a field within a struct / union. */
-#define FIO_IFUNC_DEF_GET(namespace, T_type, F_type, field_name)               \
+#define FIO_DEF_GET_FUNC_DEF(static, namespace, T_type, F_type, field_name)    \
   /** Returns current value of property within the struct / union. */          \
-  FIO_IFUNC F_type FIO_NAME(namespace, field_name)(T_type * o) {               \
+  static F_type FIO_NAME(namespace, field_name)(T_type * o);
+
+/** Defines a "get" function for a field within a struct / union. */
+#define FIO_DEF_GET_FUNC(static, namespace, T_type, F_type, field_name)        \
+  /** Returns current value of property within the struct / union. */          \
+  static F_type FIO_NAME(namespace, field_name)(T_type * o) {                  \
     FIO_ASSERT_DEBUG(o, "NULL " FIO_MACRO2STR(namespace) " pointer @ `get`!"); \
     return o->field_name;                                                      \
   }
 
 /** Defines a "set" function for a field within a struct / union. */
-#define FIO_IFUNC_DEF_SET(namespace, T_type, F_type, field_name)               \
+#define FIO_DEF_SET_FUNC_DEF(static, namespace, T_type, F_type, F_name)        \
   /** Sets a new value, returning the old one */                               \
-  FIO_IFUNC F_type FIO_NAME(FIO_NAME(namespace, field_name),                   \
-                            set)(T_type * o, F_type new_value) {               \
+  static F_type FIO_NAME(FIO_NAME(namespace, F_name), set)(T_type * o,         \
+                                                           F_type new_value);
+
+/** Defines a "set" function for a field within a struct / union. */
+#define FIO_DEF_SET_FUNC(static, namespace, T_type, F_type, F_name, on_set)    \
+  /** Sets a new value, returning the old one */                               \
+  static F_type FIO_NAME(FIO_NAME(namespace, F_name), set)(T_type * o,         \
+                                                           F_type new_value) { \
     FIO_ASSERT_DEBUG(o, "NULL " FIO_MACRO2STR(namespace) " pointer @ `set`!"); \
-    F_type old_value = o->field_name;                                          \
-    o->field_name = new_value;                                                 \
+    F_type old_value = o->F_name;                                              \
+    o->F_name = new_value;                                                     \
+    on_set(o);                                                                 \
     return old_value;                                                          \
   }
+/** Defines get/set functions for a field within a struct / union. */
+#define FIO_DEF_GETSET_FUNC(static, namespace, T_type, F_type, F_name, on_set) \
+  FIO_DEF_GET_FUNC(static, namespace, T_type, F_type, F_name)                  \
+  FIO_DEF_SET_FUNC(static, namespace, T_type, F_type, F_name, on_set)
 
 /** Defines get/set functions for a field within a struct / union. */
-#define FIO_IFUNC_DEF_GETSET(namespace, T_type, F_type, field_name)            \
-  FIO_IFUNC_DEF_GET(namespace, T_type, F_type, field_name)                     \
-  FIO_IFUNC_DEF_SET(namespace, T_type, F_type, field_name)
+#define FIO_DEF_GETSET_FUNC_DEF(static, namespace, T_type, F_type, F_name)     \
+  FIO_DEF_GET_FUNC_DEF(static, namespace, T_type, F_type, F_name)              \
+  FIO_DEF_SET_FUNC_DEF(static, namespace, T_type, F_type, F_name)
+
+#endif
+
+#ifndef FIO_IFUNC_DEF_GETSET
+/** Defines a "get" function for a field within a struct / union. */
+#define FIO_IFUNC_DEF_GET(namespace, T_type, F_type, field_name)               \
+  FIO_DEF_GET_FUNC(FIO_IFUNC, namespace, T_type, F_type, field_name)
+
+/** Defines a "set" function for a field within a struct / union. */
+#define FIO_IFUNC_DEF_SET(namespace, T_type, F_type, F_name, on_set)           \
+  FIO_DEF_SET_FUNC(FIO_IFUNC, namespace, T_type, F_type, F_name, on_set)
+
+/** Defines get/set functions for a field within a struct / union. */
+#define FIO_IFUNC_DEF_GETSET(namespace, T_type, F_type, F_name, on_set)        \
+  FIO_IFUNC_DEF_GET(namespace, T_type, F_type, F_name)                         \
+  FIO_IFUNC_DEF_SET(namespace, T_type, F_type, F_name, on_set)
 
 #endif /* FIO_IFUNC_DEF_GETSET */
 /* *****************************************************************************
@@ -960,10 +999,9 @@ memory address to be returned if needed (valid until concurrency max calls).
                                FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX *         \
                                size_per_allocation * allocations_per_thread];  \
     static size_t pos;                                                         \
-    size_t at = fio_atomic_add(&pos, count * size_per_allocation);             \
-    at %= FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX * size_per_allocation *        \
-          allocations_per_thread;                                              \
-    return at + name##buffer;                                                  \
+    size_t at = fio_atomic_add(&pos, count);                                   \
+    at %= FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX * allocations_per_thread;      \
+    return (at * size_per_allocation) + name##buffer;                          \
   }
 
 /* *****************************************************************************
@@ -35638,11 +35676,7 @@ IFUNC size_t fio_io_buffer_len(fio_io_s *io) {
 }
 
 /** Associates a new `udata` pointer with the IO, returning the old `udata` */
-IFUNC void *fio_io_udata_set(fio_io_s *io, void *udata) {
-  void *old = io->udata;
-  io->udata = udata;
-  return old;
-}
+FIO_DEF_SET_FUNC(IFUNC, fio_io, fio_io_s, void *, udata, FIO_NOOP_FN)
 
 /** Returns the `udata` pointer associated with the IO. */
 IFUNC void *fio_io_udata(fio_io_s *io) { return io->udata; }
@@ -46218,7 +46252,8 @@ FIO_SFUNC void fio___http_controller_http1_write_body(
                   .len = c->state.http.buf.len,
                   .dealloc = FIO_STRING_FREE);
     c->state.http.buf = FIO_STR_INFO0;
-    return;
+    if (args.buf && args.len)
+      return;
   }
 
   fio_io_write2(c->io,
@@ -46294,13 +46329,6 @@ FIO_SFUNC void fio___http_controller_http1_on_finish_task(void *c_,
                                                           void *upgraded) {
   fio___http_connection_s *c = (fio___http_connection_s *)c_;
   c->suspend = 0;
-  if (c->state.http.buf.len) {
-    fio_io_write2(c->io,
-                  .buf = (void *)c->state.http.buf.buf,
-                  .len = c->state.http.buf.len,
-                  .dealloc = FIO_STRING_FREE);
-    c->state.http.buf = FIO_STR_INFO0;
-  }
 
   if (upgraded)
     goto upgraded;
@@ -46357,8 +46385,18 @@ something_is_wrong:
 /** called once a request / response had finished */
 FIO_SFUNC void fio___http_controller_http1_on_finish(fio_http_s *h) {
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  if (fio_http_is_streaming(h))
-    fio_io_write2(c->io, .buf = (char *)"0\r\n\r\n", .len = 5, .copy = 1);
+  if (c->state.http.buf.len) {
+    if (fio_http_is_streaming(h))
+      fio_string_write(&c->state.http.buf, FIO_STRING_REALLOC, "0\r\n\r\n", 5);
+    fio_io_write2(c->io,
+                  .buf = (void *)c->state.http.buf.buf,
+                  .len = c->state.http.buf.len,
+                  .dealloc = FIO_STRING_FREE);
+    c->state.http.buf = FIO_STR_INFO0;
+  } else {
+    if (fio_http_is_streaming(h))
+      fio_io_write2(c->io, .buf = (char *)"0\r\n\r\n", .len = 5, .copy = 1);
+  }
   if (c->log)
     fio_http_write_log(h);
   if (fio_http_is_upgraded(h))
@@ -47823,7 +47861,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, aton_speed)(void) {
       "0x3a.0P-1074",
       "0x0.f9c7573d7fe52p-1022",
   };
-  printf("* Testing fio_aton/strtod performance:\n");
+  fprintf(stderr, "* Testing fio_aton/strtod performance:\n");
   /* Sanity Test */
   bool rounding_errors_detected = 0;
   for (size_t n_i = 0; n_i < sizeof(floats) / sizeof(floats[0]); ++n_i) {
@@ -47863,7 +47901,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, aton_speed)(void) {
   /* Speed Test */
   for (size_t fn_i = 0; fn_i < sizeof(to_test) / sizeof(to_test[0]); ++fn_i) {
     double unused;
-    printf("\t%s\t", to_test[fn_i].n);
+    fprintf(stderr, "\t%s\t", to_test[fn_i].n);
     int64_t start = FIO_NAME_TEST(stl, atol_time)();
     for (size_t i = 0; i < (FIO_ATOL_TEST_MAX / 10); ++i) {
       for (size_t n_i = 0; n_i < sizeof(floats) / sizeof(floats[0]); ++n_i) {
@@ -47874,7 +47912,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, aton_speed)(void) {
     }
     (void)unused;
     int64_t end = FIO_NAME_TEST(stl, atol_time)();
-    printf("%lld us\n", (long long int)(end - start));
+    fprintf(stderr, "%lld us\n", (long long int)(end - start));
   }
   if (rounding_errors_detected)
     FIO_LOG_WARNING("Single bit rounding errors detected when comparing "
