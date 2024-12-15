@@ -80,26 +80,26 @@ module App
 
 
 	def self.on_open(e)
-		e.subscribe :broadcast
+		e.subscribe(:broadcast) # { |msg| puts "(#{Process.pid}:#{Thread.current}): #{msg.channel} : #{msg.message}"; e.write msg.message }
 	end
 	def self.on_message(e, m)
-		Iodine.publish :broadcast, m
+		Iodine.publish(:broadcast, m)
 	end
 end
 
 
 class LogPubSub < Iodine::PubSub::Engine
 	def subscribe ch
-		puts "(#{Process.pid}) Someone subscribed to #{ch}"
+		puts "(#{Process.pid}) #{ch} has listeners (created)"
 	end
 	def psubscribe ch
-		puts "(#{Process.pid}) Someone subscribed to #{ch} (pattern)"
+		puts "(#{Process.pid}) (pattern) #{ch} has listeners (created)"
 	end
 	def unsubscribe ch
-		puts "(#{Process.pid}) Someone unsubscribed to #{ch}"
+		puts "(#{Process.pid}) #{ch} has no more listeners (destroyed)"
 	end
 	def punsubscribe ch
-		puts "(#{Process.pid}) Someone unsubscribed to #{ch} (pattern)"
+		puts "(#{Process.pid}) (pattern) #{ch} has no more listeners (destroyed)"
 	end
 	def publish m
 		puts "(#{Process.pid}) Someone published to #{m.channel}"

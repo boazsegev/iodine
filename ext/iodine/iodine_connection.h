@@ -1711,7 +1711,7 @@ typedef struct {
   uint8_t is_text;
 } iodine_io_http_on_message_internal_s;
 
-/** Called when a websocket / SSE message arrives. */
+/** Called when a WebSocket / SSE message arrives. */
 static void *iodine_io_http_on_message_internal(void *info) {
   iodine_io_http_on_message_internal_s *i =
       (iodine_io_http_on_message_internal_s *)info;
@@ -1731,7 +1731,7 @@ static void *iodine_io_http_on_message_internal(void *info) {
   return NULL;
 }
 
-/** Called when a websocket / SSE message arrives. */
+/** Called when a WebSocket / SSE message arrives. */
 static void iodine_io_http_on_message(fio_http_s *h,
                                       fio_buf_info_s msg,
                                       uint8_t is_text) {
@@ -1770,13 +1770,13 @@ Subscription Helpers
 static void *iodine_connection_on_pubsub_in_gvl(void *m_) {
   fio_msg_s *m = (fio_msg_s *)m_;
   VALUE msg = iodine_pubsub_msg_create(m);
+  /* TODO! move callback to async queue. */
   iodine_ruby_call_inside((VALUE)m->udata, IODINE_CALL_ID, 1, &msg);
   STORE.release(msg);
   return m_;
 }
 
 static void iodine_connection_on_pubsub(fio_msg_s *m) {
-  /* TODO? move callback to outside queue? */
   rb_thread_call_with_gvl(iodine_connection_on_pubsub_in_gvl, m);
 }
 
@@ -1805,6 +1805,7 @@ FIO_IFUNC VALUE iodine_connection_subscribe_internal(fio_io_s *io,
                 .filter = (int16_t)filter,
                 .channel = channel,
                 .udata = (void *)proc,
+                .queue = fio_io_async_queue(&IODINE_THREAD_POOL),
                 .on_message =
                     (!proc || (proc == Qnil) ? NULL
                                              : iodine_connection_on_pubsub),
