@@ -784,9 +784,7 @@ static VALUE iodine_handler_deafult_on_http404(VALUE handler, VALUE client) {
   iodine_connection_s *c = iodine_connection_ptr(client);
   if (!c->http)
     return Qnil;
-  fio_http_status_set(c->http, 404);
-  fio_http_finish(c->http);
-  // fio_http_send_error_response(c->http, 404);
+  fio_http_send_error_response(c->http, 404);
   return Qnil;
   (void)handler;
 }

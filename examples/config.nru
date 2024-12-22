@@ -1,8 +1,8 @@
-# This is both a NeoRack and a Rack application.
+# This is a NeoRack Application with a Rack fallback for non-NeoRack servers (such as Puma).
 #
-# Iodine can run both Rack and NeoRack applications.
+# Iodine can run both Rack (old school) and NeoRack applications.
 # 
-# In this case the `on_http` implementation will be prioritized over the `call` implementation.
+# In this case the `on_http` implementation will be called by iodine (and the `call` implementation will be called by any other server).
 # 
 # Benchmark with keep-alive:
 #
@@ -23,6 +23,7 @@
 #     listener.onevent = (e) => { console.log(e); }
 #
 module App
+	# for non-NeoRack servers, such as Puma
 	def self.call(e)
 		txt = []
 		if e['rack.upgrade?']

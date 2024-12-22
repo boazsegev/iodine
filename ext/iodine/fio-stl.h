@@ -43765,6 +43765,7 @@ FIO_SFUNC void fio_http_mime_register_essential(void) {
   REGISTER_MIME("mjs", "text/javascript");
   REGISTER_MIME("mp3", "audio/mpeg");
   REGISTER_MIME("mp4", "video/mp4");
+  REGISTER_MIME("m4a", "audio/mp4");
   REGISTER_MIME("m4v", "video/mp4");
   REGISTER_MIME("mpeg", "video/mpeg");
   REGISTER_MIME("mpkg", "application/vnd.apple.installer+xml");

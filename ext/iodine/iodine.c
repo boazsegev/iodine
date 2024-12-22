@@ -78,6 +78,7 @@ void Init_iodine(void) {
   /** The Iodine::Base module is for internal concerns. */
   iodine_rb_IODINE_BASE =
       rb_define_class_under(iodine_rb_IODINE, "Base", rb_cObject);
+  rb_undef_alloc_func(iodine_rb_IODINE_BASE);
   STORE.hold(iodine_rb_IODINE_BASE);
   /** The Iodine::Base::App404 module is for static file only. */
   iodine_rb_IODINE_BASE_APP404 =
