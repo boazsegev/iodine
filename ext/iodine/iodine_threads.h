@@ -22,7 +22,7 @@ FIO_IFUNC fio_thread_pid_t fio_thread_getpid(void) {
 
 /** Should behave the same as the POSIX system call `kill`. */
 FIO_IFUNC int fio_thread_kill(fio_thread_pid_t i, int s) {
-  VALUE args[] = {INT2NUM(((int)i)), INT2NUM(s)};
+  VALUE args[] = {INT2NUM(s), PIDT2NUM(i)};
   iodine_caller_result_s r =
       iodine_ruby_call_outside(rb_mProcess, rb_intern2("kill", 4), 2, args);
   if (r.exception)
@@ -83,9 +83,9 @@ FIO_IFUNC int fio_thread_create(fio_thread_t *t,
 
 /** Waits for the thread to finish. */
 FIO_IFUNC int fio_thread_join(fio_thread_t *t) {
+  STORE.release(t[0]);
   iodine_caller_result_s r =
       iodine_ruby_call_outside(t[0], rb_intern2("join", 4), 0, NULL);
-  STORE.release(t[0]);
   if (r.exception)
     return -1;
   return 0;

@@ -12,7 +12,7 @@ static void iodine_stop___(void *ignr_) {
 }
 
 static void iodine_connection_cache_common_strings(void);
-static void *iodine___run(void *ignr_) {
+static void *iodine___start(void *ignr_) {
   VALUE ver = rb_const_get(iodine_rb_IODINE, rb_intern2("VERSION", 7));
   unsigned threads = (unsigned)fio_io_workers((int)fio_cli_get_i("-t"));
   unsigned workers = (unsigned)fio_io_workers((int)fio_cli_get_i("-w"));
@@ -41,7 +41,7 @@ static void *iodine___run(void *ignr_) {
 
 /** Starts the Iodine IO reactor. */
 static VALUE iodine_start(VALUE self) { // clang-format on
-  rb_thread_call_without_gvl(iodine___run, NULL, iodine_stop___, NULL);
+  rb_thread_call_without_gvl(iodine___start, NULL, iodine_stop___, NULL);
   return self;
 }
 

@@ -64,6 +64,7 @@ Initialize Extension
 ***************************************************************************** */
 
 void Init_iodine(void) {
+  IODINE_THREAD_POOL = FIO_IO_ASYN_INIT;
   fio_state_callback_force(FIO_CALL_ON_INITIALIZE);
 
   IodineUTF8Encoding = rb_enc_find("UTF-8");
@@ -151,6 +152,10 @@ void Init_iodine(void) {
   Init_Iodine_PubSub_Message();
   Init_Iodine_TLS();
   Init_Iodine_Connection();
-
+  /* make sure the Iodine.run / async methods are available pre-start */
   fio_io_async_attach(&IODINE_THREAD_POOL, (uint32_t)fio_cli_get_i("-t"));
+#ifdef SIGUSR1
+  /* support hot restarting of workers */
+  fio_io_restart_on_signal(SIGUSR1);
+#endif
 }

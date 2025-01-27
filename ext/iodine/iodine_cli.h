@@ -55,6 +55,8 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
   FIO_STR_INFO_TMP_VAR(threads, 128);
   FIO_STR_INFO_TMP_VAR(workers, 128);
   const char *argv[IODINE_CLI_LIMIT];
+  const char *threads_env = NULL;
+  const char *workers_env = NULL;
   long len = 0;
   VALUE iodine_version = rb_const_get(iodine_rb_IODINE, rb_intern("VERSION"));
 
@@ -79,19 +81,22 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
                            (void (*)(void *))fio_bstr_free,
                            (void *)argv[i]);
 
+  threads_env = getenv("THREADS");
+  workers_env = getenv("WORKERS");
+
   fio_string_write2(
       &threads,
       NULL,
       FIO_STRING_WRITE_STR1("--threads -t ("),
-      (getenv("THREADS") ? FIO_STRING_WRITE_STR1(getenv("THREADS"))
-                         : FIO_STRING_WRITE_STR1("-4")),
+      (threads_env ? FIO_STRING_WRITE_STR1(threads_env)
+                   : FIO_STRING_WRITE_STR1("-4")),
       FIO_STRING_WRITE_STR1(") number of worker threads to use."));
   fio_string_write2(
       &workers,
       NULL,
       FIO_STRING_WRITE_STR1("--workers -w ("),
-      (getenv("WORKERS") ? FIO_STRING_WRITE_STR1(getenv("WORKERS"))
-                         : FIO_STRING_WRITE_STR1("-2")),
+      (workers_env ? FIO_STRING_WRITE_STR1(workers_env)
+                   : FIO_STRING_WRITE_STR1("-2")),
       FIO_STRING_WRITE_STR1(") number of worker processes to use."));
 
   fio_string_write2(
