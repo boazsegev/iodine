@@ -2,6 +2,11 @@
 # frozen_string_literal: true
 require 'iodine'
 
+# don't complain about SIGTERM.
+Signal.trap("TERM", "SIG_IGN")
+# don't fail on hot restart.
+Signal.trap("USR1", "IGNORE")
+
 begin
   require 'rack'
   module Iodine
@@ -87,12 +92,13 @@ module Iodine
           file_name ||= './'
           file_name += '/' unless file_name.end_with?('/')
           defaults = ["#{file_name}config.ru", "#{file_name}config.nru"]
+          defaults.pop if Iodine::Base::CLI['-R']
           file_name = nil;
           defaults.each {|n| file_name = n if(File.exist?(n))}
           file_name ||= defaults[-1]
         end
         file_name = nil if(!File.exist?(file_name))
-        raise("Web App not found: config.ru") unless file_name || Iodine::Base::CLI['-www']
+        raise("Web App not found: missing config.#{Iodine::Base::CLI['-R'] ? '' : 'n'}ru?") unless file_name || Iodine::Base::CLI['-www']
         file_name
       end
       def self.iodine___load_rack fn
@@ -100,9 +106,12 @@ module Iodine
         begin
           require 'rack'
         rescue LoadError => e
-          return nil
+          return nil unless Iodine::Base::CLI['-R']
+          puts "ERROR: rack not installed."
+          puts "       iodine -R requires the rack gem to be installed.\n"
+          raise e
         end
-        build = Rack::Builder.parse_file(fn)
+        build = ::Rack::Builder.parse_file(fn)
         build
       end
       def self.iodine___load_neorack fn
@@ -117,7 +126,7 @@ module Iodine
       def self.iodine___load_config
         fn = ::Iodine::Base::NeoRackUp.iodine___detect_filename
         app = ::Iodine::Base::NeoRackUp.iodine___load_rack(fn)
-        app ||= ::Iodine::Base::NeoRackUp.iodine___load_neorack(fn)
+        app ||= ::Iodine::Base::NeoRackUp.iodine___load_neorack(fn) unless Iodine::Base::CLI['-R']
         raise("Web App not found (no `run`?) in #{fn}") unless !fn || app
         # read and execute configuration file using NeoRack DSL.
         Iodine.listen nil, app
