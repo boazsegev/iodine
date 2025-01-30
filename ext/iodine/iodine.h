@@ -6,7 +6,7 @@
 #include <ruby/io.h>
 #include <ruby/thread.h>
 
-typedef int fio_thread_pid_t;
+typedef pid_t fio_thread_pid_t;
 typedef VALUE fio_thread_t;
 
 /* *****************************************************************************
@@ -80,6 +80,7 @@ facil.io
 #define FIO_THREADS_FORK_BYO        1
 #define FIO_MEMORY_ARENA_COUNT_MAX  4
 #define FIO_EVERYTHING
+
 #include "fio-stl.h"
 
 /* *****************************************************************************
@@ -102,7 +103,7 @@ FIO_LEAK_COUNTER_DEF(iodine_connection)
 FIO_LEAK_COUNTER_DEF(iodine_minimap)
 FIO_LEAK_COUNTER_DEF(iodine_mustache)
 FIO_LEAK_COUNTER_DEF(iodine_pubsub_msg)
-FIO_LEAK_COUNTER_DEF(iodine_pubsub_eng)
+// FIO_LEAK_COUNTER_DEF(iodine_pubsub_eng) /* Ruby doesn't free */
 FIO_LEAK_COUNTER_DEF(iodine_hmap)
 
 /* *****************************************************************************

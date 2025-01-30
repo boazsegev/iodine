@@ -5,7 +5,7 @@ require 'iodine'
 # don't complain about SIGTERM.
 Signal.trap("TERM", "SIG_IGN")
 # don't fail on hot restart.
-Signal.trap("USR1", "IGNORE")
+Signal.trap("USR1", "SIG_IGN")
 
 begin
   require 'rack'

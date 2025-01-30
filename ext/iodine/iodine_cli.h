@@ -141,10 +141,14 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
 
       FIO_CLI_PRINT_HEADER("HTTP"),
       FIO_CLI_STRING("--public -www public folder for static file service."),
-      FIO_CLI_INT("--max-line -maxln per-header line limit, in Kb."),
-      FIO_CLI_INT("--max-header -maxhd total header limit per request, in Kb."),
-      FIO_CLI_INT(
-          "--max-body -maxbd total message payload limit per request, in Mb."),
+      FIO_CLI_INT("--max-line -maxln (" FIO_MACRO2STR(
+          FIO_HTTP_DEFAULT_MAX_LINE_LEN) ") per-header line limit, in bytes."),
+      FIO_CLI_INT("--max-header -maxhd (" FIO_MACRO2STR(
+          FIO_HTTP_DEFAULT_MAX_HEADER_SIZE) ") total header limit per request, "
+                                            "in bytes."),
+      FIO_CLI_INT("--max-body -maxbd (" FIO_MACRO2STR(
+          FIO_HTTP_DEFAULT_MAX_BODY_SIZE) ") total message payload limit per "
+                                          "request, in bytes."),
       FIO_CLI_INT("--keep-alive -k (" FIO_MACRO2STR(
           FIO_HTTP_DEFAULT_TIMEOUT) ") HTTP keep-alive timeout in seconds "
                                     "(0..255)"),
@@ -153,9 +157,12 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
       FIO_CLI_BOOL("--log -v log HTTP messages."),
 
       FIO_CLI_PRINT_HEADER("WebSocket / SSE"),
-      FIO_CLI_INT(
-          "--ws-max-msg -maxms incoming WebSocket message limit, in Kb."),
-      FIO_CLI_INT("--timeout -ping WebSocket / SSE timeout, in seconds."),
+      FIO_CLI_INT("--ws-max-msg -maxms (" FIO_MACRO2STR(
+          FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE) ") incoming WebSocket message "
+                                            "limit, in bytes."),
+      FIO_CLI_INT("--timeout -ping (" FIO_MACRO2STR(
+          FIO_HTTP_DEFAULT_TIMEOUT_LONG) ") WebSocket / SSE timeout, in "
+                                         "seconds."),
 
       FIO_CLI_PRINT_HEADER("TLS / SSL"),
       FIO_CLI_PRINT(

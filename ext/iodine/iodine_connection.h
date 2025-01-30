@@ -1009,7 +1009,7 @@ static VALUE iodine_handler_deafult_on_http(VALUE handler, VALUE client) {
       if (fio_http_static_file_response(c->http,
                                         (fio_str_info_s)IODINE_RSTR_INFO(p),
                                         FIO_STR_INFO0,
-                                        fio_cli_get_i("-maxage"))) {
+                                        fio_http_settings(c->http)->max_age)) {
         if (rb_respond_to(bd, IODINE_EACH_ID))
           goto call_using_each;
         goto rack_error; /* FIXME? something else? */

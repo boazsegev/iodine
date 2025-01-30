@@ -12,31 +12,45 @@ FIO_IFUNC fio_thread_pid_t fio_thread_fork(void) {
     return -1;
   if (r.result == Qnil)
     return 0;
-  return NUM2INT(r.result);
+  return NUM2PIDT(r.result);
 }
 
 /** Should behave the same as the POSIX system call `getpid`. */
 FIO_IFUNC fio_thread_pid_t fio_thread_getpid(void) {
-  return (fio_thread_pid_t)getpid();
+  return (fio_thread_pid_t)fio_getpid();
 }
 
 /** Should behave the same as the POSIX system call `kill`. */
 FIO_IFUNC int fio_thread_kill(fio_thread_pid_t i, int s) {
   VALUE args[] = {INT2NUM(s), PIDT2NUM(i)};
-  iodine_caller_result_s r =
-      iodine_ruby_call_outside(rb_mProcess, rb_intern2("kill", 4), 2, args);
+  iodine_caller_result_s r = iodine_ruby_call_outside(rb_mProcess,
+                                                      rb_intern2("kill", 4),
+                                                      2,
+                                                      args,
+                                                      .ignore_exceptions = 1);
   if (r.exception)
     return -1;
   return 0;
 }
 
+typedef struct {
+  fio_thread_pid_t pid;
+  int *status;
+  int flags;
+  int ret;
+} iodine___wait_pid_args_s;
+
+FIO_SFUNC void *fio___thread_waitpid_in_gvl(void *args_) {
+  iodine___wait_pid_args_s *args = (iodine___wait_pid_args_s *)args_;
+  args->ret = rb_waitpid(args->pid, args->status, args->flags);
+  return NULL;
+}
+
 /** Should behave the same as the POSIX system call `waitpid`. */
 FIO_IFUNC int fio_thread_waitpid(fio_thread_pid_t i, int *s, int o) {
-#if FIO_OS_POSIX
-  return waitpid((pid_t)i, s, o);
-#else
-  return -1;
-#endif
+  iodine___wait_pid_args_s args = {i, s, o};
+  rb_thread_call_with_gvl(fio___thread_waitpid_in_gvl, (void *)&args);
+  return args.ret;
 }
 
 /* *****************************************************************************
@@ -77,8 +91,11 @@ FIO_IFUNC int fio_thread_create(fio_thread_t *t,
   rb_thread_call_with_gvl(iodine___thread_create_in_gvl, &starter);
   fio_lock(&starter.lock); /* wait for other thread to unlock */
   if (*starter.t == Qnil)
-    return -1;
+    goto error_starting_thread;
   return 0;
+error_starting_thread:
+  FIO_LOG_ERROR("(%d) couldn't start thread!", fio_io_pid());
+  return -1;
 }
 
 /** Waits for the thread to finish. */

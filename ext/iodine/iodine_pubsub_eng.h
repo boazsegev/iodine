@@ -174,8 +174,8 @@ static void iodine_pubsub_eng_free(void *ptr_) {
   iodine_pubsub_eng_s *e = (iodine_pubsub_eng_s *)ptr_;
   if (FIO_PUBSUB_DEFAULT == e->ptr)
     FIO_PUBSUB_DEFAULT = NULL;
-  fio_free(e);
-  FIO_LEAK_COUNTER_ON_FREE(iodine_pubsub_eng);
+  ruby_xfree(e);
+  // FIO_LEAK_COUNTER_ON_FREE(iodine_pubsub_eng);
 }
 
 static const rb_data_type_t IODINE_PUBSUB_ENG_DATA_TYPE = {
@@ -190,12 +190,13 @@ static const rb_data_type_t IODINE_PUBSUB_ENG_DATA_TYPE = {
 };
 
 static VALUE iodine_pubsub_eng_alloc(VALUE klass) {
-  iodine_pubsub_eng_s *m = (iodine_pubsub_eng_s *)fio_malloc(sizeof(*m));
+  /* use Ruby allocator for long life object */
+  iodine_pubsub_eng_s *m = (iodine_pubsub_eng_s *)ruby_xmalloc(sizeof(*m));
   if (!m)
     goto no_memory;
   *m = (iodine_pubsub_eng_s){0};
   m->ptr = &m->engine;
-  FIO_LEAK_COUNTER_ON_ALLOC(iodine_pubsub_eng);
+  // FIO_LEAK_COUNTER_ON_ALLOC(iodine_pubsub_eng);
   m->handler = TypedData_Wrap_Struct(klass, &IODINE_PUBSUB_ENG_DATA_TYPE, m);
   m->engine = iodine_pubsub___engine_validate(m->handler);
   return m->handler;

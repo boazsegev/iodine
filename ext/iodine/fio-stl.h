@@ -11582,7 +11582,7 @@ static const char *FIO___STATE_TASKS_NAMES[FIO_CALL_NEVER + 1] = {
     [FIO_CALL_ON_PARENT_CRUSH] = "ON_PARENT_CRUSH",
     [FIO_CALL_ON_CHILD_CRUSH] = "ON_CHILD_CRUSH",
     [FIO_CALL_ON_WORKER_THREAD_END] = "ON_WORKER_THREAD_END",
-    [FIO_CALL_ON_STOP] = "ON_FINISH",
+    [FIO_CALL_ON_STOP] = "ON_STOP",
     [FIO_CALL_AT_EXIT] = "AT_EXIT",
     [FIO_CALL_NEVER] = "NEVER",
 };
@@ -11677,10 +11677,10 @@ SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
     fio_trylock(FIO___STATE_TASKS_ARRAY_LOCK + FIO_CALL_NEVER);
   }
 
-  FIO_LOG_DDEBUG2("(%d) scheduling %s callbacks (%zu tasks).",
-                  (int)(fio_thread_getpid()),
-                  FIO___STATE_TASKS_NAMES[e],
-                  (size_t)FIO___STATE_TASKS_ARRAY[e].count);
+  FIO_LOG_DEBUG2("(%d) scheduling %s callbacks (%zu tasks).",
+                 (int)(fio_thread_getpid()),
+                 FIO___STATE_TASKS_NAMES[e],
+                 (size_t)FIO___STATE_TASKS_ARRAY[e].count);
   if (!FIO___STATE_TASKS_ARRAY[e].count)
     return;
   /* copy task queue */
@@ -11696,11 +11696,8 @@ SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
   }
   fio_unlock(FIO___STATE_TASKS_ARRAY_LOCK + (uintptr_t)e);
 
-  if (e <= FIO_CALL_PRE_START) {
-    /* perform copied tasks immediately within system thread */
-    for (size_t i = 0; i < len; ++i)
-      ary[i].func(ary[i].arg);
-  } else if (e <= FIO_CALL_ON_IDLE) {
+  /* perform copied tasks in correct order */
+  if (e <= FIO_CALL_ON_IDLE) {
     /* perform tasks in order */
     for (size_t i = 0; i < len; ++i)
       ary[i].func(ary[i].arg);
@@ -11711,6 +11708,7 @@ SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
   }
   /* cleanup */
   FIO_MEM_FREE(ary, ary_capa);
+
   (void)FIO___STATE_TASKS_NAMES; /* if unused */
 }
 
@@ -14196,26 +14194,34 @@ static volatile size_t FIO_NAME(FIO_MEMORY_NAME, __malloc_total);
 #define FIO_MEMORY_ON_CHUNK_ALLOC(ptr)                                         \
   do {                                                                         \
     FIO_LEAK_COUNTER_ON_ALLOC(FIO_NAME(FIO_MEMORY_NAME, __malloc_chunk));      \
-    FIO_LOG_DEBUG2("MEMORY CHUNK-ALLOC allocated      %p", ptr);               \
+    FIO_LOG_DEBUG2("(%d) MEMORY CHUNK-ALLOC allocated      %p",                \
+                   fio_getpid(),                                               \
+                   ptr);                                                       \
   } while (0);
 #define FIO_MEMORY_ON_CHUNK_FREE(ptr)                                          \
   do {                                                                         \
     FIO_LEAK_COUNTER_ON_FREE(FIO_NAME(FIO_MEMORY_NAME, __malloc_chunk));       \
-    FIO_LOG_DEBUG2("MEMORY CHUNK-DEALLOC de-allocated %p", ptr);               \
+    FIO_LOG_DEBUG2("(%d) MEMORY CHUNK-DEALLOC de-allocated %p",                \
+                   fio_getpid(),                                               \
+                   ptr);                                                       \
   } while (0);
 #define FIO_MEMORY_ON_CHUNK_CACHE(ptr)                                         \
   do {                                                                         \
-    FIO_LOG_DEBUG2("MEMORY CACHE-PUSH placed          %p in cache", ptr);      \
+    FIO_LOG_DEBUG2("(%d) MEMORY CACHE-PUSH placed          %p in cache",       \
+                   fio_getpid(),                                               \
+                   ptr);                                                       \
   } while (0);
 #define FIO_MEMORY_ON_CHUNK_UNCACHE(ptr)                                       \
   do {                                                                         \
-    FIO_LOG_DEBUG2("MEMORY CACHE-POP retrieved        %p from cache", ptr);    \
+    FIO_LOG_DEBUG2("(%d) MEMORY CACHE-POP retrieved        %p from cache",     \
+                   fio_getpid(),                                               \
+                   ptr);                                                       \
   } while (0);
 
 #define FIO_MEMORY_ON_BLOCK_RESET_IN_LOCK(ptr, blk)                            \
   do {                                                                         \
     if (0)                                                                     \
-      FIO_LOG_DEBUG2("MEMORY chunk %p block %zu reset in lock",                \
+      FIO_LOG_DEBUG2("(%d) MEMORY chunk %p block %zu reset in lock",           \
                      ptr,                                                      \
                      (size_t)blk);                                             \
   } while (0);
@@ -14223,19 +14229,24 @@ static volatile size_t FIO_NAME(FIO_MEMORY_NAME, __malloc_total);
 #define FIO_MEMORY_ON_BIG_BLOCK_SET(ptr)                                       \
   do {                                                                         \
     if (1)                                                                     \
-      FIO_LOG_DEBUG2("MEMORY chunk %p used as big-block", ptr);                \
+      FIO_LOG_DEBUG2("(%d) MEMORY chunk %p used as big-block",                 \
+                     fio_getpid(),                                             \
+                     ptr);                                                     \
   } while (0);
 
 #define FIO_MEMORY_ON_BIG_BLOCK_UNSET(ptr)                                     \
   do {                                                                         \
     if (1)                                                                     \
-      FIO_LOG_DEBUG2("MEMORY chunk %p no longer used as big-block", ptr);      \
+      FIO_LOG_DEBUG2("(%d) MEMORY chunk %p no longer used as big-block",       \
+                     fio_getpid(),                                             \
+                     ptr);                                                     \
   } while (0);
 #define FIO_MEMORY_PRINT_STATS_END()                                           \
   do {                                                                         \
     FIO_LOG_DEBUG2(                                                            \
-        "(" FIO_MACRO2STR(                                                     \
+        "(%d) (" FIO_MACRO2STR(                                                \
             FIO_NAME(FIO_MEMORY_NAME, malloc)) ") total allocations: %zu",     \
+        fio_getpid(),                                                          \
         FIO_NAME(FIO_MEMORY_NAME, __malloc_total));                            \
   } while (0)
 #define FIO_MEMORY_ON_ALLOC_FUNC()                                             \
@@ -14637,9 +14648,10 @@ FIO_SFUNC void FIO_NAME(FIO_MEMORY_NAME, __mem_state_cleanup)(void *ignr_) {
       FIO_LIST_NODE node;
     };
     void *last_chunk = NULL;
-    FIO_LOG_WARNING("(" FIO_MACRO2STR(
-        FIO_NAME(FIO_MEMORY_NAME,
-                 malloc)) ") blocks left after cleanup - memory leaks?");
+    FIO_LOG_WARNING("(%d) (" FIO_MACRO2STR(FIO_NAME(
+                        FIO_MEMORY_NAME,
+                        malloc)) ") blocks left after cleanup - memory leaks?",
+                    fio_getpid());
     FIO_LIST_EACH(struct t_s,
                   node,
                   &FIO_NAME(FIO_MEMORY_NAME, __mem_state)->blocks,
@@ -14647,11 +14659,12 @@ FIO_SFUNC void FIO_NAME(FIO_MEMORY_NAME, __mem_state_cleanup)(void *ignr_) {
       if (last_chunk == (void *)FIO_NAME(FIO_MEMORY_NAME, __mem_ptr2chunk)(pos))
         continue;
       last_chunk = (void *)FIO_NAME(FIO_MEMORY_NAME, __mem_ptr2chunk)(pos);
-      FIO_LOG_WARNING(
-          "(" FIO_MACRO2STR(FIO_NAME(FIO_MEMORY_NAME,
-                                     malloc)) ") leaked block(s) for chunk %p",
-          (void *)pos,
-          last_chunk);
+      FIO_LOG_WARNING("(%d) (" FIO_MACRO2STR(
+                          FIO_NAME(FIO_MEMORY_NAME,
+                                   malloc)) ") leaked block(s) for chunk %p",
+                      fio_getpid(),
+                      (void *)pos,
+                      last_chunk);
     }
   }
 
@@ -14754,8 +14767,9 @@ SFUNC void FIO_NAME(FIO_MEMORY_NAME, malloc_after_fork)(void) {
     FIO_NAME(FIO_MEMORY_NAME, __mem_state_setup)();
     return;
   }
-  FIO_LOG_DEBUG2("MEMORY reinitializing " FIO_MACRO2STR(
-      FIO_NAME(FIO_MEMORY_NAME, malloc)) " state");
+  FIO_LOG_DEBUG2("(%d) MEMORY reinitializing " FIO_MACRO2STR(
+                     FIO_NAME(FIO_MEMORY_NAME, malloc)) " state",
+                 fio_getpid());
   FIO_MEMORY_LOCK_TYPE_INIT(FIO_NAME(FIO_MEMORY_NAME, __mem_state)->lock);
 #if FIO_MEMORY_ENABLE_BIG_ALLOC
   FIO_MEMORY_LOCK_TYPE_INIT(FIO_NAME(FIO_MEMORY_NAME, __mem_state)->big_lock);
@@ -14775,9 +14789,10 @@ Memory Allocation - state printing (debug helper)
 void fio_malloc_print_state___(void);
 /** Prints the allocator's data structure. May be used for debugging. */
 SFUNC void FIO_NAME(FIO_MEMORY_NAME, malloc_print_state)(void) {
-  fprintf(
-      stderr,
-      FIO_MACRO2STR(FIO_NAME(FIO_MEMORY_NAME, malloc)) " allocator state:\n");
+  fprintf(stderr,
+          "(%d) " FIO_MACRO2STR(
+              FIO_NAME(FIO_MEMORY_NAME, malloc)) " allocator state:\n",
+          fio_getpid());
   for (size_t i = 0; i < FIO_NAME(FIO_MEMORY_NAME, __mem_state)->arena_count;
        ++i) {
     fprintf(stderr,
@@ -14836,9 +14851,11 @@ SFUNC void FIO_NAME(FIO_MEMORY_NAME, malloc_print_free_block_list)(void) {
   if (FIO_NAME(FIO_MEMORY_NAME, __mem_state)->blocks.prev ==
       &FIO_NAME(FIO_MEMORY_NAME, __mem_state)->blocks)
     return;
-  fprintf(stderr,
-          FIO_MACRO2STR(FIO_NAME(FIO_MEMORY_NAME,
-                                 malloc)) " allocator free block list:\n");
+  fprintf(
+      stderr,
+      "(%d) " FIO_MACRO2STR(
+          FIO_NAME(FIO_MEMORY_NAME, malloc)) " allocator free block list:\n",
+      fio_getpid());
   FIO_LIST_NODE *n = FIO_NAME(FIO_MEMORY_NAME, __mem_state)->blocks.prev;
   for (size_t i = 0; n != &FIO_NAME(FIO_MEMORY_NAME, __mem_state)->blocks;
        ++i) {
@@ -14984,11 +15001,13 @@ FIO_IFUNC void FIO_NAME(FIO_MEMORY_NAME, __mem_block_free)(void *p) {
     return;
   FIO_ASSERT_DEBUG(
       (uint32_t)c->blocks[b].ref <= FIO_MEMORY_UNITS_PER_BLOCK + 1,
-      "block reference count corrupted, possible double free? (%zd)",
+      "(%d) block reference count corrupted, possible double free? (%zd)",
+      fio_getpid(),
       (size_t)c->blocks[b].ref);
   FIO_ASSERT_DEBUG(
       (uint32_t)c->blocks[b].pos <= FIO_MEMORY_UNITS_PER_BLOCK + 1,
-      "block allocation position corrupted, possible double free? (%zd)",
+      "(%d) block allocation position corrupted, possible double free? (%zd)",
+      fio_getpid(),
       (size_t)c->blocks[b].pos);
   if (fio_atomic_sub_fetch(&c->blocks[b].ref, 1))
     return;
@@ -15414,8 +15433,9 @@ FIO_IFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
   {
 #ifdef DEBUG
     FIO_LOG_WARNING(
-        "unintended " FIO_MACRO2STR(
+        "(%d) unintended " FIO_MACRO2STR(
             FIO_NAME(FIO_MEMORY_NAME, mmap)) " allocation (slow): %zu bytes",
+        fio_getpid(),
         FIO_MEM_BYTES2PAGES(size));
 #endif
     p = FIO_NAME(FIO_MEMORY_NAME, mmap)(size);
@@ -15587,7 +15607,9 @@ SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME, realloc2)(void *ptr,
     FIO_NAME(FIO_MEMORY_NAME, __mem_chunk_s) *c =
         FIO_NAME(FIO_MEMORY_NAME, __mem_ptr2chunk)(ptr);
     size_t b = FIO_NAME(FIO_MEMORY_NAME, __mem_ptr2index)(c, ptr);
-    FIO_ASSERT(c, "cannot reallocate a pointer with a NULL system allocation");
+    FIO_ASSERT(c,
+               "(%d) cannot reallocate a pointer with a NULL system allocation",
+               fio_getpid());
 
     register size_t max_len =
         ((uintptr_t)FIO_NAME(FIO_MEMORY_NAME, __mem_chunk2ptr)(c, b, 0) +
@@ -16345,6 +16367,7 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
     return total;
   int active_count = epoll_wait(p->fds[0].fd, events, FIO_POLL_MAX_EVENTS, 0);
   if (active_count > 0) {
+    /* TODO! fix error handling*/
     for (int i = 0; i < active_count; i++) {
       // errors are handled as disconnections (on_close) in the EPOLLIN queue
       // if no error, try an active event(s)
@@ -16356,12 +16379,12 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
   active_count = epoll_wait(p->fds[1].fd, events, FIO_POLL_MAX_EVENTS, 0);
   if (active_count > 0) {
     for (int i = 0; i < active_count; i++) {
+      // holds an active event(s)
+      if (events[i].events & EPOLLIN)
+        p->settings.on_data(events[i].data.ptr);
       // errors are handled as disconnections (on_close), but only once...
       if (events[i].events & (~(EPOLLIN | EPOLLOUT)))
         p->settings.on_close(events[i].data.ptr);
-      // no error, then it's an active event(s)
-      else if (events[i].events & EPOLLIN)
-        p->settings.on_data(events[i].data.ptr);
     } // end for loop
     total += active_count;
   }
@@ -16515,14 +16538,12 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout_) {
   if (active_count > 0) {
     for (int i = 0; i < active_count; i++) {
       // test for event(s) type
-      if (events[i].filter == EVFILT_WRITE) {
+      if ((events[i].filter & EVFILT_WRITE))
         p->settings.on_ready(events[i].udata);
-      } else if (events[i].filter == EVFILT_READ) {
+      if ((events[i].filter & EVFILT_READ))
         p->settings.on_data(events[i].udata);
-      }
-      if (events[i].flags & (EV_EOF | EV_ERROR)) {
+      if (events[i].flags & (EV_EOF | EV_ERROR))
         p->settings.on_close(events[i].udata);
-      }
     }
   } else if (active_count < 0) {
     if (errno == EINTR)
@@ -26666,13 +26687,15 @@ SFUNC void FIO_NAME(FIO_ARRAY_NAME, destroy)(FIO_ARRAY_PTR ary_) {
   switch (
       FIO_NAME_BL(FIO_ARRAY_NAME, embedded)((FIO_ARRAY_PTR)FIO_PTR_TAG(&tmp))) {
   case 0:
+    if (tmp.a.ary) {
 #if !FIO_ARRAY_TYPE_DESTROY_SIMPLE
-    for (size_t i = tmp.a.start; i < tmp.a.end; ++i) {
-      FIO_ARRAY_TYPE_DESTROY(tmp.a.ary[i]);
-    }
+      for (size_t i = tmp.a.start; i < tmp.a.end; ++i) {
+        FIO_ARRAY_TYPE_DESTROY(tmp.a.ary[i]);
+      }
 #endif
-    FIO_LEAK_COUNTER_ON_FREE(FIO_NAME(FIO_ARRAY_NAME, destroy));
-    FIO_MEM_FREE_(tmp.a.ary, tmp.a.capa * sizeof(*tmp.a.ary));
+      FIO_LEAK_COUNTER_ON_FREE(FIO_NAME(FIO_ARRAY_NAME, destroy));
+      FIO_MEM_FREE_(tmp.a.ary, tmp.a.capa * sizeof(*tmp.a.ary));
+    }
     return;
   case 1:
 #if !FIO_ARRAY_TYPE_DESTROY_SIMPLE
@@ -34418,7 +34441,7 @@ developer.
 
 #ifndef FIO_IO_SHUTDOWN_TIMEOUT
 /* Sets the hard timeout (in milliseconds) for the reactor's shutdown loop. */
-#define FIO_IO_SHUTDOWN_TIMEOUT 10000
+#define FIO_IO_SHUTDOWN_TIMEOUT 15000
 #endif
 
 #ifndef FIO_IO_COUNT_STORAGE
@@ -34762,6 +34785,9 @@ SFUNC int fio_io_is_open(fio_io_s *io);
 
 /** Returns the approximate number of bytes in the outgoing buffer. */
 SFUNC size_t fio_io_backlog(fio_io_s *io);
+
+/** Does nothing. */
+SFUNC void fio_io_noop(fio_io_s *io);
 
 /* *****************************************************************************
 Task Scheduling
@@ -35318,15 +35344,13 @@ FIO_IFUNC void fio___io_env_safe_destroy(fio___io_env_safe_s *e) {
 Protocol Type Initialization
 ***************************************************************************** */
 
-static void fio___io_on_ev_mock_sus(fio_io_s *io) { fio_io_suspend(io); }
-static void fio___io_on_ev_mock_unsus(fio_io_s *io) { fio_io_unsuspend(io); }
-static void fio___io_on_ev_mock(fio_io_s *io) { (void)(io); }
+SFUNC void fio_io_noop(fio_io_s *io) { (void)(io); }
+
 static void fio___io_on_ev_pubsub_mock(struct fio_msg_s *msg) { (void)(msg); }
 static void fio___io_on_user_mock(fio_io_s *io, void *i_) {
   (void)io, (void)i_;
 }
 static void fio___io_on_close_mock(void *p1, void *p2) { (void)p1, (void)p2; }
-static void fio___io_on_ev_on_timeout(fio_io_s *io) { fio_io_close_now(io); }
 
 /* Called to perform a non-blocking `read`, same as the system call. */
 static ssize_t fio___io_func_default_read(int fd,
@@ -35403,7 +35427,7 @@ FIO_SFUNC void fio___io_init_protocol(fio_io_protocol_s *pr, _Bool has_tls) {
   fio_io_functions_s io_fn = {
       .build_context = fio___io_func_default_build_context,
       .free_context = fio___io_func_default_free_context,
-      .start = fio___io_on_ev_mock,
+      .start = fio_io_noop,
       .read = fio___io_func_default_read,
       .write = fio___io_func_default_write,
       .flush = fio___io_func_default_flush,
@@ -35413,17 +35437,17 @@ FIO_SFUNC void fio___io_init_protocol(fio_io_protocol_s *pr, _Bool has_tls) {
   if (has_tls)
     io_fn = fio_io_tls_default_functions(NULL);
   if (!pr->on_attach)
-    pr->on_attach = fio___io_on_ev_mock;
+    pr->on_attach = fio_io_noop;
   if (!pr->on_data)
-    pr->on_data = fio___io_on_ev_mock_sus;
+    pr->on_data = fio_io_suspend;
   if (!pr->on_ready)
-    pr->on_ready = fio___io_on_ev_mock;
+    pr->on_ready = fio_io_noop;
   if (!pr->on_close)
     pr->on_close = fio___io_on_close_mock;
   if (!pr->on_shutdown)
-    pr->on_shutdown = fio___io_on_ev_mock_unsus;
+    pr->on_shutdown = fio_io_noop;
   if (!pr->on_timeout)
-    pr->on_timeout = fio___io_on_ev_on_timeout;
+    pr->on_timeout = fio_io_close_now;
   if (!pr->on_pubsub)
     pr->on_pubsub = fio___io_on_ev_pubsub_mock;
   if (!pr->on_user1)
@@ -35475,7 +35499,8 @@ IO Reactor State Machine
 typedef struct {
   FIO_LIST_NODE node;
   fio_thread_pid_t pid;
-  volatile size_t stop;
+  volatile unsigned done;
+  volatile unsigned stop;
 } fio___io_pid_s;
 
 static struct FIO___IO_S {
@@ -35567,14 +35592,15 @@ IO Type
 #define FIO___IO_FLAG_CLOSE        ((uint32_t)8U)
 #define FIO___IO_FLAG_CLOSE_REMOTE ((uint32_t)16U)
 #define FIO___IO_FLAG_CLOSE_ERROR  ((uint32_t)32U)
-#define FIO___IO_FLAG_TOUCH        ((uint32_t)64U)
-#define FIO___IO_FLAG_WRITE_SCHD   ((uint32_t)128U)
-#define FIO___IO_FLAG_POLLIN_SET   ((uint32_t)256U)
-#define FIO___IO_FLAG_POLLOUT_SET  ((uint32_t)512U)
+#define FIO___IO_FLAG_CLOSED_ALL                                               \
+  (FIO___IO_FLAG_CLOSE | FIO___IO_FLAG_CLOSE_REMOTE | FIO___IO_FLAG_CLOSE_ERROR)
+#define FIO___IO_FLAG_TOUCH       ((uint32_t)64U)
+#define FIO___IO_FLAG_WRITE_SCHD  ((uint32_t)128U)
+#define FIO___IO_FLAG_POLLIN_SET  ((uint32_t)256U)
+#define FIO___IO_FLAG_POLLOUT_SET ((uint32_t)512U)
 
 #define FIO___IO_FLAG_PREVENT_ON_DATA                                          \
-  (FIO___IO_FLAG_SUSPENDED | FIO___IO_FLAG_THROTTLED | FIO___IO_FLAG_CLOSE |   \
-   FIO___IO_FLAG_CLOSE_REMOTE | FIO___IO_FLAG_CLOSE_ERROR)
+  (FIO___IO_FLAG_SUSPENDED | FIO___IO_FLAG_THROTTLED)
 
 #define FIO___IO_FLAG_POLL_SET                                                 \
   (FIO___IO_FLAG_POLLIN_SET | FIO___IO_FLAG_POLLOUT_SET)
@@ -35609,7 +35635,7 @@ FIO_IFUNC void fio___io_monitor_in(fio_io_s *io) {
   FIO_LOG_DDEBUG2("(%d) IO monitoring Input for %d (called)",
                   fio_io_pid(),
                   io->fd);
-  if (io->flags & FIO___IO_FLAG_PREVENT_ON_DATA)
+  if (io->flags & (FIO___IO_FLAG_PREVENT_ON_DATA | FIO___IO_FLAG_CLOSED_ALL))
     return;
   if ((FIO___IO_FLAG_SET(io, FIO___IO_FLAG_POLLIN_SET) &
        FIO___IO_FLAG_POLLIN_SET)) {
@@ -35729,6 +35755,7 @@ SFUNC fio_io_s *fio_io_attach_fd(int fd,
                                  void *udata,
                                  void *tls) {
   fio_io_s *io = NULL;
+  fio_io_protocol_s cpy;
   if (fd == -1)
     goto error;
   io = fio___io_new2(pr->buffer_size);
@@ -35751,8 +35778,9 @@ SFUNC fio_io_s *fio_io_attach_fd(int fd,
   return io;
 
 error:
-  pr->on_close(NULL, udata);
-  pr->io_functions.cleanup(tls);
+  cpy = *pr;
+  cpy.on_close(NULL, udata);
+  cpy.io_functions.cleanup(tls);
   return io;
 }
 
@@ -35860,6 +35888,9 @@ FIO_SFUNC void fio___io_write2(void *io_, void *packet_) {
   return;
 
 io_closed:
+  FIO_LOG_DEBUG2("(%d) write task to closed IO %d failed (task too late).",
+                 fio_io_pid(),
+                 fio_io_fd(io));
   fio_stream_packet_free(packet);
   fio___io_free2(io);
 }
@@ -36053,7 +36084,7 @@ static void fio___io_poll_on_data(void *io_, void *ignr_) {
   fio_io_s *io = (fio_io_s *)io_;
   FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_POLLIN_SET);
   if (!(io->flags & FIO___IO_FLAG_PREVENT_ON_DATA)) {
-    /* this also tests for the suspended / throttled / closing flags */
+    /* this also tests for the suspended / throttled flags, allows closed */
     io->pr->on_data(io);
     fio___io_monitor_in(io);
   } else if ((io->flags & FIO___IO_FLAG_OPEN)) {
@@ -36153,11 +36184,21 @@ connection_error:
   fio___io_free2(io);
 }
 
+// static void fio___io_poll_on_close_task(void *io_, void *ignr_) {
+//   (void)ignr_;
+//   fio_io_s *io = (fio_io_s *)io_;
+//   fio_io_close_now(io);
+//   fio___io_free2(io);
+// }
+
 static void fio___io_poll_on_close(void *io_, void *ignr_) {
   (void)ignr_;
   fio_io_s *io = (fio_io_s *)io_;
-  FIO___IO_FLAG_SET(io, FIO___IO_FLAG_CLOSE_REMOTE);
-  FIO_LOG_DEBUG2("(%d) fd %d closed by remote peer", FIO___IO.pid, io->fd);
+  if (!(io->flags & FIO___IO_FLAG_CLOSE)) {
+    FIO___IO_FLAG_SET(io, FIO___IO_FLAG_CLOSE_REMOTE);
+    FIO_LOG_DEBUG2("(%d) fd %d closed by remote peer", FIO___IO.pid, io->fd);
+  }
+  /* allow on_data tasks to complete before closing? */
   fio_io_close_now(io);
   fio___io_free2(io);
 }
@@ -36537,7 +36578,7 @@ SFUNC fio_io_tls_s *fio_io_tls_alpn_add(fio_io_tls_s *t,
   if (!t || !protocol_name)
     return t;
   if (!on_selected)
-    on_selected = fio___io_on_ev_mock;
+    on_selected = fio_io_noop;
   size_t pr_name_len = strlen(protocol_name);
   if (pr_name_len > 255) {
     FIO_LOG_ERROR(
@@ -36687,7 +36728,7 @@ SFUNC int fio_io_tls_each FIO_NOOP(fio_io_tls_each_s a) {
 SFUNC fio_io_functions_s fio_io_tls_default_functions(fio_io_functions_s *f) {
   static fio_io_functions_s default_io_functions = {
       .build_context = fio___io_func_default_build_context,
-      .start = fio___io_on_ev_mock,
+      .start = fio_io_noop,
       .read = fio___io_func_default_read,
       .write = fio___io_func_default_write,
       .flush = fio___io_func_default_flush,
@@ -36699,7 +36740,7 @@ SFUNC fio_io_functions_s fio_io_tls_default_functions(fio_io_functions_s *f) {
   if (!f->build_context)
     f->build_context = fio___io_func_default_build_context;
   if (!f->start)
-    f->start = fio___io_on_ev_mock;
+    f->start = fio_io_noop;
   if (!f->read)
     f->read = fio___io_func_default_read;
   if (!f->write)
@@ -36859,6 +36900,7 @@ The IO Reactor Cycle (the actual work)
 ***************************************************************************** */
 
 static void fio___io_signal_stop(int sig, void *flg) {
+  FIO_LOG_INFO("(%d) stop signal detected.", FIO___IO.pid);
   fio_io_stop();
   (void)sig, (void)flg;
 }
@@ -36866,8 +36908,10 @@ static void fio___io_signal_stop(int sig, void *flg) {
 static void fio___io_signal_restart(int sig, void *flg) {
   if (fio_io_is_master())
     fio_io_restart(FIO___IO.workers);
-  else
+  else {
+    FIO_LOG_INFO("(%d) restart signal detected.", FIO___IO.pid);
     fio_io_stop();
+  }
   (void)sig, (void)flg;
 }
 
@@ -36969,7 +37013,7 @@ FIO_SFUNC void fio___io_work_task(void *ignr_1, void *ignr_2) {
   fio_queue_push(&FIO___IO.queue, fio___io_work_task, ignr_1, ignr_2);
   return;
 no_run:
-  FIO___IO_FLAG_UNSET(&FIO___IO, FIO___IO_FLAG_CYCLING);
+  return;
 }
 
 FIO_SFUNC void fio___io_work(int is_worker) {
@@ -36983,17 +37027,25 @@ FIO_SFUNC void fio___io_work(int is_worker) {
     fio_state_callback_force(FIO_CALL_ON_START);
   }
   fio___io_wakeup_init();
-  FIO___IO_FLAG_SET(&FIO___IO, FIO___IO_FLAG_CYCLING);
+
   fio_queue_push(&FIO___IO.queue, fio___io_work_task);
+  FIO___IO_FLAG_SET(&FIO___IO, FIO___IO_FLAG_CYCLING);
   fio_queue_perform_all(&FIO___IO.queue);
-  FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, q) {
-    fio___io_async_stop(q);
-  }
+  FIO___IO_FLAG_UNSET(&FIO___IO, FIO___IO_FLAG_CYCLING);
+
   fio___io_shutdown();
 
   FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, q) {
     fio___io_async_stop(q);
   }
+  /* signal all child workers to terminate, parent is going away. */
+  FIO___LOCK_LOCK(FIO___IO.lock);
+  if (FIO___IO.pids.next)
+    FIO_LIST_EACH(fio___io_pid_s, node, &FIO___IO.pids, pos) {
+      if (!pos->done)
+        fio_thread_kill(pos->pid, SIGTERM);
+    }
+  FIO___LOCK_UNLOCK(FIO___IO.lock);
 
   fio_queue_perform_all(&FIO___IO.queue);
   fio_state_callback_force(FIO_CALL_ON_STOP);
@@ -37030,14 +37082,18 @@ static void *fio___io_worker_sentinel(void *pid_data) {
 
   if (fio_thread_waitpid(sentinal.pid, &status, 0) != sentinal.pid &&
       !FIO___IO.stop)
-    FIO_LOG_ERROR("waitpid failed, worker re-spawning might fail.");
-
+    FIO_LOG_ERROR("(%d) waitpid failed for %d, worker re-spawning might fail.",
+                  fio_thread_getpid(),
+                  sentinal.pid);
+  sentinal.done = 1;
   FIO___LOCK_LOCK(FIO___IO.lock);
   FIO_LIST_REMOVE(&sentinal.node);
   FIO___LOCK_UNLOCK(FIO___IO.lock);
 
   if (!WIFEXITED(status) || WEXITSTATUS(status)) {
-    FIO_LOG_WARNING("(%d) abnormal worker exit detected", FIO___IO.pid);
+    FIO_LOG_WARNING("(%d) abnormal worker exit detected for %d",
+                    FIO___IO.pid,
+                    sentinal.pid);
     fio_state_callback_force(FIO_CALL_ON_CHILD_CRUSH);
   }
   if (!FIO___IO.stop && !sentinal.stop) {
@@ -37069,26 +37125,10 @@ static void fio___io_spawn_worker(void) {
   if (FIO___IO.stop || !fio_io_is_master())
     return;
 
-  /* do not allow master tasks to run in worker - pretend to stop. */
-  FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
-  if (fio_atomic_or_fetch(&FIO___IO.stop, 2) != 2)
-    return;
-  FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, q) {
-    fio___io_async_stop(q);
-  }
-  fio_queue_perform_all(&FIO___IO.queue);
-  /* perform forking procedure with the stop flag reset. */
-  fio_atomic_and_fetch(&FIO___IO.stop, 1);
-  fio_state_callback_force(FIO_CALL_BEFORE_FORK);
-  FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
-  /* perform actual fork */
   fio_thread_pid_t pid = fio_thread_fork();
   FIO_ASSERT(pid != (fio_thread_pid_t)-1, "system call `fork` failed.");
   if (!pid)
     goto is_worker_process;
-  /* finish up */
-  fio_state_callback_force(FIO_CALL_AFTER_FORK);
-  fio_state_callback_force(FIO_CALL_IN_MASTER);
   if (fio_thread_create(&t, fio___io_worker_sentinel, (void *)(uintptr_t)pid)) {
     FIO_LOG_FATAL(
         "sentinel thread creation failed, no worker will be spawned.");
@@ -37098,6 +37138,8 @@ static void fio___io_spawn_worker(void) {
 
 is_worker_process:
   FIO___IO.pid = fio_thread_getpid();
+  FIO___IO.is_worker = 1;
+
   /* close all inherited connections immediately? */
   FIO_LIST_EACH(fio_io_protocol_s,
                 reserved.protocols,
@@ -37110,7 +37152,6 @@ is_worker_process:
   fio_queue_perform_all(&FIO___IO.queue);
   /* TODO: keep? */
 
-  FIO___IO.is_worker = 1;
   FIO_LOG_INFO("(%d) worker starting up.", fio_io_pid());
 
   if (FIO___IO.stop)
@@ -37120,8 +37161,11 @@ is_worker_process:
   fio_state_callback_force(FIO_CALL_IN_CHILD);
   fio_queue_perform_all(&FIO___IO.queue);
   fio___io_work(1);
-skip_work:
   FIO_LOG_INFO("(%d) worker exiting.", fio_io_pid());
+  exit(0);
+skip_work:
+  FIO_LOG_WARNING("(%d) worker exiting - stop signal detected during restart.",
+                  fio_io_pid());
   exit(0);
 }
 
@@ -37134,12 +37178,30 @@ static void fio___io_spawn_workers_task(void *ignr_1, void *ignr_2) {
   if (fio_atomic_or(&is_running, 1))
     return;
   FIO_LOG_INFO("(%d) spawning %d workers.", fio_io_pid(), FIO___IO.to_spawn);
+
+  /* do not allow master tasks to run in worker - pretend to stop. */
+  FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
+  if (fio_atomic_or_fetch(&FIO___IO.stop, 2) != 2)
+    return;
+  FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, q) {
+    fio___io_async_stop(q);
+  }
+  fio_queue_perform_all(&FIO___IO.queue);
+
+  /* perform forking procedure with the stop flag reset. */
+  fio_atomic_and_fetch(&FIO___IO.stop, 1);
+  fio_state_callback_force(FIO_CALL_BEFORE_FORK);
+  FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
+
+  /* perform actual fork */
   do {
     fio___io_spawn_worker();
   } while (fio_atomic_sub_fetch(&FIO___IO.to_spawn, 1));
 
-  if (!(FIO___IO_FLAG_SET(&FIO___IO, FIO___IO_FLAG_CYCLING) &
-        FIO___IO_FLAG_CYCLING)) {
+  /* finish up */
+  fio_state_callback_force(FIO_CALL_AFTER_FORK);
+  fio_state_callback_force(FIO_CALL_IN_MASTER);
+  if ((FIO___IO.flags & FIO___IO_FLAG_CYCLING)) {
     fio___io_defer_no_wakeup(fio___io_work_task, NULL, NULL);
     FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, q) {
       fio___io_async_start(q);
@@ -37186,10 +37248,8 @@ SFUNC void fio_io_start(int workers) {
 #endif
   FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
   if (workers) {
-    FIO_LOG_INFO("(%d) spawning %d workers.", fio_io_root_pid(), workers);
-    for (int i = 0; i < workers; ++i) {
-      fio___io_spawn_worker();
-    }
+    FIO___IO.to_spawn = workers;
+    fio___io_spawn_workers_task(NULL, NULL);
   } else {
     FIO_LOG_DEBUG2("(%d) starting facil.io IO reactor in single process mode.",
                    fio_io_root_pid());
@@ -37253,7 +37313,7 @@ SFUNC void fio___io_restart(void *workers_, void *ignr_) {
   FIO___LOCK_LOCK(FIO___IO.lock);
   FIO_LIST_EACH(fio___io_pid_s, node, &FIO___IO.pids, w) {
     w->stop = 1;
-    fio_thread_kill(w->pid, SIGTERM);
+    fio_thread_kill(w->pid, SIGUSR1);
   }
   FIO___LOCK_UNLOCK(FIO___IO.lock);
   /* switch to single mode? */
@@ -37330,12 +37390,12 @@ static void fio___io_listen_free(void *l_) {
 
   if (l->hide_from_log)
     FIO_LOG_DEBUG2("(%d) stopped listening @ %.*s",
-                   getpid(),
+                   fio_thread_getpid(),
                    (int)l->url_len,
                    l->url);
   else
     FIO_LOG_INFO("(%d) stopped listening @ %.*s",
-                 getpid(),
+                 fio_thread_getpid(),
                  (int)l->url_len,
                  l->url);
   fio_queue_perform_all(&FIO___IO.queue);
@@ -37406,9 +37466,15 @@ static void fio___io_listen_on_attach(fio_io_s *io) {
   if (l->on_start)
     l->on_start(l->protocol, l->udata);
   if (l->hide_from_log)
-    FIO_LOG_DEBUG2("(%d) started listening @ %s", fio_io_pid(), l->url);
+    FIO_LOG_DEBUG2("(%d) started listening @ %s%s",
+                   fio_io_pid(),
+                   l->url,
+                   l->tls_ctx ? " (TLS)" : "");
   else
-    FIO_LOG_INFO("(%d) started listening @ %s", fio_io_pid(), l->url);
+    FIO_LOG_INFO("(%d) started listening @ %s%s",
+                 fio_io_pid(),
+                 l->url,
+                 l->tls_ctx ? " (TLS)" : "");
 }
 static void fio___io_listen_on_shutdown(fio_io_s *io) {
   fio___io_listen_s *l = (fio___io_listen_s *)(io->udata);
@@ -39201,7 +39267,7 @@ FIO_SFUNC void fio___pubsub_on_enter_child(void *ignr_) {
   FIO___PUBSUB_POSTOFFICE.protocol.ipc.on_data =
       fio___pubsub_protocol_on_data_worker;
 
-  FIO___PUBSUB_POSTOFFICE.crush_on_close = 1;
+  FIO___PUBSUB_POSTOFFICE.crush_on_close = !fio_io_is_master();
 
   FIO___PUBSUB_POSTOFFICE.filter.publish = FIO___PUBSUB_PROCESS;
   FIO___PUBSUB_POSTOFFICE.filter.local =
@@ -40063,8 +40129,11 @@ FIO_SFUNC void fio___pubsub_protocol_on_close(void *p_, void *udata) {
             &FIO___PUBSUB_POSTOFFICE.remote_uuids));
   }
   fio___pubsub_message_parser_destroy(p);
-  if (FIO___PUBSUB_POSTOFFICE.crush_on_close)
+  if (FIO___PUBSUB_POSTOFFICE.crush_on_close) {
+    if (fio_io_is_running())
+      FIO_LOG_FATAL("(%d) pub/sub connection lost unexpectedly.", fio_io_pid());
     fio_io_stop();
+  }
   (void)udata;
 }
 
@@ -46031,8 +46100,14 @@ FIO_SFUNC void fio___http_on_http_with_public_folder(void *h_, void *ignr) {
 
 FIO_SFUNC void fio___http_perform_user_callback_client(void *cb_, void *h_) {
   fio_http_s *h = (fio_http_s *)h_;
+  union {
+    void (*fn)(fio_http_s *);
+    void *ptr;
+  } cb = {.ptr = cb_};
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  fio___http_perform_user_callback(cb_, h_);
+  /* unlike Server mode, handle responses from closed connections */
+  cb.fn(h);
+  fio_http_free(h);
   fio_io_free(c->io);
 }
 
@@ -46138,7 +46213,9 @@ SFUNC void *fio_http_listen FIO_NOOP(const char *url, fio_http_settings_s s) {
 /** Returns the a pointer to the HTTP settings associated with the listener. */
 SFUNC fio_http_settings_s *fio_http_listener_settings(void *listener) {
   fio___http_protocol_s *p =
-      (fio___http_protocol_s *)fio_io_listener_protocol(listener);
+      FIO_PTR_FROM_FIELD(fio___http_protocol_s,
+                         state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
+                         fio_io_listener_protocol(listener));
   return &p->settings;
 }
 /* *****************************************************************************
@@ -46744,11 +46821,11 @@ FIO_SFUNC void fio___http_controller_http1_send_headers(fio_http_s *h) {
   /* send data (move memory ownership)? */
   c->state.http.buf = buf;
   return;
-  fio_io_write2(c->io,
-                .buf = buf.buf,
-                .len = buf.len,
-                .dealloc = FIO_STRING_FREE,
-                .copy = 0);
+  // fio_io_write2(c->io,
+  //               .buf = buf.buf,
+  //               .len = buf.len,
+  //               .dealloc = FIO_STRING_FREE,
+  //               .copy = 0);
 }
 /** called by the HTTP handle for each body chunk (or to finish a response. */
 FIO_SFUNC void fio___http_controller_http1_write_body(
