@@ -32,21 +32,21 @@ static void *iodine_handle_exception(void *ignr) {
       exc_class = rb_str_new("unknown exception class", 23);
     if (TYPE(bt) == RUBY_T_ARRAY) {
       bt = rb_ary_join(bt, rb_str_new_literal("\n"));
-      FIO_LOG_ERROR("Iodine caught an unprotected exception - %.*s: %.*s\n %s ",
+      FIO_LOG_ERROR("exposed exception message: %.*s: %.*s\n %s ",
                     (int)RSTRING_LEN(exc_class),
                     RSTRING_PTR(exc_class),
                     (int)RSTRING_LEN(msg),
                     RSTRING_PTR(msg),
                     StringValueCStr(bt));
     } else if (TYPE(bt) == RUBY_T_STRING) {
-      FIO_LOG_ERROR("Iodine caught an unprotected exception - %.*s: %.*s\n"
+      FIO_LOG_ERROR("exposed exception message: %.*s: %.*s\n"
                     "No backtrace available.\n",
                     (int)RSTRING_LEN(exc_class),
                     RSTRING_PTR(exc_class),
                     (int)RSTRING_LEN(msg),
                     RSTRING_PTR(msg));
     } else {
-      FIO_LOG_ERROR("Iodine caught an unprotected exception - %.*s: %.*s\n %s\n"
+      FIO_LOG_ERROR("exposed exception message: %.*s: %.*s\n %s\n"
                     "BACKTRACE UNAVAILABLE!\n",
                     (int)RSTRING_LEN(exc_class),
                     RSTRING_PTR(exc_class),
@@ -58,8 +58,7 @@ static void *iodine_handle_exception(void *ignr) {
     FIO_LOG_ERROR("\n");
     rb_set_errinfo(Qnil);
   } else if (exc != Qnil) {
-    FIO_LOG_ERROR(
-        "Iodine caught an unprotected exception - NO MESSAGE / DATA AVAILABLE");
+    FIO_LOG_ERROR("exposed exception message: NO MESSAGE / DATA AVAILABLE");
   }
   return (void *)Qnil;
 }
@@ -70,6 +69,7 @@ typedef struct {
   int argc;
   VALUE *argv;
   VALUE proc;
+  int ignore_exceptions;
 } iodine_caller_args_s;
 
 typedef struct {
@@ -101,7 +101,7 @@ static void *iodine_ruby____outside_task_proc(void *c_) {
   c->out.result = rb_protect(iodine___func_caller_task_proc,
                              (VALUE)&c->in,
                              &c->out.exception);
-  if (c->out.exception)
+  if (c->out.exception && !c->in.ignore_exceptions)
     iodine_handle_exception(NULL);
   return NULL;
 }
@@ -110,7 +110,7 @@ static void *iodine_ruby____outside_task(void *c_) {
   iodine___caller_s *c = (iodine___caller_s *)c_;
   c->out.result =
       rb_protect(iodine___func_caller_task, (VALUE)&c->in, &c->out.exception);
-  if (c->out.exception)
+  if (c->out.exception && !c->in.ignore_exceptions)
     iodine_handle_exception(NULL);
   return NULL;
 }

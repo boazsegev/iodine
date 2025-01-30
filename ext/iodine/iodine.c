@@ -60,6 +60,28 @@ static void Init_Iodine(void) {
 }
 
 /* *****************************************************************************
+Cleanup
+***************************************************************************** */
+
+static void *iodine___perform_exit_outside_gvl(void *ignr_) {
+  (void)ignr_;
+  fio_cli_end();
+  fio_state_callback_force(FIO_CALL_AT_EXIT);
+  fio_state_callback_clear(FIO_CALL_AT_EXIT);
+  // STORE.destroy();
+}
+
+static void iodine___perform_exit(VALUE ignr_) {
+  (void)ignr_;
+  rb_gc();
+  /* iodine runs outside of GVL, but at_exit runs in GVL.. so... */
+  rb_thread_call_without_gvl(iodine___perform_exit_outside_gvl,
+                             NULL,
+                             NULL,
+                             NULL);
+}
+
+/* *****************************************************************************
 Initialize Extension
 ***************************************************************************** */
 
@@ -158,4 +180,5 @@ void Init_iodine(void) {
   /* support hot restarting of workers */
   fio_io_restart_on_signal(SIGUSR1);
 #endif
+  rb_set_end_proc(iodine___perform_exit, (VALUE)Qnil);
 }

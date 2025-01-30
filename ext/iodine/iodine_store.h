@@ -58,6 +58,7 @@ FIO_SFUNC void iodine_store___release(VALUE o);
 FIO_SFUNC void iodine_store___on_gc(void (*fn)(void *), void *arg);
 FIO_SFUNC VALUE iodine_store___frozen_str(fio_str_info_s n);
 FIO_SFUNC VALUE iodine_store___header_name(fio_str_info_s n);
+FIO_SFUNC void iodine_store___destroy(void);
 
 static struct value_reference_counter_store_s {
   iodine_reference_store_map_s map;
@@ -76,6 +77,8 @@ static struct value_reference_counter_store_s {
   VALUE (*frozen_str)(fio_str_info_s);
   /** Returns a frozen String header name (`HTTP_` + uppercase). */
   VALUE (*header_name)(fio_str_info_s);
+  /* releases all objects */
+  void (*destroy)(void);
 } STORE = {
     FIO_MAP_INIT,
     FIO_MAP_INIT,
@@ -97,33 +100,36 @@ static struct value_reference_counter_store_s {
  */
 FIO_SFUNC VALUE iodine_store___print_debug(VALUE self) {
 #ifndef IODINE_STORE_SKIP_PRINT
-  fprintf(stderr,
-          "DEBUG:\tRuby Objects Held:     %-4zu      (%-4zu current capacity)\n"
-          "      \tCached Frozen Strings: %-4zu/%-4zu (%-4zu capacity)\n"
-          "      \tCached Rack Headers:   %-4zu/%-4zu (%-4zu capacity)\n"
-          "      \tTasks to do:           %-4zu\n"
-          "      \tIodine Objects Allocated:\n"
-          "      \tConnections:           %-4zu\tMiniMaps:       %-4zu\n"
-          "      \tMustache:              %-4zu\tPubSubMessages: %-4zu\n"
-          "      \tfacil.io Objects Allocated:\n"
-          "      \tHTTP Handles:          %-4zu\tfio_bstr_s:     %-4zu\n"
-          "      \tIO Objects:            %-4zu\n",
-          (size_t)iodine_reference_store_map_count(&STORE.map),
-          (size_t)iodine_reference_store_map_capa(&STORE.map),
-          (size_t)iodine_reference_store_frzn_count(&STORE.frozen),
-          STORE.limit,
-          (size_t)iodine_reference_store_frzn_capa(&STORE.frozen),
-          (size_t)iodine_reference_store_frzn_count(&STORE.headers),
-          STORE.limit,
-          (size_t)iodine_reference_store_frzn_capa(&STORE.headers),
-          (size_t)store___todo_count(&STORE.todo),
-          FIO_LEAK_COUNTER_COUNT(iodine_connection),
-          FIO_LEAK_COUNTER_COUNT(iodine_minimap),
-          FIO_LEAK_COUNTER_COUNT(iodine_mustache),
-          FIO_LEAK_COUNTER_COUNT(iodine_pubsub_msg),
-          FIO_LEAK_COUNTER_COUNT(fio_http),
-          FIO_LEAK_COUNTER_COUNT(fio_bstr_s),
-          FIO_LEAK_COUNTER_COUNT(fio___io));
+  fprintf(
+      stderr,
+      "DEBUG: (%d) Iodine-Ruby memory store info:\n"
+      "      \tRuby Objects Held:     %-4zu       (%-4zu current capacity)\n"
+      "      \tCached Frozen Strings: %-4zu/%-4zu (%-4zu capacity)\n"
+      "      \tCached Rack Headers:   %-4zu/%-4zu (%-4zu capacity)\n"
+      "      \tTasks to do:           %-4zu\n"
+      "      \tIodine Objects Allocated:\n"
+      "      \tConnections:           %-4zu\tMiniMaps:       %-4zu\n"
+      "      \tMustache:              %-4zu\tPubSubMessages: %-4zu\n"
+      "      \tfacil.io Objects Allocated:\n"
+      "      \tHTTP Handles:          %-4zu\tfio_bstr_s:     %-4zu\n"
+      "      \tIO Objects:            %-4zu\n",
+      (int)fio_getpid(),
+      (size_t)iodine_reference_store_map_count(&STORE.map),
+      (size_t)iodine_reference_store_map_capa(&STORE.map),
+      (size_t)iodine_reference_store_frzn_count(&STORE.frozen),
+      STORE.limit,
+      (size_t)iodine_reference_store_frzn_capa(&STORE.frozen),
+      (size_t)iodine_reference_store_frzn_count(&STORE.headers),
+      STORE.limit,
+      (size_t)iodine_reference_store_frzn_capa(&STORE.headers),
+      (size_t)store___todo_count(&STORE.todo),
+      FIO_LEAK_COUNTER_COUNT(iodine_connection),
+      FIO_LEAK_COUNTER_COUNT(iodine_minimap),
+      FIO_LEAK_COUNTER_COUNT(iodine_mustache),
+      FIO_LEAK_COUNTER_COUNT(iodine_pubsub_msg),
+      FIO_LEAK_COUNTER_COUNT(fio_http),
+      FIO_LEAK_COUNTER_COUNT(fio_bstr_s),
+      FIO_LEAK_COUNTER_COUNT(fio___io));
   // fio_state_callback_print_state();
 #endif /* IODINE_STORE_SKIP_PRINT */
   return self;
@@ -239,6 +245,15 @@ FIO_SFUNC VALUE iodine_store___header_name(fio_str_info_s n) {
   return r;
 }
 
+FIO_SFUNC void iodine_store___destroy(void) {
+  fio_thread_mutex_destroy(&STORE.lock);
+  store___todo_perform_tasks_unsafe(&STORE);
+  iodine_reference_store_map_destroy(&STORE.map);
+  iodine_reference_store_frzn_destroy(&STORE.frozen);
+  iodine_reference_store_frzn_destroy(&STORE.headers);
+  store___todo_destroy(&STORE.todo);
+}
+
 FIO_SFUNC void iodine_store___on_gc(void (*fn)(void *), void *arg) {
   if (!fn && !arg)
     return;
@@ -283,14 +298,9 @@ FIO_SFUNC void iodine_store___gc_mark(
   if (FIO_LOG_LEVEL >= FIO_LOG_LEVEL_DEBUG)
     iodine_store___print_debug(Qnil);
 }
-FIO_SFUNC void value_reference_counter_store_destroy(
-    struct value_reference_counter_store_s *s) {
-  fio_thread_mutex_destroy(&s->lock);
-  store___todo_perform_tasks_unsafe(s);
-  iodine_reference_store_map_destroy(&s->map);
-  iodine_reference_store_frzn_destroy(&s->frozen);
-  iodine_reference_store_frzn_destroy(&s->headers);
-  store___todo_destroy(&s->todo);
+FIO_SFUNC void value_reference_counter_store_destroy(VALUE i_) {
+  (void)i_;
+  iodine_store___destroy();
 }
 
 static void iodine_setup_value_reference_counter(VALUE klass) {
