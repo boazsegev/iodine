@@ -193,8 +193,9 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
       FIO_CLI_STRING("--config -C configuration file to be loaded."),
       FIO_CLI_STRING(
           "--pid -pidfile -pid name for the pid file to be created."),
-      FIO_CLI_BOOL(
-          "--preload -warmup warm up the application. CAREFUL! with workers."),
+      FIO_CLI_BOOL(/* TODO! fixme? shouldn't preload be the default? */
+                   "--preload -warmup warm up the application. CAREFUL! with "
+                   "workers."),
       FIO_CLI_BOOL(
           "--contained attempts to handle possible container restrictions."),
       FIO_CLI_PRINT(

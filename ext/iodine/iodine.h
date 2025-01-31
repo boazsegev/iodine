@@ -113,12 +113,17 @@ Common Iodine Helpers
 /* IO reactor thread-pool */
 static fio_io_async_s IODINE_THREAD_POOL;
 
+static VALUE iodine_handler_method_injection__inner(VALUE self,
+                                                    VALUE handler,
+                                                    bool is_middleware);
+
 /* layer 1 helpers */
 #include "iodine_arg_helper.h"
 #include "iodine_store.h"
 /* layer 2 helpers */
 #include "iodine_caller.h"
 #include "iodine_json.h"
+#include "iodine_listener.h"
 #include "iodine_pubsub_msg.h"
 /* layer 1 modules */
 #include "iodine_cli.h"
