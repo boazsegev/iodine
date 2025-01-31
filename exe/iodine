@@ -7,36 +7,6 @@ Signal.trap("TERM", "SIG_IGN")
 # don't fail on hot restart.
 Signal.trap("USR1", "SIG_IGN")
 
-begin
-  require 'rack'
-  module Iodine
-    # Iodine's {Iodine::Rack} module provides a Rack compliant interface (connecting Iodine to Rack) for an HTTP and Websocket Server.
-    module RackHandler
-      # Runs a Rack app, as par the Rack handler requirements.
-      def self.run(app, options_ = {})
-        # nested applications... is that a thing?
-        Iodine.listen(nil, app)
-        # start Iodine
-        Iodine.start
-        true
-      end
-
-      # patches an assumption by Rack, issue #98 code donated by @Shelvak (Néstor Coppi)
-      def self.shutdown
-        Iodine.stop
-      end
-    end
-  end
-  ENV['RACK_HANDLER'] ||= 'iodine'
-  begin
-    Iodine::Utils.monkey_patch Rack::Utils
-    ::Rack::Handler.register('iodine', 'Iodine::RackHandler') if defined?(::Rack::Handler)
-    ::Rack::Handler.register('Iodine', 'Iodine::RackHandler') if defined?(::Rack::Handler)
-  rescue StandardError
-  end
-rescue LoadError
-end
-
 module Iodine
   class Base
     class NeoRackUp
@@ -107,7 +77,7 @@ module Iodine
         return nil unless (File.extname(fn) == '.ru')
         begin
           require 'rack'
-          Iodine::Utils.monkey_patch
+          Iodine::Utils.monkey_patch ::Rack::Utils
         rescue LoadError => e
           return nil unless Iodine::Base::CLI['-R']
           puts "ERROR: rack not installed."
