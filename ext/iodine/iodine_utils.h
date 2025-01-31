@@ -277,6 +277,7 @@ FIO_SFUNC VALUE iodine_utils_monkey_patch(int argc, VALUE *argv, VALUE self) {
   if (!argc) {
     argc = 1;
     argv = &default_module;
+    rb_require("rack");
     default_module = rb_define_module_under(rb_define_module("Rack"), "Utils");
   }
   for (int i = 0; i < argc; ++i) {

@@ -2693,6 +2693,7 @@ Listen function routing
 ***************************************************************************** */
 
 static VALUE iodine_listen_rb(int argc, VALUE *argv, VALUE self) {
+  VALUE r = Qnil;
   iodine_connection_args_s s = iodine_connection_parse_args(argc, argv);
   void *listener = NULL;
   switch (s.service) {
@@ -2710,7 +2711,10 @@ static VALUE iodine_listen_rb(int argc, VALUE *argv, VALUE self) {
     iodine_env_set_key_pair(IODINE_CONNECTION_ENV_TEMPLATE,
                             FIO_STR_INFO2((char *)"rack.url_scheme", 15),
                             FIO_STR_INFO2((char *)"https", 5));
-  return (VALUE)s.settings.udata;
+  r = iodine_listener_new(listener,
+                          (VALUE)s.settings.udata,
+                          s.service != IODINE_SERVICE_RAW);
+  return r;
   (void)self;
 }
 

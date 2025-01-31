@@ -105,6 +105,7 @@ module Iodine
         return nil unless (File.extname(fn) == '.ru')
         begin
           require 'rack'
+          Iodine::Utils.monkey_patch
         rescue LoadError => e
           return nil unless Iodine::Base::CLI['-R']
           puts "ERROR: rack not installed."
@@ -129,7 +130,10 @@ module Iodine
         app ||= ::Iodine::Base::NeoRackUp.iodine___load_neorack(fn) unless Iodine::Base::CLI['-R']
         raise("Web App not found (no `run`?) in #{fn}") unless !fn || app
         # read and execute configuration file using NeoRack DSL.
-        Iodine.listen nil, app
+        listener = Iodine.listen(nil, app)
+        ### TODO: Warmup
+        if Iodine::Base::CLI['-warmup']
+        end
         Iodine.start
       end
     end
@@ -156,9 +160,6 @@ if Iodine::Base::CLI['-pid']
   Iodine.on_state(:on_finish) do
     File.delete(pid_filename)
   end
-end
-### TODO: Warmup
-if Iodine::Base::CLI['-warmup']
 end
 
 Iodine::Base::NeoRackUp.iodine___load_config
