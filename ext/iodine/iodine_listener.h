@@ -5,7 +5,7 @@
 /* *****************************************************************************
 Ruby Object.
 ***************************************************************************** */
-static iodine_rb_IODINE_BASE_LISTENER;
+static VALUE iodine_rb_IODINE_BASE_LISTENER;
 
 typedef struct {
   void *listener;
@@ -43,7 +43,7 @@ static const rb_data_type_t IODINE_LISTNER_DATA_TYPE = {
 
 static iodine_listener_s *iodine_listener_ptr(VALUE self) {
   iodine_listener_s *m;
-  TypedData_Get_Struct(self, iodine_listener_s, &IODINE_MINIMAP_DATA_TYPE, m);
+  TypedData_Get_Struct(self, iodine_listener_s, &IODINE_LISTNER_DATA_TYPE, m);
   return m;
 }
 
@@ -55,7 +55,6 @@ static VALUE iodine_listener_alloc(VALUE klass) {
                                      m);
   *m = (iodine_listener_s){0};
   return self;
-  // return TypedData_Wrap_Struct(klass, &IODINE_MINIMAP_DATA_TYPE, m);
 }
 
 /* *****************************************************************************

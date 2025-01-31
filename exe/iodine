@@ -40,6 +40,8 @@ end
 module Iodine
   class Base
     class NeoRackUp
+      module NOOPHandler
+      end
       module MiddleWare_Pre
         def initialize(*args, &blk);                @app = args[0]; super; end
       private
@@ -124,15 +126,20 @@ module Iodine
         builder.instance_eval(cfgfile, fn, 0)
         builder.app
       end
-      def self.iodine___load_config
-        fn = ::Iodine::Base::NeoRackUp.iodine___detect_filename
+      def self.iodine___load_config(listener, fn)
         app = ::Iodine::Base::NeoRackUp.iodine___load_rack(fn)
         app ||= ::Iodine::Base::NeoRackUp.iodine___load_neorack(fn) unless Iodine::Base::CLI['-R']
         raise("Web App not found (no `run`?) in #{fn}") unless !fn || app
-        # read and execute configuration file using NeoRack DSL.
-        listener = Iodine.listen(nil, app)
+        listener.handler = app
+      end
+      def self.iodine___start
+        fn = ::Iodine::Base::NeoRackUp.iodine___detect_filename
+        listener = Iodine.listen(nil, Iodine::Base::NeoRackUp::NOOPHandler)
         ### TODO: Warmup
         if Iodine::Base::CLI['-warmup']
+          iodine___load_config(listener, fn)
+        else
+          Iodine.on_state(:on_start) { iodine___load_config(listener, fn) }
         end
         Iodine.start
       end
@@ -162,6 +169,6 @@ if Iodine::Base::CLI['-pid']
   end
 end
 
-Iodine::Base::NeoRackUp.iodine___load_config
+Iodine::Base::NeoRackUp.iodine___start
 
 
