@@ -334,7 +334,7 @@ Iodine will "hot-restart" the application by shutting down and re-spawning the w
 
 This will clear away any memory fragmentation concerns and other issues that might plague a long running worker process or ruby application.
 
-This could be used for hot-reloading or hot-swapping the Web Application code itself – but only if the code is lazily loaded by each worker processes (never loaded by the root process).
+This also allows for hot code swapping for all gems and application code except the `iodine` and `rack` gems which require the root (master) proccess to restart as well.
 
 To hot-restart iodine, send the `SIGUSR1` signal to the root process or `SIGINT` to a worker process.
 
@@ -348,7 +348,7 @@ end
 
 Since the master / root process doesn't handle any requests (it only handles pub/sub and house-keeping), it's memory map and process data shouldn't be as affected and the new worker processes should be healthier and more performant.
 
-**Note**: This will **not** re-load the application (any changes to the Ruby code require an actual restart) unless the application code was never loaded in the root process.
+**Note**: using the `--preload` or `-warmup` options will disable hot code swapping and save memory by loading the application to the root process (leveraging the copy-on-write memory OS feature).
 
 ### Client Support
 
