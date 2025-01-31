@@ -328,15 +328,15 @@ Redis Support Limitations:
 
 * Connections will be automatically re-established if timeouts or errors occur.
 
-### Hot Restart
+### Hot Restart / Hot Updates
 
-Iodine will "hot-restart" the application by shutting down and re-spawning the worker processes.
+Iodine will "hot-restart" the application by shutting down and re-spawning the worker processes, reloading all the gems (except `iodine` itself) and the application code along the way.
 
 This will clear away any memory fragmentation concerns and other issues that might plague a long running worker process or ruby application.
 
-This also allows for hot code swapping for all gems and application code except the `iodine` and `rack` gems which require the root (master) proccess to restart as well.
+#### How to Hot Restart
 
-To hot-restart iodine, send the `SIGUSR1` signal to the root process or `SIGINT` to a worker process.
+To hot-restart iodine, send the `SIGUSR1` signal to the root process or to restart a single process (may result in multiple versions of the code running) signal `SIGINT` to a worker process.
 
 The following code will hot-restart iodine every 4 hours when iodine is running in cluster mode:
 
@@ -346,9 +346,27 @@ Iodine.run_every(4 * 60 * 60 * 1000) do
 end
 ```
 
-Since the master / root process doesn't handle any requests (it only handles pub/sub and house-keeping), it's memory map and process data shouldn't be as affected and the new worker processes should be healthier and more performant.
+#### How does Hot Restart Work?
 
-**Note**: using the `--preload` or `-warmup` options will disable hot code swapping and save memory by loading the application to the root process (leveraging the copy-on-write memory OS feature).
+This will only work with cluster mode (even if using only 1 worker, but not when using 0 workers).
+
+The main process schedules new workers to spawn and signals the old ones to shut down. The code is (re)loaded by the worker (child) processes (the main process never loads the app). Any other option would have resulted in code artifacts during the upgrade.
+
+The old workers won't accept new connections but will complete any existing requests and may even continue to respond to existing clients if they already pipelined their requests. These responses will use the old version of the app.
+
+The new workers will reload the app code (including reloading all the of gems except for `iodine` itself) and start accepting and responding to new clients.
+
+You will have both groups of workers with both versions of your code running for a short amount of time while older clients are served, but once the rotation is complete you should be running only the new code (and workers).
+
+**Caveats**: 
+
+- It's important to note that slower clients that hadn't sent their full request will be disconnected. This is a side effect I didn't address for security reasons. I did not wish to allow maliciously slow clients to perpetually block the child process from restarting.
+
+- Also, a child that doesn't finish processing and sending the response within 15 seconds will be terminated without the full response being sent (this is controlled by the `FIO_IO_SHUTDOWN_TIMEOUT` compilation flag that defaults to `15000` milliseconds). This, again, is a malicious slow client concern, but also imposes some requirements on the web app code.
+
+#### Optimizing for Memory Instead
+
+Using the `--preload` or `-warmup` options will disable hot code swapping and save memory by loading the application to the root process (leveraging the copy-on-write memory OS feature). It will also disable any ability to update the app without restarting iodine (useful, e.g., when using a container and load balancer for hot restarts).
 
 ### Client Support
 
