@@ -92,12 +92,18 @@ module Iodine
         builder.app
       end
       def self.iodine___load_config(listener, fn, root_pid)
-        app = ::Iodine::Base::NeoRackUp.iodine___load_rack(fn)
-        app ||= ::Iodine::Base::NeoRackUp.iodine___load_neorack(fn) unless Iodine::Base::CLI['-R']
+        err = "Web App not found (no `run`?) in #{fn}"
+        begin
+          app = ::Iodine::Base::NeoRackUp.iodine___load_rack(fn)
+          app ||= ::Iodine::Base::NeoRackUp.iodine___load_neorack(fn) unless Iodine::Base::CLI['-R']
+        rescue Exception => e
+          err = e
+          app = nil
+        end
         unless !fn || app
           Iodine.stop
           Process.kill("TERM", root_pid)
-          raise("Web App not found (no `run`?) in #{fn}")
+          raise(err)
         end
         listener.handler = app
       end
