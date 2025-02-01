@@ -46988,7 +46988,8 @@ stream_chunk:
                   .dealloc = args.dealloc);
     /* chunk trailer - EOL */
     fio_io_write2(c->io, .buf = (void *)"\r\n", .len = 2);
-  }
+  } else
+    goto no_write_err;
   return;
 no_length_err:
   FIO_LOG_ERROR("HTTP1 streaming requires a correctly pre-determined "
