@@ -43791,7 +43791,7 @@ SFUNC void fio_http_write_log(fio_http_s *h) {
   fio_http_from(&buf, h);
   FIO_MEMCPY(buf.buf + buf.len, " - - ", 5);
   FIO_MEMCPY(buf.buf + buf.len + 5, date.buf, date.len);
-  buf.len += date.len + 6;
+  buf.len += date.len + 5;
   buf.buf[buf.len++] = ' ';
   buf.buf[buf.len++] = '\"';
   fio_string_write2 FIO_NOOP(&buf, NULL, to_write);
