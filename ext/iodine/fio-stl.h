@@ -46919,61 +46919,85 @@ FIO_SFUNC void fio___http_controller_http1_write_body(
   return;
 
 stream_chunk:
-  if (args.len) { /* print chunk header */
-    if (c->state.http.buf.len) {
-      fio_io_write2(c->io,
-                    .buf = (void *)c->state.http.buf.buf,
-                    .len = c->state.http.buf.len,
-                    .dealloc = FIO_STRING_FREE);
-      fio_string_write2(&c->state.http.buf,
-                        FIO_STRING_REALLOC,
-                        FIO_STRING_WRITE_HEX(args.len),
-                        FIO_STRING_WRITE_STR2("\r\n", 2));
-      fio_io_write2(c->io,
-                    .buf = (void *)c->state.http.buf.buf,
-                    .len = c->state.http.buf.len,
-                    .dealloc = FIO_STRING_FREE);
-      c->state.http.buf = FIO_STR_INFO0;
-    } else {
-      char buf[24];
-      fio_str_info_s i = FIO_STR_INFO3(buf, 0, 24);
-      fio_string_write_hex(&i, NULL, args.len);
-      fio_string_write(&i, NULL, "\r\n", 2);
-      fio_io_write2(c->io, .buf = (void *)i.buf, .len = i.len, .copy = 1);
-    }
-  } else {
-    if (c->state.http.buf.len) {
+  if (args.len && args.buf) { /* String */
+    if (args.copy || args.len < (1 << 16)) {
+      fio_string_write2(
+          &c->state.http.buf,
+          FIO_STRING_REALLOC,
+          FIO_STRING_WRITE_HEX(args.len),   /* chunk header - length */
+          FIO_STRING_WRITE_STR2("\r\n", 2), /* chunk header - EOL */
+          FIO_STRING_WRITE_STR2((char *)args.buf, args.buf ? args.len : 0),
+          FIO_STRING_WRITE_STR2("\r\n", 2)); /* chunk trailer - EOL */
       fio_io_write2(c->io,
                     .buf = (void *)c->state.http.buf.buf,
                     .len = c->state.http.buf.len,
                     .dealloc = FIO_STRING_FREE);
       c->state.http.buf = FIO_STR_INFO0;
+      if (args.dealloc)
+        args.dealloc((void *)args.buf);
+      return;
+    } else { /* avoid copying the incoming data if possible */
+      FIO_STR_INFO_TMP_VAR(buf, 32);
+      if (c->state.http.buf.buf)
+        buf = c->state.http.buf;
+      c->state.http.buf = FIO_STR_INFO0;
+      fio_string_write2(
+          &buf,
+          NULL,
+          FIO_STRING_WRITE_HEX(args.len),    /* chunk header - length */
+          FIO_STRING_WRITE_STR2("\r\n", 2)); /* chunk header - EOL */
+      fio_io_write2(c->io,
+                    .buf = buf.buf,
+                    .len = buf.len,
+                    .copy = !FIO_STR_INFO_TMP_IS_REALLOCATED(buf),
+                    .dealloc = FIO_STR_INFO_TMP_IS_REALLOCATED(buf)
+                                   ? FIO_STRING_FREE
+                                   : NULL);
+      fio_io_write2(c->io,
+                    .buf = (void *)args.buf,
+                    .len = args.len,
+                    .dealloc = args.dealloc);
+      /* chunk trailer - EOL */
+      fio_io_write2(c->io, .buf = (void *)"\r\n", .len = 2);
+      return;
     }
-    if (args.buf || (uint32_t)(args.fd + 1) > 0U)
-      FIO_LOG_ERROR("HTTP1 streaming requires a correctly pre-determined "
-                    "length per chunk.");
-    else
-      goto no_write_err;
-  }
-  fio_io_write2(c->io,
-                .buf = (void *)args.buf,
-                .fd = args.fd,
-                .len = args.len,
-                .offset = args.offset,
-                .dealloc = args.dealloc,
-                .copy = (uint8_t)args.copy);
-  /* print chunk trailer */
-  {
-    fio_buf_info_s trailer = FIO_BUF_INFO2((char *)"\r\n", 2);
-    fio_io_write2(c->io, .buf = trailer.buf, .len = trailer.len, .copy = 1);
+  } else if ((uint32_t)(args.fd + 1) > 1U) { /* File? */
+    if (!args.len) { /* TODO: collect remaining file length */
+      goto no_length_err;
+    }
+    FIO_STR_INFO_TMP_VAR(buf, 32);
+    if (c->state.http.buf.buf)
+      buf = c->state.http.buf;
+    c->state.http.buf = FIO_STR_INFO0;
+    fio_string_write2(
+        &buf,
+        NULL,
+        FIO_STRING_WRITE_HEX(args.len),    /* chunk header - length */
+        FIO_STRING_WRITE_STR2("\r\n", 2)); /* chunk header - EOL */
+    fio_io_write2(c->io,
+                  .buf = buf.buf,
+                  .len = buf.len,
+                  .copy = !FIO_STR_INFO_TMP_IS_REALLOCATED(buf),
+                  .dealloc = FIO_STR_INFO_TMP_IS_REALLOCATED(buf)
+                                 ? FIO_STRING_FREE
+                                 : NULL);
+    fio_io_write2(c->io,
+                  .fd = args.fd,
+                  .len = args.len,
+                  .copy = (bool)args.copy,
+                  .dealloc = args.dealloc);
+    /* chunk trailer - EOL */
+    fio_io_write2(c->io, .buf = (void *)"\r\n", .len = 2);
   }
   return;
-
+no_length_err:
+  FIO_LOG_ERROR("HTTP1 streaming requires a correctly pre-determined "
+                "length per chunk.");
 no_write_err:
   if (args.buf) {
     if (args.dealloc)
       args.dealloc((void *)args.buf);
-  } else if (args.fd != -1) {
+  } else if ((uint32_t)(args.fd + 1) > 1U) {
     close(args.fd);
   }
 }
