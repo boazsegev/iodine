@@ -17,6 +17,7 @@ Iodine includes native support for:
 
 * HTTP, WebSockets and EventSource (SSE) Services (server/client);
 * Event-Stream Pub/Sub (with optional Redis Pub/Sub scaling);
+* Hot Restarts and Hot Deployments
 * Fast(!) builtin Mustache template render engine;
 * Static File Service (with automatic `.gz`, `.br` and `.zip` support for pre-compressed assets);
 * Performant Request Logging;
@@ -328,7 +329,7 @@ Redis Support Limitations:
 
 * Connections will be automatically re-established if timeouts or errors occur.
 
-### Hot Restart / Hot Updates
+### Hot Restart / Hot Deployments
 
 Iodine will "hot-restart" the application by shutting down and re-spawning the worker processes, reloading all the gems (except `iodine` itself) and the application code along the way.
 
