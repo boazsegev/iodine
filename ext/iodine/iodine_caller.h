@@ -19,7 +19,7 @@ From outside the GVL call Ruby functions so:
 /* printout backtrace in case of exceptions */
 static void *iodine_handle_exception(void *ignr) {
   (void)ignr;
-  FIO_LOG_ERROR("iodine catching an exposed exception");
+  FIO_LOG_ERROR("(%d) iodine catching an exposed exception", fio_io_pid());
   VALUE exc = rb_errinfo();
   if (exc != Qnil && rb_respond_to(exc, rb_intern("message")) &&
       rb_respond_to(exc, rb_intern("backtrace"))) {

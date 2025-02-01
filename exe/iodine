@@ -2,11 +2,6 @@
 # frozen_string_literal: true
 require 'iodine'
 
-# don't complain about SIGTERM.
-Signal.trap("TERM", "SIG_IGN")
-# don't fail on hot restart.
-Signal.trap("USR1", "SIG_IGN")
-
 module Iodine
   class Base
     class NeoRackUp
@@ -96,20 +91,27 @@ module Iodine
         builder.instance_eval(cfgfile, fn, 0)
         builder.app
       end
-      def self.iodine___load_config(listener, fn)
+      def self.iodine___load_config(listener, fn, root_pid)
         app = ::Iodine::Base::NeoRackUp.iodine___load_rack(fn)
         app ||= ::Iodine::Base::NeoRackUp.iodine___load_neorack(fn) unless Iodine::Base::CLI['-R']
-        raise("Web App not found (no `run`?) in #{fn}") unless !fn || app
+        unless !fn || app
+          Iodine.stop
+          Process.kill("TERM", root_pid)
+          raise("Web App not found (no `run`?) in #{fn}")
+        end
         listener.handler = app
       end
       def self.iodine___start
         fn = ::Iodine::Base::NeoRackUp.iodine___detect_filename
         listener = Iodine.listen(nil, Iodine::Base::NeoRackUp::NOOPHandler)
+        root_pid = Process.pid
         ### TODO: Warmup
         if Iodine::Base::CLI['-warmup']
           iodine___load_config(listener, fn)
         else
-          Iodine.on_state(:on_start) { iodine___load_config(listener, fn) }
+          Iodine.on_state(:on_start) do
+            iodine___load_config(listener, fn, root_pid)
+          end
         end
         Iodine.start
       end

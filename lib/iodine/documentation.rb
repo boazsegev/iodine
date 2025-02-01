@@ -117,6 +117,11 @@ module Iodine
   # - 1 == Fatal Errors only.
   def self.verbosity=(logging_level); end
 
+  # [Number] The number of milliseconds before the reactor stops scheduling unperformed tasks during shutdown.
+  def self.shutdown_timeout(); end
+  # [Number] Sets the number of milliseconds before the reactor stops scheduling unperformed tasks during shutdown.
+  def self.shutdown_timeout=(milliseconds); end
+
   # Listens on the `url` to connections requesting `service`.
   # 
   # The `handler` handles the following events and supports the following callbacks:

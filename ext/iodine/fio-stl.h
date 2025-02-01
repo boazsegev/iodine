@@ -7517,7 +7517,8 @@ Signal Monitoring API
  */
 SFUNC int fio_signal_monitor(int sig,
                              void (*callback)(int sig, void *),
-                             void *udata);
+                             void *udata,
+                             bool propagate);
 
 /** Reviews all signals, calling any relevant callbacks. */
 SFUNC int fio_signal_review(void);
@@ -7549,7 +7550,8 @@ POSIX implementation
 
 static struct {
   int32_t sig;
-  volatile unsigned flag;
+  uint16_t propagate;
+  volatile uint16_t flag;
   void (*callback)(int sig, void *);
   void *udata;
   struct sigaction old;
@@ -7564,7 +7566,8 @@ FIO_SFUNC void fio___signal_catcher(int sig) {
     /* mark flag */
     fio___signal_watchers[i].flag = 1;
     /* pass-through if exists */
-    if (fio___signal_watchers[i].old.sa_handler != SIG_IGN &&
+    if (fio___signal_watchers[i].propagate &&
+        fio___signal_watchers[i].old.sa_handler != SIG_IGN &&
         fio___signal_watchers[i].old.sa_handler != SIG_DFL)
       fio___signal_watchers[i].old.sa_handler(sig);
     return;
@@ -7576,7 +7579,8 @@ FIO_SFUNC void fio___signal_catcher(int sig) {
  */
 SFUNC int fio_signal_monitor(int sig,
                              void (*callback)(int sig, void *),
-                             void *udata) {
+                             void *udata,
+                             bool propagate) {
   if (!sig)
     return -1;
   for (size_t i = 0; i < FIO_SIGNAL_MONITOR_MAX; ++i) {
@@ -7584,6 +7588,7 @@ SFUNC int fio_signal_monitor(int sig,
     if (fio___signal_watchers[i].sig == sig) {
       fio___signal_watchers[i].callback = callback;
       fio___signal_watchers[i].udata = udata;
+      fio___signal_watchers[i].propagate = propagate;
       return 0;
     }
     /* slot busy */
@@ -7596,6 +7601,7 @@ SFUNC int fio_signal_monitor(int sig,
     fio___signal_watchers[i].sig = sig;
     fio___signal_watchers[i].callback = callback;
     fio___signal_watchers[i].udata = udata;
+    fio___signal_watchers[i].propagate = propagate;
     act.sa_handler = fio___signal_catcher;
     sigemptyset(&act.sa_mask);
     act.sa_flags = SA_RESTART | SA_NOCLDSTOP;
@@ -7604,6 +7610,7 @@ SFUNC int fio_signal_monitor(int sig,
       fio___signal_watchers[i].callback = NULL;
       fio___signal_watchers[i].udata = (void *)1;
       fio___signal_watchers[i].sig = 0;
+      fio___signal_watchers[i].propagate = 0;
       return -1;
     }
     return 0;
@@ -7615,22 +7622,26 @@ SFUNC int fio_signal_monitor(int sig,
 SFUNC int fio_signal_forget(int sig) {
   if (!sig)
     return -1;
+  struct sigaction act = {0};
+  act.sa_handler = SIG_DFL;
   for (size_t i = 0; i < FIO_SIGNAL_MONITOR_MAX; ++i) {
     if (!fio___signal_watchers[i].sig && !fio___signal_watchers[i].udata)
-      return -1; /* initialized list is finishe */
+      break; /* initialized list is finished */
     if (fio___signal_watchers[i].sig != sig)
       continue;
     fio___signal_watchers[i].callback = NULL;
     fio___signal_watchers[i].udata = (void *)1;
     fio___signal_watchers[i].sig = 0;
-    struct sigaction act;
-    memset(&act, 0, sizeof(act));
-    if (sigaction(sig, &fio___signal_watchers[i].old, &act)) {
+    fio___signal_watchers[i].propagate = 0;
+    struct sigaction old = fio___signal_watchers[i].old;
+    old = act;
+    if (sigaction(sig, &old, &act)) {
       FIO_LOG_ERROR("couldn't unset signal handler: %s", strerror(errno));
       return -1;
     }
     return 0;
   }
+  sigaction(sig, &act, NULL);
   return -1;
 }
 
@@ -7656,7 +7667,7 @@ FIO_SFUNC void fio___signal_catcher(int sig) {
     /* mark flag */
     fio___signal_watchers[i].flag = 1;
     /* pass-through if exists */
-    if (fio___signal_watchers[i].old &&
+    if (fio___signal_watchers[i].propagate && fio___signal_watchers[i].old &&
         (intptr_t)fio___signal_watchers[i].old != (intptr_t)SIG_IGN &&
         (intptr_t)fio___signal_watchers[i].old != (intptr_t)SIG_DFL) {
       fio___signal_watchers[i].old(sig);
@@ -7673,7 +7684,8 @@ FIO_SFUNC void fio___signal_catcher(int sig) {
  */
 SFUNC int fio_signal_monitor(int sig,
                              void (*callback)(int sig, void *),
-                             void *udata) {
+                             void *udata,
+                             bool propagate) {
   if (!sig)
     return -1;
   for (size_t i = 0; i < FIO_SIGNAL_MONITOR_MAX; ++i) {
@@ -7690,12 +7702,14 @@ SFUNC int fio_signal_monitor(int sig,
     fio___signal_watchers[i].sig = sig;
     fio___signal_watchers[i].callback = callback;
     fio___signal_watchers[i].udata = udata;
+    fio___signal_watchers[i].propagate = propagate;
     fio___signal_watchers[i].old = signal(sig, fio___signal_catcher);
     if ((intptr_t)SIG_ERR == (intptr_t)fio___signal_watchers[i].old) {
       fio___signal_watchers[i].sig = 0;
       fio___signal_watchers[i].callback = NULL;
       fio___signal_watchers[i].udata = (void *)1;
       fio___signal_watchers[i].old = NULL;
+      fio___signal_watchers[i].propagate = 0;
       FIO_LOG_ERROR("couldn't set signal handler: %s", strerror(errno));
       return -1;
     }
@@ -7708,7 +7722,8 @@ SFUNC int fio_signal_monitor(int sig,
 SFUNC int fio_signal_forget(int sig) {
   if (!sig)
     return -1;
-  for (size_t i = 0; i < FIO_SIGNAL_MONITOR_MAX; ++i) {
+  size_t i = 0;
+  for (; i < FIO_SIGNAL_MONITOR_MAX; ++i) {
     if (!fio___signal_watchers[i].sig && !fio___signal_watchers[i].udata)
       return -1; /* initialized list is finished */
     if (fio___signal_watchers[i].sig != sig)
@@ -7716,7 +7731,8 @@ SFUNC int fio_signal_forget(int sig) {
     fio___signal_watchers[i].callback = NULL;
     fio___signal_watchers[i].udata = (void *)1;
     fio___signal_watchers[i].sig = 0;
-    if (fio___signal_watchers[i].old) {
+    if (fio___signal_watchers[i].old.sa_handler &&
+        fio___signal_watchers[i].old.sa_handler != SIG_DFL) {
       if ((intptr_t)signal(sig, fio___signal_watchers[i].old) ==
           (intptr_t)SIG_ERR)
         goto sig_error;
@@ -7724,10 +7740,14 @@ SFUNC int fio_signal_forget(int sig) {
       if ((intptr_t)signal(sig, SIG_DFL) == (intptr_t)SIG_ERR)
         goto sig_error;
     }
+    fio___signal_watchers[i].old.sa_handler = SIG_DFL;
     return 0;
   }
+  signal(sig, SIG_DFL);
   return -1;
 sig_error:
+  fio___signal_watchers[i].old.sa_handler = SIG_DFL;
+  signal(sig, SIG_DFL);
   FIO_LOG_ERROR("couldn't unset signal handler: %s", strerror(errno));
   return -1;
 }
@@ -7789,7 +7809,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, signal)(void) {
   size_t e = 0;
   fprintf(stderr, "* testing signal monitoring (setup / cleanup only).\n");
   for (size_t i = 0; i < sizeof(t) / sizeof(t[0]); ++i) {
-    if (fio_signal_monitor(t[i].sig, NULL, NULL)) {
+    if (fio_signal_monitor(t[i].sig, NULL, NULL, 1)) {
       FIO_LOG_ERROR("couldn't set signal monitoring for %s (%d)",
                     t[i].name,
                     t[i].sig);
@@ -34494,6 +34514,12 @@ SFUNC void fio_io_restart(int workers);
 /** Sets a signal to listen to for a hot restart (see `fio_io_restart`). */
 SFUNC void fio_io_restart_on_signal(int signal);
 
+/** Returns the shutdown timeout for the reactor. */
+SFUNC size_t fio_io_shutdown_timsout(void);
+
+/** Sets the shutdown timeout for the reactor, returning the new value. */
+SFUNC size_t fio_io_shutdown_timsout_set(size_t milliseconds);
+
 /* *****************************************************************************
 The IO Reactor's State
 ***************************************************************************** */
@@ -35525,11 +35551,13 @@ static struct FIO___IO_S {
   uint32_t to_spawn;
   fio_io_s *wakeup;
   FIO___LOCK_TYPE lock;
+  size_t shutdown_timeout;
 } FIO___IO = {
     .tick = 0,
     .wakeup_fd = -1,
     .stop = 1,
     .lock = FIO___LOCK_INIT,
+    .shutdown_timeout = FIO_IO_SHUTDOWN_TIMEOUT,
 };
 
 /** Stopping the IO reactor. */
@@ -35583,6 +35611,14 @@ SFUNC void fio_io_run_every FIO_NOOP(fio_timer_schedule_args_s args) {
 
 /** Returns a pointer for the IO reactor's queue. */
 SFUNC fio_queue_s *fio_io_queue(void) { return &FIO___IO.queue; }
+
+/** Returns the shutdown timeout for the reactor. */
+SFUNC size_t fio_io_shutdown_timsout(void) { return FIO___IO.shutdown_timeout; }
+
+/** Sets the shutdown timeout for the reactor, returning the new value. */
+SFUNC size_t fio_io_shutdown_timsout_set(size_t milliseconds) {
+  return (FIO___IO.shutdown_timeout = milliseconds);
+}
 
 /* *****************************************************************************
 IO Type
@@ -36839,18 +36875,19 @@ FIO_SFUNC void fio___io_after_fork(void *ignr_) {
   }
   fio_queue_perform_all(&FIO___IO.queue);
   fio_queue_destroy(&FIO___IO.queue);
+  FIO___IO.pids = FIO_LIST_INIT(FIO___IO.pids);
 }
 
 FIO_SFUNC void fio___io_cleanup_at_exit(void *ignr_) {
+#ifdef SIGKILL
+  FIO_LIST_EACH(fio___io_pid_s, node, &FIO___IO.pids, w) {
+    fio_thread_kill(w->pid, SIGKILL);
+  }
+#endif /* SIGKILL */
+  FIO___LOCK_DESTROY(FIO___IO.lock);
   fio___io_after_fork(ignr_);
   fio_poll_destroy(&FIO___IO.poll);
   fio___io_env_safe_destroy(&FIO___IO.env);
-#if FIO_VALIDITY_MAP_USE
-  fio_validity_map_destroy(&FIO___IO.valid);
-#if FIO_VALIDATE_IO_MUTEX
-  fio_thread_mutex_destroy(&FIO___IO.valid_lock);
-#endif
-#endif /* FIO_VALIDATE_IO_MUTEX / FIO_VALIDITY_MAP_USE */
   FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
   fio_queue_perform_all(&FIO___IO.queue);
   fio_timer_destroy(&FIO___IO.timer);
@@ -36866,6 +36903,7 @@ FIO_CONSTRUCTOR(fio___io) {
   FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
   FIO___IO.root_pid = FIO___IO.pid = fio_thread_getpid();
   FIO___IO.async = FIO_LIST_INIT(FIO___IO.async);
+  FIO___IO.pids = FIO_LIST_INIT(FIO___IO.pids);
   fio___io_init_protocol(&FIO___IO_MOCK_PROTOCOL, 0);
   fio_poll_init(&FIO___IO.poll,
                 .on_data = fio___io_poll_on_data_schd,
@@ -36901,9 +36939,24 @@ Copyright and License: see header file (000 copyright.h) or top of file
 The IO Reactor Cycle (the actual work)
 ***************************************************************************** */
 
+static void fio___io_signal_crash(int sig, void *flg) {
+  FIO_LOG_FATAL("(%d) additional stop signal(!) - should crash.", FIO___IO.pid);
+  fio_signal_forget(sig);
+  /* cannot lock, signal may be received during critical section */
+  FIO_LIST_EACH(fio___io_pid_s, node, &FIO___IO.pids, pos) {
+    if (!pos->done)
+      fio_thread_kill(pos->pid, SIGKILL);
+  }
+  fio_thread_kill(FIO___IO.root_pid, SIGKILL);
+  fio_thread_kill(FIO___IO.pid, SIGKILL);
+  exit(-1);
+  (void)sig, (void)flg;
+}
+
 static void fio___io_signal_stop(int sig, void *flg) {
   FIO_LOG_INFO("(%d) stop signal detected.", FIO___IO.pid);
   fio_io_stop();
+  fio_signal_monitor(sig, fio___io_signal_crash, flg, 0);
   (void)sig, (void)flg;
 }
 
@@ -36954,9 +37007,9 @@ FIO_SFUNC void fio___io_run_async_as_sync(void *ignr_1, void *ignr_2) {
 }
 
 FIO_SFUNC void fio___io_shutdown_task(void *shutdown_start_, void *a2) {
-  intptr_t shutdown_start = (intptr_t)shutdown_start_;
-  if (shutdown_start + FIO_IO_SHUTDOWN_TIMEOUT < FIO___IO.tick ||
-      FIO_LIST_IS_EMPTY(&FIO___IO.protocols))
+  intptr_t shutdown_start =
+      (intptr_t)shutdown_start_ + FIO___IO.shutdown_timeout;
+  if (shutdown_start < FIO___IO.tick || FIO_LIST_IS_EMPTY(&FIO___IO.protocols))
     return;
   fio___io_tick(fio_queue_count(&FIO___IO.queue) ? 0 : 100);
   fio_queue_push(&FIO___IO.queue, fio___io_run_async_as_sync);
@@ -37042,11 +37095,10 @@ FIO_SFUNC void fio___io_work(int is_worker) {
   }
   /* signal all child workers to terminate, parent is going away. */
   FIO___LOCK_LOCK(FIO___IO.lock);
-  if (FIO___IO.pids.next)
-    FIO_LIST_EACH(fio___io_pid_s, node, &FIO___IO.pids, pos) {
-      if (!pos->done)
-        fio_thread_kill(pos->pid, SIGTERM);
-    }
+  FIO_LIST_EACH(fio___io_pid_s, node, &FIO___IO.pids, pos) {
+    if (!pos->done)
+      fio_thread_kill(pos->pid, SIGTERM);
+  }
   FIO___LOCK_UNLOCK(FIO___IO.lock);
 
   fio_queue_perform_all(&FIO___IO.queue);
@@ -37077,8 +37129,6 @@ static void *fio___io_worker_sentinel(void *pid_data) {
                          (void *)thr);
 
   FIO___LOCK_LOCK(FIO___IO.lock);
-  if (!FIO___IO.pids.next)
-    FIO___IO.pids = FIO_LIST_INIT(FIO___IO.pids);
   FIO_LIST_PUSH(&FIO___IO.pids, &sentinal.node);
   FIO___LOCK_UNLOCK(FIO___IO.lock);
 
@@ -37240,13 +37290,16 @@ SFUNC void fio_io_start(int workers) {
 
   fio_state_callback_force(FIO_CALL_PRE_START);
   fio_queue_perform_all(&FIO___IO.queue);
-  fio_signal_monitor(SIGINT, fio___io_signal_stop, NULL);
-  fio_signal_monitor(SIGTERM, fio___io_signal_stop, NULL);
+  fio_signal_monitor(SIGINT, fio___io_signal_stop, NULL, 0);
+  fio_signal_monitor(SIGTERM, fio___io_signal_stop, NULL, 0);
   if (FIO___IO.restart_signal)
-    fio_signal_monitor(FIO___IO.restart_signal, fio___io_signal_restart, NULL);
+    fio_signal_monitor(FIO___IO.restart_signal,
+                       fio___io_signal_restart,
+                       NULL,
+                       0);
 
 #ifdef SIGPIPE
-  fio_signal_monitor(SIGPIPE, NULL, NULL);
+  fio_signal_monitor(SIGPIPE, NULL, NULL, 0);
 #endif
   FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
   if (workers) {
@@ -38241,7 +38294,7 @@ FIO_CONSTRUCTOR(fio___openssl_setup_default) {
   FIO___OPENSSL_IO_FUNCS = fio_openssl_io_functions();
   fio_io_tls_default_functions(&FIO___OPENSSL_IO_FUNCS);
 #ifdef SIGPIPE
-  fio_signal_monitor(SIGPIPE, NULL, NULL); /* avoid OpenSSL issue... */
+  fio_signal_monitor(SIGPIPE, NULL, NULL, 0); /* avoid OpenSSL issue... */
 #endif
 }
 
@@ -46946,7 +46999,7 @@ upgraded:
   if (c->h || !fio_io_is_open(c->io))
     goto something_is_wrong;
   c->h = (fio_http_s *)upgraded;
-  {
+  { /* TODO! test if safe to move to user thread for callback execution? */
     const size_t pr_i = fio_http_is_websocket(c->h) ? FIO___HTTP_PROTOCOL_WS
                                                     : FIO___HTTP_PROTOCOL_SSE;
     fio_http_controller_set(

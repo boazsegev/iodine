@@ -44,6 +44,15 @@ static void Init_Iodine(void) {
                              iodine_verbosity_set,
                              1);
 
+  rb_define_singleton_method(iodine_rb_IODINE,
+                             "shutdown_timeout",
+                             iodine_shutdown_timeout,
+                             0);
+  rb_define_singleton_method(iodine_rb_IODINE,
+                             "shutdown_timeout=",
+                             iodine_shutdown_timeout_set,
+                             1);
+
   rb_define_module_function(iodine_rb_IODINE, "run", iodine_defer_run, 0);
   rb_define_module_function(iodine_rb_IODINE,
                             "async",

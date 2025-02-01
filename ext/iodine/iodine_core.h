@@ -144,7 +144,27 @@ static VALUE iodine_verbosity(VALUE klass) {
 
 /** Sets the current verbosity (logging) level. */
 static VALUE iodine_verbosity_set(VALUE klass, VALUE num) {
+  rb_check_type(num, RUBY_T_FIXNUM);
   FIO_LOG_LEVEL_SET(RB_FIX2INT(num));
+  return num;
+}
+
+/* *****************************************************************************
+Shutdown Timeouts
+***************************************************************************** */
+
+/** Returns the current verbosity (logging) level.*/
+static VALUE iodine_shutdown_timeout(VALUE klass) {
+  return RB_SIZE2NUM(fio_io_shutdown_timsout());
+  (void)klass;
+}
+
+/** Sets the current verbosity (logging) level. */
+static VALUE iodine_shutdown_timeout_set(VALUE klass, VALUE num) {
+  rb_check_type(num, RUBY_T_FIXNUM);
+  if (RB_NUM2SIZE(num) > (5U * 60U * 1000U))
+    rb_raise(rb_eRangeError, "shutdown timeout out of range");
+  fio_io_shutdown_timsout_set(RB_NUM2SIZE(num));
   return num;
 }
 
