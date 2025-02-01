@@ -46962,8 +46962,17 @@ stream_chunk:
       return;
     }
   } else if ((uint32_t)(args.fd + 1) > 1U) { /* File? */
-    if (!args.len) { /* TODO: collect remaining file length */
-      goto no_length_err;
+    if (!args.len) {
+      if (fio_fd_type(args.fd) != S_IFREG)
+        goto no_length_err;
+      /* collect remaining file length */
+      off_t len = fio_fd_size(args.fd);
+      off_t offset = lseek(args.fd, 0, SEEK_CUR);
+      if (len > 0 && offset > 0)
+        len -= offset;
+      if (len <= 0)
+        goto no_length_err;
+      args.len = (size_t)len;
     }
     FIO_STR_INFO_TMP_VAR(buf, 32);
     if (c->state.http.buf.buf)
