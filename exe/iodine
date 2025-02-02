@@ -111,8 +111,8 @@ module Iodine
         fn = ::Iodine::Base::NeoRackUp.iodine___detect_filename
         listener = Iodine.listen(nil, Iodine::Base::NeoRackUp::NOOPHandler)
         root_pid = Process.pid
-        ### TODO: Warmup
-        if Iodine::Base::CLI['-warmup']
+        ### hot code reloading?
+        if Iodine::Base::CLI['-preload']
           iodine___load_config(listener, fn, root_pid)
         else
           Iodine.on_state(:on_start) do
@@ -125,11 +125,6 @@ module Iodine
   end
 end
 
-### Load configuration file
-if Iodine::Base::CLI['--config']
-  p Iodine::Base::CLI['--config']
-  require Iodine::Base::CLI['--config']
-end
 ### .pid file
 if Iodine::Base::CLI['-pid']
   pid_filename = Iodine::Base::CLI['-pid']
@@ -146,7 +141,17 @@ if Iodine::Base::CLI['-pid']
     File.delete(pid_filename)
   end
 end
-
+### hot restarts 
+if Iodine::Base::CLI['-hr'] && Iodine::Base::CLI['-w'].to_i != 0
+  Iodine.run_after(Iodine::Base::CLI['-hr'] * 1000, -1) do
+    Iodine.master? ? Process.kill("USR1", Process.pid) : false
+  end
+end
+### Load configuration file
+if Iodine::Base::CLI['--config']
+  require Iodine::Base::CLI['--config']
+end
+### Start
 Iodine::Base::NeoRackUp.iodine___start
 
 

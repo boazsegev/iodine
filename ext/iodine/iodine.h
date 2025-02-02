@@ -83,6 +83,11 @@ facil.io
 
 #include "fio-stl.h"
 
+#ifndef DEBUG
+/* Ruby doesn't always free everything pre-cleanup, so no point in counting */
+#undef FIO_LEAK_COUNTER
+#define FIO_LEAK_COUNTER 0
+#endif
 /* *****************************************************************************
 Deferring Ruby Blocks
 ***************************************************************************** */

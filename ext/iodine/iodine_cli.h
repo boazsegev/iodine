@@ -187,15 +187,23 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
           "--redis -r an optional Redis URL server address. Default: none."),
       FIO_CLI_INT("--redis-ping -rp Redis ping interval in seconds."),
 
+      FIO_CLI_PRINT_HEADER("Hot Application Swapping / Restarts"),
+      FIO_CLI_PRINT_LINE(
+          "(requires cluster mode, app code runs only in workers)"),
+      FIO_CLI_INT(
+          "--hot-restart -hr restarts all worker processes every n seconds."),
+      FIO_CLI_STRING("--config -C configuration file to be loaded."),
+      FIO_CLI_PRINT("NOTE: the code in the --config file won't be updated."),
+      FIO_CLI_BOOL("--preload -preload loads the app code before forking "
+                   "(cluster only)."),
+      FIO_CLI_PRINT(
+          "NOTE: otherwise only the --config file will run in root process."),
+
       FIO_CLI_PRINT_HEADER("Misc"),
       FIO_CLI_BOOL("--verbose -V -d print out debugging messages."),
       FIO_CLI_BOOL("--rack -R -rack prefer Rack::Builder over NeoRack."),
-      FIO_CLI_STRING("--config -C configuration file to be loaded."),
       FIO_CLI_STRING(
           "--pid -pidfile -pid name for the pid file to be created."),
-      FIO_CLI_BOOL(/* TODO! fixme? shouldn't preload be the default? */
-                   "--preload -warmup warm up the application. CAREFUL! with "
-                   "workers."),
       FIO_CLI_BOOL(
           "--contained attempts to handle possible container restrictions."),
       FIO_CLI_PRINT(
