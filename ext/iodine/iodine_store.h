@@ -91,6 +91,7 @@ static struct value_reference_counter_store_s {
     iodine_store___on_gc,
     iodine_store___frozen_str,
     iodine_store___header_name,
+    iodine_store___destroy,
 };
 
 /**
@@ -252,6 +253,11 @@ FIO_SFUNC void iodine_store___destroy(void) {
   iodine_reference_store_frzn_destroy(&STORE.frozen);
   iodine_reference_store_frzn_destroy(&STORE.headers);
   store___todo_destroy(&STORE.todo);
+  STORE.map = (iodine_reference_store_map_s){0};
+  STORE.frozen = (iodine_reference_store_frzn_s){0};
+  STORE.headers = (iodine_reference_store_frzn_s){0};
+  STORE.todo = (store___todo_s){0};
+  STORE.lock = (fio_thread_mutex_t)FIO_THREAD_MUTEX_INIT;
 }
 
 FIO_SFUNC void iodine_store___on_gc(void (*fn)(void *), void *arg) {
@@ -275,6 +281,8 @@ FIO_SFUNC int iodine_store___gc_mark__val(
 
 FIO_SFUNC void iodine_store___gc_mark(
     struct value_reference_counter_store_s *s) {
+  if (!s)
+    return;
   if (!iodine_reference_store_map_count(&s->map) &&
       !store___todo_count(&s->todo))
     return;

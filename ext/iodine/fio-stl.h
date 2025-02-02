@@ -17538,6 +17538,8 @@ init_error:
 
 FIO_IFUNC void fio___timer_event_free(fio_timer_queue_s *tq,
                                       fio___timer_event_s *t) {
+  if (!t)
+    return;
   if (tq && (t->repetitions < 0 || fio_atomic_sub_fetch(&t->repetitions, 1))) {
     FIO___LOCK_LOCK(tq->lock);
     fio___timer_insert(&tq->next, t);
@@ -17614,7 +17616,9 @@ no_timer_queue:
  * they repeat).
  */
 SFUNC void fio_timer_destroy(fio_timer_queue_s *tq) {
-  fio___timer_event_s *next;
+  if (!tq)
+    return;
+  fio___timer_event_s *next = NULL;
   FIO___LOCK_LOCK(tq->lock);
   next = tq->next;
   tq->next = NULL;
@@ -17622,7 +17626,6 @@ SFUNC void fio_timer_destroy(fio_timer_queue_s *tq) {
   FIO___LOCK_DESTROY(tq->lock);
   while (next) {
     fio___timer_event_s *tmp = next;
-
     next = next->next;
     fio___timer_event_free(NULL, tmp);
   }
@@ -36985,9 +36988,8 @@ FIO_SFUNC void fio___io_tick(int timeout) {
   FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, a) {
     fio_timer_push2queue(a->q, &a->timers, FIO___IO.tick);
   }
-  for (size_t i = 0; i < 2048; ++i)
-    if (fio_queue_perform(&FIO___IO.queue))
-      break;
+  for (size_t i = 0; i < 2048 && !fio_queue_perform(&FIO___IO.queue); ++i)
+    ;
   fio___io_review_timeouts();
   fio_signal_review();
 }

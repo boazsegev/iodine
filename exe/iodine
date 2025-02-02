@@ -113,7 +113,7 @@ module Iodine
         root_pid = Process.pid
         ### TODO: Warmup
         if Iodine::Base::CLI['-warmup']
-          iodine___load_config(listener, fn)
+          iodine___load_config(listener, fn, root_pid)
         else
           Iodine.on_state(:on_start) do
             iodine___load_config(listener, fn, root_pid)
