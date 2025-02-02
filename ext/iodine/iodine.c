@@ -72,17 +72,18 @@ static void Init_Iodine(void) {
 Cleanup
 ***************************************************************************** */
 
-static void *iodine___perform_exit_outside_gvl(void *ignr_) {
+FIO_SFUNC void *iodine___perform_exit_outside_gvl(void *ignr_) {
   (void)ignr_;
+  fio_queue_perform_all(fio_io_queue());
   fio_cli_end();
   fio_state_callback_force(FIO_CALL_AT_EXIT);
   fio_state_callback_clear(FIO_CALL_AT_EXIT);
-  // STORE.destroy();
+  STORE.destroy();
 }
 
-static void iodine___perform_exit(VALUE ignr_) {
+FIO_SFUNC void iodine___perform_exit(VALUE ignr_) {
   (void)ignr_;
-  rb_gc();
+  // rb_gc();
   /* iodine runs outside of GVL, but at_exit runs in GVL.. so... */
   rb_thread_call_without_gvl(iodine___perform_exit_outside_gvl,
                              NULL,

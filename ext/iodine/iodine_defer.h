@@ -137,7 +137,7 @@ Defer API
 ***************************************************************************** */
 
 /**
- * Runs a block of code asynchronously (adds the code to the event queue).
+ * Runs a block of code synchronously (adds the code to the IO event queue).
  *
  * Always returns the block of code to executed (Proc object).
  *
@@ -156,7 +156,7 @@ static VALUE iodine_defer_run(VALUE self) {
 }
 
 /**
- * Runs a block of code asynchronously (adds the code to the event queue).
+ * Runs a block of code asynchronously (adds the code to the async event queue).
  *
  * Always returns the block of code to executed (Proc object).
  *
