@@ -4760,6 +4760,11 @@ Patches for Windows
 
 
 ***************************************************************************** */
+#ifndef SIGKILL
+#ifdef SIGABRT
+#define SIGKILL SIGABRT
+#endif
+#endif
 #if FIO_OS_WIN
 
 /* *****************************************************************************
@@ -7652,7 +7657,8 @@ Windows Implementation
 
 static struct {
   int32_t sig;
-  volatile unsigned flag;
+  uint16_t propagate;
+  volatile uint16_t flag;
   void (*callback)(int sig, void *);
   void *udata;
   void (*old)(int sig);
@@ -7731,8 +7737,8 @@ SFUNC int fio_signal_forget(int sig) {
     fio___signal_watchers[i].callback = NULL;
     fio___signal_watchers[i].udata = (void *)1;
     fio___signal_watchers[i].sig = 0;
-    if (fio___signal_watchers[i].old.sa_handler &&
-        fio___signal_watchers[i].old.sa_handler != SIG_DFL) {
+    if (fio___signal_watchers[i].old &&
+        fio___signal_watchers[i].old != SIG_DFL) {
       if ((intptr_t)signal(sig, fio___signal_watchers[i].old) ==
           (intptr_t)SIG_ERR)
         goto sig_error;
@@ -7740,13 +7746,13 @@ SFUNC int fio_signal_forget(int sig) {
       if ((intptr_t)signal(sig, SIG_DFL) == (intptr_t)SIG_ERR)
         goto sig_error;
     }
-    fio___signal_watchers[i].old.sa_handler = SIG_DFL;
+    fio___signal_watchers[i].old = SIG_DFL;
     return 0;
   }
   signal(sig, SIG_DFL);
   return -1;
 sig_error:
-  fio___signal_watchers[i].old.sa_handler = SIG_DFL;
+  fio___signal_watchers[i].old = SIG_DFL;
   signal(sig, SIG_DFL);
   FIO_LOG_ERROR("couldn't unset signal handler: %s", strerror(errno));
   return -1;
@@ -36945,6 +36951,8 @@ The IO Reactor Cycle (the actual work)
 static void fio___io_signal_crash(int sig, void *flg) {
   FIO_LOG_FATAL("(%d) additional stop signal(!) - should crash.", FIO___IO.pid);
   fio_signal_forget(sig);
+
+#ifdef SIGKILL
   /* cannot lock, signal may be received during critical section */
   FIO_LIST_EACH(fio___io_pid_s, node, &FIO___IO.pids, pos) {
     if (!pos->done)
@@ -36952,6 +36960,7 @@ static void fio___io_signal_crash(int sig, void *flg) {
   }
   fio_thread_kill(FIO___IO.root_pid, SIGKILL);
   fio_thread_kill(FIO___IO.pid, SIGKILL);
+#endif
   exit(-1);
   (void)sig, (void)flg;
 }
