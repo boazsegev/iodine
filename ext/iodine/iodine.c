@@ -79,6 +79,7 @@ FIO_SFUNC void *iodine___perform_exit_outside_gvl(void *ignr_) {
   fio_state_callback_force(FIO_CALL_AT_EXIT);
   fio_state_callback_clear(FIO_CALL_AT_EXIT);
   STORE.destroy();
+  return NULL;
 }
 
 FIO_SFUNC void iodine___perform_exit(VALUE ignr_) {

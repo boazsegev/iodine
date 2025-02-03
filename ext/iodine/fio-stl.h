@@ -4080,13 +4080,14 @@ Leak Counter Helpers
 #undef FIO_LEAK_COUNTER_DEF
 #undef FIO_LEAK_COUNTER_ON_ALLOC
 #undef FIO_LEAK_COUNTER_ON_FREE
+#undef FIO_LEAK_COUNTER_COUNT
 
 #if (FIO_LEAK_COUNTER + 1) == 1
 /* No leak counting defined */
 #define FIO_LEAK_COUNTER_DEF(name)
-#define FIO_LEAK_COUNTER_ON_ALLOC(name)
-#define FIO_LEAK_COUNTER_ON_FREE(name)
-#define FIO_LEAK_COUNTER_COUNT(name) ((size_t)0)
+#define FIO_LEAK_COUNTER_ON_ALLOC(name) ((void)0)
+#define FIO_LEAK_COUNTER_ON_FREE(name)  ((void)0)
+#define FIO_LEAK_COUNTER_COUNT(name)    ((size_t)0)
 #else
 #define FIO_LEAK_COUNTER_DEF(name)                                             \
   FIO_IFUNC size_t FIO_NAME(fio___leak_counter, name)(size_t i) {              \
@@ -43065,7 +43066,8 @@ FIO_SFUNC fio_str_info_s fio___http_body_read_until_buf(fio_http_s *h,
     ++end;
     r.len = end - r.buf;
     h->body.pos = end - h->body.buf;
-  }
+  } else
+    h->body.pos = h->body.len;
   return r;
 }
 FIO_SFUNC void fio___http_body_expect_buf(fio_http_s *h, size_t len) {
@@ -44541,11 +44543,18 @@ FIO_SFUNC size_t fio_http1_parse(fio_http1_parser_s *p,
 /** Returns true if the parser is waiting to parse a new request/response .*/
 FIO_IFUNC size_t fio_http1_parser_is_empty(fio_http1_parser_s *p);
 
+/** Returns true if the parser is waiting for header data .*/
+FIO_IFUNC size_t fio_http1_parser_is_on_header(fio_http1_parser_s *p);
+
+/** Returns true if the parser is on body data .*/
+FIO_IFUNC size_t fio_http1_parser_is_on_body(fio_http1_parser_s *p);
+
 /** The error return value for fio_http1_parse. */
 #define FIO_HTTP1_PARSER_ERROR ((size_t)-1)
 
 /** Returns the number of bytes of payload still expected to be received. */
 FIO_IFUNC size_t fio_http1_expected(fio_http1_parser_s *p);
+
 /** A return value for `fio_http1_expected` when chunked data is expected. */
 #define FIO_HTTP1_EXPECTED_CHUNKED ((size_t)(-1))
 
@@ -44622,6 +44631,17 @@ struct fio_http1_parser_s {
 /** Returns true if the parser is waiting to parse a new request/response .*/
 FIO_IFUNC size_t fio_http1_parser_is_empty(fio_http1_parser_s *p) {
   return !p->fn || p->fn == fio_http1___start;
+}
+
+/** Returns true if the parser is waiting for header data .*/
+FIO_IFUNC size_t fio_http1_parser_is_on_header(fio_http1_parser_s *p) {
+  return p->fn == fio_http1___read_header || p->fn == fio_http1___read_trailer;
+}
+
+/** Returns true if the parser is on body data .*/
+FIO_IFUNC size_t fio_http1_parser_is_on_body(fio_http1_parser_s *p) {
+  return p->fn == fio_http1___read_body ||
+         p->fn == fio_http1___read_body_chunked;
 }
 
 /** Returns the number of bytes of payload still expected to be received. */
@@ -45922,6 +45942,8 @@ struct fio___http_connection_http_s {
   fio_http1_parser_s parser;
   fio_str_info_s buf;
   uint32_t max_header;
+  uint32_t max_line;
+  uint32_t header_bytes;
 };
 struct fio___http_connection_ws_s {
   void (*on_message)(fio_http_s *h, fio_buf_info_s msg, uint8_t is_text);
@@ -46372,6 +46394,7 @@ SFUNC fio_io_s *fio_http_connect FIO_NOOP(const char *url,
               .on_http = p->settings.on_http,
               .on_finish = p->settings.on_finish,
               .max_header = p->settings.max_header_size,
+              .max_line = p->settings.max_line_len,
           },
       .capa = p->settings.max_line_len,
       .log = p->settings.log,
@@ -46401,6 +46424,7 @@ static void fio_http1_on_complete(void *udata) {
   fio_io_suspend(c->io);
   fio_http_s *h = c->h;
   c->h = NULL;
+  c->state.http.header_bytes = 0;
   c->suspend = 1;
   // fio_io_defer(c->state.http.on_http_callback, h, NULL);
   fio_queue_push(fio_io_queue(), c->state.http.on_http_callback, h);
@@ -46485,12 +46509,20 @@ static int fio_http1_on_header(fio_buf_info_s name,
   fio___http_connection_s *c = (fio___http_connection_s *)udata;
   if (!c->h)
     return 0; /* ignore possible post-error response headers */
+  const size_t line_len = value.len + name.len;
+  c->state.http.header_bytes += line_len;
+  if ((unsigned)(c->state.http.header_bytes > c->state.http.max_header) |
+      (line_len > c->state.http.max_line))
+    goto headers_too_big;
   (!fio_http_status(c->h)
        ? fio_http_request_header_add
        : fio_http_response_header_add)(c->h,
                                        FIO_BUF2STR_INFO(name),
                                        FIO_BUF2STR_INFO(value));
   return 0;
+headers_too_big:
+  fio_http_send_error_response(c->h, 431);
+  return -1;
 }
 /** called when the special content-length header is parsed. */
 static int fio_http1_on_header_content_length(fio_buf_info_s name,
@@ -46594,6 +46626,7 @@ FIO_SFUNC void fio___http_on_attach_accept(fio_io_s *io) {
               .on_http = p->settings.on_http,
               .on_finish = p->settings.on_finish,
               .max_header = p->settings.max_header_size,
+              .max_line = p->settings.max_line_len,
           },
       .capa = capa,
       .log = p->settings.log,
@@ -46673,7 +46706,7 @@ FIO_SFUNC int fio___http1_process_data(fio_io_s *io,
                                     FIO_BUF_INFO2(c->buf, c->len),
                                     (void *)c);
   if (!consumed)
-    return -1;
+    goto nothing_consumed;
   if (consumed == FIO_HTTP1_PARSER_ERROR)
     goto http1_error;
   c->len -= consumed;
@@ -46683,8 +46716,15 @@ FIO_SFUNC int fio___http1_process_data(fio_io_s *io,
     return -1;
   return 0;
 
+nothing_consumed:
+  if (c->len == c->capa)
+    goto http1_abuse;
+  else
+    return -1;
+
 http1_error:
-  FIO_LOG_DDEBUG2("HTTP/1.1 parser error! disconnecting client at %d",
+  FIO_LOG_DDEBUG2("(%d) HTTP/1.1 parser error! disconnecting client at %d",
+                  fio_io_pid(),
                   fio_io_fd(io));
   if (c->h) {
     fio_http_s *h = c->h;
@@ -46692,6 +46732,24 @@ http1_error:
     if (!c->is_client) {
       fio_io_dup(c->io);
       if (fio_http_send_error_response(h, 400))
+        fio_io_free(c->io);
+    }
+    fio_http_free(h);
+  }
+  fio_io_close(io);
+  return -1;
+
+http1_abuse:
+  FIO_LOG_DDEBUG2(
+      "(%d) HTTP/1.1 hit security limit, disconnecting client at %d",
+      fio_io_pid(),
+      fio_io_fd(io));
+  if (c->h) {
+    fio_http_s *h = c->h;
+    c->h = NULL;
+    if (!c->is_client) {
+      fio_io_dup(c->io);
+      if (fio_http_send_error_response(h, 431))
         fio_io_free(c->io);
     }
     fio_http_free(h);
@@ -46994,13 +47052,13 @@ stream_chunk:
         NULL,
         FIO_STRING_WRITE_HEX(args.len),    /* chunk header - length */
         FIO_STRING_WRITE_STR2("\r\n", 2)); /* chunk header - EOL */
-    fio_io_write2(c->io,
-                  .buf = buf.buf,
-                  .len = buf.len,
-                  .copy = !FIO_STR_INFO_TMP_IS_REALLOCATED(buf),
-                  .dealloc = FIO_STR_INFO_TMP_IS_REALLOCATED(buf)
-                                 ? FIO_STRING_FREE
-                                 : NULL);
+    fio_io_write2(
+        c->io,
+        .buf = buf.buf,
+        .len = buf.len,
+        .copy = !FIO_STR_INFO_TMP_IS_REALLOCATED(buf),
+        .dealloc =
+            (FIO_STR_INFO_TMP_IS_REALLOCATED(buf) ? FIO_STRING_FREE : NULL));
     fio_io_write2(c->io,
                   .fd = args.fd,
                   .len = args.len,
@@ -47030,6 +47088,9 @@ FIO_SFUNC void fio___http_controller_http1_on_finish_task(void *c_,
 
   if (upgraded)
     goto upgraded;
+
+  if (!c->io)
+    goto no_io;
 
   if (fio_io_is_open(c->io)) {
     /* TODO: test for connection:close header and h->status values */
@@ -47077,6 +47138,8 @@ something_is_wrong:
                    fio_io_fd(c->io));
   fio_io_protocol_set(c->io, NULL); /* make zombie, timeout will clear it. */
   fio_io_free(c->io);
+/* fall through */
+no_io:
   fio___http_connection_free(c); /* free HTTP connection element */
 }
 
@@ -47968,8 +48031,6 @@ FIO_IFUNC fio___http_protocol_s *fio___http_protocol_init(
   for (size_t i = 0; i < FIO___HTTP_PROTOCOL_NONE + 1; ++i) {
     p->state[i].protocol =
         fio___http_protocol_get((fio___http_protocol_selector_e)i, is_client);
-    // p->state[i].protocol.iomem_size =
-    //     sizeof(fio___http_connection_s) + s.max_line_len;
     p->state[i].controller =
         fio___http_controller_get((fio___http_protocol_selector_e)i, is_client);
   }

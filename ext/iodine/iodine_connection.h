@@ -2004,14 +2004,29 @@ static void iodine_connection___client_headers_add(fio_http_s *h,
 }
 
 static int iodine_connection___client_headers(VALUE n, VALUE v, VALUE h_) {
+  FIO_STR_INFO_TMP_VAR(num, 32);
   fio_http_s *h = (fio_http_s *)h_;
+  fio_str_info_s name;
+  fio_str_info_s val;
   if (RB_TYPE_P(v, RUBY_T_ARRAY))
     goto is_array;
-  if (!RB_TYPE_P(v, RUBY_T_STRING))
+  if (RB_TYPE_P(n, RUBY_T_SYMBOL))
+    n = rb_sym_to_s(n);
+  if (!RB_TYPE_P(n, RUBY_T_STRING))
     return ST_CONTINUE;
-  iodine_connection___client_headers_add(h,
-                                         (fio_str_info_s)IODINE_RSTR_INFO(n),
-                                         (fio_str_info_s)IODINE_RSTR_INFO(v));
+  name = (fio_str_info_s)IODINE_RSTR_INFO(n);
+
+  if (RB_TYPE_P(v, RUBY_T_SYMBOL))
+    v = rb_sym_to_s(v);
+  if (RB_TYPE_P(v, RUBY_T_STRING))
+    val = (fio_str_info_s)IODINE_RSTR_INFO(v);
+  else if (RB_TYPE_P(v, RUBY_T_FIXNUM) &&
+           !fio_string_write_i(&num, NULL, FIX2LONG(v)))
+    val = num;
+  else
+    return ST_CONTINUE;
+
+  iodine_connection___client_headers_add(h, name, val);
   return ST_CONTINUE;
 is_array:
   for (size_t i = 0; i < (size_t)RARRAY_LEN(v); ++i) {
