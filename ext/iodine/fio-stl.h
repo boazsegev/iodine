@@ -11705,7 +11705,7 @@ SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
   }
 
   FIO_LOG_DEBUG2("(%d) scheduling %s callbacks (%zu tasks).",
-                 (int)(fio_thread_getpid()),
+                 (int)(fio_getpid()),
                  FIO___STATE_TASKS_NAMES[e],
                  (size_t)FIO___STATE_TASKS_ARRAY[e].count);
   if (!FIO___STATE_TASKS_ARRAY[e].count)
@@ -36969,7 +36969,8 @@ static void fio___io_signal_crash(int sig, void *flg) {
 static void fio___io_signal_stop(int sig, void *flg) {
   FIO_LOG_INFO("(%d) stop signal detected.", FIO___IO.pid);
   fio_io_stop();
-  fio_signal_monitor(sig, fio___io_signal_crash, flg, 0);
+  if (fio_io_is_master())
+    fio_signal_monitor(sig, fio___io_signal_crash, flg, 0);
   (void)sig, (void)flg;
 }
 
