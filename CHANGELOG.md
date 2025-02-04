@@ -9,13 +9,15 @@ Please refer to the current gem version to review the relevant changes for your 
 
 ## Changes
 
-#### Change log v.0.8.0.rc (2024----)
+#### Change log v.0.8.0.rc (2025----)
 
 **Update**: updated to facil.io 0.8.0, using the latest version of the [facil.io C STL](https://github.com/facil-io/cstl).
 
-**Update**: totally re-written both the C extension and the Ruby code.
+**Update**: totally re-written both the C extension and the Ruby code. All API should be considered broken / changed.
 
-**TODO**: this version is still missing Pub/Sub engines and Redis support, which will be added (hopefully) soon.
+**Update**: supports the [NeoRack specification](https://github.com/boazsegev/neorack/blob/master/SPEC.md) and its existing [extentions](https://github.com/boazsegev/neorack/blob/master/extensions), including [Rack backwards compatibility](https://github.com/boazsegev/neorack/blob/master/extensions/rack.md) with support for the previous `rack.upgrade?` WebSocket & SSE approach.
+
+**TODO**: this version is still missing Redis support, which will be added (hopefully) soon.
 
 ------------------------
 
@@ -23,7 +25,7 @@ Please refer to the current gem version to review the relevant changes for your 
 
 The new version is a complete rewrite, with a new architecture and a new API. Backwards compatibility was kept where possible.
 
-All previous changes influenced the architecture of the new version. 
+All previous changes influenced the architecture of the new version.
 
 ------------------------
 
