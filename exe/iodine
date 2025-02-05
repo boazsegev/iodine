@@ -65,22 +65,21 @@ module Iodine
           file_name ||= defaults[-1]
         end
         file_name = nil if(!File.exist?(file_name))
-        raise("Web App not found: missing config.#{Iodine::Base::CLI['-R'] ? '' : 'n'}ru?") unless file_name || Iodine::Base::CLI['-www']
+        raise("Web App not found: missing config.#{Iodine::Base::CLI['-R'] ? '' : 'n'}ru?") if (file_name.nil? && Iodine::Base::CLI[0].nil? && Iodine::Base::CLI['-www'])
         file_name
       end
       def self.iodine___load_rack fn
-        return nil unless (File.extname(fn) == '.ru')
+        return nil unless (Iodine::Base::CLI['-R'] || File.extname(fn) == '.ru')
         begin
           require 'rack'
-          Iodine::Utils.monkey_patch ::Rack::Utils
         rescue LoadError => e
           return nil unless Iodine::Base::CLI['-R']
           puts "ERROR: rack not installed."
           puts "       iodine -R requires the rack gem to be installed.\n"
           raise e
         end
-        build = ::Rack::Builder.parse_file(fn)
-        build
+        Iodine::Utils.monkey_patch ::Rack::Utils
+        ::Rack::Builder.parse_file(fn)
       end
       def self.iodine___load_neorack fn
         return nil unless fn
@@ -95,7 +94,9 @@ module Iodine
         err = "Web App not found (no `run`?) in #{fn}"
         begin
           app = ::Iodine::Base::NeoRackUp.iodine___load_rack(fn)
-          app ||= ::Iodine::Base::NeoRackUp.iodine___load_neorack(fn) unless Iodine::Base::CLI['-R']
+          unless app || Iodine::Base::CLI['-R']
+            app = ::Iodine::Base::NeoRackUp.iodine___load_neorack(fn)
+          end
         rescue Exception => e
           err = e
           app = nil
@@ -105,11 +106,16 @@ module Iodine
           Process.kill("TERM", root_pid)
           raise(err)
         end
-        listener.handler = app
+        if app
+          listener.handler = app
+        else
+          puts "WARNING:\t(#{Process.pid}) no App found."
+        end
       end
       def self.iodine___start
         fn = ::Iodine::Base::NeoRackUp.iodine___detect_filename
         listener = Iodine.listen(nil, Iodine::Base::NeoRackUp::NOOPHandler)
+        return if(!fn && Iodine::Base::CLI['-www'])
         root_pid = Process.pid
         ### hot code reloading?
         if Iodine::Base::CLI['-preload']
