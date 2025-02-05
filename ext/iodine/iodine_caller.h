@@ -119,6 +119,15 @@ static void *iodine_ruby____outside_task(void *c_) {
 Ruby Caller and Thread (GVL) - Helper Implementation
 ***************************************************************************** */
 
+/*
+Calls a function from inside the GVL.
+
+Accepts the following, possibly named, arguments:
+
+  (VALUE recv,   ID mid,     int argc,
+   VALUE *argv,  VALUE proc, int ignore_exceptions)
+
+*/
 inline static iodine_caller_result_s iodine_ruby_call_inside(
     iodine_caller_args_s args) {
   iodine_caller_result_s r = {0};
@@ -136,6 +145,15 @@ inline static iodine_caller_result_s iodine_ruby_call_inside(
   return r;
 }
 
+/*
+Calls a function from outside the GVL, aquiring the lock and then releasing it.
+
+Accepts the following, possibly named, arguments:
+
+  (VALUE recv,   ID mid,     int argc,
+   VALUE *argv,  VALUE proc, int ignore_exceptions)
+
+*/
 inline static iodine_caller_result_s iodine_ruby_call_outside(
     iodine_caller_args_s args) {
   VALUE stub[1] = {Qnil};
@@ -151,20 +169,24 @@ inline static iodine_caller_result_s iodine_ruby_call_outside(
 }
 
 /**
+Calls a function from inside the GVL.
 
-Accept the following, possibly named, arguments:
+Accepts the following, possibly named, arguments:
 
-  (VALUE recv,  ID mid,  int argc,  VALUE *argv,  VALUE proc)
+  (VALUE recv,   ID mid,     int argc,
+   VALUE *argv,  VALUE proc, int ignore_exceptions)
 
 */
 #define iodine_ruby_call_inside(...)                                           \
   iodine_ruby_call_inside((iodine_caller_args_s){__VA_ARGS__})
 
 /**
+Calls a function from outside the GVL, aquiring the lock and then releasing it.
 
-Accept the following, possibly named, arguments:
+Accepts the following, possibly named, arguments:
 
-  (VALUE recv,  ID mid,  int argc,  VALUE *argv,  VALUE proc)
+  (VALUE recv,   ID mid,     int argc,
+   VALUE *argv,  VALUE proc, int ignore_exceptions)
 
 */
 #define iodine_ruby_call_outside(...)                                          \

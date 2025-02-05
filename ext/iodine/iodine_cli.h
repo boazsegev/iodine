@@ -110,9 +110,11 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
           "\r\n\r\nUse:\r\n    iodine <options> <filename>\r\n\r\n"
           "Both <options> and <filename> are optional. i.e.,:\r\n"
           "    iodine -p 0 -b /tmp/my_unix_sock\r\n"
-          "    iodine -p 8080 path/to/app/conf.ru\r\n"
+          "    iodine -p 8080 path/to/app/config.ru\r\n"
+          "    iodine -p 8080 path/to/app/config.nru\r\n"
           "    iodine -p 8080 -w 4 -t 16\r\n"
-          "    iodine -w -1 -t 4 -r redis://usr:pass@localhost:6379/"));
+          "    iodine -w -1 -t 4 -r redis://usr:pass@localhost:6379/\r\n\r\n"
+          "Default <filename> if unspecified: `config.nru` and `config.ru`"));
 
   fio_cli_end();
   fio_cli_start(
