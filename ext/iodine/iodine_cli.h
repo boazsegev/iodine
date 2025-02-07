@@ -282,7 +282,8 @@ static VALUE iodine_cli_get(VALUE self, VALUE key) {
   char *tmp;
   if (RB_TYPE_P(key, RUBY_T_FIXNUM)) {
     val = fio_cli_unnamed_str(NUM2UINT(key));
-    r = rb_str_new(val.buf, val.len);
+    if (val.buf)
+      r = rb_str_new(val.buf, val.len);
     return r;
   }
   if (RB_TYPE_P(key, RUBY_T_SYMBOL))

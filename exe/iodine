@@ -65,10 +65,11 @@ module Iodine
           file_name ||= defaults[-1]
         end
         file_name = nil if(!File.exist?(file_name))
-        raise("Web App not found: missing config.#{Iodine::Base::CLI['-R'] ? '' : 'n'}ru?") if (file_name.nil? && Iodine::Base::CLI[0].nil? && Iodine::Base::CLI['-www'])
+        raise("Web App not found: #{(Iodine::Base::CLI[0].nil? || File.directory?(Iodine::Base::CLI[0])) ? "missing config.#{Iodine::Base::CLI['-R'] ? '' : 'n'}ru?" : "#{Iodine::Base::CLI[0]} not found"}") if (file_name.nil? && (!Iodine::Base::CLI[0].nil? || Iodine::Base::CLI['-www'].nil?))
         file_name
       end
       def self.iodine___load_rack fn
+        return nil unless fn
         return nil unless (Iodine::Base::CLI['-R'] || File.extname(fn) == '.ru')
         begin
           require 'rack'
@@ -109,13 +110,13 @@ module Iodine
         if app
           listener.handler = app
         else
-          puts "WARNING:\t(#{Process.pid}) no App found."
+          puts "WARNING:  (#{Process.pid}) no App found."
         end
       end
       def self.iodine___start
         fn = ::Iodine::Base::NeoRackUp.iodine___detect_filename
+        raise "No App and no Static File Service (-www) detected." if(fn.nil? && !Iodine::Base::CLI['-www'])
         listener = Iodine.listen(nil, Iodine::Base::NeoRackUp::NOOPHandler)
-        return if(!fn && Iodine::Base::CLI['-www'])
         root_pid = Process.pid
         ### hot code reloading?
         if Iodine::Base::CLI['-preload']
