@@ -10859,6 +10859,8 @@ SFUNC size_t fio_sock_maximize_limits(size_t maximum_limit);
 /**
  * Returns 0 on timeout, -1 on error or the events that are valid.
  *
+ * A zero timeout returns immediately.
+ *
  * Possible events are POLLIN | POLLOUT
  */
 SFUNC short fio_sock_wait_io(int fd, short events, int timeout);
@@ -10872,6 +10874,16 @@ SFUNC short fio_sock_wait_io(int fd, short events, int timeout);
 
 /** A helper macro that waits on a single IO with no callbacks (0 = no event) */
 #define FIO_SOCK_WAIT_W(fd, timeout_) fio_sock_wait_io(fd, POLLOUT, timeout_)
+
+#ifdef POLLRDHUP
+/** A helper macro that tests if a socket was closed.  */
+#define FIO_SOCK_IS_OPEN(fd)                                                   \
+  (!(fio_sock_wait_io(fd, (POLLOUT | POLLRDHUP), 0) &                          \
+     (POLLRDHUP | POLLHUP | POLLNVAL)))
+#else
+#define FIO_SOCK_IS_OPEN(fd)                                                   \
+  (!(fio_sock_wait_io(fd, POLLOUT, 0) & (POLLHUP | POLLNVAL)))
+#endif
 
 /* *****************************************************************************
 IO Poll - Implementation (always static / inlined)
@@ -46039,7 +46051,8 @@ FIO_SFUNC void fio___http_perform_user_callback(void *cb_, void *h_) {
   } cb = {.ptr = cb_};
   fio_http_s *h = (fio_http_s *)h_;
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  if (FIO_LIKELY(fio_io_is_open(c->io)))
+
+  if (FIO_LIKELY(FIO_SOCK_IS_OPEN(fio_io_fd(c->io))))
     cb.fn(h);
   fio_http_free(h);
 }
@@ -46053,7 +46066,7 @@ FIO_SFUNC void fio___http_perform_user_upgrade_callback_websocket(void *cb_,
   fio_http_s *h = (fio_http_s *)h_;
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
   struct fio___http_connection_http_s old = c->state.http;
-  if (cb.fn(h))
+  if (!FIO_LIKELY(fio_io_is_open(c->io)) || cb.fn(h))
     goto refuse_upgrade;
   if (c->h) /* request after WebSocket Upgrade? an attack vector? */
     goto refuse_upgrade;
@@ -46119,7 +46132,7 @@ FIO_SFUNC void fio___http_perform_user_upgrade_callback_sse(void *cb_,
   } cb = {.ptr = cb_};
   fio_http_s *h = (fio_http_s *)h_;
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  if (cb.fn(h))
+  if (!FIO_LIKELY(fio_io_is_open(c->io)) || cb.fn(h))
     goto refuse_upgrade;
   if (c->h) /* request after eventsource? an attack vector? */
     goto refuse_upgrade;
