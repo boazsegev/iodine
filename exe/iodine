@@ -94,6 +94,7 @@ module Iodine
       def self.iodine___load_config(listener, fn, root_pid)
         err = "Web App not found (no `run`?) in #{fn}"
         begin
+          require 'bundler/setup' if File.exist?('Gemfile') && !defined?(::Bundler)
           app = ::Iodine::Base::NeoRackUp.iodine___load_rack(fn)
           unless app || Iodine::Base::CLI['-R']
             app = ::Iodine::Base::NeoRackUp.iodine___load_neorack(fn)
