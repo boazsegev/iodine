@@ -80,7 +80,8 @@ module Iodine
           raise e
         end
         Iodine::Utils.monkey_patch ::Rack::Utils
-        app, options = ::Rack::Builder.parse_file(fn)
+        app = ::Rack::Builder.parse_file(fn)
+        app = app[0] if(app.is_a?(Array)) # Rack 2.x vs. Rack 3.x
         app
       end
       def self.iodine___load_neorack fn
