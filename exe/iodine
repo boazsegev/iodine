@@ -80,7 +80,8 @@ module Iodine
           raise e
         end
         Iodine::Utils.monkey_patch ::Rack::Utils
-        ::Rack::Builder.parse_file(fn)
+        app, options = ::Rack::Builder.parse_file(fn)
+        app
       end
       def self.iodine___load_neorack fn
         return nil unless fn
