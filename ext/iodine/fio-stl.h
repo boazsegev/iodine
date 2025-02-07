@@ -7365,8 +7365,8 @@ Random - Implementation
 #include <sys/time.h>
 #endif
 
-static volatile uint64_t fio___rand_state[4]; /* random state */
-static volatile size_t fio___rand_counter;    /* seed counter */
+static volatile uint64_t fio___rand_state[4] = {0}; /* random state */
+static volatile size_t fio___rand_counter = 0;      /* seed counter */
 /* feeds random data to the algorithm through this 256 bit feed. */
 static volatile uint64_t fio___rand_buffer[4] = {0x9c65875be1fce7b9ULL,
                                                  0x7cc568e838f6a40d,
@@ -7429,14 +7429,14 @@ SFUNC uint64_t fio_rand64(void) {
   /* modeled after xoroshiro128+, by David Blackman and Sebastiano Vigna */
   uint64_t r = 0;
   if (!((fio___rand_counter++) & (((size_t)1 << 12) - 1))) {
-    /* re-seed state every 524,288 requests / 2^19-1 attempts  */
+    /* re-seed state every 4095 requests / 2^12-1 attempts  */
     fio_rand_reseed();
   }
   const uint64_t s0[] = {fio___rand_state[0],
                          fio___rand_state[1],
                          fio___rand_state[2],
                          fio___rand_state[3]}; /* load to registers */
-  uint64_t s1[4];
+  uint64_t s1[4] = {0};
   {
     const uint64_t mulp[] = {0x37701261ED6C16C7ULL,
                              0x764DBBB75F3B3E0DULL,
@@ -35286,6 +35286,13 @@ Copyright and License: see header file (000 copyright.h) or top of file
 /** I would love to use fio_time_mono, but using time_real enables logging. */
 #define FIO___IO_GET_TIME_MILLI() fio_time2milli(fio_time_real())
 
+/** Sets a flag in io->flag */
+#define FIO___IO_FLAG_SET(io, flag_to_set)                                     \
+  fio_atomic_or(&(io)->flags, flag_to_set)
+/** unsets a flag in io->flag */
+#define FIO___IO_FLAG_UNSET(io, flag_to_unset)                                 \
+  fio_atomic_and(&(io)->flags, ~(flag_to_unset))
+
 /* *****************************************************************************
 IO environment support (`env`)
 ***************************************************************************** */
@@ -35531,8 +35538,9 @@ FIO_IFUNC void fio___io_init_protocol_test(fio_io_protocol_s *pr,
 IO Reactor State Machine
 ***************************************************************************** */
 
-#define FIO___IO_FLAG_WAKEUP  (1U)
-#define FIO___IO_FLAG_CYCLING (2U)
+#define FIO___IO_FLAG_WAKEUP   (1U)
+#define FIO___IO_FLAG_CYCLING  (2U)
+#define FIO___IO_FLAG_TICK_SET (4U)
 
 typedef struct {
   FIO_LIST_NODE node;
@@ -35570,6 +35578,32 @@ static struct FIO___IO_S {
     .shutdown_timeout = FIO_IO_SHUTDOWN_TIMEOUT,
 };
 
+FIO_IFUNC void fio___io_defer_no_wakeup(void (*task)(void *, void *),
+                                        void *udata1,
+                                        void *udata2) {
+  fio_queue_push(&FIO___IO.queue, task, udata1, udata2);
+}
+
+FIO_SFUNC void fio___io_wakeup(void);
+void fio_io_defer___(void);
+/** Schedules a task for delayed execution. This function is thread-safe. */
+SFUNC void fio_io_defer FIO_NOOP(void (*task)(void *, void *),
+                                 void *udata1,
+                                 void *udata2) {
+  fio_queue_push(&FIO___IO.queue, task, udata1, udata2);
+  fio___io_wakeup();
+}
+
+void fio_io_run_every___(void);
+/** Schedules a timer bound task, see `fio_timer_schedule`. */
+SFUNC void fio_io_run_every FIO_NOOP(fio_timer_schedule_args_s args) {
+  args.start_at = FIO___IO.tick;
+  fio_timer_schedule FIO_NOOP(&FIO___IO.timer, args);
+}
+
+/** Returns a pointer for the IO reactor's queue. */
+SFUNC fio_queue_s *fio_io_queue(void) { return &FIO___IO.queue; }
+
 /** Stopping the IO reactor. */
 SFUNC void fio_io_stop(void) { fio_atomic_or_fetch(&FIO___IO.stop, 1); }
 
@@ -35588,39 +35622,24 @@ SFUNC int fio_io_is_master(void) { return FIO___IO.root_pid == FIO___IO.pid; }
 /** Returns true if the current process is a worker process. */
 SFUNC int fio_io_is_worker(void) { return FIO___IO.is_worker; }
 
+FIO_SFUNC void fio___io_last_tick_update(void *ignr_1, void *ignr_2) {
+  FIO___IO_FLAG_UNSET(&FIO___IO, FIO___IO_FLAG_TICK_SET);
+  FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
+  (void)ignr_1, (void)ignr_2;
+}
+
 /** Returns the last millisecond when the polled for IO events. */
-SFUNC int64_t fio_io_last_tick(void) { return FIO___IO.tick; }
+SFUNC int64_t fio_io_last_tick(void) {
+  if (!(FIO___IO_FLAG_SET(&FIO___IO, FIO___IO_FLAG_TICK_SET) &
+        FIO___IO_FLAG_TICK_SET))
+    fio___io_defer_no_wakeup(fio___io_last_tick_update, NULL, NULL);
+  return FIO___IO.tick;
+}
 
 /** Sets a signal to listen to for a hot restart (see `fio_io_restart`). */
 SFUNC void fio_io_restart_on_signal(int signal) {
   FIO___IO.restart_signal = signal;
 }
-
-FIO_SFUNC void fio___io_wakeup(void);
-void fio_io_defer___(void);
-/** Schedules a task for delayed execution. This function is thread-safe. */
-SFUNC void fio_io_defer FIO_NOOP(void (*task)(void *, void *),
-                                 void *udata1,
-                                 void *udata2) {
-  fio_queue_push(&FIO___IO.queue, task, udata1, udata2);
-  fio___io_wakeup();
-}
-
-FIO_IFUNC void fio___io_defer_no_wakeup(void (*task)(void *, void *),
-                                        void *udata1,
-                                        void *udata2) {
-  fio_queue_push(&FIO___IO.queue, task, udata1, udata2);
-}
-
-void fio_io_run_every___(void);
-/** Schedules a timer bound task, see `fio_timer_schedule`. */
-SFUNC void fio_io_run_every FIO_NOOP(fio_timer_schedule_args_s args) {
-  args.start_at = FIO___IO.tick;
-  fio_timer_schedule FIO_NOOP(&FIO___IO.timer, args);
-}
-
-/** Returns a pointer for the IO reactor's queue. */
-SFUNC fio_queue_s *fio_io_queue(void) { return &FIO___IO.queue; }
 
 /** Returns the shutdown timeout for the reactor. */
 SFUNC size_t fio_io_shutdown_timsout(void) { return FIO___IO.shutdown_timeout; }
@@ -35652,11 +35671,6 @@ IO Type
 
 #define FIO___IO_FLAG_POLL_SET                                                 \
   (FIO___IO_FLAG_POLLIN_SET | FIO___IO_FLAG_POLLOUT_SET)
-
-#define FIO___IO_FLAG_SET(io, flag_to_set)                                     \
-  fio_atomic_or(&(io)->flags, flag_to_set)
-#define FIO___IO_FLAG_UNSET(io, flag_to_unset)                                 \
-  fio_atomic_and(&(io)->flags, ~(flag_to_unset))
 
 static void fio___io_poll_on_data_schd(void *io);
 static void fio___io_poll_on_ready_schd(void *io);
@@ -37790,6 +37804,9 @@ SFUNC fio_io_s *fio_io_connect FIO_NOOP(fio_io_connect_args_s args) {
 /* *****************************************************************************
 IO Reactor Finish
 ***************************************************************************** */
+#undef FIO___IO_FLAG_SET
+#undef FIO___IO_FLAG_UNSET
+#undef FIO___IO_GET_TIME_MILLI
 #endif /* FIO_IO */
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
@@ -42676,7 +42693,8 @@ int fio_http_cookie_set___(void); /* IDE Marker */
 SFUNC int fio_http_cookie_set FIO_NOOP(fio_http_s *h,
                                        fio_http_cookie_args_s cookie) {
   FIO_ASSERT_DEBUG(h, "Can't set cookie for NULL HTTP handler!");
-  if (!h || (h->state & (FIO_HTTP_STATE_FINISHED | FIO_HTTP_STATE_STREAMING)))
+  if (!h || ((h->state & (FIO_HTTP_STATE_FINISHED | FIO_HTTP_STATE_STREAMING)) |
+             (h->writer != fio____http_write_start)))
     return -1;
   /* promises that some warnings print only once. */
   static unsigned int warn_illegal = 0;
@@ -46702,19 +46720,21 @@ HTTP/1.1 Protocol
 
 FIO_SFUNC int fio___http1_process_data(fio_io_s *io,
                                        fio___http_connection_s *c) {
-  (void)io, (void)c;
-  size_t consumed = fio_http1_parse(&c->state.http.parser,
-                                    FIO_BUF_INFO2(c->buf, c->len),
-                                    (void *)c);
-  if (!consumed)
-    goto nothing_consumed;
-  if (consumed == FIO_HTTP1_PARSER_ERROR)
-    goto http1_error;
-  c->len -= consumed;
-  if (c->len)
-    FIO_MEMMOVE(c->buf, c->buf + consumed, c->len);
-  if (c->suspend)
-    return -1;
+  (void)io;
+  for (;;) {
+    size_t consumed = fio_http1_parse(&c->state.http.parser,
+                                      FIO_BUF_INFO2(c->buf, c->len),
+                                      (void *)c);
+    if (!consumed)
+      goto nothing_consumed;
+    if (consumed == FIO_HTTP1_PARSER_ERROR)
+      goto http1_error;
+    c->len -= consumed;
+    if (c->len)
+      FIO_MEMMOVE(c->buf, c->buf + consumed, c->len);
+    if (c->suspend)
+      return -1;
+  }
   return 0;
 
 nothing_consumed:

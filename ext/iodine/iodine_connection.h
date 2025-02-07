@@ -874,16 +874,25 @@ static int iodine_handler_deafult_on_http__header(VALUE n_, VALUE v, VALUE h_) {
   return iodine_handler_deafult_on_http__header2(n, v, h_);
 }
 
-static VALUE iodine_handler_deafult_on_http__each_body(VALUE s, VALUE h_) {
-  fio_http_s *h = (fio_http_s *)h_;
+typedef struct {
+  fio_http_s *h;
+  char *out;
+} iodine_body_each_info_s;
+
+static VALUE iodine_handler_deafult_on_http__each_body(VALUE s, VALUE info_) {
+  iodine_body_each_info_s *i = (iodine_body_each_info_s *)info_;
+  if (!RB_TYPE_P(s, RUBY_T_STRING))
+    s = rb_any_to_s(s);
   if (!RB_TYPE_P(s, RUBY_T_STRING))
     goto error_in_type;
-  fio_http_write(h,
-                 .buf = RSTRING_PTR(s),
-                 .len = (size_t)RSTRING_LEN(s),
-                 .copy = 1,
-                 .finish = 0);
+  i->out = fio_bstr_write(i->out, RSTRING_PTR(s), (size_t)RSTRING_LEN(s));
+  // fio_http_write(h,
+  //                .buf = RSTRING_PTR(s),
+  //                .len = (size_t)RSTRING_LEN(s),
+  //                .copy = 1,
+  //                .finish = 0);
   return s;
+
 error_in_type:
   if (s != Qnil)
     FIO_LOG_ERROR(
@@ -952,89 +961,49 @@ static VALUE iodine_handler_deafult_on_http(VALUE handler, VALUE client) {
   }
   if (!(c->flags & IODINE_CONNECTION_UPGRADE)) { /* handle body */
     VALUE bd = RARRAY_PTR(r)[2];
-
-    if (RB_TYPE_P(bd, RUBY_T_ARRAY)) {
-      size_t tst = 1;
-      const size_t len = RARRAY_LEN(bd);
-      for (size_t i = 0; i < len; ++i)
-        tst &= RB_TYPE_P(RARRAY_PTR(bd)[i], RUBY_T_STRING);
-      if (!tst)
-        goto call_using_each;
-      char buf[1ULL << 17];
-      const size_t limit = (1ULL << 17);
-      size_t blen = 0;
-      for (size_t i = 0; i < len; ++i) {
-        if (blen + (size_t)RSTRING_LEN((RARRAY_PTR(bd)[i])) < limit) {
-          FIO_MEMCPY(buf + blen,
-                     RSTRING_PTR((RARRAY_PTR(bd)[i])),
-                     (size_t)RSTRING_LEN((RARRAY_PTR(bd)[i])));
-          blen += (size_t)RSTRING_LEN((RARRAY_PTR(bd)[i]));
-          continue;
-        }
-        if (blen) {
-          fio_http_write(c->http,
-                         .buf = buf,
-                         .len = blen,
-                         .copy = 1,
-                         .finish = 0);
-          blen = 0;
-        }
-        if (i + 1 < len &&
-            (size_t)RSTRING_LEN((RARRAY_PTR(bd)[i])) < (limit << 1)) {
-          --i;
-          continue;
-        }
+    if (rb_respond_to(bd, IODINE_EACH_ID)) {      /* enumerable body... */
+      if (rb_respond_to(bd, IODINE_TO_PATH_ID)) { /* named file body... */
+        VALUE p = rb_funcallv(bd, IODINE_TO_PATH_ID, 0, NULL);
+        if (!RB_TYPE_P(p, RUBY_T_STRING))
+          goto rack_error; /* FIXME? something else? */
+        if (fio_http_static_file_response(c->http,
+                                          (fio_str_info_s)IODINE_RSTR_INFO(p),
+                                          FIO_STR_INFO0,
+                                          fio_http_settings(c->http)->max_age))
+          goto rack_error; /* FIXME? something else? */
+      } else {
+        iodine_body_each_info_s each = {.h = c->http};
+        rb_block_call(
+            bd,
+            IODINE_EACH_ID,
+            0,
+            NULL,
+            (rb_block_call_func_t)iodine_handler_deafult_on_http__each_body,
+            (VALUE)&each);
         fio_http_write(c->http,
-                       .buf = RSTRING_PTR((RARRAY_PTR(bd)[i])),
-                       .len = (size_t)RSTRING_LEN((RARRAY_PTR(bd)[i])),
-                       .copy = 1,
-                       .finish = (i + 1 == len));
-      }
-      if (blen)
-        fio_http_write(c->http,
-                       .buf = buf,
-                       .len = blen,
-                       .copy = 1,
+                       .buf = each.out,
+                       .len = fio_bstr_len(each.out),
+                       .dealloc = (void (*)(void *))fio_bstr_free,
                        .finish = 1);
-    } else if (RB_TYPE_P(bd, RUBY_T_STRING)) {
+      }
+    } else if (RB_TYPE_P(bd, RUBY_T_STRING)) { /* streaming body... */
       fio_http_write(c->http,
                      .buf = RSTRING_PTR(bd),
                      .len = (size_t)RSTRING_LEN(bd),
                      .copy = 1,
                      .finish = 1);
-    } else if (rb_respond_to(bd, IODINE_TO_PATH_ID)) { /* named file body... */
-      VALUE p = rb_funcallv(bd, IODINE_TO_PATH_ID, 0, NULL);
-      if (!RB_TYPE_P(p, RUBY_T_STRING))
-        goto rack_error; /* FIXME? something else? */
-      if (fio_http_static_file_response(c->http,
-                                        (fio_str_info_s)IODINE_RSTR_INFO(p),
-                                        FIO_STR_INFO0,
-                                        fio_http_settings(c->http)->max_age)) {
-        if (rb_respond_to(bd, IODINE_EACH_ID))
-          goto call_using_each;
-        goto rack_error; /* FIXME? something else? */
-      }
-    } else if (rb_respond_to(bd, IODINE_EACH_ID)) { /* streaming body... */
-    call_using_each:
-      rb_block_call(
-          bd,
-          IODINE_EACH_ID,
-          0,
-          NULL,
-          (rb_block_call_func_t)iodine_handler_deafult_on_http__each_body,
-          (VALUE)c->http);
-      fio_http_write(c->http, .finish = 1);
-      (void)c;
-    } else if (rb_respond_to(bd, IODINE_CALL_ID)) { /* proc streaming body... */
-      VALUE nio = iodine_connection_rack_hijack(client);
-      rb_funcallv(bd, IODINE_CALL_ID, 1, &nio);
     } else if (bd == Qnil) {
-      /* do nothing, no body. */
-    } else { /* WTF? */
-      FIO_LOG_ERROR("response body invalid for Rack application!");
-      goto rack_error;
+      /* do nothing? no body. */
+      fio_http_write(c->http, .finish = 1);
+    } else { /* streaming body – answers to `call` */
+      VALUE nio = iodine_connection_rack_hijack(client);
+      if (rb_check_funcall(bd, IODINE_CALL_ID, 1, &nio) == RUBY_Qundef) {
+        /* failed, close connection (now owned by Ruby) */
+        rb_check_funcall(nio, IODINE_CLOSE_ID, 0, NULL);
+      }
     }
   }
+
   rb_check_funcall(RARRAY_PTR(r)[2], IODINE_CLOSE_ID, 0, NULL);
 
 after_reply:
@@ -1042,6 +1011,7 @@ after_reply:
   r = rb_hash_aref(env, IODINE_RACK_AFTER_RPLY_STR);
   if (RB_TYPE_P(r, RUBY_T_ARRAY))
     for (size_t i = 0; i < (size_t)RARRAY_LEN(r); ++i) {
+      // rb_funcallv(RARRAY_PTR(r)[i], IODINE_CALL_ID, 0, NULL);
       IODINE_DEFER_BLOCK(RARRAY_PTR(r)[i]);
     }
 
