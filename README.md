@@ -7,7 +7,7 @@
 [![Gem](https://img.shields.io/gem/dt/iodine.svg)](https://rubygems.org/gems/iodine)
 [![GitHub](https://img.shields.io/badge/GitHub-Open%20Source-blue.svg)](https://github.com/boazsegev/iodine)
 
-[![Logo](https://github.com/boazsegev/iodine/raw/master/logo.png)](https://github.com/boazsegev/iodine)
+[![Logo](https://github.com/boazsegev/iodine/raw/master/logo.svg)](https://github.com/boazsegev/iodine)
 
 ## The Ruby Server You Wanted
 

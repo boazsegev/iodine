@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="100%" height="100%" viewBox="0 0 100 100" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:serif="http://www.serif.com/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:20;background-color:#000;">
+
+<!-- Main Diamond Paths -->
+<path d="M50,80 L10,40 L25,10 L75,10 L90,40Z" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+<path d="M50,80 L20,40 L35,20 L65,20 L80,40Z" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+
+<!-- Diamond Connector Lines -->
+<path d="M35,20 L25,10Z" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+<path d="M65,20 L75,10Z" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+<path d="M10,40 L20,40" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+<path d="M90,40, L80,40Z" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+
+<path d="M28,30 L72,30Z" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+<path d="M30,53 L70,53Z" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+
+<!-- Circles + Connectors -->
+<circle cx="5" cy="20" r="2" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+<path d="M28,30 L7,21Z" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+
+<circle cx="95" cy="20" r="2" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+<path d="M72,30 L93,21Z" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+
+<circle cx="95" cy="70" r="2" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+<path d="M70,53 L93,69Z" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+
+<circle cx="5" cy="70" r="2" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+<path d="M30,53 L7,69Z" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+
+<circle cx="50" cy="95" r="2" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+<path d="M50,53 L50,93Z" style="fill:none;stroke:#A24;stroke-width:1px;"/>
+
+<!-- Iodine Name -->
+<text x="50" y="42" font-family="Arial, sans-serif" font-size="17" fill="#A24" text-anchor="middle" alignment-baseline="middle" font-weight="bold">iodine</text>
+</svg>
