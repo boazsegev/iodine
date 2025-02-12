@@ -1,4 +1,4 @@
-# iodine - The One with the Event Stream and Native WebSockets
+[![Logo](logo.svg)](https://github.com/boazsegev/iodine)
 
 [![POSIX CI](https://github.com/boazsegev/iodine/actions/workflows/posix.yml/badge.svg)](https://github.com/boazsegev/iodine/actions/workflows/posix.yml)
 [![Windows CI](https://github.com/boazsegev/iodine/actions/workflows/Windows.yml/badge.svg)](https://github.com/boazsegev/iodine/actions/workflows/Windows.yml)
@@ -7,9 +7,7 @@
 [![Gem](https://img.shields.io/gem/dt/iodine.svg)](https://rubygems.org/gems/iodine)
 [![GitHub](https://img.shields.io/badge/GitHub-Open%20Source-blue.svg)](https://github.com/boazsegev/iodine)
 
-[![Logo](logo.svg)](https://github.com/boazsegev/iodine)
-
-## The Ruby Server You Wanted
+# iodine - The Ruby Server You Wanted
 
 Iodine is a fast concurrent Web Application Server for your Real-Time and Event-Stream needs, with native support for WebSockets and Pub/Sub services - but it's also so much more.
 
