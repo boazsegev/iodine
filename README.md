@@ -47,7 +47,7 @@ please review the `iodine -h` command line options for more details on these and
 
 ## Iodine - a fast & powerful HTTP + WebSockets server/client with native Pub/Sub
 
-Iodine includes a light and fast HTTP and Websocket server written in C that was written to support both the [NeoRack](https://github.com/boazsegev/neorack) and [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the [WebSocket](https://github.com/boazsegev/neorack/blob/master/extensions/websockets.md) and [SSE]](https://github.com/boazsegev/neorack/blob/master/extensions/sse.md) extension draft.
+Iodine includes a light and fast HTTP and Websocket server written in C that was written to support both the [NeoRack](https://github.com/boazsegev/neorack) and [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the [WebSocket](https://github.com/boazsegev/neorack/blob/master/extensions/websockets.md) and [SSE](https://github.com/boazsegev/neorack/blob/master/extensions/sse.md) extension draft.
 
 Iodine also supports native process cluster Pub/Sub and a native RedisEngine to easily scale iodine's Pub/Sub horizontally.
 
