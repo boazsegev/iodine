@@ -76,7 +76,7 @@ static iodine_pubsub_msg_s *iodine_pubsub_msg_get(VALUE self) {
   return m;
 }
 
-static VALUE iodine_pubsub_msg_create(fio_msg_s *msg) {
+static VALUE iodine_pubsub_msg_new(fio_msg_s *msg) {
   VALUE m = rb_obj_alloc(iodine_rb_IODINE_PUBSUB_MSG);
   STORE.hold(m);
   iodine_pubsub_msg_s *c = iodine_pubsub_msg_get(m);
