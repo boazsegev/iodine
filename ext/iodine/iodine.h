@@ -50,6 +50,7 @@ static rb_encoding *IodineUTF8Encoding;
 static rb_encoding *IodineBinaryEncoding;
 
 static VALUE IODINE_CONNECTION_ENV_TEMPLATE = Qnil;
+static VALUE IODINE_RACK_PROTOCOL_STR;
 static VALUE IODINE_RACK_HIJACK_SYM;
 static VALUE IODINE_RACK_HIJACK_STR;
 static VALUE IODINE_RACK_UPGRADE_STR;

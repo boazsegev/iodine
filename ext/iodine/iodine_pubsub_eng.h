@@ -114,7 +114,7 @@ static void iodine_pubsub_eng___punsubscribe(const fio_pubsub_engine_s *eng,
 
 static void *iodine_pubsub_eng___publish__in_GC(void *a_) {
   iodine_pubsub_eng___args_s *args = (iodine_pubsub_eng___args_s *)a_;
-  VALUE msg = iodine_pubsub_msg_create(args->msg);
+  VALUE msg = iodine_pubsub_msg_new(args->msg);
   iodine_ruby_call_inside(args->eng->handler, rb_intern("publish"), 1, &msg);
   STORE.release(msg);
   return NULL;
@@ -230,10 +230,15 @@ static VALUE iodine_pubsub_eng_initialize(VALUE self) {
 
 static VALUE iodine_pubsub_eng_default_set(VALUE klass, VALUE eng) {
   fio_pubsub_engine_s *e = FIO_PUBSUB_CLUSTER;
-  if (!IODINE_STORE_IS_SKIP(eng))
-    e = iodine_pubsub_eng_get(eng)->ptr;
-  FIO_PUBSUB_DEFAULT = e;
   ID name = rb_intern(IODINE_PUBSUB_DEFAULT_NM);
+  if (!IODINE_STORE_IS_SKIP(eng)) {
+    e = iodine_pubsub_eng_get(eng)->ptr;
+  }
+  FIO_PUBSUB_DEFAULT = e;
+  VALUE old = rb_const_get(iodine_rb_IODINE_BASE, name);
+  if ((uintptr_t)old > 15)
+    STORE.release(old);
+  STORE.hold(eng);
   rb_const_remove(iodine_rb_IODINE_BASE, name);
   rb_const_set(iodine_rb_IODINE_BASE, name, eng);
   return eng;

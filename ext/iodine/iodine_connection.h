@@ -903,10 +903,12 @@ error_in_type:
 static VALUE iodine_connection_env_get(VALUE self);
 static VALUE iodine_connection_handler_set(VALUE client, VALUE handler);
 static VALUE iodine_connection_rack_hijack(VALUE self);
+static int iodine_connection_rack_hijack_partial(VALUE self, VALUE proc);
 static VALUE iodine_connection_peer_addr(VALUE self);
 static VALUE iodine_handler_deafult_on_http(VALUE handler, VALUE client) {
   /* RACK specification: https://github.com/rack/rack/blob/main/SPEC.rdoc */
   VALUE returned_value = Qnil;
+  VALUE partial_hijack = Qnil;
   iodine_connection_s *c = iodine_connection_ptr(client);
   if (!c->http)
     return returned_value;
@@ -923,7 +925,7 @@ static VALUE iodine_handler_deafult_on_http(VALUE handler, VALUE client) {
     return returned_value;
   if (!RB_TYPE_P(r, RUBY_T_ARRAY))
     goto rack_error;
-  if (RARRAY_LEN(r) != 3)
+  if (RARRAY_LEN(r) < 3)
     goto rack_error;
   { /* handle status */
     VALUE s = RARRAY_PTR(r)[0];
@@ -941,18 +943,27 @@ static VALUE iodine_handler_deafult_on_http(VALUE handler, VALUE client) {
   { /* handle headers */
     VALUE hdr = RARRAY_PTR(r)[1];
     if (RB_TYPE_P(hdr, RUBY_T_HASH)) {
+      partial_hijack = rb_hash_delete(hdr, IODINE_RACK_HIJACK_STR);
       rb_hash_foreach(hdr,
                       iodine_handler_deafult_on_http__header,
                       (VALUE)c->http);
     } else if (RB_TYPE_P(hdr, RUBY_T_ARRAY)) {
       for (size_t i = 0; i < (size_t)RARRAY_LEN(hdr); ++i) {
         VALUE t = RARRAY_PTR(hdr)[i];
-        if (!RB_TYPE_P(t, RUBY_T_ARRAY) || RARRAY_LEN(t) != 2)
+        if (!RB_TYPE_P(t, RUBY_T_ARRAY) || RARRAY_LEN(t) != 2 ||
+            !RB_TYPE_P(RARRAY_PTR(t)[0], RUBY_T_STRING))
           goto rack_error;
-        iodine_connection___add_header(
-            c->http,
-            (fio_str_info_s)IODINE_RSTR_INFO(RARRAY_PTR(t)[0]),
-            (fio_str_info_s)IODINE_RSTR_INFO(RARRAY_PTR(t)[1]));
+        fio_str_info_s hn = (fio_str_info_s)IODINE_RSTR_INFO(RARRAY_PTR(t)[0]);
+        if (!FIO_STR_INFO_IS_EQ(
+                (fio_buf_info_s)IODINE_RSTR_INFO(RARRAY_PTR(t)[0]),
+                (fio_buf_info_s)IODINE_RSTR_INFO(IODINE_RACK_HIJACK_STR))) {
+          iodine_connection___add_header(
+              c->http,
+              hn,
+              (fio_str_info_s)IODINE_RSTR_INFO(RARRAY_PTR(t)[1]));
+          continue;
+        }
+        partial_hijack = RARRAY_PTR(t)[1];
       }
     } else {
       FIO_LOG_ERROR("Rack application response headers type error");
@@ -986,23 +997,21 @@ static VALUE iodine_handler_deafult_on_http(VALUE handler, VALUE client) {
                        .dealloc = (void (*)(void *))fio_bstr_free,
                        .finish = 1);
       }
-    } else if (RB_TYPE_P(bd, RUBY_T_STRING)) { /* streaming body... */
+    } else if (RB_TYPE_P(bd, RUBY_T_STRING)) { /* a simple String */
       fio_http_write(c->http,
                      .buf = RSTRING_PTR(bd),
                      .len = (size_t)RSTRING_LEN(bd),
                      .copy = 1,
                      .finish = 1);
-    } else if (bd == Qnil) {
-      /* do nothing? no body. */
+    } else if (bd == Qnil) { /* do nothing? no body. */
       fio_http_write(c->http, .finish = 1);
     } else { /* streaming body – answers to `call` */
-      VALUE nio = iodine_connection_rack_hijack(client);
-      if (rb_check_funcall(bd, IODINE_CALL_ID, 1, &nio) == RUBY_Qundef) {
-        /* failed, close connection (now owned by Ruby) */
-        rb_check_funcall(nio, IODINE_CLOSE_ID, 0, NULL);
-      }
+      partial_hijack = bd;
     }
   }
+  if (partial_hijack && partial_hijack != Qnil &&
+      iodine_connection_rack_hijack_partial(client, partial_hijack))
+    goto rack_error;
 
   rb_check_funcall(RARRAY_PTR(r)[2], IODINE_CLOSE_ID, 0, NULL);
 
@@ -1652,13 +1661,13 @@ static void *iodine_io_http_on_eventsource_internal(void *info_) {
       .channel = i->event,
       .message = i->data,
   };
-  VALUE args[] = {connection, iodine_pubsub_msg_create(&msg)};
+  VALUE args[] = {connection, iodine_pubsub_msg_new(&msg)};
   iodine_pubsub_msg_id_set(args[1], rb_str_new(i->id.buf, i->id.len));
   iodine_ruby_call_inside(c->store[IODINE_CONNECTION_STORE_handler],
                           IODINE_ON_EVENTSOURCE_ID,
                           2,
                           args);
-  STORE.release(args[1]); /* Store.hold(m) called iodine_pubsub_msg_create */
+  STORE.release(args[1]); /* Store.hold(m) called iodine_pubsub_msg_new */
   return NULL;
 }
 /** Called when an EventSource event is received. */
@@ -1737,8 +1746,8 @@ Subscription Helpers
 
 static void *iodine_connection_on_pubsub_in_gvl(void *m_) {
   fio_msg_s *m = (fio_msg_s *)m_;
-  VALUE msg = iodine_pubsub_msg_create(m);
-  /* TODO! move callback to async queue. */
+  VALUE msg = iodine_pubsub_msg_new(m);
+  /* TODO! move callback to async queue? Is this possible? */
   iodine_ruby_call_inside((VALUE)m->udata, IODINE_CALL_ID, 1, &msg);
   STORE.release(msg);
   return m_;
@@ -2408,6 +2417,36 @@ static VALUE iodine_connection_rack_hijack(VALUE self) {
     fio_sock_close(new_fd);
   }
   return nio;
+}
+
+/* TODO: Partial Hijack */
+FIO_SFUNC int iodine_connection_rack_hijack_partial(VALUE self, VALUE proc) {
+  iodine_connection_s *c = iodine_connection_ptr(self);
+  if (!c->http && !c->io)
+    return -1;
+  if (!c->io)
+    c->io = fio_http_io(c->http);
+  if (!rb_respond_to(proc, IODINE_CALL_ID))
+    goto error;
+  int new_fd = fio_sock_dup(fio_io_fd(c->io));
+  if (new_fd == -1)
+    goto error;
+  VALUE nio = rb_io_fdopen(new_fd, O_RDWR, NULL);
+  if (!nio || nio == Qnil)
+    goto error_after_open;
+  fio_http_write(c->http, .finish = 1);
+  if (c->store[IODINE_CONNECTION_STORE_env] &&
+      RB_TYPE_P(c->store[IODINE_CONNECTION_STORE_env], RUBY_T_HASH)) {
+    rb_hash_aset(c->store[IODINE_CONNECTION_STORE_env],
+                 STORE.frozen_str(FIO_STR_INFO1((char *)"rack.hijack_io")),
+                 nio);
+  }
+  rb_funcallv(proc, IODINE_CALL_ID, 1, &nio);
+  return 0;
+error_after_open:
+  fio_sock_close(new_fd);
+error:
+  return -1;
 }
 
 /* *****************************************************************************
