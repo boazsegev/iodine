@@ -36,7 +36,7 @@ static void iodine_pubsub_msg_mark(void *m_) {
 
 static void iodine_pubsub_msg_free(void *ptr_) {
   iodine_pubsub_msg_s *c = (iodine_pubsub_msg_s *)ptr_;
-  fio_free(c);
+  ruby_xfree(c);
   FIO_LEAK_COUNTER_ON_FREE(iodine_pubsub_msg);
 }
 
@@ -53,7 +53,7 @@ static const rb_data_type_t IODINE_PUBSUB_MSG_DATA_TYPE = {
 };
 
 static VALUE iodine_pubsub_msg_alloc(VALUE klass) {
-  iodine_pubsub_msg_s *m = (iodine_pubsub_msg_s *)fio_malloc(sizeof(*m));
+  iodine_pubsub_msg_s *m = (iodine_pubsub_msg_s *)ruby_xmalloc(sizeof(*m));
   if (!m)
     goto no_memory;
   *m = (iodine_pubsub_msg_s){0};

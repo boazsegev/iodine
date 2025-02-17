@@ -1,9 +1,8 @@
 require "mkmf"
 
-dir_config("openssl")
-
-if have_library('crypto') && have_library('ssl')
-  begin
+begin
+  dir_config("openssl")
+  if have_library('crypto') && have_library('ssl')
     require 'openssl'
     if(OpenSSL::VERSION.to_i > 2)
       puts "* Detected OpenSSL version >= 3 (#{OpenSSL::VERSION}), setting the HAVE_OPENSSL flag."
@@ -11,9 +10,9 @@ if have_library('crypto') && have_library('ssl')
     else
       puts "* Detected OpenSSL with incompatible version (#{OpenSSL::VERSION})."
     end
-  rescue LoadError
-      puts "* Couldn't find OpenSSL - skipping!"
   end
+rescue => e
+    puts "* Couldn't find OpenSSL - skipping!\n\t Err: #{e.message}"
 end
 
 $defs << "-DDEBUG" if ENV["DEBUG"]
