@@ -1,5 +1,5 @@
 /* *****************************************************************************
-Copyright: Boaz Segev, 2019-2024
+Copyright: Boaz Segev, 2019-2025
 License: ISC / MIT (choose your license)
 
 Feel free to copy, use and enjoy according to the license provided.
@@ -10861,7 +10861,9 @@ SFUNC size_t fio_sock_maximize_limits(size_t maximum_limit);
  *
  * A zero timeout returns immediately.
  *
- * Possible events are POLLIN | POLLOUT
+ * Possible events include POLLIN | POLLOUT
+ *
+ * Possible return values include POLLIN | POLLOUT | POLLHUP | POLLNVAL
  */
 SFUNC short fio_sock_wait_io(int fd, short events, int timeout);
 
@@ -15037,9 +15039,9 @@ void fio___mem_block_free___(void);
 FIO_IFUNC void FIO_NAME(FIO_MEMORY_NAME, __mem_block_free)(void *p) {
   FIO_NAME(FIO_MEMORY_NAME, __mem_chunk_s) *c =
       FIO_NAME(FIO_MEMORY_NAME, __mem_ptr2chunk)(p);
-  size_t b = FIO_NAME(FIO_MEMORY_NAME, __mem_ptr2index)(c, p);
   if (!c)
     return;
+  size_t b = FIO_NAME(FIO_MEMORY_NAME, __mem_ptr2index)(c, p);
   FIO_ASSERT_DEBUG(
       (uint32_t)c->blocks[b].ref <= FIO_MEMORY_UNITS_PER_BLOCK + 1,
       "(%d) block reference count corrupted, possible double free? (%zd)",
@@ -15055,6 +15057,9 @@ FIO_IFUNC void FIO_NAME(FIO_MEMORY_NAME, __mem_block_free)(void *p) {
 
   /* reset memory */
   FIO_NAME(FIO_MEMORY_NAME, __mem_block__reset_memory)(c, b);
+
+  if (!FIO_NAME(FIO_MEMORY_NAME, __mem_state))
+    return; /* leak if arena already freed*/
 
   /* place in free list */
   FIO_MEMORY_LOCK(FIO_NAME(FIO_MEMORY_NAME, __mem_state)->lock);
@@ -40665,46 +40670,71 @@ RESP Parser Settings
 /** The maximum number of nested layers in object responses (2...32,768)*/
 #define FIO_RESP3_MAX_NESTING 32
 
-/* RESP's parser type - do not access directly. */
+/** RESP's parser settings – callbacks and object creation. */
 typedef struct {
-  void *(*get_null)(void);
-  void *(*get_true)(void);
-  void *(*get_false)(void);
+  /** The value for NULL */
+  void *set_null;
+  /** The value for TRUE */
+  void *set_true;
+  /** The value for FALSE */
+  void *set_false;
+  /** Should return an object representing the number `i` */
   void *(*get_number)(int64_t i);
+  /** Should return an object representing the float `f` */
   void *(*get_float)(double f);
+  /** Should return an object representing the BIG number `i` */
   void *(*get_bignum)(char *str, size_t len);
+  /** Should return an object representing the String */
   void *(*get_string)(char *str, size_t len);
+  /** Should return an object representing a dynamic String */
   void *(*string_start)(size_t soft_expected);
+  /** Should write data to the a dynamic String, perhaps reallocating it */
   void *(*string_write)(void *dest, char *str, size_t len);
+  /** Should return an object representing a dynamic Array */
   void *(*array_start)(size_t soft_expected);
+  /** Should push an object to the dynamic Array, perhaps reallocating it */
   void *(*array_push)(void *array, void *value);
+  /** Should return an object representing a dynamic Map */
   void *(*map_start)(size_t soft_expected);
+  /** Should push an object to the dynamic Map, perhaps reallocating it */
   void *(*map_push)(void *map, void *key, void *value);
-  /* returns non-zero on error. */
+  /** Called on object received. returns non-zero on error. */
   int (*done)(void *udata, void *response);
+  /** Called on error response, NOT on protocol error. */
+  int (*error)(void *udata, void *response);
+  /** Called on out-of-bounds object received. returns non-zero on error. */
+  int (*push)(void *udata, void *response);
+  /** Called after either response callbacks or protocol error. */
+  void (*free_response)(void *obj);
 } fio_resp3_settings_s;
 
 /* *****************************************************************************
 RESP Parser API
 ***************************************************************************** */
 
+struct fio___resp3_frame_s {
+  /** Object in Frame */
+  void *obj;
+  /** Object Size */
+  uint32_t size;
+  /** Object Type */
+  uint8_t otype;
+};
+
 /* RESP's parser type - do not access directly. */
 typedef struct fio_resp3_s {
-  struct {
-    /** callback settings. */
-    fio_resp3_settings_s *settings;
-    /** current parsing function. */
-    size_t (*parse)(struct fio_resp3_s *, uint8_t *, size_t);
-    /** Stack's depth */
-    uint16_t depth;
-    struct {
-      void *data;
-      uint32_t expected;
-      uint8_t typ;
-    } stack[FIO_RESP3_MAX_NESTING];
-  } private_data;
+  /** callback settings. */
+  fio_resp3_settings_s settings;
   void *udata;
+  uint32_t depth;
+  uint8_t perror; /* protocol error flag */
+  struct fio___resp3_frame_s stack[FIO_RESP3_MAX_NESTING];
 } fio_resp3_s;
+
+#define FIO_RESP3_INIT(...)                                                    \
+  (fio_resp3_s) {                                                              \
+    .settings = {__VA_ARGS__}, .private_data = {0}, .udata = NULL              \
+  }
 
 /** Returns an initialized parser. */
 FIO_IFUNC fio_resp3_s fio_resp3_init(fio_resp3_settings_s *settings,
@@ -40716,49 +40746,6 @@ FIO_IFUNC void fio_resp3_init2(fio_resp3_s *dest,
 
 /** Parse `data`, returning the abount of bytes consumed. */
 FIO_IFUNC size_t fio_resp3_parse(fio_resp3_s *parser);
-
-/* *****************************************************************************
-RESP Implementation - inline functions.
-***************************************************************************** */
-
-SFUNC size_t fio___resp3_parse_start(fio_resp3_s *parser,
-                                     uint8_t *buf,
-                                     size_t len);
-/** Returns an initialized parser. */
-FIO_IFUNC fio_resp3_s fio_resp3_init(fio_resp3_settings_s *settings,
-                                     void *udata) {
-  fio_resp3_s r;
-  r.private_data.settings = settings;
-  r.private_data.parse = fio___resp3_parse_start;
-  r.private_data.depth = 0;
-  r.udata = udata;
-  return r; /* return by value */
-}
-
-/** Initializes the parser. */
-FIO_IFUNC void fio_resp3_init2(fio_resp3_s *dest,
-                               fio_resp3_settings_s *settings,
-                               void *udata) {
-  dest->private_data.settings = settings;
-  dest->private_data.parse = fio___resp3_parse_start;
-  dest->private_data.depth = 0;
-  dest->udata = udata;
-}
-
-/** Parse `data`, returning the abount of bytes consumed. */
-FIO_IFUNC size_t fio_resp3_parse(fio_resp3_s *parser,
-                                 uint8_t *buf,
-                                 size_t len) {
-  size_t r = 0, tmp = 0;
-  if (!buf)
-    return r;
-  while (len && (tmp = parser->private_data.parse(parser, buf, len)) + 1 > 1) {
-    r += tmp;
-    buf += tmp;
-    len -= tmp;
-  }
-  return r;
-}
 
 /* *****************************************************************************
 RESP Implementation - possibly externed functions.
@@ -40814,15 +40801,231 @@ RESP Implementation - possibly externed functions.
 #define FIO___RESP3_HELLO_STR_LEN (sizeof(FIO___RESP3_HELLO_STR_BUF) - 1)
 
 /* *****************************************************************************
+Validating RESP3 Settings.
+***************************************************************************** */
+
+/* clang-format off */
+static void *fio___resp3_get_number(int64_t i) { (void)i; }
+static void *fio___resp3_get_float(double f) { (void)f; }
+static void *fio___resp3_get_bignum(char *str, size_t len) { (void)str, (void)len; }
+static void *fio___resp3_get_string(char *str, size_t len) { (void)str, (void)len; }
+static void *fio___resp3_str_start(size_t soft_expected) { (void)soft_expected; }
+static void *fio___resp3_str(void *d, char *s, size_t l) { (void)d, (void)s, (void)l; }
+static void *fio___resp3_arr_start(size_t soft_expected) { (void)soft_expected; }
+static void *fio___resp3_arr_push(void *a, void *v) { (void)a, (void)v; }
+static void *fio___resp3_map_start(size_t soft_expected) { (void)soft_expected; }
+static void *fio___resp3_map(void *m, void *k, void *v) { (void)m, (void)k, (void)v; }
+static int fio___resp3_done(void *u, void *r) { (void)u, (void)r; }
+static void fio___resp3_free(void *r) { (void)r; }
+/* clang-format on */
+
+static void fio___resp3_validate_settings(fio_resp3_settings_s *settings) {
+  static const fio_resp3_settings_s defaults = {
+      .set_null = NULL,
+      .set_true = NULL,
+      .set_false = NULL,
+      .get_number = fio___resp3_get_number,
+      .get_float = fio___resp3_get_float,
+      .get_bignum = fio___resp3_get_bignum,
+      .get_string = fio___resp3_get_string,
+      .string_start = fio___resp3_str_start,
+      .string_write = fio___resp3_str,
+      .array_start = fio___resp3_arr_start,
+      .array_push = fio___resp3_arr_push,
+      .map_start = fio___resp3_map_start,
+      .map_push = fio___resp3_map,
+      .done = fio___resp3_done,
+      .error = fio___resp3_done,
+      .push = fio___resp3_done,
+      .free_response = fio___resp3_free,
+  };
+  union {
+    uintptr_t *ptr;
+    fio_resp3_settings_s *s;
+  } src, dest;
+  src.s = (fio_resp3_settings_s *)&defaults;
+  dest.s = settings;
+  for (int i = 0; i < sizeof(fio_resp3_settings_s) / sizeof(uintptr_t); ++i)
+    if (!dest.ptr[i])
+      dest.ptr[i] = src.ptr[i];
+}
+
+/* *****************************************************************************
+RESP3 Initialization
+***************************************************************************** */
+
+/** Returns an initialized parser. */
+FIO_IFUNC fio_resp3_s fio_resp3_init(fio_resp3_settings_s *settings,
+                                     void *udata) {
+  fio_resp3_s r;
+  fio___resp3_validate_settings(settings);
+  r.settings = *settings;
+  r.udata = udata;
+  r.depth = 0;
+  r.stack[0] = (struct fio___resp3_frame_s){0};
+  return r; /* return by value */
+}
+
+/** Initializes the parser. */
+FIO_IFUNC void fio_resp3_init2(fio_resp3_s *dest,
+                               fio_resp3_settings_s *settings,
+                               void *udata) {
+  fio___resp3_validate_settings(settings);
+  dest->settings = *settings;
+  dest->udata = udata;
+  dest->depth = 0;
+  dest->stack[0] = (struct fio___resp3_frame_s){0};
+}
+
+/* *****************************************************************************
+RESP3 Stack Push/Pop
+***************************************************************************** */
+
+static void fio___resp3_stack_destroy(fio_resp3_s *p) {
+  while (p->depth) {
+    size_t i = p->depth--;
+    if (p->stack[i].obj)
+      p->settings.free_response(p->stack[i].obj);
+  }
+  if (p->stack[0].obj)
+    p->settings.free_response(p->stack[0].obj);
+  p->stack[0] = (struct fio___resp3_frame_s){0};
+}
+
+static int fio___resp3_stack_push(fio_resp3_s *p) {
+  size_t i = ++p->depth;
+  if (i == FIO_RESP3_MAX_NESTING)
+    goto error;
+  p->stack[i] = (struct fio___resp3_frame_s){0};
+  return 0;
+error:
+  --p->depth;
+  fio___resp3_stack_destroy(p);
+  return -1;
+}
+
+static int fio___resp3_stack_consume(fio_resp3_s *p) {
+  while (p->depth) {
+    size_t v = p->depth;
+    size_t k = p->depth - 1;
+    size_t c = c;
+    /* ignore attributes */
+    if (p->stack[v].otype == FIO___RESP3_U8_ATTR) {
+      p->depth = c;
+      continue;
+    }
+    /* if the container type is a map, we need another object */
+    switch (p->stack[c].otype) {
+    case FIO___RESP3_U8_ATTR: /* fall through / ignore? */
+    case FIO___RESP3_U8_MAP:
+      if (p->stack[c].size)
+        return fio___resp3_stack_push(p);
+      p->depth = c;
+      continue;
+    case FIO___RESP3_U8_SET: /* push key=true and  */
+      p->settings.map_push(p->stack[c].obj,
+                           p->stack[v].obj,
+                           p->settings.set_true);
+      p->depth = c;
+      if (--p->stack[c].size)
+        return fio___resp3_stack_push(p);
+      continue;
+
+    case FIO___RESP3_U8_ARRAY: /* fall through */
+    case FIO___RESP3_U8_PUSH:
+      p->settings.array_push(p->stack[c].obj, p->stack[v].obj);
+      p->depth = c;
+      if (--p->stack[c].size)
+        return fio___resp3_stack_push(p);
+      continue;
+
+    default:
+      /* if `c` (container) isn't a container, it may be a key in a map */
+      c -= !!c;
+      switch (p->stack[c].otype) {
+      case FIO___RESP3_U8_ATTR: /* TODO: FIXME: ignore attributes? */
+        if (p->stack[v].obj)
+          p->settings.free_response(p->stack[v].obj);
+        if (p->stack[k].obj)
+          p->settings.free_response(p->stack[k].obj);
+        break;
+        p->depth = c;
+        if (--p->stack[c].size)
+          return fio___resp3_stack_push(p);
+        continue;
+
+      case FIO___RESP3_U8_MAP:
+        /* push both key and value to map */
+        p->settings.map_push(p->stack[c].obj, p->stack[k].obj, p->stack[v].obj);
+        p->depth = c;
+        if (--p->stack[c].size)
+          return fio___resp3_stack_push(p);
+        continue;
+        break;
+      default: goto error;
+      }
+    }
+  }
+
+  /* ignore attributes, as they are not replies */
+  if (p->stack[0].otype == FIO___RESP3_U8_ATTR) {
+    p->stack[0] = (struct fio___resp3_frame_s){0};
+    return 0;
+  }
+  /* call the correct callback by offset (done == 0, err == 1, push == 2) */
+  (&(p->settings.done))[(
+      (uintptr_t)(p->stack[0].otype == FIO___RESP3_U8_ERROR) |
+      (uintptr_t)(p->stack[0].otype == FIO___RESP3_U8_ERROR_BLOB) |
+      ((uintptr_t)(p->stack[0].otype == FIO___RESP3_U8_PUSH) << 1))](
+      p->udata,
+      p->stack[0].obj);
+  /* free memory */
+  p->settings.free_response(p->stack[0].obj);
+  p->stack[0] = (struct fio___resp3_frame_s){0};
+  return 0;
+
+error:
+  fio___resp3_stack_destroy(p);
+  return -1;
+}
+
+static int fio___resp3_stack_pop(fio_resp3_s *p) {
+  p->depth -= !!p->depth;
+  return fio___resp3_stack_consume(p);
+}
+/* *****************************************************************************
+RESP Implementation - inline functions.
+***************************************************************************** */
+
+static size_t fio___resp3_parse_start(fio_resp3_s *parser,
+                                      uint8_t *buf,
+                                      size_t len);
+
+/** Parse `data`, returning the abount of bytes consumed. */
+FIO_IFUNC size_t fio_resp3_parse(fio_resp3_s *parser,
+                                 uint8_t *buf,
+                                 size_t len) {
+  size_t r = 0, tmp = 0;
+  if (!buf)
+    return r;
+  while (len && (tmp = parser->private_data.parse(parser, buf, len)) + 1 > 1) {
+    r += tmp;
+    buf += tmp;
+    len -= tmp;
+  }
+  return r;
+}
+
+/* *****************************************************************************
 RESP Single Line Types
 ***************************************************************************** */
 
 /* *****************************************************************************
 RESP Parsing @ Root
 ***************************************************************************** */
-SFUNC size_t fio___resp3_parse_start(fio_resp3_s *parser,
-                                     uint8_t *buf,
-                                     size_t len);
+static size_t fio___resp3_parse_start(fio_resp3_s *parser,
+                                      uint8_t *buf,
+                                      size_t len);
 
 /* *****************************************************************************
 Queue Thoughts
