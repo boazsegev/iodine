@@ -45,9 +45,9 @@ Iodine was built with security in mind, making sure that clients will not have t
 
 please review the `iodine -h` command line options for more details on these and see if you need to change the defaults to fit better with your specific restrictions and use-cases.
 
-## Iodine - a fast & powerful HTTP + WebSockets server/client with native Pub/Sub
+## WebSockets Server/Client with Native Pub/Sub
 
-Iodine includes a light and fast HTTP and WebSocket server written in C that was written to support both the [NeoRack Specifications](https://github.com/boazsegev/neorack) (with [WebSocket](https://github.com/boazsegev/neorack/blob/master/extensions/websockets.md) / [SSE](https://github.com/boazsegev/neorack/blob/master/extensions/sse.md)) and [Rack specifications](https://github.com/rack/rack/blob/main/SPEC.rdoc) (with the experimental [WebSocket / SSE Rack draft](https://github.com/boazsegev/neorack/blob/master/deprecated/Rack-WebSocket-Draft.md)).
+Iodine includes a light and fast HTTP and WebSocket server (and client) written in C that was written to support both the [NeoRack Specifications](https://github.com/boazsegev/neorack) (with [WebSocket](https://github.com/boazsegev/neorack/blob/master/extensions/websockets.md) / [SSE](https://github.com/boazsegev/neorack/blob/master/extensions/sse.md)) and [Rack specifications](https://github.com/rack/rack/blob/main/SPEC.rdoc) (with the experimental [WebSocket / SSE Rack draft](https://github.com/boazsegev/neorack/blob/master/deprecated/Rack-WebSocket-Draft.md)).
 
 Iodine also supports native process cluster Pub/Sub and a native RedisEngine to easily scale iodine's Pub/Sub horizontally.
 
@@ -72,7 +72,7 @@ gem 'iodine', '~>0.8'
 Then start your application from the command-line / terminal using iodine:
 
 ```bash
-bundler exec iodine
+iodine
 ```
 
 #### Installing with TLS/SSL
@@ -124,7 +124,7 @@ On Rails:
     # Iodine setup - use conditional setup to make it easy to test other servers such as Puma:
     if(defined?(Iodine))
       Iodine.threads = ENV.fetch("RAILS_MAX_THREADS", 5).to_i if ENV["RAILS_MAX_THREADS"]
-      Iodine.workers = ENV.fetch("WEB_CONCURRENCY", 2).to_i if ENV["WEB_CONCURRENCY"]
+      Iodine.workers = ENV.fetch("WEB_CONCURRENCY", -2).to_i if ENV["WEB_CONCURRENCY"]
     end
     ```
 
@@ -176,7 +176,7 @@ It's as easy as that. No extra code required.
 
 ### Native HTTP `Upgrade` and SSE support
 
-Iodine's HTTP server has native support for [WebSocket](https://github.com/boazsegev/neorack/blob/master/extensions/websockets.md)/[SSE](https://github.com/boazsegev/neorack/blob/master/extensions/sse.md), using both [NeoRack](https://github.com/boazsegev/neorack) extensions and the Rack `env` response style.
+Iodine's HTTP server has native support for [WebSocket](https://github.com/boazsegev/neorack/blob/master/extensions/websockets.md)/[SSE](https://github.com/boazsegev/neorack/blob/master/extensions/sse.md), using both [NeoRack](https://github.com/boazsegev/neorack) extensions and the [Rack `env` response style](https://github.com/boazsegev/neorack/blob/master/deprecated/Rack-WebSocket-Draft.md).
 
 This promotes separation of concerns, where iodine handles all the Network related logic and the application can focus on the API and data it provides.
 
@@ -227,7 +227,7 @@ module MyNeoRackApp
     while(l = e.gets)
       out += l
     end
-    # write the data and finish (this should avoid streaming overhead).
+    # write the data and finish (using `finish` we avoid streaming overhead).
     e.finish out 
   end
 
@@ -239,7 +239,7 @@ module MyNeoRackApp
   def self.on_open(e)
     e.subscribe :broadcast
   end
-  # Called an Event Source (SSE) client send a re-connection request with the ID of the last message received.
+  # Called an Event Source (SSE) client sends a re-connection request with the ID of the last message received.
   def self.on_eventsource_reconnect(sse, last_message_id)
     puts "Reconnecting SSE client #{sse.object_id}, should send everything after message ID #{last_message_id}"
   end
@@ -247,8 +247,8 @@ module MyNeoRackApp
   def self.on_message(e, m)
     Iodine.publish :broadcast, m
   end
-  # Iodine allows clients to send properly formatted events, should you want to cheat a little.
   # This is usually more useful when using Iodine as an SSE client.
+  # However, Iodine allows clients to send properly formatted events, should you want to allow a server to read them.
   def self.on_eventsource(sse, message)
     puts "Normally only an SSE client would receive sse messages... See Iodine::Connection.new\r\n"
     puts "id: #{message.id}"
@@ -630,28 +630,17 @@ This approach helps to minimize heap fragmentation for long running processes, b
 
 It is still recommended to consider [jemalloc](http://jemalloc.net) or other allocators that also help mitigate heap fragmentation issues.
 
-
 ## Can I contribute?
 
 Yes, please, here are some thoughts:
 
 * I'm really not good at writing automated tests and benchmarks, any help would be appreciated. I keep testing manually and that's less then ideal (and it's mistake prone).
 
-* PRs or issues related to [the `facil.io` C framework](https://github.com/boazsegev/facil.io) should be placed in [the `facil.io` repository](https://github.com/boazsegev/facil.io).
+* PRs or issues related to [the `facil.io` C STL and framework](https://github.com/facil-io/cstl) should be directed to [the Proper C STL `facil.io` repository](https://github.com/facil-io/cstl).
 
 * Bug reports and pull requests are welcome on GitHub at <https://github.com/boazsegev/iodine>.
 
-* If we can write a Java wrapper for [the `facil.io` C framework](https://github.com/boazsegev/facil.io), it would be nice... but it could be as big a project as the whole gem, as a lot of minor details are implemented within the bridge between these two languages.
-
 * If you love the project or thought the code was nice, maybe helped you in your own project, drop me a line. I'd love to know.
-
-### Running the Tests
-
-Running this task will compile the C extensions then run RSpec tests:
-
-```sh
-bundle exec rake spec
-```
 
 ## License
 
