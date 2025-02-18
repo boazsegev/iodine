@@ -2614,16 +2614,16 @@ Fun Primes
 #define FIO_U32_HASH_PRIME9 0xF5781551UL
 
 /* Primes with with 64 bits, half of them set. */
-#define FIO_U64_HASH_PRIME0 0x39664DEECA23D825
-#define FIO_U64_HASH_PRIME1 0x48644F7B3959621F
-#define FIO_U64_HASH_PRIME2 0x613A19F5CB0D98D5
-#define FIO_U64_HASH_PRIME3 0x84B56B93C869EA0F
-#define FIO_U64_HASH_PRIME4 0x8EE38D13E0D95A8D
-#define FIO_U64_HASH_PRIME5 0x92E99EC981F0E279
-#define FIO_U64_HASH_PRIME6 0xDDC3100BEF158BB1
-#define FIO_U64_HASH_PRIME7 0x918F4D38049F78BD
-#define FIO_U64_HASH_PRIME8 0xB6C9F8032A35E2D9
-#define FIO_U64_HASH_PRIME9 0xFA2A5F16D2A128D5
+#define FIO_U64_HASH_PRIME0 ((uint64_t)0x39664DEECA23D825)
+#define FIO_U64_HASH_PRIME1 ((uint64_t)0x48644F7B3959621F)
+#define FIO_U64_HASH_PRIME2 ((uint64_t)0x613A19F5CB0D98D5)
+#define FIO_U64_HASH_PRIME3 ((uint64_t)0x84B56B93C869EA0F)
+#define FIO_U64_HASH_PRIME4 ((uint64_t)0x8EE38D13E0D95A8D)
+#define FIO_U64_HASH_PRIME5 ((uint64_t)0x92E99EC981F0E279)
+#define FIO_U64_HASH_PRIME6 ((uint64_t)0xDDC3100BEF158BB1)
+#define FIO_U64_HASH_PRIME7 ((uint64_t)0x918F4D38049F78BD)
+#define FIO_U64_HASH_PRIME8 ((uint64_t)0xB6C9F8032A35E2D9)
+#define FIO_U64_HASH_PRIME9 ((uint64_t)0xFA2A5F16D2A128D5)
 
 /* *****************************************************************************
 64bit addition (ADD) / subtraction (SUB) / multiplication (MUL) with carry.
@@ -3098,6 +3098,22 @@ Vector Helpers - Vector Math Operations
       (t) = (t)op(a).u##bits[i__];                                             \
   } while (0)
 
+/** Performs vector shuffling (reordering) of `var`. */
+#define FIO_MATH_UXXX_SUFFLE(var, bits, ...)                                   \
+  do {                                                                         \
+    uint##bits##_t t____[sizeof((var).u##bits) / sizeof((var).u##bits[0])];    \
+    const uint8_t shuf____[sizeof((var).u##bits) / sizeof((var).u##bits[0])] = \
+        {__VA_ARGS__};                                                         \
+    for (size_t i___ = 0;                                                      \
+         i___ < (sizeof((var).u##bits) / sizeof((var).u##bits[0]));            \
+         ++i___)                                                               \
+      t____[i___] = (var).u##bits[shuf____[i___]];                             \
+    for (size_t i___ = 0;                                                      \
+         i___ < (sizeof((var).u##bits) / sizeof((var).u##bits[0]));            \
+         ++i___)                                                               \
+      (var).u##bits[i___] = t____[i___];                                       \
+  } while (0)
+
 #define FIO___UXXX_DEF_OP(total_bits, bits, opnm, op)                          \
   FIO_IFUNC void fio_u##total_bits##_##opnm##bits(                             \
       fio_u##total_bits *target,                                               \
@@ -3155,6 +3171,7 @@ FIO___UXXX_DEF_OP4T(4096)
 #undef FIO___UXXX_DEF_OP4T_INNER
 #undef FIO___UXXX_DEF_OP
 #undef FIO___UXXX_DEF_OP2
+
 /* *****************************************************************************
 Vector Helpers - Multi-Precision Math
 ***************************************************************************** */
@@ -3243,6 +3260,90 @@ FIO___VMATH_DEF_LARGE_MUL(4096, 2048)
 
 #undef FIO___VMATH_DEF_LARGE_ADD_SUB
 #undef FIO___VMATH_DEF_LARGE_MUL
+
+/* ****************************************************************************
+Defining a Pseudo-Random Number Generator Function (deterministic / not)
+**************************************************************************** */
+
+/**
+ * Defines a deterministic Pseudo-Random Number Generator function.
+ *
+ * The following functions will be defined:
+ *
+ * - static fio_u128 name##128(void); // returns 128 bits - for internal use
+ * - extern uint64_t name##64(void); // returns 64 bits
+ * - extern void name##_bytes(void *buffer, size_t len); // fills buffer
+ *
+ * If `reseed_log` is non-zero and less than 32, the PNGR is no longer
+ * deterministic, as it will automatically re-seeds itself every 2^reseed_log
+ * iterations.
+ *
+ * The PRNG follows the design for SHISHUA, without using intrinsic functions.
+ *
+ * If `extern` is `static` or `FIO_SFUNC`, static function will be defined.
+ *
+ * https://espadrine.github.io/blog/posts/shishua-the-fastest-prng-in-the-world.html
+ */
+#define FIO_DEFINE_RANDOM_FUNCTION(extern, name, reseed_log, seed_offset)      \
+  static fio_u256 name##___state = {                                           \
+      .u64 = {(FIO_U64_HASH_PRIME0 + seed_offset),                             \
+              (FIO_U64_HASH_PRIME1 + seed_offset),                             \
+              (FIO_U64_HASH_PRIME2 + seed_offset),                             \
+              (FIO_U64_HASH_PRIME3 + seed_offset)}};                           \
+  FIO_SFUNC void name##___state_reseed(fio_u256 *state) {                      \
+    const size_t jitter_samples = 16 | (state->u8[0] & 15);                    \
+    for (size_t i = 0; i < jitter_samples; ++i) {                              \
+      struct timespec t;                                                       \
+      clock_gettime(CLOCK_MONOTONIC, &t);                                      \
+      FIO_MATH_UXXX_SUFFLE(state[0], 32, 3, 4, 5, 6, 7, 0, 1, 2);              \
+      uint64_t clk[2];                                                         \
+      clk[0] = (uint64_t)((t.tv_sec << 30) + (int64_t)t.tv_nsec);              \
+      clk[0] = fio_math_mulc64(clk[0], FIO_U64_HASH_PRIME0, clk + 1);          \
+      state->u64[0] += clk[0];                                                 \
+      state->u64[1] += clk[1];                                                 \
+      state->u64[2] += clk[0];                                                 \
+      state->u64[3] += clk[1];                                                 \
+    }                                                                          \
+  }                                                                            \
+  /** Returns a 128 bit pseudo-random number. */                               \
+  FIO_IFUNC fio_u128 name##128(void) {                                         \
+    fio_u256 r, t;                                                             \
+    if (reseed_log && reseed_log < 32) {                                       \
+      static size_t counter;                                                   \
+      if (!((counter++) & ((1ULL << reseed_log) - 1)))                         \
+        name##___state_reseed(&name##___state);                                \
+    }                                                                          \
+    t = name##___state;                                                        \
+    r.u64[0] = fio_math_mulc64(t.u64[0], FIO_U64_HASH_PRIME0, r.u64 + 1);      \
+    r.u64[2] = fio_math_mulc64(t.u64[2], FIO_U64_HASH_PRIME1, r.u64 + 3);      \
+    /* rotate 256 bit state by 96 bits and add */                              \
+    FIO_MATH_UXXX_SUFFLE(t, 32, 3, 4, 5, 6, 7, 0, 1, 2);                       \
+    FIO_MATH_UXXX_OP(r, r, t, 32, +);                                          \
+    name##___state = r;                                                        \
+    r.u64[0] ^= r.u64[2];                                                      \
+    r.u64[1] ^= r.u64[3];                                                      \
+    return r.u128[0];                                                          \
+  }                                                                            \
+  /** Returns a 64 bit pseudo-random number. */                                \
+  extern uint64_t name##64(void) {                                             \
+    fio_u128 r = name##128();                                                  \
+    return r.u64[0];                                                           \
+  }                                                                            \
+  /** Fills the `dest` buffer with pseudo-random noise. */                     \
+  extern void name##_bytes(void *dest, size_t len) {                           \
+    if (!dest || !len)                                                         \
+      return;                                                                  \
+    uint8_t *d = (uint8_t *)dest;                                              \
+    for (unsigned i = 15; i < len; i += 16) {                                  \
+      fio_u128 r = name##128();                                                \
+      fio_memcpy16(d, r.u8);                                                   \
+      d += 16;                                                                 \
+    }                                                                          \
+    if (len & 15) {                                                            \
+      fio_u128 r = name##128();                                                \
+      fio_memcpy15x(d, r.u8, len);                                             \
+    }                                                                          \
+  }
 
 /* *****************************************************************************
 String and Buffer Information Containers + Helper Macros
@@ -7067,7 +7168,10 @@ FIO_IFUNC void fio_math_div(uint64_t *dest,
   while ((rlen = fio_math_msb_index((uint64_t *)r, len)) >= blen) {
     const size_t delta = rlen - blen;
     fio_math_shl(t, (uint64_t *)b, delta, len);
-    (void)fio_math_sub(r, (uint64_t *)r, t, len);
+    {
+      uint64_t ignr_ = fio_math_sub(r, (uint64_t *)r, t, len);
+      (void)ignr_;
+    }
     q[delta >> 6] |= (1ULL << (delta & 63)); /* set the bit used */
   }
   mask = (uint64_t)0ULL - fio_math_sub(t, (uint64_t *)r, (uint64_t *)b, len);
@@ -37843,7 +37947,7 @@ IO Reactor Finish
 
 Copyright and License: see header file (000 copyright.h) or top of file
 ***************************************************************************** */
-#if defined(H___FIO_IO___H) &&                                                 \
+#if defined(H___FIO_IO___H) && !defined(FIO_NO_TLS) &&                         \
     (HAVE_OPENSSL || __has_include("openssl/ssl.h")) &&                        \
      !defined(H___FIO_OPENSSL___H) && !defined(FIO___RECURSIVE_INCLUDE)
 #define H___FIO_OPENSSL___H 1
@@ -37858,10 +37962,21 @@ SFUNC fio_io_functions_s fio_openssl_io_functions(void);
 OpenSSL Helpers Implementation
 ***************************************************************************** */
 #if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
-
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
+/* *****************************************************************************
+Validate OpenSSL Library Version
+***************************************************************************** */
+
+#if !defined(OPENSSL_VERSION_MAJOR) || OPENSSL_VERSION_MAJOR < 3
+#undef HAVE_OPENSSL
+#warning HAVE_OPENSSL flag error - incompatible OpenSSL version
+/* No valid OpenSSL, return the default TLS IO functions */
+SFUNC fio_io_functions_s fio_openssl_io_functions(void) {
+  return fio_io_tls_default_functions(NULL);
+}
+#else
 FIO_ASSERT_STATIC(OPENSSL_VERSION_MAJOR > 2, "OpenSSL version mismatch");
 
 /* *****************************************************************************
@@ -38172,7 +38287,7 @@ FIO_SFUNC ssize_t fio___openssl_read(int fd,
     r = SSL_write_ex(ssl, (void *)&r, 0, (size_t *)&r); /* fall through */
   case SSL_ERROR_WANT_X509_LOOKUP:                      /* fall through */
   case SSL_ERROR_WANT_READ:                             /* fall through */
-#ifdef SSL_ERROR_WANT_ASYNC                             /* fall through */
+#ifdef SSL_ERROR_WANT_ASYNC /* fall through */
   case SSL_ERROR_WANT_ASYNC:                            /* fall through */
 #endif
   default: errno = EWOULDBLOCK; return (r = -1);
@@ -38241,7 +38356,7 @@ FIO_SFUNC ssize_t fio___openssl_write(int fd,
   case SSL_ERROR_WANT_X509_LOOKUP:            /* fall through */
   case SSL_ERROR_WANT_WRITE:                  /* fall through */
   case SSL_ERROR_WANT_READ:                   /* fall through */
-#ifdef SSL_ERROR_WANT_ASYNC                   /* fall through */
+#ifdef SSL_ERROR_WANT_ASYNC /* fall through */
   case SSL_ERROR_WANT_ASYNC:                  /* fall through */
 #endif
   default: errno = EWOULDBLOCK; return (r = -1);
@@ -38348,7 +38463,7 @@ FIO_CONSTRUCTOR(fio___openssl_setup_default) {
 /* *****************************************************************************
 OpenSSL Helpers Cleanup
 ***************************************************************************** */
-
+#endif /* defined(OPENSSL_VERSION_MAJOR) && OPENSSL_VERSION_MAJOR >= 3 */
 #endif /* FIO_EXTERN_COMPLETE */
 #endif /* HAVE_OPENSSL */
 /* ************************************************************************* */
@@ -50318,14 +50433,20 @@ FIO_SFUNC void FIO_NAME_TEST(stl, core)(void) {
 
         /* the following will probably never detect an error */
 
-        (void)fio_math_add(expected, na, nb, 4);
-        (void)fio_u256_add(&result.u256[0], &ua, &ub);
+        {
+          uint64_t ignr_ = fio_math_add(expected, na, nb, 4);
+          ignr_ += fio_u256_add(&result.u256[0], &ua, &ub);
+          (void)ignr_;
+        }
         FIO_ASSERT(
             !memcmp(result.u256[0].u64, expected, sizeof(result.u256[0].u64)),
             "Multi-Precision ADD error");
 
-        (void)fio_math_sub(expected, na, nb, 4);
-        (void)fio_u256_sub(&result.u256[0], &ua, &ub);
+        {
+          uint64_t ignr_ = fio_math_sub(expected, na, nb, 4);
+          ignr_ += fio_u256_sub(&result.u256[0], &ua, &ub);
+          (void)ignr_;
+        }
         FIO_ASSERT(
             !memcmp(result.u256[0].u64, expected, sizeof(result.u256[0].u64)),
             "Multi-Precision SUB error");
