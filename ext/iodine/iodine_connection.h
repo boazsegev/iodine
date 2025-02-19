@@ -871,6 +871,9 @@ static int iodine_handler_deafult_on_http__header(VALUE n_, VALUE v, VALUE h_) {
     return ST_CONTINUE;
   header_rb = (fio_str_info_s)IODINE_RSTR_INFO(n_);
   IODINE___COPY_TO_LOWER_CASE(n, header_rb);
+  if (n.len > 5 && n.buf[4] == '.' && /* ignore "rack.<name>" headers */
+      fio_buf2u32u("rack") == fio_buf2u32u(n.buf))
+    return ST_CONTINUE;
   return iodine_handler_deafult_on_http__header2(n, v, h_);
 }
 
@@ -903,7 +906,8 @@ error_in_type:
 static VALUE iodine_connection_env_get(VALUE self);
 static VALUE iodine_connection_handler_set(VALUE client, VALUE handler);
 static VALUE iodine_connection_rack_hijack(VALUE self);
-static int iodine_connection_rack_hijack_partial(VALUE self, VALUE proc);
+static int iodine_connection_rack_hijack_partial(iodine_connection_s *c,
+                                                 VALUE proc);
 static VALUE iodine_connection_peer_addr(VALUE self);
 static VALUE iodine_handler_deafult_on_http(VALUE handler, VALUE client) {
   /* RACK specification: https://github.com/rack/rack/blob/main/SPEC.rdoc */
@@ -913,6 +917,7 @@ static VALUE iodine_handler_deafult_on_http(VALUE handler, VALUE client) {
   if (!c->http)
     return returned_value;
   VALUE r, env;
+  bool should_finish = 1;
   /* collect `env` and call `call`. */
   env = iodine_connection_env_get(client);
   /* call `call` from top of MiddleWare / App chain */
@@ -944,6 +949,7 @@ static VALUE iodine_handler_deafult_on_http(VALUE handler, VALUE client) {
     VALUE hdr = RARRAY_PTR(r)[1];
     if (RB_TYPE_P(hdr, RUBY_T_HASH)) {
       partial_hijack = rb_hash_delete(hdr, IODINE_RACK_HIJACK_STR);
+      should_finish = (partial_hijack == Qnil);
       rb_hash_foreach(hdr,
                       iodine_handler_deafult_on_http__header,
                       (VALUE)c->http);
@@ -964,6 +970,7 @@ static VALUE iodine_handler_deafult_on_http(VALUE handler, VALUE client) {
           continue;
         }
         partial_hijack = RARRAY_PTR(t)[1];
+        should_finish = (partial_hijack == Qnil);
       }
     } else {
       FIO_LOG_ERROR("Rack application response headers type error");
@@ -995,22 +1002,22 @@ static VALUE iodine_handler_deafult_on_http(VALUE handler, VALUE client) {
                        .buf = each.out,
                        .len = fio_bstr_len(each.out),
                        .dealloc = (void (*)(void *))fio_bstr_free,
-                       .finish = 1);
+                       .finish = should_finish);
       }
     } else if (RB_TYPE_P(bd, RUBY_T_STRING)) { /* a simple String */
       fio_http_write(c->http,
                      .buf = RSTRING_PTR(bd),
                      .len = (size_t)RSTRING_LEN(bd),
                      .copy = 1,
-                     .finish = 1);
+                     .finish = should_finish);
     } else if (bd == Qnil) { /* do nothing? no body. */
-      fio_http_write(c->http, .finish = 1);
+      fio_http_write(c->http, .finish = should_finish);
     } else { /* streaming body – answers to `call` */
       partial_hijack = bd;
     }
   }
   if (partial_hijack && partial_hijack != Qnil &&
-      iodine_connection_rack_hijack_partial(client, partial_hijack))
+      iodine_connection_rack_hijack_partial(c, partial_hijack))
     goto rack_error;
 
   rb_check_funcall(RARRAY_PTR(r)[2], IODINE_CLOSE_ID, 0, NULL);
@@ -1272,12 +1279,8 @@ static void iodine_connection_init_env_template(fio_buf_info_s at_url) {
     rb_ary_push(ver, INT2NUM(1));
     rb_ary_push(ver, INT2NUM(3));
   }
-  // TODO!
-  // iodine_env_set_const_val(env, FIO_STR_INFO1((char*)"rack.hijack?"),
-  // Qtrue);// ???
+  iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"rack.hijack?"), Qtrue);
   rb_hash_aset(env, IODINE_RACK_HIJACK_STR, Qnil);
-  // iodine_env_set_const_val(env, FIO_STR_INFO1((char*)"rack.hijack"), Qnil);
-  // // TODO?
   iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"neorack.client"), Qnil);
   iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"REQUEST_METHOD"), Qtrue);
   iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"PATH_INFO"), Qtrue);
@@ -1337,7 +1340,7 @@ static VALUE iodine_connection_env_get(VALUE self) {
       rb_hash_dup(IODINE_CONNECTION_ENV_TEMPLATE);
   iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"neorack.client"), self);
   {
-    VALUE tmp = rb_obj_method(self, IODINE_RACK_HIJACK_SYM);
+    VALUE tmp = rb_obj_method(self, IODINE_RACK_HIJACK_ID_SYM);
     c->store[IODINE_CONNECTION_STORE_tmp] = tmp;
     rb_hash_aset(env, IODINE_RACK_HIJACK_STR, tmp);
     c->store[IODINE_CONNECTION_STORE_tmp] = Qnil;
@@ -2420,10 +2423,13 @@ static VALUE iodine_connection_rack_hijack(VALUE self) {
 }
 
 /* TODO: Partial Hijack */
-FIO_SFUNC int iodine_connection_rack_hijack_partial(VALUE self, VALUE proc) {
-  iodine_connection_s *c = iodine_connection_ptr(self);
-  if (!c->http && !c->io)
+FIO_SFUNC int iodine_connection_rack_hijack_partial(iodine_connection_s *c,
+                                                    VALUE proc) {
+  if (!c->http && !c->io) {
+    FIO_LOG_ERROR(
+        "iodine_connection_rack_hijack_partial called without connections");
     return -1;
+  }
   if (!c->io)
     c->io = fio_http_io(c->http);
   if (!rb_respond_to(proc, IODINE_CALL_ID))
@@ -2441,11 +2447,13 @@ FIO_SFUNC int iodine_connection_rack_hijack_partial(VALUE self, VALUE proc) {
                  STORE.frozen_str(FIO_STR_INFO1((char *)"rack.hijack_io")),
                  nio);
   }
+  FIO_LOG_INFO("calling IO partial hijack `call`");
   rb_funcallv(proc, IODINE_CALL_ID, 1, &nio);
   return 0;
 error_after_open:
   fio_sock_close(new_fd);
 error:
+  FIO_LOG_ERROR("partial hijack error – does the object answer to `call`?");
   return -1;
 }
 
