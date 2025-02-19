@@ -163,9 +163,12 @@ void Init_iodine(void) {
   IODINE_CONST_ID_STORE(IODINE_STATE_ON_SHUTDOWN, "on_shutdown");
   IODINE_CONST_ID_STORE(IODINE_STATE_ON_STOP, "on_stop");
 
-  STORE.hold(IODINE_RACK_HIJACK_SYM = rb_id2sym(IODINE_RACK_HIJACK_ID));
-  STORE.hold(IODINE_RACK_HIJACK_STR = rb_str_new_static("rack.hijack", 11));
+  STORE.hold(IODINE_RACK_HIJACK_ID_SYM = rb_id2sym(IODINE_RACK_HIJACK_ID));
+  STORE.hold(IODINE_RACK_HIJACK_SYM = rb_id2sym(rb_intern("rack.hijack")));
+  STORE.hold(IODINE_RACK_HIJACK_STR = rb_sym_to_s(IODINE_RACK_HIJACK_SYM));
 
+  IODINE_RACK_PROTOCOL_STR =
+      STORE.frozen_str(FIO_STR_INFO1((char *)"rack.protocol"));
   IODINE_RACK_UPGRADE_STR =
       STORE.frozen_str(FIO_STR_INFO1((char *)"rack.upgrade"));
   IODINE_RACK_UPGRADE_Q_STR =
