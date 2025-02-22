@@ -16,10 +16,10 @@ Iodine includes native support for:
 * HTTP, WebSockets and EventSource (SSE) Services (server/client);
 * Event-Stream Pub/Sub (with optional Redis Pub/Sub scaling);
 * Hot Restarts and Hot Deployments
-* Fast(!) builtin Mustache template render engine;
 * Static File Service (with automatic `.gz`, `.br` and `.zip` support for pre-compressed assets);
 * Performant Request Logging;
-* Asynchronous Tasks and Timers (memory cached);
+* Fast(!) builtin Mustache template render engine;
+* Asynchronous Tasks and Timers (non-persistent memory cached);
 * HTTP/1.1 keep-alive and pipeline throttling;
 * Separate Memory Allocators for Heap Fragmentation Protection;
 * TLS 1.2 and above (Requiring OpenSSL >= 3);
@@ -29,11 +29,11 @@ Iodine is a Ruby wrapper for much of the [facil.io](https://facil.io) C framewor
 
 Since iodine wraps much of the [C facil.io framework](https://github.com/boazsegev/facil.io) for Ruby:
 
-* Iodine can handle **thousands of concurrent connections** (tested with more then 20K connections on Linux)! Limits depend on machine resources rather than software.
+* Iodine can handle **tens of thousands of concurrent connections** (tested with more then 20K connections on Linux)! Limits depend on machine resources and app design, not on the server.
 
 * Iodine is ideal for **Linux/Unix** based systems (i.e. macOS, Ubuntu, FreeBSD etc') and evented IO (while Windows and Solaris are better at IO *completion* events, which are very different).
 
-Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.3 and up... it should support the whole Ruby 2.x and 3.x MRI family, but CI tests are often limited to stable releases that are still maintained.
+Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 3.0 and up... it should support the whole Ruby 2.x and 3.x MRI family, but CI tests are often limited to stable releases that are still maintained.
 
 **Note**:
 

@@ -3235,7 +3235,8 @@ Vector Helpers - Multi-Precision Math
     fio_u##bits##_mul(&mN, t.u##bits, N_dash);                                 \
     /* Step 3: u = (t + m * N) */                                              \
     fio_u##bits##_mul(&mN, mN.u##bits, N);                                     \
-    (void)fio_u##dbl_bits##_add(&u, &t, &mN);                                  \
+    uint64_t ignr_ = fio_u##dbl_bits##_add(&u, &t, &mN);                       \
+    (void)ignr_;                                                               \
     /* Step 4: Constant Time select, if u >= N, then u = u - N */              \
     bool selector = (bool)fio_u##bits##_sub(u.u##bits, u.u##bits + 1, N);      \
     /* Step 5: Set result */                                                   \
@@ -3266,68 +3267,96 @@ Defining a Pseudo-Random Number Generator Function (deterministic / not)
 **************************************************************************** */
 
 /**
- * Defines a deterministic Pseudo-Random Number Generator function.
+ * Defines a semi-deterministic Pseudo-Random 128 bit Number Generator function.
  *
  * The following functions will be defined:
  *
- * - static fio_u128 name##128(void); // returns 128 bits - for internal use
- * - extern uint64_t name##64(void); // returns 64 bits
- * - extern void name##_bytes(void *buffer, size_t len); // fills buffer
+ * - extern fio_u128 name##128(void); // returns 128 bits
+ * - extern uint64_t name##64(void); // returns 64 bits (simply half the result)
+ * - extern void name##_bytes(void *buffer, size_t len); // fills a buffer
+ * - extern void name##_reset(void); // resets the state of the PRNG
  *
- * If `reseed_log` is non-zero and less than 32, the PNGR is no longer
+ * If `reseed_log` is non-zero and less than 64, the PNGR is no longer
  * deterministic, as it will automatically re-seeds itself every 2^reseed_log
  * iterations.
  *
- * The PRNG follows the design for SHISHUA, without using intrinsic functions.
- *
  * If `extern` is `static` or `FIO_SFUNC`, static function will be defined.
- *
- * https://espadrine.github.io/blog/posts/shishua-the-fastest-prng-in-the-world.html
  */
-#define FIO_DEFINE_RANDOM_FUNCTION(extern, name, reseed_log, seed_offset)      \
-  static fio_u256 name##___state = {                                           \
-      .u64 = {(FIO_U64_HASH_PRIME0 + seed_offset),                             \
-              (FIO_U64_HASH_PRIME1 + seed_offset),                             \
-              (FIO_U64_HASH_PRIME2 + seed_offset),                             \
-              (FIO_U64_HASH_PRIME3 + seed_offset)}};                           \
-  FIO_SFUNC void name##___state_reseed(fio_u256 *state) {                      \
-    const size_t jitter_samples = 16 | (state->u8[0] & 15);                    \
+#define FIO_DEFINE_RANDOM128_FN(extern, name, reseed_log, seed_offset)         \
+  static uint64_t name##___state[8] FIO_ALIGN(64) = {                          \
+      0x9c65875be1fce7b9ULL + seed_offset,                                     \
+      0x7cc568e838f6a40dULL,                                                   \
+      0x4bb8d885a0fe47d5ULL + seed_offset,                                     \
+      0x95561f0927ad7ecdULL,                                                   \
+      0};                                                                      \
+  extern void name##_reset(void) {                                             \
+    name##___state[0] = 0x9c65875be1fce7b9ULL + seed_offset;                   \
+    name##___state[1] = 0x7cc568e838f6a40dULL;                                 \
+    name##___state[2] = 0x4bb8d885a0fe47d5ULL + seed_offset;                   \
+    name##___state[3] = 0x95561f0927ad7ecdULL;                                 \
+    name##___state[4] = 0;                                                     \
+  }                                                                            \
+  FIO_SFUNC void name##___state_reseed(uint64_t *state) {                      \
+    const size_t jitter_samples = 8 | (state[0] & 15);                         \
     for (size_t i = 0; i < jitter_samples; ++i) {                              \
       struct timespec t;                                                       \
       clock_gettime(CLOCK_MONOTONIC, &t);                                      \
-      FIO_MATH_UXXX_SUFFLE(state[0], 32, 3, 4, 5, 6, 7, 0, 1, 2);              \
       uint64_t clk[2];                                                         \
       clk[0] = (uint64_t)((t.tv_sec << 30) + (int64_t)t.tv_nsec);              \
       clk[0] = fio_math_mulc64(clk[0], FIO_U64_HASH_PRIME0, clk + 1);          \
-      state->u64[0] += clk[0];                                                 \
-      state->u64[1] += clk[1];                                                 \
-      state->u64[2] += clk[0];                                                 \
-      state->u64[3] += clk[1];                                                 \
+      clk[1] += FIO_U64_HASH_PRIME0;                                           \
+      clk[0] += fio_lrot64(clk[0], 27);                                        \
+      clk[0] += fio_lrot64(clk[0], 49);                                        \
+      clk[1] += fio_lrot64(clk[1], 27);                                        \
+      clk[1] += fio_lrot64(clk[1], 49);                                        \
+      state[0] += clk[0];                                                      \
+      state[1] += clk[1];                                                      \
+      state[2] += clk[0];                                                      \
+      state[3] += clk[1];                                                      \
     }                                                                          \
   }                                                                            \
   /** Returns a 128 bit pseudo-random number. */                               \
-  FIO_IFUNC fio_u128 name##128(void) {                                         \
-    fio_u256 r, t;                                                             \
-    if (reseed_log && reseed_log < 32) {                                       \
-      static size_t counter;                                                   \
-      if (!((counter++) & ((1ULL << reseed_log) - 1)))                         \
-        name##___state_reseed(&name##___state);                                \
+  extern fio_u128 name##128(void) {                                            \
+    fio_u256 r;                                                                \
+    if (!((name##___state[4]++) & ((1ULL << reseed_log) - 1)) &&               \
+        ((size_t)(reseed_log - 1) < 63))                                       \
+      name##___state_reseed(name##___state);                                   \
+    uint64_t s1[4];                                                            \
+    { /* load state to registers and roll, mul, add */                         \
+      const uint64_t s0[] = {name##___state[0],                                \
+                             name##___state[1],                                \
+                             name##___state[2],                                \
+                             name##___state[3]};                               \
+      const uint64_t mulp[] = {0x37701261ED6C16C7ULL,                          \
+                               0x764DBBB75F3B3E0DULL,                          \
+                               ~(0x37701261ED6C16C7ULL),                       \
+                               ~(0x764DBBB75F3B3E0DULL)};                      \
+      const uint64_t addc[] = {name##___state[4], 0, name##___state[4], 0};    \
+      for (size_t i = 0; i < 4; ++i) {                                         \
+        s1[i] = fio_lrot64(s0[i], 33);                                         \
+        s1[i] += addc[i];                                                      \
+        s1[i] *= mulp[i];                                                      \
+        s1[i] += s0[i];                                                        \
+      }                                                                        \
     }                                                                          \
-    t = name##___state;                                                        \
-    r.u64[0] = fio_math_mulc64(t.u64[0], FIO_U64_HASH_PRIME0, r.u64 + 1);      \
-    r.u64[2] = fio_math_mulc64(t.u64[2], FIO_U64_HASH_PRIME1, r.u64 + 3);      \
-    /* rotate 256 bit state by 96 bits and add */                              \
-    FIO_MATH_UXXX_SUFFLE(t, 32, 3, 4, 5, 6, 7, 0, 1, 2);                       \
-    FIO_MATH_UXXX_OP(r, r, t, 32, +);                                          \
-    name##___state = r;                                                        \
-    r.u64[0] ^= r.u64[2];                                                      \
-    r.u64[1] ^= r.u64[3];                                                      \
+    for (size_t i = 0; i < 4; ++i) /* store to memory */                       \
+      name##___state[i] = s1[i];                                               \
+    {                                                                          \
+      const uint8_t rotc[] = {31, 29, 27, 30};                                 \
+      for (size_t i = 0; i < 4; ++i)                                           \
+        r.u64[i] = fio_lrot64(s1[i], rotc[i]);                                 \
+    }                                                                          \
+    r.u64[0] += r.u64[2];                                                      \
+    r.u64[1] += r.u64[3];                                                      \
     return r.u128[0];                                                          \
   }                                                                            \
   /** Returns a 64 bit pseudo-random number. */                                \
   extern uint64_t name##64(void) {                                             \
-    fio_u128 r = name##128();                                                  \
-    return r.u64[0];                                                           \
+    static size_t counter;                                                     \
+    static fio_u128 r;                                                         \
+    if (!((counter++) & 1))                                                    \
+      r = name##128();                                                         \
+    return r.u64[counter & 1];                                                 \
   }                                                                            \
   /** Fills the `dest` buffer with pseudo-random noise. */                     \
   extern void name##_bytes(void *dest, size_t len) {                           \
@@ -7536,10 +7565,11 @@ SFUNC uint64_t fio_rand64(void) {
     /* re-seed state every 4095 requests / 2^12-1 attempts  */
     fio_rand_reseed();
   }
+  /* load to registers */
   const uint64_t s0[] = {fio___rand_state[0],
                          fio___rand_state[1],
                          fio___rand_state[2],
-                         fio___rand_state[3]}; /* load to registers */
+                         fio___rand_state[3]};
   uint64_t s1[4] = {0};
   {
     const uint64_t mulp[] = {0x37701261ED6C16C7ULL,
@@ -19412,7 +19442,7 @@ FIO_IFUNC fio_keystr_s fio_keystr_tmp(const char *buf, uint32_t len) {
   fio_keystr_s r = {0};
   if (len + 1 < sizeof(r)) { /* always embed small strings in container! */
     r.info = (uint8_t)len;
-    FIO_MEMCPY(r.embd, buf, len);
+    FIO_MEMCPY((char *)r.embd, buf, len);
     return r;
   }
   r.info = 0xFF;
@@ -19429,7 +19459,7 @@ FIO_SFUNC fio_keystr_s fio_keystr_init(fio_str_info_s str,
     return r;
   if (str.len + 1 < sizeof(r)) {
     r.info = (uint8_t)str.len;
-    FIO_MEMCPY(r.embd, str.buf, str.len);
+    FIO_MEMCPY((char *)r.embd, str.buf, str.len);
     return r;
   }
   if (str.capa == FIO_KEYSTR_CONST) {
@@ -20366,10 +20396,10 @@ fio___string_write_unescape_write(uint8_t *restrict dest,
   *ps = s;
   return r;
 }
-FIO_IFUNC int fio_string_write_unescape(fio_str_info_s *restrict dest,
-                                        fio_string_realloc_fn alloc,
-                                        const void *src,
-                                        size_t len) {
+SFUNC int fio_string_write_unescape(fio_str_info_s *restrict dest,
+                                    fio_string_realloc_fn alloc,
+                                    const void *src,
+                                    size_t len) {
   return fio___string_altering_cycle((fio___string_altering_args_s){
       .dest = dest,
       .reallocate = alloc,
@@ -38287,7 +38317,7 @@ FIO_SFUNC ssize_t fio___openssl_read(int fd,
     r = SSL_write_ex(ssl, (void *)&r, 0, (size_t *)&r); /* fall through */
   case SSL_ERROR_WANT_X509_LOOKUP:                      /* fall through */
   case SSL_ERROR_WANT_READ:                             /* fall through */
-#ifdef SSL_ERROR_WANT_ASYNC /* fall through */
+#ifdef SSL_ERROR_WANT_ASYNC
   case SSL_ERROR_WANT_ASYNC:                            /* fall through */
 #endif
   default: errno = EWOULDBLOCK; return (r = -1);
@@ -40760,6 +40790,7 @@ Pub/Sub Cleanup
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
 #define FIO_RESP3              /* Development inclusion - ignore line */
+#define FIO_ATOL               /* Development inclusion - ignore line */
 #include "./include.h"         /* Development inclusion - ignore line */
 #endif                         /* Development inclusion - ignore line */
 /* *****************************************************************************
@@ -41112,9 +41143,91 @@ static int fio___resp3_stack_pop(fio_resp3_s *p) {
 RESP Implementation - inline functions.
 ***************************************************************************** */
 
-static size_t fio___resp3_parse_start(fio_resp3_s *parser,
-                                      uint8_t *buf,
-                                      size_t len);
+FIO_SFUNC size_t fio___resp3_parse_line(fio_resp3_s *p,
+                                        uint8_t *buf,
+                                        size_t len) {
+  uint8_t *const start = buf;
+  uint8_t *eol = (uint8_t *)FIO_MEMCHR(buf, '\n', len);
+  if (!eol)
+    return 0;
+  uint8_t *end = eol - (eol[0 - (eol > buf)] == '\r');
+  ++eol;
+  if (end == buf)
+    goto finished;
+  p->stack[p->depth].otype = buf[0];
+  switch (*buf) {
+  /** The general form is `+<string>\r\n` */
+  case FIO___RESP3_U8_SIMPLE: /* ((unsigned char)'+') */
+  /** The general form is `-<string>\r\n` */
+  case FIO___RESP3_U8_ERROR: /* ((unsigned char)'-') */
+  /** Big number `(<big number>\r\n` */
+  case FIO___RESP3_U8_BIGNUM: /* ((unsigned char)'(') */
+    ++buf;
+    p->stack[p->depth].obj = p->settings.get_string((char *)buf, end - buf);
+    goto finished;
+  /** The general form is `:<number>\r\n` */
+  case FIO___RESP3_U8_NUMBER: /* ((unsigned char)':') */
+    ++buf;
+    p->stack[p->depth].obj = p->settings.get_number(fio_atol((char **)&buf));
+    if (buf[0] != '\r' && buf[0] != '\n')
+      goto error;
+    goto finished;
+  /** Null: `_\r\n` */
+  case FIO___RESP3_U8_NULL: /* ((unsigned char)'_') */
+    p->stack[p->depth].obj = p->settings.set_null;
+    if (buf[1] != '\r' && buf[1] != '\n')
+      goto error;
+    goto finished;
+
+  /** Double: ,<floating-point-number>\r\n (inf, inf, nan, -nan) */
+  case FIO___RESP3_U8_FLOAT: /* ((unsigned char)',') */
+    ++buf;
+    goto finished;
+    if (buf[1] != '\r' && buf[1] != '\n')
+      goto error;
+    goto finished;
+  /** Boolean: `#t\r\n` and `#f\r\n` */
+  case FIO___RESP3_U8_BOOL: /* ((unsigned char)'#') */
+    ++buf;
+    switch (buf[0]) {
+    case 't': p->stack[p->depth].obj = p->settings.set_true; break;
+    case 'f': p->stack[p->depth].obj = p->settings.set_false; break;
+    default: goto error;
+    }
+    if (buf[1] != '\r' && buf[1] != '\n')
+      goto error;
+    goto finished;
+
+  /* Blob Types */
+
+  /** The general form is `$<length>\r\n<bytes>\r\n` */
+  case FIO___RESP3_U8_BLOB: /* ((unsigned char)'$') */ break;
+  /** Blob error: `!<length>\r\n<bytes>\r\n`.*/
+  case FIO___RESP3_U8_ERROR_BLOB: /* ((unsigned char)'!') */ break;
+  /** Verbatim string: first 3 bytes are the type `XXX:`,i.e., `txt:`  */
+  case FIO___RESP3_U8_VBLOB: /* ((unsigned char)'=') */ break;
+
+  /* <aggregate-type-char><numelements><CR><LF> */
+  case FIO___RESP3_U8_ARRAY: /* ((unsigned char)'*') */ break;
+  case FIO___RESP3_U8_PUSH: /*  ((unsigned char)'>') */ break;
+  case FIO___RESP3_U8_MAP: /*   ((unsigned char)'%') */ break;
+  case FIO___RESP3_U8_ATTR: /*  ((unsigned char)'|') */ break;
+  case FIO___RESP3_U8_SET: /*   ((unsigned char)'~') */ break;
+  }
+
+finished:
+  if (fio___resp3_stack_consume(p))
+    goto error;
+  return eol - start;
+push_finished:
+  return eol - start;
+error:
+  return eol - start;
+}
+
+FIO_SFUNC size_t fio___resp3_parse_router(fio_resp3_s *parser,
+                                          uint8_t *buf,
+                                          size_t len) {}
 
 /** Parse `data`, returning the abount of bytes consumed. */
 FIO_IFUNC size_t fio_resp3_parse(fio_resp3_s *parser,
@@ -41123,11 +41236,7 @@ FIO_IFUNC size_t fio_resp3_parse(fio_resp3_s *parser,
   size_t r = 0, tmp = 0;
   if (!buf)
     return r;
-  while (len && (tmp = parser->private_data.parse(parser, buf, len)) + 1 > 1) {
-    r += tmp;
-    buf += tmp;
-    len -= tmp;
-  }
+
   return r;
 }
 
@@ -42752,13 +42861,13 @@ Simple Property Set / Get
 ***************************************************************************** */
 
 #define HTTP___MAKE_GET_SET(property)                                          \
-  FIO_IFUNC fio_str_info_s fio_http_##property(fio_http_s *h) {                \
+  SFUNC fio_str_info_s fio_http_##property(fio_http_s *h) {                    \
     FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
     return fio_keystr_info(&h->property);                                      \
   }                                                                            \
                                                                                \
-  FIO_IFUNC fio_str_info_s fio_http_##property##_set(fio_http_s *h,            \
-                                                     fio_str_info_s value) {   \
+  SFUNC fio_str_info_s fio_http_##property##_set(fio_http_s *h,                \
+                                                 fio_str_info_s value) {       \
     FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
     fio_keystr_destroy(&h->property, fio___http_keystr_free);                  \
     h->property = fio_keystr_init(value, fio___http_keystr_alloc);             \
@@ -42772,7 +42881,7 @@ HTTP___MAKE_GET_SET(version)
 
 #undef HTTP___MAKE_GET_SET
 
-FIO_IFUNC_DEF_GET(fio_http, fio_http_s, size_t, status)
+FIO_DEF_GET_FUNC(SFUNC, fio_http, fio_http_s, size_t, status)
 
 /** Sets the status associated with the HTTP handle (response). */
 SFUNC size_t fio_http_status_set(fio_http_s *h, size_t status) {
@@ -53148,6 +53257,7 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #undef FIO___TEST_REINCLUDE
 #endif
 
+FIO_DEFINE_RANDOM128_FN(FIO_SFUNC, fio___prng, 31, 0)
 /* *****************************************************************************
 Playhouse hashing (next risky version)
 ***************************************************************************** */
@@ -53259,6 +53369,10 @@ FIO_SFUNC void fio_risky2_hash128(void *restrict dest,
   fio_memcpy16(dest, r);
 }
 
+FIO_SFUNC uintptr_t FIO_NAME_TEST(stl, risky2_wrapper)(char *buf, size_t len) {
+  return fio_risky2_hash(buf, len, 1);
+}
+
 #undef FIO___R2_HASH_MUL_PRIME
 #undef FIO___R2_HASH_ROUND_FULL
 
@@ -53339,9 +53453,6 @@ FIO_SFUNC uintptr_t FIO_NAME_TEST(stl, risky_wrapper)(char *buf, size_t len) {
 }
 FIO_SFUNC uintptr_t FIO_NAME_TEST(stl, stable_wrapper)(char *buf, size_t len) {
   return fio_stable_hash(buf, len, 1);
-}
-FIO_SFUNC uintptr_t FIO_NAME_TEST(stl, risky2_wrapper)(char *buf, size_t len) {
-  return fio_risky2_hash(buf, len, 1);
 }
 
 FIO_SFUNC uintptr_t FIO_NAME_TEST(stl, risky_ptr_wrapper)(char *buf,
@@ -53554,8 +53665,10 @@ FIO_SFUNC void FIO_NAME_TEST(stl, random_buffer)(uint64_t *stream,
   fprintf(stderr, "\t- \x1B[1m%s\x1B[0m (%zu CPU cycles):\n", name, clk);
 #endif
   fprintf(stderr,
-          "\t  zeros / ones (bit frequency)\t%.05f\n",
-          ((float)1.0 * totals[0]) / totals[1]);
+          "\t  zeros / ones (frequency bias)\t%.05f%% (should be near zero)\n",
+          ((((float)100.0 * totals[0]) / totals[1]) > (float)100.0
+               ? ((((float)100.0 * totals[0]) / totals[1]) - 100)
+               : ((float)100 - (((float)100.0 * totals[0]) / totals[1]))));
   if (!(totals[0] < totals[1] + (total_bits / 20) &&
         totals[1] < totals[0] + (total_bits / 20)))
     FIO_LOG_ERROR("randomness isn't random?");
@@ -53589,12 +53702,14 @@ FIO_SFUNC void FIO_NAME_TEST(stl, random_buffer)(uint64_t *stream,
 }
 
 FIO_SFUNC void FIO_NAME_TEST(stl, random)(void) {
-  fprintf(stderr,
-          "* Testing randomness "
-          "- bit frequency / hemming distance / chi-square.\n");
   const size_t test_len = (1UL << 21);
   uint64_t *rs =
       (uint64_t *)FIO_MEM_REALLOC(NULL, 0, sizeof(*rs) * test_len, 0);
+  fprintf(
+      stderr,
+      "* Testing randomness "
+      "- bit frequency / hemming distance / chi-square (%zu random bytes).\n",
+      (size_t)(sizeof(*rs) * test_len));
   clock_t start, end;
   FIO_ASSERT_ALLOC(rs);
 
@@ -53684,7 +53799,22 @@ FIO_SFUNC void FIO_NAME_TEST(stl, random)(void) {
   FIO_NAME_TEST(stl, random_buffer)
   (rs, test_len, "fio_rand_bytes", end - start);
 
-  fio_rand_feed2seed(rs, sizeof(*rs) * test_len);
+  FIO_MEMSET(rs, 0, sizeof(*rs) * test_len);
+  fio___prng64(); /* warmup */
+  start = clock();
+  for (size_t i = 0; i < test_len; ++i) {
+    rs[i] = fio___prng64();
+  }
+  end = clock();
+  FIO_NAME_TEST(stl, random_buffer)
+  (rs, test_len, "PNGR128/64bits", end - start);
+  FIO_MEMSET(rs, 0, sizeof(*rs) * test_len);
+  start = clock();
+  fio___prng_bytes(rs, test_len * sizeof(*rs));
+  end = clock();
+  FIO_NAME_TEST(stl, random_buffer)
+  (rs, test_len, "PNGR128_bytes", end - start);
+
   FIO_MEM_FREE(rs, sizeof(*rs) * test_len);
   fprintf(stderr, "\n");
   {
