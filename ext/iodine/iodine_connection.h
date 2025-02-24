@@ -1296,34 +1296,40 @@ static void iodine_connection_init_env_template(fio_buf_info_s at_url) {
   iodine_env_set_key_pair(env,
                           FIO_STR_INFO1((char *)"SCRIPT_NAME"),
                           FIO_STR_INFO0);
-  if (at_url.len) {
-    fio_url_s u = fio_url_parse(at_url.buf, at_url.len);
-    uint64_t port_num = u.port.len ? fio_atol(&u.port.buf) : 0;
-    if (port_num && (port_num < 0xFFFF))
-      iodine_env_set_const_val(env,
-                               FIO_STR_INFO1((char *)"SERVER_PORT"),
-                               UINT2NUM((unsigned)port_num));
-  } else if (fio_cli_get_i("-p")) {
-    iodine_env_set_const_val(env,
-                             FIO_STR_INFO1((char *)"SERVER_PORT"),
-                             UINT2NUM((unsigned)fio_cli_get_i("-p")));
-  } else if (fio_cli_unnamed(0)) {
-    fio_url_s u = fio_url_parse(fio_cli_unnamed(0), strlen(fio_cli_unnamed(0)));
-    uint64_t port_num = u.port.len ? fio_atol(&u.port.buf) : 0;
-    if (port_num && (port_num < 0xFFFF))
-      iodine_env_set_const_val(env,
-                               FIO_STR_INFO1((char *)"SERVER_PORT"),
-                               UINT2NUM((unsigned)port_num));
-  } else if (getenv("PORT") && strlen(getenv("PORT"))) {
-    char *tmp = getenv("PORT");
-    uint64_t port_num = fio_atol(&tmp);
-    iodine_env_set_const_val(env,
-                             FIO_STR_INFO1((char *)"SERVER_PORT"),
-                             UINT2NUM((unsigned)port_num));
-  } else {
-    iodine_env_set_const_val(env,
-                             FIO_STR_INFO1((char *)"SERVER_PORT"),
-                             UINT2NUM((unsigned)3000));
+  { /* SERVER_PORT must be a String Object. */
+    uint64_t port_num = 3000;
+    uint8_t was_set = 0;
+    if (at_url.len) {
+      fio_url_s u = fio_url_parse(at_url.buf, at_url.len);
+      port_num = u.port.len ? fio_atol(&u.port.buf) : 0;
+    } else {
+      if (fio_cli_get_i("-p")) {
+        port_num = fio_cli_get_i("-p");
+        was_set = 1;
+      } else if (fio_cli_get("-b")) {
+        fio_url_s u =
+            fio_url_parse(fio_cli_get("-b"), strlen(fio_cli_get("-b")));
+        if (u.port.len) {
+          port_num = fio_atol(&u.port.buf);
+          was_set = 1;
+        } else if (u.host.len) {
+          port_num = 80;
+          if (fio_url_is_tls(u).tls)
+            port_num = 443;
+          was_set = 1;
+        }
+      }
+      if (!was_set && getenv("PORT") && strlen(getenv("PORT"))) {
+        char *tmp = getenv("PORT");
+        port_num = fio_atol(&tmp);
+        was_set = 1;
+      }
+    }
+    FIO_STR_INFO_TMP_VAR(prt, 32);
+    fio_string_write_u(&prt, NULL, port_num);
+    iodine_env_set_key_pair_const(env,
+                                  FIO_STR_INFO1((char *)"SERVER_PORT"),
+                                  prt);
   }
 }
 
