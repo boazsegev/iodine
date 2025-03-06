@@ -25,7 +25,7 @@ static uint64_t iodinde_hmap_hash(VALUE k) {
 }
 
 static _Bool iodinde_hmap_object_cmp(VALUE a, VALUE b) {
-  if (((a ^ b) & RUBY_T_MASK))
+  if (rb_type(a) != rb_type(b))
     return 0;
   if (!RB_TYPE_P(a, RUBY_T_STRING))
     return a == b;
