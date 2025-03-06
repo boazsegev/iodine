@@ -7652,13 +7652,24 @@ Copyright and License: see header file (000 copyright.h) or top of file
 Signal Monitoring API
 ***************************************************************************** */
 
+typedef struct {
+  /** The signal number to listen for. */
+  int sig;
+  /** The callback to run - leave NULL to ignore signal. */
+  void (*callback)(int sig, void *udata);
+  /** Opaque user data. */
+  void *udata;
+  /** Should the signal propagate to existing handler(s)? */
+  bool propagate;
+  /** Call (safe) callback immediately? or wait for `fio_signal_review`? */
+  bool immediate;
+} fio_signal_monitor_args_s;
 /**
  * Starts to monitor for the specified signal, setting an optional callback.
  */
-SFUNC int fio_signal_monitor(int sig,
-                             void (*callback)(int sig, void *),
-                             void *udata,
-                             bool propagate);
+SFUNC int fio_signal_monitor(fio_signal_monitor_args_s args);
+#define fio_signal_monitor(...)                                                \
+  fio_signal_monitor((fio_signal_monitor_args_s){__VA_ARGS__})
 
 /** Reviews all signals, calling any relevant callbacks. */
 SFUNC int fio_signal_review(void);
@@ -7686,27 +7697,31 @@ Signal Monitoring Implementation - possibly externed functions.
 /* *****************************************************************************
 POSIX implementation
 ***************************************************************************** */
-#ifdef FIO_OS_POSIX
+#if defined(FIO_OS_POSIX)
 
 static struct {
-  int32_t sig;
-  uint16_t propagate;
-  volatile uint16_t flag;
-  void (*callback)(int sig, void *);
-  void *udata;
+  fio_signal_monitor_args_s args;
   struct sigaction old;
+  volatile uint16_t flag;
 } fio___signal_watchers[FIO_SIGNAL_MONITOR_MAX];
 
 FIO_SFUNC void fio___signal_catcher(int sig) {
   for (size_t i = 0; i < FIO_SIGNAL_MONITOR_MAX; ++i) {
-    if (!fio___signal_watchers[i].sig && !fio___signal_watchers[i].udata)
+    if (!fio___signal_watchers[i].args.sig &&
+        !fio___signal_watchers[i].args.udata)
       return; /* initialized list is finishe */
-    if (fio___signal_watchers[i].sig != sig)
+    if (fio___signal_watchers[i].args.sig != sig)
       continue;
+    /* execute vs mark */
+    if (fio___signal_watchers[i].args.immediate)
+      fio___signal_watchers[i].args.callback(
+          fio___signal_watchers[i].args.sig,
+          fio___signal_watchers[i].args.udata);
     /* mark flag */
-    fio___signal_watchers[i].flag = 1;
+    fio___signal_watchers[i].flag = !fio___signal_watchers[i].args.immediate;
+
     /* pass-through if exists */
-    if (fio___signal_watchers[i].propagate &&
+    if (fio___signal_watchers[i].args.propagate &&
         fio___signal_watchers[i].old.sa_handler != SIG_IGN &&
         fio___signal_watchers[i].old.sa_handler != SIG_DFL)
       fio___signal_watchers[i].old.sa_handler(sig);
@@ -7714,43 +7729,36 @@ FIO_SFUNC void fio___signal_catcher(int sig) {
   }
 }
 
+int fio_signal_monitor___(void); /* IDE Marker */
 /**
  * Starts to monitor for the specified signal, setting an optional callback.
  */
-SFUNC int fio_signal_monitor(int sig,
-                             void (*callback)(int sig, void *),
-                             void *udata,
-                             bool propagate) {
-  if (!sig)
+SFUNC int fio_signal_monitor FIO_NOOP(fio_signal_monitor_args_s args) {
+  if (!args.sig)
     return -1;
   for (size_t i = 0; i < FIO_SIGNAL_MONITOR_MAX; ++i) {
     /* updating an existing monitor */
-    if (fio___signal_watchers[i].sig == sig) {
-      fio___signal_watchers[i].callback = callback;
-      fio___signal_watchers[i].udata = udata;
-      fio___signal_watchers[i].propagate = propagate;
+    if (fio___signal_watchers[i].args.sig == args.sig) {
+      fio___signal_watchers[i].args = args;
       return 0;
     }
     /* slot busy */
-    if (fio___signal_watchers[i].sig || fio___signal_watchers[i].callback)
+    if (fio___signal_watchers[i].args.sig ||
+        fio___signal_watchers[i].args.callback)
       continue;
     /* place monitor in this slot */
     struct sigaction act;
     memset(&act, 0, sizeof(act));
     memset(fio___signal_watchers + i, 0, sizeof(fio___signal_watchers[i]));
-    fio___signal_watchers[i].sig = sig;
-    fio___signal_watchers[i].callback = callback;
-    fio___signal_watchers[i].udata = udata;
-    fio___signal_watchers[i].propagate = propagate;
+    fio___signal_watchers[i].args = args;
     act.sa_handler = fio___signal_catcher;
     sigemptyset(&act.sa_mask);
     act.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-    if (sigaction(sig, &act, &fio___signal_watchers[i].old)) {
+    if (sigaction(args.sig, &act, &fio___signal_watchers[i].old)) {
       FIO_LOG_ERROR("couldn't set signal handler: %s", strerror(errno));
-      fio___signal_watchers[i].callback = NULL;
-      fio___signal_watchers[i].udata = (void *)1;
-      fio___signal_watchers[i].sig = 0;
-      fio___signal_watchers[i].propagate = 0;
+      fio___signal_watchers[i].args = (fio_signal_monitor_args_s){
+          .udata = (void *)1,
+      };
       return -1;
     }
     return 0;
@@ -7765,14 +7773,14 @@ SFUNC int fio_signal_forget(int sig) {
   struct sigaction act = {0};
   act.sa_handler = SIG_DFL;
   for (size_t i = 0; i < FIO_SIGNAL_MONITOR_MAX; ++i) {
-    if (!fio___signal_watchers[i].sig && !fio___signal_watchers[i].udata)
+    if (!fio___signal_watchers[i].args.sig &&
+        !fio___signal_watchers[i].args.udata)
       break; /* initialized list is finished */
-    if (fio___signal_watchers[i].sig != sig)
+    if (fio___signal_watchers[i].args.sig != sig)
       continue;
-    fio___signal_watchers[i].callback = NULL;
-    fio___signal_watchers[i].udata = (void *)1;
-    fio___signal_watchers[i].sig = 0;
-    fio___signal_watchers[i].propagate = 0;
+    fio___signal_watchers[i].args = (fio_signal_monitor_args_s){
+        .udata = (void *)1,
+    };
     struct sigaction old = fio___signal_watchers[i].old;
     old = act;
     if (sigaction(sig, &old, &act)) {
@@ -7791,24 +7799,28 @@ Windows Implementation
 #elif FIO_OS_WIN
 
 static struct {
-  int32_t sig;
-  uint16_t propagate;
-  volatile uint16_t flag;
-  void (*callback)(int sig, void *);
-  void *udata;
+  fio_signal_monitor_args_s args;
   void (*old)(int sig);
+  volatile uint16_t flag;
 } fio___signal_watchers[FIO_SIGNAL_MONITOR_MAX];
 
 FIO_SFUNC void fio___signal_catcher(int sig) {
   for (size_t i = 0; i < FIO_SIGNAL_MONITOR_MAX; ++i) {
-    if (!fio___signal_watchers[i].sig && !fio___signal_watchers[i].udata)
+    if (!fio___signal_watchers[i].args.sig &&
+        !fio___signal_watchers[i].args.udata)
       return; /* initialized list is finished */
-    if (fio___signal_watchers[i].sig != sig)
+    if (fio___signal_watchers[i].args.sig != sig)
       continue;
+    /* execute vs mark */
+    if (fio___signal_watchers[i].args.immediate)
+      fio___signal_watchers[i].args.callback(
+          fio___signal_watchers[i].args.sig,
+          fio___signal_watchers[i].args.udata);
     /* mark flag */
-    fio___signal_watchers[i].flag = 1;
+    fio___signal_watchers[i].flag = !fio___signal_watchers[i].args.immediate;
     /* pass-through if exists */
-    if (fio___signal_watchers[i].propagate && fio___signal_watchers[i].old &&
+    if (fio___signal_watchers[i].args.propagate &&
+        fio___signal_watchers[i].old &&
         (intptr_t)fio___signal_watchers[i].old != (intptr_t)SIG_IGN &&
         (intptr_t)fio___signal_watchers[i].old != (intptr_t)SIG_DFL) {
       fio___signal_watchers[i].old(sig);
@@ -7820,37 +7832,31 @@ FIO_SFUNC void fio___signal_catcher(int sig) {
   }
 }
 
+SFUNC int fio_signal_monitor___(void); /* IDE Marker */
 /**
  * Starts to monitor for the specified signal, setting an optional callback.
  */
-SFUNC int fio_signal_monitor(int sig,
-                             void (*callback)(int sig, void *),
-                             void *udata,
-                             bool propagate) {
-  if (!sig)
+SFUNC int fio_signal_monitor FIO_NOOP(fio_signal_monitor_args_s args) {
+  if (!args.sig)
     return -1;
   for (size_t i = 0; i < FIO_SIGNAL_MONITOR_MAX; ++i) {
     /* updating an existing monitor */
-    if (fio___signal_watchers[i].sig == sig) {
-      fio___signal_watchers[i].callback = callback;
-      fio___signal_watchers[i].udata = udata;
+    if (fio___signal_watchers[i].args.sig == args.sig) {
+      fio___signal_watchers[i].args = args;
       return 0;
     }
     /* slot busy */
-    if (fio___signal_watchers[i].sig || fio___signal_watchers[i].callback)
+    if (fio___signal_watchers[i].args.sig ||
+        fio___signal_watchers[i].args.callback ||
+        fio___signal_watchers[i].args.udata)
       continue;
     /* place monitor in this slot */
-    fio___signal_watchers[i].sig = sig;
-    fio___signal_watchers[i].callback = callback;
-    fio___signal_watchers[i].udata = udata;
-    fio___signal_watchers[i].propagate = propagate;
-    fio___signal_watchers[i].old = signal(sig, fio___signal_catcher);
+    fio___signal_watchers[i].args = args;
+    fio___signal_watchers[i].old = signal(args.sig, fio___signal_catcher);
     if ((intptr_t)SIG_ERR == (intptr_t)fio___signal_watchers[i].old) {
-      fio___signal_watchers[i].sig = 0;
-      fio___signal_watchers[i].callback = NULL;
-      fio___signal_watchers[i].udata = (void *)1;
-      fio___signal_watchers[i].old = NULL;
-      fio___signal_watchers[i].propagate = 0;
+      fio___signal_watchers[i].args = (fio_signal_monitor_args_s){
+          .udata = (void *)1,
+      };
       FIO_LOG_ERROR("couldn't set signal handler: %s", strerror(errno));
       return -1;
     }
@@ -7865,13 +7871,14 @@ SFUNC int fio_signal_forget(int sig) {
     return -1;
   size_t i = 0;
   for (; i < FIO_SIGNAL_MONITOR_MAX; ++i) {
-    if (!fio___signal_watchers[i].sig && !fio___signal_watchers[i].udata)
+    if (!fio___signal_watchers[i].args.sig &&
+        !fio___signal_watchers[i].args.udata)
       return -1; /* initialized list is finished */
-    if (fio___signal_watchers[i].sig != sig)
+    if (fio___signal_watchers[i].args.sig != sig)
       continue;
-    fio___signal_watchers[i].callback = NULL;
-    fio___signal_watchers[i].udata = (void *)1;
-    fio___signal_watchers[i].sig = 0;
+    fio___signal_watchers[i].args = (fio_signal_monitor_args_s){
+        .udata = (void *)1,
+    };
     if (fio___signal_watchers[i].old &&
         fio___signal_watchers[i].old != SIG_DFL) {
       if ((intptr_t)signal(sig, fio___signal_watchers[i].old) ==
@@ -7902,14 +7909,16 @@ Common OS implementation
 SFUNC int fio_signal_review(void) {
   int c = 0;
   for (size_t i = 0; i < FIO_SIGNAL_MONITOR_MAX; ++i) {
-    if (!fio___signal_watchers[i].sig && !fio___signal_watchers[i].udata)
+    if (!fio___signal_watchers[i].args.sig &&
+        !fio___signal_watchers[i].args.udata)
       return c;
     if (fio___signal_watchers[i].flag) {
       fio___signal_watchers[i].flag = 0;
       ++c;
-      if (fio___signal_watchers[i].callback)
-        fio___signal_watchers[i].callback(fio___signal_watchers[i].sig,
-                                          fio___signal_watchers[i].udata);
+      if (fio___signal_watchers[i].args.callback)
+        fio___signal_watchers[i].args.callback(
+            fio___signal_watchers[i].args.sig,
+            fio___signal_watchers[i].args.udata);
     }
   }
   return c;
@@ -28857,6 +28866,7 @@ typedef struct FIO_NAME(FIO_MAP_NAME, __each_node_s) {
   void *udata;
 } FIO_NAME(FIO_MAP_NAME, __each_node_s);
 
+void fio___map___each_node___(void); /* IDE Marker */
 /* perform task for each node. */
 FIO_IFUNC int FIO_NAME(FIO_MAP_NAME,
                        __each_node)(FIO_NAME(FIO_MAP_NAME, s) * o,
@@ -29033,7 +29043,7 @@ FIO_SFUNC fio___map_node_info_s FIO_NAME(FIO_MAP_NAME, __node_info_med)(
       (uint32_t)FIO_NAME(FIO_MAP_NAME, __byte_hash)(node->hash)};
   const uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
   const uint32_t mask = (uint32_t)(FIO_MAP_CAPA(o->bits) - 1);
-  uint32_t guard = FIO_MAP_ATTACK_LIMIT + 1;
+  uint32_t guard = FIO_MAP_ATTACK_LIMIT;
   uint32_t pos = r.home = (node->hash & mask);
   uint32_t step = 2;
   uint32_t attempts = (mask < 511) ? ((mask >> 2) | 8) : 127;
@@ -29100,7 +29110,7 @@ FIO_SFUNC fio___map_node_info_s FIO_NAME(FIO_MAP_NAME, __node_info_full)(
   const uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
   const size_t attempt_limit = o->bits + 7;
   const uint64_t mbyte64 = ~(UINT64_C(0x0101010101010101) * (uint64_t)r.bhash);
-  uint32_t guard = FIO_MAP_ATTACK_LIMIT + 1;
+  uint32_t guard = FIO_MAP_ATTACK_LIMIT;
   uint32_t pos = r.home = (node->hash & mask);
   size_t attempt = 0;
   for (; r.alt == (uint32_t)-1 && attempt < attempt_limit; ++attempt) {
@@ -29268,6 +29278,7 @@ static int FIO_NAME(FIO_MAP_NAME,
   return 0;
 }
 
+void fio___map___move2map___(void); /* IDE Marker */
 FIO_IFUNC int FIO_NAME(FIO_MAP_NAME,
                        __move2map)(FIO_NAME(FIO_MAP_NAME, s) * dest,
                                    FIO_NAME(FIO_MAP_NAME, s) * src) {
@@ -29351,19 +29362,21 @@ perform_overwrite:
 
 reallocate_map:
   /* reallocate map */
-  if (FIO_NAME(FIO_MAP_NAME, __allocate_map)(&tmp, o->bits + 1))
-    goto no_memory;
-  if (FIO_NAME(FIO_MAP_NAME, __move2map)(&tmp, o)) {
+  for (int i = 1; i < 3; ++i) {
+    if (FIO_NAME(FIO_MAP_NAME, __allocate_map)(&tmp, o->bits + i))
+      goto no_memory;
+    if (FIO_NAME(FIO_MAP_NAME, __move2map)(&tmp, o)) {
+      FIO_NAME(FIO_MAP_NAME, __free_map)(&tmp, 0);
+      continue;
+    }
+    info = FIO_NAME(FIO_MAP_NAME, __node_info)(&tmp, &node);
+    if (info.home != r) {
+      FIO_NAME(FIO_MAP_NAME, __free_map)(o, 0);
+      *o = tmp;
+      goto insert;
+    }
     FIO_NAME(FIO_MAP_NAME, __free_map)(&tmp, 0);
-    goto security_partial;
   }
-  info = FIO_NAME(FIO_MAP_NAME, __node_info)(&tmp, &node);
-  if (info.home != r) {
-    FIO_NAME(FIO_MAP_NAME, __free_map)(o, 0);
-    *o = tmp;
-    goto insert;
-  }
-  FIO_NAME(FIO_MAP_NAME, __free_map)(&tmp, 0);
   goto security_partial;
 
 no_memory:
@@ -30107,44 +30120,10 @@ Map Cleanup
 
 #endif /* FIO_EXTERN_COMPLETE */
 
-#undef FIO_MAP_ARRAY_LOG_LIMIT
-#undef FIO_MAP_ATTACK_LIMIT
-#undef FIO_MAP_CAPA
-#undef FIO_MAP_CAPA_BITS_LIMIT
-#undef FIO_MAP_CUCKOO_STEPS
-#undef FIO_MAP_GET_T
-#undef FIO_MAP_HASH_FN
-#undef FIO_MAP_IS_SPARSE
-#undef FIO_MAP_KEY
-#undef FIO_MAP_KEY_CMP
-#undef FIO_MAP_KEY_COPY
-#undef FIO_MAP_KEY_DESTROY
-#undef FIO_MAP_KEY_DESTROY_SIMPLE
-#undef FIO_MAP_KEY_DISCARD
-#undef FIO_MAP_KEY_FROM_INTERNAL
-#undef FIO_MAP_KEY_INTERNAL
-#undef FIO_MAP_KEY_IS_GREATER_THAN
-#undef FIO_MAP_LRU
-#undef FIO_MAP_NAME
-#undef FIO_MAP_ORDERED
-#undef FIO_MAP_PTR
-#undef FIO_MAP_RECALC_HASH
-#undef FIO_MAP_SEEK_LIMIT
-#undef FIO_MAP_T
-#undef FIO_MAP_TEST
-#undef FIO_MAP_VALUE
-#undef FIO_MAP_VALUE_BSTR
-#undef FIO_MAP_VALUE_COPY
-#undef FIO_MAP_VALUE_DESTROY
-#undef FIO_MAP_VALUE_DESTROY_SIMPLE
-#undef FIO_MAP_VALUE_DISCARD
-#undef FIO_MAP_VALUE_FROM_INTERNAL
-#undef FIO_MAP_VALUE_INTERNAL
-
+#undef FIO___MAP_UPDATE_ORDER
 #undef FIO_MAP___MAKE_BITMAP
 #undef FIO_MAP___STEP_POS
 #undef FIO_MAP___TEST_MATCH
-#undef FIO___MAP_UPDATE_ORDER
 #undef FIO_MAP_ARRAY_LOG_LIMIT
 #undef FIO_MAP_ATTACK_LIMIT
 #undef FIO_MAP_CAPA
@@ -37135,7 +37114,11 @@ static void fio___io_signal_stop(int sig, void *flg) {
   FIO_LOG_INFO("(%d) stop signal detected.", FIO___IO.pid);
   fio_io_stop();
   if (fio_io_is_master())
-    fio_signal_monitor(sig, fio___io_signal_crash, flg, 0);
+    fio_signal_monitor(.sig = sig,
+                       .callback = fio___io_signal_crash,
+                       .udata = flg,
+                       .propagate = 0,
+                       .immediate = 1);
   (void)sig, (void)flg;
 }
 
@@ -37468,16 +37451,19 @@ SFUNC void fio_io_start(int workers) {
 
   fio_state_callback_force(FIO_CALL_PRE_START);
   fio_queue_perform_all(&FIO___IO.queue);
-  fio_signal_monitor(SIGINT, fio___io_signal_stop, NULL, 0);
-  fio_signal_monitor(SIGTERM, fio___io_signal_stop, NULL, 0);
+  fio_signal_monitor(.sig = SIGINT,
+                     .callback = fio___io_signal_stop,
+                     .immediate = 1);
+  fio_signal_monitor(.sig = SIGTERM,
+                     .callback = fio___io_signal_stop,
+                     .immediate = 1);
   if (FIO___IO.restart_signal)
-    fio_signal_monitor(FIO___IO.restart_signal,
-                       fio___io_signal_restart,
-                       NULL,
-                       0);
+    fio_signal_monitor(.sig = FIO___IO.restart_signal,
+                       .callback = fio___io_signal_restart,
+                       .immediate = 1);
 
 #ifdef SIGPIPE
-  fio_signal_monitor(SIGPIPE, NULL, NULL, 0);
+  fio_signal_monitor(.sig = SIGPIPE);
 #endif
   FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
   if (workers) {
@@ -38486,7 +38472,7 @@ FIO_CONSTRUCTOR(fio___openssl_setup_default) {
   FIO___OPENSSL_IO_FUNCS = fio_openssl_io_functions();
   fio_io_tls_default_functions(&FIO___OPENSSL_IO_FUNCS);
 #ifdef SIGPIPE
-  fio_signal_monitor(SIGPIPE, NULL, NULL, 0); /* avoid OpenSSL issue... */
+  fio_signal_monitor(.sig = SIGPIPE); /* avoid OpenSSL issue... */
 #endif
 }
 
@@ -40865,6 +40851,10 @@ struct fio___resp3_frame_s {
   uint32_t size;
   /** Object Type */
   uint8_t otype;
+  /** Streaming Object */
+  uint8_t streaming;
+  /** Object is finalized */
+  uint8_t finished;
 };
 
 /* RESP's parser type - do not access directly. */
@@ -41050,68 +41040,79 @@ error:
   return -1;
 }
 
-static int fio___resp3_stack_consume(fio_resp3_s *p) {
-  while (p->depth) {
-    size_t v = p->depth;
-    size_t k = p->depth - 1;
-    size_t c = c;
-    /* ignore attributes */
-    if (p->stack[v].otype == FIO___RESP3_U8_ATTR) {
-      p->depth = c;
-      continue;
-    }
-    /* if the container type is a map, we need another object */
+static int fio___resp3_stack_pop_or_push(fio_resp3_s *p) {
+  size_t v = p->depth;
+  size_t k = p->depth - 1;
+  size_t c = c;
+  /* ignore attributes */
+  if (p->stack[v].otype == FIO___RESP3_U8_ATTR) {
+    p->depth = c;
+    return 0;
+  }
+  /* if the container type is a map, we need another object */
+  switch (p->stack[c].otype) {
+  case FIO___RESP3_U8_MAP:
+    if (p->stack[c].size)
+      return fio___resp3_stack_push(p);
+    /* fall through / ignore? */
+  case FIO___RESP3_U8_ATTR: p->depth = c; return 0;
+  case FIO___RESP3_U8_SET: /* push key=true and  */
+    p->settings.map_push(p->stack[c].obj,
+                         p->stack[v].obj,
+                         p->settings.set_true);
+    p->depth = c;
+    if (--p->stack[c].size)
+      return fio___resp3_stack_push(p) - 1;
+    continue;
+
+  case FIO___RESP3_U8_ARRAY: /* fall through */
+  case FIO___RESP3_U8_PUSH:
+    p->settings.array_push(p->stack[c].obj, p->stack[v].obj);
+    p->depth = c;
+    if (--p->stack[c].size)
+      return fio___resp3_stack_push(p);
+    continue;
+
+  default:
+    /* if `c` (container) isn't a container, it may be a key in a map */
+    c -= !!c;
     switch (p->stack[c].otype) {
-    case FIO___RESP3_U8_ATTR: /* fall through / ignore? */
+    case FIO___RESP3_U8_ATTR: /* TODO: FIXME: ignore attributes? */
+      if (p->stack[v].obj)
+        p->settings.free_response(p->stack[v].obj);
+      if (p->stack[k].obj)
+        p->settings.free_response(p->stack[k].obj);
+      break;
+      p->depth = c;
+      if (--p->stack[c].size)
+        return fio___resp3_stack_push(p);
+      continue;
+
     case FIO___RESP3_U8_MAP:
-      if (p->stack[c].size)
-        return fio___resp3_stack_push(p);
-      p->depth = c;
-      continue;
-    case FIO___RESP3_U8_SET: /* push key=true and  */
-      p->settings.map_push(p->stack[c].obj,
-                           p->stack[v].obj,
-                           p->settings.set_true);
+      /* push both key and value to map */
+      p->settings.map_push(p->stack[c].obj, p->stack[k].obj, p->stack[v].obj);
       p->depth = c;
       if (--p->stack[c].size)
         return fio___resp3_stack_push(p);
       continue;
-
-    case FIO___RESP3_U8_ARRAY: /* fall through */
-    case FIO___RESP3_U8_PUSH:
-      p->settings.array_push(p->stack[c].obj, p->stack[v].obj);
-      p->depth = c;
-      if (--p->stack[c].size)
-        return fio___resp3_stack_push(p);
-      continue;
-
-    default:
-      /* if `c` (container) isn't a container, it may be a key in a map */
-      c -= !!c;
-      switch (p->stack[c].otype) {
-      case FIO___RESP3_U8_ATTR: /* TODO: FIXME: ignore attributes? */
-        if (p->stack[v].obj)
-          p->settings.free_response(p->stack[v].obj);
-        if (p->stack[k].obj)
-          p->settings.free_response(p->stack[k].obj);
-        break;
-        p->depth = c;
-        if (--p->stack[c].size)
-          return fio___resp3_stack_push(p);
-        continue;
-
-      case FIO___RESP3_U8_MAP:
-        /* push both key and value to map */
-        p->settings.map_push(p->stack[c].obj, p->stack[k].obj, p->stack[v].obj);
-        p->depth = c;
-        if (--p->stack[c].size)
-          return fio___resp3_stack_push(p);
-        continue;
-        break;
-      default: goto error;
-      }
+      break;
+    default: goto error;
     }
   }
+error:
+  fio___resp3_stack_destroy(p);
+  return -1;
+}
+
+static int fio___resp3_stack_consume(fio_resp3_s *p) {
+  for (;;) {
+    int pnp = fio___resp3_stack_pop_or_push(p);
+    if (!pnp)
+      continue;
+    return pnp - (pnp == 1);
+  }
+  if (p->depth)
+    return 0;
 
   /* ignore attributes, as they are not replies */
   if (p->stack[0].otype == FIO___RESP3_U8_ATTR) {
@@ -41129,10 +41130,6 @@ static int fio___resp3_stack_consume(fio_resp3_s *p) {
   p->settings.free_response(p->stack[0].obj);
   p->stack[0] = (struct fio___resp3_frame_s){0};
   return 0;
-
-error:
-  fio___resp3_stack_destroy(p);
-  return -1;
 }
 
 static int fio___resp3_stack_pop(fio_resp3_s *p) {
@@ -41169,50 +41166,63 @@ FIO_SFUNC size_t fio___resp3_parse_line(fio_resp3_s *p,
   case FIO___RESP3_U8_NUMBER: /* ((unsigned char)':') */
     ++buf;
     p->stack[p->depth].obj = p->settings.get_number(fio_atol((char **)&buf));
-    if (buf[0] != '\r' && buf[0] != '\n')
+    if (buf[buf[0] == '\r'] != '\n')
       goto error;
     goto finished;
   /** Null: `_\r\n` */
   case FIO___RESP3_U8_NULL: /* ((unsigned char)'_') */
     p->stack[p->depth].obj = p->settings.set_null;
-    if (buf[1] != '\r' && buf[1] != '\n')
+    if (buf[buf[0] == '\r'] != '\n')
       goto error;
     goto finished;
 
   /** Double: ,<floating-point-number>\r\n (inf, inf, nan, -nan) */
   case FIO___RESP3_U8_FLOAT: /* ((unsigned char)',') */
     ++buf;
-    goto finished;
-    if (buf[1] != '\r' && buf[1] != '\n')
+    p->stack[p->depth].obj = p->settings.get_float(fio_atof((char **)&buf));
+    if (buf[buf[0] == '\r'] != '\n')
       goto error;
     goto finished;
   /** Boolean: `#t\r\n` and `#f\r\n` */
   case FIO___RESP3_U8_BOOL: /* ((unsigned char)'#') */
     ++buf;
-    switch (buf[0]) {
+    switch ((buf[0] | 32)) {
     case 't': p->stack[p->depth].obj = p->settings.set_true; break;
     case 'f': p->stack[p->depth].obj = p->settings.set_false; break;
     default: goto error;
     }
-    if (buf[1] != '\r' && buf[1] != '\n')
+    if (buf[buf[0] == '\r'] != '\n')
       goto error;
     goto finished;
 
   /* Blob Types */
 
   /** The general form is `$<length>\r\n<bytes>\r\n` */
-  case FIO___RESP3_U8_BLOB: /* ((unsigned char)'$') */ break;
+  case FIO___RESP3_U8_BLOB: /* ((unsigned char)'$') */ /* fall through */
   /** Blob error: `!<length>\r\n<bytes>\r\n`.*/
-  case FIO___RESP3_U8_ERROR_BLOB: /* ((unsigned char)'!') */ break;
+  case FIO___RESP3_U8_ERROR_BLOB: /* ((unsigned char)'!') */ /* fall through */
   /** Verbatim string: first 3 bytes are the type `XXX:`,i.e., `txt:`  */
-  case FIO___RESP3_U8_VBLOB: /* ((unsigned char)'=') */ break;
+  case FIO___RESP3_U8_VBLOB: /* ((unsigned char)'=') */
+    p->stack[p->depth].obj = p->settings.string_start;
 
-  /* <aggregate-type-char><numelements><CR><LF> */
   case FIO___RESP3_U8_ARRAY: /* ((unsigned char)'*') */ break;
   case FIO___RESP3_U8_PUSH: /*  ((unsigned char)'>') */ break;
   case FIO___RESP3_U8_MAP: /*   ((unsigned char)'%') */ break;
   case FIO___RESP3_U8_ATTR: /*  ((unsigned char)'|') */ break;
   case FIO___RESP3_U8_SET: /*   ((unsigned char)'~') */ break;
+  }
+
+get_length:
+  if (buf[1] == FIO___RESP3_U8_STR_STREAM_LEN) {
+    p->stack[p->depth].streaming = 1;
+  } else {
+    ++buf;
+    uint64_t l = (uint64_t)fio_atol((char **)buf);
+    if ((l >> 32))
+      goto error;
+    p->stack[p->depth].size = (uint32_t)l;
+    if (buf[buf[0] == '\r'] != '\n')
+      goto error;
   }
 
 finished:
@@ -41225,9 +41235,13 @@ error:
   return eol - start;
 }
 
-FIO_SFUNC size_t fio___resp3_parse_router(fio_resp3_s *parser,
+FIO_SFUNC size_t fio___resp3_parse_router(fio_resp3_s *p,
                                           uint8_t *buf,
-                                          size_t len) {}
+                                          size_t len) {
+  switch (p->stack[p->depth].otype) {
+  case 0: return fio___resp3_parse_line(p, buf, len);
+  }
+}
 
 /** Parse `data`, returning the abount of bytes consumed. */
 FIO_IFUNC size_t fio_resp3_parse(fio_resp3_s *parser,
