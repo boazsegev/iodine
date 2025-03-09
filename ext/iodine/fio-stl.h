@@ -37459,8 +37459,7 @@ SFUNC void fio_io_start(int workers) {
                      .immediate = 1);
   if (FIO___IO.restart_signal)
     fio_signal_monitor(.sig = FIO___IO.restart_signal,
-                       .callback = fio___io_signal_restart,
-                       .immediate = 1);
+                       .callback = fio___io_signal_restart);
 
 #ifdef SIGPIPE
   fio_signal_monitor(.sig = SIGPIPE);
