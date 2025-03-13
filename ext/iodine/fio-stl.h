@@ -44449,8 +44449,8 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
     struct {
       char *value;
       fio_buf_info_s ext;
-    } options[] = {{(char *)"gzip", FIO_BUF_INFO2((char *)".gz", 3)},
-                   {(char *)"br", FIO_BUF_INFO2((char *)".br", 3)},
+    } options[] = {{(char *)"br", FIO_BUF_INFO2((char *)".br", 3)},
+                   {(char *)"gzip", FIO_BUF_INFO2((char *)".gz", 3)},
                    {(char *)"deflate", FIO_BUF_INFO2((char *)".zip", 4)},
                    {NULL}};
     for (size_t i = 0; options[i].value; ++i) {
