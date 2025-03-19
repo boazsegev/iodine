@@ -204,23 +204,23 @@ module Iodine
     end
 
     # Benchmark the internal mini-Hash map.
-    def self.minimap(counter = 30)
+    def self.minimap(counter = 20)
       require 'benchmark/ips'
       keys = []
-      counter.times {|i| keys << "counter_string_#{i}" }
+      (counter + 1).times {|i| keys << "counter_string_#{i}" }
       frozen_keys = []
-      counter.times {|i| keys[i].dup.freeze }
+      (counter + 1).times {|i| frozen_keys << "counter_string_#{i}".freeze }
 
       tests = [
-          ["New (#{counter + 1} Empty Maps)", Proc.new {|m| counter.times { m.class.new } }, true ],
+          ["New (#{counter * 2} Empty Maps)", Proc.new {|m| counter.times { m.class.new } }, true ],
           ["New + Set (#{counter} Numbers)", Proc.new {|m| counter.times {|i| m[i] = i } }, true ],
           ["Overwrite (#{counter} Numbers)", Proc.new {|m| counter.times {|i| m[i] = i } } ],
           ["Get (#{counter} Numbers + 1 missing)", Proc.new {|m| (counter + 1).times {|i| m[i] } } ],
-          ["New + Set (#{counter} Strings)", Proc.new {|m| counter.times {|i| m[keys[i]] = i } }, true ],
-          ["Overwrite (#{counter} Strings)", Proc.new {|m| counter.times {|i| m[keys[i]] = i } } ],
-          ["Get (#{counter} Strings + 1 missing)", Proc.new {|m| (counter + 1).times {|i| m[keys[i]] } } ],
-          ["New + Set (#{counter} Strings.freeze)", Proc.new {|m| counter.times {|i| m[frozen_keys[i]] = i } }, true ],
-          ["Overwrite (#{counter} Strings.freeze)", Proc.new {|m| counter.times {|i| m[frozen_keys[i]] = i } } ],
+          ["New + Set (#{counter} Strings)", Proc.new {|m| counter.times {|i| m["counter_string_#{i}"] = i } }, true ],
+          ["Overwrite (#{counter} Strings)", Proc.new {|m| counter.times {|i| m["counter_string_#{i}"] = i } } ],
+          ["Get (#{counter} Strings + 1 missing)", Proc.new {|m| (counter + 1).times {|i| m["counter_string_#{i}"] } } ],
+          ["New + Set (#{counter} Strings.freeze)", Proc.new {|m| counter.times {|i| m[frozen_keys[i]] = keys[i] } }, true ],
+          ["Overwrite (#{counter} Strings.freeze)", Proc.new {|m| counter.times {|i| m[frozen_keys[i]] = keys[i] } } ],
           ["Get (#{counter} Strings.freeze + 1 missing)", Proc.new {|m| (counter + 1).times {|i| m[frozen_keys[i]] } } ],
           ["each (#{counter} Strings)", Proc.new {|m| m.each {|k,v| k; v; } } ]
         ]

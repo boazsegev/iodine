@@ -36,23 +36,22 @@ static void iodine_perform_state_callback_persist(void *blk_) {
 Sets a block of code to run when Iodine's core state is updated.
 
 @param [Symbol] event the state event for which the block should run (see list).
-@since 0.7.9
 
 The state event Symbol can be any of the following:
 
 |  |  |
 |---|---|
-| `:pre_start`   | the block will be called once before starting up the IO reactor. |
-| `:before_fork` | the block will be called before each time the IO reactor forks a new worker. |
-| `:after_fork`  | the block will be called after each fork (both in parent and workers). |
-| `:enter_child` | the block will be called by a worker process right after forking. |
+| `:pre_start`    | the block will be called once before starting up the IO reactor. |
+| `:before_fork`  | the block will be called before each time the IO reactor forks a new worker. |
+| `:after_fork`   | the block will be called after each fork (both in parent and workers). |
+| `:enter_child`  | the block will be called by a worker process right after forking. |
 | `:enter_master` | the block will be called by the master process after spawning a worker (after forking). |
-| `:on_start`     | the block will be called every time a *worker* process starts. In single process mode, the master process is also a worker. |
-| `:on_idle`      | the block will be called when the IO reactor is idling. |
-| `:on_parent_crush` | the block will be called by each worker the moment it detects the master process crashed. |
-| `:on_child_crush`  | the block will be called by the parent (master) after a worker process crashed. |
-| `:start_shutdown`  | the block will be called before starting the shutdown sequence. |
-| `:on_finish`       | the block will be called just before finishing up (both on chlid and parent processes). |
+| `:start`        | the block will be called every time a *worker* process starts. In single process mode, the master process is also a worker. |
+| `:idle`         | the block will be called when the IO reactor is idling. |
+| `:parent_crush` | the block will be called by each worker the moment it detects the master process crashed. |
+| `:child_crush`  | the block will be called by the parent (master) after a worker process crashed. |
+| `:start_shutdown` | the block will be called before starting the shutdown sequence. |
+| `:finish`       | the block will be called just before finishing up (both on chlid and parent processes). |
 
 Code runs in both the parent and the child.
 */

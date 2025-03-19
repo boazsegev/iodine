@@ -167,23 +167,21 @@ module Iodine
   # 
   # @param [Symbol] event the state event for which the block should run (see list).
   # 
-  # @since 0.7.9
-  # 
   # The state event Symbol can be any of the following:
   # 
   # |  |  |
   # |---|---|
-  # | `:pre_start`   | the block will be called once before starting up the IO reactor. |
-  # | `:before_fork` | the block will be called before each time the IO reactor forks a new worker. |
-  # | `:after_fork`  | the block will be called after each fork (both in parent and workers). |
-  # | `:enter_child` | the block will be called by a worker process right after forking. |
-  # | `:enter_master` | the block will be called by the master process after spawning a worker (after forking). |
-  # | `:on_start`     | the block will be called every time a *worker* process starts. In single process mode, the master process is also a worker. |
-  # | `:on_idle`      | the block will be called when the IO reactor is idling. |
-  # | `:on_parent_crush` | the block will be called by each worker the moment it detects the master process crashed. |
-  # | `:on_child_crush`  | the block will be called by the parent (master) after a worker process crashed. |
-  # | `:start_shutdown`  | the block will be called before starting the shutdown sequence. |
-  # | `:on_stop`       | the block will be called just before stopping iodine (both on child and parent processes). |
+  # | `:pre_start`      | the block will be called once before starting up the IO reactor. |
+  # | `:before_fork`    | the block will be called before each time the IO reactor forks a new worker. |
+  # | `:after_fork`     | the block will be called after each fork (both in parent and workers). |
+  # | `:enter_child`    | the block will be called by a worker process right after forking. |
+  # | `:enter_master`   | the block will be called by the master process after spawning a worker (after forking). |
+  # | `:start`          | the block will be called every time a *worker* process starts. In single process mode, the master process is also a worker. |
+  # | `:idle`           | the block will be called every time the IO reactor enters an idling state (on all processes). |
+  # | `:parent_crush`   | the block will be called by each worker the moment it detects the master process crashed. |
+  # | `:child_crush`    | the block will be called by the parent (master) after a worker process crashed. |
+  # | `:start_shutdown` | the block will be called before starting the shutdown sequence. |
+  # | `:stop`           | the block will be called just before stopping iodine (both on child and parent processes). |
   # 
   # Code runs in both the parent and the child.
   def self.on_state(state, &block); end
@@ -212,7 +210,7 @@ module Iodine
   # 
   # Code blocks that where scheduled to run before Iodine enters cluster mode will run on all child processes.
   # 
-  # The code may run in parallel with other calls to `run` or `defer`, as it will run in one of the worker threads.
+  # The code may run in parallel with other calls to `run` or `async`, as it will run in one of the worker threads.
   # 
   # Note: method also accepts a method object if passed as a parameter.
   def self.async(&block); end 
