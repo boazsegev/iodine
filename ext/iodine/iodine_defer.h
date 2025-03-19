@@ -22,6 +22,7 @@ static ID IODINE_STATE_ON_PARENT_CRUSH;
 static ID IODINE_STATE_ON_CHILD_CRUSH;
 static ID IODINE_STATE_ON_SHUTDOWN;
 static ID IODINE_STATE_ON_STOP;
+static ID IODINE_STATE_ON_IDLE;
 
 /* performs a Ruby state callback without clearing the Ruby object's memory */
 static void iodine_perform_state_callback_persist(void *blk_) {
@@ -47,6 +48,7 @@ The state event Symbol can be any of the following:
 | `:enter_child` | the block will be called by a worker process right after forking. |
 | `:enter_master` | the block will be called by the master process after spawning a worker (after forking). |
 | `:on_start`     | the block will be called every time a *worker* process starts. In single process mode, the master process is also a worker. |
+| `:on_idle`      | the block will be called when the IO reactor is idling. |
 | `:on_parent_crush` | the block will be called by each worker the moment it detects the master process crashed. |
 | `:on_child_crush`  | the block will be called by the parent (master) after a worker process crashed. |
 | `:start_shutdown`  | the block will be called before starting the shutdown sequence. |
@@ -92,6 +94,10 @@ static VALUE iodine_on_state(VALUE self, VALUE event) { // clang-format on
                            (void *)block);
   } else if (state == IODINE_STATE_ON_CHILD_CRUSH) {
     fio_state_callback_add(FIO_CALL_ON_CHILD_CRUSH,
+                           iodine_perform_state_callback_persist,
+                           (void *)block);
+  } else if (state == IODINE_STATE_ON_IDLE) {
+    fio_state_callback_add(FIO_CALL_ON_IDLE,
                            iodine_perform_state_callback_persist,
                            (void *)block);
   } else if (state == IODINE_STATE_ON_SHUTDOWN) {
