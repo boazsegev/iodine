@@ -179,6 +179,7 @@ module Iodine
   # | `:enter_child` | the block will be called by a worker process right after forking. |
   # | `:enter_master` | the block will be called by the master process after spawning a worker (after forking). |
   # | `:on_start`     | the block will be called every time a *worker* process starts. In single process mode, the master process is also a worker. |
+  # | `:on_idle`      | the block will be called when the IO reactor is idling. |
   # | `:on_parent_crush` | the block will be called by each worker the moment it detects the master process crashed. |
   # | `:on_child_crush`  | the block will be called by the parent (master) after a worker process crashed. |
   # | `:start_shutdown`  | the block will be called before starting the shutdown sequence. |
@@ -582,8 +583,9 @@ module Iodine
       def punsubscribe(pattern); end
       # Please OVERRIDE(!) – called by iodine when a the engine is detached from iodine.
       # 
-      # This happens when the engine object went out of scope and it's collected by the GC (Garbage Collector).
+      # This happens when the engine object went out of scope and should be collected by the GC (Garbage Collector).
       def on_cleanup; end
+
       # This engine publishes the message to all subscribers in Iodine's root process.
       ROOT
       # This engine publishes the message to all subscribers in the specific root or worker process where `Iodine.publish` was called.

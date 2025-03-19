@@ -162,6 +162,7 @@ void Init_iodine(void) {
   IODINE_CONST_ID_STORE(IODINE_STATE_ON_CHILD_CRUSH, "on_child_crush");
   IODINE_CONST_ID_STORE(IODINE_STATE_ON_SHUTDOWN, "on_shutdown");
   IODINE_CONST_ID_STORE(IODINE_STATE_ON_STOP, "on_stop");
+  IODINE_CONST_ID_STORE(IODINE_STATE_ON_IDLE, "on_idle");
 
   STORE.hold(IODINE_RACK_HIJACK_ID_SYM = rb_id2sym(IODINE_RACK_HIJACK_ID));
   STORE.hold(IODINE_RACK_HIJACK_SYM = rb_id2sym(rb_intern("rack.hijack")));
