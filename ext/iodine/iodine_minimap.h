@@ -7,28 +7,22 @@ Mini Ruby Hash Map
 ***************************************************************************** */
 
 static uint64_t iodinde_hmap_hash(VALUE k) {
-  size_t t = (size_t)rb_type(k);
-  switch (t) {
-  case RUBY_T_STRING: { /* may be an unfrozen String */
+  if (RB_TYPE_P(k, RUBY_T_STRING)) {
     fio_buf_info_s buf = (fio_buf_info_s)IODINE_RSTR_INFO(k);
     return fio_risky_hash(buf.buf, buf.len, (uint64_t)&iodinde_hmap_hash);
   }
-  case RUBY_T_SYMBOL: /* fall through */
-  case RUBY_T_FIXNUM: /* fall through */
-  case RUBY_T_TRUE:   /* fall through */
-  case RUBY_T_FALSE:  /* fall through */
-  case RUBY_T_NIL:    /* these are always frozen */
+  if (RB_SYMBOL_P(k) || RB_FIXNUM_P(k) || k == RUBY_T_TRUE ||
+      k == RUBY_T_FALSE || k == RUBY_T_NIL)
     return fio_risky_num((uint64_t)k, (uint64_t)&iodinde_hmap_hash);
-  }
   rb_raise(rb_eTypeError, "key MUST be either a String or a Symbol.");
   return 0;
 }
 
 static _Bool iodinde_hmap_object_cmp(VALUE a, VALUE b) {
-  if (rb_type(a) != rb_type(b))
+  if (a == b)
+    return 1;
+  if ((unsigned)(!RB_TYPE_P(b, RUBY_T_STRING)) | (!RB_TYPE_P(a, RUBY_T_STRING)))
     return 0;
-  if (!RB_TYPE_P(a, RUBY_T_STRING))
-    return a == b;
   fio_buf_info_s aa = IODINE_RSTR_INFO(a);
   fio_buf_info_s bb = IODINE_RSTR_INFO(b);
   return FIO_BUF_INFO_IS_EQ(aa, bb);
