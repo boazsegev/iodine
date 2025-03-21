@@ -37,7 +37,7 @@ if !defined?(Server)
   Server = Iodine
   module Server
     # NeoRack support requires Server::Event to map to the class implementing the NeoRack events.
-    Event = Connection
+    Event = Iodine::Connection
   end
 end
 

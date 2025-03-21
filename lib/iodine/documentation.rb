@@ -165,7 +165,7 @@ module Iodine
 
   # Sets a block of code to run when Iodine's core state is updated.
   # 
-  # @param [Symbol] event the state event for which the block should run (see list).
+  # @param state [Symbol] event the state event for which the block should run (see list).
   # 
   # The state event Symbol can be any of the following:
   # 
@@ -375,22 +375,22 @@ module Iodine
     # 
     # @param file [String] a file name for the mustache template.
     # 
-    # @param template [String] the content of the mustache template.
+    # @param template [String] the content of the mustache template - if `nil` or missing, `file` content will be loaded from disk.
     # 
     # @param on_yaml [Proc] (**optional**) accepts a YAML front-matter String.
     # 
-    # @param &block to be used as an implicit `on_yaml` (if missing).
+    # @param &block [Block] to be used as an implicit `on_yaml` (if missing).
     # 
     # @return [Iodine::Mustache] returns an Iodine::Mustache object with the provided template ready for rendering.
     # 
     # **Note**: Either the file or template argument (or both) must be provided.
-    def initialize(file = nil, data = nil, on_yaml = nil, &block); end
+    def initialize(file = nil, template = nil, on_yaml = nil, &block); end
    
     # Renders the template given at initialization with the provided context.
     #
     #        m.render(ctx)
     #
-    # @param ctx the top level context for the template data.
+    # @param ctx [Hash] the top level context for the template data.
     #
     # @return [String] returns a String containing the rendered template.
     def render(ctx = nil); end
@@ -401,18 +401,18 @@ module Iodine
     #
     # @param file [String] a file name for the mustache template.
     #
-    # @param template [String] the content of the mustache template.
+    # @param template [String] the content of the mustache template - if `nil` or missing, `file` content will be loaded from disk.
     #
-    # @param ctx [String] the top level context for the template data.
+    # @param ctx [Hash] the top level context for the template data.
     #
     # @param on_yaml [Proc] (**optional**) accepts a YAML front-matter String.
     #
-    # @param &block to be used as an implicit \p on_yaml (if missing).
+    # @param &block [Block] to be used as an implicit \p on_yaml (if missing).
     #
     # @return [String] returns a String containing the rendered template.
     #
     # **Note**: Either the file or template argument (or both) must be provided.
-    def self.render(file = nil, data = nil, ctx = nil, on_yaml = nil, &block); end
+    def self.render(file = nil, template = nil, ctx = nil, on_yaml = nil, &block); end
   end
 
   #######################
@@ -526,13 +526,13 @@ module Iodine
       def id(); end
       # Returns the event's `channel` property - the event's target channel.
       def channel(); end
-      alias :event, :channel
+      alias :event :channel
       # Returns the event's `filter` property - the event's numerical channel filter.
       def filter(); end
       # Returns the event's `message` property - the event's payload (same as {to_s}).
       def message(); end
-      alias :msg, :message
-      alias :data, :message
+      alias :msg :message
+      alias :data :message
       # Returns the event's `published` property - the event's published timestamp in milliseconds since epoch.
       def published(); end
 
@@ -585,15 +585,15 @@ module Iodine
       def on_cleanup; end
 
       # This engine publishes the message to all subscribers in Iodine's root process.
-      ROOT
+      ROOT = Engine.new
       # This engine publishes the message to all subscribers in the specific root or worker process where `Iodine.publish` was called.
-      PROCESS
+      PROCESS = Engine.new
       # This engine publishes the message to all subscribers in Iodine's worker processes (except current process).
-      SIBLINGS
+      SIBLINGS = Engine.new
       # This engine publishes the message to all subscribers in Iodine's root and worker processes.
-      LOCAL
+      LOCAL = Engine.new
       # This engine publishes the message to all subscribers in Iodine's root and worker processes, as well as any detected Iodine instance on the local network.
-      CLUSTER
+      CLUSTER = Engine.new
     end
 
   end
@@ -606,16 +606,13 @@ module Iodine
   #
   # - HTTP related methods include the {#status}, {#method}, {#path}, {#query}, {#headers}, {#cookie}, {#each_cookie}, {#read}, {#env} (Rack), and more methods.
   # 
-  # - WbeSocket / TCP related methods include the {#open?}, {#write}, {#pending?} and {#close} methods.
+  # - WebSocket / TCP related methods include the {#open?}, {#write}, {#pending} and {#close} methods.
   # 
   # - Pub/Sub related methods include the {#subscribe}, {#unsubscribe}, {#publish} and {#pubsub?} methods.
   # 
   # - Connection specific data can be stored / accessed using {#[]}, {#[]=}, {#each}, {#store_count}, {#store_capa}, {#store_reserve} methods.
   # 
   class Connection
-    # Used for Rack Hijack (rack.hijack).
-    class RackIO < ::IO
-    end
 
     # Unless `env` is manually set, Iodine will attempt to create a default `env` object that will follow the Rack Server specification for HTTP connections.
     #
@@ -675,7 +672,7 @@ module Iodine
     #
     # (HTTP Only) Returns `true` only if upgraded and open (WebSocket is open).
     def open?(); end
-    # @deprecated Please check the {Server.extensions} Hash instead.
+    # @deprecated Please check the {Iodine.extensions} Hash instead.
     # 
     # Always returns `true`, since Iodine connections support the pub/sub extension.
     # 
@@ -891,6 +888,8 @@ module Iodine
     # Hijacks the connection from the Server and returns an IO object.
     #
     # This method MAY be used to implement a full hijack when providing compatibility with the Rack specification.
+    #
+    # @return [IO] for current underlying socket connection
     def rack_hijack; end
 
 #######################
