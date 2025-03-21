@@ -664,7 +664,7 @@ FIO_SFUNC VALUE iodine_connection_body_seek(int argc, VALUE *argv, VALUE o) {
   iodine_connection_s *c = iodine_connection_ptr(o);
   if (!c->http)
     return Qnil;
-  int64_t pos = 0;
+  int64_t pos = SSIZE_MAX;
   iodine_rb2c_arg(argc, argv, IODINE_ARG_NUM(pos, 0, "pos", 0));
   pos = (long long)fio_http_body_seek(c->http, (ssize_t)pos);
   return ULL2NUM(pos);

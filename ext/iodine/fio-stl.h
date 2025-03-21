@@ -41575,8 +41575,15 @@ SFUNC size_t fio_http_request_header_each(fio_http_s *,
 /** Gets the body (payload) length associated with the HTTP handle. */
 SFUNC size_t fio_http_body_length(fio_http_s *);
 
-/** Adjusts the body's reading position. Negative values start at the end. */
+/**
+ * Adjusts the body's reading position. Negative values start at the end.
+ *
+ * If `pos == SSIZE_MAX`, returns `fio_http_body_pos`.
+ */
 SFUNC size_t fio_http_body_seek(fio_http_s *, ssize_t pos);
+
+/** Returns the body's reading position. */
+SFUNC size_t fio_http_body_pos(fio_http_s *h);
 
 /** Reads up to `length` of data from the body, returns nothing on EOF. */
 SFUNC fio_str_info_s fio_http_body_read(fio_http_s *, size_t length);
@@ -43579,6 +43586,8 @@ SFUNC int fio_http_body_fd(fio_http_s *h) { return h->body.fd; }
 
 /** Adjusts the body's reading position. Negative values start at the end. */
 SFUNC size_t fio_http_body_seek(fio_http_s *h, ssize_t pos) {
+  if (pos == SSIZE_MAX)
+    pos = h->body.pos;
   if (pos < 0) {
     pos += h->body.len;
     if (pos < 0)
@@ -43589,6 +43598,9 @@ SFUNC size_t fio_http_body_seek(fio_http_s *h, ssize_t pos) {
   h->body.pos = pos;
   return pos;
 }
+
+/** Returns the body's reading position. */
+SFUNC size_t fio_http_body_pos(fio_http_s *h) { return h->body.pos; }
 
 /** Reads up to `length` of data from the body, returns nothing on EOF. */
 SFUNC fio_str_info_s fio_http_body_read(fio_http_s *h, size_t length) {
