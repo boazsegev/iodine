@@ -132,7 +132,7 @@ module Iodine
         if Iodine::Base::CLI['-preload']
           iodine___load_config(listener, fn, root_pid)
         else
-          Iodine.on_state(:on_start) do
+          Iodine.on_state(:start) do
             iodine___load_config(listener, fn, root_pid)
           end
         end
