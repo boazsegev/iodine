@@ -182,6 +182,7 @@ module Iodine
   # | `:child_crush`    | the block will be called by the parent (master) after a worker process crashed. |
   # | `:start_shutdown` | the block will be called before starting the shutdown sequence. |
   # | `:stop`           | the block will be called just before stopping iodine (both on child and parent processes). |
+  # | `:exit`           | the block will be called during iodine library cleanup, similar to a Ruby `at_exit` callback. |
   # 
   # Code runs in both the parent and the child.
   def self.on_state(state, &block); end
