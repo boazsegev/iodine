@@ -154,7 +154,7 @@ if Iodine::Base::CLI['-pid']
   Iodine.on_state(:pre_start) do
     IO.binwrite(pid_filename, "#{Process.pid}\r\n")
   end
-  Iodine.on_state(:on_finish) do
+  Iodine.on_state(:exit) do
     File.delete(pid_filename)
   end
 end

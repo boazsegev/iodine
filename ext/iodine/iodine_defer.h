@@ -23,6 +23,7 @@ static ID IODINE_STATE_ON_CHILD_CRUSH;
 static ID IODINE_STATE_ON_SHUTDOWN;
 static ID IODINE_STATE_ON_STOP;
 static ID IODINE_STATE_ON_IDLE;
+static ID IODINE_STATE_ON_EXIT;
 
 /* performs a Ruby state callback without clearing the Ruby object's memory */
 static void iodine_perform_state_callback_persist(void *blk_) {
@@ -105,6 +106,10 @@ static VALUE iodine_on_state(VALUE self, VALUE event) { // clang-format on
                            (void *)block);
   } else if (state == IODINE_STATE_ON_STOP) {
     fio_state_callback_add(FIO_CALL_ON_STOP,
+                           iodine_perform_state_callback_persist,
+                           (void *)block);
+  } else if (state == IODINE_STATE_ON_EXIT) {
+    fio_state_callback_add(FIO_CALL_AT_EXIT,
                            iodine_perform_state_callback_persist,
                            (void *)block);
   } else {
