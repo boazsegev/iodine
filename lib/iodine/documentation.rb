@@ -609,7 +609,7 @@ module Iodine
   # 
   # - WebSocket / TCP related methods include the {#open?}, {#write}, {#pending} and {#close} methods.
   # 
-  # - Pub/Sub related methods include the {#subscribe}, {#unsubscribe}, {#publish} and {#pubsub?} methods.
+  # - Pub/Sub related methods include the {#subscribe}, {#unsubscribe}, and {#publish} methods.
   # 
   # - Connection specific data can be stored / accessed using {#[]}, {#[]=}, {#each}, {#store_count}, {#store_capa}, {#store_reserve} methods.
   # 
@@ -902,9 +902,9 @@ module Iodine
 
 #######################
     
-    # This is an example handler for documentation purposes.
+    # This is an example handler for documentation purposes **only**.
     # 
-    # This module is designed to help you author your own Handler for {Iodine.listen}, {Iodine::Connection.new} and {Iodine.connect}.
+    # This module is designed to help you author your own Handler for {Iodine.listen} and {Iodine::Connection.new}.
     # 
     # A handler implementation is expected to implement at least one of the callbacks defined for this example Handler. Any missing callbacks will be defined by Iodine using smart defaults (where possible).
     #

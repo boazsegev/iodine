@@ -1,7 +1,6 @@
 --no-private
 --markup markdown
 -
-LIMITS.md
 CHANGELOG.md
 LICENSE.txt
 mustache.md
