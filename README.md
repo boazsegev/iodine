@@ -37,7 +37,7 @@ Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 3.0 and u
 
 **Note**:
 
-Streaming a Ruby response is often a bad performance choice no matter the server you use. [NeoRack](https://github.com/boazsegev/neorack) attempts to offer a better approach for streaming, but at the end of the day, it would be better to avoid streaming when possible. If you plan to Stream anyway, consider using [NeoRack](https://github.com/boazsegev/neorack) with an evented approach rather than blocking the thread (which is what happens when `each` is called in Ruby).
+Streaming a Ruby response is often a bad performance choice no matter the server you use. [NeoRack](https://github.com/boazsegev/neorack) attempts to offer a better approach for streaming, but at the end of the day, it would be better to avoid streaming when possible. If you plan to Stream anyway, consider using [NeoRack](https://github.com/boazsegev/neorack) with an evented approach rather than blocking worker thread (which is what happens when `each` is called in a `Rack` base application such as Rails).
 
 ## Security
 
@@ -176,7 +176,7 @@ It's as easy as that. No extra code required.
 
 ### Native HTTP `Upgrade` and SSE support
 
-Iodine's HTTP server has native support for [WebSocket](https://github.com/boazsegev/neorack/blob/master/extensions/websockets.md)/[SSE](https://github.com/boazsegev/neorack/blob/master/extensions/sse.md), using both [NeoRack](https://github.com/boazsegev/neorack) extensions and the [Rack `env` response style](https://github.com/boazsegev/neorack/blob/master/deprecated/Rack-WebSocket-Draft.md).
+Iodine's HTTP server has native support for [WebSocket](https://github.com/boazsegev/neorack/blob/master/extensions/websockets.md)/[SSE](https://github.com/boazsegev/neorack/blob/master/extensions/sse.md), using both [NeoRack](https://github.com/boazsegev/neorack) extensions and the Rack `env` [response style](https://github.com/boazsegev/neorack/blob/master/deprecated/Rack-WebSocket-Draft.md).
 
 This promotes separation of concerns, where iodine handles all the Network related logic and the application can focus on the API and data it provides.
 
@@ -636,7 +636,7 @@ Yes, please, here are some thoughts:
 
 * I'm really not good at writing automated tests and benchmarks, any help would be appreciated. I keep testing manually and that's less then ideal (and it's mistake prone).
 
-* PRs or issues related to [the `facil.io` C STL and framework](https://github.com/facil-io/cstl) should be directed to [the Proper C STL `facil.io` repository](https://github.com/facil-io/cstl).
+* PRs or issues related to [the facil.io C STL and framework](https://github.com/facil-io/cstl) should be directed to [the Proper C STL facil.io repository](https://github.com/facil-io/cstl).
 
 * Bug reports and pull requests are welcome on GitHub at <https://github.com/boazsegev/iodine>.
 
