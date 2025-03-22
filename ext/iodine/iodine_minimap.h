@@ -177,6 +177,11 @@ static VALUE iodine_minimap_count(VALUE o) {
   return ULL2NUM(
       (unsigned long long)iodine_hmap_count(&iodine_minimap_ptr(o)->map));
 }
+static VALUE iodine_minimap_clear(VALUE o) {
+  iodine_hmap_clear(&iodine_minimap_ptr(o)->map);
+  return o;
+}
+
 static VALUE iodine_minimap_capa(VALUE o) {
   return ULL2NUM(
       (unsigned long long)iodine_hmap_capa(&iodine_minimap_ptr(o)->map));
@@ -191,6 +196,36 @@ static VALUE iodine_minimap_reserve(VALUE o, VALUE s_) {
   iodine_hmap_s *m = &iodine_minimap_ptr(o)->map;
   iodine_hmap_reserve(m, s);
   return o;
+}
+
+/* *****************************************************************************
+String (JSON) output
+***************************************************************************** */
+
+static int iodine___minimap_to_s_task(iodine_hmap_each_s *e) {
+  *(char **)e->udata = iodine_json_stringify2bstr(*(char **)e->udata, e->key);
+  *(char **)e->udata = fio_bstr_write(*(char **)e->udata, ":", 1);
+  *(char **)e->udata = iodine_json_stringify2bstr(*(char **)e->udata, e->value);
+  *(char **)e->udata = fio_bstr_write(*(char **)e->udata, ",", 1);
+  return 0;
+}
+
+FIO_SFUNC VALUE iodine_minimap_to_s(VALUE o) {
+  VALUE r = Qnil;
+  iodine_hmap_s *m = &iodine_minimap_ptr(o)->map;
+  char *str;
+  if (!iodine_hmap_count(m))
+    goto empty;
+  str = fio_bstr_reserve(NULL, ((size_t)1 << 12) - 64);
+  str = fio_bstr_write(str, "{", 1);
+  iodine_hmap_each(m, iodine___minimap_to_s_task, &str, 0);
+  str[fio_bstr_len(str) - 1] = '}';
+  r = rb_str_new(str, (long)fio_bstr_len(str));
+  fio_bstr_free(str);
+  return r;
+empty:
+  r = rb_str_new("{}", 2);
+  return r;
 }
 
 /* *****************************************************************************
@@ -394,10 +429,12 @@ static void Init_Iodine_MiniMap(void) {
   rb_define_alloc_func(m, iodine_minimap_alloc);
   rb_define_method(m, "[]", iodine_minimap_get, 1);
   rb_define_method(m, "[]=", iodine_minimap_set, 2);
+  rb_define_method(m, "clear", iodine_minimap_clear, 0);
   rb_define_method(m, "count", iodine_minimap_count, 0);
   rb_define_method(m, "capa", iodine_minimap_capa, 0);
   rb_define_method(m, "each", iodine_minimap_each, 0);
   rb_define_method(m, "reserve", iodine_minimap_reserve, 1);
+  rb_define_method(m, "to_s", iodine_minimap_to_s, 0);
   rb_define_singleton_method(m, "cbench", iodine_minimap_benchmark_c, 1);
 }
 #endif /* H___IODINE_MINIMAP___H */

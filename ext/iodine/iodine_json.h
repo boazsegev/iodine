@@ -74,6 +74,70 @@ static char *iodine_json_stringify2bstr(char *dest, VALUE o) {
 }
 
 /* *****************************************************************************
+FIOBJ => Ruby Bridge
+***************************************************************************** */
+
+typedef struct iodine_fiobj2ruby_task_s {
+  VALUE out;
+} iodine_fiobj2ruby_task_s;
+
+static VALUE iodine_fiobj2ruby(FIOBJ o);
+
+static int iodine_fiobj2ruby_array_task(fiobj_array_each_s *e) {
+  rb_ary_push((VALUE)e->udata, iodine_fiobj2ruby(e->value));
+  return 0;
+}
+static int iodine_fiobj2ruby_hash_task(fiobj_hash_each_s *e) {
+  VALUE k = iodine_fiobj2ruby(e->key);
+  VALUE v = iodine_fiobj2ruby(e->value);
+  rb_hash_aset((VALUE)e->udata, k, iodine_fiobj2ruby(e->value));
+  return 0;
+}
+
+/** Converts FIOBJ to VALUE. Does NOT place VALUE in STORE automatically. */
+static VALUE iodine_fiobj2ruby(FIOBJ o) {
+  VALUE r;
+  switch (FIOBJ_TYPE(o)) {
+  case FIOBJ_T_TRUE: return Qtrue;
+  case FIOBJ_T_FALSE: return Qfalse;
+  case FIOBJ_T_NUMBER: return RB_LL2NUM(fiobj_num2i(o));
+  case FIOBJ_T_FLOAT: return rb_float_new(fiobj_float2f(o));
+  case FIOBJ_T_STRING: return rb_str_new(fiobj_str_ptr(o), fiobj_str_len(o));
+  case FIOBJ_T_ARRAY:
+    r = rb_ary_new_capa(fiobj_array_count(o));
+    STORE.hold(r);
+    fiobj_array_each(o, iodine_fiobj2ruby_array_task, (void *)r, 0);
+    STORE.release(r);
+    return r;
+  case FIOBJ_T_HASH:
+    rb_gc_disable();
+    r = rb_hash_new();
+    fiobj_hash_each(o, iodine_fiobj2ruby_hash_task, (void *)r, 0);
+    rb_gc_enable();
+    return r;
+  // case FIOBJ_T_NULL: /* fall through */
+  // case FIOBJ_T_INVALID: /* fall through */
+  default: return Qnil;
+  }
+}
+
+/* *****************************************************************************
+JSON Parser - FIOBJ to Ruby
+***************************************************************************** */
+
+/** Accepts a JSON String and returns a Ruby object. */
+static VALUE iodine_json_parse_indirect(VALUE self, VALUE rstr) {
+  VALUE r = Qnil;
+  rb_check_type(rstr, RUBY_T_STRING);
+  size_t consumed = 0;
+  FIOBJ tmp =
+      fiobj_json_parse((fio_str_info_s)IODINE_RSTR_INFO(rstr), &consumed);
+  r = iodine_fiobj2ruby(tmp);
+  fiobj_free(tmp);
+  return r;
+}
+
+/* *****************************************************************************
 JSON Parser (direct 2 Ruby)
 ***************************************************************************** */
 
@@ -279,6 +343,7 @@ yet slower than `JSON.parse(json_string)`.
 static void Init_Iodine_JSON(void) {
   VALUE m = rb_define_module_under(iodine_rb_IODINE, "JSON"); // clang-format on
   rb_define_singleton_method(m, "parse", iodine_json_parse, 1);
+  rb_define_singleton_method(m, "parse_slow", iodine_json_parse_indirect, 1);
   rb_define_singleton_method(m, "stringify", iodine_json_stringify, 1);
   rb_define_singleton_method(m, "dump", iodine_json_stringify, 1);
 }
