@@ -372,7 +372,7 @@ module Iodine
   class Mustache
     # Loads a template file and compiles it into a flattened instruction tree.
     # 
-    #        Iodine::Mustache.new(file = nil, data = nil, on_yaml = nil, &block)
+    #        Iodine::Mustache.new(file = nil, template = nil, on_yaml = nil, &block)
     # 
     # @param file [String] a file name for the mustache template.
     # 
@@ -398,7 +398,7 @@ module Iodine
 
     # Loads a template file and renders it into a String.
     #
-    #        Iodine::Mustache.render(file = nil, data = nil, ctx = nil, on_yaml = nil)
+    #        Iodine::Mustache.render(file = nil, template = nil, ctx = nil, on_yaml = nil)
     #
     # @param file [String] a file name for the mustache template.
     #
@@ -648,6 +648,8 @@ module Iodine
     # (HTTP Only) Returns the length of the `body` payload.
     attr_reader :length
 
+    # @!group Key-Data Store
+
     # Returns a the value of a key previously set.
     #
     # If the Connection is an HTTP connection and `key` is a Header String, the value of the header (if received) will be returned.
@@ -661,28 +663,37 @@ module Iodine
     # If the Connection is an HTTP connection, `each` will also iterate over any header previously accessed.
     def each(&block); end
     # Returns the number of key value pairs stored.
+    # @return [Integer]
     def store_count; end
     # Returns the theoretical capacity of the key value pair storage map.
+    # @return [Integer]
     def store_capa; end
     # Reserved a theoretical storage capacity in the key value pair storage map.
     #
     # Note that the capacity is theoretical only and some extra memory is required to allow for possible (partial) hash collisions.
     def store_reserve(number_of_items); end
 
+    # @!group Connection State
+
     # Returns `true` if the connection appears to be open (no known issues).
     #
     # (HTTP Only) Returns `true` only if upgraded and open (WebSocket is open).
     def open?(); end
-    # @deprecated Please check the {Iodine.extensions} Hash instead.
-    # 
-    # Always returns `true`, since Iodine connections support the pub/sub extension.
-    # 
-    # This method should be considered deprecated and will be removed in future versions.
-    def pubsub?(); end
+    # (HTTP Only) Returns `false` if headers can still be sent. Otherwise returns `true`.
+    def headers_sent?; end
+    # Returns `true` only if the Connection object is still valid (data can be sent).
+    def valid?; end
+    # Returns true only of the connection is a WebSocket connection.
+    def websocket?; end
+    # Returns true only of the connection is an SSE connection.
+    def sse?; end
     # Returns the number of bytes that need to be sent before the next `on_drained` callback is called.
     def pending(); end
     # Schedules the connection to be closed.
     def close(); end
+
+    # @!group Writing to the Connection
+
     # Sets a response header and returns `true`.
     # 
     # If headers have already been sent, or if either `write` or `finish` has been previously called, returns `false` (doing nothing).
@@ -726,24 +737,16 @@ module Iodine
     # Note that for HTTP connections the `"content-length"` header is automatically written if no previous calls to `write` were called.
     def finish(data = nil); end
 
-
-    # (HTTP Only) Returns `false` if headers can still be sent. Otherwise returns `true`.
-    def headers_sent?; end
-    # Returns `true` only if the Connection object is still valid (data can be sent).
-    def valid?; end
-    # Returns true only of the connection is a WebSocket connection.
-    def websocket?; end
-    # Returns true only of the connection is an SSE connection.
-    def sse?; end
-
+    # @!group Reading the HTTP Body / Payload
 
     # (HTTP Only) Returns an ASCII-8 String with the next line in the Body (same as {::IO#gets} where only `limit` is allowed).
     def gets(limit = nil); end
     # (HTTP Only) Returns an ASCII-8 String with (part of) the Body (see {::IO#read}).
     def read(maxlen = nil, out_string = nil); end
-    # (HTTP Only) Sets the body's new read position. Negative values start at the end of the body.
-    def seek(pos = 0); end
+    # (HTTP Only) Sets the body's new read position. Negative values start at the end of the body. `nil` returns current position.
+    def seek(pos = nil); end
 
+    # @!group HTTP Cookies
 
     # (HTTP Only) Returns an ASCII-8 String with the value of the named cookie.
     def cookie(name); end
@@ -763,6 +766,8 @@ module Iodine
     def set_cookie(name, value = nil, max_age = 0, domain = nil, path = nil, same_site = nil, secure = false, http_only = false, partitioned = false); end
     # Calls `block` for each name-value cookie pair.
     def each_cookie(&block); end
+
+    # @!group Pub/Sub
 
     # Publishes a message to a combination of a channel (String) and filter (number).
     # 
@@ -886,6 +891,8 @@ module Iodine
     #     Iodine::Connection.unsubscribe(filter: 1)
     def self.unsubscribe(channel = nil, filter = 0); end
 
+    # @!group Misc
+
     # Hijacks the connection from the Server and returns an IO object.
     #
     # This method MAY be used to implement a full hijack when providing compatibility with the Rack specification.
@@ -903,6 +910,9 @@ module Iodine
     #
     # **Note**: This module isn't implemented by Iodine, but is for documentation and guidance only. 
     module Handler
+
+      # @!group Callbacks
+
       # Used for [NeoRack](https://github.com/boazsegev/neorack) application authoring, when receiving HTTP requests.
       #
       # [NeoRack](https://github.com/boazsegev/neorack) allows both Async and CGI style Web Applications, making it easier to stream data and do more with a single thread.
@@ -1029,19 +1039,42 @@ module Iodine
       #     m.each {|key, value| puts "#{key} => #{value}"}
       def each(&block); end
       # Returns the number of key-value pairs stored in the Hash.
+      # @return [Integer]
       def count; end
+      # Empties the map. Returns self.
+      # @return [self]
+      def clear; end
       # Returns the maximum number of theoretical items the Hash can contain.
       #
       # Note that capacity increase will likely happen sooner and this number deals more with pre-allocated memory for the objects than with actual capacity.
+      # @return [Integer]
       def capa; end
       # Reserves room in the Hash Map for at least the @capacity requested.
       #
       # See note in {capa}.
       def reserve(capacity); end
+      # Prints a JSON representation of the map (if possible).
+      def to_s; end
       # Benchmarks MiniMap v.s Hash performance when called from within the C layer.
       #
       # Numbers printed out are in time units. Lower is better.
+      # @return [String]
       def self.cbench(number_of_items); end
+    end
+
+    # This is an empty web application that does nothing.
+    #
+    # Iodine provides default implementations for any missing callback (which is all of them in this example). Thus, this app does nothing aside of refusing WebSocket / SSE connections and returning HTTP error 404.
+    #
+    # This app is used internally when a static file service is requested without a handler. i.e.:
+    #
+    # ```sh
+    # iodine -www ./public_folder
+    # ```
+    #
+    # Which results in a `WARNING: no App found` but no error.
+    #
+    module App404
     end
   end
   
