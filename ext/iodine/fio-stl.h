@@ -381,6 +381,12 @@ typedef SSIZE_T ssize_t;
   __attribute__((format(printf, string_index, check_index)))
 #endif
 
+#ifndef SSIZE_MAX
+#define SSIZE_MAX ((ssize_t)((~(size_t)0) >> 1))
+#endif
+#ifndef SSIZE_MIN
+#define SSIZE_MIN ((ssize_t)(~((~(size_t)0) >> 1)))
+#endif
 /* *****************************************************************************
 Function Attributes
 ***************************************************************************** */
