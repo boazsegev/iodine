@@ -42,7 +42,7 @@ module Client
   end
   # Called after `on_http`/`on_closed` or if a client failed to connect.
   def self.on_finish(h)
-    Server.stop
+    Iodine.stop
   end
   # Called when an Event Source (SSE) event has been received (when acting as an Event Source client).
   def self.on_eventsource(sse, message)
@@ -57,8 +57,8 @@ opt = Iodine::Base::CLI.parse(false)
 opt[:bind] ||= opt[0] # allow the first unnamed parameter to be the URL to connect to
 raise "ERROR: this app requires a URL to connect to!" unless opt[:bind]
 
-Server.threads = 0
-Server.workers = 0
+Iodine.threads = 0
+Iodine.workers = 0
 
 # create the service instance, the block returns a connection handler.
 Iodine::Connection.new(opt[:bind], handler: Client)
@@ -66,9 +66,9 @@ Iodine::Connection.new(opt[:bind], handler: Client)
 # Read STDIO while running
 Thread.new do
   while true
-    Server.publish channel: :stdio, message: STDIN.readline
+    Iodine.publish channel: :stdio, message: STDIN.readline
   end
 end
 
 # Start the server
-Server.start
+Iodine.start
