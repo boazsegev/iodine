@@ -40,4 +40,8 @@ run App
 #     listener.onmessage = (e) => { console.log(e); }
 #     listener.addEventListener("time", (e) => { console.log(e); })
 #     listener.addEventListener("event", (e) => { console.log(e); })
-
+#
+# To run any code / configuration on the root (master) process, call Iodine with `-C`:
+#
+#     iodine -C config.rb
+#

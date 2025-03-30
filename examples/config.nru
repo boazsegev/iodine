@@ -4,25 +4,10 @@
 # 
 # In this case the `on_http` implementation will be called by iodine (and the `call` implementation will be called by any other server).
 # 
-# Benchmark with keep-alive:
-#
-#     ab -c 200 -t 4 -n 1000000 -k http://127.0.0.1:3000/
-#     wrk -c200 -d4 -t2 http://localhost:3000/
-#
-# Connect to chat server with WebSockets:
-#
-#     ws = new WebSocket("ws://" + document.location.host + document.location.pathname);
-#     ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);};
-#     ws.onclose = function(e) {console.log("closed")};
-#     ws.onopen = function(e) {ws.send("hi");};
-#
-# Listen to chat messages with Server Sent Events (EventSource / SSE):
-#
-#     const listener = new EventSource(document.location.href);
-#     listener.onmessage = (e) => { console.log(e); }
-#     listener.onevent = (e) => { console.log(e); }
-#
 module App
+	# A selector for the on_http example to implement.
+	STREAM_RESPONSES = false
+
 	# for non-NeoRack servers, such as Puma
 	def self.call(e)
 		txt = []
@@ -33,56 +18,58 @@ module App
 		end
 		[200, {}, txt]
 	end
-	# this approach streams the data, adding HTTP overhead
-	# However, this show-cases the possibilities for longer responses.
-	def self.on_http_stream(e)
-		# we write without finishing and without setting the content-length header...
-		# servers should automatically stream the response (i.e., using chunked encoding)
-		e.write "path:    #{e.path}\r\n"
-		e.write "query:   #{e.query}\r\n"
-		e.write "method:  #{e.method}\r\n"
-		e.write "version: #{e.version}\r\n"
-		e.write "from:    #{e.from} (real: #{e.peer_addr})\r\n"
-		# e.write "thread:  #{Thread.current.to_s}\r\n"
-		e.headers.each {|k,v| e.write "#{k}: #{v}\r\n" }
-		# echo request body to the response
-		while(l = e.gets)
-			e.write l
+
+	# Choose requested response callback – a streaming response vs. `content-length`.
+	if(STREAM_RESPONSES)
+
+		# This approach streams the data, adding some HTTP overhead, as may be performed by longer handlers.
+		def self.on_http(e)
+			# we write without finishing and without setting the content-length header...
+			# servers should automatically stream the response (i.e., using chunked encoding)
+			e.write "path:    #{e.path}\r\n"
+			e.write "query:   #{e.query}\r\n"
+			e.write "method:  #{e.method}\r\n"
+			e.write "version: #{e.version}\r\n"
+			e.write "from:    #{e.from} (real: #{e.peer_addr})\r\n"
+			e.headers.each {|k,v| e.write "#{k}: #{v}\r\n" }
+			# echo request body to the response
+			while(l = e.gets)
+				e.write l
+			end
+			e.finish
 		end
-		e.finish
-	end
-	def self.on_http_single_packet(e)
-		# this is similar to Rack, compiling the whole response before sending it
+
+	else # STREAM_RESPONSES?
+
+		# This is similar to Rack, compiling the whole response before sending it
 		# this should optimally result in `content-length` being set by the server
-		out =  "path:    #{e.path}\r\nquery:   #{e.query}\r\nmethod:  #{e.method}\r\nversion: #{e.version}\r\n"
-		out += "from:    #{e.from} (#{e.peer_addr})\r\n"
-		# out += "thread:  #{Thread.current.to_s}\r\n"
-		e.headers.each {|k,v| out += "#{k}: #{v}\r\n" }
-		# echo request body to the response
-		while(l = e.gets)
-			out += l
+		def self.on_http(e)
+			# First, prepare the output data
+			out =  "path:    #{e.path}\r\n" + 
+						 "query:   #{e.query}\r\n" +
+						 "method:  #{e.method}\r\n" +
+						 "version: #{e.version}\r\n" +
+						 "from:    #{e.from} (#{e.peer_addr})\r\n"
+			e.headers.each {|k,v| out += "#{k}: #{v}\r\n" }
+			# append the incoming body
+			while(l = e.gets)
+				out += l
+			end
+			# finish and write the data to the client.
+			# efficient servers will see this is the first and only `write` and set `content-length`
+			e.finish out 
 		end
-		# finally we write the data.
-		# efficient servers will see this is the first `write` and set `content-length`
-		e.finish out 
-	end
-	def self.on_http(e)
-		# change here to see the difference.
-		e.write_header :server, 'iodine'
-		e.write_header :performs, [['echo', 'ws-chat'], 2]
-		e.headers['LAST-VISIT'] = "#{Time.now.to_i - e.cookie(:been).to_i}s ago" if(e.cookie(:been))
-		e.set_cookie :been, Time.now.to_i.to_s
-		on_http_single_packet(e)
-	end
-    # # Called after `on_http` (or `on_closed` when implementing the WebSocket/SSE extensions)
-    # def self.on_finish(e)
-    # 	# perform cleanup
-    # end
 
+	end
 
+	# Called when a WebSocket / SSE connection is opened.
 	def self.on_open(e)
 		e.subscribe(:broadcast) # { |msg| puts "(#{Process.pid}:#{Thread.current}): #{msg.channel} : #{msg.message}"; e.write msg.message }
 	end
+
+	# Called when a WebSocket message is received...
+	#
+	# ... however, Iodine also allows SSE clients to "cheat" and push messages to this callback.
 	def self.on_message(e, m)
 		Iodine.publish(:broadcast, m)
 	end
@@ -108,4 +95,8 @@ run App
 #     listener.onmessage = (e) => { console.log(e); }
 #     listener.addEventListener("time", (e) => { console.log(e); })
 #     listener.addEventListener("event", (e) => { console.log(e); })
-
+#
+# To run any code / configuration on the root (master) process, call Iodine with `-C`:
+#
+#     iodine -C config.rb
+#
