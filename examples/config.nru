@@ -88,28 +88,6 @@ module App
 	end
 end
 
-
-class LogPubSub < Iodine::PubSub::Engine
-	def subscribe ch
-		puts "(#{Process.pid}) #{ch} has listeners (created)"
-	end
-	def psubscribe ch
-		puts "(#{Process.pid}) (pattern) #{ch} has listeners (created)"
-	end
-	def unsubscribe ch
-		puts "(#{Process.pid}) #{ch} has no more listeners (destroyed)"
-	end
-	def punsubscribe ch
-		puts "(#{Process.pid}) (pattern) #{ch} has no more listeners (destroyed)"
-	end
-	def publish m
-		puts "(#{Process.pid}) Someone published to #{m.channel}"
-		Iodine.publish channel: m.channel, message: m.message, filter: m.filter, engine: Iodine::PubSub::CLUSTER
-	end
-end
-
-Iodine::PubSub.default = LogPubSub.new
-
 run App
 
 # Benchmark with keep-alive:

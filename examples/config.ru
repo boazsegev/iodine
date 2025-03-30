@@ -1,7 +1,10 @@
 # A simple Rack application that prints out the `env` variable to the browser.
+#
+# This example also supports the (deprecated) old-style iodine Rack upgrade.
 module App
 	def self.call(env)
 		txt = []
+		# support old-style iodine Rack upgrade for pure Rack applications.
 		if env['rack.upgrade?']
 			env['rack.upgrade'] = self
 		else
