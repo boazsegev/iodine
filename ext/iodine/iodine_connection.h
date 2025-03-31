@@ -2365,7 +2365,10 @@ static VALUE iodine_connection_finish(int argc, VALUE *argv, VALUE self) {
   if (c->http) {
     if (fio_http_is_finished(c->http))
       return Qfalse;
-    fio_http_write(c->http, .finish = 1);
+    if (fio_http_is_streaming(c->http) || fio_http_status(c->http) < 400)
+      fio_http_write(c->http, .finish = 1);
+    else /* sending an empty error should test for a custom error page. */
+      fio_http_send_error_response(c->http, fio_http_status(c->http));
   } else if (c->io) {
     if (!fio_io_is_open(c->io))
       return Qfalse;

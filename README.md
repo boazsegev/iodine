@@ -11,9 +11,9 @@
 
 Iodine is a fast concurrent Web Application Server/Client combination that's perfect for both micro-services and inter-connected monoliths.
 
-* Iodine is a [Rack Application **Server**](./examples/config.ru).
-* Iodine is a [NeoRack Application **Server**](./examples/config.nru).
-* Iodine is an evented [TCP/IP, HTTP, WebSocket and SSE **Client**]((./examples/client)).
+* Iodine is a [Rack Application **Server**](examples/config.ru).
+* Iodine is a [NeoRack Application **Server**](examples/config.nru).
+* Iodine is an evented [TCP/IP, HTTP, WebSocket and SSE **Client**]((examples/client)).
 
 Designed for your Real-Time and Event-Stream needs, Iodine boasts native support for:
 
