@@ -4,3 +4,6 @@
 CHANGELOG.md
 LICENSE.txt
 mustache.md
+examples/client
+examples/config.ru
+examples/config.nru
