@@ -33,7 +33,7 @@ Iodine includes native support for:
 
 Since iodine wraps much of the [C facil.io framework](https://github.com/boazsegev/facil.io) for Ruby:
 
-* Iodine can handle **thousands of concurrent connections** (tested with more then 20K connections on Linux)!
+* Iodine can handle **thousands of concurrent connections** (tested with more than 20K connections on Linux)!
 
 * Iodine is ideal for **Linux/Unix** based systems (i.e. macOS, Ubuntu, FreeBSD etc'), which are ideal for evented IO (while Windows and Solaris are better at IO *completion* events, which are very different).
 
@@ -45,7 +45,7 @@ Iodine is a C extension for Ruby, developed and optimized for Ruby MRI 2.3 and u
 
 Iodine includes a light and fast HTTP and Websocket server written in C that was written according to the [Rack interface specifications](http://www.rubydoc.info/github/rack/rack/master/file/SPEC) and the [Websocket draft extension](./SPEC-Websocket-Draft.md).
 
-With `Iodine.listen service: :http` it's possible to run multiple HTTP applications (but please remember not to set more than a single application on a single TCP/IP port). 
+With `Iodine.listen service: :http` it's possible to run multiple HTTP applications (but please remember not to set more than a single application on a single TCP/IP port).
 
 Iodine also supports native process cluster Pub/Sub and a native RedisEngine to easily scale iodine's Pub/Sub horizontally.
 
@@ -278,11 +278,11 @@ module WebsocketChat
   extend self
 end
 APP = Proc.new do |env|
-  if env['rack.upgrade?'.freeze] == :websocket 
-    env['rack.upgrade'.freeze] = WebsocketChat 
+  if env['rack.upgrade?'.freeze] == :websocket
+    env['rack.upgrade'.freeze] = WebsocketChat
     [0,{}, []] # It's possible to set cookies for the response.
   elsif env['rack.upgrade?'.freeze] == :sse
-    puts "SSE connections can only receive data from the server, the can't write." 
+    puts "SSE connections can only receive data from the server, the can't write."
     env['rack.upgrade'.freeze] = WebsocketChat
     [0,{}, []] # It's possible to set cookies for the response.
   else
@@ -556,7 +556,7 @@ Iodine is written in C and allows some compile-time customizations, such as:
 * `FIO_MAX_SOCK_CAPACITY` - limits iodine's maximum client capacity. Defaults to 131,072 clients.
 
 * `FIO_USE_RISKY_HASH` - replaces SipHash with RiskyHash for iodine's internal hash maps.
- 
+
     Since iodine hash maps have internal protection against collisions and hash flooding attacks, it's possible for iodine to leverage RiskyHash, which is faster than SipHash.
 
     By default, SipHash will be used. This is a community related choice, since the community seems to believe a hash function should protect the hash map rather than it being enough for a hash map implementation to be attack resistance.
@@ -611,7 +611,7 @@ end
 
 In pure Ruby (without using C extensions or Java), it's possible to do the same by using `select`... and although `select` has some issues, it could work well for lighter loads.
 
-The server events are fairly fast and fragmented (longer code is fragmented across multiple events), so one thread is enough to run the server including it's static file service and everything... 
+The server events are fairly fast and fragmented (longer code is fragmented across multiple events), so one thread is enough to run the server including it's static file service and everything...
 
 ...but single threaded mode should probably be avoided.
 
@@ -642,7 +642,7 @@ If you have the development headers but still can't compile the iodine extension
 
 ## Mr. Sandman, write me a server
 
-Iodine allows custom TCP/IP server authoring, for those cases where we need raw TCP/IP (UDP isn't supported just yet). 
+Iodine allows custom TCP/IP server authoring, for those cases where we need raw TCP/IP (UDP isn't supported just yet).
 
 Here's a short and sweet echo server - No HTTP, just use `telnet`:
 
