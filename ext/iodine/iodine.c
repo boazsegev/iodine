@@ -44,6 +44,9 @@ static void Init_Iodine(void) {
                              iodine_verbosity_set,
                              1);
 
+  rb_define_singleton_method(iodine_rb_IODINE, "secret", iodine_secret, 0);
+  rb_define_singleton_method(iodine_rb_IODINE, "secret=", iodine_secret_set, 1);
+
   rb_define_singleton_method(iodine_rb_IODINE,
                              "shutdown_timeout",
                              iodine_shutdown_timeout,
@@ -93,10 +96,28 @@ FIO_SFUNC void iodine___perform_exit(VALUE ignr_) {
 }
 
 /* *****************************************************************************
+OS specific patches
+***************************************************************************** */
+
+#ifdef __APPLE__
+#include <dlfcn.h>
+#endif
+
+/** Any patches required by the running environment for consistent behavior */
+static void patch_env(void) {
+#ifdef __APPLE__
+  /* patch for dealing with the High Sierra `fork` limitations */
+  void *obj_c_runtime = dlopen("Foundation.framework/Foundation", RTLD_LAZY);
+  (void)obj_c_runtime;
+#endif
+}
+
+/* *****************************************************************************
 Initialize Extension
 ***************************************************************************** */
 
 void Init_iodine(void) {
+  patch_env();
   IODINE_THREAD_POOL = FIO_IO_ASYN_INIT;
   fio_state_callback_force(FIO_CALL_ON_INITIALIZE);
 

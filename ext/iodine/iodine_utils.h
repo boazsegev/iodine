@@ -243,6 +243,93 @@ FIO_SFUNC VALUE iodine_utils_is_eq(VALUE mod, VALUE a, VALUE b) { // clang-forma
 }
 
 /* *****************************************************************************
+Randomness and Friends
+***************************************************************************** */
+
+FIO_DEFINE_RANDOM128_FN(static, iodine_random, 31, 0)
+
+FIO_SFUNC VALUE iodine_random_uuid(int argc, VALUE *argv, VALUE self) {
+  VALUE r = Qnil;
+  fio_u128 rand = iodine_random128();
+  fio_buf_info_s secret = {0};
+  fio_buf_info_s info = {0};
+  FIO_STR_INFO_TMP_VAR(str, 128);
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(secret, 0, "secret", 0),
+                  IODINE_ARG_BUF(info, 0, "info", 0));
+  if (secret.buf && info.buf) {
+    fio_sha512_s sh2 = fio_sha512_init();
+    fio_sha512_consume(&sh2, secret.buf, secret.len);
+    fio_sha512_consume(&sh2, info.buf, info.len);
+    fio_u512 tmp = fio_sha512_finalize(&sh2);
+    rand.u64[0] = tmp.u64[0] + tmp.u64[1] + tmp.u64[2] + tmp.u64[3];
+    rand.u64[1] = tmp.u64[4] + tmp.u64[5] + tmp.u64[6] + tmp.u64[7];
+    /* support the vendor specific UUID variant. */
+    rand.u8[6] &= 0x0F;
+    rand.u8[6] |= 0x80;
+    rand.u8[8] &= 0x3F;
+    rand.u8[8] |= 0x80;
+  } else if (secret.buf || info.buf) {
+    if (info.buf)
+      secret = info;
+    uint64_t tmp = fio_risky_hash(secret.buf, secret.len, 0);
+    rand.u64[0] += tmp;
+    rand.u64[1] -= tmp;
+    goto random_uuid;
+  } else {
+  random_uuid:
+    /* support the random UUID version significant bits. */
+    rand.u8[6] &= 0x0F;
+    rand.u8[6] |= 0x40;
+    rand.u8[8] &= 0x3F;
+    rand.u8[8] |= 0x80;
+  }
+
+  fio_string_write2(&str,
+                    NULL,
+                    FIO_STRING_WRITE_HEX(rand.u32[0]),
+                    FIO_STRING_WRITE_STR2("-", 1),
+                    FIO_STRING_WRITE_HEX(rand.u16[2]),
+                    FIO_STRING_WRITE_STR2("-", 1),
+                    FIO_STRING_WRITE_HEX(rand.u16[3]),
+                    FIO_STRING_WRITE_STR2("-", 1),
+                    FIO_STRING_WRITE_HEX(rand.u16[4]),
+                    FIO_STRING_WRITE_STR2("-", 1),
+                    FIO_STRING_WRITE_HEX(rand.u16[5]),
+                    FIO_STRING_WRITE_HEX(rand.u32[3]));
+  r = rb_str_new(str.buf, str.len);
+  return r;
+  (void)self;
+}
+
+FIO_SFUNC VALUE iodine_random_next(VALUE self) {
+  VALUE r = Qnil;
+  FIO_STR_INFO_TMP_VAR(str, 128);
+  fio_u128 rand = iodine_random128();
+  fio_string_write2(&str,
+                    NULL,
+                    FIO_STRING_WRITE_HEX(rand.u64[0]),
+                    FIO_STRING_WRITE_HEX(rand.u64[1]));
+  r = rb_usascii_str_new(str.buf, str.len);
+  return r;
+  (void)self;
+}
+
+FIO_SFUNC VALUE iodine_random_bytes_rb(VALUE self, VALUE size) {
+  VALUE r = Qnil;
+  rb_check_type(size, RUBY_T_FIXNUM);
+  long len = FIX2LONG(size);
+  if (len < 0 || len > 0x0FFFFFFF)
+    rb_raise(rb_eRangeError, "size is out of range.");
+  r = rb_str_buf_new(len);
+  iodine_random_bytes(RSTRING_PTR(r), len);
+  rb_str_set_len(r, len);
+  return r;
+  (void)self;
+}
+
+/* *****************************************************************************
 Create Methods in Module
 ***************************************************************************** */
 
@@ -361,5 +448,11 @@ static void Init_Iodine_Utils(void) {
   rb_define_singleton_method(m, "time2str", iodine_utils_rfc7231, 1);
   rb_define_singleton_method(m, "secure_compare", iodine_utils_is_eq, 2);
   rb_define_singleton_method(m, "monkey_patch", iodine_utils_monkey_patch, -1);
+  m = rb_define_module_under(m, "Random");
+  rb_define_singleton_method(m, "next", iodine_random_next, 0);
+  rb_define_singleton_method(m, "uuid", iodine_random_uuid, -1);
+  rb_define_singleton_method(m, "bytes", iodine_random_bytes_rb, 1);
+
+  fio_state_callback_add(FIO_CALL_IN_CHILD, iodine_random_on_fork, NULL);
 }      // clang-format on
 #endif /* H___IODINE_UTILS___H */

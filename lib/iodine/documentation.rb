@@ -117,6 +117,15 @@ module Iodine
   # - 1 == Fatal Errors only.
   def self.verbosity=(logging_level); end
 
+  # [String] A SHA512 of the Secret.
+  #
+  # If no secret was previously set, Iodine will use the environment variable `SECRET` if available. Otherwise, a random secret is produced.
+  #
+  # It is recommended to set the secret as a Hex encoded String environment variable named `SECRET` before starting Ruby.
+  def self.secret(); end
+  # [String] Stores a SHA512 of the Secret String provided.
+  def self.secret=(logging_level); end
+
   # [Number] The number of milliseconds before the reactor stops scheduling unperformed tasks during shutdown.
   def self.shutdown_timeout(); end
   # [Number] Sets the number of milliseconds before the reactor stops scheduling unperformed tasks during shutdown.
@@ -511,7 +520,16 @@ module Iodine
     # If no modules were passed to the `monkey_patch` method, `Rack::Utils` will be
     # monkey patched.
     def self.monkey_patch() ;  end
-
+    module Random
+      # Returns a 128bit next pseudo-(semi)-random number as a Hex String.
+      # @return [String] returns a String containing a 128bit number in Hex format.
+      def self.next(); end
+      # Generates a UUID using either random `secret` String, a random `info` String, both or none (a deterministic UUID), depending on the number parameters supplied.
+      # @param secret [String] (**optional**) Adds salt to the UUID randomized number.
+      # @param info [String] (**optional**) Adds salt to the UUID randomized number.
+      # @return [String] in UUID format.
+      def self.uuid(secret = nil, info = nil); end
+    end
   end
 
 

@@ -158,6 +158,34 @@ module Iodine
     end
 
     # Benchmark the {Iodine::Utils} module and see if you want to use {Iodine::Utils.monkey_patch} when using Rack.
+    def self.random
+      require 'benchmark/ips'
+      require 'securerandom'
+      ::Benchmark.ips do |bm|
+          bm.report("Iodine::Utils::Random.uuid")    { Iodine::Utils::Random.uuid }
+          bm.report("         SecureRandom.uuid")    { SecureRandom.uuid }
+          bm.report("            Random.uuid_v4")    { Random.uuid_v4 }
+          bm.compare!
+      end; nil
+      ::Benchmark.ips do |bm|
+          bm.report("Iodine::Utils::Random.bytes(16)")    { Iodine::Utils::Random.bytes(16) }
+          bm.report("               Random.bytes(16)")    { ::Random.bytes(16) }
+          bm.compare!
+      end; nil
+      ::Benchmark.ips do |bm|
+          bm.report("Iodine::Utils::Random.bytes(4096)")    { Iodine::Utils::Random.bytes(4096) }
+          bm.report("               Random.bytes(4096)")    { ::Random.bytes(4096) }
+          bm.compare!
+      end; nil
+      ::Benchmark.ips do |bm|
+          bm.report("Iodine::Utils::Random.next")    { Iodine::Utils::Random.next }
+          bm.report("         SecureRandom.rand")    { SecureRandom.rand }
+          bm.report("               Random.rand")    { ::Random.rand }
+          bm.compare!
+      end; nil
+    end
+
+    # Benchmark the {Iodine::Utils} module and see if you want to use {Iodine::Utils.monkey_patch} when using Rack.
     def self.utils
       require 'rack'
       require 'cgi'
