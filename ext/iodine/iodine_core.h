@@ -150,6 +150,24 @@ static VALUE iodine_verbosity_set(VALUE klass, VALUE num) {
 }
 
 /* *****************************************************************************
+Secrets
+***************************************************************************** */
+
+/** Returns the current verbosity (logging) level.*/
+static VALUE iodine_secret(VALUE klass) {
+  fio_u512 s = fio_secret();
+  return rb_usascii_str_new((const char *)s.u8, sizeof(s));
+  (void)klass;
+}
+
+/** Sets the current verbosity (logging) level. */
+static VALUE iodine_secret_set(VALUE klass, VALUE key) {
+  rb_check_type(key, RUBY_T_STRING);
+  fio_secret_set(RSTRING_PTR(key), RSTRING_LEN(key), 0);
+  return iodine_secret(klass);
+}
+
+/* *****************************************************************************
 Shutdown Timeouts
 ***************************************************************************** */
 
