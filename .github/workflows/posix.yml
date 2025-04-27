@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ruby-version: ['3.2', '3.3']
+        ruby-version: ['3.2', '3.3', '3.4']
         os: [ubuntu-24.04, macos-14] # , windows-latest
     runs-on: ${{ matrix.os }}
     steps:

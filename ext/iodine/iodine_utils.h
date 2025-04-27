@@ -248,7 +248,7 @@ Randomness and Friends
 
 FIO_DEFINE_RANDOM128_FN(static, iodine_random, 31, 0)
 
-FIO_SFUNC VALUE iodine_random_uuid(int argc, VALUE *argv, VALUE self) {
+FIO_SFUNC VALUE iodine_utils_uuid(int argc, VALUE *argv, VALUE self) {
   VALUE r = Qnil;
   fio_u128 rand = iodine_random128();
   fio_buf_info_s secret = {0};
@@ -303,29 +303,28 @@ FIO_SFUNC VALUE iodine_random_uuid(int argc, VALUE *argv, VALUE self) {
   (void)self;
 }
 
-FIO_SFUNC VALUE iodine_random_next(VALUE self) {
+FIO_SFUNC VALUE iodine_utils_random(int argc, VALUE *argv, VALUE self) {
   VALUE r = Qnil;
-  FIO_STR_INFO_TMP_VAR(str, 128);
-  fio_u128 rand = iodine_random128();
-  fio_string_write2(&str,
-                    NULL,
-                    FIO_STRING_WRITE_HEX(rand.u64[0]),
-                    FIO_STRING_WRITE_HEX(rand.u64[1]));
-  r = rb_usascii_str_new(str.buf, str.len);
+  size_t size = 16;
+  iodine_rb2c_arg(argc, argv, IODINE_ARG_SIZE_T(size, 0, "bytes", 0));
+  if ((size - 1) > 0x0FFFFFFF)
+    rb_raise(rb_eRangeError, "`bytes` count is out of range.");
+  r = rb_str_buf_new(size);
+  iodine_random_bytes(RSTRING_PTR(r), size);
+  rb_str_set_len(r, size);
   return r;
   (void)self;
 }
 
-FIO_SFUNC VALUE iodine_random_bytes_rb(VALUE self, VALUE size) {
-  VALUE r = Qnil;
-  rb_check_type(size, RUBY_T_FIXNUM);
-  long len = FIX2LONG(size);
-  if (len < 0 || len > 0x0FFFFFFF)
-    rb_raise(rb_eRangeError, "size is out of range.");
-  r = rb_str_buf_new(len);
-  iodine_random_bytes(RSTRING_PTR(r), len);
-  rb_str_set_len(r, len);
-  return r;
+FIO_SFUNC VALUE iodine_utils_totp(int argc, VALUE *argv, VALUE self) {
+  fio_buf_info_s secret = {0};
+  long long offset = 0;
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(secret, 0, "for", 1),
+                  IODINE_ARG_NUM(offset, 0, "offset", 0));
+  uint32_t otp = fio_otp(secret, .offset = (int64_t)(offset));
+  return UINT2NUM(otp);
   (void)self;
 }
 
@@ -431,27 +430,11 @@ Performance may differ according to architecture and compiler used. Please measu
  */
 static void Init_Iodine_Utils(void) {
   VALUE m = rb_define_module_under(iodine_rb_IODINE, "Utils");
-  rb_define_singleton_method(m, "escape_path", iodine_utils_encode_path, 1);
-  rb_define_singleton_method(m, "escape_path!", iodine_utils_encode_path1, 1);
-  rb_define_singleton_method(m, "unescape_path", iodine_utils_decode_path, -1);
-  rb_define_singleton_method(m, "unescape_path!", iodine_utils_decode_path1, 1);
-  rb_define_singleton_method(m, "escape", iodine_utils_encode_url, 1);
-  rb_define_singleton_method(m, "escape!", iodine_utils_encode_url1, 1);
-  rb_define_singleton_method(m, "unescape", iodine_utils_decode_url, -1);
-  rb_define_singleton_method(m, "unescape!", iodine_utils_decode_url1, 1);
-  rb_define_singleton_method(m, "escape_html", iodine_utils_encode_html, 1);
-  rb_define_singleton_method(m, "escape_html!", iodine_utils_encode_html1, 1);
-  rb_define_singleton_method(m, "unescape_html", iodine_utils_decode_html, -1);
-  rb_define_singleton_method(m, "unescape_html!", iodine_utils_decode_html1, 1);
-  rb_define_singleton_method(m, "rfc2109", iodine_utils_rfc2109, 1);
-  rb_define_singleton_method(m, "rfc2822", iodine_utils_rfc2822, 1);
-  rb_define_singleton_method(m, "time2str", iodine_utils_rfc7231, 1);
-  rb_define_singleton_method(m, "secure_compare", iodine_utils_is_eq, 2);
-  rb_define_singleton_method(m, "monkey_patch", iodine_utils_monkey_patch, -1);
-  m = rb_define_module_under(m, "Random");
-  rb_define_singleton_method(m, "next", iodine_random_next, 0);
-  rb_define_singleton_method(m, "uuid", iodine_random_uuid, -1);
-  rb_define_singleton_method(m, "bytes", iodine_random_bytes_rb, 1);
+  iodine_utils_define_methods(m);
+  /* non-standard helpers */
+  rb_define_singleton_method(m, "random", iodine_utils_random, -1);
+  rb_define_singleton_method(m, "uuid", iodine_utils_uuid, -1);
+  rb_define_singleton_method(m, "totp", iodine_utils_totp, -1);
 
   fio_state_callback_add(FIO_CALL_IN_CHILD, iodine_random_on_fork, NULL);
 }      // clang-format on

@@ -162,25 +162,25 @@ module Iodine
       require 'benchmark/ips'
       require 'securerandom'
       ::Benchmark.ips do |bm|
-          bm.report("Iodine::Utils::Random.uuid")    { Iodine::Utils::Random.uuid }
-          bm.report("         SecureRandom.uuid")    { SecureRandom.uuid }
-          bm.report("            Random.uuid_v4")    { Random.uuid_v4 }
+          bm.report("Iodine::Utils.uuid")    { Iodine::Utils.uuid }
+          bm.report(" SecureRandom.uuid")    { SecureRandom.uuid }
+          bm.report("    Random.uuid_v4")    { Random.uuid_v4 }
           bm.compare!
       end; nil
       ::Benchmark.ips do |bm|
-          bm.report("Iodine::Utils::Random.bytes(16)")    { Iodine::Utils::Random.bytes(16) }
-          bm.report("               Random.bytes(16)")    { ::Random.bytes(16) }
+          bm.report("Iodine::Utils.bytes(16)")    { Iodine::Utils.random(16) }
+          bm.report("       Random.bytes(16)")    { ::Random.bytes(16) }
           bm.compare!
       end; nil
       ::Benchmark.ips do |bm|
-          bm.report("Iodine::Utils::Random.bytes(4096)")    { Iodine::Utils::Random.bytes(4096) }
-          bm.report("               Random.bytes(4096)")    { ::Random.bytes(4096) }
+          bm.report("Iodine::Utils.random(4096)")    { Iodine::Utils.random(4096) }
+          bm.report("        Random.bytes(4096)")    { ::Random.bytes(4096) }
           bm.compare!
       end; nil
       ::Benchmark.ips do |bm|
-          bm.report("Iodine::Utils::Random.next")    { Iodine::Utils::Random.next }
-          bm.report("         SecureRandom.rand")    { SecureRandom.rand }
-          bm.report("               Random.rand")    { ::Random.rand }
+          bm.report("Iodine::Utils.random")    { Iodine::Utils.random }
+          bm.report("   SecureRandom.rand")    { SecureRandom.rand }
+          bm.report("         Random.rand")    { ::Random.rand }
           bm.compare!
       end; nil
     end
