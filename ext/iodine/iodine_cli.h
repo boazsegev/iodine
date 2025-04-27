@@ -194,7 +194,8 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
           "(requires cluster mode, app code runs only in workers)"),
       FIO_CLI_INT(
           "--hot-restart -hr restarts all worker processes every n seconds."),
-      FIO_CLI_STRING("--config -C configuration file to be loaded."),
+      FIO_CLI_STRING(
+          "--config -C (config/boot.rb) configuration file to be loaded."),
       FIO_CLI_PRINT("NOTE: the code in the --config file won't be updated."),
       FIO_CLI_BOOL("--preload -preload loads the app code before forking "
                    "(cluster only)."),
@@ -321,13 +322,20 @@ static VALUE iodine_cli_set(VALUE self, VALUE key, VALUE value) {
     rb_raise(rb_eArgError,
              "key should be either an Integer, a String or a Symbol");
   fio_cli_arg_e t = fio_cli_type(RSTRING_PTR(key));
-  if (t == FIO_CLI_ARG_INT || t == FIO_CLI_ARG_STRING) {
+  if (t == FIO_CLI_ARG_INT) { /* Number */
     if (!RB_TYPE_P(value, RUBY_T_FIXNUM))
       rb_raise(rb_eArgError,
                "value for %s should be an Integer",
                RSTRING_PTR(key));
     fio_cli_set_i(RSTRING_PTR(key), NUM2LL(value));
-  } else {
+  } else if (t == FIO_CLI_ARG_BOOL) { /* Boolean */
+    if (value != Qtrue && value != Qfalse)
+      rb_raise(rb_eArgError,
+               "value for %s should be a Boolean",
+               RSTRING_PTR(key));
+    fio_cli_set_i(RSTRING_PTR(key), NUM2LL((value == Qtrue)));
+
+  } else { /* must be String */
     if (!RB_TYPE_P(value, RUBY_T_STRING))
       rb_raise(rb_eArgError,
                "value for %s should be a String",

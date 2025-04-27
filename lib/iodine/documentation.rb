@@ -515,21 +515,25 @@ module Iodine
     #     print_proof
     # 
     def self.secure_compare() ;  end
-    # Adds the `Iodine::Utils` methods to the modules passed as arguments.
+    # Adds the `Iodine::Utils` methods that are similar to the `Rack::Utils` module to the module(s) passed as arguments.
     # 
     # If no modules were passed to the `monkey_patch` method, `Rack::Utils` will be
     # monkey patched.
-    def self.monkey_patch() ;  end
-    module Random
-      # Returns a 128bit next pseudo-(semi)-random number as a Hex String.
-      # @return [String] returns a String containing a 128bit number in Hex format.
-      def self.next(); end
-      # Generates a UUID using either random `secret` String, a random `info` String, both or none (a deterministic UUID), depending on the number parameters supplied.
-      # @param secret [String] (**optional**) Adds salt to the UUID randomized number.
-      # @param info [String] (**optional**) Adds salt to the UUID randomized number.
-      # @return [String] in UUID format.
-      def self.uuid(secret = nil, info = nil); end
-    end
+    def self.monkey_patch(to_patch = Rack::Utils) ;  end
+    # Returns a String with the requested length of random bytes.
+    # @return [String] returns a String containing the requested length of random bytes.
+    def self.random(bytes = 16); end
+    # Generates a UUID using either random `secret` String, a random `info` String, both or none (a deterministic UUID), depending on the number parameters supplied.
+    # @param secret [String] (**optional**) Adds salt to the UUID randomized number.
+    # @param info [String] (**optional**) Adds salt to the UUID randomized number.
+    # @return [String] in UUID format.
+    def self.uuid(secret = nil, info = nil); end
+    # Returns new Timed-One-Time-Password (TOTP), in Google format (6 digit Number with a 30 second validity).
+    #
+    # @param for [String] the secret OTP for which the time based (T)OTP should be created.
+    # @param offset [Number] (**optional**) the number of "steps" backwards in time. Allows for testing of expired TOTPs.
+    # @return [Number] returns a 6 digit Number based on the secret provided and the current time.
+    def self.totp(for, offset = 0); end
   end
 
 
