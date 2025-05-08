@@ -248,6 +248,52 @@ Randomness and Friends
 
 FIO_DEFINE_RANDOM128_FN(static, iodine_random, 31, 0)
 
+FIO_SFUNC VALUE iodine_utils_hmac512(VALUE self, VALUE secret, VALUE massage) {
+  rb_check_type(secret, RUBY_T_STRING);
+  rb_check_type(massage, RUBY_T_STRING);
+  fio_buf_info_s k = IODINE_RSTR_INFO(secret);
+  fio_buf_info_s m = IODINE_RSTR_INFO(massage);
+  fio_u512 h = fio_sha512_hmac(k.buf, k.len, m.buf, m.len);
+  FIO_STR_INFO_TMP_VAR(out, 128);
+  fio_string_write_base64enc(&out, NULL, h.u8, 64, 0);
+  return rb_str_new(out.buf, out.len);
+}
+
+FIO_SFUNC VALUE iodine_utils_hmac_sha1(VALUE self,
+                                       VALUE secret,
+                                       VALUE massage) {
+  rb_check_type(secret, RUBY_T_STRING);
+  rb_check_type(massage, RUBY_T_STRING);
+  fio_buf_info_s k = IODINE_RSTR_INFO(secret);
+  fio_buf_info_s m = IODINE_RSTR_INFO(massage);
+  fio_sha1_s h = fio_sha1_hmac(k.buf, k.len, m.buf, m.len);
+  FIO_STR_INFO_TMP_VAR(out, 40);
+  fio_string_write_base64enc(&out, NULL, h.digest, 20, 0);
+  return rb_str_new(out.buf, out.len);
+}
+
+FIO_SFUNC VALUE iodine_utils_hmac_poly(VALUE self,
+                                       VALUE secret,
+                                       VALUE massage) {
+  rb_check_type(secret, RUBY_T_STRING);
+  rb_check_type(massage, RUBY_T_STRING);
+  fio_buf_info_s k = IODINE_RSTR_INFO(secret);
+  fio_buf_info_s m = IODINE_RSTR_INFO(massage);
+  fio_u256 fallback = {0};
+  fio_u128 h;
+  if (k.len < 256) {
+    fio_memcpy255x(fallback.u8, k.buf, k.len);
+    if (k.len < 10)
+      fallback = fio_sha512(k.buf, k.len).u256[0];
+    k.buf = (char *)fallback.u8;
+  }
+  fio_poly1305_auth(h.u8, k.buf, m.buf, m.len, NULL, 0);
+
+  FIO_STR_INFO_TMP_VAR(out, 32);
+  fio_string_write_base64enc(&out, NULL, h.u8, 16, 0);
+  return rb_str_new(out.buf, out.len);
+}
+
 FIO_SFUNC VALUE iodine_utils_uuid(int argc, VALUE *argv, VALUE self) {
   VALUE r = Qnil;
   fio_u128 rand = iodine_random128();
@@ -260,6 +306,15 @@ FIO_SFUNC VALUE iodine_utils_uuid(int argc, VALUE *argv, VALUE self) {
                   IODINE_ARG_BUF(info, 0, "info", 0));
   if (secret.buf && info.buf) {
     fio_sha512_s sh2 = fio_sha512_init();
+    fio_u1024 mk = {0};
+    if (secret.len <= 128) {
+      fio_memcpy255x(mk.u8, secret.buf, secret.len);
+      mk.u64[15] ^= secret.len;
+      for (size_t i = 0; i < 16; ++i)
+        mk.u64[i] ^= 0x3636363636363636ULL;
+      secret.buf = (char *)mk.u8;
+      secret.len = 128;
+    }
     fio_sha512_consume(&sh2, secret.buf, secret.len);
     fio_sha512_consume(&sh2, info.buf, info.len);
     fio_u512 tmp = fio_sha512_finalize(&sh2);
@@ -435,6 +490,11 @@ static void Init_Iodine_Utils(void) {
   rb_define_singleton_method(m, "random", iodine_utils_random, -1);
   rb_define_singleton_method(m, "uuid", iodine_utils_uuid, -1);
   rb_define_singleton_method(m, "totp", iodine_utils_totp, -1);
+  rb_define_singleton_method(m, "hmac512", iodine_utils_hmac512, 2);
+  rb_define_singleton_method(m, "hmac160", iodine_utils_hmac_sha1, 2);
+  rb_define_singleton_method(m, "hmac128", iodine_utils_hmac_poly, 2);
+
+
 
   fio_state_callback_add(FIO_CALL_IN_CHILD, iodine_random_on_fork, NULL);
 }      // clang-format on

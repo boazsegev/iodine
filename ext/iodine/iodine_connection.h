@@ -821,11 +821,11 @@ static void iodine_connection___add_header(fio_http_s *h,
                                            fio_str_info_s v) {
   char *eol = (char *)memchr(v.buf, '\n', v.len);
   while (eol) {
-    ++eol;
     fio_str_info_s tmp = FIO_STR_INFO2(v.buf, (size_t)(eol - v.buf));
+    ++eol;
     fio_http_response_header_add(h, n, tmp);
     v.buf = eol;
-    v.len -= tmp.len;
+    v.len -= tmp.len + 1;
   }
   fio_http_response_header_add(h, n, v);
 }
@@ -2254,13 +2254,15 @@ type_error:
 FIO_IFUNC VALUE iodine_connection_write_internal(VALUE self,
                                                  VALUE data,
                                                  _Bool finish) {
+  VALUE r = Qtrue;
   iodine_connection_s *c = iodine_connection_ptr(self);
   if (!c || (!c->http && !c->io))
-    return Qfalse;
+    return (r = Qfalse);
   fio_str_info_s to_write;
   unsigned to_copy = 1;
   int fileno;
   void (*dealloc)(void *) = NULL;
+  VALUE tmp;
 
   /* TODO! SSE connections? id / event / data combo? */
 
@@ -2272,6 +2274,9 @@ FIO_IFUNC VALUE iodine_connection_write_internal(VALUE self,
     // fio_http_websocket_write(c->http, to_write.buf, len, is_text)
   } else if (data == Qnil) {
     to_write = FIO_STR_INFO0;
+  } else if (c->http && fio_http_is_clean(c->http) &&
+             rb_respond_to(data, IODINE_TO_PATH_ID)) {
+    goto is_named_file;
   } else if (rb_respond_to(data, IODINE_FILENO_ID)) {
     goto is_file;
   } else {
@@ -2295,8 +2300,16 @@ FIO_IFUNC VALUE iodine_connection_write_internal(VALUE self,
     if (finish)
       fio_io_close(c->io);
   }
-  return Qtrue;
-
+  return r;
+is_named_file:
+  tmp = rb_funcallv(data, IODINE_TO_PATH_ID, 0, NULL);
+  if (fio_http_static_file_response(c->http,
+                                    (fio_str_info_s)IODINE_RSTR_INFO(tmp),
+                                    FIO_STR_INFO0,
+                                    0))
+    r = Qfalse;
+  rb_check_funcall(data, IODINE_CLOSE_ID, 0, NULL);
+  return r;
 is_file:
   fileno = fio_file_dup(FIX2INT(rb_funcallv(data, IODINE_FILENO_ID, 0, NULL)));
   if (rb_respond_to(data, IODINE_CLOSE_ID))
@@ -2310,7 +2323,7 @@ is_file:
     if (finish)
       fio_io_close(c->io);
   }
-  return Qtrue;
+  return r;
 }
 
 /** Writes data to the connection asynchronously. */
