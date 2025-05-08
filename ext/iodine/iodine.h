@@ -132,6 +132,7 @@ static VALUE iodine_handler_method_injection__inner(VALUE self,
 #include "iodine_json.h"
 #include "iodine_listener.h"
 #include "iodine_pubsub_msg.h"
+#include "iodine_utils.h"
 /* layer 1 modules */
 #include "iodine_cli.h"
 #include "iodine_defer.h"
@@ -140,7 +141,6 @@ static VALUE iodine_handler_method_injection__inner(VALUE self,
 #include "iodine_pubsub_eng.h"
 #include "iodine_threads.h"
 #include "iodine_tls.h"
-#include "iodine_utils.h"
 /* layer 2 modules */
 #include "iodine_connection.h"
 
