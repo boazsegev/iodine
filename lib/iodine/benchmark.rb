@@ -161,6 +161,19 @@ module Iodine
     def self.random
       require 'benchmark/ips'
       require 'securerandom'
+      require 'openssl' rescue nil
+      ::Benchmark.ips do |bm|
+          bm.report("         Iodine::Utils.uuid(HMAC)")    { Iodine::Utils.uuid "Secret", "message" }
+          bm.report("            Iodine::Utils.hmac128")    { Iodine::Utils.hmac128 "Secret", "message" }
+          bm.report("            Iodine::Utils.hmac160")    { Iodine::Utils.hmac160 "Secret", "message" }
+          bm.report("            Iodine::Utils.hmac512")    { Iodine::Utils.hmac512 "Secret", "message" }
+          if defined?(OpenSSL)
+            bm.report("  OpenSSL::HMAC.base64digest SHA1")    { OpenSSL::HMAC.base64digest "SHA1", "Secret", "message" }
+            bm.report("OpenSSL::HMAC.base64digest SHA512")    { OpenSSL::HMAC.base64digest "SHA512", "Secret", "message" }
+          end
+          bm.compare!
+      end; nil
+
       ::Benchmark.ips do |bm|
           bm.report("Iodine::Utils.uuid")    { Iodine::Utils.uuid }
           bm.report(" SecureRandom.uuid")    { SecureRandom.uuid }

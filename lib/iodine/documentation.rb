@@ -524,6 +524,7 @@ module Iodine
     # @return [String] returns a String containing the requested length of random bytes.
     def self.random(bytes = 16); end
     # Generates a UUID using either random `secret` String, a random `info` String, both or none (a deterministic UUID), depending on the number parameters supplied.
+    #
     # @param secret [String] (**optional**) Adds salt to the UUID randomized number.
     # @param info [String] (**optional**) Adds salt to the UUID randomized number.
     # @return [String] in UUID format.
@@ -534,6 +535,27 @@ module Iodine
     # @param offset [Number] (**optional**) the number of "steps" backwards in time. Allows for testing of expired TOTPs.
     # @return [Number] returns a 6 digit Number based on the secret provided and the current time.
     def self.totp(for, offset = 0); end
+    # Generates 16 unique bytes of Poly1305-MAC, encoding them as a 32 byte Hex encoded String.
+    # @param secret [String] The secret used for the Hash based Message Authentication Code (MAC). Only the first 32 bytes are used.
+    # @param msg [String] The message to authenticate.
+    # @return [String] 32 byte Hex encoded String.
+    def self.hmac128(secret, msg); end
+    # Generates 20 unique bytes of SHA1-HMAC, encoding them as a 40 byte Hex encoded String.
+    #
+    # This is the equivalent of calling `OpenSSL::HMAC.base64digest "SHA1", secret, msg`
+    #
+    # @param secret [String] The secret used for the Hash based Message Authentication Code (MAC).
+    # @param msg [String] The message to authenticate.
+    # @return [String] 40 byte Hex encoded String.
+    def self.hmac160(secret, msg); end
+    # Generates 128 unique bytes of SHA512-HMAC, encoding them as a 256 byte Hex encoded String.
+    #
+    # This is the equivalent of calling `OpenSSL::HMAC.base64digest "SHA512", secret, msg`
+    #
+    # @param secret [String] The secret used for the Hash based Message Authentication Code (MAC).
+    # @param msg [String] The message to authenticate.
+    # @return [String] 256 byte long Hex encoded String.
+    def self.hmac512(secret, msg); end
   end
 
 
