@@ -163,14 +163,19 @@ module Iodine
       require 'securerandom'
       require 'openssl' rescue nil
       ::Benchmark.ips do |bm|
-          bm.report("         Iodine::Utils.uuid(HMAC)")    { Iodine::Utils.uuid "Secret", "message" }
-          bm.report("            Iodine::Utils.hmac128")    { Iodine::Utils.hmac128 "Secret", "message" }
-          bm.report("            Iodine::Utils.hmac160")    { Iodine::Utils.hmac160 "Secret", "message" }
-          bm.report("            Iodine::Utils.hmac512")    { Iodine::Utils.hmac512 "Secret", "message" }
+          benchmark_secret = Iodine.secret()
+          benchmark_payload = (File.exist?(__FILE__) ? IO.binread(__FILE__)[0...512] : "my message payload")
+          digest_sha1 = "SHA1"
+          digest_sha512 = "SHA512"
+          bm.report("         Iodine::Utils.uuid(HMAC)")    { Iodine::Utils.uuid(benchmark_secret, benchmark_payload) }
+          bm.report("            Iodine::Utils.hmac128")    { Iodine::Utils.hmac128(benchmark_secret, benchmark_payload) }
+          bm.report("            Iodine::Utils.hmac160")    { Iodine::Utils.hmac160(benchmark_secret, benchmark_payload) }
+          bm.report("            Iodine::Utils.hmac512")    { Iodine::Utils.hmac512(benchmark_secret, benchmark_payload) }
           if defined?(OpenSSL)
-            bm.report("  OpenSSL::HMAC.base64digest SHA1")    { OpenSSL::HMAC.base64digest "SHA1", "Secret", "message" }
-            bm.report("OpenSSL::HMAC.base64digest SHA512")    { OpenSSL::HMAC.base64digest "SHA512", "Secret", "message" }
+            bm.report("  OpenSSL::HMAC.base64digest SHA1")    { OpenSSL::HMAC.base64digest(digest_sha1, benchmark_secret, benchmark_payload) }
+            bm.report("OpenSSL::HMAC.base64digest SHA512")    { OpenSSL::HMAC.base64digest(digest_sha512, benchmark_secret, benchmark_payload) }
           end
+          puts "Performing comparison of HMAC with #{benchmark_payload.bytesize} byte Message and a #{benchmark_secret.bytesize} byte Secret."
           bm.compare!
       end; nil
 
@@ -178,6 +183,7 @@ module Iodine
           bm.report("Iodine::Utils.uuid")    { Iodine::Utils.uuid }
           bm.report(" SecureRandom.uuid")    { SecureRandom.uuid }
           bm.report("    Random.uuid_v4")    { Random.uuid_v4 }
+          puts "Performing comparison of random UUID generation (i.e. #{Iodine::Utils.uuid})."
           bm.compare!
       end; nil
       ::Benchmark.ips do |bm|
