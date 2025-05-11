@@ -133,24 +133,24 @@ module Iodine
 
       # benchmark different use cases
       ::Benchmark.ips do |x|
-        x.report("Ruby Mustache render list of #{items.to_s}") do |times|
+        x.report("Ruby Mustache render list of #{ items.to_s }") do |times|
           view.render(data)
         end
-        x.report("Iodine::Mustache render list of #{items.to_s}") do |times|
+        x.report("Iodine::Mustache render list of #{ items.to_s }") do |times|
           mus_view.render(data)
         end
 
-        x.report("Ruby Mustache render list of #{items.to_s} with escaped data") do |times|
+        x.report("Ruby Mustache render list of #{ items.to_s } with escaped data") do |times|
           view.render(data_escaped)
         end
-        x.report("Iodine::Mustache render list of #{items.to_s} with escaped data") do |times|
+        x.report("Iodine::Mustache render list of #{ items.to_s } with escaped data") do |times|
           mus_view.render(data_escaped)
         end
 
-        x.report("Ruby Mustache - no caching - render list of #{items.to_s}") do |times|
+        x.report("Ruby Mustache - no caching - render list of #{ items.to_s }") do |times|
           ::Mustache.render(template, data)
         end
-        x.report("Iodine::Mustache - no caching - render list of #{items.to_s}") do |times|
+        x.report("Iodine::Mustache - no caching - render list of #{ items.to_s }") do |times|
           Iodine::Mustache.render(template: template, ctx: data)
         end
         x.compare!
@@ -175,7 +175,7 @@ module Iodine
             bm.report("  OpenSSL::HMAC.base64digest SHA1")    { OpenSSL::HMAC.base64digest(digest_sha1, benchmark_secret, benchmark_payload) }
             bm.report("OpenSSL::HMAC.base64digest SHA512")    { OpenSSL::HMAC.base64digest(digest_sha512, benchmark_secret, benchmark_payload) }
           end
-          puts "Performing comparison of HMAC with #{benchmark_payload.bytesize} byte Message and a #{benchmark_secret.bytesize} byte Secret."
+          puts "Performing comparison of HMAC with #{ benchmark_payload.bytesize } byte Message and a #{ benchmark_secret.bytesize } byte Secret."
           bm.compare!
       end; nil
 
@@ -183,12 +183,13 @@ module Iodine
           bm.report("Iodine::Utils.uuid")    { Iodine::Utils.uuid }
           bm.report(" SecureRandom.uuid")    { SecureRandom.uuid }
           bm.report("    Random.uuid_v4")    { Random.uuid_v4 }
-          puts "Performing comparison of random UUID generation (i.e. #{Iodine::Utils.uuid})."
+          puts "Performing comparison of random UUID generation (i.e. #{ Iodine::Utils.uuid })."
           bm.compare!
       end; nil
       ::Benchmark.ips do |bm|
-          bm.report("Iodine::Utils.bytes(16)")    { Iodine::Utils.random(16) }
+          bm.report("Iodine::Utils.random(16)")    { Iodine::Utils.random(16) }
           bm.report("       Random.bytes(16)")    { ::Random.bytes(16) }
+          puts "Performing comparison of random UUID generation (i.e. #{ Iodine::Utils.uuid })."
           bm.compare!
       end; nil
       ::Benchmark.ips do |bm|
@@ -240,12 +241,12 @@ module Iodine
           bm.report("   CGI unescape HTML")    {   CGI.unescapeHTML html_xss_safe }
           bm.compare!
       end; ::Benchmark.ips do |bm|
-          bm.report("Iodine secure compare (#{short_str2.bytesize} Bytes)")    { Iodine::Utils.secure_compare short_str1, short_str2 }
-          bm.report("  Rack secure compare (#{short_str2.bytesize} Bytes)")    {   ::Rack::Utils.secure_compare short_str1, short_str2 }
+          bm.report("Iodine secure compare (#{ short_str2.bytesize } Bytes)")    { Iodine::Utils.secure_compare short_str1, short_str2 }
+          bm.report("  Rack secure compare (#{ short_str2.bytesize } Bytes)")    {   ::Rack::Utils.secure_compare short_str1, short_str2 }
           bm.compare!
       end; ::Benchmark.ips do |bm|
-          bm.report("Iodine secure compare (#{long_str1.bytesize} Bytes)")    { Iodine::Utils.secure_compare long_str1, long_str2 }
-          bm.report("  Rack secure compare (#{long_str1.bytesize} Bytes)")    {   ::Rack::Utils.secure_compare long_str1, long_str2 }
+          bm.report("Iodine secure compare (#{ long_str1.bytesize } Bytes)")    { Iodine::Utils.secure_compare long_str1, long_str2 }
+          bm.report("  Rack secure compare (#{ long_str1.bytesize } Bytes)")    {   ::Rack::Utils.secure_compare long_str1, long_str2 }
         bm.compare!
       end && nil
     end
@@ -273,7 +274,7 @@ module Iodine
         ]
 
 
-      klasses = [Iodine::Base::MiniMap, ::Hash]
+      klasses = [ Iodine::Base::MiniMap, ::Hash ]
 
       maps = []
       klasses.each {|k| maps << k.new }
@@ -282,9 +283,9 @@ module Iodine
         ::Benchmark.ips do |bm|
           klasses.each_index do |i|
             if(t[2])
-              bm.report("#{klasses[i].name.ljust(22)} #{t[0]}") { maps[i] = klasses[i].new ; t[1].call(maps[i]) } 
+              bm.report("#{ klasses[i].name.ljust(22) } #{ t[0] }") { maps[i] = klasses[i].new ; t[1].call(maps[i]) } 
             else
-              bm.report("#{klasses[i].name.ljust(22)} #{t[0]}") { t[1].call(maps[i]) }
+              bm.report("#{ klasses[i].name.ljust(22) } #{ t[0] }") { t[1].call(maps[i]) }
             end
           end
           bm.compare!
