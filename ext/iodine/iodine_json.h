@@ -90,7 +90,7 @@ static int iodine_fiobj2ruby_array_task(fiobj_array_each_s *e) {
 static int iodine_fiobj2ruby_hash_task(fiobj_hash_each_s *e) {
   VALUE k = iodine_fiobj2ruby(e->key);
   VALUE v = iodine_fiobj2ruby(e->value);
-  rb_hash_aset((VALUE)e->udata, k, iodine_fiobj2ruby(e->value));
+  rb_hash_aset((VALUE)e->udata, k, v);
   return 0;
 }
 
@@ -104,16 +104,16 @@ static VALUE iodine_fiobj2ruby(FIOBJ o) {
   case FIOBJ_T_FLOAT: return rb_float_new(fiobj_float2f(o));
   case FIOBJ_T_STRING: return rb_str_new(fiobj_str_ptr(o), fiobj_str_len(o));
   case FIOBJ_T_ARRAY:
+    STORE.gc_stop();
     r = rb_ary_new_capa(fiobj_array_count(o));
-    STORE.hold(r);
     fiobj_array_each(o, iodine_fiobj2ruby_array_task, (void *)r, 0);
-    STORE.release(r);
+    STORE.gc_start();
     return r;
   case FIOBJ_T_HASH:
-    rb_gc_disable();
+    STORE.gc_stop();
     r = rb_hash_new();
     fiobj_hash_each(o, iodine_fiobj2ruby_hash_task, (void *)r, 0);
-    rb_gc_enable();
+    STORE.gc_start();
     return r;
   // case FIOBJ_T_NULL: /* fall through */
   // case FIOBJ_T_INVALID: /* fall through */
@@ -132,7 +132,9 @@ static VALUE iodine_json_parse_indirect(VALUE self, VALUE rstr) {
   size_t consumed = 0;
   FIOBJ tmp =
       fiobj_json_parse((fio_str_info_s)IODINE_RSTR_INFO(rstr), &consumed);
+  STORE.gc_stop();
   r = iodine_fiobj2ruby(tmp);
+  STORE.gc_start();
   fiobj_free(tmp);
   return r;
 }
@@ -166,50 +168,38 @@ FIO_SFUNC void *iodine___json_on_string(const void *start, size_t len) {
     str = rb_str_new(tmp, fio_bstr_len(tmp));
     fio_bstr_free(tmp);
   }
-  STORE.hold(str);
   return (void *)str;
 }
 FIO_SFUNC void *iodine___json_on_string_simple(const void *start, size_t len) {
   VALUE str = rb_str_new((const char *)start, len);
-  STORE.hold(str);
   return (void *)str;
 }
 /** Dictionary was detected. Returns ctx to hash map or NULL on error. */
 FIO_SFUNC void *iodine___json_on_map(void *ctx, void *at) {
   (void)ctx, (void)at;
   VALUE map = rb_hash_new();
-  STORE.hold(map);
   return (void *)map;
 }
 /** Array was detected. Returns ctx to array or NULL on error. */
 FIO_SFUNC void *iodine___json_on_array(void *ctx, void *at) {
   (void)ctx, (void)at;
   VALUE ary = rb_ary_new();
-  STORE.hold(ary);
   return (void *)ary;
 }
 /** Array was detected. Returns non-zero on error. */
 FIO_SFUNC int iodine___json_map_push(void *ctx, void *key, void *val) {
   rb_hash_aset((VALUE)ctx, (VALUE)key, (VALUE)val);
-  STORE.release((VALUE)val);
-  STORE.release((VALUE)key);
   return 0;
 }
 /** Array was detected. Returns non-zero on error. */
 FIO_SFUNC int iodine___json_array_push(void *ctx, void *val) {
   rb_ary_push((VALUE)ctx, (VALUE)val);
-  STORE.release((VALUE)val);
   return 0;
 }
 /** Called for the `key` element in case of error or NULL value. */
-FIO_SFUNC void iodine___json_free_unused_object(void *ctx) {
-  STORE.release((VALUE)ctx);
-}
+FIO_SFUNC void iodine___json_free_unused_object(void *ctx) {}
 /** the JSON parsing encountered an error - what to do with ctx? */
-FIO_SFUNC void *iodine___json_on_error(void *ctx) {
-  STORE.release((VALUE)ctx);
-  return (void *)Qnil;
-}
+FIO_SFUNC void *iodine___json_on_error(void *ctx) { return (void *)Qnil; }
 
 static fio_json_parser_callbacks_s IODINE_JSON_PARSER_CALLBACKS = {
     .on_null = iodine___json_on_null,
@@ -233,12 +223,18 @@ API
 
 /** Accepts a JSON String and returns a Ruby object. */
 static VALUE iodine_json_parse(VALUE self, VALUE rstr) {
+  VALUE r = Qnil;
   rb_check_type(rstr, RUBY_T_STRING);
-  fio_json_result_s r = fio_json_parse(&IODINE_JSON_PARSER_CALLBACKS,
-                                       RSTRING_PTR(rstr),
-                                       RSTRING_LEN(rstr));
-  STORE.release((VALUE)r.ctx);
-  return (VALUE)r.ctx;
+  STORE.gc_stop();
+  fio_json_result_s result = fio_json_parse(&IODINE_JSON_PARSER_CALLBACKS,
+                                            RSTRING_PTR(rstr),
+                                            RSTRING_LEN(rstr));
+  STORE.gc_start();
+  r = (VALUE)(result.ctx);
+  STORE.hold(r);
+  rb_str_buf_new(1); /* force GC to run if Ruby needs it */
+  STORE.release(r);
+  return r;
 }
 
 /** Accepts a Ruby object and returns a JSON String. */
