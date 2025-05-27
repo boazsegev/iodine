@@ -2844,7 +2844,7 @@ FIO_SFUNC bool fio_math_is_uprime(uint64_t n) {
  * For numbers up to 1023 this is deterministic.
  */
 FIO_IFUNC bool fio_math_is_iprime(int64_t n) {
-  return fio_math_is_uprime((n < 0) ? (uint64_t)(0LL - n) : n);
+  return fio_math_is_uprime((n < 0) ? (uint64_t)(0LL - n) : (uint64_t)n);
 }
 
 /* *****************************************************************************
