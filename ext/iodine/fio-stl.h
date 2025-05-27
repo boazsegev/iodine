@@ -1673,16 +1673,12 @@ FIO_IFUNC void fio_u2buf24_be(void *buf, uint32_t i) {
 /** Converts an unaligned byte stream to a 24 bit number - local endieness. */
 FIO_IFUNC uint32_t fio_buf2u24u(const void *c) { return fio_buf2u24_be(c); }
 /** Writes a 24 bit number to an unaligned buffer - in local endieness. */
-FIO_IFUNC void fio_u2buf24u(void *buf, uint32_t i) {
-  return fio_u2buf24_be(buf, i);
-}
+FIO_IFUNC void fio_u2buf24u(void *buf, uint32_t i) { fio_u2buf24_be(buf, i); }
 #elif __LITTLE_ENDIAN__
 /** Converts an unaligned byte stream to a 24 bit number - local endieness. */
 FIO_IFUNC uint32_t fio_buf2u24u(const void *c) { return fio_buf2u24_le(c); }
 /** Writes a 24 bit number to an unaligned buffer - in local endieness. */
-FIO_IFUNC void fio_u2buf24u(void *buf, uint32_t i) {
-  return fio_u2buf24_le(buf, i);
-}
+FIO_IFUNC void fio_u2buf24u(void *buf, uint32_t i) { fio_u2buf24_le(buf, i); }
 #else
 #warning "Couldn't calculate local version for fio_buf2u24u and fio_u2buf24u"
 #endif
@@ -2604,42 +2600,254 @@ FIO_IFUNC void fio_bit_flip(void *map, size_t bit) {
 /* *****************************************************************************
 Fun Primes
 ***************************************************************************** */
+/* clang-format off */
+
+/* Primes with with 8 bits, 3 to 5 bits of them are set. */
+#define FIO_U8_HASH_PRIME0   0x17U   /* (4/6) 00010111 */
+#define FIO_U8_HASH_PRIME1   0x1DU   /* (4/6) 00011101 */
+#define FIO_U8_HASH_PRIME2   0x25U   /* (3/6) 00100101 */
+#define FIO_U8_HASH_PRIME3   0x29U   /* (3/6) 00101001 */
+#define FIO_U8_HASH_PRIME4   0x2BU   /* (4/6) 00101011 */
+#define FIO_U8_HASH_PRIME5   0x35U   /* (4/6) 00110101 */
+#define FIO_U8_HASH_PRIME6   0x3BU   /* (5/6) 00111011 */
+#define FIO_U8_HASH_PRIME7   0x43U   /* (3/8) 01000011 */
+#define FIO_U8_HASH_PRIME8   0x47U   /* (4/8) 01000111 */
+#define FIO_U8_HASH_PRIME9   0x49U   /* (3/8) 01001001 */
+#define FIO_U8_HASH_PRIME10  0x53U   /* (4/8) 01010011 */
+#define FIO_U8_HASH_PRIME11  0x59U   /* (4/8) 01011001 */
+#define FIO_U8_HASH_PRIME12  0x61U   /* (3/8) 01100001 */
+#define FIO_U8_HASH_PRIME13  0x65U   /* (4/8) 01100101 */
+#define FIO_U8_HASH_PRIME14  0x67U   /* (5/8) 01100111 */
+#define FIO_U8_HASH_PRIME15  0x6BU   /* (5/8) 01101011 */
+#define FIO_U8_HASH_PRIME16  0x6DU   /* (5/8) 01101101 */
+#define FIO_U8_HASH_PRIME17  0x83U   /* (3/8) 10000011 */
+#define FIO_U8_HASH_PRIME18  0x89U   /* (3/8) 10001001 */
+#define FIO_U8_HASH_PRIME19  0x8BU   /* (4/8) 10001011 */
+#define FIO_U8_HASH_PRIME20  0x95U   /* (4/8) 10010101 */
+#define FIO_U8_HASH_PRIME21  0x97U   /* (5/8) 10010111 */
+#define FIO_U8_HASH_PRIME22  0x9DU   /* (5/8) 10011101 */
+#define FIO_U8_HASH_PRIME23  0xA3U   /* (4/8) 10100011 */
+#define FIO_U8_HASH_PRIME24  0xA7U   /* (5/8) 10100111 */
+#define FIO_U8_HASH_PRIME25  0xADU   /* (5/8) 10101101 */
+#define FIO_U8_HASH_PRIME26  0xB3U   /* (5/8) 10110011 */
+#define FIO_U8_HASH_PRIME27  0xB5U   /* (5/8) 10110101 */
+#define FIO_U8_HASH_PRIME28  0xC1U   /* (3/8) 11000001 */
+#define FIO_U8_HASH_PRIME29  0xC5U   /* (4/8) 11000101 */
+#define FIO_U8_HASH_PRIME30  0xC7U   /* (5/8) 11000111 */
+#define FIO_U8_HASH_PRIME31  0xD3U   /* (5/8) 11010011 */
 
 /* Primes with with 16 bits, half of them set. */
-#define FIO_U16_HASH_PRIME0 0xDA23U
-#define FIO_U16_HASH_PRIME1 0xB48BU
-#define FIO_U16_HASH_PRIME2 0xC917U
-#define FIO_U16_HASH_PRIME3 0xD855U
-#define FIO_U16_HASH_PRIME4 0xE0B9U
-#define FIO_U16_HASH_PRIME5 0xE471U
-#define FIO_U16_HASH_PRIME6 0x85CDU
-#define FIO_U16_HASH_PRIME7 0xD433U
-#define FIO_U16_HASH_PRIME8 0xE951U
-#define FIO_U16_HASH_PRIME9 0xA8E5U
+#define FIO_U16_HASH_PRIME0  0x631DU /* 0110001100011101 */
+#define FIO_U16_HASH_PRIME1  0x4F19U /* 0100111100011001 */
+#define FIO_U16_HASH_PRIME2  0xA91BU /* 1010100100011011 */
+#define FIO_U16_HASH_PRIME3  0xDF01U /* 1101111100000001 */
+#define FIO_U16_HASH_PRIME4  0x8C5DU /* 1000110001011101 */
+#define FIO_U16_HASH_PRIME5  0xF941U /* 1111100101000001 */
+#define FIO_U16_HASH_PRIME6  0xC49DU /* 1100010010011101 */
+#define FIO_U16_HASH_PRIME7  0xA32BU /* 1010001100101011 */
+#define FIO_U16_HASH_PRIME8  0x7859U /* 0111100001011001 */
+#define FIO_U16_HASH_PRIME9  0xC4F1U /* 1100010011110001 */
+#define FIO_U16_HASH_PRIME10 0x74E1U /* 0111010011100001 */
+#define FIO_U16_HASH_PRIME11 0xD433U /* 1101010000110011 */
+#define FIO_U16_HASH_PRIME12 0xCB29U /* 1100101100101001 */
+#define FIO_U16_HASH_PRIME13 0xC2A7U /* 1100001010100111 */
+#define FIO_U16_HASH_PRIME14 0xC317U /* 1100001100010111 */
+#define FIO_U16_HASH_PRIME15 0x92B9U /* 1001001010111001 */
+#define FIO_U16_HASH_PRIME16 0x7D03U /* 0111110100000011 */
+#define FIO_U16_HASH_PRIME17 0x5CD1U /* 0101110011010001 */
+#define FIO_U16_HASH_PRIME18 0x73C1U /* 0111001111000001 */
+#define FIO_U16_HASH_PRIME19 0x69A3U /* 0110100110100011 */
+#define FIO_U16_HASH_PRIME20 0xA2B3U /* 1010001010110011 */
+#define FIO_U16_HASH_PRIME21 0x521FU /* 0101001000011111 */
+#define FIO_U16_HASH_PRIME22 0x4E53U /* 0100111001010011 */
+#define FIO_U16_HASH_PRIME23 0xFC41U /* 1111110001000001 */
+#define FIO_U16_HASH_PRIME24 0x5F09U /* 0101111100001001 */
+#define FIO_U16_HASH_PRIME25 0x605FU /* 0110000001011111 */
+#define FIO_U16_HASH_PRIME26 0xA715U /* 1010011100010101 */
+#define FIO_U16_HASH_PRIME27 0x6C65U /* 0110110001100101 */
+#define FIO_U16_HASH_PRIME28 0x65C5U /* 0110010111000101 */
+#define FIO_U16_HASH_PRIME29 0x85D3U /* 1000010111010011 */
+#define FIO_U16_HASH_PRIME30 0xDE41U /* 1101111001000001 */
+#define FIO_U16_HASH_PRIME31 0xCA8DU /* 1100101010001101 */
 
 /* Primes with with 32 bits, half of them set. */
-#define FIO_U32_HASH_PRIME0 0xC19F5985UL
-#define FIO_U32_HASH_PRIME1 0x8D567931UL
-#define FIO_U32_HASH_PRIME2 0x9C178B17UL
-#define FIO_U32_HASH_PRIME3 0xA4B842DFUL
-#define FIO_U32_HASH_PRIME4 0xB0B94EC9UL
-#define FIO_U32_HASH_PRIME5 0xFA9E7084UL
-#define FIO_U32_HASH_PRIME6 0xCA63037BUL
-#define FIO_U32_HASH_PRIME7 0xD728C15DUL
-#define FIO_U32_HASH_PRIME8 0xA872A277UL
-#define FIO_U32_HASH_PRIME9 0xF5781551UL
+#define FIO_U32_HASH_PRIME0  0x618E9735 /* 01100001100011101001011100110101 */
+#define FIO_U32_HASH_PRIME1  0xD9E8E033 /* 11011001111010001110000000110011 */
+#define FIO_U32_HASH_PRIME2  0x50F116F9 /* 01010000111100010001011011111001 */
+#define FIO_U32_HASH_PRIME3  0x6E098F4B /* 01101110000010011000111101001011 */
+#define FIO_U32_HASH_PRIME4  0x8CC87A6B /* 10001100110010000111101001101011 */
+#define FIO_U32_HASH_PRIME5  0x59E16F03 /* 01011001111000010110111100000011 */
+#define FIO_U32_HASH_PRIME6  0xBB838C63 /* 10111011100000111000110001100011 */
+#define FIO_U32_HASH_PRIME7  0x8532FF05 /* 10000101001100101111111100000101 */
+#define FIO_U32_HASH_PRIME8  0x44FEC4A5 /* 01000100111111101100010010100101 */
+#define FIO_U32_HASH_PRIME9  0x9B3350D5 /* 10011011001100110101000011010101 */
+#define FIO_U32_HASH_PRIME10 0x64BE6287 /* 01100100101111100110001010000111 */
+#define FIO_U32_HASH_PRIME11 0x57C2370B /* 01010111110000100011011100001011 */
+#define FIO_U32_HASH_PRIME12 0x9E724F41 /* 10011110011100100100111101000001 */
+#define FIO_U32_HASH_PRIME13 0xF4A8A173 /* 11110100101010001010000101110011 */
+#define FIO_U32_HASH_PRIME14 0x6C4560FD /* 01101100010001010110000011111101 */
+#define FIO_U32_HASH_PRIME15 0xD8558C3D /* 11011000010101011000110000111101 */
+#define FIO_U32_HASH_PRIME16 0xC2F29157 /* 11000010111100101001000101010111 */
+#define FIO_U32_HASH_PRIME17 0xF4D03789 /* 11110100110100000011011110001001 */
+#define FIO_U32_HASH_PRIME18 0x9FB01857 /* 10011111101100000001100001010111 */
+#define FIO_U32_HASH_PRIME19 0xE9513C0F /* 11101001010100010011110000001111 */
+#define FIO_U32_HASH_PRIME20 0x89862FD3 /* 10001001100001100010111111010011 */
+#define FIO_U32_HASH_PRIME21 0xB742A51D /* 10110111010000101010010100011101 */
+#define FIO_U32_HASH_PRIME22 0xB3A681B9 /* 10110011101001101000000110111001 */
+#define FIO_U32_HASH_PRIME23 0xC44899F7 /* 11000100010010001001100111110111 */
+#define FIO_U32_HASH_PRIME24 0x67DE8341 /* 01100111110111101000001101000001 */
+#define FIO_U32_HASH_PRIME25 0xF453213B /* 11110100010100110010000100111011 */
+#define FIO_U32_HASH_PRIME26 0xD22F9855 /* 11010010001011111001100001010101 */
+#define FIO_U32_HASH_PRIME27 0x8B3E807D /* 10001011001111101000000001111101 */
+#define FIO_U32_HASH_PRIME28 0x59DD1C23 /* 01011001110111010001110000100011 */
+#define FIO_U32_HASH_PRIME29 0xEE548C8B /* 11101110010101001000110010001011 */
+#define FIO_U32_HASH_PRIME30 0xD2E74E05 /* 11010010111001110100111000000101 */
+#define FIO_U32_HASH_PRIME31 0x4E55788D /* 01001110010101010111100010001101 */
 
 /* Primes with with 64 bits, half of them set. */
-#define FIO_U64_HASH_PRIME0 ((uint64_t)0x39664DEECA23D825)
-#define FIO_U64_HASH_PRIME1 ((uint64_t)0x48644F7B3959621F)
-#define FIO_U64_HASH_PRIME2 ((uint64_t)0x613A19F5CB0D98D5)
-#define FIO_U64_HASH_PRIME3 ((uint64_t)0x84B56B93C869EA0F)
-#define FIO_U64_HASH_PRIME4 ((uint64_t)0x8EE38D13E0D95A8D)
-#define FIO_U64_HASH_PRIME5 ((uint64_t)0x92E99EC981F0E279)
-#define FIO_U64_HASH_PRIME6 ((uint64_t)0xDDC3100BEF158BB1)
-#define FIO_U64_HASH_PRIME7 ((uint64_t)0x918F4D38049F78BD)
-#define FIO_U64_HASH_PRIME8 ((uint64_t)0xB6C9F8032A35E2D9)
-#define FIO_U64_HASH_PRIME9 ((uint64_t)0xFA2A5F16D2A128D5)
+#define FIO_U64_HASH_PRIME0  ((uint64_t)0x39664DEECA23D825) /* 0011100101100110010011011110111011001010001000111101100000100101 */
+#define FIO_U64_HASH_PRIME1  ((uint64_t)0x48644F7B3959621F) /* 0100100001100100010011110111101100111001010110010110001000011111 */
+#define FIO_U64_HASH_PRIME2  ((uint64_t)0x613A19F5CB0D98D5) /* 0110000100111010000110011111010111001011000011011001100011010101 */
+#define FIO_U64_HASH_PRIME3  ((uint64_t)0x84B56B93C869EA0F) /* 1000010010110101011010111001001111001000011010011110101000001111 */
+#define FIO_U64_HASH_PRIME4  ((uint64_t)0x8EE38D13E0D95A8D) /* 1000111011100011100011010001001111100000110110010101101010001101 */
+#define FIO_U64_HASH_PRIME5  ((uint64_t)0x92E99EC981F0E279) /* 1001001011101001100111101100100110000001111100001110001001111001 */
+#define FIO_U64_HASH_PRIME6  ((uint64_t)0xDDC3100BEF158BB1) /* 1101110111000011000100000000101111101111000101011000101110110001 */
+#define FIO_U64_HASH_PRIME7  ((uint64_t)0x918F4D38049F78BD) /* 1001000110001111010011010011100000000100100111110111100010111101 */
+#define FIO_U64_HASH_PRIME8  ((uint64_t)0xB6C9F8032A35E2D9) /* 1011011011001001111110000000001100101010001101011110001011011001 */
+#define FIO_U64_HASH_PRIME9  ((uint64_t)0xFA2A5F16D2A128D5) /* 1111101000101010010111110001011011010010101000010010100011010101 */
+#define FIO_U64_HASH_PRIME10 ((uint64_t)0x5823C958ED5547D9) /* 0101100000100011110010010101100011101101010101010100011111011001 */
+#define FIO_U64_HASH_PRIME11 ((uint64_t)0xE8AB702EEE09CB43) /* 1110100010101011011100000010111011101110000010011100101101000011 */
+#define FIO_U64_HASH_PRIME12 ((uint64_t)0xEBD609356421F13D) /* 1110101111010110000010010011010101100100001000011111000100111101 */
+#define FIO_U64_HASH_PRIME13 ((uint64_t)0x43D0C330AF5B1F17) /* 0100001111010000110000110011000010101111010110110001111100010111 */
+#define FIO_U64_HASH_PRIME14 ((uint64_t)0xFEAE66D234871807) /* 1111111010101110011001101101001000110100100001110001100000000111 */
+#define FIO_U64_HASH_PRIME15 ((uint64_t)0xEE54B43A52941D6B) /* 1110111001010100101101000011101001010010100101000001110101101011 */
+#define FIO_U64_HASH_PRIME16 ((uint64_t)0x874E9DE46F15E205) /* 1000011101001110100111011110010001101111000101011110001000000101 */
+#define FIO_U64_HASH_PRIME17 ((uint64_t)0xFC7CA51A8A2E9171) /* 1111110001111100101001010001101010001010001011101001000101110001 */
+#define FIO_U64_HASH_PRIME18 ((uint64_t)0x83A70617F71F3C21) /* 1000001110100111000001100001011111110111000111110011110000100001 */
+#define FIO_U64_HASH_PRIME19 ((uint64_t)0x50FA705D6D99C11D) /* 0101000011111010011100000101110101101101100110011100000100011101 */
+#define FIO_U64_HASH_PRIME20 ((uint64_t)0x5362B5E6CF64814B) /* 0101001101100010101101011110011011001111011001001000000101001011 */
+#define FIO_U64_HASH_PRIME21 ((uint64_t)0xA7A178389B0F3077) /* 1010011110100001011110000011100010011011000011110011000001110111 */
+#define FIO_U64_HASH_PRIME22 ((uint64_t)0x779D78921199BA45) /* 0111011110011101011110001001001000010001100110011011101001000101 */
+#define FIO_U64_HASH_PRIME23 ((uint64_t)0xB42FD16A9AE90F81) /* 1011010000101111110100010110101010011010111010010000111110000001 */
+#define FIO_U64_HASH_PRIME24 ((uint64_t)0xA2B4538A3C95576D) /* 1010001010110100010100111000101000111100100101010101011101101101 */
+#define FIO_U64_HASH_PRIME25 ((uint64_t)0x5E23D8E445F94E0D) /* 0101111000100011110110001110010001000101111110010100111000001101 */
+#define FIO_U64_HASH_PRIME26 ((uint64_t)0xE7CA493CD6444F07) /* 1110011111001010010010010011110011010110010001000100111100000111 */
+#define FIO_U64_HASH_PRIME27 ((uint64_t)0x734719A6A1873CB5) /* 0111001101000111000110011010011010100001100001110011110010110101 */
+#define FIO_U64_HASH_PRIME28 ((uint64_t)0x56CCB954143A3AB7) /* 0101011011001100101110010101010000010100001110100011101010110111 */
+#define FIO_U64_HASH_PRIME29 ((uint64_t)0xFA5BC5A72480BF81) /* 1111101001011011110001011010011100100100100000001011111110000001 */
+#define FIO_U64_HASH_PRIME30 ((uint64_t)0xD9B97D090C09F789) /* 1101100110111001011111010000100100001100000010011111011110001001 */
+#define FIO_U64_HASH_PRIME31 ((uint64_t)0x9F74D0B9972E404B) /* 1001111101110100110100001011100110010111001011100100000001001011 */
+
+/* clang-format on */
+
+/** Perform modular multiplication for numbers with up to 64 bits. */
+FIO_IFUNC uint64_t fio_math_mod_mul(uint64_t a, uint64_t b, uint64_t mod) {
+#if defined(__SIZEOF_INT128__)
+  return (uint64_t)(((__uint128_t)a * b) % mod);
+#else
+  uint64_t r = 0;
+  for (; b; b >>= 1) {
+    if (b & 1)
+      r = (r + a) % mod;
+    a = (a + a) % mod;
+  }
+  return r;
+#endif
+}
+
+/** Perform modular exponentiation */
+uint64_t fio___math_mod_expo(uint64_t base, uint64_t exp, uint64_t mod) {
+  uint64_t result = 1;
+  base %= mod;
+  for (; exp; exp >>= 1) {
+    if ((exp & 1)) { /* if exp is odd, multiply base with result */
+      result = fio_math_mod_mul(result, base, mod);
+    }
+    base = fio_math_mod_mul(base, base, mod); /* mod square base */
+  }
+  return result;
+}
+
+#ifndef FIO_PRIME_TABLE_SIZE
+#define FIO_PRIME_TABLE_SIZE 128
+#endif
+/* Perform sieve prime test - deterministic. */
+FIO_SFUNC bool fio___is_prime_table(size_t n) {
+  FIO_ASSERT_DEBUG(n < (FIO_PRIME_TABLE_SIZE << 3));
+  uint64_t primes[(FIO_PRIME_TABLE_SIZE >> 3)];
+  for (size_t i = 0; i < (sizeof(primes) / sizeof(primes[0])); ++i)
+    primes[i] = ~(uint64_t)0;
+  fio_bit_unset(primes, 0);
+  for (size_t i = 2; i < (FIO_PRIME_TABLE_SIZE << 3); ++i) {
+    if (!fio_bit_get(primes, i))
+      continue;
+    for (size_t j = i * i; j < (FIO_PRIME_TABLE_SIZE << 3); j += i)
+      fio_bit_unset(primes, j);
+  }
+  return primes[n];
+}
+
+/* Perform the Miller-Rabin test - probabilistic. */
+FIO_SFUNC bool fio___is_prime_maybe(uint64_t n, size_t tests) {
+  tests += !tests; /* perform loop at least once */
+  /* find d such that n = (2**r) * d + 1 with d odd */
+  const uint64_t nm1 = n - 1;
+  uint64_t d = nm1;
+  size_t r = fio_lsb_index_unsafe(d);
+  d >>= r;
+  // fprintf(stderr, "n = %llu; r = %zu; d = %llu\n", n, r, d);
+  /* loop until tests == 0, starting with base 2 */
+  uint64_t a = 2;
+  for (;;) {
+    uint64_t x = fio___math_mod_expo(a, d, n);
+    if (x != 1 && x != nm1) {
+      bool composite = 1;
+      for (size_t j = 0; j < r - 1; j++) {
+        x = fio___math_mod_expo(x, 2, n);
+        if (x == nm1) {
+          composite = 0;
+          break;
+        }
+      }
+      if (composite)
+        return 0;
+    }
+    if (!(--tests)) /* n is (probably) prime */
+      return 1;
+    /* step into the next base between [2, n-2]... no randomness, but okay */
+    a = 2 + ((((n & 0xFFFFU) + (a - 2) + FIO_U32_HASH_PRIME0) & 0xFFFFFFFF) %
+             (n - 4));
+    a += (a == 2);
+  }
+}
+
+/**
+ * Tests if an unsigned 64 bit number is (probably) a prime.
+ *
+ * For numbers up to 1023 this is deterministic.
+ * */
+FIO_SFUNC bool fio_math_is_uprime(uint64_t n) {
+  if (n < 2)
+    return 0; // 0 and 1 aren't prime
+  if (n < 4)
+    return 1; // 2 and 3 are prime
+  if (!(n & 1))
+    return 0; // even numbers other than 2 aren't primes
+  if (n < (FIO_PRIME_TABLE_SIZE << 3))
+    return fio___is_prime_table(n);
+  return fio___is_prime_maybe(n, 10);
+}
+
+/**
+ * Tests if the absolute value of a signed 64 bit number is (probably) a prime.
+ *
+ * For numbers up to 1023 this is deterministic.
+ */
+FIO_SFUNC bool fio_math_is_prime(int64_t n) {
+  if (n < 0)
+    return fio_math_is_uprime((uint64_t)(0LL - n));
+  return fio_math_is_uprime(n);
+}
 
 /* *****************************************************************************
 64bit addition (ADD) / subtraction (SUB) / multiplication (MUL) with carry.
@@ -2823,33 +3031,54 @@ Vector Types (SIMD / Math)
 #define FIO_HAS_UX 1
 #endif
 
+#if FIO___HAS_ARM_INTRIN
+/** defines a vector group for a fio_uXXX union */
+#define FIO___UXXX_XGRP_DEF(bits)                                              \
+  uint64x2_t x64[bits / 128];                                                  \
+  uint32x4_t x32[bits / 128];                                                  \
+  uint16x8_t x16[bits / 128];                                                  \
+  uint8x16_t x8[bits / 128]
+#elif __has_attribute(vector_size)
+/** defines a vector group for a fio_uXXX union */
+#define FIO___UXXX_XGRP_DEF(bits)                                              \
+  uint64_t __attribute__((vector_size((bits / 8)))) x64[1];                    \
+  uint32_t __attribute__((vector_size((bits / 8)))) x32[1];                    \
+  uint16_t __attribute__((vector_size((bits / 8)))) x16[1];                    \
+  uint8_t __attribute__((vector_size((bits / 8)))) x8[1]
+#else
+/** defines a (fake) vector group for a fio_uXXX union */
+#define FIO___UXXX_XGRP_DEF(bits)                                              \
+  uint64_t x64[(bits / 64)];                                                   \
+  uint32_t x32[(bits / 32)];                                                   \
+  uint16_t x16[(bits / 16)];                                                   \
+  uint8_t x8[(bits / 8)]
+#endif
+
+/** defines a type array group for a fio_uXXX union */
+#define FIO___UXXX_UGRP_DEF(bits)                                              \
+  /** unsigned native word size array, length is system dependent */           \
+  size_t uz[(bits / 8) / sizeof(size_t)];                                      \
+  /** known bit word arrays */                                                 \
+  uint64_t u64[(bits / 64)];                                                   \
+  uint32_t u32[(bits / 32)];                                                   \
+  uint16_t u16[(bits / 16)];                                                   \
+  uint8_t u8[(bits / 8)];                                                      \
+  /** signed variants */                                                       \
+  ssize_t iz[(bits / 8) / sizeof(size_t)];                                     \
+  int64_t i64[(bits / 64)];                                                    \
+  int32_t i32[(bits / 32)];                                                    \
+  int16_t i16[(bits / 16)];                                                    \
+  int8_t i8[(bits / 8)];                                                       \
+  /** float variants */                                                        \
+  float f[(bits / 8) / sizeof(float)];                                         \
+  double d[(bits / 8) / sizeof(double)];                                       \
+  long double ld[(bits / 8) / sizeof(long double)];                            \
+  /** vector variants (if supported) */                                        \
+  FIO___UXXX_XGRP_DEF(bits)
+
 /** An unsigned 128bit union type. */
 typedef union fio_u128 {
-  /** unsigned native word size array, length is system dependent */
-  size_t uz[16 / sizeof(size_t)];
-  /** known bit word arrays */
-  uint64_t u64[2];
-  uint32_t u32[4];
-  uint16_t u16[8];
-  uint8_t u8[16];
-  /** signed variants */
-  ssize_t iz[16 / sizeof(size_t)];
-  int64_t i64[2];
-  int32_t i32[4];
-  int16_t i16[8];
-  int8_t i8[16];
-  /** vector types, if supported */
-#if FIO___HAS_ARM_INTRIN
-  uint64x2_t x64[1];
-  uint32x4_t x32[1];
-  uint16x8_t x16[1];
-  uint8x16_t x8[1];
-#elif __has_attribute(vector_size)
-  uint64_t __attribute__((vector_size(16))) x64[1];
-  uint32_t __attribute__((vector_size(16))) x32[1];
-  uint16_t __attribute__((vector_size(16))) x16[1];
-  uint8_t __attribute__((vector_size(16))) x8[1];
-#endif
+  FIO___UXXX_UGRP_DEF(128);
 #if defined(__SIZEOF_INT128__)
   __uint128_t alignment_for_u128_[1];
 #endif
@@ -2857,32 +3086,8 @@ typedef union fio_u128 {
 
 /** An unsigned 256bit union type. */
 typedef union fio_u256 {
-  size_t uz[32 / sizeof(size_t)];
-  uint64_t u64[4];
-  uint32_t u32[8];
-  uint16_t u16[16];
-  uint8_t u8[32];
   fio_u128 u128[2];
-  /** signed variants */
-  ssize_t iz[32 / sizeof(size_t)];
-  int64_t i64[4];
-  int32_t i32[8];
-  int16_t i16[16];
-  int8_t i8[32];
-#if FIO___HAS_ARM_INTRIN
-  uint64x2_t x64[2];
-  uint32x4_t x32[2];
-  uint16x8_t x16[2];
-  uint8x16_t x8[2];
-#elif __has_attribute(vector_size)
-  uint64_t __attribute__((vector_size(32))) x64[1];
-  uint32_t __attribute__((vector_size(32))) x32[1];
-  uint16_t __attribute__((vector_size(32))) x16[1];
-  uint8_t __attribute__((vector_size(32))) x8[1];
-#endif
-#if defined(__SIZEOF_INT128__)
-  __uint128_t alignment_for_u128_[2];
-#endif
+  FIO___UXXX_UGRP_DEF(256);
 #if defined(__SIZEOF_INT256__)
   __uint256_t alignment_for_u256_[1];
 #endif
@@ -2890,122 +3095,42 @@ typedef union fio_u256 {
 
 /** An unsigned 512bit union type. */
 typedef union fio_u512 {
-  size_t uz[64 / sizeof(size_t)];
-  uint64_t u64[8];
-  uint32_t u32[16];
-  uint16_t u16[32];
-  uint8_t u8[64];
   fio_u128 u128[4];
   fio_u256 u256[2];
-  /** signed variants */
-  ssize_t iz[64 / sizeof(size_t)];
-  int64_t i64[8];
-  int32_t i32[16];
-  int16_t i16[32];
-  int8_t i8[64];
-#if FIO___HAS_ARM_INTRIN
-  uint64x2_t x64[4];
-  uint32x4_t x32[4];
-  uint16x8_t x16[4];
-  uint8x16_t x8[4];
-#elif __has_attribute(vector_size)
-  uint64_t __attribute__((vector_size(64))) x64[1];
-  uint32_t __attribute__((vector_size(64))) x32[1];
-  uint16_t __attribute__((vector_size(64))) x16[1];
-  uint8_t __attribute__((vector_size(64))) x8[1];
-#endif
+  FIO___UXXX_UGRP_DEF(512);
 } fio_u512 FIO_ALIGN(16);
 
 /** An unsigned 1024bit union type. */
 typedef union fio_u1024 {
-  size_t uz[128 / sizeof(size_t)];
-  uint64_t u64[16];
-  uint32_t u32[32];
-  uint16_t u16[64];
-  uint8_t u8[128];
   fio_u128 u128[8];
   fio_u256 u256[4];
   fio_u512 u512[2];
-  /** signed variants */
-  ssize_t iz[128 / sizeof(size_t)];
-  int64_t i64[16];
-  int32_t i32[32];
-  int16_t i16[64];
-  int8_t i8[128];
-#if FIO___HAS_ARM_INTRIN
-  uint64x2_t x64[8];
-  uint32x4_t x32[8];
-  uint16x8_t x16[8];
-  uint8x16_t x8[8];
-#elif __has_attribute(vector_size)
-  uint64_t __attribute__((vector_size(128))) x64[1];
-  uint32_t __attribute__((vector_size(128))) x32[1];
-  uint16_t __attribute__((vector_size(128))) x16[1];
-  uint8_t __attribute__((vector_size(128))) x8[1];
-#endif
+  FIO___UXXX_UGRP_DEF(1024);
 } fio_u1024 FIO_ALIGN(16);
 
 /** An unsigned 2048bit union type. */
 typedef union fio_u2048 {
-  size_t uz[256 / sizeof(size_t)];
-  uint64_t u64[32];
-  uint32_t u32[64];
-  uint16_t u16[128];
-  uint8_t u8[256];
   fio_u128 u128[16];
   fio_u256 u256[8];
   fio_u512 u512[4];
   fio_u1024 u1024[2];
-  /** signed variants */
-  ssize_t iz[256 / sizeof(size_t)];
-  int64_t i64[32];
-  int32_t i32[64];
-  int16_t i16[128];
-  int8_t i8[256];
-#if FIO___HAS_ARM_INTRIN
-  uint64x2_t x64[16];
-  uint32x4_t x32[16];
-  uint16x8_t x16[16];
-  uint8x16_t x8[16];
-#elif __has_attribute(vector_size)
-  uint64_t __attribute__((vector_size(256))) x64[1];
-  uint32_t __attribute__((vector_size(256))) x32[1];
-  uint16_t __attribute__((vector_size(256))) x16[1];
-  uint8_t __attribute__((vector_size(256))) x8[1];
-#endif
+  FIO___UXXX_UGRP_DEF(2048);
 } fio_u2048 FIO_ALIGN(16);
 
 /** An unsigned 4096bit union type. */
 typedef union fio_u4096 {
-  size_t uz[512 / sizeof(size_t)];
-  uint64_t u64[64];
-  uint32_t u32[128];
-  uint16_t u16[256];
-  uint8_t u8[512];
   fio_u128 u128[32];
   fio_u256 u256[16];
   fio_u512 u512[8];
   fio_u1024 u1024[4];
   fio_u2048 u2048[2];
-  /** signed variants */
-  ssize_t iz[512 / sizeof(size_t)];
-  int64_t i64[64];
-  int32_t i32[128];
-  int16_t i16[256];
-  int8_t i8[512];
-#if FIO___HAS_ARM_INTRIN
-  uint64x2_t x64[32];
-  uint32x4_t x32[32];
-  uint16x8_t x16[32];
-  uint8x16_t x8[32];
-#elif __has_attribute(vector_size)
-  uint64_t __attribute__((vector_size(512))) x64[1];
-  uint32_t __attribute__((vector_size(512))) x32[1];
-  uint16_t __attribute__((vector_size(512))) x16[1];
-  uint8_t __attribute__((vector_size(512))) x8[1];
-#endif
+  FIO___UXXX_UGRP_DEF(4096);
 } fio_u4096 FIO_ALIGN(16);
 
+#undef FIO___UXXX_XGRP_DEF
+#undef FIO___UXXX_UGRP_DEF
+
+FIO_ASSERT_STATIC(sizeof(fio_u128) == 16, "Math type size error!");
 FIO_ASSERT_STATIC(sizeof(fio_u4096) == 512, "Math type size error!");
 
 #define fio_u128_init8(...)  ((fio_u128){.u8 = {__VA_ARGS__}})
@@ -3144,8 +3269,8 @@ Vector Helpers - Vector Math Operations
 /** Performs vector reduction for using `op` (+,-, *, etc'), storing to `t`. */
 #define FIO_MATH_UXXX_REDUCE(t, a, bits, op)                                   \
   do {                                                                         \
-    t = 0;                                                                     \
-    for (size_t i__ = 0; i__ < (sizeof((a).u##bits) / sizeof((a).u##bits[0])); \
+    t = (a).u##bits[0];                                                        \
+    for (size_t i__ = 1; i__ < (sizeof((a).u##bits) / sizeof((a).u##bits[0])); \
          ++i__)                                                                \
       (t) = (t)op(a).u##bits[i__];                                             \
   } while (0)
@@ -3179,7 +3304,7 @@ Vector Helpers - Vector Math Operations
     FIO_MATH_UXXX_COP(((target)[0]), ((a)[0]), (b), bits, op);                 \
   }                                                                            \
   FIO_MIFN uint##bits##_t fio_u##total_bits##_reduce_##opnm##bits(             \
-      fio_u##total_bits *a) {                                                  \
+      const fio_u##total_bits *a) {                                            \
     uint##bits##_t t;                                                          \
     FIO_MATH_UXXX_REDUCE(t, ((a)[0]), bits, op);                               \
     return t;                                                                  \
@@ -7499,10 +7624,10 @@ FIO_IFUNC void fio_stable_hash___inner(uint64_t dest[4],
   seed ^= fio_lrot64(seed, 47);
   seed = (seed << 1) + 1;
   uint64_t v[4] = {seed, seed, seed, seed};
-  uint64_t const prime[4] = {FIO_U32_HASH_PRIME0,
-                             FIO_U32_HASH_PRIME1,
-                             FIO_U32_HASH_PRIME2,
-                             FIO_U32_HASH_PRIME3};
+  uint64_t const prime[4] = {0xC19F5985UL,
+                             0x8D567931UL,
+                             0x9C178B17UL,
+                             0xA4B842DFUL};
 
   for (size_t j = 31; j < len; j += 32) {
     /* consumes 32 bytes (256 bits) each loop */
@@ -16645,7 +16770,7 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
   int active_count = epoll_wait(p->fds[0].fd, events, FIO_POLL_MAX_EVENTS, 0);
   if (active_count > 0) {
     /* TODO! fix error handling*/
-    for (size_t i = 0; i < active_count; i++) {
+    for (unsigned i = 0; i < (unsigned)active_count; i++) {
       // errors are handled as disconnections (on_close) in the EPOLLIN queue
       // if no error, try an active event(s)
       if (events[i].events & EPOLLOUT)
@@ -16655,7 +16780,7 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
   }
   active_count = epoll_wait(p->fds[1].fd, events, FIO_POLL_MAX_EVENTS, 0);
   if (active_count > 0) {
-    for (size_t i = 0; i < active_count; i++) {
+    for (unsigned i = 0; i < (unsigned)active_count; i++) {
       // holds an active event(s)
       if (events[i].events & EPOLLIN)
         p->settings.on_data(events[i].data.ptr);
@@ -16813,7 +16938,7 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout_) {
       kevent(p->fd, NULL, 0, events, FIO_POLL_MAX_EVENTS, &timeout);
 
   if (active_count > 0) {
-    for (size_t i = 0; i < active_count; i++) {
+    for (unsigned i = 0; i < (unsigned)active_count; i++) {
       // test for event(s) type
       if ((events[i].filter & EVFILT_WRITE))
         p->settings.on_ready(events[i].udata);
@@ -24204,7 +24329,7 @@ Cleanup
 
 Copyright and License: see header file (000 copyright.h) or top of file
 ***************************************************************************** */
-#if 0 && defined(FIO_ED25519) && !defined(H___FIO_ED25519___H)
+#if defined(FIO_ED25519) && !defined(H___FIO_ED25519___H) && 0
 #define H___FIO_ED25519___H
 
 /* *****************************************************************************
@@ -24222,7 +24347,7 @@ ED25519 API
 ***************************************************************************** */
 
 /** ED25519 Key Pair */
-typedef struct {
+typedef struct {        /* TODO: FIXME: do we need all the bits? */
   fio_u512 private_key; /* Private key (with extra internal storage?) */
   fio_u256 public_key;  /* Public key */
 } fio_ed25519_s;
@@ -24260,10 +24385,18 @@ FIO_IFUNC void fio___ed25519_clamp_on_key(uint8_t *k) {
   k[31] |= 0x40U; /* set the 255th bit (making sure the value is big) */
 }
 
-static fio_u256 FIO___ED25519_PRIME = fio_u256_init64(0x7FFFFFFFFFFFFFFF,
-                                                      0xFFFFFFFFFFFFFFFF,
-                                                      0xFFFFFFFFFFFFFFFF,
-                                                      0xFFFFFFFFFFFFFFED);
+static fio_u256 FIO___ED25519_PRIME = fio_u256_init64(0xFFFFFFFFFFFFFFEDULL,
+                                                      0xFFFFFFFFFFFFFFFFULL,
+                                                      0xFFFFFFFFFFFFFFFFULL,
+                                                      0x7FFFFFFFFFFFFFFFULL);
+/* clang-format off */
+static fio_u1024 FIO___ED25519_PRIME_UNPACKED =
+                 fio_u1024_init64(0xFFEDULL, 0xFFFFULL, 0xFFFFULL, 0xFFFFULL,
+                                  0xFFFFULL, 0xFFFFULL, 0xFFFFULL, 0xFFFFULL,
+                                  0xFFFFULL, 0xFFFFULL, 0xFFFFULL, 0xFFFFULL,
+                                  0xFFFFULL, 0xFFFFULL, 0xFFFFULL, 0x7FFFULL);
+/* clang-format on */
+
 /* Obfuscate or recover ED25519 keys to prevent easy memory scraping */
 FIO_IFUNC void fio___ed25519_flip(fio_ed25519_s *k) {
   /* Generate a deterministic mask */
@@ -50799,23 +50932,23 @@ FIO_SFUNC void FIO_NAME_TEST(stl, core)(void) {
   }
   {
     fprintf(stderr, "* Testing popcount and hemming distance calculation.\n");
-    for (size_t i = 0; i < 64; ++i) {
+    for (int i = 0; i < 64; ++i) {
       FIO_ASSERT(fio_popcount((uint64_t)1 << i) == 1,
                  "fio_popcount error for 1 bit");
     }
-    for (size_t i = 0; i < 63; ++i) {
+    for (int i = 0; i < 63; ++i) {
       FIO_ASSERT(fio_popcount((uint64_t)3 << i) == 2,
                  "fio_popcount error for 2 bits");
     }
-    for (size_t i = 0; i < 62; ++i) {
+    for (int i = 0; i < 62; ++i) {
       FIO_ASSERT(fio_popcount((uint64_t)7 << i) == 3,
                  "fio_popcount error for 3 bits");
     }
-    for (size_t i = 0; i < 59; ++i) {
+    for (int i = 0; i < 59; ++i) {
       FIO_ASSERT(fio_popcount((uint64_t)21 << i) == 3,
                  "fio_popcount error for 3 alternating bits");
     }
-    for (size_t i = 0; i < 64; ++i) {
+    for (int i = 0; i < 64; ++i) {
       FIO_ASSERT(fio_hemming_dist(((uint64_t)1 << i) - 1, 0) == i,
                  "fio_hemming_dist error at %d",
                  i);
@@ -51070,7 +51203,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, core)(void) {
         fio_u256_mul(&result, &ua, &ub);
         FIO_ASSERT(!memcmp(result.u64, expected, sizeof(result.u64)),
                    "Multi-Precision MUL error");
-        FIO_ASSERT(fio_u256_is_eq(&result, (fio_u256 *)&expected),
+        FIO_ASSERT(fio_u512_is_eq(&result, (fio_u512 *)&expected),
                    "Multi-Precision MUL error (is_eq)");
         {
           fio_u512 cpy = result;
@@ -52489,9 +52622,9 @@ FIO_SFUNC void FIO_NAME_TEST(stl, math)(void) {
                fio_math_lsb_index(b, 3));
   }
   { /* Test vectors (partial) */
-    fio_u128 v128 = {{0}};
-    fio_u256 v256 = {{0}};
-    fio_u512 v512 = {{0}};
+    fio_u128 v128 = {.u64 = {0}};
+    fio_u256 v256 = {.u64 = {0}};
+    fio_u512 v512 = {.u64 = {0}};
 #define FIO_VTEST_ACT_CONST(opt, val)                                          \
   fio_u128_c##opt##64(&v128, &v128, val);                                      \
   fio_u256_c##opt##64(&v256, &v256, val);                                      \
@@ -53345,7 +53478,7 @@ FIO_SFUNC void FIO_NAME_TEST(stl, pubsub_roundtrip)(void) {
           .is_pattern = 1,
       },
   };
-  const int sub_count = (sizeof(sub) / sizeof(sub[0]));
+  const size_t sub_count = (sizeof(sub) / sizeof(sub[0]));
 
 #define FIO___PUBLISH2TEST()                                                   \
   fio_publish(.engine = FIO_PUBSUB_CLUSTER,                                    \
@@ -53789,119 +53922,59 @@ FIO_DEFINE_RANDOM128_FN(FIO_SFUNC, fio___prng, 31, 0)
 Playhouse hashing (next risky version)
 ***************************************************************************** */
 
-typedef union {
-  uint64_t v[4] FIO_ALIGN(16);
-#ifdef __SIZEOF_INT128__
-  __uint128_t u128[2];
-#endif
-} fio___r2hash_s;
-
-FIO_IFUNC fio___r2hash_s fio_risky2_hash___inner(const void *restrict data_,
-                                                 size_t len,
-                                                 uint64_t seed) {
-  fio___r2hash_s v = {.v = {seed, seed, seed, seed}};
-  fio___r2hash_s const prime = {.v = {FIO_U64_HASH_PRIME0,
-                                      FIO_U64_HASH_PRIME1,
-                                      FIO_U64_HASH_PRIME2,
-                                      FIO_U64_HASH_PRIME3}};
-  fio___r2hash_s w;
-  const uint8_t *data = (const uint8_t *)data_;
-  /* seed selection is constant time to avoid leaking seed data */
-  seed += len;
-  seed ^= fio_lrot64(seed, 47);
-  seed ^= FIO_U64_HASH_PRIME4;
-
-#define FIO___R2_ROUND(i) /* this version passes all, but fast enough? */      \
-  w.v[i] = fio_ltole64(w.v[i]); /* make sure we're using little endien? */     \
-  v.v[i] ^= w.v[i];                                                            \
-  v.v[i] *= prime.v[i];                                                        \
-  w.v[i] = fio_lrot64(w.v[i], 31);                                             \
-  v.v[i] += w.v[i];                                                            \
-  v.v[i] ^= seed;
-
-  /* consumes 32 bytes (256 bits) blocks (no padding needed) */
-  for (size_t pos = 31; pos < len; pos += 32) {
-    for (size_t i = 0; i < 4; ++i) {
-      fio_memcpy8(w.v + i, data + (i << 3));
-      FIO___R2_ROUND(i);
-    }
-    seed += w.v[0] + w.v[1] + w.v[2] + w.v[3];
-    data += 32;
-  }
-#if (FIO___R2_PERFORM_FULL_BLOCK + 1) && 1
-  if (len & 31) { // pad with zeros
-    uint64_t tmp_buf[4] = {0};
-    fio_memcpy31x(tmp_buf, data, len);
-    for (size_t i = 0; i < 4; ++i) {
-      w.v[0] = tmp_buf[1];
-      FIO___R2_ROUND(i);
-    }
-  }
-#else
-  switch (len & 24) { /* only performed if data exits in these positions */
-  case 24: fio_memcpy8(w.v + 2, data + 16); FIO___R2_ROUND(2); /*fall through*/
-  case 16: fio_memcpy8(w.v + 1, data + 8); FIO___R2_ROUND(1);  /*fall through*/
-  case 8:
-    fio_memcpy8(w.v + 0, data);
-    FIO___R2_ROUND(0);
-    data += len & 24;
-  }
-  if (len & 7) {
-    uint64_t i = (len & 24) >> 3;
-    w.v[i] = 0;
-    fio_memcpy7x(w.v + i, data, len);
-    FIO___R2_ROUND(i);
-  }
-#endif
-
-  /* inner vector mini-avalanche */
-  for (size_t i = 0; i < 4; ++i)
-    v.v[i] *= prime.v[i];
-  v.v[0] ^= fio_lrot64(v.v[0], 7);
-  v.v[1] ^= fio_lrot64(v.v[1], 11);
-  v.v[2] ^= fio_lrot64(v.v[2], 13);
-  v.v[3] ^= fio_lrot64(v.v[3], 17);
-  return v;
-#undef FIO___R2_ROUND
+FIO_IFUNC void fio___risky2_round(fio_u256 *restrict v, uint8_t *bytes32) {
+  const fio_u512 primes = {.u64 = {
+                               FIO_U32_HASH_PRIME0,
+                               FIO_U32_HASH_PRIME1,
+                               FIO_U32_HASH_PRIME2,
+                               FIO_U32_HASH_PRIME3,
+                               FIO_U32_HASH_PRIME4,
+                               FIO_U32_HASH_PRIME5,
+                               FIO_U32_HASH_PRIME6,
+                               FIO_U32_HASH_PRIME7,
+                           }};
+  fio_u512 in = {.u64 = {
+                     1 + fio_buf2u32u(bytes32),
+                     1 + fio_buf2u32u(bytes32 + 4),
+                     1 + fio_buf2u32u(bytes32 + 8),
+                     1 + fio_buf2u32u(bytes32 + 12),
+                     1 + fio_buf2u32u(bytes32 + 16),
+                     1 + fio_buf2u32u(bytes32 + 20),
+                     1 + fio_buf2u32u(bytes32 + 24),
+                     1 + fio_buf2u32u(bytes32 + 28),
+                 }};
+  FIO_FOR(i, 8) { in.u64[i] *= primes.u64[i]; }
+  FIO_FOR(i, 8) { in.u32[(i << 1)] += in.u32[(i << 1) + 1]; }
+  FIO_FOR(i, 8) { v->u32[i] += in.u32[(i << 1)]; }
 }
-
 /*  Computes a facil.io Stable Hash. */
 FIO_SFUNC uint64_t fio_risky2_hash(const void *data_,
                                    size_t len,
                                    uint64_t seed) {
   uint64_t r;
-  fio___r2hash_s v = fio_risky2_hash___inner(data_, len, seed);
-  /* summing avalanche */
-  r = v.v[0] + v.v[1] + v.v[2] + v.v[3];
-  r ^= r >> 31;
-  r *= FIO_U64_HASH_PRIME4;
-  r ^= r >> 31;
+  uint8_t *data = (uint8_t *)data_;
+  fio_u256 v = {.u64 = {(FIO_U64_HASH_PRIME0 + seed) + (len),
+                        (FIO_U64_HASH_PRIME1 - seed) + (len << 1),
+                        (FIO_U64_HASH_PRIME2 + seed) + (len << 2),
+                        (FIO_U64_HASH_PRIME3 ^ seed) + (len << 3)}};
+  for (size_t i = 31; i < len; i += 32) {
+    fio___risky2_round(&v, data);
+    data += 32;
+  }
+  if ((len & 31)) { /* leftover + length input */
+    fio_u256 buf = {0};
+    fio_memcpy31x(buf.u8, data, len);
+    fio___risky2_round(&v, buf.u8);
+  }
+  /* reducing */
+  r = v.u64[0] ^ v.u64[1] ^ v.u64[2] ^ v.u64[3];
+  r ^= v.u64[0] + v.u64[1] + v.u64[2] + v.u64[3];
   return r;
-}
-
-FIO_SFUNC void fio_risky2_hash128(void *restrict dest,
-                                  const void *restrict data_,
-                                  size_t len,
-                                  uint64_t seed) {
-  fio___r2hash_s v = fio_risky2_hash___inner(data_, len, seed);
-  uint64_t r[2];
-  r[0] = v.v[0] + v.v[1] + v.v[2] + v.v[3];
-  r[1] = v.v[0] ^ v.v[1] ^ v.v[2] ^ v.v[3];
-  r[0] ^= r[0] >> 31;
-  r[1] ^= r[1] >> 31;
-  r[0] *= FIO_U64_HASH_PRIME4;
-  r[1] *= FIO_U64_HASH_PRIME0;
-  r[0] ^= r[0] >> 31;
-  r[1] ^= r[1] >> 31;
-  fio_memcpy16(dest, r);
 }
 
 FIO_SFUNC uintptr_t FIO_NAME_TEST(stl, risky2_wrapper)(char *buf, size_t len) {
   return fio_risky2_hash(buf, len, 1);
 }
-
-#undef FIO___R2_HASH_MUL_PRIME
-#undef FIO___R2_HASH_ROUND_FULL
 
 /* *****************************************************************************
 Hashing speed test
