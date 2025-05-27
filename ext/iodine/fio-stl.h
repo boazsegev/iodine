@@ -2768,23 +2768,23 @@ uint64_t fio___math_mod_expo(uint64_t base, uint64_t exp, uint64_t mod) {
   return result;
 }
 
-#ifndef FIO_PRIME_TABLE_SIZE
-#define FIO_PRIME_TABLE_SIZE 128
+#ifndef FIO_PRIME_TABLE_LIMIT
+#define FIO_PRIME_TABLE_LIMIT 1024
 #endif
 /* Perform sieve prime test - deterministic. */
 FIO_SFUNC bool fio___is_prime_table(size_t n) {
-  FIO_ASSERT_DEBUG(n < (FIO_PRIME_TABLE_SIZE << 3));
-  uint64_t primes[(FIO_PRIME_TABLE_SIZE >> 3)];
+  FIO_ASSERT_DEBUG(n < FIO_PRIME_TABLE_LIMIT);
+  uint64_t primes[((FIO_PRIME_TABLE_LIMIT + 63) >> 6)];
   for (size_t i = 0; i < (sizeof(primes) / sizeof(primes[0])); ++i)
     primes[i] = ~(uint64_t)0;
   fio_bit_unset(primes, 0);
-  for (size_t i = 2; i < (FIO_PRIME_TABLE_SIZE << 3); ++i) {
+  for (size_t i = 2; i < FIO_PRIME_TABLE_LIMIT; ++i) {
     if (!fio_bit_get(primes, i))
       continue;
-    for (size_t j = i * i; j < (FIO_PRIME_TABLE_SIZE << 3); j += i)
+    for (size_t j = i * i; j < FIO_PRIME_TABLE_LIMIT; j += i)
       fio_bit_unset(primes, j);
   }
-  return primes[n];
+  return fio_bit_get(primes, n);
 }
 
 /* Perform the Miller-Rabin test - probabilistic. */
@@ -2833,7 +2833,7 @@ FIO_SFUNC bool fio_math_is_uprime(uint64_t n) {
     return 1; // 2 and 3 are prime
   if (!(n & 1))
     return 0; // even numbers other than 2 aren't primes
-  if (n < (FIO_PRIME_TABLE_SIZE << 3))
+  if (n < (FIO_PRIME_TABLE_LIMIT))
     return fio___is_prime_table(n);
   return fio___is_prime_maybe(n, 10);
 }
@@ -2843,10 +2843,8 @@ FIO_SFUNC bool fio_math_is_uprime(uint64_t n) {
  *
  * For numbers up to 1023 this is deterministic.
  */
-FIO_SFUNC bool fio_math_is_prime(int64_t n) {
-  if (n < 0)
-    return fio_math_is_uprime((uint64_t)(0LL - n));
-  return fio_math_is_uprime(n);
+FIO_IFUNC bool fio_math_is_iprime(int64_t n) {
+  return fio_math_is_uprime((n < 0) ? (uint64_t)(0LL - n) : n);
 }
 
 /* *****************************************************************************
@@ -30001,7 +29999,7 @@ perform_overwrite:
 reallocate_map:
   /* reallocate map */
   for (size_t i = 1; i < 3; ++i) {
-    if (FIO_NAME(FIO_MAP_NAME, __allocate_map)(&tmp, o->bits + i))
+    if (FIO_NAME(FIO_MAP_NAME, __allocate_map)(&tmp, (uint32_t)(o->bits + i)))
       goto no_memory;
     if (FIO_NAME(FIO_MAP_NAME, __move2map)(&tmp, o)) {
       FIO_NAME(FIO_MAP_NAME, __free_map)(&tmp, 0);
@@ -43757,7 +43755,7 @@ SFUNC int fio_http_cookie_set FIO_NOOP(fio_http_s *h,
     return -1;
   /* promises that some warnings print only once. */
   static unsigned int warn_illegal = 0;
-  unsigned int need2warn = 0;
+  size_t need2warn = 0;
 
   /* valid / invalid characters in cookies, create with Ruby using:
       a = []

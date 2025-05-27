@@ -53,6 +53,8 @@ typedef struct {
 #define FIO_MAP_VALUE VALUE
 #include FIO_INCLUDE_FILE
 
+FIO_SFUNC void iodine_store___gc_stop(void);
+FIO_SFUNC void iodine_store___gc_start(void);
 FIO_SFUNC void iodine_store___hold(VALUE o);
 FIO_SFUNC void iodine_store___release(VALUE o);
 FIO_SFUNC void iodine_store___on_gc(void (*fn)(void *), void *arg);
@@ -66,33 +68,61 @@ static struct value_reference_counter_store_s {
   iodine_reference_store_frzn_s headers;
   store___todo_s todo;
   size_t limit;
+  size_t gc_stop_counter;
   fio_thread_mutex_t lock;
   /** Adds a VALUE to the store, protecting it from the GC. */
-  void (*hold)(VALUE);
+  void (*const hold)(VALUE);
   /** Removed a VALUE to the store, if it's `hold` count drops to zero. */
-  void (*release)(VALUE);
+  void (*const release)(VALUE);
+  /** Stops the Garbage Collector, or increases the stop count. */
+  void (*const gc_stop)(void);
+  /** Decreases the `gc_stop` count and re-starts Garbage Collector. */
+  void (*const gc_start)(void);
   /** Adds a task to be performed during the next GC cycle. */
-  void (*on_gc)(void (*fn)(void *), void *arg);
+  void (*const on_gc)(void (*fn)(void *), void *arg);
   /** Returns a frozen String, possibly cached. */
-  VALUE (*frozen_str)(fio_str_info_s);
+  VALUE (*const frozen_str)(fio_str_info_s);
   /** Returns a frozen String header name (`HTTP_` + uppercase). */
-  VALUE (*header_name)(fio_str_info_s);
+  VALUE (*const header_name)(fio_str_info_s);
   /* releases all objects */
-  void (*destroy)(void);
+  void (*const destroy)(void);
+  VALUE single_use[256];
 } STORE = {
     FIO_MAP_INIT,
     FIO_MAP_INIT,
     FIO_MAP_INIT,
     FIO_ARRAY_INIT,
     228,
+    0,
     FIO_THREAD_MUTEX_INIT,
     iodine_store___hold,
     iodine_store___release,
+    iodine_store___gc_stop,
+    iodine_store___gc_start,
     iodine_store___on_gc,
     iodine_store___frozen_str,
     iodine_store___header_name,
     iodine_store___destroy,
 };
+
+FIO_SFUNC void iodine_store___gc_stop(void) {
+  size_t state = fio_atomic_add(&STORE.gc_stop_counter, 1);
+  if (state)
+    return;
+  FIO_LOG_DEBUG("GC Paused.");
+  rb_gc_disable();
+}
+FIO_SFUNC void iodine_store___gc_start(void) {
+  size_t state = fio_atomic_sub(&STORE.gc_stop_counter, 1);
+  if (state + 256 > 256)
+    return;
+  if (state + 256 < 256) {
+    fio_atomic_add(&STORE.gc_stop_counter, 1);
+    return;
+  }
+  FIO_LOG_DEBUG("GC Resumed.");
+  rb_gc_enable();
+}
 
 /**
  * Prints the number of object withheld from the GC (for debugging).
