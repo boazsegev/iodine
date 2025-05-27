@@ -373,12 +373,12 @@ FIO_SFUNC VALUE iodine_utils_random(int argc, VALUE *argv, VALUE self) {
 
 FIO_SFUNC VALUE iodine_utils_totp(int argc, VALUE *argv, VALUE self) {
   fio_buf_info_s secret = {0};
-  long long offset = 0;
+  int64_t offset = 0;
   iodine_rb2c_arg(argc,
                   argv,
                   IODINE_ARG_BUF(secret, 0, "for", 1),
                   IODINE_ARG_NUM(offset, 0, "offset", 0));
-  uint32_t otp = fio_otp(secret, .offset = (int64_t)(offset));
+  uint32_t otp = fio_otp(secret, .offset = offset);
   return UINT2NUM(otp);
   (void)self;
 }
