@@ -4,7 +4,7 @@
 # 
 # In this case the `on_http` implementation will be called by iodine (and the `call` implementation will be called by any other server).
 # 
-module App
+module EchoApp
   # A selector for the on_http example to implement.
   STREAM_RESPONSES = false
 
@@ -27,6 +27,7 @@ module App
       # we write without finishing and without setting the content-length header...
       # servers should automatically stream the response (i.e., using chunked encoding)
       e.write "path:    #{e.path}\r\n"
+      e.write "opath:   #{e.opath}  -- (original)\r\n"
       e.write "query:   #{e.query}\r\n"
       e.write "method:  #{e.method}\r\n"
       e.write "version: #{e.version}\r\n"
@@ -46,6 +47,7 @@ module App
     def self.on_http(e)
       # First, prepare the output data
       out =  "path:    #{e.path}\r\n" + 
+             "opath:   #{e.opath}  -- (original)\r\n" +
              "query:   #{e.query}\r\n" +
              "method:  #{e.method}\r\n" +
              "version: #{e.version}\r\n" +
@@ -75,7 +77,11 @@ module App
   end
 end
 
-run App
+if defined?(Iodine)
+  map("hello") { map("echo", EchoApp); run {|e| [200, {}, "Hello World"] } }
+  map("rack") { run {|e| EchoApp.call(e) } }
+end
+run EchoApp
 
 # Benchmark with keep-alive:
 # 

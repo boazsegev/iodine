@@ -2741,8 +2741,8 @@ Fun Primes
 /* clang-format on */
 
 /** Perform modular multiplication for numbers with up to 64 bits. */
-FIO_IFUNC uint64_t fio_math_mod_mul(uint64_t a, uint64_t b, uint64_t mod) {
-#if defined(__SIZEOF_INT128__)
+FIO_IFUNC uint64_t fio_math_mod_mul64(uint64_t a, uint64_t b, uint64_t mod) {
+#if defined(__SIZEOF_INT128__) && !FIO_OS_WIN
   return (uint64_t)(((__uint128_t)a * b) % mod);
 #else
   uint64_t r = 0;
@@ -2756,14 +2756,16 @@ FIO_IFUNC uint64_t fio_math_mod_mul(uint64_t a, uint64_t b, uint64_t mod) {
 }
 
 /** Perform modular exponentiation */
-uint64_t fio___math_mod_expo(uint64_t base, uint64_t exp, uint64_t mod) {
+FIO_IFUNC uint64_t fio_math_mod_expo64(uint64_t base,
+                                       uint64_t exp,
+                                       uint64_t mod) {
   uint64_t result = 1;
   base %= mod;
   for (; exp; exp >>= 1) {
     if ((exp & 1)) { /* if exp is odd, multiply base with result */
-      result = fio_math_mod_mul(result, base, mod);
+      result = fio_math_mod_mul64(result, base, mod);
     }
-    base = fio_math_mod_mul(base, base, mod); /* mod square base */
+    base = fio_math_mod_mul64(base, base, mod); /* mod square base */
   }
   return result;
 }
@@ -2799,11 +2801,11 @@ FIO_SFUNC bool fio___is_prime_maybe(uint64_t n, size_t tests) {
   /* loop until tests == 0, starting with base 2 */
   uint64_t a = 2;
   for (;;) {
-    uint64_t x = fio___math_mod_expo(a, d, n);
+    uint64_t x = fio_math_mod_expo64(a, d, n);
     if (x != 1 && x != nm1) {
       bool composite = 1;
       for (size_t j = 0; j < r - 1; j++) {
-        x = fio___math_mod_expo(x, 2, n);
+        x = fio_math_mod_expo64(x, 2, n);
         if (x == nm1) {
           composite = 0;
           break;
@@ -7191,7 +7193,7 @@ iMap Creation Macro
         pos += 3 + mini_steps; /* 0, 3, 7 =>  max of 56 byte distance */       \
         ++mini_steps;                                                          \
       }                                                                        \
-      pos += (uint##bits##_t)0xC19F5985UL; /* big step */                      \
+      pos += (uint##bits##_t)FIO_U##bits##_HASH_PRIME0;                        \
     }                                                                          \
   }                                                                            \
   /** utilizes the values returned by the seeker object. */                    \
@@ -35378,31 +35380,32 @@ typedef struct fio_io_listen_args {
   uint8_t hide_from_log;
 } fio_io_listen_args;
 
+typedef struct fio_io_listener_s fio_io_listener_s;
 /**
  * Sets up a network service on a listening socket.
  *
  * Returns a self-destructible listener handle on success or NULL on error.
  */
-SFUNC void *fio_io_listen(fio_io_listen_args args);
+SFUNC fio_io_listener_s *fio_io_listen(fio_io_listen_args args);
 #define fio_io_listen(...) fio_io_listen((fio_io_listen_args){__VA_ARGS__})
 
 /** Notifies a listener to stop listening. */
-SFUNC void fio_io_listen_stop(void *listener);
+SFUNC void fio_io_listen_stop(fio_io_listener_s *l);
 
 /** Returns the listener's associated protocol. */
-SFUNC fio_io_protocol_s *fio_io_listener_protocol(void *listener);
+SFUNC fio_io_protocol_s *fio_io_listener_protocol(fio_io_listener_s *l);
 
 /** Returns the listener's associated `udata`. */
-SFUNC void *fio_io_listener_udata(void *listener);
+SFUNC void *fio_io_listener_udata(fio_io_listener_s *l);
 
 /** Sets the listener's associated `udata`, returning the old value. */
-SFUNC void *fio_io_listener_udata_set(void *listener, void *new_udata);
+SFUNC void *fio_io_listener_udata_set(fio_io_listener_s *l, void *new_udata);
 
 /** Returns the URL on which the listener is listening. */
-SFUNC fio_buf_info_s fio_io_listener_url(void *listener);
+SFUNC fio_buf_info_s fio_io_listener_url(fio_io_listener_s *l);
 
 /** Returns true if the listener protocol has an attached TLS context. */
-SFUNC int fio_io_listener_is_tls(void *listener);
+SFUNC int fio_io_listener_is_tls(fio_io_listener_s *l);
 
 /* *****************************************************************************
 Connecting as a Client
@@ -38257,37 +38260,38 @@ static void fio___io_listen_free(void *l_) {
   FIO_MEM_FREE_(l, sizeof(*l) + l->url_len + 1);
 }
 
-SFUNC void fio_io_listen_stop(void *listener) {
+SFUNC void fio_io_listen_stop(fio_io_listener_s *listener) {
   if (listener)
-    fio___io_listen_free(listener);
+    fio___io_listen_free((fio___io_listen_s *)listener);
 }
 
 /** Returns the URL on which the listener is listening. */
-SFUNC fio_buf_info_s fio_io_listener_url(void *listener) {
+SFUNC fio_buf_info_s fio_io_listener_url(fio_io_listener_s *listener) {
   fio___io_listen_s *l = (fio___io_listen_s *)listener;
   return FIO_BUF_INFO2(l->url, l->url_len);
 }
 
 /** Returns true if the listener protocol has an attached TLS context. */
-SFUNC int fio_io_listener_is_tls(void *listener) {
+SFUNC int fio_io_listener_is_tls(fio_io_listener_s *listener) {
   fio___io_listen_s *l = (fio___io_listen_s *)listener;
   return !!l->tls_ctx;
 }
 
 /** Returns the listener's associated protocol. */
-SFUNC fio_io_protocol_s *fio_io_listener_protocol(void *listener) {
+SFUNC fio_io_protocol_s *fio_io_listener_protocol(fio_io_listener_s *listener) {
   fio___io_listen_s *l = (fio___io_listen_s *)listener;
   return l->protocol;
 }
 
 /** Returns the listener's associated `udata`. */
-SFUNC void *fio_io_listener_udata(void *listener) {
+SFUNC void *fio_io_listener_udata(fio_io_listener_s *listener) {
   fio___io_listen_s *l = (fio___io_listen_s *)listener;
   return l->udata;
 }
 
 /** Sets the listener's associated `udata`, returning the old value. */
-SFUNC void *fio_io_listener_udata_set(void *listener, void *new_udata) {
+SFUNC void *fio_io_listener_udata_set(fio_io_listener_s *listener,
+                                      void *new_udata) {
   void *old;
   fio___io_listen_s *l = (fio___io_listen_s *)listener;
   old = l->udata;
@@ -38385,18 +38389,19 @@ int fio_io_listen___(void); /* IDE marker */
  *
  * See the `fio_listen` Macro for details.
  */
-SFUNC void *fio_io_listen FIO_NOOP(struct fio_io_listen_args args) {
+SFUNC fio_io_listener_s *fio_io_listen
+FIO_NOOP(struct fio_io_listen_args args) {
   fio___io_listen_s *l = NULL;
   void *built_tls = NULL;
   int should_free_tls = !args.tls;
   FIO_STR_INFO_TMP_VAR(url_alt, 2048);
   if (!args.protocol) {
     FIO_LOG_ERROR("fio_io_listen requires a protocol to be assigned.");
-    return l;
+    return (fio_io_listener_s *)l;
   }
   if (args.on_root && !fio_io_is_master()) {
     FIO_LOG_ERROR("fio_io_listen called with `on_root` by a non-root worker.");
-    return l;
+    return (fio_io_listener_s *)l;
   }
   if (!args.url) {
     args.url = getenv("ADDRESS");
@@ -38420,7 +38425,7 @@ SFUNC void *fio_io_listen FIO_NOOP(struct fio_io_listen_args args) {
     size_t port = fio_atomic_add(&port_counter, 1);
     if (port == 3000 && getenv("PORT")) {
       char *port_env = getenv("PORT");
-      port = fio_atol10(&port_env);
+      port = fio_atol(&port_env);
       if (!port | (port > 65535ULL))
         port = 3000;
     }
@@ -38469,7 +38474,7 @@ SFUNC void *fio_io_listen FIO_NOOP(struct fio_io_listen_args args) {
   l->fd = fio_sock_open2(l->url, FIO_SOCK_SERVER | FIO_SOCK_TCP);
   if (l->fd == -1) {
     fio___io_listen_free(l);
-    return (l = NULL);
+    return (fio_io_listener_s *)(l = NULL);
   }
   if (fio_io_is_running()) {
     fio_io_defer(fio___io_listen_attach_task_deferred, l, NULL);
@@ -38480,7 +38485,7 @@ SFUNC void *fio_io_listen FIO_NOOP(struct fio_io_listen_args args) {
         (void *)l);
   }
   fio_state_callback_add(FIO_CALL_AT_EXIT, fio___io_listen_free, l);
-  return l;
+  return (fio_io_listener_s *)l;
 }
 
 /* *****************************************************************************
@@ -42068,6 +42073,12 @@ SFUNC fio_str_info_s fio_http_method(fio_http_s *);
 /** Sets the method information associated with the HTTP handle. */
 SFUNC fio_str_info_s fio_http_method_set(fio_http_s *, fio_str_info_s);
 
+/** Gets the original / first path associated with the HTTP handle. */
+SFUNC fio_str_info_s fio_http_opath(fio_http_s *);
+
+/** Sets the original / first path associated with the HTTP handle. */
+SFUNC fio_str_info_s fio_http_opath_set(fio_http_s *, fio_str_info_s);
+
 /** Gets the path information associated with the HTTP handle. */
 SFUNC fio_str_info_s fio_http_path(fio_http_s *);
 
@@ -42785,17 +42796,17 @@ SFUNC fio_str_info_s fio_http_log_time(uint64_t now_in_seconds) {
 Helpers - fio_keystr_s memory allocation callbacks
 ***************************************************************************** */
 
-FIO_LEAK_COUNTER_DEF(http___keystr_allocator)
+FIO_LEAK_COUNTER_DEF(fio___http_keystr_allocator)
 
 FIO_SFUNC void fio___http_keystr_free(void *ptr, size_t len) {
   if (!ptr)
     return;
-  FIO_LEAK_COUNTER_ON_FREE(http___keystr_allocator);
+  FIO_LEAK_COUNTER_ON_FREE(fio___http_keystr_allocator);
   FIO_MEM_FREE_(ptr, len);
   (void)len; /* if unused */
 }
 FIO_SFUNC void *fio___http_keystr_alloc(size_t capa) {
-  FIO_LEAK_COUNTER_ON_ALLOC(http___keystr_allocator);
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___http_keystr_allocator);
   return FIO_MEM_REALLOC_(NULL, 0, capa, 0);
 }
 
@@ -42915,10 +42926,10 @@ static uint32_t FIO___HTTP_STATIC_CACHE_IMAP[FIO___HTTP_STATIC_CACHE_CAPA];
 
 static uint64_t fio___http_str_cached_hash(char *str, size_t len) {
   /* use low-case hash specific for the HTTP handle (change resilient) */
-  const fio_u256 primes = fio_u256_init64(FIO_U64_HASH_PRIME1,
-                                          FIO_U64_HASH_PRIME2,
-                                          FIO_U64_HASH_PRIME3,
-                                          FIO_U64_HASH_PRIME4);
+  const fio_u256 primes = fio_u256_init64(((uint64_t)0x84B56B93C869EA0F),
+                                          ((uint64_t)0x613A19F5CB0D98D5),
+                                          ((uint64_t)0x48644F7B3959621F),
+                                          ((uint64_t)0x39664DEECA23D825));
   uint64_t hash = 0;
   if (len > 32)
     return hash;
@@ -43333,6 +43344,7 @@ struct fio_http_s {
   uint32_t state;
   uint32_t status;
   fio_keystr_s method;
+  fio_keystr_s opath;
   fio_keystr_s path;
   fio_keystr_s query;
   fio_keystr_s version;
@@ -43363,6 +43375,7 @@ SFUNC fio_http_s *fio_http_destroy(fio_http_s *h) {
   h->controller->on_destroyed(h);
 
   fio_keystr_destroy(&h->method, fio___http_keystr_free);
+  fio_keystr_destroy(&h->opath, fio___http_keystr_free);
   fio_keystr_destroy(&h->path, fio___http_keystr_free);
   fio_keystr_destroy(&h->query, fio___http_keystr_free);
   fio_keystr_destroy(&h->version, fio___http_keystr_free);
@@ -43417,6 +43430,7 @@ SFUNC void fio_http_close(fio_http_s *h) { h->controller->close_io(h); }
 SFUNC fio_http_s *fio_http_new_copy_request(fio_http_s *o) {
   fio_http_s *h = fio_http_new();
   FIO_ASSERT_ALLOC(h);
+  fio_http_opath_set(h, fio_http_opath(o));
   fio_http_path_set(h, fio_http_path(o));
   fio_http_method_set(h, fio_http_method(o));
   fio_http_query_set(h, fio_http_query(o));
@@ -43446,7 +43460,7 @@ SFUNC fio_http_s *fio_http_new_copy_request(fio_http_s *o) {
 Simple Property Set / Get
 ***************************************************************************** */
 
-#define HTTP___MAKE_GET_SET(property)                                          \
+#define FIO___HTTP_MAKE_GET_SET(property)                                      \
   SFUNC fio_str_info_s fio_http_##property(fio_http_s *h) {                    \
     FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
     return fio_keystr_info(&h->property);                                      \
@@ -43455,17 +43469,19 @@ Simple Property Set / Get
   SFUNC fio_str_info_s fio_http_##property##_set(fio_http_s *h,                \
                                                  fio_str_info_s value) {       \
     FIO_ASSERT_DEBUG(h, "NULL HTTP handler!");                                 \
-    fio_keystr_destroy(&h->property, fio___http_keystr_free);                  \
+    fio_keystr_s old = h->property; /* delay destroy in case of copy/edit. */  \
     h->property = fio_keystr_init(value, fio___http_keystr_alloc);             \
+    fio_keystr_destroy(&old, fio___http_keystr_free);                          \
     return fio_keystr_info(&h->property);                                      \
   }
 
-HTTP___MAKE_GET_SET(method)
-HTTP___MAKE_GET_SET(path)
-HTTP___MAKE_GET_SET(query)
-HTTP___MAKE_GET_SET(version)
+FIO___HTTP_MAKE_GET_SET(method)
+FIO___HTTP_MAKE_GET_SET(path)
+FIO___HTTP_MAKE_GET_SET(opath)
+FIO___HTTP_MAKE_GET_SET(query)
+FIO___HTTP_MAKE_GET_SET(version)
 
-#undef HTTP___MAKE_GET_SET
+#undef FIO___HTTP_MAKE_GET_SET
 
 FIO_DEF_GET_FUNC(SFUNC, fio_http, fio_http_s, size_t, status)
 
@@ -44853,7 +44869,7 @@ SFUNC void fio_http_write_log(fio_http_s *h) {
   fio_string_write_s to_write[16] = {
       FIO_STRING_WRITE_STR_INFO(fio_keystr_info(&h->method)),
       FIO_STRING_WRITE_STR2((const char *)" ", 1),
-      FIO_STRING_WRITE_STR_INFO(fio_keystr_info(&h->path)),
+      FIO_STRING_WRITE_STR_INFO(fio_keystr_info(&h->opath)),
       FIO_STRING_WRITE_STR2((const char *)" ", 1),
       FIO_STRING_WRITE_STR_INFO(fio_keystr_info(&h->version)),
       FIO_STRING_WRITE_STR2((const char *)"\" ", 2),
@@ -46652,8 +46668,6 @@ typedef struct fio_http_settings_s {
   void (*on_http)(fio_http_s *h);
   /** Called when a request / response cycle is finished with no Upgrade. */
   void (*on_finish)(fio_http_s *h);
-  /** (optional) the callback to be performed when the HTTP service closes. */
-  void (*on_stop)(struct fio_http_settings_s *settings);
 
   /** Authenticate EventSource (SSE) requests, return non-zero to deny.*/
   int (*on_authenticate_sse)(fio_http_s *h);
@@ -46680,8 +46694,12 @@ typedef struct fio_http_settings_s {
   /** Called after a WebSocket / SSE connection is closed (for cleanup). */
   void (*on_close)(fio_http_s *h);
 
+  /** (optional) the callback to be performed when the HTTP service closes. */
+  void (*on_stop)(struct fio_http_settings_s *settings);
+
   /** Default opaque user data for HTTP handles (fio_http_s). */
   void *udata;
+
   /** Optional SSL/TLS support. */
   fio_io_functions_s *tls_io_func;
   /** Optional SSL/TLS support. */
@@ -46764,15 +46782,19 @@ typedef struct fio_http_settings_s {
   uint8_t log;
 } fio_http_settings_s;
 
+/* a pointer safety type */
+typedef struct fio_http_listener_s fio_http_listener_s;
+
 /** Listens to HTTP / WebSockets / SSE connections on `url`. */
-SFUNC void *fio_http_listen(const char *url, fio_http_settings_s settings);
+SFUNC fio_http_listener_s *fio_http_listen(const char *url,
+                                           fio_http_settings_s settings);
 
 /** Listens to HTTP / WebSockets / SSE connections on `url`. */
 #define fio_http_listen(url, ...)                                              \
   fio_http_listen(url, (fio_http_settings_s){__VA_ARGS__})
 
 /** Returns the a pointer to the HTTP settings associated with the listener. */
-SFUNC fio_http_settings_s *fio_http_listener_settings(void *listener);
+SFUNC fio_http_settings_s *fio_http_listener_settings(fio_http_listener_s *l);
 
 /** Allows all clients to connect (bypasses authentication). */
 SFUNC int FIO_HTTP_AUTHENTICATE_ALLOW(fio_http_s *h);
@@ -46795,6 +46817,46 @@ SFUNC fio_io_s *fio_http_connect(const char *url,
 
 /** Returns the HTTP settings associated with the HTTP object, if any. */
 SFUNC fio_http_settings_s *fio_http_settings(fio_http_s *);
+
+/* *****************************************************************************
+HTTP Routing (prefix matching)
+***************************************************************************** */
+
+/**
+ * Adds a route prefix to the HTTP handler.
+ *
+ * Order of route settings is irrelevant (unless overwriting an existing route).
+ *
+ * Matching is performed as a best-prefix match. i.e.:
+ *
+ * - All paths match the route `"/"` (the default prefix).
+ *
+ * - The route `"/user"` will match `"/user"` and all `"/user/..."` paths but
+ *   not `"/user..."`
+ *
+ * - Setting `"/user/new"` as well as `"/user"` (in whatever order) will route
+ *   `"/user/new"` and `"/user/new/..."` to `"/user/new"`. Otherwise, the
+ *   `"/user"` route will continue to behave the same.
+ *
+ * Note: the `udata`, `on_finish`, `public_folder` and `log` properties are all
+ * inherited (if missing) from the default HTTP settings used to create the
+ * listener.
+ *
+ * Note: TLS options are ignored.
+ * */
+SFUNC int fio_http_route(fio_http_listener_s *listener,
+                         const char *url,
+                         fio_http_settings_s settings);
+#define fio_http_route(listener, url, ...)                                     \
+  fio_http_route(listener, url, (fio_http_settings_s){__VA_ARGS__})
+
+/** Returns a link to the settings matching `url`, as set by `fio_http_route` */
+SFUNC fio_http_settings_s *fio_http_route_settings(fio_http_listener_s *l,
+                                                   const char *url);
+
+/* *****************************************************************************
+HTTP CRUD Helpers (basically an on_http helper that routes by path data)
+***************************************************************************** */
 
 /* *****************************************************************************
 WebSocket Helpers - HTTP Upgraded Connections
@@ -46909,10 +46971,10 @@ static void fio___http_default_on_eventsource_reconnect(fio_http_s *h,
   (void)h, (void)id;
 }
 
-static void http_settings_validate(fio_http_settings_s *s, int is_client) {
+static void fio___http_settings_validate(fio_http_settings_s *s,
+                                         int is_client) {
   if (!s->pre_http_body)
     s->pre_http_body = fio___http_default_noop;
-
   if (!s->on_http)
     s->on_http = is_client ? fio___http_default_noop
                            : fio___http_default_on_http_request;
@@ -46926,8 +46988,6 @@ static void http_settings_validate(fio_http_settings_s *s, int is_client) {
   if (!s->on_authenticate_websocket)
     s->on_authenticate_websocket = is_client ? FIO_HTTP_AUTHENTICATE_ALLOW
                                              : fio___http_default_authenticate;
-  if (!s->on_open)
-    s->on_open = fio___http_default_noop;
   if (!s->on_open)
     s->on_open = fio___http_default_noop;
   if (!s->on_message)
@@ -46968,9 +47028,9 @@ static void http_settings_validate(fio_http_settings_s *s, int is_client) {
         !(s->public_folder.len == 2 && s->public_folder.buf[0] == '~'))
       --s->public_folder.len;
     if (!fio_filename_is_folder(s->public_folder.buf)) {
-      FIO_LOG_ERROR(
-          "HTTP public folder is not a folder, setting ignored.\n\t%s",
-          s->public_folder.buf);
+      FIO_LOG_ERROR("HTTP public folder not found (or not a folder), setting "
+                    "ignored.\n\t%s",
+                    s->public_folder.buf);
       s->public_folder = ((fio_str_info_s){0});
     }
   }
@@ -46994,6 +47054,14 @@ HTTP Protocol Container (vtable + settings storage)
 ***************************************************************************** */
 #define FIO___RECURSIVE_INCLUDE 1
 
+typedef union fio___http_router_u {
+  fio_http_settings_s s;
+  void *ptr[256];
+  union fio___http_router_u *map[256];
+} fio___http_router_u;
+
+FIO_SFUNC void fio___http_router_destroy(fio___http_router_u *router);
+
 typedef struct {
   fio_http_settings_s settings;
   void (*on_http_callback)(void *, void *);
@@ -47002,6 +47070,7 @@ typedef struct {
     fio_io_protocol_s protocol;
     fio_http_controller_s controller;
   } state[FIO___HTTP_PROTOCOL_NONE + 1];
+  fio___http_router_u router;
   char public_folder_buf[];
 } fio___http_protocol_s;
 #include FIO_INCLUDE_FILE
@@ -47013,8 +47082,7 @@ typedef struct {
   do {                                                                         \
     if (o.settings.tls)                                                        \
       fio_io_tls_free(o.settings.tls);                                         \
-    if (o.settings.on_stop)                                                    \
-      o.settings.on_stop(&o.settings);                                         \
+    fio___http_router_destroy(&o.router);                                      \
   } while (0)
 #include FIO_INCLUDE_FILE
 
@@ -47088,6 +47156,210 @@ typedef struct {
 #undef FIO___RECURSIVE_INCLUDE
 
 /* *****************************************************************************
+HTTP Routing
+***************************************************************************** */
+
+FIO_LEAK_COUNTER_DEF(fio___http_router_u)
+
+void fio_http_route___(void);
+/** Adds a route prefix to the HTTP handler. */
+SFUNC int fio_http_route FIO_NOOP(fio_http_listener_s *l,
+                                  const char *url,
+                                  fio_http_settings_s s) {
+  int err = 0;
+  const uint8_t *u = (const uint8_t *)url;
+  fio___http_protocol_s *p;
+  fio___http_router_u *r;
+  if (!l)
+    goto invalid_listener_error;
+  p = FIO_PTR_FROM_FIELD(fio___http_protocol_s,
+                         state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
+                         fio_io_listener_protocol((fio_io_listener_s *)l));
+  r = &p->router;
+  if (!u || !u[0]) {
+    url = "/";
+    u = (const uint8_t *)url;
+  }
+  /* skip first `/` character, they should always exist anyway */
+  u += (*u == (uint8_t)'/');
+  /* skip last `/` character, to preserve memory and reduce seeking time */
+  for (; *u && (*u != (uint8_t)'/' || u[1]); ++u) {
+    if (*u < (sizeof(s) / sizeof(void *)))
+      goto invalid_char_error;
+    if (!r->map[*u])
+      break;
+    r = r->map[*u];
+  }
+  /* skip last `/` character, to preserve memory and reduce seeking time */
+  for (; *u && (*u != (uint8_t)'/' || u[1]); ++u) {
+    if (*u < (sizeof(s) / sizeof(void *)))
+      goto invalid_char_error;
+    r->map[*u] =
+        (fio___http_router_u *)FIO_MEM_REALLOC_(NULL, 0, sizeof(*r), 0);
+    r = r->map[*u];
+    FIO_ASSERT_ALLOC(r);
+    FIO_LEAK_COUNTER_ON_ALLOC(fio___http_router_u);
+    if (!FIO_MEM_REALLOC_IS_SAFE_) {
+      FIO_MEMSET(r, 0, sizeof(*r));
+    }
+  }
+  /* we are at the leaf node of the path */
+
+  /* inherit reasonable defaults */
+  if (!s.on_finish)
+    s.on_finish = p->settings.on_finish;
+  if (!s.udata)
+    s.udata = p->settings.udata;
+  if (!s.on_stop)
+    s.on_stop = p->settings.on_stop;
+  if (!s.on_authenticate_sse)
+    s.on_authenticate_sse = p->settings.on_authenticate_sse;
+  if (!s.on_authenticate_websocket)
+    s.on_authenticate_websocket = p->settings.on_authenticate_websocket;
+  if (!s.max_header_size)
+    s.max_header_size = p->settings.max_header_size;
+  if (!s.max_line_len)
+    s.max_line_len = p->settings.max_line_len;
+  if (!s.max_body_size)
+    s.max_body_size = p->settings.max_body_size;
+  if (!s.ws_max_msg_size)
+    s.ws_max_msg_size = p->settings.ws_max_msg_size;
+  if (!s.timeout)
+    s.timeout = p->settings.timeout;
+  if (!s.ws_timeout)
+    s.ws_timeout = p->settings.ws_timeout;
+  if (!s.sse_timeout)
+    s.sse_timeout = p->settings.sse_timeout;
+  if (!s.log)
+    s.log = p->settings.log;
+  s.tls = NULL;
+  s.tls_io_func = NULL;
+  /* validate settings and store */
+  fio___http_settings_validate(&s, 0);
+  if (!s.public_folder.buf)
+    s.public_folder = p->settings.public_folder;
+  else if (s.public_folder.buf && s.public_folder.len) {
+    s.tls =
+        (fio_io_tls_s *)FIO_MEM_REALLOC_(NULL, 0, s.public_folder.len + 1, 0);
+    FIO_ASSERT_ALLOC(s.tls);
+    FIO_MEMCPY(s.tls, s.public_folder.buf, s.public_folder.len);
+    s.public_folder = FIO_STR_INFO2((char *)s.tls, s.public_folder.len);
+    s.public_folder.buf[s.public_folder.len] = 0;
+  }
+  /* make sure we're not leaking memory when overwriting an existing route */
+  if (r->s.on_http) {
+    if (r->s.on_stop != p->settings.on_stop || r->s.udata != p->settings.udata)
+      r->s.on_stop(&r->s);
+    if (r->s.tls && (char *)r->s.tls == r->s.public_folder.buf)
+      FIO_MEM_FREE_(r->s.tls, r->s.public_folder.len + 1);
+  }
+  r->s = s;
+  return err;
+
+invalid_char_error:
+  if (url)
+    FIO_LOG_ERROR("Invalid character found in path URL[%zu]: %s",
+                  (size_t)((const char *)u - url),
+                  url);
+  else
+    FIO_LOG_FATAL("HTTP Router requires a non-NULL URL!");
+  err = -1;
+  return err;
+
+invalid_listener_error:
+  FIO_LOG_FATAL("HTTP Router requires an existing HTTP listener object.");
+  err = -1;
+  return err;
+}
+
+void fio___http_route_settings___(void);
+FIO_SFUNC fio_http_settings_s *fio___http_route_settings(
+    fio___http_router_u *route,
+    fio_str_info_s *path) {
+  static const fio_str_info_s root_path = FIO_STR_INFO2((char *)"/", 1);
+  fio_http_settings_s *r = &route->s;
+  uint8_t *pos = (uint8_t *)path->buf;
+  const uint8_t *n = pos;
+  pos += (*pos == (uint8_t)'/');
+  if (!*pos)
+    return r;
+  for (uint8_t c, hi, lo;
+       route && ((c = *pos) >= (sizeof(*r) / sizeof(void *)));
+       ++pos) {
+    /* we have a possible match here - store before stepping into path */
+    if (c == (uint8_t)'/' && route->s.on_http) {
+      r = &route->s;
+      n = pos;
+    } else if (c == (uint8_t)'%' && (hi = fio_c2i(pos[1])) < 16) {
+      if ((lo = fio_c2i(pos[2])) < 16) { /* decrypt route */
+        c = (hi << 4) | lo;
+        pos += 2;
+        if (c < (sizeof(*r) / sizeof(void *)))
+          break;
+      }
+    }
+    route = route->map[c];
+  }
+  /* test if '/' may be inferred */
+  if (!*pos && route && route->map[0]) {
+    r = &route->s;
+    *path = root_path;
+    n = (uint8_t *)path->buf;
+  }
+  n -= (n == (uint8_t *)path->buf + 1);
+  *path = FIO_STR_INFO2((char *)n, path->len - ((char *)n - path->buf));
+  return r;
+}
+
+void fio___http_route_get___(void);
+FIO_SFUNC fio_http_settings_s *fio___http_route_get(fio_http_s *h) {
+  fio_http_settings_s *r = NULL;
+  fio___http_connection_s *connection =
+      (fio___http_connection_s *)fio_http_cdata(h);
+  if (!connection)
+    return r;
+  fio___http_protocol_s *p =
+      FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, connection->settings);
+  fio_str_info_s path = fio_http_opath(h);
+  r = fio___http_route_settings(&p->router, &path);
+  fio_http_udata_set(h, r->udata);
+  fio_http_path_set(h, path);
+  connection->state.http.on_http = r->on_http;
+  connection->state.http.on_finish = r->on_finish;
+  return r;
+}
+
+FIO_SFUNC void fio___http_router_destroy(fio___http_router_u *r) {
+  if (!r)
+    return;
+  if (r->s.tls && (char *)r->s.tls == r->s.public_folder.buf)
+    FIO_MEM_FREE_(r->s.tls, r->s.public_folder.len + 1);
+  for (size_t i = (sizeof(r->s) / sizeof(void *)); i < 256; ++i) {
+    if (!r->map[i])
+      continue;
+    fio___http_router_destroy(r->map[i]);
+    FIO_MEM_FREE_(r->map[i], sizeof(*r));
+    FIO_LEAK_COUNTER_ON_FREE(fio___http_router_u);
+  }
+  if (r->s.on_stop)
+    r->s.on_stop(&r->s);
+}
+
+SFUNC fio_http_settings_s *fio_http_route_settings(fio_http_listener_s *l,
+                                                   const char *url) {
+  fio_http_settings_s *r = NULL;
+  fio___http_protocol_s *p;
+  fio_str_info_s path = FIO_STR_INFO2((char *)url, 1);
+  if (!l)
+    return r;
+  p = FIO_PTR_FROM_FIELD(fio___http_protocol_s,
+                         state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
+                         fio_io_listener_protocol((fio_io_listener_s *)l));
+  r = fio___http_route_settings(&p->router, &path);
+  return r;
+}
+
+/* *****************************************************************************
 Revisit defaults
 ***************************************************************************** */
 
@@ -47096,8 +47368,8 @@ static void fio___http_default_on_eventsource_redirect(fio_http_s *h,
                                                        fio_buf_info_s id,
                                                        fio_buf_info_s event,
                                                        fio_buf_info_s data) {
-  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  c->settings->on_message(h, data, 1);
+  fio_http_settings_s *s = fio___http_route_get(h);
+  s->on_message(h, data, 1);
   (void)h, (void)id, (void)event, (void)data;
 }
 
@@ -47207,7 +47479,8 @@ refuse_upgrade:
 }
 
 FIO_IFUNC int fio___http_on_http_test4upgrade(fio_http_s *h,
-                                              fio___http_connection_s *c) {
+                                              fio___http_connection_s *c,
+                                              fio_http_settings_s *s) {
   union {
     int (*fn)(fio_http_s *);
     void *ptr;
@@ -47217,8 +47490,9 @@ FIO_IFUNC int fio___http_on_http_test4upgrade(fio_http_s *h,
   if (fio_http_sse_requested(h))
     goto sse_requested;
   return 0;
+
 websocket_requested:
-  cb.fn = c->settings->on_authenticate_websocket;
+  cb.fn = s->on_authenticate_websocket;
   fio_queue_push(c->queue,
                  fio___http_perform_user_upgrade_callback_websocket,
                  cb.ptr,
@@ -47226,7 +47500,7 @@ websocket_requested:
   return -1;
 
 sse_requested:
-  cb.fn = c->settings->on_authenticate_sse;
+  cb.fn = s->on_authenticate_sse;
   fio_queue_push(c->queue,
                  fio___http_perform_user_upgrade_callback_sse,
                  cb.ptr,
@@ -47246,12 +47520,13 @@ FIO_SFUNC void fio___http_on_http_direct(void *h_, void *ignr) {
   fio_http_s *h = (fio_http_s *)h_;
   fio_http_status_set(h, 200);
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  if (fio___http_on_http_test4upgrade(h, c))
+  fio_http_settings_s *s = fio___http_route_get(h);
+  if (fio___http_on_http_test4upgrade(h, c, s))
     return;
   union {
     void (*fn)(fio_http_s *);
     void *ptr;
-  } cb = {.fn = c->state.http.on_http};
+  } cb = {.fn = s->on_http};
   fio_queue_push(c->queue, fio___http_perform_user_callback, cb.ptr, (void *)h);
   (void)ignr;
 }
@@ -47260,21 +47535,27 @@ FIO_SFUNC void fio___http_on_http_with_public_folder(void *h_, void *ignr) {
   fio_http_s *h = (fio_http_s *)h_;
   fio_http_status_set(h, 200);
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  if (fio___http_on_http_test4upgrade(h, c))
+  fio_http_settings_s *s = fio___http_route_get(h);
+  fio_http_udata_set(h, s->udata);
+  c->state.http.on_finish = s->on_finish;
+  if (fio___http_on_http_test4upgrade(h, c, s))
     return;
   if ((fio_http_method(h).len != 4 || (fio_buf2u32u(fio_http_method(h).buf) |
                                        0x20202020UL) != fio_buf2u32u("post")) &&
-      !fio_http_static_file_response(h,
-                                     c->settings->public_folder,
-                                     fio_http_path(h),
-                                     c->settings->max_age)) {
+      !fio_http_static_file_response(
+          h,
+          s->public_folder,
+          (s->public_folder.buf == c->settings->public_folder.buf
+               ? fio_http_opath(h)
+               : fio_http_path(h)),
+          s->max_age)) {
     fio_http_free(h);
     return;
   }
   union {
     void (*fn)(fio_http_s *);
     void *ptr;
-  } cb = {.fn = c->state.http.on_http};
+  } cb = {.fn = s->on_http};
   fio_queue_push(c->queue, fio___http_perform_user_callback, cb.ptr, (void *)h);
   (void)ignr;
 }
@@ -47377,11 +47658,21 @@ static void fio___http_listen_on_stop(fio_io_protocol_s *p, void *u) {
 }
 
 void fio_http_listen___(void); /* IDE marker */
-SFUNC void *fio_http_listen FIO_NOOP(const char *url, fio_http_settings_s s) {
-  http_settings_validate(&s, 0);
+SFUNC fio_http_listener_s *fio_http_listen FIO_NOOP(const char *url,
+                                                    fio_http_settings_s s) {
+  fio___http_settings_validate(&s, 0);
+  if (url) {
+    fio_url_s u = fio_url_parse(url, FIO_STRLEN(url));
+    if (u.path.len)
+      FIO_LOG_WARNING(
+          "HTTP listener is always at the root (home folder).\n\t"
+          "  Ignoring the path set in the listening instruction: %.*s",
+          (int)u.path.len,
+          u.path.buf);
+  }
   fio___http_protocol_s *p = fio___http_protocol_new(s.public_folder.len + 1);
   fio___http_protocol_init(p, url, s, 0);
-  void *listener =
+  fio_http_listener_s *listener = (fio_http_listener_s *)
       fio_io_listen(.url = url,
                     .protocol = &p->state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
                     .tls = s.tls,
@@ -47392,13 +47683,14 @@ SFUNC void *fio_http_listen FIO_NOOP(const char *url, fio_http_settings_s s) {
 }
 
 /** Returns the a pointer to the HTTP settings associated with the listener. */
-SFUNC fio_http_settings_s *fio_http_listener_settings(void *listener) {
+SFUNC fio_http_settings_s *fio_http_listener_settings(fio_http_listener_s *l) {
   fio___http_protocol_s *p =
       FIO_PTR_FROM_FIELD(fio___http_protocol_s,
                          state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
-                         fio_io_listener_protocol(listener));
+                         fio_io_listener_protocol((fio_io_listener_s *)l));
   return &p->settings;
 }
+
 /* *****************************************************************************
 HTTP Connect
 ***************************************************************************** */
@@ -47417,7 +47709,7 @@ SFUNC fio_io_s *fio_http_connect FIO_NOOP(const char *url,
                                           fio_http_s *h,
                                           fio_http_settings_s s) {
   FIO_STR_INFO_TMP_VAR(origin, 4096);
-  http_settings_validate(&s, 1);
+  fio___http_settings_validate(&s, 1);
   fio_url_s u = (fio_url_s){0};
   if (url)
     u = fio_url_parse(url, strlen(url));
@@ -47577,6 +47869,7 @@ static int fio_http1_on_url(fio_buf_info_s url, void *udata) {
   if (!u.path.len || u.path.buf[0] != '/')
     return -1;
   fio_http_path_set(c->h, FIO_BUF2STR_INFO(u.path));
+  fio_http_opath_set(c->h, FIO_BUF2STR_INFO(u.path));
   if (u.query.len)
     fio_http_query_set(c->h, FIO_BUF2STR_INFO(u.query));
   if (u.host.len)
@@ -49126,12 +49419,16 @@ FIO_IFUNC fio___http_protocol_s *fio___http_protocol_init(
     bool is_client) {
   int should_free_tls = !s.tls;
   FIO_ASSERT_ALLOC(p);
+  /* zero everything out and build from there */
+  *p = (fio___http_protocol_s){0};
+  /* fill in protocol and controller callbacks */
   for (size_t i = 0; i < FIO___HTTP_PROTOCOL_NONE + 1; ++i) {
     p->state[i].protocol =
         fio___http_protocol_get((fio___http_protocol_selector_e)i, is_client);
     p->state[i].controller =
         fio___http_controller_get((fio___http_protocol_selector_e)i, is_client);
   }
+  /* fill in timeouts */
   for (size_t i = 0; i < FIO___HTTP_PROTOCOL_NONE; ++i)
     p->state[i].protocol.timeout = (unsigned)s.ws_timeout * 1000U;
   p->state[FIO___HTTP_PROTOCOL_SSE].protocol.timeout =
@@ -49142,6 +49439,7 @@ FIO_IFUNC fio___http_protocol_s *fio___http_protocol_init(
       (unsigned)s.timeout * 1000U;
   p->state[FIO___HTTP_PROTOCOL_NONE].protocol.timeout =
       (unsigned)s.timeout * 1000U;
+  /* fill in TLS data */
   if (url) {
     fio_url_s u = fio_url_parse(url, strlen(url));
     s.tls = fio_io_tls_from_url(s.tls, u);
@@ -49159,13 +49457,17 @@ FIO_IFUNC fio___http_protocol_s *fio___http_protocol_init(
         fio_io_tls_free(s.tls);
     }
   }
+  /* fill in settings, callbacks and public folders */
   p->settings = s;
   p->on_http_callback = is_client ? fio___http_on_http_client
                         : (p->settings.public_folder.len)
                             ? fio___http_on_http_with_public_folder
                             : fio___http_on_http_direct;
   p->settings.public_folder.buf = p->public_folder_buf;
+  /* queue selector is performed later (on_start) */
   p->queue = fio_io_queue();
+  /* initialize initial router */
+  p->router.s = p->settings;
 
   if (s.public_folder.len)
     FIO_MEMCPY(p->public_folder_buf, s.public_folder.buf, s.public_folder.len);
@@ -49180,15 +49482,24 @@ SFUNC fio_io_s *fio_http_io(fio_http_s *h) {
   if (!h)
     return NULL;
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
+  if (!c)
+    return NULL;
   return c->io;
 }
 
 /** Returns the HTTP settings associated with the HTTP object, if any. */
 SFUNC fio_http_settings_s *fio_http_settings(fio_http_s *h) {
+  fio_http_settings_s *r = NULL;
   if (!h)
-    return NULL;
+    return r;
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  return c->settings;
+  if (!c)
+    return r;
+  fio___http_protocol_s *p =
+      FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, c->settings);
+  fio_str_info_s path = fio_http_opath(h);
+  r = fio___http_route_settings(&p->router, &path);
+  return r;
 }
 
 /* *****************************************************************************

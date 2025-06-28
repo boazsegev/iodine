@@ -376,7 +376,7 @@ FIO_SFUNC VALUE iodine_utils_totp(int argc, VALUE *argv, VALUE self) {
   int64_t offset = 0;
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(secret, 0, "for", 1),
+                  IODINE_ARG_BUF(secret, 0, "secret", 1),
                   IODINE_ARG_NUM(offset, 0, "offset", 0));
   uint32_t otp = fio_otp(secret, .offset = offset);
   return UINT2NUM(otp);
@@ -487,6 +487,7 @@ static void Init_Iodine_Utils(void) {
   VALUE m = rb_define_module_under(iodine_rb_IODINE, "Utils");
   iodine_utils_define_methods(m);
   /* non-standard helpers */
+  rb_define_singleton_method(m, "monkey_patch", iodine_utils_monkey_patch, -1);
   rb_define_singleton_method(m, "random", iodine_utils_random, -1);
   rb_define_singleton_method(m, "uuid", iodine_utils_uuid, -1);
   rb_define_singleton_method(m, "totp", iodine_utils_totp, -1);

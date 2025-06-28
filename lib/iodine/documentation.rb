@@ -389,7 +389,7 @@ module Iodine
     # 
     # @param on_yaml [Proc] (**optional**) accepts a YAML front-matter String.
     # 
-    # @param &block [Block] to be used as an implicit `on_yaml` (if missing).
+    # @param block [Block] to be used as an implicit `on_yaml` (if missing).
     # 
     # @return [Iodine::Mustache] returns an Iodine::Mustache object with the provided template ready for rendering.
     # 
@@ -417,7 +417,7 @@ module Iodine
     #
     # @param on_yaml [Proc] (**optional**) accepts a YAML front-matter String.
     #
-    # @param &block [Block] to be used as an implicit \p on_yaml (if missing).
+    # @param block [Block] to be used as an implicit \p on_yaml (if missing).
     #
     # @return [String] returns a String containing the rendered template.
     #
@@ -531,10 +531,10 @@ module Iodine
     def self.uuid(secret = nil, info = nil); end
     # Returns new Timed-One-Time-Password (TOTP), in Google format (6 digit Number with a 30 second validity).
     #
-    # @param for [String] the secret OTP for which the time based (T)OTP should be created.
+    # @param secret [String] the secret OTP for which the time based (T)OTP should be created.
     # @param offset [Number] (**optional**) the number of "steps" backwards in time. Allows for testing of expired TOTPs.
     # @return [Number] returns a 6 digit Number based on the secret provided and the current time.
-    def self.totp(for, offset = 0); end
+    def self.totp(secret, offset = 0); end
     # Generates 16 unique bytes of Poly1305-MAC, encoding them as a 32 byte Hex encoded String.
     # @param secret [String] The secret used for the Hash based Message Authentication Code (MAC). Only the first 32 bytes are used.
     # @param msg [String] The message to authenticate.
@@ -643,6 +643,30 @@ module Iodine
 
   end
 
+#######################
+    
+  # This is a listener object, returned from {Iodine.listen}.
+  # 
+  # **Note**: calling {Iodine::Listener.new} would raise an exception. Use {Iodine.listen} instead.
+  class Listener
+    # Sets the handler for new connections.
+    #
+    # @param url [String] should be `nil` unless listening for HTTP connections, in which case `url`, if set, will be used for routing the `path` part of the URL requested to the specified handler.
+    #
+    # @param handler [Object] should contain a valid {Iodine::Connection::Handler} for incoming connections.
+    #
+    # Routing with HTTP `url` values will follow the following rules:
+    #
+    # - Routing follows the best-match approach regardless of ordering. If the best match is the root URL `'/'`, the default handler will be used.
+    #
+    # - Partial URL matches are only valid if the `/` character is the one following the partial match. For example: setting `"/user"` will match `"/user"` and all `"/user/*"` paths but not `"/user*"`
+    #
+    # - The {Iodine::Connection#path} property will NOT contain the removed path prefix, but will always contain and start with the `/` character. For example: matching the path `"/user/new"` with the route for `"/user"` will set the {Iodine::Connection#path} property to `'/new'`.
+    #
+    # Note: when `handler` is `false` instead of `nil`, the handler for the route will be replace with the default handler. However, the {Iodine::Connection#path} property for the HTTP handler will behave as if a route match has occurred, removing the route's prefix.
+    def map(url = nil, handler = nil) ; end
+  end
+
   #######################
 
   # {Iodine::Connection} is the connection instance class used for all connection callbacks to control the state of the connection.
@@ -669,8 +693,10 @@ module Iodine
     attr_accessor :status
     # For HTTP connections, the `method` value is the HTTP method value received by the client.
     attr_accessor :method
-    # For HTTP connections, the `path` value is the HTTP URL's path String received by the client.
+    # For HTTP connections, the `path` value is the HTTP URL's path String received by the client. When routing, this does **NOT** include the route's prefix (see {Iodine::Listener#map}).
     attr_accessor :path
+    # For HTTP connections, the `opath` value is the HTTP URL's original path String received by the client.
+    attr_accessor :opath
     # For HTTP connections, the `query` value is the HTTP URL's query String (if received by the client).
     attr_accessor :query
     # For HTTP connections, the `version` String value stated by the HTTP client.
@@ -1076,7 +1102,7 @@ module Iodine
       def [](key); end
       # Sets the @value associated with @key and returns it.
       def []=(key, value); end
-      # Runs @block for each key-value pair. Returns the number of times the block was executed.
+      # Runs block for each key-value pair. Returns the number of times the block was executed.
       #
       #     m = Iodine::Base::MiniMap.new
       #     m[:go] = "home"
