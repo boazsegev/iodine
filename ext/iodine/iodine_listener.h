@@ -5,7 +5,7 @@
 /* *****************************************************************************
 Ruby Object.
 ***************************************************************************** */
-static VALUE iodine_rb_IODINE_BASE_LISTENER;
+static VALUE iodine_rb_IODINE_LISTENER;
 
 typedef struct {
   void *listener;
@@ -65,7 +65,7 @@ Helpers
   do {                                                                         \
     STORE.release(old_value);                                                  \
     STORE.hold(o->handler);                                                    \
-    iodine_handler_method_injection__inner(iodine_rb_IODINE_BASE_LISTENER,     \
+    iodine_handler_method_injection__inner(iodine_rb_IODINE_LISTENER,          \
                                            o->handler,                         \
                                            0);                                 \
   } while (0)
@@ -80,7 +80,7 @@ FIO_DEF_GETSET_FUNC(static,
 #undef IODINE_LISTNER_ONSET
 
 static VALUE iodine_listener_new(void *listener, VALUE handler, bool is_http) {
-  VALUE r = iodine_listener_alloc(iodine_rb_IODINE_BASE_LISTENER);
+  VALUE r = iodine_listener_alloc(iodine_rb_IODINE_LISTENER);
   if (IODINE_STORE_IS_SKIP(r))
     rb_raise(rb_eNoMemError, "Listener loocation error!");
   iodine_listener_s *l = iodine_listener_ptr(r);
@@ -93,25 +93,60 @@ static VALUE iodine_listener_new(void *listener, VALUE handler, bool is_http) {
 API
 ***************************************************************************** */
 
-static VALUE iodine_listener_handler_get(VALUE o) {
+static VALUE iodine_listener_map(int argc, VALUE *argv, VALUE o) {
   iodine_listener_s *l = iodine_listener_ptr(o);
+  fio_http_settings_s settings;
+  VALUE url = Qnil;
+  VALUE handler = Qnil;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_RB(url, 0, "url", 0),
+                  IODINE_ARG_RB(handler, 0, "handler", 0));
   if (!l->listener)
-    rb_raise(rb_eRuntimeError, "Did you try to create this object manually?");
-  return iodine___listener_handler(l);
-}
-static VALUE iodine_listener_handler_set(VALUE o, VALUE h) {
-  if (IODINE_STORE_IS_SKIP(h))
-    rb_raise(rb_eTypeError,
-             "Listener handler must be a valid object with propper callbacks. "
-             "See iodine documentation.");
-  iodine_listener_s *l = iodine_listener_ptr(o);
-  if (!l->listener)
-    rb_raise(rb_eRuntimeError, "Did you try to create this object manually?");
-  if (l->is_http)
-    fio_http_listener_settings(l->listener)->udata = (void *)h;
-  else
-    fio_io_listener_udata_set(l->listener, (void *)h);
-  return iodine___listener_handler_set(l, h);
+    rb_raise(rb_eRuntimeError,
+             "call to `map` can only be called on active listeners");
+  if (l->is_http) {
+    if (RB_TYPE_P(url, RUBY_T_SYMBOL))
+      url = rb_sym2str(rb_sym2id(url));
+    if (!IODINE_STORE_IS_SKIP(url))
+      rb_check_type(url, RUBY_T_STRING);
+    if (handler == Qnil) { /* read value */
+      handler = (VALUE)(fio_http_route_settings(
+                            (fio_http_listener_s *)(l->listener),
+                            IODINE_STORE_IS_SKIP(url) ? "/" : RSTRING_PTR(url))
+                            ->udata);
+    } else { /* set value for HTTP router */
+      if (!IODINE_STORE_IS_SKIP(handler)) {
+        STORE.hold(handler);
+        iodine_handler_method_injection__inner(iodine_rb_IODINE_LISTENER,
+                                               handler,
+                                               0);
+      }
+      settings =
+          *fio_http_listener_settings((fio_http_listener_s *)l->listener);
+      if (IODINE_STORE_IS_SKIP(handler))
+        handler = (VALUE)settings.udata;
+      settings.udata = (void *)handler;
+      settings.public_folder = FIO_STR_INFO0;
+      // TODO: test for a handler's public folder property?
+      fio_http_route FIO_NOOP((fio_http_listener_s *)l->listener,
+                              RSTRING_PTR(url),
+                              settings);
+    }
+  } else { /* not HTTP, URLs are invalid. */
+    if (!IODINE_STORE_IS_SKIP(url))
+      rb_raise(rb_eRuntimeError,
+               "URL values are only valid for HTTP listener objects.");
+    if (handler == Qnil) { /* read value */
+      handler = iodine___listener_handler(l);
+    } else { /* set value for raw router */
+      fio_io_listener_udata_set((fio_io_listener_s *)(l->listener),
+                                (void *)handler);
+      iodine___listener_handler_set(l, handler);
+    }
+  }
+  return handler;
 }
 
 static VALUE iodine_listener_initialize(VALUE o) {
@@ -122,23 +157,13 @@ static VALUE iodine_listener_initialize(VALUE o) {
 
 /* *****************************************************************************
 Initialize
-
-Benchmark with:
-
-require 'iodine/benchmark'
-Iodine::Benchmark.minimap(100)
-
-m = Iodine::Base::MiniMap.new
-10.times {|i| m[i] = i }
-m.each {|k,v| puts "#{k.to_s} => #{v.to_s}"}
 ***************************************************************************** */
 static void Init_Iodine_Listener(void) {
-  VALUE m = iodine_rb_IODINE_BASE_LISTENER =
-      rb_define_class_under(iodine_rb_IODINE_BASE, "Listener", rb_cObject);
-  STORE.hold(iodine_rb_IODINE_BASE_LISTENER);
+  VALUE m = iodine_rb_IODINE_LISTENER =
+      rb_define_class_under(iodine_rb_IODINE, "Listener", rb_cObject);
+  STORE.hold(iodine_rb_IODINE_LISTENER);
   rb_define_alloc_func(m, iodine_listener_alloc);
   rb_define_method(m, "initialize", iodine_listener_initialize, 0);
-  rb_define_method(m, "handler", iodine_listener_handler_get, 0);
-  rb_define_method(m, "handler=", iodine_listener_handler_set, 1);
+  rb_define_method(m, "map", iodine_listener_map, -1);
 }
 #endif /* H___IODINE_LISTENER___H */

@@ -27,6 +27,7 @@ typedef enum {
   IODINE_CONNECTION_STORE_rack,
   IODINE_CONNECTION_STORE_method,
   IODINE_CONNECTION_STORE_path,
+  IODINE_CONNECTION_STORE_opath,
   IODINE_CONNECTION_STORE_query,
   IODINE_CONNECTION_STORE_version,
   IODINE_CONNECTION_STORE_tmp,
@@ -254,6 +255,7 @@ Ruby Store Get/Set HTTP Properties
 /* String Get/Set: */
 IODINE_DEF_GETSET_FUNC(method, 1)
 IODINE_DEF_GETSET_FUNC(path, 0)
+IODINE_DEF_GETSET_FUNC(opath, 0)
 IODINE_DEF_GETSET_FUNC(query, 0)
 IODINE_DEF_GETSET_FUNC(version, 1)
 #undef IODINE_DEF_GETSET_FUNC
@@ -1378,6 +1380,16 @@ static VALUE iodine_connection_env_get(VALUE self) {
   iodine_env_set_key_pair(env,
                           FIO_STR_INFO2((char *)"QUERY_STRING", 12),
                           fio_keystr_info(&c->http->query));
+  { /* Router: SCRIPT_NAME*/
+    fio_str_info_s opath = fio_http_opath(c->http);
+    fio_str_info_s path = fio_http_path(c->http);
+    path.len -= (path.len == 1);
+    opath.len -= path.len;
+    if (opath.len)
+      iodine_env_set_key_pair_const(env,
+                                    FIO_STR_INFO2((char *)"SCRIPT_NAME", 11),
+                                    opath);
+  }
   {
     fio_str_info_s host =
         fio_http_request_header(c->http, FIO_STR_INFO2((char *)"host", 4), 0);
@@ -2946,6 +2958,7 @@ static void Init_Iodine_Connection(void)  {
   IODINE_DEFINE_GETSET_METHOD(status);
   IODINE_DEFINE_GETSET_METHOD(method);
   IODINE_DEFINE_GETSET_METHOD(path);
+  IODINE_DEFINE_GETSET_METHOD(opath);
   IODINE_DEFINE_GETSET_METHOD(query);
   IODINE_DEFINE_GETSET_METHOD(version);
   #undef IODINE_DEFINE_GETSET_METHOD
