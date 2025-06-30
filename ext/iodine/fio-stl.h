@@ -40162,6 +40162,13 @@ FIO_CONSTRUCTOR(fio_postoffice_init) {
       .buffer_size =
           sizeof(fio___pubsub_message_parser_s) + FIO___PUBSUB_MESSAGE_OVERHEAD,
   };
+  for (char *tmp = getenv("PUBSUB_PORT"); tmp; tmp = NULL) {
+    uint64_t port = (uint64_t)fio_atol(&tmp);
+    if (port < 0xFFFFU)
+      fio_pubsub_broadcast_on_port(port);
+    else
+      FIO_LOG_ERROR("(pub/sub) PUBSUB_PORT is out of range: %zu", (size_t)port);
+  }
 }
 
 /* *****************************************************************************
@@ -41367,6 +41374,8 @@ SFUNC void fio___pubsub_broadcast_on_port(void *port_) {
   }
   fio_io_attach_fd(fd_udp, &broadcast, port_, NULL);
   fio_io_attach_fd(fd_tcp, &accept_remote, NULL, NULL);
+  FIO_LOG_INFO("(pub/sub) broadcasting and listening on port %zu",
+               (size_t)port);
   return;
 }
 
@@ -47160,6 +47169,7 @@ HTTP Routing
 ***************************************************************************** */
 
 FIO_LEAK_COUNTER_DEF(fio___http_router_u)
+FIO_SFUNC void fio___http_on_http_with_public_folder(void *h_, void *ignr);
 
 void fio_http_route___(void);
 /** Adds a route prefix to the HTTP handler. */
@@ -47253,6 +47263,10 @@ SFUNC int fio_http_route FIO_NOOP(fio_http_listener_s *l,
     if (r->s.tls && (char *)r->s.tls == r->s.public_folder.buf)
       FIO_MEM_FREE_(r->s.tls, r->s.public_folder.len + 1);
   }
+  /* if we have a route with a static file service, we need this */
+  if (s.public_folder.buf && s.public_folder.len) {
+    p->on_http_callback = fio___http_on_http_with_public_folder;
+  }
   r->s = s;
   return err;
 
@@ -47276,7 +47290,6 @@ void fio___http_route_settings___(void);
 FIO_SFUNC fio_http_settings_s *fio___http_route_settings(
     fio___http_router_u *route,
     fio_str_info_s *path) {
-  static const fio_str_info_s root_path = FIO_STR_INFO2((char *)"/", 1);
   fio_http_settings_s *r = &route->s;
   uint8_t *pos = (uint8_t *)path->buf;
   const uint8_t *n = pos;
@@ -47303,7 +47316,7 @@ FIO_SFUNC fio_http_settings_s *fio___http_route_settings(
   /* test if '/' may be inferred */
   if (!*pos && route && route->map[0]) {
     r = &route->s;
-    *path = root_path;
+    path->len = 1;
     n = (uint8_t *)path->buf;
   }
   n -= (n == (uint8_t *)path->buf + 1);
@@ -47385,7 +47398,7 @@ FIO_SFUNC void fio___http_perform_user_callback(void *cb_, void *h_) {
   fio_http_s *h = (fio_http_s *)h_;
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
 
-  if (FIO_LIKELY(FIO_SOCK_IS_OPEN(fio_io_fd(c->io))))
+  if (FIO_LIKELY(c && FIO_SOCK_IS_OPEN(fio_io_fd(c->io))))
     cb.fn(h);
   fio_http_free(h);
 }
@@ -47536,11 +47549,10 @@ FIO_SFUNC void fio___http_on_http_with_public_folder(void *h_, void *ignr) {
   fio_http_status_set(h, 200);
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
   fio_http_settings_s *s = fio___http_route_get(h);
-  fio_http_udata_set(h, s->udata);
-  c->state.http.on_finish = s->on_finish;
   if (fio___http_on_http_test4upgrade(h, c, s))
     return;
-  if ((fio_http_method(h).len != 4 || (fio_buf2u32u(fio_http_method(h).buf) |
+  if (s->public_folder.buf &&
+      (fio_http_method(h).len != 4 || (fio_buf2u32u(fio_http_method(h).buf) |
                                        0x20202020UL) != fio_buf2u32u("post")) &&
       !fio_http_static_file_response(
           h,

@@ -102,7 +102,7 @@ Command line arguments allow easy access to different options, including concurr
 iodine -t 16 -w 4
 ```
 
-By using negative values, Iodine can calculate a good enough concurrency model for different applications. Here are some examples:
+By using negative values, Iodine can calculate a good enough concurrency model for different applications. Here are some machine dependent examples:
 
 ```bash
 # fast applications
@@ -183,7 +183,7 @@ It's as easy as that. No extra code required.
 
 ## Native Pub/Sub with *optional* Redis scaling
 
-**Note**: not yet implemented in versions `0.8.x`, but the documentation hadn't been removed with hopes of a soon-to-be implementation.
+**Note**: Redis support isn't implemented (yet) in versions `0.8.x`, but the documentation hadn't been removed with hopes of a soon-to-be implementation.
 
 Iodine's core, `facil.io` offers a native Pub/Sub implementation that can be scaled across machine boundaries using Redis.
 
@@ -194,6 +194,22 @@ Once a single iodine process cluster isn't enough, horizontal scaling for the Pu
 ```bash
 iodine -w -1 -t 8 -r redis://localhost
 ```
+
+### Pub/Sub Decentralized Horizontal Scaling
+
+Iodine can auto-detect other iodine machines on the same local network (using UDP publishing for address `0.0.0.0`).
+
+This allows iodine to scale horizontally even without Redis.
+
+To do so, all machines running iodine must share the same pub/sub port and secret.
+
+Setting the secret can be performed using the `SECRET` environment variable, or the command line (`-scrt`).
+
+Setting the pub/sub public port can be performed using the `PUBSUB_PORT` environment variable, or the command line (`-bp`).
+
+Pub/Sub messages are encrypted using ChaCha20/Poly1305 and the shared secret, mitigating the risk of sensitive data leaking. However, note that if the machine itself is shared than the secret might be readable by those sharing the machine (depending how it is stored).
+
+**Note** this feature is difficult to test and I don't test it regularly. Therefore, please let me know if you notice anything come up (i.e., dropped messages, isolated machines, whatever).
 
 #### Pub/Sub Details and Limitations
 
