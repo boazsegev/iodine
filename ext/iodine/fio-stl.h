@@ -46962,7 +46962,7 @@ typedef enum {
 } fio_http_resource_action_e;
 
 /** returns expected action or `FIO_HTTP_RESOURCE_NONE` on error. */
-fio_http_resource_action_e fio_http_resource_action(fio_http_s *h);
+FIO_IFUNC fio_http_resource_action_e fio_http_resource_action(fio_http_s *h);
 
 /* *****************************************************************************
 WebSocket Helpers - HTTP Upgraded Connections
@@ -47020,7 +47020,7 @@ Module Implementation - HTTP Routing – CRUD
 ***************************************************************************** */
 
 /** returns expected action or `FIO_HTTP_RESOURCE_NONE` on error. */
-fio_http_resource_action_e fio_http_resource_action(fio_http_s *h) {
+FIO_IFUNC fio_http_resource_action_e fio_http_resource_action(fio_http_s *h) {
   fio_http_resource_action_e r = FIO_HTTP_RESOURCE_NONE;
   if (!h)
     return r;
