@@ -1558,6 +1558,48 @@ static void iodine_io_http_on_http(fio_http_s *h) {
   rb_thread_call_with_gvl(iodine_io_http_on_http_internal, (void *)h);
 }
 
+static void *iodine_io_http_on_http_resource_internal(void *h_) {
+  fio_http_s *h = (fio_http_s *)h_;
+  VALUE connection = iodine_connection_create_from_http(h);
+  if (FIO_UNLIKELY(!connection || connection == Qnil)) {
+    FIO_LOG_FATAL("`on_http` couldn't allocate Iodine::Connection object!");
+    return NULL;
+  }
+  ID callback = 0;
+  switch (fio_http_resource_action(h)) {
+  case FIO_HTTP_RESOURCE_NONE:
+    fio_http_send_error_response(h, 404);
+    return NULL;
+  case FIO_HTTP_RESOURCE_INDEX: callback = IODINE_INDEX_ID; break;
+  case FIO_HTTP_RESOURCE_SHOW: callback = IODINE_SHOW_ID; break;
+  case FIO_HTTP_RESOURCE_NEW: callback = IODINE_NEW_ID; break;
+  case FIO_HTTP_RESOURCE_EDIT: callback = IODINE_EDIT_ID; break;
+  case FIO_HTTP_RESOURCE_CREATE: callback = IODINE_CREATE_ID; break;
+  case FIO_HTTP_RESOURCE_UPDATE: callback = IODINE_UPDATE_ID; break;
+  case FIO_HTTP_RESOURCE_DELETE: callback = IODINE_DELETE_ID; break;
+  }
+  iodine_connection_s *c = iodine_connection_ptr(connection);
+  iodine_caller_result_s e =
+      iodine_ruby_call_inside(c->store[IODINE_CONNECTION_STORE_handler],
+                              callback,
+                              1,
+                              &connection);
+  if (e.exception) {
+    fio_http_send_error_response(h, 500);
+  }
+  return NULL;
+}
+
+static void iodine_io_http_on_http_resource(fio_http_s *h) {
+  VALUE handler = (VALUE)fio_http_udata(h);
+  if (FIO_UNLIKELY(!handler || handler == Qnil)) {
+    FIO_LOG_FATAL("`on_http` resource callback couldn't find handler!");
+    fio_http_send_error_response(h, 500);
+    return;
+  }
+  rb_thread_call_with_gvl(iodine_io_http_on_http_resource_internal, (void *)h);
+}
+
 #define IODINE_CONNECTION_DEF_CB(named, id, free_handle)                       \
   static void iodine_io_http_##named(fio_http_s *h) {                          \
     VALUE connection = (VALUE)fio_http_udata2(h);                              \

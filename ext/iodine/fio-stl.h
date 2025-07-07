@@ -40167,7 +40167,9 @@ FIO_CONSTRUCTOR(fio_postoffice_init) {
     if (port < 0xFFFFU)
       fio_pubsub_broadcast_on_port(port);
     else
-      FIO_LOG_ERROR("(pub/sub) PUBSUB_PORT is out of range: %zu", (size_t)port);
+      FIO_LOG_ERROR("(%d) (pub/sub) PUBSUB_PORT is out of range: %zu",
+                    fio_getpid(),
+                    (size_t)port);
   }
 }
 
@@ -42198,6 +42200,26 @@ SFUNC void fio_http_body_write(fio_http_s *, const void *data, size_t len);
 SFUNC int fio_http_body_fd(fio_http_s *);
 
 /* *****************************************************************************
+Path Section Looping
+***************************************************************************** */
+
+/**
+ * Loops over each section of the path, decrypting percent encoding as
+ * necessary.
+ *
+ * The macro accepts the following:
+ *
+ * - `path`: the path string - accessible using fio_http_path(h).
+ * - `pos` : the name of the variable to use for accessing the section.
+ *
+ * The variable `pos` is a `fio_buf_info_s`.
+ *
+ * **Note**: the macro will break if a path's section length is greater than
+ *           (about) 4063 bytes.
+ */
+#define FIO_HTTP_PATH_EACH(path, pos)
+
+/* *****************************************************************************
 Cookies
 ***************************************************************************** */
 
@@ -42753,6 +42775,66 @@ fio___http_parsed_property_next(fio___http_header_property_s property) {
                (fio___http_header_property_s){.value = value_});               \
        property.name.len;                                                      \
        property = fio___http_parsed_property_next(property))
+
+/* *****************************************************************************
+Path Section Looping
+***************************************************************************** */
+
+#undef FIO_HTTP_PATH_EACH
+
+/**
+ * Loops over each section of the path, decrypting percent encoding as
+ * necessary.
+ *
+ * The macro accepts the following:
+ *
+ * - `path`: the path string - accessible using fio_http_path(h).
+ * - `pos` : the name of the variable to use for accessing the section.
+ *
+ * The variable `pos` is a `fio_buf_info_s`. This uses 4096 bytes on the stack.
+ * The variable `pos_reminder` is a `fio_buf_info_s` pointing to the rest of the
+ * path.
+ *
+ * **Note**: the macro will break if a path's section length is greater than
+ *           (about) 4063 bytes.
+ */
+#define FIO_HTTP_PATH_EACH(path, pos)                                          \
+  for (fio_buf_info_s pos##_reminder = FIO_STR2BUF_INFO(path),                 \
+                      pos,                                                     \
+                      buf[(4096 / sizeof(fio_buf_info_s)) - 2];                \
+       fio___http_path_each_next(&pos, &pos##_reminder, buf);)
+
+/* used internally for the macro FIO_HTTP_PATH_EACH */
+FIO_IFUNC bool fio___http_path_each_next(fio_buf_info_s *restrict section,
+                                         fio_buf_info_s *restrict path,
+                                         void *restrict mem) {
+  if (path->len < 2)
+    return 0;
+  const char *p = path->buf;
+  const char *e = p + path->len;
+  char *w = (char *)mem;
+  const char *w_start = w;
+  const char *w_end = w + (4096 - ((sizeof(fio_buf_info_s) * 2) + 1));
+  p += (*p == '/');
+  while (p < e && *p != '/' && w < w_end) {
+    while (p < e && *p != '%' && *p != '/' && w < w_end)
+      *(w++) = *(p++);
+    if (p == e || *p == '/')
+      break;
+    uint8_t hi, lo;
+    if (p + 4 > e || ((hi = fio_c2i((unsigned char)p[1])) > 15) ||
+        ((lo = fio_c2i((unsigned char)p[2])) > 15)) {
+      *(w++) = *(p++);
+      continue;
+    }
+    p += 3;
+    *(w++) = (char)((hi << 4) | lo);
+  }
+  *w = 0;
+  *section = FIO_BUF_INFO2((char *)w_start, (size_t)(w - w_start));
+  *path = FIO_BUF_INFO2((char *)p, (size_t)(e - p));
+  return (p == e || *p == '/');
+}
 
 /* *****************************************************************************
 HTTP Handle Implementation - possibly externed functions.
@@ -45096,6 +45178,7 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
       char *value;
       fio_buf_info_s ext;
     } options[] = {{(char *)"br", FIO_BUF_INFO2((char *)".br", 3)},
+                   {(char *)"zstd", FIO_BUF_INFO2((char *)".zstd", 4)},
                    {(char *)"gzip", FIO_BUF_INFO2((char *)".gz", 3)},
                    {(char *)"deflate", FIO_BUF_INFO2((char *)".zip", 4)},
                    {NULL}};
@@ -46828,7 +46911,7 @@ SFUNC fio_io_s *fio_http_connect(const char *url,
 SFUNC fio_http_settings_s *fio_http_settings(fio_http_s *);
 
 /* *****************************************************************************
-HTTP Routing (prefix matching)
+HTTP Routing – prefix matching
 ***************************************************************************** */
 
 /**
@@ -46864,8 +46947,22 @@ SFUNC fio_http_settings_s *fio_http_route_settings(fio_http_listener_s *l,
                                                    const char *url);
 
 /* *****************************************************************************
-HTTP CRUD Helpers (basically an on_http helper that routes by path data)
+HTTP Routing – CRUD
 ***************************************************************************** */
+
+typedef enum {
+  FIO_HTTP_RESOURCE_NONE,
+  FIO_HTTP_RESOURCE_INDEX,
+  FIO_HTTP_RESOURCE_SHOW,
+  FIO_HTTP_RESOURCE_NEW,
+  FIO_HTTP_RESOURCE_EDIT,
+  FIO_HTTP_RESOURCE_CREATE,
+  FIO_HTTP_RESOURCE_UPDATE,
+  FIO_HTTP_RESOURCE_DELETE,
+} fio_http_resource_action_e;
+
+/** returns expected action or `FIO_HTTP_RESOURCE_NONE` on error. */
+fio_http_resource_action_e fio_http_resource_action(fio_http_s *h);
 
 /* *****************************************************************************
 WebSocket Helpers - HTTP Upgraded Connections
@@ -46917,6 +47014,63 @@ SFUNC int fio_http_sse_write(fio_http_s *h, fio_http_sse_write_args_s args);
 
 /** Optional EventSource subscription callback - messages MUST be UTF-8. */
 SFUNC void FIO_HTTP_SSE_SUBSCRIBE_DIRECT(fio_msg_s *msg);
+
+/* *****************************************************************************
+Module Implementation - HTTP Routing – CRUD
+***************************************************************************** */
+
+/** returns expected action or `FIO_HTTP_RESOURCE_NONE` on error. */
+fio_http_resource_action_e fio_http_resource_action(fio_http_s *h) {
+  fio_http_resource_action_e r = FIO_HTTP_RESOURCE_NONE;
+  if (!h)
+    return r;
+  const uint32_t new_s = fio_buf2u32u("/new");
+  const uint32_t edit_s = fio_buf2u32u("edit");
+  const uint32_t get = fio_buf2u32u("get\x20");
+  const uint32_t put = fio_buf2u32u("put\x20");
+  const uint32_t post = fio_buf2u32u("post");
+  const uint32_t patc = fio_buf2u32u("patc");
+  const uint32_t dele = fio_buf2u32u("dele");
+  const uint32_t lete = fio_buf2u32u("lete");
+  fio_str_info_s method = fio_http_method(h);
+  fio_str_info_s path = fio_http_path(h);
+  if (method.len < 3)
+    return r;
+  uint32_t tmp = fio_buf2u32u(method.buf) | 0x20202020U; /* down-case */
+  /* GET */
+  if (tmp == get) {
+    /* index vs show */
+    r = (fio_http_resource_action_e)((unsigned)FIO_HTTP_RESOURCE_INDEX +
+                                     (path.len > 1));
+    /* show vs new */
+    r = (fio_http_resource_action_e)((unsigned)r +
+                                     ((path.len == 4 || path.len == 5) &&
+                                      (fio_buf2u32u(path.buf) == new_s)));
+    /* show vs edit */
+    r = (fio_http_resource_action_e)((unsigned)r +
+                                     ((unsigned)((path.len > 6) &&
+                                                 (fio_buf2u32u(
+                                                      (path.buf + path.len) -
+                                                      (4 + (path.buf[path.len -
+                                                                     1] ==
+                                                            '/'))) == edit_s))
+                                      << 1));
+    /* PUT/POST/PATCH */
+  } else if (tmp == put || (tmp == post && method.len == 4) ||
+             (tmp == patc && ((method.buf[4] | 32) == 'h') &&
+              method.len == 5)) {
+    /* create vs edit */
+    r = (fio_http_resource_action_e)((unsigned)FIO_HTTP_RESOURCE_CREATE +
+                                     (path.len > 1 &&
+                                      !(path.len == 4 &&
+                                        fio_buf2u32u(path.buf) == new_s)));
+    /* DELETE */
+  } else if (path.len > 1 && method.len == 6 && tmp == dele &&
+             (fio_buf2u32u(method.buf + 2) | 0x20202020U) == lete) {
+    r = FIO_HTTP_RESOURCE_DELETE;
+  }
+  return r;
+}
 
 /* *****************************************************************************
 Module Implementation - possibly externed functions.

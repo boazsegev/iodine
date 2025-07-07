@@ -35,6 +35,15 @@ static ID IODINE_ON_MESSAGE_ID;
 static ID IODINE_ON_OPEN_ID;
 static ID IODINE_ON_SHUTDOWN_ID;
 static ID IODINE_ON_TIMEOUT_ID;
+
+static ID IODINE_INDEX_ID;
+static ID IODINE_SHOW_ID;
+// static ID IODINE_NEW_ID;
+static ID IODINE_EDIT_ID;
+static ID IODINE_CREATE_ID;
+static ID IODINE_UPDATE_ID;
+static ID IODINE_DELETE_ID;
+
 #define IODINE_CONST_ID_STORE(name, value)                                     \
   name = rb_intern(value);                                                     \
   STORE.hold(RB_ID2SYM(name));

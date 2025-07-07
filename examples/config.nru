@@ -77,9 +77,20 @@ module EchoApp
   end
 end
 
+module ResourceApp
+  def self.index(e);  e.finish("Show Index"); end
+  def self.show(e);   e.finish("Show Item: #{e.path[1..-1]}"); end
+  def self.delete(e); e.finish("Delete Item: #{e.path[1..-1]}"); end
+  def self.new(e);    e.finish("New Item Form."); end
+  def self.edit(e);   e.finish("Edit Item: #{e.path[1..-1]}"); end
+  def self.create(e); e.finish("Create a new Item."); end
+  def self.update(e); e.finish("Update Item: #{e.path[1..-1]}"); end
+end
+
 if defined?(Iodine)
   map("hello") { map("echo", EchoApp); run {|e| [200, {}, "Hello World"] } }
   map("rack") { run {|e| EchoApp.call(e) } }
+  map_resource('/crud', ResourceApp)
 end
 run EchoApp
 
