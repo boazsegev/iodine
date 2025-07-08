@@ -72,18 +72,9 @@ module Iodine
         Iodine.stop
         raise e
       end
-      # Maps a URL path to a specific NeoRack Resource Application
-      def map_resource(path, handler = nil, &block)
-        if(block)
-          map(path, handler)
-        else
-          map(path, handler, &block)
-        end
-        tmp = @path_prefix.dup
-        tmp << '/' unless (path[0] == '/')
-        tmp << path
-        @map[tmp].push(true) if @map[tmp]
-        puts tmp;
+      # Makes the calling module into a NeoRack Resource handler.
+      def neorack_resource(handler)
+        Iodine.make_resource(handler)
       end
       # Sets NeoRack application for the server to run.
       def run(a = nil, &block)

@@ -782,6 +782,32 @@ too_big:
 Default Handler Implementations
 ***************************************************************************** */
 
+static VALUE iodine_handler_deafult_on_http_rest(VALUE handler, VALUE client) {
+  iodine_connection_s *c = iodine_connection_ptr(client);
+  if (FIO_UNLIKELY(!c || (VALUE)c == Qnil)) {
+    FIO_LOG_FATAL("`on_http` couldn't allocate Iodine::Connection object!");
+    return Qnil;
+  }
+  if (!c->http)
+    return Qnil;
+  fio_http_s *h = c->http;
+  ID callback = 0;
+  switch (fio_http_resource_action(h)) {
+  case FIO_HTTP_RESOURCE_NONE:
+    fio_http_send_error_response(h, 404);
+    return Qnil;
+  case FIO_HTTP_RESOURCE_INDEX: callback = IODINE_INDEX_ID; break;
+  case FIO_HTTP_RESOURCE_SHOW: callback = IODINE_SHOW_ID; break;
+  case FIO_HTTP_RESOURCE_NEW: callback = IODINE_NEW_ID; break;
+  case FIO_HTTP_RESOURCE_EDIT: callback = IODINE_EDIT_ID; break;
+  case FIO_HTTP_RESOURCE_CREATE: callback = IODINE_CREATE_ID; break;
+  case FIO_HTTP_RESOURCE_UPDATE: callback = IODINE_UPDATE_ID; break;
+  case FIO_HTTP_RESOURCE_DELETE: callback = IODINE_DELETE_ID; break;
+  }
+  rb_funcallv(handler, callback, 1, &client);
+  return Qnil;
+}
+
 static VALUE iodine_handler_deafult_on_http404(VALUE handler, VALUE client) {
   iodine_connection_s *c = iodine_connection_ptr(client);
   if (!c->http)
@@ -1156,6 +1182,40 @@ static VALUE iodine_handler_method_injection__inner(VALUE self,
 }
 
 static VALUE iodine_handler_method_injection(VALUE self, VALUE handler) {
+  return iodine_handler_method_injection__inner(self, handler, 0);
+}
+
+static VALUE iodine_resource_handler_method_injection(VALUE self,
+                                                      VALUE handler) {
+
+  if (rb_respond_to(handler, IODINE_ON_HTTP_ID)) {
+    rb_raise(rb_eRuntimeError,
+             "Object already has an `on_http` callback - can't be made into a "
+             "resource app.");
+  }
+  rb_define_singleton_method(handler,
+                             rb_id2name(IODINE_ON_HTTP_ID),
+                             iodine_handler_deafult_on_http_rest,
+                             1);
+
+#define IODINE_DEFINE_MISSING_CALLBACK(id)                                     \
+  do {                                                                         \
+    if (!rb_respond_to(handler, id))                                           \
+      rb_define_singleton_method(handler,                                      \
+                                 rb_id2name(id),                               \
+                                 iodine_handler_deafult_on_http404,            \
+                                 1);                                           \
+  } while (0)
+  IODINE_DEFINE_MISSING_CALLBACK(IODINE_INDEX_ID);
+  IODINE_DEFINE_MISSING_CALLBACK(IODINE_SHOW_ID);
+  IODINE_DEFINE_MISSING_CALLBACK(IODINE_NEW_ID);
+  IODINE_DEFINE_MISSING_CALLBACK(IODINE_EDIT_ID);
+  IODINE_DEFINE_MISSING_CALLBACK(IODINE_CREATE_ID);
+  IODINE_DEFINE_MISSING_CALLBACK(IODINE_UPDATE_ID);
+  IODINE_DEFINE_MISSING_CALLBACK(IODINE_DELETE_ID);
+#undef IODINE_DEFINE_MISSING_CALLBACK
+
+  /* let the rest be what it is */
   return iodine_handler_method_injection__inner(self, handler, 0);
 }
 
@@ -1556,48 +1616,6 @@ static void iodine_io_http_on_http(fio_http_s *h) {
     return;
   }
   rb_thread_call_with_gvl(iodine_io_http_on_http_internal, (void *)h);
-}
-
-static void *iodine_io_http_on_http_resource_internal(void *h_) {
-  fio_http_s *h = (fio_http_s *)h_;
-  VALUE connection = iodine_connection_create_from_http(h);
-  if (FIO_UNLIKELY(!connection || connection == Qnil)) {
-    FIO_LOG_FATAL("`on_http` couldn't allocate Iodine::Connection object!");
-    return NULL;
-  }
-  ID callback = 0;
-  switch (fio_http_resource_action(h)) {
-  case FIO_HTTP_RESOURCE_NONE:
-    fio_http_send_error_response(h, 404);
-    return NULL;
-  case FIO_HTTP_RESOURCE_INDEX: callback = IODINE_INDEX_ID; break;
-  case FIO_HTTP_RESOURCE_SHOW: callback = IODINE_SHOW_ID; break;
-  case FIO_HTTP_RESOURCE_NEW: callback = IODINE_NEW_ID; break;
-  case FIO_HTTP_RESOURCE_EDIT: callback = IODINE_EDIT_ID; break;
-  case FIO_HTTP_RESOURCE_CREATE: callback = IODINE_CREATE_ID; break;
-  case FIO_HTTP_RESOURCE_UPDATE: callback = IODINE_UPDATE_ID; break;
-  case FIO_HTTP_RESOURCE_DELETE: callback = IODINE_DELETE_ID; break;
-  }
-  iodine_connection_s *c = iodine_connection_ptr(connection);
-  iodine_caller_result_s e =
-      iodine_ruby_call_inside(c->store[IODINE_CONNECTION_STORE_handler],
-                              callback,
-                              1,
-                              &connection);
-  if (e.exception) {
-    fio_http_send_error_response(h, 500);
-  }
-  return NULL;
-}
-
-static void iodine_io_http_on_http_resource(fio_http_s *h) {
-  VALUE handler = (VALUE)fio_http_udata(h);
-  if (FIO_UNLIKELY(!handler || handler == Qnil)) {
-    FIO_LOG_FATAL("`on_http` resource callback couldn't find handler!");
-    fio_http_send_error_response(h, 500);
-    return;
-  }
-  rb_thread_call_with_gvl(iodine_io_http_on_http_resource_internal, (void *)h);
 }
 
 #define IODINE_CONNECTION_DEF_CB(named, id, free_handle)                       \
@@ -2981,6 +2999,9 @@ static void Init_Iodine_Connection(void)  {
   rb_define_singleton_method(iodine_rb_IODINE_BASE,
                              "add_missing_handlar_methods",
                              iodine_handler_method_injection, 1);
+  rb_define_singleton_method(iodine_rb_IODINE,
+                             "make_resource",
+                             iodine_resource_handler_method_injection, 1);
   VALUE m = iodine_rb_IODINE_CONNECTION = rb_define_class_under(iodine_rb_IODINE, "Connection", rb_cObject);
   rb_define_alloc_func(m, iodine_connection_alloc);
   STORE.hold(iodine_rb_IODINE_CONNECTION);
