@@ -10,7 +10,8 @@ module Iodine
                               sse: "0.0.1".split(?.),
                               pubsub: "0.0.1".split(?.),
                               cookies: "0.0.1".split(?.),
-                              from: "0.0.1".split(?.)
+                              from: "0.0.1".split(?.),
+                              rest: "0.0.1".split(?.)
                             })
   end
 end
