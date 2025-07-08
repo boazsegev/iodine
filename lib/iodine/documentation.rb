@@ -302,6 +302,11 @@ module Iodine
   #     Iodine.unsubscribe(filter: 1)
   def self.unsubscribe(channel = nil, filter = 0); end
 
+  # Adds an `on_http` implementation to `handler` that will route requests to their proper REST/CRUD callback.
+  #
+  # See the {Iodine::ResourceHandler} for callback details.
+  def self.make_resource(handler); end 
+
   #######################
 
   # {Iodine::JSON} exposes the {Iodine::Connection#write} fallback behavior when called with non-String objects.
@@ -1033,6 +1038,38 @@ module Iodine
       def self.on_eventsource_reconnect(connection, last_message_id); end
     end
 
+    # This is an example REST/CRUD resource handler for documentation purposes **only**.
+    # 
+    # This module is designed to help you author your own Resource Handler for {Iodine.make_resource}.
+    # 
+    # A resource handler implementation is expected to implement all the callbacks. Any missing callbacks will result in a 404 error.
+    #
+    # **Note**: This module isn't implemented by Iodine, it is for documentation and guidance only.
+    module ResourceHandler
+
+      # @!group Callbacks
+
+      # Called for `"GET /"`.
+      def self.index(e);  e.finish("Show Index");                    end
+
+      # Called for `"GET /(id)"`, where `id` can be assumed to be: `e.path[1..-1]`.
+      def self.show(e);   e.finish("Show Item: #{e.path[1..-1]}");   end
+
+      # Called for `"GET /new"`, expecting a response containing a form for posting a new element.
+      def self.new(e);    e.finish("New Item Form.");                end
+
+      # Called for `"GET /(id)/edit"`, expecting a response containing a form for editing the existing element with `id` being `e.path.split('/')[1]`.
+      def self.edit(e);   e.finish("Edit Item: #{e.path[1..-1]}");   end
+
+      # Called for `"PATCH /"`, `"PUT /"`, `"POST /"`, `"PATCH /new"`, `"PUT /new"`, `"POST /new"` (`new` is optional).
+      def self.create(e); e.finish("Create a new Item.");            end
+
+      # Called for `"PATCH /(id)"`, `"PUT /(id)"`, `"POST /(id)"`, where `id` can be assumed to be: `e.path[1..-1]`.
+      def self.update(e); e.finish("Update Item: #{e.path[1..-1]}"); end
+
+      # Called for `"DELETE /(id)"`, where `id` can be assumed to be: `e.path[1..-1]`.
+      def self.delete(e); e.finish("Delete Item: #{e.path[1..-1]}"); end
+    end
   end
 
   #######################

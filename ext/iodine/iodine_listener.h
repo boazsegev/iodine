@@ -149,75 +149,6 @@ static VALUE iodine_listener_map(int argc, VALUE *argv, VALUE o) {
   return handler;
 }
 
-static void iodine_io_http_on_http_resource(fio_http_s *h);
-static VALUE iodine_handler_deafult_on_http404(VALUE handler, VALUE client);
-static VALUE iodine_listener_map_resource(int argc, VALUE *argv, VALUE o) {
-  iodine_listener_s *l = iodine_listener_ptr(o);
-  fio_http_settings_s settings;
-  VALUE url = Qnil;
-  VALUE handler = Qnil;
-
-  iodine_rb2c_arg(argc,
-                  argv,
-                  IODINE_ARG_RB(url, 0, "url", 0),
-                  IODINE_ARG_RB(handler, 0, "handler", 0));
-  if (!l->listener)
-    rb_raise(rb_eRuntimeError,
-             "call to `map_resource` can only be called on active listeners.");
-  if (!l->is_http)
-    rb_raise(rb_eRuntimeError,
-             "call to `map_resource` can only be called on HTTP listeners.");
-  if (IODINE_STORE_IS_SKIP(url))
-    rb_raise(rb_eRuntimeError,
-             "call to `map_resource` can't be called on the root path.");
-
-  if (RB_TYPE_P(url, RUBY_T_SYMBOL))
-    url = rb_sym2str(rb_sym2id(url));
-  rb_check_type(url, RUBY_T_STRING);
-
-  if (handler == Qnil) { /* read value */
-    handler = (VALUE)(fio_http_route_settings(
-                          (fio_http_listener_s *)(l->listener),
-                          IODINE_STORE_IS_SKIP(url) ? "/" : RSTRING_PTR(url))
-                          ->udata);
-  } else { /* set value for HTTP router */
-    if (!IODINE_STORE_IS_SKIP(handler)) {
-      STORE.hold(handler);
-      iodine_handler_method_injection__inner(iodine_rb_IODINE_LISTENER,
-                                             handler,
-                                             0);
-#define IODINE_DEFINE_MISSING_CALLBACK(id)                                     \
-  do {                                                                         \
-    if (!rb_respond_to(handler, id))                                           \
-      rb_define_singleton_method(handler,                                      \
-                                 rb_id2name(id),                               \
-                                 iodine_handler_deafult_on_http404,            \
-                                 1);                                           \
-  } while (0)
-
-      IODINE_DEFINE_MISSING_CALLBACK(IODINE_INDEX_ID);
-      IODINE_DEFINE_MISSING_CALLBACK(IODINE_SHOW_ID);
-      IODINE_DEFINE_MISSING_CALLBACK(IODINE_NEW_ID);
-      IODINE_DEFINE_MISSING_CALLBACK(IODINE_EDIT_ID);
-      IODINE_DEFINE_MISSING_CALLBACK(IODINE_CREATE_ID);
-      IODINE_DEFINE_MISSING_CALLBACK(IODINE_UPDATE_ID);
-      IODINE_DEFINE_MISSING_CALLBACK(IODINE_DELETE_ID);
-
-#undef IODINE_DEFINE_MISSING_CALLBACK
-    }
-    settings = *fio_http_listener_settings((fio_http_listener_s *)l->listener);
-    if (IODINE_STORE_IS_SKIP(handler))
-      handler = (VALUE)settings.udata;
-    settings.udata = (void *)handler;
-    settings.public_folder = FIO_STR_INFO0;
-    settings.on_http = iodine_io_http_on_http_resource;
-    // TODO: test for a handler's public folder property?
-    fio_http_route FIO_NOOP((fio_http_listener_s *)l->listener,
-                            RSTRING_PTR(url),
-                            settings);
-  }
-  return handler;
-}
 static VALUE iodine_listener_initialize(VALUE o) {
   rb_raise(rb_eRuntimeError,
            "Iodine Listeners can only be created using Iodine.listen");
@@ -234,6 +165,5 @@ static void Init_Iodine_Listener(void) {
   rb_define_alloc_func(m, iodine_listener_alloc);
   rb_define_method(m, "initialize", iodine_listener_initialize, 0);
   rb_define_method(m, "map", iodine_listener_map, -1);
-  rb_define_method(m, "map_resource", iodine_listener_map_resource, -1);
 }
 #endif /* H___IODINE_LISTENER___H */
