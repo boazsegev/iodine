@@ -1390,40 +1390,16 @@ static void iodine_connection_init_env_template(fio_buf_info_s at_url) {
                            Qtrue,
                            &keeper);
   rb_hash_aset(env, IODINE_RACK_HIJACK_STR, Qnil);
-  iodine_env_set_const_val(env,
-                           FIO_STR_INFO1((char *)"neorack.client"),
-                           Qnil,
-                           &keeper);
-  iodine_env_set_const_val(env,
-                           FIO_STR_INFO1((char *)"REQUEST_METHOD"),
-                           Qtrue,
-                           &keeper);
-  iodine_env_set_const_val(env,
-                           FIO_STR_INFO1((char *)"PATH_INFO"),
-                           Qtrue,
-                           &keeper);
-  iodine_env_set_const_val(env,
-                           FIO_STR_INFO1((char *)"QUERY_STRING"),
-                           Qtrue,
-                           &keeper);
-  iodine_env_set_const_val(env,
-                           FIO_STR_INFO1((char *)"REMOTE_ADDR"),
-                           Qnil,
-                           &keeper);
-  iodine_env_set_const_val(env,
-                           FIO_STR_INFO1((char *)"SERVER_PROTOCOL"),
-                           Qtrue,
-                           &keeper);
-  iodine_env_set_const_val(env,
-                           FIO_STR_INFO1((char *)"HTTP_VERSION"),
-                           Qtrue,
-                           &keeper);
-  iodine_env_set_key_pair(env,
-                          FIO_STR_INFO1((char *)"SERVER_NAME"),
-                          FIO_STR_INFO0);
-  iodine_env_set_key_pair(env,
-                          FIO_STR_INFO1((char *)"SCRIPT_NAME"),
-                          FIO_STR_INFO0);
+  rb_hash_aset(env, IODINE_RACK_NEORACK_CLIENT, Qnil);
+  rb_hash_aset(env, IODINE_RACK_REQUEST_METHOD, Qtrue);
+  rb_hash_aset(env, IODINE_RACK_PATH_INFO, Qtrue);
+  rb_hash_aset(env, IODINE_RACK_QUERY_STRING, Qtrue);
+  rb_hash_aset(env, IODINE_RACK_REMOTE_ADDR, Qtrue);
+  rb_hash_aset(env, IODINE_RACK_SERVER_PROTOCOL, Qtrue);
+  rb_hash_aset(env, IODINE_RACK_HTTP_VERSION, Qtrue);
+  rb_hash_aset(env, IODINE_RACK_SERVER_NAME, rb_str_new("", 0));
+  rb_hash_aset(env, IODINE_RACK_SCRIPT_NAME, rb_str_new("", 0));
+
   { /* SERVER_PORT must be a String Object. */
     uint64_t port_num = 3000;
     uint8_t was_set = 0;
@@ -3058,6 +3034,7 @@ static void iodine_connection_cache_common_strings(void) {
     STORE.release(STORE.header_name(common_headers[i]));
   }
 }
+
 /* *****************************************************************************
 Initialize Connection Class
 ***************************************************************************** */
@@ -3082,29 +3059,26 @@ static void Init_Iodine_Connection(void)  {
   IODINE_CONST_ID_STORE(IODINE_SAME_SITE_LAX, "lax");
   IODINE_CONST_ID_STORE(IODINE_SAME_SITE_STRICT, "strict");
 
-  /* cache VALUE for `env` key */
-  IODINE_RACK_CONTENT_LENGTH = STORE.header_name(FIO_STR_INFO1((char *)"content-length"));
+
+/* cache VALUE for `env` key */
+#define IODINE_CONST_RACK_STORE(val, str)                                     \
+  val = STORE.frozen_str(FIO_STR_INFO1((char *)str));                         \
+  STORE.hold(val)
+
+  IODINE_RACK_CONTENT_LENGTH = STORE.header_name(FIO_STR_INFO1((char *)"CONTENT_LENGTH"));
   STORE.hold(IODINE_RACK_CONTENT_LENGTH);
-  IODINE_RACK_INPUT = STORE.frozen_str(FIO_STR_INFO1((char *)"rack.input"));
-  STORE.hold(IODINE_RACK_INPUT);
-  IODINE_RACK_NEORACK_CLIENT = STORE.frozen_str(FIO_STR_INFO1((char *)"neorack.client"));
-  STORE.hold(IODINE_RACK_NEORACK_CLIENT);
-  IODINE_RACK_REQUEST_METHOD = STORE.frozen_str(FIO_STR_INFO1((char *)"REQUEST_METHOD"));
-  STORE.hold(IODINE_RACK_REQUEST_METHOD);
-  IODINE_RACK_PATH_INFO = STORE.frozen_str(FIO_STR_INFO1((char *)"PATH_INFO"));
-  STORE.hold(IODINE_RACK_PATH_INFO);
-  IODINE_RACK_QUERY_STRING = STORE.frozen_str(FIO_STR_INFO1((char *)"QUERY_STRING"));
-  STORE.hold(IODINE_RACK_QUERY_STRING);
-  IODINE_RACK_SCRIPT_NAME = STORE.frozen_str(FIO_STR_INFO1((char *)"SCRIPT_NAME"));
-  STORE.hold(IODINE_RACK_SCRIPT_NAME);
-  IODINE_RACK_SERVER_NAME = STORE.frozen_str(FIO_STR_INFO1((char *)"SERVER_NAME"));
-  STORE.hold(IODINE_RACK_SERVER_NAME);
-  IODINE_RACK_SERVER_PROTOCOL = STORE.frozen_str(FIO_STR_INFO1((char *)"SERVER_PROTOCOL"));
-  STORE.hold(IODINE_RACK_SERVER_PROTOCOL);
-  IODINE_RACK_HTTP_VERSION = STORE.frozen_str(FIO_STR_INFO1((char *)"HTTP_VERSION"));
-  STORE.hold(IODINE_RACK_HTTP_VERSION);
-  IODINE_RACK_REMOTE_ADDR = STORE.frozen_str(FIO_STR_INFO1((char *)"REMOTE_ADDR"));
-  STORE.hold(IODINE_RACK_REMOTE_ADDR);
+
+  IODINE_CONST_RACK_STORE(IODINE_RACK_INPUT, "rack.input");
+  IODINE_CONST_RACK_STORE(IODINE_RACK_NEORACK_CLIENT, "neorack.client");
+  IODINE_CONST_RACK_STORE(IODINE_RACK_REQUEST_METHOD, "REQUEST_METHOD");
+  IODINE_CONST_RACK_STORE(IODINE_RACK_PATH_INFO, "PATH_INFO");
+  IODINE_CONST_RACK_STORE(IODINE_RACK_QUERY_STRING, "QUERY_STRING");
+  IODINE_CONST_RACK_STORE(IODINE_RACK_SCRIPT_NAME, "SCRIPT_NAME");
+  IODINE_CONST_RACK_STORE(IODINE_RACK_SERVER_NAME, "SERVER_NAME");
+  IODINE_CONST_RACK_STORE(IODINE_RACK_SERVER_PROTOCOL, "SERVER_PROTOCOL");
+  IODINE_CONST_RACK_STORE(IODINE_RACK_HTTP_VERSION, "HTTP_VERSION");
+  IODINE_CONST_RACK_STORE(IODINE_RACK_REMOTE_ADDR, "REMOTE_ADDR");
+#undef IODINE_CONST_RACK_STORE
 
   rb_define_method(m, "initialize", iodine_connection_initialize, -1);
 
