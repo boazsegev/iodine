@@ -47024,7 +47024,7 @@ FIO_IFUNC fio_http_resource_action_e fio_http_resource_action(fio_http_s *h) {
   fio_http_resource_action_e r = FIO_HTTP_RESOURCE_NONE;
   if (!h)
     return r;
-  const uint32_t new_s = fio_buf2u32u("/new");
+  const uint32_t new_s = fio_buf2u32u("/new") | 0x20202020U;
   const uint32_t edit_s = fio_buf2u32u("edit");
   const uint32_t get = fio_buf2u32u("get\x20");
   const uint32_t put = fio_buf2u32u("put\x20");
@@ -47034,38 +47034,42 @@ FIO_IFUNC fio_http_resource_action_e fio_http_resource_action(fio_http_s *h) {
   const uint32_t lete = fio_buf2u32u("lete");
   fio_str_info_s method = fio_http_method(h);
   fio_str_info_s path = fio_http_path(h);
+  bool path_ends_with_dash = (path.len && path.buf[path.len - 1] == '/');
+  bool path_is_new = ((path.len == 4 || (path.len > 4 && path.buf[4] == '/')) &&
+                      ((fio_buf2u32u(path.buf) | 0x20202020U) == new_s));
   if (method.len < 3)
     return r;
   uint32_t tmp = fio_buf2u32u(method.buf) | 0x20202020U; /* down-case */
   /* GET */
   if (tmp == get) {
+    bool path_is_edit =
+        ((path.len > 6) &&
+         path.buf[path.len - (5 + path_ends_with_dash)] == '/' &&
+         ((fio_buf2u32u((path.buf + path.len) - (4 + path_ends_with_dash)) |
+           0x20202020U) == edit_s));
     /* index vs show */
     r = (fio_http_resource_action_e)((unsigned)FIO_HTTP_RESOURCE_INDEX +
                                      (path.len > 1));
     /* show vs new */
     r = (fio_http_resource_action_e)((unsigned)r +
-                                     ((path.len == 4 || path.len == 5) &&
-                                      (fio_buf2u32u(path.buf) == new_s)));
+                                     (path_is_new & (!path_is_edit)));
     /* show vs edit */
     r = (fio_http_resource_action_e)((unsigned)r +
-                                     ((unsigned)((path.len > 6) &&
-                                                 (fio_buf2u32u(
-                                                      (path.buf + path.len) -
-                                                      (4 + (path.buf[path.len -
-                                                                     1] ==
-                                                            '/'))) == edit_s))
-                                      << 1));
+                                     ((unsigned)path_is_edit << 1));
+    /* new/edit collision */
+    r = (fio_http_resource_action_e)((unsigned)r -
+                                     (((unsigned)(r == FIO_HTTP_RESOURCE_EDIT) &
+                                       path_is_new) *
+                                      FIO_HTTP_RESOURCE_EDIT));
     /* PUT/POST/PATCH */
   } else if (tmp == put || (tmp == post && method.len == 4) ||
              (tmp == patc && ((method.buf[4] | 32) == 'h') &&
               method.len == 5)) {
     /* create vs edit */
     r = (fio_http_resource_action_e)((unsigned)FIO_HTTP_RESOURCE_CREATE +
-                                     (path.len > 1 &&
-                                      !(path.len == 4 &&
-                                        fio_buf2u32u(path.buf) == new_s)));
+                                     (path.len > 1 && !path_is_new));
     /* DELETE */
-  } else if (path.len > 1 && method.len == 6 && tmp == dele &&
+  } else if (path.len > 1 && !path_is_new && method.len == 6 && tmp == dele &&
              (fio_buf2u32u(method.buf + 2) | 0x20202020U) == lete) {
     r = FIO_HTTP_RESOURCE_DELETE;
   }

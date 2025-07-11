@@ -17,6 +17,17 @@ static ID IODINE_SAME_SITE_NONE;
 static ID IODINE_SAME_SITE_LAX;
 static ID IODINE_SAME_SITE_STRICT;
 
+static VALUE IODINE_RACK_CONTENT_LENGTH;
+static VALUE IODINE_RACK_INPUT;
+static VALUE IODINE_RACK_NEORACK_CLIENT;
+static VALUE IODINE_RACK_REQUEST_METHOD;
+static VALUE IODINE_RACK_PATH_INFO;
+static VALUE IODINE_RACK_QUERY_STRING;
+static VALUE IODINE_RACK_SCRIPT_NAME;
+static VALUE IODINE_RACK_SERVER_NAME;
+static VALUE IODINE_RACK_SERVER_PROTOCOL;
+static VALUE IODINE_RACK_HTTP_VERSION;
+static VALUE IODINE_RACK_REMOTE_ADDR;
 /* *****************************************************************************
 Ruby Connection Object
 ***************************************************************************** */
@@ -1185,19 +1196,21 @@ static VALUE iodine_handler_method_injection(VALUE self, VALUE handler) {
   return iodine_handler_method_injection__inner(self, handler, 0);
 }
 
-static VALUE iodine_resource_handler_method_injection(VALUE self,
-                                                      VALUE handler) {
-
-  if (rb_respond_to(handler, IODINE_ON_HTTP_ID)) {
-    rb_raise(rb_eRuntimeError,
-             "Object already has an `on_http` callback - can't be made into a "
-             "resource app.");
-  }
-  rb_define_singleton_method(handler,
-                             rb_id2name(IODINE_ON_HTTP_ID),
-                             iodine_handler_deafult_on_http_rest,
-                             1);
-
+static VALUE iodine_resource_handler_method_injection(int argc,
+                                                      VALUE *argv,
+                                                      VALUE self) {
+  for (int i = 0; i < argc; ++i) {
+    VALUE handler = argv[i];
+    if (rb_respond_to(handler, IODINE_ON_HTTP_ID)) {
+      rb_raise(
+          rb_eRuntimeError,
+          "Object already has an `on_http` callback - can't be made into a "
+          "resource app.");
+    }
+    rb_define_singleton_method(handler,
+                               rb_id2name(IODINE_ON_HTTP_ID),
+                               iodine_handler_deafult_on_http_rest,
+                               1);
 #define IODINE_DEFINE_MISSING_CALLBACK(id)                                     \
   do {                                                                         \
     if (!rb_respond_to(handler, id))                                           \
@@ -1206,17 +1219,17 @@ static VALUE iodine_resource_handler_method_injection(VALUE self,
                                  iodine_handler_deafult_on_http404,            \
                                  1);                                           \
   } while (0)
-  IODINE_DEFINE_MISSING_CALLBACK(IODINE_INDEX_ID);
-  IODINE_DEFINE_MISSING_CALLBACK(IODINE_SHOW_ID);
-  IODINE_DEFINE_MISSING_CALLBACK(IODINE_NEW_ID);
-  IODINE_DEFINE_MISSING_CALLBACK(IODINE_EDIT_ID);
-  IODINE_DEFINE_MISSING_CALLBACK(IODINE_CREATE_ID);
-  IODINE_DEFINE_MISSING_CALLBACK(IODINE_UPDATE_ID);
-  IODINE_DEFINE_MISSING_CALLBACK(IODINE_DELETE_ID);
+    IODINE_DEFINE_MISSING_CALLBACK(IODINE_INDEX_ID);
+    IODINE_DEFINE_MISSING_CALLBACK(IODINE_SHOW_ID);
+    IODINE_DEFINE_MISSING_CALLBACK(IODINE_NEW_ID);
+    IODINE_DEFINE_MISSING_CALLBACK(IODINE_EDIT_ID);
+    IODINE_DEFINE_MISSING_CALLBACK(IODINE_CREATE_ID);
+    IODINE_DEFINE_MISSING_CALLBACK(IODINE_UPDATE_ID);
+    IODINE_DEFINE_MISSING_CALLBACK(IODINE_DELETE_ID);
 #undef IODINE_DEFINE_MISSING_CALLBACK
-
-  /* let the rest be what it is */
-  return iodine_handler_method_injection__inner(self, handler, 0);
+    iodine_handler_method_injection__inner(self, handler, 0); /* and the rest */
+  }
+  return (argc ? argv[0] : Qnil);
 }
 
 /* *****************************************************************************
@@ -1282,42 +1295,66 @@ static void iodine_env_set_key_pair_const(VALUE env,
   STORE.release(key);
 }
 
-static void iodine_env_set_const_val(VALUE env, fio_str_info_s n, VALUE val) {
+static void iodine_env_set_const_val(VALUE env,
+                                     fio_str_info_s n,
+                                     VALUE val,
+                                     VALUE *keeper) {
   VALUE key = STORE.frozen_str(n);
-  STORE.hold(key);
+  *keeper = key;
   rb_hash_aset(env, key, val);
-  STORE.release(key);
+  *keeper = Qnil;
+}
+
+static void iodine_env_set_const_key(VALUE env,
+                                     VALUE key,
+                                     fio_str_info_s v,
+                                     VALUE *keeper) {
+
+  VALUE val = STORE.frozen_str(v);
+  *keeper = val;
+  rb_hash_aset(env, key, val);
+  *keeper = Qnil;
 }
 
 static void iodine_connection_init_env_template(fio_buf_info_s at_url) {
   VALUE env = IODINE_CONNECTION_ENV_TEMPLATE = rb_hash_new();
+  VALUE keeper = Qnil;
   STORE.hold(IODINE_CONNECTION_ENV_TEMPLATE);
   /* set template, see https://github.com/rack/rack/blob/main/SPEC.rdoc */
   // TODO: REMOTE_ADDR
   iodine_env_set_const_val(env,
                            FIO_STR_INFO1((char *)"rack.multithread"),
-                           (fio_cli_get_i("-t") ? Qtrue : Qfalse));
+                           (fio_cli_get_i("-t") ? Qtrue : Qfalse),
+                           &keeper);
   iodine_env_set_const_val(env,
                            FIO_STR_INFO1((char *)"rack.multiprocess"),
-                           (fio_cli_get_i("-w") ? Qtrue : Qfalse));
-  iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"rack.run_once"), Qfalse);
+                           (fio_cli_get_i("-w") ? Qtrue : Qfalse),
+                           &keeper);
+  iodine_env_set_const_val(env,
+                           FIO_STR_INFO1((char *)"rack.run_once"),
+                           Qfalse,
+                           &keeper);
   iodine_env_set_const_val(env,
                            FIO_STR_INFO1((char *)"rack.errors"),
-                           rb_stderr);
+                           rb_stderr,
+                           &keeper);
   iodine_env_set_const_val(env,
                            FIO_STR_INFO1((char *)"rack.multipart.buffer_size"),
-                           Qnil);
+                           Qnil,
+                           &keeper);
   iodine_env_set_const_val(
       env,
       FIO_STR_INFO1((char *)"rack.multipart.tempfile_factory"),
-      Qnil);
+      Qnil,
+      &keeper);
   iodine_env_set_const_val(
       env,
       FIO_STR_INFO1((char *)"rack.logger"),
       rb_funcallv(rb_const_get(rb_cObject, rb_intern2("Logger", 6)),
                   IODINE_NEW_ID,
                   1,
-                  &rb_stderr));
+                  &rb_stderr),
+      &keeper);
   iodine_env_set_key_pair(
       env,
       FIO_STR_INFO2((char *)"rack.url_scheme", 15),
@@ -1332,26 +1369,55 @@ static void iodine_connection_init_env_template(fio_buf_info_s at_url) {
       rb_funcallv(rb_const_get(rb_cObject, rb_intern2("StringIO", 8)),
                   IODINE_NEW_ID,
                   0,
-                  NULL));
+                  NULL),
+      &keeper);
   /* FIXME! TODO! */
-  iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"rack.session"), Qnil);
+  iodine_env_set_const_val(env,
+                           FIO_STR_INFO1((char *)"rack.session"),
+                           Qnil,
+                           &keeper);
   {
     VALUE ver = rb_ary_new();
-    iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"rack.version"), ver);
+    iodine_env_set_const_val(env,
+                             FIO_STR_INFO1((char *)"rack.version"),
+                             ver,
+                             &keeper);
     rb_ary_push(ver, INT2NUM(1));
     rb_ary_push(ver, INT2NUM(3));
   }
-  iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"rack.hijack?"), Qtrue);
+  iodine_env_set_const_val(env,
+                           FIO_STR_INFO1((char *)"rack.hijack?"),
+                           Qtrue,
+                           &keeper);
   rb_hash_aset(env, IODINE_RACK_HIJACK_STR, Qnil);
-  iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"neorack.client"), Qnil);
-  iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"REQUEST_METHOD"), Qtrue);
-  iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"PATH_INFO"), Qtrue);
-  iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"QUERY_STRING"), Qtrue);
-  iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"REMOTE_ADDR"), Qnil);
+  iodine_env_set_const_val(env,
+                           FIO_STR_INFO1((char *)"neorack.client"),
+                           Qnil,
+                           &keeper);
+  iodine_env_set_const_val(env,
+                           FIO_STR_INFO1((char *)"REQUEST_METHOD"),
+                           Qtrue,
+                           &keeper);
+  iodine_env_set_const_val(env,
+                           FIO_STR_INFO1((char *)"PATH_INFO"),
+                           Qtrue,
+                           &keeper);
+  iodine_env_set_const_val(env,
+                           FIO_STR_INFO1((char *)"QUERY_STRING"),
+                           Qtrue,
+                           &keeper);
+  iodine_env_set_const_val(env,
+                           FIO_STR_INFO1((char *)"REMOTE_ADDR"),
+                           Qnil,
+                           &keeper);
   iodine_env_set_const_val(env,
                            FIO_STR_INFO1((char *)"SERVER_PROTOCOL"),
-                           Qtrue);
-  iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"HTTP_VERSION"), Qtrue);
+                           Qtrue,
+                           &keeper);
+  iodine_env_set_const_val(env,
+                           FIO_STR_INFO1((char *)"HTTP_VERSION"),
+                           Qtrue,
+                           &keeper);
   iodine_env_set_key_pair(env,
                           FIO_STR_INFO1((char *)"SERVER_NAME"),
                           FIO_STR_INFO0);
@@ -1406,7 +1472,8 @@ static VALUE iodine_connection_env_get(VALUE self) {
     return (c->store[IODINE_CONNECTION_STORE_env] = rb_hash_new());
   VALUE env = c->store[IODINE_CONNECTION_STORE_env] =
       rb_hash_dup(IODINE_CONNECTION_ENV_TEMPLATE);
-  iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"neorack.client"), self);
+
+  rb_hash_aset(env, IODINE_RACK_NEORACK_CLIENT, self);
   {
     VALUE tmp = rb_obj_method(self, IODINE_RACK_HIJACK_ID_SYM);
     c->store[IODINE_CONNECTION_STORE_tmp] = tmp;
@@ -1424,50 +1491,55 @@ static VALUE iodine_connection_env_get(VALUE self) {
     fio_string_write_u(&num2str, NULL, fio_http_body_length(c->http));
     VALUE clen_str = rb_str_new(num2str.buf, num2str.len);
     c->store[IODINE_CONNECTION_STORE_tmp] = clen_str;
-    rb_hash_aset(env,
-                 STORE.header_name(FIO_STR_INFO1((char *)"content-length")),
-                 clen_str);
+    rb_hash_aset(env, IODINE_RACK_CONTENT_LENGTH, clen_str);
     c->store[IODINE_CONNECTION_STORE_tmp] = Qnil;
-    iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"rack.input"), self);
+    rb_hash_aset(env, IODINE_RACK_INPUT, self);
   }
 
-  iodine_env_set_key_pair_const(env,
-                                FIO_STR_INFO2((char *)"REQUEST_METHOD", 14),
-                                fio_keystr_info(&c->http->method));
-  iodine_env_set_key_pair(env,
-                          FIO_STR_INFO2((char *)"PATH_INFO", 9),
-                          fio_keystr_info(&c->http->path));
-  iodine_env_set_key_pair(env,
-                          FIO_STR_INFO2((char *)"QUERY_STRING", 12),
-                          fio_keystr_info(&c->http->query));
+  iodine_env_set_const_key(env,
+                           IODINE_RACK_REQUEST_METHOD,
+                           fio_keystr_info(&c->http->method),
+                           (c->store + IODINE_CONNECTION_STORE_tmp));
+  iodine_env_set_const_key(env,
+                           IODINE_RACK_PATH_INFO,
+                           fio_keystr_info(&c->http->path),
+                           (c->store + IODINE_CONNECTION_STORE_tmp));
+  iodine_env_set_const_key(env,
+                           IODINE_RACK_QUERY_STRING,
+                           fio_keystr_info(&c->http->query),
+                           (c->store + IODINE_CONNECTION_STORE_tmp));
   { /* Router: SCRIPT_NAME*/
     fio_str_info_s opath = fio_http_opath(c->http);
     fio_str_info_s path = fio_http_path(c->http);
     path.len -= (path.len == 1);
     opath.len -= path.len;
     if (opath.len)
-      iodine_env_set_key_pair_const(env,
-                                    FIO_STR_INFO2((char *)"SCRIPT_NAME", 11),
-                                    opath);
+      iodine_env_set_const_key(env,
+                               IODINE_RACK_SCRIPT_NAME,
+                               opath,
+                               (c->store + IODINE_CONNECTION_STORE_tmp));
   }
   {
     fio_str_info_s host =
         fio_http_request_header(c->http, FIO_STR_INFO2((char *)"host", 4), 0);
     fio_url_s u = fio_url_parse(host.buf, host.len);
-    iodine_env_set_key_pair_const(env,
-                                  FIO_STR_INFO2((char *)"SERVER_NAME", 11),
-                                  FIO_BUF2STR_INFO(u.host));
+    iodine_env_set_const_key(env,
+                             IODINE_RACK_SERVER_NAME,
+                             FIO_BUF2STR_INFO(u.host),
+                             (c->store + IODINE_CONNECTION_STORE_tmp));
   }
-  iodine_env_set_key_pair_const(env,
-                                FIO_STR_INFO2((char *)"SERVER_PROTOCOL", 15),
-                                fio_keystr_info(&c->http->version));
-  iodine_env_set_key_pair_const(env,
-                                FIO_STR_INFO2((char *)"HTTP_VERSION", 12),
-                                fio_keystr_info(&c->http->version));
+  iodine_env_set_const_key(env,
+                           IODINE_RACK_SERVER_PROTOCOL,
+                           fio_keystr_info(&c->http->version),
+                           (c->store + IODINE_CONNECTION_STORE_tmp));
+  iodine_env_set_const_key(env,
+                           IODINE_RACK_HTTP_VERSION,
+                           fio_keystr_info(&c->http->version),
+                           (c->store + IODINE_CONNECTION_STORE_tmp));
   {
     VALUE addr = iodine_connection_peer_addr(self);
     c->store[IODINE_CONNECTION_STORE_tmp] = addr;
-    iodine_env_set_const_val(env, FIO_STR_INFO1((char *)"REMOTE_ADDR"), addr);
+    rb_hash_aset(env, IODINE_RACK_REMOTE_ADDR, addr);
     c->store[IODINE_CONNECTION_STORE_tmp] = Qnil;
   }
   {
@@ -3001,7 +3073,7 @@ static void Init_Iodine_Connection(void)  {
                              iodine_handler_method_injection, 1);
   rb_define_singleton_method(iodine_rb_IODINE,
                              "make_resource",
-                             iodine_resource_handler_method_injection, 1);
+                             iodine_resource_handler_method_injection, -1);
   VALUE m = iodine_rb_IODINE_CONNECTION = rb_define_class_under(iodine_rb_IODINE, "Connection", rb_cObject);
   rb_define_alloc_func(m, iodine_connection_alloc);
   STORE.hold(iodine_rb_IODINE_CONNECTION);
@@ -3009,6 +3081,30 @@ static void Init_Iodine_Connection(void)  {
   IODINE_CONST_ID_STORE(IODINE_SAME_SITE_NONE, "none");
   IODINE_CONST_ID_STORE(IODINE_SAME_SITE_LAX, "lax");
   IODINE_CONST_ID_STORE(IODINE_SAME_SITE_STRICT, "strict");
+
+  /* cache VALUE for `env` key */
+  IODINE_RACK_CONTENT_LENGTH = STORE.header_name(FIO_STR_INFO1((char *)"content-length"));
+  STORE.hold(IODINE_RACK_CONTENT_LENGTH);
+  IODINE_RACK_INPUT = STORE.frozen_str(FIO_STR_INFO1((char *)"rack.input"));
+  STORE.hold(IODINE_RACK_INPUT);
+  IODINE_RACK_NEORACK_CLIENT = STORE.frozen_str(FIO_STR_INFO1((char *)"neorack.client"));
+  STORE.hold(IODINE_RACK_NEORACK_CLIENT);
+  IODINE_RACK_REQUEST_METHOD = STORE.frozen_str(FIO_STR_INFO1((char *)"REQUEST_METHOD"));
+  STORE.hold(IODINE_RACK_REQUEST_METHOD);
+  IODINE_RACK_PATH_INFO = STORE.frozen_str(FIO_STR_INFO1((char *)"PATH_INFO"));
+  STORE.hold(IODINE_RACK_PATH_INFO);
+  IODINE_RACK_QUERY_STRING = STORE.frozen_str(FIO_STR_INFO1((char *)"QUERY_STRING"));
+  STORE.hold(IODINE_RACK_QUERY_STRING);
+  IODINE_RACK_SCRIPT_NAME = STORE.frozen_str(FIO_STR_INFO1((char *)"SCRIPT_NAME"));
+  STORE.hold(IODINE_RACK_SCRIPT_NAME);
+  IODINE_RACK_SERVER_NAME = STORE.frozen_str(FIO_STR_INFO1((char *)"SERVER_NAME"));
+  STORE.hold(IODINE_RACK_SERVER_NAME);
+  IODINE_RACK_SERVER_PROTOCOL = STORE.frozen_str(FIO_STR_INFO1((char *)"SERVER_PROTOCOL"));
+  STORE.hold(IODINE_RACK_SERVER_PROTOCOL);
+  IODINE_RACK_HTTP_VERSION = STORE.frozen_str(FIO_STR_INFO1((char *)"HTTP_VERSION"));
+  STORE.hold(IODINE_RACK_HTTP_VERSION);
+  IODINE_RACK_REMOTE_ADDR = STORE.frozen_str(FIO_STR_INFO1((char *)"REMOTE_ADDR"));
+  STORE.hold(IODINE_RACK_REMOTE_ADDR);
 
   rb_define_method(m, "initialize", iodine_connection_initialize, -1);
 

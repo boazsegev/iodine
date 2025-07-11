@@ -62,7 +62,7 @@ module Iodine
         @app = handler
         block.call if block
         puts "WARNING: overwriting existing route mapping @ #{@path_prefix}" if(@map[@path_prefix])
-        @map[@path_prefix] = [@app]
+        @map[@path_prefix] = @app
         @middleware = old_middleware
         @app = old_app
         @path_prefix = old_path_prefix
@@ -73,8 +73,8 @@ module Iodine
         raise e
       end
       # Makes the calling module into a NeoRack Resource handler.
-      def neorack_resource(handler)
-        Iodine.make_resource(handler)
+      def neorack_resource(*ha)
+        ha.each {|handler| Server.make_resource(handler) }
       end
       # Sets NeoRack application for the server to run.
       def run(a = nil, &block)
@@ -97,7 +97,7 @@ module Iodine
       # Returns either the NeoRack Application or the routing map (if using a map) to be used.
       def app
         @map ||= {}
-        @map['/'] ||= [@app]
+        @map['/'] ||= @app
         @map
       end
       # validate name of Web Application configuration file.
@@ -166,7 +166,7 @@ module Iodine
           raise(err)
         end
         if app && app.is_a?(Hash) && app['/']
-          app.each {|k,v| v[1] ? listener.map_resource(k,v[0]) : listener.map(k,v[0]) }
+          app.each {|k,v| listener.map(k,v) }
         elsif app
           listener.map nil, app
         else
