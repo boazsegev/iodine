@@ -13,13 +13,17 @@ static void *iodine___start(void *ignr_) {
   unsigned workers = (unsigned)fio_io_workers((int)fio_cli_get_i("-w"));
   fio_io_async_attach(&IODINE_THREAD_POOL, (uint32_t)threads);
 
-  iodine_env_set_const_val(IODINE_CONNECTION_ENV_TEMPLATE,
-                           FIO_STR_INFO1((char *)"rack.multithread"),
-                           (fio_cli_get_i("-t") ? Qtrue : Qfalse));
-  iodine_env_set_const_val(IODINE_CONNECTION_ENV_TEMPLATE,
-                           FIO_STR_INFO1((char *)"rack.multiprocess"),
-                           (fio_cli_get_i("-w") ? Qtrue : Qfalse));
-
+  {
+    VALUE keeper;
+    iodine_env_set_const_val(IODINE_CONNECTION_ENV_TEMPLATE,
+                             FIO_STR_INFO1((char *)"rack.multithread"),
+                             (fio_cli_get_i("-t") ? Qtrue : Qfalse),
+                             &keeper);
+    iodine_env_set_const_val(IODINE_CONNECTION_ENV_TEMPLATE,
+                             FIO_STR_INFO1((char *)"rack.multiprocess"),
+                             (fio_cli_get_i("-w") ? Qtrue : Qfalse),
+                             &keeper);
+  }
   FIO_LOG_INFO("\n\tStarting the iodine server."
                "\n\tVersion: %s"
                "\n\tEngine: " FIO_POLL_ENGINE_STR "\n\tWorkers: %d\t(%s)"
