@@ -138,12 +138,15 @@ FIO_SFUNC VALUE iodine_store___print_debug(VALUE self) {
       "      \tCached Frozen Strings: %-4zu/%-4zu (%-4zu capacity)\n"
       "      \tCached Rack Headers:   %-4zu/%-4zu (%-4zu capacity)\n"
       "      \tTasks to do:           %-4zu\n"
+#if FIO_LEAK_COUNTER
       "      \tIodine Objects Allocated:\n"
       "      \tConnections:           %-4zu\tMiniMaps:       %-4zu\n"
       "      \tMustache:              %-4zu\tPubSubMessages: %-4zu\n"
       "      \tfacil.io Objects Allocated:\n"
       "      \tHTTP Handles:          %-4zu\tfio_bstr_s:     %-4zu\n"
-      "      \tIO Objects:            %-4zu\n",
+      "      \tIO Objects:            %-4zu\n"
+#endif /* FIO_LEAK_COUNTER */
+      ,
       (int)fio_getpid(),
       (size_t)iodine_reference_store_map_count(&STORE.map),
       (size_t)iodine_reference_store_map_capa(&STORE.map),
@@ -153,14 +156,18 @@ FIO_SFUNC VALUE iodine_store___print_debug(VALUE self) {
       (size_t)iodine_reference_store_frzn_count(&STORE.headers),
       STORE.limit,
       (size_t)iodine_reference_store_frzn_capa(&STORE.headers),
-      (size_t)store___todo_count(&STORE.todo),
+      (size_t)store___todo_count(&STORE.todo)
+#if FIO_LEAK_COUNTER
+          ,
       FIO_LEAK_COUNTER_COUNT(iodine_connection),
       FIO_LEAK_COUNTER_COUNT(iodine_minimap),
       FIO_LEAK_COUNTER_COUNT(iodine_mustache),
       FIO_LEAK_COUNTER_COUNT(iodine_pubsub_msg),
       FIO_LEAK_COUNTER_COUNT(fio_http),
       FIO_LEAK_COUNTER_COUNT(fio_bstr_s),
-      FIO_LEAK_COUNTER_COUNT(fio___io));
+      FIO_LEAK_COUNTER_COUNT(fio___io)
+#endif /* FIO_LEAK_COUNTER */
+  );
   // fio_state_callback_print_state();
 #endif /* IODINE_STORE_SKIP_PRINT */
   return self;

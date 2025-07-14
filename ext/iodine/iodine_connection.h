@@ -28,6 +28,9 @@ static VALUE IODINE_RACK_SERVER_NAME;
 static VALUE IODINE_RACK_SERVER_PROTOCOL;
 static VALUE IODINE_RACK_HTTP_VERSION;
 static VALUE IODINE_RACK_REMOTE_ADDR;
+
+/* Requires 2 allocations instead of 1, quite useless except for testing */
+#define IODINE_CONNECTION_ALLOCATE_SEPARATELY 0
 /* *****************************************************************************
 Ruby Connection Object
 ***************************************************************************** */
@@ -73,8 +76,11 @@ static void iodine_connection_free(void *ptr_) {
   fio_http_free(c->http);
   iodine_hmap_destroy(&c->map.map);
   FIO_LEAK_COUNTER_ON_FREE(iodine_connection);
+#if IODINE_CONNECTION_ALLOCATE_SEPARATELY
+  fio_free(c);
+#else
   ruby_xfree(c);
-  // fio_free(c);
+#endif
 }
 
 static void iodine_connection_mark(void *ptr_) {
@@ -94,19 +100,23 @@ static const rb_data_type_t IODINE_CONNECTION_DATA_TYPE = {
             .dsize = iodine_connection_data_size,
         },
     .data = NULL,
-    // .flags = RUBY_TYPED_FREE_IMMEDIATELY,
+#if IODINE_CONNECTION_ALLOCATE_SEPARATELY
+    .flags = RUBY_TYPED_FREE_IMMEDIATELY,
+#endif
 };
 
 static VALUE iodine_connection_alloc(VALUE klass) {
-  // iodine_connection_s *c = (iodine_connection_s *)fio_malloc(sizeof(*c));
-  // FIO_ASSERT_ALLOC(c);
-  // VALUE self = TypedData_Wrap_Struct(klass, &IODINE_CONNECTION_DATA_TYPE, c);
-
+#if IODINE_CONNECTION_ALLOCATE_SEPARATELY
+  iodine_connection_s *c = (iodine_connection_s *)fio_malloc(sizeof(*c));
+  FIO_ASSERT_ALLOC(c);
+  VALUE self = TypedData_Wrap_Struct(klass, &IODINE_CONNECTION_DATA_TYPE, c);
+#else
   iodine_connection_s *c = NULL;
   VALUE self = TypedData_Make_Struct(klass,
                                      iodine_connection_s,
                                      &IODINE_CONNECTION_DATA_TYPE,
                                      c);
+#endif
   *c = (iodine_connection_s){0};
   for (size_t i = 0; i < IODINE_CONNECTION_STORE_FINISH; ++i)
     c->store[i] = Qnil;
