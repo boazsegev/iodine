@@ -99,6 +99,10 @@ facil.io
 #undef FIO_LEAK_COUNTER
 #define FIO_LEAK_COUNTER 0
 #endif
+
+#undef FIO_LEAK_COUNTER_SKIP_EXIT
+#define FIO_LEAK_COUNTER_SKIP_EXIT 1
+
 /* *****************************************************************************
 Deferring Ruby Blocks
 ***************************************************************************** */

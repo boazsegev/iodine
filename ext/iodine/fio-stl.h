@@ -4431,10 +4431,13 @@ Leak Counter Helpers
 #define FIO_LEAK_COUNTER_ON_FREE(name)  ((void)0)
 #define FIO_LEAK_COUNTER_COUNT(name)    ((size_t)0)
 #else
+#ifndef FIO_LEAK_COUNTER_SKIP_EXIT
+#define FIO_LEAK_COUNTER_SKIP_EXIT 0
+#endif
 #define FIO_LEAK_COUNTER_DEF(name)                                             \
-  volatile size_t FIO_WEAK FIO_NAME(FIO___LEAK_COUNTER, name);                 \
-  FIO_IFUNC size_t FIO_NAME(fio___leak_counter, name)(size_t i) {              \
-    size_t tmp = fio_atomic_add_fetch(&FIO_NAME(FIO___LEAK_COUNTER, name), i); \
+  size_t FIO_WEAK FIO_NAME(fio___leak_counter, name)(size_t i) {               \
+    volatile static size_t counter = 0;                                        \
+    size_t tmp = fio_atomic_add_fetch(&counter, i);                            \
     if (FIO_UNLIKELY(tmp == ((size_t)-1)))                                     \
       goto error_double_free;                                                  \
     return tmp;                                                                \
@@ -4453,9 +4456,10 @@ Leak Counter Helpers
                     counter);                                                  \
   }                                                                            \
   FIO_CONSTRUCTOR(FIO_NAME(fio___leak_counter_const, name)) {                  \
-    fio_state_callback_add(FIO_CALL_AT_EXIT,                                   \
-                           FIO_NAME(fio___leak_counter_cleanup, name),         \
-                           NULL);                                              \
+    if (!FIO_LEAK_COUNTER_SKIP_EXIT)                                           \
+      fio_state_callback_add(FIO_CALL_AT_EXIT,                                 \
+                             FIO_NAME(fio___leak_counter_cleanup, name),       \
+                             NULL);                                            \
   }
 #define FIO_LEAK_COUNTER_COUNT(name)    FIO_NAME(fio___leak_counter, name)(0)
 #define FIO_LEAK_COUNTER_ON_ALLOC(name) FIO_NAME(fio___leak_counter, name)(1)
