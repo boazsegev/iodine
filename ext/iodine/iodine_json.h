@@ -74,6 +74,107 @@ static char *iodine_json_stringify2bstr(char *dest, VALUE o) {
 }
 
 /* *****************************************************************************
+JSON Beautifier.
+***************************************************************************** */
+
+typedef struct {
+  char *o;
+  size_t t;
+} iodine_json_beautify2bstr_s;
+
+static char *iodine_json_beautify2bstr(iodine_json_beautify2bstr_s *dest,
+                                       VALUE o);
+
+FIO_IFUNC void iodine_json_beautify2bstr_pad(iodine_json_beautify2bstr_s *d) {
+  if (!d->t)
+    return;
+  size_t len = fio_bstr_len(d->o);
+  d->o = fio_bstr_len_set(d->o, len + d->t + 1);
+  char *tmp = d->o + len;
+  *tmp++ = '\n';
+  FIO_MEMSET(tmp, '\t', d->t);
+}
+
+static int iodine_json_hash_each_beautify_callback(VALUE k,
+                                                   VALUE v,
+                                                   VALUE dest_) {
+  iodine_json_beautify2bstr_s *d = (iodine_json_beautify2bstr_s *)dest_;
+  iodine_json_beautify2bstr_pad(d);
+  iodine_json_beautify2bstr(d, k);
+  d->o = fio_bstr_write(d->o, ":", 1);
+  iodine_json_beautify2bstr(d, v);
+  d->o = fio_bstr_write(d->o, ",", 1);
+  return ST_CONTINUE;
+}
+
+/* Converts a VALUE to a fio_bstr */
+static char *iodine_json_beautify2bstr(iodine_json_beautify2bstr_s *d,
+                                       VALUE o) {
+  size_t tmp;
+  switch (rb_type(o)) {
+  case RUBY_T_NIL: return (d->o = fio_bstr_write(d->o, "null", 4));
+  case RUBY_T_TRUE: return (d->o = fio_bstr_write(d->o, "true", 4));
+  case RUBY_T_FALSE: return (d->o = fio_bstr_write(d->o, "false", 5));
+  case RUBY_T_ARRAY:
+    tmp = rb_array_len(o);
+    if (!tmp) {
+      d->o = fio_bstr_write(d->o, "[]", 2);
+      return d->o;
+    }
+    d->o = fio_bstr_write(d->o, "[", 1);
+    ++d->t;
+    for (size_t i = 0; i < tmp; ++i) {
+      iodine_json_beautify2bstr_pad(d);
+      iodine_json_beautify2bstr(d, RARRAY_PTR(o)[i]);
+      d->o = fio_bstr_write(d->o, ",", 1);
+    }
+    d->o[fio_bstr_len(d->o) - 1] = '\n';
+    --d->t;
+    iodine_json_beautify2bstr_pad(d);
+    fio_bstr_write(d->o, "]", 1);
+    return d->o;
+  case RUBY_T_HASH:
+    tmp = rb_hash_size_num(o);
+    if (!tmp) {
+      d->o = fio_bstr_write(d->o, "{}", 2);
+      return d->o;
+    }
+    d->o = fio_bstr_write(d->o, "{", 1);
+    ++d->t;
+    rb_hash_foreach(o, iodine_json_hash_each_beautify_callback, (VALUE)(d));
+    d->o[fio_bstr_len(d->o) - 1] = '\n';
+    --d->t;
+    iodine_json_beautify2bstr_pad(d);
+    fio_bstr_write(d->o, "}", 1);
+    return d->o;
+  case RUBY_T_FIXNUM: return (d->o = fio_bstr_write_i(d->o, RB_NUM2LL(o)));
+  case RUBY_T_FLOAT: {
+    FIO_STR_INFO_TMP_VAR(buf, 232);
+    buf.len = fio_ftoa(buf.buf, RFLOAT_VALUE(o), 10);
+    d->o = fio_bstr_write(d->o, buf.buf, buf.len);
+    return d->o;
+  }
+  default:
+    if (RB_TYPE_P(o, RUBY_T_SYMBOL))
+      // o = rb_sym_to_s(o);
+      o = rb_sym2str(o);
+    if (!RB_TYPE_P(o, RUBY_T_STRING))
+      o = rb_funcallv(o, IODINE_TO_S_ID, 0, NULL);
+    if (!RB_TYPE_P(o, RUBY_T_STRING)) {
+      FIO_LOG_ERROR("Iodine::JSON.stringify called with an object that doesn't "
+                    "respond to #to_s.");
+      return (d->o = fio_bstr_write(d->o, "null", 4));
+    }
+  // fall through
+  case RUBY_T_STRING:
+    d->o = fio_bstr_write(d->o, "\"", 1);
+    d->o = fio_bstr_write_escape(d->o, RSTRING_PTR(o), (size_t)RSTRING_LEN(o));
+    d->o = fio_bstr_write(d->o, "\"", 1);
+    return d->o;
+  }
+}
+
+/* *****************************************************************************
 FIOBJ => Ruby Bridge
 ***************************************************************************** */
 
@@ -118,6 +219,61 @@ static VALUE iodine_fiobj2ruby(FIOBJ o) {
   // case FIOBJ_T_NULL: /* fall through */
   // case FIOBJ_T_INVALID: /* fall through */
   default: return Qnil;
+  }
+}
+
+/* *****************************************************************************
+Ruby => FIOBJ Bridge
+***************************************************************************** */
+
+typedef struct iodine_ruby2fiobj_task_s {
+  FIOBJ out;
+} iodine_ruby2fiobj_task_s;
+
+static FIOBJ iodine_ruby2fiobj(VALUE o);
+
+static int iodine_ruby2fiobj_hash_each_task(VALUE n, VALUE v, VALUE h_) {
+  FIOBJ h = (FIOBJ)h_;
+  FIOBJ key = iodine_ruby2fiobj(n);
+  fiobj_hash_set(h, key, iodine_ruby2fiobj(v), NULL);
+  fiobj_free(key); /* by default, keys aren't owned by the hash */
+  return ST_CONTINUE;
+}
+
+/** Converts FIOBJ to VALUE. Does NOT place VALUE in STORE automatically. */
+static FIOBJ iodine_ruby2fiobj(VALUE o) {
+  FIOBJ r;
+  switch (rb_type(o)) {
+  case RUBY_T_TRUE: return fiobj_true();
+  case RUBY_T_FALSE: return fiobj_false();
+  case RUBY_T_FIXNUM: return fiobj_num_new((intptr_t)RB_NUM2LL(o));
+  case RUBY_T_FLOAT: return fiobj_float_new(rb_float_value(o));
+  case RUBY_T_SYMBOL: o = rb_sym_to_s(o); /* fall through */
+  case RUBY_T_STRING: return fiobj_str_new_cstr(RSTRING_PTR(o), RSTRING_LEN(o));
+  case RUBY_T_ARRAY:
+    if (1) {
+      const size_t alen = rb_array_len(o);
+      r = fiobj_array_new();
+      if (alen)
+        fiobj_array_reserve(r, (int64_t)alen);
+      for (size_t i = 0; i < alen; ++i)
+        fiobj_array_push(r, iodine_ruby2fiobj(RARRAY_PTR(o)[i]));
+      return r;
+    }
+  case RUBY_T_HASH:
+    r = fiobj_hash_new();
+    if (rb_hash_size_num(o))
+      fiobj_hash_reserve(r, rb_hash_size_num(o));
+    rb_hash_foreach(o, iodine_ruby2fiobj_hash_each_task, (VALUE)r);
+    return r;
+  case RUBY_T_NIL:   /* fall through */
+  case RUBY_T_UNDEF: /* fall through */
+  case RUBY_T_NONE: return fiobj_null();
+  default:
+    o = rb_any_to_s(o);
+    if (RB_TYPE_P(o, RUBY_T_STRING))
+      return fiobj_str_new_cstr(RSTRING_PTR(o), RSTRING_LEN(o));
+    return fiobj_null();
   }
 }
 
@@ -247,6 +403,29 @@ static VALUE iodine_json_stringify(VALUE self, VALUE object) {
   return r;
 }
 
+/** Accepts a Ruby object and returns a JSON String. */
+static VALUE iodine_json_pretty(VALUE self, VALUE object) {
+  VALUE r = Qnil;
+  FIOBJ o = iodine_ruby2fiobj(object);
+  FIOBJ out = fiobj2json(FIOBJ_T_INVALID, o, 1);
+  fiobj_free(o);
+  r = rb_str_new(fiobj_str_ptr(out), (long)fiobj_str_len(out));
+  fiobj_free(out);
+  return r;
+}
+
+/** Accepts a Ruby object and returns a JSON String. */
+static VALUE iodine_json_beautify(VALUE self, VALUE object) {
+  VALUE r = Qnil;
+  iodine_json_beautify2bstr_s dest = {
+      .o = fio_bstr_reserve(NULL, ((size_t)1 << 12) - 64),
+  };
+  iodine_json_beautify2bstr(&dest, object);
+  r = rb_str_new(dest.o, (long)fio_bstr_len(dest.o));
+  fio_bstr_free(dest.o);
+  return r;
+}
+
 /** Initialize Iodine::JSON */ // clang-format off
 /**
 Iodine::JSON exposes the {Iodine::Connection#write} fallback behavior when called with non-String objects.
@@ -341,6 +520,8 @@ static void Init_Iodine_JSON(void) {
   rb_define_singleton_method(m, "parse", iodine_json_parse, 1);
   rb_define_singleton_method(m, "parse_slow", iodine_json_parse_indirect, 1);
   rb_define_singleton_method(m, "stringify", iodine_json_stringify, 1);
+  rb_define_singleton_method(m, "beautify_slow", iodine_json_pretty, 1);
+  rb_define_singleton_method(m, "beautify", iodine_json_beautify, 1);
   rb_define_singleton_method(m, "dump", iodine_json_stringify, 1);
 }
 #endif /* H___IODINE_JSON___H */

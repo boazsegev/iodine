@@ -176,9 +176,9 @@ module Iodine
       ### loads auto-detected configuration file (iodine.rb)
       def self.iodine___load_conf(fn = "./")
         old_wd = Dir.getwd
-        Dir.chdir(File.dirname(fn))
+        Dir.chdir(File.dirname(fn)) if(fn && File.dirname(fn))
         conf = Iodine::Base::CLI['--config']
-        conf = (::Pathname.new(File.dirname(fn)) + Iodine::Base::CLI['--config']).to_s if(!conf || !File.exist?(conf))
+        conf = (::Pathname.new(File.dirname(fn.to_s).to_s) + Iodine::Base::CLI['--config']).to_s if(!conf || !File.exist?(conf))
         unless File.exist?(conf)
           puts "* No configuration file found @ #{conf}"
             Dir.chdir(old_wd)

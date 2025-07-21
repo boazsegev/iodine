@@ -47,8 +47,14 @@ module Iodine
         x.report("      Ruby obj.to_json") do |times|
           data_1000.to_json
         end
+        x.report("::JSON.pretty_generate") do |times|
+          ::JSON.pretty_generate(data_1000)
+        end
         x.report("Iodine::JSON.stringify") do |times|
           Iodine::JSON.stringify(data_1000)
+        end
+        x.report("Iodine::JSON.beautify") do |times|
+          Iodine::JSON.beautify(data_1000)
         end
         if(defined?(Oj))
           x.report("               Oj.dump") do |times|
