@@ -342,6 +342,8 @@ module Iodine
     def self.parse(json_string); end
     # Accepts a Ruby object and returns a JSON String.
     def self.stringify(ruby_object); end
+    # Accepts a Ruby object and returns a prettier JSON String.
+    def self.beautify(ruby_object); end
   end
 
   #######################
