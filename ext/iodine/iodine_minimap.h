@@ -203,14 +203,46 @@ String (JSON) output
 ***************************************************************************** */
 
 static int iodine___minimap_to_s_task(iodine_hmap_each_s *e) {
-  *(char **)e->udata = iodine_json_stringify2bstr(*(char **)e->udata, e->key);
+  VALUE tmp = e->key;
+  /* Note: keys MUST be Strings  */
+  switch (rb_type(tmp)) {
+  case RUBY_T_SYMBOL: tmp = rb_sym2str(tmp); /* fall through */
+  case RUBY_T_STRING:
+  string_key:
+    *(char **)e->udata = fio_bstr_write(*(char **)e->udata, "\"", 1);
+    *(char **)e->udata = fio_bstr_write_escape(*(char **)e->udata,
+                                               RSTRING_PTR(tmp),
+                                               (size_t)RSTRING_LEN(tmp));
+    *(char **)e->udata = fio_bstr_write(*(char **)e->udata, "\"", 1);
+    break;
+  case RUBY_T_FIXNUM:
+    *(char **)e->udata = fio_bstr_write2(*(char **)e->udata,
+                                         FIO_STRING_WRITE_STR2("\"", 1),
+                                         FIO_STRING_WRITE_NUM(NUM2LL(tmp)),
+                                         FIO_STRING_WRITE_STR2("\"", 1));
+    break;
+  case RUBY_T_TRUE:
+    *(char **)e->udata = fio_bstr_write(*(char **)e->udata, "\"true\"", 6);
+    break;
+  case RUBY_T_FALSE:
+    *(char **)e->udata = fio_bstr_write(*(char **)e->udata, "\"false\"", 7);
+    break;
+  case RUBY_T_NIL:
+    *(char **)e->udata = fio_bstr_write(*(char **)e->udata, "\"null\"", 6);
+    break;
+  default:
+    tmp = rb_any_to_s(tmp);
+    if (RB_TYPE_P(tmp, RUBY_T_STRING))
+      goto string_key;
+    *(char **)e->udata = fio_bstr_write(*(char **)e->udata, "\"error\"", 7);
+  }
   *(char **)e->udata = fio_bstr_write(*(char **)e->udata, ":", 1);
   *(char **)e->udata = iodine_json_stringify2bstr(*(char **)e->udata, e->value);
   *(char **)e->udata = fio_bstr_write(*(char **)e->udata, ",", 1);
   return 0;
 }
 
-FIO_SFUNC VALUE iodine_minimap_to_s(VALUE o) {
+FIO_SFUNC VALUE iodine_minimap_to_s(int argc, VALUE *argv, VALUE o) {
   VALUE r = Qnil;
   iodine_hmap_s *m = &iodine_minimap_ptr(o)->map;
   char *str;
@@ -226,6 +258,7 @@ FIO_SFUNC VALUE iodine_minimap_to_s(VALUE o) {
 empty:
   r = rb_str_new("{}", 2);
   return r;
+  (void)argc, (void)argv;
 }
 
 /* *****************************************************************************
@@ -434,7 +467,8 @@ static void Init_Iodine_MiniMap(void) {
   rb_define_method(m, "capa", iodine_minimap_capa, 0);
   rb_define_method(m, "each", iodine_minimap_each, 0);
   rb_define_method(m, "reserve", iodine_minimap_reserve, 1);
-  rb_define_method(m, "to_s", iodine_minimap_to_s, 0);
+  rb_define_method(m, "to_s", iodine_minimap_to_s, -1);
+  rb_define_method(m, "to_json", iodine_minimap_to_s, -1);
   rb_define_singleton_method(m, "cbench", iodine_minimap_benchmark_c, 1);
 }
 #endif /* H___IODINE_MINIMAP___H */
