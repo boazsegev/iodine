@@ -10,20 +10,64 @@ static void *mus_get_var(void *ctx, fio_buf_info_s name) {
   VALUE r = Qnil;
   VALUE c = (VALUE)ctx;
   ID to_hash;
+  fio_buf_info_s buf;
+  int64_t index;
+  if (TYPE(c) == RUBY_T_ARRAY)
+    goto is_an_array;
   if (TYPE(c) != RUBY_T_HASH)
     goto not_a_hash;
   r = rb_hash_aref(c, rb_id2sym(rb_intern2(name.buf, name.len)));
   if (FIO_LIKELY(r != Qnil))
-    return (void *)r;
+    goto found;
   r = rb_hash_aref(c, rb_str_new_static(name.buf, name.len));
+  if (FIO_LIKELY(r != Qnil))
+    goto found;
+  buf = name;
+  index = fio_atol(&buf.buf);
+  if (buf.buf == name.buf + name.len) {
+    r = rb_hash_aref(c, LL2NUM(index));
+  }
   if (r == Qnil)
     r = (VALUE)NULL;
+found:
   STORE.hold(r);
   return (void *)r;
+
 not_a_hash:
+  if (iodine_is_minimap(c))
+    goto is_minimap;
   to_hash = rb_intern2("to_hash", 7);
   if (c && TYPE(c) == RUBY_T_OBJECT && rb_respond_to(c, to_hash))
     return mus_get_var((void *)rb_funcallv(c, to_hash, 0, &c), name);
+  return NULL;
+
+is_minimap:
+  r = iodine_minimap_get(c, rb_id2sym(rb_intern2(name.buf, name.len)));
+  if (FIO_LIKELY(r != Qnil))
+    goto found;
+  r = iodine_minimap_get(c, rb_str_new_static(name.buf, name.len));
+  if (FIO_LIKELY(r != Qnil))
+    goto found;
+  buf = name;
+  index = fio_atol(&buf.buf);
+  if (buf.buf == name.buf + name.len) {
+    r = iodine_minimap_get(c, LL2NUM(index));
+  }
+  if (r == Qnil)
+    r = (VALUE)NULL;
+  goto found;
+
+is_an_array:
+  buf = name;
+  if (name.len == 6 && fio_buf2u32u(name.buf) == fio_buf2u32u("leng") &&
+      fio_buf2u16u(name.buf + 4) == fio_buf2u16u("th"))
+    return (void *)LL2NUM(rb_array_len(c));
+  index = fio_atol(&buf.buf);
+  if (buf.buf == name.buf + name.len) {
+    r = rb_ary_entry(c, (long)index);
+    if (FIO_LIKELY(r != Qnil))
+      goto found;
+  }
   return NULL;
 }
 static size_t mus_get_array_len(void *ctx) {
@@ -53,14 +97,18 @@ static fio_buf_info_s mus_var2str(void *var) {
     return FIO_BUF_INFO2(RSTRING_PTR(v), (size_t)RSTRING_LEN(v));
   case RUBY_T_FIXNUM: /* fall through */
   case RUBY_T_BIGNUM: /* fall through */
-  case RUBY_T_FLOAT:
+  case RUBY_T_FLOAT:  /* fall through */
+  case RUBY_T_ARRAY:  /* fall through */
+  case RUBY_T_HASH:   /* fall through */
     v = rb_funcallv(v, IODINE_TO_S_ID, 0, &v);
     return FIO_BUF_INFO2(RSTRING_PTR(v), (size_t)RSTRING_LEN(v));
-  case RUBY_T_ARRAY: /* fall through */
-  case RUBY_T_HASH:  /* fall through */
   default:
     if (rb_respond_to(v, rb_intern("call"))) {
       return mus_var2str((void *)rb_proc_call(v, rb_ary_new()));
+    }
+    if ((v = rb_check_funcall(v, IODINE_TO_S_ID, 0, NULL)) != RUBY_Qundef) {
+      if (RB_TYPE_P(v, RUBY_T_STRING))
+        return FIO_BUF_INFO2(RSTRING_PTR(v), (size_t)RSTRING_LEN(v));
     }
     return FIO_BUF_INFO2(NULL, 0);
   }

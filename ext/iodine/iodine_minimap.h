@@ -2,6 +2,7 @@
 #define H___IODINE_MINIMAP___H
 #include "iodine.h"
 
+static VALUE iodine_rb_IODINE_BASE_MINIMAP;
 /* *****************************************************************************
 Mini Ruby Hash Map
 ***************************************************************************** */
@@ -196,6 +197,14 @@ static VALUE iodine_minimap_reserve(VALUE o, VALUE s_) {
   iodine_hmap_s *m = &iodine_minimap_ptr(o)->map;
   iodine_hmap_reserve(m, s);
   return o;
+}
+
+static inline bool iodine_is_minimap(VALUE o) {
+  return (rb_class_of(o) == iodine_rb_IODINE_BASE_MINIMAP);
+}
+
+static inline VALUE iodine_is_minimap_rb(VALUE o) {
+  return (rb_class_of(o) == iodine_rb_IODINE_BASE_MINIMAP) ? Qtrue : Qfalse;
 }
 
 /* *****************************************************************************
@@ -458,7 +467,9 @@ m = Iodine::Base::MiniMap.new
 m.each {|k,v| puts "#{k.to_s} => #{v.to_s}"}
 ***************************************************************************** */
 static void Init_Iodine_MiniMap(void) {
-  VALUE m = rb_define_class_under(iodine_rb_IODINE_BASE, "MiniMap", rb_cObject);
+  VALUE m = iodine_rb_IODINE_BASE_MINIMAP =
+      rb_define_class_under(iodine_rb_IODINE_BASE, "MiniMap", rb_cObject);
+  STORE.hold(iodine_rb_IODINE_BASE_MINIMAP);
   rb_define_alloc_func(m, iodine_minimap_alloc);
   rb_define_method(m, "[]", iodine_minimap_get, 1);
   rb_define_method(m, "[]=", iodine_minimap_set, 2);
@@ -469,6 +480,7 @@ static void Init_Iodine_MiniMap(void) {
   rb_define_method(m, "reserve", iodine_minimap_reserve, 1);
   rb_define_method(m, "to_s", iodine_minimap_to_s, -1);
   rb_define_method(m, "to_json", iodine_minimap_to_s, -1);
+  rb_define_method(m, "is?", iodine_is_minimap_rb, 0);
   rb_define_singleton_method(m, "cbench", iodine_minimap_benchmark_c, 1);
 }
 #endif /* H___IODINE_MINIMAP___H */
