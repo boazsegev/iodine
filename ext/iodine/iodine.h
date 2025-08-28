@@ -93,16 +93,18 @@ facil.io
 #define FIO_MEMORY_ARENA_COUNT_MAX  4
 #define FIO_EVERYTHING
 
-#include "fio-stl.h"
-
 #ifndef DEBUG
+#undef FIO_LEAK_COUNTER_SKIP_EXIT
+#define FIO_LEAK_COUNTER_SKIP_EXIT 1
 /* Ruby doesn't always free everything pre-cleanup, so no point in counting */
 #undef FIO_LEAK_COUNTER
 #define FIO_LEAK_COUNTER 0
 #endif
 
-#undef FIO_LEAK_COUNTER_SKIP_EXIT
-#define FIO_LEAK_COUNTER_SKIP_EXIT 1
+#include "fio-stl.h"
+
+#ifndef DEBUG
+#endif
 
 /* *****************************************************************************
 Deferring Ruby Blocks
@@ -151,14 +153,15 @@ static VALUE iodine_handler_method_injection__inner(VALUE self,
 #include "iodine_cli.h"
 #include "iodine_defer.h"
 #include "iodine_minimap.h"
+/* layer 2 modules */
 #include "iodine_mustache.h"
 #include "iodine_pubsub_eng.h"
 #include "iodine_threads.h"
 #include "iodine_tls.h"
-/* layer 2 modules */
+/* layer 3 modules */
 #include "iodine_connection.h"
 
-/* layer 3 modules */
+/* layer 4 modules */
 #include "iodine_core.h"
 
 #endif /* H___IODINE___H */
