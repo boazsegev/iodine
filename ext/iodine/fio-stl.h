@@ -46024,7 +46024,10 @@ FIO_IFUNC size_t fio_http1_parser_is_on_body(fio_http1_parser_s *p);
 FIO_IFUNC size_t fio_http1_expected(fio_http1_parser_s *p);
 
 /** A return value for `fio_http1_expected` when chunked data is expected. */
-#define FIO_HTTP1_EXPECTED_CHUNKED ((size_t)(-1))
+#define FIO_HTTP1_EXPECTED_CHUNKED ((size_t)(-2))
+
+/** `fio_http1_expected` value when body isn't allowed (GET/HEAD/OPTIONS). */
+#define FIO___HTTP1_BODY_NOT_ALLOWED ((size_t)(-1))
 
 /* *****************************************************************************
 HTTP/1.x callbacks (to be implemented by parser user)
@@ -46114,6 +46117,8 @@ FIO_IFUNC size_t fio_http1_parser_is_on_body(fio_http1_parser_s *p) {
 
 /** Returns the number of bytes of payload still expected to be received. */
 FIO_IFUNC size_t fio_http1_expected(fio_http1_parser_s *p) {
+  if (p->expected == FIO___HTTP1_BODY_NOT_ALLOWED)
+    return 0;
   return p->expected;
 }
 
@@ -46155,6 +46160,10 @@ Reading the first line
 static int fio_http1___start(fio_http1_parser_s *p,
                              fio_buf_info_s *buf,
                              void *udata) {
+  const uint32_t method_get = (fio_buf2u32u("GET ") | 0x20202020);
+  const uint32_t method_head = (fio_buf2u32u("HEAD") | 0x20202020);
+  const uint64_t method_options =
+      (fio_buf2u64u("OPTIONS ") | (uint64_t)0x2020202020202020ULL);
   /* find line start/end and test */
   fio_buf_info_s wrd[3];
   char *start = buf->buf;
@@ -46200,6 +46209,17 @@ static int fio_http1___start(fio_http1_parser_s *p,
     return -1;
   if (fio_http1_on_version(wrd[2], udata))
     return -1;
+
+  /* make sure GET / HEAD / OPTIONS requests don't have a body */
+  if (((wrd[0].len == 3 || wrd[0].len == 4) &&
+       ((fio_buf2u32u(wrd[0].buf) | 0x20202020) == method_get ||
+        (fio_buf2u32u(wrd[0].buf) | 0x20202020) == method_head)) ||
+      (wrd[0].len == 7 &&
+       ((fio_buf2u64u(wrd[0].buf) | (uint64_t)0x2020202020202020ULL) ==
+        method_options)))
+    p->expected = FIO___HTTP1_BODY_NOT_ALLOWED;
+
+  /* switch to header reading mode */
   return (p->fn = fio_http1___read_header)(p, buf, udata);
 
 parse_response_line:
@@ -46230,11 +46250,14 @@ static inline int fio_http1___on_header(fio_http1_parser_s *p,
   switch (name.len) {
   case 6: /* test for "expect" */
     if (value.len == 12 && fio_buf2u32u(name.buf) == fio_buf2u32u("expe") &&
-        fio_buf2u32u(name.buf + 2) == fio_buf2u32u("pect") &&
-        fio_buf2u64u(value.buf) == fio_buf2u64u("100-cont") &&
-        fio_buf2u32u(value.buf + 8) == fio_buf2u32u("inue")) { /* Expect */
-      p->fn = fio_http1___read_header_post_expect;
-      return 0;
+        fio_buf2u32u(name.buf + 2) == fio_buf2u32u("pect")) {
+      /* Expect value validation */
+      if (fio_buf2u64u(value.buf) == fio_buf2u64u("100-cont") &&
+          fio_buf2u32u(value.buf + 8) == fio_buf2u32u("inue")) {
+        p->fn = fio_http1___read_header_post_expect;
+        return 0;
+      }
+      return -1;
     }
     break;
   case 14: /* test for "content-length" */
@@ -46242,11 +46265,17 @@ static inline int fio_http1___on_header(fio_http1_parser_s *p,
         fio_buf2u64u(name.buf + 6) == fio_buf2u64u("t-length")) {
       char *tmp = value.buf;
       uint64_t clen = fio_atol10u(&tmp);
-      if (tmp != value.buf + value.len)
+      if ((unsigned)(tmp != value.buf + value.len) |
+          (clen == FIO___HTTP1_BODY_NOT_ALLOWED) |
+          (clen == FIO_HTTP1_EXPECTED_CHUNKED))
         return -1;
+      if (!clen) /* no length? */
+        clen = FIO___HTTP1_BODY_NOT_ALLOWED;
       if (p->expected)
         return 0 - (p->expected != clen);
       p->expected = clen;
+      if (clen == FIO___HTTP1_BODY_NOT_ALLOWED)
+        return 0;
       return 0 -
              (fio_http1_on_header_content_length(name, value, clen, udata) ==
               -1);
@@ -46313,8 +46342,8 @@ static inline int fio_http1___on_trailer(fio_http1_parser_s *p,
 
 /* returns either a lower case (ASCI) or the original char. */
 static uint8_t fio_http1_tolower(uint8_t c) {
-  if ((c - ((uint8_t)'A' - 1U)) < ((uint8_t)'Z' - (uint8_t)'A'))
-    c |= 32;
+  c |= (((uint8_t)(c - (uint8_t)'A') < (uint8_t)((uint8_t)'Z' - ((uint8_t)'A')))
+        << 5);
   return c;
 }
 
@@ -46333,11 +46362,13 @@ static char *fio_http1___seek_header_div(char *p) {
       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  FIO_ASSERT(forbidden_name_chars[' '] && forbidden_name_chars['\t'],
+             "missing forbidden HTTP Header Name characters");
   for (;;) {
-    *p = (char)fio_http1_tolower((uint8_t)(*p));
-    ++p;
     if (FIO_UNLIKELY(forbidden_name_chars[((uint8_t)(*p))]))
       return p;
+    *p = (char)fio_http1_tolower((uint8_t)(*p));
+    ++p;
   }
 }
 
@@ -46357,6 +46388,9 @@ static inline int fio_http1___read_header_line(
     fio_buf_info_s name, value;
     if (!eol)
       return 1;
+    if (0)
+      while (*start == ' ' || *start == '\t')
+        ++start;
 
     buf->len -= (eol - buf->buf) + 1;
     buf->buf = eol + 1;
@@ -46385,9 +46419,11 @@ headers_finished:
   if (p->fn == fio_http1___read_header_post_expect && p->expected &&
       fio_http1_on_expect(udata))
     goto expect_failed;
-  p->fn = (!p->expected)         ? fio_http1___finish
-          : (!(p->expected + 1)) ? fio_http1___read_body_chunked
-                                 : fio_http1___read_body;
+  p->fn = (!p->expected || p->expected == FIO___HTTP1_BODY_NOT_ALLOWED)
+              ? fio_http1___finish
+          : (!(p->expected - FIO_HTTP1_EXPECTED_CHUNKED))
+              ? fio_http1___read_body_chunked
+              : fio_http1___read_body;
   return p->fn(p, buf, udata);
 
 expect_failed:
