@@ -57,6 +57,9 @@ Please refer to the core documentation in the Markdown File.
 /** An empty macro, adding white space. Used to avoid function like macros. */
 #define FIO_NOOP_FN(...)
 
+/** Macro for a No-Op function name (void). */
+#define FIO_NOOP_FN_NAME (void)
+
 /* *****************************************************************************
 Version Macros
 
@@ -41894,268 +41897,6 @@ static size_t fio___resp3_parse_start(fio_resp3_s *parser,
                                       uint8_t *buf,
                                       size_t len);
 
-#if defined(AI_REFERENCE_CODE)
-
-size_t fio_resp3_parse(fio_resp3_s *parser, const char *data) {
-  size_t consumed = 0;
-  size_t len = strlen(data);
-
-  while (consumed < len) {
-    char type_specifier = data[consumed++];
-
-    switch (type_specifier) {
-    case '+': { // Simple String
-      const char *end = memchr(data + consumed, '\r', len - consumed);
-      if (!end || end[1] != '\n') {
-        fio___resp3_handle_error(parser, "Invalid simple string");
-        return consumed;
-      }
-      size_t str_len = end - (data + consumed);
-      // Handle simple string
-      // For example, process the data between 'consumed' and 'end'
-      consumed = end - data + 2; // Move past \r\n
-      break;
-    }
-    case '-': { // Error
-      const char *end = memchr(data + consumed, '\r', len - consumed);
-      if (!end || end[1] != '\n') {
-        fio___resp3_handle_error(parser, "Invalid error");
-        return consumed;
-      }
-      size_t str_len = end - (data + consumed);
-      // Handle error
-      // For example, call the appropriate callback
-      consumed = end - data + 2; // Move past \r\n
-      break;
-    }
-    case ':': { // Integer
-      const char *end = memchr(data + consumed, '\r', len - consumed);
-      if (!end || end[1] != '\n') {
-        fio___resp3_handle_error(parser, "Invalid integer");
-        return consumed;
-      }
-      // Convert the string to an integer
-      char num_buf[end - (data + consumed) + 1];
-      memcpy(num_buf, data + consumed, end - (data + consumed));
-      num_buf[end - (data + consumed)] = '\0';
-      long number = strtol(num_buf, NULL, 10);
-      // Handle integer
-      consumed = end - data + 2; // Move past \r\n
-      break;
-    }
-    case '$': { // Bulk String
-      const char *end = memchr(data + consumed, '\r', len - consumed);
-      if (!end || end[1] != '\n') {
-        fio___resp3_handle_error(parser, "Invalid bulk string length");
-        return consumed;
-      }
-      char len_buf[end - (data + consumed) + 1];
-      memcpy(len_buf, data + consumed, end - (data + consumed));
-      len_buf[end - (data + consumed)] = '\0';
-      long str_len = strtol(len_buf, NULL, 10);
-      if (str_len == -1 && errno == ERANGE) {
-        fio___resp3_handle_error(parser, "Bulk string length overflow");
-        return consumed;
-      }
-      if (str_len == -1) {
-        // Null bulk string
-        consumed = end - data + 2; // Move past \r\n
-      } else {
-        if (consumed + str_len + 2 > len) {
-          fio___resp3_handle_error(parser, "Bulk string too long");
-          return consumed;
-        }
-        // Handle bulk string
-        const char *bulk_str = data + end - (data + consumed) + 3;
-        // For example, process the data between 'bulk_str' and 'bulk_str +
-        // str_len'
-        consumed = end - data + 3 + str_len + 2; // Move past \r\n
-      }
-      break;
-    }
-    case '*': { // Array
-      const char *end = memchr(data + consumed, '\r', len - consumed);
-      if (!end || end[1] != '\n') {
-        fio___resp3_handle_error(parser, "Invalid array length");
-        return consumed;
-      }
-      char len_buf[end - (data + consumed) + 1];
-      memcpy(len_buf, data + consumed, end - (data + consumed));
-      len_buf[end - (data + consumed)] = '\0';
-      long array_len = strtol(len_buf, NULL, 10);
-      if (array_len == -1 && errno == ERANGE) {
-        fio___resp3_handle_error(parser, "Array length overflow");
-        return consumed;
-      }
-      if (array_len == -1) {
-        // Null array
-        consumed = end - data + 2; // Move past \r\n
-      } else {
-        if (parser->depth >= FIO_RESP3_MAX_NESTING) {
-          fio___resp3_handle_error(parser, "Array nesting too deep");
-          return consumed;
-        }
-        parser->stack[parser->depth++] =
-            (fio___resp3_frame_s){.otype = '*',
-                                  .size = array_len,
-                                  .streaming = 0,
-                                  .finished = 0};
-        consumed = end - data + 2; // Move past \r\n
-      }
-      break;
-    }
-    case '%': { // Map
-      const char *end = memchr(data + consumed, '\r', len - consumed);
-      if (!end || end[1] != '\n') {
-        fio___resp3_handle_error(parser, "Invalid map length");
-        return consumed;
-      }
-      char len_buf[end - (data + consumed) + 1];
-      memcpy(len_buf, data + consumed, end - (data + consumed));
-      len_buf[end - (data + consumed)] = '\0';
-      long map_len = strtol(len_buf, NULL, 10);
-      if (map_len == -1 && errno == ERANGE) {
-        fio___resp3_handle_error(parser, "Map length overflow");
-        return consumed;
-      }
-      if (map_len == -1) {
-        // Null map
-        consumed = end - data + 2; // Move past \r\n
-      } else {
-        if (parser->depth >= FIO_RESP3_MAX_NESTING) {
-          fio___resp3_handle_error(parser, "Map nesting too deep");
-          return consumed;
-        }
-        parser->stack[parser->depth++] = (fio___resp3_frame_s){.otype = '%',
-                                                               .size = map_len,
-                                                               .streaming = 0,
-                                                               .finished = 0};
-        consumed = end - data + 2; // Move past \r\n
-      }
-      break;
-    }
-    case '~': { // Set
-      const char *end = memchr(data + consumed, '\r', len - consumed);
-      if (!end || end[1] != '\n') {
-        fio___resp3_handle_error(parser, "Invalid set length");
-        return consumed;
-      }
-      char len_buf[end - (data + consumed) + 1];
-      memcpy(len_buf, data + consumed, end - (data + consumed));
-      len_buf[end - (data + consumed)] = '\0';
-      long set_len = strtol(len_buf, NULL, 10);
-      if (set_len == -1 && errno == ERANGE) {
-        fio___resp3_handle_error(parser, "Set length overflow");
-        return consumed;
-      }
-      if (set_len == -1) {
-        // Null set
-        consumed = end - data + 2; // Move past \r\n
-      } else {
-        if (parser->depth >= FIO_RESP3_MAX_NESTING) {
-          fio___resp3_handle_error(parser, "Set nesting too deep");
-          return consumed;
-        }
-        parser->stack[parser->depth++] = (fio___resp3_frame_s){.otype = '~',
-                                                               .size = set_len,
-                                                               .streaming = 0,
-                                                               .finished = 0};
-        consumed = end - data + 2; // Move past \r\n
-      }
-      break;
-    }
-    case '>': { // Push
-      const char *end = memchr(data + consumed, '\r', len - consumed);
-      if (!end || end[1] != '\n') {
-        fio___resp3_handle_error(parser, "Invalid push length");
-        return consumed;
-      }
-      char len_buf[end - (data + consumed) + 1];
-      memcpy(len_buf, data + consumed, end - (data + consumed));
-      len_buf[end - (data + consumed)] = '\0';
-      long push_len = strtol(len_buf, NULL, 10);
-      if (push_len == -1 && errno == ERANGE) {
-        fio___resp3_handle_error(parser, "Push length overflow");
-        return consumed;
-      }
-      if (push_len == -1) {
-        // Null push
-        consumed = end - data + 2; // Move past \r\n
-      } else {
-        if (parser->depth >= FIO_RESP3_MAX_NESTING) {
-          fio___resp3_handle_error(parser, "Push nesting too deep");
-          return consumed;
-        }
-        parser->stack[parser->depth++] = (fio___resp3_frame_s){.otype = '>',
-                                                               .size = push_len,
-                                                               .streaming = 0,
-                                                               .finished = 0};
-        consumed = end - data + 2; // Move past \r\n
-      }
-      break;
-    }
-    case '#': { // Boolean/Null
-      if (consumed >= len) {
-        fio___resp3_handle_error(parser, "Invalid boolean/null");
-        return consumed;
-      }
-      if (data[consumed] == 't' && data[consumed + 1] == '\r' &&
-          data[consumed + 2] == '\n') {
-        // True
-        consumed += 3; // Move past 't\r\n'
-      } else if (data[consumed] == 'f' && data[consumed + 1] == '\r' &&
-                 data[consumed + 2] == '\n') {
-        // False
-        consumed += 3; // Move past 'f\r\n'
-      } else if (data[consumed] == '_' && data[consumed + 1] == '\r' &&
-                 data[consumed + 2] == '\n') {
-        // Null
-        consumed += 3; // Move past '_\r\n'
-      } else {
-        fio___resp3_handle_error(parser, "Invalid boolean/null");
-        return consumed;
-      }
-      break;
-    }
-    case '_': { // BLOB Error
-      const char *end = memchr(data + consumed, '\r', len - consumed);
-      if (!end || end[1] != '\n') {
-        fio___resp3_handle_error(parser, "Invalid BLOB error length");
-        return consumed;
-      }
-      char len_buf[end - (data + consumed) + 1];
-      memcpy(len_buf, data + consumed, end - (data + consumed));
-      len_buf[end - (data + consumed)] = '\0';
-      long blob_len = strtol(len_buf, NULL, 10);
-      if (blob_len == -1 && errno == ERANGE) {
-        fio___resp3_handle_error(parser, "BLOB error length overflow");
-        return consumed;
-      }
-      if (blob_len == -1) {
-        // Null BLOB error
-        consumed = end - data + 2; // Move past \r\n
-      } else {
-        if (consumed + blob_len + 2 > len) {
-          fio___resp3_handle_error(parser, "BLOB error too long");
-          return consumed;
-        }
-        // Handle BLOB error
-        const char *blob_err = data + end - (data + consumed) + 3;
-        // For example, process the data between 'blob_err' and 'blob_err +
-        // blob_len'
-        consumed = end - data + 3 + blob_len + 2; // Move past \r\n
-      }
-      break;
-    }
-    default:
-      fio___resp3_handle_error(parser, "Unknown type specifier");
-      return consumed;
-    }
-  }
-
-  return consumed;
-}
-#endif
 /* *****************************************************************************
 RESP Cleanup
 ***************************************************************************** */
@@ -42375,6 +42116,12 @@ SFUNC fio_str_info_s fio_http_version(fio_http_s *);
 
 /** Sets the version information associated with the HTTP handle. */
 SFUNC fio_str_info_s fio_http_version_set(fio_http_s *, fio_str_info_s);
+
+/** Gets the received_at timestamp (ms) associated with the HTTP handle. */
+SFUNC int64_t fio_http_received_at(fio_http_s *);
+
+/** Sets the received_at timestamp (ms) associated with the HTTP handle. */
+SFUNC int64_t fio_http_received_at_set(fio_http_s *, int64_t);
 
 /**
  * Gets the header information associated with the HTTP handle.
@@ -43843,6 +43590,12 @@ FIO___HTTP_MAKE_GET_SET(version)
 #undef FIO___HTTP_MAKE_GET_SET
 
 FIO_DEF_GET_FUNC(SFUNC, fio_http, fio_http_s, size_t, status)
+FIO_DEF_GETSET_FUNC(SFUNC,
+                    fio_http,
+                    fio_http_s,
+                    int64_t,
+                    received_at,
+                    FIO_NOOP_FN)
 
 /** Sets the status associated with the HTTP handle (response). */
 SFUNC size_t fio_http_status_set(fio_http_s *h, size_t status) {
@@ -46388,9 +46141,6 @@ static inline int fio_http1___read_header_line(
     fio_buf_info_s name, value;
     if (!eol)
       return 1;
-    if (0)
-      while (*start == ' ' || *start == '\t')
-        ++start;
 
     buf->len -= (eol - buf->buf) + 1;
     buf->buf = eol + 1;
@@ -46399,7 +46149,7 @@ static inline int fio_http1___read_header_line(
       goto headers_finished;
 
     div = fio_http1___seek_header_div(start);
-    if (div[0] != ':')
+    if (div[0] != ':' || div == start)
       return -1;
     name = FIO_BUF_INFO2(start, (size_t)(div - start));
     do {
