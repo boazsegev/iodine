@@ -45,8 +45,8 @@ static ID IODINE_CREATE_ID;
 static ID IODINE_UPDATE_ID;
 static ID IODINE_DELETE_ID;
 
-#define IODINE_CONST_ID_STORE(name, value)                                     \
-  name = rb_intern(value);                                                     \
+#define IODINE_CONST_ID_STORE(name, value) \
+  name = rb_intern(value);                 \
   STORE.hold(RB_ID2SYM(name));
 
 static VALUE iodine_rb_IODINE;
@@ -56,6 +56,7 @@ static VALUE iodine_rb_IODINE_CONNECTION;
 static VALUE iodine_rb_IODINE_PUBSUB;
 static VALUE iodine_rb_IODINE_PUBSUB_ENG;
 static VALUE iodine_rb_IODINE_PUBSUB_MSG;
+static VALUE iodine_rb_IODINE_TLS;
 static rb_encoding *IodineUTF8Encoding;
 static rb_encoding *IodineBinaryEncoding;
 
@@ -74,10 +75,10 @@ static VALUE IODINE_RACK_AFTER_RPLY_STR;
 #define IODINE_RAW_ON_DATA_READ_BUFFER (1ULL << 14)
 #endif
 
-#define IODINE_STORE_IS_SKIP(o)                                                \
+#define IODINE_STORE_IS_SKIP(o) \
   (!o || o == Qnil || o == Qtrue || o == Qfalse || TYPE(o) == RUBY_T_FIXNUM)
 
-#define IODINE_RSTR_INFO(o)                                                    \
+#define IODINE_RSTR_INFO(o) \
   { .buf = RSTRING_PTR(o), .len = (size_t)RSTRING_LEN(o) }
 
 /* shadow exit function and route it to Ruby */
@@ -116,12 +117,12 @@ Deferring Ruby Blocks
 ***************************************************************************** */
 static void iodine_defer_performe_once(void *block, void *ignr);
 
-#define IODINE_DEFER_BLOCK(blk)                                                \
-  do {                                                                         \
-    STORE.hold((blk));                                                         \
-    fio_io_async(&IODINE_THREAD_POOL,                                          \
-                 iodine_defer_performe_once,                                   \
-                 (void *)(blk));                                               \
+#define IODINE_DEFER_BLOCK(blk)              \
+  do {                                       \
+    STORE.hold((blk));                       \
+    fio_io_async(&IODINE_THREAD_POOL,        \
+                 iodine_defer_performe_once, \
+                 (void *)(blk));             \
   } while (0)
 
 /* *****************************************************************************
@@ -159,6 +160,7 @@ static VALUE iodine_handler_method_injection__inner(VALUE self,
 #include "iodine_defer.h"
 #include "iodine_minimap.h"
 /* layer 2 modules */
+#include "iodine_crypto.h"
 #include "iodine_mustache.h"
 #include "iodine_pubsub_eng.h"
 #include "iodine_redis.h"

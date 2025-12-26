@@ -52,7 +52,8 @@ end
 
 ### Initialize Redis if set in CLI
 if Iodine::Base::CLI['-r']
-  Iodine::PubSub.default = Iodine::PubSub::Engine::Redis.new( Iodine::Base::CLI['-r'],
-                                  ]ping: (Iodine::Base::CLI['-rp'] ? Iodine::Base::CLI['-rp'].to_i : nil)
-                                  )
+  Iodine::PubSub.default = Iodine::PubSub::Engine::Redis.new(
+    Iodine::Base::CLI['-r'],
+    ping: (Iodine::Base::CLI['-rp'] ? Iodine::Base::CLI['-rp'].to_i : nil)
+  )
 end

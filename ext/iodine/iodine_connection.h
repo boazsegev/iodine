@@ -89,8 +89,7 @@ static void iodine_connection_free(void *ptr_) {
 static void iodine_connection_mark(void *ptr_) {
   iodine_connection_s *c = (iodine_connection_s *)ptr_;
   for (size_t i = 0; i < IODINE_CONNECTION_STORE_FINISH; ++i)
-    if (!IODINE_STORE_IS_SKIP(c->store[i]))
-      rb_gc_mark(c->store[i]);
+    if (!IODINE_STORE_IS_SKIP(c->store[i])) rb_gc_mark(c->store[i]);
   iodine_minimap_gc_mark(&c->map);
 }
 
@@ -157,8 +156,7 @@ static VALUE iodine_connection_create_from_http(fio_http_s *h) {
   iodine_connection_s *c = iodine_connection_ptr(m);
   c->store[IODINE_CONNECTION_STORE_handler] = (VALUE)fio_http_udata(h);
   c->io = fio_http_io(h);
-  if (!(c->flags & IODINE_CONNECTION_CLIENT))
-    c->http = fio_http_dup(h);
+  if (!(c->flags & IODINE_CONNECTION_CLIENT)) c->http = fio_http_dup(h);
   fio_http_udata2_set(h, (void *)m);
   return m;
 }
@@ -169,17 +167,14 @@ State and Misc
 
 static VALUE iodine_connection_headers_sent_p(VALUE o) {
   iodine_connection_s *c = iodine_connection_ptr(o);
-  if (!c->http)
-    return Qtrue;
+  if (!c->http) return Qtrue;
   return (fio_http_is_clean(c->http) ? Qfalse : Qtrue);
 }
 
 static VALUE iodine_connection_is_clean(VALUE o) {
   iodine_connection_s *c = iodine_connection_ptr(o);
-  if (c->http)
-    return (fio_http_is_clean(c->http) ? Qfalse : Qtrue);
-  if (c->io)
-    return (fio_io_is_open(c->io) ? Qtrue : Qfalse);
+  if (c->http) return (fio_http_is_clean(c->http) ? Qfalse : Qtrue);
+  if (c->io) return (fio_io_is_open(c->io) ? Qtrue : Qfalse);
   return Qfalse;
 }
 
@@ -199,15 +194,13 @@ static VALUE iodine_connection_to_s(VALUE o) {
 
 static VALUE iodine_connection_is_websocket(VALUE o) {
   iodine_connection_s *c = iodine_connection_ptr(o);
-  if (c->http && fio_http_is_websocket(c->http))
-    return Qtrue;
+  if (c->http && fio_http_is_websocket(c->http)) return Qtrue;
   return Qfalse;
 }
 
 static VALUE iodine_connection_is_sse(VALUE o) {
   iodine_connection_s *c = iodine_connection_ptr(o);
-  if (c->http && fio_http_is_sse(c->http))
-    return Qtrue;
+  if (c->http && fio_http_is_sse(c->http)) return Qtrue;
   return Qfalse;
 }
 
@@ -215,19 +208,19 @@ static VALUE iodine_connection_is_sse(VALUE o) {
 Ruby Store Get/Set
 ***************************************************************************** */
 
-#define IODINE_DEF_GET_FUNC(val_name)                                          \
-  /** Returns the client's current val_name object. */                         \
-  static VALUE iodine_connection_##val_name##_get(VALUE self) {                \
-    iodine_connection_s *c = iodine_connection_ptr(self);                      \
-    return c->store[IODINE_CONNECTION_STORE_##val_name];                       \
+#define IODINE_DEF_GET_FUNC(val_name)                           \
+  /** Returns the client's current val_name object. */          \
+  static VALUE iodine_connection_##val_name##_get(VALUE self) { \
+    iodine_connection_s *c = iodine_connection_ptr(self);       \
+    return c->store[IODINE_CONNECTION_STORE_##val_name];        \
   }
-#define IODINE_DEF_SET_FUNC(val_name)                                          \
-  /** Sets the client's val_name object. */                                    \
-  static VALUE iodine_connection_##val_name##_set(VALUE self,                  \
-                                                  VALUE updated_val) {         \
-    iodine_connection_s *c = iodine_connection_ptr(self);                      \
-    c->store[IODINE_CONNECTION_STORE_##val_name] = updated_val;                \
-    return updated_val;                                                        \
+#define IODINE_DEF_SET_FUNC(val_name)                                  \
+  /** Sets the client's val_name object. */                            \
+  static VALUE iodine_connection_##val_name##_set(VALUE self,          \
+                                                  VALUE updated_val) { \
+    iodine_connection_s *c = iodine_connection_ptr(self);              \
+    c->store[IODINE_CONNECTION_STORE_##val_name] = updated_val;        \
+    return updated_val;                                                \
   }
 
 IODINE_DEF_GET_FUNC(handler);
@@ -240,40 +233,37 @@ IODINE_DEF_SET_FUNC(env);
 Ruby Store Get/Set HTTP Properties
 ***************************************************************************** */
 
-#define IODINE_DEF_GETSET_FUNC(val_name, frozen_)                              \
-  /** Returns the client's current val_name object. */                         \
-  static VALUE iodine_connection_##val_name##_get(VALUE self) {                \
-    iodine_connection_s *c = iodine_connection_ptr(self);                      \
-    fio_str_info_s setter;                                                     \
-    if (!c)                                                                    \
-      return Qnil;                                                             \
-    if (FIO_UNLIKELY(c->http &&                                                \
-                     c->store[IODINE_CONNECTION_STORE_##val_name] == Qnil) &&  \
-        (setter = fio_http_##val_name(c->http)).len) {                         \
-      c->store[IODINE_CONNECTION_STORE_##val_name] =                           \
-          (frozen_ ? STORE.frozen_str(setter)                                  \
-                   : rb_str_new(setter.buf, setter.len));                      \
-    }                                                                          \
-    return c->store[IODINE_CONNECTION_STORE_##val_name];                       \
-  }                                                                            \
-  /** Sets the client's val_name object. */                                    \
-  static VALUE iodine_connection_##val_name##_set(VALUE self,                  \
-                                                  VALUE updated_val) {         \
-    iodine_connection_s *c = iodine_connection_ptr(self);                      \
-    if (!c)                                                                    \
-      return Qnil;                                                             \
-    c->store[IODINE_CONNECTION_STORE_##val_name] = updated_val;                \
-    if (!c->http)                                                              \
-      return updated_val;                                                      \
-    if (RB_TYPE_P(updated_val, RUBY_T_SYMBOL))                                 \
-      updated_val = rb_sym2str(updated_val);                                   \
-    if (!RB_TYPE_P(updated_val, RUBY_T_STRING))                                \
-      rb_raise(rb_eTypeError, "new value must be a String or Symbol.");        \
-    fio_http_##val_name##_set(                                                 \
-        c->http,                                                               \
-        FIO_STR_INFO2(RSTRING_PTR(updated_val),                                \
-                      (size_t)RSTRING_LEN(updated_val)));                      \
-    return updated_val;                                                        \
+#define IODINE_DEF_GETSET_FUNC(val_name, frozen_)                             \
+  /** Returns the client's current val_name object. */                        \
+  static VALUE iodine_connection_##val_name##_get(VALUE self) {               \
+    iodine_connection_s *c = iodine_connection_ptr(self);                     \
+    fio_str_info_s setter;                                                    \
+    if (!c) return Qnil;                                                      \
+    if (FIO_UNLIKELY(c->http &&                                               \
+                     c->store[IODINE_CONNECTION_STORE_##val_name] == Qnil) && \
+        (setter = fio_http_##val_name(c->http)).len) {                        \
+      c->store[IODINE_CONNECTION_STORE_##val_name] =                          \
+          (frozen_ ? STORE.frozen_str(setter)                                 \
+                   : rb_str_new(setter.buf, setter.len));                     \
+    }                                                                         \
+    return c->store[IODINE_CONNECTION_STORE_##val_name];                      \
+  }                                                                           \
+  /** Sets the client's val_name object. */                                   \
+  static VALUE iodine_connection_##val_name##_set(VALUE self,                 \
+                                                  VALUE updated_val) {        \
+    iodine_connection_s *c = iodine_connection_ptr(self);                     \
+    if (!c) return Qnil;                                                      \
+    c->store[IODINE_CONNECTION_STORE_##val_name] = updated_val;               \
+    if (!c->http) return updated_val;                                         \
+    if (RB_TYPE_P(updated_val, RUBY_T_SYMBOL))                                \
+      updated_val = rb_sym2str(updated_val);                                  \
+    if (!RB_TYPE_P(updated_val, RUBY_T_STRING))                               \
+      rb_raise(rb_eTypeError, "new value must be a String or Symbol.");       \
+    fio_http_##val_name##_set(                                                \
+        c->http,                                                              \
+        FIO_STR_INFO2(RSTRING_PTR(updated_val),                               \
+                      (size_t)RSTRING_LEN(updated_val)));                     \
+    return updated_val;                                                       \
   }
 
 /* String Get/Set: */
@@ -284,39 +274,37 @@ IODINE_DEF_GETSET_FUNC(query, 0)
 IODINE_DEF_GETSET_FUNC(version, 1)
 #undef IODINE_DEF_GETSET_FUNC
 
-#define IODINE_DEF_GETSET_FUNC(val_name)                                       \
-  /** Returns the client's current val_name object. */                         \
-  static VALUE iodine_connection_##val_name##_get(VALUE self) {                \
-    iodine_connection_s *c = iodine_connection_ptr(self);                      \
-    if (FIO_UNLIKELY(!c || !c->http))                                          \
-      return Qnil;                                                             \
-    const size_t setter = fio_http_##val_name(c->http);                        \
-    return ULL2NUM(setter);                                                    \
-  }                                                                            \
-  /** Sets the client's val_name object. */                                    \
-  static VALUE iodine_connection_##val_name##_set(VALUE self,                  \
-                                                  VALUE updated_val) {         \
-    iodine_connection_s *c = iodine_connection_ptr(self);                      \
-    size_t setter = 0;                                                         \
-    if (FIO_UNLIKELY(!c || !c->http))                                          \
-      return Qnil;                                                             \
-    if (RB_TYPE_P(updated_val, RUBY_T_FIXNUM))                                 \
-      setter = NUM2ULL(updated_val);                                           \
-    else if (!RB_TYPE_P(updated_val, RUBY_T_STRING)) {                         \
-      fio_buf_info_s s = IODINE_RSTR_INFO(updated_val);                        \
-      const char *end = s.buf + s.len;                                         \
-      setter = fio_atol(&s.buf);                                               \
-      if (s.buf != end)                                                        \
-        rb_raise(rb_eArgError,                                                 \
-                 "passed String isn't a number: %.*s",                         \
-                 (int)s.len,                                                   \
-                 end - s.len);                                                 \
-    } else                                                                     \
-      rb_raise(                                                                \
-          rb_eTypeError,                                                       \
-          "new value must be a Number (or a String containing a number).");    \
-    fio_http_##val_name##_set(c->http, setter);                                \
-    return ULL2NUM(setter);                                                    \
+#define IODINE_DEF_GETSET_FUNC(val_name)                                    \
+  /** Returns the client's current val_name object. */                      \
+  static VALUE iodine_connection_##val_name##_get(VALUE self) {             \
+    iodine_connection_s *c = iodine_connection_ptr(self);                   \
+    if (FIO_UNLIKELY(!c || !c->http)) return Qnil;                          \
+    const size_t setter = fio_http_##val_name(c->http);                     \
+    return ULL2NUM(setter);                                                 \
+  }                                                                         \
+  /** Sets the client's val_name object. */                                 \
+  static VALUE iodine_connection_##val_name##_set(VALUE self,               \
+                                                  VALUE updated_val) {      \
+    iodine_connection_s *c = iodine_connection_ptr(self);                   \
+    size_t setter = 0;                                                      \
+    if (FIO_UNLIKELY(!c || !c->http)) return Qnil;                          \
+    if (RB_TYPE_P(updated_val, RUBY_T_FIXNUM))                              \
+      setter = NUM2ULL(updated_val);                                        \
+    else if (!RB_TYPE_P(updated_val, RUBY_T_STRING)) {                      \
+      fio_buf_info_s s = IODINE_RSTR_INFO(updated_val);                     \
+      const char *end = s.buf + s.len;                                      \
+      setter = fio_atol(&s.buf);                                            \
+      if (s.buf != end)                                                     \
+        rb_raise(rb_eArgError,                                              \
+                 "passed String isn't a number: %.*s",                      \
+                 (int)s.len,                                                \
+                 end - s.len);                                              \
+    } else                                                                  \
+      rb_raise(                                                             \
+          rb_eTypeError,                                                    \
+          "new value must be a Number (or a String containing a number)."); \
+    fio_http_##val_name##_set(c->http, setter);                             \
+    return ULL2NUM(setter);                                                 \
   }
 
 /* Numeral Get/Set: */
@@ -360,8 +348,7 @@ FIO_SFUNC VALUE iodine_connection_map_headers(VALUE o) {
   if (!c->http || (fio_atomic_or(&c->flags, IODINE_CONNECTION_HEADERS_COPIED) &
                    IODINE_CONNECTION_HEADERS_COPIED))
     return o;
-  if ((c->flags & IODINE_CONNECTION_CLIENT))
-    goto is_client;
+  if ((c->flags & IODINE_CONNECTION_CLIENT)) goto is_client;
   iodine_hmap_reserve(&c->map.map,
                       fio_http_request_header_count(c->http, FIO_STR_INFO0));
   fio_http_request_header_each(c->http, iodine_connection_map_headers_task, c);
@@ -388,14 +375,12 @@ static VALUE iodine_connection_map_set(VALUE o, VALUE key, VALUE value) {
 static VALUE iodine_connection_map_get(VALUE o, VALUE key) {
   iodine_connection_s *c = iodine_connection_ptr(o);
   VALUE r = iodine_minimap_rb_get(&c->map, key);
-  if (!r)
-    goto missing_item;
+  if (!r) goto missing_item;
   return r;
 
 missing_item:
   r = Qnil;
-  if (!c->http || !RB_TYPE_P(key, RUBY_T_STRING))
-    return r;
+  if (!c->http || !RB_TYPE_P(key, RUBY_T_STRING)) return r;
   if (1 < fio_http_request_header_count(
               c->http,
               (fio_str_info_s)IODINE_RSTR_INFO(key))) { /* more than one */
@@ -406,8 +391,7 @@ missing_item:
           fio_http_request_header(c->http,
                                   (fio_str_info_s)IODINE_RSTR_INFO(key),
                                   i);
-      if (!h.buf)
-        break;
+      if (!h.buf) break;
       rb_ary_push(r, rb_str_new(h.buf, h.len));
     }
   } else {
@@ -415,8 +399,7 @@ missing_item:
         fio_http_request_header(c->http,
                                 (fio_str_info_s)IODINE_RSTR_INFO(key),
                                 0);
-    if (h.buf)
-      r = rb_str_new(h.buf, h.len);
+    if (h.buf) r = rb_str_new(h.buf, h.len);
     iodine_connection_map_set(o, key, r);
   }
   return r;
@@ -518,13 +501,11 @@ FIO_SFUNC VALUE iodine_connection_cookie_get(VALUE o, VALUE name) {
              "Iodine::Connection instance should be an HTTP connection to "
              "use cookies.");
   }
-  if (RB_TYPE_P(name, RUBY_T_SYMBOL))
-    name = rb_sym_to_s(name);
+  if (RB_TYPE_P(name, RUBY_T_SYMBOL)) name = rb_sym_to_s(name);
   rb_check_type(name, RUBY_T_STRING);
   fio_str_info_s str =
       fio_http_cookie(c->http, RSTRING_PTR(name), RSTRING_LEN(name));
-  if (!str.buf)
-    return Qnil;
+  if (!str.buf) return Qnil;
   return rb_usascii_str_new(str.buf, str.len);
 }
 
@@ -559,8 +540,7 @@ FIO_SFUNC VALUE iodine_connection_cookie_set(int argc, VALUE *argv, VALUE o) {
                   IODINE_ARG_BOOL(http_only, 0, "http_only", 0),
                   IODINE_ARG_BOOL(partitioned, 0, "partitioned", 0));
 
-  if (!name.len)
-    return Qnil;
+  if (!name.len) return Qnil;
   if (same_site_rb != Qnil) {
     rb_check_type(same_site_rb, RUBY_T_SYMBOL);
     ID same_site_id = rb_sym2id(same_site_rb);
@@ -628,8 +608,7 @@ FIO_SFUNC VALUE iodine_connection_cookie_each(VALUE o) {
   VALUE info[3] = {o, Qnil, Qnil};
   int state = 0;
   rb_protect(iodine_connection_cookie_each_caller, (VALUE)info, &state);
-  if (!state)
-    return o;
+  if (!state) return o;
   STORE.release(info[2]);
   STORE.release(info[1]);
   VALUE exc = rb_errinfo();
@@ -645,27 +624,23 @@ HTTP Body Access
 
 FIO_SFUNC VALUE iodine_connection_body_length(VALUE o) {
   iodine_connection_s *c = iodine_connection_ptr(o);
-  if (!c->http)
-    return ULL2NUM(0);
+  if (!c->http) return ULL2NUM(0);
   return ULL2NUM(fio_http_body_length(c->http));
 }
 
 FIO_SFUNC VALUE iodine_connection_body_gets(int argc, VALUE *argv, VALUE o) {
   iodine_connection_s *c = iodine_connection_ptr(o);
-  if (!c->http)
-    return Qnil;
+  if (!c->http) return Qnil;
   size_t length = (size_t)-1;
   iodine_rb2c_arg(argc, argv, IODINE_ARG_SIZE_T(length, 0, "limit", 0));
   fio_str_info_s s = fio_http_body_read_until(c->http, '\n', length);
-  if (!s.len)
-    return Qnil;
+  if (!s.len) return Qnil;
   return rb_usascii_str_new(s.buf, s.len);
 }
 
 FIO_SFUNC VALUE iodine_connection_body_read(int argc, VALUE *argv, VALUE o) {
   iodine_connection_s *c = iodine_connection_ptr(o);
-  if (!c->http)
-    return Qnil;
+  if (!c->http) return Qnil;
   size_t length = (size_t)-1;
   VALUE rbuf = Qnil;
   iodine_rb2c_arg(argc,
@@ -688,8 +663,7 @@ FIO_SFUNC VALUE iodine_connection_body_read(int argc, VALUE *argv, VALUE o) {
 
 FIO_SFUNC VALUE iodine_connection_body_seek(int argc, VALUE *argv, VALUE o) {
   iodine_connection_s *c = iodine_connection_ptr(o);
-  if (!c->http)
-    return Qnil;
+  if (!c->http) return Qnil;
   int64_t pos = SSIZE_MAX;
   iodine_rb2c_arg(argc, argv, IODINE_ARG_NUM(pos, 0, "pos", 0));
   pos = (long long)fio_http_body_seek(c->http, (ssize_t)pos);
@@ -782,15 +756,14 @@ NOT** be duplicated by the NeoRack Application.
 Lower-Case Helper for Header Names
 ***************************************************************************** */
 
-#define IODINE___COPY_TO_LOWER_CASE(var_name, inpute_var)                      \
-  FIO_STR_INFO_TMP_VAR(var_name, 4096);                                        \
+#define IODINE___COPY_TO_LOWER_CASE(var_name, inpute_var) \
+  FIO_STR_INFO_TMP_VAR(var_name, 4096);                   \
   iodine___copy_to_lower_case(&var_name, &inpute_var);
 
 /** Converts a Header key to lower-case */
 FIO_IFUNC void iodine___copy_to_lower_case(fio_str_info_s *t,
                                            fio_str_info_s *k) {
-  if (k->len >= t->capa)
-    goto too_big;
+  if (k->len >= t->capa) goto too_big;
   for (size_t i = 0; i < k->len; ++i) {
     uint8_t c = (uint8_t)k->buf[i];
     c |= (uint8_t)(c >= 'A' || c <= 'Z') << 5;
@@ -812,21 +785,20 @@ static VALUE iodine_handler_deafult_on_http_rest(VALUE handler, VALUE client) {
     FIO_LOG_FATAL("`on_http` couldn't allocate Iodine::Connection object!");
     return Qnil;
   }
-  if (!c->http)
-    return Qnil;
+  if (!c->http) return Qnil;
   fio_http_s *h = c->http;
   ID callback = 0;
   switch (fio_http_resource_action(h)) {
-  case FIO_HTTP_RESOURCE_NONE:
-    fio_http_send_error_response(h, 404);
-    return Qnil;
-  case FIO_HTTP_RESOURCE_INDEX: callback = IODINE_INDEX_ID; break;
-  case FIO_HTTP_RESOURCE_SHOW: callback = IODINE_SHOW_ID; break;
-  case FIO_HTTP_RESOURCE_NEW: callback = IODINE_NEW_ID; break;
-  case FIO_HTTP_RESOURCE_EDIT: callback = IODINE_EDIT_ID; break;
-  case FIO_HTTP_RESOURCE_CREATE: callback = IODINE_CREATE_ID; break;
-  case FIO_HTTP_RESOURCE_UPDATE: callback = IODINE_UPDATE_ID; break;
-  case FIO_HTTP_RESOURCE_DELETE: callback = IODINE_DELETE_ID; break;
+    case FIO_HTTP_RESOURCE_NONE:
+      fio_http_send_error_response(h, 404);
+      return Qnil;
+    case FIO_HTTP_RESOURCE_INDEX: callback = IODINE_INDEX_ID; break;
+    case FIO_HTTP_RESOURCE_SHOW: callback = IODINE_SHOW_ID; break;
+    case FIO_HTTP_RESOURCE_NEW: callback = IODINE_NEW_ID; break;
+    case FIO_HTTP_RESOURCE_EDIT: callback = IODINE_EDIT_ID; break;
+    case FIO_HTTP_RESOURCE_CREATE: callback = IODINE_CREATE_ID; break;
+    case FIO_HTTP_RESOURCE_UPDATE: callback = IODINE_UPDATE_ID; break;
+    case FIO_HTTP_RESOURCE_DELETE: callback = IODINE_DELETE_ID; break;
   }
   rb_funcallv(handler, callback, 1, &client);
   return Qnil;
@@ -834,8 +806,7 @@ static VALUE iodine_handler_deafult_on_http_rest(VALUE handler, VALUE client) {
 
 static VALUE iodine_handler_deafult_on_http404(VALUE handler, VALUE client) {
   iodine_connection_s *c = iodine_connection_ptr(client);
-  if (!c->http)
-    return Qnil;
+  if (!c->http) return Qnil;
   fio_http_send_error_response(c->http, 404);
   return Qnil;
   (void)handler;
@@ -858,8 +829,7 @@ static VALUE iodine_handler_deafult_on_authx(VALUE handler, VALUE client) {
 static VALUE iodine_handler_on_auth_reroute(VALUE handler, VALUE client) {
   iodine_caller_result_s r =
       iodine_ruby_call_inside(handler, IODINE_ON_AUTHENTICATE_ID, 1, &client);
-  if (r.exception || r.result != Qtrue)
-    return Qfalse;
+  if (r.exception || r.result != Qtrue) return Qfalse;
   return Qtrue;
 }
 
@@ -887,10 +857,8 @@ static int iodine_handler_deafult_on_http__header2(fio_str_info_s n,
                                                    VALUE h_) {
   fio_http_s *h = (fio_http_s *)h_;
   FIO_STR_INFO_TMP_VAR(vstr, 24);
-  if (RB_TYPE_P(v, RUBY_T_ARRAY))
-    goto is_array;
-  if (RB_TYPE_P(v, RUBY_T_SYMBOL))
-    v = rb_sym_to_s(v);
+  if (RB_TYPE_P(v, RUBY_T_ARRAY)) goto is_array;
+  if (RB_TYPE_P(v, RUBY_T_SYMBOL)) v = rb_sym_to_s(v);
   if (RB_TYPE_P(v, RUBY_T_STRING))
     vstr = (fio_str_info_s)IODINE_RSTR_INFO(v);
   else if (RB_TYPE_P(v, RUBY_T_FIXNUM))
@@ -903,24 +871,22 @@ static int iodine_handler_deafult_on_http__header2(fio_str_info_s n,
 is_array:
   for (size_t i = 0; i < (size_t)RARRAY_LEN(v); ++i) {
     VALUE t = RARRAY_PTR(v)[i];
-    if (!RB_TYPE_P(t, RUBY_T_STRING))
-      continue;
+    if (!RB_TYPE_P(t, RUBY_T_STRING)) continue;
     iodine_connection___add_header(h, n, (fio_str_info_s)IODINE_RSTR_INFO(t));
   }
   return ST_CONTINUE;
 
 type_error:
-  FIO_LOG_WARNING("Rack response contained an invalid header value type. "
-                  "Header values MUST be Strings (or Arrays of Strings)");
+  FIO_LOG_WARNING(
+      "Rack response contained an invalid header value type. "
+      "Header values MUST be Strings (or Arrays of Strings)");
   return ST_CONTINUE;
 }
 
 static int iodine_handler_deafult_on_http__header(VALUE n_, VALUE v, VALUE h_) {
   fio_str_info_s header_rb;
-  if (RB_TYPE_P(n_, RUBY_T_SYMBOL))
-    n_ = rb_sym_to_s(n_);
-  if (!RB_TYPE_P(n_, RUBY_T_STRING))
-    return ST_CONTINUE;
+  if (RB_TYPE_P(n_, RUBY_T_SYMBOL)) n_ = rb_sym_to_s(n_);
+  if (!RB_TYPE_P(n_, RUBY_T_STRING)) return ST_CONTINUE;
   header_rb = (fio_str_info_s)IODINE_RSTR_INFO(n_);
   IODINE___COPY_TO_LOWER_CASE(n, header_rb);
   if (n.len > 5 && n.buf[4] == '.' && /* ignore "rack.<name>" headers */
@@ -936,10 +902,8 @@ typedef struct {
 
 static VALUE iodine_handler_deafult_on_http__each_body(VALUE s, VALUE info_) {
   iodine_body_each_info_s *i = (iodine_body_each_info_s *)info_;
-  if (!RB_TYPE_P(s, RUBY_T_STRING))
-    s = rb_any_to_s(s);
-  if (!RB_TYPE_P(s, RUBY_T_STRING))
-    goto error_in_type;
+  if (!RB_TYPE_P(s, RUBY_T_STRING)) s = rb_any_to_s(s);
+  if (!RB_TYPE_P(s, RUBY_T_STRING)) goto error_in_type;
   i->out = fio_bstr_write(i->out, RSTRING_PTR(s), (size_t)RSTRING_LEN(s));
   // fio_http_write(h,
   //                .buf = RSTRING_PTR(s),
@@ -966,8 +930,7 @@ static VALUE iodine_handler_deafult_on_http(VALUE handler, VALUE client) {
   VALUE returned_value = Qnil;
   VALUE partial_hijack = Qnil;
   iodine_connection_s *c = iodine_connection_ptr(client);
-  if (!c->http)
-    return returned_value;
+  if (!c->http) return returned_value;
   VALUE r, env;
   bool should_finish = 1;
   /* collect `env` and call `call`. */
@@ -978,24 +941,20 @@ static VALUE iodine_handler_deafult_on_http(VALUE handler, VALUE client) {
                   IODINE_CALL_ID,
                   1,
                   &env);
-  if (!c->http)
-    return returned_value;
-  if (!RB_TYPE_P(r, RUBY_T_ARRAY))
-    goto rack_error;
-  if (RARRAY_LEN(r) < 3)
-    goto rack_error;
+  if (!c->http) return returned_value;
+  if (!RB_TYPE_P(r, RUBY_T_ARRAY)) goto rack_error;
+  if (RARRAY_LEN(r) < 3) goto rack_error;
   { /* handle status */
     VALUE s = RARRAY_PTR(r)[0];
     long long i = 0;
     switch (rb_type(s)) {
-    case RUBY_T_STRING: i = rb_str_to_inum(s, 10, 0); break;
-    case RUBY_T_FIXNUM: i = NUM2LL(s); break;
-    case RUBY_T_TRUE: i = 200; break;
-    case RUBY_T_FALSE: i = 404; break;
-    default: i = 0;
+      case RUBY_T_STRING: i = rb_str_to_inum(s, 10, 0); break;
+      case RUBY_T_FIXNUM: i = NUM2LL(s); break;
+      case RUBY_T_TRUE: i = 200; break;
+      case RUBY_T_FALSE: i = 404; break;
+      default: i = 0;
     }
-    if (i > 0 && i < 1000)
-      fio_http_status_set(c->http, (size_t)i);
+    if (i > 0 && i < 1000) fio_http_status_set(c->http, (size_t)i);
   }
   { /* handle headers */
     VALUE hdr = RARRAY_PTR(r)[1];
@@ -1127,17 +1086,16 @@ static VALUE iodine_handler_method_injection__inner(VALUE self,
                                                     VALUE handler,
                                                     bool is_middleware) {
   static VALUE previous = Qnil;
-  if (handler == previous)
-    return handler;
+  if (handler == previous) return handler;
   previous = handler;
 /* test for handler responses and set a callback if missing */
-#define IODINE_DEFINE_MISSING_CALLBACK(id)                                     \
-  do {                                                                         \
-    if (!rb_respond_to(handler, id))                                           \
-      rb_define_singleton_method(handler,                                      \
-                                 rb_id2name(id),                               \
-                                 iodine_handler_deafult_on_event,              \
-                                 1);                                           \
+#define IODINE_DEFINE_MISSING_CALLBACK(id)                        \
+  do {                                                            \
+    if (!rb_respond_to(handler, id))                              \
+      rb_define_singleton_method(handler,                         \
+                                 rb_id2name(id),                  \
+                                 iodine_handler_deafult_on_event, \
+                                 1);                              \
   } while (0)
   IODINE_DEFINE_MISSING_CALLBACK(IODINE_ON_FINISH_ID);
   IODINE_DEFINE_MISSING_CALLBACK(IODINE_ON_CLOSE_ID);
@@ -1148,10 +1106,10 @@ static VALUE iodine_handler_method_injection__inner(VALUE self,
   IODINE_DEFINE_MISSING_CALLBACK(IODINE_ON_TIMEOUT_ID);
 #undef IODINE_DEFINE_MISSING_CALLBACK
 
-#define IODINE_DEFINE_MISSING_CALLBACK(id, callback, nargs)                    \
-  do {                                                                         \
-    if (!rb_respond_to(handler, id))                                           \
-      rb_define_singleton_method(handler, rb_id2name(id), callback, nargs);    \
+#define IODINE_DEFINE_MISSING_CALLBACK(id, callback, nargs)                 \
+  do {                                                                      \
+    if (!rb_respond_to(handler, id))                                        \
+      rb_define_singleton_method(handler, rb_id2name(id), callback, nargs); \
   } while (0)
 
   /* Has `call` but not `on_http`? assume Rack. */
@@ -1224,13 +1182,13 @@ static VALUE iodine_resource_handler_method_injection(int argc,
                                rb_id2name(IODINE_ON_HTTP_ID),
                                iodine_handler_deafult_on_http_rest,
                                1);
-#define IODINE_DEFINE_MISSING_CALLBACK(id)                                     \
-  do {                                                                         \
-    if (!rb_respond_to(handler, id))                                           \
-      rb_define_singleton_method(handler,                                      \
-                                 rb_id2name(id),                               \
-                                 iodine_handler_deafult_on_http404,            \
-                                 1);                                           \
+#define IODINE_DEFINE_MISSING_CALLBACK(id)                          \
+  do {                                                              \
+    if (!rb_respond_to(handler, id))                                \
+      rb_define_singleton_method(handler,                           \
+                                 rb_id2name(id),                    \
+                                 iodine_handler_deafult_on_http404, \
+                                 1);                                \
   } while (0)
     IODINE_DEFINE_MISSING_CALLBACK(IODINE_INDEX_ID);
     IODINE_DEFINE_MISSING_CALLBACK(IODINE_SHOW_ID);
@@ -1253,10 +1211,8 @@ Handler Set function
  * missing. */
 static VALUE iodine_connection_handler_set(VALUE client, VALUE handler) {
   iodine_connection_s *c = iodine_connection_ptr(client);
-  if (!c)
-    return Qnil;
-  if (IODINE_STORE_IS_SKIP(handler))
-    rb_raise(rb_eArgError, "invalid handler!");
+  if (!c) return Qnil;
+  if (IODINE_STORE_IS_SKIP(handler)) rb_raise(rb_eArgError, "invalid handler!");
   iodine_handler_method_injection(Qnil, handler);
   c->store[IODINE_CONNECTION_STORE_handler] = handler;
   return handler;
@@ -1322,7 +1278,6 @@ static void iodine_env_set_const_key(VALUE env,
                                      VALUE key,
                                      fio_str_info_s v,
                                      VALUE *keeper) {
-
   VALUE val = STORE.frozen_str(v);
   *keeper = val;
   rb_hash_aset(env, key, val);
@@ -1431,8 +1386,7 @@ static void iodine_connection_init_env_template(fio_buf_info_s at_url) {
           was_set = 1;
         } else if (u.host.len) {
           port_num = 80;
-          if (fio_url_is_tls(u).tls)
-            port_num = 443;
+          if (fio_url_is_tls(u).tls) port_num = 443;
           was_set = 1;
         }
       }
@@ -1453,12 +1407,10 @@ static void iodine_connection_init_env_template(fio_buf_info_s at_url) {
 /** Returns the client's current `env` object. */
 static VALUE iodine_connection_env_get(VALUE self) {
   iodine_connection_s *c = iodine_connection_ptr(self);
-  if (!c)
-    return Qnil;
+  if (!c) return Qnil;
   if (c->store[IODINE_CONNECTION_STORE_env] != Qnil)
     return c->store[IODINE_CONNECTION_STORE_env];
-  if (!c->http)
-    return (c->store[IODINE_CONNECTION_STORE_env] = rb_hash_new());
+  if (!c->http) return (c->store[IODINE_CONNECTION_STORE_env] = rb_hash_new());
   VALUE env = c->store[IODINE_CONNECTION_STORE_env] =
       rb_hash_dup(IODINE_CONNECTION_ENV_TEMPLATE);
 
@@ -1553,8 +1505,7 @@ typedef struct {
 
 static void *iodine_io_raw_on_attach_in_GIL(void *io) {
   VALUE connection = iodine_connection_create_from_io(io);
-  if (!connection || connection == Qnil)
-    return NULL;
+  if (!connection || connection == Qnil) return NULL;
   iodine_connection_s *c = iodine_connection_ptr(connection);
   iodine_ruby_call_inside(c->store[IODINE_CONNECTION_STORE_handler],
                           IODINE_ON_OPEN_ID,
@@ -1572,8 +1523,7 @@ static void iodine_io_raw_on_attach(fio_io_s *io) {
 static void *iodine_io_raw_on_data_in_GVL(void *info_) {
   iodine_io_raw_on_data_info_s *i = (iodine_io_raw_on_data_info_s *)info_;
   VALUE connection = (VALUE)fio_io_udata(i->io);
-  if (!connection || connection == Qnil)
-    return NULL;
+  if (!connection || connection == Qnil) return NULL;
   iodine_connection_s *c = iodine_connection_ptr(connection);
   VALUE buf = rb_usascii_str_new(i->buf, (long)i->len);
   c->store[IODINE_CONNECTION_STORE_tmp] = buf;
@@ -1590,23 +1540,20 @@ static void iodine_io_raw_on_data(fio_io_s *io) {
   iodine_io_raw_on_data_info_s i;
   i.io = io;
   i.len = fio_io_read(io, i.buf, IODINE_RAW_ON_DATA_READ_BUFFER);
-  if (!i.len)
-    return;
+  if (!i.len) return;
   rb_thread_call_with_gvl(iodine_io_raw_on_data_in_GVL, &i);
 }
 
-#define IODINE_CONNECTION_DEF_CB(named, id)                                    \
-  static void iodine_io_raw_##named(fio_io_s *io) {                            \
-    VALUE connection = (VALUE)fio_io_udata(io);                                \
-    if (!connection || connection == Qnil)                                     \
-      return;                                                                  \
-    iodine_connection_s *c = iodine_connection_ptr(connection);                \
-    if (!c)                                                                    \
-      return;                                                                  \
-    iodine_ruby_call_outside(c->store[IODINE_CONNECTION_STORE_handler],        \
-                             id,                                               \
-                             1,                                                \
-                             &connection);                                     \
+#define IODINE_CONNECTION_DEF_CB(named, id)                             \
+  static void iodine_io_raw_##named(fio_io_s *io) {                     \
+    VALUE connection = (VALUE)fio_io_udata(io);                         \
+    if (!connection || connection == Qnil) return;                      \
+    iodine_connection_s *c = iodine_connection_ptr(connection);         \
+    if (!c) return;                                                     \
+    iodine_ruby_call_outside(c->store[IODINE_CONNECTION_STORE_handler], \
+                             id,                                        \
+                             1,                                         \
+                             &connection);                              \
   }
 
 /** called once all pending `write` calls are finished. */
@@ -1623,11 +1570,9 @@ IODINE_CONNECTION_DEF_CB(on_timeout, IODINE_ON_TIMEOUT_ID);
 /** Called after the connection was closed (called once per IO). */
 static void iodine_io_raw_on_close(void *buf, void *udata) {
   VALUE connection = (VALUE)udata;
-  if (!connection || connection == Qnil)
-    return;
+  if (!connection || connection == Qnil) return;
   iodine_connection_s *c = iodine_connection_ptr(connection);
-  if (!c)
-    return;
+  if (!c) return;
   iodine_ruby_call_outside(c->store[IODINE_CONNECTION_STORE_handler],
                            IODINE_ON_CLOSE_ID,
                            1,
@@ -1679,28 +1624,26 @@ static void iodine_io_http_on_http(fio_http_s *h) {
   rb_thread_call_with_gvl(iodine_io_http_on_http_internal, (void *)h);
 }
 
-#define IODINE_CONNECTION_DEF_CB(named, id, free_handle)                       \
-  static void iodine_io_http_##named(fio_http_s *h) {                          \
-    VALUE connection = (VALUE)fio_http_udata2(h);                              \
-    if (!connection || connection == Qnil)                                     \
-      return;                                                                  \
-    iodine_connection_s *c = iodine_connection_ptr(connection);                \
-    if (!c)                                                                    \
-      return;                                                                  \
-    iodine_ruby_call_outside(c->store[IODINE_CONNECTION_STORE_handler],        \
-                             id,                                               \
-                             1,                                                \
-                             &connection);                                     \
-    if (free_handle) {                                                         \
-      iodine_ruby_call_outside(c->store[IODINE_CONNECTION_STORE_handler],      \
-                               IODINE_ON_FINISH_ID,                            \
-                               1,                                              \
-                               &connection);                                   \
-      fio_http_free(c->http);                                                  \
-      c->http = NULL;                                                          \
-      c->io = NULL;                                                            \
-      STORE.release(connection);                                               \
-    }                                                                          \
+#define IODINE_CONNECTION_DEF_CB(named, id, free_handle)                  \
+  static void iodine_io_http_##named(fio_http_s *h) {                     \
+    VALUE connection = (VALUE)fio_http_udata2(h);                         \
+    if (!connection || connection == Qnil) return;                        \
+    iodine_connection_s *c = iodine_connection_ptr(connection);           \
+    if (!c) return;                                                       \
+    iodine_ruby_call_outside(c->store[IODINE_CONNECTION_STORE_handler],   \
+                             id,                                          \
+                             1,                                           \
+                             &connection);                                \
+    if (free_handle) {                                                    \
+      iodine_ruby_call_outside(c->store[IODINE_CONNECTION_STORE_handler], \
+                               IODINE_ON_FINISH_ID,                       \
+                               1,                                         \
+                               &connection);                              \
+      fio_http_free(c->http);                                             \
+      c->http = NULL;                                                     \
+      c->io = NULL;                                                       \
+      STORE.release(connection);                                          \
+    }                                                                     \
   }
 
 /** Called when an IO is attached to the protocol. */
@@ -1713,36 +1656,33 @@ IODINE_CONNECTION_DEF_CB(on_shutdown, IODINE_ON_SHUTDOWN_ID, 0);
 IODINE_CONNECTION_DEF_CB(on_close, IODINE_ON_CLOSE_ID, 1);
 
 #undef IODINE_CONNECTION_DEF_CB
-#define IODINE_CONNECTION_DEF_CB(named, id, flag)                              \
-  static void *iodine_io_http_##named##_internal(void *h_) {                   \
-    fio_http_s *h = (fio_http_s *)h_;                                          \
-    VALUE connection = iodine_connection_create_from_http(h);                  \
-    if (!connection || connection == Qnil)                                     \
-      return (void *)-1;                                                       \
-    iodine_connection_s *c = iodine_connection_ptr(connection);                \
-    if (!c)                                                                    \
-      return (void *)-1;                                                       \
-    c->flags |= flag;                                                          \
-    iodine_caller_result_s r =                                                 \
-        iodine_ruby_call_inside(c->store[IODINE_CONNECTION_STORE_handler],     \
-                                id,                                            \
-                                1,                                             \
-                                &connection);                                  \
-    if (!r.exception && r.result == Qtrue)                                     \
-      return NULL;                                                             \
-    iodine_ruby_call_inside(c->store[IODINE_CONNECTION_STORE_handler],         \
-                            IODINE_ON_FINISH_ID,                               \
-                            1,                                                 \
-                            &connection);                                      \
-    fio_http_free(c->http);                                                    \
-    c->http = NULL;                                                            \
-    c->io = NULL;                                                              \
-    return (void *)-1;                                                         \
-  }                                                                            \
-  static int iodine_io_http_##named(fio_http_s *h) {                           \
-    if (!rb_thread_call_with_gvl(iodine_io_http_##named##_internal, h))        \
-      return 0;                                                                \
-    return -1;                                                                 \
+#define IODINE_CONNECTION_DEF_CB(named, id, flag)                          \
+  static void *iodine_io_http_##named##_internal(void *h_) {               \
+    fio_http_s *h = (fio_http_s *)h_;                                      \
+    VALUE connection = iodine_connection_create_from_http(h);              \
+    if (!connection || connection == Qnil) return (void *)-1;              \
+    iodine_connection_s *c = iodine_connection_ptr(connection);            \
+    if (!c) return (void *)-1;                                             \
+    c->flags |= flag;                                                      \
+    iodine_caller_result_s r =                                             \
+        iodine_ruby_call_inside(c->store[IODINE_CONNECTION_STORE_handler], \
+                                id,                                        \
+                                1,                                         \
+                                &connection);                              \
+    if (!r.exception && r.result == Qtrue) return NULL;                    \
+    iodine_ruby_call_inside(c->store[IODINE_CONNECTION_STORE_handler],     \
+                            IODINE_ON_FINISH_ID,                           \
+                            1,                                             \
+                            &connection);                                  \
+    fio_http_free(c->http);                                                \
+    c->http = NULL;                                                        \
+    c->io = NULL;                                                          \
+    return (void *)-1;                                                     \
+  }                                                                        \
+  static int iodine_io_http_##named(fio_http_s *h) {                       \
+    if (!rb_thread_call_with_gvl(iodine_io_http_##named##_internal, h))    \
+      return 0;                                                            \
+    return -1;                                                             \
   }
 
 /** Called after the connection was closed (called once per IO). */
@@ -1767,8 +1707,7 @@ static void *iodine_io_http_on_eventsource_reconnect_internal(void *info_) {
   iodine_io_http_on_eventsource_internal_s *i =
       (iodine_io_http_on_eventsource_internal_s *)info_;
   VALUE connection = (VALUE)fio_http_udata2(i->h);
-  if (!connection || connection == Qnil)
-    return NULL;
+  if (!connection || connection == Qnil) return NULL;
   iodine_connection_s *c = iodine_connection_ptr(connection);
   VALUE args[] = {connection, rb_str_new(i->id.buf, i->id.len)};
   c->store[IODINE_CONNECTION_STORE_tmp] = args[1];
@@ -1785,8 +1724,7 @@ static void iodine_io_http_on_eventsource_reconnect(fio_http_s *h,
                                                     fio_buf_info_s id) {
   /* TODO: FIXME! move into GVL and create message struct to pass to callback */
   VALUE connection = (VALUE)fio_http_udata2(h);
-  if (!connection || connection == Qnil)
-    return;
+  if (!connection || connection == Qnil) return;
   iodine_io_http_on_eventsource_internal_s info = {.h = h, .id = id};
   rb_thread_call_with_gvl(iodine_io_http_on_eventsource_reconnect_internal,
                           &info);
@@ -1796,8 +1734,7 @@ static void *iodine_io_http_on_eventsource_internal(void *info_) {
   iodine_io_http_on_eventsource_internal_s *i =
       (iodine_io_http_on_eventsource_internal_s *)info_;
   VALUE connection = (VALUE)fio_http_udata2(i->h);
-  if (!connection || connection == Qnil)
-    return NULL;
+  if (!connection || connection == Qnil) return NULL;
   iodine_connection_s *c = iodine_connection_ptr(connection);
   fio_msg_s msg = {
       .channel = i->event,
@@ -1835,8 +1772,7 @@ static void *iodine_io_http_on_message_internal(void *info) {
   iodine_io_http_on_message_internal_s *i =
       (iodine_io_http_on_message_internal_s *)info;
   VALUE connection = (VALUE)fio_http_udata2(i->h);
-  if (!connection || connection == Qnil)
-    return NULL;
+  if (!connection || connection == Qnil) return NULL;
   iodine_connection_s *c = iodine_connection_ptr(connection);
   VALUE args[] = {connection, rb_str_new(i->msg.buf, i->msg.len)};
   c->store[IODINE_CONNECTION_STORE_tmp] = args[1];
@@ -1865,8 +1801,7 @@ static void iodine_io_http_on_message(fio_http_s *h,
 /** Called when a request / response cycle is finished with no Upgrade. */
 static void iodine_io_http_on_finish(fio_http_s *h) {
   VALUE connection = (VALUE)fio_http_udata2(h);
-  if (!connection || connection == Qnil)
-    return; /* done in the `on_close` */
+  if (!connection || connection == Qnil) return; /* done in the `on_close` */
   iodine_connection_s *c = iodine_connection_ptr(connection);
   if (c->http) {
     (((c->flags & IODINE_CONNECTION_CLIENT)) ? iodine_ruby_call_outside
@@ -2034,12 +1969,9 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
     rb_raise(
         rb_eArgError,
         "Either a `:handler` or `&block` must be provided and a valid Object!");
-  if (r.url.buf)
-    r.url_data = fio_url_parse(r.url.buf, r.url.len);
-  if (!r.hint.len)
-    r.hint = r.url_data.scheme;
-  if (r.hint.len > 8)
-    rb_raise(rb_eArgError, "service hint too long");
+  if (r.url.buf) r.url_data = fio_url_parse(r.url.buf, r.url.len);
+  if (!r.hint.len) r.hint = r.url_data.scheme;
+  if (r.hint.len > 8) rb_raise(rb_eArgError, "service hint too long");
   FIO_LOG_DDEBUG("iodine connection hint: %.*s", (int)r.hint.len, r.hint.buf);
   if (!r.hint.buf || !r.hint.len ||
       FIO_BUF_INFO_IS_EQ(r.hint, FIO_BUF_INFO2((char *)"sses", 3)) ||
@@ -2087,6 +2019,9 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
   iodine_handler_method_injection(Qnil, (VALUE)r.settings.udata);
 
   r.settings.sse_timeout = r.settings.ws_timeout;
+
+  if (fio_url_is_tls(r.url_data).tls && (!r.rb_tls || r.rb_tls == Qnil))
+    r.rb_tls = true;
   if (r.rb_tls != Qnil && r.rb_tls != Qfalse) {
     rb_ivar_set((VALUE)r.settings.udata,
                 rb_intern2("__iodine__internal__tls", 23),
@@ -2101,38 +2036,39 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
                           fio_cli_get("-cert"),
                           fio_cli_get("-key"),
                           fio_cli_get("-tls-pass"));
-  }
+    /* Set TLS IO functions based on tls_io option */
+    if (tls_io_rb == Qnil)
+      tls_io_rb = rb_funcall(iodine_rb_IODINE_TLS, rb_intern("default"), 0);
 
-  /* Set TLS IO functions based on tls_io option */
-  if (tls_io_rb != Qnil) {
-    if (!RB_TYPE_P(tls_io_rb, RUBY_T_SYMBOL))
-      rb_raise(rb_eTypeError, "tls_io must be a Symbol (:iodine or :openssl)");
-    ID tls_io_id = rb_sym2id(tls_io_rb);
-    if (tls_io_id == IODINE_TLS_IO_IODINE_ID) {
+    if (tls_io_rb != Qnil) {
+      if (!RB_TYPE_P(tls_io_rb, RUBY_T_SYMBOL))
+        rb_raise(rb_eTypeError,
+                 "tls_io must be a Symbol (:iodine or :openssl)");
+      ID tls_io_id = rb_sym2id(tls_io_rb);
+      if (tls_io_id == IODINE_TLS_IO_IODINE_ID) {
 #ifdef FIO_TLS13_AVAILABLE
-      static fio_io_functions_s tls13_funcs;
-      if (!tls13_funcs.build_context)
-        tls13_funcs = fio_tls13_io_functions();
-      r.settings.tls_io_func = &tls13_funcs;
+        static fio_io_functions_s tls13_funcs;
+        if (!tls13_funcs.build_context) tls13_funcs = fio_tls13_io_functions();
+        r.settings.tls_io_func = &tls13_funcs;
 #else
-      rb_raise(rb_eRuntimeError,
-               "Embedded TLS 1.3 backend not available in this build");
+        rb_raise(rb_eRuntimeError,
+                 "Embedded TLS 1.3 backend not available in this build");
 #endif
-    } else if (tls_io_id == IODINE_TLS_IO_OPENSSL_ID) {
+      } else if (tls_io_id == IODINE_TLS_IO_OPENSSL_ID) {
 #ifdef HAVE_OPENSSL
-      static fio_io_functions_s openssl_funcs;
-      if (!openssl_funcs.build_context)
-        openssl_funcs = fio_openssl_io_functions();
-      r.settings.tls_io_func = &openssl_funcs;
+        static fio_io_functions_s openssl_funcs;
+        if (!openssl_funcs.build_context)
+          openssl_funcs = fio_openssl_io_functions();
+        r.settings.tls_io_func = &openssl_funcs;
 #else
-      rb_raise(rb_eRuntimeError,
-               "OpenSSL TLS backend not available (not compiled in)");
+        rb_raise(rb_eRuntimeError,
+                 "OpenSSL TLS backend not available (not compiled in)");
 #endif
-    } else {
-      rb_raise(rb_eArgError, "tls_io must be :iodine or :openssl");
+      } else {
+        rb_raise(rb_eArgError, "tls_io must be :iodine or :openssl");
+      }
     }
   }
-
   fio_cli_set("-b", NULL);
   return r;
 }
@@ -2160,16 +2096,12 @@ static int iodine_connection___client_headers(VALUE n, VALUE v, VALUE h_) {
   fio_http_s *h = (fio_http_s *)h_;
   fio_str_info_s name;
   fio_str_info_s val;
-  if (RB_TYPE_P(v, RUBY_T_ARRAY))
-    goto is_array;
-  if (RB_TYPE_P(n, RUBY_T_SYMBOL))
-    n = rb_sym_to_s(n);
-  if (!RB_TYPE_P(n, RUBY_T_STRING))
-    return ST_CONTINUE;
+  if (RB_TYPE_P(v, RUBY_T_ARRAY)) goto is_array;
+  if (RB_TYPE_P(n, RUBY_T_SYMBOL)) n = rb_sym_to_s(n);
+  if (!RB_TYPE_P(n, RUBY_T_STRING)) return ST_CONTINUE;
   name = (fio_str_info_s)IODINE_RSTR_INFO(n);
 
-  if (RB_TYPE_P(v, RUBY_T_SYMBOL))
-    v = rb_sym_to_s(v);
+  if (RB_TYPE_P(v, RUBY_T_SYMBOL)) v = rb_sym_to_s(v);
   if (RB_TYPE_P(v, RUBY_T_STRING))
     val = (fio_str_info_s)IODINE_RSTR_INFO(v);
   else if (RB_TYPE_P(v, RUBY_T_FIXNUM) &&
@@ -2183,8 +2115,7 @@ static int iodine_connection___client_headers(VALUE n, VALUE v, VALUE h_) {
 is_array:
   for (size_t i = 0; i < (size_t)RARRAY_LEN(v); ++i) {
     VALUE t = RARRAY_PTR(v)[i];
-    if (!RB_TYPE_P(t, RUBY_T_STRING))
-      continue;
+    if (!RB_TYPE_P(t, RUBY_T_STRING)) continue;
     iodine_connection___client_headers_add(h,
                                            (fio_str_info_s)IODINE_RSTR_INFO(n),
                                            (fio_str_info_s)IODINE_RSTR_INFO(t));
@@ -2209,8 +2140,7 @@ not_string:
 /** Called after the connection was closed (called once per IO). */
 static void iodine_io_raw_client_on_close(void *buf, void *udata) {
   VALUE connection = (VALUE)udata;
-  if (!connection || connection == Qnil)
-    return;
+  if (!connection || connection == Qnil) return;
   iodine_connection_s *c = iodine_connection_ptr(connection);
   if (c) {
     iodine_ruby_call_outside(c->store[IODINE_CONNECTION_STORE_handler],
@@ -2240,7 +2170,6 @@ static VALUE iodine_connection_initialize(int argc, VALUE *argv, VALUE self) {
   /* test if HTTP scheme */
   if (args.service == IODINE_SERVICE_HTTP ||
       args.service == IODINE_SERVICE_WS) {
-
     fio_http_s *h = fio_http_new();
 
     if (args.headers != Qnil)
@@ -2283,8 +2212,7 @@ static VALUE iodine_connection_is_open(VALUE self) {
     return ((fio_http_is_websocket(c->http) && !fio_http_is_finished(c->http))
                 ? Qfalse
                 : Qtrue);
-  if (c->io)
-    return (fio_io_is_open(c->io) ? Qtrue : Qfalse);
+  if (c->io) return (fio_io_is_open(c->io) ? Qtrue : Qfalse);
   return Qfalse;
 }
 
@@ -2294,8 +2222,7 @@ static VALUE iodine_connection_is_open(VALUE self) {
  */
 static VALUE iodine_connection_pending(VALUE self) {
   iodine_connection_s *c = iodine_connection_ptr(self);
-  if (c && c->io)
-    return RB_SIZE2NUM(((size_t)fio_io_backlog(c->io)));
+  if (c && c->io) return RB_SIZE2NUM(((size_t)fio_io_backlog(c->io)));
   return Qfalse;
 }
 
@@ -2305,8 +2232,7 @@ static VALUE iodine_connection_close(VALUE self) {
   if (c) {
     if (c->http) {
       /* avoid `rack.input` call to `close` closing the HTTP connection. */
-      if (fio_http_is_upgraded(c->http))
-        fio_http_close(c->http);
+      if (fio_http_is_upgraded(c->http)) fio_http_close(c->http);
     } else if (c->io)
       fio_io_close(c->io);
     c->flags |= IODINE_CONNECTION_CLOSED;
@@ -2335,15 +2261,11 @@ static VALUE iodine_connection_write_header___value(fio_http_s *h,
   VALUE r = Qtrue;
   FIO_STR_INFO_TMP_VAR(vstr, 24);
 
-  if (depth > 31)
-    goto too_deep;
-  if (v == Qnil || v == Qfalse)
-    goto skip;
+  if (depth > 31) goto too_deep;
+  if (v == Qnil || v == Qfalse) goto skip;
 
-  if (RB_TYPE_P(v, RUBY_T_ARRAY))
-    goto is_array;
-  if (RB_TYPE_P(v, RUBY_T_SYMBOL))
-    v = rb_sym_to_s(v);
+  if (RB_TYPE_P(v, RUBY_T_ARRAY)) goto is_array;
+  if (RB_TYPE_P(v, RUBY_T_SYMBOL)) v = rb_sym_to_s(v);
   if (RB_TYPE_P(v, RUBY_T_STRING))
     vstr = (fio_str_info_s)IODINE_RSTR_INFO(v);
   else if (RB_TYPE_P(v, RUBY_T_FIXNUM))
@@ -2382,15 +2304,12 @@ static VALUE iodine_connection_write_header(VALUE self, VALUE name, VALUE v) {
   VALUE r = Qfalse;
   iodine_connection_s *c = iodine_connection_ptr(self);
   fio_http_s *h = c->http;
-  if (!fio_http_is_clean(h))
-    return r;
+  if (!fio_http_is_clean(h)) return r;
 
   fio_str_info_s header_rb;
 
-  if (RB_TYPE_P(name, RUBY_T_SYMBOL))
-    name = rb_sym_to_s(name);
-  if (!RB_TYPE_P(name, RUBY_T_STRING))
-    goto type_error;
+  if (RB_TYPE_P(name, RUBY_T_SYMBOL)) name = rb_sym_to_s(name);
+  if (!RB_TYPE_P(name, RUBY_T_STRING)) goto type_error;
 
   c->store[IODINE_CONNECTION_STORE_tmp] = name;
 
@@ -2398,8 +2317,7 @@ static VALUE iodine_connection_write_header(VALUE self, VALUE name, VALUE v) {
   IODINE___COPY_TO_LOWER_CASE(n, header_rb);
   c->store[IODINE_CONNECTION_STORE_tmp] = Qnil;
 
-  if (v == Qnil || v == Qfalse)
-    goto clear_header;
+  if (v == Qnil || v == Qfalse) goto clear_header;
 
   r = iodine_connection_write_header___value(h, n, v, 0);
   return r;
@@ -2420,8 +2338,7 @@ FIO_IFUNC VALUE iodine_connection_write_internal(VALUE self,
                                                  _Bool finish) {
   VALUE r = Qtrue;
   iodine_connection_s *c = iodine_connection_ptr(self);
-  if (!c || (!c->http && !c->io))
-    return (r = Qfalse);
+  if (!c || (!c->http && !c->io)) return (r = Qfalse);
   fio_str_info_s to_write;
   unsigned to_copy = 1;
   int fileno;
@@ -2430,8 +2347,7 @@ FIO_IFUNC VALUE iodine_connection_write_internal(VALUE self,
 
   /* TODO! SSE connections? id / event / data combo? */
 
-  if (RB_TYPE_P(data, RUBY_T_SYMBOL))
-    data = rb_sym_to_s(data);
+  if (RB_TYPE_P(data, RUBY_T_SYMBOL)) data = rb_sym_to_s(data);
   if (RB_TYPE_P(data, RUBY_T_STRING)) {
     to_write = FIO_STR_INFO2(RSTRING_PTR(data), (size_t)RSTRING_LEN(data));
     // TODO: use Ruby encoding info for WebSocket?
@@ -2461,8 +2377,7 @@ FIO_IFUNC VALUE iodine_connection_write_internal(VALUE self,
                   .len = to_write.len,
                   .dealloc = dealloc,
                   .copy = to_copy);
-    if (finish)
-      fio_io_close(c->io);
+    if (finish) fio_io_close(c->io);
   }
   return r;
 is_named_file:
@@ -2478,14 +2393,12 @@ is_file:
   fileno = fio_file_dup(FIX2INT(rb_funcallv(data, IODINE_FILENO_ID, 0, NULL)));
   if (rb_respond_to(data, IODINE_CLOSE_ID))
     rb_funcallv(data, IODINE_CLOSE_ID, 0, NULL);
-  if (fileno == -1)
-    return Qfalse;
+  if (fileno == -1) return Qfalse;
   if (c->http)
     fio_http_write(c->http, .fd = fileno, .finish = finish);
   else if (c->io) {
     fio_io_write2(c->io, .fd = fileno);
-    if (finish)
-      fio_io_close(c->io);
+    if (finish) fio_io_close(c->io);
   }
   return r;
 }
@@ -2498,8 +2411,7 @@ static VALUE iodine_connection_write(VALUE self, VALUE data) {
 /** Writes data to the connection asynchronously. */
 static VALUE iodine_connection_write_sse(int argc, VALUE *argv, VALUE self) {
   iodine_connection_s *c = iodine_connection_ptr(self);
-  if (!c || !c->http)
-    return Qfalse;
+  if (!c || !c->http) return Qfalse;
   fio_buf_info_s to_write;
   fio_buf_info_s id = {0}, event = {0};
   VALUE data = Qnil;
@@ -2509,10 +2421,8 @@ static VALUE iodine_connection_write_sse(int argc, VALUE *argv, VALUE self) {
                   IODINE_ARG_BUF(id, 0, "id", 0),
                   IODINE_ARG_BUF(event, 0, "event", 0),
                   IODINE_ARG_RB(data, 0, "data", 0));
-  if (data == Qnil)
-    return Qfalse; /* no data payload */
-  if (RB_TYPE_P(data, RUBY_T_SYMBOL))
-    data = rb_sym_to_s(data);
+  if (data == Qnil) return Qfalse; /* no data payload */
+  if (RB_TYPE_P(data, RUBY_T_SYMBOL)) data = rb_sym_to_s(data);
   if (RB_TYPE_P(data, RUBY_T_STRING)) {
     to_write = (fio_buf_info_s)IODINE_RSTR_INFO(data);
   } else if (rb_respond_to(data, IODINE_CLOSE_ID)) {
@@ -2525,8 +2435,7 @@ static VALUE iodine_connection_write_sse(int argc, VALUE *argv, VALUE self) {
   /* don't test `fio_http_is_sse` earlier, as we may need to close files */
   if (to_write.len && fio_http_is_sse(c->http))
     fio_http_sse_write(c->http, .id = id, .event = event, .data = to_write);
-  if (dealloc)
-    dealloc(to_write.buf);
+  if (dealloc) dealloc(to_write.buf);
   return Qtrue;
 }
 
@@ -2534,21 +2443,18 @@ static VALUE iodine_connection_write_sse(int argc, VALUE *argv, VALUE self) {
 static VALUE iodine_connection_finish(int argc, VALUE *argv, VALUE self) {
   VALUE data = Qnil;
   iodine_rb2c_arg(argc, argv, IODINE_ARG_RB(data, 0, "data", 0));
-  if (data != Qnil)
-    return iodine_connection_write_internal(self, data, 1);
+  if (data != Qnil) return iodine_connection_write_internal(self, data, 1);
   iodine_connection_s *c = iodine_connection_ptr(self);
   if ((!c->http && !c->io) || (c->flags & IODINE_CONNECTION_CLIENT))
     return Qfalse;
   if (c->http) {
-    if (fio_http_is_finished(c->http))
-      return Qfalse;
+    if (fio_http_is_finished(c->http)) return Qfalse;
     if (fio_http_is_streaming(c->http) || fio_http_status(c->http) < 400)
       fio_http_write(c->http, .finish = 1);
     else /* sending an empty error should test for a custom error page. */
       fio_http_send_error_response(c->http, fio_http_status(c->http));
   } else if (c->io) {
-    if (!fio_io_is_open(c->io))
-      return Qfalse;
+    if (!fio_io_is_open(c->io)) return Qfalse;
     fio_io_close(c->io);
   }
   return Qtrue;
@@ -2558,10 +2464,8 @@ static VALUE iodine_connection_finish(int argc, VALUE *argv, VALUE self) {
 static VALUE iodine_connection_peer_addr(VALUE self) {
   fio_buf_info_s buf = FIO_BUF_INFO0;
   iodine_connection_s *c = iodine_connection_ptr(self);
-  if (c->io)
-    buf = fio_sock_peer_addr(fio_io_fd(c->io));
-  if (!buf.len)
-    return Qnil;
+  if (c->io) buf = fio_sock_peer_addr(fio_io_fd(c->io));
+  if (!buf.len) return Qnil;
   return rb_str_new(buf.buf, buf.len);
 }
 
@@ -2575,8 +2479,7 @@ static VALUE iodine_connection_from(VALUE self) {
     buf = FIO_STR2BUF_INFO(addr);
   } else if (c->io)
     buf = fio_sock_peer_addr(fio_io_fd(c->io));
-  if (!buf.len)
-    return Qnil;
+  if (!buf.len) return Qnil;
   return rb_str_new(buf.buf, buf.len);
 }
 
@@ -2587,8 +2490,7 @@ Ruby Public API - Hijacking (Rack)
 /** Method for calling `env['rack.hijack'].call`. */
 static VALUE iodine_connection_rack_hijack(VALUE self) {
   iodine_connection_s *c = iodine_connection_ptr(self);
-  if (!c->http)
-    return Qnil;
+  if (!c->http) return Qnil;
   int new_fd = fio_sock_dup(fio_io_fd(fio_http_io(c->http)));
   VALUE nio = rb_io_fdopen(new_fd, O_RDWR, NULL);
   if (nio && nio != Qnil) {
@@ -2616,16 +2518,12 @@ FIO_SFUNC int iodine_connection_rack_hijack_partial(iodine_connection_s *c,
         "iodine_connection_rack_hijack_partial called without connections");
     return -1;
   }
-  if (!c->io)
-    c->io = fio_http_io(c->http);
-  if (!rb_respond_to(proc, IODINE_CALL_ID))
-    goto error;
+  if (!c->io) c->io = fio_http_io(c->http);
+  if (!rb_respond_to(proc, IODINE_CALL_ID)) goto error;
   int new_fd = fio_sock_dup(fio_io_fd(c->io));
-  if (new_fd == -1)
-    goto error;
+  if (new_fd == -1) goto error;
   VALUE nio = rb_io_fdopen(new_fd, O_RDWR, NULL);
-  if (!nio || nio == Qnil)
-    goto error_after_open;
+  if (!nio || nio == Qnil) goto error_after_open;
   fio_http_write(c->http, .finish = 1);
   if (c->store[IODINE_CONNECTION_STORE_env] &&
       RB_TYPE_P(c->store[IODINE_CONNECTION_STORE_env], RUBY_T_HASH)) {
@@ -2669,8 +2567,7 @@ Ruby Public API - Pub/Sub
  */
 static VALUE iodine_connection_unsubscribe(int argc, VALUE *argv, VALUE self) {
   iodine_connection_s *c = iodine_connection_ptr(self);
-  if (!c || (!c->http && !c->io))
-    return Qnil;
+  if (!c || (!c->http && !c->io)) return Qnil;
   return iodine_connection_unsubscribe_internal(c->io, argc, argv);
 }
 
@@ -2736,10 +2633,8 @@ static VALUE iodine_connection_unsubscribe_klass(int argc,
  */
 static VALUE iodine_connection_subscribe(int argc, VALUE *argv, VALUE self) {
   iodine_connection_s *c = iodine_connection_ptr(self);
-  if (!c || (!c->http && !c->io))
-    return Qnil;
-  if (c->io)
-    iodine_connection_subscribe_internal(c->io, argc, argv);
+  if (!c || (!c->http && !c->io)) return Qnil;
+  if (c->io) iodine_connection_subscribe_internal(c->io, argc, argv);
   return self;
 }
 
@@ -2798,16 +2693,14 @@ static VALUE iodine_connection_publish_internal(fio_io_s *io,
     rb_raise(rb_eRangeError,
              "filter out of range (%lld > 0xFFFF)",
              (long long)filter);
-  if (RB_TYPE_P(message, RUBY_T_SYMBOL))
-    message = rb_sym_to_s(message);
+  if (RB_TYPE_P(message, RUBY_T_SYMBOL)) message = rb_sym_to_s(message);
   if (RB_TYPE_P(message, RUBY_T_STRING)) {
     msg = FIO_BUF_INFO2(RSTRING_PTR(message), (size_t)RSTRING_LEN(message));
   } else {
     to_free = iodine_json_stringify2bstr(NULL, message);
     msg = fio_bstr_buf(to_free);
   }
-  if (engine != Qnil)
-    eng = iodine_pubsub_eng_get(engine)->ptr;
+  if (engine != Qnil) eng = iodine_pubsub_eng_get(engine)->ptr;
   fio_publish(.from = io,
               .filter = (int16_t)filter,
               .channel = channel,
@@ -2882,8 +2775,7 @@ static void iodine_tcp_on_stop(fio_io_protocol_s *p, void *udata) {
 
 static void *iodine_tcp_listen(iodine_connection_args_s args) {
   fio_io_protocol_s *protocol = FIO_MEM_REALLOC(NULL, 0, sizeof(*protocol), 0);
-  if (!protocol)
-    return NULL;
+  if (!protocol) return NULL;
   STORE.hold((VALUE)args.settings.udata);
   *protocol = IODINE_RAW_PROTOCOL;
   protocol->timeout = 1000UL * (uint32_t)args.settings.ws_timeout;
@@ -2915,16 +2807,15 @@ static VALUE iodine_listen_rb(int argc, VALUE *argv, VALUE self) {
   iodine_connection_args_s s = iodine_connection_parse_args(argc, argv);
   void *listener = NULL;
   switch (s.service) {
-  case IODINE_SERVICE_RAW: listener = iodine_tcp_listen(s); break;
-  case IODINE_SERVICE_HTTP:    /* fall through */
-  case IODINE_SERVICE_UNKNOWN: /* fall through */
-  case IODINE_SERVICE_WS:
-    s.settings.on_stop = NULL; /* leak the memory, better than accidental.. */
-    listener = fio_http_listen FIO_NOOP(s.url.buf, s.settings);
+    case IODINE_SERVICE_RAW: listener = iodine_tcp_listen(s); break;
+    case IODINE_SERVICE_HTTP:    /* fall through */
+    case IODINE_SERVICE_UNKNOWN: /* fall through */
+    case IODINE_SERVICE_WS:
+      s.settings.on_stop = NULL; /* leak the memory, better than accidental.. */
+      listener = fio_http_listen FIO_NOOP(s.url.buf, s.settings);
   }
   fio_io_tls_free(s.settings.tls);
-  if (!listener)
-    rb_raise(rb_eRuntimeError, "Couldn't open listening socket.");
+  if (!listener) rb_raise(rb_eRuntimeError, "Couldn't open listening socket.");
   if (fio_io_listener_is_tls(listener))
     iodine_env_set_key_pair(IODINE_CONNECTION_ENV_TEMPLATE,
                             FIO_STR_INFO2((char *)"rack.url_scheme", 15),
@@ -3083,7 +2974,7 @@ static void iodine_connection_cache_common_strings(void) {
 Initialize Connection Class
 ***************************************************************************** */
 
-/* Initialize Iodine::Connection */ // clang-format off
+/* Initialize Iodine::Connection */  // clang-format off
 /**
  * Iodine::Connection is the connection instance class used for all
  * connection callbacks to control the state of the connection.
@@ -3204,6 +3095,6 @@ static void Init_Iodine_Connection(void)  {
 
   iodine_connection_cache_common_strings();
   iodine_connection_init_env_template(FIO_BUF_INFO0);
-} // clang-format on
+}  // clang-format on
 
 #endif /* H___IODINE_CONNECTION___H */

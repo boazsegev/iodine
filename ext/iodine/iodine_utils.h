@@ -251,6 +251,77 @@ FIO_SFUNC VALUE iodine_utils_hmac512(VALUE self, VALUE secret, VALUE massage) {
   return rb_str_new(out.buf, out.len);
 }
 
+FIO_SFUNC VALUE iodine_utils_hmac256(VALUE self, VALUE secret, VALUE massage) {
+  rb_check_type(secret, RUBY_T_STRING);
+  rb_check_type(massage, RUBY_T_STRING);
+  fio_buf_info_s k = IODINE_RSTR_INFO(secret);
+  fio_buf_info_s m = IODINE_RSTR_INFO(massage);
+  fio_u256 h = fio_sha256_hmac(k.buf, k.len, m.buf, m.len);
+  FIO_STR_INFO_TMP_VAR(out, 64);
+  fio_string_write_base64enc(&out, NULL, h.u8, 32, 0);
+  return rb_str_new(out.buf, out.len);
+}
+
+FIO_SFUNC VALUE iodine_utils_sha256(VALUE self, VALUE data) {
+  rb_check_type(data, RUBY_T_STRING);
+  fio_u256 h = fio_sha256(RSTRING_PTR(data), RSTRING_LEN(data));
+  return rb_str_new((const char *)h.u8, 32);
+}
+
+FIO_SFUNC VALUE iodine_utils_sha512(VALUE self, VALUE data) {
+  rb_check_type(data, RUBY_T_STRING);
+  fio_u512 h = fio_sha512(RSTRING_PTR(data), RSTRING_LEN(data));
+  return rb_str_new((const char *)h.u8, 64);
+}
+
+FIO_SFUNC VALUE iodine_utils_sha3_256(VALUE self, VALUE data) {
+  rb_check_type(data, RUBY_T_STRING);
+  uint8_t out[32];
+  fio_sha3_256(out, RSTRING_PTR(data), RSTRING_LEN(data));
+  return rb_str_new((const char *)out, 32);
+}
+
+FIO_SFUNC VALUE iodine_utils_sha3_512(VALUE self, VALUE data) {
+  rb_check_type(data, RUBY_T_STRING);
+  uint8_t out[64];
+  fio_sha3_512(out, RSTRING_PTR(data), RSTRING_LEN(data));
+  return rb_str_new((const char *)out, 64);
+}
+
+FIO_SFUNC VALUE iodine_utils_blake2b(int argc, VALUE *argv, VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0;
+  fio_buf_info_s key = FIO_BUF_INFO0;
+  int64_t len = 64;
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(key, 0, "key", 0),
+                  IODINE_ARG_NUM(len, 0, "len", 0));
+  if (len < 1 || len > 64)
+    rb_raise(rb_eArgError, "len must be between 1 and 64");
+  uint8_t out[64];
+  fio_blake2b(out, (size_t)len, key.buf, key.len, data.buf, data.len);
+  return rb_str_new((const char *)out, (long)len);
+  (void)self;
+}
+
+FIO_SFUNC VALUE iodine_utils_blake2s(int argc, VALUE *argv, VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0;
+  fio_buf_info_s key = FIO_BUF_INFO0;
+  int64_t len = 32;
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(key, 0, "key", 0),
+                  IODINE_ARG_NUM(len, 0, "len", 0));
+  if (len < 1 || len > 32)
+    rb_raise(rb_eArgError, "len must be between 1 and 32");
+  uint8_t out[32];
+  fio_blake2s(out, (size_t)len, key.buf, key.len, data.buf, data.len);
+  return rb_str_new((const char *)out, (long)len);
+  (void)self;
+}
+
 FIO_SFUNC VALUE iodine_utils_hmac_sha1(VALUE self,
                                        VALUE secret,
                                        VALUE massage) {
@@ -372,6 +443,67 @@ FIO_SFUNC VALUE iodine_utils_totp(int argc, VALUE *argv, VALUE self) {
   (void)self;
 }
 
+/**
+ * Generates a new TOTP secret suitable for Google Authenticator.
+ *
+ *     Iodine::Utils.totp_secret(len: 20)  # -> Base32 encoded secret
+ *
+ * The secret is generated using cryptographically secure random bytes
+ * and encoded in Base32 (uppercase, no padding) for compatibility with
+ * authenticator apps.
+ */
+FIO_SFUNC VALUE iodine_utils_totp_secret(int argc, VALUE *argv, VALUE self) {
+  int64_t len = 20;
+  iodine_rb2c_arg(argc, argv, IODINE_ARG_NUM(len, 0, "len", 0));
+
+  if (len < 10 || len > 64)
+    rb_raise(rb_eArgError, "len must be between 10 and 64");
+
+  /* Generate random bytes using secure CSPRNG */
+  uint8_t key[64];
+  fio_rand_bytes(key, (size_t)len);
+
+  /* Base32 encode (output is roughly 8/5 of input, plus null terminator) */
+  char encoded[128];
+  size_t encoded_len = fio_otp_print_key(encoded, key, (size_t)len);
+
+  return rb_str_new(encoded, (long)encoded_len);
+  (void)self;
+}
+
+/**
+ * Verifies a TOTP code against a secret with time window tolerance.
+ *
+ *     Iodine::Utils.totp_verify(secret:, code:, window: 1)  # -> true/false
+ *
+ * The window parameter specifies how many 30-second intervals to check
+ * on either side of the current time. window: 1 checks current ± 1 interval.
+ */
+FIO_SFUNC VALUE iodine_utils_totp_verify(int argc, VALUE *argv, VALUE self) {
+  fio_buf_info_s secret = FIO_BUF_INFO0;
+  int64_t code = 0;
+  int64_t window = 1;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(secret, 0, "secret", 1),
+                  IODINE_ARG_NUM(code, 0, "code", 1),
+                  IODINE_ARG_NUM(window, 0, "window", 0));
+
+  if (window < 0 || window > 10)
+    rb_raise(rb_eArgError, "window must be between 0 and 10");
+
+  /* Check code against each offset in the window */
+  for (int64_t offset = -window; offset <= window; ++offset) {
+    uint32_t expected = fio_otp(secret, .offset = offset);
+    if (expected == (uint32_t)code)
+      return Qtrue;
+  }
+
+  return Qfalse;
+  (void)self;
+}
+
 /* *****************************************************************************
 Create Methods in Module
 ***************************************************************************** */
@@ -480,9 +612,18 @@ static void Init_Iodine_Utils(void) {
   rb_define_singleton_method(m, "random", iodine_utils_random, -1);
   rb_define_singleton_method(m, "uuid", iodine_utils_uuid, -1);
   rb_define_singleton_method(m, "totp", iodine_utils_totp, -1);
+  rb_define_singleton_method(m, "totp_secret", iodine_utils_totp_secret, -1);
+  rb_define_singleton_method(m, "totp_verify", iodine_utils_totp_verify, -1);
   rb_define_singleton_method(m, "hmac512", iodine_utils_hmac512, 2);
+  rb_define_singleton_method(m, "hmac256", iodine_utils_hmac256, 2);
   rb_define_singleton_method(m, "hmac160", iodine_utils_hmac_sha1, 2);
   rb_define_singleton_method(m, "hmac128", iodine_utils_hmac_poly, 2);
+  rb_define_singleton_method(m, "sha256", iodine_utils_sha256, 1);
+  rb_define_singleton_method(m, "sha512", iodine_utils_sha512, 1);
+  rb_define_singleton_method(m, "sha3_256", iodine_utils_sha3_256, 1);
+  rb_define_singleton_method(m, "sha3_512", iodine_utils_sha3_512, 1);
+  rb_define_singleton_method(m, "blake2b", iodine_utils_blake2b, -1);
+  rb_define_singleton_method(m, "blake2s", iodine_utils_blake2s, -1);
 
 
 
