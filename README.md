@@ -78,13 +78,73 @@ Then start your application from the command-line / terminal using iodine:
 iodine
 ```
 
-### Installing with TLS/SSL
+### TLS/SSL Configuration
 
-Iodine should automatically detect when Ruby was installed with OpenSSL and link against that same library.
+Iodine supports two TLS backends:
 
-Iodine will always respect encryption requirements, even if no library is available.
+1. **OpenSSL** (default when available) - Full-featured TLS 1.2+ support
+2. **Embedded TLS 1.3** - Lightweight built-in implementation (always available)
 
-Requiring Iodine to use TLS when unavailable will result in Iodine crashing with an error message.
+#### Automatic Detection
+
+Iodine automatically detects OpenSSL during installation and uses it as the default TLS backend. If OpenSSL is unavailable, the embedded TLS 1.3 implementation is used automatically.
+
+#### Using Embedded TLS 1.3
+
+The embedded TLS 1.3 implementation is always available and can be enabled in several ways:
+
+**At Runtime (recommended):**
+```ruby
+# In your application code
+Iodine::TLS.default = :iodine
+```
+
+**Via Environment Variable:**
+```bash
+# Set before starting iodine
+export IODINE_MTLS=1
+iodine
+```
+
+**Via Command Line:**
+```bash
+iodine -mtls
+```
+
+**At Compile Time (forces embedded as default):**
+```bash
+IODINE_USE_EMBEDDED_TLS=1 gem install iodine
+```
+
+#### Checking TLS Backend Availability
+
+```ruby
+require 'iodine'
+
+# Check what's available
+Iodine::TLS::OPENSSL_AVAILABLE   # => true/false
+Iodine::TLS::EMBEDDED_AVAILABLE  # => true (always)
+Iodine::TLS::SUPPORTED           # => true (always - at least embedded is available)
+
+# Get/set the current default
+Iodine::TLS.default              # => :openssl or :iodine
+Iodine::TLS.default = :iodine    # Switch to embedded TLS 1.3
+```
+
+#### TLS Certificate Configuration
+
+```bash
+# Self-signed certificate (auto-generated)
+iodine -tls
+
+# Custom certificate
+iodine -cert /path/to/cert.pem -key /path/to/key.pem
+
+# With password-protected key
+iodine -cert /path/to/cert.pem -key /path/to/key.pem -tls-pass "password"
+```
+
+**Note**: The embedded TLS 1.3 implementation has not been independently audited. For production use with high security requirements, OpenSSL is recommended.
 
 ### Reporting Issues and Known Issues
 

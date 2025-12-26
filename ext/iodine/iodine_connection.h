@@ -2046,14 +2046,10 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
                  "tls_io must be a Symbol (:iodine or :openssl)");
       ID tls_io_id = rb_sym2id(tls_io_rb);
       if (tls_io_id == IODINE_TLS_IO_IODINE_ID) {
-#ifdef FIO_TLS13_AVAILABLE
+        /* Embedded TLS 1.3 is always available via fio-stl.h */
         static fio_io_functions_s tls13_funcs;
         if (!tls13_funcs.build_context) tls13_funcs = fio_tls13_io_functions();
         r.settings.tls_io_func = &tls13_funcs;
-#else
-        rb_raise(rb_eRuntimeError,
-                 "Embedded TLS 1.3 backend not available in this build");
-#endif
       } else if (tls_io_id == IODINE_TLS_IO_OPENSSL_ID) {
 #ifdef HAVE_OPENSSL
         static fio_io_functions_s openssl_funcs;

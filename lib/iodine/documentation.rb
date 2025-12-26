@@ -84,33 +84,46 @@ unless defined?(Iodine)
   # Iodine supports two TLS backends:
   #
   # 1. *Embedded TLS 1.3* (`:iodine`) - A lightweight, dependency-free TLS 1.3
-  #    implementation built into facil.io. No external libraries required.
+  #    implementation built into facil.io. Always available, no external libraries required.
   #
   # 2. *OpenSSL* (`:openssl`) - Uses the system's OpenSSL library. Requires
-  #    OpenSSL version 3.0 or higher.
+  #    OpenSSL version 3.0 or higher. Used as default when available.
+  #
+  # === Runtime Selection (Recommended)
+  #
+  # Set the global default TLS backend at runtime:
+  #
+  #   # Switch to embedded TLS 1.3
+  #   Iodine::TLS.default = :iodine
+  #
+  #   # Switch to OpenSSL
+  #   Iodine::TLS.default = :openssl
+  #
+  # === Environment Variable
+  #
+  # Set before starting iodine:
+  #
+  #   IODINE_MTLS=1 iodine
+  #
+  # === Command Line
+  #
+  #   iodine -mtls
   #
   # === Compile-time Default
   #
-  # Set the default TLS backend at compile time:
+  # Force embedded TLS as the compile-time default:
   #
-  #   # Force embedded TLS as default (even if OpenSSL is available)
   #   IODINE_USE_EMBEDDED_TLS=1 gem install iodine
-  #
-  # === Runtime Selection
-  #
-  # Override the default per-connection using the `tls_io:` option:
-  #
-  #   # Use embedded TLS 1.3
-  #   Iodine.listen(url: "https://localhost:3000", tls_io: :iodine)
-  #
-  #   # Use OpenSSL
-  #   Iodine.listen(url: "https://localhost:3001", tls_io: :openssl)
   #
   # === Checking Available Backends
   #
-  #   Iodine::TLS::DEFAULT            # => :openssl or :iodine (compile-time default)
-  #   Iodine::TLS::OPENSSL_AVAILABLE  # => true if OpenSSL backend is compiled in
-  #   Iodine::TLS::EMBEDDED_AVAILABLE # => true (always available)
+  #   Iodine::TLS.default              # => :openssl or :iodine (current default)
+  #   Iodine::TLS.default = :iodine    # Set the default
+  #   Iodine::TLS::OPENSSL_AVAILABLE   # => true if OpenSSL is compiled in
+  #   Iodine::TLS::EMBEDDED_AVAILABLE  # => true (always available)
+  #   Iodine::TLS::SUPPORTED           # => true (always - at least embedded is available)
+  #
+  # *Note*: The embedded TLS 1.3 implementation has not been independently audited.
   #
   module Iodine
     # [Number] The number of worker threads per worker process. Negative values signify fractions of CPU core count (-1 ~= all CPU cores, -2 ~= half CPU cores, etc').
