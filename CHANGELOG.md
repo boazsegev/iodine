@@ -19,7 +19,23 @@ Please refer to the current gem version to review the relevant changes for your 
 
 **Feature**: Redis Pub/Sub support is now implemented via `Iodine::PubSub::Engine::Redis`. Use `-r redis://host:port` from CLI or create programmatically with `Iodine::PubSub::Engine::Redis.new(url, ping: 30)`. The Redis engine also supports sending arbitrary Redis commands via `redis.cmd("GET", "key") { |result| ... }`.
 
-**Feature**: Embedded TLS 1.3 support can be enabled at compile time with `IODINE_USE_EMBEDDED_TLS=1 gem install iodine`, allowing TLS without OpenSSL dependency.
+**Feature**: Embedded TLS 1.3 is now always available as a fallback TLS backend. Enable it via:
+- Runtime: `Iodine::TLS.default = :iodine`
+- Environment: `IODINE_MTLS=1`
+- CLI: `iodine -mtls`
+- Compile-time default: `IODINE_USE_EMBEDDED_TLS=1 gem install iodine`
+
+**Feature**: New `Iodine::TLS.default` and `Iodine::TLS.default=` methods allow runtime switching between TLS backends (`:openssl` or `:iodine`).
+
+**Feature**: Extended `Iodine::Utils` with cryptographic hashing functions: `sha256`, `sha512`, `sha3_256`, `sha3_512`, `blake2b`, `blake2s`, `hmac256`.
+
+**Feature**: Extended `Iodine::Utils` with TOTP utilities: `totp_secret` (generate Base32 secrets) and `totp_verify` (verify codes with time window).
+
+**Feature**: New `Iodine::Base::Crypto` module with modern cryptographic primitives:
+- `ChaCha20Poly1305` - AEAD encryption/decryption
+- `Ed25519` - Digital signatures (keypair, sign, verify)
+- `X25519` - Key exchange and public-key encryption (ECIES)
+- `HKDF` - Key derivation (RFC 5869)
 
 ------------------------
 

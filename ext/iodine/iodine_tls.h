@@ -221,10 +221,7 @@ static VALUE iodine_tls_default_set(VALUE klass, VALUE backend) {
 
   backend_id = rb_sym2id(backend);
   if (backend_id == rb_intern("iodine")) {
-#ifndef FIO_TLS13_AVAILABLE
-    rb_raise(rb_eRuntimeError,
-             "Embedded TLS 1.3 not available in this build");
-#endif
+    /* Embedded TLS 1.3 is always available via fio-stl.h */
   } else if (backend_id == rb_intern("openssl")) {
 #ifndef HAVE_OPENSSL
     rb_raise(rb_eRuntimeError,
@@ -256,19 +253,14 @@ static void Init_Iodine_TLS(void) { /** Initialize Iodine::TLS */
   rb_define_singleton_method(m, "default=", iodine_tls_default_set, 1);
 
   /* TLS backend availability constants */
+  rb_const_set(m, rb_intern("SUPPORTED"), Qtrue); /* Always true - embedded TLS always available */
 #ifdef HAVE_OPENSSL
-  rb_const_set(m, rb_intern("SUPPORTED"), Qtrue);
   rb_const_set(m, rb_intern("OPENSSL_AVAILABLE"), Qtrue);
 #else
-  rb_const_set(m, rb_intern("SUPPORTED"), Qfalse);
   rb_const_set(m, rb_intern("OPENSSL_AVAILABLE"), Qfalse);
 #endif
-  /* Embedded TLS 1.3 availability depends on fio-stl.h version */
-#ifdef FIO_TLS13_AVAILABLE
+  /* Embedded TLS 1.3 is always available via fio-stl.h */
   rb_const_set(m, rb_intern("EMBEDDED_AVAILABLE"), Qtrue);
-#else
-  rb_const_set(m, rb_intern("EMBEDDED_AVAILABLE"), Qfalse);
-#endif
 }
 
 #endif /* H___IODINE_TLS___H */

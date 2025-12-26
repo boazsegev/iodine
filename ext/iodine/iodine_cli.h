@@ -49,6 +49,18 @@ Ruby Public API.
 /* used here, defined later */
 static VALUE iodine_tls_default_set(VALUE klass, VALUE backend);
 
+FIO_IFUNC bool iodine___mtls_env(void) {
+  bool ret = 0;
+  char *e = getenv("IODINE_MTLS");
+  if (!e) return ret;
+  fio_str_info_s s = FIO_STR_INFO1(e);
+  fio_str_info_s untrue = FIO_STR_INFO1("false");
+  fio_str_info_s untrue2 = FIO_STR_INFO1("0");
+  ret = (bool)(1UL ^ ((unsigned)(FIO_STR_INFO_IS_EQ(s, untrue)) |
+                      FIO_STR_INFO_IS_EQ(s, untrue2)));
+  return ret;
+}
+
 /** Read CLI as required data. */
 static VALUE iodine_cli_parse(VALUE self, VALUE required) {
   if (!RB_TYPE_P(rb_argv, RUBY_T_ARRAY))
@@ -224,7 +236,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
     FIO_LOG_LEVEL = FIO_LOG_LEVEL_DEBUG;
   }
 
-  if (fio_cli_get_bool("-mtls")) {
+  if (fio_cli_get_bool("-mtls") || iodine___mtls_env()) {
     fio_io_functions_s io_fn;
     io_fn = fio_tls13_io_functions();
     fio_io_tls_default_functions(&io_fn);
