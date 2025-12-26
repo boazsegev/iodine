@@ -217,6 +217,7 @@ void Init_iodine(void) {
   Init_Iodine_Listener();
   Init_Iodine_MiniMap();
   Init_Iodine_PubSub_Engine();
+  Init_Iodine_Redis();
   Init_Iodine_PubSub_Message();
   Init_Iodine_TLS();
   Init_Iodine_Connection();

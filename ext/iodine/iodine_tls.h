@@ -198,10 +198,22 @@ static void Init_Iodine_TLS(void) { /** Initialize Iodine::TLS */
   rb_define_alloc_func(m, iodine_tls_alloc);
   rb_define_method(m, "add_cert", iodine_tls_cert_add, -1);
   rb_define_method(m, "use_certificate", iodine_tls_cert_add_old_name, -1);
-#if HAVE_OPENSSL
+
+  /* TLS backend availability constants */
+#ifdef HAVE_OPENSSL
   rb_const_set(m, rb_intern("SUPPORTED"), Qtrue);
+  rb_const_set(m, rb_intern("OPENSSL_AVAILABLE"), Qtrue);
+  rb_const_set(m, rb_intern("DEFAULT"), ID2SYM(rb_intern("openssl")));
 #else
   rb_const_set(m, rb_intern("SUPPORTED"), Qfalse);
+  rb_const_set(m, rb_intern("OPENSSL_AVAILABLE"), Qfalse);
+  rb_const_set(m, rb_intern("DEFAULT"), ID2SYM(rb_intern("iodine")));
+#endif
+  /* Embedded TLS 1.3 availability depends on fio-stl.h version */
+#ifdef FIO_TLS13_AVAILABLE
+  rb_const_set(m, rb_intern("EMBEDDED_AVAILABLE"), Qtrue);
+#else
+  rb_const_set(m, rb_intern("EMBEDDED_AVAILABLE"), Qfalse);
 #endif
 }
 

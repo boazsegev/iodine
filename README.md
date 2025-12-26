@@ -183,17 +183,59 @@ It's as easy as that. No extra code required.
 
 ## Native Pub/Sub with *optional* Redis scaling
 
-**Note**: Redis support isn't implemented (yet) in versions `0.8.x`, but the documentation hadn't been removed with hopes of a soon-to-be implementation.
-
 Iodine's core, `facil.io` offers a native Pub/Sub implementation that can be scaled across machine boundaries using Redis.
 
-The default implementation covers the whole process cluster, so a single cluster doesn't need Redis
+The default implementation covers the whole process cluster, so a single cluster doesn't need Redis.
 
 Once a single iodine process cluster isn't enough, horizontal scaling for the Pub/Sub layer is as simple as connecting iodine to Redis using the `-r <url>` from the command line. i.e.:
 
 ```bash
-iodine -w -1 -t 8 -r redis://localhost
+iodine -w -1 -t 8 -r redis://localhost:6379
 ```
+
+### Redis Configuration
+
+Redis can be configured via command line or programmatically:
+
+**Command Line:**
+```bash
+# Basic Redis connection
+iodine -r redis://localhost:6379
+
+# With authentication
+iodine -r redis://user:password@redis.example.com:6379
+
+# With ping interval (seconds)
+iodine -r redis://localhost:6379 -rp 30
+```
+
+**Programmatic:**
+```ruby
+# Create Redis engine
+redis = Iodine::PubSub::Engine::Redis.new("redis://localhost:6379/", ping: 30)
+
+# Set as default Pub/Sub engine
+Iodine::PubSub.default = redis
+
+# Now all Iodine.publish calls will go through Redis
+Iodine.publish(channel: "chat", message: "Hello from Ruby!")
+```
+
+### Using Redis for Direct Commands
+
+The Redis engine also supports sending arbitrary Redis commands:
+
+```ruby
+redis = Iodine::PubSub::Engine::Redis.new("redis://localhost:6379/")
+
+# Send Redis commands with async callbacks
+redis.cmd("SET", "mykey", "Hello, Redis!") { |result| puts result }
+redis.cmd("GET", "mykey") { |value| puts "Value: #{value}" }
+redis.cmd("KEYS", "*") { |keys| p keys }
+redis.cmd("INCR", "counter") { |new_value| puts new_value }
+```
+
+**Note**: Do not use `SUBSCRIBE`, `PSUBSCRIBE`, `UNSUBSCRIBE`, or `PUNSUBSCRIBE` commands directly. These are handled internally by the Pub/Sub system.
 
 ### Pub/Sub Decentralized Horizontal Scaling
 
@@ -223,17 +265,15 @@ Iodine's internal Pub/Sub Letter Exchange Protocol (inherited from facil.io) imp
 
 * Message delivery requires a match for both the channel name (or pattern) and the numerical filter (if none provided, zero is used).
 
-Redis Support Limitations:
-
-* Redis support **has yet to be implemented** in the Iodine `0.8.x` versions.
-
-  Note: It is possible that it won't make it into the final release, as Redis is less OpenSource than it was and I just don't have the desire to code for something I stopped using... but I would welcome a PR implementing this in the [facil.io C STL repo](https://github.com/facil-io/cstl).
+Redis Support Notes:
 
 * Iodine's Redis client does *not* support multiple databases. This is both because [database scoping is ignored by Redis during pub/sub](https://redis.io/topics/pubsub#database-amp-scoping) and because [Redis Cluster doesn't support multiple databases](https://redis.io/topics/cluster-spec). This indicated that multiple database support just isn't worth the extra effort and performance hit.
 
-* The iodine Redis client will use two Redis connections for each process cluster (a single publishing connection and a single subscription connection), minimizing the Redis load and network bandwidth.
+* The iodine Redis client uses two Redis connections per process (a publishing connection and a subscription connection), minimizing the Redis load and network bandwidth.
 
-* Connections will be automatically re-established if timeouts or errors occur.
+* Connections are automatically re-established if timeouts or errors occur.
+
+* The Redis engine supports authentication via URL (e.g., `redis://user:password@host:port`).
 
 ## Hot Restart / Hot Deployments
 
