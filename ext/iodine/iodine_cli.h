@@ -14,9 +14,9 @@ static int iodine_cli_task(fio_buf_info_s name,
   VALUE n = Qnil;
   VALUE v = Qnil;
   switch (t) {
-  case FIO_CLI_ARG_BOOL: v = Qtrue; break;
-  case FIO_CLI_ARG_INT: v = RB_LL2NUM(fio_atol(&val.buf)); break;
-  default: v = rb_str_new(val.buf, val.len); break;
+    case FIO_CLI_ARG_BOOL: v = Qtrue; break;
+    case FIO_CLI_ARG_INT: v = RB_LL2NUM(fio_atol(&val.buf)); break;
+    default: v = rb_str_new(val.buf, val.len); break;
   }
   STORE.hold(v);
   if (name.buf) {
@@ -46,6 +46,8 @@ static int iodine_cli_task(fio_buf_info_s name,
 /* *****************************************************************************
 Ruby Public API.
 ***************************************************************************** */
+/* used here, defined later */
+static VALUE iodine_tls_default_set(VALUE klass, VALUE backend);
 
 /** Read CLI as required data. */
 static VALUE iodine_cli_parse(VALUE self, VALUE required) {
@@ -168,7 +170,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
 
       FIO_CLI_PRINT_HEADER("TLS / SSL"),
       FIO_CLI_PRINT(
-          "NOTE: crashes if no crypto library implementation is found."),
+          "NOTE: may crash if no crypto implementation is available."),
       FIO_CLI_BOOL(
           "--tls-self -tls uses SSL/TLS with a self signed certificate."),
       FIO_CLI_STRING("--tls-name -name The host name for the SSL/TLS "
@@ -177,6 +179,10 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
       FIO_CLI_STRING("--tls-key -key The SSL/TLS private key .pem file."),
       FIO_CLI_STRING(
           "--tls-password -tls-pass The SSL/TLS password for the private key."),
+      FIO_CLI_BOOL("--tld-embedded -mtls uses facil.io's minimal TLS 1.3 "
+                   "implementation."),
+      FIO_CLI_PRINT(
+          "NOTE: facil.io's TLS 1.3 was never audited, but could be useful."),
 
       FIO_CLI_PRINT_HEADER("Clustering Pub/Sub"),
       FIO_CLI_INT("--broadcast -bp Cluster Broadcast Port."),
@@ -216,6 +222,14 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
   /* review CLI for logging */
   if (fio_cli_get_bool("-V")) {
     FIO_LOG_LEVEL = FIO_LOG_LEVEL_DEBUG;
+  }
+
+  if (fio_cli_get_bool("-mtls")) {
+    fio_io_functions_s io_fn;
+    io_fn = fio_tls13_io_functions();
+    fio_io_tls_default_functions(&io_fn);
+    iodine_tls_default_set(Qnil, ID2SYM(rb_intern("iodine")));
+    FIO_LOG_DEBUG2("TLS 1.3 registered as default TLS implementation");
   }
 
   if (fio_cli_get_bool("--contained")) { /* container - IPC url in tmp */
@@ -287,18 +301,15 @@ static VALUE iodine_cli_get(VALUE self, VALUE key) {
   char *tmp;
   if (RB_TYPE_P(key, RUBY_T_FIXNUM)) {
     val = fio_cli_unnamed_str(NUM2UINT(key));
-    if (val.buf)
-      r = rb_str_new(val.buf, val.len);
+    if (val.buf) r = rb_str_new(val.buf, val.len);
     return r;
   }
-  if (RB_TYPE_P(key, RUBY_T_SYMBOL))
-    key = rb_sym2str(key);
+  if (RB_TYPE_P(key, RUBY_T_SYMBOL)) key = rb_sym2str(key);
   if (!RB_TYPE_P(key, RUBY_T_STRING))
     rb_raise(rb_eArgError,
              "key should be either an Integer, a String or a Symbol");
   val = fio_cli_get_str(RSTRING_PTR(key));
-  if (!val.len)
-    return r;
+  if (!val.len) return r;
   tmp = val.buf;
   ival = fio_atol(&tmp);
   if (tmp == val.buf + val.len)
@@ -320,8 +331,7 @@ static VALUE iodine_cli_set(VALUE self, VALUE key, VALUE value) {
     fio_cli_set_unnamed(NUM2UINT(key), RSTRING_PTR(value));
     return value;
   }
-  if (RB_TYPE_P(key, RUBY_T_SYMBOL))
-    key = rb_sym2str(key);
+  if (RB_TYPE_P(key, RUBY_T_SYMBOL)) key = rb_sym2str(key);
   if (!RB_TYPE_P(key, RUBY_T_STRING))
     rb_raise(rb_eArgError,
              "key should be either an Integer, a String or a Symbol");

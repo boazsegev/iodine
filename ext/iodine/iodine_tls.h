@@ -5,6 +5,9 @@
 TLS Wrapper
 ***************************************************************************** */
 
+/* Static variable to store the current default TLS backend */
+static VALUE iodine_tls_default_backend = Qnil;
+
 static void iodine_tls_free(void *ptr_) {
   fio_io_tls_s **p = (fio_io_tls_s **)ptr_;
   fio_io_tls_free(*p);
@@ -126,7 +129,7 @@ typedef struct fio_io_tls_each_s {
 SFUNC int fio_io_tls_each(fio_io_tls_each_s);
 
 /** `fio_io_tls_each` helper macro, see `fio_io_tls_each_s` for named arguments. */
-#define fio_io_tls_each(tls_, ...)                                             \
+#define fio_io_tls_each(tls_, ...) \
   fio_io_tls_each(((fio_io_tls_each_s){.tls = tls_, __VA_ARGS__}))
 
 /** If `NULL` returns current default, otherwise sets it. */
@@ -192,22 +195,73 @@ static VALUE iodine_tls_cert_add_old_name(int argc, VALUE *argv, VALUE self) {
   return iodine_tls_cert_add(argc, argv, self);
 }
 
+/* *****************************************************************************
+TLS Default Backend Getter/Setter
+***************************************************************************** */
+
+/** Getter for Iodine::TLS.default - returns the current default TLS backend */
+static VALUE iodine_tls_default_get(VALUE klass) {
+  if (iodine_tls_default_backend == Qnil) {
+    /* Return compile-time default */
+#ifdef HAVE_OPENSSL
+    return ID2SYM(rb_intern("openssl"));
+#else
+    return ID2SYM(rb_intern("iodine"));
+#endif
+  }
+  return iodine_tls_default_backend;
+  (void)klass;
+}
+
+/** Setter for Iodine::TLS.default= - validates and sets the default backend */
+static VALUE iodine_tls_default_set(VALUE klass, VALUE backend) {
+  ID backend_id;
+  if (!RB_TYPE_P(backend, RUBY_T_SYMBOL))
+    rb_raise(rb_eTypeError, "default must be a Symbol (:iodine or :openssl)");
+
+  backend_id = rb_sym2id(backend);
+  if (backend_id == rb_intern("iodine")) {
+#ifndef FIO_TLS13_AVAILABLE
+    rb_raise(rb_eRuntimeError,
+             "Embedded TLS 1.3 not available in this build");
+#endif
+  } else if (backend_id == rb_intern("openssl")) {
+#ifndef HAVE_OPENSSL
+    rb_raise(rb_eRuntimeError,
+             "OpenSSL not available (not compiled in)");
+#endif
+  } else {
+    rb_raise(rb_eArgError, "default must be :iodine or :openssl");
+  }
+
+  iodine_tls_default_backend = backend;
+  return backend;
+  (void)klass;
+}
+
+/* *****************************************************************************
+Initialize Iodine::TLS
+***************************************************************************** */
+
 static void Init_Iodine_TLS(void) { /** Initialize Iodine::TLS */
   /** Used to setup a TLS contexts for connections (incoming / outgoing). */
-  VALUE m = rb_define_class_under(iodine_rb_IODINE, "TLS", rb_cObject);
+  VALUE m = iodine_rb_IODINE_TLS =
+      rb_define_class_under(iodine_rb_IODINE, "TLS", rb_cObject);
   rb_define_alloc_func(m, iodine_tls_alloc);
   rb_define_method(m, "add_cert", iodine_tls_cert_add, -1);
   rb_define_method(m, "use_certificate", iodine_tls_cert_add_old_name, -1);
+
+  /* TLS default backend getter/setter methods */
+  rb_define_singleton_method(m, "default", iodine_tls_default_get, 0);
+  rb_define_singleton_method(m, "default=", iodine_tls_default_set, 1);
 
   /* TLS backend availability constants */
 #ifdef HAVE_OPENSSL
   rb_const_set(m, rb_intern("SUPPORTED"), Qtrue);
   rb_const_set(m, rb_intern("OPENSSL_AVAILABLE"), Qtrue);
-  rb_const_set(m, rb_intern("DEFAULT"), ID2SYM(rb_intern("openssl")));
 #else
   rb_const_set(m, rb_intern("SUPPORTED"), Qfalse);
   rb_const_set(m, rb_intern("OPENSSL_AVAILABLE"), Qfalse);
-  rb_const_set(m, rb_intern("DEFAULT"), ID2SYM(rb_intern("iodine")));
 #endif
   /* Embedded TLS 1.3 availability depends on fio-stl.h version */
 #ifdef FIO_TLS13_AVAILABLE
