@@ -1,23 +1,30 @@
-require "mkmf"
+require 'mkmf'
 
+# TLS backend selection:
+# - IODINE_USE_EMBEDDED_TLS=1 forces embedded TLS 1.3 as default
+# - Otherwise, OpenSSL is used if available and compatible
 begin
-  dir_config("openssl")
-  if have_library('crypto') && have_library('ssl')
+  dir_config('openssl')
+  if ENV['IODINE_USE_EMBEDDED_TLS']
+    puts '* Default TLS: embedded (fio_tls13) - forced by IODINE_USE_EMBEDDED_TLS'
+  elsif have_library('crypto') && have_library('ssl')
     require 'openssl'
-    if(OpenSSL::VERSION.to_i > 2)
+    if OpenSSL::VERSION.to_i > 2
       puts "* Detected OpenSSL version >= 3 (#{OpenSSL::VERSION}), setting the HAVE_OPENSSL flag."
-      $defs << "-DHAVE_OPENSSL"
+      $defs << '-DHAVE_OPENSSL'
     else
-      puts "* Detected OpenSSL with incompatible version (#{OpenSSL::VERSION})."
+      puts "* OpenSSL version incompatible (#{OpenSSL::VERSION}), using embedded TLS 1.3"
     end
+  else
+    puts '* OpenSSL not found, using embedded TLS 1.3'
   end
-rescue => e
-    puts "* Couldn't find OpenSSL - skipping!\n\t Err: #{e.message}"
+rescue StandardError => e
+  puts "* Couldn't find OpenSSL - using embedded TLS 1.3\n\t Err: #{e.message}"
 end
 
-$defs << "-DDEBUG" if ENV["DEBUG"]
+$defs << '-DDEBUG' if ENV['DEBUG']
 
-append_cflags("-Wno-undef");
-append_cflags("-Wno-missing-noreturn");
+append_cflags('-Wno-undef')
+append_cflags('-Wno-missing-noreturn')
 
-create_makefile "iodine/iodine"
+create_makefile 'iodine/iodine'

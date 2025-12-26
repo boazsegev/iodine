@@ -17,6 +17,9 @@ static ID IODINE_SAME_SITE_NONE;
 static ID IODINE_SAME_SITE_LAX;
 static ID IODINE_SAME_SITE_STRICT;
 
+static ID IODINE_TLS_IO_IODINE_ID;
+static ID IODINE_TLS_IO_OPENSSL_ID;
+
 static VALUE IODINE_RACK_CONTENT_LENGTH;
 static VALUE IODINE_RACK_INPUT;
 static VALUE IODINE_RACK_NEORACK_CLIENT;
@@ -1991,7 +1994,7 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
               .log = fio_cli_get_bool("-v"),
           },
   };
-  VALUE proc = Qnil, handler_tmp = Qnil;
+  VALUE proc = Qnil, handler_tmp = Qnil, tls_io_rb = Qnil;
   iodine_rb2c_arg(
       argc,
       argv,
@@ -1999,6 +2002,7 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
       IODINE_ARG_RB(handler_tmp, 0, "handler", 0),
       IODINE_ARG_BUF(r.hint, 0, "service", 0),
       IODINE_ARG_RB(r.rb_tls, 0, "tls", 0),
+      IODINE_ARG_RB(tls_io_rb, 0, "tls_io", 0),
       IODINE_ARG_STR(r.settings.public_folder, 0, "public", 0),
       IODINE_ARG_SIZE_T(r.settings.max_age, 0, "max_age", 0),
       IODINE_ARG_U32(r.settings.max_header_size, 0, "max_header_size", 0),
@@ -2097,6 +2101,36 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
                           fio_cli_get("-cert"),
                           fio_cli_get("-key"),
                           fio_cli_get("-tls-pass"));
+  }
+
+  /* Set TLS IO functions based on tls_io option */
+  if (tls_io_rb != Qnil) {
+    if (!RB_TYPE_P(tls_io_rb, RUBY_T_SYMBOL))
+      rb_raise(rb_eTypeError, "tls_io must be a Symbol (:iodine or :openssl)");
+    ID tls_io_id = rb_sym2id(tls_io_rb);
+    if (tls_io_id == IODINE_TLS_IO_IODINE_ID) {
+#ifdef FIO_TLS13_AVAILABLE
+      static fio_io_functions_s tls13_funcs;
+      if (!tls13_funcs.build_context)
+        tls13_funcs = fio_tls13_io_functions();
+      r.settings.tls_io_func = &tls13_funcs;
+#else
+      rb_raise(rb_eRuntimeError,
+               "Embedded TLS 1.3 backend not available in this build");
+#endif
+    } else if (tls_io_id == IODINE_TLS_IO_OPENSSL_ID) {
+#ifdef HAVE_OPENSSL
+      static fio_io_functions_s openssl_funcs;
+      if (!openssl_funcs.build_context)
+        openssl_funcs = fio_openssl_io_functions();
+      r.settings.tls_io_func = &openssl_funcs;
+#else
+      rb_raise(rb_eRuntimeError,
+               "OpenSSL TLS backend not available (not compiled in)");
+#endif
+    } else {
+      rb_raise(rb_eArgError, "tls_io must be :iodine or :openssl");
+    }
   }
 
   fio_cli_set("-b", NULL);
@@ -3068,6 +3102,9 @@ static void Init_Iodine_Connection(void)  {
   IODINE_CONST_ID_STORE(IODINE_SAME_SITE_NONE, "none");
   IODINE_CONST_ID_STORE(IODINE_SAME_SITE_LAX, "lax");
   IODINE_CONST_ID_STORE(IODINE_SAME_SITE_STRICT, "strict");
+
+  IODINE_CONST_ID_STORE(IODINE_TLS_IO_IODINE_ID, "iodine");
+  IODINE_CONST_ID_STORE(IODINE_TLS_IO_OPENSSL_ID, "openssl");
 
 
 /* cache VALUE for `env` key */

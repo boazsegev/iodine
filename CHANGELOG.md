@@ -17,7 +17,9 @@ Please refer to the current gem version to review the relevant changes for your 
 
 **Update**: supports the [NeoRack specification](https://github.com/boazsegev/neorack/blob/master/SPEC.md) and its existing [extentions](https://github.com/boazsegev/neorack/blob/master/extensions), including [Rack backwards compatibility](https://github.com/boazsegev/neorack/blob/master/extensions/rack.md) with support for the previous `rack.upgrade?` WebSocket & SSE approach.
 
-**TODO**: this version is still missing Redis support, which will be added (hopefully) soon.
+**Feature**: Redis Pub/Sub support is now implemented via `Iodine::PubSub::Engine::Redis`. Use `-r redis://host:port` from CLI or create programmatically with `Iodine::PubSub::Engine::Redis.new(url, ping: 30)`. The Redis engine also supports sending arbitrary Redis commands via `redis.cmd("GET", "key") { |result| ... }`.
+
+**Feature**: Embedded TLS 1.3 support can be enabled at compile time with `IODINE_USE_EMBEDDED_TLS=1 gem install iodine`, allowing TLS without OpenSSL dependency.
 
 ------------------------
 

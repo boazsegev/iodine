@@ -19,14 +19,12 @@ FIO_IFUNC VALUE iodine_utils_encode_with_encoding(
   if (!argc || argc > 2)
     rb_raise(rb_eArgError, "Wrong number of arguments (%d)", argc);
   rb_check_type(argv[0], RUBY_T_STRING);
-  if (!RSTRING_LEN(argv[0]))
-    return argv[0];
+  if (!RSTRING_LEN(argv[0])) return argv[0];
   rb_encoding *enc = NULL;
   if (argc == 2)
     enc = (TYPE(argv[1]) == T_STRING) ? rb_enc_find(RSTRING_PTR(argv[1]))
                                       : rb_enc_get(argv[1]);
-  if (!enc)
-    enc = IodineUTF8Encoding;
+  if (!enc) enc = IodineUTF8Encoding;
   FIO_STR_INFO_TMP_VAR(tmp, 512);
   char *org = tmp.buf;
   writer(&tmp,
@@ -35,8 +33,7 @@ FIO_IFUNC VALUE iodine_utils_encode_with_encoding(
          RSTRING_LEN(argv[0]));
   self = rb_str_new(tmp.buf, tmp.len);
   rb_enc_associate(self, enc);
-  if (org != tmp.buf)
-    FIO_STRING_FREE2(tmp);
+  if (org != tmp.buf) FIO_STRING_FREE2(tmp);
   return self;
 }
 
@@ -48,15 +45,13 @@ iodine_utils_encode_internal(VALUE mod,
                                            const void *encoded,
                                            size_t len)) {
   rb_check_type(arg, RUBY_T_STRING);
-  if (!RSTRING_LEN(arg))
-    return arg;
+  if (!RSTRING_LEN(arg)) return arg;
   FIO_STR_INFO_TMP_VAR(tmp, 512);
   const char *org = tmp.buf;
   writer(&tmp, FIO_STRING_ALLOC_COPY, RSTRING_PTR(arg), RSTRING_LEN(arg));
   arg = rb_str_new(tmp.buf, tmp.len);
   rb_enc_associate(arg, IodineUTF8Encoding);
-  if (org != tmp.buf)
-    FIO_STRING_FREE2(tmp);
+  if (org != tmp.buf) FIO_STRING_FREE2(tmp);
   return arg;
 }
 FIO_IFUNC VALUE
@@ -67,16 +62,14 @@ iodine_utils_encode1_internal(VALUE mod,
                                             const void *encoded,
                                             size_t len)) {
   rb_check_type(arg, RUBY_T_STRING);
-  if (!RSTRING_LEN(arg))
-    return arg;
+  if (!RSTRING_LEN(arg)) return arg;
   FIO_STR_INFO_TMP_VAR(tmp, 512);
   const char *org = tmp.buf;
   writer(&tmp, FIO_STRING_ALLOC_COPY, RSTRING_PTR(arg), RSTRING_LEN(arg));
   rb_str_set_len(arg, 0);
   rb_str_cat(arg, tmp.buf, tmp.len);
   rb_enc_associate(arg, IodineUTF8Encoding);
-  if (org != tmp.buf)
-    FIO_STRING_FREE2(tmp);
+  if (org != tmp.buf) FIO_STRING_FREE2(tmp);
   return arg;
 }
 
@@ -232,11 +225,10 @@ Designed to be secure against timing attacks when both String objects are of the
                 # prove_secure_compare("Rack::Utils.secure_compare (short string)", Rack::Utils.method(:secure_compare), 1024) # VERY slow
 
 */
-FIO_SFUNC VALUE iodine_utils_is_eq(VALUE mod, VALUE a, VALUE b) { // clang-format on
+FIO_SFUNC VALUE iodine_utils_is_eq(VALUE mod, VALUE a, VALUE b) {  // clang-format on
   rb_check_type(a, RUBY_T_STRING);
   rb_check_type(b, RUBY_T_STRING);
-  if (RSTRING_LEN(a) != RSTRING_LEN(b))
-    return RUBY_Qfalse;
+  if (RSTRING_LEN(a) != RSTRING_LEN(b)) return RUBY_Qfalse;
   return fio_ct_is_eq(RSTRING_PTR(a), RSTRING_PTR(b), RSTRING_LEN(a))
              ? RUBY_Qtrue
              : RUBY_Qfalse;
@@ -283,11 +275,10 @@ FIO_SFUNC VALUE iodine_utils_hmac_poly(VALUE self,
   fio_u128 h;
   if (k.len < 256) {
     fio_memcpy255x(fallback.u8, k.buf, k.len);
-    if (k.len < 10)
-      fallback = fio_sha512(k.buf, k.len).u256[0];
+    if (k.len < 10) fallback = fio_sha512(k.buf, k.len).u256[0];
     k.buf = (char *)fallback.u8;
   }
-  fio_poly1305_auth(h.u8, k.buf, m.buf, m.len, NULL, 0);
+  fio_poly1305_auth(h.u8, m.buf, m.len, NULL, 0, k.buf);
 
   FIO_STR_INFO_TMP_VAR(out, 32);
   fio_string_write_base64enc(&out, NULL, h.u8, 16, 0);
@@ -310,8 +301,7 @@ FIO_SFUNC VALUE iodine_utils_uuid(int argc, VALUE *argv, VALUE self) {
     if (secret.len <= 128) {
       fio_memcpy255x(mk.u8, secret.buf, secret.len);
       mk.u64[15] ^= secret.len;
-      for (size_t i = 0; i < 16; ++i)
-        mk.u64[i] ^= 0x3636363636363636ULL;
+      for (size_t i = 0; i < 16; ++i) mk.u64[i] ^= 0x3636363636363636ULL;
       secret.buf = (char *)mk.u8;
       secret.len = 128;
     }
@@ -326,8 +316,7 @@ FIO_SFUNC VALUE iodine_utils_uuid(int argc, VALUE *argv, VALUE self) {
     rand.u8[8] &= 0x3F;
     rand.u8[8] |= 0x80;
   } else if (secret.buf || info.buf) {
-    if (info.buf)
-      secret = info;
+    if (info.buf) secret = info;
     uint64_t tmp = fio_risky_hash(secret.buf, secret.len, 0);
     rand.u64[0] += tmp;
     rand.u64[1] -= tmp;
@@ -428,7 +417,7 @@ FIO_SFUNC VALUE iodine_utils_monkey_patch(int argc, VALUE *argv, VALUE self) {
   return self;
 }
 
-/** Initialize Iodine::Utils */ // clang-format off
+/** Initialize Iodine::Utils */  // clang-format off
 /**
 
 # Utility Helpers - Iodine's Helpers

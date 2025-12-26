@@ -103,6 +103,11 @@ facil.io
 
 #include "fio-stl.h"
 
+/* Include Redis module (requires FIOBJ types from FIO_EVERYTHING) */
+#define FIO_REDIS
+#define FIO_FIOBJ
+#include "fio-stl.h"
+
 #ifndef DEBUG
 #endif
 
@@ -156,6 +161,7 @@ static VALUE iodine_handler_method_injection__inner(VALUE self,
 /* layer 2 modules */
 #include "iodine_mustache.h"
 #include "iodine_pubsub_eng.h"
+#include "iodine_redis.h"
 #include "iodine_threads.h"
 #include "iodine_tls.h"
 /* layer 3 modules */
