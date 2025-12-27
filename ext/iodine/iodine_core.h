@@ -24,22 +24,24 @@ static void *iodine___start(void *ignr_) {
                              (fio_cli_get_i("-w") ? Qtrue : Qfalse),
                              &keeper);
   }
-  FIO_LOG_INFO("\n\tStarting the iodine server."
-               "\n\tVersion: %s"
-               "\n\tEngine: " FIO_POLL_ENGINE_STR "\n\tWorkers: %d\t(%s)"
-               "\n\tThreads: 1+%d\t(per worker)"
-               "\n\tPress ^C to exit.",
-               (ver == Qnil ? "unknown" : RSTRING_PTR(ver)),
-               workers,
-               (workers ? "cluster mode" : "single process"),
-               (int)IODINE_THREAD_POOL.count);
+  FIO_LOG_INFO(
+      "\n\tStarting the iodine server."
+      "\n\tVersion: %s"
+      "\n\tEngine: " FIO_POLL_ENGINE_STR
+      "\n\tWorkers: %d\t(%s)"
+      "\n\tThreads: 1+%d\t(per worker)"
+      "\n\tPress ^C to exit.",
+      (ver == Qnil ? "unknown" : RSTRING_PTR(ver)),
+      workers,
+      (workers ? "cluster mode" : "single process"),
+      (int)IODINE_THREAD_POOL.count);
 
   fio_io_start((int)fio_cli_get_i("-w"));
   return ignr_;
 }
 
 /** Starts the Iodine IO reactor. */
-static VALUE iodine_start(VALUE self) { // clang-format on
+static VALUE iodine_start(VALUE self) {  // clang-format on
   rb_thread_call_without_gvl(iodine___start, NULL, NULL, NULL);
   return self;
 }
@@ -76,8 +78,7 @@ Workers
 
 /** Returns the number of process workers that the reactor (will) use. */
 static VALUE iodine_workers(VALUE klass) {
-  if (!fio_cli_get("-w"))
-    return Qnil;
+  if (!fio_cli_get("-w")) return Qnil;
   unsigned long tmp = fio_io_workers((uint16_t)fio_cli_get_i("-w"));
   return LL2NUM(tmp);
   (void)klass;
@@ -109,8 +110,7 @@ Threads
 
 /** Returns the number of threads that the reactor (will) use. */
 static VALUE iodine_threads(VALUE klass) {
-  if (!fio_cli_get("-t"))
-    return Qnil;
+  if (!fio_cli_get("-t")) return Qnil;
   unsigned long tmp = fio_io_workers((uint16_t)fio_cli_get_i("-t"));
   return LL2NUM(tmp);
   (void)klass;
@@ -157,14 +157,14 @@ static VALUE iodine_verbosity_set(VALUE klass, VALUE num) {
 Secrets
 ***************************************************************************** */
 
-/** Returns the current verbosity (logging) level.*/
+/** Returns the the server's secret as a 64 byte binary string.*/
 static VALUE iodine_secret(VALUE klass) {
   fio_u512 s = fio_secret();
   return rb_usascii_str_new((const char *)s.u8, sizeof(s));
   (void)klass;
 }
 
-/** Sets the current verbosity (logging) level. */
+/** Sets a new server secret based on the secret 'key'.*/
 static VALUE iodine_secret_set(VALUE klass, VALUE key) {
   rb_check_type(key, RUBY_T_STRING);
   fio_secret_set(RSTRING_PTR(key), RSTRING_LEN(key), 0);

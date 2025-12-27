@@ -6,7 +6,8 @@
 Iodine::Base::Crypto - Advanced Cryptographic Operations
 
 Provides access to modern cryptographic primitives:
-- ChaCha20-Poly1305: AEAD symmetric encryption
+- ChaCha20-Poly1305: AEAD symmetric encryption (12-byte nonce)
+- XChaCha20-Poly1305: AEAD symmetric encryption (24-byte nonce, safe for random)
 - Ed25519: Digital signatures
 - X25519: Key exchange and public-key encryption (ECIES)
 - HKDF: Key derivation (RFC 5869)
@@ -14,6 +15,7 @@ Provides access to modern cryptographic primitives:
 
 static VALUE iodine_rb_CRYPTO;
 static VALUE iodine_rb_CHACHA20POLY1305;
+static VALUE iodine_rb_XCHACHA20POLY1305;
 static VALUE iodine_rb_ED25519;
 static VALUE iodine_rb_X25519;
 static VALUE iodine_rb_HKDF;
@@ -115,6 +117,114 @@ FIO_SFUNC VALUE iodine_crypto_chacha_decrypt(int argc,
                                          ad.len,
                                          (void *)key.buf,
                                          (void *)nonce.buf);
+
+  if (result != 0)
+    rb_raise(rb_eRuntimeError, "Authentication failed");
+
+  return plaintext;
+  (void)self;
+}
+
+/* *****************************************************************************
+XChaCha20-Poly1305 AEAD Encryption (Extended Nonce)
+***************************************************************************** */
+
+/**
+ * Encrypts data using XChaCha20-Poly1305 AEAD.
+ *
+ * XChaCha20-Poly1305 uses a 24-byte nonce (vs 12-byte for ChaCha20-Poly1305),
+ * making it safe to use randomly generated nonces without risk of collision.
+ *
+ * @param data [String] Plaintext to encrypt
+ * @param key: [String] 32-byte encryption key
+ * @param nonce: [String] 24-byte nonce (safe for random generation)
+ * @param ad: [String, nil] Optional additional authenticated data
+ * @return [Array<String, String>] [ciphertext, mac] where mac is 16 bytes
+ */
+FIO_SFUNC VALUE iodine_crypto_xchacha_encrypt(int argc,
+                                              VALUE *argv,
+                                              VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0;
+  fio_buf_info_s key = FIO_BUF_INFO0;
+  fio_buf_info_s nonce = FIO_BUF_INFO0;
+  fio_buf_info_s ad = FIO_BUF_INFO0;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(key, 0, "key", 1),
+                  IODINE_ARG_BUF(nonce, 0, "nonce", 1),
+                  IODINE_ARG_BUF(ad, 0, "ad", 0));
+
+  if (key.len != 32)
+    rb_raise(rb_eArgError, "key must be 32 bytes (got %zu)", key.len);
+  if (nonce.len != 24)
+    rb_raise(rb_eArgError, "nonce must be 24 bytes (got %zu)", nonce.len);
+
+  /* Copy data for in-place encryption */
+  VALUE ciphertext = rb_str_new(data.buf, data.len);
+  uint8_t mac[16];
+
+  fio_xchacha20_poly1305_enc(mac,
+                             RSTRING_PTR(ciphertext),
+                             data.len,
+                             ad.buf,
+                             ad.len,
+                             (void *)key.buf,
+                             (void *)nonce.buf);
+
+  VALUE mac_str = rb_str_new((const char *)mac, 16);
+  return rb_ary_new_from_args(2, ciphertext, mac_str);
+  (void)self;
+}
+
+/**
+ * Decrypts data using XChaCha20-Poly1305 AEAD.
+ *
+ * @param ciphertext [String] Ciphertext to decrypt
+ * @param mac: [String] 16-byte authentication tag
+ * @param key: [String] 32-byte encryption key
+ * @param nonce: [String] 24-byte nonce
+ * @param ad: [String, nil] Optional additional authenticated data
+ * @return [String] Decrypted plaintext
+ * @raise [RuntimeError] if authentication fails
+ */
+FIO_SFUNC VALUE iodine_crypto_xchacha_decrypt(int argc,
+                                              VALUE *argv,
+                                              VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0;
+  fio_buf_info_s mac = FIO_BUF_INFO0;
+  fio_buf_info_s key = FIO_BUF_INFO0;
+  fio_buf_info_s nonce = FIO_BUF_INFO0;
+  fio_buf_info_s ad = FIO_BUF_INFO0;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(mac, 0, "mac", 1),
+                  IODINE_ARG_BUF(key, 0, "key", 1),
+                  IODINE_ARG_BUF(nonce, 0, "nonce", 1),
+                  IODINE_ARG_BUF(ad, 0, "ad", 0));
+
+  if (key.len != 32)
+    rb_raise(rb_eArgError, "key must be 32 bytes (got %zu)", key.len);
+  if (nonce.len != 24)
+    rb_raise(rb_eArgError, "nonce must be 24 bytes (got %zu)", nonce.len);
+  if (mac.len != 16)
+    rb_raise(rb_eArgError, "mac must be 16 bytes (got %zu)", mac.len);
+
+  /* Copy data for in-place decryption, also copy mac since it's modified */
+  VALUE plaintext = rb_str_new(data.buf, data.len);
+  uint8_t mac_copy[16];
+  FIO_MEMCPY(mac_copy, mac.buf, 16);
+
+  int result = fio_xchacha20_poly1305_dec(mac_copy,
+                                          RSTRING_PTR(plaintext),
+                                          data.len,
+                                          ad.buf,
+                                          ad.len,
+                                          (void *)key.buf,
+                                          (void *)nonce.buf);
 
   if (result != 0)
     rb_raise(rb_eRuntimeError, "Authentication failed");
@@ -477,6 +587,19 @@ static void Init_Iodine_Crypto(void) {
   rb_define_module_function(iodine_rb_CHACHA20POLY1305,
                             "decrypt",
                             iodine_crypto_chacha_decrypt,
+                            -1);
+
+  /* Iodine::Base::Crypto::XChaCha20Poly1305 */
+  iodine_rb_XCHACHA20POLY1305 =
+      rb_define_module_under(iodine_rb_CRYPTO, "XChaCha20Poly1305");
+  STORE.hold(iodine_rb_XCHACHA20POLY1305);
+  rb_define_module_function(iodine_rb_XCHACHA20POLY1305,
+                            "encrypt",
+                            iodine_crypto_xchacha_encrypt,
+                            -1);
+  rb_define_module_function(iodine_rb_XCHACHA20POLY1305,
+                            "decrypt",
+                            iodine_crypto_xchacha_decrypt,
                             -1);
 
   /* Iodine::Base::Crypto::Ed25519 */
