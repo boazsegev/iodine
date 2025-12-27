@@ -5139,7 +5139,7 @@ FIO_MAP Ordering & Naming Shortcut
 #define FIO_SHA1
 #endif
 
-#if defined(FIO_PUBSUB) || defined(FIO_SECRET)
+#if defined(FIO_PUBSUB) || defined(FIO_SECRET) || defined(FIO_OTP)
 #define FIO_SHA2
 #endif
 
@@ -27233,6 +27233,67 @@ SFUNC int fio_chacha20_poly1305_dec(void *restrict mac,
                                     const void *nonce);
 
 /* *****************************************************************************
+XChaCha20Poly1305 API (Extended Nonce - 24 bytes)
+***************************************************************************** */
+
+/**
+ * Performs an in-place encryption of `data` using XChaCha20 with additional
+ * data, producing a 16 byte message authentication code (MAC) using Poly1305.
+ *
+ * XChaCha20 uses a 192-bit (24 byte) nonce, making it safe to use with
+ * randomly-generated nonces without risk of nonce collision.
+ *
+ * * `key`    MUST point to a 256 bit long memory address (32 Bytes).
+ * * `nonce`  MUST point to a 192 bit long memory address (24 Bytes).
+ * * `ad`     MAY be omitted, will NOT be encrypted.
+ * * `data`   MAY be omitted, WILL be encrypted.
+ * * `mac`    MUST point to a buffer with (at least) 16 available bytes.
+ */
+SFUNC void fio_xchacha20_poly1305_enc(void *restrict mac,
+                                      void *restrict data,
+                                      size_t len,
+                                      const void *ad, /* additional data */
+                                      size_t adlen,
+                                      const void *key,
+                                      const void *nonce);
+
+/**
+ * Performs an in-place decryption of `data` using XChaCha20 after
+ * authenticating the message authentication code (MAC) using Poly1305.
+ *
+ * * `key`    MUST point to a 256 bit long memory address (32 Bytes).
+ * * `nonce`  MUST point to a 192 bit long memory address (24 Bytes).
+ * * `ad`     MAY be omitted ONLY IF originally omitted.
+ * * `data`   MAY be omitted, WILL be decrypted.
+ * * `mac`    MUST point to a buffer where the 16 byte MAC is placed.
+ *
+ * Returns `-1` on error (authentication failed).
+ */
+SFUNC int fio_xchacha20_poly1305_dec(void *restrict mac,
+                                     void *restrict data,
+                                     size_t len,
+                                     const void *ad, /* additional data */
+                                     size_t adlen,
+                                     const void *key,
+                                     const void *nonce);
+
+/**
+ * Performs an in-place encryption/decryption of `data` using XChaCha20.
+ *
+ * XChaCha20 uses a 192-bit (24 byte) nonce, making it safe to use with
+ * randomly-generated nonces without risk of nonce collision.
+ *
+ * * `key`     MUST point to a 256 bit long memory address (32 Bytes).
+ * * `nonce`   MUST point to a 192 bit long memory address (24 Bytes).
+ * * `counter` is the block counter, usually 0 unless `data` is mid-cyphertext.
+ */
+SFUNC void fio_xchacha20(void *restrict data,
+                         size_t len,
+                         const void *key,
+                         const void *nonce,
+                         uint32_t counter);
+
+/* *****************************************************************************
 Using ChaCha20 and Poly1305 separately
 ***************************************************************************** */
 
@@ -27817,6 +27878,159 @@ SFUNC int fio_chacha20_poly1305_dec(void *restrict mac,
   fio_chacha20(data, len, key, nonce, 1);
   return 0;
 }
+
+/* *****************************************************************************
+XChaCha20 (Extended Nonce Variant)
+***************************************************************************** */
+
+/**
+ * HChaCha20: derives a 256-bit subkey from a 256-bit key and 128-bit nonce.
+ *
+ * This is the "hash" variant of ChaCha20 used in the XChaCha20 construction.
+ * Unlike regular ChaCha20, it does NOT add the initial state after the rounds.
+ * Output: words 0-3 and 12-15 of the final state (256 bits total).
+ */
+FIO_IFUNC void fio___hchacha20(void *restrict subkey,
+                               const void *key,
+                               const void *nonce16) {
+  /* Initialize state: constants + key + nonce (no counter for HChaCha20) */
+  uint32_t v[16] = {
+      // clang-format off
+      0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,  /* "expand 32-byte k" */
+      fio_buf2u32_le(key),
+      fio_buf2u32_le((uint8_t *)key + 4),
+      fio_buf2u32_le((uint8_t *)key + 8),
+      fio_buf2u32_le((uint8_t *)key + 12),
+      fio_buf2u32_le((uint8_t *)key + 16),
+      fio_buf2u32_le((uint8_t *)key + 20),
+      fio_buf2u32_le((uint8_t *)key + 24),
+      fio_buf2u32_le((uint8_t *)key + 28),
+      fio_buf2u32_le(nonce16),
+      fio_buf2u32_le((uint8_t *)nonce16 + 4),
+      fio_buf2u32_le((uint8_t *)nonce16 + 8),
+      fio_buf2u32_le((uint8_t *)nonce16 + 12),
+      // clang-format on
+  };
+
+  /* Run 10 double-rounds (20 quarter-rounds total) */
+  for (size_t round__ = 0; round__ < 10; ++round__) {
+    FIO___CHACHA_VROUND(4, v, (v + 4), (v + 8), (v + 12));
+    fio_u32x4_reshuffle((v + 4), 1, 2, 3, 0);
+    fio_u32x4_reshuffle((v + 8), 2, 3, 0, 1);
+    fio_u32x4_reshuffle((v + 12), 3, 0, 1, 2);
+    FIO___CHACHA_VROUND(4, v, (v + 4), (v + 8), (v + 12));
+    fio_u32x4_reshuffle((v + 4), 3, 0, 1, 2);
+    fio_u32x4_reshuffle((v + 8), 2, 3, 0, 1);
+    fio_u32x4_reshuffle((v + 12), 1, 2, 3, 0);
+  }
+
+  /* Output words 0-3 and 12-15 as the 256-bit subkey (NO state addition!) */
+  fio_u2buf32_le(subkey, v[0]);
+  fio_u2buf32_le((uint8_t *)subkey + 4, v[1]);
+  fio_u2buf32_le((uint8_t *)subkey + 8, v[2]);
+  fio_u2buf32_le((uint8_t *)subkey + 12, v[3]);
+  fio_u2buf32_le((uint8_t *)subkey + 16, v[12]);
+  fio_u2buf32_le((uint8_t *)subkey + 20, v[13]);
+  fio_u2buf32_le((uint8_t *)subkey + 24, v[14]);
+  fio_u2buf32_le((uint8_t *)subkey + 28, v[15]);
+}
+
+/**
+ * XChaCha20: ChaCha20 with extended 192-bit nonce.
+ *
+ * 1. Derive subkey using HChaCha20 with first 16 bytes of nonce
+ * 2. Use remaining 8 bytes of nonce (prefixed with 4 zero bytes) as 12-byte
+ *    nonce for standard ChaCha20
+ */
+SFUNC void fio_xchacha20(void *restrict data,
+                         size_t len,
+                         const void *key,
+                         const void *nonce,
+                         uint32_t counter) {
+  uint8_t subkey[32];
+  uint8_t sub_nonce[12];
+
+  /* Derive subkey from first 16 bytes of nonce */
+  fio___hchacha20(subkey, key, nonce);
+
+  /* Build sub-nonce: 4 zero bytes + last 8 bytes of original nonce */
+  sub_nonce[0] = 0;
+  sub_nonce[1] = 0;
+  sub_nonce[2] = 0;
+  sub_nonce[3] = 0;
+  FIO_MEMCPY(sub_nonce + 4, (const uint8_t *)nonce + 16, 8);
+
+  /* Apply standard ChaCha20 with derived subkey and sub-nonce */
+  fio_chacha20(data, len, subkey, sub_nonce, counter);
+
+  /* Secure cleanup */
+  fio_secure_zero(subkey, sizeof(subkey));
+}
+
+/**
+ * XChaCha20-Poly1305 encryption with 192-bit nonce.
+ */
+SFUNC void fio_xchacha20_poly1305_enc(void *restrict mac,
+                                      void *restrict data,
+                                      size_t len,
+                                      const void *ad,
+                                      size_t adlen,
+                                      const void *key,
+                                      const void *nonce) {
+  uint8_t subkey[32];
+  uint8_t sub_nonce[12];
+
+  /* Derive subkey from first 16 bytes of nonce */
+  fio___hchacha20(subkey, key, nonce);
+
+  /* Build sub-nonce: 4 zero bytes + last 8 bytes of original nonce */
+  sub_nonce[0] = 0;
+  sub_nonce[1] = 0;
+  sub_nonce[2] = 0;
+  sub_nonce[3] = 0;
+  FIO_MEMCPY(sub_nonce + 4, (const uint8_t *)nonce + 16, 8);
+
+  /* Apply standard ChaCha20-Poly1305 with derived subkey and sub-nonce */
+  fio_chacha20_poly1305_enc(mac, data, len, ad, adlen, subkey, sub_nonce);
+
+  /* Secure cleanup */
+  fio_secure_zero(subkey, sizeof(subkey));
+}
+
+/**
+ * XChaCha20-Poly1305 decryption with 192-bit nonce.
+ */
+SFUNC int fio_xchacha20_poly1305_dec(void *restrict mac,
+                                     void *restrict data,
+                                     size_t len,
+                                     const void *ad,
+                                     size_t adlen,
+                                     const void *key,
+                                     const void *nonce) {
+  uint8_t subkey[32];
+  uint8_t sub_nonce[12];
+  int result;
+
+  /* Derive subkey from first 16 bytes of nonce */
+  fio___hchacha20(subkey, key, nonce);
+
+  /* Build sub-nonce: 4 zero bytes + last 8 bytes of original nonce */
+  sub_nonce[0] = 0;
+  sub_nonce[1] = 0;
+  sub_nonce[2] = 0;
+  sub_nonce[3] = 0;
+  FIO_MEMCPY(sub_nonce + 4, (const uint8_t *)nonce + 16, 8);
+
+  /* Apply standard ChaCha20-Poly1305 decryption with derived key/nonce */
+  result =
+      fio_chacha20_poly1305_dec(mac, data, len, ad, adlen, subkey, sub_nonce);
+
+  /* Secure cleanup */
+  fio_secure_zero(subkey, sizeof(subkey));
+
+  return result;
+}
+
 /* *****************************************************************************
 Module Cleanup
 ***************************************************************************** */
@@ -41995,26 +42209,60 @@ FIO_SFUNC uint32_t fio___otp_compute(fio_buf_info_s key,
   /* t should be big endian */
   t = fio_lton64(t);
 
-  if (settings.is_raw)
-    secret = FIO_BUF2STR_INFO(key);
-  else if (settings.is_hex) {
+  if (settings.is_raw) {
+    /* raw key - hash if too long for HMAC-SHA1 (block size 64 bytes) */
+    if (key.len > 64) {
+      s.u512[0] = fio_sha512(key.buf, key.len);
+      secret.len = 64;
+      FIO_LOG_WARNING("OTP hex key too long (%zu bytes), hashing to 64 bytes",
+                      key.len);
+    } else {
+      secret = FIO_BUF2STR_INFO(key);
+    }
+  } else if (settings.is_hex) {
     /* decode Hex key input OTP */
-    FIO_ASSERT(key.len < (1024 / (8 * 2)), "key too long");
+    if (key.len >= (1024 / (8 * 2))) {
+      FIO_LOG_WARNING("OTP hex key too long (%zu bytes), hashing to 64 bytes",
+                      key.len);
+    }
     size_t written = 0; /* fun times... */
     for (size_t i = 0; i < key.len; ++i) {
       if (key.buf[i] == '-' || key.buf[i] == ' ' || key.buf[i] == '\n')
         continue;
       const size_t pos = written >> 1;
+      if (pos >= (1024 / 8))
+        break; /* stop if we exceed buffer */
       if (!(written & 1))
         secret.buf[pos] = 0;
       secret.buf[pos] |= (fio_c2i(key.buf[i]) << (((++written) & 1) << 2));
     }
     secret.len = (written >> 1) + (written & 1);
+    /* if decoded key is too long for HMAC-SHA1, hash it */
+    if (secret.len > 64) {
+      fio_u512 tmp = fio_sha512(secret.buf, secret.len);
+      s.u512[0] = tmp;
+      secret.len = 64;
+    }
   } else {
     /* decode Byte32 key input OTP */
-    FIO_ASSERT(key.len < ((64 * 8) / 5), "key too long");
     if (fio_string_write_base32dec(&secret, NULL, key.buf, key.len))
       return -1;
+    /* if decoded key is too long for HMAC-SHA1, hash it */
+    if (secret.len > 64) {
+      FIO_LOG_WARNING(
+          "OTP base32 key too long (%zu bytes), truncating decode buffer",
+          key.len);
+      fio_u512 tmp = fio_sha512(secret.buf, secret.len);
+      s.u512[0] = tmp;
+      secret.len = 64;
+      if (key.len >= ((64 * 8) / 5)) {
+        fio_sha1_s h = fio_sha1(key.buf, key.len);
+        for (int i = 0; i < 5; ++i)
+          s.u32[i] ^= h.v[i];
+        for (int i = 0; i < 5; ++i)
+          s.u32[i + 7] ^= h.v[i];
+      }
+    }
   }
 
   /* compute HMAC (HOTP of T / TOTP)  */

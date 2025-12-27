@@ -169,7 +169,7 @@ unless defined?(Iodine)
     # It is recommended to set the secret as a Hex encoded String environment variable named `SECRET` before starting Ruby.
     def self.secret(); end
     # [String] Stores a SHA512 of the Secret String provided.
-    def self.secret=(logging_level); end
+    def self.secret=(secret_to_be_hashed); end
 
     # [Number] The number of milliseconds before the reactor stops scheduling unperformed tasks during shutdown.
     def self.shutdown_timeout(); end
