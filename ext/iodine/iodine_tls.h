@@ -1,8 +1,66 @@
 #ifndef H___IODINE_TLS___H
+/** ****************************************************************************
+Iodine::TLS - TLS/SSL Context Management
+
+This module provides TLS/SSL support for Iodine connections, wrapping the
+facil.io TLS functionality and exposing it to Ruby.
+
+## TLS Backend Options
+
+Iodine supports two TLS backends:
+
+1. **Embedded TLS 1.3** (`:iodine`) - Always available via fio-stl.h
+   - Lightweight, no external dependencies
+   - TLS 1.3 only (modern, secure)
+
+2. **OpenSSL** (`:openssl`) - Available if compiled with OpenSSL support
+   - Full TLS version support (1.0, 1.1, 1.2, 1.3)
+   - Broader compatibility with older clients
+
+## Ruby API
+
+### Iodine::TLS Class
+
+    tls = Iodine::TLS.new
+    tls.add_cert(name: "example.com")
+    tls.add_cert(cert: "cert.pem", key: "key.pem")
+    tls.add_cert(cert: "cert.pem", key: "key.pem", password: ENV['TLS_PASS'])
+
+### Class Methods
+
+- `Iodine::TLS.default` - Returns the current default TLS backend (:iodine or
+  :openssl)
+- `Iodine::TLS.default = :iodine` - Sets the default TLS backend
+
+### Instance Methods
+
+- `add_cert(name:, cert:, key:, password:)` - Adds a certificate to the TLS
+  context. If only `name` is provided, a self-signed certificate is generated.
+
+### Constants
+
+- `Iodine::TLS::SUPPORTED` - Always `true` (embedded TLS always available)
+- `Iodine::TLS::OPENSSL_AVAILABLE` - `true` if OpenSSL support was compiled in
+- `Iodine::TLS::EMBEDDED_AVAILABLE` - Always `true`
+
+## Usage with Iodine.listen
+
+    # Using default TLS (auto-generates self-signed cert)
+    Iodine.listen(url: "https://0.0.0.0:3000", handler: app)
+
+    # Using custom TLS context
+    tls = Iodine::TLS.new
+    tls.add_cert(cert: "server.pem", key: "server.key")
+    Iodine.listen(url: "https://0.0.0.0:3000", handler: app, tls: tls)
+
+    # Specifying TLS backend
+    Iodine.listen(url: "https://0.0.0.0:3000", handler: app, tls_io: :openssl)
+
+***************************************************************************** */
 #define H___IODINE_TLS___H
 #include "iodine.h"
 /* *****************************************************************************
-TLS Wrapper
+TLS Wrapper - Internal Implementation
 ***************************************************************************** */
 
 /* Static variable to store the current default TLS backend */

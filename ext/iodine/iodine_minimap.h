@@ -2,9 +2,41 @@
 #define H___IODINE_MINIMAP___H
 #include "iodine.h"
 
-static VALUE iodine_rb_IODINE_BASE_MINIMAP;
 /* *****************************************************************************
-Mini Ruby Hash Map
+Iodine MiniMap - Lightweight Hash Map for Ruby
+
+This module provides the Iodine::Base::MiniMap Ruby class, a lightweight
+hash map implementation backed by facil.io's hash map. It's designed for
+internal use where a simple key-value store is needed with:
+
+- String or Symbol keys only
+- Fast lookup and insertion
+- JSON serialization support
+- Iteration via each block
+
+The MiniMap is simpler and potentially faster than Ruby's Hash for
+specific use cases, but has fewer features.
+
+Ruby API (Iodine::Base::MiniMap):
+- map[key]           - Get value for key
+- map[key] = value   - Set value (nil deletes key)
+- map.count          - Number of entries
+- map.capa           - Current capacity
+- map.each { }       - Iterate key-value pairs
+- map.clear          - Remove all entries
+- map.reserve(n)     - Pre-allocate capacity
+- map.to_s / to_json - JSON string representation
+
+Benchmark:
+  require 'iodine/benchmark'
+  Iodine::Benchmark.minimap(100)
+***************************************************************************** */
+
+/** The Iodine::Base::MiniMap Ruby class */
+static VALUE iodine_rb_IODINE_BASE_MINIMAP;
+
+/* *****************************************************************************
+Mini Ruby Hash Map - Internal Implementation
 ***************************************************************************** */
 
 static uint64_t iodinde_hmap_hash(VALUE k) {
@@ -37,9 +69,15 @@ static _Bool iodinde_hmap_object_cmp(VALUE a, VALUE b) {
 #define FIO_MAP_KEY_COPY(dest, src) ((dest) = (src))
 #include FIO_INCLUDE_FILE
 
+/**
+ * Internal structure for the MiniMap Ruby object.
+ *
+ * Wraps a facil.io hash map with a temporary VALUE holder
+ * used during key duplication to prevent GC issues.
+ */
 typedef struct {
-  iodine_hmap_s map;
-  VALUE tmp;
+  iodine_hmap_s map;  /**< The underlying facil.io hash map */
+  VALUE tmp;          /**< Temporary holder during key operations */
 } iodine_minimap_s;
 
 static int iodine_minimap_gc_mark_task(iodine_hmap_each_s *e) {
@@ -112,7 +150,7 @@ error:
 }
 
 /* *****************************************************************************
-Ruby Object.
+Ruby Object - TypedData Wrapper
 ***************************************************************************** */
 
 static void iodine_minimap_free(void *p) {
@@ -159,7 +197,7 @@ static VALUE iodine_minimap_alloc(VALUE klass) {
 }
 
 /* *****************************************************************************
-API
+API - Ruby Methods
 ***************************************************************************** */
 
 static VALUE iodine_minimap_get(VALUE o, VALUE key) {
@@ -208,7 +246,7 @@ static inline VALUE iodine_is_minimap_rb(VALUE o) {
 }
 
 /* *****************************************************************************
-String (JSON) output
+String (JSON) Output - Serialization
 ***************************************************************************** */
 
 static int iodine___minimap_to_s_task(iodine_hmap_each_s *e) {
@@ -271,7 +309,14 @@ empty:
 }
 
 /* *****************************************************************************
-Benchmark C world performance
+Benchmark - C Performance Testing
+
+Compares MiniMap performance against Ruby Hash for:
+- Insert operations
+- Overwrite operations
+- Find operations (existing keys)
+- Find operations (missing keys)
+- Iteration (each)
 ***************************************************************************** */
 
 static int each_task(void *_i) {
@@ -455,17 +500,29 @@ static VALUE iodine_minimap_benchmark_c(VALUE klass, VALUE object_count) {
 }
 
 /* *****************************************************************************
-Initialize
+Initialize - Ruby Class Registration
 
-Benchmark with:
+Usage example:
+  m = Iodine::Base::MiniMap.new
+  10.times {|i| m[i] = i }
+  m.each {|k,v| puts "#{k.to_s} => #{v.to_s}"}
 
-require 'iodine/benchmark'
-Iodine::Benchmark.minimap(100)
-
-m = Iodine::Base::MiniMap.new
-10.times {|i| m[i] = i }
-m.each {|k,v| puts "#{k.to_s} => #{v.to_s}"}
+Benchmark:
+  require 'iodine/benchmark'
+  Iodine::Benchmark.minimap(100)
 ***************************************************************************** */
+
+/**
+ * Initializes the Iodine::Base::MiniMap Ruby class.
+ *
+ * Defines the class under Iodine::Base with:
+ * - [] / []= for get/set operations
+ * - count, capa, clear, reserve for map management
+ * - each for iteration
+ * - to_s / to_json for JSON serialization
+ * - is? for type checking
+ * - cbench class method for C-level benchmarking
+ */
 static void Init_Iodine_MiniMap(void) {
   VALUE m = iodine_rb_IODINE_BASE_MINIMAP =
       rb_define_class_under(iodine_rb_IODINE_BASE, "MiniMap", rb_cObject);

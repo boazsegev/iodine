@@ -1,3 +1,16 @@
+/**
+ * @file iodine.h
+ * @brief Main header file for the Iodine Ruby C extension.
+ *
+ * This file serves as the central include point for the Iodine HTTP/WebSocket
+ * server extension. It includes Ruby headers, defines global constants and
+ * symbols, configures the facil.io C STL library, and includes all Iodine
+ * sub-modules in the correct dependency order.
+ *
+ * Iodine is built on top of the facil.io C STL library (fio-stl.h) which
+ * provides the underlying IO reactor, HTTP server, WebSocket support, and
+ * various utilities.
+ */
 #ifndef H___IODINE___H
 #define H___IODINE___H
 #include <ruby.h>
@@ -10,9 +23,13 @@ typedef pid_t fio_thread_pid_t;
 typedef VALUE fio_thread_t;
 
 /* *****************************************************************************
-Constants
+Ruby Method ID Constants
+
+These IDs are cached for efficient Ruby method calls from C code.
+They are initialized in Init_iodine() using IODINE_CONST_ID_STORE().
 ***************************************************************************** */
 
+/** @brief Cached Ruby method ID for `call` */
 static ID IODINE_CALL_ID;
 static ID IODINE_CLOSE_ID;
 static ID IODINE_EACH_ID;
@@ -45,6 +62,12 @@ static ID IODINE_CREATE_ID;
 static ID IODINE_UPDATE_ID;
 static ID IODINE_DELETE_ID;
 
+/**
+ * Stores a Ruby method ID constant and protects its Symbol from GC.
+ *
+ * @param name The C variable name to store the ID in.
+ * @param value The Ruby method name as a C string.
+ */
 #define IODINE_CONST_ID_STORE(name, value) \
   name = rb_intern(value);                 \
   STORE.hold(RB_ID2SYM(name));
@@ -71,13 +94,22 @@ static VALUE IODINE_RACK_UPGRADE_WS_SYM;
 static VALUE IODINE_RACK_UPGRADE_SSE_SYM;
 static VALUE IODINE_RACK_AFTER_RPLY_STR;
 
+/** Buffer size for raw TCP/IP connection data reads (16KB default). */
 #ifndef IODINE_RAW_ON_DATA_READ_BUFFER
 #define IODINE_RAW_ON_DATA_READ_BUFFER (1ULL << 14)
 #endif
 
+/**
+ * Returns true if the Ruby VALUE should be skipped for GC store operations.
+ * Immediate values (nil, true, false, fixnums) don't need GC protection.
+ */
 #define IODINE_STORE_IS_SKIP(o) \
   (!o || o == Qnil || o == Qtrue || o == Qfalse || TYPE(o) == RUBY_T_FIXNUM)
 
+/**
+ * Converts a Ruby String to a fio_str_info_s struct.
+ * @note The Ruby String must remain valid while the struct is in use.
+ */
 #define IODINE_RSTR_INFO(o) \
   { .buf = RSTRING_PTR(o), .len = (size_t)RSTRING_LEN(o) }
 
@@ -114,9 +146,21 @@ facil.io
 
 /* *****************************************************************************
 Deferring Ruby Blocks
+
+Provides macros for scheduling Ruby blocks to run asynchronously in the
+IO reactor's thread pool.
 ***************************************************************************** */
+
+/** Forward declaration for async block execution callback. */
 static void iodine_defer_performe_once(void *block, void *ignr);
 
+/**
+ * Schedules a Ruby block (Proc) to run asynchronously in the thread pool.
+ *
+ * The block is protected from GC until execution completes.
+ *
+ * @param blk A Ruby VALUE representing a Proc object.
+ */
 #define IODINE_DEFER_BLOCK(blk)              \
   do {                                       \
     STORE.hold((blk));                       \
@@ -137,9 +181,11 @@ FIO_LEAK_COUNTER_DEF(iodine_hmap)
 
 /* *****************************************************************************
 Common Iodine Helpers
+
+Core infrastructure shared across all Iodine modules.
 ***************************************************************************** */
 
-/* IO reactor thread-pool */
+/** The global IO reactor thread pool for async task execution. */
 static fio_io_async_s IODINE_THREAD_POOL;
 
 static VALUE iodine_handler_method_injection__inner(VALUE self,

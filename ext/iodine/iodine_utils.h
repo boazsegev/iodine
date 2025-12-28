@@ -431,14 +431,41 @@ FIO_SFUNC VALUE iodine_utils_random(int argc, VALUE *argv, VALUE self) {
   (void)self;
 }
 
+/**
+ * Generates a Time-based One-Time Password (TOTP) code.
+ *
+ * Returns a 6-digit TOTP code as an Integer, compatible with Google
+ * Authenticator and similar apps.
+ *
+ *     # Generate TOTP for current time window
+ *     code = Iodine::Utils.totp(secret: my_secret)
+ *
+ *     # Generate TOTP with custom interval (default is 30 seconds)
+ *     code = Iodine::Utils.totp(secret: my_secret, interval: 60)
+ *
+ *     # Generate TOTP for a different time window (offset in interval units)
+ *     code = Iodine::Utils.totp(secret: my_secret, offset: -1)  # previous window
+ *
+ * Parameters:
+ * - `secret:` (required) - The shared secret key (raw bytes or Base32 decoded)
+ * - `offset:` (optional) - Time offset in interval units (default: 0)
+ * - `interval:` (optional) - Time window in seconds (default: 30)
+ *
+ * Returns: Integer - A 6-digit TOTP code
+ */
 FIO_SFUNC VALUE iodine_utils_totp(int argc, VALUE *argv, VALUE self) {
   fio_buf_info_s secret = {0};
   int64_t offset = 0;
+  size_t interval = 0;
+
   iodine_rb2c_arg(argc,
                   argv,
                   IODINE_ARG_BUF(secret, 0, "secret", 1),
-                  IODINE_ARG_NUM(offset, 0, "offset", 0));
-  uint32_t otp = fio_otp(secret, .offset = offset);
+                  IODINE_ARG_NUM(offset, 0, "offset", 0),
+                  IODINE_ARG_SIZE_T(interval, 0, "interval", 0));
+  if (!interval) interval = 30;
+
+  uint32_t otp = fio_otp(secret, .offset = offset, .interval = interval);
   return UINT2NUM(otp);
   (void)self;
 }
@@ -446,11 +473,20 @@ FIO_SFUNC VALUE iodine_utils_totp(int argc, VALUE *argv, VALUE self) {
 /**
  * Generates a new TOTP secret suitable for Google Authenticator.
  *
- *     Iodine::Utils.totp_secret(len: 20)  # -> Base32 encoded secret
+ *     # Generate a secret with default length (20 bytes)
+ *     secret = Iodine::Utils.totp_secret
+ *
+ *     # Generate a longer secret (32 bytes)
+ *     secret = Iodine::Utils.totp_secret(len: 32)
  *
  * The secret is generated using cryptographically secure random bytes
  * and encoded in Base32 (uppercase, no padding) for compatibility with
  * authenticator apps.
+ *
+ * Parameters:
+ * - `len:` (optional) - Length of the secret in bytes (default: 20, range: 10-64)
+ *
+ * Returns: String - Base32 encoded secret suitable for QR codes and authenticator apps
  */
 FIO_SFUNC VALUE iodine_utils_totp_secret(int argc, VALUE *argv, VALUE self) {
   int64_t len = 20;
@@ -474,30 +510,47 @@ FIO_SFUNC VALUE iodine_utils_totp_secret(int argc, VALUE *argv, VALUE self) {
 /**
  * Verifies a TOTP code against a secret with time window tolerance.
  *
- *     Iodine::Utils.totp_verify(secret:, code:, window: 1)  # -> true/false
+ *     # Verify a TOTP code with default settings
+ *     valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code)
  *
- * The window parameter specifies how many 30-second intervals to check
- * on either side of the current time. window: 1 checks current ± 1 interval.
+ *     # Verify with larger time window (allows more clock drift)
+ *     valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code, window: 2)
+ *
+ *     # Verify with custom interval (must match the interval used to generate)
+ *     valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code, interval: 60)
+ *
+ * The window parameter specifies how many intervals to check on either side
+ * of the current time. For example, window: 1 checks current ± 1 interval.
+ *
+ * Parameters:
+ * - `secret:` (required) - The shared secret key (raw bytes or Base32 decoded)
+ * - `code:` (required) - The TOTP code to verify (Integer)
+ * - `window:` (optional) - Number of intervals to check on each side (default: 1, range: 0-10)
+ * - `interval:` (optional) - Time window in seconds (default: 30)
+ *
+ * Returns: true if the code is valid, false otherwise
  */
 FIO_SFUNC VALUE iodine_utils_totp_verify(int argc, VALUE *argv, VALUE self) {
   fio_buf_info_s secret = FIO_BUF_INFO0;
   int64_t code = 0;
   int64_t window = 1;
+  size_t interval = 0;
 
   iodine_rb2c_arg(argc,
                   argv,
                   IODINE_ARG_BUF(secret, 0, "secret", 1),
                   IODINE_ARG_NUM(code, 0, "code", 1),
-                  IODINE_ARG_NUM(window, 0, "window", 0));
+                  IODINE_ARG_NUM(window, 0, "window", 0),
+                  IODINE_ARG_SIZE_T(interval, 0, "interval", 0));
 
+  if (!interval) interval = 30;
   if (window < 0 || window > 10)
     rb_raise(rb_eArgError, "window must be between 0 and 10");
 
   /* Check code against each offset in the window */
   for (int64_t offset = -window; offset <= window; ++offset) {
-    uint32_t expected = fio_otp(secret, .offset = offset);
-    if (expected == (uint32_t)code)
-      return Qtrue;
+    uint32_t expected = fio_otp(secret, .offset = offset, .interval = interval);
+    if (expected == (uint32_t)code) return Qtrue;
   }
 
   return Qfalse;

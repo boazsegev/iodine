@@ -126,54 +126,153 @@ unless defined?(Iodine)
   # *Note*: The embedded TLS 1.3 implementation has not been independently audited.
   #
   module Iodine
-    # [Number] The number of worker threads per worker process. Negative values signify fractions of CPU core count (-1 ~= all CPU cores, -2 ~= half CPU cores, etc').
-    def self.threads(); end
-    # [Number] The number of worker threads per worker process. Negative values signify fractions of CPU core count (-1 ~= all CPU cores, -2 ~= half CPU cores, etc').
+    # Returns the number of worker threads per worker process.
+    #
+    # Negative values signify fractions of CPU core count (-1 ~= all CPU cores, -2 ~= half CPU cores, etc').
+    #
+    # @return [Integer, nil] the number of threads, or `nil` if not configured
+    def self.threads; end
+
+    # Sets the number of worker threads per worker process.
+    #
+    # Negative values signify fractions of CPU core count (-1 ~= all CPU cores, -2 ~= half CPU cores, etc').
+    #
+    # @param threads [Integer] the number of threads
+    # @return [Integer] the configured number of threads
+    # @raise [TypeError] if threads is not a Fixnum
+    # @note Can only be set in the master process before starting the reactor.
     def self.threads=(threads); end
-    # [Number] The worker processes. Negative values signify fractions of CPU core count (-1 ~= all CPU cores, -2 ~= half CPU cores, etc').
-    def self.workers(); end
-    # [Number] The worker processes. Negative values signify fractions of CPU core count (-1 ~= all CPU cores, -2 ~= half CPU cores, etc').
+
+    # Returns the number of worker processes.
+    #
+    # Negative values signify fractions of CPU core count (-1 ~= all CPU cores, -2 ~= half CPU cores, etc').
+    # A value of 0 means single-process mode (no forking).
+    #
+    # @return [Integer, nil] the number of workers, or `nil` if not configured
+    def self.workers; end
+
+    # Sets the number of worker processes.
+    #
+    # Negative values signify fractions of CPU core count (-1 ~= all CPU cores, -2 ~= half CPU cores, etc').
+    # Set to 0 for single-process mode, or > 0 for cluster mode.
+    #
+    # @param workers [Integer] the number of worker processes
+    # @return [Integer] the configured number of workers
+    # @raise [TypeError] if workers is not a Fixnum
+    # @note Can only be set in the master process before starting the reactor.
     def self.workers=(workers); end
 
-    # Starts the Iodine IO reactor. Method returns only after Iodine is stopped and cleanup is complete.
-    def self.start(); end
-    # Stops the Iodine IO reactor (as if `SIGINT` or `SIGTERM` were detected. Causes {start} to return.
-    def self.stop(); end
+    # Starts the Iodine IO reactor.
+    #
+    # This is the main entry point that begins the event loop. It:
+    # - Attaches the async thread pool
+    # - Sets rack.multithread/rack.multiprocess environment values
+    # - Logs startup information (version, workers, threads)
+    # - Starts the IO event loop (blocking until stopped)
+    #
+    # @return [self]
+    #
+    # @example
+    #   Iodine.listen(url: "http://0.0.0.0:3000", handler: MyApp)
+    #   Iodine.start
+    def self.start; end
 
-    # [Boolean] Returns `true` if current process is the master process.
-    def self.master?(); end
-    # [Boolean] Returns `true` if current process is a worker process.
+    # Stops the current process' IO reactor.
     #
-    # Note: may also be the master process if {Iodine.workers} was zero (non-cluster mode).
-    def self.worker?(); end
-    # [Boolean] Returns `true` if the Iodine IO reactor is running in the current process and the IO reactor wasn't signaled to stop.
-    def self.running?(); end
+    # If this is a worker process, the process will exit and if Iodine is running
+    # in cluster mode, a new worker will be spawned by the master process.
+    #
+    # @return [self]
+    def self.stop; end
 
-    # [Number] The level of verbosity used for Iodine logging.
-    def self.verbosity(); end
-    # [Number] The level of verbosity used for Iodine logging.
+    # Returns `true` if this is the master (root) process.
     #
-    # Each level of logging includes all lower levels.
+    # In cluster mode, the master process spawns and monitors worker processes.
+    # In single-process mode, the process is both master and worker.
     #
-    # - 5 == Debug messages.
-    # - 4 == Normal.
-    # - 3 == Warnings.
-    # - 2 == Errors.
-    # - 1 == Fatal Errors only.
+    # @return [Boolean]
+    def self.master?; end
+
+    # Returns `true` if this is a worker process.
+    #
+    # Worker processes handle actual client connections and requests.
+    # In single-process mode, the process is both master and worker.
+    #
+    # @return [Boolean]
+    def self.worker?; end
+
+    # Returns `true` if the IO reactor is currently running.
+    #
+    # @return [Boolean]
+    def self.running?; end
+
+    # Returns the current verbosity (logging) level.
+    #
+    # Log levels:
+    # - 0: No logging
+    # - 1: Fatal errors only
+    # - 2: Errors and above
+    # - 3: Warnings and above
+    # - 4: Info and above (default)
+    # - 5: Debug and above
+    #
+    # @return [Integer] the current log level (0-5)
+    def self.verbosity; end
+
+    # Sets the current verbosity (logging) level.
+    #
+    # @param logging_level [Integer] the log level (0-5)
+    # @return [Integer] the new log level
+    # @raise [TypeError] if logging_level is not a Fixnum
+    #
+    # @example
+    #   Iodine.verbosity = 5  # Enable debug logging
     def self.verbosity=(logging_level); end
 
-    # [String] A SHA512 of the Secret.
+    # Returns the server's secret as a 64-byte binary string.
     #
-    # If no secret was previously set, Iodine will use the environment variable `SECRET` if available. Otherwise, a random secret is produced.
+    # The secret is used for cryptographic operations like session signing,
+    # CSRF tokens, and other security-sensitive operations. It's derived
+    # from the secret key set via `Iodine.secret=` or auto-generated.
     #
-    # It is recommended to set the secret as a Hex encoded String environment variable named `SECRET` before starting Ruby.
-    def self.secret(); end
-    # [String] Stores a SHA512 of the Secret String provided.
+    # If no secret was previously set, Iodine will use the environment variable `SECRET` if available.
+    # Otherwise, a random secret is produced.
+    #
+    # @return [String] 64-byte binary String containing the server secret
+    #
+    # @note It is recommended to set the secret as a Hex encoded String environment variable named `SECRET` before starting Ruby.
+    def self.secret; end
+
+    # Sets a new server secret based on the provided key.
+    #
+    # The key is hashed/expanded to produce the internal 512-bit secret.
+    # This should be set before starting the server for consistent
+    # cryptographic operations across restarts.
+    #
+    # @param secret_to_be_hashed [String] the secret key
+    # @return [String] the new 64-byte server secret
+    # @raise [TypeError] if secret_to_be_hashed is not a String
     def self.secret=(secret_to_be_hashed); end
 
-    # [Number] The number of milliseconds before the reactor stops scheduling unperformed tasks during shutdown.
-    def self.shutdown_timeout(); end
-    # [Number] Sets the number of milliseconds before the reactor stops scheduling unperformed tasks during shutdown.
+    # Returns the current graceful shutdown timeout in milliseconds.
+    #
+    # During graceful shutdown, the server waits for active connections
+    # to complete before forcing termination.
+    #
+    # @return [Integer] timeout in milliseconds
+    def self.shutdown_timeout; end
+
+    # Sets the graceful shutdown timeout in milliseconds.
+    #
+    # Maximum allowed value is 5 minutes (300,000 ms).
+    #
+    # @param milliseconds [Integer] timeout in milliseconds
+    # @return [Integer] the new timeout value
+    # @raise [TypeError] if milliseconds is not a Fixnum
+    # @raise [RangeError] if milliseconds exceeds 5 minutes
+    #
+    # @example
+    #   Iodine.shutdown_timeout = 30000  # 30 seconds
     def self.shutdown_timeout=(milliseconds); end
 
     # Listens on the `url` to connections requesting `service`.
@@ -195,27 +294,29 @@ unless defined?(Iodine)
     # | `on_eventsource(client, event)` | Called when an Event Source (SSE) event is received (client mode). |
     # | `on_authenticate(client)` | **MAY** be defined instead of `on_authenticate_websocket` and `on_authenticate_sse` to unify the logic of both authentication callbacks. |
     #
-    # Accepts the following named arguments:
+    # @param url [String, nil] The address to listen at (or `nil`).
+    # @param handler [Object] The handler (callback) object / NeoRack application / Rack application.
+    # @param service [Symbol, String, nil] The service to be listening to (`http`, `https`, `ws`, `tcp`, `unix`). Can be provided as part of the `url`'s `scheme`.
+    # @param tls [Iodine::TLS, nil] An Iodine::TLS instance.
+    # @param tls_io [Symbol, nil] TLS backend selection: `:iodine` (embedded TLS 1.3), `:openssl` (OpenSSL >= 3.0), or `nil` (compile-time default).
+    # @param public [String, nil] (HTTP only) Public folder for static file service.
+    # @param max_age [Integer, nil] (HTTP only) The default maximum age for caching (when the etag header is provided).
+    # @param max_header_size [Integer, nil] (HTTP only) The maximum size for HTTP headers.
+    # @param max_line_len [Integer, nil] (HTTP only) The maximum size for a single HTTP header.
+    # @param max_body_size [Integer, nil] (HTTP only) The maximum size for an HTTP payload.
+    # @param max_msg_size [Integer, nil] (WebSocket only) The maximum size for a WebSocket message.
+    # @param timeout [Integer, nil] (HTTP only) `keep-alive` timeout.
+    # @param ping [Integer, nil] Connection timeout (WebSocket / `raw` / `tcp`).
+    # @param log [Boolean, nil] (HTTP only) If `true`, logs `http` requests.
+    # @return [Iodine::Listener] the listener object
     #
-    # | | |
-    # |---|---|
-    # | url | The address to listen at (or `nil`). |
-    # | handler | The handler (callback) object / NeoRack application / Rack application  |
-    # | service | The service to be listening to (`http`, `https`, `ws`, `tcp`, `unix`). Can be provided as part of the `url`'s `scheme`, i.e.: `"unix://./my_unix_socket.sock"`. |
-    # | tls | An Iodine::TLS instance. |
-    # | tls_io | TLS backend selection: `:iodine` (embedded TLS 1.3), `:openssl` (OpenSSL >= 3.0), or `nil` (compile-time default). Only effective when TLS is enabled. |
-    # | public | (HTTP only) Public folder for static file service. |
-    # | max_age | (HTTP only) The default maximum age for caching (when the etag header is provided). |
-    # | max_header_size | (HTTP only) The maximum size for HTTP headers. |
-    # | max_line_len | (HTTP only) The maximum size for a single HTTP header. |
-    # | max_body_size | (HTTP only) The maximum size for an HTTP payload. |
-    # | max_msg_size | (WebSocket only) The maximum size for a WebSocket message. |
-    # | timeout | (HTTP only) `keep-alive` timeout. |
-    # | ping | Connection timeout (WebSocket / `raw` / `tcp`). |
-    # | log | (HTTP only) If `true`, logs `http` requests. |
-    # | &block | An (optional) Rack application. |
+    # @note Either a `handler` or a `block` (Rack App) **must** be provided.
     #
-    # Note: Either a `handler` or a `block` (Rack App) **must** be provided.
+    # @example HTTP server
+    #   Iodine.listen(url: "http://0.0.0.0:3000", handler: MyApp)
+    #
+    # @example WebSocket server with TLS
+    #   Iodine.listen(url: "wss://0.0.0.0:3000", handler: MyWSHandler, tls_io: :iodine)
     def self.listen(url = '0.0.0.0:3000', handler = nil, service = nil); end
 
     # Sets a block of code to run when Iodine's core state is updated.
@@ -239,7 +340,12 @@ unless defined?(Iodine)
     # | `:stop`           | the block will be called just before stopping iodine (both on child and parent processes). |
     # | `:exit`           | the block will be called during iodine library cleanup, similar to a Ruby `at_exit` callback. |
     #
-    # Code runs in both the parent and the child.
+    # @return [Proc] the block
+    #
+    # @note Code runs in both the parent and the child.
+    #
+    # @example
+    #   Iodine.on_state(:start) { puts "Worker started!" }
     def self.on_state(state, &block); end
 
     # Runs a block of code in the main IO thread (adds the code to the event queue).
@@ -252,13 +358,14 @@ unless defined?(Iodine)
     #
     # The code will always run in single-threaded mode, running on the main IO thread used by Iodine.
     #
-    # Note: blocking code MUST NOT be used in the block passed to this method,
-    # or Iodine's IO will hang while waiting for the blocking code to finish.
+    # @return [Proc] the block
     #
-    # Note: method also accepts a method object if passed as a parameter.
+    # @note Blocking code MUST NOT be used in the block passed to this method,
+    #   or Iodine's IO will hang while waiting for the blocking code to finish.
+    # @note Method also accepts a method object if passed as a parameter.
     def self.run(&block); end
 
-    # Runs a block of code in the a worker thread (adds the code to the event queue).
+    # Runs a block of code in a worker thread (adds the code to the event queue).
     #
     # Always returns the block of code to executed (Proc object).
     #
@@ -268,7 +375,9 @@ unless defined?(Iodine)
     #
     # The code may run in parallel with other calls to `run` or `async`, as it will run in one of the worker threads.
     #
-    # Note: method also accepts a method object if passed as a parameter.
+    # @return [Proc] the block
+    #
+    # @note Method also accepts a method object if passed as a parameter.
     def self.async(&block); end
 
     # Runs the required block after the specified number of milliseconds have passed.
@@ -277,80 +386,63 @@ unless defined?(Iodine)
     #
     # Time is counted only once Iodine started running (using {Iodine.start}).
     #
-    # Accepts:
+    # @param milliseconds [Integer] the number of milliseconds between event repetitions.
+    # @param repetitions [Integer] the number of event repetitions. Defaults to 1 (performed once). Set to 0 for never ending.
+    # @return [Proc] a copy of the block object
     #
-    # |   |   |
-    # |---|---|
-    # | `:milliseconds` | the number of milliseconds between event repetitions. |
-    # | `:repetitions` | the number of event repetitions. Defaults to 1 (performed once). Set to 0 for never ending. |
-    # | `:block` | (required) a block is required, as otherwise there is nothing to perform. |
+    # @note The event will repeat itself until the number of repetitions had been depleted or until the event returns `false`.
     #
+    # @example Run once after 1 second
+    #   Iodine.run_after(1000) { puts "1 second passed!" }
     #
-    # The event will repeat itself until the number of repetitions had been depleted or until the event returns `false`.
-    #
-    # Always returns a copy of the block object.
+    # @example Run every 5 seconds forever
+    #   Iodine.run_after(5000, 0) { puts "tick" }
     def self.run_after(milliseconds, repetitions = 1, &block); end
 
     # Publishes a message to a combination of a channel (String) and filter (number).
     #
-    # Accepts the following (possibly named) arguments:
+    # @param channel [String, nil] the channel name to publish to.
+    # @param filter [Integer] the filter to publish to (Number < 32,767).
+    # @param message [String] the actual message to publish.
+    # @param engine [Iodine::PubSub::Engine, nil] the pub/sub engine to use (if not the default one).
+    # @return [Boolean] `true` on success
     #
-    # - `channel`: the channel name to publish to (String).
-    # - `filter`: the filter to publish to (Number < 32,767).
-    # - `message`: the actual message to publish.
-    # - `engine`: the pub/sub engine to use (if not the default one).
-    #
-    # i.e.:
-    #
-    #     Iodine.publish("channel_name", 0, "payload")
-    #     Iodine.publish(channel: "name", message: "payload")
+    # @example
+    #   Iodine.publish("channel_name", 0, "payload")
+    #   Iodine.publish(channel: "name", message: "payload")
     def self.publish(channel = nil, filter = 0, message = nil, engine = nil); end
+
     # Subscribes to a combination of a channel (String) and filter (number).
     #
-    # Accepts the following (possibly named) arguments and an **optional** block:
+    # @param channel [String, nil] the subscription's channel name.
+    # @param filter [Integer] the subscription's filter (Number < 32,767).
+    # @param callback [Proc, nil] an **optional** object that answers to call and accepts a single argument (the message structure).
+    # @return [Proc] the callback
     #
-    # - `channel`: the subscription's channel name (String).
-    # - `filter`: the subscription's filter (Number < 32,767).
-    # - `callback`: an **optional** object that answers to call and accepts a single argument (the message structure).
+    # @note Either a proc or a block **must** be provided for global subscriptions.
     #
-    # Either a proc or a block **must** be provided for global subscriptions.
-    #
-    # i.e.:
-    #
-    #     Iodine.subscribe("name")
-    #     Iodine.subscribe(channel: "name")
-    #     # or with filter
-    #     Iodine.subscribe("name", 1)
-    #     Iodine.subscribe(channel: "name", filter: 1)
-    #     # or only a filter
-    #     Iodine.subscribe(nil, 1)
-    #     Iodine.subscribe(filter: 1)
-    #     # with / without a proc
-    #     Iodine.subscribe(filter: 1) {|msg| msg.filter == 1; msg.channel == Qnil;}
-    #     Iodine.subscribe() {|msg| msg.filter == 1; msg.channel == Qnil; }
+    # @example
+    #   Iodine.subscribe("name") { |msg| puts msg.message }
+    #   Iodine.subscribe(channel: "name", filter: 1) { |msg| puts msg.message }
     def self.subscribe(channel = nil, filter = 0, &callback); end
-    # Un-Subscribes to a combination of a channel (String) and filter (number).
+
+    # Un-Subscribes from a combination of a channel (String) and filter (number).
     #
-    # Accepts the following (possibly named) arguments:
+    # @param channel [String, nil] the subscription's channel name.
+    # @param filter [Integer] the subscription's filter (Number < 32,767).
+    # @return [Boolean] `true` on success
     #
-    # - `channel`: the subscription's channel name (String).
-    # - `filter`: the subscription's filter (Number < 32,767).
-    #
-    # i.e.:
-    #
-    #     Iodine.unsubscribe("name")
-    #     Iodine.unsubscribe(channel: "name")
-    #     # or with filter
-    #     Iodine.unsubscribe("name", 1)
-    #     Iodine.unsubscribe(channel: "name", filter: 1)
-    #     # or only a filter
-    #     Iodine.unsubscribe(nil, 1)
-    #     Iodine.unsubscribe(filter: 1)
+    # @example
+    #   Iodine.unsubscribe("name")
+    #   Iodine.unsubscribe(channel: "name", filter: 1)
     def self.unsubscribe(channel = nil, filter = 0); end
 
     # Adds an `on_http` implementation to `handler` that will route requests to their proper REST/CRUD callback.
     #
-    # See the {Iodine::ResourceHandler} for callback details.
+    # @param handler [Object] the handler object to modify
+    # @return [Object] the modified handler
+    #
+    # @see Iodine::Connection::ResourceHandler
     def self.make_resource(handler); end
 
     #######################
@@ -385,10 +477,21 @@ unless defined?(Iodine)
     #     Iodine::Benchmark.json
     module JSON
       # Accepts a JSON String and returns a Ruby object.
+      #
+      # @param json_string [String] the JSON string to parse
+      # @return [Object] the parsed Ruby object
       def self.parse(json_string); end
+
       # Accepts a Ruby object and returns a JSON String.
+      #
+      # @param ruby_object [Object] the Ruby object to stringify
+      # @return [String] the JSON string
       def self.stringify(ruby_object); end
+
       # Accepts a Ruby object and returns a prettier JSON String.
+      #
+      # @param ruby_object [Object] the Ruby object to stringify
+      # @return [String] the formatted JSON string
       def self.beautify(ruby_object); end
     end
 
@@ -437,16 +540,12 @@ unless defined?(Iodine)
       #        Iodine::Mustache.new(file = nil, template = nil, on_yaml = nil, &block)
       #
       # @param file [String] a file name for the mustache template.
-      #
       # @param template [String] the content of the mustache template - if `nil` or missing, `file` content will be loaded from disk.
-      #
       # @param on_yaml [Proc] (**optional**) accepts a YAML front-matter String.
-      #
       # @param block [Block] to be used as an implicit `on_yaml` (if missing).
-      #
       # @return [Iodine::Mustache] returns an Iodine::Mustache object with the provided template ready for rendering.
       #
-      # **Note**: Either the file or template argument (or both) must be provided.
+      # @note Either the file or template argument (or both) must be provided.
       def initialize(file = nil, template = nil, on_yaml = nil, &block); end
 
       # Renders the template given at initialization with the provided context.
@@ -454,7 +553,6 @@ unless defined?(Iodine)
       #        m.render(ctx)
       #
       # @param ctx [Hash] the top level context for the template data.
-      #
       # @return [String] returns a String containing the rendered template.
       def render(ctx = nil); end
 
@@ -463,18 +561,13 @@ unless defined?(Iodine)
       #        Iodine::Mustache.render(file = nil, template = nil, ctx = nil, on_yaml = nil)
       #
       # @param file [String] a file name for the mustache template.
-      #
       # @param template [String] the content of the mustache template - if `nil` or missing, `file` content will be loaded from disk.
-      #
       # @param ctx [Hash] the top level context for the template data.
-      #
       # @param on_yaml [Proc] (**optional**) accepts a YAML front-matter String.
-      #
       # @param block [Block] to be used as an implicit \p on_yaml (if missing).
-      #
       # @return [String] returns a String containing the rendered template.
       #
-      # **Note**: Either the file or template argument (or both) must be provided.
+      # @note Either the file or template argument (or both) must be provided.
       def self.render(file = nil, template = nil, ctx = nil, on_yaml = nil, &block); end
     end
 
@@ -490,161 +583,314 @@ unless defined?(Iodine)
     # After testing the performance, consider calling {Iodine::Utils.monkey_patch} if using Rack.
     module Utils
       # Encodes a String using percent encoding (i.e., URI encoding).
-      def self.escape_path(); end
+      #
+      # @param str [String] the string to encode
+      # @return [String] the encoded string
+      def self.escape_path(str); end
+
       # Encodes a String in place using percent encoding (i.e., URI encoding).
-      def self.escape_path!(); end
+      #
+      # @param str [String] the string to encode in place
+      # @return [String] the encoded string
+      def self.escape_path!(str); end
+
       # Decodes percent encoding, including the `%uxxxx` JavaScript extension.
-      def self.unescape_path(); end
+      #
+      # @param str [String] the string to decode
+      # @return [String] the decoded string
+      def self.unescape_path(str); end
+
       # Decodes percent encoding in place, including the `%uxxxx` JavaScript.
-      def self.unescape_path!(); end
+      #
+      # @param str [String] the string to decode in place
+      # @return [String] the decoded string
+      def self.unescape_path!(str); end
+
       # Encodes a String using percent encoding (i.e., URI encoding).
-      def self.escape(); end
+      #
+      # @param str [String] the string to encode
+      # @return [String] the encoded string
+      def self.escape(str); end
+
       # Encodes a String using percent encoding (i.e., URI encoding).
-      def self.escape!(); end
+      #
+      # @param str [String] the string to encode in place
+      # @return [String] the encoded string
+      def self.escape!(str); end
+
       # Decodes percent encoding, including the `%uxxxx` JavaScript extension and converting `+` to spaces.
-      def self.unescape(); end
+      #
+      # @param str [String] the string to decode
+      # @return [String] the decoded string
+      def self.unescape(str); end
+
       # Decodes percent encoding in place, including the `%uxxxx` JavaScript extension and converting `+` to spaces.
-      def self.unescape!(); end
+      #
+      # @param str [String] the string to decode in place
+      # @return [String] the decoded string
+      def self.unescape!(str); end
+
       # Escapes String using HTML escape encoding.
       #
-      # Note: this function may significantly increase the number of escaped characters when compared to the native implementation.
-      def self.escape_html(); end
+      # @param str [String] the string to escape
+      # @return [String] the escaped string
+      #
+      # @note This function may significantly increase the number of escaped characters when compared to the native implementation.
+      def self.escape_html(str); end
+
       # Escapes String in place using HTML escape encoding.
       #
-      # Note: this function may significantly increase the number of escaped characters when compared to the native implementation.
-      def self.escape_html!(); end
+      # @param str [String] the string to escape in place
+      # @return [String] the escaped string
+      #
+      # @note This function may significantly increase the number of escaped characters when compared to the native implementation.
+      def self.escape_html!(str); end
+
       # Decodes an HTML escaped String.
-      def self.unescape_html(); end
+      #
+      # @param str [String] the string to decode
+      # @return [String] the decoded string
+      def self.unescape_html(str); end
+
       # Decodes an HTML escaped String in place.
-      def self.unescape_html!(); end
+      #
+      # @param str [String] the string to decode in place
+      # @return [String] the decoded string
+      def self.unescape_html!(str); end
+
       # Takes a Time object and returns a String conforming to RFC 2109.
-      def self.rfc2109(time);  end
+      #
+      # @param time [Time] the time object
+      # @return [String] the formatted time string
+      def self.rfc2109(time); end
+
       # Takes a Time object and returns a String conforming to RFC 2822.
-      def self.rfc2822(time);  end
+      #
+      # @param time [Time] the time object
+      # @return [String] the formatted time string
+      def self.rfc2822(time); end
+
       # Takes a Time object and returns a String conforming to RFC 7231.
+      #
+      # @param time [Time] the time object
+      # @return [String] the formatted time string
       def self.time2str(time); end
+
       # Securely compares two String objects to see if they are equal.
       #
       # Designed to be secure against timing attacks when both String objects are of the same length.
       #
-      # Performance depends on specific architecture and compiler used. Always measure:
-      #
-      #     require 'iodine'
-      #     require 'rack'
-      #     require 'benchmark'
-      #     def prove_secure_compare(name, mthd, length = 4096)
-      #       GC.disable
-      #       a = 0;
-      #       b = 0;
-      #       str1 = Array.new(length) { 'a' } .join; str2 = Array.new(length) { 'a' } .join;
-      #       counter = 1.0 / (Benchmark.measure {1024.times {mthd.call(str1, str2)}}).total
-      #       counter = counter / 2
-      #       counter = 1.0 if(counter < 1.0)
-      #       counter = counter.to_i
-      #       bm = Benchmark.measure do
-      #         2048.times do
-      #           tmp = Benchmark.measure {counter.times {mthd.call(str1, str2)}}
-      #           str1[0] = 'b'
-      #           tmp2 = Benchmark.measure {counter.times {mthd.call(str1, str2)}}
-      #           str1[0] = 'a'
-      #           tmp = tmp2.total - tmp.total
-      #           a += 1 if tmp >= 0
-      #           b += 1 if tmp <= 0
-      #         end
-      #       end
-      #       GC.enable
-      #       counter = (a.to_f/b.to_f - b.to_f/a.to_f).abs
-      #       msg = ""
-      #       msg = "DIFFERENCE TOO LARGE!" if (a == 0 || b == 0 || counter > 0.3)
-      #       puts "#{name} timing ratio #{a}:#{b} #{msg} (#{'%.3f' % counter})\n#{bm.to_s}\n"
-      #     end
-      #     def print_proof
-      #         methods = [ ["String == (short string)", (Proc.new {|a,b| a == b } )],
-      #                     ["Iodine::Utils.secure_compare (short string)", Iodine::Utils.method(:secure_compare)],
-      #                     ["Rack::Utils.secure_compare (short string)", Rack::Utils.method(:secure_compare)] ]
-      #         [64, 2048].each {|len| methods.each {|c| prove_secure_compare(c[0], c[1], len) } }
-      #     end
-      #     print_proof
-      #
-      def self.secure_compare(); end
+      # @param a [String] the first string
+      # @param b [String] the second string
+      # @return [Boolean] `true` if equal, `false` otherwise
+      def self.secure_compare(a, b); end
+
       # Adds the `Iodine::Utils` methods that are similar to the `Rack::Utils` module to the module(s) passed as arguments.
       #
-      # If no modules were passed to the `monkey_patch` method, `Rack::Utils` will be
-      # monkey patched.
+      # If no modules were passed to the `monkey_patch` method, `Rack::Utils` will be monkey patched.
+      #
+      # @param to_patch [Module] the module(s) to patch
+      # @return [self]
       def self.monkey_patch(to_patch = Rack::Utils); end
+
       # Returns a String with the requested length of random bytes.
-      # @return [String] returns a String containing the requested length of random bytes.
+      #
+      # @param bytes [Integer] the number of random bytes (default: 16)
+      # @return [String] a String containing the requested length of random bytes
       def self.random(bytes = 16); end
+
       # Generates a UUID using either random `secret` String, a random `info` String, both or none (a deterministic UUID), depending on the number parameters supplied.
       #
-      # @param secret [String] (**optional**) Adds salt to the UUID randomized number.
-      # @param info [String] (**optional**) Adds salt to the UUID randomized number.
-      # @return [String] in UUID format.
+      # @param secret [String, nil] (**optional**) Adds salt to the UUID randomized number.
+      # @param info [String, nil] (**optional**) Adds salt to the UUID randomized number.
+      # @return [String] in UUID format
       def self.uuid(secret = nil, info = nil); end
+
       # Returns new Timed-One-Time-Password (TOTP), in Google format (6 digit Number with a 30 second validity).
       #
       # @param secret [String] the secret OTP for which the time based (T)OTP should be created.
-      # @param offset [Number] (**optional**) the number of "steps" backwards in time. Allows for testing of expired TOTPs.
-      # @return [Number] returns a 6 digit Number based on the secret provided and the current time.
-      def self.totp(secret, offset = 0); end
-      # Generates 16 unique bytes of Poly1305-MAC, encoding them as a 32 byte Hex encoded String.
+      # @param offset [Integer] (**optional**) the number of "steps" backwards in time. Allows for testing of expired TOTPs.
+      # @param interval [Integer] (**optional**) time window in seconds (default: 30).
+      # @return [Integer] returns a 6 digit Number based on the secret provided and the current time.
+      #
+      # @example
+      #   code = Iodine::Utils.totp(secret: my_secret)
+      #   code = Iodine::Utils.totp(secret: my_secret, offset: -1)  # previous window
+      def self.totp(secret:, offset: 0, interval: 30); end
+
+      # Generates a new TOTP secret suitable for Google Authenticator.
+      #
+      # The secret is generated using cryptographically secure random bytes
+      # and encoded in Base32 (uppercase, no padding) for compatibility with
+      # authenticator apps.
+      #
+      # @param len [Integer] (**optional**) Length of the secret in bytes (default: 20, range: 10-64)
+      # @return [String] Base32 encoded secret suitable for QR codes and authenticator apps
+      #
+      # @example
+      #   secret = Iodine::Utils.totp_secret
+      #   secret = Iodine::Utils.totp_secret(len: 32)
+      def self.totp_secret(len: 20); end
+
+      # Verifies a TOTP code against a secret with time window tolerance.
+      #
+      # The window parameter specifies how many intervals to check on either side
+      # of the current time. For example, window: 1 checks current ± 1 interval.
+      #
+      # @param secret [String] the shared secret key (raw bytes or Base32 decoded)
+      # @param code [Integer] the TOTP code to verify
+      # @param window [Integer] (**optional**) number of intervals to check on each side (default: 1, range: 0-10)
+      # @param interval [Integer] (**optional**) time window in seconds (default: 30)
+      # @return [Boolean] `true` if the code is valid, `false` otherwise
+      #
+      # @example
+      #   valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code)
+      #   valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code, window: 2)
+      def self.totp_verify(secret:, code:, window: 1, interval: 30); end
+
+      # Generates 16 unique bytes of Poly1305-MAC, encoding them as a Base64 encoded String.
+      #
       # @param secret [String] The secret used for the Hash based Message Authentication Code (MAC). Only the first 32 bytes are used.
       # @param msg [String] The message to authenticate.
-      # @return [String] 32 byte Hex encoded String.
+      # @return [String] Base64 encoded String.
       def self.hmac128(secret, msg); end
-      # Generates 20 unique bytes of SHA1-HMAC, encoding them as a 40 byte Hex encoded String.
+
+      # Generates 20 unique bytes of SHA1-HMAC, encoding them as a Base64 encoded String.
       #
       # This is the equivalent of calling `OpenSSL::HMAC.base64digest "SHA1", secret, msg`
       #
       # @param secret [String] The secret used for the Hash based Message Authentication Code (MAC).
       # @param msg [String] The message to authenticate.
-      # @return [String] 40 byte Hex encoded String.
+      # @return [String] Base64 encoded String.
       def self.hmac160(secret, msg); end
-      # Generates 128 unique bytes of SHA512-HMAC, encoding them as a 256 byte Hex encoded String.
+
+      # Generates 32 unique bytes of SHA256-HMAC, encoding them as a Base64 encoded String.
+      #
+      # This is the equivalent of calling `OpenSSL::HMAC.base64digest "SHA256", secret, msg`
+      #
+      # @param secret [String] The secret used for the Hash based Message Authentication Code (MAC).
+      # @param msg [String] The message to authenticate.
+      # @return [String] Base64 encoded String.
+      def self.hmac256(secret, msg); end
+
+      # Generates 64 unique bytes of SHA512-HMAC, encoding them as a Base64 encoded String.
       #
       # This is the equivalent of calling `OpenSSL::HMAC.base64digest "SHA512", secret, msg`
       #
       # @param secret [String] The secret used for the Hash based Message Authentication Code (MAC).
       # @param msg [String] The message to authenticate.
-      # @return [String] 256 byte long Hex encoded String.
+      # @return [String] Base64 encoded String.
       def self.hmac512(secret, msg); end
+
+      # Computes SHA-256 hash of the data.
+      #
+      # @param data [String] the data to hash
+      # @return [String] 32-byte binary hash
+      def self.sha256(data); end
+
+      # Computes SHA-512 hash of the data.
+      #
+      # @param data [String] the data to hash
+      # @return [String] 64-byte binary hash
+      def self.sha512(data); end
+
+      # Computes SHA3-256 hash of the data.
+      #
+      # @param data [String] the data to hash
+      # @return [String] 32-byte binary hash
+      def self.sha3_256(data); end
+
+      # Computes SHA3-512 hash of the data.
+      #
+      # @param data [String] the data to hash
+      # @return [String] 64-byte binary hash
+      def self.sha3_512(data); end
+
+      # Computes BLAKE2b hash of the data.
+      #
+      # @param data [String] the data to hash
+      # @param key [String, nil] optional key for keyed hashing
+      # @param len [Integer] output length in bytes (1-64, default: 64)
+      # @return [String] binary hash of specified length
+      def self.blake2b(data, key: nil, len: 64); end
+
+      # Computes BLAKE2s hash of the data.
+      #
+      # @param data [String] the data to hash
+      # @param key [String, nil] optional key for keyed hashing
+      # @param len [Integer] output length in bytes (1-32, default: 32)
+      # @return [String] binary hash of specified length
+      def self.blake2s(data, key: nil, len: 32); end
     end
 
     #######################
 
     # This is the namespace for all pub/sub related classes and constants.
     module PubSub
+      # Returns the current default PubSub engine.
+      #
+      # @return [Iodine::PubSub::Engine] the current default engine
+      def self.default; end
+
+      # Sets the default PubSub engine for all publish operations.
+      #
+      # @param engine [Iodine::PubSub::Engine, nil] the engine to set as default (or nil for CLUSTER)
+      # @return [Iodine::PubSub::Engine] the new default engine
+      #
+      # @example
+      #   Iodine::PubSub.default = Iodine::PubSub::Engine::Redis.new("redis://localhost:6379/")
+      def self.default=(engine); end
+
       # Iodine::PubSub::Message class instances are passed to subscription callbacks.
       #
       # This allows subscription callbacks to get information about the pub/sub event.
       class Message
         # Returns the event's `id` property - a (mostly) random numerical value.
-        def id(); end
+        # @return [Integer]
+        def id; end
+
         # Returns the event's `channel` property - the event's target channel.
-        def channel(); end
+        # @return [String, nil]
+        def channel; end
         alias event channel
+
         # Returns the event's `filter` property - the event's numerical channel filter.
-        def filter(); end
+        # @return [Integer]
+        def filter; end
+
         # Returns the event's `message` property - the event's payload (same as {to_s}).
-        def message(); end
+        # @return [String]
+        def message; end
         alias msg message
         alias data message
+
         # Returns the event's `published` property - the event's published timestamp in milliseconds since epoch.
-        def published(); end
+        # @return [Integer]
+        def published; end
 
         # Returns the event's `message` property - the event's payload (same as {message}).
-        def to_s(); end
+        # @return [String]
+        def to_s; end
 
         # Sets the event's `id` property.
-        def id=(); end
+        # @param value [Integer]
+        def id=(value); end
+
         # Sets the event's `channel` property.
-        def channel=(); end
+        # @param value [String]
+        def channel=(value); end
+
         # Sets the event's `filter` property.
-        def filter=(); end
+        # @param value [Integer]
+        def filter=(value); end
+
         # Sets the event's `message` property.
-        def message=(); end
+        # @param value [String]
+        def message=(value); end
+
         # Sets the event's `published` property.
-        def published=(); end
+        # @param value [Integer]
+        def published=(value); end
       end
 
       # Iodine::PubSub::Engine class instances are used as the base class for all pub/sub engines.
@@ -665,16 +911,32 @@ unless defined?(Iodine)
       class Engine
         # When implementing your own initialization class, remember to call `super` to attach the engine to Iodine.
         def initialize; end
+
         # Please OVERRIDE(!) – called by iodine when a message was published to the engine (using `Iodine.publish(engine: MY_ENGINE, ...)).
-        def pubslish(msg); end
+        #
+        # @param msg [Iodine::PubSub::Message] the message to publish
+        def publish(msg); end
+
         # Please OVERRIDE(!) – called by iodine when a named channel was subscribed to.
+        #
+        # @param channel [String] the channel name
         def subscribe(channel); end
+
         # Please OVERRIDE(!) – called by iodine when a pattern channel was subscribed to.
+        #
+        # @param pattern [String] the pattern
         def psubscribe(pattern); end
+
         # Please OVERRIDE(!) – called by iodine when a named channel was unsubscribed to.
+        #
+        # @param channel [String] the channel name
         def unsubscribe(channel); end
+
         # Please OVERRIDE(!) – called by iodine when a pattern channel was unsubscribed to.
+        #
+        # @param pattern [String] the pattern
         def punsubscribe(pattern); end
+
         # Please OVERRIDE(!) – called by iodine when a the engine is detached from iodine.
         #
         # This happens when the engine object went out of scope and should be collected by the GC (Garbage Collector).
@@ -693,6 +955,8 @@ unless defined?(Iodine)
 
         # Redis Pub/Sub engine for distributed messaging across multiple server instances.
         #
+        # Provides both Pub/Sub functionality and direct Redis command execution.
+        #
         # @example Basic usage
         #   redis = Iodine::PubSub::Engine::Redis.new("redis://localhost:6379/", ping: 50)
         #   Iodine::PubSub.default = redis
@@ -704,7 +968,7 @@ unless defined?(Iodine)
         #   redis.cmd("SET", "key", "value") { |result| puts result }
         #   redis.cmd("GET", "key") { |value| puts value }
         #   redis.cmd("KEYS", "*") { |keys| p keys }
-        class Redis
+        class Redis < Engine
           # Creates a new Redis Pub/Sub engine.
           #
           # @param url [String] Redis server URL (e.g., "redis://localhost:6379/")
@@ -714,6 +978,12 @@ unless defined?(Iodine)
           # URL formats supported:
           # - "redis://host:port"
           # - "redis://user:password@host:port/db"
+          # - "host:port"
+          # - "host" (default port 6379)
+          #
+          # @example
+          #   redis = Iodine::PubSub::Engine::Redis.new("redis://localhost:6379/")
+          #   redis = Iodine::PubSub::Engine::Redis.new("redis://secret@host:6379/", ping: 60)
           def initialize(url, ping: 0); end
 
           # Sends a Redis command and optionally receives the response via callback.
@@ -722,6 +992,12 @@ unless defined?(Iodine)
           # @yield [result] Called with the Redis response
           # @yieldparam result [Object] The parsed Redis response
           # @return [Boolean] true on success, false on error
+          #
+          # @example
+          #   redis.cmd("SET", "key", "value") { |r| puts "SET result: #{r}" }
+          #   redis.cmd("GET", "key") { |value| puts "Value: #{value}" }
+          #   redis.cmd("KEYS", "*") { |keys| p keys }
+          #   redis.cmd("INCR", "counter") { |new_val| puts new_val }
           #
           # @note Do NOT use SUBSCRIBE/PSUBSCRIBE/UNSUBSCRIBE/PUNSUBSCRIBE commands.
           #       These are handled internally by the pub/sub system.
@@ -738,9 +1014,9 @@ unless defined?(Iodine)
     class Listener
       # Sets the handler for new connections.
       #
-      # @param url [String] should be `nil` unless listening for HTTP connections, in which case `url`, if set, will be used for routing the `path` part of the URL requested to the specified handler.
-      #
+      # @param url [String, nil] should be `nil` unless listening for HTTP connections, in which case `url`, if set, will be used for routing the `path` part of the URL requested to the specified handler.
       # @param handler [Object] should contain a valid {Iodine::Connection::Handler} for incoming connections.
+      # @return [self]
       #
       # Routing with HTTP `url` values will follow the following rules:
       #
@@ -750,7 +1026,7 @@ unless defined?(Iodine)
       #
       # - The {Iodine::Connection#path} property will NOT contain the removed path prefix, but will always contain and start with the `/` character. For example: matching the path `"/user/new"` with the route for `"/user"` will set the {Iodine::Connection#path} property to `'/new'`.
       #
-      # Note: when `handler` is `false` instead of `nil`, the handler for the route will be replace with the default handler. However, the {Iodine::Connection#path} property for the HTTP handler will behave as if a route match has occurred, removing the route's prefix.
+      # @note When `handler` is `false` instead of `nil`, the handler for the route will be replace with the default handler. However, the {Iodine::Connection#path} property for the HTTP handler will behave as if a route match has occurred, removing the route's prefix.
       def map(url = nil, handler = nil); end
     end
 
@@ -779,34 +1055,49 @@ unless defined?(Iodine)
       # @param cookies [Hash] (HTTP/WebSocket only) Cookies to send.
       # @param body [String] (HTTP only) Request body.
       # @param method [String] (HTTP only) HTTP method (defaults to GET).
+      # @return [Iodine::Connection] The new connection object.
       #
       # @example WebSocket client with embedded TLS
       #   Iodine::Connection.new("wss://example.com/socket", handler: MyHandler, tls_io: :iodine)
       #
       # @example WebSocket client with OpenSSL
       #   Iodine::Connection.new("wss://example.com/socket", handler: MyHandler, tls_io: :openssl)
-      #
-      # @return [Iodine::Connection] The new connection object.
       def initialize(url, handler: nil, tls: nil, tls_io: nil, headers: nil, cookies: nil, body: nil, method: nil); end
 
       # Unless `env` is manually set, Iodine will attempt to create a default `env` object that will follow the Rack Server specification for HTTP connections.
       #
       # Otherwise, the `env` attribute is usually a Hash object set by the client and may be used as an alternative to the Connection data storage (see {#[]} and {#[]=}).
+      # @return [Hash]
       attr_accessor :env
+
       # The `handler` attribute (see {Iodine::Connection::Handler}) - this may be the Rack application or a [NeoRack](https://github.com/boazsegev/neorack) application.
+      # @return [Object]
       attr_accessor :handler
+
       # For HTTP connections, the `status` value is the HTTP status value that will be sent in the response.
+      # @return [Integer]
       attr_accessor :status
+
       # For HTTP connections, the `method` value is the HTTP method value received by the client.
+      # @return [String]
       attr_accessor :method
+
       # For HTTP connections, the `path` value is the HTTP URL's path String received by the client. When routing, this does **NOT** include the route's prefix (see {Iodine::Listener#map}).
+      # @return [String]
       attr_accessor :path
+
       # For HTTP connections, the `opath` value is the HTTP URL's original path String received by the client.
+      # @return [String]
       attr_accessor :opath
+
       # For HTTP connections, the `query` value is the HTTP URL's query String (if received by the client).
+      # @return [String, nil]
       attr_accessor :query
+
       # For HTTP connections, the `version` String value stated by the HTTP client.
+      # @return [String]
       attr_accessor :version
+
       # For HTTP connections, sets all incoming request headers in the Connection instance storage ({#[]}) and returns `self`.
       #
       # Used to overcome lazy parsing of incoming headers. i.e.:
@@ -820,8 +1111,11 @@ unless defined?(Iodine)
       #         end
       #     end
       #
+      # @return [self]
       attr_accessor :headers
+
       # (HTTP Only) Returns the length of the `body` payload.
+      # @return [Integer]
       attr_reader :length
 
       # @!group Key-Data Store
@@ -831,22 +1125,40 @@ unless defined?(Iodine)
       # If the Connection is an HTTP connection and `key` is a Header String, the value of the header (if received) will be returned.
       #
       # If no value was set for the key (or no Header received), `nil` will be returned.
+      #
+      # @param key [Object] the key to look up
+      # @return [Object, nil] the value or nil
       def [](key); end
+
       # Sets a key value pair.
+      #
+      # @param key [Object] the key
+      # @param value [Object] the value
+      # @return [Object] the value
       def []=(key, value); end
+
       # Iterates over the stored key value pairs.
       #
       # If the Connection is an HTTP connection, `each` will also iterate over any header previously accessed.
+      #
+      # @yield [key, value] the key-value pairs
+      # @return [self]
       def each(&block); end
+
       # Returns the number of key value pairs stored.
       # @return [Integer]
       def store_count; end
+
       # Returns the theoretical capacity of the key value pair storage map.
       # @return [Integer]
       def store_capa; end
+
       # Reserved a theoretical storage capacity in the key value pair storage map.
       #
-      # Note that the capacity is theoretical only and some extra memory is required to allow for possible (partial) hash collisions.
+      # @param number_of_items [Integer] the number of items to reserve
+      # @return [self]
+      #
+      # @note The capacity is theoretical only and some extra memory is required to allow for possible (partial) hash collisions.
       def store_reserve(number_of_items); end
 
       # @!group Connection State
@@ -854,19 +1166,36 @@ unless defined?(Iodine)
       # Returns `true` if the connection appears to be open (no known issues).
       #
       # (HTTP Only) Returns `true` only if upgraded and open (WebSocket is open).
-      def open?(); end
+      # @return [Boolean]
+      def open?; end
+
       # (HTTP Only) Returns `false` if headers can still be sent. Otherwise returns `true`.
+      # @return [Boolean]
       def headers_sent?; end
+
       # Returns `true` only if the Connection object is still valid (data can be sent).
+      # @return [Boolean]
       def valid?; end
+
       # Returns true only of the connection is a WebSocket connection.
+      # @return [Boolean]
       def websocket?; end
+
       # Returns true only of the connection is an SSE connection.
+      # @return [Boolean]
       def sse?; end
+
+      # Returns true only of the connection is an HTTP connection (not upgraded).
+      # @return [Boolean]
+      def http?; end
+
       # Returns the number of bytes that need to be sent before the next `on_drained` callback is called.
-      def pending(); end
+      # @return [Integer]
+      def pending; end
+
       # Schedules the connection to be closed.
-      def close(); end
+      # @return [self]
+      def close; end
 
       # @!group Writing to the Connection
 
@@ -887,7 +1216,12 @@ unless defined?(Iodine)
       #
       # **If `value` is an `Array` of `String`s**:
       #  - The method behaves as if called multiple times with the same `name`, once for each element of `value` (except `nil` values are ignored).
+      #
+      # @param name [String] the header name (lowercase)
+      # @param values [String, Array<String>, nil] the header value(s)
+      # @return [Boolean] `true` on success, `false` if headers already sent
       def write_headers(name, values); end
+
       # Writes data to the connection asynchronously.
       #
       # If `data` **should* be a String. However, if `data` is not a String, Iodine will attempt to convert it to a JSON String, allowing Hashes, Arrays and other native Ruby objects to be sent over the wire. Note that `data` **must** be a native Ruby Object, or it could not be converted to a JSON String.
@@ -896,8 +1230,10 @@ unless defined?(Iodine)
       #
       # For SSE connections: this is similar to calling `write_sse(nil, nil, data)`.
       #
-      # Returns `false` on error / fail and `true` if the event was scheduled to be sent to the client.
+      # @param data [String, Object] the data to write
+      # @return [Boolean] `false` on error / fail and `true` if the event was scheduled to be sent to the client
       def write(data); end
+
       # Writes data to EventSource client connections asynchronously.
       #
       # The `id` and `event` elements **must** be UTF-8 encoded Strings.
@@ -906,25 +1242,47 @@ unless defined?(Iodine)
       #
       # An empty `data` String or a missing `data` argument will cause `write_sse` to return false.
       #
-      # Returns `false` on error / fail and `true` if the event was scheduled to be sent to the client.
+      # @param id [String, nil] the event ID
+      # @param event [String, nil] the event type
+      # @param data [String, Object] the event data
+      # @return [Boolean] `false` on error / fail and `true` if the event was scheduled to be sent to the client
       def write_sse(id, event, data); end
+
       # Closes the connection after writing `data`, or (HTTP Only) finishes the HTTP response.
       #
-      # Note that for HTTP connections the `"content-length"` header is automatically written if no previous calls to `write` were called.
+      # @param data [String, nil] optional data to write before closing
+      # @return [self]
+      #
+      # @note For HTTP connections the `"content-length"` header is automatically written if no previous calls to `write` were called.
       def finish(data = nil); end
 
       # @!group Reading the HTTP Body / Payload
 
       # (HTTP Only) Returns an ASCII-8 String with the next line in the Body (same as {::IO#gets} where only `limit` is allowed).
+      #
+      # @param limit [Integer, nil] maximum number of bytes to read
+      # @return [String, nil] the line or nil if at end
       def gets(limit = nil); end
+
       # (HTTP Only) Returns an ASCII-8 String with (part of) the Body (see {::IO#read}).
+      #
+      # @param maxlen [Integer, nil] maximum number of bytes to read
+      # @param out_string [String, nil] optional buffer to read into
+      # @return [String, nil] the data or nil if at end
       def read(maxlen = nil, out_string = nil); end
+
       # (HTTP Only) Sets the body's new read position. Negative values start at the end of the body. `nil` returns current position.
+      #
+      # @param pos [Integer, nil] the new position
+      # @return [Integer] the current position
       def seek(pos = nil); end
 
       # @!group HTTP Cookies
 
       # (HTTP Only) Returns an ASCII-8 String with the value of the named cookie.
+      #
+      # @param name [String, Symbol] the cookie name
+      # @return [String, nil] the cookie value or nil
       def cookie(name); end
 
       # (HTTP Only) Sets the value of the named cookie and returns `true` upon success.
@@ -935,34 +1293,46 @@ unless defined?(Iodine)
       #
       # This should behave similar to calling `write_header`, except that the cookie can be read using the {#cookie} method.
       #
-      # Note that this method accepts named arguments. i.e.:
+      # @param name [String, Symbol] the cookie name
+      # @param value [String, nil] the cookie value (nil to delete)
+      # @param max_age [Integer] max age in seconds (0 for session cookie)
+      # @param domain [String, nil] the cookie domain
+      # @param path [String, nil] the cookie path
+      # @param same_site [Symbol, nil] `:default`, `:none`, `:lax`, or `:strict`
+      # @param secure [Boolean] if true, cookie only sent over HTTPS
+      # @param http_only [Boolean] if true, cookie not accessible via JavaScript
+      # @param partitioned [Boolean] if true, cookie is partitioned
+      # @return [Boolean] `true` on success
       #
-      #     set_cookie(name: "MyCookie", value: "My non-secret data", domain: "localhost", max_age: 1_728_000)
+      # @example
+      #   set_cookie(name: "MyCookie", value: "My non-secret data", domain: "localhost", max_age: 1_728_000)
       #
-      # For more details, see: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie
+      # @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie
       def set_cookie(name, value = nil, max_age = 0, domain = nil, path = nil, same_site = nil, secure = false,
                      http_only = false, partitioned = false)
       end
 
       # Calls `block` for each name-value cookie pair.
+      #
+      # @yield [name, value] the cookie name and value
+      # @return [self]
       def each_cookie(&block); end
 
       # @!group Pub/Sub
 
       # Publishes a message to a combination of a channel (String) and filter (number).
       #
-      # Accepts the following (possibly named) arguments:
+      # @param channel [String, nil] the channel name to publish to
+      # @param filter [Integer] the filter to publish to (Number < 32,767)
+      # @param message [String] the actual message to publish
+      # @param engine [Iodine::PubSub::Engine, nil] the pub/sub engine to use (if not the default one)
+      # @return [Boolean] `true` on success
       #
-      # - `channel`: the channel name to publish to (String).
-      # - `filter`: the filter to publish to (Number < 32,767).
-      # - `message`: the actual message to publish.
-      # - `engine`: the pub/sub engine to use (if not the default one).
-      #
-      # i.e.:
-      #
-      #     Iodine::Connection.publish("channel_name", 0, "payload")
-      #     Iodine::Connection.publish(channel: "name", message: "payload")
+      # @example
+      #   Iodine::Connection.publish("channel_name", 0, "payload")
+      #   Iodine::Connection.publish(channel: "name", message: "payload")
       def self.publish(channel = nil, filter = 0, message = nil, engine = nil); end
+
       # Publishes a message to a combination of a channel (String) and filter (number).
       #
       # **Note**: events published by a specific client are sent to "**everyone else**" and ignored by the client itself.
@@ -971,107 +1341,74 @@ unless defined?(Iodine)
       #
       # To publish events to everyone, including the client itself, use the global {Iodine.publish} method or the {.publish} class method.
       #
-      # Accepts the following (possibly named) arguments:
+      # @param channel [String, nil] the channel name to publish to
+      # @param filter [Integer] the filter to publish to (Number < 32,767)
+      # @param message [String] the actual message to publish
+      # @param engine [Iodine::PubSub::Engine, nil] the pub/sub engine to use (if not the default one)
+      # @return [Boolean] `true` on success
       #
-      # - `channel`: the channel name to publish to (String).
-      # - `filter`: the filter to publish to (Number < 32,767).
-      # - `message`: the actual message to publish.
-      # - `engine`: the pub/sub engine to use (if not the default one).
-      #
-      # i.e.:
-      #
-      #     client.publish("channel_name", 0, "payload")
-      #     client.publish(channel: "name", message: "payload")
-      #
+      # @example
+      #   client.publish("channel_name", 0, "payload")
+      #   client.publish(channel: "name", message: "payload")
       def publish(channel = nil, filter = 0, message = nil, engine = nil); end
 
       # Subscribes to a combination of a channel (String) and filter (number).
       #
-      # Accepts the following (possibly named) arguments and an **optional** block:
+      # @param channel [String, nil] the subscription's channel name
+      # @param filter [Integer] the subscription's filter (Number < 32,767)
+      # @param callback [Proc, nil] an **optional** object that answers to call and accepts a single argument (the message structure)
+      # @return [Proc, nil] the callback
       #
-      # - `channel`: the subscription's channel name (String).
-      # - `filter`: the subscription's filter (Number < 32,767).
-      # - `callback`: an **optional** object that answers to call and accepts a single argument (the message structure).
+      # @note Either a proc or a block MUST be provided for global subscriptions.
       #
-      # Either a proc or a block MUST be provided for global subscriptions.
-      #
-      # i.e.:
-      #
-      #     client.subscribe("name")
-      #     client.subscribe(channel: "name")
-      #     # or with filter
-      #     client.subscribe("name", 1)
-      #     client.subscribe(channel: "name", filter: 1)
-      #     # or only a filter
-      #     client.subscribe(nil, 1)
-      #     client.subscribe(filter: 1)
-      #     # with / without a proc
-      #     client.subscribe(filter: 1) {|msg| msg.filter == 1; msg.channel == Qnil;}
-      #     client.subscribe() {|msg| msg.filter == 1; msg.channel == Qnil; }
+      # @example
+      #   client.subscribe("name") { |msg| puts msg.message }
+      #   client.subscribe(channel: "name", filter: 1) { |msg| puts msg.message }
       def subscribe(channel = nil, filter = 0, &callback); end
+
       # Subscribes to a combination of a channel (String) and filter (number).
       #
-      # Accepts the following (possibly named) arguments and an **optional** block:
+      # @param channel [String, nil] the subscription's channel name
+      # @param filter [Integer] the subscription's filter (Number < 32,767)
+      # @param callback [Proc, nil] an **optional** object that answers to call and accepts a single argument (the message structure)
+      # @return [Proc, nil] the callback
       #
-      # - `channel`: the subscription's channel name (String).
-      # - `filter`: the subscription's filter (Number < 32,767).
-      # - `callback`: an **optional** object that answers to call and accepts a single argument (the message structure).
+      # @note Either a proc or a block MUST be provided for global subscriptions.
       #
-      # Either a proc or a block MUST be provided for global subscriptions.
-      #
-      # i.e.:
-      #
-      #     Iodine::Connection.subscribe("name")
-      #     Iodine::Connection.subscribe(channel: "name")
-      #     # or with filter
-      #     Iodine::Connection.subscribe("name", 1)
-      #     Iodine::Connection.subscribe(channel: "name", filter: 1)
-      #     # or only a filter
-      #     Iodine::Connection.subscribe(nil, 1)
-      #     Iodine::Connection.subscribe(filter: 1)
-      #     # with / without a proc
-      #     Iodine::Connection.subscribe(filter: 1) {|msg| msg.filter == 1; msg.channel == Qnil;}
-      #     Iodine::Connection.subscribe() {|msg| msg.filter == 1; msg.channel == Qnil; }
+      # @example
+      #   Iodine::Connection.subscribe("name") { |msg| puts msg.message }
       def self.subscribe(channel = nil, filter = 0, &callback); end
 
-      # Un-Subscribes to a combination of a channel (String) and filter (number).
+      # Un-Subscribes from a combination of a channel (String) and filter (number).
       #
-      # Accepts the following (possibly named) arguments:
+      # @param channel [String, nil] the subscription's channel name
+      # @param filter [Integer] the subscription's filter (Number < 32,767)
+      # @return [Boolean] `true` on success
       #
-      # - `channel`: the subscription's channel name (String).
-      # - `filter`: the subscription's filter (Number < 32,767).
-      #
-      # i.e.:
-      #
-      #     client.unsubscribe("name")
-      #     client.unsubscribe(channel: "name")
-      #     # or with filter
-      #     client.unsubscribe("name", 1)
-      #     client.unsubscribe(channel: "name", filter: 1)
-      #     # or only a filter
-      #     client.unsubscribe(nil, 1)
-      #     client.unsubscribe(filter: 1)
+      # @example
+      #   client.unsubscribe("name")
+      #   client.unsubscribe(channel: "name", filter: 1)
       def unsubscribe(channel = nil, filter = 0); end
-      # Un-Subscribes to a combination of a channel (String) and filter (number).
+
+      # Un-Subscribes from a combination of a channel (String) and filter (number).
       #
-      # Accepts the following (possibly named) arguments:
+      # @param channel [String, nil] the subscription's channel name
+      # @param filter [Integer] the subscription's filter (Number < 32,767)
+      # @return [Boolean] `true` on success
       #
-      # - `channel`: the subscription's channel name (String).
-      # - `filter`: the subscription's filter (Number < 32,767).
-      #
-      # i.e.:
-      #
-      #     Iodine::Connection.unsubscribe("name")
-      #     Iodine::Connection.unsubscribe(channel: "name")
-      #     # or with filter
-      #     Iodine::Connection.unsubscribe("name", 1)
-      #     Iodine::Connection.unsubscribe(channel: "name", filter: 1)
-      #     # or only a filter
-      #     Iodine::Connection.unsubscribe(nil, 1)
-      #     Iodine::Connection.unsubscribe(filter: 1)
+      # @example
+      #   Iodine::Connection.unsubscribe("name")
       def self.unsubscribe(channel = nil, filter = 0); end
 
       # @!group Misc
+
+      # Returns the raw peer IP address.
+      # @return [String]
+      def peer_addr; end
+
+      # Returns the published peer address (may differ with proxies).
+      # @return [String]
+      def from; end
 
       # Hijacks the connection from the Server and returns an IO object.
       #
@@ -1095,29 +1432,54 @@ unless defined?(Iodine)
         # Used for [NeoRack](https://github.com/boazsegev/neorack) application authoring, when receiving HTTP requests.
         #
         # [NeoRack](https://github.com/boazsegev/neorack) allows both Async and CGI style Web Applications, making it easier to stream data and do more with a single thread.
+        #
+        # @param event [Iodine::Connection] the connection/event object
         def self.on_http(event); end
+
         # Used for [NeoRack](https://github.com/boazsegev/neorack) application authoring, when an HTTP request handling had finished.
+        #
+        # @param event [Iodine::Connection] the connection/event object
         def self.on_finish(event); end
+
         # Used for [Rack](https://github.com/rack/rack) application authoring, when receiving HTTP requests.
         #
         # [Rack](https://github.com/rack/rack) is the classical server interface and it is supported by Iodine with minimal extensions.
+        #
+        # @param env [Hash] the Rack environment hash
+        # @return [Array] the Rack response [status, headers, body]
         def self.call(env); end
+
         # When present, a missing `on_authenticate_sse` or missing `on_authenticate_websocket` will route to this callback, allowing authentication logic to be merged in one method.
         #
         # **Must** return `true` for the connection to be allowed. **Any other return value will cause the connection to be refused** (and disconnected).
         #
         # By default, if `on_message` or `on_open` are defined, than `on_authenticate` returns `true`. Otherwise, `on_authenticate` returns `false`.
+        #
+        # @param connection [Iodine::Connection] the connection object
+        # @return [Boolean] `true` to allow, `false` to deny
         def self.on_authenticate(connection); end
+
         # Called when an Event Source (SSE) request is detected, to authenticate and possibly set the identity of the user.
         #
         # By default, if `on_open` is defined, than `on_authenticate_sse` returns `true`. Otherwise, `on_authenticate` returns `false`.
+        #
+        # @param connection [Iodine::Connection] the connection object
+        # @return [Boolean] `true` to allow, `false` to deny
         def self.on_authenticate_sse(connection); end
+
         # Called when a WebSocket Upgrade request is detected, to authenticate and possibly set the identity of the user.
         #
         # By default, if `on_message` or `on_open` are defined, than `on_authenticate_websocket` returns `true`. Otherwise, `on_authenticate` returns `false`.
+        #
+        # @param connection [Iodine::Connection] the connection object
+        # @return [Boolean] `true` to allow, `false` to deny
         def self.on_authenticate_websocket(connection); end
+
         # Called when a long-running connection opens. This will be called for Event Source, WebSocket, TCP/IP and Raw Unix Socket connections.
+        #
+        # @param connection [Iodine::Connection] the connection object
         def self.on_open(connection); end
+
         # Called when incoming data arrives and its behavior depends on the underlying protocol.
         #
         # For TCP/IP and Raw Unix connections, the data is a Binary encoded String with some (or all) of the data available in the incoming socket buffer.
@@ -1127,18 +1489,41 @@ unless defined?(Iodine)
         # If the WebSocket message is in text, the String encoding will be UTF-8.
         #
         # If the WebSocket message is binary, the String encoding will be Binary (ASCII).
+        #
+        # @param connection [Iodine::Connection] the connection object
+        # @param data [String] the received data
         def self.on_message(connection, data); end
+
         # Called when all calls to {Iodine::Connection#write} have been handled and the outgoing buffer is now empty.
+        #
+        # @param connection [Iodine::Connection] the connection object
         def self.on_drained(connection); end
+
         # Called when timeout has been reached for a WebSocket / TCP/IP / Raw Unix Socket connection.
+        #
+        # @param connection [Iodine::Connection] the connection object
         def self.on_timeout(connection); end
+
         # Called when the worker that manages this connection (or the root process, in non-cluster mode) starts shutting down.
+        #
+        # @param connection [Iodine::Connection] the connection object
         def self.on_shutdown(connection); end
+
         # Called when the connection was closed (WebSocket / TCP/IP / Raw Unix Socket).
+        #
+        # @param connection [Iodine::Connection] the connection object
         def self.on_close(connection); end
+
         # Called when an Event Source (SSE) event has been received (when acting as an Event Source client).
+        #
+        # @param connection [Iodine::Connection] the connection object
+        # @param message [Iodine::PubSub::Message] the SSE message
         def self.on_eventsource(connection, message); end
+
         # Called an Event Source (SSE) client send a re-connection request with the ID of the last message received.
+        #
+        # @param connection [Iodine::Connection] the connection object
+        # @param last_message_id [String] the last message ID
         def self.on_eventsource_reconnect(connection, last_message_id); end
       end
 
@@ -1153,24 +1538,31 @@ unless defined?(Iodine)
         # @!group Callbacks
 
         # Called for `"GET /"`.
+        # @param e [Iodine::Connection] the connection object
         def self.index(e) = e.finish('Show Index')
 
         # Called for `"GET /(id)"`, where `id` can be assumed to be: `e.path[1..-1]`.
+        # @param e [Iodine::Connection] the connection object
         def self.show(e) = e.finish("Show Item: #{e.path[1..-1]}")
 
         # Called for `"GET /new"`, expecting a response containing a form for posting a new element.
+        # @param e [Iodine::Connection] the connection object
         def self.new(e) = e.finish('New Item Form.')
 
         # Called for `"GET /(id)/edit"`, expecting a response containing a form for editing the existing element with `id` being `e.path.split('/')[1]`.
+        # @param e [Iodine::Connection] the connection object
         def self.edit(e) = e.finish("Edit Item: #{e.path[1..-1]}")
 
         # Called for `"PATCH /"`, `"PUT /"`, `"POST /"`, `"PATCH /new"`, `"PUT /new"`, `"POST /new"` (`new` is optional).
+        # @param e [Iodine::Connection] the connection object
         def self.create(e) = e.finish('Create a new Item.')
 
         # Called for `"PATCH /(id)"`, `"PUT /(id)"`, `"POST /(id)"`, where `id` can be assumed to be: `e.path[1..-1]`.
+        # @param e [Iodine::Connection] the connection object
         def self.update(e) = e.finish("Update Item: #{e.path[1..-1]}")
 
         # Called for `"DELETE /(id)"`, where `id` can be assumed to be: `e.path[1..-1]`.
+        # @param e [Iodine::Connection] the connection object
         def self.delete(e) = e.finish("Delete Item: #{e.path[1..-1]}")
       end
     end
@@ -1183,24 +1575,42 @@ unless defined?(Iodine)
     #
     # The following constants provide information about available TLS backends:
     #
-    # - `Iodine::TLS::DEFAULT` - Returns `:openssl` or `:iodine` indicating the compile-time default backend.
+    # - `Iodine::TLS::SUPPORTED` - Always `true` (embedded TLS always available).
     # - `Iodine::TLS::OPENSSL_AVAILABLE` - Returns `true` if OpenSSL backend is compiled in.
     # - `Iodine::TLS::EMBEDDED_AVAILABLE` - Returns `true` (embedded TLS 1.3 is always available).
     #
     # @example Checking available backends
-    #   puts "Default TLS backend: #{Iodine::TLS::DEFAULT}"
+    #   puts "Default TLS backend: #{Iodine::TLS.default}"
     #   puts "OpenSSL available: #{Iodine::TLS::OPENSSL_AVAILABLE}"
     #   puts "Embedded TLS available: #{Iodine::TLS::EMBEDDED_AVAILABLE}"
     #
     class TLS
-      # @return [Symbol] The compile-time default TLS backend (`:openssl` or `:iodine`).
-      DEFAULT = :openssl
+      # @return [Boolean] `true` (TLS is always supported - at least embedded is available).
+      SUPPORTED = true
 
       # @return [Boolean] `true` if OpenSSL backend is compiled in and available.
       OPENSSL_AVAILABLE = true
 
       # @return [Boolean] `true` (embedded TLS 1.3 is always available).
       EMBEDDED_AVAILABLE = true
+
+      # Returns the current default TLS backend.
+      #
+      # @return [Symbol] `:openssl` or `:iodine` indicating the current default backend
+      def self.default; end
+
+      # Sets the default TLS backend.
+      #
+      # @param backend [Symbol] `:iodine` (embedded TLS 1.3) or `:openssl`
+      # @return [Symbol] the new default backend
+      # @raise [TypeError] if backend is not a Symbol
+      # @raise [ArgumentError] if backend is not `:iodine` or `:openssl`
+      # @raise [RuntimeError] if `:openssl` is requested but not available
+      #
+      # @example
+      #   Iodine::TLS.default = :iodine   # Use embedded TLS 1.3
+      #   Iodine::TLS.default = :openssl  # Use OpenSSL
+      def self.default=(backend); end
 
       # Assigns the TLS context a public certificate, allowing remote parties to validate the connection's identity.
       #
@@ -1215,14 +1625,19 @@ unless defined?(Iodine)
       #
       # Certificates and keys should be String objects leading to a PEM file.
       #
-      # This method also accepts named arguments. i.e.:
+      # @param name [String, nil] the server name (for SNI)
+      # @param cert [String, nil] path to the public certificate PEM file
+      # @param key [String, nil] path to the private key PEM file
+      # @param password [String, nil] password for the private key
+      # @return [self]
       #
-      #      tls = Iodine::TLS.new
-      #      tls.add_cert name: "example.com"
-      #      tls.add_cert cert: "my_cert.pem", key: "my_key.pem"
-      #      tls.add_cert cert: "my_cert.pem", key: "my_key.pem", password: ENV['TLS_PASS']
+      # @example
+      #   tls = Iodine::TLS.new
+      #   tls.add_cert name: "example.com"
+      #   tls.add_cert cert: "my_cert.pem", key: "my_key.pem"
+      #   tls.add_cert cert: "my_cert.pem", key: "my_key.pem", password: ENV['TLS_PASS']
       #
-      # Since TLS setup is crucial for security, an initialization error will result in Iodine crashing with an error message. This is expected behavior.
+      # @note Since TLS setup is crucial for security, an initialization error will result in Iodine crashing with an error message. This is expected behavior.
       def add_cert(name = nil, cert = nil, key = nil, password = nil); end
     end
 
@@ -1231,21 +1646,37 @@ unless defined?(Iodine)
     # Used internally by Iodine.
     class Base
       # Prints the number of object withheld from the GC (for debugging).
-      def self.print_debug(); end
+      def self.print_debug; end
+
       # Sets Iodine's cache limit for frozen strings, limited to 65,535 items.
+      #
+      # @param new_limit [Integer] the new cache limit
       def self.cache_limit=(new_limit); end
+
       # Returns Iodine's cache limit for frozen strings.
-      def self.cache_limit(); end
+      #
+      # @return [Integer] the current cache limit
+      def self.cache_limit; end
 
       # Parses and manages CLI input.
       module CLI
         # Parses CLI input.
         #
         # If `required` is true and CLI detects an error, program will exit with an appropriate exit message and a list of valid CLI options.
+        #
+        # @param required [Boolean] whether to exit on error
         def parse(required = false); end
+
         # Returns a CLI option's value.
+        #
+        # @param key [String] the option key
+        # @return [String, nil] the option value
         def [](key); end
+
         # Sets a CLI option's value.
+        #
+        # @param key [String] the option key
+        # @param value [String] the option value
         def []=(key, value); end
       end
 
@@ -1259,35 +1690,59 @@ unless defined?(Iodine)
       # It is also possible to benchmark the Ruby performance vs. the Ruby Hash using the `Iodine::Benchmark` module.
       module MiniMap
         # Returns the value associated with @key.
+        #
+        # @param key [Object] the key
+        # @return [Object, nil] the value
         def [](key); end
+
         # Sets the @value associated with @key and returns it.
+        #
+        # @param key [Object] the key
+        # @param value [Object] the value
+        # @return [Object] the value
         def []=(key, value); end
+
         # Runs block for each key-value pair. Returns the number of times the block was executed.
         #
-        #     m = Iodine::Base::MiniMap.new
-        #     m[:go] = "home"
-        #     m.each {|key, value| puts "#{key} => #{value}"}
+        # @yield [key, value] the key-value pairs
+        # @return [Integer] the number of iterations
+        #
+        # @example
+        #   m = Iodine::Base::MiniMap.new
+        #   m[:go] = "home"
+        #   m.each {|key, value| puts "#{key} => #{value}"}
         def each(&block); end
+
         # Returns the number of key-value pairs stored in the Hash.
         # @return [Integer]
         def count; end
+
         # Empties the map. Returns self.
         # @return [self]
         def clear; end
+
         # Returns the maximum number of theoretical items the Hash can contain.
         #
-        # Note that capacity increase will likely happen sooner and this number deals more with pre-allocated memory for the objects than with actual capacity.
         # @return [Integer]
+        #
+        # @note Capacity increase will likely happen sooner and this number deals more with pre-allocated memory for the objects than with actual capacity.
         def capa; end
+
         # Reserves room in the Hash Map for at least the @capacity requested.
         #
-        # See note in {capa}.
+        # @param capacity [Integer] the capacity to reserve
+        # @see #capa
         def reserve(capacity); end
+
         # Prints a JSON representation of the map (if possible).
+        # @return [String]
         def to_s; end
+
         # Benchmarks MiniMap v.s Hash performance when called from within the C layer.
         #
         # Numbers printed out are in time units. Lower is better.
+        #
+        # @param number_of_items [Integer] the number of items to benchmark
         # @return [String]
         def self.cbench(number_of_items); end
       end
@@ -1305,6 +1760,231 @@ unless defined?(Iodine)
       # Which results in a `WARNING: no App found` but no error.
       #
       module App404
+      end
+
+      # Provides access to modern cryptographic primitives.
+      #
+      # This module contains submodules for:
+      # - {ChaCha20Poly1305} - AEAD symmetric encryption (12-byte nonce)
+      # - {XChaCha20Poly1305} - AEAD symmetric encryption (24-byte nonce, safe for random)
+      # - {Ed25519} - Digital signatures
+      # - {X25519} - Key exchange and public-key encryption (ECIES)
+      # - {HKDF} - Key derivation (RFC 5869)
+      #
+      # @note This module is under `Iodine::Base` as the API may change between versions.
+      module Crypto
+        # ChaCha20-Poly1305 AEAD encryption with 12-byte nonce.
+        #
+        # @note The 12-byte nonce requires careful management to avoid reuse.
+        #   Consider using {XChaCha20Poly1305} if you need random nonces.
+        module ChaCha20Poly1305
+          # Encrypts data using ChaCha20-Poly1305 AEAD.
+          #
+          # @param data [String] Plaintext to encrypt
+          # @param key [String] 32-byte encryption key
+          # @param nonce [String] 12-byte nonce (must be unique per key)
+          # @param ad [String, nil] Optional additional authenticated data
+          # @return [Array<String, String>] [ciphertext, mac] where mac is 16 bytes
+          # @raise [ArgumentError] if key is not 32 bytes or nonce is not 12 bytes
+          #
+          # @example
+          #   key = Iodine::Utils.random(32)
+          #   nonce = Iodine::Utils.random(12)
+          #   ciphertext, mac = Iodine::Base::Crypto::ChaCha20Poly1305.encrypt("secret", key: key, nonce: nonce)
+          def self.encrypt(data, key:, nonce:, ad: nil); end
+
+          # Decrypts data using ChaCha20-Poly1305 AEAD.
+          #
+          # @param ciphertext [String] Ciphertext to decrypt
+          # @param mac [String] 16-byte authentication tag
+          # @param key [String] 32-byte encryption key
+          # @param nonce [String] 12-byte nonce
+          # @param ad [String, nil] Optional additional authenticated data
+          # @return [String] Decrypted plaintext
+          # @raise [ArgumentError] if key, nonce, or mac have incorrect sizes
+          # @raise [RuntimeError] if authentication fails
+          #
+          # @example
+          #   plaintext = Iodine::Base::Crypto::ChaCha20Poly1305.decrypt(ciphertext, mac: mac, key: key, nonce: nonce)
+          def self.decrypt(ciphertext, mac:, key:, nonce:, ad: nil); end
+        end
+
+        # XChaCha20-Poly1305 AEAD encryption with 24-byte nonce.
+        #
+        # The extended 24-byte nonce makes it safe to use randomly generated nonces
+        # without risk of collision, unlike the 12-byte nonce in ChaCha20-Poly1305.
+        module XChaCha20Poly1305
+          # Encrypts data using XChaCha20-Poly1305 AEAD.
+          #
+          # @param data [String] Plaintext to encrypt
+          # @param key [String] 32-byte encryption key
+          # @param nonce [String] 24-byte nonce (safe for random generation)
+          # @param ad [String, nil] Optional additional authenticated data
+          # @return [Array<String, String>] [ciphertext, mac] where mac is 16 bytes
+          # @raise [ArgumentError] if key is not 32 bytes or nonce is not 24 bytes
+          #
+          # @example
+          #   key = Iodine::Utils.random(32)
+          #   nonce = Iodine::Utils.random(24)  # Safe to use random nonce!
+          #   ciphertext, mac = Iodine::Base::Crypto::XChaCha20Poly1305.encrypt("secret", key: key, nonce: nonce)
+          def self.encrypt(data, key:, nonce:, ad: nil); end
+
+          # Decrypts data using XChaCha20-Poly1305 AEAD.
+          #
+          # @param ciphertext [String] Ciphertext to decrypt
+          # @param mac [String] 16-byte authentication tag
+          # @param key [String] 32-byte encryption key
+          # @param nonce [String] 24-byte nonce
+          # @param ad [String, nil] Optional additional authenticated data
+          # @return [String] Decrypted plaintext
+          # @raise [ArgumentError] if key, nonce, or mac have incorrect sizes
+          # @raise [RuntimeError] if authentication fails
+          def self.decrypt(ciphertext, mac:, key:, nonce:, ad: nil); end
+        end
+
+        # Ed25519 digital signatures (128-bit security level).
+        #
+        # Ed25519 provides fast, secure digital signatures suitable for
+        # authentication, message signing, and other cryptographic protocols.
+        module Ed25519
+          # Generates a new Ed25519 key pair.
+          #
+          # @return [Array<String, String>] [secret_key, public_key] both 32 bytes
+          #
+          # @example
+          #   secret_key, public_key = Iodine::Base::Crypto::Ed25519.keypair
+          def self.keypair; end
+
+          # Derives the public key from an Ed25519 secret key.
+          #
+          # @param secret_key [String] 32-byte secret key
+          # @return [String] 32-byte public key
+          # @raise [ArgumentError] if secret_key is not 32 bytes
+          def self.public_key(secret_key:); end
+
+          # Signs a message using Ed25519.
+          #
+          # @param message [String] Message to sign
+          # @param secret_key [String] 32-byte secret key
+          # @param public_key [String] 32-byte public key
+          # @return [String] 64-byte signature
+          # @raise [ArgumentError] if keys have incorrect sizes
+          #
+          # @example
+          #   signature = Iodine::Base::Crypto::Ed25519.sign("message", secret_key: sk, public_key: pk)
+          def self.sign(message, secret_key:, public_key:); end
+
+          # Verifies an Ed25519 signature.
+          #
+          # @param signature [String] 64-byte signature
+          # @param message [String] Original message
+          # @param public_key [String] 32-byte public key
+          # @return [Boolean] `true` if valid, `false` otherwise
+          # @raise [ArgumentError] if signature or public_key have incorrect sizes
+          #
+          # @example
+          #   valid = Iodine::Base::Crypto::Ed25519.verify(signature, "message", public_key: pk)
+          def self.verify(signature, message, public_key:); end
+        end
+
+        # X25519 key exchange (ECDH) and public-key encryption (ECIES).
+        #
+        # X25519 provides secure key agreement and can be combined with
+        # symmetric encryption for public-key encryption without prior key exchange.
+        module X25519
+          # Generates a new X25519 key pair.
+          #
+          # @return [Array<String, String>] [secret_key, public_key] both 32 bytes
+          #
+          # @example
+          #   secret_key, public_key = Iodine::Base::Crypto::X25519.keypair
+          def self.keypair; end
+
+          # Derives the public key from an X25519 secret key.
+          #
+          # @param secret_key [String] 32-byte secret key
+          # @return [String] 32-byte public key
+          # @raise [ArgumentError] if secret_key is not 32 bytes
+          def self.public_key(secret_key:); end
+
+          # Computes a shared secret using X25519 (ECDH).
+          #
+          # Both parties compute the same shared secret:
+          #   shared = X25519(my_secret, their_public)
+          #
+          # @param secret_key [String] 32-byte own secret key
+          # @param their_public [String] 32-byte other party's public key
+          # @return [String] 32-byte shared secret
+          # @raise [ArgumentError] if keys have incorrect sizes
+          # @raise [RuntimeError] if key exchange fails (e.g., low-order point)
+          #
+          # @example
+          #   # Alice and Bob each generate keypairs
+          #   alice_sk, alice_pk = Iodine::Base::Crypto::X25519.keypair
+          #   bob_sk, bob_pk = Iodine::Base::Crypto::X25519.keypair
+          #
+          #   # They exchange public keys and compute the same shared secret
+          #   alice_shared = Iodine::Base::Crypto::X25519.shared_secret(secret_key: alice_sk, their_public: bob_pk)
+          #   bob_shared = Iodine::Base::Crypto::X25519.shared_secret(secret_key: bob_sk, their_public: alice_pk)
+          #   # alice_shared == bob_shared
+          def self.shared_secret(secret_key:, their_public:); end
+
+          # Encrypts a message using X25519 public-key encryption (ECIES).
+          #
+          # Uses ephemeral key agreement + ChaCha20-Poly1305 for authenticated
+          # encryption. Only the recipient with the matching secret key can decrypt.
+          #
+          # @param message [String] Plaintext to encrypt
+          # @param recipient_pk [String] 32-byte recipient's public key
+          # @return [String] Ciphertext (message.length + 48 bytes overhead)
+          # @raise [ArgumentError] if recipient_pk is not 32 bytes
+          # @raise [RuntimeError] if encryption fails
+          #
+          # @example
+          #   # Bob encrypts a message for Alice
+          #   ciphertext = Iodine::Base::Crypto::X25519.encrypt("secret message", recipient_pk: alice_pk)
+          def self.encrypt(message, recipient_pk:); end
+
+          # Decrypts a message using X25519 public-key encryption (ECIES).
+          #
+          # @param ciphertext [String] Ciphertext from X25519.encrypt
+          # @param secret_key [String] 32-byte recipient's secret key
+          # @return [String] Decrypted plaintext
+          # @raise [ArgumentError] if secret_key is not 32 bytes or ciphertext is too short
+          # @raise [RuntimeError] if decryption fails (authentication error)
+          #
+          # @example
+          #   # Alice decrypts the message
+          #   plaintext = Iodine::Base::Crypto::X25519.decrypt(ciphertext, secret_key: alice_sk)
+          def self.decrypt(ciphertext, secret_key:); end
+        end
+
+        # HKDF key derivation (RFC 5869).
+        #
+        # HKDF is a simple and secure key derivation function based on HMAC.
+        # It can be used to derive multiple keys from a single source of keying material.
+        module HKDF
+          # Derives keying material using HKDF (RFC 5869).
+          #
+          # @param ikm [String] Input keying material
+          # @param salt [String, nil] Optional salt (random value)
+          # @param info [String, nil] Optional context/application info
+          # @param length [Integer] Desired output length (default: 32)
+          # @param sha384 [Boolean] Use SHA-384 instead of SHA-256 (default: false)
+          # @return [String] Derived key material
+          # @raise [ArgumentError] if length is out of range
+          #
+          # @example
+          #   # Derive a 32-byte key from a password
+          #   key = Iodine::Base::Crypto::HKDF.derive(ikm: password, salt: salt, info: "encryption key", length: 32)
+          #
+          # @example
+          #   # Derive multiple keys from shared secret
+          #   shared = X25519.shared_secret(...)
+          #   enc_key = HKDF.derive(ikm: shared, info: "encryption", length: 32)
+          #   mac_key = HKDF.derive(ikm: shared, info: "authentication", length: 32)
+          def self.derive(ikm:, salt: nil, info: nil, length: 32, sha384: false); end
+        end
       end
     end
 

@@ -3,7 +3,34 @@
 #include "iodine.h"
 
 /* *****************************************************************************
-JSON Stringifier.
+Iodine JSON - Fast JSON Parsing and Stringification
+
+This module provides the Iodine::JSON Ruby module for JSON operations.
+It's primarily used internally for WebSocket message serialization but
+is also exposed as a public API.
+
+Features:
+- Fast JSON stringification (Ruby objects to JSON strings)
+- JSON parsing (JSON strings to Ruby objects)
+- Beautified/pretty-printed JSON output
+- Handles nested arrays, hashes, strings, numbers, booleans, nil
+
+Performance Notes:
+- Stringification is fast (single memory copy from C to Ruby)
+- Parsing is slower than alternatives (double copy: JSON->FIOBJ->Ruby)
+- For production JSON work, consider using the 'oj' gem instead
+
+Ruby API (Iodine::JSON):
+- Iodine::JSON.parse(json_string)     - Parse JSON to Ruby objects
+- Iodine::JSON.stringify(object)      - Convert Ruby object to JSON
+- Iodine::JSON.dump(object)           - Alias for stringify
+- Iodine::JSON.beautify(object)       - Pretty-printed JSON output
+- Iodine::JSON.beautify_slow(object)  - Alternative beautifier via FIOBJ
+- Iodine::JSON.parse_slow(json)       - Alternative parser via FIOBJ
+***************************************************************************** */
+
+/* *****************************************************************************
+JSON Stringifier - Ruby to JSON String Conversion
 ***************************************************************************** */
 
 static char *iodine_json_stringify_key(char *dest, VALUE tmp) {
@@ -109,7 +136,7 @@ static char *iodine_json_stringify2bstr(char *dest, VALUE o) {
 }
 
 /* *****************************************************************************
-JSON Beautifier.
+JSON Beautifier - Pretty-Printed JSON Output
 ***************************************************************************** */
 
 typedef struct {
@@ -214,7 +241,7 @@ static char *iodine_json_beautify2bstr(iodine_json_beautify2bstr_s *d,
 }
 
 /* *****************************************************************************
-FIOBJ => Ruby Bridge
+FIOBJ => Ruby Bridge - Convert facil.io Objects to Ruby
 ***************************************************************************** */
 
 typedef struct iodine_fiobj2ruby_task_s {
@@ -234,7 +261,23 @@ static int iodine_fiobj2ruby_hash_task(fiobj_hash_each_s *e) {
   return 0;
 }
 
-/** Converts FIOBJ to VALUE. Does NOT place VALUE in STORE automatically. */
+/**
+ * Converts a FIOBJ (facil.io object) to a Ruby VALUE.
+ *
+ * Recursively converts FIOBJ types to their Ruby equivalents:
+ * - FIOBJ_T_TRUE/FALSE -> Qtrue/Qfalse
+ * - FIOBJ_T_NUMBER -> Fixnum/Bignum
+ * - FIOBJ_T_FLOAT -> Float
+ * - FIOBJ_T_STRING -> String
+ * - FIOBJ_T_ARRAY -> Array
+ * - FIOBJ_T_HASH -> Hash
+ * - FIOBJ_T_NULL/INVALID -> Qnil
+ *
+ * @param o The FIOBJ to convert
+ * @return Ruby VALUE equivalent
+ *
+ * @note Does NOT place VALUE in STORE automatically.
+ */
 static VALUE iodine_fiobj2ruby(FIOBJ o) {
   VALUE r;
   switch (FIOBJ_TYPE(o)) {
@@ -262,7 +305,7 @@ static VALUE iodine_fiobj2ruby(FIOBJ o) {
 }
 
 /* *****************************************************************************
-Ruby => FIOBJ Bridge
+Ruby => FIOBJ Bridge - Convert Ruby Objects to facil.io Objects
 ***************************************************************************** */
 
 typedef struct iodine_ruby2fiobj_task_s {
@@ -279,7 +322,24 @@ static int iodine_ruby2fiobj_hash_each_task(VALUE n, VALUE v, VALUE h_) {
   return ST_CONTINUE;
 }
 
-/** Converts FIOBJ to VALUE. Does NOT place VALUE in STORE automatically. */
+/**
+ * Converts a Ruby VALUE to a FIOBJ (facil.io object).
+ *
+ * Recursively converts Ruby types to their FIOBJ equivalents:
+ * - Qtrue/Qfalse -> fiobj_true()/fiobj_false()
+ * - Fixnum -> fiobj_num_new()
+ * - Float -> fiobj_float_new()
+ * - Symbol/String -> fiobj_str_new_cstr()
+ * - Array -> fiobj_array_new()
+ * - Hash -> fiobj_hash_new()
+ * - nil/undef -> fiobj_null()
+ * - Other -> calls #to_json or #to_s
+ *
+ * @param o The Ruby VALUE to convert
+ * @return FIOBJ equivalent
+ *
+ * @note Does NOT place VALUE in STORE automatically.
+ */
 static FIOBJ iodine_ruby2fiobj(VALUE o) {
   FIOBJ r;
   VALUE tmp;
@@ -324,10 +384,22 @@ static FIOBJ iodine_ruby2fiobj(VALUE o) {
 }
 
 /* *****************************************************************************
-JSON Parser - FIOBJ to Ruby
+JSON Parser (Indirect) - Parse via FIOBJ intermediate
 ***************************************************************************** */
 
-/** Accepts a JSON String and returns a Ruby object. */
+/**
+ * Parses a JSON string to Ruby objects via FIOBJ intermediate.
+ *
+ * This is the slower parsing path that:
+ * 1. Parses JSON string to FIOBJ tree
+ * 2. Converts FIOBJ tree to Ruby objects
+ *
+ * @param self The Iodine::JSON module
+ * @param rstr The JSON string to parse (String)
+ * @return Ruby object tree (Hash, Array, String, etc.)
+ *
+ * Ruby: Iodine::JSON.parse_slow(json_string)
+ */
 static VALUE iodine_json_parse_indirect(VALUE self, VALUE rstr) {
   VALUE r = Qnil;
   rb_check_type(rstr, RUBY_T_STRING);
@@ -342,10 +414,14 @@ static VALUE iodine_json_parse_indirect(VALUE self, VALUE rstr) {
 }
 
 /* *****************************************************************************
-JSON Parser (direct 2 Ruby)
+JSON Parser (Direct) - Parse Directly to Ruby Objects
+
+This parser uses facil.io's streaming JSON parser with callbacks that
+create Ruby objects directly, avoiding the FIOBJ intermediate step.
+This is the faster parsing path used by Iodine::JSON.parse().
 ***************************************************************************** */
 
-/** The JSON parser settings. */
+/** JSON parser callback implementations for direct Ruby object creation */
 /** NULL object was detected. Returns new object as `void *`. */
 FIO_SFUNC void *iodine___json_on_null(void) { return (void *)Qnil; }
 /** TRUE object was detected. Returns new object as `void *`. */
@@ -420,10 +496,21 @@ static fio_json_parser_callbacks_s IODINE_JSON_PARSER_CALLBACKS = {
 };
 
 /* *****************************************************************************
-API
+API - Public Ruby Methods
 ***************************************************************************** */
 
-/** Accepts a JSON String and returns a Ruby object. */
+/**
+ * Parses a JSON string to Ruby objects (fast path).
+ *
+ * Uses the direct parser that creates Ruby objects without
+ * an intermediate FIOBJ representation.
+ *
+ * @param self The Iodine::JSON module
+ * @param rstr The JSON string to parse (String)
+ * @return Ruby object tree (Hash, Array, String, etc.)
+ *
+ * Ruby: Iodine::JSON.parse(json_string)
+ */
 static VALUE iodine_json_parse(VALUE self, VALUE rstr) {
   VALUE r = Qnil;
   rb_check_type(rstr, RUBY_T_STRING);
@@ -439,7 +526,19 @@ static VALUE iodine_json_parse(VALUE self, VALUE rstr) {
   return r;
 }
 
-/** Accepts a Ruby object and returns a JSON String. */
+/**
+ * Converts a Ruby object to a JSON string.
+ *
+ * Handles all standard Ruby types (Hash, Array, String, Numeric,
+ * true, false, nil). For other objects, calls #to_json or #to_s.
+ *
+ * @param self The Iodine::JSON module
+ * @param object The Ruby object to stringify
+ * @return JSON string representation
+ *
+ * Ruby: Iodine::JSON.stringify(object)
+ *       Iodine::JSON.dump(object)  # alias
+ */
 static VALUE iodine_json_stringify(VALUE self, VALUE object) {
   VALUE r = Qnil;
   char *str = fio_bstr_reserve(NULL, ((size_t)1 << 12) - 64);
@@ -449,7 +548,18 @@ static VALUE iodine_json_stringify(VALUE self, VALUE object) {
   return r;
 }
 
-/** Accepts a Ruby object and returns a JSON String. */
+/**
+ * Converts a Ruby object to a pretty-printed JSON string (slow path).
+ *
+ * Uses FIOBJ intermediate for formatting. Slower but produces
+ * nicely indented output.
+ *
+ * @param self The Iodine::JSON module
+ * @param object The Ruby object to stringify
+ * @return Pretty-printed JSON string
+ *
+ * Ruby: Iodine::JSON.beautify_slow(object)
+ */
 static VALUE iodine_json_pretty(VALUE self, VALUE object) {
   VALUE r = Qnil;
   FIOBJ o = iodine_ruby2fiobj(object);
@@ -460,7 +570,18 @@ static VALUE iodine_json_pretty(VALUE self, VALUE object) {
   return r;
 }
 
-/** Accepts a Ruby object and returns a JSON String. */
+/**
+ * Converts a Ruby object to a pretty-printed JSON string (fast path).
+ *
+ * Uses direct stringification with indentation. Faster than
+ * beautify_slow but produces similar output.
+ *
+ * @param self The Iodine::JSON module
+ * @param object The Ruby object to stringify
+ * @return Pretty-printed JSON string with newlines and tabs
+ *
+ * Ruby: Iodine::JSON.beautify(object)
+ */
 static VALUE iodine_json_beautify(VALUE self, VALUE object) {
   VALUE r = Qnil;
   iodine_json_beautify2bstr_s dest = {
