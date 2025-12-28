@@ -1,4 +1,6 @@
-unless defined?(Iodine)
+
+# unless defined?(Iodine)
+
   # Iodine is a high performance HTTP / WebSocket server and Evented Network Tool Library.
   #
   # In essence, Iodine is a partial Ruby port for the [facil.io](http://facil.io) C library.
@@ -1991,4 +1993,4 @@ unless defined?(Iodine)
     # class Error < StandardError; end
   end
 
-end # defined?(Iodine)
+# end # defined?(Iodine)
