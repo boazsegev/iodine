@@ -1,10 +1,98 @@
 #ifndef H___IODINE_CONNECTION___H
 /** ****************************************************************************
-Iodine::Connection
+Iodine::Connection - HTTP/WebSocket/SSE/TCP Connection Management
 
-This module actually covers a LOT of the functionality of the Iodine server.
+This module is the heart of Iodine's connection handling. It manages:
+- HTTP request/response cycles (Rack-compatible)
+- WebSocket connections (full-duplex messaging)
+- Server-Sent Events (SSE) connections
+- Raw TCP/IP connections
+- Pub/Sub subscriptions per connection
 
-Everything that has to do with establishing and managing connections goes here.
+## Ruby API Overview
+
+### Connection State Methods
+
+- `open?` - Returns true if connection is open
+- `valid?` - Returns true if data can still be sent
+- `pending` - Returns bytes waiting to be sent
+- `close` - Schedules connection to close
+- `headers_sent?` - Returns true if HTTP headers were sent
+
+### HTTP Request Properties (getters/setters)
+
+- `method` / `method=` - HTTP method (GET, POST, etc.)
+- `path` / `path=` - Request path
+- `opath` / `opath=` - Original path (before routing)
+- `query` / `query=` - Query string
+- `version` / `version=` - HTTP version
+- `status` / `status=` - Response status code
+- `env` / `env=` - Rack environment hash
+- `handler` / `handler=` - Connection handler object
+
+### HTTP Response Methods
+
+- `write_header(name, value)` - Sets a response header
+- `write(data)` - Streams data to client
+- `write_sse(id:, event:, data:)` - Writes SSE event
+- `finish([data])` - Completes the response
+
+### Header/Cookie Access
+
+- `headers` - Copies headers to internal map for iteration
+- `[key]` / `[key]=` - Hash-like header access
+- `each { |k,v| }` - Iterate over headers
+- `cookie(name)` - Get cookie value
+- `set_cookie(name:, value:, ...)` - Set response cookie
+- `each_cookie { |name, value| }` - Iterate cookies
+
+### Body Access (for rack.input compatibility)
+
+- `length` - Body length in bytes
+- `read([maxlen], [out_string])` - Read body data
+- `gets([limit])` - Read line from body
+- `seek(pos)` / `rewind` - Seek in body
+
+### Network Information
+
+- `peer_addr` - Raw peer IP address
+- `from` - Published peer address (may differ with proxies)
+
+### Connection Type Detection
+
+- `websocket?` - Returns true for WebSocket connections
+- `sse?` - Returns true for SSE connections
+
+### Pub/Sub Methods (instance and class methods)
+
+- `subscribe(channel:, filter:, callback:)` - Subscribe to messages
+- `unsubscribe(channel:, filter:)` - Unsubscribe
+- `publish(channel:, message:, filter:, engine:)` - Publish message
+- `pubsub?` - Returns true (deprecated, use Server.extensions[:pubsub])
+
+## Handler Callbacks
+
+Handlers should implement these methods (defaults provided if missing):
+
+- `on_http(client)` - HTTP request received
+- `on_open(client)` - WebSocket/SSE connection opened
+- `on_message(client, message)` - WebSocket message received
+- `on_eventsource(client, message)` - SSE event received
+- `on_eventsource_reconnect(client, id)` - SSE reconnect with last ID
+- `on_drained(client)` - Output buffer empty
+- `on_shutdown(client)` - Server shutting down
+- `on_close(client)` - Connection closed
+- `on_finish(client)` - Request/response cycle complete
+- `on_authenticate_websocket(client)` - Authenticate WS upgrade
+- `on_authenticate_sse(client)` - Authenticate SSE upgrade
+
+## Rack Compatibility
+
+For Rack apps (objects with `call` method), Iodine automatically:
+- Wraps `call` as `on_http`
+- Builds Rack-compliant `env` hash
+- Handles `rack.hijack` for connection takeover
+- Supports `rack.after_reply` callbacks
 
 ***************************************************************************** */
 #define H___IODINE_CONNECTION___H
@@ -12,14 +100,18 @@ Everything that has to do with establishing and managing connections goes here.
 /* *****************************************************************************
 Constants Used only by Iodine::Connection
 ***************************************************************************** */
+
+/** Cookie SameSite attribute symbol IDs */
 static ID IODINE_SAME_SITE_DEFAULT;
 static ID IODINE_SAME_SITE_NONE;
 static ID IODINE_SAME_SITE_LAX;
 static ID IODINE_SAME_SITE_STRICT;
 
+/** TLS backend selection symbol IDs */
 static ID IODINE_TLS_IO_IODINE_ID;
 static ID IODINE_TLS_IO_OPENSSL_ID;
 
+/** Cached Rack environment key strings for performance */
 static VALUE IODINE_RACK_CONTENT_LENGTH;
 static VALUE IODINE_RACK_INPUT;
 static VALUE IODINE_RACK_NEORACK_CLIENT;
@@ -32,40 +124,59 @@ static VALUE IODINE_RACK_SERVER_PROTOCOL;
 static VALUE IODINE_RACK_HTTP_VERSION;
 static VALUE IODINE_RACK_REMOTE_ADDR;
 
-/* Requires 2 allocations instead of 1, quite useless except for testing */
+/** Requires 2 allocations instead of 1, quite useless except for testing */
 #define IODINE_CONNECTION_ALLOCATE_SEPARATELY 0
+
 /* *****************************************************************************
-Ruby Connection Object
+Ruby Connection Object - Internal Data Structures
 ***************************************************************************** */
 
+/**
+ * Indices for the connection's Ruby VALUE store array.
+ * These are cached Ruby objects associated with each connection.
+ */
 typedef enum {
-  IODINE_CONNECTION_STORE_handler = 0,
-  IODINE_CONNECTION_STORE_env,
-  IODINE_CONNECTION_STORE_rack,
-  IODINE_CONNECTION_STORE_method,
-  IODINE_CONNECTION_STORE_path,
-  IODINE_CONNECTION_STORE_opath,
-  IODINE_CONNECTION_STORE_query,
-  IODINE_CONNECTION_STORE_version,
-  IODINE_CONNECTION_STORE_tmp,
-  IODINE_CONNECTION_STORE_FINISH,
+  IODINE_CONNECTION_STORE_handler = 0, /**< Handler object for callbacks */
+  IODINE_CONNECTION_STORE_env,         /**< Rack environment hash */
+  IODINE_CONNECTION_STORE_rack,        /**< Rack response array [status,hdrs,body] */
+  IODINE_CONNECTION_STORE_method,      /**< Cached HTTP method string */
+  IODINE_CONNECTION_STORE_path,        /**< Cached request path string */
+  IODINE_CONNECTION_STORE_opath,       /**< Cached original path string */
+  IODINE_CONNECTION_STORE_query,       /**< Cached query string */
+  IODINE_CONNECTION_STORE_version,     /**< Cached HTTP version string */
+  IODINE_CONNECTION_STORE_tmp,         /**< Temporary storage during GC-sensitive ops */
+  IODINE_CONNECTION_STORE_FINISH,      /**< Sentinel value (array size) */
 } iodine_connection_store_e;
 
+/**
+ * Connection state flags.
+ * These track the connection's current state and type.
+ */
 typedef enum {
-  IODINE_CONNECTION_HEADERS_COPIED = 1,
-  IODINE_CONNECTION_UPGRADE_SSE = 2,
-  IODINE_CONNECTION_UPGRADE_WS = 4,
-  IODINE_CONNECTION_UPGRADE = (2 | 4),
-  IODINE_CONNECTION_CLOSED = 8,
-  IODINE_CONNECTION_CLIENT = 16,
+  IODINE_CONNECTION_HEADERS_COPIED = 1,  /**< Headers copied to Ruby hash */
+  IODINE_CONNECTION_UPGRADE_SSE = 2,     /**< Connection upgraded to SSE */
+  IODINE_CONNECTION_UPGRADE_WS = 4,      /**< Connection upgraded to WebSocket */
+  IODINE_CONNECTION_UPGRADE = (2 | 4),   /**< Any upgrade (SSE or WS) */
+  IODINE_CONNECTION_CLOSED = 8,          /**< Connection close scheduled */
+  IODINE_CONNECTION_CLIENT = 16,         /**< This is a client connection */
 } iodine_connection_flags_e;
 
+/**
+ * The main connection structure wrapping facil.io IO and HTTP handles.
+ *
+ * This struct is the Ruby-side representation of a connection, containing:
+ * - The underlying facil.io IO handle (for raw connections)
+ * - The facil.io HTTP handle (for HTTP/WS/SSE connections)
+ * - Cached Ruby objects for performance
+ * - A minimap for header storage
+ * - State flags
+ */
 typedef struct iodine_connection_s {
-  fio_io_s *io;
-  fio_http_s *http;
-  VALUE store[IODINE_CONNECTION_STORE_FINISH];
-  iodine_minimap_s map;
-  iodine_connection_flags_e flags;
+  fio_io_s *io;                                /**< facil.io IO handle */
+  fio_http_s *http;                            /**< facil.io HTTP handle */
+  VALUE store[IODINE_CONNECTION_STORE_FINISH]; /**< Cached Ruby objects */
+  iodine_minimap_s map;                        /**< Header storage map */
+  iodine_connection_flags_e flags;             /**< Connection state flags */
 } iodine_connection_s;
 
 static size_t iodine_connection_data_size(const void *ptr_) {

@@ -3,14 +3,45 @@
 #include "iodine.h"
 
 /* *****************************************************************************
-Ruby Object.
+Iodine Listener - Server Socket Listener Management
+
+This module provides the Iodine::Listener Ruby class which represents an
+active server socket listener. Listeners are created via Iodine.listen()
+and can be used to:
+
+- Map URL routes to different handlers (for HTTP listeners)
+- Get/set the handler for raw TCP/WebSocket connections
+- Manage listener lifecycle
+
+The Listener class wraps either:
+- fio_http_listener_s for HTTP/WebSocket listeners
+- fio_io_listener_s for raw TCP listeners
+
+Ruby API (Iodine::Listener):
+- listener.map(url: "/path", handler: obj) - Map URL to handler (HTTP only)
+- listener.map                             - Get current handler
+
+Note: Listeners can only be created via Iodine.listen(), not directly
+instantiated.
 ***************************************************************************** */
+
+/* *****************************************************************************
+Ruby Object
+***************************************************************************** */
+
+/** The Iodine::Listener Ruby class */
 static VALUE iodine_rb_IODINE_LISTENER;
 
+/**
+ * Internal structure representing an Iodine listener.
+ *
+ * Wraps either an HTTP listener (fio_http_listener_s) or a raw IO listener
+ * (fio_io_listener_s) along with its Ruby handler object.
+ */
 typedef struct {
-  void *listener;
-  VALUE handler;
-  bool is_http;
+  void *listener;   /**< Pointer to fio_http_listener_s or fio_io_listener_s */
+  VALUE handler;    /**< Ruby handler object for callbacks */
+  bool is_http;     /**< true if HTTP listener, false if raw TCP */
 } iodine_listener_s;
 
 static void iodine_listener_free(void *p) {
@@ -58,9 +89,14 @@ static VALUE iodine_listener_alloc(VALUE klass) {
 }
 
 /* *****************************************************************************
-Helpers
+Helpers - Internal Handler Management
 ***************************************************************************** */
 
+/**
+ * Macro called when a listener's handler is set.
+ * Releases the old handler from the store and holds the new one.
+ * Also injects handler methods into the listener class.
+ */
 #define IODINE_LISTNER_ONSET(o)                                                \
   do {                                                                         \
     STORE.release(old_value);                                                  \
@@ -79,6 +115,18 @@ FIO_DEF_GETSET_FUNC(static,
 
 #undef IODINE_LISTNER_ONSET
 
+/**
+ * Creates a new Iodine::Listener Ruby object wrapping a native listener.
+ *
+ * This is called internally by Iodine.listen() to create the Ruby wrapper.
+ *
+ * @param listener Pointer to the native listener (HTTP or raw)
+ * @param handler Ruby handler object for callbacks
+ * @param is_http true for HTTP listeners, false for raw TCP
+ * @return New Iodine::Listener VALUE
+ *
+ * @note Raises NoMemError if allocation fails.
+ */
 static VALUE iodine_listener_new(void *listener, VALUE handler, bool is_http) {
   VALUE r = iodine_listener_alloc(iodine_rb_IODINE_LISTENER);
   if (IODINE_STORE_IS_SKIP(r))
@@ -89,10 +137,36 @@ static VALUE iodine_listener_new(void *listener, VALUE handler, bool is_http) {
                            .is_http = is_http};
   return r;
 }
+
 /* *****************************************************************************
-API
+API - Ruby Methods
 ***************************************************************************** */
 
+/**
+ * Maps a URL path to a handler or retrieves the current handler.
+ *
+ * For HTTP listeners:
+ * - With url and handler: Maps the URL path to the handler
+ * - With url only: Returns the handler for that URL path
+ * - With neither: Returns the default handler
+ *
+ * For raw TCP listeners:
+ * - URL parameter is not allowed (raises RuntimeError)
+ * - With handler: Sets the connection handler
+ * - Without handler: Returns the current handler
+ *
+ * @param argc Number of arguments
+ * @param argv Array of arguments (url:, handler:)
+ * @param o The Iodine::Listener instance
+ * @return The handler for the specified URL/listener
+ *
+ * @note Raises RuntimeError if called on an inactive listener.
+ * @note Raises RuntimeError if URL is provided for non-HTTP listener.
+ *
+ * Ruby: listener.map(url: "/api", handler: MyHandler)
+ *       listener.map(url: "/api")  # => returns handler
+ *       listener.map               # => returns default handler
+ */
 static VALUE iodine_listener_map(int argc, VALUE *argv, VALUE o) {
   iodine_listener_s *l = iodine_listener_ptr(o);
   fio_http_settings_s settings;
@@ -149,6 +223,17 @@ static VALUE iodine_listener_map(int argc, VALUE *argv, VALUE o) {
   return handler;
 }
 
+/**
+ * Raises an error - Listeners cannot be directly instantiated.
+ *
+ * Listeners must be created via Iodine.listen() which returns a
+ * properly configured Listener object.
+ *
+ * @param o The Listener instance (unused)
+ * @return Never returns (always raises)
+ *
+ * @note Always raises RuntimeError.
+ */
 static VALUE iodine_listener_initialize(VALUE o) {
   rb_raise(rb_eRuntimeError,
            "Iodine Listeners can only be created using Iodine.listen");
@@ -156,8 +241,17 @@ static VALUE iodine_listener_initialize(VALUE o) {
 }
 
 /* *****************************************************************************
-Initialize
+Initialize - Ruby Class Registration
 ***************************************************************************** */
+
+/**
+ * Initializes the Iodine::Listener Ruby class.
+ *
+ * Defines the class under the Iodine module and registers:
+ * - Allocator function
+ * - initialize method (raises error - use Iodine.listen instead)
+ * - map method for URL routing (HTTP) or handler access (raw)
+ */
 static void Init_Iodine_Listener(void) {
   VALUE m = iodine_rb_IODINE_LISTENER =
       rb_define_class_under(iodine_rb_IODINE, "Listener", rb_cObject);

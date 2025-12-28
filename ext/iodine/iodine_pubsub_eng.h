@@ -3,27 +3,72 @@
 #include "iodine.h"
 
 /* *****************************************************************************
+Iodine PubSub Engine - Custom Publish/Subscribe Engine Support
+
+This module provides the Iodine::PubSub::Engine Ruby class which allows
+creating custom PubSub engines that can bridge Iodine's internal pub/sub
+system with external message brokers (Redis, RabbitMQ, etc.).
+
+A custom engine can implement any of these callbacks:
+- subscribe(channel)     - Called when subscribing to a channel
+- psubscribe(pattern)    - Called when subscribing to a pattern
+- unsubscribe(channel)   - Called when unsubscribing from a channel
+- punsubscribe(pattern)  - Called when unsubscribing from a pattern
+- publish(message)       - Called when publishing a message
+- on_cleanup             - Called when engine is detached
+
+Built-in engines (constants on Iodine::PubSub):
+- ROOT     - Publish to master process only
+- PROCESS  - Publish within current process only
+- SIBLINGS - Publish to sibling workers only
+- LOCAL    - Publish to current worker only
+- CLUSTER  - Publish to all workers (default)
+
+Ruby API:
+- Iodine::PubSub.default = engine  - Set default engine
+- Iodine::PubSub.default           - Get default engine
+- Iodine::PubSub::Engine.new       - Create custom engine (subclass this)
+***************************************************************************** */
+
+/* *****************************************************************************
 Ruby PubSub Engine Type
 ***************************************************************************** */
 
+/**
+ * Internal structure representing a PubSub engine.
+ *
+ * Wraps a facil.io pubsub engine with a Ruby handler object that
+ * receives callbacks for subscribe/unsubscribe/publish operations.
+ */
 typedef struct iodine_pubsub_eng_s {
-  fio_pubsub_engine_s engine;
-  fio_pubsub_engine_s *ptr;
-  VALUE handler;
+  fio_pubsub_engine_s engine;  /**< The facil.io engine callbacks */
+  fio_pubsub_engine_s *ptr;    /**< Pointer to engine (self or built-in) */
+  VALUE handler;               /**< Ruby handler object (self) */
 } iodine_pubsub_eng_s;
 
 /* *****************************************************************************
-Ruby PubSub Engine Bridge
+Ruby PubSub Engine Bridge - C to Ruby Callback Wrappers
+
+These functions bridge the facil.io C callbacks to Ruby method calls.
+They handle GVL acquisition and Ruby object creation/cleanup.
 ***************************************************************************** */
 
+/**
+ * Arguments passed to GVL-wrapped callback functions.
+ */
 typedef struct iodine_pubsub_eng___args_s {
-  iodine_pubsub_eng_s *eng;
-  fio_msg_s *msg;
-  fio_buf_info_s channel;
-  int16_t filter;
+  iodine_pubsub_eng_s *eng;    /**< The engine receiving the callback */
+  fio_msg_s *msg;              /**< Message for publish callbacks */
+  fio_buf_info_s channel;      /**< Channel name for subscribe callbacks */
+  int16_t filter;              /**< Filter value (reserved) */
 } iodine_pubsub_eng___args_s;
 
-/** Called after the engine was detached, may be used for cleanup. */
+/**
+ * Called after the engine was detached from the pubsub system.
+ * Invokes the Ruby handler's `on_cleanup` method for resource cleanup.
+ *
+ * @param eng The detached engine
+ */
 static void iodine_pubsub_eng___detached(const fio_pubsub_engine_s *eng) {
   iodine_pubsub_eng_s *e = (iodine_pubsub_eng_s *)eng;
   iodine_ruby_call_outside(e->handler, rb_intern("on_cleanup"));
@@ -37,7 +82,14 @@ static void *iodine_pubsub_eng___subscribe__in_GC(void *a_) {
   STORE.release(ch);
   return NULL;
 }
-/** Subscribes to a channel. Called ONLY in the Root (master) process. */
+/**
+ * Subscribes to a channel. Called ONLY in the Root (master) process.
+ * Invokes the Ruby handler's `subscribe` method with the channel name.
+ *
+ * @param eng The pubsub engine
+ * @param channel The channel name to subscribe to
+ * @param filter Filter value (reserved for future use)
+ */
 static void iodine_pubsub_eng___subscribe(const fio_pubsub_engine_s *eng,
                                           fio_buf_info_s channel,
                                           int16_t filter) {
@@ -57,7 +109,14 @@ static void *iodine_pubsub_eng___psubscribe__in_GC(void *a_) {
   STORE.release(ch);
   return NULL;
 }
-/** Subscribes to a pattern. Called ONLY in the Root (master) process. */
+/**
+ * Subscribes to a pattern. Called ONLY in the Root (master) process.
+ * Invokes the Ruby handler's `psubscribe` method with the pattern.
+ *
+ * @param eng The pubsub engine
+ * @param channel The pattern to subscribe to
+ * @param filter Filter value (reserved for future use)
+ */
 static void iodine_pubsub_eng___psubscribe(const fio_pubsub_engine_s *eng,
                                            fio_buf_info_s channel,
                                            int16_t filter) {
@@ -77,7 +136,14 @@ static void *iodine_pubsub_eng___unsubscribe__in_GC(void *a_) {
   STORE.release(ch);
   return NULL;
 }
-/** Unsubscribes to a channel. Called ONLY in the Root (master) process. */
+/**
+ * Unsubscribes from a channel. Called ONLY in the Root (master) process.
+ * Invokes the Ruby handler's `unsubscribe` method with the channel name.
+ *
+ * @param eng The pubsub engine
+ * @param channel The channel name to unsubscribe from
+ * @param filter Filter value (reserved for future use)
+ */
 static void iodine_pubsub_eng___unsubscribe(const fio_pubsub_engine_s *eng,
                                             fio_buf_info_s channel,
                                             int16_t filter) {
@@ -100,7 +166,14 @@ static void *iodine_pubsub_eng___punsubscribe__in_GC(void *a_) {
   STORE.release(ch);
   return NULL;
 }
-/** Unsubscribe to a pattern. Called ONLY in the Root (master) process. */
+/**
+ * Unsubscribes from a pattern. Called ONLY in the Root (master) process.
+ * Invokes the Ruby handler's `punsubscribe` method with the pattern.
+ *
+ * @param eng The pubsub engine
+ * @param channel The pattern to unsubscribe from
+ * @param filter Filter value (reserved for future use)
+ */
 static void iodine_pubsub_eng___punsubscribe(const fio_pubsub_engine_s *eng,
                                              fio_buf_info_s channel,
                                              int16_t filter) {
@@ -120,7 +193,13 @@ static void *iodine_pubsub_eng___publish__in_GC(void *a_) {
   return NULL;
 }
 
-/** Publishes a message through the engine. Called by any worker / thread. */
+/**
+ * Publishes a message through the engine. Called by any worker/thread.
+ * Invokes the Ruby handler's `publish` method with a Message object.
+ *
+ * @param eng The pubsub engine
+ * @param msg The message to publish
+ */
 static void iodine_pubsub_eng___publish(const fio_pubsub_engine_s *eng,
                                         fio_msg_s *msg) {
   iodine_pubsub_eng___args_s args = {
@@ -130,31 +209,39 @@ static void iodine_pubsub_eng___publish(const fio_pubsub_engine_s *eng,
   rb_thread_call_with_gvl(iodine_pubsub_eng___publish__in_GC, &args);
 }
 
+/**
+ * Validates a Ruby object and creates a pubsub engine struct.
+ *
+ * Checks which callback methods the Ruby object responds to and
+ * sets up the corresponding C callbacks. Methods not implemented
+ * by the Ruby object will have NULL callbacks.
+ *
+ * @param obj The Ruby engine object to validate
+ * @return A configured fio_pubsub_engine_s struct
+ */
 static fio_pubsub_engine_s iodine_pubsub___engine_validate(VALUE obj) {
   fio_pubsub_engine_s r = {
-      /** Called after the engine was detached, may be used for cleanup. */
+      /* Called after the engine was detached, may be used for cleanup. */
       .detached = (rb_respond_to(obj, rb_intern("on_cleanup")))
                       ? iodine_pubsub_eng___detached
                       : NULL,
-      /** Subscribes to a channel. Called ONLY in the Root (master) process. */
+      /* Subscribes to a channel. Called ONLY in the Root (master) process. */
       .subscribe = (rb_respond_to(obj, rb_intern("subscribe")))
                        ? iodine_pubsub_eng___subscribe
                        : NULL,
-      /** Subscribes to a pattern. Called ONLY in the Root (master) process. */
+      /* Subscribes to a pattern. Called ONLY in the Root (master) process. */
       .psubscribe = (rb_respond_to(obj, rb_intern("psubscribe")))
                         ? iodine_pubsub_eng___psubscribe
                         : NULL,
-      /** Unsubscribes to a channel. Called ONLY in the Root (master) process.
-       */
+      /* Unsubscribes from a channel. Called ONLY in the Root (master) process. */
       .unsubscribe = (rb_respond_to(obj, rb_intern("unsubscribe")))
                          ? iodine_pubsub_eng___unsubscribe
                          : NULL,
-      /** Unsubscribe to a pattern. Called ONLY in the Root (master) process. */
+      /* Unsubscribes from a pattern. Called ONLY in the Root (master) process. */
       .punsubscribe = (rb_respond_to(obj, rb_intern("punsubscribe")))
                           ? iodine_pubsub_eng___punsubscribe
                           : NULL,
-      /** Publishes a message through the engine. Called by any worker / thread.
-       */
+      /* Publishes a message through the engine. Called by any worker/thread. */
       .publish = (rb_respond_to(obj, rb_intern("publish")))
                      ? iodine_pubsub_eng___publish
                      : NULL,
@@ -162,7 +249,7 @@ static fio_pubsub_engine_s iodine_pubsub___engine_validate(VALUE obj) {
   return r;
 }
 /* *****************************************************************************
-Ruby PubSub Engine Object
+Ruby PubSub Engine Object - Ruby TypedData Wrapper
 ***************************************************************************** */
 
 static size_t iodine_pubsub_eng_data_size(const void *ptr_) {
@@ -217,17 +304,35 @@ static iodine_pubsub_eng_s *iodine_pubsub_eng_get(VALUE self) {
 }
 
 /* *****************************************************************************
-Ruby Methods
+Ruby Methods - Engine API
 ***************************************************************************** */
 
+/**
+ * Initializes a new PubSub engine and attaches it to the pubsub system.
+ *
+ * @param self The Engine instance
+ * @return self
+ *
+ * Ruby: engine = Iodine::PubSub::Engine.new
+ */
 static VALUE iodine_pubsub_eng_initialize(VALUE self) {
   iodine_pubsub_eng_s *m = iodine_pubsub_eng_get(self);
   fio_pubsub_attach(m->ptr);
   return self;
 }
 
+/** Internal constant name for storing the default engine */
 #define IODINE_PUBSUB_DEFAULT_NM "PUBSUB____DEFAULT"
 
+/**
+ * Sets the default PubSub engine for all publish operations.
+ *
+ * @param klass The Iodine::PubSub module
+ * @param eng The engine to set as default (or nil for CLUSTER)
+ * @return The new default engine
+ *
+ * Ruby: Iodine::PubSub.default = my_engine
+ */
 static VALUE iodine_pubsub_eng_default_set(VALUE klass, VALUE eng) {
   fio_pubsub_engine_s *e = FIO_PUBSUB_CLUSTER;
   ID name = rb_intern(IODINE_PUBSUB_DEFAULT_NM);
@@ -245,14 +350,31 @@ static VALUE iodine_pubsub_eng_default_set(VALUE klass, VALUE eng) {
   (void)klass;
 }
 
+/**
+ * Gets the current default PubSub engine.
+ *
+ * @param klass The Iodine::PubSub module
+ * @return The current default engine
+ *
+ * Ruby: Iodine::PubSub.default
+ */
 static VALUE iodine_pubsub_eng_default_get(VALUE klass) {
   return rb_const_get(iodine_rb_IODINE_BASE,
                       rb_intern(IODINE_PUBSUB_DEFAULT_NM));
   (void)klass;
 }
 
+/* *****************************************************************************
+Initialize - Ruby Class Registration
+***************************************************************************** */
+
 /**
- * Iodine::PubSub::Engine class instances are passed to subscription callbacks.
+ * Initializes the Iodine::PubSub::Engine Ruby class.
+ *
+ * Defines:
+ * - Iodine::PubSub.default / default= module methods
+ * - Iodine::PubSub::Engine class with initialize method
+ * - Built-in engine constants: ROOT, PROCESS, SIBLINGS, LOCAL, CLUSTER
  */
 static void Init_Iodine_PubSub_Engine(void) {
   /** Initialize Iodine::PubSub::Engine */

@@ -2,6 +2,43 @@
 #define H___IODINE_CLI___H
 #include "iodine.h"
 
+/* *****************************************************************************
+Iodine CLI - Command Line Interface Parsing
+
+This module provides the Iodine::Base::CLI Ruby module for parsing and
+managing command-line arguments. It wraps facil.io's CLI parser with
+Ruby-friendly access.
+
+Features:
+- Parses ARGV with support for named and positional arguments
+- Supports various argument types: strings, integers, booleans
+- Provides default values from environment variables (THREADS, WORKERS, etc.)
+- Configures TLS, Redis, clustering, and HTTP settings
+
+CLI Options (parsed from command line):
+- Address: -b/--bind, -p/--port
+- Concurrency: -t/--threads, -w/--workers
+- HTTP: --public, --max-line, --max-header, --max-body, --keep-alive, --log
+- WebSocket/SSE: --ws-max-msg, --timeout
+- TLS: --tls-self, --tls-name, --tls-cert, --tls-key, --tls-password
+- Clustering: --broadcast, --secret
+- Redis: --redis, --redis-ping
+- Hot Restart: --hot-restart, --config, --preload
+- Misc: --verbose, --rack, --pid, --contained
+
+Ruby API (Iodine::Base::CLI):
+- CLI.parse(required)  - Parse ARGV, returns Hash of options
+- CLI[key]             - Get CLI option value
+- CLI[key] = value     - Set CLI option value (before start only)
+
+Environment Variables:
+- THREADS, WORKERS     - Default thread/worker counts
+- ADDRESS, PORT        - Default binding address/port
+- SECRET               - Cluster secret key
+- IODINE_MTLS          - Enable embedded TLS 1.3
+***************************************************************************** */
+
+/** Maximum number of CLI arguments supported */
 #define IODINE_CLI_LIMIT 256
 
 static int iodine_cli_task(fio_buf_info_s name,

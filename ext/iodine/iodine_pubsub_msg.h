@@ -3,21 +3,58 @@
 #include "iodine.h"
 
 /* *****************************************************************************
-Ruby PubSub Message Object
+Iodine PubSub Message - Published Message Wrapper
+
+This module provides the Iodine::PubSub::Message Ruby class which represents
+a message received through the pub/sub system. Message objects are passed
+to subscription callbacks and custom engine publish handlers.
+
+Message Properties (readable and writable):
+- id        - Unique message identifier (Integer)
+- channel   - Channel name the message was published to (String)
+- event     - Alias for channel
+- filter    - Filter value (Integer, reserved)
+- message   - The message payload (String)
+- msg       - Alias for message
+- data      - Alias for message
+- published - Timestamp when message was published (Integer)
+- to_s      - Returns the message payload (String)
+
+Ruby API (Iodine::PubSub::Message):
+- message.id          - Get message ID
+- message.channel     - Get channel name
+- message.message     - Get message payload
+- message.published   - Get publish timestamp
+- message.id = val    - Set message ID (for custom engines)
+- etc.
 ***************************************************************************** */
 
+/* *****************************************************************************
+Ruby PubSub Message Object - Internal Types
+***************************************************************************** */
+
+/**
+ * Enum for indexing into the message's VALUE store array.
+ * Each property is stored at a specific index for fast access.
+ */
 typedef enum {
-  IODINE_PUBSUB_MSG_STORE_id,
-  IODINE_PUBSUB_MSG_STORE_channel,
-  IODINE_PUBSUB_MSG_STORE_filter,
-  IODINE_PUBSUB_MSG_STORE_message,
-  IODINE_PUBSUB_MSG_STORE_published,
-  IODINE_PUBSUB_MSG_STORE_FINISH,
+  IODINE_PUBSUB_MSG_STORE_id,        /**< Message unique ID */
+  IODINE_PUBSUB_MSG_STORE_channel,   /**< Channel name */
+  IODINE_PUBSUB_MSG_STORE_filter,    /**< Filter value */
+  IODINE_PUBSUB_MSG_STORE_message,   /**< Message payload */
+  IODINE_PUBSUB_MSG_STORE_published, /**< Publish timestamp */
+  IODINE_PUBSUB_MSG_STORE_FINISH,    /**< Sentinel - array size */
 } iodine_pubsub_msg_store_e;
 
+/**
+ * Internal structure representing a PubSub message.
+ *
+ * Stores Ruby VALUE objects for each message property in an array
+ * indexed by iodine_pubsub_msg_store_e values.
+ */
 typedef struct iodine_pubsub_msg_s {
-  fio_msg_s *msg;
-  VALUE store[IODINE_PUBSUB_MSG_STORE_FINISH];
+  fio_msg_s *msg;                              /**< Original C message (may be NULL) */
+  VALUE store[IODINE_PUBSUB_MSG_STORE_FINISH]; /**< Ruby values for properties */
 } iodine_pubsub_msg_s;
 
 static size_t iodine_pubsub_msg_data_size(const void *ptr_) {
@@ -76,6 +113,15 @@ static iodine_pubsub_msg_s *iodine_pubsub_msg_get(VALUE self) {
   return m;
 }
 
+/**
+ * Creates a new Iodine::PubSub::Message Ruby object from a C message.
+ *
+ * Copies all message properties from the C struct into Ruby VALUE objects.
+ * The returned message is held in the STORE to prevent GC.
+ *
+ * @param msg The C message struct to wrap
+ * @return New Iodine::PubSub::Message VALUE
+ */
 static VALUE iodine_pubsub_msg_new(fio_msg_s *msg) {
   VALUE m = rb_obj_alloc(iodine_rb_IODINE_PUBSUB_MSG);
   STORE.hold(m);
@@ -95,6 +141,15 @@ static VALUE iodine_pubsub_msg_new(fio_msg_s *msg) {
   return m;
 }
 
+/**
+ * Macro to define getter and setter functions for message properties.
+ *
+ * Generates:
+ * - iodine_pubsub_msg_<name>_get(self) - Returns the property value
+ * - iodine_pubsub_msg_<name>_set(self, val) - Sets the property value
+ *
+ * @param val_name The property name (id, channel, filter, message, published)
+ */
 #define IODINE_DEF_GET_SET_FUNC(val_name, ...)                                 \
   /** Returns the message's val_name */                                        \
   static VALUE iodine_pubsub_msg_##val_name##_get(VALUE self) {                \
@@ -111,23 +166,35 @@ static VALUE iodine_pubsub_msg_new(fio_msg_s *msg) {
     return (c->store[IODINE_PUBSUB_MSG_STORE_##val_name] = val);               \
   }
 
-IODINE_DEF_GET_SET_FUNC(id);
-IODINE_DEF_GET_SET_FUNC(channel);
-IODINE_DEF_GET_SET_FUNC(filter);
-IODINE_DEF_GET_SET_FUNC(message);
-IODINE_DEF_GET_SET_FUNC(published);
+/* Generate getter/setter functions for all message properties */
+IODINE_DEF_GET_SET_FUNC(id);        /* message.id / message.id= */
+IODINE_DEF_GET_SET_FUNC(channel);   /* message.channel / message.channel= */
+IODINE_DEF_GET_SET_FUNC(filter);    /* message.filter / message.filter= */
+IODINE_DEF_GET_SET_FUNC(message);   /* message.message / message.message= */
+IODINE_DEF_GET_SET_FUNC(published); /* message.published / message.published= */
 
 #undef IODINE_DEF_GET_SET_FUNC
 
+/* *****************************************************************************
+Initialize - Ruby Class Registration
+***************************************************************************** */
+
 /**
- * Iodine::PubSub::Message class instances are passed to subscription callbacks.
+ * Initializes the Iodine::PubSub::Message Ruby class.
+ *
+ * Defines the Message class under Iodine::PubSub with:
+ * - Getter methods: id, channel, event, filter, message, msg, data, published, to_s
+ * - Setter methods: id=, channel=, event=, filter=, message=, msg=, data=, published=
+ *
+ * Note: event/msg/data are aliases for channel/message respectively.
  */
 static void Init_Iodine_PubSub_Message(void) {
-  /** Initialize Iodine::PubSub::Message */ // clang-format off
-  
+  // clang-format off
   iodine_rb_IODINE_PUBSUB_MSG = rb_define_class_under(iodine_rb_IODINE_PUBSUB, "Message", rb_cObject);
   STORE.hold(iodine_rb_IODINE_PUBSUB_MSG);
   rb_define_alloc_func(iodine_rb_IODINE_PUBSUB_MSG, iodine_pubsub_msg_alloc);
+  
+  /* Getter methods */
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "id", iodine_pubsub_msg_id_get, 0);
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "channel", iodine_pubsub_msg_channel_get, 0);
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "event", iodine_pubsub_msg_channel_get, 0);
@@ -136,9 +203,9 @@ static void Init_Iodine_PubSub_Message(void) {
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "msg", iodine_pubsub_msg_message_get, 0);
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "data", iodine_pubsub_msg_message_get, 0);
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "published", iodine_pubsub_msg_published_get, 0);
-
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "to_s", iodine_pubsub_msg_message_get, 0);
 
+  /* Setter methods */
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "id=", iodine_pubsub_msg_id_set, 1);
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "channel=", iodine_pubsub_msg_channel_set, 1);
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "event=", iodine_pubsub_msg_channel_set, 1);
@@ -147,7 +214,8 @@ static void Init_Iodine_PubSub_Message(void) {
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "msg=", iodine_pubsub_msg_message_set, 1);
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "data=", iodine_pubsub_msg_message_set, 1);
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "published=", iodine_pubsub_msg_published_set, 1);
-} // clang-format off
+  // clang-format on
+}
 
 
 #endif /* H___IODINE_PUBSUB_MSG___H */
