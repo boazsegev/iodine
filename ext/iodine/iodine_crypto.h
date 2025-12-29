@@ -8,14 +8,18 @@ Iodine::Base::Crypto - Advanced Cryptographic Operations
 Provides access to modern cryptographic primitives:
 - ChaCha20-Poly1305: AEAD symmetric encryption (12-byte nonce)
 - XChaCha20-Poly1305: AEAD symmetric encryption (24-byte nonce, safe for random)
+- AES-128-GCM: AEAD symmetric encryption (16-byte key, 12-byte nonce)
+- AES-256-GCM: AEAD symmetric encryption (32-byte key, 12-byte nonce)
 - Ed25519: Digital signatures
-- X25519: Key exchange and public-key encryption (ECIES)
+- X25519: Key exchange and public-key encryption (ECIES with ChaCha20/AES)
 - HKDF: Key derivation (RFC 5869)
 ***************************************************************************** */
 
 static VALUE iodine_rb_CRYPTO;
 static VALUE iodine_rb_CHACHA20POLY1305;
 static VALUE iodine_rb_XCHACHA20POLY1305;
+static VALUE iodine_rb_AES128GCM;
+static VALUE iodine_rb_AES256GCM;
 static VALUE iodine_rb_ED25519;
 static VALUE iodine_rb_X25519;
 static VALUE iodine_rb_HKDF;
@@ -225,6 +229,216 @@ FIO_SFUNC VALUE iodine_crypto_xchacha_decrypt(int argc,
                                           ad.len,
                                           (void *)key.buf,
                                           (void *)nonce.buf);
+
+  if (result != 0)
+    rb_raise(rb_eRuntimeError, "Authentication failed");
+
+  return plaintext;
+  (void)self;
+}
+
+/* *****************************************************************************
+AES-128-GCM AEAD Encryption
+***************************************************************************** */
+
+/**
+ * Encrypts data using AES-128-GCM AEAD.
+ *
+ * @param data [String] Plaintext to encrypt
+ * @param key: [String] 16-byte encryption key
+ * @param nonce: [String] 12-byte nonce (must be unique per key)
+ * @param ad: [String, nil] Optional additional authenticated data
+ * @return [Array<String, String>] [ciphertext, mac] where mac is 16 bytes
+ */
+FIO_SFUNC VALUE iodine_crypto_aes128gcm_encrypt(int argc,
+                                                VALUE *argv,
+                                                VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0;
+  fio_buf_info_s key = FIO_BUF_INFO0;
+  fio_buf_info_s nonce = FIO_BUF_INFO0;
+  fio_buf_info_s ad = FIO_BUF_INFO0;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(key, 0, "key", 1),
+                  IODINE_ARG_BUF(nonce, 0, "nonce", 1),
+                  IODINE_ARG_BUF(ad, 0, "ad", 0));
+
+  if (key.len != 16)
+    rb_raise(rb_eArgError, "key must be 16 bytes (got %zu)", key.len);
+  if (nonce.len != 12)
+    rb_raise(rb_eArgError, "nonce must be 12 bytes (got %zu)", nonce.len);
+
+  /* Copy data for in-place encryption */
+  VALUE ciphertext = rb_str_new(data.buf, data.len);
+  uint8_t mac[16];
+
+  fio_aes128_gcm_enc(mac,
+                     RSTRING_PTR(ciphertext),
+                     data.len,
+                     ad.buf,
+                     ad.len,
+                     (void *)key.buf,
+                     (void *)nonce.buf);
+
+  VALUE mac_str = rb_str_new((const char *)mac, 16);
+  return rb_ary_new_from_args(2, ciphertext, mac_str);
+  (void)self;
+}
+
+/**
+ * Decrypts data using AES-128-GCM AEAD.
+ *
+ * @param ciphertext [String] Ciphertext to decrypt
+ * @param mac: [String] 16-byte authentication tag
+ * @param key: [String] 16-byte encryption key
+ * @param nonce: [String] 12-byte nonce
+ * @param ad: [String, nil] Optional additional authenticated data
+ * @return [String] Decrypted plaintext
+ * @raise [RuntimeError] if authentication fails
+ */
+FIO_SFUNC VALUE iodine_crypto_aes128gcm_decrypt(int argc,
+                                                VALUE *argv,
+                                                VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0;
+  fio_buf_info_s mac = FIO_BUF_INFO0;
+  fio_buf_info_s key = FIO_BUF_INFO0;
+  fio_buf_info_s nonce = FIO_BUF_INFO0;
+  fio_buf_info_s ad = FIO_BUF_INFO0;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(mac, 0, "mac", 1),
+                  IODINE_ARG_BUF(key, 0, "key", 1),
+                  IODINE_ARG_BUF(nonce, 0, "nonce", 1),
+                  IODINE_ARG_BUF(ad, 0, "ad", 0));
+
+  if (key.len != 16)
+    rb_raise(rb_eArgError, "key must be 16 bytes (got %zu)", key.len);
+  if (nonce.len != 12)
+    rb_raise(rb_eArgError, "nonce must be 12 bytes (got %zu)", nonce.len);
+  if (mac.len != 16)
+    rb_raise(rb_eArgError, "mac must be 16 bytes (got %zu)", mac.len);
+
+  /* Copy data for in-place decryption, also copy mac since it's modified */
+  VALUE plaintext = rb_str_new(data.buf, data.len);
+  uint8_t mac_copy[16];
+  FIO_MEMCPY(mac_copy, mac.buf, 16);
+
+  int result = fio_aes128_gcm_dec(mac_copy,
+                                  RSTRING_PTR(plaintext),
+                                  data.len,
+                                  ad.buf,
+                                  ad.len,
+                                  (void *)key.buf,
+                                  (void *)nonce.buf);
+
+  if (result != 0)
+    rb_raise(rb_eRuntimeError, "Authentication failed");
+
+  return plaintext;
+  (void)self;
+}
+
+/* *****************************************************************************
+AES-256-GCM AEAD Encryption
+***************************************************************************** */
+
+/**
+ * Encrypts data using AES-256-GCM AEAD.
+ *
+ * @param data [String] Plaintext to encrypt
+ * @param key: [String] 32-byte encryption key
+ * @param nonce: [String] 12-byte nonce (must be unique per key)
+ * @param ad: [String, nil] Optional additional authenticated data
+ * @return [Array<String, String>] [ciphertext, mac] where mac is 16 bytes
+ */
+FIO_SFUNC VALUE iodine_crypto_aes256gcm_encrypt(int argc,
+                                                VALUE *argv,
+                                                VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0;
+  fio_buf_info_s key = FIO_BUF_INFO0;
+  fio_buf_info_s nonce = FIO_BUF_INFO0;
+  fio_buf_info_s ad = FIO_BUF_INFO0;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(key, 0, "key", 1),
+                  IODINE_ARG_BUF(nonce, 0, "nonce", 1),
+                  IODINE_ARG_BUF(ad, 0, "ad", 0));
+
+  if (key.len != 32)
+    rb_raise(rb_eArgError, "key must be 32 bytes (got %zu)", key.len);
+  if (nonce.len != 12)
+    rb_raise(rb_eArgError, "nonce must be 12 bytes (got %zu)", nonce.len);
+
+  /* Copy data for in-place encryption */
+  VALUE ciphertext = rb_str_new(data.buf, data.len);
+  uint8_t mac[16];
+
+  fio_aes256_gcm_enc(mac,
+                     RSTRING_PTR(ciphertext),
+                     data.len,
+                     ad.buf,
+                     ad.len,
+                     (void *)key.buf,
+                     (void *)nonce.buf);
+
+  VALUE mac_str = rb_str_new((const char *)mac, 16);
+  return rb_ary_new_from_args(2, ciphertext, mac_str);
+  (void)self;
+}
+
+/**
+ * Decrypts data using AES-256-GCM AEAD.
+ *
+ * @param ciphertext [String] Ciphertext to decrypt
+ * @param mac: [String] 16-byte authentication tag
+ * @param key: [String] 32-byte encryption key
+ * @param nonce: [String] 12-byte nonce
+ * @param ad: [String, nil] Optional additional authenticated data
+ * @return [String] Decrypted plaintext
+ * @raise [RuntimeError] if authentication fails
+ */
+FIO_SFUNC VALUE iodine_crypto_aes256gcm_decrypt(int argc,
+                                                VALUE *argv,
+                                                VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0;
+  fio_buf_info_s mac = FIO_BUF_INFO0;
+  fio_buf_info_s key = FIO_BUF_INFO0;
+  fio_buf_info_s nonce = FIO_BUF_INFO0;
+  fio_buf_info_s ad = FIO_BUF_INFO0;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(mac, 0, "mac", 1),
+                  IODINE_ARG_BUF(key, 0, "key", 1),
+                  IODINE_ARG_BUF(nonce, 0, "nonce", 1),
+                  IODINE_ARG_BUF(ad, 0, "ad", 0));
+
+  if (key.len != 32)
+    rb_raise(rb_eArgError, "key must be 32 bytes (got %zu)", key.len);
+  if (nonce.len != 12)
+    rb_raise(rb_eArgError, "nonce must be 12 bytes (got %zu)", nonce.len);
+  if (mac.len != 16)
+    rb_raise(rb_eArgError, "mac must be 16 bytes (got %zu)", mac.len);
+
+  /* Copy data for in-place decryption, also copy mac since it's modified */
+  VALUE plaintext = rb_str_new(data.buf, data.len);
+  uint8_t mac_copy[16];
+  FIO_MEMCPY(mac_copy, mac.buf, 16);
+
+  int result = fio_aes256_gcm_dec(mac_copy,
+                                  RSTRING_PTR(plaintext),
+                                  data.len,
+                                  ad.buf,
+                                  ad.len,
+                                  (void *)key.buf,
+                                  (void *)nonce.buf);
 
   if (result != 0)
     rb_raise(rb_eRuntimeError, "Authentication failed");
@@ -513,6 +727,186 @@ FIO_SFUNC VALUE iodine_crypto_x25519_decrypt(int argc,
   (void)self;
 }
 
+/**
+ * Encrypts a message using X25519 public-key encryption (ECIES) with AES-128-GCM.
+ *
+ * Uses ephemeral key agreement + AES-128-GCM for authenticated encryption.
+ * Only the recipient with the matching secret key can decrypt.
+ *
+ * @param message [String] Plaintext to encrypt
+ * @param recipient_pk: [String] 32-byte recipient's public key
+ * @return [String] Ciphertext (message.length + 48 bytes overhead)
+ * @raise [RuntimeError] if encryption fails
+ */
+FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes128(int argc,
+                                                    VALUE *argv,
+                                                    VALUE self) {
+  fio_buf_info_s message = FIO_BUF_INFO0;
+  fio_buf_info_s recipient_pk = FIO_BUF_INFO0;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(message, 0, NULL, 1),
+                  IODINE_ARG_BUF(recipient_pk, 0, "recipient_pk", 1));
+
+  if (recipient_pk.len != 32)
+    rb_raise(rb_eArgError,
+             "recipient_pk must be 32 bytes (got %zu)",
+             recipient_pk.len);
+
+  /* Output is message + 48 bytes overhead (32 ephemeral pk + 16 mac) */
+  size_t out_len = message.len + 48;
+  VALUE ciphertext = rb_str_buf_new(out_len);
+  rb_str_set_len(ciphertext, out_len);
+
+  int result =
+      fio_x25519_encrypt((uint8_t *)RSTRING_PTR(ciphertext),
+                         message.buf,
+                         message.len,
+                         (fio_crypto_enc_fn *)fio_aes128_gcm_enc,
+                         (const uint8_t *)recipient_pk.buf);
+
+  if (result != 0)
+    rb_raise(rb_eRuntimeError, "Encryption failed");
+
+  return ciphertext;
+  (void)self;
+}
+
+/**
+ * Decrypts a message using X25519 public-key encryption (ECIES) with AES-128-GCM.
+ *
+ * @param ciphertext [String] Ciphertext from X25519.encrypt_aes128
+ * @param secret_key: [String] 32-byte recipient's secret key
+ * @return [String] Decrypted plaintext
+ * @raise [RuntimeError] if decryption fails (authentication error)
+ */
+FIO_SFUNC VALUE iodine_crypto_x25519_decrypt_aes128(int argc,
+                                                    VALUE *argv,
+                                                    VALUE self) {
+  fio_buf_info_s ciphertext = FIO_BUF_INFO0;
+  fio_buf_info_s sk = FIO_BUF_INFO0;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(ciphertext, 0, NULL, 1),
+                  IODINE_ARG_BUF(sk, 0, "secret_key", 1));
+
+  if (sk.len != 32)
+    rb_raise(rb_eArgError, "secret_key must be 32 bytes (got %zu)", sk.len);
+  if (ciphertext.len < 48)
+    rb_raise(rb_eArgError,
+             "ciphertext too short (minimum 48 bytes, got %zu)",
+             ciphertext.len);
+
+  size_t out_len = ciphertext.len - 48;
+  VALUE plaintext = rb_str_buf_new(out_len);
+  rb_str_set_len(plaintext, out_len);
+
+  int result =
+      fio_x25519_decrypt((uint8_t *)RSTRING_PTR(plaintext),
+                         (const uint8_t *)ciphertext.buf,
+                         ciphertext.len,
+                         (fio_crypto_dec_fn *)fio_aes128_gcm_dec,
+                         (const uint8_t *)sk.buf);
+
+  if (result != 0)
+    rb_raise(rb_eRuntimeError, "Decryption failed (authentication error)");
+
+  return plaintext;
+  (void)self;
+}
+
+/**
+ * Encrypts a message using X25519 public-key encryption (ECIES) with AES-256-GCM.
+ *
+ * Uses ephemeral key agreement + AES-256-GCM for authenticated encryption.
+ * Only the recipient with the matching secret key can decrypt.
+ *
+ * @param message [String] Plaintext to encrypt
+ * @param recipient_pk: [String] 32-byte recipient's public key
+ * @return [String] Ciphertext (message.length + 48 bytes overhead)
+ * @raise [RuntimeError] if encryption fails
+ */
+FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes256(int argc,
+                                                    VALUE *argv,
+                                                    VALUE self) {
+  fio_buf_info_s message = FIO_BUF_INFO0;
+  fio_buf_info_s recipient_pk = FIO_BUF_INFO0;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(message, 0, NULL, 1),
+                  IODINE_ARG_BUF(recipient_pk, 0, "recipient_pk", 1));
+
+  if (recipient_pk.len != 32)
+    rb_raise(rb_eArgError,
+             "recipient_pk must be 32 bytes (got %zu)",
+             recipient_pk.len);
+
+  /* Output is message + 48 bytes overhead (32 ephemeral pk + 16 mac) */
+  size_t out_len = message.len + 48;
+  VALUE ciphertext = rb_str_buf_new(out_len);
+  rb_str_set_len(ciphertext, out_len);
+
+  int result =
+      fio_x25519_encrypt((uint8_t *)RSTRING_PTR(ciphertext),
+                         message.buf,
+                         message.len,
+                         (fio_crypto_enc_fn *)fio_aes256_gcm_enc,
+                         (const uint8_t *)recipient_pk.buf);
+
+  if (result != 0)
+    rb_raise(rb_eRuntimeError, "Encryption failed");
+
+  return ciphertext;
+  (void)self;
+}
+
+/**
+ * Decrypts a message using X25519 public-key encryption (ECIES) with AES-256-GCM.
+ *
+ * @param ciphertext [String] Ciphertext from X25519.encrypt_aes256
+ * @param secret_key: [String] 32-byte recipient's secret key
+ * @return [String] Decrypted plaintext
+ * @raise [RuntimeError] if decryption fails (authentication error)
+ */
+FIO_SFUNC VALUE iodine_crypto_x25519_decrypt_aes256(int argc,
+                                                    VALUE *argv,
+                                                    VALUE self) {
+  fio_buf_info_s ciphertext = FIO_BUF_INFO0;
+  fio_buf_info_s sk = FIO_BUF_INFO0;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(ciphertext, 0, NULL, 1),
+                  IODINE_ARG_BUF(sk, 0, "secret_key", 1));
+
+  if (sk.len != 32)
+    rb_raise(rb_eArgError, "secret_key must be 32 bytes (got %zu)", sk.len);
+  if (ciphertext.len < 48)
+    rb_raise(rb_eArgError,
+             "ciphertext too short (minimum 48 bytes, got %zu)",
+             ciphertext.len);
+
+  size_t out_len = ciphertext.len - 48;
+  VALUE plaintext = rb_str_buf_new(out_len);
+  rb_str_set_len(plaintext, out_len);
+
+  int result =
+      fio_x25519_decrypt((uint8_t *)RSTRING_PTR(plaintext),
+                         (const uint8_t *)ciphertext.buf,
+                         ciphertext.len,
+                         (fio_crypto_dec_fn *)fio_aes256_gcm_dec,
+                         (const uint8_t *)sk.buf);
+
+  if (result != 0)
+    rb_raise(rb_eRuntimeError, "Decryption failed (authentication error)");
+
+  return plaintext;
+  (void)self;
+}
+
 /* *****************************************************************************
 HKDF Key Derivation (RFC 5869)
 ***************************************************************************** */
@@ -602,6 +996,30 @@ static void Init_Iodine_Crypto(void) {
                             iodine_crypto_xchacha_decrypt,
                             -1);
 
+  /* Iodine::Base::Crypto::AES128GCM */
+  iodine_rb_AES128GCM = rb_define_module_under(iodine_rb_CRYPTO, "AES128GCM");
+  STORE.hold(iodine_rb_AES128GCM);
+  rb_define_module_function(iodine_rb_AES128GCM,
+                            "encrypt",
+                            iodine_crypto_aes128gcm_encrypt,
+                            -1);
+  rb_define_module_function(iodine_rb_AES128GCM,
+                            "decrypt",
+                            iodine_crypto_aes128gcm_decrypt,
+                            -1);
+
+  /* Iodine::Base::Crypto::AES256GCM */
+  iodine_rb_AES256GCM = rb_define_module_under(iodine_rb_CRYPTO, "AES256GCM");
+  STORE.hold(iodine_rb_AES256GCM);
+  rb_define_module_function(iodine_rb_AES256GCM,
+                            "encrypt",
+                            iodine_crypto_aes256gcm_encrypt,
+                            -1);
+  rb_define_module_function(iodine_rb_AES256GCM,
+                            "decrypt",
+                            iodine_crypto_aes256gcm_decrypt,
+                            -1);
+
   /* Iodine::Base::Crypto::Ed25519 */
   iodine_rb_ED25519 = rb_define_module_under(iodine_rb_CRYPTO, "Ed25519");
   STORE.hold(iodine_rb_ED25519);
@@ -644,6 +1062,22 @@ static void Init_Iodine_Crypto(void) {
   rb_define_module_function(iodine_rb_X25519,
                             "decrypt",
                             iodine_crypto_x25519_decrypt,
+                            -1);
+  rb_define_module_function(iodine_rb_X25519,
+                            "encrypt_aes128",
+                            iodine_crypto_x25519_encrypt_aes128,
+                            -1);
+  rb_define_module_function(iodine_rb_X25519,
+                            "decrypt_aes128",
+                            iodine_crypto_x25519_decrypt_aes128,
+                            -1);
+  rb_define_module_function(iodine_rb_X25519,
+                            "encrypt_aes256",
+                            iodine_crypto_x25519_encrypt_aes256,
+                            -1);
+  rb_define_module_function(iodine_rb_X25519,
+                            "decrypt_aes256",
+                            iodine_crypto_x25519_decrypt_aes256,
                             -1);
 
   /* Iodine::Base::Crypto::HKDF */
