@@ -165,7 +165,6 @@ Workers - Process Pool Configuration
  * Ruby: Iodine.workers
  */
 static VALUE iodine_workers(VALUE klass) {
-  if (!fio_cli_get("-w")) return Qnil;
   unsigned long tmp = fio_io_workers((uint16_t)fio_cli_get_i("-w"));
   return LL2NUM(tmp);
   (void)klass;
@@ -217,7 +216,6 @@ Threads - Thread Pool Configuration
  * Ruby: Iodine.threads
  */
 static VALUE iodine_threads(VALUE klass) {
-  if (!fio_cli_get("-t")) return Qnil;
   unsigned long tmp = fio_io_workers((uint16_t)fio_cli_get_i("-t"));
   return LL2NUM(tmp);
   (void)klass;
