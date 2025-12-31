@@ -131,7 +131,7 @@ module Iodine
   #
   # Negative values signify fractions of CPU core count (-1 ~= all CPU cores, -2 ~= half CPU cores, etc').
   #
-  # @return [Integer, nil] the number of threads, or `nil` if not configured
+  # @return [Integer] the number of threads (defaults to -4 if not explicitly configured)
   def self.threads; end
 
   # Sets the number of worker threads per worker process.
@@ -139,9 +139,11 @@ module Iodine
   # Negative values signify fractions of CPU core count (-1 ~= all CPU cores, -2 ~= half CPU cores, etc').
   #
   # @param threads [Integer] the number of threads
-  # @return [Integer] the configured number of threads
-  # @raise [TypeError] if threads is not a Fixnum
+  # @return [Integer] the current CLI value for threads (may differ from input if set failed)
+  # @raise [TypeError] if threads is not a Fixnum (only when called from master process with non-nil value)
   # @note Can only be set in the master process before starting the reactor.
+  # @note If called from a worker process or with `nil`, logs an error but does not raise an exception.
+  #   The return value will be the current (unchanged) CLI value.
   def self.threads=(threads); end
 
   # Returns the number of worker processes.
@@ -149,7 +151,7 @@ module Iodine
   # Negative values signify fractions of CPU core count (-1 ~= all CPU cores, -2 ~= half CPU cores, etc').
   # A value of 0 means single-process mode (no forking).
   #
-  # @return [Integer, nil] the number of workers, or `nil` if not configured
+  # @return [Integer] the number of workers (defaults to -2 if not explicitly configured)
   def self.workers; end
 
   # Sets the number of worker processes.
@@ -158,9 +160,11 @@ module Iodine
   # Set to 0 for single-process mode, or > 0 for cluster mode.
   #
   # @param workers [Integer] the number of worker processes
-  # @return [Integer] the configured number of workers
-  # @raise [TypeError] if workers is not a Fixnum
+  # @return [Integer] the current CLI value for workers (may differ from input if set failed)
+  # @raise [TypeError] if workers is not a Fixnum (only when called from master process with non-nil value)
   # @note Can only be set in the master process before starting the reactor.
+  # @note If called from a worker process or with `nil`, logs an error but does not raise an exception.
+  #   The return value will be the current (unchanged) CLI value.
   def self.workers=(workers); end
 
   # Starts the Iodine IO reactor.
