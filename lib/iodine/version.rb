@@ -2,16 +2,17 @@
 
 module Iodine
   # The Iodine gem version number
-  VERSION = "0.8.0.dev"
+  VERSION = "0.8.0.rc.01"
   # NeoRack supported extensions.
   def self.extensions
     return (@extentions ||= { neo_rack: "0.0.2".split(?.),
-                              ws: "0.0.1".split(?.),
-                              sse: "0.0.1".split(?.),
-                              pubsub: "0.0.1".split(?.),
                               cookies: "0.0.1".split(?.),
                               from: "0.0.1".split(?.),
-                              rest: "0.0.1".split(?.)
+                              pubsub: "0.0.1".split(?.),
+                              rack: "1.3.0".split(?.),
+                              rest: "0.0.1".split(?.),
+                              sse: "0.0.1".split(?.),
+                              ws: "0.0.1".split(?.)
                             })
   end
 end
