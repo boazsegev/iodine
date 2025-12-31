@@ -877,7 +877,7 @@ FIO_IFUNC void iodine___copy_to_lower_case(fio_str_info_s *t,
   if (k->len >= t->capa) goto too_big;
   for (size_t i = 0; i < k->len; ++i) {
     uint8_t c = (uint8_t)k->buf[i];
-    c |= (uint8_t)(c >= 'A' || c <= 'Z') << 5;
+    c |= (uint8_t)((c >= 'A' && c <= 'Z') << 5);
     t->buf[i] = c;
   }
   t->len = k->len;
