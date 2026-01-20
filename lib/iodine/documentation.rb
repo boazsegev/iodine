@@ -422,15 +422,24 @@ module Iodine
   #
   # @param channel [String, nil] the subscription's channel name.
   # @param filter [Integer] the subscription's filter (Number < 32,767).
+  # @param since [Integer] replay cached messages since this timestamp in milliseconds
+  #   (requires {Iodine::PubSub::History.cache} to be called first).
   # @param callback [Proc, nil] an **optional** object that answers to call and accepts a single argument (the message structure).
   # @return [Proc] the callback
   #
   # @note Either a proc or a block **must** be provided for global subscriptions.
   #
-  # @example
+  # @example Basic subscription
   #   Iodine.subscribe("name") { |msg| puts msg.message }
   #   Iodine.subscribe(channel: "name", filter: 1) { |msg| puts msg.message }
-  def self.subscribe(channel = nil, filter = 0, &callback); end
+  #
+  # @example Subscription with history replay
+  #   # First enable the memory cache
+  #   Iodine::PubSub::History.cache
+  #   # Subscribe and replay messages from the last 60 seconds
+  #   since_ms = (Time.now.to_i - 60) * 1000
+  #   Iodine.subscribe(channel: "chat", since: since_ms) { |msg| puts msg.message }
+  def self.subscribe(channel = nil, filter = 0, since = 0, &callback); end
 
   # Un-Subscribes from a combination of a channel (String) and filter (number).
   #
@@ -1010,6 +1019,110 @@ module Iodine
         def cmd(*args, &block); end
       end
     end
+
+    # Iodine::PubSub::History module provides message history and replay support.
+    #
+    # When history is enabled, published messages are cached in memory (up to a
+    # configurable size limit). Subscribers can then request replay of missed
+    # messages by providing a `since` timestamp when subscribing.
+    #
+    # @example Enable memory cache with default 256MB limit
+    #   Iodine::PubSub::History.cache
+    #
+    # @example Enable memory cache with custom size
+    #   Iodine::PubSub::History.cache(size_limit: 128 * 1024 * 1024)  # 128MB
+    #
+    # @example Subscribe with history replay
+    #   # Get messages from the last 60 seconds
+    #   since_ms = (Time.now.to_i - 60) * 1000
+    #   Iodine.subscribe(channel: "chat", since: since_ms) do |msg|
+    #     puts "Message: #{msg.message}"
+    #   end
+    module History
+      # Enables the built-in in-memory history cache.
+      #
+      # The memory cache has the highest priority (255) so it will be tried
+      # first for replay requests, providing the fastest possible replay.
+      #
+      # @param size_limit [Integer] Maximum cache size in bytes (default: 256MB)
+      # @return [Boolean] true on success
+      #
+      # @example
+      #   Iodine::PubSub::History.cache(size_limit: 128 * 1024 * 1024)
+      def self.cache(size_limit: 256 * 1024 * 1024); end
+
+      # Returns true if the built-in memory cache is enabled.
+      #
+      # @return [Boolean]
+      def self.cache?; end
+
+      # Base class for custom history managers.
+      #
+      # Subclass this to implement custom history storage backends (e.g., Redis,
+      # database, file-based storage).
+      #
+      # @example Custom history manager
+      #   class MyHistoryManager < Iodine::PubSub::History::Manager
+      #     def push(message)
+      #       # Store message in your backend
+      #       @storage[message.channel] ||= []
+      #       @storage[message.channel] << message
+      #       true
+      #     end
+      #
+      #     def replay(channel:, filter:, since:)
+      #       # Return array of messages since timestamp
+      #       (@storage[channel] || []).select { |m| m.published >= since }
+      #     end
+      #
+      #     def oldest(channel:, filter:)
+      #       # Return oldest available timestamp
+      #       @storage[channel]&.first&.published || (2**64 - 1)
+      #     end
+      #   end
+      class Manager
+        # Creates and attaches a new history manager.
+        #
+        # @param priority [Integer] Manager priority (0-255, default: 128).
+        #   Higher priority managers are tried first for replay requests.
+        # @return [self]
+        def initialize(priority: 128); end
+
+        # Detaches the history manager from the pubsub system.
+        #
+        # @return [self]
+        def detach; end
+
+        # Returns true if the manager is attached.
+        #
+        # @return [Boolean]
+        def attached?; end
+
+        # Override this to store a message in history.
+        #
+        # @param message [Iodine::PubSub::Message] the message to store
+        # @return [Boolean] true on success, false on error
+        def push(message); end
+
+        # Override this to replay messages since a timestamp.
+        #
+        # @param channel [String, nil] the channel name
+        # @param filter [Integer] the filter value
+        # @param since [Integer] timestamp in milliseconds since epoch
+        # @return [Array<Iodine::PubSub::Message>] array of messages to replay
+        def replay(channel:, filter:, since:); end
+
+        # Override this to get the oldest available timestamp for a channel.
+        #
+        # @param channel [String, nil] the channel name
+        # @param filter [Integer] the filter value
+        # @return [Integer] oldest timestamp in milliseconds, or 2^64-1 if no history
+        def oldest(channel:, filter:); end
+
+        # Called when the manager is detached for cleanup.
+        def on_cleanup; end
+      end
+    end
   end
 
   #######################
@@ -1362,20 +1475,28 @@ module Iodine
     #
     # @param channel [String, nil] the subscription's channel name
     # @param filter [Integer] the subscription's filter (Number < 32,767)
+    # @param since [Integer] replay cached messages since this timestamp in milliseconds
+    #   (requires {Iodine::PubSub::History.cache} to be called first)
     # @param callback [Proc, nil] an **optional** object that answers to call and accepts a single argument (the message structure)
     # @return [Proc, nil] the callback
     #
     # @note Either a proc or a block MUST be provided for global subscriptions.
     #
-    # @example
+    # @example Basic subscription
     #   client.subscribe("name") { |msg| puts msg.message }
     #   client.subscribe(channel: "name", filter: 1) { |msg| puts msg.message }
-    def subscribe(channel = nil, filter = 0, &callback); end
+    #
+    # @example Subscription with history replay
+    #   since_ms = (Time.now.to_i - 60) * 1000
+    #   client.subscribe(channel: "chat", since: since_ms) { |msg| puts msg.message }
+    def subscribe(channel = nil, filter = 0, since = 0, &callback); end
 
     # Subscribes to a combination of a channel (String) and filter (number).
     #
     # @param channel [String, nil] the subscription's channel name
     # @param filter [Integer] the subscription's filter (Number < 32,767)
+    # @param since [Integer] replay cached messages since this timestamp in milliseconds
+    #   (requires {Iodine::PubSub::History.cache} to be called first)
     # @param callback [Proc, nil] an **optional** object that answers to call and accepts a single argument (the message structure)
     # @return [Proc, nil] the callback
     #
@@ -1383,7 +1504,7 @@ module Iodine
     #
     # @example
     #   Iodine::Connection.subscribe("name") { |msg| puts msg.message }
-    def self.subscribe(channel = nil, filter = 0, &callback); end
+    def self.subscribe(channel = nil, filter = 0, since = 0, &callback); end
 
     # Un-Subscribes from a combination of a channel (String) and filter (number).
     #

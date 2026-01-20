@@ -74,7 +74,7 @@ supports macros that will help detect and validate it's version.
 /** PATCH version: Bug fixes, minor features may be added. */
 #define FIO_VERSION_PATCH 0
 /** Build version: optional build info (string), i.e. "beta.02" */
-#define FIO_VERSION_BUILD "alpha.10"
+#define FIO_VERSION_BUILD "rc.01"
 
 #ifdef FIO_VERSION_BUILD
 /** Version as a String literal (MACRO). */
@@ -662,10 +662,12 @@ Pointer Math
   ((T_type *)((uintptr_t)(ptr) - (uintptr_t)(offset)))
 
 /** Find the root object (of a struct) from it's field (with sanitizer fix). */
+#define FIO_PTR_FIELD_OFFSET(T_type, field)                                    \
+  ((uintptr_t)((&((T_type *)0xFF00)->field)) - 0xFF00)
+
+/** Find the root object (of a struct) from it's field (with sanitizer fix). */
 #define FIO_PTR_FROM_FIELD(T_type, field, ptr)                                 \
-  FIO_PTR_MATH_SUB(T_type,                                                     \
-                   ptr,                                                        \
-                   (uintptr_t)(&((T_type *)0xFF00)->field) - 0xFF00)
+  FIO_PTR_MATH_SUB(T_type, ptr, FIO_PTR_FIELD_OFFSET(T_type, field))
 
 /* *****************************************************************************
 Sleep / Thread Scheduling Macros
@@ -1610,7 +1612,7 @@ Memory Leak Detection
   }                                                                            \
   FIO_CONSTRUCTOR(FIO_NAME(fio___leak_counter_const, name)) {                  \
     if (!FIO_LEAK_COUNTER_SKIP_EXIT)                                           \
-      fio_state_callback_add(FIO_CALL_AT_EXIT,                                 \
+      fio_state_callback_add(FIO_CALL_AFTER_EXIT,                              \
                              FIO_NAME(fio___leak_counter_cleanup, name),       \
                              NULL);                                            \
   }
@@ -1618,6 +1620,8 @@ Memory Leak Detection
 #define FIO___LEAK_COUNTER_ON_ALLOC(name) FIO_NAME(fio___leak_counter, name)(1)
 #define FIO___LEAK_COUNTER_ON_FREE(name)                                       \
   FIO_NAME(fio___leak_counter, name)(((size_t)-1))
+#define FIO___LEAK_COUNTER_REPORT(name)                                        \
+  FIO_NAME(fio___leak_counter_cleanup, name)(NULL)
 #endif
 
 /* *****************************************************************************
@@ -1836,6 +1840,19 @@ FIO_IFUNC void fio_u2buf24u(void *buf, uint32_t i) { fio_u2buf24_le(buf, i); }
 #warning "Couldn't calculate local version for fio_buf2u24u and fio_u2buf24u"
 #endif
 
+#if SIZE_T_MAX == UINT64_MAX
+/** Converts an unaligned byte stream to a size_t - local endieness. */
+FIO_IFUNC size_t fio_buf2zu(const void *c) { return (size_t)fio_buf2u64u(c); }
+/** Writes a size_t to an unaligned buffer - in local endieness. */
+FIO_IFUNC void fio_u2bufzu(void *buf, size_t i) { fio_u2buf64u(buf, i); }
+#elif SIZE_T_MAX == UINT32_MAX
+/** Converts an unaligned byte stream to a size_t - local endieness. */
+FIO_IFUNC size_t fio_buf2zu(const void *c) { return (size_t)fio_buf2u32u(c); }
+/** Writes a size_t to an unaligned buffer - in local endieness. */
+FIO_IFUNC void fio_u2bufzu(void *buf, size_t i) { fio_u2buf32u(buf, i); }
+#else
+#warning "Couldn't calculate local version for fio_buf2zu and fio_u2bufzu"
+#endif
 /* *****************************************************************************
 Vector Math, Shuffle & Reduction on native types, for up to 2048 bits
 ***************************************************************************** */
@@ -4388,7 +4405,7 @@ FIO_IFUNC uint64_t fio_cycle_counter(void) { return (uint64_t)0; }
  * If `extern` is `static` or `FIO_SFUNC`, static function will be defined.
  */
 #define FIO_DEFINE_RANDOM128_FN(extern, name, reseed_log, seed_offset)         \
-  static uint64_t name##___state[8] FIO_ALIGN(64) = {                          \
+  static uint64_t name##___state[9] FIO_ALIGN(64) = {                          \
       0x9c65875be1fce7b9ULL + seed_offset,                                     \
       0x7cc568e838f6a40dULL,                                                   \
       0x4bb8d885a0fe47d5ULL + seed_offset,                                     \
@@ -4399,7 +4416,7 @@ FIO_IFUNC uint64_t fio_cycle_counter(void) { return (uint64_t)0; }
     name##___state[1] = 0x7cc568e838f6a40dULL;                                 \
     name##___state[2] = 0x4bb8d885a0fe47d5ULL + seed_offset;                   \
     name##___state[3] = 0x95561f0927ad7ecdULL;                                 \
-    name##___state[4] = 0;                                                     \
+    name##___state[8] = name##___state[4] = 0;                                 \
   }                                                                            \
   extern void name##_reseed(void) {                                            \
     const size_t jitter_samples = 16 | (name##___state[0] & 15);               \
@@ -4421,6 +4438,7 @@ FIO_IFUNC uint64_t fio_cycle_counter(void) { return (uint64_t)0; }
       name##___state[2] += clk[0] + fio_cycle_counter();                       \
       name##___state[3] += clk[1] + fio_cycle_counter();                       \
     }                                                                          \
+    name##___state[8] += ((name##___state[8] & 7) + (name##___state[0] & 30)); \
   }                                                                            \
   /** Re-seeds the PNGR so forked processes don't match. */                    \
   extern FIO_MAYBE_UNUSED void name##_on_fork(void *is_null) {                 \
@@ -4474,9 +4492,9 @@ FIO_IFUNC uint64_t fio_cycle_counter(void) { return (uint64_t)0; }
   }                                                                            \
   /** Returns a 64 bit pseudo-random number. */                                \
   extern FIO_MAYBE_UNUSED uint64_t name##64(void) {                            \
-    static size_t counter;                                                     \
     static fio_u128 r;                                                         \
-    if (!((counter++) & 1))                                                    \
+    size_t counter = fio_atomic_add(name##___state + 8, 1);                    \
+    if (!(counter & 1))                                                        \
       r = name##128();                                                         \
     return r.u64[counter & 1];                                                 \
   }                                                                            \
@@ -4788,10 +4806,10 @@ Everything Inclusion
 #define H___FIO_EVERYTHING1___H
 #undef FIO_FIOBJ
 #undef FIO_HTTP
+#undef FIO_IO
 #undef FIO_MALLOC
 #undef FIO_MUSTACHE
 #undef FIO_PUBSUB
-#undef FIO_IO
 #undef FIOBJ_MALLOC
 #define FIO_CLI
 #define FIO_CORE
@@ -4809,10 +4827,10 @@ Everything Inclusion
 #define FIO_HTTP
 #define FIO_IO
 #define FIO_MALLOC
+#define FIO_MEMALT
 #define FIO_MUSTACHE
 #define FIO_PUBSUB
-#define FIO_MEMALT
-
+#define FIO_REDIS
 #endif
 
 #define FIO___INCLUDE_AGAIN
@@ -4843,8 +4861,8 @@ FIO_BASIC                   Basic Kitchen Sink Inclusion
 #define H___FIO_BASIC_ROUND2___H
 #define FIO_FIOBJ
 #define FIO_MUSTACHE
-#define FIOBJ_MALLOC
 #define FIO_OTP
+#define FIOBJ_MALLOC
 
 #else
 #define H___FIO_BASIC___H
@@ -4861,11 +4879,11 @@ FIO_CRYPTO            Poor-man's Cryptographic Elements
 ***************************************************************************** */
 #if defined(FIO_CRYPT) || defined(FIO_CRYPTO) || defined(FIO_TLS13) ||         \
     defined(FIO_IO)
-#undef FIO_CRYPT
-#undef FIO_CRYPTO
 #undef FIO_AES
 #undef FIO_ASN1
 #undef FIO_CHACHA
+#undef FIO_CRYPT
+#undef FIO_CRYPTO
 #undef FIO_CRYPTO_CORE
 #undef FIO_ED25519
 #undef FIO_OTP
@@ -4879,23 +4897,23 @@ FIO_CRYPTO            Poor-man's Cryptographic Elements
 #undef FIO_TLS13
 #undef FIO_X509
 #define FIO_CRYPTO_CORE
+#define FIO_AES
+#define FIO_ASN1
+#define FIO_BLAKE2
+#define FIO_CHACHA
+#define FIO_ED25519
+#define FIO_HKDF
+#define FIO_OTP
+#define FIO_P256
+#define FIO_P384
+#define FIO_PEM
+#define FIO_RSA
+#define FIO_SECRET
 #define FIO_SHA1
 #define FIO_SHA2
 #define FIO_SHA3
-#define FIO_BLAKE2
-#define FIO_CHACHA
-#define FIO_HKDF
-#define FIO_AES
-#define FIO_ED25519
-#define FIO_P256
-#define FIO_P384
-#define FIO_ASN1
-#define FIO_RSA
-#define FIO_X509
-#define FIO_PEM
-#define FIO_OTP
-#define FIO_SECRET
 #define FIO_TLS13
+#define FIO_X509
 #endif /* FIO_CRYPTO */
 
 /* *****************************************************************************
@@ -4903,6 +4921,7 @@ FIO_CORE                        Core Inclusion
 ***************************************************************************** */
 #if defined(FIO_CORE)
 #undef FIO_ATOL
+#undef FIO_CORE
 #undef FIO_FILES
 #undef FIO_GLOB_MATCH
 #undef FIO_LOG
@@ -4911,7 +4930,6 @@ FIO_CORE                        Core Inclusion
 #undef FIO_STATE
 #undef FIO_TIME
 #undef FIO_URL
-#undef FIO_CORE
 #define FIO_ATOL
 #define FIO_FILES
 #define FIO_GLOB_MATCH
@@ -5036,24 +5054,29 @@ FIO_MAP Ordering & Naming Shortcut
 #define FIO_URL_ENCODED
 #endif
 
-#if defined(FIO_PUBSUB) || (defined(DEBUG) && defined(FIO_HTTP_HANDLE))
-#undef FIO_IO
-#define FIO_IO
-#endif
-
 #if defined(FIO_HTTP) || defined(FIO_REDIS)
 #undef FIO_PUBSUB
 #define FIO_PUBSUB
 #endif
 
-#if defined(FIO_HTTP) || defined(FIO_PUBSUB)
+#if defined(FIO_PUBSUB)
+#undef FIO_IPC
+#define FIO_IPC
+#endif
+
+#if defined(FIO_IPC) || (defined(DEBUG) && defined(FIO_HTTP_HANDLE))
 #undef FIO_IO
 #define FIO_IO
 #endif
 
-#if defined(FIO_HTTP) || defined(FIO_IO)
+#if defined(FIO_IO)
 #undef FIO_POLL
 #define FIO_POLL
+#endif
+
+#if defined(FIO_REDIS)
+#undef FIO_FIOBJ
+#define FIO_FIOBJ
 #endif
 
 /* *****************************************************************************
@@ -5100,7 +5123,8 @@ FIO_MAP Ordering & Naming Shortcut
     defined(FIO_STR_SMALL) || defined(FIO_ARRAY_TYPE_STR) ||                   \
     defined(FIO_MAP_KEY_KSTR) || defined(FIO_MAP_KEY_BSTR) ||                  \
     (defined(FIO_MAP_NAME) && !defined(FIO_MAP_KEY)) ||                        \
-    defined(FIO_MUSTACHE) || defined(FIO_MAP2_NAME) || defined(FIO_OTP)
+    defined(FIO_MUSTACHE) || defined(FIO_MAP2_NAME) || defined(FIO_OTP) ||     \
+    defined(FIO_PUBSUB)
 #undef FIO_STR
 #define FIO_STR
 #endif
@@ -5130,7 +5154,7 @@ FIO_MAP Ordering & Naming Shortcut
 
 
 ***************************************************************************** */
-#if defined(FIO_PUBSUB)
+#if defined(IPC)
 #define FIO_CHACHA
 #define FIO_SECRET
 #endif
@@ -5176,7 +5200,7 @@ FIO_MAP Ordering & Naming Shortcut
 #endif
 
 #if defined(FIO_CLI) || defined(FIO_MEMORY_NAME) || defined(FIO_POLL) ||       \
-    defined(FIO_STATE) || defined(FIO_HTTP_HANDLE)
+    defined(FIO_STATE) || defined(FIO_HTTP_HANDLE) || defined(FIO_PUBSUB)
 #undef FIO_IMAP_CORE
 #define FIO_IMAP_CORE
 #endif
@@ -8035,13 +8059,15 @@ Copyright: Boaz Segev, 2019-2021; License: ISC / MIT (choose your license)
 iMap Helper Macros
 ***************************************************************************** */
 
-/** Helper macro for simple iMap array types. */
+/** Helper macro for simple iMap array types - always valid. */
 #define FIO_IMAP_ALWAYS_VALID(o) (1)
-/** Helper macro for simple iMap array types. */
+/** Helper macro for simple iMap array types - valid if nonzero. */
+#define FIO_IMAP_VALID_NON_ZERO(o) (!!(o))
+/** Helper macro for simple iMap array types - type comparison always true. */
 #define FIO_IMAP_ALWAYS_CMP_TRUE(a, b) (1)
-/** Helper macro for simple iMap array types. */
+/** Helper macro for simple iMap array types - type comparison always false. */
 #define FIO_IMAP_ALWAYS_CMP_FALSE(a, b) (0)
-/** Helper macro for simple iMap array types. */
+/** Helper macro for simple iMap array types - simple comparison. */
 #define FIO_IMAP_SIMPLE_CMP(a, b) ((a)[0] == (b)[0])
 /** Helper macro for simple iMap array types. */
 #define FIO_IMAP_EACH(array_name, map_ptr, i)                                  \
@@ -8079,6 +8105,7 @@ iMap Creation Macro
  * - `array_name_remove`   removes an object and resets its memory to zero.
  * - `array_name_reserve`  reserves a minimum imap storage capacity.
  * - `array_name_rehash`   re-builds the imap (use after sorting).
+ * - `array_name_destroy`  de-allocates internal dynamic memory.
  */
 #define FIO_TYPEDEF_IMAP_ARRAY(array_name,                                     \
                                array_type,                                     \
@@ -9434,6 +9461,8 @@ Sort Settings
 
 /* *****************************************************************************
 Sort API
+
+Note: Sorts in ascending order (bigger is later)
 ***************************************************************************** */
 
 /* Sorts a `FIO_SORT_TYPE` array with `count` members (quicksort). */
@@ -15334,14 +15363,14 @@ typedef enum {
   FIO_CALL_ON_INITIALIZE,
   /** Called once before starting up the IO reactor. */
   FIO_CALL_PRE_START,
-  /** Called before each time the IO reactor forks a new worker. */
+  /** Called before forking starts for a worker group. */
   FIO_CALL_BEFORE_FORK,
-  /** Called after each fork (both parent and child), before FIO_CALL_IN_XXX */
-  FIO_CALL_AFTER_FORK,
-  /** Called by a worker process right after forking. */
+  /** Called by a child worker process right after it was forked. */
   FIO_CALL_IN_CHILD,
-  /** Called by the master process after spawning a worker (after forking). */
+  /** Called by the master process right after spawning a worker. */
   FIO_CALL_IN_MASTER,
+  /** Called after forking ends for a worker group. */
+  FIO_CALL_AFTER_FORK,
   /** Called by each worker thread in a Server Async queue as it starts. */
   FIO_CALL_ON_WORKER_THREAD_START,
   /** Called every time a *Worker* process starts. */
@@ -15376,6 +15405,8 @@ typedef enum {
   FIO_CALL_ON_STOP,
   /** An alternative to the system's at_exit. */
   FIO_CALL_AT_EXIT,
+  /** Use after cleanup (e.g., leak testing). */
+  FIO_CALL_AFTER_EXIT,
   /** used for testing and array allocation - must be last. */
   FIO_CALL_NEVER
 } fio_state_event_type_e;
@@ -15548,9 +15579,11 @@ SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
     for (size_t i = 0; i < FIO_CALL_NEVER; ++i) {
       FIO___STATE_TASKS_ARRAY_LOCK[i] = FIO_LOCK_INIT;
     }
+    fio_rand_reseed(); /* re-seed shifted random state */
   }
-  if (e == FIO_CALL_IN_CHILD)
-    fio_rand_reseed(); /* re-seed random state in child processes */
+  if (e == FIO_CALL_IN_CHILD) {
+    fio_rand_reseed(); /* re-seed random state in child processes (twice) */
+  }
   fio___state_task_s *ary = NULL;
   size_t ary_capa = (sizeof(*ary) * FIO___STATE_TASKS_ARRAY[e].count);
   size_t len = 0;
@@ -15620,13 +15653,14 @@ FIO_SFUNC void fio___state_cleanup_task_at_exit(void *ignr_) {
 FIO_CONSTRUCTOR(fio___state_constructor) {
   FIO_LOG_DEBUG2("fio_state_callback maps are now active.");
   fio_state_callback_force(FIO_CALL_ON_INITIALIZE);
-  fio_state_callback_add(FIO_CALL_AT_EXIT,
+  fio_state_callback_add(FIO_CALL_AFTER_EXIT,
                          fio___state_cleanup_task_at_exit,
                          NULL);
 }
 
 FIO_DESTRUCTOR(fio___state_at_exit_hook) {
   fio_state_callback_force(FIO_CALL_AT_EXIT);
+  fio_state_callback_force(FIO_CALL_AFTER_EXIT);
 }
 
 /* *****************************************************************************
@@ -21644,8 +21678,7 @@ FIO_IFUNC fio___timer_event_s *fio___timer_event_new(
   if (!t)
     goto init_error;
   FIO_LEAK_COUNTER_ON_ALLOC(fio___timer_event_s);
-  if (!args.repetitions)
-    args.repetitions = 1;
+  args.repetitions += !args.repetitions;
   *t = (fio___timer_event_s){
       .fn = args.fn,
       .udata1 = args.udata1,
@@ -22878,6 +22911,8 @@ FIO_IFUNC char *fio_bstr_len_set(char *bstr, size_t len);
 
 /** Compares to see if fio_bstr a is greater than fio_bstr b (for FIO_SORT). */
 FIO_SFUNC int fio_bstr_is_greater(const char *a, const char *b);
+/** Compares to see if fio_bstr a is equal to another fio_bstr. */
+FIO_SFUNC int fio_bstr_is_eq(const char *a, const char *b);
 /** Compares to see if fio_bstr a is equal to another String. */
 FIO_SFUNC int fio_bstr_is_eq2info(const char *a_, fio_str_info_s b);
 /** Compares to see if fio_bstr a is equal to another String. */
@@ -23198,6 +23233,7 @@ FIO_IFUNC char *fio_bstr_replace(char *bstr,
   return fio_bstr___len_set(i.buf, i.len);
 }
 
+void fio_bstr_write2____(void); /* IDE Marker */
 /** Writes data to a fio_bstr, returning the address of the new fio_bstr. */
 FIO_IFUNC char *fio_bstr_write2 FIO_NOOP(char *bstr,
                                          const fio_string_write_s srcs[]) {
@@ -23360,6 +23396,13 @@ FIO_IFUNC char *fio_bstr_getdelim_fd(char *bstr,
 /** Compares to see if fio_bstr a is greater than fio_bstr b (for FIO_SORT). */
 FIO_SFUNC int fio_bstr_is_greater(const char *a, const char *b) {
   return fio_string_is_greater_buf(fio_bstr_buf(a), fio_bstr_buf(b));
+}
+
+/** Compares to see if fio_bstr a is equal to another fio_bstr. */
+FIO_SFUNC int fio_bstr_is_eq(const char *a_, const char *b_) {
+  fio_buf_info_s a = fio_bstr_buf(a_);
+  fio_buf_info_s b = fio_bstr_buf(b_);
+  return FIO_STR_INFO_IS_EQ(a, b);
 }
 
 /** Compares to see if fio_bstr a is equal to another String. */
@@ -50349,6 +50392,7 @@ SFUNC int fio_tls13_server_decrypt(fio_tls13_server_s *server,
       FIO_LOG_DEBUG2("TLS 1.3 Server: Received alert: level=%d, desc=%d",
                      level,
                      desc);
+      (void)level; /* if unused by logger */
       /* close_notify (0) is a graceful shutdown, return 0 (EOF) */
       if (desc == 0)
         return 0;
@@ -58229,8 +58273,8 @@ IFUNC FIO_REF_TYPE_PTR FIO_NAME(FIO_REF_NAME, FIO_REF_CONSTRUCTOR)(void);
 #endif /* FIO_REF_FLEX_TYPE */
 
 /** Increases the reference count. */
-FIO_IFUNC FIO_REF_TYPE_PTR FIO_NAME(FIO_REF_NAME,
-                                    FIO_REF_DUPNAME)(FIO_REF_TYPE_PTR wrapped);
+FIO_IFUNC FIO_REF_TYPE_PTR
+    FIO_NAME(FIO_REF_NAME, FIO_REF_DUPNAME)(const FIO_REF_TYPE_PTR wrapped);
 
 /** Frees a reference counted object (or decreases the reference count). */
 IFUNC void FIO_NAME(FIO_REF_NAME, FIO_REF_DESTRUCTOR)(FIO_REF_TYPE_PTR wrapped);
@@ -58251,14 +58295,14 @@ Inline Implementation
 ***************************************************************************** */
 /** Increases the reference count. */
 FIO_IFUNC FIO_REF_TYPE_PTR
-FIO_NAME(FIO_REF_NAME, FIO_REF_DUPNAME)(FIO_REF_TYPE_PTR wrapped_) {
-  FIO_REF_TYPE *wrapped = (FIO_REF_TYPE *)(FIO_PTR_UNTAG(wrapped_));
+FIO_NAME(FIO_REF_NAME, FIO_REF_DUPNAME)(const FIO_REF_TYPE_PTR wrapped_) {
+  const FIO_REF_TYPE *wrapped = (const FIO_REF_TYPE *)(FIO_PTR_UNTAG(wrapped_));
   if (!wrapped || !wrapped_)
     return 0;
   FIO_NAME(FIO_REF_NAME, _wrapper_s) *o =
       ((FIO_NAME(FIO_REF_NAME, _wrapper_s) *)wrapped) - 1;
   fio_atomic_add(&o->ref, 1);
-  return wrapped_;
+  return (FIO_REF_TYPE_PTR)wrapped_;
 }
 
 /** Debugging helper, do not use for data, as returned value is unstable. */
@@ -58421,7 +58465,8 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #if defined(FIO_FIOBJ) && !defined(H___FIO_FIOBJ___H) &&                       \
     !defined(FIO___RECURSIVE_INCLUDE)
 #define H___FIO_FIOBJ___H
-#define FIO___RECURSIVE_INCLUDE 99 /* 99 keeps EXTERN rules */
+#undef FIO_FIOBJ
+#define FIO___RECURSIVE_INCLUDE 99 /* 99 keeps EXTERN rules the same */
 /* *****************************************************************************
 FIOBJ compilation settings (type names and JSON nesting limits).
 
@@ -60643,7 +60688,6 @@ FIOBJ cleanup
 #endif /* FIO_EXTERN_COMPLETE */
 #undef FIOBJ_EXTERN_OBJ
 #undef FIOBJ_EXTERN_OBJ_IMP
-#undef FIO_FIOBJ
 #endif /* FIO_FIOBJ */
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
@@ -61586,7 +61630,7 @@ typedef struct fio_io_s fio_io_s;
 typedef struct fio_io_tls_s fio_io_tls_s;
 
 /** Message structure, as received by the `on_message` subscription callback. */
-typedef struct fio_msg_s fio_msg_s;
+typedef struct fio_pubsub_msg_s fio_pubsub_msg_s;
 
 /** The IO Async Queue type. */
 typedef struct fio_io_async_s fio_io_async_s;
@@ -61611,10 +61655,10 @@ SFUNC void fio_io_restart(int workers);
 SFUNC void fio_io_restart_on_signal(int signal);
 
 /** Returns the shutdown timeout for the reactor. */
-SFUNC size_t fio_io_shutdown_timsout(void);
+SFUNC size_t fio_io_shutdown_timeout(void);
 
 /** Sets the shutdown timeout for the reactor, returning the new value. */
-SFUNC size_t fio_io_shutdown_timsout_set(size_t milliseconds);
+SFUNC size_t fio_io_shutdown_timeout_set(size_t milliseconds);
 
 /* *****************************************************************************
 The IO Reactor's State
@@ -62036,7 +62080,7 @@ struct fio_io_protocol_s {
   /** Called after the connection was closed (once per IO). */
   void (*on_close)(void *iobuf, void *udata);
 
-  void (*on_pubsub)(struct fio_msg_s *msg);
+  void (*on_pubsub)(struct fio_pubsub_msg_s *msg);
   /** Allows user specific protocol agnostic callbacks. */
   void (*on_user1)(fio_io_s *io, void *user_data);
   /** Allows user specific protocol agnostic callbacks. */
@@ -62478,7 +62522,9 @@ Protocol Type Initialization
 
 SFUNC void fio_io_noop(fio_io_s *io) { (void)(io); }
 
-static void fio___io_on_ev_pubsub_mock(struct fio_msg_s *msg) { (void)(msg); }
+static void fio___io_on_ev_pubsub_mock(struct fio_pubsub_msg_s *msg) {
+  (void)(msg);
+}
 static void fio___io_on_user_mock(fio_io_s *io, void *i_) {
   (void)io, (void)i_;
 }
@@ -62729,10 +62775,10 @@ SFUNC void fio_io_restart_on_signal(int signal) {
 }
 
 /** Returns the shutdown timeout for the reactor. */
-SFUNC size_t fio_io_shutdown_timsout(void) { return FIO___IO.shutdown_timeout; }
+SFUNC size_t fio_io_shutdown_timeout(void) { return FIO___IO.shutdown_timeout; }
 
 /** Sets the shutdown timeout for the reactor, returning the new value. */
-SFUNC size_t fio_io_shutdown_timsout_set(size_t milliseconds) {
+SFUNC size_t fio_io_shutdown_timeout_set(size_t milliseconds) {
   return (FIO___IO.shutdown_timeout = milliseconds);
 }
 
@@ -63998,10 +64044,11 @@ FIO_SFUNC void fio___io_cleanup_at_exit(void *ignr_) {
   FIO___LOCK_DESTROY(FIO___IO.lock);
   fio___io_after_fork(ignr_);
   fio_poll_destroy(&FIO___IO.poll);
-  fio___io_env_safe_destroy(&FIO___IO.env);
   FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
   fio_queue_perform_all(&FIO___IO.queue);
   fio_timer_destroy(&FIO___IO.timer);
+  fio_queue_perform_all(&FIO___IO.queue);
+  fio___io_env_safe_destroy(&FIO___IO.env);
   fio_queue_perform_all(&FIO___IO.queue);
 }
 
@@ -64175,6 +64222,7 @@ FIO_SFUNC void fio___io_shutdown(void) {
   FIO_LOG_DEBUG2("(%d) IO Reactor shutdown timeout/done with %zu clients",
                  fio_io_pid(),
                  connected);
+  (void)connected; /* if no logger */
   /* perform remaining tasks. */
   fio_queue_perform_all(&FIO___IO.queue);
 }
@@ -64326,9 +64374,9 @@ is_worker_process:
 
   if (FIO___IO.stop)
     goto skip_work;
-  fio_state_callback_force(FIO_CALL_AFTER_FORK);
-  fio_queue_perform_all(&FIO___IO.queue);
   fio_state_callback_force(FIO_CALL_IN_CHILD);
+  fio_queue_perform_all(&FIO___IO.queue);
+  fio_state_callback_force(FIO_CALL_AFTER_FORK);
   fio_queue_perform_all(&FIO___IO.queue);
   fio___io_work(1);
   FIO_LOG_INFO("(%d) worker exiting.", fio_io_pid());
@@ -64360,17 +64408,17 @@ static void fio___io_spawn_workers_task(void *ignr_1, void *ignr_2) {
 
   /* perform forking procedure with the stop flag reset. */
   fio_atomic_and_fetch(&FIO___IO.stop, 1);
-  fio_state_callback_force(FIO_CALL_BEFORE_FORK);
   FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
 
+  fio_state_callback_force(FIO_CALL_BEFORE_FORK);
   /* perform actual fork */
   do {
     fio___io_spawn_worker();
+    fio_state_callback_force(FIO_CALL_IN_MASTER);
   } while (fio_atomic_sub_fetch(&FIO___IO.to_spawn, 1));
+  fio_state_callback_force(FIO_CALL_AFTER_FORK);
 
   /* finish up */
-  fio_state_callback_force(FIO_CALL_AFTER_FORK);
-  fio_state_callback_force(FIO_CALL_IN_MASTER);
   if ((FIO___IO.flags & FIO___IO_FLAG_CYCLING)) {
     fio___io_defer_no_wakeup(fio___io_work_task, NULL, NULL);
     FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, q) {
@@ -64536,17 +64584,22 @@ static fio___io_listen_s *fio___io_listen_dup(fio___io_listen_s *l) {
   return l;
 }
 
+FIO_SFUNC void fio___io_listen_attach_task(void *l_);
 static void fio___io_listen_free(void *l_) {
   fio___io_listen_s *l = (fio___io_listen_s *)l_;
-  if (l->io)
+  if (l->io) {
     fio_io_close(l->io);
+    l->io = NULL;
+  }
   if (fio_atomic_sub(&l->ref_count, 1))
     return;
 
   fio_state_callback_remove(FIO_CALL_AT_EXIT, fio___io_listen_free, (void *)l);
-  fio_state_callback_remove(FIO_CALL_ON_START, fio___io_listen_free, (void *)l);
+  fio_state_callback_remove(FIO_CALL_ON_START,
+                            fio___io_listen_attach_task,
+                            (void *)l);
   fio_state_callback_remove(FIO_CALL_PRE_START,
-                            fio___io_listen_free,
+                            fio___io_listen_attach_task,
                             (void *)l);
   fio___io_func_free_context_caller(l->protocol->io_functions.free_context,
                                     l->tls_ctx);
@@ -66991,6 +67044,3719 @@ TLS 1.3 IO Functions Cleanup
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_IPC                /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                Pub/Sub Services v2 (IPC-First Architecture)
+
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_IPC) && !defined(H___FIO_IPC___H) &&                           \
+    !defined(FIO___RECURSIVE_INCLUDE)
+#define H___FIO_IPC___H
+#undef FIO_IPC
+
+#ifndef FIO_IPC_URL_MAX_LENGTH
+#define FIO_IPC_URL_MAX_LENGTH 1024
+#endif
+#ifndef FIO_IPC_MAX_LENGTH
+/* maximum message length */
+#define FIO_IPC_MAX_LENGTH (128ULL * 1024U * 1024U)
+#endif
+
+/* *****************************************************************************
+IPC (Inter Process Communication) Settings / Controls
+***************************************************************************** */
+
+/** Returns the IPC url to listen to (for incoming connections). */
+SFUNC const char *fio_ipc_url(void);
+
+/**
+ * Sets the IPC url to listen to (for incoming connections).
+ *
+ * Can only be called on the master process and only before the IO reactor.
+ */
+SFUNC int fio_ipc_url_set(const char *url);
+
+/* *****************************************************************************
+IPC (Inter Process Communication) Types
+***************************************************************************** */
+
+/** IPC message structure (reference counted) */
+typedef struct fio_ipc_s {
+  fio_io_s *from; /* IO to caller - set by receiver (unsent) */
+  /* ----- wire format starts here ----- */
+  uint32_t len;   /* Length of data[] (AAD - authenticated, unencrypted) */
+  uint16_t flags; /* User settable flags (AAD - authenticated, unencrypted) */
+  uint16_t routing_flags; /* Internal (AAD - authenticated, unencrypted) */
+  uint64_t timestamp;     /* timestamp (unencrypted, used for nonce) */
+  uint64_t id;            /* 8 random bytes (unencrypted, used for nonce) */
+  union {
+    void (*call)(struct fio_ipc_s *); /* function pointer to call (encrypted) */
+    uint32_t opcode;                  /* op-code to execute*/
+  };
+  void (*on_reply)(struct fio_ipc_s *); /* run on caller (encrypted) */
+  void (*on_done)(struct fio_ipc_s *);  /* run on caller (encrypted) */
+  void *udata; /* opaque, valid only in caller (encrypted) */
+  char data[]; /* Variable-length data + 16-byte MAC at end (encrypted) */
+} fio_ipc_s;
+
+/** IPC call arguments */
+typedef struct {
+  void (*call)(fio_ipc_s *);     /* function to call */
+  void (*on_reply)(fio_ipc_s *); /* (optional) reply callback */
+  void (*on_done)(fio_ipc_s *);  /* (optional) reply finished callback */
+  uint64_t timestamp;            /* (optional) to force timestamp  */
+  uint64_t id;                   /* (optional) to force an id value  */
+  uint32_t opcode;               /* replaces `call` with op-code if non-zero */
+  uint16_t flags;                /* (optional) user-opaque flags  */
+  bool cluster; /* if set, this is intended for all machines in cluster */
+  bool workers; /* if set, this is intended for master + workers */
+  bool others;  /* if set, will not run on calling process */
+  void *udata;  /* opaque pointer data for reply */
+  fio_buf_info_s *data; /* payload (see FIO_IPC_DATA) */
+} fio_ipc_args_s;
+
+typedef struct fio_ipc_opcode_s {
+  uint32_t opcode;                      /* Unique op-code value */
+  void (*call)(struct fio_ipc_s *);     /* function to call */
+  void (*on_reply)(struct fio_ipc_s *); /* (optional) reply callback */
+  void (*on_done)(struct fio_ipc_s *);  /* (optional) reply finished callback */
+  void *udata; /* opaque, valid only in caller (encrypted) */
+} fio_ipc_opcode_s;
+
+/**
+ * A helper macro for composing multiple buffers into the request. Fill with
+ * fio_buf_info_s - will stop when a buffer has zero length. Use:
+ *
+ *     .data = FIO_IPC_DATA(FIO_BUF_INFO1((char *)"example:"),
+ *                          FIO_BUF_INFO2(&number, sizeof(number)))
+ * */
+#define FIO_IPC_DATA(...)                                                      \
+  (fio_buf_info_s[]) {                                                         \
+    __VA_ARGS__, { 0 }                                                         \
+  }
+
+/* *****************************************************************************
+IPC/RPC Op-Codes - allows cross machine operation codes for execution
+***************************************************************************** */
+
+/**
+ * Registers an op-code for message routing.
+ *
+ * There are two types of messages:
+ * 1. Fast Path - function pointers in the message payload (local IPC only).
+ * 2. Safe Path - Op-Code in the `call` payload (multi-machine RCP).
+ *
+ * Op-Codes MUST be non-zero uint32_t values.
+ * RESERVED: op-codes >= 0xFF000000 are reserved for internal use.
+ *
+ * Note: Thread safety requires that this be called before fio_io_start.
+ *
+ * Returns -1 or failure (not on master process / already registered)
+ * */
+SFUNC int fio_ipc_opcode_register(fio_ipc_opcode_s opcode);
+#define fio_ipc_opcode_register(...)                                           \
+  fio_ipc_opcode_register((fio_ipc_opcode_s){__VA_ARGS__})
+
+/** Returns a pointer to a registered op-code, or NULL if missing. */
+SFUNC const fio_ipc_opcode_s *fio_ipc_opcode(uint32_t opcode);
+
+/* *****************************************************************************
+IPC/RPC Message Exchange - Main API
+***************************************************************************** */
+
+/**
+ * Call arbitrary code in master process (worker → master / master → master).
+ *
+ * The `call` function pointer is executed on the master process.
+ *
+ * Replies are sent back to the caller via `on_reply` callback.
+ * When all replies are done, `on_done` is called.
+ */
+#define fio_ipc_call(...) fio_ipc_send(fio_ipc_new(__VA_ARGS__))
+
+/**
+ * Call arbitrary code in master process and workers (all local).
+ *
+ * Replies can be sent back to the caller only from its local master process.
+ */
+#define fio_ipc_local(...) fio_ipc_send(fio_ipc_new(.workers = 1, __VA_ARGS__))
+
+/** Call arbitrary code in master process of every machine in cluster. */
+#define fio_ipc_cluster(...)                                                   \
+  fio_ipc_send(fio_ipc_new(.cluster = 1, __VA_ARGS__))
+
+/** Call arbitrary code in master process of every machine in cluster. */
+#define fio_ipc_broadcast(...)                                                 \
+  fio_ipc_send(fio_ipc_new(.workers = 1, .cluster = 1, __VA_ARGS__))
+
+/** IPC reply arguments */
+typedef struct {
+  fio_ipc_s *ipc;
+  fio_buf_info_s *data;
+  uint64_t timestamp; /* (optional) override timestamp, 0 = use current time */
+  uint64_t id;        /* (optional) override id, 0 = use original request id */
+  uint16_t flags;     /* (optional) override flags, 0 = use original request */
+  uint8_t done;
+  uint8_t flags_set; /* set to 1 if flags should be used (allows flags=0) */
+} fio_ipc_reply_args_s;
+
+/**
+ * Send a response to the caller process (master → caller).
+ *
+ * Can be called multiple times for streaming responses.
+ * Set `done = 1` on the last reply.
+ */
+SFUNC void fio_ipc_reply(fio_ipc_reply_args_s args);
+
+#define fio_ipc_reply(r, ...)                                                  \
+  fio_ipc_reply((fio_ipc_reply_args_s){.ipc = (r), __VA_ARGS__})
+
+/* *****************************************************************************
+IPC/RPC Message Core / Lifetime - used internally and for advance use-cases
+***************************************************************************** */
+
+/**
+ * Authors a message without sending it.
+ *
+ * Used internally but available for "faking" IPC or when composing a unified
+ * code path for local execution.
+ */
+SFUNC fio_ipc_s *fio_ipc_new(fio_ipc_args_s args);
+#define fio_ipc_new(...) fio_ipc_new((fio_ipc_args_s){__VA_ARGS__})
+
+/**
+ * Duplicate a message (increment reference count).
+ *
+ * Use when storing messages for later processing.
+ * Every dup() must be matched with a free().
+ */
+SFUNC fio_ipc_s *fio_ipc_dup(fio_ipc_s *msg);
+
+/**
+ * Free a message (decrement reference count).
+ *
+ * Message is destroyed when reference count reaches zero.
+ */
+SFUNC void fio_ipc_free(fio_ipc_s *msg);
+
+/**
+ * Detaches the IPC message from it's originating IO.
+ *
+ * Call if storing or performing non-IPC actions using the IPC message.
+ * */
+SFUNC void fio_ipc_detach(fio_ipc_s *msg);
+
+/**
+ * Encrypts the IPC message(!), sends it for execution and frees it.
+ *
+ * Message will be sent according to the flags set (see fio_ipc_new):
+ * - Only to Master (fio_ipc_call);
+ * - To Master and Workers (fio_ipc_local);
+ * - To Master on Every Machine (fio_ipc_cluster);
+ * - To Master and Workers on Every Machine (fio_ipc_broadcast);
+ *
+ * Note: Takes ownership of the message's memory.
+ *
+ * Note: overwrites after_send unless `ipc->from == FIO_IPC_EXCLUDE_SELF`
+ *
+ * Note: excludes ipc->from.
+ *
+ * Note: The message is encrypted and unusable once call returns - pass it the
+ * last reference.
+ */
+SFUNC void fio_ipc_send(fio_ipc_s *ipc);
+
+/**
+ * Encrypts the IPC message(!) and sends it to target IO - frees the message.
+ *
+ * Note: Takes ownership of the message's memory.
+ *
+ * Note: The message is encrypted and unusable until the message was sent and
+ * either freed or the `after_send` callback was called.
+ */
+SFUNC void fio_ipc_send_to(fio_io_s *to, fio_ipc_s *ipc);
+
+/** Excludes current process from fio_ipc_local (to be set in ipc->from) */
+#define FIO_IPC_EXCLUDE_SELF ((fio_io_s *)((char *)-1LL))
+
+/* Sets callback to accept memory ownership after sending is complete. */
+SFUNC void fio_ipc_after_send(fio_ipc_s *ipc,
+                              void (*fn)(fio_ipc_s *, void *),
+                              void *udata);
+/* *****************************************************************************
+IPC (Inter Process Communication) Encryption
+***************************************************************************** */
+
+/** Encrypt IPC message before sending them anywhere. */
+SFUNC void fio_ipc_encrypt(fio_ipc_s *m);
+
+/** Decrypt IPC message when received. */
+FIO_IFUNC int fio_ipc_decrypt(fio_ipc_s *m);
+
+/* *****************************************************************************
+RPC (Multi-Machine Communication)
+***************************************************************************** */
+
+/**
+ * Listens to cluster connections on the port listed, auto-connects to peers.
+ *
+ * This does NOT improve message exchange or pub/sub performance. This is
+ * designed for downtime mitigation (rotating pods) / data tunneling and client
+ * load balancing (without message load balancing).
+ *
+ * All server instances get all `cluster` messages (e.g., pub/sub cluster).
+ *
+ * Note: uses the environment's (shared) secret for rudimentary encryption
+ * without forward secrecy. Rotate secrets when possible (requires restart).
+ * Good for trusted data centers, Kubernetes pods, etc'.
+ * */
+SFUNC fio_io_listener_s *fio_ipc_cluster_listen(uint16_t port);
+
+/** Manually connects to cluster peers. Usually unnecessary. */
+SFUNC void fio_ipc_cluster_connect(const char *url);
+
+/** Returns the last port number passed to fio_ipc_cluster_listen (or zero) */
+SFUNC uint16_t fio_ipc_cluster_port(void);
+
+/* *****************************************************************************
+IPC Flags - Used for message routing, settable in routing_flags
+
+These are mostly for internal use, but made available for advance usage with
+`fio_ipc_send`
+***************************************************************************** */
+
+/** Set if message is in its encrypted state - do NOT edit manually */
+#define FIO_IPC_FLAG_ENCRYPTED ((uint16_t)1UL << 0)
+/** If set, calls `on_done` rather than `call` - requires FIO_IPC_FLAG_REPLY */
+#define FIO_IPC_FLAG_DONE ((uint16_t)1UL << 1)
+/** Set if message callbacks are mapped using op-codes  */
+#define FIO_IPC_FLAG_OPCODE ((uint16_t)1UL << 2)
+/** If set, delivered to worker processes as well as master */
+#define FIO_IPC_FLAG_WORKERS ((uint16_t)1UL << 3)
+/** If set, delivered to remote machines - requires FIO_IPC_FLAG_OPCODE */
+#define FIO_IPC_FLAG_CLUSTER ((uint16_t)1UL << 4)
+/** If set, calls `on_reply` rather than `call` */
+#define FIO_IPC_FLAG_REPLY ((uint16_t)1UL << 5)
+/** If flag is set == 1, otherwise zero */
+#define FIO_IPC_FLAG_TEST(msg, flag) (((msg)->routing_flags & flag) == flag)
+/** If flag is set == flag, otherwise zero */
+#define FIO_IPC_FLAG_IF(bcond, flag) (((uint16_t)0UL - (bcond)) & flag)
+
+/* *****************************************************************************
+Implementation
+***************************************************************************** */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+/* we recursively include here */
+#define FIO___RECURSIVE_INCLUDE 1
+
+#ifndef FIO_IPC_BUFFER_LEN
+#define FIO_IPC_BUFFER_LEN 8192
+#endif
+
+/* forward declarations */
+FIO_SFUNC void fio___ipc_listen(void);
+
+/* *****************************************************************************
+IPC Message Helpers
+***************************************************************************** */
+
+typedef struct fio___ipc_metadata_s {
+  void (*after_send)(fio_ipc_s *, void *udata);
+  void *udata;
+} fio___ipc_metadata_s;
+
+/* Message reference counting using FIO_REF */
+#define FIO_REF_NAME             fio___ipc
+#define FIO_REF_TYPE             fio_ipc_s
+#define FIO_REF_DESTROY(ipc)     fio_ipc_detach(&ipc)
+#define FIO_REF_METADATA         fio___ipc_metadata_s
+#define FIO_REF_CONSTRUCTOR_ONLY 1
+#define FIO_REF_FLEX_TYPE        char
+#include FIO_INCLUDE_FILE
+
+FIO_IFUNC uint32_t fio___ipc_sizeof_header(void) {
+  return (uint32_t)(FIO_PTR_FIELD_OFFSET(fio_ipc_s, data) -
+                    FIO_PTR_FIELD_OFFSET(fio_ipc_s, len));
+}
+FIO_IFUNC uint32_t fio___ipc_sizeof_enc(uint32_t len) {
+  return (uint32_t)(FIO_PTR_FIELD_OFFSET(fio_ipc_s, data) -
+                    FIO_PTR_FIELD_OFFSET(fio_ipc_s, call)) +
+         len;
+}
+
+FIO_IFUNC uint32_t fio___ipc_wire_length(uint32_t len) {
+  /* includes the 16 byte MAC and data */
+  return (uint32_t)(fio___ipc_sizeof_header() + len + 16);
+}
+
+/* *****************************************************************************
+IPC / Remote - Op-Codes
+***************************************************************************** */
+
+#define FIO___IPC_REMOTE_OPCODE_HASH(a)                                        \
+  fio_risky_num((uint64_t)(a)->opcode, (uint64_t)(uintptr_t)&fio_ipc_new)
+#define FIO___IPC_REMOTE_OPCODE_CMP(a, b) ((a)->opcode == (b)->opcode)
+#define FIO___IPC_REMOTE_OPCODE_VALID(a)  ((a)->opcode)
+FIO_TYPEDEF_IMAP_ARRAY(fio___ipc_cluster_ops,
+                       fio_ipc_opcode_s,
+                       uint32_t,
+                       FIO___IPC_REMOTE_OPCODE_HASH,
+                       FIO___IPC_REMOTE_OPCODE_CMP,
+                       FIO___IPC_REMOTE_OPCODE_VALID)
+#undef FIO___IPC_REMOTE_OPCODE_HASH
+#undef FIO___IPC_REMOTE_OPCODE_CMP
+#undef FIO___IPC_REMOTE_OPCODE_VALID
+
+/* *****************************************************************************
+IPC / Remote - Filtering pre-existing messages
+***************************************************************************** */
+
+typedef struct {
+  uint64_t timestamp; /* timestamp (unencrypted, used for nonce) */
+  uint64_t id;        /* 8 random bytes (unencrypted, used for nonce) */
+} fio___ipc_msg_id_s;
+#define FIO___IPC_REMOTE_FILTER_HASH(a) fio_risky_num((a)->id, (a)->timestamp)
+#define FIO___IPC_REMOTE_FILTER_CMP(a, b)                                      \
+  ((a)->id == (b)->id && (a)->timestamp == (b)->timestamp)
+#define FIO___IPC_REMOTE_FILTER_VALID(a) ((a)->id && (a)->timestamp)
+FIO_TYPEDEF_IMAP_ARRAY(fio___ipc_cluster_filter,
+                       fio___ipc_msg_id_s,
+                       uint32_t,
+                       FIO___IPC_REMOTE_FILTER_HASH,
+                       FIO___IPC_REMOTE_FILTER_CMP,
+                       FIO___IPC_REMOTE_FILTER_VALID)
+#undef FIO___IPC_REMOTE_FILTER_HASH
+#undef FIO___IPC_REMOTE_FILTER_CMP
+#undef FIO___IPC_REMOTE_FILTER_VALID
+
+/* Sort by timestamp */
+#define FIO_SORT_NAME            fio___ipc_cluster_filter
+#define FIO_SORT_TYPE            fio___ipc_msg_id_s
+#define FIO_SORT_IS_BIGGER(a, b) ((a).timestamp > (b).timestamp)
+#include FIO_INCLUDE_FILE
+
+/* Returns 0 if message should be processed, -1 if already processed. */
+FIO_IFUNC int fio___ipc_cluster_filter(fio___ipc_cluster_filter_s *filter,
+                                       uint64_t timestamp,
+                                       uint64_t id) {
+  if (!filter)
+    return -1;
+  fio___ipc_msg_id_s mid = {.timestamp = timestamp, .id = id};
+  const size_t limit = 65536, keep = 16384;
+  if (fio___ipc_cluster_filter_get(filter, mid))
+    return -1;
+  if (filter->count >= limit)
+    goto at_limit;
+  fio___ipc_cluster_filter_set(filter, mid, 0);
+  return 0;
+at_limit:
+  /* reduce to `keep` items: sort, save only tail, rehash */
+  fio___ipc_cluster_filter_sort(filter->ary, filter->w);
+  FIO_MEMMOVE(filter->ary, ((filter->ary + filter->w) - keep), keep);
+  filter->ary[keep] = mid;
+  filter->count = filter->w = (keep + 1);
+  fio___ipc_cluster_filter_rehash(filter);
+  return 0;
+}
+
+FIO_IFUNC int fio___ipc_cluster_filter_window(uint64_t timestamp) {
+  const uint64_t tick = fio_io_last_tick();
+  const uint64_t window = 30000;
+  const uint64_t min = tick - window;
+  const uint64_t max = tick + window;
+  return (int)0 - (int)(timestamp > max || timestamp < min);
+}
+/* *****************************************************************************
+IPC Global State
+***************************************************************************** */
+
+/* Global state */
+static struct {
+  size_t max_length;
+  fio_io_listener_s *listener;          /* Needs to be reset sometimes? */
+  fio_io_s *worker_connection;          /* Worker's connection to master */
+  fio_io_protocol_s protocol_ipc;       /* IPC protocol */
+  fio_io_protocol_s protocol_rpc;       /* RPC protocol */
+  fio_io_protocol_s protocol_rpc_hello; /* RPC handshake protocol */
+  fio_io_protocol_s protocol_udp;       /* Peer Discovery protocol */
+  fio___ipc_cluster_ops_s opcodes;      /* Registered op-codes */
+  fio___ipc_cluster_filter_s received;  /* messages recently received */
+  fio___ipc_cluster_filter_s peers;     /* connected peers */
+  fio_u128 uuid;                        /* instance ID peers */
+  uint16_t cluster_port;                /* last port number in cluster_listen */
+  char ipc_url[FIO_IPC_URL_MAX_LENGTH]; /* IPC socket path */
+} FIO___IPC;
+
+/* *****************************************************************************
+IPC Settings
+***************************************************************************** */
+
+/** Returns the IPC url to listen to (for incoming connections). */
+SFUNC const char *fio_ipc_url(void) { return FIO___IPC.ipc_url; }
+
+/**
+ * Sets the IPC url to listen to (for incoming connections).
+ *
+ * Can only be called on the master process and only before the IO reactor.
+ */
+SFUNC int fio_ipc_url_set(const char *url) {
+  /* Build IPC URL: unix://fio_tmp_<rand>.sock  - URL inherited by worker */
+  if (!fio_io_is_master() || fio_io_is_running())
+    return -1;
+  size_t len = url ? FIO_STRLEN(url) : 0;
+  if (len > 3) {
+    if (len >= FIO_IPC_URL_MAX_LENGTH)
+      return -1;
+    FIO_MEMCPY(FIO___IPC.ipc_url, url, len);
+    FIO___IPC.ipc_url[len] = 0;
+    if (len < 3 || len > (FIO_IPC_URL_MAX_LENGTH >> 1) ||
+        !((url[len - 3] == '.' && url[len - 2] == '.' && url[len - 1] == '.') ||
+          (url[len - 3] == 'X' && url[len - 2] == 'X' && url[len - 1] == 'X')))
+      goto restart_listenr;
+    len -= 3;
+  } else {
+    len = 15;
+    FIO_MEMCPY(FIO___IPC.ipc_url, "unix://fio_tmp_", 15);
+  }
+  fio_ltoa16u(FIO___IPC.ipc_url + len, fio_rand64(), 12);
+  FIO_MEMCPY(FIO___IPC.ipc_url + (len + 12), ".sock", 6);
+restart_listenr:
+  fio___ipc_listen();
+  return 0;
+}
+
+/* *****************************************************************************
+IPC Lifetime Management
+***************************************************************************** */
+
+FIO_SFUNC void fio___ipc_free_task(void *ipc_, void *ignr_) {
+  (void)ignr_;
+  void (*fn)(fio_ipc_s *, void *) = NULL;
+  void *udata = NULL;
+  fio_ipc_s *ipc = (fio_ipc_s *)ipc_;
+  if (!ipc)
+    return;
+  /* avoid encryption race conditions, only decrypt and execute after sending */
+  if (fio___ipc_references(ipc) == 1 && fio___ipc_metadata(ipc)->after_send)
+    goto after_send;
+  fio___ipc_free(ipc);
+  return;
+
+after_send:
+  /* all access SHOULD BE from the IO thread, so we are the last owner */
+  fio_ipc_decrypt(ipc);
+  fn = fio___ipc_metadata(ipc)->after_send;
+  udata = fio___ipc_metadata(ipc)->udata;
+  fio___ipc_metadata(ipc)->after_send = NULL;
+  fio___ipc_metadata(ipc)->udata = NULL;
+  fn(ipc, udata);
+  return;
+}
+
+/** Free message (decrement ref count) */
+SFUNC void fio_ipc_free(fio_ipc_s *msg) {
+  if (!msg)
+    return;
+  fio_io_defer(fio___ipc_free_task, msg, NULL);
+}
+
+/** Free message (decrement ref count) */
+FIO_SFUNC void fio___ipc_free_in_io_thread(fio_ipc_s *msg) {
+  fio___ipc_free_task(msg, NULL);
+}
+
+/** Duplicate message (increment ref count) */
+SFUNC fio_ipc_s *fio_ipc_dup(fio_ipc_s *msg) { return fio___ipc_dup(msg); }
+
+/** Detaches the IPC message from it's originating IO. */
+SFUNC void fio_ipc_detach(fio_ipc_s *ipc) {
+  fio_io_s *io = ipc->from;
+  if (io && io != FIO_IPC_EXCLUDE_SELF)
+    fio_io_free(io);
+  ipc->from = NULL;
+}
+
+/* *****************************************************************************
+IPC Composition
+***************************************************************************** */
+
+FIO_SFUNC void fio___ipc_callback_noop(fio_ipc_s *m) { (void)m; }
+
+FIO_IFUNC size_t fio___ipc_data_len(const fio_buf_info_s *data) {
+  size_t all = 0;
+  if (!data)
+    return all;
+  for (; data->len || data->buf; ++data)
+    all += data->len;
+  return all;
+}
+FIO_IFUNC void fio___ipc_data_write(fio_ipc_s *m, const fio_buf_info_s *data) {
+  size_t pos = 0;
+  if (!data)
+    return;
+  for (; data->len || data->buf; ++data) {
+    if (!data->len)
+      continue;
+    FIO_MEMCPY(m->data + pos, data->buf, data->len);
+    pos += data->len;
+  }
+}
+
+FIO_IFUNC fio_ipc_s *fio___ipc_new_author(const fio_ipc_args_s *args,
+                                          uint16_t routing_flags) {
+
+  /* Create IPC message (allocate extra 16 bytes for MAC) */
+  const size_t data_len = fio___ipc_data_len(args->data);
+  if (data_len >= FIO___IPC.max_length) {
+    FIO_LOG_WARNING("(%d) IPC message too long to author", fio_io_pid());
+    return NULL;
+  }
+  fio_ipc_s *m = fio___ipc_new(data_len + 16);
+  if (!m)
+    return NULL;
+
+  /* Fill message */
+  if (args->cluster)
+    routing_flags |= FIO_IPC_FLAG_CLUSTER | FIO_IPC_FLAG_OPCODE;
+  if (args->workers)
+    routing_flags |= FIO_IPC_FLAG_WORKERS;
+  m->from = NULL;
+  if (args->others)
+    m->from = FIO_IPC_EXCLUDE_SELF;
+  m->len = (uint32_t)(data_len);
+  m->flags = args->flags;
+  m->timestamp = (args->timestamp ? args->timestamp : fio_io_last_tick());
+  m->id = (args->id ? args->id : fio_rand64());
+  if (args->opcode) {
+    routing_flags |= FIO_IPC_FLAG_OPCODE;
+    m->opcode = args->opcode;
+  } else
+    m->call = args->call ? args->call : fio___ipc_callback_noop;
+  m->on_reply = args->on_reply ? args->on_reply : fio___ipc_callback_noop;
+  m->on_done = args->on_done ? args->on_done : fio___ipc_callback_noop;
+  m->udata = args->udata;
+  m->routing_flags = routing_flags;
+
+  fio___ipc_data_write(m, args->data);
+  return m;
+}
+
+void fio_ipc_new___(void);
+/**
+ * Authors a message without sending it.
+ *
+ * Used internally but available for "faking" IPC or when composing a unified
+ * code path for local execution.
+ */
+SFUNC fio_ipc_s *fio_ipc_new FIO_NOOP(fio_ipc_args_s args) {
+  return fio___ipc_new_author(&args, 0);
+}
+
+/* Set what to do after sending is complete */
+SFUNC void fio_ipc_after_send(fio_ipc_s *ipc,
+                              void (*fn)(fio_ipc_s *, void *),
+                              void *udata) {
+  fio___ipc_metadata(ipc)->after_send = fn;
+  fio___ipc_metadata(ipc)->udata = udata;
+}
+
+/* *****************************************************************************
+IPC Core - Encryption/Decryption
+***************************************************************************** */
+
+FIO_IFUNC fio_u256 fio___ipc_get_encryption_key(fio_ipc_s *m) {
+  fio_u512 secret = fio_secret();
+  fio_u256 key;
+  /* folding - mix / encrypt secret using secret offset as key */
+  /* this creates a safe ephemeral key */
+  fio_chacha20(secret.u8,
+               sizeof(secret),
+               (secret.u8 + (m->id & 31) + 1),
+               ((char *)&m->timestamp + 4),
+               (m->id & 1023) + m->len);
+  /* use an impossible to predict key offset to derive final key */
+  fio_memcpy32(key.u8, secret.u8 + (secret.u8[2] & 31));
+  // FIO_LOG_DDEBUG2("(%d) IPC key: %p...%p",
+  //                 fio_io_pid(),
+  //                 (void *)(uintptr_t)key.u64[0],
+  //                 (void *)(uintptr_t)key.u64[3]);
+  return key;
+}
+
+FIO_IFUNC fio_u128 fio___ipc_get_encryption_nonce(fio_ipc_s *m) {
+  fio_u128 nonce = fio_u128_init64(m->timestamp, m->id);
+  // FIO_LOG_DDEBUG2("(%d) IPC nonce: %p-%p",
+  //                 fio_io_pid(),
+  //                 (void *)(uintptr_t)nonce.u64[0],
+  //                 (void *)(uintptr_t)nonce.u64[1]);
+  return nonce;
+}
+
+/** Encrypt IPC message before sending */
+SFUNC void fio_ipc_encrypt(fio_ipc_s *m) {
+  if ((m->routing_flags & FIO_IPC_FLAG_ENCRYPTED)) /* runs on IO thread */
+    return;
+  fio_u256 key_buf = fio___ipc_get_encryption_key(m);
+  fio_u128 nonce = fio___ipc_get_encryption_nonce(m);
+  m->routing_flags |= FIO_IPC_FLAG_ENCRYPTED; /* runs on IO thread */
+
+  FIO_LOG_DDEBUG2("(%d) IPC sizes \t enc: %zu \t wire %zu",
+                  fio_io_pid(),
+                  fio___ipc_sizeof_enc(m->len),
+                  fio___ipc_wire_length(m->len));
+
+  /* Encrypt in-place (everything after first 16 bytes) */
+  fio_chacha20_poly1305_enc((m->data + m->len),           /* MAC output */
+                            ((char *)&m->call),           /* Data to encrypt */
+                            fio___ipc_sizeof_enc(m->len), /* Data length */
+                            (char *)(&m->len),            /* AAD */
+                            8,                            /* AAD length */
+                            key_buf.u8,                   /* 32-byte key */
+                            nonce.u8                      /* 12-byte nonce */
+  );
+  m->len = fio_ltole32(m->len);
+}
+
+/** Decrypt IPC message on receive */
+FIO_IFUNC int fio_ipc_decrypt(fio_ipc_s *m) {
+  int r = 0;
+  if (!(m->routing_flags & FIO_IPC_FLAG_ENCRYPTED)) /* runs on IO thread */
+    return r;
+  m->len = fio_ltole32(m->len);
+  fio_u256 key_buf = fio___ipc_get_encryption_key(m);
+  fio_u128 nonce = fio___ipc_get_encryption_nonce(m);
+  FIO_LOG_DDEBUG2("(%d) IPC sizes \t enc: %zu \t wire %zu",
+                  fio_io_pid(),
+                  fio___ipc_sizeof_enc(m->len),
+                  fio___ipc_wire_length(m->len));
+  /* Decrypt and verify MAC */
+  r = fio_chacha20_poly1305_dec((m->data + m->len), /* MAC output */
+                                ((char *)&m->call), /* Data to decrypt */
+                                fio___ipc_sizeof_enc(m->len), /* Data length */
+                                (char *)(&m->len),            /* AAD */
+                                8,                            /* AAD length */
+                                key_buf.u8,                   /* 32-byte key */
+                                nonce.u8 /* 12-byte nonce */
+  );
+  m->routing_flags &= ~FIO_IPC_FLAG_ENCRYPTED; /* runs on IO thread */
+  if (r) {
+    FIO_LOG_SECURITY("IPC message decryption failed (possible attack)");
+  }
+  return r;
+}
+
+#undef FIO_IPC_FLAG_ENCRYPTED
+/* *****************************************************************************
+IPC / RPC - Op-Codes
+***************************************************************************** */
+
+void fio_ipc_opcode_register____(void); /* IDE Marker */
+/* Registers an op-code for message routing. */
+SFUNC int fio_ipc_opcode_register FIO_NOOP(fio_ipc_opcode_s o) {
+  if (fio_io_is_running()) {
+    FIO_LOG_ERROR("(%d) opcodes MUST be registered BEFORE IO reactor starts",
+                  fio_io_pid());
+    return -1;
+  }
+  if (!o.opcode) {
+    FIO_LOG_ERROR("(%d) opcode MUST be non-zero", fio_io_pid());
+    return -1;
+  }
+  if (!o.call) {
+    fio___ipc_cluster_ops_remove(&FIO___IPC.opcodes, o);
+    return 0;
+  }
+  if (!o.on_reply)
+    o.on_reply = fio___ipc_callback_noop;
+  if (!o.on_done)
+    o.on_done = fio___ipc_callback_noop;
+  fio___ipc_cluster_ops_set(&FIO___IPC.opcodes, o, 1);
+  return 0;
+}
+
+/** Returns a pointer to a registered op-code, or NULL if missing. */
+SFUNC const fio_ipc_opcode_s *fio_ipc_opcode(uint32_t opcode) {
+  fio_ipc_opcode_s *r;
+  fio_ipc_opcode_s find = {.opcode = opcode};
+  r = fio___ipc_cluster_ops_get(&FIO___IPC.opcodes, find);
+  return r;
+}
+
+/* *****************************************************************************
+IPC / RPC - Execution (fast path / slow path)
+***************************************************************************** */
+
+SFUNC void fio___ipc_opcode_task(fio_ipc_s *ipc, void *ignr_) {
+  const fio_ipc_opcode_s *op = fio_ipc_opcode(ipc->opcode);
+  void (*const *call)(struct fio_ipc_s *);
+  if (op) {
+    call = &op->call;
+    call += FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_REPLY);
+    call += FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_DONE);
+    ipc->udata = op->udata;
+    call[0](ipc);
+  } else {
+    FIO_LOG_WARNING("(%d) ignoring IPC cluster with illegal op-code: %u",
+                    fio_io_pid(),
+                    (unsigned)ipc->opcode);
+  }
+  fio___ipc_free_in_io_thread(ipc);
+  (void)ignr_;
+}
+
+SFUNC void fio___ipc_direct_task(fio_ipc_s *ipc, void *ignr_) {
+  void (**call)(struct fio_ipc_s *) = &ipc->call;
+  call += FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_REPLY);
+  call += FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_DONE);
+  call[0](ipc);
+  fio___ipc_free_in_io_thread(ipc);
+  (void)ignr_;
+}
+
+SFUNC void fio___ipc_execute_task(fio_ipc_s *ipc, void *ignr_) {
+  void (*task[])(fio_ipc_s * ipc, void *ignr_) = {fio___ipc_direct_task,
+                                                  fio___ipc_opcode_task};
+  task[FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_OPCODE)](ipc, ignr_);
+}
+
+/* *****************************************************************************
+IPC Core - Sending
+***************************************************************************** */
+
+FIO_SFUNC void fio___ipc_send_each_task(fio_io_s *to, void *ipc_) {
+  fio_ipc_s *ipc = (fio_ipc_s *)ipc_;
+  if (to == ipc->from)
+    return;
+  fio_io_write2(to,
+                .buf = fio_ipc_dup(ipc),
+                .offset = FIO_PTR_FIELD_OFFSET(fio_ipc_s, len),
+                .len = fio___ipc_wire_length(ipc->len),
+                .dealloc = (void (*)(void *))fio___ipc_free_in_io_thread);
+}
+
+FIO_SFUNC void fio___ipc_send_master_task(void *ipc_, void *ignr_) {
+  fio_ipc_s *ipc = (fio_ipc_s *)ipc_;
+  size_t count = 0;
+
+  if (FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_WORKERS))
+    count += fio_io_protocol_each(&FIO___IPC.protocol_ipc,
+                                  fio___ipc_send_each_task,
+                                  ipc);
+  if (FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_CLUSTER))
+    count += fio_io_protocol_each(&FIO___IPC.protocol_rpc,
+                                  fio___ipc_send_each_task,
+                                  ipc);
+  FIO_LOG_DDEBUG2("(%d) [%s] sent IPC/RPC to %zu peers",
+                  fio_io_pid(),
+                  (fio_io_is_master() ? "Master" : "Worker"),
+                  count);
+  fio___ipc_free_task(ipc, NULL);
+  (void)count; /* if unused by logger */
+  (void)ignr_;
+}
+
+/* Encrypts the IPC message(!), sends it for execution and frees it. */
+SFUNC void fio_ipc_send(fio_ipc_s *ipc) {
+  if (!ipc)
+    return;
+
+  /* Master */
+  if (fio_io_is_master()) {
+    if (ipc->from != FIO_IPC_EXCLUDE_SELF) {
+      fio_ipc_after_send(ipc, fio___ipc_execute_task, NULL);
+    }
+    if (!FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_WORKERS) &&
+        !FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_CLUSTER))
+      goto master_only;
+    fio_ipc_encrypt(ipc);
+    /* to loop on protocol IO we must run in the IO thread */
+    fio_io_defer(fio___ipc_send_master_task, ipc, NULL);
+    return;
+  }
+  /* Worker */
+  if (FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_OPCODE)) {
+    ipc->udata = ipc->from;
+  }
+  if (FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_WORKERS) &&
+      ipc->from != FIO_IPC_EXCLUDE_SELF) {
+    fio_ipc_after_send(ipc, fio___ipc_execute_task, NULL);
+  }
+  fio_ipc_send_to(FIO___IPC.worker_connection, ipc);
+  FIO_LOG_DDEBUG2("(%d) [Worker] sent IPC/RPC to 1 Master", fio_io_pid());
+  return;
+master_only:
+  fio_ipc_free(ipc); /* we might not be in the IO thread */
+}
+
+/** Send IPC message to target IO - frees the message after it's sent */
+SFUNC void fio_ipc_send_to(fio_io_s *to, fio_ipc_s *m) {
+  if (!m)
+    return;
+  if (!to)
+    goto free_send;
+
+  FIO_LOG_DDEBUG2("(%d) IPC sending %zu (data length %zu) bytes (offset %zu)",
+                  fio_io_pid(),
+                  fio___ipc_wire_length(m->len),
+                  (size_t)m->len,
+                  (size_t)FIO_PTR_FIELD_OFFSET(fio_ipc_s, len));
+
+  /* Encrypt message */
+  fio_ipc_encrypt(m);
+  FIO_LOG_DDEBUG2("(%d) IPC wire bytes: %02x %02x %02x %02x (len=%u)",
+                  fio_io_pid(),
+                  ((uint8_t *)&m->len)[0],
+                  ((uint8_t *)&m->len)[1],
+                  ((uint8_t *)&m->len)[2],
+                  ((uint8_t *)&m->len)[3],
+                  m->len);
+  fio_io_write2(to,
+                .buf = m,
+                .offset = FIO_PTR_FIELD_OFFSET(fio_ipc_s, len),
+                .len = fio___ipc_wire_length(m->len),
+                .dealloc = (void (*)(void *))fio___ipc_free_in_io_thread);
+  return;
+
+free_send:
+  fio_ipc_free(m);
+}
+
+/* *****************************************************************************
+IPC Core - Call and Reply
+***************************************************************************** */
+
+void fio_ipc_reply___(void); /* IDE Marker */
+/** Send reply to caller */
+SFUNC void fio_ipc_reply FIO_NOOP(fio_ipc_reply_args_s args) {
+  if (!args.ipc)
+    return;
+  fio_ipc_args_s ar = {
+      .timestamp = args.timestamp,
+      .id = (args.id ? args.id : args.ipc->id),
+      .call = args.ipc->call,
+      .on_reply = args.ipc->on_reply,
+      .on_done = args.ipc->on_done,
+      .udata = args.ipc->udata,
+      .flags = (args.flags_set ? args.flags : args.ipc->flags),
+      .data = args.data,
+  };
+
+  /* Author IPC message */
+  fio_ipc_s *reply = fio___ipc_new_author(
+      &ar,
+      (args.ipc->routing_flags & (FIO_IPC_FLAG_CLUSTER | FIO_IPC_FLAG_OPCODE)) |
+          FIO_IPC_FLAG_REPLY | FIO_IPC_FLAG_IF(args.done, FIO_IPC_FLAG_DONE));
+  if (!reply)
+    return;
+
+  /* Send to caller */
+  if (args.ipc->from && args.ipc->from != FIO_IPC_EXCLUDE_SELF)
+    fio_ipc_send_to(args.ipc->from, reply);
+  else
+    fio___ipc_execute_task(reply, NULL);
+}
+
+/* *****************************************************************************
+IPC Core - executing IPC calls
+***************************************************************************** */
+
+/** Wrapper that manages request vs response states */
+FIO_SFUNC void fio___ipc_on_ipc_master(void *ipc_, void *io_) {
+  fio_ipc_s *ipc = (fio_ipc_s *)ipc_;
+  if (fio_ipc_decrypt(ipc))
+    goto decrypt_error;
+  if (FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_WORKERS) ||
+      FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_CLUSTER)) {
+    /* this message expects to be forwarded */
+    if (ipc->udata == FIO_IPC_EXCLUDE_SELF &&
+        FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_CLUSTER)) {
+      /* cluster messages with FIO_IPC_EXCLUDE_SELF are excluded from master */
+      fio_io_free(ipc->from);
+      ipc->from = FIO_IPC_EXCLUDE_SELF;
+    }
+    if (ipc->from != FIO_IPC_EXCLUDE_SELF) {
+      fio_ipc_after_send(ipc, fio___ipc_execute_task, NULL);
+    }
+    fio___ipc_send_master_task(ipc, NULL);
+    return;
+  }
+  fio___ipc_execute_task(ipc, io_);
+  return;
+decrypt_error:
+  fio_io_close(io_);
+  fio___ipc_free(ipc);
+}
+
+/** Wrapper that manages request vs response states */
+FIO_SFUNC void fio___ipc_on_ipc_worker(void *ipc_, void *io_) {
+  fio_ipc_s *ipc = (fio_ipc_s *)ipc_;
+  if (fio_ipc_decrypt(ipc))
+    goto decrypt_error;
+  fio___ipc_execute_task(ipc, io_);
+  return;
+decrypt_error:
+  fio_io_close(io_);
+  fio___ipc_free(ipc);
+}
+
+/** Wrapper that manages request vs response states */
+FIO_SFUNC void fio___ipc_on_rpc_master(void *ipc_, void *io_) {
+  fio_ipc_s *ipc = (fio_ipc_s *)ipc_;
+  ipc->from = io_;
+  fio_u128 *uuid = fio_io_buffer(io_);
+  fio_u128 peer_uuid;
+
+  if (fio_ipc_decrypt(ipc) || !FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_CLUSTER) ||
+      !FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_OPCODE))
+    goto peer_error;
+
+  if (fio___ipc_cluster_filter_window(fio_ltole64(ipc->timestamp)) ||
+      fio___ipc_cluster_filter(&FIO___IPC.received,
+                               fio_ltole64(ipc->timestamp),
+                               ipc->id))
+    goto filtered;
+
+  if (ipc->opcode == (uint32_t)0xFFFFFFFF)
+    goto uuid_msg;
+
+  if (FIO_IPC_FLAG_TEST(ipc, FIO_IPC_FLAG_WORKERS)) {
+    fio_ipc_send(ipc);
+    return;
+  }
+  fio___ipc_execute_task(ipc, io_);
+  return;
+
+uuid_msg:
+  if (uuid->u64[0] || uuid->u64[1])
+    goto peer_error; /* Already received UUID from this connection */
+  fio_memcpy16(&peer_uuid, &ipc->on_reply);
+  /* test if we already connected to peer previously */
+  if (fio___ipc_cluster_filter(&FIO___IPC.peers,
+                               peer_uuid.u64[0],
+                               peer_uuid.u64[1]))
+    goto peer_error;
+  /* set peer uuid */
+  *uuid = peer_uuid;
+  fio___ipc_free(ipc);
+  return;
+peer_error:
+  fio_io_close(io_);
+filtered:
+  fio___ipc_free(ipc);
+  return;
+}
+
+/* *****************************************************************************
+IPC Core - IPC Socket Management
+***************************************************************************** */
+
+/** Parser state for reading IPC messages from socket */
+typedef struct {
+  fio_ipc_s *msg;        /* Current message being parsed */
+  uint32_t expected_len; /* Expected total length */
+  uint32_t msg_received; /* Bytes received for current message */
+  size_t buf_len;        /* Valid bytes in buffer */
+  char buffer[];         /* FIO_IPC_BUFFER_LEN for small messages */
+} fio___ipc_parser_s;
+
+FIO_IFUNC fio_u128 *fio___ipc_cluster_uuid(fio_io_s *io) {
+  return (fio_u128 *)fio_io_buffer(io);
+}
+FIO_IFUNC fio___ipc_parser_s *fio___ipc_cluster_parser(fio_io_s *io) {
+  return (fio___ipc_parser_s *)(fio___ipc_cluster_uuid(io) + 1);
+}
+
+/** Get parser from IO buffer */
+FIO_IFUNC fio___ipc_parser_s *fio___ipc_parser(fio_io_s *io) {
+  return (fio___ipc_parser_s *)fio_io_buffer(io);
+}
+
+/** Initialize parser */
+FIO_IFUNC void fio___ipc_parser_init(fio___ipc_parser_s *p) {
+  *p = (fio___ipc_parser_s){0};
+}
+
+/** Destroy parser */
+FIO_IFUNC void fio___ipc_parser_destroy(fio___ipc_parser_s *p) {
+  if (p->msg) {
+    p->msg->from = NULL; /* avoid double free, fio_io_dup wasn't called yet */
+    fio___ipc_free(p->msg);
+  }
+  *p = (fio___ipc_parser_s){0};
+}
+
+FIO_SFUNC void fio___ipc_on_attach(fio_io_s *io) {
+  fio___ipc_parser_s *p = fio___ipc_parser(io);
+  fio___ipc_parser_init(p);
+}
+
+/** Called when data is received on IPC socket */
+FIO_IFUNC void fio___ipc_on_data_internal(fio_io_s *io,
+                                          fio___ipc_parser_s *p,
+                                          void (*fn)(void *ipc, void *io)) {
+  fio_ipc_s *msg;
+  if (!p)
+    return;
+  bool had_messages = 0; /* if messages were sent, we stop reading */
+  for (;;) {
+    if ((msg = p->msg)) { /* read directly to message object */
+      p->msg_received += fio_io_read(io,
+                                     (char *)&msg->len + p->msg_received,
+                                     p->expected_len - p->msg_received);
+      if (p->expected_len != p->msg_received)
+        return;
+      fio_io_defer(fn, msg, fio_io_dup(io));
+      fio___ipc_parser_init(p);
+      return; /* don't read more messages for now */
+    }
+    /* read into IO buffer */
+    p->buf_len += fio_io_read(io,
+                              p->buffer + p->buf_len,
+                              FIO_IPC_BUFFER_LEN - p->buf_len);
+    size_t consumed = 0;
+    for (;;) { /* consume from IO buffer */
+      if (p->buf_len < 4 + consumed)
+        break;
+      p->expected_len =
+          fio___ipc_wire_length(fio_buf2u32_le(p->buffer + consumed));
+      FIO_LOG_DEBUG2("(%d) incoming IPC message: %u/%zu (len=%u, bytes: %02x "
+                     "%02x %02x %02x)",
+                     fio_io_pid(),
+                     p->expected_len,
+                     p->buf_len,
+                     fio_buf2u32u(p->buffer + consumed),
+                     (uint8_t)p->buffer[consumed],
+                     (uint8_t)p->buffer[consumed + 1],
+                     (uint8_t)p->buffer[consumed + 2],
+                     (uint8_t)p->buffer[consumed + 3]);
+      if (p->expected_len > FIO___IPC.max_length) { /* oversized? */
+        FIO_LOG_SECURITY("(%d) Invalid IPC message length: %u (buf: %zu)",
+                         fio_io_pid(),
+                         p->expected_len,
+                         p->buf_len);
+        fio_io_close(io);
+        return;
+      }
+
+      if (p->buf_len >= consumed + p->expected_len) {
+        FIO_LOG_DEBUG2("(%d) routing small IPC message:%u/%u",
+                       fio_io_pid(),
+                       p->expected_len,
+                       p->buf_len);
+        msg = fio___ipc_new(p->expected_len - fio___ipc_sizeof_header());
+        msg->from = io;
+        FIO_MEMCPY(&msg->len, p->buffer + consumed, p->expected_len);
+        consumed += p->expected_len;
+        fio_io_defer(fn, msg, fio_io_dup(io));
+        had_messages |= 1;
+        continue;
+      }
+      p->msg = msg = fio___ipc_new(p->expected_len - fio___ipc_sizeof_header());
+      p->msg_received = p->buf_len - consumed;
+      msg->from = io;
+      FIO_MEMCPY(&msg->len, p->buffer + consumed, p->msg_received);
+      consumed = p->buf_len = 0;
+      break;
+    }
+    if (consumed == p->buf_len)
+      consumed = p->buf_len = 0;
+    if (consumed) { /* partial message length 4 byte block */
+      FIO_MEMMOVE(p->buffer, p->buffer + consumed, p->buf_len - consumed);
+      p->buf_len -= consumed;
+    }
+    if (had_messages || !p->msg)
+      return;
+  }
+}
+
+/** Called when data is received on IPC socket */
+FIO_SFUNC void fio___ipc_on_data_master(fio_io_s *io) {
+  fio___ipc_on_data_internal(io, fio___ipc_parser(io), fio___ipc_on_ipc_master);
+}
+/** Called when data is received on IPC socket */
+FIO_SFUNC void fio___ipc_on_data_worker(fio_io_s *io) {
+  fio___ipc_on_data_internal(io, fio___ipc_parser(io), fio___ipc_on_ipc_worker);
+}
+
+/** Called when data is received on a cluster connection */
+FIO_SFUNC void fio___ipc_on_data_cluster(fio_io_s *io) {
+  fio___ipc_on_data_internal(io,
+                             fio___ipc_cluster_parser(io),
+                             fio___ipc_on_rpc_master);
+}
+
+/** Called when data is received on a cluster connection */
+FIO_SFUNC void fio___ipc_on_shutdown_worker(fio_io_s *io) { (void)io; }
+
+FIO_SFUNC void fio___ipc_on_shutdown_worker_callback(fio_ipc_s *ipc) {
+  fio_io_stop();
+  (void)ipc;
+}
+FIO_SFUNC void fio___ipc_on_shutdown_master(fio_io_s *io) {
+  fio_ipc_local(.others = 1, .call = fio___ipc_on_shutdown_worker_callback);
+  (void)io;
+}
+
+/** Called when IPC socket is closed */
+FIO_SFUNC void fio___ipc_on_close(void *buffer, void *udata) {
+  fio___ipc_parser_s *p = (fio___ipc_parser_s *)buffer;
+  fio___ipc_parser_destroy(p);
+  if (!fio_io_is_master()) {
+    FIO_LOG_DEBUG2("(%d) lost ICP connection", fio_io_pid());
+    fio_io_stop();
+  }
+  (void)udata;
+}
+
+FIO_SFUNC void fio___ipc_listen(void) {
+  if (FIO___IPC.listener) {
+    fio_queue_perform_all(fio_io_queue());
+    fio_io_listen_stop(FIO___IPC.listener);
+  }
+  FIO_LOG_DDEBUG2("(%d) starting IPC listening socket at: %s",
+                  fio_io_pid(),
+                  FIO___IPC.ipc_url);
+  /* Create listening socket */
+  FIO___IPC.listener = fio_io_listen(.url = FIO___IPC.ipc_url,
+                                     .protocol = &FIO___IPC.protocol_ipc,
+                                     .on_root = 1,
+                                     .hide_from_log = 1);
+
+  FIO_ASSERT(FIO___IPC.listener,
+             "Failed to create IPC listening socket: %.*s...",
+             (int)16,
+             FIO___IPC.ipc_url);
+}
+
+/* *****************************************************************************
+IPC - Remote - Peer 2 Peer Negotiations (UDP broadcast & connect)
+***************************************************************************** */
+/** Get parser from IO buffer */
+
+/* *****************************************************************************
+IPC - Remote - UDP Discovery Message Format
+*****************************************************************************
+UDP discovery message (48 bytes):
+  - uuid[16]:      Instance UUID (16 bytes)
+  - timestamp[8]:  Current timestamp in milliseconds (8 bytes)
+  - random[8]:     Random nonce for replay protection (8 bytes)
+  - mac[16]:       Poly1305 MAC over uuid+timestamp+random (16 bytes)
+***************************************************************************** */
+
+typedef struct {
+  uint8_t uuid[16];   /* Instance UUID */
+  uint64_t timestamp; /* Timestamp in milliseconds */
+  uint64_t random;    /* Random nonce */
+  uint8_t mac[16];    /* Poly1305 MAC */
+} fio___ipc_udp_discovery_s;
+
+/** Compose a UDP discovery message */
+FIO_SFUNC void fio___ipc_udp_discovery_compose(fio___ipc_udp_discovery_s *msg) {
+  fio_u256 key_buf;
+  uint64_t mac[2];
+  /* Fill message fields */
+  fio_memcpy16(msg->uuid, FIO___IPC.uuid.u8);
+  msg->timestamp = fio_lton64(fio_io_last_tick());
+  msg->random = fio_rand64();
+  /* Derive key from secret + random */
+  fio_u512 secret = fio_secret();
+  fio_chacha20(secret.u8,
+               sizeof(secret),
+               (secret.u8 + (msg->random & 31) + 1),
+               ((char *)&msg->timestamp + 4),
+               (msg->random & 1023));
+  fio_memcpy32(key_buf.u8, secret.u8 + (secret.u8[2] & 31));
+  /* Compute MAC over uuid + timestamp + random (32 bytes) */
+  fio_poly1305_auth(mac, msg, 32, NULL, 0, key_buf.u8);
+  fio_memcpy16(msg->mac, mac);
+}
+
+/** Validate a UDP discovery message. Returns 0 on success, -1 on failure. */
+FIO_SFUNC int fio___ipc_udp_discovery_validate(fio___ipc_udp_discovery_s *msg) {
+  fio_u256 key_buf;
+  uint64_t mac[2];
+  uint64_t timestamp = fio_ltole64(msg->timestamp);
+  /* Test for self-generated messages */
+  if (FIO_MEMCMP(msg->uuid, FIO___IPC.uuid.u8, 16) == 0)
+    return -1;
+  /* Test time window (30 second window) */
+  if (fio___ipc_cluster_filter_window(timestamp))
+    return -1;
+  /* Derive key from secret + random */
+  fio_u512 secret = fio_secret();
+  fio_chacha20(secret.u8,
+               sizeof(secret),
+               (secret.u8 + (msg->random & 31) + 1),
+               ((char *)&msg->timestamp + 4),
+               (msg->random & 1023));
+  fio_memcpy32(key_buf.u8, secret.u8 + (secret.u8[2] & 31));
+  /* Verify MAC */
+  fio_poly1305_auth(mac, msg, 32, NULL, 0, key_buf.u8);
+  if (FIO_MEMCMP(mac, msg->mac, 16) != 0) {
+    FIO_LOG_SECURITY("(%d) UDP discovery MAC failure - possible attack?",
+                     fio_io_pid());
+    return -1;
+  }
+  return 0;
+}
+
+/* *****************************************************************************
+IPC - Remote - UDP Discovery Protocol
+***************************************************************************** */
+
+/** Send UDP broadcast discovery message */
+FIO_SFUNC void fio___ipc_udp_broadcast_hello(fio_io_s *io) {
+  if (!fio_io_is_running() || !io)
+    return;
+  fio___ipc_udp_discovery_s msg;
+  fio___ipc_udp_discovery_compose(&msg);
+  uint16_t port = (uint16_t)(uintptr_t)fio_io_udata(io);
+  struct sockaddr_in addr = {
+      .sin_family = AF_INET,
+      .sin_port = fio_lton16(port),
+      .sin_addr.s_addr = INADDR_BROADCAST,
+  };
+  FIO_LOG_DDEBUG2("(%d) IPC/RPC sending UDP discovery broadcast on port %u",
+                  fio_io_pid(),
+                  (unsigned)port);
+  sendto(fio_io_fd(io),
+         (const char *)&msg,
+         sizeof(msg),
+         0,
+         (struct sockaddr *)&addr,
+         sizeof(addr));
+}
+
+/** Periodic task to send UDP discovery broadcasts */
+FIO_SFUNC int fio___ipc_udp_broadcast_task(void *io_, void *ignr_) {
+  (void)ignr_;
+  fio_io_s *io = (fio_io_s *)io_;
+  if (fio_io_is_open(io)) {
+    fio___ipc_udp_broadcast_hello(io);
+    return 0;
+  }
+  return -1;
+}
+FIO_SFUNC void fio___ipc_udp_broadcast_task_done(void *io_, void *ignr_) {
+  fio_io_s *io = (fio_io_s *)io_;
+  fio_io_free(io);
+  (void)ignr_;
+}
+/** Called when UDP socket is attached */
+FIO_SFUNC void fio___ipc_udp_on_attach(fio_io_s *io) {
+  /* Send initial broadcast */
+  fio___ipc_udp_broadcast_hello(io);
+  /* Schedule periodic broadcasts (every 1-2 seconds with jitter) */
+  fio_io_run_every(.fn = fio___ipc_udp_broadcast_task,
+                   .udata1 = fio_io_dup(io),
+                   .every = (uint32_t)(2048 | (1023 & FIO___IPC.uuid.u64[0])),
+                   .on_finish = fio___ipc_udp_broadcast_task_done,
+                   .repetitions = 0); /* Repeat indefinitely */
+}
+
+/** Called when UDP socket is closed */
+FIO_SFUNC void fio___ipc_udp_on_close(void *ignr1_, void *ignr2_) {
+  (void)ignr1_, (void)ignr2_;
+}
+
+/** Called when UDP data is received */
+FIO_SFUNC void fio___ipc_udp_on_data(fio_io_s *io) {
+  fio___ipc_udp_discovery_s buf;
+  struct sockaddr_storage from_storage;
+  struct sockaddr *from = (struct sockaddr *)&from_storage;
+  socklen_t from_len = sizeof(from_storage);
+  ssize_t len;
+  uint16_t port = (uint16_t)(uintptr_t)fio_io_udata(io);
+
+  while ((len = recvfrom(fio_io_fd(io),
+                         (char *)&buf,
+                         sizeof(buf),
+                         0,
+                         from,
+                         &from_len)) > 0) {
+    /* Validate message size */
+    if (len != sizeof(fio___ipc_udp_discovery_s)) {
+      FIO_LOG_SECURITY("(%d) IPC/RPC UDP received invalid packet (%zd bytes)",
+                       fio_io_pid(),
+                       len);
+      continue;
+    }
+    /* Validate message content */
+    if (fio___ipc_udp_discovery_validate(&buf)) {
+      FIO_LOG_SECURITY("(%d) IPC/RPC UDP discovery message validation failed",
+                       fio_io_pid());
+      continue;
+    }
+    /* Check if already connected to this peer */
+    fio_u128 peer_uuid;
+    fio_memcpy16(peer_uuid.u8, buf.uuid);
+    if (fio___ipc_cluster_filter_get(
+            &FIO___IPC.peers,
+            (fio___ipc_msg_id_s){peer_uuid.u64[0], peer_uuid.u64[1]})) {
+      FIO_LOG_DDEBUG2("(%d) IPC/RPC UDP skipping already connected peer",
+                      fio_io_pid());
+      continue;
+    }
+    /* Extract peer address and connect */
+    char addr_buf[128];
+    char port_buf[16];
+    if (getnameinfo(from,
+                    from_len,
+                    addr_buf,
+                    sizeof(addr_buf),
+                    port_buf,
+                    sizeof(port_buf),
+                    (NI_NUMERICHOST | NI_NUMERICSERV))) {
+      FIO_LOG_ERROR("(%d) IPC/RPC UDP couldn't resolve peer address",
+                    fio_io_pid());
+      continue;
+    }
+    /* Build TCP URL using the same port as UDP */
+    FIO_STR_INFO_TMP_VAR(url, 256);
+    fio_string_write2(&url,
+                      NULL,
+                      FIO_STRING_WRITE_STR1("tcp://"),
+                      FIO_STRING_WRITE_STR1(addr_buf),
+                      FIO_STRING_WRITE_STR1(":"),
+                      FIO_STRING_WRITE_UNUM(port));
+    FIO_LOG_INFO("(%d) IPC/RPC UDP discovered peer at %s",
+                 fio_io_pid(),
+                 url.buf);
+    /* Connect to peer via TCP */
+    fio_ipc_cluster_connect(url.buf);
+    /* Send another broadcast to help peer discover us */
+    fio___ipc_udp_broadcast_hello(io);
+  }
+}
+
+/** Start UDP discovery on the specified port */
+FIO_SFUNC void fio___ipc_cluster_udp_start(uint16_t port) {
+  /* Initialize UDP protocol */
+  FIO___IPC.protocol_udp = (fio_io_protocol_s){
+      .on_attach = fio___ipc_udp_on_attach,
+      .on_data = fio___ipc_udp_on_data,
+      .on_close = fio___ipc_udp_on_close,
+      .on_timeout = fio_io_touch, /* UDP doesn't need timeout handling */
+  };
+  /* Open UDP socket */
+  FIO_STR_INFO_TMP_VAR(port_str, 16);
+  fio_string_write_u(&port_str, NULL, (uint64_t)port);
+  int fd_udp =
+      fio_sock_open(NULL,
+                    port_str.buf,
+                    FIO_SOCK_UDP | FIO_SOCK_NONBLOCK | FIO_SOCK_SERVER);
+  if (fd_udp == -1) {
+    FIO_LOG_ERROR("(%d) IPC/RPC couldn't open UDP discovery socket on port %u",
+                  fio_io_pid(),
+                  (unsigned)port);
+    return;
+  }
+  /* Enable broadcast */
+  {
+#if FIO_OS_WIN
+    char enabled = 1;
+#else
+    int enabled = 1;
+#endif
+    setsockopt(fd_udp, SOL_SOCKET, SO_BROADCAST, &enabled, sizeof(enabled));
+    enabled = 1;
+    setsockopt(fd_udp, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+#ifdef SO_REUSEPORT
+    enabled = 1;
+    setsockopt(fd_udp, SOL_SOCKET, SO_REUSEPORT, &enabled, sizeof(enabled));
+#endif
+  }
+  /* Attach to IO reactor with port as udata */
+  fio_io_s *io = fio_io_attach_fd(fd_udp,
+                                  &FIO___IPC.protocol_udp,
+                                  (void *)(uintptr_t)port,
+                                  NULL);
+  FIO_LOG_INFO("(%d) IPC/RPC UDP discovery broadcasting on port %u",
+               fio_io_pid(),
+               (unsigned)port);
+  fio___ipc_udp_broadcast_hello(io);
+}
+
+/* *****************************************************************************
+IPC - Remote - New Connection Attachments
+***************************************************************************** */
+SFUNC void fio___ipc_on_attach_cluster(fio_io_s *io) {
+  /* set peer UUID to zero and initialize parser */
+  *fio___ipc_cluster_uuid(io) = fio_u128_init64(0, 0);
+  fio___ipc_parser_init(fio___ipc_cluster_parser(io));
+  /* inform peer about our UUID */
+  fio_ipc_s *ipc = fio_ipc_new(0);
+  FIO_ASSERT_ALLOC(ipc);
+  ipc->opcode = (uint32_t)0xFFFFFFFF;
+  ipc->udata = FIO_IPC_EXCLUDE_SELF;
+  ipc->routing_flags |= (FIO_IPC_FLAG_CLUSTER | FIO_IPC_FLAG_OPCODE);
+  fio_memcpy16(&ipc->on_reply, FIO___IPC.uuid.u8);
+  fio_ipc_send_to(io, ipc);
+}
+
+/** Called when IPC socket is closed */
+FIO_SFUNC void fio___ipc_on_close_cluster(void *buffer, void *udata) {
+  fio___ipc_parser_s *p =
+      (fio___ipc_parser_s *)((char *)buffer + sizeof(fio_u128));
+  fio___ipc_parser_destroy(p);
+  fio___ipc_cluster_filter_remove(
+      &FIO___IPC.peers,
+      (fio___ipc_msg_id_s){fio_buf2u64u(buffer),
+                           fio_buf2u64u(((char *)buffer + sizeof(uint64_t)))});
+  (void)udata;
+}
+
+/* *****************************************************************************
+IPC - Remote - Listen
+***************************************************************************** */
+
+/** Listens to cluster connections on the port listed, auto-connects to peers.
+ */
+SFUNC fio_io_listener_s *fio_ipc_cluster_listen(uint16_t port) {
+  if (!fio_io_is_master()) {
+    FIO_LOG_WARNING("fio_ipc_cluster_listen should only be called on master");
+    return NULL;
+  }
+  if (fio_secret_is_random()) {
+    FIO_LOG_WARNING("(%d) RPC disabled - using random secret."
+                    "\n\tSet a shared secret using SECRET environment "
+                    "variable for peer discovery.",
+                    fio_io_pid());
+    return NULL;
+  }
+
+  FIO_STR_INFO_TMP_VAR(url, 128);
+  fio_string_write2(&url,
+                    NULL,
+                    FIO_STRING_WRITE_STR1("tcp://0.0.0.0:"),
+                    FIO_STRING_WRITE_UNUM(port));
+
+  fio_io_listener_s *listener =
+      fio_io_listen(.url = url.buf,
+                    .protocol = &FIO___IPC.protocol_rpc,
+                    .on_root = 1,
+                    .hide_from_log = 1);
+
+  if (!listener) {
+    FIO_LOG_ERROR("Failed to listen for cluster IPC on port %u",
+                  (unsigned)port);
+    return NULL;
+  }
+
+  FIO___IPC.cluster_port = port;
+
+  FIO_LOG_INFO("Remote IPC listening on port %u", (unsigned)port);
+
+  /* Start UDP discovery on the same port */
+  fio___ipc_cluster_udp_start(port);
+
+  return listener;
+}
+
+/* Returns the last port number passed to fio_ipc_cluster_listen (or zero) */
+SFUNC uint16_t fio_ipc_cluster_port(void) { return FIO___IPC.cluster_port; }
+
+/* *****************************************************************************
+IPC - Remote - Connect
+***************************************************************************** */
+
+/** Manually connects to cluster peers. Usually unnecessary. */
+SFUNC void fio_ipc_cluster_connect(const char *url) {
+  if (!url || !*url) {
+    FIO_LOG_WARNING("(%d) fio_ipc_cluster_connect: NULL or empty URL",
+                    fio_io_pid());
+    return;
+  }
+
+  if (!fio_io_is_master()) {
+    // Workers should use fio_ipc_call to ask master to connect
+    FIO_LOG_ERROR("(%d) fio_ipc_cluster_connect should be called on master",
+                  fio_io_pid());
+    return;
+  }
+
+  fio_io_s *io = fio_io_connect(url, .protocol = &FIO___IPC.protocol_rpc);
+
+  if (!io) {
+    FIO_LOG_ERROR("(%d) Failed to connect to cluster IPC peer: %s",
+                  fio_io_pid(),
+                  url);
+    return;
+  }
+
+  FIO_LOG_INFO("(%d) Connecting to cluster IPC peer: %s", fio_io_pid(), url);
+}
+
+/* *****************************************************************************
+IPC - Initialization & Destruction
+***************************************************************************** */
+
+/** Cleanup IPC system */
+FIO_SFUNC void fio___ipc_destroy(void *ignr_) {
+  fio___ipc_cluster_filter_destroy(&FIO___IPC.received);
+  fio___ipc_cluster_filter_destroy(&FIO___IPC.peers);
+  fio___ipc_cluster_ops_destroy(&FIO___IPC.opcodes);
+  (void)ignr_;
+}
+
+/* Worker initialization - called after fork */
+FIO_SFUNC void fio___ipc_on_fork(void *ignr_) {
+  (void)ignr_;
+  if (fio_io_is_master())
+    return;
+  /* Cleanup master's resources - except opcodes (clients may use) */
+  fio___ipc_cluster_filter_destroy(&FIO___IPC.received);
+  fio___ipc_cluster_filter_destroy(&FIO___IPC.peers);
+
+  FIO___IPC.protocol_ipc.on_data = fio___ipc_on_data_worker;
+  FIO___IPC.protocol_ipc.on_shutdown = fio___ipc_on_shutdown_worker;
+
+  /* Connect to master's IPC socket */
+  FIO___IPC.worker_connection =
+      fio_io_connect(FIO___IPC.ipc_url, .protocol = &FIO___IPC.protocol_ipc);
+
+  if (!FIO___IPC.worker_connection) {
+    FIO_LOG_ERROR("Failed to connect to master IPC socket: %s",
+                  FIO___IPC.ipc_url);
+  }
+}
+void fio___ipc_init____(void); /* IDE Marker */
+/* Master initialization - runs automatically at startup */
+FIO_CONSTRUCTOR(fio___ipc_init) {
+  FIO___IPC.max_length = FIO_IPC_MAX_LENGTH;
+  FIO___IPC.protocol_ipc = (fio_io_protocol_s){
+      .on_attach = fio___ipc_on_attach,
+      .on_data = fio___ipc_on_data_master,
+      .on_shutdown = fio___ipc_on_shutdown_master,
+      .on_close = fio___ipc_on_close,
+      .on_timeout = fio_io_touch, /* TODO Fix: add pings? */
+      .buffer_size = sizeof(fio___ipc_parser_s) + FIO_IPC_BUFFER_LEN,
+  };
+  FIO___IPC.protocol_rpc = (fio_io_protocol_s){
+      .on_attach = fio___ipc_on_attach_cluster,
+      .on_data = fio___ipc_on_data_cluster,
+      .on_close = fio___ipc_on_close_cluster,
+      .on_timeout = fio_io_touch, /* TODO Fix: add pings? */
+      .buffer_size =
+          sizeof(fio_u128) + sizeof(fio___ipc_parser_s) + FIO_IPC_BUFFER_LEN,
+  };
+  FIO___IPC.uuid = fio_u128_init64(fio_rand64(), fio_rand64());
+  fio_ipc_url_set(NULL);
+  fio___ipc_listen();
+  fio_state_callback_add(FIO_CALL_IN_CHILD, fio___ipc_on_fork, NULL);
+  fio_state_callback_add(FIO_CALL_AT_EXIT, fio___ipc_destroy, NULL);
+}
+
+/* *****************************************************************************
+IPC - Extern Cleanup
+***************************************************************************** */
+#undef FIO_IPC_BUFFER_LEN
+#undef FIO___RECURSIVE_INCLUDE /* Done with the recursive inclusion */
+#endif                         /* FIO_EXTERN_COMPLETE */
+
+/* *****************************************************************************
+IPC - Cleanup
+***************************************************************************** */
+
+#endif /* FIO_IPC */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_IO                 /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                  OpenSSL Implementation for IO Functions
+
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(H___FIO_IO___H) && !defined(FIO_NO_TLS) &&                         \
+    (HAVE_OPENSSL || __has_include("openssl/ssl.h")) &&                        \
+     !defined(H___FIO_OPENSSL___H) && !defined(FIO___RECURSIVE_INCLUDE)
+#define H___FIO_OPENSSL___H 1
+/* *****************************************************************************
+OpenSSL IO Function Getter
+***************************************************************************** */
+
+/* Returns the OpenSSL IO functions. */
+SFUNC fio_io_functions_s fio_openssl_io_functions(void);
+
+/* *****************************************************************************
+OpenSSL Helpers Implementation
+***************************************************************************** */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+#include <openssl/bn.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+#include <openssl/x509v3.h>
+
+/* *****************************************************************************
+Validate OpenSSL Library Version
+***************************************************************************** */
+
+#if !defined(OPENSSL_VERSION_MAJOR) || OPENSSL_VERSION_MAJOR < 3
+#undef HAVE_OPENSSL
+#warning HAVE_OPENSSL flag error - incompatible OpenSSL version
+/* No valid OpenSSL, return the default TLS IO functions */
+SFUNC fio_io_functions_s fio_openssl_io_functions(void) {
+  return fio_io_tls_default_functions(NULL);
+}
+#else
+FIO_ASSERT_STATIC(OPENSSL_VERSION_MAJOR > 2, "OpenSSL version mismatch");
+
+/* *****************************************************************************
+Self-Signed Certificates using ECDSA P-256
+
+Security notes:
+- ECDSA P-256 provides 128-bit security (equivalent to RSA-3072)
+- Key generation is ~200x faster than RSA-4096 (~10ms vs ~2000ms)
+- Smaller certificates reduce TLS handshake overhead
+- SHA-256 is used for signing (matched to P-256 security level)
+- 180-day validity balances security with operational convenience
+- Random 128-bit serial numbers prevent prediction attacks
+- X.509v3 extensions ensure browser compatibility
+***************************************************************************** */
+
+/* Global ECDSA private key for self-signed certificates */
+static EVP_PKEY *fio___openssl_pkey = NULL;
+
+/* Cleanup callback to free the private key at exit */
+static void fio___openssl_clear_root_key(void *key) {
+  if (key) {
+    EVP_PKEY_free((EVP_PKEY *)key);
+  }
+  fio___openssl_pkey = NULL;
+}
+
+/*
+ * Generate an ECDSA P-256 private key for self-signed certificates.
+ * Thread-safe with lock protection.
+ *
+ * Why ECDSA P-256:
+ * - 128-bit security level (equivalent to RSA-3072)
+ * - Key generation: ~10ms (vs ~2000ms for RSA-4096)
+ * - Smaller keys: 256 bits (vs 4096 bits for RSA)
+ * - NIST approved, widely supported
+ * - Better performance for TLS handshakes
+ */
+static void fio___openssl_make_root_key(void) {
+  static fio_lock_i lock = FIO_LOCK_INIT;
+  fio_lock(&lock);
+  if (!fio___openssl_pkey) {
+    FIO_LOG_DEBUG2("generating ECDSA P-256 private key for TLS...");
+
+    /* Create ECDSA P-256 key using modern OpenSSL 3.x API */
+    fio___openssl_pkey = EVP_EC_gen("P-256");
+
+    if (!fio___openssl_pkey) {
+      /* Log the OpenSSL error */
+      unsigned long err = ERR_get_error();
+      char err_buf[256];
+      ERR_error_string_n(err, err_buf, sizeof(err_buf));
+      FIO_LOG_ERROR("OpenSSL ECDSA P-256 key generation failed: %s", err_buf);
+      FIO_ASSERT(0, "OpenSSL failed to create ECDSA private key.");
+    }
+
+    /* Register cleanup callback */
+    fio_state_callback_add(FIO_CALL_AT_EXIT,
+                           fio___openssl_clear_root_key,
+                           fio___openssl_pkey);
+    FIO_LOG_DEBUG2("ECDSA P-256 private key generated successfully.");
+  }
+  fio_unlock(&lock);
+}
+
+/*
+ * Add X.509v3 extensions to a certificate.
+ *
+ * Extensions added:
+ * - Subject Alternative Name (SAN): Required by modern browsers
+ * - Basic Constraints: CA:FALSE (not a CA certificate)
+ * - Key Usage: digitalSignature, keyEncipherment (for TLS)
+ * - Extended Key Usage: serverAuth (for HTTPS/TLS servers)
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+FIO_SFUNC int fio___openssl_add_x509v3_extensions(X509 *cert,
+                                                  const char *server_name) {
+  X509V3_CTX ctx;
+  X509_EXTENSION *ext = NULL;
+  int ret = -1;
+
+  /* Initialize extension context */
+  X509V3_set_ctx_nodb(&ctx);
+  X509V3_set_ctx(&ctx, cert, cert, NULL, NULL, 0);
+
+  /* Basic Constraints: CA:FALSE - this is not a CA certificate */
+  ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_basic_constraints, "CA:FALSE");
+  if (!ext) {
+    FIO_LOG_ERROR("OpenSSL: failed to create Basic Constraints extension");
+    goto cleanup;
+  }
+  if (!X509_add_ext(cert, ext, -1)) {
+    FIO_LOG_ERROR("OpenSSL: failed to add Basic Constraints extension");
+    X509_EXTENSION_free(ext);
+    goto cleanup;
+  }
+  X509_EXTENSION_free(ext);
+  ext = NULL;
+
+  /* Key Usage: digitalSignature, keyEncipherment */
+  ext = X509V3_EXT_conf_nid(NULL,
+                            &ctx,
+                            NID_key_usage,
+                            "critical,digitalSignature,keyEncipherment");
+  if (!ext) {
+    FIO_LOG_ERROR("OpenSSL: failed to create Key Usage extension");
+    goto cleanup;
+  }
+  if (!X509_add_ext(cert, ext, -1)) {
+    FIO_LOG_ERROR("OpenSSL: failed to add Key Usage extension");
+    X509_EXTENSION_free(ext);
+    goto cleanup;
+  }
+  X509_EXTENSION_free(ext);
+  ext = NULL;
+
+  /* Extended Key Usage: serverAuth */
+  ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_ext_key_usage, "serverAuth");
+  if (!ext) {
+    FIO_LOG_ERROR("OpenSSL: failed to create Extended Key Usage extension");
+    goto cleanup;
+  }
+  if (!X509_add_ext(cert, ext, -1)) {
+    FIO_LOG_ERROR("OpenSSL: failed to add Extended Key Usage extension");
+    X509_EXTENSION_free(ext);
+    goto cleanup;
+  }
+  X509_EXTENSION_free(ext);
+  ext = NULL;
+
+  /* Subject Alternative Name (SAN) - required by modern browsers */
+  if (server_name && server_name[0]) {
+    /* Build SAN value: DNS:hostname */
+    char san_value[512];
+    int san_len = snprintf(san_value, sizeof(san_value), "DNS:%s", server_name);
+    if (san_len > 0 && (size_t)san_len < sizeof(san_value)) {
+      ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_subject_alt_name, san_value);
+      if (!ext) {
+        FIO_LOG_ERROR("OpenSSL: failed to create SAN extension");
+        goto cleanup;
+      }
+      if (!X509_add_ext(cert, ext, -1)) {
+        FIO_LOG_ERROR("OpenSSL: failed to add SAN extension");
+        X509_EXTENSION_free(ext);
+        goto cleanup;
+      }
+      X509_EXTENSION_free(ext);
+      ext = NULL;
+    }
+  }
+
+  ret = 0; /* success */
+
+cleanup:
+  return ret;
+}
+
+/*
+ * Generate a cryptographically random 128-bit serial number.
+ *
+ * Security rationale:
+ * - Sequential serial numbers are predictable and can leak information
+ * - 128-bit random provides ~2^128 possible values (practically unique)
+ * - Uses OpenSSL's CSPRNG which sources from /dev/urandom or equivalent
+ * - Meets CAB Forum Baseline Requirements for serial number entropy
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+FIO_SFUNC int fio___openssl_set_random_serial(X509 *cert) {
+  BIGNUM *bn = NULL;
+  ASN1_INTEGER *serial = NULL;
+  int ret = -1;
+
+  /* Generate 128-bit random number */
+  bn = BN_new();
+  if (!bn) {
+    FIO_LOG_ERROR("OpenSSL: BN_new failed for serial number");
+    goto cleanup;
+  }
+
+  /* Generate 128 random bits using OpenSSL's CSPRNG */
+  if (!BN_rand(bn, 128, BN_RAND_TOP_ANY, BN_RAND_BOTTOM_ANY)) {
+    FIO_LOG_ERROR("OpenSSL: BN_rand failed for serial number");
+    goto cleanup;
+  }
+
+  /* Ensure the number is positive (required for X.509 serial numbers) */
+  BN_set_negative(bn, 0);
+
+  /* Convert to ASN1_INTEGER and set on certificate */
+  serial = BN_to_ASN1_INTEGER(bn, NULL);
+  if (!serial) {
+    FIO_LOG_ERROR("OpenSSL: BN_to_ASN1_INTEGER failed");
+    goto cleanup;
+  }
+
+  if (!X509_set_serialNumber(cert, serial)) {
+    FIO_LOG_ERROR("OpenSSL: X509_set_serialNumber failed");
+    goto cleanup;
+  }
+
+  ret = 0; /* success */
+
+cleanup:
+  if (serial)
+    ASN1_INTEGER_free(serial);
+  if (bn)
+    BN_free(bn);
+  return ret;
+}
+
+/*
+ * Create a self-signed X.509 certificate for TLS.
+ *
+ * Certificate properties:
+ * - Algorithm: ECDSA with P-256 curve
+ * - Signature: SHA-256 (matched to P-256 security level)
+ * - Validity: 180 days (15552000 seconds)
+ * - Serial: 128-bit cryptographically random
+ * - Extensions: Basic Constraints, Key Usage, Extended Key Usage, SAN
+ *
+ * The certificate is self-signed and suitable for development/testing.
+ * For production, use properly issued certificates from a trusted CA.
+ */
+static X509 *fio_io_tls_create_self_signed(const char *server_name) {
+  X509 *cert = NULL;
+  X509_NAME *name = NULL;
+
+  /* Validate server_name */
+  if (!server_name || !server_name[0]) {
+    server_name = "localhost";
+  }
+
+  /* Check server_name length to prevent overflow */
+  size_t srv_name_len = FIO_STRLEN(server_name);
+  if (srv_name_len > 255) {
+    FIO_LOG_ERROR("server_name too long for certificate (max 255 bytes)");
+    return NULL;
+  }
+
+  /* Ensure we have a private key */
+  fio___openssl_make_root_key();
+  if (!fio___openssl_pkey) {
+    FIO_LOG_ERROR("No private key available for self-signed certificate");
+    return NULL;
+  }
+
+  /* Allocate new X509 certificate structure */
+  cert = X509_new();
+  if (!cert) {
+    FIO_LOG_ERROR("OpenSSL: X509_new failed to allocate certificate");
+    return NULL;
+  }
+
+  /* Set certificate version to X.509v3 (version value is 0-indexed, so 2 = v3)
+   */
+  if (!X509_set_version(cert, 2)) {
+    FIO_LOG_ERROR("OpenSSL: X509_set_version failed");
+    goto error;
+  }
+
+  /* Set cryptographically random serial number */
+  if (fio___openssl_set_random_serial(cert) != 0) {
+    FIO_LOG_ERROR("OpenSSL: failed to set random serial number");
+    goto error;
+  }
+
+  /*
+   * Set validity period: 180 days
+   * - notBefore: now
+   * - notAfter: now + 180 days (15552000 seconds)
+   *
+   * Calculation: 180 days * 24 hours * 60 minutes * 60 seconds = 15552000
+   */
+  if (!X509_gmtime_adj(X509_get_notBefore(cert), 0)) {
+    FIO_LOG_ERROR("OpenSSL: X509_gmtime_adj failed for notBefore");
+    goto error;
+  }
+  if (!X509_gmtime_adj(X509_get_notAfter(cert), 15552000L)) {
+    FIO_LOG_ERROR("OpenSSL: X509_gmtime_adj failed for notAfter");
+    goto error;
+  }
+
+  /* Set the public key from our ECDSA key pair */
+  if (!X509_set_pubkey(cert, fio___openssl_pkey)) {
+    FIO_LOG_ERROR("OpenSSL: X509_set_pubkey failed");
+    goto error;
+  }
+
+  /* Set subject name with Organization and Common Name */
+  name = X509_get_subject_name(cert);
+  if (!name) {
+    FIO_LOG_ERROR("OpenSSL: X509_get_subject_name failed");
+    goto error;
+  }
+
+  /* Add Organization (O) - identifies the certificate owner */
+  if (!X509_NAME_add_entry_by_txt(name,
+                                  "O",
+                                  MBSTRING_ASC,
+                                  (const unsigned char *)server_name,
+                                  (int)srv_name_len,
+                                  -1,
+                                  0)) {
+    FIO_LOG_ERROR("OpenSSL: failed to add Organization to certificate");
+    goto error;
+  }
+
+  /* Add Common Name (CN) - the server's hostname */
+  if (!X509_NAME_add_entry_by_txt(name,
+                                  "CN",
+                                  MBSTRING_ASC,
+                                  (const unsigned char *)server_name,
+                                  (int)srv_name_len,
+                                  -1,
+                                  0)) {
+    FIO_LOG_ERROR("OpenSSL: failed to add Common Name to certificate");
+    goto error;
+  }
+
+  /* Set issuer name (same as subject for self-signed) */
+  if (!X509_set_issuer_name(cert, name)) {
+    FIO_LOG_ERROR("OpenSSL: X509_set_issuer_name failed");
+    goto error;
+  }
+
+  /* Add X.509v3 extensions for browser compatibility */
+  if (fio___openssl_add_x509v3_extensions(cert, server_name) != 0) {
+    FIO_LOG_ERROR("OpenSSL: failed to add X.509v3 extensions");
+    goto error;
+  }
+
+  /*
+   * Sign the certificate with SHA-256.
+   * SHA-256 is matched to P-256's security level (both ~128-bit security).
+   */
+  if (!X509_sign(cert, fio___openssl_pkey, EVP_sha256())) {
+    unsigned long err = ERR_get_error();
+    char err_buf[256];
+    ERR_error_string_n(err, err_buf, sizeof(err_buf));
+    FIO_LOG_ERROR("OpenSSL: X509_sign failed: %s", err_buf);
+    goto error;
+  }
+
+  FIO_LOG_DEBUG2("created self-signed certificate for '%s' (ECDSA P-256, "
+                 "SHA-256, 180 days)",
+                 server_name);
+  return cert;
+
+error:
+  if (cert)
+    X509_free(cert);
+  return NULL;
+}
+
+/* *****************************************************************************
+OpenSSL Context type wrappers
+***************************************************************************** */
+
+/* Context for all future connections */
+typedef struct {
+  SSL_CTX *ctx;
+  fio_io_tls_s *tls;
+} fio___openssl_context_s;
+
+FIO_LEAK_COUNTER_DEF(fio___openssl_context_s)
+
+/* *****************************************************************************
+OpenSSL Callbacks
+***************************************************************************** */
+
+FIO_SFUNC int fio___openssl_pem_password_cb(char *buf,
+                                            int size,
+                                            int rwflag,
+                                            void *u) {
+  const char *password = (const char *)u;
+  if (!password)
+    return 0;
+  size_t password_len = FIO_STRLEN(password);
+  if (password_len > (size_t)size)
+    return -1;
+  FIO_MEMCPY(buf, password, password_len);
+  return (int)password_len;
+  (void)rwflag;
+}
+
+FIO_SFUNC int fio___openssl_alpn_selector_cb(SSL *ssl,
+                                             const unsigned char **out,
+                                             unsigned char *outlen,
+                                             const unsigned char *in,
+                                             unsigned int inlen,
+                                             void *tls_) {
+  fio_io_s *io = (fio_io_s *)SSL_get_ex_data(ssl, 0);
+  fio___openssl_context_s *ctx = (fio___openssl_context_s *)tls_;
+
+  const unsigned char *end = in + inlen;
+  char buf[256];
+  while (in < end) {
+    uint8_t len = in[0];
+    if (len == 0 || (size_t)in + 1 + len > (size_t)end)
+      break;
+    if (len < sizeof(buf) - 1) {
+      FIO_MEMCPY(buf, in + 1, len);
+      buf[len] = 0;
+      if (!fio_io_tls_alpn_select(ctx->tls, buf, (size_t)len, io)) {
+        *out = in + 1;
+        *outlen = len;
+        FIO_LOG_DDEBUG2("(%d) TLS ALPN set to: %s for %p",
+                        (int)fio_thread_getpid(),
+                        buf,
+                        (void *)io);
+        return SSL_TLSEXT_ERR_OK;
+      }
+    }
+    in += len + 1;
+  }
+  FIO_LOG_DDEBUG2("(%d) ALPN Failed! No protocol name match for %p",
+                  (int)fio_thread_getpid(),
+                  (void *)io);
+  return SSL_TLSEXT_ERR_ALERT_FATAL;
+  (void)tls_;
+}
+
+/* *****************************************************************************
+Public Context Builder
+***************************************************************************** */
+
+FIO_SFUNC int fio___openssl_each_cert(struct fio_io_tls_each_s *e,
+                                      const char *server_name,
+                                      const char *public_cert_file,
+                                      const char *private_key_file,
+                                      const char *pk_password) {
+  fio___openssl_context_s *s = (fio___openssl_context_s *)e->udata;
+  if (public_cert_file && private_key_file) { /* load certificate from files */
+    SSL_CTX_set_default_passwd_cb(s->ctx, fio___openssl_pem_password_cb);
+    SSL_CTX_set_default_passwd_cb_userdata(s->ctx, (void *)pk_password);
+    FIO_LOG_DDEBUG2("loading TLS certificates: %s & %s",
+                    public_cert_file,
+                    private_key_file);
+    /* Set the certificate */
+    if (SSL_CTX_use_certificate_chain_file(s->ctx, public_cert_file) <= 0) {
+      ERR_print_errors_fp(stderr);
+      FIO_LOG_ERROR("OpenSSL couldn't load certificate file: %s",
+                    public_cert_file);
+      return -1;
+    }
+    /* Set the private key */
+    if (SSL_CTX_use_PrivateKey_file(s->ctx,
+                                    private_key_file,
+                                    SSL_FILETYPE_PEM) <= 0) {
+      ERR_print_errors_fp(stderr);
+      FIO_LOG_ERROR("OpenSSL couldn't load private key file: %s",
+                    private_key_file);
+      return -1;
+    }
+    /* Verify key matches certificate */
+    if (!SSL_CTX_check_private_key(s->ctx)) {
+      FIO_LOG_ERROR("OpenSSL: private key doesn't match certificate");
+      return -1;
+    }
+    SSL_CTX_set_default_passwd_cb(s->ctx, NULL);
+    SSL_CTX_set_default_passwd_cb_userdata(s->ctx, NULL);
+  } else { /* generate self-signed certificate */
+    if (!server_name || !server_name[0])
+      server_name = "localhost";
+    X509 *cert = fio_io_tls_create_self_signed(server_name);
+    if (!cert) {
+      FIO_LOG_ERROR("failed to create self-signed certificate");
+      return -1;
+    }
+    if (!SSL_CTX_use_certificate(s->ctx, cert)) {
+      X509_free(cert);
+      FIO_LOG_ERROR("OpenSSL: SSL_CTX_use_certificate failed");
+      return -1;
+    }
+    X509_free(cert); /* SSL_CTX makes a copy */
+    if (!SSL_CTX_use_PrivateKey(s->ctx, fio___openssl_pkey)) {
+      FIO_LOG_ERROR("OpenSSL: SSL_CTX_use_PrivateKey failed");
+      return -1;
+    }
+  }
+  return 0;
+}
+
+FIO_SFUNC int fio___openssl_each_alpn(struct fio_io_tls_each_s *e,
+                                      const char *protocol_name,
+                                      void (*on_selected)(fio_io_s *)) {
+  fio_str_info_s *str = (fio_str_info_s *)e->udata2;
+  if (!protocol_name)
+    return 0;
+  size_t len = FIO_STRLEN(protocol_name);
+  if (len == 0 || len > 255) {
+    FIO_LOG_ERROR("ALPN protocol name invalid length: %zu", len);
+    return -1;
+  }
+  if (len + str->len + 1 > str->capa) {
+    FIO_LOG_ERROR("ALPN protocol list overflow.");
+    return -1;
+  }
+  str->buf[str->len++] = (char)(len & 0xFF);
+  FIO_MEMCPY(str->buf + str->len, protocol_name, len);
+  str->len += len;
+  return 0;
+  (void)on_selected;
+}
+
+FIO_SFUNC int fio___openssl_each_trust(struct fio_io_tls_each_s *e,
+                                       const char *public_cert_file) {
+  X509_STORE *store = (X509_STORE *)e->udata2;
+  if (!store)
+    return -1;
+  if (public_cert_file) { /* trust specific certificate */
+    if (!X509_STORE_load_file(store, public_cert_file)) {
+      FIO_LOG_ERROR("OpenSSL: failed to load trust certificate: %s",
+                    public_cert_file);
+      return -1;
+    }
+  } else { /* trust system's default trust store */
+    const char *path = getenv(X509_get_default_cert_dir_env());
+    if (!path)
+      path = X509_get_default_cert_dir();
+    if (path) {
+      if (!X509_STORE_load_path(store, path)) {
+        FIO_LOG_WARNING("OpenSSL: failed to load system trust store from: %s",
+                        path);
+      }
+    }
+  }
+  return 0;
+}
+
+/** Helper that converts a `fio_io_tls_s` into the implementation's context. */
+FIO_SFUNC void *fio___openssl_build_context(fio_io_tls_s *tls,
+                                            uint8_t is_client) {
+  fio___openssl_context_s *ctx =
+      (fio___openssl_context_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(*ctx), 0);
+  if (!ctx) {
+    FIO_LOG_ERROR("OpenSSL: memory allocation failed for context");
+    return NULL;
+  }
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___openssl_context_s);
+  *ctx = (fio___openssl_context_s){
+      .ctx = SSL_CTX_new((is_client ? TLS_client_method : TLS_server_method)()),
+      .tls = fio_io_tls_dup(tls),
+  };
+
+  if (!ctx->ctx) {
+    FIO_LOG_ERROR("OpenSSL: SSL_CTX_new failed");
+    if (ctx->tls)
+      fio_io_tls_free(ctx->tls);
+    FIO_LEAK_COUNTER_ON_FREE(fio___openssl_context_s);
+    FIO_MEM_FREE(ctx, sizeof(*ctx));
+    return NULL;
+  }
+
+  /* Configure SSL context modes for non-blocking I/O */
+  SSL_CTX_set_mode(ctx->ctx, SSL_MODE_ENABLE_PARTIAL_WRITE);
+  SSL_CTX_set_mode(ctx->ctx, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  SSL_CTX_clear_mode(ctx->ctx, SSL_MODE_AUTO_RETRY);
+
+  /* Configure certificate verification */
+  X509_STORE *store = NULL;
+  if (fio_io_tls_trust_count(tls)) {
+    SSL_CTX_set_verify(ctx->ctx, SSL_VERIFY_PEER, NULL);
+    store = X509_STORE_new();
+    if (!store) {
+      FIO_LOG_ERROR("OpenSSL: X509_STORE_new failed");
+      goto error;
+    }
+    SSL_CTX_set_cert_store(ctx->ctx, store); /* takes ownership of store */
+  } else {
+    SSL_CTX_set_verify(ctx->ctx, SSL_VERIFY_NONE, NULL);
+    if (is_client)
+      FIO_LOG_SECURITY("no trusted TLS certificates listed for client, using "
+                       "SSL_VERIFY_NONE!");
+  }
+
+  /* Load certificates or generate self-signed */
+  if (!fio_io_tls_cert_count(tls) && !is_client) {
+    /* No certificates configured for server - use self-signed */
+    X509 *cert = fio_io_tls_create_self_signed("localhost");
+    if (!cert) {
+      FIO_LOG_ERROR("OpenSSL: failed to create self-signed certificate");
+      goto error;
+    }
+    if (!SSL_CTX_use_certificate(ctx->ctx, cert)) {
+      X509_free(cert);
+      FIO_LOG_ERROR("OpenSSL: SSL_CTX_use_certificate failed");
+      goto error;
+    }
+    X509_free(cert); /* SSL_CTX makes a copy */
+    if (!SSL_CTX_use_PrivateKey(ctx->ctx, fio___openssl_pkey)) {
+      FIO_LOG_ERROR("OpenSSL: SSL_CTX_use_PrivateKey failed");
+      goto error;
+    }
+  }
+
+  /* Process each configured certificate */
+  if (fio_io_tls_each(tls,
+                      .udata = ctx,
+                      .udata2 = store,
+                      .each_cert = fio___openssl_each_cert,
+                      .each_trust = fio___openssl_each_trust)) {
+    FIO_LOG_ERROR("OpenSSL: failed to configure certificates or trust store");
+    goto error;
+  }
+
+  /* Configure ALPN if protocols are registered */
+  if (fio_io_tls_alpn_count(tls)) {
+    FIO_STR_INFO_TMP_VAR(alpn_list, 1023);
+    if (fio_io_tls_each(tls,
+                        .udata = ctx,
+                        .udata2 = &alpn_list,
+                        .each_alpn = fio___openssl_each_alpn)) {
+      FIO_LOG_ERROR("OpenSSL: failed to configure ALPN protocols");
+      goto error;
+    }
+    if (alpn_list.len > 0) {
+      if (SSL_CTX_set_alpn_protos(ctx->ctx,
+                                  (const unsigned char *)alpn_list.buf,
+                                  (unsigned int)alpn_list.len)) {
+        FIO_LOG_ERROR("SSL_CTX_set_alpn_protos failed.");
+        /* ALPN is optional, continue without it */
+      } else {
+        SSL_CTX_set_alpn_select_cb(ctx->ctx,
+                                   fio___openssl_alpn_selector_cb,
+                                   ctx);
+        SSL_CTX_set_next_proto_select_cb(
+            ctx->ctx,
+            (int (*)(SSL *,
+                     unsigned char **,
+                     unsigned char *,
+                     const unsigned char *,
+                     unsigned int,
+                     void *))fio___openssl_alpn_selector_cb,
+            (void *)ctx);
+      }
+    }
+  }
+  return ctx;
+
+error:
+  if (ctx) {
+    if (ctx->ctx)
+      SSL_CTX_free(ctx->ctx);
+    if (ctx->tls)
+      fio_io_tls_free(ctx->tls);
+    FIO_LEAK_COUNTER_ON_FREE(fio___openssl_context_s);
+    FIO_MEM_FREE(ctx, sizeof(*ctx));
+  }
+  return NULL;
+}
+
+/* *****************************************************************************
+IO functions
+***************************************************************************** */
+
+/** Called to perform a non-blocking `read`, same as the system call. */
+FIO_SFUNC ssize_t fio___openssl_read(int fd,
+                                     void *buf,
+                                     size_t len,
+                                     void *tls_ctx) {
+  ssize_t r;
+  SSL *ssl = (SSL *)tls_ctx;
+  if (!ssl || !buf)
+    return -1;
+  errno = 0;
+  if (len > INT_MAX)
+    len = INT_MAX;
+  r = SSL_read(ssl, buf, (int)len);
+  if (r > 0)
+    return r;
+  if (errno == EWOULDBLOCK || errno == EAGAIN)
+    return (ssize_t)-1;
+
+  switch ((r = (ssize_t)SSL_get_error(ssl, (int)r))) {
+  case SSL_ERROR_SSL:                                   /* fall through */
+  case SSL_ERROR_SYSCALL:                               /* fall through */
+  case SSL_ERROR_ZERO_RETURN: return (r = 0);           /* EOF */
+  case SSL_ERROR_NONE:                                  /* fall through */
+  case SSL_ERROR_WANT_CONNECT:                          /* fall through */
+  case SSL_ERROR_WANT_ACCEPT:                           /* fall through */
+  case SSL_ERROR_WANT_WRITE:                            /* fall through */
+    r = SSL_write_ex(ssl, (void *)&r, 0, (size_t *)&r); /* fall through */
+  case SSL_ERROR_WANT_X509_LOOKUP:                      /* fall through */
+  case SSL_ERROR_WANT_READ:                             /* fall through */
+#ifdef SSL_ERROR_WANT_ASYNC
+  case SSL_ERROR_WANT_ASYNC:                            /* fall through */
+#endif
+  default: errno = EWOULDBLOCK; return (r = -1);
+  }
+  (void)fd;
+}
+
+/** Sends any unsent internal data. Returns 0 only if all data was sent. */
+FIO_SFUNC int fio___openssl_flush(int fd, void *tls_ctx) {
+  return 0;
+  (void)fd, (void)tls_ctx;
+}
+
+/** Called to perform a non-blocking `write`, same as the system call. */
+FIO_SFUNC ssize_t fio___openssl_write(int fd,
+                                      const void *buf,
+                                      size_t len,
+                                      void *tls_ctx) {
+  ssize_t r = -1;
+  if (!buf || !len || !tls_ctx)
+    return r;
+  SSL *ssl = (SSL *)tls_ctx;
+  errno = 0;
+  if (len > INT_MAX)
+    len = INT_MAX;
+  r = SSL_write(ssl, buf, (int)len);
+  if (r > 0)
+    return r;
+  if (errno == EWOULDBLOCK || errno == EAGAIN)
+    return -1;
+
+  switch ((r = (ssize_t)SSL_get_error(ssl, (int)r))) {
+  case SSL_ERROR_SSL:                         /* fall through */
+  case SSL_ERROR_SYSCALL:                     /* fall through */
+  case SSL_ERROR_ZERO_RETURN: return (r = 0); /* EOF */
+  case SSL_ERROR_NONE:                        /* fall through */
+  case SSL_ERROR_WANT_CONNECT:                /* fall through */
+  case SSL_ERROR_WANT_ACCEPT:                 /* fall through */
+  case SSL_ERROR_WANT_X509_LOOKUP:            /* fall through */
+  case SSL_ERROR_WANT_WRITE:                  /* fall through */
+  case SSL_ERROR_WANT_READ:                   /* fall through */
+#ifdef SSL_ERROR_WANT_ASYNC /* fall through */
+  case SSL_ERROR_WANT_ASYNC:                  /* fall through */
+#endif
+  default: errno = EWOULDBLOCK; return (r = -1);
+  }
+  (void)fd;
+}
+
+/* *****************************************************************************
+Per-Connection Builder
+***************************************************************************** */
+
+FIO_LEAK_COUNTER_DEF(fio___SSL)
+
+/** called once the IO was attached and the TLS object was set. */
+FIO_SFUNC void fio___openssl_start(fio_io_s *io) {
+  fio___openssl_context_s *ctx_parent =
+      (fio___openssl_context_s *)fio_io_tls(io);
+  if (!ctx_parent || !ctx_parent->ctx) {
+    FIO_LOG_ERROR("OpenSSL Context missing for connection!");
+    return;
+  }
+
+  SSL *ssl = SSL_new(ctx_parent->ctx);
+  if (!ssl) {
+    FIO_LOG_ERROR("OpenSSL: SSL_new failed");
+    return;
+  }
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___SSL);
+  fio_io_tls_set(io, (void *)ssl);
+
+  /* attach socket */
+  FIO_LOG_DDEBUG2("(%d) allocated new TLS context for %p.",
+                  (int)fio_thread_getpid(),
+                  (void *)io);
+  BIO *bio = BIO_new_socket(fio_io_fd(io), 0);
+  if (!bio) {
+    FIO_LOG_ERROR("OpenSSL: BIO_new_socket failed");
+    FIO_LEAK_COUNTER_ON_FREE(fio___SSL);
+    SSL_free(ssl);
+    fio_io_tls_set(io, NULL);
+    return;
+  }
+  SSL_set_bio(ssl, bio, bio);
+  SSL_set_ex_data(ssl, 0, (void *)io);
+  if (SSL_is_server(ssl))
+    SSL_accept(ssl);
+  else
+    SSL_connect(ssl);
+}
+
+/* *****************************************************************************
+Closing Connections
+***************************************************************************** */
+
+/** Called when the IO object finished sending all data before closure. */
+FIO_SFUNC void fio___openssl_finish(int fd, void *tls_ctx) {
+  SSL *ssl = (SSL *)tls_ctx;
+  if (ssl)
+    SSL_shutdown(ssl);
+  (void)fd;
+}
+
+/* *****************************************************************************
+Per-Connection Cleanup
+***************************************************************************** */
+
+/** Called after the IO object is closed, used to cleanup its `tls` object. */
+FIO_SFUNC void fio___openssl_cleanup(void *tls_ctx) {
+  SSL *ssl = (SSL *)tls_ctx;
+  if (ssl) {
+    SSL_shutdown(ssl);
+    FIO_LEAK_COUNTER_ON_FREE(fio___SSL);
+    SSL_free(ssl);
+  }
+}
+
+/* *****************************************************************************
+Context Cleanup
+***************************************************************************** */
+
+static void fio___openssl_free_context_task(void *tls_ctx, void *ignr_) {
+  fio___openssl_context_s *ctx = (fio___openssl_context_s *)tls_ctx;
+  if (!ctx)
+    return;
+  FIO_LEAK_COUNTER_ON_FREE(fio___openssl_context_s);
+  if (ctx->ctx)
+    SSL_CTX_free(ctx->ctx);
+  if (ctx->tls)
+    fio_io_tls_free(ctx->tls);
+  FIO_MEM_FREE(ctx, sizeof(*ctx));
+  (void)ignr_;
+}
+
+/** Builds a local TLS context out of the fio_io_tls_s object. */
+static void fio___openssl_free_context(void *tls_ctx) {
+  fio_io_defer(fio___openssl_free_context_task, tls_ctx, NULL);
+}
+
+/* *****************************************************************************
+IO Functions Structure
+***************************************************************************** */
+
+/* Returns the OpenSSL IO functions (implementation) */
+SFUNC fio_io_functions_s fio_openssl_io_functions(void) {
+  return (fio_io_functions_s){
+      .build_context = fio___openssl_build_context,
+      .free_context = fio___openssl_free_context,
+      .start = fio___openssl_start,
+      .read = fio___openssl_read,
+      .write = fio___openssl_write,
+      .flush = fio___openssl_flush,
+      .cleanup = fio___openssl_cleanup,
+      .finish = fio___openssl_finish,
+  };
+}
+
+/* Setup OpenSSL as TLS IO default */
+FIO_CONSTRUCTOR(fio___openssl_setup_default) {
+  static fio_io_functions_s FIO___OPENSSL_IO_FUNCS;
+  FIO___OPENSSL_IO_FUNCS = fio_openssl_io_functions();
+  fio_io_tls_default_functions(&FIO___OPENSSL_IO_FUNCS);
+#ifdef SIGPIPE
+  fio_signal_monitor(.sig = SIGPIPE); /* avoid OpenSSL issue... */
+#endif
+}
+
+/* *****************************************************************************
+OpenSSL Helpers Cleanup
+***************************************************************************** */
+#endif /* defined(OPENSSL_VERSION_MAJOR) && OPENSSL_VERSION_MAJOR >= 3 */
+#endif /* FIO_EXTERN_COMPLETE */
+#endif /* HAVE_OPENSSL */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_IO                 /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                  TLS 1.3 Implementation for IO Functions
+                  (Drop-in replacement when OpenSSL unavailable)
+
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(H___FIO_IO___H) && defined(H___FIO_TLS13___H) &&                   \
+    !defined(H___FIO_TLS13_IO___H) && !defined(FIO___RECURSIVE_INCLUDE)
+#define H___FIO_TLS13_IO___H 1
+/* *****************************************************************************
+TLS 1.3 IO Function Getter
+***************************************************************************** */
+
+/** Returns the TLS 1.3 IO functions. */
+SFUNC fio_io_functions_s fio_tls13_io_functions(void);
+
+/* *****************************************************************************
+TLS 1.3 IO Functions Implementation
+***************************************************************************** */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
+/* *****************************************************************************
+TLS 1.3 Context Types
+***************************************************************************** */
+
+/** Context for all future connections (built from fio_io_tls_s) */
+typedef struct {
+  fio_io_tls_s *tls;
+  uint8_t is_client;
+  /* Certificate chain (DER-encoded) for server */
+  uint8_t *cert_der;
+  size_t cert_der_len;
+  /* Private key for server (P-256: 32-byte scalar, Ed25519: 32-byte seed) */
+  uint8_t private_key[32];
+  /* Public key for P-256 signing (65 bytes: 0x04 || x || y) */
+  uint8_t public_key[65];
+  size_t private_key_len;
+  uint16_t private_key_type;
+  /* SNI hostname for client connections */
+  char server_name[256];
+  /* ALPN protocols (comma-separated) for server */
+  char alpn_protocols[256];
+  size_t alpn_protocols_len;
+} fio___tls13_context_s;
+
+FIO_LEAK_COUNTER_DEF(fio___tls13_context_s)
+
+/** Per-connection TLS state */
+typedef struct {
+  union {
+    fio_tls13_client_s client;
+    fio_tls13_server_s server;
+  } state;
+  uint8_t is_client;
+  uint8_t handshake_complete;
+  /* Buffered incoming data (partial records) */
+  uint8_t *recv_buf;
+  size_t recv_buf_len; /* Total data length in recv_buf */
+  size_t recv_buf_pos; /* Current read position (lazy compaction) */
+  size_t recv_buf_cap;
+  /* Buffered decrypted data (ready to read) */
+  uint8_t *app_buf;
+  size_t app_buf_len;
+  size_t app_buf_cap;
+  size_t app_buf_pos; /* Read position in app_buf */
+  /* Buffered outgoing handshake data */
+  uint8_t *send_buf;
+  size_t send_buf_len;
+  size_t send_buf_cap;
+  size_t send_buf_pos; /* Write position in send_buf */
+  /* Pre-allocated encryption buffer (avoids stack allocation in write path) */
+  uint8_t enc_buf[FIO_TLS13_MAX_CIPHERTEXT_LEN + FIO_TLS13_RECORD_HEADER_LEN +
+                  FIO_TLS13_TAG_LEN + 16];
+  /* Parent context (for certificate chain) */
+  fio___tls13_context_s *ctx;
+  /* Certificate chain storage (for server - pointers must outlive handshake) */
+  const uint8_t *cert_ptr;
+  size_t cert_len;
+} fio___tls13_connection_s;
+
+FIO_LEAK_COUNTER_DEF(fio___tls13_connection_s)
+
+/* *****************************************************************************
+TLS 1.3 Context Builder - Self-Signed Certificate Generation
+***************************************************************************** */
+
+#if defined(H___FIO_X509___H)
+/** Global P-256 keypair for self-signed certificates */
+static fio_x509_keypair_s fio___tls13_self_signed_keypair;
+static uint8_t *fio___tls13_self_signed_cert = NULL;
+static size_t fio___tls13_self_signed_cert_len = 0;
+
+/** Cleanup callback to free the self-signed certificate at exit */
+FIO_SFUNC void fio___tls13_clear_self_signed(void *ignr_) {
+  if (fio___tls13_self_signed_cert) {
+    FIO_MEM_FREE(fio___tls13_self_signed_cert,
+                 fio___tls13_self_signed_cert_len);
+    fio___tls13_self_signed_cert = NULL;
+    fio___tls13_self_signed_cert_len = 0;
+  }
+  fio_x509_keypair_clear(&fio___tls13_self_signed_keypair);
+  (void)ignr_;
+}
+
+/** Generate self-signed certificate for TLS 1.3 server */
+FIO_SFUNC int fio___tls13_make_self_signed(const char *server_name) {
+  static fio_lock_i lock = FIO_LOCK_INIT;
+  fio_lock(&lock);
+
+  if (fio___tls13_self_signed_cert) {
+    fio_unlock(&lock);
+    return 0; /* Already generated */
+  }
+
+  FIO_LOG_DEBUG2("generating P-256 self-signed certificate for TLS 1.3...");
+
+  /* Generate P-256 keypair (universally supported by browsers/curl) */
+  if (fio_x509_keypair_p256(&fio___tls13_self_signed_keypair) != 0) {
+    FIO_LOG_ERROR("TLS 1.3: failed to generate P-256 keypair");
+    fio_unlock(&lock);
+    return -1;
+  }
+
+  /* Set up certificate options */
+  if (!server_name || !server_name[0])
+    server_name = "localhost";
+
+  const char *san_dns[] = {server_name};
+  fio_x509_cert_options_s opts = {
+      .subject_cn = server_name,
+      .subject_cn_len = FIO_STRLEN(server_name),
+      .subject_org = "facil.io",
+      .subject_org_len = 8,
+      .san_dns = san_dns,
+      .san_dns_count = 1,
+      .is_ca = 0,
+  };
+
+  /* Calculate certificate size */
+  size_t cert_size = fio_x509_self_signed_cert(NULL,
+                                               0,
+                                               &fio___tls13_self_signed_keypair,
+                                               &opts);
+  if (cert_size == 0) {
+    FIO_LOG_ERROR("TLS 1.3: failed to calculate certificate size");
+    fio_x509_keypair_clear(&fio___tls13_self_signed_keypair);
+    fio_unlock(&lock);
+    return -1;
+  }
+
+  /* Allocate and generate certificate */
+  fio___tls13_self_signed_cert =
+      (uint8_t *)FIO_MEM_REALLOC(NULL, 0, cert_size, 0);
+  if (!fio___tls13_self_signed_cert) {
+    FIO_LOG_ERROR("TLS 1.3: failed to allocate certificate buffer");
+    fio_x509_keypair_clear(&fio___tls13_self_signed_keypair);
+    fio_unlock(&lock);
+    return -1;
+  }
+
+  fio___tls13_self_signed_cert_len =
+      fio_x509_self_signed_cert(fio___tls13_self_signed_cert,
+                                cert_size,
+                                &fio___tls13_self_signed_keypair,
+                                &opts);
+
+  if (fio___tls13_self_signed_cert_len == 0) {
+    FIO_LOG_ERROR("TLS 1.3: failed to generate self-signed certificate");
+    FIO_MEM_FREE(fio___tls13_self_signed_cert, cert_size);
+    fio___tls13_self_signed_cert = NULL;
+    fio_x509_keypair_clear(&fio___tls13_self_signed_keypair);
+    fio_unlock(&lock);
+    return -1;
+  }
+
+  /* Register cleanup callback */
+  fio_state_callback_add(FIO_CALL_AT_EXIT, fio___tls13_clear_self_signed, NULL);
+
+  FIO_LOG_DEBUG2("P-256 self-signed certificate generated successfully "
+                 "(%zu bytes)",
+                 fio___tls13_self_signed_cert_len);
+  fio_unlock(&lock);
+  return 0;
+}
+#endif /* H___FIO_X509___H */
+
+/* *****************************************************************************
+TLS 1.3 Context Builder
+***************************************************************************** */
+
+/** Callback for iterating ALPN protocols in fio_io_tls_s */
+FIO_SFUNC int fio___tls13_each_alpn(struct fio_io_tls_each_s *e,
+                                    const char *protocol_name,
+                                    void (*on_selected)(fio_io_s *)) {
+  fio___tls13_context_s *ctx = (fio___tls13_context_s *)e->udata;
+  if (!protocol_name || !protocol_name[0])
+    return 0;
+
+  size_t len = FIO_STRLEN(protocol_name);
+  if (len == 0 || len > 255) {
+    FIO_LOG_ERROR("TLS 1.3: ALPN protocol name invalid length: %zu", len);
+    return -1;
+  }
+
+  /* Append to comma-separated list */
+  size_t needed = len + (ctx->alpn_protocols_len > 0 ? 1 : 0);
+  if (ctx->alpn_protocols_len + needed >= sizeof(ctx->alpn_protocols)) {
+    FIO_LOG_ERROR("TLS 1.3: ALPN protocol list overflow");
+    return -1;
+  }
+
+  if (ctx->alpn_protocols_len > 0) {
+    ctx->alpn_protocols[ctx->alpn_protocols_len++] = ',';
+  }
+  FIO_MEMCPY(ctx->alpn_protocols + ctx->alpn_protocols_len, protocol_name, len);
+  ctx->alpn_protocols_len += len;
+  ctx->alpn_protocols[ctx->alpn_protocols_len] = '\0';
+
+  FIO_LOG_DDEBUG("TLS 1.3: added ALPN protocol: %s", protocol_name);
+  (void)on_selected;
+  return 0;
+}
+
+/** Callback for iterating certificates in fio_io_tls_s */
+FIO_SFUNC int fio___tls13_each_cert(struct fio_io_tls_each_s *e,
+                                    const char *server_name,
+                                    const char *public_cert_file,
+                                    const char *private_key_file,
+                                    const char *pk_password) {
+  fio___tls13_context_s *ctx = (fio___tls13_context_s *)e->udata;
+
+#if defined(H___FIO_PEM___H) && defined(H___FIO_X509___H)
+  /* Try to load certificate and key from PEM files */
+  if (public_cert_file && private_key_file) {
+    FIO_LOG_DEBUG2("TLS 1.3: loading certificate from %s", public_cert_file);
+    FIO_LOG_DEBUG2("TLS 1.3: loading private key from %s", private_key_file);
+
+    /* Read certificate file */
+    char *cert_pem = fio_bstr_readfile(NULL, public_cert_file, 0, 0);
+    if (!cert_pem) {
+      FIO_LOG_ERROR("TLS 1.3: failed to read certificate file: %s",
+                    public_cert_file);
+      goto use_self_signed;
+    }
+
+    /* Read private key file */
+    char *key_pem = fio_bstr_readfile(NULL, private_key_file, 0, 0);
+    if (!key_pem) {
+      FIO_LOG_ERROR("TLS 1.3: failed to read private key file: %s",
+                    private_key_file);
+      fio_bstr_free(cert_pem);
+      goto use_self_signed;
+    }
+
+    /* Allocate buffer for DER-encoded certificate */
+    size_t cert_pem_len = fio_bstr_len(cert_pem);
+    size_t der_buf_len = cert_pem_len; /* Conservative estimate */
+    ctx->cert_der = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, der_buf_len, 0);
+    if (!ctx->cert_der) {
+      FIO_LOG_ERROR("TLS 1.3: failed to allocate certificate buffer");
+      fio_bstr_free(cert_pem);
+      fio_bstr_free(key_pem);
+      return -1;
+    }
+
+    /* Extract DER from PEM */
+    ctx->cert_der_len = fio_pem_get_certificate_der(ctx->cert_der,
+                                                    der_buf_len,
+                                                    cert_pem,
+                                                    cert_pem_len);
+    fio_bstr_free(cert_pem);
+
+    if (ctx->cert_der_len == 0) {
+      FIO_LOG_ERROR("TLS 1.3: failed to parse certificate PEM");
+      FIO_MEM_FREE(ctx->cert_der, der_buf_len);
+      ctx->cert_der = NULL;
+      fio_bstr_free(key_pem);
+      goto use_self_signed;
+    }
+
+    /* Parse private key */
+    fio_pem_private_key_s pkey;
+    size_t key_pem_len = fio_bstr_len(key_pem);
+    if (fio_pem_parse_private_key(&pkey, key_pem, key_pem_len) != 0) {
+      FIO_LOG_ERROR("TLS 1.3: failed to parse private key PEM");
+      FIO_MEM_FREE(ctx->cert_der, der_buf_len);
+      ctx->cert_der = NULL;
+      ctx->cert_der_len = 0;
+      fio_bstr_free(key_pem);
+      goto use_self_signed;
+    }
+    fio_bstr_free(key_pem);
+
+    /* Copy private key based on type */
+    switch (pkey.type) {
+    case FIO_PEM_KEY_ECDSA_P256:
+      fio_memcpy32(ctx->private_key, pkey.ecdsa_p256.private_key);
+      if (pkey.ecdsa_p256.has_public_key) {
+        FIO_MEMCPY(ctx->public_key, pkey.ecdsa_p256.public_key, 65);
+      } else {
+        /* Derive public key from private key */
+#if defined(H___FIO_P256___H)
+        uint8_t tmp_secret[32];
+        fio_memcpy32(tmp_secret, pkey.ecdsa_p256.private_key);
+        fio_p256_keypair(tmp_secret, ctx->public_key);
+        fio_secure_zero(tmp_secret, 32);
+#else
+        FIO_LOG_ERROR("TLS 1.3: P-256 module required for key derivation");
+        fio_pem_private_key_clear(&pkey);
+        FIO_MEM_FREE(ctx->cert_der, der_buf_len);
+        ctx->cert_der = NULL;
+        ctx->cert_der_len = 0;
+        goto use_self_signed;
+#endif
+      }
+      ctx->private_key_len = 32;
+      ctx->private_key_type = FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256;
+      FIO_LOG_DEBUG2("TLS 1.3: loaded P-256 private key from PEM");
+      break;
+
+    case FIO_PEM_KEY_ED25519:
+      fio_memcpy32(ctx->private_key, pkey.ed25519.private_key);
+      ctx->private_key_len = 32;
+      ctx->private_key_type = FIO_TLS13_SIG_ED25519;
+      FIO_LOG_DEBUG2("TLS 1.3: loaded Ed25519 private key from PEM");
+      break;
+
+    case FIO_PEM_KEY_RSA:
+      /* RSA signing not yet supported in TLS 1.3 implementation */
+      FIO_LOG_WARNING(
+          "TLS 1.3: RSA private keys not yet supported for signing");
+      fio_pem_private_key_clear(&pkey);
+      FIO_MEM_FREE(ctx->cert_der, der_buf_len);
+      ctx->cert_der = NULL;
+      ctx->cert_der_len = 0;
+      goto use_self_signed;
+
+    default:
+      FIO_LOG_ERROR("TLS 1.3: unsupported private key type");
+      fio_pem_private_key_clear(&pkey);
+      FIO_MEM_FREE(ctx->cert_der, der_buf_len);
+      ctx->cert_der = NULL;
+      ctx->cert_der_len = 0;
+      goto use_self_signed;
+    }
+
+    fio_pem_private_key_clear(&pkey);
+    FIO_LOG_DEBUG2("TLS 1.3: certificate loaded successfully (%zu bytes)",
+                   ctx->cert_der_len);
+    (void)pk_password;
+    (void)server_name;
+    return 0;
+  }
+
+use_self_signed:
+#endif /* H___FIO_PEM___H && H___FIO_X509___H */
+
+#if defined(H___FIO_X509___H)
+  /* Generate self-signed certificate if no PEM files provided or loading failed
+   */
+  if (public_cert_file && private_key_file) {
+    FIO_LOG_WARNING(
+        "TLS 1.3: PEM loading failed, using self-signed certificate");
+  }
+
+  if (fio___tls13_make_self_signed(server_name) != 0) {
+    FIO_LOG_ERROR("TLS 1.3: failed to create self-signed certificate");
+    return -1;
+  }
+
+  /* Copy certificate to context */
+  if (fio___tls13_self_signed_cert && fio___tls13_self_signed_cert_len > 0) {
+    ctx->cert_der = (uint8_t *)
+        FIO_MEM_REALLOC(NULL, 0, fio___tls13_self_signed_cert_len, 0);
+    if (!ctx->cert_der) {
+      FIO_LOG_ERROR("TLS 1.3: failed to allocate certificate buffer");
+      return -1;
+    }
+    FIO_MEMCPY(ctx->cert_der,
+               fio___tls13_self_signed_cert,
+               fio___tls13_self_signed_cert_len);
+    ctx->cert_der_len = fio___tls13_self_signed_cert_len;
+
+    /* Copy private key (P-256 scalar) */
+    fio_memcpy32(ctx->private_key, fio___tls13_self_signed_keypair.secret_key);
+    /* Copy public key (P-256 uncompressed point for signing) */
+    FIO_MEMCPY(ctx->public_key, fio___tls13_self_signed_keypair.public_key, 65);
+    ctx->private_key_len = 32;
+    ctx->private_key_type = FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256;
+  }
+#else
+  FIO_LOG_ERROR(
+      "TLS 1.3: X509 module not available for certificate generation");
+  return -1;
+#endif
+
+  (void)pk_password;
+  return 0;
+}
+
+/** Helper that converts a `fio_io_tls_s` into the implementation's context. */
+FIO_SFUNC void *fio___tls13_build_context(fio_io_tls_s *tls,
+                                          uint8_t is_client) {
+  fio___tls13_context_s *ctx =
+      (fio___tls13_context_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(*ctx), 0);
+  if (!ctx) {
+    FIO_LOG_ERROR("TLS 1.3: memory allocation failed for context");
+    return NULL;
+  }
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___tls13_context_s);
+  FIO_MEMSET(ctx, 0, sizeof(*ctx));
+  ctx->tls = fio_io_tls_dup(tls);
+  ctx->is_client = is_client;
+
+  /* For client, extract server name from TLS object for SNI */
+  if (is_client) {
+    FIO_IMAP_EACH(fio___io_tls_cert_map, &tls->cert, i) {
+      fio_buf_info_s nm = fio_keystr_buf(&tls->cert.ary[i].nm);
+      if (nm.buf && nm.len > 0 && nm.len < sizeof(ctx->server_name)) {
+        FIO_MEMCPY(ctx->server_name, nm.buf, nm.len);
+        ctx->server_name[nm.len] = '\0';
+        FIO_LOG_DEBUG2("TLS 1.3: extracted SNI hostname: %s", ctx->server_name);
+        break;
+      }
+    }
+  } else { /* For server, load certificates */
+    /* Check if certificates are configured */
+    if (!fio_io_tls_cert_count(tls)) {
+      /* No certificates configured - use self-signed */
+#if defined(H___FIO_X509___H)
+      if (fio___tls13_make_self_signed("localhost") != 0) {
+        FIO_LOG_ERROR("TLS 1.3: failed to create self-signed certificate");
+        goto error;
+      }
+      ctx->cert_der = (uint8_t *)
+          FIO_MEM_REALLOC(NULL, 0, fio___tls13_self_signed_cert_len, 0);
+      if (!ctx->cert_der) {
+        FIO_LOG_ERROR("TLS 1.3: failed to allocate certificate buffer");
+        goto error;
+      }
+      FIO_MEMCPY(ctx->cert_der,
+                 fio___tls13_self_signed_cert,
+                 fio___tls13_self_signed_cert_len);
+      ctx->cert_der_len = fio___tls13_self_signed_cert_len;
+      /* Copy private key (P-256 scalar) */
+      fio_memcpy32(ctx->private_key,
+                   fio___tls13_self_signed_keypair.secret_key);
+      /* Copy public key (P-256 uncompressed point for signing) */
+      FIO_MEMCPY(ctx->public_key,
+                 fio___tls13_self_signed_keypair.public_key,
+                 65);
+      ctx->private_key_len = 32;
+      ctx->private_key_type = FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256;
+#else
+      FIO_LOG_ERROR("TLS 1.3: X509 module required for server certificates");
+      goto error;
+#endif
+    } else {
+      /* Process configured certificates */
+      if (fio_io_tls_each(tls,
+                          .udata = ctx,
+                          .each_cert = fio___tls13_each_cert)) {
+        FIO_LOG_ERROR("TLS 1.3: failed to configure certificates");
+        goto error;
+      }
+    }
+
+    /* Collect ALPN protocols for server */
+    if (fio_io_tls_alpn_count(tls)) {
+      if (fio_io_tls_each(tls,
+                          .udata = ctx,
+                          .each_alpn = fio___tls13_each_alpn)) {
+        FIO_LOG_ERROR("TLS 1.3: failed to configure ALPN protocols");
+        goto error;
+      }
+      if (ctx->alpn_protocols_len > 0) {
+        FIO_LOG_DEBUG2("TLS 1.3: ALPN protocols configured: %s",
+                       ctx->alpn_protocols);
+      }
+    }
+  }
+
+  return ctx;
+
+error:
+  if (ctx) {
+    if (ctx->cert_der)
+      FIO_MEM_FREE(ctx->cert_der, ctx->cert_der_len);
+    if (ctx->tls)
+      fio_io_tls_free(ctx->tls);
+    FIO_LEAK_COUNTER_ON_FREE(fio___tls13_context_s);
+    FIO_MEM_FREE(ctx, sizeof(*ctx));
+  }
+  return NULL;
+}
+
+/* *****************************************************************************
+TLS 1.3 Context Cleanup
+***************************************************************************** */
+
+FIO_SFUNC void fio___tls13_free_context_task(void *tls_ctx, void *ignr_) {
+  fio___tls13_context_s *ctx = (fio___tls13_context_s *)tls_ctx;
+  if (!ctx)
+    return;
+  FIO_LEAK_COUNTER_ON_FREE(fio___tls13_context_s);
+  if (ctx->cert_der)
+    FIO_MEM_FREE(ctx->cert_der, ctx->cert_der_len);
+  fio_secure_zero(ctx->private_key, sizeof(ctx->private_key));
+  if (ctx->tls)
+    fio_io_tls_free(ctx->tls);
+  FIO_MEM_FREE(ctx, sizeof(*ctx));
+  (void)ignr_;
+}
+
+/** Helper to free the context built by build_context. */
+FIO_SFUNC void fio___tls13_free_context(void *tls_ctx) {
+  fio_io_defer(fio___tls13_free_context_task, tls_ctx, NULL);
+}
+
+/* *****************************************************************************
+TLS 1.3 Per-Connection Management
+***************************************************************************** */
+
+/** Allocate connection state */
+FIO_SFUNC fio___tls13_connection_s *fio___tls13_connection_new(
+    fio___tls13_context_s *ctx) {
+  fio___tls13_connection_s *conn =
+      (fio___tls13_connection_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(*conn), 0);
+  if (!conn)
+    return NULL;
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___tls13_connection_s);
+  FIO_MEMSET(conn, 0, sizeof(*conn));
+  conn->is_client = ctx->is_client;
+  conn->ctx = ctx;
+
+  /* Allocate buffers */
+  conn->recv_buf_cap = FIO_TLS13_MAX_CIPHERTEXT_LEN + 256;
+  conn->recv_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, conn->recv_buf_cap, 0);
+  if (!conn->recv_buf)
+    goto error;
+
+  conn->app_buf_cap = FIO_TLS13_MAX_PLAINTEXT_LEN;
+  conn->app_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, conn->app_buf_cap, 0);
+  if (!conn->app_buf)
+    goto error;
+
+  conn->send_buf_cap = 8192;
+  conn->send_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, conn->send_buf_cap, 0);
+  if (!conn->send_buf)
+    goto error;
+
+  return conn;
+
+error:
+  if (conn->recv_buf)
+    FIO_MEM_FREE(conn->recv_buf, conn->recv_buf_cap);
+  if (conn->app_buf)
+    FIO_MEM_FREE(conn->app_buf, conn->app_buf_cap);
+  if (conn->send_buf)
+    FIO_MEM_FREE(conn->send_buf, conn->send_buf_cap);
+  FIO_LEAK_COUNTER_ON_FREE(fio___tls13_connection_s);
+  FIO_MEM_FREE(conn, sizeof(*conn));
+  return NULL;
+}
+
+/** Free connection state */
+FIO_SFUNC void fio___tls13_connection_free(fio___tls13_connection_s *conn) {
+  if (!conn)
+    return;
+
+  /* Destroy TLS state */
+  if (conn->is_client)
+    fio_tls13_client_destroy(&conn->state.client);
+  else
+    fio_tls13_server_destroy(&conn->state.server);
+
+  /* Free buffers */
+  if (conn->recv_buf)
+    FIO_MEM_FREE(conn->recv_buf, conn->recv_buf_cap);
+  if (conn->app_buf)
+    FIO_MEM_FREE(conn->app_buf, conn->app_buf_cap);
+  if (conn->send_buf)
+    FIO_MEM_FREE(conn->send_buf, conn->send_buf_cap);
+
+  FIO_LEAK_COUNTER_ON_FREE(fio___tls13_connection_s);
+  FIO_MEM_FREE(conn, sizeof(*conn));
+}
+
+/* *****************************************************************************
+TLS 1.3 IO Functions - Start
+***************************************************************************** */
+
+/** Called when a new IO is first attached to a valid protocol. */
+FIO_SFUNC void fio___tls13_start(fio_io_s *io) {
+  fio___tls13_context_s *ctx = (fio___tls13_context_s *)fio_io_tls(io);
+  if (!ctx) {
+    FIO_LOG_ERROR("TLS 1.3: Context missing for connection!");
+    return;
+  }
+
+  /* Allocate connection state */
+  fio___tls13_connection_s *conn = fio___tls13_connection_new(ctx);
+  if (!conn) {
+    FIO_LOG_ERROR("TLS 1.3: failed to allocate connection state");
+    return;
+  }
+
+  /* Store connection state in IO */
+  fio_io_tls_set(io, (void *)conn);
+
+  FIO_LOG_DDEBUG2("(%d) TLS 1.3: allocated new connection for %p (%s)",
+                  (int)fio_thread_getpid(),
+                  (void *)io,
+                  conn->is_client ? "client" : "server");
+
+  if (conn->is_client) {
+    /* Initialize client and start handshake with SNI */
+    const char *sni = ctx->server_name[0] ? ctx->server_name : NULL;
+    fio_tls13_client_init(&conn->state.client, sni);
+    fio_tls13_client_skip_verification(&conn->state.client,
+                                       1); /* TODO: proper verification */
+
+    /* Generate ClientHello */
+    int ch_len = fio_tls13_client_start(&conn->state.client,
+                                        conn->send_buf,
+                                        conn->send_buf_cap);
+    if (ch_len < 0) {
+      FIO_LOG_ERROR("TLS 1.3: failed to generate ClientHello");
+      return;
+    }
+    conn->send_buf_len = (size_t)ch_len;
+    conn->send_buf_pos = 0;
+  } else {
+    /* Initialize server */
+    fio_tls13_server_init(&conn->state.server);
+
+    /* Set certificate chain - use pointers stored in connection struct */
+    if (ctx->cert_der && ctx->cert_der_len > 0) {
+      /* Store cert pointer and length in connection for lifetime management */
+      conn->cert_ptr = ctx->cert_der;
+      conn->cert_len = ctx->cert_der_len;
+      fio_tls13_server_set_cert_chain(&conn->state.server,
+                                      &conn->cert_ptr,
+                                      &conn->cert_len,
+                                      1);
+    }
+
+    /* Set private key */
+    if (ctx->private_key_len > 0) {
+      fio_tls13_server_set_private_key(&conn->state.server,
+                                       ctx->private_key,
+                                       ctx->private_key_len,
+                                       ctx->private_key_type);
+      /* Copy public key for P-256 signing */
+      if (ctx->private_key_type == FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256) {
+        FIO_MEMCPY(conn->state.server.public_key, ctx->public_key, 65);
+      }
+    }
+
+    /* Set ALPN protocols if configured */
+    if (ctx->alpn_protocols_len > 0) {
+      fio_tls13_server_alpn_set(&conn->state.server, ctx->alpn_protocols);
+    }
+  }
+}
+
+/* *****************************************************************************
+TLS 1.3 IO Functions - Read
+***************************************************************************** */
+
+/** Called to perform a non-blocking `read`, same as the system call. */
+FIO_SFUNC ssize_t fio___tls13_read(int fd,
+                                   void *buf,
+                                   size_t len,
+                                   void *tls_ctx) {
+  fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
+  if (!conn || !buf)
+    return -1;
+
+  /* If we have buffered application data, return it first */
+  if (conn->app_buf_len > conn->app_buf_pos) {
+    size_t available = conn->app_buf_len - conn->app_buf_pos;
+    size_t to_copy = (len < available) ? len : available;
+    FIO_MEMCPY(buf, conn->app_buf + conn->app_buf_pos, to_copy);
+    conn->app_buf_pos += to_copy;
+
+    /* Reset buffer if fully consumed */
+    if (conn->app_buf_pos >= conn->app_buf_len) {
+      conn->app_buf_len = 0;
+      conn->app_buf_pos = 0;
+    }
+    return (ssize_t)to_copy;
+  }
+
+  /* Calculate available space in recv_buf and compact if needed */
+  size_t recv_data_len = conn->recv_buf_len - conn->recv_buf_pos;
+  size_t recv_space = conn->recv_buf_cap - conn->recv_buf_len;
+
+  /* Lazy compaction: only compact when buffer is >50% consumed AND
+   * we don't have enough space for a new record */
+  if (conn->recv_buf_pos > (conn->recv_buf_cap >> 1) &&
+      recv_space < FIO_TLS13_MAX_CIPHERTEXT_LEN) {
+    if (recv_data_len > 0) {
+      FIO_MEMMOVE(conn->recv_buf,
+                  conn->recv_buf + conn->recv_buf_pos,
+                  recv_data_len);
+    }
+    conn->recv_buf_len = recv_data_len;
+    conn->recv_buf_pos = 0;
+    recv_space = conn->recv_buf_cap - conn->recv_buf_len;
+  }
+
+  /* Read raw data from socket */
+  errno = 0;
+  ssize_t raw_read =
+      fio_sock_read(fd, conn->recv_buf + conn->recv_buf_len, recv_space);
+  if (raw_read <= 0) {
+    if (raw_read == 0)
+      return 0; /* EOF */
+    if (errno == EWOULDBLOCK || errno == EAGAIN)
+      return -1;
+    return raw_read;
+  }
+  conn->recv_buf_len += (size_t)raw_read;
+  recv_data_len = conn->recv_buf_len - conn->recv_buf_pos;
+
+  /* Process received data */
+  uint8_t *recv_ptr = conn->recv_buf + conn->recv_buf_pos;
+  while (recv_data_len >= FIO_TLS13_RECORD_HEADER_LEN) {
+    /* Check if we have a complete record */
+    uint16_t record_len = ((uint16_t)recv_ptr[3] << 8) | recv_ptr[4];
+    size_t total_record_len = FIO_TLS13_RECORD_HEADER_LEN + record_len;
+
+    if (recv_data_len < total_record_len)
+      break; /* Need more data */
+
+    if (!conn->handshake_complete) {
+      /* Process handshake */
+      uint8_t out_buf[8192];
+      size_t out_len = 0;
+      int consumed;
+
+      if (conn->is_client) {
+        consumed = fio_tls13_client_process(&conn->state.client,
+                                            recv_ptr,
+                                            recv_data_len,
+                                            out_buf,
+                                            sizeof(out_buf),
+                                            &out_len);
+      } else {
+        consumed = fio_tls13_server_process(&conn->state.server,
+                                            recv_ptr,
+                                            recv_data_len,
+                                            out_buf,
+                                            sizeof(out_buf),
+                                            &out_len);
+      }
+
+      if (consumed < 0) {
+        FIO_LOG_DEBUG2("TLS 1.3: handshake processing error");
+        errno = ECONNRESET;
+        return -1;
+      }
+
+      /* Buffer any handshake response */
+      if (out_len > 0) {
+        if (conn->send_buf_len + out_len <= conn->send_buf_cap) {
+          FIO_MEMCPY(conn->send_buf + conn->send_buf_len, out_buf, out_len);
+          conn->send_buf_len += out_len;
+        }
+        /* Immediately try to send handshake response */
+        while (conn->send_buf_pos < conn->send_buf_len) {
+          errno = 0;
+          ssize_t hs_written =
+              fio_sock_write(fd,
+                             conn->send_buf + conn->send_buf_pos,
+                             conn->send_buf_len - conn->send_buf_pos);
+          if (hs_written <= 0) {
+            if (errno == EWOULDBLOCK || errno == EAGAIN)
+              break; /* Will retry later */
+            break;
+          }
+          conn->send_buf_pos += (size_t)hs_written;
+        }
+        if (conn->send_buf_pos >= conn->send_buf_len) {
+          conn->send_buf_len = 0;
+          conn->send_buf_pos = 0;
+        }
+      }
+
+      /* Advance read position (lazy compaction) */
+      if (consumed > 0 && (size_t)consumed <= recv_data_len) {
+        conn->recv_buf_pos += (size_t)consumed;
+        recv_ptr += consumed;
+        recv_data_len -= (size_t)consumed;
+      }
+
+      /* Check if handshake is complete */
+      if (conn->is_client) {
+        if (fio_tls13_client_is_connected(&conn->state.client)) {
+          conn->handshake_complete = 1;
+          FIO_LOG_DEBUG2("TLS 1.3: client handshake complete");
+        } else if (fio_tls13_client_is_error(&conn->state.client)) {
+          FIO_LOG_DEBUG2("TLS 1.3: client handshake error");
+          errno = ECONNRESET;
+          return -1;
+        }
+      } else {
+        if (fio_tls13_server_is_connected(&conn->state.server)) {
+          conn->handshake_complete = 1;
+          FIO_LOG_DEBUG2("TLS 1.3: server handshake complete");
+        } else if (fio_tls13_server_is_error(&conn->state.server)) {
+          FIO_LOG_DEBUG2("TLS 1.3: server handshake error");
+          errno = ECONNRESET;
+          return -1;
+        }
+      }
+    } else {
+      /* Decrypt application data */
+      int dec_len;
+
+      /* OPTIMIZATION: If user buffer is large enough and app_buf is empty,
+       * decrypt directly into user buffer to avoid double copy */
+      size_t expected_plaintext_len = record_len > (FIO_TLS13_TAG_LEN + 1)
+                                          ? record_len - FIO_TLS13_TAG_LEN - 1
+                                          : 0;
+      uint8_t *decrypt_target;
+      size_t decrypt_capacity;
+
+      if (len >= expected_plaintext_len && conn->app_buf_len == 0 &&
+          conn->app_buf_pos == 0) {
+        /* Decrypt directly to user buffer */
+        decrypt_target = (uint8_t *)buf;
+        decrypt_capacity = len;
+      } else {
+        /* Use app_buf as intermediate buffer */
+        decrypt_target = conn->app_buf + conn->app_buf_len;
+        decrypt_capacity = conn->app_buf_cap - conn->app_buf_len;
+      }
+
+      if (conn->is_client) {
+        dec_len = fio_tls13_client_decrypt(&conn->state.client,
+                                           decrypt_target,
+                                           decrypt_capacity,
+                                           recv_ptr,
+                                           total_record_len);
+      } else {
+        dec_len = fio_tls13_server_decrypt(&conn->state.server,
+                                           decrypt_target,
+                                           decrypt_capacity,
+                                           recv_ptr,
+                                           total_record_len);
+      }
+
+      if (dec_len < 0) {
+        FIO_LOG_DEBUG2("TLS 1.3: decryption error");
+        errno = ECONNRESET;
+        return -1;
+      }
+
+      /* Advance read position (lazy compaction) */
+      conn->recv_buf_pos += total_record_len;
+      recv_ptr += total_record_len;
+      recv_data_len -= total_record_len;
+
+      /* If we decrypted directly to user buffer, return immediately */
+      if (decrypt_target == (uint8_t *)buf && dec_len > 0) {
+        return (ssize_t)dec_len;
+      }
+
+      if (dec_len > 0)
+        conn->app_buf_len += (size_t)dec_len;
+    }
+  }
+
+  /* Return buffered application data */
+  if (conn->app_buf_len > conn->app_buf_pos) {
+    size_t available = conn->app_buf_len - conn->app_buf_pos;
+    size_t to_copy = (len < available) ? len : available;
+    FIO_MEMCPY(buf, conn->app_buf + conn->app_buf_pos, to_copy);
+    conn->app_buf_pos += to_copy;
+
+    if (conn->app_buf_pos >= conn->app_buf_len) {
+      conn->app_buf_len = 0;
+      conn->app_buf_pos = 0;
+    }
+    return (ssize_t)to_copy;
+  }
+
+  /* No data available yet */
+  errno = EWOULDBLOCK;
+  return -1;
+}
+
+/* *****************************************************************************
+TLS 1.3 IO Functions - Write
+***************************************************************************** */
+
+/** Called to perform a non-blocking `write`, same as the system call. */
+FIO_SFUNC ssize_t fio___tls13_write(int fd,
+                                    const void *buf,
+                                    size_t len,
+                                    void *tls_ctx) {
+  fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
+  if (!conn || !buf || len == 0)
+    return -1;
+
+  /* If handshake not complete, can't send application data */
+  if (!conn->handshake_complete) {
+    errno = EWOULDBLOCK;
+    return -1;
+  }
+
+  /* Flush any pending handshake data (e.g., client Finished) before sending
+   * application data. The server must receive the client Finished before it
+   * can process application data encrypted with application keys. */
+  while (conn->send_buf_pos < conn->send_buf_len) {
+    errno = 0;
+    ssize_t hs_written =
+        fio_sock_write(fd,
+                       conn->send_buf + conn->send_buf_pos,
+                       conn->send_buf_len - conn->send_buf_pos);
+    if (hs_written <= 0) {
+      /* Can't send handshake data yet, so can't send app data either */
+      errno = EWOULDBLOCK;
+      return -1;
+    }
+    conn->send_buf_pos += (size_t)hs_written;
+  }
+  /* Reset send buffer after handshake data is fully sent */
+  if (conn->send_buf_pos >= conn->send_buf_len) {
+    conn->send_buf_len = 0;
+    conn->send_buf_pos = 0;
+  }
+
+  /* RFC 8446 Section 4.6.3: Send KeyUpdate response before Application Data
+   * if one is pending. The response MUST be encrypted with OLD sending keys,
+   * then we update our sending keys. */
+  if (conn->is_client && conn->state.client.key_update_pending) {
+    uint8_t ku_response[64];
+    size_t key_len = fio___tls13_key_len(&conn->state.client);
+    fio_tls13_cipher_type_e cipher_type =
+        fio___tls13_cipher_type(&conn->state.client);
+
+    int ku_len = fio_tls13_send_key_update_response(
+        ku_response,
+        sizeof(ku_response),
+        conn->state.client.client_app_traffic_secret,
+        &conn->state.client.client_app_keys,
+        &conn->state.client.key_update_pending,
+        conn->state.client.use_sha384,
+        key_len,
+        cipher_type);
+
+    if (ku_len > 0) {
+      /* Send KeyUpdate response */
+      errno = 0;
+      ssize_t ku_written = fio_sock_write(fd, ku_response, (size_t)ku_len);
+      if (ku_written <= 0) {
+        /* Can't send KeyUpdate, can't send app data either */
+        errno = EWOULDBLOCK;
+        return -1;
+      }
+      FIO_LOG_DEBUG2("TLS 1.3 Client: Sent KeyUpdate response");
+    }
+  } else if (!conn->is_client && conn->state.server.key_update_pending) {
+    uint8_t ku_response[64];
+    size_t key_len = fio___tls13_server_key_len(&conn->state.server);
+    fio_tls13_cipher_type_e cipher_type =
+        fio___tls13_server_cipher_type(&conn->state.server);
+
+    int ku_len = fio_tls13_send_key_update_response(
+        ku_response,
+        sizeof(ku_response),
+        conn->state.server.server_app_traffic_secret,
+        &conn->state.server.server_app_keys,
+        &conn->state.server.key_update_pending,
+        conn->state.server.use_sha384,
+        key_len,
+        cipher_type);
+
+    if (ku_len > 0) {
+      /* Send KeyUpdate response */
+      errno = 0;
+      ssize_t ku_written = fio_sock_write(fd, ku_response, (size_t)ku_len);
+      if (ku_written <= 0) {
+        /* Can't send KeyUpdate, can't send app data either */
+        errno = EWOULDBLOCK;
+        return -1;
+      }
+      FIO_LOG_DEBUG2("TLS 1.3 Server: Sent KeyUpdate response");
+    }
+  }
+
+  /* Limit to max plaintext size */
+  if (len > FIO_TLS13_MAX_PLAINTEXT_LEN)
+    len = FIO_TLS13_MAX_PLAINTEXT_LEN;
+
+  /* Encrypt data using pre-allocated buffer (avoids stack allocation) */
+  int enc_len;
+  if (conn->is_client) {
+    enc_len = fio_tls13_client_encrypt(&conn->state.client,
+                                       conn->enc_buf,
+                                       sizeof(conn->enc_buf),
+                                       (const uint8_t *)buf,
+                                       len);
+  } else {
+    enc_len = fio_tls13_server_encrypt(&conn->state.server,
+                                       conn->enc_buf,
+                                       sizeof(conn->enc_buf),
+                                       (const uint8_t *)buf,
+                                       len);
+  }
+
+  if (enc_len < 0) {
+    FIO_LOG_DEBUG2("TLS 1.3: encryption error");
+    errno = ECONNRESET;
+    return -1;
+  }
+
+  /* Write encrypted data to socket */
+  errno = 0;
+  ssize_t written = fio_sock_write(fd, conn->enc_buf, (size_t)enc_len);
+  if (written <= 0) {
+    if (errno == EWOULDBLOCK || errno == EAGAIN)
+      return -1;
+    return written;
+  }
+
+  /* If we wrote all encrypted data, report original plaintext length */
+  if (written == enc_len)
+    return (ssize_t)len;
+
+  /* Partial write - this is tricky with TLS, report error */
+  /* TODO: Buffer partial writes properly */
+  errno = EWOULDBLOCK;
+  return -1;
+}
+
+/* *****************************************************************************
+TLS 1.3 IO Functions - Flush
+***************************************************************************** */
+
+/** Sends any unsent internal data. Returns 0 only if all data was sent. */
+FIO_SFUNC int fio___tls13_flush(int fd, void *tls_ctx) {
+  fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
+  if (!conn)
+    return 0;
+
+  /* Send any buffered handshake data */
+  while (conn->send_buf_pos < conn->send_buf_len) {
+    errno = 0;
+    ssize_t written = fio_sock_write(fd,
+                                     conn->send_buf + conn->send_buf_pos,
+                                     conn->send_buf_len - conn->send_buf_pos);
+    if (written <= 0) {
+      if (errno == EWOULDBLOCK || errno == EAGAIN)
+        return -1; /* Would block, try again later */
+      return -1;   /* Error */
+    }
+    conn->send_buf_pos += (size_t)written;
+  }
+
+  /* Reset send buffer if fully sent */
+  if (conn->send_buf_pos >= conn->send_buf_len) {
+    conn->send_buf_len = 0;
+    conn->send_buf_pos = 0;
+  }
+
+  return (conn->send_buf_len > conn->send_buf_pos) ? -1 : 0;
+}
+
+/* *****************************************************************************
+TLS 1.3 IO Functions - Finish
+***************************************************************************** */
+
+/** Called when the IO object finished sending all data before closure. */
+FIO_SFUNC void fio___tls13_finish(int fd, void *tls_ctx) {
+  fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
+  if (!conn)
+    return;
+
+  /* Send close_notify alert */
+  if (conn->handshake_complete) {
+    uint8_t alert[32];
+    /* Build close_notify alert: level=warning(1), description=close_notify(0)
+     */
+    uint8_t alert_data[2] = {1, 0};
+    int enc_len;
+
+    if (conn->is_client) {
+      enc_len = fio_tls13_record_encrypt(alert,
+                                         sizeof(alert),
+                                         alert_data,
+                                         2,
+                                         FIO_TLS13_CONTENT_ALERT,
+                                         &conn->state.client.client_app_keys);
+    } else {
+      enc_len = fio_tls13_record_encrypt(alert,
+                                         sizeof(alert),
+                                         alert_data,
+                                         2,
+                                         FIO_TLS13_CONTENT_ALERT,
+                                         &conn->state.server.server_app_keys);
+    }
+
+    if (enc_len > 0) {
+      /* Best effort send, ignore errors */
+      (void)fio_sock_write(fd, alert, (size_t)enc_len);
+    }
+  }
+  (void)fd;
+}
+
+/* *****************************************************************************
+TLS 1.3 IO Functions - Cleanup
+***************************************************************************** */
+
+/** Called after the IO object is closed, used to cleanup its `tls` object. */
+FIO_SFUNC void fio___tls13_cleanup(void *tls_ctx) {
+  fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
+  fio___tls13_connection_free(conn);
+}
+
+/* *****************************************************************************
+TLS 1.3 IO Functions Structure
+***************************************************************************** */
+
+/** Returns the TLS 1.3 IO functions (implementation) */
+SFUNC fio_io_functions_s fio_tls13_io_functions(void) {
+  return (fio_io_functions_s){
+      .build_context = fio___tls13_build_context,
+      .free_context = fio___tls13_free_context,
+      .start = fio___tls13_start,
+      .read = fio___tls13_read,
+      .write = fio___tls13_write,
+      .flush = fio___tls13_flush,
+      .cleanup = fio___tls13_cleanup,
+      .finish = fio___tls13_finish,
+  };
+}
+
+/* *****************************************************************************
+TLS 1.3 Default Setup (when OpenSSL is not available)
+***************************************************************************** */
+
+#if !defined(HAVE_OPENSSL) && !defined(H___FIO_OPENSSL___H)
+/** Setup TLS 1.3 as TLS IO default when OpenSSL is not available */
+FIO_CONSTRUCTOR(fio___tls13_setup_default) {
+  static fio_io_functions_s FIO___TLS13_IO_FUNCS;
+  FIO___TLS13_IO_FUNCS = fio_tls13_io_functions();
+  fio_io_tls_default_functions(&FIO___TLS13_IO_FUNCS);
+  FIO_LOG_DEBUG2("TLS 1.3 registered as default TLS implementation");
+}
+#endif /* !HAVE_OPENSSL && !H___FIO_OPENSSL___H */
+
+/* *****************************************************************************
+TLS 1.3 IO Functions Cleanup
+***************************************************************************** */
+#endif /* FIO_EXTERN_COMPLETE */
+#endif /* H___FIO_IO___H && H___FIO_TLS13___H */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
 #define FIO_PUBSUB             /* Development inclusion - ignore line */
 #include "./include.h"         /* Development inclusion - ignore line */
 #endif                         /* Development inclusion - ignore line */
@@ -66999,7 +70765,7 @@ TLS 1.3 IO Functions Cleanup
 
 
 
-                Pub/Sub Services for IPC / Server applications
+                Pub/Sub Services v2 (Uses FIO_IPC for Transport)
 
 
 
@@ -67009,44 +70775,55 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #if defined(FIO_PUBSUB) && !defined(H___FIO_PUBSUB___H) &&                     \
     !defined(FIO___RECURSIVE_INCLUDE)
 #define H___FIO_PUBSUB___H
+#undef FIO_PUBSUB
 
+/* FIO_PUBSUB requires FIO_IPC for inter-process communication.
+ * If FIO_IPC is not already included, we trigger an error.
+ * The user should define FIO_IPC before including, or use include.h
+ * which handles the proper ordering. */
+#ifndef H___FIO_IPC___H
+#error "FIO_PUBSUB requires FIO_IPC. Define FIO_IPC before FIO_PUBSUB."
+#endif
+
+#ifndef FIO_PUBSUB_FUTURE_LIMIT_MS
+/**
+ * Maximum time in milliseconds to allow "future" messages to be delivered.
+ *
+ * If the module detects someone publishing a future message, it will refuse to
+ * deliver the message to subscribers.
+ *
+ * Instead, the module will notify the history engines, allowing them to buffer
+ * future messages for future delivery.
+ * */
+#define FIO_PUBSUB_FUTURE_LIMIT_MS 60000ULL
+#endif
 /* *****************************************************************************
-Pub/Sub - message format
+Pub/Sub2 - Message Format
 ***************************************************************************** */
 
 /** Message structure, as received by the `on_message` subscription callback. */
-struct fio_msg_s {
+struct fio_pubsub_msg_s {
   /** A connection (if any) to which the subscription belongs. */
   fio_io_s *io;
   /** The `udata` argument associated with the subscription. */
   void *udata;
+  /** Milliseconds since epoch. */
+  uint64_t timestamp;
   /** Message ID. */
   uint64_t id;
-  /** Milliseconds since epoch. */
-  uint64_t published;
-  /**
-   * A channel name, allowing for pub/sub patterns.
-   *
-   * NOTE: this is a shared copy - do NOT mutate the channel name string.
-   */
+  /** Channel name (shared copy - do NOT mutate). */
   fio_buf_info_s channel;
-  /**
-   * The actual message.
-   *
-   * NOTE: this is a shared copy - do NOT mutate the message payload string.
-   **/
+  /** Message payload (shared copy - do NOT mutate). */
   fio_buf_info_s message;
-  /** Channel name namespace. Negative values are reserved. */
+  /** Channel namespace. Negative values are reserved. */
   int16_t filter;
-  /** flag indicating if the message is JSON data or binary/text. */
-  uint8_t is_json;
 };
+typedef struct fio_pubsub_msg_s fio_pubsub_msg_s;
 
 /* *****************************************************************************
-Pub/Sub - Subscribe / Unsubscribe
+Pub/Sub2 - Subscribe / Publish API
 ***************************************************************************** */
 
-/** Possible arguments for the fio_subscribe method. */
 typedef struct {
   /**
    * The subscription owner - if none, the subscription is owned by the system.
@@ -67070,15 +70847,13 @@ typedef struct {
   /**
    * The callback to be called for each message forwarded to the subscription.
    */
-  void (*on_message)(fio_msg_s *msg);
+  void (*on_message)(fio_pubsub_msg_s *msg);
   /** An optional callback for when a subscription is canceled. */
   void (*on_unsubscribe)(void *udata);
   /** The opaque udata value is ignored and made available to the callbacks. */
   void *udata;
   /** The queue to which the callbacks should be routed. May be NULL. */
   fio_queue_s *queue;
-  /** Replay cached messages (if any) since supplied time in milliseconds. */
-  uint64_t replay_since;
   /**
    * OPTIONAL: subscription handle return value - should be NULL when using
    * automatic memory management with the IO or global environment.
@@ -67091,510 +70866,389 @@ typedef struct {
    * handled.
    */
   uintptr_t *subscription_handle_ptr;
-  /**
-   * A numerical namespace `filter` subscribers need to match.
-   *
-   * Negative values are reserved for facil.io framework extensions.
-   *
-   * Filer channels are bound to the processes and workers, they are NOT
-   * forwarded to engines and can be used for inter process communication (IPC).
-   */
+  /** Replay cached messages (if any) since supplied time in milliseconds. */
+  uint64_t replay_since;
+  /** A numerical namespace `filter` subscribers need to match. */
   int16_t filter;
   /** If set, pattern matching will be used (name is a pattern). */
   uint8_t is_pattern;
   /** If set, subscription will be limited to the root / master process. */
   uint8_t master_only;
-} fio_subscribe_args_s;
+} fio_pubsub_subscribe_args_s;
 
 /**
- * Subscribes to a channel / filter pair.
+ * Subscribe to a channel.
  *
- * The on_unsubscribe callback will be called on failure.
+ * In worker processes, this uses IPC to notify the master.
  */
-SFUNC void fio_subscribe(fio_subscribe_args_s args);
+SFUNC void fio_pubsub_subscribe(fio_pubsub_subscribe_args_s args);
+
+#define fio_pubsub_subscribe(...)                                              \
+  fio_pubsub_subscribe((fio_pubsub_subscribe_args_s){__VA_ARGS__})
 
 /**
- * Subscribes to a channel / filter pair.
+ * Unsubscribe from a channel.
  *
- * See `fio_subscribe_args_s` for details.
+ * Returns 0 on success, -1 if subscription not found.
  */
-#define fio_subscribe(...) fio_subscribe((fio_subscribe_args_s){__VA_ARGS__})
+SFUNC int fio_pubsub_unsubscribe(fio_pubsub_subscribe_args_s args);
 
-/**
- * Cancels an existing subscriptions.
- *
- * Accepts the same arguments as `fio_subscribe`, except the `udata` and
- * callback details are ignored (no need to provide `udata` or callback
- * details).
- *
- * If a `subscription_handle_ptr` was provided it should contain the value of
- * the subscription handle returned.
- *
- * Returns -1 if the subscription could not be found. Otherwise returns 0.
- */
-SFUNC int fio_unsubscribe(fio_subscribe_args_s args);
+#define fio_pubsub_unsubscribe(...)                                            \
+  fio_pubsub_unsubscribe((fio_pubsub_subscribe_args_s){__VA_ARGS__})
 
-/**
- * Cancels an existing subscriptions.
- *
- * Accepts the same arguments as `fio_subscribe`, except the `udata` and
- * callback details are ignored (no need to provide `udata` or callback
- * details).
- *
- * Returns -1 if the subscription could not be found. Otherwise returns 0.
- */
-#define fio_unsubscribe(...)                                                   \
-  fio_unsubscribe((fio_subscribe_args_s){__VA_ARGS__})
-
-/* A callback for IO subscriptions - sends raw message data. */
-FIO_SFUNC void FIO_ON_MESSAGE_SEND_MESSAGE(fio_msg_s *msg);
-
-/* *****************************************************************************
-Pub/Sub - Publish
-***************************************************************************** */
-
-/** A pub/sub engine data structure. See details later on. */
-typedef struct fio_pubsub_engine_s fio_pubsub_engine_s;
-
-/** Publishing and on_message callback arguments. */
-typedef struct fio_publish_args_s {
-  /** The pub/sub engine that should be used to forward this message. */
-  fio_pubsub_engine_s const *engine;
-  /** If `from` is specified, it will be skipped (won't receive message)
-   *  UNLESS a non-native `engine` is specified. */
+/** Publish arguments */
+typedef struct {
+  struct fio_pubsub_engine_s const *engine;
   fio_io_s *from;
-  /** Message ID (if missing, a random ID will be generated). */
   uint64_t id;
-  /** Milliseconds since epoch (if missing, defaults to "now"). */
-  uint64_t published;
-  /** The target named channel. */
+  uint64_t timestamp;
   fio_buf_info_s channel;
-  /** The message body / content. */
   fio_buf_info_s message;
-  /** A numeral namespace for channel names. Negative values are reserved. */
   int16_t filter;
-  /** A flag indicating if the message is JSON data or not. */
-  uint8_t is_json;
-} fio_publish_args_s;
+} fio_pubsub_publish_args_s;
 
 /**
- * Publishes a message to the relevant subscribers (if any).
+ * Publish a message to a channel.
  *
- * By default the message is sent using the `FIO_PUBSUB_DEFAULT` engine (set by
- * default to `FIO_PUBSUB_LOCAL` which publishes to all processes, including the
- * calling process).
- *
- * To limit the message only to other processes (exclude the calling process),
- * use the `FIO_PUBSUB_SIBLINGS` engine.
- *
- * To limit the message only to the calling process, use the
- * `FIO_PUBSUB_PROCESS` engine.
- *
- * To limit the message only to the root process, use the `FIO_PUBSUB_ROOT`
- * engine.
+ * In worker processes, this uses IPC to notify the master.
  */
-SFUNC void fio_publish(fio_publish_args_s args);
-/**
- * Publishes a message to the relevant subscribers (if any).
- *
- * By default the message is sent using the `FIO_PUBSUB_DEFAULT` engine (set by
- * default to `FIO_PUBSUB_LOCAL` which publishes to all processes, including the
- * calling process).
- *
- * To limit the message only to other processes (exclude the calling process),
- * use the `FIO_PUBSUB_SIBLINGS` engine.
- *
- * To limit the message only to the calling process, use the
- * `FIO_PUBSUB_PROCESS` engine.
- *
- * To limit the message only to the root process, use the `FIO_PUBSUB_ROOT`
- * engine.
- */
-#define fio_publish(...) fio_publish((fio_publish_args_s){__VA_ARGS__})
+SFUNC void fio_pubsub_publish(fio_pubsub_publish_args_s args);
 
-/**
- * Defers the current callback, so it will be called again for the message.
- *
- * After calling this function, the `msg` object must NOT be accessed again.
- */
-SFUNC void fio_pubsub_message_defer(fio_msg_s *msg);
+#define fio_pubsub_publish(...)                                                \
+  fio_pubsub_publish((fio_pubsub_publish_args_s){__VA_ARGS__})
+
+/** Pushes execution of the on_message callback to the end of the queue. */
+SFUNC void fio_pubsub_defer(fio_pubsub_msg_s *msg);
+
+SFUNC void fio_pubsub_match_fn_set(uint8_t (*match_cb)(fio_str_info_s,
+                                                       fio_str_info_s));
 
 /* *****************************************************************************
-Pub/Sub - History and Event Replay - TODO!!!
+Pub/Sub2 - available IO on_pubsub callback
 ***************************************************************************** */
 
-/** Sets the maximum number of messages to be stored in the history store. */
-// SFUNC void fio_pubsub_store_limit(size_t messages);
+/** A callback for IO subscriptions - sends raw message data. */
+SFUNC void FIO_ON_MESSAGE_SEND_MESSAGE(fio_pubsub_msg_s *msg);
 
 /* *****************************************************************************
-Pub/Sub - defaults and builtin pub/sub engines
-***************************************************************************** */
-
-/** Flag bits for internal usage (message exchange network format). */
-typedef enum {
-  /* pub/sub messages */
-  FIO___PUBSUB_JSON = 1,
-  FIO___PUBSUB_PROCESS = 2,
-  FIO___PUBSUB_ROOT = 4,
-  FIO___PUBSUB_SIBLINGS = 8,
-  FIO___PUBSUB_WORKERS = (8 | 2),
-  FIO___PUBSUB_LOCAL = (8 | 4 | 2),
-  FIO___PUBSUB_REMOTE = 16,
-  FIO___PUBSUB_CLUSTER = (16 | 8 | 4 | 2),
-  FIO___PUBSUB_REPLAY = 32, /* history replay message */
-
-  /* internal messages */
-  FIO___PUBSUB_SPECIAL = 128,
-  FIO___PUBSUB_SUB = (128 | 1),
-  FIO___PUBSUB_UNSUB = (128 | 2),
-  FIO___PUBSUB_IDENTIFY = (128 | 4),  /* identify remote connection */
-  FIO___PUBSUB_FORWARDER = (128 | 8), /* forward to external engine */
-  FIO___PUBSUB_PING = (128 | 16),
-
-  FIO___PUBSUB_HISTORY_START = (128 | 32),
-  FIO___PUBSUB_HISTORY_END = (128 | 64),
-} fio___pubsub_msg_flags_e;
-
-/** Used to publish the message exclusively to the root / master process. */
-#define FIO_PUBSUB_ROOT ((fio_pubsub_engine_s *)FIO___PUBSUB_ROOT)
-/** Used to publish the message only within the current process. */
-#define FIO_PUBSUB_PROCESS ((fio_pubsub_engine_s *)FIO___PUBSUB_PROCESS)
-/** Used to publish the message except within the current process. */
-#define FIO_PUBSUB_SIBLINGS ((fio_pubsub_engine_s *)FIO___PUBSUB_SIBLINGS)
-/** Used to publish the message for this process, its siblings and root. */
-#define FIO_PUBSUB_LOCAL ((fio_pubsub_engine_s *)FIO___PUBSUB_LOCAL)
-/** Used to publish the message to any possible publishers. */
-#define FIO_PUBSUB_CLUSTER ((fio_pubsub_engine_s *)FIO___PUBSUB_CLUSTER)
-
-#if defined(FIO_EXTERN) /* static definitions can't be easily repeated. */
-/** The default engine (settable). Initial default is FIO_PUBSUB_CLUSTER. */
-SFUNC const fio_pubsub_engine_s *FIO_PUBSUB_DEFAULT;
-
-/**
- * The pattern matching callback used for pattern matching.
- *
- * Returns 1 on a match or 0 if the string does not match the pattern.
- *
- * By default, the value is set to `fio_glob_match` (see facil.io's C STL).
- */
-SFUNC uint8_t (*FIO_PUBSUB_PATTERN_MATCH)(fio_str_info_s pattern,
-                                          fio_str_info_s channel);
-#endif
-
-/* *****************************************************************************
-Message metadata (advance usage API)
+Pub/Sub2 - Fragile - access the underlying implementation for advance use-cases
 ***************************************************************************** */
 
 /**
- * The number of different metadata callbacks that can be attached.
+ * Returns the underlying IPC message buffer carrying the message data.
  *
- * Effects performance.
- *
- * The default value should be enough for the following metadata objects:
- * - WebSocket server headers.
- * - WebSocket client (header + masked message copy).
- * - EventSource (SSE) encoded named channel and message.
- */
-#ifndef FIO___PUBSUB_METADATA_STORE_LIMIT
-#define FIO___PUBSUB_METADATA_STORE_LIMIT 4
-#endif
+ * This allows message deferral (use fio_ipc_dup) and tighter control over the
+ * message's lifetime.
+ * */
+SFUNC fio_ipc_s *fio_pubsub_msg2ipc(fio_pubsub_msg_s *msg);
 
-/** Pub/Sub Metadata callback type. */
-typedef void *(*fio_msg_metadata_fn)(fio_msg_s *);
-
-/**
- * It's possible to attach metadata to facil.io pub/sub messages before they are
- * published.
- *
- * This allows, for example, messages to be encoded as network packets for
- * outgoing protocols (i.e., encoding for WebSocket transmissions), improving
- * performance in large network based broadcasting.
- *
- * Up to `FIO___PUBSUB_METADATA_STORE_LIMIT` metadata callbacks can be attached.
- *
- * The callback should return a `void *` pointer.
- *
- * To remove a callback, call `fio_message_metadata_remove` with the returned
- * value.
- *
- * The cluster messaging system allows some messages to be flagged as JSON and
- * this flag is available to the metadata callback.
- *
- * Returns zero (0) on success or -1 on failure.
- *
- * Multiple `fio_message_metadata_add` calls increase a reference count and
- * should be matched by the same number of `fio_message_metadata_remove`.
- */
-SFUNC int fio_message_metadata_add(fio_msg_metadata_fn metadata_func,
-                                   void (*cleanup)(void *));
-
-/**
- * Removed the metadata callback.
- *
- * Removal might be delayed if live metatdata exists.
- */
-SFUNC void fio_message_metadata_remove(fio_msg_metadata_fn metadata_func);
-
-/** Finds the message's metadata, returning the data or NULL. */
-SFUNC void *fio_message_metadata(fio_msg_s *msg,
-                                 fio_msg_metadata_fn metadata_func);
+/** Extract pub/sub message from IPC message */
+SFUNC fio_pubsub_msg_s fio_pubsub_ipc2msg(fio_ipc_s *ipc);
 
 /* *****************************************************************************
-Pub/Sub Middleware and Extensions ("Engines")
+Pub/Sub2 - Engine Interface
 ***************************************************************************** */
 
 /**
- * facil.io can be linked with external Pub/Sub services using "engines".
+ * Engine structure for external pub/sub backends.
  *
- * Engines MUST provide the listed function pointers and should be attached
- * using the `fio_pubsub_attach` function.
- *
- * Engines that were connected / attached using `fio_pubsub_attach` MUST
- * disconnect / detach, before being destroyed, by using the `fio_pubsub_detach`
- * function.
- *
- * When an engine received a message to publish, it should call the
- * `fio_publish` function with the engine to which the message is forwarded.
- * i.e.:
- *
- *       fio_publish(
- *           .engine = FIO_PUBSUB_LOCAL,
- *           .channel = channel_name,
- *           .message = msg_body);
- *
- * IMPORTANT: The callbacks will be called by the main IO thread, so they should
- * never block. Long tasks should copy the data and scheduling an external task
- * (i.e., using `fio_io_defer`).
+ * EXECUTION CONTEXT:
+ * - Publish callback can be called from any thread / process.
+ * - Subscription callbacks are called from the MASTER process only
+ * - Subscription callbacks are called from the main event loop thread
+ * - Callbacks MUST NOT block (defer long operations)
  */
-struct fio_pubsub_engine_s {
-  /** Called after the engine was detached, may be used for cleanup. */
-  void (*detached)(const fio_pubsub_engine_s *eng);
-  /** Subscribes to a channel. Called ONLY in the Root (master) process. */
-  void (*subscribe)(const fio_pubsub_engine_s *eng,
-                    fio_buf_info_s channel,
+typedef struct fio_pubsub_engine_s {
+  /** Called when engine is detached */
+  void (*detached)(const struct fio_pubsub_engine_s *eng);
+
+  /** Called when a subscription is created */
+  void (*subscribe)(const struct fio_pubsub_engine_s *eng,
+                    const fio_buf_info_s channel,
                     int16_t filter);
-  /** Subscribes to a pattern. Called ONLY in the Root (master) process. */
-  void (*psubscribe)(const fio_pubsub_engine_s *eng,
+
+  /** Called when a pattern subscription is created */
+  void (*psubscribe)(const struct fio_pubsub_engine_s *eng,
+                     const fio_buf_info_s channel,
+                     int16_t filter);
+
+  /** Called when a subscription is removed */
+  void (*unsubscribe)(const struct fio_pubsub_engine_s *eng,
+                      const fio_buf_info_s channel,
+                      int16_t filter);
+
+  /** Called when a pattern subscription is removed */
+  void (*punsubscribe)(const struct fio_pubsub_engine_s *eng,
+                       const fio_buf_info_s channel,
+                       int16_t filter);
+
+  /** Called when a message is published */
+  void (*publish)(const struct fio_pubsub_engine_s *eng,
+                  const fio_pubsub_msg_s *msg);
+} fio_pubsub_engine_s;
+
+/** Attach an engine to the pub/sub system */
+SFUNC void fio_pubsub_engine_attach(fio_pubsub_engine_s *engine);
+
+/** Detach an engine from the pub/sub system */
+SFUNC void fio_pubsub_engine_detach(fio_pubsub_engine_s *engine);
+
+/** Returns the builtin engine for publishing to the process group (IPC). */
+SFUNC fio_pubsub_engine_s const *fio_pubsub_engine_ipc(void);
+
+/** Returns the builtin engine for multi-machine cluster publishing (RPC). */
+SFUNC fio_pubsub_engine_s const *fio_pubsub_engine_cluster(void);
+
+/** Returns the current default engine associated with the pub/sub system. */
+SFUNC fio_pubsub_engine_s const *fio_pubsub_engine_default(void);
+
+/** Sets the current default engine associated with the pub/sub system. */
+SFUNC fio_pubsub_engine_s const *fio_pubsub_engine_default_set(
+    fio_pubsub_engine_s const *engine);
+
+/* *****************************************************************************
+Pub/Sub2 - History Manager Interface
+***************************************************************************** */
+
+/**
+ * History storage interface - completely separate from engines.
+ *
+ * EXECUTION CONTEXT:
+ * - All callbacks are called from the MASTER process only
+ * - Callbacks are called from the main event loop thread
+ * - Callbacks MUST NOT block (defer long operations)
+ * - Callbacks SHOULD NOT be called directly by the user
+ */
+typedef struct fio_pubsub_history_s {
+  /** Cleanup callback - called when history manager is detached */
+  void (*detached)(const struct fio_pubsub_history_s *hist);
+  /**
+   * Stores a message in history.
+   *
+   * Returns 0 on success, -1 on error.
+   * Called when a message is published (master only).
+   */
+  int (*push)(const struct fio_pubsub_history_s *hist, fio_pubsub_msg_s *msg);
+
+  /**
+   * Replay messages since timestamp by calling callback for each.
+   *
+   * Returns 0 if replay was handled, -1 if this manager cannot replay.
+   *
+   * MUST call the `on_done` callback to handle possible cleanup.
+   */
+  int (*replay)(const struct fio_pubsub_history_s *hist,
+                fio_buf_info_s channel,
+                int16_t filter,
+                uint64_t since,
+                void (*on_message)(fio_pubsub_msg_s *msg, void *udata),
+                void (*on_done)(void *udata),
+                void *udata);
+
+  /**
+   * Get oldest available timestamp for a channel.
+   *
+   * Returns UINT64_MAX if no history available.
+   */
+  uint64_t (*oldest)(const struct fio_pubsub_history_s *hist,
                      fio_buf_info_s channel,
                      int16_t filter);
-  /** Unsubscribes to a channel. Called ONLY in the Root (master) process. */
-  void (*unsubscribe)(const fio_pubsub_engine_s *eng,
-                      fio_buf_info_s channel,
-                      int16_t filter);
-  /** Unsubscribe to a pattern. Called ONLY in the Root (master) process. */
-  void (*punsubscribe)(const fio_pubsub_engine_s *eng,
-                       fio_buf_info_s channel,
-                       int16_t filter);
-  /** Publishes a message through the engine. Called by any worker / thread. */
-  void (*publish)(const fio_pubsub_engine_s *eng, fio_msg_s *msg);
-};
+
+} fio_pubsub_history_s;
 
 /**
- * Attaches an engine, so it's callback can be called by facil.io.
+ * Attach a history manager with the given priority.
  *
- * The `(p)subscribe` callback will be called for every existing channel.
- *
- * This can be called multiple times resulting in re-running the `(p)subscribe`
- * callbacks.
- *
- * NOTE: engines are automatically detached from child processes but can be
- * safely used even so - messages are always forwarded to the engine attached to
- * the root (master) process.
- *
- * NOTE: engines should publish events to `FIO_PUBSUB_LOCAL`.
+ * Multiple history managers can be attached. All managers receive push()
+ * calls when messages are published. For replay(), managers are tried in
+ * priority order (highest first) until one can handle the request.
  */
-SFUNC void fio_pubsub_attach(fio_pubsub_engine_s *engine);
+SFUNC int fio_pubsub_history_attach(const fio_pubsub_history_s *manager,
+                                    uint8_t priority);
 
-/** Schedules an engine for Detachment, so it could be safely destroyed. */
-SFUNC void fio_pubsub_detach(fio_pubsub_engine_s *engine);
+/** Detach a history manager. */
+SFUNC void fio_pubsub_history_detach(const fio_pubsub_history_s *manager);
+
+/**
+ * Pushes a pub/sub message to all history containers.
+ *
+ * Use ONLY by an engine, if the message needs to be saved to the history
+ * managers in the process but is never delivered locally.
+ * */
+SFUNC void fio_pubsub_history_push_all(fio_pubsub_msg_s *msg);
+
+#ifndef FIO_PUBSUB_HISTORY_DEFAULT_CACHE_SIZE_LIMIT
+/** The default cache limit - 256Mb */
+#define FIO_PUBSUB_HISTORY_DEFAULT_CACHE_SIZE_LIMIT (1ULL << 28)
+#endif
+/**
+ * Get the built-in in-memory history manager and set it's byte-size limit.
+ *
+ * A zero value size_limit will be replaced with the following default:
+ * - Environment value of WEBSITE_MEMORY_LIMIT_MB * 1024 * 1024
+ * - Environment value of WEBSITE_MEMORY_LIMIT_KB
+ * - Environment value of WEBSITE_MEMORY_LIMIT
+ * - FIO_PUBSUB_HISTORY_DEFAULT_CACHE_SIZE_LIMIT
+ * */
+SFUNC fio_pubsub_history_s const *fio_pubsub_history_cache(size_t size_limit);
 
 /* *****************************************************************************
-Pub/Sub Clustering and Security
-***************************************************************************** */
-
-/** Sets the current IPC socket address (can't be changed while running). */
-SFUNC int fio_pubsub_ipc_url_set(char *str, size_t len);
-
-/** Returns a pointer to the current IPC socket address. */
-SFUNC const char *fio_pubsub_ipc_url(void);
-
-/** Auto-peer detection and pub/sub multi-machine clustering using `port`. */
-SFUNC void fio_pubsub_broadcast_on_port(int16_t port);
-
-/* *****************************************************************************
-
-
-
-Pub/Sub Implementation
-
-
-
-The implementation has a big number of interconnected modules:
-- Distribution Channels (`fio_channel_s` and `FIO___PUBSUB_POSTOFFICE`)
-- Subscriptions (`fio_subscription_s`)
-- Metadata Management.
-- External Distribution Engines (`fio_pubsub_engine_s`)
-- Message format and their network exchange protocols (`fio___pubsub_message_s`)
-
-Message wire format (as 64 bit numerals in little endien encoding):
-[0] Message ID
-[1] Publication time (milliseconds since epoch)
-[2] 16 bit filter | 16 bit channel len | 24 bit message len | 8 bit flags
-| --- encryption starts --- |
-| X bytes - (channel name, + 1 NUL terminator) |
-| Y bytes - (message data, + 1 NUL terminator) |
-| --- encryption ends --- |
-| 16 bytes - (optional) message MAC |
+Pub/Sub2 - Implementation
 ***************************************************************************** */
 #if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+#define FIO___RECURSIVE_INCLUDE 1
 
-#undef FIO___PUBSUB_MESSAGE_HEADER
-#define FIO___PUBSUB_MESSAGE_HEADER 24
-/* header + 2 NUL bytes (message + channel) + 16 byte MAC */
-#undef FIO___PUBSUB_MESSAGE_OVERHEAD
-#define FIO___PUBSUB_MESSAGE_OVERHEAD (FIO___PUBSUB_MESSAGE_HEADER + 18)
+/* Op-code for cluster messages (in library's reserved range 0xFF000000) */
+#define FIO___PUBSUB_OPCODE_PUBLISH 0xFF505501
 
 /* *****************************************************************************
-Pub/Sub - defaults and builtin pub/sub engines
+Channel Type - Reference Counting via FIO_REF
 ***************************************************************************** */
 
-/** The default engine (settable). Initial default is FIO_PUBSUB_CLUSTER. */
-SFUNC const fio_pubsub_engine_s *FIO_PUBSUB_DEFAULT = FIO_PUBSUB_CLUSTER;
-
-/**
- * The pattern matching callback used for pattern matching.
- *
- * Returns 1 on a match or 0 if the string does not match the pattern.
- *
- * By default, the value is set to `fio_glob_match` (see facil.io's C STL).
- */
-SFUNC uint8_t (*FIO_PUBSUB_PATTERN_MATCH)(fio_str_info_s,
-                                          fio_str_info_s) = fio_glob_match;
-
-/* a mock callback for subscriptions */
-FIO_SFUNC void fio___subscription_mock_cb(fio_msg_s *msg) { (void)msg; }
-
-/* A callback for IO subscriptions. */
-FIO_SFUNC void fio___subscription_call_protocol(fio_msg_s *msg) {
-  if (!msg->io)
-    return;
-  fio_io_protocol_s *p = fio_io_protocol(msg->io);
-  FIO_ASSERT_DEBUG(p, "every IO object should have a protocol, always");
-  p->on_pubsub(msg);
-}
-
-#ifndef FIO___PUBSUB_CLUSTER_BACKLOG
-#define FIO___PUBSUB_CLUSTER_BACKLOG (1UL << 12)
-#endif
-
-/* *****************************************************************************
-PostOffice Distribution types - Channel and Subscription Core Types
-***************************************************************************** */
-
-/** The Distribution Channel: manages subscriptions to named channels. */
-typedef struct fio_channel_s {
+/* Channel structure */
+typedef struct fio_pubsub_channel_s {
   FIO_LIST_HEAD subscriptions;
-  FIO_LIST_HEAD history;
   uint32_t name_len;
   int16_t filter;
   uint8_t is_pattern;
   char name[];
-} fio_channel_s;
+} fio_pubsub_channel_s;
 
-/** The Channel Map: maps named channels. */
-FIO_SFUNC void fio___channel_on_create(fio_channel_s *ch);
-FIO_SFUNC void fio___channel_on_destroy(fio_channel_s *ch);
+FIO_SFUNC void fio___pubsub_channel_on_create(fio_pubsub_channel_s *ch);
+FIO_SFUNC void fio___pubsub_channel_on_destroy(fio_pubsub_channel_s *ch);
 
-/**
- * Reference counting: `fio_channel_dup(ch)` / `fio_channel_free(ch)`
- */
-#define FIO_REF_NAME             fio_channel
+/* Channel reference counting */
+#define FIO_REF_NAME             fio_pubsub_channel
 #define FIO_REF_FLEX_TYPE        char
-#define FIO_REF_DESTROY(ch)      fio___channel_on_destroy(&(ch))
+#define FIO_REF_DESTROY(ch)      fio___pubsub_channel_on_destroy(&(ch))
 #define FIO_REF_CONSTRUCTOR_ONLY 1
-#define FIO___RECURSIVE_INCLUDE  1
 #include FIO_INCLUDE_FILE
-#undef FIO___RECURSIVE_INCLUDE
 
-/** The Subscription: contains subscriber data. */
-typedef struct fio_subscription_s {
+/* *****************************************************************************
+Subscription Type - Reference Counting via FIO_REF
+***************************************************************************** */
+
+/* Subscription structure */
+typedef struct fio_pubsub_subscription_s {
   FIO_LIST_NODE node;
-  FIO_LIST_NODE history;
-  FIO_LIST_NODE history_active;
-  uint64_t replay_since;
   fio_io_s *io;
-  fio_channel_s *channel;
-  fio_queue_s *queue;
-  void (*on_message)(fio_msg_s *msg);
+  void (*on_message)(fio_pubsub_msg_s *msg);
   void (*on_unsubscribe)(void *udata);
   void *udata;
-} fio_subscription_s;
+  fio_queue_s *queue;
+  uint64_t replay_since;
+  fio_pubsub_channel_s *channel;
+  int16_t filter;      /* Channel filter (temporary before channel is set) */
+  uint8_t is_pattern;  /* Pattern flag (temporary before channel is set) */
+  uint8_t master_only; /* If true, subscription exists only in master process */
+} fio_pubsub_subscription_s;
 
-/**
- * Reference counting: `fio_subscription_dup(sb)` / `fio_subscription_free(sb)`
- */
-FIO_SFUNC void fio___pubsub_subscription_on_destroy(fio_subscription_s *sub);
-#define FIO_REF_NAME             fio___subscription
-#define FIO_REF_TYPE             fio_subscription_s
-#define FIO_REF_DESTROY(obj)     fio___pubsub_subscription_on_destroy(&(obj))
-#define FIO_REF_CONSTRUCTOR_ONLY 1
-#define FIO___RECURSIVE_INCLUDE  1
+FIO_SFUNC void fio___pubsub_subscription_on_destroy(
+    fio_pubsub_subscription_s *s);
+
+/* Subscription reference counting */
+#define FIO_REF_NAME         fio_pubsub_subscription
+#define FIO_REF_DESTROY(obj) fio___pubsub_subscription_on_destroy(&(obj))
 #include FIO_INCLUDE_FILE
-#undef FIO___RECURSIVE_INCLUDE
 
-/** The Message Container */
-typedef struct {
-  fio_msg_s data;
-  void *metadata[FIO___PUBSUB_METADATA_STORE_LIMIT];
-  uint8_t metadata_is_initialized; /* to compact this we need to change all? */
-  char buf[];
-} fio___pubsub_message_s;
-
-/* returns the internal message object. */
-FIO_IFUNC fio___pubsub_message_s *fio___pubsub_msg2internal(fio_msg_s *msg);
-
-/** Callback called when a message is destroyed (reference counting). */
-FIO_SFUNC void fio___pubsub_message_on_destroy(fio___pubsub_message_s *m);
-
-/* Message reference counting */
-#define FIO_REF_NAME             fio___pubsub_message
-#define FIO_REF_DESTROY(obj)     fio___pubsub_message_on_destroy(&(obj))
-#define FIO_REF_FLEX_TYPE        char
-#define FIO_REF_CONSTRUCTOR_ONLY 1
-#define FIO___RECURSIVE_INCLUDE  1
-#include FIO_INCLUDE_FILE
-#undef FIO___RECURSIVE_INCLUDE
-
-typedef struct {
-  size_t len;
-  uint64_t uuid[2];
-  fio___pubsub_message_s *msg;
-  char buf[];
-} fio___pubsub_message_parser_s;
-
-FIO_LEAK_COUNTER_DEF(fio___pubsub_message_parser_s)
-
-FIO_IFUNC fio___pubsub_message_parser_s *fio___pubsub_message_parser(
-    fio_io_s *io) {
-  return io ? (fio___pubsub_message_parser_s *)fio_io_buffer(io) : NULL;
+/* Subscription reference counting helpers - thread management */
+FIO_SFUNC void fio___pubsub_subscription_free_task(void *s, void *ignr_) {
+  fio_pubsub_subscription_free2(s);
+  (void)ignr_;
 }
 
-FIO_SFUNC void fio___pubsub_message_parser_init(
-    fio___pubsub_message_parser_s *p) {
-  FIO_LEAK_COUNTER_ON_ALLOC(fio___pubsub_message_parser_s);
-  *p = (fio___pubsub_message_parser_s){0};
+FIO_SFUNC void fio_pubsub_subscription_free(fio_pubsub_subscription_s *s) {
+  fio_io_defer(fio___pubsub_subscription_free_task, s, NULL);
 }
 
-FIO_SFUNC void fio___pubsub_message_parser_destroy(
-    fio___pubsub_message_parser_s *p) {
-  fio___pubsub_message_free(p->msg);
-  FIO_LEAK_COUNTER_ON_FREE(fio___pubsub_message_parser_s);
+FIO_IFUNC fio_pubsub_subscription_s *fio_pubsub_subscription_dup(
+    fio_pubsub_subscription_s *s) {
+  return fio_pubsub_subscription_dup2(s);
+}
+
+/** Compute environment type key for subscription storage. */
+FIO_IFUNC intptr_t fio___pubsub_channel_env_type(int16_t filter,
+                                                 uint8_t is_pattern) {
+  return (intptr_t)(0LL - (((2ULL | (!!is_pattern)) << 16) | (uint16_t)filter));
+}
+
+/** Stub on_message handler - used for unsubscribed subscriptions */
+FIO_SFUNC void fio___pubsub_on_message_stub(fio_pubsub_msg_s *msg) {
+  (void)msg;
 }
 
 /* *****************************************************************************
-PostOffice Distribution types - The Distribution Channel Map
+Engine Collection
 ***************************************************************************** */
 
+/* Engine array */
+FIO_TYPEDEF_IMAP_ARRAY(fio___pubsub_engines,
+                       fio_pubsub_engine_s *,
+                       uint32_t,
+                       fio_risky_ptr,
+                       FIO_IMAP_SIMPLE_CMP,
+                       FIO_IMAP_VALID_NON_ZERO)
+
+/* *****************************************************************************
+History Collection
+***************************************************************************** */
+
+/* History manager entry with priority */
+typedef struct {
+  fio_pubsub_history_s *manager;
+  uint8_t priority;
+} fio___pubsub_history_entry_s;
+
+FIO_SFUNC uint64_t
+fio___pubsub_history_entry_hash(fio___pubsub_history_entry_s *e) {
+  return fio_risky_ptr(e->manager);
+}
+FIO_SFUNC int fio___pubsub_history_entry_cmp(fio___pubsub_history_entry_s *a,
+                                             fio___pubsub_history_entry_s *b) {
+  return a->manager == b->manager;
+}
+FIO_SFUNC int fio___pubsub_history_entry_valid(
+    fio___pubsub_history_entry_s *e) {
+  return e->manager != NULL;
+}
+
+FIO_TYPEDEF_IMAP_ARRAY(fio___pubsub_history_managers,
+                       fio___pubsub_history_entry_s,
+                       uint32_t,
+                       fio___pubsub_history_entry_hash,
+                       fio___pubsub_history_entry_cmp,
+                       fio___pubsub_history_entry_valid)
+
+/* Sort history managers by priority (descending - highest first) */
+#define FIO_SORT_NAME            fio___pubsub_history_entry
+#define FIO_SORT_TYPE            fio___pubsub_history_entry_s
+#define FIO_SORT_IS_BIGGER(a, b) ((a).priority < (b).priority)
+#include FIO_INCLUDE_FILE
+
+/* *****************************************************************************
+Wire Format - IPC Message Payloads
+***************************************************************************** */
+
+/**
+ * Wire format for history request payload in fio_ipc_s.data[]
+ *
+ * NOTE: filter is carried in ipc->flags (cast int16_t to uint16_t)
+ */
+typedef struct {
+  uint64_t replay_since; /* Timestamp to replay from */
+  uint32_t channel_len;  /* Channel name length */
+  char channel[];        /* Channel name */
+} fio___pubsub_history_request_s;
+
+/* History request header size without flex array padding */
+#define FIO___PUBSUB_HISTORY_REQUEST_HEADER_LEN                                \
+  FIO_PTR_FIELD_OFFSET(fio___pubsub_history_request_s, channel)
+
+/* *****************************************************************************
+Channel Map
+***************************************************************************** */
+
+/* Channel map helpers */
 #define FIO___PUBSUB_CHANNEL_ENCODE_CAPA(filter_, is_pattern_)                 \
   (((size_t)(is_pattern_) << 16) | (size_t)(uint16_t)(filter_))
 
@@ -67603,1663 +71257,1403 @@ PostOffice Distribution types - The Distribution Channel Map
                 ch->name_len,                                                  \
                 FIO___PUBSUB_CHANNEL_ENCODE_CAPA(ch->filter, ch->is_pattern))
 
-FIO_IFUNC int fio___channel_cmp(fio_channel_s *ch, fio_str_info_s s) {
+FIO_IFUNC int fio___channel_cmp(fio_pubsub_channel_s *ch, fio_str_info_s s) {
   fio_str_info_s c = FIO___PUBSUB_CHANNEL2STR(ch);
-  return FIO_STR_INFO_IS_EQ(c, s);
+  return c.capa == s.capa && FIO_STR_INFO_IS_EQ(c, s);
 }
 
-FIO_IFUNC fio_channel_s *fio___channel_new_for_map(fio_str_info_s s) {
-  fio_channel_s *ch = fio_channel_new(s.len + 1);
+FIO_IFUNC fio_pubsub_channel_s *fio___pubsub_channel_new_for_map(
+    fio_str_info_s s) {
+  fio_pubsub_channel_s *ch = fio_pubsub_channel_new(s.len + 1);
   FIO_ASSERT_ALLOC(ch);
-  *ch = (fio_channel_s){
+  *ch = (fio_pubsub_channel_s){
       .subscriptions = FIO_LIST_INIT(ch->subscriptions),
-      .history = FIO_LIST_INIT(ch->history),
       .name_len = (uint32_t)s.len,
       .filter = (int16_t)(s.capa & 0xFFFFUL),
       .is_pattern = (uint8_t)(s.capa >> 16),
   };
-  if (s.buf && s.len) /* avoid UB: memcpy with NULL src even when len==0 */
+  if (s.buf && s.len)
     FIO_MEMCPY(ch->name, s.buf, s.len);
   ch->name[s.len] = 0;
-  fio___channel_on_create(ch);
+  fio___pubsub_channel_on_create(ch);
   return ch;
 }
 
-#define FIO_MAP_NAME                  fio___channel_map
+/* Channel map type */
+#define FIO_UMAP_NAME                 fio___pubsub_channel_map
 #define FIO_MAP_KEY                   fio_str_info_s
-#define FIO_MAP_KEY_INTERNAL          fio_channel_s *
+#define FIO_MAP_KEY_INTERNAL          fio_pubsub_channel_s *
 #define FIO_MAP_KEY_FROM_INTERNAL(k_) FIO___PUBSUB_CHANNEL2STR(k_)
-#define FIO_MAP_KEY_COPY(dest, src)   ((dest) = fio___channel_new_for_map((src)))
-#define FIO_MAP_KEY_CMP(a, b)         fio___channel_cmp((a), (b))
-#define FIO_MAP_HASH_FN(str)          fio_risky_hash(str.buf, str.len, str.capa)
-#define FIO_MAP_KEY_DESTROY(key)      fio_channel_free((key))
+#define FIO_MAP_KEY_COPY(dest, src)                                            \
+  ((dest) = fio___pubsub_channel_new_for_map((src)))
+#define FIO_MAP_KEY_CMP(a, b)    fio___channel_cmp((a), (b))
+#define FIO_MAP_HASH_FN(str)     fio_risky_hash(str.buf, str.len, str.capa)
+#define FIO_MAP_KEY_DESTROY(key) fio_pubsub_channel_free((key))
 #define FIO_MAP_KEY_DISCARD(key)
-#define FIO___RECURSIVE_INCLUDE 1
 #include FIO_INCLUDE_FILE
-#undef FIO___RECURSIVE_INCLUDE
 
 /* *****************************************************************************
-Pub/Sub Subscription destruction
+History Buffer Types
 ***************************************************************************** */
 
-/* calls the on_unsubscribe callback. */
-FIO_SFUNC void fio___pubsub_subscription_on_destroy__task(void *fnp,
-                                                          void *udata) {
-  union {
-    void *p;
-    void (*fn)(void *udata);
-  } u = {.p = fnp};
-  u.fn(udata);
+#define FIO___PUBSUB_HISTORY_CHANNEL_HASH(o)                                   \
+  (fio_risky_num((o)[0]->len, (o)[0]->timestamp) + (o)[0]->id)
+#define FIO___PUBSUB_HISTORY_CHANNEL_CMP(a, b)                                 \
+  ((a)[0]->len == (b)[0]->len && (a)[0]->id == (b)[0]->id &&                   \
+   (a)[0]->timestamp == (b)[0]->timestamp)
+
+/* History Message Array per Channel */
+FIO_TYPEDEF_IMAP_ARRAY(fio___pubsub_history_channel,
+                       fio_ipc_s *,
+                       uint64_t,
+                       FIO___PUBSUB_HISTORY_CHANNEL_HASH,
+                       FIO___PUBSUB_HISTORY_CHANNEL_CMP,
+                       FIO_IMAP_VALID_NON_ZERO)
+
+/* Sort history managers by priority (descending - highest first) */
+#define FIO_SORT_NAME            fio___pubsub_history_channel
+#define FIO_SORT_TYPE            fio_ipc_s *
+#define FIO_SORT_IS_BIGGER(a, b) ((a)->timestamp > (b)->timestamp)
+#include FIO_INCLUDE_FILE
+
+#undef FIO___PUBSUB_HISTORY_CHANNEL_HASH
+#undef FIO___PUBSUB_HISTORY_CHANNEL_CMP
+
+FIO_IFUNC size_t fio___pubsub_history_cache_ipc_size(fio_ipc_s *ipc) {
+  return ipc->len + sizeof(*ipc) + 8;
 }
 
-FIO_SFUNC void fio___pubsub_subscription_on_destroy(fio_subscription_s *s) {
-  if (s->on_unsubscribe) {
-    union {
-      void *p;
-      void (*fn)(void *udata);
-    } u = {.fn = s->on_unsubscribe};
-    fio_queue_push(fio_io_queue(),
-                   fio___pubsub_subscription_on_destroy__task,
-                   u.p,
-                   s->udata);
-  }
-}
-/* *****************************************************************************
-Pub/Sub Subscription map (for mapping Master only subscriptions)
-***************************************************************************** */
-
-/** Performs Housekeeping and defers the on_unsubscribe callback. */
-FIO_IFUNC void fio___pubsub_subscription_unsubscribe(fio_subscription_s *s);
-
-/* define a helper map to manage master only subscription. */
-#define FIO_MAP_KEY_KSTR
-#define FIO_MAP_NAME             fio___postoffice_msmap
-#define FIO_MAP_VALUE            fio_subscription_s *
-#define FIO_MAP_VALUE_DESTROY(s) fio___pubsub_subscription_unsubscribe(s)
-#define FIO___RECURSIVE_INCLUDE
-#include FIO_INCLUDE_FILE
-#undef FIO___RECURSIVE_INCLUDE
-
-/* *****************************************************************************
-Pub/Sub Remote Connection Uniqueness
-***************************************************************************** */
-
-/* Managing Remote Connection Uniqueness */
-#define FIO_MAP_NAME fio___pubsub_broadcast_connected
-#define FIO_MAP_KEY  uint64_t
-#define FIO___RECURSIVE_INCLUDE
-#include FIO_INCLUDE_FILE
-#undef FIO___RECURSIVE_INCLUDE
-
-/* *****************************************************************************
-Pub/Sub Engine Map
-***************************************************************************** */
-
-/* Managing Remote Connection Uniqueness */
-#define FIO_MAP_NAME        fio___pubsub_engines
-#define FIO_MAP_KEY         fio_pubsub_engine_s *
-#define FIO_MAP_HASH_FN(e)  fio_risky_ptr(e)
-#define FIO_MAP_RECALC_HASH 1
-#define FIO_MAP_KEY_DESTROY(e)                                                 \
-  do {                                                                         \
-    e->detached(e);                                                            \
-    e = NULL;                                                                  \
-  } while (0)
-#define FIO_MAP_KEY_DISCARD(e)
-#define FIO___RECURSIVE_INCLUDE
-#include FIO_INCLUDE_FILE
-#undef FIO___RECURSIVE_INCLUDE
-
-/* *****************************************************************************
-Message Uniqueness Map for filtering remote connection broadcasts
-***************************************************************************** */
-
-/* Managing Remote Connection Uniqueness */
-#define FIO_MAP_NAME             fio___pubsub_message_map
-#define FIO_MAP_KEY              fio___pubsub_message_s *
-#define FIO_MAP_KEY_COPY(d_, e_) (d_ = fio___pubsub_message_dup(e_))
-#define FIO_MAP_KEY_CMP(a, b)                                                  \
-  (a->data.id == b->data.id && a->data.published == b->data.published)
-#define FIO_MAP_KEY_DESTROY(e) fio___pubsub_message_free(e)
-#define FIO_MAP_HASH_FN(m)     fio_risky_num(m->data.id, m->data.published)
-#define FIO_MAP_RECALC_HASH    1
-#define FIO_MAP_LRU            FIO___PUBSUB_CLUSTER_BACKLOG
-#define FIO_MAP_KEY_DISCARD(e)
-#define FIO___RECURSIVE_INCLUDE
-#include FIO_INCLUDE_FILE
-#undef FIO___RECURSIVE_INCLUDE
-
-/* *****************************************************************************
-Pub/Sub Post Office State
-***************************************************************************** */
-#ifndef FIO___IPC_LEN
-#define FIO___IPC_LEN 256
-#endif
-
-FIO_SFUNC void fio___pubsub_protocol_on_attach(fio_io_s *io);
-FIO_SFUNC void fio___pubsub_protocol_on_data_master(fio_io_s *io);
-FIO_SFUNC void fio___pubsub_protocol_on_data_worker(fio_io_s *io);
-FIO_SFUNC void fio___pubsub_protocol_on_data_remote(fio_io_s *io);
-FIO_SFUNC void fio___pubsub_protocol_on_close(void *buffer, void *udata);
-FIO_SFUNC void fio___pubsub_protocol_on_timeout(fio_io_s *io);
-
-static struct FIO___PUBSUB_POSTOFFICE {
-  fio_u128 uuid;
-  fio___channel_map_s channels;
-  fio___channel_map_s patterns;
-  struct {
-    uint8_t publish;
-    uint8_t local;
-    uint8_t remote;
-  } filter;
-  uint8_t crush_on_close;
-  FIO___LOCK_TYPE lock;
-  fio___pubsub_engines_s engines;
-  FIO_LIST_NODE history_active;
-  FIO_LIST_NODE history_waiting;
-  fio___postoffice_msmap_s master_subscriptions;
-  fio___postoffice_msmap_s global_subscriptions;
-  fio___pubsub_broadcast_connected_s remote_uuids;
-  fio___pubsub_message_map_s remote_messages;
-  fio___pubsub_message_map_s history_messages;
-  struct {
-    fio_io_protocol_s ipc;
-    fio_io_protocol_s remote;
-  } protocol;
-  fio_io_s *broadcaster;
-  struct {
-    fio_msg_metadata_fn build;
-    void (*cleanup)(void *);
-    size_t ref;
-  } metadata[FIO___PUBSUB_METADATA_STORE_LIMIT];
-  char ipc_url[FIO___IPC_LEN];
-} FIO___PUBSUB_POSTOFFICE = {
-    .filter =
-        {
-            .publish = (FIO___PUBSUB_PROCESS | FIO___PUBSUB_ROOT),
-            .local = (FIO___PUBSUB_SIBLINGS),
-            .remote = FIO___PUBSUB_REMOTE,
-        },
-    .lock = FIO___LOCK_INIT,
-    .protocol =
-        {
-            .ipc =
-                {
-                    .on_attach = fio___pubsub_protocol_on_attach,
-                    .on_data = fio___pubsub_protocol_on_data_master,
-                    .on_close = fio___pubsub_protocol_on_close,
-                    .on_timeout = fio_io_touch,
-                    .buffer_size = sizeof(fio___pubsub_message_parser_s) +
-                                   FIO___PUBSUB_MESSAGE_OVERHEAD,
-                },
-            .remote =
-                {
-                    .on_attach = fio___pubsub_protocol_on_attach,
-                    .on_data = fio___pubsub_protocol_on_data_remote,
-                    .on_close = fio___pubsub_protocol_on_close,
-                    .on_timeout = fio___pubsub_protocol_on_timeout,
-                    .buffer_size = sizeof(fio___pubsub_message_parser_s) +
-                                   FIO___PUBSUB_MESSAGE_OVERHEAD,
-                },
-        },
-};
-
-/** Returns the secret key for a message with stated `rndm` value. */
-FIO_IFUNC const void *fio___pubsub_secret_key(fio_u256 *dest, uint64_t rndm) {
-  fio_u512 s = fio_secret();
-  fio_memcpy32(dest->u8, s.u8 + (rndm & 15));
-  return (void *)dest;
-}
-
-/* *****************************************************************************
-PostOffice Helpers
-***************************************************************************** */
-
-/** Sets the current IPC socket address (shouldn't be changed while running). */
-SFUNC int fio_pubsub_ipc_url_set(char *str, size_t len) {
-  if (fio_io_is_running() || len >= FIO___IPC_LEN)
+FIO_IFUNC int fio___pubsub_history_channel_push(
+    fio___pubsub_history_channel_s *map,
+    fio_ipc_s *msg) {
+  fio_ipc_s **pos = fio___pubsub_history_channel_get(map, msg);
+  if (pos) {
+    FIO_LOG_DDEBUG2("(%d) History message push filtered (existing): %p-%p",
+                    (void *)msg->timestamp,
+                    (void *)msg->id);
     return -1;
-  fio_str_info_s url =
-      FIO_STR_INFO3(FIO___PUBSUB_POSTOFFICE.ipc_url, 0, FIO___IPC_LEN);
-  fio_string_write2(&url, NULL, FIO_STRING_WRITE_STR2(str, len));
+  }
+  pos = fio___pubsub_history_channel_set(map, fio_ipc_dup(msg), 1);
+  fio___pubsub_history_channel_sort(map->ary, map->w);
+  if (*pos != msg) /* did the order change? */
+    fio___pubsub_history_channel_rehash(map);
   return 0;
 }
-/** Returns the current IPC socket address (shouldn't be changed). */
-SFUNC const char *fio_pubsub_ipc_url(void) {
-  return FIO___PUBSUB_POSTOFFICE.ipc_url;
+
+FIO_IFUNC size_t
+fio___pubsub_history_channel_pop(fio___pubsub_history_channel_s *map) {
+  size_t r = 0;
+  if (!map->count)
+    return r;
+  fio_ipc_s *old = map->ary[0];
+  r = fio___pubsub_history_cache_ipc_size(old);
+  fio___pubsub_history_channel_remove(map, old);
+  fio_ipc_free(old);
+  return r;
+}
+
+FIO_IFUNC void fio___pubsub_history_channel_destroy_all(
+    fio___pubsub_history_channel_s *map) {
+  FIO_IMAP_EACH(fio___pubsub_history_channel, map, i)
+  fio_ipc_free(map->ary[i]);
+  fio___pubsub_history_channel_destroy(map);
+}
+
+/* History map type */
+#define FIO_UMAP_NAME        fio___pubsub_history_map
+#define FIO_MAP_KEY          fio_str_info_s
+#define FIO_MAP_KEY_INTERNAL char *
+
+#define FIO_MAP_KEY_FROM_INTERNAL(k)                                           \
+  ((fio_str_info_s){.buf = k + sizeof(size_t),                                 \
+                    .len = fio_bstr_len(k) - sizeof(size_t),                   \
+                    .capa = fio_buf2zu(k)})
+#define FIO_MAP_KEY_COPY(dest, src)                                            \
+  ((dest) = fio_bstr_write2(                                                   \
+       NULL,                                                                   \
+       FIO_STRING_WRITE_STR2((char *)&(src).capa, sizeof(size_t)),             \
+       FIO_STRING_WRITE_STR2((src).buf, (src).len)))
+#define FIO_MAP_KEY_CMP(a, b)                                                  \
+  ((b).capa == fio_buf2zu((a)) &&                                              \
+   (fio_bstr_len((a)) - sizeof(size_t)) == (b).len &&                          \
+   !FIO_MEMCMP((a) + sizeof(size_t), (b).buf, (b).len))
+
+#define FIO_MAP_HASH_FN(str)     fio_risky_hash(str.buf, str.len, str.capa)
+#define FIO_MAP_KEY_DESTROY(key) fio_bstr_free((key))
+#define FIO_MAP_KEY_DISCARD(key)
+
+#define FIO_MAP_VALUE fio___pubsub_history_channel_s
+#define FIO_MAP_VALUE_DESTROY(val)                                             \
+  fio___pubsub_history_channel_destroy_all(&(val))
+
+#include FIO_INCLUDE_FILE
+
+typedef struct {
+  size_t limit;
+  size_t size;
+  fio___pubsub_history_map_s map;
+} fio___pubsub_history_cache_s;
+/* TODO: remove older messages as necessary */
+
+FIO_SFUNC void fio___pubsub_history_cache_destroy(
+    fio___pubsub_history_cache_s *h) {
+  h->size = 0;
+  fio___pubsub_history_map_destroy(&h->map);
+}
+
+FIO_IFUNC fio___pubsub_history_channel_s *fio___pubsub_history_cache_channel(
+    fio___pubsub_history_cache_s *cache,
+    fio_buf_info_s channel,
+    int16_t filter) {
+  fio_str_info_s cname =
+      FIO_STR_INFO3(channel.buf, channel.len, (size_t)(uint16_t)filter);
+  fio___pubsub_history_map_node_s *pos =
+      fio___pubsub_history_map_get_ptr(&cache->map, cname);
+  if (!pos)
+    return NULL;
+
+  return &pos->value;
+}
+FIO_IFUNC fio___pubsub_history_channel_s *
+fio___pubsub_history_cache_channel_new(fio___pubsub_history_cache_s *cache,
+                                       fio_buf_info_s channel,
+                                       int16_t filter) {
+  fio_str_info_s cname =
+      FIO_STR_INFO3(channel.buf, channel.len, (size_t)(uint16_t)filter);
+  fio___pubsub_history_map_node_s *pos =
+      fio___pubsub_history_map_set_ptr(&cache->map,
+                                       cname,
+                                       (fio___pubsub_history_channel_s){0},
+                                       NULL,
+                                       0);
+  if (!pos)
+    return NULL;
+  return &pos->value;
 }
 
 /* *****************************************************************************
-Postoffice History Control
+Global State
 ***************************************************************************** */
 
-FIO_SFUNC void fio___pubub_on_history_start(void *ignr_1, void *ignr_2) {
-  (void)ignr_1, (void)ignr_2;
-  if (!FIO_LIST_IS_EMPTY(&FIO___PUBSUB_POSTOFFICE.history_active))
-    return;
-  FIO_LIST_EACH(fio_subscription_s,
-                history_active,
-                &FIO___PUBSUB_POSTOFFICE.history_active,
-                s) {
-    FIO_LIST_REMOVE(&s->history);
-    FIO_LIST_REMOVE(&s->history_active);
-    FIO_LIST_PUSH(&s->channel->history, &s->history);
-    FIO_LIST_PUSH(&FIO___PUBSUB_POSTOFFICE.history_active, &s->history_active);
-  }
+static struct {
+  fio___pubsub_channel_map_s channels;
+  fio___pubsub_channel_map_s patterns;
+  fio___pubsub_engines_s engines;
+  fio___pubsub_history_managers_s history_managers;
+  uint8_t (*match_fn)(fio_str_info_s pattern, fio_str_info_s name);
+  fio_pubsub_engine_s *default_engine;
+  fio_pubsub_engine_s local_engine;
+  fio_pubsub_engine_s cluster_engine;
+  fio_pubsub_history_s cache_manager;
+  fio___pubsub_history_cache_s cache;
+} FIO___PUBSUB_POSTOFFICE;
+
+/* *****************************************************************************
+Pattern Matching & Defaults
+***************************************************************************** */
+
+SFUNC void fio_pubsub_match_fn_set(uint8_t (*match_cb)(fio_str_info_s,
+                                                       fio_str_info_s)) {
+  if (!match_cb)
+    match_cb = fio_glob_match;
+  FIO___PUBSUB_POSTOFFICE.match_fn = match_cb;
 }
 
-FIO_SFUNC void fio___pubub_on_history_end(void *ignr_1, void *ignr_2) {
-  (void)ignr_1, (void)ignr_2;
-  FIO_LIST_EACH(fio_subscription_s,
-                history_active,
-                &FIO___PUBSUB_POSTOFFICE.history_active,
-                s) {
-    FIO_LIST_REMOVE(&s->history);
-    FIO_LIST_REMOVE(&s->history_active);
-  }
+/** Returns the current default engine associated with the pub/sub system. */
+SFUNC fio_pubsub_engine_s const *fio_pubsub_engine_default(void) {
+  return FIO___PUBSUB_POSTOFFICE.default_engine;
+}
+
+FIO_SFUNC void fio___pubsub_pre_start(void *ignr_);
+/** Sets the current default engine associated with the pub/sub system. */
+SFUNC fio_pubsub_engine_s const *fio_pubsub_engine_default_set(
+    fio_pubsub_engine_s const *engine) {
+  if (!engine)
+    engine = fio_pubsub_engine_ipc();
+  FIO___PUBSUB_POSTOFFICE.default_engine = (fio_pubsub_engine_s *)engine;
+  if (!fio_io_is_running())
+    fio_state_callback_remove(FIO_CALL_PRE_START, fio___pubsub_pre_start, NULL);
+  return engine;
 }
 
 /* *****************************************************************************
-Postoffice Metadata Control
+Initialization & Cleanup
 ***************************************************************************** */
 
-/* Returns zero (0) on success or -1 on failure. */
-SFUNC int fio_message_metadata_add(fio_msg_metadata_fn metadata_func,
-                                   void (*cleanup)(void *)) {
-  for (size_t i = 0; i < FIO___PUBSUB_METADATA_STORE_LIMIT;
-       ++i) { /* test existing */
-    if (fio_atomic_add(&FIO___PUBSUB_POSTOFFICE.metadata[i].ref, 1) &&
-        metadata_func == FIO___PUBSUB_POSTOFFICE.metadata[i].build)
-      return 0;
-    fio_atomic_sub(&FIO___PUBSUB_POSTOFFICE.metadata[i].ref, 1);
+FIO_SFUNC void fio___pubsub_cleanup(void *ignr_) {
+  /* Cleanup engines.
+   * Note: FIO_IMAP_EACH is safe on empty/destroyed arrays (w == 0).
+   * fio___pubsub_engines_destroy is safe to call multiple times. */
+  FIO_IMAP_EACH(fio___pubsub_engines, &FIO___PUBSUB_POSTOFFICE.engines, i) {
+    fio_pubsub_engine_s *e = FIO___PUBSUB_POSTOFFICE.engines.ary[i];
+    e->detached(e);
   }
-  for (size_t i = 0; i < FIO___PUBSUB_METADATA_STORE_LIMIT;
-       ++i) { /* insert if available */
-    if (fio_atomic_add(&FIO___PUBSUB_POSTOFFICE.metadata[i].ref, 1)) {
-      fio_atomic_sub(&FIO___PUBSUB_POSTOFFICE.metadata[i].ref, 1);
-      continue;
-    }
-    FIO___PUBSUB_POSTOFFICE.metadata[i].build = metadata_func;
-    FIO___PUBSUB_POSTOFFICE.metadata[i].cleanup = cleanup;
-    return 0;
+  fio___pubsub_engines_destroy(&FIO___PUBSUB_POSTOFFICE.engines);
+
+  /* Cleanup history managers.
+   * Note: FIO_IMAP_EACH is safe on empty/destroyed arrays (w == 0).
+   * fio___pubsub_history_managers_destroy is safe to call multiple times. */
+  FIO_IMAP_EACH(fio___pubsub_history_managers,
+                &FIO___PUBSUB_POSTOFFICE.history_managers,
+                i) {
+    fio_pubsub_history_s *m =
+        FIO___PUBSUB_POSTOFFICE.history_managers.ary[i].manager;
+    m->detached(m);
   }
-  return -1;
-}
-
-/**
- * Removed the metadata callback.
- *
- * Removal might be delayed if live metatdata
- * exists.
- */
-SFUNC void fio_message_metadata_remove(fio_msg_metadata_fn metadata_func) {
-  for (size_t i = 0; i < FIO___PUBSUB_METADATA_STORE_LIMIT;
-       ++i) { /* test existing */
-    if (fio_atomic_add(&FIO___PUBSUB_POSTOFFICE.metadata[i].ref, 1) &&
-        metadata_func == FIO___PUBSUB_POSTOFFICE.metadata[i].build) {
-      fio_atomic_sub(&FIO___PUBSUB_POSTOFFICE.metadata[i].ref, 1);
-    }
-    fio_atomic_sub(&FIO___PUBSUB_POSTOFFICE.metadata[i].ref, 1);
-  }
-}
-
-/** Finds the message's metadata, returning the data or NULL. */
-SFUNC void *fio_message_metadata(fio_msg_s *msg,
-                                 fio_msg_metadata_fn metadata_func) {
-  for (size_t i = 0; i < FIO___PUBSUB_METADATA_STORE_LIMIT;
-       ++i) { /* test existing */
-    if (FIO___PUBSUB_POSTOFFICE.metadata[i].ref &&
-        metadata_func == FIO___PUBSUB_POSTOFFICE.metadata[i].build) {
-      return fio___pubsub_msg2internal(msg)->metadata[i];
-    }
-  }
-  return NULL;
-}
-
-/* *****************************************************************************
-Listening to Local Connections (IPC)
-***************************************************************************** */
-
-#if defined(DEBUG)
-#define FIO___PUBSUB_HIDE_FROM_LOG 0
-#else
-#define FIO___PUBSUB_HIDE_FROM_LOG 1
-#endif
-/** Starts listening to IPC connections on a local socket. */
-FIO_IFUNC void fio___pubsub_ipc_listen(void *ignr_) {
+  fio___pubsub_history_managers_destroy(
+      &FIO___PUBSUB_POSTOFFICE.history_managers);
+  /* clearns and destroys the history cache, just in case */
+  FIO___PUBSUB_POSTOFFICE.cache_manager.detached(
+      &FIO___PUBSUB_POSTOFFICE.cache_manager);
   (void)ignr_;
-  if (fio_io_is_worker()) {
-    FIO_LOG_DEBUG2("(%d) pub/sub IPC socket skipped - no workers are spawned.",
-                   fio_io_pid());
-    return;
-  }
-  FIO_ASSERT(fio_io_listen(.url = FIO___PUBSUB_POSTOFFICE.ipc_url,
-                           .protocol = &FIO___PUBSUB_POSTOFFICE.protocol.ipc,
-                           .on_root = 1,
-                           .hide_from_log = FIO___PUBSUB_HIDE_FROM_LOG),
-             "(%d) pub/sub couldn't open a socket for IPC\n\t\t%s",
-             fio_io_pid(),
-             FIO___PUBSUB_POSTOFFICE.ipc_url);
 }
-#undef FIO___PUBSUB_HIDE_FROM_LOG
-
-/* *****************************************************************************
-Postoffice Constructor / Destructor
-***************************************************************************** */
-
-/* listens for IPC connections. */
-FIO_SFUNC void fio___pubsub_ipc_listen(void *);
-/* protocol functions. */
-FIO_SFUNC void fio___pubsub_protocol_on_attach(fio_io_s *io);
-FIO_SFUNC void fio___pubsub_protocol_on_data_master(fio_io_s *io);
-FIO_SFUNC void fio___pubsub_protocol_on_data_worker(fio_io_s *io);
-FIO_SFUNC void fio___pubsub_protocol_on_data_remote(fio_io_s *io);
-FIO_SFUNC void fio___pubsub_protocol_on_close(void *buffer, void *udata);
 
 FIO_SFUNC void fio___pubsub_at_exit(void *ignr_) {
-  (void)ignr_;
-  fio_queue_perform_all(fio_io_queue());
-  fio___postoffice_msmap_destroy(&FIO___PUBSUB_POSTOFFICE.master_subscriptions);
-  fio___postoffice_msmap_destroy(&FIO___PUBSUB_POSTOFFICE.global_subscriptions);
-  fio___pubsub_broadcast_connected_destroy(
-      &FIO___PUBSUB_POSTOFFICE.remote_uuids);
-  fio___pubsub_message_map_destroy(&FIO___PUBSUB_POSTOFFICE.remote_messages);
-  fio___pubsub_message_map_destroy(&FIO___PUBSUB_POSTOFFICE.history_messages);
-  fio___pubsub_engines_destroy(&FIO___PUBSUB_POSTOFFICE.engines);
-  FIO___LOCK_DESTROY(FIO___PUBSUB_POSTOFFICE.lock);
-  fio_queue_perform_all(fio_io_queue());
+  fio___pubsub_cleanup(ignr_);
+  fio___pubsub_channel_map_destroy(&FIO___PUBSUB_POSTOFFICE.channels);
+  fio___pubsub_channel_map_destroy(&FIO___PUBSUB_POSTOFFICE.patterns);
 }
 
-/** Callback called by the letter protocol entering a child processes. */
-FIO_SFUNC void fio___pubsub_on_enter_child(void *ignr_) {
-  (void)ignr_;
-  FIO___PUBSUB_POSTOFFICE.protocol.ipc.on_data =
-      fio___pubsub_protocol_on_data_worker;
-
-  FIO___PUBSUB_POSTOFFICE.crush_on_close = !fio_io_is_master();
-
-  FIO___PUBSUB_POSTOFFICE.filter.publish = FIO___PUBSUB_PROCESS;
-  FIO___PUBSUB_POSTOFFICE.filter.local =
-      (FIO___PUBSUB_SIBLINGS | FIO___PUBSUB_ROOT);
-  FIO___PUBSUB_POSTOFFICE.filter.remote = 0;
-  fio___postoffice_msmap_destroy(&FIO___PUBSUB_POSTOFFICE.master_subscriptions);
-  fio___pubsub_engines_destroy(&FIO___PUBSUB_POSTOFFICE.engines);
-  if (!fio_io_attach_fd(fio_sock_open2(FIO___PUBSUB_POSTOFFICE.ipc_url,
-                                       FIO_SOCK_CLIENT | FIO_SOCK_NONBLOCK),
-                        &FIO___PUBSUB_POSTOFFICE.protocol.ipc,
-                        NULL,
-                        NULL)) {
-    FIO_LOG_FATAL("(%d) couldn't connect to pub/sub socket @ %s",
-                  fio_io_pid(),
-                  FIO___PUBSUB_POSTOFFICE.ipc_url);
-    fio_thread_kill(fio_io_root_pid(), SIGINT);
-    FIO_ASSERT(0, "fatal error encountered");
+FIO_SFUNC void fio___pubsub_on_fork_test_unsubscribe_master(
+    fio_pubsub_channel_s *ch) {
+  /** Loops through every node in the linked list except the head. */
+  FIO_LIST_EACH(fio_pubsub_subscription_s, node, &ch->subscriptions, sub) {
+    if (sub->master_only) {
+      fio_io_env_remove(
+          sub->io,
+          .type = fio___pubsub_channel_env_type(ch->filter, ch->is_pattern),
+          .name = FIO_BUF_INFO2(ch->name, ch->name_len));
+    }
   }
 }
 
-FIO_CONSTRUCTOR(fio_postoffice_init) {
-  FIO___PUBSUB_POSTOFFICE.engines = (fio___pubsub_engines_s)FIO_MAP_INIT;
-  for (size_t i = 0; i < sizeof(FIO___PUBSUB_POSTOFFICE.uuid) / 8; ++i)
-    FIO___PUBSUB_POSTOFFICE.uuid.u64[i] = fio_rand64();
-  fio_str_info_s url =
-      FIO_STR_INFO3(FIO___PUBSUB_POSTOFFICE.ipc_url, 0, FIO___IPC_LEN);
+FIO_SFUNC void fio___pubsub_on_fork(void *ignr_) {
+  (void)ignr_;
+  if (fio_io_is_master())
+    return;
+  /* Clean up engines and history managers inherited from master */
+  fio___pubsub_cleanup(ignr_);
 
-  fio_string_write2(&url,
-                    NULL,
-                    FIO_STRING_WRITE_STR1((char *)"priv://facil_io_tmp_"),
-                    FIO_STRING_WRITE_HEX(fio_rand64()),
-                    FIO_STRING_WRITE_STR1((char *)".sock"));
-  fio_state_callback_add(FIO_CALL_PRE_START, fio___pubsub_ipc_listen, NULL);
-  fio_state_callback_add(FIO_CALL_IN_CHILD, fio___pubsub_on_enter_child, NULL);
+  /* Unsubscribe from master_only subscriptions.
+   * These should be removed from workers - remove them and clean them up,
+   * calling on_unsubscribe (to free any associated resources). */
+  FIO_MAP_EACH(fio___pubsub_channel_map, &FIO___PUBSUB_POSTOFFICE.channels, i) {
+    fio___pubsub_on_fork_test_unsubscribe_master(i.node->key);
+  }
+  FIO_MAP_EACH(fio___pubsub_channel_map, &FIO___PUBSUB_POSTOFFICE.patterns, i) {
+    fio___pubsub_on_fork_test_unsubscribe_master(i.node->key);
+  }
+}
+
+FIO_SFUNC void fio___pubsub_pre_start(void *ignr_) {
+  (void)ignr_;
+  uint16_t port = fio_ipc_cluster_port();
+  if (port && FIO___PUBSUB_POSTOFFICE.default_engine ==
+                  (fio_pubsub_engine_s *)fio_pubsub_engine_ipc())
+    FIO___PUBSUB_POSTOFFICE.default_engine =
+        (fio_pubsub_engine_s *)fio_pubsub_engine_cluster();
+}
+
+/* Forward declaration for opcode handler */
+FIO_SFUNC void fio___pubsub_engine_ipc_publish_deliver(fio_ipc_s *ipc);
+
+void fio___pubsub_init____(void); /* IDE Marker */
+FIO_CONSTRUCTOR(fio___pubsub_init) {
+  /* Initialize defaults */
+  FIO___PUBSUB_POSTOFFICE.match_fn = fio_glob_match;
+  FIO___PUBSUB_POSTOFFICE.default_engine =
+      (fio_pubsub_engine_s *)fio_pubsub_engine_ipc();
+  fio_pubsub_engine_cluster(); /* initialize cluster engine */
+  fio_pubsub_history_cache(0); /* initialize history limit */
+  /* Register op-code for receiving messages */
+  if (fio_ipc_opcode_register(.opcode = FIO___PUBSUB_OPCODE_PUBLISH,
+                              .call =
+                                  fio___pubsub_engine_ipc_publish_deliver)) {
+    FIO_LOG_ERROR("fio_pubsub_cluster_init: failed to register op-code");
+    return;
+  }
+
+  fio_pubsub_history_cache(FIO_PUBSUB_HISTORY_DEFAULT_CACHE_SIZE_LIMIT);
+  fio_state_callback_add(FIO_CALL_PRE_START, fio___pubsub_pre_start, NULL);
+  fio_state_callback_add(FIO_CALL_IN_CHILD, fio___pubsub_on_fork, NULL);
   fio_state_callback_add(FIO_CALL_AT_EXIT, fio___pubsub_at_exit, NULL);
-  /* TODO!!! */
-  FIO___PUBSUB_POSTOFFICE.protocol.ipc = (fio_io_protocol_s){
-      .on_attach = fio___pubsub_protocol_on_attach,
-      .on_data = fio___pubsub_protocol_on_data_master,
-      .on_close = fio___pubsub_protocol_on_close,
-      .on_timeout = fio_io_touch,
-      .buffer_size =
-          sizeof(fio___pubsub_message_parser_s) + FIO___PUBSUB_MESSAGE_OVERHEAD,
+}
+
+/* *****************************************************************************
+IPC to fio_pubsub_msg_s Format Helper
+***************************************************************************** */
+
+/** Extract pub/sub message from IPC message */
+FIO_IFUNC fio_pubsub_msg_s fio___pubsub_ipc2msg(fio_ipc_s *ipc) {
+  return (fio_pubsub_msg_s){
+      .timestamp = ipc->timestamp,
+      .id = ipc->id,
+      .channel = FIO_BUF_INFO2(ipc->data + 8, fio_buf2u32u(ipc->data)),
+      .message = FIO_BUF_INFO2(ipc->data + 9 + fio_buf2u32u(ipc->data),
+                               fio_buf2u32u(ipc->data + 4)),
+      .filter = (int16_t)ipc->flags,
   };
-  FIO___PUBSUB_POSTOFFICE.protocol.remote = (fio_io_protocol_s){
-      .on_attach = fio___pubsub_protocol_on_attach,
-      .on_data = fio___pubsub_protocol_on_data_remote,
-      .on_close = fio___pubsub_protocol_on_close,
-      .on_timeout = fio_io_touch,
-      .buffer_size =
-          sizeof(fio___pubsub_message_parser_s) + FIO___PUBSUB_MESSAGE_OVERHEAD,
-  };
-  for (char *tmp = getenv("PUBSUB_PORT"); tmp; tmp = NULL) {
-    uint64_t port = (uint64_t)fio_atol(&tmp);
-    if (port < 0xFFFFU)
-      fio_pubsub_broadcast_on_port(port);
-    else
-      FIO_LOG_ERROR("(%d) (pub/sub) PUBSUB_PORT is out of range: %zu",
-                    fio_getpid(),
-                    (size_t)port);
+}
+
+/** Extract pub/sub message from IPC message */
+SFUNC fio_pubsub_msg_s fio_pubsub_ipc2msg(fio_ipc_s *ipc) {
+  return fio___pubsub_ipc2msg(ipc);
+}
+
+/* *****************************************************************************
+Message Delivery to Subscriptions
+***************************************************************************** */
+
+/** Container for deferred message delivery using IPC message directly */
+typedef struct {
+  fio_pubsub_subscription_s *sub;
+  fio_ipc_s *ipc;
+  fio_pubsub_msg_s msg;
+  volatile uintptr_t defer_flag;
+} fio___pubsub_message_container_s;
+
+FIO_SFUNC void fio___pubsub_subscription_ipc_deliver(void *sub_, void *ipc_) {
+  fio___pubsub_message_container_s data = {
+      .sub = (fio_pubsub_subscription_s *)sub_,
+      .ipc = (fio_ipc_s *)ipc_,
+      .msg = fio___pubsub_ipc2msg((fio_ipc_s *)ipc_)};
+
+  data.msg.udata = data.sub->udata;
+  data.msg.io = data.sub->io;
+  data.sub->on_message(&data.msg);
+  data.sub->udata = data.msg.udata;
+  if (data.defer_flag) {
+    fio_queue_push(data.sub->queue,
+                   fio___pubsub_subscription_ipc_deliver,
+                   sub_,
+                   ipc_);
+    return;
+  }
+  fio_pubsub_subscription_free(data.sub);
+  fio_ipc_free(data.ipc);
+}
+
+SFUNC void fio_pubsub_defer(fio_pubsub_msg_s *msg) {
+  *(volatile uintptr_t *)(msg + 1) = 1;
+}
+
+FIO_IFUNC fio_ipc_s *fio___pubsub_msg2ipc(fio_pubsub_msg_s *msg) {
+  /* the channel name is 8 bytes after the `data` field starts in the IPC */
+  char *data_field = msg->channel.buf - sizeof(uint32_t[2]);
+  fio_ipc_s *ipc = FIO_PTR_FROM_FIELD(fio_ipc_s, data, data_field);
+  return ipc;
+}
+
+/** Returns the underlying IPC message buffer carrying the message data */
+SFUNC fio_ipc_s *fio_pubsub_msg2ipc(fio_pubsub_msg_s *msg) {
+  fio_ipc_s *ipc = fio___pubsub_msg2ipc(msg);
+  fio_ipc_detach(ipc);
+  return ipc;
+}
+
+/* *****************************************************************************
+Message Delivery to History Managers
+***************************************************************************** */
+
+FIO_SFUNC void fio___pubsub_history_ipc_push(fio_ipc_s *ipc) {
+  fio_pubsub_msg_s msg = fio___pubsub_ipc2msg(ipc);
+  msg.io = NULL;
+
+  /* update history engines (if any) about message */
+  FIO_IMAP_EACH(fio___pubsub_history_managers,
+                &FIO___PUBSUB_POSTOFFICE.history_managers,
+                i) {
+    fio_pubsub_history_s *mgr =
+        FIO___PUBSUB_POSTOFFICE.history_managers.ary[i].manager;
+    mgr->push(mgr, &msg);
+  }
+}
+
+SFUNC void fio_pubsub_history_push_all(fio_pubsub_msg_s *msg) {
+  fio_ipc_call(.call = fio___pubsub_history_ipc_push,
+               .timestamp = msg->timestamp,
+               .id = msg->id,
+               .flags = (uint16_t)msg->filter,
+               .data = FIO_IPC_DATA(FIO_BUF_INFO2((char *)&msg->channel.len,
+                                                  sizeof(msg->channel.len)),
+                                    FIO_BUF_INFO2((char *)&msg->message.len,
+                                                  sizeof(msg->message.len)),
+                                    msg->channel,
+                                    FIO_BUF_INFO2((char *)"\0", 1),
+                                    msg->message,
+                                    FIO_BUF_INFO2((char *)"\0", 1)));
+}
+
+/* *****************************************************************************
+Channel Callbacks
+***************************************************************************** */
+
+FIO_SFUNC void fio___pubsub_notify_master_of_subscription(fio_ipc_s *ipc) {
+  fio_buf_info_s chname = FIO_BUF_INFO2(ipc->data + 5, fio_buf2u32u(ipc->data));
+  uint8_t is_pattern = ipc->data[4];
+  int16_t filter = (int16_t)ipc->flags;
+  fio_pubsub_subscribe(.io = ipc->from,
+                       .channel = chname,
+                       .on_message = fio___pubsub_on_message_stub,
+                       .filter = filter,
+                       .is_pattern = is_pattern);
+}
+
+FIO_SFUNC void fio___pubsub_notify_master_of_unsubscription(fio_ipc_s *ipc) {
+  fio_buf_info_s chname = FIO_BUF_INFO2(ipc->data + 5, fio_buf2u32u(ipc->data));
+  uint8_t is_pattern = ipc->data[4];
+  int16_t filter = (int16_t)ipc->flags;
+  fio_pubsub_unsubscribe(.io = ipc->from,
+                         .channel = chname,
+                         .on_message = fio___pubsub_on_message_stub,
+                         .filter = filter,
+                         .is_pattern = is_pattern);
+}
+
+FIO_SFUNC void fio___pubsub_channel_on_create(fio_pubsub_channel_s *ch) {
+  fio_buf_info_s name = FIO_BUF_INFO2(ch->name, ch->name_len);
+  ch->is_pattern = !!ch->is_pattern;
+  FIO_IMAP_EACH(fio___pubsub_engines, &FIO___PUBSUB_POSTOFFICE.engines, i) {
+    (&FIO___PUBSUB_POSTOFFICE.engines.ary[i]->subscribe)[ch->is_pattern](
+        FIO___PUBSUB_POSTOFFICE.engines.ary[i],
+        name,
+        ch->filter);
+  }
+  if (!fio_io_is_master()) {
+    fio_ipc_call(.call = fio___pubsub_notify_master_of_subscription,
+                 .flags = (uint16_t)ch->filter,
+                 .data = FIO_IPC_DATA(
+                     FIO_BUF_INFO2((char *)&ch->name_len, sizeof(ch->name_len)),
+                     FIO_BUF_INFO2((char *)&ch->is_pattern, 1),
+                     FIO_BUF_INFO2(ch->name, ch->name_len)));
+    FIO_LOG_DDEBUG2("(%d) Notifying master of channel subscription: %.*s",
+                    fio_io_pid(),
+                    (int)ch->name_len,
+                    ch->name);
+  }
+}
+
+FIO_SFUNC void fio___pubsub_channel_on_destroy(fio_pubsub_channel_s *ch) {
+  fio_buf_info_s name = FIO_BUF_INFO2(ch->name, ch->name_len);
+  FIO_IMAP_EACH(fio___pubsub_engines, &FIO___PUBSUB_POSTOFFICE.engines, i) {
+    (&FIO___PUBSUB_POSTOFFICE.engines.ary[i]->unsubscribe)[ch->is_pattern](
+        FIO___PUBSUB_POSTOFFICE.engines.ary[i],
+        name,
+        ch->filter);
+  }
+  if (!fio_io_is_master()) {
+    fio_ipc_call(.call = fio___pubsub_notify_master_of_unsubscription,
+                 .flags = (uint16_t)ch->filter,
+                 .data = FIO_IPC_DATA(
+                     FIO_BUF_INFO2((char *)&ch->name_len, sizeof(ch->name_len)),
+                     FIO_BUF_INFO2((char *)&ch->is_pattern, 1),
+                     FIO_BUF_INFO2(ch->name, ch->name_len)));
+    FIO_LOG_DDEBUG2("(%d) Notifying master of channel ignored: %.*s",
+                    fio_io_pid(),
+                    (int)ch->name_len,
+                    ch->name);
   }
 }
 
 /* *****************************************************************************
-Subscription Setup
+Core Builtin Pub/Sub Engine for all process publishing
 ***************************************************************************** */
 
-/** Completes the subscription request. */
-FIO_IFUNC void fio___pubsub_subscribe_task(void *sub_, void *ignr_) {
-  fio_subscription_s *sub = (fio_subscription_s *)sub_;
-  union {
-    FIO_LIST_HEAD *ls;
-    fio_str_info_s *str;
-  } uptr = {.ls = &sub->node};
-  const fio_str_info_s ch_name = *uptr.str;
-  fio_channel_s **ch_ptr =
-      fio___channel_map_node2key_ptr(fio___channel_map_set_ptr(
-          &FIO___PUBSUB_POSTOFFICE.channels + (ch_name.capa >> 16),
-          ch_name));
-  fio_bstr_free(ch_name.buf);
-  sub->node = FIO_LIST_INIT(sub->node);
-  sub->history = FIO_LIST_INIT(sub->history);
-  sub->history_active = FIO_LIST_INIT(sub->history_active);
-  if (FIO_UNLIKELY(!ch_ptr))
-    goto no_channel;
-  sub->channel = ch_ptr[0];
-  FIO_LIST_PUSH(&(ch_ptr[0]->subscriptions), &sub->node);
-  if (sub->replay_since) {
-    FIO_LIST_PUSH(&FIO___PUBSUB_POSTOFFICE.history_waiting, &sub->history);
-    /* TODO: publish history request event to the cluster. */
-  }
-  return;
-no_channel:
-  fio___pubsub_subscription_unsubscribe(sub);
-  (void)ignr_;
+/** Called when engine is detached - nothing to do here */
+FIO_SFUNC void fio___pubsub_engine_ipc_noop(const fio_pubsub_engine_s *eng) {
+  (void)eng;
 }
 
-/** Unsubscribes a node and destroys the channel if no more subscribers. */
-FIO_IFUNC void fio___pubsub_unsubscribe_task(void *sub_, void *ignr_) {
-  fio_subscription_s *sub = (fio_subscription_s *)sub_;
-  fio_channel_s *ch = sub->channel;
-  fio___channel_map_s *map;
-  FIO_LIST_REMOVE(&sub->node);
-  FIO_LIST_REMOVE(&sub->history);
-  FIO_LIST_REMOVE(&sub->history_active);
-  if (FIO_UNLIKELY(!ch))
-    goto no_channel;
-
-  if (FIO_LIST_IS_EMPTY(&ch->subscriptions)) {
-    map = &FIO___PUBSUB_POSTOFFICE.channels + ch->is_pattern;
-    fio___channel_map_remove(map, FIO___PUBSUB_CHANNEL2STR(ch), NULL);
-    if (!fio___channel_map_count(map))
-      fio___channel_map_destroy(map);
-  }
-  sub->channel = NULL;
-
-no_channel:
-  fio___subscription_free(sub);
-  return;
-  (void)ignr_;
+FIO_SFUNC void fio___pubsub_engine_ipc_sub_noop(const fio_pubsub_engine_s *eng,
+                                                const fio_buf_info_s channel,
+                                                int16_t filter) {
+  (void)eng;
+  (void)channel;
+  (void)filter;
 }
 
-/** Performs Housekeeping and defers the on_unsubscribe callback. */
-FIO_IFUNC void fio___pubsub_subscription_unsubscribe(fio_subscription_s *s) {
-  if (!s)
+/** Distributes an IPC message to all of a channel's subscribers */
+FIO_SFUNC void fio___pubsub_engine_ipc_deliver2channel(fio_pubsub_channel_s *ch,
+                                                       fio_ipc_s *ipc) {
+  FIO_LOG_DEBUG2(
+      "(%d) channel_deliver_ipc: ch=%p subscriptions.next=%p .prev=%p",
+      fio_io_pid(),
+      (void *)ch,
+      (void *)ch->subscriptions.next,
+      (void *)ch->subscriptions.prev);
+  const fio_io_s *skip = ipc->from;
+  FIO_LIST_EACH(fio_pubsub_subscription_s, node, &ch->subscriptions, s) {
+    /* Skip if publisher is sending to itself (IO is set)*/
+    if (skip && s->io == skip)
+      continue;
+    fio_queue_push(s->queue,
+                   fio___pubsub_subscription_ipc_deliver,
+                   fio_pubsub_subscription_dup(s),
+                   fio_ipc_dup(ipc));
+  }
+}
+
+/** Called in every process for message delivery */
+FIO_SFUNC void fio___pubsub_engine_ipc_publish_deliver(fio_ipc_s *ipc) {
+  fio_pubsub_msg_s msg = fio___pubsub_ipc2msg(ipc);
+  fio_str_info_s ch_name =
+      FIO_STR_INFO3(msg.channel.buf,
+                    msg.channel.len,
+                    FIO___PUBSUB_CHANNEL_ENCODE_CAPA(msg.filter, 0));
+  /* future scheduling - delivered only to the history buffer - stop here */
+  if (ipc->timestamp >
+      (uint64_t)(fio_io_last_tick() + FIO_PUBSUB_FUTURE_LIMIT_MS))
     return;
-  s->on_message = fio___subscription_mock_cb;
+
+  /* find channel match, schedule subscription tasks */
+  fio_pubsub_channel_s **ch_ptr = fio___pubsub_channel_map_node2key_ptr(
+      fio___pubsub_channel_map_get_ptr(&FIO___PUBSUB_POSTOFFICE.channels,
+                                       ch_name));
+
+  if (ch_ptr) {
+    FIO_LOG_DDEBUG2("(%d) channel found, delivering to %.*s",
+                    fio_io_pid(),
+                    (int)ch_ptr[0]->name_len,
+                    ch_ptr[0]->name);
+    fio___pubsub_engine_ipc_deliver2channel(*ch_ptr, ipc);
+  }
+
+  /* Check pattern subscriptions */
+  FIO_MAP_EACH(fio___pubsub_channel_map, &FIO___PUBSUB_POSTOFFICE.patterns, i) {
+    fio_pubsub_channel_s *pch = i.node->key;
+    if (pch->filter == msg.filter &&
+        FIO___PUBSUB_POSTOFFICE.match_fn(
+            FIO_STR_INFO2(pch->name, pch->name_len),
+            ch_name))
+      fio___pubsub_engine_ipc_deliver2channel(pch, ipc);
+  }
+
+  /* Push to history manager - must be now, to sync history and publishing */
+  fio___pubsub_history_ipc_push(ipc);
+  return;
+}
+
+/** Called when a message is published - local IPC only (master + workers) */
+FIO_SFUNC void fio___pubsub_engine_ipc_publish(const fio_pubsub_engine_s *eng,
+                                               const fio_pubsub_msg_s *msg) {
+  uint32_t header[2] = {(uint32_t)msg->channel.len, (uint32_t)msg->message.len};
+  /*
+   * fio_ipc_local sends to master + all workers on local machine.
+   */
+  fio_ipc_local(.call = fio___pubsub_engine_ipc_publish_deliver,
+                .timestamp = msg->timestamp,
+                .id = msg->id,
+                .flags = (uint16_t)msg->filter,
+                .data =
+                    FIO_IPC_DATA(FIO_BUF_INFO2((char *)header, sizeof(header)),
+                                 msg->channel,
+                                 FIO_BUF_INFO2((char *)"\0", 1),
+                                 msg->message,
+                                 FIO_BUF_INFO2((char *)"\0", 1)));
+  (void)eng; /* unused */
+}
+
+/** Called when a message is published - local IPC only (master + workers) */
+FIO_SFUNC void fio___pubsub_engine_cluster_publish(
+    const fio_pubsub_engine_s *eng,
+    const fio_pubsub_msg_s *msg) {
+  uint32_t header[2] = {(uint32_t)msg->channel.len, (uint32_t)msg->message.len};
+  /*
+   * fio_ipc_local sends to master + all workers on local machine.
+   */
+  fio_ipc_broadcast(.opcode = FIO___PUBSUB_OPCODE_PUBLISH,
+                    .timestamp = msg->timestamp,
+                    .id = msg->id,
+                    .flags = (uint16_t)msg->filter,
+                    .data = FIO_IPC_DATA(
+                        FIO_BUF_INFO2((char *)header, sizeof(header)),
+                        msg->channel,
+                        FIO_BUF_INFO2((char *)"\0", 1),
+                        msg->message,
+                        FIO_BUF_INFO2((char *)"\0", 1)));
+  (void)eng; /* unused */
+}
+
+SFUNC fio_pubsub_engine_s const *fio_pubsub_engine_ipc(void) {
+  /* just in case someone played nasty with our previously returned pointer */
+  FIO___PUBSUB_POSTOFFICE.local_engine = (fio_pubsub_engine_s){
+      .detached = fio___pubsub_engine_ipc_noop,
+      .subscribe = fio___pubsub_engine_ipc_sub_noop,
+      .psubscribe = fio___pubsub_engine_ipc_sub_noop,
+      .unsubscribe = fio___pubsub_engine_ipc_sub_noop,
+      .punsubscribe = fio___pubsub_engine_ipc_sub_noop,
+      .publish = fio___pubsub_engine_ipc_publish,
+  };
+  return &FIO___PUBSUB_POSTOFFICE.local_engine;
+}
+
+/** Returns the builtin engine for multi-machine cluster publishing (RPC). */
+SFUNC fio_pubsub_engine_s const *fio_pubsub_engine_cluster(void) {
+  /* just in case someone played nasty with our previously returned pointer */
+  FIO___PUBSUB_POSTOFFICE.cluster_engine = (fio_pubsub_engine_s){
+      .detached = fio___pubsub_engine_ipc_noop,
+      .subscribe = fio___pubsub_engine_ipc_sub_noop,
+      .psubscribe = fio___pubsub_engine_ipc_sub_noop,
+      .unsubscribe = fio___pubsub_engine_ipc_sub_noop,
+      .punsubscribe = fio___pubsub_engine_ipc_sub_noop,
+      .publish = fio___pubsub_engine_cluster_publish,
+  };
+  return &FIO___PUBSUB_POSTOFFICE.cluster_engine;
+}
+
+/* *****************************************************************************
+Engine Attach/Detach
+***************************************************************************** */
+
+FIO_SFUNC void fio___pubsub_attach_task(void *e, void *_ignr) {
+  (void)_ignr;
+  fio_pubsub_engine_s *engine = (fio_pubsub_engine_s *)e;
+  fio___pubsub_engines_set(&FIO___PUBSUB_POSTOFFICE.engines, engine, 1);
+
+  /* Notify engine of all existing channels */
+  FIO_MAP_EACH(fio___pubsub_channel_map, &FIO___PUBSUB_POSTOFFICE.channels, i) {
+    fio_buf_info_s name = FIO_BUF_INFO2(i.key.buf, i.key.len);
+    engine->subscribe(engine, name, (int16_t)(i.key.capa & 0xFFFF));
+  }
+  FIO_MAP_EACH(fio___pubsub_channel_map, &FIO___PUBSUB_POSTOFFICE.patterns, i) {
+    fio_buf_info_s name = FIO_BUF_INFO2(i.key.buf, i.key.len);
+    engine->psubscribe(engine, name, (int16_t)(i.key.capa & 0xFFFF));
+  }
+}
+
+FIO_SFUNC void fio___pubsub_detach_task(void *e, void *_ignr) {
+  (void)_ignr;
+  fio_pubsub_engine_s *engine = (fio_pubsub_engine_s *)e;
+  fio___pubsub_engines_remove(&FIO___PUBSUB_POSTOFFICE.engines, engine);
+  if (engine->detached)
+    engine->detached(engine);
+}
+
+SFUNC void fio_pubsub_engine_attach(fio_pubsub_engine_s *engine) {
+  if (!engine)
+    return;
+  fio_pubsub_engine_s *defaults =
+      (fio_pubsub_engine_s *)fio_pubsub_engine_ipc();
+
+  /* Fill missing callbacks with defaults */
+  for (size_t i = 0; i < sizeof(fio_pubsub_engine_s) / (sizeof(void *)); ++i) {
+    if (!((void **)engine)[i])
+      ((void **)engine)[i] = ((void **)defaults)[i];
+  }
+  if (fio_io_is_running())
+    fio_io_defer(fio___pubsub_attach_task, engine, NULL);
+  else
+    fio___pubsub_attach_task(engine, NULL);
+}
+
+SFUNC void fio_pubsub_engine_detach(fio_pubsub_engine_s *engine) {
+  if (!engine)
+    return;
+  if (fio_io_is_running())
+    fio_io_defer(fio___pubsub_detach_task, engine, NULL);
+  else
+    fio___pubsub_detach_task(engine, NULL);
+}
+/* *****************************************************************************
+Publish Implementation
+***************************************************************************** */
+
+void fio_pubsub_publish___(void); /* IDE Marker */
+SFUNC void fio_pubsub_publish FIO_NOOP(fio_pubsub_publish_args_s args) {
+  if (!args.engine)
+    args.engine = FIO___PUBSUB_POSTOFFICE.default_engine;
+
+  fio_pubsub_msg_s msg = {
+      .io = args.from,
+      .id = args.id ? args.id : fio_rand64(),
+      .timestamp = args.timestamp ? args.timestamp : fio_io_last_tick(),
+      .channel = args.channel,
+      .message = args.message,
+      .filter = args.filter,
+  };
+  args.engine->publish(args.engine, &msg);
+}
+
+/* *****************************************************************************
+Unsubscribe Implementation
+***************************************************************************** */
+
+/** Unsubscribes a node (deferred task). */
+FIO_SFUNC void fio___pubsub_unsubscribe_task(void *sub_, void *ignr_) {
+  fio_pubsub_subscription_s *sub = (fio_pubsub_subscription_s *)sub_;
+
+  FIO_LIST_REMOVE(&sub->node);
+  sub->node = FIO_LIST_INIT(sub->node);
+  sub->on_message = fio___pubsub_on_message_stub;
+
+  FIO_LOG_DDEBUG2("(%d) unsubscribed performed for %p -> %.*s (ref: %zu)",
+                  fio_io_pid(),
+                  (void *)sub,
+                  (int)sub->channel->name_len,
+                  sub->channel->name,
+                  fio_pubsub_subscription_references(sub));
+
+  fio_pubsub_subscription_free2(sub);
+  /* fio_pubsub_channel_free(ch) - called by `destroy` when freed */
+  (void)ignr_;
+}
+
+/** Unsubscribe callback for environment on_close */
+FIO_SFUNC void fio___pubsub_subscription_env_unsubscribe(void *sub_) {
+  fio_pubsub_subscription_s *sub = (fio_pubsub_subscription_s *)sub_;
+  sub->on_message = fio___pubsub_on_message_stub;
+  FIO_LOG_DDEBUG2("(%d) unsubscribed called for %p -> %.*s (ref: %zu)",
+                  fio_io_pid(),
+                  (void *)sub,
+                  (int)sub->channel->name_len,
+                  sub->channel->name,
+                  fio_pubsub_subscription_references(sub));
+
   fio_queue_push(fio_io_queue(),
                  fio___pubsub_unsubscribe_task,
-                 (void *)s,
+                 (void *)sub,
                  NULL);
 }
 
-/** Subscribes to a named channel in the numerical filter's namespace. */
-void fio_subscribe___(void); /* sublimetext marker */
-SFUNC void fio_subscribe FIO_NOOP(fio_subscribe_args_s args) {
-  fio_subscription_s *s = NULL;
-  union {
-    FIO_LIST_HEAD *ls;
-    fio_str_info_s *str;
-  } uptr;
+int fio_pubsub_unsubscribe___(void); /* IDE Marker */
+SFUNC int fio_pubsub_unsubscribe FIO_NOOP(fio_pubsub_subscribe_args_s args) {
+  /* Handle subscriptions created with subscription_handle_ptr */
+  if (args.subscription_handle_ptr && *args.subscription_handle_ptr) {
+    fio_pubsub_subscription_s *sub =
+        (fio_pubsub_subscription_s *)*args.subscription_handle_ptr;
+    *args.subscription_handle_ptr = 0;
+    fio___pubsub_subscription_env_unsubscribe(sub);
+    return 0;
+  }
+  return fio_io_env_remove(
+      args.io,
+      .type = fio___pubsub_channel_env_type(args.filter, !!args.is_pattern),
+      .name = args.channel);
+}
+
+/* *****************************************************************************
+Subscribe Implementation
+***************************************************************************** */
+FIO_SFUNC void fio___pubsub_request_history(fio_pubsub_subscription_s *sub);
+
+/* A callback for IO subscriptions - sends raw message data. */
+SFUNC void FIO_ON_MESSAGE_SEND_MESSAGE(fio_pubsub_msg_s *msg) {
+  if (!msg || !msg->message.len)
+    return;
+  fio_ipc_s *ipc = fio___pubsub_msg2ipc(msg);
+  fio_io_write2(msg->io,
+                .buf = fio_ipc_dup(ipc),
+                .len = msg->message.len,
+                .offset = (size_t)(msg->message.buf - (char *)ipc),
+                .dealloc = (void (*)(void *))fio_ipc_free);
+}
+
+/* A callback for IO subscriptions. */
+FIO_SFUNC void fio___subscription_call_protocol(fio_pubsub_msg_s *msg) {
+  if (!msg->io)
+    return;
+  fio_io_protocol_s *p = fio_io_protocol(msg->io);
+  FIO_ASSERT_DEBUG(p, "every IO object should have a protocol, always");
+  p->on_pubsub((fio_pubsub_msg_s *)msg);
+}
+
+/** Completes the subscription request (deferred task). */
+FIO_SFUNC void fio___pubsub_subscribe_task(void *sub_, void *bstr_) {
+  fio_pubsub_subscription_s *sub = (fio_pubsub_subscription_s *)sub_;
+  char *bstr = (char *)bstr_;
+  fio_str_info_s ch_name = fio_bstr_info(bstr);
+  ch_name.capa = FIO___PUBSUB_CHANNEL_ENCODE_CAPA(sub->filter, sub->is_pattern);
+
+  fio_pubsub_channel_s **ch_ptr =
+      fio___pubsub_channel_map_node2key_ptr(fio___pubsub_channel_map_set_ptr(
+          &FIO___PUBSUB_POSTOFFICE.channels + sub->is_pattern,
+          ch_name));
+  fio_bstr_free(bstr);
+
+  if (FIO_UNLIKELY(!ch_ptr))
+    goto no_channel;
+  sub->channel = fio_pubsub_channel_dup(ch_ptr[0]);
+  FIO_LIST_PUSH(&(ch_ptr[0]->subscriptions), &sub->node);
+  /* Handle history replay if requested */
+  if (sub->replay_since) {
+    /* request history from master via IPC - works on both master and client */
+    if (!sub->is_pattern)
+      fio___pubsub_request_history(sub);
+    else
+      FIO_LOG_ERROR(
+          "(%d) (pubsub) cannot request history in pattern subscriptions: %.*s",
+          fio_io_pid(),
+          (int)(ch_ptr[0]->name_len),
+          ch_ptr[0]->name);
+  }
+
+  FIO_LOG_DDEBUG2("(%d) subscribed for %p -> %.*s (ref: %zu)",
+                  fio_io_pid(),
+                  (void *)sub,
+                  (int)sub->channel->name_len,
+                  sub->channel->name,
+                  fio_pubsub_subscription_references(sub));
+  fio_pubsub_subscription_free2(sub);
+  return;
+
+no_channel:
+  fio_pubsub_subscription_free2(sub);
+}
+
+void fio_pubsub_subscribe___(void); /* IDE Marker */
+SFUNC void fio_pubsub_subscribe FIO_NOOP(fio_pubsub_subscribe_args_s args) {
+  fio_pubsub_subscription_s *s = NULL;
+  char *bstr = NULL;
+
   if (args.channel.len > 0xFFFFUL)
     goto sub_error;
-  s = fio___subscription_new();
+
+  if (args.master_only && !fio_io_is_master())
+    goto sub_error;
+
+  s = fio_pubsub_subscription_new2();
   if (!s)
     goto sub_error;
+
+  bstr = args.channel.len
+             ? fio_bstr_write(NULL, args.channel.buf, args.channel.len)
+             : NULL;
+  if (args.channel.len && !bstr)
+    goto sub_error_free_sub;
+
   if (!args.queue || !args.on_message)
     args.queue = fio_io_queue();
-  *s = (fio_subscription_s){
-      .replay_since = args.replay_since,
+
+  *s = (fio_pubsub_subscription_s){
+      .node = FIO_LIST_INIT(s->node),
       .io = args.io,
       .on_message =
           (args.on_message ? args.on_message
                            : (args.io ? fio___subscription_call_protocol
-                                      : fio___subscription_mock_cb)),
-      .on_unsubscribe = args.on_unsubscribe,
+                                      : fio___pubsub_on_message_stub)),
+      .on_unsubscribe = (args.on_unsubscribe
+                             ? args.on_unsubscribe
+                             : (void (*)(void *))fio___pubsub_on_message_stub),
       .udata = args.udata,
       .queue = args.queue,
+      .replay_since = args.replay_since,
+      .channel = NULL,
+      .filter = args.filter,
+      .is_pattern = !!args.is_pattern,
+      .master_only = args.master_only,
   };
-  args.is_pattern = !!args.is_pattern; /* make sure this is either 1 or zero */
-  uptr.ls = &s->node;
-  *uptr.str = FIO_STR_INFO3(
-      (args.channel.len
-           ? fio_bstr_write(NULL, args.channel.buf, args.channel.len)
-           : NULL),
-      args.channel.len,
-      FIO___PUBSUB_CHANNEL_ENCODE_CAPA(args.filter, args.is_pattern));
 
-  if (args.subscription_handle_ptr)
-    goto has_handle;
-  if (args.master_only)
-    goto is_master_only;
-  if (!args.io)
-    goto is_global;
+  fio_io_defer(fio___pubsub_subscribe_task,
+               fio_pubsub_subscription_dup(s),
+               bstr);
 
-  fio_io_defer(fio___pubsub_subscribe_task, (void *)s, NULL);
+  if (args.subscription_handle_ptr) {
+    *args.subscription_handle_ptr = (uintptr_t)s;
+    return;
+  }
+
+  /* Store subscription in environment for later retrieval */
   fio_io_env_set(
       args.io,
-      .type = (intptr_t)(0LL - (((2ULL | (!!args.is_pattern)) << 16) |
-                                (uint16_t)args.filter)),
+      .type = fio___pubsub_channel_env_type(args.filter, args.is_pattern),
       .name = args.channel,
       .udata = s,
-      .on_close = (void (*)(void *))fio___pubsub_subscription_unsubscribe);
-  return;
-
-has_handle:
-  fio_io_defer(fio___pubsub_subscribe_task, (void *)s, NULL);
-  *args.subscription_handle_ptr = (uintptr_t)s;
-  return;
-
-is_master_only:
-  if (!fio_io_is_master())
-    goto error_not_on_master;
-is_global:
-  if (1) { /* so C++ can jump even though there's a new var here */
-    fio_io_defer(fio___pubsub_subscribe_task, (void *)s, NULL);
-    uint64_t hashed_value =
-        fio_risky_hash(args.channel.buf,
-                       args.channel.len,
-                       args.filter | ((size_t)args.is_pattern << 20));
-    FIO___LOCK_LOCK(FIO___PUBSUB_POSTOFFICE.lock);
-    fio___postoffice_msmap_set(
-        &FIO___PUBSUB_POSTOFFICE.master_subscriptions + (!args.master_only),
-        hashed_value,
-        FIO_STR_INFO2(args.channel.buf, args.channel.len),
-        s,
-        NULL);
-    FIO___LOCK_UNLOCK(FIO___PUBSUB_POSTOFFICE.lock);
-  }
-  return;
-
-error_not_on_master:
-  fio_bstr_free(uptr.str->buf);
-  s->node = FIO_LIST_INIT(s->node);
-  s->history = FIO_LIST_INIT(s->history);
-  fio___subscription_free(s);
-  FIO_LOG_WARNING(
-      "(%d) master-only subscription attempt on a non-master process: %.*s",
-      fio_io_pid(),
-      (int)args.channel.len,
-      (args.channel.buf ? args.channel.buf : (char *)""));
+      .on_close = fio___pubsub_subscription_env_unsubscribe);
   return;
 
 sub_error:
-  FIO_LOG_ERROR("(%d) pub/sub subscription/channel cannot be created?"
-                "\n\t%zu bytes long\n\t%.*s...",
-                fio_io_pid(),
-                args.channel.len,
-                (int)(args.channel.len > 10 ? 7 : args.channel.len),
-                (args.channel.buf ? args.channel.buf : (char *)""));
-  FIO_LOG_ERROR("failed to allocate a new subscription");
-  if (args.on_unsubscribe) {
-    union {
-      void *p;
-      void (*fn)(void *udata);
-    } u = {.fn = args.on_unsubscribe};
-    fio_queue_push(fio_io_queue(),
-                   fio___pubsub_subscription_on_destroy__task,
-                   u.p,
-                   args.udata);
-  }
+  FIO_LOG_ERROR("(%d) pub/sub subscription/channel cannot be created?",
+                fio_io_pid());
+  if (args.on_unsubscribe)
+    args.on_unsubscribe(args.udata);
   return;
+sub_error_free_sub:
+  FIO_LOG_ERROR("(%d) pub/sub subscription/channel cannot be created?",
+                fio_io_pid());
+  fio_pubsub_subscription_free(s);
 }
 
-/** Cancels an existing subscriptions. */
-void fio_unsubscribe___(void); /* sublimetext marker */
-int fio_unsubscribe FIO_NOOP(fio_subscribe_args_s args) {
-  if (args.subscription_handle_ptr)
-    goto has_handle;
-  if (args.master_only || !args.io)
-    goto is_global;
+/* *****************************************************************************
+Subscription Cleanup
+***************************************************************************** */
 
-  return fio_io_env_remove(
-      args.io,
-      .type = (intptr_t)(0LL - (((2ULL | (!!args.is_pattern)) << 16) |
-                                (uint16_t)args.filter)),
-      .name = args.channel);
+FIO_SFUNC void fio___pubsub_subscription_on_destroy_task(void *tsk,
+                                                         void *udata) {
+  union {
+    void *tsk;
+    void (*cb)(void *udata);
+  } u = {.tsk = tsk};
+  u.cb(udata);
+}
 
-has_handle:
-  fio___pubsub_subscription_unsubscribe(
-      *(fio_subscription_s **)args.subscription_handle_ptr);
-  return 0;
+FIO_SFUNC void fio___pubsub_subscription_on_destroy(
+    fio_pubsub_subscription_s *s) {
 
-is_global:
-  if (1) {
-    int r;
-    uint64_t hashed_value =
-        fio_risky_hash(args.channel.buf,
-                       args.channel.len,
-                       args.filter | ((size_t)args.is_pattern << 20));
-    FIO___LOCK_LOCK(FIO___PUBSUB_POSTOFFICE.lock);
-    r = fio___postoffice_msmap_remove(
-        &FIO___PUBSUB_POSTOFFICE.master_subscriptions + (!args.master_only),
-        hashed_value,
-        FIO_STR_INFO3(args.channel.buf, args.channel.len, (size_t)-1),
+  FIO_LOG_DDEBUG2("(%d) subscription destroyed for %p -> %.*s",
+                  fio_io_pid(),
+                  (void *)s,
+                  (int)s->channel->name_len,
+                  s->channel->name);
+
+  if (s->node.next != &s->node)
+    FIO_LIST_REMOVE(&(s->node));
+
+  union {
+    void *tsk;
+    void (*cb)(void *udata);
+  } u = {.cb = s->on_unsubscribe};
+  fio_queue_push(s->queue,
+                 fio___pubsub_subscription_on_destroy_task,
+                 u.tsk,
+                 s->udata);
+
+  fio_pubsub_channel_s *c = s->channel;
+  /* no more subscribers - remove channel from channel collection */
+  if (!FIO_LIST_IS_EMPTY(&c->subscriptions))
+    fio___pubsub_channel_map_remove(
+        (&FIO___PUBSUB_POSTOFFICE.channels + c->is_pattern),
+        FIO_STR_INFO3(
+            c->name,
+            c->name_len,
+            FIO___PUBSUB_CHANNEL_ENCODE_CAPA(c->filter, c->is_pattern)),
         NULL);
-    FIO___LOCK_UNLOCK(FIO___PUBSUB_POSTOFFICE.lock);
-    return r;
-  }
+  fio_pubsub_channel_free(c);
 }
-
 /* *****************************************************************************
-Pub/Sub Message Distribution (local process)
+History Request Implementation
 ***************************************************************************** */
 
-static void fio___subscription_after_on_message_task(void *s, void *m) {
-  fio___subscription_free((fio_subscription_s *)s);
-  fio___pubsub_message_free((fio___pubsub_message_s *)m);
-}
-
-/* performs the subscription callback */
-FIO_IFUNC void fio___subscription_on_message_task(void *s_, void *m_) {
-  fio_subscription_s *s = (fio_subscription_s *)s_;
-  fio___pubsub_message_s *m = (fio___pubsub_message_s *)m_;
-  struct {
-    fio_msg_s msg;
-    fio___pubsub_message_s *m;
-    uintptr_t flag;
-  } container = {
-      .msg = m->data,
-      .m = m,
-  };
-  container.msg.io = s->io;
-  container.msg.udata = s->udata;
-  container.msg.is_json = !!(container.msg.is_json & FIO___PUBSUB_JSON);
-  s->on_message(&container.msg);
-  s->udata = container.msg.udata;
-  if (container.flag)
-    goto reschedule;
-  fio_queue_push(fio_io_queue(),
-                 fio___subscription_after_on_message_task,
-                 s,
-                 m);
-  return;
-reschedule:
-  fio_queue_push(s->queue, fio___subscription_on_message_task, s_, m_);
-}
-
-/* returns the internal message object. */
-FIO_IFUNC fio___pubsub_message_s *fio___pubsub_msg2internal(fio_msg_s *msg) {
-  return *(fio___pubsub_message_s **)(msg + 1);
-}
-
-/** Defers the current callback, so it will be called again for the message. */
-SFUNC void fio_pubsub_message_defer(fio_msg_s *msg) {
-  ((uintptr_t *)(msg + 1))[1] = 1;
-}
-
-/* distributes a message to all of a channel's subscribers */
-FIO_SFUNC void fio___pubsub_channel_deliver_task(void *ch_, void *m_) {
-  fio_channel_s *ch = (fio_channel_s *)ch_;
-  fio___pubsub_message_s *m = (fio___pubsub_message_s *)m_;
-  FIO_LIST_HEAD *head = (&ch->subscriptions);
-  _Bool is_history = !!(m->data.is_json & FIO___PUBSUB_REPLAY);
-  head += is_history;
-  if (m->data.io) { /* move as many `if` statements as possible out of loops. */
-    if (is_history) {
-      FIO_LIST_EACH(fio_subscription_s, node, head, s) {
-        if (m->data.io != s->io && m->data.published >= s->replay_since)
-          fio_queue_push(
-              s->queue,
-              (void (*)(void *, void *))fio___subscription_on_message_task,
-              fio___subscription_dup(s),
-              fio___pubsub_message_dup(m));
-      }
-    } else {
-      FIO_LIST_EACH(fio_subscription_s, node, head, s) {
-        if (m->data.io != s->io)
-          fio_queue_push(
-              s->queue,
-              (void (*)(void *, void *))fio___subscription_on_message_task,
-              fio___subscription_dup(s),
-              fio___pubsub_message_dup(m));
-      }
-    }
-  } else {
-    if (is_history) {
-      FIO_LIST_EACH(fio_subscription_s, node, head, s) {
-        if (m->data.published >= s->replay_since)
-          fio_queue_push(
-              s->queue,
-              (void (*)(void *, void *))fio___subscription_on_message_task,
-              fio___subscription_dup(s),
-              fio___pubsub_message_dup(m));
-      }
-    } else {
-      FIO_LIST_EACH(fio_subscription_s, node, head, s) {
-        fio_queue_push(
-            s->queue,
-            (void (*)(void *, void *))fio___subscription_on_message_task,
-            fio___subscription_dup(s),
-            fio___pubsub_message_dup(m));
-      }
-    }
-  }
-  fio___pubsub_message_free(m);
-  fio_channel_free(ch);
-}
-
-/** Callback called when a letter is destroyed (reference counting). */
-FIO_SFUNC void fio___pubsub_message_metadata_init(fio___pubsub_message_s *m);
-/** distributes a message to all matching channels */
-FIO_SFUNC void fio___pubsub_message_deliver(fio___pubsub_message_s *m) {
-  fio___pubsub_message_metadata_init(m); /* metadata initialization */
-  fio_str_info_s ch_name =
-      FIO_STR_INFO3(m->data.channel.buf,
-                    m->data.channel.len,
-                    FIO___PUBSUB_CHANNEL_ENCODE_CAPA(m->data.filter, 0));
-  fio_channel_s **ch_ptr = fio___channel_map_node2key_ptr(
-      fio___channel_map_get_ptr(&FIO___PUBSUB_POSTOFFICE.channels, ch_name));
-  if (ch_ptr)
-    fio_queue_push(fio_io_queue(),
-                   fio___pubsub_channel_deliver_task,
-                   fio_channel_dup(ch_ptr[0]),
-                   fio___pubsub_message_dup(m));
-  FIO_MAP_EACH(fio___channel_map, &FIO___PUBSUB_POSTOFFICE.patterns, i) {
-    if (i.node->key->filter == m->data.filter &&
-        FIO_PUBSUB_PATTERN_MATCH(i.key, ch_name))
-      fio_queue_push(fio_io_queue(),
-                     fio___pubsub_channel_deliver_task,
-                     fio_channel_dup(i.node->key),
-                     fio___pubsub_message_dup(m));
-  }
-}
-
-FIO_SFUNC void fio___pubsub_message_deliver_task(void *m_, void *ignr_) {
-  fio___pubsub_message_deliver((fio___pubsub_message_s *)m_);
-  fio___pubsub_message_free((fio___pubsub_message_s *)m_);
-  (void)ignr_;
-}
-
-/* *****************************************************************************
-Pub/Sub Message Type (internal data carrying structure)
-***************************************************************************** */
-
-/** Callback called when a letter is destroyed (reference counting). */
-FIO_SFUNC void fio___pubsub_message_metadata_init(fio___pubsub_message_s *m) {
-  if (fio_atomic_or(&m->metadata_is_initialized, 1)) {
+/** IPC handler: Worker receives history reply from master */
+FIO_SFUNC void fio___pubsub_worker_on_history_reply(fio_ipc_s *ipc) {
+  if (ipc->len < sizeof(uint32_t[2])) {
+    /* Empty reply or done signal - nothing to deliver */
     return;
   }
-  fio_msg_s msg = m->data;
-  msg.is_json &= FIO___PUBSUB_JSON;
-  for (size_t i = 0; i < FIO___PUBSUB_METADATA_STORE_LIMIT; ++i) {
-    if (fio_atomic_add(&FIO___PUBSUB_POSTOFFICE.metadata[i].ref, 1)) {
-      m->metadata[i] = FIO___PUBSUB_POSTOFFICE.metadata[i].build(&msg);
-      continue;
-    }
-    fio_atomic_sub(&FIO___PUBSUB_POSTOFFICE.metadata[i].ref, 1);
-  }
-}
 
-/** Callback called when a letter is destroyed (reference counting). */
-FIO_SFUNC void fio___pubsub_message_metadata_free(fio___pubsub_message_s *m) {
-  if (!m->metadata_is_initialized)
-    return;
-  for (size_t i = 0; i < FIO___PUBSUB_METADATA_STORE_LIMIT; ++i) {
-    if (fio_atomic_add(&FIO___PUBSUB_POSTOFFICE.metadata[i].ref, 1)) {
-      FIO___PUBSUB_POSTOFFICE.metadata[i].cleanup(m->metadata[i]);
-      fio_atomic_sub(&FIO___PUBSUB_POSTOFFICE.metadata[i].ref, 1);
-    }
-    fio_atomic_sub(&FIO___PUBSUB_POSTOFFICE.metadata[i].ref, 1);
-  }
-  m->metadata_is_initialized = 0;
-}
-
-/** Callback called when a letter is destroyed (reference counting). */
-FIO_SFUNC void fio___pubsub_message_on_destroy(fio___pubsub_message_s *m) {
-  fio___pubsub_message_metadata_free(m);
-}
-
-FIO_IFUNC fio___pubsub_message_s *fio___pubsub_message_alloc(void *header) {
-  fio___pubsub_message_s *m;
-  const size_t channel_len = fio_buf2u16_le((char *)header + 18);
-  const size_t message_len = fio_buf2u24_le((char *)header + 20);
-  m = fio___pubsub_message_new(((channel_len + message_len) << 1) +
-                               (FIO___PUBSUB_MESSAGE_OVERHEAD + 2));
-  FIO_ASSERT_ALLOC(m);
-  *m = (fio___pubsub_message_s){
-      .data =
-          (fio_msg_s){
-              .udata = m->buf + channel_len + message_len + 2,
-              .channel = FIO_BUF_INFO2(m->buf, channel_len),
-              .message = FIO_BUF_INFO2(m->buf + channel_len + 1, message_len),
-          },
-  };
-  return m;
-}
-
-FIO_IFUNC fio___pubsub_message_s *fio___pubsub_message_author(
-    fio_publish_args_s args) {
-  fio___pubsub_message_s *m =
-      fio___pubsub_message_new(((args.message.len + args.channel.len) << 1) +
-                               (FIO___PUBSUB_MESSAGE_OVERHEAD + 2));
-  FIO_ASSERT_ALLOC(m);
-  *m = (fio___pubsub_message_s){
-      .data =
-          (fio_msg_s){
-              .io = args.from,
-              .id = args.id ? args.id : fio_rand64(),
-              .published = args.published
-                               ? args.published
-                               : (uint64_t)fio_time2milli(fio_time_real()),
-              .channel = FIO_BUF_INFO2(m->buf, args.channel.len),
-              .message = FIO_BUF_INFO2(m->buf + args.channel.len + 1,
-                                       args.message.len),
-              .filter = args.filter,
-              .is_json = args.is_json,
-          },
-  };
-  if (args.channel.buf && args.channel.len)
-    FIO_MEMCPY(m->data.channel.buf, args.channel.buf, args.channel.len);
-  m->data.channel.buf[args.channel.len] = 0;
-  if (args.message.buf && args.message.len)
-    FIO_MEMCPY(m->data.message.buf, args.message.buf, args.message.len);
-  m->data.message.buf[args.message.len] = 0;
-  return m;
-}
-
-FIO_SFUNC void fio___pubsub_message_encrypt(fio___pubsub_message_s *m) {
-  if (m->data.udata)
-    return;
-  fio_u256 key_buf;
-  const void *k = fio___pubsub_secret_key(&key_buf, m->data.id);
-  const uint64_t nonce[2] = {fio_risky_num(m->data.id, 0), m->data.published};
-  uint8_t *pos = (uint8_t *)(m->data.message.buf + m->data.message.len + 1);
-  uint8_t *dest = pos;
-  m->data.udata = (void *)pos;
-  fio_u2buf64_le(pos, m->data.id);
-  pos += 8;
-  fio_u2buf64_le(pos, m->data.published);
-  pos += 8;
-  fio_u2buf16_le(pos, (uint16_t)m->data.filter);
-  pos += 2;
-  fio_u2buf16_le(pos, (uint16_t)m->data.channel.len);
-  pos += 2;
-  fio_u2buf24_le(pos, (uint32_t)m->data.message.len);
-  pos += 3;
-  *(pos++) = m->data.is_json;
-  const size_t enc_len = m->data.channel.len + m->data.message.len + 2;
-  FIO_MEMCPY(pos, m->data.channel.buf, enc_len);
-  if (enc_len == 2)
-    return;
-  pos += enc_len;
-  fio_chacha20_poly1305_enc(pos,
-                            (void *)(dest + FIO___PUBSUB_MESSAGE_HEADER),
-                            m->data.channel.len + m->data.message.len + 2,
-                            m->data.udata,
-                            FIO___PUBSUB_MESSAGE_HEADER,
-                            k,
-                            nonce);
-}
-
-FIO_SFUNC int fio___pubsub_message_decrypt(fio___pubsub_message_s *m) {
-  if (m->data.id)
-    return 0;
-  if (!m->data.udata)
-    return -1;
-  fio_u256 key_buf;
-  uint8_t *pos = (uint8_t *)(m->data.message.buf + m->data.message.len + 1);
-  uint8_t *const dest = pos;
-  m->data.id = fio_buf2u64_le(pos);
-  pos += 8;
-  m->data.published = fio_buf2u64_le(pos);
-  pos += 8;
-  m->data.filter = fio_buf2u16_le(pos);
-  pos += 2;
-  m->data.channel = FIO_BUF_INFO2(m->buf, fio_buf2u16_le(pos));
-  pos += 2;
-  m->data.message =
-      FIO_BUF_INFO2(m->buf + m->data.channel.len + 1, fio_buf2u24_le(pos));
-  pos += 3;
-  m->data.is_json = *(pos++);
-  const void *k = fio___pubsub_secret_key(&key_buf, m->data.id);
-  uint64_t nonce[2] = {fio_risky_num(m->data.id, 0), m->data.published};
-  const size_t enc_len = m->data.channel.len + m->data.message.len + 2;
-  FIO_MEMCPY(m->buf, pos, enc_len);
-  if (enc_len == 2)
-    return 0;
-  pos += enc_len;
-  return fio_chacha20_poly1305_dec(pos,
-                                   m->buf,
-                                   m->data.channel.len + m->data.message.len +
-                                       2,
-                                   dest,
-                                   FIO___PUBSUB_MESSAGE_HEADER,
-                                   k,
-                                   nonce);
-}
-
-FIO_IFUNC void fio___pubsub_message_is_dirty(fio___pubsub_message_s *m) {
-  m->data.udata = NULL;
-}
-
-/* *****************************************************************************
-Pub/Sub Message Object - IO helpers
-***************************************************************************** */
-
-FIO_IFUNC void fio___pubsub_message_write2io(fio_io_s *io, void *m_) {
-  fio___pubsub_message_s *m = (fio___pubsub_message_s *)m_;
-  if (io == m->data.io)
-    return;
-  FIO_LOG_DDEBUG2("(%d) pub/sub sending IPC/peer message: %zu bytes",
-                  fio_io_pid(),
-                  m->data.message.len + m->data.channel.len +
-                      FIO___PUBSUB_MESSAGE_OVERHEAD);
-  fio___pubsub_message_encrypt(m);
-  fio_io_write2(io,
-                .buf = fio___pubsub_message_dup(m),
-                .len = (m->data.message.len + m->data.channel.len +
-                        FIO___PUBSUB_MESSAGE_OVERHEAD),
-                .offset = ((uintptr_t)(m->data.udata) - (uintptr_t)(m)),
-                .dealloc = (void (*)(void *))fio___pubsub_message_free);
-}
-
-/* A callback for IO subscriptions - sends raw message data. */
-FIO_SFUNC void FIO_ON_MESSAGE_SEND_MESSAGE(fio_msg_s *msg) {
-  if (!msg || !msg->message.len)
-    return;
-  fio___pubsub_message_s *m = fio___pubsub_msg2internal(msg);
-  fio_io_write2(msg->io,
-                .buf = fio___pubsub_message_dup(m),
-                .len = msg->message.len,
-                .offset = (size_t)(msg->message.buf - (char *)m),
-                .dealloc = (void (*)(void *))fio___pubsub_message_free);
-}
-
-/* *****************************************************************************
-Pub/Sub Message Routing
-***************************************************************************** */
-
-FIO_SFUNC void fio___pubsub_message_route(fio___pubsub_message_s *m) {
-  fio___pubsub_message_parser_s *p;
-  unsigned flags = m->data.is_json;
-  FIO_LOG_DDEBUG2("(%d) pub/sub routing message (%x)",
-                  fio_io_pid(),
-                  (int)m->data.is_json);
-
-  if (flags & FIO___PUBSUB_SPECIAL)
-    goto is_special_message;
-
-  if ((FIO___PUBSUB_POSTOFFICE.filter.local & flags))
-    fio_io_protocol_each(&FIO___PUBSUB_POSTOFFICE.protocol.ipc,
-                         fio___pubsub_message_write2io,
-                         m);
-
-  if ((FIO___PUBSUB_POSTOFFICE.filter.remote & flags))
-    fio_io_protocol_each(&FIO___PUBSUB_POSTOFFICE.protocol.remote,
-                         fio___pubsub_message_write2io,
-                         m);
-
-  if ((FIO___PUBSUB_POSTOFFICE.filter.publish & flags))
-    fio_queue_push(fio_io_queue(),
-                   fio___pubsub_message_deliver_task,
-                   fio___pubsub_message_dup(m));
-
-  return;
-
-is_special_message:
-  FIO_LOG_DDEBUG2("(%d) pub/sub internal subscription/ID message received",
-                  fio_io_pid());
-  switch (flags) {
-  case FIO___PUBSUB_SPECIAL: /* TODO: run generic command on root */ break;
-  case FIO___PUBSUB_SUB:
-    fio_subscribe(.io = m->data.io,
-                  .channel = m->data.channel,
-                  .on_message = fio___subscription_mock_cb,
-                  .filter = m->data.filter,
-                  .is_pattern = (uint8_t)(m->data.id - 1));
-    return;
-  case FIO___PUBSUB_UNSUB:
-    fio_unsubscribe(.io = m->data.io,
-                    .channel = m->data.channel,
-                    .on_message = fio___subscription_mock_cb,
-                    .filter = m->data.filter,
-                    .is_pattern = (uint8_t)(m->data.id - 1));
-    return;
-
-  case FIO___PUBSUB_IDENTIFY:
-    p = fio___pubsub_message_parser(m->data.io);
-    if (p) {
-      p->uuid[0] = m->data.id;
-      p->uuid[1] = m->data.published;
-      fio___pubsub_broadcast_connected_set(
-          &FIO___PUBSUB_POSTOFFICE.remote_uuids,
-          p->uuid[0],
-          p->uuid[1]);
-    }
-    FIO_LOG_INFO("(%d - cluster) identified new peer (%zu connections)",
+  FIO_LOG_DEBUG2("(%d) worker_on_history_reply: channel=%.*s",
                  fio_io_pid(),
-                 fio___pubsub_broadcast_connected_count(
-                     &FIO___PUBSUB_POSTOFFICE.remote_uuids));
-    return;
-  case FIO___PUBSUB_FORWARDER: /* fall through */
-  case (FIO___PUBSUB_FORWARDER | FIO___PUBSUB_JSON):
-    if (FIO___PUBSUB_POSTOFFICE.filter.remote) { /* root process */
-      fio___pubsub_message_is_dirty(m);
-      m->data.message.len -= 8;
-      m->data.is_json &= FIO___PUBSUB_JSON;
-      fio_pubsub_engine_s *e = (fio_pubsub_engine_s *)(uintptr_t)fio_buf2u64u(
-          m->data.message.buf + m->data.message.len);
-      m->data.message.buf[m->data.message.len] = 0;
-      e->publish(e, &m->data);
-    } else { /* child process */
-      fio_io_protocol_each(&FIO___PUBSUB_POSTOFFICE.protocol.ipc,
-                           fio___pubsub_message_write2io,
-                           m);
-    }
-    return;
+                 (int)(fio_buf2u32u(ipc->data)),
+                 ipc->data + sizeof(uint32_t[2]));
 
-  case FIO___PUBSUB_HISTORY_START:
-    FIO_LOG_DDEBUG2("(%d) pub/sub internal history start message received",
-                    fio_io_pid());
-    /* TODO! */
-    return;
-  case FIO___PUBSUB_HISTORY_END:
-    FIO_LOG_DDEBUG2("(%d) pub/sub internal history end message received",
-                    fio_io_pid());
-    /* TODO! */
-    return;
-  }
-  return;
+  fio_queue_push(((fio_pubsub_subscription_s *)ipc->udata)->queue,
+                 fio___pubsub_subscription_ipc_deliver,
+                 fio_pubsub_subscription_dup(ipc->udata),
+                 fio_ipc_dup(ipc));
 }
 
-/* *****************************************************************************
-Pub/Sub - Publish
-***************************************************************************** */
-
-FIO_SFUNC void fio___publish_message_task(void *m_, void *ignr_) {
-  (void)ignr_;
-  fio___pubsub_message_s *m = (fio___pubsub_message_s *)m_;
-  fio___pubsub_message_route(m);
-  fio___pubsub_message_free(m);
+/** IPC handler: Worker receives history reply from master */
+FIO_SFUNC void fio___pubsub_worker_on_history_reply_done(fio_ipc_s *ipc) {
+  fio_pubsub_subscription_free2(ipc->udata);
 }
 
-/** Publishes a message to the relevant subscribers (if any). */
-void fio_publish___(void); /* SublimeText marker*/
-void fio_publish FIO_NOOP(fio_publish_args_s args) {
-  if (FIO_UNLIKELY(args.channel.len > 0xFFFFUL)) {
-    FIO_LOG_ERROR("(%d) pub/sub channel name too long (%zu bytes)",
+/** Callback for master history replay - sends messages to requesting worker */
+FIO_SFUNC void fio___pubsub_history_replay_ipc_cb(fio_pubsub_msg_s *msg,
+                                                  void *udata) {
+  fio_ipc_s *ipc = (fio_ipc_s *)udata;
+  uint32_t header[2] = {(uint32_t)msg->channel.len, (uint32_t)msg->message.len};
+
+  static const char nul_byte[1] = {0};
+
+  /* Send history message to requesting worker (not done yet)
+   * Metadata (timestamp, id, filter) goes in IPC header */
+  fio_ipc_reply(
+      ipc,
+      .timestamp = msg->timestamp,
+      .id = msg->id,
+      .flags = (uint16_t)msg->filter,
+      .data = FIO_IPC_DATA(FIO_BUF_INFO2((char *)&header, sizeof(header)),
+                           FIO_BUF_INFO2(msg->channel.buf, msg->channel.len),
+                           FIO_BUF_INFO2((char *)nul_byte, 1),
+                           FIO_BUF_INFO2(msg->message.buf, msg->message.len),
+                           FIO_BUF_INFO2((char *)nul_byte, 1)),
+      .done = 0);
+}
+
+FIO_SFUNC void fio___pubsub_history_replay_ipc_done_cb(void *udata) {
+  fio_ipc_reply(udata, .done = 1);
+}
+
+/** IPC handler: Master receives history request from worker */
+FIO_SFUNC void fio___pubsub_master_on_history_request(fio_ipc_s *ipc) {
+  if (ipc->len < FIO___PUBSUB_HISTORY_REQUEST_HEADER_LEN) {
+    FIO_LOG_ERROR("(%d) master_on_history_request: invalid message size %u",
                   fio_io_pid(),
-                  args.channel.len);
+                  ipc->len);
+    /* Send empty done reply */
+    fio_ipc_reply(ipc, .done = 1);
     return;
   }
-  if (FIO_UNLIKELY(args.message.len > 0xFFFFFFUL)) {
-    FIO_LOG_ERROR("(%d) pub/sub message payload too large (%zu bytes)",
-                  fio_io_pid(),
-                  args.message.len);
+
+  fio___pubsub_history_request_s *req =
+      (fio___pubsub_history_request_s *)ipc->data;
+  /* Filter is carried in IPC header flags */
+  int16_t filter = (int16_t)ipc->flags;
+
+  FIO_LOG_DEBUG2("(%d) Got history request: channel=%.*s since=%llu",
+                 fio_io_pid(),
+                 (int)req->channel_len,
+                 req->channel,
+                 (unsigned long long)req->replay_since);
+
+  fio_buf_info_s channel = FIO_BUF_INFO2(req->channel, req->channel_len);
+
+  /* Find best history manager and replay */
+  fio_pubsub_history_s *best = NULL;
+  uint64_t best_oldest = UINT64_MAX;
+
+  FIO_IMAP_EACH(fio___pubsub_history_managers,
+                &FIO___PUBSUB_POSTOFFICE.history_managers,
+                i) {
+    fio_pubsub_history_s *mgr =
+        FIO___PUBSUB_POSTOFFICE.history_managers.ary[i].manager;
+    uint64_t mgr_oldest = mgr->oldest(mgr, channel, filter);
+    if (mgr_oldest < best_oldest) {
+      best_oldest = mgr_oldest;
+      best = mgr;
+    }
+    if (best_oldest <= req->replay_since)
+      break;
+  }
+
+  /* Replay from selected manager, sending each message via IPC reply */
+  if (best)
+    best->replay(best,
+                 channel,
+                 filter,
+                 req->replay_since,
+                 fio___pubsub_history_replay_ipc_cb,
+                 fio___pubsub_history_replay_ipc_done_cb,
+                 ipc);
+  else
+    fio_ipc_reply(ipc, .done = 1);
+}
+
+/** Worker requests history from master via IPC */
+FIO_SFUNC void fio___pubsub_request_history(fio_pubsub_subscription_s *sub) {
+  if (!sub || !sub->channel || !sub->replay_since)
     return;
-  }
-  fio___pubsub_message_s *m;
-  fio_msg_s msg;
 
-  if (!args.engine) {
-    args.engine = FIO_PUBSUB_DEFAULT;
-    if (!args.engine)
-      args.engine = FIO_PUBSUB_DEFAULT = FIO_PUBSUB_CLUSTER;
-    if (args.filter < 0)
-      args.engine = FIO_PUBSUB_LOCAL;
-  }
-  if ((uintptr_t)args.engine > 0xFFUL)
-    goto external_engine;
+  FIO_LOG_DEBUG2("(%d) request_history: channel=%.*s since=%llu",
+                 fio_io_pid(),
+                 (int)sub->channel->name_len,
+                 sub->channel->name,
+                 (unsigned long long)sub->replay_since);
 
-  m = fio___pubsub_message_author(args);
-  m->data.is_json = ((!!args.is_json) | ((uint8_t)(uintptr_t)args.engine));
+  /* Build history request header on stack (filter goes in IPC flags) */
+  fio___pubsub_history_request_s header = {
+      .replay_since = sub->replay_since,
+      .channel_len = sub->channel->name_len,
+  };
 
-  FIO_LOG_DDEBUG2("(%d) publishing pub/sub message (scheduling)", fio_io_pid());
-  fio_io_defer(fio___publish_message_task, m, NULL);
-  return;
-
-external_engine:
-
-  msg.message = args.message;
-  args.message.buf = NULL;
-  args.message.len += 8;
-
-  m = fio___pubsub_message_author(args);
-  m->data.is_json = ((!!args.is_json) | ((uint8_t)FIO___PUBSUB_FORWARDER));
-  FIO_MEMCPY(m->data.message.buf, msg.message.buf, msg.message.len);
-  fio_u2buf64u(m->data.message.buf + msg.message.len, (uintptr_t)args.engine);
-  fio_io_defer(fio___publish_message_task, m, NULL);
+  /* Send request to master - filter carried in IPC flags */
+  fio_ipc_call(.call = fio___pubsub_master_on_history_request,
+               .on_reply = fio___pubsub_worker_on_history_reply,
+               .on_done = fio___pubsub_worker_on_history_reply_done,
+               .udata = fio_pubsub_subscription_dup(sub),
+               .flags = (uint16_t)sub->channel->filter,
+               .data = FIO_IPC_DATA(
+                   FIO_BUF_INFO2((char *)&header,
+                                 FIO___PUBSUB_HISTORY_REQUEST_HEADER_LEN),
+                   FIO_BUF_INFO2(sub->channel->name, sub->channel->name_len)));
 }
 
 /* *****************************************************************************
-Pub/Sub Message on-the-wire parsing
+History Manager - Stubs
 ***************************************************************************** */
 
-FIO_IFUNC void fio___pubsub_message_parse(
-    fio_io_s *io,
-    void (*cb)(fio_io_s *, fio___pubsub_message_s *)) {
-  fio___pubsub_message_parser_s *parser = fio___pubsub_message_parser(io);
-  if (!parser)
-    return;
-  size_t existing = parser->len;
-  if (!parser->msg) {
-    while (existing < FIO___PUBSUB_MESSAGE_HEADER) { /* get message length */
-      size_t consumed = fio_io_read(io,
-                                    parser->buf + existing,
-                                    FIO___PUBSUB_MESSAGE_OVERHEAD - existing);
-      if (!consumed) {
-        parser->len = existing;
-        return;
-      }
-      existing += consumed;
-    }
-    parser->msg = fio___pubsub_message_alloc(parser->buf);
-    FIO_MEMCPY(parser->msg->data.udata, parser->buf, existing);
-  }
-  /* known message length, read to end and publish */
-  fio___pubsub_message_s *m = parser->msg;
-  const size_t needed =
-      m->data.channel.len + m->data.message.len + FIO___PUBSUB_MESSAGE_OVERHEAD;
-  // FIO_LOG_DDEBUG2("(%d) pub/sub parsing IPC/peer message %p (%zu/%zu bytes)",
-  //                 fio_io_pid(),
-  //                 (void *)fio_buf2u64_le(m->data.udata),
-  //                 existing,
-  //                 needed);
-  while (existing < needed) {
-    size_t consumed =
-        fio_io_read(io, (char *)m->data.udata + existing, needed - existing);
-    if (!consumed) {
-      parser->len = existing;
-      return;
-    }
-    existing += consumed;
-  }
-  parser->msg = NULL;
-  parser->len = 0;
-  m->data.io = io;
-  if (fio___pubsub_message_decrypt(m)) {
-    FIO_LOG_SECURITY("(%d) pub/sub message decryption error", fio_io_pid());
-    fio_io_close_now(io);
-  } else {
-    cb(io, m);
-  }
-  fio___pubsub_message_free(m);
-  return; /* consume no more than 1 message at a time */
+FIO_SFUNC int fio___pubsub_history_stub_push(
+    const struct fio_pubsub_history_s *hist,
+    fio_pubsub_msg_s *msg) {
+  (void)hist;
+  (void)msg;
+  return 0;
 }
 
-/* *****************************************************************************
-Pub/Sub Protocols
-***************************************************************************** */
-
-FIO_SFUNC void fio___pubsub_on_message_master(fio_io_s *io,
-                                              fio___pubsub_message_s *msg) {
-  fio___pubsub_message_route(msg);
-  (void)io;
-}
-FIO_SFUNC void fio___pubsub_on_message_worker(fio_io_s *io,
-                                              fio___pubsub_message_s *msg) {
-  fio___pubsub_message_route(msg);
-  (void)io;
-}
-FIO_SFUNC void fio___pubsub_on_message_remote(fio_io_s *io,
-                                              fio___pubsub_message_s *msg) {
-  fio___pubsub_message_map_s *map = &FIO___PUBSUB_POSTOFFICE.remote_messages;
-  map += !!(msg->data.is_json & FIO___PUBSUB_REPLAY);
-  fio___pubsub_message_s *existing = fio___pubsub_message_map_set(map, msg);
-  if (existing != msg)
-    return; /* already received */
-  fio___pubsub_message_route(msg);
-  (void)io;
-}
-FIO_SFUNC void fio___pubsub_protocol_on_attach(fio_io_s *io) {
-  fio___pubsub_message_parser_init(fio___pubsub_message_parser(io));
-}
-FIO_SFUNC void fio___pubsub_protocol_on_data_master(fio_io_s *io) {
-  fio___pubsub_message_parse(io, fio___pubsub_on_message_master);
-}
-FIO_SFUNC void fio___pubsub_protocol_on_data_worker(fio_io_s *io) {
-  fio___pubsub_message_parse(io, fio___pubsub_on_message_worker);
-}
-FIO_SFUNC void fio___pubsub_protocol_on_data_remote(fio_io_s *io) {
-  fio___pubsub_message_parse(io, fio___pubsub_on_message_remote);
-}
-
-FIO_SFUNC void fio___pubsub_protocol_on_close(void *p_, void *udata) {
-  fio___pubsub_message_parser_s *p = (fio___pubsub_message_parser_s *)p_;
-  if (p->uuid[0] || p->uuid[1]) {
-    // TODO!: fio___pubsub_broadcast_hello(fio_io_s *io) ?
-    fio___pubsub_broadcast_connected_remove(
-        &FIO___PUBSUB_POSTOFFICE.remote_uuids,
-        p->uuid[0],
-        p->uuid[1],
-        NULL);
-    FIO_LOG_INFO(
-        "(%d) (pub/sub cluster) lost peer connection (%zu connections)",
-        fio_io_pid(),
-        fio___pubsub_broadcast_connected_count(
-            &FIO___PUBSUB_POSTOFFICE.remote_uuids));
-  }
-  fio___pubsub_message_parser_destroy(p);
-  if (FIO___PUBSUB_POSTOFFICE.crush_on_close) {
-    if (fio_io_is_running())
-      FIO_LOG_FATAL("(%d) pub/sub connection lost unexpectedly.", fio_io_pid());
-    fio_io_stop();
-  }
+FIO_SFUNC int fio___pubsub_history_stub_replay(
+    const struct fio_pubsub_history_s *hist,
+    fio_buf_info_s channel,
+    int16_t filter,
+    uint64_t since,
+    void (*on_message)(fio_pubsub_msg_s *msg, void *udata),
+    void (*on_done)(void *udata),
+    void *udata) {
+  (void)hist;
+  (void)channel;
+  (void)filter;
+  (void)since;
+  (void)on_message;
+  (void)on_done;
   (void)udata;
+  if (on_done)
+    on_done(udata);
+  return -1;
 }
 
-static void fio___pubsub_protocol_on_timeout(fio_io_s *io) {
-  static const uint8_t ping_msg[FIO___PUBSUB_MESSAGE_OVERHEAD] = {
-      [23] = FIO___PUBSUB_PING};
-  fio_io_write2(io,
-                .buf = (void *)ping_msg,
-                .len = FIO___PUBSUB_MESSAGE_OVERHEAD);
+FIO_SFUNC uint64_t
+fio___pubsub_history_stub_oldest(const struct fio_pubsub_history_s *hist,
+                                 fio_buf_info_s channel,
+                                 int16_t filter) {
+  (void)hist;
+  (void)channel;
+  (void)filter;
+  return UINT64_MAX;
 }
 
-/* *****************************************************************************
-Pub/Sub Engine Support Implementation
-***************************************************************************** */
-
-static void fio___pubsub_mock_detached(const fio_pubsub_engine_s *eng) {
-  (void)eng;
-}
-static void fio___pubsub_mock_sub_unsub(const fio_pubsub_engine_s *eng,
-                                        fio_buf_info_s channel,
-                                        int16_t filter) {
-  (void)eng, (void)channel, (void)filter;
-}
-static void fio___pubsub_mock_publish(const fio_pubsub_engine_s *eng,
-                                      fio_msg_s *msg) {
-  (void)eng, (void)msg; /* TODO:? sensible default? publish to cluster? */
-}
-
-static void fio___pubsub_attach_task(void *engine_, void *ignr_) {
-  (void)ignr_;
-  fio_pubsub_engine_s *engine = (fio_pubsub_engine_s *)engine_;
-  if (!engine->detached)
-    engine->detached = fio___pubsub_mock_detached;
-  if (!engine->subscribe)
-    engine->subscribe = fio___pubsub_mock_sub_unsub;
-  if (!engine->unsubscribe)
-    engine->unsubscribe = fio___pubsub_mock_sub_unsub;
-  if (!engine->psubscribe)
-    engine->psubscribe = fio___pubsub_mock_sub_unsub;
-  if (!engine->punsubscribe)
-    engine->punsubscribe = fio___pubsub_mock_sub_unsub;
-  if (!engine->publish)
-    engine->publish = fio___pubsub_mock_publish;
-  fio___pubsub_engines_set(&FIO___PUBSUB_POSTOFFICE.engines, engine);
-  FIO_MAP_EACH(fio___channel_map, &FIO___PUBSUB_POSTOFFICE.channels, i) {
-    engine->subscribe(engine,
-                      FIO_BUF_INFO2(i.key.buf, i.key.len),
-                      (i.key.capa >> 16));
-  }
-  FIO_MAP_EACH(fio___channel_map, &FIO___PUBSUB_POSTOFFICE.patterns, i) {
-    engine->psubscribe(engine,
-                       FIO_BUF_INFO2(i.key.buf, i.key.len),
-                       (i.key.capa >> 16));
-  }
-}
-
-FIO_SFUNC void fio___pubsub_detach_task(void *engine, void *ignr_) {
-  (void)ignr_;
-  fio_pubsub_engine_s *e = (fio_pubsub_engine_s *)engine;
-  fio___pubsub_engines_remove(&FIO___PUBSUB_POSTOFFICE.engines, e, NULL);
-}
-
-/** Attaches an engine, so it's callback can be called by facil.io. */
-SFUNC void fio_pubsub_attach(fio_pubsub_engine_s *engine) {
-  if (!engine)
-    return;
-  fio_io_defer(fio___pubsub_attach_task, engine, NULL);
-}
-
-/** Schedules an engine for Detachment, so it could be safely destroyed. */
-SFUNC void fio_pubsub_detach(fio_pubsub_engine_s *engine) {
-  fio_queue_push(fio_io_queue(), fio___pubsub_detach_task, engine, NULL);
+FIO_SFUNC void fio___pubsub_history_stub_detach(
+    const struct fio_pubsub_history_s *hist) {
+  (void)hist;
 }
 
 /* *****************************************************************************
-Channel Creation / Destruction Callback (notifying engines)
+History Manager - Attach/Detach
 ***************************************************************************** */
 
-/** Callback for when a channel is created. */
-FIO_IFUNC void fio___channel_on_create(fio_channel_s *ch) {
-  fio_buf_info_s name = FIO_BUF_INFO2(ch->name, ch->name_len);
-  FIO_LOG_DDEBUG2("(%d) pub/sub %s created, filter %d, length %zu bytes: %s",
-                  fio_io_pid(),
-                  (ch->is_pattern ? "pattern" : "channel"),
-                  (int)ch->filter,
-                  (size_t)ch->name_len,
-                  name.buf);
-  FIO_MAP_EACH(fio___pubsub_engines, &FIO___PUBSUB_POSTOFFICE.engines, i) {
-    (&i.key->subscribe + ch->is_pattern)[0](i.key, name, ch->filter);
-  }
-  if (!FIO___PUBSUB_POSTOFFICE.filter.remote) { /* inform root process */
-    FIO_LOG_DDEBUG2("(%d) informing root process of new channel.",
-                    fio_io_pid());
-    fio___pubsub_message_s *m =
-        fio___pubsub_message_author((fio_publish_args_s){
-            .id = (uint64_t)(ch->is_pattern + 1),
-            .channel = FIO_BUF_INFO2(ch->name, ch->name_len),
-            .filter = ch->filter,
-            .is_json = FIO___PUBSUB_SUB,
-        });
-    fio_io_protocol_each(&FIO___PUBSUB_POSTOFFICE.protocol.ipc,
-                         fio___pubsub_message_write2io,
-                         m);
-    fio___pubsub_message_free(m);
-  }
-}
-/** Callback for when a channel is destroy. */
-FIO_IFUNC void fio___channel_on_destroy(fio_channel_s *ch) {
-  fio_buf_info_s name = FIO_BUF_INFO2(ch->name, ch->name_len);
-
-  FIO_MAP_EACH(fio___pubsub_engines, &FIO___PUBSUB_POSTOFFICE.engines, i) {
-    (&i.key->unsubscribe + ch->is_pattern)[0](i.key, name, ch->filter);
-  }
-
-  if (!FIO___PUBSUB_POSTOFFICE.filter.remote) { /* inform root process */
-    fio___pubsub_message_s *m =
-        fio___pubsub_message_author((fio_publish_args_s){
-            .id = (uint64_t)(ch->is_pattern + 1),
-            .channel = FIO_BUF_INFO2(ch->name, ch->name_len),
-            .filter = ch->filter,
-            .is_json = FIO___PUBSUB_UNSUB,
-        });
-    if (m) {
-      fio_io_protocol_each(&FIO___PUBSUB_POSTOFFICE.protocol.ipc,
-                           fio___pubsub_message_write2io,
-                           m);
-      fio___pubsub_message_free(m);
-    }
-  }
-
-  FIO_LOG_DDEBUG2("(%d) pub/sub %s destroyed, filter %d, length %zu bytes: %s",
-                  fio_io_pid(),
-                  (ch->is_pattern ? "pattern" : "channel"),
-                  (int)ch->filter,
-                  (size_t)ch->name_len,
-                  name.buf);
-}
-
-/* *****************************************************************************
-Broadcasting for remote connections
-***************************************************************************** */
-
-FIO_IFUNC fio_u512 fio___pubsub_broadcast_compose(uint64_t tick) {
-  /* [0-1]  Sender's 128 bit UUID
-   * [2]    Random nonce
-   * [3]    Timestamp in milliseconds
-   * [4-5]  MAC
-   */
-  fio_u512 u = {0};
-  fio_u256 key_buf;
-  uint64_t hello_rand = fio_rand64();
-  const void *k = fio___pubsub_secret_key(&key_buf, hello_rand);
-  u.u64[0] = FIO___PUBSUB_POSTOFFICE.uuid.u64[0];
-  u.u64[1] = FIO___PUBSUB_POSTOFFICE.uuid.u64[1];
-  u.u64[2] = fio_ltole64(hello_rand); /* persistent endienes required for k */
-  u.u64[3] = fio_ltole64(tick);
-  fio_poly1305_auth(u.u64 + 4, u.u64, 32, NULL, 0, k);
-  return u;
-}
-
-FIO_SFUNC void fio___pubsub_broadcast_hello(fio_io_s *io) {
-
-  if (!fio_io_is_running() || !(io = FIO___PUBSUB_POSTOFFICE.broadcaster))
+FIO_SFUNC void fio___pubsub_history_managers_sort(void) {
+  fio___pubsub_history_managers_s *m =
+      &FIO___PUBSUB_POSTOFFICE.history_managers;
+  if (!m->w)
     return;
-  static int64_t last_hello = 0;
-  int64_t this_hello = fio_io_last_tick();
-  if (last_hello == this_hello)
-    return;
-  fio_u512 u = fio___pubsub_broadcast_compose((last_hello = this_hello));
-  struct sockaddr_in addr = (struct sockaddr_in){
-      .sin_family = AF_INET,
-      .sin_port = fio_lton16((uint16_t)(uintptr_t)fio_io_udata(io)),
-      .sin_addr.s_addr = INADDR_BROADCAST, // inet_addr("255.255.255.255"),
-  };
-  FIO_LOG_DEBUG2("(%d) pub/sub sending broadcast.", fio_io_pid());
-  sendto(fio_io_fd(io),
-         (const char *)u.u8,
-         48,
-         0,
-         (struct sockaddr *)&addr,
-         sizeof(addr));
+  fio___pubsub_history_entry_sort(m->ary, m->w);
+  fio___pubsub_history_managers_rehash(m);
 }
 
-FIO_SFUNC void fio___pubsub_broadcast_hello_task_done(void *io_, void *ignr_) {
-  (void)ignr_;
-  fio_io_s *io = (fio_io_s *)io_;
-  fio_io_free(io);
+FIO_SFUNC void fio___pubsub_history_attach_task(void *manager_,
+                                                void *priority_) {
+  fio_pubsub_history_s *manager = (fio_pubsub_history_s *)manager_;
+  uint8_t priority = (uint8_t)(uintptr_t)priority_;
+
+  fio___pubsub_history_entry_s entry = {.manager = manager,
+                                        .priority = priority};
+  fio___pubsub_history_entry_s *existing = fio___pubsub_history_managers_get(
+      &FIO___PUBSUB_POSTOFFICE.history_managers,
+      entry);
+  if (existing) {
+    existing->priority = priority;
+    fio___pubsub_history_managers_sort();
+  } else {
+    if (fio___pubsub_history_managers_set(
+            &FIO___PUBSUB_POSTOFFICE.history_managers,
+            entry,
+            1))
+      fio___pubsub_history_managers_sort();
+  }
 }
 
-FIO_SFUNC int fio___pubsub_broadcast_hello_task(void *io_, void *ignr_) {
-  (void)ignr_;
-  fio_io_s *io = (fio_io_s *)io_;
-  fio___pubsub_broadcast_hello(io);
+SFUNC int fio_pubsub_history_attach(const fio_pubsub_history_s *manager,
+                                    uint8_t priority) {
+  if (!manager)
+    return -1;
+  fio_pubsub_history_s *updated = (fio_pubsub_history_s *)manager;
+  if (!updated->push)
+    updated->push = fio___pubsub_history_stub_push;
+  if (!updated->replay)
+    updated->replay = fio___pubsub_history_stub_replay;
+  if (!updated->oldest)
+    updated->oldest = fio___pubsub_history_stub_oldest;
+  if (!updated->detached)
+    updated->detached = fio___pubsub_history_stub_detach;
+
+  if (fio_io_is_running())
+    fio_io_defer(fio___pubsub_history_attach_task,
+                 updated,
+                 (void *)(uintptr_t)priority);
+  else
+    fio___pubsub_history_attach_task(updated, (void *)(uintptr_t)priority);
   return 0;
 }
 
-FIO_SFUNC int fio___pubsub_broadcast_hello_validate(uint64_t *hello) {
-  fio_u256 key_buf;
-  uint64_t mac[2] = {0};
-  /* test server UUID (ignore self generated messages) */
-  if (hello[0] == FIO___PUBSUB_POSTOFFICE.uuid.u64[0] &&
-      hello[1] == FIO___PUBSUB_POSTOFFICE.uuid.u64[1])
+FIO_SFUNC void fio___pubsub_history_detach_task(void *manager_, void *ignr_) {
+  fio_pubsub_history_s *manager = (fio_pubsub_history_s *)manager_;
+  fio___pubsub_history_entry_s entry = {.manager = manager, .priority = 0};
+  fio___pubsub_history_managers_remove(
+      &FIO___PUBSUB_POSTOFFICE.history_managers,
+      entry);
+  /* removes the "hole", optimizing loops */
+  fio___pubsub_history_managers_rehash(
+      &FIO___PUBSUB_POSTOFFICE.history_managers);
+  manager->detached(manager);
+  (void)ignr_;
+}
+
+SFUNC void fio_pubsub_history_detach(const fio_pubsub_history_s *manager) {
+  if (!manager)
+    return;
+  if (fio_io_is_running())
+    fio_io_defer(fio___pubsub_history_detach_task, (void *)manager, NULL);
+  else
+    fio___pubsub_history_detach_task((void *)manager, NULL);
+}
+
+/* *****************************************************************************
+Memory / Cache History Manager
+***************************************************************************** */
+
+/** Cleanup callback - called when history manager is detached */
+FIO_SFUNC void fio___pubsub_history_cache_detached(
+    const struct fio_pubsub_history_s *hist) {
+  fio___pubsub_history_cache_destroy(&FIO___PUBSUB_POSTOFFICE.cache);
+  (void)hist;
+}
+/**
+ * Store a message in history.
+ *
+ * Returns 0 on success, -1 on error.
+ * Called when a message is published (master only).
+ */
+FIO_SFUNC int fio___pubsub_history_cache_push(
+    const struct fio_pubsub_history_s *hist,
+    fio_pubsub_msg_s *msg) {
+  fio___pubsub_history_channel_s *cache =
+      fio___pubsub_history_cache_channel_new(&FIO___PUBSUB_POSTOFFICE.cache,
+                                             msg->channel,
+                                             msg->filter);
+  if (!cache)
     return -1;
-  /* test time window */
-  mac[0] = fio_io_last_tick();
-  if (mac[0] > fio_ltole64(hello[3]) + 8192 ||
-      mac[0] + 8192 < fio_ltole64(hello[3])) {
-    FIO_LOG_SECURITY(
-        "(%d) pub/sub-broadcast timing error - possible replay attack?",
-        fio_io_pid());
-    return -1;
+  fio_ipc_s *ipc = fio___pubsub_msg2ipc(msg);
+  fio_ipc_detach(ipc);
+  if (fio___pubsub_history_channel_push(cache, ipc))
+    return 0; /* exists */
+  FIO___PUBSUB_POSTOFFICE.cache.size +=
+      fio___pubsub_history_cache_ipc_size(ipc);
+  for (; FIO___PUBSUB_POSTOFFICE.cache.size >
+         FIO___PUBSUB_POSTOFFICE.cache.limit;) {
+    /* TODO pop and size update until size is under limit */
+    FIO_MAP_EACH(fio___pubsub_history_map,
+                 &FIO___PUBSUB_POSTOFFICE.cache.map,
+                 pos) {
+      if (FIO___PUBSUB_POSTOFFICE.cache.size <=
+          FIO___PUBSUB_POSTOFFICE.cache.limit)
+        goto done;
+      FIO___PUBSUB_POSTOFFICE.cache.size -=
+          fio___pubsub_history_channel_pop(&pos.node->value);
+    }
+    FIO_MAP_EACH(fio___pubsub_history_map,
+                 &FIO___PUBSUB_POSTOFFICE.cache.map,
+                 pos) {
+      fio___pubsub_history_channel_rehash(&pos.node->value);
+    }
   }
-  /* test for duplicate connections */
-  if (fio___pubsub_broadcast_connected_get(
-          &FIO___PUBSUB_POSTOFFICE.remote_uuids,
-          hello[0],
-          hello[1])) {
-    FIO_LOG_DEBUG2("(%d) pub/sub-broadcast Prevented duplicate connection!",
-                   fio_io_pid());
-    return -1;
-  }
-  /* test MAC */
-  const void *k = fio___pubsub_secret_key(&key_buf, fio_ltole64(hello[2]));
-  fio_poly1305_auth(mac, hello, 32, NULL, 0, k);
-  if (mac[0] != hello[4] || mac[1] != hello[5]) {
-    FIO_LOG_SECURITY("(%d) pub/sub-broadcast MAC failure - under attack?",
-                     fio_io_pid());
-    return -1;
+done:
+  if (msg->timestamp >
+      (uint64_t)(fio_io_last_tick() + FIO_PUBSUB_FUTURE_LIMIT_MS)) {
+    /* TODO: add timer for publishing the message using fio_pubsub_publish */
   }
   return 0;
-}
-/* *****************************************************************************
-Letter Listening to Remote Connections - TODO!
-***************************************************************************** */
-FIO_SFUNC void fio___pubsub_broadcast_on_attach(fio_io_s *io) {
-  fio___pubsub_broadcast_hello((FIO___PUBSUB_POSTOFFICE.broadcaster = io));
-  fio_io_run_every(.fn = fio___pubsub_broadcast_hello_task,
-                   .udata1 = fio_io_dup(io),
-                   .on_finish = fio___pubsub_broadcast_hello_task_done,
-                   .every =
-                       (uint32_t)(1024 |
-                                  (1023 & FIO___PUBSUB_POSTOFFICE.uuid.u64[0])),
-                   .repetitions = 2);
-}
-FIO_SFUNC void fio___pubsub_broadcast_on_close(void *ignr1_, void *ignr2_) {
-  FIO___PUBSUB_POSTOFFICE.broadcaster = NULL;
-  (void)ignr1_, (void)ignr2_;
+  (void)hist;
 }
 
-FIO_SFUNC void fio___pubsub_broadcast_on_data(fio_io_s *io) {
-  uint64_t buf[16];
-  struct sockaddr from[2];
-  socklen_t from_len = sizeof(from);
-  ssize_t len;
-  int should_say_hello = 0;
-  fio___pubsub_message_s *m = fio___pubsub_message_author(
-      (fio_publish_args_s){.id = FIO___PUBSUB_POSTOFFICE.uuid.u64[0],
-                           .published = FIO___PUBSUB_POSTOFFICE.uuid.u64[1],
-                           .is_json = FIO___PUBSUB_IDENTIFY});
-
-  while ((len = recvfrom(fio_io_fd(io), (char *)buf, 128, 0, from, &from_len)) >
-         0) {
-    if (len != 48) {
-      FIO_LOG_WARNING(
-          "(%d) pub/sub peer detection received invalid packet (%zu bytes)!",
-          fio_io_pid(),
-          len);
+/**
+ * Replay messages since timestamp by calling callback for each.
+ *
+ * Returns 0 if replay was handled, -1 if this manager cannot replay.
+ */
+FIO_SFUNC int fio___pubsub_history_cache_replay(
+    const struct fio_pubsub_history_s *hist,
+    fio_buf_info_s channel,
+    int16_t filter,
+    uint64_t since,
+    void (*on_message)(fio_pubsub_msg_s *msg, void *udata),
+    void (*on_done)(void *udata),
+    void *udata) {
+  (void)hist;
+  fio___pubsub_history_channel_s *cache =
+      fio___pubsub_history_cache_channel(&FIO___PUBSUB_POSTOFFICE.cache,
+                                         channel,
+                                         filter);
+  if (!cache || !cache->count)
+    goto done;
+  size_t index = 0;
+  uint64_t now = fio_io_last_tick();
+  if (since > cache->ary[cache->w - 1]->timestamp)
+    goto done;
+  if (since <= cache->ary[index]->timestamp)
+    goto loop;
+  /* find best position in array (mini binary search) */
+  for (size_t step = cache->w; (step >>= 1);) {
+    if (!cache->ary[index]) {
+      --index;
       continue;
     }
-    if (fio___pubsub_broadcast_hello_validate(buf)) {
-      FIO_LOG_WARNING(
-          "(%d) pub/sub peer detection received invalid packet payload!",
-          fio_io_pid());
-      continue;
-    }
-    if (fio___pubsub_broadcast_connected_get(
-            &FIO___PUBSUB_POSTOFFICE.remote_uuids,
-            buf[0],
-            buf[1]) == buf[1]) {
-      FIO_LOG_DDEBUG2("(%d) skipping peer connection - already exists",
-                      fio_io_pid());
-      continue; /* skip connection, already exists. */
-    }
-    should_say_hello |= 1;
-    FIO_LOG_DDEBUG2("(%d) detected peer, should now connect", fio_io_pid());
-
-    /* TODO: fixme! */
-    char addr_buf[128];
-    if (getnameinfo(from,
-                    from_len,
-                    addr_buf,
-                    64,
-                    addr_buf + 64,
-                    64,
-                    (NI_NUMERICHOST | NI_NUMERICHOST))) {
-      FIO_LOG_ERROR("(%d) couldn't resolve peer address", fio_io_pid());
-      continue;
-    }
-    int fd = fio_sock_open(addr_buf,
-                           addr_buf + 64,
-                           FIO_SOCK_NONBLOCK | FIO_SOCK_CLIENT | FIO_SOCK_TCP);
-    if (fd == -1) {
-      FIO_LOG_ERROR("couldn't connect to cluster peer: %s", strerror(errno));
-      continue;
-    }
-    fio___pubsub_broadcast_connected_set(&FIO___PUBSUB_POSTOFFICE.remote_uuids,
-                                         addr_buf[0],
-                                         addr_buf[1]);
-    fio_io_s *peer = fio_io_attach_fd(fd,
-                                      &FIO___PUBSUB_POSTOFFICE.protocol.remote,
-                                      NULL,
-                                      NULL);
-    fio___pubsub_message_write2io(peer, m);
-    FIO_LOG_INFO("(%d) pub/sub-cluster connecting to peer (%zu connections).",
-                 fio_io_pid(),
-                 fio___pubsub_broadcast_connected_count(
-                     &FIO___PUBSUB_POSTOFFICE.remote_uuids));
+    if (since > cache->ary[index]->timestamp)
+      index += step;
+    else if (since < cache->ary[index]->timestamp)
+      index -= step;
+    else
+      goto loop;
   }
-  fio___pubsub_message_free(m);
-  if (should_say_hello)
-    fio_io_run_every(.fn = fio___pubsub_broadcast_hello_task,
-                     .udata1 = fio_io_dup(io),
-                     .on_finish = fio___pubsub_broadcast_hello_task_done,
-                     .every =
-                         (uint32_t)(1024 |
-                                    (1023 &
-                                     FIO___PUBSUB_POSTOFFICE.uuid.u64[0])));
-}
+  index -= (since < cache->ary[index]->timestamp);
 
-FIO_SFUNC void fio___pubsub_broadcast_on_incoming(fio_io_s *io) {
-  int fd;
-  while ((fd = accept(fio_io_fd(io), NULL, NULL)) != -1) {
-    FIO_LOG_DDEBUG2("(%d) accepting a cluster peer connection", fio_io_pid());
-    fio_io_attach_fd(fd, &FIO___PUBSUB_POSTOFFICE.protocol.remote, NULL, NULL);
+loop:
+  for (; index < cache->w && cache->ary[index]->timestamp <= now; ++index) {
+    fio_pubsub_msg_s msg = fio___pubsub_ipc2msg(cache->ary[index]);
+    on_message(&msg, udata);
   }
-  FIO_LOG_INFO("(%d) (cluster) accepted new peer(s) (%zu connections).",
-               fio_io_pid(),
-               fio___pubsub_broadcast_connected_count(
-                   &FIO___PUBSUB_POSTOFFICE.remote_uuids));
+done:
+  if (on_done)
+    on_done(udata);
+  return 0;
 }
 
-SFUNC void fio___pubsub_broadcast_on_port(void *port_) {
-  int16_t port = (int16_t)(uintptr_t)port_;
-  static fio_io_protocol_s broadcast = {
-      .on_attach = fio___pubsub_broadcast_on_attach,
-      .on_data = fio___pubsub_broadcast_on_data,
-      .on_close = fio___pubsub_broadcast_on_close,
-      .on_timeout = fio_io_touch,
+/**
+ * Get oldest available timestamp for a channel.
+ *
+ * Returns UINT64_MAX if no history available.
+ */
+FIO_SFUNC uint64_t
+fio___pubsub_history_cache_oldest(const struct fio_pubsub_history_s *hist,
+                                  fio_buf_info_s channel,
+                                  int16_t filter) {
+  fio___pubsub_history_channel_s *cache =
+      fio___pubsub_history_cache_channel(&FIO___PUBSUB_POSTOFFICE.cache,
+                                         channel,
+                                         filter);
+  if (!cache)
+    return UINT64_MAX;
+  if (!cache->count)
+    return UINT64_MAX;
+  return cache->ary[0]->timestamp;
+  (void)hist;
+}
+
+SFUNC const fio_pubsub_history_s *fio_pubsub_history_cache(size_t size_limit) {
+  if (!size_limit && !FIO___PUBSUB_POSTOFFICE.cache.limit) {
+    size_t mul = 1024 * 1024;
+    int64_t tmp;
+    char *env = getenv("WEBSITE_MEMORY_LIMIT_MB");
+    if (!env) {
+      mul = 1024;
+      env = getenv("WEBSITE_MEMORY_LIMIT_KB");
+    }
+    if (!env) {
+      mul = 1;
+      env = getenv("WEBSITE_MEMORY_LIMIT");
+    }
+    if (env && (tmp = fio_atol(&env)) > 0)
+      size_limit = mul * tmp;
+    if (!size_limit)
+      size_limit = FIO_PUBSUB_HISTORY_DEFAULT_CACHE_SIZE_LIMIT;
+    FIO___PUBSUB_POSTOFFICE.cache.limit = size_limit;
+  }
+  FIO___PUBSUB_POSTOFFICE.cache_manager = (fio_pubsub_history_s){
+      .detached = fio___pubsub_history_cache_detached,
+      .push = fio___pubsub_history_cache_push,
+      .replay = fio___pubsub_history_cache_replay,
+      .oldest = fio___pubsub_history_cache_oldest,
   };
-  static fio_io_protocol_s accept_remote = {
-      .on_data = fio___pubsub_broadcast_on_incoming,
-      .on_timeout = fio_io_touch,
-  };
-  if (fio_secret_is_random()) {
-    FIO_LOG_ERROR(
-        "(%d) Listening to cluster peer connections failed!"
-        "\n\tUsing a random (non-shared) secret, cannot validate peers.",
-        fio_io_pid());
-    return;
-  }
-  if (!port || port < 0)
-    port = 3333;
-  FIO_STR_INFO_TMP_VAR(url, 32);
-  url.buf[0] = ':';
-  url.len = 1;
-  fio_string_write_u(&url, NULL, (uint64_t)port);
-
-  int fd_udp =
-      fio_sock_open(NULL,
-                    url.buf + 1,
-                    FIO_SOCK_UDP | FIO_SOCK_NONBLOCK | FIO_SOCK_SERVER);
-  FIO_ASSERT(fd_udp != -1, "couldn't open broadcast socket!");
-  int fd_tcp =
-      fio_sock_open(NULL,
-                    url.buf + 1,
-                    FIO_SOCK_TCP | FIO_SOCK_NONBLOCK | FIO_SOCK_SERVER);
-  FIO_ASSERT(fd_tcp != -1, "couldn't open cluster-peer listening socket!");
-  {
-#if FIO_OS_WIN
-    char enabled = 1;
-#else
-    int enabled = 1;
-#endif
-    setsockopt(fd_udp, SOL_SOCKET, SO_BROADCAST, &enabled, sizeof(enabled));
-    enabled = 1;
-    setsockopt(fd_udp, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
-  }
-  fio_io_attach_fd(fd_udp, &broadcast, port_, NULL);
-  fio_io_attach_fd(fd_tcp, &accept_remote, NULL, NULL);
-  FIO_LOG_INFO("(pub/sub) broadcasting and listening on port %zu",
-               (size_t)port);
-  return;
-}
-
-/** Auto-peer detection and pub/sub multi-machine clustering using `port`. */
-SFUNC void fio_pubsub_broadcast_on_port(int16_t port) {
-  fio_state_callback_add(FIO_CALL_PRE_START,
-                         fio___pubsub_broadcast_on_port,
-                         (void *)(uintptr_t)port);
+  return &FIO___PUBSUB_POSTOFFICE.cache_manager;
 }
 
 /* *****************************************************************************
-Pub/Sub Cleanup
+Done.
 ***************************************************************************** */
 
+#undef FIO___RECURSIVE_INCLUDE
 #endif /* FIO_EXTERN_COMPLETE */
-#undef FIO_PUBSUB
+
+/* *****************************************************************************
+Pub/Sub2 - Cleanup
+***************************************************************************** */
+
 #endif /* FIO_PUBSUB */
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
@@ -69282,6 +72676,7 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #if defined(FIO_REDIS) && !defined(FIO___RECURSIVE_INCLUDE) &&                 \
     !defined(H___FIO_REDIS___H)
 #define H___FIO_REDIS___H
+#undef FIO_REDIS
 
 /* *****************************************************************************
 Redis Engine - Overview
@@ -69323,7 +72718,7 @@ The Redis engine uses reference counting for memory management:
 - fio_redis_dup():   Increments ref, returns engine
 - fio_redis_free():  Decrements ref, destroys when ref reaches 0
 
-Important: fio_pubsub_attach/detach do NOT affect reference counts.
+Important: fio_pubsub_engine_attach/detach do NOT affect reference counts.
 The caller is responsible for calling fio_redis_free() when done.
 
 Internal reference management:
@@ -69358,12 +72753,12 @@ Usage 2 - With Pub/Sub:
 
     // Explicitly attach to pub/sub system - this starts the subscription
     // connection and enables SUBSCRIBE/PSUBSCRIBE/PUBLISH functionality
-    fio_pubsub_attach(redis);
+    fio_pubsub_engine_attach(redis);
 
     // ... use pub/sub ...
 
     // Explicitly detach before destroying if attached
-    fio_pubsub_detach(redis);
+    fio_pubsub_engine_detach(redis);
     fio_redis_free(redis);
 
 Note: When used as a sub-engine for clustering, do NOT attach to pub/sub.
@@ -69438,8 +72833,9 @@ SFUNC fio_pubsub_engine_s *fio_redis_dup(fio_pubsub_engine_s *engine);
  *   - Frees all queued commands
  *   - Frees the engine memory
  *
- * IMPORTANT: If the engine was attached to pub/sub via fio_pubsub_attach(),
- * you MUST call fio_pubsub_detach() before calling fio_redis_free().
+ * IMPORTANT: If the engine was attached to pub/sub via
+ * fio_pubsub_engine_attach(), you MUST call fio_pubsub_engine_detach() before
+ * calling fio_redis_free().
  *
  * Safe to call with NULL (no-op).
  */
@@ -69516,8 +72912,8 @@ typedef struct fio_redis_connection_s {
  * - on_close callbacks: ref -= 1 (balances the connect ref)
  *
  * Pub/Sub integration (NO ref changes):
- * - fio_pubsub_attach(): does NOT increment ref
- * - fio_pubsub_detach(): does NOT decrement ref
+ * - fio_pubsub_engine_attach(): does NOT increment ref
+ * - fio_pubsub_engine_detach(): does NOT decrement ref
  * - on_detached callback: only marks engine as detached, does NOT free
  */
 typedef struct fio_redis_engine_s {
@@ -69764,8 +73160,8 @@ after
 - on_close callbacks: ref -= 1 (balances the connect ref)
 
 Pub/Sub integration (NO ref changes):
-- fio_pubsub_attach(): does NOT increment ref
-- fio_pubsub_detach(): does NOT decrement ref
+- fio_pubsub_engine_attach(): does NOT increment ref
+- fio_pubsub_engine_detach(): does NOT decrement ref
 - on_detached callback: only marks engine as detached, does NOT free
 ***************************************************************************** */
 
@@ -69980,9 +73376,9 @@ FIO_SFUNC void fio___redis_on_sub_message(fio_redis_engine_s *r, FIOBJ msg) {
     r->last_channel = fiobj_dup(channel);
     fio_str_info_s ch = fiobj2cstr(channel);
     fio_str_info_s m = fiobj2cstr(data);
-    fio_publish(.channel = FIO_BUF_INFO2(ch.buf, ch.len),
-                .message = FIO_BUF_INFO2(m.buf, m.len),
-                .engine = FIO_PUBSUB_LOCAL);
+    fio_pubsub_publish(.channel = FIO_BUF_INFO2(ch.buf, ch.len),
+                       .message = FIO_BUF_INFO2(m.buf, m.len),
+                       .engine = fio_pubsub_engine_ipc());
   } else if (type.len == 8 && !FIO_MEMCMP(type.buf, "pmessage", 8) &&
              count >= 4) {
     /* Pattern message: ["pmessage", pattern, channel, data] */
@@ -69992,9 +73388,9 @@ FIO_SFUNC void fio___redis_on_sub_message(fio_redis_engine_s *r, FIOBJ msg) {
     if (!fiobj_is_eq(r->last_channel, channel)) {
       fio_str_info_s ch = fiobj2cstr(channel);
       fio_str_info_s m = fiobj2cstr(data);
-      fio_publish(.channel = FIO_BUF_INFO2(ch.buf, ch.len),
-                  .message = FIO_BUF_INFO2(m.buf, m.len),
-                  .engine = FIO_PUBSUB_LOCAL);
+      fio_pubsub_publish(.channel = FIO_BUF_INFO2(ch.buf, ch.len),
+                         .message = FIO_BUF_INFO2(m.buf, m.len),
+                         .engine = fio_pubsub_engine_ipc());
     }
   }
   /* Ignore subscribe/unsubscribe confirmations */
@@ -70058,7 +73454,7 @@ FIO_SFUNC void fio___redis_on_attach(fio_io_s *io) {
                   r->port);
     /* If attached to pub/sub, re-attach to trigger resubscription */
     if (r->attached)
-      fio_pubsub_attach(&r->engine);
+      fio_pubsub_engine_attach(&r->engine);
   } else {
     FIO_LOG_DEBUG("(redis) publishing connection established to %s:%s",
                   r->address,
@@ -70421,7 +73817,7 @@ FIO_SFUNC void fio___redis_punsubscribe(const fio_pubsub_engine_s *eng,
  * fio___redis_attach_cmd.
  */
 FIO_SFUNC void fio___redis_publish(const fio_pubsub_engine_s *eng,
-                                   fio_msg_s *msg) {
+                                   const fio_pubsub_msg_s *msg) {
   fio_redis_engine_s *r = (fio_redis_engine_s *)eng;
 
   /* Build PUBLISH command */
@@ -70663,7 +74059,6 @@ SFUNC int fio_redis_send(fio_pubsub_engine_s *engine,
 Redis Module Cleanup
 ***************************************************************************** */
 #endif /* FIO_EXTERN_COMPLETE */
-#undef FIO_REDIS
 #endif /* FIO_REDIS && !H___FIO_REDIS___H */
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
@@ -76751,7 +80146,7 @@ SFUNC fio_io_s *fio_http_io(fio_http_s *);
 
 /** Macro helper for HTTP handle pub/sub subscriptions. */
 #define fio_http_subscribe(h, ...)                                             \
-  fio_subscribe(.io = fio_http_io(h), __VA_ARGS__)
+  fio_pubsub_subscribe(.io = fio_http_io(h), __VA_ARGS__)
 
 /** Connects to HTTP / WebSockets / SSE connections on `url`. */
 SFUNC fio_io_s *fio_http_connect(const char *url,
@@ -76840,11 +80235,11 @@ SFUNC int fio_http_on_message_set(fio_http_s *h,
                                                      uint8_t));
 
 /** Optional WebSocket subscription callback. */
-SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT(fio_msg_s *msg);
+SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg);
 /** Optional WebSocket subscription callback - all messages are UTF-8 valid. */
-SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_TEXT(fio_msg_s *msg);
+SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_TEXT(fio_pubsub_msg_s *msg);
 /** Optional WebSocket subscription callback - messages may be non-UTF-8. */
-SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_BINARY(fio_msg_s *msg);
+SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_BINARY(fio_pubsub_msg_s *msg);
 
 /* *****************************************************************************
 EventSource (SSE) Helpers - HTTP Upgraded Connections
@@ -76868,7 +80263,7 @@ SFUNC int fio_http_sse_write(fio_http_s *h, fio_http_sse_write_args_s args);
   fio_http_sse_write((h), ((fio_http_sse_write_args_s){__VA_ARGS__}))
 
 /** Optional EventSource subscription callback - messages MUST be UTF-8. */
-SFUNC void FIO_HTTP_SSE_SUBSCRIBE_DIRECT(fio_msg_s *msg);
+SFUNC void FIO_HTTP_SSE_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg);
 
 /* *****************************************************************************
 Module Implementation - HTTP Routing – CRUD
@@ -78895,7 +82290,7 @@ SFUNC int fio_http_on_message_set(fio_http_s *h,
 WebSocket Writing / Subscription Helpers
 ***************************************************************************** */
 
-FIO_IFUNC void fio___http_websocket_subscribe_imp(fio_msg_s *msg,
+FIO_IFUNC void fio___http_websocket_subscribe_imp(fio_pubsub_msg_s *msg,
                                                   uint8_t is_text) {
   fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(msg->io);
   if (!c)
@@ -78904,16 +82299,16 @@ FIO_IFUNC void fio___http_websocket_subscribe_imp(fio_msg_s *msg,
 }
 
 /** Optional WebSocket subscription callback - all messages are UTF-8 valid. */
-SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_TEXT(fio_msg_s *msg) {
+SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_TEXT(fio_pubsub_msg_s *msg) {
   fio___http_websocket_subscribe_imp(msg, 1);
 }
 /** Optional WebSocket subscription callback - messages may be non-UTF-8. */
-SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_BINARY(fio_msg_s *msg) {
+SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_BINARY(fio_pubsub_msg_s *msg) {
   fio___http_websocket_subscribe_imp(msg, 0);
 }
 
 /** Optional WebSocket subscription callback. */
-SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT(fio_msg_s *msg) {
+SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg) {
   ((msg->message.len < FIO_HTTP_WEBSOCKET_WRITE_VALIDITY_TEST_LIMIT) &&
            (fio_string_utf8_valid(
                FIO_STR_INFO2((char *)msg->message.buf, msg->message.len)))
@@ -78979,7 +82374,7 @@ SFUNC int fio_http_sse_write FIO_NOOP(fio_http_s *h,
 }
 
 /** Optional EventSource subscription callback - messages MUST be UTF-8. */
-SFUNC void FIO_HTTP_SSE_SUBSCRIBE_DIRECT(fio_msg_s *msg) {
+SFUNC void FIO_HTTP_SSE_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg) {
   fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(msg->io);
   if (!c)
     return;
@@ -79812,6 +83207,10 @@ Recursive inclusion / cleanup
 #endif
 #include "412 tls13.h"
 #endif /* FIO_IO */
+
+#if defined(FIO_IPC) && !defined(FIO___RECURSIVE_INCLUDE)
+#include "404 ipc.h"
+#endif
 
 #if defined(FIO_PUBSUB) && !defined(FIO___RECURSIVE_INCLUDE)
 #include "420 pubsub.h"

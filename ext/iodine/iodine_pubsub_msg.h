@@ -52,27 +52,27 @@ typedef enum {
  * Stores Ruby VALUE objects for each message property in an array
  * indexed by iodine_pubsub_msg_store_e values.
  */
-typedef struct iodine_pubsub_msg_s {
-  fio_msg_s *msg;                              /**< Original C message (may be NULL) */
+typedef struct iodine_pubsub_msg_wrapper_s {
+  const fio_pubsub_msg_s *msg;                 /**< Original C message (may be NULL) */
   VALUE store[IODINE_PUBSUB_MSG_STORE_FINISH]; /**< Ruby values for properties */
-} iodine_pubsub_msg_s;
+} iodine_pubsub_msg_wrapper_s;
 
 static size_t iodine_pubsub_msg_data_size(const void *ptr_) {
-  iodine_pubsub_msg_s *m = (iodine_pubsub_msg_s *)ptr_;
+  iodine_pubsub_msg_wrapper_s *m = (iodine_pubsub_msg_wrapper_s *)ptr_;
   return sizeof(*m) + (m->msg ? (sizeof(m->msg[0]) + m->msg->message.len +
                                  m->msg->channel.len)
                               : 0);
 }
 
 static void iodine_pubsub_msg_mark(void *m_) {
-  iodine_pubsub_msg_s *m = (iodine_pubsub_msg_s *)m_;
+  iodine_pubsub_msg_wrapper_s *m = (iodine_pubsub_msg_wrapper_s *)m_;
   for (size_t i = 0; i < IODINE_PUBSUB_MSG_STORE_FINISH; ++i)
     if (!IODINE_STORE_IS_SKIP(m->store[i]))
       rb_gc_mark(m->store[i]);
 }
 
 static void iodine_pubsub_msg_free(void *ptr_) {
-  iodine_pubsub_msg_s *c = (iodine_pubsub_msg_s *)ptr_;
+  iodine_pubsub_msg_wrapper_s *c = (iodine_pubsub_msg_wrapper_s *)ptr_;
   ruby_xfree(c);
   FIO_LEAK_COUNTER_ON_FREE(iodine_pubsub_msg);
 }
@@ -90,10 +90,11 @@ static const rb_data_type_t IODINE_PUBSUB_MSG_DATA_TYPE = {
 };
 
 static VALUE iodine_pubsub_msg_alloc(VALUE klass) {
-  iodine_pubsub_msg_s *m = (iodine_pubsub_msg_s *)ruby_xmalloc(sizeof(*m));
+  iodine_pubsub_msg_wrapper_s *m =
+      (iodine_pubsub_msg_wrapper_s *)ruby_xmalloc(sizeof(*m));
   if (!m)
     goto no_memory;
-  *m = (iodine_pubsub_msg_s){0};
+  *m = (iodine_pubsub_msg_wrapper_s){0};
   for (size_t i = 0; i < IODINE_PUBSUB_MSG_STORE_FINISH; ++i)
     m->store[i] = Qnil;
   FIO_LEAK_COUNTER_ON_ALLOC(iodine_pubsub_msg);
@@ -104,10 +105,10 @@ no_memory:
   return Qnil;
 }
 
-static iodine_pubsub_msg_s *iodine_pubsub_msg_get(VALUE self) {
-  iodine_pubsub_msg_s *m;
+static iodine_pubsub_msg_wrapper_s *iodine_pubsub_msg_get(VALUE self) {
+  iodine_pubsub_msg_wrapper_s *m;
   TypedData_Get_Struct(self,
-                       iodine_pubsub_msg_s,
+                       iodine_pubsub_msg_wrapper_s,
                        &IODINE_PUBSUB_MSG_DATA_TYPE,
                        m);
   return m;
@@ -122,10 +123,10 @@ static iodine_pubsub_msg_s *iodine_pubsub_msg_get(VALUE self) {
  * @param msg The C message struct to wrap
  * @return New Iodine::PubSub::Message VALUE
  */
-static VALUE iodine_pubsub_msg_new(fio_msg_s *msg) {
+static VALUE iodine_pubsub_msg_new(const fio_pubsub_msg_s *msg) {
   VALUE m = rb_obj_alloc(iodine_rb_IODINE_PUBSUB_MSG);
   STORE.hold(m);
-  iodine_pubsub_msg_s *c = iodine_pubsub_msg_get(m);
+  iodine_pubsub_msg_wrapper_s *c = iodine_pubsub_msg_get(m);
   c->store[IODINE_PUBSUB_MSG_STORE_id] = ULL2NUM(msg->id);
   c->store[IODINE_PUBSUB_MSG_STORE_channel] =
       (msg->channel.len ? rb_usascii_str_new(msg->channel.buf, msg->channel.len)
@@ -137,7 +138,7 @@ static VALUE iodine_pubsub_msg_new(fio_msg_s *msg) {
       (msg->message.len ? rb_usascii_str_new(msg->message.buf, msg->message.len)
                         : Qnil);
   c->store[IODINE_PUBSUB_MSG_STORE_published] =
-      (msg->published ? ULL2NUM(msg->published) : Qnil);
+      (msg->timestamp ? ULL2NUM(msg->timestamp) : Qnil);
   return m;
 }
 
@@ -153,14 +154,14 @@ static VALUE iodine_pubsub_msg_new(fio_msg_s *msg) {
 #define IODINE_DEF_GET_SET_FUNC(val_name, ...)                                 \
   /** Returns the message's val_name */                                        \
   static VALUE iodine_pubsub_msg_##val_name##_get(VALUE self) {                \
-    iodine_pubsub_msg_s *c = iodine_pubsub_msg_get(self);                      \
+    iodine_pubsub_msg_wrapper_s *c = iodine_pubsub_msg_get(self);              \
     if (!c)                                                                    \
       return Qnil;                                                             \
     return c->store[IODINE_PUBSUB_MSG_STORE_##val_name];                       \
   }                                                                            \
   /** Sets the message's val_name */                                           \
   static VALUE iodine_pubsub_msg_##val_name##_set(VALUE self, VALUE val) {     \
-    iodine_pubsub_msg_s *c = iodine_pubsub_msg_get(self);                      \
+    iodine_pubsub_msg_wrapper_s *c = iodine_pubsub_msg_get(self);              \
     if (!c)                                                                    \
       return Qnil;                                                             \
     return (c->store[IODINE_PUBSUB_MSG_STORE_##val_name] = val);               \

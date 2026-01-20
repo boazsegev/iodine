@@ -49,6 +49,7 @@ typedef struct {
     int32_t *i32;
     int16_t *i16;
     int8_t *i8;
+    uint32_t *u64;
     uint32_t *u32;
     uint16_t *u16;
     uint8_t *u8;
@@ -108,19 +109,24 @@ typedef struct {
     .expected_type = 9, .u8 = &(t_var), .id = (id_),                           \
     .name = FIO_BUF_INFO1(((char *)name_)), .required = (required_)            \
   }
+#define IODINE_ARG_U64(t_var, id_, name_, required_)                           \
+  {                                                                            \
+    .expected_type = 10, .u64 = &(t_var), .id = (id_),                         \
+    .name = FIO_BUF_INFO1(((char *)name_)), .required = (required_)            \
+  }
 #define IODINE_ARG_U32(t_var, id_, name_, required_)                           \
   {                                                                            \
-    .expected_type = 10, .u32 = &(t_var), .id = (id_),                         \
+    .expected_type = 11, .u32 = &(t_var), .id = (id_),                         \
     .name = FIO_BUF_INFO1(((char *)name_)), .required = (required_)            \
   }
 #define IODINE_ARG_U16(t_var, id_, name_, required_)                           \
   {                                                                            \
-    .expected_type = 11, .u16 = &(t_var), .id = (id_),                         \
+    .expected_type = 12, .u16 = &(t_var), .id = (id_),                         \
     .name = FIO_BUF_INFO1(((char *)name_)), .required = (required_)            \
   }
 #define IODINE_ARG_U8(t_var, id_, name_, required_)                            \
   {                                                                            \
-    .expected_type = 12, .u8 = &(t_var), .id = (id_),                          \
+    .expected_type = 13, .u8 = &(t_var), .id = (id_),                          \
     .name = FIO_BUF_INFO1(((char *)name_)), .required = (required_)            \
   }
 
@@ -220,12 +226,21 @@ static int iodine_rb2c_arg(int argc, const VALUE *argv, iodine_rb2c_arg_s *a) {
     if (tmp != Qnil) {                                                         \
       if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                      \
         rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);       \
+      if ((size_t)NUM2ULL(tmp) > 0xFFFFFFFFFFFFFFFFULL)                        \
+        rb_raise(rb_eRangeError, "%s out of range", a[i].name.buf);            \
+      a[i].u64[0] = (uint64_t)NUM2ULL(tmp);                                    \
+    }                                                                          \
+    continue;                                                                  \
+  case 11:                                                                     \
+    if (tmp != Qnil) {                                                         \
+      if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                      \
+        rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);       \
       if ((size_t)NUM2LL(tmp) > 0xFFFFFFFFULL)                                 \
         rb_raise(rb_eRangeError, "%s out of range", a[i].name.buf);            \
       a[i].u32[0] = (uint32_t)NUM2INT(tmp);                                    \
     }                                                                          \
     continue;                                                                  \
-  case 11:                                                                     \
+  case 12:                                                                     \
     if (tmp != Qnil) {                                                         \
       if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                      \
         rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);       \
@@ -234,7 +249,7 @@ static int iodine_rb2c_arg(int argc, const VALUE *argv, iodine_rb2c_arg_s *a) {
       a[i].u16[0] = (uint16_t)NUM2SHORT(tmp);                                  \
     }                                                                          \
     continue;                                                                  \
-  case 12:                                                                     \
+  case 13:                                                                     \
     if (tmp != Qnil) {                                                         \
       if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                      \
         rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);       \

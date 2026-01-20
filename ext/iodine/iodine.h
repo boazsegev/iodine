@@ -209,6 +209,7 @@ static VALUE iodine_handler_method_injection__inner(VALUE self,
 #include "iodine_crypto.h"
 #include "iodine_mustache.h"
 #include "iodine_pubsub_eng.h"
+#include "iodine_pubsub_history.h"
 #include "iodine_redis.h"
 #include "iodine_threads.h"
 #include "iodine_tls.h"

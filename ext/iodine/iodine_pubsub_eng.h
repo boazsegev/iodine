@@ -57,10 +57,10 @@ They handle GVL acquisition and Ruby object creation/cleanup.
  * Arguments passed to GVL-wrapped callback functions.
  */
 typedef struct iodine_pubsub_eng___args_s {
-  iodine_pubsub_eng_s *eng;    /**< The engine receiving the callback */
-  fio_msg_s *msg;              /**< Message for publish callbacks */
-  fio_buf_info_s channel;      /**< Channel name for subscribe callbacks */
-  int16_t filter;              /**< Filter value (reserved) */
+  iodine_pubsub_eng_s *eng;         /**< The engine receiving the callback */
+  const fio_pubsub_msg_s *msg;      /**< Message for publish callbacks */
+  fio_buf_info_s channel;           /**< Channel name for subscribe callbacks */
+  int16_t filter;                   /**< Filter value (reserved) */
 } iodine_pubsub_eng___args_s;
 
 /**
@@ -201,7 +201,7 @@ static void *iodine_pubsub_eng___publish__in_GC(void *a_) {
  * @param msg The message to publish
  */
 static void iodine_pubsub_eng___publish(const fio_pubsub_engine_s *eng,
-                                        fio_msg_s *msg) {
+                                        const fio_pubsub_msg_s *msg) {
   iodine_pubsub_eng___args_s args = {
       .eng = (iodine_pubsub_eng_s *)eng,
       .msg = msg,
@@ -259,8 +259,8 @@ static size_t iodine_pubsub_eng_data_size(const void *ptr_) {
 
 static void iodine_pubsub_eng_free(void *ptr_) {
   iodine_pubsub_eng_s *e = (iodine_pubsub_eng_s *)ptr_;
-  if (FIO_PUBSUB_DEFAULT == e->ptr)
-    FIO_PUBSUB_DEFAULT = NULL;
+  if (fio_pubsub_engine_default() == e->ptr)
+    fio_pubsub_engine_default_set(NULL);
   ruby_xfree(e);
   // FIO_LEAK_COUNTER_ON_FREE(iodine_pubsub_eng);
 }
@@ -317,7 +317,7 @@ Ruby Methods - Engine API
  */
 static VALUE iodine_pubsub_eng_initialize(VALUE self) {
   iodine_pubsub_eng_s *m = iodine_pubsub_eng_get(self);
-  fio_pubsub_attach(m->ptr);
+  fio_pubsub_engine_attach(m->ptr);
   return self;
 }
 
@@ -334,12 +334,12 @@ static VALUE iodine_pubsub_eng_initialize(VALUE self) {
  * Ruby: Iodine::PubSub.default = my_engine
  */
 static VALUE iodine_pubsub_eng_default_set(VALUE klass, VALUE eng) {
-  fio_pubsub_engine_s *e = FIO_PUBSUB_CLUSTER;
+  fio_pubsub_engine_s *e = (fio_pubsub_engine_s *)fio_pubsub_engine_cluster();
   ID name = rb_intern(IODINE_PUBSUB_DEFAULT_NM);
   if (!IODINE_STORE_IS_SKIP(eng)) {
     e = iodine_pubsub_eng_get(eng)->ptr;
   }
-  FIO_PUBSUB_DEFAULT = e;
+  fio_pubsub_engine_default_set(e);
   VALUE old = rb_const_get(iodine_rb_IODINE_BASE, name);
   if ((uintptr_t)old > 15)
     STORE.release(old);
@@ -374,7 +374,12 @@ Initialize - Ruby Class Registration
  * Defines:
  * - Iodine::PubSub.default / default= module methods
  * - Iodine::PubSub::Engine class with initialize method
- * - Built-in engine constants: ROOT, PROCESS, SIBLINGS, LOCAL, CLUSTER
+ * - Built-in engine constants: LOCAL (IPC), CLUSTER
+ *
+ * Note: The old constants ROOT, PROCESS, SIBLINGS have been removed.
+ * The new API provides only two built-in engines:
+ * - LOCAL (fio_pubsub_engine_ipc): Local machine only (master + workers)
+ * - CLUSTER (fio_pubsub_engine_cluster): Multi-machine cluster
  */
 static void Init_Iodine_PubSub_Engine(void) {
   /** Initialize Iodine::PubSub::Engine */
@@ -392,18 +397,29 @@ static void Init_Iodine_PubSub_Engine(void) {
   STORE.hold(iodine_rb_IODINE_PUBSUB_ENG);
   rb_define_alloc_func(iodine_rb_IODINE_PUBSUB_ENG, iodine_pubsub_eng_alloc);
 
-#define IODINE_PUBSUB_ENG_INTERNAL(name)                                       \
-  do {                                                                         \
-    VALUE tmp = rb_obj_alloc(iodine_rb_IODINE_PUBSUB_ENG);                     \
-    iodine_pubsub_eng_get(tmp)->ptr = FIO_PUBSUB_##name;                       \
-    rb_define_const(iodine_rb_IODINE_PUBSUB, #name, tmp);                      \
-  } while (0)
-  IODINE_PUBSUB_ENG_INTERNAL(ROOT);
-  IODINE_PUBSUB_ENG_INTERNAL(PROCESS);
-  IODINE_PUBSUB_ENG_INTERNAL(SIBLINGS);
-  IODINE_PUBSUB_ENG_INTERNAL(LOCAL);
-  IODINE_PUBSUB_ENG_INTERNAL(CLUSTER);
-#undef IODINE_PUBSUB_ENG_INTERNAL
+  /* Define LOCAL engine (IPC - local machine only) */
+  {
+    VALUE tmp = rb_obj_alloc(iodine_rb_IODINE_PUBSUB_ENG);
+    iodine_pubsub_eng_get(tmp)->ptr =
+        (fio_pubsub_engine_s *)fio_pubsub_engine_ipc();
+    rb_define_const(iodine_rb_IODINE_PUBSUB, "LOCAL", tmp);
+  }
+
+  /* Define CLUSTER engine (multi-machine cluster) */
+  {
+    VALUE tmp = rb_obj_alloc(iodine_rb_IODINE_PUBSUB_ENG);
+    iodine_pubsub_eng_get(tmp)->ptr =
+        (fio_pubsub_engine_s *)fio_pubsub_engine_cluster();
+    rb_define_const(iodine_rb_IODINE_PUBSUB, "CLUSTER", tmp);
+  }
+
+  /* Backwards compatibility aliases - all map to LOCAL (IPC) engine */
+  {
+    VALUE local = rb_const_get(iodine_rb_IODINE_PUBSUB, rb_intern("LOCAL"));
+    rb_define_const(iodine_rb_IODINE_PUBSUB, "ROOT", local);
+    rb_define_const(iodine_rb_IODINE_PUBSUB, "PROCESS", local);
+    rb_define_const(iodine_rb_IODINE_PUBSUB, "SIBLINGS", local);
+  }
 
   rb_define_const(iodine_rb_IODINE_BASE,
                   IODINE_PUBSUB_DEFAULT_NM,
