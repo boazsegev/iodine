@@ -120,7 +120,7 @@ static VALUE iodine_redis_initialize(int argc, VALUE *argv, VALUE self) {
   }
 
   /* Attach to pub/sub system */
-  fio_pubsub_attach(e->ptr);
+  fio_pubsub_engine_attach(e->ptr);
 
   return self;
 }
@@ -241,7 +241,7 @@ Custom dealloc for Redis - need to call fio_redis_free instead of default
 static void iodine_redis_free(void *ptr_) {
   iodine_pubsub_eng_s *e = (iodine_pubsub_eng_s *)ptr_;
   if (e->ptr) {
-    fio_pubsub_detach(e->ptr);
+    fio_pubsub_engine_detach(e->ptr);
     fio_redis_free(e->ptr);
     e->ptr = NULL;
   }

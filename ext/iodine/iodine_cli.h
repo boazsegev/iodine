@@ -282,7 +282,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
   }
 
   if (fio_cli_get_bool("--contained")) { /* container - IPC url in tmp */
-    char *u = (char *)fio_pubsub_ipc_url();
+    char *u = (char *)fio_ipc_url();
     memcpy((void *)(u + 7), "/tmp/", 5);
   }
 
@@ -294,7 +294,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
 
   /* Clustering */
   if (fio_cli_get_i("-bp") > 0) {
-    fio_pubsub_broadcast_on_port(fio_cli_get_i("-bp"));
+    fio_ipc_cluster_listen((uint16_t)fio_cli_get_i("-bp"));
   }
 
   /* support -b and -p for when a URL isn't provided */
