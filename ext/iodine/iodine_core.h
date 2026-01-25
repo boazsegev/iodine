@@ -55,17 +55,15 @@ static void *iodine___start(void *ignr_) {
                              (fio_cli_get_i("-w") ? Qtrue : Qfalse),
                              &keeper);
   }
-  FIO_LOG_INFO(
-      "\n\tStarting the iodine server."
-      "\n\tVersion: %s"
-      "\n\tEngine: " FIO_POLL_ENGINE_STR
-      "\n\tWorkers: %d\t(%s)"
-      "\n\tThreads: 1+%d\t(per worker)"
-      "\n\tPress ^C to exit.",
-      (ver == Qnil ? "unknown" : RSTRING_PTR(ver)),
-      workers,
-      (workers ? "cluster mode" : "single process"),
-      (int)IODINE_THREAD_POOL.count);
+  FIO_LOG_INFO("\n\tStarting the iodine server."
+               "\n\tVersion: %s"
+               "\n\tEngine: " FIO_POLL_ENGINE_STR "\n\tWorkers: %d\t(%s)"
+               "\n\tThreads: 1+%d\t(per worker)"
+               "\n\tPress ^C to exit.",
+               (ver == Qnil ? "unknown" : RSTRING_PTR(ver)),
+               workers,
+               (workers ? "cluster mode" : "single process"),
+               (int)IODINE_THREAD_POOL.count);
 
   fio_io_start((int)fio_cli_get_i("-w"));
   return ignr_;
@@ -85,7 +83,7 @@ static void *iodine___start(void *ignr_) {
  *
  * Ruby: Iodine.start
  */
-static VALUE iodine_start(VALUE self) {  // clang-format on
+static VALUE iodine_start(VALUE self) { // clang-format on
   rb_thread_call_without_gvl(iodine___start, NULL, NULL, NULL);
   return self;
 }
@@ -353,7 +351,7 @@ Shutdown Timeouts - Graceful Shutdown Configuration
  * Ruby: Iodine.shutdown_timeout
  */
 static VALUE iodine_shutdown_timeout(VALUE klass) {
-  return RB_SIZE2NUM(fio_io_shutdown_timsout());
+  return RB_SIZE2NUM(fio_io_shutdown_timeout());
   (void)klass;
 }
 
@@ -375,7 +373,7 @@ static VALUE iodine_shutdown_timeout_set(VALUE klass, VALUE num) {
   rb_check_type(num, RUBY_T_FIXNUM);
   if (RB_NUM2SIZE(num) > (5U * 60U * 1000U))
     rb_raise(rb_eRangeError, "shutdown timeout out of range");
-  fio_io_shutdown_timsout_set(RB_NUM2SIZE(num));
+  fio_io_shutdown_timeout_set(RB_NUM2SIZE(num));
   return num;
 }
 
