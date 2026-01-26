@@ -67135,13 +67135,13 @@ typedef struct {
   void (*call)(fio_ipc_s *);     /* function to call */
   void (*on_reply)(fio_ipc_s *); /* (optional) reply callback */
   void (*on_done)(fio_ipc_s *);  /* (optional) reply finished callback */
+  fio_io_s *exclude;             /* (optional) IO to exclude from delivery */
   uint64_t timestamp;            /* (optional) to force timestamp  */
   uint64_t id;                   /* (optional) to force an id value  */
   uint32_t opcode;               /* replaces `call` with op-code if non-zero */
   uint16_t flags;                /* (optional) user-opaque flags  */
   bool cluster; /* if set, this is intended for all machines in cluster */
   bool workers; /* if set, this is intended for master + workers */
-  bool others;  /* if set, will not run on calling process */
   void *udata;  /* opaque pointer data for reply */
   fio_buf_info_s *data; /* payload (see FIO_IPC_DATA) */
 } fio_ipc_args_s;
@@ -67682,9 +67682,8 @@ FIO_IFUNC fio_ipc_s *fio___ipc_new_author(const fio_ipc_args_s *args,
     routing_flags |= FIO_IPC_FLAG_CLUSTER | FIO_IPC_FLAG_OPCODE;
   if (args->workers)
     routing_flags |= FIO_IPC_FLAG_WORKERS;
-  m->from = NULL;
-  if (args->others)
-    m->from = FIO_IPC_EXCLUDE_SELF;
+  m->from = (args->exclude == FIO_IPC_EXCLUDE_SELF ? args->exclude
+                                                   : fio_io_dup(args->exclude));
   m->len = (uint32_t)(data_len);
   m->flags = args->flags;
   m->timestamp = (uint64_t)(args->timestamp ? args->timestamp
@@ -68251,7 +68250,8 @@ FIO_SFUNC void fio___ipc_on_shutdown_worker_callback(fio_ipc_s *ipc) {
   (void)ipc;
 }
 FIO_SFUNC void fio___ipc_on_shutdown_master(fio_io_s *io) {
-  fio_ipc_local(.others = 1, .call = fio___ipc_on_shutdown_worker_callback);
+  fio_ipc_local(.exclude = FIO_IPC_EXCLUDE_SELF,
+                .call = fio___ipc_on_shutdown_worker_callback);
   (void)io;
 }
 
@@ -71936,6 +71936,7 @@ FIO_SFUNC void fio___pubsub_engine_ipc_publish(const fio_pubsub_engine_s *eng,
    * fio_ipc_local sends to master + all workers on local machine.
    */
   fio_ipc_local(.call = fio___pubsub_engine_ipc_publish_deliver,
+                .exclude = msg->io,
                 .timestamp = msg->timestamp,
                 .id = msg->id,
                 .flags = (uint16_t)msg->filter,
@@ -71957,6 +71958,7 @@ FIO_SFUNC void fio___pubsub_engine_cluster_publish(
    * fio_ipc_local sends to master + all workers on local machine.
    */
   fio_ipc_broadcast(.opcode = FIO___PUBSUB_OPCODE_PUBLISH,
+                    .exclude = msg->io,
                     .timestamp = msg->timestamp,
                     .id = msg->id,
                     .flags = (uint16_t)msg->filter,

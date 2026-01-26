@@ -101,6 +101,9 @@ For Rack apps (objects with `call` method), Iodine automatically:
 Constants Used only by Iodine::Connection
 ***************************************************************************** */
 
+/** Connection Properties IDs */
+static VALUE IODINE_TIMEOUT_ID;
+
 /** Cookie SameSite attribute symbol IDs */
 static ID IODINE_SAME_SITE_DEFAULT;
 static ID IODINE_SAME_SITE_NONE;
@@ -2107,7 +2110,7 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
               .log = fio_cli_get_bool("-v"),
           },
   };
-  VALUE proc = Qnil, handler_tmp = Qnil, tls_io_rb = Qnil;
+  VALUE proc = Qnil, handler_tmp = Qnil, tls_io_rb = Qnil, timeout = Qnil;
   iodine_rb2c_arg(
       argc,
       argv,
@@ -2147,6 +2150,10 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
     rb_raise(
         rb_eArgError,
         "Either a `:handler` or `&block` must be provided and a valid Object!");
+  if (rb_const_defined((VALUE)r.settings.udata, IODINE_TIMEOUT_ID))
+    timeout = rb_const_get((VALUE)r.settings.udata, IODINE_TIMEOUT_ID);
+  if (timeout != Qnil && timeout && RB_TYPE_P(timeout, RUBY_T_FIXNUM))
+    r.settings.ws_timeout = RB_NUM2ULL(timeout);
   if (r.url.buf)
     r.url_data = fio_url_parse(r.url.buf, r.url.len);
   if (!r.hint.len)
@@ -3226,6 +3233,9 @@ static void Init_Iodine_Connection(void)  {
 
   IODINE_CONST_ID_STORE(IODINE_TLS_IO_IODINE_ID, "iodine");
   IODINE_CONST_ID_STORE(IODINE_TLS_IO_OPENSSL_ID, "openssl");
+
+  IODINE_CONST_ID_STORE(IODINE_TIMEOUT_ID, "TIMEOUT");
+
 
 
 /* cache VALUE for `env` key */
