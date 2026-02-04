@@ -160,6 +160,10 @@ Iodine.on_state(:before_fork)  do
       ActiveRecord::Base.connection.disconnect!
     rescue
     end
+    begin
+      ActiveRecord::Base.connection_pool.disconnect!
+    rescue
+    end
   end
   if defined?(Sequel)
     begin
