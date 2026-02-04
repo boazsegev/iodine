@@ -4912,6 +4912,8 @@ FIO_CRYPTO            Poor-man's Cryptographic Elements
 #define FIO_P384
 #define FIO_PEM
 #define FIO_RSA
+#define FIO_LYRA2
+#define FIO_ARGON2
 #define FIO_SECRET
 #define FIO_SHA1
 #define FIO_SHA2
@@ -5171,7 +5173,12 @@ FIO_MAP Ordering & Naming Shortcut
 #define FIO_SHA2
 #endif
 
-#if defined(FIO_CHACHA) || defined(FIO_SHA1) || defined(FIO_SHA2)
+#if defined(FIO_LYRA2) || defined(FIO_ARGON2)
+#define FIO_BLAKE2
+#endif
+
+#if defined(FIO_CHACHA) || defined(FIO_SHA1) || defined(FIO_SHA2) ||           \
+    defined(FIO_BLAKE2)
 #undef FIO_CRYPTO_CORE
 #define FIO_CRYPTO_CORE
 #endif
@@ -26823,89 +26830,195 @@ static const uint64_t fio___blake2b_iv[8] = {0x6A09E667F3BCC908ULL,
                                              0x1F83D9ABFB41BD6BULL,
                                              0x5BE0CD19137E2179ULL};
 
-/* BLAKE2b sigma permutation table */
-static const uint8_t fio___blake2b_sigma[12][16] = {
-    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
-    {11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4},
-    {7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8},
-    {9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13},
-    {2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9},
-    {12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11},
-    {13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10},
-    {6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5},
-    {10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0},
-    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3}};
-
-/* BLAKE2b G mixing function */
-#define FIO___BLAKE2B_G(r, i, a, b, c, d, m)                                   \
+/* BLAKE2b G mixing function with hardcoded message word indices */
+#define FIO___BLAKE2B_G(a, b, c, d, mx, my)                                    \
   do {                                                                         \
-    (a) += (b) + m[fio___blake2b_sigma[r][2 * (i)]];                           \
+    (a) += (b) + (mx);                                                         \
     (d) = fio_rrot64((d) ^ (a), 32);                                           \
     (c) += (d);                                                                \
     (b) = fio_rrot64((b) ^ (c), 24);                                           \
-    (a) += (b) + m[fio___blake2b_sigma[r][2 * (i) + 1]];                       \
+    (a) += (b) + (my);                                                         \
     (d) = fio_rrot64((d) ^ (a), 16);                                           \
     (c) += (d);                                                                \
     (b) = fio_rrot64((b) ^ (c), 63);                                           \
   } while (0)
 
-/* BLAKE2b round function */
-#define FIO___BLAKE2B_ROUND(r, v, m)                                           \
-  do {                                                                         \
-    FIO___BLAKE2B_G(r, 0, v[0], v[4], v[8], v[12], m);                         \
-    FIO___BLAKE2B_G(r, 1, v[1], v[5], v[9], v[13], m);                         \
-    FIO___BLAKE2B_G(r, 2, v[2], v[6], v[10], v[14], m);                        \
-    FIO___BLAKE2B_G(r, 3, v[3], v[7], v[11], v[15], m);                        \
-    FIO___BLAKE2B_G(r, 4, v[0], v[5], v[10], v[15], m);                        \
-    FIO___BLAKE2B_G(r, 5, v[1], v[6], v[11], v[12], m);                        \
-    FIO___BLAKE2B_G(r, 6, v[2], v[7], v[8], v[13], m);                         \
-    FIO___BLAKE2B_G(r, 7, v[3], v[4], v[9], v[14], m);                         \
-  } while (0)
-
-/* BLAKE2b compression function */
+/* BLAKE2b compression function - sigma indices fully hardcoded per round */
 FIO_IFUNC void fio___blake2b_compress(fio_blake2b_s *restrict h,
                                       const uint8_t *restrict block,
                                       int is_last) {
   uint64_t v[16] FIO_ALIGN(64);
   uint64_t m[16] FIO_ALIGN(64);
 
-  /* Initialize working vector */
-  for (size_t i = 0; i < 8; ++i) {
-    v[i] = h->h[i];
-    v[i + 8] = fio___blake2b_iv[i];
-  }
-  v[12] ^= h->t[0];
-  v[13] ^= h->t[1];
-  if (is_last)
-    v[14] = ~v[14]; /* Invert finalization flag */
+  /* Initialize working vector - unrolled */
+  v[0] = h->h[0];
+  v[1] = h->h[1];
+  v[2] = h->h[2];
+  v[3] = h->h[3];
+  v[4] = h->h[4];
+  v[5] = h->h[5];
+  v[6] = h->h[6];
+  v[7] = h->h[7];
+  v[8] = fio___blake2b_iv[0];
+  v[9] = fio___blake2b_iv[1];
+  v[10] = fio___blake2b_iv[2];
+  v[11] = fio___blake2b_iv[3];
+  v[12] = fio___blake2b_iv[4] ^ h->t[0];
+  v[13] = fio___blake2b_iv[5] ^ h->t[1];
+  v[14] = is_last ? ~fio___blake2b_iv[6] : fio___blake2b_iv[6];
+  v[15] = fio___blake2b_iv[7];
 
-  /* Load message block (little-endian) */
-  for (size_t i = 0; i < 16; ++i)
-    m[i] = fio_buf2u64_le(block + i * 8);
+  /* Load message block (little-endian) - unrolled */
+  m[0] = fio_buf2u64_le(block);
+  m[1] = fio_buf2u64_le(block + 8);
+  m[2] = fio_buf2u64_le(block + 16);
+  m[3] = fio_buf2u64_le(block + 24);
+  m[4] = fio_buf2u64_le(block + 32);
+  m[5] = fio_buf2u64_le(block + 40);
+  m[6] = fio_buf2u64_le(block + 48);
+  m[7] = fio_buf2u64_le(block + 56);
+  m[8] = fio_buf2u64_le(block + 64);
+  m[9] = fio_buf2u64_le(block + 72);
+  m[10] = fio_buf2u64_le(block + 80);
+  m[11] = fio_buf2u64_le(block + 88);
+  m[12] = fio_buf2u64_le(block + 96);
+  m[13] = fio_buf2u64_le(block + 104);
+  m[14] = fio_buf2u64_le(block + 112);
+  m[15] = fio_buf2u64_le(block + 120);
 
-  /* 12 rounds of mixing */
-  FIO___BLAKE2B_ROUND(0, v, m);
-  FIO___BLAKE2B_ROUND(1, v, m);
-  FIO___BLAKE2B_ROUND(2, v, m);
-  FIO___BLAKE2B_ROUND(3, v, m);
-  FIO___BLAKE2B_ROUND(4, v, m);
-  FIO___BLAKE2B_ROUND(5, v, m);
-  FIO___BLAKE2B_ROUND(6, v, m);
-  FIO___BLAKE2B_ROUND(7, v, m);
-  FIO___BLAKE2B_ROUND(8, v, m);
-  FIO___BLAKE2B_ROUND(9, v, m);
-  FIO___BLAKE2B_ROUND(10, v, m);
-  FIO___BLAKE2B_ROUND(11, v, m);
+  /* 12 rounds with hardcoded sigma permutation indices */
+  /* Round 0: sigma = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15} */
+  FIO___BLAKE2B_G(v[0], v[4], v[8], v[12], m[0], m[1]);
+  FIO___BLAKE2B_G(v[1], v[5], v[9], v[13], m[2], m[3]);
+  FIO___BLAKE2B_G(v[2], v[6], v[10], v[14], m[4], m[5]);
+  FIO___BLAKE2B_G(v[3], v[7], v[11], v[15], m[6], m[7]);
+  FIO___BLAKE2B_G(v[0], v[5], v[10], v[15], m[8], m[9]);
+  FIO___BLAKE2B_G(v[1], v[6], v[11], v[12], m[10], m[11]);
+  FIO___BLAKE2B_G(v[2], v[7], v[8], v[13], m[12], m[13]);
+  FIO___BLAKE2B_G(v[3], v[4], v[9], v[14], m[14], m[15]);
 
-  /* Finalize state */
-  for (size_t i = 0; i < 8; ++i)
-    h->h[i] ^= v[i] ^ v[i + 8];
+  /* Round 1: sigma = {14,10,4,8,9,15,13,6,1,12,0,2,11,7,5,3} */
+  FIO___BLAKE2B_G(v[0], v[4], v[8], v[12], m[14], m[10]);
+  FIO___BLAKE2B_G(v[1], v[5], v[9], v[13], m[4], m[8]);
+  FIO___BLAKE2B_G(v[2], v[6], v[10], v[14], m[9], m[15]);
+  FIO___BLAKE2B_G(v[3], v[7], v[11], v[15], m[13], m[6]);
+  FIO___BLAKE2B_G(v[0], v[5], v[10], v[15], m[1], m[12]);
+  FIO___BLAKE2B_G(v[1], v[6], v[11], v[12], m[0], m[2]);
+  FIO___BLAKE2B_G(v[2], v[7], v[8], v[13], m[11], m[7]);
+  FIO___BLAKE2B_G(v[3], v[4], v[9], v[14], m[5], m[3]);
+
+  /* Round 2: sigma = {11,8,12,0,5,2,15,13,10,14,3,6,7,1,9,4} */
+  FIO___BLAKE2B_G(v[0], v[4], v[8], v[12], m[11], m[8]);
+  FIO___BLAKE2B_G(v[1], v[5], v[9], v[13], m[12], m[0]);
+  FIO___BLAKE2B_G(v[2], v[6], v[10], v[14], m[5], m[2]);
+  FIO___BLAKE2B_G(v[3], v[7], v[11], v[15], m[15], m[13]);
+  FIO___BLAKE2B_G(v[0], v[5], v[10], v[15], m[10], m[14]);
+  FIO___BLAKE2B_G(v[1], v[6], v[11], v[12], m[3], m[6]);
+  FIO___BLAKE2B_G(v[2], v[7], v[8], v[13], m[7], m[1]);
+  FIO___BLAKE2B_G(v[3], v[4], v[9], v[14], m[9], m[4]);
+
+  /* Round 3: sigma = {7,9,3,1,13,12,11,14,2,6,5,10,4,0,15,8} */
+  FIO___BLAKE2B_G(v[0], v[4], v[8], v[12], m[7], m[9]);
+  FIO___BLAKE2B_G(v[1], v[5], v[9], v[13], m[3], m[1]);
+  FIO___BLAKE2B_G(v[2], v[6], v[10], v[14], m[13], m[12]);
+  FIO___BLAKE2B_G(v[3], v[7], v[11], v[15], m[11], m[14]);
+  FIO___BLAKE2B_G(v[0], v[5], v[10], v[15], m[2], m[6]);
+  FIO___BLAKE2B_G(v[1], v[6], v[11], v[12], m[5], m[10]);
+  FIO___BLAKE2B_G(v[2], v[7], v[8], v[13], m[4], m[0]);
+  FIO___BLAKE2B_G(v[3], v[4], v[9], v[14], m[15], m[8]);
+
+  /* Round 4: sigma = {9,0,5,7,2,4,10,15,14,1,11,12,6,8,3,13} */
+  FIO___BLAKE2B_G(v[0], v[4], v[8], v[12], m[9], m[0]);
+  FIO___BLAKE2B_G(v[1], v[5], v[9], v[13], m[5], m[7]);
+  FIO___BLAKE2B_G(v[2], v[6], v[10], v[14], m[2], m[4]);
+  FIO___BLAKE2B_G(v[3], v[7], v[11], v[15], m[10], m[15]);
+  FIO___BLAKE2B_G(v[0], v[5], v[10], v[15], m[14], m[1]);
+  FIO___BLAKE2B_G(v[1], v[6], v[11], v[12], m[11], m[12]);
+  FIO___BLAKE2B_G(v[2], v[7], v[8], v[13], m[6], m[8]);
+  FIO___BLAKE2B_G(v[3], v[4], v[9], v[14], m[3], m[13]);
+
+  /* Round 5: sigma = {2,12,6,10,0,11,8,3,4,13,7,5,15,14,1,9} */
+  FIO___BLAKE2B_G(v[0], v[4], v[8], v[12], m[2], m[12]);
+  FIO___BLAKE2B_G(v[1], v[5], v[9], v[13], m[6], m[10]);
+  FIO___BLAKE2B_G(v[2], v[6], v[10], v[14], m[0], m[11]);
+  FIO___BLAKE2B_G(v[3], v[7], v[11], v[15], m[8], m[3]);
+  FIO___BLAKE2B_G(v[0], v[5], v[10], v[15], m[4], m[13]);
+  FIO___BLAKE2B_G(v[1], v[6], v[11], v[12], m[7], m[5]);
+  FIO___BLAKE2B_G(v[2], v[7], v[8], v[13], m[15], m[14]);
+  FIO___BLAKE2B_G(v[3], v[4], v[9], v[14], m[1], m[9]);
+
+  /* Round 6: sigma = {12,5,1,15,14,13,4,10,0,7,6,3,9,2,8,11} */
+  FIO___BLAKE2B_G(v[0], v[4], v[8], v[12], m[12], m[5]);
+  FIO___BLAKE2B_G(v[1], v[5], v[9], v[13], m[1], m[15]);
+  FIO___BLAKE2B_G(v[2], v[6], v[10], v[14], m[14], m[13]);
+  FIO___BLAKE2B_G(v[3], v[7], v[11], v[15], m[4], m[10]);
+  FIO___BLAKE2B_G(v[0], v[5], v[10], v[15], m[0], m[7]);
+  FIO___BLAKE2B_G(v[1], v[6], v[11], v[12], m[6], m[3]);
+  FIO___BLAKE2B_G(v[2], v[7], v[8], v[13], m[9], m[2]);
+  FIO___BLAKE2B_G(v[3], v[4], v[9], v[14], m[8], m[11]);
+
+  /* Round 7: sigma = {13,11,7,14,12,1,3,9,5,0,15,4,8,6,2,10} */
+  FIO___BLAKE2B_G(v[0], v[4], v[8], v[12], m[13], m[11]);
+  FIO___BLAKE2B_G(v[1], v[5], v[9], v[13], m[7], m[14]);
+  FIO___BLAKE2B_G(v[2], v[6], v[10], v[14], m[12], m[1]);
+  FIO___BLAKE2B_G(v[3], v[7], v[11], v[15], m[3], m[9]);
+  FIO___BLAKE2B_G(v[0], v[5], v[10], v[15], m[5], m[0]);
+  FIO___BLAKE2B_G(v[1], v[6], v[11], v[12], m[15], m[4]);
+  FIO___BLAKE2B_G(v[2], v[7], v[8], v[13], m[8], m[6]);
+  FIO___BLAKE2B_G(v[3], v[4], v[9], v[14], m[2], m[10]);
+
+  /* Round 8: sigma = {6,15,14,9,11,3,0,8,12,2,13,7,1,4,10,5} */
+  FIO___BLAKE2B_G(v[0], v[4], v[8], v[12], m[6], m[15]);
+  FIO___BLAKE2B_G(v[1], v[5], v[9], v[13], m[14], m[9]);
+  FIO___BLAKE2B_G(v[2], v[6], v[10], v[14], m[11], m[3]);
+  FIO___BLAKE2B_G(v[3], v[7], v[11], v[15], m[0], m[8]);
+  FIO___BLAKE2B_G(v[0], v[5], v[10], v[15], m[12], m[2]);
+  FIO___BLAKE2B_G(v[1], v[6], v[11], v[12], m[13], m[7]);
+  FIO___BLAKE2B_G(v[2], v[7], v[8], v[13], m[1], m[4]);
+  FIO___BLAKE2B_G(v[3], v[4], v[9], v[14], m[10], m[5]);
+
+  /* Round 9: sigma = {10,2,8,4,7,6,1,5,15,11,9,14,3,12,13,0} */
+  FIO___BLAKE2B_G(v[0], v[4], v[8], v[12], m[10], m[2]);
+  FIO___BLAKE2B_G(v[1], v[5], v[9], v[13], m[8], m[4]);
+  FIO___BLAKE2B_G(v[2], v[6], v[10], v[14], m[7], m[6]);
+  FIO___BLAKE2B_G(v[3], v[7], v[11], v[15], m[1], m[5]);
+  FIO___BLAKE2B_G(v[0], v[5], v[10], v[15], m[15], m[11]);
+  FIO___BLAKE2B_G(v[1], v[6], v[11], v[12], m[9], m[14]);
+  FIO___BLAKE2B_G(v[2], v[7], v[8], v[13], m[3], m[12]);
+  FIO___BLAKE2B_G(v[3], v[4], v[9], v[14], m[13], m[0]);
+
+  /* Round 10: sigma = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15} (same as 0) */
+  FIO___BLAKE2B_G(v[0], v[4], v[8], v[12], m[0], m[1]);
+  FIO___BLAKE2B_G(v[1], v[5], v[9], v[13], m[2], m[3]);
+  FIO___BLAKE2B_G(v[2], v[6], v[10], v[14], m[4], m[5]);
+  FIO___BLAKE2B_G(v[3], v[7], v[11], v[15], m[6], m[7]);
+  FIO___BLAKE2B_G(v[0], v[5], v[10], v[15], m[8], m[9]);
+  FIO___BLAKE2B_G(v[1], v[6], v[11], v[12], m[10], m[11]);
+  FIO___BLAKE2B_G(v[2], v[7], v[8], v[13], m[12], m[13]);
+  FIO___BLAKE2B_G(v[3], v[4], v[9], v[14], m[14], m[15]);
+
+  /* Round 11: sigma = {14,10,4,8,9,15,13,6,1,12,0,2,11,7,5,3} (same as 1) */
+  FIO___BLAKE2B_G(v[0], v[4], v[8], v[12], m[14], m[10]);
+  FIO___BLAKE2B_G(v[1], v[5], v[9], v[13], m[4], m[8]);
+  FIO___BLAKE2B_G(v[2], v[6], v[10], v[14], m[9], m[15]);
+  FIO___BLAKE2B_G(v[3], v[7], v[11], v[15], m[13], m[6]);
+  FIO___BLAKE2B_G(v[0], v[5], v[10], v[15], m[1], m[12]);
+  FIO___BLAKE2B_G(v[1], v[6], v[11], v[12], m[0], m[2]);
+  FIO___BLAKE2B_G(v[2], v[7], v[8], v[13], m[11], m[7]);
+  FIO___BLAKE2B_G(v[3], v[4], v[9], v[14], m[5], m[3]);
+
+  /* Finalize state - unrolled */
+  h->h[0] ^= v[0] ^ v[8];
+  h->h[1] ^= v[1] ^ v[9];
+  h->h[2] ^= v[2] ^ v[10];
+  h->h[3] ^= v[3] ^ v[11];
+  h->h[4] ^= v[4] ^ v[12];
+  h->h[5] ^= v[5] ^ v[13];
+  h->h[6] ^= v[6] ^ v[14];
+  h->h[7] ^= v[7] ^ v[15];
 }
 
 #undef FIO___BLAKE2B_G
-#undef FIO___BLAKE2B_ROUND
 
 /** Initialize a BLAKE2b streaming context. */
 SFUNC fio_blake2b_s fio_blake2b_init(size_t outlen,
@@ -26923,13 +27036,17 @@ SFUNC fio_blake2b_s fio_blake2b_init(size_t outlen,
 
   h.outlen = outlen;
 
-  /* Initialize state with IV */
-  for (size_t i = 0; i < 8; ++i)
-    h.h[i] = fio___blake2b_iv[i];
+  /* Initialize state with IV - unrolled */
+  h.h[0] = fio___blake2b_iv[0];
+  h.h[1] = fio___blake2b_iv[1];
+  h.h[2] = fio___blake2b_iv[2];
+  h.h[3] = fio___blake2b_iv[3];
+  h.h[4] = fio___blake2b_iv[4];
+  h.h[5] = fio___blake2b_iv[5];
+  h.h[6] = fio___blake2b_iv[6];
+  h.h[7] = fio___blake2b_iv[7];
 
   /* XOR parameter block into state[0] */
-  /* Parameter block: fanout=1, depth=1, leaf_len=0, node_offset=0,
-   * node_depth=0, inner_len=0, reserved=0, salt=0, personal=0 */
   h.h[0] ^= 0x01010000ULL ^ ((uint64_t)keylen << 8) ^ (uint64_t)outlen;
 
   /* If keyed, pad key to 128 bytes and process as first block */
@@ -26997,10 +27114,20 @@ SFUNC void fio_blake2b_finalize(fio_blake2b_s *restrict h, void *restrict out) {
   /* Final compression */
   fio___blake2b_compress(h, h->buf, 1);
 
-  /* Output hash (little-endian) */
+  /* Output hash (little-endian) - word-sized writes */
   uint8_t *o = (uint8_t *)out;
-  for (size_t i = 0; i < h->outlen; ++i)
-    o[i] = (uint8_t)(h->h[i / 8] >> (8 * (i % 8)));
+  size_t full_words = h->outlen >> 3; /* outlen / 8 */
+  size_t i;
+  for (i = 0; i < full_words; ++i)
+    fio_u2buf64_le(o + (i << 3), h->h[i]);
+  /* Handle remaining bytes (outlen not multiple of 8) */
+  size_t remaining = h->outlen & 7;
+  if (remaining) {
+    uint64_t last = h->h[i];
+    uint8_t *dst = o + (i << 3);
+    for (size_t j = 0; j < remaining; ++j)
+      dst[j] = (uint8_t)(last >> (8 * j));
+  }
 }
 
 /** Simple non-streaming BLAKE2b. */
@@ -27029,85 +27156,175 @@ static const uint32_t fio___blake2s_iv[8] = {0x6A09E667UL,
                                              0x1F83D9ABUL,
                                              0x5BE0CD19UL};
 
-/* BLAKE2s sigma permutation table (same as BLAKE2b) */
-static const uint8_t fio___blake2s_sigma[10][16] = {
-    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
-    {11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4},
-    {7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8},
-    {9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13},
-    {2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9},
-    {12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11},
-    {13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10},
-    {6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5},
-    {10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0}};
-
-/* BLAKE2s G mixing function */
-#define FIO___BLAKE2S_G(r, i, a, b, c, d, m)                                   \
+/* BLAKE2s G mixing function with hardcoded message word indices */
+#define FIO___BLAKE2S_G(a, b, c, d, mx, my)                                    \
   do {                                                                         \
-    (a) += (b) + m[fio___blake2s_sigma[r][2 * (i)]];                           \
+    (a) += (b) + (mx);                                                         \
     (d) = fio_rrot32((d) ^ (a), 16);                                           \
     (c) += (d);                                                                \
     (b) = fio_rrot32((b) ^ (c), 12);                                           \
-    (a) += (b) + m[fio___blake2s_sigma[r][2 * (i) + 1]];                       \
+    (a) += (b) + (my);                                                         \
     (d) = fio_rrot32((d) ^ (a), 8);                                            \
     (c) += (d);                                                                \
     (b) = fio_rrot32((b) ^ (c), 7);                                            \
   } while (0)
 
-/* BLAKE2s round function */
-#define FIO___BLAKE2S_ROUND(r, v, m)                                           \
-  do {                                                                         \
-    FIO___BLAKE2S_G(r, 0, v[0], v[4], v[8], v[12], m);                         \
-    FIO___BLAKE2S_G(r, 1, v[1], v[5], v[9], v[13], m);                         \
-    FIO___BLAKE2S_G(r, 2, v[2], v[6], v[10], v[14], m);                        \
-    FIO___BLAKE2S_G(r, 3, v[3], v[7], v[11], v[15], m);                        \
-    FIO___BLAKE2S_G(r, 4, v[0], v[5], v[10], v[15], m);                        \
-    FIO___BLAKE2S_G(r, 5, v[1], v[6], v[11], v[12], m);                        \
-    FIO___BLAKE2S_G(r, 6, v[2], v[7], v[8], v[13], m);                         \
-    FIO___BLAKE2S_G(r, 7, v[3], v[4], v[9], v[14], m);                         \
-  } while (0)
-
-/* BLAKE2s compression function */
+/* BLAKE2s compression function - sigma indices fully hardcoded per round */
 FIO_IFUNC void fio___blake2s_compress(fio_blake2s_s *restrict h,
                                       const uint8_t *restrict block,
                                       int is_last) {
   uint32_t v[16] FIO_ALIGN(64);
   uint32_t m[16] FIO_ALIGN(64);
 
-  /* Initialize working vector */
-  for (size_t i = 0; i < 8; ++i) {
-    v[i] = h->h[i];
-    v[i + 8] = fio___blake2s_iv[i];
-  }
-  v[12] ^= h->t[0];
-  v[13] ^= h->t[1];
-  if (is_last)
-    v[14] = ~v[14];
+  /* Initialize working vector - unrolled */
+  v[0] = h->h[0];
+  v[1] = h->h[1];
+  v[2] = h->h[2];
+  v[3] = h->h[3];
+  v[4] = h->h[4];
+  v[5] = h->h[5];
+  v[6] = h->h[6];
+  v[7] = h->h[7];
+  v[8] = fio___blake2s_iv[0];
+  v[9] = fio___blake2s_iv[1];
+  v[10] = fio___blake2s_iv[2];
+  v[11] = fio___blake2s_iv[3];
+  v[12] = fio___blake2s_iv[4] ^ h->t[0];
+  v[13] = fio___blake2s_iv[5] ^ h->t[1];
+  v[14] = is_last ? ~fio___blake2s_iv[6] : fio___blake2s_iv[6];
+  v[15] = fio___blake2s_iv[7];
 
-  /* Load message block (little-endian) */
-  for (size_t i = 0; i < 16; ++i)
-    m[i] = fio_buf2u32_le(block + i * 4);
+  /* Load message block (little-endian) - unrolled */
+  m[0] = fio_buf2u32_le(block);
+  m[1] = fio_buf2u32_le(block + 4);
+  m[2] = fio_buf2u32_le(block + 8);
+  m[3] = fio_buf2u32_le(block + 12);
+  m[4] = fio_buf2u32_le(block + 16);
+  m[5] = fio_buf2u32_le(block + 20);
+  m[6] = fio_buf2u32_le(block + 24);
+  m[7] = fio_buf2u32_le(block + 28);
+  m[8] = fio_buf2u32_le(block + 32);
+  m[9] = fio_buf2u32_le(block + 36);
+  m[10] = fio_buf2u32_le(block + 40);
+  m[11] = fio_buf2u32_le(block + 44);
+  m[12] = fio_buf2u32_le(block + 48);
+  m[13] = fio_buf2u32_le(block + 52);
+  m[14] = fio_buf2u32_le(block + 56);
+  m[15] = fio_buf2u32_le(block + 60);
 
-  /* 10 rounds of mixing */
-  FIO___BLAKE2S_ROUND(0, v, m);
-  FIO___BLAKE2S_ROUND(1, v, m);
-  FIO___BLAKE2S_ROUND(2, v, m);
-  FIO___BLAKE2S_ROUND(3, v, m);
-  FIO___BLAKE2S_ROUND(4, v, m);
-  FIO___BLAKE2S_ROUND(5, v, m);
-  FIO___BLAKE2S_ROUND(6, v, m);
-  FIO___BLAKE2S_ROUND(7, v, m);
-  FIO___BLAKE2S_ROUND(8, v, m);
-  FIO___BLAKE2S_ROUND(9, v, m);
+  /* 10 rounds with hardcoded sigma permutation indices */
+  /* Round 0: sigma = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15} */
+  FIO___BLAKE2S_G(v[0], v[4], v[8], v[12], m[0], m[1]);
+  FIO___BLAKE2S_G(v[1], v[5], v[9], v[13], m[2], m[3]);
+  FIO___BLAKE2S_G(v[2], v[6], v[10], v[14], m[4], m[5]);
+  FIO___BLAKE2S_G(v[3], v[7], v[11], v[15], m[6], m[7]);
+  FIO___BLAKE2S_G(v[0], v[5], v[10], v[15], m[8], m[9]);
+  FIO___BLAKE2S_G(v[1], v[6], v[11], v[12], m[10], m[11]);
+  FIO___BLAKE2S_G(v[2], v[7], v[8], v[13], m[12], m[13]);
+  FIO___BLAKE2S_G(v[3], v[4], v[9], v[14], m[14], m[15]);
 
-  /* Finalize state */
-  for (size_t i = 0; i < 8; ++i)
-    h->h[i] ^= v[i] ^ v[i + 8];
+  /* Round 1: sigma = {14,10,4,8,9,15,13,6,1,12,0,2,11,7,5,3} */
+  FIO___BLAKE2S_G(v[0], v[4], v[8], v[12], m[14], m[10]);
+  FIO___BLAKE2S_G(v[1], v[5], v[9], v[13], m[4], m[8]);
+  FIO___BLAKE2S_G(v[2], v[6], v[10], v[14], m[9], m[15]);
+  FIO___BLAKE2S_G(v[3], v[7], v[11], v[15], m[13], m[6]);
+  FIO___BLAKE2S_G(v[0], v[5], v[10], v[15], m[1], m[12]);
+  FIO___BLAKE2S_G(v[1], v[6], v[11], v[12], m[0], m[2]);
+  FIO___BLAKE2S_G(v[2], v[7], v[8], v[13], m[11], m[7]);
+  FIO___BLAKE2S_G(v[3], v[4], v[9], v[14], m[5], m[3]);
+
+  /* Round 2: sigma = {11,8,12,0,5,2,15,13,10,14,3,6,7,1,9,4} */
+  FIO___BLAKE2S_G(v[0], v[4], v[8], v[12], m[11], m[8]);
+  FIO___BLAKE2S_G(v[1], v[5], v[9], v[13], m[12], m[0]);
+  FIO___BLAKE2S_G(v[2], v[6], v[10], v[14], m[5], m[2]);
+  FIO___BLAKE2S_G(v[3], v[7], v[11], v[15], m[15], m[13]);
+  FIO___BLAKE2S_G(v[0], v[5], v[10], v[15], m[10], m[14]);
+  FIO___BLAKE2S_G(v[1], v[6], v[11], v[12], m[3], m[6]);
+  FIO___BLAKE2S_G(v[2], v[7], v[8], v[13], m[7], m[1]);
+  FIO___BLAKE2S_G(v[3], v[4], v[9], v[14], m[9], m[4]);
+
+  /* Round 3: sigma = {7,9,3,1,13,12,11,14,2,6,5,10,4,0,15,8} */
+  FIO___BLAKE2S_G(v[0], v[4], v[8], v[12], m[7], m[9]);
+  FIO___BLAKE2S_G(v[1], v[5], v[9], v[13], m[3], m[1]);
+  FIO___BLAKE2S_G(v[2], v[6], v[10], v[14], m[13], m[12]);
+  FIO___BLAKE2S_G(v[3], v[7], v[11], v[15], m[11], m[14]);
+  FIO___BLAKE2S_G(v[0], v[5], v[10], v[15], m[2], m[6]);
+  FIO___BLAKE2S_G(v[1], v[6], v[11], v[12], m[5], m[10]);
+  FIO___BLAKE2S_G(v[2], v[7], v[8], v[13], m[4], m[0]);
+  FIO___BLAKE2S_G(v[3], v[4], v[9], v[14], m[15], m[8]);
+
+  /* Round 4: sigma = {9,0,5,7,2,4,10,15,14,1,11,12,6,8,3,13} */
+  FIO___BLAKE2S_G(v[0], v[4], v[8], v[12], m[9], m[0]);
+  FIO___BLAKE2S_G(v[1], v[5], v[9], v[13], m[5], m[7]);
+  FIO___BLAKE2S_G(v[2], v[6], v[10], v[14], m[2], m[4]);
+  FIO___BLAKE2S_G(v[3], v[7], v[11], v[15], m[10], m[15]);
+  FIO___BLAKE2S_G(v[0], v[5], v[10], v[15], m[14], m[1]);
+  FIO___BLAKE2S_G(v[1], v[6], v[11], v[12], m[11], m[12]);
+  FIO___BLAKE2S_G(v[2], v[7], v[8], v[13], m[6], m[8]);
+  FIO___BLAKE2S_G(v[3], v[4], v[9], v[14], m[3], m[13]);
+
+  /* Round 5: sigma = {2,12,6,10,0,11,8,3,4,13,7,5,15,14,1,9} */
+  FIO___BLAKE2S_G(v[0], v[4], v[8], v[12], m[2], m[12]);
+  FIO___BLAKE2S_G(v[1], v[5], v[9], v[13], m[6], m[10]);
+  FIO___BLAKE2S_G(v[2], v[6], v[10], v[14], m[0], m[11]);
+  FIO___BLAKE2S_G(v[3], v[7], v[11], v[15], m[8], m[3]);
+  FIO___BLAKE2S_G(v[0], v[5], v[10], v[15], m[4], m[13]);
+  FIO___BLAKE2S_G(v[1], v[6], v[11], v[12], m[7], m[5]);
+  FIO___BLAKE2S_G(v[2], v[7], v[8], v[13], m[15], m[14]);
+  FIO___BLAKE2S_G(v[3], v[4], v[9], v[14], m[1], m[9]);
+
+  /* Round 6: sigma = {12,5,1,15,14,13,4,10,0,7,6,3,9,2,8,11} */
+  FIO___BLAKE2S_G(v[0], v[4], v[8], v[12], m[12], m[5]);
+  FIO___BLAKE2S_G(v[1], v[5], v[9], v[13], m[1], m[15]);
+  FIO___BLAKE2S_G(v[2], v[6], v[10], v[14], m[14], m[13]);
+  FIO___BLAKE2S_G(v[3], v[7], v[11], v[15], m[4], m[10]);
+  FIO___BLAKE2S_G(v[0], v[5], v[10], v[15], m[0], m[7]);
+  FIO___BLAKE2S_G(v[1], v[6], v[11], v[12], m[6], m[3]);
+  FIO___BLAKE2S_G(v[2], v[7], v[8], v[13], m[9], m[2]);
+  FIO___BLAKE2S_G(v[3], v[4], v[9], v[14], m[8], m[11]);
+
+  /* Round 7: sigma = {13,11,7,14,12,1,3,9,5,0,15,4,8,6,2,10} */
+  FIO___BLAKE2S_G(v[0], v[4], v[8], v[12], m[13], m[11]);
+  FIO___BLAKE2S_G(v[1], v[5], v[9], v[13], m[7], m[14]);
+  FIO___BLAKE2S_G(v[2], v[6], v[10], v[14], m[12], m[1]);
+  FIO___BLAKE2S_G(v[3], v[7], v[11], v[15], m[3], m[9]);
+  FIO___BLAKE2S_G(v[0], v[5], v[10], v[15], m[5], m[0]);
+  FIO___BLAKE2S_G(v[1], v[6], v[11], v[12], m[15], m[4]);
+  FIO___BLAKE2S_G(v[2], v[7], v[8], v[13], m[8], m[6]);
+  FIO___BLAKE2S_G(v[3], v[4], v[9], v[14], m[2], m[10]);
+
+  /* Round 8: sigma = {6,15,14,9,11,3,0,8,12,2,13,7,1,4,10,5} */
+  FIO___BLAKE2S_G(v[0], v[4], v[8], v[12], m[6], m[15]);
+  FIO___BLAKE2S_G(v[1], v[5], v[9], v[13], m[14], m[9]);
+  FIO___BLAKE2S_G(v[2], v[6], v[10], v[14], m[11], m[3]);
+  FIO___BLAKE2S_G(v[3], v[7], v[11], v[15], m[0], m[8]);
+  FIO___BLAKE2S_G(v[0], v[5], v[10], v[15], m[12], m[2]);
+  FIO___BLAKE2S_G(v[1], v[6], v[11], v[12], m[13], m[7]);
+  FIO___BLAKE2S_G(v[2], v[7], v[8], v[13], m[1], m[4]);
+  FIO___BLAKE2S_G(v[3], v[4], v[9], v[14], m[10], m[5]);
+
+  /* Round 9: sigma = {10,2,8,4,7,6,1,5,15,11,9,14,3,12,13,0} */
+  FIO___BLAKE2S_G(v[0], v[4], v[8], v[12], m[10], m[2]);
+  FIO___BLAKE2S_G(v[1], v[5], v[9], v[13], m[8], m[4]);
+  FIO___BLAKE2S_G(v[2], v[6], v[10], v[14], m[7], m[6]);
+  FIO___BLAKE2S_G(v[3], v[7], v[11], v[15], m[1], m[5]);
+  FIO___BLAKE2S_G(v[0], v[5], v[10], v[15], m[15], m[11]);
+  FIO___BLAKE2S_G(v[1], v[6], v[11], v[12], m[9], m[14]);
+  FIO___BLAKE2S_G(v[2], v[7], v[8], v[13], m[3], m[12]);
+  FIO___BLAKE2S_G(v[3], v[4], v[9], v[14], m[13], m[0]);
+
+  /* Finalize state - unrolled */
+  h->h[0] ^= v[0] ^ v[8];
+  h->h[1] ^= v[1] ^ v[9];
+  h->h[2] ^= v[2] ^ v[10];
+  h->h[3] ^= v[3] ^ v[11];
+  h->h[4] ^= v[4] ^ v[12];
+  h->h[5] ^= v[5] ^ v[13];
+  h->h[6] ^= v[6] ^ v[14];
+  h->h[7] ^= v[7] ^ v[15];
 }
 
 #undef FIO___BLAKE2S_G
-#undef FIO___BLAKE2S_ROUND
 
 /** Initialize a BLAKE2s streaming context. */
 SFUNC fio_blake2s_s fio_blake2s_init(size_t outlen,
@@ -27125,9 +27342,15 @@ SFUNC fio_blake2s_s fio_blake2s_init(size_t outlen,
 
   h.outlen = outlen;
 
-  /* Initialize state with IV */
-  for (size_t i = 0; i < 8; ++i)
-    h.h[i] = fio___blake2s_iv[i];
+  /* Initialize state with IV - unrolled */
+  h.h[0] = fio___blake2s_iv[0];
+  h.h[1] = fio___blake2s_iv[1];
+  h.h[2] = fio___blake2s_iv[2];
+  h.h[3] = fio___blake2s_iv[3];
+  h.h[4] = fio___blake2s_iv[4];
+  h.h[5] = fio___blake2s_iv[5];
+  h.h[6] = fio___blake2s_iv[6];
+  h.h[7] = fio___blake2s_iv[7];
 
   /* XOR parameter block into state[0] */
   h.h[0] ^= 0x01010000UL ^ ((uint32_t)keylen << 8) ^ (uint32_t)outlen;
@@ -27197,10 +27420,20 @@ SFUNC void fio_blake2s_finalize(fio_blake2s_s *restrict h, void *restrict out) {
   /* Final compression */
   fio___blake2s_compress(h, h->buf, 1);
 
-  /* Output hash (little-endian) */
+  /* Output hash (little-endian) - word-sized writes */
   uint8_t *o = (uint8_t *)out;
-  for (size_t i = 0; i < h->outlen; ++i)
-    o[i] = (uint8_t)(h->h[i / 4] >> (8 * (i % 4)));
+  size_t full_words = h->outlen >> 2; /* outlen / 4 */
+  size_t i;
+  for (i = 0; i < full_words; ++i)
+    fio_u2buf32_le(o + (i << 2), h->h[i]);
+  /* Handle remaining bytes (outlen not multiple of 4) */
+  size_t remaining = h->outlen & 3;
+  if (remaining) {
+    uint32_t last = h->h[i];
+    uint8_t *dst = o + (i << 2);
+    for (size_t j = 0; j < remaining; ++j)
+      dst[j] = (uint8_t)(last >> (8 * j));
+  }
 }
 
 /** Simple non-streaming BLAKE2s. */
@@ -30196,20 +30429,19 @@ SFUNC void fio_shake_squeeze(fio_sha3_s *restrict h,
     h->outlen = 1; /* Mark as finalized */
   }
 
-  /* Squeeze output */
+  /* Squeeze output — buflen tracks offset within current Keccak state */
   while (outlen > 0) {
-    if (h->buflen == 0) {
-      /* Output from state */
-      size_t to_copy = (outlen < h->rate) ? outlen : h->rate;
-      for (size_t i = 0; i < to_copy; ++i)
-        o[i] = (uint8_t)(h->state[i / 8] >> (8 * (i % 8)));
-      o += to_copy;
-      outlen -= to_copy;
-      if (outlen > 0) {
-        fio___keccak_f1600(h->state);
-      }
-    } else {
-      /* Should not happen in normal use */
+    size_t available = h->rate - h->buflen;
+    size_t to_copy = (outlen < available) ? outlen : available;
+    for (size_t i = 0; i < to_copy; ++i) {
+      size_t pos = h->buflen + i;
+      o[i] = (uint8_t)(h->state[pos / 8] >> (8 * (pos % 8)));
+    }
+    o += to_copy;
+    outlen -= to_copy;
+    h->buflen += to_copy;
+    if (h->buflen == h->rate) {
+      fio___keccak_f1600(h->state);
       h->buflen = 0;
     }
   }
@@ -42144,6 +42376,1704 @@ Module Cleanup
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_MLKEM              /* Development inclusion - ignore line */
+#define FIO_SHA3               /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                              ML-KEM-768 (FIPS 203)
+                        Post-Quantum Key Encapsulation Mechanism
+
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_MLKEM) && !defined(H___FIO_MLKEM___H)
+#define H___FIO_MLKEM___H
+
+/* *****************************************************************************
+ML-KEM-768 API
+
+ML-KEM (Module-Lattice-Based Key-Encapsulation Mechanism) provides
+post-quantum secure key encapsulation with 192-bit security level.
+
+Parameters (ML-KEM-768):
+  n = 256, k = 3, q = 3329
+  eta1 = 2, eta2 = 2
+  d_u = 10, d_v = 4
+  Public key:   1184 bytes
+  Secret key:   2400 bytes
+  Ciphertext:   1088 bytes
+  Shared secret:  32 bytes
+
+Note: This implementation has not been audited. Use at your own risk.
+***************************************************************************** */
+
+/** ML-KEM-768 constants */
+#define FIO_MLKEM768_PUBLICKEYBYTES  1184
+#define FIO_MLKEM768_SECRETKEYBYTES  2400
+#define FIO_MLKEM768_CIPHERTEXTBYTES 1088
+#define FIO_MLKEM768_SSBYTES         32
+#define FIO_MLKEM768_SYMBYTES        32
+
+/**
+ * Generate ML-KEM-768 keypair.
+ *
+ * Generates a random keypair using the system CSPRNG.
+ * Returns 0 on success, -1 on failure.
+ */
+SFUNC int fio_mlkem768_keypair(uint8_t pk[1184], uint8_t sk[2400]);
+
+/**
+ * Generate ML-KEM-768 keypair from deterministic seed.
+ *
+ * The coins buffer must be exactly 64 bytes (d || z).
+ * Returns 0 on success, -1 on failure.
+ */
+SFUNC int fio_mlkem768_keypair_derand(uint8_t pk[1184],
+                                      uint8_t sk[2400],
+                                      const uint8_t coins[64]);
+
+/**
+ * Encapsulate: generate ciphertext and shared secret from public key.
+ *
+ * Uses system CSPRNG for randomness.
+ * Returns 0 on success, -1 on failure.
+ */
+SFUNC int fio_mlkem768_encaps(uint8_t ct[1088],
+                              uint8_t ss[32],
+                              const uint8_t pk[1184]);
+
+/**
+ * Encapsulate with deterministic randomness.
+ *
+ * The coins buffer must be exactly 32 bytes.
+ * Returns 0 on success, -1 on failure.
+ */
+SFUNC int fio_mlkem768_encaps_derand(uint8_t ct[1088],
+                                     uint8_t ss[32],
+                                     const uint8_t pk[1184],
+                                     const uint8_t coins[32]);
+
+/**
+ * Decapsulate: recover shared secret from ciphertext and secret key.
+ *
+ * Uses implicit rejection: if the ciphertext is invalid, a pseudorandom
+ * shared secret is returned (derived from the secret key and ciphertext)
+ * rather than an error, preventing chosen-ciphertext attacks.
+ *
+ * Returns 0 on success (always succeeds for well-formed inputs).
+ */
+SFUNC int fio_mlkem768_decaps(uint8_t ss[32],
+                              const uint8_t ct[1088],
+                              const uint8_t sk[2400]);
+
+/* *****************************************************************************
+ML-KEM-768 Internal Constants
+***************************************************************************** */
+
+#define FIO___MLKEM_N    256
+#define FIO___MLKEM_K    3
+#define FIO___MLKEM_Q    3329
+#define FIO___MLKEM_ETA1 2
+#define FIO___MLKEM_ETA2 2
+#define FIO___MLKEM_DU   10
+#define FIO___MLKEM_DV   4
+
+#define FIO___MLKEM_POLYBYTES              384
+#define FIO___MLKEM_POLYVECBYTES           (FIO___MLKEM_K * FIO___MLKEM_POLYBYTES)
+#define FIO___MLKEM_POLYCOMPRESSEDBYTES    128
+#define FIO___MLKEM_POLYVECCOMPRESSEDBYTES (FIO___MLKEM_K * 320)
+
+#define FIO___MLKEM_SYMBYTES              32
+#define FIO___MLKEM_INDCPA_MSGBYTES       32
+#define FIO___MLKEM_INDCPA_PUBLICKEYBYTES FIO_MLKEM768_PUBLICKEYBYTES
+#define FIO___MLKEM_INDCPA_SECRETKEYBYTES FIO___MLKEM_POLYVECBYTES
+#define FIO___MLKEM_INDCPA_BYTES          FIO_MLKEM768_CIPHERTEXTBYTES
+
+/* Montgomery constant: 2^16 mod q */
+#define FIO___MLKEM_MONT ((int16_t)-1044)
+/* q^{-1} mod 2^16 */
+#define FIO___MLKEM_QINV ((int16_t)-3327)
+
+/* *****************************************************************************
+ML-KEM-768 Internal Types
+***************************************************************************** */
+
+typedef struct {
+  int16_t coeffs[FIO___MLKEM_N];
+} fio___mlkem_poly;
+
+typedef struct {
+  fio___mlkem_poly vec[FIO___MLKEM_K];
+} fio___mlkem_polyvec;
+
+/* *****************************************************************************
+Implementation
+***************************************************************************** */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
+/* *****************************************************************************
+NTT Zetas Table
+***************************************************************************** */
+
+static const int16_t fio___mlkem_zetas[128] = {
+    -1044, -758,  -359,  -1517, 1493,  1422,  287,   202,  -171,  622,   1577,
+    182,   962,   -1202, -1474, 1468,  573,   -1325, 264,  383,   -829,  1458,
+    -1602, -130,  -681,  1017,  732,   608,   -1542, 411,  -205,  -1571, 1223,
+    652,   -552,  1015,  -1293, 1491,  -282,  -1544, 516,  -8,    -320,  -666,
+    -1618, -1162, 126,   1469,  -853,  -90,   -271,  830,  107,   -1421, -247,
+    -951,  -398,  961,   -1508, -725,  448,   -1065, 677,  -1275, -1103, 430,
+    555,   843,   -1251, 871,   1550,  105,   422,   587,  177,   -235,  -291,
+    -460,  1574,  1653,  -246,  778,   1159,  -147,  -777, 1483,  -602,  1119,
+    -1590, 644,   -872,  349,   418,   329,   -156,  -75,  817,   1097,  603,
+    610,   1322,  -1285, -1465, 384,   -1215, -136,  1218, -1335, -874,  220,
+    -1187, -1659, -1185, -1530, -1278, 794,   -1510, -854, -870,  478,   -108,
+    -308,  996,   991,   958,   -1460, 1522,  1628};
+
+/* *****************************************************************************
+Reduction Functions
+***************************************************************************** */
+
+/**
+ * Montgomery reduction: given a 32-bit integer a, compute
+ * a * R^{-1} mod q where R = 2^16.
+ */
+FIO_IFUNC int16_t fio___mlkem_montgomery_reduce(int32_t a) {
+  int16_t t;
+  t = (int16_t)a * FIO___MLKEM_QINV;
+  t = (int16_t)((a - (int32_t)t * FIO___MLKEM_Q) >> 16);
+  return t;
+}
+
+/**
+ * Barrett reduction: reduce a mod q to range [0, q).
+ */
+FIO_IFUNC int16_t fio___mlkem_barrett_reduce(int16_t a) {
+  int16_t t;
+  const int16_t v = ((1 << 26) + FIO___MLKEM_Q / 2) / FIO___MLKEM_Q;
+  t = (int16_t)(((int32_t)v * a + (1 << 25)) >> 26);
+  t = (int16_t)(t * FIO___MLKEM_Q);
+  return (int16_t)(a - t);
+}
+
+/** Field multiplication via Montgomery: a*b*R^{-1} mod q */
+FIO_IFUNC int16_t fio___mlkem_fqmul(int16_t a, int16_t b) {
+  return fio___mlkem_montgomery_reduce((int32_t)a * b);
+}
+
+/* *****************************************************************************
+NTT / Inverse NTT / Base Multiplication
+***************************************************************************** */
+
+/** Forward NTT in-place. Input in standard order, output in bit-reversed. */
+FIO_SFUNC void fio___mlkem_ntt(int16_t r[256]) {
+  unsigned int len, start, j, k;
+  int16_t t, zeta;
+
+  k = 1;
+  for (len = 128; len >= 2; len >>= 1) {
+    for (start = 0; start < 256; start = j + len) {
+      zeta = fio___mlkem_zetas[k++];
+      for (j = start; j < start + len; j++) {
+        t = fio___mlkem_fqmul(zeta, r[j + len]);
+        r[j + len] = (int16_t)(r[j] - t);
+        r[j] = (int16_t)(r[j] + t);
+      }
+    }
+  }
+}
+
+/** Inverse NTT in-place. Input in bit-reversed order, output in standard. */
+FIO_SFUNC void fio___mlkem_invntt(int16_t r[256]) {
+  unsigned int start, len, j, k;
+  int16_t t, zeta;
+  const int16_t f = 1441; /* mont^2 / 128 */
+
+  k = 127;
+  for (len = 2; len <= 128; len <<= 1) {
+    for (start = 0; start < 256; start = j + len) {
+      zeta = fio___mlkem_zetas[k--];
+      for (j = start; j < start + len; j++) {
+        t = r[j];
+        r[j] = fio___mlkem_barrett_reduce((int16_t)(t + r[j + len]));
+        r[j + len] = (int16_t)(r[j + len] - t);
+        r[j + len] = fio___mlkem_fqmul(zeta, r[j + len]);
+      }
+    }
+  }
+  for (j = 0; j < 256; j++)
+    r[j] = fio___mlkem_fqmul(r[j], f);
+}
+
+/**
+ * Multiplication of polynomials in Zq[X]/(X^2-zeta).
+ * Used for multiplication in NTT domain.
+ */
+FIO_SFUNC void fio___mlkem_basemul(int16_t r[2],
+                                   const int16_t a[2],
+                                   const int16_t b[2],
+                                   int16_t zeta) {
+  r[0] = fio___mlkem_fqmul(a[1], b[1]);
+  r[0] = fio___mlkem_fqmul(r[0], zeta);
+  r[0] = (int16_t)(r[0] + fio___mlkem_fqmul(a[0], b[0]));
+  r[1] = fio___mlkem_fqmul(a[0], b[1]);
+  r[1] = (int16_t)(r[1] + fio___mlkem_fqmul(a[1], b[0]));
+}
+
+/* *****************************************************************************
+Polynomial Operations
+***************************************************************************** */
+
+/** Serialize polynomial to bytes (12-bit coefficients packed into bytes). */
+FIO_SFUNC void fio___mlkem_poly_tobytes(uint8_t r[FIO___MLKEM_POLYBYTES],
+                                        const fio___mlkem_poly *a) {
+  unsigned int i;
+  uint16_t t0, t1;
+  for (i = 0; i < FIO___MLKEM_N / 2; i++) {
+    /* Map to positive representative */
+    t0 = (uint16_t)a->coeffs[2 * i];
+    t0 = (uint16_t)(t0 + ((uint16_t)((int16_t)t0 >> 15) & FIO___MLKEM_Q));
+    t1 = (uint16_t)a->coeffs[2 * i + 1];
+    t1 = (uint16_t)(t1 + ((uint16_t)((int16_t)t1 >> 15) & FIO___MLKEM_Q));
+    r[3 * i + 0] = (uint8_t)(t0 >> 0);
+    r[3 * i + 1] = (uint8_t)((t0 >> 8) | (t1 << 4));
+    r[3 * i + 2] = (uint8_t)(t1 >> 4);
+  }
+}
+
+/** Deserialize polynomial from bytes. */
+FIO_SFUNC void fio___mlkem_poly_frombytes(
+    fio___mlkem_poly *r,
+    const uint8_t a[FIO___MLKEM_POLYBYTES]) {
+  unsigned int i;
+  for (i = 0; i < FIO___MLKEM_N / 2; i++) {
+    r->coeffs[2 * i] = (int16_t)(((uint16_t)(a[3 * i + 0] >> 0) |
+                                  ((uint16_t)(a[3 * i + 1]) << 8)) &
+                                 0xFFF);
+    r->coeffs[2 * i + 1] = (int16_t)(((uint16_t)(a[3 * i + 1] >> 4) |
+                                      ((uint16_t)(a[3 * i + 2]) << 4)) &
+                                     0xFFF);
+  }
+}
+
+/**
+ * Compress polynomial (d_v = 4 bits).
+ * Uses multiply-shift to avoid division by q.
+ */
+FIO_SFUNC void fio___mlkem_poly_compress(
+    uint8_t r[FIO___MLKEM_POLYCOMPRESSEDBYTES],
+    const fio___mlkem_poly *a) {
+  unsigned int i, j;
+  uint8_t t[8];
+
+  for (i = 0; i < FIO___MLKEM_N / 8; i++) {
+    for (j = 0; j < 8; j++) {
+      /* Map to positive representative */
+      int16_t u = a->coeffs[8 * i + j];
+      u = (int16_t)(u + ((u >> 15) & FIO___MLKEM_Q));
+      /* Compress: round(2^4 / q * u) mod 2^4, via multiply-shift (no division)
+       * 80635 ≈ ceil(2^28 / 3329), avoiding KyberSlash timing leak */
+      uint64_t d0 = (uint64_t)u << 4;
+      d0 += 1665;
+      d0 *= 80635;
+      d0 >>= 28;
+      t[j] = (uint8_t)(d0 & 0xf);
+    }
+    r[4 * i + 0] = (uint8_t)(t[0] | (t[1] << 4));
+    r[4 * i + 1] = (uint8_t)(t[2] | (t[3] << 4));
+    r[4 * i + 2] = (uint8_t)(t[4] | (t[5] << 4));
+    r[4 * i + 3] = (uint8_t)(t[6] | (t[7] << 4));
+  }
+}
+
+/** Decompress polynomial (d_v = 4 bits). */
+FIO_SFUNC void fio___mlkem_poly_decompress(
+    fio___mlkem_poly *r,
+    const uint8_t a[FIO___MLKEM_POLYCOMPRESSEDBYTES]) {
+  unsigned int i;
+
+  for (i = 0; i < FIO___MLKEM_N / 2; i++) {
+    r->coeffs[2 * i + 0] =
+        (int16_t)((((uint16_t)(a[i] & 15) * FIO___MLKEM_Q) + 8) >> 4);
+    r->coeffs[2 * i + 1] =
+        (int16_t)((((uint16_t)(a[i] >> 4) * FIO___MLKEM_Q) + 8) >> 4);
+  }
+}
+
+/**
+ * Convert message bytes to polynomial.
+ * Each bit of the 32-byte message maps to a coefficient: 0 or q/2.
+ * Uses constant-time cmov_int16.
+ */
+FIO_SFUNC void fio___mlkem_poly_frommsg(
+    fio___mlkem_poly *r,
+    const uint8_t msg[FIO___MLKEM_INDCPA_MSGBYTES]) {
+  unsigned int i, j;
+  int16_t mask;
+
+  for (i = 0; i < FIO___MLKEM_N / 8; i++) {
+    for (j = 0; j < 8; j++) {
+      mask = (int16_t) - (int16_t)((msg[i] >> j) & 1);
+      r->coeffs[8 * i + j] =
+          (int16_t)(mask & (int16_t)((FIO___MLKEM_Q + 1) / 2));
+    }
+  }
+}
+
+/**
+ * Convert polynomial to message bytes.
+ * Uses multiply-shift to avoid division by q.
+ */
+FIO_SFUNC void fio___mlkem_poly_tomsg(uint8_t msg[FIO___MLKEM_INDCPA_MSGBYTES],
+                                      const fio___mlkem_poly *a) {
+  unsigned int i, j;
+  uint32_t t;
+
+  for (i = 0; i < FIO___MLKEM_N / 8; i++) {
+    msg[i] = 0;
+    for (j = 0; j < 8; j++) {
+      int16_t u = a->coeffs[8 * i + j];
+      u = (int16_t)(u + ((u >> 15) & FIO___MLKEM_Q));
+      /* Compress to 1 bit: round(2/q * u) mod 2 */
+      t = (uint32_t)u;
+      t <<= 1;
+      t += 1665;
+      t *= 80635;
+      t >>= 28;
+      t &= 1;
+      msg[i] = (uint8_t)(msg[i] | (t << j));
+    }
+  }
+}
+
+/** CBD eta=2 sampling from uniform bytes. */
+FIO_SFUNC void fio___mlkem_cbd2(fio___mlkem_poly *r,
+                                const uint8_t buf[2 * FIO___MLKEM_N / 4]) {
+  unsigned int i, j;
+  uint32_t t, d;
+  int16_t a, b;
+
+  for (i = 0; i < FIO___MLKEM_N / 8; i++) {
+    t = fio_buf2u32_le(buf + 4 * i);
+    d = t & 0x55555555u;
+    d += (t >> 1) & 0x55555555u;
+    for (j = 0; j < 8; j++) {
+      a = (int16_t)((d >> (4 * j + 0)) & 0x3);
+      b = (int16_t)((d >> (4 * j + 2)) & 0x3);
+      r->coeffs[8 * i + j] = (int16_t)(a - b);
+    }
+  }
+}
+
+/** Sample noise polynomial using SHAKE256 PRF (eta1 = 2 for ML-KEM-768). */
+FIO_SFUNC void fio___mlkem_poly_getnoise_eta1(
+    fio___mlkem_poly *r,
+    const uint8_t seed[FIO___MLKEM_SYMBYTES],
+    uint8_t nonce) {
+  uint8_t buf[FIO___MLKEM_ETA1 * FIO___MLKEM_N / 4]; /* 128 bytes */
+  uint8_t extseed[FIO___MLKEM_SYMBYTES + 1];
+  FIO_MEMCPY(extseed, seed, FIO___MLKEM_SYMBYTES);
+  extseed[FIO___MLKEM_SYMBYTES] = nonce;
+  fio_shake256(buf, sizeof(buf), extseed, sizeof(extseed));
+  fio___mlkem_cbd2(r, buf);
+}
+
+/** Sample noise polynomial using SHAKE256 PRF (eta2 = 2 for ML-KEM-768). */
+FIO_SFUNC void fio___mlkem_poly_getnoise_eta2(
+    fio___mlkem_poly *r,
+    const uint8_t seed[FIO___MLKEM_SYMBYTES],
+    uint8_t nonce) {
+  uint8_t buf[FIO___MLKEM_ETA2 * FIO___MLKEM_N / 4]; /* 128 bytes */
+  uint8_t extseed[FIO___MLKEM_SYMBYTES + 1];
+  FIO_MEMCPY(extseed, seed, FIO___MLKEM_SYMBYTES);
+  extseed[FIO___MLKEM_SYMBYTES] = nonce;
+  /* PRF(s, b) = SHAKE256(s || b, 64*eta) */
+  fio_shake256(buf, sizeof(buf), extseed, sizeof(extseed));
+  fio___mlkem_cbd2(r, buf);
+}
+
+/** Apply forward NTT to polynomial. */
+FIO_SFUNC void fio___mlkem_poly_ntt(fio___mlkem_poly *r) {
+  fio___mlkem_ntt(r->coeffs);
+}
+
+/** Apply inverse NTT to polynomial. */
+FIO_SFUNC void fio___mlkem_poly_invntt_tomont(fio___mlkem_poly *r) {
+  fio___mlkem_invntt(r->coeffs);
+}
+
+/** Pointwise multiplication of polynomials in NTT domain. */
+FIO_SFUNC void fio___mlkem_poly_basemul_montgomery(fio___mlkem_poly *r,
+                                                   const fio___mlkem_poly *a,
+                                                   const fio___mlkem_poly *b) {
+  unsigned int i;
+  for (i = 0; i < FIO___MLKEM_N / 4; i++) {
+    fio___mlkem_basemul(&r->coeffs[4 * i],
+                        &a->coeffs[4 * i],
+                        &b->coeffs[4 * i],
+                        fio___mlkem_zetas[64 + i]);
+    fio___mlkem_basemul(&r->coeffs[4 * i + 2],
+                        &a->coeffs[4 * i + 2],
+                        &b->coeffs[4 * i + 2],
+                        (int16_t)-fio___mlkem_zetas[64 + i]);
+  }
+}
+
+/** Convert polynomial to Montgomery domain. */
+FIO_SFUNC void fio___mlkem_poly_tomont(fio___mlkem_poly *r) {
+  unsigned int i;
+  const int16_t f = (int16_t)((1ULL << 32) % FIO___MLKEM_Q);
+  for (i = 0; i < FIO___MLKEM_N; i++)
+    r->coeffs[i] = fio___mlkem_montgomery_reduce((int32_t)r->coeffs[i] * f);
+}
+
+/** Reduce all coefficients to canonical range. */
+FIO_SFUNC void fio___mlkem_poly_reduce(fio___mlkem_poly *r) {
+  unsigned int i;
+  for (i = 0; i < FIO___MLKEM_N; i++)
+    r->coeffs[i] = fio___mlkem_barrett_reduce(r->coeffs[i]);
+}
+
+/** Add two polynomials. */
+FIO_SFUNC void fio___mlkem_poly_add(fio___mlkem_poly *r,
+                                    const fio___mlkem_poly *a,
+                                    const fio___mlkem_poly *b) {
+  unsigned int i;
+  for (i = 0; i < FIO___MLKEM_N; i++)
+    r->coeffs[i] = (int16_t)(a->coeffs[i] + b->coeffs[i]);
+}
+
+/** Subtract two polynomials: r = a - b. */
+FIO_SFUNC void fio___mlkem_poly_sub(fio___mlkem_poly *r,
+                                    const fio___mlkem_poly *a,
+                                    const fio___mlkem_poly *b) {
+  unsigned int i;
+  for (i = 0; i < FIO___MLKEM_N; i++)
+    r->coeffs[i] = (int16_t)(a->coeffs[i] - b->coeffs[i]);
+}
+
+/* *****************************************************************************
+Polyvec Operations
+***************************************************************************** */
+
+/**
+ * Compress polyvec (d_u = 10 bits per coefficient).
+ * Uses multiply-shift to avoid division by q.
+ */
+FIO_SFUNC void fio___mlkem_polyvec_compress(
+    uint8_t r[FIO___MLKEM_POLYVECCOMPRESSEDBYTES],
+    const fio___mlkem_polyvec *a) {
+  unsigned int i, j, k;
+  uint16_t t[4];
+
+  for (i = 0; i < FIO___MLKEM_K; i++) {
+    for (j = 0; j < FIO___MLKEM_N / 4; j++) {
+      for (k = 0; k < 4; k++) {
+        int16_t u = a->vec[i].coeffs[4 * j + k];
+        u = (int16_t)(u + ((u >> 15) & FIO___MLKEM_Q));
+        /* Compress: round(2^10 / q * u) mod 2^10, via multiply-shift
+         * 1290167 ≈ ceil(2^32 / 3329), avoiding KyberSlash timing leak */
+        uint64_t d0 = (uint64_t)((uint16_t)u) << 10;
+        d0 += 1665;
+        d0 *= 1290167;
+        d0 >>= 32;
+        t[k] = (uint16_t)(d0 & 0x3ff);
+      }
+      r[0] = (uint8_t)(t[0] >> 0);
+      r[1] = (uint8_t)((t[0] >> 8) | (t[1] << 2));
+      r[2] = (uint8_t)((t[1] >> 6) | (t[2] << 4));
+      r[3] = (uint8_t)((t[2] >> 4) | (t[3] << 6));
+      r[4] = (uint8_t)(t[3] >> 2);
+      r += 5;
+    }
+  }
+}
+
+/** Decompress polyvec (d_u = 10 bits per coefficient). */
+FIO_SFUNC void fio___mlkem_polyvec_decompress(
+    fio___mlkem_polyvec *r,
+    const uint8_t a[FIO___MLKEM_POLYVECCOMPRESSEDBYTES]) {
+  unsigned int i, j;
+  uint16_t t[4];
+
+  for (i = 0; i < FIO___MLKEM_K; i++) {
+    for (j = 0; j < FIO___MLKEM_N / 4; j++) {
+      t[0] = (uint16_t)(((uint16_t)(a[0]) >> 0) | ((uint16_t)(a[1]) << 8));
+      t[1] = (uint16_t)(((uint16_t)(a[1]) >> 2) | ((uint16_t)(a[2]) << 6));
+      t[2] = (uint16_t)(((uint16_t)(a[2]) >> 4) | ((uint16_t)(a[3]) << 4));
+      t[3] = (uint16_t)(((uint16_t)(a[3]) >> 6) | ((uint16_t)(a[4]) << 2));
+      a += 5;
+      r->vec[i].coeffs[4 * j + 0] =
+          (int16_t)(((uint32_t)(t[0] & 0x3FF) * FIO___MLKEM_Q + 512) >> 10);
+      r->vec[i].coeffs[4 * j + 1] =
+          (int16_t)(((uint32_t)(t[1] & 0x3FF) * FIO___MLKEM_Q + 512) >> 10);
+      r->vec[i].coeffs[4 * j + 2] =
+          (int16_t)(((uint32_t)(t[2] & 0x3FF) * FIO___MLKEM_Q + 512) >> 10);
+      r->vec[i].coeffs[4 * j + 3] =
+          (int16_t)(((uint32_t)(t[3] & 0x3FF) * FIO___MLKEM_Q + 512) >> 10);
+    }
+  }
+}
+
+/** Serialize polyvec to bytes. */
+FIO_SFUNC void fio___mlkem_polyvec_tobytes(uint8_t r[FIO___MLKEM_POLYVECBYTES],
+                                           const fio___mlkem_polyvec *a) {
+  unsigned int i;
+  for (i = 0; i < FIO___MLKEM_K; i++)
+    fio___mlkem_poly_tobytes(r + i * FIO___MLKEM_POLYBYTES, &a->vec[i]);
+}
+
+/** Deserialize polyvec from bytes. */
+FIO_SFUNC void fio___mlkem_polyvec_frombytes(
+    fio___mlkem_polyvec *r,
+    const uint8_t a[FIO___MLKEM_POLYVECBYTES]) {
+  unsigned int i;
+  for (i = 0; i < FIO___MLKEM_K; i++)
+    fio___mlkem_poly_frombytes(&r->vec[i], a + i * FIO___MLKEM_POLYBYTES);
+}
+
+/** Apply NTT to all polynomials in polyvec. */
+FIO_SFUNC void fio___mlkem_polyvec_ntt(fio___mlkem_polyvec *r) {
+  unsigned int i;
+  for (i = 0; i < FIO___MLKEM_K; i++)
+    fio___mlkem_poly_ntt(&r->vec[i]);
+}
+
+/** Apply inverse NTT to all polynomials in polyvec. */
+FIO_SFUNC void fio___mlkem_polyvec_invntt_tomont(fio___mlkem_polyvec *r) {
+  unsigned int i;
+  for (i = 0; i < FIO___MLKEM_K; i++)
+    fio___mlkem_poly_invntt_tomont(&r->vec[i]);
+}
+
+/** Pointwise multiply-accumulate: r = sum(a[i] * b[i]). */
+FIO_SFUNC void fio___mlkem_polyvec_basemul_acc_montgomery(
+    fio___mlkem_poly *r,
+    const fio___mlkem_polyvec *a,
+    const fio___mlkem_polyvec *b) {
+  unsigned int i;
+  fio___mlkem_poly t;
+
+  fio___mlkem_poly_basemul_montgomery(r, &a->vec[0], &b->vec[0]);
+  for (i = 1; i < FIO___MLKEM_K; i++) {
+    fio___mlkem_poly_basemul_montgomery(&t, &a->vec[i], &b->vec[i]);
+    fio___mlkem_poly_add(r, r, &t);
+  }
+  fio___mlkem_poly_reduce(r);
+}
+
+/** Reduce all coefficients in polyvec. */
+FIO_SFUNC void fio___mlkem_polyvec_reduce(fio___mlkem_polyvec *r) {
+  unsigned int i;
+  for (i = 0; i < FIO___MLKEM_K; i++)
+    fio___mlkem_poly_reduce(&r->vec[i]);
+}
+
+/** Add two polyvecs. */
+FIO_SFUNC void fio___mlkem_polyvec_add(fio___mlkem_polyvec *r,
+                                       const fio___mlkem_polyvec *a,
+                                       const fio___mlkem_polyvec *b) {
+  unsigned int i;
+  for (i = 0; i < FIO___MLKEM_K; i++)
+    fio___mlkem_poly_add(&r->vec[i], &a->vec[i], &b->vec[i]);
+}
+
+/* *****************************************************************************
+Matrix Generation (Rejection Sampling via SHAKE128 XOF)
+***************************************************************************** */
+
+/**
+ * Parse uniform random bytes from SHAKE128 stream into polynomial coefficients.
+ * Rejection sampling: accept 12-bit values < q.
+ */
+FIO_SFUNC unsigned int fio___mlkem_rej_uniform(int16_t *r,
+                                               unsigned int len,
+                                               const uint8_t *buf,
+                                               unsigned int buflen) {
+  unsigned int ctr, pos;
+  uint16_t val0, val1, tmp;
+
+  ctr = pos = 0;
+  while (ctr < len && pos + 3 <= buflen) {
+    val0 = (uint16_t)(((uint16_t)(buf[pos]) | ((uint16_t)(buf[pos + 1]) << 8)) &
+                      0xFFF);
+    val1 = (uint16_t)(((uint16_t)(buf[pos + 1] >> 4) |
+                       ((uint16_t)(buf[pos + 2]) << 4)) &
+                      0xFFF);
+    pos += 3;
+
+    tmp = r[ctr];
+    r[ctr] = (int16_t)val0;
+    ctr += (int)(val0 < FIO___MLKEM_Q);
+    r[ctr] = (int16_t)val1;
+    ctr += (int)((unsigned)(ctr < len) & (unsigned)(val1 < FIO___MLKEM_Q));
+    r[ctr] = tmp;
+  }
+  return ctr;
+}
+
+#define FIO___MLKEM_GEN_MATRIX_NBLOCKS                                         \
+  ((12 * FIO___MLKEM_N / 8 * (1 << 12) / FIO___MLKEM_Q + 168) / 168)
+
+/**
+ * Generate matrix A (or A^T) from seed rho using SHAKE128.
+ * If transposed != 0, generate A^T instead.
+ */
+FIO_IFUNC void fio___mlkem_gen_matrix(fio___mlkem_polyvec *a,
+                                      const uint8_t seed[FIO___MLKEM_SYMBYTES],
+                                      int transposed) {
+  unsigned int ctr, i, j;
+  unsigned int buflen;
+  uint8_t buf[FIO___MLKEM_GEN_MATRIX_NBLOCKS * 168 + 2];
+  fio_sha3_s state;
+
+  for (i = 0; i < FIO___MLKEM_K; i++) {
+    for (j = 0; j < FIO___MLKEM_K; j++) {
+      uint8_t extseed[FIO___MLKEM_SYMBYTES + 2];
+      FIO_MEMCPY(extseed, seed, FIO___MLKEM_SYMBYTES);
+      if (transposed) {
+        extseed[FIO___MLKEM_SYMBYTES] = (uint8_t)i;
+        extseed[FIO___MLKEM_SYMBYTES + 1] = (uint8_t)j;
+      } else {
+        extseed[FIO___MLKEM_SYMBYTES] = (uint8_t)j;
+        extseed[FIO___MLKEM_SYMBYTES + 1] = (uint8_t)i;
+      }
+
+      state = fio_shake128_init();
+      fio_sha3_consume(&state, extseed, sizeof(extseed));
+
+      buflen = FIO___MLKEM_GEN_MATRIX_NBLOCKS * 168;
+      fio_shake_squeeze(&state, buf, buflen);
+
+      ctr = fio___mlkem_rej_uniform(a[i].vec[j].coeffs,
+                                    FIO___MLKEM_N,
+                                    buf,
+                                    buflen);
+
+      while (ctr < FIO___MLKEM_N) {
+        fio_shake_squeeze(&state, buf, 168);
+        ctr += fio___mlkem_rej_uniform(a[i].vec[j].coeffs + ctr,
+                                       FIO___MLKEM_N - ctr,
+                                       buf,
+                                       168);
+      }
+    }
+  }
+}
+
+/* *****************************************************************************
+Constant-Time Utilities
+***************************************************************************** */
+
+/**
+ * Constant-time comparison of two buffers.
+ * Returns 0 if equal, 1 if different.
+ */
+FIO_SFUNC uint8_t fio___mlkem_verify(const uint8_t *a,
+                                     const uint8_t *b,
+                                     size_t len) {
+  size_t i;
+  uint8_t r = 0;
+  for (i = 0; i < len; i++)
+    r |= a[i] ^ b[i];
+  /* Collapse to 0 or 1 */
+  r = (uint8_t)((-((int64_t)r)) >> 63);
+  return r;
+}
+
+/**
+ * Constant-time conditional move.
+ * If b != 0, copy src to dst. Otherwise do nothing.
+ * Uses asm barrier to prevent compiler from introducing branches.
+ */
+FIO_SFUNC void fio___mlkem_cmov(uint8_t *restrict dst,
+                                const uint8_t *restrict src,
+                                size_t len,
+                                uint8_t b) {
+  size_t i;
+  b = (uint8_t)(-b); /* 0x00 or 0xFF */
+#if defined(__GNUC__) || defined(__clang__)
+  __asm__ __volatile__("" : "+r"(b) : : "memory");
+#endif
+  for (i = 0; i < len; i++)
+    dst[i] ^= b & (dst[i] ^ src[i]);
+}
+
+/**
+ * Constant-time conditional move for int16_t arrays.
+ * If b != 0, copy v to r. Otherwise do nothing.
+ */
+FIO_SFUNC void fio___mlkem_cmov_int16(int16_t *r, int16_t v, uint16_t b) {
+  b = (uint16_t)(-b); /* 0x0000 or 0xFFFF */
+#if defined(__GNUC__) || defined(__clang__)
+  __asm__ __volatile__("" : "+r"(b) : : "memory");
+#endif
+  *r ^= (int16_t)(b & ((*r) ^ v));
+}
+
+/* *****************************************************************************
+IND-CPA PKE (Internal)
+***************************************************************************** */
+
+/**
+ * IND-CPA key generation (deterministic).
+ * Input: coins = 32 bytes (d from FIPS 203).
+ * Output: pk (1184 bytes), sk (1152 bytes = polyvec in NTT domain).
+ */
+FIO_SFUNC void fio___mlkem_indcpa_keypair_derand(
+    uint8_t pk[FIO___MLKEM_INDCPA_PUBLICKEYBYTES],
+    uint8_t sk[FIO___MLKEM_INDCPA_SECRETKEYBYTES],
+    const uint8_t coins[FIO___MLKEM_SYMBYTES]) {
+  unsigned int i;
+  uint8_t buf[2 * FIO___MLKEM_SYMBYTES];
+  const uint8_t *publicseed = buf;
+  const uint8_t *noiseseed = buf + FIO___MLKEM_SYMBYTES;
+  fio___mlkem_polyvec a[FIO___MLKEM_K], e, pkpv, skpv;
+  uint8_t nonce = 0;
+
+  /* G(d || k) = (rho, sigma) — FIPS 203 requires appending k as a byte */
+  {
+    uint8_t gbuf[FIO___MLKEM_SYMBYTES + 1];
+    FIO_MEMCPY(gbuf, coins, FIO___MLKEM_SYMBYTES);
+    gbuf[FIO___MLKEM_SYMBYTES] = FIO___MLKEM_K;
+    fio_sha3_512(buf, gbuf, sizeof(gbuf));
+  }
+
+  fio___mlkem_gen_matrix(a, publicseed, 0);
+
+  for (i = 0; i < FIO___MLKEM_K; i++)
+    fio___mlkem_poly_getnoise_eta1(&skpv.vec[i], noiseseed, nonce++);
+  for (i = 0; i < FIO___MLKEM_K; i++)
+    fio___mlkem_poly_getnoise_eta1(&e.vec[i], noiseseed, nonce++);
+
+  fio___mlkem_polyvec_ntt(&skpv);
+  fio___mlkem_polyvec_ntt(&e);
+
+  /* Compute t = A*s + e */
+  for (i = 0; i < FIO___MLKEM_K; i++) {
+    fio___mlkem_polyvec_basemul_acc_montgomery(&pkpv.vec[i], &a[i], &skpv);
+    fio___mlkem_poly_tomont(&pkpv.vec[i]);
+  }
+
+  fio___mlkem_polyvec_add(&pkpv, &pkpv, &e);
+  fio___mlkem_polyvec_reduce(&pkpv);
+
+  /* Pack secret key (NTT domain) — reduce first for 12-bit packing */
+  fio___mlkem_polyvec_reduce(&skpv);
+  fio___mlkem_polyvec_tobytes(sk, &skpv);
+  /* Pack public key: t || rho */
+  fio___mlkem_polyvec_tobytes(pk, &pkpv);
+  FIO_MEMCPY(pk + FIO___MLKEM_POLYVECBYTES, publicseed, FIO___MLKEM_SYMBYTES);
+
+  /* Zero sensitive stack data */
+  FIO_MEMSET(buf, 0, sizeof(buf));
+  FIO_MEMSET(&skpv, 0, sizeof(skpv));
+  FIO_MEMSET(&e, 0, sizeof(e));
+}
+
+/**
+ * IND-CPA encryption.
+ * Input: msg (32 bytes), pk (1184 bytes), coins (32 bytes of randomness).
+ * Output: ct (1088 bytes).
+ */
+FIO_SFUNC void fio___mlkem_indcpa_enc(
+    uint8_t ct[FIO___MLKEM_INDCPA_BYTES],
+    const uint8_t msg[FIO___MLKEM_INDCPA_MSGBYTES],
+    const uint8_t pk[FIO___MLKEM_INDCPA_PUBLICKEYBYTES],
+    const uint8_t coins[FIO___MLKEM_SYMBYTES]) {
+  unsigned int i;
+  fio___mlkem_polyvec sp, pkpv, ep, at[FIO___MLKEM_K], b;
+  fio___mlkem_poly v, k, epp;
+  uint8_t seed[FIO___MLKEM_SYMBYTES];
+  uint8_t nonce = 0;
+
+  /* Unpack public key */
+  fio___mlkem_polyvec_frombytes(&pkpv, pk);
+  FIO_MEMCPY(seed, pk + FIO___MLKEM_POLYVECBYTES, FIO___MLKEM_SYMBYTES);
+
+  /* Generate A^T */
+  fio___mlkem_gen_matrix(at, seed, 1);
+
+  /* Sample r (eta1), e1 (eta2), e2 (eta2) */
+  for (i = 0; i < FIO___MLKEM_K; i++)
+    fio___mlkem_poly_getnoise_eta1(&sp.vec[i], coins, nonce++);
+  for (i = 0; i < FIO___MLKEM_K; i++)
+    fio___mlkem_poly_getnoise_eta2(&ep.vec[i], coins, nonce++);
+  fio___mlkem_poly_getnoise_eta2(&epp, coins, nonce++);
+
+  fio___mlkem_polyvec_ntt(&sp);
+
+  /* Compute u = A^T * r + e1 */
+  for (i = 0; i < FIO___MLKEM_K; i++)
+    fio___mlkem_polyvec_basemul_acc_montgomery(&b.vec[i], &at[i], &sp);
+
+  fio___mlkem_polyvec_invntt_tomont(&b);
+  fio___mlkem_polyvec_add(&b, &b, &ep);
+  fio___mlkem_polyvec_reduce(&b);
+
+  /* Compute v = t^T * r + e2 + Decompress(Decode(m)) */
+  fio___mlkem_polyvec_basemul_acc_montgomery(&v, &pkpv, &sp);
+  fio___mlkem_poly_invntt_tomont(&v);
+
+  fio___mlkem_poly_frommsg(&k, msg);
+  fio___mlkem_poly_add(&v, &v, &epp);
+  fio___mlkem_poly_add(&v, &v, &k);
+  fio___mlkem_poly_reduce(&v);
+
+  /* Pack ciphertext: Compress(u) || Compress(v) */
+  fio___mlkem_polyvec_compress(ct, &b);
+  fio___mlkem_poly_compress(ct + FIO___MLKEM_POLYVECCOMPRESSEDBYTES, &v);
+
+  /* Zero sensitive stack data */
+  FIO_MEMSET(&sp, 0, sizeof(sp));
+  FIO_MEMSET(&k, 0, sizeof(k));
+}
+
+/**
+ * IND-CPA decryption.
+ * Input: ct (1088 bytes), sk (1152 bytes).
+ * Output: msg (32 bytes).
+ */
+FIO_SFUNC void fio___mlkem_indcpa_dec(
+    uint8_t msg[FIO___MLKEM_INDCPA_MSGBYTES],
+    const uint8_t ct[FIO___MLKEM_INDCPA_BYTES],
+    const uint8_t sk[FIO___MLKEM_INDCPA_SECRETKEYBYTES]) {
+  fio___mlkem_polyvec b, skpv;
+  fio___mlkem_poly v, mp;
+
+  /* Unpack ciphertext */
+  fio___mlkem_polyvec_decompress(&b, ct);
+  fio___mlkem_poly_decompress(&v, ct + FIO___MLKEM_POLYVECCOMPRESSEDBYTES);
+
+  /* Unpack secret key */
+  fio___mlkem_polyvec_frombytes(&skpv, sk);
+
+  fio___mlkem_polyvec_ntt(&b);
+
+  /* Compute m = v - s^T * u */
+  fio___mlkem_polyvec_basemul_acc_montgomery(&mp, &skpv, &b);
+  fio___mlkem_poly_invntt_tomont(&mp);
+
+  fio___mlkem_poly_sub(&mp, &v, &mp);
+  fio___mlkem_poly_reduce(&mp);
+
+  fio___mlkem_poly_tomsg(msg, &mp);
+}
+
+/* *****************************************************************************
+ML-KEM-768 KEM (FO Transform — FIPS 203)
+***************************************************************************** */
+
+/**
+ * ML-KEM-768 keypair generation (deterministic).
+ *
+ * coins: 64 bytes = d (32 bytes) || z (32 bytes)
+ * where d is the seed for IND-CPA keygen and z is the implicit rejection seed.
+ */
+SFUNC int fio_mlkem768_keypair_derand(uint8_t pk[1184],
+                                      uint8_t sk[2400],
+                                      const uint8_t coins[64]) {
+  if (!pk || !sk || !coins)
+    return -1;
+
+  /* IND-CPA keypair from d */
+  fio___mlkem_indcpa_keypair_derand(pk, sk, coins);
+
+  /* sk = sk_cpa || pk || H(pk) || z */
+  /* sk_cpa is already at sk[0..1151] */
+  FIO_MEMCPY(sk + FIO___MLKEM_INDCPA_SECRETKEYBYTES,
+             pk,
+             FIO___MLKEM_INDCPA_PUBLICKEYBYTES);
+  /* H(pk) = SHA3-256(pk) */
+  fio_sha3_256(sk + FIO___MLKEM_INDCPA_SECRETKEYBYTES +
+                   FIO___MLKEM_INDCPA_PUBLICKEYBYTES,
+               pk,
+               FIO___MLKEM_INDCPA_PUBLICKEYBYTES);
+  /* z (implicit rejection seed) */
+  FIO_MEMCPY(sk + FIO___MLKEM_INDCPA_SECRETKEYBYTES +
+                 FIO___MLKEM_INDCPA_PUBLICKEYBYTES + FIO___MLKEM_SYMBYTES,
+             coins + FIO___MLKEM_SYMBYTES,
+             FIO___MLKEM_SYMBYTES);
+
+  return 0;
+}
+
+/** ML-KEM-768 keypair generation (random). */
+SFUNC int fio_mlkem768_keypair(uint8_t pk[1184], uint8_t sk[2400]) {
+  uint8_t coins[64];
+  if (!pk || !sk)
+    return -1;
+  fio_rand_bytes(coins, 64);
+  int r = fio_mlkem768_keypair_derand(pk, sk, coins);
+  FIO_MEMSET(coins, 0, sizeof(coins));
+  return r;
+}
+
+/**
+ * ML-KEM-768 encapsulation (deterministic).
+ *
+ * coins: 32 bytes of randomness (m in FIPS 203).
+ */
+SFUNC int fio_mlkem768_encaps_derand(uint8_t ct[1088],
+                                     uint8_t ss[32],
+                                     const uint8_t pk[1184],
+                                     const uint8_t coins[32]) {
+  uint8_t buf[2 * FIO___MLKEM_SYMBYTES];
+  uint8_t kr[2 * FIO___MLKEM_SYMBYTES]; /* (K, r) */
+
+  if (!ct || !ss || !pk || !coins)
+    return -1;
+
+  /* buf = m || H(pk) */
+  FIO_MEMCPY(buf, coins, FIO___MLKEM_SYMBYTES);
+  fio_sha3_256(buf + FIO___MLKEM_SYMBYTES,
+               pk,
+               FIO___MLKEM_INDCPA_PUBLICKEYBYTES);
+
+  /* (K, r) = G(m || H(pk)) */
+  fio_sha3_512(kr, buf, sizeof(buf));
+
+  /* c = Enc(pk, m; r) */
+  fio___mlkem_indcpa_enc(ct, buf, pk, kr + FIO___MLKEM_SYMBYTES);
+
+  /* K = KDF(K || H(c)) — but FIPS 203 just uses K directly */
+  FIO_MEMCPY(ss, kr, FIO___MLKEM_SYMBYTES);
+
+  /* Zero sensitive stack data */
+  FIO_MEMSET(buf, 0, sizeof(buf));
+  FIO_MEMSET(kr, 0, sizeof(kr));
+
+  return 0;
+}
+
+/** ML-KEM-768 encapsulation (random). */
+SFUNC int fio_mlkem768_encaps(uint8_t ct[1088],
+                              uint8_t ss[32],
+                              const uint8_t pk[1184]) {
+  uint8_t coins[FIO___MLKEM_SYMBYTES];
+  if (!ct || !ss || !pk)
+    return -1;
+  fio_rand_bytes(coins, FIO___MLKEM_SYMBYTES);
+  int r = fio_mlkem768_encaps_derand(ct, ss, pk, coins);
+  FIO_MEMSET(coins, 0, sizeof(coins));
+  return r;
+}
+
+/**
+ * ML-KEM-768 decapsulation.
+ *
+ * Uses implicit rejection: if ciphertext verification fails, returns a
+ * pseudorandom shared secret derived from z and the ciphertext, preventing
+ * chosen-ciphertext attacks.
+ */
+SFUNC int fio_mlkem768_decaps(uint8_t ss[32],
+                              const uint8_t ct[1088],
+                              const uint8_t sk[2400]) {
+  uint8_t buf[2 * FIO___MLKEM_SYMBYTES];
+  uint8_t kr[2 * FIO___MLKEM_SYMBYTES];
+  uint8_t cmp[FIO___MLKEM_INDCPA_BYTES];
+  const uint8_t *pk;
+  const uint8_t *hpk;
+  const uint8_t *z;
+  uint8_t fail;
+
+  if (!ss || !ct || !sk)
+    return -1;
+
+  pk = sk + FIO___MLKEM_INDCPA_SECRETKEYBYTES;
+  hpk = pk + FIO___MLKEM_INDCPA_PUBLICKEYBYTES;
+  z = hpk + FIO___MLKEM_SYMBYTES;
+
+  /* m' = Dec(sk_cpa, ct) */
+  fio___mlkem_indcpa_dec(buf, ct, sk);
+
+  /* buf = m' || H(pk) */
+  FIO_MEMCPY(buf + FIO___MLKEM_SYMBYTES, hpk, FIO___MLKEM_SYMBYTES);
+
+  /* (K', r') = G(m' || H(pk)) */
+  fio_sha3_512(kr, buf, sizeof(buf));
+
+  /* c' = Enc(pk, m'; r') */
+  fio___mlkem_indcpa_enc(cmp, buf, pk, kr + FIO___MLKEM_SYMBYTES);
+
+  /* Constant-time comparison: ct == c' ? */
+  fail = fio___mlkem_verify(ct, cmp, FIO___MLKEM_INDCPA_BYTES);
+
+  /* Implicit rejection: if fail, use K_bar = J(z || ct) instead */
+  /* Overwrite K with K_bar = SHAKE256(z || ct) if fail */
+  {
+    uint8_t k_bar[FIO___MLKEM_SYMBYTES];
+    fio_sha3_s state = fio_shake256_init();
+    fio_sha3_consume(&state, z, FIO___MLKEM_SYMBYTES);
+    fio_sha3_consume(&state, ct, FIO___MLKEM_INDCPA_BYTES);
+    fio_shake_squeeze(&state, k_bar, FIO___MLKEM_SYMBYTES);
+
+    /* Constant-time select: ss = fail ? k_bar : kr */
+    FIO_MEMCPY(ss, kr, FIO___MLKEM_SYMBYTES);
+    fio___mlkem_cmov(ss, k_bar, FIO___MLKEM_SYMBYTES, fail);
+    FIO_MEMSET(k_bar, 0, sizeof(k_bar));
+  }
+
+  /* Zero sensitive stack data */
+  FIO_MEMSET(buf, 0, sizeof(buf));
+  FIO_MEMSET(kr, 0, sizeof(kr));
+  FIO_MEMSET(cmp, 0, sizeof(cmp));
+
+  return 0;
+}
+
+/* *****************************************************************************
+Cleanup - Internal Macros
+***************************************************************************** */
+
+/* *****************************************************************************
+Cleanup
+***************************************************************************** */
+
+#endif /* FIO_EXTERN_COMPLETE */
+#undef FIO_MLKEM
+#endif /* FIO_MLKEM */
+
+/* Cleanup internal macros after guard closes */
+#undef FIO___MLKEM_N
+#undef FIO___MLKEM_K
+#undef FIO___MLKEM_Q
+#undef FIO___MLKEM_ETA1
+#undef FIO___MLKEM_ETA2
+#undef FIO___MLKEM_DU
+#undef FIO___MLKEM_DV
+#undef FIO___MLKEM_SYMBYTES
+#undef FIO___MLKEM_POLYBYTES
+#undef FIO___MLKEM_POLYVECBYTES
+#undef FIO___MLKEM_POLYCOMPRESSEDBYTES
+#undef FIO___MLKEM_POLYVECCOMPRESSEDBYTES
+#undef FIO___MLKEM_INDCPA_MSGBYTES
+#undef FIO___MLKEM_INDCPA_PUBLICKEYBYTES
+#undef FIO___MLKEM_INDCPA_SECRETKEYBYTES
+#undef FIO___MLKEM_INDCPA_BYTES
+#undef FIO___MLKEM_MONT
+#undef FIO___MLKEM_QINV
+#undef FIO___MLKEM_GEN_MATRIX_NBLOCKS
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_LYRA2              /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                                    LYRA2
+                        Memory-Hard Password Hashing
+
+
+Reference: https://github.com/leocalm/Lyra (single-threaded, nPARALLEL==1)
+Uses Blake2b as the underlying sponge permutation (SPONGE=0, RHO=1).
+
+When comparing Lyra2 output hashes, use `fio_ct_is_eq` for constant-time
+comparison to avoid timing side-channel attacks.
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_LYRA2) && !defined(H___FIO_LYRA2___H)
+#define H___FIO_LYRA2___H
+/* *****************************************************************************
+Lyra2 API
+***************************************************************************** */
+
+/** Lyra2 named arguments. */
+typedef struct {
+  /** The password to hash. */
+  fio_buf_info_s password;
+  /** The salt for the hash. */
+  fio_buf_info_s salt;
+  /** Time cost (number of rounds, minimum 1). */
+  uint64_t t_cost;
+  /** Memory cost (number of rows in the matrix, minimum 3). */
+  uint64_t m_cost;
+  /** Desired output length in bytes (default 32 if 0). */
+  size_t outlen;
+  /** Number of columns (default 256 if 0). */
+  size_t n_cols;
+} fio_lyra2_args_s;
+
+/**
+ * Computes Lyra2 password hash.
+ *
+ * Uses Blake2b as the underlying sponge/hash function.
+ * Matches the reference C implementation (nPARALLEL==1, SPONGE==0, RHO==1).
+ *
+ * Output is written to the returned buffer (up to 512 bytes via fio_u512).
+ * For outlen > 64, use fio_lyra2_hash() instead.
+ *
+ * Use `fio_ct_is_eq` to compare output hashes in constant time.
+ */
+SFUNC fio_u512 fio_lyra2(fio_lyra2_args_s args);
+#define fio_lyra2(...) fio_lyra2((fio_lyra2_args_s){__VA_ARGS__})
+
+/**
+ * Computes Lyra2 password hash into a caller-provided buffer.
+ * Supports arbitrary output lengths.
+ * Returns 0 on success, -1 on error.
+ */
+SFUNC int fio_lyra2_hash(void *out, fio_lyra2_args_s args);
+#define fio_lyra2_hash(out, ...)                                               \
+  fio_lyra2_hash(out, (fio_lyra2_args_s){__VA_ARGS__})
+
+/* *****************************************************************************
+Implementation - possibly externed functions.
+***************************************************************************** */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
+/* Block length: 12 uint64_t = 96 bytes (rate portion of sponge) */
+#define FIO___LYRA2_BLOCK_LEN_INT64 12
+#define FIO___LYRA2_BLOCK_LEN_BYTES (FIO___LYRA2_BLOCK_LEN_INT64 * 8)
+
+/* Blake2b-safe block: 8 uint64_t = 64 bytes (used for bootstrapping absorb) */
+#define FIO___LYRA2_BLAKE2_SAFE_INT64 8
+#define FIO___LYRA2_BLAKE2_SAFE_BYTES (FIO___LYRA2_BLAKE2_SAFE_INT64 * 8)
+
+/* Row length in uint64_t words */
+#define FIO___LYRA2_ROW_LEN_INT64(ncols)                                       \
+  ((size_t)(ncols)*FIO___LYRA2_BLOCK_LEN_INT64)
+#define FIO___LYRA2_ROW_LEN_BYTES(ncols) (FIO___LYRA2_ROW_LEN_INT64(ncols) * 8)
+
+/* Row pointer by index (avoids indirection array) */
+#define FIO___LYRA2_ROW(matrix, row, row_len)                                  \
+  ((matrix) + (size_t)(row) * (size_t)(row_len))
+
+/* *****************************************************************************
+Blake2b permutation (full 12 rounds and reduced 1 round)
+***************************************************************************** */
+
+#define FIO___LYRA2_G(a, b, c, d)                                              \
+  do {                                                                         \
+    (a) += (b);                                                                \
+    (d) = fio_rrot64((d) ^ (a), 32);                                           \
+    (c) += (d);                                                                \
+    (b) = fio_rrot64((b) ^ (c), 24);                                           \
+    (a) += (b);                                                                \
+    (d) = fio_rrot64((d) ^ (a), 16);                                           \
+    (c) += (d);                                                                \
+    (b) = fio_rrot64((b) ^ (c), 63);                                           \
+  } while (0)
+
+#define FIO___LYRA2_ROUND(v)                                                   \
+  do {                                                                         \
+    FIO___LYRA2_G((v)[0], (v)[4], (v)[8], (v)[12]);                            \
+    FIO___LYRA2_G((v)[1], (v)[5], (v)[9], (v)[13]);                            \
+    FIO___LYRA2_G((v)[2], (v)[6], (v)[10], (v)[14]);                           \
+    FIO___LYRA2_G((v)[3], (v)[7], (v)[11], (v)[15]);                           \
+    FIO___LYRA2_G((v)[0], (v)[5], (v)[10], (v)[15]);                           \
+    FIO___LYRA2_G((v)[1], (v)[6], (v)[11], (v)[12]);                           \
+    FIO___LYRA2_G((v)[2], (v)[7], (v)[8], (v)[13]);                            \
+    FIO___LYRA2_G((v)[3], (v)[4], (v)[9], (v)[14]);                            \
+  } while (0)
+
+/** Full 12-round Blake2b permutation. */
+FIO_IFUNC void fio___lyra2_sponge_full(uint64_t *v) {
+  FIO___LYRA2_ROUND(v);
+  FIO___LYRA2_ROUND(v);
+  FIO___LYRA2_ROUND(v);
+  FIO___LYRA2_ROUND(v);
+  FIO___LYRA2_ROUND(v);
+  FIO___LYRA2_ROUND(v);
+  FIO___LYRA2_ROUND(v);
+  FIO___LYRA2_ROUND(v);
+  FIO___LYRA2_ROUND(v);
+  FIO___LYRA2_ROUND(v);
+  FIO___LYRA2_ROUND(v);
+  FIO___LYRA2_ROUND(v);
+}
+
+/** Reduced 1-round Blake2b permutation. */
+FIO_IFUNC void fio___lyra2_sponge_reduced(uint64_t *v) { FIO___LYRA2_ROUND(v); }
+
+/* *****************************************************************************
+Sponge state initialization
+***************************************************************************** */
+
+FIO_IFUNC void fio___lyra2_init_state(uint64_t state[16]) {
+  FIO_MEMSET(state, 0, 64); /* first 8 words = 0 */
+  state[8] = 0x6a09e667f3bcc908ULL;
+  state[9] = 0xbb67ae8584caa73bULL;
+  state[10] = 0x3c6ef372fe94f82bULL;
+  state[11] = 0xa54ff53a5f1d36f1ULL;
+  state[12] = 0x510e527fade682d1ULL;
+  state[13] = 0x9b05688c2b3e6c1fULL;
+  state[14] = 0x1f83d9abfb41bd6bULL;
+  state[15] = 0x5be0cd19137e2179ULL;
+}
+
+/* *****************************************************************************
+Unrolled 12-word XOR/add/copy operations for sponge blocks
+***************************************************************************** */
+
+/** XOR 8 words of `in` into state (blake2b-safe absorb). */
+FIO_IFUNC void fio___lyra2_xor8(uint64_t *state, const uint64_t *in) {
+  state[0] ^= in[0];
+  state[1] ^= in[1];
+  state[2] ^= in[2];
+  state[3] ^= in[3];
+  state[4] ^= in[4];
+  state[5] ^= in[5];
+  state[6] ^= in[6];
+  state[7] ^= in[7];
+}
+
+/** XOR 12 words of `in` into state. */
+FIO_IFUNC void fio___lyra2_xor12(uint64_t *state, const uint64_t *in) {
+  state[0] ^= in[0];
+  state[1] ^= in[1];
+  state[2] ^= in[2];
+  state[3] ^= in[3];
+  state[4] ^= in[4];
+  state[5] ^= in[5];
+  state[6] ^= in[6];
+  state[7] ^= in[7];
+  state[8] ^= in[8];
+  state[9] ^= in[9];
+  state[10] ^= in[10];
+  state[11] ^= in[11];
+}
+
+/** Copy 12 words from state to dst. */
+FIO_IFUNC void fio___lyra2_copy12(uint64_t *dst, const uint64_t *src) {
+  dst[0] = src[0];
+  dst[1] = src[1];
+  dst[2] = src[2];
+  dst[3] = src[3];
+  dst[4] = src[4];
+  dst[5] = src[5];
+  dst[6] = src[6];
+  dst[7] = src[7];
+  dst[8] = src[8];
+  dst[9] = src[9];
+  dst[10] = src[10];
+  dst[11] = src[11];
+}
+
+/** XOR 12 words: dst[j] = a[j] ^ b[j]. */
+FIO_IFUNC void fio___lyra2_xor12_into(uint64_t *dst,
+                                      const uint64_t *a,
+                                      const uint64_t *b) {
+  dst[0] = a[0] ^ b[0];
+  dst[1] = a[1] ^ b[1];
+  dst[2] = a[2] ^ b[2];
+  dst[3] = a[3] ^ b[3];
+  dst[4] = a[4] ^ b[4];
+  dst[5] = a[5] ^ b[5];
+  dst[6] = a[6] ^ b[6];
+  dst[7] = a[7] ^ b[7];
+  dst[8] = a[8] ^ b[8];
+  dst[9] = a[9] ^ b[9];
+  dst[10] = a[10] ^ b[10];
+  dst[11] = a[11] ^ b[11];
+}
+
+/** XOR wordwise-add of 3 blocks into state: state[j] ^= (a[j]+b[j]+c[j]). */
+FIO_IFUNC void fio___lyra2_xor_add3(uint64_t *state,
+                                    const uint64_t *a,
+                                    const uint64_t *b,
+                                    const uint64_t *c) {
+  state[0] ^= (a[0] + b[0] + c[0]);
+  state[1] ^= (a[1] + b[1] + c[1]);
+  state[2] ^= (a[2] + b[2] + c[2]);
+  state[3] ^= (a[3] + b[3] + c[3]);
+  state[4] ^= (a[4] + b[4] + c[4]);
+  state[5] ^= (a[5] + b[5] + c[5]);
+  state[6] ^= (a[6] + b[6] + c[6]);
+  state[7] ^= (a[7] + b[7] + c[7]);
+  state[8] ^= (a[8] + b[8] + c[8]);
+  state[9] ^= (a[9] + b[9] + c[9]);
+  state[10] ^= (a[10] + b[10] + c[10]);
+  state[11] ^= (a[11] + b[11] + c[11]);
+}
+
+/** XOR wordwise-add of 4 blocks into state. */
+FIO_IFUNC void fio___lyra2_xor_add4(uint64_t *state,
+                                    const uint64_t *a,
+                                    const uint64_t *b,
+                                    const uint64_t *c,
+                                    const uint64_t *d) {
+  state[0] ^= (a[0] + b[0] + c[0] + d[0]);
+  state[1] ^= (a[1] + b[1] + c[1] + d[1]);
+  state[2] ^= (a[2] + b[2] + c[2] + d[2]);
+  state[3] ^= (a[3] + b[3] + c[3] + d[3]);
+  state[4] ^= (a[4] + b[4] + c[4] + d[4]);
+  state[5] ^= (a[5] + b[5] + c[5] + d[5]);
+  state[6] ^= (a[6] + b[6] + c[6] + d[6]);
+  state[7] ^= (a[7] + b[7] + c[7] + d[7]);
+  state[8] ^= (a[8] + b[8] + c[8] + d[8]);
+  state[9] ^= (a[9] + b[9] + c[9] + d[9]);
+  state[10] ^= (a[10] + b[10] + c[10] + d[10]);
+  state[11] ^= (a[11] + b[11] + c[11] + d[11]);
+}
+
+/** XOR state into dst: dst[j] ^= state[j]. */
+FIO_IFUNC void fio___lyra2_xor12_self(uint64_t *dst, const uint64_t *state) {
+  dst[0] ^= state[0];
+  dst[1] ^= state[1];
+  dst[2] ^= state[2];
+  dst[3] ^= state[3];
+  dst[4] ^= state[4];
+  dst[5] ^= state[5];
+  dst[6] ^= state[6];
+  dst[7] ^= state[7];
+  dst[8] ^= state[8];
+  dst[9] ^= state[9];
+  dst[10] ^= state[10];
+  dst[11] ^= state[11];
+}
+
+/** XOR rotW(state) into dst: dst[j] ^= state[(j+2)%12] (no modulo). */
+FIO_IFUNC void fio___lyra2_xor_rotw(uint64_t *dst, const uint64_t *state) {
+  dst[0] ^= state[2];
+  dst[1] ^= state[3];
+  dst[2] ^= state[4];
+  dst[3] ^= state[5];
+  dst[4] ^= state[6];
+  dst[5] ^= state[7];
+  dst[6] ^= state[8];
+  dst[7] ^= state[9];
+  dst[8] ^= state[10];
+  dst[9] ^= state[11];
+  dst[10] ^= state[0];
+  dst[11] ^= state[1];
+}
+
+/* *****************************************************************************
+Absorb / Squeeze operations
+***************************************************************************** */
+
+/** Absorb a single 64-byte block (8 words) with full-round permutation. */
+FIO_IFUNC void fio___lyra2_absorb_blake2_safe(uint64_t *state,
+                                              const uint64_t *in) {
+  fio___lyra2_xor8(state, in);
+  fio___lyra2_sponge_full(state);
+}
+
+/** Absorb a single column (12 words) with full-round permutation. */
+FIO_IFUNC void fio___lyra2_absorb_column(uint64_t *state, uint64_t *in) {
+  fio___lyra2_xor12(state, in);
+  fio___lyra2_sponge_full(state);
+}
+
+/** Squeeze output bytes from sponge state. */
+FIO_SFUNC void fio___lyra2_squeeze(uint64_t *state,
+                                   unsigned char *out,
+                                   unsigned int len) {
+  unsigned int full_blocks = len / FIO___LYRA2_BLOCK_LEN_BYTES;
+  unsigned char *ptr = out;
+  for (unsigned int i = 0; i < full_blocks; ++i) {
+    FIO_MEMCPY(ptr, state, FIO___LYRA2_BLOCK_LEN_BYTES);
+    fio___lyra2_sponge_full(state);
+    ptr += FIO___LYRA2_BLOCK_LEN_BYTES;
+  }
+  unsigned int rem = len % FIO___LYRA2_BLOCK_LEN_BYTES;
+  if (rem)
+    FIO_MEMCPY(ptr, state, rem);
+}
+
+/* *****************************************************************************
+Row initialization: reducedSqueezeRow0
+Fills M[0] from column C-1 down to 0 using reduced permutation.
+***************************************************************************** */
+
+FIO_SFUNC void fio___lyra2_squeeze_row0(uint64_t *state,
+                                        uint64_t *row_out,
+                                        size_t n_cols) {
+  uint64_t *ptr = row_out + (n_cols - 1) * FIO___LYRA2_BLOCK_LEN_INT64;
+  for (size_t i = 0; i < n_cols; ++i) {
+    fio___lyra2_copy12(ptr, state);
+    ptr -= FIO___LYRA2_BLOCK_LEN_INT64;
+    fio___lyra2_sponge_reduced(state);
+  }
+}
+
+/* *****************************************************************************
+Row initialization: reducedDuplexRow1and2
+For each col i (0..C-1): absorb rowIn[i], reduced permute,
+write rowOut[C-1-i] = rowIn[i] XOR state.
+***************************************************************************** */
+
+FIO_SFUNC void fio___lyra2_duplex_row1and2(uint64_t *state,
+                                           uint64_t *row_in,
+                                           uint64_t *row_out,
+                                           size_t n_cols) {
+  uint64_t *ptr_in = row_in;
+  uint64_t *ptr_out = row_out + (n_cols - 1) * FIO___LYRA2_BLOCK_LEN_INT64;
+  for (size_t i = 0; i < n_cols; ++i) {
+    fio___lyra2_xor12(state, ptr_in);
+    fio___lyra2_sponge_reduced(state);
+    fio___lyra2_xor12_into(ptr_out, ptr_in, state);
+    ptr_in += FIO___LYRA2_BLOCK_LEN_INT64;
+    ptr_out -= FIO___LYRA2_BLOCK_LEN_INT64;
+  }
+}
+
+/* *****************************************************************************
+Setup filling: reducedDuplexRowFilling
+Absorbs rowInOut[col] + rowIn0[col] + rowIn1[col] (wordwise add),
+reduced permute, writes rowOut[C-1-col] = rowIn0[col] XOR state,
+updates rowInOut[col] ^= rotW(state) where rotW rotates by 2 words.
+***************************************************************************** */
+
+FIO_SFUNC void fio___lyra2_duplex_row_filling(uint64_t *state,
+                                              uint64_t *row_inout,
+                                              uint64_t *row_in0,
+                                              uint64_t *row_in1,
+                                              uint64_t *row_out,
+                                              size_t n_cols) {
+  uint64_t *ptr_inout = row_inout;
+  uint64_t *ptr_in0 = row_in0;
+  uint64_t *ptr_in1 = row_in1;
+  uint64_t *ptr_out = row_out + (n_cols - 1) * FIO___LYRA2_BLOCK_LEN_INT64;
+
+  for (size_t i = 0; i < n_cols; ++i) {
+    fio___lyra2_xor_add3(state, ptr_inout, ptr_in0, ptr_in1);
+    fio___lyra2_sponge_reduced(state);
+    fio___lyra2_xor12_into(ptr_out, ptr_in0, state);
+    fio___lyra2_xor_rotw(ptr_inout, state);
+    ptr_inout += FIO___LYRA2_BLOCK_LEN_INT64;
+    ptr_in0 += FIO___LYRA2_BLOCK_LEN_INT64;
+    ptr_in1 += FIO___LYRA2_BLOCK_LEN_INT64;
+    ptr_out -= FIO___LYRA2_BLOCK_LEN_INT64;
+  }
+}
+
+/* *****************************************************************************
+Wandering: reducedDuplexRowWandering
+For each col i (0..C-1):
+  col0 = state[4] % n_cols, col1 = state[6] % n_cols
+  absorb rowInOut0[i] + rowInOut1[i] + rowIn0[col0] + rowIn1[col1]
+  reduced permute
+  rowInOut0[i] ^= state
+  rowInOut1[i] ^= rotW(state)
+***************************************************************************** */
+
+FIO_SFUNC void fio___lyra2_duplex_row_wandering(uint64_t *state,
+                                                uint64_t *row_inout0,
+                                                uint64_t *row_inout1,
+                                                uint64_t *row_in0,
+                                                uint64_t *row_in1,
+                                                size_t n_cols) {
+  uint64_t *ptr0 = row_inout0;
+  uint64_t *ptr1 = row_inout1;
+
+  for (size_t i = 0; i < n_cols; ++i) {
+    uint64_t *p_in0 =
+        row_in0 + (state[4] % n_cols) * FIO___LYRA2_BLOCK_LEN_INT64;
+    uint64_t *p_in1 =
+        row_in1 + (state[6] % n_cols) * FIO___LYRA2_BLOCK_LEN_INT64;
+
+    fio___lyra2_xor_add4(state, ptr0, ptr1, p_in0, p_in1);
+    fio___lyra2_sponge_reduced(state);
+    fio___lyra2_xor12_self(ptr0, state);
+    fio___lyra2_xor_rotw(ptr1, state);
+
+    ptr0 += FIO___LYRA2_BLOCK_LEN_INT64;
+    ptr1 += FIO___LYRA2_BLOCK_LEN_INT64;
+  }
+}
+
+/* *****************************************************************************
+Main Lyra2 function
+***************************************************************************** */
+
+/** Computes Lyra2 password hash into caller-provided buffer. */
+SFUNC int fio_lyra2_hash FIO_NOOP(void *K, fio_lyra2_args_s args) {
+  if (!K)
+    return -1;
+
+  /* Validate and clamp parameters */
+  unsigned int kLen = (unsigned int)(args.outlen ? args.outlen : 32);
+  unsigned int pwdlen =
+      (unsigned int)(args.password.buf ? args.password.len : 0);
+  unsigned int saltlen = (unsigned int)(args.salt.buf ? args.salt.len : 0);
+  unsigned int timeCost = (unsigned int)(args.t_cost < 1 ? 1 : args.t_cost);
+  unsigned int nRows = (unsigned int)(args.m_cost < 3 ? 3 : args.m_cost);
+  unsigned int nCols = (unsigned int)(args.n_cols ? args.n_cols : 256);
+  const void *pwd = args.password.buf;
+  const void *salt = args.salt.buf;
+
+  size_t row_len_int64 = FIO___LYRA2_ROW_LEN_INT64(nCols);
+  size_t row_len_bytes = FIO___LYRA2_ROW_LEN_BYTES(nCols);
+
+  /* Overflow check */
+  if (nRows > (SIZE_MAX / row_len_bytes))
+    return -1;
+
+  /* Single allocation for entire matrix (no separate row pointer array) */
+  size_t matrix_bytes = (size_t)nRows * row_len_bytes;
+  uint64_t *wholeMatrix = (uint64_t *)FIO_MEM_REALLOC(NULL, 0, matrix_bytes, 0);
+  if (!wholeMatrix)
+    return -1;
+
+  /* ======================== Padding (pwd || salt || params) =============== */
+  /* params = kLen || pwdlen || saltlen || timeCost || nRows || nCols
+   * each as unsigned int (4 bytes) = 24 bytes total */
+  uint64_t nBlocksInput =
+      ((uint64_t)saltlen + (uint64_t)pwdlen + 6 * sizeof(unsigned int)) /
+          FIO___LYRA2_BLAKE2_SAFE_BYTES +
+      1;
+
+  /* Write into beginning of wholeMatrix */
+  unsigned char *ptrByte = (unsigned char *)wholeMatrix;
+  FIO_MEMSET(ptrByte, 0, (size_t)nBlocksInput * FIO___LYRA2_BLAKE2_SAFE_BYTES);
+
+  if (pwdlen)
+    FIO_MEMCPY(ptrByte, pwd, pwdlen);
+  ptrByte += pwdlen;
+  if (saltlen)
+    FIO_MEMCPY(ptrByte, salt, saltlen);
+  ptrByte += saltlen;
+
+  /* Params as unsigned int (4 bytes each, native byte order) */
+  FIO_MEMCPY(ptrByte, &kLen, sizeof(unsigned int));
+  ptrByte += sizeof(unsigned int);
+  FIO_MEMCPY(ptrByte, &pwdlen, sizeof(unsigned int));
+  ptrByte += sizeof(unsigned int);
+  FIO_MEMCPY(ptrByte, &saltlen, sizeof(unsigned int));
+  ptrByte += sizeof(unsigned int);
+  FIO_MEMCPY(ptrByte, &timeCost, sizeof(unsigned int));
+  ptrByte += sizeof(unsigned int);
+  FIO_MEMCPY(ptrByte, &nRows, sizeof(unsigned int));
+  ptrByte += sizeof(unsigned int);
+  FIO_MEMCPY(ptrByte, &nCols, sizeof(unsigned int));
+  ptrByte += sizeof(unsigned int);
+
+  /* 10*1 padding */
+  *ptrByte = 0x80;
+  ptrByte = (unsigned char *)wholeMatrix;
+  ptrByte += (size_t)nBlocksInput * FIO___LYRA2_BLAKE2_SAFE_BYTES - 1;
+  *ptrByte ^= 0x01;
+
+  /* ======================== Initialize Sponge State ====================== */
+  uint64_t state[16];
+  fio___lyra2_init_state(state);
+
+  /* ======================== Absorb Input ================================= */
+  {
+    uint64_t *ptrWord = wholeMatrix;
+    for (uint64_t i = 0; i < nBlocksInput; ++i) {
+      fio___lyra2_absorb_blake2_safe(state, ptrWord);
+      ptrWord += FIO___LYRA2_BLAKE2_SAFE_INT64;
+    }
+  }
+
+  /* ======================== Setup Phase ================================== */
+  /* M[0] */
+  fio___lyra2_squeeze_row0(state,
+                           FIO___LYRA2_ROW(wholeMatrix, 0, row_len_int64),
+                           nCols);
+  /* M[1] */
+  fio___lyra2_duplex_row1and2(state,
+                              FIO___LYRA2_ROW(wholeMatrix, 0, row_len_int64),
+                              FIO___LYRA2_ROW(wholeMatrix, 1, row_len_int64),
+                              nCols);
+  /* M[2] */
+  fio___lyra2_duplex_row1and2(state,
+                              FIO___LYRA2_ROW(wholeMatrix, 1, row_len_int64),
+                              FIO___LYRA2_ROW(wholeMatrix, 2, row_len_int64),
+                              nCols);
+
+  /* Filling loop */
+  {
+    int64_t gap = 1;
+    uint64_t step = 1;
+    uint64_t window = 2;
+    uint64_t sqrtVal = 2;
+    uint64_t row0 = 3;
+    uint64_t prev0 = 2;
+    uint64_t row1 = 1;
+    uint64_t prev1 = 0;
+
+    for (; row0 < nRows; ++row0) {
+      fio___lyra2_duplex_row_filling(
+          state,
+          FIO___LYRA2_ROW(wholeMatrix, row1, row_len_int64),
+          FIO___LYRA2_ROW(wholeMatrix, prev0, row_len_int64),
+          FIO___LYRA2_ROW(wholeMatrix, prev1, row_len_int64),
+          FIO___LYRA2_ROW(wholeMatrix, row0, row_len_int64),
+          nCols);
+      prev0 = row0;
+      prev1 = row1;
+      row1 = (row1 + step) & (window - 1);
+      if (row1 == 0) {
+        window *= 2;
+        step = sqrtVal + (uint64_t)gap;
+        gap = -gap;
+        if (gap == -1)
+          sqrtVal *= 2;
+      }
+    }
+
+    /* ======================== Wandering Phase ============================= */
+    for (uint64_t i = 0; i < (uint64_t)timeCost * (uint64_t)nRows; ++i) {
+      row0 = state[0] % nRows;
+      row1 = state[2] % nRows;
+      fio___lyra2_duplex_row_wandering(
+          state,
+          FIO___LYRA2_ROW(wholeMatrix, row0, row_len_int64),
+          FIO___LYRA2_ROW(wholeMatrix, row1, row_len_int64),
+          FIO___LYRA2_ROW(wholeMatrix, prev0, row_len_int64),
+          FIO___LYRA2_ROW(wholeMatrix, prev1, row_len_int64),
+          nCols);
+      prev0 = row0;
+      prev1 = row1;
+    }
+
+    /* ======================== Wrap-up Phase =============================== */
+    fio___lyra2_absorb_column(
+        state,
+        FIO___LYRA2_ROW(wholeMatrix, row0, row_len_int64));
+    fio___lyra2_squeeze(state, (unsigned char *)K, kLen);
+  }
+
+  /* ======================== Cleanup ====================================== */
+  fio_secure_zero(wholeMatrix, matrix_bytes);
+  FIO_MEM_FREE(wholeMatrix, matrix_bytes);
+  fio_secure_zero(state, sizeof(state));
+
+  return 0;
+}
+
+void fio_lyra2___(void); /* IDE Marker */
+/** Computes Lyra2 password hash, returning result as fio_u512. */
+SFUNC fio_u512 fio_lyra2 FIO_NOOP(fio_lyra2_args_s args) {
+  fio_u512 result = {0};
+  size_t outlen = args.outlen ? args.outlen : 32;
+  if (outlen > 64)
+    outlen = 64;
+  args.outlen = outlen;
+  (fio_lyra2_hash)((void *)result.u8, args);
+  return result;
+}
+
+#undef FIO___LYRA2_G
+#undef FIO___LYRA2_ROUND
+#undef FIO___LYRA2_BLOCK_LEN_INT64
+#undef FIO___LYRA2_BLOCK_LEN_BYTES
+#undef FIO___LYRA2_BLAKE2_SAFE_INT64
+#undef FIO___LYRA2_BLAKE2_SAFE_BYTES
+#undef FIO___LYRA2_ROW_LEN_INT64
+#undef FIO___LYRA2_ROW_LEN_BYTES
+#undef FIO___LYRA2_ROW
+
+#endif /* FIO_EXTERN_COMPLETE */
+#endif /* FIO_LYRA2 */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
 #define FIO_OTP                /* Development inclusion - ignore line */
 #include "./include.h"         /* Development inclusion - ignore line */
 #endif                         /* Development inclusion - ignore line */
@@ -42507,6 +44437,649 @@ Module Cleanup
 #endif /* FIO_EXTERN_COMPLETE */
 #undef FIO_SECRET
 #endif /* FIO_CRYPTO_CORE */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_ARGON2             /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                                    ARGON2
+                        Memory-Hard Password Hashing
+
+
+Reference: RFC 9106 - Argon2 Memory-Hard Function for Password Hashing
+           and Proof-of-Work Applications (version 1.3)
+
+Implements Argon2d, Argon2i, and Argon2id using Blake2b as the underlying
+hash function. Single-threaded (parallelism parameter affects memory layout
+but lanes are processed sequentially).
+
+When comparing Argon2 output hashes, use `fio_ct_is_eq` for constant-time
+comparison to avoid timing side-channel attacks.
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_ARGON2) && !defined(H___FIO_ARGON2___H)
+#define H___FIO_ARGON2___H
+/* *****************************************************************************
+Argon2 API
+***************************************************************************** */
+
+/** Argon2 type selector. */
+typedef enum {
+  FIO_ARGON2D = 0,
+  FIO_ARGON2I = 1,
+  FIO_ARGON2ID = 2,
+} fio_argon2_type_e;
+
+/** Argon2 named arguments. */
+typedef struct {
+  /** The password (message P). */
+  fio_buf_info_s password;
+  /** The salt (nonce S). */
+  fio_buf_info_s salt;
+  /** Optional secret key K. */
+  fio_buf_info_s secret;
+  /** Optional associated data X. */
+  fio_buf_info_s ad;
+  /** Time cost (number of passes t, minimum 1). */
+  uint32_t t_cost;
+  /** Memory cost in KiB (minimum 8*parallelism). */
+  uint32_t m_cost;
+  /** Degree of parallelism (number of lanes, minimum 1). */
+  uint32_t parallelism;
+  /** Desired output (tag) length in bytes (minimum 4, default 32). */
+  uint32_t outlen;
+  /** Argon2 variant: FIO_ARGON2D, FIO_ARGON2I, or FIO_ARGON2ID. */
+  fio_argon2_type_e type;
+} fio_argon2_args_s;
+
+/**
+ * Computes Argon2 password hash (RFC 9106).
+ *
+ * Supports Argon2d, Argon2i, and Argon2id variants.
+ * Output is written to the returned buffer (up to 64 bytes via fio_u512).
+ * For outlen > 64, use fio_argon2_hash() instead.
+ *
+ * Use `fio_ct_is_eq` to compare output hashes in constant time.
+ */
+SFUNC fio_u512 fio_argon2(fio_argon2_args_s args);
+#define fio_argon2(...) fio_argon2((fio_argon2_args_s){__VA_ARGS__})
+
+/**
+ * Computes Argon2 password hash into a caller-provided buffer.
+ * Supports arbitrary output lengths (minimum 4 bytes).
+ * Returns 0 on success, -1 on error.
+ */
+SFUNC int fio_argon2_hash(void *out, fio_argon2_args_s args);
+#define fio_argon2_hash(out, ...)                                              \
+  fio_argon2_hash(out, (fio_argon2_args_s){__VA_ARGS__})
+
+/* *****************************************************************************
+Implementation - possibly externed functions.
+***************************************************************************** */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
+/* Argon2 version number (v1.3 = 0x13 = 19) */
+#define FIO___ARGON2_VERSION 0x13
+
+/* Block size: 1024 bytes = 128 uint64_t words */
+#define FIO___ARGON2_BLOCK_SIZE  1024
+#define FIO___ARGON2_BLOCK_WORDS 128
+#define FIO___ARGON2_SYNC_POINTS 4
+
+/* *****************************************************************************
+GB function (Blake2b round function with multiplication hardening)
+***************************************************************************** */
+
+#define FIO___ARGON2_GB(a, b, c, d)                                            \
+  do {                                                                         \
+    (a) =                                                                      \
+        (a) + (b) + 2 * (uint64_t)((uint32_t)(a)) * (uint64_t)((uint32_t)(b)); \
+    (d) = fio_rrot64((d) ^ (a), 32);                                           \
+    (c) =                                                                      \
+        (c) + (d) + 2 * (uint64_t)((uint32_t)(c)) * (uint64_t)((uint32_t)(d)); \
+    (b) = fio_rrot64((b) ^ (c), 24);                                           \
+    (a) =                                                                      \
+        (a) + (b) + 2 * (uint64_t)((uint32_t)(a)) * (uint64_t)((uint32_t)(b)); \
+    (d) = fio_rrot64((d) ^ (a), 16);                                           \
+    (c) =                                                                      \
+        (c) + (d) + 2 * (uint64_t)((uint32_t)(c)) * (uint64_t)((uint32_t)(d)); \
+    (b) = fio_rrot64((b) ^ (c), 63);                                           \
+  } while (0)
+
+/* *****************************************************************************
+Permutation P: operates on 8 x 16-byte registers (16 uint64_t words)
+S_i = (v_{2*i+1} || v_{2*i}), so v[0..15] is the 4x4 matrix.
+***************************************************************************** */
+
+FIO_IFUNC void fio___argon2_permutation_p(uint64_t *v) {
+  FIO___ARGON2_GB(v[0], v[4], v[8], v[12]);
+  FIO___ARGON2_GB(v[1], v[5], v[9], v[13]);
+  FIO___ARGON2_GB(v[2], v[6], v[10], v[14]);
+  FIO___ARGON2_GB(v[3], v[7], v[11], v[15]);
+  FIO___ARGON2_GB(v[0], v[5], v[10], v[15]);
+  FIO___ARGON2_GB(v[1], v[6], v[11], v[12]);
+  FIO___ARGON2_GB(v[2], v[7], v[8], v[13]);
+  FIO___ARGON2_GB(v[3], v[4], v[9], v[14]);
+}
+
+/* *****************************************************************************
+Compression function G: two 1024-byte blocks -> one 1024-byte block
+G(X, Y):
+  R = X XOR Y
+  Apply P row-wise to get Q
+  Apply P column-wise to get Z
+  Output = Z XOR R
+***************************************************************************** */
+
+FIO_SFUNC void fio___argon2_compress(uint64_t *result,
+                                     const uint64_t *x,
+                                     const uint64_t *y) {
+  uint64_t r[FIO___ARGON2_BLOCK_WORDS];
+  uint64_t tmp[16];
+
+  /* R = X XOR Y */
+  for (size_t i = 0; i < FIO___ARGON2_BLOCK_WORDS; ++i)
+    r[i] = x[i] ^ y[i];
+
+  /* Copy R to result (will be XORed with Z at the end) */
+  FIO_MEMCPY(result, r, FIO___ARGON2_BLOCK_SIZE);
+
+  /* Apply P row-wise: 8 rows of 8 x 16-byte registers = 16 uint64_t each */
+  for (size_t i = 0; i < 8; ++i) {
+    /* Row i: registers R_{8i} .. R_{8i+7}, each 16 bytes = 2 uint64_t
+       So row i spans r[16*i .. 16*i+15] */
+    FIO_MEMCPY(tmp, r + 16 * i, 128);
+    fio___argon2_permutation_p(tmp);
+    FIO_MEMCPY(r + 16 * i, tmp, 128);
+  }
+
+  /* Apply P column-wise: 8 columns */
+  for (size_t i = 0; i < 8; ++i) {
+    /* Column i: registers R_{i}, R_{i+8}, R_{i+16}, ..., R_{i+56}
+       Each register is 2 uint64_t at offset 2*reg_idx in the block */
+    tmp[0] = r[2 * i];
+    tmp[1] = r[2 * i + 1];
+    tmp[2] = r[2 * (i + 8)];
+    tmp[3] = r[2 * (i + 8) + 1];
+    tmp[4] = r[2 * (i + 16)];
+    tmp[5] = r[2 * (i + 16) + 1];
+    tmp[6] = r[2 * (i + 24)];
+    tmp[7] = r[2 * (i + 24) + 1];
+    tmp[8] = r[2 * (i + 32)];
+    tmp[9] = r[2 * (i + 32) + 1];
+    tmp[10] = r[2 * (i + 40)];
+    tmp[11] = r[2 * (i + 40) + 1];
+    tmp[12] = r[2 * (i + 48)];
+    tmp[13] = r[2 * (i + 48) + 1];
+    tmp[14] = r[2 * (i + 56)];
+    tmp[15] = r[2 * (i + 56) + 1];
+
+    fio___argon2_permutation_p(tmp);
+
+    r[2 * i] = tmp[0];
+    r[2 * i + 1] = tmp[1];
+    r[2 * (i + 8)] = tmp[2];
+    r[2 * (i + 8) + 1] = tmp[3];
+    r[2 * (i + 16)] = tmp[4];
+    r[2 * (i + 16) + 1] = tmp[5];
+    r[2 * (i + 24)] = tmp[6];
+    r[2 * (i + 24) + 1] = tmp[7];
+    r[2 * (i + 32)] = tmp[8];
+    r[2 * (i + 32) + 1] = tmp[9];
+    r[2 * (i + 40)] = tmp[10];
+    r[2 * (i + 40) + 1] = tmp[11];
+    r[2 * (i + 48)] = tmp[12];
+    r[2 * (i + 48) + 1] = tmp[13];
+    r[2 * (i + 56)] = tmp[14];
+    r[2 * (i + 56) + 1] = tmp[15];
+  }
+
+  /* result = Z XOR R (Z is now in r, original R is in result) */
+  for (size_t i = 0; i < FIO___ARGON2_BLOCK_WORDS; ++i)
+    result[i] ^= r[i];
+  fio_secure_zero(r, sizeof(r));
+  fio_secure_zero(tmp, sizeof(tmp));
+}
+
+/* *****************************************************************************
+Variable-length hash function H' (Section 3.3)
+Uses Blake2b as H. H^x(data) = Blake2b with output length x.
+***************************************************************************** */
+
+FIO_SFUNC void fio___argon2_hash_prime(void *out,
+                                       uint32_t outlen,
+                                       const void *in,
+                                       size_t inlen) {
+  if (outlen <= 64) {
+    /* H'^T(A) = H^T(LE32(T) || A) */
+    fio_blake2b_s h = fio_blake2b_init(outlen, NULL, 0);
+    uint8_t le_outlen[4];
+    fio_u2buf32_le(le_outlen, outlen);
+    fio_blake2b_consume(&h, le_outlen, 4);
+    fio_blake2b_consume(&h, in, inlen);
+    fio_blake2b_finalize(&h, out);
+    fio_secure_zero(&h, sizeof(h));
+  } else {
+    /* r = ceil(T/32) - 2 */
+    uint32_t r = (outlen + 31) / 32 - 2;
+    uint8_t le_outlen[4];
+    fio_u2buf32_le(le_outlen, outlen);
+
+    /* V_1 = H^64(LE32(T) || A) */
+    uint8_t v_prev[64];
+    {
+      fio_blake2b_s h = fio_blake2b_init(64, NULL, 0);
+      fio_blake2b_consume(&h, le_outlen, 4);
+      fio_blake2b_consume(&h, in, inlen);
+      fio_blake2b_finalize(&h, v_prev);
+    }
+    /* Output W_1 (first 32 bytes of V_1) */
+    FIO_MEMCPY(out, v_prev, 32);
+
+    /* V_2 .. V_r: each V_i = H^64(V_{i-1}) */
+    for (uint32_t i = 2; i <= r; ++i) {
+      uint8_t v_cur[64];
+      fio_blake2b(v_cur, 64, v_prev, 64, NULL, 0);
+      FIO_MEMCPY((uint8_t *)out + (i - 1) * 32, v_cur, 32);
+      FIO_MEMCPY(v_prev, v_cur, 64);
+    }
+
+    /* V_{r+1} = H^(T-32*r)(V_r) */
+    uint32_t last_len = outlen - 32 * r;
+    uint8_t v_last[64];
+    fio_blake2b(v_last, last_len, v_prev, 64, NULL, 0);
+    FIO_MEMCPY((uint8_t *)out + r * 32, v_last, last_len);
+    fio_secure_zero(v_prev, sizeof(v_prev));
+    fio_secure_zero(v_last, sizeof(v_last));
+  }
+}
+
+/* *****************************************************************************
+Indexing helpers (Section 3.4)
+***************************************************************************** */
+
+/**
+ * Compute reference block index [l][z] from J_1, J_2.
+ * Section 3.4.2.
+ */
+FIO_IFUNC void fio___argon2_index(uint32_t *ref_lane,
+                                  uint32_t *ref_index,
+                                  uint32_t j1,
+                                  uint32_t j2,
+                                  uint32_t cur_lane,
+                                  uint32_t cur_pass,
+                                  uint32_t cur_slice,
+                                  uint32_t cur_index,
+                                  uint32_t lanes,
+                                  uint32_t seg_len,
+                                  uint32_t q) {
+  /* l = J_2 mod p */
+  uint32_t l = j2 % lanes;
+  /* For first pass, first slice: must reference current lane */
+  if (cur_pass == 0 && cur_slice == 0)
+    l = cur_lane;
+
+  /* Compute reference area size |W| */
+  uint32_t ref_area_size;
+  if (l == cur_lane) {
+    /* Same lane: all blocks in last 3 segments + current segment progress */
+    if (cur_pass == 0) {
+      /* First pass: only blocks computed so far in this lane */
+      ref_area_size = cur_slice * seg_len + cur_index - 1;
+    } else {
+      ref_area_size = q - seg_len + cur_index - 1;
+    }
+  } else {
+    /* Different lane: last 3 completed segments */
+    if (cur_pass == 0) {
+      ref_area_size = cur_slice * seg_len;
+    } else {
+      ref_area_size = q - seg_len;
+    }
+    /* If first block of segment, exclude last index */
+    if (cur_index == 0)
+      ref_area_size -= 1;
+  }
+
+  /* Map J_1 to position within reference area (Section 3.4.2) */
+  uint64_t x = (uint64_t)j1 * (uint64_t)j1;
+  x >>= 32;
+  x = (uint64_t)ref_area_size * x;
+  x >>= 32;
+  uint32_t zz = ref_area_size - 1 - (uint32_t)x;
+
+  /* Map zz to actual block index in lane l */
+  uint32_t start;
+  if (cur_pass == 0) {
+    start = 0;
+  } else {
+    start = (cur_slice + 1) * seg_len;
+    if (start >= q)
+      start = 0;
+  }
+
+  *ref_lane = l;
+  *ref_index = (start + zz) % q;
+}
+
+/* *****************************************************************************
+Generate Argon2i/Argon2id pseudo-random index block
+***************************************************************************** */
+
+FIO_SFUNC void fio___argon2_gen_addresses(uint64_t *addresses,
+                                          uint64_t pass,
+                                          uint64_t lane,
+                                          uint64_t slice,
+                                          uint64_t total_blocks,
+                                          uint64_t total_passes,
+                                          uint64_t type,
+                                          uint32_t seg_len) {
+  /* Number of 1024-byte address blocks needed:
+     Each address block gives 128 uint64_t = 128 pairs of (J1,J2) as 32-bit
+     Actually each uint64_t gives one (J1, J2) pair.
+     We need seg_len pairs, so ceil(seg_len / 128) address blocks. */
+  uint64_t zero_block[FIO___ARGON2_BLOCK_WORDS];
+  uint64_t input_block[FIO___ARGON2_BLOCK_WORDS];
+  uint64_t tmp[FIO___ARGON2_BLOCK_WORDS];
+
+  FIO_MEMSET(zero_block, 0, FIO___ARGON2_BLOCK_SIZE);
+  FIO_MEMSET(input_block, 0, FIO___ARGON2_BLOCK_SIZE);
+
+  /* Z = LE64(r) || LE64(l) || LE64(sl) || LE64(m') || LE64(t) || LE64(y) */
+  input_block[0] = pass;
+  input_block[1] = lane;
+  input_block[2] = slice;
+  input_block[3] = total_blocks;
+  input_block[4] = total_passes;
+  input_block[5] = type;
+
+  uint32_t num_addr_blocks =
+      (seg_len + FIO___ARGON2_BLOCK_WORDS - 1) / FIO___ARGON2_BLOCK_WORDS;
+
+  for (uint32_t i = 1; i <= num_addr_blocks; ++i) {
+    input_block[6] = (uint64_t)i;
+    /* G(ZERO, G(ZERO, input)) */
+    fio___argon2_compress(tmp, zero_block, input_block);
+    fio___argon2_compress(addresses +
+                              (size_t)(i - 1) * FIO___ARGON2_BLOCK_WORDS,
+                          zero_block,
+                          tmp);
+  }
+}
+
+/* *****************************************************************************
+Main Argon2 function
+***************************************************************************** */
+
+/** Computes Argon2 password hash into caller-provided buffer. */
+SFUNC int fio_argon2_hash FIO_NOOP(void *out, fio_argon2_args_s args) {
+  if (!out)
+    return -1;
+
+  /* Validate and clamp parameters */
+  uint32_t outlen = args.outlen ? args.outlen : 32;
+  if (outlen < 4)
+    outlen = 4;
+  uint32_t t_cost = args.t_cost < 1 ? 1 : args.t_cost;
+  uint32_t parallelism = args.parallelism < 1 ? 1 : args.parallelism;
+  uint32_t m_cost = args.m_cost;
+  uint32_t type = (uint32_t)args.type;
+  if (type > 2)
+    type = 2;
+
+  /* Minimum memory: 8 * parallelism KiB */
+  uint32_t min_mem = 8 * parallelism;
+  if (m_cost < min_mem)
+    m_cost = min_mem;
+
+  /* m' = 4 * p * floor(m / (4*p)) */
+  uint32_t segment_length = m_cost / (4 * parallelism);
+  if (segment_length < 1)
+    segment_length = 1;
+  uint32_t q = segment_length * FIO___ARGON2_SYNC_POINTS; /* columns per lane */
+  uint32_t m_prime = q * parallelism;                     /* total blocks */
+
+  /* ======================== Step 1: Compute H_0 ========================== */
+  /* H_0 = H^64(LE32(p) || LE32(T) || LE32(m) || LE32(t) || LE32(v) ||
+   *        LE32(y) || LE32(len(P)) || P || LE32(len(S)) || S ||
+   *        LE32(len(K)) || K || LE32(len(X)) || X) */
+  uint8_t h0[64];
+  {
+    fio_blake2b_s bctx = fio_blake2b_init(64, NULL, 0);
+    uint8_t le32buf[4];
+
+    fio_u2buf32_le(le32buf, parallelism);
+    fio_blake2b_consume(&bctx, le32buf, 4);
+    fio_u2buf32_le(le32buf, outlen);
+    fio_blake2b_consume(&bctx, le32buf, 4);
+    fio_u2buf32_le(le32buf, m_cost);
+    fio_blake2b_consume(&bctx, le32buf, 4);
+    fio_u2buf32_le(le32buf, t_cost);
+    fio_blake2b_consume(&bctx, le32buf, 4);
+    fio_u2buf32_le(le32buf, FIO___ARGON2_VERSION);
+    fio_blake2b_consume(&bctx, le32buf, 4);
+    fio_u2buf32_le(le32buf, type);
+    fio_blake2b_consume(&bctx, le32buf, 4);
+
+    /* Password */
+    uint32_t pwd_len = args.password.buf ? (uint32_t)args.password.len : 0;
+    fio_u2buf32_le(le32buf, pwd_len);
+    fio_blake2b_consume(&bctx, le32buf, 4);
+    if (pwd_len)
+      fio_blake2b_consume(&bctx, args.password.buf, pwd_len);
+
+    /* Salt */
+    uint32_t salt_len = args.salt.buf ? (uint32_t)args.salt.len : 0;
+    fio_u2buf32_le(le32buf, salt_len);
+    fio_blake2b_consume(&bctx, le32buf, 4);
+    if (salt_len)
+      fio_blake2b_consume(&bctx, args.salt.buf, salt_len);
+
+    /* Secret */
+    uint32_t secret_len = args.secret.buf ? (uint32_t)args.secret.len : 0;
+    fio_u2buf32_le(le32buf, secret_len);
+    fio_blake2b_consume(&bctx, le32buf, 4);
+    if (secret_len)
+      fio_blake2b_consume(&bctx, args.secret.buf, secret_len);
+
+    /* Associated data */
+    uint32_t ad_len = args.ad.buf ? (uint32_t)args.ad.len : 0;
+    fio_u2buf32_le(le32buf, ad_len);
+    fio_blake2b_consume(&bctx, le32buf, 4);
+    if (ad_len)
+      fio_blake2b_consume(&bctx, args.ad.buf, ad_len);
+
+    fio_blake2b_finalize(&bctx, h0);
+    fio_secure_zero(&bctx, sizeof(bctx));
+  }
+
+  /* ======================== Step 2: Allocate memory ====================== */
+  size_t total_blocks = (size_t)m_prime;
+  size_t mem_bytes = total_blocks * FIO___ARGON2_BLOCK_SIZE;
+  uint64_t *memory = (uint64_t *)FIO_MEM_REALLOC(NULL, 0, mem_bytes, 0);
+  if (!memory)
+    return -1;
+  FIO_MEMSET(memory, 0, mem_bytes);
+
+  /* Helper macro: pointer to block B[lane][col] */
+#define FIO___ARGON2_BLOCK(lane, col)                                          \
+  (memory +                                                                    \
+   ((size_t)(lane) * (size_t)q + (size_t)(col)) * FIO___ARGON2_BLOCK_WORDS)
+
+  /* ======================== Steps 3-4: Init first two columns ============ */
+  {
+    /* For each lane i: B[i][0] = H'^1024(H_0 || LE32(0) || LE32(i))
+     *                  B[i][1] = H'^1024(H_0 || LE32(1) || LE32(i)) */
+    uint8_t h0_input[72]; /* 64 + 4 + 4 */
+    FIO_MEMCPY(h0_input, h0, 64);
+
+    for (uint32_t i = 0; i < parallelism; ++i) {
+      /* B[i][0] */
+      fio_u2buf32_le(h0_input + 64, 0);
+      fio_u2buf32_le(h0_input + 68, i);
+      fio___argon2_hash_prime(FIO___ARGON2_BLOCK(i, 0), 1024, h0_input, 72);
+
+      /* B[i][1] */
+      fio_u2buf32_le(h0_input + 64, 1);
+      fio_u2buf32_le(h0_input + 68, i);
+      fio___argon2_hash_prime(FIO___ARGON2_BLOCK(i, 1), 1024, h0_input, 72);
+    }
+    fio_secure_zero(h0_input, sizeof(h0_input));
+  }
+
+  /* ======================== Step 5-6: Fill memory ======================== */
+  /* Allocate address buffer for Argon2i/Argon2id */
+  uint64_t *addr_block = NULL;
+  size_t addr_block_size = 0;
+  if (type == FIO_ARGON2I || type == FIO_ARGON2ID) {
+    uint32_t num_addr_blocks = (segment_length + FIO___ARGON2_BLOCK_WORDS - 1) /
+                               FIO___ARGON2_BLOCK_WORDS;
+    addr_block_size = (size_t)num_addr_blocks * FIO___ARGON2_BLOCK_SIZE;
+    addr_block = (uint64_t *)FIO_MEM_REALLOC(NULL, 0, addr_block_size, 0);
+    if (!addr_block) {
+      fio_secure_zero(memory, mem_bytes);
+      FIO_MEM_FREE(memory, mem_bytes);
+      return -1;
+    }
+  }
+
+  for (uint32_t pass = 0; pass < t_cost; ++pass) {
+    for (uint32_t slice = 0; slice < FIO___ARGON2_SYNC_POINTS; ++slice) {
+      for (uint32_t lane = 0; lane < parallelism; ++lane) {
+        /* Determine if we need data-independent indexing for this segment */
+        int use_independent = 0;
+        if (type == FIO_ARGON2I)
+          use_independent = 1;
+        else if (type == FIO_ARGON2ID && pass == 0 && slice < 2)
+          use_independent = 1;
+
+        /* Generate address block for data-independent indexing */
+        if (use_independent && addr_block) {
+          fio___argon2_gen_addresses(addr_block,
+                                     (uint64_t)pass,
+                                     (uint64_t)lane,
+                                     (uint64_t)slice,
+                                     (uint64_t)m_prime,
+                                     (uint64_t)t_cost,
+                                     (uint64_t)type,
+                                     segment_length);
+        }
+
+        uint32_t start_index = 0;
+        if (pass == 0 && slice == 0)
+          start_index = 2; /* First two blocks already computed */
+
+        /* tmp_block hoisted outside inner loop to avoid repeated stack alloc */
+        uint64_t tmp_block[FIO___ARGON2_BLOCK_WORDS];
+        for (uint32_t idx = start_index; idx < segment_length; ++idx) {
+          uint32_t cur_col = slice * segment_length + idx;
+          uint32_t prev_col = (cur_col == 0) ? (q - 1) : (cur_col - 1);
+
+          uint32_t j1, j2;
+          if (use_independent && addr_block) {
+            /* Data-independent: get J1, J2 from address block */
+            uint64_t val = addr_block[idx];
+            j1 = (uint32_t)(val & 0xFFFFFFFFULL);
+            j2 = (uint32_t)(val >> 32);
+          } else {
+            /* Data-dependent: J1, J2 from previous block */
+            j1 = (uint32_t)(FIO___ARGON2_BLOCK(lane, prev_col)[0] &
+                            0xFFFFFFFFULL);
+            j2 = (uint32_t)((FIO___ARGON2_BLOCK(lane, prev_col)[0] >> 32) &
+                            0xFFFFFFFFULL);
+          }
+
+          uint32_t ref_lane, ref_index;
+          fio___argon2_index(&ref_lane,
+                             &ref_index,
+                             j1,
+                             j2,
+                             lane,
+                             pass,
+                             slice,
+                             idx,
+                             parallelism,
+                             segment_length,
+                             q);
+
+          uint64_t *cur_block = FIO___ARGON2_BLOCK(lane, cur_col);
+          uint64_t *prev_block = FIO___ARGON2_BLOCK(lane, prev_col);
+          uint64_t *ref_block = FIO___ARGON2_BLOCK(ref_lane, ref_index);
+
+          if (pass == 0) {
+            /* First pass: B[i][j] = G(B[i][j-1], B[l][z]) */
+            fio___argon2_compress(cur_block, prev_block, ref_block);
+          } else {
+            /* Subsequent passes: B[i][j] = G(B[i][j-1], B[l][z]) XOR B[i][j]
+             */
+            fio___argon2_compress(tmp_block, prev_block, ref_block);
+            for (size_t w = 0; w < FIO___ARGON2_BLOCK_WORDS; ++w)
+              cur_block[w] ^= tmp_block[w];
+          }
+        }
+        fio_secure_zero(tmp_block, sizeof(tmp_block));
+      }
+    }
+  }
+
+  /* ======================== Step 7-8: Finalize ============================ */
+  /* C = B[0][q-1] XOR B[1][q-1] XOR ... XOR B[p-1][q-1] */
+  uint64_t final_block[FIO___ARGON2_BLOCK_WORDS];
+  FIO_MEMCPY(final_block,
+             FIO___ARGON2_BLOCK(0, q - 1),
+             FIO___ARGON2_BLOCK_SIZE);
+  for (uint32_t i = 1; i < parallelism; ++i) {
+    const uint64_t *last = FIO___ARGON2_BLOCK(i, q - 1);
+    for (size_t w = 0; w < FIO___ARGON2_BLOCK_WORDS; ++w)
+      final_block[w] ^= last[w];
+  }
+
+  /* Tag = H'^T(C) */
+  fio___argon2_hash_prime(out, outlen, final_block, FIO___ARGON2_BLOCK_SIZE);
+
+  /* ======================== Cleanup ====================================== */
+  fio_secure_zero(final_block, sizeof(final_block));
+  if (addr_block) {
+    fio_secure_zero(addr_block, addr_block_size);
+    FIO_MEM_FREE(addr_block, addr_block_size);
+  }
+  fio_secure_zero(memory, mem_bytes);
+  FIO_MEM_FREE(memory, mem_bytes);
+  fio_secure_zero(h0, sizeof(h0));
+
+#undef FIO___ARGON2_BLOCK
+  return 0;
+}
+
+void fio_argon2___(void); /* IDE Marker */
+/** Computes Argon2 password hash, returning result as fio_u512. */
+SFUNC fio_u512 fio_argon2 FIO_NOOP(fio_argon2_args_s args) {
+  fio_u512 result = {0};
+  uint32_t outlen = args.outlen ? args.outlen : 32;
+  if (outlen < 4)
+    outlen = 4;
+  if (outlen > 64)
+    outlen = 64;
+  args.outlen = outlen;
+  (fio_argon2_hash)((void *)result.u8, args);
+  return result;
+}
+
+#undef FIO___ARGON2_GB
+#undef FIO___ARGON2_VERSION
+#undef FIO___ARGON2_BLOCK_SIZE
+#undef FIO___ARGON2_BLOCK_WORDS
+#undef FIO___ARGON2_SYNC_POINTS
+
+#endif /* FIO_EXTERN_COMPLETE */
+#endif /* FIO_ARGON2 */
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -83295,11 +85868,21 @@ Recursive inclusion / cleanup
 #include "155 x509.h"
 #endif
 
+#ifdef FIO_MLKEM
+#include "156 mlkem.h"
+#endif
+
 #ifdef FIO_OTP
 #include "160 otp.h"
 #endif
 #ifdef FIO_SECRET
 #include "160 secret.h"
+#endif
+#ifdef FIO_LYRA2
+#include "160 lyra2.h"
+#endif
+#ifdef FIO_ARGON2
+#include "161 argon2.h"
 #endif
 
 #ifdef FIO_TLS13
