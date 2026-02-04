@@ -49,7 +49,7 @@ typedef struct {
     int32_t *i32;
     int16_t *i16;
     int8_t *i8;
-    uint32_t *u64;
+    uint64_t *u64;
     uint32_t *u32;
     uint16_t *u16;
     uint8_t *u8;
