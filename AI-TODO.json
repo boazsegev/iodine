@@ -1,0 +1,158 @@
+{
+  "tasks": [
+    {
+      "id": "T017",
+      "title": "Performance optimizations for iodine C code",
+      "status": "active",
+      "priority": "medium",
+      "created": "2025-12-31T00:00:00Z",
+      "updated": "2025-12-31T00:00:00Z",
+      "subtasks": [
+        {"id": "T017.1", "title": "JSON Thread-Local Buffers", "status": "pending", "effort": "1 day", "impact": "Medium"},
+        {"id": "T017.2", "title": "String Allocation Pooling", "status": "pending", "effort": "1-2 days", "impact": "Medium"},
+        {"id": "T017.3", "title": "GVL Batching for WebSocket", "status": "pending", "effort": "2-3 days", "impact": "High"},
+        {"id": "T017.4", "title": "Connection Object Pooling", "status": "pending", "effort": "2-3 days", "impact": "High"},
+        {"id": "T017.5", "title": "STORE Lock-Free Optimization", "status": "pending", "effort": "2-3 days", "impact": "High"}
+      ],
+      "assignee": "@c-developer",
+      "blockers": [],
+      "effort": "L",
+      "notes": "Plans documented. User to decide which optimizations to implement."
+    }
+  ],
+  "completed": [
+    {
+      "id": "T017.0",
+      "title": "Fix header lowercase bug in iodine_connection.h",
+      "status": "completed",
+      "completed_date": "2025-12-31T00:00:00Z",
+      "summary": "Fixed bug at line ~880: changed || to && in uppercase detection. Was lowercasing ALL characters instead of just A-Z."
+    },
+    {
+      "id": "T018",
+      "title": "Update benchmark module with crypto benchmarks",
+      "status": "completed",
+      "completed_date": "2025-12-31T00:00:00Z",
+      "summary": "Added 7 new benchmark methods: crypto_symmetric (AEAD ciphers vs OpenSSL), crypto_asymmetric (Ed25519/X25519 vs OpenSSL/RbNaCl), hashing (SHA-2/3, BLAKE2 vs OpenSSL/Digest), crypto_ecies (X25519 ECIES vs RbNaCl), crypto_kdf (HKDF vs OpenSSL), crypto_totp (vs ROTP gem), and crypto_all convenience method."
+    },
+    {
+      "id": "T016",
+      "title": "Review and fix documentation inaccuracies",
+      "status": "completed",
+      "completed_date": "2025-12-31T00:00:00Z",
+      "summary": "Reviewed Iodine documentation against C implementation. Fixed return types for threads/workers (Integer, not Integer|nil). Added error logging behavior notes for threads=/workers= setters. Verified 11 other methods were already accurate."
+    },
+    {
+      "id": "T015",
+      "title": "Update AI-MEMORY.json with new AES crypto primitives",
+      "status": "completed",
+      "completed_date": "2025-12-28T00:00:00Z",
+      "summary": "Added AES-128-GCM and AES-256-GCM to symmetric_encryption section. Updated X25519_ECIES with ruby_api variants. Updated proposed_ruby_api classes."
+    },
+    {
+      "id": "T014",
+      "title": "Update Ruby documentation for new AES modules",
+      "status": "completed",
+      "completed_date": "2025-12-28T00:00:00Z",
+      "summary": "Added Iodine::Base::Crypto::AES128GCM and AES256GCM modules to documentation.rb. Added encrypt_aes128/decrypt_aes128/encrypt_aes256/decrypt_aes256 methods to X25519 module."
+    },
+    {
+      "id": "T013",
+      "title": "Add AES-based ECIES variants to X25519",
+      "status": "completed",
+      "completed_date": "2025-12-28T00:00:00Z",
+      "summary": "Added encrypt_aes128, decrypt_aes128, encrypt_aes256, decrypt_aes256 methods to Iodine::Base::Crypto::X25519 module using fio_x25519_encrypt/decrypt with AES-GCM functions."
+    },
+    {
+      "id": "T012",
+      "title": "Implement AES-GCM module (AES128GCM, AES256GCM)",
+      "status": "completed",
+      "completed_date": "2025-12-28T00:00:00Z",
+      "summary": "Added Iodine::Base::Crypto::AES128GCM and AES256GCM modules to iodine_crypto.h with encrypt/decrypt methods. Uses fio_aes128_gcm_enc/dec and fio_aes256_gcm_enc/dec from CSTL."
+    },
+    {
+      "id": "T011",
+      "title": "Update Ruby documentation (documentation.rb)",
+      "status": "completed",
+      "completed_date": "2025-12-28T00:00:00Z",
+      "summary": "Comprehensive update to lib/iodine/documentation.rb. Added: Iodine::Base::Crypto (ChaCha20Poly1305, XChaCha20Poly1305, Ed25519, X25519, HKDF), Iodine::PubSub::Engine::Redis, missing Utils methods (sha256, sha512, sha3_*, blake2*, totp_secret, totp_verify), TLS.default/default=, Connection methods (http?, peer_addr, from). Enhanced all existing docs with proper YARD tags."
+    },
+    {
+      "id": "T010",
+      "title": "Review and fix C code documentation",
+      "status": "completed",
+      "completed_date": "2025-12-27T00:00:00Z",
+      "summary": "Reviewed all 20 C extension files in ext/iodine/. Enhanced documentation for iodine_core.h, iodine_listener.h, iodine_pubsub_eng.h, iodine_pubsub_msg.h, iodine_json.h, iodine_minimap.h, iodine_threads.h, iodine_tls.h, iodine_connection.h. Other files already had adequate documentation."
+    },
+    {
+      "id": "T008",
+      "title": "Add XChaCha20-Poly1305 to Iodine::Base::Crypto",
+      "status": "completed",
+      "completed_date": "2025-12-27T00:00:00Z",
+      "summary": "Added Iodine::Base::Crypto::XChaCha20Poly1305 module with encrypt/decrypt methods. Uses 24-byte nonce (safe for random generation) vs 12-byte for ChaCha20-Poly1305."
+    },
+    {
+      "id": "T001",
+      "title": "Create Ruby Wrapper for Redis Engine",
+      "status": "completed",
+      "completed_date": "2025-12-25T14:00:00Z",
+      "summary": "Created Iodine::PubSub::Engine::Redis class wrapping fio_redis_* C API. 29 tests passing."
+    },
+    {
+      "id": "T002.1",
+      "title": "Update extconf.rb for compile-time TLS default",
+      "status": "completed",
+      "completed_date": "2025-12-25T12:00:00Z",
+      "summary": "Added IODINE_USE_EMBEDDED_TLS env var for compile-time TLS backend selection."
+    },
+    {
+      "id": "T002.3",
+      "title": "Make Iodine::TLS.default settable",
+      "status": "completed",
+      "completed_date": "2025-12-26T00:00:00Z",
+      "summary": "Replaced DEFAULT constant with getter/setter methods for runtime global TLS backend selection."
+    },
+    {
+      "id": "T003.1",
+      "title": "Extend Iodine::Utils with hashing functions",
+      "status": "completed",
+      "completed_date": "2025-12-26T00:00:00Z",
+      "summary": "Added sha256, sha512, sha3_256, sha3_512, blake2b, blake2s, hmac256 to Iodine::Utils."
+    },
+    {
+      "id": "T003.2",
+      "title": "Extend TOTP utilities",
+      "status": "completed",
+      "completed_date": "2025-12-26T00:00:00Z",
+      "summary": "Added totp_secret(len:) for generating Base32 secrets and totp_verify(secret:, code:, window:) for verification."
+    },
+    {
+      "id": "T009",
+      "title": "Fix TOTP API documentation",
+      "status": "completed",
+      "completed_date": "2025-12-27T00:00:00Z",
+      "summary": "Fixed incomplete documentation comments for totp, totp_secret, totp_verify. Also fixed bug where totp() didn't pass interval parameter to fio_otp()."
+    },
+    {
+      "id": "T003.3",
+      "title": "Create Iodine::Base::Crypto module",
+      "status": "completed",
+      "completed_date": "2025-12-26T00:00:00Z",
+      "summary": "Created iodine_crypto.h with ChaCha20Poly1305, Ed25519, X25519, and HKDF submodules."
+    }
+  ],
+  "metadata": {
+    "project": "iodine",
+    "version": "0.8.0.dev",
+    "created": "2025-12-25T00:00:00Z",
+    "updated": "2025-12-31T00:00:00Z",
+    "focus_areas": ["Core API", "Crypto", "TLS", "Documentation", "Performance"],
+    "discoveries": {
+      "redis": "COMPLETED - Ruby wrapper created, 29 tests passing",
+      "tls": "COMPLETED - Compile-time and runtime global selection implemented",
+      "crypto": "COMPLETED - Full crypto suite with AES-GCM, ChaCha20-Poly1305, XChaCha20-Poly1305, and X25519 ECIES variants",
+      "documentation": "COMPLETED - Reviewed and fixed inaccuracies in lib/iodine/documentation.rb",
+      "performance": "Bug fixed. 5 optimization plans documented, awaiting user decision."
+    }
+  }
+}

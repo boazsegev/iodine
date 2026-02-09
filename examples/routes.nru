@@ -1,0 +1,29 @@
+# This is a multi-route example using NeoRack vs Rack `map`
+
+class RouteApp
+	def initialize(name)
+		@response = [200, {}, "Hello #{name}"] 
+	end
+	def call(e)
+		@response
+	end
+end
+
+ROUTE_COUNT = 100
+BSET_CASE_FOR_TRI = true
+
+if BSET_CASE_FOR_TRI # best case
+	ROUTE_COUNT.times {|i| url = "/try_this_route-#{i}" ; map(url) { run RouteApp.new(url) } }
+	puts "\t test with:"
+	puts "\t wrk -c200 -d4 -t2 http://localhost:3000/try_this_route-0"
+	puts "\t wrk -c200 -d4 -t2 http://localhost:3000/try_this_route-#{ROUTE_COUNT / 2}"
+	puts "\t wrk -c200 -d4 -t2 http://localhost:3000/try_this_route-#{ROUTE_COUNT - 1}"
+else
+	ROUTE_COUNT.times {|i| url = "/#{i}-try_this_route" ; map(url) { run RouteApp.new(url) } }
+	puts "\t test with:"
+	puts "\t wrk -c200 -d4 -t2 http://localhost:3000/0-try_this_route"
+	puts "\t wrk -c200 -d4 -t2 http://localhost:3000/#{ROUTE_COUNT / 2}-try_this_route"
+	puts "\t wrk -c200 -d4 -t2 http://localhost:3000/#{ROUTE_COUNT - 1}-try_this_route"
+end
+
+run {[404, {}, nil]}
