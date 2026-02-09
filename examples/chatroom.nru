@@ -1,0 +1,9 @@
+# A simple Hello World NeoRack application
+module App
+	def self.on_http(e)
+		e.status = 200
+		e.finish
+	end
+end
+
+run App

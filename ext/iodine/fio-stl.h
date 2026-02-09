@@ -263,6 +263,10 @@ Intrinsic Availability Flags
 #include <arm_acle.h>
 #include <arm_neon.h>
 #define FIO___HAS_ARM_INTRIN 1
+#if defined(__ARM_FEATURE_SHA3) /* ARMv8.2-A SHA3 extension                    \
+                                   (EOR3/RAX1/XAR/BCAX) */
+#define FIO___HAS_ARM_SHA3_INTRIN 1
+#endif
 #elif defined(__x86_64) && __has_include("immintrin.h") /* x64 Intrinsics? */
 #define FIO___HAS_X86_INTRIN 1
 #include <immintrin.h>
@@ -2305,8 +2309,8 @@ FIO_SFUNC _Bool fio_ct_is_eq(const void *a_, const void *b_, size_t bytes) {
   /* any uneven bytes? */
   if (bytes & 63) {
     /* consume uneven byte head */
-    uint64_t ua[8] FIO_ALIGN(16) = {0};
-    uint64_t ub[8] FIO_ALIGN(16) = {0};
+    uint64_t ua[8] FIO_ALIGN(64) = {0};
+    uint64_t ub[8] FIO_ALIGN(64) = {0};
     /* all these if statements can run in parallel */
     if (bytes & 32) {
       fio_memcpy32(ua, a);
@@ -2338,8 +2342,8 @@ FIO_SFUNC _Bool fio_ct_is_eq(const void *a_, const void *b_, size_t bytes) {
     b += bytes & 63;
   }
   while (a < e) {
-    uint64_t ua[8] FIO_ALIGN(16);
-    uint64_t ub[8] FIO_ALIGN(16);
+    uint64_t ua[8] FIO_ALIGN(64);
+    uint64_t ub[8] FIO_ALIGN(64);
     fio_memcpy64(ua, a);
     fio_memcpy64(ub, b);
     for (size_t i = 0; i < 8; ++i)
@@ -3823,10 +3827,6 @@ FIO_SFUNC void fio___math_mul_karatsuba(uint64_t *restrict dest,
 /* *****************************************************************************
 Vector Types (SIMD / Math)
 ***************************************************************************** */
-#if FIO___HAS_ARM_INTRIN || __has_attribute(vector_size)
-#define FIO_HAS_UX 1
-#endif
-
 #if FIO___HAS_ARM_INTRIN
 /** defines a vector group for a fio_uXXX union */
 #define FIO___UXXX_XGRP_DEF(bits)                                              \
@@ -3887,14 +3887,14 @@ typedef union fio_u256 {
 #if defined(__SIZEOF_INT256__)
   __uint256_t alignment_for_u256_[1];
 #endif
-} fio_u256 FIO_ALIGN(16);
+} fio_u256 FIO_ALIGN(32);
 
 /** An unsigned 512bit union type. */
 typedef union fio_u512 {
   fio_u128 u128[4];
   fio_u256 u256[2];
   FIO___UXXX_UGRP_DEF(512);
-} fio_u512 FIO_ALIGN(16);
+} fio_u512 FIO_ALIGN(64);
 
 /** An unsigned 1024bit union type. */
 typedef union fio_u1024 {
@@ -3902,7 +3902,7 @@ typedef union fio_u1024 {
   fio_u256 u256[4];
   fio_u512 u512[2];
   FIO___UXXX_UGRP_DEF(1024);
-} fio_u1024 FIO_ALIGN(16);
+} fio_u1024 FIO_ALIGN(64);
 
 /** An unsigned 2048bit union type. */
 typedef union fio_u2048 {
@@ -3911,7 +3911,7 @@ typedef union fio_u2048 {
   fio_u512 u512[4];
   fio_u1024 u1024[2];
   FIO___UXXX_UGRP_DEF(2048);
-} fio_u2048 FIO_ALIGN(16);
+} fio_u2048 FIO_ALIGN(64);
 
 /** An unsigned 4096bit union type. */
 typedef union fio_u4096 {
@@ -3921,7 +3921,7 @@ typedef union fio_u4096 {
   fio_u1024 u1024[4];
   fio_u2048 u2048[2];
   FIO___UXXX_UGRP_DEF(4096);
-} fio_u4096 FIO_ALIGN(16);
+} fio_u4096 FIO_ALIGN(64);
 
 #undef FIO___UXXX_XGRP_DEF
 #undef FIO___UXXX_UGRP_DEF
@@ -4022,8 +4022,6 @@ The loop count is computed dynamically via sizeof, yielding:
 - Scalar: bits/64 iterations (64-bit scalars in .u64[])
 ***************************************************************************** */
 
-#if FIO_HAS_UX && !defined(DEBUG)
-
 /** Performs `a op b` (+,-, *, etc') using vector member .x##bits[]. */
 #define FIO_MATH_UXXX_OP(t, a, b, bits, op)                                    \
   do {                                                                         \
@@ -4046,27 +4044,19 @@ The loop count is computed dynamically via sizeof, yielding:
       (t).x##bits[i__] = op(a).x##bits[i__];                                   \
   } while (0)
 
-#else /* FIO_HAS_UX */
+/** Performs ternary `t = f(a, b, c)` lane-wise using vector .x##bits[]. */
+#define FIO_MATH_UXXX_TOP(t, a, b, c, bits, expr)                              \
+  do {                                                                         \
+    for (size_t i__ = 0; i__ < (sizeof((t).x##bits) / sizeof((t).x##bits[0])); \
+         ++i__)                                                                \
+      (t).x##bits[i__] =                                                       \
+          expr((a).x##bits[i__], (b).x##bits[i__], (c).x##bits[i__]);          \
+  } while (0)
 
-#define FIO_MATH_UXXX_OP(t, a, b, bits, op)                                    \
-  do {                                                                         \
-    for (size_t i__ = 0; i__ < (sizeof((t).u##bits) / sizeof((t).u##bits[0])); \
-         ++i__)                                                                \
-      (t).u##bits[i__] = (a).u##bits[i__] op(b).u##bits[i__];                  \
-  } while (0)
-#define FIO_MATH_UXXX_COP(t, a, b, bits, op)                                   \
-  do {                                                                         \
-    for (size_t i__ = 0; i__ < (sizeof((t).u##bits) / sizeof((t).u##bits[0])); \
-         ++i__)                                                                \
-      (t).u##bits[i__] = (a).u##bits[i__] op(b);                               \
-  } while (0)
-#define FIO_MATH_UXXX_SOP(t, a, bits, op)                                      \
-  do {                                                                         \
-    for (size_t i__ = 0; i__ < (sizeof((t).u##bits) / sizeof((t).u##bits[0])); \
-         ++i__)                                                                \
-      (t).u##bits[i__] = op((a).u##bits[i__]);                                 \
-  } while (0)
-#endif /* FIO_HAS_UX */
+/* Ternary expression helpers for FIO_MATH_UXXX_TOP */
+#define FIO___EXPR_MUX(x, y, z)  ((z) ^ ((x) & ((y) ^ (z))))
+#define FIO___EXPR_MAJ(x, y, z)  (((x) & (y)) | ((z) & ((x) | (y))))
+#define FIO___EXPR_XOR3(x, y, z) ((x) ^ (y) ^ (z))
 
 /** Performs vector reduction for using `op` (+,-, *, etc'), storing to `t`. */
 #define FIO_MATH_UXXX_REDUCE(t, a, bits, op)                                   \
@@ -4118,6 +4108,32 @@ The loop count is computed dynamically via sizeof, yielding:
     FIO_MATH_UXXX_OP(((target)[0]), ((a)[0]), ((b)[0]), bits, op);             \
   }
 
+#define FIO___UXXX_DEF_TOP(total_bits, bits, opnm, expr)                       \
+  FIO_IFUNC void fio_u##total_bits##_##opnm##bits(                             \
+      fio_u##total_bits *target,                                               \
+      const fio_u##total_bits *a,                                              \
+      const fio_u##total_bits *b,                                              \
+      const fio_u##total_bits *c) {                                            \
+    FIO_MATH_UXXX_TOP(((target)[0]),                                           \
+                      ((a)[0]),                                                \
+                      ((b)[0]),                                                \
+                      ((c)[0]),                                                \
+                      bits,                                                    \
+                      expr);                                                   \
+  }
+#define FIO___UXXX_DEF_TOP2(total_bits, bits, opnm, expr)                      \
+  FIO_IFUNC void fio_u##total_bits##_##opnm(fio_u##total_bits *target,         \
+                                            const fio_u##total_bits *a,        \
+                                            const fio_u##total_bits *b,        \
+                                            const fio_u##total_bits *c) {      \
+    FIO_MATH_UXXX_TOP(((target)[0]),                                           \
+                      ((a)[0]),                                                \
+                      ((b)[0]),                                                \
+                      ((c)[0]),                                                \
+                      bits,                                                    \
+                      expr);                                                   \
+  }
+
 #define FIO___UXXX_DEF_OP4T_INNER(total_bits, opnm, op)                        \
   FIO___UXXX_DEF_OP(total_bits, 8, opnm, op)                                   \
   FIO___UXXX_DEF_OP(total_bits, 16, opnm, op)                                  \
@@ -4156,7 +4172,17 @@ The loop count is computed dynamically via sizeof, yielding:
     fio_u##total_bits##_cand64(&mask, &mask, (uint64_t)0ULL - cond);           \
     fio_u##total_bits##_xor(a, a, &mask);                                      \
     fio_u##total_bits##_xor(b, b, &mask);                                      \
-  }
+  }                                                                            \
+  /* Ternary operations: mux (choose/Ch), maj (majority/Maj), 3xor (parity) */ \
+  FIO___UXXX_DEF_TOP(total_bits, 32, mux, FIO___EXPR_MUX)                      \
+  FIO___UXXX_DEF_TOP(total_bits, 64, mux, FIO___EXPR_MUX)                      \
+  FIO___UXXX_DEF_TOP2(total_bits, 64, mux, FIO___EXPR_MUX)                     \
+  FIO___UXXX_DEF_TOP(total_bits, 32, maj, FIO___EXPR_MAJ)                      \
+  FIO___UXXX_DEF_TOP(total_bits, 64, maj, FIO___EXPR_MAJ)                      \
+  FIO___UXXX_DEF_TOP2(total_bits, 64, maj, FIO___EXPR_MAJ)                     \
+  FIO___UXXX_DEF_TOP(total_bits, 32, 3xor, FIO___EXPR_XOR3)                    \
+  FIO___UXXX_DEF_TOP(total_bits, 64, 3xor, FIO___EXPR_XOR3)                    \
+  FIO___UXXX_DEF_TOP2(total_bits, 64, 3xor, FIO___EXPR_XOR3)
 
 FIO___UXXX_DEF_OP4T(128)
 FIO___UXXX_DEF_OP4T(256)
@@ -4169,6 +4195,11 @@ FIO___UXXX_DEF_OP4T(4096)
 #undef FIO___UXXX_DEF_OP4T_INNER
 #undef FIO___UXXX_DEF_OP
 #undef FIO___UXXX_DEF_OP2
+#undef FIO___UXXX_DEF_TOP
+#undef FIO___UXXX_DEF_TOP2
+#undef FIO___EXPR_MUX
+#undef FIO___EXPR_MAJ
+#undef FIO___EXPR_XOR3
 
 /* *****************************************************************************
 SIMD-Optimized Vector Operations (XOR, AND, OR) - Value Semantics
@@ -4177,8 +4208,7 @@ These provide return-by-value vector operations that leverage SIMD when
 available. The naming convention is fio_uXXX_<op>v (v = value semantics).
 
 Uses the existing FIO_MATH_UXXX_OP macro which correctly accesses union members:
-- .x64[], .x32[] etc. when FIO_HAS_UX is defined (vector types)
-- .u64[], .u32[] etc. otherwise (scalar fallback)
+- .x64[], .x32[] etc. vector types or scalar arrays (depending on availability)
 
 IMPORTANT: The `64` parameter in FIO_MATH_UXXX_OP selects the union member
 (.x64), NOT the element size. The loop count is computed dynamically:
@@ -4333,7 +4363,7 @@ SIMD Vector Operations
   FIO_FOR_UNROLL(len, sizeof(*a), i__, result[i__] = a[i__] op b[i__])
 /** A math operation `op` between a scalar and a vector */
 #define FIO_VEC_SCALAR_OP(result, v, sclr, len, op)                            \
-  FIO_FOR_UNROLL(len, sizeof(*v), i__, result[i__] = vec[i__] op scalar)
+  FIO_FOR_UNROLL(len, sizeof(*(v)), i__, (result)[i__] = (v)[i__] op(sclr))
 /** A math operation `op` between all vector members */
 #define FIO_VEC_REDUCE_OP(result, vec, len, op)                                \
   FIO_FOR_UNROLL(len, sizeof(*vec), i__, result = result op vec[i__])
@@ -4882,14 +4912,16 @@ FIO_BASIC                   Basic Kitchen Sink Inclusion
 FIO_CRYPTO            Poor-man's Cryptographic Elements
 ***************************************************************************** */
 #if defined(FIO_CRYPT) || defined(FIO_CRYPTO) || defined(FIO_TLS13) ||         \
-    defined(FIO_IO)
+    defined(FIO_IO) || defined(FIO_MLKEM)
 #undef FIO_AES
+#undef FIO_ARGON2
 #undef FIO_ASN1
+#undef FIO_BLAKE2
 #undef FIO_CHACHA
-#undef FIO_CRYPT
-#undef FIO_CRYPTO
-#undef FIO_CRYPTO_CORE
 #undef FIO_ED25519
+#undef FIO_HKDF
+#undef FIO_LYRA2
+#undef FIO_MLKEM
 #undef FIO_OTP
 #undef FIO_P256
 #undef FIO_P384
@@ -4898,22 +4930,24 @@ FIO_CRYPTO            Poor-man's Cryptographic Elements
 #undef FIO_SECRET
 #undef FIO_SHA1
 #undef FIO_SHA2
+#undef FIO_SHA3
 #undef FIO_TLS13
 #undef FIO_X509
 #define FIO_CRYPTO_CORE
 #define FIO_AES
+#define FIO_ARGON2
 #define FIO_ASN1
 #define FIO_BLAKE2
 #define FIO_CHACHA
 #define FIO_ED25519
 #define FIO_HKDF
+#define FIO_LYRA2
+#define FIO_MLKEM
 #define FIO_OTP
 #define FIO_P256
 #define FIO_P384
 #define FIO_PEM
 #define FIO_RSA
-#define FIO_LYRA2
-#define FIO_ARGON2
 #define FIO_SECRET
 #define FIO_SHA1
 #define FIO_SHA2
@@ -5175,6 +5209,11 @@ FIO_MAP Ordering & Naming Shortcut
 
 #if defined(FIO_LYRA2) || defined(FIO_ARGON2)
 #define FIO_BLAKE2
+#endif
+
+#if defined(FIO_MLKEM)
+#define FIO_SHA3
+#define FIO_ED25519
 #endif
 
 #if defined(FIO_CHACHA) || defined(FIO_SHA1) || defined(FIO_SHA2) ||           \
@@ -8794,6 +8833,56 @@ SFUNC void fio_stable_hash128(void *restrict dest,
                               size_t len,
                               uint64_t seed);
 
+/**
+ * Computes a 256-bit non-cryptographic hash (RiskyHash 256).
+ *
+ * Based on the A3 (Zero-Copy ILP) design: 2-state multiply-fold with
+ * cross-lane mixing, 128 bytes/iteration, zero-copy XOR from input.
+ *
+ * Returns a `fio_u256` (32 bytes). Passes strict avalanche (50.0%),
+ * collision, differential, and length independence tests.
+ */
+SFUNC fio_u256 fio_risky256(const void *data, uint64_t len);
+
+/**
+ * Computes a 512-bit non-cryptographic hash (RiskyHash 512).
+ *
+ * SHAKE-style extension of fio_risky256: the first 256 bits of the 512-bit
+ * output are identical to fio_risky256 (truncation-safe). The second 256 bits
+ * come from an additional squeeze round.
+ *
+ * Returns a `fio_u512` (64 bytes).
+ */
+SFUNC fio_u512 fio_risky512(const void *data, uint64_t len);
+
+/**
+ * Computes HMAC-RiskyHash-256 (RFC 2104 construction, 32-byte digest).
+ *
+ * Uses fio_risky256 as the underlying hash with a 64-byte block size.
+ * If `key_len > 64`, the key is hashed first with fio_risky256.
+ *
+ * NOTE: The underlying hash is non-cryptographic, so standard HMAC
+ * security proofs do not apply. For cryptographic HMAC, use blake2.
+ */
+SFUNC fio_u256 fio_risky256_hmac(const void *key,
+                                 uint64_t key_len,
+                                 const void *msg,
+                                 uint64_t msg_len);
+
+/**
+ * Computes HMAC-RiskyHash-512 (RFC 2104 construction, 64-byte digest).
+ *
+ * Uses fio_risky512 as the underlying hash with a 64-byte block size.
+ * If `key_len > 64`, the key is hashed first with fio_risky512.
+ *
+ * NOTE: The underlying hash is non-cryptographic, so standard HMAC
+ * security proofs do not apply. For cryptographic HMAC, use blake2.
+ */
+SFUNC fio_u512 fio_risky512_hmac(const void *key,
+                                 uint64_t key_len,
+                                 const void *msg,
+                                 uint64_t msg_len);
+
 #define FIO_USE_STABLE_HASH_WHEN_CALLING_RISKY_HASH 0
 /* *****************************************************************************
 Risky Hash - Implementation
@@ -8824,6 +8913,111 @@ FIO_IFUNC uint64_t fio_risky_num(uint64_t n, uint64_t seed) {
 /** Adds bit entropy to a pointer values. Designed to be unsafe. */
 FIO_IFUNC uint64_t fio_risky_ptr(void *ptr) {
   return fio_risky_num((uint64_t)(uintptr_t)ptr, FIO_U64_HASH_PRIME9);
+}
+
+/* *****************************************************************************
+Risky Hash 256/512 - Internal Helpers (always-inline)
+
+Design: A3 (Zero-Copy ILP) — 2-state multiply-fold with cross-lane mixing.
+Each state is 8 x uint64_t (512 bits). Two states (v0, v1) process 128 bytes
+per iteration for instruction-level parallelism. Cross-lane mixing after each
+round ensures full diffusion across all 8 multiply-fold pairs.
+
+Streaming-Compatible Absorption Order:
+1. Main loop (128-byte pairs) → v0, v1 alternating — processed FIRST
+2. Odd block (64 bytes if total_len & 64) → v1 — processed SECOND
+3. Partial block (0-63 bytes at END) → v0 — processed LAST
+
+This order enables streaming: data is processed in forward order, with the
+partial block coming from the logical END of the message.
+
+Streaming API for HMAC:
+- fio___risky256_init(v0, v1, total_len) — init with TOTAL message length
+- fio___risky256_consume(state, data, len) — absorb streaming chunks
+- fio___risky256_finish(state) — finalize and return fio_u256
+- fio___risky512_finish(state) — finalize and return fio_u512
+***************************************************************************** */
+
+/**
+ * Cross-lane mixing: snapshot all 8 lanes, then XOR rotated pairs into each
+ * lane. Provides symmetric diffusion across multiply-fold pairs.
+ */
+FIO_IFUNC void fio___risky256_cross(uint64_t v[8]) {
+  uint64_t s0 = v[0], s1 = v[1], s2 = v[2], s3 = v[3];
+  uint64_t s4 = v[4], s5 = v[5], s6 = v[6], s7 = v[7];
+  v[0] ^= fio_lrot64(s1, 17) ^ fio_lrot64(s6, 47);
+  v[1] ^= fio_lrot64(s2, 29) ^ fio_lrot64(s7, 37);
+  v[2] ^= fio_lrot64(s3, 41) ^ fio_lrot64(s4, 19);
+  v[3] ^= fio_lrot64(s0, 53) ^ fio_lrot64(s5, 7);
+  v[4] ^= fio_lrot64(s5, 13) ^ fio_lrot64(s2, 51);
+  v[5] ^= fio_lrot64(s6, 23) ^ fio_lrot64(s3, 43);
+  v[6] ^= fio_lrot64(s7, 11) ^ fio_lrot64(s0, 59);
+  v[7] ^= fio_lrot64(s4, 3) ^ fio_lrot64(s1, 31);
+}
+
+/** Multiply-fold round: 4 multiply-fold pairs + cross-lane mixing. */
+FIO_IFUNC void fio___risky256_round(uint64_t v[8]) {
+  uint64_t t[4];
+  for (size_t i = 0; i < 4; ++i) {
+    v[i] += fio_math_mulc64(v[i], v[i + 4], t + i);
+    v[i + 4] += t[i];
+  }
+  fio___risky256_cross(v);
+}
+
+/**
+ * Streaming state for RiskyHash 256/512.
+ * Allows incremental absorption of data chunks.
+ */
+typedef struct {
+  uint64_t v0[8];     /* First state vector */
+  uint64_t v1[8];     /* Second state vector */
+  uint64_t total_len; /* Total message length (must be known upfront) */
+  uint64_t absorbed;  /* Bytes absorbed so far */
+  uint8_t buf[128];   /* Buffer for partial data (up to 127 bytes) */
+  uint8_t buf_len;    /* Bytes in buffer */
+} fio___risky256_stream_s;
+
+/** Initialize state with total message length (does seed expansion). */
+FIO_IFUNC void fio___risky256_init(uint64_t v0[8],
+                                   uint64_t v1[8],
+                                   uint64_t len) {
+  static const uint64_t p[8] = {
+      FIO_U64_HASH_PRIME1,
+      FIO_U64_HASH_PRIME2,
+      FIO_U64_HASH_PRIME3,
+      FIO_U64_HASH_PRIME4,
+      FIO_U64_HASH_PRIME5,
+      FIO_U64_HASH_PRIME6,
+      FIO_U64_HASH_PRIME7,
+      FIO_U64_HASH_PRIME0,
+  };
+  static const uint64_t q[8] = {
+      FIO_U64_HASH_PRIME8,
+      FIO_U64_HASH_PRIME9,
+      FIO_U64_HASH_PRIME10,
+      FIO_U64_HASH_PRIME11,
+      FIO_U64_HASH_PRIME12,
+      FIO_U64_HASH_PRIME13,
+      FIO_U64_HASH_PRIME14,
+      FIO_U64_HASH_PRIME15,
+  };
+  /* Seed expansion from length */
+  uint64_t seed = len;
+  seed ^= fio_lrot64(seed, 47);
+  for (size_t i = 0; i < 8; ++i) {
+    v0[i] = seed + p[i];
+    v1[i] = seed + q[i];
+  }
+}
+
+/** Initialize streaming state with total message length. */
+FIO_IFUNC void fio___risky256_stream_init(fio___risky256_stream_s *s,
+                                          uint64_t total_len) {
+  fio___risky256_init(s->v0, s->v1, total_len);
+  s->total_len = total_len;
+  s->absorbed = 0;
+  s->buf_len = 0;
 }
 
 /* *****************************************************************************
@@ -8896,6 +9090,480 @@ SFUNC uint64_t fio_risky_hash(const void *data_, size_t len, uint64_t seed) {
   v[0] += v[1];
   return v[0];
 #undef FIO___RISKY_HASH_ROUND64
+}
+
+/* *****************************************************************************
+Risky Hash 256 / 512 — Constants
+***************************************************************************** */
+
+/** Prime constants shared by absorption and finalization. */
+static const uint64_t fio___risky256_primes[8] = {
+    FIO_U64_HASH_PRIME1,
+    FIO_U64_HASH_PRIME2,
+    FIO_U64_HASH_PRIME3,
+    FIO_U64_HASH_PRIME4,
+    FIO_U64_HASH_PRIME5,
+    FIO_U64_HASH_PRIME6,
+    FIO_U64_HASH_PRIME7,
+    FIO_U64_HASH_PRIME0,
+};
+static const uint64_t fio___risky256_fin_primes[8] = {
+    FIO_U64_HASH_PRIME8,
+    FIO_U64_HASH_PRIME9,
+    FIO_U64_HASH_PRIME10,
+    FIO_U64_HASH_PRIME11,
+    FIO_U64_HASH_PRIME12,
+    FIO_U64_HASH_PRIME13,
+    FIO_U64_HASH_PRIME14,
+    FIO_U64_HASH_PRIME15,
+};
+static const uint64_t fio___risky256_extra0[8] = {
+    FIO_U64_HASH_PRIME16,
+    FIO_U64_HASH_PRIME17,
+    FIO_U64_HASH_PRIME18,
+    FIO_U64_HASH_PRIME19,
+    FIO_U64_HASH_PRIME20,
+    FIO_U64_HASH_PRIME21,
+    FIO_U64_HASH_PRIME22,
+    FIO_U64_HASH_PRIME23,
+};
+static const uint64_t fio___risky256_extra1[8] = {
+    FIO_U64_HASH_PRIME24,
+    FIO_U64_HASH_PRIME25,
+    FIO_U64_HASH_PRIME26,
+    FIO_U64_HASH_PRIME27,
+    FIO_U64_HASH_PRIME28,
+    FIO_U64_HASH_PRIME29,
+    FIO_U64_HASH_PRIME30,
+    FIO_U64_HASH_PRIME31,
+};
+
+/* *****************************************************************************
+Risky Hash 256 / 512 — Streaming Absorb (internal)
+
+Absorption order (streaming-compatible):
+1. Main loop (128-byte pairs) → v0, v1 alternating — FIRST
+2. Odd block (64 bytes if total_len & 64) → v1 — SECOND
+3. Partial block (0-63 bytes at END) → v0 — LAST
+
+This order processes data in forward order, enabling true streaming.
+The partial block contains the TAIL bytes of the message.
+***************************************************************************** */
+
+/** Absorb a 128-byte pair into v0 and v1. */
+FIO_IFUNC void fio___risky256_absorb_pair(uint64_t v0[8],
+                                          uint64_t v1[8],
+                                          const uint8_t *data) {
+  for (size_t i = 0; i < 4; ++i)
+    v0[i] += fio___risky256_primes[i];
+  for (size_t i = 0; i < 4; ++i)
+    v1[i] += fio___risky256_primes[i];
+  for (size_t i = 0; i < 8; ++i)
+    v0[i] ^= fio_buf2u64_le(data + (i << 3));
+  for (size_t i = 0; i < 8; ++i)
+    v1[i] ^= fio_buf2u64_le(data + 64 + (i << 3));
+  fio___risky256_round(v0);
+  fio___risky256_round(v1);
+}
+
+/** Absorb a 64-byte odd block into v1. */
+FIO_IFUNC void fio___risky256_absorb_odd(uint64_t v1[8], const uint8_t *data) {
+  for (size_t i = 0; i < 4; ++i)
+    v1[i] += fio___risky256_primes[i];
+  for (size_t i = 0; i < 8; ++i)
+    v1[i] ^= fio_buf2u64_le(data + (i << 3));
+  fio___risky256_round(v1);
+}
+
+/** Absorb a partial block (0-63 bytes) into v0. */
+FIO_IFUNC void fio___risky256_absorb_partial(uint64_t v0[8],
+                                             const uint8_t *data,
+                                             uint64_t partial_len) {
+  uint64_t w[8] FIO_ALIGN(16);
+  FIO_MEMSET(w, 0, 64);
+  fio_memcpy63x(w, data, partial_len);
+  ((uint8_t *)w)[63] = (uint8_t)partial_len;
+  for (size_t i = 0; i < 8; ++i)
+    w[i] = fio_ltole64(w[i]);
+  for (size_t i = 0; i < 8; ++i)
+    v0[i] ^= w[i];
+  fio___risky256_round(v0);
+}
+
+/**
+ * Streaming consume: absorb data chunks in forward order.
+ * Call multiple times with consecutive chunks, then call finish.
+ */
+FIO_SFUNC void fio___risky256_consume(fio___risky256_stream_s *s,
+                                      const void *data_,
+                                      uint64_t len) {
+  const uint8_t *data = (const uint8_t *)data_;
+  uint64_t total = s->total_len;
+  uint64_t main_end = (total >> 7) << 7; /* End of 128-byte pairs region */
+  uint64_t odd_end = main_end + ((total & 64) ? 64 : 0); /* End of odd block */
+
+  /* If we have buffered data, try to complete a block */
+  if (s->buf_len > 0) {
+    uint64_t need = 0;
+    if (s->absorbed < main_end) {
+      /* In main loop region: need 128 bytes total */
+      need = 128 - s->buf_len;
+      if (s->absorbed + 128 > main_end)
+        need = main_end - s->absorbed - s->buf_len;
+    } else if (s->absorbed < odd_end) {
+      /* In odd block region: need 64 bytes total */
+      need = 64 - s->buf_len;
+    }
+    /* Partial region: buffer until finish */
+
+    if (need > 0 && len >= need) {
+      FIO_MEMCPY(s->buf + s->buf_len, data, (size_t)need);
+      data += need;
+      len -= need;
+
+      if (s->absorbed < main_end && s->buf_len + need == 128) {
+        fio___risky256_absorb_pair(s->v0, s->v1, s->buf);
+        s->absorbed += 128;
+        s->buf_len = 0;
+      } else if (s->absorbed >= main_end && s->absorbed < odd_end &&
+                 s->buf_len + need == 64) {
+        fio___risky256_absorb_odd(s->v1, s->buf);
+        s->absorbed += 64;
+        s->buf_len = 0;
+      } else {
+        s->buf_len += (uint8_t)need;
+      }
+    } else if (need > 0) {
+      /* Not enough data to complete block, buffer it */
+      FIO_MEMCPY(s->buf + s->buf_len, data, (size_t)len);
+      s->buf_len += (uint8_t)len;
+      return;
+    }
+  }
+
+  /* Process full 128-byte pairs directly from input */
+  while (s->absorbed + 128 <= main_end && len >= 128) {
+    fio___risky256_absorb_pair(s->v0, s->v1, data);
+    data += 128;
+    len -= 128;
+    s->absorbed += 128;
+  }
+
+  /* Process odd block if we're at that boundary */
+  if (s->absorbed == main_end && (total & 64) && len >= 64) {
+    fio___risky256_absorb_odd(s->v1, data);
+    data += 64;
+    len -= 64;
+    s->absorbed += 64;
+  }
+
+  /* Buffer remaining data for partial block or incomplete block */
+  if (len > 0) {
+    FIO_MEMCPY(s->buf + s->buf_len, data, (size_t)len);
+    s->buf_len += (uint8_t)len;
+  }
+}
+
+/**
+ * Streaming finish: absorb any remaining buffered data and finalize.
+ * Returns 256-bit hash.
+ */
+FIO_SFUNC fio_u256 fio___risky256_finish(fio___risky256_stream_s *s);
+
+/**
+ * Streaming finish: absorb any remaining buffered data and finalize.
+ * Returns 512-bit hash.
+ */
+FIO_SFUNC fio_u512 fio___risky512_finish(fio___risky256_stream_s *s);
+
+/**
+ * One-shot absorb: absorbs entire message into state.
+ * Uses the new streaming-compatible order (main → odd → partial).
+ */
+FIO_SFUNC void fio___risky256_absorb(uint64_t v0[8],
+                                     uint64_t v1[8],
+                                     const void *data_,
+                                     uint64_t len) {
+  const uint8_t *data = (const uint8_t *)data_;
+  uint64_t main_pairs = len >> 7; /* Number of 128-byte pairs */
+
+  /* 1. Main loop: 128-byte pairs */
+  for (uint64_t i = 0; i < main_pairs; ++i) {
+    fio___risky256_absorb_pair(v0, v1, data);
+    data += 128;
+  }
+
+  /* 2. Odd block: 64 bytes if (len & 64) */
+  if (len & 64) {
+    fio___risky256_absorb_odd(v1, data);
+    data += 64;
+  }
+
+  /* 3. Partial block: 0-63 bytes at END */
+  if (len & 63) {
+    fio___risky256_absorb_partial(v0, data, len & 63);
+  }
+}
+
+/**
+ * Finalize state and return 256-bit hash.
+ * Merges v1 into v0, applies finalization rounds, and squeezes output.
+ */
+FIO_SFUNC fio_u256 fio___risky256_finalize(uint64_t v0[8], uint64_t v1[8]) {
+  /* Finalization: merge v1 into v0 */
+  for (size_t i = 0; i < 8; ++i)
+    v0[i] ^= fio___risky256_fin_primes[i];
+  fio___risky256_round(v0);
+  for (size_t i = 0; i < 8; ++i)
+    v1[i] ^= fio___risky256_fin_primes[i];
+  fio___risky256_round(v1);
+  for (size_t i = 0; i < 8; ++i)
+    v0[i] ^= v1[i];
+  for (size_t i = 0; i < 8; ++i)
+    v0[i] ^= fio___risky256_extra0[i];
+  fio___risky256_round(v0);
+  /* Squeeze: XOR-fold 8 lanes into 4 */
+  for (size_t i = 0; i < 8; ++i)
+    v0[i] ^= fio___risky256_primes[i];
+  fio___risky256_round(v0);
+  fio_u256 r;
+  for (size_t i = 0; i < 4; ++i)
+    r.u64[i] = v0[i] ^ v0[i + 4];
+  return r;
+}
+
+/**
+ * Finalize state and return 512-bit hash.
+ * Same as fio___risky256_finalize but does 2 squeezes for 512 bits.
+ */
+FIO_SFUNC fio_u512 fio___risky512_finalize(uint64_t v0[8], uint64_t v1[8]) {
+  /* Finalization: merge v1 into v0 */
+  for (size_t i = 0; i < 8; ++i)
+    v0[i] ^= fio___risky256_fin_primes[i];
+  fio___risky256_round(v0);
+  for (size_t i = 0; i < 8; ++i)
+    v1[i] ^= fio___risky256_fin_primes[i];
+  fio___risky256_round(v1);
+  for (size_t i = 0; i < 8; ++i)
+    v0[i] ^= v1[i];
+  for (size_t i = 0; i < 8; ++i)
+    v0[i] ^= fio___risky256_extra0[i];
+  fio___risky256_round(v0);
+  /* First squeeze: 256 bits */
+  fio_u512 r;
+  for (size_t i = 0; i < 8; ++i)
+    v0[i] ^= fio___risky256_primes[i];
+  fio___risky256_round(v0);
+  for (size_t i = 0; i < 4; ++i)
+    r.u64[i] = v0[i] ^ v0[i + 4];
+  /* Second squeeze: additional 256 bits */
+  for (size_t i = 0; i < 8; ++i)
+    v0[i] ^= fio___risky256_extra1[i];
+  fio___risky256_round(v0);
+  for (size_t i = 0; i < 4; ++i)
+    r.u64[i + 4] = v0[i] ^ v0[i + 4];
+  return r;
+}
+
+/* *****************************************************************************
+Risky Hash 256 / 512 — Streaming Finish (implementations)
+***************************************************************************** */
+
+/** Streaming finish: process buffered data and finalize to 256 bits. */
+FIO_SFUNC fio_u256 fio___risky256_finish(fio___risky256_stream_s *s) {
+  uint64_t total = s->total_len;
+  uint64_t main_end = (total >> 7) << 7;
+  uint64_t odd_end = main_end + ((total & 64) ? 64 : 0);
+
+  /* Process any remaining buffered data */
+  if (s->buf_len > 0) {
+    if (s->absorbed < main_end) {
+      /* Incomplete 128-byte pair — should not happen if total_len is correct */
+      /* Pad with zeros and absorb as pair */
+      FIO_MEMSET(s->buf + s->buf_len, 0, 128 - s->buf_len);
+      fio___risky256_absorb_pair(s->v0, s->v1, s->buf);
+      s->absorbed = main_end;
+      s->buf_len = 0;
+    }
+    if (s->absorbed < odd_end && s->absorbed >= main_end) {
+      /* Incomplete odd block — pad and absorb */
+      if (s->buf_len < 64) {
+        FIO_MEMSET(s->buf + s->buf_len, 0, 64 - s->buf_len);
+      }
+      fio___risky256_absorb_odd(s->v1, s->buf);
+      s->absorbed = odd_end;
+      s->buf_len = 0;
+    }
+    if (s->absorbed >= odd_end && s->buf_len > 0) {
+      /* Partial block at end */
+      fio___risky256_absorb_partial(s->v0, s->buf, s->buf_len);
+      s->buf_len = 0;
+    }
+  }
+
+  return fio___risky256_finalize(s->v0, s->v1);
+}
+
+/** Streaming finish: process buffered data and finalize to 512 bits. */
+FIO_SFUNC fio_u512 fio___risky512_finish(fio___risky256_stream_s *s) {
+  uint64_t total = s->total_len;
+  uint64_t main_end = (total >> 7) << 7;
+  uint64_t odd_end = main_end + ((total & 64) ? 64 : 0);
+
+  /* Process any remaining buffered data */
+  if (s->buf_len > 0) {
+    if (s->absorbed < main_end) {
+      /* Incomplete 128-byte pair — pad and absorb */
+      FIO_MEMSET(s->buf + s->buf_len, 0, 128 - s->buf_len);
+      fio___risky256_absorb_pair(s->v0, s->v1, s->buf);
+      s->absorbed = main_end;
+      s->buf_len = 0;
+    }
+    if (s->absorbed < odd_end && s->absorbed >= main_end) {
+      /* Incomplete odd block — pad and absorb */
+      if (s->buf_len < 64) {
+        FIO_MEMSET(s->buf + s->buf_len, 0, 64 - s->buf_len);
+      }
+      fio___risky256_absorb_odd(s->v1, s->buf);
+      s->absorbed = odd_end;
+      s->buf_len = 0;
+    }
+    if (s->absorbed >= odd_end && s->buf_len > 0) {
+      /* Partial block at end */
+      fio___risky256_absorb_partial(s->v0, s->buf, s->buf_len);
+      s->buf_len = 0;
+    }
+  }
+
+  return fio___risky512_finalize(s->v0, s->v1);
+}
+
+/* *****************************************************************************
+Risky Hash 256 / 512 — Public API
+***************************************************************************** */
+
+/** Computes a 256-bit non-cryptographic hash (RiskyHash 256). */
+SFUNC fio_u256 fio_risky256(const void *data_, uint64_t len) {
+  uint64_t v0[8] FIO_ALIGN(16), v1[8] FIO_ALIGN(16);
+  fio___risky256_init(v0, v1, len);
+  fio___risky256_absorb(v0, v1, data_, len);
+  return fio___risky256_finalize(v0, v1);
+}
+
+/** Computes a 512-bit non-cryptographic hash (RiskyHash 512). */
+SFUNC fio_u512 fio_risky512(const void *data_, uint64_t len) {
+  uint64_t v0[8] FIO_ALIGN(16), v1[8] FIO_ALIGN(16);
+  fio___risky256_init(v0, v1, len);
+  fio___risky256_absorb(v0, v1, data_, len);
+  return fio___risky512_finalize(v0, v1);
+}
+
+/* *****************************************************************************
+Risky Hash 256 / 512 — HMAC (RFC 2104 compliant, allocation-free)
+
+Uses streaming API for the inner hash:
+  Inner: H(K ^ ipad || msg) — streaming: feed k_ipad, then msg
+  Outer: H(K ^ opad || inner_hash) — fixed 96/128 bytes on stack
+
+Block size is 64 bytes. Keys > 64 bytes are hashed first.
+***************************************************************************** */
+
+/** HMAC-RiskyHash-256 (RFC 2104 compliant, 32-byte digest, allocation-free).
+ *
+ * Memory layout uses fio_u1024 (128 bytes) for zero-copy outer hash:
+ *   buf.u64[0..7]  = k_padded (64 bytes) - key XOR'd with ipad/opad
+ *   buf.u64[8..11] = inner hash result (32 bytes)
+ * This gives contiguous k_opad||inner_hash for outer hash input.
+ */
+SFUNC fio_u256 fio_risky256_hmac(const void *key,
+                                 uint64_t key_len,
+                                 const void *msg,
+                                 uint64_t msg_len) {
+  fio_u1024 buf = {0};
+  uint64_t *k_padded = buf.u64;       /* bytes 0-63 */
+  fio_u256 *inner_ptr = buf.u256 + 2; /* bytes 64-95 (buf.u64[8..11]) */
+
+  /* Key preparation: truncate or hash if > 64 bytes */
+  if (key_len > 64) {
+    fio_u256 hk = fio_risky256(key, key_len);
+    FIO_MEMCPY(k_padded, hk.u64, 32);
+    fio_secure_zero(hk.u8, sizeof(hk));
+  } else if (key_len) {
+    FIO_MEMCPY(k_padded, key, (size_t)key_len);
+  }
+
+  /* Inner hash: H(K ^ ipad || msg) using streaming API */
+  for (size_t i = 0; i < 8; ++i)
+    k_padded[i] ^= 0x3636363636363636ULL;
+
+  fio___risky256_stream_s state;
+  fio___risky256_stream_init(&state, 64 + msg_len);
+  fio___risky256_consume(&state, k_padded, 64);
+  if (msg_len)
+    fio___risky256_consume(&state, msg, msg_len);
+  *inner_ptr =
+      fio___risky256_finish(&state); /* write directly to buf[64..95] */
+
+  /* Toggle ipad→opad: XOR with 0x6A (0x36 ^ 0x5C) */
+  for (size_t i = 0; i < 8; ++i)
+    k_padded[i] ^= 0x6A6A6A6A6A6A6A6AULL;
+
+  /* Outer hash: H(K ^ opad || inner_hash) — contiguous 96 bytes in buf */
+  fio_u256 result = fio_risky256(buf.u8, 96);
+
+  /* Secure cleanup */
+  fio_secure_zero(&state, sizeof(state));
+  fio_secure_zero(buf.u8, 96);
+  return result;
+}
+
+/** HMAC-RiskyHash-512 (RFC 2104 compliant, 64-byte digest, allocation-free).
+ *
+ * Memory layout uses fio_u1024 (128 bytes) for zero-copy outer hash:
+ *   buf.u64[0..7]  = k_padded (64 bytes) - key XOR'd with ipad/opad
+ *   buf.u64[8..15] = inner hash result (64 bytes)
+ * This gives contiguous k_opad||inner_hash for outer hash input.
+ */
+SFUNC fio_u512 fio_risky512_hmac(const void *key,
+                                 uint64_t key_len,
+                                 const void *msg,
+                                 uint64_t msg_len) {
+  fio_u1024 buf = {0};
+  uint64_t *k_padded = buf.u64;       /* bytes 0-63 */
+  fio_u512 *inner_ptr = buf.u512 + 1; /* bytes 64-127 (buf.u64[8..15]) */
+
+  /* Key preparation: truncate or hash if > 64 bytes */
+  if (key_len > 64) {
+    fio_u512 hk = fio_risky512(key, key_len);
+    FIO_MEMCPY(k_padded, hk.u64, 64);
+    fio_secure_zero(hk.u8, sizeof(hk));
+  } else if (key_len) {
+    FIO_MEMCPY(k_padded, key, (size_t)key_len);
+  }
+
+  /* Inner hash: H(K ^ ipad || msg) using streaming API */
+  for (size_t i = 0; i < 8; ++i)
+    k_padded[i] ^= 0x3636363636363636ULL;
+
+  fio___risky256_stream_s state;
+  fio___risky256_stream_init(&state, 64 + msg_len);
+  fio___risky256_consume(&state, k_padded, 64);
+  if (msg_len)
+    fio___risky256_consume(&state, msg, msg_len);
+  *inner_ptr =
+      fio___risky512_finish(&state); /* write directly to buf[64..127] */
+
+  /* Toggle ipad→opad: XOR with 0x6A (0x36 ^ 0x5C) */
+  for (size_t i = 0; i < 8; ++i)
+    k_padded[i] ^= 0x6A6A6A6A6A6A6A6AULL;
+
+  /* Outer hash: H(K ^ opad || inner_hash) — contiguous 128 bytes in buf */
+  fio_u512 result = fio_risky512(buf.u8, 128);
+
+  /* Secure cleanup */
+  fio_secure_zero(&state, sizeof(state));
+  fio_secure_zero(buf.u8, 128);
+  return result;
 }
 
 /* *****************************************************************************
@@ -26333,7 +27001,8 @@ FIO_SFUNC int fio___mustache_parse_consume_tag(fio___mustache_parser_s *p,
   case '{':
     do /* it is known that (buf.buf ends as '=' or '}')*/
       --buf.len;
-    while (buf.buf[buf.len - 1] == ' ' || buf.buf[buf.len - 1] == '\t');
+    while (buf.len &&
+           (buf.buf[buf.len - 1] == ' ' || buf.buf[buf.len - 1] == '\t'));
 
     if (id == '=')
       return fio___mustache_parse_set_delim(p, buf); /* fall through */
@@ -26753,19 +27422,28 @@ typedef struct {
 BLAKE2b API (64-bit optimized, up to 64-byte digest)
 ***************************************************************************** */
 
+/** One-shot BLAKE2b hash with max-length (64 byte) digest. */
+FIO_IFUNC fio_u512 fio_blake2b(const void *data, uint64_t len);
+
 /**
- * A simple, non-streaming implementation of BLAKE2b.
+ * Flexible-output BLAKE2b hash.
  *
  * `out` must point to a buffer of at least `outlen` bytes.
  * `outlen` must be between 1 and 64 (default 64 if 0).
  * `key` and `keylen` are optional (set to NULL/0 for unkeyed hashing).
  */
-SFUNC void fio_blake2b(void *restrict out,
-                       size_t outlen,
-                       const void *restrict data,
-                       size_t len,
-                       const void *restrict key,
-                       size_t keylen);
+SFUNC void fio_blake2b_hash(void *restrict out,
+                            size_t outlen,
+                            const void *restrict data,
+                            size_t len,
+                            const void *restrict key,
+                            size_t keylen);
+
+/** HMAC-BLAKE2b (64 byte key, 64 byte digest), compatible with SHA HMAC. */
+SFUNC fio_u512 fio_blake2b_hmac(const void *key,
+                                uint64_t key_len,
+                                const void *msg,
+                                uint64_t msg_len);
 
 /** Initialize a BLAKE2b streaming context. outlen: 1-64 (default 64). */
 SFUNC fio_blake2b_s fio_blake2b_init(size_t outlen,
@@ -26777,26 +27455,35 @@ SFUNC void fio_blake2b_consume(fio_blake2b_s *restrict h,
                                const void *restrict data,
                                size_t len);
 
-/** Finalize BLAKE2b hash. Writes `h->outlen` bytes to `out`. */
-SFUNC void fio_blake2b_finalize(fio_blake2b_s *restrict h, void *restrict out);
+/** Finalize BLAKE2b hash. Returns result in fio_u512 (valid bytes = outlen). */
+SFUNC fio_u512 fio_blake2b_finalize(fio_blake2b_s *h);
 
 /* *****************************************************************************
 BLAKE2s API (32-bit optimized, up to 32-byte digest)
 ***************************************************************************** */
 
+/** One-shot BLAKE2s hash with max-length (32 byte) digest. */
+FIO_IFUNC fio_u256 fio_blake2s(const void *data, uint64_t len);
+
 /**
- * A simple, non-streaming implementation of BLAKE2s.
+ * Flexible-output BLAKE2s hash.
  *
  * `out` must point to a buffer of at least `outlen` bytes.
  * `outlen` must be between 1 and 32 (default 32 if 0).
  * `key` and `keylen` are optional (set to NULL/0 for unkeyed hashing).
  */
-SFUNC void fio_blake2s(void *restrict out,
-                       size_t outlen,
-                       const void *restrict data,
-                       size_t len,
-                       const void *restrict key,
-                       size_t keylen);
+SFUNC void fio_blake2s_hash(void *restrict out,
+                            size_t outlen,
+                            const void *restrict data,
+                            size_t len,
+                            const void *restrict key,
+                            size_t keylen);
+
+/** HMAC-BLAKE2s (32 byte key, 32 byte digest), compatible with SHA HMAC. */
+SFUNC fio_u256 fio_blake2s_hmac(const void *key,
+                                uint64_t key_len,
+                                const void *msg,
+                                uint64_t msg_len);
 
 /** Initialize a BLAKE2s streaming context. outlen: 1-32 (default 32). */
 SFUNC fio_blake2s_s fio_blake2s_init(size_t outlen,
@@ -26808,8 +27495,8 @@ SFUNC void fio_blake2s_consume(fio_blake2s_s *restrict h,
                                const void *restrict data,
                                size_t len);
 
-/** Finalize BLAKE2s hash. Writes `h->outlen` bytes to `out`. */
-SFUNC void fio_blake2s_finalize(fio_blake2s_s *restrict h, void *restrict out);
+/** Finalize BLAKE2s hash. Returns result in fio_u256 (valid bytes = outlen). */
+SFUNC fio_u256 fio_blake2s_finalize(fio_blake2s_s *h);
 
 /* *****************************************************************************
 Implementation - possibly externed functions.
@@ -27063,6 +27750,8 @@ SFUNC fio_blake2b_s fio_blake2b_init(size_t outlen,
 SFUNC void fio_blake2b_consume(fio_blake2b_s *restrict h,
                                const void *restrict data,
                                size_t len) {
+  if (!len)
+    return;
   const uint8_t *p = (const uint8_t *)data;
 
   /* If we have buffered data, try to complete a block */
@@ -27100,8 +27789,9 @@ SFUNC void fio_blake2b_consume(fio_blake2b_s *restrict h,
   }
 }
 
-/** Finalize BLAKE2b hash. */
-SFUNC void fio_blake2b_finalize(fio_blake2b_s *restrict h, void *restrict out) {
+/** Finalize BLAKE2b hash. Returns result in fio_u512 (valid bytes = outlen). */
+SFUNC fio_u512 fio_blake2b_finalize(fio_blake2b_s *h) {
+  fio_u512 r = {0};
   /* Update counter with remaining bytes */
   h->t[0] += h->buflen;
   if (h->t[0] < h->buflen)
@@ -27115,31 +27805,76 @@ SFUNC void fio_blake2b_finalize(fio_blake2b_s *restrict h, void *restrict out) {
   fio___blake2b_compress(h, h->buf, 1);
 
   /* Output hash (little-endian) - word-sized writes */
-  uint8_t *o = (uint8_t *)out;
   size_t full_words = h->outlen >> 3; /* outlen / 8 */
   size_t i;
   for (i = 0; i < full_words; ++i)
-    fio_u2buf64_le(o + (i << 3), h->h[i]);
+    fio_u2buf64_le(r.u8 + (i << 3), h->h[i]);
   /* Handle remaining bytes (outlen not multiple of 8) */
   size_t remaining = h->outlen & 7;
   if (remaining) {
     uint64_t last = h->h[i];
-    uint8_t *dst = o + (i << 3);
+    uint8_t *dst = r.u8 + (i << 3);
     for (size_t j = 0; j < remaining; ++j)
       dst[j] = (uint8_t)(last >> (8 * j));
   }
+  return r;
 }
 
-/** Simple non-streaming BLAKE2b. */
-SFUNC void fio_blake2b(void *restrict out,
-                       size_t outlen,
-                       const void *restrict data,
-                       size_t len,
-                       const void *restrict key,
-                       size_t keylen) {
+/** Flexible-output non-streaming BLAKE2b. */
+SFUNC void fio_blake2b_hash(void *restrict out,
+                            size_t outlen,
+                            const void *restrict data,
+                            size_t len,
+                            const void *restrict key,
+                            size_t keylen) {
   fio_blake2b_s h = fio_blake2b_init(outlen, key, keylen);
   fio_blake2b_consume(&h, data, len);
-  fio_blake2b_finalize(&h, out);
+  fio_u512 r = fio_blake2b_finalize(&h);
+  FIO_MEMCPY(out, r.u8, h.outlen);
+}
+
+/** One-shot BLAKE2b hash with max-length (64 byte) digest. */
+FIO_IFUNC fio_u512 fio_blake2b(const void *data, uint64_t len) {
+  fio_blake2b_s h = fio_blake2b_init(64, NULL, 0);
+  fio_blake2b_consume(&h, data, (size_t)len);
+  return fio_blake2b_finalize(&h);
+}
+
+/** HMAC-BLAKE2b (standard HMAC construction, 64-byte digest). */
+SFUNC fio_u512 fio_blake2b_hmac(const void *key,
+                                uint64_t key_len,
+                                const void *msg,
+                                uint64_t msg_len) {
+  uint64_t k_padded[16] = {0};
+  /* If key > block size, hash it first */
+  if (key_len > 128) {
+    fio_blake2b_s hk = fio_blake2b_init(64, NULL, 0);
+    fio_blake2b_consume(&hk, key, (size_t)key_len);
+    fio_u512 hashed = fio_blake2b_finalize(&hk);
+    fio_memcpy64(&k_padded, hashed.u8);
+  } else if (key_len) {
+    FIO_MEMCPY(&k_padded, key, (size_t)key_len);
+  }
+
+  /* Inner hash: H((padded_key ^ 0x36) || msg) */
+  for (size_t i = 0; i < 16; ++i)
+    k_padded[i] ^= (uint64_t)0x3636363636363636ULL;
+  fio_blake2b_s inner = fio_blake2b_init(64, NULL, 0);
+  fio_blake2b_consume(&inner, k_padded, 128);
+  fio_blake2b_consume(&inner, msg, (size_t)msg_len);
+  fio_u512 inner_hash = fio_blake2b_finalize(&inner);
+
+  /* Outer hash: H((padded_key ^ 0x5C) || inner_hash) */
+  for (size_t i = 0; i < 16; ++i)
+    k_padded[i] ^=
+        (uint64_t)0x3636363636363636ULL ^ (uint64_t)0x5C5C5C5C5C5C5C5CULL;
+  fio_blake2b_s outer = fio_blake2b_init(64, NULL, 0);
+  fio_blake2b_consume(&outer, k_padded, 128);
+  fio_blake2b_consume(&outer, inner_hash.u8, 64);
+  fio_u512 result = fio_blake2b_finalize(&outer);
+  fio_secure_zero(&k_padded, sizeof(k_padded));
+  fio_secure_zero(&inner_hash, sizeof(inner_hash));
+  return result;
 }
 
 /* *****************************************************************************
@@ -27369,6 +28104,8 @@ SFUNC fio_blake2s_s fio_blake2s_init(size_t outlen,
 SFUNC void fio_blake2s_consume(fio_blake2s_s *restrict h,
                                const void *restrict data,
                                size_t len) {
+  if (!len)
+    return;
   const uint8_t *p = (const uint8_t *)data;
 
   /* If we have buffered data, try to complete a block */
@@ -27406,8 +28143,9 @@ SFUNC void fio_blake2s_consume(fio_blake2s_s *restrict h,
   }
 }
 
-/** Finalize BLAKE2s hash. */
-SFUNC void fio_blake2s_finalize(fio_blake2s_s *restrict h, void *restrict out) {
+/** Finalize BLAKE2s hash. Returns result in fio_u256 (valid bytes = outlen). */
+SFUNC fio_u256 fio_blake2s_finalize(fio_blake2s_s *h) {
+  fio_u256 r = {0};
   /* Update counter with remaining bytes */
   h->t[0] += (uint32_t)h->buflen;
   if (h->t[0] < h->buflen)
@@ -27421,31 +28159,78 @@ SFUNC void fio_blake2s_finalize(fio_blake2s_s *restrict h, void *restrict out) {
   fio___blake2s_compress(h, h->buf, 1);
 
   /* Output hash (little-endian) - word-sized writes */
-  uint8_t *o = (uint8_t *)out;
   size_t full_words = h->outlen >> 2; /* outlen / 4 */
   size_t i;
   for (i = 0; i < full_words; ++i)
-    fio_u2buf32_le(o + (i << 2), h->h[i]);
+    fio_u2buf32_le(r.u8 + (i << 2), h->h[i]);
   /* Handle remaining bytes (outlen not multiple of 4) */
   size_t remaining = h->outlen & 3;
   if (remaining) {
     uint32_t last = h->h[i];
-    uint8_t *dst = o + (i << 2);
+    uint8_t *dst = r.u8 + (i << 2);
     for (size_t j = 0; j < remaining; ++j)
       dst[j] = (uint8_t)(last >> (8 * j));
   }
+  return r;
 }
 
-/** Simple non-streaming BLAKE2s. */
-SFUNC void fio_blake2s(void *restrict out,
-                       size_t outlen,
-                       const void *restrict data,
-                       size_t len,
-                       const void *restrict key,
-                       size_t keylen) {
+/** Flexible-output non-streaming BLAKE2s. */
+SFUNC void fio_blake2s_hash(void *restrict out,
+                            size_t outlen,
+                            const void *restrict data,
+                            size_t len,
+                            const void *restrict key,
+                            size_t keylen) {
   fio_blake2s_s h = fio_blake2s_init(outlen, key, keylen);
   fio_blake2s_consume(&h, data, len);
-  fio_blake2s_finalize(&h, out);
+  fio_u256 r = fio_blake2s_finalize(&h);
+  FIO_MEMCPY(out, r.u8, h.outlen);
+}
+
+/** One-shot BLAKE2s hash with max-length (32 byte) digest. */
+FIO_IFUNC fio_u256 fio_blake2s(const void *data, uint64_t len) {
+  fio_blake2s_s h = fio_blake2s_init(32, NULL, 0);
+  fio_blake2s_consume(&h, data, (size_t)len);
+  return fio_blake2s_finalize(&h);
+}
+
+/** HMAC-BLAKE2s (standard HMAC construction, 32-byte digest). */
+SFUNC fio_u256 fio_blake2s_hmac(const void *key,
+                                uint64_t key_len,
+                                const void *msg,
+                                uint64_t msg_len) {
+  uint64_t k_padded[8] = {0};
+  /* If key > block size, hash it first */
+  if (key_len > 64) {
+    fio_blake2s_s hk = fio_blake2s_init(32, NULL, 0);
+    fio_blake2s_consume(&hk, key, (size_t)key_len);
+    fio_u256 hashed = fio_blake2s_finalize(&hk);
+    FIO_MEMCPY(k_padded, hashed.u8, 32);
+  } else if (key_len) {
+    FIO_MEMCPY(k_padded, key, (size_t)key_len);
+  }
+
+  for (size_t i = 0; i < 8; ++i)
+    k_padded[i] ^= (uint64_t)0x3636363636363636ULL;
+
+  /* Inner hash: H(i_pad || msg) */
+  fio_blake2s_s inner = fio_blake2s_init(32, NULL, 0);
+  fio_blake2s_consume(&inner, k_padded, 64);
+  fio_blake2s_consume(&inner, msg, (size_t)msg_len);
+  fio_u256 inner_hash = fio_blake2s_finalize(&inner);
+
+  for (size_t i = 0; i < 8; ++i)
+    k_padded[i] ^=
+        (uint64_t)0x3636363636363636ULL ^ (uint64_t)0x5C5C5C5C5C5C5C5CULL;
+
+  /* Outer hash: H(o_pad || inner_hash) */
+  fio_blake2s_s outer = fio_blake2s_init(32, NULL, 0);
+  fio_blake2s_consume(&outer, k_padded, 64);
+  fio_blake2s_consume(&outer, inner_hash.u8, 32);
+  fio_u256 result = fio_blake2s_finalize(&outer);
+  fio_secure_zero(k_padded, sizeof(k_padded));
+  fio_secure_zero(&inner_hash, sizeof(inner_hash));
+  return result;
 }
 
 /* *****************************************************************************
@@ -27632,7 +28417,7 @@ typedef struct {
   uint64_t s[2];
   /* Accumulator should not exceed 131 bits at the end of every cycle. */
   uint64_t a[3];
-} FIO_ALIGN(16) fio___poly_s;
+} FIO_ALIGN(64) fio___poly_s;
 
 FIO_IFUNC fio___poly_s fio___poly_init(const void *key256b) {
   static const uint64_t defkey[4] = {0};
@@ -27851,22 +28636,6 @@ SFUNC void fio_poly1305_auth(void *restrict mac,
 ChaCha20 (encryption)
 ***************************************************************************** */
 
-#define FIO___CHACHA_VROUND(count, a, b, c, d)                                 \
-  for (size_t i = 0; i < count; ++i) {                                         \
-    a[i] += b[i];                                                              \
-    d[i] ^= a[i];                                                              \
-    d[i] = fio_lrot32(d[i], 16);                                               \
-    c[i] += d[i];                                                              \
-    b[i] ^= c[i];                                                              \
-    b[i] = fio_lrot32(b[i], 12);                                               \
-    a[i] += b[i];                                                              \
-    d[i] ^= a[i];                                                              \
-    d[i] = fio_lrot32(d[i], 8);                                                \
-    c[i] += d[i];                                                              \
-    b[i] ^= c[i];                                                              \
-    b[i] = fio_lrot32(b[i], 7);                                                \
-  }
-
 FIO_IFUNC fio_u512 fio___chacha_init(const void *key,
                                      const void *nonce,
                                      uint32_t counter) {
@@ -27892,97 +28661,291 @@ FIO_IFUNC fio_u512 fio___chacha_init(const void *key,
   return o;
 }
 
+/* Single-block ChaCha20: processes 64 bytes with explicit diagonal indexing. */
 FIO_SFUNC void fio___chacha_vround20(const fio_u512 c, uint8_t *restrict data) {
   uint32_t v[16];
-  for (size_t i = 0; i < 16; ++i) {
+  for (size_t i = 0; i < 16; ++i)
     v[i] = c.u32[i];
+
+/* Quarter round macro for a single block with explicit indices */
+#define FIO___CHACHA_QR1(a, b, c, d)                                           \
+  do {                                                                         \
+    v[a] += v[b];                                                              \
+    v[d] ^= v[a];                                                              \
+    v[d] = fio_lrot32(v[d], 16);                                               \
+    v[c] += v[d];                                                              \
+    v[b] ^= v[c];                                                              \
+    v[b] = fio_lrot32(v[b], 12);                                               \
+    v[a] += v[b];                                                              \
+    v[d] ^= v[a];                                                              \
+    v[d] = fio_lrot32(v[d], 8);                                                \
+    v[c] += v[d];                                                              \
+    v[b] ^= v[c];                                                              \
+    v[b] = fio_lrot32(v[b], 7);                                                \
+  } while (0)
+
+  for (size_t round__ = 0; round__ < 10; ++round__) {
+    /* Column rounds */
+    FIO___CHACHA_QR1(0, 4, 8, 12);
+    FIO___CHACHA_QR1(1, 5, 9, 13);
+    FIO___CHACHA_QR1(2, 6, 10, 14);
+    FIO___CHACHA_QR1(3, 7, 11, 15);
+    /* Diagonal rounds */
+    FIO___CHACHA_QR1(0, 5, 10, 15);
+    FIO___CHACHA_QR1(1, 6, 11, 12);
+    FIO___CHACHA_QR1(2, 7, 8, 13);
+    FIO___CHACHA_QR1(3, 4, 9, 14);
   }
-  for (size_t round__ = 0; round__ < 10; ++round__) { /* 2 rounds per loop */
-    FIO___CHACHA_VROUND(4, v, (v + 4), (v + 8), (v + 12));
-    fio_u32x4_reshuffle((v + 4), 1, 2, 3, 0);
-    fio_u32x4_reshuffle((v + 8), 2, 3, 0, 1);
-    fio_u32x4_reshuffle((v + 12), 3, 0, 1, 2);
-    FIO___CHACHA_VROUND(4, v, (v + 4), (v + 8), (v + 12));
-    fio_u32x4_reshuffle((v + 4), 3, 0, 1, 2);
-    fio_u32x4_reshuffle((v + 8), 2, 3, 0, 1);
-    fio_u32x4_reshuffle((v + 12), 1, 2, 3, 0);
-  }
-  for (size_t i = 0; i < 16; ++i) {
+#undef FIO___CHACHA_QR1
+
+  for (size_t i = 0; i < 16; ++i)
     v[i] += c.u32[i];
+
+#if __BIG_ENDIAN__
+  for (size_t i = 0; i < 16; ++i)
+    v[i] = fio_bswap32(v[i]);
+#endif
+  {
+    uint32_t d[16];
+    fio_memcpy64(d, data);
+    for (size_t i = 0; i < 16; ++i)
+      d[i] ^= v[i];
+    fio_memcpy64(data, d);
   }
+}
+
+/* 2-block ChaCha20: processes 128 bytes using explicit diagonal indexing.
+ * Avoids all shuffle operations by directly addressing diagonal elements.
+ * Layout: v[0..15] = block 0, v[16..31] = block 1 (flat, no interleaving). */
+FIO_SFUNC void fio___chacha_vround20x2(fio_u512 c, uint8_t *restrict data) {
+  /* Two separate blocks in flat layout */
+  uint32_t v0[16], v1[16];
+  for (size_t i = 0; i < 16; ++i) {
+    v0[i] = c.u32[i];
+    v1[i] = c.u32[i];
+  }
+  ++v1[12]; /* second block has counter+1 */
+
+/* Quarter round macro for a single block with explicit indices */
+#define FIO___CHACHA_QR(s, a, b, c, d)                                         \
+  do {                                                                         \
+    s[a] += s[b];                                                              \
+    s[d] ^= s[a];                                                              \
+    s[d] = fio_lrot32(s[d], 16);                                               \
+    s[c] += s[d];                                                              \
+    s[b] ^= s[c];                                                              \
+    s[b] = fio_lrot32(s[b], 12);                                               \
+    s[a] += s[b];                                                              \
+    s[d] ^= s[a];                                                              \
+    s[d] = fio_lrot32(s[d], 8);                                                \
+    s[c] += s[d];                                                              \
+    s[b] ^= s[c];                                                              \
+    s[b] = fio_lrot32(s[b], 7);                                                \
+  } while (0)
+
+  for (size_t round__ = 0; round__ < 10; ++round__) {
+    /* Column rounds */
+    FIO___CHACHA_QR(v0, 0, 4, 8, 12);
+    FIO___CHACHA_QR(v0, 1, 5, 9, 13);
+    FIO___CHACHA_QR(v0, 2, 6, 10, 14);
+    FIO___CHACHA_QR(v0, 3, 7, 11, 15);
+    FIO___CHACHA_QR(v1, 0, 4, 8, 12);
+    FIO___CHACHA_QR(v1, 1, 5, 9, 13);
+    FIO___CHACHA_QR(v1, 2, 6, 10, 14);
+    FIO___CHACHA_QR(v1, 3, 7, 11, 15);
+    /* Diagonal rounds — no shuffle needed, just different indices */
+    FIO___CHACHA_QR(v0, 0, 5, 10, 15);
+    FIO___CHACHA_QR(v0, 1, 6, 11, 12);
+    FIO___CHACHA_QR(v0, 2, 7, 8, 13);
+    FIO___CHACHA_QR(v0, 3, 4, 9, 14);
+    FIO___CHACHA_QR(v1, 0, 5, 10, 15);
+    FIO___CHACHA_QR(v1, 1, 6, 11, 12);
+    FIO___CHACHA_QR(v1, 2, 7, 8, 13);
+    FIO___CHACHA_QR(v1, 3, 4, 9, 14);
+  }
+#undef FIO___CHACHA_QR
+
+  /* Add initial state and XOR with data */
+  for (size_t i = 0; i < 16; ++i)
+    v0[i] += c.u32[i];
+  ++c.u32[12];
+  for (size_t i = 0; i < 16; ++i)
+    v1[i] += c.u32[i];
 
 #if __BIG_ENDIAN__
   for (size_t i = 0; i < 16; ++i) {
-    v[i] = fio_bswap32(v[i]);
+    v0[i] = fio_bswap32(v0[i]);
+    v1[i] = fio_bswap32(v1[i]);
   }
 #endif
   {
     uint32_t d[16];
     fio_memcpy64(d, data);
-    for (size_t i = 0; i < 16; ++i) {
-      d[i] ^= v[i];
-    }
+    for (size_t i = 0; i < 16; ++i)
+      d[i] ^= v0[i];
     fio_memcpy64(data, d);
+
+    fio_memcpy64(d, data + 64);
+    for (size_t i = 0; i < 16; ++i)
+      d[i] ^= v1[i];
+    fio_memcpy64(data + 64, d);
   }
 }
 
-FIO_SFUNC void fio___chacha_vround20x2(fio_u512 c, uint8_t *restrict data) {
-  uint32_t v[32];
-  for (size_t i = 0; i < 16; ++i) {
-    v[i + (i & (4 | 8))] = c.u32[i];
-    v[i + 4 + (i & (4 | 8))] = c.u32[i];
-  }
-  ++v[28];
-  for (size_t round__ = 0; round__ < 10; ++round__) { /* 2 rounds per loop */
-    FIO___CHACHA_VROUND(8, v, (v + 8), (v + 16), (v + 24));
-    fio_u32x8_reshuffle((v + 8), 1, 2, 3, 0, 5, 6, 7, 4);
-    fio_u32x8_reshuffle((v + 16), 2, 3, 0, 1, 6, 7, 4, 5);
-    fio_u32x8_reshuffle((v + 24), 3, 0, 1, 2, 7, 4, 5, 6);
-    FIO___CHACHA_VROUND(8, v, (v + 8), (v + 16), (v + 24));
-    fio_u32x8_reshuffle((v + 8), 3, 0, 1, 2, 7, 4, 5, 6);
-    fio_u32x8_reshuffle((v + 16), 2, 3, 0, 1, 6, 7, 4, 5);
-    fio_u32x8_reshuffle((v + 24), 1, 2, 3, 0, 5, 6, 7, 4);
-  }
-  for (size_t i = 0; i < 16; ++i) {
-    v[i + (i & (4 | 8))] += c.u32[i];
-    v[i + 4 + (i & (4 | 8))] += c.u32[i];
-  }
-  ++v[28];
+/* *****************************************************************************
+NEON 4-Block ChaCha20 (ARM NEON - processes 256 bytes per call)
+***************************************************************************** */
+#if FIO___HAS_ARM_INTRIN
 
-#if __BIG_ENDIAN__
-  for (size_t i = 0; i < 32; ++i) {
-    v[i] = fio_bswap32(v[i]);
-  }
-#endif
+/**
+ * Quarter round macro for NEON vertical layout.
+ * Each uint32x4_t holds the same word position from 4 different blocks.
+ *
+ * ROT16: vrev32q_u16 is a single REV32.8H instruction.
+ * ROT8:  vqtbl1q_u8 with rotation table is a single TBL instruction.
+ * ROT12/ROT7: shift+or (NEON has single-cycle shifts).
+ */
+#define FIO___CHACHA_QR_NEON(a, b, c, d)                                       \
+  do {                                                                         \
+    a = vaddq_u32(a, b);                                                       \
+    d = veorq_u32(d, a);                                                       \
+    d = vreinterpretq_u32_u16(vrev32q_u16(vreinterpretq_u16_u32(d)));          \
+    c = vaddq_u32(c, d);                                                       \
+    b = veorq_u32(b, c);                                                       \
+    b = vorrq_u32(vshlq_n_u32(b, 12), vshrq_n_u32(b, 20));                     \
+    a = vaddq_u32(a, b);                                                       \
+    d = veorq_u32(d, a);                                                       \
+    d = vreinterpretq_u32_u8(                                                  \
+        vqtbl1q_u8(vreinterpretq_u8_u32(d), fio___chacha_rot8_tbl));           \
+    c = vaddq_u32(c, d);                                                       \
+    b = veorq_u32(b, c);                                                       \
+    b = vorrq_u32(vshlq_n_u32(b, 7), vshrq_n_u32(b, 25));                      \
+  } while (0)
+
+/**
+ * Processes 4 ChaCha20 blocks (256 bytes) using ARM NEON intrinsics.
+ *
+ * Uses "vertical" SIMD layout: each uint32x4_t holds the same word position
+ * from 4 different blocks. v[w] = {block0[w], block1[w], block2[w], block3[w]}.
+ *
+ * Counter words get {ctr, ctr+1, ctr+2, ctr+3} for the 4 blocks.
+ */
+FIO_SFUNC void fio___chacha_vround20x4(fio_u512 c, uint8_t *restrict data) {
+  /* Byte rotation table for ROT8: rotate each 32-bit word left by 8 bits */
+  static const uint8x16_t fio___chacha_rot8_tbl =
+      {3, 0, 1, 2, 7, 4, 5, 6, 11, 8, 9, 10, 15, 12, 13, 14};
+  /* 16 state vectors — one per ChaCha20 state word, across 4 blocks */
+  uint32x4_t v0, v1, v2, v3, v4, v5, v6, v7;
+  uint32x4_t v8, v9, v10, v11, v12, v13, v14, v15;
+
+  /* Initialize: broadcast each state word across 4 lanes */
+  v0 = vdupq_n_u32(c.u32[0]);
+  v1 = vdupq_n_u32(c.u32[1]);
+  v2 = vdupq_n_u32(c.u32[2]);
+  v3 = vdupq_n_u32(c.u32[3]);
+  v4 = vdupq_n_u32(c.u32[4]);
+  v5 = vdupq_n_u32(c.u32[5]);
+  v6 = vdupq_n_u32(c.u32[6]);
+  v7 = vdupq_n_u32(c.u32[7]);
+  v8 = vdupq_n_u32(c.u32[8]);
+  v9 = vdupq_n_u32(c.u32[9]);
+  v10 = vdupq_n_u32(c.u32[10]);
+  v11 = vdupq_n_u32(c.u32[11]);
+  /* Counter word: {ctr, ctr+1, ctr+2, ctr+3} */
   {
-    fio_u32x8_reshuffle((v + 4), 4, 5, 6, 7, 0, 1, 2, 3);
-    fio_u32x8_reshuffle((v + 20), 4, 5, 6, 7, 0, 1, 2, 3);
-    uint32_t d[8];
-    fio_memcpy32(d, data);
-    for (size_t i = 0; i < 8; ++i) {
-      d[i] ^= v[i];
-    }
-    fio_memcpy32(data, d);
-
-    fio_memcpy32(d, data + 32);
-    for (size_t i = 0; i < 8; ++i) {
-      d[i] ^= v[16 + i];
-    }
-    fio_memcpy32(data + 32, d);
-
-    fio_memcpy32(d, data + 64);
-    for (size_t i = 0; i < 8; ++i) {
-      d[i] ^= v[8 + i];
-    }
-    fio_memcpy32(data + 64, d);
-
-    fio_memcpy32(d, data + 96);
-    for (size_t i = 0; i < 8; ++i) {
-      d[i] ^= v[24 + i];
-    }
-    fio_memcpy32(data + 96, d);
+    static const uint32_t ctr_inc[4] = {0, 1, 2, 3};
+    v12 = vaddq_u32(vdupq_n_u32(c.u32[12]), vld1q_u32(ctr_inc));
   }
+  v13 = vdupq_n_u32(c.u32[13]);
+  v14 = vdupq_n_u32(c.u32[14]);
+  v15 = vdupq_n_u32(c.u32[15]);
+
+  /* Save initial state for final addition */
+  const uint32x4_t s0 = v0, s1 = v1, s2 = v2, s3 = v3;
+  const uint32x4_t s4 = v4, s5 = v5, s6 = v6, s7 = v7;
+  const uint32x4_t s8 = v8, s9 = v9, s10 = v10, s11 = v11;
+  const uint32x4_t s12 = v12, s13 = v13, s14 = v14, s15 = v15;
+
+  /* 10 double rounds (20 quarter rounds total) */
+  for (int i = 0; i < 10; ++i) {
+    /* Column round */
+    FIO___CHACHA_QR_NEON(v0, v4, v8, v12);
+    FIO___CHACHA_QR_NEON(v1, v5, v9, v13);
+    FIO___CHACHA_QR_NEON(v2, v6, v10, v14);
+    FIO___CHACHA_QR_NEON(v3, v7, v11, v15);
+    /* Diagonal round */
+    FIO___CHACHA_QR_NEON(v0, v5, v10, v15);
+    FIO___CHACHA_QR_NEON(v1, v6, v11, v12);
+    FIO___CHACHA_QR_NEON(v2, v7, v8, v13);
+    FIO___CHACHA_QR_NEON(v3, v4, v9, v14);
+  }
+
+  /* Add initial state */
+  v0 = vaddq_u32(v0, s0);
+  v1 = vaddq_u32(v1, s1);
+  v2 = vaddq_u32(v2, s2);
+  v3 = vaddq_u32(v3, s3);
+  v4 = vaddq_u32(v4, s4);
+  v5 = vaddq_u32(v5, s5);
+  v6 = vaddq_u32(v6, s6);
+  v7 = vaddq_u32(v7, s7);
+  v8 = vaddq_u32(v8, s8);
+  v9 = vaddq_u32(v9, s9);
+  v10 = vaddq_u32(v10, s10);
+  v11 = vaddq_u32(v11, s11);
+  v12 = vaddq_u32(v12, s12);
+  v13 = vaddq_u32(v13, s13);
+  v14 = vaddq_u32(v14, s14);
+  v15 = vaddq_u32(v15, s15);
+
+  /* Deinterleave from vertical layout and XOR with data.
+   * Each v[w] holds {block0[w], block1[w], block2[w], block3[w]}.
+   * We need to store block b at data[b*64 .. b*64+63].
+   *
+   * Strategy: for each block, extract lane b from all 16 vectors,
+   * build 4 uint32x4_t output vectors (words 0-3, 4-7, 8-11, 12-15),
+   * XOR with data, and store.
+   */
+#define FIO___CHACHA_NEON_XORBLOCK(lane, offset)                               \
+  do {                                                                         \
+    uint32x4_t out0 = {vgetq_lane_u32(v0, lane),                               \
+                       vgetq_lane_u32(v1, lane),                               \
+                       vgetq_lane_u32(v2, lane),                               \
+                       vgetq_lane_u32(v3, lane)};                              \
+    uint32x4_t out1 = {vgetq_lane_u32(v4, lane),                               \
+                       vgetq_lane_u32(v5, lane),                               \
+                       vgetq_lane_u32(v6, lane),                               \
+                       vgetq_lane_u32(v7, lane)};                              \
+    uint32x4_t out2 = {vgetq_lane_u32(v8, lane),                               \
+                       vgetq_lane_u32(v9, lane),                               \
+                       vgetq_lane_u32(v10, lane),                              \
+                       vgetq_lane_u32(v11, lane)};                             \
+    uint32x4_t out3 = {vgetq_lane_u32(v12, lane),                              \
+                       vgetq_lane_u32(v13, lane),                              \
+                       vgetq_lane_u32(v14, lane),                              \
+                       vgetq_lane_u32(v15, lane)};                             \
+    out0 = veorq_u32(out0, vld1q_u32((const uint32_t *)(data + (offset))));    \
+    out1 =                                                                     \
+        veorq_u32(out1, vld1q_u32((const uint32_t *)(data + (offset) + 16)));  \
+    out2 =                                                                     \
+        veorq_u32(out2, vld1q_u32((const uint32_t *)(data + (offset) + 32)));  \
+    out3 =                                                                     \
+        veorq_u32(out3, vld1q_u32((const uint32_t *)(data + (offset) + 48)));  \
+    vst1q_u32((uint32_t *)(data + (offset)), out0);                            \
+    vst1q_u32((uint32_t *)(data + (offset) + 16), out1);                       \
+    vst1q_u32((uint32_t *)(data + (offset) + 32), out2);                       \
+    vst1q_u32((uint32_t *)(data + (offset) + 48), out3);                       \
+  } while (0)
+
+  FIO___CHACHA_NEON_XORBLOCK(0, 0);
+  FIO___CHACHA_NEON_XORBLOCK(1, 64);
+  FIO___CHACHA_NEON_XORBLOCK(2, 128);
+  FIO___CHACHA_NEON_XORBLOCK(3, 192);
+#undef FIO___CHACHA_NEON_XORBLOCK
 }
+
+#undef FIO___CHACHA_QR_NEON
+#endif /* FIO___HAS_ARM_INTRIN */
 
 SFUNC void fio_chacha20(void *restrict data,
                         size_t len,
@@ -27990,11 +28953,24 @@ SFUNC void fio_chacha20(void *restrict data,
                         const void *nonce,
                         uint32_t counter) {
   fio_u512 c = fio___chacha_init(key, nonce, counter);
+#if FIO___HAS_ARM_INTRIN
+  for (size_t pos = 255; pos < len; pos += 256) {
+    fio___chacha_vround20x4(c, (uint8_t *)data);
+    c.u32[12] += 4; /* block counter */
+    data = (void *)((uint8_t *)data + 256);
+  }
+  if ((len & 128)) {
+    fio___chacha_vround20x2(c, (uint8_t *)data);
+    c.u32[12] += 2; /* block counter */
+    data = (void *)((uint8_t *)data + 128);
+  }
+#else
   for (size_t pos = 127; pos < len; pos += 128) {
     fio___chacha_vround20x2(c, (uint8_t *)data);
     c.u32[12] += 2; /* block counter */
     data = (void *)((uint8_t *)data + 128);
   }
+#endif
   if ((len & 64)) {
     fio___chacha_vround20(c, (uint8_t *)data);
     data = (void *)((uint8_t *)data + 64);
@@ -28045,6 +29021,22 @@ SFUNC void fio_chacha20_poly1305_enc(void *restrict mac,
     fio_memcpy15x(tmp, ad, adlen);
     fio___poly_consume128bit(&pl, (uint8_t *)tmp, 1);
   }
+#if FIO___HAS_ARM_INTRIN
+  for (size_t i = 255; i < len; i += 256) {
+    fio___chacha_vround20x4(c, (uint8_t *)data);
+    for (size_t j = 0; j < 256; j += 16)
+      fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + j), 1);
+    c.u32[12] += 4; /* block counter */
+    data = (void *)((uint8_t *)data + 256);
+  }
+  if ((len & 128)) {
+    fio___chacha_vround20x2(c, (uint8_t *)data);
+    for (size_t j = 0; j < 128; j += 16)
+      fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + j), 1);
+    c.u32[12] += 2; /* block counter */
+    data = (void *)((uint8_t *)data + 128);
+  }
+#else
   for (size_t i = 127; i < len; i += 128) {
     fio___chacha_vround20x2(c, (uint8_t *)data);
     fio___poly_consume128bit(&pl, data, 1);
@@ -28058,6 +29050,7 @@ SFUNC void fio_chacha20_poly1305_enc(void *restrict mac,
     c.u32[12] += 2; /* block counter */
     data = (void *)((uint8_t *)data + 128);
   }
+#endif
   if ((len & 64)) {
     fio___chacha_vround20(c, (uint8_t *)data);
     fio___poly_consume128bit(&pl, data, 1);
@@ -28149,17 +29142,113 @@ SFUNC int fio_chacha20_poly1305_dec(void *restrict mac,
                                     size_t adlen,
                                     const void *key,
                                     const void *nonce) {
-  uint64_t auth[2];
-  fio_chacha20_poly1305_auth(&auth, data, len, ad, adlen, key, nonce);
-  /* Use constant-time comparison to prevent timing side-channel attacks.
-   * Even though early return stops communication with attacker, timing
-   * differences could leak information about the correct MAC value. */
-  if (!fio_ct_is_eq(auth, mac, 16)) {
-    fio_secure_zero(auth, sizeof(auth));
+  void *data_start = data;
+  fio_u512 c = fio___chacha_init(key, nonce, 0);
+  fio___poly_s pl;
+  {
+    fio_u512 c2 = fio___chacha20_mixround(c);
+    pl = fio___poly_init(&c2);
+  }
+  ++c.u32[12]; /* block counter */
+  /* Authenticate additional data (same as enc) */
+  for (size_t i = 31; i < adlen; i += 32) {
+    fio___poly_consume128bit(&pl, (uint8_t *)ad, 1);
+    fio___poly_consume128bit(&pl, (uint8_t *)ad + 16, 1);
+    ad = (void *)((uint8_t *)ad + 32);
+  }
+  if (adlen & 16) {
+    fio___poly_consume128bit(&pl, (uint8_t *)ad, 1);
+    ad = (void *)((uint8_t *)ad + 16);
+  }
+  if (adlen & 15) {
+    uint64_t tmp[2] = {0}; /* 16 byte pad */
+    fio_memcpy15x(tmp, ad, adlen);
+    fio___poly_consume128bit(&pl, (uint8_t *)tmp, 1);
+  }
+  /* Fused loop: Poly1305 over ciphertext, then ChaCha20 XOR to decrypt */
+#if FIO___HAS_ARM_INTRIN
+  for (size_t i = 255; i < len; i += 256) {
+    for (size_t j = 0; j < 256; j += 16)
+      fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + j), 1);
+    fio___chacha_vround20x4(c, (uint8_t *)data);
+    c.u32[12] += 4; /* block counter */
+    data = (void *)((uint8_t *)data + 256);
+  }
+  if ((len & 128)) {
+    for (size_t j = 0; j < 128; j += 16)
+      fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + j), 1);
+    fio___chacha_vround20x2(c, (uint8_t *)data);
+    c.u32[12] += 2; /* block counter */
+    data = (void *)((uint8_t *)data + 128);
+  }
+#else
+  for (size_t i = 127; i < len; i += 128) {
+    fio___poly_consume128bit(&pl, data, 1);
+    fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + 16), 1);
+    fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + 32), 1);
+    fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + 48), 1);
+    fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + 64), 1);
+    fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + 80), 1);
+    fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + 96), 1);
+    fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + 112), 1);
+    fio___chacha_vround20x2(c, (uint8_t *)data);
+    c.u32[12] += 2; /* block counter */
+    data = (void *)((uint8_t *)data + 128);
+  }
+#endif
+  if ((len & 64)) {
+    fio___poly_consume128bit(&pl, data, 1);
+    fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + 16), 1);
+    fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + 32), 1);
+    fio___poly_consume128bit(&pl, (void *)((uint8_t *)data + 48), 1);
+    fio___chacha_vround20(c, (uint8_t *)data);
+    ++c.u32[12]; /* block counter */
+    data = (void *)((uint8_t *)data + 64);
+  }
+  if ((len & 63)) {
+    /* Poly1305 over ciphertext tail (with zero padding) */
+    fio_u512 ct;
+    FIO_MEMSET(ct.u8, 0, 64);
+    fio_memcpy63x(ct.u8, data, len);
+    uint8_t *p = ct.u8;
+    if ((len & 32)) {
+      fio___poly_consume128bit(&pl, p, 1);
+      fio___poly_consume128bit(&pl, (p + 16), 1);
+      p += 32;
+    }
+    if ((len & 16)) {
+      fio___poly_consume128bit(&pl, p, 1);
+      p += 16;
+    }
+    if ((len & 15)) {
+      /* zero padding already set by FIO_MEMSET above */
+      fio___poly_consume128bit(&pl, p, 1);
+    }
+    /* ChaCha20 XOR to decrypt tail in-place */
+    fio_u512 dest;
+    fio_memcpy63x(dest.u8, data, len);
+    fio___chacha_vround20(c, dest.u8);
+    fio_memcpy63x(data, dest.u8, len);
+  }
+  /* Finalize Poly1305 */
+  {
+    uint64_t mac_data[2] = {fio_ltole64(adlen), fio_ltole64(len)};
+    fio___poly_consume128bit(&pl, (uint8_t *)mac_data, 1);
+  }
+  fio___poly_finilize(&pl);
+  uint8_t computed_mac[16];
+  fio_u2buf64_le(computed_mac, pl.a[0]);
+  fio_u2buf64_le(computed_mac + 8, pl.a[1]);
+  fio_secure_zero(&pl, sizeof(pl));
+  /* Constant-time MAC comparison */
+  if (!fio_ct_is_eq(computed_mac, mac, 16)) {
+    /* MAC mismatch: zero decrypted output to prevent use of unauthenticated
+     * plaintext, then return error. */
+    fio_secure_zero(data_start, len);
+    fio_secure_zero(computed_mac, sizeof(computed_mac));
     return -1;
   }
-  fio_secure_zero(auth, sizeof(auth));
-  fio_chacha20(data, len, key, nonce, 1);
+  fio_secure_zero(computed_mac, sizeof(computed_mac));
   return 0;
 }
 
@@ -28196,17 +29285,37 @@ FIO_IFUNC void fio___hchacha20(void *restrict subkey,
       // clang-format on
   };
 
+/* Quarter round macro for HChaCha20 */
+#define FIO___HCHACHA_QR(a, b, c, d)                                           \
+  do {                                                                         \
+    v[a] += v[b];                                                              \
+    v[d] ^= v[a];                                                              \
+    v[d] = fio_lrot32(v[d], 16);                                               \
+    v[c] += v[d];                                                              \
+    v[b] ^= v[c];                                                              \
+    v[b] = fio_lrot32(v[b], 12);                                               \
+    v[a] += v[b];                                                              \
+    v[d] ^= v[a];                                                              \
+    v[d] = fio_lrot32(v[d], 8);                                                \
+    v[c] += v[d];                                                              \
+    v[b] ^= v[c];                                                              \
+    v[b] = fio_lrot32(v[b], 7);                                                \
+  } while (0)
+
   /* Run 10 double-rounds (20 quarter-rounds total) */
   for (size_t round__ = 0; round__ < 10; ++round__) {
-    FIO___CHACHA_VROUND(4, v, (v + 4), (v + 8), (v + 12));
-    fio_u32x4_reshuffle((v + 4), 1, 2, 3, 0);
-    fio_u32x4_reshuffle((v + 8), 2, 3, 0, 1);
-    fio_u32x4_reshuffle((v + 12), 3, 0, 1, 2);
-    FIO___CHACHA_VROUND(4, v, (v + 4), (v + 8), (v + 12));
-    fio_u32x4_reshuffle((v + 4), 3, 0, 1, 2);
-    fio_u32x4_reshuffle((v + 8), 2, 3, 0, 1);
-    fio_u32x4_reshuffle((v + 12), 1, 2, 3, 0);
+    /* Column rounds */
+    FIO___HCHACHA_QR(0, 4, 8, 12);
+    FIO___HCHACHA_QR(1, 5, 9, 13);
+    FIO___HCHACHA_QR(2, 6, 10, 14);
+    FIO___HCHACHA_QR(3, 7, 11, 15);
+    /* Diagonal rounds */
+    FIO___HCHACHA_QR(0, 5, 10, 15);
+    FIO___HCHACHA_QR(1, 6, 11, 12);
+    FIO___HCHACHA_QR(2, 7, 8, 13);
+    FIO___HCHACHA_QR(3, 4, 9, 14);
   }
+#undef FIO___HCHACHA_QR
 
   /* Output words 0-3 and 12-15 as the 256-bit subkey (NO state addition!) */
   fio_u2buf32_le(subkey, v[0]);
@@ -29453,6 +30562,8 @@ FIO_IFUNC void fio___sha256_round(fio_u256 *h, const uint8_t *block) {
 
 /** consume data and feed it to hash. */
 SFUNC void fio_sha256_consume(fio_sha256_s *h, const void *data, uint64_t len) {
+  if (!len)
+    return;
   const uint8_t *r = (const uint8_t *)data;
   const size_t old_total = h->total_len;
   const size_t new_total = len + h->total_len;
@@ -29538,26 +30649,13 @@ FIO_IFUNC void fio___sha512_round(fio_u512 *restrict h,
   uint64_t a = h->u64[0], b = h->u64[1], c = h->u64[2], d = h->u64[3];
   uint64_t e = h->u64[4], f = h->u64[5], g = h->u64[6], hv = h->u64[7];
 
-  /* Message schedule array */
-  uint64_t w[16];
-
-  /* Load and byte-swap message block - unrolled for better performance */
-  w[0] = fio_buf2u64_be(block);
-  w[1] = fio_buf2u64_be(block + 8);
-  w[2] = fio_buf2u64_be(block + 16);
-  w[3] = fio_buf2u64_be(block + 24);
-  w[4] = fio_buf2u64_be(block + 32);
-  w[5] = fio_buf2u64_be(block + 40);
-  w[6] = fio_buf2u64_be(block + 48);
-  w[7] = fio_buf2u64_be(block + 56);
-  w[8] = fio_buf2u64_be(block + 64);
-  w[9] = fio_buf2u64_be(block + 72);
-  w[10] = fio_buf2u64_be(block + 80);
-  w[11] = fio_buf2u64_be(block + 88);
-  w[12] = fio_buf2u64_be(block + 96);
-  w[13] = fio_buf2u64_be(block + 104);
-  w[14] = fio_buf2u64_be(block + 112);
-  w[15] = fio_buf2u64_be(block + 120);
+  /* Message schedule — use fio_u1024 for aligned storage */
+  fio_u1024 wv;
+  fio_memcpy128(wv.u8, block);
+  /* Byte-swap to big-endian (no-op on big-endian systems) */
+  for (size_t i = 0; i < 16; ++i)
+    wv.u64[i] = fio_lton64(wv.u64[i]);
+  uint64_t *w = wv.u64;
 
 /* SHA-512 Sigma functions - using optimized helpers */
 #define FIO___S512_S0(x) fio_xor_rrot3_64(x, 28, 34, 39)
@@ -29697,6 +30795,8 @@ FIO_IFUNC void fio___sha512_round(fio_u512 *restrict h,
 SFUNC void fio_sha512_consume(fio_sha512_s *restrict h,
                               const void *restrict data,
                               uint64_t len) {
+  if (!len)
+    return;
   const uint8_t *r = (const uint8_t *)data;
   const size_t old_total = h->total_len;
   const size_t new_total = len + h->total_len;
@@ -30276,88 +31376,144 @@ static const uint64_t fio___keccak_rc[24] = {
     0x000000000000800aULL, 0x800000008000000aULL, 0x8000000080008081ULL,
     0x8000000000008080ULL, 0x0000000080000001ULL, 0x8000000080008008ULL};
 
-/* Keccak rotation offsets */
-static const uint8_t fio___keccak_rot[25] = {
-    0,  1,  62, 28, 27, /* row 0 */
-    36, 44, 6,  55, 20, /* row 1 */
-    3,  10, 43, 25, 39, /* row 2 */
-    41, 45, 15, 21, 8,  /* row 3 */
-    18, 2,  61, 56, 14  /* row 4 */
-};
-
-/* Keccak-f[1600] permutation */
+/* Keccak-f[1600] permutation — optimized scalar implementation.
+ *
+ * Fuses theta+rho+pi per-row, then applies chi with 5 temporaries per row.
+ * Eliminates the B[25] temporary array. State values that would be clobbered
+ * by earlier rows' chi are saved before processing.
+ *
+ * Note: ARM SHA3 NEON (EOR3/RAX1/BCAX) was attempted but regressed ~50% due
+ * to GPR↔NEON transfer overhead. Pure scalar compiles to excellent ARM64 code
+ * with clang -O3 (all state words in GPRs, fully unrolled). */
 FIO_IFUNC void fio___keccak_f1600(uint64_t *state) {
-  uint64_t C[5], D[5], B[25];
+  uint64_t C[5], t0, t1, t2, t3, t4;
+  /* Save slots for state values clobbered by earlier rows' chi.
+   * Row 0 writes [0..4]:  save s1(row2), s2(row4), s3(row1), s4(row3)
+   * Row 1 writes [5..9]:  save s5(row3), s7(row2), s8(row4)
+   * Row 2 writes [10..14]: save s11(row3), s14(row4)
+   * Row 3 writes [15..19]: save s15(row4) */
+  uint64_t s1, s2, s3, s4, s5, s7, s8, s11, s14, s15;
 
   for (size_t round = 0; round < 24; ++round) {
-    /* Theta step */
+    /* Theta: compute column parities */
     C[0] = state[0] ^ state[5] ^ state[10] ^ state[15] ^ state[20];
     C[1] = state[1] ^ state[6] ^ state[11] ^ state[16] ^ state[21];
     C[2] = state[2] ^ state[7] ^ state[12] ^ state[17] ^ state[22];
     C[3] = state[3] ^ state[8] ^ state[13] ^ state[18] ^ state[23];
     C[4] = state[4] ^ state[9] ^ state[14] ^ state[19] ^ state[24];
 
-    D[0] = C[4] ^ fio_lrot64(C[1], 1);
-    D[1] = C[0] ^ fio_lrot64(C[2], 1);
-    D[2] = C[1] ^ fio_lrot64(C[3], 1);
-    D[3] = C[2] ^ fio_lrot64(C[4], 1);
-    D[4] = C[3] ^ fio_lrot64(C[0], 1);
+    t0 = C[4] ^ fio_lrot64(C[1], 1); /* D[0] */
+    t1 = C[0] ^ fio_lrot64(C[2], 1); /* D[1] */
+    t2 = C[1] ^ fio_lrot64(C[3], 1); /* D[2] */
+    t3 = C[2] ^ fio_lrot64(C[4], 1); /* D[3] */
+    t4 = C[3] ^ fio_lrot64(C[0], 1); /* D[4] */
 
-    for (size_t i = 0; i < 25; i += 5) {
-      state[i + 0] ^= D[0];
-      state[i + 1] ^= D[1];
-      state[i + 2] ^= D[2];
-      state[i + 3] ^= D[3];
-      state[i + 4] ^= D[4];
-    }
+    /* Apply theta to state and save values needed by later rows */
+    state[0] ^= t0;
+    s1 = state[1] ^ t1;
+    s2 = state[2] ^ t2;
+    s3 = state[3] ^ t3;
+    s4 = state[4] ^ t4;
+    s5 = state[5] ^ t0;
+    state[6] ^= t1;
+    s7 = state[7] ^ t2;
+    s8 = state[8] ^ t3;
+    state[9] ^= t4;
+    state[10] ^= t0;
+    s11 = state[11] ^ t1;
+    state[12] ^= t2;
+    state[13] ^= t3;
+    s14 = state[14] ^ t4;
+    s15 = state[15] ^ t0;
+    state[16] ^= t1;
+    state[17] ^= t2;
+    state[18] ^= t3;
+    state[19] ^= t4;
+    state[20] ^= t0;
+    state[21] ^= t1;
+    state[22] ^= t2;
+    state[23] ^= t3;
+    state[24] ^= t4;
 
-    /* Rho and Pi steps combined */
-    B[0] = state[0];
-    B[1] = fio_lrot64(state[6], 44);
-    B[2] = fio_lrot64(state[12], 43);
-    B[3] = fio_lrot64(state[18], 21);
-    B[4] = fio_lrot64(state[24], 14);
-    B[5] = fio_lrot64(state[3], 28);
-    B[6] = fio_lrot64(state[9], 20);
-    B[7] = fio_lrot64(state[10], 3);
-    B[8] = fio_lrot64(state[16], 45);
-    B[9] = fio_lrot64(state[22], 61);
-    B[10] = fio_lrot64(state[1], 1);
-    B[11] = fio_lrot64(state[7], 6);
-    B[12] = fio_lrot64(state[13], 25);
-    B[13] = fio_lrot64(state[19], 8);
-    B[14] = fio_lrot64(state[20], 18);
-    B[15] = fio_lrot64(state[4], 27);
-    B[16] = fio_lrot64(state[5], 36);
-    B[17] = fio_lrot64(state[11], 10);
-    B[18] = fio_lrot64(state[17], 15);
-    B[19] = fio_lrot64(state[23], 56);
-    B[20] = fio_lrot64(state[2], 62);
-    B[21] = fio_lrot64(state[8], 55);
-    B[22] = fio_lrot64(state[14], 39);
-    B[23] = fio_lrot64(state[15], 41);
-    B[24] = fio_lrot64(state[21], 2);
+    /* Row 0: rho+pi then chi+iota */
+    t0 = state[0];
+    t1 = fio_lrot64(state[6], 44);
+    t2 = fio_lrot64(state[12], 43);
+    t3 = fio_lrot64(state[18], 21);
+    t4 = fio_lrot64(state[24], 14);
+    state[0] = t0 ^ ((~t1) & t2) ^ fio___keccak_rc[round];
+    state[1] = t1 ^ ((~t2) & t3);
+    state[2] = t2 ^ ((~t3) & t4);
+    state[3] = t3 ^ ((~t4) & t0);
+    state[4] = t4 ^ ((~t0) & t1);
 
-    /* Chi step */
-    for (size_t i = 0; i < 25; i += 5) {
-      state[i + 0] = B[i + 0] ^ ((~B[i + 1]) & B[i + 2]);
-      state[i + 1] = B[i + 1] ^ ((~B[i + 2]) & B[i + 3]);
-      state[i + 2] = B[i + 2] ^ ((~B[i + 3]) & B[i + 4]);
-      state[i + 3] = B[i + 3] ^ ((~B[i + 4]) & B[i + 0]);
-      state[i + 4] = B[i + 4] ^ ((~B[i + 0]) & B[i + 1]);
-    }
+    /* Row 1: uses saved s3 (was state[3]) */
+    t0 = fio_lrot64(s3, 28);
+    t1 = fio_lrot64(state[9], 20);
+    t2 = fio_lrot64(state[10], 3);
+    t3 = fio_lrot64(state[16], 45);
+    t4 = fio_lrot64(state[22], 61);
+    state[5] = t0 ^ ((~t1) & t2);
+    state[6] = t1 ^ ((~t2) & t3);
+    state[7] = t2 ^ ((~t3) & t4);
+    state[8] = t3 ^ ((~t4) & t0);
+    state[9] = t4 ^ ((~t0) & t1);
 
-    /* Iota step */
-    state[0] ^= fio___keccak_rc[round];
+    /* Row 2: uses saved s1 (was state[1]), s7 (was state[7]) */
+    t0 = fio_lrot64(s1, 1);
+    t1 = fio_lrot64(s7, 6);
+    t2 = fio_lrot64(state[13], 25);
+    t3 = fio_lrot64(state[19], 8);
+    t4 = fio_lrot64(state[20], 18);
+    state[10] = t0 ^ ((~t1) & t2);
+    state[11] = t1 ^ ((~t2) & t3);
+    state[12] = t2 ^ ((~t3) & t4);
+    state[13] = t3 ^ ((~t4) & t0);
+    state[14] = t4 ^ ((~t0) & t1);
+
+    /* Row 3: uses saved s4, s5, s11 (were state[4], state[5], state[11]) */
+    t0 = fio_lrot64(s4, 27);
+    t1 = fio_lrot64(s5, 36);
+    t2 = fio_lrot64(s11, 10);
+    t3 = fio_lrot64(state[17], 15);
+    t4 = fio_lrot64(state[23], 56);
+    state[15] = t0 ^ ((~t1) & t2);
+    state[16] = t1 ^ ((~t2) & t3);
+    state[17] = t2 ^ ((~t3) & t4);
+    state[18] = t3 ^ ((~t4) & t0);
+    state[19] = t4 ^ ((~t0) & t1);
+
+    /* Row 4: uses saved s2, s8, s14, s15 */
+    t0 = fio_lrot64(s2, 62);
+    t1 = fio_lrot64(s8, 55);
+    t2 = fio_lrot64(s14, 39);
+    t3 = fio_lrot64(s15, 41);
+    t4 = fio_lrot64(state[21], 2);
+    state[20] = t0 ^ ((~t1) & t2);
+    state[21] = t1 ^ ((~t2) & t3);
+    state[22] = t2 ^ ((~t3) & t4);
+    state[23] = t3 ^ ((~t4) & t0);
+    state[24] = t4 ^ ((~t0) & t1);
   }
 }
 
-/* Absorb a block into the state */
-FIO_IFUNC void fio___sha3_absorb(fio_sha3_s *restrict h) {
-  /* XOR rate bytes into state (little-endian) */
-  size_t rate_words = h->rate / 8;
+/* Absorb: XOR rate bytes from buf into state, then permute.
+ * On little-endian (ARM64, x86), state words are already in native order,
+ * so we can XOR directly as uint64_t without byte-swapping. */
+FIO_IFUNC void fio___sha3_absorb_buf(fio_sha3_s *restrict h) {
+  const size_t rate_words = h->rate >> 3;
+  const uint64_t *w = (const uint64_t *)h->buf;
   for (size_t i = 0; i < rate_words; ++i)
-    h->state[i] ^= fio_buf2u64_le(h->buf + i * 8);
+    h->state[i] ^= fio_ltole64(w[i]);
+  fio___keccak_f1600(h->state);
+}
+
+/* Absorb directly from input pointer (avoids copy to buf for full blocks) */
+FIO_IFUNC void fio___sha3_absorb_ptr(fio_sha3_s *restrict h,
+                                     const uint8_t *restrict p) {
+  const size_t rate_words = h->rate >> 3;
+  for (size_t i = 0; i < rate_words; ++i)
+    h->state[i] ^= fio_buf2u64_le(p + (i << 3));
   fio___keccak_f1600(h->state);
 }
 
@@ -30376,16 +31532,15 @@ SFUNC void fio_sha3_consume(fio_sha3_s *restrict h,
       return;
     }
     FIO_MEMCPY(h->buf + h->buflen, p, fill);
-    fio___sha3_absorb(h);
+    fio___sha3_absorb_buf(h);
     h->buflen = 0;
     p += fill;
     len -= fill;
   }
 
-  /* Process full blocks */
+  /* Process full blocks directly from input (no copy to buf) */
   while (len >= h->rate) {
-    FIO_MEMCPY(h->buf, p, h->rate);
-    fio___sha3_absorb(h);
+    fio___sha3_absorb_ptr(h, p);
     p += h->rate;
     len -= h->rate;
   }
@@ -30405,12 +31560,20 @@ SFUNC void fio_sha3_finalize(fio_sha3_s *restrict h, void *restrict out) {
   h->buf[h->rate - 1] |= 0x80;
 
   /* Final absorb */
-  fio___sha3_absorb(h);
+  fio___sha3_absorb_buf(h);
 
-  /* Squeeze output (little-endian) */
+  /* Squeeze output — copy full words then handle remainder.
+   * State is in native (little-endian) order on LE platforms. */
   uint8_t *o = (uint8_t *)out;
-  for (size_t i = 0; i < h->outlen; ++i)
-    o[i] = (uint8_t)(h->state[i / 8] >> (8 * (i % 8)));
+  const size_t full_words = h->outlen >> 3;
+  for (size_t i = 0; i < full_words; ++i)
+    fio_u2buf64_le(o + (i << 3), h->state[i]);
+  /* Handle remaining bytes (outlen not multiple of 8) */
+  const size_t rem = h->outlen & 7;
+  if (rem) {
+    uint64_t last = fio_ltole64(h->state[full_words]);
+    FIO_MEMCPY(o + (full_words << 3), &last, rem);
+  }
 }
 
 /** Squeeze output from SHAKE (can be called multiple times). */
@@ -30424,18 +31587,41 @@ SFUNC void fio_shake_squeeze(fio_sha3_s *restrict h,
     FIO_MEMSET(h->buf + h->buflen, 0, h->rate - h->buflen);
     h->buf[h->buflen] = h->delim;
     h->buf[h->rate - 1] |= 0x80;
-    fio___sha3_absorb(h);
+    fio___sha3_absorb_buf(h);
     h->buflen = 0;
     h->outlen = 1; /* Mark as finalized */
   }
 
-  /* Squeeze output — buflen tracks offset within current Keccak state */
+  /* Squeeze output — buflen tracks byte offset within current Keccak state.
+   * Copy full words where possible, byte-by-byte only at boundaries. */
   while (outlen > 0) {
     size_t available = h->rate - h->buflen;
     size_t to_copy = (outlen < available) ? outlen : available;
-    for (size_t i = 0; i < to_copy; ++i) {
-      size_t pos = h->buflen + i;
-      o[i] = (uint8_t)(h->state[pos / 8] >> (8 * (pos % 8)));
+    /* Copy squeeze output using word-aligned access where possible */
+    size_t pos = h->buflen;
+    size_t copied = 0;
+    /* Handle leading partial word */
+    if ((pos & 7) && copied < to_copy) {
+      size_t word_rem = 8 - (pos & 7);
+      if (word_rem > to_copy - copied)
+        word_rem = to_copy - copied;
+      uint64_t w = fio_ltole64(h->state[pos >> 3]);
+      for (size_t j = 0; j < word_rem; ++j)
+        o[copied + j] = (uint8_t)(w >> (8 * ((pos + j) & 7)));
+      copied += word_rem;
+      pos += word_rem;
+    }
+    /* Copy full words */
+    while (copied + 8 <= to_copy) {
+      fio_u2buf64_le(o + copied, h->state[pos >> 3]);
+      copied += 8;
+      pos += 8;
+    }
+    /* Handle trailing partial word */
+    if (copied < to_copy) {
+      uint64_t w = fio_ltole64(h->state[pos >> 3]);
+      for (size_t j = 0; copied < to_copy; ++j, ++copied)
+        o[copied] = (uint8_t)(w >> (8 * j));
     }
     o += to_copy;
     outlen -= to_copy;
@@ -33898,8 +35084,8 @@ FIO_IFUNC void fio___x25519_scalarmult(uint8_t out[32],
 
   for (int i = 254; i >= 0; --i) {
     int64_t r = (z[i >> 3] >> (i & 7)) & 1;
-    fio___gf_cswap(a, b, r);
-    fio___gf_cswap(c, d, r);
+    fio___gf_cswap(a, b, (int)r);
+    fio___gf_cswap(c, d, (int)r);
     fio___gf_add(e, a, c);
     fio___gf_sub(a, a, c);
     fio___gf_add(c, b, d);
@@ -33918,8 +35104,8 @@ FIO_IFUNC void fio___x25519_scalarmult(uint8_t out[32],
     fio___gf_mul(a, d, f);
     fio___gf_mul(d, b, x);
     fio___gf_sqr(b, e);
-    fio___gf_cswap(a, b, r);
-    fio___gf_cswap(c, d, r);
+    fio___gf_cswap(a, b, (int)r);
+    fio___gf_cswap(c, d, (int)r);
   }
 
   fio___gf_inv(c, c);
@@ -39729,6 +40915,7 @@ SFUNC int fio_rsa_verify_pss(const uint8_t *sig,
 
   /* Compute DB = maskedDB XOR dbMask */
   uint8_t db[FIO_RSA_MAX_BYTES];
+  db[0] = 0;
   for (size_t i = 0; i < db_len; ++i)
     db[i] = masked_db[i] ^ db_mask[i];
 
@@ -42377,7 +43564,6 @@ Module Cleanup
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
 #define FIO_MLKEM              /* Development inclusion - ignore line */
-#define FIO_SHA3               /* Development inclusion - ignore line */
 #include "./include.h"         /* Development inclusion - ignore line */
 #endif                         /* Development inclusion - ignore line */
 /* *****************************************************************************
@@ -42474,6 +43660,71 @@ SFUNC int fio_mlkem768_decaps(uint8_t ss[32],
                               const uint8_t sk[2400]);
 
 /* *****************************************************************************
+X25519MLKEM768 Hybrid API (TLS 1.3 NamedGroup 0x11ec)
+
+This is the hybrid key exchange combining classical X25519 with post-quantum
+ML-KEM-768, as specified in draft-ietf-tls-ecdhe-mlkem for TLS 1.3.
+
+Key format (per IETF draft-ietf-tls-ecdhe-mlkem-03 Section 4):
+  - Public key:  ML-KEM-768_ek (1184) || X25519_pk (32) = 1216 bytes
+  - Secret key:  ML-KEM-768_dk (2400) || X25519_sk (32) = 2432 bytes
+  - Ciphertext:  ML-KEM-768_ct (1088) || X25519_pk (32) = 1120 bytes
+  - Shared secret: ML-KEM-768_ss (32) || X25519_ss (32) = 64 bytes
+
+NOTE: The group name "X25519MLKEM768" does NOT reflect the concatenation order.
+The ML-KEM component comes FIRST in all concatenations (Section 4 note).
+
+Browser support: Chrome 131+, Firefox 132+, Safari iOS 26+
+Server adoption: 8.6% of top 1M sites as of early 2026
+
+Note: This implementation requires FIO_ED25519 for X25519 support.
+***************************************************************************** */
+
+/** X25519MLKEM768 hybrid constants */
+#define FIO_X25519MLKEM768_PUBLICKEYBYTES  (32 + 1184) /* 1216 */
+#define FIO_X25519MLKEM768_SECRETKEYBYTES  (32 + 2400) /* 2432 */
+#define FIO_X25519MLKEM768_CIPHERTEXTBYTES (32 + 1088) /* 1120 */
+#define FIO_X25519MLKEM768_SSBYTES         64
+
+/**
+ * Generate X25519MLKEM768 hybrid keypair.
+ *
+ * Generates both X25519 and ML-KEM-768 keypairs using system CSPRNG.
+ * The public key is ML-KEM-768_ek (1184) || X25519_pk (32) = 1216 bytes.
+ * The secret key is ML-KEM-768_dk (2400) || X25519_sk (32) = 2432 bytes.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+SFUNC int fio_x25519mlkem768_keypair(uint8_t pk[1216], uint8_t sk[2432]);
+
+/**
+ * X25519MLKEM768 hybrid encapsulation.
+ *
+ * Performs both X25519 key exchange and ML-KEM-768 encapsulation.
+ * The ciphertext is ML-KEM-768_ct (1088) || X25519_ephemeral_pk (32) = 1120
+ * bytes. The shared secret is ML-KEM-768_ss (32) || X25519_ss (32) = 64 bytes.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+SFUNC int fio_x25519mlkem768_encaps(uint8_t ct[1120],
+                                    uint8_t ss[64],
+                                    const uint8_t pk[1216]);
+
+/**
+ * X25519MLKEM768 hybrid decapsulation.
+ *
+ * Performs both X25519 shared secret derivation and ML-KEM-768 decapsulation.
+ * The shared secret is ML-KEM-768_ss (32) || X25519_ss (32) = 64 bytes.
+ *
+ * Returns 0 on success, -1 if X25519 shared secret computation fails
+ * (low-order point). ML-KEM-768 uses implicit rejection for invalid
+ * ciphertexts.
+ */
+SFUNC int fio_x25519mlkem768_decaps(uint8_t ss[64],
+                                    const uint8_t ct[1120],
+                                    const uint8_t sk[2432]);
+
+/* *****************************************************************************
 ML-KEM-768 Internal Constants
 ***************************************************************************** */
 
@@ -42503,15 +43754,10 @@ ML-KEM-768 Internal Constants
 
 /* *****************************************************************************
 ML-KEM-768 Internal Types
+
+A polynomial is int16_t[256] (256 coefficients, 512 bytes).
+A polyvec is int16_t[k][256] = int16_t[3][256] (3 polynomials).
 ***************************************************************************** */
-
-typedef struct {
-  int16_t coeffs[FIO___MLKEM_N];
-} fio___mlkem_poly;
-
-typedef struct {
-  fio___mlkem_poly vec[FIO___MLKEM_K];
-} fio___mlkem_polyvec;
 
 /* *****************************************************************************
 Implementation
@@ -42627,19 +43873,19 @@ FIO_SFUNC void fio___mlkem_basemul(int16_t r[2],
 }
 
 /* *****************************************************************************
-Polynomial Operations
+Polynomial Operations (poly = int16_t[256])
 ***************************************************************************** */
 
 /** Serialize polynomial to bytes (12-bit coefficients packed into bytes). */
 FIO_SFUNC void fio___mlkem_poly_tobytes(uint8_t r[FIO___MLKEM_POLYBYTES],
-                                        const fio___mlkem_poly *a) {
+                                        const int16_t a[256]) {
   unsigned int i;
   uint16_t t0, t1;
   for (i = 0; i < FIO___MLKEM_N / 2; i++) {
     /* Map to positive representative */
-    t0 = (uint16_t)a->coeffs[2 * i];
+    t0 = (uint16_t)a[2 * i];
     t0 = (uint16_t)(t0 + ((uint16_t)((int16_t)t0 >> 15) & FIO___MLKEM_Q));
-    t1 = (uint16_t)a->coeffs[2 * i + 1];
+    t1 = (uint16_t)a[2 * i + 1];
     t1 = (uint16_t)(t1 + ((uint16_t)((int16_t)t1 >> 15) & FIO___MLKEM_Q));
     r[3 * i + 0] = (uint8_t)(t0 >> 0);
     r[3 * i + 1] = (uint8_t)((t0 >> 8) | (t1 << 4));
@@ -42649,16 +43895,16 @@ FIO_SFUNC void fio___mlkem_poly_tobytes(uint8_t r[FIO___MLKEM_POLYBYTES],
 
 /** Deserialize polynomial from bytes. */
 FIO_SFUNC void fio___mlkem_poly_frombytes(
-    fio___mlkem_poly *r,
+    int16_t r[256],
     const uint8_t a[FIO___MLKEM_POLYBYTES]) {
   unsigned int i;
   for (i = 0; i < FIO___MLKEM_N / 2; i++) {
-    r->coeffs[2 * i] = (int16_t)(((uint16_t)(a[3 * i + 0] >> 0) |
-                                  ((uint16_t)(a[3 * i + 1]) << 8)) &
-                                 0xFFF);
-    r->coeffs[2 * i + 1] = (int16_t)(((uint16_t)(a[3 * i + 1] >> 4) |
-                                      ((uint16_t)(a[3 * i + 2]) << 4)) &
-                                     0xFFF);
+    r[2 * i] = (int16_t)(((uint16_t)(a[3 * i + 0] >> 0) |
+                          ((uint16_t)(a[3 * i + 1]) << 8)) &
+                         0xFFF);
+    r[2 * i + 1] = (int16_t)(((uint16_t)(a[3 * i + 1] >> 4) |
+                              ((uint16_t)(a[3 * i + 2]) << 4)) &
+                             0xFFF);
   }
 }
 
@@ -42668,14 +43914,14 @@ FIO_SFUNC void fio___mlkem_poly_frombytes(
  */
 FIO_SFUNC void fio___mlkem_poly_compress(
     uint8_t r[FIO___MLKEM_POLYCOMPRESSEDBYTES],
-    const fio___mlkem_poly *a) {
+    const int16_t a[256]) {
   unsigned int i, j;
   uint8_t t[8];
 
   for (i = 0; i < FIO___MLKEM_N / 8; i++) {
     for (j = 0; j < 8; j++) {
       /* Map to positive representative */
-      int16_t u = a->coeffs[8 * i + j];
+      int16_t u = a[8 * i + j];
       u = (int16_t)(u + ((u >> 15) & FIO___MLKEM_Q));
       /* Compress: round(2^4 / q * u) mod 2^4, via multiply-shift (no division)
        * 80635 ≈ ceil(2^28 / 3329), avoiding KyberSlash timing leak */
@@ -42694,14 +43940,14 @@ FIO_SFUNC void fio___mlkem_poly_compress(
 
 /** Decompress polynomial (d_v = 4 bits). */
 FIO_SFUNC void fio___mlkem_poly_decompress(
-    fio___mlkem_poly *r,
+    int16_t r[256],
     const uint8_t a[FIO___MLKEM_POLYCOMPRESSEDBYTES]) {
   unsigned int i;
 
   for (i = 0; i < FIO___MLKEM_N / 2; i++) {
-    r->coeffs[2 * i + 0] =
+    r[2 * i + 0] =
         (int16_t)((((uint16_t)(a[i] & 15) * FIO___MLKEM_Q) + 8) >> 4);
-    r->coeffs[2 * i + 1] =
+    r[2 * i + 1] =
         (int16_t)((((uint16_t)(a[i] >> 4) * FIO___MLKEM_Q) + 8) >> 4);
   }
 }
@@ -42709,10 +43955,9 @@ FIO_SFUNC void fio___mlkem_poly_decompress(
 /**
  * Convert message bytes to polynomial.
  * Each bit of the 32-byte message maps to a coefficient: 0 or q/2.
- * Uses constant-time cmov_int16.
  */
 FIO_SFUNC void fio___mlkem_poly_frommsg(
-    fio___mlkem_poly *r,
+    int16_t r[256],
     const uint8_t msg[FIO___MLKEM_INDCPA_MSGBYTES]) {
   unsigned int i, j;
   int16_t mask;
@@ -42720,8 +43965,7 @@ FIO_SFUNC void fio___mlkem_poly_frommsg(
   for (i = 0; i < FIO___MLKEM_N / 8; i++) {
     for (j = 0; j < 8; j++) {
       mask = (int16_t) - (int16_t)((msg[i] >> j) & 1);
-      r->coeffs[8 * i + j] =
-          (int16_t)(mask & (int16_t)((FIO___MLKEM_Q + 1) / 2));
+      r[8 * i + j] = (int16_t)(mask & (int16_t)((FIO___MLKEM_Q + 1) / 2));
     }
   }
 }
@@ -42731,14 +43975,14 @@ FIO_SFUNC void fio___mlkem_poly_frommsg(
  * Uses multiply-shift to avoid division by q.
  */
 FIO_SFUNC void fio___mlkem_poly_tomsg(uint8_t msg[FIO___MLKEM_INDCPA_MSGBYTES],
-                                      const fio___mlkem_poly *a) {
+                                      const int16_t a[256]) {
   unsigned int i, j;
   uint32_t t;
 
   for (i = 0; i < FIO___MLKEM_N / 8; i++) {
     msg[i] = 0;
     for (j = 0; j < 8; j++) {
-      int16_t u = a->coeffs[8 * i + j];
+      int16_t u = a[8 * i + j];
       u = (int16_t)(u + ((u >> 15) & FIO___MLKEM_Q));
       /* Compress to 1 bit: round(2/q * u) mod 2 */
       t = (uint32_t)u;
@@ -42753,7 +43997,7 @@ FIO_SFUNC void fio___mlkem_poly_tomsg(uint8_t msg[FIO___MLKEM_INDCPA_MSGBYTES],
 }
 
 /** CBD eta=2 sampling from uniform bytes. */
-FIO_SFUNC void fio___mlkem_cbd2(fio___mlkem_poly *r,
+FIO_SFUNC void fio___mlkem_cbd2(int16_t r[256],
                                 const uint8_t buf[2 * FIO___MLKEM_N / 4]) {
   unsigned int i, j;
   uint32_t t, d;
@@ -42766,19 +44010,19 @@ FIO_SFUNC void fio___mlkem_cbd2(fio___mlkem_poly *r,
     for (j = 0; j < 8; j++) {
       a = (int16_t)((d >> (4 * j + 0)) & 0x3);
       b = (int16_t)((d >> (4 * j + 2)) & 0x3);
-      r->coeffs[8 * i + j] = (int16_t)(a - b);
+      r[8 * i + j] = (int16_t)(a - b);
     }
   }
 }
 
 /** Sample noise polynomial using SHAKE256 PRF (eta1 = 2 for ML-KEM-768). */
 FIO_SFUNC void fio___mlkem_poly_getnoise_eta1(
-    fio___mlkem_poly *r,
+    int16_t r[256],
     const uint8_t seed[FIO___MLKEM_SYMBYTES],
     uint8_t nonce) {
   uint8_t buf[FIO___MLKEM_ETA1 * FIO___MLKEM_N / 4]; /* 128 bytes */
   uint8_t extseed[FIO___MLKEM_SYMBYTES + 1];
-  FIO_MEMCPY(extseed, seed, FIO___MLKEM_SYMBYTES);
+  fio_memcpy32(extseed, seed);
   extseed[FIO___MLKEM_SYMBYTES] = nonce;
   fio_shake256(buf, sizeof(buf), extseed, sizeof(extseed));
   fio___mlkem_cbd2(r, buf);
@@ -42786,80 +44030,70 @@ FIO_SFUNC void fio___mlkem_poly_getnoise_eta1(
 
 /** Sample noise polynomial using SHAKE256 PRF (eta2 = 2 for ML-KEM-768). */
 FIO_SFUNC void fio___mlkem_poly_getnoise_eta2(
-    fio___mlkem_poly *r,
+    int16_t r[256],
     const uint8_t seed[FIO___MLKEM_SYMBYTES],
     uint8_t nonce) {
   uint8_t buf[FIO___MLKEM_ETA2 * FIO___MLKEM_N / 4]; /* 128 bytes */
   uint8_t extseed[FIO___MLKEM_SYMBYTES + 1];
-  FIO_MEMCPY(extseed, seed, FIO___MLKEM_SYMBYTES);
+  fio_memcpy32(extseed, seed);
   extseed[FIO___MLKEM_SYMBYTES] = nonce;
   /* PRF(s, b) = SHAKE256(s || b, 64*eta) */
   fio_shake256(buf, sizeof(buf), extseed, sizeof(extseed));
   fio___mlkem_cbd2(r, buf);
 }
 
-/** Apply forward NTT to polynomial. */
-FIO_SFUNC void fio___mlkem_poly_ntt(fio___mlkem_poly *r) {
-  fio___mlkem_ntt(r->coeffs);
-}
-
-/** Apply inverse NTT to polynomial. */
-FIO_SFUNC void fio___mlkem_poly_invntt_tomont(fio___mlkem_poly *r) {
-  fio___mlkem_invntt(r->coeffs);
-}
-
 /** Pointwise multiplication of polynomials in NTT domain. */
-FIO_SFUNC void fio___mlkem_poly_basemul_montgomery(fio___mlkem_poly *r,
-                                                   const fio___mlkem_poly *a,
-                                                   const fio___mlkem_poly *b) {
+FIO_SFUNC void fio___mlkem_poly_basemul_montgomery(int16_t r[256],
+                                                   const int16_t a[256],
+                                                   const int16_t b[256]) {
   unsigned int i;
   for (i = 0; i < FIO___MLKEM_N / 4; i++) {
-    fio___mlkem_basemul(&r->coeffs[4 * i],
-                        &a->coeffs[4 * i],
-                        &b->coeffs[4 * i],
+    fio___mlkem_basemul(&r[4 * i],
+                        &a[4 * i],
+                        &b[4 * i],
                         fio___mlkem_zetas[64 + i]);
-    fio___mlkem_basemul(&r->coeffs[4 * i + 2],
-                        &a->coeffs[4 * i + 2],
-                        &b->coeffs[4 * i + 2],
+    fio___mlkem_basemul(&r[4 * i + 2],
+                        &a[4 * i + 2],
+                        &b[4 * i + 2],
                         (int16_t)-fio___mlkem_zetas[64 + i]);
   }
 }
 
 /** Convert polynomial to Montgomery domain. */
-FIO_SFUNC void fio___mlkem_poly_tomont(fio___mlkem_poly *r) {
+FIO_SFUNC void fio___mlkem_poly_tomont(int16_t r[256]) {
   unsigned int i;
   const int16_t f = (int16_t)((1ULL << 32) % FIO___MLKEM_Q);
   for (i = 0; i < FIO___MLKEM_N; i++)
-    r->coeffs[i] = fio___mlkem_montgomery_reduce((int32_t)r->coeffs[i] * f);
+    r[i] = fio___mlkem_montgomery_reduce((int32_t)r[i] * f);
 }
 
 /** Reduce all coefficients to canonical range. */
-FIO_SFUNC void fio___mlkem_poly_reduce(fio___mlkem_poly *r) {
+FIO_SFUNC void fio___mlkem_poly_reduce(int16_t r[256]) {
   unsigned int i;
   for (i = 0; i < FIO___MLKEM_N; i++)
-    r->coeffs[i] = fio___mlkem_barrett_reduce(r->coeffs[i]);
+    r[i] = fio___mlkem_barrett_reduce(r[i]);
 }
 
 /** Add two polynomials. */
-FIO_SFUNC void fio___mlkem_poly_add(fio___mlkem_poly *r,
-                                    const fio___mlkem_poly *a,
-                                    const fio___mlkem_poly *b) {
+FIO_SFUNC void fio___mlkem_poly_add(int16_t r[256],
+                                    const int16_t a[256],
+                                    const int16_t b[256]) {
   unsigned int i;
   for (i = 0; i < FIO___MLKEM_N; i++)
-    r->coeffs[i] = (int16_t)(a->coeffs[i] + b->coeffs[i]);
+    r[i] = (int16_t)(a[i] + b[i]);
 }
 
 /** Subtract two polynomials: r = a - b. */
-FIO_SFUNC void fio___mlkem_poly_sub(fio___mlkem_poly *r,
-                                    const fio___mlkem_poly *a,
-                                    const fio___mlkem_poly *b) {
+FIO_SFUNC void fio___mlkem_poly_sub(int16_t r[256],
+                                    const int16_t a[256],
+                                    const int16_t b[256]) {
   unsigned int i;
   for (i = 0; i < FIO___MLKEM_N; i++)
-    r->coeffs[i] = (int16_t)(a->coeffs[i] - b->coeffs[i]);
+    r[i] = (int16_t)(a[i] - b[i]);
 }
 
 /* *****************************************************************************
-Polyvec Operations
+Polyvec Operations (polyvec = int16_t[k][256])
 ***************************************************************************** */
 
 /**
@@ -42868,14 +44102,14 @@ Polyvec Operations
  */
 FIO_SFUNC void fio___mlkem_polyvec_compress(
     uint8_t r[FIO___MLKEM_POLYVECCOMPRESSEDBYTES],
-    const fio___mlkem_polyvec *a) {
+    const int16_t a[FIO___MLKEM_K][256]) {
   unsigned int i, j, k;
   uint16_t t[4];
 
   for (i = 0; i < FIO___MLKEM_K; i++) {
     for (j = 0; j < FIO___MLKEM_N / 4; j++) {
       for (k = 0; k < 4; k++) {
-        int16_t u = a->vec[i].coeffs[4 * j + k];
+        int16_t u = a[i][4 * j + k];
         u = (int16_t)(u + ((u >> 15) & FIO___MLKEM_Q));
         /* Compress: round(2^10 / q * u) mod 2^10, via multiply-shift
          * 1290167 ≈ ceil(2^32 / 3329), avoiding KyberSlash timing leak */
@@ -42897,7 +44131,7 @@ FIO_SFUNC void fio___mlkem_polyvec_compress(
 
 /** Decompress polyvec (d_u = 10 bits per coefficient). */
 FIO_SFUNC void fio___mlkem_polyvec_decompress(
-    fio___mlkem_polyvec *r,
+    int16_t r[FIO___MLKEM_K][256],
     const uint8_t a[FIO___MLKEM_POLYVECCOMPRESSEDBYTES]) {
   unsigned int i, j;
   uint16_t t[4];
@@ -42909,79 +44143,81 @@ FIO_SFUNC void fio___mlkem_polyvec_decompress(
       t[2] = (uint16_t)(((uint16_t)(a[2]) >> 4) | ((uint16_t)(a[3]) << 4));
       t[3] = (uint16_t)(((uint16_t)(a[3]) >> 6) | ((uint16_t)(a[4]) << 2));
       a += 5;
-      r->vec[i].coeffs[4 * j + 0] =
+      r[i][4 * j + 0] =
           (int16_t)(((uint32_t)(t[0] & 0x3FF) * FIO___MLKEM_Q + 512) >> 10);
-      r->vec[i].coeffs[4 * j + 1] =
+      r[i][4 * j + 1] =
           (int16_t)(((uint32_t)(t[1] & 0x3FF) * FIO___MLKEM_Q + 512) >> 10);
-      r->vec[i].coeffs[4 * j + 2] =
+      r[i][4 * j + 2] =
           (int16_t)(((uint32_t)(t[2] & 0x3FF) * FIO___MLKEM_Q + 512) >> 10);
-      r->vec[i].coeffs[4 * j + 3] =
+      r[i][4 * j + 3] =
           (int16_t)(((uint32_t)(t[3] & 0x3FF) * FIO___MLKEM_Q + 512) >> 10);
     }
   }
 }
 
 /** Serialize polyvec to bytes. */
-FIO_SFUNC void fio___mlkem_polyvec_tobytes(uint8_t r[FIO___MLKEM_POLYVECBYTES],
-                                           const fio___mlkem_polyvec *a) {
+FIO_SFUNC void fio___mlkem_polyvec_tobytes(
+    uint8_t r[FIO___MLKEM_POLYVECBYTES],
+    const int16_t a[FIO___MLKEM_K][256]) {
   unsigned int i;
   for (i = 0; i < FIO___MLKEM_K; i++)
-    fio___mlkem_poly_tobytes(r + i * FIO___MLKEM_POLYBYTES, &a->vec[i]);
+    fio___mlkem_poly_tobytes(r + i * FIO___MLKEM_POLYBYTES, a[i]);
 }
 
 /** Deserialize polyvec from bytes. */
 FIO_SFUNC void fio___mlkem_polyvec_frombytes(
-    fio___mlkem_polyvec *r,
+    int16_t r[FIO___MLKEM_K][256],
     const uint8_t a[FIO___MLKEM_POLYVECBYTES]) {
   unsigned int i;
   for (i = 0; i < FIO___MLKEM_K; i++)
-    fio___mlkem_poly_frombytes(&r->vec[i], a + i * FIO___MLKEM_POLYBYTES);
+    fio___mlkem_poly_frombytes(r[i], a + i * FIO___MLKEM_POLYBYTES);
 }
 
 /** Apply NTT to all polynomials in polyvec. */
-FIO_SFUNC void fio___mlkem_polyvec_ntt(fio___mlkem_polyvec *r) {
+FIO_SFUNC void fio___mlkem_polyvec_ntt(int16_t r[FIO___MLKEM_K][256]) {
   unsigned int i;
   for (i = 0; i < FIO___MLKEM_K; i++)
-    fio___mlkem_poly_ntt(&r->vec[i]);
+    fio___mlkem_ntt(r[i]);
 }
 
 /** Apply inverse NTT to all polynomials in polyvec. */
-FIO_SFUNC void fio___mlkem_polyvec_invntt_tomont(fio___mlkem_polyvec *r) {
+FIO_SFUNC void fio___mlkem_polyvec_invntt_tomont(
+    int16_t r[FIO___MLKEM_K][256]) {
   unsigned int i;
   for (i = 0; i < FIO___MLKEM_K; i++)
-    fio___mlkem_poly_invntt_tomont(&r->vec[i]);
+    fio___mlkem_invntt(r[i]);
 }
 
 /** Pointwise multiply-accumulate: r = sum(a[i] * b[i]). */
 FIO_SFUNC void fio___mlkem_polyvec_basemul_acc_montgomery(
-    fio___mlkem_poly *r,
-    const fio___mlkem_polyvec *a,
-    const fio___mlkem_polyvec *b) {
+    int16_t r[256],
+    const int16_t a[FIO___MLKEM_K][256],
+    const int16_t b[FIO___MLKEM_K][256]) {
   unsigned int i;
-  fio___mlkem_poly t;
+  int16_t t[256];
 
-  fio___mlkem_poly_basemul_montgomery(r, &a->vec[0], &b->vec[0]);
+  fio___mlkem_poly_basemul_montgomery(r, a[0], b[0]);
   for (i = 1; i < FIO___MLKEM_K; i++) {
-    fio___mlkem_poly_basemul_montgomery(&t, &a->vec[i], &b->vec[i]);
-    fio___mlkem_poly_add(r, r, &t);
+    fio___mlkem_poly_basemul_montgomery(t, a[i], b[i]);
+    fio___mlkem_poly_add(r, r, t);
   }
   fio___mlkem_poly_reduce(r);
 }
 
 /** Reduce all coefficients in polyvec. */
-FIO_SFUNC void fio___mlkem_polyvec_reduce(fio___mlkem_polyvec *r) {
+FIO_SFUNC void fio___mlkem_polyvec_reduce(int16_t r[FIO___MLKEM_K][256]) {
   unsigned int i;
   for (i = 0; i < FIO___MLKEM_K; i++)
-    fio___mlkem_poly_reduce(&r->vec[i]);
+    fio___mlkem_poly_reduce(r[i]);
 }
 
 /** Add two polyvecs. */
-FIO_SFUNC void fio___mlkem_polyvec_add(fio___mlkem_polyvec *r,
-                                       const fio___mlkem_polyvec *a,
-                                       const fio___mlkem_polyvec *b) {
+FIO_SFUNC void fio___mlkem_polyvec_add(int16_t r[FIO___MLKEM_K][256],
+                                       const int16_t a[FIO___MLKEM_K][256],
+                                       const int16_t b[FIO___MLKEM_K][256]) {
   unsigned int i;
   for (i = 0; i < FIO___MLKEM_K; i++)
-    fio___mlkem_poly_add(&r->vec[i], &a->vec[i], &b->vec[i]);
+    fio___mlkem_poly_add(r[i], a[i], b[i]);
 }
 
 /* *****************************************************************************
@@ -42991,13 +44227,16 @@ Matrix Generation (Rejection Sampling via SHAKE128 XOF)
 /**
  * Parse uniform random bytes from SHAKE128 stream into polynomial coefficients.
  * Rejection sampling: accept 12-bit values < q.
+ * Uses branchless constant-time pattern without requiring overflow space.
  */
 FIO_SFUNC unsigned int fio___mlkem_rej_uniform(int16_t *r,
                                                unsigned int len,
                                                const uint8_t *buf,
                                                unsigned int buflen) {
   unsigned int ctr, pos;
-  uint16_t val0, val1, tmp;
+  uint16_t val0, val1;
+  unsigned int accept0, accept1, idx;
+  int16_t tmp;
 
   ctr = pos = 0;
   while (ctr < len && pos + 3 <= buflen) {
@@ -43008,12 +44247,18 @@ FIO_SFUNC unsigned int fio___mlkem_rej_uniform(int16_t *r,
                       0xFFF);
     pos += 3;
 
+    /* Process val0: branchless write and conditional increment */
+    accept0 = (val0 < FIO___MLKEM_Q) & (ctr < len);
     tmp = r[ctr];
-    r[ctr] = (int16_t)val0;
-    ctr += (int)(val0 < FIO___MLKEM_Q);
-    r[ctr] = (int16_t)val1;
-    ctr += (int)((unsigned)(ctr < len) & (unsigned)(val1 < FIO___MLKEM_Q));
-    r[ctr] = tmp;
+    r[ctr] = (int16_t)((accept0 * val0) | ((1 - accept0) * (unsigned)tmp));
+    ctr += accept0;
+
+    /* Process val1: branchless write and conditional increment */
+    accept1 = (val1 < FIO___MLKEM_Q) & (ctr < len);
+    idx = ctr - (ctr >= len); /* Clamp index to valid range */
+    tmp = r[idx];
+    r[idx] = (int16_t)((accept1 * val1) | ((1 - accept1) * (unsigned)tmp));
+    ctr += accept1;
   }
   return ctr;
 }
@@ -43024,10 +44269,12 @@ FIO_SFUNC unsigned int fio___mlkem_rej_uniform(int16_t *r,
 /**
  * Generate matrix A (or A^T) from seed rho using SHAKE128.
  * If transposed != 0, generate A^T instead.
+ * Matrix is k x k polynomials stored as int16_t[K][K][256].
  */
-FIO_IFUNC void fio___mlkem_gen_matrix(fio___mlkem_polyvec *a,
-                                      const uint8_t seed[FIO___MLKEM_SYMBYTES],
-                                      int transposed) {
+FIO_IFUNC void fio___mlkem_gen_matrix(
+    int16_t a[FIO___MLKEM_K][FIO___MLKEM_K][FIO___MLKEM_N],
+    const uint8_t seed[FIO___MLKEM_SYMBYTES],
+    int transposed) {
   unsigned int ctr, i, j;
   unsigned int buflen;
   uint8_t buf[FIO___MLKEM_GEN_MATRIX_NBLOCKS * 168 + 2];
@@ -43036,7 +44283,7 @@ FIO_IFUNC void fio___mlkem_gen_matrix(fio___mlkem_polyvec *a,
   for (i = 0; i < FIO___MLKEM_K; i++) {
     for (j = 0; j < FIO___MLKEM_K; j++) {
       uint8_t extseed[FIO___MLKEM_SYMBYTES + 2];
-      FIO_MEMCPY(extseed, seed, FIO___MLKEM_SYMBYTES);
+      fio_memcpy32(extseed, seed);
       if (transposed) {
         extseed[FIO___MLKEM_SYMBYTES] = (uint8_t)i;
         extseed[FIO___MLKEM_SYMBYTES + 1] = (uint8_t)j;
@@ -43051,14 +44298,11 @@ FIO_IFUNC void fio___mlkem_gen_matrix(fio___mlkem_polyvec *a,
       buflen = FIO___MLKEM_GEN_MATRIX_NBLOCKS * 168;
       fio_shake_squeeze(&state, buf, buflen);
 
-      ctr = fio___mlkem_rej_uniform(a[i].vec[j].coeffs,
-                                    FIO___MLKEM_N,
-                                    buf,
-                                    buflen);
+      ctr = fio___mlkem_rej_uniform(a[i][j], FIO___MLKEM_N, buf, buflen);
 
       while (ctr < FIO___MLKEM_N) {
         fio_shake_squeeze(&state, buf, 168);
-        ctr += fio___mlkem_rej_uniform(a[i].vec[j].coeffs + ctr,
+        ctr += fio___mlkem_rej_uniform(a[i][j] + ctr,
                                        FIO___MLKEM_N - ctr,
                                        buf,
                                        168);
@@ -43105,18 +44349,6 @@ FIO_SFUNC void fio___mlkem_cmov(uint8_t *restrict dst,
     dst[i] ^= b & (dst[i] ^ src[i]);
 }
 
-/**
- * Constant-time conditional move for int16_t arrays.
- * If b != 0, copy v to r. Otherwise do nothing.
- */
-FIO_SFUNC void fio___mlkem_cmov_int16(int16_t *r, int16_t v, uint16_t b) {
-  b = (uint16_t)(-b); /* 0x0000 or 0xFFFF */
-#if defined(__GNUC__) || defined(__clang__)
-  __asm__ __volatile__("" : "+r"(b) : : "memory");
-#endif
-  *r ^= (int16_t)(b & ((*r) ^ v));
-}
-
 /* *****************************************************************************
 IND-CPA PKE (Internal)
 ***************************************************************************** */
@@ -43134,13 +44366,15 @@ FIO_SFUNC void fio___mlkem_indcpa_keypair_derand(
   uint8_t buf[2 * FIO___MLKEM_SYMBYTES];
   const uint8_t *publicseed = buf;
   const uint8_t *noiseseed = buf + FIO___MLKEM_SYMBYTES;
-  fio___mlkem_polyvec a[FIO___MLKEM_K], e, pkpv, skpv;
   uint8_t nonce = 0;
+  int16_t a[FIO___MLKEM_K][FIO___MLKEM_K][FIO___MLKEM_N];
+  int16_t e[FIO___MLKEM_K][256];
+  int16_t pkpv[FIO___MLKEM_K][256], skpv[FIO___MLKEM_K][256];
 
   /* G(d || k) = (rho, sigma) — FIPS 203 requires appending k as a byte */
   {
     uint8_t gbuf[FIO___MLKEM_SYMBYTES + 1];
-    FIO_MEMCPY(gbuf, coins, FIO___MLKEM_SYMBYTES);
+    fio_memcpy32(gbuf, coins);
     gbuf[FIO___MLKEM_SYMBYTES] = FIO___MLKEM_K;
     fio_sha3_512(buf, gbuf, sizeof(gbuf));
   }
@@ -43148,33 +44382,39 @@ FIO_SFUNC void fio___mlkem_indcpa_keypair_derand(
   fio___mlkem_gen_matrix(a, publicseed, 0);
 
   for (i = 0; i < FIO___MLKEM_K; i++)
-    fio___mlkem_poly_getnoise_eta1(&skpv.vec[i], noiseseed, nonce++);
+    fio___mlkem_poly_getnoise_eta1(skpv[i], noiseseed, nonce++);
   for (i = 0; i < FIO___MLKEM_K; i++)
-    fio___mlkem_poly_getnoise_eta1(&e.vec[i], noiseseed, nonce++);
+    fio___mlkem_poly_getnoise_eta1(e[i], noiseseed, nonce++);
 
-  fio___mlkem_polyvec_ntt(&skpv);
-  fio___mlkem_polyvec_ntt(&e);
+  fio___mlkem_polyvec_ntt(skpv);
+  fio___mlkem_polyvec_ntt(e);
 
   /* Compute t = A*s + e */
   for (i = 0; i < FIO___MLKEM_K; i++) {
-    fio___mlkem_polyvec_basemul_acc_montgomery(&pkpv.vec[i], &a[i], &skpv);
-    fio___mlkem_poly_tomont(&pkpv.vec[i]);
+    fio___mlkem_polyvec_basemul_acc_montgomery(pkpv[i],
+                                               (const int16_t(*)[256])a[i],
+                                               (const int16_t(*)[256])skpv);
+    fio___mlkem_poly_tomont(pkpv[i]);
   }
 
-  fio___mlkem_polyvec_add(&pkpv, &pkpv, &e);
-  fio___mlkem_polyvec_reduce(&pkpv);
+  fio___mlkem_polyvec_add(pkpv,
+                          (const int16_t(*)[256])pkpv,
+                          (const int16_t(*)[256])e);
+  fio___mlkem_polyvec_reduce(pkpv);
 
   /* Pack secret key (NTT domain) — reduce first for 12-bit packing */
-  fio___mlkem_polyvec_reduce(&skpv);
-  fio___mlkem_polyvec_tobytes(sk, &skpv);
+  fio___mlkem_polyvec_reduce(skpv);
+  fio___mlkem_polyvec_tobytes(sk, (const int16_t(*)[256])skpv);
   /* Pack public key: t || rho */
-  fio___mlkem_polyvec_tobytes(pk, &pkpv);
-  FIO_MEMCPY(pk + FIO___MLKEM_POLYVECBYTES, publicseed, FIO___MLKEM_SYMBYTES);
+  fio___mlkem_polyvec_tobytes(pk, (const int16_t(*)[256])pkpv);
+  fio_memcpy32(pk + FIO___MLKEM_POLYVECBYTES, publicseed);
 
-  /* Zero sensitive stack data */
+  /* Zero sensitive data */
   FIO_MEMSET(buf, 0, sizeof(buf));
-  FIO_MEMSET(&skpv, 0, sizeof(skpv));
-  FIO_MEMSET(&e, 0, sizeof(e));
+  fio_secure_zero(a, sizeof(a));
+  fio_secure_zero(e, sizeof(e));
+  fio_secure_zero(pkpv, sizeof(pkpv));
+  fio_secure_zero(skpv, sizeof(skpv));
 }
 
 /**
@@ -43188,51 +44428,66 @@ FIO_SFUNC void fio___mlkem_indcpa_enc(
     const uint8_t pk[FIO___MLKEM_INDCPA_PUBLICKEYBYTES],
     const uint8_t coins[FIO___MLKEM_SYMBYTES]) {
   unsigned int i;
-  fio___mlkem_polyvec sp, pkpv, ep, at[FIO___MLKEM_K], b;
-  fio___mlkem_poly v, k, epp;
   uint8_t seed[FIO___MLKEM_SYMBYTES];
   uint8_t nonce = 0;
+  int16_t sp[FIO___MLKEM_K][256], pkpv[FIO___MLKEM_K][256],
+      ep[FIO___MLKEM_K][256];
+  int16_t at[FIO___MLKEM_K][FIO___MLKEM_K][FIO___MLKEM_N];
+  int16_t b[FIO___MLKEM_K][256];
+  int16_t v[256], k[256], epp[256];
 
   /* Unpack public key */
-  fio___mlkem_polyvec_frombytes(&pkpv, pk);
-  FIO_MEMCPY(seed, pk + FIO___MLKEM_POLYVECBYTES, FIO___MLKEM_SYMBYTES);
+  fio___mlkem_polyvec_frombytes(pkpv, pk);
+  fio_memcpy32(seed, pk + FIO___MLKEM_POLYVECBYTES);
 
   /* Generate A^T */
   fio___mlkem_gen_matrix(at, seed, 1);
 
   /* Sample r (eta1), e1 (eta2), e2 (eta2) */
   for (i = 0; i < FIO___MLKEM_K; i++)
-    fio___mlkem_poly_getnoise_eta1(&sp.vec[i], coins, nonce++);
+    fio___mlkem_poly_getnoise_eta1(sp[i], coins, nonce++);
   for (i = 0; i < FIO___MLKEM_K; i++)
-    fio___mlkem_poly_getnoise_eta2(&ep.vec[i], coins, nonce++);
-  fio___mlkem_poly_getnoise_eta2(&epp, coins, nonce++);
+    fio___mlkem_poly_getnoise_eta2(ep[i], coins, nonce++);
+  fio___mlkem_poly_getnoise_eta2(epp, coins, nonce++);
 
-  fio___mlkem_polyvec_ntt(&sp);
+  fio___mlkem_polyvec_ntt(sp);
 
   /* Compute u = A^T * r + e1 */
   for (i = 0; i < FIO___MLKEM_K; i++)
-    fio___mlkem_polyvec_basemul_acc_montgomery(&b.vec[i], &at[i], &sp);
+    fio___mlkem_polyvec_basemul_acc_montgomery(b[i],
+                                               (const int16_t(*)[256])at[i],
+                                               (const int16_t(*)[256])sp);
 
-  fio___mlkem_polyvec_invntt_tomont(&b);
-  fio___mlkem_polyvec_add(&b, &b, &ep);
-  fio___mlkem_polyvec_reduce(&b);
+  fio___mlkem_polyvec_invntt_tomont(b);
+  fio___mlkem_polyvec_add(b,
+                          (const int16_t(*)[256])b,
+                          (const int16_t(*)[256])ep);
+  fio___mlkem_polyvec_reduce(b);
 
   /* Compute v = t^T * r + e2 + Decompress(Decode(m)) */
-  fio___mlkem_polyvec_basemul_acc_montgomery(&v, &pkpv, &sp);
-  fio___mlkem_poly_invntt_tomont(&v);
+  fio___mlkem_polyvec_basemul_acc_montgomery(v,
+                                             (const int16_t(*)[256])pkpv,
+                                             (const int16_t(*)[256])sp);
+  fio___mlkem_invntt(v);
 
-  fio___mlkem_poly_frommsg(&k, msg);
-  fio___mlkem_poly_add(&v, &v, &epp);
-  fio___mlkem_poly_add(&v, &v, &k);
-  fio___mlkem_poly_reduce(&v);
+  fio___mlkem_poly_frommsg(k, msg);
+  fio___mlkem_poly_add(v, v, epp);
+  fio___mlkem_poly_add(v, v, k);
+  fio___mlkem_poly_reduce(v);
 
   /* Pack ciphertext: Compress(u) || Compress(v) */
-  fio___mlkem_polyvec_compress(ct, &b);
-  fio___mlkem_poly_compress(ct + FIO___MLKEM_POLYVECCOMPRESSEDBYTES, &v);
+  fio___mlkem_polyvec_compress(ct, b);
+  fio___mlkem_poly_compress(ct + FIO___MLKEM_POLYVECCOMPRESSEDBYTES, v);
 
-  /* Zero sensitive stack data */
-  FIO_MEMSET(&sp, 0, sizeof(sp));
-  FIO_MEMSET(&k, 0, sizeof(k));
+  /* Zero sensitive data */
+  fio_secure_zero(sp, sizeof(sp));
+  fio_secure_zero(pkpv, sizeof(pkpv));
+  fio_secure_zero(ep, sizeof(ep));
+  fio_secure_zero(at, sizeof(at));
+  fio_secure_zero(b, sizeof(b));
+  fio_secure_zero(v, sizeof(v));
+  fio_secure_zero(k, sizeof(k));
+  fio_secure_zero(epp, sizeof(epp));
 }
 
 /**
@@ -43244,26 +44499,28 @@ FIO_SFUNC void fio___mlkem_indcpa_dec(
     uint8_t msg[FIO___MLKEM_INDCPA_MSGBYTES],
     const uint8_t ct[FIO___MLKEM_INDCPA_BYTES],
     const uint8_t sk[FIO___MLKEM_INDCPA_SECRETKEYBYTES]) {
-  fio___mlkem_polyvec b, skpv;
-  fio___mlkem_poly v, mp;
+  int16_t b[FIO___MLKEM_K][256], skpv[FIO___MLKEM_K][256];
+  int16_t v[256], mp[256];
 
   /* Unpack ciphertext */
-  fio___mlkem_polyvec_decompress(&b, ct);
-  fio___mlkem_poly_decompress(&v, ct + FIO___MLKEM_POLYVECCOMPRESSEDBYTES);
+  fio___mlkem_polyvec_decompress(b, ct);
+  fio___mlkem_poly_decompress(v, ct + FIO___MLKEM_POLYVECCOMPRESSEDBYTES);
 
   /* Unpack secret key */
-  fio___mlkem_polyvec_frombytes(&skpv, sk);
+  fio___mlkem_polyvec_frombytes(skpv, sk);
 
-  fio___mlkem_polyvec_ntt(&b);
+  fio___mlkem_polyvec_ntt(b);
 
   /* Compute m = v - s^T * u */
-  fio___mlkem_polyvec_basemul_acc_montgomery(&mp, &skpv, &b);
-  fio___mlkem_poly_invntt_tomont(&mp);
+  fio___mlkem_polyvec_basemul_acc_montgomery(mp,
+                                             (const int16_t(*)[256])skpv,
+                                             (const int16_t(*)[256])b);
+  fio___mlkem_invntt(mp);
 
-  fio___mlkem_poly_sub(&mp, &v, &mp);
-  fio___mlkem_poly_reduce(&mp);
+  fio___mlkem_poly_sub(mp, v, mp);
+  fio___mlkem_poly_reduce(mp);
 
-  fio___mlkem_poly_tomsg(msg, &mp);
+  fio___mlkem_poly_tomsg(msg, mp);
 }
 
 /* *****************************************************************************
@@ -43331,7 +44588,7 @@ SFUNC int fio_mlkem768_encaps_derand(uint8_t ct[1088],
     return -1;
 
   /* buf = m || H(pk) */
-  FIO_MEMCPY(buf, coins, FIO___MLKEM_SYMBYTES);
+  fio_memcpy32(buf, coins);
   fio_sha3_256(buf + FIO___MLKEM_SYMBYTES,
                pk,
                FIO___MLKEM_INDCPA_PUBLICKEYBYTES);
@@ -43343,7 +44600,7 @@ SFUNC int fio_mlkem768_encaps_derand(uint8_t ct[1088],
   fio___mlkem_indcpa_enc(ct, buf, pk, kr + FIO___MLKEM_SYMBYTES);
 
   /* K = KDF(K || H(c)) — but FIPS 203 just uses K directly */
-  FIO_MEMCPY(ss, kr, FIO___MLKEM_SYMBYTES);
+  fio_memcpy32(ss, kr);
 
   /* Zero sensitive stack data */
   FIO_MEMSET(buf, 0, sizeof(buf));
@@ -43394,7 +44651,7 @@ SFUNC int fio_mlkem768_decaps(uint8_t ss[32],
   fio___mlkem_indcpa_dec(buf, ct, sk);
 
   /* buf = m' || H(pk) */
-  FIO_MEMCPY(buf + FIO___MLKEM_SYMBYTES, hpk, FIO___MLKEM_SYMBYTES);
+  fio_memcpy32(buf + FIO___MLKEM_SYMBYTES, hpk);
 
   /* (K', r') = G(m' || H(pk)) */
   fio_sha3_512(kr, buf, sizeof(buf));
@@ -43415,7 +44672,7 @@ SFUNC int fio_mlkem768_decaps(uint8_t ss[32],
     fio_shake_squeeze(&state, k_bar, FIO___MLKEM_SYMBYTES);
 
     /* Constant-time select: ss = fail ? k_bar : kr */
-    FIO_MEMCPY(ss, kr, FIO___MLKEM_SYMBYTES);
+    fio_memcpy32(ss, kr);
     fio___mlkem_cmov(ss, k_bar, FIO___MLKEM_SYMBYTES, fail);
     FIO_MEMSET(k_bar, 0, sizeof(k_bar));
   }
@@ -43429,8 +44686,104 @@ SFUNC int fio_mlkem768_decaps(uint8_t ss[32],
 }
 
 /* *****************************************************************************
-Cleanup - Internal Macros
+X25519MLKEM768 Hybrid Implementation
 ***************************************************************************** */
+
+/**
+ * Generate X25519MLKEM768 hybrid keypair.
+ *
+ * Layout (per IETF draft-ietf-tls-ecdhe-mlkem-03):
+ *   pk = ML-KEM-768_ek (1184 bytes) || X25519_pk (32 bytes) = 1216 bytes
+ *   sk = ML-KEM-768_dk (2400 bytes) || X25519_sk (32 bytes) = 2432 bytes
+ */
+SFUNC int fio_x25519mlkem768_keypair(uint8_t pk[1216], uint8_t sk[2432]) {
+  if (!pk || !sk)
+    return -1;
+
+  /* Generate ML-KEM-768 keypair: pk[0..1183], sk[0..2399] */
+  if (fio_mlkem768_keypair(pk, sk) != 0) {
+    FIO_MEMSET(pk, 0, 1216);
+    FIO_MEMSET(sk, 0, 2432);
+    return -1;
+  }
+
+  /* Generate X25519 keypair: sk[2400..2431] = private, pk[1184..1215] = public
+   */
+  fio_x25519_keypair(sk + 2400, pk + 1184);
+
+  return 0;
+}
+
+/**
+ * X25519MLKEM768 hybrid encapsulation.
+ *
+ * Layout (per IETF draft-ietf-tls-ecdhe-mlkem-03):
+ *   pk (input)  = ML-KEM-768_ek (1184) || X25519_pk (32) = 1216 bytes
+ *   ct (output) = ML-KEM-768_ct (1088) || X25519_eph_pk (32) = 1120 bytes
+ *   ss (output) = ML-KEM-768_ss (32) || X25519_ss (32) = 64 bytes
+ */
+SFUNC int fio_x25519mlkem768_encaps(uint8_t ct[1120],
+                                    uint8_t ss[64],
+                                    const uint8_t pk[1216]) {
+  uint8_t x25519_eph_sk[32];
+
+  if (!ct || !ss || !pk)
+    return -1;
+
+  /* ML-KEM-768 encapsulation: ct[0..1087], ss[0..31] */
+  if (fio_mlkem768_encaps(ct, ss, pk) != 0) {
+    FIO_MEMSET(ct, 0, 1120);
+    FIO_MEMSET(ss, 0, 64);
+    return -1;
+  }
+
+  /* Generate ephemeral X25519 keypair: ct[1088..1119] = ephemeral public key */
+  fio_x25519_keypair(x25519_eph_sk, ct + 1088);
+
+  /* Compute X25519 shared secret: ss[32..63] = X25519(eph_sk, pk[1184..1215])
+   */
+  if (fio_x25519_shared_secret(ss + 32, x25519_eph_sk, pk + 1184) != 0) {
+    /* Low-order point - should not happen with valid public keys */
+    FIO_MEMSET(x25519_eph_sk, 0, sizeof(x25519_eph_sk));
+    FIO_MEMSET(ct, 0, 1120);
+    FIO_MEMSET(ss, 0, 64);
+    return -1;
+  }
+
+  /* Zero sensitive ephemeral private key */
+  FIO_MEMSET(x25519_eph_sk, 0, sizeof(x25519_eph_sk));
+
+  return 0;
+}
+
+/**
+ * X25519MLKEM768 hybrid decapsulation (IETF draft-ietf-tls-ecdhe-mlkem-03).
+ *
+ * Layout (ML-KEM FIRST per IETF Section 4):
+ *   ct (input) = ML-KEM-768_ct (1088) || X25519_eph_pk (32) = 1120 bytes
+ *   sk (input) = ML-KEM-768_dk (2400) || X25519_sk (32) = 2432 bytes
+ *   ss (output) = ML-KEM-768_ss (32) || X25519_ss (32) = 64 bytes
+ */
+SFUNC int fio_x25519mlkem768_decaps(uint8_t ss[64],
+                                    const uint8_t ct[1120],
+                                    const uint8_t sk[2432]) {
+  if (!ss || !ct || !sk)
+    return -1;
+
+  /* ML-KEM-768 decapsulation: ss[0..31] from ct[0..1087] using sk[0..2399]
+   * Note: ML-KEM uses implicit rejection, so this always "succeeds" */
+  fio_mlkem768_decaps(ss, ct, sk);
+
+  /* X25519 shared secret: ss[32..63] = X25519(sk[2400..2431], ct[1088..1119])
+   */
+  if (fio_x25519_shared_secret(ss + 32, sk + 2400, ct + 1088) != 0) {
+    /* Low-order point - indicates invalid/malicious ciphertext */
+    FIO_MEMSET(ss, 0, 64);
+    return -1;
+  }
+
+  return 0;
+}
 
 /* *****************************************************************************
 Cleanup
@@ -44664,8 +46017,10 @@ FIO_SFUNC void fio___argon2_hash_prime(void *out,
     fio_u2buf32_le(le_outlen, outlen);
     fio_blake2b_consume(&h, le_outlen, 4);
     fio_blake2b_consume(&h, in, inlen);
-    fio_blake2b_finalize(&h, out);
+    fio_u512 r = fio_blake2b_finalize(&h);
+    FIO_MEMCPY(out, r.u8, outlen);
     fio_secure_zero(&h, sizeof(h));
+    fio_secure_zero(&r, sizeof(r));
   } else {
     /* r = ceil(T/32) - 2 */
     uint32_t r = (outlen + 31) / 32 - 2;
@@ -44678,7 +46033,8 @@ FIO_SFUNC void fio___argon2_hash_prime(void *out,
       fio_blake2b_s h = fio_blake2b_init(64, NULL, 0);
       fio_blake2b_consume(&h, le_outlen, 4);
       fio_blake2b_consume(&h, in, inlen);
-      fio_blake2b_finalize(&h, v_prev);
+      fio_u512 tmp = fio_blake2b_finalize(&h);
+      FIO_MEMCPY(v_prev, tmp.u8, 64);
     }
     /* Output W_1 (first 32 bytes of V_1) */
     FIO_MEMCPY(out, v_prev, 32);
@@ -44686,7 +46042,7 @@ FIO_SFUNC void fio___argon2_hash_prime(void *out,
     /* V_2 .. V_r: each V_i = H^64(V_{i-1}) */
     for (uint32_t i = 2; i <= r; ++i) {
       uint8_t v_cur[64];
-      fio_blake2b(v_cur, 64, v_prev, 64, NULL, 0);
+      fio_blake2b_hash(v_cur, 64, v_prev, 64, NULL, 0);
       FIO_MEMCPY((uint8_t *)out + (i - 1) * 32, v_cur, 32);
       FIO_MEMCPY(v_prev, v_cur, 64);
     }
@@ -44694,7 +46050,7 @@ FIO_SFUNC void fio___argon2_hash_prime(void *out,
     /* V_{r+1} = H^(T-32*r)(V_r) */
     uint32_t last_len = outlen - 32 * r;
     uint8_t v_last[64];
-    fio_blake2b(v_last, last_len, v_prev, 64, NULL, 0);
+    fio_blake2b_hash(v_last, last_len, v_prev, 64, NULL, 0);
     FIO_MEMCPY((uint8_t *)out + r * 32, v_last, last_len);
     fio_secure_zero(v_prev, sizeof(v_prev));
     fio_secure_zero(v_last, sizeof(v_last));
@@ -44896,7 +46252,11 @@ SFUNC int fio_argon2_hash FIO_NOOP(void *out, fio_argon2_args_s args) {
     if (ad_len)
       fio_blake2b_consume(&bctx, args.ad.buf, ad_len);
 
-    fio_blake2b_finalize(&bctx, h0);
+    {
+      fio_u512 h0_result = fio_blake2b_finalize(&bctx);
+      FIO_MEMCPY(h0, h0_result.u8, 64);
+      fio_secure_zero(&h0_result, sizeof(h0_result));
+    }
     fio_secure_zero(&bctx, sizeof(bctx));
   }
 
@@ -45441,11 +46801,14 @@ typedef enum {
   FIO_TLS13_CIPHER_SUITE_CHACHA20_POLY1305_SHA256 = 0x1303,
 } fio_tls13_cipher_suite_e;
 
-/** TLS 1.3 Named Groups (RFC 8446 Section 4.2.7) */
+/** TLS 1.3 Named Groups (RFC 8446 Section 4.2.7, draft-ietf-tls-hybrid-design)
+ */
 typedef enum {
   FIO_TLS13_GROUP_SECP256R1 = 23, /* P-256 */
   FIO_TLS13_GROUP_SECP384R1 = 24, /* P-384 */
   FIO_TLS13_GROUP_X25519 = 29,    /* Curve25519 */
+  FIO_TLS13_GROUP_X25519MLKEM768 =
+      0x11ec, /* X25519 + ML-KEM-768 hybrid (PQC) */
 } fio_tls13_named_group_e;
 
 /** TLS 1.3 Signature Algorithms (RFC 8446 Section 4.2.3) */
@@ -45475,10 +46838,11 @@ TLS 1.3 Parsed Handshake Message Structures
 
 /** Parsed ServerHello message */
 typedef struct {
-  uint8_t random[32];         /* Server random */
-  uint16_t cipher_suite;      /* Selected cipher suite */
-  uint8_t key_share[128];     /* Server's key share (max size for P-384) */
-  uint8_t key_share_len;      /* Length of key share */
+  uint8_t random[32];    /* Server random */
+  uint16_t cipher_suite; /* Selected cipher suite */
+  uint8_t
+      key_share[1120];    /* Server's key share (max size for X25519MLKEM768) */
+  uint16_t key_share_len; /* Length of key share */
   uint16_t key_share_group;   /* Selected group */
   int is_hello_retry_request; /* 1 if HRR */
 } fio_tls13_server_hello_s;
@@ -47014,7 +48378,8 @@ FIO_SFUNC size_t fio___tls13_write_ext_supported_versions(uint8_t *out) {
 }
 
 /* Internal: Write supported_groups extension */
-FIO_SFUNC size_t fio___tls13_write_ext_supported_groups(uint8_t *out) {
+FIO_SFUNC size_t fio___tls13_write_ext_supported_groups(uint8_t *out,
+                                                        int include_hybrid) {
   uint8_t *p = out;
 
   /* Extension type: supported_groups (10) */
@@ -47022,15 +48387,22 @@ FIO_SFUNC size_t fio___tls13_write_ext_supported_groups(uint8_t *out) {
   p += 2;
 
   /* Extension data length: groups_len(2) + groups(2 each) */
-  /* We support: x25519, secp256r1 */
-  fio___tls13_write_u16(p, 2 + 4); /* 2 groups * 2 bytes each */
+  /* We support: x25519mlkem768 (if enabled), x25519, secp256r1 */
+  int group_count = include_hybrid ? 3 : 2;
+  fio___tls13_write_u16(p, (uint16_t)(2 + group_count * 2));
   p += 2;
 
   /* Groups length */
-  fio___tls13_write_u16(p, 4);
+  fio___tls13_write_u16(p, (uint16_t)(group_count * 2));
   p += 2;
 
-  /* x25519 (preferred) */
+  /* X25519MLKEM768 (preferred if PQC enabled - post-quantum) */
+  if (include_hybrid) {
+    fio___tls13_write_u16(p, FIO_TLS13_GROUP_X25519MLKEM768);
+    p += 2;
+  }
+
+  /* x25519 (classical preferred, fallback if PQC not supported) */
   fio___tls13_write_u16(p, FIO_TLS13_GROUP_X25519);
   p += 2;
 
@@ -47076,7 +48448,7 @@ FIO_SFUNC size_t fio___tls13_write_ext_signature_algorithms(uint8_t *out) {
   return (size_t)(p - out);
 }
 
-/* Internal: Write key_share extension (client) */
+/* Internal: Write key_share extension (client) - X25519 only */
 FIO_SFUNC size_t fio___tls13_write_ext_key_share(uint8_t *out,
                                                  const uint8_t *x25519_pubkey) {
   if (!x25519_pubkey)
@@ -47106,6 +48478,58 @@ FIO_SFUNC size_t fio___tls13_write_ext_key_share(uint8_t *out,
   p += 2;
 
   /* Public key */
+  fio_memcpy32(p, x25519_pubkey);
+  p += 32;
+
+  return (size_t)(p - out);
+}
+
+/* Internal: Write key_share extension with X25519MLKEM768 hybrid (client)
+ * Per draft-ietf-tls-hybrid-design:
+ * - Hybrid public key is X25519_pk (32) || ML-KEM-768_ek (1184) = 1216 bytes
+ * - We send BOTH hybrid and X25519 key shares for maximum compatibility
+ */
+FIO_SFUNC size_t
+fio___tls13_write_ext_key_share_hybrid(uint8_t *out,
+                                       const uint8_t *hybrid_pubkey,
+                                       const uint8_t *x25519_pubkey) {
+  if (!hybrid_pubkey || !x25519_pubkey)
+    return 0;
+
+  uint8_t *p = out;
+
+  /* Extension type: key_share (51) */
+  fio___tls13_write_u16(p, FIO_TLS13_EXT_KEY_SHARE);
+  p += 2;
+
+  /* Calculate total key share entries length:
+   * Entry 1 (X25519MLKEM768): group(2) + key_len(2) + key(1216) = 1220 bytes
+   * Entry 2 (X25519): group(2) + key_len(2) + key(32) = 36 bytes
+   * Total entries: 1256 bytes
+   */
+  uint16_t entries_len = (2 + 2 + 1216) + (2 + 2 + 32);
+
+  /* Extension data length: entries_len(2) + entries */
+  fio___tls13_write_u16(p, (uint16_t)(2 + entries_len));
+  p += 2;
+
+  /* Client key share entries length */
+  fio___tls13_write_u16(p, entries_len);
+  p += 2;
+
+  /* Key share entry 1: X25519MLKEM768 (preferred) */
+  fio___tls13_write_u16(p, FIO_TLS13_GROUP_X25519MLKEM768);
+  p += 2;
+  fio___tls13_write_u16(p, 1216); /* hybrid public key length */
+  p += 2;
+  FIO_MEMCPY(p, hybrid_pubkey, 1216);
+  p += 1216;
+
+  /* Key share entry 2: X25519 (fallback for servers without PQC) */
+  fio___tls13_write_u16(p, FIO_TLS13_GROUP_X25519);
+  p += 2;
+  fio___tls13_write_u16(p, 32);
+  p += 2;
   fio_memcpy32(p, x25519_pubkey);
   p += 32;
 
@@ -47430,8 +48854,8 @@ SFUNC int fio_tls13_build_client_hello(uint8_t *out,
   /* supported_versions extension (REQUIRED for TLS 1.3) */
   p += fio___tls13_write_ext_supported_versions(p);
 
-  /* supported_groups extension */
-  p += fio___tls13_write_ext_supported_groups(p);
+  /* supported_groups extension (no hybrid in standalone function) */
+  p += fio___tls13_write_ext_supported_groups(p, 0);
 
   /* signature_algorithms extension */
   p += fio___tls13_write_ext_signature_algorithms(p);
@@ -47534,7 +48958,8 @@ SFUNC int fio_tls13_parse_server_hello(fio_tls13_server_hello_s *out,
     switch (ext_type) {
     case FIO_TLS13_EXT_KEY_SHARE:
       /* In ServerHello: group(2) + key_len(2) + key
-       * In HelloRetryRequest: just group(2) per RFC 8446 Section 4.2.8 */
+       * In HelloRetryRequest: just group(2) per RFC 8446 Section 4.2.8
+       * Key sizes: X25519=32, P-256=65, X25519MLKEM768=1120 */
       if (ext_data_len >= 2) {
         out->key_share_group = fio___tls13_read_u16(p);
         if (ext_data_len >= 4) {
@@ -47543,7 +48968,7 @@ SFUNC int fio_tls13_parse_server_hello(fio_tls13_server_hello_s *out,
           if (key_len <= sizeof(out->key_share) &&
               ext_data_len >= 4 + key_len) {
             FIO_MEMCPY(out->key_share, p + 4, key_len);
-            out->key_share_len = (uint8_t)key_len;
+            out->key_share_len = key_len;
           }
         }
         /* If ext_data_len == 2, it's HRR with just the group */
@@ -48062,7 +49487,14 @@ typedef struct {
   uint8_t client_random[32];
   uint8_t x25519_private_key[32];
   uint8_t x25519_public_key[32];
-  uint8_t shared_secret[32]; /* ECDHE shared secret */
+  uint8_t shared_secret[64]; /* ECDHE shared secret (32 for X25519, 64 for
+                                hybrid) */
+  size_t shared_secret_len;  /* 32 for X25519/P-256, 64 for X25519MLKEM768 */
+
+  /* X25519MLKEM768 hybrid key material (post-quantum) */
+  uint8_t hybrid_private_key[2432]; /* X25519_sk[32] || ML-KEM-768_dk[2400] */
+  uint8_t hybrid_public_key[1216];  /* X25519_pk[32] || ML-KEM-768_ek[1184] */
+  uint8_t use_hybrid;               /* 1 if X25519MLKEM768 is enabled */
 
   /* Secrets (derived during handshake) - up to SHA-384 size */
   uint8_t early_secret[48];
@@ -48587,11 +50019,12 @@ FIO_SFUNC int fio___tls13_derive_handshake_keys(fio_tls13_client_s *client) {
   /* Derive early secret (no PSK) */
   fio_tls13_derive_early_secret(client->early_secret, NULL, 0, use_sha384);
 
-  /* Derive handshake secret */
+  /* Derive handshake secret
+   * Note: shared_secret_len is 32 for X25519/P-256, 64 for X25519MLKEM768 */
   fio_tls13_derive_handshake_secret(client->handshake_secret,
                                     client->early_secret,
                                     client->shared_secret,
-                                    32, /* X25519 shared secret is 32 bytes */
+                                    client->shared_secret_len,
                                     use_sha384);
 
   /* Derive client handshake traffic secret */
@@ -49241,8 +50674,31 @@ FIO_SFUNC int fio___tls13_process_server_hello(fio_tls13_client_s *client,
     return -1;
   }
 
-  /* Validate key share - support both X25519 and P-256 */
-  if (sh.key_share_group == FIO_TLS13_GROUP_X25519 && sh.key_share_len == 32) {
+  /* Validate key share - support X25519MLKEM768, X25519, and P-256 */
+  if (sh.key_share_group == FIO_TLS13_GROUP_X25519MLKEM768 &&
+      sh.key_share_len == 1120) {
+#if defined(H___FIO_MLKEM___H)
+    /* X25519MLKEM768 hybrid - server's key share is (IETF, ML-KEM first):
+     * ML-KEM-768_ciphertext (1088) || X25519_ephemeral_pk (32) = 1120 bytes
+     * Decapsulate to get 64-byte shared secret */
+    if (fio_x25519mlkem768_decaps(client->shared_secret,
+                                  sh.key_share,
+                                  client->hybrid_private_key) != 0) {
+      fio___tls13_set_error(client,
+                            FIO_TLS13_ALERT_LEVEL_FATAL,
+                            FIO_TLS13_ALERT_ILLEGAL_PARAMETER);
+      return -1;
+    }
+    client->shared_secret_len = 64;
+    FIO_LOG_DEBUG2("TLS 1.3: X25519MLKEM768 hybrid key exchange completed");
+#else
+    fio___tls13_set_error(client,
+                          FIO_TLS13_ALERT_LEVEL_FATAL,
+                          FIO_TLS13_ALERT_ILLEGAL_PARAMETER);
+    return -1;
+#endif
+  } else if (sh.key_share_group == FIO_TLS13_GROUP_X25519 &&
+             sh.key_share_len == 32) {
     /* X25519 - compute shared secret */
     if (fio_x25519_shared_secret(client->shared_secret,
                                  client->x25519_private_key,
@@ -49252,6 +50708,7 @@ FIO_SFUNC int fio___tls13_process_server_hello(fio_tls13_client_s *client,
                             FIO_TLS13_ALERT_ILLEGAL_PARAMETER);
       return -1;
     }
+    client->shared_secret_len = 32;
   } else if (sh.key_share_group == FIO_TLS13_GROUP_SECP256R1 &&
              sh.key_share_len == 65) {
 #if defined(H___FIO_P256___H)
@@ -49265,6 +50722,7 @@ FIO_SFUNC int fio___tls13_process_server_hello(fio_tls13_client_s *client,
                             FIO_TLS13_ALERT_ILLEGAL_PARAMETER);
       return -1;
     }
+    client->shared_secret_len = 32;
 #else
     fio___tls13_set_error(client,
                           FIO_TLS13_ALERT_LEVEL_FATAL,
@@ -50132,8 +51590,8 @@ FIO_SFUNC int fio___tls13_build_client_hello2(fio_tls13_client_s *client,
   /* supported_versions extension (REQUIRED for TLS 1.3) */
   p += fio___tls13_write_ext_supported_versions(p);
 
-  /* supported_groups extension */
-  p += fio___tls13_write_ext_supported_groups(p);
+  /* supported_groups extension (include hybrid if enabled) */
+  p += fio___tls13_write_ext_supported_groups(p, client->use_hybrid);
 
   /* signature_algorithms extension */
   p += fio___tls13_write_ext_signature_algorithms(p);
@@ -50239,6 +51697,7 @@ SFUNC void fio_tls13_client_init(fio_tls13_client_s *client,
   FIO_MEMSET(client, 0, sizeof(*client));
   client->state = FIO_TLS13_STATE_START;
   client->server_name = server_name;
+  client->shared_secret_len = 32; /* Default for X25519/P-256 */
 
   /* Initialize transcript hashes */
   client->transcript_sha256 = fio_sha256_init();
@@ -50247,6 +51706,15 @@ SFUNC void fio_tls13_client_init(fio_tls13_client_s *client,
   /* Generate random and X25519 keypair */
   fio_rand_bytes(client->client_random, 32);
   fio_x25519_keypair(client->x25519_private_key, client->x25519_public_key);
+
+#if defined(H___FIO_MLKEM___H)
+  /* Generate X25519MLKEM768 hybrid keypair for post-quantum protection */
+  if (fio_x25519mlkem768_keypair(client->hybrid_public_key,
+                                 client->hybrid_private_key) == 0) {
+    client->use_hybrid = 1;
+    FIO_LOG_DEBUG2("TLS 1.3: X25519MLKEM768 hybrid key generated");
+  }
+#endif
 }
 
 SFUNC void fio_tls13_client_destroy(fio_tls13_client_s *client) {
@@ -50271,7 +51739,9 @@ SFUNC void fio_tls13_client_destroy(fio_tls13_client_s *client) {
   /* Clear all sensitive data */
   fio_secure_zero(client->x25519_private_key, 32);
   fio_secure_zero(client->p256_private_key, 32);
-  fio_secure_zero(client->shared_secret, 32);
+  fio_secure_zero(client->shared_secret, 64);
+  fio_secure_zero(client->hybrid_private_key, 2432);
+  fio_secure_zero(client->hybrid_public_key, 1216);
   fio_secure_zero(client->early_secret, 48);
   fio_secure_zero(client->handshake_secret, 48);
   fio_secure_zero(client->master_secret, 48);
@@ -50351,8 +51821,12 @@ FIO_SFUNC int fio___tls13_build_client_hello_full(uint8_t *out,
   /* supported_versions extension (REQUIRED for TLS 1.3) */
   p += fio___tls13_write_ext_supported_versions(p);
 
-  /* supported_groups extension */
-  p += fio___tls13_write_ext_supported_groups(p);
+  /* supported_groups extension (include hybrid if module available) */
+#if defined(H___FIO_MLKEM___H)
+  p += fio___tls13_write_ext_supported_groups(p, 1);
+#else
+  p += fio___tls13_write_ext_supported_groups(p, 0);
+#endif
 
   /* signature_algorithms extension */
   p += fio___tls13_write_ext_signature_algorithms(p);
@@ -50381,25 +51855,82 @@ SFUNC int fio_tls13_client_start(fio_tls13_client_s *client,
   if (!client || !out || client->state != FIO_TLS13_STATE_START)
     return -1;
 
-  /* Build ClientHello */
+  /* Build ClientHello directly to support hybrid key share */
   uint16_t cipher_suites[] = {FIO_TLS13_CIPHER_SUITE_AES_128_GCM_SHA256,
                               FIO_TLS13_CIPHER_SUITE_CHACHA20_POLY1305_SHA256,
                               FIO_TLS13_CIPHER_SUITE_AES_256_GCM_SHA384};
-
-  /* Build handshake message first (without record header) */
-  uint8_t ch_msg[1024]; /* Increased for ALPN */
-  const char *alpn =
+  size_t cipher_suite_count = 3;
+  const char *alpn_protocols =
       client->alpn_protocols_len > 0 ? client->alpn_protocols : NULL;
-  int ch_len = fio___tls13_build_client_hello_full(ch_msg,
-                                                   sizeof(ch_msg),
-                                                   client->client_random,
-                                                   client->server_name,
-                                                   client->x25519_public_key,
-                                                   cipher_suites,
-                                                   3,
-                                                   alpn);
-  if (ch_len < 0)
-    return -1;
+
+  /* Build handshake message: need space for hybrid key share (1216 bytes)
+   * Max size: ~1600 bytes with all extensions */
+  uint8_t ch_msg[2048];
+  uint8_t *p = ch_msg + 4; /* Skip handshake header */
+  uint8_t *start = p;
+
+  /* Legacy version: TLS 1.2 (0x0303) */
+  fio___tls13_write_u16(p, FIO_TLS13_VERSION_TLS12);
+  p += 2;
+
+  /* Random (32 bytes) */
+  fio_memcpy32(p, client->client_random);
+  p += 32;
+
+  /* Legacy session ID (empty for TLS 1.3) */
+  *p++ = 0;
+
+  /* Cipher suites */
+  fio___tls13_write_u16(p, (uint16_t)(cipher_suite_count * 2));
+  p += 2;
+  for (size_t i = 0; i < cipher_suite_count; ++i) {
+    fio___tls13_write_u16(p, cipher_suites[i]);
+    p += 2;
+  }
+
+  /* Legacy compression methods (only null) */
+  *p++ = 1;
+  *p++ = 0;
+
+  /* Extensions */
+  uint8_t *ext_len_ptr = p;
+  p += 2;
+  uint8_t *ext_start = p;
+
+  /* SNI extension */
+  p += fio___tls13_write_ext_sni(p, client->server_name);
+
+  /* supported_versions extension (REQUIRED for TLS 1.3) */
+  p += fio___tls13_write_ext_supported_versions(p);
+
+  /* supported_groups extension (include hybrid if enabled) */
+  p += fio___tls13_write_ext_supported_groups(p, client->use_hybrid);
+
+  /* signature_algorithms extension */
+  p += fio___tls13_write_ext_signature_algorithms(p);
+
+  /* ALPN extension (RFC 7301) */
+  if (alpn_protocols && alpn_protocols[0])
+    p += fio___tls13_write_ext_alpn(p, alpn_protocols);
+
+  /* key_share extension - include hybrid if available */
+  if (client->use_hybrid) {
+    p += fio___tls13_write_ext_key_share_hybrid(p,
+                                                client->hybrid_public_key,
+                                                client->x25519_public_key);
+    FIO_LOG_DEBUG2("TLS 1.3: ClientHello includes X25519MLKEM768 key share");
+  } else {
+    p += fio___tls13_write_ext_key_share(p, client->x25519_public_key);
+  }
+
+  /* Write extensions length */
+  fio___tls13_write_u16(ext_len_ptr, (uint16_t)(p - ext_start));
+
+  /* Calculate body length and write handshake header */
+  size_t body_len = (size_t)(p - start);
+  fio_tls13_write_handshake_header(ch_msg, FIO_TLS13_HS_CLIENT_HELLO, body_len);
+
+  int ch_len = (int)(4 + body_len);
 
   /* Update transcript with ClientHello (handshake message only) */
   fio___tls13_transcript_update(client, ch_msg, (size_t)ch_len);
@@ -50685,15 +52216,16 @@ typedef struct {
   size_t supported_group_count;      /* Number of groups */
   uint16_t signature_algorithms[16]; /* Offered signature algorithms */
   size_t signature_algorithm_count;  /* Number of signature algorithms */
-  uint8_t key_shares[256];           /* Key share data */
-  size_t key_share_len;              /* Total key share data length */
-  uint16_t key_share_groups[4];      /* Groups for key shares */
-  uint8_t key_share_offsets[4];      /* Offsets into key_shares */
-  uint8_t key_share_lens[4];         /* Lengths of each key share */
-  size_t key_share_count;            /* Number of key shares */
-  const char *server_name;           /* SNI hostname (pointer into data) */
-  size_t server_name_len;            /* SNI hostname length */
-  int has_supported_versions;        /* 1 if TLS 1.3 supported */
+  uint8_t key_shares[2560]; /* Key share data (1216*2 + margin for hybrid) */
+  size_t key_share_len;     /* Total key share data length */
+  uint16_t key_share_groups[4];  /* Groups for key shares */
+  uint16_t key_share_offsets[4]; /* Offsets into key_shares */
+  uint16_t
+      key_share_lens[4]; /* Lengths of each key share (up to 1216 for hybrid) */
+  size_t key_share_count;     /* Number of key shares */
+  const char *server_name;    /* SNI hostname (pointer into data) */
+  size_t server_name_len;     /* SNI hostname length */
+  int has_supported_versions; /* 1 if TLS 1.3 supported */
   /* ALPN (Application-Layer Protocol Negotiation) */
   const char *alpn_protocols[8]; /* ALPN protocol names (pointers into data) */
   size_t alpn_protocol_lens[8];  /* ALPN protocol name lengths */
@@ -50715,7 +52247,11 @@ typedef struct {
   uint8_t server_random[32];
   uint8_t x25519_private_key[32];
   uint8_t x25519_public_key[32];
-  uint8_t shared_secret[32]; /* ECDHE shared secret */
+  uint8_t
+      hybrid_ciphertext[1120]; /* X25519MLKEM768 ciphertext for ServerHello */
+  uint8_t shared_secret[64];   /* ECDHE shared secret (32 for X25519, 64 for
+                                  hybrid) */
+  size_t shared_secret_len;    /* 32 for X25519/P-256, 64 for X25519MLKEM768 */
 
   /* Secrets (derived during handshake) - up to SHA-384 size */
   uint8_t early_secret[48];
@@ -51206,8 +52742,8 @@ FIO_SFUNC int fio___tls13_parse_ch_extensions(fio_tls13_client_hello_s *ch,
           break;
         if (offset + key_len <= sizeof(ch->key_shares)) {
           ch->key_share_groups[ch->key_share_count] = group;
-          ch->key_share_offsets[ch->key_share_count] = (uint8_t)offset;
-          ch->key_share_lens[ch->key_share_count] = (uint8_t)key_len;
+          ch->key_share_offsets[ch->key_share_count] = (uint16_t)offset;
+          ch->key_share_lens[ch->key_share_count] = key_len;
           FIO_MEMCPY(ch->key_shares + offset, shares, key_len);
           offset += key_len;
           ++ch->key_share_count;
@@ -51346,7 +52882,20 @@ FIO_SFUNC int fio___tls13_server_select_key_share(
     const fio_tls13_client_hello_s *ch,
     const uint8_t **client_key_share,
     size_t *client_key_share_len) {
-  /* We only support X25519 for now */
+  /* Prefer X25519MLKEM768 (post-quantum hybrid) if available */
+#if defined(H___FIO_MLKEM___H)
+  for (size_t i = 0; i < ch->key_share_count; ++i) {
+    if (ch->key_share_groups[i] == FIO_TLS13_GROUP_X25519MLKEM768 &&
+        ch->key_share_lens[i] == 1216) {
+      server->key_share_group = FIO_TLS13_GROUP_X25519MLKEM768;
+      *client_key_share = ch->key_shares + ch->key_share_offsets[i];
+      *client_key_share_len = 1216;
+      return 0;
+    }
+  }
+#endif
+
+  /* Fall back to X25519 (classical) */
   for (size_t i = 0; i < ch->key_share_count; ++i) {
     if (ch->key_share_groups[i] == FIO_TLS13_GROUP_X25519 &&
         ch->key_share_lens[i] == 32) {
@@ -51383,7 +52932,12 @@ TLS 1.3 Server Implementation - Message Building
 FIO_SFUNC int fio___tls13_build_server_hello(fio_tls13_server_s *server,
                                              uint8_t *out,
                                              size_t out_capacity) {
-  if (out_capacity < 256)
+  /* Check buffer capacity based on key share group:
+   * - X25519MLKEM768 needs ~1200 bytes (1120 byte key share)
+   * - X25519 needs ~100 bytes (32 byte key share) */
+  size_t min_capacity =
+      (server->key_share_group == FIO_TLS13_GROUP_X25519MLKEM768) ? 1280 : 256;
+  if (out_capacity < min_capacity)
     return -1;
 
   uint8_t *p = out + 4; /* Skip handshake header */
@@ -51427,15 +52981,28 @@ FIO_SFUNC int fio___tls13_build_server_hello(fio_tls13_server_s *server,
   /* key_share extension */
   fio___tls13_write_u16(p, FIO_TLS13_EXT_KEY_SHARE);
   p += 2;
-  fio___tls13_write_u16(p,
-                        36); /* Extension length: group(2) + len(2) + key(32) */
-  p += 2;
-  fio___tls13_write_u16(p, server->key_share_group);
-  p += 2;
-  fio___tls13_write_u16(p, 32); /* X25519 key length */
-  p += 2;
-  fio_memcpy32(p, server->x25519_public_key);
-  p += 32;
+
+  if (server->key_share_group == FIO_TLS13_GROUP_X25519MLKEM768) {
+    /* X25519MLKEM768: 1120-byte ciphertext */
+    fio___tls13_write_u16(p, 1124); /* group(2) + len(2) + ct(1120) */
+    p += 2;
+    fio___tls13_write_u16(p, FIO_TLS13_GROUP_X25519MLKEM768);
+    p += 2;
+    fio___tls13_write_u16(p, 1120); /* Ciphertext length */
+    p += 2;
+    FIO_MEMCPY(p, server->hybrid_ciphertext, 1120);
+    p += 1120;
+  } else {
+    /* X25519: 32-byte public key */
+    fio___tls13_write_u16(p, 36); /* group(2) + len(2) + key(32) */
+    p += 2;
+    fio___tls13_write_u16(p, server->key_share_group);
+    p += 2;
+    fio___tls13_write_u16(p, 32); /* X25519 key length */
+    p += 2;
+    fio_memcpy32(p, server->x25519_public_key);
+    p += 32;
+  }
 
   /* Write extensions length */
   fio___tls13_write_u16(ext_len_ptr, (uint16_t)(p - ext_start));
@@ -51778,11 +53345,12 @@ FIO_SFUNC int fio___tls13_server_derive_handshake_keys(
   /* Derive early secret (no PSK) */
   fio_tls13_derive_early_secret(server->early_secret, NULL, 0, use_sha384);
 
-  /* Derive handshake secret */
+  /* Derive handshake secret
+   * Note: shared_secret_len is 32 for X25519, 64 for X25519MLKEM768 */
   fio_tls13_derive_handshake_secret(server->handshake_secret,
                                     server->early_secret,
                                     server->shared_secret,
-                                    32, /* X25519 shared secret is 32 bytes */
+                                    server->shared_secret_len,
                                     use_sha384);
 
   /* Derive client handshake traffic secret */
@@ -52059,26 +53627,52 @@ FIO_SFUNC int fio___tls13_server_process_client_hello(
     return -1;
   }
 
-  /* Generate server random and X25519 keypair */
+  /* Generate server random */
   fio_rand_bytes(server->server_random, 32);
-  fio_x25519_keypair(server->x25519_private_key, server->x25519_public_key);
 
-  /* Compute shared secret */
-  if (fio_x25519_shared_secret(server->shared_secret,
-                               server->x25519_private_key,
-                               client_key_share) != 0) {
-    FIO_LOG_DEBUG2("TLS 1.3 Server: ECDHE shared secret failed");
+  /* Compute shared secret based on selected key share group */
+  if (server->key_share_group == FIO_TLS13_GROUP_X25519MLKEM768) {
+#if defined(H___FIO_MLKEM___H)
+    /* X25519MLKEM768: Encapsulate to client's public key (IETF, ML-KEM first)
+     * client_key_share is 1216 bytes: ML-KEM-768_ek[1184] || X25519_pk[32]
+     * Server generates ciphertext (1120 bytes) and shared secret (64 bytes) */
+    if (fio_x25519mlkem768_encaps(server->hybrid_ciphertext,
+                                  server->shared_secret,
+                                  client_key_share) != 0) {
+      FIO_LOG_DEBUG2("TLS 1.3 Server: X25519MLKEM768 encapsulation failed");
+      fio___tls13_server_set_error(server,
+                                   FIO_TLS13_ALERT_LEVEL_FATAL,
+                                   FIO_TLS13_ALERT_ILLEGAL_PARAMETER);
+      return -1;
+    }
+    server->shared_secret_len = 64;
+    FIO_LOG_DEBUG2("TLS 1.3 Server: X25519MLKEM768 hybrid key exchange");
+#else
     fio___tls13_server_set_error(server,
                                  FIO_TLS13_ALERT_LEVEL_FATAL,
-                                 FIO_TLS13_ALERT_ILLEGAL_PARAMETER);
+                                 FIO_TLS13_ALERT_INTERNAL_ERROR);
     return -1;
+#endif
+  } else {
+    /* X25519: Generate keypair and compute shared secret */
+    fio_x25519_keypair(server->x25519_private_key, server->x25519_public_key);
+    if (fio_x25519_shared_secret(server->shared_secret,
+                                 server->x25519_private_key,
+                                 client_key_share) != 0) {
+      FIO_LOG_DEBUG2("TLS 1.3 Server: ECDHE shared secret failed");
+      fio___tls13_server_set_error(server,
+                                   FIO_TLS13_ALERT_LEVEL_FATAL,
+                                   FIO_TLS13_ALERT_ILLEGAL_PARAMETER);
+      return -1;
+    }
+    server->shared_secret_len = 32;
   }
 
   /* Update transcript with ClientHello */
   fio___tls13_server_transcript_update(server, ch_msg, ch_msg_len);
 
-  /* Build ServerHello */
-  uint8_t sh_msg[256];
+  /* Build ServerHello (needs 1280+ bytes for X25519MLKEM768) */
+  uint8_t sh_msg[1536];
   int sh_len = fio___tls13_build_server_hello(server, sh_msg, sizeof(sh_msg));
   if (sh_len < 0) {
     FIO_LOG_DEBUG2("TLS 1.3 Server: ServerHello build failed");
@@ -52635,7 +54229,8 @@ SFUNC void fio_tls13_server_destroy(fio_tls13_server_s *server) {
 
   /* Clear all sensitive data */
   fio_secure_zero(server->x25519_private_key, 32);
-  fio_secure_zero(server->shared_secret, 32);
+  fio_secure_zero(server->hybrid_ciphertext, 1120);
+  fio_secure_zero(server->shared_secret, 64);
   fio_secure_zero(server->early_secret, 48);
   fio_secure_zero(server->handshake_secret, 48);
   fio_secure_zero(server->master_secret, 48);
@@ -57549,6 +59144,8 @@ FIO_IFUNC int FIO_NAME(FIO_MAP_NAME,
 /* The number of objects in the map capacity. */
 FIO_IFUNC uint8_t *FIO_NAME(FIO_MAP_NAME,
                             __imap)(FIO_NAME(FIO_MAP_NAME, s) const *o) {
+  if (!o->map)
+    return NULL;
   return (uint8_t *)(o->map + FIO_MAP_CAPA(o->bits));
 }
 
@@ -57586,12 +59183,12 @@ FIO_IFUNC int FIO_NAME(FIO_MAP_NAME,
                                     int (*fn)(FIO_NAME(FIO_MAP_NAME,
                                                        __each_node_s) *),
                                     void *udata) {
-  FIO_NAME(FIO_MAP_NAME, __each_node_s)
-  each = {.map = o, .fn = fn, .udata = udata};
-  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
   size_t counter = o->count;
   if (!counter)
     return 0;
+  FIO_NAME(FIO_MAP_NAME, __each_node_s)
+  each = {.map = o, .fn = fn, .udata = udata};
+  uint8_t *imap = FIO_NAME(FIO_MAP_NAME, __imap)(o);
 #if FIO_MAP_ORDERED
   FIO_INDEXED_LIST_EACH(o->map, node, o->head, pos) {
     each.node = o->map + pos;
@@ -59601,7 +61198,7 @@ Internal Helpers
 /* The number of objects in the map capacity. */
 FIO_IFUNC uint8_t *FIO_NAME(FIO_MAP2_NAME,
                             __imap)(FIO_NAME(FIO_MAP2_NAME, s) * o) {
-  // FIO_ASSERT(o && o->map, "shouldn't have been called.");
+  FIO_ASSERT_DEBUG(o && o->map, "shouldn't have been called.");
   return (uint8_t *)(o->map + FIO_MAP2_CAPA(o->bits));
 }
 
@@ -65413,9 +67010,9 @@ struct fio_io_s {
 };
 
 FIO_IFUNC void fio___io_monitor_in(fio_io_s *io) {
-  FIO_LOG_DDEBUG2("(%d) IO monitoring Input for %d (called)",
-                  fio_io_pid(),
-                  io->fd);
+  // FIO_LOG_DDEBUG2("(%d) IO monitoring Input for %d (called)",
+  //                 fio_io_pid(),
+  //                 io->fd);
   if (io->flags & (FIO___IO_FLAG_PREVENT_ON_DATA | FIO___IO_FLAG_CLOSED_ALL))
     return;
   if ((FIO___IO_FLAG_SET(io, FIO___IO_FLAG_POLLIN_SET) &
@@ -65423,30 +67020,30 @@ FIO_IFUNC void fio___io_monitor_in(fio_io_s *io) {
     return;
   }
   fio_poll_monitor(&FIO___IO.poll, io->fd, (void *)io, POLLIN);
-  FIO_LOG_DDEBUG2("(%d) IO monitoring Input for %d", fio_io_pid(), io->fd);
+  // FIO_LOG_DDEBUG2("(%d) IO monitoring Input for %d", fio_io_pid(), io->fd);
 }
 FIO_IFUNC void fio___io_monitor_out(fio_io_s *io) {
-  FIO_LOG_DDEBUG2("(%d) IO monitoring Output for %d (called)",
-                  fio_io_pid(),
-                  io->fd);
+  // FIO_LOG_DDEBUG2("(%d) IO monitoring Output for %d (called)",
+  //                 fio_io_pid(),
+  //                 io->fd);
   if (io->flags & FIO___IO_FLAG_WRITE_SCHD)
     return;
   if ((FIO___IO_FLAG_SET(io, FIO___IO_FLAG_POLLOUT_SET) &
        FIO___IO_FLAG_POLLOUT_SET))
     return;
   fio_poll_monitor(&FIO___IO.poll, io->fd, (void *)io, POLLOUT);
-  FIO_LOG_DDEBUG2("(%d) IO monitoring Output for %d", fio_io_pid(), io->fd);
+  // FIO_LOG_DDEBUG2("(%d) IO monitoring Output for %d", fio_io_pid(), io->fd);
 }
 
 FIO_IFUNC void fio___io_monitor_forget(fio_io_s *io) {
-  FIO_LOG_DDEBUG2("(%d) IO monitoring Removed for %d (called)",
-                  fio_io_pid(),
-                  io->fd);
+  // FIO_LOG_DDEBUG2("(%d) IO monitoring Removed for %d (called)",
+  //                 fio_io_pid(),
+  //                 io->fd);
   if (!(FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_POLL_SET) &
         FIO___IO_FLAG_POLL_SET))
     return;
   fio_poll_forget(&FIO___IO.poll, io->fd);
-  FIO_LOG_DDEBUG2("(%d) IO monitoring Removed for %d", fio_io_pid(), io->fd);
+  // FIO_LOG_DDEBUG2("(%d) IO monitoring Removed for %d", fio_io_pid(), io->fd);
 }
 
 FIO_SFUNC void fio___io_destroy(fio_io_s *io) {
@@ -65893,9 +67490,9 @@ static void fio___io_poll_on_ready(void *io_, void *ignr_) {
   size_t total = 0;
   FIO___IO_FLAG_UNSET(io,
                       (FIO___IO_FLAG_POLLOUT_SET | FIO___IO_FLAG_WRITE_SCHD));
-  FIO_LOG_DDEBUG2("(%d) poll_on_ready callback for fd %d",
-                  fio_io_pid(),
-                  fio_io_fd(io));
+  // FIO_LOG_DDEBUG2("(%d) poll_on_ready callback for fd %d",
+  //                 fio_io_pid(),
+  //                 fio_io_fd(io));
   if (!(io->flags & FIO___IO_FLAG_OPEN))
     goto finish;
   for (;;) {
@@ -65906,10 +67503,10 @@ static void fio___io_poll_on_ready(void *io_, void *ignr_) {
       break;
     ssize_t r = io->pr->io_functions.write(io->fd, buf, len, io->tls);
     if (r > 0) {
-      FIO_LOG_DDEBUG2("(%d) written %zu bytes to fd %d",
-                      FIO___IO.pid,
-                      (size_t)r,
-                      io->fd);
+      // FIO_LOG_DDEBUG2("(%d) written %zu bytes to fd %d",
+      //                 FIO___IO.pid,
+      //                 (size_t)r,
+      //                 io->fd);
       total += r;
       fio_stream_advance(&io->out, r);
       continue;
@@ -65946,11 +67543,11 @@ static void fio___io_poll_on_ready(void *io_, void *ignr_) {
       FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_THROTTLED);
       fio___io_monitor_in(io);
     }
-    FIO_LOG_DDEBUG2("(%d) calling on_ready for %p (fd %d) - %zu data left.",
-                    FIO___IO.pid,
-                    (void *)io,
-                    io->fd,
-                    fio_stream_length(&io->out));
+    // FIO_LOG_DDEBUG2("(%d) calling on_ready for %p (fd %d) - %zu data left.",
+    //                 FIO___IO.pid,
+    //                 (void *)io,
+    //                 io->fd,
+    //                 fio_stream_length(&io->out));
     io->pr->on_ready(io);
   }
 
@@ -66004,9 +67601,9 @@ Event scheduling
 ***************************************************************************** */
 
 static void fio___io_poll_on_data_schd(void *io) {
-  FIO_LOG_DDEBUG2("(%d) `on_data` scheduled for fd %d.",
-                  fio_io_pid(),
-                  fio_io_fd((fio_io_s *)io));
+  // FIO_LOG_DDEBUG2("(%d) `on_data` scheduled for fd %d.",
+  //                 fio_io_pid(),
+  //                 fio_io_fd((fio_io_s *)io));
   // FIO___IO_FLAG_POLLIN_SET
   fio___io_defer_no_wakeup(fio___io_poll_on_data,
                            (void *)fio___io_dup2((fio_io_s *)io),
@@ -66015,18 +67612,18 @@ static void fio___io_poll_on_data_schd(void *io) {
 static void fio___io_poll_on_ready_schd(void *io) {
   if (!(FIO___IO_FLAG_SET((fio_io_s *)io, FIO___IO_FLAG_WRITE_SCHD) &
         FIO___IO_FLAG_WRITE_SCHD)) {
-    FIO_LOG_DDEBUG2("(%d) `on_ready` scheduled for fd %d.",
-                    fio_io_pid(),
-                    fio_io_fd((fio_io_s *)io));
+    // FIO_LOG_DDEBUG2("(%d) `on_ready` scheduled for fd %d.",
+    //                 fio_io_pid(),
+    //                 fio_io_fd((fio_io_s *)io));
     fio___io_defer_no_wakeup(fio___io_poll_on_ready,
                              (void *)fio___io_dup2((fio_io_s *)io),
                              NULL);
   }
 }
 static void fio___io_poll_on_close_schd(void *io) {
-  FIO_LOG_DDEBUG2("(%d) remote closure for fd %d.",
-                  fio_io_pid(),
-                  fio_io_fd((fio_io_s *)io));
+  // FIO_LOG_DDEBUG2("(%d) remote closure for fd %d.",
+  //                 fio_io_pid(),
+  //                 fio_io_fd((fio_io_s *)io));
   fio___io_defer_no_wakeup(fio___io_poll_on_close,
                            (void *)fio___io_dup2((fio_io_s *)io),
                            NULL);
@@ -66058,10 +67655,10 @@ static int fio___io_review_timeouts(void) {
       FIO_ASSERT_DEBUG(io->pr == pr, "IO protocol ownership error");
       if (io->active >= limit)
         break;
-      FIO_LOG_DDEBUG2("(%d) scheduling timeout for %p (fd %d)",
-                      FIO___IO.pid,
-                      (void *)io,
-                      io->fd);
+      // FIO_LOG_DDEBUG2("(%d) scheduling timeout for %p (fd %d)",
+      //                 FIO___IO.pid,
+      //                 (void *)io,
+      //                 io->fd);
       fio___io_defer_no_wakeup(fio___io_poll_on_timeout,
                                (void *)fio___io_dup2(io),
                                NULL);
@@ -67271,9 +68868,9 @@ static void fio___io_listen_on_data_task(void *io_, void *ignr_) {
   fio___io_listen_s *l = (fio___io_listen_s *)fio_io_udata(io);
   fio_io_unsuspend(io);
   while (FIO_SOCK_FD_ISVALID(fd = fio_sock_accept(fio_io_fd(io), NULL, NULL))) {
-    FIO_LOG_DDEBUG2("(%d) accepted new connection with fd %d",
-                    fio_io_pid(),
-                    fd);
+    // FIO_LOG_DDEBUG2("(%d) accepted new connection with fd %d",
+    //                 fio_io_pid(),
+    //                 fd);
     fio_io_attach_fd(fd, l->protocol, l->udata, l->tls_ctx);
   }
   fio___io_free2(io);
@@ -70184,7 +71781,7 @@ after_send:
 SFUNC void fio_ipc_free(fio_ipc_s *msg) {
   if (!msg)
     return;
-  fio_io_defer(fio___ipc_free_task, msg, NULL);
+  fio_queue_push(fio_io_queue(), fio___ipc_free_task, msg, NULL);
 }
 
 /** Free message (decrement ref count) */
@@ -70301,16 +71898,12 @@ IPC Core - Encryption/Decryption
 
 FIO_IFUNC fio_u256 fio___ipc_get_encryption_key(fio_ipc_s *m) {
   fio_u512 secret = fio_secret();
-  fio_u256 key;
-  /* folding - mix / encrypt secret using secret offset as key */
-  /* this creates a safe ephemeral key */
-  fio_chacha20(secret.u8,
-               sizeof(secret),
-               (secret.u8 + (m->id & 31) + 1),
-               ((char *)&m->timestamp + 4),
-               (m->id & 1023) + m->len);
-  /* use an impossible to predict key offset to derive final key */
-  fio_memcpy32(key.u8, secret.u8 + (secret.u8[2] & 31));
+  /* derive a single-use ephemeral key, risky hash is good enough for this */
+  fio_u256 key = fio_risky256_hmac((secret.u8 + (m->id & 31) + 1),
+                                   32,
+                                   (char *)&m->timestamp,
+                                   16);
+  fio_secure_zero(&secret, sizeof(secret));
   // FIO_LOG_DDEBUG2("(%d) IPC key: %p...%p",
   //                 fio_io_pid(),
   //                 (void *)(uintptr_t)key.u64[0],
@@ -70335,10 +71928,10 @@ SFUNC void fio_ipc_encrypt(fio_ipc_s *m) {
   fio_u128 nonce = fio___ipc_get_encryption_nonce(m);
   m->routing_flags |= FIO_IPC_FLAG_ENCRYPTED; /* runs on IO thread */
 
-  FIO_LOG_DDEBUG2("(%d) IPC sizes \t enc: %zu \t wire %zu",
-                  fio_io_pid(),
-                  fio___ipc_sizeof_enc(m->len),
-                  fio___ipc_wire_length(m->len));
+  // FIO_LOG_DDEBUG2("(%d) IPC sizes \t enc: %zu \t wire %zu",
+  //                 fio_io_pid(),
+  //                 fio___ipc_sizeof_enc(m->len),
+  //                 fio___ipc_wire_length(m->len));
 
   /* Encrypt in-place (everything after first 16 bytes) */
   fio_chacha20_poly1305_enc((m->data + m->len),           /* MAC output */
@@ -70350,6 +71943,7 @@ SFUNC void fio_ipc_encrypt(fio_ipc_s *m) {
                             nonce.u8                      /* 12-byte nonce */
   );
   m->len = fio_ltole32(m->len);
+  fio_secure_zero(&key_buf, sizeof(key_buf));
 }
 
 /** Decrypt IPC message on receive */
@@ -70360,10 +71954,10 @@ FIO_IFUNC int fio_ipc_decrypt(fio_ipc_s *m) {
   m->len = fio_ltole32(m->len);
   fio_u256 key_buf = fio___ipc_get_encryption_key(m);
   fio_u128 nonce = fio___ipc_get_encryption_nonce(m);
-  FIO_LOG_DDEBUG2("(%d) IPC sizes \t enc: %zu \t wire %zu",
-                  fio_io_pid(),
-                  fio___ipc_sizeof_enc(m->len),
-                  fio___ipc_wire_length(m->len));
+  // FIO_LOG_DDEBUG2("(%d) IPC sizes \t enc: %zu \t wire %zu",
+  //                 fio_io_pid(),
+  //                 fio___ipc_sizeof_enc(m->len),
+  //                 fio___ipc_wire_length(m->len));
   /* Decrypt and verify MAC */
   r = fio_chacha20_poly1305_dec((m->data + m->len), /* MAC output */
                                 ((char *)&m->call), /* Data to decrypt */
@@ -70377,6 +71971,7 @@ FIO_IFUNC int fio_ipc_decrypt(fio_ipc_s *m) {
   if (r) {
     FIO_LOG_SECURITY("IPC message decryption failed (possible attack)");
   }
+  fio_secure_zero(&key_buf, sizeof(key_buf));
   return r;
 }
 
@@ -70481,10 +72076,10 @@ FIO_SFUNC void fio___ipc_send_master_task(void *ipc_, void *ignr_) {
     count += fio_io_protocol_each(&FIO___IPC.protocol_rpc,
                                   fio___ipc_send_each_task,
                                   ipc);
-  FIO_LOG_DDEBUG2("(%d) [%s] sent IPC/RPC to %zu peers",
-                  fio_io_pid(),
-                  (fio_io_is_master() ? "Master" : "Worker"),
-                  count);
+  // FIO_LOG_DDEBUG2("(%d) [%s] sent IPC/RPC to %zu peers",
+  //                 fio_io_pid(),
+  //                 (fio_io_is_master() ? "Master" : "Worker"),
+  //                 count);
   fio___ipc_free_task(ipc, NULL);
   (void)count; /* if unused by logger */
   (void)ignr_;
@@ -70520,7 +72115,7 @@ SFUNC void fio_ipc_send(fio_ipc_s *ipc) {
     fio_ipc_after_send(ipc, fio___ipc_execute_task, NULL);
   }
   fio_ipc_send_to(FIO___IPC.worker_connection, ipc);
-  FIO_LOG_DDEBUG2("(%d) [Worker] sent IPC/RPC to 1 Master", fio_io_pid());
+  // FIO_LOG_DDEBUG2("(%d) [Worker] sent IPC/RPC to 1 Master", fio_io_pid());
   return;
 master_only:
   fio_ipc_free(ipc); /* we might not be in the IO thread */
@@ -70533,11 +72128,12 @@ SFUNC void fio_ipc_send_to(fio_io_s *to, fio_ipc_s *m) {
   if (!to)
     goto free_send;
 
-  FIO_LOG_DDEBUG2("(%d) IPC sending %zu (data length %zu) bytes (offset %zu)",
-                  fio_io_pid(),
-                  fio___ipc_wire_length(m->len),
-                  (size_t)m->len,
-                  (size_t)FIO_PTR_FIELD_OFFSET(fio_ipc_s, len));
+  // FIO_LOG_DDEBUG2("(%d) IPC sending %zu (data length %zu) bytes (offset
+  // %zu)",
+  //                 fio_io_pid(),
+  //                 fio___ipc_wire_length(m->len),
+  //                 (size_t)m->len,
+  //                 (size_t)FIO_PTR_FIELD_OFFSET(fio_ipc_s, len));
 
   /* Encrypt message */
   fio_ipc_encrypt(m);
@@ -70735,7 +72331,7 @@ FIO_IFUNC void fio___ipc_on_data_internal(fio_io_s *io,
                                      p->expected_len - p->msg_received);
       if (p->expected_len != p->msg_received)
         return;
-      fio_io_defer(fn, msg, fio_io_dup(io));
+      fio_queue_push(fio_io_queue(), fn, msg, fio_io_dup(io));
       fio___ipc_parser_init(p);
       return; /* don't read more messages for now */
     }
@@ -70749,16 +72345,17 @@ FIO_IFUNC void fio___ipc_on_data_internal(fio_io_s *io,
         break;
       p->expected_len =
           fio___ipc_wire_length(fio_buf2u32_le(p->buffer + consumed));
-      FIO_LOG_DEBUG2("(%d) incoming IPC message: %u/%zu (len=%u, bytes: %02x "
-                     "%02x %02x %02x)",
-                     fio_io_pid(),
-                     p->expected_len,
-                     p->buf_len,
-                     fio_buf2u32u(p->buffer + consumed),
-                     (uint8_t)p->buffer[consumed],
-                     (uint8_t)p->buffer[consumed + 1],
-                     (uint8_t)p->buffer[consumed + 2],
-                     (uint8_t)p->buffer[consumed + 3]);
+      // FIO_LOG_DEBUG2("(%d) incoming IPC message: %u/%zu (len=%u, bytes: %02x
+      // "
+      //                "%02x %02x %02x)",
+      //                fio_io_pid(),
+      //                p->expected_len,
+      //                p->buf_len,
+      //                fio_buf2u32u(p->buffer + consumed),
+      //                (uint8_t)p->buffer[consumed],
+      //                (uint8_t)p->buffer[consumed + 1],
+      //                (uint8_t)p->buffer[consumed + 2],
+      //                (uint8_t)p->buffer[consumed + 3]);
       if (p->expected_len > FIO___IPC.max_length) { /* oversized? */
         FIO_LOG_SECURITY("(%d) Invalid IPC message length: %u (buf: %zu)",
                          fio_io_pid(),
@@ -70769,15 +72366,15 @@ FIO_IFUNC void fio___ipc_on_data_internal(fio_io_s *io,
       }
 
       if (p->buf_len >= consumed + p->expected_len) {
-        FIO_LOG_DEBUG2("(%d) routing small IPC message:%u/%u",
-                       fio_io_pid(),
-                       p->expected_len,
-                       p->buf_len);
+        // FIO_LOG_DEBUG2("(%d) routing small IPC message:%u/%u",
+        //                fio_io_pid(),
+        //                p->expected_len,
+        //                p->buf_len);
         msg = fio___ipc_new(p->expected_len - fio___ipc_sizeof_header());
         msg->from = io;
         FIO_MEMCPY(&msg->len, p->buffer + consumed, p->expected_len);
         consumed += p->expected_len;
-        fio_io_defer(fn, msg, fio_io_dup(io));
+        fio_queue_push(fio_io_queue(), fn, msg, fio_io_dup(io));
         had_messages |= 1;
         continue;
       }
@@ -73369,7 +74966,8 @@ FIO_SFUNC void fio___tls13_finish(int fd, void *tls_ctx) {
 
     if (enc_len > 0) {
       /* Best effort send, ignore errors */
-      (void)fio_sock_write(fd, (char *)alert, (size_t)enc_len);
+      int ignr_ = fio_sock_write(fd, (char *)alert, (size_t)enc_len);
+      (void)ignr_;
     }
   }
   (void)fd;
@@ -73826,7 +75424,7 @@ FIO_SFUNC void fio___pubsub_subscription_free_task(void *s, void *ignr_) {
 }
 
 FIO_SFUNC void fio_pubsub_subscription_free(fio_pubsub_subscription_s *s) {
-  fio_io_defer(fio___pubsub_subscription_free_task, s, NULL);
+  fio_queue_push(fio_io_queue(), fio___pubsub_subscription_free_task, s, NULL);
 }
 
 FIO_IFUNC fio_pubsub_subscription_s *fio_pubsub_subscription_dup(
@@ -74443,12 +76041,12 @@ FIO_SFUNC void fio___pubsub_engine_ipc_sub_noop(const fio_pubsub_engine_s *eng,
 /** Distributes an IPC message to all of a channel's subscribers */
 FIO_SFUNC void fio___pubsub_engine_ipc_deliver2channel(fio_pubsub_channel_s *ch,
                                                        fio_ipc_s *ipc) {
-  FIO_LOG_DEBUG2(
-      "(%d) channel_deliver_ipc: ch=%p subscriptions.next=%p .prev=%p",
-      fio_io_pid(),
-      (void *)ch,
-      (void *)ch->subscriptions.next,
-      (void *)ch->subscriptions.prev);
+  // FIO_LOG_DEBUG2(
+  //     "(%d) channel_deliver_ipc: ch=%p subscriptions.next=%p .prev=%p",
+  //     fio_io_pid(),
+  //     (void *)ch,
+  //     (void *)ch->subscriptions.next,
+  //     (void *)ch->subscriptions.prev);
   const fio_io_s *skip = ipc->from;
   FIO_LIST_EACH(fio_pubsub_subscription_s, node, &ch->subscriptions, s) {
     /* Skip if publisher is sending to itself (IO is set)*/
@@ -74479,10 +76077,10 @@ FIO_SFUNC void fio___pubsub_engine_ipc_publish_deliver(fio_ipc_s *ipc) {
                                        ch_name));
 
   if (ch_ptr) {
-    FIO_LOG_DDEBUG2("(%d) channel found, delivering to %.*s",
-                    fio_io_pid(),
-                    (int)ch_ptr[0]->name_len,
-                    ch_ptr[0]->name);
+    // FIO_LOG_DDEBUG2("(%d) channel found, delivering to %.*s",
+    //                 fio_io_pid(),
+    //                 (int)ch_ptr[0]->name_len,
+    //                 ch_ptr[0]->name);
     fio___pubsub_engine_ipc_deliver2channel(*ch_ptr, ipc);
   }
 
@@ -74636,8 +76234,8 @@ SFUNC void fio_pubsub_publish FIO_NOOP(fio_pubsub_publish_args_s args) {
   fio_pubsub_msg_s msg = {
       .io = args.from,
       .id = args.id ? args.id : fio_rand64(),
-      .timestamp =
-          args.timestamp ? (uint64_t)args.timestamp : fio_io_last_tick(),
+      .timestamp = args.timestamp ? (uint64_t)args.timestamp
+                                  : (uint64_t)fio_io_last_tick(),
       .channel = args.channel,
       .message = args.message,
       .filter = args.filter,
@@ -74657,12 +76255,12 @@ FIO_SFUNC void fio___pubsub_unsubscribe_task(void *sub_, void *ignr_) {
   sub->node = FIO_LIST_INIT(sub->node);
   sub->on_message = fio___pubsub_on_message_stub;
 
-  FIO_LOG_DDEBUG2("(%d) unsubscribed performed for %p -> %.*s (ref: %zu)",
-                  fio_io_pid(),
-                  (void *)sub,
-                  (int)sub->channel->name_len,
-                  sub->channel->name,
-                  fio_pubsub_subscription_references(sub));
+  // FIO_LOG_DDEBUG2("(%d) unsubscribed performed for %p -> %.*s (ref: %zu)",
+  //                 fio_io_pid(),
+  //                 (void *)sub,
+  //                 (int)sub->channel->name_len,
+  //                 sub->channel->name,
+  //                 fio_pubsub_subscription_references(sub));
 
   fio_pubsub_subscription_free2(sub);
   /* fio_pubsub_channel_free(ch) - called by `destroy` when freed */
@@ -74673,12 +76271,12 @@ FIO_SFUNC void fio___pubsub_unsubscribe_task(void *sub_, void *ignr_) {
 FIO_SFUNC void fio___pubsub_subscription_env_unsubscribe(void *sub_) {
   fio_pubsub_subscription_s *sub = (fio_pubsub_subscription_s *)sub_;
   sub->on_message = fio___pubsub_on_message_stub;
-  FIO_LOG_DDEBUG2("(%d) unsubscribed called for %p -> %.*s (ref: %zu)",
-                  fio_io_pid(),
-                  (void *)sub,
-                  (int)sub->channel->name_len,
-                  sub->channel->name,
-                  fio_pubsub_subscription_references(sub));
+  // FIO_LOG_DDEBUG2("(%d) unsubscribed called for %p -> %.*s (ref: %zu)",
+  //                 fio_io_pid(),
+  //                 (void *)sub,
+  //                 (int)sub->channel->name_len,
+  //                 sub->channel->name,
+  //                 fio_pubsub_subscription_references(sub));
 
   fio_queue_push(fio_io_queue(),
                  fio___pubsub_unsubscribe_task,
@@ -74758,12 +76356,12 @@ FIO_SFUNC void fio___pubsub_subscribe_task(void *sub_, void *bstr_) {
           ch_ptr[0]->name);
   }
 
-  FIO_LOG_DDEBUG2("(%d) subscribed for %p -> %.*s (ref: %zu)",
-                  fio_io_pid(),
-                  (void *)sub,
-                  (int)sub->channel->name_len,
-                  sub->channel->name,
-                  fio_pubsub_subscription_references(sub));
+  // FIO_LOG_DDEBUG2("(%d) subscribed for %p -> %.*s (ref: %zu)",
+  //                 fio_io_pid(),
+  //                 (void *)sub,
+  //                 (int)sub->channel->name_len,
+  //                 sub->channel->name,
+  //                 fio_pubsub_subscription_references(sub));
   fio_pubsub_subscription_free2(sub);
   return;
 
@@ -74901,10 +76499,10 @@ FIO_SFUNC void fio___pubsub_worker_on_history_reply(fio_ipc_s *ipc) {
     return;
   }
 
-  FIO_LOG_DEBUG2("(%d) worker_on_history_reply: channel=%.*s",
-                 fio_io_pid(),
-                 (int)(fio_buf2u32u(ipc->data)),
-                 ipc->data + sizeof(uint32_t[2]));
+  // FIO_LOG_DEBUG2("(%d) worker_on_history_reply: channel=%.*s",
+  //                fio_io_pid(),
+  //                (int)(fio_buf2u32u(ipc->data)),
+  //                ipc->data + sizeof(uint32_t[2]));
 
   fio_queue_push(((fio_pubsub_subscription_s *)ipc->udata)->queue,
                  fio___pubsub_subscription_ipc_deliver,
@@ -76265,7 +77863,7 @@ FIO_SFUNC void fio___redis_on_timeout(fio_io_s *io) {
 
   if (io == r->sub_conn.io) {
     /* Subscription connection - just send PING */
-    fio_io_write(io, "*1\r\n$4\r\nPING\r\n", 14);
+    fio_io_write(io, (char *)"*1\r\n$4\r\nPING\r\n", 14);
   } else {
     /* Publishing connection - check for stuck commands */
     if (!FIO_LIST_IS_EMPTY(&r->cmd_queue)) {

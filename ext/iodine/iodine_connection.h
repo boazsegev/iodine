@@ -672,7 +672,6 @@ FIO_SFUNC VALUE iodine_connection_cookie_set(int argc, VALUE *argv, VALUE o) {
                   IODINE_ARG_BOOL(secure, 0, "secure", 0),
                   IODINE_ARG_BOOL(http_only, 0, "http_only", 0),
                   IODINE_ARG_BOOL(partitioned, 0, "partitioned", 0));
-
   if (!name.len)
     return Qnil;
   if (same_site_rb != Qnil) {
@@ -931,9 +930,7 @@ static VALUE iodine_handler_deafult_on_http_rest(VALUE handler, VALUE client) {
   fio_http_s *h = c->http;
   ID callback = 0;
   switch (fio_http_resource_action(h)) {
-  case FIO_HTTP_RESOURCE_NONE:
-    fio_http_send_error_response(h, 404);
-    return Qnil;
+  case FIO_HTTP_RESOURCE_NONE: callback = IODINE_ON_HTTP_ID; break;
   case FIO_HTTP_RESOURCE_INDEX: callback = IODINE_INDEX_ID; break;
   case FIO_HTTP_RESOURCE_SHOW: callback = IODINE_SHOW_ID; break;
   case FIO_HTTP_RESOURCE_NEW: callback = IODINE_NEW_ID; break;
@@ -951,6 +948,14 @@ static VALUE iodine_handler_deafult_on_http404(VALUE handler, VALUE client) {
   if (!c->http)
     return Qnil;
   fio_http_send_error_response(c->http, 404);
+  return Qnil;
+  (void)handler;
+}
+static VALUE iodine_handler_deafult_on_http405(VALUE handler, VALUE client) {
+  iodine_connection_s *c = iodine_connection_ptr(client);
+  if (!c->http)
+    return Qnil;
+  fio_http_send_error_response(c->http, 405);
   return Qnil;
   (void)handler;
 }
@@ -1343,7 +1348,7 @@ static VALUE iodine_resource_handler_method_injection(int argc,
     if (!rb_respond_to(handler, id))                                           \
       rb_define_singleton_method(handler,                                      \
                                  rb_id2name(id),                               \
-                                 iodine_handler_deafult_on_http404,            \
+                                 iodine_handler_deafult_on_http405,            \
                                  1);                                           \
   } while (0)
     IODINE_DEFINE_MISSING_CALLBACK(IODINE_INDEX_ID);
@@ -2416,7 +2421,7 @@ static VALUE iodine_connection_pending(VALUE self) {
   iodine_connection_s *c = iodine_connection_ptr(self);
   if (c && c->io)
     return RB_SIZE2NUM(((size_t)fio_io_backlog(c->io)));
-  return Qfalse;
+  return RB_SIZE2NUM(((size_t)0));
 }
 
 /** Schedules the connection to be closed. */

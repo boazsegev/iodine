@@ -23,6 +23,7 @@ static VALUE iodine_rb_AES256GCM;
 static VALUE iodine_rb_ED25519;
 static VALUE iodine_rb_X25519;
 static VALUE iodine_rb_HKDF;
+static VALUE iodine_rb_X25519MLKEM768;
 
 /* *****************************************************************************
 ChaCha20-Poly1305 AEAD Encryption
@@ -556,6 +557,60 @@ FIO_SFUNC VALUE iodine_crypto_ed25519_verify(int argc,
   (void)self;
 }
 
+/**
+ * Converts an Ed25519 secret key to an X25519 secret key.
+ *
+ * This allows using an Ed25519 signing key for X25519 key exchange.
+ *
+ * @param ed_secret_key: [String] 32-byte Ed25519 secret key
+ * @return [String] 32-byte X25519 secret key
+ */
+FIO_SFUNC VALUE iodine_crypto_ed25519_to_x25519_secret(int argc,
+                                                       VALUE *argv,
+                                                       VALUE self) {
+  fio_buf_info_s ed_sk = FIO_BUF_INFO0;
+  iodine_rb2c_arg(argc, argv, IODINE_ARG_BUF(ed_sk, 0, "ed_secret_key", 1));
+
+  if (ed_sk.len != 32)
+    rb_raise(rb_eArgError,
+             "ed_secret_key must be 32 bytes (got %zu)",
+             ed_sk.len);
+
+  uint8_t x_sk[32];
+  fio_ed25519_sk_to_x25519(x_sk, (const uint8_t *)ed_sk.buf);
+  VALUE result = rb_str_new((const char *)x_sk, 32);
+  /* Clear secret key from stack */
+  fio_memset(x_sk, 0, 32);
+  return result;
+  (void)self;
+}
+
+/**
+ * Converts an Ed25519 public key to an X25519 public key.
+ *
+ * This allows encrypting to someone who has only shared their Ed25519
+ * signing public key.
+ *
+ * @param ed_public_key: [String] 32-byte Ed25519 public key
+ * @return [String] 32-byte X25519 public key
+ */
+FIO_SFUNC VALUE iodine_crypto_ed25519_to_x25519_public(int argc,
+                                                       VALUE *argv,
+                                                       VALUE self) {
+  fio_buf_info_s ed_pk = FIO_BUF_INFO0;
+  iodine_rb2c_arg(argc, argv, IODINE_ARG_BUF(ed_pk, 0, "ed_public_key", 1));
+
+  if (ed_pk.len != 32)
+    rb_raise(rb_eArgError,
+             "ed_public_key must be 32 bytes (got %zu)",
+             ed_pk.len);
+
+  uint8_t x_pk[32];
+  fio_ed25519_pk_to_x25519(x_pk, (const uint8_t *)ed_pk.buf);
+  return rb_str_new((const char *)x_pk, 32);
+  (void)self;
+}
+
 /* *****************************************************************************
 X25519 Key Exchange
 ***************************************************************************** */
@@ -728,7 +783,8 @@ FIO_SFUNC VALUE iodine_crypto_x25519_decrypt(int argc,
 }
 
 /**
- * Encrypts a message using X25519 public-key encryption (ECIES) with AES-128-GCM.
+ * Encrypts a message using X25519 public-key encryption (ECIES) with
+ * AES-128-GCM.
  *
  * Uses ephemeral key agreement + AES-128-GCM for authenticated encryption.
  * Only the recipient with the matching secret key can decrypt.
@@ -759,12 +815,11 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes128(int argc,
   VALUE ciphertext = rb_str_buf_new(out_len);
   rb_str_set_len(ciphertext, out_len);
 
-  int result =
-      fio_x25519_encrypt((uint8_t *)RSTRING_PTR(ciphertext),
-                         message.buf,
-                         message.len,
-                         (fio_crypto_enc_fn *)fio_aes128_gcm_enc,
-                         (const uint8_t *)recipient_pk.buf);
+  int result = fio_x25519_encrypt((uint8_t *)RSTRING_PTR(ciphertext),
+                                  message.buf,
+                                  message.len,
+                                  (fio_crypto_enc_fn *)fio_aes128_gcm_enc,
+                                  (const uint8_t *)recipient_pk.buf);
 
   if (result != 0)
     rb_raise(rb_eRuntimeError, "Encryption failed");
@@ -774,7 +829,8 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes128(int argc,
 }
 
 /**
- * Decrypts a message using X25519 public-key encryption (ECIES) with AES-128-GCM.
+ * Decrypts a message using X25519 public-key encryption (ECIES) with
+ * AES-128-GCM.
  *
  * @param ciphertext [String] Ciphertext from X25519.encrypt_aes128
  * @param secret_key: [String] 32-byte recipient's secret key
@@ -803,12 +859,11 @@ FIO_SFUNC VALUE iodine_crypto_x25519_decrypt_aes128(int argc,
   VALUE plaintext = rb_str_buf_new(out_len);
   rb_str_set_len(plaintext, out_len);
 
-  int result =
-      fio_x25519_decrypt((uint8_t *)RSTRING_PTR(plaintext),
-                         (const uint8_t *)ciphertext.buf,
-                         ciphertext.len,
-                         (fio_crypto_dec_fn *)fio_aes128_gcm_dec,
-                         (const uint8_t *)sk.buf);
+  int result = fio_x25519_decrypt((uint8_t *)RSTRING_PTR(plaintext),
+                                  (const uint8_t *)ciphertext.buf,
+                                  ciphertext.len,
+                                  (fio_crypto_dec_fn *)fio_aes128_gcm_dec,
+                                  (const uint8_t *)sk.buf);
 
   if (result != 0)
     rb_raise(rb_eRuntimeError, "Decryption failed (authentication error)");
@@ -818,7 +873,8 @@ FIO_SFUNC VALUE iodine_crypto_x25519_decrypt_aes128(int argc,
 }
 
 /**
- * Encrypts a message using X25519 public-key encryption (ECIES) with AES-256-GCM.
+ * Encrypts a message using X25519 public-key encryption (ECIES) with
+ * AES-256-GCM.
  *
  * Uses ephemeral key agreement + AES-256-GCM for authenticated encryption.
  * Only the recipient with the matching secret key can decrypt.
@@ -849,12 +905,11 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes256(int argc,
   VALUE ciphertext = rb_str_buf_new(out_len);
   rb_str_set_len(ciphertext, out_len);
 
-  int result =
-      fio_x25519_encrypt((uint8_t *)RSTRING_PTR(ciphertext),
-                         message.buf,
-                         message.len,
-                         (fio_crypto_enc_fn *)fio_aes256_gcm_enc,
-                         (const uint8_t *)recipient_pk.buf);
+  int result = fio_x25519_encrypt((uint8_t *)RSTRING_PTR(ciphertext),
+                                  message.buf,
+                                  message.len,
+                                  (fio_crypto_enc_fn *)fio_aes256_gcm_enc,
+                                  (const uint8_t *)recipient_pk.buf);
 
   if (result != 0)
     rb_raise(rb_eRuntimeError, "Encryption failed");
@@ -864,7 +919,8 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes256(int argc,
 }
 
 /**
- * Decrypts a message using X25519 public-key encryption (ECIES) with AES-256-GCM.
+ * Decrypts a message using X25519 public-key encryption (ECIES) with
+ * AES-256-GCM.
  *
  * @param ciphertext [String] Ciphertext from X25519.encrypt_aes256
  * @param secret_key: [String] 32-byte recipient's secret key
@@ -893,12 +949,11 @@ FIO_SFUNC VALUE iodine_crypto_x25519_decrypt_aes256(int argc,
   VALUE plaintext = rb_str_buf_new(out_len);
   rb_str_set_len(plaintext, out_len);
 
-  int result =
-      fio_x25519_decrypt((uint8_t *)RSTRING_PTR(plaintext),
-                         (const uint8_t *)ciphertext.buf,
-                         ciphertext.len,
-                         (fio_crypto_dec_fn *)fio_aes256_gcm_dec,
-                         (const uint8_t *)sk.buf);
+  int result = fio_x25519_decrypt((uint8_t *)RSTRING_PTR(plaintext),
+                                  (const uint8_t *)ciphertext.buf,
+                                  ciphertext.len,
+                                  (fio_crypto_dec_fn *)fio_aes256_gcm_dec,
+                                  (const uint8_t *)sk.buf);
 
   if (result != 0)
     rb_raise(rb_eRuntimeError, "Decryption failed (authentication error)");
@@ -958,6 +1013,112 @@ FIO_SFUNC VALUE iodine_crypto_hkdf_derive(int argc, VALUE *argv, VALUE self) {
            (int)sha384);
 
   return okm;
+  (void)self;
+}
+
+/* *****************************************************************************
+X25519MLKEM768 Post-Quantum Hybrid Key Encapsulation
+***************************************************************************** */
+
+/**
+ * Generates a new X25519MLKEM768 key pair.
+ *
+ * X25519MLKEM768 is a post-quantum hybrid KEM combining X25519 (classical)
+ * with ML-KEM-768 (post-quantum). This provides security against both
+ * classical and quantum attacks.
+ *
+ * @return [Array<String, String>] [secret_key, public_key]
+ *   - secret_key: 2432 bytes (ML-KEM-768 sk + X25519 sk)
+ *   - public_key: 1216 bytes (ML-KEM-768 pk + X25519 pk)
+ */
+FIO_SFUNC VALUE iodine_crypto_x25519mlkem768_keypair(VALUE self) {
+  uint8_t pk[1216], sk[2432];
+  int result = fio_x25519mlkem768_keypair(pk, sk);
+  if (result != 0)
+    rb_raise(rb_eRuntimeError, "Key generation failed");
+
+  VALUE secret = rb_str_new((const char *)sk, 2432);
+  VALUE public = rb_str_new((const char *)pk, 1216);
+  /* Clear secret key from stack */
+  fio_memset(sk, 0, 2432);
+  return rb_ary_new_from_args(2, secret, public);
+  (void)self;
+}
+
+/**
+ * Encapsulates a shared secret using X25519MLKEM768.
+ *
+ * Performs both X25519 key exchange and ML-KEM-768 encapsulation.
+ * The sender uses this with the recipient's public key to generate
+ * a shared secret and ciphertext.
+ *
+ * @param public_key: [String] 1216-byte recipient's public key
+ * @return [Array<String, String>] [ciphertext, shared_secret]
+ *   - ciphertext: 1120 bytes (ML-KEM-768 ct + X25519 ephemeral pk)
+ *   - shared_secret: 64 bytes (ML-KEM-768 ss || X25519 ss)
+ * @raise [RuntimeError] if encapsulation fails
+ */
+FIO_SFUNC VALUE iodine_crypto_x25519mlkem768_encapsulate(int argc,
+                                                         VALUE *argv,
+                                                         VALUE self) {
+  fio_buf_info_s pk = FIO_BUF_INFO0;
+  iodine_rb2c_arg(argc, argv, IODINE_ARG_BUF(pk, 0, "public_key", 1));
+
+  if (pk.len != 1216)
+    rb_raise(rb_eArgError, "public_key must be 1216 bytes (got %zu)", pk.len);
+
+  uint8_t ct[1120], ss[64];
+  int result = fio_x25519mlkem768_encaps(ct, ss, (const uint8_t *)pk.buf);
+  if (result != 0)
+    rb_raise(rb_eRuntimeError, "Encapsulation failed");
+
+  VALUE ciphertext = rb_str_new((const char *)ct, 1120);
+  VALUE shared_secret = rb_str_new((const char *)ss, 64);
+  /* Clear shared secret from stack */
+  fio_memset(ss, 0, 64);
+  return rb_ary_new_from_args(2, ciphertext, shared_secret);
+  (void)self;
+}
+
+/**
+ * Decapsulates a shared secret using X25519MLKEM768.
+ *
+ * Performs both X25519 shared secret derivation and ML-KEM-768 decapsulation.
+ * The recipient uses this with their secret key and the sender's ciphertext
+ * to recover the shared secret.
+ *
+ * @param ciphertext: [String] 1120-byte ciphertext from encapsulate
+ * @param secret_key: [String] 2432-byte recipient's secret key
+ * @return [String] 64-byte shared secret (ML-KEM-768 ss || X25519 ss)
+ * @raise [RuntimeError] if decapsulation fails (e.g., low-order point)
+ */
+FIO_SFUNC VALUE iodine_crypto_x25519mlkem768_decapsulate(int argc,
+                                                         VALUE *argv,
+                                                         VALUE self) {
+  fio_buf_info_s ct = FIO_BUF_INFO0;
+  fio_buf_info_s sk = FIO_BUF_INFO0;
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(ct, 0, "ciphertext", 1),
+                  IODINE_ARG_BUF(sk, 0, "secret_key", 1));
+
+  if (ct.len != 1120)
+    rb_raise(rb_eArgError, "ciphertext must be 1120 bytes (got %zu)", ct.len);
+  if (sk.len != 2432)
+    rb_raise(rb_eArgError, "secret_key must be 2432 bytes (got %zu)", sk.len);
+
+  uint8_t ss[64];
+  int result = fio_x25519mlkem768_decaps(ss,
+                                         (const uint8_t *)ct.buf,
+                                         (const uint8_t *)sk.buf);
+  if (result != 0)
+    rb_raise(rb_eRuntimeError,
+             "Decapsulation failed (invalid key or ciphertext)");
+
+  VALUE shared_secret = rb_str_new((const char *)ss, 64);
+  /* Clear shared secret from stack */
+  fio_memset(ss, 0, 64);
+  return shared_secret;
   (void)self;
 }
 
@@ -1039,6 +1200,14 @@ static void Init_Iodine_Crypto(void) {
                             "verify",
                             iodine_crypto_ed25519_verify,
                             -1);
+  rb_define_module_function(iodine_rb_ED25519,
+                            "to_x25519_secret",
+                            iodine_crypto_ed25519_to_x25519_secret,
+                            -1);
+  rb_define_module_function(iodine_rb_ED25519,
+                            "to_x25519_public",
+                            iodine_crypto_ed25519_to_x25519_public,
+                            -1);
 
   /* Iodine::Base::Crypto::X25519 */
   iodine_rb_X25519 = rb_define_module_under(iodine_rb_CRYPTO, "X25519");
@@ -1086,6 +1255,23 @@ static void Init_Iodine_Crypto(void) {
   rb_define_module_function(iodine_rb_HKDF,
                             "derive",
                             iodine_crypto_hkdf_derive,
+                            -1);
+
+  /* Iodine::Base::Crypto::X25519MLKEM768 */
+  iodine_rb_X25519MLKEM768 =
+      rb_define_module_under(iodine_rb_CRYPTO, "X25519MLKEM768");
+  STORE.hold(iodine_rb_X25519MLKEM768);
+  rb_define_module_function(iodine_rb_X25519MLKEM768,
+                            "keypair",
+                            iodine_crypto_x25519mlkem768_keypair,
+                            0);
+  rb_define_module_function(iodine_rb_X25519MLKEM768,
+                            "encapsulate",
+                            iodine_crypto_x25519mlkem768_encapsulate,
+                            -1);
+  rb_define_module_function(iodine_rb_X25519MLKEM768,
+                            "decapsulate",
+                            iodine_crypto_x25519mlkem768_decapsulate,
                             -1);
 }
 

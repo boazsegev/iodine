@@ -19,12 +19,14 @@ FIO_IFUNC VALUE iodine_utils_encode_with_encoding(
   if (!argc || argc > 2)
     rb_raise(rb_eArgError, "Wrong number of arguments (%d)", argc);
   rb_check_type(argv[0], RUBY_T_STRING);
-  if (!RSTRING_LEN(argv[0])) return argv[0];
+  if (!RSTRING_LEN(argv[0]))
+    return argv[0];
   rb_encoding *enc = NULL;
   if (argc == 2)
     enc = (TYPE(argv[1]) == T_STRING) ? rb_enc_find(RSTRING_PTR(argv[1]))
                                       : rb_enc_get(argv[1]);
-  if (!enc) enc = IodineUTF8Encoding;
+  if (!enc)
+    enc = IodineUTF8Encoding;
   FIO_STR_INFO_TMP_VAR(tmp, 512);
   char *org = tmp.buf;
   writer(&tmp,
@@ -33,7 +35,8 @@ FIO_IFUNC VALUE iodine_utils_encode_with_encoding(
          RSTRING_LEN(argv[0]));
   self = rb_str_new(tmp.buf, tmp.len);
   rb_enc_associate(self, enc);
-  if (org != tmp.buf) FIO_STRING_FREE2(tmp);
+  if (org != tmp.buf)
+    FIO_STRING_FREE2(tmp);
   return self;
 }
 
@@ -45,13 +48,15 @@ iodine_utils_encode_internal(VALUE mod,
                                            const void *encoded,
                                            size_t len)) {
   rb_check_type(arg, RUBY_T_STRING);
-  if (!RSTRING_LEN(arg)) return arg;
+  if (!RSTRING_LEN(arg))
+    return arg;
   FIO_STR_INFO_TMP_VAR(tmp, 512);
   const char *org = tmp.buf;
   writer(&tmp, FIO_STRING_ALLOC_COPY, RSTRING_PTR(arg), RSTRING_LEN(arg));
   arg = rb_str_new(tmp.buf, tmp.len);
   rb_enc_associate(arg, IodineUTF8Encoding);
-  if (org != tmp.buf) FIO_STRING_FREE2(tmp);
+  if (org != tmp.buf)
+    FIO_STRING_FREE2(tmp);
   return arg;
 }
 FIO_IFUNC VALUE
@@ -62,14 +67,16 @@ iodine_utils_encode1_internal(VALUE mod,
                                             const void *encoded,
                                             size_t len)) {
   rb_check_type(arg, RUBY_T_STRING);
-  if (!RSTRING_LEN(arg)) return arg;
+  if (!RSTRING_LEN(arg))
+    return arg;
   FIO_STR_INFO_TMP_VAR(tmp, 512);
   const char *org = tmp.buf;
   writer(&tmp, FIO_STRING_ALLOC_COPY, RSTRING_PTR(arg), RSTRING_LEN(arg));
   rb_str_set_len(arg, 0);
   rb_str_cat(arg, tmp.buf, tmp.len);
   rb_enc_associate(arg, IodineUTF8Encoding);
-  if (org != tmp.buf) FIO_STRING_FREE2(tmp);
+  if (org != tmp.buf)
+    FIO_STRING_FREE2(tmp);
   return arg;
 }
 
@@ -225,10 +232,11 @@ Designed to be secure against timing attacks when both String objects are of the
                 # prove_secure_compare("Rack::Utils.secure_compare (short string)", Rack::Utils.method(:secure_compare), 1024) # VERY slow
 
 */
-FIO_SFUNC VALUE iodine_utils_is_eq(VALUE mod, VALUE a, VALUE b) {  // clang-format on
+FIO_SFUNC VALUE iodine_utils_is_eq(VALUE mod, VALUE a, VALUE b) { // clang-format on
   rb_check_type(a, RUBY_T_STRING);
   rb_check_type(b, RUBY_T_STRING);
-  if (RSTRING_LEN(a) != RSTRING_LEN(b)) return RUBY_Qfalse;
+  if (RSTRING_LEN(a) != RSTRING_LEN(b))
+    return RUBY_Qfalse;
   return fio_ct_is_eq(RSTRING_PTR(a), RSTRING_PTR(b), RSTRING_LEN(a))
              ? RUBY_Qtrue
              : RUBY_Qfalse;
@@ -288,6 +296,188 @@ FIO_SFUNC VALUE iodine_utils_sha3_512(VALUE self, VALUE data) {
   return rb_str_new((const char *)out, 64);
 }
 
+FIO_SFUNC VALUE iodine_utils_sha3_224(VALUE self, VALUE data) {
+  rb_check_type(data, RUBY_T_STRING);
+  uint8_t out[28];
+  fio_sha3_224(out, RSTRING_PTR(data), RSTRING_LEN(data));
+  return rb_str_new((const char *)out, 28);
+}
+
+FIO_SFUNC VALUE iodine_utils_sha3_384(VALUE self, VALUE data) {
+  rb_check_type(data, RUBY_T_STRING);
+  uint8_t out[48];
+  fio_sha3_384(out, RSTRING_PTR(data), RSTRING_LEN(data));
+  return rb_str_new((const char *)out, 48);
+}
+
+/**
+ * Computes SHAKE128 extendable-output function.
+ *
+ * @param data [String] Input data to hash
+ * @param length: [Integer] Desired output length in bytes (default: 32)
+ * @return [String] Binary string of specified length
+ */
+FIO_SFUNC VALUE iodine_utils_shake128(int argc, VALUE *argv, VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0;
+  int64_t length = 32;
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_NUM(length, 0, "length", 0));
+  if (length < 1 || length > 0x0FFFFFFF)
+    rb_raise(rb_eArgError, "length must be between 1 and 268435455");
+  VALUE out = rb_str_buf_new((long)length);
+  rb_str_set_len(out, (long)length);
+  fio_shake128(RSTRING_PTR(out), (size_t)length, data.buf, data.len);
+  return out;
+  (void)self;
+}
+
+/**
+ * Computes SHAKE256 extendable-output function.
+ *
+ * @param data [String] Input data to hash
+ * @param length: [Integer] Desired output length in bytes (default: 64)
+ * @return [String] Binary string of specified length
+ */
+FIO_SFUNC VALUE iodine_utils_shake256(int argc, VALUE *argv, VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0;
+  int64_t length = 64;
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_NUM(length, 0, "length", 0));
+  if (length < 1 || length > 0x0FFFFFFF)
+    rb_raise(rb_eArgError, "length must be between 1 and 268435455");
+  VALUE out = rb_str_buf_new((long)length);
+  rb_str_set_len(out, (long)length);
+  fio_shake256(RSTRING_PTR(out), (size_t)length, data.buf, data.len);
+  return out;
+  (void)self;
+}
+
+/**
+ * Computes SHA-1 hash (20 bytes).
+ *
+ * WARNING: SHA-1 is cryptographically broken. Use only for legacy protocols
+ * that require it (e.g., WebSockets, TOTP compatibility).
+ *
+ * @param data [String] Input data to hash
+ * @return [String] 20-byte binary hash
+ */
+FIO_SFUNC VALUE iodine_utils_sha1(VALUE self, VALUE data) {
+  rb_check_type(data, RUBY_T_STRING);
+  fio_sha1_s h = fio_sha1(RSTRING_PTR(data), (uint64_t)RSTRING_LEN(data));
+  return rb_str_new((const char *)h.digest, 20);
+  (void)self;
+}
+
+/**
+ * Computes facil.io Risky Hash (non-cryptographic, fast).
+ *
+ * @param data [String] Input data to hash
+ * @param seed: [Integer] Optional seed value (default: 0)
+ * @return [Integer] 64-bit hash value
+ */
+FIO_SFUNC VALUE iodine_utils_risky_hash(int argc, VALUE *argv, VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0;
+  uint64_t seed = 0;
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_U64(seed, 0, "seed", 0));
+  uint64_t hash = fio_risky_hash(data.buf, data.len, seed);
+  return ULL2NUM(hash);
+  (void)self;
+}
+
+/**
+ * Computes facil.io Risky256 Hash (non-cryptographic, 256-bit).
+ *
+ * @param data [String] Input data to hash
+ * @return [String] 32-byte binary hash
+ */
+FIO_SFUNC VALUE iodine_utils_risky256(VALUE self, VALUE data) {
+  rb_check_type(data, RUBY_T_STRING);
+  fio_u256 h = fio_risky256(RSTRING_PTR(data), (uint64_t)RSTRING_LEN(data));
+  return rb_str_new((const char *)h.u8, 32);
+  (void)self;
+}
+
+/**
+ * Computes facil.io Risky512 Hash (non-cryptographic, 512-bit).
+ *
+ * First 256 bits are identical to risky256 (SHAKE-style extension).
+ *
+ * @param data [String] Input data to hash
+ * @return [String] 64-byte binary hash
+ */
+FIO_SFUNC VALUE iodine_utils_risky512(VALUE self, VALUE data) {
+  rb_check_type(data, RUBY_T_STRING);
+  fio_u512 h = fio_risky512(RSTRING_PTR(data), (uint64_t)RSTRING_LEN(data));
+  return rb_str_new((const char *)h.u8, 64);
+  (void)self;
+}
+
+/**
+ * Computes facil.io Risky256 HMAC (non-cryptographic, keyed 256-bit).
+ *
+ * @param key [String] The secret key
+ * @param data [String] Input data to hash
+ * @return [String] 32-byte binary HMAC
+ */
+FIO_SFUNC VALUE iodine_utils_risky256_hmac(VALUE self, VALUE key, VALUE data) {
+  rb_check_type(key, RUBY_T_STRING);
+  rb_check_type(data, RUBY_T_STRING);
+  fio_u256 h = fio_risky256_hmac(RSTRING_PTR(key),
+                                 (size_t)RSTRING_LEN(key),
+                                 RSTRING_PTR(data),
+                                 (size_t)RSTRING_LEN(data));
+  return rb_str_new((const char *)h.u8, 32);
+  (void)self;
+}
+
+/**
+ * Computes facil.io Risky512 HMAC (non-cryptographic, keyed 512-bit).
+ *
+ * @param key [String] The secret key
+ * @param data [String] Input data to hash
+ * @return [String] 64-byte binary HMAC
+ */
+FIO_SFUNC VALUE iodine_utils_risky512_hmac(VALUE self, VALUE key, VALUE data) {
+  rb_check_type(key, RUBY_T_STRING);
+  rb_check_type(data, RUBY_T_STRING);
+  fio_u512 h = fio_risky512_hmac(RSTRING_PTR(key),
+                                 (size_t)RSTRING_LEN(key),
+                                 RSTRING_PTR(data),
+                                 (size_t)RSTRING_LEN(data));
+  return rb_str_new((const char *)h.u8, 64);
+  (void)self;
+}
+
+/**
+ * Generates cryptographically secure random bytes using system CSPRNG.
+ *
+ * Uses arc4random_buf on BSD/macOS or /dev/urandom on Linux.
+ *
+ * @param bytes: [Integer] Number of bytes to generate (default: 32)
+ * @return [String] Binary string of random bytes
+ * @raise [RuntimeError] if CSPRNG fails
+ */
+FIO_SFUNC VALUE iodine_utils_secure_random(int argc, VALUE *argv, VALUE self) {
+  size_t size = 32;
+  iodine_rb2c_arg(argc, argv, IODINE_ARG_SIZE_T(size, 0, "bytes", 0));
+  if ((size - 1) > 0x0FFFFFFF)
+    rb_raise(rb_eRangeError, "`bytes` count is out of range.");
+  VALUE r = rb_str_buf_new(size);
+  int result = fio_rand_bytes_secure(RSTRING_PTR(r), size);
+  if (result != 0)
+    rb_raise(rb_eRuntimeError, "CSPRNG failed to generate random bytes");
+  rb_str_set_len(r, size);
+  return r;
+  (void)self;
+}
+
 FIO_SFUNC VALUE iodine_utils_blake2b(int argc, VALUE *argv, VALUE self) {
   fio_buf_info_s data = FIO_BUF_INFO0;
   fio_buf_info_s key = FIO_BUF_INFO0;
@@ -300,7 +490,7 @@ FIO_SFUNC VALUE iodine_utils_blake2b(int argc, VALUE *argv, VALUE self) {
   if (len < 1 || len > 64)
     rb_raise(rb_eArgError, "len must be between 1 and 64");
   uint8_t out[64];
-  fio_blake2b(out, (size_t)len, key.buf, key.len, data.buf, data.len);
+  fio_blake2b_hash(out, (size_t)len, key.buf, key.len, data.buf, data.len);
   return rb_str_new((const char *)out, (long)len);
   (void)self;
 }
@@ -317,7 +507,7 @@ FIO_SFUNC VALUE iodine_utils_blake2s(int argc, VALUE *argv, VALUE self) {
   if (len < 1 || len > 32)
     rb_raise(rb_eArgError, "len must be between 1 and 32");
   uint8_t out[32];
-  fio_blake2s(out, (size_t)len, key.buf, key.len, data.buf, data.len);
+  fio_blake2s_hash(out, (size_t)len, key.buf, key.len, data.buf, data.len);
   return rb_str_new((const char *)out, (long)len);
   (void)self;
 }
@@ -346,7 +536,8 @@ FIO_SFUNC VALUE iodine_utils_hmac_poly(VALUE self,
   fio_u128 h;
   if (k.len < 256) {
     fio_memcpy255x(fallback.u8, k.buf, k.len);
-    if (k.len < 10) fallback = fio_sha512(k.buf, k.len).u256[0];
+    if (k.len < 10)
+      fallback = fio_sha512(k.buf, k.len).u256[0];
     k.buf = (char *)fallback.u8;
   }
   fio_poly1305_auth(h.u8, m.buf, m.len, NULL, 0, k.buf);
@@ -372,7 +563,8 @@ FIO_SFUNC VALUE iodine_utils_uuid(int argc, VALUE *argv, VALUE self) {
     if (secret.len <= 128) {
       fio_memcpy255x(mk.u8, secret.buf, secret.len);
       mk.u64[15] ^= secret.len;
-      for (size_t i = 0; i < 16; ++i) mk.u64[i] ^= 0x3636363636363636ULL;
+      for (size_t i = 0; i < 16; ++i)
+        mk.u64[i] ^= 0x3636363636363636ULL;
       secret.buf = (char *)mk.u8;
       secret.len = 128;
     }
@@ -387,7 +579,8 @@ FIO_SFUNC VALUE iodine_utils_uuid(int argc, VALUE *argv, VALUE self) {
     rand.u8[8] &= 0x3F;
     rand.u8[8] |= 0x80;
   } else if (secret.buf || info.buf) {
-    if (info.buf) secret = info;
+    if (info.buf)
+      secret = info;
     uint64_t tmp = fio_risky_hash(secret.buf, secret.len, 0);
     rand.u64[0] += tmp;
     rand.u64[1] -= tmp;
@@ -444,7 +637,8 @@ FIO_SFUNC VALUE iodine_utils_random(int argc, VALUE *argv, VALUE self) {
  *     code = Iodine::Utils.totp(secret: my_secret, interval: 60)
  *
  *     # Generate TOTP for a different time window (offset in interval units)
- *     code = Iodine::Utils.totp(secret: my_secret, offset: -1)  # previous window
+ *     code = Iodine::Utils.totp(secret: my_secret, offset: -1)  # previous
+ * window
  *
  * Parameters:
  * - `secret:` (required) - The shared secret key (raw bytes or Base32 decoded)
@@ -463,7 +657,8 @@ FIO_SFUNC VALUE iodine_utils_totp(int argc, VALUE *argv, VALUE self) {
                   IODINE_ARG_BUF(secret, 0, "secret", 1),
                   IODINE_ARG_NUM(offset, 0, "offset", 0),
                   IODINE_ARG_SIZE_T(interval, 0, "interval", 0));
-  if (!interval) interval = 30;
+  if (!interval)
+    interval = 30;
 
   uint32_t otp = fio_otp(secret, .offset = offset, .interval = interval);
   return UINT2NUM(otp);
@@ -484,9 +679,11 @@ FIO_SFUNC VALUE iodine_utils_totp(int argc, VALUE *argv, VALUE self) {
  * authenticator apps.
  *
  * Parameters:
- * - `len:` (optional) - Length of the secret in bytes (default: 20, range: 10-64)
+ * - `len:` (optional) - Length of the secret in bytes (default: 20, range:
+ * 10-64)
  *
- * Returns: String - Base32 encoded secret suitable for QR codes and authenticator apps
+ * Returns: String - Base32 encoded secret suitable for QR codes and
+ * authenticator apps
  */
 FIO_SFUNC VALUE iodine_utils_totp_secret(int argc, VALUE *argv, VALUE self) {
   int64_t len = 20;
@@ -514,10 +711,12 @@ FIO_SFUNC VALUE iodine_utils_totp_secret(int argc, VALUE *argv, VALUE self) {
  *     valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code)
  *
  *     # Verify with larger time window (allows more clock drift)
- *     valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code, window: 2)
+ *     valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code,
+ * window: 2)
  *
  *     # Verify with custom interval (must match the interval used to generate)
- *     valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code, interval: 60)
+ *     valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code,
+ * interval: 60)
  *
  * The window parameter specifies how many intervals to check on either side
  * of the current time. For example, window: 1 checks current ± 1 interval.
@@ -525,7 +724,8 @@ FIO_SFUNC VALUE iodine_utils_totp_secret(int argc, VALUE *argv, VALUE self) {
  * Parameters:
  * - `secret:` (required) - The shared secret key (raw bytes or Base32 decoded)
  * - `code:` (required) - The TOTP code to verify (Integer)
- * - `window:` (optional) - Number of intervals to check on each side (default: 1, range: 0-10)
+ * - `window:` (optional) - Number of intervals to check on each side (default:
+ * 1, range: 0-10)
  * - `interval:` (optional) - Time window in seconds (default: 30)
  *
  * Returns: true if the code is valid, false otherwise
@@ -543,14 +743,16 @@ FIO_SFUNC VALUE iodine_utils_totp_verify(int argc, VALUE *argv, VALUE self) {
                   IODINE_ARG_NUM(window, 0, "window", 0),
                   IODINE_ARG_SIZE_T(interval, 0, "interval", 0));
 
-  if (!interval) interval = 30;
+  if (!interval)
+    interval = 30;
   if (window < 0 || window > 10)
     rb_raise(rb_eArgError, "window must be between 0 and 10");
 
   /* Check code against each offset in the window */
   for (int64_t offset = -window; offset <= window; ++offset) {
     uint32_t expected = fio_otp(secret, .offset = offset, .interval = interval);
-    if (expected == (uint32_t)code) return Qtrue;
+    if (expected == (uint32_t)code)
+      return Qtrue;
   }
 
   return Qfalse;
@@ -602,7 +804,7 @@ FIO_SFUNC VALUE iodine_utils_monkey_patch(int argc, VALUE *argv, VALUE self) {
   return self;
 }
 
-/** Initialize Iodine::Utils */  // clang-format off
+/** Initialize Iodine::Utils */ // clang-format off
 /**
 
 # Utility Helpers - Iodine's Helpers
@@ -673,8 +875,19 @@ static void Init_Iodine_Utils(void) {
   rb_define_singleton_method(m, "hmac128", iodine_utils_hmac_poly, 2);
   rb_define_singleton_method(m, "sha256", iodine_utils_sha256, 1);
   rb_define_singleton_method(m, "sha512", iodine_utils_sha512, 1);
+  rb_define_singleton_method(m, "sha3_224", iodine_utils_sha3_224, 1);
   rb_define_singleton_method(m, "sha3_256", iodine_utils_sha3_256, 1);
+  rb_define_singleton_method(m, "sha3_384", iodine_utils_sha3_384, 1);
   rb_define_singleton_method(m, "sha3_512", iodine_utils_sha3_512, 1);
+  rb_define_singleton_method(m, "shake128", iodine_utils_shake128, -1);
+  rb_define_singleton_method(m, "shake256", iodine_utils_shake256, -1);
+  rb_define_singleton_method(m, "sha1", iodine_utils_sha1, 1);
+  rb_define_singleton_method(m, "risky_hash", iodine_utils_risky_hash, -1);
+  rb_define_singleton_method(m, "risky256", iodine_utils_risky256, 1);
+  rb_define_singleton_method(m, "risky512", iodine_utils_risky512, 1);
+  rb_define_singleton_method(m, "risky256_hmac", iodine_utils_risky256_hmac, 2);
+  rb_define_singleton_method(m, "risky512_hmac", iodine_utils_risky512_hmac, 2);
+  rb_define_singleton_method(m, "secure_random", iodine_utils_secure_random, -1);
   rb_define_singleton_method(m, "blake2b", iodine_utils_blake2b, -1);
   rb_define_singleton_method(m, "blake2s", iodine_utils_blake2s, -1);
 

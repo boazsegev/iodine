@@ -51,9 +51,9 @@ static int iodine_cli_task(fio_buf_info_s name,
   VALUE n = Qnil;
   VALUE v = Qnil;
   switch (t) {
-    case FIO_CLI_ARG_BOOL: v = Qtrue; break;
-    case FIO_CLI_ARG_INT: v = RB_LL2NUM(fio_atol(&val.buf)); break;
-    default: v = rb_str_new(val.buf, val.len); break;
+  case FIO_CLI_ARG_BOOL: v = Qtrue; break;
+  case FIO_CLI_ARG_INT: v = RB_LL2NUM(fio_atol(&val.buf)); break;
+  default: v = rb_str_new(val.buf, val.len); break;
   }
   STORE.hold(v);
   if (name.buf) {
@@ -89,10 +89,11 @@ static VALUE iodine_tls_default_set(VALUE klass, VALUE backend);
 FIO_IFUNC bool iodine___mtls_env(void) {
   bool ret = 0;
   char *e = getenv("IODINE_MTLS");
-  if (!e) return ret;
+  if (!e)
+    return ret;
   fio_str_info_s s = FIO_STR_INFO1(e);
-  fio_str_info_s untrue = FIO_STR_INFO1("false");
-  fio_str_info_s untrue2 = FIO_STR_INFO1("0");
+  fio_str_info_s untrue = FIO_STR_INFO1((char *)"false");
+  fio_str_info_s untrue2 = FIO_STR_INFO1((char *)"0");
   ret = (bool)(1UL ^ ((unsigned)(FIO_STR_INFO_IS_EQ(s, untrue)) |
                       FIO_STR_INFO_IS_EQ(s, untrue2)));
   return ret;
@@ -350,15 +351,18 @@ static VALUE iodine_cli_get(VALUE self, VALUE key) {
   char *tmp;
   if (RB_TYPE_P(key, RUBY_T_FIXNUM)) {
     val = fio_cli_unnamed_str(NUM2UINT(key));
-    if (val.buf) r = rb_str_new(val.buf, val.len);
+    if (val.buf)
+      r = rb_str_new(val.buf, val.len);
     return r;
   }
-  if (RB_TYPE_P(key, RUBY_T_SYMBOL)) key = rb_sym2str(key);
+  if (RB_TYPE_P(key, RUBY_T_SYMBOL))
+    key = rb_sym2str(key);
   if (!RB_TYPE_P(key, RUBY_T_STRING))
     rb_raise(rb_eArgError,
              "key should be either an Integer, a String or a Symbol");
   val = fio_cli_get_str(RSTRING_PTR(key));
-  if (!val.len) return r;
+  if (!val.len)
+    return r;
   tmp = val.buf;
   ival = fio_atol(&tmp);
   if (tmp == val.buf + val.len)
@@ -380,7 +384,8 @@ static VALUE iodine_cli_set(VALUE self, VALUE key, VALUE value) {
     fio_cli_set_unnamed(NUM2UINT(key), RSTRING_PTR(value));
     return value;
   }
-  if (RB_TYPE_P(key, RUBY_T_SYMBOL)) key = rb_sym2str(key);
+  if (RB_TYPE_P(key, RUBY_T_SYMBOL))
+    key = rb_sym2str(key);
   if (!RB_TYPE_P(key, RUBY_T_STRING))
     rb_raise(rb_eArgError,
              "key should be either an Integer, a String or a Symbol");

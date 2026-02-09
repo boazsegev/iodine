@@ -836,6 +836,192 @@ module Iodine
     # @param len [Integer] output length in bytes (1-32, default: 32)
     # @return [String] binary hash of specified length
     def self.blake2s(data, key: nil, len: 32); end
+
+    # Computes SHA3-224 hash of the data.
+    #
+    # @param data [String] the data to hash
+    # @return [String] 28-byte binary hash digest
+    #
+    # @example
+    #   hash = Iodine::Utils.sha3_224("hello world")
+    #   # => 28-byte binary string
+    def self.sha3_224(data); end
+
+    # Computes SHA3-384 hash of the data.
+    #
+    # @param data [String] the data to hash
+    # @return [String] 48-byte binary hash digest
+    #
+    # @example
+    #   hash = Iodine::Utils.sha3_384("hello world")
+    #   # => 48-byte binary string
+    def self.sha3_384(data); end
+
+    # Computes SHAKE128 extendable-output function (XOF).
+    #
+    # SHAKE128 is a variable-length hash function from the SHA-3 family.
+    # Unlike fixed-output hash functions, XOFs can produce output of any desired length.
+    #
+    # @param data [String] the data to hash
+    # @param length [Integer] output length in bytes (default: 32)
+    # @return [String] binary string of specified length
+    # @raise [ArgumentError] if length is less than 1 or greater than 268435455
+    #
+    # @example
+    #   # Default 32-byte output
+    #   hash = Iodine::Utils.shake128("hello world")
+    #
+    #   # Custom length output
+    #   hash = Iodine::Utils.shake128("hello world", length: 64)
+    def self.shake128(data, length: 32); end
+
+    # Computes SHAKE256 extendable-output function (XOF).
+    #
+    # SHAKE256 is a variable-length hash function from the SHA-3 family.
+    # Unlike fixed-output hash functions, XOFs can produce output of any desired length.
+    # SHAKE256 provides a higher security margin than SHAKE128.
+    #
+    # @param data [String] the data to hash
+    # @param length [Integer] output length in bytes (default: 64)
+    # @return [String] binary string of specified length
+    # @raise [ArgumentError] if length is less than 1 or greater than 268435455
+    #
+    # @example
+    #   # Default 64-byte output
+    #   hash = Iodine::Utils.shake256("hello world")
+    #
+    #   # Custom length output
+    #   hash = Iodine::Utils.shake256("hello world", length: 128)
+    def self.shake256(data, length: 64); end
+
+    # Computes SHA-1 hash of the data.
+    #
+    # @param data [String] the data to hash
+    # @return [String] 20-byte binary hash digest
+    #
+    # @note SHA-1 is considered cryptographically weak and should not be used for
+    #   security-sensitive applications. Use only for protocol compatibility
+    #   (e.g., TOTP/HOTP, Git, WebSocket handshakes) where SHA-1 is required.
+    #
+    # @example
+    #   hash = Iodine::Utils.sha1("hello world")
+    #   # => 20-byte binary string
+    def self.sha1(data); end
+
+    # Computes a fast non-cryptographic hash using facil.io's Risky Hash.
+    #
+    # Risky Hash is optimized for speed and is suitable for hash tables,
+    # checksums, data partitioning, and other non-security applications.
+    #
+    # @param data [String] the data to hash
+    # @param seed [Integer] optional 64-bit seed value (default: 0)
+    # @return [Integer] 64-bit hash value
+    #
+    # @note This hash function is NOT cryptographically secure. Do not use
+    #   for security purposes such as password hashing or message authentication.
+    #
+    # @example
+    #   # Basic usage
+    #   hash = Iodine::Utils.risky_hash("hello world")
+    #
+    #   # With custom seed for different hash distributions
+    #   hash = Iodine::Utils.risky_hash("hello world", seed: 12345)
+    def self.risky_hash(data, seed: 0); end
+
+    # Computes a 256-bit (32-byte) non-cryptographic hash using Risky Hash.
+    #
+    # This is a fast, high-quality hash function suitable for hash tables,
+    # checksums, data deduplication, and other non-security applications.
+    # The output is deterministic and consistent across platforms.
+    #
+    # @param data [String] the data to hash
+    # @return [String] 32-byte binary hash digest
+    #
+    # @note This hash function is NOT cryptographically secure. Do not use
+    #   for security purposes such as password hashing or message authentication.
+    #
+    # @example
+    #   hash = Iodine::Utils.risky256("hello world")
+    #   puts hash.bytesize  # => 32
+    def self.risky256(data); end
+
+    # Computes a 512-bit (64-byte) non-cryptographic hash using Risky Hash.
+    #
+    # This is a SHAKE-style extension of risky256: the first 256 bits of
+    # the output are identical to risky256 (truncation-safe). The second
+    # 256 bits extend the hash without increasing collision resistance.
+    #
+    # @param data [String] the data to hash
+    # @return [String] 64-byte binary hash digest
+    #
+    # @note This hash function is NOT cryptographically secure. Do not use
+    #   for security purposes such as password hashing or message authentication.
+    #
+    # @example
+    #   hash = Iodine::Utils.risky512("hello world")
+    #   puts hash.bytesize  # => 64
+    #
+    #   # First 32 bytes match risky256
+    #   hash[0, 32] == Iodine::Utils.risky256("hello world")  # => true
+    def self.risky512(data); end
+
+    # Computes a 256-bit (32-byte) keyed HMAC using Risky Hash.
+    #
+    # Uses risky256 as the underlying hash with a 64-byte block size.
+    # If key_len > 64, the key is hashed first with risky256.
+    #
+    # @param key [String] the secret key for authentication
+    # @param data [String] the data to authenticate
+    # @return [String] 32-byte binary HMAC digest
+    #
+    # @note While this provides message authentication, risky256 is not a
+    #   cryptographic hash. For security-critical applications, use hmac256
+    #   (SHA-256) or hmac512 (SHA-512) instead.
+    #
+    # @example
+    #   mac = Iodine::Utils.risky256_hmac("secret-key", "message to authenticate")
+    #   puts mac.bytesize  # => 32
+    def self.risky256_hmac(key, data); end
+
+    # Computes a 512-bit (64-byte) keyed HMAC using Risky Hash.
+    #
+    # Uses risky512 as the underlying hash with a 64-byte block size.
+    # If key_len > 64, the key is hashed first with risky512.
+    #
+    # @param key [String] the secret key for authentication
+    # @param data [String] the data to authenticate
+    # @return [String] 64-byte binary HMAC digest
+    #
+    # @note While this provides message authentication, risky512 is not a
+    #   cryptographic hash. For security-critical applications, use hmac256
+    #   (SHA-256) or hmac512 (SHA-512) instead.
+    #
+    # @example
+    #   mac = Iodine::Utils.risky512_hmac("secret-key", "message to authenticate")
+    #   puts mac.bytesize  # => 64
+    def self.risky512_hmac(key, data); end
+
+    # Generates cryptographically secure random bytes using the system CSPRNG.
+    #
+    # Uses arc4random_buf on BSD/macOS or /dev/urandom on Linux to generate
+    # random bytes suitable for cryptographic key generation, nonces, and
+    # other security-sensitive applications.
+    #
+    # @param bytes [Integer] number of random bytes to generate (default: 32)
+    # @return [String] binary string containing the requested random bytes
+    # @raise [RangeError] if bytes count is out of range
+    # @raise [RuntimeError] if the CSPRNG fails to generate random bytes
+    #
+    # @example
+    #   # Generate a 32-byte key (default)
+    #   key = Iodine::Utils.secure_random
+    #
+    #   # Generate a 16-byte nonce
+    #   nonce = Iodine::Utils.secure_random(bytes: 16)
+    #
+    #   # Generate a 64-byte seed
+    #   seed = Iodine::Utils.secure_random(bytes: 64)
+    def self.secure_random(bytes: 32); end
   end
 
   #######################
@@ -1339,7 +1525,7 @@ module Iodine
     # @param name [String] the header name (lowercase)
     # @param values [String, Array<String>, nil] the header value(s)
     # @return [Boolean] `true` on success, `false` if headers already sent
-    def write_headers(name, values); end
+    def write_header(name, values); end
 
     # Writes data to the connection asynchronously.
     #
@@ -1896,9 +2082,10 @@ module Iodine
     # - {AES256GCM} - AEAD symmetric encryption with AES-256 (12-byte nonce)
     # - {ChaCha20Poly1305} - AEAD symmetric encryption (12-byte nonce)
     # - {XChaCha20Poly1305} - AEAD symmetric encryption (24-byte nonce, safe for random)
-    # - {Ed25519} - Digital signatures
+    # - {Ed25519} - Digital signatures (with key conversion to X25519)
     # - {X25519} - Key exchange and public-key encryption (ECIES with ChaCha20, AES-128, or AES-256)
     # - {HKDF} - Key derivation (RFC 5869)
+    # - {X25519MLKEM768} - Post-quantum hybrid key encapsulation (X25519 + ML-KEM-768)
     #
     # @note This module is under `Iodine::Base` as the API may change between versions.
     module Crypto
@@ -2094,6 +2281,42 @@ module Iodine
         # @example
         #   valid = Iodine::Base::Crypto::Ed25519.verify(signature, "message", public_key: pk)
         def self.verify(signature, message, public_key:); end
+
+        # Converts an Ed25519 secret key to an X25519 secret key.
+        #
+        # This allows using the same keypair for both signing (Ed25519) and
+        # encryption (X25519), reducing key management complexity.
+        #
+        # @param ed_secret_key [String] 32-byte Ed25519 secret key
+        # @return [String] 32-byte X25519 secret key
+        # @raise [ArgumentError] if ed_secret_key is not 32 bytes
+        #
+        # @example
+        #   # Generate Ed25519 keypair for signing
+        #   ed_sk, ed_pk = Iodine::Base::Crypto::Ed25519.keypair
+        #
+        #   # Convert to X25519 for encryption
+        #   x_sk = Iodine::Base::Crypto::Ed25519.to_x25519_secret(ed_secret_key: ed_sk)
+        #   x_pk = Iodine::Base::Crypto::Ed25519.to_x25519_public(ed_public_key: ed_pk)
+        #
+        #   # Now use x_sk and x_pk for X25519 encryption
+        def self.to_x25519_secret(ed_secret_key:); end
+
+        # Converts an Ed25519 public key to an X25519 public key.
+        #
+        # This allows encrypting to someone who has only shared their Ed25519
+        # signing public key, without requiring a separate X25519 public key.
+        #
+        # @param ed_public_key [String] 32-byte Ed25519 public key
+        # @return [String] 32-byte X25519 public key
+        # @raise [ArgumentError] if ed_public_key is not 32 bytes
+        #
+        # @example
+        #   # Alice has Bob's Ed25519 public key (for signature verification)
+        #   # She can derive his X25519 public key to encrypt a message
+        #   bob_x_pk = Iodine::Base::Crypto::Ed25519.to_x25519_public(ed_public_key: bob_ed_pk)
+        #   ciphertext = Iodine::Base::Crypto::X25519.encrypt("secret", recipient_pk: bob_x_pk)
+        def self.to_x25519_public(ed_public_key:); end
       end
 
       # X25519 key exchange (ECDH) and public-key encryption (ECIES).
@@ -2253,6 +2476,106 @@ module Iodine
         #   enc_key = HKDF.derive(ikm: shared, info: "encryption", length: 32)
         #   mac_key = HKDF.derive(ikm: shared, info: "authentication", length: 32)
         def self.derive(ikm:, salt: nil, info: nil, length: 32, sha384: false); end
+      end
+
+      # X25519+ML-KEM-768 Post-Quantum Hybrid Key Encapsulation Mechanism.
+      #
+      # X25519MLKEM768 combines classical X25519 elliptic curve Diffie-Hellman with
+      # ML-KEM-768 (formerly known as Kyber), a post-quantum lattice-based KEM.
+      # This hybrid approach provides security against both classical and quantum
+      # computer attacks.
+      #
+      # The hybrid construction ensures that even if one algorithm is broken,
+      # the other still provides security. This is the recommended approach for
+      # transitioning to post-quantum cryptography.
+      #
+      # Key sizes:
+      # - Secret key: 2432 bytes (ML-KEM-768 sk + X25519 sk)
+      # - Public key: 1216 bytes (ML-KEM-768 pk + X25519 pk)
+      # - Ciphertext: 1120 bytes (ML-KEM-768 ct + X25519 ephemeral pk)
+      # - Shared secret: 64 bytes (ML-KEM-768 ss || X25519 ss)
+      #
+      # @note This is a Key Encapsulation Mechanism (KEM), not direct encryption.
+      #   Use the shared secret with a symmetric cipher (e.g., AES-256-GCM or
+      #   ChaCha20-Poly1305) to encrypt actual data.
+      #
+      # @example Complete key exchange workflow
+      #   # Recipient generates a keypair
+      #   secret_key, public_key = Iodine::Base::Crypto::X25519MLKEM768.keypair
+      #
+      #   # Sender encapsulates a shared secret using recipient's public key
+      #   ciphertext, sender_shared = Iodine::Base::Crypto::X25519MLKEM768.encapsulate(public_key: public_key)
+      #
+      #   # Recipient decapsulates to obtain the same shared secret
+      #   recipient_shared = Iodine::Base::Crypto::X25519MLKEM768.decapsulate(
+      #     ciphertext: ciphertext,
+      #     secret_key: secret_key
+      #   )
+      #
+      #   # sender_shared == recipient_shared (64 bytes)
+      #   # Now both parties can use the shared secret for symmetric encryption
+      module X25519MLKEM768
+        # Generates a new X25519+ML-KEM-768 hybrid key encapsulation keypair.
+        #
+        # @return [Array<String, String>] [secret_key, public_key]
+        #   - secret_key: 2432-byte binary string
+        #   - public_key: 1216-byte binary string
+        # @raise [RuntimeError] if key generation fails
+        #
+        # @note Post-quantum secure. The keypair combines classical X25519 with
+        #   ML-KEM-768 (Kyber) for protection against both classical and quantum attacks.
+        #
+        # @example
+        #   secret_key, public_key = Iodine::Base::Crypto::X25519MLKEM768.keypair
+        #   # secret_key.bytesize => 2432
+        #   # public_key.bytesize => 1216
+        def self.keypair; end
+
+        # Encapsulates a shared secret for the given public key.
+        #
+        # The sender uses this method to generate a shared secret and ciphertext.
+        # The ciphertext is sent to the recipient, who can decapsulate it using
+        # their secret key to obtain the same shared secret.
+        #
+        # @param public_key [String] 1216-byte recipient's public key
+        # @return [Array<String, String>] [ciphertext, shared_secret]
+        #   - ciphertext: 1120-byte binary string to send to recipient
+        #   - shared_secret: 64-byte binary string for symmetric encryption
+        # @raise [ArgumentError] if public_key is not 1216 bytes
+        # @raise [RuntimeError] if encapsulation fails
+        #
+        # @note Send the ciphertext to the recipient who can decapsulate it to
+        #   obtain the same shared secret. The shared secret should be used with
+        #   a symmetric cipher for actual data encryption.
+        #
+        # @example
+        #   # Sender encapsulates a shared secret
+        #   ciphertext, shared_secret = Iodine::Base::Crypto::X25519MLKEM768.encapsulate(
+        #     public_key: recipient_public_key
+        #   )
+        #   # Send ciphertext to recipient
+        #   # Use shared_secret with AES-256-GCM or ChaCha20-Poly1305
+        def self.encapsulate(public_key:); end
+
+        # Decapsulates a shared secret using your secret key.
+        #
+        # The recipient uses this method to recover the shared secret from the
+        # ciphertext sent by the sender.
+        #
+        # @param ciphertext [String] 1120-byte ciphertext from encapsulate
+        # @param secret_key [String] 2432-byte secret key from keypair
+        # @return [String] 64-byte shared secret (same as encapsulate returned)
+        # @raise [ArgumentError] if ciphertext is not 1120 bytes or secret_key is not 2432 bytes
+        # @raise [RuntimeError] if decapsulation fails (invalid key or ciphertext)
+        #
+        # @example
+        #   # Recipient decapsulates the shared secret
+        #   shared_secret = Iodine::Base::Crypto::X25519MLKEM768.decapsulate(
+        #     ciphertext: received_ciphertext,
+        #     secret_key: my_secret_key
+        #   )
+        #   # shared_secret matches what the sender obtained from encapsulate
+        def self.decapsulate(ciphertext:, secret_key:); end
       end
     end
   end
