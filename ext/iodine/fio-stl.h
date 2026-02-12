@@ -126,6 +126,11 @@ Settings - Behavioral defaults
 #error FIO_NO_LOG and FIO_LEAK_COUNTER are exclusive, as memory leaks print to log.
 #endif
 
+#ifndef FIO_MAP_WARNING_BITSIZE
+/** imap and map allocation */
+#define FIO_MAP_WARNING_BITSIZE 24
+#endif
+
 /* *****************************************************************************
 C++ extern start
 ***************************************************************************** */
@@ -8289,6 +8294,10 @@ iMap Creation Macro
     if (!bits || bits > ((sizeof(imap_type) << 3) - 2))                        \
       return -1;                                                               \
     size_t capa = 1ULL << bits;                                                \
+    if (bits > (size_t)(FIO_MAP_WARNING_BITSIZE - 1))                          \
+      FIO_LOG_WARNING(                                                         \
+          "The " #array_name "_s map is now using a LOT of memory - %zu Mb!",  \
+          (capa >> 20) * (sizeof(array_type) + sizeof(imap_type)));            \
     size_t old_capa = FIO_NAME(array_name, capa)(a);                           \
     array_type *tmp = (array_type *)FIO_TYPEDEF_IMAP_REALLOC(                  \
         a->ary,                                                                \
@@ -16413,11 +16422,9 @@ FIO_SFUNC void fio___state_cleanup_task_at_exit(void *ignr_) {
 
 FIO_CONSTRUCTOR(fio___state_constructor) {
   FIO_LOG_DEBUG2("fio_state_callback maps are now active.");
-  /* Pre-allocate commonly used event arrays to reduce reallocation races */
-  fio___state_map_reserve(FIO___STATE_TASKS_ARRAY + FIO_CALL_ON_STOP, 32);
-  fio___state_map_reserve(FIO___STATE_TASKS_ARRAY + FIO_CALL_ON_START, 32);
-  fio___state_map_reserve(FIO___STATE_TASKS_ARRAY + FIO_CALL_IN_CHILD, 32);
-  fio___state_map_reserve(FIO___STATE_TASKS_ARRAY + FIO_CALL_AFTER_FORK, 32);
+  /* reserve memory for future use */
+  for (size_t i = 0; i < FIO_CALL_NEVER; ++i)
+    fio___state_map_reserve(FIO___STATE_TASKS_ARRAY + i, 32);
   fio_state_callback_force(FIO_CALL_ON_INITIALIZE);
   fio_state_callback_add(FIO_CALL_AFTER_EXIT,
                          fio___state_cleanup_task_at_exit,
@@ -18344,6 +18351,10 @@ CLI - cleanup
 Copyright and License: see header file (000 copyright.h) or top of file
 ***************************************************************************** */
 
+#if defined(FIO_MEMORY_DISABLE)
+#undef FIO_MALLOC_TMP_USE_SYSTEM
+#define FIO_MALLOC_TMP_USE_SYSTEM 1
+#endif
 /* *****************************************************************************
 Memory Allocation - Setup Alignment Info
 ***************************************************************************** */
@@ -64496,6 +64507,11 @@ FIO_IFUNC int FIO_NAME(FIO_MAP_NAME,
   if (bits > FIO_MAP_CAPA_BITS_LIMIT)
     return -1;
   size_t s = (sizeof(o->map[0]) + 1) << bits;
+  if (bits > (FIO_MAP_WARNING_BITSIZE))
+    FIO_LOG_WARNING(
+        "The " FIO_MACRO2STR(
+            FIO_MAP_NAME) "_s map is now using a LOT of memory - %zu Mb!",
+        (s >> 20));
   FIO_NAME(FIO_MAP_NAME, node_s) *n =
       (FIO_NAME(FIO_MAP_NAME, node_s) *)FIO_MEM_REALLOC_(NULL, 0, s, 0);
   if (!n)
@@ -67927,7 +67943,11 @@ IFUNC void FIO_NAME(FIO_REF_NAME,
   FIO_REF_DESTROY((wrapped[0]));
   FIO_REF_METADATA_DESTROY((o->metadata));
   FIO_LEAK_COUNTER_ON_FREE(FIO_REF_NAME);
-  FIO_MEM_FREE_(o, sizeof(*o) + (o->flx_size * sizeof(FIO_REF_TYPE)));
+#ifdef FIO_REF_FLEX_TYPE
+  FIO_MEM_FREE_(o, sizeof(*o) + (o->flx_size * sizeof(FIO_REF_FLEX_TYPE)));
+#else
+  FIO_MEM_FREE_(o, sizeof(*o) + sizeof(FIO_REF_TYPE));
+#endif
 }
 
 #ifdef FIO_REF_METADATA
