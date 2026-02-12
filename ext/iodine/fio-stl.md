@@ -868,17 +868,7 @@ This is provided to allow for easy "tail" processing.
 
 #### `fio_memcpy`
 
-```c
-void *fio_memcpy(void *dest, const void *src, size_t bytes);
-```
-
-A fallback for `memcpy` and `memmove`, copies `bytes` bytes from `src` to `dest`.
-
-Behaves as `memmove`, allowing for copy between overlapping memory buffers. 
-
-On most of `libc` implementations the library call will be faster. On embedded systems, test before deciding.
-
-**Note**: Implementation relies heavily on compiler auto-vectorization. Resulting code may run faster or slower than libc, depending on the compiler and available instruction sets / optimizations.
+See [Alternative Memory Functions](001 memalt.md) for full documentation.
 
 #### `FIO_MEMSET`
 
@@ -892,19 +882,7 @@ By default this will be set to either `memset` or `__builtin_memset` (if availab
 
 #### `fio_memset`
 
-```c
-void *fio_memset(void *restrict dest, uint64_t data, size_t bytes);
-```
-
-A fallback for `memset`. Sets `bytes` bytes in the `dest` buffer to `data`.
-
-The `data` can be either a single byte - in which case all bytes in `dest` will be set to `data` - or a 64 bit value which will be written repeatedly all over `dest` in local endian format (last copy may be partial).
-
-On most of `libc` implementations the library call will be faster. On embedded systems, test before deciding.
-
-Returns `dest` (the pointer originally received).
-
-**Note**: Implementation relies heavily on compiler auto-vectorization. Resulting code may run faster or slower than `libc`, depending on the compiler and available instruction sets / optimizations.
+See [Alternative Memory Functions](001 memalt.md) for full documentation.
 
 #### `FIO_MEMCHR`
 
@@ -918,17 +896,7 @@ By default this will be set to either `memchr` or `__builtin_memchr` (if availab
 
 #### `fio_memchr`
 
-```c
-void *fio_memchr(const void *buffer, const char token, size_t len);
-```
-
-A fallback for `memchr`, seeking a `token` in the number of `bytes` starting at the address of `mem`.
-
-If `token` is found, returns the address of the token's first appearance. Otherwise returns `NULL`.
-
-On most of `libc` implementations the library call will be faster. Test before deciding.
-
-**Note**: Implementation relies heavily on compiler auto-vectorization. Resulting code may run faster or slower than `libc`, depending on the compiler and available instruction sets / optimizations.
+See [Alternative Memory Functions](001 memalt.md) for full documentation.
 
 #### `FIO_MEMCMP`
 
@@ -942,15 +910,7 @@ By default this will be set to either `memcmp` or `__builtin_memcmp` (if availab
 
 #### `fio_memcmp`
 
-```c
-int fio_memcmp(const void *a, const void *b, size_t len);
-```
-
-A fallback for `memcmp`, comparing two memory regions by byte values.
-
-Returns 1 if `a > b`, -1 if `a < b` and 0 if `a == b`.
-
-**Note**: Implementation relies heavily on compiler auto-vectorization. Resulting code may run faster or slower than `libc`, depending on the compiler and available instruction sets / optimizations.
+See [Alternative Memory Functions](001 memalt.md) for full documentation.
 
 #### `FIO_STRLEN`
 
@@ -964,13 +924,7 @@ By default this will be set to either `strlen` or `__builtin_strlen` (if availab
 
 #### `fio_strlen`
 
-```c
-size_t fio_strlen(const char *str);
-```
-
-A fallback for `strlen`, returning the length of the string.
-
-**Note**: Implementation relies heavily on compiler auto-vectorization. Resulting code may run faster or slower than `libc`, depending on the compiler and available instruction sets / optimizations.
+See [Alternative Memory Functions](001 memalt.md) for full documentation.
 
 #### `FIO_MEMALT`
 
@@ -3328,6 +3282,156 @@ int main(void) {
 ```
 
 -------------------------------------------------------------------------------
+## Alternative Memory Functions
+
+```c
+#define FIO_MEMALT
+#include FIO_INCLUDE_FILE
+```
+
+By defining `FIO_MEMALT`, alternative implementations of common C memory and string functions are defined and made available. These provide fallback implementations of `memcpy`, `memset`, `memchr`, `memcmp`, and `strlen` that do not depend on the compiler's C library.
+
+Each function is a drop-in replacement for its standard library counterpart:
+
+- **`fio_memcpy`** - copies memory (handles overlapping regions like `memmove`)
+- **`fio_memset`** - fills memory with an 8-byte repeating pattern
+- **`fio_memchr`** - searches for a byte in a buffer
+- **`fio_memcmp`** - compares two memory regions
+- **`fio_strlen`** - computes the length of a NUL-terminated string
+
+These are intended as fallbacks for environments where the standard C library functions may not be available or when the library's internal `FIO_MEMCPY`, `FIO_MEMSET`, `FIO_MEMCHR`, and `FIO_MEMCMP` macros are redirected to use them.
+
+**Note**: in most cases, the compiler's built-in C library implementations will be faster. These alternatives exist for portability and for use in freestanding environments.
+
+### Memory Alternative Functions
+
+#### `fio_memset`
+
+```c
+void *fio_memset(void *restrict dest, uint64_t data, size_t bytes);
+```
+
+Fills `bytes` of memory at `dest` with the given 8-byte pattern `data`.
+
+If `data` is less than `0x100` (a single byte value), it is broadcast to fill all 8 bytes of the pattern, matching the behavior of the standard `memset`. For values >= `0x100`, the full 64-bit pattern is repeated across the destination buffer.
+
+**Parameters:**
+- `dest` - pointer to the destination buffer to fill
+- `data` - the 8-byte pattern to fill with (values < 0x100 are broadcast to all bytes)
+- `bytes` - number of bytes to fill
+
+**Returns:** `dest`, or NULL if `dest` is NULL.
+
+**Note**: unlike the standard `memset` which takes an `int` value, this function accepts a `uint64_t`, allowing an 8-byte repeating pattern to be set in a single call.
+
+#### `fio_memcpy`
+
+```c
+void *fio_memcpy(void *dest, const void *src, size_t bytes);
+```
+
+Copies `bytes` of memory from `src` to `dest`. Handles overlapping memory regions correctly (like `memmove`), choosing forward or backward copying as needed.
+
+For small non-overlapping copies (up to 64 bytes), an optimized fast path is used with overlapping fixed-size copy operations. For larger copies or overlapping regions, a 64-byte buffered copy strategy is employed to ensure correctness.
+
+**Parameters:**
+- `dest` - pointer to the destination buffer
+- `src` - pointer to the source buffer
+- `bytes` - number of bytes to copy
+
+**Returns:** `dest`.
+
+**Note**: returns immediately (no-op) if `dest == src`, if `bytes` is 0, or if either pointer is NULL. A debug log message is emitted if a NULL pointer is detected with a non-zero `bytes` value.
+
+#### `fio_memchr`
+
+```c
+void *fio_memchr(const void *buffer, const char token, size_t len);
+```
+
+Searches the first `len` bytes of `buffer` for the byte `token`.
+
+Uses platform-specific SIMD acceleration when available (AVX2 on x86-64, SSE2 on x86, NEON on ARM), falling back to a scalar implementation that processes 128 bytes at a time using bit-manipulation tricks.
+
+**Parameters:**
+- `buffer` - pointer to the memory region to search
+- `token` - the byte value to search for
+- `len` - number of bytes to search
+
+**Returns:** a pointer to the first occurrence of `token` in `buffer`, or NULL if not found or if `buffer` is NULL or `len` is 0.
+
+**Note**: this is a fallback for the standard `memchr`. The standard library version should generally be faster on most platforms.
+
+#### `fio_memcmp`
+
+```c
+int fio_memcmp(const void *a, const void *b, size_t len);
+```
+
+Compares the first `len` bytes of memory regions `a` and `b`.
+
+Processes data in 64-byte blocks for large comparisons, 8-byte blocks for medium comparisons, and byte-by-byte for small comparisons (fewer than 8 bytes).
+
+**Parameters:**
+- `a` - pointer to the first memory region
+- `b` - pointer to the second memory region
+- `len` - number of bytes to compare
+
+**Returns:** `1` if `a > b`, `-1` if `a < b`, `0` if the regions are equal. Returns `0` if `a == b` (same pointer) or if `len` is 0.
+
+**Note**: this is a fallback for the standard `memcmp`. The standard library version should generally be faster on most platforms.
+
+#### `fio_strlen`
+
+```c
+size_t fio_strlen(const char *str);
+```
+
+Computes the length of the NUL-terminated string `str`.
+
+Relies on the compiler to auto-vectorize the simple byte-scanning loop.
+
+**Parameters:**
+- `str` - pointer to a NUL-terminated string
+
+**Returns:** the number of bytes before the first NUL byte, or `0` if `str` is NULL.
+
+**Note**: this is a fallback for the standard `strlen`. The standard library version should generally be faster. This function may raise Address Sanitizer warnings due to speculative reads.
+
+### Example
+
+```c
+#define FIO_MEMALT
+#include FIO_INCLUDE_FILE
+
+void example(void) {
+  char buf[64];
+
+  /* Fill buffer with zeros */
+  fio_memset(buf, 0, sizeof(buf));
+
+  /* Fill buffer with a repeating byte pattern */
+  fio_memset(buf, 'A', 32);
+
+  /* Copy data (handles overlapping regions) */
+  const char *src = "Hello, memalt!";
+  fio_memcpy(buf, src, 14);
+
+  /* Search for a byte */
+  void *found = fio_memchr(buf, ',', 14);
+  /* found points to buf[5] (the comma) */
+
+  /* Compare memory regions */
+  int cmp = fio_memcmp(buf, src, 14);
+  /* cmp == 0 (equal) */
+
+  /* Get string length */
+  size_t len = fio_strlen(buf);
+  /* len == 14 */
+}
+```
+
+-------------------------------------------------------------------------------
 ## SIMD Types and Vector Operations
 
 The facil.io C STL provides a comprehensive set of aligned union types, SIMD-aware vector operations, and multi-precision math primitives. These are always available as part of the core library -- no `#define` or `#include` is needed beyond the initial inclusion of the STL.
@@ -3621,9 +3725,93 @@ fio_u256_store(local_buf, val);
 
 That is 11 functions x 6 sizes = **66 functions** total.
 
+### Vector Definition Macros
+
+These macros define the platform-specific SIMD vector members (`.x64`, `.x32`, `.x16`, `.x8`) used inside the `fio_uXXX` union types. They are used internally by `FIO___UXXX_UGRP_DEF` to build the union, but are also available as public macros for defining standalone vector variables of a given bit width.
+
+#### `FIO_UXXX_X64_DEF`
+
+```c
+#define FIO_UXXX_X64_DEF(name, bits) /* platform-specific */
+```
+
+Defines a `bits`-long vector named `name` using unsigned 64-bit words.
+
+- **ARM NEON**: `uint64x2_t name[bits / 128]` (array of 128-bit NEON vectors)
+- **GCC `vector_size`**: `uint64_t __attribute__((vector_size(bits / 8))) name[1]` (single full-width vector)
+- **Scalar fallback**: `uint64_t name[bits / 64]` (plain array)
+
+#### `FIO_UXXX_X32_DEF`
+
+```c
+#define FIO_UXXX_X32_DEF(name, bits) /* platform-specific */
+```
+
+Defines a `bits`-long vector named `name` using unsigned 32-bit words.
+
+- **ARM NEON**: `uint32x4_t name[bits / 128]`
+- **GCC `vector_size`**: `uint32_t __attribute__((vector_size(bits / 8))) name[1]`
+- **Scalar fallback**: `uint32_t name[bits / 32]`
+
+#### `FIO_UXXX_X16_DEF`
+
+```c
+#define FIO_UXXX_X16_DEF(name, bits) /* platform-specific */
+```
+
+Defines a `bits`-long vector named `name` using unsigned 16-bit words.
+
+- **ARM NEON**: `uint16x8_t name[bits / 128]`
+- **GCC `vector_size`**: `uint16_t __attribute__((vector_size(bits / 8))) name[1]`
+- **Scalar fallback**: `uint16_t name[bits / 16]`
+
+#### `FIO_UXXX_X8_DEF`
+
+```c
+#define FIO_UXXX_X8_DEF(name, bits) /* platform-specific */
+```
+
+Defines a `bits`-long vector named `name` using unsigned 8-bit words.
+
+- **ARM NEON**: `uint8x16_t name[bits / 128]`
+- **GCC `vector_size`**: `uint8_t __attribute__((vector_size(bits / 8))) name[1]`
+- **Scalar fallback**: `uint8_t name[bits / 8]`
+
+**Note**: these macros are used internally to define the `.x64`, `.x32`, `.x16`, `.x8` members of each `fio_uXXX` union. They can also be used directly to declare standalone SIMD-aware vector variables of **any bit width** -- not limited to the predefined 128/256/512/1024/2048/4096 sizes:
+
+```c
+/* Declare a 256-bit vector of 64-bit words */
+FIO_UXXX_X64_DEF(my_vec, 256);
+/* On GCC: uint64_t __attribute__((vector_size(32))) my_vec[1]; */
+/* On NEON: uint64x2_t my_vec[2]; */
+/* Scalar: uint64_t my_vec[4]; */
+```
+
+**Custom-length vectors**: Use these macros to define vectors of arbitrary length for domain-specific data layouts. The resulting arrays work with all `FIO_MATH_UXXX_*` operation macros:
+
+```c
+/* 384-bit vector of 32-bit words (12 elements) -- e.g., for Lyra2 state rows */
+FIO_UXXX_X32_DEF(row, 384);
+/* Scalar: uint32_t row[12]; */
+/* GCC vector: uint32_t __attribute__((vector_size(48))) row[1]; */
+
+/* 768-bit vector of 64-bit words (12 elements) -- e.g., for wide state arrays */
+FIO_UXXX_X64_DEF(state, 768);
+
+/* All FIO_MATH_UXXX_* macros work on these custom-length vectors */
+FIO_UXXX_X32_DEF(a, 384);
+FIO_UXXX_X32_DEF(b, 384);
+FIO_UXXX_X32_DEF(r, 384);
+FIO_MATH_UXXX_OP(r, a, b, 32, ^);        /* element-wise XOR */
+FIO_MATH_UXXX_OP_CRROT(r, a, 7, 32);     /* right-rotate all elements by 7 */
+```
+
 ### Low-Level Vector Helper Macros
 
-These macros form the building blocks for all higher-level `fio_uXXX` vector operations. `FIO_MATH_UXXX_OP`, `COP`, `SOP`, and `TOP` operate on the `.xN[]` SIMD vector members (benefiting from hardware SIMD when available). `FIO_MATH_UXXX_REDUCE` and `FIO_MATH_UXXX_SUFFLE` operate on the `.uN[]` unsigned integer array members instead.
+These macros form the building blocks for all higher-level `fio_uXXX` vector operations. They operate on **raw arrays** (not `fio_uXXX` union values directly). When used with `fio_uXXX` types, pass the appropriate union member:
+
+- `FIO_MATH_UXXX_OP`, `COP`, `SOP`, and `TOP` — pass `.xN` vector members (e.g., `r.x64`, `a.x32`) to benefit from hardware SIMD.
+- `FIO_MATH_UXXX_REDUCE` and `FIO_MATH_UXXX_SUFFLE` — pass `.uN` scalar array members (e.g., `a.u64`, `var.u32`).
 
 #### `FIO_MATH_UXXX_OP`
 
@@ -3631,12 +3819,22 @@ These macros form the building blocks for all higher-level `fio_uXXX` vector ope
 #define FIO_MATH_UXXX_OP(t, a, b, bits, op)
 ```
 
-Lane-wise binary operation: `t.xN[i] = a.xN[i] op b.xN[i]` for each lane `i`.
+Lane-wise binary operation: `t[i] = a[i] op b[i]` for each element `i`.
 
-- `t` - target `fio_uXXX` value (modified in place)
-- `a`, `b` - source `fio_uXXX` values
-- `bits` - selects the union member (64 for `.x64`, 32 for `.x32`, etc.)
+- `t` - target array (modified in place)
+- `a`, `b` - source arrays
+- `bits` - vestigial for this macro (loop bounds are computed from `sizeof(t) / sizeof(t[0])`)
 - `op` - C binary operator (`+`, `-`, `*`, `&`, `|`, `^`)
+
+Example:
+
+```c
+fio_u256 r, a, b;
+/* XOR using 64-bit SIMD vectors */
+FIO_MATH_UXXX_OP(r.x64, a.x64, b.x64, 64, ^);
+/* ADD using 32-bit SIMD vectors */
+FIO_MATH_UXXX_OP(r.x32, a.x32, b.x32, 32, +);
+```
 
 #### `FIO_MATH_UXXX_COP`
 
@@ -3644,10 +3842,21 @@ Lane-wise binary operation: `t.xN[i] = a.xN[i] op b.xN[i]` for each lane `i`.
 #define FIO_MATH_UXXX_COP(t, a, b, bits, op)
 ```
 
-Lane-wise operation with a scalar constant: `t.xN[i] = a.xN[i] op b` for each lane `i`.
+Lane-wise operation with a scalar constant: `t[i] = a[i] op b` for each element `i`.
 
-- `b` - a scalar constant (not a `fio_uXXX` value)
-- All other parameters are the same as `FIO_MATH_UXXX_OP`.
+- `t` - target array (modified in place)
+- `a` - source array
+- `b` - a scalar constant (not an array)
+- `bits` - vestigial for this macro
+- `op` - C binary operator
+
+Example:
+
+```c
+fio_u256 target, src;
+/* AND each 64-bit SIMD lane with a constant mask */
+FIO_MATH_UXXX_COP(target.x64, src.x64, (uint64_t)0xFF, 64, &);
+```
 
 #### `FIO_MATH_UXXX_SOP`
 
@@ -3655,9 +3864,20 @@ Lane-wise operation with a scalar constant: `t.xN[i] = a.xN[i] op b` for each la
 #define FIO_MATH_UXXX_SOP(t, a, bits, op)
 ```
 
-Lane-wise unary operation: `t.xN[i] = op a.xN[i]` for each lane `i`.
+Lane-wise unary operation: `t[i] = op a[i]` for each element `i`.
 
+- `t` - target array (modified in place)
+- `a` - source array
+- `bits` - vestigial for this macro
 - `op` - C unary operator (e.g., `~` for bitwise NOT)
+
+Example:
+
+```c
+fio_u256 target, src;
+/* Bitwise NOT */
+FIO_MATH_UXXX_SOP(target.x64, src.x64, 64, ~);
+```
 
 #### `FIO_MATH_UXXX_TOP`
 
@@ -3665,9 +3885,92 @@ Lane-wise unary operation: `t.xN[i] = op a.xN[i]` for each lane `i`.
 #define FIO_MATH_UXXX_TOP(t, a, b, c, bits, expr)
 ```
 
-Lane-wise ternary operation: `t.xN[i] = expr(a.xN[i], b.xN[i], c.xN[i])` for each lane `i`.
+Lane-wise ternary operation: `t[i] = expr(a[i], b[i], c[i])` for each element `i`.
 
-- `expr` - a function-like macro taking three arguments (e.g., a macro expanding to `(z) ^ ((x) & ((y) ^ (z)))` for mux/choose)
+- `t`, `a`, `b`, `c` - arrays (target and three sources)
+- `bits` - vestigial for this macro
+- `expr` - a function-like macro taking three arguments (e.g., `FIO___EXPR_MUX` expanding to `(z) ^ ((x) & ((y) ^ (z)))`)
+
+Example:
+
+```c
+fio_u256 t, a, b, c;
+/* Mux/choose: t[i] = c[i] ^ (a[i] & (b[i] ^ c[i])) */
+FIO_MATH_UXXX_TOP(t.x64, a.x64, b.x64, c.x64, 64, FIO___EXPR_MUX);
+```
+
+#### `FIO_MATH_UXXX_OP_RROT`
+
+```c
+#define FIO_MATH_UXXX_OP_RROT(t, a, b, bits)
+```
+
+Lane-wise right rotation: `t[i] = (a[i] >> b[i]) | (a[i] << (bits - b[i]))` for each element `i`.
+
+- `t` - target array (modified in place)
+- `a` - source array of values to rotate
+- `b` - array of rotation amounts (one per lane)
+- `bits` - the bit width of each element (8, 16, 32, or 64) — **not vestigial**, used in the rotation formula
+
+Example:
+
+```c
+fio_u256 target, src;
+uint8_t rotations[4] = {3, 7, 11, 15};  /* different rotation per 64-bit lane */
+FIO_MATH_UXXX_OP_RROT(target.x64, src.x64, rotations, 64);
+```
+
+**Note**: the rotation amounts in `b` are masked with `(bits - 1)` to handle rotations >= `bits`.
+
+**Note**: when using SIMD backends (GCC `vector_size` or NEON), the loop count is determined by `sizeof(t)/sizeof(t[0])`, which may be 1 for full-width vectors. For consistent per-lane rotation across all platforms, use the macro directly on `.uN` scalar arrays instead of `.xN` vector members.
+
+#### `FIO_MATH_UXXX_OP_LROT`
+
+```c
+#define FIO_MATH_UXXX_OP_LROT(t, a, b, bits)
+```
+
+Lane-wise left rotation: `t[i] = (a[i] << b[i]) | (a[i] >> (bits - b[i]))` for each element `i`.
+
+- `t` - target array (modified in place)
+- `a` - source array of values to rotate
+- `b` - array of rotation amounts (one per lane)
+- `bits` - the bit width of each element (8, 16, 32, or 64) — **not vestigial**, used in the rotation formula
+
+Example:
+
+```c
+fio_u256 target, src;
+uint8_t rotations[4] = {3, 7, 11, 15};  /* different rotation per 64-bit lane */
+FIO_MATH_UXXX_OP_LROT(target.x64, src.x64, rotations, 64);
+```
+
+**Note**: the rotation amounts in `b` are masked with `(bits - 1)` to handle rotations >= `bits`.
+
+**Note**: when using SIMD backends (GCC `vector_size` or NEON), the loop count is determined by `sizeof(t)/sizeof(t[0])`, which may be 1 for full-width vectors. For consistent per-lane rotation across all platforms, use the macro directly on `.uN` scalar arrays instead of `.xN` vector members.
+
+#### `FIO_MATH_UXXX_OP_CLROT`
+
+```c
+#define FIO_MATH_UXXX_OP_CLROT(t, a, c, bits)
+```
+
+Lane-wise left rotation by a constant: `t[i] = (a[i] << c) | (a[i] >> (bits - c))` for each element `i`.
+
+- `t` - target array (modified in place)
+- `a` - source array of values to rotate
+- `c` - a scalar constant rotation amount (applied to all lanes)
+- `bits` - the bit width of each element (8, 16, 32, or 64) — **not vestigial**, used in the rotation formula
+
+Example:
+
+```c
+fio_u256 target, src;
+/* Rotate all 64-bit lanes left by 17 bits */
+FIO_MATH_UXXX_OP_CLROT(target.x64, src.x64, 17, 64);
+```
+
+**Note**: the constant `c` is masked with `(bits - 1)` to handle rotations >= `bits`.
 
 #### `FIO_MATH_UXXX_REDUCE`
 
@@ -3675,10 +3978,26 @@ Lane-wise ternary operation: `t.xN[i] = expr(a.xN[i], b.xN[i], c.xN[i])` for eac
 #define FIO_MATH_UXXX_REDUCE(t, a, bits, op)
 ```
 
-Horizontal reduction across all lanes: `t = a.uN[0] op a.uN[1] op ... op a.uN[last]`.
+Horizontal reduction across all elements: `t = a[0] op a[1] op ... op a[last]`.
 
 - `t` - scalar result variable
-- Uses `.uN[]` (unsigned integer array), not `.xN[]` (vector array)
+- `a` - source array (pass `.uN` scalar array members, **not** `.xN` vector members)
+- `bits` - used to declare the temporary variable type (`uint##bits##_t`)
+- `op` - C binary operator
+
+Example:
+
+```c
+fio_u256 val;
+uint64_t sum;
+/* Sum all 64-bit words */
+FIO_MATH_UXXX_REDUCE(sum, val.u64, 64, +);
+/* OR-reduce all 64-bit words */
+uint64_t any_set;
+FIO_MATH_UXXX_REDUCE(any_set, val.u64, 64, |);
+```
+
+**Note**: the `bits` parameter is **not** vestigial for `REDUCE` — it is needed to declare the type of the temporary variable used in the reduction loop.
 
 #### `FIO_MATH_UXXX_SUFFLE`
 
@@ -3686,15 +4005,41 @@ Horizontal reduction across all lanes: `t = a.uN[0] op a.uN[1] op ... op a.uN[la
 #define FIO_MATH_UXXX_SUFFLE(var, bits, ...)
 ```
 
-Reorders lanes by index array: `var.uN[i] = var.uN[index[i]]` for each lane `i`. Uses the `.u##bits[]` unsigned integer array member (not the `.x##bits[]` vector member).
+Reorders elements by index array: `var[i] = var[index[i]]` for each element `i`. Pass `.uN` scalar array members (not `.xN` vector members).
 
-- `var` - the `fio_uXXX` value to shuffle (modified in place)
-- `bits` - selects the word width for shuffling (accesses `.u##bits[]`)
+- `var` - the array to shuffle (modified in place; pass `.uN` member)
+- `bits` - used to declare the temporary array type (`uint##bits##_t`)
 - `...` - comma-separated index values
+
+Example:
+
+```c
+fio_u256 val = fio_u256_init64(10, 20, 30, 40);
+/* Reverse the 64-bit words */
+FIO_MATH_UXXX_SUFFLE(val.u64, 64, 3, 2, 1, 0);
+/* val.u64 is now {40, 30, 20, 10} */
+```
 
 **Note**: the macro name is intentionally misspelled as "SUFFLE" (not "SHUFFLE"). When searching the codebase for shuffle operations, look for `SUFFLE`.
 
-**Note**: for `FIO_MATH_UXXX_OP`, `COP`, `SOP`, and `TOP`, the `bits` parameter selects the `.x##bits[]` vector union member, **NOT** the element size. The loop count is `sizeof(t.xN) / sizeof(t.xN[0])`, which varies by platform: 1 for GCC `vector_size`, `bits/128` for NEON, `bits/64` (or `bits/32`, etc.) for scalar fallback. For `REDUCE` and `SUFFLE`, the `bits` parameter selects the `.u##bits[]` scalar array member instead.
+**Note**: the `bits` parameter is **not** vestigial for `SUFFLE` — it is needed to declare the type of the temporary array used during shuffling.
+
+#### Summary of Parameter Semantics
+
+| Macro | Pass which member? | `bits` parameter role |
+|-------|-------------------|----------------------|
+| `FIO_MATH_UXXX_OP` | `.xN` (vector) | Vestigial — loop bounds from `sizeof(t)/sizeof(t[0])` |
+| `FIO_MATH_UXXX_COP` | `.xN` (vector) | Vestigial |
+| `FIO_MATH_UXXX_SOP` | `.xN` (vector) | Vestigial |
+| `FIO_MATH_UXXX_TOP` | `.xN` (vector) | Vestigial |
+| `FIO_MATH_UXXX_OP_RROT` | `.xN` (vector) | **Required** — used in rotation formula `(bits - b[i])` |
+| `FIO_MATH_UXXX_OP_CRROT` | `.xN` (vector) | **Required** — used in rotation formula `(bits - c)` |
+| `FIO_MATH_UXXX_OP_LROT` | `.xN` (vector) | **Required** — used in rotation formula `(bits - b[i])` |
+| `FIO_MATH_UXXX_OP_CLROT` | `.xN` (vector) | **Required** — used in rotation formula `(bits - c)` |
+| `FIO_MATH_UXXX_REDUCE` | `.uN` (scalar array) | Declares `uint##bits##_t` temp variable |
+| `FIO_MATH_UXXX_SUFFLE` | `.uN` (scalar array) | Declares `uint##bits##_t` temp array |
+
+The loop count for `OP`/`COP`/`SOP`/`TOP` is `sizeof(t) / sizeof(t[0])`, which varies by platform: 1 for GCC `vector_size`, `bits/128` for NEON, `bits/64` (or `bits/32`, etc.) for scalar fallback.
 
 ### Lane-Wise Operations (Pointer-Based)
 
@@ -3897,6 +4242,117 @@ void fio_uXXX_mux(fio_uXXX *t, const fio_uXXX *a, const fio_uXXX *b, const fio_u
 | `fio_uXXX_mux32`, `fio_uXXX_mux64`, `fio_uXXX_mux` | 32-bit, 64-bit, untyped | 128, 256, 512, 1024, 2048, 4096 |
 | `fio_uXXX_maj32`, `fio_uXXX_maj64`, `fio_uXXX_maj` | 32-bit, 64-bit, untyped | 128, 256, 512, 1024, 2048, 4096 |
 | `fio_uXXX_3xor32`, `fio_uXXX_3xor64`, `fio_uXXX_3xor` | 32-bit, 64-bit, untyped | 128, 256, 512, 1024, 2048, 4096 |
+
+### Rotation Operations (Pointer-Based)
+
+These functions perform lane-wise rotation on `fio_uXXX` types. Rotation operations are commonly used in cryptographic algorithms (SHA-2, ChaCha20, BLAKE2, etc.).
+
+#### `fio_uXXX_rrotN`
+
+```c
+void fio_uXXX_rrotN(fio_uXXX *target, const fio_uXXX *a, const uint8_t rotations[(XXX / N)]);
+```
+
+Lane-wise right rotation with per-lane rotation amounts. Each lane `i` is rotated right by `rotations[i]` bits.
+
+- `target` - destination for rotated values
+- `a` - source values to rotate
+- `rotations` - array of rotation amounts, one per lane
+
+Where `N` is one of `8`, `16`, `32`, `64` (the lane width in bits).
+
+Example:
+
+```c
+fio_u256 target, src;
+/* Rotate each 64-bit lane by a different amount */
+uint8_t rotations[4] = {7, 11, 13, 17};
+fio_u256_rrot64(&target, &src, rotations);
+```
+
+#### `fio_uXXX_crrotN`
+
+```c
+void fio_uXXX_crrotN(fio_uXXX *target, const fio_uXXX *a, uint8_t bits);
+```
+
+Lane-wise right rotation by a constant amount. All lanes are rotated right by the same number of bits.
+
+- `target` - destination for rotated values
+- `a` - source values to rotate
+- `bits` - rotation amount (applied to all lanes)
+
+Where `N` is one of `8`, `16`, `32`, `64` (the lane width in bits).
+
+Example:
+
+```c
+fio_u256 target, src;
+/* Rotate all 32-bit lanes right by 7 bits */
+fio_u256_crrot32(&target, &src, 7);
+```
+
+#### `fio_uXXX_lrotN`
+
+```c
+void fio_uXXX_lrotN(fio_uXXX *target, const fio_uXXX *a, const uint8_t rotations[(XXX / N)]);
+```
+
+Lane-wise left rotation with per-lane rotation amounts. Each lane `i` is rotated left by `rotations[i]` bits.
+
+- `target` - destination for rotated values
+- `a` - source values to rotate
+- `rotations` - array of rotation amounts, one per lane
+
+Where `N` is one of `8`, `16`, `32`, `64` (the lane width in bits).
+
+Example:
+
+```c
+fio_u256 target, src;
+/* Rotate each 64-bit lane left by a different amount */
+uint8_t rotations[4] = {7, 11, 13, 17};
+fio_u256_lrot64(&target, &src, rotations);
+```
+
+#### `fio_uXXX_clrotN`
+
+```c
+void fio_uXXX_clrotN(fio_uXXX *target, const fio_uXXX *a, uint8_t bits);
+```
+
+Lane-wise left rotation by a constant amount. All lanes are rotated left by the same number of bits.
+
+- `target` - destination for rotated values
+- `a` - source values to rotate
+- `bits` - rotation amount (applied to all lanes)
+
+Where `N` is one of `8`, `16`, `32`, `64` (the lane width in bits).
+
+Example:
+
+```c
+fio_u256 target, src;
+/* Rotate all 32-bit lanes left by 7 bits */
+fio_u256_clrot32(&target, &src, 7);
+```
+
+#### Complete Function List (4 ops x 4 widths x 6 sizes = 96 functions)
+
+| Pattern | Word widths | Sizes |
+|---------|-------------|-------|
+| `fio_uXXX_rrotN` | 8, 16, 32, 64 | 128, 256, 512, 1024, 2048, 4096 |
+| `fio_uXXX_crrotN` | 8, 16, 32, 64 | 128, 256, 512, 1024, 2048, 4096 |
+| `fio_uXXX_lrotN` | 8, 16, 32, 64 | 128, 256, 512, 1024, 2048, 4096 |
+| `fio_uXXX_clrotN` | 8, 16, 32, 64 | 128, 256, 512, 1024, 2048, 4096 |
+
+For example: `fio_u256_rrot32`, `fio_u512_crrot64`, `fio_u128_lrot8`, `fio_u256_clrot32`, etc.
+
+**Note**: the rotation amount is masked with `(N - 1)` internally, so rotations >= `N` wrap correctly.
+
+**Note**: left rotation by `n` bits is equivalent to right rotation by `(width - n)` bits. The library provides both for convenience and clarity in cryptographic code.
+
+**Note**: the per-lane rotation functions (`fio_uXXX_rrotN`, `fio_uXXX_lrotN`) use the `.xN` vector members internally, which have platform-dependent array lengths. On GCC `vector_size` backends, the entire vector is a single element, so only `rotations[0]` is used. For consistent per-lane rotation across all platforms, use the `FIO_MATH_UXXX_OP_RROT`/`FIO_MATH_UXXX_OP_LROT` macros directly on `.uN` scalar arrays. The constant rotation functions (`fio_uXXX_crrotN`, `fio_uXXX_clrotN`) work correctly on all platforms.
 
 ### Multi-Precision Math
 
@@ -4279,11 +4735,13 @@ The `fio_uXXX` types and their operations provide a portable SIMD abstraction. T
 
 #### How It Works
 
-The `.xN[]` union members (`.x64`, `.x32`, `.x16`, `.x8`) are defined differently depending on the platform:
+The `.xN[]` union members (`.x64`, `.x32`, `.x16`, `.x8`) are defined by the `FIO_UXXX_X{64,32,16,8}_DEF` macros, which produce different types depending on the platform:
 
 **ARM NEON** (when NEON + crypto intrinsics are available):
 ```c
+/* FIO_UXXX_X64_DEF(x64, bits) expands to: */
 uint64x2_t x64[bits / 128];  /* array of 128-bit NEON vectors */
+/* FIO_UXXX_X32_DEF(x32, bits) expands to: */
 uint32x4_t x32[bits / 128];
 uint16x8_t x16[bits / 128];
 uint8x16_t x8[bits / 128];
@@ -4291,6 +4749,7 @@ uint8x16_t x8[bits / 128];
 
 **GCC/Clang `vector_size`** (`__has_attribute(vector_size)`):
 ```c
+/* FIO_UXXX_X64_DEF(x64, bits) expands to: */
 uint64_t __attribute__((vector_size(bits / 8))) x64[1];  /* single full-width vector */
 uint32_t __attribute__((vector_size(bits / 8))) x32[1];
 uint16_t __attribute__((vector_size(bits / 8))) x16[1];
@@ -4299,13 +4758,14 @@ uint8_t  __attribute__((vector_size(bits / 8))) x8[1];
 
 **Scalar fallback**:
 ```c
+/* FIO_UXXX_X64_DEF(x64, bits) expands to: */
 uint64_t x64[bits / 64];  /* plain arrays */
 uint32_t x32[bits / 32];
 uint16_t x16[bits / 16];
 uint8_t  x8[bits / 8];
 ```
 
-The `FIO_MATH_UXXX_OP` macro (and friends) iterate over `sizeof(t.xN) / sizeof(t.xN[0])` elements. This yields:
+The `FIO_MATH_UXXX_OP` macro (and friends) iterate over `sizeof(t) / sizeof(t[0])` elements (where `t` is the raw array passed in, e.g., `r.x64`). This yields:
 
 | Platform | Loop iterations for `fio_u256` with `.x64` |
 |----------|---------------------------------------------|
@@ -4313,7 +4773,7 @@ The `FIO_MATH_UXXX_OP` macro (and friends) iterate over `sizeof(t.xN) / sizeof(t
 | ARM NEON | **2** (two 128-bit NEON operations) |
 | Scalar | **4** (four 64-bit scalar operations) |
 
-This means the same `FIO_MATH_UXXX_OP(r, a, b, 64, ^)` call compiles to a single vector XOR on GCC, two `veorq_u64` on NEON, or four scalar XORs on the fallback -- all from the same source code.
+This means the same `FIO_MATH_UXXX_OP(r.x64, a.x64, b.x64, 64, ^)` call compiles to a single vector XOR on GCC, two `veorq_u64` on NEON, or four scalar XORs on the fallback -- all from the same source code.
 
 ### Examples
 
@@ -7672,6 +8132,793 @@ The facil.io JSON parser supports several extensions beyond strict JSON:
 - Trailing commas: `[1, 2, 3,]` and `{"a": 1,}`
 
 -------------------------------------------------------------------------------
+## MIME Multipart Parser
+
+```c
+#define FIO_MULTIPART
+#include FIO_INCLUDE_FILE
+```
+
+By defining `FIO_MULTIPART`, a non-allocating, streaming, callback-based MIME multipart parser is defined and made available. This module implements the `multipart/form-data` format as used in HTTP file uploads ([RFC 7578](https://tools.ietf.org/html/rfc7578)).
+
+The parser uses callbacks to handle form fields and file uploads:
+
+- **Regular form fields** (no filename) trigger the `on_field` callback, or optionally the streaming `on_field_start` / `on_field_data` / `on_field_end` callbacks
+- **File uploads** trigger `on_file_start`, `on_file_data`, `on_file_end` callbacks
+- **Streaming** - call `fio_multipart_parse` repeatedly with accumulated data; the result reports how many bytes were consumed
+- **Non-allocating** - the parser does not allocate memory; all data is passed as `fio_buf_info_s` references into the original buffer
+
+### MIME Multipart Types
+
+#### `fio_multipart_parser_callbacks_s`
+
+```c
+typedef struct {
+  void *(*on_field)(void *udata,
+                    fio_buf_info_s name,
+                    fio_buf_info_s value,
+                    fio_buf_info_s content_type);
+
+  void *(*on_field_start)(void *udata,
+                          fio_buf_info_s name,
+                          fio_buf_info_s content_type);
+
+  int (*on_field_data)(void *udata, void *field_ctx, fio_buf_info_s data);
+
+  void (*on_field_end)(void *udata, void *field_ctx);
+
+  void *(*on_file_start)(void *udata,
+                         fio_buf_info_s name,
+                         fio_buf_info_s filename,
+                         fio_buf_info_s content_type);
+
+  int (*on_file_data)(void *udata, void *file_ctx, fio_buf_info_s data);
+
+  void (*on_file_end)(void *udata, void *file_ctx);
+
+  void (*on_error)(void *udata);
+} fio_multipart_parser_callbacks_s;
+```
+
+The MIME multipart parser callback collection. All callbacks are optional; unset callbacks are replaced with internal no-ops.
+
+**Members:**
+
+- `on_field` - called for each regular form field (no filename). Receives the field `name`, `value`, and optional `content_type`. Returns a user-defined context (can be NULL). **Ignored** if `on_field_start` is provided.
+- `on_field_start` - called when a large/streaming field starts (optional). If provided, the streaming field callbacks (`on_field_start` / `on_field_data` / `on_field_end`) are used instead of `on_field`. Returns a context pointer for this field.
+- `on_field_data` - called with a field data chunk. May be called multiple times per field for streaming. Returns non-zero to abort parsing.
+- `on_field_end` - called when a field ends.
+- `on_file_start` - called when a file upload starts. Receives the field `name`, the `filename`, and the `content_type`. Returns a context pointer for this file.
+- `on_file_data` - called with a file data chunk. May be called multiple times per file for streaming. Returns non-zero to abort parsing.
+- `on_file_end` - called when a file upload ends.
+- `on_error` - called on parse error (optional).
+
+**Note**: if `on_field_start` is provided, `on_field` is ignored and the streaming field callbacks are used. This enables handling of large field values without buffering the entire value in memory.
+
+#### `fio_multipart_result_s`
+
+```c
+typedef struct {
+  size_t consumed;    /* Number of bytes consumed from the input buffer. */
+  size_t field_count; /* Number of form fields parsed. */
+  size_t file_count;  /* Number of files parsed. */
+  int err;            /* Error code: 0 = success, -1 = error, -2 = need more data. */
+} fio_multipart_result_s;
+```
+
+The MIME multipart parse result type, returned by `fio_multipart_parse`.
+
+**Members:**
+
+- `consumed` - number of bytes consumed from the input buffer. When streaming, pass the remaining unconsumed data (plus any new data) in the next call.
+- `field_count` - number of regular form fields successfully parsed in this call.
+- `file_count` - number of file uploads successfully parsed in this call.
+- `err` - error code:
+  - `0` - success, all data was parsed and the closing boundary was found.
+  - `-1` - parse error (malformed data, missing boundary, missing `Content-Disposition`, or callback aborted).
+  - `-2` - need more data; call again with remaining unconsumed data plus additional data.
+
+### MIME Multipart Functions
+
+#### `fio_multipart_parse`
+
+```c
+fio_multipart_result_s
+fio_multipart_parse(const fio_multipart_parser_callbacks_s *callbacks,
+                    void *udata,
+                    fio_buf_info_s boundary,
+                    const char *data,
+                    size_t len);
+```
+
+Parses MIME multipart data, invoking callbacks for each form field and file upload encountered.
+
+The parser scans `data` for multipart boundaries, extracts headers (`Content-Disposition`, `Content-Type`), and dispatches to the appropriate callbacks. Parts with a `filename` parameter trigger the file callbacks; parts without trigger the field callbacks.
+
+**Parameters:**
+
+- `callbacks` - pointer to the callback function collection (should typically be `static const`). May be NULL, in which case all callbacks are no-ops.
+- `udata` - user data pointer passed to all callbacks.
+- `boundary` - the multipart boundary string **without** the leading `"--"` prefix. Must not exceed 250 bytes.
+- `data` - pointer to the data to parse.
+- `len` - length of the data in bytes.
+
+**Returns:** a `fio_multipart_result_s` struct with the number of bytes consumed, field/file counts, and an error code.
+
+**Note**: for streaming use, check `result.err`:
+- If `0`, parsing is complete (closing boundary found).
+- If `-2`, more data is needed. Retain the unconsumed portion (`data + result.consumed` through `data + len`) and append new data before calling again.
+- If `-1`, an unrecoverable parse error occurred.
+
+**Note**: the boundary length is limited to 250 bytes. Boundaries exceeding this limit cause an immediate error (`err = -1`).
+
+### MIME Multipart Examples
+
+#### Basic Field and File Parsing
+
+```c
+#define FIO_MULTIPART
+#include FIO_INCLUDE_FILE
+
+static void *my_on_field(void *udata,
+                         fio_buf_info_s name,
+                         fio_buf_info_s value,
+                         fio_buf_info_s content_type) {
+  printf("Field: %.*s = %.*s\n",
+         (int)name.len, name.buf,
+         (int)value.len, value.buf);
+  (void)content_type;
+  return NULL;
+}
+
+static void *my_on_file_start(void *udata,
+                              fio_buf_info_s name,
+                              fio_buf_info_s filename,
+                              fio_buf_info_s content_type) {
+  printf("File upload: %.*s (name=%.*s, type=%.*s)\n",
+         (int)filename.len, filename.buf,
+         (int)name.len, name.buf,
+         (int)content_type.len, content_type.buf);
+  return NULL;
+}
+
+static int my_on_file_data(void *udata,
+                           void *file_ctx,
+                           fio_buf_info_s data) {
+  printf("  File data chunk: %zu bytes\n", data.len);
+  return 0; /* return non-zero to abort */
+}
+
+static void my_on_file_end(void *udata, void *file_ctx) {
+  printf("  File upload complete\n");
+}
+
+void example_multipart(const char *body, size_t body_len,
+                       const char *boundary, size_t boundary_len) {
+  static const fio_multipart_parser_callbacks_s callbacks = {
+      .on_field = my_on_field,
+      .on_file_start = my_on_file_start,
+      .on_file_data = my_on_file_data,
+      .on_file_end = my_on_file_end,
+  };
+
+  fio_multipart_result_s result = fio_multipart_parse(
+      &callbacks,
+      NULL, /* udata */
+      FIO_BUF_INFO2((char *)boundary, boundary_len),
+      body,
+      body_len);
+
+  if (result.err == 0) {
+    printf("Parsed %zu fields and %zu files\n",
+           result.field_count, result.file_count);
+  } else if (result.err == -2) {
+    printf("Need more data (consumed %zu of %zu bytes)\n",
+           result.consumed, body_len);
+  } else {
+    printf("Parse error\n");
+  }
+}
+```
+
+#### Streaming Field Callbacks
+
+```c
+static void *my_field_start(void *udata,
+                            fio_buf_info_s name,
+                            fio_buf_info_s content_type) {
+  printf("Field started: %.*s\n", (int)name.len, name.buf);
+  return NULL;
+}
+
+static int my_field_data(void *udata,
+                         void *field_ctx,
+                         fio_buf_info_s data) {
+  printf("  Field data: %zu bytes\n", data.len);
+  return 0;
+}
+
+static void my_field_end(void *udata, void *field_ctx) {
+  printf("  Field complete\n");
+}
+
+void example_streaming_fields(const char *body, size_t body_len,
+                              const char *boundary, size_t boundary_len) {
+  /* When on_field_start is set, on_field is ignored */
+  static const fio_multipart_parser_callbacks_s callbacks = {
+      .on_field_start = my_field_start,
+      .on_field_data = my_field_data,
+      .on_field_end = my_field_end,
+      .on_file_start = my_on_file_start,
+      .on_file_data = my_on_file_data,
+      .on_file_end = my_on_file_end,
+  };
+
+  fio_multipart_result_s result = fio_multipart_parse(
+      &callbacks,
+      NULL,
+      FIO_BUF_INFO2((char *)boundary, boundary_len),
+      body,
+      body_len);
+
+  if (result.err == -2) {
+    /* Retain unconsumed data and append new data before retrying */
+    size_t remaining = body_len - result.consumed;
+    /* ... accumulate more data, then call fio_multipart_parse again */
+  }
+}
+```
+
+### Multipart Format Reference
+
+The `multipart/form-data` format expected by the parser:
+
+```
+--boundary\r\n
+Content-Disposition: form-data; name="field1"\r\n
+\r\n
+value1\r\n
+--boundary\r\n
+Content-Disposition: form-data; name="file1"; filename="test.txt"\r\n
+Content-Type: text/plain\r\n
+\r\n
+file content here\r\n
+--boundary--\r\n
+```
+
+- Each part starts with `--` followed by the boundary string and `\r\n`
+- Part headers are separated from the body by a blank line (`\r\n\r\n`)
+- Parts with a `filename` parameter are treated as file uploads
+- Parts without a `filename` parameter are treated as regular form fields
+- The final boundary ends with `--` (e.g., `--boundary--`)
+
+-------------------------------------------------------------------------------
+## RESP3 Parser
+
+```c
+#define FIO_RESP3
+#include FIO_INCLUDE_FILE
+```
+
+By defining `FIO_RESP3`, a non-allocating, streaming, callback-based RESP3 parser is made available. This module implements the full [RESP3 specification](https://github.com/redis/redis-specifications/blob/master/protocol/RESP3.md) used by Redis 6+ and other compatible servers.
+
+The parser uses a context-stack pattern where:
+
+- **Primitive callbacks** return the created object as `void *`
+- **Container callbacks** receive parent context and return new context
+- **Push callbacks** add children to containers
+- The parser manages the context stack internally
+
+RESP3 types supported:
+
+- **Simple types**: Simple String (`+`), Simple Error (`-`), Number (`:`), Null (`_`), Double (`,`), Boolean (`#`), Big Number (`(`)
+- **Blob types**: Blob String (`$`), Blob Error (`!`), Verbatim String (`=`)
+- **Aggregate types**: Array (`*`), Map (`%`), Set (`~`), Push (`>`), Attribute (`|`)
+- **Streaming**: Streamed strings (`$?`), streamed aggregates (`*?`, `%?`, `~?`), chunked data (`;`), end marker (`.`)
+
+**Note**: this module depends on `FIO_ATOL` for number parsing (included automatically).
+
+### Configuration Macros
+
+#### `FIO_RESP3_MAX_NESTING`
+
+```c
+#define FIO_RESP3_MAX_NESTING 32
+```
+
+The maximum number of nested layers in object responses. Valid range is 2 to 32,768. Defaults to 32.
+
+This controls the size of the parser's internal stack. Increase it if you expect deeply nested RESP3 responses, or decrease it to save memory in constrained environments.
+
+### RESP3 Type Constants
+
+#### `FIO_RESP3_SIMPLE_STR`
+
+```c
+#define FIO_RESP3_SIMPLE_STR '+'
+```
+
+Simple String type marker. Wire format: `+<string>\r\n`.
+
+#### `FIO_RESP3_SIMPLE_ERR`
+
+```c
+#define FIO_RESP3_SIMPLE_ERR '-'
+```
+
+Simple Error type marker. Wire format: `-<string>\r\n`.
+
+#### `FIO_RESP3_NUMBER`
+
+```c
+#define FIO_RESP3_NUMBER ':'
+```
+
+Number (signed 64-bit integer) type marker. Wire format: `:<number>\r\n`.
+
+#### `FIO_RESP3_NULL`
+
+```c
+#define FIO_RESP3_NULL '_'
+```
+
+Null type marker. Wire format: `_\r\n`.
+
+#### `FIO_RESP3_DOUBLE`
+
+```c
+#define FIO_RESP3_DOUBLE ','
+```
+
+Double (floating-point) type marker. Wire format: `,<floating-point-number>\r\n`. Supports `inf`, `-inf`, and `nan`.
+
+#### `FIO_RESP3_BOOL`
+
+```c
+#define FIO_RESP3_BOOL '#'
+```
+
+Boolean type marker. Wire format: `#t\r\n` (true) or `#f\r\n` (false).
+
+#### `FIO_RESP3_BIGNUM`
+
+```c
+#define FIO_RESP3_BIGNUM '('
+```
+
+Big Number type marker. Wire format: `(<big number>\r\n`. For integers that exceed signed 64-bit range.
+
+#### `FIO_RESP3_BLOB_STR`
+
+```c
+#define FIO_RESP3_BLOB_STR '$'
+```
+
+Blob String type marker. Wire format: `$<length>\r\n<bytes>\r\n`. Binary-safe. Also used to initiate streamed strings: `$?\r\n`.
+
+#### `FIO_RESP3_BLOB_ERR`
+
+```c
+#define FIO_RESP3_BLOB_ERR '!'
+```
+
+Blob Error type marker. Wire format: `!<length>\r\n<bytes>\r\n`. Binary-safe error with the first uppercase word as the error code.
+
+#### `FIO_RESP3_VERBATIM`
+
+```c
+#define FIO_RESP3_VERBATIM '='
+```
+
+Verbatim String type marker. Wire format: `=<length>\r\n<type:><bytes>\r\n`. The first 4 bytes encode a 3-character format hint (e.g., `txt:` or `mkd:`) followed by the string content.
+
+#### `FIO_RESP3_ARRAY`
+
+```c
+#define FIO_RESP3_ARRAY '*'
+```
+
+Array type marker. Wire format: `*<count>\r\n...elements...`. An ordered collection of N elements.
+
+#### `FIO_RESP3_MAP`
+
+```c
+#define FIO_RESP3_MAP '%'
+```
+
+Map type marker. Wire format: `%<count>\r\n...key-value pairs...`. An unordered collection of key-value pairs. The count is the number of pairs (each pair is 2 elements on the wire).
+
+#### `FIO_RESP3_SET`
+
+```c
+#define FIO_RESP3_SET '~'
+```
+
+Set type marker. Wire format: `~<count>\r\n...elements...`. An unordered collection of unique elements.
+
+#### `FIO_RESP3_PUSH`
+
+```c
+#define FIO_RESP3_PUSH '>'
+```
+
+Push type marker. Wire format: `><count>\r\n...elements...`. Out-of-band data (e.g., Pub/Sub messages). The first element is typically a string identifying the push type.
+
+#### `FIO_RESP3_ATTR`
+
+```c
+#define FIO_RESP3_ATTR '|'
+```
+
+Attribute type marker. Wire format: `|<count>\r\n...key-value pairs...`. Auxiliary metadata that augments the following reply. Attributes are not part of the reply value itself.
+
+#### `FIO_RESP3_STREAM_CHUNK`
+
+```c
+#define FIO_RESP3_STREAM_CHUNK ';'
+```
+
+Streamed string chunk marker. Wire format: `;<length>\r\n<bytes>\r\n`. Used within streamed strings (`$?\r\n`). A chunk with length 0 (`;0\r\n`) signals the end of the streamed string.
+
+#### `FIO_RESP3_STREAM_END`
+
+```c
+#define FIO_RESP3_STREAM_END '.'
+```
+
+Streamed aggregate end marker. Wire format: `.\r\n`. Terminates streamed aggregate types (`*?`, `%?`, `~?`) and can also terminate streamed strings.
+
+### RESP3 Types
+
+#### `fio_resp3_frame_s`
+
+```c
+typedef struct {
+  void *ctx;            /* Context for this container */
+  void *key;            /* For maps: the pending key waiting for its value */
+  int64_t remaining;    /* Expected remaining elements */
+  uint8_t type;         /* Type of this frame (FIO_RESP3_ARRAY, etc.) */
+  uint8_t streaming;    /* Is this a streaming type? */
+  uint8_t expecting_value; /* For maps: expecting key (0) or value (1)? */
+  uint8_t set_as_map;   /* Set treated as map (duplicates values as key+value) */
+} fio_resp3_frame_s;
+```
+
+Parser frame for tracking nested structures. Each frame represents one level of nesting in the RESP3 response.
+
+**Members:**
+- `ctx` - context pointer for this container (returned by `on_array`, `on_map`, etc.)
+- `key` - for map/attribute types, holds the pending key until its value arrives
+- `remaining` - number of remaining elements expected in this container (-1 for streaming)
+- `type` - the RESP3 type constant for this frame (e.g., `FIO_RESP3_ARRAY`)
+- `streaming` - non-zero if this is a streaming (unbounded) container
+- `expecting_value` - for maps: 0 when expecting a key, 1 when expecting a value
+- `set_as_map` - non-zero when a RESP3 Set is being handled as a Map (when set callbacks are missing but map callbacks are provided)
+
+**Note**: this type is part of the parser's internal state. It should not be manipulated directly.
+
+#### `fio_resp3_parser_s`
+
+```c
+typedef struct {
+  void *udata;                          /* User data passed to all callbacks */
+  uint32_t depth;                       /* Current nesting depth */
+  uint8_t error;                        /* Protocol error flag */
+  uint8_t streaming_string;             /* Streaming string in progress flag */
+  uint8_t streaming_string_type;        /* Streaming string type */
+  uint8_t reserved[1];                  /* Reserved */
+  void *streaming_string_ctx;           /* Context for streaming string */
+  fio_resp3_frame_s stack[FIO_RESP3_MAX_NESTING]; /* Stack for nested structures */
+} fio_resp3_parser_s;
+```
+
+RESP3 parser state. Maintains all state needed for incremental (streaming) parsing of RESP3 data.
+
+**Members:**
+- `udata` - user-defined data pointer passed as the first argument to all callbacks
+- `depth` - current nesting depth (0 = top level)
+- `error` - non-zero if a protocol error has occurred (parser is no longer usable)
+- `streaming_string` - non-zero if a streamed string (`$?\r\n`) is currently being received
+- `streaming_string_type` - the type of the streaming string in progress (`FIO_RESP3_BLOB_STR`, `FIO_RESP3_BLOB_ERR`, etc.)
+- `streaming_string_ctx` - context pointer returned by `on_start_string` for the current streaming string
+- `stack` - internal stack for tracking nested containers, sized by `FIO_RESP3_MAX_NESTING`
+
+Initialize with `{.udata = my_context}` before first use. For continuation after partial parse, pass the same parser.
+
+**Note**: once `error` is set, the parser will refuse further parsing. Create a new parser to recover.
+
+#### `fio_resp3_callbacks_s`
+
+```c
+typedef struct {
+  /* Primitive Callbacks - return the created object */
+  void *(*on_null)(void *udata);
+  void *(*on_bool)(void *udata, int is_true);
+  void *(*on_number)(void *udata, int64_t num);
+  void *(*on_double)(void *udata, double num);
+  void *(*on_bignum)(void *udata, const void *data, size_t len);
+  void *(*on_string)(void *udata, const void *data, size_t len, uint8_t type);
+  void *(*on_error)(void *udata, const void *data, size_t len, uint8_t type);
+
+  /* Container Callbacks - receive parent ctx, return new ctx */
+  void *(*on_array)(void *udata, void *parent_ctx, int64_t len);
+  void *(*on_map)(void *udata, void *parent_ctx, int64_t len);
+  void *(*on_set)(void *udata, void *parent_ctx, int64_t len);
+  void *(*on_push)(void *udata, void *parent_ctx, int64_t len);
+  void *(*on_attr)(void *udata, void *parent_ctx, int64_t len);
+
+  /* Push Callbacks - add child to container */
+  int (*array_push)(void *udata, void *ctx, void *value);
+  int (*map_push)(void *udata, void *ctx, void *key, void *value);
+  int (*set_push)(void *udata, void *ctx, void *value);
+  int (*push_push)(void *udata, void *ctx, void *value);
+  int (*attr_push)(void *udata, void *ctx, void *key, void *value);
+
+  /* Done Callbacks (optional) - finalize container */
+  void *(*array_done)(void *udata, void *ctx);
+  void *(*map_done)(void *udata, void *ctx);
+  void *(*set_done)(void *udata, void *ctx);
+  void *(*push_done)(void *udata, void *ctx);
+  void *(*attr_done)(void *udata, void *ctx);
+
+  /* Error Handling */
+  void (*free_unused)(void *udata, void *obj);
+  void *(*on_error_protocol)(void *udata);
+
+  /* Streaming String Callbacks (optional) */
+  void *(*on_start_string)(void *udata, size_t len, uint8_t type);
+  int (*on_string_write)(void *udata, void *ctx, const void *data, size_t len);
+  void *(*on_string_done)(void *udata, void *ctx, uint8_t type);
+} fio_resp3_callbacks_s;
+```
+
+The RESP3 parser callback table. Designed to be declared as `static const`. All callbacks receive the `udata` pointer from the parser state as their first argument.
+
+Any callback left as NULL is replaced with a safe no-op default:
+
+- Primitive no-ops return a non-NULL sentinel `(void *)(uintptr_t)1`
+- Container no-ops return a non-NULL sentinel
+- Push no-ops return 0 (success)
+- Done no-ops return the context unchanged
+- `free_unused` no-op does nothing
+- `on_error_protocol` no-op returns NULL
+
+**Primitive Callbacks** (return a new object as `void *`):
+
+| Callback | Signature | Description |
+|----------|-----------|-------------|
+| `on_null` | `void *(*)(void *udata)` | Called when Null (`_`) is received |
+| `on_bool` | `void *(*)(void *udata, int is_true)` | Called when Boolean (`#t` / `#f`) is received |
+| `on_number` | `void *(*)(void *udata, int64_t num)` | Called when a Number (`:`) is parsed |
+| `on_double` | `void *(*)(void *udata, double num)` | Called when a Double (`,`) is parsed |
+| `on_bignum` | `void *(*)(void *udata, const void *data, size_t len)` | Called when a Big Number (`(`) is parsed; data is the raw decimal string |
+| `on_string` | `void *(*)(void *udata, const void *data, size_t len, uint8_t type)` | Called for complete strings; `type` is `FIO_RESP3_SIMPLE_STR`, `FIO_RESP3_BLOB_STR`, or `FIO_RESP3_VERBATIM` |
+| `on_error` | `void *(*)(void *udata, const void *data, size_t len, uint8_t type)` | Called for errors; `type` is `FIO_RESP3_SIMPLE_ERR` or `FIO_RESP3_BLOB_ERR` |
+
+**Container Callbacks** (receive parent context, return new context as `void *`):
+
+| Callback | Signature | Description |
+|----------|-----------|-------------|
+| `on_array` | `void *(*)(void *udata, void *parent_ctx, int64_t len)` | Array start; `len` is element count (-1 for streaming) |
+| `on_map` | `void *(*)(void *udata, void *parent_ctx, int64_t len)` | Map start; `len` is pair count (-1 for streaming) |
+| `on_set` | `void *(*)(void *udata, void *parent_ctx, int64_t len)` | Set start; `len` is element count (-1 for streaming) |
+| `on_push` | `void *(*)(void *udata, void *parent_ctx, int64_t len)` | Push start; `len` is element count |
+| `on_attr` | `void *(*)(void *udata, void *parent_ctx, int64_t len)` | Attribute start; `len` is pair count |
+
+**Push Callbacks** (add child to container, return non-zero on error):
+
+| Callback | Signature | Description |
+|----------|-----------|-------------|
+| `array_push` | `int (*)(void *udata, void *ctx, void *value)` | Add value to array |
+| `map_push` | `int (*)(void *udata, void *ctx, void *key, void *value)` | Add key-value pair to map |
+| `set_push` | `int (*)(void *udata, void *ctx, void *value)` | Add value to set |
+| `push_push` | `int (*)(void *udata, void *ctx, void *value)` | Add value to push message |
+| `attr_push` | `int (*)(void *udata, void *ctx, void *key, void *value)` | Add key-value pair to attribute |
+
+**Done Callbacks** (optional, finalize container, return final object):
+
+| Callback | Signature | Description |
+|----------|-----------|-------------|
+| `array_done` | `void *(*)(void *udata, void *ctx)` | Finalize array; return final object |
+| `map_done` | `void *(*)(void *udata, void *ctx)` | Finalize map; return final object |
+| `set_done` | `void *(*)(void *udata, void *ctx)` | Finalize set; return final object |
+| `push_done` | `void *(*)(void *udata, void *ctx)` | Finalize push; return final object |
+| `attr_done` | `void *(*)(void *udata, void *ctx)` | Finalize attribute; return final object |
+
+**Error Handling:**
+
+| Callback | Signature | Description |
+|----------|-----------|-------------|
+| `free_unused` | `void (*)(void *udata, void *obj)` | Free an orphaned object (e.g., a map key whose value failed) |
+| `on_error_protocol` | `void *(*)(void *udata)` | Called on protocol error |
+
+**Streaming String Callbacks** (all three must be provided, or none):
+
+| Callback | Signature | Description |
+|----------|-----------|-------------|
+| `on_start_string` | `void *(*)(void *udata, size_t len, uint8_t type)` | Called when a blob string starts; `len` is declared length (`(size_t)-1` for streaming); return context for string builder, or NULL to fall back to `on_string` |
+| `on_string_write` | `int (*)(void *udata, void *ctx, const void *data, size_t len)` | Called with partial data; return non-zero to abort |
+| `on_string_done` | `void *(*)(void *udata, void *ctx, uint8_t type)` | Called when string is complete; return final string object |
+
+**Note**: when `on_set`, `set_push`, and `set_done` are all NULL but map callbacks are provided, the parser automatically treats RESP3 Sets as Maps (each element is used as both key and value in `map_push`).
+
+#### `fio_resp3_result_s`
+
+```c
+typedef struct {
+  void *obj;       /* The parsed top-level object (or NULL on error/incomplete) */
+  size_t consumed; /* Number of bytes consumed from the buffer */
+  int err;         /* Non-zero if an error occurred */
+} fio_resp3_result_s;
+```
+
+The RESP3 parse result type returned by `fio_resp3_parse`.
+
+**Members:**
+- `obj` - the parsed top-level object, or NULL if the data is incomplete or an error occurred
+- `consumed` - number of bytes consumed from the input buffer; unconsumed bytes should be retained for the next call
+- `err` - non-zero if a protocol error occurred; the parser is no longer usable after an error
+
+### RESP3 Functions
+
+#### `fio_resp3_parse`
+
+```c
+fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
+                                   const fio_resp3_callbacks_s *callbacks,
+                                   const void *buf,
+                                   size_t len);
+```
+
+Parses RESP3 data from a buffer.
+
+Processes as much data as possible from `buf`, invoking the appropriate callbacks for each parsed element. For partial data, the parser state is preserved; call again with remaining data appended to unconsumed bytes.
+
+**Parameters:**
+- `parser` - parser state; initialize with `{.udata = my_data}` for first call, reuse for continuation
+- `callbacks` - callback table (should be `static const`); NULL callbacks are replaced with safe no-ops
+- `buf` - pointer to the data to parse
+- `len` - length of the data in bytes
+
+**Returns:** a `fio_resp3_result_s` containing:
+- `obj` - the parsed top-level object (NULL if incomplete or error)
+- `consumed` - number of bytes consumed from `buf`
+- `err` - non-zero if a protocol error occurred
+
+**Note**: after a protocol error (`err != 0`), the parser is permanently in an error state. A new parser must be created to continue parsing.
+
+**Note**: attributes (`|`) are consumed and delivered via callbacks but do not count as reply values. After an attribute completes at the top level, the parser continues to read the actual reply.
+
+**Note**: for streamed strings (`$?\r\n`), the streaming string callbacks (`on_start_string`, `on_string_write`, `on_string_done`) must be provided. If they are not, the parser sets an error because it cannot buffer unknown-length data.
+
+### RESP3 Examples
+
+#### Basic Usage
+
+```c
+#define FIO_RESP3
+#include FIO_INCLUDE_FILE
+
+/* --- Minimal callback implementations --- */
+
+static void *my_on_null(void *udata) {
+  /* Create and return your null representation */
+  return my_obj_new_null();
+  (void)udata;
+}
+
+static void *my_on_number(void *udata, int64_t num) {
+  return my_obj_new_int(num);
+  (void)udata;
+}
+
+static void *my_on_string(void *udata, const void *data,
+                           size_t len, uint8_t type) {
+  return my_obj_new_string(data, len);
+  (void)udata; (void)type;
+}
+
+static void *my_on_array(void *udata, void *parent_ctx, int64_t len) {
+  return my_obj_new_array(len);
+  (void)udata; (void)parent_ctx;
+}
+
+static int my_array_push(void *udata, void *ctx, void *value) {
+  my_obj_array_push(ctx, value);
+  return 0;
+  (void)udata;
+}
+
+static void *my_array_done(void *udata, void *ctx) {
+  return ctx; /* array is already built */
+  (void)udata;
+}
+
+static void my_free_unused(void *udata, void *obj) {
+  my_obj_free(obj);
+  (void)udata;
+}
+
+/* --- Parsing --- */
+
+void parse_redis_response(const void *buf, size_t len) {
+  static const fio_resp3_callbacks_s callbacks = {
+      .on_null = my_on_null,
+      .on_number = my_on_number,
+      .on_string = my_on_string,
+      .on_array = my_on_array,
+      .array_push = my_array_push,
+      .array_done = my_array_done,
+      .free_unused = my_free_unused,
+  };
+
+  fio_resp3_parser_s parser = {.udata = NULL};
+  fio_resp3_result_s result =
+      fio_resp3_parse(&parser, &callbacks, buf, len);
+
+  if (result.err) {
+    fprintf(stderr, "RESP3 protocol error\n");
+    return;
+  }
+  if (result.obj) {
+    /* Process the parsed object */
+    process_result(result.obj);
+  }
+  /* result.consumed bytes were consumed; retain the rest for next call */
+}
+```
+
+#### Incremental (Streaming) Parsing
+
+```c
+void handle_socket_data(fio_resp3_parser_s *parser,
+                        const fio_resp3_callbacks_s *cb,
+                        const void *buf, size_t len) {
+  fio_resp3_result_s result = fio_resp3_parse(parser, cb, buf, len);
+
+  if (result.err) {
+    /* Protocol error - close connection */
+    close_connection();
+    return;
+  }
+
+  if (result.obj) {
+    /* Complete response received */
+    dispatch_response(result.obj);
+  }
+
+  if (result.consumed < len) {
+    /* Partial data remains - buffer unconsumed bytes for next read */
+    buffer_remaining(
+        (const char *)buf + result.consumed,
+        len - result.consumed);
+  }
+}
+```
+
+### RESP3 Wire Format Reference
+
+| Type | Marker | Format | Example |
+|------|--------|--------|---------|
+| Simple String | `+` | `+<string>\r\n` | `+OK\r\n` |
+| Simple Error | `-` | `-<string>\r\n` | `-ERR unknown\r\n` |
+| Number | `:` | `:<integer>\r\n` | `:42\r\n` |
+| Null | `_` | `_\r\n` | `_\r\n` |
+| Double | `,` | `,<double>\r\n` | `,3.14\r\n` |
+| Boolean | `#` | `#t\r\n` or `#f\r\n` | `#t\r\n` |
+| Big Number | `(` | `(<digits>\r\n` | `(12345678901234567890\r\n` |
+| Blob String | `$` | `$<len>\r\n<bytes>\r\n` | `$5\r\nhello\r\n` |
+| Blob Error | `!` | `!<len>\r\n<bytes>\r\n` | `!11\r\nERR unknown\r\n` |
+| Verbatim | `=` | `=<len>\r\n<fmt:><bytes>\r\n` | `=10\r\ntxt:hello!\r\n` |
+| Array | `*` | `*<count>\r\n...` | `*2\r\n:1\r\n:2\r\n` |
+| Map | `%` | `%<pairs>\r\n...` | `%1\r\n+a\r\n:1\r\n` |
+| Set | `~` | `~<count>\r\n...` | `~2\r\n:1\r\n:2\r\n` |
+| Push | `>` | `><count>\r\n...` | `>2\r\n+msg\r\n+hi\r\n` |
+| Attribute | `\|` | `\|<pairs>\r\n...` | `\|1\r\n+ttl\r\n:3600\r\n` |
+| Stream Chunk | `;` | `;<len>\r\n<bytes>\r\n` | `;5\r\nhello\r\n` |
+| Stream End | `.` | `.\r\n` | `.\r\n` |
+
+------------------------------------------------------------
 ## Basic Socket / IO Helpers
 
 ```c
@@ -8619,6 +9866,191 @@ int main(void) {
   printf("Converted back: %s", ctime(&converted));
   
   return 0;
+}
+```
+
+-------------------------------------------------------------------------------
+## URL-Encoded Parser
+
+```c
+#define FIO_URL_ENCODED
+#include FIO_INCLUDE_FILE
+```
+
+By defining `FIO_URL_ENCODED`, a non-allocating, callback-based URL-encoded (`application/x-www-form-urlencoded`) parser is defined and made available.
+
+The parser finds boundaries between `name=value` pairs without decoding the data. Decoding is the caller's responsibility (use `fio_string_write_url_dec`).
+
+URL-encoded format:
+- Pairs separated by `&`
+- Name and value separated by `=`
+- Special characters are percent-encoded (`%XX`)
+
+### URL-Encoded Parser Types
+
+#### `fio_url_encoded_parser_callbacks_s`
+
+```c
+typedef struct {
+  void *(*on_pair)(void *udata, fio_buf_info_s name, fio_buf_info_s value);
+  void (*on_error)(void *udata);
+} fio_url_encoded_parser_callbacks_s;
+```
+
+The URL-encoded parser callbacks. Callbacks receive `udata` as their first argument.
+
+**Members:**
+- `on_pair` - called for each `name=value` pair found. `name` and `value` point directly into the original input data (NOT decoded). Returns the (possibly updated) `udata`, or NULL to stop parsing.
+- `on_error` - called on parsing error (optional). Currently reserved for future use since URL-encoded parsing is very permissive.
+
+**Note**: this struct should typically be declared as `static const`.
+
+#### `fio_url_encoded_result_s`
+
+```c
+typedef struct {
+  size_t consumed; /* Number of bytes consumed from the buffer. */
+  size_t count;    /* Number of name=value pairs found. */
+  int err;         /* Non-zero if an error occurred (callback returned NULL). */
+} fio_url_encoded_result_s;
+```
+
+The URL-encoded parse result type.
+
+**Members:**
+- `consumed` - number of bytes consumed from the input buffer
+- `count` - number of `name=value` pairs found
+- `err` - non-zero if parsing was stopped early (the `on_pair` callback returned NULL)
+
+### URL-Encoded Parser API
+
+#### `fio_url_encoded_parse`
+
+```c
+fio_url_encoded_result_s
+fio_url_encoded_parse(const fio_url_encoded_parser_callbacks_s *callbacks,
+                      void *udata,
+                      const char *data,
+                      size_t len);
+```
+
+Parses URL-encoded data from a buffer.
+
+Iterates over the input, splitting it into `name=value` pairs delimited by `&`, and invokes the `on_pair` callback for each pair found. The parser does NOT decode percent-encoded characters.
+
+**Parameters:**
+- `callbacks` - pointer to the callback struct (should be `static const`)
+- `udata` - user data passed to callbacks; also receives the return value of `on_pair`
+- `data` - pointer to the URL-encoded data to parse
+- `len` - length of the data in bytes
+
+**Returns:** a `fio_url_encoded_result_s` containing:
+- `consumed` - number of bytes consumed from the buffer
+- `count` - number of `name=value` pairs found
+- `err` - non-zero if parsing was stopped (callback returned NULL)
+
+Parsing rules:
+- Pairs are separated by `&`
+- Name and value are separated by `=`
+- Empty value is valid: `name=` produces `value.len = 0`
+- Missing `=` means value is empty: `name` produces `name="name"`, `value.len = 0`
+- Empty name with value: `=value` produces `name.len = 0`, `value="value"`
+- Empty pairs (`&&`) are skipped
+
+**Note**: the parser does NOT decode percent-encoded characters. Use `fio_string_write_url_dec` to decode name and value buffers if needed.
+
+### URL-Encoded Parser Examples
+
+#### Basic Parsing
+
+```c
+#define FIO_URL_ENCODED
+#include FIO_INCLUDE_FILE
+
+static void *my_on_pair(void *udata,
+                        fio_buf_info_s name,
+                        fio_buf_info_s value) {
+  printf("  %.*s = %.*s\n",
+         (int)name.len, name.buf,
+         (int)value.len, value.buf);
+  return udata;
+}
+
+void example_basic(void) {
+  static const fio_url_encoded_parser_callbacks_s callbacks = {
+    .on_pair = my_on_pair,
+  };
+
+  const char *data = "foo=bar&baz=42&key=hello%20world";
+  size_t len = strlen(data);
+
+  fio_url_encoded_result_s result =
+      fio_url_encoded_parse(&callbacks, (void *)1, data, len);
+
+  printf("Consumed: %zu bytes, Pairs: %zu, Error: %d\n",
+         result.consumed, result.count, result.err);
+  /* Output:
+   *   foo = bar
+   *   baz = 42
+   *   key = hello%20world
+   * Consumed: 31 bytes, Pairs: 3, Error: 0
+   */
+}
+```
+
+#### Early Termination
+
+```c
+static void *stop_after_two(void *udata,
+                            fio_buf_info_s name,
+                            fio_buf_info_s value) {
+  size_t *count = (size_t *)udata;
+  ++(*count);
+  if (*count >= 2)
+    return NULL; /* Stop parsing */
+  return udata;
+  (void)name;
+  (void)value;
+}
+
+void example_early_stop(void) {
+  static const fio_url_encoded_parser_callbacks_s callbacks = {
+    .on_pair = stop_after_two,
+  };
+
+  const char *data = "a=1&b=2&c=3&d=4";
+  size_t count = 0;
+
+  fio_url_encoded_result_s result =
+      fio_url_encoded_parse(&callbacks, &count, data, strlen(data));
+
+  /* result.count == 2, result.err == 1 */
+}
+```
+
+#### Edge Cases
+
+```c
+void example_edges(void) {
+  static const fio_url_encoded_parser_callbacks_s callbacks = {
+    .on_pair = my_on_pair,
+  };
+
+  /* Missing '=' - entire segment is the name */
+  fio_url_encoded_parse(&callbacks, (void *)1, "justname", 8);
+  /* on_pair: name="justname", value="" */
+
+  /* Empty value */
+  fio_url_encoded_parse(&callbacks, (void *)1, "key=", 4);
+  /* on_pair: name="key", value="" */
+
+  /* Empty name with value */
+  fio_url_encoded_parse(&callbacks, (void *)1, "=value", 6);
+  /* on_pair: name="", value="value" */
+
+  /* Empty pairs are skipped */
+  fio_url_encoded_parse(&callbacks, (void *)1, "a=1&&b=2", 8);
+  /* on_pair called twice: "a"="1" and "b"="2" */
 }
 ```
 
@@ -11880,6 +13312,117 @@ void simple_example(void) {
 **Note**: Without providing context callbacks, variables will render as empty strings. For meaningful output, you need to provide at least `ctx`, `get_var`, `var2str`, and `var_is_truthful` callbacks.
 
 -------------------------------------------------------------------------------
+## Cryptographic Core
+
+```c
+#define FIO_CRYPTO_CORE
+#include FIO_INCLUDE_FILE
+```
+
+The Cryptographic Core module defines the standard function pointer types used as the AEAD (Authenticated Encryption with Associated Data) interface throughout the facil.io library. These types establish a uniform calling convention for all symmetric AEAD cipher implementations.
+
+This module is automatically included as a dependency when defining any cryptographic module (`FIO_CHACHA`, `FIO_SHA1`, `FIO_SHA2`, `FIO_BLAKE2`, etc.). It rarely needs to be included directly.
+
+**Note**: do NOT use these cryptographic primitives unless you have no other choice. Always prefer tested cryptographic libraries such as OpenSSL.
+
+### AEAD Function Pointer Types
+
+The two function pointer types below define the standard signature for all AEAD encryption and decryption functions in the library. Any function matching these signatures can be used interchangeably wherever the library expects an AEAD cipher — for example, when passed to `fio_x25519_encrypt` or `fio_x25519_decrypt`.
+
+Concrete implementations that conform to these types include:
+
+- `fio_chacha20_poly1305_enc` / `fio_chacha20_poly1305_dec` (ChaCha20-Poly1305)
+- `fio_xchacha20_poly1305_enc` / `fio_xchacha20_poly1305_dec` (XChaCha20-Poly1305)
+- `fio_aes128_gcm_enc` / `fio_aes128_gcm_dec` (AES-128-GCM)
+- `fio_aes256_gcm_enc` / `fio_aes256_gcm_dec` (AES-256-GCM)
+
+#### `fio_crypto_enc_fn`
+
+```c
+typedef void(fio_crypto_enc_fn)(void *restrict mac,
+                                void *restrict data,
+                                size_t len,
+                                const void *ad,    /* additional data */
+                                size_t adlen,
+                                const void *key,
+                                const void *nonce);
+```
+
+Function pointer type for AEAD encryption.
+
+Performs in-place encryption of `data` and writes a message authentication code (MAC) to `mac`. The additional data (`ad`) is authenticated but **not** encrypted.
+
+**Parameters:**
+- `mac` - output buffer for the authentication tag (must have at least 16 bytes available)
+- `data` - the plaintext to encrypt in-place (may be NULL if `len` is 0)
+- `len` - length of the data in bytes
+- `ad` - additional data to authenticate but not encrypt (may be NULL if `adlen` is 0)
+- `adlen` - length of the additional data in bytes
+- `key` - pointer to the encryption key (size depends on the concrete cipher, typically 32 bytes)
+- `nonce` - pointer to the nonce/IV (size depends on the concrete cipher, typically 12 or 24 bytes)
+
+**Note**: the exact sizes required for `key` and `nonce` depend on the concrete implementation. For example, ChaCha20-Poly1305 requires a 256-bit key (32 bytes) and a 96-bit nonce (12 bytes), while XChaCha20-Poly1305 requires a 192-bit nonce (24 bytes).
+
+#### `fio_crypto_dec_fn`
+
+```c
+typedef int(fio_crypto_dec_fn)(void *restrict mac,
+                               void *restrict data,
+                               size_t len,
+                               const void *ad,    /* additional data */
+                               size_t adlen,
+                               const void *key,
+                               const void *nonce);
+```
+
+Function pointer type for AEAD decryption with authentication.
+
+Authenticates the message using the MAC, then performs in-place decryption of `data`. The additional data (`ad`) must match the value used during encryption for authentication to succeed.
+
+**Parameters:**
+- `mac` - pointer to the authentication tag to verify (must point to at least 16 bytes)
+- `data` - the ciphertext to decrypt in-place (may be NULL if `len` is 0)
+- `len` - length of the data in bytes
+- `ad` - additional data used during encryption (may be NULL only if originally omitted)
+- `adlen` - length of the additional data in bytes
+- `key` - pointer to the decryption key (same key used for encryption)
+- `nonce` - pointer to the nonce/IV (same nonce used for encryption)
+
+**Returns:** `0` on success (authentication passed, data decrypted), `-1` on error (authentication failed, data left unchanged or zeroed depending on implementation).
+
+**Note**: if authentication fails, the data should be considered untrusted. Implementations typically leave the data in an undefined state or zero it on failure.
+
+### Example
+
+```c
+#define FIO_CHACHA
+#include FIO_INCLUDE_FILE
+
+void example_aead_abstraction(void) {
+  /* Use function pointers for cipher-agnostic code */
+  fio_crypto_enc_fn *encrypt = fio_chacha20_poly1305_enc;
+  fio_crypto_dec_fn *decrypt = fio_chacha20_poly1305_dec;
+
+  uint8_t key[32] = {/* ... key material ... */};
+  uint8_t nonce[12] = {/* ... nonce ... */};
+  uint8_t mac[16];
+  char message[] = "Hello, AEAD!";
+  const char *ad = "additional data";
+
+  /* Encrypt in-place */
+  encrypt(mac, message, sizeof(message) - 1,
+          ad, strlen(ad), key, nonce);
+
+  /* Decrypt in-place and verify */
+  int ok = decrypt(mac, message, sizeof(message) - 1,
+                   ad, strlen(ad), key, nonce);
+  if (ok == -1) {
+    /* authentication failed */
+  }
+}
+```
+
+------------------------------------------------------------
 ## BLAKE2
 
 ```c
@@ -13597,6 +15140,396 @@ Decrypts a message using the recipient's X25519 secret key.
 * `recipient_sk`        MUST point to the recipient's 32 byte X25519 secret key.
 
 Returns `0` on success, `-1` on failure (authentication failed or invalid input).
+
+------------------------------------------------------------
+## P-256 (secp256r1) Elliptic Curve Cryptography
+
+```c
+#define FIO_P256
+#include FIO_INCLUDE_FILE
+```
+
+By defining `FIO_P256`, the P-256 (secp256r1) elliptic curve cryptography module is defined and made available. This module provides ECDSA signature signing and verification as well as ECDHE (Elliptic Curve Diffie-Hellman Ephemeral) key exchange for the NIST P-256 curve.
+
+P-256 curve parameters (NIST FIPS 186-4):
+
+- **Prime**: p = 2^256 - 2^224 + 2^192 + 2^96 - 1
+- **Order**: n = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+- **Curve equation**: y² = x³ - 3x + b (mod p)
+
+The module supports:
+
+- **ECDSA Verification** - verify DER-encoded or raw (r, s) signatures against a public key
+- **ECDSA Signing** - sign a message hash with a secret key, producing a DER-encoded signature
+- **ECDHE Key Generation** - generate P-256 keypairs for key exchange
+- **ECDHE Shared Secret** - compute shared secrets from a local secret key and a remote public key
+
+**Note**: this implementation has not been audited and is not constant-time. Use at your own risk.
+
+### ECDSA P-256 Verification API
+
+#### `fio_ecdsa_p256_verify`
+
+```c
+int fio_ecdsa_p256_verify(const uint8_t *sig,
+                          size_t sig_len,
+                          const uint8_t *msg_hash,
+                          const uint8_t *pubkey,
+                          size_t pubkey_len);
+```
+
+Verifies an ECDSA P-256 signature encoded in DER format against an uncompressed public key.
+
+Parses the DER-encoded signature (`SEQUENCE { r INTEGER, s INTEGER }`), extracts the (r, s) components, and delegates to the raw verification routine. Validates that the public key is in uncompressed format (65 bytes starting with `0x04`).
+
+**Parameters:**
+- `sig` - DER-encoded signature bytes (`SEQUENCE { r INTEGER, s INTEGER }`)
+- `sig_len` - length of the signature in bytes
+- `msg_hash` - SHA-256 hash of the message (exactly 32 bytes)
+- `pubkey` - uncompressed public key (65 bytes: `0x04 || x || y`)
+- `pubkey_len` - length of the public key (must be 65)
+
+**Returns:** `0` on success (valid signature), `-1` on failure (invalid signature, malformed input, or NULL parameters).
+
+**Note**: the `msg_hash` must be a SHA-256 digest (32 bytes). The function does **not** hash the message itself.
+
+#### `fio_ecdsa_p256_verify_raw`
+
+```c
+int fio_ecdsa_p256_verify_raw(const uint8_t r[32],
+                              const uint8_t s[32],
+                              const uint8_t msg_hash[32],
+                              const uint8_t pubkey_x[32],
+                              const uint8_t pubkey_y[32]);
+```
+
+Verifies an ECDSA P-256 signature using raw (r, s) components and raw public key coordinates.
+
+Performs the full ECDSA verification algorithm:
+
+1. Validates r, s are in [1, n-1]
+2. Verifies the public key point lies on the P-256 curve
+3. Computes w = s⁻¹ mod n
+4. Computes u1 = e·w mod n and u2 = r·w mod n (where e is the message hash)
+5. Computes R = u1·G + u2·Q using Shamir's trick
+6. Verifies r == R.x mod n
+
+**Parameters:**
+- `r` - the r component of the signature (32 bytes, big-endian)
+- `s` - the s component of the signature (32 bytes, big-endian)
+- `msg_hash` - SHA-256 hash of the message (32 bytes)
+- `pubkey_x` - X coordinate of the public key (32 bytes, big-endian)
+- `pubkey_y` - Y coordinate of the public key (32 bytes, big-endian)
+
+**Returns:** `0` on success (valid signature), `-1` on failure.
+
+### ECDSA P-256 Signing API
+
+#### `fio_ecdsa_p256_sign`
+
+```c
+int fio_ecdsa_p256_sign(uint8_t *sig,
+                        size_t *sig_len,
+                        size_t sig_capacity,
+                        const uint8_t msg_hash[32],
+                        const uint8_t secret_key[32]);
+```
+
+Signs a message hash using ECDSA P-256, producing a DER-encoded signature.
+
+Generates a random nonce `k`, computes the signature components (r, s), and DER-encodes the result. Retries up to 100 times if the random nonce produces an invalid signature (extremely unlikely). Sensitive data (secret key copy, nonce, inverse) is securely zeroed after use.
+
+**Parameters:**
+- `sig` - output buffer for the DER-encoded signature (maximum 72 bytes)
+- `sig_len` - output: actual length of the signature written
+- `sig_capacity` - capacity of the `sig` buffer (must be >= 72)
+- `msg_hash` - SHA-256 hash of the message to sign (exactly 32 bytes)
+- `secret_key` - 32-byte secret key (scalar, big-endian); must be in [1, n-1]
+
+**Returns:** `0` on success, `-1` on failure (invalid parameters, invalid key, or signature generation failed).
+
+**Note**: the function uses `fio_rand_bytes` for nonce generation. The `msg_hash` must be a pre-computed SHA-256 digest. Sensitive key material is securely zeroed after use.
+
+### P-256 ECDHE (Key Exchange) API
+
+#### `fio_p256_keypair`
+
+```c
+int fio_p256_keypair(uint8_t secret_key[32], uint8_t public_key[65]);
+```
+
+Generates a P-256 keypair for ECDHE key exchange.
+
+Generates a cryptographically random 32-byte scalar as the secret key, validates it is in the range [1, n-1], and computes the corresponding public key point (secret_key · G). The public key is output in uncompressed format (`0x04 || x || y`).
+
+**Parameters:**
+- `secret_key` - output: 32-byte secret key (scalar, big-endian)
+- `public_key` - output: 65-byte uncompressed public key (`0x04 || x || y`)
+
+**Returns:** `0` on success, `-1` on failure (NULL parameters or random generation failed after 100 attempts).
+
+**Note**: uses `fio_rand_bytes` for random scalar generation.
+
+#### `fio_p256_shared_secret`
+
+```c
+int fio_p256_shared_secret(uint8_t shared_secret[32],
+                           const uint8_t secret_key[32],
+                           const uint8_t *their_public_key,
+                           size_t their_public_key_len);
+```
+
+Computes a P-256 ECDH shared secret from a local secret key and a remote public key.
+
+Parses the remote public key (supporting both uncompressed 65-byte and compressed 33-byte formats), validates that the point lies on the P-256 curve, and computes the scalar multiplication (secret_key · their_point). The shared secret is the x-coordinate of the resulting point.
+
+**Parameters:**
+- `shared_secret` - output: 32-byte shared secret (x-coordinate of the result point)
+- `secret_key` - 32-byte local secret key (scalar, big-endian); must be in [1, n-1]
+- `their_public_key` - remote party's public key (uncompressed 65 bytes or compressed 33 bytes)
+- `their_public_key_len` - length of the remote public key (must be 33 or 65)
+
+**Returns:** `0` on success, `-1` on failure (invalid key, point not on curve, point at infinity, or all-zero result).
+
+**Note**: sensitive data (secret key copy, intermediate points) is securely zeroed after computation. The function rejects all-zero shared secrets as a defense against low-order point attacks. Compressed public keys (`0x02`/`0x03` prefix) are automatically decompressed.
+
+### Examples
+
+#### ECDSA Sign and Verify
+
+```c
+#define FIO_P256
+#define FIO_SHA2
+#include FIO_INCLUDE_FILE
+
+void example_ecdsa(void) {
+  /* Generate a keypair */
+  uint8_t secret_key[32];
+  uint8_t public_key[65];
+  fio_p256_keypair(secret_key, public_key);
+
+  /* Hash the message with SHA-256 */
+  const char *msg = "Hello, P-256!";
+  fio_u256 hash = fio_sha256(msg, strlen(msg));
+
+  /* Sign the hash */
+  uint8_t sig[72];
+  size_t sig_len;
+  int r = fio_ecdsa_p256_sign(sig, &sig_len, sizeof(sig),
+                               hash.u8, secret_key);
+  if (r != 0) { /* handle error */ }
+
+  /* Verify the signature */
+  r = fio_ecdsa_p256_verify(sig, sig_len, hash.u8,
+                             public_key, 65);
+  if (r == 0) {
+    printf("Signature valid!\n");
+  } else {
+    printf("Signature invalid!\n");
+  }
+}
+```
+
+#### ECDHE Key Exchange
+
+```c
+#define FIO_P256
+#include FIO_INCLUDE_FILE
+
+void example_ecdhe(void) {
+  /* Alice generates her keypair */
+  uint8_t alice_sk[32], alice_pk[65];
+  fio_p256_keypair(alice_sk, alice_pk);
+
+  /* Bob generates his keypair */
+  uint8_t bob_sk[32], bob_pk[65];
+  fio_p256_keypair(bob_sk, bob_pk);
+
+  /* Alice computes shared secret using Bob's public key */
+  uint8_t alice_shared[32];
+  fio_p256_shared_secret(alice_shared, alice_sk, bob_pk, 65);
+
+  /* Bob computes shared secret using Alice's public key */
+  uint8_t bob_shared[32];
+  fio_p256_shared_secret(bob_shared, bob_sk, alice_pk, 65);
+
+  /* alice_shared and bob_shared are now identical */
+}
+```
+
+#### Raw Signature Verification
+
+```c
+void example_verify_raw(const uint8_t r[32],
+                        const uint8_t s[32],
+                        const uint8_t hash[32],
+                        const uint8_t pub_x[32],
+                        const uint8_t pub_y[32]) {
+  int result = fio_ecdsa_p256_verify_raw(r, s, hash, pub_x, pub_y);
+  if (result == 0) {
+    printf("Signature is valid\n");
+  } else {
+    printf("Signature is invalid\n");
+  }
+}
+```
+
+### ECDSA vs ECDHE Summary
+
+| Operation | Function | Input | Output |
+|-----------|----------|-------|--------|
+| Sign | `fio_ecdsa_p256_sign` | msg_hash + secret_key | DER signature (max 72 bytes) |
+| Verify (DER) | `fio_ecdsa_p256_verify` | DER sig + msg_hash + pubkey | 0 (valid) / -1 (invalid) |
+| Verify (raw) | `fio_ecdsa_p256_verify_raw` | r, s + msg_hash + pubkey_x, pubkey_y | 0 (valid) / -1 (invalid) |
+| Keypair | `fio_p256_keypair` | (none) | secret_key (32B) + public_key (65B) |
+| Shared Secret | `fio_p256_shared_secret` | secret_key + their_pubkey | shared_secret (32B) |
+
+-------------------------------------------------------------------------------
+## ECDSA P-384 (secp384r1)
+
+```c
+#define FIO_P384
+#include FIO_INCLUDE_FILE
+```
+
+By defining `FIO_P384`, the ECDSA P-384 signature verification functions are defined and made available. This module provides elliptic curve signature verification for the NIST P-384 curve (also known as secp384r1).
+
+P-384 is a widely-used elliptic curve standardized in [NIST FIPS 186-4](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-4.pdf). It is the curve behind ECDSA signatures in TLS 1.3 certificate chains, including Let's Encrypt root CAs.
+
+The module provides:
+
+- **DER signature verification** - verify ECDSA signatures in standard DER encoding with uncompressed public keys
+- **Raw signature verification** - verify ECDSA signatures given raw (r, s) components and public key coordinates
+
+Curve parameters (NIST FIPS 186-4):
+
+| Parameter | Value |
+|-----------|-------|
+| Prime p | 2^384 − 2^128 − 2^96 + 2^32 − 1 |
+| Curve equation | y² = x³ − 3x + b (mod p) |
+| Security level | ~192-bit |
+| Coordinate size | 48 bytes |
+
+**Note**: this implementation has not been audited. Use at your own risk. The scalar multiplication is not constant-time, making it suitable for signature **verification** but not for signing or key generation.
+
+### ECDSA P-384 Verification Functions
+
+#### `fio_ecdsa_p384_verify`
+
+```c
+int fio_ecdsa_p384_verify(const uint8_t *sig,
+                          size_t sig_len,
+                          const uint8_t *msg_hash,
+                          const uint8_t *pubkey,
+                          size_t pubkey_len);
+```
+
+Verifies an ECDSA P-384 signature over a message hash using a DER-encoded signature and an uncompressed public key.
+
+This is the high-level verification function. It parses the DER-encoded signature, extracts the (r, s) components, validates the uncompressed public key format, and delegates to `fio_ecdsa_p384_verify_raw`.
+
+**Parameters:**
+- `sig` - DER-encoded signature (`SEQUENCE { r INTEGER, s INTEGER }`)
+- `sig_len` - length of the signature in bytes
+- `msg_hash` - SHA-384 hash of the message (48 bytes)
+- `pubkey` - uncompressed public key (97 bytes: `0x04 || x || y`)
+- `pubkey_len` - length of the public key (must be 97)
+
+**Returns:** `0` on success (valid signature), `-1` on failure (invalid signature, malformed input, or NULL parameters).
+
+**Note**: the public key must be in uncompressed format, starting with the `0x04` prefix byte followed by the 48-byte x-coordinate and 48-byte y-coordinate. Compressed public keys are not supported.
+
+#### `fio_ecdsa_p384_verify_raw`
+
+```c
+int fio_ecdsa_p384_verify_raw(const uint8_t r[48],
+                              const uint8_t s[48],
+                              const uint8_t msg_hash[48],
+                              const uint8_t pubkey_x[48],
+                              const uint8_t pubkey_y[48]);
+```
+
+Verifies an ECDSA P-384 signature using raw (r, s) values and separate public key coordinates.
+
+This is the low-level verification function. It performs the full ECDSA verification algorithm:
+
+1. Validates that r and s are in the range [1, n−1]
+2. Verifies the public key point lies on the P-384 curve
+3. Computes w = s⁻¹ mod n
+4. Computes u1 = e·w mod n, u2 = r·w mod n (where e is the message hash)
+5. Computes R = u1·G + u2·Q using Shamir's trick for efficiency
+6. Verifies that R.x mod n equals r
+
+**Parameters:**
+- `r` - the r component of the signature (48 bytes, big-endian)
+- `s` - the s component of the signature (48 bytes, big-endian)
+- `msg_hash` - SHA-384 hash of the message (48 bytes, big-endian)
+- `pubkey_x` - x-coordinate of the public key (48 bytes, big-endian)
+- `pubkey_y` - y-coordinate of the public key (48 bytes, big-endian)
+
+**Returns:** `0` on success (valid signature), `-1` on failure (invalid signature or parameters out of range).
+
+**Note**: all byte arrays are in big-endian format (most significant byte first), which is the standard encoding for ECDSA parameters.
+
+### ECDSA P-384 Examples
+
+#### DER Signature Verification (TLS Certificate)
+
+```c
+#define FIO_P384
+#include FIO_INCLUDE_FILE
+
+int verify_tls_certificate_signature(const uint8_t *der_sig,
+                                     size_t der_sig_len,
+                                     const uint8_t *tbs_hash,
+                                     const uint8_t *pubkey) {
+  /* der_sig: DER-encoded ECDSA signature from the certificate */
+  /* tbs_hash: SHA-384 hash of the TBS (to-be-signed) certificate data */
+  /* pubkey: 97-byte uncompressed public key (0x04 || x || y) */
+
+  int result = fio_ecdsa_p384_verify(der_sig, der_sig_len,
+                                     tbs_hash,
+                                     pubkey, 97);
+  if (result == 0) {
+    /* Signature is valid */
+  } else {
+    /* Signature is invalid */
+  }
+  return result;
+}
+```
+
+#### Raw Signature Verification
+
+```c
+void example_raw_verify(void) {
+  /* Raw 48-byte big-endian components */
+  uint8_t r[48] = { /* ... r component ... */ };
+  uint8_t s[48] = { /* ... s component ... */ };
+  uint8_t hash[48] = { /* ... SHA-384 hash of message ... */ };
+  uint8_t pub_x[48] = { /* ... public key x-coordinate ... */ };
+  uint8_t pub_y[48] = { /* ... public key y-coordinate ... */ };
+
+  int result = fio_ecdsa_p384_verify_raw(r, s, hash, pub_x, pub_y);
+  if (result == 0) {
+    /* Valid signature */
+  } else {
+    /* Invalid signature */
+  }
+}
+```
+
+### Implementation Notes
+
+The P-384 implementation uses:
+
+- **6 × 64-bit limb representation** for field elements (little-endian limb order)
+- **Jacobian coordinates** for point operations, with mixed affine-Jacobian addition
+- **NIST fast reduction** (FIPS 186-4, Section D.2.4) for modular reduction after field multiplication
+- **Shamir's trick** for the double scalar multiplication u1·G + u2·Q during verification
+- **Fermat's little theorem** for field and scalar inversions (a⁻¹ = a^(p−2) mod p)
+
+The scalar multiplication uses a double-and-add algorithm that is **not** constant-time. This is acceptable for signature verification (which operates only on public data) but would be unsuitable for signing or key generation.
 
 ------------------------------------------------------------
 ## ASN.1 DER Parser
@@ -20289,6 +22222,331 @@ int main(void) {
 ```
 
 -------------------------------------------------------------------------------
+## PEM Parser
+
+```c
+#define FIO_PEM
+#include FIO_INCLUDE_FILE
+```
+
+By defining `FIO_PEM`, the PEM file parser module is defined and made available. This module provides parsing of PEM-encoded files as defined in [RFC 7468](https://tools.ietf.org/html/rfc7468), commonly used for X.509 certificates and private keys in TLS.
+
+PEM (Privacy-Enhanced Mail) format wraps binary DER-encoded data in Base64 with distinctive header and footer lines:
+
+```
+-----BEGIN <label>-----
+<base64-encoded DER data>
+-----END <label>-----
+```
+
+The module supports:
+
+- **Generic PEM parsing** - extract and Base64-decode any PEM block by label
+- **Certificate extraction** - parse `CERTIFICATE` labeled blocks, with optional X.509 structure parsing
+- **Private key parsing** - decode private keys from multiple formats:
+  - PKCS#8 `PRIVATE KEY` (RSA, ECDSA P-256, Ed25519)
+  - PKCS#1 `RSA PRIVATE KEY` (legacy RSA)
+  - SEC1 `EC PRIVATE KEY` (legacy EC)
+- **Secure cleanup** - zero sensitive key material after use
+
+**Note**: this module depends on the Base64 string utilities (always available). Certificate structure parsing requires the X.509 module (`FIO_X509`), and private key parsing requires the ASN.1 module (`FIO_ASN1`). The generic `fio_pem_parse` function works without these dependencies.
+
+**Note**: encrypted private keys are not supported.
+
+### PEM Types
+
+#### `fio_pem_key_type_e`
+
+```c
+typedef enum {
+  FIO_PEM_KEY_UNKNOWN = 0,    /* Unknown or unsupported key type */
+  FIO_PEM_KEY_RSA = 1,        /* RSA private key */
+  FIO_PEM_KEY_ECDSA_P256 = 2, /* ECDSA P-256 (secp256r1) private key */
+  FIO_PEM_KEY_ED25519 = 3,    /* Ed25519 private key */
+} fio_pem_key_type_e;
+```
+
+Identifies the algorithm type of a parsed private key.
+
+#### `fio_pem_s`
+
+```c
+typedef struct {
+  const uint8_t *der; /* Pointer to decoded DER data */
+  size_t der_len;     /* Length of DER data */
+  const char *label;  /* PEM label (e.g., "CERTIFICATE", "PRIVATE KEY") */
+  size_t label_len;   /* Length of label */
+} fio_pem_s;
+```
+
+Represents a single parsed PEM block. Returned by `fio_pem_parse` after locating and Base64-decoding one PEM entity.
+
+**Members:**
+- `der` - pointer to the decoded DER (binary) data; points into the caller-provided `der_buf`
+- `der_len` - length of the decoded DER data in bytes
+- `label` - pointer to the PEM label string (e.g., `"CERTIFICATE"`); points into the original PEM input data
+- `label_len` - length of the label string in bytes (not NUL-terminated)
+
+**Note**: the `label` pointer refers directly into the original `pem_data` buffer. The `der` pointer refers into the caller-provided decode buffer. Both become invalid if their respective buffers are freed.
+
+#### `fio_pem_private_key_s`
+
+```c
+typedef struct {
+  fio_pem_key_type_e type;
+  union {
+    struct {
+      const uint8_t *n; /* RSA modulus (big-endian) */
+      size_t n_len;
+      const uint8_t *e; /* RSA public exponent (big-endian) */
+      size_t e_len;
+      const uint8_t *d; /* RSA private exponent (big-endian) */
+      size_t d_len;
+      const uint8_t *p; /* RSA prime p (optional) */
+      size_t p_len;
+      const uint8_t *q; /* RSA prime q (optional) */
+      size_t q_len;
+    } rsa;
+    struct {
+      uint8_t private_key[32]; /* P-256 scalar (32 bytes) */
+      uint8_t public_key[65];  /* Uncompressed point (optional) */
+      int has_public_key;      /* 1 if public_key is populated */
+    } ecdsa_p256;
+    struct {
+      uint8_t private_key[32]; /* Ed25519 seed (32 bytes) */
+      uint8_t public_key[32];  /* Ed25519 public key (optional) */
+      int has_public_key;      /* 1 if public_key is populated */
+    } ed25519;
+  };
+} fio_pem_private_key_s;
+```
+
+Holds the parsed components of a private key. The `type` field determines which union member is active.
+
+**Members:**
+- `type` - the key algorithm type (`fio_pem_key_type_e`)
+
+**RSA members** (`key.rsa.*`, when `type == FIO_PEM_KEY_RSA`):
+- `n` / `n_len` - RSA modulus, big-endian (leading zero byte stripped)
+- `e` / `e_len` - RSA public exponent, big-endian
+- `d` / `d_len` - RSA private exponent, big-endian
+- `p` / `p_len` - first prime factor (optional, may be NULL)
+- `q` / `q_len` - second prime factor (optional, may be NULL)
+
+**ECDSA P-256 members** (`key.ecdsa_p256.*`, when `type == FIO_PEM_KEY_ECDSA_P256`):
+- `private_key` - 32-byte P-256 scalar
+- `public_key` - 65-byte uncompressed point (`0x04 || X || Y`), valid only if `has_public_key` is 1
+- `has_public_key` - 1 if the public key was present in the PEM data, 0 otherwise
+
+**Ed25519 members** (`key.ed25519.*`, when `type == FIO_PEM_KEY_ED25519`):
+- `private_key` - 32-byte Ed25519 seed
+- `public_key` - 32-byte Ed25519 public key, valid only if `has_public_key` is 1
+- `has_public_key` - 1 if the public key was present in the PEM data, 0 otherwise
+
+**Note**: for RSA keys, the `n`, `e`, `d`, `p`, and `q` pointers reference data inside a temporary DER buffer allocated during parsing. These pointers become invalid after `fio_pem_parse_private_key` returns, so copy any data you need before the structure goes out of scope. For ECDSA and Ed25519 keys, the key bytes are copied into the structure and remain valid.
+
+**Note**: call `fio_pem_private_key_clear` when done to securely zero sensitive key material.
+
+### PEM Functions
+
+#### `fio_pem_parse`
+
+```c
+size_t fio_pem_parse(fio_pem_s *out,
+                     uint8_t *der_buf,
+                     size_t der_buf_len,
+                     const char *pem_data,
+                     size_t pem_len);
+```
+
+Parses a single PEM block from `pem_data`.
+
+Locates the next `-----BEGIN <label>-----` / `-----END <label>-----` pair, Base64-decodes the content between them, and writes the decoded DER data into `der_buf`. The resulting label and DER pointers are stored in `out`.
+
+**Parameters:**
+- `out` - output structure filled with parsed PEM block information
+- `der_buf` - caller-provided buffer to store decoded DER data
+- `der_buf_len` - size of `der_buf` in bytes
+- `pem_data` - pointer to PEM-encoded input data
+- `pem_len` - length of the PEM input data in bytes
+
+**Returns:** the number of bytes consumed from `pem_data` (including the end marker and trailing newlines), or 0 on error (no PEM block found, decode failure, or buffer too small).
+
+**Note**: to parse multiple PEM blocks from a single file, advance `pem_data` by the returned byte count and reduce `pem_len` accordingly, calling `fio_pem_parse` in a loop until it returns 0.
+
+#### `fio_pem_parse_certificate`
+
+```c
+int fio_pem_parse_certificate(fio_x509_cert_s *cert,
+                              const char *pem_data,
+                              size_t pem_len);
+```
+
+Parses a PEM-encoded X.509 certificate and fills the `cert` structure.
+
+Locates a `CERTIFICATE` labeled PEM block, Base64-decodes it, and parses the resulting DER as an X.509 certificate using `fio_x509_parse`.
+
+**Parameters:**
+- `cert` - output X.509 certificate structure (defined in the X.509 module)
+- `pem_data` - PEM-encoded certificate data
+- `pem_len` - length of the PEM data in bytes
+
+**Returns:** 0 on success, -1 on error (no certificate found, wrong label, decode failure, or X.509 parse failure).
+
+**Note**: requires the X.509 module (`FIO_X509`). Returns -1 if the X.509 module is not available.
+
+**Note**: on success, the `cert` structure may contain pointers into an internally allocated DER buffer. The caller must manage the lifetime of the certificate data accordingly.
+
+#### `fio_pem_get_certificate_der`
+
+```c
+size_t fio_pem_get_certificate_der(uint8_t *der_out,
+                                   size_t der_out_len,
+                                   const char *pem_data,
+                                   size_t pem_len);
+```
+
+Extracts the raw DER-encoded certificate bytes from PEM data without parsing the X.509 structure.
+
+This is a convenience function that locates a `CERTIFICATE` labeled PEM block, Base64-decodes it, and writes the binary DER data to `der_out`.
+
+**Parameters:**
+- `der_out` - output buffer for the decoded DER data
+- `der_out_len` - size of the output buffer in bytes
+- `pem_data` - PEM-encoded certificate data
+- `pem_len` - length of the PEM data in bytes
+
+**Returns:** the number of DER bytes written to `der_out`, or 0 on error (no certificate found, wrong label, buffer too small, or decode failure).
+
+**Note**: unlike `fio_pem_parse_certificate`, this function does not require the X.509 module and does not parse the certificate structure.
+
+#### `fio_pem_parse_private_key`
+
+```c
+int fio_pem_parse_private_key(fio_pem_private_key_s *key,
+                              const char *pem_data,
+                              size_t pem_len);
+```
+
+Parses a PEM-encoded private key and fills the `key` structure.
+
+Dispatches to the appropriate parser based on the PEM label:
+
+| PEM Label | Format | Supported Key Types |
+|-----------|--------|---------------------|
+| `PRIVATE KEY` | PKCS#8 (RFC 5958) | RSA, ECDSA P-256, Ed25519 |
+| `RSA PRIVATE KEY` | PKCS#1 | RSA |
+| `EC PRIVATE KEY` | SEC1 | ECDSA P-256 |
+
+**Parameters:**
+- `key` - output private key structure
+- `pem_data` - PEM-encoded private key data
+- `pem_len` - length of the PEM data in bytes
+
+**Returns:** 0 on success, -1 on error (unsupported label, unsupported algorithm/curve, parse failure, or missing ASN.1 module).
+
+**Note**: requires the ASN.1 module (`FIO_ASN1`) for key structure parsing. Returns -1 if the ASN.1 module is not available.
+
+**Note**: on failure, the `key` structure is securely zeroed. On success, call `fio_pem_private_key_clear` when done to securely zero sensitive key material.
+
+**Note**: for RSA keys parsed from PKCS#8 or PKCS#1, the internal pointers (`n`, `e`, `d`, `p`, `q`) reference a temporary DER buffer that is freed before this function returns. Copy any needed data immediately.
+
+#### `fio_pem_private_key_clear`
+
+```c
+void fio_pem_private_key_clear(fio_pem_private_key_s *key);
+```
+
+Securely clears a private key structure by overwriting all memory with zeros using `fio_secure_zero`.
+
+**Parameters:**
+- `key` - pointer to the private key structure to clear (safe to pass NULL)
+
+**Note**: always call this function when a `fio_pem_private_key_s` is no longer needed, especially for ECDSA and Ed25519 keys whose scalar bytes are stored directly in the structure.
+
+### PEM Examples
+
+#### Parsing a PEM Certificate (DER Extraction)
+
+```c
+#define FIO_PEM
+#include FIO_INCLUDE_FILE
+
+void example_get_cert_der(const char *pem_data, size_t pem_len) {
+  uint8_t der_buf[4096];
+  size_t der_len = fio_pem_get_certificate_der(
+      der_buf, sizeof(der_buf), pem_data, pem_len);
+  if (der_len == 0) {
+    /* Error: no valid certificate found */
+    return;
+  }
+  /* der_buf[0..der_len-1] contains the raw DER certificate */
+}
+```
+
+#### Parsing Multiple PEM Blocks
+
+```c
+void example_parse_all_blocks(const char *pem_data, size_t pem_len) {
+  uint8_t der_buf[8192];
+  fio_pem_s pem;
+  size_t offset = 0;
+
+  while (offset < pem_len) {
+    size_t consumed = fio_pem_parse(
+        &pem, der_buf, sizeof(der_buf),
+        pem_data + offset, pem_len - offset);
+    if (consumed == 0)
+      break;
+
+    printf("Found PEM block: %.*s (%zu bytes DER)\n",
+           (int)pem.label_len, pem.label, pem.der_len);
+    offset += consumed;
+  }
+}
+```
+
+#### Parsing a Private Key
+
+```c
+void example_parse_key(const char *pem_data, size_t pem_len) {
+  fio_pem_private_key_s key;
+  if (fio_pem_parse_private_key(&key, pem_data, pem_len) != 0) {
+    /* Error: unsupported or malformed key */
+    return;
+  }
+
+  switch (key.type) {
+  case FIO_PEM_KEY_RSA:
+    printf("RSA key: modulus %zu bytes\n", key.rsa.n_len);
+    break;
+  case FIO_PEM_KEY_ECDSA_P256:
+    printf("ECDSA P-256 key (public key %s)\n",
+           key.ecdsa_p256.has_public_key ? "present" : "absent");
+    break;
+  case FIO_PEM_KEY_ED25519:
+    printf("Ed25519 key (public key %s)\n",
+           key.ed25519.has_public_key ? "present" : "absent");
+    break;
+  default:
+    break;
+  }
+
+  /* Securely clear key material when done */
+  fio_pem_private_key_clear(&key);
+}
+```
+
+### Supported Key Formats
+
+| PEM Label | Standard | Key Types | Notes |
+|-----------|----------|-----------|-------|
+| `PRIVATE KEY` | PKCS#8 (RFC 5958) | RSA, ECDSA P-256, Ed25519 | Recommended modern format |
+| `RSA PRIVATE KEY` | PKCS#1 (RFC 8017) | RSA only | Legacy format |
+| `EC PRIVATE KEY` | SEC1 (RFC 5915) | ECDSA P-256 only | Legacy format; curve detected by 32-byte key length |
+| `CERTIFICATE` | X.509 (RFC 5280) | N/A | Certificate parsing, not key |
+
+------------------------------------------------------------
 ## IO Reactor - an Evented, Single-Threaded, IO Reactor
 
 ```c
@@ -25381,6 +27639,836 @@ Messages received from Redis subscriptions are forwarded to local subscribers vi
 - **Cluster Mode**: This module connects to a single Redis instance. For Redis Cluster, you would need to connect to the appropriate node or use a Redis proxy.
 
 ------------------------------------------------------------
+## HTTP/1.1 Parser
+
+```c
+#define FIO_HTTP1_PARSER
+#include FIO_INCLUDE_FILE
+```
+
+By defining `FIO_HTTP1_PARSER`, a lightweight, zero-allocation HTTP/1.1 parser is defined and made available. The parser is implemented entirely as static functions and uses a callback-driven (SAX-style) design.
+
+The parser handles both **requests** and **responses**, automatically detecting which is being parsed from the first line. It supports:
+
+- **Request parsing** - method, URL, version, headers, and body
+- **Response parsing** - version, status code, status text, headers, and body
+- **Chunked transfer encoding** - automatic chunk size parsing and reassembly
+- **Content-Length bodies** - known-length body reading
+- **Trailer headers** - chunked encoding trailers with forbidden-header filtering
+- **Expect: 100-continue** - callback notification for flow control
+- **Incremental parsing** - feed data in arbitrary chunks; the parser resumes where it left off
+
+**Standalone use**: this parser can be used independently in a separate translation unit from the rest of the HTTP module. To use it standalone, define `FIO_HTTP1_PARSER` and implement the required callback functions (declared as `static` prototypes in the header). The callbacks are **not** provided by the parser - they must be implemented by the user.
+
+### HTTP/1.1 Parser Type
+
+#### `fio_http1_parser_s`
+
+```c
+struct fio_http1_parser_s {
+  int (*fn)(fio_http1_parser_s *, fio_buf_info_s *, void *);
+  size_t expected;
+};
+```
+
+The HTTP/1.1 parser state type.
+
+The parser is a small state machine containing a function pointer to the current parsing stage and a counter for expected remaining body bytes.
+
+**Members:**
+- `fn` - internal function pointer to the current parsing stage (treat as opaque)
+- `expected` - number of body bytes still expected, or a sentinel value for chunked/no-body states (treat as opaque)
+
+**Note**: this type should be treated as opaque. Initialize it with `FIO_HTTP1_PARSER_INIT` and interact with it only through the provided API functions.
+
+#### `FIO_HTTP1_PARSER_INIT`
+
+```c
+#define FIO_HTTP1_PARSER_INIT ((fio_http1_parser_s){0})
+```
+
+Zero-initialization value for the parser.
+
+Use this macro to initialize or reset a parser instance:
+
+```c
+fio_http1_parser_s parser = FIO_HTTP1_PARSER_INIT;
+```
+
+### HTTP/1.1 Parser API
+
+#### `fio_http1_parse`
+
+```c
+size_t fio_http1_parse(fio_http1_parser_s *p,
+                       fio_buf_info_s buf,
+                       void *udata);
+```
+
+Parses HTTP/1.x data, calling the appropriate callbacks as elements are parsed.
+
+Data can be fed incrementally - the parser maintains its state between calls and resumes parsing where it left off. Each call processes as much data as possible from the provided buffer.
+
+**Parameters:**
+- `p` - pointer to an initialized `fio_http1_parser_s` parser state
+- `buf` - a `fio_buf_info_s` containing the data to parse (pointer and length)
+- `udata` - opaque user data pointer passed through to all callbacks
+
+**Returns:** the number of bytes consumed from `buf`, or `FIO_HTTP1_PARSER_ERROR` (`(size_t)-1`) on error.
+
+**Note**: after `fio_http1_on_complete` fires, the parser resets itself. Unconsumed bytes (i.e., `buf.len - returned_value`) may belong to a subsequent HTTP message and should be fed to the parser again.
+
+**Note**: a return value of `0` when `buf.len > 0` means the parser needs more data to make progress (e.g., an incomplete header line).
+
+#### `fio_http1_parser_is_empty`
+
+```c
+size_t fio_http1_parser_is_empty(fio_http1_parser_s *p);
+```
+
+Returns true (non-zero) if the parser is idle - waiting to parse a new request or response.
+
+This is the case immediately after initialization or after a complete request/response has been parsed and the `fio_http1_on_complete` callback has fired.
+
+**Parameters:**
+- `p` - pointer to the parser state
+
+**Returns:** non-zero if the parser is empty/idle, zero otherwise.
+
+#### `fio_http1_parser_is_on_header`
+
+```c
+size_t fio_http1_parser_is_on_header(fio_http1_parser_s *p);
+```
+
+Returns true (non-zero) if the parser is currently reading header data.
+
+This includes both regular headers and chunked encoding trailer headers.
+
+**Parameters:**
+- `p` - pointer to the parser state
+
+**Returns:** non-zero if the parser is in the header-reading stage, zero otherwise.
+
+#### `fio_http1_parser_is_on_body`
+
+```c
+size_t fio_http1_parser_is_on_body(fio_http1_parser_s *p);
+```
+
+Returns true (non-zero) if the parser is currently reading body data.
+
+This includes both known-length bodies (Content-Length) and chunked transfer encoding bodies.
+
+**Parameters:**
+- `p` - pointer to the parser state
+
+**Returns:** non-zero if the parser is in the body-reading stage, zero otherwise.
+
+#### `fio_http1_expected`
+
+```c
+size_t fio_http1_expected(fio_http1_parser_s *p);
+```
+
+Returns the number of bytes of body payload still expected to be received.
+
+For chunked transfer encoding, returns `FIO_HTTP1_EXPECTED_CHUNKED`. For methods that don't allow a body (GET, HEAD, OPTIONS) or when no body is expected, returns `0`.
+
+**Parameters:**
+- `p` - pointer to the parser state
+
+**Returns:** number of remaining body bytes, `FIO_HTTP1_EXPECTED_CHUNKED` for chunked bodies, or `0` if no body is expected.
+
+### HTTP/1.1 Parser Constants
+
+#### `FIO_HTTP1_PARSER_ERROR`
+
+```c
+#define FIO_HTTP1_PARSER_ERROR ((size_t)-1)
+```
+
+The error return value for `fio_http1_parse`.
+
+When `fio_http1_parse` returns this value, the HTTP data was malformed and the connection should be closed. The parser state is undefined after an error.
+
+#### `FIO_HTTP1_EXPECTED_CHUNKED`
+
+```c
+#define FIO_HTTP1_EXPECTED_CHUNKED ((size_t)(-2))
+```
+
+A return value for `fio_http1_expected` indicating that the body uses chunked transfer encoding.
+
+When chunked encoding is active, the total body size is not known in advance.
+
+### Callbacks (User-Implemented)
+
+The HTTP/1.1 parser requires the user to implement the following `static` callback functions. These are declared as prototypes in the parser header and **must be defined** in the same translation unit where the parser is included.
+
+All callbacks that return `int` should return `0` on success or `-1` (non-zero) to signal an error and abort parsing.
+
+#### `fio_http1_on_complete`
+
+```c
+static void fio_http1_on_complete(void *udata);
+```
+
+Called when a complete HTTP request or response has been parsed (all headers and body received).
+
+After this callback fires, the parser automatically resets itself and is ready to parse the next message on the same connection (HTTP keep-alive).
+
+**Parameters:**
+- `udata` - the opaque user data pointer passed to `fio_http1_parse`
+
+#### `fio_http1_on_method`
+
+```c
+static int fio_http1_on_method(fio_buf_info_s method, void *udata);
+```
+
+Called when a request method is parsed (e.g., `GET`, `POST`, `PUT`).
+
+This callback is only called for HTTP requests, not responses.
+
+**Parameters:**
+- `method` - a `fio_buf_info_s` containing the method string (not NUL-terminated)
+- `udata` - the opaque user data pointer
+
+**Returns:** `0` on success, `-1` to abort parsing.
+
+**Note**: the parser automatically detects GET, HEAD, and OPTIONS methods and marks them as not allowing a body (unless overridden by Content-Length or Transfer-Encoding headers).
+
+#### `fio_http1_on_status`
+
+```c
+static int fio_http1_on_status(size_t istatus,
+                               fio_buf_info_s status,
+                               void *udata);
+```
+
+Called when a response status line is parsed.
+
+This callback is only called for HTTP responses, not requests.
+
+**Parameters:**
+- `istatus` - the numeric HTTP status code (e.g., `200`, `404`)
+- `status` - a `fio_buf_info_s` containing the status text without the numeric prefix (e.g., `"OK"`, `"Not Found"`)
+- `udata` - the opaque user data pointer
+
+**Returns:** `0` on success, `-1` to abort parsing.
+
+#### `fio_http1_on_url`
+
+```c
+static int fio_http1_on_url(fio_buf_info_s path, void *udata);
+```
+
+Called when a request URL/path is parsed.
+
+This callback is only called for HTTP requests, not responses.
+
+**Parameters:**
+- `path` - a `fio_buf_info_s` containing the URL/path string (not NUL-terminated)
+- `udata` - the opaque user data pointer
+
+**Returns:** `0` on success, `-1` to abort parsing.
+
+#### `fio_http1_on_version`
+
+```c
+static int fio_http1_on_version(fio_buf_info_s version, void *udata);
+```
+
+Called when the HTTP version string is parsed (e.g., `HTTP/1.1`).
+
+Called for both requests and responses. For requests, the version appears as the third token on the first line. For responses, it appears as the first token.
+
+**Parameters:**
+- `version` - a `fio_buf_info_s` containing the version string (not NUL-terminated, clamped to 14 bytes max)
+- `udata` - the opaque user data pointer
+
+**Returns:** `0` on success, `-1` to abort parsing.
+
+#### `fio_http1_on_header`
+
+```c
+static int fio_http1_on_header(fio_buf_info_s name,
+                               fio_buf_info_s value,
+                               void *udata);
+```
+
+Called for each parsed header.
+
+Header names are automatically converted to lowercase by the parser. This callback is also used for chunked encoding trailer headers (with forbidden headers filtered out by the parser).
+
+**Parameters:**
+- `name` - a `fio_buf_info_s` containing the lowercase header name (not NUL-terminated)
+- `value` - a `fio_buf_info_s` containing the header value with leading/trailing whitespace trimmed (not NUL-terminated; `buf` is NULL if value is empty)
+- `udata` - the opaque user data pointer
+
+**Returns:** `0` on success, `-1` to abort parsing.
+
+**Note**: the `content-length` and `transfer-encoding: chunked` headers are processed internally by the parser. The `content-length` header is reported through `fio_http1_on_header_content_length` instead of this callback. The `transfer-encoding` header is reported through this callback only if it contains values other than `chunked` (the `chunked` token is stripped).
+
+#### `fio_http1_on_header_content_length`
+
+```c
+static int fio_http1_on_header_content_length(fio_buf_info_s name,
+                                              fio_buf_info_s value,
+                                              size_t content_length,
+                                              void *udata);
+```
+
+Called when the special `content-length` header is parsed.
+
+This callback allows the user to validate or reject the content length (e.g., enforce maximum body size limits).
+
+**Parameters:**
+- `name` - a `fio_buf_info_s` containing the header name (`"content-length"`)
+- `value` - a `fio_buf_info_s` containing the raw header value string
+- `content_length` - the parsed numeric value of the Content-Length header
+- `udata` - the opaque user data pointer
+
+**Returns:** `0` to accept the content length, `-1` to reject (aborts parsing).
+
+**Note**: the parser enforces that duplicate `content-length` headers must have the same value (CL.CL attack prevention). It also rejects `content-length` values that collide with internal sentinel values or that overflow.
+
+#### `fio_http1_on_expect`
+
+```c
+static int fio_http1_on_expect(void *udata);
+```
+
+Called when an `Expect: 100-continue` header is received and all headers have been parsed.
+
+This allows the server to send a `100 Continue` interim response before the client sends the body, or to reject the request with a `417 Expectation Failed` response.
+
+**Parameters:**
+- `udata` - the opaque user data pointer
+
+**Returns:** `0` to continue parsing (accept the body), non-zero to stop (the parser resets, no `fio_http1_on_complete` is called).
+
+**Note**: the parser only recognizes the exact value `100-continue` for the `Expect` header. Any other value causes a parse error.
+
+#### `fio_http1_on_body_chunk`
+
+```c
+static int fio_http1_on_body_chunk(fio_buf_info_s chunk, void *udata);
+```
+
+Called for each chunk of body data received.
+
+For Content-Length bodies, this may be called multiple times if data arrives incrementally, with chunks summing to the total content length. For chunked transfer encoding, this is called once per decoded chunk (without the chunk framing).
+
+**Parameters:**
+- `chunk` - a `fio_buf_info_s` containing the body data chunk
+- `udata` - the opaque user data pointer
+
+**Returns:** `0` on success, `-1` to abort parsing.
+
+### Security Features
+
+The parser includes several built-in protections:
+
+- **CL.CL prevention** - duplicate `content-length` headers with different values cause a parse error
+- **CL.TE prevention** - conflicting `content-length` and `transfer-encoding: chunked` headers cause a parse error
+- **Forbidden trailer headers** - the following headers are rejected in chunked encoding trailers: `authorization`, `cache-control`, `content-encoding`, `content-length`, `content-range`, `content-type`, `expect`, `host`, `max-forwards`, `set-cookie`, `te`, `trailer`, `transfer-encoding`
+- **Header name validation** - forbidden characters in header names cause a parse error
+- **Content-Length overflow protection** - values that would overflow or collide with sentinel values are rejected
+
+### Standalone Usage Example
+
+To use the HTTP/1.1 parser independently from the full HTTP module, define the required callbacks in your translation unit:
+
+```c
+#define FIO_HTTP1_PARSER
+#include FIO_INCLUDE_FILE
+
+/* --- Implement all required callbacks --- */
+
+static int fio_http1_on_method(fio_buf_info_s method, void *udata) {
+  printf("Method: %.*s\n", (int)method.len, method.buf);
+  return 0;
+}
+
+static int fio_http1_on_url(fio_buf_info_s path, void *udata) {
+  printf("URL: %.*s\n", (int)path.len, path.buf);
+  return 0;
+}
+
+static int fio_http1_on_version(fio_buf_info_s version, void *udata) {
+  printf("Version: %.*s\n", (int)version.len, version.buf);
+  return 0;
+}
+
+static int fio_http1_on_status(size_t istatus,
+                               fio_buf_info_s status,
+                               void *udata) {
+  printf("Status: %zu %.*s\n", istatus, (int)status.len, status.buf);
+  return 0;
+}
+
+static int fio_http1_on_header(fio_buf_info_s name,
+                               fio_buf_info_s value,
+                               void *udata) {
+  printf("Header: %.*s: %.*s\n",
+         (int)name.len, name.buf,
+         (int)value.len, value.buf);
+  return 0;
+}
+
+static int fio_http1_on_header_content_length(fio_buf_info_s name,
+                                              fio_buf_info_s value,
+                                              size_t content_length,
+                                              void *udata) {
+  printf("Content-Length: %zu\n", content_length);
+  /* Reject bodies larger than 1MB */
+  return (content_length > (1UL << 20)) ? -1 : 0;
+}
+
+static int fio_http1_on_expect(void *udata) {
+  /* Accept 100-continue */
+  return 0;
+}
+
+static int fio_http1_on_body_chunk(fio_buf_info_s chunk, void *udata) {
+  printf("Body chunk: %zu bytes\n", chunk.len);
+  return 0;
+}
+
+static void fio_http1_on_complete(void *udata) {
+  printf("Request/Response complete!\n");
+}
+
+/* --- Use the parser --- */
+
+void parse_http_data(char *data, size_t len) {
+  fio_http1_parser_s parser = FIO_HTTP1_PARSER_INIT;
+  fio_buf_info_s buf = FIO_BUF_INFO2(data, len);
+  size_t consumed = fio_http1_parse(&parser, buf, NULL);
+  if (consumed == FIO_HTTP1_PARSER_ERROR) {
+    printf("Parse error!\n");
+    return;
+  }
+  printf("Consumed %zu of %zu bytes\n", consumed, len);
+}
+```
+
+### Incremental Parsing Example
+
+The parser supports feeding data in arbitrary-sized chunks:
+
+```c
+void example_incremental_parsing(int fd) {
+  fio_http1_parser_s parser = FIO_HTTP1_PARSER_INIT;
+  char buffer[4096];
+  size_t pending = 0;
+
+  for (;;) {
+    /* Read more data into buffer after any unconsumed bytes */
+    ssize_t nread = read(fd, buffer + pending, sizeof(buffer) - pending);
+    if (nread <= 0)
+      break;
+    pending += nread;
+
+    /* Parse available data */
+    fio_buf_info_s buf = FIO_BUF_INFO2(buffer, pending);
+    size_t consumed = fio_http1_parse(&parser, buf, NULL);
+    if (consumed == FIO_HTTP1_PARSER_ERROR) {
+      /* Malformed HTTP - close connection */
+      break;
+    }
+
+    /* Move unconsumed data to front of buffer */
+    if (consumed && consumed < pending) {
+      memmove(buffer, buffer + consumed, pending - consumed);
+    }
+    pending -= consumed;
+  }
+}
+```
+
+------------------------------------------------------------
+## WebSocket Parser
+
+```c
+#define FIO_WEBSOCKET_PARSER
+#include FIO_INCLUDE_FILE
+```
+
+By defining `FIO_WEBSOCKET_PARSER`, a WebSocket frame parser and formatter are defined and made available. This module implements the WebSocket protocol framing layer as specified in [RFC 6455](https://tools.ietf.org/html/rfc6455).
+
+The module provides:
+
+- **Parsing (unwrapping)** - a callback-driven streaming parser that consumes raw WebSocket frames, handles masking/unmasking, fragmentation, and dispatches complete messages to user-defined callbacks
+- **Formatting (wrapping)** - functions to wrap payload data into properly framed WebSocket messages for both server-side (unmasked) and client-side (masked) connections
+- **Control frame handling** - automatic dispatch of ping, pong, and close control frames
+- **permessage-deflate** - support for the compression extension via a decompression callback (RSV1 flag)
+
+The parser is designed as a set of static functions suitable for embedding directly in protocol implementations. It uses a state-machine approach with function-pointer dispatch for efficient incremental parsing.
+
+### Configuration Macros
+
+#### `FIO_WEBSOCKET_MAX_PAYLOAD`
+
+```c
+#ifndef FIO_WEBSOCKET_MAX_PAYLOAD
+#define FIO_WEBSOCKET_MAX_PAYLOAD ((uint64_t)(1ULL << 30))
+#endif
+```
+
+Maximum allowed WebSocket frame payload length. Defaults to 1 GB (`1 << 30`).
+
+Override this macro before including the header to change the limit. Setting a lower value helps prevent denial-of-service attacks via memory exhaustion. Frames with a payload length exceeding this value cause a parser error.
+
+#### `FIO_WEBSOCKET_PARSER_ERROR`
+
+```c
+#define FIO_WEBSOCKET_PARSER_ERROR ((size_t)-1)
+```
+
+The sentinel value returned by `fio_websocket_parse` on error. Equivalent to `(size_t)-1`.
+
+### Types
+
+#### `fio_websocket_parser_s`
+
+```c
+struct fio_websocket_parser_s {
+  int (*fn)(fio_websocket_parser_s *, fio_buf_info_s *, void *);
+  uint64_t start_at;
+  uint64_t expect;
+  uint32_t mask;
+  uint8_t first;
+  uint8_t current;
+  uint8_t must_mask;
+};
+```
+
+The WebSocket parser state machine context.
+
+**Members:**
+- `fn` - internal state function pointer (drives the parsing state machine)
+- `start_at` - tracks the unmasking offset within a multi-frame message
+- `expect` - number of payload bytes remaining in the current frame
+- `mask` - the 32-bit masking key for the current frame (0 if unmasked)
+- `first` - the first byte (opcode + flags) of the first frame in the current message
+- `current` - the first byte (opcode + flags) of the current frame being parsed
+- `must_mask` - set to 1 to require masking on all incoming frames (server mode); causes a parser error if an unmasked frame is received
+
+**Note**: initialize this struct to zero before first use. The parser automatically sets up its internal state on the first call to `fio_websocket_parse`. Set `.must_mask = 1` for server-side parsers (RFC 6455 requires clients to mask all frames).
+
+### Parsing API
+
+#### `fio_websocket_parse`
+
+```c
+size_t fio_websocket_parse(fio_websocket_parser_s *p,
+                           fio_buf_info_s buf,
+                           void *udata);
+```
+
+Parses WebSocket data from `buf`, calling the appropriate callbacks as frames are consumed.
+
+The parser is incremental: it can be called with partial data and will resume from where it left off on the next call. Internally it drives a state machine that consumes frame headers, payload data, handles unmasking, reassembles fragmented messages, and dispatches complete messages via callbacks.
+
+**Parameters:**
+- `p` - pointer to an initialized (zeroed) `fio_websocket_parser_s` context
+- `buf` - the raw data buffer to parse (a `fio_buf_info_s` with `.buf` and `.len`)
+- `udata` - opaque user data pointer passed through to all callbacks
+
+**Returns:** the number of bytes consumed from `buf`, or `FIO_WEBSOCKET_PARSER_ERROR` (`(size_t)-1`) on protocol error.
+
+**Note**: a return value less than `buf.len` means there is unconsumed data remaining (typically a partial frame). The caller should buffer the remainder and call again when more data arrives.
+
+### Parsing Callbacks
+
+These functions must be implemented by the user. The parser calls them during parsing to deliver events and request buffer management.
+
+#### `fio_websocket_on_message`
+
+```c
+void fio_websocket_on_message(void *udata,
+                              fio_buf_info_s msg,
+                              unsigned char is_text);
+```
+
+Called when a complete data message (text or binary) has been fully received and reassembled.
+
+**Parameters:**
+- `udata` - the opaque user data pointer from `fio_websocket_parse`
+- `msg` - the complete message payload (already unmasked and, if RSV1 was set, decompressed)
+- `is_text` - `1` if the message is a UTF-8 text frame (opcode 0x1), `0` if binary (opcode 0x2)
+
+#### `fio_websocket_write_partial`
+
+```c
+fio_buf_info_s fio_websocket_write_partial(void *udata,
+                                           fio_buf_info_s partial,
+                                           size_t more_expected);
+```
+
+Called when the parser needs to copy incoming frame payload to an external buffer. This callback is responsible for accumulating partial frame data into a contiguous message buffer.
+
+The returned buffer **must** point to the accumulated message data, as the parser needs it for unmasking.
+
+**Parameters:**
+- `udata` - the opaque user data pointer from `fio_websocket_parse`
+- `partial` - the partial payload data to append (`partial.len` may be 0)
+- `more_expected` - the number of additional payload bytes expected in the current frame (0 when the frame is complete)
+
+**Returns:** a `fio_buf_info_s` pointing to the full accumulated message buffer so far. Must return a valid buffer (non-NULL `.buf`); returning a buffer with `.buf == NULL` signals a protocol error and aborts parsing.
+
+**Note**: when `more_expected` is 0, the current frame's payload is complete. The parser will then unmask the data in-place starting from the appropriate offset.
+
+#### `fio_websocket_decompress`
+
+```c
+fio_buf_info_s fio_websocket_decompress(void *udata,
+                                        fio_buf_info_s msg);
+```
+
+Called when the permessage-deflate extension requires decompression (RSV1 bit set on the first frame of the message).
+
+**Parameters:**
+- `udata` - the opaque user data pointer from `fio_websocket_parse`
+- `msg` - the complete (unmasked) compressed message payload
+
+**Returns:** a `fio_buf_info_s` pointing to the decompressed message data. Returning a buffer with `.buf == NULL` signals an error and aborts parsing.
+
+#### `fio_websocket_on_protocol_ping`
+
+```c
+void fio_websocket_on_protocol_ping(void *udata, fio_buf_info_s msg);
+```
+
+Called when a WebSocket ping control frame (opcode 0x9) is received.
+
+**Parameters:**
+- `udata` - the opaque user data pointer from `fio_websocket_parse`
+- `msg` - the ping payload (may be empty; up to 125 bytes per RFC 6455)
+
+**Note**: per RFC 6455, the application should respond with a pong frame containing the same payload.
+
+#### `fio_websocket_on_protocol_pong`
+
+```c
+void fio_websocket_on_protocol_pong(void *udata, fio_buf_info_s msg);
+```
+
+Called when a WebSocket pong control frame (opcode 0xA) is received.
+
+**Parameters:**
+- `udata` - the opaque user data pointer from `fio_websocket_parse`
+- `msg` - the pong payload (may be empty)
+
+#### `fio_websocket_on_protocol_close`
+
+```c
+void fio_websocket_on_protocol_close(void *udata, fio_buf_info_s msg);
+```
+
+Called when a WebSocket close control frame (opcode 0x8) is received.
+
+**Parameters:**
+- `udata` - the opaque user data pointer from `fio_websocket_parse`
+- `msg` - the close payload. If non-empty, the first 2 bytes contain the close status code (big-endian) and the remainder is an optional UTF-8 reason string.
+
+**Note**: per RFC 6455, the application should respond with a close frame and then close the connection.
+
+### Formatting API
+
+#### `fio_websocket_wrapped_len`
+
+```c
+uint64_t fio_websocket_wrapped_len(uint64_t len);
+```
+
+Returns the number of bytes required for the WebSocket frame header plus payload for a server (unmasked) message of `len` bytes.
+
+The header size varies depending on the payload length:
+- 0-125 bytes: 2-byte header
+- 126-65535 bytes: 4-byte header
+- 65536+ bytes: 10-byte header
+
+**Parameters:**
+- `len` - the payload length in bytes
+
+**Returns:** the total framed message size (header + payload) for an unmasked (server) frame.
+
+**Note**: for client (masked) frames, add 4 to the returned value to account for the 32-bit masking key.
+
+#### `fio_websocket_server_wrap`
+
+```c
+uint64_t fio_websocket_server_wrap(void *target,
+                                   const void *msg,
+                                   uint64_t len,
+                                   unsigned char opcode,
+                                   unsigned char first,
+                                   unsigned char last,
+                                   unsigned char rsv);
+```
+
+Wraps a WebSocket server message and writes the framed data to `target`. Server frames are unmasked per RFC 6455.
+
+The `first` and `last` flags support message fragmentation. When sending a complete message in a single frame, set both to 1.
+
+**Parameters:**
+- `target` - destination buffer (must have capacity for at least `fio_websocket_wrapped_len(len)` bytes)
+- `msg` - pointer to the payload data
+- `len` - payload length in bytes
+- `opcode` - the WebSocket opcode (see table below)
+- `first` - set to 1 for the first (or only) frame of a message
+- `last` - set to 1 for the last (or only) frame of a message (sets the FIN bit)
+- `rsv` - reserved bits (3 bits); set bit 0 (value 1) for permessage-deflate compressed data
+
+**Returns:** the number of bytes written to `target`. Always equal to `fio_websocket_wrapped_len(len)`.
+
+**Opcode values (RFC 6455):**
+
+| Opcode | Meaning |
+|--------|---------|
+| `0x0` | Continuation frame |
+| `0x1` | Text frame (UTF-8) |
+| `0x2` | Binary frame |
+| `0x3`-`0x7` | Reserved (non-control) |
+| `0x8` | Connection close |
+| `0x9` | Ping |
+| `0xA` | Pong |
+| `0xB`-`0xF` | Reserved (control) |
+
+#### `fio_websocket_client_wrap`
+
+```c
+uint64_t fio_websocket_client_wrap(void *target,
+                                   const void *msg,
+                                   uint64_t len,
+                                   unsigned char opcode,
+                                   unsigned char first,
+                                   unsigned char last,
+                                   unsigned char rsv);
+```
+
+Wraps a WebSocket client message and writes the framed data to `target`. Client frames are masked with a random 32-bit key per RFC 6455.
+
+The masking key is generated using `fio_rand64()` and is guaranteed to be non-zero. Masking prevents proxy cache poisoning attacks and is required for all client-to-server frames.
+
+The `first` and `last` flags support message fragmentation, identical to `fio_websocket_server_wrap`.
+
+**Parameters:**
+- `target` - destination buffer (must have capacity for at least `fio_websocket_wrapped_len(len) + 4` bytes)
+- `msg` - pointer to the payload data
+- `len` - payload length in bytes
+- `opcode` - the WebSocket opcode (see opcode table in `fio_websocket_server_wrap`)
+- `first` - set to 1 for the first (or only) frame of a message
+- `last` - set to 1 for the last (or only) frame of a message (sets the FIN bit)
+- `rsv` - reserved bits (3 bits); set bit 0 (value 1) for permessage-deflate compressed data
+
+**Returns:** the number of bytes written to `target`. Always equal to `fio_websocket_wrapped_len(len) + 4`.
+
+### Examples
+
+#### Server: Sending a Text Message
+
+```c
+#define FIO_WEBSOCKET_PARSER
+#include FIO_INCLUDE_FILE
+
+void example_server_send(int fd) {
+  const char *msg = "Hello, WebSocket!";
+  uint64_t len = strlen(msg);
+  uint64_t frame_len = fio_websocket_wrapped_len(len);
+
+  uint8_t buf[128]; /* ensure sufficient capacity */
+  fio_websocket_server_wrap(buf, msg, len,
+                            1,  /* opcode: text */
+                            1,  /* first frame */
+                            1,  /* last frame (FIN) */
+                            0); /* no RSV bits */
+  /* write buf[0..frame_len-1] to the connection */
+}
+```
+
+#### Client: Sending a Binary Message
+
+```c
+void example_client_send(int fd) {
+  const uint8_t data[] = {0x01, 0x02, 0x03, 0x04};
+  uint64_t len = sizeof(data);
+  uint64_t frame_len = fio_websocket_wrapped_len(len) + 4;
+
+  uint8_t buf[128];
+  fio_websocket_client_wrap(buf, data, len,
+                            2,  /* opcode: binary */
+                            1,  /* first frame */
+                            1,  /* last frame (FIN) */
+                            0); /* no RSV bits */
+  /* write buf[0..frame_len-1] to the connection */
+}
+```
+
+#### Parsing Incoming Data
+
+```c
+/* Callback implementations (must be provided by the user) */
+FIO_SFUNC void fio_websocket_on_message(void *udata,
+                                        fio_buf_info_s msg,
+                                        unsigned char is_text) {
+  printf("Received %s message (%zu bytes): %.*s\n",
+         is_text ? "text" : "binary",
+         msg.len, (int)msg.len, msg.buf);
+}
+
+FIO_SFUNC fio_buf_info_s fio_websocket_write_partial(void *udata,
+                                                     fio_buf_info_s partial,
+                                                     size_t more_expected) {
+  /* Simple example: accumulate into a dynamic buffer (pseudo-code) */
+  my_buffer_s *b = (my_buffer_s *)udata;
+  if (partial.len)
+    my_buffer_append(b, partial.buf, partial.len);
+  return FIO_BUF_INFO2(b->data, b->len);
+}
+
+FIO_SFUNC fio_buf_info_s fio_websocket_decompress(void *udata,
+                                                  fio_buf_info_s msg) {
+  /* Implement permessage-deflate decompression here */
+  return msg; /* pass-through if compression not supported */
+}
+
+FIO_SFUNC void fio_websocket_on_protocol_ping(void *udata,
+                                              fio_buf_info_s msg) {
+  /* Respond with a pong frame containing the same payload */
+}
+
+FIO_SFUNC void fio_websocket_on_protocol_pong(void *udata,
+                                              fio_buf_info_s msg) {
+  /* Handle pong (e.g., update keep-alive timer) */
+}
+
+FIO_SFUNC void fio_websocket_on_protocol_close(void *udata,
+                                               fio_buf_info_s msg) {
+  /* Send a close frame in response, then close the connection */
+}
+
+void example_parse(void *raw_data, size_t raw_len) {
+  static fio_websocket_parser_s parser = {0};
+  parser.must_mask = 1; /* server-side: require client masking */
+
+  fio_buf_info_s buf = FIO_BUF_INFO2((char *)raw_data, raw_len);
+  my_buffer_s my_buf = {0};
+
+  size_t consumed = fio_websocket_parse(&parser, buf, &my_buf);
+  if (consumed == FIO_WEBSOCKET_PARSER_ERROR) {
+    /* Protocol error - close the connection */
+    return;
+  }
+  /* If consumed < raw_len, buffer the remainder for next read */
+}
+```
+
+------------------------------------------------------------
 ## HTTP Server
 
 ### Listening for HTTP / WebSockets and EventSource connections
@@ -25958,15 +29046,15 @@ Sets the original / first path associated with the HTTP handle.
 #define FIO_HTTP_PATH_EACH(path, pos)
 ```
 
-Loops over each section of `path`, decoding percent encoding as necessary.
+Loops over each section of `path`, decoding percent encoding as necessary. This uses 4096 bytes on the stack.
 
 The macro accepts the following:
 
 - `path`: the path string as a `fio_str_info_s` or `fio_buf_info_s` object (see [`fio_http_path(h)`](#fio_http_path)).
 
-- `pos` : the name of the variable to use for accessing the section.
+- `pos` : the name of the variable to use for accessing the section. The variable `pos` is a `fio_buf_info_s`.
 
-The variable `pos` is a `fio_buf_info_s`.
+- `pos_reminder` : automatically available inside the loop body, this `fio_buf_info_s` variable points to the rest of the path (the portion not yet iterated).
 
 **Note**: the macro will break if any path's section length is greater than (about) 4063 bytes.
 
@@ -26322,7 +29410,7 @@ size_t fio_http_cookie_each(fio_http_s *,
 
 Iterates through all cookies. A non-zero return will stop iteration.
 
-#### fio_http_set_cookie_each
+#### `fio_http_set_cookie_each`
 
 ```c
 size_t fio_http_set_cookie_each(fio_http_s *h,
