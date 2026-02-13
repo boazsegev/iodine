@@ -72911,7 +72911,7 @@ static void fio___io_poll_on_ready(void *io_, void *ignr_) {
     io->total_sent += total;
 #endif
   }
-  if (fio_stream_any(&io->out) || io->pr->io_functions.flush(io->fd, io->tls)) {
+  if (io->pr->io_functions.flush(io->fd, io->tls) || fio_stream_any(&io->out)) {
     if (fio_stream_length(&io->out) >= FIO_IO_THROTTLE_LIMIT) {
       if (!(io->flags & FIO___IO_FLAG_THROTTLED))
         FIO_LOG_DDEBUG2("(%d), throttled IO %p (fd %d)",
@@ -74533,2091 +74533,6 @@ IO Reactor Finish
 #undef FIO___IO_FLAG_UNSET
 #undef FIO___IO_GET_TIME_MILLI
 #endif /* FIO_IO */
-/* ************************************************************************* */
-#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
-#define FIO___DEV___           /* Development inclusion - ignore line */
-#define FIO_IO                 /* Development inclusion - ignore line */
-#include "./include.h"         /* Development inclusion - ignore line */
-#endif                         /* Development inclusion - ignore line */
-/* *****************************************************************************
-
-
-
-
-                  OpenSSL Implementation for IO Functions
-
-
-
-
-Copyright and License: see header file (000 copyright.h) or top of file
-***************************************************************************** */
-#if defined(H___FIO_IO___H) && !defined(FIO_NO_TLS) &&                         \
-    (HAVE_OPENSSL || __has_include("openssl/ssl.h")) &&                        \
-     !defined(H___FIO_OPENSSL___H) && !defined(FIO___RECURSIVE_INCLUDE)
-#define H___FIO_OPENSSL___H 1
-/* *****************************************************************************
-OpenSSL IO Function Getter
-***************************************************************************** */
-
-/* Returns the OpenSSL IO functions. */
-SFUNC fio_io_functions_s fio_openssl_io_functions(void);
-
-/* *****************************************************************************
-OpenSSL Helpers Implementation
-***************************************************************************** */
-#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
-#include <openssl/bn.h>
-#include <openssl/err.h>
-#include <openssl/ssl.h>
-#include <openssl/x509v3.h>
-
-/* *****************************************************************************
-Validate OpenSSL Library Version
-***************************************************************************** */
-
-#if !defined(OPENSSL_VERSION_MAJOR) || OPENSSL_VERSION_MAJOR < 3
-#undef HAVE_OPENSSL
-#warning HAVE_OPENSSL flag error - incompatible OpenSSL version
-/* No valid OpenSSL, return the default TLS IO functions */
-SFUNC fio_io_functions_s fio_openssl_io_functions(void) {
-  return fio_io_tls_default_functions(NULL);
-}
-#else
-FIO_ASSERT_STATIC(OPENSSL_VERSION_MAJOR > 2, "OpenSSL version mismatch");
-
-/* *****************************************************************************
-Self-Signed Certificates using ECDSA P-256
-
-Security notes:
-- ECDSA P-256 provides 128-bit security (equivalent to RSA-3072)
-- Key generation is ~200x faster than RSA-4096 (~10ms vs ~2000ms)
-- Smaller certificates reduce TLS handshake overhead
-- SHA-256 is used for signing (matched to P-256 security level)
-- 180-day validity balances security with operational convenience
-- Random 128-bit serial numbers prevent prediction attacks
-- X.509v3 extensions ensure browser compatibility
-***************************************************************************** */
-
-/* Global ECDSA private key for self-signed certificates */
-static EVP_PKEY *fio___openssl_pkey = NULL;
-
-/* Cleanup callback to free the private key at exit */
-static void fio___openssl_clear_root_key(void *key) {
-  if (key) {
-    EVP_PKEY_free((EVP_PKEY *)key);
-  }
-  fio___openssl_pkey = NULL;
-}
-
-/*
- * Generate an ECDSA P-256 private key for self-signed certificates.
- * Thread-safe with lock protection.
- *
- * Why ECDSA P-256:
- * - 128-bit security level (equivalent to RSA-3072)
- * - Key generation: ~10ms (vs ~2000ms for RSA-4096)
- * - Smaller keys: 256 bits (vs 4096 bits for RSA)
- * - NIST approved, widely supported
- * - Better performance for TLS handshakes
- */
-static void fio___openssl_make_root_key(void) {
-  static fio_lock_i lock = FIO_LOCK_INIT;
-  fio_lock(&lock);
-  if (!fio___openssl_pkey) {
-    FIO_LOG_DEBUG2("generating ECDSA P-256 private key for TLS...");
-
-    /* Create ECDSA P-256 key using modern OpenSSL 3.x API */
-    fio___openssl_pkey = EVP_EC_gen("P-256");
-
-    if (!fio___openssl_pkey) {
-      /* Log the OpenSSL error */
-      unsigned long err = ERR_get_error();
-      char err_buf[256];
-      ERR_error_string_n(err, err_buf, sizeof(err_buf));
-      FIO_LOG_ERROR("OpenSSL ECDSA P-256 key generation failed: %s", err_buf);
-      FIO_ASSERT(0, "OpenSSL failed to create ECDSA private key.");
-    }
-
-    /* Register cleanup callback */
-    fio_state_callback_add(FIO_CALL_AT_EXIT,
-                           fio___openssl_clear_root_key,
-                           fio___openssl_pkey);
-    FIO_LOG_DEBUG2("ECDSA P-256 private key generated successfully.");
-  }
-  fio_unlock(&lock);
-}
-
-/*
- * Add X.509v3 extensions to a certificate.
- *
- * Extensions added:
- * - Subject Alternative Name (SAN): Required by modern browsers
- * - Basic Constraints: CA:FALSE (not a CA certificate)
- * - Key Usage: digitalSignature, keyEncipherment (for TLS)
- * - Extended Key Usage: serverAuth (for HTTPS/TLS servers)
- *
- * Returns 0 on success, -1 on failure.
- */
-FIO_SFUNC int fio___openssl_add_x509v3_extensions(X509 *cert,
-                                                  const char *server_name) {
-  X509V3_CTX ctx;
-  X509_EXTENSION *ext = NULL;
-  int ret = -1;
-
-  /* Initialize extension context */
-  X509V3_set_ctx_nodb(&ctx);
-  X509V3_set_ctx(&ctx, cert, cert, NULL, NULL, 0);
-
-  /* Basic Constraints: CA:FALSE - this is not a CA certificate */
-  ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_basic_constraints, "CA:FALSE");
-  if (!ext) {
-    FIO_LOG_ERROR("OpenSSL: failed to create Basic Constraints extension");
-    goto cleanup;
-  }
-  if (!X509_add_ext(cert, ext, -1)) {
-    FIO_LOG_ERROR("OpenSSL: failed to add Basic Constraints extension");
-    X509_EXTENSION_free(ext);
-    goto cleanup;
-  }
-  X509_EXTENSION_free(ext);
-  ext = NULL;
-
-  /* Key Usage: digitalSignature, keyEncipherment */
-  ext = X509V3_EXT_conf_nid(NULL,
-                            &ctx,
-                            NID_key_usage,
-                            "critical,digitalSignature,keyEncipherment");
-  if (!ext) {
-    FIO_LOG_ERROR("OpenSSL: failed to create Key Usage extension");
-    goto cleanup;
-  }
-  if (!X509_add_ext(cert, ext, -1)) {
-    FIO_LOG_ERROR("OpenSSL: failed to add Key Usage extension");
-    X509_EXTENSION_free(ext);
-    goto cleanup;
-  }
-  X509_EXTENSION_free(ext);
-  ext = NULL;
-
-  /* Extended Key Usage: serverAuth */
-  ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_ext_key_usage, "serverAuth");
-  if (!ext) {
-    FIO_LOG_ERROR("OpenSSL: failed to create Extended Key Usage extension");
-    goto cleanup;
-  }
-  if (!X509_add_ext(cert, ext, -1)) {
-    FIO_LOG_ERROR("OpenSSL: failed to add Extended Key Usage extension");
-    X509_EXTENSION_free(ext);
-    goto cleanup;
-  }
-  X509_EXTENSION_free(ext);
-  ext = NULL;
-
-  /* Subject Alternative Name (SAN) - required by modern browsers */
-  if (server_name && server_name[0]) {
-    /* Build SAN value: DNS:hostname */
-    char san_value[512];
-    int san_len = snprintf(san_value, sizeof(san_value), "DNS:%s", server_name);
-    if (san_len > 0 && (size_t)san_len < sizeof(san_value)) {
-      ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_subject_alt_name, san_value);
-      if (!ext) {
-        FIO_LOG_ERROR("OpenSSL: failed to create SAN extension");
-        goto cleanup;
-      }
-      if (!X509_add_ext(cert, ext, -1)) {
-        FIO_LOG_ERROR("OpenSSL: failed to add SAN extension");
-        X509_EXTENSION_free(ext);
-        goto cleanup;
-      }
-      X509_EXTENSION_free(ext);
-      ext = NULL;
-    }
-  }
-
-  ret = 0; /* success */
-
-cleanup:
-  return ret;
-}
-
-/*
- * Generate a cryptographically random 128-bit serial number.
- *
- * Security rationale:
- * - Sequential serial numbers are predictable and can leak information
- * - 128-bit random provides ~2^128 possible values (practically unique)
- * - Uses OpenSSL's CSPRNG which sources from /dev/urandom or equivalent
- * - Meets CAB Forum Baseline Requirements for serial number entropy
- *
- * Returns 0 on success, -1 on failure.
- */
-FIO_SFUNC int fio___openssl_set_random_serial(X509 *cert) {
-  BIGNUM *bn = NULL;
-  ASN1_INTEGER *serial = NULL;
-  int ret = -1;
-
-  /* Generate 128-bit random number */
-  bn = BN_new();
-  if (!bn) {
-    FIO_LOG_ERROR("OpenSSL: BN_new failed for serial number");
-    goto cleanup;
-  }
-
-  /* Generate 128 random bits using OpenSSL's CSPRNG */
-  if (!BN_rand(bn, 128, BN_RAND_TOP_ANY, BN_RAND_BOTTOM_ANY)) {
-    FIO_LOG_ERROR("OpenSSL: BN_rand failed for serial number");
-    goto cleanup;
-  }
-
-  /* Ensure the number is positive (required for X.509 serial numbers) */
-  BN_set_negative(bn, 0);
-
-  /* Convert to ASN1_INTEGER and set on certificate */
-  serial = BN_to_ASN1_INTEGER(bn, NULL);
-  if (!serial) {
-    FIO_LOG_ERROR("OpenSSL: BN_to_ASN1_INTEGER failed");
-    goto cleanup;
-  }
-
-  if (!X509_set_serialNumber(cert, serial)) {
-    FIO_LOG_ERROR("OpenSSL: X509_set_serialNumber failed");
-    goto cleanup;
-  }
-
-  ret = 0; /* success */
-
-cleanup:
-  if (serial)
-    ASN1_INTEGER_free(serial);
-  if (bn)
-    BN_free(bn);
-  return ret;
-}
-
-/*
- * Create a self-signed X.509 certificate for TLS.
- *
- * Certificate properties:
- * - Algorithm: ECDSA with P-256 curve
- * - Signature: SHA-256 (matched to P-256 security level)
- * - Validity: 180 days (15552000 seconds)
- * - Serial: 128-bit cryptographically random
- * - Extensions: Basic Constraints, Key Usage, Extended Key Usage, SAN
- *
- * The certificate is self-signed and suitable for development/testing.
- * For production, use properly issued certificates from a trusted CA.
- */
-static X509 *fio_io_tls_create_self_signed(const char *server_name) {
-  X509 *cert = NULL;
-  X509_NAME *name = NULL;
-
-  /* Validate server_name */
-  if (!server_name || !server_name[0]) {
-    server_name = "localhost";
-  }
-
-  /* Check server_name length to prevent overflow */
-  size_t srv_name_len = FIO_STRLEN(server_name);
-  if (srv_name_len > 255) {
-    FIO_LOG_ERROR("server_name too long for certificate (max 255 bytes)");
-    return NULL;
-  }
-
-  /* Ensure we have a private key */
-  fio___openssl_make_root_key();
-  if (!fio___openssl_pkey) {
-    FIO_LOG_ERROR("No private key available for self-signed certificate");
-    return NULL;
-  }
-
-  /* Allocate new X509 certificate structure */
-  cert = X509_new();
-  if (!cert) {
-    FIO_LOG_ERROR("OpenSSL: X509_new failed to allocate certificate");
-    return NULL;
-  }
-
-  /* Set certificate version to X.509v3 (version value is 0-indexed, so 2 = v3)
-   */
-  if (!X509_set_version(cert, 2)) {
-    FIO_LOG_ERROR("OpenSSL: X509_set_version failed");
-    goto error;
-  }
-
-  /* Set cryptographically random serial number */
-  if (fio___openssl_set_random_serial(cert) != 0) {
-    FIO_LOG_ERROR("OpenSSL: failed to set random serial number");
-    goto error;
-  }
-
-  /*
-   * Set validity period: 180 days
-   * - notBefore: now
-   * - notAfter: now + 180 days (15552000 seconds)
-   *
-   * Calculation: 180 days * 24 hours * 60 minutes * 60 seconds = 15552000
-   */
-  if (!X509_gmtime_adj(X509_get_notBefore(cert), 0)) {
-    FIO_LOG_ERROR("OpenSSL: X509_gmtime_adj failed for notBefore");
-    goto error;
-  }
-  if (!X509_gmtime_adj(X509_get_notAfter(cert), 15552000L)) {
-    FIO_LOG_ERROR("OpenSSL: X509_gmtime_adj failed for notAfter");
-    goto error;
-  }
-
-  /* Set the public key from our ECDSA key pair */
-  if (!X509_set_pubkey(cert, fio___openssl_pkey)) {
-    FIO_LOG_ERROR("OpenSSL: X509_set_pubkey failed");
-    goto error;
-  }
-
-  /* Set subject name with Organization and Common Name */
-  name = X509_get_subject_name(cert);
-  if (!name) {
-    FIO_LOG_ERROR("OpenSSL: X509_get_subject_name failed");
-    goto error;
-  }
-
-  /* Add Organization (O) - identifies the certificate owner */
-  if (!X509_NAME_add_entry_by_txt(name,
-                                  "O",
-                                  MBSTRING_ASC,
-                                  (const unsigned char *)server_name,
-                                  (int)srv_name_len,
-                                  -1,
-                                  0)) {
-    FIO_LOG_ERROR("OpenSSL: failed to add Organization to certificate");
-    goto error;
-  }
-
-  /* Add Common Name (CN) - the server's hostname */
-  if (!X509_NAME_add_entry_by_txt(name,
-                                  "CN",
-                                  MBSTRING_ASC,
-                                  (const unsigned char *)server_name,
-                                  (int)srv_name_len,
-                                  -1,
-                                  0)) {
-    FIO_LOG_ERROR("OpenSSL: failed to add Common Name to certificate");
-    goto error;
-  }
-
-  /* Set issuer name (same as subject for self-signed) */
-  if (!X509_set_issuer_name(cert, name)) {
-    FIO_LOG_ERROR("OpenSSL: X509_set_issuer_name failed");
-    goto error;
-  }
-
-  /* Add X.509v3 extensions for browser compatibility */
-  if (fio___openssl_add_x509v3_extensions(cert, server_name) != 0) {
-    FIO_LOG_ERROR("OpenSSL: failed to add X.509v3 extensions");
-    goto error;
-  }
-
-  /*
-   * Sign the certificate with SHA-256.
-   * SHA-256 is matched to P-256's security level (both ~128-bit security).
-   */
-  if (!X509_sign(cert, fio___openssl_pkey, EVP_sha256())) {
-    unsigned long err = ERR_get_error();
-    char err_buf[256];
-    ERR_error_string_n(err, err_buf, sizeof(err_buf));
-    FIO_LOG_ERROR("OpenSSL: X509_sign failed: %s", err_buf);
-    goto error;
-  }
-
-  FIO_LOG_DEBUG2("created self-signed certificate for '%s' (ECDSA P-256, "
-                 "SHA-256, 180 days)",
-                 server_name);
-  return cert;
-
-error:
-  if (cert)
-    X509_free(cert);
-  return NULL;
-}
-
-/* *****************************************************************************
-OpenSSL Context type wrappers
-***************************************************************************** */
-
-/* Context for all future connections */
-typedef struct {
-  SSL_CTX *ctx;
-  fio_io_tls_s *tls;
-} fio___openssl_context_s;
-
-FIO_LEAK_COUNTER_DEF(fio___openssl_context_s)
-
-/* *****************************************************************************
-OpenSSL Callbacks
-***************************************************************************** */
-
-FIO_SFUNC int fio___openssl_pem_password_cb(char *buf,
-                                            int size,
-                                            int rwflag,
-                                            void *u) {
-  const char *password = (const char *)u;
-  if (!password)
-    return 0;
-  size_t password_len = FIO_STRLEN(password);
-  if (password_len > (size_t)size)
-    return -1;
-  FIO_MEMCPY(buf, password, password_len);
-  return (int)password_len;
-  (void)rwflag;
-}
-
-FIO_SFUNC int fio___openssl_alpn_selector_cb(SSL *ssl,
-                                             const unsigned char **out,
-                                             unsigned char *outlen,
-                                             const unsigned char *in,
-                                             unsigned int inlen,
-                                             void *tls_) {
-  fio_io_s *io = (fio_io_s *)SSL_get_ex_data(ssl, 0);
-  fio___openssl_context_s *ctx = (fio___openssl_context_s *)tls_;
-
-  const unsigned char *end = in + inlen;
-  char buf[256];
-  while (in < end) {
-    uint8_t len = in[0];
-    if (len == 0 || (size_t)in + 1 + len > (size_t)end)
-      break;
-    if (len < sizeof(buf) - 1) {
-      FIO_MEMCPY(buf, in + 1, len);
-      buf[len] = 0;
-      if (!fio_io_tls_alpn_select(ctx->tls, buf, (size_t)len, io)) {
-        *out = in + 1;
-        *outlen = len;
-        FIO_LOG_DDEBUG2("(%d) TLS ALPN set to: %s for %p",
-                        (int)fio_thread_getpid(),
-                        buf,
-                        (void *)io);
-        return SSL_TLSEXT_ERR_OK;
-      }
-    }
-    in += len + 1;
-  }
-  FIO_LOG_DDEBUG2("(%d) ALPN Failed! No protocol name match for %p",
-                  (int)fio_thread_getpid(),
-                  (void *)io);
-  return SSL_TLSEXT_ERR_ALERT_FATAL;
-  (void)tls_;
-}
-
-/* *****************************************************************************
-Public Context Builder
-***************************************************************************** */
-
-FIO_SFUNC int fio___openssl_each_cert(struct fio_io_tls_each_s *e,
-                                      const char *server_name,
-                                      const char *public_cert_file,
-                                      const char *private_key_file,
-                                      const char *pk_password) {
-  fio___openssl_context_s *s = (fio___openssl_context_s *)e->udata;
-  if (public_cert_file && private_key_file) { /* load certificate from files */
-    SSL_CTX_set_default_passwd_cb(s->ctx, fio___openssl_pem_password_cb);
-    SSL_CTX_set_default_passwd_cb_userdata(s->ctx, (void *)pk_password);
-    FIO_LOG_DDEBUG2("loading TLS certificates: %s & %s",
-                    public_cert_file,
-                    private_key_file);
-    /* Set the certificate */
-    if (SSL_CTX_use_certificate_chain_file(s->ctx, public_cert_file) <= 0) {
-      ERR_print_errors_fp(stderr);
-      FIO_LOG_ERROR("OpenSSL couldn't load certificate file: %s",
-                    public_cert_file);
-      return -1;
-    }
-    /* Set the private key */
-    if (SSL_CTX_use_PrivateKey_file(s->ctx,
-                                    private_key_file,
-                                    SSL_FILETYPE_PEM) <= 0) {
-      ERR_print_errors_fp(stderr);
-      FIO_LOG_ERROR("OpenSSL couldn't load private key file: %s",
-                    private_key_file);
-      return -1;
-    }
-    /* Verify key matches certificate */
-    if (!SSL_CTX_check_private_key(s->ctx)) {
-      FIO_LOG_ERROR("OpenSSL: private key doesn't match certificate");
-      return -1;
-    }
-    SSL_CTX_set_default_passwd_cb(s->ctx, NULL);
-    SSL_CTX_set_default_passwd_cb_userdata(s->ctx, NULL);
-  } else { /* generate self-signed certificate */
-    if (!server_name || !server_name[0])
-      server_name = "localhost";
-    X509 *cert = fio_io_tls_create_self_signed(server_name);
-    if (!cert) {
-      FIO_LOG_ERROR("failed to create self-signed certificate");
-      return -1;
-    }
-    if (!SSL_CTX_use_certificate(s->ctx, cert)) {
-      X509_free(cert);
-      FIO_LOG_ERROR("OpenSSL: SSL_CTX_use_certificate failed");
-      return -1;
-    }
-    X509_free(cert); /* SSL_CTX makes a copy */
-    if (!SSL_CTX_use_PrivateKey(s->ctx, fio___openssl_pkey)) {
-      FIO_LOG_ERROR("OpenSSL: SSL_CTX_use_PrivateKey failed");
-      return -1;
-    }
-  }
-  return 0;
-}
-
-FIO_SFUNC int fio___openssl_each_alpn(struct fio_io_tls_each_s *e,
-                                      const char *protocol_name,
-                                      void (*on_selected)(fio_io_s *)) {
-  fio_str_info_s *str = (fio_str_info_s *)e->udata2;
-  if (!protocol_name)
-    return 0;
-  size_t len = FIO_STRLEN(protocol_name);
-  if (len == 0 || len > 255) {
-    FIO_LOG_ERROR("ALPN protocol name invalid length: %zu", len);
-    return -1;
-  }
-  if (len + str->len + 1 > str->capa) {
-    FIO_LOG_ERROR("ALPN protocol list overflow.");
-    return -1;
-  }
-  str->buf[str->len++] = (char)(len & 0xFF);
-  FIO_MEMCPY(str->buf + str->len, protocol_name, len);
-  str->len += len;
-  return 0;
-  (void)on_selected;
-}
-
-FIO_SFUNC int fio___openssl_each_trust(struct fio_io_tls_each_s *e,
-                                       const char *public_cert_file) {
-  X509_STORE *store = (X509_STORE *)e->udata2;
-  if (!store)
-    return -1;
-  if (public_cert_file) { /* trust specific certificate */
-    if (!X509_STORE_load_file(store, public_cert_file)) {
-      FIO_LOG_ERROR("OpenSSL: failed to load trust certificate: %s",
-                    public_cert_file);
-      return -1;
-    }
-  } else { /* trust system's default trust store */
-    const char *path = getenv(X509_get_default_cert_dir_env());
-    if (!path)
-      path = X509_get_default_cert_dir();
-    if (path) {
-      if (!X509_STORE_load_path(store, path)) {
-        FIO_LOG_WARNING("OpenSSL: failed to load system trust store from: %s",
-                        path);
-      }
-    }
-  }
-  return 0;
-}
-
-/** Helper that converts a `fio_io_tls_s` into the implementation's context. */
-FIO_SFUNC void *fio___openssl_build_context(fio_io_tls_s *tls,
-                                            uint8_t is_client) {
-  fio___openssl_context_s *ctx =
-      (fio___openssl_context_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(*ctx), 0);
-  if (!ctx) {
-    FIO_LOG_ERROR("OpenSSL: memory allocation failed for context");
-    return NULL;
-  }
-  FIO_LEAK_COUNTER_ON_ALLOC(fio___openssl_context_s);
-  *ctx = (fio___openssl_context_s){
-      .ctx = SSL_CTX_new((is_client ? TLS_client_method : TLS_server_method)()),
-      .tls = fio_io_tls_dup(tls),
-  };
-
-  if (!ctx->ctx) {
-    FIO_LOG_ERROR("OpenSSL: SSL_CTX_new failed");
-    if (ctx->tls)
-      fio_io_tls_free(ctx->tls);
-    FIO_LEAK_COUNTER_ON_FREE(fio___openssl_context_s);
-    FIO_MEM_FREE(ctx, sizeof(*ctx));
-    return NULL;
-  }
-
-  /* Configure SSL context modes for non-blocking I/O */
-  SSL_CTX_set_mode(ctx->ctx, SSL_MODE_ENABLE_PARTIAL_WRITE);
-  SSL_CTX_set_mode(ctx->ctx, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
-  SSL_CTX_clear_mode(ctx->ctx, SSL_MODE_AUTO_RETRY);
-
-  /* Configure certificate verification */
-  X509_STORE *store = NULL;
-  if (fio_io_tls_trust_count(tls)) {
-    SSL_CTX_set_verify(ctx->ctx, SSL_VERIFY_PEER, NULL);
-    store = X509_STORE_new();
-    if (!store) {
-      FIO_LOG_ERROR("OpenSSL: X509_STORE_new failed");
-      goto error;
-    }
-    SSL_CTX_set_cert_store(ctx->ctx, store); /* takes ownership of store */
-  } else {
-    SSL_CTX_set_verify(ctx->ctx, SSL_VERIFY_NONE, NULL);
-    if (is_client)
-      FIO_LOG_SECURITY("no trusted TLS certificates listed for client, using "
-                       "SSL_VERIFY_NONE!");
-  }
-
-  /* Load certificates or generate self-signed */
-  if (!fio_io_tls_cert_count(tls) && !is_client) {
-    /* No certificates configured for server - use self-signed */
-    X509 *cert = fio_io_tls_create_self_signed("localhost");
-    if (!cert) {
-      FIO_LOG_ERROR("OpenSSL: failed to create self-signed certificate");
-      goto error;
-    }
-    if (!SSL_CTX_use_certificate(ctx->ctx, cert)) {
-      X509_free(cert);
-      FIO_LOG_ERROR("OpenSSL: SSL_CTX_use_certificate failed");
-      goto error;
-    }
-    X509_free(cert); /* SSL_CTX makes a copy */
-    if (!SSL_CTX_use_PrivateKey(ctx->ctx, fio___openssl_pkey)) {
-      FIO_LOG_ERROR("OpenSSL: SSL_CTX_use_PrivateKey failed");
-      goto error;
-    }
-  }
-
-  /* Process each configured certificate */
-  if (fio_io_tls_each(tls,
-                      .udata = ctx,
-                      .udata2 = store,
-                      .each_cert = fio___openssl_each_cert,
-                      .each_trust = fio___openssl_each_trust)) {
-    FIO_LOG_ERROR("OpenSSL: failed to configure certificates or trust store");
-    goto error;
-  }
-
-  /* Configure ALPN if protocols are registered */
-  if (fio_io_tls_alpn_count(tls)) {
-    FIO_STR_INFO_TMP_VAR(alpn_list, 1023);
-    if (fio_io_tls_each(tls,
-                        .udata = ctx,
-                        .udata2 = &alpn_list,
-                        .each_alpn = fio___openssl_each_alpn)) {
-      FIO_LOG_ERROR("OpenSSL: failed to configure ALPN protocols");
-      goto error;
-    }
-    if (alpn_list.len > 0) {
-      if (SSL_CTX_set_alpn_protos(ctx->ctx,
-                                  (const unsigned char *)alpn_list.buf,
-                                  (unsigned int)alpn_list.len)) {
-        FIO_LOG_ERROR("SSL_CTX_set_alpn_protos failed.");
-        /* ALPN is optional, continue without it */
-      } else {
-        SSL_CTX_set_alpn_select_cb(ctx->ctx,
-                                   fio___openssl_alpn_selector_cb,
-                                   ctx);
-        SSL_CTX_set_next_proto_select_cb(
-            ctx->ctx,
-            (int (*)(SSL *,
-                     unsigned char **,
-                     unsigned char *,
-                     const unsigned char *,
-                     unsigned int,
-                     void *))fio___openssl_alpn_selector_cb,
-            (void *)ctx);
-      }
-    }
-  }
-  return ctx;
-
-error:
-  if (ctx) {
-    if (ctx->ctx)
-      SSL_CTX_free(ctx->ctx);
-    if (ctx->tls)
-      fio_io_tls_free(ctx->tls);
-    FIO_LEAK_COUNTER_ON_FREE(fio___openssl_context_s);
-    FIO_MEM_FREE(ctx, sizeof(*ctx));
-  }
-  return NULL;
-}
-
-/* *****************************************************************************
-IO functions
-***************************************************************************** */
-
-/** Called to perform a non-blocking `read`, same as the system call. */
-FIO_SFUNC ssize_t fio___openssl_read(int fd,
-                                     void *buf,
-                                     size_t len,
-                                     void *tls_ctx) {
-  ssize_t r;
-  SSL *ssl = (SSL *)tls_ctx;
-  if (!ssl || !buf)
-    return -1;
-  errno = 0;
-  if (len > INT_MAX)
-    len = INT_MAX;
-  r = SSL_read(ssl, buf, (int)len);
-  if (r > 0)
-    return r;
-  if (errno == EWOULDBLOCK || errno == EAGAIN)
-    return (ssize_t)-1;
-
-  switch ((r = (ssize_t)SSL_get_error(ssl, (int)r))) {
-  case SSL_ERROR_SSL:                                   /* fall through */
-  case SSL_ERROR_SYSCALL:                               /* fall through */
-  case SSL_ERROR_ZERO_RETURN: return (r = 0);           /* EOF */
-  case SSL_ERROR_NONE:                                  /* fall through */
-  case SSL_ERROR_WANT_CONNECT:                          /* fall through */
-  case SSL_ERROR_WANT_ACCEPT:                           /* fall through */
-  case SSL_ERROR_WANT_WRITE:                            /* fall through */
-    r = SSL_write_ex(ssl, (void *)&r, 0, (size_t *)&r); /* fall through */
-  case SSL_ERROR_WANT_X509_LOOKUP:                      /* fall through */
-  case SSL_ERROR_WANT_READ:                             /* fall through */
-#ifdef SSL_ERROR_WANT_ASYNC
-  case SSL_ERROR_WANT_ASYNC:                            /* fall through */
-#endif
-  default: errno = EWOULDBLOCK; return (r = -1);
-  }
-  (void)fd;
-}
-
-/** Sends any unsent internal data. Returns 0 only if all data was sent. */
-FIO_SFUNC int fio___openssl_flush(int fd, void *tls_ctx) {
-  return 0;
-  (void)fd, (void)tls_ctx;
-}
-
-/** Called to perform a non-blocking `write`, same as the system call. */
-FIO_SFUNC ssize_t fio___openssl_write(int fd,
-                                      const void *buf,
-                                      size_t len,
-                                      void *tls_ctx) {
-  ssize_t r = -1;
-  if (!buf || !len || !tls_ctx)
-    return r;
-  SSL *ssl = (SSL *)tls_ctx;
-  errno = 0;
-  if (len > INT_MAX)
-    len = INT_MAX;
-  r = SSL_write(ssl, buf, (int)len);
-  if (r > 0)
-    return r;
-  if (errno == EWOULDBLOCK || errno == EAGAIN)
-    return -1;
-
-  switch ((r = (ssize_t)SSL_get_error(ssl, (int)r))) {
-  case SSL_ERROR_SSL:                         /* fall through */
-  case SSL_ERROR_SYSCALL:                     /* fall through */
-  case SSL_ERROR_ZERO_RETURN: return (r = 0); /* EOF */
-  case SSL_ERROR_NONE:                        /* fall through */
-  case SSL_ERROR_WANT_CONNECT:                /* fall through */
-  case SSL_ERROR_WANT_ACCEPT:                 /* fall through */
-  case SSL_ERROR_WANT_X509_LOOKUP:            /* fall through */
-  case SSL_ERROR_WANT_WRITE:                  /* fall through */
-  case SSL_ERROR_WANT_READ:                   /* fall through */
-#ifdef SSL_ERROR_WANT_ASYNC /* fall through */
-  case SSL_ERROR_WANT_ASYNC:                  /* fall through */
-#endif
-  default: errno = EWOULDBLOCK; return (r = -1);
-  }
-  (void)fd;
-}
-
-/* *****************************************************************************
-Per-Connection Builder
-***************************************************************************** */
-
-FIO_LEAK_COUNTER_DEF(fio___SSL)
-
-/** called once the IO was attached and the TLS object was set. */
-FIO_SFUNC void fio___openssl_start(fio_io_s *io) {
-  fio___openssl_context_s *ctx_parent =
-      (fio___openssl_context_s *)fio_io_tls(io);
-  if (!ctx_parent || !ctx_parent->ctx) {
-    FIO_LOG_ERROR("OpenSSL Context missing for connection!");
-    return;
-  }
-
-  SSL *ssl = SSL_new(ctx_parent->ctx);
-  if (!ssl) {
-    FIO_LOG_ERROR("OpenSSL: SSL_new failed");
-    return;
-  }
-  FIO_LEAK_COUNTER_ON_ALLOC(fio___SSL);
-  fio_io_tls_set(io, (void *)ssl);
-
-  /* attach socket */
-  FIO_LOG_DDEBUG2("(%d) allocated new TLS context for %p.",
-                  (int)fio_thread_getpid(),
-                  (void *)io);
-  BIO *bio = BIO_new_socket(fio_io_fd(io), 0);
-  if (!bio) {
-    FIO_LOG_ERROR("OpenSSL: BIO_new_socket failed");
-    FIO_LEAK_COUNTER_ON_FREE(fio___SSL);
-    SSL_free(ssl);
-    fio_io_tls_set(io, NULL);
-    return;
-  }
-  SSL_set_bio(ssl, bio, bio);
-  SSL_set_ex_data(ssl, 0, (void *)io);
-  if (SSL_is_server(ssl))
-    SSL_accept(ssl);
-  else
-    SSL_connect(ssl);
-}
-
-/* *****************************************************************************
-Closing Connections
-***************************************************************************** */
-
-/** Called when the IO object finished sending all data before closure. */
-FIO_SFUNC void fio___openssl_finish(int fd, void *tls_ctx) {
-  SSL *ssl = (SSL *)tls_ctx;
-  if (ssl)
-    SSL_shutdown(ssl);
-  (void)fd;
-}
-
-/* *****************************************************************************
-Per-Connection Cleanup
-***************************************************************************** */
-
-/** Called after the IO object is closed, used to cleanup its `tls` object. */
-FIO_SFUNC void fio___openssl_cleanup(void *tls_ctx) {
-  SSL *ssl = (SSL *)tls_ctx;
-  if (ssl) {
-    SSL_shutdown(ssl);
-    FIO_LEAK_COUNTER_ON_FREE(fio___SSL);
-    SSL_free(ssl);
-  }
-}
-
-/* *****************************************************************************
-Context Cleanup
-***************************************************************************** */
-
-static void fio___openssl_free_context_task(void *tls_ctx, void *ignr_) {
-  fio___openssl_context_s *ctx = (fio___openssl_context_s *)tls_ctx;
-  if (!ctx)
-    return;
-  FIO_LEAK_COUNTER_ON_FREE(fio___openssl_context_s);
-  if (ctx->ctx)
-    SSL_CTX_free(ctx->ctx);
-  if (ctx->tls)
-    fio_io_tls_free(ctx->tls);
-  FIO_MEM_FREE(ctx, sizeof(*ctx));
-  (void)ignr_;
-}
-
-/** Builds a local TLS context out of the fio_io_tls_s object. */
-static void fio___openssl_free_context(void *tls_ctx) {
-  fio_io_defer(fio___openssl_free_context_task, tls_ctx, NULL);
-}
-
-/* *****************************************************************************
-IO Functions Structure
-***************************************************************************** */
-
-/* Returns the OpenSSL IO functions (implementation) */
-SFUNC fio_io_functions_s fio_openssl_io_functions(void) {
-  return (fio_io_functions_s){
-      .build_context = fio___openssl_build_context,
-      .free_context = fio___openssl_free_context,
-      .start = fio___openssl_start,
-      .read = fio___openssl_read,
-      .write = fio___openssl_write,
-      .flush = fio___openssl_flush,
-      .cleanup = fio___openssl_cleanup,
-      .finish = fio___openssl_finish,
-  };
-}
-
-/* Setup OpenSSL as TLS IO default */
-FIO_CONSTRUCTOR(fio___openssl_setup_default) {
-  static fio_io_functions_s FIO___OPENSSL_IO_FUNCS;
-  FIO___OPENSSL_IO_FUNCS = fio_openssl_io_functions();
-  fio_io_tls_default_functions(&FIO___OPENSSL_IO_FUNCS);
-#ifdef SIGPIPE
-  fio_signal_monitor(.sig = SIGPIPE); /* avoid OpenSSL issue... */
-#endif
-}
-
-/* *****************************************************************************
-OpenSSL Helpers Cleanup
-***************************************************************************** */
-#endif /* defined(OPENSSL_VERSION_MAJOR) && OPENSSL_VERSION_MAJOR >= 3 */
-#endif /* FIO_EXTERN_COMPLETE */
-#endif /* HAVE_OPENSSL */
-/* ************************************************************************* */
-#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
-#define FIO___DEV___           /* Development inclusion - ignore line */
-#define FIO_IO                 /* Development inclusion - ignore line */
-#include "./include.h"         /* Development inclusion - ignore line */
-#endif                         /* Development inclusion - ignore line */
-/* *****************************************************************************
-
-
-
-
-                  TLS 1.3 Implementation for IO Functions
-                  (Drop-in replacement when OpenSSL unavailable)
-
-
-
-
-Copyright and License: see header file (000 copyright.h) or top of file
-***************************************************************************** */
-#if defined(H___FIO_IO___H) && defined(H___FIO_TLS13___H) &&                   \
-    !defined(H___FIO_TLS13_IO___H) && !defined(FIO___RECURSIVE_INCLUDE)
-#define H___FIO_TLS13_IO___H 1
-/* *****************************************************************************
-TLS 1.3 IO Function Getter
-***************************************************************************** */
-
-/** Returns the TLS 1.3 IO functions. */
-SFUNC fio_io_functions_s fio_tls13_io_functions(void);
-
-/* *****************************************************************************
-TLS 1.3 IO Functions Implementation
-***************************************************************************** */
-#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
-
-/* *****************************************************************************
-TLS 1.3 Context Types
-***************************************************************************** */
-
-/** Context for all future connections (built from fio_io_tls_s) */
-typedef struct {
-  fio_io_tls_s *tls;
-  uint8_t is_client;
-  /* Certificate chain (DER-encoded) for server */
-  uint8_t *cert_der;
-  size_t cert_der_len;
-  /* Private key for server (P-256: 32-byte scalar, Ed25519: 32-byte seed) */
-  uint8_t private_key[32];
-  /* Public key for P-256 signing (65 bytes: 0x04 || x || y) */
-  uint8_t public_key[65];
-  size_t private_key_len;
-  uint16_t private_key_type;
-  /* SNI hostname for client connections */
-  char server_name[256];
-  /* ALPN protocols (comma-separated) for server */
-  char alpn_protocols[256];
-  size_t alpn_protocols_len;
-} fio___tls13_context_s;
-
-FIO_LEAK_COUNTER_DEF(fio___tls13_context_s)
-
-/** Per-connection TLS state */
-typedef struct {
-  union {
-    fio_tls13_client_s client;
-    fio_tls13_server_s server;
-  } state;
-  uint8_t is_client;
-  uint8_t handshake_complete;
-  /* Buffered incoming data (partial records) */
-  uint8_t *recv_buf;
-  size_t recv_buf_len; /* Total data length in recv_buf */
-  size_t recv_buf_pos; /* Current read position (lazy compaction) */
-  size_t recv_buf_cap;
-  /* Buffered decrypted data (ready to read) */
-  uint8_t *app_buf;
-  size_t app_buf_len;
-  size_t app_buf_cap;
-  size_t app_buf_pos; /* Read position in app_buf */
-  /* Buffered outgoing handshake data */
-  uint8_t *send_buf;
-  size_t send_buf_len;
-  size_t send_buf_cap;
-  size_t send_buf_pos; /* Write position in send_buf */
-  /* Pre-allocated encryption buffer (avoids stack allocation in write path) */
-  uint8_t enc_buf[FIO_TLS13_MAX_CIPHERTEXT_LEN + FIO_TLS13_RECORD_HEADER_LEN +
-                  FIO_TLS13_TAG_LEN + 16];
-  /* Parent context (for certificate chain) */
-  fio___tls13_context_s *ctx;
-  /* Certificate chain storage (for server - pointers must outlive handshake) */
-  const uint8_t *cert_ptr;
-  size_t cert_len;
-} fio___tls13_connection_s;
-
-FIO_LEAK_COUNTER_DEF(fio___tls13_connection_s)
-
-/* *****************************************************************************
-TLS 1.3 Context Builder - Self-Signed Certificate Generation
-***************************************************************************** */
-
-#if defined(H___FIO_X509___H)
-/** Global P-256 keypair for self-signed certificates */
-static fio_x509_keypair_s fio___tls13_self_signed_keypair;
-static uint8_t *fio___tls13_self_signed_cert = NULL;
-static size_t fio___tls13_self_signed_cert_len = 0;
-
-/** Cleanup callback to free the self-signed certificate at exit */
-FIO_SFUNC void fio___tls13_clear_self_signed(void *ignr_) {
-  if (fio___tls13_self_signed_cert) {
-    FIO_MEM_FREE(fio___tls13_self_signed_cert,
-                 fio___tls13_self_signed_cert_len);
-    fio___tls13_self_signed_cert = NULL;
-    fio___tls13_self_signed_cert_len = 0;
-  }
-  fio_x509_keypair_clear(&fio___tls13_self_signed_keypair);
-  (void)ignr_;
-}
-
-/** Generate self-signed certificate for TLS 1.3 server */
-FIO_SFUNC int fio___tls13_make_self_signed(const char *server_name) {
-  static fio_lock_i lock = FIO_LOCK_INIT;
-  fio_lock(&lock);
-
-  if (fio___tls13_self_signed_cert) {
-    fio_unlock(&lock);
-    return 0; /* Already generated */
-  }
-
-  FIO_LOG_DEBUG2("generating P-256 self-signed certificate for TLS 1.3...");
-
-  /* Generate P-256 keypair (universally supported by browsers/curl) */
-  if (fio_x509_keypair_p256(&fio___tls13_self_signed_keypair) != 0) {
-    FIO_LOG_ERROR("TLS 1.3: failed to generate P-256 keypair");
-    fio_unlock(&lock);
-    return -1;
-  }
-
-  /* Set up certificate options */
-  if (!server_name || !server_name[0])
-    server_name = "localhost";
-
-  const char *san_dns[] = {server_name};
-  fio_x509_cert_options_s opts = {
-      .subject_cn = server_name,
-      .subject_cn_len = FIO_STRLEN(server_name),
-      .subject_org = "facil.io",
-      .subject_org_len = 8,
-      .san_dns = san_dns,
-      .san_dns_count = 1,
-      .is_ca = 0,
-  };
-
-  /* Calculate certificate size */
-  size_t cert_size = fio_x509_self_signed_cert(NULL,
-                                               0,
-                                               &fio___tls13_self_signed_keypair,
-                                               &opts);
-  if (cert_size == 0) {
-    FIO_LOG_ERROR("TLS 1.3: failed to calculate certificate size");
-    fio_x509_keypair_clear(&fio___tls13_self_signed_keypair);
-    fio_unlock(&lock);
-    return -1;
-  }
-
-  /* Allocate and generate certificate */
-  fio___tls13_self_signed_cert =
-      (uint8_t *)FIO_MEM_REALLOC(NULL, 0, cert_size, 0);
-  if (!fio___tls13_self_signed_cert) {
-    FIO_LOG_ERROR("TLS 1.3: failed to allocate certificate buffer");
-    fio_x509_keypair_clear(&fio___tls13_self_signed_keypair);
-    fio_unlock(&lock);
-    return -1;
-  }
-
-  fio___tls13_self_signed_cert_len =
-      fio_x509_self_signed_cert(fio___tls13_self_signed_cert,
-                                cert_size,
-                                &fio___tls13_self_signed_keypair,
-                                &opts);
-
-  if (fio___tls13_self_signed_cert_len == 0) {
-    FIO_LOG_ERROR("TLS 1.3: failed to generate self-signed certificate");
-    FIO_MEM_FREE(fio___tls13_self_signed_cert, cert_size);
-    fio___tls13_self_signed_cert = NULL;
-    fio_x509_keypair_clear(&fio___tls13_self_signed_keypair);
-    fio_unlock(&lock);
-    return -1;
-  }
-
-  /* Register cleanup callback */
-  fio_state_callback_add(FIO_CALL_AT_EXIT, fio___tls13_clear_self_signed, NULL);
-
-  FIO_LOG_DEBUG2("P-256 self-signed certificate generated successfully "
-                 "(%zu bytes)",
-                 fio___tls13_self_signed_cert_len);
-  fio_unlock(&lock);
-  return 0;
-}
-#endif /* H___FIO_X509___H */
-
-/* *****************************************************************************
-TLS 1.3 Context Builder
-***************************************************************************** */
-
-/** Callback for iterating ALPN protocols in fio_io_tls_s */
-FIO_SFUNC int fio___tls13_each_alpn(struct fio_io_tls_each_s *e,
-                                    const char *protocol_name,
-                                    void (*on_selected)(fio_io_s *)) {
-  fio___tls13_context_s *ctx = (fio___tls13_context_s *)e->udata;
-  if (!protocol_name || !protocol_name[0])
-    return 0;
-
-  size_t len = FIO_STRLEN(protocol_name);
-  if (len == 0 || len > 255) {
-    FIO_LOG_ERROR("TLS 1.3: ALPN protocol name invalid length: %zu", len);
-    return -1;
-  }
-
-  /* Append to comma-separated list */
-  size_t needed = len + (ctx->alpn_protocols_len > 0 ? 1 : 0);
-  if (ctx->alpn_protocols_len + needed >= sizeof(ctx->alpn_protocols)) {
-    FIO_LOG_ERROR("TLS 1.3: ALPN protocol list overflow");
-    return -1;
-  }
-
-  if (ctx->alpn_protocols_len > 0) {
-    ctx->alpn_protocols[ctx->alpn_protocols_len++] = ',';
-  }
-  FIO_MEMCPY(ctx->alpn_protocols + ctx->alpn_protocols_len, protocol_name, len);
-  ctx->alpn_protocols_len += len;
-  ctx->alpn_protocols[ctx->alpn_protocols_len] = '\0';
-
-  FIO_LOG_DDEBUG("TLS 1.3: added ALPN protocol: %s", protocol_name);
-  (void)on_selected;
-  return 0;
-}
-
-/** Callback for iterating certificates in fio_io_tls_s */
-FIO_SFUNC int fio___tls13_each_cert(struct fio_io_tls_each_s *e,
-                                    const char *server_name,
-                                    const char *public_cert_file,
-                                    const char *private_key_file,
-                                    const char *pk_password) {
-  fio___tls13_context_s *ctx = (fio___tls13_context_s *)e->udata;
-
-#if defined(H___FIO_PEM___H) && defined(H___FIO_X509___H)
-  /* Try to load certificate and key from PEM files */
-  if (public_cert_file && private_key_file) {
-    FIO_LOG_DEBUG2("TLS 1.3: loading certificate from %s", public_cert_file);
-    FIO_LOG_DEBUG2("TLS 1.3: loading private key from %s", private_key_file);
-
-    /* Read certificate file */
-    char *cert_pem = fio_bstr_readfile(NULL, public_cert_file, 0, 0);
-    if (!cert_pem) {
-      FIO_LOG_ERROR("TLS 1.3: failed to read certificate file: %s",
-                    public_cert_file);
-      goto use_self_signed;
-    }
-
-    /* Read private key file */
-    char *key_pem = fio_bstr_readfile(NULL, private_key_file, 0, 0);
-    if (!key_pem) {
-      FIO_LOG_ERROR("TLS 1.3: failed to read private key file: %s",
-                    private_key_file);
-      fio_bstr_free(cert_pem);
-      goto use_self_signed;
-    }
-
-    /* Allocate buffer for DER-encoded certificate */
-    size_t cert_pem_len = fio_bstr_len(cert_pem);
-    size_t der_buf_len = cert_pem_len; /* Conservative estimate */
-    ctx->cert_der = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, der_buf_len, 0);
-    if (!ctx->cert_der) {
-      FIO_LOG_ERROR("TLS 1.3: failed to allocate certificate buffer");
-      fio_bstr_free(cert_pem);
-      fio_bstr_free(key_pem);
-      return -1;
-    }
-
-    /* Extract DER from PEM */
-    ctx->cert_der_len = fio_pem_get_certificate_der(ctx->cert_der,
-                                                    der_buf_len,
-                                                    cert_pem,
-                                                    cert_pem_len);
-    fio_bstr_free(cert_pem);
-
-    if (ctx->cert_der_len == 0) {
-      FIO_LOG_ERROR("TLS 1.3: failed to parse certificate PEM");
-      FIO_MEM_FREE(ctx->cert_der, der_buf_len);
-      ctx->cert_der = NULL;
-      fio_bstr_free(key_pem);
-      goto use_self_signed;
-    }
-
-    /* Parse private key */
-    fio_pem_private_key_s pkey;
-    size_t key_pem_len = fio_bstr_len(key_pem);
-    if (fio_pem_parse_private_key(&pkey, key_pem, key_pem_len) != 0) {
-      FIO_LOG_ERROR("TLS 1.3: failed to parse private key PEM");
-      FIO_MEM_FREE(ctx->cert_der, der_buf_len);
-      ctx->cert_der = NULL;
-      ctx->cert_der_len = 0;
-      fio_bstr_free(key_pem);
-      goto use_self_signed;
-    }
-    fio_bstr_free(key_pem);
-
-    /* Copy private key based on type */
-    switch (pkey.type) {
-    case FIO_PEM_KEY_ECDSA_P256:
-      fio_memcpy32(ctx->private_key, pkey.ecdsa_p256.private_key);
-      if (pkey.ecdsa_p256.has_public_key) {
-        FIO_MEMCPY(ctx->public_key, pkey.ecdsa_p256.public_key, 65);
-      } else {
-        /* Derive public key from private key */
-#if defined(H___FIO_P256___H)
-        uint8_t tmp_secret[32];
-        fio_memcpy32(tmp_secret, pkey.ecdsa_p256.private_key);
-        fio_p256_keypair(tmp_secret, ctx->public_key);
-        fio_secure_zero(tmp_secret, 32);
-#else
-        FIO_LOG_ERROR("TLS 1.3: P-256 module required for key derivation");
-        fio_pem_private_key_clear(&pkey);
-        FIO_MEM_FREE(ctx->cert_der, der_buf_len);
-        ctx->cert_der = NULL;
-        ctx->cert_der_len = 0;
-        goto use_self_signed;
-#endif
-      }
-      ctx->private_key_len = 32;
-      ctx->private_key_type = FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256;
-      FIO_LOG_DEBUG2("TLS 1.3: loaded P-256 private key from PEM");
-      break;
-
-    case FIO_PEM_KEY_ED25519:
-      fio_memcpy32(ctx->private_key, pkey.ed25519.private_key);
-      ctx->private_key_len = 32;
-      ctx->private_key_type = FIO_TLS13_SIG_ED25519;
-      FIO_LOG_DEBUG2("TLS 1.3: loaded Ed25519 private key from PEM");
-      break;
-
-    case FIO_PEM_KEY_RSA:
-      /* RSA signing not yet supported in TLS 1.3 implementation */
-      FIO_LOG_WARNING(
-          "TLS 1.3: RSA private keys not yet supported for signing");
-      fio_pem_private_key_clear(&pkey);
-      FIO_MEM_FREE(ctx->cert_der, der_buf_len);
-      ctx->cert_der = NULL;
-      ctx->cert_der_len = 0;
-      goto use_self_signed;
-
-    default:
-      FIO_LOG_ERROR("TLS 1.3: unsupported private key type");
-      fio_pem_private_key_clear(&pkey);
-      FIO_MEM_FREE(ctx->cert_der, der_buf_len);
-      ctx->cert_der = NULL;
-      ctx->cert_der_len = 0;
-      goto use_self_signed;
-    }
-
-    fio_pem_private_key_clear(&pkey);
-    FIO_LOG_DEBUG2("TLS 1.3: certificate loaded successfully (%zu bytes)",
-                   ctx->cert_der_len);
-    (void)pk_password;
-    (void)server_name;
-    return 0;
-  }
-
-use_self_signed:
-#endif /* H___FIO_PEM___H && H___FIO_X509___H */
-
-#if defined(H___FIO_X509___H)
-  /* Generate self-signed certificate if no PEM files provided or loading failed
-   */
-  if (public_cert_file && private_key_file) {
-    FIO_LOG_WARNING(
-        "TLS 1.3: PEM loading failed, using self-signed certificate");
-  }
-
-  if (fio___tls13_make_self_signed(server_name) != 0) {
-    FIO_LOG_ERROR("TLS 1.3: failed to create self-signed certificate");
-    return -1;
-  }
-
-  /* Copy certificate to context */
-  if (fio___tls13_self_signed_cert && fio___tls13_self_signed_cert_len > 0) {
-    ctx->cert_der = (uint8_t *)
-        FIO_MEM_REALLOC(NULL, 0, fio___tls13_self_signed_cert_len, 0);
-    if (!ctx->cert_der) {
-      FIO_LOG_ERROR("TLS 1.3: failed to allocate certificate buffer");
-      return -1;
-    }
-    FIO_MEMCPY(ctx->cert_der,
-               fio___tls13_self_signed_cert,
-               fio___tls13_self_signed_cert_len);
-    ctx->cert_der_len = fio___tls13_self_signed_cert_len;
-
-    /* Copy private key (P-256 scalar) */
-    fio_memcpy32(ctx->private_key, fio___tls13_self_signed_keypair.secret_key);
-    /* Copy public key (P-256 uncompressed point for signing) */
-    FIO_MEMCPY(ctx->public_key, fio___tls13_self_signed_keypair.public_key, 65);
-    ctx->private_key_len = 32;
-    ctx->private_key_type = FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256;
-  }
-#else
-  FIO_LOG_ERROR(
-      "TLS 1.3: X509 module not available for certificate generation");
-  return -1;
-#endif
-
-  (void)pk_password;
-  return 0;
-}
-
-/** Helper that converts a `fio_io_tls_s` into the implementation's context. */
-FIO_SFUNC void *fio___tls13_build_context(fio_io_tls_s *tls,
-                                          uint8_t is_client) {
-  fio___tls13_context_s *ctx =
-      (fio___tls13_context_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(*ctx), 0);
-  if (!ctx) {
-    FIO_LOG_ERROR("TLS 1.3: memory allocation failed for context");
-    return NULL;
-  }
-  FIO_LEAK_COUNTER_ON_ALLOC(fio___tls13_context_s);
-  FIO_MEMSET(ctx, 0, sizeof(*ctx));
-  ctx->tls = fio_io_tls_dup(tls);
-  ctx->is_client = is_client;
-
-  /* For client, extract server name from TLS object for SNI */
-  if (is_client) {
-    FIO_IMAP_EACH(fio___io_tls_cert_map, &tls->cert, i) {
-      fio_buf_info_s nm = fio_keystr_buf(&tls->cert.ary[i].nm);
-      if (nm.buf && nm.len > 0 && nm.len < sizeof(ctx->server_name)) {
-        FIO_MEMCPY(ctx->server_name, nm.buf, nm.len);
-        ctx->server_name[nm.len] = '\0';
-        FIO_LOG_DEBUG2("TLS 1.3: extracted SNI hostname: %s", ctx->server_name);
-        break;
-      }
-    }
-  } else { /* For server, load certificates */
-    /* Check if certificates are configured */
-    if (!fio_io_tls_cert_count(tls)) {
-      /* No certificates configured - use self-signed */
-#if defined(H___FIO_X509___H)
-      if (fio___tls13_make_self_signed("localhost") != 0) {
-        FIO_LOG_ERROR("TLS 1.3: failed to create self-signed certificate");
-        goto error;
-      }
-      ctx->cert_der = (uint8_t *)
-          FIO_MEM_REALLOC(NULL, 0, fio___tls13_self_signed_cert_len, 0);
-      if (!ctx->cert_der) {
-        FIO_LOG_ERROR("TLS 1.3: failed to allocate certificate buffer");
-        goto error;
-      }
-      FIO_MEMCPY(ctx->cert_der,
-                 fio___tls13_self_signed_cert,
-                 fio___tls13_self_signed_cert_len);
-      ctx->cert_der_len = fio___tls13_self_signed_cert_len;
-      /* Copy private key (P-256 scalar) */
-      fio_memcpy32(ctx->private_key,
-                   fio___tls13_self_signed_keypair.secret_key);
-      /* Copy public key (P-256 uncompressed point for signing) */
-      FIO_MEMCPY(ctx->public_key,
-                 fio___tls13_self_signed_keypair.public_key,
-                 65);
-      ctx->private_key_len = 32;
-      ctx->private_key_type = FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256;
-#else
-      FIO_LOG_ERROR("TLS 1.3: X509 module required for server certificates");
-      goto error;
-#endif
-    } else {
-      /* Process configured certificates */
-      if (fio_io_tls_each(tls,
-                          .udata = ctx,
-                          .each_cert = fio___tls13_each_cert)) {
-        FIO_LOG_ERROR("TLS 1.3: failed to configure certificates");
-        goto error;
-      }
-    }
-
-    /* Collect ALPN protocols for server */
-    if (fio_io_tls_alpn_count(tls)) {
-      if (fio_io_tls_each(tls,
-                          .udata = ctx,
-                          .each_alpn = fio___tls13_each_alpn)) {
-        FIO_LOG_ERROR("TLS 1.3: failed to configure ALPN protocols");
-        goto error;
-      }
-      if (ctx->alpn_protocols_len > 0) {
-        FIO_LOG_DEBUG2("TLS 1.3: ALPN protocols configured: %s",
-                       ctx->alpn_protocols);
-      }
-    }
-  }
-
-  return ctx;
-
-error:
-  if (ctx) {
-    if (ctx->cert_der)
-      FIO_MEM_FREE(ctx->cert_der, ctx->cert_der_len);
-    if (ctx->tls)
-      fio_io_tls_free(ctx->tls);
-    FIO_LEAK_COUNTER_ON_FREE(fio___tls13_context_s);
-    FIO_MEM_FREE(ctx, sizeof(*ctx));
-  }
-  return NULL;
-}
-
-/* *****************************************************************************
-TLS 1.3 Context Cleanup
-***************************************************************************** */
-
-FIO_SFUNC void fio___tls13_free_context_task(void *tls_ctx, void *ignr_) {
-  fio___tls13_context_s *ctx = (fio___tls13_context_s *)tls_ctx;
-  if (!ctx)
-    return;
-  FIO_LEAK_COUNTER_ON_FREE(fio___tls13_context_s);
-  if (ctx->cert_der)
-    FIO_MEM_FREE(ctx->cert_der, ctx->cert_der_len);
-  fio_secure_zero(ctx->private_key, sizeof(ctx->private_key));
-  if (ctx->tls)
-    fio_io_tls_free(ctx->tls);
-  FIO_MEM_FREE(ctx, sizeof(*ctx));
-  (void)ignr_;
-}
-
-/** Helper to free the context built by build_context. */
-FIO_SFUNC void fio___tls13_free_context(void *tls_ctx) {
-  fio_io_defer(fio___tls13_free_context_task, tls_ctx, NULL);
-}
-
-/* *****************************************************************************
-TLS 1.3 Per-Connection Management
-***************************************************************************** */
-
-/** Allocate connection state */
-FIO_SFUNC fio___tls13_connection_s *fio___tls13_connection_new(
-    fio___tls13_context_s *ctx) {
-  fio___tls13_connection_s *conn =
-      (fio___tls13_connection_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(*conn), 0);
-  if (!conn)
-    return NULL;
-  FIO_LEAK_COUNTER_ON_ALLOC(fio___tls13_connection_s);
-  FIO_MEMSET(conn, 0, sizeof(*conn));
-  conn->is_client = ctx->is_client;
-  conn->ctx = ctx;
-
-  /* Allocate buffers */
-  conn->recv_buf_cap = FIO_TLS13_MAX_CIPHERTEXT_LEN + 256;
-  conn->recv_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, conn->recv_buf_cap, 0);
-  if (!conn->recv_buf)
-    goto error;
-
-  conn->app_buf_cap = FIO_TLS13_MAX_PLAINTEXT_LEN;
-  conn->app_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, conn->app_buf_cap, 0);
-  if (!conn->app_buf)
-    goto error;
-
-  conn->send_buf_cap = 8192;
-  conn->send_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, conn->send_buf_cap, 0);
-  if (!conn->send_buf)
-    goto error;
-
-  return conn;
-
-error:
-  if (conn->recv_buf)
-    FIO_MEM_FREE(conn->recv_buf, conn->recv_buf_cap);
-  if (conn->app_buf)
-    FIO_MEM_FREE(conn->app_buf, conn->app_buf_cap);
-  if (conn->send_buf)
-    FIO_MEM_FREE(conn->send_buf, conn->send_buf_cap);
-  FIO_LEAK_COUNTER_ON_FREE(fio___tls13_connection_s);
-  FIO_MEM_FREE(conn, sizeof(*conn));
-  return NULL;
-}
-
-/** Free connection state */
-FIO_SFUNC void fio___tls13_connection_free(fio___tls13_connection_s *conn) {
-  if (!conn)
-    return;
-
-  /* Destroy TLS state */
-  if (conn->is_client)
-    fio_tls13_client_destroy(&conn->state.client);
-  else
-    fio_tls13_server_destroy(&conn->state.server);
-
-  /* Free buffers */
-  if (conn->recv_buf)
-    FIO_MEM_FREE(conn->recv_buf, conn->recv_buf_cap);
-  if (conn->app_buf)
-    FIO_MEM_FREE(conn->app_buf, conn->app_buf_cap);
-  if (conn->send_buf)
-    FIO_MEM_FREE(conn->send_buf, conn->send_buf_cap);
-
-  FIO_LEAK_COUNTER_ON_FREE(fio___tls13_connection_s);
-  FIO_MEM_FREE(conn, sizeof(*conn));
-}
-
-/* *****************************************************************************
-TLS 1.3 IO Functions - Start
-***************************************************************************** */
-
-/** Called when a new IO is first attached to a valid protocol. */
-FIO_SFUNC void fio___tls13_start(fio_io_s *io) {
-  fio___tls13_context_s *ctx = (fio___tls13_context_s *)fio_io_tls(io);
-  if (!ctx) {
-    FIO_LOG_ERROR("TLS 1.3: Context missing for connection!");
-    return;
-  }
-
-  /* Allocate connection state */
-  fio___tls13_connection_s *conn = fio___tls13_connection_new(ctx);
-  if (!conn) {
-    FIO_LOG_ERROR("TLS 1.3: failed to allocate connection state");
-    return;
-  }
-
-  /* Store connection state in IO */
-  fio_io_tls_set(io, (void *)conn);
-
-  FIO_LOG_DDEBUG2("(%d) TLS 1.3: allocated new connection for %p (%s)",
-                  (int)fio_thread_getpid(),
-                  (void *)io,
-                  conn->is_client ? "client" : "server");
-
-  if (conn->is_client) {
-    /* Initialize client and start handshake with SNI */
-    const char *sni = ctx->server_name[0] ? ctx->server_name : NULL;
-    fio_tls13_client_init(&conn->state.client, sni);
-    fio_tls13_client_skip_verification(&conn->state.client,
-                                       1); /* TODO: proper verification */
-
-    /* Generate ClientHello */
-    int ch_len = fio_tls13_client_start(&conn->state.client,
-                                        conn->send_buf,
-                                        conn->send_buf_cap);
-    if (ch_len < 0) {
-      FIO_LOG_ERROR("TLS 1.3: failed to generate ClientHello");
-      return;
-    }
-    conn->send_buf_len = (size_t)ch_len;
-    conn->send_buf_pos = 0;
-  } else {
-    /* Initialize server */
-    fio_tls13_server_init(&conn->state.server);
-
-    /* Set certificate chain - use pointers stored in connection struct */
-    if (ctx->cert_der && ctx->cert_der_len > 0) {
-      /* Store cert pointer and length in connection for lifetime management */
-      conn->cert_ptr = ctx->cert_der;
-      conn->cert_len = ctx->cert_der_len;
-      fio_tls13_server_set_cert_chain(&conn->state.server,
-                                      &conn->cert_ptr,
-                                      &conn->cert_len,
-                                      1);
-    }
-
-    /* Set private key */
-    if (ctx->private_key_len > 0) {
-      fio_tls13_server_set_private_key(&conn->state.server,
-                                       ctx->private_key,
-                                       ctx->private_key_len,
-                                       ctx->private_key_type);
-      /* Copy public key for P-256 signing */
-      if (ctx->private_key_type == FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256) {
-        FIO_MEMCPY(conn->state.server.public_key, ctx->public_key, 65);
-      }
-    }
-
-    /* Set ALPN protocols if configured */
-    if (ctx->alpn_protocols_len > 0) {
-      fio_tls13_server_alpn_set(&conn->state.server, ctx->alpn_protocols);
-    }
-  }
-}
-
-/* *****************************************************************************
-TLS 1.3 IO Functions - Read
-***************************************************************************** */
-
-/** Called to perform a non-blocking `read`, same as the system call. */
-FIO_SFUNC ssize_t fio___tls13_read(int fd,
-                                   void *buf,
-                                   size_t len,
-                                   void *tls_ctx) {
-  fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
-  if (!conn || !buf)
-    return -1;
-
-  /* If we have buffered application data, return it first */
-  if (conn->app_buf_len > conn->app_buf_pos) {
-    size_t available = conn->app_buf_len - conn->app_buf_pos;
-    size_t to_copy = (len < available) ? len : available;
-    FIO_MEMCPY(buf, conn->app_buf + conn->app_buf_pos, to_copy);
-    conn->app_buf_pos += to_copy;
-
-    /* Reset buffer if fully consumed */
-    if (conn->app_buf_pos >= conn->app_buf_len) {
-      conn->app_buf_len = 0;
-      conn->app_buf_pos = 0;
-    }
-    return (ssize_t)to_copy;
-  }
-
-  /* Calculate available space in recv_buf and compact if needed */
-  size_t recv_data_len = conn->recv_buf_len - conn->recv_buf_pos;
-  size_t recv_space = conn->recv_buf_cap - conn->recv_buf_len;
-
-  /* Lazy compaction: only compact when buffer is >50% consumed AND
-   * we don't have enough space for a new record */
-  if (conn->recv_buf_pos > (conn->recv_buf_cap >> 1) &&
-      recv_space < FIO_TLS13_MAX_CIPHERTEXT_LEN) {
-    if (recv_data_len > 0) {
-      FIO_MEMMOVE(conn->recv_buf,
-                  conn->recv_buf + conn->recv_buf_pos,
-                  recv_data_len);
-    }
-    conn->recv_buf_len = recv_data_len;
-    conn->recv_buf_pos = 0;
-    recv_space = conn->recv_buf_cap - conn->recv_buf_len;
-  }
-
-  /* Read raw data from socket */
-  errno = 0;
-  ssize_t raw_read =
-      fio_sock_read(fd, conn->recv_buf + conn->recv_buf_len, recv_space);
-  if (raw_read <= 0) {
-    if (raw_read == 0)
-      return 0; /* EOF */
-    if (errno == EWOULDBLOCK || errno == EAGAIN)
-      return -1;
-    return raw_read;
-  }
-  conn->recv_buf_len += (size_t)raw_read;
-  recv_data_len = conn->recv_buf_len - conn->recv_buf_pos;
-
-  /* Process received data */
-  uint8_t *recv_ptr = conn->recv_buf + conn->recv_buf_pos;
-  while (recv_data_len >= FIO_TLS13_RECORD_HEADER_LEN) {
-    /* Check if we have a complete record */
-    uint16_t record_len = ((uint16_t)recv_ptr[3] << 8) | recv_ptr[4];
-    size_t total_record_len = FIO_TLS13_RECORD_HEADER_LEN + record_len;
-
-    if (recv_data_len < total_record_len)
-      break; /* Need more data */
-
-    if (!conn->handshake_complete) {
-      /* Process handshake */
-      uint8_t out_buf[8192];
-      size_t out_len = 0;
-      int consumed;
-
-      if (conn->is_client) {
-        consumed = fio_tls13_client_process(&conn->state.client,
-                                            recv_ptr,
-                                            recv_data_len,
-                                            out_buf,
-                                            sizeof(out_buf),
-                                            &out_len);
-      } else {
-        consumed = fio_tls13_server_process(&conn->state.server,
-                                            recv_ptr,
-                                            recv_data_len,
-                                            out_buf,
-                                            sizeof(out_buf),
-                                            &out_len);
-      }
-
-      if (consumed < 0) {
-        FIO_LOG_DEBUG2("TLS 1.3: handshake processing error");
-        errno = ECONNRESET;
-        return -1;
-      }
-
-      /* Buffer any handshake response */
-      if (out_len > 0) {
-        if (conn->send_buf_len + out_len <= conn->send_buf_cap) {
-          FIO_MEMCPY(conn->send_buf + conn->send_buf_len, out_buf, out_len);
-          conn->send_buf_len += out_len;
-        }
-        /* Immediately try to send handshake response */
-        while (conn->send_buf_pos < conn->send_buf_len) {
-          errno = 0;
-          ssize_t hs_written =
-              fio_sock_write(fd,
-                             conn->send_buf + conn->send_buf_pos,
-                             conn->send_buf_len - conn->send_buf_pos);
-          if (hs_written <= 0) {
-            if (errno == EWOULDBLOCK || errno == EAGAIN)
-              break; /* Will retry later */
-            break;
-          }
-          conn->send_buf_pos += (size_t)hs_written;
-        }
-        if (conn->send_buf_pos >= conn->send_buf_len) {
-          conn->send_buf_len = 0;
-          conn->send_buf_pos = 0;
-        }
-      }
-
-      /* Advance read position (lazy compaction) */
-      if (consumed > 0 && (size_t)consumed <= recv_data_len) {
-        conn->recv_buf_pos += (size_t)consumed;
-        recv_ptr += consumed;
-        recv_data_len -= (size_t)consumed;
-      }
-
-      /* Check if handshake is complete */
-      if (conn->is_client) {
-        if (fio_tls13_client_is_connected(&conn->state.client)) {
-          conn->handshake_complete = 1;
-          FIO_LOG_DEBUG2("TLS 1.3: client handshake complete");
-        } else if (fio_tls13_client_is_error(&conn->state.client)) {
-          FIO_LOG_DEBUG2("TLS 1.3: client handshake error");
-          errno = ECONNRESET;
-          return -1;
-        }
-      } else {
-        if (fio_tls13_server_is_connected(&conn->state.server)) {
-          conn->handshake_complete = 1;
-          FIO_LOG_DEBUG2("TLS 1.3: server handshake complete");
-        } else if (fio_tls13_server_is_error(&conn->state.server)) {
-          FIO_LOG_DEBUG2("TLS 1.3: server handshake error");
-          errno = ECONNRESET;
-          return -1;
-        }
-      }
-    } else {
-      /* Decrypt application data */
-      int dec_len;
-
-      /* OPTIMIZATION: If user buffer is large enough and app_buf is empty,
-       * decrypt directly into user buffer to avoid double copy */
-      size_t expected_plaintext_len = record_len > (FIO_TLS13_TAG_LEN + 1)
-                                          ? record_len - FIO_TLS13_TAG_LEN - 1
-                                          : 0;
-      uint8_t *decrypt_target;
-      size_t decrypt_capacity;
-
-      if (len >= expected_plaintext_len && conn->app_buf_len == 0 &&
-          conn->app_buf_pos == 0) {
-        /* Decrypt directly to user buffer */
-        decrypt_target = (uint8_t *)buf;
-        decrypt_capacity = len;
-      } else {
-        /* Use app_buf as intermediate buffer */
-        decrypt_target = conn->app_buf + conn->app_buf_len;
-        decrypt_capacity = conn->app_buf_cap - conn->app_buf_len;
-      }
-
-      if (conn->is_client) {
-        dec_len = fio_tls13_client_decrypt(&conn->state.client,
-                                           decrypt_target,
-                                           decrypt_capacity,
-                                           recv_ptr,
-                                           total_record_len);
-      } else {
-        dec_len = fio_tls13_server_decrypt(&conn->state.server,
-                                           decrypt_target,
-                                           decrypt_capacity,
-                                           recv_ptr,
-                                           total_record_len);
-      }
-
-      if (dec_len < 0) {
-        FIO_LOG_DEBUG2("TLS 1.3: decryption error");
-        errno = ECONNRESET;
-        return -1;
-      }
-
-      /* Advance read position (lazy compaction) */
-      conn->recv_buf_pos += total_record_len;
-      recv_ptr += total_record_len;
-      recv_data_len -= total_record_len;
-
-      /* If we decrypted directly to user buffer, return immediately */
-      if (decrypt_target == (uint8_t *)buf && dec_len > 0) {
-        return (ssize_t)dec_len;
-      }
-
-      if (dec_len > 0)
-        conn->app_buf_len += (size_t)dec_len;
-    }
-  }
-
-  /* Return buffered application data */
-  if (conn->app_buf_len > conn->app_buf_pos) {
-    size_t available = conn->app_buf_len - conn->app_buf_pos;
-    size_t to_copy = (len < available) ? len : available;
-    FIO_MEMCPY(buf, conn->app_buf + conn->app_buf_pos, to_copy);
-    conn->app_buf_pos += to_copy;
-
-    if (conn->app_buf_pos >= conn->app_buf_len) {
-      conn->app_buf_len = 0;
-      conn->app_buf_pos = 0;
-    }
-    return (ssize_t)to_copy;
-  }
-
-  /* No data available yet */
-  errno = EWOULDBLOCK;
-  return -1;
-}
-
-/* *****************************************************************************
-TLS 1.3 IO Functions - Write
-***************************************************************************** */
-
-/** Called to perform a non-blocking `write`, same as the system call. */
-FIO_SFUNC ssize_t fio___tls13_write(int fd,
-                                    const void *buf,
-                                    size_t len,
-                                    void *tls_ctx) {
-  fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
-  if (!conn || !buf || len == 0)
-    return -1;
-
-  /* If handshake not complete, can't send application data */
-  if (!conn->handshake_complete) {
-    errno = EWOULDBLOCK;
-    return -1;
-  }
-
-  /* Flush any pending handshake data (e.g., client Finished) before sending
-   * application data. The server must receive the client Finished before it
-   * can process application data encrypted with application keys. */
-  while (conn->send_buf_pos < conn->send_buf_len) {
-    errno = 0;
-    ssize_t hs_written =
-        fio_sock_write(fd,
-                       conn->send_buf + conn->send_buf_pos,
-                       conn->send_buf_len - conn->send_buf_pos);
-    if (hs_written <= 0) {
-      /* Can't send handshake data yet, so can't send app data either */
-      errno = EWOULDBLOCK;
-      return -1;
-    }
-    conn->send_buf_pos += (size_t)hs_written;
-  }
-  /* Reset send buffer after handshake data is fully sent */
-  if (conn->send_buf_pos >= conn->send_buf_len) {
-    conn->send_buf_len = 0;
-    conn->send_buf_pos = 0;
-  }
-
-  /* RFC 8446 Section 4.6.3: Send KeyUpdate response before Application Data
-   * if one is pending. The response MUST be encrypted with OLD sending keys,
-   * then we update our sending keys. */
-  if (conn->is_client && conn->state.client.key_update_pending) {
-    uint8_t ku_response[64];
-    size_t key_len = fio___tls13_key_len(&conn->state.client);
-    fio_tls13_cipher_type_e cipher_type =
-        fio___tls13_cipher_type(&conn->state.client);
-
-    int ku_len = fio_tls13_send_key_update_response(
-        ku_response,
-        sizeof(ku_response),
-        conn->state.client.client_app_traffic_secret,
-        &conn->state.client.client_app_keys,
-        &conn->state.client.key_update_pending,
-        conn->state.client.use_sha384,
-        key_len,
-        cipher_type);
-
-    if (ku_len > 0) {
-      /* Send KeyUpdate response */
-      errno = 0;
-      ssize_t ku_written = fio_sock_write(fd, ku_response, (size_t)ku_len);
-      if (ku_written <= 0) {
-        /* Can't send KeyUpdate, can't send app data either */
-        errno = EWOULDBLOCK;
-        return -1;
-      }
-      FIO_LOG_DEBUG2("TLS 1.3 Client: Sent KeyUpdate response");
-    }
-  } else if (!conn->is_client && conn->state.server.key_update_pending) {
-    uint8_t ku_response[64];
-    size_t key_len = fio___tls13_server_key_len(&conn->state.server);
-    fio_tls13_cipher_type_e cipher_type =
-        fio___tls13_server_cipher_type(&conn->state.server);
-
-    int ku_len = fio_tls13_send_key_update_response(
-        ku_response,
-        sizeof(ku_response),
-        conn->state.server.server_app_traffic_secret,
-        &conn->state.server.server_app_keys,
-        &conn->state.server.key_update_pending,
-        conn->state.server.use_sha384,
-        key_len,
-        cipher_type);
-
-    if (ku_len > 0) {
-      /* Send KeyUpdate response */
-      errno = 0;
-      ssize_t ku_written = fio_sock_write(fd, ku_response, (size_t)ku_len);
-      if (ku_written <= 0) {
-        /* Can't send KeyUpdate, can't send app data either */
-        errno = EWOULDBLOCK;
-        return -1;
-      }
-      FIO_LOG_DEBUG2("TLS 1.3 Server: Sent KeyUpdate response");
-    }
-  }
-
-  /* Limit to max plaintext size */
-  if (len > FIO_TLS13_MAX_PLAINTEXT_LEN)
-    len = FIO_TLS13_MAX_PLAINTEXT_LEN;
-
-  /* Encrypt data using pre-allocated buffer (avoids stack allocation) */
-  int enc_len;
-  if (conn->is_client) {
-    enc_len = fio_tls13_client_encrypt(&conn->state.client,
-                                       conn->enc_buf,
-                                       sizeof(conn->enc_buf),
-                                       (const uint8_t *)buf,
-                                       len);
-  } else {
-    enc_len = fio_tls13_server_encrypt(&conn->state.server,
-                                       conn->enc_buf,
-                                       sizeof(conn->enc_buf),
-                                       (const uint8_t *)buf,
-                                       len);
-  }
-
-  if (enc_len < 0) {
-    FIO_LOG_DEBUG2("TLS 1.3: encryption error");
-    errno = ECONNRESET;
-    return -1;
-  }
-
-  /* Write encrypted data to socket */
-  errno = 0;
-  ssize_t written = fio_sock_write(fd, conn->enc_buf, (size_t)enc_len);
-  if (written <= 0) {
-    if (errno == EWOULDBLOCK || errno == EAGAIN)
-      return -1;
-    return written;
-  }
-
-  /* If we wrote all encrypted data, report original plaintext length */
-  if (written == enc_len)
-    return (ssize_t)len;
-
-  /* Partial write - this is tricky with TLS, report error */
-  /* TODO: Buffer partial writes properly */
-  errno = EWOULDBLOCK;
-  return -1;
-}
-
-/* *****************************************************************************
-TLS 1.3 IO Functions - Flush
-***************************************************************************** */
-
-/** Sends any unsent internal data. Returns 0 only if all data was sent. */
-FIO_SFUNC int fio___tls13_flush(int fd, void *tls_ctx) {
-  fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
-  if (!conn)
-    return 0;
-
-  /* Send any buffered handshake data */
-  while (conn->send_buf_pos < conn->send_buf_len) {
-    errno = 0;
-    ssize_t written = fio_sock_write(fd,
-                                     conn->send_buf + conn->send_buf_pos,
-                                     conn->send_buf_len - conn->send_buf_pos);
-    if (written <= 0) {
-      if (errno == EWOULDBLOCK || errno == EAGAIN)
-        return -1; /* Would block, try again later */
-      return -1;   /* Error */
-    }
-    conn->send_buf_pos += (size_t)written;
-  }
-
-  /* Reset send buffer if fully sent */
-  if (conn->send_buf_pos >= conn->send_buf_len) {
-    conn->send_buf_len = 0;
-    conn->send_buf_pos = 0;
-  }
-
-  return (conn->send_buf_len > conn->send_buf_pos) ? -1 : 0;
-}
-
-/* *****************************************************************************
-TLS 1.3 IO Functions - Finish
-***************************************************************************** */
-
-/** Called when the IO object finished sending all data before closure. */
-FIO_SFUNC void fio___tls13_finish(int fd, void *tls_ctx) {
-  fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
-  if (!conn)
-    return;
-
-  /* Send close_notify alert */
-  if (conn->handshake_complete) {
-    uint8_t alert[32];
-    /* Build close_notify alert: level=warning(1), description=close_notify(0)
-     */
-    uint8_t alert_data[2] = {1, 0};
-    int enc_len;
-
-    if (conn->is_client) {
-      enc_len = fio_tls13_record_encrypt(alert,
-                                         sizeof(alert),
-                                         alert_data,
-                                         2,
-                                         FIO_TLS13_CONTENT_ALERT,
-                                         &conn->state.client.client_app_keys);
-    } else {
-      enc_len = fio_tls13_record_encrypt(alert,
-                                         sizeof(alert),
-                                         alert_data,
-                                         2,
-                                         FIO_TLS13_CONTENT_ALERT,
-                                         &conn->state.server.server_app_keys);
-    }
-
-    if (enc_len > 0) {
-      /* Best effort send, ignore errors */
-      (void)fio_sock_write(fd, alert, (size_t)enc_len);
-    }
-  }
-  (void)fd;
-}
-
-/* *****************************************************************************
-TLS 1.3 IO Functions - Cleanup
-***************************************************************************** */
-
-/** Called after the IO object is closed, used to cleanup its `tls` object. */
-FIO_SFUNC void fio___tls13_cleanup(void *tls_ctx) {
-  fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
-  fio___tls13_connection_free(conn);
-}
-
-/* *****************************************************************************
-TLS 1.3 IO Functions Structure
-***************************************************************************** */
-
-/** Returns the TLS 1.3 IO functions (implementation) */
-SFUNC fio_io_functions_s fio_tls13_io_functions(void) {
-  return (fio_io_functions_s){
-      .build_context = fio___tls13_build_context,
-      .free_context = fio___tls13_free_context,
-      .start = fio___tls13_start,
-      .read = fio___tls13_read,
-      .write = fio___tls13_write,
-      .flush = fio___tls13_flush,
-      .cleanup = fio___tls13_cleanup,
-      .finish = fio___tls13_finish,
-  };
-}
-
-/* *****************************************************************************
-TLS 1.3 Default Setup (when OpenSSL is not available)
-***************************************************************************** */
-
-#if !defined(HAVE_OPENSSL) && !defined(H___FIO_OPENSSL___H)
-/** Setup TLS 1.3 as TLS IO default when OpenSSL is not available */
-FIO_CONSTRUCTOR(fio___tls13_setup_default) {
-  static fio_io_functions_s FIO___TLS13_IO_FUNCS;
-  FIO___TLS13_IO_FUNCS = fio_tls13_io_functions();
-  fio_io_tls_default_functions(&FIO___TLS13_IO_FUNCS);
-  FIO_LOG_DEBUG2("TLS 1.3 registered as default TLS implementation");
-}
-#endif /* !HAVE_OPENSSL && !H___FIO_OPENSSL___H */
-
-/* *****************************************************************************
-TLS 1.3 IO Functions Cleanup
-***************************************************************************** */
-#endif /* FIO_EXTERN_COMPLETE */
-#endif /* H___FIO_IO___H && H___FIO_TLS13___H */
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -79295,30 +77210,55 @@ typedef struct {
   } state;
   uint8_t is_client;
   uint8_t handshake_complete;
-  /* Buffered incoming data (partial records) */
-  uint8_t *recv_buf;
+  /* Buffered incoming data (partial records) - stored in buf[0..cap) */
   size_t recv_buf_len; /* Total data length in recv_buf */
   size_t recv_buf_pos; /* Current read position (lazy compaction) */
-  size_t recv_buf_cap;
-  /* Buffered decrypted data (ready to read) */
-  uint8_t *app_buf;
+  /* Buffered decrypted data (ready to read) - stored in buf[cap..2*cap) */
   size_t app_buf_len;
-  size_t app_buf_cap;
   size_t app_buf_pos; /* Read position in app_buf */
-  /* Buffered outgoing handshake data */
-  uint8_t *send_buf;
+  /* Buffered outgoing handshake data - stored in buf[2*cap..3*cap) */
   size_t send_buf_len;
-  size_t send_buf_cap;
   size_t send_buf_pos; /* Write position in send_buf */
   /* Pre-allocated encryption buffer (avoids stack allocation in write path) */
   uint8_t enc_buf[FIO_TLS13_MAX_CIPHERTEXT_LEN + FIO_TLS13_RECORD_HEADER_LEN +
                   FIO_TLS13_TAG_LEN + 16];
+  /* Partial write tracking: encrypted data that couldn't be fully sent.
+   * TLS records are atomic - we must buffer partial writes because:
+   * 1. Re-encrypting would use a new sequence number, corrupting the stream
+   * 2. The browser would receive a partial record followed by a new record */
+  size_t enc_buf_len;       /* Total encrypted data length in enc_buf */
+  size_t enc_buf_sent;      /* Bytes already sent from enc_buf */
+  size_t enc_plaintext_len; /* Original plaintext length (for return value) */
   /* Parent context (for certificate chain) */
   fio___tls13_context_s *ctx;
   /* Certificate chain storage (for server - pointers must outlive handshake) */
   const uint8_t *cert_ptr;
   size_t cert_len;
+  /* Flexible array member: all buffers in single allocation
+   * Layout: [recv_buf | app_buf | send_buf], each FIO_IO_BUFFER_PER_WRITE */
+  uint8_t buf[];
 } fio___tls13_connection_s;
+
+/** Buffer capacity per buffer region (recv, app, send) */
+#define FIO___TLS13_BUF_CAP FIO_IO_BUFFER_PER_WRITE
+
+/** Total buffer size for flexible array member */
+#define FIO___TLS13_BUF_TOTAL (FIO___TLS13_BUF_CAP * 3)
+
+/** Get pointer to recv_buf region */
+FIO_IFUNC uint8_t *fio___tls13_recv_buf(fio___tls13_connection_s *c) {
+  return c->buf + (FIO___TLS13_BUF_CAP * 0);
+}
+
+/** Get pointer to app_buf region */
+FIO_IFUNC uint8_t *fio___tls13_app_buf(fio___tls13_connection_s *c) {
+  return c->buf + (FIO___TLS13_BUF_CAP * 1);
+}
+
+/** Get pointer to send_buf region */
+FIO_IFUNC uint8_t *fio___tls13_send_buf(fio___tls13_connection_s *c) {
+  return c->buf + (FIO___TLS13_BUF_CAP * 2);
+}
 
 FIO_LEAK_COUNTER_DEF(fio___tls13_connection_s)
 
@@ -79763,46 +77703,21 @@ FIO_SFUNC void fio___tls13_free_context(void *tls_ctx) {
 TLS 1.3 Per-Connection Management
 ***************************************************************************** */
 
-/** Allocate connection state */
+/** Allocate connection state with flexible array buffer */
 FIO_SFUNC fio___tls13_connection_s *fio___tls13_connection_new(
     fio___tls13_context_s *ctx) {
+  /* Single allocation for struct + all buffers (flex array member) */
+  size_t alloc_size = sizeof(fio___tls13_connection_s) + FIO___TLS13_BUF_TOTAL;
   fio___tls13_connection_s *conn =
-      (fio___tls13_connection_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(*conn), 0);
+      (fio___tls13_connection_s *)FIO_MEM_REALLOC(NULL, 0, alloc_size, 0);
   if (!conn)
     return NULL;
   FIO_LEAK_COUNTER_ON_ALLOC(fio___tls13_connection_s);
-  FIO_MEMSET(conn, 0, sizeof(*conn));
+  FIO_MEMSET(conn, 0, alloc_size);
   conn->is_client = ctx->is_client;
   conn->ctx = ctx;
 
-  /* Allocate buffers */
-  conn->recv_buf_cap = FIO_TLS13_MAX_CIPHERTEXT_LEN + 256;
-  conn->recv_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, conn->recv_buf_cap, 0);
-  if (!conn->recv_buf)
-    goto error;
-
-  conn->app_buf_cap = FIO_TLS13_MAX_PLAINTEXT_LEN;
-  conn->app_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, conn->app_buf_cap, 0);
-  if (!conn->app_buf)
-    goto error;
-
-  conn->send_buf_cap = 8192;
-  conn->send_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, conn->send_buf_cap, 0);
-  if (!conn->send_buf)
-    goto error;
-
   return conn;
-
-error:
-  if (conn->recv_buf)
-    FIO_MEM_FREE(conn->recv_buf, conn->recv_buf_cap);
-  if (conn->app_buf)
-    FIO_MEM_FREE(conn->app_buf, conn->app_buf_cap);
-  if (conn->send_buf)
-    FIO_MEM_FREE(conn->send_buf, conn->send_buf_cap);
-  FIO_LEAK_COUNTER_ON_FREE(fio___tls13_connection_s);
-  FIO_MEM_FREE(conn, sizeof(*conn));
-  return NULL;
 }
 
 /** Free connection state */
@@ -79816,16 +77731,9 @@ FIO_SFUNC void fio___tls13_connection_free(fio___tls13_connection_s *conn) {
   else
     fio_tls13_server_destroy(&conn->state.server);
 
-  /* Free buffers */
-  if (conn->recv_buf)
-    FIO_MEM_FREE(conn->recv_buf, conn->recv_buf_cap);
-  if (conn->app_buf)
-    FIO_MEM_FREE(conn->app_buf, conn->app_buf_cap);
-  if (conn->send_buf)
-    FIO_MEM_FREE(conn->send_buf, conn->send_buf_cap);
-
+  /* Single free for struct + all buffers (flex array member) */
   FIO_LEAK_COUNTER_ON_FREE(fio___tls13_connection_s);
-  FIO_MEM_FREE(conn, sizeof(*conn));
+  FIO_MEM_FREE(conn, sizeof(*conn) + FIO___TLS13_BUF_TOTAL);
 }
 
 /* *****************************************************************************
@@ -79864,8 +77772,8 @@ FIO_SFUNC void fio___tls13_start(fio_io_s *io) {
 
     /* Generate ClientHello */
     int ch_len = fio_tls13_client_start(&conn->state.client,
-                                        conn->send_buf,
-                                        conn->send_buf_cap);
+                                        fio___tls13_send_buf(conn),
+                                        FIO___TLS13_BUF_CAP);
     if (ch_len < 0) {
       FIO_LOG_ERROR("TLS 1.3: failed to generate ClientHello");
       return;
@@ -79923,7 +77831,7 @@ FIO_SFUNC ssize_t fio___tls13_read(int fd,
   if (conn->app_buf_len > conn->app_buf_pos) {
     size_t available = conn->app_buf_len - conn->app_buf_pos;
     size_t to_copy = (len < available) ? len : available;
-    FIO_MEMCPY(buf, conn->app_buf + conn->app_buf_pos, to_copy);
+    FIO_MEMCPY(buf, fio___tls13_app_buf(conn) + conn->app_buf_pos, to_copy);
     conn->app_buf_pos += to_copy;
 
     /* Reset buffer if fully consumed */
@@ -79936,27 +77844,28 @@ FIO_SFUNC ssize_t fio___tls13_read(int fd,
 
   /* Calculate available space in recv_buf and compact if needed */
   size_t recv_data_len = conn->recv_buf_len - conn->recv_buf_pos;
-  size_t recv_space = conn->recv_buf_cap - conn->recv_buf_len;
+  size_t recv_space = FIO___TLS13_BUF_CAP - conn->recv_buf_len;
 
   /* Lazy compaction: only compact when buffer is >50% consumed AND
    * we don't have enough space for a new record */
-  if (conn->recv_buf_pos > (conn->recv_buf_cap >> 1) &&
+  if (conn->recv_buf_pos > (FIO___TLS13_BUF_CAP >> 1) &&
       recv_space < FIO_TLS13_MAX_CIPHERTEXT_LEN) {
     if (recv_data_len > 0) {
-      FIO_MEMMOVE(conn->recv_buf,
-                  conn->recv_buf + conn->recv_buf_pos,
+      FIO_MEMMOVE(fio___tls13_recv_buf(conn),
+                  fio___tls13_recv_buf(conn) + conn->recv_buf_pos,
                   recv_data_len);
     }
     conn->recv_buf_len = recv_data_len;
     conn->recv_buf_pos = 0;
-    recv_space = conn->recv_buf_cap - conn->recv_buf_len;
+    recv_space = FIO___TLS13_BUF_CAP - conn->recv_buf_len;
   }
 
   /* Read raw data from socket */
   errno = 0;
-  ssize_t raw_read = fio_sock_read(fd,
-                                   (char *)conn->recv_buf + conn->recv_buf_len,
-                                   recv_space);
+  ssize_t raw_read =
+      fio_sock_read(fd,
+                    (char *)fio___tls13_recv_buf(conn) + conn->recv_buf_len,
+                    recv_space);
   if (raw_read <= 0) {
     if (raw_read == 0)
       return 0; /* EOF */
@@ -79968,7 +77877,7 @@ FIO_SFUNC ssize_t fio___tls13_read(int fd,
   recv_data_len = conn->recv_buf_len - conn->recv_buf_pos;
 
   /* Process received data */
-  uint8_t *recv_ptr = conn->recv_buf + conn->recv_buf_pos;
+  uint8_t *recv_ptr = fio___tls13_recv_buf(conn) + conn->recv_buf_pos;
   while (recv_data_len >= FIO_TLS13_RECORD_HEADER_LEN) {
     /* Check if we have a complete record */
     uint16_t record_len = ((uint16_t)recv_ptr[3] << 8) | recv_ptr[4];
@@ -80007,17 +77916,19 @@ FIO_SFUNC ssize_t fio___tls13_read(int fd,
 
       /* Buffer any handshake response */
       if (out_len > 0) {
-        if (conn->send_buf_len + out_len <= conn->send_buf_cap) {
-          FIO_MEMCPY(conn->send_buf + conn->send_buf_len, out_buf, out_len);
+        if (conn->send_buf_len + out_len <= FIO___TLS13_BUF_CAP) {
+          FIO_MEMCPY(fio___tls13_send_buf(conn) + conn->send_buf_len,
+                     out_buf,
+                     out_len);
           conn->send_buf_len += out_len;
         }
         /* Immediately try to send handshake response */
         while (conn->send_buf_pos < conn->send_buf_len) {
           errno = 0;
-          ssize_t hs_written =
-              fio_sock_write(fd,
-                             (char *)conn->send_buf + conn->send_buf_pos,
-                             conn->send_buf_len - conn->send_buf_pos);
+          ssize_t hs_written = fio_sock_write(
+              fd,
+              (char *)fio___tls13_send_buf(conn) + conn->send_buf_pos,
+              conn->send_buf_len - conn->send_buf_pos);
           if (hs_written <= 0) {
             if (errno == EWOULDBLOCK || errno == EAGAIN)
               break; /* Will retry later */
@@ -80077,8 +77988,8 @@ FIO_SFUNC ssize_t fio___tls13_read(int fd,
         decrypt_capacity = len;
       } else {
         /* Use app_buf as intermediate buffer */
-        decrypt_target = conn->app_buf + conn->app_buf_len;
-        decrypt_capacity = conn->app_buf_cap - conn->app_buf_len;
+        decrypt_target = fio___tls13_app_buf(conn) + conn->app_buf_len;
+        decrypt_capacity = FIO___TLS13_BUF_CAP - conn->app_buf_len;
       }
 
       if (conn->is_client) {
@@ -80120,7 +78031,7 @@ FIO_SFUNC ssize_t fio___tls13_read(int fd,
   if (conn->app_buf_len > conn->app_buf_pos) {
     size_t available = conn->app_buf_len - conn->app_buf_pos;
     size_t to_copy = (len < available) ? len : available;
-    FIO_MEMCPY(buf, conn->app_buf + conn->app_buf_pos, to_copy);
+    FIO_MEMCPY(buf, fio___tls13_app_buf(conn) + conn->app_buf_pos, to_copy);
     conn->app_buf_pos += to_copy;
 
     if (conn->app_buf_pos >= conn->app_buf_len) {
@@ -80161,7 +78072,7 @@ FIO_SFUNC ssize_t fio___tls13_write(int fd,
     errno = 0;
     ssize_t hs_written =
         fio_sock_write(fd,
-                       (char *)conn->send_buf + conn->send_buf_pos,
+                       (char *)fio___tls13_send_buf(conn) + conn->send_buf_pos,
                        conn->send_buf_len - conn->send_buf_pos);
     if (hs_written <= 0) {
       /* Can't send handshake data yet, so can't send app data either */
@@ -80174,6 +78085,39 @@ FIO_SFUNC ssize_t fio___tls13_write(int fd,
   if (conn->send_buf_pos >= conn->send_buf_len) {
     conn->send_buf_len = 0;
     conn->send_buf_pos = 0;
+  }
+
+  /* CRITICAL: Flush any pending encrypted data from a previous partial write.
+   * TLS records are atomic - we cannot re-encrypt because the sequence number
+   * has already been incremented. We must send the buffered encrypted data
+   * before we can accept new plaintext.
+   *
+   * IMPORTANT: We must NOT return the old plaintext_len here! The IO layer
+   * passed us NEW data in buf/len. If we return the old length, the IO layer
+   * will advance the stream by that amount, losing the new data.
+   * Instead, we flush the pending data and then continue to process the new
+   * data. If we can't fully flush, return EWOULDBLOCK. */
+  while (conn->enc_buf_sent < conn->enc_buf_len) {
+    size_t remaining = conn->enc_buf_len - conn->enc_buf_sent;
+    errno = 0;
+    ssize_t written = fio_sock_write(fd,
+                                     (char *)conn->enc_buf + conn->enc_buf_sent,
+                                     remaining);
+    if (written <= 0) {
+      if (errno == EWOULDBLOCK || errno == EAGAIN) {
+        errno = EWOULDBLOCK;
+        return -1;
+      }
+      return written;
+    }
+    conn->enc_buf_sent += (size_t)written;
+  }
+
+  /* Pending data fully sent - reset buffer and continue to process new data */
+  if (conn->enc_buf_len > 0) {
+    conn->enc_buf_len = 0;
+    conn->enc_buf_sent = 0;
+    conn->enc_plaintext_len = 0;
   }
 
   /* RFC 8446 Section 4.6.3: Send KeyUpdate response before Application Data
@@ -80267,19 +78211,37 @@ FIO_SFUNC ssize_t fio___tls13_write(int fd,
   errno = 0;
   ssize_t written = fio_sock_write(fd, (char *)conn->enc_buf, (size_t)enc_len);
   if (written <= 0) {
-    if (errno == EWOULDBLOCK || errno == EAGAIN)
-      return -1;
-    return written;
+    if (errno == EWOULDBLOCK || errno == EAGAIN) {
+      /* Socket buffer full before we could write anything.
+       * Buffer the entire encrypted record for later.
+       * CRITICAL: We must return SUCCESS here because:
+       * 1. We've already encrypted the data (sequence number incremented)
+       * 2. If we return -1, IO layer will retry with same plaintext
+       * 3. We'd encrypt the same data twice, corrupting the TLS stream
+       * The flush() function will send the buffered data later. */
+      conn->enc_buf_len = (size_t)enc_len;
+      conn->enc_buf_sent = 0;
+      conn->enc_plaintext_len = len;
+      return (ssize_t)len; /* Success - data accepted, will be sent via flush */
+    }
+    return written; /* Real error */
   }
 
   /* If we wrote all encrypted data, report original plaintext length */
-  if (written == enc_len)
+  if ((size_t)written == (size_t)enc_len)
     return (ssize_t)len;
 
-  /* Partial write - this is tricky with TLS, report error */
-  /* TODO: Buffer partial writes properly */
-  errno = EWOULDBLOCK;
-  return -1;
+  /* Partial write - buffer the remaining encrypted data.
+   * CRITICAL: We cannot re-encrypt because the TLS sequence number has
+   * already been incremented. The encrypted data in enc_buf is the only
+   * valid ciphertext for this record. */
+  conn->enc_buf_len = (size_t)enc_len;
+  conn->enc_buf_sent = (size_t)written;
+  conn->enc_plaintext_len = len;
+
+  /* Report success - the plaintext has been "accepted" and will be sent.
+   * The IO layer will call flush() to complete the write. */
+  return (ssize_t)len;
 }
 
 /* *****************************************************************************
@@ -80297,7 +78259,7 @@ FIO_SFUNC int fio___tls13_flush(int fd, void *tls_ctx) {
     errno = 0;
     ssize_t written =
         fio_sock_write(fd,
-                       (char *)conn->send_buf + conn->send_buf_pos,
+                       (char *)fio___tls13_send_buf(conn) + conn->send_buf_pos,
                        conn->send_buf_len - conn->send_buf_pos);
     if (written <= 0) {
       if (errno == EWOULDBLOCK || errno == EAGAIN)
@@ -80313,7 +78275,34 @@ FIO_SFUNC int fio___tls13_flush(int fd, void *tls_ctx) {
     conn->send_buf_pos = 0;
   }
 
-  return (conn->send_buf_len > conn->send_buf_pos) ? -1 : 0;
+  /* CRITICAL: Flush any pending encrypted application data from partial write.
+   * TLS records are atomic - this data MUST be sent before the connection
+   * can be considered flushed. */
+  while (conn->enc_buf_sent < conn->enc_buf_len) {
+    size_t remaining = conn->enc_buf_len - conn->enc_buf_sent;
+    errno = 0;
+    ssize_t written = fio_sock_write(fd,
+                                     (char *)conn->enc_buf + conn->enc_buf_sent,
+                                     remaining);
+    if (written <= 0) {
+      if (errno == EWOULDBLOCK || errno == EAGAIN)
+        return -1; /* Would block, try again later */
+      return -1;   /* Error */
+    }
+    conn->enc_buf_sent += (size_t)written;
+  }
+
+  /* Reset encrypted buffer if fully sent */
+  if (conn->enc_buf_sent >= conn->enc_buf_len) {
+    conn->enc_buf_len = 0;
+    conn->enc_buf_sent = 0;
+    conn->enc_plaintext_len = 0;
+  }
+
+  /* Return 0 only if all data was sent */
+  int has_pending = (conn->send_buf_len > conn->send_buf_pos) ||
+                    (conn->enc_buf_len > conn->enc_buf_sent);
+  return has_pending ? -1 : 0;
 }
 
 /* *****************************************************************************
