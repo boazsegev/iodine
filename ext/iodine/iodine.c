@@ -211,6 +211,7 @@ void Init_iodine(void) {
 
   Init_Iodine();
   Init_Iodine_Base_CLI();
+  Init_Iodine_Compression();
   Init_Iodine_Crypto();
   Init_Iodine_Mustache();
   Init_Iodine_Utils();

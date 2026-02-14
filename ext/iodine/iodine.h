@@ -68,8 +68,8 @@ static ID IODINE_DELETE_ID;
  * @param name The C variable name to store the ID in.
  * @param value The Ruby method name as a C string.
  */
-#define IODINE_CONST_ID_STORE(name, value) \
-  name = rb_intern(value);                 \
+#define IODINE_CONST_ID_STORE(name, value)                                     \
+  name = rb_intern(value);                                                     \
   STORE.hold(RB_ID2SYM(name));
 
 static VALUE iodine_rb_IODINE;
@@ -103,14 +103,14 @@ static VALUE IODINE_RACK_AFTER_RPLY_STR;
  * Returns true if the Ruby VALUE should be skipped for GC store operations.
  * Immediate values (nil, true, false, fixnums) don't need GC protection.
  */
-#define IODINE_STORE_IS_SKIP(o) \
+#define IODINE_STORE_IS_SKIP(o)                                                \
   (!o || o == Qnil || o == Qtrue || o == Qfalse || TYPE(o) == RUBY_T_FIXNUM)
 
 /**
  * Converts a Ruby String to a fio_str_info_s struct.
  * @note The Ruby String must remain valid while the struct is in use.
  */
-#define IODINE_RSTR_INFO(o) \
+#define IODINE_RSTR_INFO(o)                                                    \
   { .buf = RSTRING_PTR(o), .len = (size_t)RSTRING_LEN(o) }
 
 /* shadow exit function and route it to Ruby */
@@ -161,12 +161,12 @@ static void iodine_defer_performe_once(void *block, void *ignr);
  *
  * @param blk A Ruby VALUE representing a Proc object.
  */
-#define IODINE_DEFER_BLOCK(blk)              \
-  do {                                       \
-    STORE.hold((blk));                       \
-    fio_io_async(&IODINE_THREAD_POOL,        \
-                 iodine_defer_performe_once, \
-                 (void *)(blk));             \
+#define IODINE_DEFER_BLOCK(blk)                                                \
+  do {                                                                         \
+    STORE.hold((blk));                                                         \
+    fio_io_async(&IODINE_THREAD_POOL,                                          \
+                 iodine_defer_performe_once,                                   \
+                 (void *)(blk));                                               \
   } while (0)
 
 /* *****************************************************************************
@@ -206,6 +206,7 @@ static VALUE iodine_handler_method_injection__inner(VALUE self,
 #include "iodine_defer.h"
 #include "iodine_minimap.h"
 /* layer 2 modules */
+#include "iodine_compression.h"
 #include "iodine_crypto.h"
 #include "iodine_mustache.h"
 #include "iodine_pubsub_eng.h"

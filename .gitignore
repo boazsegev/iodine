@@ -18,3 +18,7 @@
 .DS_Store
 spec/examples.txt
 spec/log
+
+# AI local files
+AI-MEMORY*
+AI-*

@@ -2075,6 +2075,130 @@ module Iodine
     module App404
     end
 
+    # Provides access to data compression and decompression algorithms.
+    #
+    # This module contains submodules for:
+    # - {Deflate} - Raw DEFLATE compression (RFC 1951) - no headers
+    # - {Gzip} - GZIP compression (RFC 1952) - deflate with gzip wrapper
+    # - {Brotli} - Brotli compression (RFC 7932) - modern, high-ratio compression
+    #
+    # All compression methods accept a binary String and return a binary String.
+    # Decompression methods will raise {RuntimeError} if the input data is
+    # corrupt or truncated.
+    #
+    # @note This module is under `Iodine::Base` as the API may change between versions.
+    #
+    # @example Deflate round-trip
+    #   compressed = Iodine::Base::Compression::Deflate.compress("Hello, World!" * 100)
+    #   original = Iodine::Base::Compression::Deflate.decompress(compressed)
+    #
+    # @example Gzip for HTTP responses
+    #   body = Iodine::Base::Compression::Gzip.compress(response_body, level: 6)
+    #
+    # @example Brotli for static assets
+    #   compressed = Iodine::Base::Compression::Brotli.compress(File.read("app.js"), quality: 4)
+    module Compression
+      # Raw DEFLATE compression (RFC 1951).
+      #
+      # Produces raw deflate data without any headers or trailers.
+      # Suitable for protocols that manage their own framing (e.g., WebSocket
+      # permessage-deflate) or when you need the smallest possible output.
+      #
+      # For HTTP responses, prefer {Gzip} which adds the standard gzip wrapper.
+      module Deflate
+        # Compresses data using raw DEFLATE.
+        #
+        # @param data [String] Data to compress
+        # @param level [Integer] Compression level (0-9, default: 6).
+        #   0 = no compression (store), 1-3 = fast, 4-6 = balanced, 7-9 = best compression.
+        # @return [String] Compressed data (binary string)
+        # @raise [ArgumentError] if level is not between 0 and 9
+        # @raise [RuntimeError] if compression fails
+        #
+        # @example
+        #   compressed = Iodine::Base::Compression::Deflate.compress("Hello, World!", level: 6)
+        def self.compress(data, level: 6); end
+
+        # Decompresses raw DEFLATE data.
+        #
+        # @param data [String] Compressed data (raw DEFLATE, no gzip/zlib headers)
+        # @return [String] Decompressed data (binary string)
+        # @raise [RuntimeError] if data is corrupt or truncated
+        #
+        # @example
+        #   original = Iodine::Base::Compression::Deflate.decompress(compressed)
+        def self.decompress(data); end
+      end
+
+      # GZIP compression (RFC 1952).
+      #
+      # Produces standard gzip-formatted data with headers and CRC32 trailer.
+      # This is the format used by HTTP `Content-Encoding: gzip` and the `gzip`
+      # command-line tool. Compatible with `Zlib::GzipReader` in Ruby stdlib.
+      #
+      # Internally uses the same DEFLATE algorithm as {Deflate} but wraps the
+      # output with the 18-byte gzip header and trailer.
+      module Gzip
+        # Compresses data using GZIP format.
+        #
+        # @param data [String] Data to compress
+        # @param level [Integer] Compression level (0-9, default: 6).
+        #   0 = no compression (store), 1-3 = fast, 4-6 = balanced, 7-9 = best compression.
+        # @return [String] GZIP-compressed data (binary string)
+        # @raise [ArgumentError] if level is not between 0 and 9
+        # @raise [RuntimeError] if compression fails
+        #
+        # @example
+        #   gzipped = Iodine::Base::Compression::Gzip.compress("Hello, World!", level: 6)
+        def self.compress(data, level: 6); end
+
+        # Decompresses GZIP data.
+        #
+        # @param data [String] GZIP-compressed data
+        # @return [String] Decompressed data (binary string)
+        # @raise [RuntimeError] if data is corrupt or truncated
+        #
+        # @example
+        #   original = Iodine::Base::Compression::Gzip.decompress(gzipped)
+        def self.decompress(data); end
+      end
+
+      # Brotli compression (RFC 7932).
+      #
+      # Brotli is a modern compression algorithm developed by Google that typically
+      # achieves better compression ratios than DEFLATE/gzip, especially for text
+      # content like HTML, CSS, and JavaScript. It is widely supported by browsers
+      # via `Content-Encoding: br`.
+      #
+      # @note The quality parameter ranges from 1-4 (not 0-11 as in the reference
+      #   Brotli library). Quality 1 uses fast greedy matching while quality 4 uses
+      #   lazy matching for better compression.
+      module Brotli
+        # Compresses data using Brotli.
+        #
+        # @param data [String] Data to compress
+        # @param quality [Integer] Compression quality (1-4, default: 4).
+        #   1 = fastest (greedy), 4 = best compression (lazy matching).
+        # @return [String] Brotli-compressed data (binary string)
+        # @raise [ArgumentError] if quality is not between 1 and 4
+        # @raise [RuntimeError] if compression fails
+        #
+        # @example
+        #   compressed = Iodine::Base::Compression::Brotli.compress("Hello, World!", quality: 4)
+        def self.compress(data, quality: 4); end
+
+        # Decompresses Brotli data.
+        #
+        # @param data [String] Brotli-compressed data
+        # @return [String] Decompressed data (binary string)
+        # @raise [RuntimeError] if data is corrupt or truncated
+        #
+        # @example
+        #   original = Iodine::Base::Compression::Brotli.decompress(compressed)
+        def self.decompress(data); end
+      end
+    end
+
     # Provides access to modern cryptographic primitives.
     #
     # This module contains submodules for:
