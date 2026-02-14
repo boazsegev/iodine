@@ -22757,9 +22757,31 @@ struct fio_io_functions_s {
   void (*start)(fio_io_s *io);
   /** Called to perform a non-blocking `read`, same as the system call. */
   ssize_t (*read)(int fd, void *buf, size_t len, void *context);
-  /** Called to perform a non-blocking `write`, same as the system call. */
+  /**
+   * Called to perform a non-blocking `write`, same as POSIX `write(2)`.
+   *
+   * Returns the number of plaintext bytes accepted/consumed (positive `N`),
+   * `0` when `len` is `0` (nothing to write), or `-1` on error (with `errno`
+   * set to `EWOULDBLOCK` / `EAGAIN` when the socket is full, or `EINVAL` for
+   * invalid arguments).
+   *
+   * IMPORTANT: once data has been transformed (e.g., TLS encryption),
+   * implementations MUST return success (`N > 0`) even if the underlying
+   * socket write would block, because the transformation may not be reversible
+   * (e.g., TLS sequence numbers have already been incremented). Buffered
+   * transformed data will be sent later by `flush`.
+   */
   ssize_t (*write)(int fd, const void *buf, size_t len, void *context);
-  /** Sends any unsent internal data. Returns 0 only if all data was sent. */
+  /**
+   * Sends any unsent internal data. Returns `0` only if all data was sent.
+   *
+   * Return values are same as POSIX `write(2)`, where 0 indicates all was flushed.
+   * 
+   * Returns the number of bytes actually written to the socket (positive `N`),
+   * `0` when all internal buffers are empty (nothing left to send), or `-1` on
+   * error (with `errno` set to `EWOULDBLOCK` / `EAGAIN` when pending data
+   * couldn't be fully flushed).
+   */
   int (*flush)(int fd, void *context);
   /** Called when the IO object finished sending all data before closure. */
   void (*finish)(int fd, void *context);

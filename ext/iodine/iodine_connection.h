@@ -2549,6 +2549,7 @@ FIO_IFUNC VALUE iodine_connection_write_internal(VALUE self,
     return (r = Qfalse);
   fio_str_info_s to_write;
   unsigned to_copy = 1;
+  unsigned is_text = 0;
   int fileno;
   void (*dealloc)(void *) = NULL;
   VALUE tmp;
@@ -2559,8 +2560,7 @@ FIO_IFUNC VALUE iodine_connection_write_internal(VALUE self,
     data = rb_sym_to_s(data);
   if (RB_TYPE_P(data, RUBY_T_STRING)) {
     to_write = FIO_STR_INFO2(RSTRING_PTR(data), (size_t)RSTRING_LEN(data));
-    // TODO: use Ruby encoding info for WebSocket?
-    // fio_http_websocket_write(c->http, to_write.buf, len, is_text)
+    is_text = (rb_enc_get(data) == IodineUTF8Encoding);
   } else if (data == Qnil) {
     to_write = FIO_STR_INFO0;
   } else if (c->http && fio_http_is_clean(c->http) &&
@@ -2572,15 +2572,19 @@ FIO_IFUNC VALUE iodine_connection_write_internal(VALUE self,
     dealloc = (void (*)(void *))fio_bstr_free;
     to_copy = 0;
     to_write = fio_bstr_info(iodine_json_stringify2bstr(NULL, data));
+    is_text = 1; /* JSON is always UTF-8 */
   }
-  if (c->http)
-    fio_http_write(c->http,
-                   .buf = to_write.buf,
-                   .len = to_write.len,
-                   .dealloc = dealloc,
-                   .copy = to_copy,
-                   .finish = finish);
-  else if (c->io) {
+  if (c->http) {
+    if (fio_http_is_websocket(c->http))
+      fio_http_websocket_write(c->http, to_write.buf, to_write.len, is_text);
+    else
+      fio_http_write(c->http,
+                     .buf = to_write.buf,
+                     .len = to_write.len,
+                     .dealloc = dealloc,
+                     .copy = to_copy,
+                     .finish = finish);
+  } else if (c->io) {
     fio_io_write2(c->io,
                   .buf = to_write.buf,
                   .len = to_write.len,
