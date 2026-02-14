@@ -11835,6 +11835,9 @@ FIO_IFUNC size_t fio_fd_size(int fd);
  */
 FIO_IFUNC size_t fio_filename_type(const char *filename);
 
+/** Populates `stat_buf` with the file's metadata. Returns 0 on success. */
+FIO_IFUNC int fio_filename_stat(const char *filename, struct stat *stat_buf);
+
 /**
  * Returns the file type (or 0 on both error).
  *
@@ -12063,6 +12066,12 @@ FIO_IFUNC size_t fio_filename_type(const char *filename) {
   if (stat(filename, &stt))
     return r;
   return (r = (size_t)((stt.st_mode & S_IFMT)));
+}
+
+FIO_IFUNC int fio_filename_stat(const char *filename, struct stat *stat_buf) {
+  if (!filename || !stat_buf)
+    return -1;
+  return stat(filename, stat_buf);
 }
 
 FIO_IFUNC size_t fio_fd_type(int fd) {
@@ -52363,10 +52372,14 @@ SFUNC int fio_tls13_record_encrypt(uint8_t *out,
  * - Scans backwards to find real content type (removes padding)
  * - Sequence number is incremented after successful decryption
  *
+ * Note: decryption is performed in-place in the ciphertext buffer, so the
+ * ciphertext buffer will be modified. The output buffer only needs to hold
+ * the plaintext (not the internal content type byte).
+ *
  * @param out          Output buffer for decrypted plaintext
- * @param out_capacity Capacity of output buffer
+ * @param out_capacity Capacity of output buffer (>= plaintext length)
  * @param content_type Output: actual content type from inner plaintext
- * @param ciphertext   Input ciphertext (includes 5-byte header)
+ * @param ciphertext   Input ciphertext (includes 5-byte header, modified)
  * @param ciphertext_len Total length including header
  * @param keys         Decryption keys (sequence number will be incremented)
  * @return Plaintext length (excluding padding and content type), or -1 on error
@@ -53497,8 +53510,11 @@ SFUNC int fio_tls13_record_decrypt(uint8_t *out,
   /* Calculate inner ciphertext length (excluding tag) */
   size_t inner_ct_len = payload_len - FIO_TLS13_TAG_LEN;
 
-  /* Check output capacity */
-  if (out_capacity < inner_ct_len)
+  /* Check output capacity - only need room for plaintext (inner_ct_len - 1),
+   * since the content type byte is extracted separately.
+   * AEAD decryption is performed in-place in the ciphertext buffer.
+   * We use +16 instead of +1 for better memcpy alignment. */
+  if (inner_ct_len == 0 || out_capacity + 16 < inner_ct_len)
     return -1;
 
   /* Extract tag (last 16 bytes of payload) */
@@ -53511,9 +53527,12 @@ SFUNC int fio_tls13_record_decrypt(uint8_t *out,
   /* AAD is the 5-byte record header */
   const uint8_t *aad = ciphertext;
 
-  /* Decrypt */
+  /* Decrypt in-place in the ciphertext buffer to avoid requiring the caller
+   * to allocate space for the internal content type byte. The ciphertext
+   * buffer is a receive buffer that gets consumed after decryption. */
+  uint8_t *dec_buf = (uint8_t *)(uintptr_t)payload;
   int ret =
-      fio___tls13_aead_decrypt(out,
+      fio___tls13_aead_decrypt(dec_buf,
                                tag,
                                payload,
                                inner_ct_len,
@@ -53534,7 +53553,7 @@ SFUNC int fio_tls13_record_decrypt(uint8_t *out,
    * Per RFC 8446: zeros are optional padding, real content type is
    * the last non-zero byte */
   size_t pt_len = inner_ct_len;
-  while (pt_len > 0 && out[pt_len - 1] == 0)
+  while (pt_len > 0 && dec_buf[pt_len - 1] == 0)
     --pt_len;
 
   /* Must have at least the content type byte (RFC 8446 §5.4) */
@@ -53545,17 +53564,21 @@ SFUNC int fio_tls13_record_decrypt(uint8_t *out,
   }
 
   /* Last non-zero byte is the content type */
-  uint8_t inner_type = out[pt_len - 1];
+  uint8_t inner_type = dec_buf[pt_len - 1];
   --pt_len; /* Exclude content type from plaintext length */
 
   /* Validate content type */
   if (inner_type != FIO_TLS13_CONTENT_ALERT &&
       inner_type != FIO_TLS13_CONTENT_HANDSHAKE &&
       inner_type != FIO_TLS13_CONTENT_APPLICATION_DATA) {
-    /* Zero out decrypted data on invalid content type */
-    fio_secure_zero(out, inner_ct_len);
+    /* Zero out decrypted data */
+    fio_secure_zero(dec_buf, inner_ct_len);
     return -1;
   }
+
+  /* Copy plaintext to output buffer */
+  if (pt_len > 0)
+    FIO_MEMCPY(out, dec_buf, pt_len);
 
   *content_type = (fio_tls13_content_type_e)inner_type;
 
@@ -71583,9 +71606,33 @@ struct fio_io_functions_s {
   void (*start)(fio_io_s *io);
   /** Called to perform a non-blocking `read`, same as the system call. */
   ssize_t (*read)(int fd, void *buf, size_t len, void *context);
-  /** Called to perform a non-blocking `write`, same as the system call. */
+  /**
+   * Called to perform a non-blocking `write`, same as POSIX `write(2)`.
+   *
+   * Returns the number of plaintext bytes accepted/consumed (positive `N`),
+   * `0` when `len` is `0` (nothing to write), or `-1` on error (with `errno`
+   * set to `EWOULDBLOCK` / `EAGAIN` when the socket is full, or `EINVAL` for
+   * invalid arguments).
+   *
+   * IMPORTANT: once data has been transformed (e.g., TLS encryption),
+   * implementations MUST return success (`N > 0`) even if the underlying
+   * socket write would block, because the transformation may not be reversible
+   * (e.g., TLS sequence numbers have already been incremented). Buffered
+   * transformed data will be sent later by `flush`.
+   */
   ssize_t (*write)(int fd, const void *buf, size_t len, void *context);
-  /** Sends any unsent internal data. Returns 0 only if all data was sent. */
+  /**
+   * Sends any unsent internal data. Returns `0` only if all data was sent.
+   *
+   * Returns the number of bytes actually written to the socket (positive `N`),
+   * `0` when all internal buffers are empty (nothing left to send), or `-1` on
+   * error (with `errno` set to `EWOULDBLOCK` / `EAGAIN` when pending data
+   * couldn't be fully flushed).
+   *
+   * The IO layer uses truthiness: non-zero (`N > 0` or `-1`) means data is
+   * still pending and the socket should be monitored for writability; `0`
+   * means all done.
+   */
   int (*flush)(int fd, void *context);
   /** Called when the IO object finished sending all data before closure. */
   void (*finish)(int fd, void *context);
@@ -72367,6 +72414,7 @@ IO Type
 #define FIO___IO_FLAG_WRITE_SCHD  ((uint32_t)128U)
 #define FIO___IO_FLAG_POLLIN_SET  ((uint32_t)256U)
 #define FIO___IO_FLAG_POLLOUT_SET ((uint32_t)512U)
+#define FIO___IO_FLAG_WRITE_DIRTY ((uint32_t)1024U)
 
 #define FIO___IO_FLAG_PREVENT_ON_DATA                                          \
   (FIO___IO_FLAG_SUSPENDED | FIO___IO_FLAG_THROTTLED)
@@ -72377,6 +72425,7 @@ IO Type
 static void fio___io_poll_on_data_schd(void *io);
 static void fio___io_poll_on_ready_schd(void *io);
 static void fio___io_poll_on_close_schd(void *io);
+FIO_IFUNC void fio___io_free_with_flush(fio_io_s *io);
 
 /** The main IO object type. Should be treated as an opaque pointer. */
 struct fio_io_s {
@@ -72496,7 +72545,7 @@ FIO_SFUNC void fio___io_protocol_set(void *io_, void *pr_) {
     fio___io_monitor_out(io);
   }
   fio___io_monitor_in(io);
-  fio___io_free2(io);
+  fio___io_free_with_flush(io);
 }
 
 /** Performs a task for each IO in the stated protocol. */
@@ -72689,7 +72738,10 @@ SFUNC void fio_io_write2 FIO_NOOP(fio_io_s *io, fio_io_write_args_s args) {
     goto error;
   if ((io->flags & FIO___IO_FLAG_CLOSE))
     goto write_called_after_close;
-  fio_io_defer(fio___io_write2, (void *)fio___io_dup2(io), (void *)packet);
+  FIO___IO_FLAG_SET(io, FIO___IO_FLAG_WRITE_DIRTY);
+  fio___io_defer_no_wakeup(fio___io_write2,
+                           (void *)fio___io_dup2(io),
+                           (void *)packet);
   return;
 
 error: /* note: `dealloc` already called by the `fio_stream` error handler. */
@@ -72765,9 +72817,23 @@ SFUNC void fio___io_free_task(void *io_, void *ignr_) {
   fio___io_free2((fio_io_s *)io_);
   (void)ignr_;
 }
-/** Free IO (reference) - thread-safe */
+/** Free IO (reference) - thread-safe, flushes pending writes. */
 SFUNC void fio_io_free(fio_io_s *io) {
+  if (FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_WRITE_DIRTY) &
+      FIO___IO_FLAG_WRITE_DIRTY) {
+    fio___io_poll_on_ready_schd((void *)io);
+    fio___io_wakeup();
+  }
   fio___io_defer_no_wakeup(fio___io_free_task, (void *)io, NULL);
+}
+
+/** IO-thread free that flushes dirty writes (schedules on_ready if needed). */
+FIO_IFUNC void fio___io_free_with_flush(fio_io_s *io) {
+  if (FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_WRITE_DIRTY) &
+      FIO___IO_FLAG_WRITE_DIRTY) {
+    fio___io_poll_on_ready_schd((void *)io);
+  }
+  fio___io_free2(io);
 }
 
 /** Suspends future "on_data" events for the IO. */
@@ -72862,7 +72928,7 @@ static void fio___io_poll_on_data(void *io_, void *ignr_) {
   } else if ((io->flags & FIO___IO_FLAG_OPEN)) {
     fio___io_monitor_out(io);
   }
-  fio___io_free2(io);
+  fio___io_free_with_flush(io);
   return;
 }
 
@@ -72882,36 +72948,41 @@ static void fio___io_poll_on_ready(void *io_, void *ignr_) {
   if (!(io->flags & FIO___IO_FLAG_OPEN))
     goto finish;
   for (;;) {
+    ssize_t r = io->pr->io_functions.flush(io->fd, io->tls);
     size_t len = FIO_IO_BUFFER_PER_WRITE;
     char *buf = buf_mem;
-    fio_stream_read(&io->out, &buf, &len);
-    if (!len)
-      break;
-    ssize_t r = io->pr->io_functions.write(io->fd, buf, len, io->tls);
-    if (r > 0) {
-      // FIO_LOG_DDEBUG2("(%d) written %zu bytes to fd %d",
-      //                 FIO___IO.pid,
-      //                 (size_t)r,
-      //                 io->fd);
+    if ((!r)) {
+      fio_stream_read(&io->out, &buf, &len);
+      if (!len)
+        goto finish_loop;
+      r = io->pr->io_functions.write(io->fd, buf, len, io->tls);
+    }
+    switch ((size_t)(r + 1)) {
+    case 0:
+      if ((errno == EWOULDBLOCK) || (errno == EAGAIN))
+        goto finish_loop;
+      if (errno == EINTR)
+        continue;
+      /* fallthrough */
+    case 1: goto connection_error;
+    default:
+      FIO_LOG_DDEBUG2("(%d) written %zu bytes to fd %d",
+                      FIO___IO.pid,
+                      (size_t)r,
+                      io->fd);
       total += r;
       fio_stream_advance(&io->out, r);
       continue;
     }
-    if (r == -1) {
-      if ((errno == EWOULDBLOCK) || (errno == EAGAIN))
-        break;
-      if (errno == EINTR)
-        continue;
-    }
-    goto connection_error;
   }
+finish_loop:
   if (total) {
     fio___io_touch((void *)fio___io_dup2(io), NULL);
 #if FIO_IO_COUNT_STORAGE
     io->total_sent += total;
 #endif
   }
-  if (io->pr->io_functions.flush(io->fd, io->tls) || fio_stream_any(&io->out)) {
+  if (fio_stream_any(&io->out)) {
     if (fio_stream_length(&io->out) >= FIO_IO_THROTTLE_LIMIT) {
       if (!(io->flags & FIO___IO_FLAG_THROTTLED))
         FIO_LOG_DDEBUG2("(%d), throttled IO %p (fd %d)",
@@ -72938,7 +73009,7 @@ static void fio___io_poll_on_ready(void *io_, void *ignr_) {
   }
 
 finish:
-  fio___io_free2(io);
+  fio___io_free_with_flush(io);
   return;
 
 connection_error:
@@ -72953,7 +73024,7 @@ connection_error:
         strerror(errno));
 #endif
   fio_io_close_now(io);
-  fio___io_free2(io);
+  fio___io_free_with_flush(io);
 }
 
 // static void fio___io_poll_on_close_task(void *io_, void *ignr_) {
@@ -72979,7 +73050,7 @@ static void fio___io_poll_on_timeout(void *io_, void *ignr_) {
   (void)ignr_;
   fio_io_s *io = (fio_io_s *)io_;
   io->pr->on_timeout(io);
-  fio___io_free2(io);
+  fio___io_free_with_flush(io);
 }
 
 /* *****************************************************************************
@@ -76836,10 +76907,20 @@ FIO_SFUNC void *fio___openssl_build_context(fio_io_tls_s *tls,
     return NULL;
   }
 
-  /* Configure SSL context modes for non-blocking I/O */
-  SSL_CTX_set_mode(ctx->ctx, SSL_MODE_ENABLE_PARTIAL_WRITE);
-  SSL_CTX_set_mode(ctx->ctx, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  /* Configure SSL context modes for non-blocking I/O.
+   * PARTIAL_WRITE: allow SSL_write to return with partial data sent.
+   * ACCEPT_MOVING_WRITE_BUFFER: buffer pointer may change between retries.
+   * RELEASE_BUFFERS: free OpenSSL's internal 34KB per-connection read/write
+   *   buffers when idle — dramatically reduces memory/cache pressure. */
+  SSL_CTX_set_mode(ctx->ctx,
+                   SSL_MODE_ENABLE_PARTIAL_WRITE |
+                       SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+                       SSL_MODE_RELEASE_BUFFERS);
   SSL_CTX_clear_mode(ctx->ctx, SSL_MODE_AUTO_RETRY);
+
+  /* Enable TLS 1.3 session tickets for resumption.
+   * On reconnect, avoids full handshake — saves ~30-50% handshake CPU. */
+  SSL_CTX_set_num_tickets(ctx->ctx, 2);
 
   /* Configure certificate verification */
   X509_STORE *store = NULL;
@@ -76935,93 +77016,416 @@ error:
 }
 
 /* *****************************************************************************
+Per-Connection State (Custom BIO Architecture)
+
+Instead of BIO_s_mem() (which copies data through internal BUF_MEM buffers),
+we use custom BIO types that give OpenSSL direct access to our buffers:
+- Custom rbio: OpenSSL reads raw socket data directly from conn->recv_buf
+- Custom wbio: OpenSSL writes encrypted data directly into conn->enc_buf
+This eliminates ALL intermediate copies, matching BIO_new_socket performance
+while retaining full control over batching and partial write buffering.
+***************************************************************************** */
+
+/** Max encrypted record overhead: header(5) + max_plaintext(16384) + tag(16)
+ *  + 256 bytes margin for TLS 1.2/1.3 variations and alignment. */
+#define FIO___OPENSSL_ENC_RECORD_SIZE (16384 + 5 + 16 + 256)
+
+/** Per-connection wrapper around SSL, with receive and encrypted output
+ *  buffers. Custom BIOs read/write directly from/to these buffers. */
+typedef struct {
+  SSL *ssl;
+  /* Cached handshake state — avoids SSL_is_init_finished() vtable call
+   * on every read() in the hot path (post-handshake). */
+  uint8_t handshake_complete;
+  /* Receive buffer — raw socket data fed to OpenSSL for decryption.
+   * We read the socket directly into this buffer, and OpenSSL's custom rbio
+   * read callback pulls from it. Sized for one full IO read (64KB). */
+  size_t recv_buf_len;
+  size_t recv_buf_pos;
+  uint8_t recv_buf[FIO_IO_BUFFER_PER_WRITE]; /* 64KB */
+  /* Encrypted output buffer — OpenSSL's custom wbio write callback appends
+   * directly here. Sized for 4 max TLS records (~66KB). */
+  size_t enc_buf_len;
+  size_t enc_buf_sent;
+  uint8_t enc_buf[4 * FIO___OPENSSL_ENC_RECORD_SIZE];
+} fio___openssl_connection_s;
+
+FIO_LEAK_COUNTER_DEF(fio___openssl_connection_s)
+
+/* *****************************************************************************
+Custom BIO Methods — Write BIO (OpenSSL encrypted output → enc_buf)
+***************************************************************************** */
+
+/** Custom wbio write_ex: OpenSSL calls this to output encrypted data.
+ *  Appends directly into conn->enc_buf — no intermediate BUF_MEM copy. */
+FIO_SFUNC int fio___openssl_wbio_write_ex(BIO *bio,
+                                          const char *data,
+                                          size_t len,
+                                          size_t *written) {
+  fio___openssl_connection_s *conn =
+      (fio___openssl_connection_s *)BIO_get_data(bio);
+  if (!conn || !data || !len) {
+    *written = 0;
+    return 0;
+  }
+  size_t space = sizeof(conn->enc_buf) - conn->enc_buf_len;
+  size_t to_write = (len < space) ? len : space;
+  if (!to_write) {
+    BIO_set_retry_write(bio);
+    *written = 0;
+    return 0;
+  }
+  FIO_MEMCPY(conn->enc_buf + conn->enc_buf_len, data, to_write);
+  conn->enc_buf_len += to_write;
+  *written = to_write;
+  return 1;
+}
+
+/* *****************************************************************************
+Custom BIO Methods — Read BIO (recv_buf → OpenSSL for decryption)
+***************************************************************************** */
+
+/** Custom rbio read_ex: OpenSSL calls this to get raw data for decryption.
+ *  Reads directly from conn->recv_buf — no intermediate BUF_MEM copy. */
+FIO_SFUNC int fio___openssl_rbio_read_ex(BIO *bio,
+                                         char *buf,
+                                         size_t len,
+                                         size_t *readbytes) {
+  fio___openssl_connection_s *conn =
+      (fio___openssl_connection_s *)BIO_get_data(bio);
+  if (!conn || !buf || !len) {
+    *readbytes = 0;
+    return 0;
+  }
+  size_t avail = conn->recv_buf_len - conn->recv_buf_pos;
+  if (!avail) {
+    BIO_set_retry_read(bio);
+    *readbytes = 0;
+    return 0;
+  }
+  size_t to_read = (len < avail) ? len : avail;
+  FIO_MEMCPY(buf, conn->recv_buf + conn->recv_buf_pos, to_read);
+  conn->recv_buf_pos += to_read;
+  /* Compact when fully consumed */
+  if (conn->recv_buf_pos >= conn->recv_buf_len) {
+    conn->recv_buf_len = 0;
+    conn->recv_buf_pos = 0;
+  }
+  *readbytes = to_read;
+  return 1;
+}
+
+/* *****************************************************************************
+Custom BIO Methods — Shared ctrl callback
+***************************************************************************** */
+
+/** ctrl callback for both custom BIOs. Handles flush, pending queries. */
+FIO_SFUNC long fio___openssl_bio_ctrl(BIO *bio, int cmd, long num, void *ptr) {
+  switch (cmd) {
+  case BIO_CTRL_FLUSH: return 1; /* always "flushed" — we manage flushing */
+  case BIO_CTRL_PUSH:            /* fall through */
+  case BIO_CTRL_POP: return 0;
+  case BIO_CTRL_WPENDING: {
+    fio___openssl_connection_s *conn =
+        (fio___openssl_connection_s *)BIO_get_data(bio);
+    return conn ? (long)(conn->enc_buf_len - conn->enc_buf_sent) : 0;
+  }
+  case BIO_CTRL_PENDING: {
+    fio___openssl_connection_s *conn =
+        (fio___openssl_connection_s *)BIO_get_data(bio);
+    return conn ? (long)(conn->recv_buf_len - conn->recv_buf_pos) : 0;
+  }
+  default: return 0;
+  }
+  (void)num;
+  (void)ptr;
+}
+
+/* *****************************************************************************
+Custom BIO Methods — Global BIO_METHOD objects (created once, read-only)
+***************************************************************************** */
+
+static BIO_METHOD *fio___openssl_rbio_method = NULL;
+static BIO_METHOD *fio___openssl_wbio_method = NULL;
+
+/** Initialize custom BIO methods. Thread-safe via lock. Call from constructor.
+ */
+FIO_SFUNC void fio___openssl_init_bio_methods(void) {
+  static fio_lock_i lock = FIO_LOCK_INIT;
+  fio_lock(&lock);
+  if (!fio___openssl_rbio_method) {
+    fio___openssl_rbio_method =
+        BIO_meth_new(BIO_TYPE_SOURCE_SINK | BIO_get_new_index(), "fio_rbio");
+    BIO_meth_set_read_ex(fio___openssl_rbio_method, fio___openssl_rbio_read_ex);
+    BIO_meth_set_ctrl(fio___openssl_rbio_method, fio___openssl_bio_ctrl);
+
+    fio___openssl_wbio_method =
+        BIO_meth_new(BIO_TYPE_SOURCE_SINK | BIO_get_new_index(), "fio_wbio");
+    BIO_meth_set_write_ex(fio___openssl_wbio_method,
+                          fio___openssl_wbio_write_ex);
+    BIO_meth_set_ctrl(fio___openssl_wbio_method, fio___openssl_bio_ctrl);
+  }
+  fio_unlock(&lock);
+}
+
+/** Cleanup callback to free BIO methods at exit. */
+FIO_SFUNC void fio___openssl_free_bio_methods(void *ignr_) {
+  if (fio___openssl_rbio_method) {
+    BIO_meth_free(fio___openssl_rbio_method);
+    fio___openssl_rbio_method = NULL;
+  }
+  if (fio___openssl_wbio_method) {
+    BIO_meth_free(fio___openssl_wbio_method);
+    fio___openssl_wbio_method = NULL;
+  }
+  (void)ignr_;
+}
+
+/* *****************************************************************************
+Per-Connection Helpers
+***************************************************************************** */
+
+/** Try to send pending enc_buf data directly to socket.
+ *  Returns total bytes sent, 0 if nothing pending or socket full. */
+FIO_SFUNC size_t fio___openssl_send_enc_buf(int fd,
+                                            fio___openssl_connection_s *conn) {
+  if (conn->enc_buf_sent >= conn->enc_buf_len)
+    return 0;
+
+  /* Fast path: try to send everything in one call (common case) */
+  size_t remaining = conn->enc_buf_len - conn->enc_buf_sent;
+  ssize_t written =
+      fio_sock_write(fd, (char *)conn->enc_buf + conn->enc_buf_sent, remaining);
+  if (written > 0 && (size_t)written >= remaining) {
+    /* All sent in one call */
+    conn->enc_buf_len = 0;
+    conn->enc_buf_sent = 0;
+    return remaining;
+  }
+  if (written > 0)
+    conn->enc_buf_sent += (size_t)written;
+
+  /* Slow path: partial send, retry loop */
+  size_t total = (written > 0) ? (size_t)written : 0;
+  while (conn->enc_buf_sent < conn->enc_buf_len) {
+    written = fio_sock_write(fd,
+                             (char *)conn->enc_buf + conn->enc_buf_sent,
+                             conn->enc_buf_len - conn->enc_buf_sent);
+    if (written <= 0)
+      break;
+    conn->enc_buf_sent += (size_t)written;
+    total += (size_t)written;
+  }
+  if (conn->enc_buf_sent >= conn->enc_buf_len) {
+    conn->enc_buf_len = 0;
+    conn->enc_buf_sent = 0;
+  }
+  return total;
+}
+
+/* *****************************************************************************
 IO functions
 ***************************************************************************** */
 
-/** Called to perform a non-blocking `read`, same as the system call. */
+/** Called to perform a non-blocking `read`, same as the system call.
+ *
+ * Custom BIO flow (one copy, same as BIO_new_socket):
+ * 1. Read raw bytes from socket directly into conn->recv_buf (ONE copy)
+ * 2. If handshake incomplete: call SSL_do_handshake() — OpenSSL pulls from
+ *    recv_buf via custom rbio, writes handshake output to enc_buf via custom
+ *    wbio. Send enc_buf immediately (IO layer won't call on_ready during
+ *    handshake because there's no outgoing stream data yet).
+ * 3. If handshake complete: call SSL_read_ex() to decrypt application data.
+ *    OpenSSL pulls from recv_buf via custom rbio.
+ * 4. Send any post-read output from enc_buf (key updates, etc.)
+ */
 FIO_SFUNC ssize_t fio___openssl_read(int fd,
                                      void *buf,
                                      size_t len,
                                      void *tls_ctx) {
-  ssize_t r;
-  SSL *ssl = (SSL *)tls_ctx;
-  if (!ssl || !buf)
+  fio___openssl_connection_s *conn = (fio___openssl_connection_s *)tls_ctx;
+  if (!conn || !buf)
     return -1;
-  errno = 0;
-  if (len > INT_MAX)
-    len = INT_MAX;
-  r = SSL_read(ssl, buf, (int)len);
-  if (r > 0)
-    return r;
-  if (errno == EWOULDBLOCK || errno == EAGAIN)
-    return (ssize_t)-1;
+  SSL *ssl = conn->ssl;
 
-  switch ((r = (ssize_t)SSL_get_error(ssl, (int)r))) {
-  case SSL_ERROR_SSL:                                   /* fall through */
-  case SSL_ERROR_SYSCALL:                               /* fall through */
-  case SSL_ERROR_ZERO_RETURN: return (r = 0);           /* EOF */
-  case SSL_ERROR_NONE:                                  /* fall through */
-  case SSL_ERROR_WANT_CONNECT:                          /* fall through */
-  case SSL_ERROR_WANT_ACCEPT:                           /* fall through */
-  case SSL_ERROR_WANT_WRITE:                            /* fall through */
-    r = SSL_write_ex(ssl, (void *)&r, 0, (size_t *)&r); /* fall through */
-  case SSL_ERROR_WANT_X509_LOOKUP:                      /* fall through */
-  case SSL_ERROR_WANT_READ:                             /* fall through */
-#ifdef SSL_ERROR_WANT_ASYNC
-  case SSL_ERROR_WANT_ASYNC:                            /* fall through */
-#endif
-  default: errno = EWOULDBLOCK; return (r = -1);
+  /* Step 1: Compact recv_buf when >50% consumed, to maximize socket read space.
+   * Without compaction, the buffer fragments as OpenSSL reads one record at a
+   * time — recv_buf_pos advances but unconsumed data stays in place, leaving
+   * shrinking space for new socket reads. */
+  if (conn->recv_buf_pos > (sizeof(conn->recv_buf) >> 1)) {
+    size_t remaining = conn->recv_buf_len - conn->recv_buf_pos;
+    if (remaining > 0)
+      FIO_MEMMOVE(conn->recv_buf,
+                  conn->recv_buf + conn->recv_buf_pos,
+                  remaining);
+    conn->recv_buf_len = remaining;
+    conn->recv_buf_pos = 0;
   }
-  (void)fd;
+
+  /* Step 2: Read raw data from socket directly into recv_buf.
+   * ONE copy: socket → recv_buf. Same as BIO_new_socket. */
+  if (conn->recv_buf_len < sizeof(conn->recv_buf)) {
+    ssize_t raw = fio_sock_read(fd,
+                                (char *)conn->recv_buf + conn->recv_buf_len,
+                                sizeof(conn->recv_buf) - conn->recv_buf_len);
+    if (raw > 0)
+      conn->recv_buf_len += (size_t)raw;
+    else if (raw == 0)
+      return 0; /* EOF */
+    /* raw == -1 with EWOULDBLOCK is OK — recv_buf may still have data
+     * from a previous read that SSL_read can process. */
+  }
+
+  /* Step 3: If handshake not complete, advance it.
+   * With custom BIOs, handshake responses land directly in enc_buf via the
+   * wbio write callback. We MUST send them from within the read callback
+   * because the IO layer's on_ready loop won't run until the protocol layer
+   * queues outgoing data — which won't happen until after the handshake
+   * completes. This matches the native TLS 1.3 implementation. */
+  if (!conn->handshake_complete) {
+    SSL_do_handshake(ssl);
+    /* Handshake output is already in enc_buf — send it immediately */
+    if (conn->enc_buf_len > conn->enc_buf_sent)
+      fio___openssl_send_enc_buf(fd, conn);
+    /* If handshake still not finished, tell IO layer to wait for more data */
+    if (!SSL_is_init_finished(ssl)) {
+      errno = EWOULDBLOCK;
+      return -1;
+    }
+    /* Handshake just completed — cache the result to avoid vtable call */
+    conn->handshake_complete = 1;
+    /* Fall through to try SSL_read_ex */
+  }
+
+  /* Step 4: Decrypt application data.
+   * OpenSSL pulls raw data from recv_buf via custom rbio read callback. */
+  size_t readbytes = 0;
+  int r = SSL_read_ex(ssl, buf, len, &readbytes);
+
+  /* Step 5: Send any post-read output (key updates, renegotiation).
+   * These are already in enc_buf via the custom wbio write callback. */
+  if (conn->enc_buf_len > conn->enc_buf_sent)
+    fio___openssl_send_enc_buf(fd, conn);
+
+  if (r == 1 && readbytes > 0)
+    return (ssize_t)readbytes;
+
+  /* Fast path: if recv_buf is empty, it's just WANT_READ (no more data).
+   * Avoids the expensive SSL_get_error() call which accesses OpenSSL's
+   * thread-local error queue. This is the most common "failure" case. */
+  if (conn->recv_buf_pos >= conn->recv_buf_len) {
+    errno = EWOULDBLOCK;
+    return -1;
+  }
+
+  /* Slow path: actual SSL error */
+  int ssl_err = SSL_get_error(ssl, r);
+  switch (ssl_err) {
+  case SSL_ERROR_SSL:                   /* fall through */
+  case SSL_ERROR_SYSCALL:               /* fall through */
+  case SSL_ERROR_ZERO_RETURN: return 0; /* EOF */
+  default: errno = EWOULDBLOCK; return -1;
+  }
 }
 
-/** Sends any unsent internal data. Returns 0 only if all data was sent. */
+/**
+ * Sends any unsent internal data. Returns:
+ *   -1  on error / EWOULDBLOCK (pending data couldn't be fully flushed)
+ *    0  when all internal buffers are empty (nothing left to send)
+ *
+ * With custom BIOs, all encrypted output is already in enc_buf. Flush simply
+ * sends any pending enc_buf data to the socket.
+ */
 FIO_SFUNC int fio___openssl_flush(int fd, void *tls_ctx) {
+  fio___openssl_connection_s *conn = (fio___openssl_connection_s *)tls_ctx;
+  if (!conn)
+    return 0;
+  if (conn->enc_buf_sent >= conn->enc_buf_len) {
+    conn->enc_buf_len = 0;
+    conn->enc_buf_sent = 0;
+    return 0;
+  }
+  fio___openssl_send_enc_buf(fd, conn);
+  if (conn->enc_buf_sent < conn->enc_buf_len) {
+    errno = EWOULDBLOCK;
+    return -1;
+  }
   return 0;
-  (void)fd, (void)tls_ctx;
 }
 
-/** Called to perform a non-blocking `write`, same as the system call. */
+/**
+ * Called to perform a non-blocking `write`, same as POSIX write(2).
+ * Returns:
+ *   N > 0  - number of plaintext bytes accepted/encrypted
+ *   0      - nothing to write (len was 0)
+ *   -1     - error or EWOULDBLOCK
+ *
+ * Custom BIO flow (zero intermediate copies):
+ * 1. Flush any pending enc_buf data from a previous partial write
+ * 2. Call SSL_write_ex() — OpenSSL encrypts plaintext and the custom wbio
+ *    write callback appends ciphertext directly into enc_buf
+ * 3. Send enc_buf to socket
+ *
+ * IMPORTANT: Once SSL_write_ex succeeds, OpenSSL's internal state (sequence
+ * numbers, etc.) has advanced. We MUST return success even if the socket write
+ * fails — the encrypted data is buffered in enc_buf and flush() sends later.
+ */
 FIO_SFUNC ssize_t fio___openssl_write(int fd,
                                       const void *buf,
                                       size_t len,
                                       void *tls_ctx) {
-  ssize_t r = -1;
-  if (!buf || !len || !tls_ctx)
-    return r;
-  SSL *ssl = (SSL *)tls_ctx;
-  errno = 0;
-  if (len > INT_MAX)
-    len = INT_MAX;
-  r = SSL_write(ssl, buf, (int)len);
-  if (r > 0)
-    return r;
-  if (errno == EWOULDBLOCK || errno == EAGAIN)
+  if (!buf || !tls_ctx) {
+    errno = EINVAL;
     return -1;
-
-  switch ((r = (ssize_t)SSL_get_error(ssl, (int)r))) {
-  case SSL_ERROR_SSL:                         /* fall through */
-  case SSL_ERROR_SYSCALL:                     /* fall through */
-  case SSL_ERROR_ZERO_RETURN: return (r = 0); /* EOF */
-  case SSL_ERROR_NONE:                        /* fall through */
-  case SSL_ERROR_WANT_CONNECT:                /* fall through */
-  case SSL_ERROR_WANT_ACCEPT:                 /* fall through */
-  case SSL_ERROR_WANT_X509_LOOKUP:            /* fall through */
-  case SSL_ERROR_WANT_WRITE:                  /* fall through */
-  case SSL_ERROR_WANT_READ:                   /* fall through */
-#ifdef SSL_ERROR_WANT_ASYNC /* fall through */
-  case SSL_ERROR_WANT_ASYNC:                  /* fall through */
-#endif
-  default: errno = EWOULDBLOCK; return (r = -1);
   }
-  (void)fd;
+  if (!len)
+    return 0;
+  fio___openssl_connection_s *conn = (fio___openssl_connection_s *)tls_ctx;
+
+  /* Step 1: Flush any pending encrypted data from a previous partial write.
+   * We cannot accept new plaintext until the old encrypted data is sent,
+   * because enc_buf space is needed for the new encrypted output. */
+  while (conn->enc_buf_sent < conn->enc_buf_len) {
+    errno = 0;
+    ssize_t written = fio_sock_write(fd,
+                                     (char *)conn->enc_buf + conn->enc_buf_sent,
+                                     conn->enc_buf_len - conn->enc_buf_sent);
+    if (written <= 0) {
+      errno = EWOULDBLOCK;
+      return -1;
+    }
+    conn->enc_buf_sent += (size_t)written;
+  }
+  /* Pending data fully sent — reset buffer */
+  conn->enc_buf_len = 0;
+  conn->enc_buf_sent = 0;
+
+  /* Step 2: Encrypt plaintext via SSL_write_ex.
+   * OpenSSL writes encrypted output directly into enc_buf via custom wbio. */
+  size_t ssl_written = 0;
+  int r = SSL_write_ex(conn->ssl, buf, len, &ssl_written);
+
+  if (r != 1 || ssl_written == 0) {
+    int ssl_err = SSL_get_error(conn->ssl, r);
+    switch (ssl_err) {
+    case SSL_ERROR_SSL:                   /* fall through */
+    case SSL_ERROR_SYSCALL:               /* fall through */
+    case SSL_ERROR_ZERO_RETURN: return 0; /* connection error / EOF */
+    default: errno = EWOULDBLOCK; return -1;
+    }
+  }
+
+  /* Step 3: Send enc_buf (which now has encrypted data written by OpenSSL). */
+  fio___openssl_send_enc_buf(fd, conn);
+
+  /* CRITICAL: Return SUCCESS because SSL state has advanced.
+   * Even if socket was full, data is buffered (in enc_buf) for flush(). */
+  return (ssize_t)ssl_written;
 }
 
 /* *****************************************************************************
 Per-Connection Builder
 ***************************************************************************** */
-
-FIO_LEAK_COUNTER_DEF(fio___SSL)
 
 /** called once the IO was attached and the TLS object was set. */
 FIO_SFUNC void fio___openssl_start(fio_io_s *io) {
@@ -77037,27 +77441,62 @@ FIO_SFUNC void fio___openssl_start(fio_io_s *io) {
     FIO_LOG_ERROR("OpenSSL: SSL_new failed");
     return;
   }
-  FIO_LEAK_COUNTER_ON_ALLOC(fio___SSL);
-  fio_io_tls_set(io, (void *)ssl);
 
-  /* attach socket */
-  FIO_LOG_DDEBUG2("(%d) allocated new TLS context for %p.",
-                  (int)fio_thread_getpid(),
-                  (void *)io);
-  BIO *bio = BIO_new_socket(fio_io_fd(io), 0);
-  if (!bio) {
-    FIO_LOG_ERROR("OpenSSL: BIO_new_socket failed");
-    FIO_LEAK_COUNTER_ON_FREE(fio___SSL);
+  /* Allocate per-connection wrapper */
+  fio___openssl_connection_s *conn =
+      (fio___openssl_connection_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(*conn), 0);
+  if (!conn) {
+    FIO_LOG_ERROR("OpenSSL: connection allocation failed");
     SSL_free(ssl);
-    fio_io_tls_set(io, NULL);
     return;
   }
-  SSL_set_bio(ssl, bio, bio);
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___openssl_connection_s);
+  FIO_MEMSET(conn, 0, sizeof(*conn));
+  conn->ssl = ssl;
+
+  /* Create custom BIOs that read/write directly from/to our buffers */
+  fio___openssl_init_bio_methods();
+  BIO *rbio = BIO_new(fio___openssl_rbio_method);
+  BIO *wbio = BIO_new(fio___openssl_wbio_method);
+  if (!rbio || !wbio) {
+    FIO_LOG_ERROR("OpenSSL: BIO_new(custom) failed");
+    if (rbio)
+      BIO_free(rbio);
+    if (wbio)
+      BIO_free(wbio);
+    FIO_LEAK_COUNTER_ON_FREE(fio___openssl_connection_s);
+    FIO_MEM_FREE(conn, sizeof(*conn));
+    SSL_free(ssl);
+    return;
+  }
+  BIO_set_data(rbio, conn); /* point to our connection struct */
+  BIO_set_data(wbio, conn);
+  BIO_set_init(rbio, 1); /* mark as initialized */
+  BIO_set_init(wbio, 1);
+  SSL_set_bio(ssl, rbio, wbio); /* SSL takes ownership of both BIOs */
+
+  fio_io_tls_set(io, (void *)conn);
+
+  FIO_LOG_DDEBUG2("(%d) allocated new TLS context (custom BIO) for %p.",
+                  (int)fio_thread_getpid(),
+                  (void *)io);
+
   SSL_set_ex_data(ssl, 0, (void *)io);
+
+  /* Initiate handshake — OpenSSL writes handshake data into enc_buf via wbio */
   if (SSL_is_server(ssl))
     SSL_accept(ssl);
   else
     SSL_connect(ssl);
+
+  /* Send any initial handshake output (ClientHello for client) directly.
+   * For client connections, the ClientHello must be sent now because the
+   * IO layer won't call on_ready/flush until the protocol layer queues outgoing
+   * data — which won't happen until after the handshake completes. For server
+   * connections, SSL_accept returns immediately (needs ClientHello first), so
+   * enc_buf is typically empty here. */
+  if (conn->enc_buf_len > conn->enc_buf_sent)
+    fio___openssl_send_enc_buf(fio_io_fd(io), conn);
 }
 
 /* *****************************************************************************
@@ -77066,10 +77505,16 @@ Closing Connections
 
 /** Called when the IO object finished sending all data before closure. */
 FIO_SFUNC void fio___openssl_finish(int fd, void *tls_ctx) {
-  SSL *ssl = (SSL *)tls_ctx;
-  if (ssl)
-    SSL_shutdown(ssl);
-  (void)fd;
+  fio___openssl_connection_s *conn = (fio___openssl_connection_s *)tls_ctx;
+  if (!conn || !conn->ssl)
+    return;
+
+  /* SSL_shutdown writes close_notify directly into enc_buf via custom wbio */
+  SSL_shutdown(conn->ssl);
+
+  /* Best-effort send close_notify */
+  if (conn->enc_buf_len > conn->enc_buf_sent)
+    fio___openssl_send_enc_buf(fd, conn);
 }
 
 /* *****************************************************************************
@@ -77078,12 +77523,15 @@ Per-Connection Cleanup
 
 /** Called after the IO object is closed, used to cleanup its `tls` object. */
 FIO_SFUNC void fio___openssl_cleanup(void *tls_ctx) {
-  SSL *ssl = (SSL *)tls_ctx;
-  if (ssl) {
-    SSL_shutdown(ssl);
-    FIO_LEAK_COUNTER_ON_FREE(fio___SSL);
-    SSL_free(ssl);
+  fio___openssl_connection_s *conn = (fio___openssl_connection_s *)tls_ctx;
+  if (!conn)
+    return;
+  if (conn->ssl) {
+    SSL_shutdown(conn->ssl);
+    SSL_free(conn->ssl); /* Also frees the attached BIOs */
   }
+  FIO_LEAK_COUNTER_ON_FREE(fio___openssl_connection_s);
+  FIO_MEM_FREE(conn, sizeof(*conn));
 }
 
 /* *****************************************************************************
@@ -77128,9 +77576,13 @@ SFUNC fio_io_functions_s fio_openssl_io_functions(void) {
 
 /* Setup OpenSSL as TLS IO default */
 FIO_CONSTRUCTOR(fio___openssl_setup_default) {
+  fio___openssl_init_bio_methods();
   static fio_io_functions_s FIO___OPENSSL_IO_FUNCS;
   FIO___OPENSSL_IO_FUNCS = fio_openssl_io_functions();
   fio_io_tls_default_functions(&FIO___OPENSSL_IO_FUNCS);
+  fio_state_callback_add(FIO_CALL_AT_EXIT,
+                         fio___openssl_free_bio_methods,
+                         NULL);
 #ifdef SIGPIPE
   fio_signal_monitor(.sig = SIGPIPE); /* avoid OpenSSL issue... */
 #endif
@@ -77219,16 +77671,20 @@ typedef struct {
   /* Buffered outgoing handshake data - stored in buf[2*cap..3*cap) */
   size_t send_buf_len;
   size_t send_buf_pos; /* Write position in send_buf */
-  /* Pre-allocated encryption buffer (avoids stack allocation in write path) */
-  uint8_t enc_buf[FIO_TLS13_MAX_CIPHERTEXT_LEN + FIO_TLS13_RECORD_HEADER_LEN +
-                  FIO_TLS13_TAG_LEN + 16];
+  /* Pre-allocated encryption buffer for multi-record batching.
+   * Sized for 4 max TLS records to match FIO_IO_BUFFER_PER_WRITE (64KB).
+   * The IO layer offers up to 64KB per write; each TLS record holds up to
+   * 16384 bytes of plaintext with 22 bytes overhead, so 4 records cover it. */
+#define FIO___TLS13_ENC_RECORD_SIZE                                            \
+  (FIO_TLS13_MAX_CIPHERTEXT_LEN + FIO_TLS13_RECORD_HEADER_LEN +                \
+   FIO_TLS13_TAG_LEN + 16)
+  uint8_t enc_buf[4 * FIO___TLS13_ENC_RECORD_SIZE];
   /* Partial write tracking: encrypted data that couldn't be fully sent.
    * TLS records are atomic - we must buffer partial writes because:
    * 1. Re-encrypting would use a new sequence number, corrupting the stream
    * 2. The browser would receive a partial record followed by a new record */
-  size_t enc_buf_len;       /* Total encrypted data length in enc_buf */
-  size_t enc_buf_sent;      /* Bytes already sent from enc_buf */
-  size_t enc_plaintext_len; /* Original plaintext length (for return value) */
+  size_t enc_buf_len;  /* Total encrypted data length in enc_buf */
+  size_t enc_buf_sent; /* Bytes already sent from enc_buf */
   /* Parent context (for certificate chain) */
   fio___tls13_context_s *ctx;
   /* Certificate chain storage (for server - pointers must outlive handshake) */
@@ -78050,41 +78506,38 @@ FIO_SFUNC ssize_t fio___tls13_read(int fd,
 TLS 1.3 IO Functions - Write
 ***************************************************************************** */
 
-/** Called to perform a non-blocking `write`, same as the system call. */
+/** Called to perform a non-blocking `write`, same as POSIX write(2).
+ *
+ * Returns:
+ *   N > 0  - number of plaintext bytes accepted/encrypted
+ *   0      - nothing to write (EOF condition, len was 0)
+ *   -1     - error or EWOULDBLOCK (socket full, can't accept data now)
+ *
+ * Multi-record batching: encrypts up to 4 TLS records (64KB plaintext) into
+ * enc_buf in a single call, then writes everything with one fio_sock_write().
+ * Handshake data (send_buf) and KeyUpdate responses are prepended to enc_buf
+ * so all outgoing data goes in a single syscall.
+ *
+ * IMPORTANT: Once data is encrypted, the TLS sequence number is incremented.
+ * The function MUST return success (N > 0) after encryption, even if the
+ * socket write fails. The encrypted data is buffered and flush() sends later.
+ */
 FIO_SFUNC ssize_t fio___tls13_write(int fd,
                                     const void *buf,
                                     size_t len,
                                     void *tls_ctx) {
   fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
-  if (!conn || !buf || len == 0)
+  if (!conn || !buf) {
+    errno = EINVAL;
     return -1;
+  }
+  if (len == 0)
+    return 0;
 
   /* If handshake not complete, can't send application data */
   if (!conn->handshake_complete) {
     errno = EWOULDBLOCK;
     return -1;
-  }
-
-  /* Flush any pending handshake data (e.g., client Finished) before sending
-   * application data. The server must receive the client Finished before it
-   * can process application data encrypted with application keys. */
-  while (conn->send_buf_pos < conn->send_buf_len) {
-    errno = 0;
-    ssize_t hs_written =
-        fio_sock_write(fd,
-                       (char *)fio___tls13_send_buf(conn) + conn->send_buf_pos,
-                       conn->send_buf_len - conn->send_buf_pos);
-    if (hs_written <= 0) {
-      /* Can't send handshake data yet, so can't send app data either */
-      errno = EWOULDBLOCK;
-      return -1;
-    }
-    conn->send_buf_pos += (size_t)hs_written;
-  }
-  /* Reset send buffer after handshake data is fully sent */
-  if (conn->send_buf_pos >= conn->send_buf_len) {
-    conn->send_buf_len = 0;
-    conn->send_buf_pos = 0;
   }
 
   /* CRITICAL: Flush any pending encrypted data from a previous partial write.
@@ -78108,30 +78561,44 @@ FIO_SFUNC ssize_t fio___tls13_write(int fd,
         errno = EWOULDBLOCK;
         return -1;
       }
-      return written;
+      return -1; /* Real socket error */
     }
     conn->enc_buf_sent += (size_t)written;
   }
 
-  /* Pending data fully sent - reset buffer and continue to process new data */
-  if (conn->enc_buf_len > 0) {
-    conn->enc_buf_len = 0;
-    conn->enc_buf_sent = 0;
-    conn->enc_plaintext_len = 0;
+  /* Pending data fully sent - reset buffer */
+  conn->enc_buf_len = 0;
+  conn->enc_buf_sent = 0;
+
+  /* Position in enc_buf where we'll write next */
+  size_t enc_pos = 0;
+
+  /* Copy any pending handshake data (e.g., client Finished) into enc_buf
+   * so it goes out in the same syscall as application data. */
+  if (conn->send_buf_pos < conn->send_buf_len) {
+    size_t hs_remaining = conn->send_buf_len - conn->send_buf_pos;
+    if (hs_remaining <= sizeof(conn->enc_buf)) {
+      FIO_MEMCPY(conn->enc_buf,
+                 fio___tls13_send_buf(conn) + conn->send_buf_pos,
+                 hs_remaining);
+      enc_pos = hs_remaining;
+    }
+    conn->send_buf_len = 0;
+    conn->send_buf_pos = 0;
   }
 
   /* RFC 8446 Section 4.6.3: Send KeyUpdate response before Application Data
-   * if one is pending. The response MUST be encrypted with OLD sending keys,
-   * then we update our sending keys. */
+   * if one is pending. Encrypt into enc_buf with OLD sending keys,
+   * then update our sending keys. */
   if (conn->is_client && conn->state.client.key_update_pending) {
-    uint8_t ku_response[64];
+    size_t ku_space = sizeof(conn->enc_buf) - enc_pos;
     size_t key_len = fio___tls13_key_len(&conn->state.client);
     fio_tls13_cipher_type_e cipher_type =
         fio___tls13_cipher_type(&conn->state.client);
 
     int ku_len = fio_tls13_send_key_update_response(
-        ku_response,
-        sizeof(ku_response),
+        conn->enc_buf + enc_pos,
+        ku_space,
         conn->state.client.client_app_traffic_secret,
         &conn->state.client.client_app_keys,
         &conn->state.client.key_update_pending,
@@ -78140,26 +78607,18 @@ FIO_SFUNC ssize_t fio___tls13_write(int fd,
         cipher_type);
 
     if (ku_len > 0) {
-      /* Send KeyUpdate response */
-      errno = 0;
-      ssize_t ku_written =
-          fio_sock_write(fd, (char *)ku_response, (size_t)ku_len);
-      if (ku_written <= 0) {
-        /* Can't send KeyUpdate, can't send app data either */
-        errno = EWOULDBLOCK;
-        return -1;
-      }
-      FIO_LOG_DEBUG2("TLS 1.3 Client: Sent KeyUpdate response");
+      enc_pos += (size_t)ku_len;
+      FIO_LOG_DEBUG2("TLS 1.3 Client: KeyUpdate response queued in enc_buf");
     }
   } else if (!conn->is_client && conn->state.server.key_update_pending) {
-    uint8_t ku_response[64];
+    size_t ku_space = sizeof(conn->enc_buf) - enc_pos;
     size_t key_len = fio___tls13_server_key_len(&conn->state.server);
     fio_tls13_cipher_type_e cipher_type =
         fio___tls13_server_cipher_type(&conn->state.server);
 
     int ku_len = fio_tls13_send_key_update_response(
-        ku_response,
-        sizeof(ku_response),
+        conn->enc_buf + enc_pos,
+        ku_space,
         conn->state.server.server_app_traffic_secret,
         &conn->state.server.server_app_keys,
         &conn->state.server.key_update_pending,
@@ -78168,93 +78627,126 @@ FIO_SFUNC ssize_t fio___tls13_write(int fd,
         cipher_type);
 
     if (ku_len > 0) {
-      /* Send KeyUpdate response */
-      errno = 0;
-      ssize_t ku_written =
-          fio_sock_write(fd, (char *)ku_response, (size_t)ku_len);
-      if (ku_written <= 0) {
-        /* Can't send KeyUpdate, can't send app data either */
-        errno = EWOULDBLOCK;
-        return -1;
+      enc_pos += (size_t)ku_len;
+      FIO_LOG_DEBUG2("TLS 1.3 Server: KeyUpdate response queued in enc_buf");
+    }
+  }
+
+  /* Multi-record encryption: loop encrypting up to 4 TLS records into enc_buf.
+   * Each record holds up to FIO_TLS13_MAX_PLAINTEXT_LEN (16384) bytes. */
+  size_t total_plaintext = 0;
+  const uint8_t *src = (const uint8_t *)buf;
+  size_t remaining_plaintext = len;
+
+  while (remaining_plaintext > 0) {
+    /* Check if enc_buf has space for at least one more max record */
+    size_t enc_space = sizeof(conn->enc_buf) - enc_pos;
+    if (enc_space < FIO_TLS13_RECORD_HEADER_LEN + 1 + 1 + FIO_TLS13_TAG_LEN)
+      break; /* Not enough space for even a minimal record */
+
+    /* Clamp this chunk to max plaintext per record */
+    size_t chunk = remaining_plaintext;
+    if (chunk > FIO_TLS13_MAX_PLAINTEXT_LEN)
+      chunk = FIO_TLS13_MAX_PLAINTEXT_LEN;
+
+    /* Also clamp to what fits in remaining enc_buf space:
+     * encrypted size = header(5) + plaintext + content_type(1) + tag(16) */
+    size_t max_pt_for_space =
+        enc_space - FIO_TLS13_RECORD_HEADER_LEN - 1 - FIO_TLS13_TAG_LEN;
+    if (chunk > max_pt_for_space)
+      chunk = max_pt_for_space;
+
+    /* Encrypt one record into enc_buf at enc_pos */
+    int enc_len;
+    if (conn->is_client) {
+      enc_len = fio_tls13_client_encrypt(&conn->state.client,
+                                         conn->enc_buf + enc_pos,
+                                         enc_space,
+                                         src,
+                                         chunk);
+    } else {
+      enc_len = fio_tls13_server_encrypt(&conn->state.server,
+                                         conn->enc_buf + enc_pos,
+                                         enc_space,
+                                         src,
+                                         chunk);
+    }
+
+    if (enc_len < 0) {
+      /* Encryption error. If we already encrypted some records, return what
+       * we have. Otherwise report error. */
+      if (total_plaintext > 0)
+        break;
+      FIO_LOG_DEBUG2("TLS 1.3: encryption error");
+      errno = ECONNRESET;
+      return -1;
+    }
+
+    enc_pos += (size_t)enc_len;
+    src += chunk;
+    remaining_plaintext -= chunk;
+    total_plaintext += chunk;
+  }
+
+  /* If we have data to send (handshake, KeyUpdate, and/or encrypted records),
+   * write it all in a single syscall. */
+  if (enc_pos > 0) {
+    errno = 0;
+    ssize_t written = fio_sock_write(fd, (char *)conn->enc_buf, enc_pos);
+    if (written <= 0) {
+      if (errno == EWOULDBLOCK || errno == EAGAIN) {
+        /* Socket buffer full. Buffer everything for later.
+         * CRITICAL: Return SUCCESS for any encrypted plaintext because
+         * sequence numbers are incremented. flush() will send later. */
+        conn->enc_buf_len = enc_pos;
+        conn->enc_buf_sent = 0;
+        errno = 0;
+        return total_plaintext > 0 ? (ssize_t)total_plaintext : -1;
       }
-      FIO_LOG_DEBUG2("TLS 1.3 Server: Sent KeyUpdate response");
+      return -1; /* Real socket error */
+    }
+
+    /* Partial write - buffer the remainder.
+     * CRITICAL: Cannot re-encrypt; sequence numbers already incremented. */
+    if ((size_t)written < enc_pos) {
+      conn->enc_buf_len = enc_pos;
+      conn->enc_buf_sent = (size_t)written;
     }
   }
 
-  /* Limit to max plaintext size */
-  if (len > FIO_TLS13_MAX_PLAINTEXT_LEN)
-    len = FIO_TLS13_MAX_PLAINTEXT_LEN;
-
-  /* Encrypt data using pre-allocated buffer (avoids stack allocation) */
-  int enc_len;
-  if (conn->is_client) {
-    enc_len = fio_tls13_client_encrypt(&conn->state.client,
-                                       conn->enc_buf,
-                                       sizeof(conn->enc_buf),
-                                       (const uint8_t *)buf,
-                                       len);
-  } else {
-    enc_len = fio_tls13_server_encrypt(&conn->state.server,
-                                       conn->enc_buf,
-                                       sizeof(conn->enc_buf),
-                                       (const uint8_t *)buf,
-                                       len);
-  }
-
-  if (enc_len < 0) {
-    FIO_LOG_DEBUG2("TLS 1.3: encryption error");
-    errno = ECONNRESET;
-    return -1;
-  }
-
-  /* Write encrypted data to socket */
-  errno = 0;
-  ssize_t written = fio_sock_write(fd, (char *)conn->enc_buf, (size_t)enc_len);
-  if (written <= 0) {
-    if (errno == EWOULDBLOCK || errno == EAGAIN) {
-      /* Socket buffer full before we could write anything.
-       * Buffer the entire encrypted record for later.
-       * CRITICAL: We must return SUCCESS here because:
-       * 1. We've already encrypted the data (sequence number incremented)
-       * 2. If we return -1, IO layer will retry with same plaintext
-       * 3. We'd encrypt the same data twice, corrupting the TLS stream
-       * The flush() function will send the buffered data later. */
-      conn->enc_buf_len = (size_t)enc_len;
-      conn->enc_buf_sent = 0;
-      conn->enc_plaintext_len = len;
-      return (ssize_t)len; /* Success - data accepted, will be sent via flush */
-    }
-    return written; /* Real error */
-  }
-
-  /* If we wrote all encrypted data, report original plaintext length */
-  if ((size_t)written == (size_t)enc_len)
-    return (ssize_t)len;
-
-  /* Partial write - buffer the remaining encrypted data.
-   * CRITICAL: We cannot re-encrypt because the TLS sequence number has
-   * already been incremented. The encrypted data in enc_buf is the only
-   * valid ciphertext for this record. */
-  conn->enc_buf_len = (size_t)enc_len;
-  conn->enc_buf_sent = (size_t)written;
-  conn->enc_plaintext_len = len;
-
-  /* Report success - the plaintext has been "accepted" and will be sent.
-   * The IO layer will call flush() to complete the write. */
-  return (ssize_t)len;
+  /* Report total plaintext bytes accepted.
+   * N > 0: plaintext was encrypted and sent/buffered.
+   * -1: no plaintext could be encrypted (enc_buf full of control data). */
+  if (total_plaintext > 0)
+    return (ssize_t)total_plaintext;
+  errno = EWOULDBLOCK;
+  return -1;
 }
 
 /* *****************************************************************************
 TLS 1.3 IO Functions - Flush
 ***************************************************************************** */
 
-/** Sends any unsent internal data. Returns 0 only if all data was sent. */
+/** Sends any unsent internal data, returning POSIX write(2) semantics.
+ *
+ * Returns:
+ *   N > 0  - number of bytes written to the socket
+ *   0      - nothing to flush, all internal buffers are empty (EOF)
+ *   -1     - error or EWOULDBLOCK (pending data couldn't be flushed)
+ *
+ * After the write() rewrite, all outgoing data (handshake, KeyUpdate,
+ * encrypted records) is unified into enc_buf. Flush only needs to drain it.
+ * The send_buf is still flushed here for handshake data generated during
+ * read() (before write() has a chance to copy it into enc_buf). */
 FIO_SFUNC int fio___tls13_flush(int fd, void *tls_ctx) {
   fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
   if (!conn)
     return 0;
 
-  /* Send any buffered handshake data */
+  size_t total_flushed = 0;
+
+  /* Send any buffered handshake data that was generated during read()
+   * and hasn't been copied into enc_buf by write() yet. */
   while (conn->send_buf_pos < conn->send_buf_len) {
     errno = 0;
     ssize_t written =
@@ -78262,11 +78754,12 @@ FIO_SFUNC int fio___tls13_flush(int fd, void *tls_ctx) {
                        (char *)fio___tls13_send_buf(conn) + conn->send_buf_pos,
                        conn->send_buf_len - conn->send_buf_pos);
     if (written <= 0) {
-      if (errno == EWOULDBLOCK || errno == EAGAIN)
-        return -1; /* Would block, try again later */
-      return -1;   /* Error */
+      if (total_flushed > 0)
+        goto done;
+      return -1;
     }
     conn->send_buf_pos += (size_t)written;
+    total_flushed += (size_t)written;
   }
 
   /* Reset send buffer if fully sent */
@@ -78275,9 +78768,7 @@ FIO_SFUNC int fio___tls13_flush(int fd, void *tls_ctx) {
     conn->send_buf_pos = 0;
   }
 
-  /* CRITICAL: Flush any pending encrypted application data from partial write.
-   * TLS records are atomic - this data MUST be sent before the connection
-   * can be considered flushed. */
+  /* Flush pending encrypted data (handshake + KeyUpdate + app records) */
   while (conn->enc_buf_sent < conn->enc_buf_len) {
     size_t remaining = conn->enc_buf_len - conn->enc_buf_sent;
     errno = 0;
@@ -78285,24 +78776,34 @@ FIO_SFUNC int fio___tls13_flush(int fd, void *tls_ctx) {
                                      (char *)conn->enc_buf + conn->enc_buf_sent,
                                      remaining);
     if (written <= 0) {
-      if (errno == EWOULDBLOCK || errno == EAGAIN)
-        return -1; /* Would block, try again later */
-      return -1;   /* Error */
+      if (total_flushed > 0)
+        goto done;
+      return -1;
     }
     conn->enc_buf_sent += (size_t)written;
+    total_flushed += (size_t)written;
   }
 
   /* Reset encrypted buffer if fully sent */
   if (conn->enc_buf_sent >= conn->enc_buf_len) {
     conn->enc_buf_len = 0;
     conn->enc_buf_sent = 0;
-    conn->enc_plaintext_len = 0;
   }
 
-  /* Return 0 only if all data was sent */
-  int has_pending = (conn->send_buf_len > conn->send_buf_pos) ||
-                    (conn->enc_buf_len > conn->enc_buf_sent);
-  return has_pending ? -1 : 0;
+done:
+  /* N > 0: bytes were flushed (may still have pending data).
+   * 0: all internal buffers are empty.
+   * The IO layer uses truthiness to decide whether to monitor for POLLOUT,
+   * so both N > 0 and -1 correctly trigger continued monitoring. */
+  if (total_flushed > 0)
+    return (int)total_flushed;
+  /* Check if there's still pending data we couldn't flush */
+  if ((conn->send_buf_len > conn->send_buf_pos) ||
+      (conn->enc_buf_len > conn->enc_buf_sent)) {
+    errno = EWOULDBLOCK;
+    return -1;
+  }
+  return 0;
 }
 
 /* *****************************************************************************
