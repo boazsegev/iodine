@@ -107,7 +107,16 @@ FIO_SFUNC void *fio___thread_waitpid_in_gvl(void *args_) {
  */
 FIO_IFUNC int fio_thread_waitpid(fio_thread_pid_t i, int *s, int o) {
   iodine___wait_pid_args_s args = {i, s, o};
+  /* GVL state is ambiguous — sentinel thread doesn't have GVL, but other
+     callers might. On Ruby 4.0+ rb_thread_call_with_gvl is lenient. */
+#if RUBY_API_VERSION_MAJOR >= 4
   rb_thread_call_with_gvl(fio___thread_waitpid_in_gvl, (void *)&args);
+#else
+  if (ruby_thread_has_gvl_p())
+    fio___thread_waitpid_in_gvl((void *)&args);
+  else
+    rb_thread_call_with_gvl(fio___thread_waitpid_in_gvl, (void *)&args);
+#endif
   return args.ret;
 }
 
@@ -156,7 +165,16 @@ FIO_IFUNC int fio_thread_create(fio_thread_t *t,
                                        .fn = fn,
                                        .arg = arg};
   fio_lock(&starter.lock);
+  /* GVL state is ambiguous — called from both GVL and non-GVL contexts.
+     On Ruby 4.0+ rb_thread_call_with_gvl is lenient; on 3.x we must check. */
+#if RUBY_API_VERSION_MAJOR >= 4
   rb_thread_call_with_gvl(iodine___thread_create_in_gvl, &starter);
+#else
+  if (ruby_thread_has_gvl_p())
+    iodine___thread_create_in_gvl(&starter);
+  else
+    rb_thread_call_with_gvl(iodine___thread_create_in_gvl, &starter);
+#endif
   fio_lock(&starter.lock); /* wait for other thread to unlock */
   if (*starter.t == Qnil)
     goto error_starting_thread;
