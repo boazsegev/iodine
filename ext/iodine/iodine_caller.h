@@ -219,11 +219,23 @@ Accepts the following, possibly named, arguments:
 #if RUBY_API_VERSION_MAJOR >= 4
 #define iodine_ruby_call_anywhere(...)                                         \
   iodine_ruby_call_outside((iodine_caller_args_s){__VA_ARGS__})
+#define iodine_c_call_with(fn, args) rb_thread_call_with_gvl(fn, args)
+#define iodine_c_call_without(fn, args)                                        \
+  rb_thread_call_without_gvl(fn, args, NULL, NULL)
+
 #else
 #define iodine_ruby_call_anywhere(...)                                         \
   (ruby_thread_has_gvl_p()                                                     \
        ? iodine_ruby_call_inside                                               \
        : iodine_ruby_call_outside)((iodine_caller_args_s){__VA_ARGS__})
+
+#define iodine_c_call_with(fn, args)                                           \
+  (ruby_thread_has_gvl_p() ? fn(args) : rb_thread_call_with_gvl(fn, args))
+
+#define iodine_c_call_without(fn, args)                                        \
+  (ruby_thread_has_gvl_p() ? fn(args)                                          \
+                           : rb_thread_call_without_gvl(fn, args, NULL, NULL))
+
 #endif
 
 #endif /* H___IODINE_CALLER___H */
