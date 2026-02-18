@@ -38,35 +38,31 @@ Starting / Stopping the IO Reactor
 ***************************************************************************** */
 
 static void iodine_connection_cache_common_strings(void);
-static void *iodine___start(void *ignr_) {
-  VALUE ver = rb_const_get(iodine_rb_IODINE, rb_intern2("VERSION", 7));
+
+/** C-only data passed from iodine_start() (GVL held) to iodine___start()
+ *  (GVL released) so that iodine___start() never touches Ruby API. */
+typedef struct {
+  const char *version; /* C string copy of Iodine::VERSION */
+} iodine___start_args_s;
+
+static void *iodine___start(void *arg_) {
+  iodine___start_args_s *args = (iodine___start_args_s *)arg_;
   unsigned threads = (unsigned)fio_io_workers((int)fio_cli_get_i("-t"));
   unsigned workers = (unsigned)fio_io_workers((int)fio_cli_get_i("-w"));
   fio_io_async_attach(&IODINE_THREAD_POOL, (uint32_t)threads);
 
-  {
-    VALUE keeper;
-    iodine_env_set_const_val(IODINE_CONNECTION_ENV_TEMPLATE,
-                             FIO_STR_INFO1((char *)"rack.multithread"),
-                             (fio_cli_get_i("-t") ? Qtrue : Qfalse),
-                             &keeper);
-    iodine_env_set_const_val(IODINE_CONNECTION_ENV_TEMPLATE,
-                             FIO_STR_INFO1((char *)"rack.multiprocess"),
-                             (fio_cli_get_i("-w") ? Qtrue : Qfalse),
-                             &keeper);
-  }
   FIO_LOG_INFO("\n\tStarting the iodine server."
                "\n\tVersion: %s"
                "\n\tEngine: " FIO_POLL_ENGINE_STR "\n\tWorkers: %d\t(%s)"
                "\n\tThreads: 1+%d\t(per worker)"
                "\n\tPress ^C to exit.",
-               (ver == Qnil ? "unknown" : RSTRING_PTR(ver)),
+               args->version,
                workers,
                (workers ? "cluster mode" : "single process"),
                (int)IODINE_THREAD_POOL.count);
 
   fio_io_start((int)fio_cli_get_i("-w"));
-  return ignr_;
+  return NULL;
 }
 
 /**
@@ -84,7 +80,27 @@ static void *iodine___start(void *ignr_) {
  * Ruby: Iodine.start
  */
 static VALUE iodine_start(VALUE self) { // clang-format on
-  rb_thread_call_without_gvl(iodine___start, NULL, NULL, NULL);
+  /* All Ruby API calls MUST happen here (GVL is held).
+   * iodine___start() runs WITHOUT the GVL and must only use pure C. */
+  iodine___start_args_s start_args = {.version = "unknown"};
+  VALUE ver = rb_const_get(iodine_rb_IODINE, rb_intern2("VERSION", 7));
+  if (ver != Qnil)
+    start_args.version = RSTRING_PTR(ver);
+
+  /* Set rack.multithread / rack.multiprocess env template values (Ruby API) */
+  {
+    VALUE keeper;
+    iodine_env_set_const_val(IODINE_CONNECTION_ENV_TEMPLATE,
+                             FIO_STR_INFO1((char *)"rack.multithread"),
+                             (fio_cli_get_i("-t") ? Qtrue : Qfalse),
+                             &keeper);
+    iodine_env_set_const_val(IODINE_CONNECTION_ENV_TEMPLATE,
+                             FIO_STR_INFO1((char *)"rack.multiprocess"),
+                             (fio_cli_get_i("-w") ? Qtrue : Qfalse),
+                             &keeper);
+  }
+
+  rb_thread_call_without_gvl(iodine___start, &start_args, NULL, NULL);
   return self;
 }
 

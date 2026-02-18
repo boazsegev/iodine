@@ -185,14 +185,18 @@ static void iodine_pubsub_eng___punsubscribe(const fio_pubsub_engine_s *eng,
 static void *iodine_pubsub_eng___publish__in_GC(void *a_) {
   iodine_pubsub_eng___args_s *args = (iodine_pubsub_eng___args_s *)a_;
   VALUE msg = iodine_pubsub_msg_new(args->msg);
+  STORE.hold(msg);
   iodine_ruby_call_inside(args->eng->handler, rb_intern("publish"), 1, &msg);
   STORE.release(msg);
   return NULL;
 }
-
 /**
  * Publishes a message through the engine. Called by any worker/thread.
  * Invokes the Ruby handler's `publish` method with a Message object.
+ *
+ * publish is called INLINE by fio_pubsub_publish() — GVL state is ambiguous.
+ * When Ruby calls Iodine.publish with a custom engine, we already have GVL.
+ * When called from IO thread / IPC delivery, we don't.
  *
  * @param eng The pubsub engine
  * @param msg The message to publish
@@ -203,7 +207,10 @@ static void iodine_pubsub_eng___publish(const fio_pubsub_engine_s *eng,
       .eng = (iodine_pubsub_eng_s *)eng,
       .msg = msg,
   };
-  rb_thread_call_with_gvl(iodine_pubsub_eng___publish__in_GC, &args);
+  if (ruby_thread_has_gvl_p())
+    iodine_pubsub_eng___publish__in_GC(&args);
+  else
+    rb_thread_call_with_gvl(iodine_pubsub_eng___publish__in_GC, &args);
 }
 
 /**

@@ -14,6 +14,10 @@ From outside the GVL call Ruby functions so:
 
     iodine_caller_result_s r = iodine_ruby_call_outside(recv, mid, argc, argv);
 
+When GVL state is ambiguous (may or may not hold it) call Ruby functions so:
+
+    iodine_caller_result_s r = iodine_ruby_call_anywhere(recv, mid, argc, argv);
+
 ***************************************************************************** */
 
 /* printout backtrace in case of exceptions */
@@ -146,7 +150,10 @@ inline static iodine_caller_result_s iodine_ruby_call_inside(
 }
 
 /*
-Calls a function from outside the GVL, aquiring the lock and then releasing it.
+Calls a function from outside the GVL, acquiring the lock and then releasing it.
+
+All call sites are from IO/worker threads that do NOT hold the GVL.
+For ambiguous GVL state, use iodine_ruby_call_anywhere instead.
 
 Accepts the following, possibly named, arguments:
 
@@ -162,9 +169,9 @@ inline static iodine_caller_result_s iodine_ruby_call_outside(
   iodine___caller_s r = {args, {0}};
   FIO_ASSERT_DEBUG(args.recv && args.mid,
                    "iodine_ruby_call requires an object and method name");
-  rb_thread_call_with_gvl(args.proc ? iodine_ruby____outside_task_proc
-                                    : iodine_ruby____outside_task,
-                          &r);
+  void *(*fn)(void *) = args.proc ? iodine_ruby____outside_task_proc
+                                  : iodine_ruby____outside_task;
+  rb_thread_call_with_gvl(fn, &r);
   return r.out;
 }
 
@@ -191,5 +198,24 @@ Accepts the following, possibly named, arguments:
 */
 #define iodine_ruby_call_outside(...)                                          \
   iodine_ruby_call_outside((iodine_caller_args_s){__VA_ARGS__})
+
+/**
+For code paths where the calling thread may or may not hold the GVL.
+
+Checks ruby_thread_has_gvl_p() at runtime:
+  - If GVL held:  calls the Ruby function directly (like
+iodine_ruby_call_inside)
+  - If GVL not held: acquires GVL first (like iodine_ruby_call_outside)
+
+Accepts the following, possibly named, arguments:
+
+  (VALUE recv,   ID mid,     int argc,
+   VALUE *argv,  VALUE proc, int ignore_exceptions)
+
+*/
+#define iodine_ruby_call_anywhere(...)                                         \
+  (ruby_thread_has_gvl_p()                                                     \
+       ? iodine_ruby_call_inside                                               \
+       : iodine_ruby_call_outside)((iodine_caller_args_s){__VA_ARGS__})
 
 #endif /* H___IODINE_CALLER___H */
