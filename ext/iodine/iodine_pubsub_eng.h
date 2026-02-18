@@ -207,10 +207,15 @@ static void iodine_pubsub_eng___publish(const fio_pubsub_engine_s *eng,
       .eng = (iodine_pubsub_eng_s *)eng,
       .msg = msg,
   };
+#if RUBY_API_VERSION_MAJOR >= 4
+  /* Ruby 4.0+ rb_thread_call_with_gvl is GVL-lenient — safe either way. */
+  rb_thread_call_with_gvl(iodine_pubsub_eng___publish__in_GC, &args);
+#else
   if (ruby_thread_has_gvl_p())
     iodine_pubsub_eng___publish__in_GC(&args);
   else
     rb_thread_call_with_gvl(iodine_pubsub_eng___publish__in_GC, &args);
+#endif
 }
 
 /**

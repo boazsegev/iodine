@@ -19,6 +19,16 @@
 #include <ruby/io.h>
 #include <ruby/thread.h>
 
+/* ruby_thread_has_gvl_p() exists since Ruby 2.x but was only publicly declared
+   in ruby/thread.h starting with Ruby 4.0. On older Rubies, provide our own
+   declaration to avoid implicit-function-declaration errors on Windows/macOS.
+   On Ruby 4.0+, rb_thread_call_with_gvl() is GVL-lenient (safe to call whether
+   or not the GVL is held), so the check is unnecessary — but we still declare
+   it to keep the code unconditionally compilable. */
+#if RUBY_API_VERSION_MAJOR < 4
+int ruby_thread_has_gvl_p(void);
+#endif
+
 typedef pid_t fio_thread_pid_t;
 typedef VALUE fio_thread_t;
 
