@@ -16,12 +16,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ruby-version: ['3.2', '3.3', '3.4']
-        os: [ubuntu-24.04, macos-14] # , windows-latest
+        ruby-version: ['3.2', '3.3', '3.4', '4.0']
+        os: [ubuntu-24.04, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Ruby # see https://github.com/ruby/setup-ruby#versioning)
+    - name: Set up Ruby
       uses: ruby/setup-ruby@v1
       with:
         ruby-version: ${{ matrix.ruby-version }}
@@ -31,12 +31,6 @@ jobs:
     - name: Install Gems
       run: bundle install
     - name: Compile Iodine
-      run: |
-        echo CFLAGS = $CFLAGS
-        echo cflags = $cflags
-        echo HOME = $HOME
-        ruby -e 'puts Gem.default_dir'
-        bundle exec rake compile -v
-#       env VERBOSE=1 bundle exec rspec --format documentation
-#    - name: Run tests
-#      run: bundle exec rake
+      run: bundle exec rake compile
+    - name: Run tests
+      run: bundle exec rspec spec/ --format progress

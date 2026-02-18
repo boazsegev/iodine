@@ -342,7 +342,7 @@ module Iodine
   # | `:idle`           | the block will be called every time the IO reactor enters an idling state (on all processes). |
   # | `:parent_crush`   | the block will be called by each worker the moment it detects the master process crashed. |
   # | `:child_crush`    | the block will be called by the parent (master) after a worker process crashed. |
-  # | `:start_shutdown` | the block will be called before starting the shutdown sequence. |
+  # | `:shutdown`       | the block will be called before starting the shutdown sequence. |
   # | `:stop`           | the block will be called just before stopping iodine (both on child and parent processes). |
   # | `:exit`           | the block will be called during iodine library cleanup, similar to a Ruby `at_exit` callback. |
   #
@@ -416,7 +416,7 @@ module Iodine
   # @example
   #   Iodine.publish("channel_name", 0, "payload")
   #   Iodine.publish(channel: "name", message: "payload")
-  def self.publish(channel = nil, filter = 0, message = nil, engine = nil); end
+  def self.publish(channel = nil, message = nil, filter = 0, engine = nil); end
 
   # Subscribes to a combination of a channel (String) and filter (number).
   #
@@ -428,10 +428,21 @@ module Iodine
   # @return [Proc] the callback
   #
   # @note Either a proc or a block **must** be provided for global subscriptions.
+  # @note **One subscription per channel per context.** A "context" is either a specific
+  #   IO object (e.g., a WebSocket connection) or the global context (no IO). Calling
+  #   `subscribe` on the same channel within the same context silently replaces any
+  #   previously registered callback for that channel — you do **not** get two callbacks.
+  #   To route a published message to multiple handlers, use multiple IO contexts
+  #   (e.g., multiple WebSocket connections each with their own subscription).
   #
   # @example Basic subscription
   #   Iodine.subscribe("name") { |msg| puts msg.message }
   #   Iodine.subscribe(channel: "name", filter: 1) { |msg| puts msg.message }
+  #
+  # @example Second subscribe replaces the first in the same context
+  #   Iodine.subscribe("ch") { |msg| puts "first"  }  # registered
+  #   Iodine.subscribe("ch") { |msg| puts "second" }  # replaces the first
+  #   Iodine.publish("ch", 0, "hello")  # only "second" is printed
   #
   # @example Subscription with history replay
   #   # First enable the memory cache
@@ -612,8 +623,9 @@ module Iodine
     # Decodes percent encoding, including the `%uxxxx` JavaScript extension.
     #
     # @param str [String] the string to decode
+    # @param encoding [String, Encoding, nil] target string encoding (default: UTF-8)
     # @return [String] the decoded string
-    def self.unescape_path(str); end
+    def self.unescape_path(str, encoding = nil); end
 
     # Decodes percent encoding in place, including the `%uxxxx` JavaScript.
     #
@@ -636,8 +648,9 @@ module Iodine
     # Decodes percent encoding, including the `%uxxxx` JavaScript extension and converting `+` to spaces.
     #
     # @param str [String] the string to decode
+    # @param encoding [String, Encoding, nil] target string encoding (default: UTF-8)
     # @return [String] the decoded string
-    def self.unescape(str); end
+    def self.unescape(str, encoding = nil); end
 
     # Decodes percent encoding in place, including the `%uxxxx` JavaScript extension and converting `+` to spaces.
     #
@@ -664,8 +677,9 @@ module Iodine
     # Decodes an HTML escaped String.
     #
     # @param str [String] the string to decode
+    # @param encoding [String, Encoding, nil] target string encoding (default: UTF-8)
     # @return [String] the decoded string
-    def self.unescape_html(str); end
+    def self.unescape_html(str, encoding = nil); end
 
     # Decodes an HTML escaped String in place.
     #
@@ -709,6 +723,8 @@ module Iodine
     def self.monkey_patch(to_patch = Rack::Utils); end
 
     # Returns a String with the requested length of random bytes.
+    #
+    # Uses high entropy seeding auto-cycles, but isn't a tested cryptographic CPRNG.
     #
     # @param bytes [Integer] the number of random bytes (default: 16)
     # @return [String] a String containing the requested length of random bytes
@@ -907,6 +923,27 @@ module Iodine
     #   hash = Iodine::Utils.sha1("hello world")
     #   # => 20-byte binary string
     def self.sha1(data); end
+
+    # Computes CRC32 checksum (ITU-T V.42 / ISO 3309 / gzip polynomial 0xEDB88320).
+    #
+    # Uses a slicing-by-8 algorithm for high throughput. This is the standard CRC32
+    # used by gzip, zlib, and Ethernet — NOT the Castagnoli (CRC32-C) variant.
+    #
+    # Supports incremental computation: pass the previous CRC value as `initial_crc`
+    # to continue a checksum across multiple buffers.
+    #
+    # @param data [String] the data to checksum
+    # @param initial_crc [Integer] starting CRC value for incremental computation (default: 0)
+    # @return [Integer] 32-bit CRC32 checksum as an unsigned integer
+    #
+    # @example Basic usage
+    #   checksum = Iodine::Utils.crc32("Hello, World!")
+    #
+    # @example Incremental computation over multiple buffers
+    #   crc = Iodine::Utils.crc32("Hello, ")
+    #   crc = Iodine::Utils.crc32("World!", initial_crc: crc)
+    #   # Same result as: Iodine::Utils.crc32("Hello, World!")
+    def self.crc32(data, initial_crc: 0); end
 
     # Computes a fast non-cryptographic hash using facil.io's Risky Hash.
     #
@@ -1143,15 +1180,9 @@ module Iodine
       # This happens when the engine object went out of scope and should be collected by the GC (Garbage Collector).
       def on_cleanup; end
 
-      # This engine publishes the message to all subscribers in Iodine's root process.
-      ROOT = Engine.new
-      # This engine publishes the message to all subscribers in the specific root or worker process where `Iodine.publish` was called.
-      PROCESS = Engine.new
-      # This engine publishes the message to all subscribers in Iodine's worker processes (except current process).
-      SIBLINGS = Engine.new
-      # This engine publishes the message to all subscribers in Iodine's root and worker processes.
+      # This engine publishes the message to all subscribers within the local machine (master process + all worker processes).
       LOCAL = Engine.new
-      # This engine publishes the message to all subscribers in Iodine's root and worker processes, as well as any detected Iodine instance on the local network.
+      # This engine publishes the message to all subscribers across the entire cluster (all machines). This is the default engine.
       CLUSTER = Engine.new
 
       # Redis Pub/Sub engine for distributed messaging across multiple server instances.
@@ -1204,6 +1235,93 @@ module Iodine
         #       These are handled internally by the pub/sub system.
         def cmd(*args, &block); end
       end
+    end
+
+    # Iodine::PubSub::Subscription wraps an independent, non-IO-bound pub/sub
+    # subscription handle.
+    #
+    # Unlike {Iodine.subscribe} — which allows only **one callback per channel
+    # per global context** (a second call silently replaces the first) — each
+    # `Subscription` object is its own independent context. You can create as
+    # many `Subscription` objects as you like for the same channel and each
+    # will receive every published message independently.
+    #
+    # The subscription is automatically cancelled when the object is garbage
+    # collected, but you can also cancel it early with {#cancel}.
+    #
+    # @example Basic usage
+    #   sub = Iodine::PubSub::Subscription.new("chat") { |msg| puts msg.message }
+    #
+    # @example Multiple independent subscriptions to the same channel
+    #   sub1 = Iodine::PubSub::Subscription.new("news") { |msg| puts "Handler 1: #{msg.message}" }
+    #   sub2 = Iodine::PubSub::Subscription.new("news") { |msg| puts "Handler 2: #{msg.message}" }
+    #   # Both sub1 and sub2 receive every message published to "news"
+    #
+    # @example With keyword arguments and filter
+    #   sub = Iodine::PubSub::Subscription.new(channel: "events", filter: 42) { |msg| ... }
+    #
+    # @example Live handler replacement
+    #   sub = Iodine::PubSub::Subscription.new("ch") { |msg| puts "old" }
+    #   sub.handler = proc { |msg| puts "new" }  # future messages go here
+    #
+    # @example Early cancellation
+    #   sub = Iodine::PubSub::Subscription.new("ch") { |msg| ... }
+    #   sub.cancel   # stop receiving messages immediately
+    #   sub.active?  # => false
+    class Subscription
+      # Creates a new independent pub/sub subscription.
+      #
+      # Each `Subscription.new` call creates its own independent context,
+      # so multiple subscriptions to the same channel all receive messages.
+      #
+      # @param channel [String] the channel name to subscribe to
+      # @param filter [Integer] optional numerical filter (default: 0, max: 32767)
+      # @param since [Integer] optional replay-since timestamp in milliseconds
+      #   (requires {Iodine::PubSub::History.cache} to be enabled)
+      # @yield [msg] required message handler block
+      # @yieldparam msg [Iodine::PubSub::Message] the received message
+      # @return [Iodine::PubSub::Subscription] the new subscription
+      # @raise [ArgumentError] if no block is given
+      # @raise [RangeError] if filter is out of range
+      #
+      # @example
+      #   sub = Iodine::PubSub::Subscription.new("channel") { |msg| puts msg.message }
+      #   sub = Iodine::PubSub::Subscription.new(channel: "ch", filter: 0) { |msg| ... }
+      def initialize(channel, filter: 0, since: 0, &block); end
+
+      # Returns the current message handler proc.
+      #
+      # @return [Proc, nil] the handler proc, or nil if the subscription was
+      #   cancelled and the handler cleared
+      def handler; end
+
+      # Replaces the message handler proc.
+      #
+      # Future messages will be dispatched to the new proc. The swap takes
+      # effect immediately — any message dispatched after this call will use
+      # the new handler.
+      #
+      # @param new_handler [Proc] the new handler (must respond to `#call`)
+      # @return [Proc] the new handler
+      # @raise [ArgumentError] if new_handler does not respond to `call`
+      def handler=(new_handler); end
+
+      # Returns `true` if the subscription is still active.
+      #
+      # A subscription becomes inactive after {#cancel} is called or after
+      # the object is garbage collected.
+      #
+      # @return [Boolean]
+      def active?; end
+
+      # Cancels the subscription, stopping future message delivery.
+      #
+      # Idempotent — safe to call multiple times. After cancellation, no
+      # further messages will be delivered. The subscription is also
+      # automatically cancelled when the object is garbage collected.
+      #
+      # @return [self]
+      def cancel; end
     end
 
     # Iodine::PubSub::History module provides message history and replay support.
@@ -2359,6 +2477,9 @@ module Iodine
         # @return [String] Decrypted plaintext
         # @raise [ArgumentError] if key, nonce, or mac have incorrect sizes
         # @raise [RuntimeError] if authentication fails
+        #
+        # @example
+        #   plaintext = Iodine::Base::Crypto::XChaCha20Poly1305.decrypt(ciphertext, mac: mac, key: key, nonce: nonce)
         def self.decrypt(ciphertext, mac:, key:, nonce:, ad: nil); end
       end
 
@@ -2588,7 +2709,7 @@ module Iodine
         # @param length [Integer] Desired output length (default: 32)
         # @param sha384 [Boolean] Use SHA-384 instead of SHA-256 (default: false)
         # @return [String] Derived key material
-        # @raise [ArgumentError] if length is out of range
+        # @raise [ArgumentError] if length is out of range (max 8160 bytes for SHA-256; max 12240 bytes for SHA-384 when `sha384: true`)
         #
         # @example
         #   # Derive a 32-byte key from a password

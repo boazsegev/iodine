@@ -234,6 +234,7 @@ FIO_SFUNC VALUE iodine_store___frozen_str(fio_str_info_s n) {
   r = rb_str_new(n.buf, n.len); /* might invoke GC, can't be in a lock */
   rb_str_freeze(r);
   if (iodine_reference_store_frzn_count(&STORE.frozen) < STORE.limit) {
+    /* May cause STORE.frozen to grow slightly more than limit, acceptable */
     fio_thread_mutex_lock(&STORE.lock);
     iodine_reference_store_frzn_set(&STORE.frozen, n, r, NULL);
     fio_thread_mutex_unlock(&STORE.lock);

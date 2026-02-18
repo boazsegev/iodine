@@ -5313,6 +5313,55 @@ Writes a 4096-bit unsigned integer to `dest` as a hex string.
 Returns the number of bytes written (excluding the NUL terminator).
 
 -------------------------------------------------------------------------------
+## CRC32
+
+```c
+#define FIO_CRC32
+#include "fio-stl.h"
+```
+
+Provides fast CRC32 computation (ITU-T V.42 / ISO 3309 / gzip polynomial `0xEDB88320`) using slicing-by-16 for ~8-16x throughput over byte-at-a-time lookup. Used by gzip, PNG, and many other formats.
+
+**Note:** this is **NOT** CRC32-C (Castagnoli). Hardware CRC32 instructions on ARM (ARMv8 CRC extension) and x86 (SSE4.2) compute CRC32-C with a different polynomial (`0x82F63B78`) and cannot be used here.
+
+**Note:** this module is automatically included when `FIO_DEFLATE` is defined.
+
+### CRC32 API
+
+#### `fio_crc32`
+
+```c
+uint32_t fio_crc32(const void *data, size_t len, uint32_t initial_crc);
+```
+
+Computes CRC32 over `len` bytes starting at `data`.
+
+* `data`        - pointer to input bytes.
+* `len`         - number of bytes to process.
+* `initial_crc` - pass `0` for a new computation, or a previous return value to continue an incremental CRC32 over multiple buffers.
+
+**Returns:** the CRC32 checksum as a `uint32_t`.
+
+Uses slicing-by-16 internally (~8-16x faster than byte-at-a-time).
+
+Example — single buffer:
+
+```c
+const char *msg = "Hello, World!";
+uint32_t crc = fio_crc32(msg, strlen(msg), 0);
+printf("CRC32: 0x%08X\n", crc);
+```
+
+Example — incremental (multi-buffer):
+
+```c
+uint32_t crc = 0;
+crc = fio_crc32("Hello, ", 7, crc);
+crc = fio_crc32("World!", 6, crc);
+/* crc is identical to computing over the full "Hello, World!" in one call */
+```
+
+------------------------------------------------------------
 ## Glob Matching
 
 ```c
@@ -17515,6 +17564,469 @@ Gets the SHA512 of a (possibly shared) masked secret stored in `secret`.
 Please store the returned value on the stack or not at all. The secret is stored masked in memory and unmasked copies should be temporary with short life-spans.
 
 -------------------------------------------------------------------------------
+## Brotli Compression
+
+```c
+#define FIO_BROTLI
+#include "fio-stl.h"
+```
+
+Provides Brotli compression and decompression per [RFC 7932](https://tools.ietf.org/html/rfc7932).
+
+The compressor supports quality levels 1-6:
+
+- **q1-q2**: greedy matching with a direct-mapped hash table. Fast, low compression.
+- **q3-q4**: lazy matching with a direct-mapped hash table. Better compression at moderate cost.
+- **q5**: hash chain (depth-16 ring buffer per bucket) + distance cache + score-based lazy matching + context modeling (2 literal Huffman trees, UTF-8/LSB6 mode detection) + static dictionary search (122KB dictionary, identity + uppercase_first transforms).
+- **q6**: everything in q5 plus greedy literal block splitting (up to 32 block types, each with its own Huffman tree).
+
+Data smaller than 8KB always uses the q4 path regardless of the requested quality level, because the hash chain's multi-entry buckets provide no benefit at low load factors and the context modeling / block splitting overhead exceeds any entropy savings.
+
+The compressor emits a single meta-block with NPOSTFIX=0 and NDIRECT=0. Maximum input size per call is 16MB (clamped internally).
+
+The decompressor is fully RFC 7932 compliant: two-level packed Huffman tables, context-dependent literal decoding (4 context modes), 122,784-byte static dictionary with 121 transforms, and a 64-bit branchless bit reader.
+
+**Note**: incompressibility detection is built into q5+. After probing ~1024 positions, if the match rate is below 5%, the compressor falls back to a depth-1 fast mode that avoids expensive chain walks, distance cache lookups, and dictionary searches.
+
+### Brotli API
+
+#### `fio_brotli_compress`
+
+```c
+size_t fio_brotli_compress(void *out,
+                           size_t out_len,
+                           const void *in,
+                           size_t in_len,
+                           int quality);
+```
+
+Compresses `in_len` bytes from `in` into the buffer `out` using Brotli (RFC 7932).
+
+The caller must provide an output buffer sized via `fio_brotli_compress_bound()`.
+
+Empty input (`in == NULL` or `in_len == 0`) produces a valid 1-byte empty Brotli stream (`0x06`).
+
+* `out` - destination buffer for compressed data.
+* `out_len` - capacity of the destination buffer in bytes.
+* `in` - source data to compress.
+* `in_len` - length of source data in bytes (max 16MB; larger values are clamped).
+* `quality` - compression quality level, 1-6. Values outside this range are clamped.
+
+**Returns:** the number of compressed bytes written on success, or `0` on error (e.g., output buffer too small or `out` is NULL).
+
+#### `fio_brotli_compress_bound`
+
+```c
+size_t fio_brotli_compress_bound(size_t in_len);
+```
+
+Returns a conservative upper bound on the compressed output size for `in_len` bytes of input.
+
+The bound is computed as `in_len + (in_len >> 2) + 1024`, which accounts for Brotli framing overhead and the worst case where data is incompressible.
+
+Use this to allocate the output buffer before calling `fio_brotli_compress()`.
+
+#### `fio_brotli_decompress`
+
+```c
+size_t fio_brotli_decompress(void *out,
+                             size_t out_len,
+                             const void *in,
+                             size_t in_len);
+```
+
+Decompresses Brotli-compressed data (RFC 7932).
+
+The function has three operating modes depending on the output buffer:
+
+1. **Normal decompression** (`out != NULL` and `out_len > 0`): decompresses into the provided buffer.
+2. **Size query** (`out == NULL` or `out_len == 0`): scans meta-block headers and returns the total decompressed size without allocating or writing any output. Returns `0` if the data is corrupt.
+3. **Buffer too small**: if the output buffer is insufficient during decompression, returns the **required** buffer size (a value `> out_len`). The caller can then reallocate and retry.
+
+* `out` - destination buffer for decompressed data, or NULL for size query.
+* `out_len` - capacity of the destination buffer in bytes, or 0 for size query.
+* `in` - Brotli-compressed input data.
+* `in_len` - length of compressed input in bytes.
+
+**Returns:**
+
+| Condition | Return value |
+|-----------|-------------|
+| Success | Decompressed byte count (`<= out_len`) |
+| Buffer too small | Required buffer size (`> out_len`) |
+| Corrupt / invalid data | `0` |
+| Size query (`out == NULL` or `out_len == 0`) | Required size, or `0` if corrupt |
+
+**Note**: the size query mode sums MLEN values from meta-block headers. It can only determine the total size when all remaining meta-blocks are either uncompressed or the last meta-block. If a non-last compressed meta-block is encountered during scanning, the function returns `0` (size cannot be determined without full decompression).
+
+#### `fio_brotli_decompress_bound`
+
+```c
+size_t fio_brotli_decompress_bound(size_t in_len);
+```
+
+Returns a conservative upper bound on the decompressed size for `in_len` bytes of Brotli-compressed input.
+
+Brotli's theoretical maximum expansion ratio is very high; this function uses a practical bound of `in_len * 1032 + 1024`, capped at 4GB for inputs larger than 1GB.
+
+**Note**: prefer using the size query mode of `fio_brotli_decompress()` (pass `out = NULL`) to determine the actual decompressed size rather than relying on this worst-case bound.
+
+### Example
+
+```c
+#define FIO_BROTLI
+#include "fio-stl.h"
+
+void brotli_roundtrip_example(void) {
+  const char *input = "Hello, Brotli! This is a compression test.";
+  size_t in_len = strlen(input);
+
+  /* Compress */
+  size_t comp_bound = fio_brotli_compress_bound(in_len);
+  void *compressed = malloc(comp_bound);
+  size_t comp_len =
+      fio_brotli_compress(compressed, comp_bound, input, in_len, 5);
+  if (!comp_len) {
+    fprintf(stderr, "Compression failed\n");
+    free(compressed);
+    return;
+  }
+
+  /* Query decompressed size */
+  size_t decomp_size =
+      fio_brotli_decompress(NULL, 0, compressed, comp_len);
+
+  /* Decompress */
+  void *decompressed = malloc(decomp_size);
+  size_t decomp_len =
+      fio_brotli_decompress(decompressed, decomp_size, compressed, comp_len);
+
+  printf("Original: %zu bytes, Compressed: %zu bytes, Decompressed: %zu bytes\n",
+         in_len, comp_len, decomp_len);
+
+  free(compressed);
+  free(decompressed);
+}
+```
+
+------------------------------------------------------------
+## DEFLATE / Gzip Compression
+
+```c
+#define FIO_DEFLATE
+#include "fio-stl.h"
+```
+
+Provides raw DEFLATE compression/decompression (RFC 1951) plus gzip wrappers (RFC 1952). Designed for WebSocket permessage-deflate (RFC 7692) and static file compression.
+
+Key design features:
+
+- 64-bit branchless bit buffer for high throughput decompression
+- Two-level packed Huffman tables (11-bit litlen, 8-bit distance, ~12KB on stack)
+- LZ77 with hash chain matching, lazy evaluation, and 8-byte word-at-a-time match extension
+- Automatic fixed vs. dynamic Huffman block selection based on cost comparison
+- Streaming API with context takeover for WebSocket permessage-deflate
+
+Compression levels: 0 = store (no compression), 1 = fast greedy (sparse hash insertion), 2-3 = greedy (sparse insertion), 4-6 = lazy matching (full hash insertion), 7-9 = maximum compression (deep chain search).
+
+**Note:** this module depends on `FIO_CRC32` which will be automatically included.
+
+### Compression Bounds
+
+#### `fio_deflate_compress_bound`
+
+```c
+size_t fio_deflate_compress_bound(size_t in_len);
+```
+
+Returns a conservative upper bound on the compressed output size for raw DEFLATE. The bound accounts for stored block headers (5 bytes per 65535 bytes of data) plus dynamic Huffman header overhead.
+
+Use this to allocate an output buffer that is guaranteed to be large enough:
+
+```c
+size_t bound = fio_deflate_compress_bound(in_len);
+void *out = malloc(bound);
+size_t compressed = fio_deflate_compress(out, bound, data, in_len, 6);
+```
+
+#### `fio_deflate_decompress_bound`
+
+```c
+size_t fio_deflate_decompress_bound(size_t in_len);
+```
+
+Returns a conservative upper bound on the decompressed size (1032x expansion ratio, minimum 4096 bytes). The DEFLATE theoretical maximum is 1032:1 but practical data is much less.
+
+**Note:** for precise sizing, call `fio_deflate_decompress` with `out = NULL` and `out_len = 0` to query the exact decompressed size without allocating an output buffer.
+
+### Raw DEFLATE API
+
+#### `fio_deflate_compress`
+
+```c
+size_t fio_deflate_compress(void *out,
+                            size_t out_len,
+                            const void *in,
+                            size_t in_len,
+                            int level);
+```
+
+Compresses data using raw DEFLATE (no zlib/gzip headers or trailers).
+
+- `out` - output buffer for compressed data
+- `out_len` - capacity of the output buffer in bytes
+- `in` - input data to compress
+- `in_len` - length of input data in bytes
+- `level` - compression level: 0 = store, 1-3 = fast, 4-6 = normal, 7-9 = best
+
+**Returns:** compressed length on success, 0 on error (output buffer too small or allocation failure).
+
+**Note:** when `in` is NULL or `in_len` is 0, emits an empty stored block (5 bytes). The output buffer must have at least 5 bytes available.
+
+#### `fio_deflate_decompress`
+
+```c
+size_t fio_deflate_decompress(void *out,
+                              size_t out_len,
+                              const void *in,
+                              size_t in_len);
+```
+
+Decompresses raw DEFLATE data (no zlib/gzip headers).
+
+- `out` - output buffer for decompressed data (may be NULL for size query)
+- `out_len` - capacity of the output buffer in bytes (may be 0 for size query)
+- `in` - compressed input data
+- `in_len` - length of compressed data in bytes
+
+**Returns:**
+
+- On success: decompressed byte count (`<= out_len`).
+- On buffer too small: the **required** buffer size (`> out_len`). Callers should reallocate and retry.
+- On corrupt/invalid data: `0`.
+- When `out == NULL` or `out_len == 0`: performs a full decode pass counting output bytes and returns the required size (`0` if data is corrupt). This allows callers to query the decompressed size without allocating.
+
+**Note:** the size-return behavior on buffer overflow is a key design feature. When the return value exceeds `out_len`, the caller knows exactly how many bytes to allocate for a successful retry. A return of `0` always indicates corrupt or invalid data.
+
+### Gzip API
+
+#### `fio_gzip_compress`
+
+```c
+size_t fio_gzip_compress(void *out,
+                         size_t out_len,
+                         const void *in,
+                         size_t in_len,
+                         int level);
+```
+
+Compresses data with a gzip wrapper (suitable for HTTP `Content-Encoding: gzip`).
+
+Writes a 10-byte gzip header, raw DEFLATE compressed data, and an 8-byte trailer containing the CRC32 checksum and original data size (ISIZE).
+
+- `out` - output buffer (must have room for at least 18 bytes: 10 header + 0 data + 8 trailer)
+- `out_len` - capacity of the output buffer in bytes
+- `in` - input data to compress
+- `in_len` - length of input data in bytes
+- `level` - compression level: 0 = store, 1-3 = fast, 4-6 = normal, 7-9 = best
+
+**Returns:** total output length on success (header + compressed data + trailer), 0 on error.
+
+#### `fio_gzip_decompress`
+
+```c
+size_t fio_gzip_decompress(void *out,
+                           size_t out_len,
+                           const void *in,
+                           size_t in_len);
+```
+
+Decompresses gzip data. Validates the gzip header, decompresses the DEFLATE payload, and verifies the CRC32 checksum and ISIZE trailer.
+
+- `out` - output buffer for decompressed data (may be NULL for size query)
+- `out_len` - capacity of the output buffer in bytes (may be 0 for size query)
+- `in` - gzip compressed input data
+- `in_len` - length of compressed data in bytes
+
+**Returns:**
+
+- On success: decompressed byte count (`<= out_len`).
+- On buffer too small: the **required** buffer size (`> out_len`). Only ISIZE is verified (CRC32 requires actual data).
+- On corrupt/invalid data or checksum mismatch: `0`.
+- When `out == NULL` or `out_len == 0`: returns required size (`0` if corrupt).
+
+**Note:** supports gzip files with optional FEXTRA, FNAME, FCOMMENT, and FHCRC header fields. The minimum valid gzip input is 18 bytes (10 header + 0 data + 8 trailer).
+
+### Streaming API
+
+The streaming API provides incremental compression and decompression with context takeover, designed for WebSocket permessage-deflate (RFC 7692).
+
+**Context takeover** means the compressor and decompressor maintain a 32KB sliding window across multiple `fio_deflate_push` calls. This allows LZ77 back-references to reach into data from previous messages, significantly improving compression ratio for repetitive WebSocket traffic.
+
+**Protocol details:**
+
+- **Compression:** each flush emits a non-final DEFLATE block (`BFINAL=0`) followed by a sync flush marker (`0x00 0x00 0xFF 0xFF`). For WebSocket permessage-deflate, strip the last 4 bytes (the sync marker) before sending the frame.
+- **Decompression:** on flush, the sync flush marker (`0x00 0x00 0xFF 0xFF`) is automatically re-appended to the buffered compressed data before decompression. For WebSocket permessage-deflate, pass the received frame data directly (without the sync marker) and call with `flush = 1`.
+
+#### `fio_deflate_s`
+
+```c
+typedef struct fio_deflate_s fio_deflate_s;
+```
+
+Opaque streaming deflate/inflate state. Maintains the sliding window, hash chain (compressor), and input buffer across multiple `fio_deflate_push` calls.
+
+#### `fio_deflate_new`
+
+```c
+fio_deflate_s *fio_deflate_new(int level, int is_compress);
+```
+
+Creates a new streaming deflate/inflate state.
+
+- `level` - compression level 1-9 (clamped to this range; ignored for decompression)
+- `is_compress` - non-zero for compression, 0 for decompression
+
+**Returns:** a new `fio_deflate_s` pointer on success, NULL on allocation failure.
+
+**Note:** for compression, this allocates ~384KB for the hash chain tables (head + generation + prev arrays). For decompression, only the base struct (~32KB for the sliding window) is allocated.
+
+#### `fio_deflate_free`
+
+```c
+void fio_deflate_free(fio_deflate_s *s);
+```
+
+Frees a streaming deflate/inflate state and all associated memory (hash tables, input buffer).
+
+- `s` - streaming state to free (may be NULL, in which case this is a no-op)
+
+#### `fio_deflate_destroy`
+
+```c
+void fio_deflate_destroy(fio_deflate_s *s);
+```
+
+Resets a streaming deflate/inflate context. Clears the sliding window, resets the hash chain generation counter (compressor), and resets the input buffer length. Keeps all allocated memory for reuse.
+
+Use this to start a new compression/decompression session without reallocating:
+
+```c
+fio_deflate_s *ctx = fio_deflate_new(6, 1);
+/* ... compress messages ... */
+fio_deflate_destroy(ctx); /* reset for new session */
+/* ... compress more messages ... */
+fio_deflate_free(ctx);    /* done, release memory */
+```
+
+- `s` - streaming state to reset (may be NULL, in which case this is a no-op)
+
+#### `fio_deflate_push`
+
+```c
+size_t fio_deflate_push(fio_deflate_s *s,
+                        void *out,
+                        size_t out_len,
+                        const void *in,
+                        size_t in_len,
+                        int flush);
+```
+
+Streaming compress/decompress. Accumulates input data and produces output on flush or when the internal buffer is full (compressor only, at 32KB).
+
+- `s` - streaming state created by `fio_deflate_new`
+- `out` - output buffer for compressed/decompressed data
+- `out_len` - capacity of the output buffer in bytes
+- `in` - input data (may be NULL if only flushing)
+- `in_len` - length of input data in bytes (may be 0 if only flushing)
+- `flush` - 0 for normal buffering, 1 for sync flush (emit output now)
+
+**Returns:**
+
+- **Compression:** compressed byte count on success, 0 if data was buffered (no flush) or on error.
+- **Decompression:**
+  - Decompressed byte count on success (`<= out_len`).
+  - Required buffer size when buffer too small (`> out_len`). The internal buffer is **preserved** for retry with a larger output buffer.
+  - `0` on corrupt/invalid data, allocation failure, or if data was buffered (no flush).
+
+**Note:** for WebSocket permessage-deflate, always call with `flush = 1` at message boundaries. The compressor emits a sync flush marker; the decompressor automatically re-appends the `0x00 0x00 0xFF 0xFF` sync marker before decompressing.
+
+### Examples
+
+#### One-shot compression and decompression
+
+```c
+#define FIO_DEFLATE
+#include "fio-stl.h"
+
+void example_oneshot(void) {
+  const char *data = "Hello, DEFLATE compression!";
+  size_t data_len = strlen(data);
+
+  /* Compress */
+  size_t bound = fio_deflate_compress_bound(data_len);
+  void *compressed = malloc(bound);
+  size_t comp_len = fio_deflate_compress(compressed, bound, data, data_len, 6);
+
+  /* Query decompressed size */
+  size_t needed = fio_deflate_decompress(NULL, 0, compressed, comp_len);
+
+  /* Decompress */
+  void *output = malloc(needed);
+  size_t dec_len = fio_deflate_decompress(output, needed, compressed, comp_len);
+
+  free(output);
+  free(compressed);
+}
+```
+
+#### Gzip for HTTP responses
+
+```c
+void example_gzip(const void *body, size_t body_len) {
+  size_t bound = fio_deflate_compress_bound(body_len) + 18;
+  void *gzipped = malloc(bound);
+  size_t gz_len = fio_gzip_compress(gzipped, bound, body, body_len, 6);
+  if (gz_len) {
+    /* Send gzipped response with Content-Encoding: gzip */
+  }
+  free(gzipped);
+}
+```
+
+#### Streaming WebSocket permessage-deflate
+
+```c
+void example_websocket_streaming(void) {
+  /* Create compressor and decompressor with context takeover */
+  fio_deflate_s *comp = fio_deflate_new(6, 1);  /* compress, level 6 */
+  fio_deflate_s *decomp = fio_deflate_new(0, 0); /* decompress */
+
+  char out[4096];
+
+  /* Compress a message (flush=1 at message boundary) */
+  const char *msg = "Hello WebSocket!";
+  size_t comp_len = fio_deflate_push(comp, out, sizeof(out),
+                                     msg, strlen(msg), 1);
+  /* For permessage-deflate: strip last 4 bytes (sync marker) before sending */
+  size_t send_len = comp_len - 4;
+
+  /* Decompress (receiver re-appends sync marker internally on flush) */
+  char decoded[4096];
+  size_t dec_len = fio_deflate_push(decomp, decoded, sizeof(decoded),
+                                    out, send_len, 1);
+
+  /* Reset for new session (keeps memory allocated) */
+  fio_deflate_destroy(comp);
+  fio_deflate_destroy(decomp);
+
+  /* Free when done */
+  fio_deflate_free(comp);
+  fio_deflate_free(decomp);
+}
+```
+
+------------------------------------------------------------
 ## TLS 1.3 Module
 
 ```c
@@ -22941,7 +23453,21 @@ Returns the root / master process id.
 int64_t fio_io_last_tick(void);
 ```
 
-Returns the last millisecond when the IO reactor polled for events.
+Returns a cached **monotonic** timestamp (in milliseconds) recording the last time the IO reactor polled for events.
+
+Because this value comes from a monotonic clock it is immune to NTP adjustments and system clock changes, making it suitable for measuring durations, timeouts, and timer intervals. It is **not** suitable for producing epoch-based wall-clock timestamps — use `fio_io_last_tick_time` for that.
+
+#### `fio_io_last_tick_time`
+
+```c
+int64_t fio_io_last_tick_time(void);
+```
+
+Returns a cached **wall-clock** (real-time) timestamp in milliseconds since the Unix epoch, updated each IO tick at the same time as `fio_io_last_tick`.
+
+Use this when you need an approximate epoch-based timestamp without the cost of a `clock_gettime` syscall — for example, when generating HTTP `Date:` headers or writing access-log entries. Because the value is updated once per IO tick it may lag by up to one tick interval.
+
+**Note**: Not suitable for measuring durations or timeouts — use `fio_io_last_tick` for that.
 
 #### `fio_io_restart`
 
@@ -24794,6 +25320,20 @@ The encryption ensures:
 
 **Note**: If decryption fails (e.g., due to tampering), a security log message is emitted and the message is discarded.
 
+### Connection Keepalive
+
+IPC and cluster connections are automatically monitored for liveness via an internal ping/keepalive protocol. This mechanism is fully transparent — ping and pong frames are never dispatched to user callbacks.
+
+**How it works:**
+
+1. On the first timeout event the IO module sends a ping frame to the peer and marks the connection as awaiting a pong.
+2. If a pong is received before the next timeout, the connection is considered alive and the pending flag is cleared.
+3. If no pong is received before the next timeout, the connection is closed and the peer is considered dead.
+
+The keepalive applies to both local IPC connections (master ↔ worker) and cluster RPC connections (machine ↔ machine).
+
+**Note**: Ping frames carry random junk in all encrypted fields (`call`, `on_reply`, `on_done`, `udata`) with no data payload. This ensures there is no deterministic plaintext for an attacker to exploit, preserving the forward security properties of the ChaCha20-Poly1305 AEAD cipher.
+
 ### Thread Safety
 
 - `fio_ipc_call`, `fio_ipc_reply`, `fio_ipc_local`, `fio_ipc_cluster`, and `fio_ipc_broadcast` are thread-safe and can be called from any thread
@@ -26341,17 +26881,19 @@ The Pub/Sub module was completely rewritten. Key changes:
 #include FIO_INCLUDE_FILE
 ```
 
-The Redis module provides a pub/sub engine that integrates with facil.io's pub/sub system, enabling distributed messaging across multiple server instances through Redis.
+The Redis module provides a pub/sub engine that integrates with facil.io's pub/sub system, enabling distributed messaging across multiple server instances through Redis. It also serves as a standalone Redis client for arbitrary commands (GET, SET, INCR, etc.).
 
 This module is designed for horizontal scaling scenarios where multiple application instances need to share pub/sub messages. When attached to the facil.io pub/sub system, all subscriptions and publications are automatically synchronized through Redis.
 
 **Note**: This module requires the IO reactor (`FIO_IO`), FIOBJ types (`FIO_FIOBJ`), and RESP3 parser (`FIO_RESP3`) modules, which are automatically included.
 
-**Note**: The engine is only active after the IO reactor starts (`fio_io_start()`). Commands sent before the reactor starts are queued and executed once the connection is established.
+**Note**: `fio_redis_new()` **MUST** be called before `fio_io_start()` (before fork). Creating Redis engines from worker processes is not supported.
 
 ### Features
 
-- **Dual Connection Model**: Maintains separate connections for publishing and subscribing to avoid protocol conflicts
+- **Master-Only Redis Connections**: Only the master process connects to Redis; workers proxy through IPC
+- **Dual Connection Model**: Master maintains separate connections for publishing and subscribing to avoid protocol conflicts
+- **Transparent Multi-Process Support**: `fio_redis_send()` and `fio_pubsub_publish()` work from any process — routing is automatic
 - **Automatic Subscription Management**: SUBSCRIBE/PSUBSCRIBE commands are handled internally by the pub/sub engine
 - **Command Queue**: Send arbitrary Redis commands with asynchronous callbacks
 - **Authentication Support**: Optional AUTH command on connection
@@ -26374,27 +26916,98 @@ void on_message(fio_pubsub_msg_s *msg) {
 }
 
 int main(void) {
-  /* Create Redis engine (ref count = 1) */
+  /* Create Redis engine BEFORE fio_io_start() */
   fio_pubsub_engine_s *redis = fio_redis_new(
       .url = "redis://localhost:6379"
   );
-  
+
   /* Attach to pub/sub system (does NOT take ownership) */
   fio_pubsub_engine_attach(redis);
-  
+
   /* Subscribe to a channel */
   fio_pubsub_subscribe(.channel = FIO_BUF_INFO1("my-channel"),
                 .on_message = on_message);
-  
-  /* Start the IO reactor */
+
+  /* Start the IO reactor (forks workers if count > 0) */
   fio_io_start(0);
-  
+
   /* Cleanup - detach before freeing if attached */
   fio_pubsub_engine_detach(redis);
   fio_redis_free(redis);
   return 0;
 }
 ```
+
+------------------------------------------------------------
+
+### Architecture
+
+#### Master-Only Redis Connections
+
+Only the **master** process connects to the Redis server. Worker processes never open direct TCP connections to Redis. Instead, workers communicate with the master via IPC (Inter-Process Communication), and the master forwards operations to Redis on their behalf.
+
+This design ensures:
+- **No duplicate connections**: N workers do not create N×2 Redis connections
+- **Correct pub/sub semantics**: SUBSCRIBE/UNSUBSCRIBE only happen on the master's subscription connection
+- **Transparent operation**: The public API (`fio_redis_send`, `fio_pubsub_publish`) works identically from any process
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        Master Process                            │
+│  ┌──────────────────────┐    ┌──────────────────────────────┐    │
+│  │ Publishing Connection │    │ Subscription Connection      │    │
+│  │ - fio_redis_send()   │    │ - SUBSCRIBE/PSUBSCRIBE       │    │
+│  │ - PUBLISH commands   │    │ - Receives pub/sub messages  │    │
+│  │ - Regular commands   │    │ - Pattern matching           │    │
+│  └──────────┬───────────┘    └──────────────┬───────────────┘    │
+│             └────────────────┬──────────────┘                    │
+│                              │                                   │
+│                              ▼                                   │
+│                    ┌─────────────────┐                            │
+│                    │   Redis Server  │                            │
+│                    └─────────────────┘                            │
+│                                                                  │
+│  ┌───────────────────────────────────────────────────────────┐   │
+│  │                    IPC Bus                                │   │
+│  └──────┬──────────────────┬──────────────────┬─────────────┘   │
+└─────────┼──────────────────┼──────────────────┼─────────────────┘
+          │                  │                  │
+          ▼                  ▼                  ▼
+   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+   │  Worker 1   │   │  Worker 2   │   │  Worker N   │
+   │ IPC → Master│   │ IPC → Master│   │ IPC → Master│
+   └─────────────┘   └─────────────┘   └─────────────┘
+```
+
+#### How Operations Route by Process
+
+| Operation | On Master | On Worker |
+|-----------|-----------|-----------|
+| `fio_redis_send()` | Queued directly on pub_conn | Serialized to RESP, sent to master via IPC; master executes against Redis and replies back via IPC |
+| `fio_pubsub_publish()` | Sent as Redis PUBLISH on pub_conn | Forwarded to master via IPC; master sends PUBLISH to Redis |
+| Subscription messages | Received on sub_conn, distributed to all processes via pub/sub IPC | Received from master via pub/sub IPC infrastructure |
+
+#### Dual Connection Model
+
+The master maintains two separate TCP connections to the Redis server:
+
+1. **Publishing Connection** (`pub_conn`): Used for sending commands (`fio_redis_send`) and PUBLISH operations. This connection operates in request-response mode.
+
+2. **Subscription Connection** (`sub_conn`): Used exclusively for SUBSCRIBE/PSUBSCRIBE operations. Once a connection enters subscription mode, it can only receive pub/sub messages and cannot execute regular commands.
+
+This separation is required by the Redis protocol — a connection in subscription mode cannot execute regular commands, and mixing the two would cause protocol errors.
+
+#### Ownership and Attach/Detach
+
+The `fio_pubsub_engine_attach()` and `fio_pubsub_engine_detach()` functions do **NOT** transfer ownership of the engine. They simply register or unregister the engine with the pub/sub system.
+
+The caller who created the engine with `fio_redis_new()` is responsible for calling `fio_redis_free()` when the engine is no longer needed. **Important**: If the engine was attached via `fio_pubsub_engine_attach()`, you **MUST** call `fio_pubsub_engine_detach()` before calling `fio_redis_free()`.
+
+#### Command Queue
+
+Commands sent via `fio_redis_send()` on the master are queued internally and sent one at a time, waiting for each reply before sending the next command. This ensures proper correlation between commands and their responses.
+
+The queue is processed in FIFO order. If the connection is lost, queued commands remain in the queue and are sent after reconnection.
 
 ------------------------------------------------------------
 
@@ -26408,7 +27021,7 @@ int main(void) {
 
 Size of the read buffer for Redis connections in bytes. Default is 32768 (32KB).
 
-Each Redis engine allocates two read buffers (one for each connection), so the total memory usage per engine is `FIO_REDIS_READ_BUFFER * 2` bytes plus overhead.
+The master allocates two read buffers (one for each connection), so the total memory usage per engine is `FIO_REDIS_READ_BUFFER * 2` bytes plus overhead.
 
 ------------------------------------------------------------
 
@@ -26511,7 +27124,9 @@ fio_pubsub_engine_s *redis = fio_redis_new(
 
 **Returns:** A pointer to the pub/sub engine on success, or NULL on error.
 
-**Note**: The engine is only active after the IO reactor starts running (`fio_io_start()`). Connection attempts are deferred until the reactor is running.
+**Note**: **MUST** be called before `fio_io_start()` (before fork). The engine is created in the master process and shared across all workers after fork. Creating engines from worker processes is not supported.
+
+**Note**: The engine is only active after the IO reactor starts running (`fio_io_start()`). Connection attempts are deferred until the reactor is running. Workers automatically detect the engine and route operations through IPC.
 
 **Note**: The caller owns the returned reference and must call `fio_redis_free()` when done. Attaching to pub/sub does NOT transfer ownership.
 
@@ -26549,7 +27164,7 @@ Decrements the reference count. When count reaches 0, destroys the engine.
 This function:
 1. Decrements the reference count
 2. If ref reaches 0:
-   - Closes both Redis connections (publishing and subscription)
+   - Closes all connections (Redis TCP connections on master)
    - Frees any queued commands
    - Releases all allocated memory
 
@@ -26570,9 +27185,13 @@ int fio_redis_send(fio_pubsub_engine_s *engine,
                    void *udata);
 ```
 
-Sends a Redis command through the engine's publishing connection.
+Sends a Redis command through the engine's connection.
 
 The command is sent asynchronously. When a reply is received from Redis, the callback is invoked with the parsed response.
+
+**On master**: the command is queued directly on the publishing connection and sent to Redis. The callback runs on the IO thread.
+
+**On worker**: the command is serialized to RESP format and forwarded to the master via IPC. The master executes the command against Redis and sends the reply back via IPC. The callback runs on the worker's IO thread.
 
 **Parameters:**
 - `engine` - The Redis engine returned by `fio_redis_new()`
@@ -26597,6 +27216,59 @@ The `reply` parameter is a FIOBJ object representing the Redis response:
 - Errors become `FIOBJ_T_STRING` (check logs for error messages)
 
 **Warning**: NEVER use `fio_redis_send` for subscription commands (`SUBSCRIBE`, `PSUBSCRIBE`, `UNSUBSCRIBE`, `PUNSUBSCRIBE`). These commands are handled internally by the pub/sub engine through the subscription connection. Using them with `fio_redis_send` will violate the Redis protocol and cause connection errors.
+
+------------------------------------------------------------
+
+### Multi-Process Behavior
+
+The Redis engine is designed for facil.io's multi-process architecture where `fio_io_start()` forks worker processes.
+
+#### Setup Requirements
+
+1. Call `fio_redis_new()` **before** `fio_io_start()` — the engine must exist before fork
+2. Optionally call `fio_pubsub_engine_attach()` before or after start (pub/sub integration)
+3. Call `fio_io_start(workers)` — master connects to Redis; workers inherit the engine pointer
+
+```c
+int main(void) {
+  /* Create engine in master, before fork */
+  fio_pubsub_engine_s *redis = fio_redis_new(.url = "localhost:6379");
+  fio_pubsub_engine_attach(redis);
+
+  /* Fork workers — master connects to Redis, workers use IPC */
+  fio_io_start(4);  /* 4 worker processes */
+
+  fio_pubsub_engine_detach(redis);
+  fio_redis_free(redis);
+  return 0;
+}
+```
+
+#### Worker Command Flow
+
+When a worker calls `fio_redis_send()`:
+
+1. The command FIOBJ array is serialized to RESP wire format on the worker
+2. The RESP bytes are sent to the master process via `fio_ipc_call()`
+3. The master deserializes and queues the command on the publishing connection
+4. Redis processes the command and replies
+5. The master serializes the reply to RESP and sends it back to the worker via IPC
+6. The worker deserializes the reply and invokes the callback on its IO thread
+
+This is transparent to the caller — the same `fio_redis_send()` call works on both master and worker.
+
+#### Worker Publish Flow
+
+When a worker calls `fio_pubsub_publish()` with a Redis-attached engine:
+
+1. The channel and message are forwarded to the master via IPC
+2. The master sends a Redis `PUBLISH` command on the publishing connection
+3. Redis distributes the message to all subscribers (including other application instances)
+4. Incoming subscription messages on the master are distributed to all local processes via the existing pub/sub IPC infrastructure
+
+#### Single-Process Mode
+
+When using `fio_io_start(0)` (no fork), the process acts as both master and worker. All operations go directly to Redis without IPC indirection.
 
 ------------------------------------------------------------
 
@@ -26688,7 +27360,7 @@ void on_start(void *udata) {
   FIO_LOG_INFO("Subscribed to channels via Redis");
 }
 
-/* Publish a message (from any worker process) */
+/* Publish a message (works from any process - master or worker) */
 void broadcast_message(const char *channel, const char *message) {
   fio_pubsub_publish(.channel = FIO_BUF_INFO1(channel),
               .message = FIO_BUF_INFO1(message),
@@ -26696,7 +27368,7 @@ void broadcast_message(const char *channel, const char *message) {
 }
 
 int main(void) {
-  /* Create Redis engine (ref count = 1) */
+  /* Create Redis engine BEFORE fio_io_start() */
   redis_engine = fio_redis_new(.url = "redis://localhost:6379");
   if (!redis_engine) {
     FIO_LOG_FATAL("Failed to create Redis engine");
@@ -26709,8 +27381,8 @@ int main(void) {
   /* Register startup callback */
   fio_state_callback_add(FIO_CALL_ON_START, on_start, NULL);
   
-  /* Start the server */
-  fio_io_start(0);
+  /* Start the server with 4 workers */
+  fio_io_start(4);
   
   /* Cleanup - detach before freeing if attached */
   fio_pubsub_engine_detach(redis_engine);
@@ -26799,63 +27471,18 @@ void on_mget_reply(fio_pubsub_engine_s *e, FIOBJ reply, void *udata) {
 
 ------------------------------------------------------------
 
-### Architecture Notes
-
-#### Dual Connection Model
-
-The Redis engine maintains two separate TCP connections to the Redis server:
-
-1. **Publishing Connection**: Used for sending commands (`fio_redis_send`) and PUBLISH operations. This connection operates in request-response mode.
-
-2. **Subscription Connection**: Used exclusively for SUBSCRIBE/PSUBSCRIBE operations. Once a connection enters subscription mode, it can only receive pub/sub messages and cannot execute regular commands.
-
-This separation is required by the Redis protocol - a connection in subscription mode cannot execute regular commands, and mixing the two would cause protocol errors.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    facil.io Application                      │
-├─────────────────────────────────────────────────────────────┤
-│                    Redis Pub/Sub Engine                      │
-│  ┌─────────────────────┐    ┌─────────────────────────────┐ │
-│  │ Publishing Connection│    │ Subscription Connection     │ │
-│  │ - fio_redis_send()  │    │ - SUBSCRIBE/PSUBSCRIBE      │ │
-│  │ - PUBLISH commands  │    │ - Receives pub/sub messages │ │
-│  │ - Regular commands  │    │ - Pattern matching          │ │
-│  └──────────┬──────────┘    └──────────────┬──────────────┘ │
-└─────────────┼───────────────────────────────┼───────────────┘
-              │                               │
-              └───────────────┬───────────────┘
-                              │
-                              ▼
-                    ┌─────────────────┐
-                    │   Redis Server  │
-                    └─────────────────┘
-```
-
-#### Ownership and Attach/Detach
-
-The `fio_pubsub_engine_attach()` and `fio_pubsub_engine_detach()` functions do **NOT** transfer ownership of the engine. They simply register or unregister the engine with the pub/sub system.
-
-The caller who created the engine with `fio_redis_new()` is responsible for calling `fio_redis_free()` when the engine is no longer needed. **Important**: If the engine was attached via `fio_pubsub_engine_attach()`, you **MUST** call `fio_pubsub_engine_detach()` before calling `fio_redis_free()`.
-
-#### Command Queue
-
-Commands sent via `fio_redis_send()` are queued internally and sent one at a time, waiting for each reply before sending the next command. This ensures proper correlation between commands and their responses.
-
-The queue is processed in FIFO order. If the connection is lost, queued commands remain in the queue and are sent after reconnection.
-
-------------------------------------------------------------
-
 ### Error Handling
 
 #### Connection Loss
 
-When a connection is lost:
+When a Redis connection is lost (master process only):
 
 1. The engine logs a warning message
 2. Automatic reconnection is attempted after a brief delay
 3. On the subscription connection, all active subscriptions are re-established via `fio_pubsub_engine_attach()`
 4. Queued commands on the publishing connection are sent after reconnection
+
+Worker processes are unaffected by Redis connection loss — their IPC commands will queue on the master until the Redis connection is restored.
 
 #### Authentication Failures
 
@@ -26883,7 +27510,16 @@ The Redis engine is thread-safe. All internal state modifications are delegated 
 - `fio_redis_new()` - Thread-safe (defers connection to IO thread)
 - `fio_redis_dup()` - Thread-safe (uses atomic reference counting)
 - `fio_redis_free()` - Thread-safe (defers cleanup to IO thread)
-- `fio_redis_send()` - Thread-safe (defers command queuing to IO thread)
+- `fio_redis_send()` - Thread-safe (defers command queuing to IO thread; on workers, routes via IPC)
+
+**Multi-process safety:**
+
+In multi-process mode, `fio_redis_send()` and `fio_pubsub_publish()` work transparently from any process. They automatically detect whether they are running on the master or a worker and route accordingly:
+
+- **Master**: operations go directly to the Redis connection
+- **Worker**: operations are serialized and forwarded to the master via IPC
+
+The detection uses `fio_io_is_master()` internally. In single-process mode (`fio_io_start(0)`), the process is both master and worker, so all operations take the direct master path.
 
 **Internal operations that run on the IO thread:**
 - Command queue management (add, remove, send)
@@ -26914,19 +27550,21 @@ struct fio_pubsub_engine_s {
 
 When attached via `fio_pubsub_engine_attach()`:
 
-- `subscribe` sends Redis `SUBSCRIBE` command
-- `psubscribe` sends Redis `PSUBSCRIBE` command  
-- `unsubscribe` sends Redis `UNSUBSCRIBE` command
-- `punsubscribe` sends Redis `PUNSUBSCRIBE` command
-- `publish` sends Redis `PUBLISH` command via the command queue
+- `subscribe` sends Redis `SUBSCRIBE` command (on master's sub_conn)
+- `psubscribe` sends Redis `PSUBSCRIBE` command (on master's sub_conn)
+- `unsubscribe` sends Redis `UNSUBSCRIBE` command (on master's sub_conn)
+- `punsubscribe` sends Redis `PUNSUBSCRIBE` command (on master's sub_conn)
+- `publish` sends Redis `PUBLISH` command (on master's pub_conn; workers forward via IPC)
 
-Messages received from Redis subscriptions are forwarded to local subscribers via `fio_pubsub_publish()` with `fio_pubsub_engine_ipc()` engine.
+Messages received from Redis subscriptions are forwarded to local subscribers via `fio_pubsub_publish()` with `fio_pubsub_engine_ipc()` engine, which distributes them to all processes.
 
 **Note**: The `filter` parameter is ignored by the Redis engine. Redis does not support facil.io's numeric filter namespaces.
 
 ------------------------------------------------------------
 
 ### Limitations
+
+- **Engine Creation Timing**: `fio_redis_new()` must be called before `fio_io_start()`. Creating engines from worker processes is not supported.
 
 - **Filter Namespaces**: Redis does not support facil.io's numeric filter feature. All Redis pub/sub operates with filter = 0.
 
@@ -27412,7 +28050,7 @@ The parser is designed as a set of static functions suitable for embedding direc
 
 ```c
 #ifndef FIO_WEBSOCKET_MAX_PAYLOAD
-#define FIO_WEBSOCKET_MAX_PAYLOAD ((uint64_t)(1ULL << 30))
+#define FIO_WEBSOCKET_MAX_PAYLOAD ((uint64_t)(256ULL << 20))
 #endif
 ```
 
@@ -27843,6 +28481,12 @@ typedef struct fio_http_settings_s {
   uint8_t connect_timeout;
   /** Logging flag - set to TRUE to log HTTP requests. */
   uint8_t log;
+  /** Opt-in: auto-compress static files (save .br/.gz to disk). */
+  uint8_t compress_static;
+  /** Opt-in: auto-compress dynamic HTTP responses on-the-fly. */
+  uint8_t compress_dynamic;
+  /** Opt-in: enable permessage-deflate for WebSocket connections. */
+  uint8_t compress_ws;
 } fio_http_settings_s;
 ```
 
@@ -27888,8 +28532,13 @@ fio_http_listener_s *listener = fio_http_listen("0.0.0.0:3000",
 | `sse_timeout` | `uint8_t` | SSE timeout in seconds; defaults to `FIO_HTTP_DEFAULT_TIMEOUT_LONG` |
 | `connect_timeout` | `uint8_t` | Client connection timeout (client mode only) |
 | `log` | `uint8_t` | Set to TRUE to log HTTP requests |
+| `compress_static` | `uint8_t` | Opt-in: auto-compress static files (save `.br`/`.gz` variants to disk) |
+| `compress_dynamic` | `uint8_t` | Opt-in: auto-compress dynamic HTTP responses on-the-fly |
+| `compress_ws` | `uint8_t` | Opt-in: enable permessage-deflate (RFC 7692) for WebSocket connections |
 
 **Returns:** a listener handle (`fio_http_listener_s *`) on success, or NULL on error. The listener can be used with `fio_http_route` to add route-specific handlers.
+
+**Note**: the `compress_static`, `compress_dynamic`, and `compress_ws` options require `FIO_DEFLATE` and/or `FIO_BROTLI` to be defined before including the library. When both are available, Brotli is preferred for clients that support it, with deflate/gzip as fallback.
 
 #### `fio_http_route`
 

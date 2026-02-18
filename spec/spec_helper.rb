@@ -3,6 +3,9 @@
 require 'bundler/setup'
 require 'iodine'
 
+# Add spec/support to load path so helpers can be required without full paths
+$LOAD_PATH.unshift(File.join(__dir__, 'support'))
+
 RSpec.configure do |config|
   config.expect_with :rspec do |expectations|
     expectations.include_chain_clauses_in_custom_matcher_descriptions = true
@@ -20,6 +23,19 @@ RSpec.configure do |config|
 
   config.default_formatter = 'doc' if config.files_to_run.one?
 
-  config.order = :random
-  Kernel.srand config.seed
+  # Use defined order to ensure reactor-lifecycle specs run in a predictable
+  # sequence. Iodine.on_state(:start) callbacks accumulate across reactor
+  # restarts; random ordering can cause cross-spec interference.
+  config.order = :defined
+
+  # Keep failure output clean: filter gem/internal frames out of backtraces
+  # so only application and spec lines are shown.
+  config.filter_run_excluding :skip
+  config.backtrace_exclusion_patterns = [
+    /\/gems\//,
+    /\/rubygems\//,
+    /\/bin\//,
+    /spec_helper\.rb/,
+    /RSpec/,
+  ]
 end

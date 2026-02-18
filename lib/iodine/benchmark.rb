@@ -176,60 +176,124 @@ module Iodine
       rescue LoadError
         nil
       end
+
+      # -----------------------------------------------------------------------
+      # HMAC benchmarks — all MACs (cryptographic and non-cryptographic) ranked
+      #
+      # NOTE on algorithm mapping:
+      #   hmac128       => Poly1305 MAC (not HMAC-SHA1/SHA256; no standard OpenSSL equivalent)
+      #   hmac160       => HMAC-SHA1  (compared against OpenSSL HMAC-SHA1)
+      #   hmac256       => HMAC-SHA256 (compared against OpenSSL HMAC-SHA256)
+      #   hmac512       => HMAC-SHA512 (compared against OpenSSL HMAC-SHA512)
+      #   risky256_hmac => keyed MAC on non-crypto Risky Hash — NOT for security-critical use
+      #   risky512_hmac => keyed MAC on non-crypto Risky Hash — NOT for security-critical use
+      #
+      # Payload: 512 bytes of the benchmark file itself (representative of a
+      # short-to-medium web token or session payload).
+      # -----------------------------------------------------------------------
+      benchmark_secret = Iodine.secret
+      benchmark_payload = (File.exist?(__FILE__) ? IO.binread(__FILE__)[0...512] : 'my message payload')
+
+      puts "HMAC benchmarks — all MACs ranked — #{benchmark_payload.bytesize}-byte message, #{benchmark_secret.bytesize}-byte secret"
+      puts "  [WARNING: risky256_hmac / risky512_hmac are NOT suitable for security-critical authentication]"
+
+      # Pre-create OpenSSL digest objects outside the hot loop so we measure
+      # only the HMAC computation, not object allocation.
+      if defined?(OpenSSL)
+        digest_sha1   = OpenSSL::Digest.new('SHA1')
+        digest_sha256 = OpenSSL::Digest.new('SHA256')
+        digest_sha512 = OpenSSL::Digest.new('SHA512')
+      end
+
       ::Benchmark.ips do |bm|
-        benchmark_secret = Iodine.secret
-        benchmark_payload = (File.exist?(__FILE__) ? IO.binread(__FILE__)[0...512] : 'my message payload')
-        digest_sha1 = 'SHA1'
-        digest_sha512 = 'SHA512'
-        bm.report('         Iodine::Utils.uuid(HMAC)')    { Iodine::Utils.uuid(benchmark_secret, benchmark_payload) }
-        bm.report('            Iodine::Utils.hmac128')    do
+        # Non-cryptographic MACs — no standard equivalent; included for throughput ranking
+        bm.report('Iodine::Utils.risky256_hmac (non-crypto, 32B)') do
+          Iodine::Utils.risky256_hmac(benchmark_secret, benchmark_payload)
+        end
+        bm.report('Iodine::Utils.risky512_hmac (non-crypto, 64B)') do
+          Iodine::Utils.risky512_hmac(benchmark_secret, benchmark_payload)
+        end
+        # Poly1305 MAC — no direct OpenSSL equivalent; shown for reference only
+        bm.report('Iodine::Utils.hmac128 (Poly1305)         ') do
           Iodine::Utils.hmac128(benchmark_secret, benchmark_payload)
         end
-        bm.report('            Iodine::Utils.hmac160') do
+        # HMAC-SHA1
+        bm.report('Iodine::Utils.hmac160 (HMAC-SHA1)        ') do
           Iodine::Utils.hmac160(benchmark_secret, benchmark_payload)
         end
-        bm.report('            Iodine::Utils.hmac512') do
+        # HMAC-SHA256
+        bm.report('Iodine::Utils.hmac256 (HMAC-SHA256)      ') do
+          Iodine::Utils.hmac256(benchmark_secret, benchmark_payload)
+        end
+        # HMAC-SHA512
+        bm.report('Iodine::Utils.hmac512 (HMAC-SHA512)      ') do
           Iodine::Utils.hmac512(benchmark_secret, benchmark_payload)
         end
         if defined?(OpenSSL)
-          bm.report('  OpenSSL::HMAC.base64digest SHA1') do
-            OpenSSL::HMAC.base64digest(digest_sha1, benchmark_secret, benchmark_payload)
+          bm.report('OpenSSL::HMAC.digest SHA1                ') do
+            OpenSSL::HMAC.digest(digest_sha1, benchmark_secret, benchmark_payload)
           end
-          bm.report('OpenSSL::HMAC.base64digest SHA512') do
-            OpenSSL::HMAC.base64digest(digest_sha512, benchmark_secret, benchmark_payload)
+          bm.report('OpenSSL::HMAC.digest SHA256              ') do
+            OpenSSL::HMAC.digest(digest_sha256, benchmark_secret, benchmark_payload)
+          end
+          bm.report('OpenSSL::HMAC.digest SHA512              ') do
+            OpenSSL::HMAC.digest(digest_sha512, benchmark_secret, benchmark_payload)
           end
         end
-        puts "Performing comparison of HMAC with #{benchmark_payload.bytesize} byte Message and a #{benchmark_secret.bytesize} byte Secret."
         bm.compare!
       end
 
+      # -----------------------------------------------------------------------
+      # UUID generation
+      # -----------------------------------------------------------------------
+      puts "\nUUID generation (random v4)"
       ::Benchmark.ips do |bm|
         bm.report('Iodine::Utils.uuid') { Iodine::Utils.uuid }
-        bm.report(' SecureRandom.uuid')    { SecureRandom.uuid }
-        bm.report('    Random.uuid_v4')    { Random.uuid_v4 }
-        puts "Performing comparison of random UUID generation (i.e. #{Iodine::Utils.uuid})."
+        bm.report(' SecureRandom.uuid') { SecureRandom.uuid }
+        bm.report('    Random.uuid_v4') { Random.uuid_v4 }
         bm.compare!
       end
 
+      # -----------------------------------------------------------------------
+      # Random bytes generation — all generators ranked per size
+      #
+      # Iodine::Utils.random uses a fast PRNG (not cryptographically secure).
+      # Iodine::Utils.secure_random uses arc4random_buf (BSD/macOS) or
+      # /dev/urandom (Linux) — suitable for key generation and nonces.
+      # Compared against SecureRandom.random_bytes and OpenSSL::Random.random_bytes.
+      # -----------------------------------------------------------------------
+      puts "\nRandom bytes — all generators ranked — 16 bytes"
       ::Benchmark.ips do |bm|
-        bm.report('Iodine::Utils.random(16)') { Iodine::Utils.random(16) }
-        bm.report('       Random.bytes(16)') { ::Random.bytes(16) }
-        puts "Performing comparison of random UUID generation (i.e. #{Iodine::Utils.uuid})."
+        bm.report('Iodine::Utils.random(16)              ') { Iodine::Utils.random(16) }
+        bm.report('Random.bytes(16)                      ') { ::Random.bytes(16) }
+        bm.report('Iodine::Utils.secure_random(bytes: 16)') { Iodine::Utils.secure_random(bytes: 16) }
+        bm.report('SecureRandom.random_bytes(16)         ') { SecureRandom.random_bytes(16) }
+        if defined?(OpenSSL)
+          bm.report('OpenSSL::Random.random_bytes(16)      ') { OpenSSL::Random.random_bytes(16) }
+        end
         bm.compare!
       end
 
+      puts "\nRandom bytes — all generators ranked — 4096 bytes"
       ::Benchmark.ips do |bm|
-        bm.report('Iodine::Utils.random(4096)') { Iodine::Utils.random(4096) }
-        bm.report('        Random.bytes(4096)') { ::Random.bytes(4096) }
+        bm.report('Iodine::Utils.random(4096)              ') { Iodine::Utils.random(4096) }
+        bm.report('Random.bytes(4096)                      ') { ::Random.bytes(4096) }
+        bm.report('Iodine::Utils.secure_random(bytes: 4096)') { Iodine::Utils.secure_random(bytes: 4096) }
+        bm.report('SecureRandom.random_bytes(4096)         ') { SecureRandom.random_bytes(4096) }
+        if defined?(OpenSSL)
+          bm.report('OpenSSL::Random.random_bytes(4096)      ') { OpenSSL::Random.random_bytes(4096) }
+        end
         bm.compare!
       end
 
+      puts "\nRandom float (0.0..1.0)"
       ::Benchmark.ips do |bm|
         bm.report('Iodine::Utils.random') { Iodine::Utils.random }
-        bm.report('   SecureRandom.rand')    { SecureRandom.rand }
-        bm.report('         Random.rand')    { ::Random.rand }
+        bm.report('   SecureRandom.rand') { SecureRandom.rand }
+        bm.report('         Random.rand') { ::Random.rand }
         bm.compare!
       end
+
       nil
     end
 
@@ -345,6 +409,16 @@ module Iodine
     # with various payload sizes (64 bytes, 1KB, 64KB).
     #
     # Requires OpenSSL for comparison benchmarks.
+    #
+    # FAIRNESS NOTES:
+    # - All ciphertexts for decryption are pre-computed OUTSIDE the hot loop so
+    #   that only the actual encrypt/decrypt operation is timed.
+    # - OpenSSL cipher setup (new/encrypt/key/iv/auth_data) is inside the hot
+    #   loop because Iodine also re-initialises state per call — both sides pay
+    #   the same per-call setup cost.
+    # - XChaCha20-Poly1305 has no OpenSSL equivalent; it is included in the
+    #   unified block with a label suffix so its throughput is visible in context.
+    # - All implementations use the same key, nonce, and additional data.
     def self.crypto_symmetric
       require 'benchmark/ips'
       begin
@@ -355,136 +429,211 @@ module Iodine
 
       # Test data sizes
       sizes = {
-        '64B' => 64,
-        '1KB' => 1024,
+        '64B'  => 64,
+        '1KB'  => 1024,
         '64KB' => 65_536
       }
 
-      # Keys and nonces
-      key_32 = Iodine::Utils.random(32)
-      key_16 = Iodine::Utils.random(16)
-      nonce_12 = Iodine::Utils.random(12)
-      nonce_24 = Iodine::Utils.random(24)
-      ad = 'additional authenticated data'
+      # Keys and nonces — generated once, reused across all benchmarks
+      key_32    = Iodine::Utils.random(32)
+      key_16    = Iodine::Utils.random(16)
+      nonce_12  = Iodine::Utils.random(12)
+      nonce_24  = Iodine::Utils.random(24)
+      ad        = 'additional authenticated data'
+
+      # Check which OpenSSL ciphers are available
+      openssl_chacha_available = defined?(OpenSSL) &&
+                                 OpenSSL::Cipher.ciphers.include?('chacha20-poly1305')
+      openssl_aes_available    = defined?(OpenSSL)
+
+      # Label width — wide enough for 'Iodine XChaCha20-Poly1305 encrypt (24B nonce)'
+      lw = 36
 
       puts '=' * 70
       puts 'AEAD Symmetric Encryption Benchmarks'
       puts '=' * 70
+      puts
+      puts 'NOTE: All ciphertexts are pre-computed outside the hot loop.'
+      puts 'OpenSSL cipher setup is inside the loop (same cost as Iodine).'
+      puts 'XChaCha20-Poly1305 has no OpenSSL equivalent — included in the'
+      puts 'unified block with a label note so throughput is visible in context.'
+      puts
 
       sizes.each do |size_name, size|
         plaintext = Iodine::Utils.random(size)
 
-        puts "\n--- Payload Size: #{size_name} ---\n\n"
+        puts "\n--- Payload Size: #{size_name} — all ciphers ranked together ---\n\n"
 
-        # ChaCha20-Poly1305 benchmark
-        puts 'ChaCha20-Poly1305 (32-byte key, 12-byte nonce):'
+        # ------------------------------------------------------------------
+        # Pre-compute all ciphertexts outside the hot loop so that only the
+        # decrypt operation itself is timed in the decrypt block below.
+        # ------------------------------------------------------------------
+        iodine_ct_chacha, iodine_mac_chacha =
+          Iodine::Base::Crypto::ChaCha20Poly1305.encrypt(plaintext, key: key_32, nonce: nonce_12, ad: ad)
+
+        iodine_ct_xchacha, iodine_mac_xchacha =
+          Iodine::Base::Crypto::XChaCha20Poly1305.encrypt(plaintext, key: key_32, nonce: nonce_24, ad: ad)
+
+        iodine_ct_aes128, iodine_mac_aes128 =
+          Iodine::Base::Crypto::AES128GCM.encrypt(plaintext, key: key_16, nonce: nonce_12, ad: ad)
+
+        iodine_ct_aes256, iodine_mac_aes256 =
+          Iodine::Base::Crypto::AES256GCM.encrypt(plaintext, key: key_32, nonce: nonce_12, ad: ad)
+
+        openssl_ct_chacha = nil
+        openssl_tag_chacha = nil
+        if openssl_chacha_available
+          c = OpenSSL::Cipher.new('chacha20-poly1305')
+          c.encrypt
+          c.key       = key_32
+          c.iv        = nonce_12
+          c.auth_data = ad
+          openssl_ct_chacha  = c.update(plaintext) + c.final
+          openssl_tag_chacha = c.auth_tag
+        end
+
+        openssl_ct_aes128 = nil
+        openssl_tag_aes128 = nil
+        openssl_ct_aes256 = nil
+        openssl_tag_aes256 = nil
+        if openssl_aes_available
+          c = OpenSSL::Cipher.new('aes-128-gcm')
+          c.encrypt
+          c.key       = key_16
+          c.iv        = nonce_12
+          c.auth_data = ad
+          openssl_ct_aes128  = c.update(plaintext) + c.final
+          openssl_tag_aes128 = c.auth_tag
+
+          c = OpenSSL::Cipher.new('aes-256-gcm')
+          c.encrypt
+          c.key       = key_32
+          c.iv        = nonce_12
+          c.auth_data = ad
+          openssl_ct_aes256  = c.update(plaintext) + c.final
+          openssl_tag_aes256 = c.auth_tag
+        end
+
+        # ------------------------------------------------------------------
+        # Unified encrypt block — all ciphers compete side-by-side.
+        # XChaCha20 has no OpenSSL equivalent — labelled with (no OSSl equiv).
+        # x.compare! prints a ranked table so the fastest cipher is clear.
+        # ------------------------------------------------------------------
+        puts "Encrypt — all ciphers ranked:"
+        puts "  (XChaCha20-Poly1305 has no OpenSSL equivalent — included for ranking context)"
         ::Benchmark.ips do |x|
-          x.report('Iodine ChaCha20-Poly1305 encrypt') do
+          x.report('Iodine ChaCha20-Poly1305 encrypt'.ljust(lw)) do
             Iodine::Base::Crypto::ChaCha20Poly1305.encrypt(plaintext, key: key_32, nonce: nonce_12, ad: ad)
           end
-
-          if defined?(OpenSSL) && OpenSSL::Cipher.ciphers.include?('chacha20-poly1305')
-            x.report('OpenSSL ChaCha20-Poly1305 encrypt') do
-              cipher = OpenSSL::Cipher.new('chacha20-poly1305')
-              cipher.encrypt
-              cipher.key = key_32
-              cipher.iv = nonce_12
-              cipher.auth_data = ad
-              cipher.update(plaintext)
-              cipher.final
-              cipher.auth_tag
+          if openssl_chacha_available
+            # OpenSSL cipher setup is inside the loop — same per-call cost as Iodine
+            x.report('OpenSSL ChaCha20-Poly1305 encrypt'.ljust(lw)) do
+              c = OpenSSL::Cipher.new('chacha20-poly1305')
+              c.encrypt
+              c.key       = key_32
+              c.iv        = nonce_12
+              c.auth_data = ad
+              _ = c.update(plaintext) + c.final
+              c.auth_tag
             end
           end
-
-          x.compare!
-        end
-
-        # Decrypt benchmark
-        ciphertext_chacha, mac_chacha = Iodine::Base::Crypto::ChaCha20Poly1305.encrypt(plaintext, key: key_32,
-                                                                                                  nonce: nonce_12, ad: ad)
-
-        ::Benchmark.ips do |x|
-          x.report('Iodine ChaCha20-Poly1305 decrypt') do
-            Iodine::Base::Crypto::ChaCha20Poly1305.decrypt(ciphertext_chacha, mac: mac_chacha, key: key_32,
-                                                                              nonce: nonce_12, ad: ad)
-          end
-
-          if defined?(OpenSSL) && OpenSSL::Cipher.ciphers.include?('chacha20-poly1305')
-            # Prepare OpenSSL ciphertext
-            cipher = OpenSSL::Cipher.new('chacha20-poly1305')
-            cipher.encrypt
-            cipher.key = key_32
-            cipher.iv = nonce_12
-            cipher.auth_data = ad
-            openssl_ciphertext = cipher.update(plaintext) + cipher.final
-            openssl_tag = cipher.auth_tag
-
-            x.report('OpenSSL ChaCha20-Poly1305 decrypt') do
-              decipher = OpenSSL::Cipher.new('chacha20-poly1305')
-              decipher.decrypt
-              decipher.key = key_32
-              decipher.iv = nonce_12
-              decipher.auth_data = ad
-              decipher.auth_tag = openssl_tag
-              decipher.update(openssl_ciphertext) + decipher.final
-            end
-          end
-
-          x.compare!
-        end
-
-        # XChaCha20-Poly1305 benchmark (Iodine only - OpenSSL doesn't support XChaCha20)
-        puts "\nXChaCha20-Poly1305 (32-byte key, 24-byte nonce - safe for random nonces):"
-        ::Benchmark.ips do |x|
-          x.report('Iodine XChaCha20-Poly1305 encrypt') do
+          # XChaCha20 has no OpenSSL equivalent — included for ranking context
+          x.report('Iodine XChaCha20-Poly1305 encrypt (24B nonce)'.ljust(lw)) do
             Iodine::Base::Crypto::XChaCha20Poly1305.encrypt(plaintext, key: key_32, nonce: nonce_24, ad: ad)
           end
-          x.compare!
-        end
-
-        # AES-128-GCM benchmark
-        puts "\nAES-128-GCM (16-byte key, 12-byte nonce):"
-        ::Benchmark.ips do |x|
-          x.report('Iodine AES-128-GCM encrypt') do
+          x.report('Iodine AES-128-GCM encrypt'.ljust(lw)) do
             Iodine::Base::Crypto::AES128GCM.encrypt(plaintext, key: key_16, nonce: nonce_12, ad: ad)
           end
-
-          if defined?(OpenSSL)
-            x.report('OpenSSL AES-128-GCM encrypt') do
-              cipher = OpenSSL::Cipher.new('aes-128-gcm')
-              cipher.encrypt
-              cipher.key = key_16
-              cipher.iv = nonce_12
-              cipher.auth_data = ad
-              cipher.update(plaintext)
-              cipher.final
-              cipher.auth_tag
+          if openssl_aes_available
+            x.report('OpenSSL AES-128-GCM encrypt'.ljust(lw)) do
+              c = OpenSSL::Cipher.new('aes-128-gcm')
+              c.encrypt
+              c.key       = key_16
+              c.iv        = nonce_12
+              c.auth_data = ad
+              _ = c.update(plaintext) + c.final
+              c.auth_tag
             end
           end
-
+          x.report('Iodine AES-256-GCM encrypt'.ljust(lw)) do
+            Iodine::Base::Crypto::AES256GCM.encrypt(plaintext, key: key_32, nonce: nonce_12, ad: ad)
+          end
+          if openssl_aes_available
+            x.report('OpenSSL AES-256-GCM encrypt'.ljust(lw)) do
+              c = OpenSSL::Cipher.new('aes-256-gcm')
+              c.encrypt
+              c.key       = key_32
+              c.iv        = nonce_12
+              c.auth_data = ad
+              _ = c.update(plaintext) + c.final
+              c.auth_tag
+            end
+          end
           x.compare!
         end
 
-        # AES-256-GCM benchmark
-        puts "\nAES-256-GCM (32-byte key, 12-byte nonce):"
+        # ------------------------------------------------------------------
+        # Unified decrypt block — all ciphers compete side-by-side.
+        # Ciphertexts were pre-computed above (outside the hot loop).
+        # x.compare! prints a ranked table so the fastest cipher is clear.
+        # ------------------------------------------------------------------
+        puts "\nDecrypt — all ciphers ranked:"
+        puts "  (XChaCha20-Poly1305 has no OpenSSL equivalent — included for ranking context)"
         ::Benchmark.ips do |x|
-          x.report('Iodine AES-256-GCM encrypt') do
-            Iodine::Base::Crypto::AES256GCM.encrypt(plaintext, key: key_32, nonce: nonce_12, ad: ad)
+          x.report('Iodine ChaCha20-Poly1305 decrypt'.ljust(lw)) do
+            Iodine::Base::Crypto::ChaCha20Poly1305.decrypt(
+              iodine_ct_chacha, mac: iodine_mac_chacha, key: key_32, nonce: nonce_12, ad: ad
+            )
           end
-
-          if defined?(OpenSSL)
-            x.report('OpenSSL AES-256-GCM encrypt') do
-              cipher = OpenSSL::Cipher.new('aes-256-gcm')
-              cipher.encrypt
-              cipher.key = key_32
-              cipher.iv = nonce_12
-              cipher.auth_data = ad
-              cipher.update(plaintext)
-              cipher.final
-              cipher.auth_tag
+          if openssl_chacha_available
+            x.report('OpenSSL ChaCha20-Poly1305 decrypt'.ljust(lw)) do
+              d = OpenSSL::Cipher.new('chacha20-poly1305')
+              d.decrypt
+              d.key       = key_32
+              d.iv        = nonce_12
+              d.auth_data = ad
+              d.auth_tag  = openssl_tag_chacha
+              d.update(openssl_ct_chacha) + d.final
             end
           end
-
+          # XChaCha20 has no OpenSSL equivalent — included for ranking context
+          x.report('Iodine XChaCha20-Poly1305 decrypt (24B nonce)'.ljust(lw)) do
+            Iodine::Base::Crypto::XChaCha20Poly1305.decrypt(
+              iodine_ct_xchacha, mac: iodine_mac_xchacha, key: key_32, nonce: nonce_24, ad: ad
+            )
+          end
+          x.report('Iodine AES-128-GCM decrypt'.ljust(lw)) do
+            Iodine::Base::Crypto::AES128GCM.decrypt(
+              iodine_ct_aes128, mac: iodine_mac_aes128, key: key_16, nonce: nonce_12, ad: ad
+            )
+          end
+          if openssl_aes_available
+            x.report('OpenSSL AES-128-GCM decrypt'.ljust(lw)) do
+              d = OpenSSL::Cipher.new('aes-128-gcm')
+              d.decrypt
+              d.key       = key_16
+              d.iv        = nonce_12
+              d.auth_data = ad
+              d.auth_tag  = openssl_tag_aes128
+              d.update(openssl_ct_aes128) + d.final
+            end
+          end
+          x.report('Iodine AES-256-GCM decrypt'.ljust(lw)) do
+            Iodine::Base::Crypto::AES256GCM.decrypt(
+              iodine_ct_aes256, mac: iodine_mac_aes256, key: key_32, nonce: nonce_12, ad: ad
+            )
+          end
+          if openssl_aes_available
+            x.report('OpenSSL AES-256-GCM decrypt'.ljust(lw)) do
+              d = OpenSSL::Cipher.new('aes-256-gcm')
+              d.decrypt
+              d.key       = key_32
+              d.iv        = nonce_12
+              d.auth_data = ad
+              d.auth_tag  = openssl_tag_aes256
+              d.update(openssl_ct_aes256) + d.final
+            end
+          end
           x.compare!
         end
       end
@@ -532,12 +681,22 @@ module Iodine
         end
       end
 
-      # Prepare RbNaCl keys if available
-      rbnacl_available = defined?(RbNaCl)
-      if rbnacl_available
+      # Prepare RbNaCl keys if available — probe via actual instantiation so
+      # that a partially-loaded gem (defined?(RbNaCl) true but sub-constants
+      # missing) is caught cleanly rather than raising NameError later.
+      rbnacl_available = false
+      rbnacl_signing_key = nil
+      rbnacl_verify_key  = nil
+      begin
         rbnacl_signing_key = RbNaCl::SigningKey.new(iodine_sk)
-        rbnacl_verify_key = rbnacl_signing_key.verify_key
+        rbnacl_verify_key  = rbnacl_signing_key.verify_key
+        rbnacl_available   = true
+      rescue NameError, LoadError => e
+        puts "RbNaCl not available (#{e.message}); skipping RbNaCl comparisons."
       end
+
+      # Label width — wide enough for 'Iodine Ed25519 sign (4KB)          '
+      lw = 34
 
       puts 'Ed25519 Key Generation:'
       ::Benchmark.ips do |x|
@@ -560,45 +719,35 @@ module Iodine
         x.compare!
       end
 
-      puts "\nEd25519 Signing (short message: #{message_short.bytesize} bytes):"
+      # ------------------------------------------------------------------
+      # Unified signing block — both message sizes compete side-by-side.
+      # This lets readers see how message length affects signing throughput.
+      # x.compare! prints a ranked table across all entries.
+      # ------------------------------------------------------------------
+      puts "\nEd25519 Signing — all implementations and message sizes ranked:"
       ::Benchmark.ips do |x|
-        x.report('Iodine Ed25519.sign') do
+        x.report("Iodine Ed25519 sign (#{message_short.bytesize}B)".ljust(lw)) do
           Iodine::Base::Crypto::Ed25519.sign(message_short, secret_key: iodine_sk, public_key: iodine_pk)
         end
-
-        if openssl_ed25519_available
-          x.report('OpenSSL Ed25519 sign') do
-            openssl_ed_key.sign(nil, message_short)
-          end
-        end
-
-        if rbnacl_available
-          x.report('RbNaCl sign') do
-            rbnacl_signing_key.sign(message_short)
-          end
-        end
-
-        x.compare!
-      end
-
-      puts "\nEd25519 Signing (long message: #{message_long.bytesize} bytes):"
-      ::Benchmark.ips do |x|
-        x.report('Iodine Ed25519.sign') do
+        x.report("Iodine Ed25519 sign (#{message_long.bytesize / 1024}KB)".ljust(lw)) do
           Iodine::Base::Crypto::Ed25519.sign(message_long, secret_key: iodine_sk, public_key: iodine_pk)
         end
-
         if openssl_ed25519_available
-          x.report('OpenSSL Ed25519 sign') do
+          x.report("OpenSSL Ed25519 sign (#{message_short.bytesize}B)".ljust(lw)) do
+            openssl_ed_key.sign(nil, message_short)
+          end
+          x.report("OpenSSL Ed25519 sign (#{message_long.bytesize / 1024}KB)".ljust(lw)) do
             openssl_ed_key.sign(nil, message_long)
           end
         end
-
         if rbnacl_available
-          x.report('RbNaCl sign') do
+          x.report("RbNaCl sign (#{message_short.bytesize}B)".ljust(lw)) do
+            rbnacl_signing_key.sign(message_short)
+          end
+          x.report("RbNaCl sign (#{message_long.bytesize / 1024}KB)".ljust(lw)) do
             rbnacl_signing_key.sign(message_long)
           end
         end
-
         x.compare!
       end
 
@@ -699,9 +848,38 @@ module Iodine
 
     # Benchmarks Iodine's hashing functions vs OpenSSL/Digest equivalents.
     #
-    # Tests SHA-256, SHA-512, SHA3-256, SHA3-512, BLAKE2b, and BLAKE2s.
+    # Tests SHA-256, SHA-512, SHA3-224, SHA3-256, SHA3-512, BLAKE2b, BLAKE2s,
+    # SHAKE128, SHAKE256, risky256, and risky512 across three payload sizes
+    # (64B, 1KB, 64KB). risky256/risky512 are non-cryptographic but are
+    # included as faster alternatives suitable for message authentication where
+    # cryptographic strength is not required.
+    #
+    # For each payload size, ALL algorithms compete in a single Benchmark.ips
+    # block so results can be used directly for algorithm selection — you can
+    # immediately see "at 1KB, which hash is fastest?"
     #
     # Requires OpenSSL for comparison benchmarks.
+    #
+    # FAIRNESS NOTES:
+    # - OpenSSL::Digest objects are pre-instantiated ONCE before the sizes loop
+    #   and reused across all iterations. Calling instance.digest(data) resets
+    #   the existing EVP_MD_CTX state (via EVP_DigestInit_ex) without allocating
+    #   a new context — only the hash computation itself is timed.
+    # - By contrast, the class methods OpenSSL::Digest.digest('SHA3-256', data)
+    #   and OpenSSL::Digest::SHA256.digest(data) allocate a new EVP_MD_CTX AND
+    #   run EVP_get_digestbyname() on every call — unfairly penalising OpenSSL.
+    # - Digest::SHA256/SHA512 (Ruby stdlib) delegates to OpenSSL internally.
+    #   The same pre-instantiation fix is applied: Digest::SHA256.new is created
+    #   once and instance.digest(data) is called in the hot loop.
+    # - SHA3 and BLAKE2 availability depends on the OpenSSL build. If not
+    #   available, only Iodine results are shown for those algorithms.
+    # - SHAKE128/SHAKE256 have no OpenSSL Ruby binding; they are included in
+    #   the unified block so their throughput is visible in the ranking.
+    #
+    # NOTE on digest == hash: Iodine's sha256/sha3_256/blake2b etc. and
+    # OpenSSL::Digest both compute cryptographic message digests — they are the
+    # same operation (deterministic, fixed-output-length, one-way hash functions
+    # over arbitrary input). The comparison is apples-to-apples.
     def self.hashing
       require 'benchmark/ips'
       begin
@@ -718,165 +896,159 @@ module Iodine
       puts '=' * 70
       puts 'Hashing Benchmarks'
       puts '=' * 70
+      puts
+      puts 'NOTE: All algorithms are benchmarked together per payload size so'
+      puts 'results can be used for algorithm selection. OpenSSL::Digest and'
+      puts 'Digest:: objects are pre-instantiated once before the sizes loop;'
+      puts 'instance.digest(data) reuses the EVP_MD_CTX (only resets state) —'
+      puts 'no per-call allocation or string lookup overhead.'
+      puts
 
       # Test data sizes
       sizes = {
-        '64B' => 64,
-        '1KB' => 1024,
+        '64B'  => 64,
+        '1KB'  => 1024,
         '64KB' => 65_536
       }
+
+      # ------------------------------------------------------------------
+      # Pre-check which OpenSSL algorithms are available and pre-instantiate
+      # digest objects ONCE here — before the sizes loop — so they are
+      # allocated exactly once regardless of how many size iterations run.
+      # ------------------------------------------------------------------
+      openssl_sha3_256_available  = false
+      openssl_sha3_512_available  = false
+      openssl_blake2b_available   = false
+      openssl_blake2s_available   = false
+      openssl_sha3_224_available  = false
+
+      # Pre-instantiated digest objects (nil if algorithm unavailable)
+      ossl_sha256    = nil
+      ossl_sha512    = nil
+      ossl_sha3_256  = nil
+      ossl_sha3_512  = nil
+      ossl_blake2b   = nil
+      ossl_blake2s   = nil
+      ossl_sha3_224  = nil
+      digest_sha256  = nil
+      digest_sha512  = nil
+
+      if defined?(OpenSSL)
+        # SHA-256 and SHA-512 are always available in any OpenSSL build
+        ossl_sha256 = OpenSSL::Digest.new('SHA256')
+        ossl_sha512 = OpenSSL::Digest.new('SHA512')
+
+        begin
+          ossl_sha3_256 = OpenSSL::Digest.new('SHA3-256')
+          ossl_sha3_256.digest('') # probe — raises if unavailable
+          openssl_sha3_256_available = true
+        rescue OpenSSL::Digest::DigestError, RuntimeError
+          ossl_sha3_256 = nil
+          # SHA3-256 not available in this OpenSSL build
+        end
+        begin
+          ossl_sha3_512 = OpenSSL::Digest.new('SHA3-512')
+          ossl_sha3_512.digest('')
+          openssl_sha3_512_available = true
+        rescue OpenSSL::Digest::DigestError, RuntimeError
+          ossl_sha3_512 = nil
+          # SHA3-512 not available
+        end
+        begin
+          ossl_blake2b = OpenSSL::Digest.new('BLAKE2b512')
+          ossl_blake2b.digest('')
+          openssl_blake2b_available = true
+        rescue OpenSSL::Digest::DigestError, RuntimeError
+          ossl_blake2b = nil
+          # BLAKE2b not available
+        end
+        begin
+          ossl_blake2s = OpenSSL::Digest.new('BLAKE2s256')
+          ossl_blake2s.digest('')
+          openssl_blake2s_available = true
+        rescue OpenSSL::Digest::DigestError, RuntimeError
+          ossl_blake2s = nil
+          # BLAKE2s not available
+        end
+        begin
+          ossl_sha3_224 = OpenSSL::Digest.new('SHA3-224')
+          ossl_sha3_224.digest('')
+          openssl_sha3_224_available = true
+        rescue OpenSSL::Digest::DigestError, RuntimeError
+          ossl_sha3_224 = nil
+          # SHA3-224 not available in this OpenSSL build
+        end
+      end
+
+      if defined?(Digest)
+        # Ruby stdlib Digest — pre-instantiate once; instance.digest(data)
+        # calls reset+update+finish on the existing object (no allocation).
+        digest_sha256 = Digest::SHA256.new
+        digest_sha512 = Digest::SHA512.new
+      end
+
+      # Label width — wide enough for the longest entry ("Iodine risky512 (non-crypto, 64B)")
+      lw = 34
 
       sizes.each do |size_name, size|
         data = Iodine::Utils.random(size)
 
-        puts "\n--- Data Size: #{size_name} ---\n\n"
+        puts "\n--- Data Size: #{size_name} — all algorithms ranked together ---\n\n"
+        puts "  (SHAKE128/SHAKE256 have no OpenSSL Ruby binding; risky256/risky512 are non-crypto"
+        puts "   alternatives suitable for fast message authentication; all included for ranking context)"
+        puts
 
-        # SHA-256
-        puts 'SHA-256:'
+        # ------------------------------------------------------------------
+        # Unified block: all algorithms compete side-by-side for this size.
+        # x.compare! prints a ranked table so the fastest algorithm is clear.
+        # ------------------------------------------------------------------
         ::Benchmark.ips do |x|
-          x.report('Iodine sha256') do
-            Iodine::Utils.sha256(data)
+          # ---- Iodine entries (always present) ----
+          x.report('Iodine sha256'.ljust(lw))                    { Iodine::Utils.sha256(data) }
+          x.report('Iodine sha512'.ljust(lw))                    { Iodine::Utils.sha512(data) }
+          x.report('Iodine sha3_224'.ljust(lw))                  { Iodine::Utils.sha3_224(data) }
+          x.report('Iodine sha3_256'.ljust(lw))                  { Iodine::Utils.sha3_256(data) }
+          x.report('Iodine sha3_512'.ljust(lw))                  { Iodine::Utils.sha3_512(data) }
+          x.report('Iodine blake2b (64B)'.ljust(lw))             { Iodine::Utils.blake2b(data, len: 64) }
+          x.report('Iodine blake2s (32B)'.ljust(lw))             { Iodine::Utils.blake2s(data, len: 32) }
+          x.report('Iodine shake128 (XOF, 32B)'.ljust(lw))       { Iodine::Utils.shake128(data, length: 32) }
+          x.report('Iodine shake256 (XOF, 64B)'.ljust(lw))       { Iodine::Utils.shake256(data, length: 64) }
+          ## risky256/risky512: non-crypto alternatives for fast message authentication
+          # x.report('Iodine risky256 (non-crypto, 32B)'.ljust(lw)) { Iodine::Utils.risky256(data) }
+          # x.report('Iodine risky512 (non-crypto, 64B)'.ljust(lw)) { Iodine::Utils.risky512(data) }
+
+          # ---- OpenSSL entries (conditionally present) ----
+          if ossl_sha256
+            x.report('OpenSSL SHA256'.ljust(lw))      { ossl_sha256.digest(data) }
+          end
+          if ossl_sha512
+            x.report('OpenSSL SHA512'.ljust(lw))      { ossl_sha512.digest(data) }
+          end
+          if openssl_sha3_224_available
+            x.report('OpenSSL SHA3-224'.ljust(lw))    { ossl_sha3_224.digest(data) }
+          end
+          if openssl_sha3_256_available
+            x.report('OpenSSL SHA3-256'.ljust(lw))    { ossl_sha3_256.digest(data) }
+          end
+          if openssl_sha3_512_available
+            x.report('OpenSSL SHA3-512'.ljust(lw))    { ossl_sha3_512.digest(data) }
+          end
+          if openssl_blake2b_available
+            x.report('OpenSSL BLAKE2b512'.ljust(lw))  { ossl_blake2b.digest(data) }
+          end
+          if openssl_blake2s_available
+            x.report('OpenSSL BLAKE2s256'.ljust(lw))  { ossl_blake2s.digest(data) }
           end
 
-          if defined?(OpenSSL)
-            x.report('OpenSSL SHA256') do
-              OpenSSL::Digest::SHA256.digest(data)
-            end
+          # ---- Ruby stdlib Digest entries (conditionally present) ----
+          if digest_sha256
+            x.report('Digest::SHA256'.ljust(lw))      { digest_sha256.digest(data) }
+          end
+          if digest_sha512
+            x.report('Digest::SHA512'.ljust(lw))      { digest_sha512.digest(data) }
           end
 
-          if defined?(Digest)
-            x.report('Digest::SHA256') do
-              Digest::SHA256.digest(data)
-            end
-          end
-
-          x.compare!
-        end
-
-        # SHA-512
-        puts "\nSHA-512:"
-        ::Benchmark.ips do |x|
-          x.report('Iodine sha512') do
-            Iodine::Utils.sha512(data)
-          end
-
-          if defined?(OpenSSL)
-            x.report('OpenSSL SHA512') do
-              OpenSSL::Digest::SHA512.digest(data)
-            end
-          end
-
-          if defined?(Digest)
-            x.report('Digest::SHA512') do
-              Digest::SHA512.digest(data)
-            end
-          end
-
-          x.compare!
-        end
-
-        # SHA3-256
-        puts "\nSHA3-256:"
-        ::Benchmark.ips do |x|
-          x.report('Iodine sha3_256') do
-            Iodine::Utils.sha3_256(data)
-          end
-
-          if defined?(OpenSSL)
-            begin
-              # OpenSSL 1.1.1+ supports SHA3
-              OpenSSL::Digest.new('SHA3-256')
-              x.report('OpenSSL SHA3-256') do
-                OpenSSL::Digest.new('SHA3-256').digest(data)
-              end
-            rescue OpenSSL::Digest::DigestError
-              # SHA3 not available in this OpenSSL version
-            end
-          end
-
-          x.compare!
-        end
-
-        # SHA3-512
-        puts "\nSHA3-512:"
-        ::Benchmark.ips do |x|
-          x.report('Iodine sha3_512') do
-            Iodine::Utils.sha3_512(data)
-          end
-
-          if defined?(OpenSSL)
-            begin
-              OpenSSL::Digest.new('SHA3-512')
-              x.report('OpenSSL SHA3-512') do
-                OpenSSL::Digest.new('SHA3-512').digest(data)
-              end
-            rescue OpenSSL::Digest::DigestError
-              # SHA3 not available
-            end
-          end
-
-          x.compare!
-        end
-
-        # BLAKE2b
-        puts "\nBLAKE2b (64-byte output):"
-        ::Benchmark.ips do |x|
-          x.report('Iodine blake2b') do
-            Iodine::Utils.blake2b(data, len: 64)
-          end
-
-          if defined?(OpenSSL)
-            begin
-              OpenSSL::Digest.new('BLAKE2b512')
-              x.report('OpenSSL BLAKE2b512') do
-                OpenSSL::Digest.new('BLAKE2b512').digest(data)
-              end
-            rescue OpenSSL::Digest::DigestError
-              # BLAKE2 not available
-            end
-          end
-
-          x.compare!
-        end
-
-        # BLAKE2s
-        puts "\nBLAKE2s (32-byte output):"
-        ::Benchmark.ips do |x|
-          x.report('Iodine blake2s') do
-            Iodine::Utils.blake2s(data, len: 32)
-          end
-
-          if defined?(OpenSSL)
-            begin
-              OpenSSL::Digest.new('BLAKE2s256')
-              x.report('OpenSSL BLAKE2s256') do
-                OpenSSL::Digest.new('BLAKE2s256').digest(data)
-              end
-            rescue OpenSSL::Digest::DigestError
-              # BLAKE2s not available
-            end
-          end
-
-          x.compare!
-        end
-
-        # Keyed BLAKE2b (MAC mode)
-        next unless size <= 1024 # Only for smaller sizes to keep benchmark reasonable
-
-        key = Iodine::Utils.random(32)
-        puts "\nBLAKE2b Keyed (MAC mode, 32-byte key):"
-        ::Benchmark.ips do |x|
-          x.report('Iodine blake2b keyed') do
-            Iodine::Utils.blake2b(data, key: key, len: 32)
-          end
-
-          # Compare with HMAC-SHA256 as alternative MAC
-          if defined?(OpenSSL)
-            x.report('OpenSSL HMAC-SHA256') do
-              OpenSSL::HMAC.digest('SHA256', key, data)
-            end
-          end
-
+          puts "\n--- Data Size: #{size_name} ---\n\n"
           x.compare!
         end
       end
@@ -886,9 +1058,17 @@ module Iodine
 
     # Benchmarks Iodine's X25519 ECIES public-key encryption vs RbNaCl sealed boxes.
     #
-    # Tests encryption/decryption with various payload sizes.
+    # Tests encryption/decryption with various payload sizes and all cipher variants.
     #
     # Optional dependencies: RbNaCl gem for comparison.
+    #
+    # FAIRNESS NOTES:
+    # - All ciphertexts for decryption are pre-computed OUTSIDE the hot loop so
+    #   that only the actual decrypt operation is timed.
+    # - All three Iodine cipher variants (ChaCha20, AES-128, AES-256) compete in
+    #   the unified encrypt block so readers can choose the right cipher.
+    # - RbNaCl SimpleBox uses XSalsa20-Poly1305 (different cipher) — included for
+    #   throughput reference; label makes the difference clear.
     def self.crypto_ecies
       require 'benchmark/ips'
       begin
@@ -906,72 +1086,85 @@ module Iodine
 
       # Test data sizes
       sizes = {
-        '64B' => 64,
-        '1KB' => 1024,
+        '64B'  => 64,
+        '1KB'  => 1024,
         '16KB' => 16_384
       }
 
-      rbnacl_available = defined?(RbNaCl)
-      if rbnacl_available
-        rbnacl_pk = RbNaCl::PrivateKey.new(recipient_sk).public_key
+      # Label width — wide enough for 'Iodine X25519.decrypt_aes256 (AES-256)'
+      lw = 32
+
+      rbnacl_available = false
+      rbnacl_pk = nil
+      rbnacl_sk = nil
+      begin
         rbnacl_sk = RbNaCl::PrivateKey.new(recipient_sk)
+        rbnacl_pk = rbnacl_sk.public_key
+        rbnacl_available = true
+      rescue NameError, LoadError => e
+        puts "RbNaCl not available (#{e.message}); skipping RbNaCl comparisons."
       end
 
       sizes.each do |size_name, size|
         plaintext = Iodine::Utils.random(size)
 
-        puts "\n--- Payload Size: #{size_name} ---\n\n"
+        puts "\n--- Payload Size: #{size_name} — all cipher variants ranked ---\n\n"
 
-        # Encryption benchmarks
-        puts 'X25519 ECIES Encryption (ChaCha20-Poly1305):'
+        # ------------------------------------------------------------------
+        # Pre-compute all ciphertexts outside the hot loop so that only the
+        # decrypt operation itself is timed in the decrypt block below.
+        # ------------------------------------------------------------------
+        iodine_ct_chacha  = Iodine::Base::Crypto::X25519.encrypt(plaintext, recipient_pk: recipient_pk)
+        iodine_ct_aes128  = Iodine::Base::Crypto::X25519.encrypt_aes128(plaintext, recipient_pk: recipient_pk)
+        iodine_ct_aes256  = Iodine::Base::Crypto::X25519.encrypt_aes256(plaintext, recipient_pk: recipient_pk)
+        rbnacl_ciphertext = rbnacl_available ? RbNaCl::SimpleBox.from_public_key(rbnacl_pk).encrypt(plaintext) : nil
+
+        # ------------------------------------------------------------------
+        # Unified encrypt block — all cipher variants compete side-by-side.
+        # x.compare! prints a ranked table so the fastest cipher is clear.
+        # ------------------------------------------------------------------
+        puts "Encrypt — all cipher variants ranked:"
         ::Benchmark.ips do |x|
-          x.report('Iodine X25519.encrypt') do
+          x.report('Iodine X25519.encrypt (ChaCha20)'.ljust(lw)) do
             Iodine::Base::Crypto::X25519.encrypt(plaintext, recipient_pk: recipient_pk)
           end
-
+          x.report('Iodine X25519.encrypt_aes128'.ljust(lw)) do
+            Iodine::Base::Crypto::X25519.encrypt_aes128(plaintext, recipient_pk: recipient_pk)
+          end
+          x.report('Iodine X25519.encrypt_aes256'.ljust(lw)) do
+            Iodine::Base::Crypto::X25519.encrypt_aes256(plaintext, recipient_pk: recipient_pk)
+          end
           if rbnacl_available
-            x.report('RbNaCl SimpleBox seal') do
+            # RbNaCl SimpleBox uses XSalsa20-Poly1305 — different cipher, shown for reference
+            x.report('RbNaCl SimpleBox seal'.ljust(lw)) do
               RbNaCl::SimpleBox.from_public_key(rbnacl_pk).encrypt(plaintext)
             end
           end
-
           x.compare!
         end
 
-        # Decryption benchmarks
-        iodine_ciphertext = Iodine::Base::Crypto::X25519.encrypt(plaintext, recipient_pk: recipient_pk)
-
-        puts "\nX25519 ECIES Decryption (ChaCha20-Poly1305):"
+        # ------------------------------------------------------------------
+        # Unified decrypt block — all cipher variants compete side-by-side.
+        # Ciphertexts were pre-computed above (outside the hot loop).
+        # x.compare! prints a ranked table so the fastest cipher is clear.
+        # ------------------------------------------------------------------
+        puts "\nDecrypt — all cipher variants ranked:"
         ::Benchmark.ips do |x|
-          x.report('Iodine X25519.decrypt') do
-            Iodine::Base::Crypto::X25519.decrypt(iodine_ciphertext, secret_key: recipient_sk)
+          x.report('Iodine X25519.decrypt (ChaCha20)'.ljust(lw)) do
+            Iodine::Base::Crypto::X25519.decrypt(iodine_ct_chacha, secret_key: recipient_sk)
           end
-
+          x.report('Iodine X25519.decrypt_aes128'.ljust(lw)) do
+            Iodine::Base::Crypto::X25519.decrypt_aes128(iodine_ct_aes128, secret_key: recipient_sk)
+          end
+          x.report('Iodine X25519.decrypt_aes256'.ljust(lw)) do
+            Iodine::Base::Crypto::X25519.decrypt_aes256(iodine_ct_aes256, secret_key: recipient_sk)
+          end
           if rbnacl_available
-            rbnacl_ciphertext = RbNaCl::SimpleBox.from_public_key(rbnacl_pk).encrypt(plaintext)
-            x.report('RbNaCl SimpleBox open') do
+            # RbNaCl SimpleBox uses XSalsa20-Poly1305 — different cipher, shown for reference
+            x.report('RbNaCl SimpleBox open'.ljust(lw)) do
               RbNaCl::SimpleBox.from_keypair(rbnacl_pk, rbnacl_sk).decrypt(rbnacl_ciphertext)
             end
           end
-
-          x.compare!
-        end
-
-        # Compare different ECIES cipher variants
-        puts "\nIodine X25519 ECIES Cipher Variants (encryption):"
-        ::Benchmark.ips do |x|
-          x.report('X25519.encrypt (ChaCha20)') do
-            Iodine::Base::Crypto::X25519.encrypt(plaintext, recipient_pk: recipient_pk)
-          end
-
-          x.report('X25519.encrypt_aes128') do
-            Iodine::Base::Crypto::X25519.encrypt_aes128(plaintext, recipient_pk: recipient_pk)
-          end
-
-          x.report('X25519.encrypt_aes256') do
-            Iodine::Base::Crypto::X25519.encrypt_aes256(plaintext, recipient_pk: recipient_pk)
-          end
-
           x.compare!
         end
       end
@@ -997,7 +1190,7 @@ module Iodine
       puts '=' * 70
 
       # Input keying material (e.g., from X25519 shared secret)
-      ikm = Iodine::Utils.random(32)
+      ikm  = Iodine::Utils.random(32)
       salt = Iodine::Utils.random(32)
       info = 'application specific context'
 
@@ -1049,6 +1242,14 @@ module Iodine
     # Tests TOTP generation and verification.
     #
     # Optional dependencies: rotp gem for comparison.
+    #
+    # FAIRNESS NOTES:
+    # - Both implementations use the SAME underlying secret bytes. Iodine
+    #   accepts raw bytes; ROTP accepts Base32-encoded strings. The Base32
+    #   encoding of the raw secret is decoded by ROTP back to the same bytes,
+    #   so both implementations compute TOTP for the same secret.
+    # - Verification windows are matched: Iodine window:1 checks ±1 interval;
+    #   ROTP drift_behind/drift_ahead:30 also checks ±1 interval (30 seconds).
     def self.crypto_totp
       require 'benchmark/ips'
       begin
@@ -1061,14 +1262,23 @@ module Iodine
       puts 'TOTP (Time-based One-Time Password) Benchmarks'
       puts '=' * 70
 
-      # Generate a TOTP secret
-      secret = Iodine::Utils.totp_secret(len: 20)
-      # Decode for Iodine (it expects raw bytes)
-      # Note: Iodine's totp expects the raw secret, not base32 encoded
+      # Generate a raw 20-byte secret (the canonical TOTP secret).
+      # Iodine::Utils.totp expects raw bytes.
+      # ROTP expects a Base32-encoded string — we use the Base32 encoding of
+      # the same raw bytes so both implementations operate on the same secret.
       raw_secret = Iodine::Utils.random(20)
 
+      # totp_secret returns a Base32-encoded string from random bytes.
+      # We need the Base32 encoding of our specific raw_secret for ROTP.
+      # Use Iodine's own Base32 encoder via totp_secret if possible, otherwise
+      # fall back to ROTP's Base32 encoder.
       rotp_available = defined?(ROTP)
-      rotp_totp = ROTP::TOTP.new(secret) if rotp_available
+
+      if rotp_available
+        # Encode raw_secret to Base32 for ROTP
+        base32_secret = ROTP::Base32.encode(raw_secret)
+        rotp_totp = ROTP::TOTP.new(base32_secret)
+      end
 
       puts "\nTOTP Secret Generation:"
       ::Benchmark.ips do |x|
@@ -1085,7 +1295,7 @@ module Iodine
         x.compare!
       end
 
-      puts "\nTOTP Code Generation:"
+      puts "\nTOTP Code Generation (same secret, same time window):"
       ::Benchmark.ips do |x|
         x.report('Iodine totp') do
           Iodine::Utils.totp(secret: raw_secret)
@@ -1100,9 +1310,12 @@ module Iodine
         x.compare!
       end
 
-      puts "\nTOTP Verification (window: 1):"
-      current_code = Iodine::Utils.totp(secret: raw_secret)
+      # Verification: use the same window size for both.
+      # Iodine window:1 = check current ± 1 interval (3 codes total).
+      # ROTP drift_behind:30, drift_ahead:30 = check current ± 1 interval (3 codes total).
+      current_code = Iodine::Utils.totp(secret: raw_secret).to_i
 
+      puts "\nTOTP Verification (window: ±1 interval = 3 codes checked):"
       ::Benchmark.ips do |x|
         x.report('Iodine totp_verify') do
           Iodine::Utils.totp_verify(secret: raw_secret, code: current_code, window: 1)
@@ -1121,6 +1334,298 @@ module Iodine
       nil
     end
 
+    # Benchmarks Iodine's compression vs Ruby's Zlib stdlib.
+    #
+    # Tests Deflate, Gzip, and Brotli compression/decompression with
+    # various payload sizes and compressible content.
+    #
+    # FAIRNESS NOTES:
+    # - Both Iodine and Zlib use the same compression level (6 = default).
+    # - Payloads are compressible text (repeated English prose), not random
+    #   bytes. Random bytes are incompressible and would make compression
+    #   benchmarks meaningless.
+    # - Brotli has no Ruby stdlib equivalent; it is shown solo with a note.
+    # - Zlib::Deflate.deflate and Zlib::GzipWriter are the idiomatic one-shot
+    #   Ruby APIs and are used here.
+    def self.compression
+      require 'benchmark/ips'
+      require 'zlib'
+
+      puts '=' * 70
+      puts 'Compression Benchmarks'
+      puts '=' * 70
+      puts
+      puts 'NOTE: Payloads are compressible English text (not random bytes).'
+      puts 'Both Iodine and Zlib use compression level 6 (default).'
+      puts
+
+      # Compressible payload: repeated English prose
+      prose = "The quick brown fox jumps over the lazy dog. " \
+              "Pack my box with five dozen liquor jugs. " \
+              "How vexingly quick daft zebras jump! " \
+              "The five boxing wizards jump quickly. "
+
+      sizes = {
+        '1KB'  => 1024,
+        '16KB' => 16_384,
+        '64KB' => 65_536
+      }
+
+      # Label width — wide enough for 'Iodine Brotli.compress (no Zlib equiv)'
+      lw = 30
+
+      sizes.each do |size_name, size|
+        # Build a compressible payload of the target size
+        plaintext = (prose * ((size / prose.bytesize) + 1))[0, size]
+        plaintext.force_encoding(Encoding::BINARY)
+
+        puts "\n--- Payload Size: #{size_name} (compressible text) ---\n\n"
+
+        # ------------------------------------------------------------------
+        # Pre-compute all compressed inputs outside the hot loop so that
+        # decompression benchmarks only measure decompression, not compression.
+        # ------------------------------------------------------------------
+        iodine_deflated = Iodine::Base::Compression::Deflate.compress(plaintext, level: 6)
+        zlib_deflated   = Zlib::Deflate.deflate(plaintext, Zlib::DEFAULT_COMPRESSION)
+
+        iodine_gzipped = Iodine::Base::Compression::Gzip.compress(plaintext, level: 6)
+        zlib_gzipped   = begin
+          sio = StringIO.new(String.new, 'wb')
+          gz = Zlib::GzipWriter.new(sio, Zlib::DEFAULT_COMPRESSION)
+          gz.write(plaintext)
+          gz.close
+          sio.string
+        end
+
+        iodine_brotli = Iodine::Base::Compression::Brotli.compress(plaintext, quality: 4)
+
+        # ------------------------------------------------------------------
+        # Unified compress block — all algorithms compete side-by-side.
+        # Brotli has no Zlib equivalent but is included for ranking context.
+        # x.compare! prints a ranked table so the fastest algorithm is clear.
+        # ------------------------------------------------------------------
+        puts "Compress — all algorithms ranked (level 6 / quality 4):"
+        puts "  (Brotli has no Zlib equivalent — included for ranking context)"
+        ::Benchmark.ips do |x|
+          x.report('Iodine Deflate.compress'.ljust(lw)) do
+            Iodine::Base::Compression::Deflate.compress(plaintext, level: 6)
+          end
+          x.report('Zlib::Deflate.deflate'.ljust(lw)) do
+            Zlib::Deflate.deflate(plaintext, Zlib::DEFAULT_COMPRESSION)
+          end
+          x.report('Iodine Gzip.compress'.ljust(lw)) do
+            Iodine::Base::Compression::Gzip.compress(plaintext, level: 6)
+          end
+          x.report('Zlib gzip (StringIO)'.ljust(lw)) do
+            sio = StringIO.new(String.new, 'wb')
+            gz = Zlib::GzipWriter.new(sio, Zlib::DEFAULT_COMPRESSION)
+            gz.write(plaintext)
+            gz.close
+            sio.string
+          end
+          # Brotli has no Zlib equivalent — included for throughput ranking context
+          x.report('Iodine Brotli.compress (no Zlib equiv)'.ljust(lw)) do
+            Iodine::Base::Compression::Brotli.compress(plaintext, quality: 4)
+          end
+          x.compare!
+        end
+
+        # ------------------------------------------------------------------
+        # Unified decompress block — all algorithms compete side-by-side.
+        # Each implementation decompresses its own format (fair comparison).
+        # Brotli has no Zlib equivalent but is included for ranking context.
+        # ------------------------------------------------------------------
+        puts "\nDecompress — all algorithms ranked:"
+        puts "  (Brotli has no Zlib equivalent — included for ranking context)"
+        ::Benchmark.ips do |x|
+          x.report('Iodine Deflate.decompress'.ljust(lw)) do
+            Iodine::Base::Compression::Deflate.decompress(iodine_deflated)
+          end
+          x.report('Zlib::Inflate.inflate'.ljust(lw)) do
+            Zlib::Inflate.inflate(zlib_deflated)
+          end
+          x.report('Iodine Gzip.decompress'.ljust(lw)) do
+            Iodine::Base::Compression::Gzip.decompress(iodine_gzipped)
+          end
+          x.report('Zlib::GzipReader'.ljust(lw)) do
+            Zlib::GzipReader.new(StringIO.new(zlib_gzipped)).read
+          end
+          # Brotli has no Zlib equivalent — included for throughput ranking context
+          x.report('Iodine Brotli.decompress (no Zlib equiv)'.ljust(lw)) do
+            Iodine::Base::Compression::Brotli.decompress(iodine_brotli)
+          end
+          x.compare!
+        end
+      end
+
+      nil
+    end
+
+    # Benchmarks Iodine's non-cryptographic hash functions.
+    #
+    # Tests risky_hash (64-bit), risky256, risky512, and crc32 against
+    # Ruby stdlib equivalents where available.
+    #
+    # FAIRNESS NOTES:
+    # - risky_hash and String#hash serve the same purpose: seeding hash maps.
+    #   Ruby's Hash tables use String#hash (SipHash, seeded per-process).
+    #   Iodine's MiniMap uses risky_hash — a faster alternative to SipHash with
+    #   proven collision resistance and superior bit distribution.
+    # - crc32 is compared against Zlib.crc32 (same polynomial: ITU-T V.42).
+    # - risky256/risky512 have no stdlib equivalents; shown for reference only.
+    def self.non_crypto_hashing
+      require 'benchmark/ips'
+      require 'zlib'
+
+      puts '=' * 70
+      puts 'Non-Cryptographic Hash Benchmarks'
+      puts '=' * 70
+      puts
+      puts 'NOTE: risky_hash and String#hash both seed hash maps — a direct'
+      puts 'comparison. Ruby Hash uses String#hash (SipHash, per-process seed).'
+      puts 'Iodine MiniMap uses risky_hash: faster than SipHash with proven'
+      puts 'collision resistance and superior bit distribution.'
+      puts
+
+      sizes = {
+        '64B'  => 64,
+        '1KB'  => 1024,
+        '64KB' => 65_536
+      }
+
+      # Label width — wide enough for 'Iodine risky512 (non-crypto, 64B)'
+      lw = 32
+
+      sizes.each do |size_name, size|
+        data = Iodine::Utils.random(size)
+
+        puts "\n--- Data Size: #{size_name} — all non-crypto hashes ranked together ---\n\n"
+        puts "  (risky256/risky512 have no stdlib equivalent; String#hash uses SipHash — same use case as risky_hash)"
+        puts
+
+        # ------------------------------------------------------------------
+        # Unified block: all non-crypto hash algorithms compete side-by-side.
+        # x.compare! prints a ranked table so the fastest algorithm is clear.
+        # ------------------------------------------------------------------
+        ::Benchmark.ips do |x|
+          x.report('Iodine risky_hash (64-bit)'.ljust(lw)) do
+            Iodine::Utils.risky_hash(data)
+          end
+          x.report('Iodine crc32 (32-bit)'.ljust(lw)) do
+            Iodine::Utils.crc32(data)
+          end
+          # risky256/risky512 have no stdlib equivalent — included for ranking context
+          x.report('Iodine risky256 (non-crypto, 32B)'.ljust(lw)) do
+            Iodine::Utils.risky256(data)
+          end
+          x.report('Iodine risky512 (non-crypto, 64B)'.ljust(lw)) do
+            Iodine::Utils.risky512(data)
+          end
+          # Zlib.crc32 — direct equivalent for crc32 (same ITU-T V.42 polynomial)
+          x.report('Zlib.crc32'.ljust(lw)) do
+            Zlib.crc32(data)
+          end
+          # String#hash uses SipHash (seeded per-process) — same use case as
+          # risky_hash: both are hash-map hash functions. Direct comparison.
+          x.report('String#hash (SipHash, per-process)'.ljust(lw)) do
+            data.hash
+          end
+          x.compare!
+        end
+      end
+
+      nil
+    end
+
+    # Benchmarks Iodine's X25519+ML-KEM-768 post-quantum hybrid KEM.
+    #
+    # X25519MLKEM768 is a hybrid Key Encapsulation Mechanism that combines:
+    # - Classical X25519 elliptic curve Diffie-Hellman
+    # - ML-KEM-768 (formerly Kyber), a post-quantum lattice-based KEM
+    #
+    # The hybrid construction provides security against both classical and
+    # quantum computer attacks. Even if one algorithm is broken, the other
+    # still provides security.
+    #
+    # Key sizes:
+    # - Secret key: 2432 bytes  |  Public key: 1216 bytes
+    # - Ciphertext: 1120 bytes  |  Shared secret: 64 bytes
+    #
+    # There is no Ruby stdlib or OpenSSL equivalent for ML-KEM-768.
+    # X25519.keypair is included for relative cost comparison only.
+    #
+    # FAIRNESS NOTES:
+    # - Keypairs are generated OUTSIDE the encapsulate/decapsulate hot loops.
+    # - X25519.keypair is shown alongside X25519MLKEM768.keypair so readers
+    #   can see the overhead of adding ML-KEM-768 to a classical X25519 key.
+    # - No compare! for solo benchmarks (no stdlib equivalent).
+    def self.crypto_pqkem
+      require 'benchmark/ips'
+
+      puts '=' * 70
+      puts 'Post-Quantum Hybrid KEM Benchmarks (X25519 + ML-KEM-768)'
+      puts '=' * 70
+      puts
+      puts 'NOTE: X25519MLKEM768 is a hybrid KEM combining classical X25519 with'
+      puts 'ML-KEM-768 (Kyber). No Ruby stdlib or OpenSSL equivalent exists.'
+      puts 'X25519.keypair is shown for relative cost comparison only.'
+      puts
+
+      # ------------------------------------------------------------------
+      # Key generation — compare X25519MLKEM768 vs plain X25519
+      # ------------------------------------------------------------------
+      puts 'Key Generation (X25519MLKEM768 vs X25519 for relative cost):'
+      ::Benchmark.ips do |x|
+        x.report('Iodine X25519MLKEM768.keypair') do
+          Iodine::Base::Crypto::X25519MLKEM768.keypair
+        end
+
+        # X25519 keypair shown for relative cost reference only.
+        # X25519MLKEM768 is expected to be significantly slower due to ML-KEM-768.
+        x.report('Iodine X25519.keypair (classical, for reference)') do
+          Iodine::Base::Crypto::X25519.keypair
+        end
+
+        x.compare!
+      end
+
+      # Generate a keypair outside the hot loop for encapsulate/decapsulate
+      pqkem_sk, pqkem_pk = Iodine::Base::Crypto::X25519MLKEM768.keypair
+
+      # ------------------------------------------------------------------
+      # Encapsulation — sender generates shared secret + ciphertext
+      #
+      # No stdlib equivalent; shown for throughput reference only.
+      # ------------------------------------------------------------------
+      puts "\nEncapsulation (sender generates shared secret + 1120-byte ciphertext):"
+      puts "  [No stdlib equivalent — shown for throughput reference only]"
+      ::Benchmark.ips do |x|
+        x.report('Iodine X25519MLKEM768.encapsulate') do
+          Iodine::Base::Crypto::X25519MLKEM768.encapsulate(public_key: pqkem_pk)
+        end
+        # No compare! — no stdlib equivalent
+      end
+
+      # Generate a ciphertext outside the hot loop for decapsulate
+      pqkem_ct, = Iodine::Base::Crypto::X25519MLKEM768.encapsulate(public_key: pqkem_pk)
+
+      # ------------------------------------------------------------------
+      # Decapsulation — recipient recovers shared secret from ciphertext
+      #
+      # No stdlib equivalent; shown for throughput reference only.
+      # ------------------------------------------------------------------
+      puts "\nDecapsulation (recipient recovers 64-byte shared secret from ciphertext):"
+      puts "  [No stdlib equivalent — shown for throughput reference only]"
+      ::Benchmark.ips do |x|
+        x.report('Iodine X25519MLKEM768.decapsulate') do
+          Iodine::Base::Crypto::X25519MLKEM768.decapsulate(ciphertext: pqkem_ct, secret_key: pqkem_sk)
+        end
+        # No compare! — no stdlib equivalent
+      end
+
+      nil
+    end
+
     # Runs all crypto benchmarks.
     #
     # This is a convenience method that runs all crypto-related benchmarks:
@@ -1130,6 +1635,9 @@ module Iodine
     # - crypto_ecies (public-key encryption)
     # - crypto_kdf (HKDF key derivation)
     # - crypto_totp (TOTP generation/verification)
+    # - compression (Deflate, Gzip, Brotli)
+    # - non_crypto_hashing (risky_hash, crc32, risky256, risky512)
+    # - crypto_pqkem (X25519+ML-KEM-768 post-quantum hybrid KEM)
     def self.crypto_all
       puts "\n" + '=' * 70
       puts 'Running All Crypto Benchmarks'
@@ -1146,6 +1654,12 @@ module Iodine
       crypto_kdf
       puts "\n"
       crypto_totp
+      puts "\n"
+      compression
+      puts "\n"
+      non_crypto_hashing
+      puts "\n"
+      crypto_pqkem
 
       puts "\n" + '=' * 70
       puts 'All Crypto Benchmarks Complete'

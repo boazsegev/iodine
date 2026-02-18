@@ -12,13 +12,15 @@ Gem::Specification.new do |spec|
   spec.description = 'A fast HTTP / Websocket Server with built-in Pub/Sub support (with or without Redis), static file support and many other features, optimized for Ruby MRI on Linux / BSD / macOS / Windows'
   spec.homepage = "https://github.com/boazsegev/iodine"
   spec.license = "MIT"
-  spec.required_ruby_version = ">= 3.0.0"
+  # Minimum version aligns with actively maintained Ruby releases.
+  # See: https://www.ruby-lang.org/en/downloads/branches/
+  spec.required_ruby_version = ">= 3.2.0"
 
   spec.metadata["allowed_push_host"] = "https://rubygems.org"
 
   spec.metadata["homepage_uri"] = spec.homepage
   spec.metadata["source_code_uri"] = "https://github.com/boazsegev/iodine"
-  spec.metadata["changelog_uri"] = "https://github.com/boazsegev/iodine/CHANGELOG.md"
+  spec.metadata["changelog_uri"] = "https://github.com/boazsegev/iodine/blob/master/CHANGELOG.md"
 
   # Specify which files should be added to the gem when it is released.
   # The `git ls-files -z` loads the files in the RubyGem that have been added into git.
@@ -29,18 +31,15 @@ Gem::Specification.new do |spec|
   end
   spec.bindir = "exe"
   spec.executables = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
-  spec.require_paths = ["lib", "ext"]
+  spec.require_paths = ["lib"]
   
   # Development dependencies
   spec.add_development_dependency 'rake-compiler', '>= 1', '< 2.0'
 
   spec.extensions = %w(ext/iodine/extconf.rb)
-  spec.post_install_message = "Thank you for installing Iodine #{Iodine::VERSION}.\n" +
-                              "Remember: if iodine supports your business, it's only fair to give value back (code contributions / donations)."
+  spec.post_install_message = "Thank you for installing Iodine #{Iodine::VERSION}."
 
-  # Uncomment to register a new dependency of your gem
-  # spec.add_dependency "example-gem", "~> 1.0"
-
-  # For more information and examples about making a new gem, check out our
-  # guide at: https://bundler.io/guides/creating_gem.html
+  # Development dependencies
+  spec.add_development_dependency 'rake', '~> 13.0'
+  spec.add_development_dependency 'rspec', '~> 3.0'
 end

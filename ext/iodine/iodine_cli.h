@@ -279,6 +279,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
     io_fn = fio_tls13_io_functions();
     fio_io_tls_default_functions(&io_fn);
     iodine_tls_default_set(Qnil, ID2SYM(rb_intern("iodine")));
+    fio_cli_set("-tls", "1");
     FIO_LOG_DEBUG2("TLS 1.3 registered as default TLS implementation");
   }
 

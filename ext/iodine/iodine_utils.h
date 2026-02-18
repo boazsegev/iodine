@@ -163,8 +163,9 @@ Time to String Helpers
 ***************************************************************************** */
 
 FIO_IFUNC time_t iodine_utils_rb2time(VALUE rtm) {
-  rtm = rb_funcallv(rtm, rb_intern("to_i"), 0, NULL);
-  return FIX2LONG(rtm) ? FIX2LONG(rtm) : fio_time_real().tv_sec;
+  rtm = (rtm == Qnil ? LONG2NUM(0)
+                     : rb_funcallv(rtm, rb_intern("to_i"), 0, NULL));
+  return NUM2LONG(rtm) ? NUM2LONG(rtm) : fio_time_real().tv_sec;
 }
 
 /** Takes a Time object and returns a String conforming to RFC 2109. */
@@ -246,7 +247,7 @@ FIO_SFUNC VALUE iodine_utils_is_eq(VALUE mod, VALUE a, VALUE b) { // clang-forma
 Randomness and Friends
 ***************************************************************************** */
 
-FIO_DEFINE_RANDOM128_FN(static, iodine_random, 31, 0)
+FIO_DEFINE_RANDOM128_FN(static, iodine_random, 10, 0)
 
 FIO_SFUNC VALUE iodine_utils_hmac512(VALUE self, VALUE secret, VALUE massage) {
   rb_check_type(secret, RUBY_T_STRING);
@@ -373,6 +374,31 @@ FIO_SFUNC VALUE iodine_utils_sha1(VALUE self, VALUE data) {
 }
 
 /**
+ * Computes CRC32 checksum (ITU-T V.42 / ISO 3309 / gzip polynomial 0xEDB88320).
+ *
+ * Uses a slicing-by-8 algorithm for high throughput. This is the standard CRC32
+ * used by gzip, zlib, and Ethernet — NOT the Castagnoli (CRC32-C) variant.
+ *
+ * Supports incremental computation: pass the previous return value as
+ * `initial_crc` to continue a checksum over multiple buffers.
+ *
+ * @param data [String] Input data to checksum
+ * @param initial_crc: [Integer] Starting CRC value (default: 0)
+ * @return [Integer] 32-bit CRC32 checksum
+ */
+FIO_SFUNC VALUE iodine_utils_crc32(int argc, VALUE *argv, VALUE self) {
+  fio_buf_info_s data = FIO_BUF_INFO0;
+  uint32_t initial_crc = 0;
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_U32(initial_crc, 0, "initial_crc", 0));
+  uint32_t crc = fio_crc32(data.buf, data.len, initial_crc);
+  return UINT2NUM(crc);
+  (void)self;
+}
+
+/**
  * Computes facil.io Risky Hash (non-cryptographic, fast).
  *
  * @param data [String] Input data to hash
@@ -490,8 +516,8 @@ FIO_SFUNC VALUE iodine_utils_blake2b(int argc, VALUE *argv, VALUE self) {
   if (len < 1 || len > 64)
     rb_raise(rb_eArgError, "len must be between 1 and 64");
   uint8_t out[64];
-  fio_blake2b_hash(out, (size_t)len, key.buf, key.len, data.buf, data.len);
-  return rb_str_new((const char *)out, (long)len);
+  fio_blake2b_hash(out, (size_t)len, data.buf, data.len, key.buf, key.len);
+  return rb_enc_str_new((const char *)out, (long)len, IodineBinaryEncoding);
   (void)self;
 }
 
@@ -507,8 +533,8 @@ FIO_SFUNC VALUE iodine_utils_blake2s(int argc, VALUE *argv, VALUE self) {
   if (len < 1 || len > 32)
     rb_raise(rb_eArgError, "len must be between 1 and 32");
   uint8_t out[32];
-  fio_blake2s_hash(out, (size_t)len, key.buf, key.len, data.buf, data.len);
-  return rb_str_new((const char *)out, (long)len);
+  fio_blake2s_hash(out, (size_t)len, data.buf, data.len, key.buf, key.len);
+  return rb_enc_str_new((const char *)out, (long)len, IodineBinaryEncoding);
   (void)self;
 }
 
@@ -611,6 +637,7 @@ FIO_SFUNC VALUE iodine_utils_uuid(int argc, VALUE *argv, VALUE self) {
   (void)self;
 }
 
+/** Generates random data, high entropy, not cryptographically tested. */
 FIO_SFUNC VALUE iodine_utils_random(int argc, VALUE *argv, VALUE self) {
   VALUE r = Qnil;
   size_t size = 16;
@@ -692,9 +719,9 @@ FIO_SFUNC VALUE iodine_utils_totp_secret(int argc, VALUE *argv, VALUE self) {
   if (len < 10 || len > 64)
     rb_raise(rb_eArgError, "len must be between 10 and 64");
 
-  /* Generate random bytes using secure CSPRNG */
+  /* Generate a good enough random key */
   uint8_t key[64];
-  fio_rand_bytes(key, (size_t)len);
+  fio_rand_bytes_secure(key, (size_t)len);
 
   /* Base32 encode (output is roughly 8/5 of input, plus null terminator) */
   char encoded[128];
@@ -882,6 +909,7 @@ static void Init_Iodine_Utils(void) {
   rb_define_singleton_method(m, "shake128", iodine_utils_shake128, -1);
   rb_define_singleton_method(m, "shake256", iodine_utils_shake256, -1);
   rb_define_singleton_method(m, "sha1", iodine_utils_sha1, 1);
+  rb_define_singleton_method(m, "crc32", iodine_utils_crc32, -1);
   rb_define_singleton_method(m, "risky_hash", iodine_utils_risky_hash, -1);
   rb_define_singleton_method(m, "risky256", iodine_utils_risky256, 1);
   rb_define_singleton_method(m, "risky512", iodine_utils_risky512, 1);

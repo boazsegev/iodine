@@ -19,6 +19,11 @@
 spec/examples.txt
 spec/log
 
-# AI local files
-AI-MEMORY*
+# AI working files (never commit these)
+AI-MEMORY.json
+AI-TODO.json
+AI-TODO.md
+AI-*.json
+AI-*.md
+AI-*.txt
 AI-*

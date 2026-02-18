@@ -235,9 +235,9 @@ static int iodine_rb2c_arg(int argc, const VALUE *argv, iodine_rb2c_arg_s *a) {
     if (tmp != Qnil) {                                                         \
       if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                      \
         rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);       \
-      if ((size_t)NUM2LL(tmp) > 0xFFFFFFFFULL)                                 \
+      if ((size_t)NUM2ULL(tmp) > 0xFFFFFFFFULL)                                \
         rb_raise(rb_eRangeError, "%s out of range", a[i].name.buf);            \
-      a[i].u32[0] = (uint32_t)NUM2INT(tmp);                                    \
+      a[i].u32[0] = (uint32_t)NUM2ULL(tmp);                                    \
     }                                                                          \
     continue;                                                                  \
   case 12:                                                                     \

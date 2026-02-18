@@ -79,6 +79,7 @@ static VALUE iodine_rb_IODINE_CONNECTION;
 static VALUE iodine_rb_IODINE_PUBSUB;
 static VALUE iodine_rb_IODINE_PUBSUB_ENG;
 static VALUE iodine_rb_IODINE_PUBSUB_MSG;
+static VALUE iodine_rb_IODINE_PUBSUB_SUB;
 static VALUE iodine_rb_IODINE_TLS;
 static rb_encoding *IodineUTF8Encoding;
 static rb_encoding *IodineBinaryEncoding;
@@ -176,6 +177,7 @@ FIO_LEAK_COUNTER_DEF(iodine_connection)
 FIO_LEAK_COUNTER_DEF(iodine_minimap)
 FIO_LEAK_COUNTER_DEF(iodine_mustache)
 FIO_LEAK_COUNTER_DEF(iodine_pubsub_msg)
+FIO_LEAK_COUNTER_DEF(iodine_pubsub_sub)
 // FIO_LEAK_COUNTER_DEF(iodine_pubsub_eng) /* Ruby doesn't free */
 FIO_LEAK_COUNTER_DEF(iodine_hmap)
 

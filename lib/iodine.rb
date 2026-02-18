@@ -9,13 +9,12 @@ require_relative 'iodine/version'
 require 'iodine/iodine'
 
 # Support common ENV options for setting concurrency.
-
-Iodine.threads = ENV['THREADS'].to_i if Iodine.threads.zero?
-Iodine.workers = ENV['WORKERS'].to_i if Iodine.workers.zero?
-Iodine.threads = ENV['WEB_THREADS'].to_i if Iodine.threads.zero?
-Iodine.workers = ENV['WEB_WORKERS'].to_i if Iodine.workers.zero?
-Iodine.threads = ENV['RAILS_MAX_THREADS'].to_i if Iodine.threads.zero?
-Iodine.workers = ENV['WEB_CONCURRENCY'].to_i if Iodine.workers.zero?
+Iodine.threads = ENV['RAILS_MAX_THREADS'].to_i if ENV['RAILS_MAX_THREADS'] && Iodine.threads.zero?
+Iodine.workers = ENV['WEB_CONCURRENCY'].to_i if ENV['WEB_CONCURRENCY'] && Iodine.workers.zero?
+Iodine.threads = ENV['WEB_THREADS'].to_i if ENV['WEB_THREADS'] && Iodine.threads.zero?
+Iodine.workers = ENV['WEB_WORKERS'].to_i if ENV['WEB_WORKERS'] && Iodine.workers.zero?
+Iodine.threads = ENV['THREADS'].to_i if ENV['THREADS'] && Iodine.threads.zero?
+Iodine.workers = ENV['WORKERS'].to_i if ENV['WORKERS'] && Iodine.workers.zero?
 
 module Iodine
   class Base
@@ -23,6 +22,18 @@ module Iodine
     def self.trap_sigint
       old_trap = trap('SIGINT') { puts "(#{Process.pid}) Received Ctrl-C and shutting down iodine." }
       trap('SIGINT', &old_trap) if old_trap && old_trap.respond_to?(:call)
+    end
+  end
+
+  module PubSub
+    class Engine
+      # Base publish method — subclasses override this to route messages to
+      # external brokers. The default implementation is a no-op (the built-in
+      # CLUSTER and LOCAL engines handle delivery in C).
+      #
+      # @param msg [Iodine::PubSub::Message] the message to publish
+      # @return [void]
+      def publish(msg); end
     end
   end
 end

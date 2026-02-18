@@ -5,7 +5,7 @@ module Iodine
   VERSION = "0.8.0.rc.02"
   # NeoRack supported extensions.
   def self.extensions
-    return (@extentions ||= { neo_rack: "0.0.2".split(?.),
+    return (@extensions ||= { neo_rack: "0.0.2".split(?.),
                               cookies: "0.0.1".split(?.),
                               from: "0.0.1".split(?.),
                               pubsub: "0.0.1".split(?.),

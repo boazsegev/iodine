@@ -1,7 +1,22 @@
 # frozen_string_literal: true
 
-RSpec.describe Iodine::PubSub::Engine::Redis do
-  let(:redis_url) { ENV.fetch('REDIS_URL', 'redis://localhost:6379/') }
+require 'socket'
+require 'uri'
+
+# Skip the entire file if no Redis server is reachable.
+REDIS_URL = ENV.fetch('REDIS_URL', 'redis://localhost:6379/')
+REDIS_AVAILABLE = begin
+  uri   = URI.parse(REDIS_URL)
+  host  = uri.host || 'localhost'
+  port  = uri.port || 6379
+  Socket.tcp(host, port, connect_timeout: 1).close
+  true
+rescue
+  false
+end
+
+RSpec.describe Iodine::PubSub::Engine::Redis, skip: !REDIS_AVAILABLE && 'Redis server not available' do
+  let(:redis_url) { REDIS_URL }
 
   describe '.new' do
     it 'creates a Redis engine with default ping' do

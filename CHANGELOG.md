@@ -1,15 +1,13 @@
 # Iodine
 
 [![Gem Version](https://badge.fury.io/rb/iodine.svg)](https://badge.fury.io/rb/iodine)
-[![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
-
 Please notice that this change log contains updates for upcoming releases as well as previous releases.
 
 Please refer to the current gem version to review the relevant changes for your release.
 
 ## Changes
 
-#### Change log v.0.8.0.rc (2025----)
+#### Change log v0.8.0.rc02 (2026-02-18)
 
 **Update**: updated to facil.io 0.8.0, using the latest version of the [facil.io C STL](https://github.com/facil-io/cstl).
 
@@ -27,15 +25,47 @@ Please refer to the current gem version to review the relevant changes for your 
 
 **Feature**: New `Iodine::TLS.default` and `Iodine::TLS.default=` methods allow runtime switching between TLS backends (`:openssl` or `:iodine`).
 
+**Feature**: New `Iodine.secret` and `Iodine.secret=` methods for server-wide secret management. The secret is used for cryptographic operations (session signing, CSRF tokens, etc.) and can be seeded from the `SECRET` environment variable or set explicitly before starting the server.
+
+**Feature**: `Iodine::Listener` (returned by `Iodine.listen`) now supports URL-based routing via `Iodine::Listener#map(url, handler)`. Partial path matches are supported (e.g., mapping `"/api"` routes all `"/api/*"` requests to the given handler, with the matched prefix stripped from `connection.path`).
+
+**Feature**: New `Iodine.make_resource(handler)` method and `Iodine::Connection::ResourceHandler` interface for automatic REST/CRUD routing. Adds an `on_http` implementation that dispatches `GET /`, `GET /:id`, `GET /new`, `GET /:id/edit`, `POST /`, `PATCH /:id`, `PUT /:id`, and `DELETE /:id` to the corresponding `index`, `show`, `new`, `edit`, `create`, `update`, and `delete` callbacks.
+
+**Feature**: New `Iodine::PubSub::History` module for in-process message history and replay. Call `Iodine::PubSub::History.cache` to enable the built-in memory cache (default 256 MB limit), then subscribe with a `since:` timestamp to replay missed messages. Custom history backends can be implemented by subclassing `Iodine::PubSub::History::Manager`.
+
 **Feature**: Extended `Iodine::Utils` with cryptographic hashing functions: `sha256`, `sha512`, `sha3_256`, `sha3_512`, `blake2b`, `blake2s`, `hmac256`.
+
+**Feature**: Extended `Iodine::Utils` with additional hashing and MAC functions: `sha3_224`, `sha3_384`, `shake128` (XOF, variable-length), `shake256` (XOF, variable-length), `sha1` (legacy/protocol compatibility), `hmac512`, `hmac160`, `hmac128` (Poly1305-MAC).
+
+**Feature**: Extended `Iodine::Utils` with non-cryptographic hash functions: `risky_hash` (64-bit, seeded), `risky256` (256-bit), `risky512` (512-bit), `risky256_hmac`, `risky512_hmac`. Suitable for hash tables, checksums, and data partitioning; not for security use.
+
+**Feature**: Extended `Iodine::Utils` with `crc32(data, initial_crc: 0)` — CRC32 checksum (ITU-T V.42 / gzip polynomial) with support for incremental computation across multiple buffers.
+
+**Feature**: Extended `Iodine::Utils` with `secure_random(bytes: 32)` — cryptographically secure random bytes using the system CSPRNG (`arc4random_buf` on BSD/macOS, `/dev/urandom` on Linux).
 
 **Feature**: Extended `Iodine::Utils` with TOTP utilities: `totp_secret` (generate Base32 secrets) and `totp_verify` (verify codes with time window).
 
 **Feature**: New `Iodine::Base::Crypto` module with modern cryptographic primitives:
-- `ChaCha20Poly1305` - AEAD encryption/decryption
-- `Ed25519` - Digital signatures (keypair, sign, verify)
-- `X25519` - Key exchange and public-key encryption (ECIES)
-- `HKDF` - Key derivation (RFC 5869)
+- `ChaCha20Poly1305` - AEAD encryption/decryption (12-byte nonce)
+- `XChaCha20Poly1305` - AEAD encryption/decryption (24-byte nonce, safe for random nonces)
+- `AES128GCM` - AEAD encryption/decryption with AES-128 (12-byte nonce)
+- `AES256GCM` - AEAD encryption/decryption with AES-256 (12-byte nonce)
+- `Ed25519` - Digital signatures (keypair, sign, verify, key conversion to X25519)
+- `X25519` - Key exchange (ECDH) and public-key encryption (ECIES with ChaCha20, AES-128-GCM, or AES-256-GCM via `encrypt`, `encrypt_aes128`, `encrypt_aes256`)
+- `HKDF` - Key derivation (RFC 5869, SHA-256 or SHA-384)
+- `X25519MLKEM768` - Post-quantum hybrid KEM (X25519 + ML-KEM-768 / Kyber)
+
+**Feature**: New `Iodine::Base::Compression` module with `Deflate`, `Gzip`, and `Brotli` submodules, each providing `compress` and `decompress` class methods. Supports configurable compression levels.
+
+**Feature**: `Iodine::JSON.beautify(ruby_object)` — pretty-prints a Ruby object as a formatted JSON string.
+
+**Feature**: `Iodine::Connection#publish` instance method added alongside the existing `Iodine::Connection.publish` class method. The instance method publishes to everyone *except* the calling connection (per the NeoRack pub/sub extension).
+
+**Fix**: WebSocket `write` now correctly sends text frames for UTF-8 encoded strings and binary frames for non-UTF-8 strings, matching the WebSocket specification.
+
+**Fix**: Fixed a type mismatch that caused incorrect behavior in certain connection scenarios. Credit to @michal-kazmierczak (Michał Kaźmierczak) for reporting issue #156.
+
+**Breaking Change**: Removed deprecated `Iodine::PubSub::Engine::ROOT`, `Iodine::PubSub::Engine::PROCESS`, and `Iodine::PubSub::Engine::SIBLINGS` constants. Use `Iodine::PubSub::Engine::LOCAL` (local machine, all processes) or `Iodine::PubSub::Engine::CLUSTER` (entire cluster, default) instead.
 
 ------------------------
 

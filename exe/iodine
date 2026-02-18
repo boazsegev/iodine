@@ -8,7 +8,7 @@ module Iodine
     class NeoRackUp
       module NOOPHandler
       end
-      module MiddleWare_Pre
+      module MiddleWarePre__
         def initialize(*args, &blk);                @app = args[0]; super; end
       private
         def method_missing(method_name, *arguments)
@@ -16,7 +16,7 @@ module Iodine
             m.call(*arguments)
         end
       end
-      module MiddleWare_Def
+      module MiddleWareDef__
         def on_http(e);                     @app.on_http(e); end
         def on_finish(e);                   @app.on_finish(e); end
         def call(env);                      @app.call(env); end
@@ -33,13 +33,13 @@ module Iodine
         def on_eventsource_reconnect(e,id); @app.on_eventsource_reconnect(e,id); end
       end
 
-      UTF_8_BOM = '\xef\xbb\xbf'
+      UTF_8_BOM = "\xef\xbb\xbf"
 
       # uses specified Middleware class.
       def use(mw, *args, &block)
         @middleware ||= []
-        mw.prepend ::Iodine::Base::NeoRackUp::MiddleWare_Pre
-        mw.include ::Iodine::Base::NeoRackUp::MiddleWare_Def
+        mw.prepend ::Iodine::Base::NeoRackUp::MiddleWarePre__
+        mw.include ::Iodine::Base::NeoRackUp::MiddleWareDef__
         @middleware <<[mw, args, block]
       end
       # Maps a URL path to a specific NeoRack Application
@@ -82,7 +82,7 @@ module Iodine
         raise "`run` called more than once." if @app
         raise "Missing either an application handler or a block for the `run` instruction." unless a
         raise "Missing both `on_http(e)` and `call(env)` in provided App." unless (a.respond_to?(:on_http) || a.respond_to?(:call))
-        Iodine::Base.add_missing_handlar_methods(a)
+        Iodine::Base.add_missing_handler_methods(a)
         while(@middleware && !@middleware.empty?)
           m = @middleware.pop
           a = m[0].new(a, *m[1], &m[2])
@@ -215,7 +215,7 @@ if Iodine::Base::CLI['-pid']
   pid_filename = Iodine::Base::CLI['-pid']
   pid_filename << "iodine.pid" if(pid_filename[-1] == '/')
   if File.exist?(pid_filename)
-    raise "pid filename shold point to a valid file name (not a folder)!" if(!File.file?(pid_filename))
+    raise "pid filename should point to a valid file name (not a folder)!" if(!File.file?(pid_filename))
     raise "pid filename error! (doesn't end with .pid)" if(File.extname(pid_filename) != '.pid')
     File.delete(pid_filename)
   end

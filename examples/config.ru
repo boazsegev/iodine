@@ -20,7 +20,7 @@ module App
   end
 end
 
-map("/hello") { map("/echo") { run App }; run {|e| [200, {}, "Hello World"] } }
+map("/hello") { map("/echo") { run App }; run {|e| [200, {}, ["Hello World"]] } }
 run App
 
 # Benchmark with keep-alive:
