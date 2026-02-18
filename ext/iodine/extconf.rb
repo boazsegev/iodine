@@ -27,4 +27,9 @@ $defs << '-DDEBUG' if ENV['DEBUG']
 append_cflags('-Wno-undef')
 append_cflags('-Wno-missing-noreturn')
 
+# Windows requires crypt32 for cryptographic primitives used by the TLS backend
+if /mingw|mswin/ =~ RUBY_PLATFORM
+  $libs = append_library($libs, 'crypt32')
+end
+
 create_makefile 'iodine/iodine'
