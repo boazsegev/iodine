@@ -120,6 +120,18 @@ static VALUE IODINE_RACK_AFTER_RPLY_STR;
 /* *****************************************************************************
 facil.io
 ***************************************************************************** */
+
+/* Fix: __attribute__((weak)) doesn't work correctly on Windows PE/COFF
+   (MinGW DLLs) — weak symbols may not be properly allocated in the DLL's data
+   segment, causing segfaults when accessed (e.g., writing to FIO_LOG_LEVEL).
+   Since iodine compiles as a single translation unit, weak symbols are
+   unnecessary — override FIO_WEAK to empty before fio-stl.h is included. */
+#if defined(_WIN32) || defined(__MINGW32__) || defined(__CYGWIN__)
+#ifndef FIO_WEAK
+#define FIO_WEAK /* empty — no weak attribute on Windows */
+#endif
+#endif
+
 #define FIO_LEAK_COUNTER            1
 #define FIO_MUSTACHE_LAMBDA_SUPPORT 1
 #define FIO_THREADS_BYO             1
