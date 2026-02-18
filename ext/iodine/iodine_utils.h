@@ -619,20 +619,18 @@ FIO_SFUNC VALUE iodine_utils_uuid(int argc, VALUE *argv, VALUE self) {
     rand.u8[8] &= 0x3F;
     rand.u8[8] |= 0x80;
   }
-
-  fio_string_write2(&str,
-                    NULL,
-                    FIO_STRING_WRITE_HEX(rand.u32[0]),
-                    FIO_STRING_WRITE_STR2("-", 1),
-                    FIO_STRING_WRITE_HEX(rand.u16[2]),
-                    FIO_STRING_WRITE_STR2("-", 1),
-                    FIO_STRING_WRITE_HEX(rand.u16[3]),
-                    FIO_STRING_WRITE_STR2("-", 1),
-                    FIO_STRING_WRITE_HEX(rand.u16[4]),
-                    FIO_STRING_WRITE_STR2("-", 1),
-                    FIO_STRING_WRITE_HEX(rand.u16[5]),
-                    FIO_STRING_WRITE_HEX(rand.u32[3]));
-  r = rb_str_new(str.buf, str.len);
+  fio_ltoa16u(str.buf, rand.u32[0], 8);
+  str.buf[8] = '-';
+  fio_ltoa16u(str.buf + 9, rand.u16[2], 4);
+  str.buf[13] = '-';
+  fio_ltoa16u(str.buf + 14, rand.u16[3], 4);
+  str.buf[18] = '-';
+  fio_ltoa16u(str.buf + 19, rand.u16[4], 4);
+  str.buf[23] = '-';
+  fio_ltoa16u(str.buf + 24, rand.u16[5], 4);
+  fio_ltoa16u(str.buf + 28, rand.u32[3], 8);
+  str.buf[36] = '0';
+  r = rb_str_new(str.buf, 36);
   return r;
   (void)self;
 }
