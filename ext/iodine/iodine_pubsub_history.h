@@ -162,7 +162,7 @@ static uint64_t iodine_pubsub_history___oldest(const fio_pubsub_history_s *hist,
 static void iodine_pubsub_history___detached(const fio_pubsub_history_s *hist) {
   iodine_pubsub_history_s *h = (iodine_pubsub_history_s *)hist;
   h->attached = 0;
-  iodine_ruby_call_outside(h->handler, rb_intern("on_cleanup"));
+  iodine_ruby_call_anywhere(h->handler, rb_intern("on_cleanup"));
 }
 
 static void *iodine_pubsub_history___push__in_GC(void *a_) {

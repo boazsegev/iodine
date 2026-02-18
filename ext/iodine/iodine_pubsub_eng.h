@@ -68,7 +68,7 @@ typedef struct iodine_pubsub_eng___args_s {
  */
 static void iodine_pubsub_eng___detached(const fio_pubsub_engine_s *eng) {
   iodine_pubsub_eng_s *e = (iodine_pubsub_eng_s *)eng;
-  iodine_ruby_call_outside(e->handler, rb_intern("on_cleanup"));
+  iodine_ruby_call_anywhere(e->handler, rb_intern("on_cleanup"));
 }
 
 static void *iodine_pubsub_eng___subscribe__in_GC(void *a_) {

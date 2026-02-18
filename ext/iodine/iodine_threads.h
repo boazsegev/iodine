@@ -72,11 +72,11 @@ FIO_IFUNC fio_thread_pid_t fio_thread_getpid(void) {
  */
 FIO_IFUNC int fio_thread_kill(fio_thread_pid_t i, int s) {
   VALUE args[] = {INT2NUM(s), PIDT2NUM(i)};
-  iodine_caller_result_s r = iodine_ruby_call_outside(rb_mProcess,
-                                                      rb_intern2("kill", 4),
-                                                      2,
-                                                      args,
-                                                      .ignore_exceptions = 1);
+  iodine_caller_result_s r = iodine_ruby_call_anywhere(rb_mProcess,
+                                                       rb_intern2("kill", 4),
+                                                       2,
+                                                       args,
+                                                       .ignore_exceptions = 1);
   if (r.exception)
     return -1;
   return 0;
@@ -107,7 +107,7 @@ FIO_SFUNC void *fio___thread_waitpid_in_gvl(void *args_) {
  */
 FIO_IFUNC int fio_thread_waitpid(fio_thread_pid_t i, int *s, int o) {
   iodine___wait_pid_args_s args = {i, s, o};
-  rb_thread_call_with_gvl(fio___thread_waitpid_in_gvl, (void *)&args);
+  iodine_c_call_with(fio___thread_waitpid_in_gvl, (void *)&args);
   return args.ret;
 }
 
@@ -178,7 +178,7 @@ error_starting_thread:
 FIO_IFUNC int fio_thread_join(fio_thread_t *t) {
   STORE.release(t[0]);
   iodine_caller_result_s r =
-      iodine_ruby_call_outside(t[0], rb_intern2("join", 4), 0, NULL);
+      iodine_ruby_call_anywhere(t[0], rb_intern2("join", 4), 0, NULL);
   if (r.exception)
     return -1;
   return 0;

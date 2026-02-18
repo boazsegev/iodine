@@ -29,7 +29,7 @@ static ID IODINE_STATE_ON_EXIT;
 static void iodine_perform_state_callback_persist(void *blk_) {
   VALUE blk = (VALUE)blk_;
   // iodine_caller_result_s r =
-  iodine_ruby_call_outside(blk, IODINE_CALL_ID, 0, NULL);
+  iodine_ruby_call_anywhere(blk, IODINE_CALL_ID, 0, NULL);
 }
 
 // clang-format off
@@ -125,14 +125,14 @@ Task performance
 ***************************************************************************** */
 
 static void iodine_defer_performe_once(void *block, void *ignr) {
-  iodine_ruby_call_outside((VALUE)block, IODINE_CALL_ID, 0, NULL);
+  iodine_ruby_call_anywhere((VALUE)block, IODINE_CALL_ID, 0, NULL);
   STORE.release((VALUE)block);
   (void)ignr;
 }
 
 static int iodine_defer_run_timer(void *block, void *ignr) {
   iodine_caller_result_s r =
-      iodine_ruby_call_outside((VALUE)block, IODINE_CALL_ID, 0, NULL);
+      iodine_ruby_call_anywhere((VALUE)block, IODINE_CALL_ID, 0, NULL);
   return 0 - (r.exception || (r.result == Qfalse));
   (void)ignr;
 }
