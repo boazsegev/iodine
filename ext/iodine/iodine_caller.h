@@ -233,8 +233,8 @@ Accepts the following, possibly named, arguments:
   (ruby_thread_has_gvl_p() ? fn(args) : rb_thread_call_with_gvl(fn, args))
 
 #define iodine_c_call_without(fn, args)                                        \
-  (ruby_thread_has_gvl_p() ? fn(args)                                          \
-                           : rb_thread_call_without_gvl(fn, args, NULL, NULL))
+  (ruby_thread_has_gvl_p() ? rb_thread_call_without_gvl(fn, args, NULL, NULL)  \
+                           : fn(args))
 
 #endif
 
