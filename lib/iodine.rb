@@ -59,6 +59,14 @@ Iodine.on_state(:before_fork) do
     rescue StandardError
     end
   end
+  if defined?(ActiveRecord)
+    begin
+      ActiveRecord::Base.connection_handlers.each do |handler|
+        handler.clear_all_connections!
+      end
+    rescue StandardError
+    end
+  end
 end
 
 ### Initialize Redis if set in CLI
