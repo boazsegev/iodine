@@ -202,21 +202,11 @@ Accepts the following, possibly named, arguments:
 /**
 For code paths where the calling thread may or may not hold the GVL.
 
-On Ruby 4.0+, rb_thread_call_with_gvl is GVL-lenient (safe to call whether or
-not the GVL is held), so we just use iodine_ruby_call_outside directly.
+On Ruby 4.0+, this SHOULD be safe (is it, though?).
 
-On Ruby 3.x, checks ruby_thread_has_gvl_p() at runtime:
-  - If GVL held:  calls the Ruby function directly (like
-iodine_ruby_call_inside)
-  - If GVL not held: acquires GVL first (like iodine_ruby_call_outside)
-
-Accepts the following, possibly named, arguments:
-
-  (VALUE recv,   ID mid,     int argc,
-   VALUE *argv,  VALUE proc, int ignore_exceptions)
-
+On Ruby 3.x, checks ruby_thread_has_gvl_p() at runtime.
 */
-#if RUBY_API_VERSION_MAJOR >= 4
+#if RUBY_API_VERSION_MAJOR >= 4 && 0
 #define iodine_ruby_call_anywhere(...)                                         \
   iodine_ruby_call_outside((iodine_caller_args_s){__VA_ARGS__})
 #define iodine_c_call_with(fn, args) rb_thread_call_with_gvl(fn, args)
