@@ -11161,37 +11161,31 @@ Returns the system call used for polling as a constant string.
 
 ### `FIO_POLL` Compile Time Macros
 
-#### `FIO_POLL_ENGINE`
+#### Engine Selection Macros
+
+Define one of the following before including the library to select the polling engine. If none is defined, the best available engine for the current platform is selected automatically.
 
 ```c
-#define FIO_POLL_ENGINE_POLL   1
-#define FIO_POLL_ENGINE_EPOLL  2
-#define FIO_POLL_ENGINE_KQUEUE 3
+#define FIO_POLL_ENGINE_POLL    /* POSIX poll() / WSAPoll - any platform */
+#define FIO_POLL_ENGINE_EPOLL   /* Linux epoll */
+#define FIO_POLL_ENGINE_KQUEUE  /* BSD/macOS kqueue */
+#define FIO_POLL_ENGINE_WEPOLL  /* Windows wepoll (requires extras/wepoll.c) */
 ```
-
-Allows for both the detection and the manual selection (override) of the underlying IO multiplexing API.
 
 When multiplexing a small number of IO sockets, using the `poll` engine might be faster, as it uses fewer system calls.
 
-```c
-#define FIO_POLL_ENGINE FIO_POLL_ENGINE_POLL
-```
-
-If `FIO_POLL_ENGINE` is not defined, the engine is automatically detected based on system availability (`epoll` on Linux, `kqueue` on BSD/macOS, `poll` as fallback).
+Auto-detection order (when no engine is explicitly selected): `wepoll` on Windows, `epoll` on Linux, `kqueue` on BSD/macOS, `poll` as universal fallback.
 
 #### `FIO_POLL_ENGINE_STR`
 
 ```c
-#if FIO_POLL_ENGINE == FIO_POLL_ENGINE_POLL
-#define FIO_POLL_ENGINE_STR "poll"
-#elif FIO_POLL_ENGINE == FIO_POLL_ENGINE_EPOLL
-#define FIO_POLL_ENGINE_STR "epoll"
-#elif FIO_POLL_ENGINE == FIO_POLL_ENGINE_KQUEUE
-#define FIO_POLL_ENGINE_STR "kqueue"
-#endif
+#define FIO_POLL_ENGINE_STR "poll"    /* set by FIO_POLL_ENGINE_POLL */
+#define FIO_POLL_ENGINE_STR "epoll"   /* set by FIO_POLL_ENGINE_EPOLL */
+#define FIO_POLL_ENGINE_STR "kqueue"  /* set by FIO_POLL_ENGINE_KQUEUE */
+#define FIO_POLL_ENGINE_STR "wepoll (Windows epoll)" /* set by FIO_POLL_ENGINE_WEPOLL */
 ```
 
-A string macro representing the used IO multiplexing "engine".
+A string macro representing the selected IO multiplexing engine.
 
 #### `FIO_POLL_POSSIBLE_FLAGS`
 
