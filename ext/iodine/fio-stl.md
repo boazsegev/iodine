@@ -11157,7 +11157,7 @@ const char *fio_poll_engine(void);
 
 Returns the system call used for polling as a constant string.
 
-**Returns:** `"poll"`, `"epoll"`, or `"kqueue"` depending on the selected engine.
+**Returns:** `"poll"`, `"epoll"`, or `"kqueue"` depending on the selected engine (always `"poll"` on Windows).
 
 ### `FIO_POLL` Compile Time Macros
 
@@ -11169,12 +11169,11 @@ Define one of the following before including the library to select the polling e
 #define FIO_POLL_ENGINE_POLL    /* POSIX poll() / WSAPoll - any platform */
 #define FIO_POLL_ENGINE_EPOLL   /* Linux epoll */
 #define FIO_POLL_ENGINE_KQUEUE  /* BSD/macOS kqueue */
-#define FIO_POLL_ENGINE_WEPOLL  /* Windows wepoll (requires extras/wepoll.c) */
 ```
 
 When multiplexing a small number of IO sockets, using the `poll` engine might be faster, as it uses fewer system calls.
 
-Auto-detection order (when no engine is explicitly selected): `wepoll` on Windows, `epoll` on Linux, `kqueue` on BSD/macOS, `poll` as universal fallback.
+Auto-detection order (when no engine is explicitly selected): `epoll` on Linux, `kqueue` on BSD/macOS, `poll` as universal fallback (including Windows).
 
 #### `FIO_POLL_ENGINE_STR`
 
@@ -11182,7 +11181,6 @@ Auto-detection order (when no engine is explicitly selected): `wepoll` on Window
 #define FIO_POLL_ENGINE_STR "poll"    /* set by FIO_POLL_ENGINE_POLL */
 #define FIO_POLL_ENGINE_STR "epoll"   /* set by FIO_POLL_ENGINE_EPOLL */
 #define FIO_POLL_ENGINE_STR "kqueue"  /* set by FIO_POLL_ENGINE_KQUEUE */
-#define FIO_POLL_ENGINE_STR "wepoll (Windows epoll)" /* set by FIO_POLL_ENGINE_WEPOLL */
 ```
 
 A string macro representing the selected IO multiplexing engine.
