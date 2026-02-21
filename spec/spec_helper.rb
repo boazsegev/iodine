@@ -38,4 +38,18 @@ RSpec.configure do |config|
     /spec_helper\.rb/,
     /RSpec/,
   ]
+
+  # On CI, progress format only shows an 'F' — print full failure details
+  # immediately when each example fails so remote logs are self-contained.
+  config.after(:each) do |example|
+    next unless example.exception
+
+    e = example.exception
+    loc = example.location
+    puts "\n[FAILED] #{example.full_description}"
+    puts "  Location : #{loc}"
+    puts "  Error    : #{e.class}: #{e.message}"
+    puts "  Backtrace:\n#{e.backtrace.map { |l| "    #{l}" }.join("\n")}"
+    puts
+  end
 end
