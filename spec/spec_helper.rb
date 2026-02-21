@@ -41,15 +41,17 @@ RSpec.configure do |config|
 
   # On CI, progress format only shows an 'F' — print full failure details
   # immediately when each example fails so remote logs are self-contained.
+  # Backtrace is only shown for unexpected exceptions (not assertion failures).
   config.after(:each) do |example|
     next unless example.exception
 
     e = example.exception
-    loc = example.location
     puts "\n[FAILED] #{example.full_description}"
-    puts "  Location : #{loc}"
+    puts "  Location : #{example.location}"
     puts "  Error    : #{e.class}: #{e.message}"
-    puts "  Backtrace:\n#{e.backtrace.map { |l| "    #{l}" }.join("\n")}"
+    unless e.is_a?(RSpec::Expectations::ExpectationNotMetError)
+      puts "  Backtrace:\n#{e.backtrace.map { |l| "    #{l}" }.join("\n")}"
+    end
     puts
   end
 end
