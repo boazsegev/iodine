@@ -201,47 +201,64 @@ FIO_IFUNC int fio_thread_detach(fio_thread_t *t) {
 /**
  * Terminates the current thread via Ruby's thread lifecycle.
  *
- * Always uses rb_thread_kill (via the GVL) — never pthread_exit or
- * _endthread(). All threads in iodine are Ruby Thread objects regardless of
- * platform; they must be terminated through Ruby's own lifecycle so that
- * blocking-region state (th->blocking, th->unblock) is properly unwound.
+ * All iodine threads are Ruby Thread objects. They must exit through Ruby's
+ * own lifecycle so that blocking-region state (th->blocking, th->unblock) is
+ * properly unwound. rb_thread_kill requires the GVL; fio_thread_exit may be
+ * called without it, so we acquire the GVL via iodine_c_call_with first.
  *
- * rb_thread_kill requires the GVL. fio_thread_exit may be called from within
- * rb_thread_call_without_gvl (GVL not held), so GVL is re-acquired via
- * iodine_c_call_with before calling rb_thread_kill.
+ * Inside the GVL, rb_thread_current() is safe and returns the correct VALUE
+ * for the calling thread. Note: this function is currently dead code —
+ * facil.io thread workers exit by returning NULL from their thread function.
  */
-static void *fio___thread_exit_in_gvl(void *t) {
-  rb_thread_kill((VALUE)t);
+static void *fio___thread_exit_in_gvl(void *ignr) {
+  (void)ignr;
+  rb_thread_kill(rb_thread_current());
   return NULL;
 }
 
 FIO_IFUNC void fio_thread_exit(void) {
-  iodine_c_call_with(fio___thread_exit_in_gvl, (void *)rb_thread_current());
+  iodine_c_call_with(fio___thread_exit_in_gvl, NULL);
 }
 
 /**
  * Compares two thread handles for equality.
  *
- * @param a First thread handle
- * @param b Second thread handle
- * @return Non-zero if threads are the same, 0 otherwise
+ * fio_thread_t is a native thread ID (uintptr_t), so simple equality works.
  */
 FIO_IFUNC int fio_thread_equal(fio_thread_t *a, fio_thread_t *b) {
   return *a == *b;
 }
 
 /**
- * Returns the current thread handle.
+ * Returns the current native thread ID as fio_thread_t.
  *
- * @return Current Ruby Thread VALUE
+ * Called by facil.io internals (memory allocator arena selection, thread
+ * equality) WITHOUT the GVL. Returns a stable, GC-independent identifier —
+ * the native OS thread ID cast to uintptr_t, NOT a Ruby VALUE (which could
+ * be moved by GC compaction). This is safe, fast, and requires no Ruby API.
+ *
+ * Use iodine_ruby_thread_current() (GVL required) to get the Ruby VALUE.
  */
-FIO_IFUNC fio_thread_t fio_thread_current(void) { return rb_thread_current(); }
+FIO_IFUNC fio_thread_t fio_thread_current(void) {
+#ifdef _WIN32
+  return (fio_thread_t)(uintptr_t)GetCurrentThreadId();
+#else
+  return (fio_thread_t)(uintptr_t)pthread_self();
+#endif
+}
 
 /**
  * Yields execution to other threads.
  *
- * Calls Ruby's Thread.pass to allow other threads to run.
+ * Called without the GVL — uses OS-level yield, NOT rb_thread_schedule()
+ * which requires the GVL.
  */
-FIO_IFUNC void fio_thread_yield(void) { rb_thread_schedule(); }
+FIO_IFUNC void fio_thread_yield(void) {
+#ifdef _WIN32
+  Sleep(0);
+#else
+  sched_yield();
+#endif
+}
 
 #endif /* H___IODINE_THREADS___H */
