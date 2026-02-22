@@ -199,19 +199,24 @@ FIO_IFUNC int fio_thread_detach(fio_thread_t *t) {
 }
 
 /**
- * Terminates the current thread.
+ * Terminates the current thread via Ruby's thread lifecycle.
  *
- * Uses platform-specific exit: pthread_exit on POSIX,
- * _endthread on Windows, rb_thread_kill on other platforms.
+ * Always uses rb_thread_kill (via the GVL) — never pthread_exit or
+ * _endthread(). All threads in iodine are Ruby Thread objects regardless of
+ * platform; they must be terminated through Ruby's own lifecycle so that
+ * blocking-region state (th->blocking, th->unblock) is properly unwound.
+ *
+ * rb_thread_kill requires the GVL. fio_thread_exit may be called from within
+ * rb_thread_call_without_gvl (GVL not held), so GVL is re-acquired via
+ * iodine_c_call_with before calling rb_thread_kill.
  */
+static void *fio___thread_exit_in_gvl(void *t) {
+  rb_thread_kill((VALUE)t);
+  return NULL;
+}
+
 FIO_IFUNC void fio_thread_exit(void) {
-#if FIO_OS_POSIX
-  pthread_exit(NULL);
-#elif FIO_OS_WIN
-  _endthread();
-#else
-  rb_thread_kill(rb_thread_current());
-#endif
+  iodine_c_call_with(fio___thread_exit_in_gvl, (void *)rb_thread_current());
 }
 
 /**
