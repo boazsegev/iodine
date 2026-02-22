@@ -225,10 +225,8 @@ void Init_iodine(void) {
   Init_Iodine_PubSub_Message();
   Init_Iodine_TLS();
   Init_Iodine_Connection();
-  /* Note: fio_io_async_attach is called in iodine___start() with the correct
-   * thread count (after fio_cli_start has parsed CLI args). Calling it here
-   * at Init time is both premature (fio_cli_get_i("-t") returns 0) and harmful
-   * (leaves q->node.next non-NULL, breaking stop/start cycles). */
+  /* make sure the Iodine.run / async methods are available pre-start */
+  fio_io_async_attach(&IODINE_THREAD_POOL, (uint32_t)fio_cli_get_i("-t"));
 #ifdef SIGUSR1
   /* support hot restarting of workers */
   fio_io_restart_on_signal(SIGUSR1);

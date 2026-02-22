@@ -49,7 +49,6 @@ static void *iodine___start(void *arg_) {
   iodine___start_args_s *args = (iodine___start_args_s *)arg_;
   unsigned threads = (unsigned)fio_io_workers((int)fio_cli_get_i("-t"));
   unsigned workers = (unsigned)fio_io_workers((int)fio_cli_get_i("-w"));
-
   fio_io_async_attach(&IODINE_THREAD_POOL, (uint32_t)threads);
 
   FIO_LOG_INFO("\n\tStarting the iodine server."
@@ -63,11 +62,6 @@ static void *iodine___start(void *arg_) {
                (int)IODINE_THREAD_POOL.count);
 
   fio_io_start((int)fio_cli_get_i("-w"));
-  /* Reset thread pool so it is safely re-attached on the next Iodine.start.
-   * fio___io_async_stop destroys q->queue but leaves q->node.next non-NULL,
-   * which would cause fio_io_async_attach to skip re-initialization and call
-   * fio___io_async_start on the destroyed queue — crashing on restart. */
-  IODINE_THREAD_POOL = FIO_IO_ASYN_INIT;
   return NULL;
 }
 
@@ -93,15 +87,6 @@ static VALUE iodine_start(VALUE self) { // clang-format on
   if (ver != Qnil)
     start_args.version = RSTRING_PTR(ver);
 
-#ifdef _WIN32
-  /* Worker processes require fork(2), which is unavailable on Windows.
-   * Raise here while the GVL is still held. */
-  if (fio_cli_get_i("-w") != 0)
-    rb_raise(rb_eNotImpError,
-             "Worker processes (fork) are not supported on Windows. "
-             "Call Iodine.workers = 0 before Iodine.start.");
-#endif /* _WIN32 */
-
   /* Set rack.multithread / rack.multiprocess env template values (Ruby API) */
   {
     VALUE keeper;
@@ -116,7 +101,6 @@ static VALUE iodine_start(VALUE self) { // clang-format on
   }
 
   rb_thread_call_without_gvl(iodine___start, &start_args, NULL, NULL);
-
   return self;
 }
 
