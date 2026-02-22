@@ -45,7 +45,7 @@ class IodineTestBatch
 
   # Start Iodine once, run all registered tests, stop, return results.
   def start!(extra_setup: nil)
-    Iodine.verbosity = 0
+    Iodine.verbosity = 1  # keep FATAL visible for CI crash diagnostics
     Iodine.workers   = @workers
     Iodine.threads   = @threads
 

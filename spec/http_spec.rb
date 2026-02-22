@@ -81,7 +81,7 @@ RSpec.describe 'Iodine HTTP server' do
   HTTP_STARTED = [false]  # rubocop:disable RSpec/LeakyConstantDeclaration
 
   before(:context) do
-    Iodine.verbosity = 0
+    Iodine.verbosity = 1  # keep FATAL visible for CI crash diagnostics
     Iodine.workers   = 0
     Iodine.threads   = 4   # async HTTP clients need worker threads
 
