@@ -423,19 +423,35 @@ This is the faster parsing path used by Iodine::JSON.parse().
 
 /** JSON parser callback implementations for direct Ruby object creation */
 /** NULL object was detected. Returns new object as `void *`. */
-FIO_SFUNC void *iodine___json_on_null(void) { return (void *)Qnil; }
+FIO_SFUNC void *iodine___json_on_null(void *udata) {
+  (void)udata;
+  return (void *)Qnil;
+}
 /** TRUE object was detected. Returns new object as `void *`. */
-FIO_SFUNC void *iodine___json_on_true(void) { return (void *)Qtrue; }
+FIO_SFUNC void *iodine___json_on_true(void *udata) {
+  (void)udata;
+  return (void *)Qtrue;
+}
 /** FALSE object was detected. Returns new object as `void *`. */
-FIO_SFUNC void *iodine___json_on_false(void) { return (void *)Qfalse; }
+FIO_SFUNC void *iodine___json_on_false(void *udata) {
+  (void)udata;
+  return (void *)Qfalse;
+}
 /** Number was detected (long long). Returns new object as `void *`. */
-FIO_SFUNC void *iodine___json_on_number(int64_t i) {
+FIO_SFUNC void *iodine___json_on_number(void *udata, int64_t i) {
+  (void)udata;
   return (void *)(LL2NUM(((long long)i)));
 }
 /** Float was detected (double).Returns new object as `void *`.  */
-FIO_SFUNC void *iodine___json_on_float(double f) { return (void *)DBL2NUM(f); }
+FIO_SFUNC void *iodine___json_on_float(void *udata, double f) {
+  (void)udata;
+  return (void *)DBL2NUM(f);
+}
 /** String was detected (int / float). update `pos` to point at ending */
-FIO_SFUNC void *iodine___json_on_string(const void *start, size_t len) {
+FIO_SFUNC void *iodine___json_on_string(void *udata,
+                                        const void *start,
+                                        size_t len) {
+  (void)udata;
   VALUE str;
   if (len < 4096) {
     FIO_STR_INFO_TMP_VAR(buf, 4096);
@@ -448,36 +464,49 @@ FIO_SFUNC void *iodine___json_on_string(const void *start, size_t len) {
   }
   return (void *)str;
 }
-FIO_SFUNC void *iodine___json_on_string_simple(const void *start, size_t len) {
+FIO_SFUNC void *iodine___json_on_string_simple(void *udata,
+                                               const void *start,
+                                               size_t len) {
+  (void)udata;
   VALUE str = rb_str_new((const char *)start, len);
   return (void *)str;
 }
 /** Dictionary was detected. Returns ctx to hash map or NULL on error. */
-FIO_SFUNC void *iodine___json_on_map(void *ctx, void *at) {
-  (void)ctx, (void)at;
+FIO_SFUNC void *iodine___json_on_map(void *udata, void *ctx, void *at) {
+  (void)udata, (void)ctx, (void)at;
   VALUE map = rb_hash_new();
   return (void *)map;
 }
 /** Array was detected. Returns ctx to array or NULL on error. */
-FIO_SFUNC void *iodine___json_on_array(void *ctx, void *at) {
-  (void)ctx, (void)at;
+FIO_SFUNC void *iodine___json_on_array(void *udata, void *ctx, void *at) {
+  (void)udata, (void)ctx, (void)at;
   VALUE ary = rb_ary_new();
   return (void *)ary;
 }
-/** Array was detected. Returns non-zero on error. */
-FIO_SFUNC int iodine___json_map_push(void *ctx, void *key, void *val) {
+/** Map entry detected. Returns non-zero on error. */
+FIO_SFUNC int iodine___json_map_push(void *udata,
+                                     void *ctx,
+                                     void *key,
+                                     void *val) {
+  (void)udata;
   rb_hash_aset((VALUE)ctx, (VALUE)key, (VALUE)val);
   return 0;
 }
-/** Array was detected. Returns non-zero on error. */
-FIO_SFUNC int iodine___json_array_push(void *ctx, void *val) {
+/** Array entry detected. Returns non-zero on error. */
+FIO_SFUNC int iodine___json_array_push(void *udata, void *ctx, void *val) {
+  (void)udata;
   rb_ary_push((VALUE)ctx, (VALUE)val);
   return 0;
 }
 /** Called for the `key` element in case of error or NULL value. */
-FIO_SFUNC void iodine___json_free_unused_object(void *ctx) {}
+FIO_SFUNC void iodine___json_free_unused_object(void *udata, void *ctx) {
+  (void)udata, (void)ctx;
+}
 /** the JSON parsing encountered an error - what to do with ctx? */
-FIO_SFUNC void *iodine___json_on_error(void *ctx) { return (void *)Qnil; }
+FIO_SFUNC void *iodine___json_on_error(void *udata, void *ctx) {
+  (void)udata, (void)ctx;
+  return (void *)Qnil;
+}
 
 static fio_json_parser_callbacks_s IODINE_JSON_PARSER_CALLBACKS = {
     .on_null = iodine___json_on_null,
@@ -516,6 +545,7 @@ static VALUE iodine_json_parse(VALUE self, VALUE rstr) {
   rb_check_type(rstr, RUBY_T_STRING);
   STORE.gc_stop();
   fio_json_result_s result = fio_json_parse(&IODINE_JSON_PARSER_CALLBACKS,
+                                            NULL,
                                             RSTRING_PTR(rstr),
                                             RSTRING_LEN(rstr));
   STORE.gc_start();

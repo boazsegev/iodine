@@ -7750,43 +7750,47 @@ The default value is `0`.
 ```c
 typedef struct {
   /** NULL object was detected. Returns new object as `void *`. */
-  void *(*on_null)(void);
+  void *(*on_null)(void *udata);
   /** TRUE object was detected. Returns new object as `void *`. */
-  void *(*on_true)(void);
+  void *(*on_true)(void *udata);
   /** FALSE object was detected. Returns new object as `void *`. */
-  void *(*on_false)(void);
+  void *(*on_false)(void *udata);
   /** Number was detected (long long). Returns new object as `void *`. */
-  void *(*on_number)(int64_t i);
+  void *(*on_number)(void *udata, int64_t i);
   /** Float was detected (double). Returns new object as `void *`. */
-  void *(*on_float)(double f);
+  void *(*on_float)(void *udata, double f);
   /** (escaped) String was detected. Returns a new String as `void *`. */
-  void *(*on_string)(const void *start, size_t len);
+  void *(*on_string)(void *udata, const void *start, size_t len);
   /** (unescaped) String was detected. Returns a new String as `void *`. */
-  void *(*on_string_simple)(const void *start, size_t len);
+  void *(*on_string_simple)(void *udata, const void *start, size_t len);
   /** Dictionary was detected. Returns ctx to hash map or NULL on error. */
-  void *(*on_map)(void *ctx, void *at);
+  void *(*on_map)(void *udata, void *ctx, void *at);
   /** Array was detected. Returns ctx to array or NULL on error. */
-  void *(*on_array)(void *ctx, void *at);
-  /** Map push. Returns non-zero on error. */
-  int (*map_push)(void *ctx, void *key, void *value);
-  /** Array push. Returns non-zero on error. */
-  int (*array_push)(void *ctx, void *value);
+  void *(*on_array)(void *udata, void *ctx, void *at);
+  /** Map entry detected. Returns non-zero on error. Owns key and value. */
+  int (*map_push)(void *udata, void *ctx, void *key, void *value);
+  /** Array entry detected. Returns non-zero on error. Owns value. */
+  int (*array_push)(void *udata, void *ctx, void *value);
   /** Called when an array object (`ctx`) appears done. */
-  int (*array_finished)(void *ctx);
+  int (*array_finished)(void *udata, void *ctx);
   /** Called when a map object (`ctx`) appears done. */
-  int (*map_finished)(void *ctx);
+  int (*map_finished)(void *udata, void *ctx);
   /** Called when context is expected to be an array (i.e., fio_json_parse_update). */
-  int (*is_array)(void *ctx);
+  int (*is_array)(void *udata, void *ctx);
   /** Called when context is expected to be a map (i.e., fio_json_parse_update). */
-  int (*is_map)(void *ctx);
-  /** Called for the `key` element in case of error or NULL value. */
-  void (*free_unused_object)(void *ctx);
-  /** The JSON parsing encountered an error - what to do with ctx? */
-  void *(*on_error)(void *ctx);
+  int (*is_map)(void *udata, void *ctx);
+  /** Called for unused objects (e.g., key on error). Must free the object. */
+  void (*free_unused_object)(void *udata, void *ctx);
+  /** The JSON parsing encountered an error. Owns ctx, should free or return. */
+  void *(*on_error)(void *udata, void *ctx);
 } fio_json_parser_callbacks_s;
 ```
 
 The JSON parser requires certain callbacks to create objects or perform actions based on JSON data.
+
+Every callback receives `udata` as its first argument — the per-call user data pointer passed to `fio_json_parse()`. This allows the same `fio_json_parser_callbacks_s` instance to be shared (even as a `static const`) across many concurrent callers without any per-call state stored in the struct.
+
+**Ownership**: Callbacks that return `void *` objects transfer ownership to the parser. The parser will either pass these objects to `map_push` / `array_push` (transferring ownership to the container), or call `free_unused_object` if the object is not used (e.g., on error or NULL map key). The `on_error` callback receives ownership of any partial result.
 
 **Required Callbacks:**
 
@@ -7812,7 +7816,7 @@ The following callbacks **MUST** be provided to the parser:
 
 - `array_push` - Pushes a value to an array. Returns non-zero on error.
 
-- `free_unused_object` - Called for the `key` element in case of error that caused `key` to be unused.
+- `free_unused_object` - Called for unused objects (e.g., a key with no matching value on error). Must free the object.
 
 **Optional Callbacks:**
 
@@ -7854,6 +7858,7 @@ The JSON return type containing the parsing result.
 
 ```c
 fio_json_result_s fio_json_parse(fio_json_parser_callbacks_s *callbacks,
+                                 void *udata,
                                  const char *json_string,
                                  const size_t len);
 ```
@@ -7874,6 +7879,7 @@ The parser decouples the parsing process from the resulting data-structure by ca
 **Parameters:**
 
 - `callbacks` - Pointer to the callback structure defining how to handle JSON elements
+- `udata` - Per-call user data pointer passed as the first argument to every callback
 - `json_string` - The JSON string to parse
 - `len` - Length of the JSON string in bytes
 
@@ -7883,12 +7889,15 @@ The parser decouples the parsing process from the resulting data-structure by ca
 - `stop_pos` - Number of bytes consumed (position where parsing stopped)
 - `err` - Non-zero if an error occurred
 
+**Note**: `udata` is passed as a function argument rather than stored in the callbacks struct. This allows the same `fio_json_parser_callbacks_s` to be shared (even as a `static const`) across many concurrent callers — the struct stays hot in CPU cache while each call threads its own context through every callback.
+
 **Note**: The parser automatically skips UTF-8 BOM (Byte Order Mark) if present at the beginning of the string.
 
 #### `fio_json_parse_update`
 
 ```c
 fio_json_result_s fio_json_parse_update(fio_json_parser_callbacks_s *callbacks,
+                                        void *udata,
                                         void *ctx,
                                         const char *json_string,
                                         const size_t len);
@@ -7903,6 +7912,7 @@ This function is useful for merging JSON data into an existing data structure.
 **Parameters:**
 
 - `callbacks` - Pointer to the callback structure (must include `is_array` and `is_map` callbacks)
+- `udata` - Per-call user data pointer passed as the first argument to every callback
 - `ctx` - The existing object to update
 - `json_string` - The JSON string containing update data
 - `len` - Length of the JSON string in bytes
@@ -7965,78 +7975,87 @@ struct my_json_obj_s {
 };
 
 /* Callback implementations */
-static void *my_on_null(void) {
+static void *my_on_null(void *udata) {
   my_json_obj_s *o = calloc(1, sizeof(*o));
   o->type = MY_JSON_NULL;
+  (void)udata;
   return o;
 }
 
-static void *my_on_true(void) {
+static void *my_on_true(void *udata) {
   my_json_obj_s *o = calloc(1, sizeof(*o));
   o->type = MY_JSON_TRUE;
+  (void)udata;
   return o;
 }
 
-static void *my_on_false(void) {
+static void *my_on_false(void *udata) {
   my_json_obj_s *o = calloc(1, sizeof(*o));
   o->type = MY_JSON_FALSE;
+  (void)udata;
   return o;
 }
 
-static void *my_on_number(int64_t i) {
+static void *my_on_number(void *udata, int64_t i) {
   my_json_obj_s *o = calloc(1, sizeof(*o));
   o->type = MY_JSON_NUMBER;
   o->i = i;
+  (void)udata;
   return o;
 }
 
-static void *my_on_float(double f) {
+static void *my_on_float(void *udata, double f) {
   my_json_obj_s *o = calloc(1, sizeof(*o));
   o->type = MY_JSON_FLOAT;
   o->f = f;
+  (void)udata;
   return o;
 }
 
-static void *my_on_string(const void *start, size_t len) {
+static void *my_on_string(void *udata, const void *start, size_t len) {
   my_json_obj_s *o = calloc(1, sizeof(*o));
   o->type = MY_JSON_STRING;
   /* Note: in production, you'd want to unescape the string */
   fio_str_write(&o->str, start, len);
+  (void)udata;
   return o;
 }
 
-static void *my_on_array(void *ctx, void *at) {
+static void *my_on_array(void *udata, void *ctx, void *at) {
   my_json_obj_s *o = calloc(1, sizeof(*o));
   o->type = MY_JSON_ARRAY;
   o->array.capa = 8;
   o->array.items = calloc(o->array.capa, sizeof(void *));
+  (void)udata;
   (void)ctx;
   (void)at;
   return o;
 }
 
-static void *my_on_map(void *ctx, void *at) {
+static void *my_on_map(void *udata, void *ctx, void *at) {
   my_json_obj_s *o = calloc(1, sizeof(*o));
   o->type = MY_JSON_MAP;
   o->map.capa = 8;
   o->map.keys = calloc(o->map.capa, sizeof(void *));
   o->map.values = calloc(o->map.capa, sizeof(void *));
+  (void)udata;
   (void)ctx;
   (void)at;
   return o;
 }
 
-static int my_array_push(void *ctx, void *value) {
+static int my_array_push(void *udata, void *ctx, void *value) {
   my_json_obj_s *arr = ctx;
   if (arr->array.len >= arr->array.capa) {
     arr->array.capa *= 2;
     arr->array.items = realloc(arr->array.items, arr->array.capa * sizeof(void *));
   }
   arr->array.items[arr->array.len++] = value;
+  (void)udata;
   return 0;
 }
 
-static int my_map_push(void *ctx, void *key, void *value) {
+static int my_map_push(void *udata, void *ctx, void *key, void *value) {
   my_json_obj_s *map = ctx;
   if (map->map.len >= map->map.capa) {
     map->map.capa *= 2;
@@ -8046,11 +8065,11 @@ static int my_map_push(void *ctx, void *key, void *value) {
   map->map.keys[map->map.len] = key;
   map->map.values[map->map.len] = value;
   map->map.len++;
+  (void)udata;
   return 0;
 }
 
-static void my_free_obj(void *ctx) {
-  my_json_obj_s *o = ctx;
+static void my_free_obj_impl(my_json_obj_s *o) {
   if (!o)
     return;
   switch (o->type) {
@@ -8059,13 +8078,13 @@ static void my_free_obj(void *ctx) {
     break;
   case MY_JSON_ARRAY:
     for (size_t i = 0; i < o->array.len; i++)
-      my_free_obj(o->array.items[i]);
+      my_free_obj_impl(o->array.items[i]);
     free(o->array.items);
     break;
   case MY_JSON_MAP:
     for (size_t i = 0; i < o->map.len; i++) {
-      my_free_obj(o->map.keys[i]);
-      my_free_obj(o->map.values[i]);
+      my_free_obj_impl(o->map.keys[i]);
+      my_free_obj_impl(o->map.values[i]);
     }
     free(o->map.keys);
     free(o->map.values);
@@ -8074,6 +8093,12 @@ static void my_free_obj(void *ctx) {
     break;
   }
   free(o);
+}
+
+/* free_unused_object callback: called by the parser for unused objects */
+static void my_free_obj(void *udata, void *ctx) {
+  my_free_obj_impl((my_json_obj_s *)ctx);
+  (void)udata;
 }
 
 /* Print JSON object as minified string */
@@ -8141,7 +8166,7 @@ int main(void) {
       .free_unused_object = my_free_obj,
   };
 
-  fio_json_result_s result = fio_json_parse(&callbacks, json, strlen(json));
+  fio_json_result_s result = fio_json_parse(&callbacks, NULL, json, strlen(json));
 
   if (result.err) {
     FIO_LOG_ERROR("JSON parsing failed at position %zu", result.stop_pos);
@@ -8152,7 +8177,7 @@ int main(void) {
   my_print_json(result.ctx);
   printf("\n");
 
-  my_free_obj(result.ctx);
+  my_free_obj_impl(result.ctx);
   return 0;
 }
 ```
