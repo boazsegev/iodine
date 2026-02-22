@@ -53,8 +53,12 @@ typedef struct {
 #define FIO_MAP_VALUE VALUE
 #include FIO_INCLUDE_FILE
 
+/* MUST be a log 2 */
+#define IODINE___SINGLE_USE_COUNT 8
+
 FIO_SFUNC void iodine_store___gc_stop(void);
 FIO_SFUNC void iodine_store___gc_start(void);
+FIO_SFUNC void iodine_store___cache(VALUE o);
 FIO_SFUNC void iodine_store___hold(VALUE o);
 FIO_SFUNC void iodine_store___release(VALUE o);
 FIO_SFUNC void iodine_store___on_gc(void (*fn)(void *), void *arg);
@@ -86,7 +90,9 @@ static struct value_reference_counter_store_s {
   VALUE (*const header_name)(fio_str_info_s);
   /* releases all objects */
   void (*const destroy)(void);
-  VALUE single_use[256];
+  /** Stores a value in a ring cache, never lets go until overwritten. */
+  void (*const cache)(VALUE);
+  VALUE single_use[IODINE___SINGLE_USE_COUNT];
 } STORE = {
     FIO_MAP_INIT,
     FIO_MAP_INIT,
@@ -103,6 +109,7 @@ static struct value_reference_counter_store_s {
     iodine_store___frozen_str,
     iodine_store___header_name,
     iodine_store___destroy,
+    iodine_store___cache,
 };
 
 FIO_SFUNC void iodine_store___gc_stop(void) {
@@ -202,6 +209,13 @@ FIO_IFUNC void iodine_store___hold_unsafe(VALUE o) {
   } else {
     fio_atomic_add(&n->value, 1);
   }
+}
+
+FIO_SFUNC void iodine_store___cache(VALUE o) {
+  static volatile size_t i;
+  if (IODINE_STORE_IS_SKIP(o))
+    return;
+  STORE.single_use[fio_atomic_add(&i, 1) & ((IODINE___SINGLE_USE_COUNT)-1)] = o;
 }
 
 FIO_SFUNC void iodine_store___hold(VALUE o) {
@@ -343,10 +357,20 @@ FIO_SFUNC void iodine_store___gc_mark(
   // fio_thread_mutex_unlock(&s->lock);
   if (FIO_LOG_LEVEL >= FIO_LOG_LEVEL_DEBUG)
     iodine_store___print_debug(Qnil);
+
+  for (size_t i = 0;
+       i < (sizeof(STORE.single_use) / sizeof(STORE.single_use[0]));
+       ++i)
+    if (!IODINE_STORE_IS_SKIP(STORE.single_use[i]))
+      rb_gc_mark(STORE.single_use[i]);
 }
 FIO_SFUNC void value_reference_counter_store_destroy(VALUE i_) {
   (void)i_;
   iodine_store___destroy();
+  for (size_t i = 0;
+       i < (sizeof(STORE.single_use) / sizeof(STORE.single_use[0]));
+       ++i)
+    STORE.single_use[i] = Qnil;
 }
 
 static void iodine_setup_value_reference_counter(VALUE klass) {

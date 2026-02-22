@@ -1036,9 +1036,10 @@ FIO_SFUNC VALUE iodine_crypto_x25519mlkem768_keypair(VALUE self) {
   int result = fio_x25519mlkem768_keypair(pk, sk);
   if (result != 0)
     rb_raise(rb_eRuntimeError, "Key generation failed");
-
-  VALUE secret = rb_str_new((const char *)sk, 2432);
-  VALUE public = rb_str_new((const char *)pk, 1216);
+  VALUE secret = rb_enc_str_new((const char *)sk, 2432, IodineBinaryEncoding);
+  /* store to ring cache, a temporary thing */
+  STORE.cache(secret);
+  VALUE public = rb_enc_str_new((const char *)pk, 1216, IodineBinaryEncoding);
   /* Clear secret key from stack */
   fio_memset(sk, 0, 2432);
   return rb_ary_new_from_args(2, secret, public);
