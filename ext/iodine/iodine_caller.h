@@ -202,9 +202,14 @@ Accepts the following, possibly named, arguments:
 /**
 For code paths where the calling thread may or may not hold the GVL.
 
-On Ruby 4.0+, this SHOULD be safe (is it, though?).
+On Ruby 3.x and 4.x (current path): checks ruby_thread_has_gvl_p() at runtime.
 
-On Ruby 3.x, checks ruby_thread_has_gvl_p() at runtime.
+NOTE: Ruby Feature #20750 (merged Dec 2025) made rb_thread_call_with_gvl()
+GVL-lenient on Ruby 4.x — safe to call whether or not GVL is held.
+The `&& 0` gate below preserves the safe runtime-check path on all versions
+until the lenient behaviour is confirmed present in every supported Ruby 4.x
+release used in CI. To activate the simplified Ruby 4 fast path, remove
+`&& 0` once Ruby 4.0.1+ GVL-lenience is verified in CI.
 */
 #if RUBY_API_VERSION_MAJOR >= 4 && 0
 #define iodine_ruby_call_anywhere(...)                                         \

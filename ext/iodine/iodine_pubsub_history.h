@@ -186,7 +186,7 @@ static int iodine_pubsub_history___push(const fio_pubsub_history_s *hist,
       .msg = msg,
       .result = -1,
   };
-  rb_thread_call_with_gvl(iodine_pubsub_history___push__in_GC, &args);
+  iodine_c_call_with(iodine_pubsub_history___push__in_GC, &args);
   return args.result;
 }
 
@@ -304,7 +304,7 @@ static int iodine_pubsub_history___replay(
       .udata = udata,
       .result = -1,
   };
-  rb_thread_call_with_gvl(iodine_pubsub_history___replay__in_GC, &args);
+  iodine_c_call_with(iodine_pubsub_history___replay__in_GC, &args);
   return args.result;
 }
 
@@ -348,7 +348,7 @@ static uint64_t iodine_pubsub_history___oldest(const fio_pubsub_history_s *hist,
       .filter = filter,
       .oldest_result = UINT64_MAX,
   };
-  rb_thread_call_with_gvl(iodine_pubsub_history___oldest__in_GC, &args);
+  iodine_c_call_with(iodine_pubsub_history___oldest__in_GC, &args);
   return args.oldest_result;
 }
 

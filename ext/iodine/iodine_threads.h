@@ -43,7 +43,7 @@ API for Forking Processes
  */
 FIO_IFUNC fio_thread_pid_t fio_thread_fork(void) {
   iodine_caller_result_s r =
-      iodine_ruby_call_outside(rb_mProcess, rb_intern2("fork", 4), 0, NULL);
+      iodine_ruby_call_anywhere(rb_mProcess, rb_intern2("fork", 4), 0, NULL);
   if (r.exception)
     return -1;
   if (r.result == Qnil)

@@ -1684,8 +1684,7 @@ static void *iodine_io_raw_on_attach_in_GIL(void *io) {
 
 /** Called when an IO is attached to the protocol. */
 static void iodine_io_raw_on_attach(fio_io_s *io) {
-  /* Enter GIL */
-  rb_thread_call_with_gvl(iodine_io_raw_on_attach_in_GIL, io);
+  iodine_c_call_with(iodine_io_raw_on_attach_in_GIL, io);
 }
 
 static void *iodine_io_raw_on_data_in_GVL(void *info_) {
@@ -1711,7 +1710,7 @@ static void iodine_io_raw_on_data(fio_io_s *io) {
   i.len = fio_io_read(io, i.buf, IODINE_RAW_ON_DATA_READ_BUFFER);
   if (!i.len)
     return;
-  rb_thread_call_with_gvl(iodine_io_raw_on_data_in_GVL, &i);
+  iodine_c_call_with(iodine_io_raw_on_data_in_GVL, &i);
 }
 
 #define IODINE_CONNECTION_DEF_CB(named, id)                                    \
@@ -1722,10 +1721,10 @@ static void iodine_io_raw_on_data(fio_io_s *io) {
     iodine_connection_s *c = iodine_connection_ptr(connection);                \
     if (!c)                                                                    \
       return;                                                                  \
-    iodine_ruby_call_outside(c->store[IODINE_CONNECTION_STORE_handler],        \
-                             id,                                               \
-                             1,                                                \
-                             &connection);                                     \
+    iodine_ruby_call_anywhere(c->store[IODINE_CONNECTION_STORE_handler],       \
+                              id,                                              \
+                              1,                                               \
+                              &connection);                                    \
   }
 
 /** called once all pending `write` calls are finished. */
@@ -1747,10 +1746,10 @@ static void iodine_io_raw_on_close(void *buf, void *udata) {
   iodine_connection_s *c = iodine_connection_ptr(connection);
   if (!c)
     return;
-  iodine_ruby_call_outside(c->store[IODINE_CONNECTION_STORE_handler],
-                           IODINE_ON_CLOSE_ID,
-                           1,
-                           &connection);
+  iodine_ruby_call_anywhere(c->store[IODINE_CONNECTION_STORE_handler],
+                            IODINE_ON_CLOSE_ID,
+                            1,
+                            &connection);
   (void)buf;
 }
 
@@ -1795,7 +1794,7 @@ static void iodine_io_http_on_http(fio_http_s *h) {
     fio_http_send_error_response(h, 500);
     return;
   }
-  rb_thread_call_with_gvl(iodine_io_http_on_http_internal, (void *)h);
+  iodine_c_call_with(iodine_io_http_on_http_internal, (void *)h);
 }
 
 #define IODINE_CONNECTION_DEF_CB(named, id, free_handle)                       \
@@ -1806,15 +1805,15 @@ static void iodine_io_http_on_http(fio_http_s *h) {
     iodine_connection_s *c = iodine_connection_ptr(connection);                \
     if (!c)                                                                    \
       return;                                                                  \
-    iodine_ruby_call_outside(c->store[IODINE_CONNECTION_STORE_handler],        \
-                             id,                                               \
-                             1,                                                \
-                             &connection);                                     \
+    iodine_ruby_call_anywhere(c->store[IODINE_CONNECTION_STORE_handler],       \
+                              id,                                              \
+                              1,                                               \
+                              &connection);                                    \
     if (free_handle) {                                                         \
-      iodine_ruby_call_outside(c->store[IODINE_CONNECTION_STORE_handler],      \
-                               IODINE_ON_FINISH_ID,                            \
-                               1,                                              \
-                               &connection);                                   \
+      iodine_ruby_call_anywhere(c->store[IODINE_CONNECTION_STORE_handler],     \
+                                IODINE_ON_FINISH_ID,                           \
+                                1,                                             \
+                                &connection);                                  \
       fio_http_free(c->http);                                                  \
       c->http = NULL;                                                          \
       c->io = NULL;                                                            \
@@ -1859,7 +1858,7 @@ IODINE_CONNECTION_DEF_CB(on_close, IODINE_ON_CLOSE_ID, 1);
     return (void *)-1;                                                         \
   }                                                                            \
   static int iodine_io_http_##named(fio_http_s *h) {                           \
-    if (!rb_thread_call_with_gvl(iodine_io_http_##named##_internal, h))        \
+    if (!iodine_c_call_with(iodine_io_http_##named##_internal, h))             \
       return 0;                                                                \
     return -1;                                                                 \
   }
@@ -1902,13 +1901,11 @@ static void *iodine_io_http_on_eventsource_reconnect_internal(void *info_) {
 /** Called when an EventSource reconnect event requests an ID. */
 static void iodine_io_http_on_eventsource_reconnect(fio_http_s *h,
                                                     fio_buf_info_s id) {
-  /* TODO: FIXME! move into GVL and create message struct to pass to callback */
   VALUE connection = (VALUE)fio_http_udata2(h);
   if (!connection || connection == Qnil)
     return;
   iodine_io_http_on_eventsource_internal_s info = {.h = h, .id = id};
-  rb_thread_call_with_gvl(iodine_io_http_on_eventsource_reconnect_internal,
-                          &info);
+  iodine_c_call_with(iodine_io_http_on_eventsource_reconnect_internal, &info);
 }
 
 static void *iodine_io_http_on_eventsource_internal(void *info_) {
@@ -1940,7 +1937,7 @@ static void iodine_io_http_on_eventsource(fio_http_s *h,
                                                    .id = id,
                                                    .event = event,
                                                    .data = data};
-  rb_thread_call_with_gvl(iodine_io_http_on_eventsource_internal, &info);
+  iodine_c_call_with(iodine_io_http_on_eventsource_internal, &info);
 }
 
 typedef struct {
@@ -1980,7 +1977,7 @@ static void iodine_io_http_on_message(fio_http_s *h,
       .msg = msg,
       .is_text = is_text,
   };
-  rb_thread_call_with_gvl(iodine_io_http_on_message_internal, &info);
+  iodine_c_call_with(iodine_io_http_on_message_internal, &info);
 }
 
 /** Called when a request / response cycle is finished with no Upgrade. */
@@ -1990,12 +1987,17 @@ static void iodine_io_http_on_finish(fio_http_s *h) {
     return; /* done in the `on_close` */
   iodine_connection_s *c = iodine_connection_ptr(connection);
   if (c->http) {
-    (((c->flags & IODINE_CONNECTION_CLIENT)) ? iodine_ruby_call_outside
-                                             : iodine_ruby_call_inside)(
-        (iodine_caller_args_s){c->store[IODINE_CONNECTION_STORE_handler],
-                               IODINE_ON_FINISH_ID,
-                               1,
-                               &connection});
+    if (c->flags & IODINE_CONNECTION_CLIENT) {
+      iodine_ruby_call_anywhere(c->store[IODINE_CONNECTION_STORE_handler],
+                                IODINE_ON_FINISH_ID,
+                                1,
+                                &connection);
+    } else {
+      iodine_ruby_call_inside(c->store[IODINE_CONNECTION_STORE_handler],
+                              IODINE_ON_FINISH_ID,
+                              1,
+                              &connection);
+    }
     fio_http_free(h);
   }
   c->http = NULL;
@@ -2017,7 +2019,7 @@ static void *iodine_connection_on_pubsub_in_gvl(void *m_) {
 }
 
 static void iodine_connection_on_pubsub(fio_pubsub_msg_s *m) {
-  rb_thread_call_with_gvl(iodine_connection_on_pubsub_in_gvl, m);
+  iodine_c_call_with(iodine_connection_on_pubsub_in_gvl, m);
 }
 
 FIO_IFUNC VALUE iodine_connection_subscribe_internal(fio_io_s *io,
@@ -2342,10 +2344,10 @@ static void iodine_io_raw_client_on_close(void *buf, void *udata) {
     return;
   iodine_connection_s *c = iodine_connection_ptr(connection);
   if (c) {
-    iodine_ruby_call_outside(c->store[IODINE_CONNECTION_STORE_handler],
-                             IODINE_ON_CLOSE_ID,
-                             1,
-                             &connection);
+    iodine_ruby_call_anywhere(c->store[IODINE_CONNECTION_STORE_handler],
+                              IODINE_ON_CLOSE_ID,
+                              1,
+                              &connection);
     fio_io_protocol_s *p = fio_io_protocol(c->io);
     FIO_MEM_FREE(p, sizeof(*p));
   }

@@ -95,7 +95,7 @@ static void iodine_pubsub_eng___subscribe(const fio_pubsub_engine_s *eng,
       .channel = channel,
       .filter = filter,
   };
-  rb_thread_call_with_gvl(iodine_pubsub_eng___subscribe__in_GC, &args);
+  iodine_c_call_with(iodine_pubsub_eng___subscribe__in_GC, &args);
 }
 
 static void *iodine_pubsub_eng___psubscribe__in_GC(void *a_) {
@@ -122,7 +122,7 @@ static void iodine_pubsub_eng___psubscribe(const fio_pubsub_engine_s *eng,
       .channel = channel,
       .filter = filter,
   };
-  rb_thread_call_with_gvl(iodine_pubsub_eng___psubscribe__in_GC, &args);
+  iodine_c_call_with(iodine_pubsub_eng___psubscribe__in_GC, &args);
 }
 
 static void *iodine_pubsub_eng___unsubscribe__in_GC(void *a_) {
@@ -149,7 +149,7 @@ static void iodine_pubsub_eng___unsubscribe(const fio_pubsub_engine_s *eng,
       .channel = channel,
       .filter = filter,
   };
-  rb_thread_call_with_gvl(iodine_pubsub_eng___unsubscribe__in_GC, &args);
+  iodine_c_call_with(iodine_pubsub_eng___unsubscribe__in_GC, &args);
 }
 
 static void *iodine_pubsub_eng___punsubscribe__in_GC(void *a_) {
@@ -179,7 +179,7 @@ static void iodine_pubsub_eng___punsubscribe(const fio_pubsub_engine_s *eng,
       .channel = channel,
       .filter = filter,
   };
-  rb_thread_call_with_gvl(iodine_pubsub_eng___punsubscribe__in_GC, &args);
+  iodine_c_call_with(iodine_pubsub_eng___punsubscribe__in_GC, &args);
 }
 
 static void *iodine_pubsub_eng___publish__in_GC(void *a_) {
@@ -499,7 +499,7 @@ static void *iodine_pubsub_sub_on_message_in_gvl(void *m_) {
  * Called by facil.io when a message arrives on the subscribed channel.
  */
 static void iodine_pubsub_sub_on_message(fio_pubsub_msg_s *m) {
-  rb_thread_call_with_gvl(iodine_pubsub_sub_on_message_in_gvl, m);
+  iodine_c_call_with(iodine_pubsub_sub_on_message_in_gvl, m);
 }
 
 /**
