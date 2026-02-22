@@ -100,6 +100,15 @@ static VALUE iodine_start(VALUE self) { // clang-format on
                              &keeper);
   }
 
+#ifdef _WIN32
+  /* Worker processes require fork(2), which is unavailable on Windows.
+   * Check here while the GVL is still held so rb_raise is safe. */
+  if (fio_cli_get_i("-w") != 0)
+    rb_raise(rb_eNotImpError,
+             "Worker processes (fork) are not supported on Windows. "
+             "Call Iodine.workers = 0 before Iodine.start.");
+#endif /* _WIN32 */
+
   rb_thread_call_without_gvl(iodine___start, &start_args, NULL, NULL);
   return self;
 }
