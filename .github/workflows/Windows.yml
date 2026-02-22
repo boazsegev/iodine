@@ -33,4 +33,4 @@ jobs:
     - name: Compile Iodine
       run: bundle exec rake compile
     - name: Run tests
-      run: bundle exec rspec spec/ --format progress
+      run: bundle exec rspec spec/ --format documentation 2>&1
