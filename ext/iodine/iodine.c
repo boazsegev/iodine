@@ -117,13 +117,6 @@ Initialize Extension
 ***************************************************************************** */
 
 void Init_iodine(void) {
-#ifdef _WIN32
-  /* Ensure Winsock is initialized before any socket calls (e.g., Iodine.listen
-   * at load time). On Windows, getaddrinfo() requires WSAStartup() to have been
-   * called first. fio___wsa_start() is idempotent — safe to call multiple
-   * times. */
-  fio___wsa_start();
-#endif
   patch_env();
   IODINE_THREAD_POOL = FIO_IO_ASYN_INIT;
   fio_state_callback_force(FIO_CALL_ON_INITIALIZE);
