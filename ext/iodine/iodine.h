@@ -13,6 +13,58 @@
  */
 #ifndef H___IODINE___H
 #define H___IODINE___H
+/* *****************************************************************************
+facil.io
+***************************************************************************** */
+
+/* Fix: __attribute__((weak)) doesn't work correctly on Windows PE/COFF
+   (MinGW DLLs) — weak symbols may not be properly allocated in the DLL's data
+   segment, causing segfaults when accessed (e.g., writing to FIO_LOG_LEVEL).
+   Since iodine compiles as a single translation unit, weak symbols are
+   unnecessary — override FIO_WEAK to empty before fio-stl.h is included. */
+#if defined(_WIN32) || defined(__MINGW32__) || defined(__CYGWIN__)
+#ifndef FIO_WEAK
+#define FIO_WEAK /* empty — no weak attribute on Windows */
+#endif
+#endif
+
+void rb_exit(int);
+/* shadow exit function and route it to Ruby */
+#define exit(status) rb_exit(status)
+
+typedef unsigned long long fio_thread_t;
+typedef int fio_thread_pid_t;
+// typedef VALUE fio_thread_t;
+
+#define FIO_LEAK_COUNTER            1
+#define FIO_MUSTACHE_LAMBDA_SUPPORT 1
+#define FIO_THREADS_BYO             1
+#define FIO_THREADS_FORK_BYO        1
+#define FIO_MEMORY_ARENA_COUNT_MAX  4
+#define FIO_EVERYTHING
+
+#ifndef DEBUG
+#undef FIO_LEAK_COUNTER_SKIP_EXIT
+#define FIO_LEAK_COUNTER_SKIP_EXIT 1
+/* Ruby doesn't always free everything pre-cleanup, so no point in counting */
+#undef FIO_LEAK_COUNTER
+#define FIO_LEAK_COUNTER 0
+#endif
+
+#include "fio-stl.h"
+
+/* Include Redis module (requires FIOBJ types from FIO_EVERYTHING) */
+#define FIO_REDIS
+#define FIO_FIOBJ
+#include "fio-stl.h"
+
+#ifndef DEBUG
+#endif
+
+/* *****************************************************************************
+Ruby
+***************************************************************************** */
+
 #include <ruby.h>
 #include <ruby/encoding.h>
 #include <ruby/intern.h>
@@ -28,9 +80,6 @@
 #if RUBY_API_VERSION_MAJOR < 4
 int ruby_thread_has_gvl_p(void);
 #endif
-
-typedef pid_t fio_thread_pid_t;
-typedef VALUE fio_thread_t;
 
 /* *****************************************************************************
 Ruby Method ID Constants
@@ -123,49 +172,6 @@ static VALUE IODINE_RACK_AFTER_RPLY_STR;
  */
 #define IODINE_RSTR_INFO(o)                                                    \
   { .buf = RSTRING_PTR(o), .len = (size_t)RSTRING_LEN(o) }
-
-/* shadow exit function and route it to Ruby */
-#define exit(status) rb_exit(status)
-
-/* *****************************************************************************
-facil.io
-***************************************************************************** */
-
-/* Fix: __attribute__((weak)) doesn't work correctly on Windows PE/COFF
-   (MinGW DLLs) — weak symbols may not be properly allocated in the DLL's data
-   segment, causing segfaults when accessed (e.g., writing to FIO_LOG_LEVEL).
-   Since iodine compiles as a single translation unit, weak symbols are
-   unnecessary — override FIO_WEAK to empty before fio-stl.h is included. */
-#if defined(_WIN32) || defined(__MINGW32__) || defined(__CYGWIN__)
-#ifndef FIO_WEAK
-#define FIO_WEAK /* empty — no weak attribute on Windows */
-#endif
-#endif
-
-#define FIO_LEAK_COUNTER            1
-#define FIO_MUSTACHE_LAMBDA_SUPPORT 1
-#define FIO_THREADS_BYO             1
-#define FIO_THREADS_FORK_BYO        1
-#define FIO_MEMORY_ARENA_COUNT_MAX  4
-#define FIO_EVERYTHING
-
-#ifndef DEBUG
-#undef FIO_LEAK_COUNTER_SKIP_EXIT
-#define FIO_LEAK_COUNTER_SKIP_EXIT 1
-/* Ruby doesn't always free everything pre-cleanup, so no point in counting */
-#undef FIO_LEAK_COUNTER
-#define FIO_LEAK_COUNTER 0
-#endif
-
-#include "fio-stl.h"
-
-/* Include Redis module (requires FIOBJ types from FIO_EVERYTHING) */
-#define FIO_REDIS
-#define FIO_FIOBJ
-#include "fio-stl.h"
-
-#ifndef DEBUG
-#endif
 
 /* *****************************************************************************
 Deferring Ruby Blocks
