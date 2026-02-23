@@ -214,7 +214,7 @@ end
 # These run as ordinary synchronous RSpec examples.
 # ---------------------------------------------------------------------------
 RSpec.describe 'Iodine configuration (no reactor)' do
-  before(:each) { Iodine.verbosity = 1 }  # keep FATAL visible for CI crash diagnostics
+  before(:each) { Iodine.verbosity = 2 }  # floor: ERROR+FATAL visible in CI
 
   # -----------------------------------------------------------------------
   # Iodine.verbosity

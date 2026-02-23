@@ -47,7 +47,7 @@ RSpec.describe 'Iodine raw TCP connection' do
   RAW_STARTED = [false]  # rubocop:disable RSpec/LeakyConstantDeclaration
 
   before(:context) do
-    Iodine.verbosity = 1  # keep FATAL visible so FIO_LOG_FATAL appears before any abort()
+    Iodine.verbosity = 2  # floor: ERROR+FATAL visible in CI
     Iodine.workers   = 0
     Iodine.threads   = 1   # raw IO needs only one worker thread
 

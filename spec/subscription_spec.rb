@@ -101,7 +101,7 @@ RSpec.describe 'Iodine::PubSub::Subscription' do
     r[:handler_swap]          = { old_fired: false, new_fired: false, new_msg: nil }
     r[:cancelled_no_delivery] = { received: false }
 
-    Iodine.verbosity = 1  # keep FATAL visible for CI crash diagnostics
+    Iodine.verbosity = 2  # floor: ERROR+FATAL visible in CI
     Iodine.workers   = 0
     Iodine.threads   = 1
 

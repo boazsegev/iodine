@@ -10,7 +10,7 @@ RSpec.configure do |config|
   # Ensure FIO_LOG_FATAL messages (printed before abort() via FIO_ASSERT) are
   # always visible in CI output. Level 1 = FATAL only; individual specs may
   # raise this but should not lower it below 1.
-  Iodine.verbosity = 1
+  Iodine.verbosity = 2  # floor: ERROR+FATAL visible in CI (level 1=fatal, 2=error, 3=warning, 4=info, 5=debug)
 
   config.expect_with :rspec do |expectations|
     expectations.include_chain_clauses_in_custom_matcher_descriptions = true
