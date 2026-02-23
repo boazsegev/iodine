@@ -88,7 +88,7 @@ static VALUE iodine_tls_default_set(VALUE klass, VALUE backend);
 
 FIO_IFUNC bool iodine___mtls_env(void) {
   bool ret = 0;
-  char *e = getenv("IODINE_MTLS");
+  char *e = fio_sys_env("IODINE_MTLS");
   if (!e)
     return ret;
   fio_str_info_s s = FIO_STR_INFO1(e);
@@ -133,8 +133,8 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
                            (void (*)(void *))fio_bstr_free,
                            (void *)argv[i]);
 
-  threads_env = getenv("THREADS");
-  workers_env = getenv("WORKERS");
+  threads_env = fio_sys_env("THREADS");
+  workers_env = fio_sys_env("WORKERS");
 
   fio_string_write2(
       &threads,
@@ -322,11 +322,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
                         FIO_STRING_WRITE_STR2(u.query.buf, u.query.len));
       fio_cli_set("-b", url.buf);
     } else {
-#if FIO_OS_WIN
-      SetEnvironmentVariable("PORT", fio_cli_get("-p"));
-#else
-      setenv("PORT", fio_cli_get("-p"), 1);
-#endif
+      fio_sys_env_set("PORT", fio_cli_get("-p"), 1);
     }
   }
 
