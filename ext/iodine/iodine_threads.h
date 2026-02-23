@@ -241,13 +241,9 @@ FIO_IFUNC int fio_thread_equal(fio_thread_t *a, fio_thread_t *b) {
  */
 FIO_IFUNC fio_thread_t fio_thread_current(void) {
 #ifdef _WIN32
-  /* Return a real HANDLE, matching fio-stl.h's updated Windows thread model
-   * where fio_thread_t stores a kernel HANDLE (not a numeric TID).
-   * The caller owns this handle; if not passed to fio_thread_join/detach,
-   * it must be closed with CloseHandle to avoid a handle leak. */
-  return (fio_thread_t)(uintptr_t)OpenThread(THREAD_ALL_ACCESS,
-                                             FALSE,
-                                             GetCurrentThreadId());
+  /* Return the numeric TID, matching fio-stl.h's TID-only design.
+   * No kernel object is created, no CloseHandle required, no leak. */
+  return (fio_thread_t)(uintptr_t)GetCurrentThreadId();
 #else
   return (fio_thread_t)(uintptr_t)pthread_self();
 #endif
