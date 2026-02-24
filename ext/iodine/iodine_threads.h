@@ -2,6 +2,94 @@
 #include "iodine.h"
 
 /* *****************************************************************************
+Condition Variables - BYO Implementation (FIO_THREADS_COND_BYO)
+
+On Windows: fio-stl.h's fio_thread_cond_wait uses SleepConditionVariableSRW
+with INFINITE timeout, causing a deadlock during reactor startup. Worker threads
+enter the infinite wait immediately (queue is empty at startup), and since
+nothing signals them before the reactor's main loop starts, they sleep forever:
+
+  - Main thread spin-waits for grp.stop == 0 (set only after manager creates
+    all workers)
+  - Manager thread blocks in fio_thread_join waiting for workers to exit
+  - Workers sleep forever in SleepConditionVariableSRW(INFINITE)
+  - Nothing signals workers because the IO loop hasn't started yet
+  - IO loop can't start because main thread is stuck in the spin-wait
+
+Fix: use a 500ms timed wait so workers periodically wake to check grp->stop
+and exit cleanly when signalled.
+
+On POSIX: delegate to pthread_cond_* unchanged (no behavioral change).
+***************************************************************************** */
+
+#ifdef _WIN32
+
+/* fio_thread_cond_t is typedef'd as CONDITION_VARIABLE in iodine.h */
+
+FIO_IFUNC int fio_thread_cond_init(fio_thread_cond_t *c) {
+  InitializeConditionVariable(c);
+  return 0;
+}
+
+/* Use 500ms timeout instead of INFINITE — lets workers wake periodically
+ * to check the stop flag, preventing deadlock during reactor startup. */
+FIO_IFUNC int fio_thread_cond_wait(fio_thread_cond_t *c,
+                                   fio_thread_mutex_t *m) {
+  SleepConditionVariableSRW(c, m, 500, 0);
+  return 0;
+}
+
+FIO_IFUNC int fio_thread_cond_timedwait(fio_thread_cond_t *c,
+                                        fio_thread_mutex_t *m,
+                                        size_t milliseconds) {
+  return 0 - !SleepConditionVariableSRW(c, m, (DWORD)milliseconds, 0);
+}
+
+FIO_IFUNC int fio_thread_cond_signal(fio_thread_cond_t *c) {
+  WakeConditionVariable(c);
+  return 0;
+}
+
+FIO_IFUNC void fio_thread_cond_destroy(fio_thread_cond_t *c) { (void)c; }
+
+#else /* POSIX */
+
+/* fio_thread_cond_t is typedef'd as pthread_cond_t in iodine.h */
+
+FIO_IFUNC int fio_thread_cond_init(fio_thread_cond_t *c) {
+  return pthread_cond_init(c, NULL);
+}
+
+FIO_IFUNC int fio_thread_cond_wait(fio_thread_cond_t *c,
+                                   fio_thread_mutex_t *m) {
+  return pthread_cond_wait(c, m);
+}
+
+FIO_IFUNC int fio_thread_cond_timedwait(fio_thread_cond_t *c,
+                                        fio_thread_mutex_t *m,
+                                        size_t milliseconds) {
+  struct timespec t;
+  clock_gettime(CLOCK_REALTIME, &t);
+  t.tv_sec += (time_t)(milliseconds / 1000);
+  t.tv_nsec += (long)((milliseconds % 1000) * 1000000);
+  if (t.tv_nsec >= 1000000000L) {
+    t.tv_sec++;
+    t.tv_nsec -= 1000000000L;
+  }
+  return pthread_cond_timedwait(c, m, &t);
+}
+
+FIO_IFUNC int fio_thread_cond_signal(fio_thread_cond_t *c) {
+  return pthread_cond_signal(c);
+}
+
+FIO_IFUNC void fio_thread_cond_destroy(fio_thread_cond_t *c) {
+  pthread_cond_destroy(c);
+}
+
+#endif /* _WIN32 / POSIX */
+
+/* *****************************************************************************
 Iodine Threads - Ruby-Aware Threading and Process Management
 
 This module provides Ruby-aware implementations of threading and process

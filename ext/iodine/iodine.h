@@ -36,9 +36,23 @@ typedef unsigned long long fio_thread_t;
 typedef int fio_thread_pid_t;
 // typedef VALUE fio_thread_t;
 
+/* Provide fio_thread_cond_t typedef before fio-stl.h is included.
+ * fio-stl.h's forward declarations reference fio_thread_cond_t unconditionally
+ * (even when FIO_THREADS_COND_BYO is set), so the type must be visible before
+ * fio-stl.h is parsed. We include the minimal system header needed for the
+ * underlying type, then define the typedef ourselves. */
+#if defined(_WIN32) || defined(__MINGW32__) || defined(__CYGWIN__)
+#include <synchapi.h>
+typedef CONDITION_VARIABLE fio_thread_cond_t;
+#else
+#include <pthread.h>
+typedef pthread_cond_t fio_thread_cond_t;
+#endif
+
 #define FIO_LEAK_COUNTER            1
 #define FIO_MUSTACHE_LAMBDA_SUPPORT 1
 #define FIO_THREADS_BYO             1
+#define FIO_THREADS_COND_BYO        1
 #define FIO_THREADS_FORK_BYO        1
 #define FIO_MEMORY_ARENA_COUNT_MAX  4
 #define FIO_EVERYTHING
