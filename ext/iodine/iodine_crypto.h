@@ -48,7 +48,7 @@ FIO_SFUNC VALUE iodine_crypto_chacha_encrypt(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(key, 0, "key", 1),
                   IODINE_ARG_BUF(nonce, 0, "nonce", 1),
                   IODINE_ARG_BUF(ad, 0, "ad", 0));
@@ -97,7 +97,7 @@ FIO_SFUNC VALUE iodine_crypto_chacha_decrypt(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(mac, 0, "mac", 1),
                   IODINE_ARG_BUF(key, 0, "key", 1),
                   IODINE_ARG_BUF(nonce, 0, "nonce", 1),
@@ -156,7 +156,7 @@ FIO_SFUNC VALUE iodine_crypto_xchacha_encrypt(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(key, 0, "key", 1),
                   IODINE_ARG_BUF(nonce, 0, "nonce", 1),
                   IODINE_ARG_BUF(ad, 0, "ad", 0));
@@ -205,7 +205,7 @@ FIO_SFUNC VALUE iodine_crypto_xchacha_decrypt(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(mac, 0, "mac", 1),
                   IODINE_ARG_BUF(key, 0, "key", 1),
                   IODINE_ARG_BUF(nonce, 0, "nonce", 1),
@@ -261,7 +261,7 @@ FIO_SFUNC VALUE iodine_crypto_aes128gcm_encrypt(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(key, 0, "key", 1),
                   IODINE_ARG_BUF(nonce, 0, "nonce", 1),
                   IODINE_ARG_BUF(ad, 0, "ad", 0));
@@ -310,7 +310,7 @@ FIO_SFUNC VALUE iodine_crypto_aes128gcm_decrypt(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(mac, 0, "mac", 1),
                   IODINE_ARG_BUF(key, 0, "key", 1),
                   IODINE_ARG_BUF(nonce, 0, "nonce", 1),
@@ -366,7 +366,7 @@ FIO_SFUNC VALUE iodine_crypto_aes256gcm_encrypt(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(key, 0, "key", 1),
                   IODINE_ARG_BUF(nonce, 0, "nonce", 1),
                   IODINE_ARG_BUF(ad, 0, "ad", 0));
@@ -415,7 +415,7 @@ FIO_SFUNC VALUE iodine_crypto_aes256gcm_decrypt(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(data, 0, NULL, 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(mac, 0, "mac", 1),
                   IODINE_ARG_BUF(key, 0, "key", 1),
                   IODINE_ARG_BUF(nonce, 0, "nonce", 1),
@@ -504,7 +504,7 @@ FIO_SFUNC VALUE iodine_crypto_ed25519_sign(int argc, VALUE *argv, VALUE self) {
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(message, 0, NULL, 1),
+                  IODINE_ARG_BUF(message, 0, "data", 1),
                   IODINE_ARG_BUF(sk, 0, "secret_key", 1),
                   IODINE_ARG_BUF(pk, 0, "public_key", 1));
 
@@ -540,8 +540,8 @@ FIO_SFUNC VALUE iodine_crypto_ed25519_verify(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(sig, 0, NULL, 1),
-                  IODINE_ARG_BUF(message, 1, NULL, 1),
+                  IODINE_ARG_BUF(sig, 0, "data", 1),
+                  IODINE_ARG_BUF(message, 1, "data", 1),
                   IODINE_ARG_BUF(pk, 0, "public_key", 1));
 
   if (sig.len != 64)
@@ -711,7 +711,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(message, 0, NULL, 1),
+                  IODINE_ARG_BUF(message, 0, "data", 1),
                   IODINE_ARG_BUF(recipient_pk, 0, "recipient_pk", 1));
 
   if (recipient_pk.len != 32)
@@ -754,7 +754,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519_decrypt(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(ciphertext, 0, NULL, 1),
+                  IODINE_ARG_BUF(ciphertext, 0, "data", 1),
                   IODINE_ARG_BUF(sk, 0, "secret_key", 1));
 
   if (sk.len != 32)
@@ -802,7 +802,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes128(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(message, 0, NULL, 1),
+                  IODINE_ARG_BUF(message, 0, "data", 1),
                   IODINE_ARG_BUF(recipient_pk, 0, "recipient_pk", 1));
 
   if (recipient_pk.len != 32)
@@ -845,7 +845,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519_decrypt_aes128(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(ciphertext, 0, NULL, 1),
+                  IODINE_ARG_BUF(ciphertext, 0, "data", 1),
                   IODINE_ARG_BUF(sk, 0, "secret_key", 1));
 
   if (sk.len != 32)
@@ -892,7 +892,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes256(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(message, 0, NULL, 1),
+                  IODINE_ARG_BUF(message, 0, "data", 1),
                   IODINE_ARG_BUF(recipient_pk, 0, "recipient_pk", 1));
 
   if (recipient_pk.len != 32)
@@ -935,7 +935,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519_decrypt_aes256(int argc,
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(ciphertext, 0, NULL, 1),
+                  IODINE_ARG_BUF(ciphertext, 0, "data", 1),
                   IODINE_ARG_BUF(sk, 0, "secret_key", 1));
 
   if (sk.len != 32)
@@ -1100,7 +1100,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519mlkem768_decapsulate(int argc,
   fio_buf_info_s sk = FIO_BUF_INFO0;
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(ct, 0, "ciphertext", 1),
+                  IODINE_ARG_BUF(ct, 0, "data", 1),
                   IODINE_ARG_BUF(sk, 0, "secret_key", 1));
 
   if (ct.len != 1120)

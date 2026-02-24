@@ -28,9 +28,23 @@ facil.io
 #endif
 #endif
 
-void rb_exit(int);
-/* shadow exit function and route it to Ruby */
-#define exit(status) rb_exit(status)
+/* NOTE: Do NOT redefine exit() to rb_exit() here.
+ * rb_exit() requires the GVL, but fio-stl.h calls exit() from async worker
+ * threads that run without the GVL. Calling rb_exit() without the GVL causes
+ * a silent crash with no output. The real CRT exit() is correct here —
+ * it flushes stdio buffers and terminates cleanly without Ruby involvement. */
+
+/* Route all fio-stl.h log output to stdout and flush immediately.
+ * On Windows, stderr in a MinGW DLL is not flushed before process termination,
+ * causing FIO_LOG_FATAL/ERROR messages to be silently swallowed on crash.
+ * Writing to stdout (which Ruby keeps sync'd) and flushing ensures messages
+ * appear in CI output even when the process exits immediately after. */
+#define FIO_STDERR_FILE stdout
+#define FIO_LOG2STDERR(...)                                                    \
+  do {                                                                         \
+    fprintf(stdout, __VA_ARGS__);                                              \
+    fflush(stdout);                                                            \
+  } while (0)
 
 typedef unsigned long long fio_thread_t;
 typedef int fio_thread_pid_t;
@@ -64,6 +78,17 @@ typedef pthread_cond_t fio_thread_cond_t;
 #undef FIO_LEAK_COUNTER
 #define FIO_LEAK_COUNTER 0
 #endif
+
+#define FIO_STDERR_FILE stdout
+#define FIO_ASSERT(cond, ...)                                                  \
+  do {                                                                         \
+    if (FIO_UNLIKELY(!(cond))) {                                               \
+      FIO_LOG_FATAL(__VA_ARGS__);                                              \
+      FIO_LOG_FATAL("     errno(%d): %s\n", errno, strerror(errno));           \
+      fflash(FIO_STDERR_FILE);                                                 \
+      raise(SIGINT);                                                           \
+    }                                                                          \
+  } while (0)
 
 #include "fio-stl.h"
 

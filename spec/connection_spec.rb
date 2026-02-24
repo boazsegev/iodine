@@ -47,36 +47,56 @@ RSpec.describe 'Iodine raw TCP connection' do
   RAW_STARTED = [false]  # rubocop:disable RSpec/LeakyConstantDeclaration
 
   before(:context) do
+    $stdout.puts "DEBUG: before(:context) start"; $stdout.flush
     Iodine.verbosity = 2  # floor: ERROR+FATAL visible in CI
     Iodine.workers   = 0
     Iodine.threads   = 1   # raw IO needs only one worker thread
+    $stdout.puts "DEBUG: config done, registering on_state"; $stdout.flush
 
     run_tests = proc do
+      $stdout.puts "DEBUG: run_tests start"; $stdout.flush
       TCPSocket.open('127.0.0.1', RAW_PORT) do |sock|
+        $stdout.puts "DEBUG: TCPSocket connected"; $stdout.flush
         # Read the server greeting
         greeting = sock.gets
+        $stdout.puts "DEBUG: got greeting: #{greeting.inspect}"; $stdout.flush
         RAW_RESULTS[:greeting] = greeting&.chomp
 
         # Send a line and read the echo
         sock.write("PING\n")
         sock.flush
+        $stdout.puts "DEBUG: sent PING"; $stdout.flush
         echo = sock.gets
+        $stdout.puts "DEBUG: got echo: #{echo.inspect}"; $stdout.flush
         RAW_RESULTS[:echo] = echo&.chomp
       end
+      $stdout.puts "DEBUG: run_tests done"; $stdout.flush
     rescue => e
+      $stdout.puts "DEBUG: run_tests error: #{e.class}: #{e.message}"; $stdout.flush
       RAW_RESULTS[:error] = "#{e.class}: #{e.message}"
     ensure
+      $stdout.puts "DEBUG: run_tests ensure, stopping"; $stdout.flush
       Iodine.run_after(100) { Iodine.stop }
     end
 
     Iodine.on_state(:start) do
+      $stdout.puts "DEBUG: on_state(:start) fired"; $stdout.flush
       next if RAW_STARTED[0]
       RAW_STARTED[0] = true
-      Iodine.run_after(50)   { Iodine.async { run_tests.call } }
+      Iodine.run_after(500) do
+        $stdout.puts "DEBUG: run_after(500) fired"; $stdout.flush
+        Iodine.async do
+          $stdout.puts "DEBUG: inside async block"; $stdout.flush
+          run_tests.call
+        end
+        $stdout.puts "DEBUG: async dispatched"; $stdout.flush
+      end
       Iodine.run_after(5000) { Iodine.stop }
     end
 
+    $stdout.puts "DEBUG: calling Iodine.start"; $stdout.flush
     Iodine.start
+    $stdout.puts "DEBUG: Iodine.start returned"; $stdout.flush
   end
 
   it 'completes without errors' do
