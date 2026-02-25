@@ -85,10 +85,36 @@ typedef pthread_cond_t fio_thread_cond_t;
     if (FIO_UNLIKELY(!(cond))) {                                               \
       FIO_LOG_FATAL(__VA_ARGS__);                                              \
       FIO_LOG_FATAL("     errno(%d): %s\n", errno, strerror(errno));           \
-      fflash(FIO_STDERR_FILE);                                                 \
+      fflush(FIO_STDERR_FILE);                                                 \
       raise(SIGINT);                                                           \
     }                                                                          \
   } while (0)
+
+/* Windows fix: fio_sock_dup() in fio-stl.h calls WSASocket with dwFlags=0
+ * when FROM_PROTOCOL_INFO is used. On MinGW, this returns INVALID_SOCKET
+ * (WSAEINVAL) when the WSAPROTOCOL_INFO struct encodes WSA_FLAG_OVERLAPPED.
+ * We intercept WSASocket via macro rename so the wrapper runs instead.
+ * The wrapper adds WSA_FLAG_OVERLAPPED when lpProtocolInfo != NULL && dwFlags
+ * == 0. fio-stl.h is auto-generated — DO NOT edit it directly. See:
+ * research/2026-02-22 001 fio-stl bug report - fio_sock_dup
+ * WSA_FLAG_OVERLAPPED.md
+ */
+#if defined(_WIN32) || defined(__MINGW32__)
+static inline SOCKET iodine___WSASocket_fixed(
+    int af,
+    int type,
+    int protocol,
+    LPWSAPROTOCOL_INFOA lpProtocolInfo,
+    GROUP g,
+    DWORD dwFlags) {
+  /* FROM_PROTOCOL_INFO case: MinGW requires WSA_FLAG_OVERLAPPED in dwFlags
+   * when the protocol info encodes an overlapped socket, else WSAEINVAL. */
+  if (lpProtocolInfo != NULL && dwFlags == 0)
+    dwFlags = WSA_FLAG_OVERLAPPED;
+  return WSASocket(af, type, protocol, lpProtocolInfo, g, dwFlags);
+}
+#define WSASocket iodine___WSASocket_fixed
+#endif /* _WIN32 || __MINGW32__ */
 
 #include "fio-stl.h"
 
