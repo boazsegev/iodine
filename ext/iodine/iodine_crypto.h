@@ -1074,7 +1074,9 @@ FIO_SFUNC VALUE iodine_crypto_x25519mlkem768_encapsulate(int argc,
     rb_raise(rb_eRuntimeError, "Encapsulation failed");
 
   VALUE ciphertext = rb_str_new((const char *)ct, 1120);
+  STORE.cache(ciphertext);
   VALUE shared_secret = rb_str_new((const char *)ss, 64);
+  STORE.cache(shared_secret);
   /* Clear shared secret from stack */
   fio_memset(ss, 0, 64);
   return rb_ary_new_from_args(2, ciphertext, shared_secret);
