@@ -28,33 +28,12 @@ facil.io
 #endif
 #endif
 
-/* NOTE: Do NOT redefine exit() to rb_exit() here.
- * rb_exit() requires the GVL, but fio-stl.h calls exit() from async worker
- * threads that run without the GVL. Calling rb_exit() without the GVL causes
- * a silent crash with no output. The real CRT exit() is correct here —
- * it flushes stdio buffers and terminates cleanly without Ruby involvement. */
-
-/* Route all fio-stl.h log output to stdout and flush immediately.
- * On Windows, stderr in a MinGW DLL is not flushed before process termination,
- * causing FIO_LOG_FATAL/ERROR messages to be silently swallowed on crash.
- * Writing to stdout (which Ruby keeps sync'd) and flushing ensures messages
- * appear in CI output even when the process exits immediately after. */
-#define FIO_STDERR_FILE stdout
-#define FIO_LOG2STDERR(...)                                                    \
-  do {                                                                         \
-    fprintf(stdout, __VA_ARGS__);                                              \
-    fflush(stdout);                                                            \
-  } while (0)
+#define FIO_LEAK_COUNTER 1
+#include "fio-stl.h"
 
 typedef unsigned long long fio_thread_t;
 typedef int fio_thread_pid_t;
-// typedef VALUE fio_thread_t;
 
-/* Provide fio_thread_cond_t typedef before fio-stl.h is included.
- * fio-stl.h's forward declarations reference fio_thread_cond_t unconditionally
- * (even when FIO_THREADS_COND_BYO is set), so the type must be visible before
- * fio-stl.h is parsed. We include the minimal system header needed for the
- * underlying type, then define the typedef ourselves. */
 #if defined(_WIN32) || defined(__MINGW32__) || defined(__CYGWIN__)
 #include <synchapi.h>
 typedef CONDITION_VARIABLE fio_thread_cond_t;
@@ -63,7 +42,6 @@ typedef CONDITION_VARIABLE fio_thread_cond_t;
 typedef pthread_cond_t fio_thread_cond_t;
 #endif
 
-#define FIO_LEAK_COUNTER            1
 #define FIO_MUSTACHE_LAMBDA_SUPPORT 1
 #define FIO_THREADS_BYO             1
 #define FIO_THREADS_COND_BYO        1
@@ -79,12 +57,12 @@ typedef pthread_cond_t fio_thread_cond_t;
 #define FIO_LEAK_COUNTER 0
 #endif
 
-#include "fio-stl.h"
+#include FIO_INCLUDE_FILE
 
 /* Include Redis module (requires FIOBJ types from FIO_EVERYTHING) */
 #define FIO_REDIS
 #define FIO_FIOBJ
-#include "fio-stl.h"
+#include FIO_INCLUDE_FILE
 
 #ifndef DEBUG
 #endif
