@@ -768,16 +768,16 @@ module Iodine
     # The window parameter specifies how many intervals to check on either side
     # of the current time. For example, window: 1 checks current ± 1 interval.
     #
-    # @param secret [String] the shared secret key (raw bytes or Base32 decoded)
     # @param code [Integer] the TOTP code to verify
+    # @param secret [String] the shared secret key (raw bytes or Base32 decoded)
     # @param window [Integer] (**optional**) number of intervals to check on each side (default: 1, range: 0-10)
     # @param interval [Integer] (**optional**) time window in seconds (default: 30)
     # @return [Boolean] `true` if the code is valid, `false` otherwise
     #
     # @example
-    #   valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code)
-    #   valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code, window: 2)
-    def self.totp_verify(secret:, code:, window: 1, interval: 30); end
+    #   valid = Iodine::Utils.totp_verify(code: user_code, secret: my_secret)
+    #   valid = Iodine::Utils.totp_verify(code: user_code, secret: my_secret, window: 2)
+    def self.totp_verify(code:, secret:, window: 1, interval: 30); end
 
     # Generates 16 unique bytes of Poly1305-MAC, encoding them as a Base64 encoded String.
     #
@@ -2353,7 +2353,7 @@ module Iodine
 
         # Decrypts data using ChaCha20-Poly1305 AEAD.
         #
-        # @param ciphertext [String] Ciphertext to decrypt
+        # @param data [String] Ciphertext to decrypt
         # @param mac [String] 16-byte authentication tag
         # @param key [String] 32-byte encryption key
         # @param nonce [String] 12-byte nonce
@@ -2363,8 +2363,8 @@ module Iodine
         # @raise [RuntimeError] if authentication fails
         #
         # @example
-        #   plaintext = Iodine::Base::Crypto::ChaCha20Poly1305.decrypt(ciphertext, mac: mac, key: key, nonce: nonce)
-        def self.decrypt(ciphertext, mac:, key:, nonce:, ad: nil); end
+        #   plaintext = Iodine::Base::Crypto::ChaCha20Poly1305.decrypt(data, mac: mac, key: key, nonce: nonce)
+        def self.decrypt(data, mac:, key:, nonce:, ad: nil); end
       end
 
       # AES-128-GCM AEAD encryption with 12-byte nonce.
@@ -2393,7 +2393,7 @@ module Iodine
 
         # Decrypts data using AES-128-GCM AEAD.
         #
-        # @param ciphertext [String] Ciphertext to decrypt
+        # @param data [String] Ciphertext to decrypt
         # @param mac [String] 16-byte authentication tag
         # @param key [String] 16-byte encryption key
         # @param nonce [String] 12-byte nonce
@@ -2403,8 +2403,8 @@ module Iodine
         # @raise [RuntimeError] if authentication fails
         #
         # @example
-        #   plaintext = Iodine::Base::Crypto::AES128GCM.decrypt(ciphertext, mac: mac, key: key, nonce: nonce)
-        def self.decrypt(ciphertext, mac:, key:, nonce:, ad: nil); end
+        #   plaintext = Iodine::Base::Crypto::AES128GCM.decrypt(data, mac: mac, key: key, nonce: nonce)
+        def self.decrypt(data, mac:, key:, nonce:, ad: nil); end
       end
 
       # AES-256-GCM AEAD encryption with 12-byte nonce.
@@ -2433,7 +2433,7 @@ module Iodine
 
         # Decrypts data using AES-256-GCM AEAD.
         #
-        # @param ciphertext [String] Ciphertext to decrypt
+        # @param data [String] Ciphertext to decrypt
         # @param mac [String] 16-byte authentication tag
         # @param key [String] 32-byte encryption key
         # @param nonce [String] 12-byte nonce
@@ -2443,8 +2443,8 @@ module Iodine
         # @raise [RuntimeError] if authentication fails
         #
         # @example
-        #   plaintext = Iodine::Base::Crypto::AES256GCM.decrypt(ciphertext, mac: mac, key: key, nonce: nonce)
-        def self.decrypt(ciphertext, mac:, key:, nonce:, ad: nil); end
+        #   plaintext = Iodine::Base::Crypto::AES256GCM.decrypt(data, mac: mac, key: key, nonce: nonce)
+        def self.decrypt(data, mac:, key:, nonce:, ad: nil); end
       end
 
       # XChaCha20-Poly1305 AEAD encryption with 24-byte nonce.
@@ -2469,7 +2469,7 @@ module Iodine
 
         # Decrypts data using XChaCha20-Poly1305 AEAD.
         #
-        # @param ciphertext [String] Ciphertext to decrypt
+        # @param data [String] Ciphertext to decrypt
         # @param mac [String] 16-byte authentication tag
         # @param key [String] 32-byte encryption key
         # @param nonce [String] 24-byte nonce
@@ -2479,8 +2479,8 @@ module Iodine
         # @raise [RuntimeError] if authentication fails
         #
         # @example
-        #   plaintext = Iodine::Base::Crypto::XChaCha20Poly1305.decrypt(ciphertext, mac: mac, key: key, nonce: nonce)
-        def self.decrypt(ciphertext, mac:, key:, nonce:, ad: nil); end
+        #   plaintext = Iodine::Base::Crypto::XChaCha20Poly1305.decrypt(data, mac: mac, key: key, nonce: nonce)
+        def self.decrypt(data, mac:, key:, nonce:, ad: nil); end
       end
 
       # Ed25519 digital signatures (128-bit security level).
@@ -2505,27 +2505,27 @@ module Iodine
 
         # Signs a message using Ed25519.
         #
-        # @param message [String] Message to sign
+        # @param data [String] Message to sign
         # @param secret_key [String] 32-byte secret key
         # @param public_key [String] 32-byte public key
         # @return [String] 64-byte signature
         # @raise [ArgumentError] if keys have incorrect sizes
         #
         # @example
-        #   signature = Iodine::Base::Crypto::Ed25519.sign("message", secret_key: sk, public_key: pk)
-        def self.sign(message, secret_key:, public_key:); end
+        #   signature = Iodine::Base::Crypto::Ed25519.sign("data", secret_key: sk, public_key: pk)
+        def self.sign(data, secret_key:, public_key:); end
 
         # Verifies an Ed25519 signature.
         #
+        # @param data [String] Original message
         # @param signature [String] 64-byte signature
-        # @param message [String] Original message
         # @param public_key [String] 32-byte public key
         # @return [Boolean] `true` if valid, `false` otherwise
         # @raise [ArgumentError] if signature or public_key have incorrect sizes
         #
         # @example
-        #   valid = Iodine::Base::Crypto::Ed25519.verify(signature, "message", public_key: pk)
-        def self.verify(signature, message, public_key:); end
+        #   valid = Iodine::Base::Crypto::Ed25519.verify("data", signature, public_key: pk)
+        def self.verify(data, signature, public_key:); end
 
         # Converts an Ed25519 secret key to an X25519 secret key.
         #
@@ -2611,7 +2611,7 @@ module Iodine
         # Uses ephemeral key agreement + ChaCha20-Poly1305 for authenticated
         # encryption. Only the recipient with the matching secret key can decrypt.
         #
-        # @param message [String] Plaintext to encrypt
+        # @param data [String] Plaintext to encrypt
         # @param recipient_pk [String] 32-byte recipient's public key
         # @return [String] Ciphertext (message.length + 48 bytes overhead)
         # @raise [ArgumentError] if recipient_pk is not 32 bytes
@@ -2620,20 +2620,20 @@ module Iodine
         # @example
         #   # Bob encrypts a message for Alice
         #   ciphertext = Iodine::Base::Crypto::X25519.encrypt("secret message", recipient_pk: alice_pk)
-        def self.encrypt(message, recipient_pk:); end
+        def self.encrypt(data, recipient_pk:); end
 
         # Decrypts a message using X25519 public-key encryption (ECIES).
         #
-        # @param ciphertext [String] Ciphertext from X25519.encrypt
+        # @param data [String] Ciphertext from X25519.encrypt
         # @param secret_key [String] 32-byte recipient's secret key
         # @return [String] Decrypted plaintext
-        # @raise [ArgumentError] if secret_key is not 32 bytes or ciphertext is too short
+        # @raise [ArgumentError] if secret_key is not 32 bytes or data is too short
         # @raise [RuntimeError] if decryption fails (authentication error)
         #
         # @example
         #   # Alice decrypts the message
-        #   plaintext = Iodine::Base::Crypto::X25519.decrypt(ciphertext, secret_key: alice_sk)
-        def self.decrypt(ciphertext, secret_key:); end
+        #   plaintext = Iodine::Base::Crypto::X25519.decrypt(data, secret_key: alice_sk)
+        def self.decrypt(data, secret_key:); end
 
         # Encrypts a message using X25519 ECIES with AES-128-GCM.
         #
@@ -2641,7 +2641,7 @@ module Iodine
         # Only the recipient with the matching secret key can decrypt.
         # The shared secret is derived using HKDF before use as the AES key.
         #
-        # @param message [String] Plaintext to encrypt
+        # @param data [String] Plaintext to encrypt
         # @param recipient_pk [String] 32-byte recipient's public key
         # @return [String] Ciphertext (message.length + 48 bytes overhead)
         # @raise [ArgumentError] if recipient_pk is not 32 bytes
@@ -2650,20 +2650,20 @@ module Iodine
         # @example
         #   # Bob encrypts a message for Alice using AES-128-GCM
         #   ciphertext = Iodine::Base::Crypto::X25519.encrypt_aes128("secret message", recipient_pk: alice_pk)
-        def self.encrypt_aes128(message, recipient_pk:); end
+        def self.encrypt_aes128(data, recipient_pk:); end
 
         # Decrypts a message using X25519 ECIES with AES-128-GCM.
         #
-        # @param ciphertext [String] Ciphertext from X25519.encrypt_aes128
+        # @param data [String] Ciphertext from X25519.encrypt_aes128
         # @param secret_key [String] 32-byte recipient's secret key
         # @return [String] Decrypted plaintext
-        # @raise [ArgumentError] if secret_key is not 32 bytes or ciphertext is too short
+        # @raise [ArgumentError] if secret_key is not 32 bytes or data is too short
         # @raise [RuntimeError] if decryption fails (authentication error)
         #
         # @example
         #   # Alice decrypts the message
-        #   plaintext = Iodine::Base::Crypto::X25519.decrypt_aes128(ciphertext, secret_key: alice_sk)
-        def self.decrypt_aes128(ciphertext, secret_key:); end
+        #   plaintext = Iodine::Base::Crypto::X25519.decrypt_aes128(data, secret_key: alice_sk)
+        def self.decrypt_aes128(data, secret_key:); end
 
         # Encrypts a message using X25519 ECIES with AES-256-GCM.
         #
@@ -2671,7 +2671,7 @@ module Iodine
         # Only the recipient with the matching secret key can decrypt.
         # The shared secret is derived using HKDF before use as the AES key.
         #
-        # @param message [String] Plaintext to encrypt
+        # @param data [String] Plaintext to encrypt
         # @param recipient_pk [String] 32-byte recipient's public key
         # @return [String] Ciphertext (message.length + 48 bytes overhead)
         # @raise [ArgumentError] if recipient_pk is not 32 bytes
@@ -2680,20 +2680,20 @@ module Iodine
         # @example
         #   # Bob encrypts a message for Alice using AES-256-GCM
         #   ciphertext = Iodine::Base::Crypto::X25519.encrypt_aes256("secret message", recipient_pk: alice_pk)
-        def self.encrypt_aes256(message, recipient_pk:); end
+        def self.encrypt_aes256(data, recipient_pk:); end
 
         # Decrypts a message using X25519 ECIES with AES-256-GCM.
         #
-        # @param ciphertext [String] Ciphertext from X25519.encrypt_aes256
+        # @param data [String] Ciphertext from X25519.encrypt_aes256
         # @param secret_key [String] 32-byte recipient's secret key
         # @return [String] Decrypted plaintext
-        # @raise [ArgumentError] if secret_key is not 32 bytes or ciphertext is too short
+        # @raise [ArgumentError] if secret_key is not 32 bytes or data is too short
         # @raise [RuntimeError] if decryption fails (authentication error)
         #
         # @example
         #   # Alice decrypts the message
-        #   plaintext = Iodine::Base::Crypto::X25519.decrypt_aes256(ciphertext, secret_key: alice_sk)
-        def self.decrypt_aes256(ciphertext, secret_key:); end
+        #   plaintext = Iodine::Base::Crypto::X25519.decrypt_aes256(data, secret_key: alice_sk)
+        def self.decrypt_aes256(data, secret_key:); end
       end
 
       # HKDF key derivation (RFC 5869).
@@ -2737,7 +2737,7 @@ module Iodine
       # Key sizes:
       # - Secret key: 2432 bytes (ML-KEM-768 sk + X25519 sk)
       # - Public key: 1216 bytes (ML-KEM-768 pk + X25519 pk)
-      # - Ciphertext: 1120 bytes (ML-KEM-768 ct + X25519 ephemeral pk)
+      # - Data: 1120 bytes (ML-KEM-768 ct + X25519 ephemeral pk)
       # - Shared secret: 64 bytes (ML-KEM-768 ss || X25519 ss)
       #
       # @note This is a Key Encapsulation Mechanism (KEM), not direct encryption.
@@ -2749,11 +2749,11 @@ module Iodine
       #   secret_key, public_key = Iodine::Base::Crypto::X25519MLKEM768.keypair
       #
       #   # Sender encapsulates a shared secret using recipient's public key
-      #   ciphertext, sender_shared = Iodine::Base::Crypto::X25519MLKEM768.encapsulate(public_key: public_key)
+      #   data, sender_shared = Iodine::Base::Crypto::X25519MLKEM768.encapsulate(public_key: public_key)
       #
       #   # Recipient decapsulates to obtain the same shared secret
       #   recipient_shared = Iodine::Base::Crypto::X25519MLKEM768.decapsulate(
-      #     ciphertext: ciphertext,
+      #     data: data,
       #     secret_key: secret_key
       #   )
       #
@@ -2778,49 +2778,49 @@ module Iodine
 
         # Encapsulates a shared secret for the given public key.
         #
-        # The sender uses this method to generate a shared secret and ciphertext.
-        # The ciphertext is sent to the recipient, who can decapsulate it using
+        # The sender uses this method to generate a shared secret and data.
+        # The data is sent to the recipient, who can decapsulate it using
         # their secret key to obtain the same shared secret.
         #
         # @param public_key [String] 1216-byte recipient's public key
-        # @return [Array<String, String>] [ciphertext, shared_secret]
-        #   - ciphertext: 1120-byte binary string to send to recipient
+        # @return [Array<String, String>] [data, shared_secret]
+        #   - data: 1120-byte binary string to send to recipient
         #   - shared_secret: 64-byte binary string for symmetric encryption
         # @raise [ArgumentError] if public_key is not 1216 bytes
         # @raise [RuntimeError] if encapsulation fails
         #
-        # @note Send the ciphertext to the recipient who can decapsulate it to
+        # @note Send the data to the recipient who can decapsulate it to
         #   obtain the same shared secret. The shared secret should be used with
         #   a symmetric cipher for actual data encryption.
         #
         # @example
         #   # Sender encapsulates a shared secret
-        #   ciphertext, shared_secret = Iodine::Base::Crypto::X25519MLKEM768.encapsulate(
+        #   data, shared_secret = Iodine::Base::Crypto::X25519MLKEM768.encapsulate(
         #     public_key: recipient_public_key
         #   )
-        #   # Send ciphertext to recipient
+        #   # Send data to recipient
         #   # Use shared_secret with AES-256-GCM or ChaCha20-Poly1305
         def self.encapsulate(public_key:); end
 
         # Decapsulates a shared secret using your secret key.
         #
         # The recipient uses this method to recover the shared secret from the
-        # ciphertext sent by the sender.
+        # data sent by the sender.
         #
-        # @param ciphertext [String] 1120-byte ciphertext from encapsulate
+        # @param data [String] 1120-byte encapsulated data from encapsulate
         # @param secret_key [String] 2432-byte secret key from keypair
         # @return [String] 64-byte shared secret (same as encapsulate returned)
-        # @raise [ArgumentError] if ciphertext is not 1120 bytes or secret_key is not 2432 bytes
-        # @raise [RuntimeError] if decapsulation fails (invalid key or ciphertext)
+        # @raise [ArgumentError] if data is not 1120 bytes or secret_key is not 2432 bytes
+        # @raise [RuntimeError] if decapsulation fails (invalid key or data)
         #
         # @example
         #   # Recipient decapsulates the shared secret
         #   shared_secret = Iodine::Base::Crypto::X25519MLKEM768.decapsulate(
-        #     ciphertext: received_ciphertext,
+        #     data: received_ciphertext,
         #     secret_key: my_secret_key
         #   )
         #   # shared_secret matches what the sender obtained from encapsulate
-        def self.decapsulate(ciphertext:, secret_key:); end
+        def self.decapsulate(data:, secret_key:); end
       end
     end
   end

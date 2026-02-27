@@ -144,7 +144,10 @@ static int iodine_rb2c_arg(int argc, const VALUE *argv, iodine_rb2c_arg_s *a) {
     continue;                                                                  \
   }                                                                            \
   switch (a[i].expected_type) {                                                \
-  case 0: a[i].rb[0] = tmp; continue;                                          \
+  case 0:                                                                      \
+    a[i].rb[0] = tmp;                                                          \
+    STORE.cache(tmp);                                                          \
+    continue;                                                                  \
   case 1:                                                                      \
     if (RB_TYPE_P(tmp, RUBY_T_SYMBOL))                                         \
       tmp = rb_sym2str(tmp);                                                   \
@@ -152,6 +155,7 @@ static int iodine_rb2c_arg(int argc, const VALUE *argv, iodine_rb2c_arg_s *a) {
       rb_raise(rb_eTypeError,                                                  \
                "%s should be a String (or Symbol)",                            \
                a[i].name.buf);                                                 \
+    STORE.cache(tmp);                                                          \
     a[i].buf[0] = FIO_BUF_INFO2(RSTRING_PTR(tmp), (size_t)RSTRING_LEN(tmp));   \
     continue;                                                                  \
   case 2:                                                                      \
@@ -161,6 +165,7 @@ static int iodine_rb2c_arg(int argc, const VALUE *argv, iodine_rb2c_arg_s *a) {
       rb_raise(rb_eTypeError,                                                  \
                "%s should be a String (or Symbol)",                            \
                a[i].name.buf);                                                 \
+    STORE.cache(tmp);                                                          \
     a[i].str[0] = FIO_STR_INFO2(RSTRING_PTR(tmp), (size_t)RSTRING_LEN(tmp));   \
     continue;                                                                  \
   case 3:                                                                      \
@@ -170,15 +175,17 @@ static int iodine_rb2c_arg(int argc, const VALUE *argv, iodine_rb2c_arg_s *a) {
     continue;                                                                  \
   case 4:                                                                      \
     if (tmp == Qnil) {                                                         \
-      if (rb_block_given_p())                                                  \
+      if (rb_block_given_p()) {                                                \
         tmp = rb_block_proc();                                                 \
-      else if (a[i].required)                                                  \
+        STORE.cache(tmp);                                                      \
+      } else if (a[i].required)                                                \
         goto missing_required;                                                 \
       else                                                                     \
         continue;                                                              \
     } else if (tmp != Qnil && !rb_respond_to(tmp, rb_intern2("call", 4)))      \
       rb_raise(rb_eArgError, "a callback object MUST respond to `call`");      \
     a[i].rb[0] = tmp;                                                          \
+    STORE.cache(tmp);                                                          \
     continue;                                                                  \
   case 5:                                                                      \
     if (tmp != Qnil) {                                                         \

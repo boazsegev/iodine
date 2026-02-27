@@ -714,18 +714,18 @@ RSpec.describe Iodine::Utils do
 
     it 'returns true for the current TOTP code' do
       code = Iodine::Utils.totp(secret: raw_secret)
-      expect(Iodine::Utils.totp_verify(secret: raw_secret, code: code)).to be true
+      expect(Iodine::Utils.totp_verify(code: code, secret: raw_secret)).to be true
     end
 
     it 'returns false for an obviously wrong code' do
       # Use a code that is definitely wrong (negative or out of range)
       # We use -1 which can never be a valid 6-digit TOTP
-      expect(Iodine::Utils.totp_verify(secret: raw_secret, code: -1)).to be false
+      expect(Iodine::Utils.totp_verify(code: -1, secret: raw_secret)).to be false
     end
 
     it 'accepts a window: parameter' do
       code = Iodine::Utils.totp(secret: raw_secret)
-      expect(Iodine::Utils.totp_verify(secret: raw_secret, code: code, window: 2)).to be true
+      expect(Iodine::Utils.totp_verify(code: code, secret: raw_secret, window: 2)).to be true
     end
   end
 

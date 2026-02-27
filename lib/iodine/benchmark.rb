@@ -757,7 +757,7 @@ module Iodine
       puts "\nEd25519 Verification (short message):"
       ::Benchmark.ips do |x|
         x.report('Iodine Ed25519.verify') do
-          Iodine::Base::Crypto::Ed25519.verify(iodine_signature, message_short, public_key: iodine_pk)
+          Iodine::Base::Crypto::Ed25519.verify(message_short, iodine_signature, public_key: iodine_pk)
         end
 
         if openssl_ed25519_available
@@ -1318,7 +1318,7 @@ module Iodine
       puts "\nTOTP Verification (window: ±1 interval = 3 codes checked):"
       ::Benchmark.ips do |x|
         x.report('Iodine totp_verify') do
-          Iodine::Utils.totp_verify(secret: raw_secret, code: current_code, window: 1)
+          Iodine::Utils.totp_verify(code: current_code, secret: raw_secret, window: 1)
         end
 
         if rotp_available
@@ -1593,11 +1593,11 @@ module Iodine
       pqkem_sk, pqkem_pk = Iodine::Base::Crypto::X25519MLKEM768.keypair
 
       # ------------------------------------------------------------------
-      # Encapsulation — sender generates shared secret + ciphertext
+      # Encapsulation — sender generates shared secret + data
       #
       # No stdlib equivalent; shown for throughput reference only.
       # ------------------------------------------------------------------
-      puts "\nEncapsulation (sender generates shared secret + 1120-byte ciphertext):"
+      puts "\nEncapsulation (sender generates shared secret + 1120-byte data):"
       puts "  [No stdlib equivalent — shown for throughput reference only]"
       ::Benchmark.ips do |x|
         x.report('Iodine X25519MLKEM768.encapsulate') do
@@ -1606,19 +1606,19 @@ module Iodine
         # No compare! — no stdlib equivalent
       end
 
-      # Generate a ciphertext outside the hot loop for decapsulate
+      # Generate encapsulated data outside the hot loop for decapsulate
       pqkem_ct, = Iodine::Base::Crypto::X25519MLKEM768.encapsulate(public_key: pqkem_pk)
 
       # ------------------------------------------------------------------
-      # Decapsulation — recipient recovers shared secret from ciphertext
+      # Decapsulation — recipient recovers shared secret from data
       #
       # No stdlib equivalent; shown for throughput reference only.
       # ------------------------------------------------------------------
-      puts "\nDecapsulation (recipient recovers 64-byte shared secret from ciphertext):"
+      puts "\nDecapsulation (recipient recovers 64-byte shared secret from data):"
       puts "  [No stdlib equivalent — shown for throughput reference only]"
       ::Benchmark.ips do |x|
         x.report('Iodine X25519MLKEM768.decapsulate') do
-          Iodine::Base::Crypto::X25519MLKEM768.decapsulate(ciphertext: pqkem_ct, secret_key: pqkem_sk)
+          Iodine::Base::Crypto::X25519MLKEM768.decapsulate(data: pqkem_ct, secret_key: pqkem_sk)
         end
         # No compare! — no stdlib equivalent
       end

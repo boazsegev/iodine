@@ -78,7 +78,7 @@ FIO_SFUNC VALUE iodine_crypto_chacha_encrypt(int argc,
 /**
  * Decrypts data using ChaCha20-Poly1305 AEAD.
  *
- * @param ciphertext [String] Ciphertext to decrypt
+ * @param data [String] Ciphertext to decrypt
  * @param mac: [String] 16-byte authentication tag
  * @param key: [String] 32-byte encryption key
  * @param nonce: [String] 12-byte nonce
@@ -186,7 +186,7 @@ FIO_SFUNC VALUE iodine_crypto_xchacha_encrypt(int argc,
 /**
  * Decrypts data using XChaCha20-Poly1305 AEAD.
  *
- * @param ciphertext [String] Ciphertext to decrypt
+ * @param data [String] Ciphertext to decrypt
  * @param mac: [String] 16-byte authentication tag
  * @param key: [String] 32-byte encryption key
  * @param nonce: [String] 24-byte nonce
@@ -291,7 +291,7 @@ FIO_SFUNC VALUE iodine_crypto_aes128gcm_encrypt(int argc,
 /**
  * Decrypts data using AES-128-GCM AEAD.
  *
- * @param ciphertext [String] Ciphertext to decrypt
+ * @param data [String] Ciphertext to decrypt
  * @param mac: [String] 16-byte authentication tag
  * @param key: [String] 16-byte encryption key
  * @param nonce: [String] 12-byte nonce
@@ -396,7 +396,7 @@ FIO_SFUNC VALUE iodine_crypto_aes256gcm_encrypt(int argc,
 /**
  * Decrypts data using AES-256-GCM AEAD.
  *
- * @param ciphertext [String] Ciphertext to decrypt
+ * @param data [String] Ciphertext to decrypt
  * @param mac: [String] 16-byte authentication tag
  * @param key: [String] 32-byte encryption key
  * @param nonce: [String] 12-byte nonce
@@ -492,19 +492,19 @@ FIO_SFUNC VALUE iodine_crypto_ed25519_public_key(int argc,
 /**
  * Signs a message using Ed25519.
  *
- * @param message [String] Message to sign
+ * @param data [String] Message to sign
  * @param secret_key: [String] 32-byte secret key
  * @param public_key: [String] 32-byte public key
  * @return [String] 64-byte signature
  */
 FIO_SFUNC VALUE iodine_crypto_ed25519_sign(int argc, VALUE *argv, VALUE self) {
-  fio_buf_info_s message = FIO_BUF_INFO0;
+  fio_buf_info_s data = FIO_BUF_INFO0;
   fio_buf_info_s sk = FIO_BUF_INFO0;
   fio_buf_info_s pk = FIO_BUF_INFO0;
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(message, 0, "data", 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(sk, 0, "secret_key", 1),
                   IODINE_ARG_BUF(pk, 0, "public_key", 1));
 
@@ -515,8 +515,8 @@ FIO_SFUNC VALUE iodine_crypto_ed25519_sign(int argc, VALUE *argv, VALUE self) {
 
   uint8_t sig[64];
   fio_ed25519_sign(sig,
-                   message.buf,
-                   message.len,
+                   data.buf,
+                   data.len,
                    (const uint8_t *)sk.buf,
                    (const uint8_t *)pk.buf);
   return rb_str_new((const char *)sig, 64);
@@ -526,8 +526,8 @@ FIO_SFUNC VALUE iodine_crypto_ed25519_sign(int argc, VALUE *argv, VALUE self) {
 /**
  * Verifies an Ed25519 signature.
  *
+ * @param data [String] Original message
  * @param signature [String] 64-byte signature
- * @param message [String] Original message
  * @param public_key: [String] 32-byte public key
  * @return [Boolean] true if valid, false otherwise
  */
@@ -535,13 +535,13 @@ FIO_SFUNC VALUE iodine_crypto_ed25519_verify(int argc,
                                              VALUE *argv,
                                              VALUE self) {
   fio_buf_info_s sig = FIO_BUF_INFO0;
-  fio_buf_info_s message = FIO_BUF_INFO0;
+  fio_buf_info_s data = FIO_BUF_INFO0;
   fio_buf_info_s pk = FIO_BUF_INFO0;
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(sig, 0, "data", 1),
-                  IODINE_ARG_BUF(message, 1, "data", 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
+                  IODINE_ARG_BUF(sig, 0, "signature", 1),
                   IODINE_ARG_BUF(pk, 0, "public_key", 1));
 
   if (sig.len != 64)
@@ -550,8 +550,8 @@ FIO_SFUNC VALUE iodine_crypto_ed25519_verify(int argc,
     rb_raise(rb_eArgError, "public_key must be 32 bytes (got %zu)", pk.len);
 
   int result = fio_ed25519_verify((const uint8_t *)sig.buf,
-                                  message.buf,
-                                  message.len,
+                                  data.buf,
+                                  data.len,
                                   (const uint8_t *)pk.buf);
   return result == 0 ? Qtrue : Qfalse;
   (void)self;
@@ -698,7 +698,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519_shared_secret(int argc,
  * Uses ephemeral key agreement + ChaCha20-Poly1305 for authenticated
  * encryption. Only the recipient with the matching secret key can decrypt.
  *
- * @param message [String] Plaintext to encrypt
+ * @param data [String] Plaintext to encrypt
  * @param recipient_pk: [String] 32-byte recipient's public key
  * @return [String] Ciphertext (message.length + 48 bytes overhead)
  * @raise [RuntimeError] if encryption fails
@@ -706,12 +706,12 @@ FIO_SFUNC VALUE iodine_crypto_x25519_shared_secret(int argc,
 FIO_SFUNC VALUE iodine_crypto_x25519_encrypt(int argc,
                                              VALUE *argv,
                                              VALUE self) {
-  fio_buf_info_s message = FIO_BUF_INFO0;
+  fio_buf_info_s data = FIO_BUF_INFO0;
   fio_buf_info_s recipient_pk = FIO_BUF_INFO0;
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(message, 0, "data", 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(recipient_pk, 0, "recipient_pk", 1));
 
   if (recipient_pk.len != 32)
@@ -719,15 +719,15 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt(int argc,
              "recipient_pk must be 32 bytes (got %zu)",
              recipient_pk.len);
 
-  /* Output is message + 48 bytes overhead (32 ephemeral pk + 16 mac) */
-  size_t out_len = message.len + 48;
+  /* Output is data + 48 bytes overhead (32 ephemeral pk + 16 mac) */
+  size_t out_len = data.len + 48;
   VALUE ciphertext = rb_str_buf_new(out_len);
   rb_str_set_len(ciphertext, out_len);
 
   int result =
       fio_x25519_encrypt((uint8_t *)RSTRING_PTR(ciphertext),
-                         message.buf,
-                         message.len,
+                         data.buf,
+                         data.len,
                          (fio_crypto_enc_fn *)fio_chacha20_poly1305_enc,
                          (const uint8_t *)recipient_pk.buf);
 
@@ -741,7 +741,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt(int argc,
 /**
  * Decrypts a message using X25519 public-key encryption (ECIES).
  *
- * @param ciphertext [String] Ciphertext from X25519.encrypt
+ * @param data [String] Ciphertext from X25519.encrypt
  * @param secret_key: [String] 32-byte recipient's secret key
  * @return [String] Decrypted plaintext
  * @raise [RuntimeError] if decryption fails (authentication error)
@@ -749,29 +749,29 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt(int argc,
 FIO_SFUNC VALUE iodine_crypto_x25519_decrypt(int argc,
                                              VALUE *argv,
                                              VALUE self) {
-  fio_buf_info_s ciphertext = FIO_BUF_INFO0;
+  fio_buf_info_s data = FIO_BUF_INFO0;
   fio_buf_info_s sk = FIO_BUF_INFO0;
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(ciphertext, 0, "data", 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(sk, 0, "secret_key", 1));
 
   if (sk.len != 32)
     rb_raise(rb_eArgError, "secret_key must be 32 bytes (got %zu)", sk.len);
-  if (ciphertext.len < 48)
+  if (data.len < 48)
     rb_raise(rb_eArgError,
-             "ciphertext too short (minimum 48 bytes, got %zu)",
-             ciphertext.len);
+             "data too short (minimum 48 bytes, got %zu)",
+             data.len);
 
-  size_t out_len = ciphertext.len - 48;
+  size_t out_len = data.len - 48;
   VALUE plaintext = rb_str_buf_new(out_len);
   rb_str_set_len(plaintext, out_len);
 
   int result =
       fio_x25519_decrypt((uint8_t *)RSTRING_PTR(plaintext),
-                         (const uint8_t *)ciphertext.buf,
-                         ciphertext.len,
+                         (const uint8_t *)data.buf,
+                         data.len,
                          (fio_crypto_dec_fn *)fio_chacha20_poly1305_dec,
                          (const uint8_t *)sk.buf);
 
@@ -789,7 +789,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519_decrypt(int argc,
  * Uses ephemeral key agreement + AES-128-GCM for authenticated encryption.
  * Only the recipient with the matching secret key can decrypt.
  *
- * @param message [String] Plaintext to encrypt
+ * @param data [String] Plaintext to encrypt
  * @param recipient_pk: [String] 32-byte recipient's public key
  * @return [String] Ciphertext (message.length + 48 bytes overhead)
  * @raise [RuntimeError] if encryption fails
@@ -797,12 +797,12 @@ FIO_SFUNC VALUE iodine_crypto_x25519_decrypt(int argc,
 FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes128(int argc,
                                                     VALUE *argv,
                                                     VALUE self) {
-  fio_buf_info_s message = FIO_BUF_INFO0;
+  fio_buf_info_s data = FIO_BUF_INFO0;
   fio_buf_info_s recipient_pk = FIO_BUF_INFO0;
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(message, 0, "data", 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(recipient_pk, 0, "recipient_pk", 1));
 
   if (recipient_pk.len != 32)
@@ -810,14 +810,14 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes128(int argc,
              "recipient_pk must be 32 bytes (got %zu)",
              recipient_pk.len);
 
-  /* Output is message + 48 bytes overhead (32 ephemeral pk + 16 mac) */
-  size_t out_len = message.len + 48;
+  /* Output is data + 48 bytes overhead (32 ephemeral pk + 16 mac) */
+  size_t out_len = data.len + 48;
   VALUE ciphertext = rb_str_buf_new(out_len);
   rb_str_set_len(ciphertext, out_len);
 
   int result = fio_x25519_encrypt((uint8_t *)RSTRING_PTR(ciphertext),
-                                  message.buf,
-                                  message.len,
+                                  data.buf,
+                                  data.len,
                                   (fio_crypto_enc_fn *)fio_aes128_gcm_enc,
                                   (const uint8_t *)recipient_pk.buf);
 
@@ -832,7 +832,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes128(int argc,
  * Decrypts a message using X25519 public-key encryption (ECIES) with
  * AES-128-GCM.
  *
- * @param ciphertext [String] Ciphertext from X25519.encrypt_aes128
+ * @param data [String] Ciphertext from X25519.encrypt_aes128
  * @param secret_key: [String] 32-byte recipient's secret key
  * @return [String] Decrypted plaintext
  * @raise [RuntimeError] if decryption fails (authentication error)
@@ -840,28 +840,28 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes128(int argc,
 FIO_SFUNC VALUE iodine_crypto_x25519_decrypt_aes128(int argc,
                                                     VALUE *argv,
                                                     VALUE self) {
-  fio_buf_info_s ciphertext = FIO_BUF_INFO0;
+  fio_buf_info_s data = FIO_BUF_INFO0;
   fio_buf_info_s sk = FIO_BUF_INFO0;
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(ciphertext, 0, "data", 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(sk, 0, "secret_key", 1));
 
   if (sk.len != 32)
     rb_raise(rb_eArgError, "secret_key must be 32 bytes (got %zu)", sk.len);
-  if (ciphertext.len < 48)
+  if (data.len < 48)
     rb_raise(rb_eArgError,
-             "ciphertext too short (minimum 48 bytes, got %zu)",
-             ciphertext.len);
+             "data too short (minimum 48 bytes, got %zu)",
+             data.len);
 
-  size_t out_len = ciphertext.len - 48;
+  size_t out_len = data.len - 48;
   VALUE plaintext = rb_str_buf_new(out_len);
   rb_str_set_len(plaintext, out_len);
 
   int result = fio_x25519_decrypt((uint8_t *)RSTRING_PTR(plaintext),
-                                  (const uint8_t *)ciphertext.buf,
-                                  ciphertext.len,
+                                  (const uint8_t *)data.buf,
+                                  data.len,
                                   (fio_crypto_dec_fn *)fio_aes128_gcm_dec,
                                   (const uint8_t *)sk.buf);
 
@@ -879,7 +879,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519_decrypt_aes128(int argc,
  * Uses ephemeral key agreement + AES-256-GCM for authenticated encryption.
  * Only the recipient with the matching secret key can decrypt.
  *
- * @param message [String] Plaintext to encrypt
+ * @param data [String] Plaintext to encrypt
  * @param recipient_pk: [String] 32-byte recipient's public key
  * @return [String] Ciphertext (message.length + 48 bytes overhead)
  * @raise [RuntimeError] if encryption fails
@@ -887,12 +887,12 @@ FIO_SFUNC VALUE iodine_crypto_x25519_decrypt_aes128(int argc,
 FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes256(int argc,
                                                     VALUE *argv,
                                                     VALUE self) {
-  fio_buf_info_s message = FIO_BUF_INFO0;
+  fio_buf_info_s data = FIO_BUF_INFO0;
   fio_buf_info_s recipient_pk = FIO_BUF_INFO0;
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(message, 0, "data", 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(recipient_pk, 0, "recipient_pk", 1));
 
   if (recipient_pk.len != 32)
@@ -900,14 +900,14 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes256(int argc,
              "recipient_pk must be 32 bytes (got %zu)",
              recipient_pk.len);
 
-  /* Output is message + 48 bytes overhead (32 ephemeral pk + 16 mac) */
-  size_t out_len = message.len + 48;
+  /* Output is data + 48 bytes overhead (32 ephemeral pk + 16 mac) */
+  size_t out_len = data.len + 48;
   VALUE ciphertext = rb_str_buf_new(out_len);
   rb_str_set_len(ciphertext, out_len);
 
   int result = fio_x25519_encrypt((uint8_t *)RSTRING_PTR(ciphertext),
-                                  message.buf,
-                                  message.len,
+                                  data.buf,
+                                  data.len,
                                   (fio_crypto_enc_fn *)fio_aes256_gcm_enc,
                                   (const uint8_t *)recipient_pk.buf);
 
@@ -922,7 +922,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes256(int argc,
  * Decrypts a message using X25519 public-key encryption (ECIES) with
  * AES-256-GCM.
  *
- * @param ciphertext [String] Ciphertext from X25519.encrypt_aes256
+ * @param data [String] Ciphertext from X25519.encrypt_aes256
  * @param secret_key: [String] 32-byte recipient's secret key
  * @return [String] Decrypted plaintext
  * @raise [RuntimeError] if decryption fails (authentication error)
@@ -930,28 +930,28 @@ FIO_SFUNC VALUE iodine_crypto_x25519_encrypt_aes256(int argc,
 FIO_SFUNC VALUE iodine_crypto_x25519_decrypt_aes256(int argc,
                                                     VALUE *argv,
                                                     VALUE self) {
-  fio_buf_info_s ciphertext = FIO_BUF_INFO0;
+  fio_buf_info_s data = FIO_BUF_INFO0;
   fio_buf_info_s sk = FIO_BUF_INFO0;
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(ciphertext, 0, "data", 1),
+                  IODINE_ARG_BUF(data, 0, "data", 1),
                   IODINE_ARG_BUF(sk, 0, "secret_key", 1));
 
   if (sk.len != 32)
     rb_raise(rb_eArgError, "secret_key must be 32 bytes (got %zu)", sk.len);
-  if (ciphertext.len < 48)
+  if (data.len < 48)
     rb_raise(rb_eArgError,
-             "ciphertext too short (minimum 48 bytes, got %zu)",
-             ciphertext.len);
+             "data too short (minimum 48 bytes, got %zu)",
+             data.len);
 
-  size_t out_len = ciphertext.len - 48;
+  size_t out_len = data.len - 48;
   VALUE plaintext = rb_str_buf_new(out_len);
   rb_str_set_len(plaintext, out_len);
 
   int result = fio_x25519_decrypt((uint8_t *)RSTRING_PTR(plaintext),
-                                  (const uint8_t *)ciphertext.buf,
-                                  ciphertext.len,
+                                  (const uint8_t *)data.buf,
+                                  data.len,
                                   (fio_crypto_dec_fn *)fio_aes256_gcm_dec,
                                   (const uint8_t *)sk.buf);
 
@@ -1051,11 +1051,11 @@ FIO_SFUNC VALUE iodine_crypto_x25519mlkem768_keypair(VALUE self) {
  *
  * Performs both X25519 key exchange and ML-KEM-768 encapsulation.
  * The sender uses this with the recipient's public key to generate
- * a shared secret and ciphertext.
+ * a shared secret and encapsulated data.
  *
  * @param public_key: [String] 1216-byte recipient's public key
- * @return [Array<String, String>] [ciphertext, shared_secret]
- *   - ciphertext: 1120 bytes (ML-KEM-768 ct + X25519 ephemeral pk)
+ * @return [Array<String, String>] [data, shared_secret]
+ *   - data: 1120 bytes (ML-KEM-768 ct + X25519 ephemeral pk)
  *   - shared_secret: 64 bytes (ML-KEM-768 ss || X25519 ss)
  * @raise [RuntimeError] if encapsulation fails
  */
@@ -1087,10 +1087,10 @@ FIO_SFUNC VALUE iodine_crypto_x25519mlkem768_encapsulate(int argc,
  * Decapsulates a shared secret using X25519MLKEM768.
  *
  * Performs both X25519 shared secret derivation and ML-KEM-768 decapsulation.
- * The recipient uses this with their secret key and the sender's ciphertext
+ * The recipient uses this with their secret key and the sender's data
  * to recover the shared secret.
  *
- * @param ciphertext: [String] 1120-byte ciphertext from encapsulate
+ * @param data: [String] 1120-byte encapsulated data from encapsulate
  * @param secret_key: [String] 2432-byte recipient's secret key
  * @return [String] 64-byte shared secret (ML-KEM-768 ss || X25519 ss)
  * @raise [RuntimeError] if decapsulation fails (e.g., low-order point)
@@ -1106,7 +1106,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519mlkem768_decapsulate(int argc,
                   IODINE_ARG_BUF(sk, 0, "secret_key", 1));
 
   if (ct.len != 1120)
-    rb_raise(rb_eArgError, "ciphertext must be 1120 bytes (got %zu)", ct.len);
+    rb_raise(rb_eArgError, "data must be 1120 bytes (got %zu)", ct.len);
   if (sk.len != 2432)
     rb_raise(rb_eArgError, "secret_key must be 2432 bytes (got %zu)", sk.len);
 
@@ -1115,8 +1115,7 @@ FIO_SFUNC VALUE iodine_crypto_x25519mlkem768_decapsulate(int argc,
                                          (const uint8_t *)ct.buf,
                                          (const uint8_t *)sk.buf);
   if (result != 0)
-    rb_raise(rb_eRuntimeError,
-             "Decapsulation failed (invalid key or ciphertext)");
+    rb_raise(rb_eRuntimeError, "Decapsulation failed (invalid key or data)");
 
   VALUE shared_secret = rb_str_new((const char *)ss, 64);
   /* Clear shared secret from stack */

@@ -733,22 +733,22 @@ FIO_SFUNC VALUE iodine_utils_totp_secret(int argc, VALUE *argv, VALUE self) {
  * Verifies a TOTP code against a secret with time window tolerance.
  *
  *     # Verify a TOTP code with default settings
- *     valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code)
+ *     valid = Iodine::Utils.totp_verify(code: user_code, secret: my_secret)
  *
  *     # Verify with larger time window (allows more clock drift)
- *     valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code,
+ *     valid = Iodine::Utils.totp_verify(code: user_code, secret: my_secret,
  * window: 2)
  *
  *     # Verify with custom interval (must match the interval used to generate)
- *     valid = Iodine::Utils.totp_verify(secret: my_secret, code: user_code,
+ *     valid = Iodine::Utils.totp_verify(code: user_code, secret: my_secret,
  * interval: 60)
  *
  * The window parameter specifies how many intervals to check on either side
  * of the current time. For example, window: 1 checks current ± 1 interval.
  *
  * Parameters:
- * - `secret:` (required) - The shared secret key (raw bytes or Base32 decoded)
  * - `code:` (required) - The TOTP code to verify (Integer)
+ * - `secret:` (required) - The shared secret key (raw bytes or Base32 decoded)
  * - `window:` (optional) - Number of intervals to check on each side (default:
  * 1, range: 0-10)
  * - `interval:` (optional) - Time window in seconds (default: 30)
@@ -763,8 +763,8 @@ FIO_SFUNC VALUE iodine_utils_totp_verify(int argc, VALUE *argv, VALUE self) {
 
   iodine_rb2c_arg(argc,
                   argv,
-                  IODINE_ARG_BUF(secret, 0, "secret", 1),
                   IODINE_ARG_NUM(code, 0, "code", 1),
+                  IODINE_ARG_BUF(secret, 0, "secret", 1),
                   IODINE_ARG_NUM(window, 0, "window", 0),
                   IODINE_ARG_SIZE_T(interval, 0, "interval", 0));
 

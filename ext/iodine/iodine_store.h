@@ -54,7 +54,7 @@ typedef struct {
 #include FIO_INCLUDE_FILE
 
 /* MUST be a log 2 */
-#define IODINE___SINGLE_USE_COUNT 8
+#define IODINE___SINGLE_USE_COUNT 16
 
 FIO_SFUNC void iodine_store___gc_stop(void);
 FIO_SFUNC void iodine_store___gc_start(void);
@@ -358,12 +358,15 @@ FIO_SFUNC void iodine_store___gc_mark(
   if (FIO_LOG_LEVEL >= FIO_LOG_LEVEL_DEBUG)
     iodine_store___print_debug(Qnil);
 
-  for (size_t i = 0;
-       i < (sizeof(STORE.single_use) / sizeof(STORE.single_use[0]));
-       ++i)
-    if (!IODINE_STORE_IS_SKIP(STORE.single_use[i]))
-      rb_gc_mark(STORE.single_use[i]);
+  for (size_t i = 0; i < IODINE___SINGLE_USE_COUNT; ++i) {
+    VALUE tmp = STORE.single_use[i];
+    STORE.single_use[i] = Qnil;
+    if (IODINE_STORE_IS_SKIP(tmp))
+      continue;
+    rb_gc_mark(tmp);
+  }
 }
+
 FIO_SFUNC void value_reference_counter_store_destroy(VALUE i_) {
   (void)i_;
   iodine_store___destroy();

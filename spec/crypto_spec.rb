@@ -360,34 +360,34 @@ RSpec.describe Iodine::Base::Crypto do
     describe '.verify' do
       it 'returns true for a valid signature' do
         sig = mod.sign(message, secret_key: sk, public_key: pk)
-        expect(mod.verify(sig, message, public_key: pk)).to be true
+        expect(mod.verify(message, sig, public_key: pk)).to be true
       end
 
       it 'returns false for a tampered message' do
         sig = mod.sign(message, secret_key: sk, public_key: pk)
-        expect(mod.verify(sig, 'tampered message', public_key: pk)).to be false
+        expect(mod.verify('tampered message', sig, public_key: pk)).to be false
       end
 
       it 'returns false for a tampered signature' do
         sig = mod.sign(message, secret_key: sk, public_key: pk)
         bad_sig = sig.dup
         bad_sig.setbyte(0, bad_sig.getbyte(0) ^ 0xFF)
-        expect(mod.verify(bad_sig, message, public_key: pk)).to be false
+        expect(mod.verify(message, bad_sig, public_key: pk)).to be false
       end
 
       it 'returns false when verified with a different public key' do
         sig = mod.sign(message, secret_key: sk, public_key: pk)
         _sk2, pk2 = mod.keypair
-        expect(mod.verify(sig, message, public_key: pk2)).to be false
+        expect(mod.verify(message, sig, public_key: pk2)).to be false
       end
 
       it 'raises ArgumentError for wrong signature size' do
-        expect { mod.verify('short', message, public_key: pk) }.to raise_error(ArgumentError)
+        expect { mod.verify(message, 'short', public_key: pk) }.to raise_error(ArgumentError)
       end
 
       it 'raises ArgumentError for wrong public key size' do
         sig = mod.sign(message, secret_key: sk, public_key: pk)
-        expect { mod.verify(sig, message, public_key: 'short') }.to raise_error(ArgumentError)
+        expect { mod.verify(message, sig, public_key: 'short') }.to raise_error(ArgumentError)
       end
     end
 
@@ -622,13 +622,13 @@ RSpec.describe Iodine::Base::Crypto do
       let(:sk) { keypair[0] }
       let(:pk) { keypair[1] }
 
-      it 'encapsulate returns [ciphertext, shared_secret]' do
+      it 'encapsulate returns [data, shared_secret]' do
         result = mod.encapsulate(public_key: pk)
         expect(result).to be_a(Array)
         expect(result.length).to eq(2)
       end
 
-      it 'encapsulate returns 1120-byte ciphertext' do
+      it 'encapsulate returns 1120-byte data' do
         ct, _ss = mod.encapsulate(public_key: pk)
         expect(ct.bytesize).to eq(1120)
       end
@@ -640,13 +640,13 @@ RSpec.describe Iodine::Base::Crypto do
 
       it 'decapsulate recovers the same shared secret' do
         ct, ss_enc = mod.encapsulate(public_key: pk)
-        ss_dec = mod.decapsulate(ciphertext: ct, secret_key: sk)
+        ss_dec = mod.decapsulate(data: ct, secret_key: sk)
         expect(ss_dec).to eq(ss_enc)
       end
 
       it 'decapsulate returns a 64-byte shared secret' do
         ct, _ss = mod.encapsulate(public_key: pk)
-        ss = mod.decapsulate(ciphertext: ct, secret_key: sk)
+        ss = mod.decapsulate(data: ct, secret_key: sk)
         expect(ss.bytesize).to eq(64)
       end
 
@@ -654,13 +654,19 @@ RSpec.describe Iodine::Base::Crypto do
         expect { mod.encapsulate(public_key: 'short') }.to raise_error(ArgumentError)
       end
 
-      it 'raises ArgumentError for wrong ciphertext size' do
-        expect { mod.decapsulate(ciphertext: 'short', secret_key: sk) }.to raise_error(ArgumentError)
+      it 'raises ArgumentError for wrong data size' do
+        expect { mod.decapsulate(data: 'short', secret_key: sk) }.to raise_error(ArgumentError)
       end
 
       it 'raises ArgumentError for wrong secret key size' do
         ct, _ss = mod.encapsulate(public_key: pk)
-        expect { mod.decapsulate(ciphertext: ct, secret_key: 'short') }.to raise_error(ArgumentError)
+        expect { mod.decapsulate(data: ct, secret_key: 'short') }.to raise_error(ArgumentError)
+      end
+
+      it 'raises ArgumentError for unsupported ciphertext keyword' do
+        ct, _ss = mod.encapsulate(public_key: pk)
+        expect { mod.decapsulate(ciphertext: ct, secret_key: sk) }
+          .to raise_error(ArgumentError, /missing required argument data/)
       end
     end
   end
