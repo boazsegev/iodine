@@ -4,22 +4,15 @@
 /* *****************************************************************************
 Condition Variables - BYO Implementation (FIO_THREADS_COND_BYO)
 
-On Windows: fio-stl.h's fio_thread_cond_wait uses SleepConditionVariableSRW
-with INFINITE timeout, causing a deadlock during reactor startup. Worker threads
-enter the infinite wait immediately (queue is empty at startup), and since
-nothing signals them before the reactor's main loop starts, they sleep forever:
+Provides Windows and POSIX implementations of condition variable primitives
+used by facil.io's worker thread pool.
 
-  - Main thread spin-waits for grp.stop == 0 (set only after manager creates
-    all workers)
-  - Manager thread blocks in fio_thread_join waiting for workers to exit
-  - Workers sleep forever in SleepConditionVariableSRW(INFINITE)
-  - Nothing signals workers because the IO loop hasn't started yet
-  - IO loop can't start because main thread is stuck in the spin-wait
+On Windows: Uses SleepConditionVariableSRW with INFINITE timeout, matching
+POSIX pthread_cond_wait behavior. Workers are properly signaled when:
+  - Tasks are added to the queue (fio_queue_push signals all consumers)
+  - Shutdown is initiated (fio_queue_workers_stop signals all workers)
 
-Fix: use a 500ms timed wait so workers periodically wake to check grp->stop
-and exit cleanly when signalled.
-
-On POSIX: delegate to pthread_cond_* unchanged (no behavioral change).
+On POSIX: Delegates to pthread_cond_* unchanged.
 ***************************************************************************** */
 
 #ifdef _WIN32
@@ -31,11 +24,11 @@ FIO_IFUNC int fio_thread_cond_init(fio_thread_cond_t *c) {
   return 0;
 }
 
-/* Use 500ms timeout instead of INFINITE — lets workers wake periodically
- * to check the stop flag, preventing deadlock during reactor startup. */
+/* Wait indefinitely until signaled — matches POSIX pthread_cond_wait behavior.
+ * Workers are signaled when tasks are added or during shutdown. */
 FIO_IFUNC int fio_thread_cond_wait(fio_thread_cond_t *c,
                                    fio_thread_mutex_t *m) {
-  SleepConditionVariableSRW(c, m, 500, 0);
+  SleepConditionVariableSRW(c, m, INFINITE, 0);
   return 0;
 }
 
