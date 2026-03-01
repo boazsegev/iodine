@@ -8,7 +8,9 @@ require 'uri'
 # =============================================================================
 # Iodine HTTP Integration Tests
 #
-# One Iodine.listen + one Iodine.start covers all HTTP tests.
+# Single port with routing — tests both native NeoRack handler and Rack-
+# compatible handler on one listener using path-based routing.
+#
 # HTTP client calls run from Iodine.async (worker thread) so the IO thread
 # is never blocked. All results collected into HTTP_RESULTS, assertions after
 # start returns.
@@ -17,13 +19,20 @@ require 'uri'
 # persists across Iodine.stop/start cycles and is shared by all reactor
 # restarts. Call Iodine.listen ONCE at the top level (outside any before block
 # or on_state callback), never inside on_state(:start).
+#
+# ROUTING STRUCTURE:
+#   /native/*  → TestHTTPHandler (NeoRack native handler with on_http)
+#   /rack/*    → RackHandler (Rack-compatible handler with .call interface)
+#
+# The listener strips the route prefix, so handlers see paths without /native
+# or /rack. For example, request to /native/echo arrives as e.path = '/echo'.
 # =============================================================================
 
 HTTP_PORT    = (ENV['IODINE_TEST_PORT'] || 19_876).to_i
 HTTP_RESULTS = {}
 
 # ---------------------------------------------------------------------------
-# NeoRack handler — a single handler covers all test cases via path routing
+# NeoRack native handler — uses on_http(e) interface
 # ---------------------------------------------------------------------------
 module TestHTTPHandler
   def self.on_http(e)
@@ -56,21 +65,32 @@ module TestHTTPHandler
   end
 end
 
-# Rack-style fallback handler (responds to .call)
+# ---------------------------------------------------------------------------
+# Rack-compatible handler — uses .call(env) interface
+# ---------------------------------------------------------------------------
 module RackHandler
   def self.call(env)
     [200, { 'content-type' => 'text/plain' }, ["rack:#{env['REQUEST_METHOD']}:#{env['PATH_INFO']}"]]
   end
 end
 
-HTTP_RACK_PORT = HTTP_PORT + 1
+# ---------------------------------------------------------------------------
+# Default handler for unmapped routes (returns 404)
+# ---------------------------------------------------------------------------
+module DefaultHandler
+  def self.on_http(e)
+    e.status = 404
+    e.finish('route-not-found')
+  end
+end
 
-# Register listeners once at file-load time — they persist until process exit,
-# surviving any number of Iodine.stop/start cycles.
+# Register single listener with routing at file-load time.
+# The listener persists until process exit, surviving Iodine.stop/start cycles.
 # If the port is already in use (e.g. from a previous run held in TIME_WAIT),
 # override with: IODINE_TEST_PORT=<free_port> bundle exec rspec spec/http_spec.rb
-Iodine.listen(url: "http://127.0.0.1:#{HTTP_PORT}",      handler: TestHTTPHandler)
-Iodine.listen(url: "http://127.0.0.1:#{HTTP_RACK_PORT}", handler: RackHandler)
+listener = Iodine.listen(url: "http://127.0.0.1:#{HTTP_PORT}", handler: DefaultHandler)
+listener.map('/native', TestHTTPHandler)
+listener.map('/rack',   RackHandler)
 
 # ---------------------------------------------------------------------------
 # HTTP test suite — one reactor start, all scenarios run inside one async block
@@ -91,34 +111,34 @@ RSpec.describe 'Iodine HTTP server' do
     run_tests = proc do
       base = "http://127.0.0.1:#{HTTP_PORT}"
 
-      # GET /echo?foo=bar
-      resp = Net::HTTP.get_response(URI("#{base}/echo?foo=bar"))
+      # GET /native/echo?foo=bar (routed to TestHTTPHandler)
+      resp = Net::HTTP.get_response(URI("#{base}/native/echo?foo=bar"))
       HTTP_RESULTS[:get_status] = resp.code.to_i
       HTTP_RESULTS[:get_body]   = resp.body
 
-      # POST /echo with body
-      resp = Net::HTTP.post(URI("#{base}/echo"), 'hello-body', 'Content-Type' => 'text/plain')
+      # POST /native/echo with body (routed to TestHTTPHandler)
+      resp = Net::HTTP.post(URI("#{base}/native/echo"), 'hello-body', 'Content-Type' => 'text/plain')
       HTTP_RESULTS[:post_status] = resp.code.to_i
       HTTP_RESULTS[:post_body]   = resp.body
 
-      # Custom request header reflected as response header
-      req = Net::HTTP::Get.new('/headers')
+      # Custom request header reflected as response header (routed to TestHTTPHandler)
+      req = Net::HTTP::Get.new('/native/headers')
       req['X-Test-Input'] = 'reflected-value'
       resp = Net::HTTP.start('127.0.0.1', HTTP_PORT) { |h| h.request(req) }
       HTTP_RESULTS[:hdr_echo]   = resp['X-Echo']
       HTTP_RESULTS[:hdr_status] = resp.code.to_i
 
-      # Custom status code
-      resp = Net::HTTP.get_response(URI("#{base}/status"))
+      # Custom status code (routed to TestHTTPHandler)
+      resp = Net::HTTP.get_response(URI("#{base}/native/status"))
       HTTP_RESULTS[:custom_status] = resp.code.to_i
       HTTP_RESULTS[:status_body]   = resp.body
 
-      # Multiple sequential requests on one keep-alive connection
+      # Multiple sequential requests on one keep-alive connection (routed to TestHTTPHandler)
       statuses = []
       bodies   = []
       Net::HTTP.start('127.0.0.1', HTTP_PORT) do |http|
         3.times do |i|
-          r = http.get("/multi", 'X-Seq' => i.to_s)
+          r = http.get("/native/multi", 'X-Seq' => i.to_s)
           statuses << r.code.to_i
           bodies   << r.body
         end
@@ -126,13 +146,13 @@ RSpec.describe 'Iodine HTTP server' do
       HTTP_RESULTS[:multi_statuses] = statuses
       HTTP_RESULTS[:multi_bodies]   = bodies
 
-      # Streaming response (write without finish, then finish)
-      resp = Net::HTTP.get_response(URI("#{base}/stream"))
+      # Streaming response (write without finish, then finish) (routed to TestHTTPHandler)
+      resp = Net::HTTP.get_response(URI("#{base}/native/stream"))
       HTTP_RESULTS[:stream_status] = resp.code.to_i
       HTTP_RESULTS[:stream_body]   = resp.body
 
-      # Rack-style handler on its pre-registered port (listener bound at file load)
-      resp = Net::HTTP.get_response(URI("http://127.0.0.1:#{HTTP_RACK_PORT}/rack-path"))
+      # Rack-compatible handler on /rack/* route (routed to RackHandler)
+      resp = Net::HTTP.get_response(URI("#{base}/rack/test-path"))
       HTTP_RESULTS[:rack_status] = resp.code.to_i
       HTTP_RESULTS[:rack_body]   = resp.body
 
@@ -261,15 +281,15 @@ RSpec.describe 'Iodine HTTP server' do
   end
 
   # -------------------------------------------------------------------------
-  # Rack-style handler
+  # Rack-compatible handler (routed via /rack/*)
   # -------------------------------------------------------------------------
-  describe 'Rack-style handler (.call interface)' do
+  describe 'Rack-compatible handler (.call interface)' do
     it 'returns status 200' do
       expect(HTTP_RESULTS[:rack_status]).to eq(200)
     end
 
-    it 'body is generated by the Rack handler' do
-      expect(HTTP_RESULTS[:rack_body]).to eq('rack:GET:/rack-path')
+    it 'body is generated by the Rack handler with stripped route prefix' do
+      expect(HTTP_RESULTS[:rack_body]).to eq('rack:GET:/test-path')
     end
   end
 end
