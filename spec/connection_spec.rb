@@ -48,7 +48,7 @@ RSpec.describe 'Iodine raw TCP connection' do
 
   before(:context) do
     $stdout.puts "DEBUG: before(:context) start"; $stdout.flush
-    Iodine.verbosity = 2  # floor: ERROR+FATAL visible in CI
+
     Iodine.workers   = 0
     Iodine.threads   = 1   # raw IO needs only one worker thread
     $stdout.puts "DEBUG: config done, registering on_state"; $stdout.flush

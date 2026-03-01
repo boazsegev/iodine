@@ -214,7 +214,17 @@ end
 # These run as ordinary synchronous RSpec examples.
 # ---------------------------------------------------------------------------
 RSpec.describe 'Iodine configuration (no reactor)' do
-  before(:each) { Iodine.verbosity = 2 }  # floor: ERROR+FATAL visible in CI
+  before(:all) do
+    @original_verbosity = Iodine.verbosity  # Should be TEST_VERBOSITY (5) from spec_helper
+  end
+
+  before(:each) do
+    Iodine.verbosity = 2  # floor for config API tests (lower than TEST_VERBOSITY)
+  end
+
+  after(:all) do
+    Iodine.verbosity = @original_verbosity
+  end
 
   # -----------------------------------------------------------------------
   # Iodine.verbosity
