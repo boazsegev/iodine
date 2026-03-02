@@ -711,12 +711,10 @@ static int iodine_connection_cookie_each_task(fio_http_s *h,
   VALUE *argv = (VALUE *)info;
   ++argv;
   argv[0] = rb_usascii_str_new(name.buf, name.len);
-  STORE.hold(argv[0]); /* TODO, avoid STORE for fast path if possible */
+  STORE.cache(argv[0]);
   argv[1] = rb_usascii_str_new(value.buf, value.len);
-  STORE.hold(argv[1]);
+  STORE.cache(argv[1]);
   rb_yield_values2(2, argv);
-  STORE.release(argv[1]);
-  STORE.release(argv[0]);
   argv[0] = Qnil;
   argv[1] = Qnil;
   return 0;
@@ -808,88 +806,6 @@ FIO_SFUNC VALUE iodine_connection_body_seek(int argc, VALUE *argv, VALUE o) {
   pos = (long long)fio_http_body_seek(c->http, (ssize_t)pos);
   return ULL2NUM(pos);
 }
-
-/* *****************************************************************************
-HTTP Response API TODO
-
-- `write_header(name, value)`: Sets a response header and returns `true`. If
-   headers were already sent or either `write` or `finish` was previously
-   called, it **MUST** return `false`.
-
-  - The header `name` **MUST** be a lowercase string. Servers **MAY** enforce
-    this by converting string objects to lowercase.
-
-  - Servers **MAY** accept Symbols as the header `name` well.
-
-  - `value` **MUST** be either a String or an Array of Strings. Servers **SHOULD
-    NOT** (but **MAY**) accept other `value` types.
-
-  - The `write_header` method is **irreversible**. Servers **MAY** write the
-    header immediately, as they see fit.
-
-  - When `write_header` **MAY** be called multiple times for the same header
-    `name`. This **MAY** result in multiple headers with the same name being
-    sent. Servers **SHOULD** avoid sending the same header name if it is
-    forbidden by the HTTP standard.
-
-* `write(data)` - **streams** the data, using the appropriate encoding.
-**Note**:
-
-    * `data` MUST be either String object or a
-      [File](https://ruby-doc.org/core-2.7.0/File.html) (or
-      [TempFile](https://ruby-doc.org/stdlib-2.7.0/libdoc/tempfile/rdoc/Tempfile.html))
-      object.
-
-    * If `data` is a `File` instance, then the server **MUST** call it's `close`
-method after the data was sent.
-
-    * If the `"content-type"` was set to `text/event-stream`, this is an SSE /
-EventSource connection and servers **MUST** send the data as is (the encoding
-**MUST** be assumed to be handled by the application layer).
-
-    * Otherwise, if the `"content-length"` header wasn't set, the server **MUST
-EITHER** use `chunked` [transfer
-encoding](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding),
-**OR** set the [`connection: close`
-header](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Connection)
-and close the connection once `finish` was called.
-
-    * If the headers weren't previously sent, they **MUST** be sent (or locked)
-at this point. Once `write` or `finish` are called, calls to `write_header`
-**MUST** return `false`.
-
-* `finish([data])` - completes the response. Note:
-
-    * Subsequent calls to `finish` **MUST** be ignored (except `close` **MUST**
-still be called if `data` is a `File` instance).
-
-    * `data` MUST be either `nil`, or a String object, or a
-[File](https://ruby-doc.org/core-2.7.0/File.html) (or
-[TempFile](https://ruby-doc.org/stdlib-2.7.0/libdoc/tempfile/rdoc/Tempfile.html))
-object.
-
-    * If `data` is a `File` instance, then the server **MUST** call it's `close`
-method after the data was sent.
-
-    * If the headers weren't previously sent, they **MUST** be sent before
-sending any data.
-
-    * If `data` was provided, it should be sent. If no previous calls to `write`
-were made and no `"content-length"` header was set, the server **MAY** set the
-`"content-length"` for the response before sending the `data`.
-
-* `headers_sent?` - returns `true` if additional headers cannot be sent (the
-headers were already sent). Otherwise returns `false`. Servers **MAY** return
-`false` **even if** the response is implemented using `chunked` encoding with
-trailers, allowing certain headers to be sent after the response was sent.
-
-* `valid?` - returns `true` if data may still be sent (the connection is open
-and `finish` hadn't been called yet). Otherwise returns `false`.
-
-* `dup` - (optional) **SHOULD** throw an exception, as the `event` object **MUST
-NOT** be duplicated by the NeoRack Application.
-
-***************************************************************************** */
 
 /* *****************************************************************************
 Lower-Case Helper for Header Names
@@ -1408,24 +1324,20 @@ static void iodine_env_set_key_pair(VALUE env,
                                     fio_str_info_s n,
                                     fio_str_info_s v) {
   VALUE key = STORE.frozen_str(n);
-  STORE.hold(key);
+  STORE.cache(key);
   VALUE val = rb_str_new(v.buf, v.len);
-  STORE.hold(val);
+  STORE.cache(val);
   rb_hash_aset(env, key, val);
-  STORE.release(val);
-  STORE.release(key);
 }
 
 static void iodine_env_set_key_pair_const(VALUE env,
                                           fio_str_info_s n,
                                           fio_str_info_s v) {
   VALUE key = STORE.frozen_str(n);
-  STORE.hold(key);
+  STORE.cache(key);
   VALUE val = STORE.frozen_str(v);
-  STORE.hold(val);
+  STORE.cache(val);
   rb_hash_aset(env, key, val);
-  STORE.release(val);
-  STORE.release(key);
 }
 
 static void iodine_env_set_const_val(VALUE env,
@@ -1453,7 +1365,6 @@ static void iodine_connection_init_env_template(fio_buf_info_s at_url) {
   VALUE keeper = Qnil;
   STORE.hold(IODINE_CONNECTION_ENV_TEMPLATE);
   /* set template, see https://github.com/rack/rack/blob/main/SPEC.rdoc */
-  // TODO: REMOTE_ADDR
   iodine_env_set_const_val(env,
                            FIO_STR_INFO1((char *)"rack.multithread"),
                            (fio_cli_get_i("-t") ? Qtrue : Qfalse),
@@ -1766,7 +1677,6 @@ static fio_io_protocol_s IODINE_RAW_PROTOCOL = {
 /* *****************************************************************************
 HTTP / WebSockets Callbacks and Helpers
 ***************************************************************************** */
-/** TODO: fix me */
 
 static void *iodine_io_http_on_http_internal(void *h_) {
   fio_http_s *h = (fio_http_s *)h_;
@@ -2742,7 +2652,7 @@ static VALUE iodine_connection_rack_hijack(VALUE self) {
   return nio;
 }
 
-/* TODO: Partial Hijack */
+/* Partial Hijack */
 FIO_SFUNC int iodine_connection_rack_hijack_partial(iodine_connection_s *c,
                                                     VALUE proc) {
   if (!c->http && !c->io) {
@@ -3008,7 +2918,7 @@ Listen to incoming TCP/IP Connections
 ***************************************************************************** */
 
 static void iodine_tcp_on_stop(fio_io_protocol_s *p, void *udata) {
-  /* TODO! call on_close */
+  /* TODO! call on_finish or something similar... maybe */
   // VALUE connection = rb_obj_alloc(iodine_rb_IODINE_CONNECTION);
   // STORE.hold(connection);
   // iodine_connection_s *c = iodine_connection_ptr(m);
@@ -3065,7 +2975,7 @@ static VALUE iodine_listen_rb(int argc, VALUE *argv, VALUE self) {
     listener = fio_http_listen FIO_NOOP(s.url.buf, s.settings);
   }
   fio_io_tls_free(s.settings.tls);
-  if (!listener)
+  if (!listener) /* resources freed by fio_io_listen if it fails */
     rb_raise(rb_eRuntimeError, "Couldn't open listening socket.");
   if (fio_io_listener_is_tls(listener))
     iodine_env_set_key_pair(IODINE_CONNECTION_ENV_TEMPLATE,

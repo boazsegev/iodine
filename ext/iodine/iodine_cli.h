@@ -55,7 +55,7 @@ static int iodine_cli_task(fio_buf_info_s name,
   case FIO_CLI_ARG_INT: v = RB_LL2NUM(fio_atol(&val.buf)); break;
   default: v = rb_str_new(val.buf, val.len); break;
   }
-  STORE.hold(v);
+  STORE.cache(v);
   if (name.buf) {
     at = 0;
     while (name.buf[0] == '-') {
@@ -63,7 +63,7 @@ static int iodine_cli_task(fio_buf_info_s name,
       --name.len;
     }
     n = rb_str_new(name.buf, name.len);
-    STORE.hold(n);
+    STORE.cache(n);
   } else {
     n = RB_INT2FIX(at);
     ++at;
@@ -71,12 +71,9 @@ static int iodine_cli_task(fio_buf_info_s name,
   rb_hash_aset(h, n, v);
   if (RB_TYPE_P(n, RUBY_T_STRING)) {
     tmp = rb_str_intern(n);
-    STORE.release(n);
-    STORE.hold((n = tmp));
+    STORE.cache((n = tmp));
     rb_hash_aset(h, n, v);
-    STORE.release(n);
   }
-  STORE.release(v);
   return 0;
 }
 

@@ -550,9 +550,8 @@ static VALUE iodine_json_parse(VALUE self, VALUE rstr) {
                                             RSTRING_LEN(rstr));
   STORE.gc_start();
   r = (VALUE)(result.ctx);
-  STORE.hold(r);
+  STORE.cache(r);
   rb_str_buf_new(1); /* force GC to run if Ruby needs it */
-  STORE.release(r);
   return r;
 }
 

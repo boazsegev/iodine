@@ -74,9 +74,8 @@ static void iodine_pubsub_eng___detached(const fio_pubsub_engine_s *eng) {
 static void *iodine_pubsub_eng___subscribe__in_GC(void *a_) {
   iodine_pubsub_eng___args_s *args = (iodine_pubsub_eng___args_s *)a_;
   VALUE ch = rb_str_new(args->channel.buf, args->channel.len);
-  STORE.hold(ch);
+  STORE.cache(ch);
   iodine_ruby_call_inside(args->eng->handler, rb_intern("subscribe"), 1, &ch);
-  STORE.release(ch);
   return NULL;
 }
 /**
@@ -101,9 +100,8 @@ static void iodine_pubsub_eng___subscribe(const fio_pubsub_engine_s *eng,
 static void *iodine_pubsub_eng___psubscribe__in_GC(void *a_) {
   iodine_pubsub_eng___args_s *args = (iodine_pubsub_eng___args_s *)a_;
   VALUE ch = rb_str_new(args->channel.buf, args->channel.len);
-  STORE.hold(ch);
+  STORE.cache(ch);
   iodine_ruby_call_inside(args->eng->handler, rb_intern("psubscribe"), 1, &ch);
-  STORE.release(ch);
   return NULL;
 }
 /**
@@ -128,9 +126,8 @@ static void iodine_pubsub_eng___psubscribe(const fio_pubsub_engine_s *eng,
 static void *iodine_pubsub_eng___unsubscribe__in_GC(void *a_) {
   iodine_pubsub_eng___args_s *args = (iodine_pubsub_eng___args_s *)a_;
   VALUE ch = rb_str_new(args->channel.buf, args->channel.len);
-  STORE.hold(ch);
+  STORE.cache(ch);
   iodine_ruby_call_inside(args->eng->handler, rb_intern("unsubscribe"), 1, &ch);
-  STORE.release(ch);
   return NULL;
 }
 /**
@@ -155,12 +152,11 @@ static void iodine_pubsub_eng___unsubscribe(const fio_pubsub_engine_s *eng,
 static void *iodine_pubsub_eng___punsubscribe__in_GC(void *a_) {
   iodine_pubsub_eng___args_s *args = (iodine_pubsub_eng___args_s *)a_;
   VALUE ch = rb_str_new(args->channel.buf, args->channel.len);
-  STORE.hold(ch);
+  STORE.cache(ch);
   iodine_ruby_call_inside(args->eng->handler,
                           rb_intern("punsubscribe"),
                           1,
                           &ch);
-  STORE.release(ch);
   return NULL;
 }
 /**
@@ -185,9 +181,8 @@ static void iodine_pubsub_eng___punsubscribe(const fio_pubsub_engine_s *eng,
 static void *iodine_pubsub_eng___publish__in_GC(void *a_) {
   iodine_pubsub_eng___args_s *args = (iodine_pubsub_eng___args_s *)a_;
   VALUE msg = iodine_pubsub_msg_new(args->msg);
-  STORE.hold(msg);
+  STORE.cache(msg);
   iodine_ruby_call_inside(args->eng->handler, rb_intern("publish"), 1, &msg);
-  STORE.release(msg);
   return NULL;
 }
 /**
