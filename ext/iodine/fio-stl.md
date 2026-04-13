@@ -24618,7 +24618,7 @@ Replies are sent back to the caller via the `on_reply` callback. When all replie
 /* Worker calls master to process data */
 fio_ipc_call(.call = process_on_master,
              .on_reply = handle_reply,
-             .on_done = cleanup,
+             .on_done = last_reply_and_cleanup,
              .udata = my_context,
              .data = FIO_IPC_DATA(FIO_BUF_INFO1((char *)"request_data")));
 ```
@@ -25098,6 +25098,8 @@ void on_reply(fio_ipc_s *msg) {
 
 /* Called on worker when all replies done */
 void on_done(fio_ipc_s *msg) {
+  if(msg->len)
+    on_reply(msg);
   printf("Request complete\n");
   (void)msg;
 }
@@ -25281,6 +25283,8 @@ void on_chunk(fio_ipc_s *msg) {
 
 /* Worker notified when streaming complete */
 void on_stream_done(fio_ipc_s *msg) {
+  if(msg->len)
+    on_chunk(msg);
   printf("Stream complete\n");
   (void)msg;
 }
