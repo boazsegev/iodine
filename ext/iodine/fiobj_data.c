@@ -63,6 +63,17 @@ Object required VTable and functions
     }                                                                          \
   } while (0)
 
+static inline int64_t fiobj_data_get_fd_size(const FIOBJ o) {
+  struct stat stat;
+retry:
+  if (fstat(obj2io(o)->fd, &stat)) {
+    if (errno == EINTR)
+      goto retry;
+    return -1;
+  }
+  return stat.st_size;
+}
+
 static void fiobj_data_copy_buffer(FIOBJ o) {
   obj2io(o)->capa = (((obj2io(o)->len) >> 12) + 1) << 12;
   void *tmp = fio_malloc(obj2io(o)->capa);
@@ -143,17 +154,6 @@ static inline void fiobj_data_pre_write(FIOBJ o, uintptr_t length) {
   obj2io(o)->capa = (((obj2io(o)->len + length) >> 12) + 1) << 12;
   obj2io(o)->buffer = fio_realloc(obj2io(o)->buffer, obj2io(o)->capa);
   REQUIRE_MEM(obj2io(o)->buffer);
-}
-
-static inline int64_t fiobj_data_get_fd_size(const FIOBJ o) {
-  struct stat stat;
-retry:
-  if (fstat(obj2io(o)->fd, &stat)) {
-    if (errno == EINTR)
-      goto retry;
-    return -1;
-  }
-  return stat.st_size;
 }
 
 static FIOBJ fiobj_data_alloc(void *buffer, int fd) {
@@ -963,6 +963,7 @@ intptr_t fiobj_data_write(FIOBJ io, void *buffer, uintptr_t length) {
   /* Unslice slices */
   if (obj2io(io)->fd == -2)
     fiobj_data_assert_dynamic(io);
+
   if (obj2io(io)->fd == -1) {
     /* String Code */
     fiobj_data_pre_write(io, length + 1);
@@ -971,6 +972,7 @@ intptr_t fiobj_data_write(FIOBJ io, void *buffer, uintptr_t length) {
     obj2io(io)->buffer[obj2io(io)->len] = 0;
     return length;
   }
+
   /* File Code */
   return pwrite(obj2io(io)->fd, buffer, length, fiobj_data_get_fd_size(io));
 }
