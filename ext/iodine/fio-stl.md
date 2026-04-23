@@ -4866,6 +4866,8 @@ If the `FIO_ATOL` macro is defined, the following functions will be defined for 
 
 **Note**: all functions that write to a buffer also write a `NUL` terminator byte.
 
+**CRITICAL**: all `fio_atol` functions are guard-less(!), they assume: (1) that the buffer has an invalid character that ends the conversion (such as a `NUL` terminator byte); and that (2) system allocations are 8 byte aligned (the terminating character is within an 8 byte group all read together).
+
 ### Configuration Macros
 
 #### `FIO_ATOL_ALLOW_UNDERSCORE_DIVIDER`
@@ -6062,7 +6064,7 @@ The facil.io random generator functions appear both faster and more random than 
 
 I designed it in the hopes of achieving a cryptographically safe PRNG, but it wasn't cryptographically analyzed, lacks a good source of entropy and should be considered as a good enough non-cryptographic PRNG for general use.
 
-**Note**: bitwise operations (`FIO_BITWISE`), Risky Hash and Stable Hash are automatically defined along with `FIO_RAND`, since they are required by the algorithm.
+**Note**: Risky Hash and Stable Hash are automatically defined along with `FIO_RAND`.
 
 ### Pseudo-Random Generator Functions
 
@@ -28047,385 +28049,299 @@ void example_incremental_parsing(int fd) {
 ```
 
 ------------------------------------------------------------
-## WebSocket Parser
+# WebSocket Parser
+
+Parse WebSocket frames (RFC 6455). 24 bytes of state. Zero allocation. Bytes in, events out.
+
+## Quick Start
 
 ```c
 #define FIO_WEBSOCKET_PARSER
 #include FIO_INCLUDE_FILE
+
+fio_websocket_s parser;
+fio_websocket_init(&parser);
+
+// In your read loop:
+fio_websocket_event_s ev;
+size_t consumed = fio_websocket_parse(&parser, input_buffer, &ev);
+
+switch (ev.type) {
+  case FIO_WEBSOCKET_EV_DATA_CHUNK:
+    if (ev.is_first) { /* start new message */ }
+    /* ev.payload points into input_buffer, already unmasked */
+    if (ev.is_last)  { /* message complete */ }
+    break;
+  case FIO_WEBSOCKET_EV_CONTROL:
+    if (ev.opcode == FIO_WEBSOCKET_OP_PING) { /* send pong */ }
+    break;
+  case FIO_WEBSOCKET_EV_ERROR:
+    /* protocol error—ev.close_code is set */
+    break;
+}
 ```
 
-By defining `FIO_WEBSOCKET_PARSER`, a WebSocket frame parser and formatter are defined and made available. This module implements the WebSocket protocol framing layer as specified in [RFC 6455](https://tools.ietf.org/html/rfc6455).
+## What It Does
 
-The module provides:
+This parser reads raw WebSocket bytes and produces structured events. It:
 
-- **Parsing (unwrapping)** - a callback-driven streaming parser that consumes raw WebSocket frames, handles masking/unmasking, fragmentation, and dispatches complete messages to user-defined callbacks
-- **Formatting (wrapping)** - functions to wrap payload data into properly framed WebSocket messages for both server-side (unmasked) and client-side (masked) connections
-- **Control frame handling** - automatic dispatch of ping, pong, and close control frames
-- **permessage-deflate** - support for the compression extension via a decompression callback (RSV1 flag)
+- Parses frame headers (opcode, length, mask, FIN, RSV)
+- Unmasks payload **in place** in your buffer
+- Validates protocol invariants (opcode whitelist, fragmentation rules, close codes)
+- Reports data chunks and control frames as events
 
-The parser is designed as a set of static functions suitable for embedding directly in protocol implementations. It uses a state-machine approach with function-pointer dispatch for efficient incremental parsing.
+It does **not**:
 
-### Configuration Macros
+- Allocate memory
+- Store callbacks
+- Buffer control frames internally
+- Accumulate message data
+- Validate masking policy (client vs server)
+- Run extension transforms (e.g., permessage-deflate)
 
-#### `FIO_WEBSOCKET_MAX_PAYLOAD`
+Those concerns belong in the caller.
+
+## Parser State
 
 ```c
-#ifndef FIO_WEBSOCKET_MAX_PAYLOAD
-#define FIO_WEBSOCKET_MAX_PAYLOAD ((uint64_t)(256ULL << 20))
-#endif
+typedef struct fio_websocket_s {
+  uint64_t frame_remaining;  // bytes left in current frame
+  uint32_t mask;             // frame mask (0 = unmasked)
+  uint32_t frame_consumed;   // bytes consumed (for mask rotation)
+  uint16_t close_code;       // last error/close code
+  uint8_t state;             // HEADER, PAYLOAD, CLOSED, ERROR
+  uint8_t flags;             // fin, masked, opcode, msg_opcode
+  uint8_t flags2;            // paused, msg_rsv
+  uint8_t reserved;
+} fio_websocket_s;
 ```
 
-Maximum allowed WebSocket frame payload length. Defaults to 1 GB (`1 << 30`).
+**Size: 24 bytes.** Verified at compile time.
 
-Override this macro before including the header to change the limit. Setting a lower value helps prevent denial-of-service attacks via memory exhaustion. Frames with a payload length exceeding this value cause a parser error.
+### Flags
 
-#### `FIO_WEBSOCKET_PARSER_ERROR`
+Access via macros—do not touch fields directly:
 
 ```c
-#define FIO_WEBSOCKET_PARSER_ERROR ((size_t)-1)
+FIO_WEBSOCKET_GET_FIN(p)        // current frame FIN bit
+FIO_WEBSOCKET_GET_MASKED(p)     // current frame MASK bit
+FIO_WEBSOCKET_GET_OPCODE(p)     // current frame opcode (0,1,2,8,9,10)
+FIO_WEBSOCKET_GET_MSG_OPCODE(p) // message opcode (1=text, 2=binary, 0=none)
+FIO_WEBSOCKET_GET_PAUSED(p)     // one-message-per-parse gate
+FIO_WEBSOCKET_GET_MSG_RSV(p)    // RSV bits from opening frame (3-bit value)
 ```
 
-The sentinel value returned by `fio_websocket_parse` on error. Equivalent to `(size_t)-1`.
-
-### Types
-
-#### `fio_websocket_parser_s`
+## Events
 
 ```c
-struct fio_websocket_parser_s {
-  int (*fn)(fio_websocket_parser_s *, fio_buf_info_s *, void *);
-  uint64_t start_at;
-  uint64_t expect;
-  uint32_t mask;
-  uint8_t first;
-  uint8_t current;
-  uint8_t must_mask;
-};
+typedef struct {
+  uint8_t type;            // NONE, DATA_CHUNK, CONTROL, ERROR
+  uint8_t opcode;          // frame opcode (control frames)
+  uint8_t is_text;         // 1=text, 0=binary (data chunks)
+  uint8_t rsv;             // RSV bits from opening frame
+  uint8_t is_first;        // first chunk of a new message
+  uint8_t is_last;         // last chunk of message
+  fio_buf_info_s payload;  // points INTO your input buffer
+  uint16_t close_code;     // for CLOSE and ERROR
+} fio_websocket_event_s;
 ```
 
-The WebSocket parser state machine context.
+### Event Types
 
-**Members:**
-- `fn` - internal state function pointer (drives the parsing state machine)
-- `start_at` - tracks the unmasking offset within a multi-frame message
-- `expect` - number of payload bytes remaining in the current frame
-- `mask` - the 32-bit masking key for the current frame (0 if unmasked)
-- `first` - the first byte (opcode + flags) of the first frame in the current message
-- `current` - the first byte (opcode + flags) of the current frame being parsed
-- `must_mask` - set to 1 to require masking on all incoming frames (server mode); causes a parser error if an unmasked frame is received
+| Type | When It Fires |
+|------|---------------|
+| `FIO_WEBSOCKET_EV_NONE` | No complete frame yet—feed more bytes |
+| `FIO_WEBSOCKET_EV_DATA_CHUNK` | Data payload available. `payload` points into your buffer. `is_first`/`is_last` mark message boundaries. |
+| `FIO_WEBSOCKET_EV_CONTROL` | Complete control frame. `opcode` is PING, PONG, or CLOSE. `payload` is the full control payload (≤125 bytes). |
+| `FIO_WEBSOCKET_EV_ERROR` | Protocol violation. `close_code` set. Parser enters ERROR state. |
 
-**Note**: initialize this struct to zero before first use. The parser automatically sets up its internal state on the first call to `fio_websocket_parse`. Set `.must_mask = 1` for server-side parsers (RFC 6455 requires clients to mask all frames).
+### Buffer Lifetime
 
-### Parsing API
+**Critical:** `ev.payload.buf` points **into the input buffer you passed to `fio_websocket_parse()`**. The parser unmasks in place. Keep the input buffer valid until you are done with the payload.
 
-#### `fio_websocket_parse`
+## API Reference
+
+### Lifecycle
 
 ```c
-size_t fio_websocket_parse(fio_websocket_parser_s *p,
+void fio_websocket_init(fio_websocket_s *p);   // zero, set state = HEADER
+void fio_websocket_reset(fio_websocket_s *p);  // same as init
+```
+
+### Parsing
+
+```c
+size_t fio_websocket_parse(fio_websocket_s *p,
                            fio_buf_info_s buf,
-                           void *udata);
+                           fio_websocket_event_s *ev);
 ```
 
-Parses WebSocket data from `buf`, calling the appropriate callbacks as frames are consumed.
-
-The parser is incremental: it can be called with partial data and will resume from where it left off on the next call. Internally it drives a state machine that consumes frame headers, payload data, handles unmasking, reassembles fragmented messages, and dispatches complete messages via callbacks.
+**Returns:** bytes consumed (≤ `buf.len`), or `FIO_WEBSOCKET_PARSE_ERROR` on protocol error.
 
 **Parameters:**
-- `p` - pointer to an initialized (zeroed) `fio_websocket_parser_s` context
-- `buf` - the raw data buffer to parse (a `fio_buf_info_s` with `.buf` and `.len`)
-- `udata` - opaque user data pointer passed through to all callbacks
+- `p` — parser state (must be initialized)
+- `buf` — `{buf, len}` pointing to incoming bytes
+- `ev` — out-parameter receiving the event (may be NULL, but then errors are silent)
 
-**Returns:** the number of bytes consumed from `buf`, or `FIO_WEBSOCKET_PARSER_ERROR` (`(size_t)-1`) on protocol error.
+### Writing Frames
 
-**Note**: a return value less than `buf.len` means there is unconsumed data remaining (typically a partial frame). The caller should buffer the remainder and call again when more data arrives.
-
-### Parsing Callbacks
-
-These functions must be implemented by the user. The parser calls them during parsing to deliver events and request buffer management.
-
-#### `fio_websocket_on_message`
+Server functions produce **unmasked** frames. Client functions produce **masked** frames (PRNG mask when `mask=0`).
 
 ```c
-void fio_websocket_on_message(void *udata,
-                              fio_buf_info_s msg,
-                              unsigned char is_text);
+// Data messages
+uint64_t fio_websocket_write_message_server(void *dst, fio_buf_info_s msg,
+                                            _Bool is_text, uint8_t rsv);
+uint64_t fio_websocket_write_message_client(void *dst, fio_buf_info_s msg,
+                                            _Bool is_text, uint32_t mask,
+                                            uint8_t rsv);
+
+// Control frames
+uint64_t fio_websocket_write_ping_server(void *dst, fio_buf_info_s p);
+uint64_t fio_websocket_write_ping_client(void *dst, fio_buf_info_s p,
+                                         uint32_t mask);
+uint64_t fio_websocket_write_pong_server(void *dst, fio_buf_info_s p);
+uint64_t fio_websocket_write_pong_client(void *dst, fio_buf_info_s p,
+                                         uint32_t mask);
+uint64_t fio_websocket_write_close_server(void *dst, uint16_t code,
+                                          fio_buf_info_s reason);
+uint64_t fio_websocket_write_close_client(void *dst, uint16_t code,
+                                          fio_buf_info_s reason,
+                                          uint32_t mask);
+
+// Utility
+uint64_t fio_websocket_write_len(uint64_t payload_len, _Bool masked);
 ```
 
-Called when a complete data message (text or binary) has been fully received and reassembled.
+**RSV bits:** Pass `FIO_WEBSOCKET_RSV1` (0x4) to mark permessage-deflate compression (RFC 7692). The parser exposes RSV in `ev.rsv`; the caller interprets them.
 
-**Parameters:**
-- `udata` - the opaque user data pointer from `fio_websocket_parse`
-- `msg` - the complete message payload (already unmasked and, if RSV1 was set, decompressed)
-- `is_text` - `1` if the message is a UTF-8 text frame (opcode 0x1), `0` if binary (opcode 0x2)
-
-#### `fio_websocket_write_partial`
+## Complete Example
 
 ```c
-fio_buf_info_s fio_websocket_write_partial(void *udata,
-                                           fio_buf_info_s partial,
-                                           size_t more_expected);
-```
-
-Called when the parser needs to copy incoming frame payload to an external buffer. This callback is responsible for accumulating partial frame data into a contiguous message buffer.
-
-The returned buffer **must** point to the accumulated message data, as the parser needs it for unmasking.
-
-**Parameters:**
-- `udata` - the opaque user data pointer from `fio_websocket_parse`
-- `partial` - the partial payload data to append (`partial.len` may be 0)
-- `more_expected` - the number of additional payload bytes expected in the current frame (0 when the frame is complete)
-
-**Returns:** a `fio_buf_info_s` pointing to the full accumulated message buffer so far. Must return a valid buffer (non-NULL `.buf`); returning a buffer with `.buf == NULL` signals a protocol error and aborts parsing.
-
-**Note**: when `more_expected` is 0, the current frame's payload is complete. The parser will then unmask the data in-place starting from the appropriate offset.
-
-#### `fio_websocket_decompress`
-
-```c
-fio_buf_info_s fio_websocket_decompress(void *udata,
-                                        fio_buf_info_s msg);
-```
-
-Called when the permessage-deflate extension requires decompression (RSV1 bit set on the first frame of the message).
-
-**Parameters:**
-- `udata` - the opaque user data pointer from `fio_websocket_parse`
-- `msg` - the complete (unmasked) compressed message payload
-
-**Returns:** a `fio_buf_info_s` pointing to the decompressed message data. Returning a buffer with `.buf == NULL` signals an error and aborts parsing.
-
-#### `fio_websocket_on_protocol_ping`
-
-```c
-void fio_websocket_on_protocol_ping(void *udata, fio_buf_info_s msg);
-```
-
-Called when a WebSocket ping control frame (opcode 0x9) is received.
-
-**Parameters:**
-- `udata` - the opaque user data pointer from `fio_websocket_parse`
-- `msg` - the ping payload (may be empty; up to 125 bytes per RFC 6455)
-
-**Note**: per RFC 6455, the application should respond with a pong frame containing the same payload.
-
-#### `fio_websocket_on_protocol_pong`
-
-```c
-void fio_websocket_on_protocol_pong(void *udata, fio_buf_info_s msg);
-```
-
-Called when a WebSocket pong control frame (opcode 0xA) is received.
-
-**Parameters:**
-- `udata` - the opaque user data pointer from `fio_websocket_parse`
-- `msg` - the pong payload (may be empty)
-
-#### `fio_websocket_on_protocol_close`
-
-```c
-void fio_websocket_on_protocol_close(void *udata, fio_buf_info_s msg);
-```
-
-Called when a WebSocket close control frame (opcode 0x8) is received.
-
-**Parameters:**
-- `udata` - the opaque user data pointer from `fio_websocket_parse`
-- `msg` - the close payload. If non-empty, the first 2 bytes contain the close status code (big-endian) and the remainder is an optional UTF-8 reason string.
-
-**Note**: per RFC 6455, the application should respond with a close frame and then close the connection.
-
-### Formatting API
-
-#### `fio_websocket_wrapped_len`
-
-```c
-uint64_t fio_websocket_wrapped_len(uint64_t len);
-```
-
-Returns the number of bytes required for the WebSocket frame header plus payload for a server (unmasked) message of `len` bytes.
-
-The header size varies depending on the payload length:
-- 0-125 bytes: 2-byte header
-- 126-65535 bytes: 4-byte header
-- 65536+ bytes: 10-byte header
-
-**Parameters:**
-- `len` - the payload length in bytes
-
-**Returns:** the total framed message size (header + payload) for an unmasked (server) frame.
-
-**Note**: for client (masked) frames, add 4 to the returned value to account for the 32-bit masking key.
-
-#### `fio_websocket_server_wrap`
-
-```c
-uint64_t fio_websocket_server_wrap(void *target,
-                                   const void *msg,
-                                   uint64_t len,
-                                   unsigned char opcode,
-                                   unsigned char first,
-                                   unsigned char last,
-                                   unsigned char rsv);
-```
-
-Wraps a WebSocket server message and writes the framed data to `target`. Server frames are unmasked per RFC 6455.
-
-The `first` and `last` flags support message fragmentation. When sending a complete message in a single frame, set both to 1.
-
-**Parameters:**
-- `target` - destination buffer (must have capacity for at least `fio_websocket_wrapped_len(len)` bytes)
-- `msg` - pointer to the payload data
-- `len` - payload length in bytes
-- `opcode` - the WebSocket opcode (see table below)
-- `first` - set to 1 for the first (or only) frame of a message
-- `last` - set to 1 for the last (or only) frame of a message (sets the FIN bit)
-- `rsv` - reserved bits (3 bits); set bit 0 (value 1) for permessage-deflate compressed data
-
-**Returns:** the number of bytes written to `target`. Always equal to `fio_websocket_wrapped_len(len)`.
-
-**Opcode values (RFC 6455):**
-
-| Opcode | Meaning |
-|--------|---------|
-| `0x0` | Continuation frame |
-| `0x1` | Text frame (UTF-8) |
-| `0x2` | Binary frame |
-| `0x3`-`0x7` | Reserved (non-control) |
-| `0x8` | Connection close |
-| `0x9` | Ping |
-| `0xA` | Pong |
-| `0xB`-`0xF` | Reserved (control) |
-
-#### `fio_websocket_client_wrap`
-
-```c
-uint64_t fio_websocket_client_wrap(void *target,
-                                   const void *msg,
-                                   uint64_t len,
-                                   unsigned char opcode,
-                                   unsigned char first,
-                                   unsigned char last,
-                                   unsigned char rsv);
-```
-
-Wraps a WebSocket client message and writes the framed data to `target`. Client frames are masked with a random 32-bit key per RFC 6455.
-
-The masking key is generated using `fio_rand64()` and is guaranteed to be non-zero. Masking prevents proxy cache poisoning attacks and is required for all client-to-server frames.
-
-The `first` and `last` flags support message fragmentation, identical to `fio_websocket_server_wrap`.
-
-**Parameters:**
-- `target` - destination buffer (must have capacity for at least `fio_websocket_wrapped_len(len) + 4` bytes)
-- `msg` - pointer to the payload data
-- `len` - payload length in bytes
-- `opcode` - the WebSocket opcode (see opcode table in `fio_websocket_server_wrap`)
-- `first` - set to 1 for the first (or only) frame of a message
-- `last` - set to 1 for the last (or only) frame of a message (sets the FIN bit)
-- `rsv` - reserved bits (3 bits); set bit 0 (value 1) for permessage-deflate compressed data
-
-**Returns:** the number of bytes written to `target`. Always equal to `fio_websocket_wrapped_len(len) + 4`.
-
-### Examples
-
-#### Server: Sending a Text Message
-
-```c
-#define FIO_WEBSOCKET_PARSER
-#include FIO_INCLUDE_FILE
-
-void example_server_send(int fd) {
-  const char *msg = "Hello, WebSocket!";
-  uint64_t len = strlen(msg);
-  uint64_t frame_len = fio_websocket_wrapped_len(len);
-
-  uint8_t buf[128]; /* ensure sufficient capacity */
-  fio_websocket_server_wrap(buf, msg, len,
-                            1,  /* opcode: text */
-                            1,  /* first frame */
-                            1,  /* last frame (FIN) */
-                            0); /* no RSV bits */
-  /* write buf[0..frame_len-1] to the connection */
-}
-```
-
-#### Client: Sending a Binary Message
-
-```c
-void example_client_send(int fd) {
-  const uint8_t data[] = {0x01, 0x02, 0x03, 0x04};
-  uint64_t len = sizeof(data);
-  uint64_t frame_len = fio_websocket_wrapped_len(len) + 4;
-
-  uint8_t buf[128];
-  fio_websocket_client_wrap(buf, data, len,
-                            2,  /* opcode: binary */
-                            1,  /* first frame */
-                            1,  /* last frame (FIN) */
-                            0); /* no RSV bits */
-  /* write buf[0..frame_len-1] to the connection */
-}
-```
-
-#### Parsing Incoming Data
-
-```c
-/* Callback implementations (must be provided by the user) */
-FIO_SFUNC void fio_websocket_on_message(void *udata,
-                                        fio_buf_info_s msg,
-                                        unsigned char is_text) {
-  printf("Received %s message (%zu bytes): %.*s\n",
-         is_text ? "text" : "binary",
-         msg.len, (int)msg.len, msg.buf);
-}
-
-FIO_SFUNC fio_buf_info_s fio_websocket_write_partial(void *udata,
-                                                     fio_buf_info_s partial,
-                                                     size_t more_expected) {
-  /* Simple example: accumulate into a dynamic buffer (pseudo-code) */
-  my_buffer_s *b = (my_buffer_s *)udata;
-  if (partial.len)
-    my_buffer_append(b, partial.buf, partial.len);
-  return FIO_BUF_INFO2(b->data, b->len);
-}
-
-FIO_SFUNC fio_buf_info_s fio_websocket_decompress(void *udata,
-                                                  fio_buf_info_s msg) {
-  /* Implement permessage-deflate decompression here */
-  return msg; /* pass-through if compression not supported */
-}
-
-FIO_SFUNC void fio_websocket_on_protocol_ping(void *udata,
-                                              fio_buf_info_s msg) {
-  /* Respond with a pong frame containing the same payload */
-}
-
-FIO_SFUNC void fio_websocket_on_protocol_pong(void *udata,
-                                              fio_buf_info_s msg) {
-  /* Handle pong (e.g., update keep-alive timer) */
-}
-
-FIO_SFUNC void fio_websocket_on_protocol_close(void *udata,
-                                               fio_buf_info_s msg) {
-  /* Send a close frame in response, then close the connection */
-}
-
-void example_parse(void *raw_data, size_t raw_len) {
-  static fio_websocket_parser_s parser = {0};
-  parser.must_mask = 1; /* server-side: require client masking */
-
-  fio_buf_info_s buf = FIO_BUF_INFO2((char *)raw_data, raw_len);
-  my_buffer_s my_buf = {0};
-
-  size_t consumed = fio_websocket_parse(&parser, buf, &my_buf);
-  if (consumed == FIO_WEBSOCKET_PARSER_ERROR) {
-    /* Protocol error - close the connection */
-    return;
+#include "fio-stl.h"
+
+typedef struct {
+  fio_websocket_s parser;
+  fio_bstr_s *accumulator;   // message accumulator
+  void (*on_message)(fio_buf_info_s msg, _Bool is_text);
+} connection_t;
+
+void on_data(connection_t *c, fio_websocket_event_s *ev) {
+  if (ev->is_first) {
+    fio_bstr_free(c->accumulator);
+    c->accumulator = NULL;
   }
-  /* If consumed < raw_len, buffer the remainder for next read */
+  if (ev->payload.len) {
+    c->accumulator = fio_bstr_write(c->accumulator,
+                                    ev->payload.buf,
+                                    ev->payload.len);
+  }
+  if (ev->is_last) {
+    fio_buf_info_s msg = c->accumulator
+        ? fio_bstr_buf(c->accumulator)
+        : FIO_BUF_INFO0;
+    c->on_message(msg, ev->is_text);
+    fio_bstr_free(c->accumulator);
+    c->accumulator = NULL;
+  }
+}
+
+void on_control(connection_t *c, fio_websocket_event_s *ev) {
+  switch (ev->opcode) {
+  case FIO_WEBSOCKET_OP_PING: {
+    char buf[140];
+    size_t n = fio_websocket_write_pong_server(buf, ev->payload);
+    send(c->fd, buf, n, 0);
+    break;
+  }
+  case FIO_WEBSOCKET_OP_CLOSE: {
+    uint16_t code = ev->close_code;
+    fio_buf_info_s reason = (ev->payload.len > 2)
+        ? FIO_BUF_INFO2(ev->payload.buf + 2, ev->payload.len - 2)
+        : FIO_BUF_INFO0;
+    printf("Close: %d %.*s\n", code, (int)reason.len, reason.buf);
+    break;
+  }
+  }
+}
+
+void process_bytes(connection_t *c, char *data, size_t len) {
+  fio_buf_info_s buf = FIO_BUF_INFO2(data, len);
+  while (buf.len) {
+    fio_websocket_event_s ev = {0};
+    size_t n = fio_websocket_parse(&c->parser, buf, &ev);
+    if (n == FIO_WEBSOCKET_PARSE_ERROR) {
+      fprintf(stderr, "WebSocket error: %d\n", c->parser.close_code);
+      return;
+    }
+    buf.buf += n;
+    buf.len -= n;
+    switch (ev.type) {
+    case FIO_WEBSOCKET_EV_DATA_CHUNK:  on_data(c, &ev); break;
+    case FIO_WEBSOCKET_EV_CONTROL:     on_control(c, &ev); break;
+    case FIO_WEBSOCKET_EV_ERROR:       return;
+    }
+  }
 }
 ```
 
-------------------------------------------------------------
+## Validation
+
+The parser enforces:
+
+- Opcode whitelist: 0, 1, 2, 8, 9, 10 only
+- Control frames: FIN=1, payload ≤ 125 bytes
+- Fragmentation: continuations follow openings; no nested messages
+- Extended length: MSB must be 0
+- Frame size: ≤ `FIO_WEBSOCKET_DEFAULT_MAX_FRAME` (1 GiB)
+- Close codes: validated per RFC §7.4.1
+
+**Caller must enforce:**
+
+- Masking policy (client masks, server does not)
+- RSV semantics and extension transforms
+- Message size limits
+- UTF-8 validation for text frames
+
+## Thread Safety
+
+The parser is fully thread-safe. It stores no shared state, no callbacks, and no pointers to external data. Multiple threads may parse concurrently with independent `fio_websocket_s` instances. Synchronize access to shared buffers and connection state in the caller.
+
+## Performance
+
+- **24 bytes**: fits in one cache line
+- **Zero allocation**: no malloc/free in parse path
+- **In-place unmasking**: no payload copies
+- **No callback indirection**: events returned by value
+- **Straight-line hot path**: header parse → chunk emit, minimal branches
+
+## Constants
+
+```c
+// Close codes (RFC 6455 §7.4.1)
+FIO_WEBSOCKET_CLOSE_OK               = 1000
+FIO_WEBSOCKET_CLOSE_GOING_AWAY       = 1001
+FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR   = 1002
+FIO_WEBSOCKET_CLOSE_UNSUPPORTED_DATA = 1003
+FIO_WEBSOCKET_CLOSE_NO_STATUS        = 1005
+FIO_WEBSOCKET_CLOSE_INVALID_PAYLOAD  = 1007
+FIO_WEBSOCKET_CLOSE_POLICY_VIOLATION = 1008
+FIO_WEBSOCKET_CLOSE_MESSAGE_TOO_BIG  = 1009
+FIO_WEBSOCKET_CLOSE_MANDATORY_EXT    = 1010
+FIO_WEBSOCKET_CLOSE_INTERNAL_ERROR   = 1011
+
+// RSV bits
+FIO_WEBSOCKET_RSV1 = 0x4   // permessage-deflate
+FIO_WEBSOCKET_RSV2 = 0x2
+FIO_WEBSOCKET_RSV3 = 0x1
+
+// Limits
+FIO_WEBSOCKET_DEFAULT_MAX_FRAME = (1ULL << 30)  // 1 GiB
+FIO_WEBSOCKET_PARSE_ERROR       = ((size_t)-1)
+```
+
+## License
+
+See `000 copyright.h` or the top of `fio-stl.h`.
 ## HTTP Server
 
 ### Listening for HTTP / WebSockets and EventSource connections
@@ -28451,7 +28367,15 @@ typedef struct fio_http_settings_s {
   int (*on_authenticate_websocket)(fio_http_s *h);
   /** Called once a WebSocket / SSE connection upgrade is complete. */
   void (*on_open)(fio_http_s *h);
-  /** Called when a WebSocket message is received. */
+  /** Called when a WebSocket message is received.
+   *
+   * The `msg` payload is always backed by a `fio_bstr` (a reference-counted
+   * string buffer). This means:
+   * - You may call `fio_bstr_dup(msg.buf)` to retain the payload beyond the
+   *   callback without copying data.
+   * - `fio_bstr_free(msg.buf)` is safe (and a no-op for NULL).
+   * - The buffer is valid only for the duration of the callback unless dup'd.
+   */
   void (*on_message)(fio_http_s *h, fio_buf_info_s msg, uint8_t is_text);
   /** Called when an EventSource event is received. */
   void (*on_eventsource)(fio_http_s *h,
