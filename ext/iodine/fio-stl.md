@@ -11606,7 +11606,7 @@ int64_t fio_timer_next_at(fio_timer_queue_s *timer_queue);
 
 Returns the millisecond at which the next event should occur.
 
-If no timer is due (list is empty), returns `-1`.
+If no timer is due (list is empty), returns the maximum possible value.
 
 **Note**: Unless manually specified, millisecond timers are relative to  `fio_time_milli()`.
 
