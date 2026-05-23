@@ -16302,6 +16302,34 @@ FIO_IFUNC int fio___json_consume_colon(fio___json_state_s *s) {
   return 0;
 }
 
+FIO_SFUNC int fio___json_consume_comment(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "comment");
+  const size_t len = (size_t)(s->end - s->pos);
+  if (*s->pos == '#' || (len > 2 && s->pos[0] == '/' && s->pos[1] == '/')) {
+    /* EOL style comment, C style or Bash/Ruby style*/
+    const char *tmp = (const char *)FIO_MEMCHR(s->pos, '\n', len);
+    if (tmp) {
+      s->pos = tmp;
+      return 0;
+    }
+    s->error = 1;
+    return -1;
+  }
+  if ((len > 3 && s->pos[0] == '/' && s->pos[1] == '*')) {
+    const char *tmp = s->pos + 2; /* skip past the opening slash-star */
+    while (tmp < s->end &&
+           (tmp = (const char *)FIO_MEMCHR(tmp, '/', s->end - tmp))) {
+      s->pos = ++tmp;
+      if (tmp[-2] == '*')
+        return 0;
+    }
+    s->error = 1;
+    return -1;
+  }
+  s->error = 1;
+  return -1;
+}
+
 FIO_SFUNC void *fio___json_consume_infinit(fio___json_state_s *s,
                                            _Bool negative) {
   FIO_JSON___PRINT_STEP(s, "infinity");
@@ -16400,18 +16428,75 @@ is_inifinity:
 #endif /* FIO_JSON_USE_FIO_ATON */
 }
 
-FIO_SFUNC void *fio___json_consume_string(fio___json_state_s *s) {
-  FIO_JSON___PRINT_STEP(s, "string");
+FIO_IFUNC void *fio___json_consume_string_any(fio___json_state_s *s,
+                                              const char quote) {
   void *(*cb)(void *udata, const void *start, size_t len) =
       s->cb.on_string_simple;
   const char *start = ++s->pos;
   for (; s->pos < s->end; ++s->pos) {
-    if (*s->pos == '"')
+    if (*s->pos == quote)
       return cb(s->udata, start, (s->pos++) - start);
     if (*s->pos == '\\')
       cb = s->cb.on_string;
     s->pos += (*s->pos == '\\');
   }
+  s->error = 1;
+  return NULL;
+}
+
+FIO_SFUNC void *fio___json_consume_string(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "double quote string");
+  return fio___json_consume_string_any(s, '"');
+}
+
+FIO_SFUNC void *fio___json_consume_string_single_quote(fio___json_state_s *s) {
+  FIO_JSON___PRINT_STEP(s, "single quote string");
+  return fio___json_consume_string_any(s, '\'');
+}
+
+FIO_SFUNC void *fio___json_consume_object_key(fio___json_state_s *s) {
+  // return fio___json_consume(s);
+  /* Ruby map maker
+  m = []; m[255] = 0; 256.times {|i| m[i] = 0 };
+  "0123456789_$\\".bytes.each {|b| m[b] = 1 };
+  ('z'.ord - 'a'.ord + 1).times {|i| m['a'.ord + i] = 1; m['A'.ord + i] = 1; };
+  puts "static const uint8_t valid_key[256] = { #{m.join(', ')} };"; nil
+  */
+  static const uint8_t valid_key[256] = {
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1,
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1,
+      0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+      1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  if (s->pos >= s->end)
+    goto set_error;
+  if (*s->pos == '"')
+    return fio___json_consume_string(s);
+  if (*s->pos == '\'')
+    return fio___json_consume_string_single_quote(s);
+  if (*s->pos == ',' || *s->pos == '}')
+    return NULL;
+  FIO_JSON___PRINT_STEP(s, "consumption of quote-less map key");
+  void *(*cb)(void *udata, const void *start, size_t len) =
+      s->cb.on_string_simple;
+  const char *start = s->pos;
+  for (; s->pos < s->end;) {
+    size_t add = 1;
+    if (!valid_key[(*(uint8_t *)s->pos)] &&
+        (add = fio_utf8_char_len(s->pos)) < 2)
+      return cb(s->udata, start, (size_t)(s->pos - start));
+    if (*s->pos == '\\')
+      cb = s->cb.on_string;
+    add += (*s->pos == '\\');
+    s->pos += add;
+  }
+set_error:
   s->error = 1;
   return NULL;
 }
@@ -16425,9 +16510,16 @@ FIO_SFUNC void *fio___json_consume_map(fio___json_state_s *s) {
   s->key = NULL;
   if (++s->depth == FIO_JSON_MAX_DEPTH)
     goto too_deep;
+  ++s->pos;
   for (;;) {
-    ++s->pos;
-    s->key = fio___json_consume(s);
+    if (fio___json_consume_whitespace(s))
+      break;
+    if ((*s->pos == '#' || s->pos[0] == '/')) {
+      if (fio___json_consume_comment(s))
+        break;
+      continue;
+    }
+    s->key = fio___json_consume_object_key(s);
     if (s->error || !s->key)
       break;
     if (fio___json_consume_colon(s))
@@ -16442,6 +16534,7 @@ FIO_SFUNC void *fio___json_consume_map(fio___json_state_s *s) {
       break;
     if (*s->pos != ',')
       break;
+    ++s->pos;
   }
   if (s->key) {
     s->error = 1;
@@ -16558,33 +16651,6 @@ on_error:
   s->error = 1;
   return NULL;
 }
-FIO_SFUNC int fio___json_consume_comment(fio___json_state_s *s) {
-  FIO_JSON___PRINT_STEP(s, "comment");
-  const size_t len = (size_t)(s->end - s->pos);
-  if (*s->pos == '#' || (len > 2 && s->pos[0] == '/' && s->pos[1] == '/')) {
-    /* EOL style comment, C style or Bash/Ruby style*/
-    const char *tmp = (const char *)FIO_MEMCHR(s->pos, '\n', len);
-    if (tmp) {
-      s->pos = tmp;
-      return 0;
-    }
-    s->error = 1;
-    return -1;
-  }
-  if ((len > 3 && s->pos[0] == '/' && s->pos[1] == '*')) {
-    const char *tmp = s->pos + 2; /* skip past the opening slash-star */
-    while (tmp < s->end &&
-           (tmp = (const char *)FIO_MEMCHR(tmp, '/', s->end - tmp))) {
-      s->pos = ++tmp;
-      if (tmp[-2] == '*')
-        return 0;
-    }
-    s->error = 1;
-    return -1;
-  }
-  s->error = 1;
-  return -1;
-}
 
 void *fio___json_consume(fio___json_state_s *s) {
   for (;;) {
@@ -16618,6 +16684,7 @@ void *fio___json_consume(fio___json_state_s *s) {
       case 'i': /* fall through */
       case 'I': return fio___json_consume_infinit(s, 0);
       case '"': return fio___json_consume_string(s);
+      case '\'': return fio___json_consume_string_single_quote(s);
       case '{': return fio___json_consume_map(s);
       case '}': return NULL; /* don't progress, just stop. */
       case '[': return fio___json_consume_array(s);
