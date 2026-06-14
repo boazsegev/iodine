@@ -984,7 +984,7 @@ FIO_IFUNC uint8_t fio_trylock_group(fio_lock_i *lock, uint8_t group) {
   if (!(state & group))
     return 0;
   /* store the acquired locks in `state`. */
-  state = ~((~state) & group);
+  state = (uint8_t)(~((~state) & group));
   /* release the locks we acquired */
   fio_atomic_and(lock, state);
   return 1;
@@ -1009,17 +1009,17 @@ FIO_IFUNC void fio_lock_group(fio_lock_i *lock, uint8_t group) {
 FIO_IFUNC void fio_unlock_group(fio_lock_i *lock, uint8_t group) {
   if (!group)
     group = 1;
-  fio_atomic_and(lock, (~group));
+  fio_atomic_and(lock, (uint8_t)(~group));
 }
 
 /** Tries to lock all sublocks. Returns 0 on success and 1 on failure. */
 FIO_IFUNC uint8_t fio_trylock_full(fio_lock_i *lock) {
-  return fio_trylock_group(lock, (uint8_t)~0);
+  return fio_trylock_group(lock, (uint8_t)(~0));
 }
 
 /** Busy waits for all sub lock to become available - not recommended. */
 FIO_IFUNC void fio_lock_full(fio_lock_i *lock) {
-  fio_lock_group(lock, (uint8_t)~0);
+  fio_lock_group(lock, (uint8_t)(~0));
 }
 
 /** Unlocks all sub locks, no matter which thread owns the lock. */
@@ -2269,7 +2269,7 @@ FIO_IFUNC FIO_CONST uintmax_t fio_ct_if(uintmax_t cond,
 /** Returns `a` if a >= `b`. */
 FIO_IFUNC FIO_CONST intmax_t fio_ct_max(intmax_t a_, intmax_t b_) {
   // if b - a is negative, a > b, unless both / one are negative.
-  const uintmax_t a = a_, b = b_;
+  const uintmax_t a = (uintmax_t)a_, b = (uintmax_t)b_;
   return (
       intmax_t)fio_ct_if_bool(((a - b) >> ((sizeof(a) << 3) - 1)) & 1, b, a);
 }
@@ -2277,7 +2277,7 @@ FIO_IFUNC FIO_CONST intmax_t fio_ct_max(intmax_t a_, intmax_t b_) {
 /** Returns `a` if a >= `b`. */
 FIO_IFUNC FIO_CONST intmax_t fio_ct_min(intmax_t a_, intmax_t b_) {
   // if b - a is negative, a > b, unless both / one are negative.
-  const uintmax_t a = a_, b = b_;
+  const uintmax_t a = (uintmax_t)a_, b = (uintmax_t)b_;
   return (
       intmax_t)fio_ct_if_bool(((a - b) >> ((sizeof(a) << 3) - 1)) & 1, a, b);
 }
@@ -2285,15 +2285,17 @@ FIO_IFUNC FIO_CONST intmax_t fio_ct_min(intmax_t a_, intmax_t b_) {
 /** Returns absolute value. */
 FIO_IFUNC FIO_CONST uintmax_t fio_ct_abs(intmax_t i_) {
   // if b - a is negative, a > b, unless both / one are negative.
-  const uintmax_t i = i_;
-  return (intmax_t)fio_ct_if_bool((i >> ((sizeof(i) << 3) - 1)), 0 - i, i);
+  const uintmax_t i = (uintmax_t)i_;
+  return fio_ct_if_bool((uintmax_t)(i >> ((sizeof(i) << 3) - 1)),
+                        (uintmax_t)((uintmax_t)0 - i),
+                        i);
 }
 
 /* returns either a lower case (ASCI) or the original char. */
 FIO_IFUNC char fio_ct_tolower(char c) {
-  return (c | (((uint8_t)((uint8_t)c - (uint8_t)'A') <
-                (uint8_t)(((uint8_t)'Z' + 1) - ((uint8_t)'A')))
-               << 5));
+  return (char)((uint8_t)c | (((uint8_t)((uint8_t)c - (uint8_t)'A') <
+                               (uint8_t)(((uint8_t)'Z' + 1) - ((uint8_t)'A')))
+                              << 5));
 }
 
 /* *****************************************************************************
@@ -4438,7 +4440,7 @@ Vector Helpers - Multi-Precision Math
       is_bigger |= (is_eq & (a->u64[i] > b->u64[i]));                          \
       is_eq &= (unsigned)(a->u64[i] == b->u64[i]);                             \
     }                                                                          \
-    return (is_eq - 1) + (is_bigger << 1);                                     \
+    return (int)((is_eq - (unsigned)1) + (is_bigger << 1));                    \
   }
 
 #undef FIO___VMATH_DEF_LARGE_MUL
@@ -5273,6 +5275,13 @@ FIO_MAP Ordering & Naming Shortcut
 #define FIO_JSON
 #endif
 
+#if defined(FIO_MD2HTML)
+#undef FIO_GFM
+#define FIO_GFM
+#undef FIO_STR
+#define FIO_STR
+#endif
+
 #if defined(FIO_HTTP)
 #undef FIO_HTTP1_PARSER
 #define FIO_HTTP1_PARSER
@@ -5294,13 +5303,15 @@ FIO_MAP Ordering & Naming Shortcut
 #define FIO_STATE
 #endif
 
-#if defined(FIO_HTTP_HANDLE) || defined(FIO_STR_NAME) ||                       \
+#if defined(FIO_STR) || defined(FIO_HTTP_HANDLE) || defined(FIO_STR_NAME) ||   \
     defined(FIO_STR_SMALL) || defined(FIO_ARRAY_TYPE_STR) ||                   \
     defined(FIO_MAP_KEY_KSTR) || defined(FIO_MAP_KEY_BSTR) ||                  \
     (defined(FIO_MAP_NAME) && !defined(FIO_MAP_KEY)) ||                        \
     defined(FIO_MUSTACHE) || defined(FIO_MAP2_NAME) || defined(FIO_OTP) ||     \
     defined(FIO_PUBSUB)
 #undef FIO_STR
+#undef FIO_ENTITY
+#define FIO_ENTITY
 #define FIO_STR
 #endif
 
@@ -8155,7 +8166,7 @@ FIO_SFUNC FIO___PRINTF_STYLE(1, 0) void FIO_LOG2STDERR(const char *format,
     }
     tmp___log[len___log++] = '\n';
     tmp___log[len___log] = '0';
-    fwrite(tmp___log, 1, len___log, FIO_STDERR_FILE);
+    fwrite(tmp___log, 1, (size_t)len___log, FIO_STDERR_FILE);
     return;
   }
   fwrite("\x1B[1mERROR:\x1B[0m log output error (can't write).\n",
@@ -8766,7 +8777,7 @@ SFUNC FIO___ASAN_AVOID size_t fio_strlen(const char *str) {
     return 0;
   for (; *str;) /* compiler, please vectorize */
     ++str;
-  return (str - start);
+  return (size_t)(str - start);
   //   const char *r = (const char *)str;
   //   uint64_t u[16] FIO_ALIGN(16) = {0};
   //   uint64_t flag = 0;
@@ -9453,7 +9464,7 @@ Implementation - inlined
 /** Returns the number of digits in base 10. */
 FIO_IFUNC size_t fio_digits10(int64_t i) {
   if (i >= 0)
-    return fio_digits10u(i);
+    return fio_digits10u((uint64_t)i);
   return fio_digits10u((0ULL - (uint64_t)i)) + 1;
 }
 
@@ -9561,10 +9572,10 @@ FIO_IFUNC void fio_ltoa8u(char *dest, uint64_t i, size_t digits) {
   dest += digits;
   *dest-- = 0;
   while (i > 7) {
-    *dest-- = '0' + (i & 7);
+    *dest-- = (char)('0' + (i & 7));
     i >>= 3;
   }
-  *dest = '0' + i;
+  *dest = (char)('0' + i);
 }
 
 FIO_IFUNC void fio_ltoa10u(char *dest, uint64_t i, size_t digits) {
@@ -9572,10 +9583,10 @@ FIO_IFUNC void fio_ltoa10u(char *dest, uint64_t i, size_t digits) {
   *dest-- = 0;
   while (i > 9) {
     uint64_t nxt = i / 10;
-    *dest-- = '0' + (i - (nxt * 10ULL));
+    *dest-- = (char)('0' + (i - (nxt * 10ULL)));
     i = nxt;
   }
-  *dest = '0' + (unsigned char)i;
+  *dest = (char)('0' + (unsigned char)i);
 }
 
 FIO_IFUNC void fio_ltoa16u(char *dest, uint64_t i, size_t digits) {
@@ -9584,9 +9595,9 @@ FIO_IFUNC void fio_ltoa16u(char *dest, uint64_t i, size_t digits) {
   *dest-- = 0;
   while (digits) {
     digits -= 2;
-    *dest-- = fio_i2c(i & 15);
+    *dest-- = (char)fio_i2c((uint8_t)(i & 15));
     i >>= 4;
-    *dest-- = fio_i2c(i & 15);
+    *dest-- = (char)fio_i2c((uint8_t)(i & 15));
     i >>= 4;
   }
 }
@@ -9625,10 +9636,10 @@ FIO_IFUNC void fio_ltoa_xbase(char *dest,
   *dest-- = 0;
   while (i >= base) {
     uint64_t nxt = i / base;
-    *dest-- = fio_i2c(i - (nxt * base));
+    *dest-- = (char)fio_i2c((uint8_t)(i - (nxt * base)));
     i = nxt;
   }
-  *dest = fio_i2c(i);
+  *dest = (char)fio_i2c((uint8_t)i);
 }
 
 /** Converts an unsigned `val` to a signed `val`, with overflow protection. */
@@ -9636,14 +9647,14 @@ FIO_IFUNC int64_t fio_u2i_limit(uint64_t val, size_t to_negative) {
   if (!to_negative) {
     /* overflow? */
     if (!(val & 0x8000000000000000ULL))
-      return val;
+      return (int64_t)val;
     errno = E2BIG;
     val = 0x7FFFFFFFFFFFFFFFULL;
-    return val;
+    return (int64_t)val;
   }
   if (!(val & 0x8000000000000000ULL)) {
-    val = (int64_t)0LL - (int64_t)val;
-    return val;
+    val = (uint64_t)((int64_t)0LL - (int64_t)val);
+    return (int64_t)val;
   }
   /* read overflow */
   errno = E2BIG;
@@ -9704,8 +9715,8 @@ FIO_IFUNC double fio_u2d(uint64_t mant, int64_t exponent) {
     goto is_inifinity_or_nan;
   if (FIO_UNLIKELY(exponent <= 0))
     goto is_subnormal;
-  exponent = (uint64_t)exponent << 52;
-  u.u64 |= exponent;
+  exponent = (int64_t)((uint64_t)exponent << 52);
+  u.u64 |= (uint64_t)exponent;
   /* reposition mant bits so we "hide" the fist set bit in bit[52] */
   if (msbi < 52)
     mant = mant << (52 - msbi);
@@ -9813,7 +9824,7 @@ SFUNC uint64_t fio_atol8u(char **pstr) {
     *pstr += (**pstr == '_'); /* allow '_' as a divider. */
 #endif
   }
-  if ((fio_c2i(**pstr)) < 8)
+  if ((fio_c2i((uint8_t)(**pstr))) < 8)
     errno = E2BIG;
   return r;
 }
@@ -10072,7 +10083,7 @@ SFUNC uint64_t fio_atol_xbase(char **pstr, size_t base) {
     if (r > limit)
       break;
   }
-  if ((fio_c2i(**pstr)) < base)
+  if ((fio_c2i((uint8_t)(**pstr))) < base)
     errno = E2BIG;
   return r;
 }
@@ -10101,14 +10112,14 @@ SFUNC int64_t FIO___ASAN_AVOID fio_atol(char **pstr) {
   neg = (p[0] == '-');
   p += (neg | (p[0] == '+'));
 
-  base += (p[0] == '0');             /* starts with zero? - oct */
-  p += base;                         /* consume the possible '0' */
-  base += ((p[0] | 32) == 'b');      /* binary */
-  base += ((p[0] | 32) == 'x') << 1; /* hex */
-  p += (base > 1);                   /* consume 'b' or 'x' */
-  char *const s = p;                 /* mark starting point */
-  u.u64 = fn[base](&p);              /* convert string to unsigned long long */
-  if (p != s || base == 1)           /* false oct base, a single '0'? */
+  base += (p[0] == '0');                         /* starts with zero? - oct */
+  p += base;                                     /* consume the possible '0' */
+  base += ((p[0] | 32) == 'b');                  /* binary */
+  base += ((uint32_t)((p[0] | 32) == 'x') << 1); /* hex */
+  p += (base > 1);                               /* consume 'b' or 'x' */
+  char *const s = p;                             /* mark starting point */
+  u.u64 = fn[base](&p);    /* convert string to unsigned long long */
+  if (p != s || base == 1) /* false oct base, a single '0'? */
     *pstr = p;
   if ((neg | !base)) /* if base 10 or negative, treat signed bit as overflow */
     return fio_u2i_limit(u.u64, neg);
@@ -10217,7 +10228,11 @@ SFUNC size_t fio_ftoa(char *dest, double num, uint8_t base) {
   if (isnan(num))
     goto is_nan;
 
-  written = snprintf(dest, 30, "%g", num);
+  written = (size_t)snprintf(dest, 30, "%g", num);
+  if ((written + 1) == 0)
+    written = 0;
+  if (written > 30)
+    written = 30;
   /* test if we need to add a ".0" to the end of the string */
   for (char *start = dest;;) {
     switch (*start) {
@@ -10269,7 +10284,8 @@ FIO_IFUNC long double fio___aton_pow10(uint64_t e10) {
 #undef fio___aton_pow10_map_row
   if (e10 < sizeof(pow_map) / sizeof(pow_map[0]))
     return pow_map[e10];
-  return powl(10, e10); /* return infinity? */
+  return (long double)powl((long double)10,
+                           (long double)e10); /* return infinity? */
 }
 
 /** Returns a power of 10. Supports values up to 1.0e-308. */
@@ -10288,7 +10304,9 @@ FIO_IFUNC long double fio___aton_pow10n(uint64_t e10) {
 #undef fio___aton_pow10_map_row
   if (e10 < sizeof(pow_map) / sizeof(pow_map[0]))
     return pow_map[e10];
-  return powl(10, (int64_t)(0 - e10)); /* return zero? */
+  return (long double)powl(
+      (long double)10,
+      (long double)((long double)0 - e10)); /* return zero? */
 }
 
 FIO_SFUNC FIO___ASAN_AVOID fio_aton_s fio_aton(char **pstr) {
@@ -10320,30 +10338,30 @@ FIO_SFUNC FIO___ASAN_AVOID fio_aton_s fio_aton(char **pstr) {
   if ((p[0] | 32) == 'n')
     goto is_nan;
 
-  base += (p[0] == '0');             /* oct */
-  p += base;                         /* consume '0' */
-  base += ((p[0] | 32) == 'b');      /* binary */
-  base += ((p[0] | 32) == 'x') << 1; /* hex */
-  base -= (base & (p[0] == '.'));    /* 0. isn't oct...  */
-  p += (base > 1);                   /* consume 'b' or 'x' */
-  start = p;                         /* mark starting point */
+  base += (uint16_t)(p[0] == '0');               /* oct */
+  p += base;                                     /* consume '0' */
+  base += (uint16_t)((p[0] | 32) == 'b');        /* binary */
+  base += (uint16_t)(((p[0] | 32) == 'x') << 1); /* hex */
+  base -= (uint16_t)(base & (p[0] == '.'));      /* 0. isn't oct...  */
+  p += (base > 1);                               /* consume 'b' or 'x' */
+  start = p;                                     /* mark starting point */
 
   // FIO_LOG_INFO("Start Unsigned: %s", p);
   before_dot = fn[base]((char **)&p);
   if (base == 2)
     goto is_binary;
   head = p;
-  while (fio_c2i(p[0]) < base_limit[base])
+  while (fio_c2i((uint8_t)(p[0])) < base_limit[base])
     ++p;
-  head_expo = p - head;
+  head_expo = (size_t)(p - head);
   force_float |= !!(head_expo);
   if (p[0] == '.') {
     ++p;
     force_float = 1;
     head = p;
     after_dot = fn[base]((char **)&p);
-    dot_expo = p - head;
-    while (fio_c2i(p[0]) < base_limit[base])
+    dot_expo = (size_t)(p - head);
+    while (fio_c2i((uint8_t)(p[0])) < base_limit[base])
       ++p;
   }
   if ((p[0] | 32) == exponent_char[base]) {
@@ -10362,7 +10380,7 @@ FIO_SFUNC FIO___ASAN_AVOID fio_aton_s fio_aton(char **pstr) {
                        (!neg && base))) { /* is integer */
     r.u = before_dot;
     if (neg)
-      r.i = 0 - r.u;
+      r.i = (int64_t)(0 - r.u);
     return r;
   }
   dbl = (long double)before_dot;
@@ -10372,18 +10390,18 @@ FIO_SFUNC FIO___ASAN_AVOID fio_aton_s fio_aton(char **pstr) {
     if (after_dot)
       dbl_dot *= fio___aton_pow10n(dot_expo);
   } else if (base == 3) {
-    dbl *= fio_u2d(1, (head_expo << 2));
-    dbl_dot *= fio_u2d(1, 0 - (dot_expo << 2));
+    dbl *= fio_u2d(1U, (int64_t)(head_expo << 2));
+    dbl_dot *= fio_u2d(1U, ((int64_t)0 - (dot_expo << 2)));
   } else { /* if (base == 1) */
-    dbl *= fio_u2d(1, (head_expo * 3));
-    dbl_dot *= fio_u2d(1, 0 - (dot_expo * 3));
+    dbl *= fio_u2d(1U, (int64_t)(head_expo * 3));
+    dbl_dot *= fio_u2d(1U, ((int64_t)0 - (dot_expo * 3)));
   }
   dbl += dbl_dot;
   if (expo) {
     if (base < 2) { /* base 10 / Oct */
       dbl *= (expo_neg ? fio___aton_pow10n : fio___aton_pow10)(expo);
     } else {
-      dbl *= fio_u2d(1, (int64_t)(expo_neg ? 0 - expo : expo));
+      dbl *= fio_u2d(1U, (expo_neg ? (int64_t)0 - expo : (int64_t)expo));
     }
   }
   r.is_float = 1;
@@ -10407,7 +10425,7 @@ is_infinity:
 is_nan:
   if ((p[1] | 32) == 'a' && (p[2] | 32) == 'n') { /* nan */
     r.is_float = 1;
-    r.i = ((~(uint64_t)0) >> (!neg));
+    r.u = ((~(uint64_t)0) >> (!neg));
     p += 3;
     *pstr = (char *)p;
   } else
@@ -11939,7 +11957,7 @@ SFUNC uint8_t fio_glob_match(fio_str_info_s pat, fio_str_info_s str) {
 
       if (match == inverted)
         goto backtrack;
-      pat.len -= cls - (uint8_t *)pat.buf;
+      pat.len -= (size_t)(cls - (uint8_t *)pat.buf);
       pat.buf = (char *)cls;
 
     } break;
@@ -12139,8 +12157,8 @@ iMap Creation Macro
     const imap_type hash = (imap_type)hash_fn(pobj);                           \
     imap_type tester = (hash & hash_mask); /* hides lower bits for `tester` */ \
     imap_type pos = hash + (hash >> a->capa_bits); /* use more bits for pos */ \
-    tester += (!tester) << a->capa_bits;                                       \
-    tester -= (hash_mask == tester) << a->capa_bits;                           \
+    tester += (imap_type)((!tester) << a->capa_bits);                          \
+    tester -= (imap_type)((hash_mask == tester) << a->capa_bits);              \
     size_t attempts = 11;                                                      \
     for (;;) {                                                                 \
       /* tests up to 3 groups of 4 bytes (uint32_t) within a 64 byte group */  \
@@ -12335,14 +12353,14 @@ iMap Creation Macro
                                      (uint##bits##_t)(~(uint##bits##_t)0)};    \
     if (!ary)                                                                  \
       return r;                                                                \
-    const uint##bits##_t capa = ((uint##bits##_t)1 << capa_bits);              \
+    const uint##bits##_t capa = (uint##bits##_t)((uint64_t)1 << capa_bits);    \
     const uint##bits##_t pos_mask = (uint##bits##_t)(capa - 1);                \
     const uint##bits##_t hash_mask = (uint##bits##_t) ~pos_mask;               \
     uint##bits##_t tester = (hash & hash_mask); /* hide `tester` lower bits */ \
     uint##bits##_t pos = hash;                  /* use more bits */            \
     /* make sure tester isn't a reserved value (0 || ~0) */                    \
-    tester += (!tester) << capa_bits;                                          \
-    tester -= (hash_mask == tester) << capa_bits;                              \
+    tester += (uint##bits##_t)((!tester) << capa_bits);                        \
+    tester -= (uint##bits##_t)((hash_mask == tester) << capa_bits);            \
     r.set_val = tester; /* store tester value */                               \
     size_t attempts = max_attempts;                                            \
     /* tests up to 3 groups of 4 bytes (uint32_t) within a 64 byte group */    \
@@ -12388,6 +12406,9 @@ FIO___IMAP_SEEKER_TYPE(16)
 FIO___IMAP_SEEKER_TYPE(32)
 FIO___IMAP_SEEKER_TYPE(64)
 
+// #define FIO_IMAP_STATIC()
+
+// FIO_NAME(array_name, s)
 /* *****************************************************************************
 iMap Cleanup
 ***************************************************************************** */
@@ -14524,7 +14545,7 @@ FIO_IFUNC int fio_thread_cond_timedwait(fio_thread_cond_t *c,
                                         size_t milliseconds) {
   struct timespec t;
   clock_gettime(CLOCK_REALTIME, &t);
-  milliseconds += t.tv_nsec / 1000000;
+  milliseconds += (size_t)(t.tv_nsec / 1000000);
   t.tv_sec += (long)(milliseconds / 1000);
   t.tv_nsec = (long)((milliseconds % 1000) * 1000000);
   return pthread_cond_timedwait(c, m, &t);
@@ -15164,7 +15185,7 @@ FIO_SFUNC fio_url_query_each_s fio_url_query_each_next(fio_url_query_each_s i) {
     return i;
   char *amp = (char *)FIO_MEMCHR(i.name.buf, '&', i.name.len);
   if (amp) {
-    i.name.len = amp - i.name.buf;
+    i.name.len = (size_t)(amp - i.name.buf);
     i.private___.len -= i.name.len + 1;
     i.private___.buf += i.name.len + 1;
   } else {
@@ -15173,8 +15194,8 @@ FIO_SFUNC fio_url_query_each_s fio_url_query_each_next(fio_url_query_each_s i) {
   char *equ = (char *)FIO_MEMCHR(i.name.buf, '=', i.name.len);
   if (equ) {
     i.value.buf = equ + 1;
-    i.value.len = (i.name.buf + i.name.len) - i.value.buf;
-    i.name.len = equ - i.name.buf;
+    i.value.len = (size_t)((i.name.buf + i.name.len) - i.value.buf);
+    i.name.len = (size_t)(equ - i.name.buf);
   } else {
     i.value = FIO_BUF_INFO0;
   }
@@ -15261,7 +15282,7 @@ SFUNC fio_url_s fio_url_parse(const char *url, size_t len) {
   case ':':
     if (pos + 2 <= end && pos[1] == '/' && pos[2] == '/') {
       /* scheme:// */
-      r.scheme.len = pos - url;
+      r.scheme.len = (size_t)(pos - url);
       pos += 3;
     } else {
       /* username:[password] OR */
@@ -15428,15 +15449,15 @@ finish:
     s |= 0x20202020U; /* downcase */
     if (s == file_str || s == unix_str || s == priv_str) {
       r.path.buf = r.scheme.buf + 7;
-      r.path.len = end - (r.scheme.buf + 7);
+      r.path.len = (size_t)(end - (r.scheme.buf + 7));
       if (r.query.len)
-        r.path.len = r.query.buf - (r.path.buf + 1);
+        r.path.len = (size_t)(r.query.buf - (r.path.buf + 1));
       else if (r.target.len)
-        r.path.len = r.target.buf - (r.path.buf + 1);
+        r.path.len = (size_t)(r.target.buf - (r.path.buf + 1));
       r.user.len = r.password.len = r.port.len = r.host.len = 0;
     }
   } else if (!r.scheme.len && r.host.buf && r.host.buf[0] == '.') {
-    r.path.len = end - r.host.buf;
+    r.path.len = (size_t)(end - r.host.buf);
     r.path.buf = r.host.buf;
     r.query.len = r.target.len = r.host.len = 0;
   }
@@ -15555,6 +15576,191 @@ FIO_URL - Cleanup
 #endif /* FIO_URL || FIO_URI */
 #undef FIO_URL
 #undef FIO_URI
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_ENTITY             /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                          ML Entity Decoding
+
+
+
+Provides `fio_entity` for decoding a single Markup Language entity
+(`&name;`, `&#digits;`, `&#xhex;`) into its UTF-8 representation.
+
+The entity table currently supports ~40 common named entities. The table
+shape is designed for a future upgrade to static imap lookup.
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_ENTITY) && !defined(H___FIO_ENTITY___H)
+#define H___FIO_ENTITY___H
+
+/* Dependency: fio_atol10u / fio_atol16u for numeric entity parsing. */
+#ifndef H___FIO_ATOL___H
+#define FIO_ATOL
+#define FIO___RECURSIVE_INCLUDE 1
+#include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
+#endif
+
+/**
+ * Decodes a single ML entity from `src` (length `len`, starting at '&').
+ *
+ * Writes decoded UTF-8 bytes to `dest`, which MUST be at least 8 bytes.
+ * A NUL terminator is written only if the decoded result is shorter than
+ * 8 bytes.
+ *
+ * Returns the number of bytes written to `dest` (excluding NUL), or 0 if
+ * `src` does not start with a valid entity.
+ *
+ * Supported forms:
+ *   - Named:   `&name;`   (case-insensitive, ~40 common entities)
+ *   - Decimal: `&#digits;`
+ *   - Hex:     `&#xhex;` or `&#Xhex;`
+ */
+SFUNC size_t fio_entity(char *dest, const char *src, size_t len);
+
+/* *****************************************************************************
+ML Entity Decoding — Implementation
+***************************************************************************** */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
+/** Named entity entry. `name` is lowercase. `r` is UTF-8. */
+typedef struct {
+  char name[32];
+  uint8_t nlen;
+  uint8_t rlen;
+  uint8_t r[8];
+} fio___entity_s;
+
+static const fio___entity_s fio___entity_table[] = {
+#define FIO___ENTITY(n, result)                                                \
+  {.name = n, .nlen = (uint8_t)(sizeof(n) - 1),                               \
+   .rlen = (uint8_t)(sizeof(result) - 1), .r = result}
+    FIO___ENTITY("lt", "<"),
+    FIO___ENTITY("gt", ">"),
+    FIO___ENTITY("amp", "&"),
+    FIO___ENTITY("apos", "'"),
+    FIO___ENTITY("quot", "\""),
+    FIO___ENTITY("nbsp", "\xC2\xA0"),
+    FIO___ENTITY("tab", "\t"),
+    FIO___ENTITY("ge", "\xE2\x89\xA5"),
+    FIO___ENTITY("le", "\xE2\x89\xA4"),
+    FIO___ENTITY("ne", "\xE2\x89\xA0"),
+    FIO___ENTITY("copy", "\xC2\xA9"),
+    FIO___ENTITY("aelig", "\xC3\x86"),
+    FIO___ENTITY("aacute", "\xC3\x81"),
+    FIO___ENTITY("dcaron", "\xC4\x8E"),
+    FIO___ENTITY("ouml", "\xC3\xB6"),
+    FIO___ENTITY("fjlig", "fj"),
+    FIO___ENTITY("hilbertspace", "\xE2\x84\x8B"),
+    FIO___ENTITY("differentiald", "\xE2\x85\x86"),
+    FIO___ENTITY("clockwisecontourintegral", "\xE2\x88\xB2"),
+    FIO___ENTITY("nge", "\xE2\x89\xA7\xCC\xB8"),
+    FIO___ENTITY("raquo", "\xC2\xBB"),
+    FIO___ENTITY("laquo", "\xC2\xAB"),
+    FIO___ENTITY("rdquo", "\xE2\x80\x9D"),
+    FIO___ENTITY("ldquo", "\xE2\x80\x9C"),
+    FIO___ENTITY("reg", "\xC2\xAE"),
+    FIO___ENTITY("asymp", "\xE2\x89\x88"),
+    FIO___ENTITY("bdquo", "\xE2\x80\x9E"),
+    FIO___ENTITY("bull", "\xE2\x80\xA2"),
+    FIO___ENTITY("cent", "\xC2\xA2"),
+    FIO___ENTITY("euro", "\xE2\x82\xAC"),
+    FIO___ENTITY("dagger", "\xE2\x80\xA0"),
+    FIO___ENTITY("deg", "\xC2\xB0"),
+    FIO___ENTITY("frac14", "\xC2\xBC"),
+    FIO___ENTITY("frac12", "\xC2\xBD"),
+    FIO___ENTITY("frac34", "\xC2\xBE"),
+    FIO___ENTITY("hellip", "\xE2\x80\xA6"),
+    FIO___ENTITY("lsquo", "\xE2\x80\x98"),
+    FIO___ENTITY("mdash", "\xE2\x80\x94"),
+    FIO___ENTITY("middot", "\xC2\xB7"),
+    FIO___ENTITY("ndash", "\xE2\x80\x93"),
+    FIO___ENTITY("para", "\xC2\xB6"),
+    FIO___ENTITY("plusmn", "\xC2\xB1"),
+    FIO___ENTITY("pound", "\xC2\xA3"),
+    FIO___ENTITY("prime", "\xE2\x80\xB2"),
+    FIO___ENTITY("rsquo", "\xE2\x80\x99"),
+    FIO___ENTITY("sbquo", "\xE2\x80\x9A"),
+    FIO___ENTITY("sect", "\xC2\xA7"),
+    FIO___ENTITY("trade", "\xE2\x84\xA2"),
+    FIO___ENTITY("yen", "\xC2\xA5"),
+#undef FIO___ENTITY
+};
+
+#define FIO___ENTITY_TABLE_LEN                                                 \
+  (sizeof(fio___entity_table) / sizeof(fio___entity_table[0]))
+
+SFUNC size_t fio_entity(char *dest, const char *src, size_t len) {
+  if (!dest || !src || len < 3 || *src != '&')
+    return 0;
+  const char *p = src + 1;
+  const char *end = src + len;
+
+  /* ── Numeric: &#digits; or &#xhex; ── */
+  if (*p == '#') {
+    ++p;
+    if (p >= end)
+      return 0;
+    int is_hex = (*p == 'x' || *p == 'X');
+    p += is_hex;
+    char *digits = (char *)p;
+    uint64_t codepoint =
+        (is_hex ? fio_atol16u : fio_atol10u)(&digits);
+    if (digits == (char *)p)
+      return 0; /* no digits */
+    p = digits;
+    if (p >= end || *p != ';')
+      return 0;
+    if (codepoint == 0)
+      codepoint = 0xFFFD; /* replacement char for &#0; */
+    if (codepoint > 0x10FFFF)
+      return 0;
+    size_t written = fio_utf8_write((uint8_t *)dest, (uint32_t)codepoint);
+    if (written < 8)
+      dest[written] = '\0';
+    return written;
+  }
+
+  /* ── Named: &name; ── */
+  {
+    const char *name_start = p;
+    while (p < end && *p != ';' &&
+           (size_t)(p - name_start) < sizeof(fio___entity_table[0].name))
+      ++p;
+    if (p >= end || *p != ';')
+      return 0;
+    uint8_t name_len = (uint8_t)(p - name_start);
+    for (size_t i = 0; i < FIO___ENTITY_TABLE_LEN; ++i) {
+      if (fio___entity_table[i].nlen != name_len)
+        continue;
+      int match = 1;
+      for (uint8_t j = 0; j < name_len; ++j)
+        match &= ((name_start[j] | 32) ==
+                  (fio___entity_table[i].name[j] | 32));
+      if (!match)
+        continue;
+      uint8_t rlen = fio___entity_table[i].rlen;
+      FIO_MEMCPY(dest, fio___entity_table[i].r, rlen);
+      if (rlen < 8)
+        dest[rlen] = '\0';
+      return rlen;
+    }
+    return 0; /* unknown named entity */
+  }
+}
+
+#undef FIO___ENTITY_TABLE_LEN
+#endif /* FIO_EXTERN_COMPLETE */
+#endif /* FIO_ENTITY */
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -22887,6 +23093,9 @@ SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME, mmap)(size_t size);
 /**
  * When forking is called manually, call this function to reset the facil.io
  * memory allocator's locks.
+ *
+ * This is provided in case of forking in a multi-threaded environment, which
+ * some people do even though it's bad.
  */
 SFUNC void FIO_NAME(FIO_MEMORY_NAME, malloc_after_fork)(void);
 
@@ -23197,8 +23406,10 @@ Helpers and System Memory Allocation
 #define H___FIO_MEM_INCLUDE_ONCE___H
 
 #define FIO_MEM_BYTES2PAGES(size)                                              \
-  (((size_t)(size) + ((1UL << FIO_MEM_PAGE_SIZE_LOG) - 1)) &                   \
-   ((~(size_t)0) << FIO_MEM_PAGE_SIZE_LOG))
+  ((size > (SIZE_MAX - ((1UL << FIO_MEM_PAGE_SIZE_LOG) - 1)))                  \
+       ? size                                                                  \
+       : (((size_t)(size) + ((1UL << FIO_MEM_PAGE_SIZE_LOG) - 1)) &            \
+          ((~(size_t)0) << FIO_MEM_PAGE_SIZE_LOG)))
 
 /* *****************************************************************************
 
@@ -23244,18 +23455,18 @@ FIO_SFUNC void *FIO_MEM_SYS_ALLOC_def_func(size_t bytes,
   const size_t alignment_mask = (1ULL << alignment_log) - 1;
   const size_t alignment_size = (1ULL << alignment_log);
   bytes = FIO_MEM_BYTES2PAGES(bytes);
-  next_alloc =
-      (void *)(((uintptr_t)next_alloc + alignment_mask) & alignment_mask);
+  void *next_hint = next_alloc =
+      (void *)(((uintptr_t)next_alloc + alignment_mask) & (~alignment_mask));
 /* hope for the best? */
 #ifdef MAP_ALIGNED
-  result = mmap(next_alloc,
+  result = mmap(next_hint,
                 bytes,
                 PROT_READ | PROT_WRITE,
                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_ALIGNED(alignment_log),
                 -1,
                 0);
 #else
-  result = mmap(next_alloc,
+  result = mmap(next_hint,
                 bytes,
                 PROT_READ | PROT_WRITE,
                 MAP_PRIVATE | MAP_ANONYMOUS,
@@ -23282,8 +23493,8 @@ FIO_SFUNC void *FIO_MEM_SYS_ALLOC_def_func(size_t bytes,
       result = (void *)((uintptr_t)result + offset);
     }
     munmap((void *)((uintptr_t)result + bytes), alignment_size - offset);
+    next_alloc = (void *)((uintptr_t)result + (bytes << 2));
   }
-  next_alloc = (void *)((uintptr_t)result + (bytes << 2));
   return result;
 }
 
@@ -23724,7 +23935,7 @@ Allocator State
 typedef struct FIO_NAME(FIO_MEMORY_NAME, __mem_state_s)
     FIO_NAME(FIO_MEMORY_NAME, __mem_state_s);
 
-static struct FIO_NAME(FIO_MEMORY_NAME, __mem_state_s) {
+struct FIO_NAME(FIO_MEMORY_NAME, __mem_state_s) {
 #if FIO_MEMORY_CACHE_SLOTS
   /** cache array container for available memory chunks */
   struct {
@@ -23733,6 +23944,10 @@ static struct FIO_NAME(FIO_MEMORY_NAME, __mem_state_s) {
     size_t pos;
   } cache;
 #endif /* FIO_MEMORY_CACHE_SLOTS */
+  /* cache line padding */
+  uint8_t pad_for_cache0___[128 -
+                            (127 & ((sizeof(void *) * FIO_MEMORY_CACHE_SLOTS) +
+                                    sizeof(size_t)))];
 
 #if FIO_MEMORY_ENABLE_BIG_ALLOC
   /** a block for big allocations, shared (no arena) */
@@ -23740,17 +23955,30 @@ static struct FIO_NAME(FIO_MEMORY_NAME, __mem_state_s) {
   int32_t big_last_pos;
   /** big allocation lock */
   FIO_MEMORY_LOCK_TYPE big_lock;
-  uint8_t pad_for_cache___[115]; /* cache line padding */
+  /* cache line padding */
+  uint8_t
+      pad_for_cache1___[128 -
+                        (127 & (sizeof(void *) + sizeof(FIO_MEMORY_LOCK_TYPE) +
+                                (sizeof(int32_t) > sizeof(FIO_MEMORY_LOCK_TYPE)
+                                     ? sizeof(int32_t)
+                                     : sizeof(FIO_MEMORY_LOCK_TYPE))))];
+
 #endif /* FIO_MEMORY_ENABLE_BIG_ALLOC */
   /** main memory state lock */
   FIO_MEMORY_LOCK_TYPE lock;
   /** free list for available blocks */
   FIO_LIST_HEAD blocks;
+  /* cache line padding */
+  uint8_t pad_for_cache2___
+      [128 - (127 & (sizeof(FIO_MEMORY_LOCK_TYPE) +
+                     (sizeof(FIO_LIST_HEAD) > sizeof(FIO_MEMORY_LOCK_TYPE)
+                          ? sizeof(FIO_LIST_HEAD)
+                          : sizeof(FIO_MEMORY_LOCK_TYPE))))];
+
   /** the arena count for the allocator */
-  uint8_t pad_for_cache2___[111]; /* cache line padding */
   size_t arena_count;
   FIO_NAME(FIO_MEMORY_NAME, __mem_arena_s) arena[];
-} * FIO_NAME(FIO_MEMORY_NAME, __mem_state);
+} * FIO_NAME(FIO_MEMORY_NAME, __mem_state) FIO_WEAK;
 
 /* *****************************************************************************
 Arena assignment
@@ -25074,7 +25302,7 @@ void fio_mmap__(void);
  * However, since this allocation will invoke the system call (`mmap`), it will
  * be inherently slower.
  *
- * `mempoll_free` can be used for deallocating the memory.
+ * The allocator's `free` function can be used for deallocating the memory.
  */
 SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME, mmap)(size_t size) {
   if (!size)
@@ -25438,6 +25666,7680 @@ Memory pool cleanup
 #undef FIO_MEMORY_UNLOCK
 
 /* don't undefine FIO_MEMORY_NAME due to possible use in allocation macros */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_STR                /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                      Binary Safe String Core Helpers
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_STR) && !defined(H___FIO_STR___H)
+#define H___FIO_STR___H
+/* *****************************************************************************
+String Authorship Helpers (`fio_string_write` functions)
+***************************************************************************** */
+
+/**
+ * A reallocation callback type for buffers in a `fio_str_info_s`.
+ *
+ * The callback MUST allocate at least `len + 1` bytes, setting the new capacity
+ * in `dest->capa`.
+ *
+ * Returns 0 on success, -1 on error.
+ * */
+typedef int (*fio_string_realloc_fn)(fio_str_info_s *dest, size_t len);
+/**
+ * Writes data to the end of the string in the `fio_string_s` struct,
+ * returning an updated `fio_string_s` struct.
+ *
+ * The returned string is NUL terminated if edited.
+ *
+ * * `dest` an `fio_string_s` struct containing the destination string.
+ *
+ * * `reallocate` is a callback that attempts to reallocate more memory (i.e.,
+ * using `realloc`) and returns an updated `fio_string_s` struct containing the
+ *   updated capacity and buffer pointer (as well as the original length).
+ *
+ *   On failure the original `fio_string_s` should be returned. if
+ * `reallocate` is NULL or fails, the data copied will be truncated.
+ *
+ * * `src` is the data to be written to the end of `dest`.
+ *
+ * * `len` is the length of the data to be written to the end of `dest`.
+ *
+ * Note: this function performs only minimal checks and assumes that `dest` is
+ *       fully valid - i.e., that `dest.capa >= dest.len`, that `dest.buf` is
+ *       valid, etc'.
+ *
+ * An example for a `reallocate` callback using the system's `realloc` function:
+ *
+ *      int fio_string_realloc_system(fio_str_info_s *dest, size_t len_no_nul) {
+ *       const size_t new_capa = fio_string_capa4len(len_no_nul);
+ *       void *tmp = realloc(dest.buf, new_capa);
+ *       if (!tmp)
+ *         return -1;
+ *       dest.capa = new_capa;
+ *       dest.buf = (char *)tmp;
+ *       return 0;
+ *     }
+ *
+ * An example for using the function:
+ *
+ *     void example(void) {
+ *       char buf[32];
+ *       fio_str_info_s str = FIO_STR_INFO3(buf, 0, 32);
+ *       fio_string_write(&str, NULL, "The answer is: 0x", 17);
+ *       str.len += fio_ltoa(str.buf + str.len, 42, 16);
+ *       fio_string_write(&str, NULL, "!\n", 2);
+ *       printf("%s", str.buf);
+ *     }
+ */
+FIO_SFUNC int fio_string_write(fio_str_info_s *dest,
+                               fio_string_realloc_fn reallocate,
+                               const void *restrict src,
+                               size_t len);
+
+/**
+ * Similar to `fio_string_write`, only replacing/inserting a sub-string in a
+ * specific location.
+ *
+ * Negative `start_pos` values are calculated backwards, `-1` == end of String.
+ *
+ * When `overwrite_len` is zero, the function will insert the data at
+ * `start_pos`, pushing existing data until after the inserted data.
+ *
+ * If `overwrite_len` is non-zero, than `overwrite_len` bytes will be
+ * overwritten (or deleted).
+ *
+ * If `len == 0` than `src` will be ignored and the data marked for replacement
+ * will be erased.
+ */
+SFUNC int fio_string_replace(fio_str_info_s *dest,
+                             fio_string_realloc_fn reallocate,
+                             intptr_t start_pos,
+                             size_t overwrite_len,
+                             const void *src,
+                             size_t len);
+
+/** Argument type used by fio_string_write2. */
+typedef struct {
+  size_t klass;
+  union {
+    struct {
+      size_t len;
+      const char *buf;
+    } str;
+    double f;
+    int64_t i;
+    uint64_t u;
+  } info;
+} fio_string_write_s;
+
+/**
+ * Writes a group of objects (strings, numbers, etc') to `dest`.
+ *
+ * `dest` and `reallocate` are similar to `fio_string_write`.
+ *
+ * `src` is an array of `fio_string_write_s` structs, ending with a struct
+ * that's all set to 0.
+ *
+ * Use the `fio_string_write2` macro for ease, i.e.:
+ *
+ *    fio_str_info_s str = {0};
+ *    fio_string_write2(&str, my_reallocate,
+ *                        FIO_STRING_WRITE_STR1("The answer is: "),
+ *                        FIO_STRING_WRITE_NUM(42),
+ *                        FIO_STRING_WRITE_STR2("(0x", 3),
+ *                        FIO_STRING_WRITE_HEX(42),
+ *                        FIO_STRING_WRITE_STR2(")", 1));
+ *
+ * Note: this function might end up allocating more memory than absolutely
+ * required as it favors fast performance over memory savings. It performs only
+ * a single allocation (if any) and computes numeral string length only when
+ * writing the numbers to the string.
+ */
+SFUNC int fio_string_write2(fio_str_info_s *restrict dest,
+                            fio_string_realloc_fn reallocate,
+                            const fio_string_write_s srcs[]);
+
+/* Helper macro for fio_string_write2 */
+#define fio_string_write2(dest, reallocate, ...)                               \
+  fio_string_write2((dest),                                                    \
+                    (reallocate),                                              \
+                    (fio_string_write_s[]){__VA_ARGS__, {0}})
+
+/** A macro to add a String to `fio_string_write2`. */
+#define FIO_STRING_WRITE_STR1(str_)                                            \
+  ((fio_string_write_s){                                                       \
+      .klass = 1,                                                              \
+      .info.str = {.len = (size_t)FIO_STRLEN((str_)), .buf = (str_)}})
+
+/** A macro to add a String with known length to `fio_string_write2`. */
+#define FIO_STRING_WRITE_STR2(str_, len_)                                      \
+  ((fio_string_write_s){.klass = 1, .info.str = {.len = (len_), .buf = (str_)}})
+
+/** A macro to add a String with known length to `fio_string_write2`. */
+#define FIO_STRING_WRITE_STR_INFO(str_)                                        \
+  ((fio_string_write_s){.klass = 1,                                            \
+                        .info.str = {.len = (str_).len, .buf = (str_).buf}})
+
+/** A macro to add a signed number to `fio_string_write2`. */
+#define FIO_STRING_WRITE_NUM(num)                                              \
+  ((fio_string_write_s){.klass = 2, .info.i = (int64_t)(num)})
+
+/** A macro to add an unsigned number to `fio_string_write2`. */
+#define FIO_STRING_WRITE_UNUM(num)                                             \
+  ((fio_string_write_s){.klass = 3, .info.u = (uint64_t)(num)})
+
+/** A macro to add a hex representation to `fio_string_write2`. */
+#define FIO_STRING_WRITE_HEX(num)                                              \
+  ((fio_string_write_s){.klass = 4, .info.u = (uint64_t)(num)})
+
+/** A macro to add a binary representation to `fio_string_write2`. */
+#define FIO_STRING_WRITE_BIN(num)                                              \
+  ((fio_string_write_s){.klass = 5, .info.u = (uint64_t)(num)})
+
+/** A macro to add a float (double) to `fio_string_write2`. */
+#define FIO_STRING_WRITE_FLOAT(num)                                            \
+  ((fio_string_write_s){.klass = 6, .info.f = (double)(num)})
+
+/* *****************************************************************************
+String Numerals support
+***************************************************************************** */
+
+/* Writes a signed number `i` to the String */
+SFUNC int fio_string_write_i(fio_str_info_s *dest,
+                             fio_string_realloc_fn reallocate,
+                             int64_t i);
+/* Writes an unsigned number `i` to the String */
+SFUNC int fio_string_write_u(fio_str_info_s *dest,
+                             fio_string_realloc_fn reallocate,
+                             uint64_t i);
+/* Writes a hex representation of `i` to the String */
+SFUNC int fio_string_write_hex(fio_str_info_s *dest,
+                               fio_string_realloc_fn reallocate,
+                               uint64_t i);
+/* Writes a binary representation of `i` to the String */
+SFUNC int fio_string_write_bin(fio_str_info_s *dest,
+                               fio_string_realloc_fn reallocate,
+                               uint64_t i);
+
+/* *****************************************************************************
+String printf style support
+***************************************************************************** */
+
+/** Similar to fio_string_write, only using printf semantics. */
+SFUNC FIO___PRINTF_STYLE(3, 0) int fio_string_printf(
+    fio_str_info_s *dest,
+    fio_string_realloc_fn reallocate,
+    const char *format,
+    ...);
+
+/** Similar to fio_string_write, only using vprintf semantics. */
+SFUNC FIO___PRINTF_STYLE(3, 0) int fio_string_vprintf(
+    fio_str_info_s *dest,
+    fio_string_realloc_fn reallocate,
+    const char *format,
+    va_list argv);
+
+/* *****************************************************************************
+String C / JSON escaping
+***************************************************************************** */
+
+/**
+ * Writes data at the end of the String, escaping the data using JSON semantics.
+ *
+ * The JSON semantic are common to many programming languages, promising a UTF-8
+ * String while making it easy to read and copy the string during debugging.
+ */
+SFUNC int fio_string_write_escape(fio_str_info_s *restrict dest,
+                                  fio_string_realloc_fn reallocate,
+                                  const void *raw,
+                                  size_t raw_len);
+
+/** Writes an escaped data into the string after un-escaping the data. */
+SFUNC int fio_string_write_unescape(fio_str_info_s *dest,
+                                    fio_string_realloc_fn reallocate,
+                                    const void *enscaped,
+                                    size_t enscaped_len);
+
+/* *****************************************************************************
+String Base32 support
+***************************************************************************** */
+
+/** Writes data to String using base64 encoding. */
+SFUNC int fio_string_write_base32enc(fio_str_info_s *dest,
+                                     fio_string_realloc_fn reallocate,
+                                     const void *raw,
+                                     size_t raw_len);
+
+/** Writes decoded base64 data to String. */
+SFUNC int fio_string_write_base32dec(fio_str_info_s *dest,
+                                     fio_string_realloc_fn reallocate,
+                                     const void *encoded,
+                                     size_t encoded_len);
+
+/* *****************************************************************************
+String Base64 support
+***************************************************************************** */
+
+/** Writes data to String using base64 encoding. */
+SFUNC int fio_string_write_base64enc(fio_str_info_s *dest,
+                                     fio_string_realloc_fn reallocate,
+                                     const void *raw,
+                                     size_t raw_len,
+                                     uint8_t url_encoded);
+
+/** Writes decoded base64 data to String. */
+SFUNC int fio_string_write_base64dec(fio_str_info_s *dest,
+                                     fio_string_realloc_fn reallocate,
+                                     const void *encoded,
+                                     size_t encoded_len);
+
+/* *****************************************************************************
+String URL Encoding support
+***************************************************************************** */
+
+/** Writes data to String using URL encoding (a.k.a., percent encoding). */
+SFUNC int fio_string_write_url_enc(fio_str_info_s *dest,
+                                   fio_string_realloc_fn reallocate,
+                                   const void *raw,
+                                   size_t raw_len);
+
+/** Writes decoded URL data to String, decoding + to spaces. */
+SFUNC int fio_string_write_url_dec(fio_str_info_s *dest,
+                                   fio_string_realloc_fn reallocate,
+                                   const void *encoded,
+                                   size_t encoded_len);
+
+/** Writes decoded URL data to String, without decoding + to spaces. */
+SFUNC int fio_string_write_path_dec(fio_str_info_s *dest,
+                                    fio_string_realloc_fn reallocate,
+                                    const void *encoded,
+                                    size_t encoded_len);
+
+/* *****************************************************************************
+String HTML escaping support
+***************************************************************************** */
+
+/** Writes HTML escaped data to a String. */
+SFUNC int fio_string_write_html_escape(fio_str_info_s *dest,
+                                       fio_string_realloc_fn reallocate,
+                                       const void *raw,
+                                       size_t raw_len);
+
+/** Writes HTML un-escaped data to a String - incomplete and minimal. */
+SFUNC int fio_string_write_html_unescape(fio_str_info_s *dest,
+                                         fio_string_realloc_fn reallocate,
+                                         const void *enscaped,
+                                         size_t enscaped_len);
+
+/* *****************************************************************************
+String File Reading support
+***************************************************************************** */
+
+/**
+ * Writes up to `limit` bytes from `fd` into `dest`, starting at `start_at`.
+ *
+ * If `limit` is 0 (or less than 0) data will be written until EOF.
+ *
+ * If `start_at` is negative, position will be calculated from the end of the
+ * file where `-1 == EOF`.
+ *
+ * Note: this will fail unless used on actual files (not sockets, not pipes).
+ * */
+SFUNC int fio_string_readfd(fio_str_info_s *dest,
+                            fio_string_realloc_fn reallocate,
+                            int fd,
+                            intptr_t start_at,
+                            size_t limit);
+
+/**
+ * Opens the file `filename` and pastes it's contents (or a slice ot it) at
+ * the end of the String. If `limit == 0`, than the data will be read until
+ * EOF.
+ *
+ * If the file can't be located, opened or read, or if `start_at` is beyond
+ * the EOF position, NULL is returned in the state's `data` field.
+ */
+SFUNC int fio_string_readfile(fio_str_info_s *dest,
+                              fio_string_realloc_fn reallocate,
+                              const char *filename,
+                              intptr_t start_at,
+                              size_t limit);
+
+/**
+ * Writes up to `limit` bytes from `fd` into `dest`, starting at `start_at` and
+ * ending either at the first occurrence of `delim` or at EOF.
+ *
+ * If `limit` is 0 (or less than 0) as much data as may be required will be
+ * written.
+ *
+ * If `start_at` is negative, position will be calculated from the end of the
+ * file where `-1 == EOF`.
+ *
+ * Note: this will fail unless used on actual seekable files (not sockets, not
+ * pipes).
+ * */
+SFUNC int fio_string_getdelim_fd(fio_str_info_s *dest,
+                                 fio_string_realloc_fn reallocate,
+                                 int fd,
+                                 intptr_t start_at,
+                                 char delim,
+                                 size_t limit);
+
+/**
+ * Opens the file `filename`, calls `fio_string_getdelim_fd` and closes the
+ * file.
+ */
+SFUNC int fio_string_getdelim_file(fio_str_info_s *dest,
+                                   fio_string_realloc_fn reallocate,
+                                   const char *filename,
+                                   intptr_t start_at,
+                                   char delim,
+                                   size_t limit);
+
+/* *****************************************************************************
+Memory Helpers (for Authorship)
+***************************************************************************** */
+
+/* calculates a 16 bytes boundary aligned capacity for `new_len`. */
+FIO_IFUNC size_t fio_string_capa4len(size_t new_len);
+
+/** Default reallocation callback implementation using libc `realloc`. */
+#define FIO_STRING_SYS_REALLOC fio_string_sys_reallocate
+/** Default reallocation callback implementation using the default allocator */
+#define FIO_STRING_REALLOC fio_string_default_reallocate
+/** Default reallocation callback for memory that mustn't be freed. */
+#define FIO_STRING_ALLOC_COPY fio_string_default_allocate_copy
+/** default allocator for the fio_keystr_s string data.. */
+#define FIO_STRING_ALLOC_KEY fio_string_default_key_alloc
+/** Frees memory that was allocated with the default callbacks. */
+#define FIO_STRING_FREE fio_string_default_free
+/** Frees memory that was allocated with the default callbacks. */
+#define FIO_STRING_FREE2 fio_string_default_free2
+/** Frees memory that was allocated for a key string. */
+#define FIO_STRING_FREE_KEY fio_string_default_free_key
+/** Does nothing. */
+#define FIO_STRING_FREE_NOOP fio_string_default_free_noop
+/** Does nothing. */
+#define FIO_STRING_FREE_NOOP2 fio_string_default_free_noop2
+
+/** default reallocation callback implementation. */
+SFUNC int fio_string_default_reallocate(fio_str_info_s *dst, size_t len);
+/** default reallocation callback for memory that mustn't be freed. */
+SFUNC int fio_string_default_allocate_copy(fio_str_info_s *dest,
+                                           size_t new_capa);
+/** frees memory that was allocated with the default callbacks. */
+SFUNC void fio_string_default_free(void *);
+/** frees memory that was allocated with the default callbacks. */
+SFUNC void fio_string_default_free2(fio_str_info_s str);
+/** does nothing. */
+SFUNC void fio_string_default_free_noop(void *);
+/** does nothing. */
+SFUNC void fio_string_default_free_noop2(fio_str_info_s str);
+
+/** default allocator for the fio_keystr_s string data.. */
+SFUNC void *fio_string_default_key_alloc(size_t len);
+/** frees a fio_keystr_s memory that was allocated with the default callback. */
+SFUNC void fio_string_default_free_key(void *, size_t);
+
+/* *****************************************************************************
+UTF-8 Support
+***************************************************************************** */
+
+/** Returns 1 if the String is UTF-8 valid and 0 if not. */
+SFUNC bool fio_string_utf8_valid(fio_str_info_s str);
+
+/** Returns the String's length in UTF-8 characters or 0 if invalid. */
+SFUNC size_t fio_string_utf8_len(fio_str_info_s str);
+
+/** Returns 0 if non-UTF-8 or returns 1-4 (UTF-8 if a valid char). */
+SFUNC size_t fio_string_utf8_valid_code_point(const void *u8c, size_t buf_len);
+
+/**
+ * Takes a UTF-8 character selection information (UTF-8 position and length)
+ * and updates the same variables so they reference the raw byte slice
+ * information.
+ *
+ * If the String isn't UTF-8 valid up to the requested selection, than `pos`
+ * will be updated to `-1` otherwise values are always positive.
+ *
+ * The returned `len` value may be shorter than the original if there wasn't
+ * enough data left to accommodate the requested length. When a `len` value of
+ * `0` is returned, this means that `pos` marks the end of the String.
+ *
+ * Returns -1 on error and 0 on success.
+ */
+SFUNC int fio_string_utf8_select(fio_str_info_s str,
+                                 intptr_t *pos,
+                                 size_t *len);
+
+/* *****************************************************************************
+Sorting / Comparison Helpers
+***************************************************************************** */
+
+/**
+ * Compares two `fio_buf_info_s`, returning 1 if data in a is bigger than b.
+ *
+ * Note: returns 0 if data in b is bigger than or equal(!).
+ */
+SFUNC int fio_string_is_greater_buf(fio_buf_info_s a, fio_buf_info_s b);
+
+/**
+ * Compares two strings, returning 1 if string a is bigger than string b.
+ *
+ * Note: returns 0 if string b is bigger than string a or if strings are equal.
+ */
+FIO_IFUNC int fio_string_is_greater(fio_str_info_s a, fio_str_info_s b);
+
+/* *****************************************************************************
+Binary String Type - Embedded Strings optimized for mutability and locality
+***************************************************************************** */
+
+/* for internal use only */
+typedef struct {
+  uint32_t len;
+  uint32_t capa;
+  uint32_t ref;
+} fio___bstr_meta_s;
+
+/* for internal use only */
+typedef struct {
+  fio___bstr_meta_s meta;
+  char *ptr;
+} fio___bstr_const_s;
+
+/** Reserves `len` for future `write` operations (used to minimize realloc). */
+FIO_IFUNC char *fio_bstr_reserve(char *bstr, size_t len);
+
+/** Copies a `fio_bstr` using "copy on write". */
+FIO_IFUNC char *fio_bstr_copy(char *bstr);
+/** Frees a binary string allocated by a `fio_bstr` function. Returns NULL.*/
+FIO_IFUNC void fio_bstr_free(char *bstr);
+
+/** Returns information about the fio_bstr. */
+FIO_IFUNC fio_str_info_s fio_bstr_info(const char *bstr);
+/** Returns information about the fio_bstr. */
+FIO_IFUNC fio_buf_info_s fio_bstr_buf(const char *bstr);
+/** Gets the length of the fio_bstr. `bstr` MUST NOT be NULL. */
+FIO_IFUNC size_t fio_bstr_len(const char *bstr);
+/** Sets the length of the fio_bstr. `bstr` MUST NOT be NULL. */
+FIO_IFUNC char *fio_bstr_len_set(char *bstr, size_t len);
+
+/** Compares to see if fio_bstr a is greater than fio_bstr b (for FIO_SORT). */
+FIO_SFUNC int fio_bstr_is_greater(const char *a, const char *b);
+/** Compares to see if fio_bstr a is equal to another fio_bstr. */
+FIO_SFUNC int fio_bstr_is_eq(const char *a, const char *b);
+/** Compares to see if fio_bstr a is equal to another String. */
+FIO_SFUNC int fio_bstr_is_eq2info(const char *a_, fio_str_info_s b);
+/** Compares to see if fio_bstr a is equal to another String. */
+FIO_SFUNC int fio_bstr_is_eq2buf(const char *a_, fio_buf_info_s b);
+
+/**
+ * Writes data to a fio_bstr, returning the address of the new fio_bstr.
+ * Returns existing string on reallocation error (true for all fio_bstr_write).
+ */
+FIO_IFUNC char *fio_bstr_write(char *bstr,
+                               const void *restrict src,
+                               size_t len);
+/** Replaces data in a fio_bstr, returning the address of the new fio_bstr. */
+FIO_IFUNC char *fio_bstr_replace(char *bstr,
+                                 intptr_t start_pos,
+                                 size_t overwrite_len,
+                                 const void *src,
+                                 size_t len);
+/** Writes data to a fio_bstr, returning the address of the new fio_bstr. */
+FIO_IFUNC char *fio_bstr_write2(char *bstr, const fio_string_write_s srcs[]);
+/** Writes data to a fio_bstr, returning the address of the new fio_bstr. */
+#define fio_bstr_write2(bstr, ...)                                             \
+  fio_bstr_write2(bstr, (fio_string_write_s[]){__VA_ARGS__, {0}})
+
+/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
+FIO_IFUNC char *fio_bstr_write_i(char *bstr, int64_t num);
+/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
+FIO_IFUNC char *fio_bstr_write_u(char *bstr, uint64_t num);
+/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
+FIO_IFUNC char *fio_bstr_write_hex(char *bstr, uint64_t num);
+/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
+FIO_IFUNC char *fio_bstr_write_bin(char *bstr, uint64_t num);
+
+/** Writes escaped data to a fio_bstr, returning its new address. */
+FIO_IFUNC char *fio_bstr_write_escape(char *bstr, const void *src, size_t len);
+/** Un-escapes and writes data to a fio_bstr, returning its new address. */
+FIO_IFUNC char *fio_bstr_write_unescape(char *bstr,
+                                        const void *src,
+                                        size_t len);
+
+/** Writes base64 encoded data to a fio_bstr, returning its new address. */
+FIO_IFUNC char *fio_bstr_write_base64enc(char *bstr,
+                                         const void *src,
+                                         size_t len,
+                                         uint8_t url_encoded);
+/** Decodes base64 data and writes to a fio_bstr, returning its new address. */
+FIO_IFUNC char *fio_bstr_write_base64dec(char *bstr,
+                                         const void *src,
+                                         size_t len);
+
+/** Writes data to String using URL encoding (a.k.a., percent encoding). */
+FIO_IFUNC char *fio_bstr_write_url_enc(char *bstr,
+                                       const void *data,
+                                       size_t len);
+/** Writes decoded URL data to String. */
+FIO_IFUNC char *fio_bstr_write_url_dec(char *bstr,
+                                       const void *encoded,
+                                       size_t len);
+
+/** Writes HTML escaped data to a String. */
+FIO_IFUNC char *fio_bstr_write_html_escape(char *bstr,
+                                           const void *raw,
+                                           size_t len);
+/** Writes HTML un-escaped data to a String - incomplete and minimal. */
+FIO_IFUNC char *fio_bstr_write_html_unescape(char *bstr,
+                                             const void *escaped,
+                                             size_t len);
+
+/** Writes to the String from a regular file `fd`. */
+FIO_IFUNC char *fio_bstr_readfd(char *bstr,
+                                int fd,
+                                intptr_t start_at,
+                                intptr_t limit);
+/** Writes to the String from a regular file named `filename`. */
+FIO_IFUNC char *fio_bstr_readfile(char *bstr,
+                                  const char *filename,
+                                  intptr_t start_at,
+                                  intptr_t limit);
+/** Writes to the String from a regular file named `filename`. */
+FIO_IFUNC char *fio_bstr_getdelim_file(char *bstr,
+                                       const char *filename,
+                                       intptr_t start_at,
+                                       char delim,
+                                       size_t limit);
+/** Writes to the String from a regular file `fd`. */
+FIO_IFUNC char *fio_bstr_getdelim_fd(char *bstr,
+                                     int fd,
+                                     intptr_t start_at,
+                                     char delim,
+                                     size_t limit);
+
+/** Writes a `fio_bstr` in `printf` style. */
+FIO_IFUNC FIO___PRINTF_STYLE(2, 0) char *fio_bstr_printf(char *bstr,
+                                                         const char *format,
+                                                         ...);
+
+/** default reallocation callback implementation - mostly for internal use. */
+SFUNC int fio_bstr_reallocate(fio_str_info_s *dest, size_t len);
+
+/* *****************************************************************************
+Key String Type - binary String container for Hash Maps and Arrays
+***************************************************************************** */
+
+/** a semi-opaque type used for the `fio_keystr` functions */
+typedef struct fio_keystr_s fio_keystr_s;
+
+/** returns the Key String. NOTE: Key Strings are NOT NUL TERMINATED! */
+FIO_IFUNC fio_buf_info_s fio_keystr_buf(fio_keystr_s *str);
+/** returns the Key String. NOTE: Key Strings are NOT NUL TERMINATED! */
+FIO_IFUNC fio_str_info_s fio_keystr_info(fio_keystr_s *str);
+
+/** Returns a TEMPORARY `fio_keystr_s`. */
+FIO_IFUNC fio_keystr_s fio_keystr_tmp(const char *buf, uint32_t len);
+/** Returns an initialized `fio_keystr_s` containing a copy of `str`. */
+FIO_SFUNC fio_keystr_s fio_keystr_init(fio_str_info_s str,
+                                       void *(*alloc_func)(size_t len));
+/** Destroys an initialized `fio_keystr_s`. */
+FIO_SFUNC void fio_keystr_destroy(fio_keystr_s *key,
+                                  void (*free_func)(void *, size_t));
+/** Compares two Key Strings. */
+FIO_IFUNC int fio_keystr_is_eq(fio_keystr_s a, fio_keystr_s b);
+/** Compares a Key String to any String - used internally by the hash map. */
+FIO_IFUNC int fio_keystr_is_eq2(fio_keystr_s a_, fio_str_info_s b);
+/** Compares a Key String to any String - used internally by the hash map. */
+FIO_IFUNC int fio_keystr_is_eq3(fio_keystr_s a_, fio_buf_info_s b);
+/** Returns a good-enough `fio_keystr_s` risky hash. */
+FIO_IFUNC uint64_t fio_keystr_hash(fio_keystr_s a);
+
+#define FIO_KEYSTR_CONST ((size_t)-1LL)
+
+/* *****************************************************************************
+
+
+                             String Implementation
+
+                           IMPLEMENTATION - INLINED
+
+
+***************************************************************************** */
+
+/* *****************************************************************************
+String Authorship Helpers - (inlined) implementation
+***************************************************************************** */
+
+/* calculates a 16 bytes boundary aligned capacity for `new_len`. */
+FIO_IFUNC size_t fio_string_capa4len(size_t new_len) {
+  return sizeof(char) *
+         ((new_len + 15LL + (!(new_len & 15ULL))) & (~((size_t)15ULL)));
+}
+
+/*
+ * performs `reallocate` if necessary, `capa` rounded up to 16 byte units.
+ * updates `len` if reallocation fails (or is unavailable).
+ */
+FIO_IFUNC int fio_string___write_validate_len(fio_str_info_s *restrict dest,
+                                              fio_string_realloc_fn reallocate,
+                                              size_t *restrict len) {
+  size_t l = len[0];
+  if ((dest->capa > dest->len + l) && (dest->capa > l))
+    return 0;
+  if (reallocate && l < (dest->capa >> 2) &&
+      ((dest->capa >> 2) + (dest->capa) < 0x7FFFFFFFULL))
+    l = (dest->capa >> 2);
+  l += dest->len;
+  if (l < 0x7FFFFFFFULL && reallocate && !reallocate(dest, l))
+    return 0;
+  if (dest->capa > dest->len + 1)
+    len[0] = dest->capa - (dest->len + 1);
+  else
+    len[0] = 0;
+  return -1;
+}
+
+/* fio_string_write */
+FIO_SFUNC int fio_string_write(fio_str_info_s *dest,
+                               fio_string_realloc_fn reallocate,
+                               const void *restrict src,
+                               size_t len) {
+  int r = 0;
+  if (!len)
+    return r;
+  r = fio_string___write_validate_len(dest, reallocate, &len);
+  if (FIO_LIKELY(len && src))
+    FIO_MEMCPY(dest->buf + dest->len, src, len);
+  dest->len += len;
+  dest->buf[dest->len] = 0;
+  return r;
+}
+
+/**
+ * Compares two strings, returning 1 if string a is bigger than string b.
+ *
+ * Note: returns 0 if string b is bigger than string a or if strings are equal.
+ */
+FIO_IFUNC int fio_string_is_greater(fio_str_info_s a, fio_str_info_s b) {
+  return fio_string_is_greater_buf(FIO_STR2BUF_INFO(a), FIO_STR2BUF_INFO(b));
+}
+
+/* *****************************************************************************
+Binary String Type - Embedded Strings
+***************************************************************************** */
+FIO_LEAK_COUNTER_DEF(fio_bstr_s)
+
+#ifndef FIO___BSTR_META
+#define FIO___BSTR_META(bstr)                                                  \
+  FIO_PTR_MATH_SUB(fio___bstr_meta_s, bstr, sizeof(fio___bstr_meta_s))
+#endif
+
+/** Duplicates a `fio_bstr` using copy on write. */
+FIO_IFUNC char *fio_bstr_copy(char *bstr) {
+  if (!bstr)
+    return bstr;
+  fio___bstr_meta_s *meta = FIO___BSTR_META(bstr);
+  if (fio_atomic_add(&meta->ref, 1) > ((uint32_t)1UL << 31))
+    goto copy_anyway;
+  return bstr;
+copy_anyway:
+  bstr = fio_bstr_write(NULL, bstr, meta->len);
+  fio_bstr_free((char *)(meta + 1));
+  return bstr;
+}
+
+/** Frees a binary string allocated by a `fio_bstr` function. */
+FIO_IFUNC void fio_bstr_free(char *bstr) {
+  if (!bstr)
+    return;
+  fio___bstr_meta_s *meta = FIO___BSTR_META(bstr);
+  if (fio_atomic_sub(&meta->ref, 1))
+    return;
+  FIO_LEAK_COUNTER_ON_FREE(fio_bstr_s);
+  FIO_MEM_FREE_(meta, (meta->capa + sizeof(*meta)));
+}
+
+/** internal helper - sets the length of the fio_bstr. */
+FIO_IFUNC char *fio_bstr___len_set(char *bstr, size_t len) {
+  if (FIO_UNLIKELY(!bstr))
+    return bstr;
+  // if (FIO_UNLIKELY(len >= 0xFFFFFFFFULL))
+  //   return bstr;
+  bstr[(FIO___BSTR_META(bstr)->len = (uint32_t)len)] = 0;
+  return bstr;
+}
+
+/** Reserves `len` for future `write` operations (used to minimize realloc). */
+FIO_IFUNC char *fio_bstr_reserve(char *bstr, size_t len) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  if (i.len + len < i.capa)
+    return bstr;
+  fio_bstr_reallocate(&i, (i.len + len));
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+/** Returns information about the fio_bstr. */
+FIO_IFUNC fio_str_info_s fio_bstr_info(const char *bstr) {
+  fio_str_info_s r = {0};
+  r.buf = (char *)bstr;
+  /* please emit conditional mov and not if branches */
+  if (bstr)
+    r.len = FIO___BSTR_META(bstr)->len;
+  if (bstr)
+    r.capa = FIO___BSTR_META(bstr)->capa;
+  if (bstr && FIO___BSTR_META(bstr)->ref)
+    r.capa = 1;
+  return r;
+}
+
+/** Returns information about the fio_bstr. */
+FIO_IFUNC fio_buf_info_s fio_bstr_buf(const char *bstr) {
+  fio___bstr_meta_s mem[1] = {{0}};
+  fio___bstr_meta_s *meta_map[2] = {FIO___BSTR_META(bstr), mem};
+  fio___bstr_meta_s *meta = meta_map[!bstr];
+  return FIO_BUF_INFO2((char *)bstr, meta->len);
+}
+
+/** Gets the length of the fio_bstr. `bstr` MUST NOT be NULL. */
+FIO_IFUNC size_t fio_bstr_len(const char *bstr) {
+  if (!bstr)
+    return 0;
+  fio___bstr_meta_s *meta = FIO___BSTR_META(bstr);
+  return meta->len;
+}
+
+/** Sets the length of the fio_bstr. `bstr` MUST NOT be NULL. */
+FIO_IFUNC char *fio_bstr_len_set(char *bstr, size_t len) {
+  fio___bstr_meta_s m[2] = {0};
+  fio___bstr_meta_s *meta = FIO___BSTR_META(bstr);
+  if (!bstr)
+    meta = m;
+  if (FIO_UNLIKELY(len >= 0xFFFFFFFFULL))
+    return bstr;
+  if (FIO_UNLIKELY(meta->ref || meta->capa <= len)) {
+    fio_str_info_s i = fio_bstr_info(bstr);
+    fio_bstr_reallocate(&i, len);
+    bstr = i.buf;
+  }
+  return fio_bstr___len_set(bstr, len);
+}
+
+/** Writes data to a fio_bstr, returning the address of the new fio_bstr. */
+FIO_IFUNC char *fio_bstr_write(char *bstr,
+                               const void *restrict src,
+                               size_t len) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write(&i, fio_bstr_reallocate, src, len);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+/** Replaces data in a fio_bstr, returning the address of the new fio_bstr. */
+FIO_IFUNC char *fio_bstr_replace(char *bstr,
+                                 intptr_t start_pos,
+                                 size_t overwrite_len,
+                                 const void *src,
+                                 size_t len) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_replace(&i,
+                     fio_bstr_reallocate,
+                     start_pos,
+                     overwrite_len,
+                     src,
+                     len);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+void fio_bstr_write2____(void); /* IDE Marker */
+/** Writes data to a fio_bstr, returning the address of the new fio_bstr. */
+FIO_IFUNC char *fio_bstr_write2 FIO_NOOP(char *bstr,
+                                         const fio_string_write_s srcs[]) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write2 FIO_NOOP(&i, fio_bstr_reallocate, srcs);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
+FIO_IFUNC char *fio_bstr_write_i(char *bstr, int64_t num) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write_i(&i, fio_bstr_reallocate, num);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
+FIO_IFUNC char *fio_bstr_write_u(char *bstr, uint64_t num) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write_u(&i, fio_bstr_reallocate, num);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
+FIO_IFUNC char *fio_bstr_write_hex(char *bstr, uint64_t num) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write_hex(&i, fio_bstr_reallocate, num);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
+FIO_IFUNC char *fio_bstr_write_bin(char *bstr, uint64_t num) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write_bin(&i, fio_bstr_reallocate, num);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+/** Writes escaped data to a fio_bstr, returning its new address. */
+FIO_IFUNC char *fio_bstr_write_escape(char *bstr, const void *src, size_t len) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write_escape(&i, fio_bstr_reallocate, src, len);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+/** Un-escapes and writes data to a fio_bstr, returning its new address. */
+FIO_IFUNC char *fio_bstr_write_unescape(char *bstr,
+                                        const void *src,
+                                        size_t len) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write_unescape(&i, fio_bstr_reallocate, src, len);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+/** Writes base64 encoded data to a fio_bstr, returning its new address. */
+FIO_IFUNC char *fio_bstr_write_base64enc(char *bstr,
+                                         const void *src,
+                                         size_t len,
+                                         uint8_t url_encoded) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write_base64enc(&i, fio_bstr_reallocate, src, len, url_encoded);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+/** Decodes base64 data and writes to a fio_bstr, returning its new address. */
+FIO_IFUNC char *fio_bstr_write_base64dec(char *bstr,
+                                         const void *src,
+                                         size_t len) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write_base64dec(&i, fio_bstr_reallocate, src, len);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+/** Writes data to String using URL encoding (a.k.a., percent encoding). */
+FIO_IFUNC char *fio_bstr_write_url_enc(char *bstr,
+                                       const void *src,
+                                       size_t len) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write_url_enc(&i, fio_bstr_reallocate, src, len);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+/** Writes decoded URL data to String. */
+FIO_IFUNC char *fio_bstr_write_url_dec(char *bstr,
+                                       const void *src,
+                                       size_t len) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write_url_dec(&i, fio_bstr_reallocate, src, len);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+/** Writes HTML escaped data to a String. */
+FIO_IFUNC char *fio_bstr_write_html_escape(char *bstr,
+                                           const void *src,
+                                           size_t len) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write_html_escape(&i, fio_bstr_reallocate, src, len);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+/** Writes HTML un-escaped data to a String - incomplete and minimal. */
+FIO_IFUNC char *fio_bstr_write_html_unescape(char *bstr,
+                                             const void *src,
+                                             size_t len) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_write_html_unescape(&i, fio_bstr_reallocate, src, len);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+FIO_IFUNC FIO___PRINTF_STYLE(2, 0) char *fio_bstr_printf(char *bstr,
+                                                         const char *format,
+                                                         ...) {
+  va_list argv;
+  va_start(argv, format);
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_vprintf(&i, fio_bstr_reallocate, format, argv);
+  va_end(argv);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+/** Writes to the String from a regular file `fd`. */
+FIO_IFUNC char *fio_bstr_readfd(char *bstr,
+                                int fd,
+                                intptr_t start_at,
+                                intptr_t limit) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_readfd(&i, fio_bstr_reallocate, fd, start_at, limit);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+/** Writes to the String from a regular file named `filename`. */
+FIO_IFUNC char *fio_bstr_readfile(char *bstr,
+                                  const char *filename,
+                                  intptr_t start_at,
+                                  intptr_t limit) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_readfile(&i, fio_bstr_reallocate, filename, start_at, limit);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+/** Writes to the String from a regular file named `filename`. */
+FIO_IFUNC char *fio_bstr_getdelim_file(char *bstr,
+                                       const char *filename,
+                                       intptr_t start_at,
+                                       char delim,
+                                       size_t limit) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_getdelim_file(&i,
+                           fio_bstr_reallocate,
+                           filename,
+                           start_at,
+                           delim,
+                           limit);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+/** Writes to the String from a regular file `fd`. */
+FIO_IFUNC char *fio_bstr_getdelim_fd(char *bstr,
+                                     int fd,
+                                     intptr_t start_at,
+                                     char delim,
+                                     size_t limit) {
+  fio_str_info_s i = fio_bstr_info(bstr);
+  fio_string_getdelim_fd(&i, fio_bstr_reallocate, fd, start_at, delim, limit);
+  return fio_bstr___len_set(i.buf, i.len);
+}
+
+/** Compares to see if fio_bstr a is greater than fio_bstr b (for FIO_SORT). */
+FIO_SFUNC int fio_bstr_is_greater(const char *a, const char *b) {
+  return fio_string_is_greater_buf(fio_bstr_buf(a), fio_bstr_buf(b));
+}
+
+/** Compares to see if fio_bstr a is equal to another fio_bstr. */
+FIO_SFUNC int fio_bstr_is_eq(const char *a_, const char *b_) {
+  fio_buf_info_s a = fio_bstr_buf(a_);
+  fio_buf_info_s b = fio_bstr_buf(b_);
+  return FIO_STR_INFO_IS_EQ(a, b);
+}
+
+/** Compares to see if fio_bstr a is equal to another String. */
+FIO_SFUNC int fio_bstr_is_eq2info(const char *a_, fio_str_info_s b) {
+  fio_str_info_s a = fio_bstr_info(a_);
+  return FIO_STR_INFO_IS_EQ(a, b);
+}
+/** Compares to see if fio_bstr a is equal to another String. */
+FIO_SFUNC int fio_bstr_is_eq2buf(const char *a_, fio_buf_info_s b) {
+  fio_buf_info_s a = fio_bstr_buf(a_);
+  return FIO_BUF_INFO_IS_EQ(a, b);
+}
+
+/* *****************************************************************************
+Key String Type - binary String container for Hash Maps and Arrays
+***************************************************************************** */
+FIO_LEAK_COUNTER_DEF(fio_keystr_s)
+
+/* key string type implementation */
+struct fio_keystr_s {
+  uint8_t info;
+  uint8_t embd[3];
+  uint32_t len;
+  const char *buf;
+};
+
+/** returns the Key String. */
+FIO_IFUNC fio_buf_info_s fio_keystr_buf(fio_keystr_s *str) {
+  fio_buf_info_s r;
+  if ((str->info + 1) > 1) {
+    r = (fio_buf_info_s){.len = str->info, .buf = (char *)str->embd};
+    return r;
+  }
+  r = (fio_buf_info_s){.len = str->len, .buf = (char *)str->buf};
+  return r;
+}
+/** returns the Key String. */
+FIO_IFUNC fio_str_info_s fio_keystr_info(fio_keystr_s *str) {
+  fio_str_info_s r;
+  if ((str->info + 1) > 1) {
+    r = (fio_str_info_s){.len = str->info, .buf = (char *)str->embd};
+    return r;
+  }
+  r = (fio_str_info_s){.len = str->len, .buf = (char *)str->buf};
+  return r;
+}
+
+/** Returns a TEMPORARY `fio_keystr_s` to be used as a key for a hash map. */
+FIO_IFUNC fio_keystr_s fio_keystr_tmp(const char *buf, uint32_t len) {
+  fio_keystr_s r = {0};
+  if (len + 1 &&             /* test for overflow */
+      len + 1 < sizeof(r)) { /* always embed small strings in container! */
+    r.info = (uint8_t)len;
+    FIO_MEMCPY((char *)r.embd, buf, len);
+    return r;
+  }
+  r.info = 0xFF;
+  r.len = len;
+  r.buf = buf;
+  return r;
+}
+
+/** Returns a copy of `fio_keystr_s`. */
+FIO_SFUNC fio_keystr_s fio_keystr_init(fio_str_info_s str,
+                                       void *(*alloc_func)(size_t len)) {
+  fio_keystr_s r = {0};
+  if (!str.buf || !str.len || (str.len & (~(size_t)0xFFFFFFFF)))
+    return r;
+  if (str.len + 1 && str.len + 1 < sizeof(r)) {
+    r.info = (uint8_t)str.len;
+    FIO_MEMCPY((char *)r.embd, str.buf, str.len);
+    return r;
+  }
+  if (str.capa == FIO_KEYSTR_CONST) {
+    r.info = 0xFF;
+    r.len = (uint32_t)str.len;
+    r.buf = str.buf;
+    return r;
+  }
+  if (!alloc_func)
+    return r;
+  char *buf;
+  r.len = (uint32_t)str.len;
+  r.buf = buf = (char *)alloc_func(str.len + 1);
+  if (!buf)
+    goto no_mem;
+  FIO_LEAK_COUNTER_ON_ALLOC(fio_keystr_s);
+  FIO_MEMCPY(buf, str.buf, str.len);
+  buf[str.len] = 0;
+  return r;
+no_mem:
+  FIO_LOG_FATAL("fio_keystr_init allocation failed - results undefined!!!");
+  r = fio_keystr_tmp(str.buf, (uint32_t)str.len);
+  return r;
+}
+/** Destroys a copy of `fio_keystr_s` - used internally by the hash map. */
+FIO_SFUNC void fio_keystr_destroy(fio_keystr_s *key,
+                                  void (*free_func)(void *, size_t)) {
+  if (key->info || !key->buf)
+    return;
+  FIO_LEAK_COUNTER_ON_FREE(fio_keystr_s);
+  free_func((void *)key->buf, key->len);
+}
+
+/** Compares two Key Strings. */
+FIO_IFUNC int fio_keystr_is_eq(fio_keystr_s a_, fio_keystr_s b_) {
+  fio_buf_info_s a = fio_keystr_buf(&a_);
+  fio_buf_info_s b = fio_keystr_buf(&b_);
+  return FIO_BUF_INFO_IS_EQ(a, b);
+}
+
+/** Compares a Key String to any String - used internally by the hash map. */
+FIO_IFUNC int fio_keystr_is_eq2(fio_keystr_s a_, fio_str_info_s b) {
+  fio_str_info_s a = fio_keystr_info(&a_);
+  return FIO_STR_INFO_IS_EQ(a, b);
+}
+/** Compares a Key String to any String - used internally by the hash map. */
+FIO_IFUNC int fio_keystr_is_eq3(fio_keystr_s a_, fio_buf_info_s b) {
+  fio_buf_info_s a = fio_keystr_buf(&a_);
+  return FIO_BUF_INFO_IS_EQ(a, b);
+}
+
+/** Returns a good-enough `fio_keystr_s` risky hash. */
+FIO_IFUNC uint64_t fio_keystr_hash(fio_keystr_s a_) {
+  fio_buf_info_s a = fio_keystr_buf(&a_);
+  return fio_risky_hash(a.buf, a.len, (uint64_t)(uintptr_t)fio_risky_hash);
+}
+
+/* *****************************************************************************
+Extern-ed functions
+***************************************************************************** */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
+FIO_LEAK_COUNTER_DEF(fio_string_default_allocations)
+FIO_LEAK_COUNTER_DEF(fio_string_default_key_allocations)
+/* *****************************************************************************
+Allocation Helpers
+***************************************************************************** */
+
+SFUNC int fio_string_sys_reallocate(fio_str_info_s *dest, size_t len) {
+  if (len > (SIZE_MAX >> 2))
+    return -1;
+  len = fio_string_capa4len(len);
+  void *tmp = realloc(dest->buf, len);
+  if (!tmp)
+    return -1;
+  dest->capa = len;
+  dest->buf = (char *)tmp;
+  return 0;
+}
+
+SFUNC int fio_string_default_reallocate(fio_str_info_s *dest, size_t len) {
+  if (len > (SIZE_MAX >> 2))
+    return -1;
+  len = fio_string_capa4len(len);
+  void *tmp = FIO_MEM_REALLOC_(dest->buf, dest->capa, len, dest->len);
+  if (!tmp)
+    return -1;
+  if (!dest->buf)
+    FIO_LEAK_COUNTER_ON_ALLOC(fio_string_default_allocations);
+  dest->capa = len;
+  dest->buf = (char *)tmp;
+  return 0;
+}
+
+SFUNC int fio_string_default_allocate_copy(fio_str_info_s *dest, size_t len) {
+  if (len > (SIZE_MAX >> 2))
+    return -1;
+  len = fio_string_capa4len(len);
+  void *tmp = FIO_MEM_REALLOC_(NULL, 0, len, 0);
+  if (!tmp)
+    return -1;
+  FIO_LEAK_COUNTER_ON_ALLOC(fio_string_default_allocations);
+  if (dest->len)
+    FIO_MEMCPY(tmp, dest->buf, dest->len);
+  dest->capa = len;
+  dest->buf = (char *)tmp;
+  return 0;
+}
+
+SFUNC void *fio_string_default_key_alloc(size_t len) {
+  return FIO_MEM_REALLOC_(NULL, 0, len, 0);
+}
+
+SFUNC void fio_string_default_free(void *ptr) {
+  if (ptr) {
+    FIO_LEAK_COUNTER_ON_FREE(fio_string_default_allocations);
+    FIO_MEM_FREE_(ptr, 0);
+  }
+}
+SFUNC void fio_string_default_free2(fio_str_info_s str) {
+  if (str.buf) {
+    FIO_LEAK_COUNTER_ON_FREE(fio_string_default_allocations);
+    FIO_MEM_FREE_(str.buf, str.capa);
+  }
+}
+
+/** frees a fio_keystr_s memory that was allocated with the default callback. */
+SFUNC void fio_string_default_free_key(void *buf, size_t capa) {
+  FIO_MEM_FREE_(buf, capa);
+  (void)capa; /* if unused */
+}
+
+SFUNC void fio_string_default_free_noop(void *str) { (void)str; }
+SFUNC void fio_string_default_free_noop2(fio_str_info_s str) { (void)str; }
+
+/* *****************************************************************************
+Numeral Support
+***************************************************************************** */
+
+/* fio_string_write_i */
+SFUNC int fio_string_write_i(fio_str_info_s *dest,
+                             fio_string_realloc_fn reallocate,
+                             int64_t i) {
+  int r = -1;
+  size_t len = 0;
+  len = fio_digits10(i);
+  if (fio_string___write_validate_len(dest, reallocate, &len))
+    return r; /* no writing of partial numbers. */
+  r = 0;
+  fio_ltoa10(dest->buf + dest->len, i, len);
+  dest->len += len;
+  return r;
+}
+
+/* fio_string_write_u */
+SFUNC int fio_string_write_u(fio_str_info_s *dest,
+                             fio_string_realloc_fn reallocate,
+                             uint64_t i) {
+  int r = -1;
+  size_t len = fio_digits10u(i);
+  if (fio_string___write_validate_len(dest, reallocate, &len))
+    return r; /* no writing of partial numbers. */
+  r = 0;
+  fio_ltoa10u(dest->buf + dest->len, i, len);
+  dest->len += len;
+  return r;
+}
+
+/* fio_string_write_hex */
+SFUNC int fio_string_write_hex(fio_str_info_s *dest,
+                               fio_string_realloc_fn reallocate,
+                               uint64_t i) {
+  int r = 0;
+  size_t len = fio_digits16u(i);
+  if (fio_string___write_validate_len(dest, reallocate, &len))
+    return (r = -1); /* no writing of partial numbers. */
+  fio_ltoa16u(dest->buf + dest->len, i, len);
+  dest->len += len;
+  return r;
+}
+
+/* fio_string_write_bin */
+SFUNC int fio_string_write_bin(fio_str_info_s *dest,
+                               fio_string_realloc_fn reallocate,
+                               uint64_t i) {
+  int r = 0;
+  size_t len = fio_digits_bin(i);
+  if (fio_string___write_validate_len(dest, reallocate, &len))
+    return (r = -1); /* no writing of partial numbers. */
+  fio_ltoa_bin(dest->buf + dest->len, i, len);
+  dest->len += len;
+  return r;
+}
+
+/* *****************************************************************************
+`printf` Style Support
+***************************************************************************** */
+
+/* Similar to fio_string_write, only using vprintf semantics. */
+SFUNC int FIO___PRINTF_STYLE(3, 0)
+    fio_string_vprintf(fio_str_info_s *dest,
+                       fio_string_realloc_fn reallocate,
+                       const char *format,
+                       va_list argv) {
+  int r = 0;
+  va_list argv_cpy;
+  va_copy(argv_cpy, argv);
+  int len_i = vsnprintf(NULL, 0, format, argv_cpy);
+  va_end(argv_cpy);
+  if (len_i <= 0)
+    return -1;
+  size_t len = (size_t)len_i;
+  r = fio_string___write_validate_len(dest, reallocate, &len);
+  if (FIO_UNLIKELY(dest->capa < dest->len + 2))
+    return -1;
+  if (len)
+    vsnprintf(dest->buf + dest->len, len + 1, format, argv);
+  dest->len += len;
+  dest->buf[dest->len] = 0;
+  return r;
+}
+
+/** Similar to fio_string_write, only using printf semantics. */
+SFUNC int FIO___PRINTF_STYLE(3, 4)
+    fio_string_printf(fio_str_info_s *dest,
+                      fio_string_realloc_fn reallocate,
+                      const char *format,
+                      ...) {
+  int r = 0;
+  va_list argv;
+  va_start(argv, format);
+  r = fio_string_vprintf(dest, reallocate, format, argv);
+  va_end(argv);
+  return r;
+}
+
+/* *****************************************************************************
+UTF-8 Support
+***************************************************************************** */
+
+/** Returns 0 if non-UTF-8 or returns 1-4 (UTF-8 if a valid char). */
+SFUNC size_t fio_string_utf8_valid_code_point(const void *c, size_t buf_len) {
+  size_t l = fio_utf8_char_len((uint8_t *)c);
+  l &= 0U - (buf_len >= l);
+  return l;
+}
+
+/** Returns 1 if the String is UTF-8 valid and 0 if not. */
+SFUNC bool fio_string_utf8_valid(fio_str_info_s str) {
+  if (!str.len)
+    return 1;
+  char *const end = str.buf + str.len;
+  size_t tmp;
+  while ((tmp = fio_utf8_char_len(str.buf)) && ((str.buf += tmp) < end))
+    ;
+  return str.buf == end;
+}
+
+/** Returns the String's length in UTF-8 characters. */
+SFUNC size_t fio_string_utf8_len(fio_str_info_s str) {
+  if (!str.len)
+    return 0;
+  char *end = str.buf + str.len;
+  size_t utf8len = 0, tmp;
+  do {
+    tmp = fio_utf8_char_len(str.buf);
+    str.buf += tmp;
+    ++utf8len;
+  } while (tmp && str.buf < end);
+  utf8len &= 0U - (str.buf == end);
+  return utf8len;
+}
+
+/**
+ * Takes a UTF-8 character selection information (UTF-8 position and length)
+ * and updates the same variables so they reference the raw byte slice
+ * information.
+ *
+ * If the String isn't UTF-8 valid up to the requested selection, than `pos`
+ * will be updated to `-1` otherwise values are always positive.
+ *
+ * The returned `len` value may be shorter than the original if there wasn't
+ * enough data left to accommodate the requested length. When a `len` value of
+ * `0` is returned, this means that `pos` marks the end of the String.
+ *
+ * Returns -1 on error and 0 on success.
+ */
+SFUNC int fio_string_utf8_select(fio_str_info_s str,
+                                 intptr_t *pos,
+                                 size_t *len) {
+  if (!pos || !len)
+    return -1;
+  const uint8_t *p = (uint8_t *)str.buf;
+  const uint8_t *const end = p + str.len;
+  size_t start, clen;
+  if (!str.len)
+    goto at_end;
+  if ((*pos) > 0) {
+    start = *pos;
+    do {
+      clen = fio_utf8_char_len(p);
+      p += clen;
+      --start;
+    } while (clen && start && p < end);
+    if (!clen || p > end)
+      goto error;
+    if (p == end)
+      goto at_end;
+  } else if (*pos < 0) { /* walk backwards */
+    p += str.len;
+    start = 0 - *pos;
+    do {
+      const uint8_t *was = p;
+      --p;
+      while ((*p & 0xC0U) == 0x80U && p > (uint8_t *)str.buf)
+        --p;
+      if ((size_t)fio_utf8_char_len_unsafe(*p) != (size_t)(was - p))
+        goto error;
+    } while (--start && p > (uint8_t *)str.buf);
+  }
+  *pos = p - (uint8_t *)str.buf;
+
+  /* find end */
+  start = *len;
+  clen = 1;
+  while (start && p < end && (clen = fio_utf8_char_len(p))) {
+    p += clen;
+    --start;
+  }
+  if (!clen || p > end)
+    goto error;
+  *len = p - ((uint8_t *)str.buf + (*pos));
+  return 0;
+
+at_end:
+  *pos = str.len;
+  *len = 0;
+  return 0;
+error:
+  *pos = -1;
+  *len = 0;
+  return -1;
+}
+
+/* *****************************************************************************
+fio_string_is_greater
+***************************************************************************** */
+
+/**
+ * Compares two `fio_buf_info_s`, returning 1 if data in a is bigger than b.
+ *
+ * Note: returns 0 if data in b is bigger than or equal(!).
+ */
+SFUNC int fio_string_is_greater_buf(fio_buf_info_s a, fio_buf_info_s b) {
+  const int a_len_is_bigger = a.len > b.len;
+  size_t len = a_len_is_bigger ? b.len : a.len; /* shared length */
+  if (a.buf == b.buf)
+    return a_len_is_bigger;
+  uint64_t ua[4] FIO_ALIGN(16) = {0};
+  uint64_t ub[4] FIO_ALIGN(16) = {0};
+  uint64_t flag = 0;
+  if (len < 32)
+    goto mini_cmp;
+
+  len -= 32;
+  for (;;) {
+    for (size_t i = 0; i < 4; ++i) {
+      fio_memcpy8(ua + i, a.buf);
+      fio_memcpy8(ub + i, b.buf);
+      flag |= (ua[i] ^ ub[i]);
+      a.buf += 8;
+      b.buf += 8;
+    }
+    if (flag)
+      goto review_diff;
+    if (len > 31) {
+      len -= 32;
+      continue;
+    }
+    if (!len)
+      return a_len_is_bigger;
+    a.buf -= 32;
+    b.buf -= 32;
+    a.buf += len & 31;
+    b.buf += len & 31;
+    len = 0;
+  }
+
+review_diff:
+  if (ua[2] != ub[2]) {
+    ua[3] = ua[2];
+    ub[3] = ub[2];
+  }
+  if (ua[1] != ub[1]) {
+    ua[3] = ua[1];
+    ub[3] = ub[1];
+  }
+  if (ua[0] != ub[0]) {
+    ua[3] = ua[0];
+    ub[3] = ub[0];
+  }
+review_diff8:
+  ua[3] = fio_lton64(ua[3]); /* comparison requires network byte order */
+  ub[3] = fio_lton64(ub[3]);
+  return ua[3] > ub[3];
+
+mini_cmp:
+  if (len > 7) {
+    len -= 8;
+    for (;;) {
+      fio_memcpy8(ua + 3, a.buf);
+      fio_memcpy8(ub + 3, b.buf);
+      if (ua[3] != ub[3])
+        goto review_diff8;
+      if (len > 7) {
+        a.buf += 8;
+        b.buf += 8;
+        len -= 8;
+        continue;
+      }
+      if (!len)
+        return a_len_is_bigger;
+      a.buf += len & 7;
+      b.buf += len & 7;
+      len = 0;
+    }
+  }
+  while (len--) {
+    if (a.buf[0] != b.buf[0])
+      return a.buf[0] > b.buf[0];
+    ++a.buf;
+    ++b.buf;
+  }
+  return a_len_is_bigger;
+}
+
+/* *****************************************************************************
+Insert / Write2
+***************************************************************************** */
+
+/* fio_string_replace */
+SFUNC int fio_string_replace(fio_str_info_s *dest,
+                             fio_string_realloc_fn reallocate,
+                             intptr_t start_pos,
+                             size_t overwrite_len,
+                             const void *src,
+                             size_t len) {
+  int r = 0;
+  if (!dest)
+    return (r = -1);
+  if (start_pos < 0) {
+    start_pos = dest->len + start_pos + 1;
+    if (start_pos < 0)
+      start_pos = 0;
+  }
+  if (dest->len < (size_t)start_pos + overwrite_len + 1) {
+    if ((size_t)start_pos < dest->len)
+      dest->len = start_pos;
+    return fio_string_write(dest, reallocate, src, len);
+  }
+
+  size_t move_start = start_pos + overwrite_len;
+  size_t move_len = dest->len - (start_pos + overwrite_len);
+  if (overwrite_len < len) {
+    /* adjust for possible memory expansion */
+    const size_t extra = len - overwrite_len;
+    if (dest->capa < dest->len + extra + 1) {
+      r = -1; /* in case reallocate is NULL */
+      if (!reallocate ||
+          FIO_UNLIKELY(
+              (r = reallocate(dest, fio_string_capa4len(dest->len + extra))))) {
+        move_len -= (dest->len + extra + 1) - dest->capa;
+        if (dest->capa < start_pos + len + 1) {
+          move_len = 0;
+          len = dest->capa - start_pos - 1;
+        }
+      }
+    }
+  }
+  if (move_len)
+    FIO_MEMMOVE(dest->buf + start_pos + len, dest->buf + move_start, move_len);
+  if (len && src)
+    FIO_MEMCPY(dest->buf + start_pos, src, len);
+  dest->len = start_pos + len + move_len;
+  dest->buf[dest->len] = 0;
+  return r;
+}
+
+/* IDE marker */
+void fio_string_write2____(void);
+/* the fio_string_write2 is a printf alternative. */
+SFUNC int fio_string_write2 FIO_NOOP(fio_str_info_s *restrict dest,
+                                     fio_string_realloc_fn reallocate,
+                                     const fio_string_write_s srcs[]) {
+  int r = 0;
+  const fio_string_write_s *pos = srcs;
+  size_t len = 0;
+
+  while (pos->klass) {
+    if (len > (SIZE_MAX >> 1))
+      return -1;
+    switch (pos->klass) { /* use more memory rather then calculate twice. */
+    case 2: /* number */ len += fio_digits10(pos->info.i); break;
+    case 3: /* unsigned */ len += fio_digits10u(pos->info.u); break;
+    case 4: /* hex */ len += fio_digits16u(pos->info.u); break;
+    case 5: /* binary */ len += fio_digits_bin(pos->info.u); break;
+    case 6: /* float */ len += 18; break;
+    default:
+      if (pos->info.str.len > (SIZE_MAX >> 2))
+        return -1;
+      len += pos->info.str.len;
+    }
+    ++pos;
+  }
+  if (!len)
+    return r;
+  pos = srcs;
+  if (fio_string___write_validate_len(dest, reallocate, &len))
+    goto truncate;
+  while (pos->klass) {
+    switch (pos->klass) {
+    case 2: fio_string_write_i(dest, NULL, pos->info.i); break;   /* number */
+    case 3: fio_string_write_u(dest, NULL, pos->info.u); break;   /* unsigned */
+    case 4: fio_string_write_hex(dest, NULL, pos->info.u); break; /* hex */
+    case 5: fio_string_write_bin(dest, NULL, pos->info.u); break; /* binary */
+    case 6:                                                       /* float */
+      dest->len += snprintf(dest->buf + dest->len, 19, "%.15g", pos->info.f);
+      break;
+    default:
+      FIO_MEMCPY(&dest->buf[dest->len], pos->info.str.buf, pos->info.str.len);
+      dest->len += pos->info.str.len;
+    }
+    ++pos;
+  }
+finish:
+  dest->buf[dest->len] = 0;
+  return r;
+truncate:
+  r = -1;
+  while (pos->klass) {
+    switch (pos->klass) {
+    case 2:
+      if (fio_string_write_i(dest, NULL, pos->info.i))
+        goto finish;
+      break; /* number */
+    case 3:
+      if (fio_string_write_u(dest, NULL, pos->info.u))
+        goto finish;
+      break; /* unsigned */
+    case 4:
+      if (fio_string_write_hex(dest, NULL, pos->info.u))
+        goto finish;
+      break; /* hex */
+    case 5:
+      if (fio_string_write_bin(dest, NULL, pos->info.u))
+        goto finish;
+      break; /* binary */
+    case 6:  /* float */
+      len = snprintf(dest->buf + dest->len, 19, "%.15g", pos->info.f);
+      if (dest->capa < dest->len + len + 2)
+        goto finish;
+      dest->len += len;
+      break;
+    default:
+      if (fio_string_write(dest, NULL, pos->info.str.buf, pos->info.str.len))
+        goto finish;
+    }
+    ++pos;
+  }
+  goto finish;
+}
+
+/* *****************************************************************************
+Escaping / Un-Escaping Primitives (not for encoding)
+***************************************************************************** */
+
+typedef struct {
+  fio_str_info_s *restrict dest;
+  fio_string_realloc_fn reallocate;
+  const void *restrict src;
+  const size_t len;
+  /* moves to the next character (or character sequence) to alter. */
+  const uint8_t *(*next)(const uint8_t *restrict s, const uint8_t *restrict e);
+  /*
+   * `dest` will be NULL when calculating length to be written.
+   *
+   * `*s` is the source data.
+   *
+   * `e` is the end-of-bounds position (src + len).
+   *
+   * Returns the number of characters that would have been written.
+   *
+   * Note: must update `s` to point to the next character after the altered
+   * sequence.
+   */
+  size_t (*diff)(uint8_t *restrict dest,
+                 const uint8_t *restrict *restrict s,
+                 const uint8_t *restrict e);
+  /*
+   * Writes (un)escaped data to `dest`.
+   *
+   * Behaves the same as `diff` only writes data to `dest`.
+   *
+   * `dest` is the same number of bytes as reported by `diff` (or more).
+   */
+  size_t (*write)(uint8_t *restrict dest,
+                  const uint8_t *restrict *restrict s,
+                  const uint8_t *restrict e);
+  /* If `len` of `src` is less then `skip_diff_len`, skips the test. */
+  uint32_t skip_diff_len;
+} fio___string_altering_args_s;
+
+/**
+ * Writes an escaped data into the string after un-escaping the data.
+ */
+FIO_IFUNC int fio___string_altering_cycle(
+    const fio___string_altering_args_s args) {
+  int r = 0;
+  if (((long long)args.len < 1) | !args.src | !args.dest)
+    return r;
+  const uint8_t *s = (const uint8_t *)args.src;
+  const uint8_t *e = s + args.len;
+  const uint8_t *p = s;
+  fio_str_info_s d = *args.dest;
+  size_t first_stop = 0;
+  size_t updater = 0;
+  /* we need to allocate memory - limit to result's length */
+  if (d.len + args.len >= d.capa) {
+    updater = (args.len > args.skip_diff_len);
+    size_t written_length = args.len;
+    if (updater) { /* skip memory reduction for small strings */
+      written_length = 0;
+      p = s;
+      for (;;) {
+        const uint8_t *p2 = args.next(p, e);
+        if (!p2)
+          break;
+        written_length += p2 - p;
+        p = p2;
+        first_stop |= (0ULL - updater) & ((p - s) + 1);
+        updater = 0;
+        written_length += args.diff(NULL, &p, e);
+        if (p + 1 > e)
+          break;
+      }
+    }
+    written_length += e - p;
+    /* allocate extra required space. */
+    FIO_ASSERT_DEBUG(written_length > 0, "string (un)escape reduced too much");
+    if (d.len + written_length >= d.capa &&
+        fio_string___write_validate_len(&d, args.reallocate, &written_length)) {
+      r = -1;
+      goto finish;
+    }
+  }
+
+  /* copy unescaped head of string (if it's worth our time), saves one memchr */
+  if (((!first_stop) & updater) | (first_stop > 16)) {
+    if (!first_stop)
+      first_stop = (e - s) + 1;
+    --first_stop;
+    FIO_MEMMOVE(d.buf + d.len, s, first_stop);
+    d.len += first_stop;
+    s += first_stop;
+  }
+  p = s;
+
+  /* start copying and un-escaping as needed */
+  while (p < e) {
+    const uint8_t *p2 = args.next(p, e);
+    if (!p2)
+      break;
+    if (p2 - p) {
+      updater = p2 - p;
+      FIO_MEMMOVE(d.buf + d.len, p, updater);
+      d.len += updater;
+    }
+    p = p2;
+    d.len += args.write((uint8_t *)d.buf + d.len, &p, e);
+  }
+  if (p < e) {
+    updater = e - p;
+    FIO_MEMCPY(d.buf + d.len, p, updater);
+    d.len += updater;
+  }
+
+finish:
+  d.buf[d.len] = 0;
+  *args.dest = d;
+  return r;
+}
+
+/* *****************************************************************************
+String C / JSON escaping
+***************************************************************************** */
+
+/**
+ * Writes data at the end of the String, escaping the data using JSON semantics.
+ *
+ * The JSON semantic are common to many programming languages, promising a UTF-8
+ * String while making it easy to read and copy the string during debugging.
+ */
+SFUNC int fio_string_write_escape(fio_str_info_s *restrict dest,
+                                  fio_string_realloc_fn reallocate,
+                                  const void *restrict src,
+                                  size_t len) {
+  /* Escaping map, test if bit 64 is set or not. Created using Ruby Script:
+  map = []; 256.times { |i| map << ((i > 126 || i < 35) ? 5 : 0)  };
+  256.times { |i| map[i] = ((i > 127) ? 3 : map[i])  };
+  map[' '.ord] = 0; map['!'.ord] = 0;
+  ["\b","\f","\n","\r","\t",'\\','"'].each {|c| map[c.ord] = 1 };
+  str = map.map {|e| e.to_s } .join(', ');
+  puts "static const uint8_t escape_map[256]= { #{str} };"
+   */
+  static const uint8_t escape_map[256] = {
+      5, 5, 5, 5, 5, 5, 5, 5, 1, 1, 1, 5, 1, 1, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+      5, 5, 5, 5, 5, 5, 5, 5, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
+  int r = 0;
+  if ((!len | !src | !dest))
+    return r;
+  size_t extra_space = 0;
+  size_t first_stop = 0;
+  size_t updater = 1;
+  const uint8_t *s = (const uint8_t *)src;
+  const uint8_t *e = s + len;
+  const uint8_t *p = s;
+
+  /* test memory length requirements – unlikely to be avoided (len * 5) */
+  for (; (p < e); ++p) {
+    if (!escape_map[*p]) /* skip valid ASCII, hope for compiler magic */
+      continue;
+    size_t valid_utf8_len = fio_utf8_char_len(p);
+    if (valid_utf8_len > 1) { /* skip valid UTF-8 */
+      p += valid_utf8_len - 1;
+      continue;
+    }
+    first_stop |= (0ULL - updater) & (p - s);
+    updater = 0;
+    /* count extra bytes */
+    extra_space += escape_map[*p];
+  }
+
+  /* reserve space and copy any valid first_stop */
+  /* the + 3 adds room for the likely use case of JSON: "\",\"" */
+  if ((dest->capa < dest->len + extra_space + len + 1) &&
+      (!reallocate ||
+       reallocate(dest,
+                  fio_string_capa4len(dest->len + extra_space + len + 3)))) {
+    r = -1;
+    len = dest->capa - (dest->len + 6);
+    if (dest->capa < len + 6)
+      return r;
+  }
+
+  /* copy unescaped head of string (if it's worth our time) */
+  if (((!first_stop) & updater & (!escape_map[*s])) || first_stop > 16) {
+    if (!first_stop)
+      first_stop = len;
+    FIO_MEMMOVE(dest->buf + dest->len, s, first_stop);
+    dest->len += first_stop;
+    s += first_stop;
+  }
+  p = s;
+
+  /* start copying and escaping as needed */
+  for (;;) {
+    if (!(escape_map[*p])) {
+      for (s = p; (s < e) && !(escape_map[*s]); ++s)
+        ; /* hope for compiler magic */
+      updater = s - p;
+      FIO_MEMMOVE(dest->buf + dest->len, p, updater);
+      dest->len += updater;
+      p = s;
+    }
+    if (p >= e)
+      break;
+    size_t valid_utf8_len = fio_utf8_char_len(p);
+    size_t limit = e - p;
+    if (valid_utf8_len > limit)
+      valid_utf8_len = limit;
+    switch (valid_utf8_len) {
+    case 4: dest->buf[dest->len++] = *p++; /* fall through */
+    case 3: dest->buf[dest->len++] = *p++; /* fall through */
+    case 2:
+      dest->buf[dest->len++] = *p++; /* fall through */
+      dest->buf[dest->len++] = *p++; /* fall through */
+      continue;
+    default: break;
+    }
+    // FIO_ASSERT(valid_utf8_len < 2, "valid_utf8_len error!");
+    dest->buf[dest->len++] = '\\';
+    uint8_t ec = *p++;
+    switch (ec) {
+    case '\b': dest->buf[dest->len++] = 'b'; continue;
+    case '\f': dest->buf[dest->len++] = 'f'; continue;
+    case '\n': dest->buf[dest->len++] = 'n'; continue;
+    case '\r': dest->buf[dest->len++] = 'r'; continue;
+    case '\t': dest->buf[dest->len++] = 't'; continue;
+    case '\\': dest->buf[dest->len++] = '\\'; continue;
+    case '"': dest->buf[dest->len++] = '"'; continue;
+    default: { /* escaping all control characters and non-UTF-8 characters */
+      const char in_hex[2] = {(char)fio_i2c(ec >> 4), (char)fio_i2c(ec & 15)};
+      const uint8_t invalid = ((uint8_t)ec & 128) >> 6;    /* 0 or 2 */
+      const uint8_t u2x = (invalid | (invalid >> 1));      /* 0 or 3 */
+      dest->buf[dest->len++] = (char)((uint8_t)'u' + u2x); /* u + 3 = x */
+      dest->buf[dest->len++] = '0';
+      dest->buf[dest->len++] = '0';
+      dest->len -= invalid; /* erase the 00 and walk back if invalid */
+      dest->buf[dest->len++] = in_hex[0];
+      dest->buf[dest->len++] = in_hex[1];
+    }
+    }
+  }
+  dest->buf[dest->len] = 0;
+  return r;
+}
+
+FIO_SFUNC const uint8_t *fio___string_write_unescape_next(
+    const uint8_t *restrict s,
+    const uint8_t *restrict e) {
+  if (*s == '\\')
+    return s;
+  return (const uint8_t *)FIO_MEMCHR(s, '\\', e - s);
+}
+
+FIO_SFUNC size_t
+fio___string_write_unescape_diff(uint8_t *restrict dest,
+                                 const uint8_t *restrict *restrict ps,
+                                 const uint8_t *restrict e) {
+  size_t r = 1;
+  unsigned step = 1;
+  const uint8_t *s = *ps;
+  ++s;
+  unsigned peek = ((*s == 'x') & (e - s > 2));
+  peek &= (unsigned)(fio_c2i(s[peek]) < 16) & (fio_c2i(s[peek + peek]) < 16);
+  step |= (peek << 1);
+  // peek &= (fio_c2i(s[peek]) > 7);
+  r += peek; /* assumes \xFF is unescaped as UTF-8, up to 2 bytes */
+
+  peek = ((*s == 'u') & (e - s > 4));
+  peek &= (unsigned)(fio_c2i(s[peek]) < 16) & (fio_c2i(s[peek + peek]) < 16) &
+          (fio_c2i(s[peek + peek + peek]) < 16) &
+          (fio_c2i(s[peek + peek + peek + peek]) < 16);
+  r |= (peek << 1); /* assumes \uFFFF in maximum length, ignores UTF-16 pairs */
+  step |= (peek << 2);
+
+  s += step;
+  *ps = s;
+  return r;
+  (void)dest;
+}
+FIO_IFUNC size_t
+fio___string_write_unescape_write(uint8_t *restrict dest,
+                                  const uint8_t *restrict *restrict ps,
+                                  const uint8_t *restrict e) {
+  unsigned r = 1;
+  const uint8_t *restrict s = *ps;
+  s += ((s + 1) < e); /* skip '\\' byte */
+  switch (*s) {
+  case 'b':
+    *dest = '\b';
+    ++s;
+    break; /* from switch */
+  case 'f':
+    *dest = '\f';
+    ++s;
+    break; /* from switch */
+  case 'n':
+    *dest = '\n';
+    ++s;
+    break; /* from switch */
+  case 'r':
+    *dest = '\r';
+    ++s;
+    break; /* from switch */
+  case 't':
+    *dest = '\t';
+    ++s;
+    break; /* from switch */
+  case 'u': {
+    /* test UTF-8 notation */
+    if ((s + 4 < e) && ((unsigned)(fio_c2i(s[1]) < 16) & (fio_c2i(s[2]) < 16) &
+                        (fio_c2i(s[3]) < 16) & (fio_c2i(s[4]) < 16))) {
+      uint32_t u = (((fio_c2i(s[1]) << 4) | fio_c2i(s[2])) << 8) |
+                   ((fio_c2i(s[3]) << 4) | fio_c2i(s[4]));
+      if ((s + 10 < e) &&
+          (((fio_c2i(s[1]) << 4) | fio_c2i(s[2])) == 0xD8U && s[5] == '\\' &&
+           s[6] == 'u' &&
+           ((unsigned)(fio_c2i(s[7]) < 16) & (fio_c2i(s[8]) < 16) &
+            (fio_c2i(s[9]) < 16) & (fio_c2i(s[10]) < 16)))) {
+        /* surrogate-pair (high/low code points) */
+        u = (u & 0x03FF) << 10;
+        u |= (((((fio_c2i(s[7]) << 4) | fio_c2i(s[8])) << 8) |
+               ((fio_c2i(s[9]) << 4) | fio_c2i(s[10]))) &
+              0x03FF);
+        u += 0x10000;
+        s += 6;
+      }
+      r = fio_utf8_write(dest, u);
+      s += 5;
+      break; /* from switch */
+    } else
+      goto invalid_escape;
+  }
+  case 'x': { /* test for hex notation */
+    if (fio_c2i(s[1]) < 16 && fio_c2i(s[2]) < 16) {
+      *dest = (fio_c2i(s[1]) << 4) | fio_c2i(s[2]);
+      s += 3;
+      break; /* from switch */
+    } else
+      goto invalid_escape;
+  }
+  case '0':
+  case '1':
+  case '2':
+  case '3':
+  case '4':
+  case '5':
+  case '6':
+  case '7': { /* test for octal notation */
+    if (s[0] >= '0' && s[0] <= '7' && s[1] >= '0' && s[1] <= '7') {
+      *dest = ((s[0] - '0') << 3) | (s[1] - '0');
+      s += 2;
+      break; /* from switch */
+    } else
+      goto invalid_escape;
+  }
+  case '"':
+  case '\\':
+  case '/':
+  /* fall through */
+  default:
+  invalid_escape:
+    *dest = *s++;
+  }
+  *ps = s;
+  return r;
+}
+SFUNC int fio_string_write_unescape(fio_str_info_s *restrict dest,
+                                    fio_string_realloc_fn alloc,
+                                    const void *src,
+                                    size_t len) {
+  return fio___string_altering_cycle((fio___string_altering_args_s){
+      .dest = dest,
+      .reallocate = alloc,
+      .src = src,
+      .len = len,
+      .next = fio___string_write_unescape_next,
+      .diff = fio___string_write_unescape_diff,
+      .write = fio___string_write_unescape_write,
+      .skip_diff_len = 127,
+  });
+}
+
+/* *****************************************************************************
+String Base32 support
+***************************************************************************** */
+
+/** Writes data to String using base64 encoding. */
+SFUNC int fio_string_write_base32enc(fio_str_info_s *dest,
+                                     fio_string_realloc_fn reallocate,
+                                     const void *raw,
+                                     size_t raw_len) {
+  static const uint8_t base32encode[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  int r = 0;
+  size_t expected = ((raw_len * 8) / 5) + 1;
+  if (fio_string___write_validate_len(dest, reallocate, &expected)) {
+    return (r = -1); /* no partial encoding. */
+  }
+  expected = dest->len;
+  size_t bits = 0, store = 0;
+  for (size_t i = 0; i < raw_len; ++i) {
+    store = (store << 8) | (size_t)((uint8_t *)raw)[i];
+    bits += 8;
+    if (bits < 25)
+      continue;
+    while (bits > 4) {
+      uint8_t val = base32encode[(31U & (store >> (bits - 5)))];
+      dest->buf[dest->len++] = val;
+      bits -= 5;
+    }
+  }
+  while (bits > 4) {
+    uint8_t val = base32encode[(31U & (store >> (bits - 5)))];
+    dest->buf[dest->len++] = val;
+    bits -= 5;
+  }
+  if (bits) {
+    // dest->buf[dest->len++] = base32encode[store & ((1U << bits) - 1)];
+    dest->buf[dest->len++] = base32encode[31U & (store << (5 - bits))];
+    dest->buf[dest->len] = '=';
+    dest->len += !!((dest->len - expected) % 5);
+  }
+  dest->buf[dest->len] = 0;
+  return r;
+}
+
+/** Writes decoded base64 data to String. */
+SFUNC int fio_string_write_base32dec(fio_str_info_s *dest,
+                                     fio_string_realloc_fn reallocate,
+                                     const void *encoded,
+                                     size_t encoded_len) {
+  /* ABCDEF6HIJK3MN6PQRSTUV6XYZ234567
+ a = [];
+ 256.times { a << 255 }
+ b = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".bytes
+ b.length.times {|i| a[b[i]] = i }
+ b = "abcdefghijklmnopqrstuvwxyz234567".bytes
+ b.length.times {|i| a[b[i]] = i }
+ b = " \r\n\t\b".bytes
+ b.length.times {|i| a[b[i]] = 32 }
+ a.map! {|n| n.to_s 10 }
+ puts "const static uint8_t base32decode[256] = { #{a.join(", ") } }; "
+*/
+  static const uint8_t base32decode[256] = {
+      255, 255, 255, 255, 255, 255, 255, 255, 32,  32,  32,  255, 255, 32,  255,
+      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+      255, 255, 32,  255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+      255, 255, 255, 255, 255, 26,  27,  28,  29,  30,  31,  255, 255, 255, 255,
+      255, 255, 255, 255, 255, 0,   1,   2,   3,   4,   5,   6,   7,   8,   9,
+      10,  11,  12,  13,  14,  15,  16,  17,  18,  19,  20,  21,  22,  23,  24,
+      25,  255, 255, 255, 255, 255, 255, 0,   1,   2,   3,   4,   5,   6,   7,
+      8,   9,   10,  11,  12,  13,  14,  15,  16,  17,  18,  19,  20,  21,  22,
+      23,  24,  25,  255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+      255};
+  int r = 0;
+  size_t expected = ((encoded_len * 5) / 8) + 1;
+  if (fio_string___write_validate_len(dest, reallocate, &expected)) {
+    return (r = -1); /* no partial encoding. */
+  }
+  uint64_t val = 0;
+  uint64_t bits = 0;
+  uint8_t *s = (uint8_t *)dest->buf + dest->len;
+  for (size_t i = 0; i < encoded_len; ++i) {
+    uint64_t dec = (size_t)base32decode[((uint8_t *)encoded)[i]];
+    if (dec == 32)
+      continue;
+    if (dec > 31)
+      break;
+    bits += 5;
+    val = (val << 5) | dec;
+    if (bits < 40)
+      continue;
+    do {
+      *(s++) = (0xFF & (val >> (bits - 8)));
+      bits -= 8;
+    } while (bits > 7);
+  }
+  while (bits > 7) {
+    *(s++) = (0xFF & (val >> (bits - 8)));
+    bits -= 8;
+  }
+  if (bits) { /* letfover bits considered padding? */
+    val = 0xFF & (val << (8 - bits));
+    if (val || (encoded_len && ((uint8_t *)encoded)[encoded_len - 1] != '='))
+      *(s++) = val;
+  }
+  dest->len = (size_t)(s - (uint8_t *)dest->buf);
+  dest->buf[dest->len] = 0;
+  return r;
+}
+
+/* *****************************************************************************
+String Base64 support
+***************************************************************************** */
+
+/** Writes data to String using Base64 encoding. */
+SFUNC int fio_string_write_base64enc(fio_str_info_s *dest,
+                                     fio_string_realloc_fn reallocate,
+                                     const void *data,
+                                     size_t len,
+                                     uint8_t url_encoded) {
+  int r = 0;
+  if (!dest || !data || !len)
+    return r;
+  static const char *encmap[2] = {
+      /* Regular, URL encoding*/
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_=",
+  };
+
+  /* the base64 encoding array */
+  const char *encoding = encmap[!!url_encoded];
+
+  /* base64 length and padding information */
+  size_t groups = len / 3;
+  const size_t mod = len - (groups * 3);
+  size_t target_size = (groups + (mod != 0)) * 4;
+
+  if (fio_string___write_validate_len(dest, reallocate, &target_size)) {
+    return (r = -1); /* no partial encoding. */
+  }
+  char *writer = dest->buf + dest->len;
+  const unsigned char *reader = (const unsigned char *)data;
+  dest->len += target_size;
+  /* write encoded data */
+  while (groups) {
+    --groups;
+    const unsigned char tmp1 = *(reader++);
+    const unsigned char tmp2 = *(reader++);
+    const unsigned char tmp3 = *(reader++);
+
+    *(writer++) = encoding[(tmp1 >> 2) & 63];
+    *(writer++) = encoding[(((tmp1 & 3) << 4) | ((tmp2 >> 4) & 15))];
+    *(writer++) = encoding[((tmp2 & 15) << 2) | ((tmp3 >> 6) & 3)];
+    *(writer++) = encoding[tmp3 & 63];
+  }
+
+  /* write padding / ending */
+  switch (mod) {
+  case 2: {
+    const unsigned char tmp1 = *(reader++);
+    const unsigned char tmp2 = *(reader++);
+
+    *(writer++) = encoding[(tmp1 >> 2) & 63];
+    *(writer++) = encoding[((tmp1 & 3) << 4) | ((tmp2 >> 4) & 15)];
+    *(writer++) = encoding[((tmp2 & 15) << 2)];
+    *(writer++) = '=';
+  } break;
+  case 1: {
+    const unsigned char tmp1 = *(reader++);
+
+    *(writer++) = encoding[(tmp1 >> 2) & 63];
+    *(writer++) = encoding[(tmp1 & 3) << 4];
+    *(writer++) = '=';
+    *(writer++) = '=';
+  } break;
+  }
+  dest->buf[dest->len] = 0;
+  return r;
+}
+
+/** Writes decoded base64 data to String. */
+SFUNC int fio_string_write_base64dec(fio_str_info_s *dest,
+                                     fio_string_realloc_fn reallocate,
+                                     const void *encoded_,
+                                     size_t len) {
+  /* Base64 decoding array. Generation script (Ruby):
+s = ["ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
+     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_="]
+valid = []; (0..255).each {|i| valid[i] = 0 };
+decoder = []; (0..127).each {|i| decoder[i] = 0 };
+s.each {|d| d.bytes.each_with_index { |b, i| decoder[b] = i; valid[b] = 1 } };
+p valid; p decoder; nil
+  */
+  static const uint8_t base64_valid[256] = {
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1,
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1,
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1,
+      0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+      1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  };
+  static const uint8_t base64_decodes[128] = {
+      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  62, 0,  62, 0,  63,
+      52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 0,  0,  0,  64, 0,  0,
+      0,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14,
+      15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 0,  0,  0,  0,  63,
+      0,  26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+      41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 0,  0,  0,  0,  0,
+  };
+  int r = 0;
+  if (!dest || !encoded_ || !len)
+    return r;
+  const uint8_t *encoded = (const uint8_t *)encoded_;
+  /* skip unknown data at end */
+  while (len && !base64_valid[encoded[len - 1]]) {
+    len--;
+  }
+  if (!len)
+    return (r = -1);
+
+  /* reserve memory space */
+  {
+    size_t required_len = (((len >> 2) * 3) + 3);
+    if (fio_string___write_validate_len(dest, reallocate, &required_len)) {
+      return (r = -1); /* no partial decoding. */
+    };
+  }
+
+  /* decoded and count actual length */
+  size_t pos = 0;
+  uint8_t b64wrd[4];
+  const uint8_t *stop = encoded + len;
+  uint8_t *writer = (uint8_t *)dest->buf + dest->len;
+  for (;;) {
+    if (base64_valid[encoded[0]])
+      b64wrd[pos++] = base64_decodes[encoded[0]];
+    else if (!isspace(encoded[0]))
+      break;
+    ++encoded;
+    if (pos == 4) {
+      writer[0] = (b64wrd[0] << 2) | (b64wrd[1] >> 4);
+      writer[1] = (b64wrd[1] << 4) | (b64wrd[2] >> 2);
+      writer[2] = (b64wrd[2] << 6) | b64wrd[3];
+      pos = 0;
+      writer += 3;
+    }
+    if (encoded == stop)
+      break;
+  }
+  switch (pos) {
+  case 1: b64wrd[1] = 0; /* fall through */
+  case 2: b64wrd[2] = 0; /* fall through */
+  case 3: b64wrd[3] = 0; /* fall through */
+  case 4:
+    writer[0] = (b64wrd[0] << 2) | (b64wrd[1] >> 4);
+    writer[1] = (b64wrd[1] << 4) | (b64wrd[2] >> 2);
+    writer[2] = (b64wrd[2] << 6) | b64wrd[3];
+    writer += 3;
+  }
+  writer -= (encoded[-1] == '=') + (encoded[-2] == '=');
+  if (writer < ((uint8_t *)dest->buf + dest->len))
+    writer = ((uint8_t *)dest->buf + dest->len);
+  dest->len = (size_t)(writer - (uint8_t *)dest->buf);
+  dest->buf[dest->len] = 0;
+  return r;
+}
+
+/* *****************************************************************************
+String URL Encoding support
+***************************************************************************** */
+
+/** Writes data to String using URL encoding (a.k.a., percent encoding). */
+SFUNC int fio_string_write_url_enc(fio_str_info_s *dest,
+                                   fio_string_realloc_fn reallocate,
+                                   const void *data,
+                                   size_t data_len) {
+  static const uint8_t url_enc_map[256] = {
+      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 2,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 0,
+      2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2};
+  int r = 0;
+  /* reserve memory space */
+  {
+    size_t required_len = data_len;
+    for (size_t i = 0; i < data_len; ++i) {
+      required_len += url_enc_map[((uint8_t *)data)[i]];
+    }
+    if (fio_string___write_validate_len(dest, reallocate, &required_len)) {
+      return (r = -1); /* no partial encoding. */
+    };
+  }
+  for (size_t i = 0; i < data_len; ++i) {
+    if (!url_enc_map[((uint8_t *)data)[i]]) {
+      dest->buf[dest->len++] = ((uint8_t *)data)[i];
+      continue;
+    }
+    dest->buf[dest->len++] = '%';
+    dest->buf[dest->len++] = fio_i2c(((uint8_t *)data)[i] >> 4);
+    dest->buf[dest->len++] = fio_i2c(((uint8_t *)data)[i] & 15);
+  }
+  dest->buf[dest->len] = 0;
+  return r;
+}
+
+/** Writes decoded URL data to String. */
+FIO_IFUNC int fio_string_write_url_dec_internal(
+    fio_str_info_s *dest,
+    fio_string_realloc_fn reallocate,
+    const void *encoded,
+    size_t encoded_len,
+    _Bool plus_is_included) {
+  int r = 0;
+  if (!dest || !encoded || !encoded_len)
+    return r;
+  uint8_t *pr = (uint8_t *)encoded;
+  uint8_t *last = pr;
+  uint8_t *end = pr + encoded_len;
+  if (dest->len + encoded_len >= dest->capa) { /* reserve only what we need */
+    size_t act_len = 0;
+    while (end > pr && (pr = (uint8_t *)FIO_MEMCHR(pr, '%', end - pr))) {
+      act_len += pr - last;
+      last = pr + 1;
+      if (end - last > 1 && fio_c2i(last[0]) < 16 && fio_c2i(last[1]) < 16)
+        last += 2;
+      else if (end - last > 4 && (last[0] | 32) == 'u' &&
+               fio_c2i(last[1]) < 16 && fio_c2i(last[2]) < 16 &&
+               fio_c2i(last[3]) < 16 && fio_c2i(last[4]) < 16) {
+        last += 5;
+        act_len += 3; /* uXXXX length maxes out at 4 ... I think */
+      }
+      pr = last;
+    }
+    act_len += end - last;
+    if (fio_string___write_validate_len(dest, reallocate, &act_len)) {
+      return (r = -1); /* no partial decoding. */
+    };
+  }
+  /* copy and un-encode data */
+  pr = (uint8_t *)encoded;
+  last = pr;
+  end = pr + encoded_len;
+  while (end > pr && (pr = (uint8_t *)FIO_MEMCHR(pr, '%', end - pr))) {
+    const size_t slice_len = pr - last;
+    if (slice_len) {
+      FIO_MEMCPY(dest->buf + dest->len, last, slice_len);
+      /* test for '+' in the slice that has no % characters */
+      if (plus_is_included) {
+        uint8_t *start_plus = (uint8_t *)dest->buf + dest->len;
+        uint8_t *end_plus = start_plus + slice_len;
+        while (
+            start_plus && start_plus < end_plus &&
+            (start_plus =
+                 (uint8_t *)FIO_MEMCHR(start_plus, '+', end_plus - start_plus)))
+          *(start_plus++) = ' ';
+      }
+    }
+    dest->len += slice_len;
+    last = pr + 1;
+    if (end - last > 1 && fio_c2i(last[0]) < 16 && fio_c2i(last[1]) < 16) {
+      dest->buf[dest->len++] = (fio_c2i(last[0]) << 4) | fio_c2i(last[1]);
+      last += 2;
+    } else if (end - last > 4 && (last[0] | 32) == 'u' &&
+               fio_c2i(last[1]) < 16 && fio_c2i(last[2]) < 16 &&
+               fio_c2i(last[3]) < 16 && fio_c2i(last[4]) < 16) {
+      uint32_t u = (((fio_c2i(last[1]) << 4) | fio_c2i(last[2])) << 8) |
+                   ((fio_c2i(last[3]) << 4) | fio_c2i(last[4]));
+      if (end - last > 9 &&
+          ((fio_c2i(last[1]) << 4) | fio_c2i(last[2])) == 0xD8U &&
+          last[5] == '%' && last[6] == 'u' && fio_c2i(last[7]) < 16 &&
+          fio_c2i(last[8]) < 16 && fio_c2i(last[9]) < 16 &&
+          fio_c2i(last[10]) < 16) {
+        /* surrogate-pair (high/low code points) */
+        u = (u & 0x03FF) << 10;
+        u |= (((((fio_c2i(last[7]) << 4) | fio_c2i(last[8])) << 8) |
+               ((fio_c2i(last[9]) << 4) | fio_c2i(last[10]))) &
+              0x03FF);
+        u += 0x10000;
+        last += 6;
+      }
+      dest->len += fio_utf8_write((uint8_t *)dest->buf + dest->len, u);
+      last += 5;
+    } else {
+      dest->buf[dest->len++] = '%';
+    }
+    pr = last;
+  }
+  if (end > last) {
+    const size_t slice_len = end - last;
+    FIO_MEMCPY(dest->buf + dest->len, last, slice_len);
+    /* test for '+' in the slice that has no % characters */
+    if (plus_is_included) {
+      uint8_t *start_plus = (uint8_t *)dest->buf + dest->len;
+      uint8_t *end_plus = start_plus + slice_len;
+      while (
+          start_plus && start_plus < end_plus &&
+          (start_plus =
+               (uint8_t *)FIO_MEMCHR(start_plus, '+', end_plus - start_plus)))
+        *(start_plus++) = ' ';
+    }
+    dest->len += slice_len;
+  }
+  dest->buf[dest->len] = 0;
+  return r;
+}
+
+/** Writes decoded URL data to String. */
+SFUNC int fio_string_write_url_dec(fio_str_info_s *dest,
+                                   fio_string_realloc_fn reallocate,
+                                   const void *encoded,
+                                   size_t encoded_len) {
+  return fio_string_write_url_dec_internal(dest,
+                                           reallocate,
+                                           encoded,
+                                           encoded_len,
+                                           1);
+}
+
+/** Writes decoded URL data to String. */
+SFUNC int fio_string_write_path_dec(fio_str_info_s *dest,
+                                    fio_string_realloc_fn reallocate,
+                                    const void *encoded,
+                                    size_t encoded_len) {
+  return fio_string_write_url_dec_internal(dest,
+                                           reallocate,
+                                           encoded,
+                                           encoded_len,
+                                           0);
+}
+
+/* *****************************************************************************
+String HTML escaping support
+***************************************************************************** */
+
+/** Writes HTML escaped data to a String. */
+SFUNC int fio_string_write_html_escape(fio_str_info_s *dest,
+                                       fio_string_realloc_fn reallocate,
+                                       const void *data,
+                                       size_t data_len) {
+  /* produced using the following Ruby script:
+    a = (0..255).to_a.map {|i| "&#x#{i.to_s(16)};" }
+    must_escape = ['&', '<', '>', '"', "'", '`', '!', '@', '$', '%',
+                   '(', ')', '=', '+', '{', '}', '[', ']'] # space?
+    ["\b","\f","\n","\r","\t",'\\'].each {|i| a[i.ord] = i }
+    (32..123).each {|i| a[i] = i.chr unless must_escape.include?(i.chr) }
+    {'<': "&lt;", '>': "&gt;", '"': "&qout;", '&': "&amp;"}.each {|k,v|
+       a[k.to_s.ord] = v
+    }
+    b = a.map {|s| s.length }
+    puts "static const uint8_t html_escape_len[] = {", b.to_s.slice(1..-2), "};"
+  */
+  static const uint8_t html_escape_len[] = {
+      5, 5, 5, 5, 5, 5, 5, 5, 1, 1, 1, 5, 1, 1, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6,
+      6, 6, 6, 6, 6, 6, 6, 6, 1, 6, 6, 1, 6, 6, 5, 6, 6, 6, 1, 6, 1, 1, 1, 1,
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 6, 4, 1, 6, 1, 1, 1, 1, 1, 1, 1,
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 6, 1, 6, 1, 1,
+      6, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+      1, 1, 1, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+      6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+      6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+      6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+      6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+      6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6};
+  int r = 0;
+  size_t start = 0;
+  size_t pos = 0;
+  if (!data_len || !data || !dest)
+    return r;
+  { /* reserve memory space */
+    size_t required_len = data_len;
+    for (size_t i = 0; i < data_len; ++i) {
+      required_len += html_escape_len[((uint8_t *)data)[i]];
+    }
+    if (fio_string___write_validate_len(dest, reallocate, &required_len)) {
+      return (r = -1); /* no partial encoding. */
+    };
+  }
+  for (;;) { /* copy and encode data */
+    while (pos < data_len && html_escape_len[((uint8_t *)data)[pos]] == 1)
+      ++pos;
+    /* don't escape valid UTF-8 */
+    if (pos < data_len)
+      switch (
+          fio_string_utf8_valid_code_point((void *)(((uint8_t *)data) + pos),
+                                           data_len - pos)) {
+      case 4: ++pos; /* fall through */
+      case 3: ++pos; /* fall through */
+      case 2: pos += 2; continue;
+      }
+    /* copy valid segment before escaping */
+    if (pos != start) {
+      const size_t len = pos - start;
+      FIO_MEMCPY(dest->buf + dest->len, (uint8_t *)data + start, len);
+      dest->len += len;
+      start = pos;
+    }
+    if (pos == data_len)
+      break;
+    /* escape data */
+    dest->buf[dest->len++] = '&';
+    switch (((uint8_t *)data)[pos]) {
+    case '<':
+      dest->buf[dest->len++] = 'l';
+      dest->buf[dest->len++] = 't';
+      break;
+    case '>':
+      dest->buf[dest->len++] = 'g';
+      dest->buf[dest->len++] = 't';
+      break;
+    case '"':
+      dest->buf[dest->len++] = 'q';
+      dest->buf[dest->len++] = 'u';
+      dest->buf[dest->len++] = 'o';
+      dest->buf[dest->len++] = 't';
+      break;
+    case '&':
+      dest->buf[dest->len++] = 'a';
+      dest->buf[dest->len++] = 'm';
+      dest->buf[dest->len++] = 'p';
+      break;
+    default:
+      dest->buf[dest->len++] = '#';
+      dest->buf[dest->len++] = 'x';
+      dest->len += ((dest->buf[dest->len] =
+                         fio_i2c(((uint8_t *)data)[pos] >> 4)) != '0');
+      dest->buf[dest->len++] = fio_i2c(((uint8_t *)data)[pos] & 15);
+    }
+    dest->buf[dest->len++] = ';';
+    ++pos;
+    start = pos;
+  }
+  dest->buf[dest->len] = 0;
+  return r;
+}
+
+/** Writes HTML un-escaped data to a String - incomplete and minimal. */
+SFUNC int fio_string_write_html_unescape(fio_str_info_s *dest,
+                                         fio_string_realloc_fn reallocate,
+                                         const void *data,
+                                         size_t data_len) {
+  int r = 0;
+  struct {
+    uint64_t code;
+    uint32_t clen;
+    uint8_t r[4];
+  } html_named_codes[] = {
+#define FIO___STRING_HTML_CODE_POINT(named_code, result)                       \
+  {.code = *(uint64_t *)(named_code "\0\0\0\0\0\0\0\0"),                       \
+   .clen = (uint32_t)(sizeof(named_code) - 1),                                 \
+   .r = result}
+      FIO___STRING_HTML_CODE_POINT("lt", "<"),
+      FIO___STRING_HTML_CODE_POINT("gt", ">"),
+      FIO___STRING_HTML_CODE_POINT("amp", "&"),
+      FIO___STRING_HTML_CODE_POINT("apos", "'"),
+      FIO___STRING_HTML_CODE_POINT("quot", "\""),
+      FIO___STRING_HTML_CODE_POINT("nbsp", "\xC2\xA0"),
+      FIO___STRING_HTML_CODE_POINT("tab", "\t"),
+      FIO___STRING_HTML_CODE_POINT("ge", "≥"),
+      FIO___STRING_HTML_CODE_POINT("le", "≤"),
+      FIO___STRING_HTML_CODE_POINT("ne", "≠"),
+      FIO___STRING_HTML_CODE_POINT("copy", "©"),
+      FIO___STRING_HTML_CODE_POINT("raquo", "»"),
+      FIO___STRING_HTML_CODE_POINT("laquo", "«"),
+      FIO___STRING_HTML_CODE_POINT("rdquo", "”"),
+      FIO___STRING_HTML_CODE_POINT("ldquo", "“"),
+      FIO___STRING_HTML_CODE_POINT("reg", "®"),
+      FIO___STRING_HTML_CODE_POINT("asymp", "≈"),
+      FIO___STRING_HTML_CODE_POINT("bdquo", "„"),
+      FIO___STRING_HTML_CODE_POINT("bull", "•"),
+      FIO___STRING_HTML_CODE_POINT("cent", "¢"),
+      FIO___STRING_HTML_CODE_POINT("euro", "€"),
+      FIO___STRING_HTML_CODE_POINT("dagger", "†"),
+      FIO___STRING_HTML_CODE_POINT("deg", "°"),
+      FIO___STRING_HTML_CODE_POINT("frac14", "¼"),
+      FIO___STRING_HTML_CODE_POINT("frac12", "½"),
+      FIO___STRING_HTML_CODE_POINT("frac34", "¾"),
+      FIO___STRING_HTML_CODE_POINT("hellip", "…"),
+      FIO___STRING_HTML_CODE_POINT("lsquo", "‘"),
+      FIO___STRING_HTML_CODE_POINT("mdash", "—"),
+      FIO___STRING_HTML_CODE_POINT("middot", "·"),
+      FIO___STRING_HTML_CODE_POINT("ndash", "–"),
+      FIO___STRING_HTML_CODE_POINT("para", "¶"),
+      FIO___STRING_HTML_CODE_POINT("plusmn", "±"),
+      FIO___STRING_HTML_CODE_POINT("pound", "£"),
+      FIO___STRING_HTML_CODE_POINT("prime", "′"),
+      FIO___STRING_HTML_CODE_POINT("rsquo", "’"),
+      FIO___STRING_HTML_CODE_POINT("sbquo", "‚"),
+      FIO___STRING_HTML_CODE_POINT("sect", "§"),
+      FIO___STRING_HTML_CODE_POINT("trade", "™"),
+      FIO___STRING_HTML_CODE_POINT("yen", "¥"),
+  };
+  if (!dest || !data || !data_len)
+    return r;
+  size_t reduced = data_len + dest->len;
+  uint8_t *start = (uint8_t *)data;
+  uint8_t *const end = start + data_len;
+  if (dest->len + data_len >= dest->capa) { /* reserve only what we need */
+    reduced = data_len;
+    uint8_t *del = start;
+    while (end > del && (del = (uint8_t *)FIO_MEMCHR(del, '&', end - del))) {
+      uint8_t *tmp = del++;
+      /* note that in some cases the `;` might be dropped (history) */
+      if (del[0] == '#') {
+        ++del;
+        del += (del[0] == 'x');
+        uint64_t num =
+            (del[-1] == 'x' ? fio_atol16u : fio_atol10u)((char **)&del);
+        if (del >= end || num > 65535) /* untrusted result */
+          continue;
+        del += (*del == ';');
+        reduced -= (del - tmp);
+        reduced += fio_utf8_code_len((uint32_t)num);
+        continue;
+      }
+      union {
+        uint64_t u64;
+        uint8_t u8[8];
+      } u;
+      for (size_t i = 0;
+           i < sizeof(html_named_codes) / sizeof(html_named_codes[0]);
+           ++i) {
+        u.u64 = 0;
+        for (size_t p = 0; p < html_named_codes[i].clen; ++p)
+          u.u8[p] = del[p] | 32;
+        if (u.u64 != html_named_codes[i].code)
+          continue;
+        del += html_named_codes[i].clen;
+        if (del > end)
+          break;
+        del += (del < end && del[0] == ';');
+        reduced -= (del - tmp);
+        for (size_t j = 0; html_named_codes[i].r[j]; ++j)
+          ++reduced;
+        break;
+      }
+    }
+    if (fio_string___write_validate_len(dest, reallocate, &reduced)) {
+      return (r = -1); /* no partial decoding. */
+    }
+    reduced += dest->len;
+  }
+  { /* copy and unescape data */
+    uint8_t *del = start = (uint8_t *)data;
+    while (end > (start = del) &&
+           (del = (uint8_t *)FIO_MEMCHR(del, '&', end - del))) {
+      if (start != del) {
+        const size_t len = del - start;
+        FIO_MEMCPY(dest->buf + dest->len, start, len);
+        dest->len += len;
+        start = del;
+      }
+      ++del;
+      if (del == end)
+        break;
+      if (del[0] == '#') {
+        ++del;
+        if (del + 2 > end)
+          break;
+        del += (del[0] == 'x');
+        uint64_t num =
+            (del[-1] == 'x' ? fio_atol16u : fio_atol10u)((char **)&del);
+        if (*del != ';' || num > 65535)
+          goto untrusted_no_encode;
+        dest->len +=
+            fio_utf8_write((uint8_t *)dest->buf + dest->len, (uint32_t)num);
+        del += (del < end && del[0] == ';');
+        continue;
+      }
+      /* note that in some cases the `;` might be dropped (history) */
+      for (size_t i = 0;
+           i < sizeof(html_named_codes) / sizeof(html_named_codes[0]);
+           ++i) {
+        union {
+          uint64_t u64;
+          uint8_t u8[8];
+        } u = {0};
+        for (size_t p = 0; p < html_named_codes[i].clen; ++p)
+          u.u8[p] = del[p] | 32;
+        if (u.u64 != html_named_codes[i].code)
+          continue;
+        del += html_named_codes[i].clen;
+        del += (del < end && del[0] == ';');
+        start = del;
+        for (size_t j = 0; html_named_codes[i].r[j]; ++j) {
+          dest->buf[dest->len++] = html_named_codes[i].r[j];
+        }
+        break;
+      }
+      if (start == del)
+        continue;
+    untrusted_no_encode: /* untrusted, don't decode */
+      del += (del < end && del[0] == ';');
+      FIO_MEMCPY(dest->buf + dest->len, start, del - start);
+      dest->len += del - start;
+    }
+  }
+  if (start < end) {
+    const size_t len = end - start;
+    FIO_MEMCPY(dest->buf + dest->len, start, len);
+    dest->len += len;
+  }
+  dest->buf[dest->len] = 0;
+  FIO_ASSERT_DEBUG(dest->len < reduced + 1,
+                   "string HTML unescape reduced calculation error");
+  return r;
+}
+
+/* *****************************************************************************
+String File Reading support
+***************************************************************************** */
+
+FIO_IFUNC intptr_t fio___string_fd_normalise_offset(intptr_t i,
+                                                    size_t file_len) {
+  if (i < 0) {
+    i += (intptr_t)file_len + 1;
+    if (i < 0)
+      i = 0;
+  }
+  return i;
+}
+
+/**
+ * Writes up to `limit` bytes from `fd` into `dest`, starting at `start_at`.
+ *
+ * If `limit` is 0 (or less than 0) data will be written until EOF.
+ *
+ * If `start_at` is negative, position will be calculated from the end of the
+ * file where `-1 == EOF`.
+ *
+ * Note: this will fail unless used on actual files (not sockets, not pipes).
+ * */
+SFUNC int fio_string_readfd(fio_str_info_s *dest,
+                            fio_string_realloc_fn reallocate,
+                            int fd,
+                            intptr_t start_at,
+                            size_t limit) {
+  int r = 0;
+  if (!dest) {
+    return r;
+  }
+  size_t file_len = fio_fd_size(fd);
+  start_at = fio___string_fd_normalise_offset(start_at, file_len);
+  if (!limit || file_len < (size_t)(limit + start_at)) {
+    limit = (intptr_t)file_len - start_at;
+  }
+  if (!file_len || !limit || (size_t)start_at >= file_len) {
+    return (r = -1);
+  }
+  r = fio_string___write_validate_len(dest, reallocate, &limit);
+  size_t added = fio_fd_read(fd, dest->buf + dest->len, limit, (off_t)start_at);
+  dest->len += added;
+  dest->buf[dest->len] = 0;
+  return r;
+}
+
+/**
+ * Opens the file `filename` and pastes it's contents (or a slice ot it) at
+ * the end of the String. If `limit == 0`, than the data will be read until
+ * EOF.
+ *
+ * If the file can't be located, opened or read, or if `start_at` is beyond
+ * the EOF position, NULL is returned in the state's `data` field.
+ */
+SFUNC int fio_string_readfile(fio_str_info_s *dest,
+                              fio_string_realloc_fn reallocate,
+                              const char *filename,
+                              intptr_t start_at,
+                              size_t limit) {
+  int r = -1;
+  int fd = fio_filename_open(filename, O_RDONLY);
+  if (fd == -1)
+    return r;
+  r = fio_string_readfd(dest, reallocate, fd, start_at, limit);
+  close(fd);
+  return r;
+}
+
+/**
+ * Writes up to `limit` bytes from `fd` into `dest`, starting at `start_at`
+ * and ending at the first occurrence of `token`.
+ *
+ * If `limit` is 0 (or less than 0) as much data as may be required will be
+ * written.
+ *
+ * If `start_at` is negative, position will be calculated from the end of the
+ * file where `-1 == EOF`.
+ *
+ * Note: this will fail unless used on actual seekable files (not sockets, not
+ * pipes).
+ * */
+SFUNC int fio_string_getdelim_fd(fio_str_info_s *dest,
+                                 fio_string_realloc_fn reallocate,
+                                 int fd,
+                                 intptr_t start_at,
+                                 char delim,
+                                 size_t limit) {
+  int r = -1;
+  if (!dest || fd == -1)
+    return (r = 0);
+  size_t file_len = fio_fd_size(fd);
+  if (!file_len)
+    return r;
+  start_at = fio___string_fd_normalise_offset(start_at, file_len);
+  if ((size_t)start_at >= file_len)
+    return r;
+  size_t index = fio_fd_find_next(fd, delim, (size_t)start_at);
+  if (index == FIO_FD_FIND_EOF)
+    index = file_len;
+  if (limit < 1 || limit > (index - start_at) + 1) {
+    limit = (index - start_at) + 1;
+  }
+
+  r = fio_string___write_validate_len(dest, reallocate, &limit);
+  size_t added = fio_fd_read(fd, dest->buf + dest->len, limit, (off_t)start_at);
+  dest->len += added;
+  dest->buf[dest->len] = 0;
+  return r;
+}
+
+/**
+ * Opens the file `filename`, calls `fio_string_getdelim_fd` and closes the
+ * file.
+ */
+SFUNC int fio_string_getdelim_file(fio_str_info_s *dest,
+                                   fio_string_realloc_fn reallocate,
+                                   const char *filename,
+                                   intptr_t start_at,
+                                   char delim,
+                                   size_t limit) {
+  int r = -1;
+  int fd = fio_filename_open(filename, O_RDONLY);
+  if (fd == -1)
+    return r;
+  r = fio_string_getdelim_fd(dest, reallocate, fd, start_at, delim, limit);
+  close(fd);
+  return r;
+}
+
+/* *****************************************************************************
+Binary String Type - Embedded Strings
+***************************************************************************** */
+/** default reallocation callback implementation */
+SFUNC int fio_bstr_reallocate(fio_str_info_s *dest, size_t len) {
+  fio___bstr_meta_s *bstr_m = NULL;
+  if (len > UINT32_MAX || len > (SIZE_MAX - sizeof(bstr_m[0])))
+    return -1;
+  size_t new_capa = fio_string_capa4len(len + sizeof(bstr_m[0]));
+  if (dest->capa < fio_string_capa4len(sizeof(bstr_m[0])))
+    goto copy_the_string;
+  bstr_m = (fio___bstr_meta_s *)FIO_MEM_REALLOC_(
+      ((fio___bstr_meta_s *)dest->buf - 1),
+      sizeof(bstr_m[0]) + dest->capa,
+      new_capa,
+      FIO___BSTR_META(dest->buf)->len + sizeof(bstr_m[0]));
+  if (!bstr_m)
+    return -1;
+update_metadata:
+  dest->buf = (char *)(bstr_m + 1);
+  dest->capa = new_capa - sizeof(bstr_m[0]);
+  bstr_m->capa = (uint32_t)dest->capa;
+  return 0;
+
+copy_the_string:
+  bstr_m = (fio___bstr_meta_s *)FIO_MEM_REALLOC_(NULL, 0, new_capa, 0);
+  if (!bstr_m)
+    return -1;
+  if (!FIO_MEM_REALLOC_IS_SAFE_)
+    *bstr_m = (fio___bstr_meta_s){0};
+  FIO_LEAK_COUNTER_ON_ALLOC(fio_bstr_s);
+  if (dest->len) {
+    FIO_MEMCPY((bstr_m + 1), dest->buf, dest->len + 1);
+    bstr_m->len = (uint32_t)dest->len;
+  }
+  if (dest->capa)
+    fio_bstr_free(dest->buf);
+  goto update_metadata;
+}
+
+/* *****************************************************************************
+String Core Cleanup
+***************************************************************************** */
+#endif /* FIO_EXTERN_COMPLETE */
+#undef FIO_STR
+#endif /* H__FIO_STR__H */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_GFM                /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                        GFM Markdown Parser (Flat-State)
+
+  Non-recursive, zero-allocation GFM parser. Replaces `004 markdown.h`.
+
+  Algorithm:
+    Follows GFM spec appendix A exactly. Three steps per line:
+      Step 1: Match open container continuations (outermost → innermost)
+      Step 2: Check for new block starts / lazy continuation
+      Step 3: Incorporate text into the deepest open block
+
+    All container state lives in a flat array indexed by depth — no C
+    recursion, no stack overflow risk. Inline parsing uses a forward-scan
+    approach with a local open-section stack.
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_GFM) && !defined(H___FIO_GFM___H)
+#define H___FIO_GFM___H
+
+/* Dependency: ML entity decoding for inline parsing. */
+#ifndef H___FIO_ENTITY___H
+#define FIO_ENTITY
+#define FIO___RECURSIVE_INCLUDE 1
+#include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
+#endif
+
+/* ---------------------------------------------------------------------------
+ * Configuration macros — user may override before inclusion.
+ * ------------------------------------------------------------------------- */
+
+#ifndef FIO_GFM_MAX_DEPTH
+/** Maximum container nesting depth (blockquote + list). */
+#define FIO_GFM_MAX_DEPTH 255
+#endif
+FIO_ASSERT_STATIC(FIO_GFM_MAX_DEPTH < 256,
+                  "FIO_GFM_MAX_DEPTH must fit in a single byte (<= 255)");
+
+#ifndef FIO_GFM_MAX_TABLE_COLUMNS
+/** Maximum table columns (2 bits each → 4 columns per byte). */
+#define FIO_GFM_MAX_TABLE_COLUMNS 64
+#endif
+FIO_ASSERT_STATIC(FIO_GFM_MAX_TABLE_COLUMNS > 0,
+                  "FIO_GFM_MAX_TABLE_COLUMNS too small");
+
+#ifndef FIO_GFM_REF_CACHE_SIZE
+/** Maximum reference definitions held in the fast cache. */
+#define FIO_GFM_REF_CACHE_SIZE 128
+#endif
+FIO_ASSERT_STATIC(FIO_GFM_REF_CACHE_SIZE > 0,
+                  "FIO_GFM_REF_CACHE_SIZE too small");
+
+/* Inline delimiter stack is local to fio___gfm_inline_parse() — not in
+ * the parser struct. See FIO___GFM_MAX_OPEN_SECTIONS in the inline parser
+ * section. This keeps the parser struct ~4 KB smaller. */
+
+/* ---------------------------------------------------------------------------
+ * Internal constants
+ * ------------------------------------------------------------------------- */
+
+#define FIO___GFM_TAB_WIDTH         4U
+#define FIO___GFM_MAX_MARKER_INDENT 3U
+#define FIO___GFM_MIN_FENCE_LEN     3
+#define FIO___GFM_MAX_ATX_HEADING   6
+#define FIO___GFM_MAX_ENTITY_LEN    32
+
+/** Error codes — negative values are parser-generated. */
+#define FIO_GFM_ERR_GENERIC -1
+#define FIO_GFM_ERR_DEPTH   -2
+#define FIO_GFM_ERR_INPUT   -3
+
+/* ---------------------------------------------------------------------------
+ * Block flags (on container events via `fio_gfm_event_s.flags`)
+ * ------------------------------------------------------------------------- */
+
+/** List is tight (no blank lines between items). */
+#define FIO_GFM_F_TIGHT ((uint8_t)1U << 0)
+/** A blank line was seen between items — list is loose. */
+#define FIO_GFM_F_LOOSE_SEEN ((uint8_t)1U << 1)
+/** GFM task-list marker present. */
+#define FIO_GFM_F_TASK ((uint8_t)1U << 2)
+/** GFM task-list marker is checked. */
+#define FIO_GFM_F_TASK_CHECKED ((uint8_t)1U << 3)
+
+/** Internal: list item has already started block content. */
+#define FIO___GFM_F_LI_HAS_BLOCK ((uint8_t)1U << 4)
+/** Internal: empty list item saw an extra leading blank line. */
+#define FIO___GFM_F_LI_LEADING_BLANK ((uint8_t)1U << 5)
+
+/* ---------------------------------------------------------------------------
+ * Public API — self-contained, does NOT depend on 004 markdown.h.
+ *
+ * Callbacks: push / write / pop. Three callbacks, no error callback.
+ * Errors are communicated via return value from push/write/pop (non-zero
+ * aborts parsing) and the return value of fio_gfm_parse() (0 on error).
+ * ------------------------------------------------------------------------- */
+
+/** GFM node type. Covers block sections, inline sections, and text.
+ *  Value 0 is reserved (no active type). All public types are nonzero. */
+typedef enum {
+  /* === Block sections (push/pop pairs) === */
+  FIO_GFM_PARAGRAPH = 1,
+  FIO_GFM_HEADING,
+  FIO_GFM_THEMATIC_BREAK,
+  FIO_GFM_BLOCKQUOTE,
+  FIO_GFM_LIST_UNORDERED,
+  FIO_GFM_LIST_ORDERED,
+  FIO_GFM_LIST_ITEM,
+  FIO_GFM_CODE_BLOCK, /* indented or fenced — e->info has language tag.
+                        * Content emitted per-line as write(TEXT) events. */
+  FIO_GFM_HTML_BLOCK, /* content emitted per-line as write(TEXT) events. */
+  FIO_GFM_TABLE,
+  FIO_GFM_TABLE_ROW,
+  FIO_GFM_TABLE_CELL, /* content emitted per-cell via inline parse. */
+
+  /* === Inline sections (push/pop pairs) === */
+  FIO_GFM_EMPHASIS,      /* * or _ — single */
+  FIO_GFM_STRONG,        /* ** or __ — double */
+  FIO_GFM_STRIKETHROUGH, /* ~~ */
+  FIO_GFM_LINK,
+
+  /* === Text / leaf content (write only, no push/pop) === */
+  FIO_GFM_TEXT,         /* literal text — raw source slice, zero-copy.
+                         * Escapes and entities are NOT decoded; callbacks
+                         * receive the original source bytes. */
+  FIO_GFM_SOFT_BREAK,   /* line break → space in output */
+  FIO_GFM_HARD_BREAK,   /* forced line break (trailing \\ or 2+ spaces) */
+  FIO_GFM_CODE_SPAN,    /* inline code (`...`) — text is verbatim content */
+  FIO_GFM_IMAGE,        /* image — destination, title, text (alt) set */
+  FIO_GFM_AUTOLINK,     /* <url> or GFM extended autolink */
+  FIO_GFM_INLINE_HTML,  /* raw inline HTML tag */
+  FIO_GFM_FOOTNOTE_REF, /* GFM footnote reference [^label] */
+} fio_gfm_type_e;
+
+/** GFM table cell alignment. */
+typedef enum {
+  FIO_GFM_ALIGN_NONE = 0,
+  FIO_GFM_ALIGN_LEFT,
+  FIO_GFM_ALIGN_RIGHT,
+  FIO_GFM_ALIGN_CENTER,
+} fio_gfm_align_e;
+
+/** GFM event. Passed by pointer to all callbacks.
+ *
+ * `udata` is live: the parser copies it back after each callback,
+ * so the callback can update it (e.g., to push/pop render state). */
+typedef struct {
+  void *udata;                /* live: parser copies back after callback */
+  fio_buf_info_s source;      /* full source slice for this event */
+  fio_buf_info_s text;        /* text / label / code content */
+  fio_buf_info_s marker;      /* marker slice (`#`, fence, list marker) */
+  fio_buf_info_s info;        /* fenced code info string */
+  fio_buf_info_s destination; /* link/image/autolink URL */
+  fio_buf_info_s title;       /* link/image title */
+  fio_buf_info_s reference;   /* reference label for ref-style links/images */
+  uint32_t list_start;        /* ordered list start number */
+  uint16_t columns;           /* table column count */
+  uint16_t column;            /* table cell column index (0-based) */
+  uint8_t type;               /* fio_gfm_type_e */
+  uint8_t heading_level;      /* 1..6 for headings */
+  uint8_t flags;              /* FIO_GFM_F_* */
+  uint8_t align;              /* fio_gfm_align_e for table cells */
+  uint8_t padding;            /* virtual leading spaces from tab expansion */
+} fio_gfm_event_s;
+
+/** GFM parser callbacks. Three callbacks, all optional.
+ *
+ * push — emitted when a section opens (block or inline).
+ * write — emitted for text content and leaf nodes.
+ * pop  — emitted when a section closes.
+ *
+ * Return 0 to continue, non-zero to abort parsing. The non-zero value
+ * is propagated to any enclosing scope; positive values are user errors,
+ * negative values are reserved for parser errors.
+ */
+typedef struct {
+  int (*push)(fio_gfm_event_s *e);  /* section start */
+  int (*write)(fio_gfm_event_s *e); /* text / leaf content */
+  int (*pop)(fio_gfm_event_s *e);   /* section end */
+} fio_gfm_callbacks_s;
+
+/**
+ * Parses a complete Markdown/GFM document and emits callback events.
+ *
+ * Non-streaming: `source` must contain the complete document.
+ * Zero-copy: events are slices into `source`.
+ * Zero-allocation: all state lives on the C stack (~12 KB).
+ * Non-recursive: O(1) C stack depth.
+ *
+ * Returns the number of source bytes consumed. On error (callback returned
+ * non-zero, depth overflow, or invalid input), returns the byte offset where
+ * parsing stopped. Check the return value against `source.len` to detect
+ * incomplete parsing.
+ */
+SFUNC size_t fio_gfm_parse(const fio_gfm_callbacks_s *callbacks,
+                           void *udata,
+                           fio_buf_info_s source);
+
+/* *****************************************************************************
+ * GFM Parser — Implementation
+ *
+ * The entire implementation lives inside FIO_EXTERN_COMPLETE || !FIO_EXTERN
+ * so that when used as a header-only library the implementation compiles once.
+ * ************************************************************************** */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
+/* ===========================================================================
+ * Internal Types
+ * ========================================================================= */
+
+/** Reference definition cache entry. */
+typedef struct {
+  fio_buf_info_s label;
+  fio_buf_info_s destination;
+  fio_buf_info_s title;
+} fio___gfm_ref_s;
+
+/* Inline parser uses a forward-scan approach with a local open-section
+ * stack (allocated on the C stack inside fio___gfm_inline_parse()).
+ * No delimiter stack is stored in the parser struct. */
+
+/* --- Internal container types (encode marker identity) --- */
+#define FIO___GFM_CONT_BQ       0 /* blockquote */
+#define FIO___GFM_CONT_LI       1 /* list item */
+#define FIO___GFM_CONT_UL_DASH  2 /* unordered list, '-' bullet */
+#define FIO___GFM_CONT_UL_PLUS  3 /* unordered list, '+' bullet */
+#define FIO___GFM_CONT_UL_STAR  4 /* unordered list, '*' bullet */
+#define FIO___GFM_CONT_OL_DOT   5 /* ordered list, '.' delimiter */
+#define FIO___GFM_CONT_OL_PAREN 6 /* ordered list, ')' delimiter */
+
+/** Map internal container type to public fio_gfm_type_e for events. */
+FIO_IFUNC uint8_t fio___gfm_cont_public_type(uint8_t t) {
+  static const uint8_t map[] = {
+      FIO_GFM_BLOCKQUOTE,     /* 0: BQ */
+      FIO_GFM_LIST_ITEM,      /* 1: LI */
+      FIO_GFM_LIST_UNORDERED, /* 2: UL_DASH */
+      FIO_GFM_LIST_UNORDERED, /* 3: UL_PLUS */
+      FIO_GFM_LIST_UNORDERED, /* 4: UL_STAR */
+      FIO_GFM_LIST_ORDERED,   /* 5: OL_DOT */
+      FIO_GFM_LIST_ORDERED,   /* 6: OL_PAREN */
+  };
+  return (t < sizeof(map)) ? map[t] : 0;
+}
+
+/** Per-depth nesting entry. 4 bytes, no padding. */
+typedef struct {
+  uint8_t  type;   /* FIO___GFM_CONT_* — encodes container kind + marker */
+  uint8_t  flags;  /* reserved (available for future per-depth state) */
+  uint16_t indent; /* content indent (used by LIST_ITEM for continuation) */
+} fio___gfm_nest_s;
+
+/* ===========================================================================
+ * The Flat State Struct
+ *
+ * ALL parser state lives here. No local variables in recursive frames.
+ * This struct is allocated on the C stack in fio_gfm_parse().
+ *
+ * Cache-line layout (64-byte lines, single-threaded):
+ *
+ *   Line 0 (bytes 0-63):  HOT — touched every line of input.
+ *     Constant: cb, start, end.
+ *     Mutable:  udata, para_start, para_end, depth, matched_depth,
+ *               leaf_type, para_open, fence_char, leaf_html_type,
+ *               fence_len, fence_indent, err.
+ *     Packed to exactly 64 bytes — no wasted padding.
+ *
+ *   Line 1+ (bytes 64-1083): WARM — touched during container walks.
+ *     nest[] array, 4 bytes/entry, starts on cache line boundary.
+ *     Step 1 walks nest[0..depth-1] sequentially each line.
+ *     Typical depth 2-5 = 8-20 bytes = stays in one cache line.
+ *
+ *   After nest: WARM LEAF — touched only inside specific leaf types.
+ *     fence_info, leaf_start (fenced code / HTML block paths only).
+ *
+ *   Cold tail: Reference cache, table alignment, footnotes, consumed.
+ *     Touched only during inline parsing (ref lookup) or table rows.
+ * ========================================================================= */
+
+typedef struct {
+  /* =================================================================
+   * Cache line 0: HOT — every field here is accessed on most lines.
+   * 6 pointers (48) + 1 int (4) + 4 uint16 (8) + 4 uint8 (4) = 64.
+   * ================================================================= */
+
+  /* --- Constant (set once at parse start, read every emit) --- */
+  int (*push)(fio_gfm_event_s *);  /*  8 — inlined from callbacks_s */
+  int (*write)(fio_gfm_event_s *); /*  8 — avoids double-deref through cb-> */
+  int (*pop)(fio_gfm_event_s *);   /*  8 — all three in cache line 0 */
+  char   *start;                   /*  8 — document start */
+  char   *end;                     /*  8 — document end */
+
+  /* --- Mutable (read/written most lines) --- */
+  void   *udata;                   /*  8 — live: synced with events */
+  char   *para_start;              /*  8 — paragraph text accumulator */
+  char   *para_end;                /*  8 — end of accumulated para text */
+                                   /* --- 64 bytes: 8 pointers --- */
+
+  /* =================================================================
+   * Cache line 1: Mutable control + nesting stack head.
+   * depth/matched_depth are read then nest[] is walked — co-locate.
+   * leaf_type/para_open branch immediately after Step 1.
+   * Typical nest walk (depth 2-5) stays within this cache line.
+   * ================================================================= */
+  int      err;                    /*  4 — non-zero = abort */
+  uint16_t depth;                  /*  2 — container nesting depth */
+  uint16_t matched_depth;          /*  2 — deepest matched container */
+  uint16_t fence_len;              /*  2 — opening fence length */
+  uint16_t fence_indent;           /*  2 — opening fence indent */
+  uint8_t  leaf_type;              /*  1 — current leaf (0 = none) */
+  uint8_t  para_open;              /*  1 — 1 iff leaf_type == PARAGRAPH */
+  uint8_t  fence_char;             /*  1 — '`'/'~' = fenced, 0 = indented */
+  uint8_t  leaf_html_type;         /*  1 — HTML block sub-type (1-7) */
+                                   /* --- 16 bytes, then nest[] follows --- */
+
+  /* Container nesting stack. 4 bytes/entry.
+   * Internal types encode marker identity (see FIO___GFM_CONT_*).
+   * list_start not stored (passed on push, never re-read).
+   * Tight/loose determined by lookahead, not tracked here.
+   *
+   * Example for "> - foo":
+   *   nest[0] = { CONT_BQ,      .indent = 0 }
+   *   nest[1] = { CONT_UL_DASH, .indent = 0 }
+   *   nest[2] = { CONT_LI,      .indent = 4 }
+   */
+  fio___gfm_nest_s nest[FIO_GFM_MAX_DEPTH];
+
+  /* =================================================================
+   * WARM LEAF — only accessed inside fenced code / HTML block paths.
+   * ================================================================= */
+
+  /** Fenced code info string (language tag). Empty for indented code.
+   *  fence_char/fence_len/fence_indent live in cache line 0 (hot). */
+  fio_buf_info_s fence_info;
+  /** Source start of the current leaf. */
+  char *leaf_start;
+
+  /* =================================================================
+   * COLD — reference cache, table, footnotes, error bookkeeping.
+   * Touched only during inline parsing or specific leaf types.
+   * ================================================================= */
+
+  size_t consumed;  /* bytes consumed (for error reporting) */
+
+  /* Reference cache: lazy scan, 128 entries + 1 overflow slot. */
+  fio___gfm_ref_s refs[FIO_GFM_REF_CACHE_SIZE];
+  fio___gfm_ref_s ref_overflow_slot;
+  char    *ref_scanned_to;
+  uint16_t ref_count;
+  uint8_t  ref_overflow;
+
+  /* Table alignment (bit-packed, 2 bits/column). */
+  uint8_t  table_align[(FIO_GFM_MAX_TABLE_COLUMNS + 3) >> 2];
+  uint16_t table_columns;
+
+  /* Footnote state (GFM extension). */
+  uint8_t  in_footnote;
+  uint8_t  footnote_depth;
+
+  /* Indented code: pending blank lines (stripped if trailing per spec 4.4).
+   * Store (content, le) pairs to preserve whitespace content. */
+#define FIO___GFM_MAX_IC_BLANKS 32
+  char *ic_blank_content[FIO___GFM_MAX_IC_BLANKS];
+  char *ic_blank_le[FIO___GFM_MAX_IC_BLANKS];
+  uint16_t ic_pending_blanks;
+
+} fio___gfm_parser_s;
+
+/* Verify layout: cache line 0 = 8 pointers (64 bytes).
+ * Cache line 1 starts with 16 bytes of control fields, then nest[]. */
+FIO_ASSERT_STATIC(
+    offsetof(fio___gfm_parser_s, err) == 64,
+    "fio___gfm_parser_s: mutable control must start at byte 64");
+
+/* Forward declarations for cross-references between sections. */
+FIO_SFUNC int fio___gfm_close_paragraph(fio___gfm_parser_s *st);
+FIO_SFUNC int fio___gfm_close_leaf(fio___gfm_parser_s *st);
+FIO_SFUNC int fio___gfm_inline_parse(fio___gfm_parser_s *st,
+                                     char *start,
+                                     char *end);
+FIO_SFUNC int fio___gfm_emit_table_row(fio___gfm_parser_s *st,
+                                        char *p,
+                                        char *le);
+FIO_SFUNC void fio___gfm_ref_cache_add(fio___gfm_parser_s *st,
+                                       fio_buf_info_s label,
+                                       fio_buf_info_s dest,
+                                       fio_buf_info_s title);
+FIO_SFUNC char *fio___gfm_try_parse_ref_def(char *p,
+                                            char *end,
+                                            fio_buf_info_s *label,
+                                            fio_buf_info_s *dest,
+                                            fio_buf_info_s *title);
+FIO_SFUNC void fio___gfm_ref_scan_document(fio___gfm_parser_s *st);
+FIO_SFUNC char *fio___gfm_html_tag_end(char *p, char *end);
+
+/* ===========================================================================
+ * Nesting Stack Macros
+ *
+ * nest[] is 0-indexed: nest[0] is depth 1 (outermost), nest[depth-1] is
+ * innermost. depth==0 means no containers open.
+ * ========================================================================= */
+
+#define FIO___GFM_DEPTH(st)      ((st)->depth)
+#define FIO___GFM_TYPE(st, d)    ((st)->nest[(d)].type)
+#define FIO___GFM_TOP(st)        ((st)->nest[(st)->depth - 1])
+#define FIO___GFM_TOP_TYPE(st)   ((st)->nest[(st)->depth - 1].type)
+
+/** Push a container. Sets err on overflow. */
+#define FIO___GFM_PUSH(st, type_val, indent_val)                               \
+  do {                                                                         \
+    if ((st)->depth >= FIO_GFM_MAX_DEPTH) {                                    \
+      (st)->err = FIO_GFM_ERR_DEPTH;                                           \
+      break;                                                                   \
+    }                                                                          \
+    (st)->nest[(st)->depth++] = (fio___gfm_nest_s){                            \
+        .type = (type_val),                                                    \
+        .indent = (indent_val),                                                \
+    };                                                                         \
+  } while (0)
+
+/** Pop the innermost container. */
+#define FIO___GFM_POP(st) (--(st)->depth)
+
+/* ===========================================================================
+ * Table Alignment Macros (identical to 004 markdown.h)
+ * ========================================================================= */
+
+#define FIO___GFM_TABLE_ALIGN_GET(st, col)                                     \
+  (((st)->table_align[(col) >> 2] >> (((col)&3) << 1)) & 3)
+#define FIO___GFM_TABLE_ALIGN_SET(st, col, val)                                \
+  do {                                                                         \
+    uint8_t _shift = ((col)&3) << 1;                                           \
+    (st)->table_align[(col) >> 2] &= ~(3 << _shift);                           \
+    (st)->table_align[(col) >> 2] |= ((val)&3) << _shift;                      \
+  } while (0)
+
+/* ===========================================================================
+ * Event Emission Helpers
+ *
+ * Three callbacks: push / write / pop. No error callback.
+ * Errors are signaled by non-zero return from callbacks or by comparing
+ * the return value of fio_gfm_parse() against source.len.
+ *
+ * `udata` is live: the parser reads it back from the event after each
+ * callback, so callbacks can mutate it (e.g., push/pop render state).
+ * ========================================================================= */
+
+FIO_IFUNC void fio___gfm_event_init(fio___gfm_parser_s *st,
+                                    fio_gfm_event_s *e) {
+  FIO_MEMSET(e, 0, sizeof(*e));
+  e->udata = st->udata;
+}
+
+/** Emit a push (section open) event. Returns callback result. */
+FIO_IFUNC int fio___gfm_emit_push(fio___gfm_parser_s *st, fio_gfm_event_s *e) {
+  if (!st->push)
+    return 0;
+  e->udata = st->udata;
+  int r = st->push(e);
+  st->udata = e->udata;
+  return r;
+}
+
+/** Emit a write (text / leaf content) event. Returns callback result. */
+FIO_IFUNC int fio___gfm_emit_write(fio___gfm_parser_s *st, fio_gfm_event_s *e) {
+  if (!st->write)
+    return 0;
+  e->udata = st->udata;
+  int r = st->write(e);
+  st->udata = e->udata;
+  return r;
+}
+
+/** Emit a pop (section close) event. Returns callback result. */
+FIO_IFUNC int fio___gfm_emit_pop(fio___gfm_parser_s *st, fio_gfm_event_s *e) {
+  if (!st->pop)
+    return 0;
+  e->udata = st->udata;
+  int r = st->pop(e);
+  st->udata = e->udata;
+  return r;
+}
+
+/* ===========================================================================
+ * Low-Level Text Helpers
+ *
+ * These operate on raw source bytes. They handle tab expansion, virtual
+ * column computation, line boundary detection, and whitespace classification.
+ * ========================================================================= */
+
+/** Find the end of the current line (\n, \r, or end of document). */
+FIO_IFUNC char *fio___gfm_line_end(char *p, char *end) {
+  while (p < end && *p != '\n' && *p != '\r')
+    ++p;
+  return p;
+}
+
+/** Advance past the current line ending (\r\n, \n, \r, or stay at end). */
+FIO_IFUNC char *fio___gfm_line_next(char *le, char *end) {
+  le += (le < end && *le == '\r');
+  le += (le < end && *le == '\n');
+  return le;
+}
+
+/** Compute the virtual column at position `target` starting from `start`.
+ *  Tabs expand to the next multiple of 4. */
+FIO_IFUNC uint32_t fio___gfm_vcol(char *start, char *target) {
+  uint32_t col = 0;
+  while (start < target) {
+    uint32_t is_tab = (*start == '\t');
+    /* tab: jump to next multiple of 4. non-tab: advance by 1. */
+    col += is_tab *
+               (FIO___GFM_TAB_WIDTH - (col & (FIO___GFM_TAB_WIDTH - 1U)) - 1U) +
+           1U;
+    ++start;
+  }
+  return col;
+}
+
+/** Compute the virtual column of the first non-whitespace character.
+ *  Equivalent to fio___gfm_vcol(p, ltrim(p, le)). */
+FIO_IFUNC uint32_t fio___gfm_indent(char *p, char *le) {
+  uint32_t col = 0;
+  while (p < le && (*p == ' ' || *p == '\t')) {
+    uint32_t is_tab = (*p == '\t');
+    col += is_tab *
+               (FIO___GFM_TAB_WIDTH - (col & (FIO___GFM_TAB_WIDTH - 1U)) - 1U) +
+           1U;
+    ++p;
+  }
+  return col;
+}
+
+/** Skip whitespace, consuming up to `columns` virtual columns.
+ *  Returns pointer to position after consuming, or NULL if the line
+ *  has fewer than `columns` of whitespace. Sets *padding to the
+ *  overshoot if a tab crosses the column boundary. */
+FIO_IFUNC char *fio___gfm_skip_indent(char *p,
+                                      char *le,
+                                      uint32_t columns,
+                                      uint8_t *padding) {
+  uint32_t col = 0;
+  uint8_t pad = 0;
+  while (p < le && col < columns) {
+    uint32_t advance =
+        (*p == '\t') ? FIO___GFM_TAB_WIDTH - (col & (FIO___GFM_TAB_WIDTH - 1U))
+                     : (*p == ' ');
+    if (!advance)
+      break;
+    col += advance;
+    ++p;
+  }
+  pad = (uint8_t)((col - columns) & -(col > columns));
+  if (padding)
+    *padding = pad;
+  return col >= columns ? p : NULL;
+}
+
+/** Skip virtual indentation when earlier marker stripping left virtual spaces
+ *  before `p` (from a partially consumed tab). Updates *padding to leftover
+ *  virtual spaces that should be emitted before `p`. */
+FIO_IFUNC char *fio___gfm_skip_indent_with_padding(char *p,
+                                                   char *le,
+                                                   uint32_t columns,
+                                                   uint8_t *padding) {
+  uint8_t pad = padding ? *padding : 0;
+  if (pad >= columns) {
+    if (padding)
+      *padding = (uint8_t)(pad - columns);
+    return p;
+  }
+  columns -= pad;
+  if (padding)
+    *padding = 0;
+  return fio___gfm_skip_indent(p, le, columns, padding);
+}
+
+/** Left-trim whitespace. Only use before emitting TEXT events (G5). */
+FIO_IFUNC char *fio___gfm_ltrim(char *p, char *le) {
+  while (p < le && (*p == ' ' || *p == '\t'))
+    ++p;
+  return p;
+}
+
+/** Right-trim whitespace. */
+FIO_IFUNC char *fio___gfm_rtrim(char *start, char *end) {
+  while (end > start && (end[-1] == ' ' || end[-1] == '\t'))
+    --end;
+  return end;
+}
+
+/** Test if a line is blank (only whitespace between p and le). */
+FIO_IFUNC int fio___gfm_is_blank(char *p, char *le) {
+  return fio___gfm_ltrim(p, le) == le;
+}
+
+/* ASCII lowercase — use the core constant-time helper. */
+#define fio___gfm_tolower(c) fio_ct_tolower(c)
+
+/** Test if character is ASCII punctuation (per CommonMark). */
+FIO_IFUNC int fio___gfm_is_punct(char c) {
+  return (c >= '!' && c <= '/') || (c >= ':' && c <= '@') ||
+         (c >= '[' && c <= '`') || (c >= '{' && c <= '~');
+}
+
+/* ===========================================================================
+ * Block Detection Helpers
+ *
+ * Each helper tests whether the current content (after container markers
+ * have been consumed) starts a specific block type. They operate on
+ * virtual columns, never on raw byte offsets.
+ *
+ * TODO: Implement each of these. The signatures and contracts are final.
+ * ========================================================================= */
+
+/** Test for ATX heading: 1-6 '#' chars followed by space or end-of-line,
+ *  at indent <= 3.
+ *  Returns heading level (1-6) or 0 if not a heading. */
+FIO_SFUNC int fio___gfm_is_atx_heading(char *p, char *le) {
+  /* GFM spec section 4.2: 1-6 '#' then space/tab/EOL. */
+  if (p >= le || *p != '#')
+    return 0;
+  int level = 0;
+  while (p < le && *p == '#') {
+    ++level;
+    ++p;
+  }
+  if (level > FIO___GFM_MAX_ATX_HEADING)
+    return 0;
+  /* Must be followed by space, tab, or end of line */
+  if (p < le && *p != ' ' && *p != '\t')
+    return 0;
+  return level;
+}
+
+/** Test for thematic break: 3+ of same char (-, _, *) with optional spaces.
+ *  Returns 1 if thematic break, 0 otherwise. */
+FIO_SFUNC int fio___gfm_is_thematic_break(char *p, char *le) {
+  /* GFM spec section 4.1: 3+ of same char (- _ *), optional spaces. */
+  if (p >= le)
+    return 0;
+  char ch = *p;
+  if (ch != '-' && ch != '_' && ch != '*')
+    return 0;
+  int count = 0;
+  while (p < le) {
+    count += (*p == ch);
+    if (*p != ch && *p != ' ' && *p != '\t')
+      return 0;
+    ++p;
+  }
+  return count >= 3;
+}
+
+/** Test for blockquote marker: '>' at indent <= 3.
+ *  Returns 1 if blockquote marker found, 0 otherwise.
+ *  Sets *after to the position after '>' + optional space. */
+FIO_SFUNC int fio___gfm_is_blockquote(char *p,
+                                      char *le,
+                                      uint32_t base_col,
+                                      char **after,
+                                      uint8_t *padding) {
+  /* GFM spec section 5.1: '>' optionally followed by one virtual space. */
+  if (p >= le || *p != '>')
+    return 0;
+  ++p;
+  if (p < le && *p == ' ') {
+    ++p;
+  } else if (p < le && *p == '\t') {
+    uint32_t tab_cols = FIO___GFM_TAB_WIDTH -
+                        ((base_col + 1) & (FIO___GFM_TAB_WIDTH - 1U));
+    if (padding)
+      *padding = (uint8_t)(*padding + tab_cols - 1);
+    ++p;
+  }
+  *after = p;
+  return 1;
+}
+
+/** Test for fenced code opening: 3+ backticks or tildes at indent <= 3.
+ *  Returns fence length or 0 if not a fence opener.
+ *  Sets *fence_ch to the fence character. */
+FIO_SFUNC uint16_t fio___gfm_is_fenced_code_open(char *p,
+                                                 char *le,
+                                                 char *fence_ch) {
+  /* GFM spec section 4.5: 3+ backticks or tildes. */
+  if (p >= le || (*p != '`' && *p != '~'))
+    return 0;
+  char ch = *p;
+  uint16_t len = 0;
+  while (p < le && *p == ch) {
+    ++len;
+    ++p;
+  }
+  if (len < FIO___GFM_MIN_FENCE_LEN)
+    return 0;
+  /* Backtick fences: info string must not contain backtick */
+  if (ch == '`') {
+    for (char *s = p; s < le; ++s) {
+      if (*s == '`')
+        return 0;
+    }
+  }
+  *fence_ch = ch;
+  return len;
+}
+
+/** Test for closing fence: same char, length >= opening, indent <= 3.
+ *  Returns 1 if valid closing fence, 0 otherwise. */
+FIO_SFUNC int fio___gfm_is_fenced_code_close(char *p,
+                                             char *le,
+                                             char fence_ch,
+                                             uint16_t fence_len) {
+  /* GFM spec section 4.5: closing fence = same char, >= opener length. */
+  /* Skip up to 3 spaces of indent */
+  uint32_t ind = 0;
+  while (p < le && (*p == ' ' || *p == '\t') && ind < FIO___GFM_TAB_WIDTH) {
+    ind += (*p == '\t')
+               ? FIO___GFM_TAB_WIDTH - (ind & (FIO___GFM_TAB_WIDTH - 1U))
+               : 1;
+    ++p;
+  }
+  if (ind > FIO___GFM_MAX_MARKER_INDENT)
+    return 0;
+  if (p >= le || *p != fence_ch)
+    return 0;
+  uint16_t count = 0;
+  while (p < le && *p == fence_ch) {
+    ++count;
+    ++p;
+  }
+  if (count < fence_len)
+    return 0;
+  /* Rest of line must be whitespace */
+  while (p < le) {
+    if (*p != ' ' && *p != '\t')
+      return 0;
+    ++p;
+  }
+  return 1;
+}
+
+/** Parsed list marker result. */
+typedef struct {
+  char *content_start;     /* position where item content begins */
+  uint32_t start_num;      /* ordered list start number (0 for bullet) */
+  uint8_t type;            /* FIO___GFM_CONT_* internal type */
+  uint8_t marker_char;     /* '-', '+', '*', '.', or ')' */
+  uint16_t content_indent; /* virtual column of content start */
+  uint8_t  task;           /* FIO_GFM_F_TASK | FIO_GFM_F_TASK_CHECKED */
+  uint8_t  padding;        /* virtual spaces before content_start */
+} fio___gfm_list_marker_s;
+
+/** Test for list marker at current position.
+ *  Returns 1 if valid list marker found, 0 otherwise.
+ *  Fills *info with marker details.
+ *
+ *  Bullet markers: -, +, * followed by 1-4 spaces then content.
+ *  Ordered markers: 1-9 digits followed by . or ) then 1-4 spaces.
+ *
+ *  GFM spec: "the spaces after the list marker determine how much
+ *  relative indentation is needed." Content indent is the column of
+ *  the first non-whitespace character after the marker + spaces.
+ *  If the line after the marker is blank, content indent = marker width + 1.
+ */
+FIO_SFUNC int fio___gfm_is_list_marker(char *p,
+                                       char *le,
+                                       uint32_t base_col,
+                                       fio___gfm_list_marker_s *info) {
+  /* GFM spec section 5.2: bullet (- + *) or ordered (digits + . or )). */
+  uint8_t type;
+  uint32_t start_num = 0;
+  uint32_t marker_width;
+
+  if (p < le && (*p == '-' || *p == '+' || *p == '*')) {
+    /* Bullet list */
+    info->marker_char = *p;
+    type = (*p == '-') ? FIO___GFM_CONT_UL_DASH
+         : (*p == '+') ? FIO___GFM_CONT_UL_PLUS
+                       : FIO___GFM_CONT_UL_STAR;
+    marker_width = 1;
+    ++p;
+  } else {
+    /* Try ordered: 1-9 digits then '.' or ')' */
+    char *d = p;
+    int digits = 0;
+    while (d < le && *d >= '0' && *d <= '9' && digits < 10) {
+      start_num = start_num * 10 + (uint32_t)(*d - '0');
+      ++digits;
+      ++d;
+    }
+    if (digits < 1 || digits > 9 || d >= le || (*d != '.' && *d != ')'))
+      return 0;
+    info->marker_char = *d;
+    type = (*d == '.') ? FIO___GFM_CONT_OL_DOT : FIO___GFM_CONT_OL_PAREN;
+    marker_width = (uint32_t)digits + 1;
+    p = d + 1;
+  }
+
+  /* After marker: must have space/tab or be at EOL */
+  if (p < le && *p != ' ' && *p != '\t')
+    return 0;
+
+  /* Count whitespace after marker (in virtual columns) */
+  uint32_t after_col = base_col + marker_width;
+  char *scan = p;
+  uint32_t spaces = 0;
+  while (scan < le && (*scan == ' ' || *scan == '\t')) {
+    spaces += (*scan == '\t')
+                  ? FIO___GFM_TAB_WIDTH -
+                        ((after_col + spaces) & (FIO___GFM_TAB_WIDTH - 1U))
+                  : 1;
+    ++scan;
+  }
+
+  int blank_after = (scan >= le);
+
+  info->padding = 0;
+  if (blank_after || spaces > 4) {
+    info->content_indent = (uint16_t)(base_col + marker_width + 1);
+    /* Consume just one virtual space past marker (or stay at EOL). */
+    if (p < le && *p == '\t') {
+      uint32_t tab_cols = FIO___GFM_TAB_WIDTH -
+                          (after_col & (FIO___GFM_TAB_WIDTH - 1U));
+      info->padding = (uint8_t)(tab_cols - 1);
+    }
+    info->content_start = (p < le) ? p + 1 : p;
+  } else {
+    info->content_indent = (uint16_t)(base_col + marker_width + spaces);
+    info->content_start = scan;
+  }
+
+  info->start_num = start_num;
+  info->type = type;
+  info->task = 0;
+
+  /* Task list item detection: [ ] or [x] immediately after marker whitespace */
+  {
+    char *t = info->content_start;
+    if (t + 3 <= le && t[0] == '[' &&
+        (t[1] == ' ' || t[1] == 'x' || t[1] == 'X') &&
+        t[2] == ']' &&
+        t + 3 < le && (t[3] == ' ' || t[3] == '\t')) {
+      info->task = FIO_GFM_F_TASK |
+                   ((t[1] == 'x' || t[1] == 'X') ? FIO_GFM_F_TASK_CHECKED : 0);
+      info->content_start = t + 4;
+    }
+  }
+
+  return 1;
+}
+
+/** Test for HTML block start. Returns HTML block type (1-7) or 0.
+ *
+ *  Types 1-6 can interrupt a paragraph. Type 7 cannot.
+ *  The `can_interrupt_para` parameter controls which types are checked. */
+/** Case-insensitive prefix match. Returns pointer past match or NULL. */
+FIO_SFUNC char *fio___gfm_ci_match(char *p, char *le, const char *word) {
+  while (*word && p < le) {
+    if (fio___gfm_tolower(*p) != *word)
+      return NULL;
+    ++p;
+    ++word;
+  }
+  return (*word == 0) ? p : NULL;
+}
+
+/** Check if tag name matches a block-level tag (GFM spec section 4.6 type 6).
+ *  `p` points at first char of tag name, `le` is line end.
+ *  Returns pointer past the tag name, or NULL if not a block tag. */
+FIO_SFUNC char *fio___gfm_is_block_tag(char *p, char *le) {
+  /* Must be at least 1 char */
+  if (p >= le)
+    return NULL;
+  /* Extract tag name (lowercase ASCII letters and digits) */
+  char *start = p;
+  while (p < le && ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+                    (*p >= '0' && *p <= '9')))
+    ++p;
+  size_t len = (size_t)(p - start);
+  if (!len || len > 10)
+    return NULL;
+  /* Build lowercase copy */
+  char tag[11];
+  for (size_t i = 0; i < len; ++i)
+    tag[i] = (char)fio___gfm_tolower(start[i]);
+  tag[len] = 0;
+  /* Check against block-level tags (sorted for readability, linear scan) */
+  static const char *const tags[] = {
+      "address",    "article",  "aside",   "base",      "basefont",
+      "blockquote", "body",     "caption", "center",    "col",
+      "colgroup",   "dd",       "details", "dialog",    "dir",
+      "div",        "dl",       "dt",      "fieldset",  "figcaption",
+      "figure",     "footer",   "form",    "frame",     "frameset",
+      "h1",         "h2",       "h3",      "h4",        "h5",
+      "h6",         "head",     "header",  "hr",        "html",
+      "iframe",     "legend",   "li",      "link",      "main",
+      "menu",       "menuitem", "nav",     "noframes",  "ol",
+      "optgroup",   "option",   "p",       "param",     "search",
+      "section",    "summary",  "table",   "tbody",     "td",
+      "tfoot",      "th",       "thead",   "title",     "tr",
+      "track",      "ul",       NULL};
+  for (int i = 0; tags[i]; ++i) {
+    if (len == FIO_STRLEN(tags[i]) && FIO_MEMCMP(tag, tags[i], len) == 0)
+      return p;
+  }
+  return NULL;
+}
+
+FIO_SFUNC int fio___gfm_is_html_block_start(char *p,
+                                            char *le,
+                                            int can_interrupt_para) {
+  /* GFM spec section 4.6: HTML blocks, types 1-7. */
+  if (p >= le || *p != '<')
+    return 0;
+  char *after = p + 1;
+
+  /* Type 2: <!-- */
+  if (le - after >= 3 && after[0] == '!' && after[1] == '-' && after[2] == '-')
+    return 2;
+
+  /* Type 3: <? */
+  if (after < le && *after == '?')
+    return 3;
+
+  /* Type 5: <![CDATA[ */
+  if (fio___gfm_ci_match(after, le, "![cdata["))
+    return 5;
+
+  /* Type 4: <! + uppercase letter */
+  if (le - after >= 2 && after[0] == '!' && after[1] >= 'A' && after[1] <= 'Z')
+    return 4;
+
+  /* Type 1: <script, <pre, <style (case-insensitive) + whitespace/>/>  */
+  {
+    char *m;
+    if ((m = fio___gfm_ci_match(after, le, "script")) ||
+        (m = fio___gfm_ci_match(after, le, "pre")) ||
+        (m = fio___gfm_ci_match(after, le, "style"))) {
+      if (m >= le || *m == ' ' || *m == '\t' || *m == '>' || *m == '/')
+        return 1;
+    }
+  }
+
+  /* Type 6: </ or < + block-level tag + whitespace/>/> */
+  {
+    char *tag_start = after;
+    int closing = 0;
+    if (tag_start < le && *tag_start == '/') {
+      closing = 1;
+      ++tag_start;
+    }
+    char *tag_end = fio___gfm_is_block_tag(tag_start, le);
+    if (tag_end) {
+      if (tag_end >= le || *tag_end == ' ' || *tag_end == '\t' ||
+          *tag_end == '>' || *tag_end == '/' ||
+          (closing && *tag_end == '>'))
+        return 6;
+    }
+  }
+
+  /* Type 7: complete open/close tag on its own line (no script/pre/style).
+   * Only when can_interrupt_para is set (= NOT interrupting a paragraph).
+   * Tag name: letter followed by letters/digits/hyphens only. Must end at
+   * whitespace, '>', '/>' or attributes. Autolinks (<scheme://...>) are NOT
+   * valid HTML tags and must not match here. */
+  if (can_interrupt_para) {
+    char *tag_end = fio___gfm_html_tag_end(p, le);
+    if (tag_end) {
+      while (tag_end < le && (*tag_end == ' ' || *tag_end == '\t'))
+        ++tag_end;
+      if (tag_end >= le)
+        return 7;
+    }
+  }
+
+  return 0;
+}
+
+/** Check if a line contains an HTML block close condition for the given type.
+ *  Returns 1 if the close condition is found, 0 otherwise.
+ *  Types 6-7 close on blank line, not by scanning content. */
+FIO_SFUNC int fio___gfm_html_block_has_close(char *p, char *le, int html_type) {
+  switch (html_type) {
+  case 1: /* </script>, </pre>, </style> */
+    for (char *s = p; s + 2 < le; ++s) {
+      if (*s == '<' && s[1] == '/') {
+        if (fio___gfm_ci_match(s + 2, le, "script>") ||
+            fio___gfm_ci_match(s + 2, le, "pre>") ||
+            fio___gfm_ci_match(s + 2, le, "style>"))
+          return 1;
+      }
+    }
+    return 0;
+  case 2: /* --> */
+    for (char *s = p; s + 2 < le; ++s) {
+      if (s[0] == '-' && s[1] == '-' && s[2] == '>')
+        return 1;
+    }
+    return 0;
+  case 3: /* ?> */
+    for (char *s = p; s + 1 < le; ++s) {
+      if (s[0] == '?' && s[1] == '>')
+        return 1;
+    }
+    return 0;
+  case 4: /* > */
+    for (char *s = p; s < le; ++s) {
+      if (*s == '>')
+        return 1;
+    }
+    return 0;
+  case 5: /* ]]> */
+    for (char *s = p; s + 2 < le; ++s) {
+      if (s[0] == ']' && s[1] == ']' && s[2] == '>')
+        return 1;
+    }
+    return 0;
+  default: return 0;
+  }
+}
+
+/** Test for setext heading underline: line of '=' or '-' only.
+ *  Returns heading level (1 for '=', 2 for '-') or 0.
+ *  Only valid when a paragraph is open. */
+FIO_SFUNC int fio___gfm_is_setext_underline(char *p, char *le) {
+  /* GFM spec section 4.3: line of '=' (level 1) or '-' (level 2). */
+  if (p >= le)
+    return 0;
+  char ch = *p;
+  if (ch != '=' && ch != '-')
+    return 0;
+  while (p < le && *p == ch)
+    ++p;
+  /* Trailing whitespace is allowed */
+  while (p < le && (*p == ' ' || *p == '\t'))
+    ++p;
+  if (p < le)
+    return 0; /* non-matching chars remain */
+  return (ch == '=') + (ch == '-') * 2;
+}
+
+/** Advance past one table cell (pipe-separated).
+ *  Handles backslash escapes and backtick code spans so that escaped
+ *  pipes and pipes inside code are not treated as separators.
+ *  Returns pointer to the pipe separator or le if end of line.
+ *  Sets *cell_start and *cell_end to the trimmed cell content. */
+FIO_SFUNC char *fio___gfm_table_cell_next(char *p,
+                                           char *le,
+                                           char **cell_start,
+                                           char **cell_end) {
+  char *cs = p;
+  while (p < le) {
+    if (*p == '\\' && p + 1 < le) {
+      p += 2;
+      continue;
+    }
+    if (*p == '`') {
+      char *bq = p;
+      while (p < le && *p == '`')
+        ++p;
+      uint16_t bq_len = (uint16_t)(p - bq);
+      while (p < le) {
+        if (*p == '`') {
+          char *cr = p;
+          while (p < le && *p == '`')
+            ++p;
+          if ((uint16_t)(p - cr) == bq_len)
+            break;
+        } else {
+          ++p;
+        }
+      }
+      continue;
+    }
+    if (*p == '|')
+      break;
+    ++p;
+  }
+  char *ce = p;
+  while (ce > cs && (ce[-1] == ' ' || ce[-1] == '\t'))
+    --ce;
+  while (cs < ce && (*cs == ' ' || *cs == '\t'))
+    ++cs;
+  *cell_start = cs;
+  *cell_end = ce;
+  return p;
+}
+
+/** Count pipe-separated cells in a table row (header or body).
+ *  Handles leading/trailing pipes. Used to validate header column count. */
+FIO_SFUNC uint16_t fio___gfm_count_table_cells(char *p, char *le) {
+  uint16_t cols = 0;
+  while (p < le && (*p == ' ' || *p == '\t'))
+    ++p;
+  p += (p < le && *p == '|');
+  while (p < le) {
+    char *cs, *ce;
+    p = fio___gfm_table_cell_next(p, le, &cs, &ce);
+    ++cols;
+    if (p < le && *p == '|') {
+      ++p;
+      char *rest = p;
+      while (rest < le && (*rest == ' ' || *rest == '\t'))
+        ++rest;
+      if (rest >= le)
+        break;
+    } else {
+      break;
+    }
+  }
+  return cols;
+}
+
+/** Test if a line is a valid table delimiter row.
+ *  Returns column count or 0 if not a delimiter row.
+ *  Parses alignment markers and stores them in st->table_align[]. */
+FIO_SFUNC uint16_t fio___gfm_is_table_delimiter(fio___gfm_parser_s *st,
+                                                char *p,
+                                                char *le) {
+  uint16_t cols = 0;
+  /* Skip leading whitespace */
+  while (p < le && (*p == ' ' || *p == '\t'))
+    ++p;
+  /* Optional leading pipe */
+  p += (p < le && *p == '|');
+
+  while (p < le) {
+    /* Skip whitespace before cell */
+    while (p < le && (*p == ' ' || *p == '\t'))
+      ++p;
+    if (p >= le)
+      break;
+
+    /* Parse delimiter cell: optional ':', one+ '-', optional ':' */
+    int has_left = (p < le && *p == ':');
+    p += has_left;
+
+    int dashes = 0;
+    while (p < le && *p == '-') {
+      ++dashes;
+      ++p;
+    }
+    if (!dashes)
+      return 0; /* each cell must have at least one dash */
+
+    int has_right = (p < le && *p == ':');
+    p += has_right;
+
+    uint8_t align = (has_left && has_right) ? FIO_GFM_ALIGN_CENTER
+                  : has_left                ? FIO_GFM_ALIGN_LEFT
+                  : has_right               ? FIO_GFM_ALIGN_RIGHT
+                                            : FIO_GFM_ALIGN_NONE;
+
+    /* Skip whitespace after cell */
+    while (p < le && (*p == ' ' || *p == '\t'))
+      ++p;
+
+    /* Store alignment */
+    if (cols < FIO_GFM_MAX_TABLE_COLUMNS)
+      FIO___GFM_TABLE_ALIGN_SET(st, cols, align);
+    ++cols;
+
+    /* Expect pipe or end of line */
+    if (p < le && *p == '|') {
+      ++p;
+      /* Check if this was a trailing pipe */
+      char *rest = p;
+      while (rest < le && (*rest == ' ' || *rest == '\t'))
+        ++rest;
+      if (rest >= le)
+        break;
+    } else if (p < le) {
+      return 0; /* unexpected character */
+    }
+  }
+
+  if (cols)
+    st->table_columns = cols;
+  return cols;
+}
+
+/* ===========================================================================
+ * Container Operations
+ *
+ * These manage the nesting stack: pushing new containers, popping closed
+ * ones, and closing all containers deeper than `matched_depth`.
+ * ========================================================================= */
+
+FIO_IFUNC void fio___gfm_mark_li_content(fio___gfm_parser_s *st) {
+  for (uint16_t d = FIO___GFM_DEPTH(st); d > 0; --d) {
+    if (st->nest[d - 1].type == FIO___GFM_CONT_LI) {
+      st->nest[d - 1].flags |= FIO___GFM_F_LI_HAS_BLOCK;
+      break;
+    }
+  }
+}
+
+/** Push a blockquote container onto the nesting stack and emit PUSH event.
+ *  `content_after` points to the position after '>' + optional space. */
+FIO_SFUNC int fio___gfm_push_blockquote(fio___gfm_parser_s *st,
+                                        uint16_t content_col) {
+  fio___gfm_mark_li_content(st);
+  FIO___GFM_PUSH(st, FIO___GFM_CONT_BQ, 0);
+  if (st->err)
+    return st->err;
+  fio_gfm_event_s e;
+  fio___gfm_event_init(st, &e);
+  e.type = FIO_GFM_BLOCKQUOTE;
+  (void)content_col;
+  return fio___gfm_emit_push(st, &e);
+}
+
+/** Push a new list + list item onto the nesting stack.
+ *
+ *  Pushes TWO entries: LIST container + first LIST_ITEM.
+ *  Tight/loose determined by lookahead, passed on the LIST push event.
+ *  list_start passed on the LIST push event, not stored in nest[].
+ *
+ *  Emits: PUSH(LIST_ORDERED/LIST_UNORDERED), PUSH(LIST_ITEM). */
+/** Lookahead: check if the list starting at the current position is tight.
+ *  Scans forward to the second list item. If a blank line is found between
+ *  items 1 and 2 (outside nested containers/code), the list is loose. */
+FIO_SFUNC uint8_t fio___gfm_list_lookahead_tight(fio___gfm_parser_s *st,
+                                                 fio___gfm_list_marker_s *info) {
+  /* Scan forward from the current position to find the second item.
+   * If a blank line appears before the second item, the list is loose.
+   * For single-item lists, if a blank line appears between two
+   * block-level elements within the item, the list is also loose
+   * (GFM spec: "directly contain two block-level elements with a
+   * blank line between them"). */
+  char *p = info->content_start;
+  char *end = st->end;
+  /* If content_start is on the marker line and the rest is blank,
+   * skip to the next line. */
+  {
+    char *marker_le = fio___gfm_line_end(p, end);
+    if (fio___gfm_is_blank(p, marker_le))
+      p = fio___gfm_line_next(marker_le, end);
+  }
+  int saw_blank = 0;
+  int content_after_blank = 0;
+  int in_fence = 0;
+  int in_nested_list = 0;
+  int nested_blank = 0;
+  uint32_t nested_marker_indent = 0;
+  uint32_t nested_content_indent = 0;
+  char *marker_line_end = fio___gfm_line_end(info->content_start, end);
+  uint16_t bq_depth = 0;
+  for (uint16_t d = 0; d < st->depth; ++d)
+    bq_depth += (st->nest[d].type == FIO___GFM_CONT_BQ);
+  char *marker_line_start = info->content_start;
+  while (marker_line_start > st->start && marker_line_start[-1] != '\n' &&
+         marker_line_start[-1] != '\r')
+    --marker_line_start;
+  uint32_t item_marker_indent = bq_depth
+                                    ? 0
+                                    : fio___gfm_indent(marker_line_start,
+                                                       marker_line_end);
+  uint32_t item_content_indent = bq_depth
+                                     ? info->content_indent
+                                     : fio___gfm_vcol(marker_line_start,
+                                                      info->content_start);
+
+  while (p < end) {
+    char *le = fio___gfm_line_end(p, end);
+    char *next = fio___gfm_line_next(le, end);
+    char *line = p;
+    uint8_t line_padding = 0;
+
+    if (p > marker_line_end) {
+      for (uint16_t bq = 0; bq < bq_depth; ++bq) {
+        uint32_t bq_col = line_padding + fio___gfm_indent(line, le);
+        char *bq_trimmed = fio___gfm_ltrim(line, le);
+        if (bq_col > FIO___GFM_MAX_MARKER_INDENT || bq_trimmed >= le ||
+            *bq_trimmed != '>' ||
+            !fio___gfm_is_blockquote(bq_trimmed,
+                                     le,
+                                     bq_col,
+                                     &line,
+                                     &line_padding))
+          return content_after_blank ? 0 : FIO_GFM_F_TIGHT;
+      }
+    }
+
+    if (in_fence) {
+      /* Inside fenced code — check for closing fence */
+      char *ft = fio___gfm_ltrim(line, le);
+      if (ft < le && (*ft == '`' || *ft == '~'))
+        in_fence = 0; /* simplified: any fence-like line ends code */
+      p = next;
+      continue;
+    }
+
+    if (fio___gfm_is_blank(line, le)) {
+      if (in_nested_list)
+        nested_blank = 1;
+      else
+        saw_blank = 1;
+      p = next;
+      continue;
+    }
+
+    /* Check list markers before blank-line accounting. Markers indented to
+     * this item's content column belong to a child list; their blanks should
+     * not make this parent list loose unless a later parent block follows. */
+    uint32_t vcol = line_padding + fio___gfm_indent(line, le);
+    fio___gfm_list_marker_s m2;
+    int has_marker = fio___gfm_is_list_marker(fio___gfm_ltrim(line, le),
+                                             le,
+                                             vcol,
+                                             &m2);
+    if (in_nested_list) {
+      if (has_marker && vcol >= nested_marker_indent) {
+        nested_blank = 0;
+        p = next;
+        continue;
+      }
+      if (vcol >= nested_content_indent) {
+        nested_blank = 0;
+        p = next;
+        continue;
+      }
+      if (nested_blank)
+        return 0;
+      in_nested_list = 0;
+      nested_marker_indent = 0;
+      nested_content_indent = 0;
+    }
+
+    if (has_marker && vcol >= item_content_indent) {
+      if (saw_blank)
+        return 0;
+      in_nested_list = 1;
+      nested_blank = 0;
+      nested_marker_indent = vcol;
+      nested_content_indent = m2.content_indent;
+      p = next;
+      continue;
+    }
+
+    if (has_marker && vcol < item_marker_indent)
+      return content_after_blank ? 0 : FIO_GFM_F_TIGHT;
+
+    if (has_marker && vcol <= FIO___GFM_MAX_MARKER_INDENT) {
+      if (m2.type != info->type)
+        return saw_blank ? 0 : FIO_GFM_F_TIGHT;
+      if (saw_blank)
+        return 0;
+      content_after_blank = 0;
+      in_nested_list = 0;
+      nested_blank = 0;
+      nested_marker_indent = 0;
+      nested_content_indent = 0;
+      {
+        char fc2;
+        char *mt = fio___gfm_ltrim(m2.content_start, le);
+        if (mt < le && fio___gfm_is_fenced_code_open(mt, le, &fc2))
+          in_fence = 1;
+      }
+      p = next;
+      continue;
+    }
+
+    if (in_nested_list && nested_blank)
+      return 0;
+    in_nested_list = 0;
+    nested_marker_indent = 0;
+    nested_content_indent = 0;
+
+    /* Non-blank content after a blank → potential loose trigger.
+     * But only if the content is inside the list item (indent >=
+     * content_indent) or starts a new list item. Content with
+     * indent < content_indent is outside the item. */
+    if (saw_blank) {
+      uint32_t line_indent = line_padding + fio___gfm_indent(line, le);
+      if (line_indent >= item_content_indent) {
+        content_after_blank = 1;
+      } else {
+        /* Content is outside the list item — stop scanning */
+        return FIO_GFM_F_TIGHT;
+      }
+    }
+
+    /* Check for fence open */
+    char *ft = fio___gfm_ltrim(line, le);
+    if (ft < le && (*ft == '`' || *ft == '~')) {
+      char fc;
+      if (fio___gfm_is_fenced_code_open(ft, le, &fc))
+        in_fence = 1;
+    }
+
+    p = next;
+  }
+  /* Single-item list: loose if blank line separates block elements. */
+  return content_after_blank ? 0 : FIO_GFM_F_TIGHT;
+}
+
+FIO_SFUNC int fio___gfm_push_list_and_item(fio___gfm_parser_s *st,
+                                           fio___gfm_list_marker_s *info) {
+  int r;
+  fio___gfm_mark_li_content(st);
+  if (st->depth + 2 > FIO_GFM_MAX_DEPTH) {
+    st->err = FIO_GFM_ERR_DEPTH;
+    return st->err;
+  }
+
+  /* Lookahead for tight/loose */
+  uint8_t tight = fio___gfm_list_lookahead_tight(st, info);
+
+  /* Push LIST container */
+  FIO___GFM_PUSH(st, info->type, 0);
+  if (st->err)
+    return st->err;
+  /* Store tight/loose in the LIST container's flags */
+  st->nest[st->depth - 1].flags = tight;
+
+  fio_gfm_event_s e;
+  fio___gfm_event_init(st, &e);
+  e.type = fio___gfm_cont_public_type(info->type);
+  e.list_start = info->start_num;
+  e.flags = tight;
+  r = fio___gfm_emit_push(st, &e);
+  if (r)
+    return r;
+
+  /* Push LIST_ITEM — propagate tight flag from parent LIST. */
+  FIO___GFM_PUSH(st, FIO___GFM_CONT_LI, info->content_indent);
+  if (st->err)
+    return st->err;
+  st->nest[st->depth - 1].flags = tight;
+
+  fio___gfm_event_init(st, &e);
+  e.type = FIO_GFM_LIST_ITEM;
+  e.flags = tight | info->task;
+  return fio___gfm_emit_push(st, &e);
+}
+
+/** Push a new list item into an existing list.
+ *
+ *  Closes the current LIST_ITEM (and any nested containers),
+ *  then pushes a new LIST_ITEM.
+ *
+ *  Emits: POP(LIST_ITEM) [+ POPs for nested], PUSH(LIST_ITEM). */
+FIO_SFUNC int fio___gfm_push_new_item(fio___gfm_parser_s *st,
+                                      uint16_t list_depth,
+                                      fio___gfm_list_marker_s *info) {
+  int r = 0;
+
+  /* Close open leaf first */
+  if (st->leaf_type) {
+    r = fio___gfm_close_leaf(st);
+    if (r)
+      return r;
+  }
+
+  /* Pop containers from innermost down to (but not including) the LIST.
+   * list_depth is 1-indexed (nest[list_depth-1] is the LIST).
+   * We need to pop everything deeper: LI + any nested containers. */
+  while (FIO___GFM_DEPTH(st) > list_depth) {
+    fio_gfm_event_s e;
+    fio___gfm_event_init(st, &e);
+    e.type = fio___gfm_cont_public_type(FIO___GFM_TOP_TYPE(st));
+    /* Propagate tight flag on LIST_ITEM pops */
+    e.flags = st->nest[st->depth - 1].flags;
+    r = fio___gfm_emit_pop(st, &e);
+    FIO___GFM_POP(st);
+    if (r) {
+      st->err = r;
+      return r;
+    }
+  }
+
+  /* Get tight flag from parent LIST container */
+  uint8_t tight = st->nest[list_depth - 1].flags & FIO_GFM_F_TIGHT;
+
+  /* Push new LIST_ITEM — propagate tight from parent LIST. */
+  FIO___GFM_PUSH(st, FIO___GFM_CONT_LI, info->content_indent);
+  if (st->err)
+    return st->err;
+  st->nest[st->depth - 1].flags = tight;
+
+  fio_gfm_event_s e;
+  fio___gfm_event_init(st, &e);
+  e.type = FIO_GFM_LIST_ITEM;
+  e.flags = tight | info->task;
+  return fio___gfm_emit_push(st, &e);
+}
+
+/** Close the open leaf block (paragraph, fenced code, etc.).
+ *
+ *  For paragraphs: extracts reference definitions first, then emits
+ *  the paragraph (or nothing if all text was ref defs).
+ *  For other leaves: emits POP event. */
+FIO_SFUNC int fio___gfm_close_leaf(fio___gfm_parser_s *st) {
+  if (!st->leaf_type)
+    return 0;
+  int r = 0;
+  switch (st->leaf_type) {
+  case FIO_GFM_PARAGRAPH:
+    r = fio___gfm_close_paragraph(st);
+    return r;
+  case FIO_GFM_CODE_BLOCK: {
+    fio_gfm_event_s e;
+    fio___gfm_event_init(st, &e);
+    e.type = FIO_GFM_CODE_BLOCK;
+    r = fio___gfm_emit_pop(st, &e);
+    st->leaf_type = 0;
+    st->fence_char = 0;
+    st->fence_len = 0;
+    st->fence_indent = 0;
+    st->fence_info = (fio_buf_info_s){0};
+    st->ic_pending_blanks = 0;
+    return r;
+  }
+  case FIO_GFM_HTML_BLOCK: {
+    /* TODO: implement HTML block close */
+    fio_gfm_event_s e;
+    fio___gfm_event_init(st, &e);
+    e.type = FIO_GFM_HTML_BLOCK;
+    r = fio___gfm_emit_pop(st, &e);
+    st->leaf_type = 0;
+    st->leaf_html_type = 0;
+    return r;
+  }
+  case FIO_GFM_TABLE: {
+    /* TODO: implement table close */
+    fio_gfm_event_s e;
+    fio___gfm_event_init(st, &e);
+    e.type = FIO_GFM_TABLE;
+    r = fio___gfm_emit_pop(st, &e);
+    st->leaf_type = 0;
+    st->table_columns = 0;
+    return r;
+  }
+  default: break;
+  }
+  st->leaf_type = 0;
+  return r;
+}
+
+/** Close all containers deeper than `matched_depth`.
+ *
+ *  This is called in Step 2 when we've determined that unmatched
+ *  containers must be closed (not a lazy continuation line).
+ *
+ *  Closes from innermost to outermost, emitting POP events.
+ *  Also closes any open leaf first. */
+FIO_SFUNC int fio___gfm_close_unmatched(fio___gfm_parser_s *st) {
+  int r = 0;
+
+  /* Close open leaf first (paragraph, code, etc.) */
+  if (st->leaf_type) {
+    r = fio___gfm_close_leaf(st);
+    if (r)
+      return r;
+  }
+
+  /* Pop containers from innermost to matched_depth.
+   * Propagate flags (tight/loose) on POP events so the renderer
+   * can suppress <p> tags in tight list items. */
+  while (FIO___GFM_DEPTH(st) > st->matched_depth) {
+    fio_gfm_event_s e = {
+        .udata = st->udata,
+        .type = fio___gfm_cont_public_type(FIO___GFM_TOP_TYPE(st)),
+        .flags = st->nest[st->depth - 1].flags,
+    };
+    r = fio___gfm_emit_pop(st, &e);
+    FIO___GFM_POP(st);
+    if (r) {
+      st->err = r;
+      return r;
+    }
+  }
+  return 0;
+}
+
+/** Close orphaned LIST containers at the top of the nesting stack.
+ *  When an LI is closed by close_unmatched but the parent LIST survives
+ *  (because LIST containers always match in Step 1), the LIST should
+ *  also close for document-level blocks (thematic break, heading, etc.)
+ *  that shouldn't be nested inside a list. */
+FIO_SFUNC int fio___gfm_close_orphan_lists(fio___gfm_parser_s *st) {
+  int r = 0;
+  while (FIO___GFM_DEPTH(st) > 0) {
+    uint8_t t = FIO___GFM_TOP_TYPE(st);
+    if (t < FIO___GFM_CONT_UL_DASH || t > FIO___GFM_CONT_OL_PAREN)
+      break;
+    fio_gfm_event_s e = {
+        .udata = st->udata,
+        .type = fio___gfm_cont_public_type(t),
+        .flags = st->nest[st->depth - 1].flags,
+    };
+    r = fio___gfm_emit_pop(st, &e);
+    FIO___GFM_POP(st);
+    if (r) { st->err = r; return r; }
+  }
+  return 0;
+}
+
+/** Close ALL open blocks. Called at end of document. */
+FIO_SFUNC int fio___gfm_close_all(fio___gfm_parser_s *st) {
+  st->matched_depth = 0;
+  return fio___gfm_close_unmatched(st);
+}
+
+/* ===========================================================================
+ * Paragraph Operations
+ * ========================================================================= */
+
+/** Open a new paragraph starting at `content`. */
+FIO_SFUNC void fio___gfm_open_paragraph(fio___gfm_parser_s *st,
+                                        char *content,
+                                        char *le) {
+  fio___gfm_mark_li_content(st);
+  /* NOTE: No PUSH event is emitted here. The PUSH is deferred until
+   * paragraph close, because:
+   *   1. The paragraph might be retroactively converted to a setext heading.
+   *   2. The paragraph might be retroactively converted to a table.
+   *   3. Leading lines might be reference definitions, not paragraph text.
+   *
+   * We just accumulate text and resolve the type on close.
+   */
+  st->leaf_type = FIO_GFM_PARAGRAPH;
+  st->para_open = 1;
+  st->para_start = content;
+  st->para_end = le;
+  st->leaf_start = content;
+}
+
+/** Append a line to the open paragraph. */
+FIO_SFUNC void fio___gfm_append_paragraph(fio___gfm_parser_s *st,
+                                          char *le_or_next) {
+  /* Extend the paragraph's accumulated text to include this line.
+   * `le_or_next` should be the line_next position (past the newline)
+   * so that the newline is included in the accumulated text. */
+  st->para_end = le_or_next;
+}
+
+/** Close the open paragraph. Extracts ref defs, emits paragraph events. */
+FIO_SFUNC int fio___gfm_close_paragraph(fio___gfm_parser_s *st) {
+  int r = 0;
+  char *text = st->para_start;
+  char *text_end = st->para_end;
+
+  for (;;) {
+    fio_buf_info_s lbl, dst, ttl;
+    char *after = fio___gfm_try_parse_ref_def(text, text_end, &lbl, &dst, &ttl);
+    if (!after)
+      break;
+    fio___gfm_ref_cache_add(st, lbl, dst, ttl);
+    text = after;
+  }
+
+  /* Left-trim leading whitespace and newlines from paragraph text */
+  while (text < text_end &&
+         (*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r'))
+    ++text;
+  /* Right-trim trailing whitespace/newlines from paragraph text */
+  while (text_end > text &&
+         (text_end[-1] == '\n' || text_end[-1] == '\r' ||
+          text_end[-1] == ' ' || text_end[-1] == '\t'))
+    --text_end;
+
+  /* Emit paragraph if any text remains after ref def extraction */
+  if (text < text_end) {
+    fio_gfm_event_s e;
+    fio___gfm_event_init(st, &e);
+    e.type = FIO_GFM_PARAGRAPH;
+    e.source = FIO_BUF_INFO2(text, (size_t)(text_end - text));
+    r = fio___gfm_emit_push(st, &e);
+    if (!r)
+      r = fio___gfm_inline_parse(st, text, text_end);
+    if (!r) {
+      fio___gfm_event_init(st, &e);
+      e.type = FIO_GFM_PARAGRAPH;
+      r = fio___gfm_emit_pop(st, &e);
+    }
+  }
+
+  st->leaf_type = 0;
+  st->para_open = 0;
+  st->para_start = NULL;
+  st->para_end = NULL;
+  return r;
+}
+
+/** Convert open paragraph to a setext heading. */
+FIO_SFUNC int fio___gfm_convert_to_setext(fio___gfm_parser_s *st,
+                                          char *underline,
+                                          char *le,
+                                          int level) {
+  int r = 0;
+  char *text = st->para_start;
+  char *text_end = st->para_end;
+  (void)underline;
+  (void)le;
+
+  /* Extract leading ref defs */
+  for (;;) {
+    fio_buf_info_s lbl, dst, ttl;
+    char *after = fio___gfm_try_parse_ref_def(text, text_end, &lbl, &dst, &ttl);
+    if (!after)
+      break;
+    fio___gfm_ref_cache_add(st, lbl, dst, ttl);
+    text = after;
+  }
+
+  /* Left-trim leading whitespace and newlines */
+  while (text < text_end &&
+         (*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r'))
+    ++text;
+  /* Right-trim paragraph text */
+  while (text_end > text &&
+         (text_end[-1] == '\n' || text_end[-1] == '\r' ||
+          text_end[-1] == ' ' || text_end[-1] == '\t'))
+    --text_end;
+
+  if (text < text_end) {
+    /* Emit as heading */
+    fio_gfm_event_s e;
+    fio___gfm_event_init(st, &e);
+    e.type = FIO_GFM_HEADING;
+    e.heading_level = (uint8_t)level;
+    e.source = FIO_BUF_INFO2(text, (size_t)(text_end - text));
+    r = fio___gfm_emit_push(st, &e);
+    if (!r)
+      r = fio___gfm_inline_parse(st, text, text_end);
+    if (!r) {
+      fio___gfm_event_init(st, &e);
+      e.type = FIO_GFM_HEADING;
+      e.heading_level = (uint8_t)level;
+      r = fio___gfm_emit_pop(st, &e);
+    }
+  } else if (level == 2) {
+    /* All text was ref defs and underline is '---' → thematic break */
+    fio_gfm_event_s e;
+    fio___gfm_event_init(st, &e);
+    e.type = FIO_GFM_THEMATIC_BREAK;
+    r = fio___gfm_emit_push(st, &e);
+    if (!r) {
+      fio___gfm_event_init(st, &e);
+      e.type = FIO_GFM_THEMATIC_BREAK;
+      r = fio___gfm_emit_pop(st, &e);
+    }
+  } else {
+    /* All text was ref defs and underline is '===' → not a setext heading.
+     * Keep the paragraph open with the underline text. */
+    st->leaf_type = FIO_GFM_PARAGRAPH;
+    st->para_open = 1;
+    st->para_start = underline;
+    st->para_end = le;
+    return r;
+  }
+
+  st->leaf_type = 0;
+  st->para_open = 0;
+  st->para_start = NULL;
+  st->para_end = NULL;
+  return r;
+}
+
+/** Convert open paragraph to a table (GFM extension). */
+FIO_SFUNC int fio___gfm_convert_to_table(fio___gfm_parser_s *st,
+                                         char *delim_line,
+                                         char *delim_le) {
+  int r = 0;
+  char *text = st->para_start;
+  char *text_end = st->para_end;
+  (void)delim_line;
+  (void)delim_le;
+
+  /* The table header is the paragraph's final physical line. GFM tables may
+   * start after paragraph text; in that case only the final paragraph line is
+   * reinterpreted as the header and earlier lines remain a paragraph. */
+  while (text_end > text && (text_end[-1] == '\n' || text_end[-1] == '\r'))
+    --text_end;
+  char *header = text;
+  for (char *s = text; s < text_end; ++s) {
+    if (*s == '\n' || *s == '\r')
+      header = s + 1;
+  }
+
+  /* Header column count must match delimiter column count
+   * (is_table_delimiter already stored count in st->table_columns). */
+  uint16_t header_cols = fio___gfm_count_table_cells(header, text_end);
+  if (header_cols != st->table_columns || !header_cols)
+    return 0;
+
+  /* --- Conversion confirmed: emit TABLE + header row --- */
+
+  if (header > text) {
+    st->para_end = header;
+    r = fio___gfm_close_paragraph(st);
+    if (r)
+      return r;
+  }
+
+  /* Clear paragraph state */
+  st->leaf_type = 0;
+  st->para_open = 0;
+  st->para_start = NULL;
+  st->para_end = NULL;
+
+  /* Emit PUSH(TABLE) */
+  fio_gfm_event_s e;
+  fio___gfm_event_init(st, &e);
+  e.type = FIO_GFM_TABLE;
+  e.columns = st->table_columns;
+  r = fio___gfm_emit_push(st, &e);
+  if (r)
+    return r;
+
+  /* Emit header row (cells parsed via inline_parse) */
+  r = fio___gfm_emit_table_row(st, header, text_end);
+  if (r)
+    return r;
+
+  /* Set leaf type for body row processing by the main loop */
+  st->leaf_type = FIO_GFM_TABLE;
+  return 0;
+}
+
+/* ===========================================================================
+ * Blank Line Handler
+ * ========================================================================= */
+
+/** Handle a blank line. Context-dependent behavior. */
+FIO_SFUNC int fio___gfm_handle_blank_line(fio___gfm_parser_s *st) {
+  int had_leaf = !!st->leaf_type;
+  switch (st->leaf_type) {
+  case FIO_GFM_PARAGRAPH: {
+    int r = fio___gfm_close_paragraph(st);
+    if (r)
+      return r;
+    /* A blank line that closes a paragraph also makes the enclosing
+     * list loose (if inside a list item). Fall through. */
+    break;
+  }
+  case FIO_GFM_CODE_BLOCK:
+    /* Blank line inside code block — part of content.
+     * Fenced: always continues. Indented: trailing blanks stripped on close.
+     * TODO: emit blank line as text when code block emission is wired. */
+    return 0;
+  case FIO_GFM_HTML_BLOCK:
+    /* Types 6-7: blank line closes HTML block. Types 1-5: continues. */
+    if (st->leaf_html_type >= 6)
+      return fio___gfm_close_leaf(st);
+    return 0;
+  case FIO_GFM_TABLE:
+    return fio___gfm_close_leaf(st);
+  default: break;
+  }
+  if (!had_leaf && FIO___GFM_DEPTH(st) > 0 &&
+      FIO___GFM_TOP_TYPE(st) == FIO___GFM_CONT_LI &&
+      !(st->nest[st->depth - 1].flags & FIO___GFM_F_LI_HAS_BLOCK))
+    st->nest[st->depth - 1].flags |= FIO___GFM_F_LI_LEADING_BLANK;
+  /* Tight/loose is determined by list lookahead at list open time.
+   * Do not clear FIO_GFM_F_TIGHT here: a blank line may belong to a child
+   * list that will close before the next non-blank parent block. */
+  return 0;
+}
+
+/* ===========================================================================
+ * Reference Cache
+ * ========================================================================= */
+
+FIO_IFUNC uint32_t fio___gfm_utf8_read(char **p, char *end) {
+  unsigned char c = (unsigned char)**p;
+  if (c < 0x80) {
+    ++(*p);
+    return (uint32_t)c;
+  }
+  if (c >= 0xC2 && c <= 0xDF && *p + 1 < end) {
+    unsigned char c1 = (unsigned char)(*p)[1];
+    if ((c1 & 0xC0) == 0x80) {
+      *p += 2;
+      return (((uint32_t)c & 0x1F) << 6) | ((uint32_t)c1 & 0x3F);
+    }
+  }
+  if (c >= 0xE0 && c <= 0xEF && *p + 2 < end) {
+    unsigned char c1 = (unsigned char)(*p)[1];
+    unsigned char c2 = (unsigned char)(*p)[2];
+    if ((c1 & 0xC0) == 0x80 && (c2 & 0xC0) == 0x80 &&
+        (c != 0xE0 || c1 >= 0xA0) && (c != 0xED || c1 < 0xA0)) {
+      *p += 3;
+      return (((uint32_t)c & 0x0F) << 12) |
+             (((uint32_t)c1 & 0x3F) << 6) | ((uint32_t)c2 & 0x3F);
+    }
+  }
+  if (c >= 0xF0 && c <= 0xF4 && *p + 3 < end) {
+    unsigned char c1 = (unsigned char)(*p)[1];
+    unsigned char c2 = (unsigned char)(*p)[2];
+    unsigned char c3 = (unsigned char)(*p)[3];
+    if ((c1 & 0xC0) == 0x80 && (c2 & 0xC0) == 0x80 &&
+        (c3 & 0xC0) == 0x80 && (c != 0xF0 || c1 >= 0x90) &&
+        (c != 0xF4 || c1 < 0x90)) {
+      *p += 4;
+      return (((uint32_t)c & 0x07) << 18) |
+             (((uint32_t)c1 & 0x3F) << 12) |
+             (((uint32_t)c2 & 0x3F) << 6) | ((uint32_t)c3 & 0x3F);
+    }
+  }
+  ++(*p);
+  return (uint32_t)c;
+}
+
+FIO_IFUNC uint32_t fio___gfm_label_fold(uint32_t c) {
+  if (c >= 'A' && c <= 'Z')
+    return c + 32;
+  if ((c >= 0x00C0 && c <= 0x00D6) || (c >= 0x00D8 && c <= 0x00DE))
+    return c + 32;
+  if ((c >= 0x0391 && c <= 0x03A1) || (c >= 0x03A3 && c <= 0x03AB))
+    return c + 32;
+  if (c >= 0x0410 && c <= 0x042F)
+    return c + 32;
+  if (c == 0x0401)
+    return 0x0451;
+  if (c == 0x03C2)
+    return 0x03C3;
+  return c;
+}
+
+/** Compare two reference labels with GFM normalization:
+ *  Unicode-aware case-fold, collapse internal whitespace to single space,
+ *  strip leading/trailing whitespace. Returns 1 if equal, 0 otherwise. */
+FIO_SFUNC int fio___gfm_label_eq(fio_buf_info_s a, fio_buf_info_s b) {
+  char *ap = a.buf, *ae = a.buf + a.len;
+  char *bp = b.buf, *be = b.buf + b.len;
+  /* skip leading whitespace */
+  while (ap < ae && (*ap == ' ' || *ap == '\t' || *ap == '\n' || *ap == '\r'))
+    ++ap;
+  while (bp < be && (*bp == ' ' || *bp == '\t' || *bp == '\n' || *bp == '\r'))
+    ++bp;
+  /* strip trailing whitespace */
+  while (ae > ap && (ae[-1] == ' ' || ae[-1] == '\t' || ae[-1] == '\n' ||
+                     ae[-1] == '\r'))
+    --ae;
+  while (be > bp && (be[-1] == ' ' || be[-1] == '\t' || be[-1] == '\n' ||
+                     be[-1] == '\r'))
+    --be;
+  /* walk both labels comparing with case-fold and whitespace collapse */
+  while (ap < ae && bp < be) {
+    int a_ws = (*ap == ' ' || *ap == '\t' || *ap == '\n' || *ap == '\r');
+    int b_ws = (*bp == ' ' || *bp == '\t' || *bp == '\n' || *bp == '\r');
+    if (a_ws && b_ws) {
+      /* collapse both runs */
+      while (ap < ae && (*ap == ' ' || *ap == '\t' || *ap == '\n' ||
+                         *ap == '\r'))
+        ++ap;
+      while (bp < be && (*bp == ' ' || *bp == '\t' || *bp == '\n' ||
+                         *bp == '\r'))
+        ++bp;
+      continue;
+    }
+    if (a_ws != b_ws)
+      return 0;
+    if (fio___gfm_label_fold(fio___gfm_utf8_read(&ap, ae)) !=
+        fio___gfm_label_fold(fio___gfm_utf8_read(&bp, be)))
+      return 0;
+  }
+  return (ap == ae) & (bp == be);
+}
+
+/** Add a reference definition to the cache. First definition wins. */
+FIO_SFUNC void fio___gfm_ref_cache_add(fio___gfm_parser_s *st,
+                                       fio_buf_info_s label,
+                                       fio_buf_info_s dest,
+                                       fio_buf_info_s title) {
+  /* First definition wins: check if label already exists. */
+  for (uint16_t i = 0; i < st->ref_count; ++i) {
+    if (fio___gfm_label_eq(st->refs[i].label, label))
+      return;
+  }
+  if (st->ref_count < FIO_GFM_REF_CACHE_SIZE) {
+    st->refs[st->ref_count++] = (fio___gfm_ref_s){
+        .label = label,
+        .destination = dest,
+        .title = title,
+    };
+  } else {
+    st->ref_overflow = 1;
+  }
+}
+
+/** Try to parse a reference definition from text.
+ *  Returns pointer past the ref def on success, NULL on failure.
+ *  On success, fills *label, *dest, *title. */
+FIO_SFUNC char *fio___gfm_try_parse_ref_def(char *p,
+                                            char *end,
+                                            fio_buf_info_s *label,
+                                            fio_buf_info_s *dest,
+                                            fio_buf_info_s *title) {
+  char *s = p;
+  /* 1. Skip 0-3 spaces indent */
+  {
+    int sp = 0;
+    while (s < end && (*s == ' ' || *s == '\t') && sp < 4) {
+      sp += (*s == '\t') ? (4 - (sp & 3)) : 1;
+      s += (sp <= 3);
+      if (sp > 3) break;
+    }
+    if (sp > 3)
+      return NULL;
+  }
+  /* 2. Parse [label] */
+  if (s >= end || *s != '[')
+    return NULL;
+  ++s;
+  char *lbl_start = s;
+  int lbl_empty = 1;
+  while (s < end && *s != ']') {
+    if (*s == '[')
+      return NULL; /* no nested unescaped [ */
+    if (*s == '\\' && s + 1 < end) {
+      lbl_empty = 0;
+      s += 2;
+      continue;
+    }
+    lbl_empty &= (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r');
+    ++s;
+  }
+  if (s >= end || lbl_empty)
+    return NULL;
+  char *lbl_end = s;
+  ++s; /* skip ']' */
+  /* 3. Expect ':' immediately after ']' */
+  if (s >= end || *s != ':')
+    return NULL;
+  ++s;
+  /* 4. Optional whitespace (including up to one line ending) */
+  while (s < end && (*s == ' ' || *s == '\t'))
+    ++s;
+  if (s < end && (*s == '\n' || *s == '\r')) {
+    s += (s < end && *s == '\r');
+    s += (s < end && *s == '\n');
+    while (s < end && (*s == ' ' || *s == '\t'))
+      ++s;
+  }
+  /* 5. Parse destination */
+  char *dst_start = NULL, *dst_end = NULL;
+  if (s < end && *s == '<') {
+    /* angle-bracket form */
+    ++s;
+    dst_start = s;
+    while (s < end && *s != '>' && *s != '\n' && *s != '\r') {
+      if (*s == '\\' && s + 1 < end) {
+        s += 2;
+        continue;
+      }
+      if (*s == '<')
+        return NULL;
+      ++s;
+    }
+    if (s >= end || *s != '>')
+      return NULL;
+    dst_end = s;
+    ++s; /* skip '>' */
+  } else {
+    /* bare destination: balanced parens, no spaces */
+    dst_start = s;
+    int paren_depth = 0;
+    while (s < end && *s != ' ' && *s != '\t' && *s != '\n' && *s != '\r') {
+      if (*s == '\\' && s + 1 < end) {
+        s += 2;
+        continue;
+      }
+      if (*s == '(') {
+        ++paren_depth;
+      } else if (*s == ')') {
+        if (paren_depth == 0)
+          break;
+        --paren_depth;
+      }
+      /* ASCII control chars invalid in bare destination */
+      if ((unsigned char)*s < 0x20)
+        return NULL;
+      ++s;
+    }
+    if (paren_depth != 0)
+      return NULL;
+    dst_end = s;
+    if (dst_start == dst_end)
+      return NULL; /* bare form requires non-empty destination */
+  }
+  /* 6. Optional whitespace (including up to one line ending).
+   *    Save position before title attempt so we can fall back. */
+  char *before_title_ws = s;
+  while (s < end && (*s == ' ' || *s == '\t'))
+    ++s;
+  char *ttl_start = NULL, *ttl_end = NULL;
+  char *after_dest_line = s; /* position after dest + horizontal ws */
+  int had_line_ending = 0;
+  if (s < end && (*s == '\n' || *s == '\r')) {
+    had_line_ending = 1;
+    s += (*s == '\r');
+    s += (s < end && *s == '\n');
+    while (s < end && (*s == ' ' || *s == '\t'))
+      ++s;
+  }
+  /* 7. Optional title in "...", '...', or (...)
+   *    Title must be separated from destination by whitespace
+   *    (spaces, tabs, or a line ending). */
+  if (s < end && (*s == '"' || *s == '\'' || *s == '(')) {
+    if (before_title_ws == after_dest_line && !had_line_ending) {
+      /* No whitespace between destination and title → invalid ref def */
+      return NULL;
+    }
+    char open_ch = *s;
+    char close_ch = (open_ch == '(') ? ')' : open_ch;
+    ++s;
+    ttl_start = s;
+    while (s < end) {
+      if (*s == '\\' && s + 1 < end) {
+        s += 2;
+        continue;
+      }
+      if (*s == close_ch) {
+        ttl_end = s;
+        ++s;
+        break;
+      }
+      /* check for blank line inside title — invalidates ref def */
+      if (*s == '\n' || *s == '\r') {
+        char *nl = s;
+        nl += (*nl == '\r');
+        nl += (nl < end && *nl == '\n');
+        if (nl >= end || fio___gfm_is_blank(nl, fio___gfm_line_end(nl, end))) {
+          /* blank line in title — title parse failed */
+          ttl_start = NULL;
+          ttl_end = NULL;
+          break;
+        }
+      }
+      ++s;
+    }
+    if (!ttl_end) {
+      /* Title didn't close — no title. Fall back to position after dest. */
+      ttl_start = NULL;
+      s = after_dest_line;
+      /* If we consumed a line ending, the ref def ended at end-of-dest line */
+      if (had_line_ending)
+        s = before_title_ws;
+    }
+  }
+  /* 8. No further non-whitespace on the final line.
+   *    If trailing non-whitespace after a title, fall back to no title. */
+  if (ttl_start) {
+    while (s < end && (*s == ' ' || *s == '\t'))
+      ++s;
+    if (s < end && *s != '\n' && *s != '\r') {
+      /* Trailing non-whitespace after title → invalid title, fall back */
+      ttl_start = NULL;
+    }
+  }
+  if (!ttl_start) {
+    /* no title — rest of dest line must be whitespace */
+    s = after_dest_line;
+    if (had_line_ending) {
+      s = before_title_ws;
+    }
+    while (s < end && (*s == ' ' || *s == '\t'))
+      ++s;
+    if (s < end && *s != '\n' && *s != '\r')
+      return NULL;
+  }
+  /* skip final line ending */
+  if (s < end && (*s == '\n' || *s == '\r')) {
+    s += (*s == '\r');
+    s += (s < end && *s == '\n');
+  }
+  /* Fill outputs */
+  *label = FIO_BUF_INFO2(lbl_start, (size_t)(lbl_end - lbl_start));
+  *dest = FIO_BUF_INFO2(dst_start, (size_t)(dst_end - dst_start));
+  if (ttl_start && ttl_end)
+    *title = FIO_BUF_INFO2(ttl_start, (size_t)(ttl_end - ttl_start));
+  else
+    *title = (fio_buf_info_s){0};
+  return s;
+}
+
+/** Resolve a reference label to its definition.
+ *  Returns pointer to the ref entry, or NULL if not found.
+ *  Triggers lazy document scan on first cache miss. */
+FIO_SFUNC fio___gfm_ref_s *fio___gfm_ref_resolve(fio___gfm_parser_s *st,
+                                                 fio_buf_info_s label) {
+  /* Stage 1: Linear scan of cache. */
+  for (uint16_t i = 0; i < st->ref_count; ++i) {
+    if (fio___gfm_label_eq(st->refs[i].label, label))
+      return &st->refs[i];
+  }
+  /* Stage 2: If not yet scanned, scan entire document. */
+  if (!st->ref_scanned_to) {
+    fio___gfm_ref_scan_document(st);
+    for (uint16_t i = 0; i < st->ref_count; ++i) {
+      if (fio___gfm_label_eq(st->refs[i].label, label))
+        return &st->refs[i];
+    }
+  }
+  return NULL;
+}
+
+/** Scan the entire document for reference definitions (lazy, one-shot). */
+FIO_SFUNC void fio___gfm_ref_scan_document(fio___gfm_parser_s *st) {
+  char *p = st->start;
+  char *doc_end = st->end;
+  int in_fence = 0;
+  char fence_ch = 0;
+  uint16_t fence_len = 0;
+  int prev_was_blank_or_block = 1; /* first line can start a ref def */
+
+  while (p < doc_end) {
+    char *le = fio___gfm_line_end(p, doc_end);
+    char *next = fio___gfm_line_next(le, doc_end);
+
+    uint32_t ind = fio___gfm_indent(p, le);
+
+    if (in_fence) {
+      /* Check for closing fence */
+      char *ft = fio___gfm_ltrim(p, le);
+      if (ind <= FIO___GFM_MAX_MARKER_INDENT && ft < le && *ft == fence_ch) {
+        uint16_t cnt = 0;
+        char *fc = ft;
+        while (fc < le && *fc == fence_ch) {
+          ++cnt;
+          ++fc;
+        }
+        /* closing fence: same char, >= opener len, rest is whitespace */
+        if (cnt >= fence_len && fio___gfm_is_blank(fc, le))
+          in_fence = 0;
+      }
+      prev_was_blank_or_block = 0;
+      p = next;
+      continue;
+    }
+
+    /* Skip indented code (indent >= 4) */
+    if (ind >= 4) {
+      prev_was_blank_or_block = 0;
+      p = next;
+      continue;
+    }
+
+    /* Strip blockquote markers for scanning (simplified: one level) */
+    char *line = p;
+    while (line < le && (*line == ' ' || *line == '\t'))
+      ++line;
+    if (line < le && *line == '>') {
+      ++line;
+      line += (line < le && (*line == ' ' || *line == '\t'));
+    }
+
+    /* Check for fence open */
+    {
+      char *ft = fio___gfm_ltrim(line, le);
+      if (ft < le && (*ft == '`' || *ft == '~')) {
+        char fc;
+        uint16_t fl = fio___gfm_is_fenced_code_open(ft, le, &fc);
+        if (fl) {
+          in_fence = 1;
+          fence_ch = fc;
+          fence_len = fl;
+          prev_was_blank_or_block = 1;
+          p = next;
+          continue;
+        }
+      }
+    }
+
+    if (fio___gfm_is_blank(line, le)) {
+      prev_was_blank_or_block = 1;
+      p = next;
+      continue;
+    }
+
+    /* Detect block-level constructs so ref defs can follow them */
+    {
+      char *ft = fio___gfm_ltrim(line, le);
+      if (fio___gfm_is_atx_heading(ft, le) ||
+          fio___gfm_is_thematic_break(ft, le) ||
+          (ft < le && *ft == '>') ||
+          (ft < le && (*ft == '-' || *ft == '+' || *ft == '*')) ||
+          (ft < le && *ft >= '0' && *ft <= '9')) {
+        prev_was_blank_or_block = 1;
+        p = next;
+        continue;
+      }
+    }
+
+    /* Try ref def if line starts with '[' at indent <= 3 and
+     * the previous line was a blank line or block start. */
+    {
+      char *ft = fio___gfm_ltrim(line, le);
+      if (prev_was_blank_or_block && ft < le && *ft == '[') {
+        fio_buf_info_s lbl, dst, ttl;
+        char *after = fio___gfm_try_parse_ref_def(line, doc_end, &lbl, &dst, &ttl);
+        if (after) {
+          fio___gfm_ref_cache_add(st, lbl, dst, ttl);
+          /* A ref def might span multiple lines; advance past it */
+          prev_was_blank_or_block = 1;
+          p = after;
+          continue;
+        }
+      }
+    }
+
+    prev_was_blank_or_block = 0;
+    p = next;
+  }
+  st->ref_scanned_to = st->end;
+}
+
+/* ===========================================================================
+ * Inline Parser (Forward-Scan — Single Pass, No Recursion)
+ *
+ * DOCUMENT-ORDER GUARANTEE:
+ *   All callbacks (push/write/pop) are emitted in strict left-to-right
+ *   document order. For "Hello **World**", the callback sequence is:
+ *
+ *     write(TEXT, "Hello ")
+ *     push(STRONG)
+ *     write(TEXT, "World")
+ *     pop(STRONG)
+ *
+ *   This allows a renderer to sequentially append to a string buffer
+ *   without any backtracking, delete, undo, or random-access patching.
+ *
+ * HOW IT WORKS (single pass, forward scanning):
+ *
+ *   Walk the text left-to-right. When a potential opener is found
+ *   (*, _, ~~, [, ![), scan FORWARD to find its matching closer
+ *   BEFORE emitting any push event. This resolves nesting order at
+ *   discovery time — no speculative emission, no retroactive correction.
+ *
+ *   After emitting the push, the main loop continues scanning the
+ *   INTERIOR of the construct. Interior emphasis, links, code spans
+ *   etc. are handled by the same loop — no recursion needed. When the
+ *   closer position is reached, the corresponding pop is emitted.
+ *
+ *   For combined delimiter runs like `***`:
+ *     1. Forward-scan finds the first matching closer (e.g., `**`).
+ *     2. This tells us: 2 chars consumed → STRONG, 1 remaining → EMPHASIS.
+ *     3. Emit push(EMPHASIS), push(STRONG) in the correct nesting order.
+ *     4. When `**` is reached: pop(STRONG).
+ *     5. When `*` is reached: pop(EMPHASIS).
+ *     No guessing, no resetting — the forward scan determines the
+ *     nesting before any push is emitted.
+ *
+ *   Code spans, autolinks, HTML tags, escapes, entities, and breaks
+ *   are resolved immediately during the scan (they are unambiguous).
+ *
+ * WHY FORWARD-SCAN INSTEAD OF DELIMITER STACK + TWO-PHASE:
+ *   - Single pass: no temporary event array (saves ~16 KB stack).
+ *   - No resolution phase: push/pop emitted immediately, in order.
+ *   - No delete/undo needed: nesting resolved before committing.
+ *   - Simpler mental model: "look ahead, then commit."
+ *   - Delimiter stack shrinks to a simple open-section tracker.
+ *
+ * COMPLEXITY:
+ *   O(n) for typical documents. O(n²) worst case for pathological
+ *   inputs (many unclosed openers). Bounded by MAX_DELIM_STACK — when
+ *   the stack overflows, excess delimiters emit as literal text.
+ *
+ * Entry point: fio___gfm_inline_parse()
+ *   Called when a leaf closes (paragraph, heading, table cell).
+ *   Processes the text region [start..end) for inline elements.
+ * ========================================================================= */
+
+/** Forward-scan for emphasis closer.
+ *
+ *  Given an opener with `marker` char and `opener_len` chars,
+ *  scans [search_start..boundary) for a matching closer.
+ *
+ *  `boundary` is the closer position of the enclosing section, or
+ *  end-of-text if no section is open. This is CRITICAL: inner constructs
+ *  must not find closers past their parent's closer. Without this bound,
+ *  overlapping spans like `<em>foo <strong>bar</em> baz</strong>` can
+ *  occur. With the bound, `**` inside an `*` emphasis cannot match a
+ *  `**` that lies past the `*` closer — so it becomes literal text.
+ *
+ *  Returns: pointer to the closer run, or NULL if no closer found.
+ *  On success, *closer_len is set to the closer's run length.
+ *
+ *  Matching rules:
+ *  - Closer must be a right-flanking delimiter run of the same char.
+ *  - Rule of three: if closer can also open, (opener_len + closer_len)
+ *    must not be a multiple of 3 unless both are multiples of 3.
+ *  - For ~~: only exact length 2 matches.
+ *
+ *  The forward scan skips over code spans (backtick pairs) to avoid
+ *  false matches inside code. */
+FIO_IFUNC int fio___gfm_is_ascii_alnum(uint8_t c) {
+  return ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+          (c >= '0' && c <= '9'));
+}
+
+FIO_IFUNC int fio___gfm_is_autolink_body(char *p, char *end) {
+  for (; p < end; ++p) {
+    unsigned char c = (unsigned char)*p;
+    if (c <= 32 || c == '<' || c == '>')
+      return 0;
+  }
+  return 1;
+}
+
+FIO_IFUNC int fio___gfm_is_autolink_scheme(char *p, char *end) {
+  size_t len = 0;
+  if (p >= end || !((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z')))
+    return 0;
+  for (; p < end && *p != ':'; ++p) {
+    char c = *p;
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+          (c >= '0' && c <= '9') || c == '+' || c == '.' || c == '-'))
+      return 0;
+    ++len;
+  }
+  return (p < end && *p == ':' && len >= 2 && len <= 32 && p + 1 < end &&
+          fio___gfm_is_autolink_body(p + 1, end));
+}
+
+FIO_IFUNC int fio___gfm_is_autolink_email(char *p, char *end) {
+  char *at = NULL;
+  char *domain;
+  int label_len = 0, label_has_dot = 0;
+  for (char *s = p; s < end; ++s) {
+    char c = *s;
+    int ok = ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '.' || c == '!' || c == '#' ||
+              c == '$' || c == '%' || c == '&' || c == '\'' || c == '*' ||
+              c == '+' || c == '/' || c == '=' || c == '?' || c == '^' ||
+              c == '_' || c == '`' || c == '{' || c == '|' || c == '}' ||
+              c == '~' || c == '-');
+    if (c == '@') {
+      if (at || s == p)
+        return 0;
+      at = s;
+      continue;
+    }
+    if (!ok)
+      return 0;
+  }
+  if (!at || at + 1 >= end)
+    return 0;
+  domain = at + 1;
+  if (*domain == '.' || *domain == '-')
+    return 0;
+  for (char *s = domain; s < end; ++s) {
+    char c = *s;
+    if (c == '.') {
+      if (!label_len || s[-1] == '-')
+        return 0;
+      label_has_dot = 1;
+      label_len = 0;
+      continue;
+    }
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+          (c >= '0' && c <= '9') || c == '-'))
+      return 0;
+    ++label_len;
+  }
+  return label_has_dot && label_len > 0 && end[-1] != '-';
+}
+
+FIO_IFUNC char *fio___gfm_extended_url_end(char *p, char *end) {
+  char *s = p;
+  int is_url = 0;
+  if (end - p >= 7 && fio___gfm_ci_match(p, end, "http://") == p + 7)
+    is_url = 1;
+  else if (end - p >= 8 && fio___gfm_ci_match(p, end, "https://") == p + 8)
+    is_url = 1;
+  else if (end - p >= 6 && fio___gfm_ci_match(p, end, "ftp://") == p + 6)
+    is_url = 1;
+  else if (end - p >= 4 && fio___gfm_ci_match(p, end, "www.") == p + 4)
+    is_url = 1;
+  if (!is_url)
+    return NULL;
+  while (s < end && *s > ' ' && *s != '<')
+    ++s;
+  while (s > p && (s[-1] == '.' || s[-1] == ',' || s[-1] == ':' ||
+                   s[-1] == '*' || s[-1] == '_' || s[-1] == '~' ||
+                   s[-1] == '?' || s[-1] == '!'))
+    --s;
+  for (;;) {
+    char *amp = s;
+    while (amp > p && amp[-1] != '&')
+      --amp;
+    if (amp <= p || s[-1] != ';')
+      break;
+    int entityish = 1;
+    for (char *e = amp; e < s - 1; ++e) {
+      char c = *e;
+      if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '#')) {
+        entityish = 0;
+        break;
+      }
+    }
+    if (!entityish)
+      break;
+    s = amp - 1;
+  }
+  int open_paren = 0, close_paren = 0;
+  for (char *q = p; q < s; ++q) {
+    open_paren += (*q == '(');
+    close_paren += (*q == ')');
+  }
+  while (s > p && s[-1] == ')' && close_paren > open_paren) {
+    --s;
+    --close_paren;
+  }
+  return (s > p) ? s : NULL;
+}
+
+FIO_IFUNC char *fio___gfm_extended_email_end(char *p, char *end) {
+  char *s = p;
+  while (s < end) {
+    char c = *s;
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+          (c >= '0' && c <= '9') || c == '.' || c == '!' || c == '#' ||
+          c == '$' || c == '%' || c == '&' || c == '\'' || c == '*' ||
+          c == '+' || c == '/' || c == '=' || c == '?' || c == '^' ||
+          c == '_' || c == '`' || c == '{' || c == '|' || c == '}' ||
+          c == '~' || c == '-' || c == '@'))
+      break;
+    ++s;
+  }
+  while (s > p && (s[-1] == '.' || s[-1] == ','))
+    --s;
+  return fio___gfm_is_autolink_email(p, s) ? s : NULL;
+}
+
+FIO_IFUNC int fio___gfm_is_html_attr_name_start(char c) {
+  return ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' ||
+          c == ':');
+}
+
+FIO_IFUNC int fio___gfm_is_html_attr_name_char(char c) {
+  return fio___gfm_is_html_attr_name_start(c) || (c >= '0' && c <= '9') ||
+         c == '.' || c == '-';
+}
+
+FIO_SFUNC char *fio___gfm_html_tag_end(char *p, char *end) {
+  if (p >= end || *p != '<' || p + 1 >= end)
+    return NULL;
+
+  if (end - p >= 4 && p[1] == '!' && p[2] == '-' && p[3] == '-') {
+    if (p + 4 < end && p[4] == '>')
+      return p + 5;
+    if (p + 5 < end && p[4] == '-' && p[5] == '>')
+      return p + 6;
+    for (char *s = p + 4; s + 2 < end; ++s) {
+      if (s[0] == '-' && s[1] == '-' && s[2] == '>')
+        return s + 3;
+    }
+    return NULL;
+  }
+  if (p[1] == '?') {
+    for (char *s = p + 2; s + 1 < end; ++s) {
+      if (s[0] == '?' && s[1] == '>')
+        return s + 2;
+    }
+    return NULL;
+  }
+  if (fio___gfm_ci_match(p + 1, end, "![cdata[")) {
+    for (char *s = p + 9; s + 2 < end; ++s) {
+      if (s[0] == ']' && s[1] == ']' && s[2] == '>')
+        return s + 3;
+    }
+    return NULL;
+  }
+  if (p[1] == '!') {
+    char *s = p + 2;
+    if (s >= end || !(*s >= 'A' && *s <= 'Z'))
+      return NULL;
+    while (s < end && *s >= 'A' && *s <= 'Z')
+      ++s;
+    if (s >= end || !(*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r'))
+      return NULL;
+    while (s < end && *s != '>')
+      ++s;
+    return (s < end) ? s + 1 : NULL;
+  }
+
+  char *s = p + 1;
+  int closing = 0;
+  if (*s == '/') {
+    closing = 1;
+    ++s;
+  }
+  if (s >= end || !((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z')))
+    return NULL;
+  while (s < end && ((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') ||
+                     (*s >= '0' && *s <= '9') || *s == '-'))
+    ++s;
+
+  if (closing) {
+    while (s < end && (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r'))
+      ++s;
+    return (s < end && *s == '>') ? s + 1 : NULL;
+  }
+
+  for (;;) {
+    int had_ws = 0;
+    while (s < end && (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r')) {
+      had_ws = 1;
+      ++s;
+    }
+    if (s >= end)
+      return NULL;
+    if (*s == '>')
+      return s + 1;
+    if (*s == '/')
+      return (s + 1 < end && s[1] == '>') ? s + 2 : NULL;
+    if (!had_ws || !fio___gfm_is_html_attr_name_start(*s))
+      return NULL;
+    while (s < end && fio___gfm_is_html_attr_name_char(*s))
+      ++s;
+    char *after_name = s;
+    while (s < end && (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r'))
+      ++s;
+    if (s >= end || *s != '=') {
+      s = after_name;
+      continue;
+    }
+    ++s;
+    while (s < end && (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r'))
+      ++s;
+    if (s >= end)
+      return NULL;
+    if (*s == '\'' || *s == '"') {
+      char quote = *s++;
+      while (s < end && *s != quote)
+        ++s;
+      if (s >= end)
+        return NULL;
+      ++s;
+      continue;
+    }
+    char *value = s;
+    while (s < end && !(*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r' ||
+                        *s == '"' || *s == '\'' || *s == '=' || *s == '<' ||
+                        *s == '>' || *s == '`'))
+      ++s;
+    if (s == value)
+      return NULL;
+  }
+}
+
+/** Return the end of a CommonMark angle autolink or inline raw HTML span.
+ *  Used by delimiter lookahead so marker characters inside raw HTML attrs
+ *  don't satisfy emphasis closers (e.g. `*<img title="*">`). */
+FIO_SFUNC char *fio___gfm_inline_angle_end(char *p, char *end) {
+  if (p >= end || *p != '<')
+    return NULL;
+  char *gt = p + 1;
+  while (gt < end && *gt != '>')
+    ++gt;
+  if (gt < end && (fio___gfm_is_autolink_scheme(p + 1, gt) ||
+                   fio___gfm_is_autolink_email(p + 1, gt)))
+    return gt + 1;
+  return fio___gfm_html_tag_end(p, end);
+}
+
+FIO_SFUNC char *fio___gfm_link_like_end(char *p, char *end) {
+  if (p >= end)
+    return NULL;
+  p += (*p == '!' && p + 1 < end && p[1] == '[');
+  if (p >= end || *p != '[')
+    return NULL;
+  char *s = p + 1;
+  uint16_t depth = 0;
+  while (s < end) {
+    if (*s == '\\' && s + 1 < end) {
+      s += 2;
+      continue;
+    }
+    if (*s == '`') {
+      char *bq = s;
+      while (s < end && *s == '`')
+        ++s;
+      uint16_t bq_len = (uint16_t)(s - bq);
+      while (s < end) {
+        if (*s == '`') {
+          char *cr = s;
+          while (s < end && *s == '`')
+            ++s;
+          if ((uint16_t)(s - cr) == bq_len)
+            break;
+        } else {
+          ++s;
+        }
+      }
+      continue;
+    }
+    if (*s == '<') {
+      char *ae = fio___gfm_inline_angle_end(s, end);
+      if (ae) {
+        s = ae;
+        continue;
+      }
+    }
+    if (*s == '[') {
+      ++depth;
+      ++s;
+      continue;
+    }
+    if (*s == ']') {
+      if (!depth)
+        break;
+      --depth;
+    }
+    ++s;
+  }
+  if (s >= end || depth)
+    return NULL;
+  char *after = s + 1;
+  if (after < end && *after == '(') {
+    char *q = after + 1;
+    int pd = 1;
+    while (q < end && pd) {
+      if (*q == '\\' && q + 1 < end) {
+        q += 2;
+        continue;
+      }
+      pd += (*q == '(') - (*q == ')');
+      ++q;
+    }
+    return pd ? NULL : q;
+  }
+  if (after < end && *after == '[') {
+    char *q = after + 1;
+    while (q < end && *q != ']') {
+      if (*q == '\\' && q + 1 < end)
+        q += 2;
+      else
+        ++q;
+    }
+    return (q < end) ? q + 1 : NULL;
+  }
+  return NULL;
+}
+
+FIO_SFUNC char *fio___gfm_find_closer(fio___gfm_parser_s *st,
+                                      char *search_start,
+                                      char *boundary,
+                                      char marker,
+                                      uint16_t opener_len,
+                                      uint16_t *closer_len) {
+  char *s = search_start;
+  int depth = 0; /* tracks inner openers that consume closers */
+  while (s < boundary) {
+    /* Skip backtick code spans */
+    if (*s == '`') {
+      char *bq = s;
+      while (s < boundary && *s == '`')
+        ++s;
+      uint16_t bq_len = (uint16_t)(s - bq);
+      int found_close = 0;
+      while (s < boundary) {
+        if (*s == '`') {
+          char *cr = s;
+          while (s < boundary && *s == '`')
+            ++s;
+          if ((uint16_t)(s - cr) == bq_len) {
+            found_close = 1;
+            break;
+          }
+        } else {
+          ++s;
+        }
+      }
+      if (!found_close)
+        s = bq + bq_len;
+      continue;
+    }
+    /* Skip backslash escapes */
+    if (*s == '\\' && s + 1 < boundary) {
+      s += 2;
+      continue;
+    }
+    /* Skip angle autolinks, raw HTML, and link/image constructs. Delimiters
+     * inside them are literal/link text, not closer candidates. */
+    if (*s == '<') {
+      char *angle_end = fio___gfm_inline_angle_end(s, boundary);
+      if (angle_end) {
+        s = angle_end;
+        continue;
+      }
+    }
+    if (*s == '[' || (*s == '!' && s + 1 < boundary && s[1] == '[')) {
+      char *link_end = fio___gfm_link_like_end(s, boundary);
+      if (link_end) {
+        s = link_end;
+        continue;
+      }
+      char *bracket = s + (*s == '!');
+      char *q = bracket + 1;
+      uint16_t bd = 0;
+      while (q < boundary) {
+        if (*q == '[')
+          ++bd;
+        else if (*q == ']') {
+          if (!bd)
+            break;
+          --bd;
+        }
+        ++q;
+      }
+      if (*s == '[' && q < boundary && *q == ']') {
+        fio_buf_info_s label = FIO_BUF_INFO2(s + 1, (size_t)(q - (s + 1)));
+        if (fio___gfm_ref_resolve(st, label)) {
+          s = q + 1;
+          continue;
+        }
+      }
+    }
+    /* Check for run of marker */
+    if (*s == marker) {
+      char *run_start = s;
+      while (s < boundary && *s == marker)
+        ++s;
+      uint16_t run_len = (uint16_t)(s - run_start);
+      /* Classify flanking */
+      char before = (run_start > search_start) ? run_start[-1] : (char)marker;
+      int before_ws = (before == ' ' || before == '\t' || before == '\n' ||
+                       before == '\r');
+      int before_punct = fio___gfm_is_punct(before);
+      char after = (s < boundary) ? *s : ' ';
+      int after_ws =
+          (after == ' ' || after == '\t' || after == '\n' || after == '\r');
+      int after_punct = fio___gfm_is_punct(after);
+      int left_flanking = !after_ws && (!after_punct || before_ws || before_punct);
+      int right_flanking = !before_ws && (!before_punct || after_ws || after_punct);
+
+      /* Determine can_open / can_close per delimiter type */
+      int can_open = left_flanking;
+      int can_close = right_flanking;
+      if (marker == '_') {
+        can_open = left_flanking && (!right_flanking || before_punct);
+        can_close = right_flanking && (!left_flanking || after_punct);
+      }
+      if (marker == '~') {
+        can_close = can_close && (run_len == opener_len);
+        can_open = can_open && (run_len == opener_len);
+      }
+
+      /* Nesting: pure opener increments depth, closer decrements */
+      if (can_open && !can_close) {
+        ++depth;
+        continue;
+      }
+      if (!can_close)
+        continue;
+
+      /* This run can close. If inner openers consumed, decrement depth. */
+      if (depth > 0) {
+        --depth;
+        continue;
+      }
+
+      /* Rule of three check */
+      if (marker == '*' || marker == '_') {
+        if (can_open) {
+          uint16_t sum = opener_len + run_len;
+          if ((sum % 3 == 0) && (opener_len % 3 != 0 || run_len % 3 != 0))
+            continue;
+        }
+      }
+      *closer_len = run_len;
+      return run_start;
+    }
+    ++s;
+  }
+  return NULL;
+}
+
+/** Forward-scan for link/image: find ']' and validate link syntax.
+ *
+ *  Given a '[' or '![' at `opener`, scans forward for the matching ']',
+ *  then checks for inline link `(url "title")`, reference `[label]`,
+ *  collapsed `[]`, or shortcut (nothing after ']').
+ *
+ *  Returns: pointer past the full link construct on success (after the
+ *  closing ')' or ']'), or NULL if this is not a valid link/image.
+ *
+ *  On success, fills *dest, *title, *ref_label with the link metadata.
+ *  The link text spans [text_start..bracket_close). */
+FIO_SFUNC char *fio___gfm_find_link(fio___gfm_parser_s *st,
+                                    char *opener,
+                                    char *end,
+                                    int is_image,
+                                    char **text_start,
+                                    char **bracket_close,
+                                    fio_buf_info_s *dest,
+                                    fio_buf_info_s *title,
+                                    fio_buf_info_s *ref_label) {
+  (void)is_image;
+  char *s = opener + 1; /* past '[' */
+  *text_start = s;
+  *dest = (fio_buf_info_s){0};
+  *title = (fio_buf_info_s){0};
+  *ref_label = (fio_buf_info_s){0};
+
+  /* Scan for the matching ']' for link text. Balanced nested brackets are
+   * part of the link text; brackets inside code spans, raw HTML, and angle
+   * autolinks do not close the link. */
+  uint16_t bracket_depth = 0;
+  while (s < end) {
+    if (*s == '\\' && s + 1 < end) {
+      s += 2;
+      continue;
+    }
+    if (*s == '`') {
+      char *bq = s;
+      while (s < end && *s == '`')
+        ++s;
+      uint16_t bq_len = (uint16_t)(s - bq);
+      while (s < end) {
+        if (*s == '`') {
+          char *cr = s;
+          while (s < end && *s == '`')
+            ++s;
+          if ((uint16_t)(s - cr) == bq_len)
+            break;
+        } else {
+          ++s;
+        }
+      }
+      continue;
+    }
+    if (*s == '<') {
+      char *angle_end = fio___gfm_inline_angle_end(s, end);
+      if (angle_end) {
+        s = angle_end;
+        continue;
+      }
+    }
+    if (*s == '[') {
+      ++bracket_depth;
+      ++s;
+      continue;
+    }
+    if (*s == ']') {
+      if (!bracket_depth)
+        break;
+      --bracket_depth;
+      ++s;
+      continue;
+    }
+    ++s;
+  }
+  if (s >= end || bracket_depth)
+    return NULL;
+  *bracket_close = s;
+  ++s; /* past ']' */
+
+  if (!is_image) {
+    for (char *inner = *text_start; inner < *bracket_close; ++inner) {
+      if (*inner == '[' && !(inner > *text_start && inner[-1] == '!')) {
+        char *inner_end = fio___gfm_link_like_end(inner, *bracket_close);
+        if (inner_end)
+          return NULL;
+      }
+    }
+  }
+
+  /* (a) Inline link: ( destination "title" ) */
+  if (s < end && *s == '(') {
+    char *lp = s + 1;
+    /* skip whitespace */
+    while (lp < end && (*lp == ' ' || *lp == '\t' || *lp == '\n' ||
+                        *lp == '\r'))
+      ++lp;
+    /* parse destination */
+    char *ds = NULL, *de = NULL;
+    if (lp < end && *lp == '<') {
+      ++lp;
+      ds = lp;
+      while (lp < end && *lp != '>' && *lp != '\n' && *lp != '\r') {
+        if (*lp == '\\' && lp + 1 < end) {
+          lp += 2;
+          continue;
+        }
+        ++lp;
+      }
+      if (lp >= end || *lp != '>')
+        goto try_ref;
+      de = lp;
+      ++lp;
+    } else if (lp < end && *lp != ')') {
+      ds = lp;
+      int pd = 0;
+      while (lp < end && *lp != ' ' && *lp != '\t' && *lp != '\n' &&
+             *lp != '\r') {
+        if (*lp == '\\' && lp + 1 < end) {
+          lp += 2;
+          continue;
+        }
+        if (*lp == '(')
+          ++pd;
+        else if (*lp == ')') {
+          if (pd == 0)
+            break;
+          --pd;
+        }
+        ++lp;
+      }
+      if (pd != 0)
+        goto try_ref;
+      de = lp;
+    } else {
+      ds = lp;
+      de = lp; /* empty destination */
+    }
+    /* skip whitespace before optional title */
+    while (lp < end && (*lp == ' ' || *lp == '\t' || *lp == '\n' ||
+                        *lp == '\r'))
+      ++lp;
+    /* optional title */
+    char *ts = NULL, *te = NULL;
+    if (lp < end && (*lp == '"' || *lp == '\'' || *lp == '(')) {
+      char open_ch = *lp;
+      char close_ch = (open_ch == '(') ? ')' : open_ch;
+      ++lp;
+      ts = lp;
+      while (lp < end && *lp != close_ch) {
+        if (*lp == '\\' && lp + 1 < end) {
+          lp += 2;
+          continue;
+        }
+        ++lp;
+      }
+      if (lp >= end)
+        goto try_ref;
+      te = lp;
+      ++lp;
+    }
+    /* skip whitespace, expect ')' */
+    while (lp < end && (*lp == ' ' || *lp == '\t' || *lp == '\n' ||
+                        *lp == '\r'))
+      ++lp;
+    if (lp < end && *lp == ')') {
+      ++lp;
+      if (ds)
+        *dest = FIO_BUF_INFO2(ds, (size_t)(de - ds));
+      if (ts && te)
+        *title = FIO_BUF_INFO2(ts, (size_t)(te - ts));
+      return lp;
+    }
+  }
+
+try_ref:
+  /* (b) Full reference: [label] */
+  if (s < end && *s == '[') {
+    char *rs = s + 1;
+    char *re = rs;
+    while (re < end && *re != ']') {
+      if (*re == '\\' && re + 1 < end) {
+        re += 2;
+        continue;
+      }
+      ++re;
+    }
+    if (re < end && re > rs) {
+      fio_buf_info_s rl = FIO_BUF_INFO2(rs, (size_t)(re - rs));
+      fio___gfm_ref_s *ref = fio___gfm_ref_resolve(st, rl);
+      if (ref) {
+        *dest = ref->destination;
+        *title = ref->title;
+        *ref_label = rl;
+        return re + 1;
+      }
+    }
+    /* (c) Collapsed reference: [] */
+    if (re < end && rs == re) {
+      fio_buf_info_s rl = FIO_BUF_INFO2(
+          *text_start, (size_t)(*bracket_close - *text_start));
+      fio___gfm_ref_s *ref = fio___gfm_ref_resolve(st, rl);
+      if (ref) {
+        *dest = ref->destination;
+        *title = ref->title;
+        *ref_label = rl;
+        return re + 1;
+      }
+    }
+  }
+
+  /* (d) Shortcut reference: label = link text. A following '[' means this
+   * attempted a full/collapsed reference; if that failed, do not reinterpret
+   * the first bracketed text as a shortcut. */
+  if (!(s < end && *s == '[')) {
+    fio_buf_info_s rl = FIO_BUF_INFO2(
+        *text_start, (size_t)(*bracket_close - *text_start));
+    fio___gfm_ref_s *ref = fio___gfm_ref_resolve(st, rl);
+    if (ref) {
+      *dest = ref->destination;
+      *title = ref->title;
+      *ref_label = rl;
+      return *bracket_close + 1;
+    }
+  }
+
+  return NULL;
+}
+
+/** Open-section stack entry.
+ *
+ *  Tracks what push events are currently open so that closers can be
+ *  matched. This is NOT the CommonMark delimiter stack — it's a simple
+ *  stack of "this type is open, pop it when closer is reached."
+ */
+typedef struct {
+  char *closer_pos;    /* source position where the closer starts */
+  char *advance_to;    /* if non-NULL, advance here after pop (links) */
+  uint16_t closer_len; /* byte length of the closer delimiter run */
+  uint8_t type;        /* fio_gfm_type_e being pushed */
+  uint8_t marker;      /* delimiter char (* _ ~) */
+} fio___gfm_open_section_s;
+
+#ifndef FIO___GFM_MAX_OPEN_SECTIONS
+#define FIO___GFM_MAX_OPEN_SECTIONS 64
+#endif
+
+/** Parse a region of text for inline elements.
+ *
+ *  Main inline parsing entry point. Called when a leaf closes.
+ *  Processes [start..end) and emits push/write/pop callbacks in strict
+ *  left-to-right document order.
+ *
+ *  NO RECURSION. Single pass with forward lookahead.
+ *
+ *  DOCUMENT-ORDER GUARANTEE: For input "Hello **World**":
+ *    write(TEXT, "Hello ") → push(STRONG) → write(TEXT, "World") → pop(STRONG)
+ */
+FIO_SFUNC int fio___gfm_inline_parse(fio___gfm_parser_s *st,
+                                     char *start,
+                                     char *end) {
+  int r = 0;
+  char *p = start;          /* current scan position */
+  char *text_start = start; /* start of pending literal text */
+
+  /* Count blockquote nesting depth for stripping '>' from continuation lines.
+   * When paragraph text spans multiple source lines inside a blockquote,
+   * the raw text slice contains embedded '>' markers that must be skipped. */
+  uint16_t bq_depth = 0;
+  for (uint16_t d = 0; d < st->depth; ++d)
+    bq_depth += (st->nest[d].type == FIO___GFM_CONT_BQ);
+
+  /* Open-section stack: tracks active push events awaiting their pop.
+   * When the scan reaches a closer_pos, the corresponding pop is emitted.
+   * Stack is ordered innermost-on-top (LIFO). */
+  fio___gfm_open_section_s open[FIO___GFM_MAX_OPEN_SECTIONS];
+  uint16_t open_top = 0;
+
+/* Helper: emit pending literal text from text_start to pos. */
+#define FIO___GFM_FLUSH_TEXT(pos)                                              \
+  do {                                                                         \
+    if ((pos) > text_start) {                                                  \
+      fio_gfm_event_s _e = {                                                   \
+          .udata = st->udata,                                                  \
+          .text = FIO_BUF_INFO2(text_start, (size_t)((pos)-text_start)),          \
+          .type = FIO_GFM_TEXT,                                                \
+      };                                                                       \
+      r = fio___gfm_emit_write(st, &_e);                                       \
+      if (r)                                                                   \
+        goto done;                                                             \
+    }                                                                          \
+    text_start = (pos);                                                        \
+  } while (0)
+
+  while (p < end) {
+    /* (a) Closer check: pop any open sections whose closer we've reached */
+    while (open_top > 0 && p >= open[open_top - 1].closer_pos) {
+      fio___gfm_open_section_s *sec = &open[open_top - 1];
+      FIO___GFM_FLUSH_TEXT(sec->closer_pos);
+      char *adv = sec->advance_to;
+      uint8_t sec_type = sec->type;
+      p = sec->closer_pos + sec->closer_len;
+      text_start = p;
+      --open_top;
+      fio_gfm_event_s ev;
+      fio___gfm_event_init(st, &ev);
+      ev.type = sec_type;
+      r = fio___gfm_emit_pop(st, &ev);
+      if (r)
+        goto done;
+      if (adv) {
+        p = adv;
+        text_start = p;
+      }
+    }
+    if (p >= end)
+      break;
+
+    char c = *p;
+    int angle_suppressed = 0;
+    {
+      char *prev = p;
+      while (prev > start && (prev[-1] == ' ' || prev[-1] == '\t'))
+        --prev;
+      angle_suppressed = (prev > start && prev[-1] == '<');
+    }
+
+    /* (b) Backslash escape */
+    if (c == '\\' && p + 1 < end) {
+      char nc = p[1];
+      if (nc == '\n' || nc == '\r') {
+        /* hard break */
+        FIO___GFM_FLUSH_TEXT(p);
+        p += 1; /* skip backslash */
+        p += (*p == '\r');
+        p += (p < end && *p == '\n');
+        for (uint16_t bq = 0; bq < bq_depth && p < end; ++bq) {
+          char *t = p;
+          uint32_t sp = 0;
+          while (t < end && (*t == ' ' || *t == '\t') && sp < 3) {
+            sp += (*t == '\t')
+                      ? FIO___GFM_TAB_WIDTH - (sp & (FIO___GFM_TAB_WIDTH - 1U))
+                      : 1;
+            ++t;
+          }
+          if (t < end && *t == '>') {
+            p = t + 1;
+            p += (p < end && (*p == ' ' || *p == '\t'));
+          } else {
+            break;
+          }
+        }
+        while (p < end && (*p == ' ' || *p == '\t'))
+          ++p;
+        text_start = p;
+        if (p < end) {
+          fio_gfm_event_s ev;
+          fio___gfm_event_init(st, &ev);
+          ev.type = FIO_GFM_HARD_BREAK;
+          r = fio___gfm_emit_write(st, &ev);
+          if (r) goto done;
+        }
+        continue;
+      }
+      if (fio___gfm_is_punct(nc)) {
+        /* escaped punctuation: flush text before '\', skip '\',
+         * restart text from the escaped char (exclude backslash). */
+        FIO___GFM_FLUSH_TEXT(p);
+        p += 1; /* skip backslash */
+        text_start = p; /* text resumes at the escaped char */
+        p += 1; /* advance past the escaped char */
+        continue;
+      }
+      ++p;
+      continue;
+    }
+
+    /* (b2) Ampersand — ML entity decode */
+    if (c == '&') {
+      char decoded[8];
+      size_t decoded_len = fio_entity(decoded, p, (size_t)(end - p));
+      if (decoded_len) {
+        /* Find the ';' to advance past the entity */
+        char *semi = p + 1;
+        while (semi < end && *semi != ';')
+          ++semi;
+        FIO___GFM_FLUSH_TEXT(p);
+        fio_gfm_event_s ev;
+        fio___gfm_event_init(st, &ev);
+        ev.type = FIO_GFM_TEXT;
+        ev.text = FIO_BUF_INFO2(decoded, decoded_len);
+        r = fio___gfm_emit_write(st, &ev);
+        if (r) goto done;
+        p = semi + 1;
+        text_start = p;
+        continue;
+      }
+      ++p;
+      continue;
+    }
+
+    /* (c) Backtick — code span */
+    if (c == '`') {
+      char *bt_start = p;
+      while (p < end && *p == '`')
+        ++p;
+      uint16_t bt_len = (uint16_t)(p - bt_start);
+      /* forward-scan for matching closing run */
+      char *scan = p;
+      char *code_closer = NULL;
+      while (scan < end) {
+        if (*scan == '`') {
+          char *cr = scan;
+          while (scan < end && *scan == '`')
+            ++scan;
+          if ((uint16_t)(scan - cr) == bt_len) {
+            code_closer = cr;
+            break;
+          }
+        } else {
+          ++scan;
+        }
+      }
+      if (code_closer) {
+        FIO___GFM_FLUSH_TEXT(bt_start);
+        /* code span interior: [p..code_closer) */
+        char *cs = p;
+        char *ce = code_closer;
+        /* strip one leading + trailing space/newline if both present and
+         * content is not all whitespace (CommonMark: line endings = spaces) */
+        if (ce - cs >= 2 &&
+            (*cs == ' ' || *cs == '\n' || *cs == '\r') &&
+            (ce[-1] == ' ' || ce[-1] == '\n' || ce[-1] == '\r')) {
+          int all_ws = 1;
+          for (char *t = cs; t < ce && all_ws; ++t)
+            all_ws &= (*t == ' ' || *t == '\n' || *t == '\r');
+          if (!all_ws) {
+            ++cs;
+            --ce;
+          }
+        }
+        /* Replace internal newlines with spaces for code span */
+        fio_gfm_event_s ev;
+        fio___gfm_event_init(st, &ev);
+        ev.type = FIO_GFM_CODE_SPAN;
+        ev.text = FIO_BUF_INFO2(cs, (size_t)(ce - cs));
+        r = fio___gfm_emit_write(st, &ev);
+        if (r) goto done;
+        p = code_closer + bt_len;
+        text_start = p;
+      }
+      /* else: no closer found, p already advanced past backticks (literal) */
+      continue;
+    }
+
+    /* (d) Newline */
+    if (c == '\n' || c == '\r') {
+      /* check for hard break: 2+ trailing spaces before newline */
+      char *line_text_end = p;
+      int trailing_spaces = 0;
+      while (line_text_end > text_start &&
+             (line_text_end[-1] == ' ' || line_text_end[-1] == '\t')) {
+        --line_text_end;
+        ++trailing_spaces;
+      }
+      int is_hard = (trailing_spaces >= 2);
+      FIO___GFM_FLUSH_TEXT(line_text_end);
+      /* skip line ending */
+      p += (*p == '\r');
+      p += (p < end && *p == '\n');
+      /* Strip blockquote continuation markers from paragraph text.
+       * When a paragraph spans multiple lines inside a blockquote,
+       * continuation lines in the raw source contain '>' markers
+       * consumed by Step 1 but physically present in the text slice.
+       * Strip up to bq_depth levels of '>' markers. */
+      for (uint16_t bq = 0; bq < bq_depth && p < end; ++bq) {
+        char *t = p;
+        uint32_t sp = 0;
+        while (t < end && (*t == ' ' || *t == '\t') && sp < 3) {
+          sp += (*t == '\t')
+                    ? FIO___GFM_TAB_WIDTH - (sp & (FIO___GFM_TAB_WIDTH - 1U))
+                    : 1;
+          ++t;
+        }
+        if (t < end && *t == '>') {
+          p = t + 1;
+          p += (p < end && (*p == ' ' || *p == '\t'));
+        } else {
+          break; /* lazy continuation — no marker at this level */
+        }
+      }
+      /* strip leading whitespace from continuation line */
+      while (p < end && (*p == ' ' || *p == '\t'))
+        ++p;
+      text_start = p;
+      if (p < end) {
+        fio_gfm_event_s ev;
+        fio___gfm_event_init(st, &ev);
+        ev.type = is_hard ? FIO_GFM_HARD_BREAK : FIO_GFM_SOFT_BREAK;
+        r = fio___gfm_emit_write(st, &ev);
+        if (r) goto done;
+      }
+      continue;
+    }
+
+    /* (e) GFM extended autolinks (bare URLs and emails) */
+    if (!angle_suppressed &&
+        (p == start || !(fio___gfm_is_ascii_alnum((uint8_t)p[-1]))) &&
+        ((c == 'h' || c == 'H' || c == 'f' || c == 'F' || c == 'w' ||
+          c == 'W'))) {
+      char *ue = fio___gfm_extended_url_end(p, end);
+      if (ue) {
+        FIO___GFM_FLUSH_TEXT(p);
+        fio_gfm_event_s ev;
+        fio___gfm_event_init(st, &ev);
+        ev.type = FIO_GFM_AUTOLINK;
+        ev.text = FIO_BUF_INFO2(p, (size_t)(ue - p));
+        ev.destination = ev.text;
+        r = fio___gfm_emit_write(st, &ev);
+        if (r) goto done;
+        p = ue;
+        text_start = p;
+        continue;
+      }
+    }
+    if (!angle_suppressed &&
+        (p == start || !(fio___gfm_is_ascii_alnum((uint8_t)p[-1]))) &&
+        ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+         (c >= '0' && c <= '9'))) {
+      char *ee = fio___gfm_extended_email_end(p, end);
+      if (ee) {
+        FIO___GFM_FLUSH_TEXT(p);
+        fio_gfm_event_s ev;
+        fio___gfm_event_init(st, &ev);
+        ev.type = FIO_GFM_AUTOLINK;
+        ev.text = FIO_BUF_INFO2(p, (size_t)(ee - p));
+        ev.destination = ev.text;
+        r = fio___gfm_emit_write(st, &ev);
+        if (r) goto done;
+        p = ee;
+        text_start = p;
+        continue;
+      }
+    }
+
+    /* (f) Less-than — autolink or inline HTML */
+    if (c == '<') {
+      char *gt = p + 1;
+      while (gt < end && *gt != '>')
+        ++gt;
+      if (gt < end) {
+        /* check for CommonMark autolink: absolute URI or email */
+        if (fio___gfm_is_autolink_scheme(p + 1, gt) ||
+            fio___gfm_is_autolink_email(p + 1, gt)) {
+          FIO___GFM_FLUSH_TEXT(p);
+          fio_gfm_event_s ev;
+          fio___gfm_event_init(st, &ev);
+          ev.type = FIO_GFM_AUTOLINK;
+          ev.text = FIO_BUF_INFO2(p + 1, (size_t)(gt - (p + 1)));
+          ev.destination = ev.text;
+          r = fio___gfm_emit_write(st, &ev);
+          if (r) goto done;
+          p = gt + 1;
+          text_start = p;
+          continue;
+        }
+        /* check for inline HTML */
+        char *tag_end = fio___gfm_html_tag_end(p, end);
+        if (tag_end) {
+          FIO___GFM_FLUSH_TEXT(p);
+          fio_gfm_event_s ev;
+          fio___gfm_event_init(st, &ev);
+          ev.type = FIO_GFM_INLINE_HTML;
+          ev.text = FIO_BUF_INFO2(p, (size_t)(tag_end - p));
+          r = fio___gfm_emit_write(st, &ev);
+          if (r) goto done;
+          p = tag_end;
+          text_start = p;
+          continue;
+        }
+      }
+      ++p;
+      continue;
+    }
+
+    /* (f) Star / underscore — emphasis / strong */
+    if (c == '*' || c == '_') {
+      char marker = c;
+      char *run_start = p;
+      while (p < end && *p == marker)
+        ++p;
+      uint16_t run_len = (uint16_t)(p - run_start);
+
+      /* classify left-flanking */
+      char before = (run_start > start) ? run_start[-1] : ' ';
+      int before_ws = (before == ' ' || before == '\t' || before == '\n' ||
+                       before == '\r');
+      int before_punct = fio___gfm_is_punct(before);
+      char after = (p < end) ? *p : ' ';
+      int after_ws = (after == ' ' || after == '\t' || after == '\n' ||
+                      after == '\r');
+      int after_punct = fio___gfm_is_punct(after);
+      int left_flanking = !after_ws && (!after_punct || before_ws || before_punct);
+
+      int can_open = left_flanking;
+      if (marker == '_') {
+        /* _ can open only if left-flanking AND
+         * (not right-flanking OR preceded by punctuation) */
+        int right_flanking = !before_ws && (!before_punct || after_ws || after_punct);
+        can_open = left_flanking && (!right_flanking || before_punct);
+      }
+
+      if (can_open && open_top < FIO___GFM_MAX_OPEN_SECTIONS) {
+        char *boundary = open_top > 0 ? open[open_top - 1].closer_pos : end;
+        uint16_t cl = 0;
+        char *closer = fio___gfm_find_closer(st, p, boundary, marker, run_len, &cl);
+        if (closer) {
+          /* determine consume: 2 for STRONG if both >= 2, else 1 for EMPHASIS */
+          uint16_t consume = (run_len >= 2 && cl >= 2) ? 2 : 1;
+          uint8_t inner_type = (consume == 2) ? FIO_GFM_STRONG : FIO_GFM_EMPHASIS;
+          uint16_t remaining = run_len - consume;
+
+          FIO___GFM_FLUSH_TEXT(run_start);
+
+          if (remaining > 0 && open_top + 1 < FIO___GFM_MAX_OPEN_SECTIONS) {
+            uint16_t outer_consume = remaining;
+            uint8_t outer_type =
+                (outer_consume >= 2) ? FIO_GFM_STRONG : FIO_GFM_EMPHASIS;
+            if (outer_consume > 2)
+              outer_consume = 2;
+
+            /* Check if closer run has enough chars for both layers */
+            if (cl > consume) {
+              /* Closer run splits: inner takes first `consume`,
+               * outer takes chars at closer+consume (len = cl-consume). */
+              uint16_t outer_cl_len = cl - consume;
+              if (outer_cl_len > outer_consume)
+                outer_cl_len = outer_consume;
+              /* push outer, then inner (LIFO: inner on top) */
+              fio_gfm_event_s ev;
+              fio___gfm_event_init(st, &ev);
+              ev.type = outer_type;
+              r = fio___gfm_emit_push(st, &ev);
+              if (r) goto done;
+              open[open_top++] = (fio___gfm_open_section_s){
+                  .closer_pos = closer + consume,
+                  .closer_len = outer_cl_len,
+                  .type = outer_type,
+                  .marker = (uint8_t)marker,
+              };
+
+              fio___gfm_event_init(st, &ev);
+              ev.type = inner_type;
+              r = fio___gfm_emit_push(st, &ev);
+              if (r) goto done;
+              open[open_top++] = (fio___gfm_open_section_s){
+                  .closer_pos = closer,
+                  .closer_len = consume,
+                  .type = inner_type,
+                  .marker = (uint8_t)marker,
+              };
+
+              p = run_start + run_len;
+              text_start = p;
+              continue;
+            }
+            /* Closer run has no extra chars — search for separate outer */
+            uint16_t outer_cl = 0;
+            char *outer_closer = fio___gfm_find_closer(
+                st, closer + cl, boundary, marker, outer_consume, &outer_cl);
+            if (outer_closer) {
+              /* push outer, then inner (LIFO: inner on top) */
+              fio_gfm_event_s ev;
+              fio___gfm_event_init(st, &ev);
+              ev.type = outer_type;
+              r = fio___gfm_emit_push(st, &ev);
+              if (r) goto done;
+              open[open_top++] = (fio___gfm_open_section_s){
+                  .closer_pos = outer_closer,
+                  .closer_len = outer_consume,
+                  .type = outer_type,
+                  .marker = (uint8_t)marker,
+              };
+
+              fio___gfm_event_init(st, &ev);
+              ev.type = inner_type;
+              r = fio___gfm_emit_push(st, &ev);
+              if (r) goto done;
+              open[open_top++] = (fio___gfm_open_section_s){
+                  .closer_pos = closer,
+                  .closer_len = consume,
+                  .type = inner_type,
+                  .marker = (uint8_t)marker,
+              };
+
+              p = run_start + run_len;
+              text_start = p;
+              continue;
+            }
+            /* no outer closer: emit remaining as text, push inner only */
+            {
+              fio_gfm_event_s ev;
+              fio___gfm_event_init(st, &ev);
+              ev.type = FIO_GFM_TEXT;
+              ev.text = FIO_BUF_INFO2(run_start, remaining);
+              r = fio___gfm_emit_write(st, &ev);
+              if (r) goto done;
+            }
+          } else if (remaining > 0) {
+            /* stack full for outer: emit remaining as text */
+            fio_gfm_event_s ev;
+            fio___gfm_event_init(st, &ev);
+            ev.type = FIO_GFM_TEXT;
+            ev.text = FIO_BUF_INFO2(run_start, remaining);
+            r = fio___gfm_emit_write(st, &ev);
+            if (r) goto done;
+          }
+
+          /* push inner */
+          {
+            fio_gfm_event_s ev;
+            fio___gfm_event_init(st, &ev);
+            ev.type = inner_type;
+            r = fio___gfm_emit_push(st, &ev);
+            if (r) goto done;
+          }
+          open[open_top++] = (fio___gfm_open_section_s){
+              .closer_pos = closer,
+              .closer_len = consume,
+              .type = inner_type,
+              .marker = (uint8_t)marker,
+          };
+
+          p = run_start + run_len;
+          text_start = p;
+          continue;
+        }
+      }
+      /* no closer or cannot open: literal text (p already advanced) */
+      continue;
+    }
+
+    /* (g) Tilde — strikethrough */
+    if (c == '~') {
+      char *run_start = p;
+      while (p < end && *p == '~')
+        ++p;
+      uint16_t run_len = (uint16_t)(p - run_start);
+      if ((run_len == 1 || run_len == 2) &&
+          open_top < FIO___GFM_MAX_OPEN_SECTIONS) {
+        char before = (run_start > start) ? run_start[-1] : ' ';
+        int before_ws = (before == ' ' || before == '\t' || before == '\n' ||
+                         before == '\r');
+        int before_punct = fio___gfm_is_punct(before);
+        char after = (p < end) ? *p : ' ';
+        int after_ws = (after == ' ' || after == '\t' || after == '\n' ||
+                        after == '\r');
+        int after_punct = fio___gfm_is_punct(after);
+        int left_flanking = !after_ws && (!after_punct || before_ws || before_punct);
+        if (left_flanking) {
+          char *boundary = open_top > 0 ? open[open_top - 1].closer_pos : end;
+          uint16_t cl = 0;
+          char *closer = fio___gfm_find_closer(st, p, boundary, '~', run_len, &cl);
+          if (closer) {
+            FIO___GFM_FLUSH_TEXT(run_start);
+            fio_gfm_event_s ev;
+            fio___gfm_event_init(st, &ev);
+            ev.type = FIO_GFM_STRIKETHROUGH;
+            r = fio___gfm_emit_push(st, &ev);
+            if (r) goto done;
+            open[open_top++] = (fio___gfm_open_section_s){
+                .closer_pos = closer,
+                .closer_len = run_len,
+                .type = FIO_GFM_STRIKETHROUGH,
+                .marker = '~',
+            };
+            text_start = p;
+            continue;
+          }
+        }
+      }
+      /* literal tildes (p already advanced) */
+      continue;
+    }
+
+    /* (h) Open bracket — link / image */
+    if (c == '[' || (c == '!' && p + 1 < end && p[1] == '[')) {
+      int is_image = (c == '!');
+      char *bracket = p + is_image; /* points at '[' */
+      char *link_text_start = NULL;
+      char *bracket_close = NULL;
+      fio_buf_info_s l_dest, l_title, l_ref;
+      char *link_end = fio___gfm_find_link(st, bracket, end, is_image,
+                                           &link_text_start, &bracket_close,
+                                           &l_dest, &l_title, &l_ref);
+      if (link_end) {
+        FIO___GFM_FLUSH_TEXT(p);
+        if (is_image) {
+          /* IMAGE: emit as single write event */
+          fio_gfm_event_s ev;
+          fio___gfm_event_init(st, &ev);
+          ev.type = FIO_GFM_IMAGE;
+          ev.text = FIO_BUF_INFO2(link_text_start,
+                                  (size_t)(bracket_close - link_text_start));
+          ev.destination = l_dest;
+          ev.title = l_title;
+          ev.reference = l_ref;
+          r = fio___gfm_emit_write(st, &ev);
+          if (r) goto done;
+          p = link_end;
+          text_start = p;
+        } else {
+          /* LINK: push, scan interior, pop at ']' then advance to link_end */
+          fio_gfm_event_s ev;
+          fio___gfm_event_init(st, &ev);
+          ev.type = FIO_GFM_LINK;
+          ev.destination = l_dest;
+          ev.title = l_title;
+          ev.reference = l_ref;
+          r = fio___gfm_emit_push(st, &ev);
+          if (r) goto done;
+          if (open_top < FIO___GFM_MAX_OPEN_SECTIONS) {
+            open[open_top++] = (fio___gfm_open_section_s){
+                .closer_pos = bracket_close,
+                .advance_to = link_end,
+                .closer_len = 1,
+                .type = FIO_GFM_LINK,
+                .marker = '[',
+            };
+          }
+          p = link_text_start;
+          text_start = p;
+        }
+        continue;
+      }
+      /* not a valid link/image — literal text */
+      p += 1 + is_image;
+      continue;
+    }
+
+    /* (i) Default: advance */
+    ++p;
+  }
+
+  /* flush remaining text */
+  FIO___GFM_FLUSH_TEXT(end);
+
+done:
+  /* If there are unclosed sections (pathological input), pop them now.
+   * This ensures invariant I2 (every push has a matching pop). */
+  while (open_top > 0) {
+    --open_top;
+    fio_gfm_event_s e = {
+        .udata = st->udata,
+        .type = open[open_top].type,
+    };
+    fio___gfm_emit_pop(st, &e);
+  }
+
+#undef FIO___GFM_FLUSH_TEXT
+  return r;
+}
+
+/* ===========================================================================
+ * Block Emission Helpers (used by main loop)
+ * ========================================================================= */
+
+/** Emit an ATX heading: parse content, PUSH(HEADING) + inline + POP(HEADING).
+ *  `trimmed` points to the first '#', `le` is line end. */
+FIO_SFUNC int fio___gfm_emit_atx_heading(fio___gfm_parser_s *st,
+                                         char *trimmed,
+                                         char *le,
+                                         int level) {
+  int r = 0;
+  fio___gfm_mark_li_content(st);
+  /* Skip '#' markers */
+  char *content = trimmed + level;
+  /* Skip required space/tab after markers */
+  if (content < le && (*content == ' ' || *content == '\t'))
+    ++content;
+  /* Strip leading whitespace from content */
+  while (content < le && (*content == ' ' || *content == '\t'))
+    ++content;
+  /* Strip trailing '#' run preceded by space */
+  char *cend = le;
+  while (cend > content && (cend[-1] == ' ' || cend[-1] == '\t'))
+    --cend;
+  if (cend > content && cend[-1] == '#') {
+    char *h = cend - 1;
+    while (h > content && h[-1] == '#')
+      --h;
+    if (h == content || h[-1] == ' ' || h[-1] == '\t')
+      cend = h;
+    while (cend > content && (cend[-1] == ' ' || cend[-1] == '\t'))
+      --cend;
+  }
+
+  fio_gfm_event_s e;
+  fio___gfm_event_init(st, &e);
+  e.type = FIO_GFM_HEADING;
+  e.heading_level = (uint8_t)level;
+  e.source = FIO_BUF_INFO2(trimmed, (size_t)(le - trimmed));
+  r = fio___gfm_emit_push(st, &e);
+  if (!r && content < cend)
+    r = fio___gfm_inline_parse(st, content, cend);
+  if (!r) {
+    fio___gfm_event_init(st, &e);
+    e.type = FIO_GFM_HEADING;
+    e.heading_level = (uint8_t)level;
+    r = fio___gfm_emit_pop(st, &e);
+  }
+  return r;
+}
+
+/** Emit a thematic break: PUSH(THEMATIC_BREAK) + POP(THEMATIC_BREAK). */
+FIO_SFUNC int fio___gfm_emit_thematic_break(fio___gfm_parser_s *st,
+                                            char *trimmed,
+                                            char *le) {
+  int r;
+  fio___gfm_mark_li_content(st);
+  fio_gfm_event_s e;
+  fio___gfm_event_init(st, &e);
+  e.type = FIO_GFM_THEMATIC_BREAK;
+  e.source = FIO_BUF_INFO2(trimmed, (size_t)(le - trimmed));
+  r = fio___gfm_emit_push(st, &e);
+  if (!r) {
+    fio___gfm_event_init(st, &e);
+    e.type = FIO_GFM_THEMATIC_BREAK;
+    r = fio___gfm_emit_pop(st, &e);
+  }
+  return r;
+}
+
+/** Open a fenced code block. Parses info string and emits PUSH(CODE_BLOCK).
+ *  `trimmed` points at the fence chars, `le` is line end. */
+FIO_SFUNC int fio___gfm_open_fenced_code(fio___gfm_parser_s *st,
+                                         char *trimmed,
+                                         char *le,
+                                         uint32_t vcol,
+                                         char fc,
+                                         uint16_t fl) {
+  fio___gfm_mark_li_content(st);
+  st->leaf_type = FIO_GFM_CODE_BLOCK;
+  st->fence_char = (uint8_t)fc;
+  st->fence_len = fl;
+  st->fence_indent = (uint16_t)vcol;
+
+  /* Parse info string: text after fence chars, trimmed */
+  char *info_start = trimmed + fl;
+  while (info_start < le && (*info_start == ' ' || *info_start == '\t'))
+    ++info_start;
+  char *info_end = le;
+  while (info_end > info_start &&
+         (info_end[-1] == ' ' || info_end[-1] == '\t'))
+    --info_end;
+  st->fence_info = FIO_BUF_INFO2(info_start, (size_t)(info_end - info_start));
+  st->leaf_start = trimmed;
+
+  fio_gfm_event_s e;
+  fio___gfm_event_init(st, &e);
+  e.type = FIO_GFM_CODE_BLOCK;
+  e.info = st->fence_info;
+  e.source = FIO_BUF_INFO2(trimmed, (size_t)(le - trimmed));
+  return fio___gfm_emit_push(st, &e);
+}
+
+/** Emit a code content line. Strips up to `strip_cols` virtual columns. */
+FIO_SFUNC int fio___gfm_emit_code_line(fio___gfm_parser_s *st,
+                                       char *p,
+                                       char *le,
+                                       uint32_t strip_cols,
+                                       uint8_t padding) {
+  /* Strip leading indentation, preserving virtual spaces left by tabs. */
+  if (strip_cols > 0) {
+    char *after = fio___gfm_skip_indent_with_padding(
+        p, le, strip_cols, &padding);
+    if (after) {
+      p = after;
+    } else if (fio___gfm_is_blank(p, le)) {
+      p = le;
+      padding = 0;
+    }
+  }
+  fio_gfm_event_s e;
+  fio___gfm_event_init(st, &e);
+  e.type = FIO_GFM_TEXT;
+  e.text = FIO_BUF_INFO2(p, (size_t)(le - p));
+  e.padding = padding;
+  return fio___gfm_emit_write(st, &e);
+}
+
+/** Emit a table row: PUSH(TABLE_ROW), cells, POP(TABLE_ROW).
+ *  Each cell: PUSH(TABLE_CELL), inline_parse(content), POP(TABLE_CELL).
+ *  Missing cells (fewer than table_columns) are emitted as empty.
+ *  Excess cells (more than table_columns) are silently ignored. */
+FIO_SFUNC int fio___gfm_emit_table_row(fio___gfm_parser_s *st,
+                                        char *p,
+                                        char *le) {
+  int r = 0;
+  fio_gfm_event_s e;
+
+  /* PUSH(TABLE_ROW) */
+  fio___gfm_event_init(st, &e);
+  e.type = FIO_GFM_TABLE_ROW;
+  e.columns = st->table_columns;
+  r = fio___gfm_emit_push(st, &e);
+  if (r)
+    return r;
+
+  /* Skip leading whitespace + optional leading pipe */
+  while (p < le && (*p == ' ' || *p == '\t'))
+    ++p;
+  p += (p < le && *p == '|');
+
+  uint16_t col = 0;
+  while (p < le && col < st->table_columns) {
+    char *cs, *ce;
+    p = fio___gfm_table_cell_next(p, le, &cs, &ce);
+
+    /* PUSH(TABLE_CELL) */
+    fio___gfm_event_init(st, &e);
+    e.type = FIO_GFM_TABLE_CELL;
+    e.column = col;
+    e.columns = st->table_columns;
+    e.align = FIO___GFM_TABLE_ALIGN_GET(st, col);
+    r = fio___gfm_emit_push(st, &e);
+    if (r)
+      return r;
+
+    /* Inline parse cell content */
+    if (cs < ce) {
+      r = fio___gfm_inline_parse(st, cs, ce);
+      if (r)
+        return r;
+    }
+
+    /* POP(TABLE_CELL) */
+    fio___gfm_event_init(st, &e);
+    e.type = FIO_GFM_TABLE_CELL;
+    r = fio___gfm_emit_pop(st, &e);
+    if (r)
+      return r;
+
+    ++col;
+
+    /* Advance past pipe separator */
+    if (p < le && *p == '|') {
+      ++p;
+      /* Check for trailing pipe (only whitespace remains) */
+      char *rest = p;
+      while (rest < le && (*rest == ' ' || *rest == '\t'))
+        ++rest;
+      if (rest >= le)
+        break;
+    } else {
+      break;
+    }
+  }
+
+  /* Emit empty cells for missing columns */
+  while (col < st->table_columns) {
+    fio___gfm_event_init(st, &e);
+    e.type = FIO_GFM_TABLE_CELL;
+    e.column = col;
+    e.columns = st->table_columns;
+    e.align = FIO___GFM_TABLE_ALIGN_GET(st, col);
+    r = fio___gfm_emit_push(st, &e);
+    if (r)
+      return r;
+    fio___gfm_event_init(st, &e);
+    e.type = FIO_GFM_TABLE_CELL;
+    r = fio___gfm_emit_pop(st, &e);
+    if (r)
+      return r;
+    ++col;
+  }
+
+  /* POP(TABLE_ROW) */
+  fio___gfm_event_init(st, &e);
+  e.type = FIO_GFM_TABLE_ROW;
+  r = fio___gfm_emit_pop(st, &e);
+  return r;
+}
+
+/* ===========================================================================
+ * THE MAIN LOOP
+ *
+ * This is the core of the flat-state parser. It implements the three-step-
+ * per-line algorithm from the GFM spec appendix A.
+ *
+ * The key insight that makes this work WITHOUT recursion:
+ *
+ *   In a recursive-descent parser, container state is carried in C stack
+ *   frames. Entering a blockquote means calling parse_blockquote(), which
+ *   calls parse_blocks() recursively. The C stack IS the container stack.
+ *
+ *   In this flat parser, container state is carried in a single struct
+ *   array (nest[] — 4 bytes per depth: type, flags, indent).
+ *   The main loop walks this array with a simple `for` loop instead of
+ *   recursing. This eliminates stack overflow risk and keeps all state
+ *   inspectable in a single struct.
+ *
+ *   The trick is the three-step-per-line algorithm:
+ *     Step 1: Walk existing containers, consuming their markers.
+ *     Step 2: At the point where matching stopped, check for new blocks.
+ *             New containers push onto the stack and we loop back to
+ *             check for MORE new blocks (the `try_new_block` loop).
+ *             This replaces the recursive "enter container, parse blocks"
+ *             pattern with an iterative "push container, loop" pattern.
+ *     Step 3: Whatever text remains goes into the deepest open block.
+ *
+ *   Lazy continuation is the subtlest part: when a paragraph is open,
+ *   unmatched containers are NOT closed. The line becomes paragraph
+ *   continuation text. This is checked BEFORE closing unmatched
+ *   containers, which is why we track `matched_depth` separately.
+ * ========================================================================= */
+
+SFUNC size_t fio_gfm_parse(const fio_gfm_callbacks_s *callbacks,
+                           void *udata,
+                           fio_buf_info_s source) {
+  fio___gfm_parser_s st;
+  FIO_MEMSET(&st, 0, sizeof(st));
+  if (callbacks) {
+    st.push = callbacks->push;
+    st.write = callbacks->write;
+    st.pop = callbacks->pop;
+  }
+  st.udata = udata;
+  st.start = source.buf;
+  st.end = source.buf + source.len;
+
+  /* --- Input validation --- */
+  if (!source.buf && source.len) {
+    st.err = FIO_GFM_ERR_INPUT;
+    return 0;
+  }
+  if (!source.len)
+    return 0;
+
+  char *p = st.start;
+
+  /* =======================================================================
+   * MAIN LOOP: process one line per iteration.
+   *
+   * Invariants maintained at loop entry:
+   *   - p points to the start of the current line in the source.
+   *   - st.nest[0] is the current container depth.
+   *   - st.leaf_type indicates the open leaf (0 = none).
+   *   - st.para_open == 1 iff st.leaf_type == FIO_GFM_PARAGRAPH.
+   *   - st.err == 0 (non-zero exits the loop).
+   * ===================================================================== */
+  while (p < st.end && !st.err) {
+    char *le = fio___gfm_line_end(p, st.end);
+    char *next = fio___gfm_line_next(le, st.end);
+
+    /* =================================================================
+     * STEP 1: MATCH OPEN CONTAINER CONTINUATIONS
+     *
+     * Walk from outermost (depth 1) to innermost (depth N).
+     * For each container, test if this line satisfies its continuation
+     * condition. Consume the container's marker from the line as we go.
+     *
+     * `content` tracks the current position in the line AFTER consumed
+     * markers. It advances as each container's marker is consumed.
+     *
+     * `matched_depth` records the deepest container that matched.
+     * If matching stops early, deeper containers are "unmatched" but
+     * NOT yet closed (they may survive via lazy continuation).
+     * ================================================================= */
+    char *content = p;
+    uint8_t content_padding = 0;
+    st.matched_depth = 0;
+    int from_push = 0; /* set to 1 when entering try_new_block via push */
+
+    for (uint16_t d = 0; d < st.depth; ++d) {
+      uint8_t ctype = st.nest[d].type;
+
+      if (ctype == FIO___GFM_CONT_BQ) {
+        /* Blockquote continuation: expect '>' within first 3 columns. */
+        uint32_t ind = content_padding + fio___gfm_indent(content, le);
+        if (ind > FIO___GFM_MAX_MARKER_INDENT)
+          break;
+        char *trimmed = fio___gfm_ltrim(content, le);
+        if (trimmed >= le || *trimmed != '>')
+          break;
+        if (!fio___gfm_is_blockquote(trimmed,
+                                     le,
+                                     ind,
+                                     &content,
+                                     &content_padding))
+          break;
+        st.matched_depth = d + 1;
+
+      } else if (ctype >= FIO___GFM_CONT_UL_DASH &&
+                 ctype <= FIO___GFM_CONT_OL_PAREN) {
+        /* LIST containers always match — their child LIST_ITEM decides. */
+        st.matched_depth = d + 1;
+
+      } else if (ctype == FIO___GFM_CONT_LI) {
+        /* List item continuation: indent >= item's content indent. */
+        if (fio___gfm_is_blank(content, le)) {
+          st.matched_depth = d + 1;
+        } else {
+          if (st.nest[d].flags & FIO___GFM_F_LI_LEADING_BLANK)
+            break;
+          uint32_t line_col = content_padding + fio___gfm_indent(content, le);
+          if (line_col >= st.nest[d].indent) {
+            char *after = fio___gfm_skip_indent_with_padding(
+                content, le, st.nest[d].indent, &content_padding);
+            if (after)
+              content = after;
+            st.matched_depth = d + 1;
+          } else {
+            break;
+          }
+        }
+      }
+    } /* end Step 1 */
+
+    /* =================================================================
+     * STEP 2: HANDLE CONTINUATION OF OPEN LEAVES
+     *
+     * Some leaf blocks consume all subsequent lines regardless of what
+     * they contain (fenced code, HTML blocks). Handle these first,
+     * before checking for new block starts.
+     *
+     * If all containers matched (matched_depth == nest[0]), the leaf
+     * continues normally. If some containers were unmatched, the leaf
+     * is implicitly closed by the container breakout.
+     * ================================================================= */
+
+    if (st.leaf_type == FIO_GFM_CODE_BLOCK) {
+      if (st.matched_depth != FIO___GFM_DEPTH(&st)) {
+        /* Container breakout — code block implicitly closed. */
+        fio___gfm_close_leaf(&st);
+        fio___gfm_close_unmatched(&st);
+        goto step2_new_blocks;
+      }
+      if (st.fence_char) {
+        /* --- Fenced code: consumes all lines until closing fence --- */
+        if (fio___gfm_is_fenced_code_close(content,
+                                           le,
+                                           st.fence_char,
+                                           st.fence_len)) {
+          fio___gfm_close_leaf(&st);
+        } else {
+          /* Content line. Strip up to fence_indent columns of indent. */
+          uint32_t code_indent = content_padding + fio___gfm_indent(content, le);
+          uint32_t strip_cols = st.fence_indent;
+          strip_cols = (strip_cols < code_indent) ? strip_cols : code_indent;
+          fio___gfm_emit_code_line(
+              &st, content, le, strip_cols, content_padding);
+        }
+        p = next;
+        continue;
+      }
+      /* --- Indented code: continues while indent >= 4 or blank --- */
+      {
+        uint32_t vcol_ic = content_padding + fio___gfm_indent(content, le);
+        int is_blank_ic = fio___gfm_is_blank(content, le);
+        if (vcol_ic >= 4 || is_blank_ic) {
+          if (is_blank_ic) {
+            /* Buffer blank lines — strip if trailing (spec 4.4). */
+            if (st.ic_pending_blanks < FIO___GFM_MAX_IC_BLANKS) {
+              st.ic_blank_content[st.ic_pending_blanks] = content;
+              st.ic_blank_le[st.ic_pending_blanks] = le;
+            }
+            ++st.ic_pending_blanks;
+          } else {
+            /* Non-blank code line: emit buffered blank lines first */
+            for (uint16_t bi = 0; bi < st.ic_pending_blanks; ++bi) {
+              uint16_t idx = (bi < FIO___GFM_MAX_IC_BLANKS) ? bi : 0;
+              fio___gfm_emit_code_line(&st,
+                                       st.ic_blank_content[idx],
+                                       st.ic_blank_le[idx], 4, 0);
+            }
+            st.ic_pending_blanks = 0;
+            fio___gfm_emit_code_line(&st, content, le, 4, content_padding);
+          }
+          p = next;
+          continue;
+        }
+      }
+      /* Indent < 4 and not blank — close (discard pending blanks). */
+      st.ic_pending_blanks = 0;
+      fio___gfm_close_leaf(&st);
+    }
+
+    if (st.leaf_type == FIO_GFM_HTML_BLOCK) {
+      if (st.matched_depth != FIO___GFM_DEPTH(&st)) {
+        fio___gfm_close_leaf(&st);
+        fio___gfm_close_unmatched(&st);
+        goto step2_new_blocks;
+      }
+      /* Types 6-7: blank line closes HTML block.
+       * Must check here because the HTML continuation catches all lines
+       * before the blank line handler at step2_new_blocks. */
+      if (st.leaf_html_type >= 6 && fio___gfm_is_blank(content, le)) {
+        fio___gfm_close_leaf(&st);
+        goto step2_new_blocks;
+      }
+      /* Emit line as HTML content */
+      {
+        fio_gfm_event_s e;
+        fio___gfm_event_init(&st, &e);
+        e.type = FIO_GFM_TEXT;
+        e.text = FIO_BUF_INFO2(content, (size_t)(le - content));
+        fio___gfm_emit_write(&st, &e);
+      }
+      /* Check close conditions by type (types 1-5 have in-line close) */
+      if (fio___gfm_html_block_has_close(content, le, st.leaf_html_type))
+        fio___gfm_close_leaf(&st);
+      p = next;
+      continue;
+    }
+
+    if (st.leaf_type == FIO_GFM_TABLE) {
+      if (st.matched_depth == FIO___GFM_DEPTH(&st)) {
+        if (fio___gfm_is_blank(content, le)) {
+          fio___gfm_close_leaf(&st);
+          /* Fall through — blank line after table */
+        } else {
+          /* Check if this line starts a block structure (breaks table).
+           * Per GFM spec: "The table is broken at the first empty line,
+           * or beginning of another block-level structure." */
+          {
+            uint32_t tvcol = fio___gfm_indent(content, le);
+            if (tvcol <= FIO___GFM_MAX_MARKER_INDENT) {
+              char *tt = fio___gfm_ltrim(content, le);
+              char *bq_dummy;
+              char fc_dummy;
+              fio___gfm_list_marker_s lm_dummy;
+              if (fio___gfm_is_atx_heading(tt, le) ||
+                  fio___gfm_is_thematic_break(tt, le) ||
+                  fio___gfm_is_blockquote(tt, le, tvcol, &bq_dummy, NULL) ||
+                  fio___gfm_is_fenced_code_open(tt, le, &fc_dummy) ||
+                  fio___gfm_is_html_block_start(tt, le, 1) ||
+                  fio___gfm_is_list_marker(tt, le, tvcol, &lm_dummy)) {
+                fio___gfm_close_leaf(&st);
+                goto step2_new_blocks;
+              }
+            }
+          }
+          fio___gfm_emit_table_row(&st, content, le);
+          p = next;
+          continue;
+        }
+      } else {
+        fio___gfm_close_leaf(&st);
+        fio___gfm_close_unmatched(&st);
+      }
+      /* Fall through to step2_new_blocks */
+    }
+
+    /* =================================================================
+     * STEP 2 CONTINUED: NEW BLOCK DETECTION
+     *
+     * At this point, `content` points to the line content after all
+     * matched container markers have been consumed. `matched_depth`
+     * tells us how many containers matched.
+     *
+     * Two cases:
+     *   A) Paragraph is open → use special precedence rules.
+     *   B) No paragraph open → use full block detection.
+     * ================================================================= */
+  step2_new_blocks:
+
+    /* Handle blank lines (they interact with many block types) */
+    if (fio___gfm_is_blank(content, le)) {
+      fio___gfm_close_unmatched(&st);
+      fio___gfm_handle_blank_line(&st);
+      p = next;
+      continue;
+    }
+
+    /* --- CASE A: PARAGRAPH IS OPEN --- */
+    if (st.para_open) {
+      uint32_t vcol = fio___gfm_indent(content, le);
+      char *trimmed = fio___gfm_ltrim(content, le);
+
+      /* A1: Setext heading underline?
+       *     Only valid when ALL containers matched — a setext underline
+       *     must be in the same container context as the paragraph.
+       *     e.g., "> foo\n---" — the --- is outside the blockquote,
+       *     so it's a thematic break, not a setext heading.
+       *
+       *     CRITICAL: This check must come BEFORE thematic break.
+       *     "---" after a paragraph is a setext heading (level 2),
+       *     NOT a thematic break — but only within matched containers. */
+      if (vcol <= FIO___GFM_MAX_MARKER_INDENT &&
+          st.matched_depth == FIO___GFM_DEPTH(&st)) {
+        int setext_level = fio___gfm_is_setext_underline(trimmed, le);
+        if (setext_level) {
+          /* Convert paragraph to heading FIRST (consumes para state),
+           * THEN close unmatched containers. close_unmatched would
+           * otherwise close the paragraph as a regular paragraph.
+           *
+           * If convert_to_setext opened a new paragraph (because the
+           * preceding text was all ref defs), don't close_unmatched —
+           * the paragraph stays open for continuation. */
+          fio___gfm_convert_to_setext(&st, content, le, setext_level);
+          if (!st.para_open)
+            fio___gfm_close_unmatched(&st);
+          p = next;
+          continue;
+        }
+      }
+
+      /* A2: Table delimiter row?
+       *     If paragraph has exactly one line and this line is a valid
+       *     delimiter row, convert the paragraph to a table.
+       *     Only valid when all containers matched and indent <= 3. */
+      if (st.para_start && st.para_end &&
+          vcol <= FIO___GFM_MAX_MARKER_INDENT &&
+          st.matched_depth == FIO___GFM_DEPTH(&st)) {
+        uint16_t delim_cols = fio___gfm_is_table_delimiter(&st, trimmed, le);
+        if (delim_cols > 0) {
+          int tr = fio___gfm_convert_to_table(&st, content, le);
+          if (tr) {
+            st.err = tr;
+            break;
+          }
+          if (st.leaf_type == FIO_GFM_TABLE) {
+            p = next;
+            continue;
+          }
+          /* Conversion declined (column mismatch / multi-line para) —
+           * fall through to paragraph continuation. */
+        }
+      }
+
+      /* A3: Can any block type interrupt this paragraph?
+       *
+       *     The GFM spec restricts which blocks can interrupt a paragraph:
+       *       YES: ATX heading, fenced code, thematic break, blockquote,
+       *            HTML block types 1-6, bullet list, ordered list (start=1)
+       *       NO:  Indented code, HTML type 7, ref defs, ordered list start>1
+       *
+       *     If nothing interrupts: this is lazy continuation or paragraph
+       *     continuation text. */
+      if (vcol <= FIO___GFM_MAX_MARKER_INDENT) {
+        /* ATX heading? */
+        int atx_level = fio___gfm_is_atx_heading(trimmed, le);
+        if (atx_level) {
+          fio___gfm_close_unmatched(&st);
+          fio___gfm_close_orphan_lists(&st);
+          fio___gfm_close_paragraph(&st);
+          fio___gfm_emit_atx_heading(&st, trimmed, le, atx_level);
+          p = next;
+          continue;
+        }
+
+        /* Thematic break? (checked AFTER setext above) */
+        if (fio___gfm_is_thematic_break(trimmed, le)) {
+          fio___gfm_close_unmatched(&st);
+          fio___gfm_close_orphan_lists(&st);
+          fio___gfm_close_paragraph(&st);
+          fio___gfm_emit_thematic_break(&st, trimmed, le);
+          p = next;
+          continue;
+        }
+
+        /* Fenced code? */
+        char fc;
+        uint16_t fl = fio___gfm_is_fenced_code_open(trimmed, le, &fc);
+        if (fl) {
+          fio___gfm_close_unmatched(&st);
+          fio___gfm_close_orphan_lists(&st);
+          fio___gfm_close_paragraph(&st);
+          fio___gfm_open_fenced_code(&st, trimmed, le, vcol, fc, fl);
+          p = next;
+          continue;
+        }
+
+        /* Blockquote? */
+        char *bq_after;
+        if (fio___gfm_is_blockquote(
+                trimmed, le, vcol, &bq_after, &content_padding)) {
+          fio___gfm_close_unmatched(&st);
+          fio___gfm_close_orphan_lists(&st);
+          fio___gfm_close_paragraph(&st);
+          uint16_t bq_content_col = fio___gfm_vcol(p, bq_after);
+          fio___gfm_push_blockquote(&st, bq_content_col);
+          if (st.err)
+            break;
+          content = bq_after;
+          from_push = 1;
+          goto try_new_block;
+        }
+
+        /* HTML block types 1-6? (type 7 CANNOT interrupt a paragraph) */
+        int html_type = fio___gfm_is_html_block_start(trimmed, le, 0);
+        if (html_type >= 1 && html_type <= 6) {
+          fio___gfm_close_unmatched(&st);
+          fio___gfm_close_orphan_lists(&st);
+          fio___gfm_close_paragraph(&st);
+          fio___gfm_mark_li_content(&st);
+          st.leaf_type = FIO_GFM_HTML_BLOCK;
+          st.leaf_html_type = (uint8_t)html_type;
+          st.leaf_start = content;
+          {
+            fio_gfm_event_s e;
+            fio___gfm_event_init(&st, &e);
+            e.type = FIO_GFM_HTML_BLOCK;
+            e.source = FIO_BUF_INFO2(content, (size_t)(le - content));
+            fio___gfm_emit_push(&st, &e);
+          }
+          /* First line is also content */
+          {
+            fio_gfm_event_s e;
+            fio___gfm_event_init(&st, &e);
+            e.type = FIO_GFM_TEXT;
+            e.text = FIO_BUF_INFO2(content, (size_t)(le - content));
+            fio___gfm_emit_write(&st, &e);
+          }
+          /* Check same-line close (e.g., <style>...</style> on one line) */
+          if (fio___gfm_html_block_has_close(content, le, html_type))
+            fio___gfm_close_leaf(&st);
+          p = next;
+          continue;
+        }
+
+        /* List marker? */
+        fio___gfm_list_marker_s marker_info;
+        if (fio___gfm_is_list_marker(trimmed, le, vcol, &marker_info)) {
+          /* Bullet lists always interrupt. Ordered only if start == 1. */
+        {
+          /* Check for existing list of same type FIRST.
+           * A new item in an existing list always interrupts (even ordered
+           * with start > 1). Only a NEW list is restricted.
+           * Don't match a list whose LI was matched (d < matched_depth),
+           * since that means we're INSIDE the LI → create nested list. */
+          uint16_t list_depth = 0;
+          int has_diff_list = 0;
+          uint16_t depth_a = FIO___GFM_DEPTH(&st);
+          for (uint16_t d = depth_a; d >= 1; --d) {
+            uint8_t t = st.nest[d - 1].type;
+            if (t >= FIO___GFM_CONT_UL_DASH && t <= FIO___GFM_CONT_OL_PAREN) {
+              if (t == marker_info.type && d >= st.matched_depth)
+                list_depth = d;
+              else
+                has_diff_list = 1;
+              break;
+            }
+            if (t == FIO___GFM_CONT_BQ)
+              break;
+          }
+          /* New item in existing list: always allowed.
+           * New list: bullet or ordered start=1 only.
+           * Different delimiter (e.g., '.' vs ')') always starts new. */
+          if (list_depth || has_diff_list ||
+              (!fio___gfm_is_blank(marker_info.content_start, le) &&
+               (marker_info.start_num == 0 || marker_info.start_num == 1))) {
+            fio___gfm_close_paragraph(&st);
+            fio___gfm_close_unmatched(&st);
+            /* After close_unmatched, the first found list may no longer exist
+             * (e.g., "> - foo\n- bar" — BQ and its list were closed). If a
+             * nested list was popped, retry against the surviving stack so a
+             * following marker can become an item in the outer list. */
+            if (list_depth && list_depth > FIO___GFM_DEPTH(&st)) {
+              list_depth = 0;
+              for (uint16_t d = FIO___GFM_DEPTH(&st); d >= 1; --d) {
+                uint8_t t = st.nest[d - 1].type;
+                if (t >= FIO___GFM_CONT_UL_DASH &&
+                    t <= FIO___GFM_CONT_OL_PAREN) {
+                  if (t == marker_info.type)
+                    list_depth = d;
+                  break;
+                }
+                if (t == FIO___GFM_CONT_BQ)
+                  break;
+              }
+            }
+            if (list_depth && list_depth <= FIO___GFM_DEPTH(&st)) {
+              fio___gfm_push_new_item(&st, list_depth, &marker_info);
+            } else {
+              /* Close existing different-type list at current depth */
+              if (FIO___GFM_DEPTH(&st) > 0) {
+                uint8_t tt = FIO___GFM_TOP_TYPE(&st);
+                if (tt >= FIO___GFM_CONT_UL_DASH &&
+                    tt <= FIO___GFM_CONT_OL_PAREN) {
+                  st.matched_depth = FIO___GFM_DEPTH(&st) - 1;
+                  fio___gfm_close_unmatched(&st);
+                }
+              }
+              fio___gfm_push_list_and_item(&st, &marker_info);
+            }
+            if (st.err)
+              break;
+            content = marker_info.content_start;
+            content_padding = marker_info.padding;
+            from_push = 1;
+            goto try_new_block;
+          }
+        }
+          /* Ordered with start > 1: cannot interrupt paragraph.
+           * Fall through to lazy continuation. */
+        }
+      }
+
+      /* A4: LAZY CONTINUATION
+       *
+       *     None of the above matched. This line is paragraph continuation.
+       *     Even if some containers were unmatched (matched_depth < nest[0]),
+       *     we do NOT close them. The paragraph absorbs the line.
+       *
+       *     This is the heart of lazy continuation:
+       *       > foo       ← opens blockquote + paragraph
+       *       bar         ← no '>', but paragraph open → lazy continuation
+       *                     blockquote stays open
+       *
+       *     IMPORTANT: We use `le` (not `next`) because the newline is
+       *     part of the line ending, not paragraph content. But we store
+       *     `next` so that paragraph text includes the newline for proper
+       *     inline parsing of soft/hard breaks. */
+      fio___gfm_append_paragraph(&st, next);
+      p = next;
+      continue;
+    }
+
+    /* --- CASE B: NO PARAGRAPH OPEN — FULL BLOCK DETECTION --- */
+
+    /* Close unmatched containers now.
+     * (With no paragraph, there's no lazy continuation to preserve.) */
+    fio___gfm_close_unmatched(&st);
+
+    /* If closing an unmatched LI left its parent LIST at the stack top, keep
+     * it only when the current line starts the next list item. Otherwise the
+     * next block is outside the list. */
+    if (FIO___GFM_DEPTH(&st) > 0) {
+      uint8_t ot = FIO___GFM_TOP_TYPE(&st);
+      if (ot >= FIO___GFM_CONT_UL_DASH && ot <= FIO___GFM_CONT_OL_PAREN) {
+        fio___gfm_list_marker_s orphan_marker;
+        uint32_t orphan_vcol = fio___gfm_indent(content, le);
+        char *orphan_trimmed = fio___gfm_ltrim(content, le);
+        if (orphan_vcol > FIO___GFM_MAX_MARKER_INDENT ||
+            !fio___gfm_is_list_marker(orphan_trimmed,
+                                      le,
+                                      orphan_vcol,
+                                      &orphan_marker))
+          fio___gfm_close_orphan_lists(&st);
+      }
+    }
+
+    /* Try to open new blocks. This loop handles nested container starts:
+     * e.g., "> - foo" opens a blockquote, then inside it opens a list.
+     * After each container is pushed, we loop back to check if the
+     * remaining content starts ANOTHER container.
+     *
+     * from_push tracks whether we arrived via a container push (1) or
+     * from the top of the line (0). When from a push, list markers
+     * ALWAYS start new nested lists — never match parent lists.
+     *
+     * This iterative loop replaces the recursive pattern where
+     * parse_blockquote() calls parse_blocks() which calls parse_list()
+     * which calls parse_blocks() again. */
+  try_new_block:;
+    uint32_t vcol = content_padding + fio___gfm_indent(content, le);
+    char *trimmed = fio___gfm_ltrim(content, le);
+
+    /* B1: Indented code? (only when no paragraph is open)
+     *     A line with indent >= 4 that doesn't start another block. */
+    if (vcol >= 4) {
+      fio___gfm_mark_li_content(&st);
+      st.leaf_type = FIO_GFM_CODE_BLOCK;
+      st.fence_char = 0; /* indented = no fence char */
+      st.fence_len = 0;
+      st.fence_indent = 0;
+      st.leaf_start = content;
+      fio_gfm_event_s e;
+      fio___gfm_event_init(&st, &e);
+      e.type = FIO_GFM_CODE_BLOCK;
+      e.source = FIO_BUF_INFO2(content, (size_t)(le - content));
+      fio___gfm_emit_push(&st, &e);
+      fio___gfm_emit_code_line(&st, content, le, 4, content_padding);
+      p = next;
+      continue;
+    }
+
+    /* B2: ATX heading? */
+    {
+      int atx_level = fio___gfm_is_atx_heading(trimmed, le);
+      if (atx_level) {
+        fio___gfm_emit_atx_heading(&st, trimmed, le, atx_level);
+        p = next;
+        continue;
+      }
+    }
+
+    /* B3: Thematic break? */
+    if (fio___gfm_is_thematic_break(trimmed, le)) {
+      fio___gfm_emit_thematic_break(&st, trimmed, le);
+      p = next;
+      continue;
+    }
+
+    /* B4: Fenced code? */
+    {
+      char fc;
+      uint16_t fl = fio___gfm_is_fenced_code_open(trimmed, le, &fc);
+      if (fl) {
+        fio___gfm_open_fenced_code(&st, trimmed, le, vcol, fc, fl);
+        p = next;
+        continue;
+      }
+    }
+
+    /* B5: Blockquote? → push container, loop back for nested blocks */
+    {
+      char *bq_after;
+      if (fio___gfm_is_blockquote(
+              trimmed, le, vcol, &bq_after, &content_padding)) {
+        uint16_t bq_content_col = fio___gfm_vcol(p, bq_after);
+        fio___gfm_push_blockquote(&st, bq_content_col);
+        if (st.err)
+          break;
+        content = bq_after;
+        from_push = 1;
+        goto try_new_block; /* check for nested blocks inside blockquote */
+      }
+    }
+
+    /* B6: HTML block? (all 7 types when no paragraph is open) */
+    {
+      int html_type = fio___gfm_is_html_block_start(trimmed, le, 1);
+      if (html_type) {
+        fio___gfm_mark_li_content(&st);
+        st.leaf_type = FIO_GFM_HTML_BLOCK;
+        st.leaf_html_type = (uint8_t)html_type;
+        st.leaf_start = content;
+        fio_gfm_event_s e;
+        fio___gfm_event_init(&st, &e);
+        e.type = FIO_GFM_HTML_BLOCK;
+        e.source = FIO_BUF_INFO2(content, (size_t)(le - content));
+        fio___gfm_emit_push(&st, &e);
+        /* First line is also content */
+        fio___gfm_event_init(&st, &e);
+        e.type = FIO_GFM_TEXT;
+        e.text = FIO_BUF_INFO2(content, (size_t)(le - content));
+        fio___gfm_emit_write(&st, &e);
+        /* Check same-line close (e.g., <style>...</style> on one line) */
+        if (fio___gfm_html_block_has_close(content, le, html_type))
+          fio___gfm_close_leaf(&st);
+        p = next;
+        continue;
+      }
+    }
+
+    /* B7: List item? → push LIST + LIST_ITEM containers, loop back */
+    {
+      fio___gfm_list_marker_s marker_info;
+      if (fio___gfm_is_list_marker(trimmed, le, vcol, &marker_info)) {
+        /* Determine if this is a new item in an existing list or a new list.
+         *
+         * Check the current nesting stack:
+         *   - If innermost container is a LIST with the same marker type,
+         *     this is a new item in that list.
+         *   - Otherwise, this starts a new list.
+         *
+         * "Same marker type" means:
+         *   - Same bullet character (-, +, *) for unordered lists, OR
+         *   - Same delimiter (., )) for ordered lists.
+         *
+         * A different character starts a DIFFERENT list:
+         *   "- foo\n+ bar" = two separate lists.
+         */
+        uint16_t list_depth = 0;
+        uint16_t depth = FIO___GFM_DEPTH(&st);
+
+        /* Walk backwards to find enclosing LIST of same type.
+         * When from_push is set, we're processing content INSIDE a
+         * just-opened container — list markers always create nested
+         * lists, never match parent lists. */
+        if (!from_push) {
+          for (uint16_t d = depth; d >= 1; --d) {
+            uint8_t t = st.nest[d - 1].type; /* 0-indexed */
+            if (t >= FIO___GFM_CONT_UL_DASH && t <= FIO___GFM_CONT_OL_PAREN) {
+              if (t == marker_info.type)
+                list_depth = d;
+              break; /* stop at first list container we find */
+            }
+            if (t == FIO___GFM_CONT_BQ)
+              break; /* don't look past blockquote boundaries */
+          }
+        }
+
+        if (list_depth) {
+          /* New item in existing list */
+          fio___gfm_push_new_item(&st, list_depth, &marker_info);
+        } else {
+          /* Close existing different-type list at current depth */
+          if (FIO___GFM_DEPTH(&st) > 0) {
+            uint8_t tt = FIO___GFM_TOP_TYPE(&st);
+            if (tt >= FIO___GFM_CONT_UL_DASH && tt <= FIO___GFM_CONT_OL_PAREN) {
+              st.matched_depth = FIO___GFM_DEPTH(&st) - 1;
+              fio___gfm_close_unmatched(&st);
+            }
+          }
+          /* New list */
+          fio___gfm_push_list_and_item(&st, &marker_info);
+        }
+
+        if (st.err)
+          break;
+
+        /* Advance content past the list marker */
+        content = marker_info.content_start;
+        content_padding = marker_info.padding;
+        from_push = 1;
+        goto try_new_block; /* check for nested blocks inside list item */
+      }
+    }
+
+    /* B8: Default — open a new paragraph.
+     * Skip if content >= le (e.g., empty list item marker line). */
+    if (content < le)
+      fio___gfm_open_paragraph(&st, content, le);
+    p = next;
+    continue;
+
+  } /* end main loop */
+
+  /* =======================================================================
+   * END OF DOCUMENT: Close all open blocks.
+   * ===================================================================== */
+  fio___gfm_close_all(&st);
+
+  return st.err ? st.consumed : (size_t)(st.end - st.start);
+}
+
+#endif /* FIO_EXTERN_COMPLETE || !FIO_EXTERN */
+#endif /* FIO_GFM && !H___FIO_GFM___H */
+
+/* *****************************************************************************
+Clean up macros
+***************************************************************************** */
+#undef FIO_GFM
+#undef FIO___GFM_TAB_WIDTH
+#undef FIO___GFM_MAX_MARKER_INDENT
+#undef FIO___GFM_MIN_FENCE_LEN
+#undef FIO___GFM_MAX_ATX_HEADING
+#undef FIO___GFM_MAX_ENTITY_LEN
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -27615,7 +35517,7 @@ Cleanup
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
-#define FIO_STR                /* Development inclusion - ignore line */
+#define FIO_MD2HTML            /* Development inclusion - ignore line */
 #include "./include.h"         /* Development inclusion - ignore line */
 #endif                         /* Development inclusion - ignore line */
 /* *****************************************************************************
@@ -27623,2926 +35525,840 @@ Cleanup
 
 
 
-                      Binary Safe String Core Helpers
-
+                       Markdown to HTML bstr Renderer
 
 
 Copyright and License: see header file (000 copyright.h) or top of file
 ***************************************************************************** */
-#if defined(FIO_STR) && !defined(H___FIO_STR___H)
-#define H___FIO_STR___H
-/* *****************************************************************************
-String Authorship Helpers (`fio_string_write` functions)
-***************************************************************************** */
-
-/**
- * A reallocation callback type for buffers in a `fio_str_info_s`.
- *
- * The callback MUST allocate at least `len + 1` bytes, setting the new capacity
- * in `dest->capa`.
- * */
-typedef int (*fio_string_realloc_fn)(fio_str_info_s *dest, size_t len);
-/**
- * Writes data to the end of the string in the `fio_string_s` struct,
- * returning an updated `fio_string_s` struct.
- *
- * The returned string is NUL terminated if edited.
- *
- * * `dest` an `fio_string_s` struct containing the destination string.
- *
- * * `reallocate` is a callback that attempts to reallocate more memory (i.e.,
- * using `realloc`) and returns an updated `fio_string_s` struct containing the
- *   updated capacity and buffer pointer (as well as the original length).
- *
- *   On failure the original `fio_string_s` should be returned. if
- * `reallocate` is NULL or fails, the data copied will be truncated.
- *
- * * `src` is the data to be written to the end of `dest`.
- *
- * * `len` is the length of the data to be written to the end of `dest`.
- *
- * Note: this function performs only minimal checks and assumes that `dest` is
- *       fully valid - i.e., that `dest.capa >= dest.len`, that `dest.buf` is
- *       valid, etc'.
- *
- * An example for a `reallocate` callback using the system's `realloc` function:
- *
- *      int fio_string_realloc_system(fio_str_info_s *dest, size_t len_no_nul) {
- *       const size_t new_capa = fio_string_capa4len(len_pre_nul);
- *       void *tmp = realloc(dest.buf, new_capa);
- *       if (!tmp)
- *         return -1;
- *       dest.capa = new_capa;
- *       dest.buf = (char *)tmp;
- *       return 0;
- *     }
- *
- * An example for using the function:
- *
- *     void example(void) {
- *       char buf[32];
- *       fio_str_info_s str = FIO_STR_INFO3(buf, 0, 32);
- *       fio_string_write(&str, NULL, "The answer is: 0x", 17);
- *       str.len += fio_ltoa(str.buf + str.len, 42, 16);
- *       fio_string_write(&str, NULL, "!\n", 2);
- *       printf("%s", str.buf);
- *     }
- */
-FIO_SFUNC int fio_string_write(fio_str_info_s *dest,
-                               fio_string_realloc_fn reallocate,
-                               const void *restrict src,
-                               size_t len);
-
-/**
- * Similar to `fio_string_write`, only replacing/inserting a sub-string in a
- * specific location.
- *
- * Negative `start_pos` values are calculated backwards, `-1` == end of String.
- *
- * When `overwrite_len` is zero, the function will insert the data at
- * `start_pos`, pushing existing data until after the inserted data.
- *
- * If `overwrite_len` is non-zero, than `overwrite_len` bytes will be
- * overwritten (or deleted).
- *
- * If `len == 0` than `src` will be ignored and the data marked for replacement
- * will be erased.
- */
-SFUNC int fio_string_replace(fio_str_info_s *dest,
-                             fio_string_realloc_fn reallocate,
-                             intptr_t start_pos,
-                             size_t overwrite_len,
-                             const void *src,
-                             size_t len);
-
-/** Argument type used by fio_string_write2. */
-typedef struct {
-  size_t klass;
-  union {
-    struct {
-      size_t len;
-      const char *buf;
-    } str;
-    double f;
-    int64_t i;
-    uint64_t u;
-  } info;
-} fio_string_write_s;
-
-/**
- * Writes a group of objects (strings, numbers, etc') to `dest`.
- *
- * `dest` and `reallocate` are similar to `fio_string_write`.
- *
- * `src` is an array of `fio_string_write_s` structs, ending with a struct
- * that's all set to 0.
- *
- * Use the `fio_string_write2` macro for ease, i.e.:
- *
- *    fio_str_info_s str = {0};
- *    fio_string_write2(&str, my_reallocate,
- *                        FIO_STRING_WRITE_STR1("The answer is: "),
- *                        FIO_STRING_WRITE_NUM(42),
- *                        FIO_STRING_WRITE_STR2("(0x", 3),
- *                        FIO_STRING_WRITE_HEX(42),
- *                        FIO_STRING_WRITE_STR2(")", 1));
- *
- * Note: this function might end up allocating more memory than absolutely
- * required as it favors fast performance over memory savings. It performs only
- * a single allocation (if any) and computes numeral string length only when
- * writing the numbers to the string.
- */
-SFUNC int fio_string_write2(fio_str_info_s *restrict dest,
-                            fio_string_realloc_fn reallocate,
-                            const fio_string_write_s srcs[]);
-
-/* Helper macro for fio_string_write2 */
-#define fio_string_write2(dest, reallocate, ...)                               \
-  fio_string_write2((dest),                                                    \
-                    (reallocate),                                              \
-                    (fio_string_write_s[]){__VA_ARGS__, {0}})
-
-/** A macro to add a String to `fio_string_write2`. */
-#define FIO_STRING_WRITE_STR1(str_)                                            \
-  ((fio_string_write_s){                                                       \
-      .klass = 1,                                                              \
-      .info.str = {.len = (size_t)FIO_STRLEN((str_)), .buf = (str_)}})
-
-/** A macro to add a String with known length to `fio_string_write2`. */
-#define FIO_STRING_WRITE_STR2(str_, len_)                                      \
-  ((fio_string_write_s){.klass = 1, .info.str = {.len = (len_), .buf = (str_)}})
-
-/** A macro to add a String with known length to `fio_string_write2`. */
-#define FIO_STRING_WRITE_STR_INFO(str_)                                        \
-  ((fio_string_write_s){.klass = 1,                                            \
-                        .info.str = {.len = (str_).len, .buf = (str_).buf}})
-
-/** A macro to add a signed number to `fio_string_write2`. */
-#define FIO_STRING_WRITE_NUM(num)                                              \
-  ((fio_string_write_s){.klass = 2, .info.i = (int64_t)(num)})
-
-/** A macro to add an unsigned number to `fio_string_write2`. */
-#define FIO_STRING_WRITE_UNUM(num)                                             \
-  ((fio_string_write_s){.klass = 3, .info.u = (uint64_t)(num)})
-
-/** A macro to add a hex representation to `fio_string_write2`. */
-#define FIO_STRING_WRITE_HEX(num)                                              \
-  ((fio_string_write_s){.klass = 4, .info.u = (uint64_t)(num)})
-
-/** A macro to add a binary representation to `fio_string_write2`. */
-#define FIO_STRING_WRITE_BIN(num)                                              \
-  ((fio_string_write_s){.klass = 5, .info.u = (uint64_t)(num)})
-
-/** A macro to add a float (double) to `fio_string_write2`. */
-#define FIO_STRING_WRITE_FLOAT(num)                                            \
-  ((fio_string_write_s){.klass = 6, .info.f = (double)(num)})
-
-/* *****************************************************************************
-String Numerals support
-***************************************************************************** */
-
-/* Writes a signed number `i` to the String */
-SFUNC int fio_string_write_i(fio_str_info_s *dest,
-                             fio_string_realloc_fn reallocate,
-                             int64_t i);
-/* Writes an unsigned number `i` to the String */
-SFUNC int fio_string_write_u(fio_str_info_s *dest,
-                             fio_string_realloc_fn reallocate,
-                             uint64_t i);
-/* Writes a hex representation of `i` to the String */
-SFUNC int fio_string_write_hex(fio_str_info_s *dest,
-                               fio_string_realloc_fn reallocate,
-                               uint64_t i);
-/* Writes a binary representation of `i` to the String */
-SFUNC int fio_string_write_bin(fio_str_info_s *dest,
-                               fio_string_realloc_fn reallocate,
-                               uint64_t i);
-
-/* *****************************************************************************
-String printf style support
-***************************************************************************** */
-
-/** Similar to fio_string_write, only using printf semantics. */
-SFUNC FIO___PRINTF_STYLE(3, 0) int fio_string_printf(
-    fio_str_info_s *dest,
-    fio_string_realloc_fn reallocate,
-    const char *format,
-    ...);
-
-/** Similar to fio_string_write, only using vprintf semantics. */
-SFUNC FIO___PRINTF_STYLE(3, 0) int fio_string_vprintf(
-    fio_str_info_s *dest,
-    fio_string_realloc_fn reallocate,
-    const char *format,
-    va_list argv);
-
-/* *****************************************************************************
-String C / JSON escaping
-***************************************************************************** */
-
-/**
- * Writes data at the end of the String, escaping the data using JSON semantics.
- *
- * The JSON semantic are common to many programming languages, promising a UTF-8
- * String while making it easy to read and copy the string during debugging.
- */
-SFUNC int fio_string_write_escape(fio_str_info_s *restrict dest,
-                                  fio_string_realloc_fn reallocate,
-                                  const void *raw,
-                                  size_t raw_len);
-
-/** Writes an escaped data into the string after un-escaping the data. */
-SFUNC int fio_string_write_unescape(fio_str_info_s *dest,
-                                    fio_string_realloc_fn reallocate,
-                                    const void *enscaped,
-                                    size_t enscaped_len);
-
-/* *****************************************************************************
-String Base32 support
-***************************************************************************** */
-
-/** Writes data to String using base64 encoding. */
-SFUNC int fio_string_write_base32enc(fio_str_info_s *dest,
-                                     fio_string_realloc_fn reallocate,
-                                     const void *raw,
-                                     size_t raw_len);
-
-/** Writes decoded base64 data to String. */
-SFUNC int fio_string_write_base32dec(fio_str_info_s *dest,
-                                     fio_string_realloc_fn reallocate,
-                                     const void *encoded,
-                                     size_t encoded_len);
-
-/* *****************************************************************************
-String Base64 support
-***************************************************************************** */
-
-/** Writes data to String using base64 encoding. */
-SFUNC int fio_string_write_base64enc(fio_str_info_s *dest,
-                                     fio_string_realloc_fn reallocate,
-                                     const void *raw,
-                                     size_t raw_len,
-                                     uint8_t url_encoded);
-
-/** Writes decoded base64 data to String. */
-SFUNC int fio_string_write_base64dec(fio_str_info_s *dest,
-                                     fio_string_realloc_fn reallocate,
-                                     const void *encoded,
-                                     size_t encoded_len);
-
-/* *****************************************************************************
-String URL Encoding support
-***************************************************************************** */
-
-/** Writes data to String using URL encoding (a.k.a., percent encoding). */
-SFUNC int fio_string_write_url_enc(fio_str_info_s *dest,
-                                   fio_string_realloc_fn reallocate,
-                                   const void *raw,
-                                   size_t raw_len);
-
-/** Writes decoded URL data to String, decoding + to spaces. */
-SFUNC int fio_string_write_url_dec(fio_str_info_s *dest,
-                                   fio_string_realloc_fn reallocate,
-                                   const void *encoded,
-                                   size_t encoded_len);
-
-/** Writes decoded URL data to String, without decoding + to spaces. */
-SFUNC int fio_string_write_path_dec(fio_str_info_s *dest,
-                                    fio_string_realloc_fn reallocate,
-                                    const void *encoded,
-                                    size_t encoded_len);
-
-/* *****************************************************************************
-String HTML escaping support
-***************************************************************************** */
-
-/** Writes HTML escaped data to a String. */
-SFUNC int fio_string_write_html_escape(fio_str_info_s *dest,
-                                       fio_string_realloc_fn reallocate,
-                                       const void *raw,
-                                       size_t raw_len);
-
-/** Writes HTML un-escaped data to a String - incomplete and minimal. */
-SFUNC int fio_string_write_html_unescape(fio_str_info_s *dest,
-                                         fio_string_realloc_fn reallocate,
-                                         const void *enscaped,
-                                         size_t enscaped_len);
-
-/* *****************************************************************************
-String File Reading support
-***************************************************************************** */
-
-/**
- * Writes up to `limit` bytes from `fd` into `dest`, starting at `start_at`.
- *
- * If `limit` is 0 (or less than 0) data will be written until EOF.
- *
- * If `start_at` is negative, position will be calculated from the end of the
- * file where `-1 == EOF`.
- *
- * Note: this will fail unless used on actual files (not sockets, not pipes).
- * */
-SFUNC int fio_string_readfd(fio_str_info_s *dest,
-                            fio_string_realloc_fn reallocate,
-                            int fd,
-                            intptr_t start_at,
-                            size_t limit);
-
-/**
- * Opens the file `filename` and pastes it's contents (or a slice ot it) at
- * the end of the String. If `limit == 0`, than the data will be read until
- * EOF.
- *
- * If the file can't be located, opened or read, or if `start_at` is beyond
- * the EOF position, NULL is returned in the state's `data` field.
- */
-SFUNC int fio_string_readfile(fio_str_info_s *dest,
-                              fio_string_realloc_fn reallocate,
-                              const char *filename,
-                              intptr_t start_at,
-                              size_t limit);
-
-/**
- * Writes up to `limit` bytes from `fd` into `dest`, starting at `start_at` and
- * ending either at the first occurrence of `delim` or at EOF.
- *
- * If `limit` is 0 (or less than 0) as much data as may be required will be
- * written.
- *
- * If `start_at` is negative, position will be calculated from the end of the
- * file where `-1 == EOF`.
- *
- * Note: this will fail unless used on actual seekable files (not sockets, not
- * pipes).
- * */
-SFUNC int fio_string_getdelim_fd(fio_str_info_s *dest,
-                                 fio_string_realloc_fn reallocate,
-                                 int fd,
-                                 intptr_t start_at,
-                                 char delim,
-                                 size_t limit);
-
-/**
- * Opens the file `filename`, calls `fio_string_getdelim_fd` and closes the
- * file.
- */
-SFUNC int fio_string_getdelim_file(fio_str_info_s *dest,
-                                   fio_string_realloc_fn reallocate,
-                                   const char *filename,
-                                   intptr_t start_at,
-                                   char delim,
-                                   size_t limit);
-
-/* *****************************************************************************
-Memory Helpers (for Authorship)
-***************************************************************************** */
-
-/* calculates a 16 bytes boundary aligned capacity for `new_len`. */
-FIO_IFUNC size_t fio_string_capa4len(size_t new_len);
-
-/** Default reallocation callback implementation using libc `realloc`. */
-#define FIO_STRING_SYS_REALLOC fio_string_sys_reallocate
-/** Default reallocation callback implementation using the default allocator */
-#define FIO_STRING_REALLOC fio_string_default_reallocate
-/** Default reallocation callback for memory that mustn't be freed. */
-#define FIO_STRING_ALLOC_COPY fio_string_default_allocate_copy
-/** default allocator for the fio_keystr_s string data.. */
-#define FIO_STRING_ALLOC_KEY fio_string_default_key_alloc
-/** Frees memory that was allocated with the default callbacks. */
-#define FIO_STRING_FREE fio_string_default_free
-/** Frees memory that was allocated with the default callbacks. */
-#define FIO_STRING_FREE2 fio_string_default_free2
-/** Frees memory that was allocated for a key string. */
-#define FIO_STRING_FREE_KEY fio_string_default_free_key
-/** Does nothing. */
-#define FIO_STRING_FREE_NOOP fio_string_default_free_noop
-/** Does nothing. */
-#define FIO_STRING_FREE_NOOP2 fio_string_default_free_noop2
-
-/** default reallocation callback implementation. */
-SFUNC int fio_string_default_reallocate(fio_str_info_s *dst, size_t len);
-/** default reallocation callback for memory that mustn't be freed. */
-SFUNC int fio_string_default_allocate_copy(fio_str_info_s *dest,
-                                           size_t new_capa);
-/** frees memory that was allocated with the default callbacks. */
-SFUNC void fio_string_default_free(void *);
-/** frees memory that was allocated with the default callbacks. */
-SFUNC void fio_string_default_free2(fio_str_info_s str);
-/** does nothing. */
-SFUNC void fio_string_default_free_noop(void *);
-/** does nothing. */
-SFUNC void fio_string_default_free_noop2(fio_str_info_s str);
-
-/** default allocator for the fio_keystr_s string data.. */
-SFUNC void *fio_string_default_key_alloc(size_t len);
-/** frees a fio_keystr_s memory that was allocated with the default callback. */
-SFUNC void fio_string_default_free_key(void *, size_t);
-
-/* *****************************************************************************
-UTF-8 Support
-***************************************************************************** */
-
-/** Returns 1 if the String is UTF-8 valid and 0 if not. */
-SFUNC bool fio_string_utf8_valid(fio_str_info_s str);
-
-/** Returns the String's length in UTF-8 characters or 0 if invalid. */
-SFUNC size_t fio_string_utf8_len(fio_str_info_s str);
-
-/** Returns 0 if non-UTF-8 or returns 1-4 (UTF-8 if a valid char). */
-SFUNC size_t fio_string_utf8_valid_code_point(const void *u8c, size_t buf_len);
-
-/**
- * Takes a UTF-8 character selection information (UTF-8 position and length)
- * and updates the same variables so they reference the raw byte slice
- * information.
- *
- * If the String isn't UTF-8 valid up to the requested selection, than `pos`
- * will be updated to `-1` otherwise values are always positive.
- *
- * The returned `len` value may be shorter than the original if there wasn't
- * enough data left to accommodate the requested length. When a `len` value of
- * `0` is returned, this means that `pos` marks the end of the String.
- *
- * Returns -1 on error and 0 on success.
- */
-SFUNC int fio_string_utf8_select(fio_str_info_s str,
-                                 intptr_t *pos,
-                                 size_t *len);
-
-/* *****************************************************************************
-Sorting / Comparison Helpers
-***************************************************************************** */
-
-/**
- * Compares two `fio_buf_info_s`, returning 1 if data in a is bigger than b.
- *
- * Note: returns 0 if data in b is bigger than or equal(!).
- */
-SFUNC int fio_string_is_greater_buf(fio_buf_info_s a, fio_buf_info_s b);
-
-/**
- * Compares two strings, returning 1 if string a is bigger than string b.
- *
- * Note: returns 0 if string b is bigger than string a or if strings are equal.
- */
-FIO_IFUNC int fio_string_is_greater(fio_str_info_s a, fio_str_info_s b);
-
-/* *****************************************************************************
-Binary String Type - Embedded Strings optimized for mutability and locality
-***************************************************************************** */
-
-/* for internal use only */
-typedef struct {
-  uint32_t len;
-  uint32_t capa;
-  uint32_t ref;
-} fio___bstr_meta_s;
-
-/* for internal use only */
-typedef struct {
-  fio___bstr_meta_s meta;
-  char *ptr;
-} fio___bstr_const_s;
-
-/** Reserves `len` for future `write` operations (used to minimize realloc). */
-FIO_IFUNC char *fio_bstr_reserve(char *bstr, size_t len);
-
-/** Copies a `fio_bstr` using "copy on write". */
-FIO_IFUNC char *fio_bstr_copy(char *bstr);
-/** Frees a binary string allocated by a `fio_bstr` function. Returns NULL.*/
-FIO_IFUNC void fio_bstr_free(char *bstr);
-
-/** Returns information about the fio_bstr. */
-FIO_IFUNC fio_str_info_s fio_bstr_info(const char *bstr);
-/** Returns information about the fio_bstr. */
-FIO_IFUNC fio_buf_info_s fio_bstr_buf(const char *bstr);
-/** Gets the length of the fio_bstr. `bstr` MUST NOT be NULL. */
-FIO_IFUNC size_t fio_bstr_len(const char *bstr);
-/** Sets the length of the fio_bstr. `bstr` MUST NOT be NULL. */
-FIO_IFUNC char *fio_bstr_len_set(char *bstr, size_t len);
-
-/** Compares to see if fio_bstr a is greater than fio_bstr b (for FIO_SORT). */
-FIO_SFUNC int fio_bstr_is_greater(const char *a, const char *b);
-/** Compares to see if fio_bstr a is equal to another fio_bstr. */
-FIO_SFUNC int fio_bstr_is_eq(const char *a, const char *b);
-/** Compares to see if fio_bstr a is equal to another String. */
-FIO_SFUNC int fio_bstr_is_eq2info(const char *a_, fio_str_info_s b);
-/** Compares to see if fio_bstr a is equal to another String. */
-FIO_SFUNC int fio_bstr_is_eq2buf(const char *a_, fio_buf_info_s b);
-
-/** Writes data to a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_write(char *bstr,
-                               const void *restrict src,
-                               size_t len);
-/** Replaces data in a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_replace(char *bstr,
-                                 intptr_t start_pos,
-                                 size_t overwrite_len,
-                                 const void *src,
-                                 size_t len);
-/** Writes data to a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_write2(char *bstr, const fio_string_write_s srcs[]);
-/** Writes data to a fio_bstr, returning the address of the new fio_bstr. */
-#define fio_bstr_write2(bstr, ...)                                             \
-  fio_bstr_write2(bstr, (fio_string_write_s[]){__VA_ARGS__, {0}})
-
-/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_write_i(char *bstr, int64_t num);
-/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_write_u(char *bstr, uint64_t num);
-/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_write_hex(char *bstr, uint64_t num);
-/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_write_bin(char *bstr, uint64_t num);
-
-/** Writes escaped data to a fio_bstr, returning its new address. */
-FIO_IFUNC char *fio_bstr_write_escape(char *bstr, const void *src, size_t len);
-/** Un-escapes and writes data to a fio_bstr, returning its new address. */
-FIO_IFUNC char *fio_bstr_write_unescape(char *bstr,
-                                        const void *src,
-                                        size_t len);
-
-/** Writes base64 encoded data to a fio_bstr, returning its new address. */
-FIO_IFUNC char *fio_bstr_write_base64enc(char *bstr,
-                                         const void *src,
-                                         size_t len,
-                                         uint8_t url_encoded);
-/** Decodes base64 data and writes to a fio_bstr, returning its new address. */
-FIO_IFUNC char *fio_bstr_write_base64dec(char *bstr,
-                                         const void *src,
-                                         size_t len);
-
-/** Writes data to String using URL encoding (a.k.a., percent encoding). */
-FIO_IFUNC char *fio_bstr_write_url_enc(char *bstr,
-                                       const void *data,
-                                       size_t len);
-/** Writes decoded URL data to String. */
-FIO_IFUNC char *fio_bstr_write_url_dec(char *bstr,
-                                       const void *encoded,
-                                       size_t len);
-
-/** Writes HTML escaped data to a String. */
-FIO_IFUNC char *fio_bstr_write_html_escape(char *bstr,
-                                           const void *raw,
-                                           size_t len);
-/** Writes HTML un-escaped data to a String - incomplete and minimal. */
-FIO_IFUNC char *fio_bstr_write_html_unescape(char *bstr,
-                                             const void *escaped,
-                                             size_t len);
-
-/** Writes to the String from a regular file `fd`. */
-FIO_IFUNC char *fio_bstr_readfd(char *bstr,
-                                int fd,
-                                intptr_t start_at,
-                                intptr_t limit);
-/** Writes to the String from a regular file named `filename`. */
-FIO_IFUNC char *fio_bstr_readfile(char *bstr,
-                                  const char *filename,
-                                  intptr_t start_at,
-                                  intptr_t limit);
-/** Writes to the String from a regular file named `filename`. */
-FIO_IFUNC char *fio_bstr_getdelim_file(char *bstr,
-                                       const char *filename,
-                                       intptr_t start_at,
-                                       char delim,
-                                       size_t limit);
-/** Writes to the String from a regular file `fd`. */
-FIO_IFUNC char *fio_bstr_getdelim_fd(char *bstr,
-                                     int fd,
-                                     intptr_t start_at,
-                                     char delim,
-                                     size_t limit);
-
-/** Writes a `fio_bstr` in `printf` style. */
-FIO_IFUNC FIO___PRINTF_STYLE(2, 0) char *fio_bstr_printf(char *bstr,
-                                                         const char *format,
-                                                         ...);
-
-/** default reallocation callback implementation - mostly for internal use. */
-SFUNC int fio_bstr_reallocate(fio_str_info_s *dest, size_t len);
-
-/* *****************************************************************************
-Key String Type - binary String container for Hash Maps and Arrays
-***************************************************************************** */
-
-/** a semi-opaque type used for the `fio_keystr` functions */
-typedef struct fio_keystr_s fio_keystr_s;
-
-/** returns the Key String. NOTE: Key Strings are NOT NUL TERMINATED! */
-FIO_IFUNC fio_buf_info_s fio_keystr_buf(fio_keystr_s *str);
-/** returns the Key String. NOTE: Key Strings are NOT NUL TERMINATED! */
-FIO_IFUNC fio_str_info_s fio_keystr_info(fio_keystr_s *str);
-
-/** Returns a TEMPORARY `fio_keystr_s`. */
-FIO_IFUNC fio_keystr_s fio_keystr_tmp(const char *buf, uint32_t len);
-/** Returns an initialized `fio_keystr_s` containing a copy of `str`. */
-FIO_SFUNC fio_keystr_s fio_keystr_init(fio_str_info_s str,
-                                       void *(*alloc_func)(size_t len));
-/** Destroys an initialized `fio_keystr_s`. */
-FIO_SFUNC void fio_keystr_destroy(fio_keystr_s *key,
-                                  void (*free_func)(void *, size_t));
-/** Compares two Key Strings. */
-FIO_IFUNC int fio_keystr_is_eq(fio_keystr_s a, fio_keystr_s b);
-/** Compares a Key String to any String - used internally by the hash map. */
-FIO_IFUNC int fio_keystr_is_eq2(fio_keystr_s a_, fio_str_info_s b);
-/** Compares a Key String to any String - used internally by the hash map. */
-FIO_IFUNC int fio_keystr_is_eq3(fio_keystr_s a_, fio_buf_info_s b);
-/** Returns a good-enough `fio_keystr_s` risky hash. */
-FIO_IFUNC uint64_t fio_keystr_hash(fio_keystr_s a);
-
-#define FIO_KEYSTR_CONST ((size_t)-1LL)
-
-/* *****************************************************************************
-
-
-                             String Implementation
-
-                           IMPLEMENTATION - INLINED
-
-
-***************************************************************************** */
-
-/* *****************************************************************************
-String Authorship Helpers - (inlined) implementation
-***************************************************************************** */
-
-/* calculates a 16 bytes boundary aligned capacity for `new_len`. */
-FIO_IFUNC size_t fio_string_capa4len(size_t new_len) {
-  return sizeof(char) *
-         ((new_len + 15LL + (!(new_len & 15ULL))) & (~((size_t)15ULL)));
-}
-
-/*
- * performs `reallocate` if necessary, `capa` rounded up to 16 byte units.
- * updates `len` if reallocation fails (or is unavailable).
- */
-FIO_IFUNC int fio_string___write_validate_len(fio_str_info_s *restrict dest,
-                                              fio_string_realloc_fn reallocate,
-                                              size_t *restrict len) {
-  size_t l = len[0];
-  if ((dest->capa > dest->len + l))
-    return 0;
-  if (reallocate && l < (dest->capa >> 2) &&
-      ((dest->capa >> 2) + (dest->capa) < 0x7FFFFFFFULL))
-    l = (dest->capa >> 2);
-  l += dest->len;
-  if (l < 0x7FFFFFFFULL && reallocate && !reallocate(dest, l))
-    return 0;
-  if (dest->capa > dest->len + 1)
-    len[0] = dest->capa - (dest->len + 1);
-  else
-    len[0] = 0;
-  return -1;
-}
-
-/* fio_string_write */
-FIO_SFUNC int fio_string_write(fio_str_info_s *dest,
-                               fio_string_realloc_fn reallocate,
-                               const void *restrict src,
-                               size_t len) {
-  int r = 0;
-  if (!len)
-    return r;
-  r = fio_string___write_validate_len(dest, reallocate, &len);
-  if (FIO_LIKELY(len && src))
-    FIO_MEMCPY(dest->buf + dest->len, src, len);
-  dest->len += len;
-  dest->buf[dest->len] = 0;
-  return r;
-}
-
-/**
- * Compares two strings, returning 1 if string a is bigger than string b.
- *
- * Note: returns 0 if string b is bigger than string a or if strings are equal.
- */
-FIO_IFUNC int fio_string_is_greater(fio_str_info_s a, fio_str_info_s b) {
-  return fio_string_is_greater_buf(FIO_STR2BUF_INFO(a), FIO_STR2BUF_INFO(b));
-}
-
-/* *****************************************************************************
-Binary String Type - Embedded Strings
-***************************************************************************** */
-FIO_LEAK_COUNTER_DEF(fio_bstr_s)
-
-#ifndef FIO___BSTR_META
-#define FIO___BSTR_META(bstr)                                                  \
-  FIO_PTR_MATH_SUB(fio___bstr_meta_s, bstr, sizeof(fio___bstr_meta_s))
+#if defined(FIO_MD2HTML) && !defined(H___FIO_MD2HTML___H)
+#define H___FIO_MD2HTML___H
+
+#ifndef FIO_MD2HTML_ERR_ALLOC
+/** Markdown-to-HTML renderer callback error: output allocation failed. */
+#define FIO_MD2HTML_ERR_ALLOC 1
 #endif
 
-/** Duplicates a `fio_bstr` using copy on write. */
-FIO_IFUNC char *fio_bstr_copy(char *bstr) {
-  if (!bstr)
-    return bstr;
-  fio___bstr_meta_s *meta = FIO___BSTR_META(bstr);
-  if (fio_atomic_add(&meta->ref, 1) > ((uint32_t)1UL << 31))
-    goto copy_anyway;
-  return bstr;
-copy_anyway:
-  bstr = fio_bstr_write(NULL, bstr, meta->len);
-  fio_bstr_free((char *)(meta + 1));
-  return bstr;
-}
+/* Dependency: binary string buffer for output accumulation. */
+#ifndef H___FIO_STR___H
+#define FIO_STR
+#define FIO___RECURSIVE_INCLUDE 1
+#include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
+#endif
 
-/** Frees a binary string allocated by a `fio_bstr` function. */
-FIO_IFUNC void fio_bstr_free(char *bstr) {
-  if (!bstr)
-    return;
-  fio___bstr_meta_s *meta = FIO___BSTR_META(bstr);
-  if (fio_atomic_sub(&meta->ref, 1))
-    return;
-  FIO_LEAK_COUNTER_ON_FREE(fio_bstr_s);
-  FIO_MEM_FREE_(meta, (meta->capa + sizeof(*meta)));
-}
+/* Dependency: GFM parser event source. */
+#ifndef H___FIO_GFM___H
+#define FIO_GFM
+#define FIO___RECURSIVE_INCLUDE 1
+#include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
+#endif
 
-/** internal helper - sets the length of the fio_bstr. */
-FIO_IFUNC char *fio_bstr___len_set(char *bstr, size_t len) {
-  if (FIO_UNLIKELY(!bstr))
-    return bstr;
-  // if (FIO_UNLIKELY(len >= 0xFFFFFFFFULL))
-  //   return bstr;
-  bstr[(FIO___BSTR_META(bstr)->len = (uint32_t)len)] = 0;
-  return bstr;
-}
-
-/** Reserves `len` for future `write` operations (used to minimize realloc). */
-FIO_IFUNC char *fio_bstr_reserve(char *bstr, size_t len) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  if (i.len + len < i.capa)
-    return bstr;
-  fio_bstr_reallocate(&i, (i.len + len));
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-/** Returns information about the fio_bstr. */
-FIO_IFUNC fio_str_info_s fio_bstr_info(const char *bstr) {
-  fio_str_info_s r = {0};
-  r.buf = (char *)bstr;
-  /* please emit conditional mov and not if branches */
-  if (bstr)
-    r.len = FIO___BSTR_META(bstr)->len;
-  if (bstr)
-    r.capa = FIO___BSTR_META(bstr)->capa;
-  if (bstr && FIO___BSTR_META(bstr)->ref)
-    r.capa = 1;
-  return r;
-}
-
-/** Returns information about the fio_bstr. */
-FIO_IFUNC fio_buf_info_s fio_bstr_buf(const char *bstr) {
-  fio___bstr_meta_s mem[1] = {{0}};
-  fio___bstr_meta_s *meta_map[2] = {FIO___BSTR_META(bstr), mem};
-  fio___bstr_meta_s *meta = meta_map[!bstr];
-  return FIO_BUF_INFO2((char *)bstr, meta->len);
-}
-
-/** Gets the length of the fio_bstr. `bstr` MUST NOT be NULL. */
-FIO_IFUNC size_t fio_bstr_len(const char *bstr) {
-  if (!bstr)
-    return 0;
-  fio___bstr_meta_s *meta = FIO___BSTR_META(bstr);
-  return meta->len;
-}
-
-/** Sets the length of the fio_bstr. `bstr` MUST NOT be NULL. */
-FIO_IFUNC char *fio_bstr_len_set(char *bstr, size_t len) {
-  fio___bstr_meta_s m[2] = {0};
-  fio___bstr_meta_s *meta = FIO___BSTR_META(bstr);
-  if (!bstr)
-    meta = m;
-  if (FIO_UNLIKELY(len >= 0xFFFFFFFFULL))
-    return bstr;
-  if (FIO_UNLIKELY(meta->ref || meta->capa <= len)) {
-    fio_str_info_s i = fio_bstr_info(bstr);
-    fio_bstr_reallocate(&i, len);
-    bstr = i.buf;
-  }
-  return fio_bstr___len_set(bstr, len);
-}
-
-/** Writes data to a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_write(char *bstr,
-                               const void *restrict src,
-                               size_t len) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write(&i, fio_bstr_reallocate, src, len);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-/** Replaces data in a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_replace(char *bstr,
-                                 intptr_t start_pos,
-                                 size_t overwrite_len,
-                                 const void *src,
-                                 size_t len) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_replace(&i,
-                     fio_bstr_reallocate,
-                     start_pos,
-                     overwrite_len,
-                     src,
-                     len);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-void fio_bstr_write2____(void); /* IDE Marker */
-/** Writes data to a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_write2 FIO_NOOP(char *bstr,
-                                         const fio_string_write_s srcs[]) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write2 FIO_NOOP(&i, fio_bstr_reallocate, srcs);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_write_i(char *bstr, int64_t num) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write_i(&i, fio_bstr_reallocate, num);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_write_u(char *bstr, uint64_t num) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write_u(&i, fio_bstr_reallocate, num);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_write_hex(char *bstr, uint64_t num) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write_hex(&i, fio_bstr_reallocate, num);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-/** Writes number to a fio_bstr, returning the address of the new fio_bstr. */
-FIO_IFUNC char *fio_bstr_write_bin(char *bstr, uint64_t num) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write_bin(&i, fio_bstr_reallocate, num);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-/** Writes escaped data to a fio_bstr, returning its new address. */
-FIO_IFUNC char *fio_bstr_write_escape(char *bstr, const void *src, size_t len) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write_escape(&i, fio_bstr_reallocate, src, len);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-/** Un-escapes and writes data to a fio_bstr, returning its new address. */
-FIO_IFUNC char *fio_bstr_write_unescape(char *bstr,
-                                        const void *src,
-                                        size_t len) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write_unescape(&i, fio_bstr_reallocate, src, len);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-/** Writes base64 encoded data to a fio_bstr, returning its new address. */
-FIO_IFUNC char *fio_bstr_write_base64enc(char *bstr,
-                                         const void *src,
-                                         size_t len,
-                                         uint8_t url_encoded) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write_base64enc(&i, fio_bstr_reallocate, src, len, url_encoded);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-/** Decodes base64 data and writes to a fio_bstr, returning its new address. */
-FIO_IFUNC char *fio_bstr_write_base64dec(char *bstr,
-                                         const void *src,
-                                         size_t len) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write_base64dec(&i, fio_bstr_reallocate, src, len);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-/** Writes data to String using URL encoding (a.k.a., percent encoding). */
-FIO_IFUNC char *fio_bstr_write_url_enc(char *bstr,
-                                       const void *src,
-                                       size_t len) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write_url_enc(&i, fio_bstr_reallocate, src, len);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-/** Writes decoded URL data to String. */
-FIO_IFUNC char *fio_bstr_write_url_dec(char *bstr,
-                                       const void *src,
-                                       size_t len) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write_url_dec(&i, fio_bstr_reallocate, src, len);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-/** Writes HTML escaped data to a String. */
-FIO_IFUNC char *fio_bstr_write_html_escape(char *bstr,
-                                           const void *src,
-                                           size_t len) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write_html_escape(&i, fio_bstr_reallocate, src, len);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-/** Writes HTML un-escaped data to a String - incomplete and minimal. */
-FIO_IFUNC char *fio_bstr_write_html_unescape(char *bstr,
-                                             const void *src,
-                                             size_t len) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_write_html_unescape(&i, fio_bstr_reallocate, src, len);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-FIO_IFUNC FIO___PRINTF_STYLE(2, 0) char *fio_bstr_printf(char *bstr,
-                                                         const char *format,
-                                                         ...) {
-  va_list argv;
-  va_start(argv, format);
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_vprintf(&i, fio_bstr_reallocate, format, argv);
-  va_end(argv);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-/** Writes to the String from a regular file `fd`. */
-FIO_IFUNC char *fio_bstr_readfd(char *bstr,
-                                int fd,
-                                intptr_t start_at,
-                                intptr_t limit) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_readfd(&i, fio_bstr_reallocate, fd, start_at, limit);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-/** Writes to the String from a regular file named `filename`. */
-FIO_IFUNC char *fio_bstr_readfile(char *bstr,
-                                  const char *filename,
-                                  intptr_t start_at,
-                                  intptr_t limit) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_readfile(&i, fio_bstr_reallocate, filename, start_at, limit);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-/** Writes to the String from a regular file named `filename`. */
-FIO_IFUNC char *fio_bstr_getdelim_file(char *bstr,
-                                       const char *filename,
-                                       intptr_t start_at,
-                                       char delim,
-                                       size_t limit) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_getdelim_file(&i,
-                           fio_bstr_reallocate,
-                           filename,
-                           start_at,
-                           delim,
-                           limit);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-/** Writes to the String from a regular file `fd`. */
-FIO_IFUNC char *fio_bstr_getdelim_fd(char *bstr,
-                                     int fd,
-                                     intptr_t start_at,
-                                     char delim,
-                                     size_t limit) {
-  fio_str_info_s i = fio_bstr_info(bstr);
-  fio_string_getdelim_fd(&i, fio_bstr_reallocate, fd, start_at, delim, limit);
-  return fio_bstr___len_set(i.buf, i.len);
-}
-
-/** Compares to see if fio_bstr a is greater than fio_bstr b (for FIO_SORT). */
-FIO_SFUNC int fio_bstr_is_greater(const char *a, const char *b) {
-  return fio_string_is_greater_buf(fio_bstr_buf(a), fio_bstr_buf(b));
-}
-
-/** Compares to see if fio_bstr a is equal to another fio_bstr. */
-FIO_SFUNC int fio_bstr_is_eq(const char *a_, const char *b_) {
-  fio_buf_info_s a = fio_bstr_buf(a_);
-  fio_buf_info_s b = fio_bstr_buf(b_);
-  return FIO_STR_INFO_IS_EQ(a, b);
-}
-
-/** Compares to see if fio_bstr a is equal to another String. */
-FIO_SFUNC int fio_bstr_is_eq2info(const char *a_, fio_str_info_s b) {
-  fio_str_info_s a = fio_bstr_info(a_);
-  return FIO_STR_INFO_IS_EQ(a, b);
-}
-/** Compares to see if fio_bstr a is equal to another String. */
-FIO_SFUNC int fio_bstr_is_eq2buf(const char *a_, fio_buf_info_s b) {
-  fio_buf_info_s a = fio_bstr_buf(a_);
-  return FIO_BUF_INFO_IS_EQ(a, b);
-}
+/**
+ * Renders a complete Markdown / GFM document into an owned `fio_bstr`.
+ *
+ * The returned pointer should be released with `fio_bstr_free`. Pass NULL as
+ * `bstr_target` to allocate a new buffer, or pass an existing `fio_bstr` to
+ * append to it. On parser or allocation failure, NULL is returned; newly
+ * allocated output is freed.
+ *
+ * The renderer preserves raw Markdown HTML blocks / inline HTML, and escapes
+ * normal text, code, and attribute values.
+ */
+SFUNC char *fio_md2html(char *bstr_target, fio_buf_info_s source);
 
 /* *****************************************************************************
-Key String Type - binary String container for Hash Maps and Arrays
-***************************************************************************** */
-FIO_LEAK_COUNTER_DEF(fio_keystr_s)
-
-/* key string type implementation */
-struct fio_keystr_s {
-  uint8_t info;
-  uint8_t embd[3];
-  uint32_t len;
-  const char *buf;
-};
-
-/** returns the Key String. */
-FIO_IFUNC fio_buf_info_s fio_keystr_buf(fio_keystr_s *str) {
-  fio_buf_info_s r;
-  if ((str->info + 1) > 1) {
-    r = (fio_buf_info_s){.len = str->info, .buf = (char *)str->embd};
-    return r;
-  }
-  r = (fio_buf_info_s){.len = str->len, .buf = (char *)str->buf};
-  return r;
-}
-/** returns the Key String. */
-FIO_IFUNC fio_str_info_s fio_keystr_info(fio_keystr_s *str) {
-  fio_str_info_s r;
-  if ((str->info + 1) > 1) {
-    r = (fio_str_info_s){.len = str->info, .buf = (char *)str->embd};
-    return r;
-  }
-  r = (fio_str_info_s){.len = str->len, .buf = (char *)str->buf};
-  return r;
-}
-
-/** Returns a TEMPORARY `fio_keystr_s` to be used as a key for a hash map. */
-FIO_IFUNC fio_keystr_s fio_keystr_tmp(const char *buf, uint32_t len) {
-  fio_keystr_s r = {0};
-  if (len + 1 &&             /* test for overflow */
-      len + 1 < sizeof(r)) { /* always embed small strings in container! */
-    r.info = (uint8_t)len;
-    FIO_MEMCPY((char *)r.embd, buf, len);
-    return r;
-  }
-  r.info = 0xFF;
-  r.len = len;
-  r.buf = buf;
-  return r;
-}
-
-/** Returns a copy of `fio_keystr_s`. */
-FIO_SFUNC fio_keystr_s fio_keystr_init(fio_str_info_s str,
-                                       void *(*alloc_func)(size_t len)) {
-  fio_keystr_s r = {0};
-  if (!str.buf || !str.len || (str.len & (~(size_t)0xFFFFFFFF)))
-    return r;
-  if (str.len + 1 && str.len + 1 < sizeof(r)) {
-    r.info = (uint8_t)str.len;
-    FIO_MEMCPY((char *)r.embd, str.buf, str.len);
-    return r;
-  }
-  if (str.capa == FIO_KEYSTR_CONST) {
-    r.info = 0xFF;
-    r.len = (uint32_t)str.len;
-    r.buf = str.buf;
-    return r;
-  }
-  char *buf;
-  r.len = (uint32_t)str.len;
-  r.buf = buf = (char *)alloc_func(str.len + 1);
-  if (!buf)
-    goto no_mem;
-  FIO_LEAK_COUNTER_ON_ALLOC(fio_keystr_s);
-  FIO_MEMCPY(buf, str.buf, str.len);
-  buf[str.len] = 0;
-  return r;
-no_mem:
-  FIO_LOG_FATAL("fio_keystr_init allocation failed - results undefined!!!");
-  r = fio_keystr_tmp(str.buf, (uint32_t)str.len);
-  return r;
-}
-/** Destroys a copy of `fio_keystr_s` - used internally by the hash map. */
-FIO_SFUNC void fio_keystr_destroy(fio_keystr_s *key,
-                                  void (*free_func)(void *, size_t)) {
-  if (key->info || !key->buf)
-    return;
-  FIO_LEAK_COUNTER_ON_FREE(fio_keystr_s);
-  free_func((void *)key->buf, key->len);
-}
-
-/** Compares two Key Strings. */
-FIO_IFUNC int fio_keystr_is_eq(fio_keystr_s a_, fio_keystr_s b_) {
-  fio_buf_info_s a = fio_keystr_buf(&a_);
-  fio_buf_info_s b = fio_keystr_buf(&b_);
-  return FIO_BUF_INFO_IS_EQ(a, b);
-}
-
-/** Compares a Key String to any String - used internally by the hash map. */
-FIO_IFUNC int fio_keystr_is_eq2(fio_keystr_s a_, fio_str_info_s b) {
-  fio_str_info_s a = fio_keystr_info(&a_);
-  return FIO_STR_INFO_IS_EQ(a, b);
-}
-/** Compares a Key String to any String - used internally by the hash map. */
-FIO_IFUNC int fio_keystr_is_eq3(fio_keystr_s a_, fio_buf_info_s b) {
-  fio_buf_info_s a = fio_keystr_buf(&a_);
-  return FIO_BUF_INFO_IS_EQ(a, b);
-}
-
-/** Returns a good-enough `fio_keystr_s` risky hash. */
-FIO_IFUNC uint64_t fio_keystr_hash(fio_keystr_s a_) {
-  fio_buf_info_s a = fio_keystr_buf(&a_);
-  return fio_risky_hash(a.buf, a.len, (uint64_t)(uintptr_t)fio_string_write2);
-}
-
-/* *****************************************************************************
-Extern-ed functions
+Markdown to HTML Renderer - Implementation
 ***************************************************************************** */
 #if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
 
-FIO_LEAK_COUNTER_DEF(fio_string_default_allocations)
-FIO_LEAK_COUNTER_DEF(fio_string_default_key_allocations)
-/* *****************************************************************************
-Allocation Helpers
-***************************************************************************** */
-
-SFUNC int fio_string_sys_reallocate(fio_str_info_s *dest, size_t len) {
-  len = fio_string_capa4len(len);
-  void *tmp = realloc(dest->buf, dest->capa);
-  if (!tmp)
-    return -1;
-  dest->capa = len;
-  dest->buf = (char *)tmp;
-  return 0;
-}
-
-SFUNC int fio_string_default_reallocate(fio_str_info_s *dest, size_t len) {
-  len = fio_string_capa4len(len);
-  void *tmp = FIO_MEM_REALLOC_(dest->buf, dest->capa, len, dest->len);
-  if (!tmp)
-    return -1;
-  if (!dest->buf)
-    FIO_LEAK_COUNTER_ON_ALLOC(fio_string_default_allocations);
-  dest->capa = len;
-  dest->buf = (char *)tmp;
-  return 0;
-}
-
-SFUNC int fio_string_default_allocate_copy(fio_str_info_s *dest, size_t len) {
-  len = fio_string_capa4len(len);
-  void *tmp = FIO_MEM_REALLOC_(NULL, 0, len, 0);
-  if (!tmp)
-    return -1;
-  FIO_LEAK_COUNTER_ON_ALLOC(fio_string_default_allocations);
-  dest->capa = len;
-  dest->buf = (char *)tmp;
-  if (dest->len)
-    FIO_MEMCPY(tmp, dest->buf, dest->len);
-  return 0;
-}
-
-SFUNC void *fio_string_default_key_alloc(size_t len) {
-  return FIO_MEM_REALLOC_(NULL, 0, len, 0);
-}
-
-SFUNC void fio_string_default_free(void *ptr) {
-  if (ptr) {
-    FIO_LEAK_COUNTER_ON_FREE(fio_string_default_allocations);
-    FIO_MEM_FREE_(ptr, 0);
-  }
-}
-SFUNC void fio_string_default_free2(fio_str_info_s str) {
-  if (str.buf) {
-    FIO_LEAK_COUNTER_ON_FREE(fio_string_default_allocations);
-    FIO_MEM_FREE_(str.buf, str.capa);
-  }
-}
-
-/** frees a fio_keystr_s memory that was allocated with the default callback. */
-SFUNC void fio_string_default_free_key(void *buf, size_t capa) {
-  FIO_MEM_FREE_(buf, capa);
-  (void)capa; /* if unused */
-}
-
-SFUNC void fio_string_default_free_noop(void *str) { (void)str; }
-SFUNC void fio_string_default_free_noop2(fio_str_info_s str) { (void)str; }
-
-/* *****************************************************************************
-Numeral Support
-***************************************************************************** */
-
-/* fio_string_write_i */
-SFUNC int fio_string_write_i(fio_str_info_s *dest,
-                             fio_string_realloc_fn reallocate,
-                             int64_t i) {
-  int r = -1;
-  size_t len = 0;
-  len = fio_digits10(i);
-  if (fio_string___write_validate_len(dest, reallocate, &len))
-    return r; /* no writing of partial numbers. */
-  r = 0;
-  fio_ltoa10(dest->buf + dest->len, i, len);
-  dest->len += len;
-  return r;
-}
-
-/* fio_string_write_u */
-SFUNC int fio_string_write_u(fio_str_info_s *dest,
-                             fio_string_realloc_fn reallocate,
-                             uint64_t i) {
-  int r = -1;
-  size_t len = fio_digits10u(i);
-  if (fio_string___write_validate_len(dest, reallocate, &len))
-    return r; /* no writing of partial numbers. */
-  r = 0;
-  fio_ltoa10u(dest->buf + dest->len, i, len);
-  dest->len += len;
-  return r;
-}
-
-/* fio_string_write_hex */
-SFUNC int fio_string_write_hex(fio_str_info_s *dest,
-                               fio_string_realloc_fn reallocate,
-                               uint64_t i) {
-  int r = 0;
-  size_t len = fio_digits16u(i);
-  if (fio_string___write_validate_len(dest, reallocate, &len))
-    return (r = -1); /* no writing of partial numbers. */
-  fio_ltoa16u(dest->buf + dest->len, i, len);
-  dest->len += len;
-  return r;
-}
-
-/* fio_string_write_bin */
-SFUNC int fio_string_write_bin(fio_str_info_s *dest,
-                               fio_string_realloc_fn reallocate,
-                               uint64_t i) {
-  int r = 0;
-  size_t len = fio_digits_bin(i);
-  if (fio_string___write_validate_len(dest, reallocate, &len))
-    return (r = -1); /* no writing of partial numbers. */
-  fio_ltoa_bin(dest->buf + dest->len, i, len);
-  dest->len += len;
-  return r;
-}
-
-/* *****************************************************************************
-`printf` Style Support
-***************************************************************************** */
-
-/* Similar to fio_string_write, only using vprintf semantics. */
-SFUNC int FIO___PRINTF_STYLE(3, 0)
-    fio_string_vprintf(fio_str_info_s *dest,
-                       fio_string_realloc_fn reallocate,
-                       const char *format,
-                       va_list argv) {
-  int r = 0;
-  va_list argv_cpy;
-  va_copy(argv_cpy, argv);
-  int len_i = vsnprintf(NULL, 0, format, argv_cpy);
-  va_end(argv_cpy);
-  if (len_i <= 0)
-    return -1;
-  size_t len = (size_t)len_i;
-  r = fio_string___write_validate_len(dest, reallocate, &len);
-  if (FIO_UNLIKELY(dest->capa < dest->len + 2))
-    return -1;
-  if (len)
-    vsnprintf(dest->buf + dest->len, len + 1, format, argv);
-  dest->len += len;
-  dest->buf[dest->len] = 0;
-  return r;
-}
-
-/** Similar to fio_string_write, only using printf semantics. */
-SFUNC int FIO___PRINTF_STYLE(3, 4)
-    fio_string_printf(fio_str_info_s *dest,
-                      fio_string_realloc_fn reallocate,
-                      const char *format,
-                      ...) {
-  int r = 0;
-  va_list argv;
-  va_start(argv, format);
-  r = fio_string_vprintf(dest, reallocate, format, argv);
-  va_end(argv);
-  return r;
-}
-
-/* *****************************************************************************
-UTF-8 Support
-***************************************************************************** */
-
-/** Returns 0 if non-UTF-8 or returns 1-4 (UTF-8 if a valid char). */
-SFUNC size_t fio_string_utf8_valid_code_point(const void *c, size_t buf_len) {
-  size_t l = fio_utf8_char_len((uint8_t *)c);
-  l &= 0U - (buf_len >= l);
-  return l;
-}
-
-/** Returns 1 if the String is UTF-8 valid and 0 if not. */
-SFUNC bool fio_string_utf8_valid(fio_str_info_s str) {
-  if (!str.len)
-    return 1;
-  char *const end = str.buf + str.len;
-  size_t tmp;
-  while ((tmp = fio_utf8_char_len(str.buf)) && ((str.buf += tmp) < end))
-    ;
-  return str.buf == end;
-}
-
-/** Returns the String's length in UTF-8 characters. */
-SFUNC size_t fio_string_utf8_len(fio_str_info_s str) {
-  if (!str.len)
-    return 0;
-  char *end = str.buf + str.len;
-  size_t utf8len = 0, tmp;
-  do {
-    tmp = fio_utf8_char_len(str.buf);
-    str.buf += tmp;
-    ++utf8len;
-  } while (tmp && str.buf < end);
-  utf8len &= 0U - (str.buf == end);
-  return utf8len;
-}
-
-/**
- * Takes a UTF-8 character selection information (UTF-8 position and length)
- * and updates the same variables so they reference the raw byte slice
- * information.
- *
- * If the String isn't UTF-8 valid up to the requested selection, than `pos`
- * will be updated to `-1` otherwise values are always positive.
- *
- * The returned `len` value may be shorter than the original if there wasn't
- * enough data left to accommodate the requested length. When a `len` value of
- * `0` is returned, this means that `pos` marks the end of the String.
- *
- * Returns -1 on error and 0 on success.
- */
-SFUNC int fio_string_utf8_select(fio_str_info_s str,
-                                 intptr_t *pos,
-                                 size_t *len) {
-  if (!pos || !len)
-    return -1;
-  const uint8_t *p = (uint8_t *)str.buf;
-  const uint8_t *const end = p + str.len;
-  size_t start, clen;
-  if (!str.len)
-    goto at_end;
-  if ((*pos) > 0) {
-    start = *pos;
-    do {
-      clen = fio_utf8_char_len(p);
-      p += clen;
-      --start;
-    } while (clen && start && p < end);
-    if (!clen || p > end)
-      goto error;
-    if (p == end)
-      goto at_end;
-  } else if (*pos < 0) { /* walk backwards */
-    p += str.len;
-    start = 0 - *pos;
-    do {
-      const uint8_t *was = p;
-      --p;
-      while ((*p & 0xC0U) == 0x80U && p > (uint8_t *)str.buf)
-        --p;
-      if ((size_t)fio_utf8_char_len_unsafe(*p) != (size_t)(was - p))
-        goto error;
-    } while (--start && p > (uint8_t *)str.buf);
-  }
-  *pos = p - (uint8_t *)str.buf;
-
-  /* find end */
-  start = *len;
-  clen = 1;
-  while (start && p < end && (clen = fio_utf8_char_len(p))) {
-    p += clen;
-    --start;
-  }
-  if (!clen || p > end)
-    goto error;
-  *len = p - ((uint8_t *)str.buf + (*pos));
-  return 0;
-
-at_end:
-  *pos = str.len;
-  *len = 0;
-  return 0;
-error:
-  *pos = -1;
-  *len = 0;
-  return -1;
-}
-
-/* *****************************************************************************
-fio_string_is_greater
-***************************************************************************** */
-
-/**
- * Compares two `fio_buf_info_s`, returning 1 if data in a is bigger than b.
- *
- * Note: returns 0 if data in b is bigger than or equal(!).
- */
-SFUNC int fio_string_is_greater_buf(fio_buf_info_s a, fio_buf_info_s b) {
-  const int a_len_is_bigger = a.len > b.len;
-  size_t len = a_len_is_bigger ? b.len : a.len; /* shared length */
-  if (a.buf == b.buf)
-    return a_len_is_bigger;
-  uint64_t ua[4] FIO_ALIGN(16) = {0};
-  uint64_t ub[4] FIO_ALIGN(16) = {0};
-  uint64_t flag = 0;
-  if (len < 32)
-    goto mini_cmp;
-
-  len -= 32;
-  for (;;) {
-    for (size_t i = 0; i < 4; ++i) {
-      fio_memcpy8(ua + i, a.buf);
-      fio_memcpy8(ub + i, b.buf);
-      flag |= (ua[i] ^ ub[i]);
-      a.buf += 8;
-      b.buf += 8;
-    }
-    if (flag)
-      goto review_diff;
-    if (len > 31) {
-      len -= 32;
-      continue;
-    }
-    if (!len)
-      return a_len_is_bigger;
-    a.buf -= 32;
-    b.buf -= 32;
-    a.buf += len & 31;
-    b.buf += len & 31;
-    len = 0;
-  }
-
-review_diff:
-  if (ua[2] != ub[2]) {
-    ua[3] = ua[2];
-    ub[3] = ub[2];
-  }
-  if (ua[1] != ub[1]) {
-    ua[3] = ua[1];
-    ub[3] = ub[1];
-  }
-  if (ua[0] != ub[0]) {
-    ua[3] = ua[0];
-    ub[3] = ub[0];
-  }
-review_diff8:
-  ua[3] = fio_lton64(ua[3]); /* comparison requires network byte order */
-  ub[3] = fio_lton64(ub[3]);
-  return ua[3] > ub[3];
-
-mini_cmp:
-  if (len > 7) {
-    len -= 8;
-    for (;;) {
-      fio_memcpy8(ua + 3, a.buf);
-      fio_memcpy8(ub + 3, b.buf);
-      if (ua[3] != ub[3])
-        goto review_diff8;
-      if (len > 7) {
-        a.buf += 8;
-        b.buf += 8;
-        len -= 8;
-        continue;
-      }
-      if (!len)
-        return a_len_is_bigger;
-      a.buf += len & 7;
-      b.buf += len & 7;
-      len = 0;
-    }
-  }
-  while (len--) {
-    if (a.buf[0] != b.buf[0])
-      return a.buf[0] > b.buf[0];
-    ++a.buf;
-    ++b.buf;
-  }
-  return a_len_is_bigger;
-}
-
-/* *****************************************************************************
-Insert / Write2
-***************************************************************************** */
-
-/* fio_string_replace */
-SFUNC int fio_string_replace(fio_str_info_s *dest,
-                             fio_string_realloc_fn reallocate,
-                             intptr_t start_pos,
-                             size_t overwrite_len,
-                             const void *src,
-                             size_t len) {
-  int r = 0;
-  if (start_pos < 0) {
-    start_pos = dest->len + start_pos + 1;
-    if (start_pos < 0)
-      start_pos = 0;
-  }
-  if (dest->len < (size_t)start_pos + overwrite_len + 1) {
-    if ((size_t)start_pos < dest->len)
-      dest->len = start_pos;
-    return fio_string_write(dest, reallocate, src, len);
-  }
-
-  size_t move_start = start_pos + overwrite_len;
-  size_t move_len = dest->len - (start_pos + overwrite_len);
-  if (overwrite_len < len) {
-    /* adjust for possible memory expansion */
-    const size_t extra = len - overwrite_len;
-    if (dest->capa < dest->len + extra + 1) {
-      r = -1; /* in case reallocate is NULL */
-      if (!reallocate ||
-          FIO_UNLIKELY(
-              (r = reallocate(dest, fio_string_capa4len(dest->len + extra))))) {
-        move_len -= (dest->len + extra + 1) - dest->capa;
-        if (dest->capa < start_pos + len + 1) {
-          move_len = 0;
-          len = dest->capa - start_pos - 1;
-        }
-      }
-    }
-  }
-  if (move_len)
-    FIO_MEMMOVE(dest->buf + start_pos + len, dest->buf + move_start, move_len);
-  if (len)
-    FIO_MEMCPY(dest->buf + start_pos, src, len);
-  dest->len = start_pos + len + move_len;
-  dest->buf[dest->len] = 0;
-  return r;
-}
-
-/* IDE marker */
-void fio_string_write2____(void);
-/* the fio_string_write2 is a printf alternative. */
-SFUNC int fio_string_write2 FIO_NOOP(fio_str_info_s *restrict dest,
-                                     fio_string_realloc_fn reallocate,
-                                     const fio_string_write_s srcs[]) {
-  int r = 0;
-  const fio_string_write_s *pos = srcs;
-  size_t len = 0;
-
-  while (pos->klass) {
-    switch (pos->klass) { /* use more memory rather then calculate twice. */
-    case 2: /* number */ len += fio_digits10(pos->info.i); break;
-    case 3: /* unsigned */ len += fio_digits10u(pos->info.u); break;
-    case 4: /* hex */ len += fio_digits16u(pos->info.u); break;
-    case 5: /* binary */ len += fio_digits_bin(pos->info.u); break;
-    case 6: /* float */ len += 18; break;
-    default: len += pos->info.str.len;
-    }
-    ++pos;
-  }
-  if (!len)
-    return r;
-  pos = srcs;
-  if (fio_string___write_validate_len(dest, reallocate, &len))
-    goto truncate;
-  while (pos->klass) {
-    switch (pos->klass) {
-    case 2: fio_string_write_i(dest, NULL, pos->info.i); break;   /* number */
-    case 3: fio_string_write_u(dest, NULL, pos->info.u); break;   /* unsigned */
-    case 4: fio_string_write_hex(dest, NULL, pos->info.u); break; /* hex */
-    case 5: fio_string_write_bin(dest, NULL, pos->info.u); break; /* binary */
-    case 6:                                                       /* float */
-      dest->len += snprintf(dest->buf + dest->len, 19, "%.15g", pos->info.f);
-      break;
-    default:
-      FIO_MEMCPY(&dest->buf[dest->len], pos->info.str.buf, pos->info.str.len);
-      dest->len += pos->info.str.len;
-    }
-    ++pos;
-  }
-finish:
-  dest->buf[dest->len] = 0;
-  return r;
-truncate:
-  r = -1;
-  while (pos->klass) {
-    switch (pos->klass) {
-    case 2:
-      if (fio_string_write_i(dest, NULL, pos->info.i))
-        goto finish;
-      break; /* number */
-    case 3:
-      if (fio_string_write_u(dest, NULL, pos->info.u))
-        goto finish;
-      break; /* unsigned */
-    case 4:
-      if (fio_string_write_hex(dest, NULL, pos->info.u))
-        goto finish;
-      break; /* hex */
-    case 5:
-      if (fio_string_write_bin(dest, NULL, pos->info.u))
-        goto finish;
-      break; /* binary */
-    case 6:  /* float */
-      len = snprintf(dest->buf + dest->len, 19, "%.15g", pos->info.f);
-      if (dest->capa < dest->len + len + 2)
-        goto finish;
-      dest->len += len;
-      break;
-    default:
-      if (fio_string_write(dest, NULL, pos->info.str.buf, pos->info.str.len))
-        goto finish;
-    }
-    ++pos;
-  }
-  goto finish;
-}
-
-/* *****************************************************************************
-Escaping / Un-Escaping Primitives (not for encoding)
-***************************************************************************** */
+/* ---------------------------------------------------------------------------
+ * Internal renderer state
+ * ------------------------------------------------------------------------- */
 
 typedef struct {
-  fio_str_info_s *restrict dest;
-  fio_string_realloc_fn reallocate;
-  const void *restrict src;
-  const size_t len;
-  /* moves to the next character (or character sequence) to alter. */
-  const uint8_t *(*next)(const uint8_t *restrict s, const uint8_t *restrict e);
-  /*
-   * `dest` will be NULL when calculating length to be written.
-   *
-   * `*s` is the source data.
-   *
-   * `e` is the end-of-bounds position (src + len).
-   *
-   * Returns the number of characters that would have been written.
-   *
-   * Note: must update `s` to point to the next character after the altered
-   * sequence.
-   */
-  size_t (*diff)(uint8_t *restrict dest,
-                 const uint8_t *restrict *restrict s,
-                 const uint8_t *restrict e);
-  /*
-   * Writes (un)escaped data to `dest`.
-   *
-   * Behaves the same as `diff` only writes data to `dest`.
-   *
-   * `dest` is the same number of bytes as reported by `diff` (or more).
-   */
-  size_t (*write)(uint8_t *restrict dest,
-                  const uint8_t *restrict *restrict s,
-                  const uint8_t *restrict e);
-  /* If `len` of `src` is less then `skip_diff_len`, skips the test. */
-  uint32_t skip_diff_len;
-  /* If set, will not allow a partial write when memory allocation fails. */
-  uint32_t refuse_partial;
-} fio___string_altering_args_s;
+  char *bstr;             /* output buffer (fio_bstr) */
+  uint32_t table_row;     /* 0 = header row, 1+ = body rows */
+  uint32_t table_cell_depth; /* >0 iff rendering a table cell */
+  uint32_t tight_depth;   /* >0 iff we're inside tight list items */
+  uint32_t li_depth;      /* renderer LIST_ITEM stack depth */
+  uint32_t para_suppress; /* >0 iff paragraphs are suppressed (tight) */
+  uint32_t block_container_depth; /* nesting depth of block containers within tight LI */
+  uint8_t in_code_block;  /* 1 iff inside <pre><code> */
+  uint8_t in_html_block;  /* 1 iff inside HTML block */
+  uint8_t code_has_line;  /* 1 iff at least one code line was emitted */
+  uint8_t tight_child_pending; /* 1 iff a prior tight-LI child was emitted */
+  uint8_t li_tight[128];  /* original tight state for LIST_ITEM pops */
+  uint32_t li_block_base[128]; /* block_container_depth at LIST_ITEM push */
+  int err;
+} fio___md2html_renderer_s;
 
-/**
- * Writes an escaped data into the string after un-escaping the data.
- */
-FIO_IFUNC int fio___string_altering_cycle(
-    const fio___string_altering_args_s args) {
-  int r = 0;
-  if (((long long)args.len < 1) | !args.src | !args.dest)
-    return r;
-  const uint8_t *s = (const uint8_t *)args.src;
-  const uint8_t *e = s + args.len;
-  const uint8_t *p = s;
-  fio_str_info_s d = *args.dest;
-  size_t first_stop = 0;
-  size_t updater = 0;
-  /* we need to allocate memory - limit to result's length */
-  if (d.len + args.len >= d.capa) {
-    updater = (args.len > args.skip_diff_len);
-    size_t written_length = args.len;
-    if (updater) { /* skip memory reduction for small strings */
-      written_length = 0;
-      p = s;
-      for (;;) {
-        const uint8_t *p2 = args.next(p, e);
-        if (!p2)
-          break;
-        written_length += p2 - p;
-        p = p2;
-        first_stop |= (0ULL - updater) & ((p - s) + 1);
-        updater = 0;
-        written_length += args.diff(NULL, &p, e);
-        if (p + 1 > e)
-          break;
-      }
-    }
-    written_length += e - p;
-    /* allocate extra required space. */
-    FIO_ASSERT_DEBUG(written_length > 0, "string (un)escape reduced too much");
-    if (d.len + written_length >= d.capa &&
-        fio_string___write_validate_len(&d, args.reallocate, &written_length)) {
-      r = -1;
-      if (args.refuse_partial)
-        goto finish;
-      e = (const uint8_t *)d.capa - (d.len + 1);
-    }
-  }
+/* ---------------------------------------------------------------------------
+ * Output helpers
+ * ------------------------------------------------------------------------- */
 
-  /* copy unescaped head of string (if it's worth our time), saves one memchr */
-  if (((!first_stop) & updater) | (first_stop > 16)) {
-    if (!first_stop)
-      first_stop = (e - s) + 1;
-    --first_stop;
-    FIO_MEMMOVE(d.buf + d.len, s, first_stop);
-    d.len += first_stop;
-    s += first_stop;
-  }
-  p = s;
-
-  /* start copying and un-escaping as needed */
-  while (p < e) {
-    const uint8_t *p2 = args.next(p, e);
-    if (!p2)
-      break;
-    if (p2 - p) {
-      updater = p2 - p;
-      FIO_MEMMOVE(d.buf + d.len, p, updater);
-      d.len += updater;
-    }
-    p = p2;
-    d.len += args.write((uint8_t *)d.buf + d.len, &p, e);
-  }
-  if (p < e) {
-    updater = e - p;
-    FIO_MEMCPY(d.buf + d.len, p, updater);
-    d.len += updater;
-  }
-
-finish:
-  d.buf[d.len] = 0;
-  *args.dest = d;
-  return r;
+FIO_IFUNC void fio___md2html_append(fio___md2html_renderer_s *r,
+                                    const char *s,
+                                    size_t n) {
+  if (r->err || !n)
+    return;
+  r->bstr = fio_bstr_write(r->bstr, s, n);
+  if (!r->bstr)
+    r->err = FIO_MD2HTML_ERR_ALLOC;
 }
 
-/* *****************************************************************************
-String C / JSON escaping
-***************************************************************************** */
+#define FIO___MD2HTML_LIT(r, lit)                                              \
+  fio___md2html_append((r), (lit), sizeof(lit) - 1)
 
-/**
- * Writes data at the end of the String, escaping the data using JSON semantics.
- *
- * The JSON semantic are common to many programming languages, promising a UTF-8
- * String while making it easy to read and copy the string during debugging.
- */
-SFUNC int fio_string_write_escape(fio_str_info_s *restrict dest,
-                                  fio_string_realloc_fn reallocate,
-                                  const void *restrict src,
-                                  size_t len) {
-  /* Escaping map, test if bit 64 is set or not. Created using Ruby Script:
-  map = []; 256.times { |i| map << ((i > 126 || i < 35) ? 5 : 0)  };
-  256.times { |i| map[i] = ((i > 127) ? 3 : map[i])  };
-  map[' '.ord] = 0; map['!'.ord] = 0;
-  ["\b","\f","\n","\r","\t",'\\','"'].each {|c| map[c.ord] = 1 };
-  str = map.map {|e| e.to_s } .join(', ');
-  puts "static const uint8_t escape_map[256]= { #{str} };"
-   */
-  static const uint8_t escape_map[256] = {
-      5, 5, 5, 5, 5, 5, 5, 5, 1, 1, 1, 5, 1, 1, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-      5, 5, 5, 5, 5, 5, 5, 5, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
-  int r = 0;
-  if ((!len | !src | !dest))
-    return r;
-  size_t extra_space = 0;
-  size_t first_stop = 0;
-  size_t updater = 1;
-  const uint8_t *s = (const uint8_t *)src;
-  const uint8_t *e = s + len;
-  const uint8_t *p = s;
+FIO_IFUNC void fio___md2html_append_u(fio___md2html_renderer_s *r, uint32_t n) {
+  char tmp[16];
+  int len = snprintf(tmp, sizeof(tmp), "%u", n);
+  fio___md2html_append(r, tmp, (size_t)len);
+}
 
-  /* test memory length requirements – unlikely to be avoided (len * 5) */
-  for (; (p < e); ++p) {
-    if (!escape_map[*p]) /* skip valid ASCII, hope for compiler magic */
-      continue;
-    size_t valid_utf8_len = fio_utf8_char_len(p);
-    if (valid_utf8_len > 1) { /* skip valid UTF-8 */
-      p += valid_utf8_len - 1;
+/** Escape text for HTML output: & < > " */
+FIO_IFUNC void fio___md2html_escape(fio___md2html_renderer_s *r,
+                                    const char *s,
+                                    size_t n) {
+  const char *mark = s;
+  const char *end = s + n;
+  while (s < end) {
+    const char *entity = NULL;
+    size_t elen = 0;
+    switch (*s) {
+    case '&': entity = "&amp;";  elen = 5; break;
+    case '<': entity = "&lt;";   elen = 4; break;
+    case '>': entity = "&gt;";   elen = 4; break;
+    case '"': entity = "&quot;"; elen = 6; break;
+    }
+    if (entity) {
+      fio___md2html_append(r, mark, (size_t)(s - mark));
+      fio___md2html_append(r, entity, elen);
+      mark = s + 1;
+    }
+    ++s;
+  }
+  fio___md2html_append(r, mark, (size_t)(end - mark));
+}
+
+/* ---------------------------------------------------------------------------
+ * Tag filter (GFM disallows certain raw HTML tags)
+ * ------------------------------------------------------------------------- */
+
+FIO_IFUNC int fio___md2html_is_tagfilter_name(const char *s,
+                                              size_t len,
+                                              int html_block) {
+  static const char *const names[] = {"iframe", "noembed", "noframes",
+                                      "plaintext", "style", "textarea",
+                                      "title", "xmp"};
+  if (html_block) {
+    return (len == 3 && (s[0] == 'x' || s[0] == 'X') &&
+            (s[1] == 'm' || s[1] == 'M') && (s[2] == 'p' || s[2] == 'P')) ||
+           (len == 8 && (s[0] == 't' || s[0] == 'T') &&
+            (s[1] == 'e' || s[1] == 'E') && (s[2] == 'x' || s[2] == 'X') &&
+            (s[3] == 't' || s[3] == 'T') && (s[4] == 'a' || s[4] == 'A') &&
+            (s[5] == 'r' || s[5] == 'R') && (s[6] == 'e' || s[6] == 'E') &&
+            (s[7] == 'a' || s[7] == 'A'));
+  }
+  for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+    const char *n = names[i];
+    size_t j = 0;
+    while (j < len && n[j]) {
+      char c = s[j];
+      if (c >= 'A' && c <= 'Z')
+        c = (char)(c + ('a' - 'A'));
+      if (c != n[j])
+        break;
+      ++j;
+    }
+    if (j == len && !n[j])
+      return 1;
+  }
+  return 0;
+}
+
+FIO_IFUNC const char *fio___md2html_bracket_close(const char *p,
+                                                  const char *end) {
+  const char *s = p + 1;
+  uint16_t depth = 0;
+  while (s < end) {
+    if (*s == '\\' && s + 1 < end) {
+      s += 2;
       continue;
     }
-    first_stop |= (0ULL - updater) & (p - s);
-    updater = 0;
-    /* count extra bytes */
-    extra_space += escape_map[*p];
-  }
-
-  /* reserve space and copy any valid first_stop */
-  /* the + 3 adds room for the likely use case of JSON: "\",\"" */
-  if ((dest->capa < dest->len + extra_space + len + 1) &&
-      (!reallocate ||
-       reallocate(dest,
-                  fio_string_capa4len(dest->len + extra_space + len + 3)))) {
-    r = -1;
-    len = dest->capa - (dest->len + 6);
-    if (dest->capa < len + 6)
-      return r;
-  }
-
-  /* copy unescaped head of string (if it's worth our time) */
-  if (((!first_stop) & updater & (!escape_map[*s])) || first_stop > 16) {
-    if (!first_stop)
-      first_stop = len;
-    FIO_MEMMOVE(dest->buf + dest->len, s, first_stop);
-    dest->len += first_stop;
-    s += first_stop;
-  }
-  p = s;
-
-  /* start copying and escaping as needed */
-  for (;;) {
-    if (!(escape_map[*p])) {
-      for (s = p; (s < e) && !(escape_map[*s]); ++s)
-        ; /* hope for compiler magic */
-      updater = s - p;
-      FIO_MEMMOVE(dest->buf + dest->len, p, updater);
-      dest->len += updater;
-      p = s;
+    if (*s == '[') {
+      ++depth;
+    } else if (*s == ']') {
+      if (!depth)
+        return s;
+      --depth;
     }
-    if (p >= e)
-      break;
-    size_t valid_utf8_len = fio_utf8_char_len(p);
-    size_t limit = e - p;
-    if (valid_utf8_len > limit)
-      valid_utf8_len = limit;
-    switch (valid_utf8_len) {
-    case 4: dest->buf[dest->len++] = *p++; /* fall through */
-    case 3: dest->buf[dest->len++] = *p++; /* fall through */
-    case 2:
-      dest->buf[dest->len++] = *p++; /* fall through */
-      dest->buf[dest->len++] = *p++; /* fall through */
+    ++s;
+  }
+  return NULL;
+}
+
+FIO_IFUNC const char *fio___md2html_link_like_end(const char *p,
+                                                  const char *end) {
+  p += (*p == '!' && p + 1 < end && p[1] == '[');
+  if (p >= end || *p != '[')
+    return NULL;
+  const char *close = fio___md2html_bracket_close(p, end);
+  if (!close)
+    return NULL;
+  const char *after = close + 1;
+  if (after < end && *after == '(') {
+    const char *q = after + 1;
+    int pd = 1;
+    while (q < end && pd) {
+      if (*q == '\\' && q + 1 < end) {
+        q += 2;
+        continue;
+      }
+      pd += (*q == '(') - (*q == ')');
+      ++q;
+    }
+    return pd ? NULL : q;
+  }
+  if (after < end && *after == '[') {
+    const char *q = after + 1;
+    while (q < end && *q != ']')
+      q += (*q == '\\' && q + 1 < end) ? 2 : 1;
+    return (q < end) ? q + 1 : NULL;
+  }
+  return NULL;
+}
+
+FIO_IFUNC int fio___md2html_range_has_link(const char *s, const char *end) {
+  const char *start = s;
+  while (s < end) {
+    if (*s == '[' && !(s > start && s[-1] == '!')) {
+      if (fio___md2html_link_like_end(s, end))
+        return 1;
+    }
+    ++s;
+  }
+  return 0;
+}
+
+/** Escape image alt text: strip nested link/image markup and emphasis markers. */
+FIO_IFUNC void fio___md2html_escape_alt_text(fio___md2html_renderer_s *r,
+                                             const char *s,
+                                             size_t n) {
+  const char *end = s + n;
+  while (s < end) {
+    if ((*s == '[' || (*s == '!' && s + 1 < end && s[1] == '['))) {
+      int is_image = (*s == '!');
+      const char *bracket = s + is_image;
+      const char *close = fio___md2html_bracket_close(bracket, end);
+      const char *link_end = fio___md2html_link_like_end(s, end);
+      if (close && link_end &&
+          (is_image || !fio___md2html_range_has_link(bracket + 1, close))) {
+        fio___md2html_escape_alt_text(r, bracket + 1,
+                                      (size_t)(close - (bracket + 1)));
+        s = link_end;
+        continue;
+      }
+    }
+    if (*s == '\\' && s + 1 < end) {
+      fio___md2html_escape(r, s + 1, 1);
+      s += 2;
       continue;
+    }
+    if (*s == '*' || *s == '_' || *s == '~') {
+      ++s;
+      continue;
+    }
+    fio___md2html_escape(r, s, 1);
+    ++s;
+  }
+}
+
+/** Emit raw HTML with GFM tagfilter applied. */
+FIO_IFUNC void fio___md2html_append_tagfiltered(fio___md2html_renderer_s *r,
+                                                const char *s,
+                                                size_t n,
+                                                int html_block) {
+  const char *mark = s;
+  const char *end = s + n;
+  while (s < end) {
+    if (*s == '<') {
+      const char *name = s + 1;
+      name += (name < end && *name == '/');
+      const char *name_end = name;
+      while (name_end < end &&
+             ((*name_end >= 'a' && *name_end <= 'z') ||
+              (*name_end >= 'A' && *name_end <= 'Z') ||
+              (*name_end >= '0' && *name_end <= '9') || *name_end == '-'))
+        ++name_end;
+      if (name_end > name &&
+          fio___md2html_is_tagfilter_name(name,
+                                          (size_t)(name_end - name),
+                                          html_block)) {
+        fio___md2html_append(r, mark, (size_t)(s - mark));
+        FIO___MD2HTML_LIT(r, "&lt;");
+        mark = s + 1;
+      }
+    }
+    ++s;
+  }
+  fio___md2html_append(r, mark, (size_t)(end - mark));
+}
+
+/* ---------------------------------------------------------------------------
+ * URL / attribute escaping
+ * ------------------------------------------------------------------------- */
+
+/** Escape for URL attribute: percent-encode non-safe chars.
+ *  Already-percent-encoded sequences (%XX) pass through. */
+FIO_IFUNC void fio___md2html_escape_url(fio___md2html_renderer_s *r,
+                                        const char *s,
+                                        size_t n) {
+  static const char hex[] = "0123456789ABCDEF";
+  const char *end = s + n;
+  while (s < end) {
+    unsigned char c = (unsigned char)*s;
+    if (c == '&') {
+      FIO___MD2HTML_LIT(r, "&amp;");
+    } else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+               (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' ||
+               c == '~' || c == ':' || c == '/' || c == '?' || c == '#' ||
+               c == '@' || c == '!' || c == '$' ||
+               c == '\'' || c == '(' || c == ')' || c == '*' ||
+               c == '+' || c == ',' || c == ';' || c == '=' || c == '%') {
+      fio___md2html_append(r, s, 1);
+    } else {
+      char pct[3] = {'%', hex[c >> 4], hex[c & 0xf]};
+      fio___md2html_append(r, pct, 3);
+    }
+    ++s;
+  }
+}
+
+/** Escape for URL attribute, processing backslash-escaped markdown
+ *  punctuation first (unescape \X -> X then URL-encode). */
+FIO_IFUNC void fio___md2html_escape_md_url(fio___md2html_renderer_s *r,
+                                           const char *s,
+                                           size_t n) {
+  const char *end = s + n;
+  while (s < end) {
+    if (*s == '&') {
+      const char *semi = s + 1;
+      while (semi < end && *semi != ';' && (semi - s) < 32)
+        ++semi;
+      if (semi < end && *semi == ';') {
+        char decoded[8];
+        size_t dlen = fio_entity(decoded, s, (size_t)(semi - s + 1));
+        if (dlen) {
+          fio___md2html_escape_url(r, decoded, dlen);
+          s = semi + 1;
+          continue;
+        }
+        if (semi - s == 5 &&
+            (s[1] == 'a' || s[1] == 'A') &&
+            (s[2] == 'u' || s[2] == 'U') &&
+            (s[3] == 'm' || s[3] == 'M') &&
+            (s[4] == 'l' || s[4] == 'L')) {
+          fio___md2html_escape_url(r, "\xC3\xA4", 2);
+          s = semi + 1;
+          continue;
+        }
+      }
+    }
+    if (*s == '\\' && s + 1 < end) {
+      char next = s[1];
+      int is_punct =
+          (next >= '!' && next <= '/') || (next >= ':' && next <= '@') ||
+          (next >= '[' && next <= '`') || (next >= '{' && next <= '~');
+      if (is_punct) {
+        fio___md2html_escape_url(r, s + 1, 1);
+        s += 2;
+        continue;
+      }
+    }
+    fio___md2html_escape_url(r, s, 1);
+    ++s;
+  }
+}
+
+/** Escape text that may contain backslash escapes (\* -> *). */
+FIO_IFUNC void fio___md2html_escape_md_text(fio___md2html_renderer_s *r,
+                                            const char *s,
+                                            size_t n) {
+  const char *mark = s;
+  const char *end = s + n;
+  while (s < end) {
+    if (*s == '&') {
+      const char *semi = s + 1;
+      while (semi < end && *semi != ';' && (semi - s) < 32)
+        ++semi;
+      if (semi < end && *semi == ';') {
+        char decoded[8];
+        size_t dlen = fio_entity(decoded, s, (size_t)(semi - s + 1));
+        if (dlen) {
+          fio___md2html_append(r, mark, (size_t)(s - mark));
+          fio___md2html_escape(r, decoded, dlen);
+          s = semi + 1;
+          mark = s;
+          continue;
+        }
+      }
+    }
+    if (*s == '\\' && s + 1 < end) {
+      char next = s[1];
+      int is_punct =
+          (next >= '!' && next <= '/') || (next >= ':' && next <= '@') ||
+          (next >= '[' && next <= '`') || (next >= '{' && next <= '~');
+      if (is_punct) {
+        fio___md2html_append(r, mark, (size_t)(s - mark));
+        fio___md2html_escape(r, s + 1, 1);
+        s += 2;
+        mark = s;
+        continue;
+      }
+    }
+    ++s;
+  }
+  fio___md2html_append(r, mark, (size_t)(end - mark));
+}
+
+/* ---------------------------------------------------------------------------
+ * GFM event callbacks
+ * ------------------------------------------------------------------------- */
+
+FIO_IFUNC int fio___md2html_push(fio_gfm_event_s *e) {
+  fio___md2html_renderer_s *r = (fio___md2html_renderer_s *)e->udata;
+  if (r->err)
+    return r->err;
+
+  switch (e->type) {
+  case FIO_GFM_PARAGRAPH:
+    if (r->li_depth) {
+      uint32_t li = r->li_depth - 1;
+      if (li < sizeof(r->li_tight) && r->li_tight[li] &&
+          r->block_container_depth == r->li_block_base[li]) {
+        ++r->para_suppress;
+        return 0;
+      }
+    }
+    FIO___MD2HTML_LIT(r, "<p>");
+    return 0;
+
+  case FIO_GFM_HEADING:
+    if (r->tight_depth && r->block_container_depth == 0 && r->tight_child_pending)
+      FIO___MD2HTML_LIT(r, "\n");
+    FIO___MD2HTML_LIT(r, "<h");
+    fio___md2html_append_u(r, e->heading_level);
+    FIO___MD2HTML_LIT(r, ">");
+    ++r->block_container_depth;
+    r->tight_child_pending = 0;
+    return 0;
+
+  case FIO_GFM_THEMATIC_BREAK:
+    FIO___MD2HTML_LIT(r, "<hr />");
+    return 0;
+
+  case FIO_GFM_BLOCKQUOTE:
+    if (r->tight_depth && r->block_container_depth == 0 && r->tight_child_pending)
+      FIO___MD2HTML_LIT(r, "\n");
+    FIO___MD2HTML_LIT(r, "<blockquote>");
+    ++r->block_container_depth;
+    r->tight_child_pending = 0;
+    return 0;
+
+  case FIO_GFM_LIST_UNORDERED:
+    if (r->tight_depth && r->block_container_depth == 0 && r->tight_child_pending)
+      FIO___MD2HTML_LIT(r, "\n");
+    FIO___MD2HTML_LIT(r, "<ul>");
+    r->tight_child_pending = 0;
+    return 0;
+
+  case FIO_GFM_LIST_ORDERED:
+    if (r->tight_depth && r->block_container_depth == 0 && r->tight_child_pending)
+      FIO___MD2HTML_LIT(r, "\n");
+    FIO___MD2HTML_LIT(r, "<ol");
+    if (e->list_start != 1) {
+      FIO___MD2HTML_LIT(r, " start=\"");
+      fio___md2html_append_u(r, e->list_start);
+      FIO___MD2HTML_LIT(r, "\"");
+    }
+    FIO___MD2HTML_LIT(r, ">");
+    r->tight_child_pending = 0;
+    return 0;
+
+  case FIO_GFM_LIST_ITEM: {
+    uint8_t was_tight = !!(e->flags & FIO_GFM_F_TIGHT);
+    if (r->li_depth < sizeof(r->li_tight)) {
+      r->li_tight[r->li_depth] = was_tight;
+      r->li_block_base[r->li_depth] = r->block_container_depth;
+    }
+    ++r->li_depth;
+    if (was_tight)
+      ++r->tight_depth;
+    r->tight_child_pending = 0;
+    FIO___MD2HTML_LIT(r, "<li>");
+    if (e->flags & FIO_GFM_F_TASK) {
+      FIO___MD2HTML_LIT(r, "<input type=\"checkbox\"");
+      if (e->flags & FIO_GFM_F_TASK_CHECKED)
+        FIO___MD2HTML_LIT(r, " checked=\"\"");
+      FIO___MD2HTML_LIT(r, " disabled=\"\" /> ");
+    }
+    return 0;
+  }
+
+  case FIO_GFM_CODE_BLOCK:
+    r->in_code_block = 1;
+    r->code_has_line = 0;
+    FIO___MD2HTML_LIT(r, "<pre><code");
+    if (e->info.len) {
+      const char *lang = e->info.buf;
+      size_t lang_len = e->info.len;
+      for (size_t i = 0; i < e->info.len; ++i) {
+        if (e->info.buf[i] == ' ' || e->info.buf[i] == '\t') {
+          lang_len = i;
+          break;
+        }
+      }
+      if (lang_len) {
+        FIO___MD2HTML_LIT(r, " class=\"language-");
+        fio___md2html_escape_md_text(r, lang, lang_len);
+        FIO___MD2HTML_LIT(r, "\"");
+      }
+    }
+    FIO___MD2HTML_LIT(r, ">");
+    return 0;
+
+  case FIO_GFM_HTML_BLOCK:
+    r->in_html_block = 1;
+    return 0;
+
+  case FIO_GFM_TABLE:
+    if (r->tight_depth && r->block_container_depth == 0 && r->tight_child_pending)
+      FIO___MD2HTML_LIT(r, "\n");
+    r->table_row = 0;
+    FIO___MD2HTML_LIT(r, "<table><thead>");
+    ++r->block_container_depth;
+    r->tight_child_pending = 0;
+    return 0;
+
+  case FIO_GFM_TABLE_ROW:
+    if (r->table_row == 1)
+      FIO___MD2HTML_LIT(r, "<tbody>");
+    FIO___MD2HTML_LIT(r, "<tr>");
+    return 0;
+
+  case FIO_GFM_TABLE_CELL:
+    ++r->table_cell_depth;
+    if (r->table_row == 0)
+      FIO___MD2HTML_LIT(r, "<th");
+    else
+      FIO___MD2HTML_LIT(r, "<td");
+    switch (e->align) {
+    case FIO_GFM_ALIGN_LEFT:   FIO___MD2HTML_LIT(r, " align=\"left\"");   break;
+    case FIO_GFM_ALIGN_RIGHT:  FIO___MD2HTML_LIT(r, " align=\"right\"");  break;
+    case FIO_GFM_ALIGN_CENTER: FIO___MD2HTML_LIT(r, " align=\"center\""); break;
     default: break;
     }
-    // FIO_ASSERT(valid_utf8_len < 2, "valid_utf8_len error!");
-    dest->buf[dest->len++] = '\\';
-    uint8_t ec = *p++;
-    switch (ec) {
-    case '\b': dest->buf[dest->len++] = 'b'; continue;
-    case '\f': dest->buf[dest->len++] = 'f'; continue;
-    case '\n': dest->buf[dest->len++] = 'n'; continue;
-    case '\r': dest->buf[dest->len++] = 'r'; continue;
-    case '\t': dest->buf[dest->len++] = 't'; continue;
-    case '\\': dest->buf[dest->len++] = '\\'; continue;
-    case '"': dest->buf[dest->len++] = '"'; continue;
-    default: { /* escaping all control characters and non-UTF-8 characters */
-      const char in_hex[2] = {(char)fio_i2c(ec >> 4), (char)fio_i2c(ec & 15)};
-      const uint8_t invalid = ((uint8_t)ec & 128) >> 6;    /* 0 or 2 */
-      const uint8_t u2x = (invalid | (invalid >> 1));      /* 0 or 3 */
-      dest->buf[dest->len++] = (char)((uint8_t)'u' + u2x); /* u + 3 = x */
-      dest->buf[dest->len++] = '0';
-      dest->buf[dest->len++] = '0';
-      dest->len -= invalid; /* erase the 00 and walk back if invalid */
-      dest->buf[dest->len++] = in_hex[0];
-      dest->buf[dest->len++] = in_hex[1];
+    FIO___MD2HTML_LIT(r, ">");
+    return 0;
+
+  case FIO_GFM_EMPHASIS:
+    FIO___MD2HTML_LIT(r, "<em>");
+    return 0;
+
+  case FIO_GFM_STRONG:
+    FIO___MD2HTML_LIT(r, "<strong>");
+    return 0;
+
+  case FIO_GFM_STRIKETHROUGH:
+    FIO___MD2HTML_LIT(r, "<del>");
+    return 0;
+
+  case FIO_GFM_LINK:
+    FIO___MD2HTML_LIT(r, "<a href=\"");
+    fio___md2html_escape_md_url(r, e->destination.buf, e->destination.len);
+    FIO___MD2HTML_LIT(r, "\"");
+    if (e->title.len) {
+      FIO___MD2HTML_LIT(r, " title=\"");
+      fio___md2html_escape_md_text(r, e->title.buf, e->title.len);
+      FIO___MD2HTML_LIT(r, "\"");
     }
-    }
-  }
-  dest->buf[dest->len] = 0;
-  return r;
-}
+    FIO___MD2HTML_LIT(r, ">");
+    return 0;
 
-FIO_SFUNC const uint8_t *fio___string_write_unescape_next(
-    const uint8_t *restrict s,
-    const uint8_t *restrict e) {
-  if (*s == '\\')
-    return s;
-  return (const uint8_t *)FIO_MEMCHR(s, '\\', e - s);
-}
-
-FIO_SFUNC size_t
-fio___string_write_unescape_diff(uint8_t *restrict dest,
-                                 const uint8_t *restrict *restrict ps,
-                                 const uint8_t *restrict e) {
-  size_t r = 1;
-  unsigned step = 1;
-  const uint8_t *s = *ps;
-  ++s;
-  unsigned peek = ((*s == 'x') & (e - s > 2));
-  peek &= (unsigned)(fio_c2i(s[peek]) < 16) & (fio_c2i(s[peek + peek]) < 16);
-  step |= (peek << 1);
-  // peek &= (fio_c2i(s[peek]) > 7);
-  r += peek; /* assumes \xFF is unescaped as UTF-8, up to 2 bytes */
-
-  peek = ((*s == 'u') & (e - s > 4));
-  peek &= (unsigned)(fio_c2i(s[peek]) < 16) & (fio_c2i(s[peek + peek]) < 16) &
-          (fio_c2i(s[peek + peek + peek]) < 16) &
-          (fio_c2i(s[peek + peek + peek + peek]) < 16);
-  r |= (peek << 1); /* assumes \uFFFF in maximum length, ignores UTF-16 pairs */
-  step |= (peek << 2);
-
-  s += step;
-  *ps = s;
-  return r;
-  (void)dest;
-}
-FIO_IFUNC size_t
-fio___string_write_unescape_write(uint8_t *restrict dest,
-                                  const uint8_t *restrict *restrict ps,
-                                  const uint8_t *restrict e) {
-  unsigned r = 1;
-  const uint8_t *restrict s = *ps;
-  s += ((s + 1) < e); /* skip '\\' byte */
-  switch (*s) {
-  case 'b':
-    *dest = '\b';
-    ++s;
-    break; /* from switch */
-  case 'f':
-    *dest = '\f';
-    ++s;
-    break; /* from switch */
-  case 'n':
-    *dest = '\n';
-    ++s;
-    break; /* from switch */
-  case 'r':
-    *dest = '\r';
-    ++s;
-    break; /* from switch */
-  case 't':
-    *dest = '\t';
-    ++s;
-    break; /* from switch */
-  case 'u': {
-    /* test UTF-8 notation */
-    if ((s + 4 < e) && ((unsigned)(fio_c2i(s[1]) < 16) & (fio_c2i(s[2]) < 16) &
-                        (fio_c2i(s[3]) < 16) & (fio_c2i(s[4]) < 16))) {
-      uint32_t u = (((fio_c2i(s[1]) << 4) | fio_c2i(s[2])) << 8) |
-                   ((fio_c2i(s[3]) << 4) | fio_c2i(s[4]));
-      if ((s + 10 < e) &&
-          (((fio_c2i(s[1]) << 4) | fio_c2i(s[2])) == 0xD8U && s[5] == '\\' &&
-           s[6] == 'u' &&
-           ((unsigned)(fio_c2i(s[7]) < 16) & (fio_c2i(s[8]) < 16) &
-            (fio_c2i(s[9]) < 16) & (fio_c2i(s[10]) < 16)))) {
-        /* surrogate-pair (high/low code points) */
-        u = (u & 0x03FF) << 10;
-        u |= (((((fio_c2i(s[7]) << 4) | fio_c2i(s[8])) << 8) |
-               ((fio_c2i(s[9]) << 4) | fio_c2i(s[10]))) &
-              0x03FF);
-        u += 0x10000;
-        s += 6;
-      }
-      r = fio_utf8_write(dest, u);
-      s += 5;
-      break; /* from switch */
-    } else
-      goto invalid_escape;
-  }
-  case 'x': { /* test for hex notation */
-    if (fio_c2i(s[1]) < 16 && fio_c2i(s[2]) < 16) {
-      *dest = (fio_c2i(s[1]) << 4) | fio_c2i(s[2]);
-      s += 3;
-      break; /* from switch */
-    } else
-      goto invalid_escape;
-  }
-  case '0':
-  case '1':
-  case '2':
-  case '3':
-  case '4':
-  case '5':
-  case '6':
-  case '7': { /* test for octal notation */
-    if (s[0] >= '0' && s[0] <= '7' && s[1] >= '0' && s[1] <= '7') {
-      *dest = ((s[0] - '0') << 3) | (s[1] - '0');
-      s += 2;
-      break; /* from switch */
-    } else
-      goto invalid_escape;
-  }
-  case '"':
-  case '\\':
-  case '/':
-  /* fall through */
   default:
-  invalid_escape:
-    *dest = *s++;
+    return 0;
   }
-  *ps = s;
-  return r;
-}
-SFUNC int fio_string_write_unescape(fio_str_info_s *restrict dest,
-                                    fio_string_realloc_fn alloc,
-                                    const void *src,
-                                    size_t len) {
-  return fio___string_altering_cycle((fio___string_altering_args_s){
-      .dest = dest,
-      .reallocate = alloc,
-      .src = src,
-      .len = len,
-      .next = fio___string_write_unescape_next,
-      .diff = fio___string_write_unescape_diff,
-      .write = fio___string_write_unescape_write,
-      .skip_diff_len = 127,
-      .refuse_partial = 1,
-  });
 }
 
-/* *****************************************************************************
-String Base32 support
-***************************************************************************** */
+FIO_IFUNC int fio___md2html_pop(fio_gfm_event_s *e) {
+  fio___md2html_renderer_s *r = (fio___md2html_renderer_s *)e->udata;
+  if (r->err)
+    return r->err;
 
-/** Writes data to String using base64 encoding. */
-SFUNC int fio_string_write_base32enc(fio_str_info_s *dest,
-                                     fio_string_realloc_fn reallocate,
-                                     const void *raw,
-                                     size_t raw_len) {
-  static const uint8_t base32ecncode[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  int r = 0;
-  size_t expected = ((raw_len * 8) / 5) + 1;
-  if (fio_string___write_validate_len(dest, reallocate, &expected)) {
-    return (r = -1); /* no partial encoding. */
-  }
-  expected = dest->len;
-  size_t bits = 0, store = 0;
-  for (size_t i = 0; i < raw_len; ++i) {
-    store = (store << 8) | (size_t)((uint8_t *)raw)[i];
-    bits += 8;
-    if (bits < 25)
-      continue;
-    while (bits > 4) {
-      uint8_t val = base32ecncode[(31U & (store >> (bits - 5)))];
-      dest->buf[dest->len++] = val;
-      bits -= 5;
+  switch (e->type) {
+  case FIO_GFM_PARAGRAPH:
+    if (r->para_suppress) {
+      --r->para_suppress;
+      return 0;
     }
-  }
-  while (bits > 4) {
-    uint8_t val = base32ecncode[(31U & (store >> (bits - 5)))];
-    dest->buf[dest->len++] = val;
-    bits -= 5;
-  }
-  if (bits) {
-    // dest->buf[dest->len++] = base32ecncode[store & ((1U << bits) - 1)];
-    dest->buf[dest->len++] = base32ecncode[31U & (store << (5 - bits))];
-    dest->buf[dest->len] = '=';
-    dest->len += !!((dest->len - expected) % 5);
-  }
-  dest->buf[dest->len] = 0;
-  return r;
-}
+    FIO___MD2HTML_LIT(r, "</p>");
+    return 0;
 
-/** Writes decoded base64 data to String. */
-SFUNC int fio_string_write_base32dec(fio_str_info_s *dest,
-                                     fio_string_realloc_fn reallocate,
-                                     const void *encoded,
-                                     size_t encoded_len) {
-  /* ABCDEF6HIJK3MN6PQRSTUV6XYZ234567
- a = [];
- 256.times { a << 255 }
- b = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".bytes
- b.length.times {|i| a[b[i]] = i }
- b = "abcdefghijklmnopqrstuvwxyz234567".bytes
- b.length.times {|i| a[b[i]] = i }
- b = " \r\n\t\b".bytes
- b.length.times {|i| a[b[i]] = 32 }
- a.map! {|n| n.to_s 10 }
- puts "const static uint8_t base32decode[256] = { #{a.join(", ") } }; "
-*/
-  static const uint8_t base32decode[256] = {
-      255, 255, 255, 255, 255, 255, 255, 255, 32,  32,  32,  255, 255, 32,  255,
-      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-      255, 255, 32,  255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-      255, 255, 255, 255, 255, 26,  27,  28,  29,  30,  31,  255, 255, 255, 255,
-      255, 255, 255, 255, 255, 0,   1,   2,   3,   4,   5,   6,   7,   8,   9,
-      10,  11,  12,  13,  14,  15,  16,  17,  18,  19,  20,  21,  22,  23,  24,
-      25,  255, 255, 255, 255, 255, 255, 0,   1,   2,   3,   4,   5,   6,   7,
-      8,   9,   10,  11,  12,  13,  14,  15,  16,  17,  18,  19,  20,  21,  22,
-      23,  24,  25,  255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-      255};
-  int r = 0;
-  size_t expected = ((encoded_len * 5) / 8) + 1;
-  if (fio_string___write_validate_len(dest, reallocate, &expected)) {
-    return (r = -1); /* no partial encoding. */
-  }
-  uint64_t val = 0;
-  uint64_t bits = 0;
-  uint8_t *s = (uint8_t *)dest->buf + dest->len;
-  for (size_t i = 0; i < encoded_len; ++i) {
-    uint64_t dec = (size_t)base32decode[((uint8_t *)encoded)[i]];
-    if (dec == 32)
-      continue;
-    if (dec > 31)
-      break;
-    bits += 5;
-    val = (val << 5) | dec;
-    if (bits < 40)
-      continue;
-    do {
-      *(s++) = (0xFF & (val >> (bits - 8)));
-      bits -= 8;
-    } while (bits > 7);
-  }
-  while (bits > 7) {
-    *(s++) = (0xFF & (val >> (bits - 8)));
-    bits -= 8;
-  }
-  if (bits) { /* letfover bits considered padding? */
-    val = 0xFF & (val << (8 - bits));
-    if (val || (encoded_len && ((uint8_t *)encoded)[encoded_len - 1] != '='))
-      *(s++) = val;
-  }
-  dest->len = (size_t)(s - (uint8_t *)dest->buf);
-  dest->buf[dest->len] = 0;
-  return r;
-}
+  case FIO_GFM_HEADING:
+    FIO___MD2HTML_LIT(r, "</h");
+    fio___md2html_append_u(r, e->heading_level);
+    FIO___MD2HTML_LIT(r, ">");
+    if (r->block_container_depth)
+      --r->block_container_depth;
+    r->tight_child_pending = 1;
+    return 0;
 
-/* *****************************************************************************
-String Base64 support
-***************************************************************************** */
+  case FIO_GFM_THEMATIC_BREAK:
+    return 0;
 
-/** Writes data to String using Base64 encoding. */
-SFUNC int fio_string_write_base64enc(fio_str_info_s *dest,
-                                     fio_string_realloc_fn reallocate,
-                                     const void *data,
-                                     size_t len,
-                                     uint8_t url_encoded) {
-  int r = 0;
-  if (!dest || !data || !len)
-    return r;
-  static const char *encmap[2] = {
-      /* Regular, URL encoding*/
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_=",
-  };
+  case FIO_GFM_BLOCKQUOTE:
+    FIO___MD2HTML_LIT(r, "</blockquote>");
+    if (r->block_container_depth)
+      --r->block_container_depth;
+    r->tight_child_pending = 1;
+    return 0;
 
-  /* the base64 encoding array */
-  const char *encoding = encmap[!!url_encoded];
+  case FIO_GFM_LIST_UNORDERED:
+    FIO___MD2HTML_LIT(r, "</ul>");
+    r->tight_child_pending = 1;
+    return 0;
 
-  /* base64 length and padding information */
-  size_t groups = len / 3;
-  const size_t mod = len - (groups * 3);
-  size_t target_size = (groups + (mod != 0)) * 4;
+  case FIO_GFM_LIST_ORDERED:
+    FIO___MD2HTML_LIT(r, "</ol>");
+    r->tight_child_pending = 1;
+    return 0;
 
-  if (fio_string___write_validate_len(dest, reallocate, &target_size)) {
-    return (r = -1); /* no partial encoding. */
-  }
-  char *writer = dest->buf + dest->len;
-  const unsigned char *reader = (const unsigned char *)data;
-  dest->len += target_size;
-  /* write encoded data */
-  while (groups) {
-    --groups;
-    const unsigned char tmp1 = *(reader++);
-    const unsigned char tmp2 = *(reader++);
-    const unsigned char tmp3 = *(reader++);
-
-    *(writer++) = encoding[(tmp1 >> 2) & 63];
-    *(writer++) = encoding[(((tmp1 & 3) << 4) | ((tmp2 >> 4) & 15))];
-    *(writer++) = encoding[((tmp2 & 15) << 2) | ((tmp3 >> 6) & 3)];
-    *(writer++) = encoding[tmp3 & 63];
-  }
-
-  /* write padding / ending */
-  switch (mod) {
-  case 2: {
-    const unsigned char tmp1 = *(reader++);
-    const unsigned char tmp2 = *(reader++);
-
-    *(writer++) = encoding[(tmp1 >> 2) & 63];
-    *(writer++) = encoding[((tmp1 & 3) << 4) | ((tmp2 >> 4) & 15)];
-    *(writer++) = encoding[((tmp2 & 15) << 2)];
-    *(writer++) = '=';
-  } break;
-  case 1: {
-    const unsigned char tmp1 = *(reader++);
-
-    *(writer++) = encoding[(tmp1 >> 2) & 63];
-    *(writer++) = encoding[(tmp1 & 3) << 4];
-    *(writer++) = '=';
-    *(writer++) = '=';
-  } break;
-  }
-  dest->buf[dest->len] = 0;
-  return r;
-}
-
-/** Writes decoded base64 data to String. */
-SFUNC int fio_string_write_base64dec(fio_str_info_s *dest,
-                                     fio_string_realloc_fn reallocate,
-                                     const void *encoded_,
-                                     size_t len) {
-  /* Base64 decoding array. Generation script (Ruby):
-s = ["ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
-     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_="]
-valid = []; (0..255).each {|i| valid[i] = 0 };
-decoder = []; (0..127).each {|i| decoder[i] = 0 };
-s.each {|d| d.bytes.each_with_index { |b, i| decoder[b] = i; valid[b] = 1 } };
-p valid; p decoder; nil
-  */
-  static const uint8_t base64_valid[256] = {
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1,
-      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1,
-      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1,
-      0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-      1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  };
-  static const uint8_t base64_decodes[128] = {
-      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  62, 0,  62, 0,  63,
-      52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 0,  0,  0,  64, 0,  0,
-      0,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14,
-      15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 0,  0,  0,  0,  63,
-      0,  26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-      41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 0,  0,  0,  0,  0,
-  };
-  int r = 0;
-  if (!dest || !encoded_ || !len)
-    return r;
-  const uint8_t *encoded = (const uint8_t *)encoded_;
-  /* skip unknown data at end */
-  while (len && !base64_valid[encoded[len - 1]]) {
-    len--;
-  }
-  if (!len)
-    return (r = -1);
-
-  /* reserve memory space */
-  {
-    size_t required_len = (((len >> 2) * 3) + 3);
-    if (fio_string___write_validate_len(dest, reallocate, &required_len)) {
-      return (r = -1); /* no partial decoding. */
-    };
-  }
-
-  /* decoded and count actual length */
-  size_t pos = 0;
-  uint8_t b64wrd[4];
-  const uint8_t *stop = encoded + len;
-  uint8_t *writer = (uint8_t *)dest->buf + dest->len;
-  for (;;) {
-    if (base64_valid[encoded[0]])
-      b64wrd[pos++] = base64_decodes[encoded[0]];
-    else if (!isspace(encoded[0]))
-      break;
-    ++encoded;
-    if (pos == 4) {
-      writer[0] = (b64wrd[0] << 2) | (b64wrd[1] >> 4);
-      writer[1] = (b64wrd[1] << 4) | (b64wrd[2] >> 2);
-      writer[2] = (b64wrd[2] << 6) | b64wrd[3];
-      pos = 0;
-      writer += 3;
+  case FIO_GFM_LIST_ITEM: {
+    uint8_t was_tight = 0;
+    FIO___MD2HTML_LIT(r, "</li>");
+    if (r->li_depth) {
+      --r->li_depth;
+      if (r->li_depth < sizeof(r->li_tight))
+        was_tight = r->li_tight[r->li_depth];
     }
-    if (encoded == stop)
-      break;
+    if (was_tight && r->tight_depth)
+      --r->tight_depth;
+    r->tight_child_pending = 0;
+    return 0;
   }
-  switch (pos) {
-  case 1: b64wrd[1] = 0; /* fall through */
-  case 2: b64wrd[2] = 0; /* fall through */
-  case 3: b64wrd[3] = 0; /* fall through */
-  case 4:
-    writer[0] = (b64wrd[0] << 2) | (b64wrd[1] >> 4);
-    writer[1] = (b64wrd[1] << 4) | (b64wrd[2] >> 2);
-    writer[2] = (b64wrd[2] << 6) | b64wrd[3];
-    writer += 3;
+
+  case FIO_GFM_CODE_BLOCK:
+    if (r->code_has_line)
+      FIO___MD2HTML_LIT(r, "\n");
+    FIO___MD2HTML_LIT(r, "</code></pre>");
+    r->in_code_block = 0;
+    r->code_has_line = 0;
+    return 0;
+
+  case FIO_GFM_HTML_BLOCK:
+    r->in_html_block = 0;
+    return 0;
+
+  case FIO_GFM_TABLE:
+    if (r->table_row > 1)
+      FIO___MD2HTML_LIT(r, "</tbody>");
+    FIO___MD2HTML_LIT(r, "</table>");
+    if (r->block_container_depth)
+      --r->block_container_depth;
+    r->tight_child_pending = 1;
+    return 0;
+
+  case FIO_GFM_TABLE_ROW:
+    FIO___MD2HTML_LIT(r, "</tr>");
+    if (r->table_row++ == 0)
+      FIO___MD2HTML_LIT(r, "</thead>");
+    return 0;
+
+  case FIO_GFM_TABLE_CELL:
+    if (r->table_row == 0)
+      FIO___MD2HTML_LIT(r, "</th>");
+    else
+      FIO___MD2HTML_LIT(r, "</td>");
+    if (r->table_cell_depth)
+      --r->table_cell_depth;
+    return 0;
+
+  case FIO_GFM_EMPHASIS:
+    FIO___MD2HTML_LIT(r, "</em>");
+    return 0;
+
+  case FIO_GFM_STRONG:
+    FIO___MD2HTML_LIT(r, "</strong>");
+    return 0;
+
+  case FIO_GFM_STRIKETHROUGH:
+    FIO___MD2HTML_LIT(r, "</del>");
+    return 0;
+
+  case FIO_GFM_LINK:
+    FIO___MD2HTML_LIT(r, "</a>");
+    return 0;
+
+  default:
+    return 0;
   }
-  writer -= (encoded[-1] == '=') + (encoded[-2] == '=');
-  if (writer < ((uint8_t *)dest->buf + dest->len))
-    writer = ((uint8_t *)dest->buf + dest->len);
-  dest->len = (size_t)(writer - (uint8_t *)dest->buf);
-  dest->buf[dest->len] = 0;
-  return r;
 }
 
-/* *****************************************************************************
-String URL Encoding support
-***************************************************************************** */
+FIO_IFUNC int fio___md2html_write(fio_gfm_event_s *e) {
+  fio___md2html_renderer_s *r = (fio___md2html_renderer_s *)e->udata;
+  if (r->err)
+    return r->err;
 
-/** Writes data to String using URL encoding (a.k.a., percent encoding). */
-SFUNC int fio_string_write_url_enc(fio_str_info_s *dest,
-                                   fio_string_realloc_fn reallocate,
-                                   const void *data,
-                                   size_t data_len) {
-  static const uint8_t url_enc_map[256] = {
-      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 2,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 0,
-      2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2};
-  int r = 0;
-  /* reserve memory space */
-  {
-    size_t required_len = data_len;
-    for (size_t i = 0; i < data_len; ++i) {
-      required_len += url_enc_map[((uint8_t *)data)[i]];
-    }
-    if (fio_string___write_validate_len(dest, reallocate, &required_len)) {
-      return (r = -1); /* no partial encoding. */
-    };
-  }
-  for (size_t i = 0; i < data_len; ++i) {
-    if (!url_enc_map[((uint8_t *)data)[i]]) {
-      dest->buf[dest->len++] = ((uint8_t *)data)[i];
-      continue;
-    }
-    dest->buf[dest->len++] = '%';
-    dest->buf[dest->len++] = fio_i2c(((uint8_t *)data)[i] >> 4);
-    dest->buf[dest->len++] = fio_i2c(((uint8_t *)data)[i] & 15);
-  }
-  dest->buf[dest->len] = 0;
-  return r;
-}
-
-/** Writes decoded URL data to String. */
-FIO_IFUNC int fio_string_write_url_dec_internal(
-    fio_str_info_s *dest,
-    fio_string_realloc_fn reallocate,
-    const void *encoded,
-    size_t encoded_len,
-    _Bool plus_is_included) {
-  int r = 0;
-  if (!dest || !encoded || !encoded_len)
-    return r;
-  uint8_t *pr = (uint8_t *)encoded;
-  uint8_t *last = pr;
-  uint8_t *end = pr + encoded_len;
-  if (dest->len + encoded_len >= dest->capa) { /* reserve only what we need */
-    size_t act_len = 0;
-    while (end > pr && (pr = (uint8_t *)FIO_MEMCHR(pr, '%', end - pr))) {
-      act_len += pr - last;
-      last = pr + 1;
-      if (end - last > 1 && fio_c2i(last[0]) < 16 && fio_c2i(last[1]) < 16)
-        last += 2;
-      else if (end - last > 4 && (last[0] | 32) == 'u' &&
-               fio_c2i(last[1]) < 16 && fio_c2i(last[2]) < 16 &&
-               fio_c2i(last[3]) < 16 && fio_c2i(last[4]) < 16) {
-        last += 5;
-        act_len += 3; /* uXXXX length maxes out at 4 ... I think */
+  switch (e->type) {
+  case FIO_GFM_TEXT:
+    if (r->in_code_block) {
+      if (r->code_has_line)
+        FIO___MD2HTML_LIT(r, "\n");
+      r->code_has_line = 1;
+      if (e->padding) {
+        char spaces[8] = {0};
+        size_t n = e->padding < 8 ? e->padding : 8;
+        memset(spaces, ' ', n);
+        fio___md2html_append(r, spaces, n);
       }
-      pr = last;
+      fio___md2html_escape(r, e->text.buf, e->text.len);
+      return 0;
     }
-    act_len += end - last;
-    if (fio_string___write_validate_len(dest, reallocate, &act_len)) {
-      return (r = -1); /* no partial decoding. */
-    };
-  }
-  /* copy and un-encode data */
-  pr = (uint8_t *)encoded;
-  last = pr;
-  end = pr + encoded_len;
-  while (end > pr && (pr = (uint8_t *)FIO_MEMCHR(pr, '%', end - pr))) {
-    const size_t slice_len = pr - last;
-    if (slice_len) {
-      FIO_MEMCPY(dest->buf + dest->len, last, slice_len);
-      /* test for '+' in the slice that has no % characters */
-      if (plus_is_included) {
-        uint8_t *start_plus = (uint8_t *)dest->buf + dest->len;
-        uint8_t *end_plus = start_plus + slice_len;
-        while (
-            start_plus && start_plus < end_plus &&
-            (start_plus =
-                 (uint8_t *)FIO_MEMCHR(start_plus, '+', end_plus - start_plus)))
-          *(start_plus++) = ' ';
+    if (r->in_html_block) {
+      if (e->text.len)
+        fio___md2html_append_tagfiltered(r, e->text.buf, e->text.len, 1);
+      FIO___MD2HTML_LIT(r, "\n");
+      return 0;
+    }
+    if (r->li_depth) {
+      uint32_t li = r->li_depth - 1;
+      if (li < sizeof(r->li_tight) && r->li_tight[li] &&
+          r->block_container_depth == r->li_block_base[li]) {
+        if (r->tight_child_pending)
+          FIO___MD2HTML_LIT(r, "\n");
+        r->tight_child_pending = 1;
       }
     }
-    dest->len += slice_len;
-    last = pr + 1;
-    if (end - last > 1 && fio_c2i(last[0]) < 16 && fio_c2i(last[1]) < 16) {
-      dest->buf[dest->len++] = (fio_c2i(last[0]) << 4) | fio_c2i(last[1]);
-      last += 2;
-    } else if (end - last > 4 && (last[0] | 32) == 'u' &&
-               fio_c2i(last[1]) < 16 && fio_c2i(last[2]) < 16 &&
-               fio_c2i(last[3]) < 16 && fio_c2i(last[4]) < 16) {
-      uint32_t u = (((fio_c2i(last[1]) << 4) | fio_c2i(last[2])) << 8) |
-                   ((fio_c2i(last[3]) << 4) | fio_c2i(last[4]));
-      if (end - last > 9 &&
-          ((fio_c2i(last[1]) << 4) | fio_c2i(last[2])) == 0xD8U &&
-          last[5] == '%' && last[6] == 'u' && fio_c2i(last[7]) < 16 &&
-          fio_c2i(last[8]) < 16 && fio_c2i(last[9]) < 16 &&
-          fio_c2i(last[10]) < 16) {
-        /* surrogate-pair (high/low code points) */
-        u = (u & 0x03FF) << 10;
-        u |= (((((fio_c2i(last[7]) << 4) | fio_c2i(last[8])) << 8) |
-               ((fio_c2i(last[9]) << 4) | fio_c2i(last[10]))) &
-              0x03FF);
-        u += 0x10000;
-        last += 6;
-      }
-      dest->len += fio_utf8_write((uint8_t *)dest->buf + dest->len, u);
-      last += 5;
-    } else {
-      dest->buf[dest->len++] = '%';
-    }
-    pr = last;
-  }
-  if (end > last) {
-    const size_t slice_len = end - last;
-    FIO_MEMCPY(dest->buf + dest->len, last, slice_len);
-    /* test for '+' in the slice that has no % characters */
-    if (plus_is_included) {
-      uint8_t *start_plus = (uint8_t *)dest->buf + dest->len;
-      uint8_t *end_plus = start_plus + slice_len;
-      while (
-          start_plus && start_plus < end_plus &&
-          (start_plus =
-               (uint8_t *)FIO_MEMCHR(start_plus, '+', end_plus - start_plus)))
-        *(start_plus++) = ' ';
-    }
-    dest->len += slice_len;
-  }
-  dest->buf[dest->len] = 0;
-  return r;
-}
+    fio___md2html_escape(r, e->text.buf, e->text.len);
+    return 0;
 
-/** Writes decoded URL data to String. */
-SFUNC int fio_string_write_url_dec(fio_str_info_s *dest,
-                                   fio_string_realloc_fn reallocate,
-                                   const void *encoded,
-                                   size_t encoded_len) {
-  return fio_string_write_url_dec_internal(dest,
-                                           reallocate,
-                                           encoded,
-                                           encoded_len,
-                                           1);
-}
+  case FIO_GFM_SOFT_BREAK:
+    FIO___MD2HTML_LIT(r, "\n");
+    r->tight_child_pending = 0;
+    return 0;
 
-/** Writes decoded URL data to String. */
-SFUNC int fio_string_write_path_dec(fio_str_info_s *dest,
-                                    fio_string_realloc_fn reallocate,
-                                    const void *encoded,
-                                    size_t encoded_len) {
-  return fio_string_write_url_dec_internal(dest,
-                                           reallocate,
-                                           encoded,
-                                           encoded_len,
-                                           0);
-}
+  case FIO_GFM_HARD_BREAK:
+    FIO___MD2HTML_LIT(r, "<br />\n");
+    r->tight_child_pending = 0;
+    return 0;
 
-/* *****************************************************************************
-String HTML escaping support
-***************************************************************************** */
-
-/** Writes HTML escaped data to a String. */
-SFUNC int fio_string_write_html_escape(fio_str_info_s *dest,
-                                       fio_string_realloc_fn reallocate,
-                                       const void *data,
-                                       size_t data_len) {
-  /* produced using the following Ruby script:
-    a = (0..255).to_a.map {|i| "&#x#{i.to_s(16)};" }
-    must_escape = ['&', '<', '>', '"', "'", '`', '!', '@', '$', '%',
-                   '(', ')', '=', '+', '{', '}', '[', ']'] # space?
-    ["\b","\f","\n","\r","\t",'\\'].each {|i| a[i.ord] = i }
-    (32..123).each {|i| a[i] = i.chr unless must_escape.include?(i.chr) }
-    {'<': "&lt;", '>': "&gt;", '"': "&qout;", '&': "&amp;"}.each {|k,v|
-       a[k.to_s.ord] = v
-    }
-    b = a.map {|s| s.length }
-    puts "static const uint8_t html_escape_len[] = {", b.to_s.slice(1..-2), "};"
-  */
-  static const uint8_t html_escape_len[] = {
-      5, 5, 5, 5, 5, 5, 5, 5, 1, 1, 1, 5, 1, 1, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6,
-      6, 6, 6, 6, 6, 6, 6, 6, 1, 6, 6, 1, 6, 6, 5, 6, 6, 6, 1, 6, 1, 1, 1, 1,
-      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 6, 4, 1, 6, 1, 1, 1, 1, 1, 1, 1,
-      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 6, 1, 6, 1, 1,
-      6, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-      1, 1, 1, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-      6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-      6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-      6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-      6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-      6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6};
-  int r = 0;
-  size_t start = 0;
-  size_t pos = 0;
-  if (!data_len || !data || !dest)
-    return r;
-  { /* reserve memory space */
-    size_t required_len = data_len;
-    for (size_t i = 0; i < data_len; ++i) {
-      required_len += html_escape_len[((uint8_t *)data)[i]];
-    }
-    if (fio_string___write_validate_len(dest, reallocate, &required_len)) {
-      return (r = -1); /* no partial encoding. */
-    };
-  }
-  for (;;) { /* copy and encode data */
-    while (pos < data_len && html_escape_len[((uint8_t *)data)[pos]] == 1)
-      ++pos;
-    /* don't escape valid UTF-8 */
-    if (pos < data_len)
-      switch (
-          fio_string_utf8_valid_code_point((void *)(((uint8_t *)data) + pos),
-                                           data_len - pos)) {
-      case 4: ++pos; /* fall through */
-      case 3: ++pos; /* fall through */
-      case 2: pos += 2; continue;
-      }
-    /* copy valid segment before escaping */
-    if (pos != start) {
-      const size_t len = pos - start;
-      FIO_MEMCPY(dest->buf + dest->len, (uint8_t *)data + start, len);
-      dest->len += len;
-      start = pos;
-    }
-    if (pos == data_len)
-      break;
-    /* escape data */
-    dest->buf[dest->len++] = '&';
-    switch (((uint8_t *)data)[pos]) {
-    case '<':
-      dest->buf[dest->len++] = 'l';
-      dest->buf[dest->len++] = 't';
-      break;
-    case '>':
-      dest->buf[dest->len++] = 'g';
-      dest->buf[dest->len++] = 't';
-      break;
-    case '"':
-      dest->buf[dest->len++] = 'q';
-      dest->buf[dest->len++] = 'u';
-      dest->buf[dest->len++] = 'o';
-      dest->buf[dest->len++] = 't';
-      break;
-    case '&':
-      dest->buf[dest->len++] = 'a';
-      dest->buf[dest->len++] = 'm';
-      dest->buf[dest->len++] = 'p';
-      break;
-    default:
-      dest->buf[dest->len++] = '#';
-      dest->buf[dest->len++] = 'x';
-      dest->len += ((dest->buf[dest->len] =
-                         fio_i2c(((uint8_t *)data)[pos] >> 4)) != '0');
-      dest->buf[dest->len++] = fio_i2c(((uint8_t *)data)[pos] & 15);
-    }
-    dest->buf[dest->len++] = ';';
-    ++pos;
-    start = pos;
-  }
-  dest->buf[dest->len] = 0;
-  return r;
-}
-
-/** Writes HTML un-escaped data to a String - incomplete and minimal. */
-SFUNC int fio_string_write_html_unescape(fio_str_info_s *dest,
-                                         fio_string_realloc_fn reallocate,
-                                         const void *data,
-                                         size_t data_len) {
-  int r = 0;
-  struct {
-    uint64_t code;
-    uint32_t clen;
-    uint8_t r[4];
-  } html_named_codes[] = {
-#define FIO___STRING_HTML_CODE_POINT(named_code, result)                       \
-  {.code = *(uint64_t *)(named_code "\0\0\0\0\0\0\0\0"),                       \
-   .clen = (uint32_t)(sizeof(named_code) - 1),                                 \
-   .r = result}
-      FIO___STRING_HTML_CODE_POINT("lt", "<"),
-      FIO___STRING_HTML_CODE_POINT("gt", ">"),
-      FIO___STRING_HTML_CODE_POINT("amp", "&"),
-      FIO___STRING_HTML_CODE_POINT("apos", "'"),
-      FIO___STRING_HTML_CODE_POINT("quot", "\""),
-      FIO___STRING_HTML_CODE_POINT("nbsp", "\xC2\xA0"),
-      FIO___STRING_HTML_CODE_POINT("tab", "\t"),
-      FIO___STRING_HTML_CODE_POINT("ge", "≥"),
-      FIO___STRING_HTML_CODE_POINT("le", "≤"),
-      FIO___STRING_HTML_CODE_POINT("ne", "≠"),
-      FIO___STRING_HTML_CODE_POINT("copy", "©"),
-      FIO___STRING_HTML_CODE_POINT("raquo", "»"),
-      FIO___STRING_HTML_CODE_POINT("laquo", "«"),
-      FIO___STRING_HTML_CODE_POINT("rdquo", "”"),
-      FIO___STRING_HTML_CODE_POINT("ldquo", "“"),
-      FIO___STRING_HTML_CODE_POINT("reg", "®"),
-      FIO___STRING_HTML_CODE_POINT("asymp", "≈"),
-      FIO___STRING_HTML_CODE_POINT("bdquo", "„"),
-      FIO___STRING_HTML_CODE_POINT("bull", "•"),
-      FIO___STRING_HTML_CODE_POINT("cent", "¢"),
-      FIO___STRING_HTML_CODE_POINT("euro", "€"),
-      FIO___STRING_HTML_CODE_POINT("dagger", "†"),
-      FIO___STRING_HTML_CODE_POINT("deg", "°"),
-      FIO___STRING_HTML_CODE_POINT("frac14", "¼"),
-      FIO___STRING_HTML_CODE_POINT("frac12", "½"),
-      FIO___STRING_HTML_CODE_POINT("frac34", "¾"),
-      FIO___STRING_HTML_CODE_POINT("hellip", "…"),
-      FIO___STRING_HTML_CODE_POINT("lsquo", "‘"),
-      FIO___STRING_HTML_CODE_POINT("mdash", "—"),
-      FIO___STRING_HTML_CODE_POINT("middot", "·"),
-      FIO___STRING_HTML_CODE_POINT("ndash", "–"),
-      FIO___STRING_HTML_CODE_POINT("para", "¶"),
-      FIO___STRING_HTML_CODE_POINT("plusmn", "±"),
-      FIO___STRING_HTML_CODE_POINT("pound", "£"),
-      FIO___STRING_HTML_CODE_POINT("prime", "′"),
-      FIO___STRING_HTML_CODE_POINT("rsquo", "’"),
-      FIO___STRING_HTML_CODE_POINT("sbquo", "‚"),
-      FIO___STRING_HTML_CODE_POINT("sect", "§"),
-      FIO___STRING_HTML_CODE_POINT("trade", "™"),
-      FIO___STRING_HTML_CODE_POINT("yen", "¥"),
-  };
-  if (!dest || !data || !data_len)
-    return r;
-  size_t reduced = data_len + dest->len;
-  uint8_t *start = (uint8_t *)data;
-  uint8_t *const end = start + data_len;
-  if (dest->len + data_len >= dest->capa) { /* reserve only what we need */
-    reduced = data_len;
-    uint8_t *del = start;
-    while (end > del && (del = (uint8_t *)FIO_MEMCHR(del, '&', end - del))) {
-      uint8_t *tmp = del++;
-      /* note that in some cases the `;` might be dropped (history) */
-      if (del[0] == '#') {
-        ++del;
-        del += (del[0] == 'x');
-        uint64_t num =
-            (del[-1] == 'x' ? fio_atol16u : fio_atol10u)((char **)&del);
-        if (del >= end || num > 65535) /* untrusted result */
-          continue;
-        del += (*del == ';');
-        reduced -= (del - tmp);
-        reduced += fio_utf8_code_len((uint32_t)num);
+  case FIO_GFM_CODE_SPAN: {
+    FIO___MD2HTML_LIT(r, "<code>");
+    const char *cs = e->text.buf;
+    const char *ce = cs + e->text.len;
+    const char *mark = cs;
+    while (cs < ce) {
+      if (r->table_cell_depth && *cs == '\\' && cs + 1 < ce && cs[1] == '|') {
+        fio___md2html_escape(r, mark, (size_t)(cs - mark));
+        fio___md2html_append(r, "|", 1);
+        cs += 2;
+        mark = cs;
         continue;
       }
-      union {
-        uint64_t u64;
-        uint8_t u8[8];
-      } u;
-      for (size_t i = 0;
-           i < sizeof(html_named_codes) / sizeof(html_named_codes[0]);
-           ++i) {
-        u.u64 = 0;
-        for (size_t p = 0; p < html_named_codes[i].clen; ++p)
-          u.u8[p] = del[p] | 32;
-        if (u.u64 != html_named_codes[i].code)
-          continue;
-        del += html_named_codes[i].clen;
-        if (del > end)
-          break;
-        del += (del < end && del[0] == ';');
-        reduced -= (del - tmp);
-        for (size_t j = 0; html_named_codes[i].r[j]; ++j)
-          ++reduced;
-        break;
+      if (*cs == '\n' || *cs == '\r') {
+        fio___md2html_escape(r, mark, (size_t)(cs - mark));
+        fio___md2html_append(r, " ", 1);
+        cs += (*cs == '\r' && cs + 1 < ce && cs[1] == '\n') ? 2 : 1;
+        mark = cs;
+      } else {
+        ++cs;
       }
     }
-    if (fio_string___write_validate_len(dest, reallocate, &reduced)) {
-      return (r = -1); /* no partial decoding. */
+    fio___md2html_escape(r, mark, (size_t)(ce - mark));
+    FIO___MD2HTML_LIT(r, "</code>");
+    return 0;
+  }
+
+  case FIO_GFM_IMAGE:
+    FIO___MD2HTML_LIT(r, "<img src=\"");
+    fio___md2html_escape_md_url(r, e->destination.buf, e->destination.len);
+    FIO___MD2HTML_LIT(r, "\" alt=\"");
+    fio___md2html_escape_alt_text(r, e->text.buf, e->text.len);
+    FIO___MD2HTML_LIT(r, "\"");
+    if (e->title.len) {
+      FIO___MD2HTML_LIT(r, " title=\"");
+      fio___md2html_escape_md_text(r, e->title.buf, e->title.len);
+      FIO___MD2HTML_LIT(r, "\"");
     }
-    reduced += dest->len;
-  }
-  { /* copy and unescape data */
-    uint8_t *del = start = (uint8_t *)data;
-    while (end > (start = del) &&
-           (del = (uint8_t *)FIO_MEMCHR(del, '&', end - del))) {
-      if (start != del) {
-        const size_t len = del - start;
-        FIO_MEMCPY(dest->buf + dest->len, start, len);
-        dest->len += len;
-        start = del;
-      }
-      ++del;
-      if (del == end)
-        break;
-      if (del[0] == '#') {
-        ++del;
-        if (del + 2 > end)
-          break;
-        del += (del[0] == 'x');
-        uint64_t num =
-            (del[-1] == 'x' ? fio_atol16u : fio_atol10u)((char **)&del);
-        if (*del != ';' || num > 65535)
-          goto untrusted_no_encode;
-        dest->len +=
-            fio_utf8_write((uint8_t *)dest->buf + dest->len, (uint32_t)num);
-        del += (del < end && del[0] == ';');
-        continue;
-      }
-      /* note that in some cases the `;` might be dropped (history) */
-      for (size_t i = 0;
-           i < sizeof(html_named_codes) / sizeof(html_named_codes[0]);
-           ++i) {
-        union {
-          uint64_t u64;
-          uint8_t u8[8];
-        } u = {0};
-        for (size_t p = 0; p < html_named_codes[i].clen; ++p)
-          u.u8[p] = del[p] | 32;
-        if (u.u64 != html_named_codes[i].code)
-          continue;
-        del += html_named_codes[i].clen;
-        del += (del < end && del[0] == ';');
-        start = del;
-        for (size_t j = 0; html_named_codes[i].r[j]; ++j) {
-          dest->buf[dest->len++] = html_named_codes[i].r[j];
-        }
-        break;
-      }
-      if (start == del)
-        continue;
-    untrusted_no_encode: /* untrusted, don't decode */
-      del += (del < end && del[0] == ';');
-      FIO_MEMCPY(dest->buf + dest->len, start, del - start);
-      dest->len += del - start;
+    FIO___MD2HTML_LIT(r, " />");
+    return 0;
+
+  case FIO_GFM_AUTOLINK: {
+    int is_email = 0, has_colon = 0;
+    for (size_t i = 0; i < e->destination.len; ++i) {
+      is_email |= (e->destination.buf[i] == '@');
+      has_colon |= (e->destination.buf[i] == ':');
     }
+    FIO___MD2HTML_LIT(r, "<a href=\"");
+    if (is_email && !has_colon)
+      FIO___MD2HTML_LIT(r, "mailto:");
+    else if (e->destination.len >= 4 &&
+             (e->destination.buf[0] == 'w' || e->destination.buf[0] == 'W') &&
+             (e->destination.buf[1] == 'w' || e->destination.buf[1] == 'W') &&
+             (e->destination.buf[2] == 'w' || e->destination.buf[2] == 'W') &&
+             e->destination.buf[3] == '.')
+      FIO___MD2HTML_LIT(r, "http://");
+    if (e->destination.len)
+      fio___md2html_escape_url(r, e->destination.buf, e->destination.len);
+    FIO___MD2HTML_LIT(r, "\">");
+    if (e->text.len)
+      fio___md2html_escape(r, e->text.buf, e->text.len);
+    FIO___MD2HTML_LIT(r, "</a>");
+    return 0;
   }
-  if (start < end) {
-    const size_t len = end - start;
-    FIO_MEMCPY(dest->buf + dest->len, start, len);
-    dest->len += len;
+
+  case FIO_GFM_INLINE_HTML:
+    if (e->text.len)
+      fio___md2html_append_tagfiltered(r, e->text.buf, e->text.len, 0);
+    return 0;
+
+  default:
+    return 0;
   }
-  dest->buf[dest->len] = 0;
-  FIO_ASSERT_DEBUG(dest->len < reduced + 1,
-                   "string HTML unescape reduced calculation error");
-  return r;
 }
 
-/* *****************************************************************************
-String File Reading support
-***************************************************************************** */
+/* ---------------------------------------------------------------------------
+ * Public API
+ * ------------------------------------------------------------------------- */
 
-FIO_IFUNC intptr_t fio___string_fd_normalise_offset(intptr_t i,
-                                                    size_t file_len) {
-  if (i < 0) {
-    i += (intptr_t)file_len + 1;
-    if (i < 0)
-      i = 0;
-  }
-  return i;
-}
-
-/**
- * Writes up to `limit` bytes from `fd` into `dest`, starting at `start_at`.
- *
- * If `limit` is 0 (or less than 0) data will be written until EOF.
- *
- * If `start_at` is negative, position will be calculated from the end of the
- * file where `-1 == EOF`.
- *
- * Note: this will fail unless used on actual files (not sockets, not pipes).
- * */
-SFUNC int fio_string_readfd(fio_str_info_s *dest,
-                            fio_string_realloc_fn reallocate,
-                            int fd,
-                            intptr_t start_at,
-                            size_t limit) {
-  int r = 0;
-  if (!dest) {
-    return r;
-  }
-  size_t file_len = fio_fd_size(fd);
-  start_at = fio___string_fd_normalise_offset(start_at, file_len);
-  if (!limit || file_len < (size_t)(limit + start_at)) {
-    limit = (intptr_t)file_len - start_at;
-  }
-  if (!file_len || !limit || (size_t)start_at >= file_len) {
-    return (r = -1);
-  }
-  r = fio_string___write_validate_len(dest, reallocate, &limit);
-  size_t added = fio_fd_read(fd, dest->buf + dest->len, limit, (off_t)start_at);
-  dest->len += added;
-  dest->buf[dest->len] = 0;
-  return r;
-}
-
-/**
- * Opens the file `filename` and pastes it's contents (or a slice ot it) at
- * the end of the String. If `limit == 0`, than the data will be read until
- * EOF.
- *
- * If the file can't be located, opened or read, or if `start_at` is beyond
- * the EOF position, NULL is returned in the state's `data` field.
- */
-SFUNC int fio_string_readfile(fio_str_info_s *dest,
-                              fio_string_realloc_fn reallocate,
-                              const char *filename,
-                              intptr_t start_at,
-                              size_t limit) {
-  int r = -1;
-  int fd = fio_filename_open(filename, O_RDONLY);
-  if (fd == -1)
-    return r;
-  r = fio_string_readfd(dest, reallocate, fd, start_at, limit);
-  close(fd);
-  return r;
-}
-
-/**
- * Writes up to `limit` bytes from `fd` into `dest`, starting at `start_at`
- * and ending at the first occurrence of `token`.
- *
- * If `limit` is 0 (or less than 0) as much data as may be required will be
- * written.
- *
- * If `start_at` is negative, position will be calculated from the end of the
- * file where `-1 == EOF`.
- *
- * Note: this will fail unless used on actual seekable files (not sockets, not
- * pipes).
- * */
-SFUNC int fio_string_getdelim_fd(fio_str_info_s *dest,
-                                 fio_string_realloc_fn reallocate,
-                                 int fd,
-                                 intptr_t start_at,
-                                 char delim,
-                                 size_t limit) {
-  int r = -1;
-  if (!dest || fd == -1)
-    return (r = 0);
-  size_t file_len = fio_fd_size(fd);
-  if (!file_len)
-    return r;
-  start_at = fio___string_fd_normalise_offset(start_at, file_len);
-  if ((size_t)start_at >= file_len)
-    return r;
-  size_t index = fio_fd_find_next(fd, delim, (size_t)start_at);
-  if (index == FIO_FD_FIND_EOF)
-    index = file_len;
-  if (limit < 1 || limit > (index - start_at) + 1) {
-    limit = (index - start_at) + 1;
+SFUNC char *fio_md2html(char *bstr_target, fio_buf_info_s source) {
+  fio___md2html_renderer_s renderer = {0};
+  renderer.bstr = bstr_target;
+  if (!renderer.bstr) {
+    /* allocate storage for an empty bstr before parsing begins */
+    renderer.bstr = fio_bstr_reserve(NULL, 1);
+    if (!renderer.bstr)
+      return NULL;
   }
 
-  r = fio_string___write_validate_len(dest, reallocate, &limit);
-  size_t added = fio_fd_read(fd, dest->buf + dest->len, limit, (off_t)start_at);
-  dest->len += added;
-  dest->buf[dest->len] = 0;
-  return r;
-}
+  fio_gfm_callbacks_s cb = {
+      .push = fio___md2html_push,
+      .write = fio___md2html_write,
+      .pop = fio___md2html_pop,
+  };
 
-/**
- * Opens the file `filename`, calls `fio_string_getdelim_fd` and closes the
- * file.
- */
-SFUNC int fio_string_getdelim_file(fio_str_info_s *dest,
-                                   fio_string_realloc_fn reallocate,
-                                   const char *filename,
-                                   intptr_t start_at,
-                                   char delim,
-                                   size_t limit) {
-  int r = -1;
-  int fd = fio_filename_open(filename, O_RDONLY);
-  if (fd == -1)
-    return r;
-  r = fio_string_getdelim_fd(dest, reallocate, fd, start_at, delim, limit);
-  close(fd);
-  return r;
-}
-
-/* *****************************************************************************
-Binary String Type - Embedded Strings
-***************************************************************************** */
-/** default reallocation callback implementation */
-SFUNC int fio_bstr_reallocate(fio_str_info_s *dest, size_t len) {
-  fio___bstr_meta_s *bstr_m = NULL;
-  size_t new_capa = fio_string_capa4len(len + sizeof(bstr_m[0]));
-  if (FIO_UNLIKELY(new_capa > (size_t)0xFFFFFFFFULL))
-    new_capa = (size_t)0x0FFFFFFFFULL + sizeof(bstr_m[0]);
-  if (dest->capa < fio_string_capa4len(sizeof(bstr_m[0])))
-    goto copy_the_string;
-  bstr_m = (fio___bstr_meta_s *)FIO_MEM_REALLOC_(
-      ((fio___bstr_meta_s *)dest->buf - 1),
-      sizeof(bstr_m[0]) + dest->capa,
-      new_capa,
-      FIO___BSTR_META(dest->buf)->len + sizeof(bstr_m[0]));
-  if (!bstr_m)
-    return -1;
-update_metadata:
-  dest->buf = (char *)(bstr_m + 1);
-  dest->capa = new_capa - sizeof(bstr_m[0]);
-  bstr_m->capa = (uint32_t)dest->capa;
-  return 0;
-
-copy_the_string:
-  bstr_m = (fio___bstr_meta_s *)FIO_MEM_REALLOC_(NULL, 0, new_capa, 0);
-  if (!bstr_m)
-    return -1;
-  if (!FIO_MEM_REALLOC_IS_SAFE_)
-    *bstr_m = (fio___bstr_meta_s){0};
-  FIO_LEAK_COUNTER_ON_ALLOC(fio_bstr_s);
-  if (dest->len) {
-    FIO_MEMCPY((bstr_m + 1), dest->buf, dest->len + 1);
-    bstr_m->len = (uint32_t)dest->len;
+  size_t consumed = fio_gfm_parse(&cb, &renderer, source);
+  if (consumed != source.len || renderer.err) {
+    if (!bstr_target)
+      fio_bstr_free(renderer.bstr);
+    return NULL;
   }
-  if (dest->capa)
-    fio_bstr_free(dest->buf);
-  goto update_metadata;
+  return renderer.bstr;
 }
 
-/* *****************************************************************************
-String Core Cleanup
-***************************************************************************** */
 #endif /* FIO_EXTERN_COMPLETE */
-#undef FIO_STR
-#endif /* H__FIO_STR__H */
+#endif /* H___FIO_MD2HTML___H */
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -31595,7 +37411,7 @@ FIO_SFUNC int fio___mustache_parse_block(fio___mustache_parser_s *p) {
       }
       break;
     }
-    if (FIO_UNLIKELY(*p->forwards.buf == p->delim.in.buf[0] &&
+    if (FIO_UNLIKELY(p->forwards.buf[0] == p->delim.in.buf[0] &&
                      p->forwards.buf + p->delim.in.len <= end &&
                      p->delim.in.cmp(p->forwards.buf, p->delim.in.buf))) {
       /* tag started */
@@ -31621,8 +37437,9 @@ FIO_SFUNC int fio___mustache_parse_block(fio___mustache_parser_s *p) {
         goto empty_tag_error;
       p->forwards.buf += p->delim.out.len;
       p->forwards.len = (size_t)(end - p->forwards.buf);
-      p->dirty |= (unsigned)(p->forwards.buf[0] && p->forwards.buf[0] != '\r' &&
-                             p->forwards.buf[0] != '\n');
+      p->dirty |=
+          (unsigned)(p->forwards.len && p->forwards.buf[0] &&
+                     p->forwards.buf[0] != '\r' && p->forwards.buf[0] != '\n');
       if (p->dirty && p->backwards.len) { /* not stand-alone, add txt */
         fio___mustache_parse_add_text(p, p->backwards);
         p->backwards = FIO_BUF_INFO2((p->backwards.buf + p->backwards.len), 0);
@@ -42855,11 +48672,11 @@ SFUNC void fio_ed25519_public_key(uint8_t public_key[32],
  * The signature is 64 bytes and is deterministic (same message + key = same
  * signature).
  */
-SFUNC void fio_ed25519_sign(uint8_t signature[64],
-                            const void *message,
-                            size_t len,
-                            const uint8_t secret_key[32],
-                            const uint8_t public_key[32]);
+SFUNC int fio_ed25519_sign(uint8_t signature[64],
+                           const void *message,
+                           size_t len,
+                           const uint8_t secret_key[32],
+                           const uint8_t public_key[32]);
 
 /**
  * Verifies an Ed25519 signature.
@@ -44838,11 +50655,14 @@ SFUNC void fio_ed25519_public_key(uint8_t public_key[32],
   fio___ge_p3_tobytes(public_key, pk);
 }
 
-SFUNC void fio_ed25519_sign(uint8_t signature[64],
-                            const void *message,
-                            size_t len,
-                            const uint8_t secret_key[32],
-                            const uint8_t public_key[32]) {
+SFUNC int fio_ed25519_sign(uint8_t signature[64],
+                           const void *message,
+                           size_t len,
+                           const uint8_t secret_key[32],
+                           const uint8_t public_key[32]) {
+  if (!signature || !secret_key || !public_key || (!message && len))
+    return -1;
+
   /* hash secret key */
   fio_u512 h = fio_sha512(secret_key, 32);
 
@@ -44877,6 +50697,7 @@ SFUNC void fio_ed25519_sign(uint8_t signature[64],
 
   /* s = (r + k * h) mod l */
   fio___sc_muladd(signature + 32, r, k, h.u8);
+  return 0;
 }
 
 SFUNC int fio_ed25519_verify(const uint8_t signature[64],
@@ -45308,16 +51129,29 @@ FIO_IFUNC void fio___p256_fe_one(fio___p256_fe_s r) {
   r[3] = 0;
 }
 
-/** Check if field element is zero */
+/** Public-value check: returns 1 if field element is zero. */
 FIO_IFUNC int fio___p256_fe_is_zero(const fio___p256_fe_s a) {
   return (a[0] | a[1] | a[2] | a[3]) == 0;
 }
 
-/** Compare two field elements: returns 0 if equal */
+/** Secret-safe check: returns 1 if field element is zero. */
+FIO_IFUNC int fio___p256_fe_ct_is_zero(const fio___p256_fe_s a) {
+  uint64_t diff = a[0] | a[1] | a[2] | a[3];
+  return (int)fio_ct_false(diff);
+}
+
+/** Public-value compare: returns 0 if equal. */
 FIO_IFUNC int fio___p256_fe_eq(const fio___p256_fe_s a,
                                const fio___p256_fe_s b) {
   uint64_t diff = (a[0] ^ b[0]) | (a[1] ^ b[1]) | (a[2] ^ b[2]) | (a[3] ^ b[3]);
   return diff == 0 ? 0 : 1;
+}
+
+/** Secret-safe compare: returns 1 if equal. */
+FIO_IFUNC int fio___p256_fe_ct_is_eq(const fio___p256_fe_s a,
+                                     const fio___p256_fe_s b) {
+  uint64_t diff = (a[0] ^ b[0]) | (a[1] ^ b[1]) | (a[2] ^ b[2]) | (a[3] ^ b[3]);
+  return (int)fio_ct_false(diff);
 }
 
 /** Load 32-byte big-endian number into field element */
@@ -45705,12 +51539,18 @@ FIO_IFUNC void fio___p256_scalar_from_bytes(fio___p256_scalar_s r,
   r[0] = fio_buf2u64_be(in + 24);
 }
 
-/** Check if scalar is zero */
+/** Public-value check: returns 1 if scalar is zero. */
 FIO_IFUNC int fio___p256_scalar_is_zero(const fio___p256_scalar_s a) {
   return (a[0] | a[1] | a[2] | a[3]) == 0;
 }
 
-/** Check if scalar >= n (curve order) */
+/** Secret-safe check: returns 1 if scalar is zero. */
+FIO_IFUNC int fio___p256_scalar_ct_is_zero(const fio___p256_scalar_s a) {
+  uint64_t diff = a[0] | a[1] | a[2] | a[3];
+  return (int)fio_ct_false(diff);
+}
+
+/** Public-value check: returns 1 if scalar >= n (curve order). */
 FIO_IFUNC int fio___p256_scalar_gte_n(const fio___p256_scalar_s a) {
   /* Compare from most significant limb */
   if (a[3] > FIO___P256_N[3])
@@ -45728,6 +51568,32 @@ FIO_IFUNC int fio___p256_scalar_gte_n(const fio___p256_scalar_s a) {
   if (a[0] >= FIO___P256_N[0])
     return 1;
   return 0;
+}
+
+/** Secret-safe check: returns 1 if scalar >= n (curve order). */
+FIO_IFUNC int fio___p256_scalar_ct_gte_n(const fio___p256_scalar_s a) {
+  uint64_t borrow = 0;
+  (void)fio_math_subc64(a[0], FIO___P256_N[0], 0, &borrow);
+  (void)fio_math_subc64(a[1], FIO___P256_N[1], borrow, &borrow);
+  (void)fio_math_subc64(a[2], FIO___P256_N[2], borrow, &borrow);
+  (void)fio_math_subc64(a[3], FIO___P256_N[3], borrow, &borrow);
+  return (int)(borrow ^ 1);
+}
+
+/** Secret-safe conditional scalar subtraction: a = cond ? a - n : a. */
+FIO_IFUNC void fio___p256_scalar_sub_n_if(fio___p256_scalar_s a,
+                                          uint64_t cond) {
+  uint64_t borrow = 0;
+  uint64_t s[4];
+  uint64_t mask = (uint64_t)0 - (cond & 1);
+  s[0] = fio_math_subc64(a[0], FIO___P256_N[0], 0, &borrow);
+  s[1] = fio_math_subc64(a[1], FIO___P256_N[1], borrow, &borrow);
+  s[2] = fio_math_subc64(a[2], FIO___P256_N[2], borrow, &borrow);
+  s[3] = fio_math_subc64(a[3], FIO___P256_N[3], borrow, &borrow);
+  a[0] = fio_ct_mux64(mask, s[0], a[0]);
+  a[1] = fio_ct_mux64(mask, s[1], a[1]);
+  a[2] = fio_ct_mux64(mask, s[2], a[2]);
+  a[3] = fio_ct_mux64(mask, s[3], a[3]);
 }
 
 /** Scalar reduction mod n using fio_math_div */
@@ -45761,7 +51627,23 @@ FIO_SFUNC void fio___p256_scalar_mul(fio___p256_scalar_s r,
                                      const fio___p256_scalar_s b) {
   uint64_t t[8] = {0};
 
-  /* Schoolbook multiplication */
+  /* Schoolbook multiplication with full carry propagation. */
+#if defined(__SIZEOF_INT128__)
+  for (int i = 0; i < 4; ++i) {
+    __uint128_t carry = 0;
+    for (int j = 0; j < 4; ++j) {
+      const int k = i + j;
+      __uint128_t sum = (__uint128_t)a[i] * b[j] + t[k] + carry;
+      t[k] = (uint64_t)sum;
+      carry = sum >> 64;
+    }
+    for (int k = i + 4; carry && k < 8; ++k) {
+      __uint128_t sum = (__uint128_t)t[k] + carry;
+      t[k] = (uint64_t)sum;
+      carry = sum >> 64;
+    }
+  }
+#else
   for (int i = 0; i < 4; ++i) {
     uint64_t carry = 0;
     for (int j = 0; j < 4; ++j) {
@@ -45772,8 +51654,13 @@ FIO_SFUNC void fio___p256_scalar_mul(fio___p256_scalar_s r,
       t[i + j] = fio_math_addc64(t[i + j], carry, 0, &c2);
       carry = hi + c1 + c2;
     }
-    t[i + 4] += carry;
+    for (int k = i + 4; carry && k < 8; ++k) {
+      uint64_t c = 0;
+      t[k] = fio_math_addc64(t[k], carry, 0, &c);
+      carry = c;
+    }
   }
+#endif
 
   fio___p256_scalar_reduce(r, t);
 }
@@ -45863,24 +51750,33 @@ FIO_IFUNC void fio___p256_point_to_jacobian(
   fio___p256_fe_one(j->z);
 }
 
+/** Return all-ones if field element is zero, zero otherwise. */
+FIO_IFUNC uint64_t fio___p256_fe_ct_is_zero_mask(const fio___p256_fe_s a) {
+  return (uint64_t)0 - (uint64_t)fio___p256_fe_ct_is_zero(a);
+}
+
+FIO_IFUNC void fio___p256_point_cswap(fio___p256_point_jacobian_s *a,
+                                      fio___p256_point_jacobian_s *b,
+                                      uint64_t swap);
+
 /** Convert Jacobian point to affine (x = X/Z², y = Y/Z³) */
 FIO_SFUNC void fio___p256_point_to_affine(
     fio___p256_point_affine_s *a,
     const fio___p256_point_jacobian_s *j) {
-  if (fio___p256_point_is_infinity(j)) {
-    fio___p256_fe_zero(a->x);
-    fio___p256_fe_zero(a->y);
-    return;
-  }
-
   fio___p256_fe_s z_inv, z_inv2, z_inv3;
 
+  /* Inverting Z=0 yields zero with this fixed-exponent inversion path, so
+   * infinity maps to the same affine (0, 0) result with no branch. */
   fio___p256_fe_inv(z_inv, j->z);
   fio___p256_fe_sqr(z_inv2, z_inv);
   fio___p256_fe_mul(z_inv3, z_inv2, z_inv);
 
   fio___p256_fe_mul(a->x, j->x, z_inv2);
   fio___p256_fe_mul(a->y, j->y, z_inv3);
+
+  fio_secure_zero(z_inv, sizeof(z_inv));
+  fio_secure_zero(z_inv2, sizeof(z_inv2));
+  fio_secure_zero(z_inv3, sizeof(z_inv3));
 }
 
 /**
@@ -45896,12 +51792,8 @@ FIO_SFUNC void fio___p256_point_to_affine(
  */
 FIO_SFUNC void fio___p256_point_double(fio___p256_point_jacobian_s *r,
                                        const fio___p256_point_jacobian_s *p) {
-  if (fio___p256_point_is_infinity(p)) {
-    fio___p256_point_set_infinity(r);
-    return;
-  }
-
   fio___p256_fe_s t1, t2, t3, t4, t5, yz;
+  fio___p256_point_jacobian_s generic, infinity, candidate;
 
   /* Save Y*Z early to handle aliasing (r == p) */
   fio___p256_fe_mul(yz, p->y, p->z);
@@ -45936,8 +51828,8 @@ FIO_SFUNC void fio___p256_point_double(fio___p256_point_jacobian_s *r,
   fio___p256_fe_sqr(t3, t2);
 
   /* X' = λ² - 2S */
-  fio___p256_fe_sub(r->x, t3, t5);
-  fio___p256_fe_sub(r->x, r->x, t5);
+  fio___p256_fe_sub(generic.x, t3, t5);
+  fio___p256_fe_sub(generic.x, generic.x, t5);
 
   /* t4 = Y⁴ */
   fio___p256_fe_sqr(t4, t4);
@@ -45948,14 +51840,30 @@ FIO_SFUNC void fio___p256_point_double(fio___p256_point_jacobian_s *r,
   fio___p256_fe_add(t4, t4, t4);
 
   /* t5 = S - X' */
-  fio___p256_fe_sub(t5, t5, r->x);
+  fio___p256_fe_sub(t5, t5, generic.x);
 
   /* Y' = λ(S - X') - 8Y⁴ */
-  fio___p256_fe_mul(r->y, t2, t5);
-  fio___p256_fe_sub(r->y, r->y, t4);
+  fio___p256_fe_mul(generic.y, t2, t5);
+  fio___p256_fe_sub(generic.y, generic.y, t4);
 
   /* Z' = 2YZ (using pre-computed value to handle aliasing) */
-  fio___p256_fe_add(r->z, yz, yz);
+  fio___p256_fe_add(generic.z, yz, yz);
+
+  /* Select infinity for infinity input without branching on p->z. */
+  fio___p256_point_set_infinity(&infinity);
+  *r = generic;
+  candidate = infinity;
+  fio___p256_point_cswap(r, &candidate, fio___p256_fe_ct_is_zero_mask(p->z) & 1);
+
+  fio_secure_zero(t1, sizeof(t1));
+  fio_secure_zero(t2, sizeof(t2));
+  fio_secure_zero(t3, sizeof(t3));
+  fio_secure_zero(t4, sizeof(t4));
+  fio_secure_zero(t5, sizeof(t5));
+  fio_secure_zero(yz, sizeof(yz));
+  fio_secure_zero(&generic, sizeof(generic));
+  fio_secure_zero(&infinity, sizeof(infinity));
+  fio_secure_zero(&candidate, sizeof(candidate));
 }
 
 /**
@@ -45967,12 +51875,9 @@ FIO_SFUNC void fio___p256_point_double(fio___p256_point_jacobian_s *r,
 FIO_SFUNC void fio___p256_point_add_mixed(fio___p256_point_jacobian_s *r,
                                           const fio___p256_point_jacobian_s *p,
                                           const fio___p256_point_affine_s *q) {
-  if (fio___p256_point_is_infinity(p)) {
-    fio___p256_point_to_jacobian(r, q);
-    return;
-  }
-
   fio___p256_fe_s t1, t2, t3, t4, t5, t6;
+  fio___p256_point_jacobian_s generic, doubled, infinity, q_jac, selected;
+  fio___p256_point_jacobian_s candidate;
 
   /* t1 = Z₁² */
   fio___p256_fe_sqr(t1, p->z);
@@ -45992,19 +51897,6 @@ FIO_SFUNC void fio___p256_point_add_mixed(fio___p256_point_jacobian_s *r,
   /* t4 = Y₂Z₁³ - Y₁ = R */
   fio___p256_fe_sub(t4, t4, p->y);
 
-  /* Check if points are equal or opposite */
-  if (fio___p256_fe_is_zero(t3)) {
-    if (fio___p256_fe_is_zero(t4)) {
-      /* Points are equal - double */
-      fio___p256_point_double(r, p);
-      return;
-    } else {
-      /* Points are opposite - result is infinity */
-      fio___p256_point_set_infinity(r);
-      return;
-    }
-  }
-
   /* t5 = H² */
   fio___p256_fe_sqr(t5, t3);
 
@@ -46014,24 +51906,63 @@ FIO_SFUNC void fio___p256_point_add_mixed(fio___p256_point_jacobian_s *r,
   /* t1 = X₁H² */
   fio___p256_fe_mul(t1, p->x, t5);
 
-  /* t2 = Y₁H³ (compute early to handle r == p aliasing) */
+  /* t2 = Y₁H³ */
   fio___p256_fe_mul(t2, p->y, t6);
 
-  /* Z₃ = Z₁H (compute early to handle r == p aliasing) */
-  fio___p256_fe_mul(r->z, p->z, t3);
+  /* Z₃ = Z₁H */
+  fio___p256_fe_mul(generic.z, p->z, t3);
 
   /* X₃ = R² - H³ - 2X₁H² */
-  fio___p256_fe_sqr(r->x, t4);
-  fio___p256_fe_sub(r->x, r->x, t6);
-  fio___p256_fe_sub(r->x, r->x, t1);
-  fio___p256_fe_sub(r->x, r->x, t1);
+  fio___p256_fe_sqr(generic.x, t4);
+  fio___p256_fe_sub(generic.x, generic.x, t6);
+  fio___p256_fe_sub(generic.x, generic.x, t1);
+  fio___p256_fe_sub(generic.x, generic.x, t1);
 
   /* t1 = X₁H² - X₃ */
-  fio___p256_fe_sub(t1, t1, r->x);
+  fio___p256_fe_sub(t1, t1, generic.x);
 
   /* Y₃ = R(X₁H² - X₃) - Y₁H³ */
-  fio___p256_fe_mul(r->y, t4, t1);
-  fio___p256_fe_sub(r->y, r->y, t2);
+  fio___p256_fe_mul(generic.y, t4, t1);
+  fio___p256_fe_sub(generic.y, generic.y, t2);
+
+  /* Compute all exceptional-case results unconditionally. */
+  fio___p256_point_double(&doubled, p);
+  fio___p256_point_set_infinity(&infinity);
+  fio___p256_point_to_jacobian(&q_jac, q);
+
+  /* Select the correct result without branching on point coordinates:
+   * - p infinity: q
+   * - H == 0 and R == 0: 2p
+   * - H == 0 and R != 0: infinity
+   * - otherwise: generic mixed-add result */
+  uint64_t p_inf_mask = fio___p256_fe_ct_is_zero_mask(p->z);
+  uint64_t h_zero_mask = fio___p256_fe_ct_is_zero_mask(t3);
+  uint64_t r_zero_mask = fio___p256_fe_ct_is_zero_mask(t4);
+  uint64_t not_p_inf_mask = ~p_inf_mask;
+  uint64_t equal_mask = not_p_inf_mask & h_zero_mask & r_zero_mask;
+  uint64_t opposite_mask = not_p_inf_mask & h_zero_mask & ~r_zero_mask;
+
+  selected = generic;
+  candidate = infinity;
+  fio___p256_point_cswap(&selected, &candidate, opposite_mask & 1);
+  candidate = doubled;
+  fio___p256_point_cswap(&selected, &candidate, equal_mask & 1);
+  candidate = q_jac;
+  fio___p256_point_cswap(&selected, &candidate, p_inf_mask & 1);
+  *r = selected;
+
+  fio_secure_zero(t1, sizeof(t1));
+  fio_secure_zero(t2, sizeof(t2));
+  fio_secure_zero(t3, sizeof(t3));
+  fio_secure_zero(t4, sizeof(t4));
+  fio_secure_zero(t5, sizeof(t5));
+  fio_secure_zero(t6, sizeof(t6));
+  fio_secure_zero(&generic, sizeof(generic));
+  fio_secure_zero(&doubled, sizeof(doubled));
+  fio_secure_zero(&infinity, sizeof(infinity));
+  fio_secure_zero(&q_jac, sizeof(q_jac));
+  fio_secure_zero(&selected, sizeof(selected));
+  fio_secure_zero(&candidate, sizeof(candidate));
 }
 
 /* (fio___p256_point_add_jacobian removed — ladder uses mixed add directly) */
@@ -46071,52 +52002,50 @@ FIO_IFUNC void fio___p256_point_cswap(fio___p256_point_jacobian_s *a,
  * execution. Every bit position performs exactly the same sequence of field
  * operations regardless of the scalar value, preventing timing side-channels.
  *
- * To avoid the "point at infinity" special case at the start of the ladder
- * (which would require a branch), we compute k' = k + 2n (twice the curve
- * order). Since 1 <= k < n and n > 2^255, we have k' = k + 2n > 2^256, so
- * bit 256 of k' is always 1. We initialize the ladder with that known leading
- * 1 and process the remaining 256 bits — giving the same result as k*P
- * because 2n*P = 2*(n*P) = 2*infinity = infinity, and infinity + k*P = k*P.
+ * The ladder starts from R[0] = infinity and R[1] = P, then processes exactly
+ * the 256 scalar bits from most-significant to least-significant. Do not use
+ * the old k + 2n shortcut: for scalars near n it can overflow the assumed
+ * 257-bit range and drop a high carry.
  *
- * Algorithm (257 bits, bit 256 always 1):
- *   k' = k + 2n  (257-bit value, bit 256 = 1 always)
- *   R[0] = P,  R[1] = 2P   (ladder state after consuming the leading 1)
+ * Algorithm (256 bits):
+ *   R[0] = infinity, R[1] = P
  *   for bit i from 255 down to 0:
- *     b = bit i of k'
+ *     b = bit i of k
  *     cswap(R[0], R[1], b)
- *     R[1] = R[0] + R[1]
- *     R[0] = 2 * R[0]
+ *     D = 2 * R[0]
+ *     P_sel = (b == 0) ? P : -P   (selected with masks, no branch)
+ *     R[1] = D + P_sel            (equivalent to old R[0] + old R[1])
+ *     R[0] = D
  *     cswap(R[0], R[1], b)
  *   result = R[0]
  *
- * The add step uses the mixed Jacobian+affine addition with the input point P
- * (kept in affine form). After the first cswap, the invariant R[1] = R[0] ± P
- * allows computing R[0]+R[1] = 2*R[0] ± P using one double and one mixed add.
- * The sign is determined by the current bit b (branchless y-coordinate select).
+ * After the first cswap, the invariant R[1] = R[0] ± P allows computing
+ * R[0] + R[1] as 2*R[0] ± P using one double and one mixed add. The sign is
+ * determined by the current bit b through branchless y-coordinate selection.
  * This avoids field inversion entirely: 1 double + 1 mixed add per bit.
  */
 FIO_SFUNC void fio___p256_point_mul(fio___p256_point_jacobian_s *r,
                                     const fio___p256_scalar_s k,
                                     const fio___p256_point_affine_s *p) {
-  /* Compute k' = k + 2n.
-   * 2n in 64-bit limbs (little-endian): shift n left by 1.
-   * Since n > 2^255, 2n > 2^256, so bit 256 of k' is always 1. */
-  uint64_t carry = 0;
-  uint64_t kp[5];
-  kp[0] = fio_math_addc64(k[0], FIO___P256_N[0] << 1, 0, &carry);
-  kp[1] = fio_math_addc64(k[1],
-                          (FIO___P256_N[1] << 1) | (FIO___P256_N[0] >> 63),
-                          carry,
-                          &carry);
-  kp[2] = fio_math_addc64(k[2],
-                          (FIO___P256_N[2] << 1) | (FIO___P256_N[1] >> 63),
-                          carry,
-                          &carry);
-  kp[3] = fio_math_addc64(k[3],
-                          (FIO___P256_N[3] << 1) | (FIO___P256_N[2] >> 63),
-                          carry,
-                          &carry);
-  kp[4] = (FIO___P256_N[3] >> 63) + carry; /* bit 256: always 1 */
+  /* Constant-time Montgomery ladder over the 256 scalar bits of k.
+   *
+   * The previous k' = k + 2n shortcut assumed bit 256 of k' was always the
+   * leading 1, but k + 2n can exceed 2^257 for scalars near n.  That caused
+   * the ladder to drop a high carry and produced wrong results for many
+   * random scalars (small scalars like 1 and 2 happened to work).
+   *
+   * Instead we start from the true scalar k with the standard initialization:
+   *   R[0] = infinity, R[1] = P
+   * and process bits 255 down to 0.  point_add_mixed handles the infinity
+   * case, so the first iterations where k's top bits are zero are safe.
+   *
+   * Invariant after the first cswap (and before the second):
+   *   b=0: R[0] = a*P, R[1] = (a+1)*P  → R[1] = R[0] + P
+   *   b=1: R[0] = (a+1)*P, R[1] = a*P  → R[1] = R[0] - P
+   *
+   * We compute D = 2*R[0] and then R[1] = D + P_sel where P_sel is P for
+   * b=0 and -P for b=1, selected branchlessly.
+   */
 
   /* Precompute -P (same x, negated y) for the b=1 case */
   fio___p256_point_affine_s P_neg;
@@ -46124,24 +52053,14 @@ FIO_SFUNC void fio___p256_point_mul(fio___p256_point_jacobian_s *r,
   fio___p256_fe_neg(P_neg.y, p->y);
 
   fio___p256_point_jacobian_s R0, R1, D;
+  fio___p256_point_affine_s P_sel;
 
-  /* Initialize ladder: R[0] = P, R[1] = 2P
-   * Corresponds to consuming the leading 1 (bit 256 of k'). */
-  fio___p256_point_to_jacobian(&R0, p);
-  fio___p256_point_double(&R1, &R0);
+  /* Initialize ladder: R[0] = infinity, R[1] = P */
+  fio___p256_point_set_infinity(&R0);
+  fio___p256_point_to_jacobian(&R1, p);
 
-  /* Process bits 255 down to 0 of k'.
-   *
-   * Ladder invariant (after first cswap, before second cswap):
-   *   b=0: R[0] = a*P, R[1] = (a+1)*P  → R[1] = R[0] + P
-   *   b=1: R[0] = (a+1)*P, R[1] = a*P  → R[1] = R[0] - P
-   *
-   * Therefore R[0] + R[1] = 2*R[0] + (b==0 ? P : -P).
-   * We compute: D = 2*R[0], sum = D + P_sel (mixed add).
-   * P_sel is chosen branchlessly from {P, -P} based on b.
-   */
   for (int i = 255; i >= 0; --i) {
-    uint64_t b = (kp[i / 64] >> (i % 64)) & 1ULL;
+    uint64_t b = (k[i / 64] >> (i % 64)) & 1ULL;
 
     /* First cswap: if b=1, swap so R[0] is the "larger" register */
     fio___p256_point_cswap(&R0, &R1, b);
@@ -46152,7 +52071,6 @@ FIO_SFUNC void fio___p256_point_mul(fio___p256_point_jacobian_s *r,
     /* Constant-time select P or -P based on b:
      * mask = 0 if b=0 (use P), ~0 if b=1 (use -P).
      * x-coordinate is the same for P and -P. */
-    fio___p256_point_affine_s P_sel;
     uint64_t bmask = (uint64_t)0 - b;
     fio___p256_fe_copy(P_sel.x, p->x);
     P_sel.y[0] = (p->y[0] & ~bmask) | (P_neg.y[0] & bmask);
@@ -46171,6 +52089,12 @@ FIO_SFUNC void fio___p256_point_mul(fio___p256_point_jacobian_s *r,
   }
 
   *r = R0;
+
+  fio_secure_zero(&P_neg, sizeof(P_neg));
+  fio_secure_zero(&P_sel, sizeof(P_sel));
+  fio_secure_zero(&R0, sizeof(R0));
+  fio_secure_zero(&R1, sizeof(R1));
+  fio_secure_zero(&D, sizeof(D));
 }
 
 /**
@@ -46480,16 +52404,37 @@ SFUNC int fio_ecdsa_p256_sign(uint8_t *sig,
   if (!sig || !sig_len || !msg_hash || !secret_key || sig_capacity < 72)
     return -1;
 
-  fio___p256_scalar_s d, e, k, r_scalar, s_scalar, tmp;
+  int rc = -1;
+  fio___p256_scalar_s d = {0}, e = {0}, k = {0}, k_inv = {0};
+  fio___p256_scalar_s r_scalar = {0}, s_scalar = {0}, tmp = {0};
+  fio___p256_point_affine_s g = {0}, R_aff = {0};
+  fio___p256_point_jacobian_s R_jac = {0};
+  uint8_t k_bytes[32] = {0};
+  uint8_t r_bytes[32] = {0}, s_bytes[32] = {0};
+  uint8_t r_der[35] = {0}, s_der[35] = {0};
+
+#define FIO___P256_SIGN_CLEAR_ATTEMPT()                                        \
+  do {                                                                         \
+    fio_secure_zero(k, sizeof(k));                                             \
+    fio_secure_zero(k_inv, sizeof(k_inv));                                     \
+    fio_secure_zero(r_scalar, sizeof(r_scalar));                               \
+    fio_secure_zero(s_scalar, sizeof(s_scalar));                               \
+    fio_secure_zero(tmp, sizeof(tmp));                                         \
+    fio_secure_zero(k_bytes, sizeof(k_bytes));                                 \
+    fio_secure_zero(r_bytes, sizeof(r_bytes));                                 \
+    fio_secure_zero(s_bytes, sizeof(s_bytes));                                 \
+    fio_secure_zero(r_der, sizeof(r_der));                                     \
+    fio_secure_zero(s_der, sizeof(s_der));                                     \
+    fio_secure_zero(&R_jac, sizeof(R_jac));                                    \
+    fio_secure_zero(&R_aff, sizeof(R_aff));                                    \
+  } while (0)
 
   /* Load secret key as scalar d */
   fio___p256_scalar_from_bytes(d, secret_key);
 
   /* Validate d: 0 < d < n */
-  if (fio___p256_scalar_is_zero(d) || fio___p256_scalar_gte_n(d)) {
-    fio_secure_zero(d, sizeof(d));
-    return -1;
-  }
+  if (fio___p256_scalar_ct_is_zero(d) | fio___p256_scalar_ct_gte_n(d))
+    goto cleanup;
 
   /* Load message hash as scalar e */
   fio___p256_scalar_from_bytes(e, msg_hash);
@@ -46503,142 +52448,98 @@ SFUNC int fio_ecdsa_p256_sign(uint8_t *sig,
     e[3] = fio_math_subc64(e[3], FIO___P256_N[3], borrow, &borrow);
   }
 
-  /* Generate random k and compute signature */
-  /* Try up to 100 times to get valid k (should succeed on first try) */
-  uint8_t k_bytes[32];
-  uint8_t r_bytes[32], s_bytes[32];
+  fio___p256_fe_copy(g.x, FIO___P256_GX);
+  fio___p256_fe_copy(g.y, FIO___P256_GY);
 
+  /* Generate random k and compute signature. */
   for (int attempts = 0; attempts < 100; ++attempts) {
-    /* Generate random k */
+    /* Generate random nonce k in the valid scalar range 0 < k < n. */
     do {
       fio_rand_bytes(k_bytes, 32);
-    } while (!fio_buf2u64u(k_bytes) || !fio_buf2u64u(k_bytes + 8) ||
-             !fio_buf2u64u(k_bytes + 16) || !fio_buf2u64u(k_bytes + 24));
-    fio___p256_scalar_from_bytes(k, k_bytes);
-
-    /* Ensure 0 < k < n */
-    if (fio___p256_scalar_is_zero(k) || fio___p256_scalar_gte_n(k))
-      continue;
+      fio___p256_scalar_from_bytes(k, k_bytes);
+    } while (fio___p256_scalar_ct_is_zero(k) |
+             fio___p256_scalar_ct_gte_n(k));
 
     /* Compute R = k * G */
-    fio___p256_point_affine_s g;
-    fio___p256_fe_copy(g.x, FIO___P256_GX);
-    fio___p256_fe_copy(g.y, FIO___P256_GY);
-
-    fio___p256_point_jacobian_s R_jac;
     fio___p256_point_mul(&R_jac, k, &g);
 
-    if (fio___p256_point_is_infinity(&R_jac))
+    if (fio___p256_point_is_infinity(&R_jac)) {
+      FIO___P256_SIGN_CLEAR_ATTEMPT();
       continue;
+    }
 
     /* Convert R to affine */
-    fio___p256_point_affine_s R_aff;
     fio___p256_point_to_affine(&R_aff, &R_jac);
 
     /* r = R.x mod n */
     fio___p256_fe_to_bytes(r_bytes, R_aff.x);
     fio___p256_scalar_from_bytes(r_scalar, r_bytes);
 
-    /* Reduce r mod n if needed */
-    while (fio___p256_scalar_gte_n(r_scalar)) {
-      uint64_t borrow = 0;
-      r_scalar[0] = fio_math_subc64(r_scalar[0], FIO___P256_N[0], 0, &borrow);
-      r_scalar[1] =
-          fio_math_subc64(r_scalar[1], FIO___P256_N[1], borrow, &borrow);
-      r_scalar[2] =
-          fio_math_subc64(r_scalar[2], FIO___P256_N[2], borrow, &borrow);
-      r_scalar[3] =
-          fio_math_subc64(r_scalar[3], FIO___P256_N[3], borrow, &borrow);
+    /* Reduce r mod n if needed. R.x < p < 2n, so one subtract is enough. */
+    fio___p256_scalar_sub_n_if(r_scalar,
+                               (uint64_t)fio___p256_scalar_ct_gte_n(r_scalar));
+
+    if (fio___p256_scalar_ct_is_zero(r_scalar)) {
+      FIO___P256_SIGN_CLEAR_ATTEMPT();
+      continue;
     }
 
-    /* If r == 0, try again */
-    if (fio___p256_scalar_is_zero(r_scalar))
-      continue;
-
     /* Compute s = k^(-1) * (e + r*d) mod n */
-    /* First: r*d mod n */
     fio___p256_scalar_mul(tmp, r_scalar, d);
 
-    /* Then: e + r*d mod n */
-    /* Add e to tmp */
     uint64_t carry = 0;
     tmp[0] = fio_math_addc64(tmp[0], e[0], 0, &carry);
     tmp[1] = fio_math_addc64(tmp[1], e[1], carry, &carry);
     tmp[2] = fio_math_addc64(tmp[2], e[2], carry, &carry);
     tmp[3] = fio_math_addc64(tmp[3], e[3], carry, &carry);
 
-    /* Reduce mod n if needed */
-    while (carry || fio___p256_scalar_gte_n(tmp)) {
-      uint64_t borrow = 0;
-      tmp[0] = fio_math_subc64(tmp[0], FIO___P256_N[0], 0, &borrow);
-      tmp[1] = fio_math_subc64(tmp[1], FIO___P256_N[1], borrow, &borrow);
-      tmp[2] = fio_math_subc64(tmp[2], FIO___P256_N[2], borrow, &borrow);
-      tmp[3] = fio_math_subc64(tmp[3], FIO___P256_N[3], borrow, &borrow);
-      carry = 0;
-    }
+    /* e and r*d are each < n, so one subtract is enough. */
+    fio___p256_scalar_sub_n_if(tmp,
+                               carry |
+                                   (uint64_t)fio___p256_scalar_ct_gte_n(tmp));
 
-    /* Compute k^(-1) mod n */
-    fio___p256_scalar_s k_inv;
     fio___p256_scalar_inv(k_inv, k);
-
-    /* s = k^(-1) * (e + r*d) mod n */
     fio___p256_scalar_mul(s_scalar, k_inv, tmp);
 
-    /* If s == 0, try again */
-    if (fio___p256_scalar_is_zero(s_scalar))
+    if (fio___p256_scalar_ct_is_zero(s_scalar)) {
+      FIO___P256_SIGN_CLEAR_ATTEMPT();
       continue;
+    }
 
-    /* Convert r and s to bytes (big-endian) */
-    /* r_scalar to r_bytes */
     fio_u2buf64_be(r_bytes, r_scalar[3]);
     fio_u2buf64_be(r_bytes + 8, r_scalar[2]);
     fio_u2buf64_be(r_bytes + 16, r_scalar[1]);
     fio_u2buf64_be(r_bytes + 24, r_scalar[0]);
 
-    /* s_scalar to s_bytes */
     fio_u2buf64_be(s_bytes, s_scalar[3]);
     fio_u2buf64_be(s_bytes + 8, s_scalar[2]);
     fio_u2buf64_be(s_bytes + 16, s_scalar[1]);
     fio_u2buf64_be(s_bytes + 24, s_scalar[0]);
 
-    /* Encode as DER: SEQUENCE { r INTEGER, s INTEGER } */
-    uint8_t r_der[35], s_der[35];
-    FIO_MEMSET(r_der, 0, sizeof(r_der));
-    FIO_MEMSET(s_der, 0, sizeof(s_der));
     size_t r_der_len = fio___p256_encode_der_integer(r_der, r_bytes);
     size_t s_der_len = fio___p256_encode_der_integer(s_der, s_bytes);
-
     size_t seq_content_len = r_der_len + s_der_len;
-    size_t total_len =
-        2 + seq_content_len; /* SEQUENCE tag + length + content */
+    size_t total_len = 2 + seq_content_len;
 
-    if (total_len > sig_capacity) {
-      fio_secure_zero(d, sizeof(d));
-      fio_secure_zero(k, sizeof(k));
-      fio_secure_zero(k_inv, sizeof(k_inv));
-      return -1;
-    }
+    if (total_len > sig_capacity)
+      goto cleanup;
 
-    /* Write SEQUENCE header */
-    sig[0] = 0x30; /* SEQUENCE tag */
+    sig[0] = 0x30;
     sig[1] = (uint8_t)seq_content_len;
     FIO_MEMCPY(sig + 2, r_der, r_der_len);
     FIO_MEMCPY(sig + 2 + r_der_len, s_der, s_der_len);
-
     *sig_len = total_len;
-
-    /* Clear sensitive data */
-    fio_secure_zero(d, sizeof(d));
-    fio_secure_zero(k, sizeof(k));
-    fio_secure_zero(k_inv, sizeof(k_inv));
-    fio_secure_zero(k_bytes, sizeof(k_bytes));
-
-    return 0;
+    rc = 0;
+    goto cleanup;
   }
 
-  /* Failed to generate valid signature after 100 attempts */
+cleanup:
   fio_secure_zero(d, sizeof(d));
-  return -1;
+  fio_secure_zero(e, sizeof(e));
+  fio_secure_zero(&g, sizeof(g));
+  FIO___P256_SIGN_CLEAR_ATTEMPT();
+#undef FIO___P256_SIGN_CLEAR_ATTEMPT
+  return rc;
 }
 
 /* *****************************************************************************
@@ -46759,7 +52660,10 @@ SFUNC int fio_p256_keypair(uint8_t secret_key[32], uint8_t public_key[65]) {
   if (!secret_key || !public_key)
     return -1;
 
-  fio___p256_scalar_s k;
+  int rc = -1;
+  fio___p256_scalar_s k = {0};
+  fio___p256_point_affine_s g = {0}, pub_aff = {0};
+  fio___p256_point_jacobian_s pub_jac = {0};
 
   /* Generate random scalar and ensure 0 < k < n */
   for (int attempts = 0; attempts < 100; ++attempts) {
@@ -46770,23 +52674,21 @@ SFUNC int fio_p256_keypair(uint8_t secret_key[32], uint8_t public_key[65]) {
     fio___p256_scalar_from_bytes(k, secret_key);
 
     /* Check k is not zero and k < n */
-    if (!fio___p256_scalar_is_zero(k) && !fio___p256_scalar_gte_n(k))
+    if (!fio___p256_scalar_ct_is_zero(k) && !fio___p256_scalar_ct_gte_n(k)) {
+      rc = 0;
       break;
-
-    if (attempts == 99)
-      return -1; /* Failed to generate valid scalar */
+    }
   }
 
+  if (rc != 0)
+    goto cleanup;
+
   /* Compute public key = k * G */
-  fio___p256_point_affine_s g;
   fio___p256_fe_copy(g.x, FIO___P256_GX);
   fio___p256_fe_copy(g.y, FIO___P256_GY);
-
-  fio___p256_point_jacobian_s pub_jac;
   fio___p256_point_mul(&pub_jac, k, &g);
 
   /* Convert to affine */
-  fio___p256_point_affine_s pub_aff;
   fio___p256_point_to_affine(&pub_aff, &pub_jac);
 
   /* Serialize: 0x04 || x || y */
@@ -46794,10 +52696,14 @@ SFUNC int fio_p256_keypair(uint8_t secret_key[32], uint8_t public_key[65]) {
   fio___p256_fe_to_bytes(public_key + 1, pub_aff.x);
   fio___p256_fe_to_bytes(public_key + 33, pub_aff.y);
 
-  /* Clear sensitive data */
+cleanup:
+  if (rc != 0)
+    fio_secure_zero(secret_key, 32);
   fio_secure_zero(k, sizeof(k));
-
-  return 0;
+  fio_secure_zero(&g, sizeof(g));
+  fio_secure_zero(&pub_jac, sizeof(pub_jac));
+  fio_secure_zero(&pub_aff, sizeof(pub_aff));
+  return rc;
 }
 
 SFUNC int fio_p256_shared_secret(uint8_t shared_secret[32],
@@ -46807,63 +52713,60 @@ SFUNC int fio_p256_shared_secret(uint8_t shared_secret[32],
   if (!shared_secret || !secret_key || !their_public_key)
     return -1;
 
-  fio___p256_point_affine_s their_point;
+  int rc = -1;
+  fio___p256_point_affine_s their_point = {0}, result_aff = {0};
+  fio___p256_point_jacobian_s result_jac = {0};
+  fio___p256_scalar_s k = {0};
 
   /* Parse their public key */
   if (their_public_key_len == 65) {
     /* Uncompressed: 0x04 || x || y */
     if (their_public_key[0] != 0x04)
-      return -1;
+      goto cleanup;
     fio___p256_fe_from_bytes(their_point.x, their_public_key + 1);
     fio___p256_fe_from_bytes(their_point.y, their_public_key + 33);
   } else if (their_public_key_len == 33) {
     /* Compressed: 0x02/0x03 || x */
     if (fio___p256_point_decompress(&their_point, their_public_key) != 0)
-      return -1;
+      goto cleanup;
   } else {
-    return -1; /* Invalid length */
+    goto cleanup;
   }
 
   /* Validate point is on curve */
   if (fio___p256_point_validate(&their_point) != 0)
-    return -1;
+    goto cleanup;
 
-  /* Load our secret key as scalar */
-  fio___p256_scalar_s k;
+  /* Load and validate our secret scalar: 0 < k < n */
   fio___p256_scalar_from_bytes(k, secret_key);
-
-  /* Validate scalar: 0 < k < n */
-  if (fio___p256_scalar_is_zero(k) || fio___p256_scalar_gte_n(k)) {
-    fio_secure_zero(k, sizeof(k));
-    return -1;
-  }
+  if (fio___p256_scalar_ct_is_zero(k) | fio___p256_scalar_ct_gte_n(k))
+    goto cleanup;
 
   /* Compute shared = k * their_point */
-  fio___p256_point_jacobian_s result_jac;
   fio___p256_point_mul(&result_jac, k, &their_point);
 
   /* Check for point at infinity (shouldn't happen with valid inputs) */
-  if (fio___p256_point_is_infinity(&result_jac)) {
-    fio_secure_zero(k, sizeof(k));
-    return -1;
-  }
+  if (fio___p256_point_is_infinity(&result_jac))
+    goto cleanup;
 
   /* Convert to affine and extract x-coordinate */
-  fio___p256_point_affine_s result_aff;
   fio___p256_point_to_affine(&result_aff, &result_jac);
   fio___p256_fe_to_bytes(shared_secret, result_aff.x);
-
-  /* Clear sensitive data */
-  fio_secure_zero(k, sizeof(k));
-  fio_secure_zero(&result_jac, sizeof(result_jac));
-  fio_secure_zero(&result_aff, sizeof(result_aff));
 
   /* Check for all-zero output (low-order point attack) */
   uint8_t zero_check = 0;
   for (int i = 0; i < 32; ++i)
     zero_check |= shared_secret[i];
+  rc = zero_check ? 0 : -1;
 
-  return zero_check ? 0 : -1;
+cleanup:
+  if (rc != 0)
+    fio_secure_zero(shared_secret, 32);
+  fio_secure_zero(k, sizeof(k));
+  fio_secure_zero(&their_point, sizeof(their_point));
+  fio_secure_zero(&result_jac, sizeof(result_jac));
+  fio_secure_zero(&result_aff, sizeof(result_aff));
+  return rc;
 }
 
 /* *****************************************************************************
@@ -49670,7 +55573,7 @@ Module Cleanup
 
 
 
-                    RSA Signature Verification for TLS 1.3
+                    RSA Signature Verification and Signing for TLS 1.3
                          (PKCS#1 v1.5 and RSA-PSS)
 
 
@@ -49738,14 +55641,31 @@ typedef struct {
  * The modulus (n) and private exponent (d) are stored as big-endian byte
  * arrays. This matches the DER encoding used in PKCS#8 private keys.
  *
- * Note: This is a minimal representation. CRT parameters (p, q, dP, dQ, qInv)
- * are not used - we compute m^d mod n directly.
+ * Optional CRT parameters (p, q, dP, dQ, qInv) and the public exponent (e)
+ * may be provided. When CRT parameters are available, signing uses CRT with
+ * message blinding for better side-channel resistance. When only n and d are
+ * available, signing falls back to a non-CRT (still constant-time) path.
+ *
+ * All optional fields are indicated by a non-zero length. Missing CRT
+ * parameters may be derived from p, q, and d when p and q are present.
  */
 typedef struct {
   const uint8_t *n; /**< Modulus (big-endian) */
   size_t n_len;     /**< Modulus length in bytes (256, 384, or 512) */
   const uint8_t *d; /**< Private exponent (big-endian) */
   size_t d_len;     /**< Private exponent length in bytes */
+  const uint8_t *e; /**< Public exponent (big-endian), optional, for blinding */
+  size_t e_len;
+  const uint8_t *p; /**< Prime p (big-endian), optional, for CRT */
+  size_t p_len;
+  const uint8_t *q; /**< Prime q (big-endian), optional, for CRT */
+  size_t q_len;
+  const uint8_t *dP; /**< d mod (p-1) (big-endian), optional, for CRT */
+  size_t dP_len;
+  const uint8_t *dQ; /**< d mod (q-1) (big-endian), optional, for CRT */
+  size_t dQ_len;
+  const uint8_t *qInv; /**< q^-1 mod p (big-endian), optional, for CRT */
+  size_t qInv_len;
 } fio_rsa_privkey_s;
 
 /* *****************************************************************************
@@ -49964,6 +55884,14 @@ FIO_SFUNC void fio___rsa_words_to_bytes(uint8_t *bytes,
   }
 }
 
+/** Strip DER INTEGER sign-extension zero bytes from big-endian input. */
+FIO_IFUNC void fio___rsa_trim_be(const uint8_t **bytes, size_t *byte_len) {
+  while (*byte_len > 1 && **bytes == 0) {
+    ++(*bytes);
+    --(*byte_len);
+  }
+}
+
 /** Compare two big integers. Returns: <0 if a<b, 0 if a==b, >0 if a>b */
 FIO_SFUNC int fio___rsa_cmp(const uint64_t *a,
                             const uint64_t *b,
@@ -49978,80 +55906,384 @@ FIO_SFUNC int fio___rsa_cmp(const uint64_t *a,
   return 0;
 }
 
+/** Constant-time conditional swap of two word arrays. */
+FIO_SFUNC void fio___rsa_cswap_words(uint64_t *a,
+                                     uint64_t *b,
+                                     uint64_t swap,
+                                     size_t word_count) {
+  const uint64_t mask = (uint64_t)0 - (swap & 1);
+  for (size_t i = 0; i < word_count; ++i) {
+    const uint64_t t = mask & (a[i] ^ b[i]);
+    a[i] ^= t;
+    b[i] ^= t;
+  }
+}
+
+/** Modular inverse of an odd 64-bit value modulo 2^64 (Newton-Raphson). */
+FIO_SFUNC uint64_t fio___rsa_inv_mod_2pow64(uint64_t a) {
+  /* a must be odd. */
+  uint64_t x = 1;
+  for (int i = 0; i < 8; ++i) {
+    x = x * (2 - a * x);
+  }
+  return x;
+}
+
+/* Forward declarations for helpers defined below. */
+FIO_SFUNC void fio___rsa_mont_mul(uint64_t *result,
+                                  const uint64_t *a,
+                                  const uint64_t *b,
+                                  const uint64_t *n,
+                                  const uint64_t *n_prime,
+                                  size_t word_count);
+FIO_SFUNC void fio___rsa_mont_setup(const uint64_t *n,
+                                    size_t word_count,
+                                    uint64_t *n_prime,
+                                    uint64_t *r2modn);
+FIO_SFUNC void fio___rsa_mul_mod(uint64_t *result,
+                                 const uint64_t *a,
+                                 const uint64_t *b,
+                                 const uint64_t *mod,
+                                 size_t mod_word_count);
+
+/** Constant-time less-than: returns 1 if a < b, else 0. */
+
+FIO_SFUNC uint64_t fio___rsa_ct_lt(const uint64_t *a,
+                                   const uint64_t *b,
+                                   size_t word_count) {
+  uint64_t lt = 0;
+  uint64_t eq = (uint64_t)0 - 1; /* ~0 */
+  for (size_t i = word_count; i > 0;) {
+    --i;
+    uint64_t a_i = a[i];
+    uint64_t b_i = b[i];
+    uint64_t diff = a_i ^ b_i;
+    uint64_t borrow = 0;
+    (void)fio_math_subc64(a_i, b_i, 0, &borrow); /* borrow=1 iff a_i < b_i */
+    lt |= (eq & borrow);
+    eq &= (uint64_t)0 - (diff == 0);
+  }
+  return lt & 1;
+}
+
+/**
+ * Constant-time reduction of a value that is smaller than mod^2.
+ *
+ * On input, m_full has full_word_count words and is known to satisfy
+ * m_full < mod^2 (e.g. the RSA message representative m and mod = p or q).
+ * The result is written to out (mod_word_count words) and satisfies
+ * out = m_full mod mod.
+ */
+FIO_SFUNC void fio___rsa_reduce_mod(uint64_t *out,
+                                    const uint64_t *m_full,
+                                    const uint64_t *mod,
+                                    size_t mod_word_count,
+                                    size_t full_word_count) {
+  uint64_t n_prime[FIO_RSA_MAX_WORDS];
+  uint64_t r2modn[FIO_RSA_MAX_WORDS];
+  fio___rsa_mont_setup(mod, mod_word_count, n_prime, r2modn);
+
+  /* m_full = m_low + m_high * R where R = 2^(64*mod_word_count).
+   * m_high may be shorter than mod_word_count words. */
+  uint64_t m_high[FIO_RSA_MAX_WORDS];
+  FIO_MEMSET(m_high, 0, sizeof(m_high));
+  if (full_word_count > mod_word_count) {
+    size_t high_words = full_word_count - mod_word_count;
+    if (high_words > mod_word_count)
+      high_words = mod_word_count;
+    FIO_MEMCPY(m_high, m_full + mod_word_count,
+               high_words * sizeof(uint64_t));
+  }
+
+  /* Montgomery multiplication below expects operands in normal form (< mod).
+   * Since mod has its top bit set for RSA primes, m_high < R < 2*mod, so one
+   * branchless conditional subtraction is sufficient. */
+  uint64_t m_high_sub[FIO_RSA_MAX_WORDS];
+  uint64_t m_high_borrow = fio_math_sub(m_high_sub, m_high, mod, mod_word_count);
+  uint64_t use_m_high_sub = (uint64_t)0 - (m_high_borrow ^ 1);
+  uint64_t use_m_high = (uint64_t)0 - m_high_borrow;
+  for (size_t i = 0; i < mod_word_count; ++i)
+    m_high[i] = (m_high_sub[i] & use_m_high_sub) | (m_high[i] & use_m_high);
+
+  /* Compute R mod mod = 2^(64*mod_word_count) mod mod.  mod is public, so
+   * the variable-time division is acceptable. */
+  uint64_t R_ext[FIO_RSA_MAX_WORDS * 2];
+  uint64_t mod_ext[FIO_RSA_MAX_WORDS * 2];
+  uint64_t R_mod_mod[FIO_RSA_MAX_WORDS];
+  FIO_MEMSET(R_ext, 0, sizeof(R_ext));
+  FIO_MEMSET(mod_ext, 0, sizeof(mod_ext));
+  FIO_MEMSET(R_mod_mod, 0, sizeof(R_mod_mod));
+  R_ext[mod_word_count] = 1;
+  FIO_MEMCPY(mod_ext, mod, mod_word_count * sizeof(uint64_t));
+  fio_math_div(NULL, R_mod_mod, R_ext, mod_ext, mod_word_count * 2);
+
+  /* out = m_high * (R mod mod) + m_low  (mod mod).
+   * This is correct because m = m_low + m_high * R.  If the low-word add
+   * carries, account for the extra R by adding R mod mod branchlessly. */
+  fio___rsa_mul_mod(out, m_high, R_mod_mod, mod, mod_word_count);
+  uint64_t low_carry = fio_math_add(out, out, m_full, mod_word_count);
+  uint64_t carry_mask = (uint64_t)0 - low_carry;
+  uint64_t carry_add[FIO_RSA_MAX_WORDS];
+  for (size_t i = 0; i < mod_word_count; ++i)
+    carry_add[i] = R_mod_mod[i] & carry_mask;
+  (void)fio_math_add(out, out, carry_add, mod_word_count);
+
+  /* For RSA primes R < 2*mod, so the value is < 2*mod after carry handling.
+   * Two conditional subtractions are kept for conservative normalization. */
+  for (int pass = 0; pass < 2; ++pass) {
+    uint64_t sub[FIO_RSA_MAX_WORDS];
+    uint64_t borrow = fio_math_sub(sub, out, mod, mod_word_count);
+    uint64_t use_sub = (uint64_t)0 - (borrow ^ 1);
+    uint64_t use_out = (uint64_t)0 - borrow;
+    for (size_t i = 0; i < mod_word_count; ++i) {
+      out[i] = (sub[i] & use_sub) | (out[i] & use_out);
+    }
+  }
+
+  fio_secure_zero(R_ext, sizeof(R_ext));
+  fio_secure_zero(mod_ext, sizeof(mod_ext));
+  fio_secure_zero(R_mod_mod, sizeof(R_mod_mod));
+  fio_secure_zero(m_high, sizeof(m_high));
+  fio_secure_zero(m_high_sub, sizeof(m_high_sub));
+  fio_secure_zero(carry_add, sizeof(carry_add));
+}
+
+/**
+ * Generate a random odd value in [1, mod-1] where mod is odd.
+ *
+ * The output is mod_word_count little-endian words.  The value is reduced
+ * modulo mod in constant time and then forced odd, so it is always in the
+ * required range and never zero.
+ */
+FIO_SFUNC void fio___rsa_random_mod(uint64_t *out,
+                                    const uint64_t *mod,
+                                    size_t mod_word_count) {
+  uint8_t bytes[FIO_RSA_MAX_BYTES];
+  size_t byte_len = mod_word_count * sizeof(uint64_t);
+
+  if (fio_rand_bytes_secure(bytes, byte_len) != 0)
+    fio_rand_bytes(bytes, byte_len);
+
+  fio___rsa_bytes_to_words(out, mod_word_count, bytes, byte_len);
+
+  /* Reduce out modulo mod in constant time: out = out - mod if out >= mod. */
+  uint64_t sub[FIO_RSA_MAX_WORDS];
+  uint64_t borrow = fio_math_sub(sub, out, mod, mod_word_count);
+  uint64_t use_sub = (uint64_t)0 - (borrow ^ 1);
+  uint64_t use_out = (uint64_t)0 - borrow;
+  for (size_t i = 0; i < mod_word_count; ++i)
+    out[i] = (sub[i] & use_sub) | (out[i] & use_out);
+
+  /* Force odd and non-zero.  If mod-1 was even, the OR can produce mod;
+   * subtract mod branchlessly in that case and map the zero result to one. */
+  out[0] |= 1;
+  borrow = fio_math_sub(sub, out, mod, mod_word_count);
+  use_sub = (uint64_t)0 - (borrow ^ 1);
+  use_out = (uint64_t)0 - borrow;
+  uint64_t diff = 0;
+  for (size_t i = 0; i < mod_word_count; ++i) {
+    out[i] = (sub[i] & use_sub) | (out[i] & use_out);
+    diff |= out[i];
+  }
+  out[0] |= (uint64_t)fio_ct_false(diff);
+
+  fio_secure_zero(bytes, sizeof(bytes));
+  fio_secure_zero(sub, sizeof(sub));
+}
+
+/**
+ * Modular multiplication in normal form using Montgomery reduction.
+ *
+ * result = a * b mod mod.  a and b are in normal form.  The computation is
+ * constant-time with respect to the values of a and b.
+ */
+FIO_SFUNC void fio___rsa_mul_mod(uint64_t *result,
+                                 const uint64_t *a,
+                                 const uint64_t *b,
+                                 const uint64_t *mod,
+                                 size_t mod_word_count) {
+  uint64_t n_prime[FIO_RSA_MAX_WORDS];
+  uint64_t r2modn[FIO_RSA_MAX_WORDS];
+  fio___rsa_mont_setup(mod, mod_word_count, n_prime, r2modn);
+
+  uint64_t a_mont[FIO_RSA_MAX_WORDS];
+  uint64_t b_mont[FIO_RSA_MAX_WORDS];
+  uint64_t one[FIO_RSA_MAX_WORDS];
+  FIO_MEMSET(one, 0, sizeof(one));
+  one[0] = 1;
+
+  fio___rsa_mont_mul(a_mont, a, r2modn, mod, n_prime, mod_word_count);
+  fio___rsa_mont_mul(b_mont, b, r2modn, mod, n_prime, mod_word_count);
+
+  uint64_t ab_mont[FIO_RSA_MAX_WORDS];
+  fio___rsa_mont_mul(ab_mont, a_mont, b_mont, mod, n_prime, mod_word_count);
+  fio___rsa_mont_mul(result, ab_mont, one, mod, n_prime, mod_word_count);
+
+  fio_secure_zero(n_prime, sizeof(n_prime));
+  fio_secure_zero(r2modn, sizeof(r2modn));
+  fio_secure_zero(a_mont, sizeof(a_mont));
+  fio_secure_zero(b_mont, sizeof(b_mont));
+  fio_secure_zero(ab_mont, sizeof(ab_mont));
+}
+
+/**
+ * SOS Montgomery multiplication: result = a * b * R^-1 mod n.
+ *
+ * Requires n to be odd and n_prime to satisfy n * n_prime == -1 (mod R),
+ * where R = 2^(64 * word_count).
+ */
+FIO_SFUNC void fio___rsa_mont_mul(uint64_t *result,
+                                   const uint64_t *a,
+                                   const uint64_t *b,
+                                   const uint64_t *n,
+                                   const uint64_t *n_prime,
+                                   size_t word_count) {
+  uint64_t t[FIO_RSA_MAX_WORDS * 2];
+  uint64_t m_full[FIO_RSA_MAX_WORDS * 2];
+  uint64_t mn[FIO_RSA_MAX_WORDS * 2];
+  uint64_t sum[FIO_RSA_MAX_WORDS * 2];
+  uint64_t sub[FIO_RSA_MAX_WORDS];
+
+  /* T = a * b. Use the branchless long-multiplication helper because the
+   * operands here are secret (ladder state / base). */
+  fio___math_mul_long(t, a, b, word_count);
+
+  /* m = (T_low * n') mod R (low word_count words of the product) */
+  fio___math_mul_long(m_full, t, n_prime, word_count);
+
+  /* m * n */
+  fio___math_mul_long(mn, m_full, n, word_count);
+
+  /* sum = T + m*n */
+  const uint64_t high_carry = fio_math_add(sum, t, mn, word_count * 2);
+
+  /* U = sum / R.  The low half is zero because sum is divisible by R. */
+  const uint64_t borrow = fio_math_sub(sub, sum + word_count, n, word_count);
+  const uint64_t use_sub = (borrow ^ 1) | high_carry;
+  const uint64_t keep = (uint64_t)0 - (use_sub == 0);
+
+  for (size_t i = 0; i < word_count; ++i) {
+    result[i] = (sum[word_count + i] & keep) | (sub[i] & ~keep);
+  }
+}
+
+/**
+ * Precompute Montgomery constants for an odd modulus n.
+ *
+ * On output:
+ *   n_prime satisfies n * n_prime == -1 (mod R), where R = 2^(64*w).
+ *   r2modn is R^2 mod n.
+ */
+FIO_SFUNC void fio___rsa_mont_setup(const uint64_t *n,
+                                     size_t word_count,
+                                     uint64_t *n_prime,
+                                     uint64_t *r2modn) {
+  uint64_t n_ext[FIO_RSA_MAX_WORDS * 2];
+  uint64_t tmp[FIO_RSA_MAX_WORDS * 2];
+  uint64_t prod[FIO_RSA_MAX_WORDS * 2];
+
+  /* n' = -n^{-1} mod R, lifted from the word inverse by Newton iteration. */
+  const uint64_t n0_inv = fio___rsa_inv_mod_2pow64(n[0]);
+  FIO_MEMSET(n_prime, 0, word_count * sizeof(uint64_t));
+  n_prime[0] = (uint64_t)0 - n0_inv;
+
+  for (int iter = 0; iter < 16; ++iter) {
+    /* prod = n * n_prime + 2  (Newton step for n' satisfying n*n' == -1 mod R) */
+    fio_math_mul(prod, n, n_prime, word_count);
+    uint64_t c = 0;
+    prod[0] = fio_math_addc64(prod[0], 2, 0, &c);
+    for (size_t j = 1; j < word_count * 2; ++j) {
+      prod[j] = fio_math_addc64(prod[j], 0, c, &c);
+    }
+    /* n_prime = n_prime * prod mod R (low words only) */
+    fio_math_mul(tmp, n_prime, prod, word_count);
+    FIO_MEMCPY(n_prime, tmp, word_count * sizeof(uint64_t));
+  }
+
+  /* R mod n, where R = 2^(64*word_count) */
+  FIO_MEMSET(n_ext, 0, word_count * 2 * sizeof(uint64_t));
+  FIO_MEMCPY(n_ext, n, word_count * sizeof(uint64_t));
+  FIO_MEMSET(tmp, 0, word_count * 2 * sizeof(uint64_t));
+  tmp[word_count] = 1ULL;
+
+  uint64_t rmodn_ext[FIO_RSA_MAX_WORDS * 2];
+  fio_math_div(NULL, rmodn_ext, tmp, n_ext, word_count * 2);
+
+  /* R^2 mod n = (R mod n)^2 mod n */
+  fio_math_mul(tmp, rmodn_ext, rmodn_ext, word_count);
+  uint64_t r2_ext[FIO_RSA_MAX_WORDS * 2];
+  fio_math_div(NULL, r2_ext, tmp, n_ext, word_count * 2);
+  FIO_MEMCPY(r2modn, r2_ext, word_count * sizeof(uint64_t));
+}
+
 /* *****************************************************************************
 Implementation - Modular Exponentiation
 
 Compute: result = base^exp mod n
 
-Uses square-and-multiply algorithm with constant-time modular reduction.
-For RSA verification, exp is typically 65537 (0x10001) = 17 bits.
+Uses a constant-time Montgomery ladder with SOS Montgomery multiplication.
+The same sequence of operations is executed for every exponent bit.
 ***************************************************************************** */
 
 /**
- * Modular exponentiation: result = base^exp mod n
+ * Constant-time modular exponentiation: result = base^exp mod n
  *
- * This uses a simple square-and-multiply algorithm.
- * For RSA verification with e=65537, this does 17 squarings + 1 multiply.
+ * Uses a Montgomery ladder with Separated-Operand-Scanning (SOS) Montgomery
+ * multiplication.  The loop processes every bit position of the exponent,
+ * performing the same sequence of operations regardless of the exponent bit.
+ * No branch is taken on secret data.
  */
 FIO_SFUNC void fio___rsa_modexp(uint64_t *result,
                                 const uint64_t *base,
                                 const uint64_t *exp,
                                 const uint64_t *n,
                                 size_t word_count) {
-/* Double-size buffers for multiplication results and div remainder */
-#if !defined(_MSC_VER) && (!defined(__cplusplus) || __cplusplus > 201402L)
-  uint64_t tmp[word_count * 2];
-  uint64_t acc[word_count * 2];
-  uint64_t sqr[word_count * 2];
-  uint64_t n_ext[word_count * 2];
-#else
-  uint64_t tmp[FIO_RSA_MAX_WORDS * 2];
-  uint64_t acc[FIO_RSA_MAX_WORDS * 2];
-  uint64_t sqr[FIO_RSA_MAX_WORDS * 2];
-  uint64_t n_ext[FIO_RSA_MAX_WORDS * 2];
+  if (!word_count)
+    return;
+
   FIO_ASSERT(word_count <= FIO_RSA_MAX_WORDS,
              "RSA key size exceeds maximum supported");
-#endif
 
-  /* Zero-extend n to double size for use with fio_math_div */
-  FIO_MEMCPY(n_ext, n, word_count * sizeof(uint64_t));
-  FIO_MEMSET(n_ext + word_count, 0, word_count * sizeof(uint64_t));
+  uint64_t n_prime[FIO_RSA_MAX_WORDS];
+  uint64_t r2modn[FIO_RSA_MAX_WORDS];
+  fio___rsa_mont_setup(n, word_count, n_prime, r2modn);
 
-  /* Initialize accumulator to 1 (zero the full double-size buffer) */
-  FIO_MEMSET(acc, 0, word_count * 2 * sizeof(uint64_t));
-  acc[0] = 1;
+  uint64_t one[FIO_RSA_MAX_WORDS];
+  uint64_t base_mont[FIO_RSA_MAX_WORDS];
+  uint64_t r0[FIO_RSA_MAX_WORDS];
+  uint64_t r1[FIO_RSA_MAX_WORDS];
+  uint64_t tmp[FIO_RSA_MAX_WORDS];
 
-  /* Copy base to squaring buffer (zero upper half) */
-  FIO_MEMSET(sqr, 0, word_count * 2 * sizeof(uint64_t));
-  FIO_MEMCPY(sqr, base, word_count * sizeof(uint64_t));
+  FIO_MEMSET(one, 0, word_count * sizeof(uint64_t));
+  one[0] = 1;
 
-  /* Find the highest set bit in the exponent */
-  size_t exp_bits = fio_math_msb_index((uint64_t *)exp, word_count);
-  if (exp_bits == (size_t)-1) {
-    /* exp = 0, result = 1 (already set) */
-    FIO_MEMCPY(result, acc, word_count * sizeof(uint64_t));
-    return;
+  /* Convert base and 1 into Montgomery representation. */
+  fio___rsa_mont_mul(base_mont, base, r2modn, n, n_prime, word_count);
+  fio___rsa_mont_mul(r0, one, r2modn, n, n_prime, word_count);
+  FIO_MEMCPY(r1, base_mont, word_count * sizeof(uint64_t));
+
+  /* Montgomery ladder: process all exponent bits from MSB to LSB. */
+  const int total_bits = (int)(word_count * 64);
+  for (int i = total_bits - 1; i >= 0; --i) {
+    const uint64_t b = (exp[(unsigned)i >> 6] >> (i & 63)) & 1ULL;
+
+    fio___rsa_cswap_words(r0, r1, b, word_count);
+    fio___rsa_mont_mul(tmp, r0, r1, n, n_prime, word_count);
+    FIO_MEMCPY(r1, tmp, word_count * sizeof(uint64_t));
+    fio___rsa_mont_mul(tmp, r0, r0, n, n_prime, word_count);
+    FIO_MEMCPY(r0, tmp, word_count * sizeof(uint64_t));
+    fio___rsa_cswap_words(r0, r1, b, word_count);
   }
 
-  /* Square-and-multiply from LSB to MSB */
-  for (size_t bit = 0; bit <= exp_bits; ++bit) {
-    size_t word_idx = bit / 64;
-    size_t bit_idx = bit % 64;
+  /* Convert result out of Montgomery representation. */
+  fio___rsa_mont_mul(result, r0, one, n, n_prime, word_count);
 
-    /* If this bit is set, multiply accumulator by current square */
-    if (exp[word_idx] & (1ULL << bit_idx)) {
-      fio_math_mul(tmp, acc, sqr, word_count);
-      fio_math_div(NULL, acc, tmp, n_ext, word_count * 2);
-    }
-
-    /* Square the current value (unless this is the last bit) */
-    if (bit < exp_bits) {
-      fio_math_mul(tmp, sqr, sqr, word_count);
-      fio_math_div(NULL, sqr, tmp, n_ext, word_count * 2);
-    }
-  }
-
-  FIO_MEMCPY(result, acc, word_count * sizeof(uint64_t));
+  fio_secure_zero(n_prime, sizeof(n_prime));
+  fio_secure_zero(r2modn, sizeof(r2modn));
+  fio_secure_zero(base_mont, sizeof(base_mont));
+  fio_secure_zero(r0, sizeof(r0));
+  fio_secure_zero(r1, sizeof(r1));
+  fio_secure_zero(tmp, sizeof(tmp));
 }
 
 /**
@@ -50119,14 +56351,21 @@ FIO_SFUNC int fio___rsa_public_op(uint8_t *result,
   if (!result || !sig || !key || !key->n || !key->e)
     return -1;
 
+  const uint8_t *n = key->n;
+  const uint8_t *e = key->e;
+  size_t n_len = key->n_len;
+  size_t e_len = key->e_len;
+  fio___rsa_trim_be(&n, &n_len);
+  fio___rsa_trim_be(&e, &e_len);
+
   /* Validate key size */
-  if (key->n_len > FIO_RSA_MAX_BYTES || key->n_len < 256)
+  if (n_len > FIO_RSA_MAX_BYTES || n_len < 256)
     return -1; /* Only support 2048-4096 bit keys */
 
-  if (sig_len != key->n_len)
+  if (sig_len != n_len)
     return -1; /* Signature must be same length as modulus */
 
-  size_t word_count = (key->n_len + 7) / 8;
+  size_t word_count = (n_len + 7) / 8;
 
 #if !defined(_MSC_VER) && (!defined(__cplusplus) || __cplusplus > 201402L)
   uint64_t n_words[word_count];
@@ -50139,7 +56378,7 @@ FIO_SFUNC int fio___rsa_public_op(uint8_t *result,
 #endif
 
   /* Convert to internal representation */
-  fio___rsa_bytes_to_words(n_words, word_count, key->n, key->n_len);
+  fio___rsa_bytes_to_words(n_words, word_count, n, n_len);
   fio___rsa_bytes_to_words(sig_words, word_count, sig, sig_len);
 
   /* Verify signature < modulus */
@@ -50148,9 +56387,9 @@ FIO_SFUNC int fio___rsa_public_op(uint8_t *result,
 
   /* Check if exponent is 65537 (common case) */
   uint64_t e_val = 0;
-  if (key->e_len <= 8) {
-    for (size_t i = 0; i < key->e_len; ++i)
-      e_val = (e_val << 8) | key->e[i];
+  if (e_len <= 8) {
+    for (size_t i = 0; i < e_len; ++i)
+      e_val = (e_val << 8) | e[i];
   }
 
   if (e_val == 65537) {
@@ -50166,12 +56405,12 @@ FIO_SFUNC int fio___rsa_public_op(uint8_t *result,
     uint64_t e_words[FIO_RSA_MAX_WORDS];
 #endif
     FIO_MEMSET(e_words, 0, word_count * sizeof(uint64_t));
-    fio___rsa_bytes_to_words(e_words, word_count, key->e, key->e_len);
+    fio___rsa_bytes_to_words(e_words, word_count, e, e_len);
     fio___rsa_modexp(result_words, sig_words, e_words, n_words, word_count);
   }
 
   /* Convert back to bytes */
-  fio___rsa_words_to_bytes(result, key->n_len, result_words, word_count);
+  fio___rsa_words_to_bytes(result, n_len, result_words, word_count);
 
   return 0;
 }
@@ -50362,6 +56601,10 @@ SFUNC int fio_rsa_verify_pss(const uint8_t *sig,
   /* For TLS 1.3, salt length = hash length */
   size_t salt_len = hash_len;
 
+  const uint8_t *n = key->n;
+  size_t n_len = key->n_len;
+  fio___rsa_trim_be(&n, &n_len);
+
   /* Compute sig^e mod n */
   uint8_t em[FIO_RSA_MAX_BYTES];
   if (fio___rsa_public_op(em, sig, sig_len, key) != 0)
@@ -50380,18 +56623,27 @@ SFUNC int fio_rsa_verify_pss(const uint8_t *sig,
    *   - PS = zero bytes
    */
 
-  size_t em_len = key->n_len;
+  size_t em_len = n_len;
   size_t db_len = em_len - hash_len - 1;
 
+  /* Compute top-mask from the actual modulus bit length (RFC 8017 9.1.2). */
+  size_t word_count = (n_len + 7) / 8;
+  uint64_t n_words[FIO_RSA_MAX_WORDS];
+  fio___rsa_bytes_to_words(n_words, word_count, n, n_len);
+  size_t em_bits = fio_math_msb_index(n_words, word_count);
+  if (em_bits == (size_t)-1)
+    em_bits = 0;
+  size_t top_mask = 0xFF >> (8 * em_len - em_bits);
+
+  /* Accumulate all PSS validation checks in constant time.
+   * No return statement appears after the public-key operation. */
+  int result = 0;
+
   /* Verify trailing byte is 0xBC */
-  if (em[em_len - 1] != 0xBC)
-    return -1;
+  result |= em[em_len - 1] ^ 0xBC;
 
   /* The top bits of EM should be 0 (based on modulus bit length) */
-  size_t em_bits = key->n_len * 8 - 1; /* One less than modulus bits */
-  size_t top_mask = 0xFF >> (8 * em_len - em_bits - 1);
-  if ((em[0] & ~top_mask) != 0)
-    return -1;
+  result |= em[0] & ~top_mask;
 
   /* Extract H (hash) from EM */
   const uint8_t *masked_db = em;
@@ -50413,7 +56665,6 @@ SFUNC int fio_rsa_verify_pss(const uint8_t *sig,
   /* Verify DB = PS || 0x01 || salt */
   /* PS should be all zeros, length = db_len - salt_len - 1 */
   size_t ps_len = db_len - salt_len - 1;
-  int result = 0;
 
   /* Verify PS (all zeros) */
   for (size_t i = 0; i < ps_len; ++i)
@@ -50454,7 +56705,8 @@ SFUNC int fio_rsa_verify_pss(const uint8_t *sig,
   /* Verify H == H' */
   result |= fio___rsa_memcmp_ct(h, h_prime, hash_len);
 
-  return result ? -1 : 0;
+  /* Single exit point; branchless on the accumulated validation result. */
+  return -1 + (!result);
 }
 
 /* *****************************************************************************
@@ -50462,11 +56714,215 @@ Implementation - RSA-PSS Signature Generation (RFC 8017 Section 8.1)
 ***************************************************************************** */
 
 /**
+ * Non-CRT private key operation.
+ *
+ * Falls back to the plain constant-time Montgomery ladder.  A non-CRT
+ * blinding path would require a constant-time modular inverse modulo the
+ * composite n, which is not implemented here; production keys should supply
+ * CRT parameters so the CRT+blinding path is used instead.
+ */
+FIO_SFUNC int fio___rsa_private_op_non_crt(uint64_t *result_words,
+                                           const uint64_t *m_words,
+                                           const uint64_t *d_words,
+                                           const uint64_t *n_words,
+                                           size_t word_count) {
+  fio___rsa_modexp(result_words, m_words, d_words, n_words, word_count);
+  return 0;
+}
+
+/**
+ * CRT private key operation with RSA blinding.
+ *
+ * Requires p, q, dP, dQ, qInv and the public exponent e.  Blinding is done
+ * independently modulo p and q, then the two halves are recombined with the
+ * CRT formula.  All scalar operations are constant-time.
+ */
+FIO_SFUNC int fio___rsa_private_op_crt(uint64_t *result_words,
+                                       const uint64_t *m_words,
+                                       const fio_rsa_privkey_s *key,
+                                       size_t word_count) {
+  const uint8_t *n_be = key->n;
+  const uint8_t *p_be = key->p;
+  const uint8_t *q_be = key->q;
+  const uint8_t *dP_be = key->dP;
+  const uint8_t *dQ_be = key->dQ;
+  const uint8_t *qInv_be = key->qInv;
+  const uint8_t *e_be = key->e;
+  size_t n_len = key->n_len;
+  size_t p_len = key->p_len;
+  size_t q_len = key->q_len;
+  size_t dP_len = key->dP_len;
+  size_t dQ_len = key->dQ_len;
+  size_t qInv_len = key->qInv_len;
+  size_t e_len = key->e_len;
+  fio___rsa_trim_be(&n_be, &n_len);
+  fio___rsa_trim_be(&p_be, &p_len);
+  fio___rsa_trim_be(&q_be, &q_len);
+  fio___rsa_trim_be(&dP_be, &dP_len);
+  fio___rsa_trim_be(&dQ_be, &dQ_len);
+  fio___rsa_trim_be(&qInv_be, &qInv_len);
+  fio___rsa_trim_be(&e_be, &e_len);
+
+  size_t p_word_count = (p_len + 7) / 8;
+  size_t q_word_count = (q_len + 7) / 8;
+
+  if (!p_word_count || p_word_count > FIO_RSA_MAX_WORDS / 2 ||
+      !q_word_count || q_word_count > FIO_RSA_MAX_WORDS / 2)
+    return -1;
+
+  uint64_t n_words[FIO_RSA_MAX_WORDS];
+  fio___rsa_bytes_to_words(n_words, word_count, n_be, n_len);
+
+  uint64_t p[FIO_RSA_MAX_WORDS];
+  uint64_t q[FIO_RSA_MAX_WORDS];
+  uint64_t dP[FIO_RSA_MAX_WORDS];
+  uint64_t dQ[FIO_RSA_MAX_WORDS];
+  uint64_t qInv[FIO_RSA_MAX_WORDS];
+  uint64_t e_p[FIO_RSA_MAX_WORDS];
+  uint64_t e_q[FIO_RSA_MAX_WORDS];
+
+  FIO_MEMSET(p, 0, sizeof(p));
+  FIO_MEMSET(q, 0, sizeof(q));
+  FIO_MEMSET(dP, 0, sizeof(dP));
+  FIO_MEMSET(dQ, 0, sizeof(dQ));
+  FIO_MEMSET(qInv, 0, sizeof(qInv));
+  FIO_MEMSET(e_p, 0, sizeof(e_p));
+  FIO_MEMSET(e_q, 0, sizeof(e_q));
+
+  fio___rsa_bytes_to_words(p, p_word_count, p_be, p_len);
+  fio___rsa_bytes_to_words(q, q_word_count, q_be, q_len);
+  fio___rsa_bytes_to_words(dP, p_word_count, dP_be, dP_len);
+  fio___rsa_bytes_to_words(dQ, q_word_count, dQ_be, dQ_len);
+  fio___rsa_bytes_to_words(qInv, p_word_count, qInv_be, qInv_len);
+  fio___rsa_bytes_to_words(e_p, p_word_count, e_be, e_len);
+  fio___rsa_bytes_to_words(e_q, q_word_count, e_be, e_len);
+
+  /* m_p = m mod p, m_q = m mod q */
+  uint64_t m_p[FIO_RSA_MAX_WORDS];
+  uint64_t m_q[FIO_RSA_MAX_WORDS];
+  fio___rsa_reduce_mod(m_p, m_words, p, p_word_count, word_count);
+  fio___rsa_reduce_mod(m_q, m_words, q, q_word_count, word_count);
+
+  /* Random blinding factors r_p, r_q */
+  uint64_t r_p[FIO_RSA_MAX_WORDS];
+  uint64_t r_q[FIO_RSA_MAX_WORDS];
+  fio___rsa_random_mod(r_p, p, p_word_count);
+  fio___rsa_random_mod(r_q, q, q_word_count);
+
+  /* m'_p = r_p^e * m_p mod p, m'_q = r_q^e * m_q mod q */
+  uint64_t r_e_p[FIO_RSA_MAX_WORDS];
+  uint64_t r_e_q[FIO_RSA_MAX_WORDS];
+  uint64_t m_blind_p[FIO_RSA_MAX_WORDS];
+  uint64_t m_blind_q[FIO_RSA_MAX_WORDS];
+  fio___rsa_modexp(r_e_p, r_p, e_p, p, p_word_count);
+  fio___rsa_modexp(r_e_q, r_q, e_q, q, q_word_count);
+  fio___rsa_mul_mod(m_blind_p, r_e_p, m_p, p, p_word_count);
+  fio___rsa_mul_mod(m_blind_q, r_e_q, m_q, q, q_word_count);
+
+  /* s'_p = m'_p^dP mod p, s'_q = m'_q^dQ mod q */
+  uint64_t s_blind_p[FIO_RSA_MAX_WORDS];
+  uint64_t s_blind_q[FIO_RSA_MAX_WORDS];
+  fio___rsa_modexp(s_blind_p, m_blind_p, dP, p, p_word_count);
+  fio___rsa_modexp(s_blind_q, m_blind_q, dQ, q, q_word_count);
+
+  /* Unblind using Fermat's little theorem: r^-1 = r^(mod-2) mod mod. */
+  uint64_t one[FIO_RSA_MAX_WORDS];
+  FIO_MEMSET(one, 0, sizeof(one));
+  one[0] = 1;
+
+  uint64_t p_minus_2[FIO_RSA_MAX_WORDS];
+  uint64_t q_minus_2[FIO_RSA_MAX_WORDS];
+  FIO_MEMSET(p_minus_2, 0, sizeof(p_minus_2));
+  FIO_MEMSET(q_minus_2, 0, sizeof(q_minus_2));
+  FIO_MEMCPY(p_minus_2, p, p_word_count * sizeof(uint64_t));
+  FIO_MEMCPY(q_minus_2, q, q_word_count * sizeof(uint64_t));
+  (void)fio_math_sub(p_minus_2, p_minus_2, one, p_word_count); /* p-1 */
+  (void)fio_math_sub(p_minus_2, p_minus_2, one, p_word_count); /* p-2 */
+  (void)fio_math_sub(q_minus_2, q_minus_2, one, q_word_count); /* q-1 */
+  (void)fio_math_sub(q_minus_2, q_minus_2, one, q_word_count); /* q-2 */
+
+  uint64_t r_inv_p[FIO_RSA_MAX_WORDS];
+  uint64_t r_inv_q[FIO_RSA_MAX_WORDS];
+  uint64_t s_p[FIO_RSA_MAX_WORDS];
+  uint64_t s_q[FIO_RSA_MAX_WORDS];
+  fio___rsa_modexp(r_inv_p, r_p, p_minus_2, p, p_word_count);
+  fio___rsa_modexp(r_inv_q, r_q, q_minus_2, q, q_word_count);
+  fio___rsa_mul_mod(s_p, s_blind_p, r_inv_p, p, p_word_count);
+  fio___rsa_mul_mod(s_q, s_blind_q, r_inv_q, q, q_word_count);
+
+  /* CRT recombination: h = qInv * (s_p - s_q) mod p,
+   *                    s = s_q + q * h mod n */
+  uint64_t diff[FIO_RSA_MAX_WORDS];
+  uint64_t h[FIO_RSA_MAX_WORDS];
+  uint64_t p_mask[FIO_RSA_MAX_WORDS];
+  uint64_t borrow = fio_math_sub(diff, s_p, s_q, p_word_count);
+  uint64_t use_add = (uint64_t)0 - borrow;
+  for (size_t i = 0; i < p_word_count; ++i)
+    p_mask[i] = p[i] & use_add;
+  (void)fio_math_add(diff, diff, p_mask, p_word_count);
+  fio___rsa_mul_mod(h, qInv, diff, p, p_word_count);
+
+  /* q * h mod n (zero-extend q and h to word_count) */
+  uint64_t q_ext[FIO_RSA_MAX_WORDS];
+  uint64_t h_ext[FIO_RSA_MAX_WORDS];
+  uint64_t s_q_ext[FIO_RSA_MAX_WORDS];
+  FIO_MEMSET(q_ext, 0, word_count * sizeof(uint64_t));
+  FIO_MEMSET(h_ext, 0, word_count * sizeof(uint64_t));
+  FIO_MEMSET(s_q_ext, 0, word_count * sizeof(uint64_t));
+  FIO_MEMCPY(q_ext, q, q_word_count * sizeof(uint64_t));
+  FIO_MEMCPY(h_ext, h, p_word_count * sizeof(uint64_t));
+  FIO_MEMCPY(s_q_ext, s_q, q_word_count * sizeof(uint64_t));
+
+  uint64_t qh[FIO_RSA_MAX_WORDS];
+  fio___rsa_mul_mod(qh, q_ext, h_ext, n_words, word_count);
+  (void)fio_math_add(result_words, qh, s_q_ext, word_count);
+
+  /* result may be in [0, 2*n); reduce once. */
+  uint64_t sub_n[FIO_RSA_MAX_WORDS];
+  uint64_t borrow_n = fio_math_sub(sub_n, result_words, n_words, word_count);
+  uint64_t use_sub_n = (uint64_t)0 - (borrow_n ^ 1);
+  uint64_t use_res = (uint64_t)0 - borrow_n;
+  for (size_t i = 0; i < word_count; ++i)
+    result_words[i] = (sub_n[i] & use_sub_n) | (result_words[i] & use_res);
+
+  fio_secure_zero(p, sizeof(p));
+  fio_secure_zero(q, sizeof(q));
+  fio_secure_zero(dP, sizeof(dP));
+  fio_secure_zero(dQ, sizeof(dQ));
+  fio_secure_zero(qInv, sizeof(qInv));
+  fio_secure_zero(e_p, sizeof(e_p));
+  fio_secure_zero(e_q, sizeof(e_q));
+  fio_secure_zero(m_p, sizeof(m_p));
+  fio_secure_zero(m_q, sizeof(m_q));
+  fio_secure_zero(r_p, sizeof(r_p));
+  fio_secure_zero(r_q, sizeof(r_q));
+  fio_secure_zero(r_e_p, sizeof(r_e_p));
+  fio_secure_zero(r_e_q, sizeof(r_e_q));
+  fio_secure_zero(m_blind_p, sizeof(m_blind_p));
+  fio_secure_zero(m_blind_q, sizeof(m_blind_q));
+  fio_secure_zero(s_blind_p, sizeof(s_blind_p));
+  fio_secure_zero(s_blind_q, sizeof(s_blind_q));
+  fio_secure_zero(r_inv_p, sizeof(r_inv_p));
+  fio_secure_zero(r_inv_q, sizeof(r_inv_q));
+  fio_secure_zero(s_p, sizeof(s_p));
+  fio_secure_zero(s_q, sizeof(s_q));
+  fio_secure_zero(p_minus_2, sizeof(p_minus_2));
+  fio_secure_zero(q_minus_2, sizeof(q_minus_2));
+  fio_secure_zero(diff, sizeof(diff));
+  fio_secure_zero(h, sizeof(h));
+  fio_secure_zero(p_mask, sizeof(p_mask));
+  fio_secure_zero(qh, sizeof(qh));
+  fio_secure_zero(n_words, sizeof(n_words));
+
+  return 0;
+}
+
+/**
  * RSA private key operation: result = m^d mod n (RSASP1 per RFC 8017)
  *
- * This computes the modular exponentiation using the private exponent.
- * Unlike the public key operation which uses e=65537 (optimized path),
- * the private exponent d is typically the same size as the modulus.
+ * Uses CRT with RSA blinding when CRT parameters and the public exponent are
+ * available.  Falls back to the plain constant-time Montgomery ladder when
+ * CRT parameters are unavailable.
  */
 FIO_SFUNC int fio___rsa_private_op(uint8_t *result,
                                    const uint8_t *message,
@@ -50475,48 +56931,67 @@ FIO_SFUNC int fio___rsa_private_op(uint8_t *result,
   if (!result || !message || !key || !key->n || !key->d)
     return -1;
 
+  const uint8_t *n = key->n;
+  const uint8_t *d = key->d;
+  size_t n_len = key->n_len;
+  size_t d_len = key->d_len;
+  fio___rsa_trim_be(&n, &n_len);
+  fio___rsa_trim_be(&d, &d_len);
+
   /* Validate key size */
-  if (key->n_len > FIO_RSA_MAX_BYTES || key->n_len < 256)
+  if (n_len > FIO_RSA_MAX_BYTES || n_len < 256)
     return -1; /* Only support 2048-4096 bit keys */
 
-  if (msg_len != key->n_len)
+  if (msg_len != n_len)
     return -1; /* Message must be same length as modulus */
 
-  size_t word_count = (key->n_len + 7) / 8;
+  size_t word_count = (n_len + 7) / 8;
 
-#if !defined(_MSC_VER) && (!defined(__cplusplus) || __cplusplus > 201402L)
-  uint64_t n_words[word_count];
-  uint64_t d_words[word_count];
-  uint64_t msg_words[word_count];
-  uint64_t result_words[word_count];
-#else
   uint64_t n_words[FIO_RSA_MAX_WORDS];
   uint64_t d_words[FIO_RSA_MAX_WORDS];
   uint64_t msg_words[FIO_RSA_MAX_WORDS];
   uint64_t result_words[FIO_RSA_MAX_WORDS];
-#endif
+
+  FIO_MEMSET(n_words, 0, sizeof(n_words));
+  FIO_MEMSET(d_words, 0, sizeof(d_words));
+  FIO_MEMSET(msg_words, 0, sizeof(msg_words));
+  FIO_MEMSET(result_words, 0, sizeof(result_words));
 
   /* Convert to internal representation */
-  fio___rsa_bytes_to_words(n_words, word_count, key->n, key->n_len);
-  fio___rsa_bytes_to_words(d_words, word_count, key->d, key->d_len);
+  fio___rsa_bytes_to_words(n_words, word_count, n, n_len);
+  fio___rsa_bytes_to_words(d_words, word_count, d, d_len);
   fio___rsa_bytes_to_words(msg_words, word_count, message, msg_len);
 
-  /* Verify message < modulus */
-  if (fio___rsa_cmp(msg_words, n_words, word_count) >= 0)
-    return -1;
+  int have_crt = (key->p && key->p_len && key->q && key->q_len &&
+                  key->dP && key->dP_len && key->dQ && key->dQ_len &&
+                  key->qInv && key->qInv_len && key->e && key->e_len);
+  int rc = -1;
 
-  /* Compute m^d mod n using general modexp */
-  fio___rsa_modexp(result_words, msg_words, d_words, n_words, word_count);
+  /* Verify message < modulus (constant-time). */
+  if (fio___rsa_ct_lt(msg_words, n_words, word_count) == 0)
+    goto cleanup;
 
-  /* Convert back to bytes */
-  fio___rsa_words_to_bytes(result, key->n_len, result_words, word_count);
+  if (have_crt) {
+    rc = fio___rsa_private_op_crt(result_words, msg_words, key, word_count);
+  } else {
+    /* No CRT parameters: fall back to the plain constant-time Montgomery
+     * ladder.  Production signing keys should supply CRT parameters so the
+     * CRT+blinding path above is used. */
+    rc = fio___rsa_private_op_non_crt(
+        result_words, msg_words, d_words, n_words, word_count);
+  }
 
+  if (rc == 0)
+    fio___rsa_words_to_bytes(result, n_len, result_words, word_count);
+
+cleanup:
   /* Clear sensitive data */
+  fio_secure_zero(n_words, sizeof(n_words));
   fio_secure_zero(d_words, sizeof(d_words));
   fio_secure_zero(msg_words, sizeof(msg_words));
   fio_secure_zero(result_words, sizeof(result_words));
 
-  return 0;
+  return rc;
 }
 
 /**
@@ -50535,7 +57010,8 @@ FIO_SFUNC int fio___rsa_emsa_pss_encode(uint8_t *em,
                                         size_t em_len,
                                         const uint8_t *msg_hash,
                                         size_t hash_len,
-                                        fio_rsa_hash_e hash_alg) {
+                                        fio_rsa_hash_e hash_alg,
+                                        size_t top_mask) {
   if (!em || !msg_hash)
     return -1;
 
@@ -50605,10 +57081,7 @@ FIO_SFUNC int fio___rsa_emsa_pss_encode(uint8_t *em,
     em[i] = db[i] ^ db_mask[i];
 
   /* Step 8: Set leftmost bits of maskedDB to zero
-   * For byte-aligned modulus (which is always the case for RSA),
-   * we need to clear the top bit to ensure EM < n */
-  size_t em_bits = em_len * 8 - 1; /* One less than modulus bits */
-  size_t top_mask = 0xFF >> (8 * em_len - em_bits - 1);
+   * based on the actual modulus bit length. */
   em[0] &= top_mask;
 
   /* Step 9: EM = maskedDB || H || 0xBC */
@@ -50618,7 +57091,9 @@ FIO_SFUNC int fio___rsa_emsa_pss_encode(uint8_t *em,
   /* Clear sensitive data */
   fio_secure_zero(salt, sizeof(salt));
   fio_secure_zero(m_prime, sizeof(m_prime));
+  fio_secure_zero(h, sizeof(h));
   fio_secure_zero(db, sizeof(db));
+  fio_secure_zero(db_mask, sizeof(db_mask));
 
   return 0;
 }
@@ -50647,27 +57122,41 @@ SFUNC int fio_rsa_sign_pss(uint8_t *signature,
   if (hash_len != expected_hash_len)
     return -1;
 
+  const uint8_t *n = key->n;
+  size_t n_len = key->n_len;
+  fio___rsa_trim_be(&n, &n_len);
+
   /* Validate key size */
-  if (key->n_len > FIO_RSA_MAX_BYTES || key->n_len < 256)
+  if (n_len > FIO_RSA_MAX_BYTES || n_len < 256)
     return -1;
+
+  /* Compute top-mask from the actual modulus bit length. */
+  size_t word_count = (n_len + 7) / 8;
+  uint64_t n_words[FIO_RSA_MAX_WORDS];
+  fio___rsa_bytes_to_words(n_words, word_count, n, n_len);
+  size_t em_bits = fio_math_msb_index(n_words, word_count);
+  if (em_bits == (size_t)-1)
+    em_bits = 0;
+  size_t top_mask = 0xFF >> (8 * n_len - em_bits);
 
   /* Step 1: EMSA-PSS-ENCODE */
   uint8_t em[FIO_RSA_MAX_BYTES];
-  if (fio___rsa_emsa_pss_encode(em, key->n_len, msg_hash, hash_len, hash_alg) !=
-      0) {
+  if (fio___rsa_emsa_pss_encode(
+          em, n_len, msg_hash, hash_len, hash_alg, top_mask) != 0) {
     return -1;
   }
 
   /* Step 2-4: RSASP1 - compute s = m^d mod n */
-  if (fio___rsa_private_op(signature, em, key->n_len, key) != 0) {
+  if (fio___rsa_private_op(signature, em, n_len, key) != 0) {
     fio_secure_zero(em, sizeof(em));
     return -1;
   }
 
-  *sig_len = key->n_len;
+  *sig_len = n_len;
 
   /* Clear sensitive data */
   fio_secure_zero(em, sizeof(em));
+  fio_secure_zero(n_words, sizeof(n_words));
 
   FIO_LOG_DEBUG2("RSA-PSS: Generated %zu-byte signature", *sig_len);
   return 0;
@@ -81575,6 +88064,74 @@ FIO_SFUNC int fio___tls13_build_certificate(fio_tls13_server_s *server,
 }
 
 /* Internal: Build CertificateVerify message */
+/**
+ * Parse the RSA private key structure stored in server->private_key.
+ *
+ * The minimum format is:
+ *   [n_len:4][n:n_len][d_len:4][d:d_len]
+ *
+ * An extended format may append, in order:
+ *   [e_len:4][e:e_len][p_len:4][p:p_len][q_len:4][q:q_len]
+ *   [dP_len:4][dP:dP_len][dQ_len:4][dQ:dQ_len][qInv_len:4][qInv:qInv_len]
+ *
+ * Missing optional fields are left as NULL / zero length.
+ */
+FIO_SFUNC int fio___tls13_parse_rsa_private_key(fio_rsa_privkey_s *key,
+                                                const uint8_t *pk,
+                                                size_t pk_len) {
+  const uint8_t *start = pk;
+
+  if (!key || !pk || pk_len < 8)
+    return -1;
+
+  FIO_MEMSET(key, 0, sizeof(*key));
+
+  uint32_t n_len = ((uint32_t)pk[0] << 24) | ((uint32_t)pk[1] << 16) |
+                   ((uint32_t)pk[2] << 8) | pk[3];
+  pk += 4;
+  if (n_len > FIO_RSA_MAX_BYTES || n_len < 256)
+    return -1;
+  if ((size_t)(pk - start) + n_len + 4 > pk_len)
+    return -1;
+  key->n = pk;
+  key->n_len = n_len;
+  pk += n_len;
+
+  uint32_t d_len = ((uint32_t)pk[0] << 24) | ((uint32_t)pk[1] << 16) |
+                   ((uint32_t)pk[2] << 8) | pk[3];
+  pk += 4;
+  if (d_len > FIO_RSA_MAX_BYTES)
+    return -1;
+  if ((size_t)(pk - start) + d_len > pk_len)
+    return -1;
+  key->d = pk;
+  key->d_len = d_len;
+  pk += d_len;
+
+  /* Optional fields.  Each is [len:4][data:len]; if the buffer ends here the
+   * field is absent and the remaining code leaves the pointer NULL. */
+  const uint8_t **fields[] = {&key->e,   &key->p,   &key->q,
+                              &key->dP,  &key->dQ,  &key->qInv};
+  size_t *lens[] = {&key->e_len,   &key->p_len,   &key->q_len,
+                    &key->dP_len,  &key->dQ_len,  &key->qInv_len};
+  for (size_t i = 0; i < 6; ++i) {
+    if ((size_t)(pk - start) + 4 > pk_len)
+      break;
+    uint32_t len = ((uint32_t)pk[0] << 24) | ((uint32_t)pk[1] << 16) |
+                   ((uint32_t)pk[2] << 8) | pk[3];
+    pk += 4;
+    if (len > FIO_RSA_MAX_BYTES)
+      return -1;
+    if ((size_t)(pk - start) + len > pk_len)
+      return -1;
+    *fields[i] = pk;
+    *lens[i] = len;
+    pk += len;
+  }
+
+  return 0;
+}
+
 FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
                                                    uint8_t *out,
                                                    size_t out_capacity) {
@@ -81644,28 +88201,12 @@ FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
       return -1;
 
     /* Parse the private key structure */
-    const uint8_t *pk = server->private_key;
-    uint32_t n_len = ((uint32_t)pk[0] << 24) | ((uint32_t)pk[1] << 16) |
-                     ((uint32_t)pk[2] << 8) | pk[3];
-    pk += 4;
-    if (n_len > FIO_RSA_MAX_BYTES || n_len < 256)
+    fio_rsa_privkey_s rsa_key;
+    if (fio___tls13_parse_rsa_private_key(
+            &rsa_key, server->private_key, server->private_key_len) != 0) {
+      FIO_LOG_DEBUG2("TLS 1.3 Server: RSA private key parsing failed");
       return -1;
-    const uint8_t *n = pk;
-    pk += n_len;
-
-    if ((size_t)(pk - server->private_key) + 4 > server->private_key_len)
-      return -1;
-    uint32_t d_len = ((uint32_t)pk[0] << 24) | ((uint32_t)pk[1] << 16) |
-                     ((uint32_t)pk[2] << 8) | pk[3];
-    pk += 4;
-    if (d_len > FIO_RSA_MAX_BYTES)
-      return -1;
-    const uint8_t *d = pk;
-
-    fio_rsa_privkey_s rsa_key = {.n = n,
-                                 .n_len = n_len,
-                                 .d = d,
-                                 .d_len = d_len};
+    }
 
     if (fio_rsa_sign_pss(signature,
                          &sig_len,
@@ -81688,31 +88229,12 @@ FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
     FIO_MEMCPY(msg_hash, h.u8, 48);
 
     /* Parse the private key structure (same format as SHA-256 case) */
-    if (server->private_key_len < 8)
+    fio_rsa_privkey_s rsa_key;
+    if (fio___tls13_parse_rsa_private_key(
+            &rsa_key, server->private_key, server->private_key_len) != 0) {
+      FIO_LOG_DEBUG2("TLS 1.3 Server: RSA private key parsing failed");
       return -1;
-
-    const uint8_t *pk = server->private_key;
-    uint32_t n_len = ((uint32_t)pk[0] << 24) | ((uint32_t)pk[1] << 16) |
-                     ((uint32_t)pk[2] << 8) | pk[3];
-    pk += 4;
-    if (n_len > FIO_RSA_MAX_BYTES || n_len < 256)
-      return -1;
-    const uint8_t *n = pk;
-    pk += n_len;
-
-    if ((size_t)(pk - server->private_key) + 4 > server->private_key_len)
-      return -1;
-    uint32_t d_len = ((uint32_t)pk[0] << 24) | ((uint32_t)pk[1] << 16) |
-                     ((uint32_t)pk[2] << 8) | pk[3];
-    pk += 4;
-    if (d_len > FIO_RSA_MAX_BYTES)
-      return -1;
-    const uint8_t *d = pk;
-
-    fio_rsa_privkey_s rsa_key = {.n = n,
-                                 .n_len = n_len,
-                                 .d = d,
-                                 .d_len = d_len};
+    }
 
     if (fio_rsa_sign_pss(signature,
                          &sig_len,
@@ -93446,16 +99968,22 @@ typedef struct {
   fio_pem_key_type_e type;
   union {
     struct {
-      const uint8_t *n; /**< RSA modulus (big-endian) */
+      uint8_t n[FIO_RSA_MAX_BYTES]; /**< RSA modulus (big-endian) */
       size_t n_len;
-      const uint8_t *e; /**< RSA public exponent (big-endian) */
+      uint8_t e[FIO_RSA_MAX_BYTES]; /**< RSA public exponent (big-endian) */
       size_t e_len;
-      const uint8_t *d; /**< RSA private exponent (big-endian) */
+      uint8_t d[FIO_RSA_MAX_BYTES]; /**< RSA private exponent (big-endian) */
       size_t d_len;
-      const uint8_t *p; /**< RSA prime p (optional) */
+      uint8_t p[FIO_RSA_MAX_BYTES]; /**< RSA prime p (optional) */
       size_t p_len;
-      const uint8_t *q; /**< RSA prime q (optional) */
+      uint8_t q[FIO_RSA_MAX_BYTES]; /**< RSA prime q (optional) */
       size_t q_len;
+      uint8_t dP[FIO_RSA_MAX_BYTES]; /**< d mod (p-1) (optional) */
+      size_t dP_len;
+      uint8_t dQ[FIO_RSA_MAX_BYTES]; /**< d mod (q-1) (optional) */
+      size_t dQ_len;
+      uint8_t qInv[FIO_RSA_MAX_BYTES]; /**< q^-1 mod p (optional) */
+      size_t qInv_len;
     } rsa;
     struct {
       uint8_t private_key[32]; /**< P-256 scalar (32 bytes) */
@@ -93837,12 +100365,17 @@ FIO_SFUNC int fio___pem_parse_pkcs8(fio_pem_private_key_s *key,
       return -1;
     if (!fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER))
       return -1;
-    key->rsa.n = rsa_elem.data;
-    key->rsa.n_len = rsa_elem.len;
-    /* Skip leading zero if present */
-    if (key->rsa.n_len > 1 && key->rsa.n[0] == 0x00) {
-      key->rsa.n++;
-      key->rsa.n_len--;
+    {
+      const uint8_t *src = rsa_elem.data;
+      size_t src_len = rsa_elem.len;
+      if (src_len > 1 && src[0] == 0x00) {
+        ++src;
+        --src_len;
+      }
+      if (src_len > FIO_RSA_MAX_BYTES)
+        return -1;
+      FIO_MEMCPY(key->rsa.n, src, src_len);
+      key->rsa.n_len = src_len;
     }
 
     /* publicExponent (e) */
@@ -93850,11 +100383,17 @@ FIO_SFUNC int fio___pem_parse_pkcs8(fio_pem_private_key_s *key,
       return -1;
     if (!fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER))
       return -1;
-    key->rsa.e = rsa_elem.data;
-    key->rsa.e_len = rsa_elem.len;
-    if (key->rsa.e_len > 1 && key->rsa.e[0] == 0x00) {
-      key->rsa.e++;
-      key->rsa.e_len--;
+    {
+      const uint8_t *src = rsa_elem.data;
+      size_t src_len = rsa_elem.len;
+      if (src_len > 1 && src[0] == 0x00) {
+        ++src;
+        --src_len;
+      }
+      if (src_len > FIO_RSA_MAX_BYTES)
+        return -1;
+      FIO_MEMCPY(key->rsa.e, src, src_len);
+      key->rsa.e_len = src_len;
     }
 
     /* privateExponent (d) */
@@ -93862,31 +100401,100 @@ FIO_SFUNC int fio___pem_parse_pkcs8(fio_pem_private_key_s *key,
       return -1;
     if (!fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER))
       return -1;
-    key->rsa.d = rsa_elem.data;
-    key->rsa.d_len = rsa_elem.len;
-    if (key->rsa.d_len > 1 && key->rsa.d[0] == 0x00) {
-      key->rsa.d++;
-      key->rsa.d_len--;
+    {
+      const uint8_t *src = rsa_elem.data;
+      size_t src_len = rsa_elem.len;
+      if (src_len > 1 && src[0] == 0x00) {
+        ++src;
+        --src_len;
+      }
+      if (src_len > FIO_RSA_MAX_BYTES)
+        return -1;
+      FIO_MEMCPY(key->rsa.d, src, src_len);
+      key->rsa.d_len = src_len;
     }
 
     /* prime1 (p) */
     if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) == 0 &&
         fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER)) {
-      key->rsa.p = rsa_elem.data;
-      key->rsa.p_len = rsa_elem.len;
-      if (key->rsa.p_len > 1 && key->rsa.p[0] == 0x00) {
-        key->rsa.p++;
-        key->rsa.p_len--;
+      {
+        const uint8_t *src = rsa_elem.data;
+        size_t src_len = rsa_elem.len;
+        if (src_len > 1 && src[0] == 0x00) {
+          ++src;
+          --src_len;
+        }
+        if (src_len <= FIO_RSA_MAX_BYTES) {
+          FIO_MEMCPY(key->rsa.p, src, src_len);
+          key->rsa.p_len = src_len;
+        }
       }
 
       /* prime2 (q) */
       if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) == 0 &&
           fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER)) {
-        key->rsa.q = rsa_elem.data;
-        key->rsa.q_len = rsa_elem.len;
-        if (key->rsa.q_len > 1 && key->rsa.q[0] == 0x00) {
-          key->rsa.q++;
-          key->rsa.q_len--;
+        {
+          const uint8_t *src = rsa_elem.data;
+          size_t src_len = rsa_elem.len;
+          if (src_len > 1 && src[0] == 0x00) {
+            ++src;
+            --src_len;
+          }
+          if (src_len <= FIO_RSA_MAX_BYTES) {
+            FIO_MEMCPY(key->rsa.q, src, src_len);
+            key->rsa.q_len = src_len;
+          }
+        }
+
+        /* exponent1 (dP = d mod (p-1)) */
+        if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) == 0 &&
+            fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER)) {
+          {
+            const uint8_t *src = rsa_elem.data;
+            size_t src_len = rsa_elem.len;
+            if (src_len > 1 && src[0] == 0x00) {
+              ++src;
+              --src_len;
+            }
+            if (src_len <= FIO_RSA_MAX_BYTES) {
+              FIO_MEMCPY(key->rsa.dP, src, src_len);
+              key->rsa.dP_len = src_len;
+            }
+          }
+
+          /* exponent2 (dQ = d mod (q-1)) */
+          if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) == 0 &&
+              fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER)) {
+            {
+              const uint8_t *src = rsa_elem.data;
+              size_t src_len = rsa_elem.len;
+              if (src_len > 1 && src[0] == 0x00) {
+                ++src;
+                --src_len;
+              }
+              if (src_len <= FIO_RSA_MAX_BYTES) {
+                FIO_MEMCPY(key->rsa.dQ, src, src_len);
+                key->rsa.dQ_len = src_len;
+              }
+            }
+
+            /* coefficient (qInv = q^-1 mod p) */
+            if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) == 0 &&
+                fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER)) {
+              {
+                const uint8_t *src = rsa_elem.data;
+                size_t src_len = rsa_elem.len;
+                if (src_len > 1 && src[0] == 0x00) {
+                  ++src;
+                  --src_len;
+                }
+                if (src_len <= FIO_RSA_MAX_BYTES) {
+                  FIO_MEMCPY(key->rsa.qInv, src, src_len);
+                  key->rsa.qInv_len = src_len;
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -94035,11 +100643,17 @@ FIO_SFUNC int fio___pem_parse_rsa_private_key(fio_pem_private_key_s *key,
     return -1;
   if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
     return -1;
-  key->rsa.n = elem.data;
-  key->rsa.n_len = elem.len;
-  if (key->rsa.n_len > 1 && key->rsa.n[0] == 0x00) {
-    key->rsa.n++;
-    key->rsa.n_len--;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len > FIO_RSA_MAX_BYTES)
+      return -1;
+    FIO_MEMCPY(key->rsa.n, src, src_len);
+    key->rsa.n_len = src_len;
   }
 
   /* publicExponent (e) */
@@ -94047,11 +100661,17 @@ FIO_SFUNC int fio___pem_parse_rsa_private_key(fio_pem_private_key_s *key,
     return -1;
   if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
     return -1;
-  key->rsa.e = elem.data;
-  key->rsa.e_len = elem.len;
-  if (key->rsa.e_len > 1 && key->rsa.e[0] == 0x00) {
-    key->rsa.e++;
-    key->rsa.e_len--;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len > FIO_RSA_MAX_BYTES)
+      return -1;
+    FIO_MEMCPY(key->rsa.e, src, src_len);
+    key->rsa.e_len = src_len;
   }
 
   /* privateExponent (d) */
@@ -94059,11 +100679,17 @@ FIO_SFUNC int fio___pem_parse_rsa_private_key(fio_pem_private_key_s *key,
     return -1;
   if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
     return -1;
-  key->rsa.d = elem.data;
-  key->rsa.d_len = elem.len;
-  if (key->rsa.d_len > 1 && key->rsa.d[0] == 0x00) {
-    key->rsa.d++;
-    key->rsa.d_len--;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len > FIO_RSA_MAX_BYTES)
+      return -1;
+    FIO_MEMCPY(key->rsa.d, src, src_len);
+    key->rsa.d_len = src_len;
   }
 
   /* prime1 (p) */
@@ -94071,11 +100697,17 @@ FIO_SFUNC int fio___pem_parse_rsa_private_key(fio_pem_private_key_s *key,
     return -1;
   if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
     return -1;
-  key->rsa.p = elem.data;
-  key->rsa.p_len = elem.len;
-  if (key->rsa.p_len > 1 && key->rsa.p[0] == 0x00) {
-    key->rsa.p++;
-    key->rsa.p_len--;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len <= FIO_RSA_MAX_BYTES) {
+      FIO_MEMCPY(key->rsa.p, src, src_len);
+      key->rsa.p_len = src_len;
+    }
   }
 
   /* prime2 (q) */
@@ -94083,11 +100715,71 @@ FIO_SFUNC int fio___pem_parse_rsa_private_key(fio_pem_private_key_s *key,
     return -1;
   if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
     return -1;
-  key->rsa.q = elem.data;
-  key->rsa.q_len = elem.len;
-  if (key->rsa.q_len > 1 && key->rsa.q[0] == 0x00) {
-    key->rsa.q++;
-    key->rsa.q_len--;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len <= FIO_RSA_MAX_BYTES) {
+      FIO_MEMCPY(key->rsa.q, src, src_len);
+      key->rsa.q_len = src_len;
+    }
+  }
+
+  /* exponent1 (dP = d mod (p-1)) */
+  if (fio_asn1_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
+    return -1;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len <= FIO_RSA_MAX_BYTES) {
+      FIO_MEMCPY(key->rsa.dP, src, src_len);
+      key->rsa.dP_len = src_len;
+    }
+  }
+
+  /* exponent2 (dQ = d mod (q-1)) */
+  if (fio_asn1_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
+    return -1;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len <= FIO_RSA_MAX_BYTES) {
+      FIO_MEMCPY(key->rsa.dQ, src, src_len);
+      key->rsa.dQ_len = src_len;
+    }
+  }
+
+  /* coefficient (qInv = q^-1 mod p) */
+  if (fio_asn1_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
+    return -1;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len <= FIO_RSA_MAX_BYTES) {
+      FIO_MEMCPY(key->rsa.qInv, src, src_len);
+      key->rsa.qInv_len = src_len;
+    }
   }
 
   return 0;
@@ -94576,6 +101268,8 @@ typedef struct {
   /**
    * If this is a buffer, the de-allocation function used to free it.
    *
+   * If `copy == 0`, and `dealloc` is set, `write` will take ownership.
+   *
    * If NULL, the buffer will NOT be de-allocated.
    */
   void (*dealloc)(void *);
@@ -94703,6 +101397,9 @@ system's IO functions.
 This defines Transport Layer callbacks that facil.io will treat as non-blocking
 system calls and allows any protocol to easily add a secure (SSL/TLS) flavor if
 desired.
+
+The functions receive the file descriptor (`fd`) but MUST NOT keep a copy or
+defer any `fd` related actions to later.
 */
 struct fio_io_functions_s {
   /** Helper that converts a `fio_io_tls_s` into the implementation's context.
@@ -94713,7 +101410,7 @@ struct fio_io_functions_s {
   /** called when a new IO is first attached to a valid protocol. */
   void (*start)(fio_io_s *io);
   /** Called to perform a non-blocking `read`, same as the system call. */
-  ssize_t (*read)(int fd, void *buf, size_t len, void *context);
+  ssize_t (*read)(fio_socket_i fd, void *buf, size_t len, void *context);
   /**
    * Called to perform a non-blocking `write`, same as POSIX `write(2)`.
    *
@@ -94728,7 +101425,7 @@ struct fio_io_functions_s {
    * (e.g., TLS sequence numbers have already been incremented). Buffered
    * transformed data will be sent later by `flush`.
    */
-  ssize_t (*write)(int fd, const void *buf, size_t len, void *context);
+  ssize_t (*write)(fio_socket_i fd, const void *buf, size_t len, void *context);
   /**
    * Sends any unsent internal data. Returns `0` only if all data was sent.
    *
@@ -94741,9 +101438,9 @@ struct fio_io_functions_s {
    * still pending and the socket should be monitored for writability; `0`
    * means all done.
    */
-  int (*flush)(int fd, void *context);
+  int (*flush)(fio_socket_i fd, void *context);
   /** Called when the IO object finished sending all data before closure. */
-  void (*finish)(int fd, void *context);
+  void (*finish)(fio_socket_i fd, void *context);
   /** Called after the IO object is closed, used to cleanup its `tls` object. */
   void (*cleanup)(void *context);
 };
@@ -94821,14 +101518,18 @@ struct fio_io_protocol_s {
   /**
    * The timeout value in milliseconds for all connections using this protocol.
    *
-   * Limited to FIO_IO_TIMEOUT_MAX seconds. Zero (0) == FIO_IO_TIMEOUT_MAX
+   * Limited to FIO_IO_TIMEOUT_MAX ms. Zero (0) == FIO_IO_TIMEOUT_MAX
    */
   uint32_t timeout;
   /** The number of bytes to allocate for the fio_io_buf buffer. */
   uint32_t buffer_size;
 };
 
-/** Performs a task for each IO in the stated protocol. */
+/**
+ * Performs a task for each IO in the stated protocol.
+ *
+ * Call ONLY from the main IO thread (consider using `fio_io_defer`).
+ * */
 SFUNC size_t fio_io_protocol_each(fio_io_protocol_s *protocol,
                                   void (*task)(fio_io_s *, void *udata2),
                                   void *udata2);
@@ -95047,7 +101748,7 @@ SFUNC int fio_io_tls_each(fio_io_tls_each_s);
 #define fio_io_tls_each(tls_, ...)                                             \
   fio_io_tls_each(((fio_io_tls_each_s){.tls = tls_, __VA_ARGS__}))
 
-/** If `NULL` returns current default, otherwise sets it. */
+/** If `NULL` returns current default, otherwise sets it. Set before start. */
 SFUNC fio_io_functions_s fio_io_tls_default_functions(fio_io_functions_s *);
 
 /* *****************************************************************************
@@ -95381,6 +102082,9 @@ FIO_SFUNC void fio___io_protocol_init(fio_io_protocol_s *pr, _Bool has_tls) {
     pr->timeout = FIO_IO_TIMEOUT_MAX;
   /* round up to nearest 16 byte size */
   pr->buffer_size = ((pr->buffer_size + 15ULL) & (~15ULL));
+  if (pr->buffer_size > 0x3FFFFF)
+    FIO_LOG_WARNING("A very large protocol buffer was requested... %zu per IO",
+                    (size_t)pr->buffer_size);
 }
 
 /* the FIO___MOCK_PROTOCOL is used to manage hijacked / zombie connections. */
@@ -95542,14 +102246,16 @@ FIO_IFUNC void fio___io_free_with_flush(fio_io_s *io);
 
 /** The main IO object type. Should be treated as an opaque pointer. */
 struct fio_io_s {
+  fio_io_protocol_s *pr;
+  void *udata;
+  void *tls;
+  fio___io_env_safe_s env;
+  uint8_t pad___[64 - (63 & (sizeof(fio___io_env_safe_s) + sizeof(void *) +
+                             sizeof(void *) + sizeof(fio_io_protocol_s *)))];
   fio_socket_i fd;
   uint32_t flags;
   FIO_LIST_NODE node;
-  void *udata;
-  void *tls;
-  fio_io_protocol_s *pr;
   fio_stream_s out;
-  fio___io_env_safe_s env;
 #if FIO_IO_COUNT_STORAGE
   size_t total_sent;
   size_t total_recieved;
@@ -95685,6 +102391,8 @@ SFUNC fio_io_s *fio_io_attach_fd(fio_socket_i fd,
   fio_io_protocol_s cpy;
   if (!FIO_SOCK_FD_ISVALID(fd))
     goto error;
+  if (!pr)
+    pr = &FIO___IO_MOCK_PROTOCOL;
   io = fio___io_new2(pr->buffer_size);
   *io = (fio_io_s){
       .fd = fd,
@@ -95743,21 +102451,10 @@ IFUNC size_t fio_io_buffer_len(fio_io_s *io) {
   return fio___io_metadata_flex_len(io);
 }
 
-/** Associates a new `udata` pointer with the IO, returning the old `udata` */
-FIO_DEF_SET_FUNC(IFUNC, fio_io, fio_io_s, void *, udata, FIO_NOOP_FN)
-
-/** Returns the `udata` pointer associated with the IO. */
-IFUNC void *fio_io_udata(fio_io_s *io) { return io->udata; }
-
-/** Associates a new `tls` pointer with the IO, returning the old `tls` */
-IFUNC void *fio_io_tls_set(fio_io_s *io, void *tls) {
-  void *old = io->tls;
-  io->tls = tls;
-  return old;
-}
-
-/** Returns the `tls` pointer associated with the IO. */
-IFUNC void *fio_io_tls(fio_io_s *io) { return io->tls; }
+/* Get/Set the IO's `udata` pointer */
+FIO_DEF_GETSET_FUNC(IFUNC, fio_io, fio_io_s, void *, udata, FIO_NOOP_FN)
+/* Get/Set the IO's `tls` context pointer */
+FIO_DEF_GETSET_FUNC(IFUNC, fio_io, fio_io_s, void *, tls, FIO_NOOP_FN)
 
 /** Returns the socket file descriptor (fd) associated with the IO. */
 IFUNC fio_socket_i fio_io_fd(fio_io_s *io) { return io->fd; }
@@ -95844,7 +102541,7 @@ SFUNC void fio_io_write2 FIO_NOOP(fio_io_s *io, fio_io_write_args_s args) {
                                   args.offset,
                                   args.copy,
                                   args.dealloc);
-  } else if ((unsigned)(args.fd + 1) > 1) {
+  } else if (((unsigned)args.fd + 1) > 1 /* int file descriptor, not sock */) {
     packet = fio_stream_pack_fd((int)args.fd, args.len, args.offset, args.copy);
   } else /* fio_io_write2 called without data */
     goto do_nothing;
@@ -95935,6 +102632,8 @@ SFUNC void fio___io_free_task(void *io_, void *ignr_) {
 }
 /** Free IO (reference) - thread-safe, flushes pending writes. */
 SFUNC void fio_io_free(fio_io_s *io) {
+  if (!io)
+    return;
   if (FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_WRITE_DIRTY) &
       FIO___IO_FLAG_WRITE_DIRTY) {
     fio___io_poll_on_ready_schd((void *)io);
@@ -96048,13 +102747,14 @@ static void fio___io_poll_on_data(void *io_, void *ignr_) {
   return;
 }
 
+FIO_STATIC_ALLOC_DEF(fio___on_ready_buf_new, char, FIO_IO_BUFFER_PER_WRITE, 1)
 static void fio___io_poll_on_ready(void *io_, void *ignr_) {
   (void)ignr_;
 #if defined(DEBUG) && DEBUG
   errno = 0;
 #endif
   fio_io_s *io = (fio_io_s *)io_;
-  char buf_mem[FIO_IO_BUFFER_PER_WRITE];
+  char *buf_mem = fio___on_ready_buf_new(1);
   size_t total = 0;
   FIO___IO_FLAG_UNSET(io,
                       (FIO___IO_FLAG_POLLOUT_SET | FIO___IO_FLAG_WRITE_SCHD));
@@ -96067,18 +102767,19 @@ static void fio___io_poll_on_ready(void *io_, void *ignr_) {
     ssize_t r = io->pr->io_functions.flush(io->fd, io->tls);
     size_t len = FIO_IO_BUFFER_PER_WRITE;
     char *buf = buf_mem;
-    if (r) {
-      if ((r + 1))
-        total += r;
-      else if ((errno != EWOULDBLOCK) && (errno != EAGAIN))
+    switch ((size_t)(r + 1)) {
+    case 0:
+      if ((errno != EWOULDBLOCK) && (errno != EAGAIN))
         goto connection_error;
-      goto finish_loop;
+      break;
+    case 1: break;
+    default: total += (size_t)r; goto finish_loop;
     }
     fio_stream_read(&io->out, &buf, &len);
     if (!len)
       goto finish_loop;
     r = io->pr->io_functions.write(io->fd, buf, len, io->tls);
-    switch ((size_t)(r + 1)) {
+    switch (((size_t)r + 1)) {
     case 0:
       if ((errno == EWOULDBLOCK) || (errno == EAGAIN))
         goto finish_loop;
@@ -96570,7 +103271,7 @@ SFUNC int fio_io_tls_alpn_select(fio_io_tls_s *t,
                                  const char *protocol_name,
                                  size_t name_length,
                                  fio_io_s *io) {
-  if (!t || !protocol_name)
+  if (!t || !protocol_name || name_length > 0xFF)
     return -1;
   fio___io_tls_alpn_s seeking = {
       .nm = fio_keystr_tmp(protocol_name, (uint32_t)name_length)};
@@ -97191,8 +103892,10 @@ static void fio___io_spawn_workers_task(void *ignr_1, void *ignr_2) {
 
   /* do not allow master tasks to run in worker - pretend to stop. */
   FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
+
   if (fio_atomic_or_fetch(&FIO___IO.stop, 2) != 2)
-    return;
+    goto faild_or_done;
+
   FIO_LIST_EACH(fio_io_async_s, node, &FIO___IO.async, q) {
     fio___io_async_stop(q);
   }
@@ -97218,6 +103921,7 @@ static void fio___io_spawn_workers_task(void *ignr_1, void *ignr_2) {
     }
   }
 
+faild_or_done:
   is_running = 0;
   (void)ignr_1, (void)ignr_2;
 }
@@ -97293,6 +103997,8 @@ SFUNC uint16_t fio_io_workers(int workers) {
     workers = (int)(cores / (0 - workers));
     workers += !workers;
   }
+  if (workers > 0x0FFF)
+    workers = 0x0FFF;
   return (uint16_t)workers;
 }
 
@@ -97579,6 +104285,7 @@ FIO_NOOP(struct fio_io_listen_args_s args) {
     FIO_LOG_ERROR("fio_io_listen called with `on_root` by a non-root worker.");
     return (fio_io_listener_s *)l;
   }
+test_url:
   if (!args.url) {
     args.url = fio_sys_env("ADDRESS");
     if (!args.url)
@@ -97588,6 +104295,7 @@ FIO_NOOP(struct fio_io_listen_args_s args) {
   if (url_alt.len > 2024) {
     FIO_LOG_ERROR("binding address / url too long.");
     args.url = NULL;
+    goto test_url;
   }
   fio_url_s url = fio_url_parse(args.url, url_alt.len);
   if (url.scheme.buf &&
@@ -97599,6 +104307,8 @@ FIO_NOOP(struct fio_io_listen_args_s args) {
   if (!url.port.buf && !url.scheme.buf) {
     static size_t port_counter = 3000;
     size_t port = fio_atomic_add(&port_counter, 1);
+    if (!port_counter | (port_counter > 65535ULL))
+      port = port_counter = 3000;
     if (port == 3000 && fio_sys_env("PORT")) {
       char *port_env = fio_sys_env("PORT");
       port = fio_atol(&port_env);
@@ -97708,9 +104418,7 @@ FIO_SFUNC void fio___connecting_on_ready(fio_io_s *io) {
 void fio_io_connect___(void); /* IDE Marker */
 SFUNC fio_io_s *fio_io_connect FIO_NOOP(fio_io_connect_args_s args) {
   int should_free_tls = !args.tls;
-  if (!args.protocol)
-    return NULL;
-  if (!args.url) {
+  if (!args.protocol || !args.url) {
     if (args.on_failed)
       args.on_failed(args.protocol, args.udata);
     return NULL;
@@ -100947,14 +107655,21 @@ typedef struct {
   fio_io_tls_s *tls;
   uint8_t is_client;
   /* Certificate chain (DER-encoded) for server */
-  uint8_t *cert_der;
-  size_t cert_der_len;
-  /* Private key for server (P-256: 32-byte scalar, Ed25519: 32-byte seed) */
+  uint8_t *cert_der;  /* alias for first certificate (compat/debug) */
+  size_t cert_der_len; /* length of first certificate */
+  const uint8_t **cert_chain;
+  size_t *cert_chain_lens;
+  size_t cert_chain_count;
+  /* Private key for server (P-256: 32-byte scalar, Ed25519: 32-byte seed).
+   * RSA keys are too large for this buffer; use private_key_ext instead. */
   uint8_t private_key[32];
   /* Public key for P-256 signing (65 bytes: 0x04 || x || y) */
   uint8_t public_key[65];
   size_t private_key_len;
   uint16_t private_key_type;
+  /* Extended private key buffer for RSA (n + d encoded for the TLS layer). */
+  uint8_t *private_key_ext;
+  size_t private_key_ext_len;
   /* SNI hostname for client connections */
   char server_name[256];
   /* ALPN protocols (comma-separated) for server */
@@ -100976,6 +107691,78 @@ typedef struct {
 } fio___tls13_context_s;
 
 FIO_LEAK_COUNTER_DEF(fio___tls13_context_s)
+
+/** Free DER certificate buffers owned by a context. */
+FIO_SFUNC void fio___tls13_context_cert_chain_free(
+    fio___tls13_context_s *ctx) {
+  if (!ctx)
+    return;
+  for (size_t i = 0; i < ctx->cert_chain_count; ++i)
+    FIO_MEM_FREE((void *)ctx->cert_chain[i], ctx->cert_chain_lens[i]);
+  if (ctx->cert_chain)
+    FIO_MEM_FREE((void *)ctx->cert_chain,
+                 ctx->cert_chain_count * sizeof(*ctx->cert_chain));
+  if (ctx->cert_chain_lens)
+    FIO_MEM_FREE(ctx->cert_chain_lens,
+                 ctx->cert_chain_count * sizeof(*ctx->cert_chain_lens));
+  ctx->cert_der = NULL;
+  ctx->cert_der_len = 0;
+  ctx->cert_chain = NULL;
+  ctx->cert_chain_lens = NULL;
+  ctx->cert_chain_count = 0;
+}
+
+/** Add an owned DER certificate buffer to a context chain. */
+FIO_SFUNC int fio___tls13_context_cert_chain_add(
+    fio___tls13_context_s *ctx,
+    uint8_t *der_buf,
+    size_t der_len) {
+  if (!ctx || !der_buf || !der_len)
+    return -1;
+  size_t old_count = ctx->cert_chain_count;
+  size_t new_count = old_count + 1;
+  const uint8_t **new_chain =
+      (const uint8_t **)FIO_MEM_REALLOC(NULL,
+                                        0,
+                                        new_count * sizeof(*ctx->cert_chain),
+                                        0);
+  size_t *new_lens =
+      (size_t *)FIO_MEM_REALLOC(NULL,
+                                0,
+                                new_count * sizeof(*ctx->cert_chain_lens),
+                                0);
+  if (!new_chain || !new_lens) {
+    if (new_chain)
+      FIO_MEM_FREE((void *)new_chain,
+                   new_count * sizeof(*ctx->cert_chain));
+    if (new_lens)
+      FIO_MEM_FREE(new_lens, new_count * sizeof(*ctx->cert_chain_lens));
+    FIO_MEM_FREE(der_buf, der_len);
+    return -1;
+  }
+  if (old_count) {
+    FIO_MEMCPY((void *)new_chain,
+               ctx->cert_chain,
+               old_count * sizeof(*ctx->cert_chain));
+    FIO_MEMCPY(new_lens,
+               ctx->cert_chain_lens,
+               old_count * sizeof(*ctx->cert_chain_lens));
+    FIO_MEM_FREE((void *)ctx->cert_chain,
+                 old_count * sizeof(*ctx->cert_chain));
+    FIO_MEM_FREE(ctx->cert_chain_lens,
+                 old_count * sizeof(*ctx->cert_chain_lens));
+  }
+  ctx->cert_chain = new_chain;
+  ctx->cert_chain_lens = new_lens;
+  ctx->cert_chain[old_count] = der_buf;
+  ctx->cert_chain_lens[old_count] = der_len;
+  ctx->cert_chain_count = new_count;
+  if (!old_count) {
+    ctx->cert_der = der_buf;
+    ctx->cert_der_len = der_len;
+  }
+  return 0;
+}
 
 /* *****************************************************************************
 TLS 1.3 Global System Trust Store Singleton
@@ -101128,19 +107915,34 @@ FIO_SFUNC int fio___tls13_make_self_signed(fio___tls13_context_s *ctx,
     return -1;
   }
 
-  ctx->cert_der = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, cert_size, 0);
-  if (!ctx->cert_der) {
+  uint8_t *cert_tmp = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, cert_size, 0);
+  if (!cert_tmp) {
     FIO_LOG_ERROR("TLS 1.3: failed to allocate certificate buffer");
     fio_x509_keypair_clear(&keypair);
     return -1;
   }
 
-  ctx->cert_der_len =
-      fio_x509_self_signed_cert(ctx->cert_der, cert_size, &keypair, &opts);
-  if (ctx->cert_der_len == 0) {
+  size_t cert_der_len =
+      fio_x509_self_signed_cert(cert_tmp, cert_size, &keypair, &opts);
+  if (cert_der_len == 0) {
     FIO_LOG_ERROR("TLS 1.3: failed to generate self-signed certificate");
-    FIO_MEM_FREE(ctx->cert_der, cert_size);
-    ctx->cert_der = NULL;
+    FIO_MEM_FREE(cert_tmp, cert_size);
+    fio_x509_keypair_clear(&keypair);
+    return -1;
+  }
+
+  uint8_t *cert_der = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, cert_der_len, 0);
+  if (!cert_der) {
+    FIO_LOG_ERROR("TLS 1.3: failed to allocate exact certificate buffer");
+    FIO_MEM_FREE(cert_tmp, cert_size);
+    fio_x509_keypair_clear(&keypair);
+    return -1;
+  }
+  FIO_MEMCPY(cert_der, cert_tmp, cert_der_len);
+  FIO_MEM_FREE(cert_tmp, cert_size);
+
+  if (fio___tls13_context_cert_chain_add(ctx, cert_der, cert_der_len) != 0) {
+    FIO_LOG_ERROR("TLS 1.3: failed to store self-signed certificate");
     fio_x509_keypair_clear(&keypair);
     return -1;
   }
@@ -101195,6 +107997,45 @@ FIO_SFUNC int fio___tls13_each_alpn(struct fio_io_tls_each_s *e,
   return 0;
 }
 
+#if defined(H___FIO_PEM___H) && defined(H___FIO_X509___H)
+/** Load all CERTIFICATE PEM blocks from a file buffer into ctx->cert_chain. */
+FIO_SFUNC int fio___tls13_load_cert_pem_chain(fio___tls13_context_s *ctx,
+                                              const char *pem_data,
+                                              size_t pem_len) {
+  int loaded = 0;
+  const char *pos = pem_data;
+  size_t remaining = pem_len;
+
+  while (remaining > 0) {
+    uint8_t tmp_der[16384];
+    fio_pem_s pem_block;
+    size_t consumed =
+        fio_pem_parse(&pem_block, tmp_der, sizeof(tmp_der), pos, remaining);
+    if (consumed == 0)
+      break;
+
+    if (pem_block.label_len == 11 &&
+        FIO_MEMCMP(pem_block.label, "CERTIFICATE", 11) == 0 &&
+        pem_block.der_len > 0) {
+      uint8_t *der_buf =
+          (uint8_t *)FIO_MEM_REALLOC(NULL, 0, pem_block.der_len, 0);
+      if (!der_buf)
+        return (loaded > 0) ? loaded : -1;
+      FIO_MEMCPY(der_buf, tmp_der, pem_block.der_len);
+      if (fio___tls13_context_cert_chain_add(ctx,
+                                             der_buf,
+                                             pem_block.der_len) != 0)
+        return (loaded > 0) ? loaded : -1;
+      ++loaded;
+    }
+
+    pos += consumed;
+    remaining -= consumed;
+  }
+  return loaded;
+}
+#endif /* H___FIO_PEM___H && H___FIO_X509___H */
+
 /** Callback for iterating certificates in fio_io_tls_s */
 FIO_SFUNC int fio___tls13_each_cert(struct fio_io_tls_each_s *e,
                                     const char *server_name,
@@ -101226,28 +108067,14 @@ FIO_SFUNC int fio___tls13_each_cert(struct fio_io_tls_each_s *e,
       goto use_self_signed;
     }
 
-    /* Allocate buffer for DER-encoded certificate */
+    /* Load every CERTIFICATE block so servers send the full chain. */
     size_t cert_pem_len = fio_bstr_len(cert_pem);
-    size_t der_buf_len = cert_pem_len; /* Conservative estimate */
-    ctx->cert_der = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, der_buf_len, 0);
-    if (!ctx->cert_der) {
-      FIO_LOG_ERROR("TLS 1.3: failed to allocate certificate buffer");
-      fio_bstr_free(cert_pem);
-      fio_bstr_free(key_pem);
-      return -1;
-    }
-
-    /* Extract DER from PEM */
-    ctx->cert_der_len = fio_pem_get_certificate_der(ctx->cert_der,
-                                                    der_buf_len,
-                                                    cert_pem,
-                                                    cert_pem_len);
+    int certs_loaded =
+        fio___tls13_load_cert_pem_chain(ctx, cert_pem, cert_pem_len);
     fio_bstr_free(cert_pem);
 
-    if (ctx->cert_der_len == 0) {
+    if (certs_loaded <= 0) {
       FIO_LOG_ERROR("TLS 1.3: failed to parse certificate PEM");
-      FIO_MEM_FREE(ctx->cert_der, der_buf_len);
-      ctx->cert_der = NULL;
       fio_bstr_free(key_pem);
       goto use_self_signed;
     }
@@ -101257,9 +108084,7 @@ FIO_SFUNC int fio___tls13_each_cert(struct fio_io_tls_each_s *e,
     size_t key_pem_len = fio_bstr_len(key_pem);
     if (fio_pem_parse_private_key(&pkey, key_pem, key_pem_len) != 0) {
       FIO_LOG_ERROR("TLS 1.3: failed to parse private key PEM");
-      FIO_MEM_FREE(ctx->cert_der, der_buf_len);
-      ctx->cert_der = NULL;
-      ctx->cert_der_len = 0;
+      fio___tls13_context_cert_chain_free(ctx);
       fio_bstr_free(key_pem);
       goto use_self_signed;
     }
@@ -101281,9 +108106,7 @@ FIO_SFUNC int fio___tls13_each_cert(struct fio_io_tls_each_s *e,
 #else
         FIO_LOG_ERROR("TLS 1.3: P-256 module required for key derivation");
         fio_pem_private_key_clear(&pkey);
-        FIO_MEM_FREE(ctx->cert_der, der_buf_len);
-        ctx->cert_der = NULL;
-        ctx->cert_der_len = 0;
+        fio___tls13_context_cert_chain_free(ctx);
         goto use_self_signed;
 #endif
       }
@@ -101299,28 +108122,65 @@ FIO_SFUNC int fio___tls13_each_cert(struct fio_io_tls_each_s *e,
       FIO_LOG_DEBUG2("TLS 1.3: loaded Ed25519 private key from PEM");
       break;
 
-    case FIO_PEM_KEY_RSA:
-      /* RSA signing not yet supported in TLS 1.3 implementation */
-      FIO_LOG_WARNING(
-          "TLS 1.3: RSA private keys not yet supported for signing");
+    case FIO_PEM_KEY_RSA: {
+#if defined(H___FIO_RSA___H)
+      /* Encode the RSA private key in the format expected by the TLS 1.3
+       * server: [n_len:4][n:n_len][d_len:4][d:d_len]. */
+      if (!pkey.rsa.n_len || !pkey.rsa.d_len ||
+          pkey.rsa.n_len > FIO_RSA_MAX_BYTES ||
+          pkey.rsa.d_len > FIO_RSA_MAX_BYTES) {
+        FIO_LOG_ERROR("TLS 1.3: RSA private key has invalid lengths");
+        fio_pem_private_key_clear(&pkey);
+        fio___tls13_context_cert_chain_free(ctx);
+        goto use_self_signed;
+      }
+      size_t encoded_len = 8 + pkey.rsa.n_len + pkey.rsa.d_len;
+      uint8_t *encoded =
+          (uint8_t *)FIO_MEM_REALLOC(NULL, 0, encoded_len, 0);
+      if (!encoded) {
+        FIO_LOG_ERROR("TLS 1.3: failed to allocate RSA private key buffer");
+        fio_pem_private_key_clear(&pkey);
+        fio___tls13_context_cert_chain_free(ctx);
+        goto use_self_signed;
+      }
+      encoded[0] = (uint8_t)(pkey.rsa.n_len >> 24);
+      encoded[1] = (uint8_t)(pkey.rsa.n_len >> 16);
+      encoded[2] = (uint8_t)(pkey.rsa.n_len >> 8);
+      encoded[3] = (uint8_t)(pkey.rsa.n_len);
+      FIO_MEMCPY(encoded + 4, pkey.rsa.n, pkey.rsa.n_len);
+      size_t d_offset = 4 + pkey.rsa.n_len;
+      encoded[d_offset + 0] = (uint8_t)(pkey.rsa.d_len >> 24);
+      encoded[d_offset + 1] = (uint8_t)(pkey.rsa.d_len >> 16);
+      encoded[d_offset + 2] = (uint8_t)(pkey.rsa.d_len >> 8);
+      encoded[d_offset + 3] = (uint8_t)(pkey.rsa.d_len);
+      FIO_MEMCPY(encoded + d_offset + 4, pkey.rsa.d, pkey.rsa.d_len);
+
+      ctx->private_key_ext = encoded;
+      ctx->private_key_ext_len = encoded_len;
+      ctx->private_key_len = 0;
+      ctx->private_key_type = FIO_TLS13_SIG_RSA_PSS_RSAE_SHA256;
+      FIO_LOG_DEBUG2("TLS 1.3: loaded RSA private key from PEM (n=%zu)",
+                     pkey.rsa.n_len);
+      break;
+#else
+      FIO_LOG_ERROR(
+          "TLS 1.3: RSA private key loaded but RSA module not available");
       fio_pem_private_key_clear(&pkey);
-      FIO_MEM_FREE(ctx->cert_der, der_buf_len);
-      ctx->cert_der = NULL;
-      ctx->cert_der_len = 0;
+      fio___tls13_context_cert_chain_free(ctx);
       goto use_self_signed;
+#endif
+    }
 
     default:
       FIO_LOG_ERROR("TLS 1.3: unsupported private key type");
       fio_pem_private_key_clear(&pkey);
-      FIO_MEM_FREE(ctx->cert_der, der_buf_len);
-      ctx->cert_der = NULL;
-      ctx->cert_der_len = 0;
+      fio___tls13_context_cert_chain_free(ctx);
       goto use_self_signed;
     }
 
     fio_pem_private_key_clear(&pkey);
-    FIO_LOG_DEBUG2("TLS 1.3: certificate loaded successfully (%zu bytes)",
-                   ctx->cert_der_len);
+    FIO_LOG_DEBUG2("TLS 1.3: loaded %d certificate(s) from PEM chain",
+                   certs_loaded);
     (void)pk_password;
     (void)server_name;
     return 0;
@@ -101748,8 +108608,13 @@ FIO_SFUNC void *fio___tls13_build_context(fio_io_tls_s *tls,
 
 error:
   if (ctx) {
-    if (ctx->cert_der)
-      FIO_MEM_FREE(ctx->cert_der, ctx->cert_der_len);
+    fio___tls13_context_cert_chain_free(ctx);
+    if (ctx->private_key_ext) {
+      fio_secure_zero(ctx->private_key_ext, ctx->private_key_ext_len);
+      FIO_MEM_FREE(ctx->private_key_ext, ctx->private_key_ext_len);
+      ctx->private_key_ext = NULL;
+      ctx->private_key_ext_len = 0;
+    }
 #if defined(H___FIO_X509___H) && defined(H___FIO_PEM___H)
     /* Only free DER buffers when this context owns them (trust_der_owned=1).
      * When trust_der_owned=0 the arrays are the global system trust singleton
@@ -101782,9 +108647,14 @@ FIO_SFUNC void fio___tls13_free_context_task(void *tls_ctx, void *ignr_) {
   if (!ctx)
     return;
   FIO_LEAK_COUNTER_ON_FREE(fio___tls13_context_s);
-  if (ctx->cert_der)
-    FIO_MEM_FREE(ctx->cert_der, ctx->cert_der_len);
+  fio___tls13_context_cert_chain_free(ctx);
   fio_secure_zero(ctx->private_key, sizeof(ctx->private_key));
+  if (ctx->private_key_ext) {
+    fio_secure_zero(ctx->private_key_ext, ctx->private_key_ext_len);
+    FIO_MEM_FREE(ctx->private_key_ext, ctx->private_key_ext_len);
+    ctx->private_key_ext = NULL;
+    ctx->private_key_ext_len = 0;
+  }
 #if defined(H___FIO_X509___H) && defined(H___FIO_PEM___H)
   /* Only free DER buffers when this context owns them (trust_der_owned=1).
    * When trust_der_owned=0 the arrays are the global system trust singleton
@@ -101906,19 +108776,22 @@ FIO_SFUNC void fio___tls13_start(fio_io_s *io) {
     /* Initialize server */
     fio_tls13_server_init(&conn->state.server);
 
-    /* Set certificate chain - use pointers stored in connection struct */
-    if (ctx->cert_der && ctx->cert_der_len > 0) {
-      /* Store cert pointer and length in connection for lifetime management */
-      conn->cert_ptr = ctx->cert_der;
-      conn->cert_len = ctx->cert_der_len;
+    /* Set certificate chain loaded into the context. */
+    if (ctx->cert_chain && ctx->cert_chain_count > 0) {
       fio_tls13_server_set_cert_chain(&conn->state.server,
-                                      &conn->cert_ptr,
-                                      &conn->cert_len,
-                                      1);
+                                      ctx->cert_chain,
+                                      ctx->cert_chain_lens,
+                                      ctx->cert_chain_count);
     }
 
     /* Set private key */
-    if (ctx->private_key_len > 0) {
+    if (ctx->private_key_type == FIO_TLS13_SIG_RSA_PSS_RSAE_SHA256 &&
+        ctx->private_key_ext) {
+      fio_tls13_server_set_private_key(&conn->state.server,
+                                       ctx->private_key_ext,
+                                       ctx->private_key_ext_len,
+                                       ctx->private_key_type);
+    } else if (ctx->private_key_len > 0) {
       fio_tls13_server_set_private_key(&conn->state.server,
                                        ctx->private_key,
                                        ctx->private_key_len,
@@ -112088,7 +118961,7 @@ static int fio_http1___read_body_chunked(fio_http1_parser_s *p,
 
   char *eol = buf->buf;
   size_t expected = fio_atol16u(&eol); /* never overflows, EOL validated */
-  if (eol == buf->buf)
+  if (eol == buf->buf || expected > 0x0FFFFFFF) /* cap expected */
     return -1;
   eol += (eol[0] == '\r');
   if (eol >= buf->buf + buf->len)
@@ -116117,6 +122990,10 @@ Recursive inclusion / cleanup
 #include "002 url.h"
 #endif
 
+#ifdef FIO_ENTITY
+#include "003 entities.h"
+#endif
+
 #ifdef FIO_FILES
 #include "004 files.h"
 #endif
@@ -116141,7 +123018,6 @@ Recursive inclusion / cleanup
 #ifdef FIO_MULTIPART
 #include "004 multipart.h"
 #endif
-
 #if defined(FIO_CLI) && !defined(FIO___RECURSIVE_INCLUDE)
 #include "005 cli.h"
 #endif
@@ -116150,20 +123026,30 @@ Recursive inclusion / cleanup
 #include "010 mem.h"
 #endif
 
+#ifdef FIO_STR
+#include "011 string core.h"
+#endif
+
+#ifdef FIO_GFM
+#include "012 gfm.h"
+#endif
+
 #if defined(FIO_POLL) && !defined(FIO___RECURSIVE_INCLUDE)
 #include "102 poll api.h"
 #include "102 poll epoll.h"
 #include "102 poll kqueue.h"
 #include "102 poll poll.h"
 #endif
-#ifdef FIO_STR
-#include "102 string core.h"
-#endif
+
 #ifdef FIO_STREAM
 #include "102 stream.h"
 #endif
 #ifdef FIO_QUEUE
 #include "102 queue.h"
+#endif
+
+#ifdef FIO_MD2HTML
+#include "103 md2html.h"
 #endif
 
 #ifdef FIO_MUSTACHE
@@ -116312,37 +123198,6 @@ Recursive inclusion / cleanup
 
 #ifndef FIO___DEV___
 #include "700 cleanup.h"
-#endif
-
-#if 0 && defined(FIO_TEST_ALL) && !defined(H___FIO_TESTS_START___H)
-#include "900 tests start.h"
-#include "902 atol.h"
-#include "902 atomics.h"
-#include "902 cli.h"
-#include "902 core.h"
-#include "902 files.h"
-#include "902 fiobj.h"
-#include "902 glob matching.h"
-#include "902 http handle.h"
-#include "902 imap.h"
-#include "902 io.h"
-#include "902 math.h"
-#include "902 memalt.h"
-#include "902 mustache.h"
-#include "902 poll.h"
-#include "902 pubsub.h"
-#include "902 queue.h"
-#include "902 random.h"
-#include "902 sock.h"
-#include "902 sort.h"
-#include "902 state callbacks.h"
-#include "902 stream.h"
-#include "902 string core.h"
-#include "902 time.h"
-#include "902 url.h"
-#include "903 chacha.h"
-#include "903 sha.h"
-#include "998 tests finish.h"
 #endif
 
 #endif /* !H___FIO_CSTL_COMBINED___H */
