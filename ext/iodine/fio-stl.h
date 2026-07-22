@@ -33,6 +33,7 @@ Feel free to copy, use and enjoy according to the license provided.
 #define H___FIO_CSTL_COMBINED___H
 #endif /* H___FIO_CSTL_COMBINED___H */
 #ifndef FIO_INCLUDE_FILE
+/** Persists the include file name (single file vs. folder) */
 #define FIO_INCLUDE_FILE "fio-stl.h"
 #endif
 /* *****************************************************************************
@@ -54,7 +55,7 @@ Please refer to the core documentation in the Markdown File.
 /** An empty macro, adding white space. Used to avoid function like macros. */
 #define FIO_NOOP
 
-/** An empty macro, adding white space. Used to avoid function like macros. */
+/** A no-op macro that takes arguments. i.e., for use in `FIO_DEF_SET_FUNC` */
 #define FIO_NOOP_FN(...)
 
 /** Macro for a No-Op function name (void). */
@@ -74,7 +75,7 @@ supports macros that will help detect and validate it's version.
 /** PATCH version: Bug fixes, minor features may be added. */
 #define FIO_VERSION_PATCH 0
 /** Build version: optional build info (string), i.e. "beta.02" */
-#define FIO_VERSION_BUILD "rc.01"
+#define FIO_VERSION_BUILD "rc.02"
 
 #ifdef FIO_VERSION_BUILD
 /** Version as a String literal (MACRO). */
@@ -109,16 +110,17 @@ Settings - Behavioral defaults
 #endif
 
 #ifndef FIO_LIMIT_INTRINSIC_BUFFER
-/* limits register consumption on some pseudo-intrinsics, using more loops */
+/** Limits register consumption on some pseudo-intrinsics, using more loops */
 #define FIO_LIMIT_INTRINSIC_BUFFER 1
 #endif
 
 #ifndef FIO_MEMORY_INITIALIZE_ALLOCATIONS_DEFAULT
-/* Memory allocations should be secure by default (facil.io allocators only) */
+/** Memory allocations should be secure by default (facil.io allocators only) */
 #define FIO_MEMORY_INITIALIZE_ALLOCATIONS_DEFAULT 1
 #endif
 
 #ifndef FIO_MEM_PAGE_SIZE_LOG
+/** Compile-time memory page size log (12 == 4096 bytes). */
 #define FIO_MEM_PAGE_SIZE_LOG 12 /* assumes 4096 bytes per page */
 #endif
 
@@ -127,7 +129,7 @@ Settings - Behavioral defaults
 #endif
 
 #ifndef FIO_MAP_WARNING_BITSIZE
-/** imap and map allocation */
+/** iMap and Map allocation size warning (log2), 24 == 16Mb. */
 #define FIO_MAP_WARNING_BITSIZE ((size_t)24)
 #endif
 
@@ -199,11 +201,14 @@ Compiler Helpers - Deprecation, Alignment, Inlining, Memory Barriers
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
+/** Sets alignment is supported by compiler. */
 #define FIO_ALIGN(bytes) __attribute__((aligned(bytes)))
 #elif defined(__INTEL_COMPILER) || defined(_MSC_VER)
+/** Sets alignment is supported by compiler. */
 #define FIO_ALIGN(bytes)
 // #define FIO_ALIGN(bytes) __declspec(align(bytes))
 #else
+/** Sets alignment is supported by compiler. */
 #define FIO_ALIGN(bytes)
 #endif
 
@@ -213,19 +218,21 @@ Compiler Helpers - Deprecation, Alignment, Inlining, Memory Barriers
 /** We define this because Microsoft's naming scheme isn't portable */
 #define _CRT_SECURE_NO_WARNINGS 1
 
-#define inline   __inline
+#define inline __inline
+/** Thread local variable property. */
 #define __thread __declspec(thread)
 #elif !defined(__clang__) && !defined(__GNUC__)
+/** Thread local variable property. */
 #define __thread _Thread_local
 #endif
 
 #if defined(__clang__) || defined(__GNUC__)
 /** Clobber CPU registers and prevent compiler reordering optimizations. */
-#define FIO_COMPILER_GUARD             __asm__ volatile("" ::: "memory")
+#define FIO_COMPILER_GUARD __asm__ volatile("" ::: "memory")
+/** Prevent compiler reordering optimizations. */
 #define FIO_COMPILER_GUARD_INSTRUCTION __asm__ volatile("" :::)
 #elif defined(_MSC_VER)
 #include <intrin.h>
-/** Clobber CPU registers and prevent compiler reordering optimizations. */
 #define FIO_COMPILER_GUARD             _ReadWriteBarrier()
 #define FIO_COMPILER_GUARD_INSTRUCTION _WriteBarrier()
 #pragma message("Warning: Windows deprecated it's low-level C memory barrier.")
@@ -310,8 +317,10 @@ Aligned Memory Access Selectors
 /* *****************************************************************************
 OS Specific includes and Macros
 ***************************************************************************** */
+/** Always defined, true on POSIX systems. */
 #define FIO_OS_POSIX 0
-#define FIO_OS_WIN   0
+/** Always defined, true on Windows systems. */
+#define FIO_OS_WIN 0
 
 /* Windows check MUST come first: MinGW/MSYS2 define both __unix__ and _WIN32.
  * If the POSIX branch wins, fio_sock_dup calls dup() on a Winsock SOCKET
@@ -345,26 +354,28 @@ OS Specific includes and Macros
 #include <time.h>
 #include <winsock2.h> /* struct timeval is here... why? Microsoft. */
 
+/** Calls the `getpid` provided by the system. */
 #define fio_getpid _getpid
 
 #ifndef FIO_KILL_SELF
+/** Sends a signal to kill the current process (emulates CTRL + C). */
 #define FIO_KILL_SELF() GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)
 #endif
 
-#if defined(__MINGW32__)
-/* Mingw supports */
+#if defined(__MINGW32__) /* Mingw supports */
+                         /** True if POSIX headers are available. */
 #define FIO_HAVE_UNIX_TOOLS    2
 #define __USE_MINGW_ANSI_STDIO 1
 #define FIO___PRINTF_STYLE(string_index, check_index)                          \
   __attribute__((format(__MINGW_PRINTF_FORMAT, string_index, check_index)))
-#elif defined(__CYGWIN__)
-/* TODO: cygwin support */
+#elif defined(__CYGWIN__) /* TODO: cygwin support */
+/** True if POSIX headers are available. */
 #define FIO_HAVE_UNIX_TOOLS    3
 #define __USE_MINGW_ANSI_STDIO 1
 #define FIO___PRINTF_STYLE(string_index, check_index)                          \
   __attribute__((format(__MINGW_PRINTF_FORMAT, string_index, check_index)))
-#else
-/* Pure MSVC (not MinGW/Cygwin) */
+#else /* Pure MSVC (not MinGW/Cygwin) */
+/** True if POSIX headers are available. */
 #define FIO_HAVE_UNIX_TOOLS 0
 typedef SSIZE_T ssize_t;
 /* MSVC doesn't support __attribute__, use empty macro */
@@ -379,10 +390,14 @@ typedef SSIZE_T ssize_t;
 
 #elif defined(__unix__) || defined(__linux__) || defined(__APPLE__)
 #undef FIO_OS_POSIX
+/** True if POSIX headers are available. */
 #define FIO_HAVE_UNIX_TOOLS 1
+/** True if POSIX OS is detected. */
 #define FIO_OS_POSIX        1
+/** Calls the `getpid` provided by the system. */
 #define fio_getpid          getpid
 #ifndef FIO_KILL_SELF
+/** Sends a signal to kill the current process (emulates CTRL + C). */
 #define FIO_KILL_SELF() kill(0, SIGINT)
 #endif
 
@@ -430,22 +445,32 @@ typedef SSIZE_T ssize_t;
 #endif
 
 #ifndef SSIZE_MAX
+/** the value of `SSIZE_MAX` (ssize_t range). */
 #define SSIZE_MAX ((ssize_t)((~(size_t)0) >> 1))
 #endif
 #ifndef SSIZE_MIN
+/** the value of `SSIZE_MIN` (ssize_t range). */
 #define SSIZE_MIN ((ssize_t)(~((~(size_t)0) >> 1)))
+#endif
+
+#ifndef FIO_SIZE_T_ERROR
+/** The `-1` value for a `size_t` type, often used as an error value. */
+#define FIO_SIZE_T_ERROR (~(size_t)0)
 #endif
 /* *****************************************************************************
 Function Attributes
 ***************************************************************************** */
 
 #if __has_attribute(unused) || defined(__GNUC__) || defined(__clang__)
+/** Marks a variable / function as possibly unused (if compiler supported). */
 #define FIO_MAYBE_UNUSED __attribute__((unused))
 #else
+/** Marks a variable / function as possibly unused (if compiler supported). */
 #define FIO_MAYBE_UNUSED
 #endif
 
 #ifndef FIO_SFUNC
+/** static, possibly unused, function. */
 #define FIO_SFUNC static FIO_MAYBE_UNUSED
 #endif
 
@@ -455,11 +480,12 @@ Function Attributes
 #endif
 
 #ifndef FIO_WARN_UNUSED
-/** Attribute for functions whose return value should not be ignored. */
 #if __has_attribute(warn_unused_result) || defined(__GNUC__) ||                \
     defined(__clang__)
+/** Attribute for functions whose return value should not be ignored. */
 #define FIO_WARN_UNUSED __attribute__((warn_unused_result))
 #else
+/** Attribute for functions whose return value should not be ignored. */
 #define FIO_WARN_UNUSED
 #endif
 #endif
@@ -469,20 +495,21 @@ Function Attributes
 #define FIO_MIFN FIO_IFUNC FIO_WARN_UNUSED
 #endif
 
-/** Marks a function as const (no side effects, result depends only on args) */
 #ifndef FIO_CONST
 #if __has_attribute(const) || defined(__GNUC__)
+/** Marks a function as const (no side effects, result depends only on args) */
 #define FIO_CONST __attribute__((const))
 #else
 #define FIO_CONST
 #endif
 #endif
 
-/** Marks a function as pure (no side effects, may read global memory) */
 #ifndef FIO_PURE
 #if __has_attribute(pure) || defined(__GNUC__)
+/** Marks a function as pure (no side effects, may read global memory) */
 #define FIO_PURE __attribute__((pure))
 #else
+/** Marks a function as pure (on supported compilers) */
 #define FIO_PURE
 #endif
 #endif
@@ -510,12 +537,12 @@ Function Attributes
 #endif
 
 #ifndef FIO_DEF_GET_SET
-/** Defines a "get" function for a field within a struct / union. */
-#define FIO_DEF_GET_FUNC_DEF(static, namespace, T_type, F_type, field_name)    \
+/** Declares (names) a `get` function for a field within a struct / union. */
+#define FIO_DEF_GET_FUNC_DEC(static, namespace, T_type, F_type, field_name)    \
   /** Returns current value of property within the struct / union. */          \
   static F_type FIO_NAME(namespace, field_name)(T_type * o);
 
-/** Defines a "get" function for a field within a struct / union. */
+/** Defines a `get` function for a field within a struct / union. */
 #define FIO_DEF_GET_FUNC(static, namespace, T_type, F_type, field_name)        \
   /** Returns current value of property within the struct / union. */          \
   static F_type FIO_NAME(namespace, field_name)(T_type * o) {                  \
@@ -523,13 +550,13 @@ Function Attributes
     return o->field_name;                                                      \
   }
 
-/** Defines a "set" function for a field within a struct / union. */
-#define FIO_DEF_SET_FUNC_DEF(static, namespace, T_type, F_type, F_name)        \
+/** Declares (names) a `set` function for a field within a struct / union. */
+#define FIO_DEF_SET_FUNC_DEC(static, namespace, T_type, F_type, F_name)        \
   /** Sets a new value, returning the old one */                               \
   static F_type FIO_NAME(FIO_NAME(namespace, F_name), set)(T_type * o,         \
                                                            F_type new_value);
 
-/** Defines a "set" function for a field within a struct / union. */
+/** Defines a `set` function for a field within a struct / union. */
 #define FIO_DEF_SET_FUNC(static, namespace, T_type, F_type, F_name, on_set)    \
   /** Sets a new value, returning the old one */                               \
   static F_type FIO_NAME(FIO_NAME(namespace, F_name), set)(T_type * o,         \
@@ -540,28 +567,28 @@ Function Attributes
     on_set(o);                                                                 \
     return old_value;                                                          \
   }
-/** Defines get/set functions for a field within a struct / union. */
+/** Defines `get/set` functions for a field within a struct / union. */
 #define FIO_DEF_GETSET_FUNC(static, namespace, T_type, F_type, F_name, on_set) \
   FIO_DEF_GET_FUNC(static, namespace, T_type, F_type, F_name)                  \
   FIO_DEF_SET_FUNC(static, namespace, T_type, F_type, F_name, on_set)
 
-/** Defines get/set functions for a field within a struct / union. */
-#define FIO_DEF_GETSET_FUNC_DEF(static, namespace, T_type, F_type, F_name)     \
-  FIO_DEF_GET_FUNC_DEF(static, namespace, T_type, F_type, F_name)              \
-  FIO_DEF_SET_FUNC_DEF(static, namespace, T_type, F_type, F_name)
+/** Declares (names) `get/set` functions for a field within a struct / union. */
+#define FIO_DEF_GETSET_FUNC_DEC(static, namespace, T_type, F_type, F_name)     \
+  FIO_DEF_GET_FUNC_DEC(static, namespace, T_type, F_type, F_name)              \
+  FIO_DEF_SET_FUNC_DEC(static, namespace, T_type, F_type, F_name)
 
 #endif
 
 #ifndef FIO_IFUNC_DEF_GETSET
-/** Defines a "get" function for a field within a struct / union. */
+/** Defines a `get` function for a field within a struct / union. */
 #define FIO_IFUNC_DEF_GET(namespace, T_type, F_type, field_name)               \
   FIO_DEF_GET_FUNC(FIO_IFUNC, namespace, T_type, F_type, field_name)
 
-/** Defines a "set" function for a field within a struct / union. */
+/** Defines a `set` function for a field within a struct / union. */
 #define FIO_IFUNC_DEF_SET(namespace, T_type, F_type, F_name, on_set)           \
   FIO_DEF_SET_FUNC(FIO_IFUNC, namespace, T_type, F_type, F_name, on_set)
 
-/** Defines get/set functions for a field within a struct / union. */
+/** Defines `get/set` functions for a field within a struct / union. */
 #define FIO_IFUNC_DEF_GETSET(namespace, T_type, F_type, F_name, on_set)        \
   FIO_IFUNC_DEF_GET(namespace, T_type, F_type, F_name)                         \
   FIO_IFUNC_DEF_SET(namespace, T_type, F_type, F_name, on_set)
@@ -619,10 +646,14 @@ FIO_SFUNC int fio___msv_run_counter_macro_to_3_digits(void) {
 Conditional Likelihood
 ***************************************************************************** */
 #if defined(__clang__) || defined(__GNUC__)
-#define FIO_LIKELY(cond)   __builtin_expect((cond), 1)
+/** Provides a compiler hint for value likelihood, if possible. */
+#define FIO_LIKELY(cond) __builtin_expect((cond), 1)
+/** Provides a compiler hint for value likelihood, if possible. */
 #define FIO_UNLIKELY(cond) __builtin_expect((cond), 0)
 #else
+/** Provides a compiler hint for value likelihood, if possible. */
 #define FIO_LIKELY(cond)   (cond)
+/** Provides a compiler hint for value likelihood, if possible. */
 #define FIO_UNLIKELY(cond) (cond)
 #endif
 
@@ -662,28 +693,30 @@ Cache Prefetch Hints
 Macro Stringifier
 ***************************************************************************** */
 #ifndef FIO_MACRO2STR
-#define FIO_MACRO2STR_STEP2(macro) #macro
+#define FIO___MACRO2STR_STEP2(macro) #macro
 /** Converts a macro's content to a string literal. */
-#define FIO_MACRO2STR(macro) FIO_MACRO2STR_STEP2(macro)
+#define FIO_MACRO2STR(macro) FIO___MACRO2STR_STEP2(macro)
 #endif
 
 /* *****************************************************************************
 Naming Macros
 ***************************************************************************** */
 /* Used for naming functions and types */
-#define FIO_NAME_FROM_MACRO_STEP2(prefix, postfix, div) prefix##div##postfix
-#define FIO_NAME_FROM_MACRO_STEP1(prefix, postfix, div)                        \
-  FIO_NAME_FROM_MACRO_STEP2(prefix, postfix, div)
+#define FIO___NAME_FROM_MACRO_STEP2(prefix, postfix, div) prefix##div##postfix
+#define FIO___NAME_FROM_MACRO_STEP1(prefix, postfix, div)                      \
+  FIO___NAME_FROM_MACRO_STEP2(prefix, postfix, div)
 
 /** Used for naming functions and variables resulting in: prefix_postfix */
-#define FIO_NAME(prefix, postfix) FIO_NAME_FROM_MACRO_STEP1(prefix, postfix, _)
+#define FIO_NAME(prefix, postfix)                                              \
+  FIO___NAME_FROM_MACRO_STEP1(prefix, postfix, _)
 
 /** Sets naming convention for conversion functions, i.e.: foo2bar */
-#define FIO_NAME2(prefix, postfix) FIO_NAME_FROM_MACRO_STEP1(prefix, postfix, 2)
+#define FIO_NAME2(prefix, postfix)                                             \
+  FIO___NAME_FROM_MACRO_STEP1(prefix, postfix, 2)
 
 /** Sets naming convention for boolean testing functions, i.e.: foo_is_true */
 #define FIO_NAME_BL(prefix, postfix)                                           \
-  FIO_NAME_FROM_MACRO_STEP1(prefix, postfix, _is_)
+  FIO___NAME_FROM_MACRO_STEP1(prefix, postfix, _is_)
 
 /** Used internally to name test functions. */
 #define FIO_NAME_TEST(prefix, postfix)                                         \
@@ -956,8 +989,11 @@ Copyright and License: see header file (000 copyright.h) or top of file
 Spin-Locks
 ***************************************************************************** */
 
-#define FIO_LOCK_INIT         0
+/** Initialization value for a spin lock. */
+#define FIO_LOCK_INIT 0
+/** A numbered sub-lock index, must be less than 8. Zero == the master lock. */
 #define FIO_LOCK_SUBLOCK(sub) ((uint8_t)(1U) << ((sub)&7))
+/** A spin lock type, must be initialized to `FIO_LOCK_INIT` before use. */
 typedef volatile unsigned char fio_lock_i;
 
 #ifndef FIO___LOCK_RESCHDULE_EVERY_LOG
@@ -969,10 +1005,13 @@ typedef volatile unsigned char fio_lock_i;
  * Combine a number of sublocks using OR (`|`) and the FIO_LOCK_SUBLOCK(i)
  * macro. i.e.:
  *
- *      if(!fio_trylock_group(&lock,
- *                            FIO_LOCK_SUBLOCK(1) | FIO_LOCK_SUBLOCK(2))) {
- *         // act in lock
- *      }
+ *```c
+ * if(!fio_trylock_group(&lock,
+ *                       FIO_LOCK_SUBLOCK(1) | FIO_LOCK_SUBLOCK(2))) {
+ *    // act in lock
+ * }
+ * fio_unlock_group(&lock, FIO_LOCK_SUBLOCK(1) | FIO_LOCK_SUBLOCK(2)));
+ * ```
  *
  * Returns 0 on success and non-zero on failure.
  */
@@ -1090,7 +1129,7 @@ memory address to be returned if needed (valid until concurrency max calls).
 ***************************************************************************** */
 
 #ifndef FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX
-/* The multiplier is used to set the maximum number of safe concurrent calls. */
+/** The multiplier used to set the maximum number of safe concurrent calls. */
 #define FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX 256
 #endif
 
@@ -1101,7 +1140,9 @@ memory address to be returned if needed (valid until concurrency max calls).
  * single input `count` and returns a `type_T` pointer (`type_T *`) containing
  * `sizeof(type_T) * count * size_per_allocation` in correct memory alignment.
  *
- *          static type_T *name(size_t allocation_count);
+ * ```c
+ * static type_T *name(size_t allocation_count);
+ * ```
  *
  * That memory is statically allocated, allowing it be returned and never
  * needing to be freed.
@@ -1109,8 +1150,72 @@ memory address to be returned if needed (valid until concurrency max calls).
  * The functions can safely allocate the following number of bytes before
  * the function returns the same memory block to another caller:
  *
- *     FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX * allocations_per_thread *
+ * ```c
+ * max_thread_safty * allocations_per_thread * sizeof(type_T) *
+ * size_per_allocation
+ * ```
+ *
+ * Example use:
+ *
+ * ```c
+ * // defined a static allocator for 32 byte long strings
+ * FIO_STATIC_ALLOC_DEF_UNSAFE(numer2hex_allocator, char, 19, 1, 256);
+ * // a function that returns an unsigned number as a 16 digit hex string
+ * char * ntos16(uint16_t n) {
+ *   char * n = numer2hex_allocator(1);
+ *   n[0] = '0'; n[1] = 'x';
+ *   fio_ltoa16u(n+2, n, 16);
+ *   n[18] = 0;
+ *   return n;
+ * }
+ * ```
+ *
+ * A similar approach is use by `fiobj_num2cstr` in order to provide temporary
+ * conversions of FIOBJ to a C String that doesn't require memory management.
+ */
+#define FIO_STATIC_ALLOC_DEF_UNSAFE(name,                                      \
+                                    type_T,                                    \
+                                    size_per_allocation,                       \
+                                    allocations_per_thread,                    \
+                                    max_thread_safty)                          \
+  /** Allocates `count` blocks of memory from the `name` static arena. */      \
+  FIO_SFUNC FIO_WARN_UNUSED type_T *name(size_t count) {                       \
+    static type_T name##buffer[sizeof(type_T) * max_thread_safty *             \
+                               size_per_allocation * allocations_per_thread];  \
+    static size_t pos;                                                         \
+    if (!count)                                                                \
+      return name##buffer;                                                     \
+    size_t at = fio_atomic_add(&pos, count);                                   \
+    at %= max_thread_safty * allocations_per_thread;                           \
+    return (at * size_per_allocation) + name##buffer;                          \
+  }                                                                            \
+  /** Returns the size of the static arena in `sizeof(type_T)` units. */       \
+  FIO_IFUNC size_t name##_size(void) {                                         \
+    return (size_t)(max_thread_safty * size_per_allocation *                   \
+                    allocations_per_thread);                                   \
+  }
+
+/**
+ * Defines a simple (almost naive) static memory allocator named `name`.
+ *
+ * This defines a memory allocation function named `name` that accepts a
+ * single input `count` and returns a `type_T` pointer (`type_T *`) containing
+ * `sizeof(type_T) * count * size_per_allocation` in correct memory alignment.
+ *
+ * ```c
+ * static type_T *name(size_t allocation_count);
+ * ```
+ *
+ * That memory is statically allocated, allowing it be returned and never
+ * needing to be freed.
+ *
+ * The functions can safely allocate the following number of bytes before
+ * the function returns the same memory block to another caller:
+ *
+ * ```c
+ * FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX * allocations_per_thread *
  *         sizeof(type_T) * size_per_allocation
+ * ```
  *
  * Example use:
  *
@@ -1134,15 +1239,11 @@ memory address to be returned if needed (valid until concurrency max calls).
                              type_T,                                           \
                              size_per_allocation,                              \
                              allocations_per_thread)                           \
-  FIO_SFUNC FIO_WARN_UNUSED type_T *name(size_t count) {                       \
-    static type_T name##buffer[sizeof(type_T) *                                \
-                               FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX *         \
-                               size_per_allocation * allocations_per_thread];  \
-    static size_t pos;                                                         \
-    size_t at = fio_atomic_add(&pos, count);                                   \
-    at %= FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX * allocations_per_thread;      \
-    return (at * size_per_allocation) + name##buffer;                          \
-  }
+  FIO_STATIC_ALLOC_DEF_UNSAFE(name,                                            \
+                              type_T,                                          \
+                              size_per_allocation,                             \
+                              allocations_per_thread,                          \
+                              FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX)
 
 /* *****************************************************************************
 Logging Primitives (no-op)
@@ -1150,9 +1251,9 @@ Logging Primitives (no-op)
 
 /* avoid printing a full / nested path when __FILE_NAME__ is available */
 #ifdef __FILE_NAME__
-#define FIO__FILE__ __FILE_NAME__
+#define FIO___FILE__ __FILE_NAME__
 #else
-#define FIO__FILE__ __FILE__
+#define FIO___FILE__ __FILE__
 #endif
 
 /** Logging level of zero (no logging). */
@@ -1175,24 +1276,38 @@ Logging Primitives (no-op)
 
 // clang-format off
 #define FIO___LOG_PRINT_LEVEL(level, ...) do { if ((level) <= FIO_LOG_LEVEL_GET()) {FIO_LOG2STDERR(__VA_ARGS__);} } while (0)
-#define FIO_LOG_WRITE(...)    FIO_LOG2STDERR("(" FIO__FILE__ ":" FIO_MACRO2STR(__LINE__) "): " __VA_ARGS__)
+/** Writes a message to the log, including the file name and line number. */
+#define FIO_LOG_WRITE(...)    FIO_LOG2STDERR("(" FIO___FILE__ ":" FIO_MACRO2STR(__LINE__) "): " __VA_ARGS__)
+/** Writes a Fatal message to the log. */
 #define FIO_LOG_FATAL(...)    FIO___LOG_PRINT_LEVEL(FIO_LOG_LEVEL_FATAL, "\x1B[1m\x1B[7mFATAL:\x1B[0m    " __VA_ARGS__)
+/** Writes a Error message to the log. */
 #define FIO_LOG_ERROR(...)    FIO___LOG_PRINT_LEVEL(FIO_LOG_LEVEL_ERROR, "\x1B[1mERROR:\x1B[0m    " __VA_ARGS__)
+/** Writes a Security message to the log. */
 #define FIO_LOG_SECURITY(...) FIO___LOG_PRINT_LEVEL(FIO_LOG_LEVEL_ERROR, "\x1B[1mSECURITY:\x1B[0m " __VA_ARGS__)
+/** Writes a Warning message to the log. */
 #define FIO_LOG_WARNING(...)  FIO___LOG_PRINT_LEVEL(FIO_LOG_LEVEL_WARNING, "\x1B[2mWARNING:\x1B[0m  " __VA_ARGS__)
+/** Writes a Info message to the log. */
 #define FIO_LOG_INFO(...)     FIO___LOG_PRINT_LEVEL(FIO_LOG_LEVEL_INFO, "INFO:     " __VA_ARGS__)
-#define FIO_LOG_DEBUG(...)    FIO___LOG_PRINT_LEVEL(FIO_LOG_LEVEL_DEBUG,"DEBUG:    (" FIO__FILE__ ":" FIO_MACRO2STR(__LINE__) ") " __VA_ARGS__)
+/** Writes a Debug message to the log, including the file name and line number. */
+#define FIO_LOG_DEBUG(...)    FIO___LOG_PRINT_LEVEL(FIO_LOG_LEVEL_DEBUG,"DEBUG:    (" FIO___FILE__ ":" FIO_MACRO2STR(__LINE__) ") " __VA_ARGS__)
+/** Writes a Debug message to the log. */
 #define FIO_LOG_DEBUG2(...)   FIO___LOG_PRINT_LEVEL(FIO_LOG_LEVEL_DEBUG, "DEBUG:    " __VA_ARGS__)
 // clang-format on
 
 #ifdef DEBUG
-#define FIO_LOG_DDEBUG(...)           FIO_LOG_DEBUG(__VA_ARGS__)
-#define FIO_LOG_DDEBUG2(...)          FIO_LOG_DEBUG2(__VA_ARGS__)
-#define FIO_LOG_DERROR(...)           FIO_LOG_ERROR(__VA_ARGS__)
-#define FIO_LOG_DSECURITY(...)        FIO_LOG_SECURITY(__VA_ARGS__)
-#define FIO_LOG_DWARNING(...)         FIO_LOG_WARNING(__VA_ARGS__)
+/** Writes a Debug message to the log only if `DEBUG` was defined. */
+#define FIO_LOG_DDEBUG(...) FIO_LOG_DEBUG(__VA_ARGS__)
+/** Writes a Debug2 message to the log only if `DEBUG` was defined. */
+#define FIO_LOG_DDEBUG2(...) FIO_LOG_DEBUG2(__VA_ARGS__)
+/** Writes a Error message to the log only if `DEBUG` was defined. */
+#define FIO_LOG_DERROR(...) FIO_LOG_ERROR(__VA_ARGS__)
+/** Writes a Security message to the log only if `DEBUG` was defined. */
+#define FIO_LOG_DSECURITY(...) FIO_LOG_SECURITY(__VA_ARGS__)
+/** Writes a Warning message to the log only if `DEBUG` was defined. */
+#define FIO_LOG_DWARNING(...) FIO_LOG_WARNING(__VA_ARGS__)
+/** Writes a Info message to the log only if `DEBUG` was defined. */
 #define FIO_LOG_DINFO(...)            FIO_LOG_INFO(__VA_ARGS__)
-#define FIO_ASSERT___PERFORM_SIGNAL() FIO_KILL_SELF();
+#define FIO___ASSERT_PERFORM_SIGNAL() FIO_KILL_SELF();
 #else
 #define FIO_LOG_DDEBUG(...)    ((void)(0))
 #define FIO_LOG_DDEBUG2(...)   ((void)(0))
@@ -1200,7 +1315,7 @@ Logging Primitives (no-op)
 #define FIO_LOG_DSECURITY(...) ((void)(0))
 #define FIO_LOG_DWARNING(...)  ((void)(0))
 #define FIO_LOG_DINFO(...)     ((void)(0))
-#define FIO_ASSERT___PERFORM_SIGNAL()
+#define FIO___ASSERT_PERFORM_SIGNAL()
 #endif /* DEBUG */
 
 #ifndef FIO_LOG_LENGTH_LIMIT
@@ -1218,13 +1333,13 @@ Assertions
 ***************************************************************************** */
 
 #ifndef FIO_ASSERT
-/* Asserts a condition is true, or kills the application using SIGINT. */
+/** Asserts a condition is true, or kills the application using SIGINT. */
 #define FIO_ASSERT(cond, ...)                                                  \
   do {                                                                         \
     if (FIO_UNLIKELY(!(cond))) {                                               \
       FIO_LOG_FATAL(__VA_ARGS__);                                              \
       FIO_LOG_FATAL("     errno(%d): %s\n", errno, strerror(errno));           \
-      FIO_ASSERT___PERFORM_SIGNAL();                                           \
+      FIO___ASSERT_PERFORM_SIGNAL();                                           \
       exit(-1);                                                                \
     }                                                                          \
   } while (0)
@@ -1240,10 +1355,10 @@ Assertions
 #define FIO_ASSERT_DEBUG(cond, ...)                                            \
   do {                                                                         \
     if (!(cond)) {                                                             \
-      FIO_LOG_FATAL("(" FIO__FILE__                                            \
+      FIO_LOG_FATAL("(" FIO___FILE__                                           \
                     ":" FIO_MACRO2STR(__LINE__) ") " __VA_ARGS__);             \
       FIO_LOG_FATAL("     errno(%d): %s\n", errno, strerror(errno));           \
-      FIO_ASSERT___PERFORM_SIGNAL();                                           \
+      FIO___ASSERT_PERFORM_SIGNAL();                                           \
       exit(-1);                                                                \
     }                                                                          \
   } while (0)
@@ -1255,8 +1370,10 @@ Assertions
 Static Assertions
 ***************************************************************************** */
 #if __STDC_VERSION__ >= 201112L
+/** Perform a static (build time) assertion. */
 #define FIO_ASSERT_STATIC(cond, msg) _Static_assert((cond), msg)
 #else
+/** Perform a static (build time) assertion. */
 #define FIO_ASSERT_STATIC(cond, msg)                                           \
   static const char *FIO_NAME(fio_static_assertion_failed,                     \
                               __LINE__)[(((cond) << 1) - 1)] = {(char *)msg}
@@ -1303,13 +1420,13 @@ Static Endian Test
 #endif
 #elif !defined(__BIG_ENDIAN__) && !defined(__BYTE_ORDER__) &&                  \
     !defined(__LITTLE_ENDIAN__)
-#define FIO_LITTLE_ENDIAN_TEST 0x31323334UL
-#define FIO_BIG_ENDIAN_TEST    0x34333231UL
-#define FIO_ENDIAN_ORDER_TEST  ('1234')
-#if ENDIAN_ORDER_TEST == LITTLE_ENDIAN_TEST
+#define FIO___LITTLE_ENDIAN_TEST 0x31323334UL
+#define FIO___BIG_ENDIAN_TEST    0x34333231UL
+#define FIO___ENDIAN_ORDER_TEST  ('1234')
+#if FIO___ENDIAN_ORDER_TEST == FIO___LITTLE_ENDIAN_TEST
 #define __BIG_ENDIAN__    0
 #define __LITTLE_ENDIAN__ 1
-#elif ENDIAN_ORDER_TEST == BIG_ENDIAN_TEST
+#elif FIO___BIG_ENDIAN_TEST == FIO___BIG_ENDIAN_TEST
 #define __BIG_ENDIAN__    1
 #define __LITTLE_ENDIAN__ 0
 #else
@@ -1322,6 +1439,7 @@ Static Endian Test
 Dynamic Endian Testing
 ***************************************************************************** */
 
+/** Dynamically test if we are on a little endian machine. */
 FIO_IFUNC unsigned int fio_is_little_endian(void) {
   union {
     unsigned long ul;
@@ -1330,6 +1448,7 @@ FIO_IFUNC unsigned int fio_is_little_endian(void) {
   return (unsigned int)u.u8[0];
 }
 
+/** Dynamically test if we are on a big endian machine. */
 FIO_IFUNC unsigned int fio_is_big_endian(void) {
   return !fio_is_little_endian();
 }
@@ -1337,6 +1456,7 @@ FIO_IFUNC unsigned int fio_is_big_endian(void) {
 /* *****************************************************************************
 Security Related macros
 ***************************************************************************** */
+/** Places `pages` x 4096 bytes of zero (`0`) on the stack. */
 #define FIO_MEM_STACK_WIPE(pages)                                              \
   do {                                                                         \
     volatile char stack_mem[(pages) << 12] = {0};                              \
@@ -1348,21 +1468,27 @@ Settings - Memory Function Selectors
 ***************************************************************************** */
 #ifdef FIO_MEMALT
 #ifndef FIO_MEMCPY
+/** Use this macro instead of `memcpy`, for easy implementation overriding. */
 #define FIO_MEMCPY fio_memcpy
 #endif
 #ifndef FIO_MEMMOVE
+/** Use this macro instead of `memmove`, for easy implementation overriding. */
 #define FIO_MEMMOVE fio_memcpy
 #endif
 #ifndef FIO_MEMCMP
+/** Use this macro instead of `memcmp`, for easy implementation overriding. */
 #define FIO_MEMCMP fio_memcmp
 #endif
 #ifndef FIO_MEMCHR
+/** Use this macro instead of `memchr`, for easy implementation overriding. */
 #define FIO_MEMCHR fio_memchr
 #endif
 #ifndef FIO_MEMSET
+/** Use this macro instead of `memset`, for easy implementation overriding. */
 #define FIO_MEMSET fio_memset
 #endif
 #ifndef FIO_STRLEN
+/** Use this macro instead of `strlen`, for easy implementation overriding. */
 #define FIO_STRLEN fio_strlen
 #endif
 #endif /* FIO_MEMALT */
@@ -1442,8 +1568,14 @@ Settings - Memory Function Selectors
 SIMD Vector Looping Helper
 ***************************************************************************** */
 
-/* Internal - bytes per constant iterative loop for compiler optimization  */
-#define FIO___SIMD_BYTES ((size_t)256U)
+/**
+ * The byte stride used by `FIO_FOR_UNROLL` for compiler-friendly batches.
+ *
+ * Most CPUs should be able to hold at least 512 bytes in their registers. The
+ * default value assumes half that is available for the optimized loop, as the
+ * action within each loop will likely require some available registers.
+ */
+#define FIO_FOR_UNROLL_GROUP_SIZE ((size_t)256U)
 /**
  * Unrolled `for` loop - separates for loops to make it easier for the compiler
  * to optimize.
@@ -1452,22 +1584,39 @@ SIMD Vector Looping Helper
  * @param size_of_loop - the number of bytes consumed by each `action`
  * @param i - the loop index variable name to use (accessible by `action`)
  * @param action - an action to be performed each iteration (can be a macro)
+ *
+ * Note that `action` is NOT guarded. In the following `strlen` example, the
+ * `if` statement will run only after each SIMD loop has ended, allowing the
+ * compiler to unroll the loops:
+ *
+ * ```c
+ *   size_t has_zero = 0;
+ *   const size_t iterations = ((~(uintptr_t)str) + 1) | (1ULL << 31);
+ * #define FIO___STRLEN_ACTION                                        \
+ *   has_zero += (!str[i] | !!has_zero);                              \
+ *   if (has_zero)                                                    \
+ *     return i - has_zero;
+ *   FIO_FOR_UNROLL(iterations, 1, i, FIO___STRLEN_ACTION);
+ * #undef FIO___STRLEN_ACTION
+ *   return ~(size_t)0;
+ * ```
  * */
 #define FIO_FOR_UNROLL(iterations, size_of_loop, i, action)                    \
   do {                                                                         \
     size_t i = 0;                                                              \
     const size_t fio___unroll_remainder__ =                                    \
-        ((iterations) & ((FIO___SIMD_BYTES / (size_of_loop)) - 1));            \
+        ((iterations) & ((FIO_FOR_UNROLL_GROUP_SIZE / (size_of_loop)) - 1));   \
     /* handle odd length vectors, not multiples of FIO___LOG2V */              \
-    if (fio___unroll_remainder__)                                              \
+    if (fio___unroll_remainder__ && ((iterations) + 1))                        \
       for (; i < fio___unroll_remainder__; ++i)                                \
         action;                                                                \
     if (iterations)                                                            \
-      for (; !((iterations) + 1) || (i < (iterations));)                       \
+      for (; !((iterations) + 1) || (i < (iterations));) {                     \
         for (size_t j__loop__ = 0;                                             \
-             j__loop__ < (FIO___SIMD_BYTES / (size_of_loop));                  \
+             j__loop__ < (FIO_FOR_UNROLL_GROUP_SIZE / (size_of_loop));         \
              ++j__loop__, ++i) /* dear compiler, please vectorize */           \
           action;                                                              \
+      }                                                                        \
   } while (0)
 
 /* *****************************************************************************
@@ -1475,7 +1624,7 @@ Memory Copying Primitives (the basis for unaligned memory access for numbers)
 ***************************************************************************** */
 
 /* memcpy selectors / overriding */
-#if __has_builtin(__builtin_memcpy) /* __builtin_memcpy isn't really better */
+#if __has_builtin(__builtin_memcpy) && 0 /* __builtin_memcpy can be better */
 #define FIO___MAKE_MEMCPY_FIXED(bytes)                                         \
   FIO_SFUNC void *fio_memcpy##bytes(void *restrict d,                          \
                                     const void *restrict s) {                  \
@@ -1602,10 +1751,11 @@ FIO_SFUNC void *fio___memcpy_unsafe_x(void *restrict d_,
 }
 
 #define FIO___MEMCPYX_MAKER(lim, fn)                                           \
+  /** Copies up to `len & lim` bytes from `src` (`s`) to `dest` (`d`). */      \
   FIO_IFUNC void *fio_memcpy##lim##x(void *restrict d,                         \
                                      const void *restrict s,                   \
-                                     size_t l) {                               \
-    return fn(d, s, (l & lim));                                                \
+                                     size_t len) {                             \
+    return fn(d, s, (len & lim));                                              \
   }
 
 /** No-op (completes the name space). */
@@ -1613,25 +1763,16 @@ FIO_SFUNC void *fio_memcpy0x(void *d, const void *s, size_t l) {
   ((void)s), ((void)l);
   return d;
 }
-/** Copies up to (len & 7) bytes from `src` (`s`) to `dest` (`d`). */
+
 FIO___MEMCPYX_MAKER(7, fio___memcpy_unsafe_63x)
-/** Copies up to (len & 15) bytes from `src` (`s`) to `dest` (`d`). */
 FIO___MEMCPYX_MAKER(15, fio___memcpy_unsafe_63x)
-/** Copies up to (len & 31) bytes from `src` (`s`) to `dest` (`d`). */
 FIO___MEMCPYX_MAKER(31, fio___memcpy_unsafe_63x)
-/** Copies up to (len & 63) bytes from `src` (`s`) to `dest` (`d`). */
 FIO___MEMCPYX_MAKER(63, fio___memcpy_unsafe_63x)
-/** Copies up to (len & 127) bytes from `src` (`s`) to `dest` (`d`). */
 FIO___MEMCPYX_MAKER(127, fio___memcpy_unsafe_x)
-/** Copies up to (len & 255) bytes from `src` (`s`) to `dest` (`d`). */
 FIO___MEMCPYX_MAKER(255, fio___memcpy_unsafe_x)
-/** Copies up to (len & 511) bytes from `src` (`s`) to `dest` (`d`). */
 FIO___MEMCPYX_MAKER(511, fio___memcpy_unsafe_x)
-/** Copies up to (len & 1023) bytes from `src` (`s`) to `dest` (`d`). */
 FIO___MEMCPYX_MAKER(1023, fio___memcpy_unsafe_x)
-/** Copies up to (len & 2047) bytes from `src` (`s`) to `dest` (`d`). */
 FIO___MEMCPYX_MAKER(2047, fio___memcpy_unsafe_x)
-/** Copies up to (len & 4095) bytes from `src` (`s`) to `dest` (`d`). */
 FIO___MEMCPYX_MAKER(4095, fio___memcpy_unsafe_x)
 #undef FIO___MEMCPYX_MAKER
 
@@ -1640,6 +1781,7 @@ Memory Leak Detection
 ***************************************************************************** */
 
 #ifndef FIO_LEAK_COUNTER_SKIP_EXIT
+/** If set, no `FIO_CALL_AFTER_EXIT` leak reporting event is registered. */
 #define FIO_LEAK_COUNTER_SKIP_EXIT 0
 #endif
 #ifndef FIO___LEAK_COUNTER_DEF
@@ -1685,29 +1827,32 @@ Swapping byte's order (`bswap` variations)
 /* avoid special cases by defining for all sizes */
 #define fio_bswap8(i) (i)
 
-/** Byte swap a 16 bit integer, inlined. */
 #if __has_builtin(__builtin_bswap16)
+/** Byte swap a 16 bit integer, inlined. */
 #define fio_bswap16(i) __builtin_bswap16((uint16_t)(i))
 #else
+/** Byte swap a 16 bit integer, inlined. */
 FIO_IFUNC FIO_CONST uint16_t fio_bswap16(uint16_t i) {
   return ((((i)&0xFFU) << 8) | (((i)&0xFF00U) >> 8));
 }
 #endif
 
-/** Byte swap a 32 bit integer, inlined. */
 #if __has_builtin(__builtin_bswap32)
+/** Byte swap a 32 bit integer, inlined. */
 #define fio_bswap32(i) __builtin_bswap32((uint32_t)(i))
 #else
+/** Byte swap a 32 bit integer, inlined. */
 FIO_IFUNC FIO_CONST uint32_t fio_bswap32(uint32_t i) {
   return ((((i)&0xFFUL) << 24) | (((i)&0xFF00UL) << 8) |
           (((i)&0xFF0000UL) >> 8) | (((i)&0xFF000000UL) >> 24));
 }
 #endif
 
-/** Byte swap a 64 bit integer, inlined. */
 #if __has_builtin(__builtin_bswap64)
+/** Byte swap a 64 bit integer, inlined. */
 #define fio_bswap64(i) __builtin_bswap64((uint64_t)(i))
 #else
+/** Byte swap a 64 bit integer, inlined. */
 FIO_IFUNC FIO_CONST uint64_t fio_bswap64(uint64_t i) {
   return ((((i)&0xFFULL) << 56) | (((i)&0xFF00ULL) << 40) |
           (((i)&0xFF0000ULL) << 24) | (((i)&0xFF000000ULL) << 8) |
@@ -1764,9 +1909,9 @@ Switching Endian Ordering
 /** Local byte order to Little Endian byte order, 128 bit integer */
 #define fio_ltole128(i) fio_bswap128((i))
 
-/** An endianess dependent shift operation, moves bytes forwards. */
+/** An endianess dependent shift operation, moves bits forwards. */
 #define FIO_SHIFT_FORWARDS(i, bits) ((i) >> (bits))
-/** An endianess dependent shift operation, moves bytes backwards. */
+/** An endianess dependent shift operation, moves bits backwards. */
 #define FIO_SHIFT_BACKWARDS(i, bits) ((i) << (bits))
 
 #endif /* __SIZEOF_INT128__ */
@@ -1912,6 +2057,7 @@ FIO_IFUNC void fio_u2bufzu(void *buf, size_t i) { fio_u2buf32u(buf, i); }
 Vector Math, Shuffle & Reduction on native types, for up to 2048 bits
 ***************************************************************************** */
 #define FIO____SHFL_FN(T, prefx, len)                                          \
+  /** Reorders (shuffles) the vectors using the indexes in `indx`. */          \
   FIO_IFUNC void fio_##prefx##x##len##_reshuffle(T *v, uint8_t indx[len]) {    \
     T tmp[len];                                                                \
     for (size_t i = 0; i < len; ++i) {                                         \
@@ -1922,6 +2068,7 @@ Vector Math, Shuffle & Reduction on native types, for up to 2048 bits
     }                                                                          \
   }
 #define FIO____REDUCE_FN(T, prefx, len, opnm, op)                              \
+  /** Performs `opnm` in order along the vector, returning the result. */      \
   FIO_MIFN T fio_##prefx##x##len##_reduce_##opnm(T *v) {                       \
     T r = v[0];                                                                \
     for (size_t i = 1; i < len; ++i) {                                         \
@@ -1929,11 +2076,13 @@ Vector Math, Shuffle & Reduction on native types, for up to 2048 bits
     }                                                                          \
     return r;                                                                  \
   }                                                                            \
+  /** Performs operation `a opnm b`, storing the result in `dest`. */          \
   FIO_IFUNC void fio_##prefx##x##len##_##opnm(T *dest, T *a, T *b) {           \
     for (size_t i = 0; i < len; ++i)                                           \
       dest[i] = a[i] op b[i];                                                  \
   }
 #define FIO____REDUCE_MINMAX(T, prefx, len)                                    \
+  /** Returns the maximum value in a vector. */                                \
   FIO_MIFN T fio_##prefx##x##len##_reduce_max(T *v) {                          \
     T r = v[0];                                                                \
     for (size_t i = 1; i < len; ++i) {                                         \
@@ -1941,6 +2090,7 @@ Vector Math, Shuffle & Reduction on native types, for up to 2048 bits
     }                                                                          \
     return r;                                                                  \
   }                                                                            \
+  /** Returns the minimum value in a vector. */                                \
   FIO_MIFN T fio_##prefx##x##len##_reduce_min(T *v) {                          \
     T r = v[0];                                                                \
     for (size_t i = 1; i < len; ++i) {                                         \
@@ -3653,17 +3803,19 @@ FIO_IFUNC void fio___math_mul_1024(uint64_t *restrict dest,
 #endif
 }
 
+// clang-format off
 /**
  * Karatsuba multiplication threshold (in 64-bit words).
  *
  * Below this threshold, schoolbook multiplication is faster.
  * Empirical testing (tests/performance-core.c) shows:
  *
- *   Size          Schoolbook      Karatsuba       Winner
- *   256-bit  (4w)  227 M ops/sec  22 M ops/sec   Schoolbook 10x faster
- *   512-bit  (8w)  41 M ops/sec   13 M ops/sec   Schoolbook 3x faster
- *   1024-bit (16w) 9 M ops/sec    5 M ops/sec    Schoolbook 2x faster
- *   2048-bit (32w) 1.18 M ops/sec 1.34 M ops/sec Karatsuba 1.13x faster
+ * | Size           |Schoolbook      | Karatsuba      | Winner  |
+ * | -------------- | -------------- | -------------- | ------- |
+ * | 256-bit  (4w)  | 227 M ops/sec  | 22 M ops/sec   | Schoolbook 10x faster |
+ * | 512-bit  (8w)  | 41 M ops/sec   | 13 M ops/sec   | Schoolbook 3x faster |
+ * | 1024-bit (16w) | 9 M ops/sec    | 5 M ops/sec    | Schoolbook 2x faster |
+ * | 2048-bit (32w) | 1.18 M ops/sec | 1.34 M ops/sec | Karatsuba 1.13x faster |
  *
  * Crossover point: ~32 words (2048 bits) on modern CPUs.
  * Conservative threshold accounts for platform variations (28-36 words).
@@ -3673,15 +3825,17 @@ FIO_IFUNC void fio___math_mul_1024(uint64_t *restrict dest,
 #ifndef FIO___MATH_KARATSUBA_THRESHOLD
 #define FIO___MATH_KARATSUBA_THRESHOLD 32
 #endif
-
+// clang-format on
 /**
  * Karatsuba multiplication for large multi-precision numbers.
  *
+ * ```
  * For a = a_hi * B + a_lo and b = b_hi * B + b_lo (where B = 2^(half*64)):
- *   z0 = a_lo * b_lo
- *   z2 = a_hi * b_hi
- *   z1 = (a_lo + a_hi) * (b_lo + b_hi) - z0 - z2
- *   result = z2 * B² + z1 * B + z0
+ * z0 = a_lo * b_lo
+ * z2 = a_hi * b_hi
+ * z1 = (a_lo + a_hi) * (b_lo + b_hi) - z0 - z2
+ * result = z2 * B² + z1 * B + z0
+ * ```
  *
  * Uses 3 multiplications instead of 4, giving O(n^1.585) complexity.
  *
@@ -4072,6 +4226,7 @@ Vector Helpers - memory load operations (implementation starts here)
     }                                                                          \
     return r;                                                                  \
   }                                                                            \
+  /** Loads vector from memory, swapping byte order by bit group.  */          \
   FIO_MIFN fio_u##total_bits fio_u##total_bits##_bswap##bits(                  \
       fio_u##total_bits a) {                                                   \
     fio_u##total_bits r = {0};                                                 \
@@ -4707,6 +4862,14 @@ typedef struct fio_buf_info_s {
   char *buf;
 } fio_buf_info_s;
 
+/** An information type for reporting/storing unsigned buffer data. */
+typedef struct fio_ubuf_info_s {
+  /** The buffer's length, if any. */
+  size_t len;
+  /** The buffer's address (may be NULL if no buffer). */
+  unsigned char *buf;
+} fio_ubuf_info_s;
+
 /** Compares two `fio_str_info_s` objects for content equality. */
 #define FIO_STR_INFO_IS_EQ(s1, s2)                                             \
   ((s1).len == (s2).len &&                                                     \
@@ -4742,6 +4905,17 @@ typedef struct fio_buf_info_s {
 /** Converts a String with a known length into a fio_buf_info_s. */
 #define FIO_BUF_INFO2(str, length)                                             \
   ((fio_buf_info_s){.len = (length), .buf = (str)})
+
+/** A NULL fio_ubuf_info_s. */
+#define FIO_UBUF_INFO0 ((fio_ubuf_info_s){0})
+
+/** Converts a C String into a fio_ubuf_info_s. */
+#define FIO_UBUF_INFO1(str)                                                    \
+  ((fio_ubuf_info_s){.len = ((str) ? FIO_STRLEN((str)) : 0), .buf = (str)})
+
+/** Converts a String with a known length into a fio_ubuf_info_s. */
+#define FIO_UBUF_INFO2(str, length)                                            \
+  ((fio_ubuf_info_s){.len = (length), .buf = (str)})
 
 /** Converts a fio_buf_info_s into a fio_str_info_s. */
 #define FIO_BUF2STR_INFO(buf_info)                                             \
@@ -5052,7 +5226,7 @@ FIO_CRYPTO            Poor-man's Cryptographic Elements
     defined(FIO_IO) || defined(FIO_MLKEM)
 #undef FIO_AES
 #undef FIO_ARGON2
-#undef FIO_ASN1
+#undef FIO_DER
 #undef FIO_BLAKE2
 #undef FIO_CHACHA
 #undef FIO_ED25519
@@ -5073,7 +5247,7 @@ FIO_CRYPTO            Poor-man's Cryptographic Elements
 #define FIO_CRYPTO_CORE
 #define FIO_AES
 #define FIO_ARGON2
-#define FIO_ASN1
+#define FIO_DER
 #define FIO_BLAKE2
 #define FIO_CHACHA
 #define FIO_ED25519
@@ -5325,12 +5499,6 @@ FIO_MAP Ordering & Naming Shortcut
 #define FIO_QUEUE
 #endif
 
-#if defined(FIO_HTTP_HANDLE) || defined(FIO_QUEUE) || defined(FIO_OTP) ||      \
-    defined(FIO_X509)
-#undef FIO_TIME
-#define FIO_TIME
-#endif
-
 /* *****************************************************************************
 
 
@@ -5341,6 +5509,8 @@ FIO_MAP Ordering & Naming Shortcut
 
 ***************************************************************************** */
 #if defined(IPC)
+#undef FIO_CHACHA
+#undef FIO_SECRET
 #define FIO_CHACHA
 #define FIO_SECRET
 #endif
@@ -5349,15 +5519,40 @@ FIO_MAP Ordering & Naming Shortcut
 #define FIO_SHA1
 #endif
 
-#if defined(FIO_PUBSUB) || defined(FIO_SECRET) || defined(FIO_OTP)
+#if defined(FIO_PEM)
+#undef FIO_X509
+#undef FIO_STR
+#define FIO_X509
+#define FIO_STR
+#endif
+
+#if defined(FIO_X509)
+#undef FIO_DER
+#undef FIO_RSA
+#undef FIO_ED25519
+#undef FIO_P256
+#undef FIO_P384
+#define FIO_DER
+#define FIO_RSA
+#define FIO_ED25519
+#define FIO_P256
+#define FIO_P384
+#endif
+
+#if defined(FIO_PUBSUB) || defined(FIO_SECRET) || defined(FIO_OTP) ||          \
+    defined(FIO_X509)
+#undef FIO_SHA2
 #define FIO_SHA2
 #endif
 
 #if defined(FIO_LYRA2) || defined(FIO_ARGON2)
+#undef FIO_BLAKE2
 #define FIO_BLAKE2
 #endif
 
 #if defined(FIO_MLKEM)
+#undef FIO_SHA3
+#undef FIO_ED25519
 #define FIO_SHA3
 #define FIO_ED25519
 #endif
@@ -5377,6 +5572,12 @@ FIO_MAP Ordering & Naming Shortcut
 
 
 ***************************************************************************** */
+
+#if defined(FIO_HTTP_HANDLE) || defined(FIO_QUEUE) || defined(FIO_OTP) ||      \
+    defined(FIO_X509)
+#undef FIO_TIME
+#define FIO_TIME
+#endif
 
 #if defined(FIO_STR) || defined(FIO_HTTP) || defined(FIO_STREAM)
 #undef FIO_FILES
@@ -8094,7 +8295,7 @@ Pointer Tagging
   do {                                                                         \
     if (!(FIO_PTR_TAG_VALIDATE((tagged_ptr)))) {                               \
       /* Log error since GOTO indicates cleanup or other side-effects. */      \
-      FIO_LOG_ERROR("(" FIO__FILE__ ":" FIO_MACRO2STR(                         \
+      FIO_LOG_ERROR("(" FIO___FILE__ ":" FIO_MACRO2STR(                        \
           __LINE__) ") pointer tag (type) mismatch in function call.");        \
       goto lable;                                                              \
     }                                                                          \
@@ -8417,6 +8618,32 @@ SFUNC void *fio_memset(void *restrict dest_, uint64_t data, size_t bytes) {
     data |= (data << 16);
     data |= (data << 32);
   }
+#if 1
+  for (size_t i = 255; i < bytes; (i += 256), (d += 256))
+    for (size_t j = 0; j < 32; ++j)
+      fio_memcpy8(d + (j << 3), (char *)&data);
+  if (bytes & 128)
+    for (size_t j = 0; j < 16; ++j)
+      fio_memcpy8(d + (j << 3), (char *)&data);
+  d += (bytes & 128);
+  if (bytes & 64)
+    for (size_t j = 0; j < 8; ++j)
+      fio_memcpy8(d + (j << 3), (char *)&data);
+  d += (bytes & 64);
+  if (bytes & 32)
+    for (size_t j = 0; j < 4; ++j)
+      fio_memcpy8(d + (j << 3), (char *)&data);
+  d += (bytes & 32);
+  if (bytes & 16)
+    for (size_t j = 0; j < 2; ++j)
+      fio_memcpy8(d + (j << 3), (char *)&data);
+  d += (bytes & 16);
+  if (bytes & 8)
+    fio_memcpy8(d, (char *)&data);
+  d += (bytes & 8);
+  fio_memcpy7x(d, (char *)&data, bytes);
+  return dest_;
+#else
   if (FIO_UNLIKELY(bytes < 32))
     goto small_memset;
 
@@ -8450,6 +8677,7 @@ small_memset:
   }
   fio_memcpy7x(d, &data, bytes);
   return dest_;
+#endif
 }
 
 /* *****************************************************************************
@@ -8772,33 +9000,19 @@ fio_strlen - (trust the compiler to optimize)
 
 /** An alternative to `strlen` - though really, strlen should be much better. */
 SFUNC FIO___ASAN_AVOID size_t fio_strlen(const char *str) {
-  const char *start = str;
   if (FIO_UNLIKELY(!str))
     return 0;
-  for (; *str;) /* compiler, please vectorize */
-    ++str;
-  return (size_t)(str - start);
-  //   const char *r = (const char *)str;
-  //   uint64_t u[16] FIO_ALIGN(16) = {0};
-  //   uint64_t flag = 0;
-  //   for (;;) {
-  //     fio_memcpy128(u, r);
-  //     for (size_t i = 0; i < 16; ++i) {
-  //       flag |= (u[i] = fio_has_zero_byte64(u[i]));
-  //     }
-  //     if (flag)
-  //       goto found_in_map;
-  //     r += 128;
-  //   }
-  // found_in_map:
-  //   flag = u[0];
-  //   for (size_t i = 0; i < 7; ++i) {
-  //     if (!flag) {
-  //       r += 8;
-  //       flag = u[i + 1];
-  //     }
-  //   }
-  //   return ((r - str) + fio_lsb_index_unsafe(flag));
+  /* set iterations to pointer alignment + impossibly high number */
+  const size_t iterations = ((~(uintptr_t)str) + 1) | (1ULL << 31);
+  /* marks the number of bytes since NUL */
+  size_t since_zero = 0;
+#define FIO___STRLEN_ACTION                                                    \
+  since_zero += ((!str[i]) | (!!since_zero)); /* runs inside loop */           \
+  if (since_zero)                             /* runs outside loop */          \
+    return i - since_zero;
+  FIO_FOR_UNROLL(iterations, 1, i, FIO___STRLEN_ACTION);
+#undef FIO___STRLEN_ACTION
+  return ~(size_t)0;
 }
 
 /* *****************************************************************************
@@ -8809,86 +9023,19 @@ fio_memcmp
 SFUNC int fio_memcmp(const void *a_, const void *b_, size_t len) {
   if (FIO_UNLIKELY(a_ == b_ || !len))
     return 0;
-  uint64_t ua[8] FIO_ALIGN(16);
-  uint64_t ub[8] FIO_ALIGN(16);
-  size_t flag = 0;
-  char *a = (char *)a_;
-  char *b = (char *)b_;
-  char *e;
-  if (*a != *b)
-    return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1);
-  if (FIO_UNLIKELY(len < 8))
-    goto fio_memcmp_mini;
-  if (FIO_UNLIKELY(len < 64))
-    goto fio_memcmp_small;
-
-  e = a + len - 63;
-  do {
-    fio_memcpy64(ua, a);
-    fio_memcpy64(ub, b);
-    for (size_t i = 0; i < 8; ++i)
-      flag |= (ua[i] ^ ub[i]);
-    if (flag)
-      goto fio_memcmp_found;
-    a += 64;
-    b += 64;
-  } while (a < e);
-  a += len & 63;
-  b += len & 63;
-  a -= 64;
-  b -= 64;
-  fio_memcpy64(ua, a);
-  fio_memcpy64(ub, b);
-  for (size_t i = 0; i < 8; ++i)
-    flag |= (ua[i] ^ ub[i]);
-  if (flag)
-    goto fio_memcmp_found;
-  return 0;
-
-fio_memcmp_found:
-  if (ua[0] == ub[0])
-    for (size_t i = 8; --i;)
-      if (ua[i] != ub[i]) {
-        ua[0] = ua[i];
-        ub[0] = ub[i];
-      }
-  goto fio_memcmp_small_found;
-
-fio_memcmp_small:
-  e = a + len - 7;
-  do {
-    fio_memcpy8(ua, a);
-    fio_memcpy8(ub, b);
-    if (ua[0] != ub[0])
-      goto fio_memcmp_small_found;
-    a += 8;
-    b += 8;
-  } while (a < e);
-  a += len & 7;
-  b += len & 7;
-  a -= 8;
-  b -= 8;
-  fio_memcpy8(ua, a);
-  fio_memcpy8(ub, b);
-  if (ua[0] != ub[0])
-    goto fio_memcmp_small_found;
-  return 0;
-
-fio_memcmp_small_found:
-  ua[0] = fio_lton64(ua[0]);
-  ub[0] = fio_lton64(ub[0]);
-  return (int)1 - (int)((ub[0] > ua[0]) << 1);
-
-fio_memcmp_mini:
-  switch ((len & 7)) { /* clang-format off */
-    case 7: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b; /* fall through */
-    case 6: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b; /* fall through */
-    case 5: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b; /* fall through */
-    case 4: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b; /* fall through */
-    case 3: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b; /* fall through */
-    case 2: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b; /* fall through */
-    case 1: if (*a != *b) return (int)1 - (int)(((unsigned)b[0] > (unsigned)a[0]) << 1); ++a; ++b;
-    } /* clang-format on */
+  if (FIO_UNLIKELY(!a_))
+    return -1;
+  if (FIO_UNLIKELY(!b_))
+    return 1;
+  const uint8_t *a = (const uint8_t *)a_;
+  const uint8_t *b = (const uint8_t *)b_;
+  size_t since = 0;
+#define FIO___MEMCMP_ACTION                                                    \
+  since += ((a[i] != b[i]) | (!!since)); /* runs inside loop */                \
+  if (since)                             /* runs outside loop */               \
+    return (int)1 - (int)((unsigned)(a[i - since] < b[i - since]) << 1);
+  FIO_FOR_UNROLL(len, 1, i, FIO___MEMCMP_ACTION);
+#undef FIO___MEMCMP_ACTION
   return 0;
 }
 
@@ -9106,8 +9253,10 @@ FIO_SFUNC int clock_gettime(const uint32_t clk_type, struct timespec *tv) {
   case CLOCK_REALTIME:
   realtime_clock:
     GetSystemTimePreciseAsFileTime(&tu.ft);
-    tv->tv_sec = tu.u / 10000000;
-    tv->tv_nsec = tu.u - (tv->tv_sec * 10000000);
+    /* FILETIME counts 100-ns intervals since 1601-01-01. Convert to Unix
+     * time (seconds since 1970-01-01) and nanoseconds. */
+    tv->tv_sec = (time_t)(tu.u / 10000000ULL - 11644473600ULL);
+    tv->tv_nsec = (long)((tu.u % 10000000ULL) * 100ULL);
     return 0;
 
 #ifdef CLOCK_PROCESS_CPUTIME_ID
@@ -11928,9 +12077,15 @@ SFUNC uint8_t fio_glob_match(fio_str_info_s pat, fio_str_info_s str) {
       break;
 
     case '[': { /* Character class */
-      uint8_t match = 0, inverted = (*(uint8_t *)pat.buf == '^' ||
-                                     *(uint8_t *)pat.buf == '!');
-      uint8_t *cls = (uint8_t *)pat.buf + inverted;
+      uint8_t *cls = (uint8_t *)pat.buf;
+      uint8_t *const pend = (uint8_t *)pat.buf + pat.len; /* class bounds */
+      uint8_t match = 0, inverted = 0;
+      if (cls < pend && (*cls == '^' || *cls == '!')) {
+        inverted = 1;
+        ++cls;
+      }
+      if (cls >= pend) /* unterminated class, no ']' within bounds */
+        goto backtrack;
       uint8_t a = *cls++;
 
       /*
@@ -11941,8 +12096,10 @@ SFUNC uint8_t fio_glob_match(fio_str_info_s pat, fio_str_info_s str) {
       do {
         uint8_t b = a;
         if (a == '\\') { /* when escaped, next character is regular */
+          if (cls >= pend)
+            goto backtrack;
           b = a = *(cls++);
-        } else if (cls[0] == '-' && cls[1] != ']') {
+        } else if (cls + 1 < pend && cls[0] == '-' && cls[1] != ']') {
           b = cls[1];
 
           cls += 2;
@@ -11953,6 +12110,8 @@ SFUNC uint8_t fio_glob_match(fio_str_info_s pat, fio_str_info_s str) {
           }
         }
         match |= (a <= c && c <= b);
+        if (cls >= pend) /* no closing ']' within bounds */
+          goto backtrack;
       } while ((a = *cls++) != ']');
 
       if (match == inverted)
@@ -16135,7 +16294,7 @@ SFUNC int fio_filename_open(const char *filename, int flags) {
 }
 
 /** Returns 1 if `path` possibly folds backwards (has "/../", "/..", "//"). */
-SFUNC int fio___filename_is_unsafe_sep(const char *path, const char sep) {
+static int fio___filename_is_unsafe_sep(const char *path, const char sep) {
   if (!path) /* no file is a safe file, nothing to do */
     return 0;
   /* Check for leading "../" which escapes the base directory */
@@ -19657,7 +19816,7 @@ FIO_IFUNC int fio_sock_pipe(fio_socket_i fds[2]) { return pipe(fds); }
 #if defined(DEBUG) && 0
 #define close(fd)                                                              \
   do {                                                                         \
-    FIO_LOG_DWARNING("(%d) (" FIO__FILE__ ":" FIO_MACRO2STR(                   \
+    FIO_LOG_DWARNING("(%d) (" FIO___FILE__ ":" FIO_MACRO2STR(                  \
                          __LINE__) ") fio_sock_close called for fd %d",        \
                      fio_getpid(),                                             \
                      (int)fd);                                                 \
@@ -21396,13 +21555,9 @@ SFUNC time_t fio_gm2time(struct tm tm) {
   time = time * 60LL + tm.tm_min;
   time = time * 60LL + tm.tm_sec;
 
-  if (tm.tm_isdst > 0) {
-    time -= 60 * 60;
-  }
+  time -= (int64_t)((60 * 60) & (0ULL - (tm.tm_isdst > 0)));
 #if (defined(HAVE_TM_TM_ZONE) && HAVE_TM_TM_ZONE) || defined(BSD)
-  if (tm.tm_gmtoff) {
-    time += tm.tm_gmtoff;
-  }
+  time += tm.tm_gmtoff;
 #endif
   return (time_t)time;
 }
@@ -22998,6 +23153,7 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #undef FIO_MALLOC_TMP_USE_SYSTEM
 #define FIO_MALLOC_TMP_USE_SYSTEM 1
 #endif
+
 /* *****************************************************************************
 Memory Allocation - Setup Alignment Info
 ***************************************************************************** */
@@ -23109,6 +23265,24 @@ NOTE: most configuration values should be a power of 2 or a logarithmic value.
 #if defined(FIO_MALLOC_TMP_USE_SYSTEM) && FIO_MALLOC_TMP_USE_SYSTEM
 #undef FIO_MEMORY_INITIALIZE_ALLOCATIONS
 #define FIO_MEMORY_INITIALIZE_ALLOCATIONS 0
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#include <stddef.h>
+#define FIO___MEM_SYSTEM_ALIGNMENT _Alignof(max_align_t)
+#else
+#define FIO___MEM_SYSTEM_ALIGNMENT sizeof(double)
+#endif
+#undef FIO_MEMORY_ALIGN_LOG
+#define FIO_MEMORY_ALIGN_LOG                                                   \
+  ((FIO___MEM_SYSTEM_ALIGNMENT >= 256)   ? 8                                   \
+   : (FIO___MEM_SYSTEM_ALIGNMENT >= 128) ? 7                                   \
+   : (FIO___MEM_SYSTEM_ALIGNMENT >= 64)  ? 6                                   \
+   : (FIO___MEM_SYSTEM_ALIGNMENT >= 32)  ? 5                                   \
+   : (FIO___MEM_SYSTEM_ALIGNMENT >= 16)  ? 4                                   \
+   : (FIO___MEM_SYSTEM_ALIGNMENT >= 8)   ? 3                                   \
+   : (FIO___MEM_SYSTEM_ALIGNMENT >= 4)   ? 2                                   \
+   : (FIO___MEM_SYSTEM_ALIGNMENT >= 2)   ? 1                                   \
+                                         : 0)
+
 #endif
 
 #ifndef FIO_MEMORY_SYS_ALLOCATION_SIZE_LOG
@@ -23117,8 +23291,8 @@ NOTE: most configuration values should be a power of 2 or a logarithmic value.
  *
  * Limited to >=17 and <=24.
  *
- * By default 22, which is a ~2Mb allocation per system call, resulting in a
- * maximum allocation size of 131Kb.
+ * By default 21, which is a ~2Mb allocation per system call, resulting in a
+ * maximum allocation size of 64Kb.
  */
 #define FIO_MEMORY_SYS_ALLOCATION_SIZE_LOG 21
 #endif
@@ -23291,6 +23465,18 @@ Memory Allocation - configuration access - UNSTABLE API!!!
 /** Arena count for the allocator. */
 SFUNC size_t FIO_NAME(FIO_MEMORY_NAME, malloc_arenas)(void);
 
+/* Returns the calculated block size. */
+SFUNC size_t FIO_NAME(FIO_MEMORY_NAME, malloc_block_size)(void);
+
+/** Prints the allocator's data structure. May be used for debugging. */
+SFUNC void FIO_NAME(FIO_MEMORY_NAME, malloc_print_state)(void);
+
+/** Prints the allocator's free block list. May be used for debugging. */
+SFUNC void FIO_NAME(FIO_MEMORY_NAME, malloc_print_free_block_list)(void);
+
+/** Prints the settings used to define the allocator. */
+SFUNC void FIO_NAME(FIO_MEMORY_NAME, malloc_print_settings)(void);
+
 /** System allocation sizes (bytes per system allocation). */
 FIO_IFUNC size_t FIO_NAME(FIO_MEMORY_NAME, malloc_sys_alloc_size)(void) {
   return FIO_MEMORY_SYS_ALLOCATION_SIZE;
@@ -23324,18 +23510,6 @@ FIO_IFUNC size_t FIO_NAME(FIO_MEMORY_NAME, malloc_arena_alloc_limit)(void) {
 FIO_IFUNC size_t FIO_NAME(FIO_MEMORY_NAME, realloc_is_safe)(void) {
   return FIO_MEMORY_INITIALIZE_ALLOCATIONS;
 }
-
-/* Returns the calculated block size. */
-SFUNC size_t FIO_NAME(FIO_MEMORY_NAME, malloc_block_size)(void);
-
-/** Prints the allocator's data structure. May be used for debugging. */
-SFUNC void FIO_NAME(FIO_MEMORY_NAME, malloc_print_state)(void);
-
-/** Prints the allocator's free block list. May be used for debugging. */
-SFUNC void FIO_NAME(FIO_MEMORY_NAME, malloc_print_free_block_list)(void);
-
-/** Prints the settings used to define the allocator. */
-SFUNC void FIO_NAME(FIO_MEMORY_NAME, malloc_print_settings)(void);
 
 /* *****************************************************************************
 Set global macros to use this allocator if FIO_MALLOC
@@ -27239,6 +27413,7 @@ void fio_string_write2____(void);
 SFUNC int fio_string_write2 FIO_NOOP(fio_str_info_s *restrict dest,
                                      fio_string_realloc_fn reallocate,
                                      const fio_string_write_s srcs[]) {
+#define FIO___STRING_WRITE2_FLOAT_LEN 24
   int r = 0;
   const fio_string_write_s *pos = srcs;
   size_t len = 0;
@@ -27251,7 +27426,7 @@ SFUNC int fio_string_write2 FIO_NOOP(fio_str_info_s *restrict dest,
     case 3: /* unsigned */ len += fio_digits10u(pos->info.u); break;
     case 4: /* hex */ len += fio_digits16u(pos->info.u); break;
     case 5: /* binary */ len += fio_digits_bin(pos->info.u); break;
-    case 6: /* float */ len += 18; break;
+    case 6: /* float */ len += FIO___STRING_WRITE2_FLOAT_LEN; break;
     default:
       if (pos->info.str.len > (SIZE_MAX >> 2))
         return -1;
@@ -27270,9 +27445,17 @@ SFUNC int fio_string_write2 FIO_NOOP(fio_str_info_s *restrict dest,
     case 3: fio_string_write_u(dest, NULL, pos->info.u); break;   /* unsigned */
     case 4: fio_string_write_hex(dest, NULL, pos->info.u); break; /* hex */
     case 5: fio_string_write_bin(dest, NULL, pos->info.u); break; /* binary */
-    case 6:                                                       /* float */
-      dest->len += snprintf(dest->buf + dest->len, 19, "%.15g", pos->info.f);
+    case 6: {                                                     /* float */
+      /* snprintf returns the length it *would* have written; the buffer is
+       * capped at 19 (<=18 chars + NUL) and only 18 bytes were reserved, so
+       * cap the advance to the bytes actually written to avoid overrunning. */
+      int fl = snprintf(dest->buf + dest->len, 19, "%.15g", pos->info.f);
+      dest->len += (fl < 0) ? 0
+                            : ((fl > FIO___STRING_WRITE2_FLOAT_LEN)
+                                   ? (size_t)FIO___STRING_WRITE2_FLOAT_LEN
+                                   : (size_t)fl);
       break;
+    }
     default:
       FIO_MEMCPY(&dest->buf[dest->len], pos->info.str.buf, pos->info.str.len);
       dest->len += pos->info.str.len;
@@ -27303,7 +27486,13 @@ truncate:
         goto finish;
       break; /* binary */
     case 6:  /* float */
-      len = snprintf(dest->buf + dest->len, 19, "%.15g", pos->info.f);
+      len = snprintf(dest->buf + dest->len,
+                     FIO___STRING_WRITE2_FLOAT_LEN,
+                     "%.15g",
+                     pos->info.f);
+      /* snprintf return is "would-be" length; cap to written */
+      if (len > FIO___STRING_WRITE2_FLOAT_LEN)
+        len = FIO___STRING_WRITE2_FLOAT_LEN;
       if (dest->capa < dest->len + len + 2)
         goto finish;
       dest->len += len;
@@ -27315,6 +27504,7 @@ truncate:
     ++pos;
   }
   goto finish;
+#undef FIO___STRING_WRITE2_FLOAT_LEN
 }
 
 /* *****************************************************************************
@@ -27980,7 +28170,9 @@ p valid; p decoder; nil
     writer[2] = (b64wrd[2] << 6) | b64wrd[3];
     writer += 3;
   }
-  writer -= (encoded[-1] == '=') + (encoded[-2] == '=');
+  /* Avoid reading before the start of the input for very short data. */
+  writer -= (encoded - (const uint8_t *)encoded_ >= 1 && encoded[-1] == '=');
+  writer -= (encoded - (const uint8_t *)encoded_ >= 2 && encoded[-2] == '=');
   if (writer < ((uint8_t *)dest->buf + dest->len))
     writer = ((uint8_t *)dest->buf + dest->len);
   dest->len = (size_t)(writer - (uint8_t *)dest->buf);
@@ -40536,6 +40728,19 @@ SFUNC void fio_sha512_consume(fio_sha512_s *h, const void *data, uint64_t len);
 /** finalizes a fio_u512 with the SHA 512 hash. */
 SFUNC fio_u512 fio_sha512_finalize(fio_sha512_s *h);
 
+/** initializes a fio_u512 so the hash can consume streaming data (SHA-384).
+ *
+ * SHA-384 is SHA-512 with different initial values, truncated to 48 bytes.
+ * NOTE: truncating a SHA-512 result is NOT the same as SHA-384. */
+FIO_IFUNC fio_sha512_s fio_sha384_init(void);
+/** Feed data into the hash */
+#define fio_sha384_consume fio_sha512_consume
+/** finalizes a fio_u512 with the SHA 384 hash (first 48 bytes are the hash). */
+#define fio_sha384_finalize fio_sha512_finalize
+/** A simple, non streaming, implementation of the SHA-384 hashing algorithm.
+ * Returns a fio_u512 of which the first 48 bytes hold the SHA-384 hash. */
+FIO_IFUNC fio_u512 fio_sha384(const void *data, uint64_t len);
+
 /* *****************************************************************************
 Implementation - static / inline functions.
 ***************************************************************************** */
@@ -40576,6 +40781,26 @@ FIO_IFUNC fio_sha512_s fio_sha512_init(void) {
 /** A simple, non streaming, implementation of the SHA-256 hashing algorithm. */
 FIO_IFUNC fio_u512 fio_sha512(const void *data, uint64_t len) {
   fio_sha512_s h = fio_sha512_init();
+  fio_sha512_consume(&h, data, len);
+  return fio_sha512_finalize(&h);
+}
+
+/** initializes a fio_u512 with the SHA-384 initial values. */
+FIO_IFUNC fio_sha512_s fio_sha384_init(void) {
+  fio_sha512_s h = {.hash.u64 = {0xCBBB9D5DC1059ED8ULL,
+                                 0x629A292A367CD507ULL,
+                                 0x9159015A3070DD17ULL,
+                                 0x152FECD8F70E5939ULL,
+                                 0x67332667FFC00B31ULL,
+                                 0x8EB44A8768581511ULL,
+                                 0xDB0C2E0D64F98FA7ULL,
+                                 0x47B5481DBEFA4FA4ULL}};
+  return h;
+}
+
+/** A simple, non streaming, implementation of the SHA-384 hashing algorithm. */
+FIO_IFUNC fio_u512 fio_sha384(const void *data, uint64_t len) {
+  fio_sha512_s h = fio_sha384_init();
   fio_sha512_consume(&h, data, len);
   return fio_sha512_finalize(&h);
 }
@@ -54058,7 +54283,7 @@ Cleanup
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
-#define FIO_ASN1               /* Development inclusion - ignore line */
+#define FIO_DER               /* Development inclusion - ignore line */
 #include "./include.h"         /* Development inclusion - ignore line */
 #endif                         /* Development inclusion - ignore line */
 /* *****************************************************************************
@@ -54074,8 +54299,8 @@ Cleanup
 
 Copyright and License: see header file (000 copyright.h) or top of file
 ***************************************************************************** */
-#if defined(FIO_ASN1) && !defined(H___FIO_ASN1___H)
-#define H___FIO_ASN1___H
+#if defined(FIO_DER) && !defined(H___FIO_DER___H)
+#define H___FIO_DER___H
 
 /* *****************************************************************************
 ASN.1 Tag Types (Universal Class)
@@ -54083,96 +54308,48 @@ ASN.1 Tag Types (Universal Class)
 
 /** ASN.1 Universal Tag Types */
 typedef enum {
-  FIO_ASN1_EOC = 0x00,               /**< End-of-contents */
-  FIO_ASN1_BOOLEAN = 0x01,           /**< Boolean */
-  FIO_ASN1_INTEGER = 0x02,           /**< Integer */
-  FIO_ASN1_BIT_STRING = 0x03,        /**< Bit String */
-  FIO_ASN1_OCTET_STRING = 0x04,      /**< Octet String */
-  FIO_ASN1_NULL = 0x05,              /**< Null */
-  FIO_ASN1_OID = 0x06,               /**< Object Identifier */
-  FIO_ASN1_OBJECT_DESCRIPTOR = 0x07, /**< Object Descriptor */
-  FIO_ASN1_EXTERNAL = 0x08,          /**< External */
-  FIO_ASN1_REAL = 0x09,              /**< Real (float) */
-  FIO_ASN1_ENUMERATED = 0x0A,        /**< Enumerated */
-  FIO_ASN1_EMBEDDED_PDV = 0x0B,      /**< Embedded PDV */
-  FIO_ASN1_UTF8_STRING = 0x0C,       /**< UTF-8 String */
-  FIO_ASN1_RELATIVE_OID = 0x0D,      /**< Relative OID */
-  FIO_ASN1_SEQUENCE = 0x10,         /**< Sequence (0x30 with constructed bit) */
-  FIO_ASN1_SET = 0x11,              /**< Set (0x31 with constructed bit) */
-  FIO_ASN1_NUMERIC_STRING = 0x12,   /**< Numeric String */
-  FIO_ASN1_PRINTABLE_STRING = 0x13, /**< Printable String */
-  FIO_ASN1_T61_STRING = 0x14,       /**< T61 String (Teletex) */
-  FIO_ASN1_VIDEOTEX_STRING = 0x15,  /**< Videotex String */
-  FIO_ASN1_IA5_STRING = 0x16,       /**< IA5 String (ASCII) */
-  FIO_ASN1_UTC_TIME = 0x17,         /**< UTC Time */
-  FIO_ASN1_GENERALIZED_TIME = 0x18, /**< Generalized Time */
-  FIO_ASN1_GRAPHIC_STRING = 0x19,   /**< Graphic String */
-  FIO_ASN1_VISIBLE_STRING = 0x1A,   /**< Visible String */
-  FIO_ASN1_GENERAL_STRING = 0x1B,   /**< General String */
-  FIO_ASN1_UNIVERSAL_STRING = 0x1C, /**< Universal String */
-  FIO_ASN1_BMP_STRING = 0x1E,       /**< BMP String (UCS-2) */
+  FIO_DER_EOC = 0x00,               /**< End-of-contents */
+  FIO_DER_BOOLEAN = 0x01,           /**< Boolean */
+  FIO_DER_INTEGER = 0x02,           /**< Integer */
+  FIO_DER_BIT_STRING = 0x03,        /**< Bit String */
+  FIO_DER_OCTET_STRING = 0x04,      /**< Octet String */
+  FIO_DER_NULL = 0x05,              /**< Null */
+  FIO_DER_OID = 0x06,               /**< Object Identifier */
+  FIO_DER_OBJECT_DESCRIPTOR = 0x07, /**< Object Descriptor */
+  FIO_DER_EXTERNAL = 0x08,          /**< External */
+  FIO_DER_REAL = 0x09,              /**< Real (float) */
+  FIO_DER_ENUMERATED = 0x0A,        /**< Enumerated */
+  FIO_DER_EMBEDDED_PDV = 0x0B,      /**< Embedded PDV */
+  FIO_DER_UTF8_STRING = 0x0C,       /**< UTF-8 String */
+  FIO_DER_RELATIVE_OID = 0x0D,      /**< Relative OID */
+  FIO_DER_SEQUENCE = 0x10,         /**< Sequence (0x30 with constructed bit) */
+  FIO_DER_SET = 0x11,              /**< Set (0x31 with constructed bit) */
+  FIO_DER_NUMERIC_STRING = 0x12,   /**< Numeric String */
+  FIO_DER_PRINTABLE_STRING = 0x13, /**< Printable String */
+  FIO_DER_T61_STRING = 0x14,       /**< T61 String (Teletex) */
+  FIO_DER_VIDEOTEX_STRING = 0x15,  /**< Videotex String */
+  FIO_DER_IA5_STRING = 0x16,       /**< IA5 String (ASCII) */
+  FIO_DER_UTC_TIME = 0x17,         /**< UTC Time */
+  FIO_DER_GENERALIZED_TIME = 0x18, /**< Generalized Time */
+  FIO_DER_GRAPHIC_STRING = 0x19,   /**< Graphic String */
+  FIO_DER_VISIBLE_STRING = 0x1A,   /**< Visible String */
+  FIO_DER_GENERAL_STRING = 0x1B,   /**< General String */
+  FIO_DER_UNIVERSAL_STRING = 0x1C, /**< Universal String */
+  FIO_DER_BMP_STRING = 0x1E,       /**< BMP String (UCS-2) */
   /* Context-specific tags (0x80 | tag_number) with constructed bit (0x20) */
-  FIO_ASN1_CONTEXT_0 = 0xA0, /**< [0] EXPLICIT/IMPLICIT */
-  FIO_ASN1_CONTEXT_1 = 0xA1, /**< [1] EXPLICIT/IMPLICIT */
-  FIO_ASN1_CONTEXT_2 = 0xA2, /**< [2] EXPLICIT/IMPLICIT */
-  FIO_ASN1_CONTEXT_3 = 0xA3, /**< [3] EXPLICIT/IMPLICIT */
-} fio_asn1_tag_e;
+  FIO_DER_CONTEXT_0 = 0xA0, /**< [0] EXPLICIT/IMPLICIT */
+  FIO_DER_CONTEXT_1 = 0xA1, /**< [1] EXPLICIT/IMPLICIT */
+  FIO_DER_CONTEXT_2 = 0xA2, /**< [2] EXPLICIT/IMPLICIT */
+  FIO_DER_CONTEXT_3 = 0xA3, /**< [3] EXPLICIT/IMPLICIT */
+} fio_der_tag_e;
 
 /** ASN.1 Tag Class (bits 7-6 of tag byte) */
 typedef enum {
-  FIO_ASN1_CLASS_UNIVERSAL = 0,   /**< Universal (built-in types) */
-  FIO_ASN1_CLASS_APPLICATION = 1, /**< Application-specific */
-  FIO_ASN1_CLASS_CONTEXT = 2,     /**< Context-specific */
-  FIO_ASN1_CLASS_PRIVATE = 3,     /**< Private */
-} fio_asn1_class_e;
-
-/* *****************************************************************************
-Common OID Constants for X.509 and TLS
-***************************************************************************** */
-
-/* Signature Algorithms */
-#define FIO_OID_SHA256_WITH_RSA   "1.2.840.113549.1.1.11"
-#define FIO_OID_SHA384_WITH_RSA   "1.2.840.113549.1.1.12"
-#define FIO_OID_SHA512_WITH_RSA   "1.2.840.113549.1.1.13"
-#define FIO_OID_RSA_PSS           "1.2.840.113549.1.1.10"
-#define FIO_OID_ECDSA_WITH_SHA256 "1.2.840.10045.4.3.2"
-#define FIO_OID_ECDSA_WITH_SHA384 "1.2.840.10045.4.3.3"
-#define FIO_OID_ECDSA_WITH_SHA512 "1.2.840.10045.4.3.4"
-#define FIO_OID_ED25519           "1.3.101.112"
-#define FIO_OID_ED448             "1.3.101.113"
-
-/* Public Key Algorithms */
-#define FIO_OID_RSA_ENCRYPTION "1.2.840.113549.1.1.1"
-#define FIO_OID_EC_PUBLIC_KEY  "1.2.840.10045.2.1"
-
-/* Elliptic Curves */
-#define FIO_OID_SECP256R1 "1.2.840.10045.3.1.7"
-#define FIO_OID_SECP384R1 "1.3.132.0.34"
-#define FIO_OID_SECP521R1 "1.3.132.0.35"
-#define FIO_OID_X25519    "1.3.101.110"
-#define FIO_OID_X448      "1.3.101.111"
-
-/* X.509 Extensions */
-#define FIO_OID_SUBJECT_KEY_ID    "2.5.29.14"
-#define FIO_OID_KEY_USAGE         "2.5.29.15"
-#define FIO_OID_SUBJECT_ALT_NAME  "2.5.29.17"
-#define FIO_OID_BASIC_CONSTRAINTS "2.5.29.19"
-#define FIO_OID_CRL_DIST_POINTS   "2.5.29.31"
-#define FIO_OID_CERT_POLICIES     "2.5.29.32"
-#define FIO_OID_AUTH_KEY_ID       "2.5.29.35"
-#define FIO_OID_EXT_KEY_USAGE     "2.5.29.37"
-
-/* Extended Key Usage OIDs (RFC 5280 Section 4.2.1.12) */
-#define FIO_OID_EKU_SERVER_AUTH "1.3.6.1.5.5.7.3.1"
-#define FIO_OID_EKU_CLIENT_AUTH "1.3.6.1.5.5.7.3.2"
-
-/* X.509 Distinguished Name Attributes */
-#define FIO_OID_COMMON_NAME  "2.5.4.3"
-#define FIO_OID_COUNTRY      "2.5.4.6"
-#define FIO_OID_LOCALITY     "2.5.4.7"
-#define FIO_OID_STATE        "2.5.4.8"
-#define FIO_OID_ORGANIZATION "2.5.4.10"
-#define FIO_OID_ORG_UNIT     "2.5.4.11"
+  FIO_DER_CLASS_UNIVERSAL = 0,   /**< Universal (built-in types) */
+  FIO_DER_CLASS_APPLICATION = 1, /**< Application-specific */
+  FIO_DER_CLASS_CONTEXT = 2,     /**< Context-specific */
+  FIO_DER_CLASS_PRIVATE = 3,     /**< Private */
+} fio_der_class_e;
 
 /* *****************************************************************************
 ASN.1 Parsed Element Structure
@@ -54186,13 +54363,13 @@ typedef struct {
   uint8_t is_constructed; /**< 1 if constructed (contains other elements) */
   uint8_t tag_class;  /**< 0=Universal, 1=Application, 2=Context, 3=Private */
   uint8_t tag_number; /**< Tag number (bits 4-0, or extended) */
-} fio_asn1_element_s;
+} fio_der_element_s;
 
 /** Iterator for SEQUENCE or SET contents */
 typedef struct {
   const uint8_t *pos; /**< Current position */
   const uint8_t *end; /**< End of sequence */
-} fio_asn1_iterator_s;
+} fio_der_iterator_s;
 
 /* *****************************************************************************
 ASN.1 Parser API - Core Functions
@@ -54206,7 +54383,7 @@ ASN.1 Parser API - Core Functions
  * @param data_len Length of data buffer
  * @return Pointer to next element (after this one), or NULL on error
  */
-SFUNC const uint8_t *fio_asn1_parse(fio_asn1_element_s *elem,
+SFUNC const uint8_t *fio_der_parse(fio_der_element_s *elem,
                                     const uint8_t *data,
                                     size_t data_len);
 
@@ -54217,7 +54394,7 @@ SFUNC const uint8_t *fio_asn1_parse(fio_asn1_element_s *elem,
  * @param data Original data pointer where element was parsed from
  * @return Total bytes used by the element encoding
  */
-FIO_IFUNC size_t fio_asn1_element_total_len(const fio_asn1_element_s *elem,
+FIO_IFUNC size_t fio_der_element_total_len(const fio_der_element_s *elem,
                                             const uint8_t *data);
 
 /* *****************************************************************************
@@ -54235,7 +54412,7 @@ ASN.1 Parser API - Type-Specific Parsers
  * @param value Output for integer value (can be NULL for large integers)
  * @return 0 on success, -1 on error
  */
-SFUNC int fio_asn1_parse_integer(const fio_asn1_element_s *elem,
+SFUNC int fio_der_parse_integer(const fio_der_element_s *elem,
                                  uint64_t *value);
 
 /**
@@ -54247,7 +54424,7 @@ SFUNC int fio_asn1_parse_integer(const fio_asn1_element_s *elem,
  * @param unused_bits Output number of unused bits in last byte (0-7)
  * @return 0 on success, -1 on error
  */
-SFUNC int fio_asn1_parse_bit_string(const fio_asn1_element_s *elem,
+SFUNC int fio_der_parse_bit_string(const fio_der_element_s *elem,
                                     const uint8_t **bits,
                                     size_t *bit_len,
                                     uint8_t *unused_bits);
@@ -54262,19 +54439,9 @@ SFUNC int fio_asn1_parse_bit_string(const fio_asn1_element_s *elem,
  * @param buf_len Buffer size
  * @return Number of chars written (excluding NUL), or -1 on error
  */
-SFUNC int fio_asn1_parse_oid(const fio_asn1_element_s *elem,
+SFUNC int fio_der_parse_oid(const fio_der_element_s *elem,
                              char *buf,
                              size_t buf_len);
-
-/**
- * Compare an ASN.1 OID element to a known OID string.
- *
- * @param elem Parsed element (must be OID type)
- * @param oid_string OID in dot notation (e.g., "1.2.840.113549.1.1.11")
- * @return 1 if match, 0 if no match
- */
-SFUNC int fio_asn1_oid_eq(const fio_asn1_element_s *elem,
-                          const char *oid_string);
 
 /**
  * Parse an ASN.1 time (UTC Time or Generalized Time) to Unix timestamp.
@@ -54284,7 +54451,7 @@ SFUNC int fio_asn1_oid_eq(const fio_asn1_element_s *elem,
  * UTC)
  * @return 0 on success, -1 on error
  */
-SFUNC int fio_asn1_parse_time(const fio_asn1_element_s *elem,
+SFUNC int fio_der_parse_time(const fio_der_element_s *elem,
                               int64_t *unix_time);
 
 /**
@@ -54297,7 +54464,7 @@ SFUNC int fio_asn1_parse_time(const fio_asn1_element_s *elem,
  * @param len Output length of string
  * @return Pointer to string data, or NULL on error
  */
-FIO_IFUNC const char *fio_asn1_parse_string(const fio_asn1_element_s *elem,
+FIO_IFUNC const char *fio_der_parse_string(const fio_der_element_s *elem,
                                             size_t *len);
 
 /**
@@ -54307,7 +54474,7 @@ FIO_IFUNC const char *fio_asn1_parse_string(const fio_asn1_element_s *elem,
  * @param value Output boolean value (0 = false, non-zero = true)
  * @return 0 on success, -1 on error
  */
-FIO_IFUNC int fio_asn1_parse_boolean(const fio_asn1_element_s *elem,
+FIO_IFUNC int fio_der_parse_boolean(const fio_der_element_s *elem,
                                      int *value);
 
 /* *****************************************************************************
@@ -54320,8 +54487,8 @@ ASN.1 Parser API - Sequence/Set Iteration
  * @param it Iterator to initialize
  * @param sequence Parsed element (must be SEQUENCE or SET)
  */
-FIO_IFUNC void fio_asn1_iterator_init(fio_asn1_iterator_s *it,
-                                      const fio_asn1_element_s *sequence);
+FIO_IFUNC void fio_der_iterator_init(fio_der_iterator_s *it,
+                                      const fio_der_element_s *sequence);
 
 /**
  * Get the next element from an iterator.
@@ -54330,8 +54497,8 @@ FIO_IFUNC void fio_asn1_iterator_init(fio_asn1_iterator_s *it,
  * @param elem Output for parsed element
  * @return 0 if element available, -1 if end or error
  */
-SFUNC int fio_asn1_iterator_next(fio_asn1_iterator_s *it,
-                                 fio_asn1_element_s *elem);
+SFUNC int fio_der_iterator_next(fio_der_iterator_s *it,
+                                 fio_der_element_s *elem);
 
 /**
  * Check if iterator has more elements.
@@ -54339,7 +54506,7 @@ SFUNC int fio_asn1_iterator_next(fio_asn1_iterator_s *it,
  * @param it Iterator
  * @return 1 if more elements available, 0 otherwise
  */
-FIO_IFUNC int fio_asn1_iterator_has_next(const fio_asn1_iterator_s *it);
+FIO_IFUNC int fio_der_iterator_has_next(const fio_der_iterator_s *it);
 
 /* *****************************************************************************
 ASN.1 Parser API - Helper Functions
@@ -54349,10 +54516,10 @@ ASN.1 Parser API - Helper Functions
  * Check if an element is a specific tag type.
  *
  * @param elem Parsed element
- * @param tag Expected tag (e.g., FIO_ASN1_INTEGER)
+ * @param tag Expected tag (e.g., FIO_DER_INTEGER)
  * @return 1 if match, 0 otherwise
  */
-FIO_IFUNC int fio_asn1_is_tag(const fio_asn1_element_s *elem, uint8_t tag);
+FIO_IFUNC int fio_der_is_tag(const fio_der_element_s *elem, uint8_t tag);
 
 /**
  * Check if an element is a context-specific tag.
@@ -54361,7 +54528,7 @@ FIO_IFUNC int fio_asn1_is_tag(const fio_asn1_element_s *elem, uint8_t tag);
  * @param tag_num Context tag number (0-31)
  * @return 1 if match, 0 otherwise
  */
-FIO_IFUNC int fio_asn1_is_context_tag(const fio_asn1_element_s *elem,
+FIO_IFUNC int fio_der_is_context_tag(const fio_der_element_s *elem,
                                       uint8_t tag_num);
 
 /**
@@ -54373,14 +54540,14 @@ FIO_IFUNC int fio_asn1_is_context_tag(const fio_asn1_element_s *elem,
  * @param elem Parsed element
  * @return Tag number
  */
-FIO_IFUNC uint8_t fio_asn1_tag_number(const fio_asn1_element_s *elem);
+FIO_IFUNC uint8_t fio_der_tag_number(const fio_der_element_s *elem);
 
 /* *****************************************************************************
 Implementation - Inline Functions
 ***************************************************************************** */
 
 /** Get total encoded length of element */
-FIO_IFUNC size_t fio_asn1_element_total_len(const fio_asn1_element_s *elem,
+FIO_IFUNC size_t fio_der_element_total_len(const fio_der_element_s *elem,
                                             const uint8_t *data) {
   if (!elem || !data || !elem->data)
     return 0;
@@ -54388,24 +54555,24 @@ FIO_IFUNC size_t fio_asn1_element_total_len(const fio_asn1_element_s *elem,
 }
 
 /** Parse string types - returns pointer to data */
-FIO_IFUNC const char *fio_asn1_parse_string(const fio_asn1_element_s *elem,
+FIO_IFUNC const char *fio_der_parse_string(const fio_der_element_s *elem,
                                             size_t *len) {
   if (!elem || !len)
     return NULL;
   /* Accept various string types */
   uint8_t tag_num = elem->tag & 0x1F;
-  if (elem->tag_class != FIO_ASN1_CLASS_UNIVERSAL)
+  if (elem->tag_class != FIO_DER_CLASS_UNIVERSAL)
     return NULL;
   switch (tag_num) {
-  case FIO_ASN1_UTF8_STRING:
-  case FIO_ASN1_PRINTABLE_STRING:
-  case FIO_ASN1_IA5_STRING:
-  case FIO_ASN1_T61_STRING:
-  case FIO_ASN1_VISIBLE_STRING:
-  case FIO_ASN1_GENERAL_STRING:
-  case FIO_ASN1_UNIVERSAL_STRING:
-  case FIO_ASN1_BMP_STRING:
-  case FIO_ASN1_NUMERIC_STRING:
+  case FIO_DER_UTF8_STRING:
+  case FIO_DER_PRINTABLE_STRING:
+  case FIO_DER_IA5_STRING:
+  case FIO_DER_T61_STRING:
+  case FIO_DER_VISIBLE_STRING:
+  case FIO_DER_GENERAL_STRING:
+  case FIO_DER_UNIVERSAL_STRING:
+  case FIO_DER_BMP_STRING:
+  case FIO_DER_NUMERIC_STRING:
     *len = elem->len;
     return (const char *)elem->data;
   default: return NULL;
@@ -54413,12 +54580,12 @@ FIO_IFUNC const char *fio_asn1_parse_string(const fio_asn1_element_s *elem,
 }
 
 /** Parse boolean value */
-FIO_IFUNC int fio_asn1_parse_boolean(const fio_asn1_element_s *elem,
+FIO_IFUNC int fio_der_parse_boolean(const fio_der_element_s *elem,
                                      int *value) {
   if (!elem || !value)
     return -1;
-  if ((elem->tag & 0x1F) != FIO_ASN1_BOOLEAN ||
-      elem->tag_class != FIO_ASN1_CLASS_UNIVERSAL)
+  if ((elem->tag & 0x1F) != FIO_DER_BOOLEAN ||
+      elem->tag_class != FIO_DER_CLASS_UNIVERSAL)
     return -1;
   if (elem->len != 1)
     return -1;
@@ -54426,9 +54593,43 @@ FIO_IFUNC int fio_asn1_parse_boolean(const fio_asn1_element_s *elem,
   return 0;
 }
 
+/* *****************************************************************************
+OID Value Helpers (internal) - fio_u128 byte-15 design
+*****************************************************************************
+
+An OID value is a plain fio_u128 where bytes 0-14 hold the DER content bytes
+(zero-padded) and byte 15 holds the content length. The length is folded in
+because 0x00 is a legal OID content byte (arc 0), so padding alone cannot
+distinguish {..0B} from {..0B 00} - different OIDs. Oversized OIDs (content
+> 15 bytes) simply never match, which is safe: AlgorithmIdentifier OIDs are
+attacker-controlled and RFC 5280 requires exact match.
+***************************************************************************** */
+
+/** Build OID value from element. Build ONCE per element, then test
+    against any number of constants. Invalid/oversized -> all 0xFF (never
+    matches a valid value: byte 15 would be 0xFF, not <= 15). */
+FIO_IFUNC fio_u128 fio___der_oid_value(const fio_der_element_s *elem) {
+  fio_u128 r;
+  if (!elem || elem->len > 15) {
+    r.u64[0] = r.u64[1] = ~(uint64_t)0;
+    return r;
+  }
+  r.u64[0] = r.u64[1] = 0;
+  for (uint8_t i = 0; i < elem->len; ++i)
+    r.u8[i] = elem->data[i];
+  r.u8[15] = (uint8_t)elem->len;
+  return r;
+}
+
+/** Exact compare: two u64 lane ==. No len field, no memcmp, no call.
+    Endianness-agnostic (both sides built from identical byte layouts). */
+FIO_IFUNC int fio___der_oid_eq(fio_u128 a, fio_u128 b) {
+  return a.u64[0] == b.u64[0] && a.u64[1] == b.u64[1];
+}
+
 /** Initialize iterator for sequence/set */
-FIO_IFUNC void fio_asn1_iterator_init(fio_asn1_iterator_s *it,
-                                      const fio_asn1_element_s *sequence) {
+FIO_IFUNC void fio_der_iterator_init(fio_der_iterator_s *it,
+                                      const fio_der_element_s *sequence) {
   if (!it)
     return;
   if (!sequence || !sequence->data) {
@@ -54441,32 +54642,32 @@ FIO_IFUNC void fio_asn1_iterator_init(fio_asn1_iterator_s *it,
 }
 
 /** Check if iterator has more elements */
-FIO_IFUNC int fio_asn1_iterator_has_next(const fio_asn1_iterator_s *it) {
+FIO_IFUNC int fio_der_iterator_has_next(const fio_der_iterator_s *it) {
   return (it && it->pos && it->end && it->pos < it->end);
 }
 
 /** Check if element matches tag */
-FIO_IFUNC int fio_asn1_is_tag(const fio_asn1_element_s *elem, uint8_t tag) {
+FIO_IFUNC int fio_der_is_tag(const fio_der_element_s *elem, uint8_t tag) {
   if (!elem)
     return 0;
   /* For universal tags, compare the tag number */
-  if (elem->tag_class == FIO_ASN1_CLASS_UNIVERSAL)
+  if (elem->tag_class == FIO_DER_CLASS_UNIVERSAL)
     return (elem->tag & 0x1F) == (tag & 0x1F);
   /* For other classes, compare full tag byte */
   return elem->tag == tag;
 }
 
 /** Check if element is context-specific tag */
-FIO_IFUNC int fio_asn1_is_context_tag(const fio_asn1_element_s *elem,
+FIO_IFUNC int fio_der_is_context_tag(const fio_der_element_s *elem,
                                       uint8_t tag_num) {
   if (!elem)
     return 0;
-  return (elem->tag_class == FIO_ASN1_CLASS_CONTEXT) &&
+  return (elem->tag_class == FIO_DER_CLASS_CONTEXT) &&
          ((elem->tag & 0x1F) == (tag_num & 0x1F));
 }
 
 /** Get tag number from element */
-FIO_IFUNC uint8_t fio_asn1_tag_number(const fio_asn1_element_s *elem) {
+FIO_IFUNC uint8_t fio_der_tag_number(const fio_der_element_s *elem) {
   if (!elem)
     return 0;
   return elem->tag & 0x1F;
@@ -54486,7 +54687,7 @@ Implementation - Core Parser
  * Returns pointer past length field, or NULL on error.
  * Sets *out_len to the parsed length value.
  */
-FIO_SFUNC const uint8_t *fio___asn1_parse_length(const uint8_t *data,
+FIO_SFUNC const uint8_t *fio___der_parse_length(const uint8_t *data,
                                                  const uint8_t *end,
                                                  size_t *out_len) {
   if (!data || !end || !out_len || data >= end)
@@ -54524,7 +54725,7 @@ FIO_SFUNC const uint8_t *fio___asn1_parse_length(const uint8_t *data,
 }
 
 /** Parse one ASN.1 element from DER data */
-SFUNC const uint8_t *fio_asn1_parse(fio_asn1_element_s *elem,
+SFUNC const uint8_t *fio_der_parse(fio_der_element_s *elem,
                                     const uint8_t *data,
                                     size_t data_len) {
   if (!elem || !data || data_len == 0)
@@ -54561,7 +54762,7 @@ SFUNC const uint8_t *fio_asn1_parse(fio_asn1_element_s *elem,
 
   /* Parse length */
   size_t content_len;
-  p = fio___asn1_parse_length(p, end, &content_len);
+  p = fio___der_parse_length(p, end, &content_len);
   if (!p)
     return NULL;
 
@@ -54579,14 +54780,14 @@ SFUNC const uint8_t *fio_asn1_parse(fio_asn1_element_s *elem,
 Implementation - Integer Parser
 ***************************************************************************** */
 
-SFUNC int fio_asn1_parse_integer(const fio_asn1_element_s *elem,
+SFUNC int fio_der_parse_integer(const fio_der_element_s *elem,
                                  uint64_t *value) {
   if (!elem)
     return -1;
 
   /* Verify it's an INTEGER */
-  if (elem->tag_class != FIO_ASN1_CLASS_UNIVERSAL ||
-      (elem->tag & 0x1F) != FIO_ASN1_INTEGER)
+  if (elem->tag_class != FIO_DER_CLASS_UNIVERSAL ||
+      (elem->tag & 0x1F) != FIO_DER_INTEGER)
     return -1;
 
   if (elem->len == 0)
@@ -54619,7 +54820,7 @@ SFUNC int fio_asn1_parse_integer(const fio_asn1_element_s *elem,
 Implementation - Bit String Parser
 ***************************************************************************** */
 
-SFUNC int fio_asn1_parse_bit_string(const fio_asn1_element_s *elem,
+SFUNC int fio_der_parse_bit_string(const fio_der_element_s *elem,
                                     const uint8_t **bits,
                                     size_t *bit_len,
                                     uint8_t *unused_bits) {
@@ -54627,8 +54828,8 @@ SFUNC int fio_asn1_parse_bit_string(const fio_asn1_element_s *elem,
     return -1;
 
   /* Verify it's a BIT STRING */
-  if (elem->tag_class != FIO_ASN1_CLASS_UNIVERSAL ||
-      (elem->tag & 0x1F) != FIO_ASN1_BIT_STRING)
+  if (elem->tag_class != FIO_DER_CLASS_UNIVERSAL ||
+      (elem->tag & 0x1F) != FIO_DER_BIT_STRING)
     return -1;
 
   if (elem->len < 1)
@@ -54660,7 +54861,7 @@ Implementation - OID Parser
 ***************************************************************************** */
 
 /** Parse OID component from base-128 encoding */
-FIO_SFUNC const uint8_t *fio___asn1_parse_oid_component(const uint8_t *p,
+FIO_SFUNC const uint8_t *fio___der_parse_oid_component(const uint8_t *p,
                                                         const uint8_t *end,
                                                         uint64_t *value) {
   uint64_t v = 0;
@@ -54681,7 +54882,7 @@ FIO_SFUNC const uint8_t *fio___asn1_parse_oid_component(const uint8_t *p,
 }
 
 /** Write unsigned integer to string */
-FIO_SFUNC int fio___asn1_write_uint(char *buf, size_t buf_len, uint64_t value) {
+FIO_SFUNC int fio___der_write_uint(char *buf, size_t buf_len, uint64_t value) {
   if (!buf || buf_len == 0)
     return -1;
 
@@ -54705,15 +54906,15 @@ FIO_SFUNC int fio___asn1_write_uint(char *buf, size_t buf_len, uint64_t value) {
   return len;
 }
 
-SFUNC int fio_asn1_parse_oid(const fio_asn1_element_s *elem,
+SFUNC int fio_der_parse_oid(const fio_der_element_s *elem,
                              char *buf,
                              size_t buf_len) {
   if (!elem || !buf || buf_len < 4)
     return -1;
 
   /* Verify it's an OID */
-  if (elem->tag_class != FIO_ASN1_CLASS_UNIVERSAL ||
-      (elem->tag & 0x1F) != FIO_ASN1_OID)
+  if (elem->tag_class != FIO_DER_CLASS_UNIVERSAL ||
+      (elem->tag & 0x1F) != FIO_DER_OID)
     return -1;
 
   if (elem->len == 0)
@@ -54737,7 +54938,7 @@ SFUNC int fio_asn1_parse_oid(const fio_asn1_element_s *elem,
     c2 = first - 80;
   }
 
-  int len = fio___asn1_write_uint(out, (size_t)(out_end - out), c1);
+  int len = fio___der_write_uint(out, (size_t)(out_end - out), c1);
   if (len < 0)
     return -1;
   out += len;
@@ -54748,7 +54949,7 @@ SFUNC int fio_asn1_parse_oid(const fio_asn1_element_s *elem,
   *out++ = '.';
   total++;
 
-  len = fio___asn1_write_uint(out, (size_t)(out_end - out), c2);
+  len = fio___der_write_uint(out, (size_t)(out_end - out), c2);
   if (len < 0)
     return -1;
   out += len;
@@ -54757,7 +54958,7 @@ SFUNC int fio_asn1_parse_oid(const fio_asn1_element_s *elem,
   /* Remaining components */
   while (p < end) {
     uint64_t component;
-    p = fio___asn1_parse_oid_component(p, end, &component);
+    p = fio___der_parse_oid_component(p, end, &component);
     if (!p)
       return -1;
 
@@ -54766,7 +54967,7 @@ SFUNC int fio_asn1_parse_oid(const fio_asn1_element_s *elem,
     *out++ = '.';
     total++;
 
-    len = fio___asn1_write_uint(out, (size_t)(out_end - out), component);
+    len = fio___der_write_uint(out, (size_t)(out_end - out), component);
     if (len < 0)
       return -1;
     out += len;
@@ -54777,190 +54978,99 @@ SFUNC int fio_asn1_parse_oid(const fio_asn1_element_s *elem,
   return total;
 }
 
-SFUNC int fio_asn1_oid_eq(const fio_asn1_element_s *elem,
-                          const char *oid_string) {
-  if (!elem || !oid_string)
-    return 0;
-
-  /* Parse OID to string and compare */
-  char buf[128];
-  int len = fio_asn1_parse_oid(elem, buf, sizeof(buf));
-  if (len < 0)
-    return 0;
-
-  /* Compare strings */
-  size_t oid_len = FIO_STRLEN(oid_string);
-  if ((size_t)len != oid_len)
-    return 0;
-
-  return FIO_MEMCMP(buf, oid_string, oid_len) == 0;
-}
-
 /* *****************************************************************************
 Implementation - Time Parser
 ***************************************************************************** */
 
-/** Parse 2-digit number from string */
-FIO_SFUNC int fio___asn1_parse_2digits(const char *p, int *value) {
-  if (p[0] < '0' || p[0] > '9' || p[1] < '0' || p[1] > '9')
-    return -1;
-  *value = (p[0] - '0') * 10 + (p[1] - '0');
-  return 0;
-}
-
-/** Days in each month (non-leap year) */
-static const int fio___days_in_month[] =
-    {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-
-/** Check if year is leap year */
-FIO_SFUNC int fio___is_leap_year(int year) {
-  return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-}
-
-/** Convert broken-down time to Unix timestamp */
-FIO_SFUNC int64_t
-fio___asn1_mktime(int year, int month, int day, int hour, int min, int sec) {
-  /* Validate ranges */
-  if (month < 1 || month > 12)
-    return -1;
-  if (day < 1 || day > 31)
-    return -1;
-  if (hour < 0 || hour > 23)
-    return -1;
-  if (min < 0 || min > 59)
-    return -1;
-  if (sec < 0 || sec > 60) /* Allow leap second */
-    return -1;
-
-  /* Calculate days since Unix epoch (1970-01-01) */
-  int64_t days = 0;
-
-  /* Years from 1970 to year-1 */
-  for (int y = 1970; y < year; ++y)
-    days += fio___is_leap_year(y) ? 366 : 365;
-  for (int y = year; y < 1970; ++y)
-    days -= fio___is_leap_year(y) ? 366 : 365;
-
-  /* Months in current year */
-  for (int m = 1; m < month; ++m) {
-    days += fio___days_in_month[m - 1];
-    if (m == 2 && fio___is_leap_year(year))
-      days += 1;
-  }
-
-  /* Days in current month */
-  days += day - 1;
-
-  /* Convert to seconds */
-  int64_t ts = days * 86400LL + hour * 3600LL + min * 60LL + sec;
-  return ts;
-}
-
-SFUNC int fio_asn1_parse_time(const fio_asn1_element_s *elem,
+SFUNC int fio_der_parse_time(const fio_der_element_s *elem,
                               int64_t *unix_time) {
   if (!elem || !unix_time)
     return -1;
 
-  uint8_t tag = elem->tag & 0x1F;
-  if (elem->tag_class != FIO_ASN1_CLASS_UNIVERSAL)
-    return -1;
-
-  const char *p = (const char *)elem->data;
-  size_t len = elem->len;
-
+  char *p = (char *)elem->data;
+  uint64_t digits;
+  uint64_t divisor = 100000000ULL;
+  size_t consumed = 0;
   int year, month, day, hour, min, sec = 0;
+  uint8_t tag = elem->tag & 0x1F;
 
-  if (tag == FIO_ASN1_UTC_TIME) {
-    /* UTCTime: YYMMDDhhmmZ or YYMMDDhhmmssZ */
-    if (len != 11 && len != 13)
-      return -1;
-
-    int yy;
-    if (fio___asn1_parse_2digits(p, &yy) < 0)
-      return -1;
-    /* RFC 5280: years 00-49 = 2000-2049, 50-99 = 1950-1999 */
-    year = (yy < 50) ? 2000 + yy : 1900 + yy;
-    p += 2;
-
-    if (fio___asn1_parse_2digits(p, &month) < 0)
-      return -1;
-    p += 2;
-    if (fio___asn1_parse_2digits(p, &day) < 0)
-      return -1;
-    p += 2;
-    if (fio___asn1_parse_2digits(p, &hour) < 0)
-      return -1;
-    p += 2;
-    if (fio___asn1_parse_2digits(p, &min) < 0)
-      return -1;
-    p += 2;
-
-    if (len == 13) {
-      if (fio___asn1_parse_2digits(p, &sec) < 0)
-        return -1;
-      p += 2;
-    }
-
-    if (*p != 'Z')
-      return -1;
-  } else if (tag == FIO_ASN1_GENERALIZED_TIME) {
-    /* GeneralizedTime: YYYYMMDDhhmmssZ */
-    if (len < 15)
-      return -1;
-
-    int yy1, yy2;
-    if (fio___asn1_parse_2digits(p, &yy1) < 0)
-      return -1;
-    p += 2;
-    if (fio___asn1_parse_2digits(p, &yy2) < 0)
-      return -1;
-    p += 2;
-    year = yy1 * 100 + yy2;
-
-    if (fio___asn1_parse_2digits(p, &month) < 0)
-      return -1;
-    p += 2;
-    if (fio___asn1_parse_2digits(p, &day) < 0)
-      return -1;
-    p += 2;
-    if (fio___asn1_parse_2digits(p, &hour) < 0)
-      return -1;
-    p += 2;
-    if (fio___asn1_parse_2digits(p, &min) < 0)
-      return -1;
-    p += 2;
-    if (fio___asn1_parse_2digits(p, &sec) < 0)
-      return -1;
-    p += 2;
-
-    /* Skip optional fractional seconds */
-    if (*p == '.') {
-      p++;
-      while (*p >= '0' && *p <= '9')
-        p++;
-    }
-
-    if (*p != 'Z')
-      return -1;
-  } else {
+  if (elem->tag_class != FIO_DER_CLASS_UNIVERSAL ||
+      (tag != FIO_DER_UTC_TIME && tag != FIO_DER_GENERALIZED_TIME) ||
+      elem->len < 10 || fio_buf2u32u(p) == (0x01010101UL * '0'))
     return -1;
+
+  digits = fio_atol10u(&p);
+  consumed = (size_t)(p - (const char *)elem->data);
+
+  /* Skip optional fractional seconds */
+  if (*p == '.') {
+    p++;
+    while (*p >= '0' && *p <= '9')
+      p++;
+  }
+  if (*p != 'Z')
+    return -1;
+
+  if (tag == FIO_DER_UTC_TIME) {
+    if (consumed == 12)
+      divisor = 10000000000ULL; /*   YYMMDDhhmmss */
+    else if (consumed != 10)
+      return -1;
+  } else { /* GENERALIZED_TIME */
+    if (consumed == 14)
+      divisor = 10000000000ULL; /* YYYYMMDDhhmmss */
+    else if (consumed != 12)
+      return -1;
   }
 
-  *unix_time = fio___asn1_mktime(year, month, day, hour, min, sec);
-  return (*unix_time == -1) ? -1 : 0;
+  year = digits / divisor;
+  digits -= year * divisor;
+  divisor /= 100;
+  month = digits / divisor;
+  digits -= month * divisor;
+  divisor /= 100;
+  day = digits / divisor;
+  digits -= day * divisor;
+  divisor /= 100;
+  hour = digits / divisor;
+  digits -= hour * divisor;
+  divisor /= 100;
+  min = digits / divisor;
+  digits -= min * divisor;
+  divisor /= 100;
+  sec = digits;
+
+  if (tag == FIO_DER_UTC_TIME) {
+    year += (year < 50 ? 2000 : 1900);
+  }
+
+  {
+    struct tm tm = {
+        .tm_year = year - 1900,
+        .tm_mon = month - 1,
+        .tm_mday = day,
+        .tm_hour = hour,
+        .tm_min = min,
+        .tm_sec = sec,
+        .tm_isdst = 0,
+    };
+    *unix_time = (int64_t)fio_gm2time(tm);
+  }
+  return 0;
 }
 
 /* *****************************************************************************
 Implementation - Iterator
-***************************************************************************** */
+*****************************************************************************
+*/
 
-SFUNC int fio_asn1_iterator_next(fio_asn1_iterator_s *it,
-                                 fio_asn1_element_s *elem) {
+SFUNC int fio_der_iterator_next(fio_der_iterator_s *it,
+                                 fio_der_element_s *elem) {
   if (!it || !elem || !it->pos || !it->end || it->pos >= it->end)
     return -1;
 
   size_t remaining = (size_t)(it->end - it->pos);
-  const uint8_t *next = fio_asn1_parse(elem, it->pos, remaining);
+  const uint8_t *next = fio_der_parse(elem, it->pos, remaining);
   if (!next)
     return -1;
 
@@ -54970,7 +55080,8 @@ SFUNC int fio_asn1_iterator_next(fio_asn1_iterator_s *it,
 
 /* *****************************************************************************
 ASN.1 DER Encoding API
-***************************************************************************** */
+*****************************************************************************
+*/
 
 /**
  * Encode DER length field.
@@ -54979,7 +55090,7 @@ ASN.1 DER Encoding API
  * @param len Length value to encode
  * @return Number of bytes written/needed
  */
-SFUNC size_t fio_asn1_encode_length(uint8_t *buf, size_t len);
+SFUNC size_t fio_der_encode_length(uint8_t *buf, size_t len);
 
 /**
  * Encode an ASN.1 INTEGER.
@@ -54991,7 +55102,7 @@ SFUNC size_t fio_asn1_encode_length(uint8_t *buf, size_t len);
  * @param data_len Length of integer data
  * @return Number of bytes written/needed
  */
-SFUNC size_t fio_asn1_encode_integer(uint8_t *buf,
+SFUNC size_t fio_der_encode_integer(uint8_t *buf,
                                      const uint8_t *data,
                                      size_t data_len);
 
@@ -55002,16 +55113,19 @@ SFUNC size_t fio_asn1_encode_integer(uint8_t *buf,
  * @param value Integer value (up to 64-bit)
  * @return Number of bytes written/needed
  */
-SFUNC size_t fio_asn1_encode_integer_small(uint8_t *buf, uint64_t value);
+SFUNC size_t fio_der_encode_integer_small(uint8_t *buf, uint64_t value);
 
 /**
- * Encode an ASN.1 OID from dot notation string.
+ * Encode an ASN.1 OID TLV from an OID value (internal).
+ *
+ * The OID value holds the DER content bytes in bytes 0-14 and the content
+ * length in byte 15 (see fio___der_oid_value). No dot-string parsing.
  *
  * @param buf Output buffer (can be NULL to calculate length only)
- * @param oid_string OID in dot notation (e.g., "1.2.840.113549.1.1.11")
+ * @param oid OID value (fio_u128, length folded into byte 15)
  * @return Number of bytes written/needed, or 0 on error
  */
-SFUNC size_t fio_asn1_encode_oid(uint8_t *buf, const char *oid_string);
+SFUNC size_t fio___der_encode_oid(uint8_t *buf, fio_u128 oid);
 
 /**
  * Encode an ASN.1 UTF8String.
@@ -55021,7 +55135,7 @@ SFUNC size_t fio_asn1_encode_oid(uint8_t *buf, const char *oid_string);
  * @param str_len String length
  * @return Number of bytes written/needed
  */
-SFUNC size_t fio_asn1_encode_utf8_string(uint8_t *buf,
+SFUNC size_t fio_der_encode_utf8_string(uint8_t *buf,
                                          const char *str,
                                          size_t str_len);
 
@@ -55033,7 +55147,7 @@ SFUNC size_t fio_asn1_encode_utf8_string(uint8_t *buf,
  * @param str_len String length
  * @return Number of bytes written/needed
  */
-SFUNC size_t fio_asn1_encode_printable_string(uint8_t *buf,
+SFUNC size_t fio_der_encode_printable_string(uint8_t *buf,
                                               const char *str,
                                               size_t str_len);
 
@@ -55046,7 +55160,7 @@ SFUNC size_t fio_asn1_encode_printable_string(uint8_t *buf,
  * @param unused_bits Number of unused bits in last byte (0-7)
  * @return Number of bytes written/needed
  */
-SFUNC size_t fio_asn1_encode_bit_string(uint8_t *buf,
+SFUNC size_t fio_der_encode_bit_string(uint8_t *buf,
                                         const uint8_t *bits,
                                         size_t bit_len,
                                         uint8_t unused_bits);
@@ -55059,7 +55173,7 @@ SFUNC size_t fio_asn1_encode_bit_string(uint8_t *buf,
  * @param data_len Length of data
  * @return Number of bytes written/needed
  */
-SFUNC size_t fio_asn1_encode_octet_string(uint8_t *buf,
+SFUNC size_t fio_der_encode_octet_string(uint8_t *buf,
                                           const uint8_t *data,
                                           size_t data_len);
 
@@ -55070,7 +55184,7 @@ SFUNC size_t fio_asn1_encode_octet_string(uint8_t *buf,
  * @param content_len Length of content that will follow
  * @return Number of bytes written/needed for tag+length only
  */
-SFUNC size_t fio_asn1_encode_sequence_header(uint8_t *buf, size_t content_len);
+SFUNC size_t fio_der_encode_sequence_header(uint8_t *buf, size_t content_len);
 
 /**
  * Encode an ASN.1 SET wrapper around existing content.
@@ -55079,7 +55193,7 @@ SFUNC size_t fio_asn1_encode_sequence_header(uint8_t *buf, size_t content_len);
  * @param content_len Length of content that will follow
  * @return Number of bytes written/needed for tag+length only
  */
-SFUNC size_t fio_asn1_encode_set_header(uint8_t *buf, size_t content_len);
+SFUNC size_t fio_der_encode_set_header(uint8_t *buf, size_t content_len);
 
 /**
  * Encode an ASN.1 context-specific tag wrapper.
@@ -55087,10 +55201,11 @@ SFUNC size_t fio_asn1_encode_set_header(uint8_t *buf, size_t content_len);
  * @param buf Output buffer (can be NULL to calculate length only)
  * @param tag_num Context tag number (0-30)
  * @param content_len Length of content that will follow
- * @param constructed 1 if constructed (contains other elements), 0 if primitive
+ * @param constructed 1 if constructed (contains other elements), 0 if
+ * primitive
  * @return Number of bytes written/needed for tag+length only
  */
-SFUNC size_t fio_asn1_encode_context_header(uint8_t *buf,
+SFUNC size_t fio_der_encode_context_header(uint8_t *buf,
                                             uint8_t tag_num,
                                             size_t content_len,
                                             int constructed);
@@ -55101,7 +55216,7 @@ SFUNC size_t fio_asn1_encode_context_header(uint8_t *buf,
  * @param buf Output buffer (can be NULL to calculate length only)
  * @return Number of bytes written/needed (always 2)
  */
-SFUNC size_t fio_asn1_encode_null(uint8_t *buf);
+SFUNC size_t fio_der_encode_null(uint8_t *buf);
 
 /**
  * Encode an ASN.1 BOOLEAN.
@@ -55110,7 +55225,7 @@ SFUNC size_t fio_asn1_encode_null(uint8_t *buf);
  * @param value Boolean value (0 = false, non-zero = true)
  * @return Number of bytes written/needed (always 3)
  */
-SFUNC size_t fio_asn1_encode_boolean(uint8_t *buf, int value);
+SFUNC size_t fio_der_encode_boolean(uint8_t *buf, int value);
 
 /**
  * Encode an ASN.1 UTCTime from Unix timestamp.
@@ -55119,7 +55234,7 @@ SFUNC size_t fio_asn1_encode_boolean(uint8_t *buf, int value);
  * @param unix_time Unix timestamp (seconds since 1970-01-01 00:00:00 UTC)
  * @return Number of bytes written/needed
  */
-SFUNC size_t fio_asn1_encode_utc_time(uint8_t *buf, int64_t unix_time);
+SFUNC size_t fio_der_encode_utc_time(uint8_t *buf, int64_t unix_time);
 
 /**
  * Encode an ASN.1 GeneralizedTime from Unix timestamp.
@@ -55128,14 +55243,15 @@ SFUNC size_t fio_asn1_encode_utc_time(uint8_t *buf, int64_t unix_time);
  * @param unix_time Unix timestamp (seconds since 1970-01-01 00:00:00 UTC)
  * @return Number of bytes written/needed
  */
-SFUNC size_t fio_asn1_encode_generalized_time(uint8_t *buf, int64_t unix_time);
+SFUNC size_t fio_der_encode_generalized_time(uint8_t *buf, int64_t unix_time);
 
 /* *****************************************************************************
 Implementation - ASN.1 Encoding Functions
-***************************************************************************** */
+*****************************************************************************
+*/
 
 /** Encode DER length field */
-SFUNC size_t fio_asn1_encode_length(uint8_t *buf, size_t len) {
+SFUNC size_t fio_der_encode_length(uint8_t *buf, size_t len) {
   if (len < 128) {
     /* Short form */
     if (buf)
@@ -55161,7 +55277,7 @@ SFUNC size_t fio_asn1_encode_length(uint8_t *buf, size_t len) {
 }
 
 /** Encode ASN.1 INTEGER */
-SFUNC size_t fio_asn1_encode_integer(uint8_t *buf,
+SFUNC size_t fio_der_encode_integer(uint8_t *buf,
                                      const uint8_t *data,
                                      size_t data_len) {
   if (!data || data_len == 0)
@@ -55178,12 +55294,12 @@ SFUNC size_t fio_asn1_encode_integer(uint8_t *buf,
   size_t content_len = data_len + need_zero;
 
   /* Calculate total length */
-  size_t len_bytes = fio_asn1_encode_length(NULL, content_len);
+  size_t len_bytes = fio_der_encode_length(NULL, content_len);
   size_t total = 1 + len_bytes + content_len;
 
   if (buf) {
-    buf[0] = FIO_ASN1_INTEGER;
-    fio_asn1_encode_length(buf + 1, content_len);
+    buf[0] = FIO_DER_INTEGER;
+    fio_der_encode_length(buf + 1, content_len);
     size_t offset = 1 + len_bytes;
     if (need_zero)
       buf[offset++] = 0x00;
@@ -55194,7 +55310,7 @@ SFUNC size_t fio_asn1_encode_integer(uint8_t *buf,
 }
 
 /** Encode ASN.1 INTEGER from small value */
-SFUNC size_t fio_asn1_encode_integer_small(uint8_t *buf, uint64_t value) {
+SFUNC size_t fio_der_encode_integer_small(uint8_t *buf, uint64_t value) {
   uint8_t tmp[9];
   size_t len = 0;
 
@@ -55214,102 +55330,39 @@ SFUNC size_t fio_asn1_encode_integer_small(uint8_t *buf, uint64_t value) {
       tmp[i] = (uint8_t)(value >> ((len - 1 - i) * 8));
   }
 
-  return fio_asn1_encode_integer(buf, tmp, len);
+  return fio_der_encode_integer(buf, tmp, len);
 }
 
-/** Encode ASN.1 OID from dot notation */
-SFUNC size_t fio_asn1_encode_oid(uint8_t *buf, const char *oid_string) {
-  if (!oid_string)
-    return 0;
+/** Encode ASN.1 OID TLV from an OID value (internal) */
+SFUNC size_t fio___der_encode_oid(uint8_t *buf, fio_u128 oid) {
+  size_t content_len = oid.u8[15];
+  if (content_len > 15)
+    return 0; /* invalid OID value (e.g., the all-0xFF never-match value) */
 
-  /* Parse OID components */
-  uint64_t components[32];
-  size_t num_components = 0;
-  const char *p = oid_string;
-
-  while (*p && num_components < 32) {
-    uint64_t val = 0;
-    while (*p >= '0' && *p <= '9') {
-      val = val * 10 + (*p - '0');
-      ++p;
-    }
-    components[num_components++] = val;
-    if (*p == '.')
-      ++p;
-    else if (*p != '\0')
-      return 0; /* Invalid character */
-  }
-
-  if (num_components < 2)
-    return 0;
-
-  /* Calculate encoded length */
-  /* First two components encoded as single byte: X*40 + Y */
-  size_t content_len = 1;
-
-  /* Remaining components in base-128 */
-  for (size_t i = 2; i < num_components; ++i) {
-    uint64_t v = components[i];
-    if (v == 0) {
-      content_len += 1;
-    } else {
-      size_t bytes = 0;
-      while (v > 0) {
-        ++bytes;
-        v >>= 7;
-      }
-      content_len += bytes;
-    }
-  }
-
-  size_t len_bytes = fio_asn1_encode_length(NULL, content_len);
+  size_t len_bytes = fio_der_encode_length(NULL, content_len);
   size_t total = 1 + len_bytes + content_len;
 
   if (buf) {
-    buf[0] = FIO_ASN1_OID;
-    fio_asn1_encode_length(buf + 1, content_len);
+    buf[0] = FIO_DER_OID;
+    fio_der_encode_length(buf + 1, content_len);
     size_t offset = 1 + len_bytes;
-
-    /* First two components */
-    buf[offset++] = (uint8_t)(components[0] * 40 + components[1]);
-
-    /* Remaining components in base-128 */
-    for (size_t i = 2; i < num_components; ++i) {
-      uint64_t v = components[i];
-      if (v == 0) {
-        buf[offset++] = 0;
-      } else {
-        /* Count bytes needed */
-        size_t bytes = 0;
-        uint64_t tmp = v;
-        while (tmp > 0) {
-          ++bytes;
-          tmp >>= 7;
-        }
-        /* Write base-128 with continuation bits */
-        for (size_t j = bytes; j > 0; --j) {
-          uint8_t b = (uint8_t)((v >> ((j - 1) * 7)) & 0x7F);
-          if (j > 1)
-            b |= 0x80;
-          buf[offset++] = b;
-        }
-      }
-    }
+    for (size_t i = 0; i < content_len; ++i)
+      buf[offset + i] = oid.u8[i];
   }
 
   return total;
 }
 
 /** Encode ASN.1 UTF8String */
-SFUNC size_t fio_asn1_encode_utf8_string(uint8_t *buf,
+SFUNC size_t fio_der_encode_utf8_string(uint8_t *buf,
                                          const char *str,
                                          size_t str_len) {
-  size_t len_bytes = fio_asn1_encode_length(NULL, str_len);
+  size_t len_bytes = fio_der_encode_length(NULL, str_len);
   size_t total = 1 + len_bytes + str_len;
 
   if (buf) {
-    buf[0] = FIO_ASN1_UTF8_STRING;
-    fio_asn1_encode_length(buf + 1, str_len);
+    buf[0] = FIO_DER_UTF8_STRING;
+    fio_der_encode_length(buf + 1, str_len);
     if (str_len > 0)
       FIO_MEMCPY(buf + 1 + len_bytes, str, str_len);
   }
@@ -55318,15 +55371,15 @@ SFUNC size_t fio_asn1_encode_utf8_string(uint8_t *buf,
 }
 
 /** Encode ASN.1 PrintableString */
-SFUNC size_t fio_asn1_encode_printable_string(uint8_t *buf,
+SFUNC size_t fio_der_encode_printable_string(uint8_t *buf,
                                               const char *str,
                                               size_t str_len) {
-  size_t len_bytes = fio_asn1_encode_length(NULL, str_len);
+  size_t len_bytes = fio_der_encode_length(NULL, str_len);
   size_t total = 1 + len_bytes + str_len;
 
   if (buf) {
-    buf[0] = FIO_ASN1_PRINTABLE_STRING;
-    fio_asn1_encode_length(buf + 1, str_len);
+    buf[0] = FIO_DER_PRINTABLE_STRING;
+    fio_der_encode_length(buf + 1, str_len);
     if (str_len > 0)
       FIO_MEMCPY(buf + 1 + len_bytes, str, str_len);
   }
@@ -55335,17 +55388,17 @@ SFUNC size_t fio_asn1_encode_printable_string(uint8_t *buf,
 }
 
 /** Encode ASN.1 BIT STRING */
-SFUNC size_t fio_asn1_encode_bit_string(uint8_t *buf,
+SFUNC size_t fio_der_encode_bit_string(uint8_t *buf,
                                         const uint8_t *bits,
                                         size_t bit_len,
                                         uint8_t unused_bits) {
   size_t content_len = 1 + bit_len; /* unused bits byte + data */
-  size_t len_bytes = fio_asn1_encode_length(NULL, content_len);
+  size_t len_bytes = fio_der_encode_length(NULL, content_len);
   size_t total = 1 + len_bytes + content_len;
 
   if (buf) {
-    buf[0] = FIO_ASN1_BIT_STRING;
-    fio_asn1_encode_length(buf + 1, content_len);
+    buf[0] = FIO_DER_BIT_STRING;
+    fio_der_encode_length(buf + 1, content_len);
     buf[1 + len_bytes] = unused_bits;
     if (bit_len > 0)
       FIO_MEMCPY(buf + 2 + len_bytes, bits, bit_len);
@@ -55355,15 +55408,15 @@ SFUNC size_t fio_asn1_encode_bit_string(uint8_t *buf,
 }
 
 /** Encode ASN.1 OCTET STRING */
-SFUNC size_t fio_asn1_encode_octet_string(uint8_t *buf,
+SFUNC size_t fio_der_encode_octet_string(uint8_t *buf,
                                           const uint8_t *data,
                                           size_t data_len) {
-  size_t len_bytes = fio_asn1_encode_length(NULL, data_len);
+  size_t len_bytes = fio_der_encode_length(NULL, data_len);
   size_t total = 1 + len_bytes + data_len;
 
   if (buf) {
-    buf[0] = FIO_ASN1_OCTET_STRING;
-    fio_asn1_encode_length(buf + 1, data_len);
+    buf[0] = FIO_DER_OCTET_STRING;
+    fio_der_encode_length(buf + 1, data_len);
     if (data && data_len > 0)
       FIO_MEMCPY(buf + 1 + len_bytes, data, data_len);
   }
@@ -55372,60 +55425,60 @@ SFUNC size_t fio_asn1_encode_octet_string(uint8_t *buf,
 }
 
 /** Encode ASN.1 SEQUENCE header */
-SFUNC size_t fio_asn1_encode_sequence_header(uint8_t *buf, size_t content_len) {
-  size_t len_bytes = fio_asn1_encode_length(NULL, content_len);
+SFUNC size_t fio_der_encode_sequence_header(uint8_t *buf, size_t content_len) {
+  size_t len_bytes = fio_der_encode_length(NULL, content_len);
   size_t total = 1 + len_bytes;
 
   if (buf) {
     buf[0] = 0x30; /* SEQUENCE tag (constructed) */
-    fio_asn1_encode_length(buf + 1, content_len);
+    fio_der_encode_length(buf + 1, content_len);
   }
 
   return total;
 }
 
 /** Encode ASN.1 SET header */
-SFUNC size_t fio_asn1_encode_set_header(uint8_t *buf, size_t content_len) {
-  size_t len_bytes = fio_asn1_encode_length(NULL, content_len);
+SFUNC size_t fio_der_encode_set_header(uint8_t *buf, size_t content_len) {
+  size_t len_bytes = fio_der_encode_length(NULL, content_len);
   size_t total = 1 + len_bytes;
 
   if (buf) {
     buf[0] = 0x31; /* SET tag (constructed) */
-    fio_asn1_encode_length(buf + 1, content_len);
+    fio_der_encode_length(buf + 1, content_len);
   }
 
   return total;
 }
 
 /** Encode ASN.1 context-specific tag header */
-SFUNC size_t fio_asn1_encode_context_header(uint8_t *buf,
+SFUNC size_t fio_der_encode_context_header(uint8_t *buf,
                                             uint8_t tag_num,
                                             size_t content_len,
                                             int constructed) {
-  size_t len_bytes = fio_asn1_encode_length(NULL, content_len);
+  size_t len_bytes = fio_der_encode_length(NULL, content_len);
   size_t total = 1 + len_bytes;
 
   if (buf) {
     buf[0] = (uint8_t)(0x80 | (constructed ? 0x20 : 0) | (tag_num & 0x1F));
-    fio_asn1_encode_length(buf + 1, content_len);
+    fio_der_encode_length(buf + 1, content_len);
   }
 
   return total;
 }
 
 /** Encode ASN.1 NULL */
-SFUNC size_t fio_asn1_encode_null(uint8_t *buf) {
+SFUNC size_t fio_der_encode_null(uint8_t *buf) {
   if (buf) {
-    buf[0] = FIO_ASN1_NULL;
+    buf[0] = FIO_DER_NULL;
     buf[1] = 0x00;
   }
   return 2;
 }
 
 /** Encode ASN.1 BOOLEAN */
-SFUNC size_t fio_asn1_encode_boolean(uint8_t *buf, int value) {
+SFUNC size_t fio_der_encode_boolean(uint8_t *buf, int value) {
   if (buf) {
-    buf[0] = FIO_ASN1_BOOLEAN;
+    buf[0] = FIO_DER_BOOLEAN;
     buf[1] = 0x01;
     buf[2] = value ? 0xFF : 0x00;
   }
@@ -55433,61 +55486,35 @@ SFUNC size_t fio_asn1_encode_boolean(uint8_t *buf, int value) {
 }
 
 /** Helper: convert Unix timestamp to broken-down time */
-FIO_SFUNC void fio___asn1_gmtime(int64_t unix_time,
+FIO_SFUNC void fio___der_gmtime(int64_t unix_time,
                                  int *year,
                                  int *month,
                                  int *day,
                                  int *hour,
                                  int *min,
                                  int *sec) {
-  /* Days since epoch */
-  int64_t days = unix_time / 86400;
-  int64_t rem = unix_time % 86400;
-  if (rem < 0) {
-    --days;
-    rem += 86400;
-  }
+  const time_t t = (time_t)unix_time;
+  const struct tm tm = fio_time2gm(t);
 
-  *hour = (int)(rem / 3600);
-  rem %= 3600;
-  *min = (int)(rem / 60);
-  *sec = (int)(rem % 60);
-
-  /* Calculate year and day of year */
-  int y = 1970;
-  while (days >= (fio___is_leap_year(y) ? 366 : 365)) {
-    days -= fio___is_leap_year(y) ? 366 : 365;
-    ++y;
-  }
-  while (days < 0) {
-    --y;
-    days += fio___is_leap_year(y) ? 366 : 365;
-  }
-  *year = y;
-
-  /* Calculate month and day */
-  int m = 1;
-  while (days >= fio___days_in_month[m - 1] +
-                     (m == 2 && fio___is_leap_year(y) ? 1 : 0)) {
-    days -=
-        fio___days_in_month[m - 1] + (m == 2 && fio___is_leap_year(y) ? 1 : 0);
-    ++m;
-  }
-  *month = m;
-  *day = (int)days + 1;
+  *year = tm.tm_year + 1900;
+  *month = tm.tm_mon + 1;
+  *day = tm.tm_mday;
+  *hour = tm.tm_hour;
+  *min = tm.tm_min;
+  *sec = tm.tm_sec;
 }
 
 /** Encode ASN.1 UTCTime */
-SFUNC size_t fio_asn1_encode_utc_time(uint8_t *buf, int64_t unix_time) {
+SFUNC size_t fio_der_encode_utc_time(uint8_t *buf, int64_t unix_time) {
   /* UTCTime format: YYMMDDhhmmssZ (13 bytes) */
   size_t content_len = 13;
   size_t total = 1 + 1 + content_len; /* tag + length + content */
 
   if (buf) {
     int year, month, day, hour, min, sec;
-    fio___asn1_gmtime(unix_time, &year, &month, &day, &hour, &min, &sec);
+    fio___der_gmtime(unix_time, &year, &month, &day, &hour, &min, &sec);
 
-    buf[0] = FIO_ASN1_UTC_TIME;
+    buf[0] = FIO_DER_UTC_TIME;
     buf[1] = (uint8_t)content_len;
 
     /* Year (2 digits) */
@@ -55517,16 +55544,16 @@ SFUNC size_t fio_asn1_encode_utc_time(uint8_t *buf, int64_t unix_time) {
 }
 
 /** Encode ASN.1 GeneralizedTime */
-SFUNC size_t fio_asn1_encode_generalized_time(uint8_t *buf, int64_t unix_time) {
+SFUNC size_t fio_der_encode_generalized_time(uint8_t *buf, int64_t unix_time) {
   /* GeneralizedTime format: YYYYMMDDhhmmssZ (15 bytes) */
   size_t content_len = 15;
   size_t total = 1 + 1 + content_len; /* tag + length + content */
 
   if (buf) {
     int year, month, day, hour, min, sec;
-    fio___asn1_gmtime(unix_time, &year, &month, &day, &hour, &min, &sec);
+    fio___der_gmtime(unix_time, &year, &month, &day, &hour, &min, &sec);
 
-    buf[0] = FIO_ASN1_GENERALIZED_TIME;
+    buf[0] = FIO_DER_GENERALIZED_TIME;
     buf[1] = (uint8_t)content_len;
 
     /* Year (4 digits) */
@@ -55560,8 +55587,8 @@ SFUNC size_t fio_asn1_encode_generalized_time(uint8_t *buf, int64_t unix_time) {
 Module Cleanup
 ***************************************************************************** */
 #endif /* FIO_EXTERN_COMPLETE */
-#endif /* FIO_ASN1 */
-#undef FIO_ASN1
+#endif /* FIO_DER */
+#undef FIO_DER
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -56560,8 +56587,7 @@ FIO_SFUNC void fio___rsa_mgf1(uint8_t *mask,
       break;
     }
     case FIO_RSA_HASH_SHA384: {
-      fio_u512 h = fio_sha512(hash_input, seed_len + 4);
-      /* SHA-384 is truncated SHA-512 */
+      fio_u512 h = fio_sha384(hash_input, seed_len + 4);
       FIO_MEMCPY(mask + offset, h.u8, to_copy);
       break;
     }
@@ -56691,7 +56717,7 @@ SFUNC int fio_rsa_verify_pss(const uint8_t *sig,
     break;
   }
   case FIO_RSA_HASH_SHA384: {
-    fio_u512 hp = fio_sha512(m_prime, 8 + hash_len + salt_len);
+    fio_u512 hp = fio_sha384(m_prime, 8 + hash_len + salt_len);
     FIO_MEMCPY(h_prime, hp.u8, 48);
     break;
   }
@@ -57050,7 +57076,7 @@ FIO_SFUNC int fio___rsa_emsa_pss_encode(uint8_t *em,
     break;
   }
   case FIO_RSA_HASH_SHA384: {
-    fio_sha512_s sha = fio_sha512_init();
+    fio_sha512_s sha = fio_sha384_init();
     fio_sha512_consume(&sha, m_prime, 8 + hash_len + salt_len);
     fio_u512 hp = fio_sha512_finalize(&sha);
     FIO_MEMCPY(h, hp.u8, 48);
@@ -57168,2386 +57194,6 @@ Module Cleanup
 #endif /* FIO_EXTERN_COMPLETE */
 #endif /* FIO_RSA */
 #undef FIO_RSA
-/* ************************************************************************* */
-#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
-#define FIO___DEV___           /* Development inclusion - ignore line */
-#define FIO_X509               /* Development inclusion - ignore line */
-#include "./include.h"         /* Development inclusion - ignore line */
-#endif                         /* Development inclusion - ignore line */
-/* *****************************************************************************
-
-
-
-
-                        X.509 Certificate Parser for TLS 1.3
-                            (RFC 5280 Certificate Parsing)
-
-
-
-
-Copyright and License: see header file (000 copyright.h) or top of file
-***************************************************************************** */
-#if defined(FIO_X509) && !defined(H___FIO_X509___H)
-#define H___FIO_X509___H
-
-/* *****************************************************************************
-X.509 Certificate Parser Module
-
-This module provides X.509v3 certificate parsing for TLS 1.3 certificate
-verification. It supports:
-
-- RSA, ECDSA (P-256, P-384), and Ed25519 public keys
-- Signature verification using issuer certificates
-- Validity period checking
-- Hostname matching (CN and SAN with wildcards)
-- Basic constraints and key usage extensions
-- Certificate chain validation
-- Trust store management
-
-**Note**: This is a minimal parser for TLS 1.3. Not all X.509 features
-are supported. The implementation is non-allocating (pointers into DER data).
-***************************************************************************** */
-
-/* *****************************************************************************
-X.509 Type Definitions
-***************************************************************************** */
-
-/** Public key algorithm types */
-typedef enum {
-  FIO_X509_KEY_UNKNOWN = 0,
-  FIO_X509_KEY_RSA = 1,        /**< RSA (any key size) */
-  FIO_X509_KEY_ECDSA_P256 = 2, /**< ECDSA with P-256/secp256r1 */
-  FIO_X509_KEY_ECDSA_P384 = 3, /**< ECDSA with P-384/secp384r1 */
-  FIO_X509_KEY_ED25519 = 4,    /**< Ed25519 (EdDSA) */
-} fio_x509_key_type_e;
-
-/** Signature algorithm types */
-typedef enum {
-  FIO_X509_SIG_UNKNOWN = 0,
-  FIO_X509_SIG_RSA_PKCS1_SHA256 = 1, /**< sha256WithRSAEncryption */
-  FIO_X509_SIG_RSA_PKCS1_SHA384 = 2, /**< sha384WithRSAEncryption */
-  FIO_X509_SIG_RSA_PKCS1_SHA512 = 3, /**< sha512WithRSAEncryption */
-  FIO_X509_SIG_RSA_PSS_SHA256 = 4,   /**< RSA-PSS with SHA-256 */
-  FIO_X509_SIG_RSA_PSS_SHA384 = 5,   /**< RSA-PSS with SHA-384 */
-  FIO_X509_SIG_RSA_PSS_SHA512 = 6,   /**< RSA-PSS with SHA-512 */
-  FIO_X509_SIG_ECDSA_SHA256 = 7,     /**< ecdsa-with-SHA256 */
-  FIO_X509_SIG_ECDSA_SHA384 = 8,     /**< ecdsa-with-SHA384 */
-  FIO_X509_SIG_ED25519 = 9,          /**< Ed25519 */
-} fio_x509_sig_alg_e;
-
-/** Key Usage bit flags (RFC 5280 Section 4.2.1.3)
- *
- * ASN.1 BIT STRING uses MSB-first bit ordering:
- * - Bit 0 = MSB of first byte (0x80)
- * - Bit 1 = 0x40, Bit 2 = 0x20, etc.
- * - Bits 8+ are in the second byte
- */
-typedef enum {
-  FIO_X509_KU_DIGITAL_SIGNATURE = 0x0080, /* bit 0 = MSB of byte 0 */
-  FIO_X509_KU_NON_REPUDIATION = 0x0040,   /* bit 1 */
-  FIO_X509_KU_KEY_ENCIPHERMENT = 0x0020,  /* bit 2 */
-  FIO_X509_KU_DATA_ENCIPHERMENT = 0x0010, /* bit 3 */
-  FIO_X509_KU_KEY_AGREEMENT = 0x0008,     /* bit 4 */
-  FIO_X509_KU_KEY_CERT_SIGN = 0x0004,     /* bit 5 */
-  FIO_X509_KU_CRL_SIGN = 0x0002,          /* bit 6 */
-  FIO_X509_KU_ENCIPHER_ONLY = 0x0001,     /* bit 7 */
-  FIO_X509_KU_DECIPHER_ONLY = 0x8000,     /* bit 8 = MSB of byte 1 */
-} fio_x509_key_usage_e;
-
-/** X.509 chain validation error codes */
-typedef enum {
-  FIO_X509_OK = 0,                   /**< Validation successful */
-  FIO_X509_ERR_PARSE = -1,           /**< Failed to parse certificate */
-  FIO_X509_ERR_EXPIRED = -2,         /**< Certificate expired */
-  FIO_X509_ERR_NOT_YET_VALID = -3,   /**< Certificate not yet valid */
-  FIO_X509_ERR_SIGNATURE = -4,       /**< Signature verification failed */
-  FIO_X509_ERR_ISSUER_MISMATCH = -5, /**< Issuer DN doesn't match subject DN */
-  FIO_X509_ERR_NOT_CA = -6,          /**< Issuer is not a CA certificate */
-  FIO_X509_ERR_NO_TRUST_ANCHOR = -7, /**< Certificate not in trust store */
-  FIO_X509_ERR_HOSTNAME_MISMATCH = -8, /**< Hostname doesn't match cert */
-  FIO_X509_ERR_EMPTY_CHAIN = -9,       /**< Empty certificate chain */
-  FIO_X509_ERR_CHAIN_TOO_LONG = -10,   /**< Chain exceeds maximum depth */
-} fio_x509_error_e;
-
-/** Trust store for root CA certificates */
-typedef struct {
-  const uint8_t **roots;   /**< Array of root CA certificate DER data */
-  const size_t *root_lens; /**< Array of root CA certificate lengths */
-  size_t root_count;       /**< Number of root CAs */
-} fio_x509_trust_store_s;
-
-/** TLS certificate entry (parsed from Certificate message) */
-typedef struct {
-  const uint8_t *cert; /**< DER-encoded certificate data */
-  size_t cert_len;     /**< Certificate length */
-} fio_tls_cert_entry_s;
-
-/** Parsed X.509 certificate structure */
-typedef struct {
-  /** Certificate version (0=v1, 1=v2, 2=v3) */
-  int version;
-
-  /** Validity period (Unix timestamps) */
-  int64_t not_before;
-  int64_t not_after;
-
-  /** Subject Distinguished Name (raw DER for comparison) */
-  const uint8_t *subject_der;
-  size_t subject_der_len;
-
-  /** Issuer Distinguished Name (raw DER for comparison) */
-  const uint8_t *issuer_der;
-  size_t issuer_der_len;
-
-  /** Subject Common Name (if present, pointer into DER data) */
-  const char *subject_cn;
-  size_t subject_cn_len;
-
-  /** Public Key Type */
-  fio_x509_key_type_e key_type;
-
-  /** Public Key Data (union based on key_type) */
-  union {
-    struct {
-      const uint8_t *n; /**< RSA modulus (big-endian) */
-      size_t n_len;
-      const uint8_t *e; /**< RSA exponent (big-endian) */
-      size_t e_len;
-    } rsa;
-    struct {
-      const uint8_t *point; /**< Uncompressed EC point (04 || x || y) */
-      size_t point_len;
-    } ecdsa;
-    struct {
-      const uint8_t *key; /**< 32-byte Ed25519 public key */
-    } ed25519;
-  } pubkey;
-
-  /** Signature Algorithm */
-  fio_x509_sig_alg_e sig_alg;
-
-  /** Signature value (pointer into DER data) */
-  const uint8_t *signature;
-  size_t signature_len;
-
-  /** TBS Certificate (for signature verification) */
-  const uint8_t *tbs_data;
-  size_t tbs_len;
-
-  /** Basic Constraints: is CA */
-  int is_ca;
-
-  /** Key Usage extension present */
-  int has_key_usage;
-  /** Key Usage bits */
-  uint16_t key_usage;
-
-  /** Subject Alternative Name: first DNS name (if present) */
-  const char *san_dns;
-  size_t san_dns_len;
-
-  /** Subject Alternative Name extension raw data (for iterating all SANs) */
-  const uint8_t *san_ext_data;
-  size_t san_ext_len;
-
-} fio_x509_cert_s;
-
-/* *****************************************************************************
-X.509 Parser API
-***************************************************************************** */
-
-/**
- * Parse a DER-encoded X.509 certificate.
- *
- * The cert structure will contain pointers into the original DER data,
- * so the DER data must remain valid while the cert is in use.
- *
- * @param cert Output certificate structure (will be zeroed first)
- * @param der_data Pointer to DER-encoded certificate
- * @param der_len Length of DER data in bytes
- * @return 0 on success, -1 on error
- */
-SFUNC int fio_x509_parse(fio_x509_cert_s *cert,
-                         const uint8_t *der_data,
-                         size_t der_len);
-
-/**
- * Verify certificate signature using issuer's public key.
- *
- * This verifies that the certificate was signed by the issuer.
- *
- * @param cert Certificate to verify
- * @param issuer Certificate of the issuer (contains the public key)
- * @return 0 if valid, -1 if invalid or error
- */
-SFUNC int fio_x509_verify_signature(const fio_x509_cert_s *cert,
-                                    const fio_x509_cert_s *issuer);
-
-/**
- * Check if certificate is currently valid (not expired, not yet valid).
- *
- * @param cert Certificate to check
- * @param current_time Current Unix timestamp (seconds since epoch)
- * @return 0 if valid, -1 if expired or not yet valid
- */
-FIO_IFUNC int fio_x509_check_validity(const fio_x509_cert_s *cert,
-                                      int64_t current_time);
-
-/**
- * Check if hostname matches certificate (CN or SAN).
- *
- * Supports wildcard matching (*.example.com).
- * Per RFC 6125, wildcards only match one label.
- *
- * @param cert Certificate to check
- * @param hostname Hostname to match
- * @param hostname_len Length of hostname
- * @return 0 if match, -1 if no match
- */
-SFUNC int fio_x509_match_hostname(const fio_x509_cert_s *cert,
-                                  const char *hostname,
-                                  size_t hostname_len);
-
-/**
- * Compare two Distinguished Names for equality.
- *
- * Used for checking if issuer DN matches subject DN.
- *
- * @param dn1 First DN (DER-encoded)
- * @param dn1_len Length of first DN
- * @param dn2 Second DN (DER-encoded)
- * @param dn2_len Length of second DN
- * @return 0 if equal, non-zero if different
- */
-FIO_IFUNC int fio_x509_dn_equals(const uint8_t *dn1,
-                                 size_t dn1_len,
-                                 const uint8_t *dn2,
-                                 size_t dn2_len);
-
-/* *****************************************************************************
-X.509 Certificate Chain Validation API
-***************************************************************************** */
-
-/**
- * Validate a certificate chain for TLS 1.3.
- *
- * The chain should be ordered from end-entity to closest-to-root:
- *   - certs[0] = server's certificate (end-entity)
- *   - certs[1] = intermediate CA (signed certs[0])
- *   - certs[n-1] = closest to root (may be root or intermediate)
- *
- * Validation performs:
- *   1. Parse all certificates
- *   2. Check validity period for all certificates
- *   3. Verify hostname matches end-entity certificate (if hostname provided)
- *   4. Verify each certificate's signature using the next certificate's key
- *   5. Verify issuer DNs match subject DNs in the chain
- *   6. Verify intermediate/root certificates have CA:TRUE
- *   7. Verify the chain terminates at a trusted root (if trust store provided)
- *
- * @param certs Array of DER-encoded certificates
- * @param cert_lens Array of certificate lengths
- * @param cert_count Number of certificates in chain
- * @param hostname Expected hostname for end-entity (NULL to skip check)
- * @param current_time Current Unix timestamp for validity checking
- * @param trust_store Root CA certificates (NULL to skip trust check)
- * @return FIO_X509_OK (0) on success, or error code on failure
- */
-SFUNC int fio_x509_verify_chain(const uint8_t **certs,
-                                const size_t *cert_lens,
-                                size_t cert_count,
-                                const char *hostname,
-                                int64_t current_time,
-                                fio_x509_trust_store_s *trust_store);
-
-/**
- * Check if a certificate is in the trust store.
- *
- * Comparison is done by matching subject DN.
- *
- * @param cert Certificate to check
- * @param trust_store Trust store to search
- * @return 0 if trusted, -1 if not found
- */
-SFUNC int fio_x509_is_trusted(const fio_x509_cert_s *cert,
-                              fio_x509_trust_store_s *trust_store);
-
-/** Error value for fio_tls_parse_certificate_message */
-#define FIO_TLS_CERT_PARSE_ERROR ((size_t)-1)
-
-/**
- * Parse TLS 1.3 Certificate message into individual certificates.
- *
- * TLS 1.3 Certificate message format (RFC 8446):
- *   certificate_request_context<0..2^8-1>
- *   certificate_list<0..2^24-1>:
- *     CertificateEntry:
- *       cert_data<1..2^24-1>
- *       extensions<0..2^16-1>
- *
- * @param entries Output array for certificate entries
- * @param max_entries Maximum entries to parse
- * @param data Raw Certificate message data (after handshake header)
- * @param data_len Length of Certificate message data
- * @return Number of certificates parsed, or FIO_TLS_CERT_PARSE_ERROR on error
- */
-SFUNC size_t fio_tls_parse_certificate_message(fio_tls_cert_entry_s *entries,
-                                               size_t max_entries,
-                                               const uint8_t *data,
-                                               size_t data_len);
-
-/**
- * Get human-readable error string for X.509 validation error code.
- *
- * @param error Error code from fio_x509_verify_chain
- * @return Static string describing the error
- */
-FIO_IFUNC const char *fio_x509_error_str(int error);
-
-/* *****************************************************************************
-Implementation - Inline Functions
-***************************************************************************** */
-
-/** Check if certificate is within validity period */
-FIO_IFUNC int fio_x509_check_validity(const fio_x509_cert_s *cert,
-                                      int64_t current_time) {
-  if (!cert)
-    return -1;
-  if (current_time < cert->not_before)
-    return -1; /* Not yet valid */
-  if (current_time > cert->not_after)
-    return -1; /* Expired */
-  return 0;
-}
-
-/** Compare two Distinguished Names */
-FIO_IFUNC int fio_x509_dn_equals(const uint8_t *dn1,
-                                 size_t dn1_len,
-                                 const uint8_t *dn2,
-                                 size_t dn2_len) {
-  if (dn1_len != dn2_len)
-    return 1;
-  if (!dn1 || !dn2)
-    return 1;
-  return FIO_MEMCMP(dn1, dn2, dn1_len);
-}
-
-/** Get human-readable error string for X.509 validation error code */
-FIO_IFUNC const char *fio_x509_error_str(int error) {
-  switch (error) {
-  case FIO_X509_OK: return "OK";
-  case FIO_X509_ERR_PARSE: return "Failed to parse certificate";
-  case FIO_X509_ERR_EXPIRED: return "Certificate expired";
-  case FIO_X509_ERR_NOT_YET_VALID: return "Certificate not yet valid";
-  case FIO_X509_ERR_SIGNATURE: return "Signature verification failed";
-  case FIO_X509_ERR_ISSUER_MISMATCH: return "Issuer DN mismatch";
-  case FIO_X509_ERR_NOT_CA: return "Issuer is not a CA";
-  case FIO_X509_ERR_NO_TRUST_ANCHOR: return "No trusted root CA found";
-  case FIO_X509_ERR_HOSTNAME_MISMATCH: return "Hostname mismatch";
-  case FIO_X509_ERR_EMPTY_CHAIN: return "Empty certificate chain";
-  case FIO_X509_ERR_CHAIN_TOO_LONG: return "Certificate chain too long";
-  default: return "Unknown error";
-  }
-}
-
-/* *****************************************************************************
-Implementation - Possibly Externed Functions
-***************************************************************************** */
-#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
-
-/* *****************************************************************************
-Implementation - Internal Helpers
-***************************************************************************** */
-
-/** Parse signature algorithm OID to enum */
-FIO_SFUNC fio_x509_sig_alg_e
-fio___x509_parse_sig_alg(const fio_asn1_element_s *alg_id) {
-  if (!alg_id || !alg_id->data)
-    return FIO_X509_SIG_UNKNOWN;
-
-  /* AlgorithmIdentifier ::= SEQUENCE { algorithm OID, parameters ANY } */
-  fio_asn1_iterator_s it;
-  fio_asn1_element_s oid;
-
-  fio_asn1_iterator_init(&it, alg_id);
-  if (fio_asn1_iterator_next(&it, &oid) != 0)
-    return FIO_X509_SIG_UNKNOWN;
-
-  if (!fio_asn1_is_tag(&oid, FIO_ASN1_OID))
-    return FIO_X509_SIG_UNKNOWN;
-
-  /* Check against known OIDs */
-  if (fio_asn1_oid_eq(&oid, FIO_OID_SHA256_WITH_RSA))
-    return FIO_X509_SIG_RSA_PKCS1_SHA256;
-  if (fio_asn1_oid_eq(&oid, FIO_OID_SHA384_WITH_RSA))
-    return FIO_X509_SIG_RSA_PKCS1_SHA384;
-  if (fio_asn1_oid_eq(&oid, FIO_OID_SHA512_WITH_RSA))
-    return FIO_X509_SIG_RSA_PKCS1_SHA512;
-  if (fio_asn1_oid_eq(&oid, FIO_OID_ECDSA_WITH_SHA256))
-    return FIO_X509_SIG_ECDSA_SHA256;
-  if (fio_asn1_oid_eq(&oid, FIO_OID_ECDSA_WITH_SHA384))
-    return FIO_X509_SIG_ECDSA_SHA384;
-  if (fio_asn1_oid_eq(&oid, FIO_OID_ED25519))
-    return FIO_X509_SIG_ED25519;
-  if (fio_asn1_oid_eq(&oid, FIO_OID_RSA_PSS)) {
-    /* RSA-PSS - need to check parameters to determine hash */
-    /* For simplicity, default to SHA-256 for now */
-    /* TODO: Parse RSA-PSS parameters to determine actual hash */
-    return FIO_X509_SIG_RSA_PSS_SHA256;
-  }
-
-  return FIO_X509_SIG_UNKNOWN;
-}
-
-/** Parse SubjectPublicKeyInfo to extract public key */
-FIO_SFUNC int fio___x509_parse_pubkey(fio_x509_cert_s *cert,
-                                      const fio_asn1_element_s *spki) {
-  if (!cert || !spki)
-    return -1;
-
-  /*
-   * SubjectPublicKeyInfo ::= SEQUENCE {
-   *   algorithm        AlgorithmIdentifier,
-   *   subjectPublicKey BIT STRING
-   * }
-   */
-  fio_asn1_iterator_s it;
-  fio_asn1_element_s alg_id, pubkey_bits;
-
-  fio_asn1_iterator_init(&it, spki);
-
-  /* Get AlgorithmIdentifier */
-  if (fio_asn1_iterator_next(&it, &alg_id) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&alg_id, FIO_ASN1_SEQUENCE))
-    return -1;
-
-  /* Get BIT STRING containing public key */
-  if (fio_asn1_iterator_next(&it, &pubkey_bits) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&pubkey_bits, FIO_ASN1_BIT_STRING))
-    return -1;
-
-  /* Parse the BIT STRING */
-  const uint8_t *bits;
-  size_t bit_len;
-  uint8_t unused_bits;
-  if (fio_asn1_parse_bit_string(&pubkey_bits, &bits, &bit_len, &unused_bits) !=
-      0)
-    return -1;
-
-  /* Parse AlgorithmIdentifier to get key type */
-  fio_asn1_iterator_s alg_it;
-  fio_asn1_element_s oid, params;
-
-  fio_asn1_iterator_init(&alg_it, &alg_id);
-  if (fio_asn1_iterator_next(&alg_it, &oid) != 0)
-    return -1;
-
-  if (fio_asn1_oid_eq(&oid, FIO_OID_RSA_ENCRYPTION)) {
-    /* RSA public key - bits contains SEQUENCE { n INTEGER, e INTEGER } */
-    cert->key_type = FIO_X509_KEY_RSA;
-
-    fio_asn1_element_s rsa_seq;
-    if (!fio_asn1_parse(&rsa_seq, bits, bit_len))
-      return -1;
-    if (!fio_asn1_is_tag(&rsa_seq, FIO_ASN1_SEQUENCE))
-      return -1;
-
-    fio_asn1_iterator_s rsa_it;
-    fio_asn1_element_s n_elem, e_elem;
-
-    fio_asn1_iterator_init(&rsa_it, &rsa_seq);
-
-    /* Get modulus (n) */
-    if (fio_asn1_iterator_next(&rsa_it, &n_elem) != 0)
-      return -1;
-    if (!fio_asn1_is_tag(&n_elem, FIO_ASN1_INTEGER))
-      return -1;
-
-    /* Get exponent (e) */
-    if (fio_asn1_iterator_next(&rsa_it, &e_elem) != 0)
-      return -1;
-    if (!fio_asn1_is_tag(&e_elem, FIO_ASN1_INTEGER))
-      return -1;
-
-    /* Store pointers - handle leading zero byte for positive integers */
-    cert->pubkey.rsa.n = n_elem.data;
-    cert->pubkey.rsa.n_len = n_elem.len;
-    cert->pubkey.rsa.e = e_elem.data;
-    cert->pubkey.rsa.e_len = e_elem.len;
-
-    /* Skip leading zero byte if present (positive integer encoding) */
-    if (cert->pubkey.rsa.n_len > 1 && cert->pubkey.rsa.n[0] == 0x00) {
-      cert->pubkey.rsa.n++;
-      cert->pubkey.rsa.n_len--;
-    }
-    if (cert->pubkey.rsa.e_len > 1 && cert->pubkey.rsa.e[0] == 0x00) {
-      cert->pubkey.rsa.e++;
-      cert->pubkey.rsa.e_len--;
-    }
-
-  } else if (fio_asn1_oid_eq(&oid, FIO_OID_EC_PUBLIC_KEY)) {
-    /* ECDSA - need to check curve parameter */
-    if (fio_asn1_iterator_next(&alg_it, &params) != 0)
-      return -1;
-
-    if (fio_asn1_oid_eq(&params, FIO_OID_SECP256R1)) {
-      cert->key_type = FIO_X509_KEY_ECDSA_P256;
-    } else if (fio_asn1_oid_eq(&params, FIO_OID_SECP384R1)) {
-      cert->key_type = FIO_X509_KEY_ECDSA_P384;
-    } else {
-      return -1; /* Unsupported curve */
-    }
-
-    /* EC public key is the uncompressed point directly in BIT STRING */
-    cert->pubkey.ecdsa.point = bits;
-    cert->pubkey.ecdsa.point_len = bit_len;
-
-  } else if (fio_asn1_oid_eq(&oid, FIO_OID_ED25519)) {
-    /* Ed25519 - public key is 32 bytes directly in BIT STRING */
-    cert->key_type = FIO_X509_KEY_ED25519;
-
-    if (bit_len != 32)
-      return -1; /* Ed25519 public key must be 32 bytes */
-
-    cert->pubkey.ed25519.key = bits;
-
-  } else {
-    cert->key_type = FIO_X509_KEY_UNKNOWN;
-  }
-
-  return 0;
-}
-
-/** Extract Common Name from a Name sequence */
-FIO_SFUNC void fio___x509_extract_cn(fio_x509_cert_s *cert,
-                                     const fio_asn1_element_s *name) {
-  if (!cert || !name)
-    return;
-
-  /*
-   * Name ::= SEQUENCE OF RelativeDistinguishedName
-   * RelativeDistinguishedName ::= SET OF AttributeTypeAndValue
-   * AttributeTypeAndValue ::= SEQUENCE { type OID, value ANY }
-   */
-  fio_asn1_iterator_s name_it;
-  fio_asn1_element_s rdn;
-
-  fio_asn1_iterator_init(&name_it, name);
-
-  while (fio_asn1_iterator_next(&name_it, &rdn) == 0) {
-    if (!fio_asn1_is_tag(&rdn, FIO_ASN1_SET))
-      continue;
-
-    fio_asn1_iterator_s rdn_it;
-    fio_asn1_element_s atv;
-
-    fio_asn1_iterator_init(&rdn_it, &rdn);
-
-    while (fio_asn1_iterator_next(&rdn_it, &atv) == 0) {
-      if (!fio_asn1_is_tag(&atv, FIO_ASN1_SEQUENCE))
-        continue;
-
-      fio_asn1_iterator_s atv_it;
-      fio_asn1_element_s type_oid, value;
-
-      fio_asn1_iterator_init(&atv_it, &atv);
-
-      if (fio_asn1_iterator_next(&atv_it, &type_oid) != 0)
-        continue;
-      if (fio_asn1_iterator_next(&atv_it, &value) != 0)
-        continue;
-
-      /* Check if this is Common Name */
-      if (fio_asn1_oid_eq(&type_oid, FIO_OID_COMMON_NAME)) {
-        size_t len;
-        const char *cn = fio_asn1_parse_string(&value, &len);
-        if (cn) {
-          cert->subject_cn = cn;
-          cert->subject_cn_len = len;
-        }
-        return;
-      }
-    }
-  }
-}
-
-/** Parse X.509v3 extensions */
-FIO_SFUNC void fio___x509_parse_extensions(fio_x509_cert_s *cert,
-                                           const fio_asn1_element_s *exts) {
-  if (!cert || !exts)
-    return;
-
-  /*
-   * Extensions ::= SEQUENCE OF Extension
-   * Extension ::= SEQUENCE {
-   *   extnID      OID,
-   *   critical    BOOLEAN DEFAULT FALSE,
-   *   extnValue   OCTET STRING (DER-encoded extension value)
-   * }
-   */
-  fio_asn1_iterator_s exts_it;
-  fio_asn1_element_s ext;
-
-  fio_asn1_iterator_init(&exts_it, exts);
-
-  while (fio_asn1_iterator_next(&exts_it, &ext) == 0) {
-    if (!fio_asn1_is_tag(&ext, FIO_ASN1_SEQUENCE))
-      continue;
-
-    fio_asn1_iterator_s ext_it;
-    fio_asn1_element_s oid, elem;
-
-    fio_asn1_iterator_init(&ext_it, &ext);
-
-    /* Get extension OID */
-    if (fio_asn1_iterator_next(&ext_it, &oid) != 0)
-      continue;
-
-    /* Skip critical flag if present, get value */
-    if (fio_asn1_iterator_next(&ext_it, &elem) != 0)
-      continue;
-
-    /* If BOOLEAN (critical), skip to get OCTET STRING */
-    const fio_asn1_element_s *value = &elem;
-    fio_asn1_element_s value_storage;
-    if (fio_asn1_is_tag(&elem, FIO_ASN1_BOOLEAN)) {
-      if (fio_asn1_iterator_next(&ext_it, &value_storage) != 0)
-        continue;
-      value = &value_storage;
-    }
-
-    if (!fio_asn1_is_tag(value, FIO_ASN1_OCTET_STRING))
-      continue;
-
-    /* Parse based on extension type */
-    if (fio_asn1_oid_eq(&oid, FIO_OID_BASIC_CONSTRAINTS)) {
-      /* BasicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE, ... } */
-      fio_asn1_element_s bc_seq;
-      if (fio_asn1_parse(&bc_seq, value->data, value->len)) {
-        if (fio_asn1_is_tag(&bc_seq, FIO_ASN1_SEQUENCE)) {
-          fio_asn1_iterator_s bc_it;
-          fio_asn1_element_s ca_elem;
-
-          fio_asn1_iterator_init(&bc_it, &bc_seq);
-          if (fio_asn1_iterator_next(&bc_it, &ca_elem) == 0) {
-            if (fio_asn1_is_tag(&ca_elem, FIO_ASN1_BOOLEAN)) {
-              int ca_val;
-              if (fio_asn1_parse_boolean(&ca_elem, &ca_val) == 0) {
-                cert->is_ca = ca_val;
-              }
-            }
-          }
-        }
-      }
-    } else if (fio_asn1_oid_eq(&oid, FIO_OID_KEY_USAGE)) {
-      /* KeyUsage ::= BIT STRING */
-      fio_asn1_element_s ku_bits;
-      if (fio_asn1_parse(&ku_bits, value->data, value->len)) {
-        if (fio_asn1_is_tag(&ku_bits, FIO_ASN1_BIT_STRING)) {
-          const uint8_t *bits;
-          size_t bit_len;
-          uint8_t unused;
-          if (fio_asn1_parse_bit_string(&ku_bits, &bits, &bit_len, &unused) ==
-              0) {
-            cert->has_key_usage = 1;
-            if (bit_len >= 1) {
-              cert->key_usage = bits[0];
-              if (bit_len >= 2)
-                cert->key_usage |= (uint16_t)bits[1] << 8;
-            }
-          }
-        }
-      }
-    } else if (fio_asn1_oid_eq(&oid, FIO_OID_SUBJECT_ALT_NAME)) {
-      /* SubjectAltName ::= GeneralNames = SEQUENCE OF GeneralName
-       * GeneralName ::= CHOICE { dNSName [2] IA5String, ... }
-       */
-      /* Store raw SAN extension data for later iteration */
-      cert->san_ext_data = value->data;
-      cert->san_ext_len = value->len;
-
-      fio_asn1_element_s san_seq;
-      if (fio_asn1_parse(&san_seq, value->data, value->len)) {
-        if (fio_asn1_is_tag(&san_seq, FIO_ASN1_SEQUENCE)) {
-          fio_asn1_iterator_s san_it;
-          fio_asn1_element_s gn;
-
-          fio_asn1_iterator_init(&san_it, &san_seq);
-
-          while (fio_asn1_iterator_next(&san_it, &gn) == 0) {
-            /* dNSName is context tag [2] */
-            if (fio_asn1_is_context_tag(&gn, 2)) {
-              /* Store first DNS name only (for backward compatibility) */
-              if (!cert->san_dns) {
-                cert->san_dns = (const char *)gn.data;
-                cert->san_dns_len = gn.len;
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-/* *****************************************************************************
-Implementation - Main Parsing Function
-***************************************************************************** */
-
-SFUNC int fio_x509_parse(fio_x509_cert_s *cert,
-                         const uint8_t *der_data,
-                         size_t der_len) {
-  if (!cert || !der_data || der_len == 0)
-    return -1;
-
-  /* Zero the certificate structure */
-  FIO_MEMSET(cert, 0, sizeof(*cert));
-
-  /*
-   * Certificate ::= SEQUENCE {
-   *   tbsCertificate       TBSCertificate,
-   *   signatureAlgorithm   AlgorithmIdentifier,
-   *   signatureValue       BIT STRING
-   * }
-   */
-  fio_asn1_element_s cert_seq;
-  if (!fio_asn1_parse(&cert_seq, der_data, der_len))
-    return -1;
-
-  if (!fio_asn1_is_tag(&cert_seq, FIO_ASN1_SEQUENCE))
-    return -1;
-
-  fio_asn1_iterator_s cert_it;
-  fio_asn1_element_s tbs, sig_alg, sig_value;
-
-  fio_asn1_iterator_init(&cert_it, &cert_seq);
-
-  /* Parse tbsCertificate */
-  if (fio_asn1_iterator_next(&cert_it, &tbs) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&tbs, FIO_ASN1_SEQUENCE))
-    return -1;
-
-  /* Store TBS data for signature verification */
-  cert->tbs_data =
-      der_data + (tbs.data - cert_seq.data) -
-      (tbs.data > der_data ? (tbs.data - der_data) - (tbs.data - cert_seq.data)
-                           : 0);
-  /* Calculate proper TBS bounds including tag and length */
-  {
-    const uint8_t *tbs_start = tbs.data;
-    /* Walk backwards to find the tag byte */
-    while (tbs_start > der_data && tbs_start[-1] != 0x30)
-      --tbs_start;
-    if (tbs_start > der_data)
-      --tbs_start;
-    cert->tbs_data = tbs_start;
-    cert->tbs_len = (tbs.data + tbs.len) - tbs_start;
-  }
-
-  /* Parse signatureAlgorithm */
-  if (fio_asn1_iterator_next(&cert_it, &sig_alg) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&sig_alg, FIO_ASN1_SEQUENCE))
-    return -1;
-
-  cert->sig_alg = fio___x509_parse_sig_alg(&sig_alg);
-
-  /* Parse signatureValue (BIT STRING) */
-  if (fio_asn1_iterator_next(&cert_it, &sig_value) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&sig_value, FIO_ASN1_BIT_STRING))
-    return -1;
-
-  {
-    const uint8_t *bits;
-    size_t bit_len;
-    uint8_t unused;
-    if (fio_asn1_parse_bit_string(&sig_value, &bits, &bit_len, &unused) != 0)
-      return -1;
-    cert->signature = bits;
-    cert->signature_len = bit_len;
-  }
-
-  /*
-   * TBSCertificate ::= SEQUENCE {
-   *   version         [0]  EXPLICIT Version DEFAULT v1,
-   *   serialNumber         CertificateSerialNumber,
-   *   signature            AlgorithmIdentifier,
-   *   issuer               Name,
-   *   validity             Validity,
-   *   subject              Name,
-   *   subjectPublicKeyInfo SubjectPublicKeyInfo,
-   *   issuerUniqueID  [1]  IMPLICIT UniqueIdentifier OPTIONAL,
-   *   subjectUniqueID [2]  IMPLICIT UniqueIdentifier OPTIONAL,
-   *   extensions      [3]  EXPLICIT Extensions OPTIONAL
-   * }
-   */
-  fio_asn1_iterator_s tbs_it;
-  fio_asn1_element_s elem;
-
-  fio_asn1_iterator_init(&tbs_it, &tbs);
-
-  /* Get first element - may be version or serial */
-  if (fio_asn1_iterator_next(&tbs_it, &elem) != 0)
-    return -1;
-
-  /* Check for version (context tag [0]) */
-  if (fio_asn1_is_context_tag(&elem, 0)) {
-    /* Parse version */
-    fio_asn1_element_s version_int;
-    if (fio_asn1_parse(&version_int, elem.data, elem.len)) {
-      uint64_t ver;
-      if (fio_asn1_parse_integer(&version_int, &ver) == 0) {
-        cert->version = (int)ver;
-      }
-    }
-    /* Get next element (serial number) */
-    if (fio_asn1_iterator_next(&tbs_it, &elem) != 0)
-      return -1;
-  } else {
-    cert->version = 0; /* v1 (default) */
-  }
-
-  /* Skip serialNumber (INTEGER) */
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
-    return -1;
-
-  /* Skip signature (AlgorithmIdentifier) */
-  if (fio_asn1_iterator_next(&tbs_it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_SEQUENCE))
-    return -1;
-
-  /* Parse issuer (Name = SEQUENCE) */
-  if (fio_asn1_iterator_next(&tbs_it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_SEQUENCE))
-    return -1;
-
-  /* Store issuer DN (including tag and length for comparison) */
-  {
-    const uint8_t *issuer_start = elem.data;
-    while (issuer_start > tbs.data && issuer_start[-1] != 0x30)
-      --issuer_start;
-    if (issuer_start > tbs.data)
-      --issuer_start;
-    cert->issuer_der = issuer_start;
-    cert->issuer_der_len = (elem.data + elem.len) - issuer_start;
-  }
-
-  /* Parse validity (SEQUENCE { notBefore, notAfter }) */
-  if (fio_asn1_iterator_next(&tbs_it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_SEQUENCE))
-    return -1;
-
-  {
-    fio_asn1_iterator_s val_it;
-    fio_asn1_element_s not_before, not_after;
-
-    fio_asn1_iterator_init(&val_it, &elem);
-
-    if (fio_asn1_iterator_next(&val_it, &not_before) == 0) {
-      fio_asn1_parse_time(&not_before, &cert->not_before);
-    }
-    if (fio_asn1_iterator_next(&val_it, &not_after) == 0) {
-      fio_asn1_parse_time(&not_after, &cert->not_after);
-    }
-  }
-
-  /* Parse subject (Name = SEQUENCE) */
-  if (fio_asn1_iterator_next(&tbs_it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_SEQUENCE))
-    return -1;
-
-  /* Store subject DN */
-  {
-    const uint8_t *subject_start = elem.data;
-    while (subject_start > tbs.data && subject_start[-1] != 0x30)
-      --subject_start;
-    if (subject_start > tbs.data)
-      --subject_start;
-    cert->subject_der = subject_start;
-    cert->subject_der_len = (elem.data + elem.len) - subject_start;
-  }
-
-  /* Extract Common Name */
-  fio___x509_extract_cn(cert, &elem);
-
-  /* Parse subjectPublicKeyInfo (SEQUENCE) */
-  if (fio_asn1_iterator_next(&tbs_it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_SEQUENCE))
-    return -1;
-
-  if (fio___x509_parse_pubkey(cert, &elem) != 0)
-    return -1;
-
-  /* Check for extensions [3] (v3 only) */
-  while (fio_asn1_iterator_next(&tbs_it, &elem) == 0) {
-    if (fio_asn1_is_context_tag(&elem, 3)) {
-      /* Extensions wrapped in context tag [3] */
-      fio_asn1_element_s exts;
-      if (fio_asn1_parse(&exts, elem.data, elem.len)) {
-        if (fio_asn1_is_tag(&exts, FIO_ASN1_SEQUENCE)) {
-          fio___x509_parse_extensions(cert, &exts);
-        }
-      }
-      break;
-    }
-  }
-
-  return 0;
-}
-
-/* *****************************************************************************
-Implementation - Hostname Matching
-***************************************************************************** */
-
-/** Case-insensitive character comparison */
-FIO_SFUNC int fio___x509_char_eq_nocase(char a, char b) {
-  /* Convert to lowercase */
-  char la = a | (char)((uint8_t)(a >= 'A' && a <= 'Z') << 5);
-  char lb = b | (char)((uint8_t)(b >= 'A' && b <= 'Z') << 5);
-  return la == lb;
-}
-
-/** Match a single hostname against a pattern (with wildcard support) */
-FIO_SFUNC int fio___x509_match_name(const char *pattern,
-                                    size_t pattern_len,
-                                    const char *hostname,
-                                    size_t hostname_len) {
-  if (!pattern || !hostname || pattern_len == 0 || hostname_len == 0)
-    return -1;
-
-  /* Check for wildcard pattern */
-  if (pattern_len >= 2 && pattern[0] == '*' && pattern[1] == '.') {
-    /* Wildcard certificate: *.example.com
-     * Per RFC 6125: wildcard matches only one label
-     */
-    const char *pattern_rest = pattern + 2;
-    size_t pattern_rest_len = pattern_len - 2;
-
-    /* Find first dot in hostname */
-    size_t dot_pos = 0;
-    for (size_t i = 0; i < hostname_len; ++i) {
-      if (hostname[i] == '.') {
-        dot_pos = i;
-        break;
-      }
-    }
-
-    /* Hostname must have at least one label before the matched part */
-    if (dot_pos == 0 || dot_pos == hostname_len - 1)
-      return -1;
-
-    /* Compare rest of pattern with rest of hostname (after first dot) */
-    const char *hostname_rest = hostname + dot_pos + 1;
-    size_t hostname_rest_len = hostname_len - dot_pos - 1;
-
-    if (pattern_rest_len != hostname_rest_len)
-      return -1;
-
-    for (size_t i = 0; i < pattern_rest_len; ++i) {
-      if (!fio___x509_char_eq_nocase(pattern_rest[i], hostname_rest[i]))
-        return -1;
-    }
-
-    return 0;
-  }
-
-  /* Exact match (case-insensitive) */
-  if (pattern_len != hostname_len)
-    return -1;
-
-  for (size_t i = 0; i < pattern_len; ++i) {
-    if (!fio___x509_char_eq_nocase(pattern[i], hostname[i]))
-      return -1;
-  }
-
-  return 0;
-}
-
-SFUNC int fio_x509_match_hostname(const fio_x509_cert_s *cert,
-                                  const char *hostname,
-                                  size_t hostname_len) {
-  if (!cert || !hostname || hostname_len == 0)
-    return -1;
-
-  FIO_LOG_DEBUG2("X.509 hostname match: checking '%.*s'",
-                 (int)hostname_len,
-                 hostname);
-
-  /* Per RFC 6125: If SAN extension is present, check ALL SAN DNS names */
-  if (cert->san_ext_data && cert->san_ext_len > 0) {
-    FIO_LOG_DEBUG2("X.509 hostname match: SAN extension present (%zu bytes)",
-                   cert->san_ext_len);
-    /* Re-parse the SAN extension to iterate through all DNS names */
-    fio_asn1_element_s san_seq;
-    if (fio_asn1_parse(&san_seq, cert->san_ext_data, cert->san_ext_len)) {
-      if (fio_asn1_is_tag(&san_seq, FIO_ASN1_SEQUENCE)) {
-        fio_asn1_iterator_s san_it;
-        fio_asn1_element_s gn;
-
-        fio_asn1_iterator_init(&san_it, &san_seq);
-
-        while (fio_asn1_iterator_next(&san_it, &gn) == 0) {
-          /* dNSName is context tag [2] */
-          if (fio_asn1_is_context_tag(&gn, 2)) {
-            FIO_LOG_DEBUG2("X.509 hostname match: SAN DNS name: '%.*s'",
-                           (int)gn.len,
-                           (const char *)gn.data);
-            /* Try to match this DNS name */
-            if (fio___x509_match_name((const char *)gn.data,
-                                      gn.len,
-                                      hostname,
-                                      hostname_len) == 0) {
-              FIO_LOG_DEBUG2("X.509 hostname match: MATCH FOUND");
-              return 0; /* Match found */
-            }
-          }
-        }
-      }
-    }
-    /* SAN extension present but no match found - do NOT fall back to CN */
-    FIO_LOG_DEBUG2("X.509 hostname match: no SAN match found");
-    return -1;
-  }
-
-  /* Check if san_dns is set directly (without raw extension data) */
-  if (cert->san_dns && cert->san_dns_len > 0) {
-    FIO_LOG_DEBUG2("X.509 hostname match: SAN DNS set directly: '%.*s'",
-                   (int)cert->san_dns_len,
-                   cert->san_dns);
-    if (fio___x509_match_name(cert->san_dns,
-                              cert->san_dns_len,
-                              hostname,
-                              hostname_len) == 0) {
-      FIO_LOG_DEBUG2("X.509 hostname match: MATCH FOUND");
-      return 0;
-    }
-    /* SAN present but no match - do NOT fall back to CN */
-    FIO_LOG_DEBUG2("X.509 hostname match: no SAN match found");
-    return -1;
-  }
-
-  /* No SAN extension present - fall back to Common Name */
-  FIO_LOG_DEBUG2("X.509 hostname match: no SAN, checking CN");
-  if (cert->subject_cn && cert->subject_cn_len > 0) {
-    FIO_LOG_DEBUG2("X.509 hostname match: CN='%.*s'",
-                   (int)cert->subject_cn_len,
-                   cert->subject_cn);
-    return fio___x509_match_name(cert->subject_cn,
-                                 cert->subject_cn_len,
-                                 hostname,
-                                 hostname_len);
-  }
-
-  FIO_LOG_DEBUG2("X.509 hostname match: no CN either");
-  return -1;
-}
-
-/* *****************************************************************************
-Implementation - Signature Verification
-***************************************************************************** */
-
-SFUNC int fio_x509_verify_signature(const fio_x509_cert_s *cert,
-                                    const fio_x509_cert_s *issuer) {
-  if (!cert || !issuer)
-    return -1;
-
-  if (!cert->tbs_data || cert->tbs_len == 0)
-    return -1;
-  if (!cert->signature || cert->signature_len == 0)
-    return -1;
-
-  /* Hash the TBS certificate data based on signature algorithm */
-  uint8_t hash[64]; /* Max hash size (SHA-512) */
-  size_t hash_len = 0;
-
-  switch (cert->sig_alg) {
-  case FIO_X509_SIG_RSA_PKCS1_SHA256:
-  case FIO_X509_SIG_RSA_PSS_SHA256:
-  case FIO_X509_SIG_ECDSA_SHA256: {
-    fio_u256 h = fio_sha256(cert->tbs_data, cert->tbs_len);
-    fio_memcpy32(hash, h.u8);
-    hash_len = 32;
-    break;
-  }
-  case FIO_X509_SIG_RSA_PKCS1_SHA384:
-  case FIO_X509_SIG_RSA_PSS_SHA384:
-  case FIO_X509_SIG_ECDSA_SHA384: {
-    /* SHA-384 is truncated SHA-512 - we use fio_sha512 and truncate */
-    fio_sha512_s sh = fio_sha512_init();
-    /* Modify initial hash values for SHA-384 */
-    sh.hash.u64[0] = 0xCBBB9D5DC1059ED8ULL;
-    sh.hash.u64[1] = 0x629A292A367CD507ULL;
-    sh.hash.u64[2] = 0x9159015A3070DD17ULL;
-    sh.hash.u64[3] = 0x152FECD8F70E5939ULL;
-    sh.hash.u64[4] = 0x67332667FFC00B31ULL;
-    sh.hash.u64[5] = 0x8EB44A8768581511ULL;
-    sh.hash.u64[6] = 0xDB0C2E0D64F98FA7ULL;
-    sh.hash.u64[7] = 0x47B5481DBEFA4FA4ULL;
-    fio_sha512_consume(&sh, cert->tbs_data, cert->tbs_len);
-    fio_u512 h = fio_sha512_finalize(&sh);
-    FIO_MEMCPY(hash, h.u8, 48);
-    hash_len = 48;
-    break;
-  }
-  case FIO_X509_SIG_RSA_PKCS1_SHA512:
-  case FIO_X509_SIG_RSA_PSS_SHA512: {
-    fio_u512 h = fio_sha512(cert->tbs_data, cert->tbs_len);
-    fio_memcpy64(hash, h.u8);
-    hash_len = 64;
-    break;
-  }
-  case FIO_X509_SIG_ED25519: {
-    /* Ed25519 doesn't pre-hash - the data is hashed internally */
-    /* Verification would be done directly with fio_ed25519_verify */
-    break;
-  }
-  default: return -1; /* Unknown algorithm */
-  }
-
-  /* Verify signature based on issuer's key type */
-  switch (issuer->key_type) {
-  case FIO_X509_KEY_RSA: {
-    if (!issuer->pubkey.rsa.n || !issuer->pubkey.rsa.e)
-      return -1;
-
-    fio_rsa_pubkey_s rsa_key = {
-        .n = issuer->pubkey.rsa.n,
-        .n_len = issuer->pubkey.rsa.n_len,
-        .e = issuer->pubkey.rsa.e,
-        .e_len = issuer->pubkey.rsa.e_len,
-    };
-
-    fio_rsa_hash_e rsa_hash;
-    switch (hash_len) {
-    case 32: rsa_hash = FIO_RSA_HASH_SHA256; break;
-    case 48: rsa_hash = FIO_RSA_HASH_SHA384; break;
-    case 64: rsa_hash = FIO_RSA_HASH_SHA512; break;
-    default: return -1;
-    }
-
-    switch (cert->sig_alg) {
-    case FIO_X509_SIG_RSA_PKCS1_SHA256:
-    case FIO_X509_SIG_RSA_PKCS1_SHA384:
-    case FIO_X509_SIG_RSA_PKCS1_SHA512:
-      return fio_rsa_verify_pkcs1(cert->signature,
-                                  cert->signature_len,
-                                  hash,
-                                  hash_len,
-                                  rsa_hash,
-                                  &rsa_key);
-    case FIO_X509_SIG_RSA_PSS_SHA256:
-    case FIO_X509_SIG_RSA_PSS_SHA384:
-    case FIO_X509_SIG_RSA_PSS_SHA512:
-      return fio_rsa_verify_pss(cert->signature,
-                                cert->signature_len,
-                                hash,
-                                hash_len,
-                                rsa_hash,
-                                &rsa_key);
-    default: return -1;
-    }
-  }
-
-  case FIO_X509_KEY_ECDSA_P256:
-  case FIO_X509_KEY_ECDSA_P384: {
-#if defined(H___FIO_P256___H)
-    /* ECDSA P-256 verification */
-    if (issuer->key_type == FIO_X509_KEY_ECDSA_P256) {
-      if (!issuer->pubkey.ecdsa.point || issuer->pubkey.ecdsa.point_len != 65)
-        return -1;
-
-      /* P-256 uses SHA-256, verify hash_len matches */
-      if (hash_len != 32)
-        return -1;
-
-      return fio_ecdsa_p256_verify(cert->signature,
-                                   cert->signature_len,
-                                   hash,
-                                   issuer->pubkey.ecdsa.point,
-                                   issuer->pubkey.ecdsa.point_len);
-    }
-#endif
-#if defined(H___FIO_P384___H)
-    /* ECDSA P-384 verification */
-    if (issuer->key_type == FIO_X509_KEY_ECDSA_P384) {
-      if (!issuer->pubkey.ecdsa.point || issuer->pubkey.ecdsa.point_len != 97)
-        return -1;
-
-      /* P-384 uses SHA-384, verify hash_len matches */
-      if (hash_len != 48)
-        return -1;
-
-      return fio_ecdsa_p384_verify(cert->signature,
-                                   cert->signature_len,
-                                   hash,
-                                   issuer->pubkey.ecdsa.point,
-                                   issuer->pubkey.ecdsa.point_len);
-    }
-#endif
-    /* Unsupported ECDSA curve */
-    return -1;
-  }
-
-  case FIO_X509_KEY_ED25519: {
-#if defined(H___FIO_ED25519___H)
-    /* Ed25519 verification */
-    if (!issuer->pubkey.ed25519.key)
-      return -1;
-
-    /* Ed25519 signature should be 64 bytes */
-    if (cert->signature_len != 64)
-      return -1;
-
-    return fio_ed25519_verify(cert->signature,
-                              cert->tbs_data,
-                              cert->tbs_len,
-                              issuer->pubkey.ed25519.key);
-#else
-    return -1;
-#endif
-  }
-
-  default: return -1;
-  }
-}
-
-/* *****************************************************************************
-Implementation - Certificate Chain Validation
-***************************************************************************** */
-
-/** Maximum certificate chain depth (prevents DoS via deep chains) */
-#ifndef FIO_X509_MAX_CHAIN_DEPTH
-#define FIO_X509_MAX_CHAIN_DEPTH 10
-#endif
-
-SFUNC int fio_x509_is_trusted(const fio_x509_cert_s *cert,
-                              fio_x509_trust_store_s *trust_store) {
-  if (!cert || !trust_store)
-    return -1;
-  if (!trust_store->roots || trust_store->root_count == 0)
-    return -1;
-
-  /* Check each root certificate in the trust store */
-  for (size_t i = 0; i < trust_store->root_count; ++i) {
-    if (!trust_store->roots[i] || trust_store->root_lens[i] == 0)
-      continue;
-
-    /* Parse the root certificate */
-    fio_x509_cert_s root;
-    if (fio_x509_parse(&root,
-                       trust_store->roots[i],
-                       trust_store->root_lens[i]) != 0)
-      continue;
-
-    /* Compare subject DNs (the cert's issuer should match root's subject) */
-    if (fio_x509_dn_equals(cert->issuer_der,
-                           cert->issuer_der_len,
-                           root.subject_der,
-                           root.subject_der_len) == 0) {
-      return 0; /* Found trusted root */
-    }
-
-    /* Also check if the cert itself is a trusted root */
-    if (fio_x509_dn_equals(cert->subject_der,
-                           cert->subject_der_len,
-                           root.subject_der,
-                           root.subject_der_len) == 0) {
-      return 0; /* Cert is in trust store */
-    }
-  }
-
-  return -1; /* Not found in trust store */
-}
-
-/**
- * Find issuing certificate in trust store for signature verification.
- * Returns 0 if found and parsed into `issuer`, -1 if not found.
- */
-FIO_SFUNC int fio___x509_find_issuer_in_trust_store(
-    fio_x509_cert_s *issuer,
-    const fio_x509_cert_s *cert,
-    fio_x509_trust_store_s *trust_store) {
-  if (!issuer || !cert || !trust_store)
-    return -1;
-  if (!trust_store->roots || trust_store->root_count == 0)
-    return -1;
-
-  for (size_t i = 0; i < trust_store->root_count; ++i) {
-    if (!trust_store->roots[i] || trust_store->root_lens[i] == 0)
-      continue;
-
-    if (fio_x509_parse(issuer,
-                       trust_store->roots[i],
-                       trust_store->root_lens[i]) != 0)
-      continue;
-
-    /* Check if this root's subject matches cert's issuer */
-    if (fio_x509_dn_equals(cert->issuer_der,
-                           cert->issuer_der_len,
-                           issuer->subject_der,
-                           issuer->subject_der_len) == 0) {
-      return 0; /* Found issuer */
-    }
-  }
-
-  return -1; /* Not found */
-}
-
-SFUNC int fio_x509_verify_chain(const uint8_t **certs,
-                                const size_t *cert_lens,
-                                size_t cert_count,
-                                const char *hostname,
-                                int64_t current_time,
-                                fio_x509_trust_store_s *trust_store) {
-  /* Validate inputs */
-  if (!certs || !cert_lens)
-    return FIO_X509_ERR_PARSE;
-  if (cert_count == 0)
-    return FIO_X509_ERR_EMPTY_CHAIN;
-  if (cert_count > FIO_X509_MAX_CHAIN_DEPTH)
-    return FIO_X509_ERR_CHAIN_TOO_LONG;
-
-  /* Parse all certificates in the chain */
-  fio_x509_cert_s chain[FIO_X509_MAX_CHAIN_DEPTH];
-
-  for (size_t i = 0; i < cert_count; ++i) {
-    if (!certs[i] || cert_lens[i] == 0) {
-      FIO_LOG_DEBUG("X.509 chain: certificate %zu is empty", i);
-      return FIO_X509_ERR_PARSE;
-    }
-
-    if (fio_x509_parse(&chain[i], certs[i], cert_lens[i]) != 0) {
-      FIO_LOG_DEBUG("X.509 chain: failed to parse certificate %zu", i);
-      return FIO_X509_ERR_PARSE;
-    }
-
-    /* Check validity period */
-    if (current_time < chain[i].not_before) {
-      FIO_LOG_DEBUG("X.509 chain: certificate %zu not yet valid", i);
-      return FIO_X509_ERR_NOT_YET_VALID;
-    }
-    if (current_time > chain[i].not_after) {
-      FIO_LOG_DEBUG("X.509 chain: certificate %zu expired", i);
-      return FIO_X509_ERR_EXPIRED;
-    }
-  }
-
-  /* Check hostname on end-entity certificate (index 0) */
-  if (hostname) {
-    size_t hostname_len = FIO_STRLEN(hostname);
-    if (fio_x509_match_hostname(&chain[0], hostname, hostname_len) != 0) {
-      FIO_LOG_DEBUG("X.509 chain: hostname mismatch for '%s'", hostname);
-      return FIO_X509_ERR_HOSTNAME_MISMATCH;
-    }
-  }
-
-  /* Verify chain signatures and issuer relationships */
-  for (size_t i = 0; i < cert_count - 1; ++i) {
-    /* Verify issuer DN of cert[i] matches subject DN of cert[i+1] */
-    if (fio_x509_dn_equals(chain[i].issuer_der,
-                           chain[i].issuer_der_len,
-                           chain[i + 1].subject_der,
-                           chain[i + 1].subject_der_len) != 0) {
-      FIO_LOG_DEBUG("X.509 chain: issuer mismatch at position %zu", i);
-      return FIO_X509_ERR_ISSUER_MISMATCH;
-    }
-
-    /* Verify that the issuer (i+1) is a CA certificate */
-    if (!chain[i + 1].is_ca) {
-      /* Check if it's a self-signed root (may not have BasicConstraints) */
-      int is_self_signed =
-          fio_x509_dn_equals(chain[i + 1].issuer_der,
-                             chain[i + 1].issuer_der_len,
-                             chain[i + 1].subject_der,
-                             chain[i + 1].subject_der_len) == 0;
-      /* Allow self-signed certs even without CA flag for compatibility */
-      if (!is_self_signed) {
-        FIO_LOG_DEBUG("X.509 chain: certificate %zu is not a CA", i + 1);
-        return FIO_X509_ERR_NOT_CA;
-      }
-    }
-
-    /* Verify signature of cert[i] using public key from cert[i+1] */
-    if (fio_x509_verify_signature(&chain[i], &chain[i + 1]) != 0) {
-      FIO_LOG_DEBUG("X.509 chain: signature verification failed at %zu", i);
-      return FIO_X509_ERR_SIGNATURE;
-    }
-  }
-
-  /* Handle the last certificate in the chain */
-  size_t last = cert_count - 1;
-
-  /* Check if the last certificate is self-signed */
-  int is_self_signed = fio_x509_dn_equals(chain[last].issuer_der,
-                                          chain[last].issuer_der_len,
-                                          chain[last].subject_der,
-                                          chain[last].subject_der_len) == 0;
-
-  if (is_self_signed) {
-    /* Self-signed: verify its own signature */
-    if (fio_x509_verify_signature(&chain[last], &chain[last]) != 0) {
-      FIO_LOG_DEBUG("X.509 chain: self-signed root signature invalid");
-      return FIO_X509_ERR_SIGNATURE;
-    }
-
-    /* Check if self-signed root is in trust store */
-    if (trust_store) {
-      if (fio_x509_is_trusted(&chain[last], trust_store) != 0) {
-        FIO_LOG_DEBUG("X.509 chain: self-signed root not in trust store");
-        return FIO_X509_ERR_NO_TRUST_ANCHOR;
-      }
-    }
-  } else {
-    /* Not self-signed: must be signed by a certificate in trust store */
-    if (trust_store) {
-      /* Find issuer in trust store */
-      fio_x509_cert_s issuer;
-      if (fio___x509_find_issuer_in_trust_store(&issuer,
-                                                &chain[last],
-                                                trust_store) != 0) {
-        FIO_LOG_DEBUG("X.509 chain: issuer not found in trust store");
-        return FIO_X509_ERR_NO_TRUST_ANCHOR;
-      }
-
-      /* Verify signature using trust store certificate */
-      if (fio_x509_verify_signature(&chain[last], &issuer) != 0) {
-        FIO_LOG_DEBUG("X.509 chain: signature by trusted CA failed");
-        return FIO_X509_ERR_SIGNATURE;
-      }
-    }
-  }
-
-  FIO_LOG_DEBUG("X.509 chain: validation successful (%zu certificates)",
-                cert_count);
-  return FIO_X509_OK;
-}
-
-SFUNC size_t fio_tls_parse_certificate_message(fio_tls_cert_entry_s *entries,
-                                               size_t max_entries,
-                                               const uint8_t *data,
-                                               size_t data_len) {
-  if (!entries || max_entries == 0 || !data || data_len == 0)
-    return FIO_TLS_CERT_PARSE_ERROR;
-
-  const uint8_t *p = data;
-  const uint8_t *end = data + data_len;
-
-  /*
-   * TLS 1.3 Certificate message format (RFC 8446 Section 4.4.2):
-   *
-   * struct {
-   *     opaque certificate_request_context<0..2^8-1>;
-   *     CertificateEntry certificate_list<0..2^24-1>;
-   * } Certificate;
-   *
-   * struct {
-   *     opaque cert_data<1..2^24-1>;
-   *     Extension extensions<0..2^16-1>;
-   * } CertificateEntry;
-   */
-
-  /* Parse certificate_request_context length (1 byte) */
-  if (p >= end)
-    return FIO_TLS_CERT_PARSE_ERROR;
-  uint8_t ctx_len = *p++;
-  if (p + ctx_len > end)
-    return FIO_TLS_CERT_PARSE_ERROR;
-  p += ctx_len; /* Skip context (usually empty for server certificates) */
-
-  /* Parse certificate_list length (3 bytes, big-endian) */
-  if (p + 3 > end)
-    return FIO_TLS_CERT_PARSE_ERROR;
-  size_t list_len = ((size_t)p[0] << 16) | ((size_t)p[1] << 8) | p[2];
-  p += 3;
-
-  if (p + list_len > end)
-    return FIO_TLS_CERT_PARSE_ERROR;
-
-  const uint8_t *list_end = p + list_len;
-  size_t count = 0;
-
-  /* Parse each CertificateEntry */
-  while (p < list_end && count < max_entries) {
-    /* cert_data length (3 bytes, big-endian) */
-    if (p + 3 > list_end)
-      return FIO_TLS_CERT_PARSE_ERROR;
-    size_t cert_len = ((size_t)p[0] << 16) | ((size_t)p[1] << 8) | p[2];
-    p += 3;
-
-    if (cert_len == 0 || p + cert_len > list_end)
-      return FIO_TLS_CERT_PARSE_ERROR;
-
-    /* Store certificate entry */
-    entries[count].cert = p;
-    entries[count].cert_len = cert_len;
-    ++count;
-    p += cert_len;
-
-    /* extensions length (2 bytes, big-endian) */
-    if (p + 2 > list_end)
-      return FIO_TLS_CERT_PARSE_ERROR;
-    size_t ext_len = ((size_t)p[0] << 8) | p[1];
-    p += 2;
-
-    if (p + ext_len > list_end)
-      return FIO_TLS_CERT_PARSE_ERROR;
-    p += ext_len; /* Skip extensions */
-  }
-
-  return count;
-}
-
-/* *****************************************************************************
-X.509 Certificate Generation API
-***************************************************************************** */
-
-/** Key pair types for certificate generation */
-typedef enum {
-  FIO_X509_KEYPAIR_ED25519 = 1, /**< Ed25519 (preferred) */
-  FIO_X509_KEYPAIR_P256 = 2,    /**< ECDSA P-256 */
-} fio_x509_keypair_type_e;
-
-/** Key pair structure for certificate generation */
-typedef struct {
-  fio_x509_keypair_type_e type; /**< Key type */
-  uint8_t secret_key[64];       /**< Secret key (32 bytes for Ed25519, P-256) */
-  uint8_t public_key[65]; /**< Public key (32 for Ed25519, 65 for P-256) */
-  size_t secret_key_len;  /**< Actual secret key length */
-  size_t public_key_len;  /**< Actual public key length */
-} fio_x509_keypair_s;
-
-/** Certificate generation options */
-typedef struct {
-  const char *subject_cn;  /**< Subject Common Name (required) */
-  size_t subject_cn_len;   /**< Length of subject_cn (0 = use strlen) */
-  const char *subject_org; /**< Subject Organization (optional) */
-  size_t subject_org_len;  /**< Length of subject_org */
-  const char *subject_ou;  /**< Subject Organizational Unit (optional) */
-  size_t subject_ou_len;   /**< Length of subject_ou */
-  const char *subject_c;   /**< Subject Country (optional, 2 chars) */
-  int64_t not_before;      /**< Validity start (Unix timestamp, 0 = now) */
-  int64_t not_after;       /**< Validity end (Unix timestamp, 0 = +1 year) */
-  const char **san_dns;    /**< Subject Alternative Names (DNS) */
-  size_t san_dns_count;    /**< Number of SAN DNS entries */
-  int is_ca;               /**< Set CA:TRUE in BasicConstraints */
-  uint16_t key_usage;      /**< Key Usage bits (0 = default for type) */
-} fio_x509_cert_options_s;
-
-/**
- * Generate an Ed25519 key pair for certificate signing.
- *
- * @param keypair Output key pair structure
- * @return 0 on success, -1 on error
- */
-SFUNC int fio_x509_keypair_ed25519(fio_x509_keypair_s *keypair);
-
-/**
- * Generate a P-256 key pair for certificate signing.
- *
- * @param keypair Output key pair structure
- * @return 0 on success, -1 on error
- */
-SFUNC int fio_x509_keypair_p256(fio_x509_keypair_s *keypair);
-
-/**
- * Generate a self-signed X.509v3 certificate.
- *
- * The certificate is DER-encoded and written to the output buffer.
- * Call with buf=NULL to get the maximum possible certificate size.
- * This returns a worst-case size that accounts for variable-length DER
- * encoding (e.g., serial numbers with varying leading zeros), ensuring
- * that a buffer of this size will always be sufficient for the actual
- * generation call.
- *
- * @param buf Output buffer (can be NULL to calculate max size)
- * @param buf_len Buffer size (ignored if buf is NULL)
- * @param keypair Key pair to use for signing
- * @param options Certificate options
- * @return Number of bytes written (if buf!=NULL) or max needed (if buf==NULL),
- * or 0 on error
- */
-SFUNC size_t fio_x509_self_signed_cert(uint8_t *buf,
-                                       size_t buf_len,
-                                       const fio_x509_keypair_s *keypair,
-                                       const fio_x509_cert_options_s *options);
-
-/**
- * Securely clear a key pair structure.
- *
- * @param keypair Key pair to clear
- */
-FIO_IFUNC void fio_x509_keypair_clear(fio_x509_keypair_s *keypair);
-
-/* *****************************************************************************
-Implementation - Certificate Generation
-***************************************************************************** */
-
-/** Securely clear key pair */
-FIO_IFUNC void fio_x509_keypair_clear(fio_x509_keypair_s *keypair) {
-  if (keypair) {
-    fio_secure_zero(keypair->secret_key, sizeof(keypair->secret_key));
-    FIO_MEMSET(keypair, 0, sizeof(*keypair));
-  }
-}
-
-/** Generate Ed25519 key pair */
-SFUNC int fio_x509_keypair_ed25519(fio_x509_keypair_s *keypair) {
-  if (!keypair)
-    return -1;
-
-  FIO_MEMSET(keypair, 0, sizeof(*keypair));
-  keypair->type = FIO_X509_KEYPAIR_ED25519;
-
-#if defined(H___FIO_ED25519___H)
-  fio_ed25519_keypair(keypair->secret_key, keypair->public_key);
-  keypair->secret_key_len = 32;
-  keypair->public_key_len = 32;
-  return 0;
-#else
-  FIO_LOG_ERROR("Ed25519 not available - define FIO_ED25519 before including");
-  return -1;
-#endif
-}
-
-/** Generate P-256 key pair */
-SFUNC int fio_x509_keypair_p256(fio_x509_keypair_s *keypair) {
-  if (!keypair)
-    return -1;
-
-  FIO_MEMSET(keypair, 0, sizeof(*keypair));
-  keypair->type = FIO_X509_KEYPAIR_P256;
-
-#if defined(H___FIO_P256___H)
-  if (fio_p256_keypair(keypair->secret_key, keypair->public_key) != 0)
-    return -1;
-  keypair->secret_key_len = 32;
-  keypair->public_key_len = 65;
-  return 0;
-#else
-  FIO_LOG_ERROR("P-256 not available - define FIO_P256 before including");
-  return -1;
-#endif
-}
-
-/** Helper: encode a single RDN (Relative Distinguished Name) */
-FIO_SFUNC size_t fio___x509_encode_rdn(uint8_t *buf,
-                                       const char *oid,
-                                       const char *value,
-                                       size_t value_len) {
-  if (!value || value_len == 0)
-    return 0;
-
-  /* AttributeTypeAndValue ::= SEQUENCE { type OID, value ANY } */
-  size_t oid_len = fio_asn1_encode_oid(NULL, oid);
-  size_t str_len = fio_asn1_encode_utf8_string(NULL, value, value_len);
-  size_t atv_content = oid_len + str_len;
-  size_t atv_len =
-      fio_asn1_encode_sequence_header(NULL, atv_content) + atv_content;
-
-  /* SET { AttributeTypeAndValue } */
-  size_t set_len = fio_asn1_encode_set_header(NULL, atv_len) + atv_len;
-
-  if (buf) {
-    size_t offset = 0;
-    offset += fio_asn1_encode_set_header(buf + offset, atv_len);
-    offset += fio_asn1_encode_sequence_header(buf + offset, atv_content);
-    offset += fio_asn1_encode_oid(buf + offset, oid);
-    offset += fio_asn1_encode_utf8_string(buf + offset, value, value_len);
-    (void)offset;
-  }
-
-  return set_len;
-}
-
-/** Helper: encode Name (sequence of RDNs) */
-FIO_SFUNC size_t fio___x509_encode_name(uint8_t *buf,
-                                        const fio_x509_cert_options_s *opts) {
-  /* Calculate content length */
-  size_t content_len = 0;
-
-  /* Country (C) */
-  if (opts->subject_c)
-    content_len +=
-        fio___x509_encode_rdn(NULL, FIO_OID_COUNTRY, opts->subject_c, 2);
-
-  /* Organization (O) */
-  if (opts->subject_org && opts->subject_org_len > 0)
-    content_len += fio___x509_encode_rdn(NULL,
-                                         FIO_OID_ORGANIZATION,
-                                         opts->subject_org,
-                                         opts->subject_org_len);
-
-  /* Organizational Unit (OU) */
-  if (opts->subject_ou && opts->subject_ou_len > 0)
-    content_len += fio___x509_encode_rdn(NULL,
-                                         FIO_OID_ORG_UNIT,
-                                         opts->subject_ou,
-                                         opts->subject_ou_len);
-
-  /* Common Name (CN) - required */
-  size_t cn_len = opts->subject_cn_len;
-  if (cn_len == 0 && opts->subject_cn)
-    cn_len = FIO_STRLEN(opts->subject_cn);
-  content_len += fio___x509_encode_rdn(NULL,
-                                       FIO_OID_COMMON_NAME,
-                                       opts->subject_cn,
-                                       cn_len);
-
-  size_t total =
-      fio_asn1_encode_sequence_header(NULL, content_len) + content_len;
-
-  if (buf) {
-    size_t offset = 0;
-    offset += fio_asn1_encode_sequence_header(buf + offset, content_len);
-
-    if (opts->subject_c)
-      offset += fio___x509_encode_rdn(buf + offset,
-                                      FIO_OID_COUNTRY,
-                                      opts->subject_c,
-                                      2);
-
-    if (opts->subject_org && opts->subject_org_len > 0)
-      offset += fio___x509_encode_rdn(buf + offset,
-                                      FIO_OID_ORGANIZATION,
-                                      opts->subject_org,
-                                      opts->subject_org_len);
-
-    if (opts->subject_ou && opts->subject_ou_len > 0)
-      offset += fio___x509_encode_rdn(buf + offset,
-                                      FIO_OID_ORG_UNIT,
-                                      opts->subject_ou,
-                                      opts->subject_ou_len);
-
-    offset += fio___x509_encode_rdn(buf + offset,
-                                    FIO_OID_COMMON_NAME,
-                                    opts->subject_cn,
-                                    cn_len);
-    (void)offset;
-  }
-
-  return total;
-}
-
-/** Helper: encode Validity */
-FIO_SFUNC size_t fio___x509_encode_validity(uint8_t *buf,
-                                            int64_t not_before,
-                                            int64_t not_after) {
-  size_t time_len = fio_asn1_encode_utc_time(NULL, 0);
-  size_t content_len = time_len * 2;
-  size_t total =
-      fio_asn1_encode_sequence_header(NULL, content_len) + content_len;
-
-  if (buf) {
-    size_t offset = 0;
-    offset += fio_asn1_encode_sequence_header(buf + offset, content_len);
-    offset += fio_asn1_encode_utc_time(buf + offset, not_before);
-    offset += fio_asn1_encode_utc_time(buf + offset, not_after);
-    (void)offset;
-  }
-
-  return total;
-}
-
-/** Helper: encode SubjectPublicKeyInfo for Ed25519 */
-FIO_SFUNC size_t fio___x509_encode_spki_ed25519(uint8_t *buf,
-                                                const uint8_t pubkey[32]) {
-  /* AlgorithmIdentifier for Ed25519: SEQUENCE { OID } (no params) */
-  size_t oid_len = fio_asn1_encode_oid(NULL, FIO_OID_ED25519);
-  size_t alg_content = oid_len;
-  size_t alg_len =
-      fio_asn1_encode_sequence_header(NULL, alg_content) + alg_content;
-
-  /* BIT STRING containing 32-byte public key */
-  size_t bits_len = fio_asn1_encode_bit_string(NULL, pubkey, 32, 0);
-
-  size_t content_len = alg_len + bits_len;
-  size_t total =
-      fio_asn1_encode_sequence_header(NULL, content_len) + content_len;
-
-  if (buf) {
-    size_t offset = 0;
-    offset += fio_asn1_encode_sequence_header(buf + offset, content_len);
-    offset += fio_asn1_encode_sequence_header(buf + offset, alg_content);
-    offset += fio_asn1_encode_oid(buf + offset, FIO_OID_ED25519);
-    offset += fio_asn1_encode_bit_string(buf + offset, pubkey, 32, 0);
-    (void)offset;
-  }
-
-  return total;
-}
-
-/** Helper: encode SubjectPublicKeyInfo for P-256 */
-FIO_SFUNC size_t fio___x509_encode_spki_p256(uint8_t *buf,
-                                             const uint8_t pubkey[65]) {
-  /* AlgorithmIdentifier: SEQUENCE { ecPublicKey OID, secp256r1 OID } */
-  size_t ec_oid_len = fio_asn1_encode_oid(NULL, FIO_OID_EC_PUBLIC_KEY);
-  size_t curve_oid_len = fio_asn1_encode_oid(NULL, FIO_OID_SECP256R1);
-  size_t alg_content = ec_oid_len + curve_oid_len;
-  size_t alg_len =
-      fio_asn1_encode_sequence_header(NULL, alg_content) + alg_content;
-
-  /* BIT STRING containing 65-byte uncompressed point */
-  size_t bits_len = fio_asn1_encode_bit_string(NULL, pubkey, 65, 0);
-
-  size_t content_len = alg_len + bits_len;
-  size_t total =
-      fio_asn1_encode_sequence_header(NULL, content_len) + content_len;
-
-  if (buf) {
-    size_t offset = 0;
-    offset += fio_asn1_encode_sequence_header(buf + offset, content_len);
-    offset += fio_asn1_encode_sequence_header(buf + offset, alg_content);
-    offset += fio_asn1_encode_oid(buf + offset, FIO_OID_EC_PUBLIC_KEY);
-    offset += fio_asn1_encode_oid(buf + offset, FIO_OID_SECP256R1);
-    offset += fio_asn1_encode_bit_string(buf + offset, pubkey, 65, 0);
-    (void)offset;
-  }
-
-  return total;
-}
-
-/** Helper: encode BasicConstraints extension */
-FIO_SFUNC size_t fio___x509_encode_ext_basic_constraints(uint8_t *buf,
-                                                         int is_ca) {
-  /* BasicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE } */
-  size_t bc_content = is_ca ? fio_asn1_encode_boolean(NULL, 1) : 0;
-  size_t bc_len =
-      fio_asn1_encode_sequence_header(NULL, bc_content) + bc_content;
-
-  /* Wrap in OCTET STRING */
-  size_t octet_len = fio_asn1_encode_octet_string(NULL, NULL, bc_len);
-
-  /* Extension: SEQUENCE { OID, critical BOOLEAN, value OCTET STRING } */
-  size_t oid_len = fio_asn1_encode_oid(NULL, FIO_OID_BASIC_CONSTRAINTS);
-  size_t crit_len = fio_asn1_encode_boolean(NULL, 1); /* critical = TRUE */
-  size_t ext_content = oid_len + crit_len + octet_len;
-  size_t total =
-      fio_asn1_encode_sequence_header(NULL, ext_content) + ext_content;
-
-  if (buf) {
-    size_t offset = 0;
-    offset += fio_asn1_encode_sequence_header(buf + offset, ext_content);
-    offset += fio_asn1_encode_oid(buf + offset, FIO_OID_BASIC_CONSTRAINTS);
-    offset += fio_asn1_encode_boolean(buf + offset, 1); /* critical */
-
-    /* OCTET STRING containing BasicConstraints */
-    size_t octet_hdr = fio_asn1_encode_octet_string(buf + offset, NULL, bc_len);
-    /* Write the actual BasicConstraints content */
-    uint8_t *bc_buf = buf + offset + octet_hdr - bc_len;
-    size_t bc_off = 0;
-    bc_off += fio_asn1_encode_sequence_header(bc_buf + bc_off, bc_content);
-    if (is_ca)
-      bc_off += fio_asn1_encode_boolean(bc_buf + bc_off, 1);
-    (void)bc_off;
-    offset += octet_hdr;
-    (void)offset;
-  }
-
-  return total;
-}
-
-/** Helper: encode KeyUsage extension */
-FIO_SFUNC size_t fio___x509_encode_ext_key_usage(uint8_t *buf,
-                                                 uint16_t key_usage) {
-  /* KeyUsage ::= BIT STRING */
-  /* Encode as 2 bytes with unused bits calculated */
-  uint8_t ku_bytes[2];
-  ku_bytes[0] = (uint8_t)(key_usage & 0xFF);
-  ku_bytes[1] = (uint8_t)((key_usage >> 8) & 0xFF);
-
-  /* Calculate unused bits in last byte */
-  uint8_t unused = 0;
-  size_t ku_len = 2;
-  if (ku_bytes[1] == 0) {
-    ku_len = 1;
-    /* Count trailing zeros in first byte */
-    uint8_t b = ku_bytes[0];
-    while (b && !(b & 1)) {
-      ++unused;
-      b >>= 1;
-    }
-  } else {
-    /* Count trailing zeros in second byte */
-    uint8_t b = ku_bytes[1];
-    while (b && !(b & 1)) {
-      ++unused;
-      b >>= 1;
-    }
-  }
-
-  size_t bits_len = fio_asn1_encode_bit_string(NULL, ku_bytes, ku_len, unused);
-
-  /* Wrap in OCTET STRING */
-  size_t octet_len = fio_asn1_encode_octet_string(NULL, NULL, bits_len);
-
-  /* Extension: SEQUENCE { OID, critical BOOLEAN, value OCTET STRING } */
-  size_t oid_len = fio_asn1_encode_oid(NULL, FIO_OID_KEY_USAGE);
-  size_t crit_len = fio_asn1_encode_boolean(NULL, 1); /* critical = TRUE */
-  size_t ext_content = oid_len + crit_len + octet_len;
-  size_t total =
-      fio_asn1_encode_sequence_header(NULL, ext_content) + ext_content;
-
-  if (buf) {
-    size_t offset = 0;
-    offset += fio_asn1_encode_sequence_header(buf + offset, ext_content);
-    offset += fio_asn1_encode_oid(buf + offset, FIO_OID_KEY_USAGE);
-    offset += fio_asn1_encode_boolean(buf + offset, 1); /* critical */
-
-    /* OCTET STRING containing KeyUsage BIT STRING */
-    size_t octet_hdr =
-        fio_asn1_encode_octet_string(buf + offset, NULL, bits_len);
-    uint8_t *ku_buf = buf + offset + octet_hdr - bits_len;
-    fio_asn1_encode_bit_string(ku_buf, ku_bytes, ku_len, unused);
-    offset += octet_hdr;
-    (void)offset;
-  }
-
-  return total;
-}
-
-/** Helper: encode SubjectAltName extension */
-FIO_SFUNC size_t fio___x509_encode_ext_san(uint8_t *buf,
-                                           const char **dns_names,
-                                           size_t dns_count) {
-  if (!dns_names || dns_count == 0)
-    return 0;
-
-  /* GeneralNames ::= SEQUENCE OF GeneralName
-   * GeneralName ::= CHOICE { dNSName [2] IA5String, ... } */
-  size_t san_content = 0;
-  for (size_t i = 0; i < dns_count; ++i) {
-    size_t name_len = FIO_STRLEN(dns_names[i]);
-    /* Context tag [2] + length + data */
-    san_content +=
-        fio_asn1_encode_context_header(NULL, 2, name_len, 0) + name_len;
-  }
-
-  size_t san_len =
-      fio_asn1_encode_sequence_header(NULL, san_content) + san_content;
-
-  /* Wrap in OCTET STRING */
-  size_t octet_len = fio_asn1_encode_octet_string(NULL, NULL, san_len);
-
-  /* Extension: SEQUENCE { OID, value OCTET STRING } (not critical) */
-  size_t oid_len = fio_asn1_encode_oid(NULL, FIO_OID_SUBJECT_ALT_NAME);
-  size_t ext_content = oid_len + octet_len;
-  size_t total =
-      fio_asn1_encode_sequence_header(NULL, ext_content) + ext_content;
-
-  if (buf) {
-    size_t offset = 0;
-    offset += fio_asn1_encode_sequence_header(buf + offset, ext_content);
-    offset += fio_asn1_encode_oid(buf + offset, FIO_OID_SUBJECT_ALT_NAME);
-
-    /* OCTET STRING containing SAN */
-    size_t octet_hdr =
-        fio_asn1_encode_octet_string(buf + offset, NULL, san_len);
-    uint8_t *san_buf = buf + offset + octet_hdr - san_len;
-    size_t san_off = 0;
-    san_off += fio_asn1_encode_sequence_header(san_buf + san_off, san_content);
-    for (size_t i = 0; i < dns_count; ++i) {
-      size_t name_len = FIO_STRLEN(dns_names[i]);
-      san_off +=
-          fio_asn1_encode_context_header(san_buf + san_off, 2, name_len, 0);
-      FIO_MEMCPY(san_buf + san_off, dns_names[i], name_len);
-      san_off += name_len;
-    }
-    offset += octet_hdr;
-    (void)offset;
-  }
-
-  return total;
-}
-
-/** Helper: encode Extended Key Usage extension (serverAuth for TLS servers) */
-FIO_SFUNC size_t fio___x509_encode_ext_eku(uint8_t *buf, int is_ca) {
-  /* For CA certificates, we don't add EKU (it's for end-entity certs) */
-  if (is_ca)
-    return 0;
-
-  /*
-   * ExtKeyUsageSyntax ::= SEQUENCE SIZE (1..MAX) OF KeyPurposeId
-   * KeyPurposeId ::= OBJECT IDENTIFIER
-   *
-   * For TLS servers, we need serverAuth (1.3.6.1.5.5.7.3.1)
-   */
-  size_t server_auth_oid_len =
-      fio_asn1_encode_oid(NULL, FIO_OID_EKU_SERVER_AUTH);
-  size_t eku_content = server_auth_oid_len;
-  size_t eku_len =
-      fio_asn1_encode_sequence_header(NULL, eku_content) + eku_content;
-
-  /* Wrap in OCTET STRING */
-  size_t octet_len = fio_asn1_encode_octet_string(NULL, NULL, eku_len);
-
-  /* Extension: SEQUENCE { OID, value OCTET STRING } (not critical) */
-  size_t oid_len = fio_asn1_encode_oid(NULL, FIO_OID_EXT_KEY_USAGE);
-  size_t ext_content = oid_len + octet_len;
-  size_t total =
-      fio_asn1_encode_sequence_header(NULL, ext_content) + ext_content;
-
-  if (buf) {
-    size_t offset = 0;
-    offset += fio_asn1_encode_sequence_header(buf + offset, ext_content);
-    offset += fio_asn1_encode_oid(buf + offset, FIO_OID_EXT_KEY_USAGE);
-
-    /* OCTET STRING containing EKU SEQUENCE */
-    size_t octet_hdr =
-        fio_asn1_encode_octet_string(buf + offset, NULL, eku_len);
-    uint8_t *eku_buf = buf + offset + octet_hdr - eku_len;
-    size_t eku_off = 0;
-    eku_off += fio_asn1_encode_sequence_header(eku_buf + eku_off, eku_content);
-    eku_off += fio_asn1_encode_oid(eku_buf + eku_off, FIO_OID_EKU_SERVER_AUTH);
-    (void)eku_off;
-    offset += octet_hdr;
-    (void)offset;
-  }
-
-  return total;
-}
-
-/** Helper: encode Extensions wrapper */
-FIO_SFUNC size_t
-fio___x509_encode_extensions(uint8_t *buf,
-                             const fio_x509_keypair_s *kp,
-                             const fio_x509_cert_options_s *opts) {
-  /* Calculate extensions content */
-  size_t ext_content = 0;
-
-  /* BasicConstraints */
-  ext_content += fio___x509_encode_ext_basic_constraints(NULL, opts->is_ca);
-
-  /* KeyUsage */
-  uint16_t ku = opts->key_usage;
-  if (ku == 0) {
-    /* Default key usage based on certificate type and key algorithm */
-    if (opts->is_ca) {
-      ku = FIO_X509_KU_KEY_CERT_SIGN | FIO_X509_KU_CRL_SIGN;
-    } else {
-      /*
-       * For ECDSA/Ed25519 certificates: digitalSignature only
-       * KEY_ENCIPHERMENT is for RSA key exchange, NOT for ECDSA!
-       * Using KEY_ENCIPHERMENT with ECDSA causes Chrome to reject with
-       * ERR_SSL_KEY_USAGE_INCOMPATIBLE
-       */
-      ku = FIO_X509_KU_DIGITAL_SIGNATURE;
-    }
-  }
-  ext_content += fio___x509_encode_ext_key_usage(NULL, ku);
-
-  /* Extended Key Usage (serverAuth for TLS server certificates) */
-  ext_content += fio___x509_encode_ext_eku(NULL, opts->is_ca);
-
-  /* SubjectAltName */
-  if (opts->san_dns && opts->san_dns_count > 0)
-    ext_content +=
-        fio___x509_encode_ext_san(NULL, opts->san_dns, opts->san_dns_count);
-
-  /* Extensions SEQUENCE */
-  size_t exts_len =
-      fio_asn1_encode_sequence_header(NULL, ext_content) + ext_content;
-
-  /* Wrap in context tag [3] */
-  size_t total =
-      fio_asn1_encode_context_header(NULL, 3, exts_len, 1) + exts_len;
-
-  if (buf) {
-    size_t offset = 0;
-    offset += fio_asn1_encode_context_header(buf + offset, 3, exts_len, 1);
-    offset += fio_asn1_encode_sequence_header(buf + offset, ext_content);
-    offset +=
-        fio___x509_encode_ext_basic_constraints(buf + offset, opts->is_ca);
-    offset += fio___x509_encode_ext_key_usage(buf + offset, ku);
-    offset += fio___x509_encode_ext_eku(buf + offset, opts->is_ca);
-    if (opts->san_dns && opts->san_dns_count > 0)
-      offset += fio___x509_encode_ext_san(buf + offset,
-                                          opts->san_dns,
-                                          opts->san_dns_count);
-    (void)offset;
-  }
-
-  return total;
-  (void)kp;
-}
-
-/** Helper: encode AlgorithmIdentifier for signature */
-FIO_SFUNC size_t fio___x509_encode_sig_alg(uint8_t *buf,
-                                           fio_x509_keypair_type_e type) {
-  const char *oid;
-  int has_params;
-
-  switch (type) {
-  case FIO_X509_KEYPAIR_ED25519:
-    oid = FIO_OID_ED25519;
-    has_params = 0;
-    break;
-  case FIO_X509_KEYPAIR_P256:
-    oid = FIO_OID_ECDSA_WITH_SHA256;
-    has_params = 0;
-    break;
-  default: return 0;
-  }
-
-  size_t oid_len = fio_asn1_encode_oid(NULL, oid);
-  size_t content_len = oid_len;
-  if (has_params)
-    content_len += fio_asn1_encode_null(NULL);
-
-  size_t total =
-      fio_asn1_encode_sequence_header(NULL, content_len) + content_len;
-
-  if (buf) {
-    size_t offset = 0;
-    offset += fio_asn1_encode_sequence_header(buf + offset, content_len);
-    offset += fio_asn1_encode_oid(buf + offset, oid);
-    if (has_params)
-      offset += fio_asn1_encode_null(buf + offset);
-    (void)offset;
-  }
-
-  return total;
-}
-
-/** Generate self-signed certificate */
-SFUNC size_t fio_x509_self_signed_cert(uint8_t *buf,
-                                       size_t buf_len,
-                                       const fio_x509_keypair_s *keypair,
-                                       const fio_x509_cert_options_s *options) {
-  if (!keypair || !options || !options->subject_cn)
-    return 0;
-
-  /* Set default validity if not specified */
-  int64_t not_before = options->not_before;
-  int64_t not_after = options->not_after;
-  if (not_before == 0)
-    not_before = (int64_t)fio_time_real().tv_sec;
-  if (not_after == 0)
-    not_after = not_before + (365 * 24 * 60 * 60); /* +1 year */
-
-  /* Calculate TBSCertificate content length */
-  size_t tbs_content = 0;
-
-  /* Version [0] EXPLICIT INTEGER (v3 = 2) */
-  size_t version_int = fio_asn1_encode_integer_small(NULL, 2);
-  size_t version_len =
-      fio_asn1_encode_context_header(NULL, 0, version_int, 1) + version_int;
-  tbs_content += version_len;
-
-  /* Serial number: 16 bytes, DER-encoded INTEGER.
-   * Max size = 1 (tag) + 1 (length) + 16 (content) = 18 bytes.
-   * High bit is always cleared (serial[0] &= 0x7F), so no leading zero needed.
-   * When buf==NULL, we use this maximum to ensure callers allocate enough space
-   * regardless of how many leading zeros the actual random serial may have. */
-  size_t serial_len = 18;
-  tbs_content += serial_len;
-
-  /* Signature algorithm */
-  size_t sig_alg_len = fio___x509_encode_sig_alg(NULL, keypair->type);
-  tbs_content += sig_alg_len;
-
-  /* Issuer (same as subject for self-signed) */
-  size_t issuer_len = fio___x509_encode_name(NULL, options);
-  tbs_content += issuer_len;
-
-  /* Validity */
-  size_t validity_len = fio___x509_encode_validity(NULL, not_before, not_after);
-  tbs_content += validity_len;
-
-  /* Subject */
-  size_t subject_len = fio___x509_encode_name(NULL, options);
-  tbs_content += subject_len;
-
-  /* SubjectPublicKeyInfo */
-  size_t spki_len = 0;
-  switch (keypair->type) {
-  case FIO_X509_KEYPAIR_ED25519:
-    spki_len = fio___x509_encode_spki_ed25519(NULL, keypair->public_key);
-    break;
-  case FIO_X509_KEYPAIR_P256:
-    spki_len = fio___x509_encode_spki_p256(NULL, keypair->public_key);
-    break;
-  default: return 0;
-  }
-  tbs_content += spki_len;
-
-  /* Extensions */
-  size_t exts_len = fio___x509_encode_extensions(NULL, keypair, options);
-  tbs_content += exts_len;
-
-  /* TBSCertificate SEQUENCE */
-  size_t tbs_len =
-      fio_asn1_encode_sequence_header(NULL, tbs_content) + tbs_content;
-
-  /* Signature algorithm (again, in outer Certificate) */
-  size_t outer_sig_alg_len = fio___x509_encode_sig_alg(NULL, keypair->type);
-
-  /* Signature value (BIT STRING) */
-  size_t sig_value_len;
-  switch (keypair->type) {
-  case FIO_X509_KEYPAIR_ED25519:
-    sig_value_len = fio_asn1_encode_bit_string(NULL, NULL, 64, 0);
-    break;
-  case FIO_X509_KEYPAIR_P256:
-    /* ECDSA signature is DER-encoded SEQUENCE { r INTEGER, s INTEGER }
-     * Maximum size: 2 + 2 + (2 + 33) + (2 + 33) = 74 bytes */
-    sig_value_len = fio_asn1_encode_bit_string(NULL, NULL, 74, 0);
-    break;
-  default: return 0;
-  }
-
-  /* Certificate SEQUENCE */
-  size_t cert_content = tbs_len + outer_sig_alg_len + sig_value_len;
-  size_t total =
-      fio_asn1_encode_sequence_header(NULL, cert_content) + cert_content;
-
-  if (!buf)
-    return total;
-
-  if (buf_len < total)
-    return 0;
-
-  /* Generate random serial number (20 bytes max per RFC 5280) */
-  uint8_t serial[16];
-  do {
-    fio_rand_bytes(serial, sizeof(serial));
-  } while (!fio_buf2u64u(serial) || !fio_buf2u64u(serial + 8));
-  serial[0] &= 0x7F; /* Ensure positive */
-
-  /* Now encode everything */
-  size_t offset = 0;
-
-  /* We need to encode TBS first to sign it, but we don't know the final
-   * certificate length yet. Encode TBS to a temporary location. */
-  uint8_t *tbs_start =
-      buf + fio_asn1_encode_sequence_header(NULL, cert_content);
-
-  /* Encode TBSCertificate */
-  size_t tbs_offset = 0;
-  tbs_offset +=
-      fio_asn1_encode_sequence_header(tbs_start + tbs_offset, tbs_content);
-
-  /* Version */
-  tbs_offset +=
-      fio_asn1_encode_context_header(tbs_start + tbs_offset, 0, version_int, 1);
-  tbs_offset += fio_asn1_encode_integer_small(tbs_start + tbs_offset, 2);
-
-  /* Serial */
-  tbs_offset +=
-      fio_asn1_encode_integer(tbs_start + tbs_offset, serial, sizeof(serial));
-
-  /* Signature algorithm */
-  tbs_offset +=
-      fio___x509_encode_sig_alg(tbs_start + tbs_offset, keypair->type);
-
-  /* Issuer */
-  tbs_offset += fio___x509_encode_name(tbs_start + tbs_offset, options);
-
-  /* Validity */
-  tbs_offset +=
-      fio___x509_encode_validity(tbs_start + tbs_offset, not_before, not_after);
-
-  /* Subject */
-  tbs_offset += fio___x509_encode_name(tbs_start + tbs_offset, options);
-
-  /* SubjectPublicKeyInfo */
-  switch (keypair->type) {
-  case FIO_X509_KEYPAIR_ED25519:
-    tbs_offset += fio___x509_encode_spki_ed25519(tbs_start + tbs_offset,
-                                                 keypair->public_key);
-    break;
-  case FIO_X509_KEYPAIR_P256:
-    tbs_offset += fio___x509_encode_spki_p256(tbs_start + tbs_offset,
-                                              keypair->public_key);
-    break;
-  default: return 0;
-  }
-
-  /* Extensions */
-  tbs_offset +=
-      fio___x509_encode_extensions(tbs_start + tbs_offset, keypair, options);
-
-  /* Sign the TBSCertificate */
-  uint8_t signature[128]; /* Large enough for any signature */
-  size_t actual_sig_len = 0;
-
-  switch (keypair->type) {
-  case FIO_X509_KEYPAIR_ED25519: {
-#if defined(H___FIO_ED25519___H)
-    fio_ed25519_sign(signature,
-                     tbs_start,
-                     tbs_len,
-                     keypair->secret_key,
-                     keypair->public_key);
-    actual_sig_len = 64;
-#else
-    return 0;
-#endif
-    break;
-  }
-  case FIO_X509_KEYPAIR_P256: {
-#if defined(H___FIO_P256___H) && defined(H___FIO_SHA2___H)
-    /* Hash the TBS with SHA-256 */
-    fio_u256 hash = fio_sha256(tbs_start, tbs_len);
-
-    /* Sign using proper ECDSA P-256 (returns DER-encoded signature) */
-    if (fio_ecdsa_p256_sign(signature,
-                            &actual_sig_len,
-                            sizeof(signature),
-                            hash.u8,
-                            keypair->secret_key) != 0)
-      return 0;
-#else
-    return 0;
-#endif
-    break;
-  }
-  default: return 0;
-  }
-
-  /* Recalculate actual signature BIT STRING length */
-  size_t actual_sig_bits_len =
-      fio_asn1_encode_bit_string(NULL, signature, actual_sig_len, 0);
-
-  /* Recalculate certificate content length */
-  cert_content = tbs_len + outer_sig_alg_len + actual_sig_bits_len;
-  total = fio_asn1_encode_sequence_header(NULL, cert_content) + cert_content;
-
-  if (buf_len < total)
-    return 0;
-
-  /* Encode final certificate */
-  offset = 0;
-  offset += fio_asn1_encode_sequence_header(buf + offset, cert_content);
-
-  /* Copy TBS (already encoded) */
-  FIO_MEMMOVE(buf + offset, tbs_start, tbs_len);
-  offset += tbs_len;
-
-  /* Signature algorithm */
-  offset += fio___x509_encode_sig_alg(buf + offset, keypair->type);
-
-  /* Signature value */
-  offset +=
-      fio_asn1_encode_bit_string(buf + offset, signature, actual_sig_len, 0);
-
-  return total;
-}
-
-/* *****************************************************************************
-Module Cleanup
-***************************************************************************** */
-#endif /* FIO_EXTERN_COMPLETE */
-#endif /* FIO_X509 */
-#undef FIO_X509
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -61371,6 +59017,3481 @@ Cleanup
 #undef FIO___MLKEM_MONT
 #undef FIO___MLKEM_QINV
 #undef FIO___MLKEM_GEN_MATRIX_NBLOCKS
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_X509               /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                        X.509 Certificate Parser for TLS 1.3
+                            (RFC 5280 Certificate Parsing)
+
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_X509) && !defined(H___FIO_X509___H)
+#define H___FIO_X509___H
+
+/* *****************************************************************************
+X.509 Certificate Parser Module
+
+This module provides X.509v3 certificate parsing for TLS 1.3 certificate
+verification. It supports:
+
+- RSA, ECDSA (P-256, P-384), and Ed25519 public keys
+- Signature verification using issuer certificates
+- Validity period checking
+- Hostname matching (CN and SAN with wildcards)
+- Basic constraints and key usage extensions
+- Certificate chain validation
+- Trust store management
+
+**Note**: This is a minimal parser for TLS 1.3. Not all X.509 features
+are supported. The implementation is non-allocating (pointers into DER data).
+***************************************************************************** */
+
+/* *****************************************************************************
+X.509 Type Definitions
+***************************************************************************** */
+
+/** Public key algorithm types */
+typedef enum {
+  FIO_X509_KEY_UNKNOWN = 0,
+  FIO_X509_KEY_RSA = 1,        /**< RSA (any key size) */
+  FIO_X509_KEY_ECDSA_P256 = 2, /**< ECDSA with P-256/secp256r1 */
+  FIO_X509_KEY_ECDSA_P384 = 3, /**< ECDSA with P-384/secp384r1 */
+  FIO_X509_KEY_ED25519 = 4,    /**< Ed25519 (EdDSA) */
+} fio_x509_key_algo_e;
+
+/** Signature algorithm types */
+typedef enum {
+  FIO_X509_SIGNATURE_UNKNOWN = 0,
+  FIO_X509_SIGNATURE_RSA_PKCS1_SHA256 = 1, /**< sha256WithRSAEncryption */
+  FIO_X509_SIGNATURE_RSA_PKCS1_SHA384 = 2, /**< sha384WithRSAEncryption */
+  FIO_X509_SIGNATURE_RSA_PKCS1_SHA512 = 3, /**< sha512WithRSAEncryption */
+  FIO_X509_SIGNATURE_RSA_PSS_SHA256 = 4,   /**< RSA-PSS with SHA-256 */
+  FIO_X509_SIGNATURE_RSA_PSS_SHA384 = 5,   /**< RSA-PSS with SHA-384 */
+  FIO_X509_SIGNATURE_RSA_PSS_SHA512 = 6,   /**< RSA-PSS with SHA-512 */
+  FIO_X509_SIGNATURE_ECDSA_SHA256 = 7,     /**< ecdsa-with-SHA256 */
+  FIO_X509_SIGNATURE_ECDSA_SHA384 = 8,     /**< ecdsa-with-SHA384 */
+  FIO_X509_SIGNATURE_ED25519 = 9,          /**< Ed25519 */
+} fio_x509_signature_algo_e;
+
+/** Key Usage bit flags (RFC 5280 Section 4.2.1.3)
+ *
+ * ASN.1 BIT STRING uses MSB-first bit ordering:
+ * - Bit 0 = MSB of first byte (0x80)
+ * - Bit 1 = 0x40, Bit 2 = 0x20, etc.
+ * - Bits 8+ are in the second byte
+ */
+typedef enum {
+  FIO_X509_KU_DIGITAL_SIGNATURE = 0x0080, /* bit 0 = MSB of byte 0 */
+  FIO_X509_KU_NON_REPUDIATION = 0x0040,   /* bit 1 */
+  FIO_X509_KU_KEY_ENCIPHERMENT = 0x0020,  /* bit 2 */
+  FIO_X509_KU_DATA_ENCIPHERMENT = 0x0010, /* bit 3 */
+  FIO_X509_KU_KEY_AGREEMENT = 0x0008,     /* bit 4 */
+  FIO_X509_KU_KEY_CERT_SIGN = 0x0004,     /* bit 5 */
+  FIO_X509_KU_CRL_SIGN = 0x0002,          /* bit 6 */
+  FIO_X509_KU_ENCIPHER_ONLY = 0x0001,     /* bit 7 */
+  FIO_X509_KU_DECIPHER_ONLY = 0x8000,     /* bit 8 = MSB of byte 1 */
+} fio_x509_key_usage_e;
+
+/** X.509 chain validation error codes */
+typedef enum {
+  FIO_X509_OK = 0,                   /**< Validation successful */
+  FIO_X509_ERR_PARSE = -1,           /**< Failed to parse certificate */
+  FIO_X509_ERR_EXPIRED = -2,         /**< Certificate expired */
+  FIO_X509_ERR_NOT_YET_VALID = -3,   /**< Certificate not yet valid */
+  FIO_X509_ERR_SIGNATURE = -4,       /**< Signature verification failed */
+  FIO_X509_ERR_ISSUER_MISMATCH = -5, /**< Issuer DN doesn't match subject DN */
+  FIO_X509_ERR_NOT_CA = -6,          /**< Issuer is not a CA certificate */
+  FIO_X509_ERR_NO_TRUST_ANCHOR = -7, /**< Certificate not in trust store */
+  FIO_X509_ERR_HOSTNAME_MISMATCH = -8, /**< Hostname doesn't match cert */
+  FIO_X509_ERR_EMPTY_CHAIN = -9,       /**< Empty certificate chain */
+  FIO_X509_ERR_CHAIN_TOO_LONG = -10,   /**< Chain exceeds maximum depth */
+} fio_x509_error_e;
+
+/** Trust store for root CA certificates */
+typedef struct {
+  const uint8_t **roots;   /**< Array of root CA certificate DER data */
+  const size_t *root_lens; /**< Array of root CA certificate lengths */
+  size_t root_count;       /**< Number of root CAs */
+} fio_x509_trust_store_s;
+
+/** TLS certificate entry (parsed from Certificate message) */
+typedef struct {
+  const uint8_t *cert; /**< DER-encoded certificate data */
+  size_t cert_len;     /**< Certificate length */
+} fio_tls_cert_entry_s;
+
+/**
+ * Parsed X.509 certificate structure.
+ *
+ * All buffer fields are non-owning views (`fio_buf_info_s` /
+ * `fio_ubuf_info_s`) into the original DER data, which must remain valid
+ * while the certificate is in use.
+ *
+ * When a certificate is obtained through fio_io_peer_info_next (TLS peer
+ * certificate inspection), the views point into memory owned by the TLS
+ * backend and remain valid until the next fio_io_peer_info_next call (on ANY
+ * connection) or until the connection is closed, whichever comes first.
+ */
+typedef struct fio_x509_cert_s {
+  /* Buffer views (16 bytes each, 8-byte aligned — no padding) */
+
+  /** Raw DER data (points to the original input, NOT a copy) */
+  fio_ubuf_info_s der;
+
+  /** Certificate serial number (raw INTEGER contents, pointer into DER) */
+  fio_ubuf_info_s serial;
+
+  /** Subject Distinguished Name (raw DER for comparison) */
+  fio_ubuf_info_s subject;
+
+  /** Issuer Distinguished Name (raw DER for comparison) */
+  fio_ubuf_info_s issuer;
+
+  /** Subject Common Name (if present, pointer into DER data) */
+  fio_buf_info_s cn;
+
+  /** Public Key Data (union based on key_algo) */
+  union {
+    struct {
+      fio_ubuf_info_s n; /**< RSA modulus (big-endian) */
+      fio_ubuf_info_s e; /**< RSA exponent (big-endian) */
+    } rsa;
+    struct {
+      fio_ubuf_info_s point; /**< Uncompressed EC point (04 || x || y) */
+    } ecdsa;
+    struct {
+      fio_ubuf_info_s key; /**< 32-byte Ed25519 public key */
+    } ed25519;
+  } pubkey;
+
+  /** Signature value (pointer into DER data) */
+  fio_ubuf_info_s signature;
+
+  /** TBS Certificate (for signature verification) */
+  fio_ubuf_info_s tbs;
+
+  /** Subject Alternative Name: first DNS name (if present) */
+  fio_buf_info_s san_dns;
+
+  /** Subject Alternative Name extension raw data (for iterating all SANs) */
+  fio_ubuf_info_s san_ext;
+
+  /** Subject Alternative Name: first IP address (if present) */
+  fio_ubuf_info_s san_ip;
+
+  /** Validity period (Unix timestamps) */
+  int64_t not_before;
+  int64_t not_after;
+
+  /** SHA-256 fingerprint of the DER data (see fio_x509_fingerprint) */
+  uint8_t fingerprint[32];
+
+  /* Small fields grouped at the end (no bitfields — byte access is faster) */
+
+  /** Public Key Type */
+  fio_x509_key_algo_e key_algo;
+  /** Signature Algorithm */
+  fio_x509_signature_algo_e signature_algo;
+  /** Key Usage extension bits */
+  uint16_t key_usage;
+  /** Peer chain verification state: non-zero if a TLS backend verified this
+   * certificate's chain (see fio_io_peer_info_next).  Always zero after
+   * fio_x509_parse — parsing does not verify anything. */
+  uint8_t verified;
+  /** Position in the peer certificate chain (0 = leaf certificate).
+   *  Iteration is capped at 128 certificates (max value 127) as a
+   *  deep-nesting / DoS guard.  Set by fio_io_peer_info_next.
+   *  Always zero after fio_x509_parse. */
+  uint8_t chain_index;
+  /** Certificate version (0=v1, 1=v2, 2=v3) */
+  uint8_t version;
+  /** Basic Constraints: is CA */
+  uint8_t is_ca;
+  /** Key Usage extension present */
+  uint8_t has_key_usage;
+
+} fio_x509_cert_s;
+
+/* *****************************************************************************
+X.509 OID Constants (fio_u128 byte-15 design)
+*****************************************************************************
+
+An OID value is a plain fio_u128 where bytes 0-14 hold the DER content bytes
+(zero-padded) and byte 15 holds the content length. Compare parsed OID
+elements against these constants with fio___der_oid_eq (two u64 lane ==,
+no memcmp, no call) after building the value once with fio___der_oid_value.
+Generated by `bun ./ai-tools/oid-table.js c` - do not edit by hand.
+***************************************************************************** */
+
+/* Signature Algorithms */
+#define FIO_X509_OID_SHA256_WITH_RSA \
+  ((fio_u128){.u8 = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B, [15] = 9}}) /* 1.2.840.113549.1.1.11 */
+#define FIO_X509_OID_SHA384_WITH_RSA \
+  ((fio_u128){.u8 = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0C, [15] = 9}}) /* 1.2.840.113549.1.1.12 */
+#define FIO_X509_OID_SHA512_WITH_RSA \
+  ((fio_u128){.u8 = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0D, [15] = 9}}) /* 1.2.840.113549.1.1.13 */
+#define FIO_X509_OID_RSA_PSS \
+  ((fio_u128){.u8 = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0A, [15] = 9}}) /* 1.2.840.113549.1.1.10 */
+#define FIO_X509_OID_ECDSA_WITH_SHA256 \
+  ((fio_u128){.u8 = {0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02, [15] = 8}}) /* 1.2.840.10045.4.3.2 */
+#define FIO_X509_OID_ECDSA_WITH_SHA384 \
+  ((fio_u128){.u8 = {0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x03, [15] = 8}}) /* 1.2.840.10045.4.3.3 */
+#define FIO_X509_OID_ECDSA_WITH_SHA512 \
+  ((fio_u128){.u8 = {0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x04, [15] = 8}}) /* 1.2.840.10045.4.3.4 */
+#define FIO_X509_OID_ED25519 \
+  ((fio_u128){.u8 = {0x2B, 0x65, 0x70, [15] = 3}}) /* 1.3.101.112 */
+#define FIO_X509_OID_ED448 \
+  ((fio_u128){.u8 = {0x2B, 0x65, 0x71, [15] = 3}}) /* 1.3.101.113 */
+
+/* Public Key Algorithms */
+#define FIO_X509_OID_RSA_ENCRYPTION \
+  ((fio_u128){.u8 = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01, [15] = 9}}) /* 1.2.840.113549.1.1.1 */
+#define FIO_X509_OID_EC_PUBLIC_KEY \
+  ((fio_u128){.u8 = {0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, [15] = 7}}) /* 1.2.840.10045.2.1 */
+
+/* Elliptic Curves */
+#define FIO_X509_OID_SECP256R1 \
+  ((fio_u128){.u8 = {0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, [15] = 8}}) /* 1.2.840.10045.3.1.7 */
+#define FIO_X509_OID_SECP384R1 \
+  ((fio_u128){.u8 = {0x2B, 0x81, 0x04, 0x00, 0x22, [15] = 5}}) /* 1.3.132.0.34 */
+#define FIO_X509_OID_SECP521R1 \
+  ((fio_u128){.u8 = {0x2B, 0x81, 0x04, 0x00, 0x23, [15] = 5}}) /* 1.3.132.0.35 */
+#define FIO_X509_OID_X25519 \
+  ((fio_u128){.u8 = {0x2B, 0x65, 0x6E, [15] = 3}}) /* 1.3.101.110 */
+#define FIO_X509_OID_X448 \
+  ((fio_u128){.u8 = {0x2B, 0x65, 0x6F, [15] = 3}}) /* 1.3.101.111 */
+
+/* X.509 Extensions */
+#define FIO_X509_OID_SUBJECT_KEY_ID \
+  ((fio_u128){.u8 = {0x55, 0x1D, 0x0E, [15] = 3}}) /* 2.5.29.14 */
+#define FIO_X509_OID_KEY_USAGE \
+  ((fio_u128){.u8 = {0x55, 0x1D, 0x0F, [15] = 3}}) /* 2.5.29.15 */
+#define FIO_X509_OID_SUBJECT_ALT_NAME \
+  ((fio_u128){.u8 = {0x55, 0x1D, 0x11, [15] = 3}}) /* 2.5.29.17 */
+#define FIO_X509_OID_BASIC_CONSTRAINTS \
+  ((fio_u128){.u8 = {0x55, 0x1D, 0x13, [15] = 3}}) /* 2.5.29.19 */
+#define FIO_X509_OID_CRL_DIST_POINTS \
+  ((fio_u128){.u8 = {0x55, 0x1D, 0x1F, [15] = 3}}) /* 2.5.29.31 */
+#define FIO_X509_OID_CERT_POLICIES \
+  ((fio_u128){.u8 = {0x55, 0x1D, 0x20, [15] = 3}}) /* 2.5.29.32 */
+#define FIO_X509_OID_AUTH_KEY_ID \
+  ((fio_u128){.u8 = {0x55, 0x1D, 0x23, [15] = 3}}) /* 2.5.29.35 */
+#define FIO_X509_OID_EXT_KEY_USAGE \
+  ((fio_u128){.u8 = {0x55, 0x1D, 0x25, [15] = 3}}) /* 2.5.29.37 */
+
+/* Extended Key Usage */
+#define FIO_X509_OID_EKU_SERVER_AUTH \
+  ((fio_u128){.u8 = {0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01, [15] = 8}}) /* 1.3.6.1.5.5.7.3.1 */
+#define FIO_X509_OID_EKU_CLIENT_AUTH \
+  ((fio_u128){.u8 = {0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02, [15] = 8}}) /* 1.3.6.1.5.5.7.3.2 */
+
+/* Distinguished Name Attributes */
+#define FIO_X509_OID_COMMON_NAME \
+  ((fio_u128){.u8 = {0x55, 0x04, 0x03, [15] = 3}}) /* 2.5.4.3 */
+#define FIO_X509_OID_COUNTRY \
+  ((fio_u128){.u8 = {0x55, 0x04, 0x06, [15] = 3}}) /* 2.5.4.6 */
+#define FIO_X509_OID_LOCALITY \
+  ((fio_u128){.u8 = {0x55, 0x04, 0x07, [15] = 3}}) /* 2.5.4.7 */
+#define FIO_X509_OID_STATE \
+  ((fio_u128){.u8 = {0x55, 0x04, 0x08, [15] = 3}}) /* 2.5.4.8 */
+#define FIO_X509_OID_ORGANIZATION \
+  ((fio_u128){.u8 = {0x55, 0x04, 0x0A, [15] = 3}}) /* 2.5.4.10 */
+#define FIO_X509_OID_ORG_UNIT \
+  ((fio_u128){.u8 = {0x55, 0x04, 0x0B, [15] = 3}}) /* 2.5.4.11 */
+
+/* *****************************************************************************
+X.509 Parser API
+***************************************************************************** */
+
+/**
+ * Parse a DER-encoded X.509 certificate.
+ *
+ * The cert structure will contain pointers into the original DER data,
+ * so the DER data must remain valid while the cert is in use.
+ *
+ * @param cert Output certificate structure (will be zeroed first)
+ * @param der_data Pointer to DER-encoded certificate
+ * @param der_len Length of DER data in bytes
+ * @return 0 on success, -1 on error
+ */
+SFUNC int fio_x509_parse(fio_x509_cert_s *cert,
+                         const uint8_t *der_data,
+                         size_t der_len);
+
+/**
+ * Computes the SHA-256 fingerprint of the certificate's DER data, storing
+ * the raw 32-byte hash in `cert->fingerprint`.
+ *
+ * Call after fio_x509_parse. This is a lazy (on-demand) operation so that
+ * parsing alone never pays the hashing cost.
+ *
+ * @param cert Parsed certificate (must have been filled by fio_x509_parse)
+ */
+SFUNC void fio_x509_fingerprint(fio_x509_cert_s *cert);
+
+/**
+ * Verify certificate signature using issuer's public key.
+ *
+ * This verifies that the certificate was signed by the issuer.
+ *
+ * @param cert Certificate to verify
+ * @param issuer Certificate of the issuer (contains the public key)
+ * @return 0 if valid, -1 if invalid or error
+ */
+SFUNC int fio_x509_verify_signature(const fio_x509_cert_s *cert,
+                                    const fio_x509_cert_s *issuer);
+
+/**
+ * Check if certificate is currently valid (not expired, not yet valid).
+ *
+ * @param cert Certificate to check
+ * @param current_time Current Unix timestamp (seconds since epoch)
+ * @return 0 if valid, -1 if expired or not yet valid
+ */
+FIO_IFUNC int fio_x509_check_validity(const fio_x509_cert_s *cert,
+                                      int64_t current_time);
+
+/**
+ * Check if hostname matches certificate (CN or SAN).
+ *
+ * Supports wildcard matching (*.example.com).
+ * Per RFC 6125, wildcards only match one label.
+ *
+ * @param cert Certificate to check
+ * @param hostname Hostname to match
+ * @param hostname_len Length of hostname
+ * @return 0 if match, -1 if no match
+ */
+SFUNC int fio_x509_match_hostname(const fio_x509_cert_s *cert,
+                                  const char *hostname,
+                                  size_t hostname_len);
+
+/* *****************************************************************************
+X.509 Certificate Chain Validation API
+***************************************************************************** */
+
+/**
+ * Validate a certificate chain for TLS 1.3.
+ *
+ * The chain should be ordered from end-entity to closest-to-root:
+ *   - certs[0] = server's certificate (end-entity)
+ *   - certs[1] = intermediate CA (signed certs[0])
+ *   - certs[n-1] = closest to root (may be root or intermediate)
+ *
+ * Validation performs:
+ *   1. Parse all certificates
+ *   2. Check validity period for all certificates
+ *   3. Verify hostname matches end-entity certificate (if hostname provided)
+ *   4. Verify each certificate's signature using the next certificate's key
+ *   5. Verify issuer DNs match subject DNs in the chain
+ *   6. Verify intermediate/root certificates have CA:TRUE
+ *   7. Verify the chain terminates at a trusted root (if trust store provided)
+ *
+ * @param certs Array of DER-encoded certificate views
+ * @param cert_count Number of certificates in chain
+ * @param hostname Expected hostname for end-entity (NULL to skip check)
+ * @param current_time Current Unix timestamp for validity checking
+ * @param trust_store Root CA certificates (NULL to skip trust check)
+ * @return FIO_X509_OK (0) on success, or error code on failure
+ */
+SFUNC int fio_x509_verify_chain(const fio_ubuf_info_s *certs,
+                                size_t cert_count,
+                                const char *hostname,
+                                int64_t current_time,
+                                fio_x509_trust_store_s *trust_store);
+
+/**
+ * Check if a certificate is in the trust store.
+ *
+ * Comparison is done by matching subject DN.
+ *
+ * @param cert Certificate to check
+ * @param trust_store Trust store to search
+ * @return 0 if trusted, -1 if not found
+ */
+SFUNC int fio_x509_is_trusted(const fio_x509_cert_s *cert,
+                              fio_x509_trust_store_s *trust_store);
+
+/** Error value for fio_tls_parse_certificate_message */
+#define FIO_TLS_CERT_PARSE_ERROR ((size_t)-1)
+
+/**
+ * Parse TLS 1.3 Certificate message into individual certificates.
+ *
+ * TLS 1.3 Certificate message format (RFC 8446):
+ *   certificate_request_context<0..2^8-1>
+ *   certificate_list<0..2^24-1>:
+ *     CertificateEntry:
+ *       cert_data<1..2^24-1>
+ *       extensions<0..2^16-1>
+ *
+ * @param entries Output array for certificate entries
+ * @param max_entries Maximum entries to parse
+ * @param data Raw Certificate message data (after handshake header)
+ * @param data_len Length of Certificate message data
+ * @return Number of certificates parsed, or FIO_TLS_CERT_PARSE_ERROR on error
+ */
+SFUNC size_t fio_tls_parse_certificate_message(fio_tls_cert_entry_s *entries,
+                                               size_t max_entries,
+                                               const uint8_t *data,
+                                               size_t data_len);
+
+/**
+ * Get human-readable error string for X.509 validation error code.
+ *
+ * @param error Error code from fio_x509_verify_chain
+ * @return Static string describing the error
+ */
+FIO_IFUNC const char *fio_x509_error_str(int error);
+
+/* *****************************************************************************
+Implementation - Inline Functions
+***************************************************************************** */
+
+/** Check if certificate is within validity period */
+FIO_IFUNC int fio_x509_check_validity(const fio_x509_cert_s *cert,
+                                      int64_t current_time) {
+  if (!cert)
+    return -1;
+  if (current_time < cert->not_before)
+    return -1; /* Not yet valid */
+  if (current_time > cert->not_after)
+    return -1; /* Expired */
+  return 0;
+}
+
+/** Get human-readable error string for X.509 validation error code */
+FIO_IFUNC const char *fio_x509_error_str(int error) {
+  switch (error) {
+  case FIO_X509_OK: return "OK";
+  case FIO_X509_ERR_PARSE: return "Failed to parse certificate";
+  case FIO_X509_ERR_EXPIRED: return "Certificate expired";
+  case FIO_X509_ERR_NOT_YET_VALID: return "Certificate not yet valid";
+  case FIO_X509_ERR_SIGNATURE: return "Signature verification failed";
+  case FIO_X509_ERR_ISSUER_MISMATCH: return "Issuer DN mismatch";
+  case FIO_X509_ERR_NOT_CA: return "Issuer is not a CA";
+  case FIO_X509_ERR_NO_TRUST_ANCHOR: return "No trusted root CA found";
+  case FIO_X509_ERR_HOSTNAME_MISMATCH: return "Hostname mismatch";
+  case FIO_X509_ERR_EMPTY_CHAIN: return "Empty certificate chain";
+  case FIO_X509_ERR_CHAIN_TOO_LONG: return "Certificate chain too long";
+  default: return "Unknown error";
+  }
+}
+
+/* *****************************************************************************
+X.509 Certificate Generation API
+***************************************************************************** */
+
+/** Key pair types for certificate generation */
+typedef enum {
+  FIO_X509_KEYPAIR_ED25519 = 1, /**< Ed25519 (preferred) */
+  FIO_X509_KEYPAIR_P256 = 2,    /**< ECDSA P-256 */
+} fio_x509_keypair_type_e;
+
+/** Key pair structure for certificate generation */
+typedef struct {
+  fio_x509_keypair_type_e type; /**< Key type */
+  uint8_t secret_key[64];       /**< Secret key (32 bytes for Ed25519, P-256) */
+  uint8_t public_key[65]; /**< Public key (32 for Ed25519, 65 for P-256) */
+  size_t secret_key_len;  /**< Actual secret key length */
+  size_t public_key_len;  /**< Actual public key length */
+} fio_x509_keypair_s;
+
+/**
+ * Certificate generation options.
+ *
+ * All string fields are `fio_buf_info_s` views (non-owning) — a zero `.len`
+ * marks the field as absent. There is NO implicit strlen fallback: callers
+ * wrapping C strings should use `FIO_BUF_INFO2((char *)s, FIO_STRLEN(s))`.
+ */
+typedef struct {
+  fio_buf_info_s cn;      /**< Subject Common Name (required) */
+  fio_buf_info_s org;     /**< Subject Organization (optional) */
+  fio_buf_info_s ou;      /**< Subject Organizational Unit (optional) */
+  fio_buf_info_s country; /**< Subject Country (optional, 2 chars) */
+  int64_t not_before;     /**< Validity start (Unix timestamp, 0 = now) */
+  int64_t not_after;      /**< Validity end (Unix timestamp, 0 = +1 year) */
+  const fio_buf_info_s *san_dns; /**< Subject Alternative Names (DNS) */
+  size_t san_dns_count;   /**< Number of SAN DNS entries */
+  int is_ca;              /**< Set CA:TRUE in BasicConstraints */
+  uint16_t key_usage;     /**< Key Usage bits (0 = default for type) */
+} fio_x509_cert_options_s;
+
+/**
+ * Generate an Ed25519 key pair for certificate signing.
+ *
+ * @param keypair Output key pair structure
+ * @return 0 on success, -1 on error
+ */
+SFUNC int fio_x509_keypair_ed25519(fio_x509_keypair_s *keypair);
+
+/**
+ * Generate a P-256 key pair for certificate signing.
+ *
+ * @param keypair Output key pair structure
+ * @return 0 on success, -1 on error
+ */
+SFUNC int fio_x509_keypair_p256(fio_x509_keypair_s *keypair);
+
+/**
+ * Generate a self-signed X.509v3 certificate.
+ *
+ * The certificate is DER-encoded and written to the output buffer.
+ * Call with buf=NULL to get the maximum possible certificate size.
+ * This returns a worst-case size that accounts for variable-length DER
+ * encoding (e.g., serial numbers with varying leading zeros), ensuring
+ * that a buffer of this size will always be sufficient for the actual
+ * generation call.
+ *
+ * @param buf Output buffer (can be NULL to calculate max size)
+ * @param buf_len Buffer size (ignored if buf is NULL)
+ * @param keypair Key pair to use for signing
+ * @param options Certificate options
+ * @return Number of bytes written (if buf!=NULL) or max needed (if buf==NULL),
+ * or 0 on error
+ */
+SFUNC size_t fio_x509_self_signed_cert(uint8_t *buf,
+                                       size_t buf_len,
+                                       const fio_x509_keypair_s *keypair,
+                                       const fio_x509_cert_options_s *options);
+
+/**
+ * Securely clear a key pair structure.
+ *
+ * @param keypair Key pair to clear
+ */
+FIO_IFUNC void fio_x509_keypair_clear(fio_x509_keypair_s *keypair);
+
+/** Securely clear key pair */
+FIO_IFUNC void fio_x509_keypair_clear(fio_x509_keypair_s *keypair) {
+  if (keypair) {
+    fio_secure_zero(keypair->secret_key, sizeof(keypair->secret_key));
+    FIO_MEMSET(keypair, 0, sizeof(*keypair));
+  }
+}
+
+/* *****************************************************************************
+Implementation - Possibly Externed Functions
+***************************************************************************** */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
+/* *****************************************************************************
+Implementation - Internal Helpers
+***************************************************************************** */
+
+/** Parse signature algorithm OID to enum */
+FIO_SFUNC fio_x509_signature_algo_e
+fio___x509_parse_signature_algo(const fio_der_element_s *alg_id) {
+  if (!alg_id || !alg_id->data)
+    return FIO_X509_SIGNATURE_UNKNOWN;
+
+  /* AlgorithmIdentifier ::= SEQUENCE { algorithm OID, parameters ANY } */
+  fio_der_iterator_s it;
+  fio_der_element_s oid;
+
+  fio_der_iterator_init(&it, alg_id);
+  if (fio_der_iterator_next(&it, &oid) != 0)
+    return FIO_X509_SIGNATURE_UNKNOWN;
+
+  if (!fio_der_is_tag(&oid, FIO_DER_OID))
+    return FIO_X509_SIGNATURE_UNKNOWN;
+
+  /* Check against known OIDs (build value once, then test constants) */
+  fio_u128 oid_val = fio___der_oid_value(&oid);
+  if (fio___der_oid_eq(oid_val, FIO_X509_OID_SHA256_WITH_RSA))
+    return FIO_X509_SIGNATURE_RSA_PKCS1_SHA256;
+  if (fio___der_oid_eq(oid_val, FIO_X509_OID_SHA384_WITH_RSA))
+    return FIO_X509_SIGNATURE_RSA_PKCS1_SHA384;
+  if (fio___der_oid_eq(oid_val, FIO_X509_OID_SHA512_WITH_RSA))
+    return FIO_X509_SIGNATURE_RSA_PKCS1_SHA512;
+  if (fio___der_oid_eq(oid_val, FIO_X509_OID_ECDSA_WITH_SHA256))
+    return FIO_X509_SIGNATURE_ECDSA_SHA256;
+  if (fio___der_oid_eq(oid_val, FIO_X509_OID_ECDSA_WITH_SHA384))
+    return FIO_X509_SIGNATURE_ECDSA_SHA384;
+  if (fio___der_oid_eq(oid_val, FIO_X509_OID_ED25519))
+    return FIO_X509_SIGNATURE_ED25519;
+  if (fio___der_oid_eq(oid_val, FIO_X509_OID_RSA_PSS)) {
+    /* RSA-PSS - need to check parameters to determine hash */
+    /* For simplicity, default to SHA-256 for now */
+    /* TODO: Parse RSA-PSS parameters to determine actual hash */
+    return FIO_X509_SIGNATURE_RSA_PSS_SHA256;
+  }
+
+  return FIO_X509_SIGNATURE_UNKNOWN;
+}
+
+/** Parse SubjectPublicKeyInfo to extract public key */
+FIO_SFUNC int fio___x509_parse_pubkey(fio_x509_cert_s *cert,
+                                      const fio_der_element_s *spki) {
+  if (!cert || !spki)
+    return -1;
+
+  /*
+   * SubjectPublicKeyInfo ::= SEQUENCE {
+   *   algorithm        AlgorithmIdentifier,
+   *   subjectPublicKey BIT STRING
+   * }
+   */
+  fio_der_iterator_s it;
+  fio_der_element_s alg_id, pubkey_bits;
+
+  fio_der_iterator_init(&it, spki);
+
+  /* Get AlgorithmIdentifier */
+  if (fio_der_iterator_next(&it, &alg_id) != 0)
+    return -1;
+  if (!fio_der_is_tag(&alg_id, FIO_DER_SEQUENCE))
+    return -1;
+
+  /* Get BIT STRING containing public key */
+  if (fio_der_iterator_next(&it, &pubkey_bits) != 0)
+    return -1;
+  if (!fio_der_is_tag(&pubkey_bits, FIO_DER_BIT_STRING))
+    return -1;
+
+  /* Parse the BIT STRING */
+  const uint8_t *bits;
+  size_t bit_len;
+  uint8_t unused_bits;
+  if (fio_der_parse_bit_string(&pubkey_bits, &bits, &bit_len, &unused_bits) !=
+      0)
+    return -1;
+
+  /* Parse AlgorithmIdentifier to get key type */
+  fio_der_iterator_s alg_it;
+  fio_der_element_s oid, params;
+
+  fio_der_iterator_init(&alg_it, &alg_id);
+  if (fio_der_iterator_next(&alg_it, &oid) != 0)
+    return -1;
+
+  fio_u128 oid_val = fio___der_oid_value(&oid);
+  if (fio___der_oid_eq(oid_val, FIO_X509_OID_RSA_ENCRYPTION)) {
+    /* RSA public key - bits contains SEQUENCE { n INTEGER, e INTEGER } */
+    cert->key_algo = FIO_X509_KEY_RSA;
+
+    fio_der_element_s rsa_seq;
+    if (!fio_der_parse(&rsa_seq, bits, bit_len))
+      return -1;
+    if (!fio_der_is_tag(&rsa_seq, FIO_DER_SEQUENCE))
+      return -1;
+
+    fio_der_iterator_s rsa_it;
+    fio_der_element_s n_elem, e_elem;
+
+    fio_der_iterator_init(&rsa_it, &rsa_seq);
+
+    /* Get modulus (n) */
+    if (fio_der_iterator_next(&rsa_it, &n_elem) != 0)
+      return -1;
+    if (!fio_der_is_tag(&n_elem, FIO_DER_INTEGER))
+      return -1;
+
+    /* Get exponent (e) */
+    if (fio_der_iterator_next(&rsa_it, &e_elem) != 0)
+      return -1;
+    if (!fio_der_is_tag(&e_elem, FIO_DER_INTEGER))
+      return -1;
+
+    /* Store pointers - handle leading zero byte for positive integers */
+    cert->pubkey.rsa.n = FIO_UBUF_INFO2((uint8_t *)n_elem.data, n_elem.len);
+    cert->pubkey.rsa.e = FIO_UBUF_INFO2((uint8_t *)e_elem.data, e_elem.len);
+
+    /* Skip leading zero byte if present (positive integer encoding) */
+    if (cert->pubkey.rsa.n.len > 1 && cert->pubkey.rsa.n.buf[0] == 0x00) {
+      cert->pubkey.rsa.n.buf++;
+      cert->pubkey.rsa.n.len--;
+    }
+    if (cert->pubkey.rsa.e.len > 1 && cert->pubkey.rsa.e.buf[0] == 0x00) {
+      cert->pubkey.rsa.e.buf++;
+      cert->pubkey.rsa.e.len--;
+    }
+
+  } else if (fio___der_oid_eq(oid_val, FIO_X509_OID_EC_PUBLIC_KEY)) {
+    /* ECDSA - need to check curve parameter */
+    if (fio_der_iterator_next(&alg_it, &params) != 0)
+      return -1;
+
+    fio_u128 curve_val = fio___der_oid_value(&params);
+    if (fio___der_oid_eq(curve_val, FIO_X509_OID_SECP256R1)) {
+      cert->key_algo = FIO_X509_KEY_ECDSA_P256;
+    } else if (fio___der_oid_eq(curve_val, FIO_X509_OID_SECP384R1)) {
+      cert->key_algo = FIO_X509_KEY_ECDSA_P384;
+    } else {
+      return -1; /* Unsupported curve */
+    }
+
+    /* EC public key is the uncompressed point directly in BIT STRING */
+    cert->pubkey.ecdsa.point = FIO_UBUF_INFO2((uint8_t *)bits, bit_len);
+
+  } else if (fio___der_oid_eq(oid_val, FIO_X509_OID_ED25519)) {
+    /* Ed25519 - public key is 32 bytes directly in BIT STRING */
+    cert->key_algo = FIO_X509_KEY_ED25519;
+
+    if (bit_len != 32)
+      return -1; /* Ed25519 public key must be 32 bytes */
+
+    cert->pubkey.ed25519.key = FIO_UBUF_INFO2((uint8_t *)bits, bit_len);
+
+  } else {
+    cert->key_algo = FIO_X509_KEY_UNKNOWN;
+  }
+
+  return 0;
+}
+
+/** Extract Common Name from a Name sequence */
+FIO_SFUNC void fio___x509_extract_cn(fio_x509_cert_s *cert,
+                                     const fio_der_element_s *name) {
+  if (!cert || !name)
+    return;
+
+  /*
+   * Name ::= SEQUENCE OF RelativeDistinguishedName
+   * RelativeDistinguishedName ::= SET OF AttributeTypeAndValue
+   * AttributeTypeAndValue ::= SEQUENCE { type OID, value ANY }
+   */
+  fio_der_iterator_s name_it;
+  fio_der_element_s rdn;
+
+  fio_der_iterator_init(&name_it, name);
+
+  while (fio_der_iterator_next(&name_it, &rdn) == 0) {
+    if (!fio_der_is_tag(&rdn, FIO_DER_SET))
+      continue;
+
+    fio_der_iterator_s rdn_it;
+    fio_der_element_s atv;
+
+    fio_der_iterator_init(&rdn_it, &rdn);
+
+    while (fio_der_iterator_next(&rdn_it, &atv) == 0) {
+      if (!fio_der_is_tag(&atv, FIO_DER_SEQUENCE))
+        continue;
+
+      fio_der_iterator_s atv_it;
+      fio_der_element_s type_oid, value;
+
+      fio_der_iterator_init(&atv_it, &atv);
+
+      if (fio_der_iterator_next(&atv_it, &type_oid) != 0)
+        continue;
+      if (fio_der_iterator_next(&atv_it, &value) != 0)
+        continue;
+
+      /* Check if this is Common Name */
+      if (fio___der_oid_eq(fio___der_oid_value(&type_oid),
+                           FIO_X509_OID_COMMON_NAME)) {
+        size_t len;
+        const char *cn = fio_der_parse_string(&value, &len);
+        if (cn) {
+          cert->cn = FIO_BUF_INFO2((char *)cn, len);
+        }
+        return;
+      }
+    }
+  }
+}
+
+/** Parse X.509v3 extensions */
+FIO_SFUNC void fio___x509_parse_extensions(fio_x509_cert_s *cert,
+                                           const fio_der_element_s *exts) {
+  if (!cert || !exts)
+    return;
+
+  /*
+   * Extensions ::= SEQUENCE OF Extension
+   * Extension ::= SEQUENCE {
+   *   extnID      OID,
+   *   critical    BOOLEAN DEFAULT FALSE,
+   *   extnValue   OCTET STRING (DER-encoded extension value)
+   * }
+   */
+  fio_der_iterator_s exts_it;
+  fio_der_element_s ext;
+
+  fio_der_iterator_init(&exts_it, exts);
+
+  while (fio_der_iterator_next(&exts_it, &ext) == 0) {
+    if (!fio_der_is_tag(&ext, FIO_DER_SEQUENCE))
+      continue;
+
+    fio_der_iterator_s ext_it;
+    fio_der_element_s oid, elem;
+
+    fio_der_iterator_init(&ext_it, &ext);
+
+    /* Get extension OID */
+    if (fio_der_iterator_next(&ext_it, &oid) != 0)
+      continue;
+
+    /* Skip critical flag if present, get value */
+    if (fio_der_iterator_next(&ext_it, &elem) != 0)
+      continue;
+
+    /* If BOOLEAN (critical), skip to get OCTET STRING */
+    const fio_der_element_s *value = &elem;
+    fio_der_element_s value_storage;
+    if (fio_der_is_tag(&elem, FIO_DER_BOOLEAN)) {
+      if (fio_der_iterator_next(&ext_it, &value_storage) != 0)
+        continue;
+      value = &value_storage;
+    }
+
+    if (!fio_der_is_tag(value, FIO_DER_OCTET_STRING))
+      continue;
+
+    /* Parse based on extension type (build OID value once per extension) */
+    fio_u128 ext_oid = fio___der_oid_value(&oid);
+    if (fio___der_oid_eq(ext_oid, FIO_X509_OID_BASIC_CONSTRAINTS)) {
+      /* BasicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE, ... } */
+      fio_der_element_s bc_seq;
+      if (fio_der_parse(&bc_seq, value->data, value->len)) {
+        if (fio_der_is_tag(&bc_seq, FIO_DER_SEQUENCE)) {
+          fio_der_iterator_s bc_it;
+          fio_der_element_s ca_elem;
+
+          fio_der_iterator_init(&bc_it, &bc_seq);
+          if (fio_der_iterator_next(&bc_it, &ca_elem) == 0) {
+            if (fio_der_is_tag(&ca_elem, FIO_DER_BOOLEAN)) {
+              int ca_val;
+              if (fio_der_parse_boolean(&ca_elem, &ca_val) == 0) {
+                cert->is_ca = ca_val;
+              }
+            }
+          }
+        }
+      }
+    } else if (fio___der_oid_eq(ext_oid, FIO_X509_OID_KEY_USAGE)) {
+      /* KeyUsage ::= BIT STRING */
+      fio_der_element_s ku_bits;
+      if (fio_der_parse(&ku_bits, value->data, value->len)) {
+        if (fio_der_is_tag(&ku_bits, FIO_DER_BIT_STRING)) {
+          const uint8_t *bits;
+          size_t bit_len;
+          uint8_t unused;
+          if (fio_der_parse_bit_string(&ku_bits, &bits, &bit_len, &unused) ==
+              0) {
+            cert->has_key_usage = 1;
+            if (bit_len >= 1) {
+              cert->key_usage = bits[0];
+              if (bit_len >= 2)
+                cert->key_usage |= (uint16_t)bits[1] << 8;
+            }
+          }
+        }
+      }
+    } else if (fio___der_oid_eq(ext_oid, FIO_X509_OID_SUBJECT_ALT_NAME)) {
+      /* SubjectAltName ::= GeneralNames = SEQUENCE OF GeneralName
+       * GeneralName ::= CHOICE { dNSName [2] IA5String, ... }
+       */
+      /* Store raw SAN extension data for later iteration */
+      cert->san_ext = FIO_UBUF_INFO2((uint8_t *)value->data, value->len);
+
+      fio_der_element_s san_seq;
+      if (fio_der_parse(&san_seq, value->data, value->len)) {
+        if (fio_der_is_tag(&san_seq, FIO_DER_SEQUENCE)) {
+          fio_der_iterator_s san_it;
+          fio_der_element_s gn;
+
+          fio_der_iterator_init(&san_it, &san_seq);
+
+          while (fio_der_iterator_next(&san_it, &gn) == 0) {
+            /* dNSName is context tag [2] */
+            if (fio_der_is_context_tag(&gn, 2)) {
+              /* Store first DNS name only (for backward compatibility) */
+              if (!cert->san_dns.buf) {
+                cert->san_dns = FIO_BUF_INFO2((char *)gn.data, gn.len);
+              }
+            }
+            /* iPAddress is context tag [7] */
+            if (fio_der_is_context_tag(&gn, 7)) {
+              if (!cert->san_ip.buf) {
+                cert->san_ip = FIO_UBUF_INFO2((uint8_t *)gn.data, gn.len);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/* *****************************************************************************
+Implementation - Main Parsing Function
+***************************************************************************** */
+
+SFUNC int fio_x509_parse(fio_x509_cert_s *cert,
+                         const uint8_t *der_data,
+                         size_t der_len) {
+  if (!cert || !der_data || der_len == 0)
+    return -1;
+
+  /* Zero the certificate structure */
+  FIO_MEMSET(cert, 0, sizeof(*cert));
+
+  /* Reference the original DER data (not a copy) */
+  cert->der = FIO_UBUF_INFO2((uint8_t *)der_data, der_len);
+
+  /*
+   * Certificate ::= SEQUENCE {
+   *   tbsCertificate       TBSCertificate,
+   *   signatureAlgorithm   AlgorithmIdentifier,
+   *   signatureValue       BIT STRING
+   * }
+   */
+  fio_der_element_s cert_seq;
+  if (!fio_der_parse(&cert_seq, der_data, der_len))
+    return -1;
+
+  if (!fio_der_is_tag(&cert_seq, FIO_DER_SEQUENCE))
+    return -1;
+
+  fio_der_iterator_s cert_it;
+  fio_der_element_s tbs, signature_algo, sig_value;
+
+  fio_der_iterator_init(&cert_it, &cert_seq);
+
+  /* Parse tbsCertificate (capture TLV start before advancing iterator) */
+  const uint8_t *tbs_start = cert_it.pos;
+  if (fio_der_iterator_next(&cert_it, &tbs) != 0)
+    return -1;
+  if (!fio_der_is_tag(&tbs, FIO_DER_SEQUENCE))
+    return -1;
+
+  /* Store TBS data (full TLV) for signature verification */
+  cert->tbs = FIO_UBUF_INFO2((uint8_t *)tbs_start,
+                             (size_t)((tbs.data + tbs.len) - tbs_start));
+
+  /* Parse signatureAlgorithm */
+  if (fio_der_iterator_next(&cert_it, &signature_algo) != 0)
+    return -1;
+  if (!fio_der_is_tag(&signature_algo, FIO_DER_SEQUENCE))
+    return -1;
+
+  cert->signature_algo = fio___x509_parse_signature_algo(&signature_algo);
+
+  /* Parse signatureValue (BIT STRING) */
+  if (fio_der_iterator_next(&cert_it, &sig_value) != 0)
+    return -1;
+  if (!fio_der_is_tag(&sig_value, FIO_DER_BIT_STRING))
+    return -1;
+
+  {
+    const uint8_t *bits;
+    size_t bit_len;
+    uint8_t unused;
+    if (fio_der_parse_bit_string(&sig_value, &bits, &bit_len, &unused) != 0)
+      return -1;
+    cert->signature = FIO_UBUF_INFO2((uint8_t *)bits, bit_len);
+  }
+
+  /*
+   * TBSCertificate ::= SEQUENCE {
+   *   version         [0]  EXPLICIT Version DEFAULT v1,
+   *   serialNumber         CertificateSerialNumber,
+   *   signature            AlgorithmIdentifier,
+   *   issuer               Name,
+   *   validity             Validity,
+   *   subject              Name,
+   *   subjectPublicKeyInfo SubjectPublicKeyInfo,
+   *   issuerUniqueID  [1]  IMPLICIT UniqueIdentifier OPTIONAL,
+   *   subjectUniqueID [2]  IMPLICIT UniqueIdentifier OPTIONAL,
+   *   extensions      [3]  EXPLICIT Extensions OPTIONAL
+   * }
+   */
+  fio_der_iterator_s tbs_it;
+  fio_der_element_s elem;
+
+  fio_der_iterator_init(&tbs_it, &tbs);
+
+  /* Get first element - may be version or serial */
+  if (fio_der_iterator_next(&tbs_it, &elem) != 0)
+    return -1;
+
+  /* Check for version (context tag [0]) */
+  if (fio_der_is_context_tag(&elem, 0)) {
+    /* Parse version */
+    fio_der_element_s version_int;
+    if (fio_der_parse(&version_int, elem.data, elem.len)) {
+      uint64_t ver;
+      if (fio_der_parse_integer(&version_int, &ver) == 0) {
+        cert->version = (int)ver;
+      }
+    }
+    /* Get next element (serial number) */
+    if (fio_der_iterator_next(&tbs_it, &elem) != 0)
+      return -1;
+  } else {
+    cert->version = 0; /* v1 (default) */
+  }
+
+  /* Skip serialNumber (INTEGER) */
+  if (!fio_der_is_tag(&elem, FIO_DER_INTEGER))
+    return -1;
+  cert->serial = FIO_UBUF_INFO2((uint8_t *)elem.data, elem.len);
+
+  /* Skip signature (AlgorithmIdentifier) */
+  if (fio_der_iterator_next(&tbs_it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_SEQUENCE))
+    return -1;
+
+  /* Parse issuer (Name = SEQUENCE; capture TLV start before advancing) */
+  const uint8_t *issuer_start = tbs_it.pos;
+  if (fio_der_iterator_next(&tbs_it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_SEQUENCE))
+    return -1;
+
+  /* Store issuer DN (full TLV, including tag and length, for comparison) */
+  cert->issuer =
+      FIO_UBUF_INFO2((uint8_t *)issuer_start,
+                     (size_t)((elem.data + elem.len) - issuer_start));
+
+  /* Parse validity (SEQUENCE { notBefore, notAfter }) */
+  if (fio_der_iterator_next(&tbs_it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_SEQUENCE))
+    return -1;
+
+  {
+    fio_der_iterator_s val_it;
+    fio_der_element_s not_before, not_after;
+    int has_not_after = 0;
+
+    fio_der_iterator_init(&val_it, &elem);
+
+    if (fio_der_iterator_next(&val_it, &not_before) == 0) {
+      if (fio_der_parse_time(&not_before, &cert->not_before) != 0)
+        return -1; /* malformed notBefore */
+    }
+    /* missing notBefore is treated as "in the past" (cert->not_before stays
+     * 0 from the memset above), which is safe: it only matters if the
+     * certificate is "not yet valid", and epoch is never in the future. */
+
+    if (fio_der_iterator_next(&val_it, &not_after) == 0) {
+      if (fio_der_parse_time(&not_after, &cert->not_after) != 0)
+        return -1; /* malformed notAfter */
+      has_not_after = 1;
+    }
+    if (!has_not_after)
+      return -1; /* missing notAfter is unrecoverable */
+  }
+
+  /* Parse subject (Name = SEQUENCE; capture TLV start before advancing) */
+  const uint8_t *subject_start = tbs_it.pos;
+  if (fio_der_iterator_next(&tbs_it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_SEQUENCE))
+    return -1;
+
+  /* Store subject DN (full TLV) */
+  cert->subject =
+      FIO_UBUF_INFO2((uint8_t *)subject_start,
+                     (size_t)((elem.data + elem.len) - subject_start));
+
+  /* Extract Common Name */
+  fio___x509_extract_cn(cert, &elem);
+
+  /* Parse subjectPublicKeyInfo (SEQUENCE) */
+  if (fio_der_iterator_next(&tbs_it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_SEQUENCE))
+    return -1;
+
+  if (fio___x509_parse_pubkey(cert, &elem) != 0)
+    return -1;
+
+  /* Check for extensions [3] (v3 only) */
+  while (fio_der_iterator_next(&tbs_it, &elem) == 0) {
+    if (fio_der_is_context_tag(&elem, 3)) {
+      /* Extensions wrapped in context tag [3] */
+      fio_der_element_s exts;
+      if (fio_der_parse(&exts, elem.data, elem.len)) {
+        if (fio_der_is_tag(&exts, FIO_DER_SEQUENCE)) {
+          fio___x509_parse_extensions(cert, &exts);
+        }
+      }
+      break;
+    }
+  }
+
+  return 0;
+}
+
+/** Computes the SHA-256 fingerprint of the certificate's DER data. */
+SFUNC void fio_x509_fingerprint(fio_x509_cert_s *cert) {
+  if (!cert || !cert->der.buf || !cert->der.len)
+    return;
+  fio_u256 hash = fio_sha256(cert->der.buf, cert->der.len);
+  FIO_MEMCPY(cert->fingerprint, hash.u8, 32);
+}
+
+/* *****************************************************************************
+Implementation - Hostname Matching
+***************************************************************************** */
+
+/** Case-insensitive character comparison */
+FIO_SFUNC int fio___x509_char_eq_nocase(char a, char b) {
+  /* Convert to lowercase */
+  char la = a | (char)((uint8_t)(a >= 'A' && a <= 'Z') << 5);
+  char lb = b | (char)((uint8_t)(b >= 'A' && b <= 'Z') << 5);
+  return la == lb;
+}
+
+/** Match a single hostname against a pattern (with wildcard support) */
+FIO_SFUNC int fio___x509_match_name(const char *pattern,
+                                    size_t pattern_len,
+                                    const char *hostname,
+                                    size_t hostname_len) {
+  if (!pattern || !hostname || pattern_len == 0 || hostname_len == 0)
+    return -1;
+
+  /* Check for wildcard pattern */
+  if (pattern_len >= 2 && pattern[0] == '*' && pattern[1] == '.') {
+    /* Wildcard certificate: *.example.com
+     * Per RFC 6125: wildcard matches only one label
+     */
+    const char *pattern_rest = pattern + 2;
+    size_t pattern_rest_len = pattern_len - 2;
+
+    /* Find first dot in hostname */
+    size_t dot_pos = 0;
+    for (size_t i = 0; i < hostname_len; ++i) {
+      if (hostname[i] == '.') {
+        dot_pos = i;
+        break;
+      }
+    }
+
+    /* Hostname must have at least one label before the matched part */
+    if (dot_pos == 0 || dot_pos == hostname_len - 1)
+      return -1;
+
+    /* Compare rest of pattern with rest of hostname (after first dot) */
+    const char *hostname_rest = hostname + dot_pos + 1;
+    size_t hostname_rest_len = hostname_len - dot_pos - 1;
+
+    if (pattern_rest_len != hostname_rest_len)
+      return -1;
+
+    for (size_t i = 0; i < pattern_rest_len; ++i) {
+      if (!fio___x509_char_eq_nocase(pattern_rest[i], hostname_rest[i]))
+        return -1;
+    }
+
+    return 0;
+  }
+
+  /* Exact match (case-insensitive) */
+  if (pattern_len != hostname_len)
+    return -1;
+
+  for (size_t i = 0; i < pattern_len; ++i) {
+    if (!fio___x509_char_eq_nocase(pattern[i], hostname[i]))
+      return -1;
+  }
+
+  return 0;
+}
+
+SFUNC int fio_x509_match_hostname(const fio_x509_cert_s *cert,
+                                  const char *hostname,
+                                  size_t hostname_len) {
+  if (!cert || !hostname || hostname_len == 0)
+    return -1;
+
+  FIO_LOG_DEBUG2("X.509 hostname match: checking '%.*s'",
+                 (int)hostname_len,
+                 hostname);
+
+  /* Per RFC 6125: If SAN extension is present, check ALL SAN DNS names */
+  if (cert->san_ext.buf && cert->san_ext.len > 0) {
+    FIO_LOG_DEBUG2("X.509 hostname match: SAN extension present (%zu bytes)",
+                   cert->san_ext.len);
+    /* Re-parse the SAN extension to iterate through all DNS names */
+    fio_der_element_s san_seq;
+    if (fio_der_parse(&san_seq,
+                       cert->san_ext.buf,
+                       cert->san_ext.len)) {
+      if (fio_der_is_tag(&san_seq, FIO_DER_SEQUENCE)) {
+        fio_der_iterator_s san_it;
+        fio_der_element_s gn;
+
+        fio_der_iterator_init(&san_it, &san_seq);
+
+        while (fio_der_iterator_next(&san_it, &gn) == 0) {
+          /* dNSName is context tag [2] */
+          if (fio_der_is_context_tag(&gn, 2)) {
+            FIO_LOG_DEBUG2("X.509 hostname match: SAN DNS name: '%.*s'",
+                           (int)gn.len,
+                           (const char *)gn.data);
+            /* Try to match this DNS name */
+            if (fio___x509_match_name((const char *)gn.data,
+                                      gn.len,
+                                      hostname,
+                                      hostname_len) == 0) {
+              FIO_LOG_DEBUG2("X.509 hostname match: MATCH FOUND");
+              return 0; /* Match found */
+            }
+          }
+        }
+      }
+    }
+    /* SAN extension present but no match found - do NOT fall back to CN */
+    FIO_LOG_DEBUG2("X.509 hostname match: no SAN match found");
+    return -1;
+  }
+
+  /* Check if san_dns is set directly (without raw extension data) */
+  if (cert->san_dns.buf && cert->san_dns.len > 0) {
+    FIO_LOG_DEBUG2("X.509 hostname match: SAN DNS set directly: '%.*s'",
+                   (int)cert->san_dns.len,
+                   cert->san_dns.buf);
+    if (fio___x509_match_name(cert->san_dns.buf,
+                              cert->san_dns.len,
+                              hostname,
+                              hostname_len) == 0) {
+      FIO_LOG_DEBUG2("X.509 hostname match: MATCH FOUND");
+      return 0;
+    }
+    /* SAN present but no match - do NOT fall back to CN */
+    FIO_LOG_DEBUG2("X.509 hostname match: no SAN match found");
+    return -1;
+  }
+
+  /* No SAN extension present - fall back to Common Name */
+  FIO_LOG_DEBUG2("X.509 hostname match: no SAN, checking CN");
+  if (cert->cn.buf && cert->cn.len > 0) {
+    FIO_LOG_DEBUG2("X.509 hostname match: CN='%.*s'",
+                   (int)cert->cn.len,
+                   cert->cn.buf);
+    return fio___x509_match_name(cert->cn.buf,
+                                 cert->cn.len,
+                                 hostname,
+                                 hostname_len);
+  }
+
+  FIO_LOG_DEBUG2("X.509 hostname match: no CN either");
+  return -1;
+}
+
+/* *****************************************************************************
+Implementation - Signature Verification
+***************************************************************************** */
+
+SFUNC int fio_x509_verify_signature(const fio_x509_cert_s *cert,
+                                    const fio_x509_cert_s *issuer) {
+  if (!cert || !issuer)
+    return -1;
+
+  if (!cert->tbs.buf || cert->tbs.len == 0)
+    return -1;
+  if (!cert->signature.buf || cert->signature.len == 0)
+    return -1;
+
+  /* Hash the TBS certificate data based on signature algorithm */
+  uint8_t hash[64]; /* Max hash size (SHA-512) */
+  size_t hash_len = 0;
+
+  switch (cert->signature_algo) {
+  case FIO_X509_SIGNATURE_RSA_PKCS1_SHA256:
+  case FIO_X509_SIGNATURE_RSA_PSS_SHA256:
+  case FIO_X509_SIGNATURE_ECDSA_SHA256: {
+    fio_u256 h = fio_sha256(cert->tbs.buf, cert->tbs.len);
+    fio_memcpy32(hash, h.u8);
+    hash_len = 32;
+    break;
+  }
+  case FIO_X509_SIGNATURE_RSA_PKCS1_SHA384:
+  case FIO_X509_SIGNATURE_RSA_PSS_SHA384:
+  case FIO_X509_SIGNATURE_ECDSA_SHA384: {
+    fio_u512 h = fio_sha384(cert->tbs.buf, cert->tbs.len);
+    FIO_MEMCPY(hash, h.u8, 48);
+    hash_len = 48;
+    break;
+  }
+  case FIO_X509_SIGNATURE_RSA_PKCS1_SHA512:
+  case FIO_X509_SIGNATURE_RSA_PSS_SHA512: {
+    fio_u512 h = fio_sha512(cert->tbs.buf, cert->tbs.len);
+    fio_memcpy64(hash, h.u8);
+    hash_len = 64;
+    break;
+  }
+  case FIO_X509_SIGNATURE_ED25519: {
+    /* Ed25519 doesn't pre-hash - the data is hashed internally */
+    /* Verification would be done directly with fio_ed25519_verify */
+    break;
+  }
+  default: return -1; /* Unknown algorithm */
+  }
+
+  /* Verify signature based on issuer's key type */
+  switch (issuer->key_algo) {
+  case FIO_X509_KEY_RSA: {
+    if (!issuer->pubkey.rsa.n.buf || !issuer->pubkey.rsa.e.buf)
+      return -1;
+
+    fio_rsa_pubkey_s rsa_key = {
+        .n = issuer->pubkey.rsa.n.buf,
+        .n_len = issuer->pubkey.rsa.n.len,
+        .e = issuer->pubkey.rsa.e.buf,
+        .e_len = issuer->pubkey.rsa.e.len,
+    };
+
+    fio_rsa_hash_e rsa_hash;
+    switch (hash_len) {
+    case 32: rsa_hash = FIO_RSA_HASH_SHA256; break;
+    case 48: rsa_hash = FIO_RSA_HASH_SHA384; break;
+    case 64: rsa_hash = FIO_RSA_HASH_SHA512; break;
+    default: return -1;
+    }
+
+    switch (cert->signature_algo) {
+    case FIO_X509_SIGNATURE_RSA_PKCS1_SHA256:
+    case FIO_X509_SIGNATURE_RSA_PKCS1_SHA384:
+    case FIO_X509_SIGNATURE_RSA_PKCS1_SHA512:
+      return fio_rsa_verify_pkcs1(cert->signature.buf,
+                                  cert->signature.len,
+                                  hash,
+                                  hash_len,
+                                  rsa_hash,
+                                  &rsa_key);
+    case FIO_X509_SIGNATURE_RSA_PSS_SHA256:
+    case FIO_X509_SIGNATURE_RSA_PSS_SHA384:
+    case FIO_X509_SIGNATURE_RSA_PSS_SHA512:
+      return fio_rsa_verify_pss(cert->signature.buf,
+                                cert->signature.len,
+                                hash,
+                                hash_len,
+                                rsa_hash,
+                                &rsa_key);
+    default: return -1;
+    }
+  }
+
+  case FIO_X509_KEY_ECDSA_P256:
+  case FIO_X509_KEY_ECDSA_P384: {
+#if defined(H___FIO_P256___H)
+    /* ECDSA P-256 verification */
+    if (issuer->key_algo == FIO_X509_KEY_ECDSA_P256) {
+      if (!issuer->pubkey.ecdsa.point.buf ||
+          issuer->pubkey.ecdsa.point.len != 65)
+        return -1;
+
+      /* P-256 uses SHA-256, verify hash_len matches */
+      if (hash_len != 32)
+        return -1;
+
+      return fio_ecdsa_p256_verify(cert->signature.buf,
+                                   cert->signature.len,
+                                   hash,
+                                   issuer->pubkey.ecdsa.point.buf,
+                                   issuer->pubkey.ecdsa.point.len);
+    }
+#endif
+#if defined(H___FIO_P384___H)
+    /* ECDSA P-384 verification */
+    if (issuer->key_algo == FIO_X509_KEY_ECDSA_P384) {
+      if (!issuer->pubkey.ecdsa.point.buf ||
+          issuer->pubkey.ecdsa.point.len != 97)
+        return -1;
+
+      /* P-384 uses SHA-384, verify hash_len matches */
+      if (hash_len != 48)
+        return -1;
+
+      return fio_ecdsa_p384_verify(cert->signature.buf,
+                                   cert->signature.len,
+                                   hash,
+                                   issuer->pubkey.ecdsa.point.buf,
+                                   issuer->pubkey.ecdsa.point.len);
+    }
+#endif
+    /* Unsupported ECDSA curve */
+    return -1;
+  }
+
+  case FIO_X509_KEY_ED25519: {
+#if defined(H___FIO_ED25519___H)
+    /* Ed25519 verification */
+    if (!issuer->pubkey.ed25519.key.buf)
+      return -1;
+
+    /* Ed25519 signature should be 64 bytes */
+    if (cert->signature.len != 64)
+      return -1;
+
+    return fio_ed25519_verify(cert->signature.buf,
+                              cert->tbs.buf,
+                              cert->tbs.len,
+                              issuer->pubkey.ed25519.key.buf);
+#else
+    return -1;
+#endif
+  }
+
+  default: return -1;
+  }
+}
+
+/* *****************************************************************************
+Implementation - Certificate Chain Validation
+***************************************************************************** */
+
+/** Maximum certificate chain depth (prevents DoS via deep chains) */
+#ifndef FIO_X509_MAX_CHAIN_DEPTH
+#define FIO_X509_MAX_CHAIN_DEPTH 10
+#endif
+
+SFUNC int fio_x509_is_trusted(const fio_x509_cert_s *cert,
+                              fio_x509_trust_store_s *trust_store) {
+  if (!cert || !trust_store)
+    return -1;
+  if (!trust_store->roots || trust_store->root_count == 0)
+    return -1;
+
+  /* Check each root certificate in the trust store */
+  for (size_t i = 0; i < trust_store->root_count; ++i) {
+    if (!trust_store->roots[i] || trust_store->root_lens[i] == 0)
+      continue;
+
+    /* Parse the root certificate */
+    fio_x509_cert_s root;
+    if (fio_x509_parse(&root,
+                       trust_store->roots[i],
+                       trust_store->root_lens[i]) != 0)
+      continue;
+
+    /* Compare subject DNs (the cert's issuer should match root's subject) */
+    if (FIO_BUF_INFO_IS_EQ(cert->issuer, root.subject)) {
+      return 0; /* Found trusted root */
+    }
+
+    /* Also check if the cert itself is a trusted root */
+    if (FIO_BUF_INFO_IS_EQ(cert->subject, root.subject)) {
+      return 0; /* Cert is in trust store */
+    }
+  }
+
+  return -1; /* Not found in trust store */
+}
+
+/**
+ * Find issuing certificate in trust store for signature verification.
+ * Returns 0 if found and parsed into `issuer`, -1 if not found.
+ */
+FIO_SFUNC int fio___x509_find_issuer_in_trust_store(
+    fio_x509_cert_s *issuer,
+    const fio_x509_cert_s *cert,
+    fio_x509_trust_store_s *trust_store) {
+  if (!issuer || !cert || !trust_store)
+    return -1;
+  if (!trust_store->roots || trust_store->root_count == 0)
+    return -1;
+
+  for (size_t i = 0; i < trust_store->root_count; ++i) {
+    if (!trust_store->roots[i] || trust_store->root_lens[i] == 0)
+      continue;
+
+    if (fio_x509_parse(issuer,
+                       trust_store->roots[i],
+                       trust_store->root_lens[i]) != 0)
+      continue;
+
+    /* Check if this root's subject matches cert's issuer */
+    if (FIO_BUF_INFO_IS_EQ(cert->issuer, issuer->subject)) {
+      return 0; /* Found issuer */
+    }
+  }
+
+  return -1; /* Not found */
+}
+
+SFUNC int fio_x509_verify_chain(const fio_ubuf_info_s *certs,
+                                size_t cert_count,
+                                const char *hostname,
+                                int64_t current_time,
+                                fio_x509_trust_store_s *trust_store) {
+  /* Validate inputs */
+  if (!certs)
+    return FIO_X509_ERR_PARSE;
+  if (cert_count == 0)
+    return FIO_X509_ERR_EMPTY_CHAIN;
+  if (cert_count > FIO_X509_MAX_CHAIN_DEPTH)
+    return FIO_X509_ERR_CHAIN_TOO_LONG;
+
+  /* Parse all certificates in the chain */
+  fio_x509_cert_s chain[FIO_X509_MAX_CHAIN_DEPTH];
+
+  for (size_t i = 0; i < cert_count; ++i) {
+    if (!certs[i].buf || certs[i].len == 0) {
+      FIO_LOG_DEBUG("X.509 chain: certificate %zu is empty", i);
+      return FIO_X509_ERR_PARSE;
+    }
+
+    if (fio_x509_parse(&chain[i], certs[i].buf, certs[i].len) != 0) {
+      FIO_LOG_DEBUG("X.509 chain: failed to parse certificate %zu", i);
+      return FIO_X509_ERR_PARSE;
+    }
+
+    /* Check validity period */
+    if (current_time < chain[i].not_before) {
+      FIO_LOG_DEBUG("X.509 chain: certificate %zu not yet valid", i);
+      return FIO_X509_ERR_NOT_YET_VALID;
+    }
+    if (current_time > chain[i].not_after) {
+      FIO_LOG_DEBUG("X.509 chain: certificate %zu expired", i);
+      return FIO_X509_ERR_EXPIRED;
+    }
+  }
+
+  /* Check hostname on end-entity certificate (index 0) */
+  if (hostname) {
+    size_t hostname_len = FIO_STRLEN(hostname);
+    if (fio_x509_match_hostname(&chain[0], hostname, hostname_len) != 0) {
+      FIO_LOG_DEBUG("X.509 chain: hostname mismatch for '%s'", hostname);
+      return FIO_X509_ERR_HOSTNAME_MISMATCH;
+    }
+  }
+
+  /* Verify chain signatures and issuer relationships */
+  for (size_t i = 0; i < cert_count - 1; ++i) {
+    /* Verify issuer DN of cert[i] matches subject DN of cert[i+1] */
+    if (!FIO_BUF_INFO_IS_EQ(chain[i].issuer, chain[i + 1].subject)) {
+      FIO_LOG_DEBUG("X.509 chain: issuer mismatch at position %zu", i);
+      return FIO_X509_ERR_ISSUER_MISMATCH;
+    }
+
+    /* Verify that the issuer (i+1) is a CA certificate */
+    if (!chain[i + 1].is_ca) {
+      /* Check if it's a self-signed root (may not have BasicConstraints) */
+      int is_self_signed =
+          FIO_BUF_INFO_IS_EQ(chain[i + 1].issuer, chain[i + 1].subject);
+      /* Allow self-signed certs even without CA flag for compatibility */
+      if (!is_self_signed) {
+        FIO_LOG_DEBUG("X.509 chain: certificate %zu is not a CA", i + 1);
+        return FIO_X509_ERR_NOT_CA;
+      }
+    }
+
+    /* Verify signature of cert[i] using public key from cert[i+1] */
+    if (fio_x509_verify_signature(&chain[i], &chain[i + 1]) != 0) {
+      FIO_LOG_DEBUG("X.509 chain: signature verification failed at %zu", i);
+      return FIO_X509_ERR_SIGNATURE;
+    }
+  }
+
+  /* Handle the last certificate in the chain */
+  size_t last = cert_count - 1;
+
+  /* Check if the last certificate is self-signed */
+  int is_self_signed =
+      FIO_BUF_INFO_IS_EQ(chain[last].issuer, chain[last].subject);
+
+  if (is_self_signed) {
+    /* Self-signed: verify its own signature (well-formedness check) */
+    if (fio_x509_verify_signature(&chain[last], &chain[last]) != 0) {
+      FIO_LOG_DEBUG("X.509 chain: self-signed root signature invalid");
+      return FIO_X509_ERR_SIGNATURE;
+    }
+  }
+
+  /* The last certificate must chain to a trust anchor.
+   *
+   * A trust anchor is identified by its (subject DN, public key) pair, so
+   * the anchor's public key MUST verify the certificate's signature.  For a
+   * self-signed certificate this proves the certificate IS the anchor (same
+   * key) — DN matching alone would allow an impostor to mint a self-signed
+   * certificate copying a trusted anchor's name. */
+  if (trust_store) {
+    /* Find issuer in trust store */
+    fio_x509_cert_s issuer;
+    if (fio___x509_find_issuer_in_trust_store(&issuer,
+                                              &chain[last],
+                                              trust_store) != 0) {
+      FIO_LOG_DEBUG("X.509 chain: issuer not found in trust store");
+      return FIO_X509_ERR_NO_TRUST_ANCHOR;
+    }
+
+    /* Verify signature using trust store certificate */
+    if (fio_x509_verify_signature(&chain[last], &issuer) != 0) {
+      FIO_LOG_DEBUG("X.509 chain: signature by trusted CA failed");
+      return FIO_X509_ERR_SIGNATURE;
+    }
+  }
+
+  FIO_LOG_DEBUG("X.509 chain: validation successful (%zu certificates)",
+                cert_count);
+  return FIO_X509_OK;
+}
+
+SFUNC size_t fio_tls_parse_certificate_message(fio_tls_cert_entry_s *entries,
+                                               size_t max_entries,
+                                               const uint8_t *data,
+                                               size_t data_len) {
+  if (!entries || max_entries == 0 || !data || data_len == 0)
+    return FIO_TLS_CERT_PARSE_ERROR;
+
+  const uint8_t *p = data;
+  const uint8_t *end = data + data_len;
+
+  /*
+   * TLS 1.3 Certificate message format (RFC 8446 Section 4.4.2):
+   *
+   * struct {
+   *     opaque certificate_request_context<0..2^8-1>;
+   *     CertificateEntry certificate_list<0..2^24-1>;
+   * } Certificate;
+   *
+   * struct {
+   *     opaque cert_data<1..2^24-1>;
+   *     Extension extensions<0..2^16-1>;
+   * } CertificateEntry;
+   */
+
+  /* Parse certificate_request_context length (1 byte) */
+  if (p >= end)
+    return FIO_TLS_CERT_PARSE_ERROR;
+  uint8_t ctx_len = *p++;
+  if (p + ctx_len > end)
+    return FIO_TLS_CERT_PARSE_ERROR;
+  p += ctx_len; /* Skip context (usually empty for server certificates) */
+
+  /* Parse certificate_list length (3 bytes, big-endian) */
+  if (p + 3 > end)
+    return FIO_TLS_CERT_PARSE_ERROR;
+  size_t list_len = ((size_t)p[0] << 16) | ((size_t)p[1] << 8) | p[2];
+  p += 3;
+
+  if (p + list_len > end)
+    return FIO_TLS_CERT_PARSE_ERROR;
+
+  const uint8_t *list_end = p + list_len;
+  size_t count = 0;
+
+  /* Parse each CertificateEntry */
+  while (p < list_end && count < max_entries) {
+    /* cert_data length (3 bytes, big-endian) */
+    if (p + 3 > list_end)
+      return FIO_TLS_CERT_PARSE_ERROR;
+    size_t cert_len = ((size_t)p[0] << 16) | ((size_t)p[1] << 8) | p[2];
+    p += 3;
+
+    if (cert_len == 0 || p + cert_len > list_end)
+      return FIO_TLS_CERT_PARSE_ERROR;
+
+    /* Store certificate entry */
+    entries[count].cert = p;
+    entries[count].cert_len = cert_len;
+    ++count;
+    p += cert_len;
+
+    /* extensions length (2 bytes, big-endian) */
+    if (p + 2 > list_end)
+      return FIO_TLS_CERT_PARSE_ERROR;
+    size_t ext_len = ((size_t)p[0] << 8) | p[1];
+    p += 2;
+
+    if (p + ext_len > list_end)
+      return FIO_TLS_CERT_PARSE_ERROR;
+    p += ext_len; /* Skip extensions */
+  }
+
+  return count;
+}
+
+/* *****************************************************************************
+Implementation - Certificate Generation
+***************************************************************************** */
+
+/** Generate Ed25519 key pair */
+SFUNC int fio_x509_keypair_ed25519(fio_x509_keypair_s *keypair) {
+  if (!keypair)
+    return -1;
+
+  FIO_MEMSET(keypair, 0, sizeof(*keypair));
+  keypair->type = FIO_X509_KEYPAIR_ED25519;
+
+#if defined(H___FIO_ED25519___H)
+  fio_ed25519_keypair(keypair->secret_key, keypair->public_key);
+  keypair->secret_key_len = 32;
+  keypair->public_key_len = 32;
+  return 0;
+#else
+  FIO_LOG_ERROR("Ed25519 not available - define FIO_ED25519 before including");
+  return -1;
+#endif
+}
+
+/** Generate P-256 key pair */
+SFUNC int fio_x509_keypair_p256(fio_x509_keypair_s *keypair) {
+  if (!keypair)
+    return -1;
+
+  FIO_MEMSET(keypair, 0, sizeof(*keypair));
+  keypair->type = FIO_X509_KEYPAIR_P256;
+
+#if defined(H___FIO_P256___H)
+  if (fio_p256_keypair(keypair->secret_key, keypair->public_key) != 0)
+    return -1;
+  keypair->secret_key_len = 32;
+  keypair->public_key_len = 65;
+  return 0;
+#else
+  FIO_LOG_ERROR("P-256 not available - define FIO_P256 before including");
+  return -1;
+#endif
+}
+
+/** Helper: encode a single RDN (Relative Distinguished Name) */
+FIO_SFUNC size_t fio___x509_encode_rdn(uint8_t *buf,
+                                       fio_u128 oid,
+                                       fio_buf_info_s value) {
+  if (!value.buf || value.len == 0)
+    return 0;
+
+  /* AttributeTypeAndValue ::= SEQUENCE { type OID, value ANY } */
+  size_t oid_len = fio___der_encode_oid(NULL, oid);
+  size_t str_len = fio_der_encode_utf8_string(NULL, value.buf, value.len);
+  size_t atv_content = oid_len + str_len;
+  size_t atv_len =
+      fio_der_encode_sequence_header(NULL, atv_content) + atv_content;
+
+  /* SET { AttributeTypeAndValue } */
+  size_t set_len = fio_der_encode_set_header(NULL, atv_len) + atv_len;
+
+  if (buf) {
+    size_t offset = 0;
+    offset += fio_der_encode_set_header(buf + offset, atv_len);
+    offset += fio_der_encode_sequence_header(buf + offset, atv_content);
+    offset += fio___der_encode_oid(buf + offset, oid);
+    offset += fio_der_encode_utf8_string(buf + offset, value.buf, value.len);
+    (void)offset;
+  }
+
+  return set_len;
+}
+
+/** Helper: encode Name (sequence of RDNs) */
+FIO_SFUNC size_t fio___x509_encode_name(uint8_t *buf,
+                                        const fio_x509_cert_options_s *opts) {
+  /* Calculate content length */
+  size_t content_len = 0;
+
+  /* Country (C) */
+  if (opts->country.len)
+    content_len +=
+        fio___x509_encode_rdn(NULL, FIO_X509_OID_COUNTRY, opts->country);
+
+  /* Organization (O) */
+  if (opts->org.len)
+    content_len +=
+        fio___x509_encode_rdn(NULL, FIO_X509_OID_ORGANIZATION, opts->org);
+
+  /* Organizational Unit (OU) */
+  if (opts->ou.len)
+    content_len +=
+        fio___x509_encode_rdn(NULL, FIO_X509_OID_ORG_UNIT, opts->ou);
+
+  /* Common Name (CN) - required */
+  content_len +=
+      fio___x509_encode_rdn(NULL, FIO_X509_OID_COMMON_NAME, opts->cn);
+
+  size_t total =
+      fio_der_encode_sequence_header(NULL, content_len) + content_len;
+
+  if (buf) {
+    size_t offset = 0;
+    offset += fio_der_encode_sequence_header(buf + offset, content_len);
+
+    if (opts->country.len)
+      offset += fio___x509_encode_rdn(buf + offset,
+                                      FIO_X509_OID_COUNTRY,
+                                      opts->country);
+
+    if (opts->org.len)
+      offset += fio___x509_encode_rdn(buf + offset,
+                                      FIO_X509_OID_ORGANIZATION,
+                                      opts->org);
+
+    if (opts->ou.len)
+      offset +=
+          fio___x509_encode_rdn(buf + offset, FIO_X509_OID_ORG_UNIT, opts->ou);
+
+    offset +=
+        fio___x509_encode_rdn(buf + offset, FIO_X509_OID_COMMON_NAME, opts->cn);
+    (void)offset;
+  }
+
+  return total;
+}
+
+/** Helper: encode Validity */
+FIO_SFUNC size_t fio___x509_encode_validity(uint8_t *buf,
+                                            int64_t not_before,
+                                            int64_t not_after) {
+  size_t time_len = fio_der_encode_utc_time(NULL, 0);
+  size_t content_len = time_len * 2;
+  size_t total =
+      fio_der_encode_sequence_header(NULL, content_len) + content_len;
+
+  if (buf) {
+    size_t offset = 0;
+    offset += fio_der_encode_sequence_header(buf + offset, content_len);
+    offset += fio_der_encode_utc_time(buf + offset, not_before);
+    offset += fio_der_encode_utc_time(buf + offset, not_after);
+    (void)offset;
+  }
+
+  return total;
+}
+
+/** Helper: encode SubjectPublicKeyInfo for Ed25519 */
+FIO_SFUNC size_t fio___x509_encode_spki_ed25519(uint8_t *buf,
+                                                const uint8_t pubkey[32]) {
+  /* AlgorithmIdentifier for Ed25519: SEQUENCE { OID } (no params) */
+  size_t oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_ED25519);
+  size_t alg_content = oid_len;
+  size_t alg_len =
+      fio_der_encode_sequence_header(NULL, alg_content) + alg_content;
+
+  /* BIT STRING containing 32-byte public key */
+  size_t bits_len = fio_der_encode_bit_string(NULL, pubkey, 32, 0);
+
+  size_t content_len = alg_len + bits_len;
+  size_t total =
+      fio_der_encode_sequence_header(NULL, content_len) + content_len;
+
+  if (buf) {
+    size_t offset = 0;
+    offset += fio_der_encode_sequence_header(buf + offset, content_len);
+    offset += fio_der_encode_sequence_header(buf + offset, alg_content);
+    offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_ED25519);
+    offset += fio_der_encode_bit_string(buf + offset, pubkey, 32, 0);
+    (void)offset;
+  }
+
+  return total;
+}
+
+/** Helper: encode SubjectPublicKeyInfo for P-256 */
+FIO_SFUNC size_t fio___x509_encode_spki_p256(uint8_t *buf,
+                                             const uint8_t pubkey[65]) {
+  /* AlgorithmIdentifier: SEQUENCE { ecPublicKey OID, secp256r1 OID } */
+  size_t ec_oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_EC_PUBLIC_KEY);
+  size_t curve_oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_SECP256R1);
+  size_t alg_content = ec_oid_len + curve_oid_len;
+  size_t alg_len =
+      fio_der_encode_sequence_header(NULL, alg_content) + alg_content;
+
+  /* BIT STRING containing 65-byte uncompressed point */
+  size_t bits_len = fio_der_encode_bit_string(NULL, pubkey, 65, 0);
+
+  size_t content_len = alg_len + bits_len;
+  size_t total =
+      fio_der_encode_sequence_header(NULL, content_len) + content_len;
+
+  if (buf) {
+    size_t offset = 0;
+    offset += fio_der_encode_sequence_header(buf + offset, content_len);
+    offset += fio_der_encode_sequence_header(buf + offset, alg_content);
+    offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_EC_PUBLIC_KEY);
+    offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_SECP256R1);
+    offset += fio_der_encode_bit_string(buf + offset, pubkey, 65, 0);
+    (void)offset;
+  }
+
+  return total;
+}
+
+/** Helper: encode BasicConstraints extension */
+FIO_SFUNC size_t fio___x509_encode_ext_basic_constraints(uint8_t *buf,
+                                                         int is_ca) {
+  /* BasicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE } */
+  size_t bc_content = is_ca ? fio_der_encode_boolean(NULL, 1) : 0;
+  size_t bc_len =
+      fio_der_encode_sequence_header(NULL, bc_content) + bc_content;
+
+  /* Wrap in OCTET STRING */
+  size_t octet_len = fio_der_encode_octet_string(NULL, NULL, bc_len);
+
+  /* Extension: SEQUENCE { OID, critical BOOLEAN, value OCTET STRING } */
+  size_t oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_BASIC_CONSTRAINTS);
+  size_t crit_len = fio_der_encode_boolean(NULL, 1); /* critical = TRUE */
+  size_t ext_content = oid_len + crit_len + octet_len;
+  size_t total =
+      fio_der_encode_sequence_header(NULL, ext_content) + ext_content;
+
+  if (buf) {
+    size_t offset = 0;
+    offset += fio_der_encode_sequence_header(buf + offset, ext_content);
+    offset +=
+        fio___der_encode_oid(buf + offset, FIO_X509_OID_BASIC_CONSTRAINTS);
+    offset += fio_der_encode_boolean(buf + offset, 1); /* critical */
+
+    /* OCTET STRING containing BasicConstraints */
+    size_t octet_hdr = fio_der_encode_octet_string(buf + offset, NULL, bc_len);
+    /* Write the actual BasicConstraints content */
+    uint8_t *bc_buf = buf + offset + octet_hdr - bc_len;
+    size_t bc_off = 0;
+    bc_off += fio_der_encode_sequence_header(bc_buf + bc_off, bc_content);
+    if (is_ca)
+      bc_off += fio_der_encode_boolean(bc_buf + bc_off, 1);
+    (void)bc_off;
+    offset += octet_hdr;
+    (void)offset;
+  }
+
+  return total;
+}
+
+/** Helper: encode KeyUsage extension */
+FIO_SFUNC size_t fio___x509_encode_ext_key_usage(uint8_t *buf,
+                                                 uint16_t key_usage) {
+  /* KeyUsage ::= BIT STRING */
+  /* Encode as 2 bytes with unused bits calculated */
+  uint8_t ku_bytes[2];
+  ku_bytes[0] = (uint8_t)(key_usage & 0xFF);
+  ku_bytes[1] = (uint8_t)((key_usage >> 8) & 0xFF);
+
+  /* Calculate unused bits in last byte */
+  uint8_t unused = 0;
+  size_t ku_len = 2;
+  if (ku_bytes[1] == 0) {
+    ku_len = 1;
+    /* Count trailing zeros in first byte */
+    uint8_t b = ku_bytes[0];
+    while (b && !(b & 1)) {
+      ++unused;
+      b >>= 1;
+    }
+  } else {
+    /* Count trailing zeros in second byte */
+    uint8_t b = ku_bytes[1];
+    while (b && !(b & 1)) {
+      ++unused;
+      b >>= 1;
+    }
+  }
+
+  size_t bits_len = fio_der_encode_bit_string(NULL, ku_bytes, ku_len, unused);
+
+  /* Wrap in OCTET STRING */
+  size_t octet_len = fio_der_encode_octet_string(NULL, NULL, bits_len);
+
+  /* Extension: SEQUENCE { OID, critical BOOLEAN, value OCTET STRING } */
+  size_t oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_KEY_USAGE);
+  size_t crit_len = fio_der_encode_boolean(NULL, 1); /* critical = TRUE */
+  size_t ext_content = oid_len + crit_len + octet_len;
+  size_t total =
+      fio_der_encode_sequence_header(NULL, ext_content) + ext_content;
+
+  if (buf) {
+    size_t offset = 0;
+    offset += fio_der_encode_sequence_header(buf + offset, ext_content);
+    offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_KEY_USAGE);
+    offset += fio_der_encode_boolean(buf + offset, 1); /* critical */
+
+    /* OCTET STRING containing KeyUsage BIT STRING */
+    size_t octet_hdr =
+        fio_der_encode_octet_string(buf + offset, NULL, bits_len);
+    uint8_t *ku_buf = buf + offset + octet_hdr - bits_len;
+    fio_der_encode_bit_string(ku_buf, ku_bytes, ku_len, unused);
+    offset += octet_hdr;
+    (void)offset;
+  }
+
+  return total;
+}
+
+/** Helper: encode SubjectAltName extension */
+FIO_SFUNC size_t fio___x509_encode_ext_san(uint8_t *buf,
+                                           const fio_buf_info_s *dns_names,
+                                           size_t dns_count) {
+  if (!dns_names || dns_count == 0)
+    return 0;
+
+  /* GeneralNames ::= SEQUENCE OF GeneralName
+   * GeneralName ::= CHOICE { dNSName [2] IA5String, ... } */
+  size_t san_content = 0;
+  for (size_t i = 0; i < dns_count; ++i) {
+    size_t name_len = dns_names[i].len;
+    /* Context tag [2] + length + data */
+    san_content +=
+        fio_der_encode_context_header(NULL, 2, name_len, 0) + name_len;
+  }
+
+  size_t san_len =
+      fio_der_encode_sequence_header(NULL, san_content) + san_content;
+
+  /* Wrap in OCTET STRING */
+  size_t octet_len = fio_der_encode_octet_string(NULL, NULL, san_len);
+
+  /* Extension: SEQUENCE { OID, value OCTET STRING } (not critical) */
+  size_t oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_SUBJECT_ALT_NAME);
+  size_t ext_content = oid_len + octet_len;
+  size_t total =
+      fio_der_encode_sequence_header(NULL, ext_content) + ext_content;
+
+  if (buf) {
+    size_t offset = 0;
+    offset += fio_der_encode_sequence_header(buf + offset, ext_content);
+    offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_SUBJECT_ALT_NAME);
+
+    /* OCTET STRING containing SAN */
+    size_t octet_hdr =
+        fio_der_encode_octet_string(buf + offset, NULL, san_len);
+    uint8_t *san_buf = buf + offset + octet_hdr - san_len;
+    size_t san_off = 0;
+    san_off += fio_der_encode_sequence_header(san_buf + san_off, san_content);
+    for (size_t i = 0; i < dns_count; ++i) {
+      size_t name_len = dns_names[i].len;
+      san_off +=
+          fio_der_encode_context_header(san_buf + san_off, 2, name_len, 0);
+      FIO_MEMCPY(san_buf + san_off, dns_names[i].buf, name_len);
+      san_off += name_len;
+    }
+    offset += octet_hdr;
+    (void)offset;
+  }
+
+  return total;
+}
+
+/** Helper: encode Extended Key Usage extension (serverAuth for TLS servers) */
+FIO_SFUNC size_t fio___x509_encode_ext_eku(uint8_t *buf, int is_ca) {
+  /* For CA certificates, we don't add EKU (it's for end-entity certs) */
+  if (is_ca)
+    return 0;
+
+  /*
+   * ExtKeyUsageSyntax ::= SEQUENCE SIZE (1..MAX) OF KeyPurposeId
+   * KeyPurposeId ::= OBJECT IDENTIFIER
+   *
+   * For TLS servers, we need serverAuth (1.3.6.1.5.5.7.3.1)
+   */
+  size_t server_auth_oid_len =
+      fio___der_encode_oid(NULL, FIO_X509_OID_EKU_SERVER_AUTH);
+  size_t eku_content = server_auth_oid_len;
+  size_t eku_len =
+      fio_der_encode_sequence_header(NULL, eku_content) + eku_content;
+
+  /* Wrap in OCTET STRING */
+  size_t octet_len = fio_der_encode_octet_string(NULL, NULL, eku_len);
+
+  /* Extension: SEQUENCE { OID, value OCTET STRING } (not critical) */
+  size_t oid_len = fio___der_encode_oid(NULL, FIO_X509_OID_EXT_KEY_USAGE);
+  size_t ext_content = oid_len + octet_len;
+  size_t total =
+      fio_der_encode_sequence_header(NULL, ext_content) + ext_content;
+
+  if (buf) {
+    size_t offset = 0;
+    offset += fio_der_encode_sequence_header(buf + offset, ext_content);
+    offset += fio___der_encode_oid(buf + offset, FIO_X509_OID_EXT_KEY_USAGE);
+
+    /* OCTET STRING containing EKU SEQUENCE */
+    size_t octet_hdr =
+        fio_der_encode_octet_string(buf + offset, NULL, eku_len);
+    uint8_t *eku_buf = buf + offset + octet_hdr - eku_len;
+    size_t eku_off = 0;
+    eku_off += fio_der_encode_sequence_header(eku_buf + eku_off, eku_content);
+    eku_off +=
+        fio___der_encode_oid(eku_buf + eku_off, FIO_X509_OID_EKU_SERVER_AUTH);
+    (void)eku_off;
+    offset += octet_hdr;
+    (void)offset;
+  }
+
+  return total;
+}
+
+/** Helper: encode Extensions wrapper */
+FIO_SFUNC size_t
+fio___x509_encode_extensions(uint8_t *buf,
+                             const fio_x509_keypair_s *kp,
+                             const fio_x509_cert_options_s *opts) {
+  /* Calculate extensions content */
+  size_t ext_content = 0;
+
+  /* BasicConstraints */
+  ext_content += fio___x509_encode_ext_basic_constraints(NULL, opts->is_ca);
+
+  /* KeyUsage */
+  uint16_t ku = opts->key_usage;
+  if (ku == 0) {
+    /* Default key usage based on certificate type and key algorithm */
+    if (opts->is_ca) {
+      ku = FIO_X509_KU_KEY_CERT_SIGN | FIO_X509_KU_CRL_SIGN;
+    } else {
+      /*
+       * For ECDSA/Ed25519 certificates: digitalSignature only
+       * KEY_ENCIPHERMENT is for RSA key exchange, NOT for ECDSA!
+       * Using KEY_ENCIPHERMENT with ECDSA causes Chrome to reject with
+       * ERR_SSL_KEY_USAGE_INCOMPATIBLE
+       */
+      ku = FIO_X509_KU_DIGITAL_SIGNATURE;
+    }
+  }
+  ext_content += fio___x509_encode_ext_key_usage(NULL, ku);
+
+  /* Extended Key Usage (serverAuth for TLS server certificates) */
+  ext_content += fio___x509_encode_ext_eku(NULL, opts->is_ca);
+
+  /* SubjectAltName */
+  if (opts->san_dns && opts->san_dns_count > 0)
+    ext_content +=
+        fio___x509_encode_ext_san(NULL, opts->san_dns, opts->san_dns_count);
+
+  /* Extensions SEQUENCE */
+  size_t exts_len =
+      fio_der_encode_sequence_header(NULL, ext_content) + ext_content;
+
+  /* Wrap in context tag [3] */
+  size_t total =
+      fio_der_encode_context_header(NULL, 3, exts_len, 1) + exts_len;
+
+  if (buf) {
+    size_t offset = 0;
+    offset += fio_der_encode_context_header(buf + offset, 3, exts_len, 1);
+    offset += fio_der_encode_sequence_header(buf + offset, ext_content);
+    offset +=
+        fio___x509_encode_ext_basic_constraints(buf + offset, opts->is_ca);
+    offset += fio___x509_encode_ext_key_usage(buf + offset, ku);
+    offset += fio___x509_encode_ext_eku(buf + offset, opts->is_ca);
+    if (opts->san_dns && opts->san_dns_count > 0)
+      offset += fio___x509_encode_ext_san(buf + offset,
+                                          opts->san_dns,
+                                          opts->san_dns_count);
+    (void)offset;
+  }
+
+  return total;
+  (void)kp;
+}
+
+/** Helper: encode AlgorithmIdentifier for signature */
+FIO_SFUNC size_t fio___x509_encode_signature_algo(uint8_t *buf,
+                                           fio_x509_keypair_type_e type) {
+  fio_u128 oid;
+  int has_params;
+
+  switch (type) {
+  case FIO_X509_KEYPAIR_ED25519:
+    oid = FIO_X509_OID_ED25519;
+    has_params = 0;
+    break;
+  case FIO_X509_KEYPAIR_P256:
+    oid = FIO_X509_OID_ECDSA_WITH_SHA256;
+    has_params = 0;
+    break;
+  default: return 0;
+  }
+
+  size_t oid_len = fio___der_encode_oid(NULL, oid);
+  size_t content_len = oid_len;
+  if (has_params)
+    content_len += fio_der_encode_null(NULL);
+
+  size_t total =
+      fio_der_encode_sequence_header(NULL, content_len) + content_len;
+
+  if (buf) {
+    size_t offset = 0;
+    offset += fio_der_encode_sequence_header(buf + offset, content_len);
+    offset += fio___der_encode_oid(buf + offset, oid);
+    if (has_params)
+      offset += fio_der_encode_null(buf + offset);
+    (void)offset;
+  }
+
+  return total;
+}
+
+/** Generate self-signed certificate */
+SFUNC size_t fio_x509_self_signed_cert(uint8_t *buf,
+                                       size_t buf_len,
+                                       const fio_x509_keypair_s *keypair,
+                                       const fio_x509_cert_options_s *options) {
+  if (!keypair || !options || !options->cn.len)
+    return 0;
+
+  /* Set default validity if not specified */
+  int64_t not_before = options->not_before;
+  int64_t not_after = options->not_after;
+  const int64_t now = (int64_t)fio_time_real().tv_sec;
+  if (not_before == 0)
+    not_before = now - 86400; /* start validity 1 day ago */
+  if (not_after == 0)
+    not_after = now + (365 * 24 * 60 * 60); /* +1 year */
+
+  /* Calculate TBSCertificate content length */
+  size_t tbs_content = 0;
+
+  /* Version [0] EXPLICIT INTEGER (v3 = 2) */
+  size_t version_int = fio_der_encode_integer_small(NULL, 2);
+  size_t version_len =
+      fio_der_encode_context_header(NULL, 0, version_int, 1) + version_int;
+  tbs_content += version_len;
+
+  /* Serial number: 16 bytes, DER-encoded INTEGER.
+   * Max size = 1 (tag) + 1 (length) + 16 (content) = 18 bytes.
+   * High bit is always cleared (serial[0] &= 0x7F), so no leading zero needed.
+   * When buf==NULL, we use this maximum to ensure callers allocate enough space
+   * regardless of how many leading zeros the actual random serial may have. */
+  size_t serial_len = 18;
+  tbs_content += serial_len;
+
+  /* Signature algorithm */
+  size_t signature_algo_len = fio___x509_encode_signature_algo(NULL, keypair->type);
+  tbs_content += signature_algo_len;
+
+  /* Issuer (same as subject for self-signed) */
+  size_t issuer_len = fio___x509_encode_name(NULL, options);
+  tbs_content += issuer_len;
+
+  /* Validity */
+  size_t validity_len = fio___x509_encode_validity(NULL, not_before, not_after);
+  tbs_content += validity_len;
+
+  /* Subject */
+  size_t subject_len = fio___x509_encode_name(NULL, options);
+  tbs_content += subject_len;
+
+  /* SubjectPublicKeyInfo */
+  size_t spki_len = 0;
+  switch (keypair->type) {
+  case FIO_X509_KEYPAIR_ED25519:
+    spki_len = fio___x509_encode_spki_ed25519(NULL, keypair->public_key);
+    break;
+  case FIO_X509_KEYPAIR_P256:
+    spki_len = fio___x509_encode_spki_p256(NULL, keypair->public_key);
+    break;
+  default: return 0;
+  }
+  tbs_content += spki_len;
+
+  /* Extensions */
+  size_t exts_len = fio___x509_encode_extensions(NULL, keypair, options);
+  tbs_content += exts_len;
+
+  /* TBSCertificate SEQUENCE */
+  size_t tbs_len =
+      fio_der_encode_sequence_header(NULL, tbs_content) + tbs_content;
+
+  /* Signature algorithm (again, in outer Certificate) */
+  size_t outer_signature_algo_len = fio___x509_encode_signature_algo(NULL, keypair->type);
+
+  /* Signature value (BIT STRING) */
+  size_t sig_value_len;
+  switch (keypair->type) {
+  case FIO_X509_KEYPAIR_ED25519:
+    sig_value_len = fio_der_encode_bit_string(NULL, NULL, 64, 0);
+    break;
+  case FIO_X509_KEYPAIR_P256:
+    /* ECDSA signature is DER-encoded SEQUENCE { r INTEGER, s INTEGER }
+     * Maximum size: 2 + 2 + (2 + 33) + (2 + 33) = 74 bytes */
+    sig_value_len = fio_der_encode_bit_string(NULL, NULL, 74, 0);
+    break;
+  default: return 0;
+  }
+
+  /* Certificate SEQUENCE */
+  size_t cert_content = tbs_len + outer_signature_algo_len + sig_value_len;
+  size_t total =
+      fio_der_encode_sequence_header(NULL, cert_content) + cert_content;
+
+  if (!buf)
+    return total;
+
+  if (buf_len < total)
+    return 0;
+
+  /* Generate random serial number (20 bytes max per RFC 5280) */
+  uint8_t serial[16];
+  do {
+    fio_rand_bytes(serial, sizeof(serial));
+  } while (!fio_buf2u64u(serial) || !fio_buf2u64u(serial + 8));
+  serial[0] &= 0x7F; /* Ensure positive */
+
+  /* Now encode everything */
+  size_t offset = 0;
+
+  /* We need to encode TBS first to sign it, but we don't know the final
+   * certificate length yet. Encode TBS to a temporary location. */
+  uint8_t *tbs_start =
+      buf + fio_der_encode_sequence_header(NULL, cert_content);
+
+  /* Encode TBSCertificate */
+  size_t tbs_offset = 0;
+  tbs_offset +=
+      fio_der_encode_sequence_header(tbs_start + tbs_offset, tbs_content);
+
+  /* Version */
+  tbs_offset +=
+      fio_der_encode_context_header(tbs_start + tbs_offset, 0, version_int, 1);
+  tbs_offset += fio_der_encode_integer_small(tbs_start + tbs_offset, 2);
+
+  /* Serial */
+  tbs_offset +=
+      fio_der_encode_integer(tbs_start + tbs_offset, serial, sizeof(serial));
+
+  /* Signature algorithm */
+  tbs_offset +=
+      fio___x509_encode_signature_algo(tbs_start + tbs_offset, keypair->type);
+
+  /* Issuer */
+  tbs_offset += fio___x509_encode_name(tbs_start + tbs_offset, options);
+
+  /* Validity */
+  tbs_offset +=
+      fio___x509_encode_validity(tbs_start + tbs_offset, not_before, not_after);
+
+  /* Subject */
+  tbs_offset += fio___x509_encode_name(tbs_start + tbs_offset, options);
+
+  /* SubjectPublicKeyInfo */
+  switch (keypair->type) {
+  case FIO_X509_KEYPAIR_ED25519:
+    tbs_offset += fio___x509_encode_spki_ed25519(tbs_start + tbs_offset,
+                                                 keypair->public_key);
+    break;
+  case FIO_X509_KEYPAIR_P256:
+    tbs_offset += fio___x509_encode_spki_p256(tbs_start + tbs_offset,
+                                              keypair->public_key);
+    break;
+  default: return 0;
+  }
+
+  /* Extensions */
+  tbs_offset +=
+      fio___x509_encode_extensions(tbs_start + tbs_offset, keypair, options);
+
+  /* Sign the TBSCertificate */
+  uint8_t signature[128]; /* Large enough for any signature */
+  size_t actual_sig_len = 0;
+
+  switch (keypair->type) {
+  case FIO_X509_KEYPAIR_ED25519: {
+#if defined(H___FIO_ED25519___H)
+    fio_ed25519_sign(signature,
+                     tbs_start,
+                     tbs_len,
+                     keypair->secret_key,
+                     keypair->public_key);
+    actual_sig_len = 64;
+#else
+    return 0;
+#endif
+    break;
+  }
+  case FIO_X509_KEYPAIR_P256: {
+    /* Hash the TBS with SHA-256 */
+    fio_u256 hash = fio_sha256(tbs_start, tbs_len);
+
+    /* Sign using proper ECDSA P-256 (returns DER-encoded signature) */
+    if (fio_ecdsa_p256_sign(signature,
+                            &actual_sig_len,
+                            sizeof(signature),
+                            hash.u8,
+                            keypair->secret_key) != 0)
+      return 0;
+    break;
+  }
+  default: return 0;
+  }
+
+  /* Recalculate actual signature BIT STRING length */
+  size_t actual_sig_bits_len =
+      fio_der_encode_bit_string(NULL, signature, actual_sig_len, 0);
+
+  /* Recalculate certificate content length */
+  cert_content = tbs_len + outer_signature_algo_len + actual_sig_bits_len;
+  total = fio_der_encode_sequence_header(NULL, cert_content) + cert_content;
+
+  if (buf_len < total)
+    return 0;
+
+  /* Encode final certificate */
+  offset = 0;
+  offset += fio_der_encode_sequence_header(buf + offset, cert_content);
+
+  /* Copy TBS (already encoded) */
+  FIO_MEMMOVE(buf + offset, tbs_start, tbs_len);
+  offset += tbs_len;
+
+  /* Signature algorithm */
+  offset += fio___x509_encode_signature_algo(buf + offset, keypair->type);
+
+  /* Signature value */
+  offset +=
+      fio_der_encode_bit_string(buf + offset, signature, actual_sig_len, 0);
+
+  return total;
+}
+
+/* *****************************************************************************
+Module Cleanup
+***************************************************************************** */
+#endif /* FIO_EXTERN_COMPLETE */
+#endif /* FIO_X509 */
+#undef FIO_X509
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_PEM                /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                          PEM File Parser for TLS 1.3
+                    (RFC 7468 - Textual Encodings of PKIX)
+
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_PEM) && !defined(H___FIO_PEM___H)
+#define H___FIO_PEM___H
+
+/* *****************************************************************************
+PEM Parser Module
+
+This module provides PEM file parsing for loading X.509 certificates and
+private keys from PEM-encoded files. It supports:
+
+- Certificate parsing ("CERTIFICATE" label)
+- PKCS#8 private keys ("PRIVATE KEY" label)
+- Legacy RSA private keys ("RSA PRIVATE KEY" label - PKCS#1)
+- Legacy EC private keys ("EC PRIVATE KEY" label - SEC1)
+
+PEM format (RFC 7468):
+  -----BEGIN <label>-----
+  <base64-encoded DER data>
+  -----END <label>-----
+
+**Note**: This parser does not support encrypted private keys.
+***************************************************************************** */
+
+/* *****************************************************************************
+PEM Type Definitions
+***************************************************************************** */
+
+/** Private key algorithm types */
+typedef enum {
+  FIO_PEM_KEY_UNKNOWN = 0,
+  FIO_PEM_KEY_RSA = 1,
+  FIO_PEM_KEY_ECDSA_P256 = 2,
+  FIO_PEM_KEY_ED25519 = 3,
+} fio_pem_key_type_e;
+
+/** Parsed PEM block */
+typedef struct {
+  const uint8_t *der; /**< Pointer to decoded DER data */
+  size_t der_len;     /**< Length of DER data */
+  const char *label;  /**< PEM label (e.g., "CERTIFICATE", "PRIVATE KEY") */
+  size_t label_len;   /**< Length of label */
+} fio_pem_s;
+
+/** Parsed private key structure */
+typedef struct {
+  fio_pem_key_type_e type;
+  union {
+    struct {
+      uint8_t n[FIO_RSA_MAX_BYTES]; /**< RSA modulus (big-endian) */
+      size_t n_len;
+      uint8_t e[FIO_RSA_MAX_BYTES]; /**< RSA public exponent (big-endian) */
+      size_t e_len;
+      uint8_t d[FIO_RSA_MAX_BYTES]; /**< RSA private exponent (big-endian) */
+      size_t d_len;
+      uint8_t p[FIO_RSA_MAX_BYTES]; /**< RSA prime p (optional) */
+      size_t p_len;
+      uint8_t q[FIO_RSA_MAX_BYTES]; /**< RSA prime q (optional) */
+      size_t q_len;
+      uint8_t dP[FIO_RSA_MAX_BYTES]; /**< d mod (p-1) (optional) */
+      size_t dP_len;
+      uint8_t dQ[FIO_RSA_MAX_BYTES]; /**< d mod (q-1) (optional) */
+      size_t dQ_len;
+      uint8_t qInv[FIO_RSA_MAX_BYTES]; /**< q^-1 mod p (optional) */
+      size_t qInv_len;
+    } rsa;
+    struct {
+      uint8_t private_key[32]; /**< P-256 scalar (32 bytes) */
+      uint8_t public_key[65];  /**< Uncompressed point (optional, can derive) */
+      int has_public_key;      /**< 1 if public_key is populated */
+    } ecdsa_p256;
+    struct {
+      uint8_t private_key[32]; /**< Ed25519 seed (32 bytes) */
+      uint8_t public_key[32];  /**< Ed25519 public key (optional) */
+      int has_public_key;      /**< 1 if public_key is populated */
+    } ed25519;
+  };
+} fio_pem_private_key_s;
+
+/* *****************************************************************************
+PEM Parser API
+***************************************************************************** */
+
+/**
+ * Parse a single PEM block from data.
+ *
+ * Finds the next -----BEGIN <label>----- and -----END <label>----- markers,
+ * base64 decodes the content between them, and returns the DER data.
+ *
+ * @param out Output structure to fill with parsed PEM block info
+ * @param der_buf Buffer to store decoded DER data (caller-provided)
+ * @param der_buf_len Size of der_buf
+ * @param pem_data PEM-encoded data
+ * @param pem_len Length of PEM data
+ * @return Number of bytes consumed from pem_data, or 0 on error
+ */
+SFUNC size_t fio_pem_parse(fio_pem_s *out,
+                           uint8_t *der_buf,
+                           size_t der_buf_len,
+                           const char *pem_data,
+                           size_t pem_len);
+
+/**
+ * Parse certificate from PEM file content.
+ *
+ * Handles "CERTIFICATE" label and parses the X.509 certificate.
+ *
+ * @param cert Output certificate structure (from fio_x509.h)
+ * @param pem_data PEM-encoded certificate data
+ * @param pem_len Length of PEM data
+ * @return 0 on success, -1 on error
+ */
+SFUNC int fio_pem_parse_certificate(fio_x509_cert_s *cert,
+                                    const char *pem_data,
+                                    size_t pem_len);
+
+/**
+ * Parse private key from PEM file content.
+ *
+ * Supports:
+ * - "PRIVATE KEY" (PKCS#8 PrivateKeyInfo)
+ * - "RSA PRIVATE KEY" (PKCS#1 RSAPrivateKey)
+ * - "EC PRIVATE KEY" (SEC1 ECPrivateKey)
+ *
+ * @param key Output private key structure
+ * @param pem_data PEM-encoded private key data
+ * @param pem_len Length of PEM data
+ * @return 0 on success, -1 on error
+ */
+SFUNC int fio_pem_parse_private_key(fio_pem_private_key_s *key,
+                                    const char *pem_data,
+                                    size_t pem_len);
+
+/**
+ * Get the DER-encoded certificate from PEM data.
+ *
+ * This is a convenience function that extracts just the DER bytes
+ * without parsing the X.509 structure.
+ *
+ * @param der_out Output buffer for DER data
+ * @param der_out_len Size of output buffer
+ * @param pem_data PEM-encoded certificate data
+ * @param pem_len Length of PEM data
+ * @return Length of DER data written, or 0 on error
+ */
+SFUNC size_t fio_pem_get_certificate_der(uint8_t *der_out,
+                                         size_t der_out_len,
+                                         const char *pem_data,
+                                         size_t pem_len);
+
+/**
+ * Securely clear a private key structure.
+ *
+ * @param key Private key to clear
+ */
+FIO_IFUNC void fio_pem_private_key_clear(fio_pem_private_key_s *key);
+
+/* *****************************************************************************
+Implementation - Inline Functions
+***************************************************************************** */
+
+/** Securely clear private key */
+FIO_IFUNC void fio_pem_private_key_clear(fio_pem_private_key_s *key) {
+  if (key) {
+    fio_secure_zero(key, sizeof(*key));
+  }
+}
+
+/* *****************************************************************************
+Implementation - Possibly Externed Functions
+***************************************************************************** */
+#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
+/* *****************************************************************************
+Implementation - PEM Parsing Helpers
+***************************************************************************** */
+
+/** Find a string in data (like memmem but simpler) */
+FIO_SFUNC const char *fio___pem_find(const char *haystack,
+                                     size_t haystack_len,
+                                     const char *needle,
+                                     size_t needle_len) {
+  if (needle_len > haystack_len || needle_len == 0)
+    return NULL;
+
+  const char *end = haystack + haystack_len - needle_len + 1;
+  for (const char *p = haystack; p < end; ++p) {
+    if (FIO_MEMCMP(p, needle, needle_len) == 0)
+      return p;
+  }
+  return NULL;
+}
+
+/** Skip whitespace and newlines */
+FIO_SFUNC const char *fio___pem_skip_ws(const char *p, const char *end) {
+  while (p < end && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n'))
+    ++p;
+  return p;
+}
+
+/* *****************************************************************************
+Implementation - Core PEM Parser
+***************************************************************************** */
+
+SFUNC size_t fio_pem_parse(fio_pem_s *out,
+                           uint8_t *der_buf,
+                           size_t der_buf_len,
+                           const char *pem_data,
+                           size_t pem_len) {
+  if (!out || !der_buf || !pem_data || pem_len == 0)
+    return 0;
+
+  FIO_MEMSET(out, 0, sizeof(*out));
+
+  /* Find -----BEGIN */
+  static const char begin_marker[] = "-----BEGIN ";
+  static const char end_marker[] = "-----END ";
+  static const char dashes[] = "-----";
+
+  const char *begin = fio___pem_find(pem_data, pem_len, begin_marker, 11);
+  if (!begin)
+    return 0;
+
+  /* Extract label */
+  const char *label_start = begin + 11;
+  const char *label_end = fio___pem_find(label_start,
+                                         pem_len - (label_start - pem_data),
+                                         dashes,
+                                         5);
+  if (!label_end)
+    return 0;
+
+  out->label = label_start;
+  out->label_len = (size_t)(label_end - label_start);
+
+  /* Find start of base64 data (after -----) */
+  const char *data_start = label_end + 5;
+  data_start = fio___pem_skip_ws(data_start, pem_data + pem_len);
+
+  /* Find -----END <label>----- */
+  char end_pattern[128];
+  if (out->label_len + 16 > sizeof(end_pattern))
+    return 0;
+
+  FIO_MEMCPY(end_pattern, end_marker, 9);
+  FIO_MEMCPY(end_pattern + 9, out->label, out->label_len);
+  FIO_MEMCPY(end_pattern + 9 + out->label_len, dashes, 5);
+  size_t end_pattern_len = 9 + out->label_len + 5;
+
+  const char *data_end = fio___pem_find(data_start,
+                                        pem_len - (data_start - pem_data),
+                                        end_pattern,
+                                        end_pattern_len);
+  if (!data_end)
+    return 0;
+
+  /* Trim trailing whitespace from data */
+  while (data_end > data_start &&
+         (data_end[-1] == ' ' || data_end[-1] == '\t' || data_end[-1] == '\r' ||
+          data_end[-1] == '\n'))
+    --data_end;
+
+  /* Base64 decode the data */
+  size_t base64_len = (size_t)(data_end - data_start);
+  fio_str_info_s der_str = FIO_STR_INFO3((char *)der_buf, 0, der_buf_len);
+
+  if (fio_string_write_base64dec(&der_str, NULL, data_start, base64_len) != 0) {
+    /* Buffer too small or decode error */
+    return 0;
+  }
+
+  out->der = der_buf;
+  out->der_len = der_str.len;
+
+  /* Return total bytes consumed (up to and including end marker) */
+  const char *consumed_end = data_end + end_pattern_len;
+  /* Skip past any trailing newline */
+  while (consumed_end < pem_data + pem_len &&
+         (*consumed_end == '\r' || *consumed_end == '\n'))
+    ++consumed_end;
+
+  return (size_t)(consumed_end - pem_data);
+}
+
+/* *****************************************************************************
+Implementation - Certificate Parsing
+***************************************************************************** */
+
+SFUNC size_t fio_pem_get_certificate_der(uint8_t *der_out,
+                                         size_t der_out_len,
+                                         const char *pem_data,
+                                         size_t pem_len) {
+  if (!der_out || !pem_data || pem_len == 0)
+    return 0;
+
+  fio_pem_s pem;
+  size_t consumed =
+      fio_pem_parse(&pem, der_out, der_out_len, pem_data, pem_len);
+  if (consumed == 0)
+    return 0;
+
+  /* Verify it's a certificate */
+  if (pem.label_len != 11 || FIO_MEMCMP(pem.label, "CERTIFICATE", 11) != 0) {
+    FIO_LOG_DEBUG("PEM: expected CERTIFICATE label, got '%.*s'",
+                  (int)pem.label_len,
+                  pem.label);
+    return 0;
+  }
+
+  return pem.der_len;
+}
+
+SFUNC int fio_pem_parse_certificate(fio_x509_cert_s *cert,
+                                    const char *pem_data,
+                                    size_t pem_len) {
+#if !defined(H___FIO_X509___H)
+  FIO_LOG_ERROR("PEM: X.509 module not available");
+  (void)cert;
+  (void)pem_data;
+  (void)pem_len;
+  return -1;
+#else
+  if (!cert || !pem_data || pem_len == 0)
+    return -1;
+
+  /* Allocate buffer for DER data (PEM is ~4/3 larger due to base64) */
+  size_t der_buf_len = pem_len; /* Conservative estimate */
+  uint8_t *der_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, der_buf_len, 0);
+  if (!der_buf)
+    return -1;
+
+  size_t der_len =
+      fio_pem_get_certificate_der(der_buf, der_buf_len, pem_data, pem_len);
+  if (der_len == 0) {
+    FIO_MEM_FREE(der_buf, der_buf_len);
+    return -1;
+  }
+
+  /* Parse the X.509 certificate */
+  int result = fio_x509_parse(cert, der_buf, der_len);
+
+  /* Note: The cert structure contains pointers into der_buf,
+   * so we cannot free it here. The caller must manage the lifetime.
+   * For now, we leak the buffer - a proper implementation would
+   * require the caller to provide the buffer or use a different API. */
+  if (result != 0) {
+    FIO_MEM_FREE(der_buf, der_buf_len);
+  }
+  /* If successful, der_buf is intentionally not freed - cert points into it */
+
+  return result;
+#endif
+}
+
+/* *****************************************************************************
+Implementation - PKCS#8 Private Key Parsing
+***************************************************************************** */
+
+/**
+ * Parse PKCS#8 PrivateKeyInfo (RFC 5958):
+ *
+ * PrivateKeyInfo ::= SEQUENCE {
+ *   version                   Version,
+ *   privateKeyAlgorithm       AlgorithmIdentifier,
+ *   privateKey                OCTET STRING,
+ *   attributes           [0]  IMPLICIT Attributes OPTIONAL
+ * }
+ */
+FIO_SFUNC int fio___pem_parse_pkcs8(fio_pem_private_key_s *key,
+                                    const uint8_t *der,
+                                    size_t der_len) {
+#if !defined(H___FIO_DER___H)
+  (void)key;
+  (void)der;
+  (void)der_len;
+  return -1;
+#else
+  if (!key || !der || der_len == 0)
+    return -1;
+
+  fio_der_element_s seq;
+  if (!fio_der_parse(&seq, der, der_len))
+    return -1;
+  if (!fio_der_is_tag(&seq, FIO_DER_SEQUENCE))
+    return -1;
+
+  fio_der_iterator_s it;
+  fio_der_element_s elem;
+  fio_der_iterator_init(&it, &seq);
+
+  /* Parse version (INTEGER) */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_INTEGER))
+    return -1;
+
+  /* Parse privateKeyAlgorithm (AlgorithmIdentifier = SEQUENCE) */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_SEQUENCE))
+    return -1;
+
+  /* Extract algorithm OID */
+  fio_der_iterator_s alg_it;
+  fio_der_element_s oid, params;
+  fio_der_iterator_init(&alg_it, &elem);
+
+  if (fio_der_iterator_next(&alg_it, &oid) != 0)
+    return -1;
+  if (!fio_der_is_tag(&oid, FIO_DER_OID))
+    return -1;
+
+  /* Parse privateKey (OCTET STRING) */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_OCTET_STRING))
+    return -1;
+
+  const uint8_t *priv_key_data = elem.data;
+  size_t priv_key_len = elem.len;
+
+  /* Determine key type from algorithm OID (build value once) */
+  fio_u128 oid_val = fio___der_oid_value(&oid);
+  if (fio___der_oid_eq(oid_val, FIO_X509_OID_RSA_ENCRYPTION)) {
+    /* RSA private key - privateKey contains RSAPrivateKey */
+    key->type = FIO_PEM_KEY_RSA;
+
+    /* Parse RSAPrivateKey structure */
+    fio_der_element_s rsa_seq;
+    if (!fio_der_parse(&rsa_seq, priv_key_data, priv_key_len))
+      return -1;
+    if (!fio_der_is_tag(&rsa_seq, FIO_DER_SEQUENCE))
+      return -1;
+
+    fio_der_iterator_s rsa_it;
+    fio_der_element_s rsa_elem;
+    fio_der_iterator_init(&rsa_it, &rsa_seq);
+
+    /* version */
+    if (fio_der_iterator_next(&rsa_it, &rsa_elem) != 0)
+      return -1;
+
+    /* modulus (n) */
+    if (fio_der_iterator_next(&rsa_it, &rsa_elem) != 0)
+      return -1;
+    if (!fio_der_is_tag(&rsa_elem, FIO_DER_INTEGER))
+      return -1;
+    {
+      const uint8_t *src = rsa_elem.data;
+      size_t src_len = rsa_elem.len;
+      if (src_len > 1 && src[0] == 0x00) {
+        ++src;
+        --src_len;
+      }
+      if (src_len > FIO_RSA_MAX_BYTES)
+        return -1;
+      FIO_MEMCPY(key->rsa.n, src, src_len);
+      key->rsa.n_len = src_len;
+    }
+
+    /* publicExponent (e) */
+    if (fio_der_iterator_next(&rsa_it, &rsa_elem) != 0)
+      return -1;
+    if (!fio_der_is_tag(&rsa_elem, FIO_DER_INTEGER))
+      return -1;
+    {
+      const uint8_t *src = rsa_elem.data;
+      size_t src_len = rsa_elem.len;
+      if (src_len > 1 && src[0] == 0x00) {
+        ++src;
+        --src_len;
+      }
+      if (src_len > FIO_RSA_MAX_BYTES)
+        return -1;
+      FIO_MEMCPY(key->rsa.e, src, src_len);
+      key->rsa.e_len = src_len;
+    }
+
+    /* privateExponent (d) */
+    if (fio_der_iterator_next(&rsa_it, &rsa_elem) != 0)
+      return -1;
+    if (!fio_der_is_tag(&rsa_elem, FIO_DER_INTEGER))
+      return -1;
+    {
+      const uint8_t *src = rsa_elem.data;
+      size_t src_len = rsa_elem.len;
+      if (src_len > 1 && src[0] == 0x00) {
+        ++src;
+        --src_len;
+      }
+      if (src_len > FIO_RSA_MAX_BYTES)
+        return -1;
+      FIO_MEMCPY(key->rsa.d, src, src_len);
+      key->rsa.d_len = src_len;
+    }
+
+    /* prime1 (p) */
+    if (fio_der_iterator_next(&rsa_it, &rsa_elem) == 0 &&
+        fio_der_is_tag(&rsa_elem, FIO_DER_INTEGER)) {
+      {
+        const uint8_t *src = rsa_elem.data;
+        size_t src_len = rsa_elem.len;
+        if (src_len > 1 && src[0] == 0x00) {
+          ++src;
+          --src_len;
+        }
+        if (src_len <= FIO_RSA_MAX_BYTES) {
+          FIO_MEMCPY(key->rsa.p, src, src_len);
+          key->rsa.p_len = src_len;
+        }
+      }
+
+      /* prime2 (q) */
+      if (fio_der_iterator_next(&rsa_it, &rsa_elem) == 0 &&
+          fio_der_is_tag(&rsa_elem, FIO_DER_INTEGER)) {
+        {
+          const uint8_t *src = rsa_elem.data;
+          size_t src_len = rsa_elem.len;
+          if (src_len > 1 && src[0] == 0x00) {
+            ++src;
+            --src_len;
+          }
+          if (src_len <= FIO_RSA_MAX_BYTES) {
+            FIO_MEMCPY(key->rsa.q, src, src_len);
+            key->rsa.q_len = src_len;
+          }
+        }
+
+        /* exponent1 (dP = d mod (p-1)) */
+        if (fio_der_iterator_next(&rsa_it, &rsa_elem) == 0 &&
+            fio_der_is_tag(&rsa_elem, FIO_DER_INTEGER)) {
+          {
+            const uint8_t *src = rsa_elem.data;
+            size_t src_len = rsa_elem.len;
+            if (src_len > 1 && src[0] == 0x00) {
+              ++src;
+              --src_len;
+            }
+            if (src_len <= FIO_RSA_MAX_BYTES) {
+              FIO_MEMCPY(key->rsa.dP, src, src_len);
+              key->rsa.dP_len = src_len;
+            }
+          }
+
+          /* exponent2 (dQ = d mod (q-1)) */
+          if (fio_der_iterator_next(&rsa_it, &rsa_elem) == 0 &&
+              fio_der_is_tag(&rsa_elem, FIO_DER_INTEGER)) {
+            {
+              const uint8_t *src = rsa_elem.data;
+              size_t src_len = rsa_elem.len;
+              if (src_len > 1 && src[0] == 0x00) {
+                ++src;
+                --src_len;
+              }
+              if (src_len <= FIO_RSA_MAX_BYTES) {
+                FIO_MEMCPY(key->rsa.dQ, src, src_len);
+                key->rsa.dQ_len = src_len;
+              }
+            }
+
+            /* coefficient (qInv = q^-1 mod p) */
+            if (fio_der_iterator_next(&rsa_it, &rsa_elem) == 0 &&
+                fio_der_is_tag(&rsa_elem, FIO_DER_INTEGER)) {
+              {
+                const uint8_t *src = rsa_elem.data;
+                size_t src_len = rsa_elem.len;
+                if (src_len > 1 && src[0] == 0x00) {
+                  ++src;
+                  --src_len;
+                }
+                if (src_len <= FIO_RSA_MAX_BYTES) {
+                  FIO_MEMCPY(key->rsa.qInv, src, src_len);
+                  key->rsa.qInv_len = src_len;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return 0;
+
+  } else if (fio___der_oid_eq(oid_val, FIO_X509_OID_EC_PUBLIC_KEY)) {
+    /* EC private key - check curve parameter */
+    if (fio_der_iterator_next(&alg_it, &params) != 0)
+      return -1;
+
+    if (fio___der_oid_eq(fio___der_oid_value(&params),
+                         FIO_X509_OID_SECP256R1)) {
+      key->type = FIO_PEM_KEY_ECDSA_P256;
+
+      /* Parse ECPrivateKey structure (SEC1) */
+      fio_der_element_s ec_seq;
+      if (!fio_der_parse(&ec_seq, priv_key_data, priv_key_len))
+        return -1;
+      if (!fio_der_is_tag(&ec_seq, FIO_DER_SEQUENCE))
+        return -1;
+
+      fio_der_iterator_s ec_it;
+      fio_der_element_s ec_elem;
+      fio_der_iterator_init(&ec_it, &ec_seq);
+
+      /* version */
+      if (fio_der_iterator_next(&ec_it, &ec_elem) != 0)
+        return -1;
+
+      /* privateKey (OCTET STRING, 32 bytes for P-256) */
+      if (fio_der_iterator_next(&ec_it, &ec_elem) != 0)
+        return -1;
+      if (!fio_der_is_tag(&ec_elem, FIO_DER_OCTET_STRING))
+        return -1;
+      if (ec_elem.len != 32)
+        return -1;
+
+      fio_memcpy32(key->ecdsa_p256.private_key, ec_elem.data);
+
+      /* Optional: publicKey [1] BIT STRING */
+      key->ecdsa_p256.has_public_key = 0;
+      while (fio_der_iterator_next(&ec_it, &ec_elem) == 0) {
+        if (fio_der_is_context_tag(&ec_elem, 1)) {
+          /* Parse BIT STRING containing public key */
+          fio_der_element_s bits;
+          if (fio_der_parse(&bits, ec_elem.data, ec_elem.len) &&
+              fio_der_is_tag(&bits, FIO_DER_BIT_STRING)) {
+            const uint8_t *pubkey_bits;
+            size_t pubkey_len;
+            uint8_t unused;
+            if (fio_der_parse_bit_string(&bits,
+                                          &pubkey_bits,
+                                          &pubkey_len,
+                                          &unused) == 0) {
+              if (pubkey_len == 65 && pubkey_bits[0] == 0x04) {
+                FIO_MEMCPY(key->ecdsa_p256.public_key, pubkey_bits, 65);
+                key->ecdsa_p256.has_public_key = 1;
+              }
+            }
+          }
+          break;
+        }
+      }
+
+      return 0;
+    }
+    /* Other curves not supported */
+    return -1;
+
+  } else if (fio___der_oid_eq(oid_val, FIO_X509_OID_ED25519)) {
+    /* Ed25519 private key */
+    key->type = FIO_PEM_KEY_ED25519;
+
+    /* For Ed25519, privateKey is an OCTET STRING containing another
+     * OCTET STRING with the 32-byte seed */
+    fio_der_element_s seed;
+    if (!fio_der_parse(&seed, priv_key_data, priv_key_len))
+      return -1;
+    if (!fio_der_is_tag(&seed, FIO_DER_OCTET_STRING))
+      return -1;
+    if (seed.len != 32)
+      return -1;
+
+    fio_memcpy32(key->ed25519.private_key, seed.data);
+    key->ed25519.has_public_key = 0;
+
+    return 0;
+  }
+
+  return -1; /* Unknown algorithm */
+#endif
+}
+
+/* *****************************************************************************
+Implementation - Legacy RSA Private Key Parsing (PKCS#1)
+***************************************************************************** */
+
+/**
+ * Parse PKCS#1 RSAPrivateKey:
+ *
+ * RSAPrivateKey ::= SEQUENCE {
+ *   version           Version,
+ *   modulus           INTEGER,  -- n
+ *   publicExponent    INTEGER,  -- e
+ *   privateExponent   INTEGER,  -- d
+ *   prime1            INTEGER,  -- p
+ *   prime2            INTEGER,  -- q
+ *   exponent1         INTEGER,  -- d mod (p-1)
+ *   exponent2         INTEGER,  -- d mod (q-1)
+ *   coefficient       INTEGER,  -- (inverse of q) mod p
+ *   otherPrimeInfos   OtherPrimeInfos OPTIONAL
+ * }
+ */
+FIO_SFUNC int fio___pem_parse_rsa_private_key(fio_pem_private_key_s *key,
+                                              const uint8_t *der,
+                                              size_t der_len) {
+#if !defined(H___FIO_DER___H)
+  (void)key;
+  (void)der;
+  (void)der_len;
+  return -1;
+#else
+  if (!key || !der || der_len == 0)
+    return -1;
+
+  key->type = FIO_PEM_KEY_RSA;
+
+  fio_der_element_s seq;
+  if (!fio_der_parse(&seq, der, der_len))
+    return -1;
+  if (!fio_der_is_tag(&seq, FIO_DER_SEQUENCE))
+    return -1;
+
+  fio_der_iterator_s it;
+  fio_der_element_s elem;
+  fio_der_iterator_init(&it, &seq);
+
+  /* version */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_INTEGER))
+    return -1;
+
+  /* modulus (n) */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_INTEGER))
+    return -1;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len > FIO_RSA_MAX_BYTES)
+      return -1;
+    FIO_MEMCPY(key->rsa.n, src, src_len);
+    key->rsa.n_len = src_len;
+  }
+
+  /* publicExponent (e) */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_INTEGER))
+    return -1;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len > FIO_RSA_MAX_BYTES)
+      return -1;
+    FIO_MEMCPY(key->rsa.e, src, src_len);
+    key->rsa.e_len = src_len;
+  }
+
+  /* privateExponent (d) */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_INTEGER))
+    return -1;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len > FIO_RSA_MAX_BYTES)
+      return -1;
+    FIO_MEMCPY(key->rsa.d, src, src_len);
+    key->rsa.d_len = src_len;
+  }
+
+  /* prime1 (p) */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_INTEGER))
+    return -1;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len <= FIO_RSA_MAX_BYTES) {
+      FIO_MEMCPY(key->rsa.p, src, src_len);
+      key->rsa.p_len = src_len;
+    }
+  }
+
+  /* prime2 (q) */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_INTEGER))
+    return -1;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len <= FIO_RSA_MAX_BYTES) {
+      FIO_MEMCPY(key->rsa.q, src, src_len);
+      key->rsa.q_len = src_len;
+    }
+  }
+
+  /* exponent1 (dP = d mod (p-1)) */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_INTEGER))
+    return -1;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len <= FIO_RSA_MAX_BYTES) {
+      FIO_MEMCPY(key->rsa.dP, src, src_len);
+      key->rsa.dP_len = src_len;
+    }
+  }
+
+  /* exponent2 (dQ = d mod (q-1)) */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_INTEGER))
+    return -1;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len <= FIO_RSA_MAX_BYTES) {
+      FIO_MEMCPY(key->rsa.dQ, src, src_len);
+      key->rsa.dQ_len = src_len;
+    }
+  }
+
+  /* coefficient (qInv = q^-1 mod p) */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_INTEGER))
+    return -1;
+  {
+    const uint8_t *src = elem.data;
+    size_t src_len = elem.len;
+    if (src_len > 1 && src[0] == 0x00) {
+      ++src;
+      --src_len;
+    }
+    if (src_len <= FIO_RSA_MAX_BYTES) {
+      FIO_MEMCPY(key->rsa.qInv, src, src_len);
+      key->rsa.qInv_len = src_len;
+    }
+  }
+
+  return 0;
+#endif
+}
+
+/* *****************************************************************************
+Implementation - Legacy EC Private Key Parsing (SEC1)
+***************************************************************************** */
+
+/**
+ * Parse SEC1 ECPrivateKey:
+ *
+ * ECPrivateKey ::= SEQUENCE {
+ *   version        INTEGER { ecPrivkeyVer1(1) },
+ *   privateKey     OCTET STRING,
+ *   parameters [0] ECParameters {{ NamedCurve }} OPTIONAL,
+ *   publicKey  [1] BIT STRING OPTIONAL
+ * }
+ */
+FIO_SFUNC int fio___pem_parse_ec_private_key(fio_pem_private_key_s *key,
+                                             const uint8_t *der,
+                                             size_t der_len) {
+#if !defined(H___FIO_DER___H)
+  (void)key;
+  (void)der;
+  (void)der_len;
+  return -1;
+#else
+  if (!key || !der || der_len == 0)
+    return -1;
+
+  fio_der_element_s seq;
+  if (!fio_der_parse(&seq, der, der_len))
+    return -1;
+  if (!fio_der_is_tag(&seq, FIO_DER_SEQUENCE))
+    return -1;
+
+  fio_der_iterator_s it;
+  fio_der_element_s elem;
+  fio_der_iterator_init(&it, &seq);
+
+  /* version */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_INTEGER))
+    return -1;
+
+  /* privateKey (OCTET STRING) */
+  if (fio_der_iterator_next(&it, &elem) != 0)
+    return -1;
+  if (!fio_der_is_tag(&elem, FIO_DER_OCTET_STRING))
+    return -1;
+
+  /* Determine curve from key length or parameters */
+  if (elem.len == 32) {
+    /* Assume P-256 based on key length */
+    key->type = FIO_PEM_KEY_ECDSA_P256;
+    fio_memcpy32(key->ecdsa_p256.private_key, elem.data);
+    key->ecdsa_p256.has_public_key = 0;
+
+    /* Look for parameters [0] to confirm curve */
+    while (fio_der_iterator_next(&it, &elem) == 0) {
+      if (fio_der_is_context_tag(&elem, 0)) {
+        /* Parse curve OID */
+        fio_der_element_s curve_oid;
+        if (fio_der_parse(&curve_oid, elem.data, elem.len) &&
+            fio_der_is_tag(&curve_oid, FIO_DER_OID)) {
+          if (!fio___der_oid_eq(fio___der_oid_value(&curve_oid),
+                                FIO_X509_OID_SECP256R1)) {
+            /* Not P-256, unsupported */
+            return -1;
+          }
+        }
+      } else if (fio_der_is_context_tag(&elem, 1)) {
+        /* Parse public key [1] BIT STRING */
+        fio_der_element_s bits;
+        if (fio_der_parse(&bits, elem.data, elem.len) &&
+            fio_der_is_tag(&bits, FIO_DER_BIT_STRING)) {
+          const uint8_t *pubkey_bits;
+          size_t pubkey_len;
+          uint8_t unused;
+          if (fio_der_parse_bit_string(&bits,
+                                        &pubkey_bits,
+                                        &pubkey_len,
+                                        &unused) == 0) {
+            if (pubkey_len == 65 && pubkey_bits[0] == 0x04) {
+              FIO_MEMCPY(key->ecdsa_p256.public_key, pubkey_bits, 65);
+              key->ecdsa_p256.has_public_key = 1;
+            }
+          }
+        }
+      }
+    }
+
+    return 0;
+  }
+
+  return -1; /* Unsupported key length/curve */
+#endif
+}
+
+/* *****************************************************************************
+Implementation - Main Private Key Parser
+***************************************************************************** */
+
+SFUNC int fio_pem_parse_private_key(fio_pem_private_key_s *key,
+                                    const char *pem_data,
+                                    size_t pem_len) {
+  if (!key || !pem_data || pem_len == 0)
+    return -1;
+
+  FIO_MEMSET(key, 0, sizeof(*key));
+
+  /* Allocate buffer for DER data */
+  size_t der_buf_len = pem_len;
+  uint8_t *der_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, der_buf_len, 0);
+  if (!der_buf)
+    return -1;
+
+  fio_pem_s pem;
+  size_t consumed =
+      fio_pem_parse(&pem, der_buf, der_buf_len, pem_data, pem_len);
+  if (consumed == 0) {
+    FIO_MEM_FREE(der_buf, der_buf_len);
+    return -1;
+  }
+
+  int result = -1;
+
+  /* Dispatch based on label */
+  if (pem.label_len == 11 && FIO_MEMCMP(pem.label, "PRIVATE KEY", 11) == 0) {
+    /* PKCS#8 PrivateKeyInfo */
+    result = fio___pem_parse_pkcs8(key, pem.der, pem.der_len);
+  } else if (pem.label_len == 15 &&
+             FIO_MEMCMP(pem.label, "RSA PRIVATE KEY", 15) == 0) {
+    /* PKCS#1 RSAPrivateKey */
+    result = fio___pem_parse_rsa_private_key(key, pem.der, pem.der_len);
+  } else if (pem.label_len == 14 &&
+             FIO_MEMCMP(pem.label, "EC PRIVATE KEY", 14) == 0) {
+    /* SEC1 ECPrivateKey */
+    result = fio___pem_parse_ec_private_key(key, pem.der, pem.der_len);
+  } else {
+    FIO_LOG_DEBUG("PEM: unsupported private key label '%.*s'",
+                  (int)pem.label_len,
+                  pem.label);
+  }
+
+  FIO_MEM_FREE(der_buf, der_buf_len);
+
+  if (result != 0) {
+    fio_pem_private_key_clear(key);
+  }
+
+  return result;
+}
+
+/* *****************************************************************************
+Module Cleanup
+***************************************************************************** */
+#endif /* FIO_EXTERN_COMPLETE */
+#endif /* FIO_PEM */
+#undef FIO_PEM
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -81770,15 +82891,15 @@ typedef enum {
 
 /** TLS 1.3 Signature Algorithms (RFC 8446 Section 4.2.3) */
 typedef enum {
-  FIO_TLS13_SIG_RSA_PKCS1_SHA256 = 0x0401,
-  FIO_TLS13_SIG_RSA_PKCS1_SHA384 = 0x0501,
-  FIO_TLS13_SIG_RSA_PKCS1_SHA512 = 0x0601,
-  FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256 = 0x0403,
-  FIO_TLS13_SIG_ECDSA_SECP384R1_SHA384 = 0x0503,
-  FIO_TLS13_SIG_RSA_PSS_RSAE_SHA256 = 0x0804,
-  FIO_TLS13_SIG_RSA_PSS_RSAE_SHA384 = 0x0805,
-  FIO_TLS13_SIG_ED25519 = 0x0807,
-} fio_tls13_signature_scheme_e;
+  FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA256 = 0x0401,
+  FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA384 = 0x0501,
+  FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA512 = 0x0601,
+  FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256 = 0x0403,
+  FIO_TLS13_SIGNATURE_ECDSA_SECP384R1_SHA384 = 0x0503,
+  FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256 = 0x0804,
+  FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA384 = 0x0805,
+  FIO_TLS13_SIGNATURE_ED25519 = 0x0807,
+} fio_tls13_signature_algo_e;
 
 /** TLS 1.3 Protocol Version Constants */
 #define FIO_TLS13_VERSION_TLS12 0x0303
@@ -81813,28 +82934,24 @@ typedef struct {
 
 /** Parsed Certificate message (minimal - first cert only) */
 typedef struct {
-  const uint8_t *cert_data; /* Pointer to first certificate */
-  size_t cert_len;          /* Length of first certificate */
+  fio_ubuf_info_s cert; /* First certificate (view into message data) */
 } fio_tls13_certificate_s;
 
 /** Parsed CertificateVerify message */
 typedef struct {
-  uint16_t signature_scheme;
-  const uint8_t *signature;
-  size_t signature_len;
+  fio_ubuf_info_s signature; /* Signature (view into message data) */
+  uint16_t signature_algo;
 } fio_tls13_certificate_verify_s;
 
 /** Parsed CertificateRequest message (RFC 8446 Section 4.3.2) */
 typedef struct {
-  uint8_t certificate_request_context[255]; /* Opaque context */
-  size_t certificate_request_context_len;   /* Context length (0-255) */
-  uint16_t signature_algorithms[16];        /* Required signature algorithms */
-  size_t signature_algorithm_count;         /* Number of signature algorithms */
-  uint16_t signature_algorithms_cert[16];   /* Cert chain sig algs (optional) */
-  size_t signature_algorithms_cert_count;   /* Number of cert sig algs */
-  /* Certificate authorities (optional, pointers into original data) */
-  const uint8_t *certificate_authorities; /* Raw CA DNs data */
-  size_t certificate_authorities_len;     /* Total CA DNs length */
+  fio_ubuf_info_s authorities; /* Raw CA DNs data (view into message) */
+  size_t context_len;          /* Context length (0-255) */
+  size_t algo_count;           /* Number of signature algorithms */
+  size_t cert_algos_count;     /* Number of cert sig algos */
+  uint16_t algos[16];          /* Required signature algorithms */
+  uint16_t cert_algos[16];     /* Cert chain sig algos (optional) */
+  uint8_t context[255];        /* Opaque context */
 } fio_tls13_certificate_request_s;
 
 /* *****************************************************************************
@@ -83384,22 +84501,22 @@ FIO_SFUNC size_t fio___tls13_write_ext_supported_groups(uint8_t *out,
   return (size_t)(p - out);
 }
 
-/* Internal: Write signature_algorithms extension */
+/* Internal: Write algos extension */
 FIO_SFUNC size_t fio___tls13_write_ext_signature_algorithms(uint8_t *out) {
   uint8_t *p = out;
 
-  /* Extension type: signature_algorithms (13) */
+  /* Extension type: algos (13) */
   fio___tls13_write_u16(p, FIO_TLS13_EXT_SIGNATURE_ALGORITHMS);
   p += 2;
 
   /* We support: ed25519, ecdsa_secp256r1_sha256, rsa_pss_rsae_sha256,
    * rsa_pkcs1_sha256 */
-  uint16_t algos[] = {FIO_TLS13_SIG_ED25519,
-                      FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256,
-                      FIO_TLS13_SIG_RSA_PSS_RSAE_SHA256,
-                      FIO_TLS13_SIG_RSA_PKCS1_SHA256,
-                      FIO_TLS13_SIG_RSA_PSS_RSAE_SHA384,
-                      FIO_TLS13_SIG_RSA_PKCS1_SHA384};
+  uint16_t algos[] = {FIO_TLS13_SIGNATURE_ED25519,
+                      FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256,
+                      FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256,
+                      FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA256,
+                      FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA384,
+                      FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA384};
   size_t algo_count = sizeof(algos) / sizeof(algos[0]);
 
   /* Extension data length: algos_len(2) + algos */
@@ -83601,10 +84718,9 @@ FIO_SFUNC size_t fio___tls13_write_ext_alpn(uint8_t *out,
  */
 FIO_SFUNC int fio___tls13_parse_alpn_extension(const uint8_t *data,
                                                size_t data_len,
-                                               const char **protos,
-                                               size_t *lens,
+                                               fio_buf_info_s *protos,
                                                size_t max_count) {
-  if (!data || data_len < 2 || !protos || !lens)
+  if (!data || data_len < 2 || !protos)
     return -1;
 
   /* Read protocol name list length */
@@ -83623,8 +84739,8 @@ FIO_SFUNC int fio___tls13_parse_alpn_extension(const uint8_t *data,
     if (proto_len == 0 || p + proto_len > end)
       break;
 
-    protos[count] = (const char *)p;
-    lens[count] = proto_len;
+    protos[count].buf = (char *)p;
+    protos[count].len = proto_len;
     ++count;
     p += proto_len;
   }
@@ -83721,14 +84837,13 @@ FIO_SFUNC int fio___tls13_parse_alpn_response(const uint8_t *data,
  * @param max_len         Maximum length for selected buffer
  * @return 0 on success, -1 if no match
  */
-FIO_SFUNC int fio___tls13_select_alpn(const char **client_protos,
-                                      const size_t *client_lens,
+FIO_SFUNC int fio___tls13_select_alpn(const fio_buf_info_s *client_protos,
                                       size_t client_count,
                                       const char *server_protos,
                                       char *selected,
                                       size_t *selected_len,
                                       size_t max_len) {
-  if (!client_protos || !client_lens || client_count == 0)
+  if (!client_protos || client_count == 0)
     return -1;
   if (!server_protos || !server_protos[0])
     return -1;
@@ -83746,8 +84861,8 @@ FIO_SFUNC int fio___tls13_select_alpn(const char **client_protos,
 
     /* Check against each client protocol */
     for (size_t i = 0; i < client_count; ++i) {
-      if (client_lens[i] == srv_len &&
-          FIO_MEMCMP(client_protos[i], srv_start, srv_len) == 0) {
+      if (client_protos[i].len == srv_len &&
+          FIO_MEMCMP(client_protos[i].buf, srv_start, srv_len) == 0) {
         /* Match found */
         if (srv_len >= max_len)
           return -1;
@@ -83828,7 +84943,7 @@ SFUNC int fio_tls13_build_client_hello(uint8_t *out,
   /* supported_groups extension (no hybrid in standalone function) */
   p += fio___tls13_write_ext_supported_groups(p, 0);
 
-  /* signature_algorithms extension */
+  /* algos extension */
   p += fio___tls13_write_ext_signature_algorithms(p);
 
   /* key_share extension */
@@ -84077,8 +85192,8 @@ SFUNC int fio_tls13_parse_certificate(fio_tls13_certificate_s *out,
     return -1;
 
   /* Store pointer to first certificate */
-  out->cert_data = p;
-  out->cert_len = cert_len;
+  out->cert.buf = (unsigned char *)p;
+  out->cert.len = cert_len;
 
   return 0;
 }
@@ -84102,7 +85217,7 @@ SFUNC int fio_tls13_parse_certificate_verify(
   /* Signature algorithm (2 bytes) */
   if (p + 2 > end)
     return -1;
-  out->signature_scheme = fio___tls13_read_u16(p);
+  out->signature_algo = fio___tls13_read_u16(p);
   p += 2;
 
   /* Signature length (2 bytes) */
@@ -84114,8 +85229,8 @@ SFUNC int fio_tls13_parse_certificate_verify(
   /* Signature data */
   if (p + sig_len > end)
     return -1;
-  out->signature = p;
-  out->signature_len = sig_len;
+  out->signature.buf = (unsigned char *)p;
+  out->signature.len = sig_len;
 
   return 0;
 }
@@ -84126,12 +85241,12 @@ CertificateRequest Parsing/Building Implementation (RFC 8446 Section 4.3.2)
 CertificateRequest is sent by the server to request client authentication.
 Format:
   struct {
-    opaque certificate_request_context<0..2^8-1>;
+    opaque context<0..2^8-1>;
     Extension extensions<2..2^16-1>;
   } CertificateRequest;
 
-Required extension: signature_algorithms (13)
-Optional extensions: certificate_authorities (47), signature_algorithms_cert
+Required extension: algos (13)
+Optional extensions: authorities.buf (47), cert_algos
 (50)
 ***************************************************************************** */
 
@@ -84153,18 +85268,16 @@ SFUNC int fio_tls13_parse_certificate_request(
  *
  * @param out          Output buffer
  * @param out_capacity Capacity of output buffer
- * @param context      Certificate request context (random bytes)
- * @param context_len  Context length (0-255)
- * @param sig_algs     Signature algorithms to accept
- * @param sig_alg_count Number of signature algorithms
+ * @param context      Certificate request context (random bytes, up to 255)
+ * @param signature_algos     Signature algorithms to accept
+ * @param signature_algo_count Number of signature algorithms
  * @return Message length on success, -1 on error
  */
 SFUNC int fio_tls13_build_certificate_request(uint8_t *out,
                                               size_t out_capacity,
-                                              const uint8_t *context,
-                                              size_t context_len,
-                                              const uint16_t *sig_algs,
-                                              size_t sig_alg_count);
+                                              fio_ubuf_info_s context,
+                                              const uint16_t *signature_algos,
+                                              size_t signature_algo_count);
 
 /* CertificateRequest parsing implementation */
 SFUNC int fio_tls13_parse_certificate_request(
@@ -84187,9 +85300,9 @@ SFUNC int fio_tls13_parse_certificate_request(
     return -1;
 
   /* Copy context */
-  out->certificate_request_context_len = ctx_len;
+  out->context_len = ctx_len;
   if (ctx_len > 0)
-    FIO_MEMCPY(out->certificate_request_context, p, ctx_len);
+    FIO_MEMCPY(out->context, p, ctx_len);
   p += ctx_len;
 
   /* Extensions length (2 bytes) */
@@ -84215,7 +85328,7 @@ SFUNC int fio_tls13_parse_certificate_request(
 
     switch (ext_type) {
     case FIO_TLS13_EXT_SIGNATURE_ALGORITHMS: {
-      /* signature_algorithms extension (REQUIRED) */
+      /* algos extension (REQUIRED) */
       if (ext_data_len < 2)
         break;
       uint16_t algos_len = fio___tls13_read_u16(p);
@@ -84226,14 +85339,14 @@ SFUNC int fio_tls13_parse_certificate_request(
       if (count > 16)
         count = 16;
       for (size_t i = 0; i < count; ++i)
-        out->signature_algorithms[i] = fio___tls13_read_u16(algos + i * 2);
-      out->signature_algorithm_count = count;
+        out->algos[i] = fio___tls13_read_u16(algos + i * 2);
+      out->algo_count = count;
       has_sig_algs = 1;
       break;
     }
 
     case FIO_TLS13_EXT_SIGNATURE_ALGORITHMS_CERT: {
-      /* signature_algorithms_cert extension (optional) */
+      /* cert_algos extension (optional) */
       if (ext_data_len < 2)
         break;
       uint16_t algos_len = fio___tls13_read_u16(p);
@@ -84244,20 +85357,20 @@ SFUNC int fio_tls13_parse_certificate_request(
       if (count > 16)
         count = 16;
       for (size_t i = 0; i < count; ++i)
-        out->signature_algorithms_cert[i] = fio___tls13_read_u16(algos + i * 2);
-      out->signature_algorithms_cert_count = count;
+        out->cert_algos[i] = fio___tls13_read_u16(algos + i * 2);
+      out->cert_algos_count = count;
       break;
     }
 
     case FIO_TLS13_EXT_CERTIFICATE_AUTHORITIES: {
-      /* certificate_authorities extension (optional) */
+      /* authorities.buf extension (optional) */
       if (ext_data_len < 2)
         break;
       uint16_t cas_len = fio___tls13_read_u16(p);
       if (cas_len + 2 > ext_data_len)
         break;
-      out->certificate_authorities = p + 2;
-      out->certificate_authorities_len = cas_len;
+      out->authorities.buf = (unsigned char *)(p + 2);
+      out->authorities.len = cas_len;
       break;
     }
 
@@ -84269,9 +85382,9 @@ SFUNC int fio_tls13_parse_certificate_request(
     p += ext_data_len;
   }
 
-  /* signature_algorithms extension is REQUIRED per RFC 8446 */
+  /* algos extension is REQUIRED per RFC 8446 */
   if (!has_sig_algs) {
-    FIO_LOG_DEBUG2("TLS 1.3: CertificateRequest missing signature_algorithms");
+    FIO_LOG_DEBUG2("TLS 1.3: CertificateRequest missing algos");
     return -1;
   }
 
@@ -84281,20 +85394,19 @@ SFUNC int fio_tls13_parse_certificate_request(
 /* CertificateRequest building implementation */
 SFUNC int fio_tls13_build_certificate_request(uint8_t *out,
                                               size_t out_capacity,
-                                              const uint8_t *context,
-                                              size_t context_len,
-                                              const uint16_t *sig_algs,
-                                              size_t sig_alg_count) {
-  if (!out || !sig_algs || sig_alg_count == 0)
+                                              fio_ubuf_info_s context,
+                                              const uint16_t *signature_algos,
+                                              size_t signature_algo_count) {
+  if (!out || !signature_algos || signature_algo_count == 0)
     return -1;
-  if (context_len > 255)
+  if (context.len > 255)
     return -1;
 
   /* Calculate size:
    * handshake_header(4) + ctx_len(1) + ctx + ext_len(2) +
-   * sig_algs_ext: type(2) + len(2) + algos_len(2) + algos(sig_alg_count*2) */
-  size_t sig_algs_ext_len = 2 + 2 + 2 + sig_alg_count * 2;
-  size_t body_len = 1 + context_len + 2 + sig_algs_ext_len;
+   * sig_algs_ext: type(2) + len(2) + algos_len(2) + algos(signature_algo_count*2) */
+  size_t sig_algs_ext_len = 2 + 2 + 2 + signature_algo_count * 2;
+  size_t body_len = 1 + context.len + 2 + sig_algs_ext_len;
   size_t total_len = 4 + body_len;
 
   if (out_capacity < total_len)
@@ -84309,25 +85421,25 @@ SFUNC int fio_tls13_build_certificate_request(uint8_t *out,
   p += 4;
 
   /* Certificate request context */
-  *p++ = (uint8_t)context_len;
-  if (context_len > 0 && context) {
-    FIO_MEMCPY(p, context, context_len);
-    p += context_len;
+  *p++ = (uint8_t)context.len;
+  if (context.len > 0 && context.buf) {
+    FIO_MEMCPY(p, context.buf, context.len);
+    p += context.len;
   }
 
   /* Extensions length */
   fio___tls13_write_u16(p, (uint16_t)sig_algs_ext_len);
   p += 2;
 
-  /* signature_algorithms extension */
+  /* algos extension */
   fio___tls13_write_u16(p, FIO_TLS13_EXT_SIGNATURE_ALGORITHMS);
   p += 2;
-  fio___tls13_write_u16(p, (uint16_t)(2 + sig_alg_count * 2));
+  fio___tls13_write_u16(p, (uint16_t)(2 + signature_algo_count * 2));
   p += 2;
-  fio___tls13_write_u16(p, (uint16_t)(sig_alg_count * 2));
+  fio___tls13_write_u16(p, (uint16_t)(signature_algo_count * 2));
   p += 2;
-  for (size_t i = 0; i < sig_alg_count; ++i) {
-    fio___tls13_write_u16(p, sig_algs[i]);
+  for (size_t i = 0; i < signature_algo_count; ++i) {
+    fio___tls13_write_u16(p, signature_algos[i]);
     p += 2;
   }
 
@@ -84446,6 +85558,16 @@ typedef enum {
 } fio_tls13_client_state_e;
 
 /** TLS 1.3 Client Context */
+/** Certificate chain: DER views + optional owned storage (received chains).
+ * Private type - used only as a member of the connection structs. */
+typedef struct {
+  uint8_t *buf;              /* Owned storage, NULL when views are external */
+  size_t buf_len;
+  size_t buf_cap;
+  size_t count;              /* Number of certificates */
+  fio_ubuf_info_s certs[10]; /* DER views */
+} fio___tls13_cert_chain_s;
+
 typedef struct {
   /* State */
   fio_tls13_client_state_e state;
@@ -84486,14 +85608,10 @@ typedef struct {
   fio_sha256_s transcript_sha256; /* For SHA-256 cipher suites */
   fio_sha512_s transcript_sha384; /* For SHA-384 cipher suites */
 
-  /* Server certificate (pointer to received data, not owned) */
-  const uint8_t *server_cert;
-  size_t server_cert_len;
-
-  /* CertificateVerify signature (pointer to received data, not owned) */
-  const uint8_t *server_signature;
-  size_t server_signature_len;
-  uint16_t server_signature_scheme;
+  /* Peer (server) certificate and proof of possession (views) */
+  fio_ubuf_info_s peer_cert;      /* Leaf certificate */
+  fio_ubuf_info_s peer_signature; /* CertificateVerify signature */
+  uint16_t peer_signature_algo;   /* CertificateVerify algorithm */
 
   /* Error info */
   uint8_t alert_level;
@@ -84509,42 +85627,38 @@ typedef struct {
   uint8_t chain_verified;   /* 1 if certificate chain was validated */
   int16_t cert_error;       /* Certificate error code (fio_x509_error_e) */
 
-  /* Certificate chain from server (raw pointers into cert_data_buf) */
-  const uint8_t *cert_chain[10]; /* Up to 10 certificates in chain */
-  size_t cert_chain_lens[10];    /* Length of each certificate */
-  size_t cert_chain_count;       /* Number of certificates received */
-
-  /* Buffer to store certificate data (copied from decrypted records) */
-  uint8_t *cert_data_buf;   /* Allocated buffer for certificate data */
-  size_t cert_data_buf_len; /* Total length of certificate data */
-  size_t cert_data_buf_cap; /* Capacity of certificate data buffer */
+  /* Peer certificate chain (views + owned storage) */
+  fio___tls13_cert_chain_s peer_chain;
 
   /* HelloRetryRequest handling (RFC 8446 Section 4.1.4) */
-  uint8_t hrr_received;         /* 1 if HRR was received (to detect second) */
-  uint16_t hrr_selected_group;  /* Group selected by server in HRR */
-  uint8_t *hrr_cookie;          /* Cookie from HRR (if any) */
-  size_t hrr_cookie_len;        /* Length of cookie */
-  uint8_t p256_private_key[32]; /* P-256 private key (for HRR fallback) */
-  uint8_t p256_public_key[65];  /* P-256 public key (uncompressed) */
+  struct {
+    fio_ubuf_info_s cookie;       /* Cookie from HRR (owned, if any) */
+    uint16_t selected_group;      /* Group selected by server in HRR */
+    uint8_t received;             /* 1 if HRR was received (detect second) */
+    uint8_t p256_private_key[32]; /* P-256 private key (for HRR fallback) */
+    uint8_t p256_public_key[65];  /* P-256 public key (uncompressed) */
+  } hrr;
 
   /* ALPN (Application-Layer Protocol Negotiation - RFC 7301) */
-  char alpn_protocols[256];  /* Client's offered protocols (comma-separated) */
-  size_t alpn_protocols_len; /* Length of offered protocols string */
-  char alpn_selected[256];   /* Server's selected protocol (null-terminated) */
-  size_t alpn_selected_len;  /* Length of selected protocol */
+  struct {
+    size_t offered_len;  /* Length of offered protocols string */
+    size_t selected_len; /* Length of selected protocol */
+    char offered[256];   /* Client's offered protocols (comma-separated) */
+    char selected[256];  /* Server's selected protocol (null-terminated) */
+  } alpn;
 
   /* Client Certificate Authentication (RFC 8446 Section 4.4.2) */
-  uint8_t cert_request_received;      /* 1 if CertificateRequest received */
-  uint8_t cert_request_context[255];  /* Context from CertificateRequest */
-  size_t cert_request_context_len;    /* Context length */
-  uint16_t cert_request_sig_algs[16]; /* Server's accepted sig algorithms */
-  size_t cert_request_sig_alg_count;  /* Number of accepted sig algs */
-  const uint8_t *client_cert;         /* Client's certificate (DER) */
-  size_t client_cert_len;             /* Client certificate length */
-  const uint8_t *client_private_key;  /* Client's private key */
-  size_t client_private_key_len;      /* Private key length */
-  uint16_t client_key_type;           /* Key type (signature scheme) */
-  uint8_t client_public_key[65];      /* Public key for P-256 (65 bytes) */
+  struct {
+    fio_ubuf_info_s cert;        /* Client's certificate (DER) */
+    fio_ubuf_info_s private_key; /* Client's private key */
+    size_t context_len;          /* CertificateRequest context length */
+    size_t algo_count;           /* Number of accepted sig algos */
+    uint16_t algos[16];          /* Server's accepted sig algorithms */
+    uint16_t signature_algo;     /* Signing algorithm (signature scheme) */
+    uint8_t requested;           /* 1 if CertificateRequest received */
+    uint8_t public_key[65];      /* Public key for P-256 (65 bytes) */
+    uint8_t context[255];        /* Context from CertificateRequest */
+  } auth;
 
   /* Internal flags */
   uint8_t encrypted_read;     /* 1 if reading encrypted records */
@@ -84765,16 +85879,16 @@ FIO_IFUNC void fio_tls13_client_alpn_set(fio_tls13_client_s *client,
   if (!client)
     return;
   if (!protocols || !protocols[0]) {
-    client->alpn_protocols[0] = '\0';
-    client->alpn_protocols_len = 0;
+    client->alpn.offered[0] = '\0';
+    client->alpn.offered_len = 0;
     return;
   }
   size_t len = 0;
-  while (protocols[len] && len < sizeof(client->alpn_protocols) - 1)
+  while (protocols[len] && len < sizeof(client->alpn.offered) - 1)
     ++len;
-  FIO_MEMCPY(client->alpn_protocols, protocols, len);
-  client->alpn_protocols[len] = '\0';
-  client->alpn_protocols_len = len;
+  FIO_MEMCPY(client->alpn.offered, protocols, len);
+  client->alpn.offered[len] = '\0';
+  client->alpn.offered_len = len;
 }
 
 /**
@@ -84784,9 +85898,9 @@ FIO_IFUNC void fio_tls13_client_alpn_set(fio_tls13_client_s *client,
  * @return Selected protocol string, or NULL if none negotiated
  */
 FIO_IFUNC const char *fio_tls13_client_alpn_get(fio_tls13_client_s *client) {
-  if (!client || client->alpn_selected_len == 0)
+  if (!client || client->alpn.selected_len == 0)
     return NULL;
-  return client->alpn_selected;
+  return client->alpn.selected;
 }
 
 /**
@@ -84797,25 +85911,19 @@ FIO_IFUNC const char *fio_tls13_client_alpn_get(fio_tls13_client_s *client) {
  *
  * @param client      Client context
  * @param cert        DER-encoded client certificate
- * @param cert_len    Certificate length
  * @param private_key Private key (Ed25519: 32 bytes, P-256: 32 bytes)
- * @param key_len     Private key length
- * @param key_type    Key type (FIO_TLS13_SIG_ED25519, FIO_TLS13_SIG_ECDSA_*,
- * etc)
+ * @param algo        Signature algorithm (FIO_TLS13_SIGNATURE_ED25519,
+ *                    FIO_TLS13_SIGNATURE_ECDSA_*, etc)
  */
 FIO_IFUNC void fio_tls13_client_set_cert(fio_tls13_client_s *client,
-                                         const uint8_t *cert,
-                                         size_t cert_len,
-                                         const uint8_t *private_key,
-                                         size_t key_len,
-                                         uint16_t key_type) {
+                                         fio_ubuf_info_s cert,
+                                         fio_ubuf_info_s private_key,
+                                         fio_tls13_signature_algo_e algo) {
   if (!client)
     return;
-  client->client_cert = cert;
-  client->client_cert_len = cert_len;
-  client->client_private_key = private_key;
-  client->client_private_key_len = key_len;
-  client->client_key_type = key_type;
+  client->auth.cert = cert;
+  client->auth.private_key = private_key;
+  client->auth.signature_algo = (uint16_t)algo;
 }
 
 /**
@@ -84831,7 +85939,7 @@ FIO_IFUNC void fio_tls13_client_set_public_key(fio_tls13_client_s *client,
                                                const uint8_t *public_key) {
   if (!client || !public_key)
     return;
-  FIO_MEMCPY(client->client_public_key, public_key, 65);
+  FIO_MEMCPY(client->auth.public_key, public_key, 65);
 }
 
 /**
@@ -84841,7 +85949,7 @@ FIO_IFUNC void fio_tls13_client_set_public_key(fio_tls13_client_s *client,
  * @return 1 if CertificateRequest was received, 0 otherwise
  */
 FIO_IFUNC int fio_tls13_client_cert_requested(fio_tls13_client_s *client) {
-  return client ? client->cert_request_received : 0;
+  return client ? client->auth.requested : 0;
 }
 
 /* *****************************************************************************
@@ -85172,7 +86280,7 @@ The signature context for client CertificateVerify is:
  * Internal: Build client Certificate message.
  *
  * If client has no certificate configured, sends empty certificate list.
- * The certificate_request_context MUST match what server sent.
+ * The context MUST match what server sent.
  *
  * @param client       Client context
  * @param out          Output buffer
@@ -85185,15 +86293,14 @@ FIO_SFUNC int fio___tls13_build_client_certificate(fio_tls13_client_s *client,
   if (!client || !out)
     return -1;
 
-  size_t ctx_len = client->cert_request_context_len;
-  size_t cert_len = client->client_cert_len;
-  const uint8_t *cert = client->client_cert;
+  size_t ctx_len = client->auth.context_len;
+  fio_ubuf_info_s cert = client->auth.cert;
 
   /* Calculate body size:
    * ctx_len(1) + ctx + list_len(3) + [cert_len(3) + cert + ext_len(2)] */
   size_t list_len = 0;
-  if (cert && cert_len > 0)
-    list_len = 3 + cert_len + 2; /* cert_len(3) + cert + extensions(2) */
+  if (cert.buf && cert.len > 0)
+    list_len = 3 + cert.len + 2; /* cert_len(3) + cert + extensions(2) */
 
   size_t body_len = 1 + ctx_len + 3 + list_len;
   size_t total_len = 4 + body_len;
@@ -85210,7 +86317,7 @@ FIO_SFUNC int fio___tls13_build_client_certificate(fio_tls13_client_s *client,
   /* Certificate request context (must echo server's context) */
   *p++ = (uint8_t)ctx_len;
   if (ctx_len > 0) {
-    FIO_MEMCPY(p, client->cert_request_context, ctx_len);
+    FIO_MEMCPY(p, client->auth.context, ctx_len);
     p += ctx_len;
   }
 
@@ -85219,14 +86326,14 @@ FIO_SFUNC int fio___tls13_build_client_certificate(fio_tls13_client_s *client,
   p += 3;
 
   /* Certificate entry (if we have one) */
-  if (cert && cert_len > 0) {
+  if (cert.buf && cert.len > 0) {
     /* Certificate data length */
-    fio___tls13_write_u24(p, (uint32_t)cert_len);
+    fio___tls13_write_u24(p, (uint32_t)cert.len);
     p += 3;
 
     /* Certificate data */
-    FIO_MEMCPY(p, cert, cert_len);
-    p += cert_len;
+    FIO_MEMCPY(p, cert.buf, cert.len);
+    p += cert.len;
 
     /* Extensions (empty) */
     *p++ = 0;
@@ -85234,7 +86341,7 @@ FIO_SFUNC int fio___tls13_build_client_certificate(fio_tls13_client_s *client,
   }
 
   FIO_LOG_DEBUG2("TLS 1.3 Client: Built Certificate message (%s)",
-                 (cert && cert_len > 0) ? "with cert" : "empty");
+                 (cert.buf && cert.len > 0) ? "with cert" : "empty");
 
   return (int)total_len;
 }
@@ -85256,7 +86363,7 @@ FIO_SFUNC int fio___tls13_build_client_certificate_verify(
     size_t out_capacity) {
   if (!client || !out)
     return -1;
-  if (!client->client_private_key || client->client_private_key_len == 0)
+  if (!client->auth.private_key.buf || client->auth.private_key.len == 0)
     return -1;
 
   /* Build signed content per RFC 8446 Section 4.4.3
@@ -85281,23 +86388,23 @@ FIO_SFUNC int fio___tls13_build_client_certificate_verify(
   uint8_t signature[512]; /* Max for RSA-4096 */
   size_t sig_len = 0;
 
-  switch (client->client_key_type) {
-  case FIO_TLS13_SIG_ED25519: {
-    if (client->client_private_key_len != 32)
+  switch (client->auth.signature_algo) {
+  case FIO_TLS13_SIGNATURE_ED25519: {
+    if (client->auth.private_key.len != 32)
       return -1;
     /* Ed25519 signs directly over the content */
     uint8_t ed_public_key[32];
-    fio_ed25519_public_key(ed_public_key, client->client_private_key);
+    fio_ed25519_public_key(ed_public_key, client->auth.private_key.buf);
     fio_ed25519_sign(signature,
                      signed_content,
                      signed_content_len,
-                     client->client_private_key,
+                     client->auth.private_key.buf,
                      ed_public_key);
     sig_len = 64;
     break;
   }
-  case FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256: {
-    if (client->client_private_key_len != 32)
+  case FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256: {
+    if (client->auth.private_key.len != 32)
       return -1;
     /* P-256 ECDSA: hash the signed content with SHA-256, then sign */
     fio_u256 msg_hash = fio_sha256(signed_content, signed_content_len);
@@ -85305,13 +86412,13 @@ FIO_SFUNC int fio___tls13_build_client_certificate_verify(
                             &sig_len,
                             sizeof(signature),
                             msg_hash.u8,
-                            client->client_private_key) != 0)
+                            client->auth.private_key.buf) != 0)
       return -1;
     break;
   }
   default:
     FIO_LOG_DEBUG2("TLS 1.3 Client: Unsupported signature scheme 0x%04x",
-                   client->client_key_type);
+                   client->auth.signature_algo);
     return -1;
   }
 
@@ -85329,7 +86436,7 @@ FIO_SFUNC int fio___tls13_build_client_certificate_verify(
   p += 4;
 
   /* Signature algorithm */
-  fio___tls13_write_u16(p, client->client_key_type);
+  fio___tls13_write_u16(p, client->auth.signature_algo);
   p += 2;
 
   /* Signature length */
@@ -85343,7 +86450,7 @@ FIO_SFUNC int fio___tls13_build_client_certificate_verify(
   fio_secure_zero(signature, sizeof(signature));
 
   FIO_LOG_DEBUG2("TLS 1.3 Client: Built CertificateVerify scheme=0x%04x",
-                 client->client_key_type);
+                 client->auth.signature_algo);
 
   return (int)(4 + body_len);
 }
@@ -85372,24 +86479,24 @@ FIO_SFUNC int fio___tls13_process_certificate_request(
   }
 
   /* Store context (must be echoed in client Certificate) */
-  client->cert_request_context_len = cr.certificate_request_context_len;
-  if (cr.certificate_request_context_len > 0) {
-    FIO_MEMCPY(client->cert_request_context,
-               cr.certificate_request_context,
-               cr.certificate_request_context_len);
+  client->auth.context_len = cr.context_len;
+  if (cr.context_len > 0) {
+    FIO_MEMCPY(client->auth.context,
+               cr.context,
+               cr.context_len);
   }
 
   /* Store accepted signature algorithms */
-  client->cert_request_sig_alg_count = cr.signature_algorithm_count;
-  for (size_t i = 0; i < cr.signature_algorithm_count && i < 16; ++i)
-    client->cert_request_sig_algs[i] = cr.signature_algorithms[i];
+  client->auth.algo_count = cr.algo_count;
+  for (size_t i = 0; i < cr.algo_count && i < 16; ++i)
+    client->auth.algos[i] = cr.algos[i];
 
-  client->cert_request_received = 1;
+  client->auth.requested = 1;
 
   FIO_LOG_DEBUG2("TLS 1.3 Client: CertificateRequest received (ctx_len=%zu, "
-                 "sig_algs=%zu)",
-                 cr.certificate_request_context_len,
-                 cr.signature_algorithm_count);
+                 "signature_algos=%zu)",
+                 cr.context_len,
+                 cr.algo_count);
 
   return 0;
 }
@@ -85456,7 +86563,7 @@ FIO_SFUNC int fio___tls13_handle_hello_retry_request(
     size_t hrr_msg_len) {
   /* RFC 8446 Section 4.1.4: Client MUST abort with unexpected_message
    * if it receives a second HelloRetryRequest */
-  if (client->hrr_received) {
+  if (client->hrr.received) {
     FIO_LOG_DEBUG2("TLS 1.3: Received second HelloRetryRequest - aborting");
     fio___tls13_set_error(client,
                           FIO_TLS13_ALERT_LEVEL_FATAL,
@@ -85518,8 +86625,8 @@ FIO_SFUNC int fio___tls13_handle_hello_retry_request(
   }
 
   /* Store selected group for retry */
-  client->hrr_selected_group = selected_group;
-  client->hrr_received = 1;
+  client->hrr.selected_group = selected_group;
+  client->hrr.received = 1;
 
   /* Parse HRR extensions to extract cookie if present */
   /* The HRR message format is same as ServerHello, parse extensions */
@@ -85566,15 +86673,15 @@ FIO_SFUNC int fio___tls13_handle_hello_retry_request(
         uint16_t cookie_len = fio___tls13_read_u16(p);
         if (cookie_len > 0 && cookie_len <= ext_data_len - 2) {
           /* Free old cookie if any */
-          if (client->hrr_cookie) {
-            FIO_MEM_FREE(client->hrr_cookie, client->hrr_cookie_len);
+          if (client->hrr.cookie.buf) {
+            FIO_MEM_FREE(client->hrr.cookie.buf, client->hrr.cookie.len);
           }
           /* Allocate and copy cookie */
-          client->hrr_cookie =
+          client->hrr.cookie.buf =
               (uint8_t *)FIO_MEM_REALLOC(NULL, 0, cookie_len, 0);
-          if (client->hrr_cookie) {
-            FIO_MEMCPY(client->hrr_cookie, p + 2, cookie_len);
-            client->hrr_cookie_len = cookie_len;
+          if (client->hrr.cookie.buf) {
+            FIO_MEMCPY(client->hrr.cookie.buf, p + 2, cookie_len);
+            client->hrr.cookie.len = cookie_len;
             FIO_LOG_DEBUG2("TLS 1.3 HRR: Stored cookie (%zu bytes)",
                            (size_t)cookie_len);
           }
@@ -85597,7 +86704,7 @@ FIO_SFUNC int fio___tls13_handle_hello_retry_request(
   if (selected_group == FIO_TLS13_GROUP_SECP256R1) {
 #if defined(H___FIO_P256___H)
     /* Generate P-256 keypair */
-    fio_p256_keypair(client->p256_private_key, client->p256_public_key);
+    fio_p256_keypair(client->hrr.p256_private_key, client->hrr.p256_public_key);
     FIO_LOG_DEBUG2("TLS 1.3 HRR: Generated P-256 key share");
 #else
     FIO_LOG_DEBUG2("TLS 1.3 HRR: P-256 not available");
@@ -85685,7 +86792,7 @@ FIO_SFUNC int fio___tls13_process_server_hello(fio_tls13_client_s *client,
 #if defined(H___FIO_P256___H)
     /* P-256 - compute shared secret (after HRR) */
     if (fio_p256_shared_secret(client->shared_secret,
-                               client->p256_private_key,
+                               client->hrr.p256_private_key,
                                sh.key_share,
                                sh.key_share_len) != 0) {
       fio___tls13_set_error(client,
@@ -85737,13 +86844,13 @@ FIO_SFUNC int fio___tls13_process_encrypted_extensions(
   /* Store selected ALPN protocol if present */
   if (ee.alpn_selected_len > 0) {
     size_t copy_len = ee.alpn_selected_len;
-    if (copy_len >= sizeof(client->alpn_selected))
-      copy_len = sizeof(client->alpn_selected) - 1;
-    FIO_MEMCPY(client->alpn_selected, ee.alpn_selected, copy_len);
-    client->alpn_selected[copy_len] = '\0';
-    client->alpn_selected_len = copy_len;
+    if (copy_len >= sizeof(client->alpn.selected))
+      copy_len = sizeof(client->alpn.selected) - 1;
+    FIO_MEMCPY(client->alpn.selected, ee.alpn_selected, copy_len);
+    client->alpn.selected[copy_len] = '\0';
+    client->alpn.selected_len = copy_len;
     FIO_LOG_DEBUG2("TLS 1.3 Client: ALPN negotiated: %s",
-                   client->alpn_selected);
+                   client->alpn.selected);
   }
 
   return 0;
@@ -85764,14 +86871,14 @@ FIO_SFUNC int fio___tls13_process_certificate(fio_tls13_client_s *client,
   }
 
   /* Reset certificate chain */
-  client->cert_chain_count = 0;
-  client->cert_data_buf_len = 0;
+  client->peer_chain.count = 0;
+  client->peer_chain.buf_len = 0;
 
   /* Parse certificate chain structure */
   const uint8_t *p = data;
   const uint8_t *end = data + data_len;
 
-  /* Skip certificate_request_context */
+  /* Skip context */
   if (p >= end)
     return 0;
   uint8_t ctx_len = *p++;
@@ -85824,24 +86931,24 @@ FIO_SFUNC int fio___tls13_process_certificate(fio_tls13_client_s *client,
   }
 
   /* Allocate or reallocate buffer if needed */
-  if (total_cert_size > client->cert_data_buf_cap) {
-    if (client->cert_data_buf)
-      FIO_MEM_FREE(client->cert_data_buf, client->cert_data_buf_cap);
-    client->cert_data_buf =
+  if (total_cert_size > client->peer_chain.buf_cap) {
+    if (client->peer_chain.buf)
+      FIO_MEM_FREE(client->peer_chain.buf, client->peer_chain.buf_cap);
+    client->peer_chain.buf =
         (uint8_t *)FIO_MEM_REALLOC(NULL, 0, total_cert_size, 0);
-    if (!client->cert_data_buf) {
-      client->cert_data_buf_cap = 0;
+    if (!client->peer_chain.buf) {
+      client->peer_chain.buf_cap = 0;
       fio___tls13_set_error(client,
                             FIO_TLS13_ALERT_LEVEL_FATAL,
                             FIO_TLS13_ALERT_INTERNAL_ERROR);
       return -1;
     }
-    client->cert_data_buf_cap = total_cert_size;
+    client->peer_chain.buf_cap = total_cert_size;
   }
 
   /* Second pass: copy certificate data to persistent buffer */
-  uint8_t *buf_ptr = client->cert_data_buf;
-  while (p < list_end && client->cert_chain_count < 10) {
+  uint8_t *buf_ptr = client->peer_chain.buf;
+  while (p < list_end && client->peer_chain.count < 10) {
     if (p + 3 > list_end)
       break;
     size_t cert_len = ((size_t)p[0] << 16) | ((size_t)p[1] << 8) | p[2];
@@ -85851,9 +86958,9 @@ FIO_SFUNC int fio___tls13_process_certificate(fio_tls13_client_s *client,
 
     /* Copy certificate data to persistent buffer */
     FIO_MEMCPY(buf_ptr, p, cert_len);
-    client->cert_chain[client->cert_chain_count] = buf_ptr;
-    client->cert_chain_lens[client->cert_chain_count] = cert_len;
-    ++client->cert_chain_count;
+    client->peer_chain.certs[client->peer_chain.count].buf = buf_ptr;
+    client->peer_chain.certs[client->peer_chain.count].len = cert_len;
+    ++client->peer_chain.count;
     buf_ptr += cert_len;
     p += cert_len;
 
@@ -85867,17 +86974,17 @@ FIO_SFUNC int fio___tls13_process_certificate(fio_tls13_client_s *client,
     p += ext_len;
   }
 
-  client->cert_data_buf_len = (size_t)(buf_ptr - client->cert_data_buf);
+  client->peer_chain.buf_len = (size_t)(buf_ptr - client->peer_chain.buf);
 
-  /* Update server_cert to point to first certificate in persistent buffer */
-  if (client->cert_chain_count > 0) {
-    client->server_cert = client->cert_chain[0];
-    client->server_cert_len = client->cert_chain_lens[0];
+  /* Update peer_cert to point to first certificate in persistent buffer */
+  if (client->peer_chain.count > 0) {
+    client->peer_cert.buf = client->peer_chain.certs[0].buf;
+    client->peer_cert.len = client->peer_chain.certs[0].len;
   }
 
   FIO_LOG_DEBUG2("TLS 1.3: Received %zu certificates in chain (%zu bytes)",
-                 client->cert_chain_count,
-                 client->cert_data_buf_len);
+                 client->peer_chain.count,
+                 client->peer_chain.buf_len);
   return 0;
 }
 
@@ -85922,9 +87029,9 @@ FIO_SFUNC int fio___tls13_verify_cv_signature(fio_tls13_client_s *client,
 
   /* Determine hash algorithm from signature scheme */
   switch (sig_scheme) {
-  case FIO_TLS13_SIG_RSA_PSS_RSAE_SHA256:
-  case FIO_TLS13_SIG_RSA_PKCS1_SHA256:
-  case FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256: {
+  case FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256:
+  case FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA256:
+  case FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256: {
     fio_sha256_s sha = fio_sha256_init();
     fio_sha256_consume(&sha, signed_content, signed_content_len);
     fio_u256 h = fio_sha256_finalize(&sha);
@@ -85933,19 +87040,16 @@ FIO_SFUNC int fio___tls13_verify_cv_signature(fio_tls13_client_s *client,
     rsa_hash_alg = FIO_RSA_HASH_SHA256;
     break;
   }
-  case FIO_TLS13_SIG_RSA_PSS_RSAE_SHA384:
-  case FIO_TLS13_SIG_RSA_PKCS1_SHA384:
-  case FIO_TLS13_SIG_ECDSA_SECP384R1_SHA384: {
-    /* SHA-384 uses SHA-512 internals, truncated to 48 bytes */
-    fio_sha512_s sha = fio_sha512_init();
-    fio_sha512_consume(&sha, signed_content, signed_content_len);
-    fio_u512 h = fio_sha512_finalize(&sha);
-    FIO_MEMCPY(content_hash, h.u8, 48); /* Use first 48 bytes (SHA-384) */
+  case FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA384:
+  case FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA384:
+  case FIO_TLS13_SIGNATURE_ECDSA_SECP384R1_SHA384: {
+    fio_u512 h = fio_sha384(signed_content, signed_content_len);
+    FIO_MEMCPY(content_hash, h.u8, 48);
     expected_hash_len = 48;
     rsa_hash_alg = FIO_RSA_HASH_SHA384;
     break;
   }
-  case FIO_TLS13_SIG_ED25519:
+  case FIO_TLS13_SIGNATURE_ED25519:
     /* Ed25519 does not pre-hash the message */
     expected_hash_len = 0;
     rsa_hash_alg = FIO_RSA_HASH_SHA256; /* unused */
@@ -85957,20 +87061,20 @@ FIO_SFUNC int fio___tls13_verify_cv_signature(fio_tls13_client_s *client,
 
   /* Verify signature based on algorithm and key type */
   switch (sig_scheme) {
-  case FIO_TLS13_SIG_RSA_PSS_RSAE_SHA256:
-  case FIO_TLS13_SIG_RSA_PSS_RSAE_SHA384: {
+  case FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256:
+  case FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA384: {
     /* RSA-PSS verification - required for TLS 1.3 */
-    if (cert->key_type != FIO_X509_KEY_RSA) {
+    if (cert->key_algo != FIO_X509_KEY_RSA) {
       FIO_LOG_DEBUG2("TLS 1.3: Certificate key type mismatch for RSA-PSS");
       return -1;
     }
     /* Build RSA public key structure */
     fio_rsa_pubkey_s pubkey;
     FIO_MEMSET(&pubkey, 0, sizeof(pubkey));
-    pubkey.n = cert->pubkey.rsa.n;
-    pubkey.n_len = cert->pubkey.rsa.n_len;
-    pubkey.e = cert->pubkey.rsa.e;
-    pubkey.e_len = cert->pubkey.rsa.e_len;
+    pubkey.n = cert->pubkey.rsa.n.buf;
+    pubkey.n_len = cert->pubkey.rsa.n.len;
+    pubkey.e = cert->pubkey.rsa.e.buf;
+    pubkey.e_len = cert->pubkey.rsa.e.len;
 
     if (fio_rsa_verify_pss(signature,
                            sig_len,
@@ -85983,19 +87087,19 @@ FIO_SFUNC int fio___tls13_verify_cv_signature(fio_tls13_client_s *client,
     }
     break;
   }
-  case FIO_TLS13_SIG_RSA_PKCS1_SHA256:
-  case FIO_TLS13_SIG_RSA_PKCS1_SHA384: {
+  case FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA256:
+  case FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA384: {
     /* RSA PKCS#1 v1.5 - legacy, but some servers still use it */
-    if (cert->key_type != FIO_X509_KEY_RSA) {
+    if (cert->key_algo != FIO_X509_KEY_RSA) {
       FIO_LOG_DEBUG2("TLS 1.3: Certificate key type mismatch for RSA-PKCS1");
       return -1;
     }
     fio_rsa_pubkey_s pubkey;
     FIO_MEMSET(&pubkey, 0, sizeof(pubkey));
-    pubkey.n = cert->pubkey.rsa.n;
-    pubkey.n_len = cert->pubkey.rsa.n_len;
-    pubkey.e = cert->pubkey.rsa.e;
-    pubkey.e_len = cert->pubkey.rsa.e_len;
+    pubkey.n = cert->pubkey.rsa.n.buf;
+    pubkey.n_len = cert->pubkey.rsa.n.len;
+    pubkey.e = cert->pubkey.rsa.e.buf;
+    pubkey.e_len = cert->pubkey.rsa.e.len;
 
     if (fio_rsa_verify_pkcs1(signature,
                              sig_len,
@@ -86008,9 +87112,9 @@ FIO_SFUNC int fio___tls13_verify_cv_signature(fio_tls13_client_s *client,
     }
     break;
   }
-  case FIO_TLS13_SIG_ED25519: {
+  case FIO_TLS13_SIGNATURE_ED25519: {
     /* Ed25519 - sign directly over the content (no pre-hashing) */
-    if (cert->key_type != FIO_X509_KEY_ED25519) {
+    if (cert->key_algo != FIO_X509_KEY_ED25519) {
       FIO_LOG_DEBUG2("TLS 1.3: Certificate key type mismatch for Ed25519");
       return -1;
     }
@@ -86021,28 +87125,28 @@ FIO_SFUNC int fio___tls13_verify_cv_signature(fio_tls13_client_s *client,
     if (fio_ed25519_verify(signature,
                            signed_content,
                            signed_content_len,
-                           cert->pubkey.ed25519.key) != 0) {
+                           cert->pubkey.ed25519.key.buf) != 0) {
       FIO_LOG_DEBUG2("TLS 1.3: Ed25519 signature verification failed");
       return -1;
     }
     break;
   }
-  case FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256: {
+  case FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256: {
 #if defined(H___FIO_P256___H)
     /* ECDSA P-256 with SHA-256 */
-    if (cert->key_type != FIO_X509_KEY_ECDSA_P256) {
+    if (cert->key_algo != FIO_X509_KEY_ECDSA_P256) {
       FIO_LOG_DEBUG2("TLS 1.3: Certificate key type mismatch for ECDSA P-256");
       return -1;
     }
-    if (!cert->pubkey.ecdsa.point || cert->pubkey.ecdsa.point_len != 65) {
+    if (!cert->pubkey.ecdsa.point.buf || cert->pubkey.ecdsa.point.len != 65) {
       FIO_LOG_DEBUG2("TLS 1.3: Invalid ECDSA P-256 public key");
       return -1;
     }
     if (fio_ecdsa_p256_verify(signature,
                               sig_len,
                               content_hash,
-                              cert->pubkey.ecdsa.point,
-                              cert->pubkey.ecdsa.point_len) != 0) {
+                              cert->pubkey.ecdsa.point.buf,
+                              cert->pubkey.ecdsa.point.len) != 0) {
       FIO_LOG_DEBUG2("TLS 1.3: ECDSA P-256 signature verification failed");
       return -1;
     }
@@ -86052,22 +87156,22 @@ FIO_SFUNC int fio___tls13_verify_cv_signature(fio_tls13_client_s *client,
     return -1;
 #endif
   }
-  case FIO_TLS13_SIG_ECDSA_SECP384R1_SHA384: {
+  case FIO_TLS13_SIGNATURE_ECDSA_SECP384R1_SHA384: {
 #if defined(H___FIO_P384___H)
     /* ECDSA P-384 with SHA-384 */
-    if (cert->key_type != FIO_X509_KEY_ECDSA_P384) {
+    if (cert->key_algo != FIO_X509_KEY_ECDSA_P384) {
       FIO_LOG_DEBUG2("TLS 1.3: Certificate key type mismatch for ECDSA P-384");
       return -1;
     }
-    if (!cert->pubkey.ecdsa.point || cert->pubkey.ecdsa.point_len != 97) {
+    if (!cert->pubkey.ecdsa.point.buf || cert->pubkey.ecdsa.point.len != 97) {
       FIO_LOG_DEBUG2("TLS 1.3: Invalid ECDSA P-384 public key");
       return -1;
     }
     if (fio_ecdsa_p384_verify(signature,
                               sig_len,
                               content_hash,
-                              cert->pubkey.ecdsa.point,
-                              cert->pubkey.ecdsa.point_len) != 0) {
+                              cert->pubkey.ecdsa.point.buf,
+                              cert->pubkey.ecdsa.point.len) != 0) {
       FIO_LOG_DEBUG2("TLS 1.3: ECDSA P-384 signature verification failed");
       return -1;
     }
@@ -86098,9 +87202,9 @@ FIO_SFUNC int fio___tls13_process_certificate_verify(fio_tls13_client_s *client,
   }
 
   /* Store signature info */
-  client->server_signature = cv.signature;
-  client->server_signature_len = cv.signature_len;
-  client->server_signature_scheme = cv.signature_scheme;
+  client->peer_signature.buf = cv.signature.buf;
+  client->peer_signature.len = cv.signature.len;
+  client->peer_signature_algo = cv.signature_algo;
 
   /* Skip verification if explicitly disabled */
   if (client->skip_cert_verify) {
@@ -86111,7 +87215,7 @@ FIO_SFUNC int fio___tls13_process_certificate_verify(fio_tls13_client_s *client,
 
 #if defined(H___FIO_X509___H) && defined(H___FIO_RSA___H)
   /* Must have at least one certificate to verify against */
-  if (client->cert_chain_count == 0) {
+  if (client->peer_chain.count == 0) {
     FIO_LOG_DEBUG2("TLS 1.3: No certificates received for CV verification");
     fio___tls13_set_error(client,
                           FIO_TLS13_ALERT_LEVEL_FATAL,
@@ -86122,8 +87226,8 @@ FIO_SFUNC int fio___tls13_process_certificate_verify(fio_tls13_client_s *client,
   /* Parse the end-entity certificate to get the public key */
   fio_x509_cert_s cert;
   if (fio_x509_parse(&cert,
-                     client->cert_chain[0],
-                     client->cert_chain_lens[0]) != 0) {
+                     client->peer_chain.certs[0].buf,
+                     client->peer_chain.certs[0].len) != 0) {
     FIO_LOG_DEBUG2("TLS 1.3: Failed to parse server certificate for CV");
     client->cert_error = FIO_X509_ERR_PARSE;
     fio___tls13_set_error(client,
@@ -86135,9 +87239,9 @@ FIO_SFUNC int fio___tls13_process_certificate_verify(fio_tls13_client_s *client,
   /* Verify the CertificateVerify signature */
   if (fio___tls13_verify_cv_signature(client,
                                       &cert,
-                                      cv.signature_scheme,
-                                      cv.signature,
-                                      cv.signature_len) != 0) {
+                                      cv.signature_algo,
+                                      cv.signature.buf,
+                                      cv.signature.len) != 0) {
     FIO_LOG_DEBUG2("TLS 1.3: CertificateVerify signature invalid");
     fio___tls13_set_error(client,
                           FIO_TLS13_ALERT_LEVEL_FATAL,
@@ -86177,7 +87281,7 @@ FIO_SFUNC int fio___tls13_verify_certificate_chain(fio_tls13_client_s *client) {
   }
 
   /* Must have at least one certificate */
-  if (client->cert_chain_count == 0) {
+  if (client->peer_chain.count == 0) {
     FIO_LOG_DEBUG2("TLS 1.3: No certificates to verify");
     client->cert_error = FIO_X509_ERR_EMPTY_CHAIN;
     return -1;
@@ -86189,9 +87293,8 @@ FIO_SFUNC int fio___tls13_verify_certificate_chain(fio_tls13_client_s *client) {
   /* Use x509 chain verification if trust store is provided */
   if (client->trust_store != NULL) {
     int result =
-        fio_x509_verify_chain(client->cert_chain,
-                              client->cert_chain_lens,
-                              client->cert_chain_count,
+        fio_x509_verify_chain(client->peer_chain.certs,
+                              client->peer_chain.count,
                               client->server_name,
                               current_time,
                               (fio_x509_trust_store_s *)client->trust_store);
@@ -86408,7 +87511,7 @@ FIO_SFUNC int fio___tls13_process_handshake_message(fio_tls13_client_s *client,
 
       /* If server requested client certificate, send Certificate and
        * CertificateVerify before Finished (RFC 8446 Section 4.4) */
-      if (client->cert_request_received) {
+      if (client->auth.requested) {
         /* Build client Certificate */
         int cert_len =
             fio___tls13_build_client_certificate(client,
@@ -86426,7 +87529,7 @@ FIO_SFUNC int fio___tls13_process_handshake_message(fio_tls13_client_s *client,
         hs_msgs_len += (size_t)cert_len;
 
         /* Build client CertificateVerify (only if we sent a certificate) */
-        if (client->client_cert && client->client_cert_len > 0) {
+        if (client->auth.cert.buf && client->auth.cert.len > 0) {
           int cv_len = fio___tls13_build_client_certificate_verify(
               client,
               hs_msgs + hs_msgs_len,
@@ -86559,32 +87662,32 @@ FIO_SFUNC int fio___tls13_build_client_hello2(fio_tls13_client_s *client,
   /* supported_groups extension (include hybrid if enabled) */
   p += fio___tls13_write_ext_supported_groups(p, client->use_hybrid);
 
-  /* signature_algorithms extension */
+  /* algos extension */
   p += fio___tls13_write_ext_signature_algorithms(p);
 
   /* Cookie extension (if provided in HRR) */
-  if (client->hrr_cookie && client->hrr_cookie_len > 0) {
+  if (client->hrr.cookie.buf && client->hrr.cookie.len > 0) {
     /* Extension type: cookie (44) */
     fio___tls13_write_u16(p, FIO_TLS13_EXT_COOKIE);
     p += 2;
     /* Extension data length: cookie_len(2) + cookie */
-    fio___tls13_write_u16(p, (uint16_t)(2 + client->hrr_cookie_len));
+    fio___tls13_write_u16(p, (uint16_t)(2 + client->hrr.cookie.len));
     p += 2;
     /* Cookie length */
-    fio___tls13_write_u16(p, (uint16_t)client->hrr_cookie_len);
+    fio___tls13_write_u16(p, (uint16_t)client->hrr.cookie.len);
     p += 2;
     /* Cookie data */
-    FIO_MEMCPY(p, client->hrr_cookie, client->hrr_cookie_len);
-    p += client->hrr_cookie_len;
+    FIO_MEMCPY(p, client->hrr.cookie.buf, client->hrr.cookie.len);
+    p += client->hrr.cookie.len;
     FIO_LOG_DEBUG2("TLS 1.3 CH2: Included cookie (%zu bytes)",
-                   client->hrr_cookie_len);
+                   client->hrr.cookie.len);
   }
 
   /* key_share extension - SINGLE entry for server-selected group */
   fio___tls13_write_u16(p, FIO_TLS13_EXT_KEY_SHARE);
   p += 2;
 
-  if (client->hrr_selected_group == FIO_TLS13_GROUP_X25519) {
+  if (client->hrr.selected_group == FIO_TLS13_GROUP_X25519) {
     /* X25519: entries_len(2) + group(2) + key_len(2) + key(32) = 38 bytes */
     fio___tls13_write_u16(p, 2 + 36); /* Extension data length */
     p += 2;
@@ -86596,7 +87699,7 @@ FIO_SFUNC int fio___tls13_build_client_hello2(fio_tls13_client_s *client,
     p += 2;
     fio_memcpy32(p, client->x25519_public_key);
     p += 32;
-  } else if (client->hrr_selected_group == FIO_TLS13_GROUP_SECP256R1) {
+  } else if (client->hrr.selected_group == FIO_TLS13_GROUP_SECP256R1) {
 #if defined(H___FIO_P256___H)
     /* P-256: entries_len(2) + group(2) + key_len(2) + key(65) = 71 bytes */
     fio___tls13_write_u16(p, 2 + 69); /* Extension data length */
@@ -86607,7 +87710,7 @@ FIO_SFUNC int fio___tls13_build_client_hello2(fio_tls13_client_s *client,
     p += 2;
     fio___tls13_write_u16(p, 65); /* Key length (uncompressed point) */
     p += 2;
-    FIO_MEMCPY(p, client->p256_public_key, 65);
+    FIO_MEMCPY(p, client->hrr.p256_public_key, 65);
     p += 65;
 #else
     FIO_LOG_DEBUG2("TLS 1.3 CH2: P-256 not available");
@@ -86615,7 +87718,7 @@ FIO_SFUNC int fio___tls13_build_client_hello2(fio_tls13_client_s *client,
 #endif
   } else {
     FIO_LOG_DEBUG2("TLS 1.3 CH2: Unsupported group 0x%04x",
-                   client->hrr_selected_group);
+                   client->hrr.selected_group);
     return -1;
   }
 
@@ -86646,7 +87749,7 @@ FIO_SFUNC int fio___tls13_build_client_hello2(fio_tls13_client_s *client,
 
   FIO_LOG_DEBUG2("TLS 1.3: Built ClientHello2 (%zu bytes) for group 0x%04x",
                  total_len,
-                 client->hrr_selected_group);
+                 client->hrr.selected_group);
 
   return (int)total_len;
 }
@@ -86688,23 +87791,23 @@ SFUNC void fio_tls13_client_destroy(fio_tls13_client_s *client) {
     return;
 
   /* Free certificate data buffer */
-  if (client->cert_data_buf) {
-    FIO_MEM_FREE(client->cert_data_buf, client->cert_data_buf_cap);
-    client->cert_data_buf = NULL;
-    client->cert_data_buf_len = 0;
-    client->cert_data_buf_cap = 0;
+  if (client->peer_chain.buf) {
+    FIO_MEM_FREE(client->peer_chain.buf, client->peer_chain.buf_cap);
+    client->peer_chain.buf = NULL;
+    client->peer_chain.buf_len = 0;
+    client->peer_chain.buf_cap = 0;
   }
 
   /* Free HRR cookie if allocated */
-  if (client->hrr_cookie) {
-    FIO_MEM_FREE(client->hrr_cookie, client->hrr_cookie_len);
-    client->hrr_cookie = NULL;
-    client->hrr_cookie_len = 0;
+  if (client->hrr.cookie.buf) {
+    FIO_MEM_FREE(client->hrr.cookie.buf, client->hrr.cookie.len);
+    client->hrr.cookie.buf = NULL;
+    client->hrr.cookie.len = 0;
   }
 
   /* Clear all sensitive data */
   fio_secure_zero(client->x25519_private_key, 32);
-  fio_secure_zero(client->p256_private_key, 32);
+  fio_secure_zero(client->hrr.p256_private_key, 32);
   fio_secure_zero(client->shared_secret, 64);
   fio_secure_zero(client->hybrid_private_key, 2432);
   fio_secure_zero(client->hybrid_public_key, 1216);
@@ -86794,7 +87897,7 @@ FIO_SFUNC int fio___tls13_build_client_hello_full(uint8_t *out,
   p += fio___tls13_write_ext_supported_groups(p, 0);
 #endif
 
-  /* signature_algorithms extension */
+  /* algos extension */
   p += fio___tls13_write_ext_signature_algorithms(p);
 
   /* ALPN extension (RFC 7301) */
@@ -86827,7 +87930,7 @@ SFUNC int fio_tls13_client_start(fio_tls13_client_s *client,
                               FIO_TLS13_CIPHER_SUITE_AES_256_GCM_SHA384};
   size_t cipher_suite_count = 3;
   const char *alpn_protocols =
-      client->alpn_protocols_len > 0 ? client->alpn_protocols : NULL;
+      client->alpn.offered_len > 0 ? client->alpn.offered : NULL;
 
   /* Build handshake message: need space for hybrid key share (1216 bytes)
    * Max size: ~1600 bytes with all extensions */
@@ -86872,7 +87975,7 @@ SFUNC int fio_tls13_client_start(fio_tls13_client_s *client,
   /* supported_groups extension (include hybrid if enabled) */
   p += fio___tls13_write_ext_supported_groups(p, client->use_hybrid);
 
-  /* signature_algorithms extension */
+  /* algos extension */
   p += fio___tls13_write_ext_signature_algorithms(p);
 
   /* ALPN extension (RFC 7301) */
@@ -87173,30 +88276,26 @@ typedef enum {
 
 /** Parsed ClientHello message */
 typedef struct {
-  uint8_t random[32];                /* Client random */
-  uint8_t legacy_session_id[32];     /* Legacy session ID (for middlebox) */
-  uint8_t legacy_session_id_len;     /* Length of legacy session ID */
-  uint16_t cipher_suites[16];        /* Offered cipher suites */
-  size_t cipher_suite_count;         /* Number of cipher suites */
-  uint16_t supported_groups[8];      /* Offered key exchange groups */
-  size_t supported_group_count;      /* Number of groups */
-  uint16_t signature_algorithms[16]; /* Offered signature algorithms */
-  size_t signature_algorithm_count;  /* Number of signature algorithms */
+  fio_ubuf_info_s server_name;      /* SNI hostname (view into data) */
+  fio_buf_info_s alpn_protocols[8]; /* ALPN protocol names (views) */
+  size_t cipher_suite_count;        /* Number of cipher suites */
+  size_t supported_group_count;     /* Number of groups */
+  size_t algo_count;                /* Number of signature algorithms */
+  size_t key_share_len;             /* Total key share data length */
+  size_t key_share_count;           /* Number of key shares */
+  size_t alpn_protocol_count;       /* Number of ALPN protocols */
+  int has_supported_versions;       /* 1 if TLS 1.3 supported */
+  uint16_t cipher_suites[16];       /* Offered cipher suites */
+  uint16_t supported_groups[8];     /* Offered key exchange groups */
+  uint16_t algos[16];               /* Offered signature algorithms */
+  uint16_t key_share_groups[4];     /* Groups for key shares */
+  uint16_t key_share_offsets[4];    /* Offsets into key_shares */
+  uint16_t key_share_lens[4];       /* Lengths of each key share */
+  uint8_t legacy_session_id_len;    /* Length of legacy session ID */
+  uint8_t random[32];               /* Client random */
+  uint8_t legacy_session_id[32];    /* Legacy session ID (for middlebox) */
   uint8_t key_shares[2560]; /* Key share data (1216*2 + margin for hybrid) */
-  size_t key_share_len;     /* Total key share data length */
-  uint16_t key_share_groups[4];  /* Groups for key shares */
-  uint16_t key_share_offsets[4]; /* Offsets into key_shares */
-  uint16_t
-      key_share_lens[4]; /* Lengths of each key share (up to 1216 for hybrid) */
-  size_t key_share_count;     /* Number of key shares */
-  const char *server_name;    /* SNI hostname (pointer into data) */
-  size_t server_name_len;     /* SNI hostname length */
-  int has_supported_versions; /* 1 if TLS 1.3 supported */
-  /* ALPN (Application-Layer Protocol Negotiation) */
-  const char *alpn_protocols[8]; /* ALPN protocol names (pointers into data) */
-  size_t alpn_protocol_lens[8];  /* ALPN protocol name lengths */
-  size_t alpn_protocol_count;    /* Number of ALPN protocols */
-} fio_tls13_client_hello_s;
+} fio___tls13_client_hello_s;
 
 /** TLS 1.3 Server Context */
 typedef struct {
@@ -87206,7 +88305,7 @@ typedef struct {
   /* Negotiated parameters */
   uint16_t cipher_suite;     /* Selected cipher suite */
   uint16_t key_share_group;  /* Selected key exchange group */
-  uint16_t signature_scheme; /* Selected signature algorithm */
+  uint16_t signature_algo; /* Selected signature algorithm */
   int use_sha384;            /* 0 = SHA-256, 1 = SHA-384 */
 
   /* Key material */
@@ -87238,49 +88337,45 @@ typedef struct {
   fio_sha256_s transcript_sha256; /* For SHA-256 cipher suites */
   fio_sha512_s transcript_sha384; /* For SHA-384 cipher suites */
 
-  /* Certificate chain (DER-encoded certificates) */
-  const uint8_t **cert_chain;    /* Array of certificate pointers */
-  const size_t *cert_chain_lens; /* Array of certificate lengths */
-  size_t cert_chain_count;       /* Number of certificates */
-
-  /* Private key for signing (Ed25519, P-256, or RSA) */
-  const uint8_t *private_key; /* Private key data */
-  size_t private_key_len;     /* Private key length */
-  uint16_t private_key_type;  /* Key type (signature scheme) */
-  /* Public key for P-256 signing (65 bytes: 0x04 || x || y) */
-  uint8_t public_key[65];
+  /* Server credentials (not owned) */
+  struct {
+    const fio_ubuf_info_s *chain; /* Certificate chain views */
+    size_t chain_count;           /* Number of certificates */
+    fio_ubuf_info_s private_key;  /* Private key (Ed25519, P-256, or RSA) */
+    uint16_t signature_algo;      /* Signing algorithm (signature scheme) */
+    uint8_t public_key[65];       /* P-256 public key (0x04 || x || y) */
+  } credentials;
 
   /* Client info (from ClientHello) */
-  char client_sni[256];          /* Client's SNI hostname */
-  size_t client_sni_len;         /* SNI length */
-  uint8_t legacy_session_id[32]; /* Client's legacy session ID (to echo) */
+  size_t peer_sni_len;           /* SNI length */
+  char peer_sni[256];            /* Client's SNI hostname */
   uint8_t legacy_session_id_len; /* Length of legacy session ID */
+  uint8_t legacy_session_id[32]; /* Client's legacy session ID (to echo) */
 
   /* ALPN (Application-Layer Protocol Negotiation) */
-  char selected_alpn[256];     /* Selected ALPN protocol name */
-  size_t selected_alpn_len;    /* Selected ALPN protocol length */
-  char alpn_supported[256];    /* Server's supported protocols (comma-sep) */
-  size_t alpn_supported_len;   /* Length of supported protocols string */
-  const char **alpn_protocols; /* Server's supported ALPN protocols */
-  const size_t *alpn_protocol_lens; /* Server's ALPN protocol lengths */
-  size_t alpn_protocol_count;       /* Number of server's ALPN protocols */
+  struct {
+    const fio_buf_info_s *list; /* Server's supported ALPN protocols */
+    size_t list_count;          /* Number of supported protocols */
+    size_t selected_len;        /* Selected ALPN protocol length */
+    size_t supported_len;       /* Length of supported protocols string */
+    char selected[256];         /* Selected ALPN protocol name */
+    char supported[256];        /* Server's supported protocols (comma-sep) */
+  } alpn;
 
   /* Error info */
   uint8_t alert_level;
   uint8_t alert_description;
 
   /* Client Certificate Authentication (RFC 8446 Section 4.3.2, 4.4.2, 4.4.3) */
-  uint8_t require_client_cert;          /* 0=none, 1=optional, 2=required */
-  uint8_t cert_request_context[32];     /* Random context for CertRequest */
-  size_t cert_request_context_len;      /* Context length */
-  uint8_t client_cert_received;         /* 1 if client sent Certificate */
-  const uint8_t *client_cert_chain[10]; /* Client's certificate chain */
-  size_t client_cert_chain_lens[10];    /* Certificate lengths */
-  size_t client_cert_chain_count;       /* Number of certificates */
-  uint8_t *client_cert_data_buf;        /* Buffer for client cert data */
-  size_t client_cert_data_buf_len;      /* Data length in buffer */
-  size_t client_cert_data_buf_cap;      /* Buffer capacity */
-  uint8_t client_cert_verified;         /* 1 if client cert verified */
+  struct {
+    fio___tls13_cert_chain_s chain; /* Client's chain (views + owned buf) */
+    void *trust_store;              /* fio_x509_trust_store_s* or NULL */
+    size_t context_len;             /* CertRequest context length */
+    uint8_t require;                /* 0=none, 1=optional, 2=required */
+    uint8_t received;               /* 1 if client sent Certificate */
+    uint8_t verified;               /* 1 if client cert verified */
+    uint8_t context[32];            /* Random context for CertRequest */
+  } peer_auth;
 
   /* Internal flags */
   uint8_t encrypted_read;     /* 1 if reading encrypted records */
@@ -87310,28 +88405,40 @@ SFUNC void fio_tls13_server_destroy(fio_tls13_server_s *server);
 /**
  * Set certificate chain for server authentication.
  *
- * @param server     Server context
- * @param certs      Array of DER-encoded certificate pointers
- * @param cert_lens  Array of certificate lengths
- * @param cert_count Number of certificates (first is end-entity)
+ * The chain array and the certificate data it points to must remain valid
+ * for the lifetime of the server context (views are stored, not copied).
+ *
+ * @param server Server context
+ * @param chain  Array of DER-encoded certificate views
+ * @param count  Number of certificates (first is end-entity)
  */
 SFUNC void fio_tls13_server_set_cert_chain(fio_tls13_server_s *server,
-                                           const uint8_t **certs,
-                                           const size_t *cert_lens,
-                                           size_t cert_count);
+                                           const fio_ubuf_info_s *chain,
+                                           size_t count);
 
 /**
  * Set private key for server authentication.
  *
- * @param server      Server context
- * @param private_key Private key data (Ed25519: 32 bytes seed)
- * @param key_len     Private key length
- * @param key_type    Key type (FIO_TLS13_SIG_ED25519, etc.)
+ * @param server Server context
+ * @param key    Private key data (Ed25519: 32 bytes seed)
+ * @param algo   Signature algorithm (FIO_TLS13_SIGNATURE_ED25519, etc.)
  */
 SFUNC void fio_tls13_server_set_private_key(fio_tls13_server_s *server,
-                                            const uint8_t *private_key,
-                                            size_t key_len,
-                                            uint16_t key_type);
+                                            fio_ubuf_info_s key,
+                                            fio_tls13_signature_algo_e algo);
+
+/**
+ * Set a trust store for client certificate verification.
+ *
+ * The trust_store pointer should point to a valid fio_x509_trust_store_s
+ * structure. This is only used when client certificate authentication is
+ * required.
+ *
+ * @param server      Server context
+ * @param trust_store Trust store for client cert chain verification, or NULL
+ */
+FIO_IFUNC void fio_tls13_server_set_trust_store(fio_tls13_server_s *server,
+                                            void *trust_store);
 
 /**
  * Process incoming TLS record(s).
@@ -87423,7 +88530,7 @@ FIO_IFUNC const char *fio_tls13_server_state_name(fio_tls13_server_s *server) {
  * Get client's SNI hostname.
  */
 FIO_IFUNC const char *fio_tls13_server_get_sni(fio_tls13_server_s *server) {
-  return (server && server->client_sni_len > 0) ? server->client_sni : NULL;
+  return (server && server->peer_sni_len > 0) ? server->peer_sni : NULL;
 }
 
 /**
@@ -87440,16 +88547,16 @@ FIO_IFUNC void fio_tls13_server_alpn_set(fio_tls13_server_s *server,
   if (!server)
     return;
   if (!protocols || !protocols[0]) {
-    server->alpn_supported[0] = '\0';
-    server->alpn_supported_len = 0;
+    server->alpn.supported[0] = '\0';
+    server->alpn.supported_len = 0;
     return;
   }
   size_t len = 0;
-  while (protocols[len] && len < sizeof(server->alpn_supported) - 1)
+  while (protocols[len] && len < sizeof(server->alpn.supported) - 1)
     ++len;
-  FIO_MEMCPY(server->alpn_supported, protocols, len);
-  server->alpn_supported[len] = '\0';
-  server->alpn_supported_len = len;
+  FIO_MEMCPY(server->alpn.supported, protocols, len);
+  server->alpn.supported[len] = '\0';
+  server->alpn.supported_len = len;
 }
 
 /**
@@ -87459,9 +88566,9 @@ FIO_IFUNC void fio_tls13_server_alpn_set(fio_tls13_server_s *server,
  * @return Selected protocol string, or NULL if none negotiated
  */
 FIO_IFUNC const char *fio_tls13_server_alpn_get(fio_tls13_server_s *server) {
-  if (!server || server->selected_alpn_len == 0)
+  if (!server || server->alpn.selected_len == 0)
     return NULL;
-  return server->selected_alpn;
+  return server->alpn.selected;
 }
 
 /**
@@ -87478,7 +88585,17 @@ FIO_IFUNC void fio_tls13_server_require_client_cert(fio_tls13_server_s *server,
                                                     int mode) {
   if (!server)
     return;
-  server->require_client_cert = (uint8_t)(mode & 0x03);
+  server->peer_auth.require = (uint8_t)(mode & 0x03);
+}
+
+/**
+ * Set a trust store for client certificate verification.
+ */
+FIO_IFUNC void fio_tls13_server_set_trust_store(fio_tls13_server_s *server,
+                                                void *trust_store) {
+  if (!server)
+    return;
+  server->peer_auth.trust_store = trust_store;
 }
 
 /**
@@ -87489,7 +88606,7 @@ FIO_IFUNC void fio_tls13_server_require_client_cert(fio_tls13_server_s *server,
  */
 FIO_IFUNC int fio_tls13_server_client_cert_received(
     fio_tls13_server_s *server) {
-  return server ? server->client_cert_received : 0;
+  return server ? server->peer_auth.received : 0;
 }
 
 /**
@@ -87500,27 +88617,20 @@ FIO_IFUNC int fio_tls13_server_client_cert_received(
  */
 FIO_IFUNC int fio_tls13_server_client_cert_verified(
     fio_tls13_server_s *server) {
-  return server ? server->client_cert_verified : 0;
+  return server ? server->peer_auth.verified : 0;
 }
 
 /**
  * Get client's certificate (first in chain).
  *
- * @param server   Server context
- * @param cert_len Output: certificate length
- * @return Pointer to DER-encoded certificate, or NULL if none
+ * @param server Server context
+ * @return Certificate view (empty buffer if none)
  */
-FIO_IFUNC const uint8_t *fio_tls13_server_get_client_cert(
-    fio_tls13_server_s *server,
-    size_t *cert_len) {
-  if (!server || server->client_cert_chain_count == 0) {
-    if (cert_len)
-      *cert_len = 0;
-    return NULL;
-  }
-  if (cert_len)
-    *cert_len = server->client_cert_chain_lens[0];
-  return server->client_cert_chain[0];
+FIO_IFUNC fio_ubuf_info_s fio_tls13_server_get_client_cert(
+    fio_tls13_server_s *server) {
+  if (!server || server->peer_auth.chain.count == 0)
+    return (fio_ubuf_info_s){0};
+  return server->peer_auth.chain.certs[0];
 }
 
 /* *****************************************************************************
@@ -87594,7 +88704,7 @@ TLS 1.3 Server Implementation - ClientHello Parsing
 ***************************************************************************** */
 
 /* Internal: Parse ClientHello extensions */
-FIO_SFUNC int fio___tls13_parse_ch_extensions(fio_tls13_client_hello_s *ch,
+FIO_SFUNC int fio___tls13_parse_ch_extensions(fio___tls13_client_hello_s *ch,
                                               const uint8_t *data,
                                               size_t data_len) {
   const uint8_t *p = data;
@@ -87629,8 +88739,8 @@ FIO_SFUNC int fio___tls13_parse_ch_extensions(fio_tls13_client_hello_s *ch,
         if (list + name_len > list_end)
           break;
         if (name_type == 0) { /* host_name */
-          ch->server_name = (const char *)list;
-          ch->server_name_len = name_len;
+          ch->server_name.buf = (unsigned char *)list;
+          ch->server_name.len = name_len;
           break;
         }
         list += name_len;
@@ -87667,8 +88777,8 @@ FIO_SFUNC int fio___tls13_parse_ch_extensions(fio_tls13_client_hello_s *ch,
       if (count > 16)
         count = 16;
       for (size_t i = 0; i < count; ++i)
-        ch->signature_algorithms[i] = fio___tls13_read_u16(algos + i * 2);
-      ch->signature_algorithm_count = count;
+        ch->algos[i] = fio___tls13_read_u16(algos + i * 2);
+      ch->algo_count = count;
       break;
     }
 
@@ -87725,7 +88835,6 @@ FIO_SFUNC int fio___tls13_parse_ch_extensions(fio_tls13_client_hello_s *ch,
       int count = fio___tls13_parse_alpn_extension(ext_data,
                                                    ext_len,
                                                    ch->alpn_protocols,
-                                                   ch->alpn_protocol_lens,
                                                    8);
       if (count > 0)
         ch->alpn_protocol_count = (size_t)count;
@@ -87742,7 +88851,7 @@ FIO_SFUNC int fio___tls13_parse_ch_extensions(fio_tls13_client_hello_s *ch,
 }
 
 /* Internal: Parse ClientHello message */
-FIO_SFUNC int fio___tls13_parse_client_hello(fio_tls13_client_hello_s *ch,
+FIO_SFUNC int fio___tls13_parse_client_hello(fio___tls13_client_hello_s *ch,
                                              const uint8_t *data,
                                              size_t data_len) {
   if (!ch || !data)
@@ -87820,7 +88929,7 @@ TLS 1.3 Server Implementation - Negotiation
 /* Internal: Select cipher suite from client's offer */
 FIO_SFUNC int fio___tls13_server_select_cipher(
     fio_tls13_server_s *server,
-    const fio_tls13_client_hello_s *ch) {
+    const fio___tls13_client_hello_s *ch) {
   /* Server preference order */
   static const uint16_t preferred[] = {
       FIO_TLS13_CIPHER_SUITE_AES_128_GCM_SHA256,
@@ -87845,7 +88954,7 @@ FIO_SFUNC int fio___tls13_server_select_cipher(
 /* Internal: Select key share group from client's offer */
 FIO_SFUNC int fio___tls13_server_select_key_share(
     fio_tls13_server_s *server,
-    const fio_tls13_client_hello_s *ch,
+    const fio___tls13_client_hello_s *ch,
     const uint8_t **client_key_share,
     size_t *client_key_share_len) {
   /* Prefer X25519MLKEM768 (post-quantum hybrid) if available */
@@ -87878,11 +88987,11 @@ FIO_SFUNC int fio___tls13_server_select_key_share(
 /* Internal: Select signature algorithm based on server's key type */
 FIO_SFUNC int fio___tls13_server_select_signature(
     fio_tls13_server_s *server,
-    const fio_tls13_client_hello_s *ch) {
+    const fio___tls13_client_hello_s *ch) {
   /* Check if client supports our key type */
-  for (size_t i = 0; i < ch->signature_algorithm_count; ++i) {
-    if (ch->signature_algorithms[i] == server->private_key_type) {
-      server->signature_scheme = server->private_key_type;
+  for (size_t i = 0; i < ch->algo_count; ++i) {
+    if (ch->algos[i] == server->credentials.signature_algo) {
+      server->signature_algo = server->credentials.signature_algo;
       return 0;
     }
   }
@@ -87993,12 +89102,12 @@ FIO_SFUNC int fio___tls13_build_encrypted_extensions(fio_tls13_server_s *server,
   uint8_t *ext_start = p;
 
   /* ALPN extension if protocol was negotiated */
-  if (server->selected_alpn_len > 0) {
+  if (server->alpn.selected_len > 0) {
     p += fio___tls13_build_alpn_response(p,
-                                         server->selected_alpn,
-                                         server->selected_alpn_len);
+                                         server->alpn.selected,
+                                         server->alpn.selected_len);
     FIO_LOG_DEBUG2("TLS 1.3 Server: Including ALPN in EE: %s",
-                   server->selected_alpn);
+                   server->alpn.selected);
   }
 
   /* Write extensions length */
@@ -88018,14 +89127,14 @@ FIO_SFUNC int fio___tls13_build_encrypted_extensions(fio_tls13_server_s *server,
 FIO_SFUNC int fio___tls13_build_certificate(fio_tls13_server_s *server,
                                             uint8_t *out,
                                             size_t out_capacity) {
-  if (!server->cert_chain || server->cert_chain_count == 0)
+  if (!server->credentials.chain || server->credentials.chain_count == 0)
     return -1;
 
   /* Calculate total size needed */
   size_t total_cert_size = 0;
-  for (size_t i = 0; i < server->cert_chain_count; ++i)
+  for (size_t i = 0; i < server->credentials.chain_count; ++i)
     total_cert_size +=
-        3 + server->cert_chain_lens[i] + 2; /* len(3) + cert + ext_len(2) */
+        3 + server->credentials.chain[i].len + 2; /* len(3) + cert + ext_len(2) */
 
   size_t body_len =
       1 + 3 + total_cert_size; /* ctx_len(1) + list_len(3) + certs */
@@ -88046,14 +89155,14 @@ FIO_SFUNC int fio___tls13_build_certificate(fio_tls13_server_s *server,
   p += 3;
 
   /* Certificate entries */
-  for (size_t i = 0; i < server->cert_chain_count; ++i) {
+  for (size_t i = 0; i < server->credentials.chain_count; ++i) {
     /* Certificate data length */
-    fio___tls13_write_u24(p, (uint32_t)server->cert_chain_lens[i]);
+    fio___tls13_write_u24(p, (uint32_t)server->credentials.chain[i].len);
     p += 3;
 
     /* Certificate data */
-    FIO_MEMCPY(p, server->cert_chain[i], server->cert_chain_lens[i]);
-    p += server->cert_chain_lens[i];
+    FIO_MEMCPY(p, server->credentials.chain[i].buf, server->credentials.chain[i].len);
+    p += server->credentials.chain[i].len;
 
     /* Extensions (empty) */
     *p++ = 0;
@@ -88065,7 +89174,7 @@ FIO_SFUNC int fio___tls13_build_certificate(fio_tls13_server_s *server,
 
 /* Internal: Build CertificateVerify message */
 /**
- * Parse the RSA private key structure stored in server->private_key.
+ * Parse the RSA private key structure stored in server->credentials.private_key.buf.
  *
  * The minimum format is:
  *   [n_len:4][n:n_len][d_len:4][d:d_len]
@@ -88135,7 +89244,7 @@ FIO_SFUNC int fio___tls13_parse_rsa_private_key(fio_rsa_privkey_s *key,
 FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
                                                    uint8_t *out,
                                                    size_t out_capacity) {
-  if (!server->private_key || server->private_key_len == 0)
+  if (!server->credentials.private_key.buf || server->credentials.private_key.len == 0)
     return -1;
 
   /* Build signed content per RFC 8446 Section 4.4.3 */
@@ -88160,23 +89269,23 @@ FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
   uint8_t signature[FIO_RSA_MAX_BYTES]; /* Max RSA-4096 signature */
   size_t sig_len = 0;
 
-  switch (server->private_key_type) {
-  case FIO_TLS13_SIG_ED25519: {
-    if (server->private_key_len != 32)
+  switch (server->credentials.signature_algo) {
+  case FIO_TLS13_SIGNATURE_ED25519: {
+    if (server->credentials.private_key.len != 32)
       return -1;
     /* Ed25519 signs directly over the content */
     uint8_t ed_public_key[32];
-    fio_ed25519_public_key(ed_public_key, server->private_key);
+    fio_ed25519_public_key(ed_public_key, server->credentials.private_key.buf);
     fio_ed25519_sign(signature,
                      signed_content,
                      signed_content_len,
-                     server->private_key,
+                     server->credentials.private_key.buf,
                      ed_public_key);
     sig_len = 64;
     break;
   }
-  case FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256: {
-    if (server->private_key_len != 32)
+  case FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256: {
+    if (server->credentials.private_key.len != 32)
       return -1;
     /* P-256 ECDSA: hash the signed content with SHA-256, then sign */
     fio_u256 msg_hash = fio_sha256(signed_content, signed_content_len);
@@ -88184,12 +89293,12 @@ FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
                             &sig_len,
                             sizeof(signature),
                             msg_hash.u8,
-                            server->private_key) != 0)
+                            server->credentials.private_key.buf) != 0)
       return -1;
     break;
   }
 #if defined(H___FIO_RSA___H)
-  case FIO_TLS13_SIG_RSA_PSS_RSAE_SHA256: {
+  case FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256: {
     /* RSA-PSS with SHA-256 (required for TLS 1.3 with RSA certificates) */
     /* Hash the signed content with SHA-256 */
     fio_u256 msg_hash = fio_sha256(signed_content, signed_content_len);
@@ -88197,13 +89306,13 @@ FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
     /* Build RSA private key structure
      * For RSA, private_key points to the modulus (n) and private exponent (d)
      * stored consecutively: [n_len:4][n:n_len][d_len:4][d:d_len] */
-    if (server->private_key_len < 8)
+    if (server->credentials.private_key.len < 8)
       return -1;
 
     /* Parse the private key structure */
     fio_rsa_privkey_s rsa_key;
     if (fio___tls13_parse_rsa_private_key(
-            &rsa_key, server->private_key, server->private_key_len) != 0) {
+            &rsa_key, server->credentials.private_key.buf, server->credentials.private_key.len) != 0) {
       FIO_LOG_DEBUG2("TLS 1.3 Server: RSA private key parsing failed");
       return -1;
     }
@@ -88219,19 +89328,17 @@ FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
     }
     break;
   }
-  case FIO_TLS13_SIG_RSA_PSS_RSAE_SHA384: {
+  case FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA384: {
     /* RSA-PSS with SHA-384 */
     /* Hash the signed content with SHA-384 */
-    fio_sha512_s sha = fio_sha512_init();
-    fio_sha512_consume(&sha, signed_content, signed_content_len);
-    fio_u512 h = fio_sha512_finalize(&sha);
+    fio_u512 h = fio_sha384(signed_content, signed_content_len);
     uint8_t msg_hash[48];
     FIO_MEMCPY(msg_hash, h.u8, 48);
 
     /* Parse the private key structure (same format as SHA-256 case) */
     fio_rsa_privkey_s rsa_key;
     if (fio___tls13_parse_rsa_private_key(
-            &rsa_key, server->private_key, server->private_key_len) != 0) {
+            &rsa_key, server->credentials.private_key.buf, server->credentials.private_key.len) != 0) {
       FIO_LOG_DEBUG2("TLS 1.3 Server: RSA private key parsing failed");
       return -1;
     }
@@ -88251,7 +89358,7 @@ FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
   default:
     /* Unsupported signature algorithm */
     FIO_LOG_DEBUG2("TLS 1.3 Server: Unsupported signature scheme 0x%04x",
-                   server->private_key_type);
+                   server->credentials.signature_algo);
     return -1;
   }
 
@@ -88269,7 +89376,7 @@ FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
   p += 4;
 
   /* Signature algorithm */
-  fio___tls13_write_u16(p, server->signature_scheme);
+  fio___tls13_write_u16(p, server->signature_algo);
   p += 2;
 
   /* Signature length */
@@ -88283,7 +89390,7 @@ FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
   fio_secure_zero(signature, sizeof(signature));
 
   FIO_LOG_DEBUG2("TLS 1.3 Server: CertificateVerify scheme=0x%04x sig_len=%zu",
-                 server->signature_scheme,
+                 server->signature_algo,
                  sig_len);
 
   return (int)(4 + body_len);
@@ -88525,7 +89632,7 @@ FIO_SFUNC int fio___tls13_server_process_client_hello(
     size_t out_capacity,
     size_t *out_len) {
   /* Parse ClientHello */
-  fio_tls13_client_hello_s ch;
+  fio___tls13_client_hello_s ch;
   if (fio___tls13_parse_client_hello(&ch, ch_msg + 4, ch_msg_len - 4) != 0) {
     FIO_LOG_DEBUG2("TLS 1.3 Server: ClientHello parse failed");
     fio___tls13_server_set_error(server,
@@ -88536,7 +89643,7 @@ FIO_SFUNC int fio___tls13_server_process_client_hello(
 
   FIO_LOG_DDEBUG("TLS 1.3 Server: ClientHello ciphers=%zu sigs=%zu keys=%zu",
                  ch.cipher_suite_count,
-                 ch.signature_algorithm_count,
+                 ch.algo_count,
                  ch.key_share_count);
 
   /* Verify TLS 1.3 is supported */
@@ -88549,13 +89656,13 @@ FIO_SFUNC int fio___tls13_server_process_client_hello(
   }
 
   /* Store SNI */
-  if (ch.server_name && ch.server_name_len > 0) {
-    size_t copy_len = ch.server_name_len;
-    if (copy_len >= sizeof(server->client_sni))
-      copy_len = sizeof(server->client_sni) - 1;
-    FIO_MEMCPY(server->client_sni, ch.server_name, copy_len);
-    server->client_sni[copy_len] = '\0';
-    server->client_sni_len = copy_len;
+  if (ch.server_name.buf && ch.server_name.len > 0) {
+    size_t copy_len = ch.server_name.len;
+    if (copy_len >= sizeof(server->peer_sni))
+      copy_len = sizeof(server->peer_sni) - 1;
+    FIO_MEMCPY(server->peer_sni, ch.server_name.buf, copy_len);
+    server->peer_sni[copy_len] = '\0';
+    server->peer_sni_len = copy_len;
   }
 
   /* Store legacy session ID (must echo in ServerHello for middlebox compat) */
@@ -88567,17 +89674,16 @@ FIO_SFUNC int fio___tls13_server_process_client_hello(
   }
 
   /* ALPN negotiation (RFC 7301) */
-  if (ch.alpn_protocol_count > 0 && server->alpn_supported_len > 0) {
+  if (ch.alpn_protocol_count > 0 && server->alpn.supported_len > 0) {
     /* Client offered ALPN and server has supported protocols configured */
     if (fio___tls13_select_alpn(ch.alpn_protocols,
-                                ch.alpn_protocol_lens,
                                 ch.alpn_protocol_count,
-                                server->alpn_supported,
-                                server->selected_alpn,
-                                &server->selected_alpn_len,
-                                sizeof(server->selected_alpn)) == 0) {
+                                server->alpn.supported,
+                                server->alpn.selected,
+                                &server->alpn.selected_len,
+                                sizeof(server->alpn.selected)) == 0) {
       FIO_LOG_DEBUG2("TLS 1.3 Server: ALPN selected: %s",
-                     server->selected_alpn);
+                     server->alpn.selected);
     } else {
       /* No matching protocol - RFC 7301 says server SHOULD send alert */
       FIO_LOG_DEBUG2("TLS 1.3 Server: ALPN no match, client offered %zu protos",
@@ -88619,7 +89725,7 @@ FIO_SFUNC int fio___tls13_server_process_client_hello(
   /* Select signature algorithm */
   if (fio___tls13_server_select_signature(server, &ch) != 0) {
     FIO_LOG_DEBUG2("TLS 1.3 Server: sig algorithm mismatch (key=0x%04x)",
-                   server->private_key_type);
+                   server->credentials.signature_algo);
     fio___tls13_server_set_error(server,
                                  FIO_TLS13_ALERT_LEVEL_FATAL,
                                  FIO_TLS13_ALERT_HANDSHAKE_FAILURE);
@@ -88715,25 +89821,26 @@ FIO_SFUNC int fio___tls13_server_process_client_hello(
   hs_msgs_len += (size_t)ee_len;
 
   /* CertificateRequest (if client auth is required/optional) */
-  if (server->require_client_cert > 0) {
+  if (server->peer_auth.require > 0) {
     /* Generate random context for CertificateRequest */
-    fio_rand_bytes(server->cert_request_context, 32);
-    server->cert_request_context_len = 32;
+    fio_rand_bytes(server->peer_auth.context, 32);
+    server->peer_auth.context_len = 32;
 
     /* Signature algorithms we accept from clients */
-    uint16_t sig_algs[] = {FIO_TLS13_SIG_ED25519,
-                           FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256,
-                           FIO_TLS13_SIG_RSA_PSS_RSAE_SHA256,
-                           FIO_TLS13_SIG_RSA_PKCS1_SHA256};
-    size_t sig_alg_count = sizeof(sig_algs) / sizeof(sig_algs[0]);
+    uint16_t signature_algos[] = {FIO_TLS13_SIGNATURE_ED25519,
+                           FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256,
+                           FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256,
+                           FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA256};
+    size_t signature_algo_count = sizeof(signature_algos) / sizeof(signature_algos[0]);
 
     int cr_len =
         fio_tls13_build_certificate_request(hs_msgs + hs_msgs_len,
                                             sizeof(hs_msgs) - hs_msgs_len,
-                                            server->cert_request_context,
-                                            server->cert_request_context_len,
-                                            sig_algs,
-                                            sig_alg_count);
+                                            FIO_UBUF_INFO2(
+                                                server->peer_auth.context,
+                                                server->peer_auth.context_len),
+                                            signature_algos,
+                                            signature_algo_count);
     if (cr_len < 0) {
       FIO_LOG_DEBUG2("TLS 1.3 Server: CertificateRequest build failed");
       fio___tls13_server_set_error(server,
@@ -88746,7 +89853,7 @@ FIO_SFUNC int fio___tls13_server_process_client_hello(
                                          (size_t)cr_len);
     hs_msgs_len += (size_t)cr_len;
     FIO_LOG_DEBUG2("TLS 1.3 Server: CertificateRequest sent (mode=%d)",
-                   server->require_client_cert);
+                   server->peer_auth.require);
   }
 
   /* Certificate */
@@ -88852,7 +89959,7 @@ FIO_SFUNC int fio___tls13_server_process_client_hello(
   server->encrypted_write = 1;
 
   /* If client auth is enabled, wait for Certificate first */
-  if (server->require_client_cert > 0)
+  if (server->peer_auth.require > 0)
     server->state = FIO_TLS13_SERVER_STATE_WAIT_CLIENT_CERT;
   else
     server->state = FIO_TLS13_SERVER_STATE_WAIT_FINISHED;
@@ -88881,7 +89988,7 @@ FIO_SFUNC int fio___tls13_server_process_client_certificate(
   }
 
   /* Certificate message format (RFC 8446 Section 4.4.2):
-   *   opaque certificate_request_context<0..2^8-1>;
+   *   opaque context<0..2^8-1>;
    *   CertificateEntry certificate_list<0..2^24-1>;
    *
    * CertificateEntry:
@@ -88897,7 +90004,7 @@ FIO_SFUNC int fio___tls13_server_process_client_certificate(
 
   size_t pos = 0;
 
-  /* certificate_request_context length */
+  /* context length */
   uint8_t ctx_len = body[pos++];
   if (pos + ctx_len > body_len) {
     fio___tls13_server_set_error(server,
@@ -88907,10 +90014,10 @@ FIO_SFUNC int fio___tls13_server_process_client_certificate(
   }
 
   /* Verify context matches what we sent */
-  if (ctx_len != server->cert_request_context_len ||
+  if (ctx_len != server->peer_auth.context_len ||
       (ctx_len > 0 &&
-       FIO_MEMCMP(body + pos, server->cert_request_context, ctx_len) != 0)) {
-    FIO_LOG_DEBUG2("TLS 1.3 Server: certificate_request_context mismatch");
+       FIO_MEMCMP(body + pos, server->peer_auth.context, ctx_len) != 0)) {
+    FIO_LOG_DEBUG2("TLS 1.3 Server: context mismatch");
     fio___tls13_server_set_error(server,
                                  FIO_TLS13_ALERT_LEVEL_FATAL,
                                  FIO_TLS13_ALERT_ILLEGAL_PARAMETER);
@@ -88939,11 +90046,11 @@ FIO_SFUNC int fio___tls13_server_process_client_certificate(
   /* Empty certificate list? */
   if (list_len == 0) {
     FIO_LOG_DEBUG2("TLS 1.3 Server: client sent empty certificate");
-    server->client_cert_received = 0;
-    server->client_cert_chain_count = 0;
+    server->peer_auth.received = 0;
+    server->peer_auth.chain.count = 0;
 
     /* If client cert is required, this is an error */
-    if (server->require_client_cert == 2) {
+    if (server->peer_auth.require == 2) {
       fio___tls13_server_set_error(server,
                                    FIO_TLS13_ALERT_LEVEL_FATAL,
                                    FIO_TLS13_ALERT_CERTIFICATE_REQUIRED);
@@ -88957,55 +90064,55 @@ FIO_SFUNC int fio___tls13_server_process_client_certificate(
   }
 
   /* Allocate buffer for certificate data if needed */
-  if (server->client_cert_data_buf_cap < list_len) {
-    if (server->client_cert_data_buf)
-      FIO_MEM_FREE(server->client_cert_data_buf,
-                   server->client_cert_data_buf_cap);
-    server->client_cert_data_buf =
+  if (server->peer_auth.chain.buf_cap < list_len) {
+    if (server->peer_auth.chain.buf)
+      FIO_MEM_FREE(server->peer_auth.chain.buf,
+                   server->peer_auth.chain.buf_cap);
+    server->peer_auth.chain.buf =
         (uint8_t *)FIO_MEM_REALLOC(NULL, 0, list_len, 0);
-    if (!server->client_cert_data_buf) {
-      server->client_cert_data_buf_cap = 0;
+    if (!server->peer_auth.chain.buf) {
+      server->peer_auth.chain.buf_cap = 0;
       fio___tls13_server_set_error(server,
                                    FIO_TLS13_ALERT_LEVEL_FATAL,
                                    FIO_TLS13_ALERT_INTERNAL_ERROR);
       return -1;
     }
-    server->client_cert_data_buf_cap = list_len;
+    server->peer_auth.chain.buf_cap = list_len;
   }
 
   /* Copy certificate data to persistent buffer */
-  FIO_MEMCPY(server->client_cert_data_buf, body + pos, list_len);
-  server->client_cert_data_buf_len = list_len;
+  FIO_MEMCPY(server->peer_auth.chain.buf, body + pos, list_len);
+  server->peer_auth.chain.buf_len = list_len;
 
   /* Parse certificate entries */
   size_t list_pos = 0;
-  server->client_cert_chain_count = 0;
+  server->peer_auth.chain.count = 0;
 
-  while (list_pos < list_len && server->client_cert_chain_count < 10) {
+  while (list_pos < list_len && server->peer_auth.chain.count < 10) {
     /* cert_data length (3 bytes) */
     if (list_pos + 3 > list_len)
       break;
     uint32_t cert_len =
-        ((uint32_t)server->client_cert_data_buf[list_pos] << 16) |
-        ((uint32_t)server->client_cert_data_buf[list_pos + 1] << 8) |
-        server->client_cert_data_buf[list_pos + 2];
+        ((uint32_t)server->peer_auth.chain.buf[list_pos] << 16) |
+        ((uint32_t)server->peer_auth.chain.buf[list_pos + 1] << 8) |
+        server->peer_auth.chain.buf[list_pos + 2];
     list_pos += 3;
 
     if (list_pos + cert_len > list_len)
       break;
 
     /* Store pointer to certificate in our buffer */
-    server->client_cert_chain[server->client_cert_chain_count] =
-        server->client_cert_data_buf + list_pos;
-    server->client_cert_chain_lens[server->client_cert_chain_count] = cert_len;
-    server->client_cert_chain_count++;
+    server->peer_auth.chain.certs[server->peer_auth.chain.count].buf =
+        server->peer_auth.chain.buf + list_pos;
+    server->peer_auth.chain.certs[server->peer_auth.chain.count].len = cert_len;
+    server->peer_auth.chain.count++;
     list_pos += cert_len;
 
     /* extensions length (2 bytes) */
     if (list_pos + 2 > list_len)
       break;
-    uint16_t ext_len = ((uint16_t)server->client_cert_data_buf[list_pos] << 8) |
-                       server->client_cert_data_buf[list_pos + 1];
+    uint16_t ext_len = ((uint16_t)server->peer_auth.chain.buf[list_pos] << 8) |
+                       server->peer_auth.chain.buf[list_pos + 1];
     list_pos += 2;
 
     /* Skip extensions */
@@ -89014,7 +90121,7 @@ FIO_SFUNC int fio___tls13_server_process_client_certificate(
     list_pos += ext_len;
   }
 
-  if (server->client_cert_chain_count == 0) {
+  if (server->peer_auth.chain.count == 0) {
     FIO_LOG_DEBUG2("TLS 1.3 Server: failed to parse client certificate chain");
     fio___tls13_server_set_error(server,
                                  FIO_TLS13_ALERT_LEVEL_FATAL,
@@ -89022,9 +90129,9 @@ FIO_SFUNC int fio___tls13_server_process_client_certificate(
     return -1;
   }
 
-  server->client_cert_received = 1;
+  server->peer_auth.received = 1;
   FIO_LOG_DEBUG2("TLS 1.3 Server: received %zu client certificate(s)",
-                 server->client_cert_chain_count);
+                 server->peer_auth.chain.count);
 
   /* Update transcript with Certificate message */
   fio___tls13_server_transcript_update(server, cert_msg, cert_msg_len);
@@ -89097,44 +90204,144 @@ FIO_SFUNC int fio___tls13_server_verify_client_certificate_verify(
   /* Verify signature based on scheme */
   int verified = 0;
 
+#if defined(H___FIO_X509___H)
+  /* Parse the leaf client certificate to obtain the public key. */
+  fio_x509_cert_s leaf;
+  if (fio_x509_parse(
+          &leaf, server->peer_auth.chain.certs[0].buf, server->peer_auth.chain.certs[0].len) != 0) {
+    FIO_LOG_DEBUG2("TLS 1.3 Server: failed to parse client certificate");
+    fio___tls13_server_set_error(server,
+                                 FIO_TLS13_ALERT_LEVEL_FATAL,
+                                 FIO_TLS13_ALERT_BAD_CERTIFICATE);
+    return -1;
+  }
+
+  /* Verify the certificate chain against the trust store if configured. */
+  if (server->peer_auth.trust_store) {
+    fio_x509_trust_store_s *trust =
+        (fio_x509_trust_store_s *)server->peer_auth.trust_store;
+    int v = fio_x509_verify_chain(server->peer_auth.chain.certs,
+                                  server->peer_auth.chain.count,
+                                  NULL,
+                                  (int64_t)fio_time_real().tv_sec,
+                                  trust);
+    if (v != 0) {
+      FIO_LOG_DEBUG2("TLS 1.3 Server: client cert chain verification failed (%d)",
+                     v);
+      fio___tls13_server_set_error(server,
+                                   FIO_TLS13_ALERT_LEVEL_FATAL,
+                                   FIO_TLS13_ALERT_BAD_CERTIFICATE);
+      return -1;
+    }
+  }
+
   switch (sig_scheme) {
-  case FIO_TLS13_SIG_ED25519: {
-    /* Ed25519 signature verification */
-    if (sig_len != 64) {
-      FIO_LOG_DEBUG2("TLS 1.3 Server: Ed25519 signature wrong length: %u",
-                     sig_len);
+  case FIO_TLS13_SIGNATURE_ED25519: {
+    if (sig_len != 64 || leaf.key_algo != FIO_X509_KEY_ED25519) {
+      FIO_LOG_DEBUG2("TLS 1.3 Server: Ed25519 signature/key mismatch");
       break;
     }
-    /* Extract public key from client certificate */
-    /* For now, we need to parse the certificate to get the public key */
-    /* TODO: Implement proper X.509 public key extraction */
-    FIO_LOG_DEBUG2("TLS 1.3 Server: Ed25519 client cert verification not yet "
-                   "implemented");
-    /* For testing, mark as verified if we have a certificate */
-    verified = 1;
+    if (fio_ed25519_verify(signature,
+                           signed_content,
+                           signed_content_len,
+                           leaf.pubkey.ed25519.key.buf) == 0)
+      verified = 1;
     break;
   }
 
-  case FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256: {
-    /* ECDSA P-256 signature verification */
-    /* TODO: Implement proper X.509 public key extraction and verification */
-    FIO_LOG_DEBUG2("TLS 1.3 Server: ECDSA P-256 client cert verification not "
-                   "yet fully implemented");
-    /* For testing, mark as verified if we have a certificate */
-    (void)signed_content;
-    (void)signed_content_len;
-    (void)signature;
-    verified = 1;
+  case FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256: {
+    if (leaf.key_algo != FIO_X509_KEY_ECDSA_P256) {
+      FIO_LOG_DEBUG2("TLS 1.3 Server: ECDSA P-256 key type mismatch");
+      break;
+    }
+    fio_u256 msg_hash = fio_sha256(signed_content, signed_content_len);
+    if (fio_ecdsa_p256_verify(signature,
+                              sig_len,
+                              msg_hash.u8,
+                              leaf.pubkey.ecdsa.point.buf,
+                              leaf.pubkey.ecdsa.point.len) == 0)
+      verified = 1;
     break;
   }
 
-  case FIO_TLS13_SIG_RSA_PSS_RSAE_SHA256:
-  case FIO_TLS13_SIG_RSA_PKCS1_SHA256: {
-    /* RSA signature verification */
-    FIO_LOG_DEBUG2("TLS 1.3 Server: RSA client cert verification not yet "
-                   "implemented");
-    /* For testing, mark as verified if we have a certificate */
-    verified = 1;
+  case FIO_TLS13_SIGNATURE_ECDSA_SECP384R1_SHA384: {
+    if (leaf.key_algo != FIO_X509_KEY_ECDSA_P384) {
+      FIO_LOG_DEBUG2("TLS 1.3 Server: ECDSA P-384 key type mismatch");
+      break;
+    }
+    fio_u512 msg_hash = fio_sha384(signed_content, signed_content_len);
+    if (fio_ecdsa_p384_verify(signature,
+                              sig_len,
+                              msg_hash.u8,
+                              leaf.pubkey.ecdsa.point.buf,
+                              leaf.pubkey.ecdsa.point.len) == 0)
+      verified = 1;
+    break;
+  }
+
+  case FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256:
+  case FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA256: {
+    if (leaf.key_algo != FIO_X509_KEY_RSA) {
+      FIO_LOG_DEBUG2("TLS 1.3 Server: RSA key type mismatch");
+      break;
+    }
+    fio_rsa_pubkey_s key = {
+        .n = leaf.pubkey.rsa.n.buf,
+        .n_len = leaf.pubkey.rsa.n.len,
+        .e = leaf.pubkey.rsa.e.buf,
+        .e_len = leaf.pubkey.rsa.e.len,
+    };
+    fio_u256 msg_hash = fio_sha256(signed_content, signed_content_len);
+    if (sig_scheme == FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256) {
+      if (fio_rsa_verify_pss(signature,
+                             sig_len,
+                             msg_hash.u8,
+                             32,
+                             FIO_RSA_HASH_SHA256,
+                             &key) == 0)
+        verified = 1;
+    } else {
+      if (fio_rsa_verify_pkcs1(signature,
+                               sig_len,
+                               msg_hash.u8,
+                               32,
+                               FIO_RSA_HASH_SHA256,
+                               &key) == 0)
+        verified = 1;
+    }
+    break;
+  }
+
+  case FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA384:
+  case FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA384: {
+    if (leaf.key_algo != FIO_X509_KEY_RSA) {
+      FIO_LOG_DEBUG2("TLS 1.3 Server: RSA key type mismatch");
+      break;
+    }
+    fio_rsa_pubkey_s key = {
+        .n = leaf.pubkey.rsa.n.buf,
+        .n_len = leaf.pubkey.rsa.n.len,
+        .e = leaf.pubkey.rsa.e.buf,
+        .e_len = leaf.pubkey.rsa.e.len,
+    };
+    fio_u512 msg_hash = fio_sha384(signed_content, signed_content_len);
+    if (sig_scheme == FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA384) {
+      if (fio_rsa_verify_pss(signature,
+                             sig_len,
+                             msg_hash.u8,
+                             48,
+                             FIO_RSA_HASH_SHA384,
+                             &key) == 0)
+        verified = 1;
+    } else {
+      if (fio_rsa_verify_pkcs1(signature,
+                               sig_len,
+                               msg_hash.u8,
+                               48,
+                               FIO_RSA_HASH_SHA384,
+                               &key) == 0)
+        verified = 1;
+    }
     break;
   }
 
@@ -89146,6 +90353,19 @@ FIO_SFUNC int fio___tls13_server_verify_client_certificate_verify(
                                  FIO_TLS13_ALERT_ILLEGAL_PARAMETER);
     return -1;
   }
+#else
+  (void)sig_scheme;
+  (void)sig_len;
+  (void)signature;
+  (void)signed_content;
+  (void)signed_content_len;
+  FIO_LOG_DEBUG2("TLS 1.3 Server: client certificate verification requires X509 "
+                 "module");
+  fio___tls13_server_set_error(server,
+                               FIO_TLS13_ALERT_LEVEL_FATAL,
+                               FIO_TLS13_ALERT_INTERNAL_ERROR);
+  return -1;
+#endif
 
   if (!verified) {
     FIO_LOG_DEBUG2("TLS 1.3 Server: client CertificateVerify failed");
@@ -89155,7 +90375,7 @@ FIO_SFUNC int fio___tls13_server_verify_client_certificate_verify(
     return -1;
   }
 
-  server->client_cert_verified = 1;
+  server->peer_auth.verified = 1;
   FIO_LOG_DEBUG2("TLS 1.3 Server: client CertificateVerify verified "
                  "(scheme=0x%04x)",
                  sig_scheme);
@@ -89219,7 +90439,7 @@ SFUNC void fio_tls13_server_init(fio_tls13_server_s *server) {
   server->transcript_sha384 = fio_sha512_init();
 
   /* Default to Ed25519 if no key type set */
-  server->private_key_type = FIO_TLS13_SIG_ED25519;
+  server->credentials.signature_algo = FIO_TLS13_SIGNATURE_ED25519;
 }
 
 SFUNC void fio_tls13_server_destroy(fio_tls13_server_s *server) {
@@ -89244,37 +90464,33 @@ SFUNC void fio_tls13_server_destroy(fio_tls13_server_s *server) {
   fio_tls13_record_keys_clear(&server->server_app_keys);
 
   /* Free client certificate data buffer */
-  if (server->client_cert_data_buf) {
-    FIO_MEM_FREE(server->client_cert_data_buf,
-                 server->client_cert_data_buf_cap);
-    server->client_cert_data_buf = NULL;
-    server->client_cert_data_buf_cap = 0;
-    server->client_cert_data_buf_len = 0;
+  if (server->peer_auth.chain.buf) {
+    FIO_MEM_FREE(server->peer_auth.chain.buf,
+                 server->peer_auth.chain.buf_cap);
+    server->peer_auth.chain.buf = NULL;
+    server->peer_auth.chain.buf_cap = 0;
+    server->peer_auth.chain.buf_len = 0;
   }
 
   FIO_MEMSET(server, 0, sizeof(*server));
 }
 
 SFUNC void fio_tls13_server_set_cert_chain(fio_tls13_server_s *server,
-                                           const uint8_t **certs,
-                                           const size_t *cert_lens,
-                                           size_t cert_count) {
+                                           const fio_ubuf_info_s *chain,
+                                           size_t count) {
   if (!server)
     return;
-  server->cert_chain = certs;
-  server->cert_chain_lens = cert_lens;
-  server->cert_chain_count = cert_count;
+  server->credentials.chain = chain;
+  server->credentials.chain_count = count;
 }
 
 SFUNC void fio_tls13_server_set_private_key(fio_tls13_server_s *server,
-                                            const uint8_t *private_key,
-                                            size_t key_len,
-                                            uint16_t key_type) {
+                                            fio_ubuf_info_s key,
+                                            fio_tls13_signature_algo_e algo) {
   if (!server)
     return;
-  server->private_key = private_key;
-  server->private_key_len = key_len;
-  server->private_key_type = key_type;
+  server->credentials.private_key = key;
+  server->credentials.signature_algo = (uint16_t)algo;
 }
 
 SFUNC int fio_tls13_server_process(fio_tls13_server_s *server,
@@ -97436,7 +98652,7 @@ typedef struct {
 #ifdef FIO_REF_METADATA
   FIO_REF_METADATA metadata;
 #endif
-} FIO_NAME(FIO_REF_NAME, _wrapper_s);
+} FIO_NAME(FIO_REF_NAME, __wrapper_s);
 
 #ifdef FIO_PTR_TAG_TYPE
 #define FIO_REF_TYPE_PTR FIO_PTR_TAG_TYPE
@@ -97483,8 +98699,8 @@ FIO_NAME(FIO_REF_NAME, FIO_REF_DUPNAME)(const FIO_REF_TYPE_PTR wrapped_) {
   const FIO_REF_TYPE *wrapped = (const FIO_REF_TYPE *)(FIO_PTR_UNTAG(wrapped_));
   if (!wrapped || !wrapped_)
     return 0;
-  FIO_NAME(FIO_REF_NAME, _wrapper_s) *o =
-      ((FIO_NAME(FIO_REF_NAME, _wrapper_s) *)wrapped) - 1;
+  FIO_NAME(FIO_REF_NAME, __wrapper_s) *o =
+      ((FIO_NAME(FIO_REF_NAME, __wrapper_s) *)wrapped) - 1;
   fio_atomic_add(&o->ref, 1);
   return (FIO_REF_TYPE_PTR)wrapped_;
 }
@@ -97494,8 +98710,8 @@ FIO_IFUNC size_t FIO_NAME(FIO_REF_NAME, references)(FIO_REF_TYPE_PTR wrapped_) {
   FIO_REF_TYPE *wrapped = (FIO_REF_TYPE *)(FIO_PTR_UNTAG(wrapped_));
   if (!wrapped || !wrapped_)
     return 0;
-  FIO_NAME(FIO_REF_NAME, _wrapper_s) *o =
-      ((FIO_NAME(FIO_REF_NAME, _wrapper_s) *)wrapped) - 1;
+  FIO_NAME(FIO_REF_NAME, __wrapper_s) *o =
+      ((FIO_NAME(FIO_REF_NAME, __wrapper_s) *)wrapped) - 1;
   return o->ref;
 }
 
@@ -97506,8 +98722,8 @@ IFUNC uint32_t FIO_NAME(FIO_REF_NAME,
   FIO_REF_TYPE *wrapped = (FIO_REF_TYPE *)(FIO_PTR_UNTAG(wrapped_));
   if (!wrapped || !wrapped_)
     return 0;
-  FIO_NAME(FIO_REF_NAME, _wrapper_s) *o =
-      ((FIO_NAME(FIO_REF_NAME, _wrapper_s) *)wrapped) - 1;
+  FIO_NAME(FIO_REF_NAME, __wrapper_s) *o =
+      ((FIO_NAME(FIO_REF_NAME, __wrapper_s) *)wrapped) - 1;
   return o->flx_size;
 }
 #endif
@@ -97523,8 +98739,8 @@ FIO_LEAK_COUNTER_DEF(FIO_REF_NAME)
 #ifdef FIO_REF_FLEX_TYPE
 IFUNC FIO_REF_TYPE_PTR FIO_NAME(FIO_REF_NAME,
                                 FIO_REF_CONSTRUCTOR)(size_t members) {
-  FIO_NAME(FIO_REF_NAME, _wrapper_s) *o =
-      (FIO_NAME(FIO_REF_NAME, _wrapper_s) *)FIO_MEM_REALLOC_(
+  FIO_NAME(FIO_REF_NAME, __wrapper_s) *o =
+      (FIO_NAME(FIO_REF_NAME, __wrapper_s) *)FIO_MEM_REALLOC_(
           NULL,
           0,
           sizeof(*o) + sizeof(FIO_REF_TYPE) +
@@ -97532,8 +98748,9 @@ IFUNC FIO_REF_TYPE_PTR FIO_NAME(FIO_REF_NAME,
           0);
 #else
 IFUNC FIO_REF_TYPE_PTR FIO_NAME(FIO_REF_NAME, FIO_REF_CONSTRUCTOR)(void) {
-  FIO_NAME(FIO_REF_NAME, _wrapper_s) *o = (FIO_NAME(FIO_REF_NAME, _wrapper_s) *)
-      FIO_MEM_REALLOC_(NULL, 0, sizeof(*o) + sizeof(FIO_REF_TYPE), 0);
+  FIO_NAME(FIO_REF_NAME, __wrapper_s) *o =
+      (FIO_NAME(FIO_REF_NAME, __wrapper_s) *)
+          FIO_MEM_REALLOC_(NULL, 0, sizeof(*o) + sizeof(FIO_REF_TYPE), 0);
 #endif /* FIO_REF_FLEX_TYPE */
   if (!o)
     return (FIO_REF_TYPE_PTR)(o);
@@ -97556,8 +98773,8 @@ IFUNC void FIO_NAME(FIO_REF_NAME,
   if (!wrapped || !wrapped_)
     return;
   FIO_PTR_TAG_VALID_OR_RETURN_VOID(wrapped_);
-  FIO_NAME(FIO_REF_NAME, _wrapper_s) *o =
-      ((FIO_NAME(FIO_REF_NAME, _wrapper_s) *)wrapped) - 1;
+  FIO_NAME(FIO_REF_NAME, __wrapper_s) *o =
+      ((FIO_NAME(FIO_REF_NAME, __wrapper_s) *)wrapped) - 1;
   if (!o)
     return;
   if (fio_atomic_sub_fetch(&o->ref, 1))
@@ -97577,8 +98794,8 @@ IFUNC void FIO_NAME(FIO_REF_NAME,
 IFUNC FIO_REF_METADATA *FIO_NAME(FIO_REF_NAME,
                                  metadata)(FIO_REF_TYPE_PTR wrapped_) {
   FIO_REF_TYPE *wrapped = (FIO_REF_TYPE *)(FIO_PTR_UNTAG(wrapped_));
-  FIO_NAME(FIO_REF_NAME, _wrapper_s) *o =
-      ((FIO_NAME(FIO_REF_NAME, _wrapper_s) *)wrapped) - 1;
+  FIO_NAME(FIO_REF_NAME, __wrapper_s) *o =
+      ((FIO_NAME(FIO_REF_NAME, __wrapper_s) *)wrapped) - 1;
   return &o->metadata;
 }
 #endif
@@ -97747,6 +98964,7 @@ size_t FIO_WEAK_VAR FIOBJ_MARK_MEMORY_FREE_COUNTER;
       FIOBJ_MARK_MEMORY_ALLOC_COUNTER - FIOBJ_MARK_MEMORY_FREE_COUNTER,        \
       FIOBJ_MARK_MEMORY_ALLOC_COUNTER,                                         \
       FIOBJ_MARK_MEMORY_FREE_COUNTER)
+/** If true, FIOBJ memory allocation counting is enabled. */
 #define FIOBJ_MARK_MEMORY_ENABLED 1
 
 #else
@@ -97756,6 +98974,7 @@ size_t FIO_WEAK_VAR FIOBJ_MARK_MEMORY_FREE_COUNTER;
 #define FIOBJ_MARK_MEMORY_ALLOC()
 #define FIOBJ_MARK_MEMORY_FREE()
 #define FIOBJ_MARK_MEMORY_PRINT()
+/** If true, FIOBJ memory allocation counting is enabled. */
 #define FIOBJ_MARK_MEMORY_ENABLED 0
 #endif
 
@@ -98534,7 +99753,11 @@ FIOBJ Integers
 #define FIO_PTR_UNTAG(p)        FIOBJ_PTR_UNTAG(p)
 #define FIO_PTR_TAG_VALIDATE(p) (FIOBJ_TYPE_CLASS(p) == FIOBJ_T_OTHER)
 #define FIO_PTR_TAG_TYPE        FIOBJ
+#undef FIO___RECURSIVE_INCLUDE
+#define FIO___RECURSIVE_INCLUDE 1
 #include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
+#define FIO___RECURSIVE_INCLUDE 99
 
 /* Places a 61 or 29 bit signed integer in the leftmost bits of a word. */
 #define FIO_NUMBER_ENCODE(i) (((uintptr_t)(i) << 3) | FIOBJ_T_NUMBER)
@@ -98609,7 +99832,11 @@ FIOBJ Floats
 #define FIO_PTR_UNTAG(p)        FIOBJ_PTR_UNTAG(p)
 #define FIO_PTR_TAG_VALIDATE(p) (FIOBJ_TYPE_CLASS(p) == FIOBJ_T_OTHER)
 #define FIO_PTR_TAG_TYPE        FIOBJ
+#undef FIO___RECURSIVE_INCLUDE
+#define FIO___RECURSIVE_INCLUDE 1
 #include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
+#define FIO___RECURSIVE_INCLUDE 99
 
 /** Creates a new Float object. */
 FIO_IFUNC FIOBJ FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_FLOAT), new)(double i) {
@@ -99019,14 +100246,14 @@ typedef struct {
 
 #define FIO_ARRAY_NAME fiobj___active_stack
 #define FIO_ARRAY_TYPE fiobj___stack_element_s
-#define FIO_ARRAY_COPY(dest, src)                                              \
+#define FIO_ARRAY_TYPE_COPY(dest, src)                                         \
   do {                                                                         \
     (dest).obj = fiobj_dup((src).obj);                                         \
     (dest).pos = (src).pos;                                                    \
   } while (0)
-#define FIO_ARRAY_TYPE_CMP(a, b) (a).obj == (b).obj
-#define FIO_ARRAY_DESTROY(o)     fiobj_free(o)
-#define FIO___RECURSIVE_INCLUDE  1
+#define FIO_ARRAY_TYPE_CMP(a, b)  (a).obj == (b).obj
+#define FIO_ARRAY_TYPE_DESTROY(o) fiobj_free(o.obj)
+#define FIO___RECURSIVE_INCLUDE   1
 #include FIO_INCLUDE_FILE
 #undef FIO___RECURSIVE_INCLUDE
 
@@ -99625,9 +100852,11 @@ SFUNC size_t FIO_NAME(FIO_NAME(fiobj, FIOBJ___NAME_HASH),
 
 #else
 #define FIO_JSON
+#undef FIO___RECURSIVE_INCLUDE
 #define FIO___RECURSIVE_INCLUDE 1
 #include FIO_INCLUDE_FILE
 #undef FIO___RECURSIVE_INCLUDE
+#define FIO___RECURSIVE_INCLUDE 99
 
 /* FIOBJ JSON parser */
 typedef struct {
@@ -99905,1046 +101134,6 @@ FIOBJ cleanup
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
-#define FIO_PEM                /* Development inclusion - ignore line */
-#include "./include.h"         /* Development inclusion - ignore line */
-#endif                         /* Development inclusion - ignore line */
-/* *****************************************************************************
-
-
-
-
-                          PEM File Parser for TLS 1.3
-                    (RFC 7468 - Textual Encodings of PKIX)
-
-
-
-
-Copyright and License: see header file (000 copyright.h) or top of file
-***************************************************************************** */
-#if defined(FIO_PEM) && !defined(H___FIO_PEM___H)
-#define H___FIO_PEM___H
-
-/* *****************************************************************************
-PEM Parser Module
-
-This module provides PEM file parsing for loading X.509 certificates and
-private keys from PEM-encoded files. It supports:
-
-- Certificate parsing ("CERTIFICATE" label)
-- PKCS#8 private keys ("PRIVATE KEY" label)
-- Legacy RSA private keys ("RSA PRIVATE KEY" label - PKCS#1)
-- Legacy EC private keys ("EC PRIVATE KEY" label - SEC1)
-
-PEM format (RFC 7468):
-  -----BEGIN <label>-----
-  <base64-encoded DER data>
-  -----END <label>-----
-
-**Note**: This parser does not support encrypted private keys.
-***************************************************************************** */
-
-/* *****************************************************************************
-PEM Type Definitions
-***************************************************************************** */
-
-/** Private key algorithm types */
-typedef enum {
-  FIO_PEM_KEY_UNKNOWN = 0,
-  FIO_PEM_KEY_RSA = 1,
-  FIO_PEM_KEY_ECDSA_P256 = 2,
-  FIO_PEM_KEY_ED25519 = 3,
-} fio_pem_key_type_e;
-
-/** Parsed PEM block */
-typedef struct {
-  const uint8_t *der; /**< Pointer to decoded DER data */
-  size_t der_len;     /**< Length of DER data */
-  const char *label;  /**< PEM label (e.g., "CERTIFICATE", "PRIVATE KEY") */
-  size_t label_len;   /**< Length of label */
-} fio_pem_s;
-
-/** Parsed private key structure */
-typedef struct {
-  fio_pem_key_type_e type;
-  union {
-    struct {
-      uint8_t n[FIO_RSA_MAX_BYTES]; /**< RSA modulus (big-endian) */
-      size_t n_len;
-      uint8_t e[FIO_RSA_MAX_BYTES]; /**< RSA public exponent (big-endian) */
-      size_t e_len;
-      uint8_t d[FIO_RSA_MAX_BYTES]; /**< RSA private exponent (big-endian) */
-      size_t d_len;
-      uint8_t p[FIO_RSA_MAX_BYTES]; /**< RSA prime p (optional) */
-      size_t p_len;
-      uint8_t q[FIO_RSA_MAX_BYTES]; /**< RSA prime q (optional) */
-      size_t q_len;
-      uint8_t dP[FIO_RSA_MAX_BYTES]; /**< d mod (p-1) (optional) */
-      size_t dP_len;
-      uint8_t dQ[FIO_RSA_MAX_BYTES]; /**< d mod (q-1) (optional) */
-      size_t dQ_len;
-      uint8_t qInv[FIO_RSA_MAX_BYTES]; /**< q^-1 mod p (optional) */
-      size_t qInv_len;
-    } rsa;
-    struct {
-      uint8_t private_key[32]; /**< P-256 scalar (32 bytes) */
-      uint8_t public_key[65];  /**< Uncompressed point (optional, can derive) */
-      int has_public_key;      /**< 1 if public_key is populated */
-    } ecdsa_p256;
-    struct {
-      uint8_t private_key[32]; /**< Ed25519 seed (32 bytes) */
-      uint8_t public_key[32];  /**< Ed25519 public key (optional) */
-      int has_public_key;      /**< 1 if public_key is populated */
-    } ed25519;
-  };
-} fio_pem_private_key_s;
-
-/* *****************************************************************************
-PEM Parser API
-***************************************************************************** */
-
-/**
- * Parse a single PEM block from data.
- *
- * Finds the next -----BEGIN <label>----- and -----END <label>----- markers,
- * base64 decodes the content between them, and returns the DER data.
- *
- * @param out Output structure to fill with parsed PEM block info
- * @param der_buf Buffer to store decoded DER data (caller-provided)
- * @param der_buf_len Size of der_buf
- * @param pem_data PEM-encoded data
- * @param pem_len Length of PEM data
- * @return Number of bytes consumed from pem_data, or 0 on error
- */
-SFUNC size_t fio_pem_parse(fio_pem_s *out,
-                           uint8_t *der_buf,
-                           size_t der_buf_len,
-                           const char *pem_data,
-                           size_t pem_len);
-
-/**
- * Parse certificate from PEM file content.
- *
- * Handles "CERTIFICATE" label and parses the X.509 certificate.
- *
- * @param cert Output certificate structure (from fio_x509.h)
- * @param pem_data PEM-encoded certificate data
- * @param pem_len Length of PEM data
- * @return 0 on success, -1 on error
- */
-SFUNC int fio_pem_parse_certificate(fio_x509_cert_s *cert,
-                                    const char *pem_data,
-                                    size_t pem_len);
-
-/**
- * Parse private key from PEM file content.
- *
- * Supports:
- * - "PRIVATE KEY" (PKCS#8 PrivateKeyInfo)
- * - "RSA PRIVATE KEY" (PKCS#1 RSAPrivateKey)
- * - "EC PRIVATE KEY" (SEC1 ECPrivateKey)
- *
- * @param key Output private key structure
- * @param pem_data PEM-encoded private key data
- * @param pem_len Length of PEM data
- * @return 0 on success, -1 on error
- */
-SFUNC int fio_pem_parse_private_key(fio_pem_private_key_s *key,
-                                    const char *pem_data,
-                                    size_t pem_len);
-
-/**
- * Get the DER-encoded certificate from PEM data.
- *
- * This is a convenience function that extracts just the DER bytes
- * without parsing the X.509 structure.
- *
- * @param der_out Output buffer for DER data
- * @param der_out_len Size of output buffer
- * @param pem_data PEM-encoded certificate data
- * @param pem_len Length of PEM data
- * @return Length of DER data written, or 0 on error
- */
-SFUNC size_t fio_pem_get_certificate_der(uint8_t *der_out,
-                                         size_t der_out_len,
-                                         const char *pem_data,
-                                         size_t pem_len);
-
-/**
- * Securely clear a private key structure.
- *
- * @param key Private key to clear
- */
-FIO_IFUNC void fio_pem_private_key_clear(fio_pem_private_key_s *key);
-
-/* *****************************************************************************
-Implementation - Inline Functions
-***************************************************************************** */
-
-/** Securely clear private key */
-FIO_IFUNC void fio_pem_private_key_clear(fio_pem_private_key_s *key) {
-  if (key) {
-    fio_secure_zero(key, sizeof(*key));
-  }
-}
-
-/* *****************************************************************************
-Implementation - Possibly Externed Functions
-***************************************************************************** */
-#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
-
-/* *****************************************************************************
-Implementation - PEM Parsing Helpers
-***************************************************************************** */
-
-/** Find a string in data (like memmem but simpler) */
-FIO_SFUNC const char *fio___pem_find(const char *haystack,
-                                     size_t haystack_len,
-                                     const char *needle,
-                                     size_t needle_len) {
-  if (needle_len > haystack_len || needle_len == 0)
-    return NULL;
-
-  const char *end = haystack + haystack_len - needle_len + 1;
-  for (const char *p = haystack; p < end; ++p) {
-    if (FIO_MEMCMP(p, needle, needle_len) == 0)
-      return p;
-  }
-  return NULL;
-}
-
-/** Skip whitespace and newlines */
-FIO_SFUNC const char *fio___pem_skip_ws(const char *p, const char *end) {
-  while (p < end && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n'))
-    ++p;
-  return p;
-}
-
-/* *****************************************************************************
-Implementation - Core PEM Parser
-***************************************************************************** */
-
-SFUNC size_t fio_pem_parse(fio_pem_s *out,
-                           uint8_t *der_buf,
-                           size_t der_buf_len,
-                           const char *pem_data,
-                           size_t pem_len) {
-  if (!out || !der_buf || !pem_data || pem_len == 0)
-    return 0;
-
-  FIO_MEMSET(out, 0, sizeof(*out));
-
-  /* Find -----BEGIN */
-  static const char begin_marker[] = "-----BEGIN ";
-  static const char end_marker[] = "-----END ";
-  static const char dashes[] = "-----";
-
-  const char *begin = fio___pem_find(pem_data, pem_len, begin_marker, 11);
-  if (!begin)
-    return 0;
-
-  /* Extract label */
-  const char *label_start = begin + 11;
-  const char *label_end = fio___pem_find(label_start,
-                                         pem_len - (label_start - pem_data),
-                                         dashes,
-                                         5);
-  if (!label_end)
-    return 0;
-
-  out->label = label_start;
-  out->label_len = (size_t)(label_end - label_start);
-
-  /* Find start of base64 data (after -----) */
-  const char *data_start = label_end + 5;
-  data_start = fio___pem_skip_ws(data_start, pem_data + pem_len);
-
-  /* Find -----END <label>----- */
-  char end_pattern[128];
-  if (out->label_len + 16 > sizeof(end_pattern))
-    return 0;
-
-  FIO_MEMCPY(end_pattern, end_marker, 9);
-  FIO_MEMCPY(end_pattern + 9, out->label, out->label_len);
-  FIO_MEMCPY(end_pattern + 9 + out->label_len, dashes, 5);
-  size_t end_pattern_len = 9 + out->label_len + 5;
-
-  const char *data_end = fio___pem_find(data_start,
-                                        pem_len - (data_start - pem_data),
-                                        end_pattern,
-                                        end_pattern_len);
-  if (!data_end)
-    return 0;
-
-  /* Trim trailing whitespace from data */
-  while (data_end > data_start &&
-         (data_end[-1] == ' ' || data_end[-1] == '\t' || data_end[-1] == '\r' ||
-          data_end[-1] == '\n'))
-    --data_end;
-
-  /* Base64 decode the data */
-  size_t base64_len = (size_t)(data_end - data_start);
-  fio_str_info_s der_str = FIO_STR_INFO3((char *)der_buf, 0, der_buf_len);
-
-  if (fio_string_write_base64dec(&der_str, NULL, data_start, base64_len) != 0) {
-    /* Buffer too small or decode error */
-    return 0;
-  }
-
-  out->der = der_buf;
-  out->der_len = der_str.len;
-
-  /* Return total bytes consumed (up to and including end marker) */
-  const char *consumed_end = data_end + end_pattern_len;
-  /* Skip past any trailing newline */
-  while (consumed_end < pem_data + pem_len &&
-         (*consumed_end == '\r' || *consumed_end == '\n'))
-    ++consumed_end;
-
-  return (size_t)(consumed_end - pem_data);
-}
-
-/* *****************************************************************************
-Implementation - Certificate Parsing
-***************************************************************************** */
-
-SFUNC size_t fio_pem_get_certificate_der(uint8_t *der_out,
-                                         size_t der_out_len,
-                                         const char *pem_data,
-                                         size_t pem_len) {
-  if (!der_out || !pem_data || pem_len == 0)
-    return 0;
-
-  fio_pem_s pem;
-  size_t consumed =
-      fio_pem_parse(&pem, der_out, der_out_len, pem_data, pem_len);
-  if (consumed == 0)
-    return 0;
-
-  /* Verify it's a certificate */
-  if (pem.label_len != 11 || FIO_MEMCMP(pem.label, "CERTIFICATE", 11) != 0) {
-    FIO_LOG_DEBUG("PEM: expected CERTIFICATE label, got '%.*s'",
-                  (int)pem.label_len,
-                  pem.label);
-    return 0;
-  }
-
-  return pem.der_len;
-}
-
-SFUNC int fio_pem_parse_certificate(fio_x509_cert_s *cert,
-                                    const char *pem_data,
-                                    size_t pem_len) {
-#if !defined(H___FIO_X509___H)
-  FIO_LOG_ERROR("PEM: X.509 module not available");
-  (void)cert;
-  (void)pem_data;
-  (void)pem_len;
-  return -1;
-#else
-  if (!cert || !pem_data || pem_len == 0)
-    return -1;
-
-  /* Allocate buffer for DER data (PEM is ~4/3 larger due to base64) */
-  size_t der_buf_len = pem_len; /* Conservative estimate */
-  uint8_t *der_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, der_buf_len, 0);
-  if (!der_buf)
-    return -1;
-
-  size_t der_len =
-      fio_pem_get_certificate_der(der_buf, der_buf_len, pem_data, pem_len);
-  if (der_len == 0) {
-    FIO_MEM_FREE(der_buf, der_buf_len);
-    return -1;
-  }
-
-  /* Parse the X.509 certificate */
-  int result = fio_x509_parse(cert, der_buf, der_len);
-
-  /* Note: The cert structure contains pointers into der_buf,
-   * so we cannot free it here. The caller must manage the lifetime.
-   * For now, we leak the buffer - a proper implementation would
-   * require the caller to provide the buffer or use a different API. */
-  if (result != 0) {
-    FIO_MEM_FREE(der_buf, der_buf_len);
-  }
-  /* If successful, der_buf is intentionally not freed - cert points into it */
-
-  return result;
-#endif
-}
-
-/* *****************************************************************************
-Implementation - PKCS#8 Private Key Parsing
-***************************************************************************** */
-
-/**
- * Parse PKCS#8 PrivateKeyInfo (RFC 5958):
- *
- * PrivateKeyInfo ::= SEQUENCE {
- *   version                   Version,
- *   privateKeyAlgorithm       AlgorithmIdentifier,
- *   privateKey                OCTET STRING,
- *   attributes           [0]  IMPLICIT Attributes OPTIONAL
- * }
- */
-FIO_SFUNC int fio___pem_parse_pkcs8(fio_pem_private_key_s *key,
-                                    const uint8_t *der,
-                                    size_t der_len) {
-#if !defined(H___FIO_ASN1___H)
-  (void)key;
-  (void)der;
-  (void)der_len;
-  return -1;
-#else
-  if (!key || !der || der_len == 0)
-    return -1;
-
-  fio_asn1_element_s seq;
-  if (!fio_asn1_parse(&seq, der, der_len))
-    return -1;
-  if (!fio_asn1_is_tag(&seq, FIO_ASN1_SEQUENCE))
-    return -1;
-
-  fio_asn1_iterator_s it;
-  fio_asn1_element_s elem;
-  fio_asn1_iterator_init(&it, &seq);
-
-  /* Parse version (INTEGER) */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
-    return -1;
-
-  /* Parse privateKeyAlgorithm (AlgorithmIdentifier = SEQUENCE) */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_SEQUENCE))
-    return -1;
-
-  /* Extract algorithm OID */
-  fio_asn1_iterator_s alg_it;
-  fio_asn1_element_s oid, params;
-  fio_asn1_iterator_init(&alg_it, &elem);
-
-  if (fio_asn1_iterator_next(&alg_it, &oid) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&oid, FIO_ASN1_OID))
-    return -1;
-
-  /* Parse privateKey (OCTET STRING) */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_OCTET_STRING))
-    return -1;
-
-  const uint8_t *priv_key_data = elem.data;
-  size_t priv_key_len = elem.len;
-
-  /* Determine key type from algorithm OID */
-  if (fio_asn1_oid_eq(&oid, FIO_OID_RSA_ENCRYPTION)) {
-    /* RSA private key - privateKey contains RSAPrivateKey */
-    key->type = FIO_PEM_KEY_RSA;
-
-    /* Parse RSAPrivateKey structure */
-    fio_asn1_element_s rsa_seq;
-    if (!fio_asn1_parse(&rsa_seq, priv_key_data, priv_key_len))
-      return -1;
-    if (!fio_asn1_is_tag(&rsa_seq, FIO_ASN1_SEQUENCE))
-      return -1;
-
-    fio_asn1_iterator_s rsa_it;
-    fio_asn1_element_s rsa_elem;
-    fio_asn1_iterator_init(&rsa_it, &rsa_seq);
-
-    /* version */
-    if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) != 0)
-      return -1;
-
-    /* modulus (n) */
-    if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) != 0)
-      return -1;
-    if (!fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER))
-      return -1;
-    {
-      const uint8_t *src = rsa_elem.data;
-      size_t src_len = rsa_elem.len;
-      if (src_len > 1 && src[0] == 0x00) {
-        ++src;
-        --src_len;
-      }
-      if (src_len > FIO_RSA_MAX_BYTES)
-        return -1;
-      FIO_MEMCPY(key->rsa.n, src, src_len);
-      key->rsa.n_len = src_len;
-    }
-
-    /* publicExponent (e) */
-    if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) != 0)
-      return -1;
-    if (!fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER))
-      return -1;
-    {
-      const uint8_t *src = rsa_elem.data;
-      size_t src_len = rsa_elem.len;
-      if (src_len > 1 && src[0] == 0x00) {
-        ++src;
-        --src_len;
-      }
-      if (src_len > FIO_RSA_MAX_BYTES)
-        return -1;
-      FIO_MEMCPY(key->rsa.e, src, src_len);
-      key->rsa.e_len = src_len;
-    }
-
-    /* privateExponent (d) */
-    if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) != 0)
-      return -1;
-    if (!fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER))
-      return -1;
-    {
-      const uint8_t *src = rsa_elem.data;
-      size_t src_len = rsa_elem.len;
-      if (src_len > 1 && src[0] == 0x00) {
-        ++src;
-        --src_len;
-      }
-      if (src_len > FIO_RSA_MAX_BYTES)
-        return -1;
-      FIO_MEMCPY(key->rsa.d, src, src_len);
-      key->rsa.d_len = src_len;
-    }
-
-    /* prime1 (p) */
-    if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) == 0 &&
-        fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER)) {
-      {
-        const uint8_t *src = rsa_elem.data;
-        size_t src_len = rsa_elem.len;
-        if (src_len > 1 && src[0] == 0x00) {
-          ++src;
-          --src_len;
-        }
-        if (src_len <= FIO_RSA_MAX_BYTES) {
-          FIO_MEMCPY(key->rsa.p, src, src_len);
-          key->rsa.p_len = src_len;
-        }
-      }
-
-      /* prime2 (q) */
-      if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) == 0 &&
-          fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER)) {
-        {
-          const uint8_t *src = rsa_elem.data;
-          size_t src_len = rsa_elem.len;
-          if (src_len > 1 && src[0] == 0x00) {
-            ++src;
-            --src_len;
-          }
-          if (src_len <= FIO_RSA_MAX_BYTES) {
-            FIO_MEMCPY(key->rsa.q, src, src_len);
-            key->rsa.q_len = src_len;
-          }
-        }
-
-        /* exponent1 (dP = d mod (p-1)) */
-        if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) == 0 &&
-            fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER)) {
-          {
-            const uint8_t *src = rsa_elem.data;
-            size_t src_len = rsa_elem.len;
-            if (src_len > 1 && src[0] == 0x00) {
-              ++src;
-              --src_len;
-            }
-            if (src_len <= FIO_RSA_MAX_BYTES) {
-              FIO_MEMCPY(key->rsa.dP, src, src_len);
-              key->rsa.dP_len = src_len;
-            }
-          }
-
-          /* exponent2 (dQ = d mod (q-1)) */
-          if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) == 0 &&
-              fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER)) {
-            {
-              const uint8_t *src = rsa_elem.data;
-              size_t src_len = rsa_elem.len;
-              if (src_len > 1 && src[0] == 0x00) {
-                ++src;
-                --src_len;
-              }
-              if (src_len <= FIO_RSA_MAX_BYTES) {
-                FIO_MEMCPY(key->rsa.dQ, src, src_len);
-                key->rsa.dQ_len = src_len;
-              }
-            }
-
-            /* coefficient (qInv = q^-1 mod p) */
-            if (fio_asn1_iterator_next(&rsa_it, &rsa_elem) == 0 &&
-                fio_asn1_is_tag(&rsa_elem, FIO_ASN1_INTEGER)) {
-              {
-                const uint8_t *src = rsa_elem.data;
-                size_t src_len = rsa_elem.len;
-                if (src_len > 1 && src[0] == 0x00) {
-                  ++src;
-                  --src_len;
-                }
-                if (src_len <= FIO_RSA_MAX_BYTES) {
-                  FIO_MEMCPY(key->rsa.qInv, src, src_len);
-                  key->rsa.qInv_len = src_len;
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    return 0;
-
-  } else if (fio_asn1_oid_eq(&oid, FIO_OID_EC_PUBLIC_KEY)) {
-    /* EC private key - check curve parameter */
-    if (fio_asn1_iterator_next(&alg_it, &params) != 0)
-      return -1;
-
-    if (fio_asn1_oid_eq(&params, FIO_OID_SECP256R1)) {
-      key->type = FIO_PEM_KEY_ECDSA_P256;
-
-      /* Parse ECPrivateKey structure (SEC1) */
-      fio_asn1_element_s ec_seq;
-      if (!fio_asn1_parse(&ec_seq, priv_key_data, priv_key_len))
-        return -1;
-      if (!fio_asn1_is_tag(&ec_seq, FIO_ASN1_SEQUENCE))
-        return -1;
-
-      fio_asn1_iterator_s ec_it;
-      fio_asn1_element_s ec_elem;
-      fio_asn1_iterator_init(&ec_it, &ec_seq);
-
-      /* version */
-      if (fio_asn1_iterator_next(&ec_it, &ec_elem) != 0)
-        return -1;
-
-      /* privateKey (OCTET STRING, 32 bytes for P-256) */
-      if (fio_asn1_iterator_next(&ec_it, &ec_elem) != 0)
-        return -1;
-      if (!fio_asn1_is_tag(&ec_elem, FIO_ASN1_OCTET_STRING))
-        return -1;
-      if (ec_elem.len != 32)
-        return -1;
-
-      fio_memcpy32(key->ecdsa_p256.private_key, ec_elem.data);
-
-      /* Optional: publicKey [1] BIT STRING */
-      key->ecdsa_p256.has_public_key = 0;
-      while (fio_asn1_iterator_next(&ec_it, &ec_elem) == 0) {
-        if (fio_asn1_is_context_tag(&ec_elem, 1)) {
-          /* Parse BIT STRING containing public key */
-          fio_asn1_element_s bits;
-          if (fio_asn1_parse(&bits, ec_elem.data, ec_elem.len) &&
-              fio_asn1_is_tag(&bits, FIO_ASN1_BIT_STRING)) {
-            const uint8_t *pubkey_bits;
-            size_t pubkey_len;
-            uint8_t unused;
-            if (fio_asn1_parse_bit_string(&bits,
-                                          &pubkey_bits,
-                                          &pubkey_len,
-                                          &unused) == 0) {
-              if (pubkey_len == 65 && pubkey_bits[0] == 0x04) {
-                FIO_MEMCPY(key->ecdsa_p256.public_key, pubkey_bits, 65);
-                key->ecdsa_p256.has_public_key = 1;
-              }
-            }
-          }
-          break;
-        }
-      }
-
-      return 0;
-    }
-    /* Other curves not supported */
-    return -1;
-
-  } else if (fio_asn1_oid_eq(&oid, FIO_OID_ED25519)) {
-    /* Ed25519 private key */
-    key->type = FIO_PEM_KEY_ED25519;
-
-    /* For Ed25519, privateKey is an OCTET STRING containing another
-     * OCTET STRING with the 32-byte seed */
-    fio_asn1_element_s seed;
-    if (!fio_asn1_parse(&seed, priv_key_data, priv_key_len))
-      return -1;
-    if (!fio_asn1_is_tag(&seed, FIO_ASN1_OCTET_STRING))
-      return -1;
-    if (seed.len != 32)
-      return -1;
-
-    fio_memcpy32(key->ed25519.private_key, seed.data);
-    key->ed25519.has_public_key = 0;
-
-    return 0;
-  }
-
-  return -1; /* Unknown algorithm */
-#endif
-}
-
-/* *****************************************************************************
-Implementation - Legacy RSA Private Key Parsing (PKCS#1)
-***************************************************************************** */
-
-/**
- * Parse PKCS#1 RSAPrivateKey:
- *
- * RSAPrivateKey ::= SEQUENCE {
- *   version           Version,
- *   modulus           INTEGER,  -- n
- *   publicExponent    INTEGER,  -- e
- *   privateExponent   INTEGER,  -- d
- *   prime1            INTEGER,  -- p
- *   prime2            INTEGER,  -- q
- *   exponent1         INTEGER,  -- d mod (p-1)
- *   exponent2         INTEGER,  -- d mod (q-1)
- *   coefficient       INTEGER,  -- (inverse of q) mod p
- *   otherPrimeInfos   OtherPrimeInfos OPTIONAL
- * }
- */
-FIO_SFUNC int fio___pem_parse_rsa_private_key(fio_pem_private_key_s *key,
-                                              const uint8_t *der,
-                                              size_t der_len) {
-#if !defined(H___FIO_ASN1___H)
-  (void)key;
-  (void)der;
-  (void)der_len;
-  return -1;
-#else
-  if (!key || !der || der_len == 0)
-    return -1;
-
-  key->type = FIO_PEM_KEY_RSA;
-
-  fio_asn1_element_s seq;
-  if (!fio_asn1_parse(&seq, der, der_len))
-    return -1;
-  if (!fio_asn1_is_tag(&seq, FIO_ASN1_SEQUENCE))
-    return -1;
-
-  fio_asn1_iterator_s it;
-  fio_asn1_element_s elem;
-  fio_asn1_iterator_init(&it, &seq);
-
-  /* version */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
-    return -1;
-
-  /* modulus (n) */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
-    return -1;
-  {
-    const uint8_t *src = elem.data;
-    size_t src_len = elem.len;
-    if (src_len > 1 && src[0] == 0x00) {
-      ++src;
-      --src_len;
-    }
-    if (src_len > FIO_RSA_MAX_BYTES)
-      return -1;
-    FIO_MEMCPY(key->rsa.n, src, src_len);
-    key->rsa.n_len = src_len;
-  }
-
-  /* publicExponent (e) */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
-    return -1;
-  {
-    const uint8_t *src = elem.data;
-    size_t src_len = elem.len;
-    if (src_len > 1 && src[0] == 0x00) {
-      ++src;
-      --src_len;
-    }
-    if (src_len > FIO_RSA_MAX_BYTES)
-      return -1;
-    FIO_MEMCPY(key->rsa.e, src, src_len);
-    key->rsa.e_len = src_len;
-  }
-
-  /* privateExponent (d) */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
-    return -1;
-  {
-    const uint8_t *src = elem.data;
-    size_t src_len = elem.len;
-    if (src_len > 1 && src[0] == 0x00) {
-      ++src;
-      --src_len;
-    }
-    if (src_len > FIO_RSA_MAX_BYTES)
-      return -1;
-    FIO_MEMCPY(key->rsa.d, src, src_len);
-    key->rsa.d_len = src_len;
-  }
-
-  /* prime1 (p) */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
-    return -1;
-  {
-    const uint8_t *src = elem.data;
-    size_t src_len = elem.len;
-    if (src_len > 1 && src[0] == 0x00) {
-      ++src;
-      --src_len;
-    }
-    if (src_len <= FIO_RSA_MAX_BYTES) {
-      FIO_MEMCPY(key->rsa.p, src, src_len);
-      key->rsa.p_len = src_len;
-    }
-  }
-
-  /* prime2 (q) */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
-    return -1;
-  {
-    const uint8_t *src = elem.data;
-    size_t src_len = elem.len;
-    if (src_len > 1 && src[0] == 0x00) {
-      ++src;
-      --src_len;
-    }
-    if (src_len <= FIO_RSA_MAX_BYTES) {
-      FIO_MEMCPY(key->rsa.q, src, src_len);
-      key->rsa.q_len = src_len;
-    }
-  }
-
-  /* exponent1 (dP = d mod (p-1)) */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
-    return -1;
-  {
-    const uint8_t *src = elem.data;
-    size_t src_len = elem.len;
-    if (src_len > 1 && src[0] == 0x00) {
-      ++src;
-      --src_len;
-    }
-    if (src_len <= FIO_RSA_MAX_BYTES) {
-      FIO_MEMCPY(key->rsa.dP, src, src_len);
-      key->rsa.dP_len = src_len;
-    }
-  }
-
-  /* exponent2 (dQ = d mod (q-1)) */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
-    return -1;
-  {
-    const uint8_t *src = elem.data;
-    size_t src_len = elem.len;
-    if (src_len > 1 && src[0] == 0x00) {
-      ++src;
-      --src_len;
-    }
-    if (src_len <= FIO_RSA_MAX_BYTES) {
-      FIO_MEMCPY(key->rsa.dQ, src, src_len);
-      key->rsa.dQ_len = src_len;
-    }
-  }
-
-  /* coefficient (qInv = q^-1 mod p) */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
-    return -1;
-  {
-    const uint8_t *src = elem.data;
-    size_t src_len = elem.len;
-    if (src_len > 1 && src[0] == 0x00) {
-      ++src;
-      --src_len;
-    }
-    if (src_len <= FIO_RSA_MAX_BYTES) {
-      FIO_MEMCPY(key->rsa.qInv, src, src_len);
-      key->rsa.qInv_len = src_len;
-    }
-  }
-
-  return 0;
-#endif
-}
-
-/* *****************************************************************************
-Implementation - Legacy EC Private Key Parsing (SEC1)
-***************************************************************************** */
-
-/**
- * Parse SEC1 ECPrivateKey:
- *
- * ECPrivateKey ::= SEQUENCE {
- *   version        INTEGER { ecPrivkeyVer1(1) },
- *   privateKey     OCTET STRING,
- *   parameters [0] ECParameters {{ NamedCurve }} OPTIONAL,
- *   publicKey  [1] BIT STRING OPTIONAL
- * }
- */
-FIO_SFUNC int fio___pem_parse_ec_private_key(fio_pem_private_key_s *key,
-                                             const uint8_t *der,
-                                             size_t der_len) {
-#if !defined(H___FIO_ASN1___H)
-  (void)key;
-  (void)der;
-  (void)der_len;
-  return -1;
-#else
-  if (!key || !der || der_len == 0)
-    return -1;
-
-  fio_asn1_element_s seq;
-  if (!fio_asn1_parse(&seq, der, der_len))
-    return -1;
-  if (!fio_asn1_is_tag(&seq, FIO_ASN1_SEQUENCE))
-    return -1;
-
-  fio_asn1_iterator_s it;
-  fio_asn1_element_s elem;
-  fio_asn1_iterator_init(&it, &seq);
-
-  /* version */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_INTEGER))
-    return -1;
-
-  /* privateKey (OCTET STRING) */
-  if (fio_asn1_iterator_next(&it, &elem) != 0)
-    return -1;
-  if (!fio_asn1_is_tag(&elem, FIO_ASN1_OCTET_STRING))
-    return -1;
-
-  /* Determine curve from key length or parameters */
-  if (elem.len == 32) {
-    /* Assume P-256 based on key length */
-    key->type = FIO_PEM_KEY_ECDSA_P256;
-    fio_memcpy32(key->ecdsa_p256.private_key, elem.data);
-    key->ecdsa_p256.has_public_key = 0;
-
-    /* Look for parameters [0] to confirm curve */
-    while (fio_asn1_iterator_next(&it, &elem) == 0) {
-      if (fio_asn1_is_context_tag(&elem, 0)) {
-        /* Parse curve OID */
-        fio_asn1_element_s curve_oid;
-        if (fio_asn1_parse(&curve_oid, elem.data, elem.len) &&
-            fio_asn1_is_tag(&curve_oid, FIO_ASN1_OID)) {
-          if (!fio_asn1_oid_eq(&curve_oid, FIO_OID_SECP256R1)) {
-            /* Not P-256, unsupported */
-            return -1;
-          }
-        }
-      } else if (fio_asn1_is_context_tag(&elem, 1)) {
-        /* Parse public key [1] BIT STRING */
-        fio_asn1_element_s bits;
-        if (fio_asn1_parse(&bits, elem.data, elem.len) &&
-            fio_asn1_is_tag(&bits, FIO_ASN1_BIT_STRING)) {
-          const uint8_t *pubkey_bits;
-          size_t pubkey_len;
-          uint8_t unused;
-          if (fio_asn1_parse_bit_string(&bits,
-                                        &pubkey_bits,
-                                        &pubkey_len,
-                                        &unused) == 0) {
-            if (pubkey_len == 65 && pubkey_bits[0] == 0x04) {
-              FIO_MEMCPY(key->ecdsa_p256.public_key, pubkey_bits, 65);
-              key->ecdsa_p256.has_public_key = 1;
-            }
-          }
-        }
-      }
-    }
-
-    return 0;
-  }
-
-  return -1; /* Unsupported key length/curve */
-#endif
-}
-
-/* *****************************************************************************
-Implementation - Main Private Key Parser
-***************************************************************************** */
-
-SFUNC int fio_pem_parse_private_key(fio_pem_private_key_s *key,
-                                    const char *pem_data,
-                                    size_t pem_len) {
-  if (!key || !pem_data || pem_len == 0)
-    return -1;
-
-  FIO_MEMSET(key, 0, sizeof(*key));
-
-  /* Allocate buffer for DER data */
-  size_t der_buf_len = pem_len;
-  uint8_t *der_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, der_buf_len, 0);
-  if (!der_buf)
-    return -1;
-
-  fio_pem_s pem;
-  size_t consumed =
-      fio_pem_parse(&pem, der_buf, der_buf_len, pem_data, pem_len);
-  if (consumed == 0) {
-    FIO_MEM_FREE(der_buf, der_buf_len);
-    return -1;
-  }
-
-  int result = -1;
-
-  /* Dispatch based on label */
-  if (pem.label_len == 11 && FIO_MEMCMP(pem.label, "PRIVATE KEY", 11) == 0) {
-    /* PKCS#8 PrivateKeyInfo */
-    result = fio___pem_parse_pkcs8(key, pem.der, pem.der_len);
-  } else if (pem.label_len == 15 &&
-             FIO_MEMCMP(pem.label, "RSA PRIVATE KEY", 15) == 0) {
-    /* PKCS#1 RSAPrivateKey */
-    result = fio___pem_parse_rsa_private_key(key, pem.der, pem.der_len);
-  } else if (pem.label_len == 14 &&
-             FIO_MEMCMP(pem.label, "EC PRIVATE KEY", 14) == 0) {
-    /* SEC1 ECPrivateKey */
-    result = fio___pem_parse_ec_private_key(key, pem.der, pem.der_len);
-  } else {
-    FIO_LOG_DEBUG("PEM: unsupported private key label '%.*s'",
-                  (int)pem.label_len,
-                  pem.label);
-  }
-
-  FIO_MEM_FREE(der_buf, der_buf_len);
-
-  if (result != 0) {
-    fio_pem_private_key_clear(key);
-  }
-
-  return result;
-}
-
-/* *****************************************************************************
-Module Cleanup
-***************************************************************************** */
-#endif /* FIO_EXTERN_COMPLETE */
-#endif /* FIO_PEM */
-#undef FIO_PEM
-/* ************************************************************************* */
-#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
-#define FIO___DEV___           /* Development inclusion - ignore line */
 #define FIO_IO                 /* Development inclusion - ignore line */
 #include "./include.h"         /* Development inclusion - ignore line */
 #endif                         /* Development inclusion - ignore line */
@@ -101017,6 +101206,9 @@ typedef struct fio_pubsub_msg_s fio_pubsub_msg_s;
 
 /** The IO Async Queue type. */
 typedef struct fio_io_async_s fio_io_async_s;
+
+/** Parsed X.509 certificate (defined in the X509 module, `156 x509.h`). */
+typedef struct fio_x509_cert_s fio_x509_cert_s;
 
 /* *****************************************************************************
 Starting / Stopping the IO Reactor
@@ -101245,6 +101437,40 @@ IFUNC void *fio_io_tls(fio_io_s *io);
 /** Returns the socket file descriptor (fd) associated with the IO. */
 IFUNC fio_socket_i fio_io_fd(fio_io_s *io);
 
+/**
+ * Returns the next peer information item for the connection.
+ *
+ * Iterate to inspect the peer's certificate chain (leaf certificate first),
+ * e.g., for client certificate authentication / authorization:
+ *
+ *     fio_x509_cert_s cert = {0}; // zeroed = new loop
+ *     while (fio_io_peer_info_next(io, &cert) == 0) {
+ *       // cert.verified != 0 if the TLS backend verified the chain
+ *       // cert.chain_index == position in the chain (0 == leaf)
+ *       // cert.cn, cert.fingerprint, etc.
+ *     }
+ *
+ * The iterator is stateless — the position is identified from `dest` alone:
+ * a zeroed `dest` (`der.buf == NULL`) starts a new loop; otherwise iteration
+ * continues at `dest->chain_index + 1`. Multiple loops may iterate the same
+ * connection concurrently without interfering with each other.
+ *
+ * Iteration is capped at 128 certificates (`chain_index` 0..127) as a
+ * deep-nesting / DoS guard — longer chains end the loop with -1.
+ *
+ * A `NULL` `dest` returns -1. To restart a loop, zero the struct (e.g.,
+ * `FIO_MEMSET(&cert, 0, sizeof(cert))`).
+ *
+ * Returns 0 while data is available, or -1 when done / unavailable (e.g.,
+ * handshake incomplete, the peer sent no certificate, or the X509 module is
+ * unavailable).
+ *
+ * NOTE: the parsed fields point into memory owned by the TLS backend and
+ * remain valid only until the next fio_io_peer_info_next call (on ANY
+ * connection) or until the connection is closed, whichever comes first.
+ */
+SFUNC int fio_io_peer_info_next(fio_io_s *io, fio_x509_cert_s *dest);
+
 /** Resets a socket's timeout counter. */
 SFUNC void fio_io_touch(fio_io_s *io);
 
@@ -101343,6 +101569,12 @@ SFUNC void fio_io_unsuspend(fio_io_s *io);
 /** Returns 1 if the IO handle was suspended. */
 SFUNC int fio_io_is_suspended(fio_io_s *io);
 
+/** Schedules one deferred `on_data` callback for already-buffered input.
+ *
+ * Repeated calls before delivery are coalesced. This does not bypass normal
+ * suspension or throttling checks. */
+SFUNC void fio_io_on_data_schedule(fio_io_s *io);
+
 /** Returns 1 if the IO handle is marked as open. */
 SFUNC int fio_io_is_open(fio_io_s *io);
 
@@ -101401,6 +101633,11 @@ desired.
 The functions receive the file descriptor (`fd`) but MUST NOT keep a copy or
 defer any `fd` related actions to later.
 */
+
+/* NOTE: peer certificate inspection requires the X509 module (`156 x509.h`),
+ * which defines fio_x509_cert_s.  Without it, peer_info_next implementations
+ * simply return -1. */
+
 struct fio_io_functions_s {
   /** Helper that converts a `fio_io_tls_s` into the implementation's context.
    */
@@ -101443,6 +101680,20 @@ struct fio_io_functions_s {
   void (*finish)(fio_socket_i fd, void *context);
   /** Called after the IO object is closed, used to cleanup its `tls` object. */
   void (*cleanup)(void *context);
+  /**
+   * Returns the next peer information item for the connection.
+   *
+   * The iterator is stateless — the position is identified from `dest`
+   * alone: a zeroed `dest` (`der.buf == NULL`) starts a new loop at the
+   * leaf certificate; otherwise iteration continues at
+   * `dest->chain_index + 1`.
+   * A `NULL` `dest` returns -1.
+   * Returns 0 while data is available, or -1 when done / unavailable.
+   * Implementations must not allocate memory in this callback.
+   */
+  int (*peer_info_next)(fio_socket_i fd,
+                        fio_x509_cert_s *dest,
+                        void *context);
 };
 
 /**************************************************************************/ /**
@@ -101869,7 +102120,6 @@ typedef struct {
     if ((o).on_close)                                                          \
       (o).on_close((o).udata);                                                 \
   } while (0)
-#define FIO_MAP_DESTROY_AFTER_COPY 0
 
 #define FIO___RECURSIVE_INCLUDE 1
 #include FIO_INCLUDE_FILE
@@ -101957,7 +102207,7 @@ static void fio___io_on_user_mock(fio_io_s *io, void *i_) {
 static void fio___io_on_close_mock(void *p1, void *p2) { (void)p1, (void)p2; }
 
 /* Called to perform a non-blocking `read`, same as the system call. */
-static ssize_t fio___io_func_default_read(int fd,
+static ssize_t fio___io_func_default_read(fio_socket_i fd,
                                           void *buf,
                                           size_t len,
                                           void *tls) {
@@ -101965,7 +102215,7 @@ static ssize_t fio___io_func_default_read(int fd,
   (void)tls;
 }
 /** Called to perform a non-blocking `write`, same as the system call. */
-static ssize_t fio___io_func_default_write(int fd,
+static ssize_t fio___io_func_default_write(fio_socket_i fd,
                                            const void *buf,
                                            size_t len,
                                            void *tls) {
@@ -101973,15 +102223,23 @@ static ssize_t fio___io_func_default_write(int fd,
   (void)tls;
 }
 /** Sends any unsent internal data. Returns 0 only if all data was sent. */
-static int fio___io_func_default_flush(int fd, void *tls) {
+static int fio___io_func_default_flush(fio_socket_i fd, void *tls) {
   return 0;
   (void)fd, (void)tls;
 }
 /** Sends any unsent internal data. Returns 0 only if all data was sent. */
-static void fio___io_func_default_finish(int fd, void *tls) {
+static void fio___io_func_default_finish(fio_socket_i fd, void *tls) {
   (void)fd, (void)tls;
 }
 static void fio___io_func_default_cleanup(void *p1) { (void)p1; }
+
+/** Default peer_info_next: no peer information available. */
+static int fio___io_func_default_peer_info_next(fio_socket_i fd,
+                                                fio_x509_cert_s *dest,
+                                                void *tls) {
+  return -1;
+  (void)fd, (void)dest, (void)tls;
+}
 
 /** Builds a local TLS context out of the fio_io_tls_s object. */
 static void *fio___io_func_default_build_context(fio_io_tls_s *tls,
@@ -102037,6 +102295,7 @@ FIO_SFUNC void fio___io_protocol_init(fio_io_protocol_s *pr, _Bool has_tls) {
       .flush = fio___io_func_default_flush,
       .finish = fio___io_func_default_finish,
       .cleanup = fio___io_func_default_cleanup,
+      .peer_info_next = fio___io_func_default_peer_info_next,
   };
   if (has_tls)
     io_fn = fio_io_tls_default_functions(NULL);
@@ -102078,6 +102337,8 @@ FIO_SFUNC void fio___io_protocol_init(fio_io_protocol_s *pr, _Bool has_tls) {
     pr->io_functions.finish = io_fn.finish;
   if (!pr->io_functions.cleanup)
     pr->io_functions.cleanup = io_fn.cleanup;
+  if (!pr->io_functions.peer_info_next)
+    pr->io_functions.peer_info_next = io_fn.peer_info_next;
   if (!pr->timeout)
     pr->timeout = FIO_IO_TIMEOUT_MAX;
   /* round up to nearest 16 byte size */
@@ -102232,6 +102493,7 @@ IO Type
 #define FIO___IO_FLAG_POLLIN_SET  ((uint32_t)256U)
 #define FIO___IO_FLAG_POLLOUT_SET ((uint32_t)512U)
 #define FIO___IO_FLAG_WRITE_DIRTY ((uint32_t)1024U)
+#define FIO___IO_FLAG_DATA_SCHD   ((uint32_t)2048U)
 
 #define FIO___IO_FLAG_PREVENT_ON_DATA                                          \
   (FIO___IO_FLAG_SUSPENDED | FIO___IO_FLAG_THROTTLED)
@@ -102458,6 +102720,13 @@ FIO_DEF_GETSET_FUNC(IFUNC, fio_io, fio_io_s, void *, tls, FIO_NOOP_FN)
 
 /** Returns the socket file descriptor (fd) associated with the IO. */
 IFUNC fio_socket_i fio_io_fd(fio_io_s *io) { return io->fd; }
+
+/** Returns the next peer information item for the connection. */
+IFUNC int fio_io_peer_info_next(fio_io_s *io, fio_x509_cert_s *dest) {
+  if (!io || !io->pr || !io->pr->io_functions.peer_info_next)
+    return -1;
+  return io->pr->io_functions.peer_info_next(fio_io_fd(io), dest, io->tls);
+}
 
 FIO_SFUNC void fio___io_touch(void *io_, void *ignr_) {
   fio_io_s *io = (fio_io_s *)io_;
@@ -102735,7 +103004,8 @@ Event handling
 static void fio___io_poll_on_data(void *io_, void *ignr_) {
   (void)ignr_;
   fio_io_s *io = (fio_io_s *)io_;
-  FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_POLLIN_SET);
+  FIO___IO_FLAG_UNSET(io,
+                      (FIO___IO_FLAG_POLLIN_SET | FIO___IO_FLAG_DATA_SCHD));
   if (!(io->flags & FIO___IO_FLAG_PREVENT_ON_DATA)) {
     /* this also tests for the suspended / throttled flags, allows closed */
     io->pr->on_data(io);
@@ -102888,6 +103158,17 @@ static void fio___io_poll_on_data_schd(void *io) {
                            (void *)fio___io_dup2((fio_io_s *)io),
                            NULL);
 }
+SFUNC void fio_io_on_data_schedule(fio_io_s *io) {
+  if (!io || (io->flags & FIO___IO_FLAG_CLOSED_ALL))
+    return;
+  if (!(FIO___IO_FLAG_SET(io, FIO___IO_FLAG_DATA_SCHD) &
+        FIO___IO_FLAG_DATA_SCHD)) {
+    fio___io_defer_no_wakeup(fio___io_poll_on_data,
+                             (void *)fio___io_dup2(io),
+                             NULL);
+  }
+}
+
 static void fio___io_poll_on_ready_schd(void *io) {
   if (!(FIO___IO_FLAG_SET((fio_io_s *)io, FIO___IO_FLAG_WRITE_SCHD) &
         FIO___IO_FLAG_WRITE_SCHD)) {
@@ -103399,6 +103680,7 @@ SFUNC fio_io_functions_s fio_io_tls_default_functions(fio_io_functions_s *f) {
       .flush = fio___io_func_default_flush,
       .finish = fio___io_func_default_finish,
       .cleanup = fio___io_func_default_cleanup,
+      .peer_info_next = fio___io_func_default_peer_info_next,
   };
   if (!f)
     return default_io_functions;
@@ -103416,6 +103698,8 @@ SFUNC fio_io_functions_s fio_io_tls_default_functions(fio_io_functions_s *f) {
     f->finish = fio___io_func_default_finish;
   if (!f->cleanup)
     f->cleanup = fio___io_func_default_cleanup;
+  if (!f->peer_info_next)
+    f->peer_info_next = fio___io_func_default_peer_info_next;
   default_io_functions = *f;
   return default_io_functions;
 }
@@ -106878,14 +107162,8 @@ FIO_SFUNC int fio___openssl_each_trust(struct fio_io_tls_each_s *e,
       return -1;
     }
   } else { /* trust system's default trust store */
-    const char *path = fio_sys_env(X509_get_default_cert_dir_env());
-    if (!path)
-      path = X509_get_default_cert_dir();
-    if (path) {
-      if (!X509_STORE_load_path(store, path)) {
-        FIO_LOG_WARNING("OpenSSL: failed to load system trust store from: %s",
-                        path);
-      }
+    if (!X509_STORE_set_default_paths(store)) {
+      FIO_LOG_WARNING("OpenSSL: failed to load the system trust store");
     }
   }
   return 0;
@@ -106930,16 +107208,26 @@ FIO_SFUNC void *fio___openssl_build_context(fio_io_tls_s *tls,
    * On reconnect, avoids full handshake — saves ~30-50% handshake CPU. */
   SSL_CTX_set_num_tickets(ctx->ctx, 2);
 
-  /* Configure certificate verification */
+  /* Configure certificate verification.
+   * Trust always refers to PEER verification: a client verifies the server,
+   * a server verifies (and requires) a client certificate.  An empty trust
+   * list means no verification.  fio_io_tls_trust_add(tls, NULL) selects
+   * the system trust store (loaded via fio___openssl_each_trust). */
   X509_STORE *store = NULL;
-  if (fio_io_tls_trust_count(tls)) {
-    SSL_CTX_set_verify(ctx->ctx, SSL_VERIFY_PEER, NULL);
+  if (fio_io_tls_trust_count(tls) || tls->trust_sys) {
     store = X509_STORE_new();
     if (!store) {
       FIO_LOG_ERROR("OpenSSL: X509_STORE_new failed");
       goto error;
     }
     SSL_CTX_set_cert_store(ctx->ctx, store); /* takes ownership of store */
+    if (is_client) {
+      SSL_CTX_set_verify(ctx->ctx, SSL_VERIFY_PEER, NULL);
+    } else {
+      SSL_CTX_set_verify(ctx->ctx,
+                         SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+                         NULL);
+    }
   } else {
     SSL_CTX_set_verify(ctx->ctx, SSL_VERIFY_NONE, NULL);
     if (is_client)
@@ -107037,6 +107325,12 @@ while retaining full control over batching and partial write buffering.
 /** Max encrypted record overhead: header(5) + max_plaintext(16384) + tag(16)
  *  + 256 bytes margin for TLS 1.2/1.3 variations and alignment. */
 #define FIO___OPENSSL_ENC_RECORD_SIZE (16384 + 5 + 16 + 256)
+
+#ifndef FIO___OPENSSL_PEER_INFO_DER_MAX
+/** Max DER size of a peer certificate accepted by fio___openssl_peer_info_next.
+ * Real-world certificates are well under 8KB; larger ones are skipped. */
+#define FIO___OPENSSL_PEER_INFO_DER_MAX 8192
+#endif
 
 /** Per-connection wrapper around SSL, with receive and encrypted output
  *  buffers. Custom BIOs read/write directly from/to these buffers. */
@@ -107432,6 +107726,110 @@ FIO_SFUNC ssize_t fio___openssl_write(int fd,
 }
 
 /* *****************************************************************************
+Peer Information Iterator
+***************************************************************************** */
+
+/** Static round-robin DER slots for peer certificate iteration (one fresh
+ * slot per call, never freed — see FIO_STATIC_ALLOC_DEF).  OpenSSL does not
+ * expose the peer's DER zero-copy, so each certificate is re-encoded into a
+ * fresh slot (two-pass i2d_X509) and parsed in place. */
+FIO_STATIC_ALLOC_DEF(fio___openssl_peer_der,
+                     uint8_t,
+                     FIO___OPENSSL_PEER_INFO_DER_MAX,
+                     1)
+
+/** Returns an owned reference to the peer certificate at `pos` (leaf first).
+ *
+ * SSL_get_peer_cert_chain includes the leaf for clients but excludes it for
+ * servers.  Normalize both layouts so the public iterator always starts at the
+ * leaf and advances through the remaining chain without duplication. */
+FIO_SFUNC X509 *fio___openssl_peer_cert_at(SSL *ssl, size_t pos) {
+  X509 *leaf = SSL_get1_peer_certificate(ssl);
+  if (!leaf)
+    return NULL;
+  if (!pos)
+    return leaf;
+
+  STACK_OF(X509) *chain = SSL_get_peer_cert_chain(ssl);
+  if (!chain) {
+    X509_free(leaf);
+    return NULL;
+  }
+  const int count = sk_X509_num(chain);
+  size_t chain_pos = pos - 1;
+  if (count > 0) {
+    X509 *first = sk_X509_value(chain, 0);
+    if (first && X509_cmp(first, leaf) == 0)
+      chain_pos = pos;
+  }
+  if (chain_pos >= (size_t)count) {
+    X509_free(leaf);
+    return NULL;
+  }
+
+  X509 *cert = sk_X509_value(chain, (int)chain_pos);
+  if (!cert || X509_up_ref(cert) != 1)
+    cert = NULL;
+  X509_free(leaf);
+  return cert;
+}
+
+/** Returns the next peer certificate for the connection.
+ *
+ * The iterator is stateless — the position is identified from `dest` alone:
+ * a zeroed `dest` (`der.buf == NULL`) starts a new loop at the leaf
+ * certificate; otherwise iteration continues at `dest->chain_index + 1`.
+ * Returns 0 while data is available, -1 when done / on error. */
+FIO_SFUNC int fio___openssl_peer_info_next(fio_socket_i fd,
+                                           fio_x509_cert_s *dest,
+                                           void *tls_ctx) {
+  fio___openssl_connection_s *conn = (fio___openssl_connection_s *)tls_ctx;
+  if (!conn || !dest)
+    return -1;
+  if (!conn->handshake_complete)
+    return -1;
+  (void)fd;
+#if defined(H___FIO_X509___H) && defined(H___FIO_SHA2___H)
+  /* Identify the position from `dest` — read `chain_index` BEFORE
+   * fio_x509_parse, which zeroes the whole struct.
+   * Iteration is capped at 128 certificates (deep-nesting / DoS guard). */
+  if ((uint8_t)dest->chain_index & (uint8_t)128U)
+    return -1;
+  const size_t pos =
+      dest->der.buf ? ((size_t)dest->chain_index + 1) : (size_t)0;
+  if ((uint8_t)pos & (uint8_t)128U)
+    return -1;
+  X509 *cert = fio___openssl_peer_cert_at(conn->ssl, pos);
+  if (!cert)
+    return -1;
+  int result = -1;
+  /* Stage the DER encoding in a fresh static slot (two-pass i2d).
+   * DER is canonical, so the re-encoded bytes equal the received bytes and
+   * all parsed views reference the slot directly. */
+  int der_len = i2d_X509(cert, NULL);
+  if (der_len <= 0 || (size_t)der_len > FIO___OPENSSL_PEER_INFO_DER_MAX)
+    goto cleanup;
+  uint8_t *slot = fio___openssl_peer_der(1);
+  uint8_t *w = slot;
+  if (i2d_X509(cert, &w) != der_len)
+    goto cleanup;
+  if (fio_x509_parse(dest, slot, (size_t)der_len) != 0)
+    goto cleanup;
+  fio_x509_fingerprint(dest);
+  /* OpenSSL verifies the chain as a whole; the result applies to each cert. */
+  dest->verified = (SSL_get_verify_result(conn->ssl) == X509_V_OK);
+  dest->chain_index = (uint8_t)pos;
+  result = 0;
+
+cleanup:
+  X509_free(cert);
+  return result;
+#else  /* !H___FIO_X509___H || !H___FIO_SHA2___H */
+  return -1; /* peer certificate inspection requires the X509 module */
+#endif
+}
+
+/* *****************************************************************************
 Per-Connection Builder
 ***************************************************************************** */
 
@@ -107579,6 +107977,7 @@ SFUNC fio_io_functions_s fio_openssl_io_functions(void) {
       .flush = fio___openssl_flush,
       .cleanup = fio___openssl_cleanup,
       .finish = fio___openssl_finish,
+      .peer_info_next = fio___openssl_peer_info_next,
   };
 }
 
@@ -107655,10 +108054,8 @@ typedef struct {
   fio_io_tls_s *tls;
   uint8_t is_client;
   /* Certificate chain (DER-encoded) for server */
-  uint8_t *cert_der;  /* alias for first certificate (compat/debug) */
-  size_t cert_der_len; /* length of first certificate */
-  const uint8_t **cert_chain;
-  size_t *cert_chain_lens;
+  fio_ubuf_info_s cert_der; /* alias for first certificate (compat/debug) */
+  fio_ubuf_info_s *cert_chain; /* Owned array of DER views */
   size_t cert_chain_count;
   /* Private key for server (P-256: 32-byte scalar, Ed25519: 32-byte seed).
    * RSA keys are too large for this buffer; use private_key_ext instead. */
@@ -107666,10 +108063,9 @@ typedef struct {
   /* Public key for P-256 signing (65 bytes: 0x04 || x || y) */
   uint8_t public_key[65];
   size_t private_key_len;
-  uint16_t private_key_type;
+  uint16_t signature_algo;
   /* Extended private key buffer for RSA (n + d encoded for the TLS layer). */
-  uint8_t *private_key_ext;
-  size_t private_key_ext_len;
+  fio_ubuf_info_s private_key_ext;
   /* SNI hostname for client connections */
   char server_name[256];
   /* ALPN protocols (comma-separated) for server */
@@ -107693,73 +108089,44 @@ typedef struct {
 FIO_LEAK_COUNTER_DEF(fio___tls13_context_s)
 
 /** Free DER certificate buffers owned by a context. */
-FIO_SFUNC void fio___tls13_context_cert_chain_free(
-    fio___tls13_context_s *ctx) {
+FIO_SFUNC void fio___tls13_context_cert_chain_free(fio___tls13_context_s *ctx) {
   if (!ctx)
     return;
   for (size_t i = 0; i < ctx->cert_chain_count; ++i)
-    FIO_MEM_FREE((void *)ctx->cert_chain[i], ctx->cert_chain_lens[i]);
+    FIO_MEM_FREE((void *)ctx->cert_chain[i].buf, ctx->cert_chain[i].len);
   if (ctx->cert_chain)
     FIO_MEM_FREE((void *)ctx->cert_chain,
                  ctx->cert_chain_count * sizeof(*ctx->cert_chain));
-  if (ctx->cert_chain_lens)
-    FIO_MEM_FREE(ctx->cert_chain_lens,
-                 ctx->cert_chain_count * sizeof(*ctx->cert_chain_lens));
-  ctx->cert_der = NULL;
-  ctx->cert_der_len = 0;
+  ctx->cert_der = (fio_ubuf_info_s){0};
   ctx->cert_chain = NULL;
-  ctx->cert_chain_lens = NULL;
   ctx->cert_chain_count = 0;
 }
 
 /** Add an owned DER certificate buffer to a context chain. */
-FIO_SFUNC int fio___tls13_context_cert_chain_add(
-    fio___tls13_context_s *ctx,
-    uint8_t *der_buf,
-    size_t der_len) {
+FIO_SFUNC int fio___tls13_context_cert_chain_add(fio___tls13_context_s *ctx,
+                                                 uint8_t *der_buf,
+                                                 size_t der_len) {
   if (!ctx || !der_buf || !der_len)
     return -1;
   size_t old_count = ctx->cert_chain_count;
   size_t new_count = old_count + 1;
-  const uint8_t **new_chain =
-      (const uint8_t **)FIO_MEM_REALLOC(NULL,
-                                        0,
-                                        new_count * sizeof(*ctx->cert_chain),
-                                        0);
-  size_t *new_lens =
-      (size_t *)FIO_MEM_REALLOC(NULL,
-                                0,
-                                new_count * sizeof(*ctx->cert_chain_lens),
-                                0);
-  if (!new_chain || !new_lens) {
-    if (new_chain)
-      FIO_MEM_FREE((void *)new_chain,
-                   new_count * sizeof(*ctx->cert_chain));
-    if (new_lens)
-      FIO_MEM_FREE(new_lens, new_count * sizeof(*ctx->cert_chain_lens));
+  fio_ubuf_info_s *new_chain = (fio_ubuf_info_s *)
+      FIO_MEM_REALLOC(NULL, 0, new_count * sizeof(*ctx->cert_chain), 0);
+  if (!new_chain) {
     FIO_MEM_FREE(der_buf, der_len);
     return -1;
   }
   if (old_count) {
-    FIO_MEMCPY((void *)new_chain,
+    FIO_MEMCPY(new_chain,
                ctx->cert_chain,
                old_count * sizeof(*ctx->cert_chain));
-    FIO_MEMCPY(new_lens,
-               ctx->cert_chain_lens,
-               old_count * sizeof(*ctx->cert_chain_lens));
-    FIO_MEM_FREE((void *)ctx->cert_chain,
-                 old_count * sizeof(*ctx->cert_chain));
-    FIO_MEM_FREE(ctx->cert_chain_lens,
-                 old_count * sizeof(*ctx->cert_chain_lens));
+    FIO_MEM_FREE((void *)ctx->cert_chain, old_count * sizeof(*ctx->cert_chain));
   }
   ctx->cert_chain = new_chain;
-  ctx->cert_chain_lens = new_lens;
-  ctx->cert_chain[old_count] = der_buf;
-  ctx->cert_chain_lens[old_count] = der_len;
+  ctx->cert_chain[old_count] = FIO_UBUF_INFO2(der_buf, der_len);
   ctx->cert_chain_count = new_count;
   if (!old_count) {
-    ctx->cert_der = der_buf;
-    ctx->cert_der_len = der_len;
+    ctx->cert_der = FIO_UBUF_INFO2(der_buf, der_len);
   }
   return 0;
 }
@@ -107810,69 +108177,67 @@ FIO_CONSTRUCTOR(fio___tls13_sys_trust_register_cleanup) {
 }
 #endif /* H___FIO_X509___H && H___FIO_PEM___H */
 
-/** Per-connection TLS state */
+/** Per-connection TLS state.
+ *
+ * Hot metadata precedes all buffers, so common read/write bookkeeping stays
+ * cache-local. The wire-output queue holds both plaintext handshake records
+ * and encrypted post-handshake records. */
+#define FIO___TLS13_OUT_RECORD_SIZE                                            \
+  (FIO_TLS13_MAX_CIPHERTEXT_LEN + FIO_TLS13_RECORD_HEADER_LEN +                \
+   FIO_TLS13_TAG_LEN + 16)
+#define FIO___TLS13_OUT_BUF_CAP (4 * FIO___TLS13_OUT_RECORD_SIZE)
+#define FIO___TLS13_RECV_BUF_CAP                                             \
+  (FIO_TLS13_RECORD_HEADER_LEN + FIO_TLS13_MAX_CIPHERTEXT_LEN)
+#define FIO___TLS13_APP_BUF_CAP FIO_TLS13_MAX_PLAINTEXT_LEN
+#define FIO___TLS13_READ_SCRATCH_CAP (4 * FIO___TLS13_RECV_BUF_CAP)
+
 typedef struct {
+  /* Hot read/write cursors. */
+  size_t out_buf_len;
+  size_t out_buf_sent;
+  size_t recv_buf_len;
+  size_t recv_buf_pos;
+  size_t app_buf_len;
+  size_t app_buf_pos;
+  uint8_t is_client;
+  uint8_t handshake_complete;
+
+  /* Connection metadata. */
+  fio_io_s *io;
+  fio___tls13_context_s *ctx;
+  const uint8_t *cert_ptr;
+  size_t cert_len;
+
+  /* TLS session state. */
   union {
     fio_tls13_client_s client;
     fio_tls13_server_s server;
   } state;
-  uint8_t is_client;
-  uint8_t handshake_complete;
-  /* Buffered incoming data (partial records) - stored in buf[0..cap) */
-  size_t recv_buf_len; /* Total data length in recv_buf */
-  size_t recv_buf_pos; /* Current read position (lazy compaction) */
-  /* Buffered decrypted data (ready to read) - stored in buf[cap..2*cap) */
-  size_t app_buf_len;
-  size_t app_buf_pos; /* Read position in app_buf */
-  /* Buffered outgoing handshake data - stored in buf[2*cap..3*cap) */
-  size_t send_buf_len;
-  size_t send_buf_pos; /* Write position in send_buf */
-  /* Pre-allocated encryption buffer for multi-record batching.
-   * Sized for 4 max TLS records to match FIO_IO_BUFFER_PER_WRITE (64KB).
-   * The IO layer offers up to 64KB per write; each TLS record holds up to
-   * 16384 bytes of plaintext with 22 bytes overhead, so 4 records cover it. */
-#define FIO___TLS13_ENC_RECORD_SIZE                                            \
-  (FIO_TLS13_MAX_CIPHERTEXT_LEN + FIO_TLS13_RECORD_HEADER_LEN +                \
-   FIO_TLS13_TAG_LEN + 16)
-  uint8_t enc_buf[4 * FIO___TLS13_ENC_RECORD_SIZE];
-  /* Partial write tracking: encrypted data that couldn't be fully sent.
-   * TLS records are atomic - we must buffer partial writes because:
-   * 1. Re-encrypting would use a new sequence number, corrupting the stream
-   * 2. The browser would receive a partial record followed by a new record */
-  size_t enc_buf_len;  /* Total encrypted data length in enc_buf */
-  size_t enc_buf_sent; /* Bytes already sent from enc_buf */
-  /* Parent context (for certificate chain) */
-  fio___tls13_context_s *ctx;
-  /* Certificate chain storage (for server - pointers must outlive handshake) */
-  const uint8_t *cert_ptr;
-  size_t cert_len;
-  /* Flexible array member: all buffers in single allocation
-   * Layout: [recv_buf | app_buf | send_buf], each FIO_IO_BUFFER_PER_WRITE */
+
+  /* Serialized wire data, retained across partial socket writes. */
+  uint8_t out_buf[FIO___TLS13_OUT_BUF_CAP];
+
+  /* Flexible storage layout: [recv_buf | app_buf]. */
   uint8_t buf[];
 } fio___tls13_connection_s;
 
-/** Buffer capacity per buffer region (recv, app, send) */
-#define FIO___TLS13_BUF_CAP FIO_IO_BUFFER_PER_WRITE
+#define FIO___TLS13_BUF_TOTAL                                                  \
+  (FIO___TLS13_RECV_BUF_CAP + FIO___TLS13_APP_BUF_CAP)
 
-/** Total buffer size for flexible array member */
-#define FIO___TLS13_BUF_TOTAL (FIO___TLS13_BUF_CAP * 3)
-
-/** Get pointer to recv_buf region */
+/** Get pointer to the persistent ciphertext receive buffer. */
 FIO_IFUNC uint8_t *fio___tls13_recv_buf(fio___tls13_connection_s *c) {
-  return c->buf + (FIO___TLS13_BUF_CAP * 0);
+  return c->buf;
 }
 
-/** Get pointer to app_buf region */
+/** Get pointer to the persistent decrypted application buffer. */
 FIO_IFUNC uint8_t *fio___tls13_app_buf(fio___tls13_connection_s *c) {
-  return c->buf + (FIO___TLS13_BUF_CAP * 1);
-}
-
-/** Get pointer to send_buf region */
-FIO_IFUNC uint8_t *fio___tls13_send_buf(fio___tls13_connection_s *c) {
-  return c->buf + (FIO___TLS13_BUF_CAP * 2);
+  return c->buf + FIO___TLS13_RECV_BUF_CAP;
 }
 
 FIO_LEAK_COUNTER_DEF(fio___tls13_connection_s)
+
+FIO_STATIC_ALLOC_DEF_UNSAFE(
+    fio___tls13_buffer_alloc, uint8_t, FIO___TLS13_READ_SCRATCH_CAP, 1, 4)
 
 /* *****************************************************************************
 TLS 1.3 Context Builder - Self-Signed Certificate Generation
@@ -107897,12 +108262,11 @@ FIO_SFUNC int fio___tls13_make_self_signed(fio___tls13_context_s *ctx,
     return -1;
   }
 
-  const char *san_dns[] = {server_name};
+  fio_buf_info_s san_dns[] = {
+      FIO_BUF_INFO2((char *)server_name, FIO_STRLEN(server_name))};
   fio_x509_cert_options_s opts = {
-      .subject_cn = server_name,
-      .subject_cn_len = FIO_STRLEN(server_name),
-      .subject_org = "facil.io",
-      .subject_org_len = 8,
+      .cn = FIO_BUF_INFO2((char *)server_name, FIO_STRLEN(server_name)),
+      .org = FIO_BUF_INFO2((char *)"facil.io", 8),
       .san_dns = san_dns,
       .san_dns_count = 1,
       .is_ca = 0,
@@ -107951,11 +108315,11 @@ FIO_SFUNC int fio___tls13_make_self_signed(fio___tls13_context_s *ctx,
   fio_memcpy32(ctx->private_key, keypair.secret_key);
   FIO_MEMCPY(ctx->public_key, keypair.public_key, 65);
   ctx->private_key_len = 32;
-  ctx->private_key_type = FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256;
+  ctx->signature_algo = FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256;
 
   fio_x509_keypair_clear(&keypair);
   FIO_LOG_DEBUG2("TLS 1.3: self-signed certificate generated (%zu bytes)",
-                 ctx->cert_der_len);
+                 ctx->cert_der.len);
   return 0;
 }
 #endif /* H___FIO_X509___H */
@@ -108022,9 +108386,8 @@ FIO_SFUNC int fio___tls13_load_cert_pem_chain(fio___tls13_context_s *ctx,
       if (!der_buf)
         return (loaded > 0) ? loaded : -1;
       FIO_MEMCPY(der_buf, tmp_der, pem_block.der_len);
-      if (fio___tls13_context_cert_chain_add(ctx,
-                                             der_buf,
-                                             pem_block.der_len) != 0)
+      if (fio___tls13_context_cert_chain_add(ctx, der_buf, pem_block.der_len) !=
+          0)
         return (loaded > 0) ? loaded : -1;
       ++loaded;
     }
@@ -108111,14 +108474,14 @@ FIO_SFUNC int fio___tls13_each_cert(struct fio_io_tls_each_s *e,
 #endif
       }
       ctx->private_key_len = 32;
-      ctx->private_key_type = FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256;
+      ctx->signature_algo = FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256;
       FIO_LOG_DEBUG2("TLS 1.3: loaded P-256 private key from PEM");
       break;
 
     case FIO_PEM_KEY_ED25519:
       fio_memcpy32(ctx->private_key, pkey.ed25519.private_key);
       ctx->private_key_len = 32;
-      ctx->private_key_type = FIO_TLS13_SIG_ED25519;
+      ctx->signature_algo = FIO_TLS13_SIGNATURE_ED25519;
       FIO_LOG_DEBUG2("TLS 1.3: loaded Ed25519 private key from PEM");
       break;
 
@@ -108135,8 +108498,7 @@ FIO_SFUNC int fio___tls13_each_cert(struct fio_io_tls_each_s *e,
         goto use_self_signed;
       }
       size_t encoded_len = 8 + pkey.rsa.n_len + pkey.rsa.d_len;
-      uint8_t *encoded =
-          (uint8_t *)FIO_MEM_REALLOC(NULL, 0, encoded_len, 0);
+      uint8_t *encoded = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, encoded_len, 0);
       if (!encoded) {
         FIO_LOG_ERROR("TLS 1.3: failed to allocate RSA private key buffer");
         fio_pem_private_key_clear(&pkey);
@@ -108155,10 +108517,10 @@ FIO_SFUNC int fio___tls13_each_cert(struct fio_io_tls_each_s *e,
       encoded[d_offset + 3] = (uint8_t)(pkey.rsa.d_len);
       FIO_MEMCPY(encoded + d_offset + 4, pkey.rsa.d, pkey.rsa.d_len);
 
-      ctx->private_key_ext = encoded;
-      ctx->private_key_ext_len = encoded_len;
+      ctx->private_key_ext.buf = encoded;
+      ctx->private_key_ext.len = encoded_len;
       ctx->private_key_len = 0;
-      ctx->private_key_type = FIO_TLS13_SIG_RSA_PSS_RSAE_SHA256;
+      ctx->signature_algo = FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256;
       FIO_LOG_DEBUG2("TLS 1.3: loaded RSA private key from PEM (n=%zu)",
                      pkey.rsa.n_len);
       break;
@@ -108529,14 +108891,18 @@ FIO_SFUNC void *fio___tls13_build_context(fio_io_tls_s *tls,
     }
 #if defined(H___FIO_X509___H) && defined(H___FIO_PEM___H)
     /* Build trust store from configured trust certificates.
-     * When no explicit trust config exists, use the system CA store as the
-     * secure default — this prevents silent MITM when the caller forgets to
-     * configure trust anchors.
      *
-     * Problem 2 fix: the system CA store is loaded ONCE into a global
-     * singleton (fio___tls13_sys_trust) and shared across all contexts.
-     * Per-context trust_der_bufs/lens are only allocated for user-configured
-     * certs (trust_der_owned=1).  System trust is a non-owning reference
+     * Trust semantics (fio_io_tls_trust_add always refers to PEER
+     * verification):
+     * - trust certificates listed: verify the peer (server) against them.
+     * - fio_io_tls_trust_add(tls, NULL): verify against the system store.
+     * - empty trust list: NO peer verification (a SECURITY warning is
+     *   logged and verification is skipped when the handshake starts).
+     *
+     * The system CA store is loaded ONCE into a global singleton
+     * (fio___tls13_sys_trust) and shared across all contexts.  Per-context
+     * trust_der_bufs/lens are only allocated for user-configured certs
+     * (trust_der_owned=1).  System trust is a non-owning reference
      * (trust_der_owned=0). */
     if (fio_io_tls_trust_count(tls) || tls->trust_sys) {
       /* Explicit trust config: load via iterator.
@@ -108548,22 +108914,6 @@ FIO_SFUNC void *fio___tls13_build_context(fio_io_tls_s *tls,
         FIO_LOG_ERROR("TLS 1.3: failed to load trust certificates");
         goto error;
       }
-    } else {
-      /* No explicit trust config: use global system CA store as default */
-      int loaded = fio___tls13_get_system_trust();
-      if (loaded <= 0) {
-        FIO_LOG_ERROR("TLS 1.3: no trust store configured and system CA store "
-                      "not found — TLS client connections will fail. Add CA "
-                      "certificates via fio_io_tls_trust_add() or call "
-                      "fio_io_tls_trust_add(tls, NULL) for system store.");
-        goto error;
-      }
-      /* Point context at the global singleton — no per-context ownership */
-      ctx->trust_store = fio___tls13_sys_trust.store;
-      /* trust_der_owned stays 0 — free path must NOT free these buffers */
-      FIO_LOG_DEBUG2("TLS 1.3: using global system CA store (%d certs) as "
-                     "default trust anchor",
-                     loaded);
     }
 #endif     /* H___FIO_X509___H && H___FIO_PEM___H */
   } else { /* For server, load certificates */
@@ -108602,6 +108952,29 @@ FIO_SFUNC void *fio___tls13_build_context(fio_io_tls_s *tls,
                        ctx->alpn_protocols);
       }
     }
+
+#if defined(H___FIO_X509___H) && defined(H___FIO_PEM___H)
+    /* Load trust store for client certificate verification if configured.
+     * Trust always refers to peer verification: for a server context, the
+     * peer is the client.  An empty trust list means no client certificate
+     * is requested or verified. */
+    if (fio_io_tls_trust_count(tls) || tls->trust_sys) {
+      if (fio_io_tls_each(tls,
+                          .udata = ctx,
+                          .each_trust = fio___tls13_each_trust)) {
+        FIO_LOG_ERROR("TLS 1.3: failed to load client trust certificates");
+        goto error;
+      }
+    } else if (tls->trust_sys) {
+      int loaded = fio___tls13_get_system_trust();
+      if (loaded <= 0) {
+        FIO_LOG_ERROR("TLS 1.3: failed to load system trust store for client "
+                      "certificate verification");
+        goto error;
+      }
+      ctx->trust_store = fio___tls13_sys_trust.store;
+    }
+#endif /* H___FIO_X509___H && H___FIO_PEM___H */
   }
 
   return ctx;
@@ -108609,11 +108982,11 @@ FIO_SFUNC void *fio___tls13_build_context(fio_io_tls_s *tls,
 error:
   if (ctx) {
     fio___tls13_context_cert_chain_free(ctx);
-    if (ctx->private_key_ext) {
-      fio_secure_zero(ctx->private_key_ext, ctx->private_key_ext_len);
-      FIO_MEM_FREE(ctx->private_key_ext, ctx->private_key_ext_len);
-      ctx->private_key_ext = NULL;
-      ctx->private_key_ext_len = 0;
+    if (ctx->private_key_ext.buf) {
+      fio_secure_zero(ctx->private_key_ext.buf, ctx->private_key_ext.len);
+      FIO_MEM_FREE(ctx->private_key_ext.buf, ctx->private_key_ext.len);
+      ctx->private_key_ext.buf = NULL;
+      ctx->private_key_ext.len = 0;
     }
 #if defined(H___FIO_X509___H) && defined(H___FIO_PEM___H)
     /* Only free DER buffers when this context owns them (trust_der_owned=1).
@@ -108649,11 +109022,11 @@ FIO_SFUNC void fio___tls13_free_context_task(void *tls_ctx, void *ignr_) {
   FIO_LEAK_COUNTER_ON_FREE(fio___tls13_context_s);
   fio___tls13_context_cert_chain_free(ctx);
   fio_secure_zero(ctx->private_key, sizeof(ctx->private_key));
-  if (ctx->private_key_ext) {
-    fio_secure_zero(ctx->private_key_ext, ctx->private_key_ext_len);
-    FIO_MEM_FREE(ctx->private_key_ext, ctx->private_key_ext_len);
-    ctx->private_key_ext = NULL;
-    ctx->private_key_ext_len = 0;
+  if (ctx->private_key_ext.buf) {
+    fio_secure_zero(ctx->private_key_ext.buf, ctx->private_key_ext.len);
+    FIO_MEM_FREE(ctx->private_key_ext.buf, ctx->private_key_ext.len);
+    ctx->private_key_ext.buf = NULL;
+    ctx->private_key_ext.len = 0;
   }
 #if defined(H___FIO_X509___H) && defined(H___FIO_PEM___H)
   /* Only free DER buffers when this context owns them (trust_der_owned=1).
@@ -108717,6 +109090,24 @@ FIO_SFUNC void fio___tls13_connection_free(fio___tls13_connection_s *conn) {
   FIO_MEM_FREE(conn, sizeof(*conn) + FIO___TLS13_BUF_TOTAL);
 }
 
+/** Drains serialized wire data, retaining any unsent suffix for retry. */
+FIO_SFUNC ssize_t fio___tls13_out_flush(fio_socket_i fd,
+                                        fio___tls13_connection_s *conn) {
+  size_t total_flushed = 0;
+  while (conn->out_buf_sent < conn->out_buf_len) {
+    ssize_t written = fio_sock_write(fd,
+                                     (char *)conn->out_buf + conn->out_buf_sent,
+                                     conn->out_buf_len - conn->out_buf_sent);
+    if (written <= 0)
+      return total_flushed ? (ssize_t)total_flushed : -1;
+    conn->out_buf_sent += (size_t)written;
+    total_flushed += (size_t)written;
+  }
+  conn->out_buf_len = 0;
+  conn->out_buf_sent = 0;
+  return (ssize_t)total_flushed;
+}
+
 /* *****************************************************************************
 TLS 1.3 IO Functions - Start
 ***************************************************************************** */
@@ -108736,7 +109127,8 @@ FIO_SFUNC void fio___tls13_start(fio_io_s *io) {
     return;
   }
 
-  /* Store connection state in IO */
+  /* Store the non-owning IO backpointer and connection state. */
+  conn->io = io;
   fio_io_tls_set(io, (void *)conn);
 
   FIO_LOG_DDEBUG2("(%d) TLS 1.3: allocated new connection for %p (%s)",
@@ -108750,28 +109142,33 @@ FIO_SFUNC void fio___tls13_start(fio_io_s *io) {
     fio_tls13_client_init(&conn->state.client, sni);
 
     /* Configure certificate verification.
-     * The trust store is populated by fio___tls13_build_context (either from
-     * explicit certs or the system CA store).  If X509/PEM modules are absent,
-     * verification will fail at handshake time unless skip_cert_verify is set
-     * explicitly by the caller. */
+     * The trust store is populated by fio___tls13_build_context only when
+     * trust certificates were configured.  An empty trust list means no
+     * peer (server) verification — skip verification and warn, matching
+     * the OpenSSL backend's SSL_VERIFY_NONE behavior. */
 #if defined(H___FIO_X509___H) && defined(H___FIO_PEM___H)
     if (ctx->trust_store.root_count > 0) {
       fio_tls13_client_set_trust_store(&conn->state.client, &ctx->trust_store);
+    } else {
+      FIO_LOG_SECURITY("no trusted TLS certificates listed for client, "
+                       "skipping server certificate verification!");
+      fio_tls13_client_skip_verification(&conn->state.client, 1);
     }
-    /* No else: if trust_store is empty here, fio___tls13_build_context already
-     * failed or the caller explicitly set skip_cert_verify elsewhere. */
+#else
+    /* X509 module unavailable — cannot verify, skip (insecure). */
+    fio_tls13_client_skip_verification(&conn->state.client, 1);
 #endif /* H___FIO_X509___H && H___FIO_PEM___H */
 
     /* Generate ClientHello */
     int ch_len = fio_tls13_client_start(&conn->state.client,
-                                        fio___tls13_send_buf(conn),
-                                        FIO___TLS13_BUF_CAP);
+                                        conn->out_buf,
+                                        sizeof(conn->out_buf));
     if (ch_len < 0) {
       FIO_LOG_ERROR("TLS 1.3: failed to generate ClientHello");
       return;
     }
-    conn->send_buf_len = (size_t)ch_len;
-    conn->send_buf_pos = 0;
+    conn->out_buf_len = (size_t)ch_len;
+    conn->out_buf_sent = 0;
   } else {
     /* Initialize server */
     fio_tls13_server_init(&conn->state.server);
@@ -108780,25 +109177,27 @@ FIO_SFUNC void fio___tls13_start(fio_io_s *io) {
     if (ctx->cert_chain && ctx->cert_chain_count > 0) {
       fio_tls13_server_set_cert_chain(&conn->state.server,
                                       ctx->cert_chain,
-                                      ctx->cert_chain_lens,
                                       ctx->cert_chain_count);
     }
 
     /* Set private key */
-    if (ctx->private_key_type == FIO_TLS13_SIG_RSA_PSS_RSAE_SHA256 &&
-        ctx->private_key_ext) {
+    if (ctx->signature_algo == FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256 &&
+        ctx->private_key_ext.buf) {
       fio_tls13_server_set_private_key(&conn->state.server,
                                        ctx->private_key_ext,
-                                       ctx->private_key_ext_len,
-                                       ctx->private_key_type);
+                                       (fio_tls13_signature_algo_e)
+                                           ctx->signature_algo);
     } else if (ctx->private_key_len > 0) {
       fio_tls13_server_set_private_key(&conn->state.server,
-                                       ctx->private_key,
-                                       ctx->private_key_len,
-                                       ctx->private_key_type);
+                                       FIO_UBUF_INFO2(ctx->private_key,
+                                                      ctx->private_key_len),
+                                       (fio_tls13_signature_algo_e)
+                                           ctx->signature_algo);
       /* Copy public key for P-256 signing */
-      if (ctx->private_key_type == FIO_TLS13_SIG_ECDSA_SECP256R1_SHA256) {
-        FIO_MEMCPY(conn->state.server.public_key, ctx->public_key, 65);
+      if (ctx->signature_algo == FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256) {
+        FIO_MEMCPY(conn->state.server.credentials.public_key,
+                   ctx->public_key,
+                   65);
       }
     }
 
@@ -108806,6 +109205,14 @@ FIO_SFUNC void fio___tls13_start(fio_io_s *io) {
     if (ctx->alpn_protocols_len > 0) {
       fio_tls13_server_alpn_set(&conn->state.server, ctx->alpn_protocols);
     }
+
+#if defined(H___FIO_X509___H) && defined(H___FIO_PEM___H)
+    /* Require client certificates when a trust store is configured. */
+    if (ctx->trust_store.root_count > 0) {
+      fio_tls13_server_require_client_cert(&conn->state.server, 2);
+      fio_tls13_server_set_trust_store(&conn->state.server, &ctx->trust_store);
+    }
+#endif /* H___FIO_X509___H && H___FIO_PEM___H */
   }
 }
 
@@ -108813,8 +109220,176 @@ FIO_SFUNC void fio___tls13_start(fio_io_s *io) {
 TLS 1.3 IO Functions - Read
 ***************************************************************************** */
 
+/** Decrypts one complete TLS record into the supplied destination. */
+FIO_SFUNC int fio___tls13_decrypt_record(fio___tls13_connection_s *conn,
+                                         uint8_t *dest,
+                                         size_t dest_capacity,
+                                         const uint8_t *record,
+                                         size_t record_len) {
+  if (conn->is_client)
+    return fio_tls13_client_decrypt(
+        &conn->state.client, dest, dest_capacity, record, record_len);
+  return fio_tls13_server_decrypt(
+      &conn->state.server, dest, dest_capacity, record, record_len);
+}
+
+/** Reads post-handshake TLS records through scratch storage.
+ *
+ * The scratch capacity is bounded by the larger of the caller's remaining
+ * buffer and available application-buffer space. Since every TLS record adds
+ * wire overhead, all plaintext from the batch fits its selected destination. */
+FIO_SFUNC ssize_t fio___tls13_read_connected(fio_socket_i fd,
+                                             void *buf,
+                                             size_t len,
+                                             fio___tls13_connection_s *conn) {
+  uint8_t *scratch = fio___tls13_buffer_alloc(1);
+  uint8_t *user_buf = (uint8_t *)buf;
+  size_t user_written = 0;
+
+  /* Complete a retained ciphertext fragment before starting a new batch. */
+  if (conn->recv_buf_len) {
+    if (conn->recv_buf_pos) {
+      size_t remaining = conn->recv_buf_len - conn->recv_buf_pos;
+      FIO_MEMMOVE(fio___tls13_recv_buf(conn),
+                  fio___tls13_recv_buf(conn) + conn->recv_buf_pos,
+                  remaining);
+      conn->recv_buf_len = remaining;
+      conn->recv_buf_pos = 0;
+    }
+    while (conn->recv_buf_len < FIO_TLS13_RECORD_HEADER_LEN ||
+           conn->recv_buf_len <
+               FIO_TLS13_RECORD_HEADER_LEN +
+                   (((size_t)fio___tls13_recv_buf(conn)[3] << 8) |
+                    fio___tls13_recv_buf(conn)[4])) {
+      size_t needed;
+      if (conn->recv_buf_len < FIO_TLS13_RECORD_HEADER_LEN) {
+        needed = FIO_TLS13_RECORD_HEADER_LEN - conn->recv_buf_len;
+      } else {
+        size_t ciphertext_len =
+            ((size_t)fio___tls13_recv_buf(conn)[3] << 8) |
+            fio___tls13_recv_buf(conn)[4];
+        if (ciphertext_len > FIO_TLS13_MAX_CIPHERTEXT_LEN) {
+          errno = ECONNRESET;
+          return -1;
+        }
+        needed = FIO_TLS13_RECORD_HEADER_LEN + ciphertext_len -
+                 conn->recv_buf_len;
+      }
+      ssize_t read_len = fio_sock_read(fd, (char *)scratch, needed);
+      if (read_len <= 0)
+        return read_len;
+      FIO_MEMCPY(fio___tls13_recv_buf(conn) + conn->recv_buf_len,
+                 scratch,
+                 (size_t)read_len);
+      conn->recv_buf_len += (size_t)read_len;
+    }
+
+    size_t record_len = FIO_TLS13_RECORD_HEADER_LEN +
+                        (((size_t)fio___tls13_recv_buf(conn)[3] << 8) |
+                         fio___tls13_recv_buf(conn)[4]);
+    uint8_t *target = len >= FIO___TLS13_APP_BUF_CAP
+                          ? user_buf
+                          : fio___tls13_app_buf(conn);
+    size_t target_capacity = len >= FIO___TLS13_APP_BUF_CAP
+                                 ? len
+                                 : FIO___TLS13_APP_BUF_CAP;
+    int decrypted = fio___tls13_decrypt_record(
+        conn, target, target_capacity, fio___tls13_recv_buf(conn), record_len);
+    if (decrypted < 0) {
+      errno = ECONNRESET;
+      return -1;
+    }
+    conn->recv_buf_len = 0;
+    conn->recv_buf_pos = 0;
+    if (target == user_buf)
+      return decrypted;
+    conn->app_buf_len = (size_t)decrypted;
+  }
+
+  if (conn->app_buf_len > conn->app_buf_pos) {
+    size_t available = conn->app_buf_len - conn->app_buf_pos;
+    size_t to_copy = len < available ? len : available;
+    FIO_MEMCPY(user_buf, fio___tls13_app_buf(conn) + conn->app_buf_pos, to_copy);
+    conn->app_buf_pos += to_copy;
+    if (conn->app_buf_pos == conn->app_buf_len) {
+      conn->app_buf_len = 0;
+      conn->app_buf_pos = 0;
+    } else {
+      fio_io_on_data_schedule(conn->io);
+    }
+    return (ssize_t)to_copy;
+  }
+
+  size_t app_space = FIO___TLS13_APP_BUF_CAP - conn->app_buf_len;
+  size_t read_capacity = len > app_space ? len : app_space;
+  if (read_capacity > FIO___TLS13_READ_SCRATCH_CAP)
+    read_capacity = FIO___TLS13_READ_SCRATCH_CAP;
+  if (!read_capacity)
+    return 0;
+
+  ssize_t read_len = fio_sock_read(fd, (char *)scratch, read_capacity);
+  if (read_len <= 0)
+    return read_len;
+
+  uint8_t *target = len >= app_space ? user_buf : fio___tls13_app_buf(conn);
+  size_t target_capacity = len >= app_space ? len : app_space;
+  size_t offset = 0;
+  size_t produced = 0;
+  while ((size_t)read_len - offset >= FIO_TLS13_RECORD_HEADER_LEN) {
+    size_t ciphertext_len = ((size_t)scratch[offset + 3] << 8) |
+                            scratch[offset + 4];
+    if (ciphertext_len > FIO_TLS13_MAX_CIPHERTEXT_LEN) {
+      errno = ECONNRESET;
+      return -1;
+    }
+    size_t record_len = FIO_TLS13_RECORD_HEADER_LEN + ciphertext_len;
+    if ((size_t)read_len - offset < record_len)
+      break;
+    int decrypted = fio___tls13_decrypt_record(conn,
+                                               target + produced,
+                                               target_capacity - produced,
+                                               scratch + offset,
+                                               record_len);
+    if (decrypted < 0) {
+      errno = ECONNRESET;
+      return -1;
+    }
+    produced += (size_t)decrypted;
+    offset += record_len;
+  }
+
+  if (offset < (size_t)read_len) {
+    size_t partial_len = (size_t)read_len - offset;
+    FIO_MEMCPY(fio___tls13_recv_buf(conn), scratch + offset, partial_len);
+    conn->recv_buf_len = partial_len;
+    conn->recv_buf_pos = 0;
+  }
+
+  if (target == user_buf)
+    user_written = produced;
+  else
+    conn->app_buf_len = produced;
+
+  if (user_written)
+    return (ssize_t)user_written;
+  if (conn->app_buf_len) {
+    size_t to_copy = len < conn->app_buf_len ? len : conn->app_buf_len;
+    FIO_MEMCPY(user_buf, fio___tls13_app_buf(conn), to_copy);
+    conn->app_buf_pos = to_copy;
+    if (conn->app_buf_pos == conn->app_buf_len) {
+      conn->app_buf_len = 0;
+      conn->app_buf_pos = 0;
+    } else {
+      fio_io_on_data_schedule(conn->io);
+    }
+    return (ssize_t)to_copy;
+  }
+  errno = EWOULDBLOCK;
+  return -1;
+}
+
 /** Called to perform a non-blocking `read`, same as the system call. */
-FIO_SFUNC ssize_t fio___tls13_read(int fd,
+FIO_SFUNC ssize_t fio___tls13_read(fio_socket_i fd,
                                    void *buf,
                                    size_t len,
                                    void *tls_ctx) {
@@ -108833,17 +109408,22 @@ FIO_SFUNC ssize_t fio___tls13_read(int fd,
     if (conn->app_buf_pos >= conn->app_buf_len) {
       conn->app_buf_len = 0;
       conn->app_buf_pos = 0;
+    } else {
+      fio_io_on_data_schedule(conn->io);
     }
     return (ssize_t)to_copy;
   }
 
+  if (conn->handshake_complete)
+    return fio___tls13_read_connected(fd, buf, len, conn);
+
   /* Calculate available space in recv_buf and compact if needed */
   size_t recv_data_len = conn->recv_buf_len - conn->recv_buf_pos;
-  size_t recv_space = FIO___TLS13_BUF_CAP - conn->recv_buf_len;
+  size_t recv_space = FIO___TLS13_RECV_BUF_CAP - conn->recv_buf_len;
 
   /* Lazy compaction: only compact when buffer is >50% consumed AND
    * we don't have enough space for a new record */
-  if (conn->recv_buf_pos > (FIO___TLS13_BUF_CAP >> 1) &&
+  if (conn->recv_buf_pos > (FIO___TLS13_RECV_BUF_CAP >> 1) &&
       recv_space < FIO_TLS13_MAX_CIPHERTEXT_LEN) {
     if (recv_data_len > 0) {
       FIO_MEMMOVE(fio___tls13_recv_buf(conn),
@@ -108852,15 +109432,14 @@ FIO_SFUNC ssize_t fio___tls13_read(int fd,
     }
     conn->recv_buf_len = recv_data_len;
     conn->recv_buf_pos = 0;
-    recv_space = FIO___TLS13_BUF_CAP - conn->recv_buf_len;
+    recv_space = FIO___TLS13_RECV_BUF_CAP - conn->recv_buf_len;
   }
 
-  /* Read raw data from socket */
+  /* Read ciphertext through a shared scratch buffer, retaining only an
+   * incomplete TLS record in the connection. */
+  uint8_t *read_buf = fio___tls13_buffer_alloc(1);
   errno = 0;
-  ssize_t raw_read =
-      fio_sock_read(fd,
-                    (char *)fio___tls13_recv_buf(conn) + conn->recv_buf_len,
-                    recv_space);
+  ssize_t raw_read = fio_sock_read(fd, (char *)read_buf, recv_space);
   if (raw_read <= 0) {
     if (raw_read == 0)
       return 0; /* EOF */
@@ -108868,6 +109447,9 @@ FIO_SFUNC ssize_t fio___tls13_read(int fd,
       return -1;
     return raw_read;
   }
+  FIO_MEMCPY(fio___tls13_recv_buf(conn) + conn->recv_buf_len,
+             read_buf,
+             (size_t)raw_read);
   conn->recv_buf_len += (size_t)raw_read;
   recv_data_len = conn->recv_buf_len - conn->recv_buf_pos;
 
@@ -108909,32 +109491,16 @@ FIO_SFUNC ssize_t fio___tls13_read(int fd,
         return -1;
       }
 
-      /* Buffer any handshake response */
+      /* Queue any handshake response after already serialized wire data. */
       if (out_len > 0) {
-        if (conn->send_buf_len + out_len <= FIO___TLS13_BUF_CAP) {
-          FIO_MEMCPY(fio___tls13_send_buf(conn) + conn->send_buf_len,
-                     out_buf,
-                     out_len);
-          conn->send_buf_len += out_len;
+        if (out_len > sizeof(conn->out_buf) - conn->out_buf_len) {
+          FIO_LOG_ERROR("TLS 1.3: handshake output queue overflow");
+          errno = ENOBUFS;
+          return -1;
         }
-        /* Immediately try to send handshake response */
-        while (conn->send_buf_pos < conn->send_buf_len) {
-          errno = 0;
-          ssize_t hs_written = fio_sock_write(
-              fd,
-              (char *)fio___tls13_send_buf(conn) + conn->send_buf_pos,
-              conn->send_buf_len - conn->send_buf_pos);
-          if (hs_written <= 0) {
-            if (errno == EWOULDBLOCK || errno == EAGAIN)
-              break; /* Will retry later */
-            break;
-          }
-          conn->send_buf_pos += (size_t)hs_written;
-        }
-        if (conn->send_buf_pos >= conn->send_buf_len) {
-          conn->send_buf_len = 0;
-          conn->send_buf_pos = 0;
-        }
+        FIO_MEMCPY(conn->out_buf + conn->out_buf_len, out_buf, out_len);
+        conn->out_buf_len += out_len;
+        (void)fio___tls13_out_flush(fd, conn);
       }
 
       /* Advance read position (lazy compaction) */
@@ -108984,7 +109550,7 @@ FIO_SFUNC ssize_t fio___tls13_read(int fd,
       } else {
         /* Use app_buf as intermediate buffer */
         decrypt_target = fio___tls13_app_buf(conn) + conn->app_buf_len;
-        decrypt_capacity = FIO___TLS13_BUF_CAP - conn->app_buf_len;
+        decrypt_capacity = FIO___TLS13_APP_BUF_CAP - conn->app_buf_len;
       }
 
       if (conn->is_client) {
@@ -109032,6 +109598,8 @@ FIO_SFUNC ssize_t fio___tls13_read(int fd,
     if (conn->app_buf_pos >= conn->app_buf_len) {
       conn->app_buf_len = 0;
       conn->app_buf_pos = 0;
+    } else {
+      fio_io_on_data_schedule(conn->io);
     }
     return (ssize_t)to_copy;
   }
@@ -109053,15 +109621,14 @@ TLS 1.3 IO Functions - Write
  *   -1     - error or EWOULDBLOCK (socket full, can't accept data now)
  *
  * Multi-record batching: encrypts up to 4 TLS records (64KB plaintext) into
- * enc_buf in a single call, then writes everything with one fio_sock_write().
- * Handshake data (send_buf) and KeyUpdate responses are prepended to enc_buf
- * so all outgoing data goes in a single syscall.
+ * the shared wire-output queue and then attempts a single socket write.
+ * Handshake data and KeyUpdate responses use the same ordered queue.
  *
  * IMPORTANT: Once data is encrypted, the TLS sequence number is incremented.
  * The function MUST return success (N > 0) after encryption, even if the
  * socket write fails. The encrypted data is buffered and flush() sends later.
  */
-FIO_SFUNC ssize_t fio___tls13_write(int fd,
+FIO_SFUNC ssize_t fio___tls13_write(fio_socket_i fd,
                                     const void *buf,
                                     size_t len,
                                     void *tls_ctx) {
@@ -109079,64 +109646,25 @@ FIO_SFUNC ssize_t fio___tls13_write(int fd,
     return -1;
   }
 
-  /* CRITICAL: Flush any pending encrypted data from a previous partial write.
-   * TLS records are atomic - we cannot re-encrypt because the sequence number
-   * has already been incremented. We must send the buffered encrypted data
-   * before we can accept new plaintext.
-   *
-   * IMPORTANT: We must NOT return the old plaintext_len here! The IO layer
-   * passed us NEW data in buf/len. If we return the old length, the IO layer
-   * will advance the stream by that amount, losing the new data.
-   * Instead, we flush the pending data and then continue to process the new
-   * data. If we can't fully flush, return EWOULDBLOCK. */
-  while (conn->enc_buf_sent < conn->enc_buf_len) {
-    size_t remaining = conn->enc_buf_len - conn->enc_buf_sent;
-    errno = 0;
-    ssize_t written = fio_sock_write(fd,
-                                     (char *)conn->enc_buf + conn->enc_buf_sent,
-                                     remaining);
-    if (written <= 0) {
-      if (errno == EWOULDBLOCK || errno == EAGAIN) {
-        errno = EWOULDBLOCK;
-        return -1;
-      }
-      return -1; /* Real socket error */
-    }
-    conn->enc_buf_sent += (size_t)written;
+  /* Serialized output must drain before new plaintext is accepted: TLS record
+   * sequence numbers have already advanced for every queued record. */
+  if (fio___tls13_out_flush(fd, conn) < 0 || conn->out_buf_len) {
+    errno = EWOULDBLOCK;
+    return -1;
   }
 
-  /* Pending data fully sent - reset buffer */
-  conn->enc_buf_len = 0;
-  conn->enc_buf_sent = 0;
+  size_t out_pos = 0;
 
-  /* Position in enc_buf where we'll write next */
-  size_t enc_pos = 0;
-
-  /* Copy any pending handshake data (e.g., client Finished) into enc_buf
-   * so it goes out in the same syscall as application data. */
-  if (conn->send_buf_pos < conn->send_buf_len) {
-    size_t hs_remaining = conn->send_buf_len - conn->send_buf_pos;
-    if (hs_remaining <= sizeof(conn->enc_buf)) {
-      FIO_MEMCPY(conn->enc_buf,
-                 fio___tls13_send_buf(conn) + conn->send_buf_pos,
-                 hs_remaining);
-      enc_pos = hs_remaining;
-    }
-    conn->send_buf_len = 0;
-    conn->send_buf_pos = 0;
-  }
-
-  /* RFC 8446 Section 4.6.3: Send KeyUpdate response before Application Data
-   * if one is pending. Encrypt into enc_buf with OLD sending keys,
-   * then update our sending keys. */
+  /* RFC 8446 Section 4.6.3: serialize a KeyUpdate response before
+   * application data, using the old sending keys. */
   if (conn->is_client && conn->state.client.key_update_pending) {
-    size_t ku_space = sizeof(conn->enc_buf) - enc_pos;
+    size_t ku_space = sizeof(conn->out_buf) - out_pos;
     size_t key_len = fio___tls13_key_len(&conn->state.client);
     fio_tls13_cipher_type_e cipher_type =
         fio___tls13_cipher_type(&conn->state.client);
 
     int ku_len = fio_tls13_send_key_update_response(
-        conn->enc_buf + enc_pos,
+        conn->out_buf + out_pos,
         ku_space,
         conn->state.client.client_app_traffic_secret,
         &conn->state.client.client_app_keys,
@@ -109146,17 +109674,17 @@ FIO_SFUNC ssize_t fio___tls13_write(int fd,
         cipher_type);
 
     if (ku_len > 0) {
-      enc_pos += (size_t)ku_len;
-      FIO_LOG_DEBUG2("TLS 1.3 Client: KeyUpdate response queued in enc_buf");
+      out_pos += (size_t)ku_len;
+      FIO_LOG_DEBUG2("TLS 1.3 Client: KeyUpdate response queued in out_buf");
     }
   } else if (!conn->is_client && conn->state.server.key_update_pending) {
-    size_t ku_space = sizeof(conn->enc_buf) - enc_pos;
+    size_t ku_space = sizeof(conn->out_buf) - out_pos;
     size_t key_len = fio___tls13_server_key_len(&conn->state.server);
     fio_tls13_cipher_type_e cipher_type =
         fio___tls13_server_cipher_type(&conn->state.server);
 
     int ku_len = fio_tls13_send_key_update_response(
-        conn->enc_buf + enc_pos,
+        conn->out_buf + out_pos,
         ku_space,
         conn->state.server.server_app_traffic_secret,
         &conn->state.server.server_app_keys,
@@ -109166,54 +109694,45 @@ FIO_SFUNC ssize_t fio___tls13_write(int fd,
         cipher_type);
 
     if (ku_len > 0) {
-      enc_pos += (size_t)ku_len;
-      FIO_LOG_DEBUG2("TLS 1.3 Server: KeyUpdate response queued in enc_buf");
+      out_pos += (size_t)ku_len;
+      FIO_LOG_DEBUG2("TLS 1.3 Server: KeyUpdate response queued in out_buf");
     }
   }
 
-  /* Multi-record encryption: loop encrypting up to 4 TLS records into enc_buf.
-   * Each record holds up to FIO_TLS13_MAX_PLAINTEXT_LEN (16384) bytes. */
+  /* Encrypt up to four TLS records into the shared wire-output queue. */
   size_t total_plaintext = 0;
   const uint8_t *src = (const uint8_t *)buf;
   size_t remaining_plaintext = len;
 
   while (remaining_plaintext > 0) {
-    /* Check if enc_buf has space for at least one more max record */
-    size_t enc_space = sizeof(conn->enc_buf) - enc_pos;
-    if (enc_space < FIO_TLS13_RECORD_HEADER_LEN + 1 + 1 + FIO_TLS13_TAG_LEN)
-      break; /* Not enough space for even a minimal record */
+    size_t out_space = sizeof(conn->out_buf) - out_pos;
+    if (out_space < FIO_TLS13_RECORD_HEADER_LEN + 1 + FIO_TLS13_TAG_LEN)
+      break;
 
-    /* Clamp this chunk to max plaintext per record */
     size_t chunk = remaining_plaintext;
     if (chunk > FIO_TLS13_MAX_PLAINTEXT_LEN)
       chunk = FIO_TLS13_MAX_PLAINTEXT_LEN;
-
-    /* Also clamp to what fits in remaining enc_buf space:
-     * encrypted size = header(5) + plaintext + content_type(1) + tag(16) */
     size_t max_pt_for_space =
-        enc_space - FIO_TLS13_RECORD_HEADER_LEN - 1 - FIO_TLS13_TAG_LEN;
+        out_space - FIO_TLS13_RECORD_HEADER_LEN - 1 - FIO_TLS13_TAG_LEN;
     if (chunk > max_pt_for_space)
       chunk = max_pt_for_space;
 
-    /* Encrypt one record into enc_buf at enc_pos */
-    int enc_len;
+    int out_len;
     if (conn->is_client) {
-      enc_len = fio_tls13_client_encrypt(&conn->state.client,
-                                         conn->enc_buf + enc_pos,
-                                         enc_space,
+      out_len = fio_tls13_client_encrypt(&conn->state.client,
+                                         conn->out_buf + out_pos,
+                                         out_space,
                                          src,
                                          chunk);
     } else {
-      enc_len = fio_tls13_server_encrypt(&conn->state.server,
-                                         conn->enc_buf + enc_pos,
-                                         enc_space,
+      out_len = fio_tls13_server_encrypt(&conn->state.server,
+                                         conn->out_buf + out_pos,
+                                         out_space,
                                          src,
                                          chunk);
     }
 
-    if (enc_len < 0) {
-      /* Encryption error. If we already encrypted some records, return what
-       * we have. Otherwise report error. */
+    if (out_len < 0) {
       if (total_plaintext > 0)
         break;
       FIO_LOG_DEBUG2("TLS 1.3: encryption error");
@@ -109221,41 +109740,19 @@ FIO_SFUNC ssize_t fio___tls13_write(int fd,
       return -1;
     }
 
-    enc_pos += (size_t)enc_len;
+    out_pos += (size_t)out_len;
     src += chunk;
     remaining_plaintext -= chunk;
     total_plaintext += chunk;
   }
 
-  /* If we have data to send (handshake, KeyUpdate, and/or encrypted records),
-   * write it all in a single syscall. */
-  if (enc_pos > 0) {
-    errno = 0;
-    ssize_t written = fio_sock_write(fd, (char *)conn->enc_buf, enc_pos);
-    if (written <= 0) {
-      if (errno == EWOULDBLOCK || errno == EAGAIN) {
-        /* Socket buffer full. Buffer everything for later.
-         * CRITICAL: Return SUCCESS for any encrypted plaintext because
-         * sequence numbers are incremented. flush() will send later. */
-        conn->enc_buf_len = enc_pos;
-        conn->enc_buf_sent = 0;
-        errno = 0;
-        return total_plaintext > 0 ? (ssize_t)total_plaintext : -1;
-      }
-      return -1; /* Real socket error */
-    }
-
-    /* Partial write - buffer the remainder.
-     * CRITICAL: Cannot re-encrypt; sequence numbers already incremented. */
-    if ((size_t)written < enc_pos) {
-      conn->enc_buf_len = enc_pos;
-      conn->enc_buf_sent = (size_t)written;
-    }
+  if (out_pos > 0) {
+    conn->out_buf_len = out_pos;
+    conn->out_buf_sent = 0;
+    if (fio___tls13_out_flush(fd, conn) < 0 && total_plaintext == 0)
+      return -1;
   }
 
-  /* Report total plaintext bytes accepted.
-   * N > 0: plaintext was encrypted and sent/buffered.
-   * -1: no plaintext could be encrypted (enc_buf full of control data). */
   if (total_plaintext > 0)
     return (ssize_t)total_plaintext;
   errno = EWOULDBLOCK;
@@ -109273,72 +109770,19 @@ TLS 1.3 IO Functions - Flush
  *   0      - nothing to flush, all internal buffers are empty (EOF)
  *   -1     - error or EWOULDBLOCK (pending data couldn't be flushed)
  *
- * After the write() rewrite, all outgoing data (handshake, KeyUpdate,
- * encrypted records) is unified into enc_buf. Flush only needs to drain it.
- * The send_buf is still flushed here for handshake data generated during
- * read() (before write() has a chance to copy it into enc_buf). */
-FIO_SFUNC int fio___tls13_flush(int fd, void *tls_ctx) {
+ * Handshake, KeyUpdate, and encrypted application records share one wire-output
+ * queue, so flush only needs to drain that queue. */
+FIO_SFUNC int fio___tls13_flush(fio_socket_i fd, void *tls_ctx) {
   fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
   if (!conn)
     return 0;
 
-  size_t total_flushed = 0;
-
-  /* Send any buffered handshake data that was generated during read()
-   * and hasn't been copied into enc_buf by write() yet. */
-  while (conn->send_buf_pos < conn->send_buf_len) {
-    errno = 0;
-    ssize_t written =
-        fio_sock_write(fd,
-                       (char *)fio___tls13_send_buf(conn) + conn->send_buf_pos,
-                       conn->send_buf_len - conn->send_buf_pos);
-    if (written <= 0) {
-      if (total_flushed > 0)
-        goto done;
-      return -1;
-    }
-    conn->send_buf_pos += (size_t)written;
-    total_flushed += (size_t)written;
-  }
-
-  /* Reset send buffer if fully sent */
-  if (conn->send_buf_pos >= conn->send_buf_len) {
-    conn->send_buf_len = 0;
-    conn->send_buf_pos = 0;
-  }
-
-  /* Flush pending encrypted data (handshake + KeyUpdate + app records) */
-  while (conn->enc_buf_sent < conn->enc_buf_len) {
-    size_t remaining = conn->enc_buf_len - conn->enc_buf_sent;
-    errno = 0;
-    ssize_t written = fio_sock_write(fd,
-                                     (char *)conn->enc_buf + conn->enc_buf_sent,
-                                     remaining);
-    if (written <= 0) {
-      if (total_flushed > 0)
-        goto done;
-      return -1;
-    }
-    conn->enc_buf_sent += (size_t)written;
-    total_flushed += (size_t)written;
-  }
-
-  /* Reset encrypted buffer if fully sent */
-  if (conn->enc_buf_sent >= conn->enc_buf_len) {
-    conn->enc_buf_len = 0;
-    conn->enc_buf_sent = 0;
-  }
-
-done:
-  /* N > 0: bytes were flushed (may still have pending data).
-   * 0: all internal buffers are empty.
-   * The IO layer uses truthiness to decide whether to monitor for POLLOUT,
-   * so both N > 0 and -1 correctly trigger continued monitoring. */
-  if (total_flushed > 0)
-    return (int)total_flushed;
-  /* Check if there's still pending data we couldn't flush */
-  if ((conn->send_buf_len > conn->send_buf_pos) ||
-      (conn->enc_buf_len > conn->enc_buf_sent)) {
+  ssize_t flushed = fio___tls13_out_flush(fd, conn);
+  if (conn->app_buf_len > conn->app_buf_pos)
+    fio_io_on_data_schedule(conn->io);
+  if (flushed > 0)
+    return (int)flushed;
+  if (flushed < 0 || conn->out_buf_len) {
     errno = EWOULDBLOCK;
     return -1;
   }
@@ -109350,7 +109794,7 @@ TLS 1.3 IO Functions - Finish
 ***************************************************************************** */
 
 /** Called when the IO object finished sending all data before closure. */
-FIO_SFUNC void fio___tls13_finish(int fd, void *tls_ctx) {
+FIO_SFUNC void fio___tls13_finish(fio_socket_i fd, void *tls_ctx) {
   fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
   if (!conn)
     return;
@@ -109399,6 +109843,66 @@ FIO_SFUNC void fio___tls13_cleanup(void *tls_ctx) {
 }
 
 /* *****************************************************************************
+Peer Information Iterator
+***************************************************************************** */
+
+/** Returns the next peer certificate for the connection (zero-copy).
+ *
+ * The iterator is stateless — the position is identified from `dest` alone:
+ * a zeroed `dest` (`der.buf == NULL`) starts a new loop at the leaf
+ * certificate; otherwise iteration continues at `dest->chain_index + 1`.
+ * Returns 0 while data is available, -1 when done / on error. */
+FIO_SFUNC int fio___tls13_peer_info_next(fio_socket_i fd,
+                                         fio_x509_cert_s *dest,
+                                         void *tls_ctx) {
+  fio___tls13_connection_s *conn = (fio___tls13_connection_s *)tls_ctx;
+  if (!conn || !dest)
+    return -1;
+  if (!conn->handshake_complete)
+    return -1;
+  (void)fd;
+#if defined(H___FIO_X509___H) && defined(H___FIO_SHA2___H)
+  const fio_ubuf_info_s *chain;
+  size_t chain_count;
+  uint8_t verified;
+  if (conn->is_client) {
+    chain = conn->state.client.peer_chain.certs;
+    chain_count = conn->state.client.peer_chain.count;
+    /* skipped verification must not be reported as verified */
+    verified = !conn->state.client.skip_cert_verify &&
+               conn->state.client.cert_verified &&
+               conn->state.client.chain_verified;
+  } else {
+    chain = conn->state.server.peer_auth.chain.certs;
+    chain_count = conn->state.server.peer_auth.chain.count;
+    verified = conn->state.server.peer_auth.verified;
+  }
+  /* Identify the position from `dest` — read `chain_index` BEFORE
+   * fio_x509_parse, which zeroes the whole struct.
+   * Iteration is capped at 128 certificates (deep-nesting / DoS guard). */
+  if ((uint8_t)dest->chain_index & (uint8_t)128U)
+    return -1;
+  const size_t pos =
+      dest->der.buf ? ((size_t)dest->chain_index + 1) : (size_t)0;
+  if ((uint8_t)pos & (uint8_t)128U)
+    return -1;
+  if (pos >= chain_count)
+    return -1;
+  /* Parse in place: all fio_x509_cert_s views reference the certificate DER
+   * stored in the TLS state (peer_chain / peer_auth chain storage), valid
+   * for the connection's lifetime. No allocation or copying takes place. */
+  if (fio_x509_parse(dest, chain[pos].buf, chain[pos].len) != 0)
+    return -1;
+  fio_x509_fingerprint(dest);
+  dest->verified = verified;
+  dest->chain_index = (uint8_t)pos;
+  return 0;
+#else  /* !H___FIO_X509___H || !H___FIO_SHA2___H */
+  return -1; /* peer certificate inspection requires the X509 module */
+#endif
+}
+
+/* *****************************************************************************
 TLS 1.3 IO Functions Structure
 ***************************************************************************** */
 
@@ -109413,6 +109917,7 @@ SFUNC fio_io_functions_s fio_tls13_io_functions(void) {
       .flush = fio___tls13_flush,
       .cleanup = fio___tls13_cleanup,
       .finish = fio___tls13_finish,
+      .peer_info_next = fio___tls13_peer_info_next,
   };
 }
 
@@ -118612,7 +119117,8 @@ static int fio_http1___start(fio_http1_parser_s *p,
     buf->buf = start;
     return 1;
   }
-  char *eol = (char *)FIO_MEMCHR(start, '\n', buf->len);
+  char *eol =
+      (char *)FIO_MEMCHR(start, '\n', (size_t)((buf->buf + buf->len) - start));
   if (!eol)
     return 1;
   if (start + 13 > eol) /* test for minimal data GET HTTP/1 or ### HTTP/1 */
@@ -119061,7 +119567,7 @@ enum {
   FIO_WEBSOCKET_EV_ERROR = 4,
 };
 
-/** WebSocket frame opcodes (RFC 6455). */
+/* WebSocket frame opcodes (RFC 6455). */
 #define FIO_WEBSOCKET_OP_CONT   0x0
 #define FIO_WEBSOCKET_OP_TEXT   0x1
 #define FIO_WEBSOCKET_OP_BINARY 0x2
@@ -119069,20 +119575,20 @@ enum {
 #define FIO_WEBSOCKET_OP_PING   0x9
 #define FIO_WEBSOCKET_OP_PONG   0xA
 
-/** Parser FSM states. */
+/* Parser FSM states. */
 #define FIO_WEBSOCKET_STATE_HEADER  0
 #define FIO_WEBSOCKET_STATE_PAYLOAD 1
 #define FIO_WEBSOCKET_STATE_CLOSED  0xFE
 #define FIO_WEBSOCKET_STATE_ERROR   0xFF
 
-/** Flag bit positions in fio_websocket_s.flags. */
+/* Flag bit positions in fio_websocket_s.flags. */
 #define FIO_WEBSOCKET_FLAG_FIN             0x80
 #define FIO_WEBSOCKET_FLAG_MASKED          0x40
 #define FIO_WEBSOCKET_FLAG_OPCODE_MASK     0x3C
 #define FIO_WEBSOCKET_FLAG_OPCODE_SHIFT    2
 #define FIO_WEBSOCKET_FLAG_MSG_OPCODE_MASK 0x03
 
-/** Flag bit positions in fio_websocket_s.flags2. */
+/* Flag bit positions in fio_websocket_s.flags2. */
 #define FIO_WEBSOCKET_FLAG2_PAUSED        0x80
 #define FIO_WEBSOCKET_FLAG2_MSG_RSV_MASK  0x70
 #define FIO_WEBSOCKET_FLAG2_MSG_RSV_SHIFT 4
@@ -119644,21 +120150,27 @@ HTTP Setting Defaults
 ***************************************************************************** */
 
 #ifndef FIO_HTTP_DEFAULT_MAX_HEADER_SIZE
+/** The default HTTP total header size limit in bytes. */
 #define FIO_HTTP_DEFAULT_MAX_HEADER_SIZE 32768 /* (1UL << 15) */
 #endif
 #ifndef FIO_HTTP_DEFAULT_MAX_LINE_LEN
+/** The default HTTP header line limit in bytes. */
 #define FIO_HTTP_DEFAULT_MAX_LINE_LEN 8192 /* (1UL << 13) */
 #endif
 #ifndef FIO_HTTP_DEFAULT_MAX_BODY_SIZE
+/** The default HTTP payload size limit in bytes. */
 #define FIO_HTTP_DEFAULT_MAX_BODY_SIZE 33554432 /* (1UL << 25) */
 #endif
 #ifndef FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE
+/** The default WebSocket message size limit in bytes. */
 #define FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE 262144 /* (1UL << 18) */
 #endif
 #ifndef FIO_HTTP_DEFAULT_TIMEOUT
+/** The default timeout for HTTP connections. */
 #define FIO_HTTP_DEFAULT_TIMEOUT 50
 #endif
 #ifndef FIO_HTTP_DEFAULT_TIMEOUT_LONG
+/** The default timeout for long held HTTP connections (WebSockets / SSE). */
 #define FIO_HTTP_DEFAULT_TIMEOUT_LONG 50
 #endif
 
@@ -119673,7 +120185,7 @@ HTTP Setting Defaults
 #endif
 
 #ifndef FIO_WEBSOCKET_STATS
-/* If true, logs longest WebSocket round-trips (using FIO_LOG_INFO). */
+/** If true, logs longest WebSocket round-trips (using FIO_LOG_INFO). */
 #define FIO_WEBSOCKET_STATS 0
 #endif
 
@@ -119878,6 +120390,28 @@ HTTP Routing – prefix matching
 SFUNC int fio_http_route(fio_http_listener_s *listener,
                          const char *url,
                          fio_http_settings_s settings);
+/**
+ * Adds a route prefix to the HTTP handler.
+ *
+ * Order of route settings is irrelevant (unless overwriting an existing route).
+ *
+ * Matching is performed as a best-prefix match. i.e.:
+ *
+ * - All paths match the route `"/"` (the default prefix).
+ *
+ * - The route `"/user"` will match `"/user"` and all `"/user/..."` paths but
+ *   not `"/user..."`
+ *
+ * - Setting `"/user/new"` as well as `"/user"` (in whatever order) will route
+ *   `"/user/new"` and `"/user/new/..."` to `"/user/new"`. Otherwise, the
+ *   `"/user"` route will continue to behave the same.
+ *
+ * Note: the `udata`, `on_finish`, `public_folder` and `log` properties are all
+ * inherited (if missing) from the default HTTP settings used to create the
+ * listener.
+ *
+ * Note: TLS options are ignored.
+ * */
 #define fio_http_route(listener, url, ...)                                     \
   fio_http_route(listener, url, (fio_http_settings_s){__VA_ARGS__})
 
@@ -119898,6 +120432,7 @@ typedef enum {
   FIO_HTTP_RESOURCE_CREATE,
   FIO_HTTP_RESOURCE_UPDATE,
   FIO_HTTP_RESOURCE_DELETE,
+  FIO_HTTP_RESOURCE_QUERY,
 } fio_http_resource_action_e;
 
 /** returns expected action or `FIO_HTTP_RESOURCE_NONE` on error. */
@@ -119971,6 +120506,7 @@ FIO_IFUNC fio_http_resource_action_e fio_http_resource_action(fio_http_s *h) {
   const uint32_t patc = fio_buf2u32u("patc");
   const uint32_t dele = fio_buf2u32u("dele");
   const uint32_t lete = fio_buf2u32u("lete");
+  const uint32_t query = fio_buf2u32u("quer");
   fio_str_info_s method = fio_http_method(h);
   fio_str_info_s path = fio_http_path(h);
   bool path_ends_with_dash = (path.len && path.buf[path.len - 1] == '/');
@@ -120011,6 +120547,8 @@ FIO_IFUNC fio_http_resource_action_e fio_http_resource_action(fio_http_s *h) {
   } else if (path.len > 1 && !path_is_new && method.len == 6 && tmp == dele &&
              (fio_buf2u32u(method.buf + 2) | 0x20202020U) == lete) {
     r = FIO_HTTP_RESOURCE_DELETE;
+  } else if (tmp == query && method.len == 5 && (method.buf[4] | 32) == 'y') {
+    r = FIO_HTTP_RESOURCE_QUERY;
   }
   return r;
 }
@@ -122229,7 +122767,7 @@ SFUNC int fio_http_sse_write FIO_NOOP(fio_http_s *h,
     while (args.data.len &&
            (pos = (char *)FIO_MEMCHR(args.data.buf, '\n', args.data.len))) {
       const size_t len = (pos + 1) - args.data.buf;
-      pos -= (pos[-1] == '\r');
+      pos -= (pos > args.data.buf && pos[-1] == '\r');
       payload = fio_bstr_write2(
           payload,
           FIO_STRING_WRITE_STR2("data:", 5),
@@ -122940,6 +123478,7 @@ Recursive inclusion / cleanup
             Including facil.io modules for multi-file header option
 ***************************************************************************** */
 #ifndef FIO_INCLUDE_FILE
+/** Persists the include file name (single file vs. folder) */
 #define FIO_INCLUDE_FILE "fio-stl/include.h"
 #include "000 core.h"
 #include "001 patches.h"
@@ -123094,20 +123633,24 @@ Recursive inclusion / cleanup
 #include "154 p384.h"
 #endif
 
-#ifdef FIO_ASN1
-#include "155 asn1.h"
+#ifdef FIO_DER
+#include "155 der.h"
 #endif
 
 #ifdef FIO_RSA
 #include "155 rsa.h"
 #endif
 
-#ifdef FIO_X509
-#include "155 x509.h"
-#endif
-
 #ifdef FIO_MLKEM
 #include "156 mlkem.h"
+#endif
+
+#ifdef FIO_X509
+#include "156 x509.h"
+#endif
+
+#ifdef FIO_PEM
+#include "157 pem.h"
 #endif
 
 #ifdef FIO_LYRA2
@@ -123118,10 +123661,10 @@ Recursive inclusion / cleanup
 #endif
 
 #ifdef FIO_OTP
-#include "160 otp.h"
+#include "159 otp.h"
 #endif
 #ifdef FIO_SECRET
-#include "160 secret.h"
+#include "159 secret.h"
 #endif
 #ifdef FIO_DEFLATE
 #include "162 deflate.h"
@@ -123135,15 +123678,11 @@ Recursive inclusion / cleanup
 #include "190 tls13.h"
 #endif
 
-#ifdef FIO_PEM
-#include "301 pem.h"
-#endif
-
 #if defined(FIO_STR_SMALL) || defined(FIO_STR_NAME)
-#include "200 string.h"
+#include "201 string.h"
 #endif
 #ifdef FIO_ARRAY_NAME
-#include "201 array.h"
+#include "202 array.h"
 #endif
 #if defined(FIO_UMAP_NAME) || defined(FIO_OMAP_NAME) || defined(FIO_MAP_NAME)
 #include "210 map.h"
@@ -123160,18 +123699,17 @@ Recursive inclusion / cleanup
 #endif
 
 #if defined(FIO_IO) && !defined(FIO___RECURSIVE_INCLUDE)
-#include "400 io api.h"
-#include "401 io types.h"
-#include "402 io reactor.h"
+#include "401 io api.h"
+#include "402 io types.h"
+#include "403 io reactor.h"
+#if defined(FIO_IPC)
+#include "404 ipc.h"
+#endif
 #if defined(HAVE_OPENSSL)
 #include "405 openssl.h"
 #endif
 #include "405 tls13.h"
 #endif /* FIO_IO */
-
-#if defined(FIO_IPC) && !defined(FIO___RECURSIVE_INCLUDE)
-#include "404 ipc.h"
-#endif
 
 #if defined(FIO_PUBSUB) && !defined(FIO___RECURSIVE_INCLUDE)
 #include "420 pubsub.h"
