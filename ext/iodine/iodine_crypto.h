@@ -24,6 +24,8 @@ static VALUE iodine_rb_ED25519;
 static VALUE iodine_rb_X25519;
 static VALUE iodine_rb_HKDF;
 static VALUE iodine_rb_X25519MLKEM768;
+static VALUE iodine_rb_ARGON2;
+static VALUE iodine_rb_LYRA2;
 
 /* *****************************************************************************
 ChaCha20-Poly1305 AEAD Encryption
@@ -1125,6 +1127,149 @@ FIO_SFUNC VALUE iodine_crypto_x25519mlkem768_decapsulate(int argc,
 }
 
 /* *****************************************************************************
+Argon2 Password Hashing (RFC 9106)
+***************************************************************************** */
+
+/**
+ * Hashes a password using Argon2 (d, i, or id).
+ *
+ * @param password [String] The password to hash.
+ * @param salt [String] A unique salt (minimum 8 bytes recommended).
+ * @param t_cost [Integer] Time cost / iterations (default: 3).
+ * @param m_cost [Integer] Memory cost in KiB (default: 65536 = 64 MiB).
+ * @param parallelism [Integer] Parallelism lanes (default: 1).
+ * @param outlen [Integer] Output length in bytes (default: 32).
+ * @param type [Symbol] Argon2 variant: :d, :i, or :id (default: :id).
+ * @param secret [String, nil] Optional secret key (Argon2 secret value K).
+ * @param ad [String, nil] Optional associated data (Argon2 associated data X).
+ * @return [String] Binary hash of the requested length.
+ */
+FIO_SFUNC VALUE iodine_crypto_argon2_hash(int argc, VALUE *argv, VALUE self) {
+  fio_buf_info_s password = FIO_BUF_INFO0;
+  fio_buf_info_s salt = FIO_BUF_INFO0;
+  fio_buf_info_s secret = FIO_BUF_INFO0;
+  fio_buf_info_s ad = FIO_BUF_INFO0;
+  int64_t t_cost = 3;
+  int64_t m_cost = 64 * 1024;
+  int64_t parallelism = 1;
+  int64_t outlen = 32;
+  VALUE type_rb = Qnil;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(password, 0, "password", 1),
+                  IODINE_ARG_BUF(salt, 0, "salt", 1),
+                  IODINE_ARG_BUF(secret, 0, "secret", 0),
+                  IODINE_ARG_BUF(ad, 0, "ad", 0),
+                  IODINE_ARG_NUM(t_cost, 0, "t_cost", 0),
+                  IODINE_ARG_NUM(m_cost, 0, "m_cost", 0),
+                  IODINE_ARG_NUM(parallelism, 0, "parallelism", 0),
+                  IODINE_ARG_NUM(outlen, 0, "outlen", 0),
+                  IODINE_ARG_RB(type_rb, 0, "type", 0));
+
+  if (outlen < 4 || outlen > 0x0FFFFFFF)
+    rb_raise(rb_eArgError, "outlen must be between 4 and 268435455");
+  if (t_cost < 1)
+    rb_raise(rb_eArgError, "t_cost must be >= 1");
+  if (parallelism < 1)
+    rb_raise(rb_eArgError, "parallelism must be >= 1");
+  if (m_cost < 8 * parallelism)
+    rb_raise(rb_eArgError, "m_cost must be >= 8 * parallelism");
+
+  fio_argon2_type_e type = FIO_ARGON2ID;
+  if (type_rb != Qnil) {
+    if (!RB_TYPE_P(type_rb, RUBY_T_SYMBOL))
+      rb_raise(rb_eTypeError, "type must be a Symbol (:d, :i, or :id)");
+    ID type_id = rb_sym2id(type_rb);
+    if (type_id == rb_intern("d"))
+      type = FIO_ARGON2D;
+    else if (type_id == rb_intern("i"))
+      type = FIO_ARGON2I;
+    else if (type_id == rb_intern("id"))
+      type = FIO_ARGON2ID;
+    else
+      rb_raise(rb_eArgError, "type must be :d, :i, or :id");
+  }
+
+  VALUE out = rb_str_buf_new((long)outlen);
+  rb_str_set_len(out, (long)outlen);
+
+  int result = fio_argon2_hash(RSTRING_PTR(out),
+                               .password = password,
+                               .salt = salt,
+                               .secret = secret,
+                               .ad = ad,
+                               .t_cost = (uint32_t)t_cost,
+                               .m_cost = (uint32_t)m_cost,
+                               .parallelism = (uint32_t)parallelism,
+                               .outlen = (uint32_t)outlen,
+                               .type = type);
+  if (result != 0)
+    rb_raise(rb_eRuntimeError, "Argon2 hashing failed");
+
+  return out;
+  (void)self;
+}
+
+/* *****************************************************************************
+Lyra2 Password Hashing
+***************************************************************************** */
+
+/**
+ * Hashes a password using Lyra2.
+ *
+ * @param password [String] The password to hash.
+ * @param salt [String] A unique salt.
+ * @param t_cost [Integer] Time cost / rounds (default: 1).
+ * @param m_cost [Integer] Memory cost / rows in matrix (default: 1000).
+ * @param outlen [Integer] Output length in bytes (default: 32).
+ * @param n_cols [Integer] Number of columns (default: 256).
+ * @return [String] Binary hash of the requested length.
+ */
+FIO_SFUNC VALUE iodine_crypto_lyra2_hash(int argc, VALUE *argv, VALUE self) {
+  fio_buf_info_s password = FIO_BUF_INFO0;
+  fio_buf_info_s salt = FIO_BUF_INFO0;
+  int64_t t_cost = 1;
+  int64_t m_cost = 1000;
+  int64_t outlen = 32;
+  int64_t n_cols = 256;
+
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(password, 0, "password", 1),
+                  IODINE_ARG_BUF(salt, 0, "salt", 1),
+                  IODINE_ARG_NUM(t_cost, 0, "t_cost", 0),
+                  IODINE_ARG_NUM(m_cost, 0, "m_cost", 0),
+                  IODINE_ARG_NUM(outlen, 0, "outlen", 0),
+                  IODINE_ARG_NUM(n_cols, 0, "n_cols", 0));
+
+  if (outlen < 1 || outlen > 0x0FFFFFFF)
+    rb_raise(rb_eArgError, "outlen must be between 1 and 268435455");
+  if (t_cost < 1)
+    rb_raise(rb_eArgError, "t_cost must be >= 1");
+  if (m_cost < 3)
+    rb_raise(rb_eArgError, "m_cost must be >= 3");
+  if (n_cols < 1)
+    rb_raise(rb_eArgError, "n_cols must be >= 1");
+
+  VALUE out = rb_str_buf_new((long)outlen);
+  rb_str_set_len(out, (long)outlen);
+
+  int result = fio_lyra2_hash(RSTRING_PTR(out),
+                              .password = password,
+                              .salt = salt,
+                              .t_cost = (uint64_t)t_cost,
+                              .m_cost = (uint64_t)m_cost,
+                              .outlen = (size_t)outlen,
+                              .n_cols = (size_t)n_cols);
+  if (result != 0)
+    rb_raise(rb_eRuntimeError, "Lyra2 hashing failed");
+
+  return out;
+  (void)self;
+}
+
+/* *****************************************************************************
 Module Initialization
 ***************************************************************************** */
 
@@ -1274,6 +1419,22 @@ static void Init_Iodine_Crypto(void) {
   rb_define_module_function(iodine_rb_X25519MLKEM768,
                             "decapsulate",
                             iodine_crypto_x25519mlkem768_decapsulate,
+                            -1);
+
+  /* Iodine::Base::Crypto::Argon2 */
+  iodine_rb_ARGON2 = rb_define_module_under(iodine_rb_CRYPTO, "Argon2");
+  STORE.hold(iodine_rb_ARGON2);
+  rb_define_module_function(iodine_rb_ARGON2,
+                            "hash",
+                            iodine_crypto_argon2_hash,
+                            -1);
+
+  /* Iodine::Base::Crypto::Lyra2 */
+  iodine_rb_LYRA2 = rb_define_module_under(iodine_rb_CRYPTO, "Lyra2");
+  STORE.hold(iodine_rb_LYRA2);
+  rb_define_module_function(iodine_rb_LYRA2,
+                            "hash",
+                            iodine_crypto_lyra2_hash,
                             -1);
 }
 

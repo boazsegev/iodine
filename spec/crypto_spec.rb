@@ -670,4 +670,128 @@ RSpec.describe Iodine::Base::Crypto do
       end
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Argon2
+  # ---------------------------------------------------------------------------
+  describe 'Argon2' do
+    let(:mod) { Iodine::Base::Crypto::Argon2 }
+    let(:password) { 'correct horse battery staple' }
+    let(:salt) { SecureRandom.random_bytes(16) }
+
+    describe '.hash' do
+      it 'returns a String' do
+        result = mod.hash(password, salt: salt)
+        expect(result).to be_a(String)
+      end
+
+      it 'returns 32 bytes by default' do
+        expect(mod.hash(password, salt: salt).bytesize).to eq(32)
+      end
+
+      it 'respects the outlen: parameter' do
+        expect(mod.hash(password, salt: salt, outlen: 64).bytesize).to eq(64)
+      end
+
+      it 'is deterministic for the same inputs' do
+        r1 = mod.hash(password, salt: salt)
+        r2 = mod.hash(password, salt: salt)
+        expect(r1).to eq(r2)
+      end
+
+      it 'produces different output with different salt' do
+        r1 = mod.hash(password, salt: salt)
+        r2 = mod.hash(password, salt: SecureRandom.random_bytes(16))
+        expect(r1).not_to eq(r2)
+      end
+
+      it 'supports Argon2d' do
+        expect(mod.hash(password, salt: salt, type: :d).bytesize).to eq(32)
+      end
+
+      it 'supports Argon2i' do
+        expect(mod.hash(password, salt: salt, type: :i).bytesize).to eq(32)
+      end
+
+      it 'supports Argon2id' do
+        expect(mod.hash(password, salt: salt, type: :id).bytesize).to eq(32)
+      end
+
+      it 'produces different output with different types' do
+        r_d = mod.hash(password, salt: salt, type: :d)
+        r_i = mod.hash(password, salt: salt, type: :i)
+        r_id = mod.hash(password, salt: salt, type: :id)
+        expect(r_d).not_to eq(r_i)
+        expect(r_i).not_to eq(r_id)
+      end
+
+      it 'raises ArgumentError for invalid type' do
+        expect { mod.hash(password, salt: salt, type: :invalid) }.to raise_error(ArgumentError)
+      end
+
+      it 'raises ArgumentError for outlen too small' do
+        expect { mod.hash(password, salt: salt, outlen: 3) }.to raise_error(ArgumentError)
+      end
+
+      it 'raises ArgumentError for missing password' do
+        expect { mod.hash(salt: salt) }.to raise_error(ArgumentError)
+      end
+
+      it 'raises ArgumentError for missing salt' do
+        expect { mod.hash(password) }.to raise_error(ArgumentError)
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Lyra2
+  # ---------------------------------------------------------------------------
+  describe 'Lyra2' do
+    let(:mod) { Iodine::Base::Crypto::Lyra2 }
+    let(:password) { 'correct horse battery staple' }
+    let(:salt) { SecureRandom.random_bytes(16) }
+
+    describe '.hash' do
+      it 'returns a String' do
+        result = mod.hash(password, salt: salt)
+        expect(result).to be_a(String)
+      end
+
+      it 'returns 32 bytes by default' do
+        expect(mod.hash(password, salt: salt).bytesize).to eq(32)
+      end
+
+      it 'respects the outlen: parameter' do
+        expect(mod.hash(password, salt: salt, outlen: 64).bytesize).to eq(64)
+      end
+
+      it 'is deterministic for the same inputs' do
+        r1 = mod.hash(password, salt: salt)
+        r2 = mod.hash(password, salt: salt)
+        expect(r1).to eq(r2)
+      end
+
+      it 'produces different output with different salt' do
+        r1 = mod.hash(password, salt: salt)
+        r2 = mod.hash(password, salt: SecureRandom.random_bytes(16))
+        expect(r1).not_to eq(r2)
+      end
+
+      it 'raises ArgumentError for outlen too small' do
+        expect { mod.hash(password, salt: salt, outlen: 0) }.to raise_error(ArgumentError)
+      end
+
+      it 'raises ArgumentError for m_cost too small' do
+        expect { mod.hash(password, salt: salt, m_cost: 2) }.to raise_error(ArgumentError)
+      end
+
+      it 'raises ArgumentError for missing password' do
+        expect { mod.hash(salt: salt) }.to raise_error(ArgumentError)
+      end
+
+      it 'raises ArgumentError for missing salt' do
+        expect { mod.hash(password) }.to raise_error(ArgumentError)
+      end
+    end
+  end
 end
