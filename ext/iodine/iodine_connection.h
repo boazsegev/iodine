@@ -854,6 +854,7 @@ static VALUE iodine_handler_default_on_http_rest(VALUE handler, VALUE client) {
   case FIO_HTTP_RESOURCE_CREATE: callback = IODINE_CREATE_ID; break;
   case FIO_HTTP_RESOURCE_UPDATE: callback = IODINE_UPDATE_ID; break;
   case FIO_HTTP_RESOURCE_DELETE: callback = IODINE_DELETE_ID; break;
+  case FIO_HTTP_RESOURCE_QUERY: callback = IODINE_QUERY_ID; break;
   }
   rb_funcallv(handler, callback, 1, &client);
   return Qnil;
@@ -874,6 +875,11 @@ static VALUE iodine_handler_default_on_http405(VALUE handler, VALUE client) {
   fio_http_send_error_response(c->http, 405);
   return Qnil;
   (void)handler;
+}
+
+/* by default, QUERY requests get routed to the `index` method. */
+static VALUE iodine_handler_default_on_http_query(VALUE handler, VALUE client) {
+  return rb_funcallv(handler, IODINE_INDEX_ID, 1, &client);
 }
 
 static VALUE iodine_handler_default_on_event(VALUE handler, VALUE client) {
@@ -1275,6 +1281,11 @@ static VALUE iodine_resource_handler_method_injection(int argc,
     IODINE_DEFINE_MISSING_CALLBACK(IODINE_CREATE_ID);
     IODINE_DEFINE_MISSING_CALLBACK(IODINE_UPDATE_ID);
     IODINE_DEFINE_MISSING_CALLBACK(IODINE_DELETE_ID);
+    if (!rb_respond_to(handler, IODINE_QUERY_ID))
+      rb_define_singleton_method(handler,
+                                 rb_id2name(IODINE_QUERY_ID),
+                                 iodine_handler_default_on_http_query,
+                                 1);
 #undef IODINE_DEFINE_MISSING_CALLBACK
     iodine_handler_method_injection__inner(self, handler, 0); /* and the rest */
   }
@@ -2070,8 +2081,13 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
     rb_raise(
         rb_eArgError,
         "Either a `:handler` or `&block` must be provided and a valid Object!");
-  if (rb_const_defined((VALUE)r.settings.udata, IODINE_TIMEOUT_ID))
-    timeout = rb_const_get((VALUE)r.settings.udata, IODINE_TIMEOUT_ID);
+  /* the TIMEOUT constant only applies to class / module handlers (looking
+   * up a constant on other object types, e.g., a Proc, is unsafe) */
+  if (RB_TYPE_P((VALUE)r.settings.udata, RUBY_T_MODULE) ||
+      RB_TYPE_P((VALUE)r.settings.udata, RUBY_T_CLASS)) {
+    if (rb_const_defined((VALUE)r.settings.udata, IODINE_TIMEOUT_ID))
+      timeout = rb_const_get((VALUE)r.settings.udata, IODINE_TIMEOUT_ID);
+  }
   if (timeout != Qnil && timeout && RB_TYPE_P(timeout, RUBY_T_FIXNUM))
     r.settings.ws_timeout = RB_NUM2ULL(timeout);
   if (r.url.buf)
@@ -2622,6 +2638,44 @@ static VALUE iodine_connection_from(VALUE self) {
   if (!buf.len)
     return Qnil;
   return rb_str_new(buf.buf, buf.len);
+}
+
+/* *****************************************************************************
+Ruby Public API - Peer Certificate (TLS Client Authentication)
+***************************************************************************** */
+
+/**
+ * Returns the peer's leaf certificate (an {Iodine::TLS::Certificate}), or
+ * `nil` if unavailable (not a TLS connection, handshake incomplete, or the
+ * peer sent no certificate).
+ */
+static VALUE iodine_connection_certificate(VALUE self) {
+  iodine_connection_s *c = iodine_connection_ptr(self);
+  fio_x509_cert_s cert = {0}; /* zeroed = new iteration loop (leaf first) */
+  if (!c->io)
+    return Qnil;
+  if (fio_io_peer_info_next(c->io, &cert))
+    return Qnil;
+  return iodine_tls_certificate_new(&cert);
+}
+
+/**
+ * Yields the peer's certificate chain, leaf certificate first, allocating an
+ * {Iodine::TLS::Certificate} per certificate.
+ *
+ * Returns an Enumerator if no block is given.
+ */
+static VALUE iodine_connection_each_certificate(VALUE self) {
+  iodine_connection_s *c = iodine_connection_ptr(self);
+  fio_x509_cert_s cert = {0}; /* zeroed = new iteration loop (leaf first) */
+  RETURN_ENUMERATOR(self, 0, NULL);
+  if (!c->io)
+    return self;
+  /* NOTE: iodine_tls_certificate_new copies all fields eagerly, since the
+   * parsed views are invalidated by the next fio_io_peer_info_next call. */
+  while (fio_io_peer_info_next(c->io, &cert) == 0)
+    rb_yield(iodine_tls_certificate_new(&cert));
+  return self;
 }
 
 /* *****************************************************************************
@@ -3240,6 +3294,11 @@ static void Init_Iodine_Connection(void)  {
 
   rb_define_method(m, "peer_addr", iodine_connection_peer_addr, 0);
   rb_define_method(m, "from", iodine_connection_from, 0);
+  rb_define_method(m, "certificate", iodine_connection_certificate, 0);
+  rb_define_method(m,
+                   "each_certificate",
+                   iodine_connection_each_certificate,
+                   0);
 
   rb_define_method(m, "subscribe", iodine_connection_subscribe, -1);
   rb_define_singleton_method(m, "subscribe", iodine_connection_subscribe_klass, -1);

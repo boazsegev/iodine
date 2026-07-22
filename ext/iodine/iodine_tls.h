@@ -36,6 +36,9 @@ Iodine supports two TLS backends:
 
 - `add_cert(name:, cert:, key:, password:)` - Adds a certificate to the TLS
   context. If only `name` is provided, a self-signed certificate is generated.
+- `trust(path = nil)` - Adds a public certificate (PEM file) to the trust
+  list, enabling peer (client) certificate authentication. Without a path,
+  trusts the system's default trust registry.
 
 ### Constants
 
@@ -59,6 +62,9 @@ Iodine supports two TLS backends:
 ***************************************************************************** */
 #define H___IODINE_TLS___H
 #include "iodine.h"
+
+static VALUE iodine_rb_TLS_CERTIFICATE;
+
 /* *****************************************************************************
 TLS Wrapper - Internal Implementation
 ***************************************************************************** */
@@ -263,6 +269,40 @@ static VALUE iodine_tls_cert_add_old_name(int argc, VALUE *argv, VALUE self) {
 }
 
 /* *****************************************************************************
+TLS Trust Store (Peer Certificate Authentication)
+***************************************************************************** */
+
+// clang-format off
+/**
+Adds a public certificate (or certificate bundle) to the "trust" list,
+enabling peer (client) certificate authentication / authorization.
+
+     tls = Iodine::TLS.new
+     tls.trust("clients-ca.pem")
+
+Calling `trust` without a path (or with `nil`) trusts the system's default
+trust registry.
+
+Once the trust list is non-empty, servers using this TLS context request a
+certificate from connecting clients and verify its chain against the trusted
+certificates. The peer's certificate chain can then be reviewed by the
+application using {Iodine::Connection#certificate} and
+{Iodine::Connection#each_certificate}.
+
+@param path [String, nil] path to a PEM file with one or more trusted
+  certificates (`nil` for the system's trust registry).
+@return [Iodine::TLS] returns itself, so calls may be chained.
+*/ // clang-format on
+static VALUE iodine_tls_trust(int argc, VALUE *argv, VALUE self) {
+  fio_io_tls_s *tls = iodine_tls_get(self);
+  fio_buf_info_s path = FIO_BUF_INFO0;
+  iodine_rb2c_arg(argc, argv, IODINE_ARG_BUF(path, 0, "path", 0));
+  /* NULL path marks the system's default trust registry as trusted */
+  fio_io_tls_trust_add(tls, path.buf);
+  return self;
+}
+
+/* *****************************************************************************
 TLS Default Backend Getter/Setter
 ***************************************************************************** */
 
@@ -320,6 +360,109 @@ static VALUE iodine_tls_default_set(VALUE klass, VALUE backend) {
 }
 
 /* *****************************************************************************
+Iodine::TLS::Certificate - Peer Certificate Snapshot
+***************************************************************************** */
+
+/** Maps a public key algorithm to a Ruby Symbol. */
+static VALUE iodine_tls_certificate_key_algo_sym(fio_x509_key_algo_e algo) {
+  switch (algo) {
+  case FIO_X509_KEY_RSA: return ID2SYM(rb_intern("rsa"));
+  case FIO_X509_KEY_ECDSA_P256: return ID2SYM(rb_intern("ecdsa_p256"));
+  case FIO_X509_KEY_ECDSA_P384: return ID2SYM(rb_intern("ecdsa_p384"));
+  case FIO_X509_KEY_ED25519: return ID2SYM(rb_intern("ed25519"));
+  default: return ID2SYM(rb_intern("unknown"));
+  }
+}
+
+/** Maps a signature algorithm to a Ruby Symbol. */
+static VALUE
+iodine_tls_certificate_signature_algo_sym(fio_x509_signature_algo_e algo) {
+  switch (algo) {
+  case FIO_X509_SIGNATURE_RSA_PKCS1_SHA256:
+    return ID2SYM(rb_intern("rsa_pkcs1_sha256"));
+  case FIO_X509_SIGNATURE_RSA_PKCS1_SHA384:
+    return ID2SYM(rb_intern("rsa_pkcs1_sha384"));
+  case FIO_X509_SIGNATURE_RSA_PKCS1_SHA512:
+    return ID2SYM(rb_intern("rsa_pkcs1_sha512"));
+  case FIO_X509_SIGNATURE_RSA_PSS_SHA256:
+    return ID2SYM(rb_intern("rsa_pss_sha256"));
+  case FIO_X509_SIGNATURE_RSA_PSS_SHA384:
+    return ID2SYM(rb_intern("rsa_pss_sha384"));
+  case FIO_X509_SIGNATURE_RSA_PSS_SHA512:
+    return ID2SYM(rb_intern("rsa_pss_sha512"));
+  case FIO_X509_SIGNATURE_ECDSA_SHA256:
+    return ID2SYM(rb_intern("ecdsa_sha256"));
+  case FIO_X509_SIGNATURE_ECDSA_SHA384:
+    return ID2SYM(rb_intern("ecdsa_sha384"));
+  case FIO_X509_SIGNATURE_ED25519: return ID2SYM(rb_intern("ed25519"));
+  default: return ID2SYM(rb_intern("unknown"));
+  }
+}
+
+/** Converts a (possibly empty) buffer view to a Ruby String (or `nil`). */
+#define IODINE___CERT_BUF2STR(bufinfo)                                        \
+  ((bufinfo).buf ? rb_str_new((const char *)(bufinfo).buf,                    \
+                              (long)(bufinfo).len)                            \
+                 : Qnil)
+
+/**
+ * Builds an Iodine::TLS::Certificate snapshot from a parsed X.509
+ * certificate.
+ *
+ * All fields are copied eagerly, since the `fio_x509_cert_s` views are
+ * transient (valid only until the next `fio_io_peer_info_next` call on ANY
+ * connection or until the connection is closed).
+ */
+static VALUE iodine_tls_certificate_new(const fio_x509_cert_s *cert) {
+  VALUE o = rb_obj_alloc(iodine_rb_TLS_CERTIFICATE);
+  rb_ivar_set(o, rb_intern("@der"), IODINE___CERT_BUF2STR(cert->der));
+  rb_ivar_set(o, rb_intern("@serial"), IODINE___CERT_BUF2STR(cert->serial));
+  rb_ivar_set(o, rb_intern("@subject"), IODINE___CERT_BUF2STR(cert->subject));
+  rb_ivar_set(o, rb_intern("@issuer"), IODINE___CERT_BUF2STR(cert->issuer));
+  rb_ivar_set(o, rb_intern("@cn"), IODINE___CERT_BUF2STR(cert->cn));
+  rb_ivar_set(o,
+              rb_intern("@signature"),
+              IODINE___CERT_BUF2STR(cert->signature));
+  rb_ivar_set(o, rb_intern("@san_dns"), IODINE___CERT_BUF2STR(cert->san_dns));
+  rb_ivar_set(o, rb_intern("@san_ip"), IODINE___CERT_BUF2STR(cert->san_ip));
+  rb_ivar_set(o,
+              rb_intern("@not_before"),
+              rb_time_new((time_t)cert->not_before, 0));
+  rb_ivar_set(o,
+              rb_intern("@not_after"),
+              rb_time_new((time_t)cert->not_after, 0));
+  rb_ivar_set(o,
+              rb_intern("@fingerprint"),
+              rb_str_new((const char *)cert->fingerprint, 32));
+  rb_ivar_set(o,
+              rb_intern("@key_algo"),
+              iodine_tls_certificate_key_algo_sym(cert->key_algo));
+  rb_ivar_set(o,
+              rb_intern("@signature_algo"),
+              iodine_tls_certificate_signature_algo_sym(cert->signature_algo));
+  rb_ivar_set(o,
+              rb_intern("@key_usage"),
+              cert->has_key_usage ? UINT2NUM(cert->key_usage) : Qnil);
+  rb_ivar_set(o, rb_intern("@version"), INT2FIX(cert->version));
+  rb_ivar_set(o, rb_intern("@chain_index"), INT2FIX(cert->chain_index));
+  rb_ivar_set(o, rb_intern("@verified"), cert->verified ? Qtrue : Qfalse);
+  rb_ivar_set(o, rb_intern("@ca"), cert->is_ca ? Qtrue : Qfalse);
+  return rb_obj_freeze(o);
+}
+
+#undef IODINE___CERT_BUF2STR
+
+/** Returns `true` if the TLS backend verified this certificate's chain. */
+static VALUE iodine_tls_certificate_verified_p(VALUE self) {
+  return rb_ivar_get(self, rb_intern("@verified"));
+}
+
+/** Returns `true` if the certificate is a CA (Basic Constraints). */
+static VALUE iodine_tls_certificate_ca_p(VALUE self) {
+  return rb_ivar_get(self, rb_intern("@ca"));
+}
+
+/* *****************************************************************************
 Initialize Iodine::TLS
 ***************************************************************************** */
 
@@ -330,6 +473,7 @@ static void Init_Iodine_TLS(void) { /** Initialize Iodine::TLS */
   rb_define_alloc_func(m, iodine_tls_alloc);
   rb_define_method(m, "add_cert", iodine_tls_cert_add, -1);
   rb_define_method(m, "use_certificate", iodine_tls_cert_add_old_name, -1);
+  rb_define_method(m, "trust", iodine_tls_trust, -1);
 
   /* TLS default backend getter/setter methods */
   rb_define_singleton_method(m, "default", iodine_tls_default_get, 0);
@@ -346,6 +490,33 @@ static void Init_Iodine_TLS(void) { /** Initialize Iodine::TLS */
 #endif
   /* Embedded TLS 1.3 is always available via fio-stl.h */
   rb_const_set(m, rb_intern("EMBEDDED_AVAILABLE"), Qtrue);
+
+  /* Iodine::TLS::Certificate - peer certificate snapshot (value object) */
+  {
+    /** An immutable snapshot of an X.509 certificate. */
+    VALUE c = iodine_rb_TLS_CERTIFICATE =
+        rb_define_class_under(iodine_rb_IODINE_TLS, "Certificate", rb_cObject);
+    /* certificates originate from TLS connections, not Ruby code */
+    rb_undef_method(rb_singleton_class(c), "new");
+    rb_define_attr(c, "der", 1, 0);
+    rb_define_attr(c, "serial", 1, 0);
+    rb_define_attr(c, "subject", 1, 0);
+    rb_define_attr(c, "issuer", 1, 0);
+    rb_define_attr(c, "cn", 1, 0);
+    rb_define_attr(c, "signature", 1, 0);
+    rb_define_attr(c, "san_dns", 1, 0);
+    rb_define_attr(c, "san_ip", 1, 0);
+    rb_define_attr(c, "not_before", 1, 0);
+    rb_define_attr(c, "not_after", 1, 0);
+    rb_define_attr(c, "fingerprint", 1, 0);
+    rb_define_attr(c, "key_algo", 1, 0);
+    rb_define_attr(c, "signature_algo", 1, 0);
+    rb_define_attr(c, "key_usage", 1, 0);
+    rb_define_attr(c, "version", 1, 0);
+    rb_define_attr(c, "chain_index", 1, 0);
+    rb_define_method(c, "verified?", iodine_tls_certificate_verified_p, 0);
+    rb_define_method(c, "ca?", iodine_tls_certificate_ca_p, 0);
+  }
 }
 
 #endif /* H___IODINE_TLS___H */

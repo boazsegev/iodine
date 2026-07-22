@@ -1841,6 +1841,31 @@ module Iodine
     # @return [String]
     def from; end
 
+    # Returns the peer's leaf certificate, if the peer presented one.
+    #
+    # Returns `nil` when unavailable (not a TLS connection, handshake
+    # incomplete, or the peer sent no certificate). Never raises.
+    #
+    # @return [Iodine::TLS::Certificate, nil] the peer's leaf certificate
+    #
+    # @example Client certificate authorization
+    #   def on_http(client)
+    #     cert = client.certificate
+    #     return forbidden unless cert&.verified?
+    #     user = Users.find_by(fingerprint: cert.fingerprint)
+    #     # ...
+    #   end
+    def certificate; end
+
+    # Yields the peer's certificate chain, leaf certificate first.
+    #
+    # Allocates one {Iodine::TLS::Certificate} per certificate (they are
+    # snapshots, safe to keep). Returns an Enumerator when no block is given.
+    #
+    # @yieldparam cert [Iodine::TLS::Certificate] a certificate in the chain
+    # @return [Enumerator, self]
+    def each_certificate; end
+
     # Hijacks the connection from the Server and returns an IO object.
     #
     # This method MAY be used to implement a full hijack when providing compatibility with the Rack specification.
@@ -1972,6 +1997,10 @@ module Iodine
       # @param e [Iodine::Connection] the connection object
       def self.index(e) = e.finish('Show Index')
 
+      # Called for `"QUERY /*"`, re-routes to `index` if missing – assumes either a search or index filtering.
+      # @param e [Iodine::Connection] the connection object
+      def self.query(e) = self.index(e)
+
       # Called for `"GET /(id)"`, where `id` can be assumed to be: `e.path[1..-1]`.
       # @param e [Iodine::Connection] the connection object
       def self.show(e) = e.finish("Show Item: #{e.path[1..-1]}")
@@ -2070,6 +2099,61 @@ module Iodine
     #
     # @note Since TLS setup is crucial for security, an initialization error will result in Iodine crashing with an error message. This is expected behavior.
     def add_cert(name = nil, cert = nil, key = nil, password = nil); end
+
+    # Adds a public certificate (or certificate bundle) to the "trust" list, enabling peer (client) certificate authentication / authorization.
+    #
+    # Once the trust list is non-empty, servers using this TLS context request a certificate from connecting clients and verify its chain against the trusted certificates. The peer's certificate chain can then be reviewed by the application using {Iodine::Connection#certificate} and {Iodine::Connection#each_certificate}.
+    #
+    # @param path [String, nil] path to a PEM file with one or more trusted certificates (`nil` for the system's trust registry).
+    # @return [Iodine::TLS] returns itself, so calls may be chained.
+    #
+    # @example
+    #   tls = Iodine::TLS.new
+    #   tls.add_cert(cert: "server.pem", key: "server.key")
+    #   tls.trust("clients-ca.pem")
+    def trust(path = nil); end
+
+    # An immutable snapshot of an X.509 certificate.
+    #
+    # Instances are created by Iodine (see {Iodine::Connection#certificate} and {Iodine::Connection#each_certificate}) and cannot be constructed from Ruby code.
+    class Certificate
+      # @return [String] the raw DER data (binary).
+      attr_reader :der
+      # @return [String] the certificate's serial number (binary).
+      attr_reader :serial
+      # @return [String] the Subject Distinguished Name (raw DER, binary).
+      attr_reader :subject
+      # @return [String] the Issuer Distinguished Name (raw DER, binary).
+      attr_reader :issuer
+      # @return [String, nil] the Subject Common Name, if present.
+      attr_reader :cn
+      # @return [String] the signature value (binary).
+      attr_reader :signature
+      # @return [String, nil] the first DNS Subject Alternative Name, if present.
+      attr_reader :san_dns
+      # @return [String, nil] the first IP Subject Alternative Name (binary, 4 or 16 bytes), if present.
+      attr_reader :san_ip
+      # @return [Time] beginning of the validity period.
+      attr_reader :not_before
+      # @return [Time] end of the validity period.
+      attr_reader :not_after
+      # @return [String] the SHA-256 fingerprint of the DER data (32 bytes, binary).
+      attr_reader :fingerprint
+      # @return [Symbol] the public key algorithm (`:rsa`, `:ecdsa_p256`, `:ecdsa_p384`, `:ed25519` or `:unknown`).
+      attr_reader :key_algo
+      # @return [Symbol] the signature algorithm (i.e., `:rsa_pkcs1_sha256`, `:rsa_pss_sha384`, `:ecdsa_sha256`, `:ed25519` or `:unknown`).
+      attr_reader :signature_algo
+      # @return [Integer, nil] the Key Usage extension bitmask, if the extension is present.
+      attr_reader :key_usage
+      # @return [Integer] the certificate version (0 = v1, 1 = v2, 2 = v3).
+      attr_reader :version
+      # @return [Integer] the certificate's position in the peer's chain (0 = leaf).
+      attr_reader :chain_index
+      # @return [Boolean] `true` if the TLS backend verified this certificate's chain against the trust store.
+      def verified?; end
+      # @return [Boolean] `true` if the certificate is a CA (Basic Constraints).
+      def ca?; end
+    end
   end
 
   #######################
@@ -2821,6 +2905,74 @@ module Iodine
         #   )
         #   # shared_secret matches what the sender obtained from encapsulate
         def self.decapsulate(data:, secret_key:); end
+      end
+
+      # Argon2 memory-hard password hashing (RFC 9106).
+      #
+      # Argon2id is the recommended default variant. It provides resistance
+      # against both side-channel and GPU cracking attacks.
+      #
+      # @note Use `Iodine::Utils.secure_compare` to compare hashes in constant time.
+      #
+      # @example Hash a password with default parameters (Argon2id, t=3, m=64 MiB)
+      #   hash = Iodine::Base::Crypto::Argon2.hash(password, salt: salt)
+      #
+      # @example Use OWASP-recommended minimum settings for Argon2id
+      #   hash = Iodine::Base::Crypto::Argon2.hash(
+      #     password,
+      #     salt: salt,
+      #     t_cost: 3,
+      #     m_cost: 64 * 1024,  # KiB
+      #     parallelism: 1,
+      #     outlen: 32
+      #   )
+      module Argon2
+        # Hashes a password using Argon2.
+        #
+        # @param password [String] The password to hash.
+        # @param salt [String] A unique salt (at least 8 bytes recommended).
+        # @param t_cost [Integer] Time cost / iterations (default: 3).
+        # @param m_cost [Integer] Memory cost in KiB (default: 65536 = 64 MiB).
+        # @param parallelism [Integer] Parallelism lanes (default: 1).
+        # @param outlen [Integer] Output length in bytes (default: 32, minimum: 4).
+        # @param type [Symbol] Argon2 variant: :d, :i, or :id (default: :id).
+        # @param secret [String, nil] Optional secret key.
+        # @param ad [String, nil] Optional associated data.
+        # @return [String] Binary hash of the requested length.
+        # @raise [ArgumentError] if parameters are invalid.
+        # @raise [RuntimeError] if hashing fails.
+        #
+        # @example
+        #   hash = Iodine::Base::Crypto::Argon2.hash("password", salt: SecureRandom.random_bytes(16))
+        def self.hash(password, salt:, t_cost: 3, m_cost: 64 * 1024, parallelism: 1, outlen: 32, type: :id, secret: nil, ad: nil); end
+      end
+
+      # Lyra2 memory-hard password hashing.
+      #
+      # Lyra2 was a finalist in the Password Hashing Competition. It uses
+      # Blake2b as the underlying sponge function and offers a tunable
+      # time-memory trade-off.
+      #
+      # @note Use `Iodine::Utils.secure_compare` to compare hashes in constant time.
+      #
+      # @example Hash a password with default parameters
+      #   hash = Iodine::Base::Crypto::Lyra2.hash(password, salt: salt)
+      module Lyra2
+        # Hashes a password using Lyra2.
+        #
+        # @param password [String] The password to hash.
+        # @param salt [String] A unique salt.
+        # @param t_cost [Integer] Time cost / rounds (default: 1).
+        # @param m_cost [Integer] Memory cost in rows (default: 1000, minimum: 3).
+        # @param outlen [Integer] Output length in bytes (default: 32).
+        # @param n_cols [Integer] Number of columns (default: 256).
+        # @return [String] Binary hash of the requested length.
+        # @raise [ArgumentError] if parameters are invalid.
+        # @raise [RuntimeError] if hashing fails.
+        #
+        # @example
+        #   hash = Iodine::Base::Crypto::Lyra2.hash("password", salt: SecureRandom.random_bytes(16))
+        def self.hash(password, salt:, t_cost: 1, m_cost: 1000, outlen: 32, n_cols: 256); end
       end
     end
   end
