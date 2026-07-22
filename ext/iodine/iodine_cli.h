@@ -179,9 +179,12 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
           "-bind -b address to listen to in URL format (MAY include PORT)."),
       FIO_CLI_PRINT(
           "It's possible to add TLS/SSL data to the binding URL. i.e.:"),
-      FIO_CLI_PRINT("\t iodine -b https://0.0.0.0/tls=./cert_path/"),
+      FIO_CLI_PRINT("\t iodine -b https://0.0.0.0/?tls=./cert_path/"),
       FIO_CLI_PRINT(
-          "\t iodine -b https://0.0.0.0/key=./key.pem&cert=./cert.pem"),
+          "\t iodine -b https://0.0.0.0/?key=./key.pem&cert=./cert.pem"),
+      FIO_CLI_PRINT("TLS client authentication / trust is available. i.e.:"),
+      FIO_CLI_PRINT("\t iodine -b https://0.0.0.0/?trust=ca.pem"),
+      FIO_CLI_PRINT("\t iodine -b https://0.0.0.0/?trust=system"),
       FIO_CLI_INT("-port -p default port number to listen to."),
       FIO_CLI_PRINT(
           "Note: these are optional and supersede previous instructions."),
