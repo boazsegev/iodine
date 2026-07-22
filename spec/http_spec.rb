@@ -108,6 +108,7 @@ RSpec.describe 'Iodine HTTP server' do
     # Capture the test runner as a local proc so it's accessible from the
     # on_state(:start) closure (before(:context) runs in instance context,
     # not class context, so class methods are not directly accessible).
+    http_finished = false
     run_tests = proc do
       base = "http://127.0.0.1:#{HTTP_PORT}"
 
@@ -159,6 +160,7 @@ RSpec.describe 'Iodine HTTP server' do
     rescue => e
       HTTP_RESULTS[:error] = "#{e.class}: #{e.message}\n#{e.backtrace.first(3).join("\n")}"
     ensure
+      http_finished = true
       Iodine.run_after(100) { Iodine.stop }
     end
 
@@ -167,8 +169,9 @@ RSpec.describe 'Iodine HTTP server' do
       HTTP_STARTED[0] = true
       # Give the listener a moment to finish binding before hitting it
       Iodine.run_after(50) { Iodine.async { run_tests.call } }
-      # Safety watchdog — registered here so it uses the current reactor tick
-      Iodine.run_after(5000) { Iodine.stop }
+      # Timers survive reactor restarts, so an obsolete watchdog must not stop
+      # a later spec's reactor cycle after this test completes normally.
+      Iodine.run_after(5000) { Iodine.stop unless http_finished }
     end
 
     Iodine.start

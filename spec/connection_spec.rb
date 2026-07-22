@@ -53,6 +53,7 @@ RSpec.describe 'Iodine raw TCP connection' do
     Iodine.threads   = 1   # raw IO needs only one worker thread
     $stdout.puts "DEBUG: config done, registering on_state"; $stdout.flush
 
+    raw_finished = false
     run_tests = proc do
       $stdout.puts "DEBUG: run_tests start"; $stdout.flush
       TCPSocket.open('127.0.0.1', RAW_PORT) do |sock|
@@ -75,6 +76,7 @@ RSpec.describe 'Iodine raw TCP connection' do
       $stdout.puts "DEBUG: run_tests error: #{e.class}: #{e.message}"; $stdout.flush
       RAW_RESULTS[:error] = "#{e.class}: #{e.message}"
     ensure
+      raw_finished = true
       $stdout.puts "DEBUG: run_tests ensure, stopping"; $stdout.flush
       Iodine.run_after(100) { Iodine.stop }
     end
@@ -91,7 +93,9 @@ RSpec.describe 'Iodine raw TCP connection' do
         end
         $stdout.puts "DEBUG: async dispatched"; $stdout.flush
       end
-      Iodine.run_after(5000) { Iodine.stop }
+      # Timers survive reactor restarts, so an obsolete watchdog must not stop
+      # a later spec's reactor cycle after this test completes normally.
+      Iodine.run_after(5000) { Iodine.stop unless raw_finished }
     end
 
     $stdout.puts "DEBUG: calling Iodine.start"; $stdout.flush
