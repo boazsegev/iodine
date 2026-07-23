@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'open3'
 
 # =============================================================================
 # Iodine::PubSub::Subscription Tests
@@ -29,6 +30,33 @@ RSpec.describe 'Iodine::PubSub::Subscription' do
     it 'raises ArgumentError when no block is given' do
       expect { Iodine::PubSub::Subscription.new('sub-noblock') }.to raise_error(ArgumentError)
     end
+
+    it 'rejects repeated initialization without orphaning the first subscription' do
+      sub = Iodine::PubSub::Subscription.allocate
+      sub.send(:initialize, 'sub-reinitialize') { |_msg| }
+      expect { sub.send(:initialize, 'sub-reinitialize-again') { |_msg| } }
+        .to raise_error(RuntimeError, 'Subscription is already initialized')
+      expect(sub.cancel).to equal(sub)
+    end
+
+    it 'remains safe when facil.io rejects a subscription synchronously' do
+      sub = Iodine::PubSub::Subscription.new('x' * 65_536) { |_msg| }
+      expect(sub.active?).to be false
+      expect(sub.cancel).to equal(sub)
+      expect { sub.handler = proc { |_msg| } }.not_to raise_error
+    end
+
+    it 'releases an active subscription during process exit' do
+      child = <<~RUBY
+        require 'iodine'
+        Iodine.verbosity = 5
+        Iodine::PubSub::Subscription.new('sub-at-exit') { |_msg| }
+      RUBY
+      _stdout, stderr, status = Open3.capture3(RbConfig.ruby, '-Ilib', '-e', child)
+
+      expect(status).to be_success
+      expect(stderr).not_to match(/leaks detected for (?:iodine_pubsub_sub|fio_pubsub_subscription)/)
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -40,7 +68,7 @@ RSpec.describe 'Iodine::PubSub::Subscription' do
   # ---------------------------------------------------------------------------
   SUB_RESULTS = {}  # rubocop:disable RSpec/LeakyConstantDeclaration
 
-  # Keep subscription objects alive (stored here so GC doesn't auto-cancel)
+  # Keep references for subscriptions whose methods are used after creation.
   SUB_REFS = {}  # rubocop:disable RSpec/LeakyConstantDeclaration
 
   before(:context) do
@@ -86,6 +114,19 @@ RSpec.describe 'Iodine::PubSub::Subscription' do
     sub_hget.cancel
 
     # -------------------------------------------------------------------------
+    # Test: a global subscription stays active without a caller-held reference
+    # -------------------------------------------------------------------------
+    r[:unreferenced_global] = { received: false }
+    create_global_subscription = lambda do
+      Iodine::PubSub::Subscription.new('sub-unreferenced-global') do |_msg|
+        r[:unreferenced_global][:received] = true
+      end
+      nil
+    end
+    create_global_subscription.call
+    GC.start(full_mark: true, immediate_sweep: true)
+
+    # -------------------------------------------------------------------------
     # Start the reactor — create delivery subs inside on_state(:start),
     # publish via run_after, watchdog stops it.
     #
@@ -100,7 +141,9 @@ RSpec.describe 'Iodine::PubSub::Subscription' do
     r[:multi_independent]     = { count: 0 }
     r[:handler_swap]          = { old_fired: false, new_fired: false, new_msg: nil }
     r[:cancelled_no_delivery] = { received: false }
-
+    r[:queued_cancel]         = { received: false }
+    queued_cancel_gate = Queue.new
+    queued_cancel_thread = nil
 
     Iodine.workers   = 0
     Iodine.threads   = 1
@@ -129,18 +172,36 @@ RSpec.describe 'Iodine::PubSub::Subscription' do
       sub_cancelled = Iodine::PubSub::Subscription.new('sub-cancelled') { |_msg| r[:cancelled_no_delivery][:received] = true }
       sub_cancelled.cancel
 
+      SUB_REFS[:queue_blocker] = Iodine::PubSub::Subscription.new('sub-queue-blocker') do |_msg|
+        queued_cancel_gate.pop
+      end
+      SUB_REFS[:queued_cancel] = Iodine::PubSub::Subscription.new('sub-queued-cancel') do |_msg|
+        r[:queued_cancel][:received] = true
+      end
+
       # Stagger publishes to avoid races — give subscriptions time to register
       # (subscription handles are set asynchronously by facil.io; 100ms margin)
       Iodine.run_after(150) { Iodine.publish(channel: 'sub-delivery',  message: 'hello-sub') }
       Iodine.run_after(250) { Iodine.publish(channel: 'sub-multi',     message: 'ping') }
       Iodine.run_after(350) { Iodine.publish(channel: 'sub-swap',      message: 'swapped') }
       Iodine.run_after(450) { Iodine.publish(channel: 'sub-cancelled', message: 'should-not-arrive') }
+      Iodine.run_after(550) { Iodine.publish(channel: 'sub-unreferenced-global', message: 'still-active') }
+      Iodine.run_after(650) do
+        Iodine.publish(channel: 'sub-queue-blocker', message: 'block-worker')
+        Iodine.publish(channel: 'sub-queued-cancel', message: 'already-queued')
+        queued_cancel_thread = Thread.new do
+          sleep 0.05
+          SUB_REFS[:queued_cancel].cancel
+          queued_cancel_gate << true
+        end
+      end
 
       # Watchdog — fires after all publishes have had time to deliver
-      Iodine.run_after(800) { Iodine.stop }
+      Iodine.run_after(1_100) { Iodine.stop }
     end
 
     Iodine.start
+    queued_cancel_thread&.join
   end
 
   # ---------------------------------------------------------------------------
@@ -213,6 +274,14 @@ RSpec.describe 'Iodine::PubSub::Subscription' do
   describe 'cancelled subscription' do
     it 'does not receive messages after cancel' do
       expect(SUB_RESULTS[:cancelled_no_delivery][:received]).to be false
+    end
+
+    it 'keeps a global subscription alive without a caller-held reference' do
+      expect(SUB_RESULTS[:unreferenced_global][:received]).to be true
+    end
+
+    it 'does not invoke a handler that was queued before cancellation' do
+      expect(SUB_RESULTS[:queued_cancel][:received]).to be false
     end
   end
 end

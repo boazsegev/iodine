@@ -1246,11 +1246,12 @@ module Iodine
     # many `Subscription` objects as you like for the same channel and each
     # will receive every published message independently.
     #
-    # The subscription is automatically cancelled when the object is garbage
-    # collected, but you can also cancel it early with {#cancel}.
+    # The subscription **MUST** be explicitly cancelled or will remain until the process ends.
     #
-    # @example Basic usage
-    #   sub = Iodine::PubSub::Subscription.new("chat") { |msg| puts msg.message }
+    # A Iodine::PubSub::Subscription instance is never garbage collected unless subscription is cancelled using {#cancel}.
+    #
+    # @example Basic usage (lives forever)
+    #   Iodine::PubSub::Subscription.new("chat") { |msg| puts msg.message }
     #
     # @example Multiple independent subscriptions to the same channel
     #   sub1 = Iodine::PubSub::Subscription.new("news") { |msg| puts "Handler 1: #{msg.message}" }

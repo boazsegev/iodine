@@ -433,12 +433,13 @@ Features:
 - Multiple independent subscriptions to the same channel
 - Early cancellation via #cancel (idempotent)
 - Live handler replacement via #handler=
-- Auto-cancel on GC (via TypedData dfree)
+- Global lifetime even without a caller-held reference
+- Auto-cancel during FIO_CALL_AT_EXIT
 
 Ruby API:
   sub = Iodine::PubSub::Subscription.new("channel") { |msg| ... }
   sub = Iodine::PubSub::Subscription.new(channel: "ch", filter: 0) { |msg| ... }
-  sub.handler          # => Proc (or nil if cancelled)
+  sub.handler          # => current Proc (retained after cancellation)
   sub.handler = proc   # => proc (replaces callback for future messages)
   sub.active?          # => true/false
   sub.cancel           # => self (idempotent)
@@ -449,66 +450,60 @@ Ruby PubSub Subscription Type
 ***************************************************************************** */
 
 /**
- * Heap-allocated context passed as udata to the facil.io subscription.
- * Contains the proc AND a back-pointer to zero s->handle when unsubscribed.
- * Freed by on_unsubscribe after releasing the proc and zeroing the handle.
- */
-typedef struct iodine_pubsub_sub_udata_s {
-  VALUE proc;      /**< GC-protected Ruby Proc */
-  uintptr_t *hptr; /**< pointer to iodine_pubsub_sub_s.handle (to zero it) */
-} iodine_pubsub_sub_udata_s;
-
-/**
- * Internal structure representing an independent pub/sub subscription.
+ * One native object is shared by the Ruby wrapper and facil.io.
  *
- * handle: facil.io subscription handle (0 = cancelled or already freed).
- * ud:     heap-allocated udata shared with facil.io (NULL after cancelled).
- * handler: Ruby-side getter/setter value.
+ * The wrapper is held in STORE for as long as the native subscription exists,
+ * so a subscription remains active even when the caller doesn't save it.
  */
 typedef struct iodine_pubsub_sub_s {
-  uintptr_t handle;              /**< facil.io subscription handle (0 = done) */
-  iodine_pubsub_sub_udata_s *ud; /**< shared udata (NULL once unsubscribed) */
-  VALUE handler;                 /**< Ruby-side handler (getter/setter only) */
+  uintptr_t handle;
+  VALUE handler;
+  VALUE wrapper;
+  uint8_t initialized;
 } iodine_pubsub_sub_s;
+
+/** Requests cancellation. fio_pubsub_unsubscribe zeros the handle and is
+ * idempotent when guarded by the handle check. */
+static void iodine_pubsub_sub_force_cleanup(void *sub_) {
+  iodine_pubsub_sub_s *s = (iodine_pubsub_sub_s *)sub_;
+  if (s->handle)
+    fio_pubsub_unsubscribe(.subscription_handle_ptr = &s->handle);
+}
 
 /* *****************************************************************************
 Ruby PubSub Subscription - Message Callbacks
 ***************************************************************************** */
 
-/**
- * Called inside the GVL to dispatch a pub/sub message to the Ruby handler.
- * udata is an iodine_pubsub_sub_udata_s* — reads proc from it.
- */
+/** Called inside the GVL to dispatch a pub/sub message. */
 static void *iodine_pubsub_sub_on_message_in_gvl(void *m_) {
   fio_pubsub_msg_s *m = (fio_pubsub_msg_s *)m_;
-  iodine_pubsub_sub_udata_s *ud = (iodine_pubsub_sub_udata_s *)m->udata;
-  if (IODINE_STORE_IS_SKIP(ud->proc))
+  iodine_pubsub_sub_s *s = (iodine_pubsub_sub_s *)m->udata;
+  if (!s->handle || IODINE_STORE_IS_SKIP(s->handler))
     return m_;
   VALUE msg = iodine_pubsub_msg_new(m);
-  iodine_ruby_call_inside(ud->proc, IODINE_CALL_ID, 1, &msg);
+  iodine_ruby_call_inside(s->handler, IODINE_CALL_ID, 1, &msg);
   STORE.release(msg);
   return m_;
 }
 
-/**
- * Called by facil.io when a message arrives on the subscribed channel.
- */
+/** Called by facil.io when a message arrives on the subscribed channel. */
 static void iodine_pubsub_sub_on_message(fio_pubsub_msg_s *m) {
   iodine_c_call_with(iodine_pubsub_sub_on_message_in_gvl, m);
 }
 
 /**
- * Called by facil.io when the subscription is freed (cancel or reactor stop).
- * Releases the proc from STORE, zeroes the handle (if Ruby object still alive),
- * and frees the udata struct.
- * Safe to call outside GVL — STORE.release uses a mutex, no Ruby API.
+ * Removes exit cleanup and releases the STORE-held Ruby wrapper after the
+ * native subscription is completely gone. Safe outside the GVL.
  */
 static void iodine_pubsub_sub_on_unsubscribe(void *udata) {
-  iodine_pubsub_sub_udata_s *ud = (iodine_pubsub_sub_udata_s *)udata;
-  STORE.release(ud->proc);
-  if (ud->hptr)
-    *ud->hptr = 0; /* zero s->handle so dfree knows it's already freed */
-  ruby_xfree(ud);
+  iodine_pubsub_sub_s *s = (iodine_pubsub_sub_s *)udata;
+  VALUE wrapper = s->wrapper;
+  s->handle = 0;
+  s->wrapper = Qnil;
+  fio_state_callback_remove(FIO_CALL_AT_EXIT,
+                            iodine_pubsub_sub_force_cleanup,
+                            s);
+  STORE.release(wrapper);
 }
 
 /* *****************************************************************************
@@ -529,20 +524,9 @@ static void iodine_pubsub_sub_mark(void *ptr_) {
     rb_gc_mark(s->handler);
 }
 
-/**
- * TypedData free callback — called by Ruby GC when the Subscription is freed.
- *
- * If ud is non-NULL, null out ud->hptr so on_unsubscribe won't write to the
- * freed s->handle, then call fio_pubsub_unsubscribe to cancel and free udata.
- * If ud is NULL, on_unsubscribe already ran and cleaned everything up.
- */
+/** The wrapper can only be collected after native unsubscribe releases it. */
 static void iodine_pubsub_sub_free(void *ptr_) {
-  iodine_pubsub_sub_s *s = (iodine_pubsub_sub_s *)ptr_;
-  if (s->ud) {
-    s->ud->hptr = NULL; /* prevent on_unsubscribe writing to freed s->handle */
-    fio_pubsub_unsubscribe(.subscription_handle_ptr = &s->handle);
-  }
-  ruby_xfree(s);
+  ruby_xfree(ptr_);
   FIO_LEAK_COUNTER_ON_FREE(iodine_pubsub_sub);
 }
 
@@ -562,7 +546,7 @@ static VALUE iodine_pubsub_sub_alloc(VALUE klass) {
   iodine_pubsub_sub_s *s = (iodine_pubsub_sub_s *)ruby_xmalloc(sizeof(*s));
   if (!s)
     goto no_memory;
-  *s = (iodine_pubsub_sub_s){.handle = 0, .ud = NULL, .handler = Qnil};
+  *s = (iodine_pubsub_sub_s){.handler = Qnil, .wrapper = Qnil};
   FIO_LEAK_COUNTER_ON_ALLOC(iodine_pubsub_sub);
   return TypedData_Wrap_Struct(klass, &IODINE_PUBSUB_SUB_DATA_TYPE, s);
 no_memory:
@@ -619,23 +603,21 @@ static VALUE iodine_pubsub_sub_initialize(int argc, VALUE *argv, VALUE self) {
              "filter out of range (%lld > 0xFFFF)",
              (long long)filter);
 
-  /* Allocate shared udata — owns the GC-protected proc and the hptr backlink */
-  iodine_pubsub_sub_udata_s *ud =
-      (iodine_pubsub_sub_udata_s *)ruby_xmalloc(sizeof(*ud));
-  if (!ud)
-    rb_raise(rb_eNoMemError, "Subscription: udata allocation failed");
-  STORE.hold(proc);
-  *ud = (iodine_pubsub_sub_udata_s){.proc = proc, .hptr = &s->handle};
-  s->ud = ud;
+  if (s->initialized)
+    rb_raise(rb_eRuntimeError, "Subscription is already initialized");
+  s->initialized = 1;
   s->handler = proc;
+  s->wrapper = self;
+  STORE.hold(self);
+  fio_state_callback_add(FIO_CALL_AT_EXIT,
+                         iodine_pubsub_sub_force_cleanup,
+                         s);
 
-  /* Subscribe with subscription_handle_ptr (no IO binding).
-   * udata = ud (heap struct). on_unsubscribe zeroes handle, releases proc,
-   * and frees ud — safe whether called by cancel, dfree, or reactor stop. */
+  /* The same native object is both Ruby's TypedData and facil.io's udata. */
   fio_pubsub_subscribe(.subscription_handle_ptr = &s->handle,
                        .filter = (int16_t)filter,
                        .channel = channel,
-                       .udata = (void *)ud,
+                       .udata = (void *)s,
                        .queue = fio_io_async_queue(&IODINE_THREAD_POOL),
                        .on_message = iodine_pubsub_sub_on_message,
                        .on_unsubscribe = iodine_pubsub_sub_on_unsubscribe,
@@ -646,7 +628,7 @@ static VALUE iodine_pubsub_sub_initialize(int argc, VALUE *argv, VALUE self) {
 /**
  * Returns the current message handler proc.
  *
- * @return [Proc, nil] the handler proc, or nil if cancelled
+ * @return [Proc, nil] the current handler, retained after cancellation
  *
  * Ruby: sub.handler  # => Proc
  */
@@ -658,12 +640,8 @@ static VALUE iodine_pubsub_sub_handler_get(VALUE self) {
 /**
  * Replaces the message handler proc.
  *
- * Updates both the Ruby-side getter (#handler) and the udata proc used for
- * message delivery. After handler=, future messages will be dispatched to
- * the new proc.
- *
- * Thread-safety: called inside GVL; udata proc is also read inside GVL
- * (in iodine_pubsub_sub_on_message_in_gvl), so the update is safe.
+ * Updates the single handler field used by both #handler and message delivery.
+ * Both this method and message dispatch run under the GVL.
  *
  * @param new_handler [Proc] the new handler (must respond to #call)
  * @return [Proc] the new handler
@@ -675,23 +653,7 @@ static VALUE iodine_pubsub_sub_handler_set(VALUE self, VALUE new_handler) {
   if (!IODINE_STORE_IS_SKIP(new_handler) &&
       !rb_respond_to(new_handler, rb_intern2("call", 4)))
     rb_raise(rb_eArgError, "handler must respond to `call`");
-  STORE.hold(new_handler);
-  /* Update the udata proc so future message delivery uses the new handler.
-   * Both this method and iodine_pubsub_sub_on_message_in_gvl run inside the
-   * GVL, so this assignment is thread-safe. The old proc is released once —
-   * either via ud->proc (if active) or via s->handler (if cancelled). */
-  if (s->ud) {
-    VALUE old_proc = s->ud->proc;
-    s->ud->proc = new_handler;
-    s->handler = new_handler;
-    if (!IODINE_STORE_IS_SKIP(old_proc))
-      STORE.release(old_proc);
-  } else {
-    VALUE old = s->handler;
-    s->handler = new_handler;
-    if (!IODINE_STORE_IS_SKIP(old))
-      STORE.release(old);
-  }
+  s->handler = new_handler;
   return new_handler;
 }
 
@@ -703,8 +665,7 @@ static VALUE iodine_pubsub_sub_handler_set(VALUE self, VALUE new_handler) {
  * Ruby: sub.active?  # => true/false
  */
 static VALUE iodine_pubsub_sub_active_p(VALUE self) {
-  iodine_pubsub_sub_s *s = iodine_pubsub_sub_get(self);
-  return s->ud ? Qtrue : Qfalse;
+  return iodine_pubsub_sub_get(self)->handle ? Qtrue : Qfalse;
 }
 
 /**
@@ -718,12 +679,7 @@ static VALUE iodine_pubsub_sub_active_p(VALUE self) {
  * Ruby: sub.cancel  # => self
  */
 static VALUE iodine_pubsub_sub_cancel(VALUE self) {
-  iodine_pubsub_sub_s *s = iodine_pubsub_sub_get(self);
-  if (!s->ud)
-    return self;      /* already cancelled — idempotent */
-  s->ud->hptr = NULL; /* prevent on_unsubscribe from writing to s->handle */
-  fio_pubsub_unsubscribe(.subscription_handle_ptr = &s->handle);
-  s->ud = NULL; /* mark as cancelled so dfree won't call unsubscribe again */
+  iodine_pubsub_sub_force_cleanup(iodine_pubsub_sub_get(self));
   return self;
 }
 

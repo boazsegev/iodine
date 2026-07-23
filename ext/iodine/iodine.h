@@ -50,11 +50,11 @@ typedef pthread_cond_t fio_thread_cond_t;
 #define FIO_EVERYTHING
 
 #ifndef DEBUG
-#undef FIO_LEAK_COUNTER_SKIP_EXIT
-#define FIO_LEAK_COUNTER_SKIP_EXIT 1
+// #undef FIO_LEAK_COUNTER_SKIP_EXIT
+// #define FIO_LEAK_COUNTER_SKIP_EXIT 1
 /* Ruby doesn't always free everything pre-cleanup, so no point in counting */
-#undef FIO_LEAK_COUNTER
-#define FIO_LEAK_COUNTER 0
+// #undef FIO_LEAK_COUNTER
+// #define FIO_LEAK_COUNTER 0
 #endif
 
 #include FIO_INCLUDE_FILE

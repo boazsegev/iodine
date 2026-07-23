@@ -54296,7 +54296,7 @@ Cleanup
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
-#define FIO_DER               /* Development inclusion - ignore line */
+#define FIO_DER                /* Development inclusion - ignore line */
 #include "./include.h"         /* Development inclusion - ignore line */
 #endif                         /* Development inclusion - ignore line */
 /* *****************************************************************************
@@ -54335,20 +54335,20 @@ typedef enum {
   FIO_DER_EMBEDDED_PDV = 0x0B,      /**< Embedded PDV */
   FIO_DER_UTF8_STRING = 0x0C,       /**< UTF-8 String */
   FIO_DER_RELATIVE_OID = 0x0D,      /**< Relative OID */
-  FIO_DER_SEQUENCE = 0x10,         /**< Sequence (0x30 with constructed bit) */
-  FIO_DER_SET = 0x11,              /**< Set (0x31 with constructed bit) */
-  FIO_DER_NUMERIC_STRING = 0x12,   /**< Numeric String */
-  FIO_DER_PRINTABLE_STRING = 0x13, /**< Printable String */
-  FIO_DER_T61_STRING = 0x14,       /**< T61 String (Teletex) */
-  FIO_DER_VIDEOTEX_STRING = 0x15,  /**< Videotex String */
-  FIO_DER_IA5_STRING = 0x16,       /**< IA5 String (ASCII) */
-  FIO_DER_UTC_TIME = 0x17,         /**< UTC Time */
-  FIO_DER_GENERALIZED_TIME = 0x18, /**< Generalized Time */
-  FIO_DER_GRAPHIC_STRING = 0x19,   /**< Graphic String */
-  FIO_DER_VISIBLE_STRING = 0x1A,   /**< Visible String */
-  FIO_DER_GENERAL_STRING = 0x1B,   /**< General String */
-  FIO_DER_UNIVERSAL_STRING = 0x1C, /**< Universal String */
-  FIO_DER_BMP_STRING = 0x1E,       /**< BMP String (UCS-2) */
+  FIO_DER_SEQUENCE = 0x10,          /**< Sequence (0x30 with constructed bit) */
+  FIO_DER_SET = 0x11,               /**< Set (0x31 with constructed bit) */
+  FIO_DER_NUMERIC_STRING = 0x12,    /**< Numeric String */
+  FIO_DER_PRINTABLE_STRING = 0x13,  /**< Printable String */
+  FIO_DER_T61_STRING = 0x14,        /**< T61 String (Teletex) */
+  FIO_DER_VIDEOTEX_STRING = 0x15,   /**< Videotex String */
+  FIO_DER_IA5_STRING = 0x16,        /**< IA5 String (ASCII) */
+  FIO_DER_UTC_TIME = 0x17,          /**< UTC Time */
+  FIO_DER_GENERALIZED_TIME = 0x18,  /**< Generalized Time */
+  FIO_DER_GRAPHIC_STRING = 0x19,    /**< Graphic String */
+  FIO_DER_VISIBLE_STRING = 0x1A,    /**< Visible String */
+  FIO_DER_GENERAL_STRING = 0x1B,    /**< General String */
+  FIO_DER_UNIVERSAL_STRING = 0x1C,  /**< Universal String */
+  FIO_DER_BMP_STRING = 0x1E,        /**< BMP String (UCS-2) */
   /* Context-specific tags (0x80 | tag_number) with constructed bit (0x20) */
   FIO_DER_CONTEXT_0 = 0xA0, /**< [0] EXPLICIT/IMPLICIT */
   FIO_DER_CONTEXT_1 = 0xA1, /**< [1] EXPLICIT/IMPLICIT */
@@ -54397,8 +54397,8 @@ ASN.1 Parser API - Core Functions
  * @return Pointer to next element (after this one), or NULL on error
  */
 SFUNC const uint8_t *fio_der_parse(fio_der_element_s *elem,
-                                    const uint8_t *data,
-                                    size_t data_len);
+                                   const uint8_t *data,
+                                   size_t data_len);
 
 /**
  * Get the total encoded length of an ASN.1 element (tag + length + content).
@@ -54408,7 +54408,7 @@ SFUNC const uint8_t *fio_der_parse(fio_der_element_s *elem,
  * @return Total bytes used by the element encoding
  */
 FIO_IFUNC size_t fio_der_element_total_len(const fio_der_element_s *elem,
-                                            const uint8_t *data);
+                                           const uint8_t *data);
 
 /* *****************************************************************************
 ASN.1 Parser API - Type-Specific Parsers
@@ -54425,8 +54425,7 @@ ASN.1 Parser API - Type-Specific Parsers
  * @param value Output for integer value (can be NULL for large integers)
  * @return 0 on success, -1 on error
  */
-SFUNC int fio_der_parse_integer(const fio_der_element_s *elem,
-                                 uint64_t *value);
+SFUNC int fio_der_parse_integer(const fio_der_element_s *elem, uint64_t *value);
 
 /**
  * Parse an ASN.1 BIT STRING element.
@@ -54438,9 +54437,9 @@ SFUNC int fio_der_parse_integer(const fio_der_element_s *elem,
  * @return 0 on success, -1 on error
  */
 SFUNC int fio_der_parse_bit_string(const fio_der_element_s *elem,
-                                    const uint8_t **bits,
-                                    size_t *bit_len,
-                                    uint8_t *unused_bits);
+                                   const uint8_t **bits,
+                                   size_t *bit_len,
+                                   uint8_t *unused_bits);
 
 /**
  * Parse an ASN.1 OID into a dot-separated string.
@@ -54453,8 +54452,8 @@ SFUNC int fio_der_parse_bit_string(const fio_der_element_s *elem,
  * @return Number of chars written (excluding NUL), or -1 on error
  */
 SFUNC int fio_der_parse_oid(const fio_der_element_s *elem,
-                             char *buf,
-                             size_t buf_len);
+                            char *buf,
+                            size_t buf_len);
 
 /**
  * Parse an ASN.1 time (UTC Time or Generalized Time) to Unix timestamp.
@@ -54464,8 +54463,7 @@ SFUNC int fio_der_parse_oid(const fio_der_element_s *elem,
  * UTC)
  * @return 0 on success, -1 on error
  */
-SFUNC int fio_der_parse_time(const fio_der_element_s *elem,
-                              int64_t *unix_time);
+SFUNC int fio_der_parse_time(const fio_der_element_s *elem, int64_t *unix_time);
 
 /**
  * Parse an ASN.1 string element.
@@ -54478,7 +54476,7 @@ SFUNC int fio_der_parse_time(const fio_der_element_s *elem,
  * @return Pointer to string data, or NULL on error
  */
 FIO_IFUNC const char *fio_der_parse_string(const fio_der_element_s *elem,
-                                            size_t *len);
+                                           size_t *len);
 
 /**
  * Parse an ASN.1 BOOLEAN element.
@@ -54487,8 +54485,7 @@ FIO_IFUNC const char *fio_der_parse_string(const fio_der_element_s *elem,
  * @param value Output boolean value (0 = false, non-zero = true)
  * @return 0 on success, -1 on error
  */
-FIO_IFUNC int fio_der_parse_boolean(const fio_der_element_s *elem,
-                                     int *value);
+FIO_IFUNC int fio_der_parse_boolean(const fio_der_element_s *elem, int *value);
 
 /* *****************************************************************************
 ASN.1 Parser API - Sequence/Set Iteration
@@ -54501,7 +54498,7 @@ ASN.1 Parser API - Sequence/Set Iteration
  * @param sequence Parsed element (must be SEQUENCE or SET)
  */
 FIO_IFUNC void fio_der_iterator_init(fio_der_iterator_s *it,
-                                      const fio_der_element_s *sequence);
+                                     const fio_der_element_s *sequence);
 
 /**
  * Get the next element from an iterator.
@@ -54511,7 +54508,7 @@ FIO_IFUNC void fio_der_iterator_init(fio_der_iterator_s *it,
  * @return 0 if element available, -1 if end or error
  */
 SFUNC int fio_der_iterator_next(fio_der_iterator_s *it,
-                                 fio_der_element_s *elem);
+                                fio_der_element_s *elem);
 
 /**
  * Check if iterator has more elements.
@@ -54542,7 +54539,7 @@ FIO_IFUNC int fio_der_is_tag(const fio_der_element_s *elem, uint8_t tag);
  * @return 1 if match, 0 otherwise
  */
 FIO_IFUNC int fio_der_is_context_tag(const fio_der_element_s *elem,
-                                      uint8_t tag_num);
+                                     uint8_t tag_num);
 
 /**
  * Get the tag number from an element.
@@ -54561,7 +54558,7 @@ Implementation - Inline Functions
 
 /** Get total encoded length of element */
 FIO_IFUNC size_t fio_der_element_total_len(const fio_der_element_s *elem,
-                                            const uint8_t *data) {
+                                           const uint8_t *data) {
   if (!elem || !data || !elem->data)
     return 0;
   return (size_t)(elem->data - data) + elem->len;
@@ -54569,7 +54566,7 @@ FIO_IFUNC size_t fio_der_element_total_len(const fio_der_element_s *elem,
 
 /** Parse string types - returns pointer to data */
 FIO_IFUNC const char *fio_der_parse_string(const fio_der_element_s *elem,
-                                            size_t *len) {
+                                           size_t *len) {
   if (!elem || !len)
     return NULL;
   /* Accept various string types */
@@ -54593,8 +54590,7 @@ FIO_IFUNC const char *fio_der_parse_string(const fio_der_element_s *elem,
 }
 
 /** Parse boolean value */
-FIO_IFUNC int fio_der_parse_boolean(const fio_der_element_s *elem,
-                                     int *value) {
+FIO_IFUNC int fio_der_parse_boolean(const fio_der_element_s *elem, int *value) {
   if (!elem || !value)
     return -1;
   if ((elem->tag & 0x1F) != FIO_DER_BOOLEAN ||
@@ -54642,7 +54638,7 @@ FIO_IFUNC int fio___der_oid_eq(fio_u128 a, fio_u128 b) {
 
 /** Initialize iterator for sequence/set */
 FIO_IFUNC void fio_der_iterator_init(fio_der_iterator_s *it,
-                                      const fio_der_element_s *sequence) {
+                                     const fio_der_element_s *sequence) {
   if (!it)
     return;
   if (!sequence || !sequence->data) {
@@ -54672,7 +54668,7 @@ FIO_IFUNC int fio_der_is_tag(const fio_der_element_s *elem, uint8_t tag) {
 
 /** Check if element is context-specific tag */
 FIO_IFUNC int fio_der_is_context_tag(const fio_der_element_s *elem,
-                                      uint8_t tag_num) {
+                                     uint8_t tag_num) {
   if (!elem)
     return 0;
   return (elem->tag_class == FIO_DER_CLASS_CONTEXT) &&
@@ -54701,8 +54697,8 @@ Implementation - Core Parser
  * Sets *out_len to the parsed length value.
  */
 FIO_SFUNC const uint8_t *fio___der_parse_length(const uint8_t *data,
-                                                 const uint8_t *end,
-                                                 size_t *out_len) {
+                                                const uint8_t *end,
+                                                size_t *out_len) {
   if (!data || !end || !out_len || data >= end)
     return NULL;
 
@@ -54739,8 +54735,8 @@ FIO_SFUNC const uint8_t *fio___der_parse_length(const uint8_t *data,
 
 /** Parse one ASN.1 element from DER data */
 SFUNC const uint8_t *fio_der_parse(fio_der_element_s *elem,
-                                    const uint8_t *data,
-                                    size_t data_len) {
+                                   const uint8_t *data,
+                                   size_t data_len) {
   if (!elem || !data || data_len == 0)
     return NULL;
 
@@ -54794,7 +54790,7 @@ Implementation - Integer Parser
 ***************************************************************************** */
 
 SFUNC int fio_der_parse_integer(const fio_der_element_s *elem,
-                                 uint64_t *value) {
+                                uint64_t *value) {
   if (!elem)
     return -1;
 
@@ -54834,9 +54830,9 @@ Implementation - Bit String Parser
 ***************************************************************************** */
 
 SFUNC int fio_der_parse_bit_string(const fio_der_element_s *elem,
-                                    const uint8_t **bits,
-                                    size_t *bit_len,
-                                    uint8_t *unused_bits) {
+                                   const uint8_t **bits,
+                                   size_t *bit_len,
+                                   uint8_t *unused_bits) {
   if (!elem || !bits || !bit_len || !unused_bits)
     return -1;
 
@@ -54875,8 +54871,8 @@ Implementation - OID Parser
 
 /** Parse OID component from base-128 encoding */
 FIO_SFUNC const uint8_t *fio___der_parse_oid_component(const uint8_t *p,
-                                                        const uint8_t *end,
-                                                        uint64_t *value) {
+                                                       const uint8_t *end,
+                                                       uint64_t *value) {
   uint64_t v = 0;
   size_t count = 0;
 
@@ -54920,8 +54916,8 @@ FIO_SFUNC int fio___der_write_uint(char *buf, size_t buf_len, uint64_t value) {
 }
 
 SFUNC int fio_der_parse_oid(const fio_der_element_s *elem,
-                             char *buf,
-                             size_t buf_len) {
+                            char *buf,
+                            size_t buf_len) {
   if (!elem || !buf || buf_len < 4)
     return -1;
 
@@ -54996,7 +54992,7 @@ Implementation - Time Parser
 ***************************************************************************** */
 
 SFUNC int fio_der_parse_time(const fio_der_element_s *elem,
-                              int64_t *unix_time) {
+                             int64_t *unix_time) {
   if (!elem || !unix_time)
     return -1;
 
@@ -55036,22 +55032,22 @@ SFUNC int fio_der_parse_time(const fio_der_element_s *elem,
       return -1;
   }
 
-  year = digits / divisor;
+  year = (int)(digits / divisor);
   digits -= year * divisor;
   divisor /= 100;
-  month = digits / divisor;
+  month = (int)(digits / divisor);
   digits -= month * divisor;
   divisor /= 100;
-  day = digits / divisor;
+  day = (int)(digits / divisor);
   digits -= day * divisor;
   divisor /= 100;
-  hour = digits / divisor;
+  hour = (int)(digits / divisor);
   digits -= hour * divisor;
   divisor /= 100;
-  min = digits / divisor;
+  min = (int)(digits / divisor);
   digits -= min * divisor;
   divisor /= 100;
-  sec = digits;
+  sec = (int)(digits);
 
   if (tag == FIO_DER_UTC_TIME) {
     year += (year < 50 ? 2000 : 1900);
@@ -55078,7 +55074,7 @@ Implementation - Iterator
 */
 
 SFUNC int fio_der_iterator_next(fio_der_iterator_s *it,
-                                 fio_der_element_s *elem) {
+                                fio_der_element_s *elem) {
   if (!it || !elem || !it->pos || !it->end || it->pos >= it->end)
     return -1;
 
@@ -55116,8 +55112,8 @@ SFUNC size_t fio_der_encode_length(uint8_t *buf, size_t len);
  * @return Number of bytes written/needed
  */
 SFUNC size_t fio_der_encode_integer(uint8_t *buf,
-                                     const uint8_t *data,
-                                     size_t data_len);
+                                    const uint8_t *data,
+                                    size_t data_len);
 
 /**
  * Encode an ASN.1 INTEGER from a small value.
@@ -55149,8 +55145,8 @@ SFUNC size_t fio___der_encode_oid(uint8_t *buf, fio_u128 oid);
  * @return Number of bytes written/needed
  */
 SFUNC size_t fio_der_encode_utf8_string(uint8_t *buf,
-                                         const char *str,
-                                         size_t str_len);
+                                        const char *str,
+                                        size_t str_len);
 
 /**
  * Encode an ASN.1 PrintableString.
@@ -55161,8 +55157,8 @@ SFUNC size_t fio_der_encode_utf8_string(uint8_t *buf,
  * @return Number of bytes written/needed
  */
 SFUNC size_t fio_der_encode_printable_string(uint8_t *buf,
-                                              const char *str,
-                                              size_t str_len);
+                                             const char *str,
+                                             size_t str_len);
 
 /**
  * Encode an ASN.1 BIT STRING.
@@ -55174,9 +55170,9 @@ SFUNC size_t fio_der_encode_printable_string(uint8_t *buf,
  * @return Number of bytes written/needed
  */
 SFUNC size_t fio_der_encode_bit_string(uint8_t *buf,
-                                        const uint8_t *bits,
-                                        size_t bit_len,
-                                        uint8_t unused_bits);
+                                       const uint8_t *bits,
+                                       size_t bit_len,
+                                       uint8_t unused_bits);
 
 /**
  * Encode an ASN.1 OCTET STRING.
@@ -55187,8 +55183,8 @@ SFUNC size_t fio_der_encode_bit_string(uint8_t *buf,
  * @return Number of bytes written/needed
  */
 SFUNC size_t fio_der_encode_octet_string(uint8_t *buf,
-                                          const uint8_t *data,
-                                          size_t data_len);
+                                         const uint8_t *data,
+                                         size_t data_len);
 
 /**
  * Encode an ASN.1 SEQUENCE wrapper around existing content.
@@ -55219,9 +55215,9 @@ SFUNC size_t fio_der_encode_set_header(uint8_t *buf, size_t content_len);
  * @return Number of bytes written/needed for tag+length only
  */
 SFUNC size_t fio_der_encode_context_header(uint8_t *buf,
-                                            uint8_t tag_num,
-                                            size_t content_len,
-                                            int constructed);
+                                           uint8_t tag_num,
+                                           size_t content_len,
+                                           int constructed);
 
 /**
  * Encode an ASN.1 NULL.
@@ -55291,8 +55287,8 @@ SFUNC size_t fio_der_encode_length(uint8_t *buf, size_t len) {
 
 /** Encode ASN.1 INTEGER */
 SFUNC size_t fio_der_encode_integer(uint8_t *buf,
-                                     const uint8_t *data,
-                                     size_t data_len) {
+                                    const uint8_t *data,
+                                    size_t data_len) {
   if (!data || data_len == 0)
     return 0;
 
@@ -55368,8 +55364,8 @@ SFUNC size_t fio___der_encode_oid(uint8_t *buf, fio_u128 oid) {
 
 /** Encode ASN.1 UTF8String */
 SFUNC size_t fio_der_encode_utf8_string(uint8_t *buf,
-                                         const char *str,
-                                         size_t str_len) {
+                                        const char *str,
+                                        size_t str_len) {
   size_t len_bytes = fio_der_encode_length(NULL, str_len);
   size_t total = 1 + len_bytes + str_len;
 
@@ -55385,8 +55381,8 @@ SFUNC size_t fio_der_encode_utf8_string(uint8_t *buf,
 
 /** Encode ASN.1 PrintableString */
 SFUNC size_t fio_der_encode_printable_string(uint8_t *buf,
-                                              const char *str,
-                                              size_t str_len) {
+                                             const char *str,
+                                             size_t str_len) {
   size_t len_bytes = fio_der_encode_length(NULL, str_len);
   size_t total = 1 + len_bytes + str_len;
 
@@ -55402,9 +55398,9 @@ SFUNC size_t fio_der_encode_printable_string(uint8_t *buf,
 
 /** Encode ASN.1 BIT STRING */
 SFUNC size_t fio_der_encode_bit_string(uint8_t *buf,
-                                        const uint8_t *bits,
-                                        size_t bit_len,
-                                        uint8_t unused_bits) {
+                                       const uint8_t *bits,
+                                       size_t bit_len,
+                                       uint8_t unused_bits) {
   size_t content_len = 1 + bit_len; /* unused bits byte + data */
   size_t len_bytes = fio_der_encode_length(NULL, content_len);
   size_t total = 1 + len_bytes + content_len;
@@ -55422,8 +55418,8 @@ SFUNC size_t fio_der_encode_bit_string(uint8_t *buf,
 
 /** Encode ASN.1 OCTET STRING */
 SFUNC size_t fio_der_encode_octet_string(uint8_t *buf,
-                                          const uint8_t *data,
-                                          size_t data_len) {
+                                         const uint8_t *data,
+                                         size_t data_len) {
   size_t len_bytes = fio_der_encode_length(NULL, data_len);
   size_t total = 1 + len_bytes + data_len;
 
@@ -55465,9 +55461,9 @@ SFUNC size_t fio_der_encode_set_header(uint8_t *buf, size_t content_len) {
 
 /** Encode ASN.1 context-specific tag header */
 SFUNC size_t fio_der_encode_context_header(uint8_t *buf,
-                                            uint8_t tag_num,
-                                            size_t content_len,
-                                            int constructed) {
+                                           uint8_t tag_num,
+                                           size_t content_len,
+                                           int constructed) {
   size_t len_bytes = fio_der_encode_length(NULL, content_len);
   size_t total = 1 + len_bytes;
 
@@ -55500,12 +55496,12 @@ SFUNC size_t fio_der_encode_boolean(uint8_t *buf, int value) {
 
 /** Helper: convert Unix timestamp to broken-down time */
 FIO_SFUNC void fio___der_gmtime(int64_t unix_time,
-                                 int *year,
-                                 int *month,
-                                 int *day,
-                                 int *hour,
-                                 int *min,
-                                 int *sec) {
+                                int *year,
+                                int *month,
+                                int *day,
+                                int *hour,
+                                int *min,
+                                int *sec) {
   const time_t t = (time_t)unix_time;
   const struct tm tm = fio_time2gm(t);
 
@@ -110354,7 +110350,7 @@ Subscription Type - Reference Counting via FIO_REF
 ***************************************************************************** */
 
 /* Subscription structure */
-typedef struct fio_pubsub_subscription_s {
+typedef struct fio___pubsub_subscription_s {
   FIO_LIST_NODE node;
   fio_io_s *io;
   void (*on_message)(fio_pubsub_msg_s *msg);
@@ -110366,29 +110362,29 @@ typedef struct fio_pubsub_subscription_s {
   int16_t filter;      /* Channel filter (temporary before channel is set) */
   uint8_t is_pattern;  /* Pattern flag (temporary before channel is set) */
   uint8_t master_only; /* If true, subscription exists only in master process */
-} fio_pubsub_subscription_s;
+} fio___pubsub_subscription_s;
 
 FIO_SFUNC void fio___pubsub_subscription_on_destroy(
-    fio_pubsub_subscription_s *s);
+    fio___pubsub_subscription_s *s);
 
 /* Subscription reference counting */
-#define FIO_REF_NAME         fio_pubsub_subscription
+#define FIO_REF_NAME         fio___pubsub_subscription
 #define FIO_REF_DESTROY(obj) fio___pubsub_subscription_on_destroy(&(obj))
 #include FIO_INCLUDE_FILE
 
 /* Subscription reference counting helpers - thread management */
 FIO_SFUNC void fio___pubsub_subscription_free_task(void *s, void *ignr_) {
-  fio_pubsub_subscription_free2(s);
+  fio___pubsub_subscription_free2(s);
   (void)ignr_;
 }
 
-FIO_SFUNC void fio_pubsub_subscription_free(fio_pubsub_subscription_s *s) {
+FIO_SFUNC void fio___pubsub_subscription_free(fio___pubsub_subscription_s *s) {
   fio_queue_push(fio_io_queue(), fio___pubsub_subscription_free_task, s, NULL);
 }
 
-FIO_IFUNC fio_pubsub_subscription_s *fio_pubsub_subscription_dup(
-    fio_pubsub_subscription_s *s) {
-  return fio_pubsub_subscription_dup2(s);
+FIO_IFUNC fio___pubsub_subscription_s *fio___pubsub_subscription_dup(
+    fio___pubsub_subscription_s *s) {
+  return fio___pubsub_subscription_dup2(s);
 }
 
 /** Compute environment type key for subscription storage. */
@@ -110747,7 +110743,7 @@ FIO_SFUNC void fio___pubsub_at_exit(void *ignr_) {
 FIO_SFUNC void fio___pubsub_on_fork_test_unsubscribe_master(
     fio_pubsub_channel_s *ch) {
   /** Loops through every node in the linked list except the head. */
-  FIO_LIST_EACH(fio_pubsub_subscription_s, node, &ch->subscriptions, sub) {
+  FIO_LIST_EACH(fio___pubsub_subscription_s, node, &ch->subscriptions, sub) {
     if (sub->master_only) {
       fio_io_env_remove(
           sub->io,
@@ -110839,7 +110835,7 @@ Message Delivery to Subscriptions
 
 /** Container for deferred message delivery using IPC message directly */
 typedef struct {
-  fio_pubsub_subscription_s *sub;
+  fio___pubsub_subscription_s *sub;
   fio_ipc_s *ipc;
   fio_pubsub_msg_s msg;
   volatile uintptr_t defer_flag;
@@ -110847,7 +110843,7 @@ typedef struct {
 
 FIO_SFUNC void fio___pubsub_subscription_ipc_deliver(void *sub_, void *ipc_) {
   fio___pubsub_message_container_s data = {
-      .sub = (fio_pubsub_subscription_s *)sub_,
+      .sub = (fio___pubsub_subscription_s *)sub_,
       .ipc = (fio_ipc_s *)ipc_,
       .msg = fio___pubsub_ipc2msg((fio_ipc_s *)ipc_)};
 
@@ -110862,7 +110858,7 @@ FIO_SFUNC void fio___pubsub_subscription_ipc_deliver(void *sub_, void *ipc_) {
                    ipc_);
     return;
   }
-  fio_pubsub_subscription_free(data.sub);
+  fio___pubsub_subscription_free(data.sub);
   fio_ipc_free(data.ipc);
 }
 
@@ -111029,13 +111025,13 @@ FIO_SFUNC void fio___pubsub_engine_ipc_deliver2channel(fio_pubsub_channel_s *ch,
   //                fio___pubsub_ipc2msg(ipc).message.len,
   //                ipc->len);
 
-  FIO_LIST_EACH(fio_pubsub_subscription_s, node, &ch->subscriptions, s) {
+  FIO_LIST_EACH(fio___pubsub_subscription_s, node, &ch->subscriptions, s) {
     /* Skip if publisher is sending to itself (IO is set)*/
     if (skip && s->io == skip)
       continue;
     fio_queue_push(s->queue,
                    fio___pubsub_subscription_ipc_deliver,
-                   fio_pubsub_subscription_dup(s),
+                   fio___pubsub_subscription_dup(s),
                    fio_ipc_dup(ipc));
   }
 }
@@ -111234,7 +111230,7 @@ Unsubscribe Implementation
 
 /** Unsubscribes a node (deferred task). */
 FIO_SFUNC void fio___pubsub_unsubscribe_task(void *sub_, void *ignr_) {
-  fio_pubsub_subscription_s *sub = (fio_pubsub_subscription_s *)sub_;
+  fio___pubsub_subscription_s *sub = (fio___pubsub_subscription_s *)sub_;
 
   FIO_LIST_REMOVE(&sub->node);
   sub->node = FIO_LIST_INIT(sub->node);
@@ -111245,24 +111241,25 @@ FIO_SFUNC void fio___pubsub_unsubscribe_task(void *sub_, void *ignr_) {
   //                 (void *)sub,
   //                 (int)sub->channel->name_len,
   //                 sub->channel->name,
-  //                 fio_pubsub_subscription_references(sub));
+  //                 fio___pubsub_subscription_references(sub));
 
-  fio_pubsub_subscription_free2(sub);
+  fio___pubsub_subscription_free2(sub);
   /* fio_pubsub_channel_free(ch) - called by `destroy` when freed */
   (void)ignr_;
 }
 
 /** Unsubscribe callback for environment on_close */
 FIO_SFUNC void fio___pubsub_subscription_env_unsubscribe(void *sub_) {
-  fio_pubsub_subscription_s *sub = (fio_pubsub_subscription_s *)sub_;
+  fio___pubsub_subscription_s *sub = (fio___pubsub_subscription_s *)sub_;
+  if (!sub)
+    return;
   sub->on_message = fio___pubsub_on_message_stub;
   // FIO_LOG_DDEBUG2("(%d) unsubscribed called for %p -> %.*s (ref: %zu)",
   //                 fio_io_pid(),
   //                 (void *)sub,
   //                 (int)sub->channel->name_len,
   //                 sub->channel->name,
-  //                 fio_pubsub_subscription_references(sub));
-
+  //                 fio___pubsub_subscription_references(sub));
   fio_queue_push(fio_io_queue(),
                  fio___pubsub_unsubscribe_task,
                  (void *)sub,
@@ -111273,10 +111270,12 @@ int fio_pubsub_unsubscribe___(void); /* IDE Marker */
 SFUNC int fio_pubsub_unsubscribe FIO_NOOP(fio_pubsub_subscribe_args_s args) {
   /* Handle subscriptions created with subscription_handle_ptr */
   if (args.subscription_handle_ptr && *args.subscription_handle_ptr) {
-    fio_pubsub_subscription_s *sub =
-        (fio_pubsub_subscription_s *)*args.subscription_handle_ptr;
-    *args.subscription_handle_ptr = 0;
-    fio___pubsub_subscription_env_unsubscribe(sub);
+    fio___pubsub_subscription_s *sub =
+        (fio___pubsub_subscription_s *)(fio_atomic_exchange(
+            args.subscription_handle_ptr,
+            0));
+    if (sub)
+      fio___pubsub_subscription_env_unsubscribe(sub);
     return 0;
   }
   return fio_io_env_remove(
@@ -111288,7 +111287,7 @@ SFUNC int fio_pubsub_unsubscribe FIO_NOOP(fio_pubsub_subscribe_args_s args) {
 /* *****************************************************************************
 Subscribe Implementation
 ***************************************************************************** */
-FIO_SFUNC void fio___pubsub_request_history(fio_pubsub_subscription_s *sub);
+FIO_SFUNC void fio___pubsub_request_history(fio___pubsub_subscription_s *sub);
 
 /* A callback for IO subscriptions - sends raw message data. */
 SFUNC void FIO_ON_MESSAGE_SEND_MESSAGE(fio_pubsub_msg_s *msg) {
@@ -111313,7 +111312,7 @@ FIO_SFUNC void fio___subscription_call_protocol(fio_pubsub_msg_s *msg) {
 
 /** Completes the subscription request (deferred task). */
 FIO_SFUNC void fio___pubsub_subscribe_task(void *sub_, void *bstr_) {
-  fio_pubsub_subscription_s *sub = (fio_pubsub_subscription_s *)sub_;
+  fio___pubsub_subscription_s *sub = (fio___pubsub_subscription_s *)sub_;
   char *bstr = (char *)bstr_;
   fio_str_info_s ch_name = fio_bstr_info(bstr);
   ch_name.capa = FIO___PUBSUB_CHANNEL_ENCODE_CAPA(sub->filter, sub->is_pattern);
@@ -111346,17 +111345,17 @@ FIO_SFUNC void fio___pubsub_subscribe_task(void *sub_, void *bstr_) {
   //                 (void *)sub,
   //                 (int)sub->channel->name_len,
   //                 sub->channel->name,
-  //                 fio_pubsub_subscription_references(sub));
-  fio_pubsub_subscription_free2(sub);
+  //                 fio___pubsub_subscription_references(sub));
+  fio___pubsub_subscription_free2(sub);
   return;
 
 no_channel:
-  fio_pubsub_subscription_free2(sub);
+  fio___pubsub_subscription_free2(sub);
 }
 
 void fio_pubsub_subscribe___(void); /* IDE Marker */
 SFUNC void fio_pubsub_subscribe FIO_NOOP(fio_pubsub_subscribe_args_s args) {
-  fio_pubsub_subscription_s *s = NULL;
+  fio___pubsub_subscription_s *s = NULL;
   char *bstr = NULL;
 
   if (args.channel.len > 0xFFFFUL)
@@ -111365,7 +111364,7 @@ SFUNC void fio_pubsub_subscribe FIO_NOOP(fio_pubsub_subscribe_args_s args) {
   if (args.master_only && !fio_io_is_master())
     goto sub_error;
 
-  s = fio_pubsub_subscription_new2();
+  s = fio___pubsub_subscription_new2();
   if (!s)
     goto sub_error;
 
@@ -111378,7 +111377,7 @@ SFUNC void fio_pubsub_subscribe FIO_NOOP(fio_pubsub_subscribe_args_s args) {
   if (!args.queue || !args.on_message)
     args.queue = fio_io_queue();
 
-  *s = (fio_pubsub_subscription_s){
+  *s = (fio___pubsub_subscription_s){
       .node = FIO_LIST_INIT(s->node),
       .io = args.io,
       .on_message =
@@ -111398,7 +111397,7 @@ SFUNC void fio_pubsub_subscribe FIO_NOOP(fio_pubsub_subscribe_args_s args) {
   };
 
   fio_io_defer(fio___pubsub_subscribe_task,
-               fio_pubsub_subscription_dup(s),
+               fio___pubsub_subscription_dup(s),
                bstr);
 
   if (args.subscription_handle_ptr) {
@@ -111416,15 +111415,18 @@ SFUNC void fio_pubsub_subscribe FIO_NOOP(fio_pubsub_subscribe_args_s args) {
   return;
 
 sub_error:
-  FIO_LOG_ERROR("(%d) pub/sub subscription/channel cannot be created?",
-                fio_io_pid());
+  FIO_LOG_ERROR(
+      "(%d) pub/sub subscription/channel cannot be created? %.*s",
+      fio_io_pid(),
+      ((args.channel.len > 0xFFFFUL) ? (int)16 : (int)args.channel.len),
+      ((args.channel.len > 0xFFFFUL) ? "<name too long>" : args.channel.buf));
   if (args.on_unsubscribe)
     args.on_unsubscribe(args.udata);
   return;
 sub_error_free_sub:
   FIO_LOG_ERROR("(%d) pub/sub subscription/channel cannot be created?",
                 fio_io_pid());
-  fio_pubsub_subscription_free(s);
+  fio___pubsub_subscription_free(s);
 }
 
 /* *****************************************************************************
@@ -111441,7 +111443,7 @@ FIO_SFUNC void fio___pubsub_subscription_on_destroy_task(void *tsk,
 }
 
 FIO_SFUNC void fio___pubsub_subscription_on_destroy(
-    fio_pubsub_subscription_s *s) {
+    fio___pubsub_subscription_s *s) {
   fio_pubsub_channel_s *c = s->channel;
 
   FIO_LOG_DDEBUG2("(%d) subscription destroyed for %p -> %.*s",
@@ -111490,16 +111492,16 @@ FIO_SFUNC void fio___pubsub_worker_on_history_reply(fio_ipc_s *ipc) {
   //                (int)(fio_buf2u32u(ipc->data)),
   //                ipc->data + sizeof(uint32_t[2]));
 
-  fio_queue_push(((fio_pubsub_subscription_s *)ipc->udata)->queue,
+  fio_queue_push(((fio___pubsub_subscription_s *)ipc->udata)->queue,
                  fio___pubsub_subscription_ipc_deliver,
-                 fio_pubsub_subscription_dup(ipc->udata),
+                 fio___pubsub_subscription_dup(ipc->udata),
                  fio_ipc_dup(ipc));
 }
 
 /** IPC handler: Worker receives history reply from master */
 FIO_SFUNC void fio___pubsub_worker_on_history_reply_done(fio_ipc_s *ipc) {
   fio___pubsub_worker_on_history_reply(ipc); /* MAY contain last message */
-  fio_pubsub_subscription_free2(ipc->udata);
+  fio___pubsub_subscription_free2(ipc->udata);
 }
 
 /** Callback for master history replay - sends messages to requesting worker */
@@ -111585,7 +111587,7 @@ FIO_SFUNC void fio___pubsub_master_on_history_request(fio_ipc_s *ipc) {
 }
 
 /** Worker requests history from master via IPC */
-FIO_SFUNC void fio___pubsub_request_history(fio_pubsub_subscription_s *sub) {
+FIO_SFUNC void fio___pubsub_request_history(fio___pubsub_subscription_s *sub) {
   if (!sub || !sub->channel || !sub->replay_since)
     return;
 
@@ -111605,7 +111607,7 @@ FIO_SFUNC void fio___pubsub_request_history(fio_pubsub_subscription_s *sub) {
   fio_ipc_call(.call = fio___pubsub_master_on_history_request,
                .on_reply = fio___pubsub_worker_on_history_reply,
                .on_done = fio___pubsub_worker_on_history_reply_done,
-               .udata = fio_pubsub_subscription_dup(sub),
+               .udata = fio___pubsub_subscription_dup(sub),
                .flags = (uint16_t)sub->channel->filter,
                .data = FIO_IPC_DATA(
                    FIO_BUF_INFO2((char *)&header,
