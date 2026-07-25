@@ -1121,129 +1121,85 @@ FIO_IFUNC void fio_atomic_bit_flip(void *map, size_t bit) {
 UNSAFE (good enough) Static Memory Allocation
 
 This is useful when attempting thread-safety controls through a round-robin
-buffer that assumes both fast usage and a maximum number of concurrent calls, or
-maximum number of threads, of `FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX`.
+buffer that assumes short-lived usage and a caller-selected maximum number of
+concurrent allocations.
 
-This is supposed to provide both a safe alternative to `alloca` and allows the
-memory address to be returned if needed (valid until concurrency max calls).
+This provides a safer alternative to `alloca` when a temporary memory address
+must be returned. The memory remains valid until its round-robin slot is reused.
 ***************************************************************************** */
 
 #ifndef FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX
-/** The multiplier used to set the maximum number of safe concurrent calls. */
+/** Default slot count used by selected internal static allocators. */
 #define FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX 256
 #endif
 
 /**
- * Defines a simple (almost naive) static memory allocator named `name`.
+ * Defines a statically backed, round-robin allocator named `name`.
  *
- * This defines a memory allocation function named `name` that accepts a
- * single input `count` and returns a `type_T` pointer (`type_T *`) containing
- * `sizeof(type_T) * count * size_per_allocation` in correct memory alignment.
+ * This defines the following functions:
  *
  * ```c
- * static type_T *name(size_t allocation_count);
+ * static type_T *name(size_t count);
+ * static inline size_t name##_size(void);
  * ```
  *
- * That memory is statically allocated, allowing it be returned and never
- * needing to be freed.
+ * The allocator has `max_concurrent_allocations` slots, each containing
+ * `units_per_allocation` `type_T` elements. `name(count)` returns a pointer to
+ * the slot selected by the atomic round-robin position. `count` advances that
+ * position by the requested number of slots; it does not change the size of
+ * the returned slot. Passing `0` returns the first slot without advancing.
  *
- * The functions can safely allocate the following number of bytes before
- * the function returns the same memory block to another caller:
+ * The memory is static, correctly aligned for `type_T`, and must not be freed.
+ * `name##_size()` returns the logical arena capacity in `type_T` units:
  *
  * ```c
- * max_thread_safty * allocations_per_thread * sizeof(type_T) *
- * size_per_allocation
+ * max_concurrent_allocations * units_per_allocation
  * ```
+ *
+ * A returned slot remains valid until the allocator wraps and reuses it. Set
+ * `max_concurrent_allocations` for the maximum number of outstanding slots,
+ * including concurrent callers.
  *
  * Example use:
  *
  * ```c
- * // defined a static allocator for 32 byte long strings
- * FIO_STATIC_ALLOC_DEF_UNSAFE(numer2hex_allocator, char, 19, 1, 256);
+ * // defines a static allocator for 19-character strings
+ * FIO_STATIC_ALLOC_DEF(numer2hex_allocator,
+ *                      char,
+ *                      19,
+ *                      FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX);
  * // a function that returns an unsigned number as a 16 digit hex string
- * char * ntos16(uint16_t n) {
- *   char * n = numer2hex_allocator(1);
- *   n[0] = '0'; n[1] = 'x';
- *   fio_ltoa16u(n+2, n, 16);
- *   n[18] = 0;
- *   return n;
+ * char *ntos16(uint16_t n) {
+ *   char *buf = numer2hex_allocator(1);
+ *   buf[0] = '0'; buf[1] = 'x';
+ *   fio_ltoa16u(buf + 2, n, 16);
+ *   buf[18] = 0;
+ *   return buf;
  * }
  * ```
  *
- * A similar approach is use by `fiobj_num2cstr` in order to provide temporary
- * conversions of FIOBJ to a C String that doesn't require memory management.
+ * A similar approach is used by `fiobj_num2cstr` for temporary FIOBJ-to-string
+ * conversions that do not require memory management.
  */
-#define FIO_STATIC_ALLOC_DEF_UNSAFE(name,                                      \
-                                    type_T,                                    \
-                                    size_per_allocation,                       \
-                                    allocations_per_thread,                    \
-                                    max_thread_safty)                          \
-  /** Allocates `count` blocks of memory from the `name` static arena. */      \
+#define FIO_STATIC_ALLOC_DEF(name,                                             \
+                             type_T,                                           \
+                             units_per_allocation,                             \
+                             max_concurrent_allocations)                       \
+  /** Returns a slot from the `name` static arena. */                         \
   FIO_SFUNC FIO_WARN_UNUSED type_T *name(size_t count) {                       \
-    static type_T name##buffer[sizeof(type_T) * max_thread_safty *             \
-                               size_per_allocation * allocations_per_thread];  \
+    static type_T name##buffer[sizeof(type_T) * (max_concurrent_allocations) * \
+                               (units_per_allocation)];                        \
     static size_t pos;                                                         \
     if (!count)                                                                \
       return name##buffer;                                                     \
     size_t at = fio_atomic_add(&pos, count);                                   \
-    at %= max_thread_safty * allocations_per_thread;                           \
-    return (at * size_per_allocation) + name##buffer;                          \
+    at %= (max_concurrent_allocations);                                        \
+    return (at * (units_per_allocation)) + name##buffer;                       \
   }                                                                            \
-  /** Returns the size of the static arena in `sizeof(type_T)` units. */       \
+  /** Returns the logical arena capacity in `type_T` units. */                \
   FIO_IFUNC size_t name##_size(void) {                                         \
-    return (size_t)(max_thread_safty * size_per_allocation *                   \
-                    allocations_per_thread);                                   \
+    return (size_t)((max_concurrent_allocations) * (units_per_allocation));    \
   }
-
-/**
- * Defines a simple (almost naive) static memory allocator named `name`.
- *
- * This defines a memory allocation function named `name` that accepts a
- * single input `count` and returns a `type_T` pointer (`type_T *`) containing
- * `sizeof(type_T) * count * size_per_allocation` in correct memory alignment.
- *
- * ```c
- * static type_T *name(size_t allocation_count);
- * ```
- *
- * That memory is statically allocated, allowing it be returned and never
- * needing to be freed.
- *
- * The functions can safely allocate the following number of bytes before
- * the function returns the same memory block to another caller:
- *
- * ```c
- * FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX * allocations_per_thread *
- *         sizeof(type_T) * size_per_allocation
- * ```
- *
- * Example use:
- *
- * ```c
- * // defined a static allocator for 32 byte long strings
- * FIO_STATIC_ALLOC_DEF(numer2hex_allocator, char, 19, 1);
- * // a function that returns an unsigned number as a 16 digit hex string
- * char * ntos16(uint16_t n) {
- *   char * n = numer2hex_allocator(1);
- *   n[0] = '0'; n[1] = 'x';
- *   fio_ltoa16u(n+2, n, 16);
- *   n[18] = 0;
- *   return n;
- * }
- * ```
- *
- * A similar approach is use by `fiobj_num2cstr` in order to provide temporary
- * conversions of FIOBJ to a C String that doesn't require memory management.
- */
-#define FIO_STATIC_ALLOC_DEF(name,                                             \
-                             type_T,                                           \
-                             size_per_allocation,                              \
-                             allocations_per_thread)                           \
-  FIO_STATIC_ALLOC_DEF_UNSAFE(name,                                            \
-                              type_T,                                          \
-                              size_per_allocation,                             \
-                              allocations_per_thread,                          \
-                              FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX)
 
 /* *****************************************************************************
 Logging Primitives (no-op)
@@ -9331,7 +9287,10 @@ On POSIX: thin inline wrappers around getenv / setenv with identical signatures.
 
 #if FIO_OS_WIN
 
-FIO_STATIC_ALLOC_DEF(fio___sys_env_buf_new, char, 4096, 2)
+FIO_STATIC_ALLOC_DEF(fio___sys_env_buf_new,
+                     char,
+                     4096,
+                     (FIO_STATIC_ALLOC_SAFE_CONCURRENCY_MAX << 1))
 /** Portable getenv: returns the value of environment variable `name`, or NULL.
  * Uses GetEnvironmentVariableA on Windows to bypass Ruby win32.h macro
  * redefinition of getenv. The returned pointer is valid until the next call. */
@@ -18112,6 +18071,23 @@ RESP3 Parser Settings
 #define FIO_RESP3_MAX_NESTING 32
 #endif
 
+/**
+ * Fixed-length blob strings (`$<len>`, `!<len>`, `=<len>`) larger than this
+ * threshold are streamed incrementally when the callback table provides the
+ * streaming string callbacks (on_start_string / on_string_write /
+ * on_string_done): the parser starts the string as soon as its header is
+ * parsed and feeds data in chunks as it arrives (`result.consumed` advances
+ * per chunk), instead of waiting for the whole blob to be contiguous in the
+ * read window. This allows blobs larger than any consumer read buffer.
+ *
+ * Blobs at or below the threshold keep the wait-for-contiguity behavior
+ * (single zero-copy write, even across split reads). Callback tables without
+ * streaming callbacks are unaffected (always wait-for-contiguity).
+ */
+#ifndef FIO_RESP3_STREAM_THRESHOLD
+#define FIO_RESP3_STREAM_THRESHOLD 4096
+#endif
+
 /* *****************************************************************************
 RESP3 Type Constants
 ***************************************************************************** */
@@ -18192,10 +18168,15 @@ typedef struct {
   uint8_t streaming_string;
   /** Streaming string type (FIO_RESP3_BLOB_STR, FIO_RESP3_BLOB_ERR, etc.) */
   uint8_t streaming_string_type;
-  /** Reserved */
-  uint8_t reserved[1];
+  /** Streamed fixed-length blob: trailing CRLF bytes pending (0...2) */
+  uint8_t streaming_blob_crlf;
   /** Context for streaming string (from on_start_string) */
   void *streaming_string_ctx;
+  /**
+   * Streamed fixed-length blob: data bytes remaining to stream.
+   * Zero when inactive or in `$?` (chunked) streaming mode.
+   */
+  int64_t streaming_remaining;
   /** Stack for nested structures */
   fio_resp3_frame_s stack[FIO_RESP3_MAX_NESTING];
 } fio_resp3_parser_s;
@@ -18767,6 +18748,41 @@ FIO_IFUNC int fio___resp3_push_frame(fio_resp3_parser_s *p,
 }
 
 /* *****************************************************************************
+Internal Helper: Start incremental streaming of a fixed-length blob
+***************************************************************************** */
+
+/**
+ * Starts incremental streaming for a fixed-length blob string (`$`, `!`, `=`)
+ * whose declared length exceeds FIO_RESP3_STREAM_THRESHOLD.
+ *
+ * Returns non-zero if streaming started (parser state was updated and the
+ * caller must `continue` the parse loop), zero if the caller should fall
+ * back to the buffered (wait-for-contiguity) path.
+ *
+ * Streaming is skipped (fallback) when: the table has no streaming
+ * callbacks, the blob is small, or a chunked (`$?`) string is in progress
+ * (a `$` token is malformed inside `$?`; keep the historical lenient
+ * buffered handling there).
+ */
+FIO_SFUNC int fio___resp3_stream_blob_start(fio_resp3_parser_s *p,
+                                            fio___resp3_cb_s *cb,
+                                            size_t blob_len,
+                                            uint8_t type) {
+  if (!cb->on_start_string || blob_len <= FIO_RESP3_STREAM_THRESHOLD ||
+      p->streaming_string)
+    return 0;
+  void *ctx = cb->on_start_string(p->udata, blob_len, type);
+  if (!ctx)
+    return 0;
+  p->streaming_string = 1;
+  p->streaming_string_type = type;
+  p->streaming_string_ctx = ctx;
+  p->streaming_remaining = (int64_t)blob_len;
+  p->streaming_blob_crlf = 2;
+  return 1;
+}
+
+/* *****************************************************************************
 RESP3 Main Parse Function
 ***************************************************************************** */
 
@@ -18794,6 +18810,67 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
   }
 
   while (pos < end) {
+    /* Streamed fixed-length blob continuation.
+     *
+     * Feed blob data as it arrives (no EOL search - blob data is arbitrary
+     * bytes) and advance result.consumed per chunk, so consumer read buffers
+     * keep draining mid-blob. This state is only entered for blobs larger
+     * than FIO_RESP3_STREAM_THRESHOLD (see fio___resp3_stream_blob_start).
+     */
+    if (parser->streaming_remaining) {
+      size_t avail = (size_t)(end - pos);
+      size_t chunk = (avail < (size_t)parser->streaming_remaining)
+                         ? avail
+                         : (size_t)parser->streaming_remaining;
+      if (cb.on_string_write(parser->udata,
+                             parser->streaming_string_ctx,
+                             pos,
+                             chunk)) {
+        parser->error = 1;
+        result.err = 1;
+        goto done;
+      }
+      pos += chunk;
+      parser->streaming_remaining -= (int64_t)chunk;
+      result.consumed = (size_t)(pos - start);
+      if (parser->streaming_remaining)
+        break; /* need more data */
+    }
+    if (parser->streaming_blob_crlf) {
+      /* Consume the trailing CRLF. Tolerates the CRLF being split across
+       * parse calls; tolerates it missing entirely (matches the buffered
+       * path, which skips \r and \n only when present). */
+      while (parser->streaming_blob_crlf && pos < end) {
+        if ((parser->streaming_blob_crlf == 2 && *pos == '\r') ||
+            (parser->streaming_blob_crlf == 1 && *pos == '\n')) {
+          ++pos;
+          --parser->streaming_blob_crlf;
+        } else {
+          parser->streaming_blob_crlf = 0; /* tolerate missing CRLF */
+        }
+      }
+      result.consumed = (size_t)(pos - start);
+      if (parser->streaming_blob_crlf)
+        break; /* need more data */
+      /* Streamed blob complete */
+      obj = cb.on_string_done(parser->udata,
+                              parser->streaming_string_ctx,
+                              parser->streaming_string_type);
+      parser->streaming_string = 0;
+      parser->streaming_string_ctx = NULL;
+      parser->streaming_string_type = 0;
+      obj = fio___resp3_on_value(parser, &cb, obj);
+      if (parser->error) {
+        result.err = 1;
+        goto done;
+      }
+      if (obj && parser->depth == 0) {
+        result.obj = obj;
+        goto done;
+      }
+      continue;
+    }
+
     const uint8_t *eol = fio___resp3_find_eol(pos, end);
     if (!eol)
       break; /* Need more data */
@@ -18976,6 +19053,13 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
         break;
       }
 
+      /* Large blobs stream incrementally (see FIO_RESP3_STREAM_THRESHOLD) */
+      if (fio___resp3_stream_blob_start(parser,
+                                        &cb,
+                                        (size_t)blob_len,
+                                        FIO_RESP3_BLOB_STR))
+        continue;
+
       /* Check if we have complete blob data */
       if ((size_t)(end - pos) < (size_t)blob_len + 2) {
         /* Not enough data - rewind to start of this message */
@@ -19055,6 +19139,13 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
         break;
       }
 
+      /* Large blobs stream incrementally (see FIO_RESP3_STREAM_THRESHOLD) */
+      if (fio___resp3_stream_blob_start(parser,
+                                        &cb,
+                                        (size_t)blob_len,
+                                        FIO_RESP3_BLOB_ERR))
+        continue;
+
       if ((size_t)(end - pos) < (size_t)blob_len + 2) {
         pos = start + result.consumed;
         goto done;
@@ -19129,6 +19220,13 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
         }
         break;
       }
+
+      /* Large blobs stream incrementally (see FIO_RESP3_STREAM_THRESHOLD) */
+      if (fio___resp3_stream_blob_start(parser,
+                                        &cb,
+                                        (size_t)blob_len,
+                                        FIO_RESP3_VERBATIM))
+        continue;
 
       if ((size_t)(end - pos) < (size_t)blob_len + 2) {
         pos = start + result.consumed;
@@ -103025,7 +103123,7 @@ static void fio___io_poll_on_data(void *io_, void *ignr_) {
   return;
 }
 
-FIO_STATIC_ALLOC_DEF(fio___on_ready_buf_new, char, FIO_IO_BUFFER_PER_WRITE, 1)
+FIO_STATIC_ALLOC_DEF(fio___on_ready_buf_new, char, FIO_IO_BUFFER_PER_WRITE, 4)
 static void fio___io_poll_on_ready(void *io_, void *ignr_) {
   (void)ignr_;
 #if defined(DEBUG) && DEBUG
@@ -107771,7 +107869,7 @@ Peer Information Iterator
 FIO_STATIC_ALLOC_DEF(fio___openssl_peer_der,
                      uint8_t,
                      FIO___OPENSSL_PEER_INFO_DER_MAX,
-                     1)
+                     4)
 
 /** Returns an owned reference to the peer certificate at `pos` (leaf first).
  *
@@ -108089,7 +108187,7 @@ typedef struct {
   fio_io_tls_s *tls;
   uint8_t is_client;
   /* Certificate chain (DER-encoded) for server */
-  fio_ubuf_info_s cert_der; /* alias for first certificate (compat/debug) */
+  fio_ubuf_info_s cert_der;    /* alias for first certificate (compat/debug) */
   fio_ubuf_info_s *cert_chain; /* Owned array of DER views */
   size_t cert_chain_count;
   /* Private key for server (P-256: 32-byte scalar, Ed25519: 32-byte seed).
@@ -108221,9 +108319,9 @@ FIO_CONSTRUCTOR(fio___tls13_sys_trust_register_cleanup) {
   (FIO_TLS13_MAX_CIPHERTEXT_LEN + FIO_TLS13_RECORD_HEADER_LEN +                \
    FIO_TLS13_TAG_LEN + 16)
 #define FIO___TLS13_OUT_BUF_CAP (4 * FIO___TLS13_OUT_RECORD_SIZE)
-#define FIO___TLS13_RECV_BUF_CAP                                             \
+#define FIO___TLS13_RECV_BUF_CAP                                               \
   (FIO_TLS13_RECORD_HEADER_LEN + FIO_TLS13_MAX_CIPHERTEXT_LEN)
-#define FIO___TLS13_APP_BUF_CAP FIO_TLS13_MAX_PLAINTEXT_LEN
+#define FIO___TLS13_APP_BUF_CAP      FIO_TLS13_MAX_PLAINTEXT_LEN
 #define FIO___TLS13_READ_SCRATCH_CAP (4 * FIO___TLS13_RECV_BUF_CAP)
 
 typedef struct {
@@ -108271,8 +108369,10 @@ FIO_IFUNC uint8_t *fio___tls13_app_buf(fio___tls13_connection_s *c) {
 
 FIO_LEAK_COUNTER_DEF(fio___tls13_connection_s)
 
-FIO_STATIC_ALLOC_DEF_UNSAFE(
-    fio___tls13_buffer_alloc, uint8_t, FIO___TLS13_READ_SCRATCH_CAP, 1, 4)
+FIO_STATIC_ALLOC_DEF(fio___tls13_buffer_alloc,
+                     uint8_t,
+                     FIO___TLS13_READ_SCRATCH_CAP,
+                     4)
 
 /* *****************************************************************************
 TLS 1.3 Context Builder - Self-Signed Certificate Generation
@@ -109218,16 +109318,15 @@ FIO_SFUNC void fio___tls13_start(fio_io_s *io) {
     /* Set private key */
     if (ctx->signature_algo == FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256 &&
         ctx->private_key_ext.buf) {
-      fio_tls13_server_set_private_key(&conn->state.server,
-                                       ctx->private_key_ext,
-                                       (fio_tls13_signature_algo_e)
-                                           ctx->signature_algo);
+      fio_tls13_server_set_private_key(
+          &conn->state.server,
+          ctx->private_key_ext,
+          (fio_tls13_signature_algo_e)ctx->signature_algo);
     } else if (ctx->private_key_len > 0) {
-      fio_tls13_server_set_private_key(&conn->state.server,
-                                       FIO_UBUF_INFO2(ctx->private_key,
-                                                      ctx->private_key_len),
-                                       (fio_tls13_signature_algo_e)
-                                           ctx->signature_algo);
+      fio_tls13_server_set_private_key(
+          &conn->state.server,
+          FIO_UBUF_INFO2(ctx->private_key, ctx->private_key_len),
+          (fio_tls13_signature_algo_e)ctx->signature_algo);
       /* Copy public key for P-256 signing */
       if (ctx->signature_algo == FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256) {
         FIO_MEMCPY(conn->state.server.credentials.public_key,
@@ -109262,10 +109361,16 @@ FIO_SFUNC int fio___tls13_decrypt_record(fio___tls13_connection_s *conn,
                                          const uint8_t *record,
                                          size_t record_len) {
   if (conn->is_client)
-    return fio_tls13_client_decrypt(
-        &conn->state.client, dest, dest_capacity, record, record_len);
-  return fio_tls13_server_decrypt(
-      &conn->state.server, dest, dest_capacity, record, record_len);
+    return fio_tls13_client_decrypt(&conn->state.client,
+                                    dest,
+                                    dest_capacity,
+                                    record,
+                                    record_len);
+  return fio_tls13_server_decrypt(&conn->state.server,
+                                  dest,
+                                  dest_capacity,
+                                  record,
+                                  record_len);
 }
 
 /** Reads post-handshake TLS records through scratch storage.
@@ -109300,15 +109405,14 @@ FIO_SFUNC ssize_t fio___tls13_read_connected(fio_socket_i fd,
       if (conn->recv_buf_len < FIO_TLS13_RECORD_HEADER_LEN) {
         needed = FIO_TLS13_RECORD_HEADER_LEN - conn->recv_buf_len;
       } else {
-        size_t ciphertext_len =
-            ((size_t)fio___tls13_recv_buf(conn)[3] << 8) |
-            fio___tls13_recv_buf(conn)[4];
+        size_t ciphertext_len = ((size_t)fio___tls13_recv_buf(conn)[3] << 8) |
+                                fio___tls13_recv_buf(conn)[4];
         if (ciphertext_len > FIO_TLS13_MAX_CIPHERTEXT_LEN) {
           errno = ECONNRESET;
           return -1;
         }
-        needed = FIO_TLS13_RECORD_HEADER_LEN + ciphertext_len -
-                 conn->recv_buf_len;
+        needed =
+            FIO_TLS13_RECORD_HEADER_LEN + ciphertext_len - conn->recv_buf_len;
       }
       ssize_t read_len = fio_sock_read(fd, (char *)scratch, needed);
       if (read_len <= 0)
@@ -109322,14 +109426,15 @@ FIO_SFUNC ssize_t fio___tls13_read_connected(fio_socket_i fd,
     size_t record_len = FIO_TLS13_RECORD_HEADER_LEN +
                         (((size_t)fio___tls13_recv_buf(conn)[3] << 8) |
                          fio___tls13_recv_buf(conn)[4]);
-    uint8_t *target = len >= FIO___TLS13_APP_BUF_CAP
-                          ? user_buf
-                          : fio___tls13_app_buf(conn);
-    size_t target_capacity = len >= FIO___TLS13_APP_BUF_CAP
-                                 ? len
-                                 : FIO___TLS13_APP_BUF_CAP;
-    int decrypted = fio___tls13_decrypt_record(
-        conn, target, target_capacity, fio___tls13_recv_buf(conn), record_len);
+    uint8_t *target =
+        len >= FIO___TLS13_APP_BUF_CAP ? user_buf : fio___tls13_app_buf(conn);
+    size_t target_capacity =
+        len >= FIO___TLS13_APP_BUF_CAP ? len : FIO___TLS13_APP_BUF_CAP;
+    int decrypted = fio___tls13_decrypt_record(conn,
+                                               target,
+                                               target_capacity,
+                                               fio___tls13_recv_buf(conn),
+                                               record_len);
     if (decrypted < 0) {
       errno = ECONNRESET;
       return -1;
@@ -109344,7 +109449,9 @@ FIO_SFUNC ssize_t fio___tls13_read_connected(fio_socket_i fd,
   if (conn->app_buf_len > conn->app_buf_pos) {
     size_t available = conn->app_buf_len - conn->app_buf_pos;
     size_t to_copy = len < available ? len : available;
-    FIO_MEMCPY(user_buf, fio___tls13_app_buf(conn) + conn->app_buf_pos, to_copy);
+    FIO_MEMCPY(user_buf,
+               fio___tls13_app_buf(conn) + conn->app_buf_pos,
+               to_copy);
     conn->app_buf_pos += to_copy;
     if (conn->app_buf_pos == conn->app_buf_len) {
       conn->app_buf_len = 0;
@@ -109371,8 +109478,8 @@ FIO_SFUNC ssize_t fio___tls13_read_connected(fio_socket_i fd,
   size_t offset = 0;
   size_t produced = 0;
   while ((size_t)read_len - offset >= FIO_TLS13_RECORD_HEADER_LEN) {
-    size_t ciphertext_len = ((size_t)scratch[offset + 3] << 8) |
-                            scratch[offset + 4];
+    size_t ciphertext_len =
+        ((size_t)scratch[offset + 3] << 8) | scratch[offset + 4];
     if (ciphertext_len > FIO_TLS13_MAX_CIPHERTEXT_LEN) {
       errno = ECONNRESET;
       return -1;
@@ -109932,7 +110039,7 @@ FIO_SFUNC int fio___tls13_peer_info_next(fio_socket_i fd,
   dest->verified = verified;
   dest->chain_index = (uint8_t)pos;
   return 0;
-#else  /* !H___FIO_X509___H || !H___FIO_SHA2___H */
+#else /* !H___FIO_X509___H || !H___FIO_SHA2___H */
   return -1; /* peer certificate inspection requires the X509 module */
 #endif
 }
@@ -111943,18 +112050,32 @@ This module provides a Redis engine that can be used either as:
 2. A pub/sub engine when attached to facil.io's pub/sub system
 
 Features:
+- RESP3 protocol (REQUIRED: Redis >= 6.0; HELLO 3 handshake, no RESP2
+  fallback - handshake failure is a hard engine error)
 - Command queue with callbacks for arbitrary Redis commands
-- Authentication support
+- Authentication support (folded into the HELLO 3 handshake)
 - Automatic reconnection on connection loss
 - Ping/pong keepalive
 - Optional pub/sub integration with SUBSCRIBE/PSUBSCRIBE/PUBLISH
+
+Single-Connection RESP3 Architecture:
+=====================================
+After HELLO 3, SUBSCRIBE no longer commandeers the connection, so commands
+and push frames multiplex on ONE connection:
+- Outgoing: a lock-step command FIFO (one command in flight) plus
+  fire-and-forget SUBSCRIBE-family writes (their confirmations arrive as
+  RESP3 push frames, never command replies, so they cannot desynchronize
+  the FIFO).
+- Incoming: per-frame routing. RESP3 push (`>`) frames (pub/sub deliveries,
+  subscribe confirmations) go to the push handler; all other top-level
+  frames are command replies matched to the FIFO head.
 
 Multi-Process Architecture:
 ===========================
 Only the MASTER process connects to the Redis server. Worker processes
 communicate with the master via IPC (Inter-Process Communication).
 
-  Master:   [Redis pub_conn] + [Redis sub_conn] → Redis Server
+  Master:   [Redis connection] → Redis Server
   Worker 1: [IPC connection] → Master → Redis
   Worker 2: [IPC connection] → Master → Redis
 
@@ -112067,8 +112188,25 @@ Redis Engine Settings
 ***************************************************************************** */
 
 #ifndef FIO_REDIS_READ_BUFFER
-/** Size of the read buffer for Redis connections */
-#define FIO_REDIS_READ_BUFFER 32768
+/** Size of the read buffer for the Redis connection.
+ * NOTE: must fit fio_redis_connection_s.buf_pos (uint32_t). */
+#define FIO_REDIS_READ_BUFFER 65536
+#endif
+
+/** The read-buffer position type must be able to hold FIO_REDIS_READ_BUFFER. */
+#define FIO___REDIS_BUF_POS_T uint32_t
+FIO_ASSERT_STATIC(FIO_REDIS_READ_BUFFER <= UINT32_MAX,
+                  "FIO_REDIS_READ_BUFFER exceeds the buf_pos type (uint32_t)");
+
+#ifndef FIO_REDIS_MAX_BATCH
+/**
+ * Maximum number of complete messages processed per `on_data` event.
+ *
+ * When the cap is reached with more data buffered, processing continues in a
+ * deferred task. This keeps any single event-loop callback small - downstream
+ * work per message is limited to scheduling (defer / publish), never I/O.
+ */
+#define FIO_REDIS_MAX_BATCH 128
 #endif
 
 /* *****************************************************************************
@@ -112088,13 +112226,34 @@ typedef struct {
    * - NULL or empty → defaults to "localhost:6379"
    */
   const char *url;
-  /** Redis server's password, if any (for AUTH command) */
+  /** Redis server's password, if any (folded into the HELLO 3 handshake) */
   const char *auth;
   /** Length of auth string (0 = auto-detect with strlen) */
   size_t auth_len;
   /** Ping interval in seconds (0 = default 300 seconds) */
   uint8_t ping_interval;
+  /**
+   * Cumulative payload budget per top-level Redis message, in bytes.
+   *
+   * Budget = Σ(all string payload bytes) + 32 × (count of ALL objects -
+   * String, Array, Map, Bool, Number, etc.). Checked BEFORE allocating or
+   * appending; a breach logs an error and disconnects.
+   *
+   * 0 = default (16MB). Protects against hostile / corrupt servers declaring
+   * huge `$<len>` allocations or oversized replies.
+   */
+  size_t payload_limit;
 } fio_redis_args_s;
+
+/** Redis connection state, observed from the IO thread. */
+typedef enum {
+  /** The engine stopped after a failed HELLO handshake (or NULL was queried). */
+  FIO_REDIS_STATE_ERROR,
+  /** No socket is attached, or the RESP3 HELLO handshake is still pending. */
+  FIO_REDIS_STATE_CONNECTING,
+  /** A socket is attached and its RESP3 HELLO handshake completed. */
+  FIO_REDIS_STATE_CONNECTED,
+} fio_redis_state_e;
 
 /**
  * Creates a Redis pub/sub engine with reference count = 1.
@@ -112139,6 +112298,15 @@ SFUNC fio_pubsub_engine_s *fio_redis_dup(fio_pubsub_engine_s *engine);
 SFUNC void fio_redis_free(fio_pubsub_engine_s *engine);
 
 /**
+ * Returns the current Redis connection state.
+ *
+ * This function must be called from the IO thread. Commands can be sent in
+ * every state: they queue until the RESP3 HELLO handshake completes.
+ */
+SFUNC fio_redis_state_e
+fio_redis_state(fio_pubsub_engine_s const *engine);
+
+/**
  * Sends a Redis command through the engine's connection.
  *
  * The response will be sent back using the optional callback. `udata` is passed
@@ -112178,6 +112346,96 @@ Redis Engine Implementation
 Internal Types
 ***************************************************************************** */
 
+/** Default cumulative payload budget per top-level message (16MB). */
+#define FIO___REDIS_DEFAULT_PAYLOAD_LIMIT (16UL << 20)
+
+/** Per-object budget overhead (every RESP object costs 32 bytes of budget). */
+#define FIO___REDIS_PAYLOAD_OBJECT_COST 32
+
+/**
+ * Sentinel string context: returned by on_start_string when the payload
+ * budget is exceeded. Non-NULL (so the parser enters the streaming path),
+ * but the first on_string_write fails (-1), aborting the parse BEFORE any
+ * large allocation happens. The sticky limit_exceeded flag is set at the
+ * same time, so the connection is closed after the parse call regardless.
+ */
+#define FIO___REDIS_PS_SENTINEL ((void *)(uintptr_t)1)
+
+/**
+ * Marker object for zero-copy push-frame capture: used as the container
+ * context and element value while a push frame is being captured (never a
+ * valid FIOBJ - must never be freed or dereferenced).
+ */
+#define FIO___REDIS_CAPTURE_MARK ((void *)(uintptr_t)2)
+
+/** Push frame modes (classified from element 0). */
+#define FIO___REDIS_PUSH_UNDECIDED 0
+#define FIO___REDIS_PUSH_MESSAGE   1
+#define FIO___REDIS_PUSH_PMESSAGE  2
+#define FIO___REDIS_PUSH_OTHER     3
+
+/** In-progress string capture (one at a time, per parser design). */
+typedef struct {
+  /** Declared string length. */
+  size_t declared;
+  /** Bytes received so far. */
+  size_t received;
+  /** Read-buffer pointer (zero-copy, complete in a single write). */
+  const uint8_t *ptr;
+  /** Exact temp assembly buffer (NULL when zero-copy). */
+  uint8_t *temp;
+} fio___redis_capture_string_s;
+
+/** Completed channel slot (zero-copy read-buffer ptr or owned temp). */
+typedef struct {
+  const uint8_t *ptr;
+  size_t len;
+} fio___redis_capture_slot_s;
+
+/** Test hook for observing publish calls (channel, message buf_infos). */
+typedef void (*fio___redis_publish_hook_f)(void *udata,
+                                           fio_buf_info_s channel,
+                                           fio_buf_info_s message);
+
+/**
+ * Per-connection payload budget accounting (parser.udata points to this).
+ *
+ * One cumulative budget per top-level RESP message:
+ *   total = Σ(all string payload bytes) + 32 × (all objects)
+ * Checked BEFORE allocating or appending; breach is sticky (limit_exceeded)
+ * and closes the connection. Reset when a top-level object completes and on
+ * connection reset.
+ */
+typedef struct {
+  /** Cumulative charge for the current top-level message. */
+  size_t msg_total;
+  /** The budget (copied from the engine; never changes after creation). */
+  size_t payload_limit;
+  /** Sticky flag: budget breached -> close connection after the parse call. */
+  uint8_t limit_exceeded;
+  /** Non-zero if the in-progress string's bytes were fully charged at start
+   * (known `$<len>`); zero for `$?` chunked strings (charged per chunk). */
+  uint8_t str_precharged;
+  /** Non-zero when the current top-level frame is a RESP3 push (`>`) frame.
+   * Set by on_push (top-level only), read + reset by the parse loop. */
+  uint8_t is_push;
+  /** Zero-copy push-frame capture state (active only inside push frames). */
+  uint8_t capture;
+  /** Push frame mode: FIO___REDIS_PUSH_{UNDECIDED,MESSAGE,PMESSAGE,OTHER}. */
+  uint8_t push_mode;
+  /** cap_channel points to an owned temp buffer (freeze/temp assembly). */
+  uint8_t cap_channel_owned;
+  /** Completed element count of the current push frame. */
+  uint32_t elem_index;
+  /** In-progress string capture. */
+  fio___redis_capture_string_s cur;
+  /** Completed channel slot. */
+  fio___redis_capture_slot_s cap_channel;
+  /** Test-only publish hook (NULL in production -> real fio_pubsub_publish). */
+  fio___redis_publish_hook_f publish_hook;
+  void *publish_hook_udata;
+} fio___redis_parse_state_s;
+
 /** Command queue node */
 typedef struct fio_redis_cmd_s {
   FIO_LIST_NODE node;
@@ -112191,8 +112449,8 @@ typedef struct fio_redis_cmd_s {
 typedef struct fio_redis_connection_s {
   fio_io_s *io;
   fio_resp3_parser_s parser;
-  uint16_t buf_pos; /* Position in read buffer */
-  uint8_t is_sub;   /* Is this the subscription connection? */
+  fio___redis_parse_state_s ps;  /* payload budget accounting (parser.udata) */
+  FIO___REDIS_BUF_POS_T buf_pos; /* Position in read buffer */
 } fio_redis_connection_s;
 
 /**
@@ -112217,21 +112475,21 @@ typedef struct fio_redis_connection_s {
  * IO ↔ Engine: peers, no ownership in either direction.
  */
 typedef struct fio_redis_engine_s {
-  fio_pubsub_engine_s engine;      /* Must be first for casting */
-  fio_redis_connection_s pub_conn; /* Publishing connection */
-  fio_redis_connection_s sub_conn; /* Subscription connection */
+  fio_pubsub_engine_s engine;  /* Must be first for casting */
+  fio_redis_connection_s conn; /* THE connection (RESP3 multiplexes all) */
   char *address;
   char *port;
-  char *auth_cmd; /* Pre-formatted AUTH command */
-  size_t auth_cmd_len;
-  FIOBJ last_channel;      /* Last received channel (dedup) */
+  char *hello_cmd; /* Pre-formatted HELLO 3 [AUTH] command */
+  size_t hello_cmd_len;
   FIO_LIST_HEAD cmd_queue; /* Command queue - accessed only from IO thread */
+  size_t payload_limit;    /* Cumulative per-message payload budget */
+  uint8_t *last_channel;   /* Last published channel (dedup, owned bytes) */
+  size_t last_channel_len; /* Last published channel length */
   uint8_t ping_interval;
   volatile uint8_t pub_sent; /* Flag: command sent, awaiting reply */
   volatile uint8_t running;  /* Flag: engine is active (for reconnection) */
   volatile uint8_t attached; /* Flag: attached to pub/sub system */
-  uint8_t
-      buf[FIO_REDIS_READ_BUFFER * 2]; /* Read buffers for both connections */
+  uint8_t buf[FIO_REDIS_READ_BUFFER]; /* Read buffer for the connection */
 } fio_redis_engine_s;
 
 /* Forward declarations */
@@ -112258,31 +112516,294 @@ FIO_LEAK_COUNTER_DEF(fio___redis_cmd)
 RESP3 Callbacks for FIOBJ Building
 ***************************************************************************** */
 
+/**
+ * Charges `bytes` against the connection's payload budget.
+ *
+ * Returns non-zero on breach (and sets the sticky limit_exceeded flag).
+ * Overflow-safe: msg_total <= payload_limit is an invariant, because bytes
+ * are only added when they fit the remaining budget.
+ *
+ * No-op (always 0) when udata is NULL - the IPC reply re-parse path uses a
+ * NULL udata; those bytes came from the master over trusted local IPC and
+ * were already budget-checked when the master parsed them from Redis.
+ */
+FIO_SFUNC int fio___redis_ps_charge(void *udata, size_t bytes) {
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
+  if (!ps || ps->limit_exceeded)
+    return ps ? (int)ps->limit_exceeded : 0;
+  if (bytes > ps->payload_limit - ps->msg_total) {
+    ps->limit_exceeded = 1;
+    FIO_LOG_ERROR("(redis) payload limit exceeded (%zu + %zu > %zu)",
+                  ps->msg_total,
+                  bytes,
+                  ps->payload_limit);
+    return 1;
+  }
+  ps->msg_total += bytes;
+  return 0;
+}
+
+/** Charges the per-object overhead (32) + `len` string payload bytes. */
+FIO_SFUNC int fio___redis_ps_charge_str(void *udata, size_t len) {
+  return fio___redis_ps_charge(udata, FIO___REDIS_PAYLOAD_OBJECT_COST) ||
+         fio___redis_ps_charge(udata, len);
+}
+
+/* *****************************************************************************
+Zero-Copy Push-Frame Capture
+
+RESP3 push frames have a closed, trivial vocabulary: ["message", channel,
+payload], ["pmessage", pattern, channel, payload], subscribe confirmations,
+pong, and (opt-in) keyspace notifications. None of them need FIOBJ.
+
+While a top-level push frame is parsed (ps.capture), string data is captured
+from read-buffer pointers (zero-copy): small strings are always contiguous
+(the parser waits for contiguity below FIO_RESP3_STREAM_THRESHOLD), and any
+string that completes in a single write is used in place. A string split
+across parse calls is assembled into ONE exact temp buffer (budget-checked
+at start), which is freed immediately after the synchronous publish returns.
+No read-buffer pointer outlives its parse window: fio___redis_capture_freeze
+moves an open channel slot into owned storage before read-buffer compaction,
+and fio_pubsub_publish is synchronous (the IPC engine copies what it
+retains).
+***************************************************************************** */
+
+/**
+ * Begins capture of a fixed-length push-frame string.
+ * Budget check BEFORE any allocation; oversize returns the error sentinel.
+ * `$?` chunked strings are unsupported in push frames (Redis never emits
+ * chunked encoding) - treated as a protocol violation: sticky breach.
+ */
+FIO_SFUNC void *fio___redis_capture_start_string(fio___redis_parse_state_s *ps,
+                                                 size_t len,
+                                                 uint8_t type) {
+  (void)type;
+  if (len == (size_t)-1) {
+    FIO_LOG_ERROR("(redis) unsupported chunked ($?) string in push frame");
+    ps->limit_exceeded = 1;
+    return FIO___REDIS_PS_SENTINEL;
+  }
+  if (fio___redis_ps_charge_str(ps, len))
+    return FIO___REDIS_PS_SENTINEL;
+  ps->cur = (fio___redis_capture_string_s){.declared = len};
+  return &ps->cur;
+}
+
+/**
+ * Captures string data. A string completed in a single write is captured
+ * from the read buffer (zero-copy); otherwise ONE exact temp buffer is
+ * allocated at the first partial write (size was budget-checked at start)
+ * and chunks are appended.
+ */
+FIO_SFUNC int fio___redis_capture_write(fio___redis_parse_state_s *ps,
+                                        void *ctx,
+                                        const void *data,
+                                        size_t len) {
+  if (ctx == FIO___REDIS_PS_SENTINEL)
+    return -1;
+  fio___redis_capture_string_s *cur = &ps->cur;
+  if (!len)
+    return 0;
+  if (cur->received + len > cur->declared)
+    return -1; /* overflow - parser accounting error */
+  if (!cur->ptr && !cur->temp) {
+    if (len == cur->declared) {
+      /* Zero-copy: the string completed in a single write. The pointer is
+       * safe until on_string_done (same parse call): the parser can only
+       * suspend between here and done at pos == end (CRLF pending), where
+       * the consumer has no unconsumed tail to compact. */
+      cur->ptr = (const uint8_t *)data;
+    } else {
+      cur->temp = (uint8_t *)
+          FIO_MEM_REALLOC(NULL, 0, cur->declared ? cur->declared : 1, 0);
+      if (!cur->temp)
+        return -1;
+      FIO_MEMCPY(cur->temp, data, len);
+    }
+  } else if (cur->temp) {
+    FIO_MEMCPY(cur->temp + cur->received, data, len);
+  } else {
+    return -1; /* zero-copy slot already complete - impossible extra write */
+  }
+  cur->received += len;
+  return 0;
+}
+
+/** Publishes the captured channel + payload (message / deduped pmessage). */
+FIO_SFUNC void fio___redis_capture_publish(fio___redis_parse_state_s *ps,
+                                           const uint8_t *payload,
+                                           size_t payload_len) {
+  fio_redis_connection_s *conn =
+      FIO_PTR_FROM_FIELD(fio_redis_connection_s, ps, ps);
+  fio_redis_engine_s *r = FIO_PTR_FROM_FIELD(fio_redis_engine_s, conn, conn);
+  const uint8_t *ch = ps->cap_channel.ptr;
+  size_t ch_len = ps->cap_channel.len;
+  int dedup_hit = (ch_len == r->last_channel_len &&
+                   (!ch_len || !FIO_MEMCMP(r->last_channel, ch, ch_len)));
+
+  if (ps->push_mode == FIO___REDIS_PUSH_MESSAGE) {
+    if (ps->publish_hook) {
+      ps->publish_hook(ps->publish_hook_udata,
+                       FIO_BUF_INFO2((char *)ch, ch_len),
+                       FIO_BUF_INFO2((char *)payload, payload_len));
+    } else {
+      fio_pubsub_publish(.channel = FIO_BUF_INFO2((char *)ch, ch_len),
+                         .message = FIO_BUF_INFO2((char *)payload, payload_len),
+                         .engine = fio_pubsub_engine_ipc());
+    }
+    /* last_channel: owned byte buffer, copy on change only */
+    if (!dedup_hit) {
+      uint8_t *nb = (uint8_t *)FIO_MEM_REALLOC(r->last_channel,
+                                               r->last_channel_len,
+                                               ch_len ? ch_len : 1,
+                                               0);
+      if (nb) {
+        r->last_channel = nb;
+        FIO_MEMCPY(nb, ch, ch_len);
+        r->last_channel_len = ch_len;
+      }
+    }
+  } else if (ps->push_mode == FIO___REDIS_PUSH_PMESSAGE && !dedup_hit) {
+    if (ps->publish_hook) {
+      ps->publish_hook(ps->publish_hook_udata,
+                       FIO_BUF_INFO2((char *)ch, ch_len),
+                       FIO_BUF_INFO2((char *)payload, payload_len));
+    } else {
+      fio_pubsub_publish(.channel = FIO_BUF_INFO2((char *)ch, ch_len),
+                         .message = FIO_BUF_INFO2((char *)payload, payload_len),
+                         .engine = fio_pubsub_engine_ipc());
+    }
+  }
+}
+
+/**
+ * Finalizes a captured string: classifies the type token (element 0),
+ * assigns the channel/payload slots, and publishes when the payload
+ * completes. `temp` (when non-NULL) is the exact assembly buffer of `len`
+ * bytes; ownership is transferred to the channel slot or freed.
+ */
+FIO_SFUNC void fio___redis_capture_string_done(fio___redis_parse_state_s *ps,
+                                               const uint8_t *ptr,
+                                               size_t len,
+                                               uint8_t *temp) {
+  if (ps->elem_index == 0) {
+    /* Type token: message / pmessage / anything else (confirmations, pong,
+     * keyspace notifications, unknown push types - all skipped). */
+    if (len == 7 && !FIO_MEMCMP(ptr, "message", 7))
+      ps->push_mode = FIO___REDIS_PUSH_MESSAGE;
+    else if (len == 8 && !FIO_MEMCMP(ptr, "pmessage", 8))
+      ps->push_mode = FIO___REDIS_PUSH_PMESSAGE;
+    else
+      ps->push_mode = FIO___REDIS_PUSH_OTHER;
+    if (temp)
+      FIO_MEM_FREE(temp, len ? len : 1);
+    return;
+  }
+
+  int is_channel =
+      (ps->push_mode == FIO___REDIS_PUSH_MESSAGE && ps->elem_index == 1) ||
+      (ps->push_mode == FIO___REDIS_PUSH_PMESSAGE && ps->elem_index == 2);
+  int is_payload =
+      (ps->push_mode == FIO___REDIS_PUSH_MESSAGE && ps->elem_index == 2) ||
+      (ps->push_mode == FIO___REDIS_PUSH_PMESSAGE && ps->elem_index == 3);
+
+  if (is_channel) {
+    ps->cap_channel.ptr = temp ? temp : ptr;
+    ps->cap_channel.len = len;
+    ps->cap_channel_owned = (uint8_t)(temp != NULL);
+    return; /* temp ownership moved to the channel slot */
+  }
+  if (is_payload) {
+    fio___redis_capture_publish(ps, ptr, len);
+    if (ps->cap_channel_owned && ps->cap_channel.ptr)
+      FIO_MEM_FREE((void *)ps->cap_channel.ptr,
+                   ps->cap_channel.len ? ps->cap_channel.len : 1);
+    ps->cap_channel = (fio___redis_capture_slot_s){0};
+    ps->cap_channel_owned = 0;
+    if (temp)
+      FIO_MEM_FREE(temp, len ? len : 1);
+    return;
+  }
+  /* Pattern element / OTHER mode / malformed extra element: discard. */
+  if (temp)
+    FIO_MEM_FREE(temp, len ? len : 1);
+}
+
+/**
+ * Moves an open zero-copy channel slot into owned storage. MUST be called
+ * before read-buffer compaction while a push frame is incomplete, so no
+ * read-buffer pointer outlives its parse window. The bytes were already
+ * budget-charged at string start.
+ */
+FIO_SFUNC void fio___redis_capture_freeze(fio___redis_parse_state_s *ps) {
+  if (!ps->capture || !ps->cap_channel.ptr || ps->cap_channel_owned)
+    return;
+  size_t len = ps->cap_channel.len;
+  uint8_t *t = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, len ? len : 1, 0);
+  if (!t) {
+    ps->push_mode = FIO___REDIS_PUSH_OTHER; /* OOM - drop the frame */
+    return;
+  }
+  FIO_MEMCPY(t, ps->cap_channel.ptr, len);
+  ps->cap_channel.ptr = t;
+  ps->cap_channel_owned = 1;
+}
+
+/** Resets all capture state, freeing any owned assembly buffers. */
+FIO_SFUNC void fio___redis_capture_reset(fio___redis_parse_state_s *ps) {
+  if (ps->cur.temp)
+    FIO_MEM_FREE(ps->cur.temp, ps->cur.declared ? ps->cur.declared : 1);
+  ps->cur = (fio___redis_capture_string_s){0};
+  if (ps->cap_channel_owned && ps->cap_channel.ptr)
+    FIO_MEM_FREE((void *)ps->cap_channel.ptr,
+                 ps->cap_channel.len ? ps->cap_channel.len : 1);
+  ps->cap_channel = (fio___redis_capture_slot_s){0};
+  ps->cap_channel_owned = 0;
+  ps->capture = 0;
+  ps->push_mode = FIO___REDIS_PUSH_UNDECIDED;
+  ps->elem_index = 0;
+}
+
 FIO_SFUNC void *fio___redis_on_null(void *udata) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
+  fio___redis_ps_charge(udata, FIO___REDIS_PAYLOAD_OBJECT_COST);
+  if (ps && ps->capture)
+    return FIO___REDIS_CAPTURE_MARK;
   return (void *)fiobj_null();
 }
 
 FIO_SFUNC void *fio___redis_on_bool(void *udata, int is_true) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
+  fio___redis_ps_charge(udata, FIO___REDIS_PAYLOAD_OBJECT_COST);
+  if (ps && ps->capture)
+    return FIO___REDIS_CAPTURE_MARK;
   return (void *)(is_true ? fiobj_true() : fiobj_false());
 }
 
 FIO_SFUNC void *fio___redis_on_number(void *udata, int64_t num) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
+  fio___redis_ps_charge(udata, FIO___REDIS_PAYLOAD_OBJECT_COST);
+  if (ps && ps->capture)
+    return FIO___REDIS_CAPTURE_MARK;
   return (void *)fiobj_num_new((intptr_t)num);
 }
 
 FIO_SFUNC void *fio___redis_on_double(void *udata, double num) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
+  fio___redis_ps_charge(udata, FIO___REDIS_PAYLOAD_OBJECT_COST);
+  if (ps && ps->capture)
+    return FIO___REDIS_CAPTURE_MARK;
   return (void *)fiobj_float_new(num);
 }
 
 FIO_SFUNC void *fio___redis_on_bignum(void *udata,
                                       const void *data,
                                       size_t len) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
   /* Store big numbers as strings */
+  fio___redis_ps_charge_str(udata, len);
+  if (ps && ps->capture)
+    return FIO___REDIS_CAPTURE_MARK;
   return (void *)fiobj_str_new_cstr((const char *)data, len);
 }
 
@@ -112290,34 +112811,68 @@ FIO_SFUNC void *fio___redis_on_string(void *udata,
                                       const void *data,
                                       size_t len,
                                       uint8_t type) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
   (void)type;
+  fio___redis_ps_charge_str(udata, len);
+  if (ps && ps->capture) {
+    /* Simple string in a push frame: capture inline (always contiguous) */
+    fio___redis_capture_string_done(ps, (const uint8_t *)data, len, NULL);
+    return FIO___REDIS_CAPTURE_MARK;
+  }
   return (void *)fiobj_str_new_cstr((const char *)data, len);
 }
 
 /**
  * Called when a blob string starts.
- * Pre-allocate FIOBJ string buffer if length is known.
+ *
+ * Budget check BEFORE allocating: known `$<len>` lengths are charged in
+ * full (32 + len) so an oversize declaration returns the error sentinel
+ * instead of allocating. Allocation is EXACT after a passed check (no caps).
+ * `$?` chunked strings charge 32 now and each chunk's bytes on write.
  */
 FIO_SFUNC void *fio___redis_on_start_string(void *udata,
                                             size_t len,
                                             uint8_t type) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
+  if (ps && ps->capture)
+    return fio___redis_capture_start_string(ps, len, type);
   (void)type;
-  /* Pre-allocate if length known, otherwise create empty string */
-  if (len != (size_t)-1 && len > 0)
+  if (len == (size_t)-1) {
+    /* Chunked string ($?): length unknown - charge overhead, bytes per chunk */
+    if (fio___redis_ps_charge(udata, FIO___REDIS_PAYLOAD_OBJECT_COST))
+      return FIO___REDIS_PS_SENTINEL;
+    if (ps)
+      ps->str_precharged = 0;
+    return (void *)fiobj_str_new();
+  }
+  /* Known length: charge overhead + ALL bytes before allocating (exact) */
+  if (fio___redis_ps_charge_str(udata, len))
+    return FIO___REDIS_PS_SENTINEL;
+  if (ps)
+    ps->str_precharged = 1;
+  if (len > 0)
     return (void *)fiobj_str_new_buf(len);
   return (void *)fiobj_str_new();
 }
 
 /**
  * Called with partial string data - append to FIOBJ string.
+ *
+ * Fails (-1) immediately for sentinel contexts (budget breach at start),
+ * aborting the parse. `$?` chunks are budget-checked per chunk BEFORE
+ * appending; known-length strings were fully charged at start.
  */
 FIO_SFUNC int fio___redis_on_string_write(void *udata,
                                           void *ctx,
                                           const void *data,
                                           size_t len) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
+  if (ps && ps->capture)
+    return fio___redis_capture_write(ps, ctx, data, len);
+  if (ctx == FIO___REDIS_PS_SENTINEL)
+    return -1;
+  if (ps && !ps->str_precharged && fio___redis_ps_charge(udata, len))
+    return -1;
   fiobj_str_write((FIOBJ)ctx, (const char *)data, len);
   return 0;
 }
@@ -112328,8 +112883,21 @@ FIO_SFUNC int fio___redis_on_string_write(void *udata,
 FIO_SFUNC void *fio___redis_on_string_done(void *udata,
                                            void *ctx,
                                            uint8_t type) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
   (void)type;
+  /* Sentinel is unreachable for fixed-length strings (the first write
+   * fails first); a `$?` end marker may legally follow a sentinel start. */
+  if (ctx == FIO___REDIS_PS_SENTINEL)
+    return (void *)fiobj_null();
+  if (ps && ps->capture) {
+    fio___redis_capture_string_s *cur = &ps->cur;
+    fio___redis_capture_string_done(ps,
+                                    cur->temp ? cur->temp : cur->ptr,
+                                    cur->received,
+                                    cur->temp);
+    ps->cur = (fio___redis_capture_string_s){0};
+    return FIO___REDIS_CAPTURE_MARK;
+  }
   return ctx; /* Return the completed FIOBJ string */
 }
 
@@ -112337,9 +112905,12 @@ FIO_SFUNC void *fio___redis_on_error(void *udata,
                                      const void *data,
                                      size_t len,
                                      uint8_t type) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
   (void)type;
   /* Store errors as strings - caller can check context */
+  fio___redis_ps_charge_str(udata, len);
+  if (ps && ps->capture)
+    return FIO___REDIS_CAPTURE_MARK;
   FIOBJ err = fiobj_str_new_cstr((const char *)data, len);
   FIO_LOG_WARNING("(redis) error response: %.*s", (int)len, (const char *)data);
   return (void *)err;
@@ -112348,28 +112919,50 @@ FIO_SFUNC void *fio___redis_on_error(void *udata,
 FIO_SFUNC void *fio___redis_on_array(void *udata,
                                      void *parent_ctx,
                                      int64_t len) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
   (void)parent_ctx;
   (void)len;
+  fio___redis_ps_charge(udata, FIO___REDIS_PAYLOAD_OBJECT_COST);
+  if (ps && ps->capture)
+    return FIO___REDIS_CAPTURE_MARK;
   return (void *)fiobj_array_new();
 }
 
 FIO_SFUNC void *fio___redis_on_map(void *udata, void *parent_ctx, int64_t len) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
   (void)parent_ctx;
   (void)len;
+  fio___redis_ps_charge(udata, FIO___REDIS_PAYLOAD_OBJECT_COST);
+  if (ps && ps->capture)
+    return FIO___REDIS_CAPTURE_MARK;
   return (void *)fiobj_hash_new();
 }
 
 FIO_SFUNC void *fio___redis_on_push(void *udata,
                                     void *parent_ctx,
                                     int64_t len) {
-  /* Push messages are treated as arrays */
+  /* Push frames are out-of-band server messages (pub/sub deliveries,
+   * subscribe confirmations, keyspace notifications), never command
+   * replies. Top-level push frames enter zero-copy capture: no FIOBJ is
+   * built, string data is captured from read-buffer pointers. */
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
+  (void)len;
+  if (ps && !parent_ctx) {
+    ps->is_push = 1;
+    fio___redis_ps_charge(udata, FIO___REDIS_PAYLOAD_OBJECT_COST);
+    ps->capture = 1;
+    ps->push_mode = FIO___REDIS_PUSH_UNDECIDED;
+    ps->elem_index = 0;
+    return FIO___REDIS_CAPTURE_MARK;
+  }
+  /* Nested push (malformed) or non-budgeted context: build as an array */
   return fio___redis_on_array(udata, parent_ctx, len);
 }
 
 FIO_SFUNC int fio___redis_array_push(void *udata, void *ctx, void *value) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
+  if (ps && ps->capture)
+    return 0; /* capture mode: elements are captured / discarded */
   fiobj_array_push((FIOBJ)ctx, (FIOBJ)value);
   return 0;
 }
@@ -112378,14 +112971,38 @@ FIO_SFUNC int fio___redis_map_push(void *udata,
                                    void *ctx,
                                    void *key,
                                    void *value) {
-  (void)udata;
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
+  if (ps && ps->capture)
+    return 0; /* capture mode: elements are captured / discarded */
   fiobj_hash_set((FIOBJ)ctx, (FIOBJ)key, (FIOBJ)value, NULL);
   if (key != value) /* in a set, both key and value are same and owned by set */
     fiobj_free((FIOBJ)key);
   return 0;
 }
 
+FIO_SFUNC int fio___redis_push_push(void *udata, void *ctx, void *value) {
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
+  if (ps && ps->capture) {
+    ++ps->elem_index; /* one more push-frame element completed */
+    return 0;
+  }
+  return fio___redis_array_push(udata, ctx, value);
+}
+
+FIO_SFUNC void *fio___redis_push_done(void *udata, void *ctx) {
+  fio___redis_parse_state_s *ps = (fio___redis_parse_state_s *)udata;
+  if (ps && ps->capture) {
+    /* Captured push frame complete: publish already happened at payload
+     * completion; the parse loop resets the capture state. Return a valid
+     * (freeable) object so the parse loop observes the frame boundary. */
+    return (void *)fiobj_null();
+  }
+  return ctx;
+}
+
 FIO_SFUNC void fio___redis_free_unused(void *udata, void *obj) {
+  if (obj == FIO___REDIS_CAPTURE_MARK)
+    return;
   (void)udata;
   fiobj_free((FIOBJ)obj);
 }
@@ -112409,8 +113026,9 @@ static const fio_resp3_callbacks_s FIO___REDIS_RESP3_CALLBACKS = {
     .on_map = fio___redis_on_map,
     .on_push = fio___redis_on_push,
     .array_push = fio___redis_array_push,
-    .push_push = fio___redis_array_push,
+    .push_push = fio___redis_push_push,
     .map_push = fio___redis_map_push,
+    .push_done = fio___redis_push_done,
     .free_unused = fio___redis_free_unused,
     .on_error_protocol = fio___redis_on_error_protocol,
     /* Streaming string callbacks for efficient large string handling */
@@ -112423,8 +113041,9 @@ static const fio_resp3_callbacks_s FIO___REDIS_RESP3_CALLBACKS = {
 RESP Formatting Helpers
 ***************************************************************************** */
 
-/** Writes a FIOBJ to RESP format into a string.
- * Uses RESP3 type prefixes to preserve types through serialization roundtrips:
+/**
+ * RESP serialization uses RESP3 type prefixes to preserve types through
+ * serialization roundtrips:
  * - NULL  → $-1\r\n (RESP2 null bulk string)
  * - TRUE  → #t\r\n (RESP3 boolean)
  * - FALSE → #f\r\n (RESP3 boolean)
@@ -112433,53 +113052,263 @@ RESP Formatting Helpers
  * - HASH   → %<count>\r\n (RESP3 map)
  * - ARRAY  → *<count>\r\n (RESP2 array)
  * - STRING → $<len>\r\n<data>\r\n (RESP2 bulk string)
+ *
+ * Serialization is a two-pass, allocation-free (per call-site) design:
+ * fio___redis_fiobj2resp_len() computes the exact size with a depth guard,
+ * then fio___redis_fiobj2resp_write() writes directly into the destination
+ * buffer with a raw cursor. This lets hot paths serialize straight into
+ * their final allocation with zero temporary FIOBJ strings and zero copies.
  */
-FIO_SFUNC void fio___redis_fiobj2resp(FIOBJ dest, FIOBJ obj) {
-  fio_str_info_s s;
+
+/** Serialization depth limit (matches the RESP3 parser's nesting limit). */
+#define FIO___REDIS_RESP_MAX_DEPTH FIO_RESP3_MAX_NESTING
+
+/** Returns the decimal digit count for `n` (including the sign). */
+FIO_SFUNC size_t fio___redis_digits_i64(int64_t n) {
+  size_t d = (n < 0) ? 2 : 1;
+  uint64_t u = (n < 0) ? ((uint64_t)0 - (uint64_t)n) : (uint64_t)n;
+  while (u > 9) {
+    u /= 10;
+    ++d;
+  }
+  return d;
+}
+
+/**
+ * Returns the exact byte count required to serialize `obj` to RESP,
+ * or 0 on error (nesting deeper than FIO___REDIS_RESP_MAX_DEPTH, or size
+ * overflow). A valid serialization is never 0 bytes.
+ */
+FIO_SFUNC size_t fio___redis_fiobj2resp_len(FIOBJ obj, uint32_t depth) {
+  if (depth > FIO___REDIS_RESP_MAX_DEPTH)
+    return 0;
   switch (FIOBJ_TYPE(obj)) {
-  case FIOBJ_T_NULL: fiobj_str_write(dest, "$-1\r\n", 5); break;
-  case FIOBJ_T_TRUE: fiobj_str_write(dest, "#t\r\n", 4); break;
-  case FIOBJ_T_FALSE: fiobj_str_write(dest, "#f\r\n", 4); break;
-  case FIOBJ_T_NUMBER:
-    fiobj_str_write(dest, ":", 1);
-    fiobj_str_write_i(dest, fiobj2i(obj));
-    fiobj_str_write(dest, "\r\n", 2);
-    break;
-  case FIOBJ_T_FLOAT: {
+  case FIOBJ_T_NULL: return 5;  /* $-1\r\n */
+  case FIOBJ_T_TRUE:            /* fallthrough */
+  case FIOBJ_T_FALSE: return 4; /* #t\r\n / #f\r\n */
+  case FIOBJ_T_NUMBER:          /* :<i>\r\n */
+    return 3 + fio___redis_digits_i64(fiobj2i(obj));
+  case FIOBJ_T_FLOAT: { /* ,<f>\r\n */
     char tmp[64];
-    size_t tmp_len = fio_ftoa(tmp, fiobj2f(obj), 10);
-    fiobj_str_write(dest, ",", 1);
-    fiobj_str_write(dest, tmp, tmp_len);
-    fiobj_str_write(dest, "\r\n", 2);
-    break;
+    return 3 + fio_ftoa(tmp, fiobj2f(obj), 10);
   }
-  case FIOBJ_T_ARRAY:
-    fiobj_str_write(dest, "*", 1);
-    fiobj_str_write_i(dest, (int64_t)fiobj_array_count(obj));
-    fiobj_str_write(dest, "\r\n", 2);
-    for (size_t i = 0; i < fiobj_array_count(obj); ++i) {
-      fio___redis_fiobj2resp(dest, fiobj_array_get(obj, (int32_t)i));
+  case FIOBJ_T_ARRAY: {
+    size_t count = fiobj_array_count(obj);
+    size_t len = 3 + fio___redis_digits_i64((int64_t)count);
+    for (size_t i = 0; i < count; ++i) {
+      size_t sub = fio___redis_fiobj2resp_len(fiobj_array_get(obj, (int32_t)i),
+                                              depth + 1);
+      if (!sub || (len += sub) < sub)
+        return 0; /* error or overflow */
     }
-    break;
-  case FIOBJ_T_HASH:
-    fiobj_str_write(dest, "%", 1);
-    fiobj_str_write_i(dest, (int64_t)fiobj_hash_count(obj));
-    fiobj_str_write(dest, "\r\n", 2);
+    return len;
+  }
+  case FIOBJ_T_HASH: {
+    size_t len = 3 + fio___redis_digits_i64((int64_t)fiobj_hash_count(obj));
+    int err = 0;
     FIO_MAP_EACH(fiobj_hash, obj, pos) {
-      fio___redis_fiobj2resp(dest, pos.key);
-      fio___redis_fiobj2resp(dest, pos.value);
+      if (err)
+        continue;
+      size_t klen = fio___redis_fiobj2resp_len(pos.key, depth + 1);
+      size_t vlen = fio___redis_fiobj2resp_len(pos.value, depth + 1);
+      if (!klen || !vlen || (len += klen) < klen || (len += vlen) < vlen)
+        err = 1; /* error or overflow */
     }
-    break;
-  case FIOBJ_T_STRING:
-  default:
-    s = fiobj2cstr(obj);
-    fiobj_str_write(dest, "$", 1);
-    fiobj_str_write_i(dest, (int64_t)s.len);
-    fiobj_str_write(dest, "\r\n", 2);
-    fiobj_str_write(dest, s.buf, s.len);
-    fiobj_str_write(dest, "\r\n", 2);
-    break;
+    return err ? 0 : len;
   }
+  case FIOBJ_T_STRING:
+  default: { /* $<len>\r\n<data>\r\n */
+    fio_str_info_s s = fiobj2cstr(obj);
+    return s.len + fio___redis_digits_i64((int64_t)s.len) + 5;
+  }
+  }
+}
+
+/**
+ * Serializes `obj` to RESP at `pos`, returning the advanced cursor.
+ *
+ * The destination MUST have at least fio___redis_fiobj2resp_len(obj, depth)
+ * bytes - no bounds checks are performed. Call the length function first
+ * (it also validates depth).
+ */
+FIO_SFUNC uint8_t *fio___redis_fiobj2resp_write(uint8_t *pos,
+                                                FIOBJ obj,
+                                                uint32_t depth) {
+  switch (FIOBJ_TYPE(obj)) {
+  case FIOBJ_T_NULL: FIO_MEMCPY(pos, "$-1\r\n", 5); return pos + 5;
+  case FIOBJ_T_TRUE: FIO_MEMCPY(pos, "#t\r\n", 4); return pos + 4;
+  case FIOBJ_T_FALSE: FIO_MEMCPY(pos, "#f\r\n", 4); return pos + 4;
+  case FIOBJ_T_NUMBER:
+    *pos++ = ':';
+    pos += fio_ltoa((char *)pos, fiobj2i(obj), 10);
+    *pos++ = '\r';
+    *pos++ = '\n';
+    return pos;
+  case FIOBJ_T_FLOAT:
+    *pos++ = ',';
+    pos += fio_ftoa((char *)pos, fiobj2f(obj), 10);
+    *pos++ = '\r';
+    *pos++ = '\n';
+    return pos;
+  case FIOBJ_T_ARRAY: {
+    size_t count = fiobj_array_count(obj);
+    *pos++ = '*';
+    pos += fio_ltoa((char *)pos, (int64_t)count, 10);
+    *pos++ = '\r';
+    *pos++ = '\n';
+    for (size_t i = 0; i < count; ++i)
+      pos = fio___redis_fiobj2resp_write(pos,
+                                         fiobj_array_get(obj, (int32_t)i),
+                                         depth + 1);
+    return pos;
+  }
+  case FIOBJ_T_HASH:
+    *pos++ = '%';
+    pos += fio_ltoa((char *)pos, (int64_t)fiobj_hash_count(obj), 10);
+    *pos++ = '\r';
+    *pos++ = '\n';
+    FIO_MAP_EACH(fiobj_hash, obj, pos_) {
+      pos = fio___redis_fiobj2resp_write(pos, pos_.key, depth + 1);
+      pos = fio___redis_fiobj2resp_write(pos, pos_.value, depth + 1);
+    }
+    return pos;
+  case FIOBJ_T_STRING:
+  default: {
+    fio_str_info_s s = fiobj2cstr(obj);
+    *pos++ = '$';
+    pos += fio_ltoa((char *)pos, (int64_t)s.len, 10);
+    *pos++ = '\r';
+    *pos++ = '\n';
+    FIO_MEMCPY(pos, s.buf, s.len);
+    pos += s.len;
+    *pos++ = '\r';
+    *pos++ = '\n';
+    return pos;
+  }
+  }
+}
+
+/** Writes a FIOBJ to RESP format into a FIOBJ string (cold path helper). */
+FIO_SFUNC void fio___redis_fiobj2resp(FIOBJ dest, FIOBJ obj) {
+  size_t len = fio___redis_fiobj2resp_len(obj, 0);
+  if (!len)
+    return;
+  uint8_t *tmp = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, len, 0);
+  if (!tmp)
+    return;
+  fio___redis_fiobj2resp_write(tmp, obj, 0);
+  fiobj_str_write(dest, (const char *)tmp, len);
+  FIO_MEM_FREE(tmp, len);
+}
+
+/* *****************************************************************************
+Subscribe-Family Command Builder
+***************************************************************************** */
+
+/** Worst-case overhead for a subscribe-family command (verb, digits, CRLFs). */
+#define FIO___REDIS_SUB_CMD_OVERHEAD 64
+
+/**
+ * Writes a subscribe-family command:
+ *   *2\r\n$<verb_len>\r\n<verb>\r\n$<channel_len>\r\n<channel>\r\n
+ *
+ * Returns the number of bytes written (at most
+ * FIO___REDIS_SUB_CMD_OVERHEAD + channel.len).
+ *
+ * Raw text building - the command structure is fixed and known,
+ * no dynamic FIOBJ types are needed.
+ */
+FIO_SFUNC size_t fio___redis_write_sub_cmd(uint8_t *dest,
+                                           const char *verb,
+                                           size_t verb_len,
+                                           fio_buf_info_s channel) {
+  uint8_t *pos = dest;
+  FIO_MEMCPY(pos, "*2\r\n$", 5);
+  pos += 5;
+  pos += fio_ltoa((char *)pos, (int64_t)verb_len, 10);
+  *pos++ = '\r';
+  *pos++ = '\n';
+  FIO_MEMCPY(pos, verb, verb_len);
+  pos += verb_len;
+  FIO_MEMCPY(pos, "\r\n$", 3);
+  pos += 3;
+  pos += fio_ltoa((char *)pos, (int64_t)channel.len, 10);
+  *pos++ = '\r';
+  *pos++ = '\n';
+  FIO_MEMCPY(pos, channel.buf, channel.len);
+  pos += channel.len;
+  *pos++ = '\r';
+  *pos++ = '\n';
+  return (size_t)(pos - dest);
+}
+
+/**
+ * Sends a subscribe-family command on the subscription connection.
+ * Uses a stack buffer for typical channel names, heap for huge ones.
+ * MUST be called from the IO thread only.
+ */
+FIO_SFUNC void fio___redis_sub_send(fio_redis_engine_s *r,
+                                    const char *verb,
+                                    size_t verb_len,
+                                    fio_buf_info_s channel) {
+  if (!r->conn.io)
+    return;
+  uint8_t stack_buf[256];
+  uint8_t *buf = stack_buf;
+  size_t need = FIO___REDIS_SUB_CMD_OVERHEAD + channel.len;
+  if (need > sizeof(stack_buf)) {
+    buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, need, 0);
+    if (!buf)
+      return;
+  }
+  size_t len = fio___redis_write_sub_cmd(buf, verb, verb_len, channel);
+  fio_io_write(r->conn.io, buf, len);
+  if (buf != stack_buf)
+    FIO_MEM_FREE(buf, need);
+}
+
+/* *****************************************************************************
+HELLO 3 Handshake Command Builder
+***************************************************************************** */
+
+/**
+ * Returns the exact byte count of the HELLO 3 handshake command.
+ *
+ * No auth:  *3\r\n$5\r\nHELLO\r\n$1\r\n3\r\n                     (22 bytes)
+ * Auth:     *5\r\n$5\r\nHELLO\r\n$1\r\n3\r\n$4\r\nAUTH\r\n$7\r\ndefault\r\n
+ *           $<digits>\r\n<password>\r\n
+ */
+FIO_SFUNC size_t fio___redis_hello_cmd_len(size_t auth_len) {
+  if (!auth_len)
+    return 22;
+  return 50 + fio___redis_digits_i64((int64_t)auth_len) + auth_len;
+}
+
+/**
+ * Writes the HELLO 3 handshake command (auth folds in when auth_len > 0).
+ * Returns the number of bytes written (== fio___redis_hello_cmd_len).
+ * Raw text building - fixed, known structure, no dynamic FIOBJ types.
+ */
+FIO_SFUNC size_t fio___redis_write_hello_cmd(uint8_t *dest,
+                                             const char *auth,
+                                             size_t auth_len) {
+  uint8_t *pos = dest;
+  if (!auth_len) {
+    FIO_MEMCPY(pos, "*3\r\n$5\r\nHELLO\r\n$1\r\n3\r\n", 22);
+    return 22;
+  }
+  FIO_MEMCPY(pos,
+             "*5\r\n$5\r\nHELLO\r\n$1\r\n3\r\n$4\r\nAUTH\r\n$7\r\ndefault\r\n$",
+             46);
+  pos += 46;
+  pos += fio_ltoa((char *)pos, (int64_t)auth_len, 10);
+  *pos++ = '\r';
+  *pos++ = '\n';
+  FIO_MEMCPY(pos, auth, auth_len);
+  pos += auth_len;
+  *pos++ = '\r';
+  *pos++ = '\n';
+  return (size_t)(pos - dest);
 }
 
 /* *****************************************************************************
@@ -112508,7 +113337,7 @@ IO ↔ Engine: peers, no ownership in either direction.
 
 fio___redis_destroy (called when last ref drops):
 - Sets running=0 (stops command queue from accepting new commands)
-- Closes pub_conn and sub_conn (NULL udata first to prevent on_close dup)
+- Closes the connection (NULL udata first to prevent on_close dup)
 - Removes fork callback
 - Drains command queue (invokes callbacks with FIOBJ_INVALID)
 - Frees last_channel
@@ -112516,20 +113345,33 @@ fio___redis_destroy (called when last ref drops):
 
 FIO_SFUNC void fio___redis_connection_reset(fio_redis_connection_s *conn) {
   conn->buf_pos = 0;
-  /* Clean up any partially parsed streaming string */
-  if (conn->parser.streaming_string && conn->parser.streaming_string_ctx) {
-    fiobj_free((FIOBJ)conn->parser.streaming_string_ctx);
+  if (conn->ps.capture) {
+    /* Zero-copy push capture in progress: contexts are capture markers /
+     * the in-progress capture struct, never FIOBJ objects. */
+    fio___redis_capture_reset(&conn->ps);
+  } else {
+    /* Clean up any partially parsed streaming string (never the budget
+     * sentinel, which is not a FIOBJ) */
+    if (conn->parser.streaming_string && conn->parser.streaming_string_ctx &&
+        conn->parser.streaming_string_ctx != FIO___REDIS_PS_SENTINEL) {
+      fiobj_free((FIOBJ)conn->parser.streaming_string_ctx);
+    }
+    /* Clean up any partially built containers in the parser stack */
+    while (conn->parser.depth > 0) {
+      fio_resp3_frame_s *f = &conn->parser.stack[conn->parser.depth - 1];
+      if (f->key)
+        fiobj_free((FIOBJ)f->key);
+      if (f->ctx)
+        fiobj_free((FIOBJ)f->ctx);
+      --conn->parser.depth;
+    }
   }
-  /* Clean up any partially built containers in the parser stack */
-  while (conn->parser.depth > 0) {
-    fio_resp3_frame_s *f = &conn->parser.stack[conn->parser.depth - 1];
-    if (f->key)
-      fiobj_free((FIOBJ)f->key);
-    if (f->ctx)
-      fiobj_free((FIOBJ)f->ctx);
-    --conn->parser.depth;
-  }
-  conn->parser = (fio_resp3_parser_s){0};
+  /* Reset the payload budget for the next message (payload_limit persists) */
+  conn->ps.msg_total = 0;
+  conn->ps.limit_exceeded = 0;
+  conn->ps.str_precharged = 0;
+  conn->ps.is_push = 0;
+  conn->parser = (fio_resp3_parser_s){.udata = &conn->ps};
   conn->io = NULL;
 }
 
@@ -112554,28 +113396,23 @@ FIO_SFUNC void fio___redis_destroy(fio_redis_engine_s *r) {
   /* Close connections safely.
    * 1. NULL the io field first so on_close_internal sees conn->io == NULL
    *    and skips the reconnect path.
-   * 2. Set udata to NULL on the io handle so on_close_pub/sub returns early
+   * 2. Set udata to NULL on the io handle so on_close returns early
    *    without calling fio___redis_free (which would underflow the ref count
    *    since we are already in destroy with ref == 0).
    * 3. Then close. */
-  fio_io_s *pub_io = r->pub_conn.io;
-  fio_io_s *sub_io = r->sub_conn.io;
-  r->pub_conn.io = NULL;
-  r->sub_conn.io = NULL;
-  if (pub_io) {
-    fio_io_udata_set(pub_io, NULL);
-    fio_io_close_now(pub_io);
-  }
-  if (sub_io) {
-    fio_io_udata_set(sub_io, NULL);
-    fio_io_close_now(sub_io);
+  fio_io_s *io = r->conn.io;
+  r->conn.io = NULL;
+  if (io) {
+    fio_io_udata_set(io, NULL);
+    fio_io_close_now(io);
   }
 
   /* Remove fork callback to prevent use-after-free */
   fio_state_callback_remove(FIO_CALL_IN_CHILD, fio___redis_on_fork, r);
 
   /* Free remaining resources - invoke callbacks to release IPC references */
-  fiobj_free(r->last_channel);
+  if (r->last_channel)
+    FIO_MEM_FREE(r->last_channel, r->last_channel_len);
   while (!FIO_LIST_IS_EMPTY(&r->cmd_queue)) {
     fio_redis_cmd_s *cmd;
     FIO_LIST_POP(fio_redis_cmd_s, node, cmd, &r->cmd_queue);
@@ -112601,11 +113438,11 @@ command queuing from any thread.
  * MUST be called from the IO thread only.
  */
 FIO_SFUNC void fio___redis_send_next_cmd(fio_redis_engine_s *r) {
-  if (!r->pub_sent && !FIO_LIST_IS_EMPTY(&r->cmd_queue) && r->pub_conn.io) {
+  if (!r->pub_sent && !FIO_LIST_IS_EMPTY(&r->cmd_queue) && r->conn.io) {
     r->pub_sent = 1;
     fio_redis_cmd_s *cmd =
         FIO_PTR_FROM_FIELD(fio_redis_cmd_s, node, r->cmd_queue.next);
-    fio_io_write(r->pub_conn.io, cmd->cmd, cmd->cmd_len);
+    fio_io_write(r->conn.io, cmd->cmd, cmd->cmd_len);
   }
 }
 
@@ -112693,64 +113530,13 @@ FIO_SFUNC void fio___redis_on_pub_message(fio_redis_engine_s *r, FIOBJ msg) {
   fio_io_defer(fio___redis_perform_callback, r, cmd);
 }
 
-/**
- * Handle message on subscription connection.
- * Called from IO thread via on_data callback - no lock needed.
- */
-FIO_SFUNC void fio___redis_on_sub_message(fio_redis_engine_s *r, FIOBJ msg) {
-  if (FIOBJ_TYPE(msg) != FIOBJ_T_ARRAY) {
-    /* Likely a PONG or status response */
-    fio_str_info_s s = fiobj2cstr(msg);
-    if (s.len != 4 || s.buf[0] != 'P') {
-      FIO_LOG_WARNING("(redis) unexpected subscription data: %.*s",
-                      (int)s.len,
-                      s.buf);
-    }
-    return;
-  }
-
-  size_t count = fiobj_array_count(msg);
-  if (count < 3)
-    return;
-
-  fio_str_info_s type = fiobj2cstr(fiobj_array_get(msg, 0));
-
-  if (type.len == 7 && !FIO_MEMCMP(type.buf, "message", 7)) {
-    /* Regular message: ["message", channel, data] */
-    FIOBJ channel = fiobj_array_get(msg, 1);
-    FIOBJ data = fiobj_array_get(msg, 2);
-    fiobj_free(r->last_channel);
-    r->last_channel = fiobj_dup(channel);
-    fio_str_info_s ch = fiobj2cstr(channel);
-    fio_str_info_s m = fiobj2cstr(data);
-    fio_pubsub_publish(.channel = FIO_BUF_INFO2(ch.buf, ch.len),
-                       .message = FIO_BUF_INFO2(m.buf, m.len),
-                       .engine = fio_pubsub_engine_ipc());
-  } else if (type.len == 8 && !FIO_MEMCMP(type.buf, "pmessage", 8) &&
-             count >= 4) {
-    /* Pattern message: ["pmessage", pattern, channel, data] */
-    FIOBJ channel = fiobj_array_get(msg, 2);
-    FIOBJ data = fiobj_array_get(msg, 3);
-    /* Deduplicate if same channel as last message */
-    if (!fiobj_is_eq(r->last_channel, channel)) {
-      fio_str_info_s ch = fiobj2cstr(channel);
-      fio_str_info_s m = fiobj2cstr(data);
-      fio_pubsub_publish(.channel = FIO_BUF_INFO2(ch.buf, ch.len),
-                         .message = FIO_BUF_INFO2(m.buf, m.len),
-                         .engine = fio_pubsub_engine_ipc());
-    }
-  }
-  /* Ignore subscribe/unsubscribe confirmations */
-}
-
 /* *****************************************************************************
 Protocol Callbacks
 ***************************************************************************** */
 
 FIO_SFUNC void fio___redis_on_attach(fio_io_s *io);
 FIO_SFUNC void fio___redis_on_data(fio_io_s *io);
-FIO_SFUNC void fio___redis_on_close_pub(void *buffer, void *udata);
-FIO_SFUNC void fio___redis_on_close_sub(void *buffer, void *udata);
+FIO_SFUNC void fio___redis_on_close(void *buffer, void *udata);
 FIO_SFUNC void fio___redis_on_timeout(fio_io_s *io);
 FIO_SFUNC void fio___redis_connect(void *engine_, void *conn_);
 FIO_SFUNC void fio___redis_subscribe(const fio_pubsub_engine_s *eng,
@@ -112760,107 +113546,288 @@ FIO_SFUNC void fio___redis_psubscribe(const fio_pubsub_engine_s *eng,
                                       fio_buf_info_s channel,
                                       int16_t filter);
 
-/** Protocol for publishing connection */
-static fio_io_protocol_s FIO___REDIS_PUB_PROTOCOL = {
+/** Protocol for the (single) Redis connection */
+static fio_io_protocol_s FIO___REDIS_PROTOCOL = {
     .on_attach = fio___redis_on_attach,
     .on_data = fio___redis_on_data,
-    .on_close = fio___redis_on_close_pub,
+    .on_close = fio___redis_on_close,
     .on_timeout = fio___redis_on_timeout,
     .timeout = 300000, /* 5 minutes default */
 };
 
-/** Protocol for subscription connection */
-static fio_io_protocol_s FIO___REDIS_SUB_PROTOCOL = {
-    .on_attach = fio___redis_on_attach,
-    .on_data = fio___redis_on_data,
-    .on_close = fio___redis_on_close_sub,
-    .on_timeout = fio___redis_on_timeout,
-    .timeout = 300000,
-};
+/**
+ * HELLO 3 handshake reply callback.
+ *
+ * A successful HELLO returns a map (hash) reply. Anything else (an `-ERR`
+ * for servers without RESP3, i.e. Redis < 6.0, or an auth failure) is a
+ * HARD engine error: no RESP2 fallback. The engine stops and the connection
+ * is closed; queued commands are failed at engine destroy.
+ */
+FIO_SFUNC void fio___redis_on_hello_reply(fio_pubsub_engine_s *e,
+                                          FIOBJ reply,
+                                          void *udata) {
+  fio_redis_engine_s *r = (fio_redis_engine_s *)e;
+  (void)udata;
+  if (reply == FIOBJ_INVALID || FIOBJ_TYPE(reply) != FIOBJ_T_HASH) {
+    FIO_LOG_ERROR(
+        "(redis) HELLO 3 handshake failed (RESP3 requires Redis >= 6.0; "
+        "check auth) - engine disabled");
+    r->running = 0;
+    fio_io_s *io = r->conn.io;
+    if (io)
+      fio_io_close_now(io); /* on_close will not reconnect (running == 0) */
+    return;
+  }
+  FIO_LOG_DEBUG("(redis) HELLO 3 handshake complete (RESP3)");
+}
+
+/**
+ * Returns a snapshot of the Redis connection state.
+ *
+ * This function must be called from the IO thread: it observes the command
+ * queue to distinguish a TCP connection awaiting `HELLO 3` from a RESP3-ready
+ * connection. Commands may be sent regardless of the returned state.
+ */
+SFUNC fio_redis_state_e
+fio_redis_state(fio_pubsub_engine_s const *engine) {
+  if (!engine)
+    return FIO_REDIS_STATE_ERROR;
+  fio_redis_engine_s const *r = (fio_redis_engine_s const *)engine;
+  if (!r->running)
+    return FIO_REDIS_STATE_ERROR;
+  if (!r->conn.io)
+    return FIO_REDIS_STATE_CONNECTING;
+  FIO_LIST_NODE const *node = r->cmd_queue.next;
+  if (node != &r->cmd_queue) {
+    fio_redis_cmd_s const *cmd =
+        FIO_PTR_FROM_FIELD(fio_redis_cmd_s, node, node);
+    if (cmd->callback == fio___redis_on_hello_reply)
+      return FIO_REDIS_STATE_CONNECTING;
+  }
+  return FIO_REDIS_STATE_CONNECTED;
+}
+
+/** Returns the buffer capacity needed for a batched (re)subscription
+ * buffer (upper bound; fio___redis_resubscribe_write returns the exact
+ * byte count). */
+FIO_SFUNC size_t fio___redis_resubscribe_size(void) {
+  size_t total = 0;
+  FIO_MAP_EACH(fio___pubsub_channel_map, &FIO___PUBSUB_POSTOFFICE.channels, i) {
+    fio_pubsub_channel_s *ch = i.node->key;
+    total += FIO___REDIS_SUB_CMD_OVERHEAD + ch->name_len;
+  }
+  FIO_MAP_EACH(fio___pubsub_channel_map, &FIO___PUBSUB_POSTOFFICE.patterns, i) {
+    fio_pubsub_channel_s *ch = i.node->key;
+    total += FIO___REDIS_SUB_CMD_OVERHEAD + ch->name_len;
+  }
+  return total;
+}
+
+/**
+ * Writes the batched SUBSCRIBE/PSUBSCRIBE commands for all known channels
+ * (channels first, then patterns). Returns the number of bytes written.
+ * The destination MUST have at least fio___redis_resubscribe_size() bytes.
+ */
+FIO_SFUNC size_t fio___redis_resubscribe_write(uint8_t *dest) {
+  uint8_t *pos = dest;
+  FIO_MAP_EACH(fio___pubsub_channel_map, &FIO___PUBSUB_POSTOFFICE.channels, i) {
+    fio_pubsub_channel_s *ch = i.node->key;
+    pos += fio___redis_write_sub_cmd(pos,
+                                     "SUBSCRIBE",
+                                     9,
+                                     FIO_BUF_INFO2(ch->name, ch->name_len));
+  }
+  FIO_MAP_EACH(fio___pubsub_channel_map, &FIO___PUBSUB_POSTOFFICE.patterns, i) {
+    fio_pubsub_channel_s *ch = i.node->key;
+    pos += fio___redis_write_sub_cmd(pos,
+                                     "PSUBSCRIBE",
+                                     10,
+                                     FIO_BUF_INFO2(ch->name, ch->name_len));
+  }
+  return (size_t)(pos - dest);
+}
+
+/**
+ * Resubscription on (re)connect: sends SUBSCRIBE/PSUBSCRIBE for all channels
+ * the pub/sub system knows about, batched into a single buffer and one write.
+ *
+ * We do NOT call fio_pubsub_engine_attach here because that defers
+ * fio___pubsub_attach_task, which could run after fio___pubsub_detach_task
+ * (if detach is in progress), causing a use-after-free when attach_task
+ * re-adds the freed engine to the pub/sub engines list.
+ *
+ * Instead, we directly iterate the pub/sub channel maps and send wire
+ * commands. This is safe because we're on the IO thread and the channel
+ * maps are only modified on the IO thread.
+ *
+ * MUST be called from the IO thread only, AFTER HELLO was written (RESP3
+ * confirmations arrive as push frames on the same connection).
+ */
+FIO_SFUNC void fio___redis_resubscribe(fio_redis_engine_s *r) {
+  if (!r->attached || !r->running || !r->conn.io)
+    return;
+  size_t total = fio___redis_resubscribe_size();
+  if (!total)
+    return;
+  uint8_t stack_buf[4096];
+  uint8_t *buf = stack_buf;
+  if (total > sizeof(stack_buf))
+    buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, total, 0);
+  if (!buf)
+    return;
+  size_t written = fio___redis_resubscribe_write(buf);
+  fio_io_write(r->conn.io, buf, written);
+  if (buf != stack_buf)
+    FIO_MEM_FREE(buf, total);
+}
 
 /**
  * Called when connection is attached to the protocol (connection ready).
  * Runs on IO thread - no lock needed.
+ *
+ * Queues HELLO 3 (auth folded in) as the first command. Its map reply is
+ * consumed by the normal lock-step FIFO (see fio___redis_on_hello_reply).
  */
 FIO_SFUNC void fio___redis_on_attach(fio_io_s *io) {
   fio_redis_engine_s *r = (fio_redis_engine_s *)fio_io_udata(io);
   if (!r)
     return;
 
-  /* Determine which connection this is based on protocol */
-  fio_io_protocol_s *pr = fio_io_protocol(io);
-  int is_sub = (pr == &FIO___REDIS_SUB_PROTOCOL);
-  fio_redis_connection_s *conn = is_sub ? &r->sub_conn : &r->pub_conn;
-
-  /* Store the IO handle now that connection is ready */
+  fio_redis_connection_s *conn = &r->conn;
   conn->io = io;
-  conn->is_sub = (uint8_t)is_sub;
 
-  /* Send AUTH if configured.
-   * For pub connection: queue as a proper command so its reply is consumed
-   * and doesn't desynchronize the command queue.
-   * For sub connection: direct write is fine since non-array replies are
-   * ignored in fio___redis_on_sub_message. */
-  if (!is_sub && r->auth_cmd_len) {
-    fio_redis_cmd_s *auth_cmd = (fio_redis_cmd_s *)
-        FIO_MEM_REALLOC(NULL, 0, sizeof(*auth_cmd) + r->auth_cmd_len + 1, 0);
-    if (auth_cmd) {
-      FIO_LEAK_COUNTER_ON_ALLOC(fio___redis_cmd);
-      *auth_cmd = (fio_redis_cmd_s){.cmd_len = r->auth_cmd_len};
-      FIO_MEMCPY(auth_cmd->cmd, r->auth_cmd, r->auth_cmd_len);
-      FIO_LIST_PUSH(&r->cmd_queue, &auth_cmd->node);
+  /* Queue HELLO 3 at the queue HEAD: it must be the first command on the
+   * wire of every (re)connection - before any leftover commands and before
+   * any SUBSCRIBE bytes (an early SUBSCRIBE would commandeer a RESP2 link
+   * and its confirmations would desynchronize the reply FIFO). */
+  fio_redis_cmd_s *hello = (fio_redis_cmd_s *)
+      FIO_MEM_REALLOC(NULL, 0, sizeof(*hello) + r->hello_cmd_len + 1, 0);
+  if (!hello) {
+    FIO_LOG_ERROR("(redis) failed to allocate HELLO command");
+    fio_io_close_now(io); /* reconnect will retry */
+    return;
+  }
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___redis_cmd);
+  *hello = (fio_redis_cmd_s){
+      .callback = fio___redis_on_hello_reply,
+      .cmd_len = r->hello_cmd_len,
+  };
+  FIO_MEMCPY(hello->cmd, r->hello_cmd, r->hello_cmd_len);
+  hello->cmd[r->hello_cmd_len] = 0;
+  /* Prepend to queue head (FIO_LIST has no unshift) */
+  hello->node.next = r->cmd_queue.next;
+  hello->node.prev = &r->cmd_queue;
+  r->cmd_queue.next->prev = &hello->node;
+  r->cmd_queue.next = &hello->node;
+
+  FIO_LOG_DEBUG("(redis) connection established to %s:%s", r->address, r->port);
+
+  /* Send any queued commands (HELLO is now at the head) - IO thread */
+  r->pub_sent = 0;
+  fio___redis_send_next_cmd(r);
+
+  /* Resubscribe all known channels on this connection (reconnect case).
+   * The batch is written AFTER the queued HELLO, so RESP3 confirmation
+   * push frames never desynchronize the command FIFO. */
+  fio___redis_resubscribe(r);
+}
+
+/**
+ * Deferred continuation for fio___redis_parse_buffered (message cap reached).
+ * Holds its own engine reference.
+ */
+FIO_SFUNC void fio___redis_on_data_continue(void *engine_, void *conn_);
+
+/**
+ * Parses all complete RESP messages currently in the connection's buffer.
+ *
+ * Uses a running offset and compacts the buffer at most once, at the end.
+ * The parser is NOT reset between messages: after each complete object the
+ * parser is already back at depth 0 with streaming flags cleared, so the
+ * historical per-message `{0}` reset (~1KB memset per message) is redundant.
+ * Partial/error state is still cleaned up by fio___redis_connection_reset
+ * when the connection closes.
+ *
+ * Processes at most FIO_REDIS_MAX_BATCH messages per call; if more data
+ * remains, the rest is deferred (fio___redis_on_data_continue) so no single
+ * event-loop callback grows unbounded.
+ *
+ * MUST be called from the IO thread only.
+ */
+FIO_SFUNC void fio___redis_parse_buffered(fio_redis_engine_s *r,
+                                          fio_redis_connection_s *conn,
+                                          uint8_t *buf,
+                                          fio_io_s *io) {
+  size_t pos = 0;
+  size_t count = 0;
+  for (;;) {
+    fio_resp3_result_s result = fio_resp3_parse(&conn->parser,
+                                                &FIO___REDIS_RESP3_CALLBACKS,
+                                                buf + pos,
+                                                conn->buf_pos - pos);
+
+    if (result.err || conn->ps.limit_exceeded) {
+      FIO_LOG_ERROR("(redis) %s - closing connection",
+                    conn->ps.limit_exceeded ? "payload limit exceeded"
+                                            : "parser error");
+      fio_io_close_now(io);
+      return;
+    }
+
+    pos += result.consumed;
+
+    if (!result.obj)
+      break; /* no complete message available */
+
+    /* Top-level message complete - reset per-message state */
+    conn->ps.msg_total = 0;
+
+    FIOBJ msg = (FIOBJ)result.obj;
+
+    /* Per-frame routing: RESP3 push frames are out-of-band server messages
+     * (pub/sub deliveries, subscribe confirmations); everything else is a
+     * command reply matched to the lock-step FIFO queue. */
+    uint8_t is_push = conn->ps.is_push;
+    conn->ps.is_push = 0;
+    if (is_push) {
+      /* Zero-copy capture: publishing already happened at payload
+       * completion (synchronous, before any compaction). Clean up. */
+      fio___redis_capture_reset(&conn->ps);
+    } else {
+      fio___redis_on_pub_message(r, msg);
+    }
+    fiobj_free(msg);
+
+    /* Cap work per event - defer the rest to keep the event loop snappy. */
+    if (++count >= FIO_REDIS_MAX_BATCH && pos < conn->buf_pos) {
+      fio___redis_capture_freeze(&conn->ps);
+      conn->buf_pos -= (FIO___REDIS_BUF_POS_T)pos;
+      FIO_MEMMOVE(buf, buf + pos, conn->buf_pos);
+      fio___redis_dup(r); /* ref for deferred continuation task */
+      fio_io_defer(fio___redis_on_data_continue, r, conn);
+      return;
     }
   }
-  if (is_sub && r->auth_cmd_len) {
-    fio_io_write(io, r->auth_cmd, r->auth_cmd_len);
-  }
 
-  if (is_sub) {
-    FIO_LOG_DEBUG("(redis) subscription connection established to %s:%s",
-                  r->address,
-                  r->port);
-    /* Resubscription on reconnect: directly send SUBSCRIBE/PSUBSCRIBE for
-     * all channels the pub/sub system knows about.
-     *
-     * We do NOT call fio_pubsub_engine_attach here because that defers
-     * fio___pubsub_attach_task, which could run after fio___pubsub_detach_task
-     * (if detach is in progress), causing a use-after-free when attach_task
-     * re-adds the freed engine to the pub/sub engines list.
-     *
-     * Instead, we directly iterate the pub/sub channel maps and send wire
-     * commands. This is safe because we're on the IO thread and the channel
-     * maps are only modified on the IO thread. */
-    if (r->attached && r->running) {
-      FIO_MAP_EACH(fio___pubsub_channel_map,
-                   &FIO___PUBSUB_POSTOFFICE.channels,
-                   i) {
-        fio_pubsub_channel_s *ch = i.node->key;
-        fio_buf_info_s name = FIO_BUF_INFO2(ch->name, ch->name_len);
-        fio___redis_subscribe(&r->engine, name, ch->filter);
-      }
-      FIO_MAP_EACH(fio___pubsub_channel_map,
-                   &FIO___PUBSUB_POSTOFFICE.patterns,
-                   i) {
-        fio_pubsub_channel_s *ch = i.node->key;
-        fio_buf_info_s name = FIO_BUF_INFO2(ch->name, ch->name_len);
-        fio___redis_psubscribe(&r->engine, name, ch->filter);
-      }
-    }
-  } else {
-    FIO_LOG_DEBUG("(redis) publishing connection established to %s:%s",
-                  r->address,
-                  r->port);
-    /* Send any queued commands - no lock needed, we're on IO thread */
-    r->pub_sent = 0;
-    fio___redis_send_next_cmd(r);
-
-    /* Start subscription connection only if attached, running, and reactor
-     * is still running */
-    if (r->attached && r->running && fio_io_is_running() && !r->sub_conn.io) {
-      fio___redis_dup(r); /* Increment ref for deferred task */
-      fio_io_defer(fio___redis_connect, r, &r->sub_conn);
-    }
+  /* Single compaction of unconsumed data to start of buffer */
+  if (pos) {
+    fio___redis_capture_freeze(&conn->ps);
+    conn->buf_pos -= (FIO___REDIS_BUF_POS_T)pos;
+    if (conn->buf_pos)
+      FIO_MEMMOVE(buf, buf + pos, conn->buf_pos);
   }
+}
+
+FIO_SFUNC void fio___redis_on_data_continue(void *engine_, void *conn_) {
+  fio_redis_engine_s *r = (fio_redis_engine_s *)engine_;
+  fio_redis_connection_s *conn = (fio_redis_connection_s *)conn_;
+  fio_io_s *io = conn->io;
+  if (!r->running || !io) {
+    fio___redis_free(r);
+    return;
+  }
+  fio___redis_parse_buffered(r, conn, r->buf, io);
+  fio___redis_free(r);
 }
 
 FIO_SFUNC void fio___redis_on_data(fio_io_s *io) {
@@ -112868,19 +113835,8 @@ FIO_SFUNC void fio___redis_on_data(fio_io_s *io) {
   if (!r)
     return;
 
-  fio_redis_connection_s *conn;
-  uint8_t *buf;
-  int is_sub;
-
-  if (io == r->sub_conn.io) {
-    conn = &r->sub_conn;
-    buf = r->buf + FIO_REDIS_READ_BUFFER;
-    is_sub = 1;
-  } else {
-    conn = &r->pub_conn;
-    buf = r->buf;
-    is_sub = 0;
-  }
+  fio_redis_connection_s *conn = &r->conn;
+  uint8_t *buf = r->buf;
 
   /* Read data */
   size_t available = FIO_REDIS_READ_BUFFER - conn->buf_pos;
@@ -112888,51 +113844,13 @@ FIO_SFUNC void fio___redis_on_data(fio_io_s *io) {
   if (!len)
     return;
 
-  conn->buf_pos += (uint16_t)len;
-
-  /* Parse RESP data - loop to process all complete messages in buffer */
-  for (;;) {
-    fio_resp3_result_s result = fio_resp3_parse(&conn->parser,
-                                                &FIO___REDIS_RESP3_CALLBACKS,
-                                                buf,
-                                                conn->buf_pos);
-
-    if (result.err) {
-      FIO_LOG_ERROR("(redis) parser error - closing connection");
-      fio_io_close_now(io);
-      return;
-    }
-
-    /* Move unconsumed data to start of buffer */
-    if (result.consumed && result.consumed < conn->buf_pos) {
-      size_t remaining = conn->buf_pos - result.consumed;
-      FIO_MEMMOVE(buf, buf + result.consumed, remaining);
-      conn->buf_pos = (uint16_t)remaining;
-    } else if (result.consumed) {
-      conn->buf_pos = 0;
-    }
-
-    if (result.obj) {
-      FIOBJ msg = (FIOBJ)result.obj;
-      if (is_sub) {
-        fio___redis_on_sub_message(r, msg);
-      } else {
-        fio___redis_on_pub_message(r, msg);
-      }
-      fiobj_free(msg);
-      /* Reset parser for next message and continue processing */
-      conn->parser = (fio_resp3_parser_s){0};
-      continue;
-    }
-
-    /* No complete message available, exit loop */
-    break;
-  }
+  conn->buf_pos += (FIO___REDIS_BUF_POS_T)len;
+  fio___redis_parse_buffered(r, conn, buf, io);
 }
 
 /** Internal helper for connection close handling.
  *
- * Called from on_close_pub / on_close_sub with the udata from the IO handle.
+ * Called from on_close with the udata from the IO handle.
  * If r is NULL, the engine was already destroyed (fio___redis_destroy nulled
  * the udata before closing) — do nothing.
  *
@@ -112947,25 +113865,17 @@ FIO_SFUNC void fio___redis_on_close_internal(fio_redis_engine_s *r,
 
   /* Reconnect if IO reactor is still running */
   if (fio_io_is_running()) {
-    FIO_LOG_WARNING("(redis) %s connection lost, reconnecting...",
-                    (conn == &r->sub_conn) ? "subscription" : "publishing");
+    FIO_LOG_WARNING("(redis) connection lost, reconnecting...");
     fio___redis_dup(r); /* ref for deferred reconnect task */
     fio_io_defer(fio___redis_connect, r, conn);
   }
   /* No fio___redis_free here — connection holds no ownership ref */
 }
 
-FIO_SFUNC void fio___redis_on_close_pub(void *buffer, void *udata) {
+FIO_SFUNC void fio___redis_on_close(void *buffer, void *udata) {
   (void)buffer;
   fio___redis_on_close_internal((fio_redis_engine_s *)udata,
-                                udata ? &((fio_redis_engine_s *)udata)->pub_conn
-                                      : NULL);
-}
-
-FIO_SFUNC void fio___redis_on_close_sub(void *buffer, void *udata) {
-  (void)buffer;
-  fio___redis_on_close_internal((fio_redis_engine_s *)udata,
-                                udata ? &((fio_redis_engine_s *)udata)->sub_conn
+                                udata ? &((fio_redis_engine_s *)udata)->conn
                                       : NULL);
 }
 
@@ -112978,25 +113888,22 @@ FIO_SFUNC void fio___redis_on_timeout(fio_io_s *io) {
   if (!r)
     return;
 
-  if (io == r->sub_conn.io) {
-    /* Subscription connection - just send PING */
-    fio_io_write(io, (char *)"*1\r\n$4\r\nPING\r\n", 14);
-  } else {
-    /* Publishing connection - check for stuck commands */
-    if (!FIO_LIST_IS_EMPTY(&r->cmd_queue)) {
-      FIO_LOG_WARNING("(redis) server unresponsive, disconnecting");
-      fio_io_close_now(io);
-      return;
-    }
-    /* Queue a PING command */
-    fio_redis_cmd_s *cmd =
-        (fio_redis_cmd_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(*cmd) + 15, 0);
-    if (cmd) {
-      FIO_LEAK_COUNTER_ON_ALLOC(fio___redis_cmd);
-      *cmd = (fio_redis_cmd_s){.cmd_len = 14};
-      FIO_MEMCPY(cmd->cmd, "*1\r\n$4\r\nPING\r\n", 15);
-      fio___redis_attach_cmd(r, cmd);
-    }
+  /* Check for stuck commands */
+  if (!FIO_LIST_IS_EMPTY(&r->cmd_queue)) {
+    FIO_LOG_WARNING("(redis) server unresponsive, disconnecting");
+    fio_io_close_now(io);
+    return;
+  }
+  /* Queue a PING command - already on the IO thread, queue directly.
+   * The +PONG reply dequeues it under the normal lock-step FIFO. */
+  fio_redis_cmd_s *cmd =
+      (fio_redis_cmd_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(*cmd) + 14, 0);
+  if (cmd) {
+    FIO_LEAK_COUNTER_ON_ALLOC(fio___redis_cmd);
+    *cmd = (fio_redis_cmd_s){.cmd_len = 14};
+    FIO_MEMCPY(cmd->cmd, "*1\r\n$4\r\nPING\r\n", 14);
+    FIO_LIST_PUSH(&r->cmd_queue, &cmd->node);
+    fio___redis_send_next_cmd(r);
   }
 }
 
@@ -113025,28 +113932,33 @@ FIO_SFUNC void fio___redis_connect(void *engine_, void *conn_) {
     return;
   }
 
-  int is_sub = (conn == &r->sub_conn);
-  conn->is_sub = is_sub;
-  fio_io_protocol_s *protocol =
-      is_sub ? &FIO___REDIS_SUB_PROTOCOL : &FIO___REDIS_PUB_PROTOCOL;
-
-  /* Build URL */
+  /* Build URL - bounded FIO_MEMCPY assembly, no truncation */
   char url[512];
-  size_t url_len = 0;
-  url_len += (size_t)snprintf(url + url_len,
-                              sizeof(url) - url_len,
-                              "tcp://%s:%s",
-                              r->address,
-                              r->port);
+  const size_t host_len = FIO_STRLEN(r->address);
+  const size_t port_len = FIO_STRLEN(r->port);
+  if (host_len + port_len + 8 > sizeof(url)) {
+    FIO_LOG_ERROR("(redis) address too long: %s:%s", r->address, r->port);
+    /* Same failure path as a failed connection attempt */
+    fio_io_run_every(.fn = fio___redis_connect_timer,
+                     .udata1 = r,
+                     .udata2 = conn,
+                     .every = 1000,
+                     .repetitions = 1);
+    return; /* ref ownership transferred to timer */
+  }
+  FIO_MEMCPY(url, "tcp://", 6);
+  FIO_MEMCPY(url + 6, r->address, host_len);
+  url[6 + host_len] = ':';
+  FIO_MEMCPY(url + 7 + host_len, r->port, port_len);
+  url[7 + host_len + port_len] = 0;
 
-  FIO_LOG_DEBUG("(redis) connecting to %s:%s (%s)",
-                r->address,
-                r->port,
-                is_sub ? "subscription" : "publishing");
+  FIO_LOG_DEBUG("(redis) connecting to %s:%s", r->address, r->port);
 
   /* Start async connection - on_attach will be called when ready */
-  conn->io =
-      fio_io_connect(url, .protocol = protocol, .udata = r, .timeout = 30000);
+  conn->io = fio_io_connect(url,
+                            .protocol = &FIO___REDIS_PROTOCOL,
+                            .udata = r,
+                            .timeout = 30000);
   if (!conn->io) {
     FIO_LOG_ERROR("(redis) failed to initiate connection to %s:%s",
                   r->address,
@@ -113185,15 +114097,28 @@ FIO_SFUNC void fio___redis_ipc_send_redis_reply(fio_pubsub_engine_s *e,
   fio_ipc_s *ipc = (fio_ipc_s *)udata;
   (void)e;
 
-  /* Serialize reply to RESP format */
-  FIOBJ resp = fiobj_str_new_buf(256);
-  if (reply == FIOBJ_INVALID) {
-    /* No reply / error - send null */
-    fiobj_str_write(resp, "$-1\r\n", 5);
-  } else {
-    fio___redis_fiobj2resp(resp, reply);
+  /* Serialize reply to RESP format (stack buffer, heap for large replies) */
+  uint8_t stack_buf[512];
+  uint8_t *buf = stack_buf;
+  size_t resp_len = 0;
+  if (reply != FIOBJ_INVALID)
+    resp_len = fio___redis_fiobj2resp_len(reply, 0);
+  if (resp_len) {
+    if (resp_len > sizeof(stack_buf)) {
+      buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, resp_len, 0);
+      if (!buf) {
+        buf = stack_buf;
+        resp_len = 0;
+      }
+    }
+    if (resp_len)
+      fio___redis_fiobj2resp_write(buf, reply, 0);
   }
-  fio_str_info_s s = fiobj2cstr(resp);
+  if (!resp_len) {
+    /* No reply / error / unserializable / OOM - send null */
+    resp_len = 5;
+    FIO_MEMCPY(buf, "$-1\r\n", 5);
+  }
 
   /* Send reply back to worker via IPC.
    * Echo the 16-byte header from the original request so the worker
@@ -113201,9 +114126,10 @@ FIO_SFUNC void fio___redis_ipc_send_redis_reply(fio_pubsub_engine_s *e,
   fio_ipc_reply(ipc,
                 .data = FIO_IPC_DATA(
                     FIO_BUF_INFO2(ipc->data, FIO___REDIS_IPC_SEND_HEADER),
-                    FIO_BUF_INFO2(s.buf, s.len)),
+                    FIO_BUF_INFO2((char *)buf, resp_len)),
                 .done = 1);
-  fiobj_free(resp);
+  if (buf != stack_buf)
+    FIO_MEM_FREE(buf, resp_len);
   fio_ipc_free(ipc);
 }
 
@@ -113325,11 +114251,12 @@ EXECUTION CONTEXT:
  * Guard: if r->attached is 0, no system ref was taken — return immediately
  * to avoid underflowing the reference count.
  *
- * NOTE: We do NOT close sub_conn here. The sub_conn will close naturally
- * (via IO shutdown or normal close path). When on_close_sub fires, it checks
- * r->attached (now 0) and skips reconnection. This avoids the re-entrancy
- * hazard of closing sub_conn here and having on_close_sub call fio___redis_free
- * on an engine that may already be in fio___redis_destroy.
+ * NOTE: We do NOT close the connection here. It is shared with the command
+ * queue and will close naturally (via IO shutdown or normal close path).
+ * This avoids the re-entrancy hazard of closing it here and having on_close
+ * fire on an engine that may already be in fio___redis_destroy.
+ * Server-side subscriptions are dropped with fire-and-forget UNSUBSCRIBE /
+ * PUNSUBSCRIBE (RESP3 confirmations arrive as push frames, ignored).
  */
 FIO_SFUNC void fio___redis_detached(const fio_pubsub_engine_s *eng) {
   fio_redis_engine_s *r = (fio_redis_engine_s *)eng;
@@ -113339,18 +114266,35 @@ FIO_SFUNC void fio___redis_detached(const fio_pubsub_engine_s *eng) {
     return;
   r->attached = 0;
 
-  /* Close sub connection — no longer needed without pub/sub.
-   * Null the udata first so on_close sees NULL and does not reconnect. */
-  fio_io_s *sub_io = r->sub_conn.io;
-  r->sub_conn.io = NULL;
-  if (sub_io) {
-    fio_io_udata_set(sub_io, NULL);
-    fio_io_close_now(sub_io);
+  /* Drop all server-side subscriptions (fire-and-forget; RESP3
+   * confirmations arrive as push frames and are ignored). The connection
+   * itself stays open - it is shared with the command queue. */
+  if (r->conn.io) {
+    fio_io_write(r->conn.io,
+                 (char *)"*1\r\n$11\r\nUNSUBSCRIBE\r\n"
+                         "*1\r\n$12\r\nPUNSUBSCRIBE\r\n",
+                 45);
   }
 
   /* Release the system's reference (transferred at fio_pubsub_engine_attach).
    * The caller moved their ref to the system; this releases it. */
   fio___redis_free(r);
+}
+
+/**
+ * Shared attach logic for subscribe / psubscribe: marks the engine as
+ * attached and starts the connection if needed.
+ */
+FIO_SFUNC void fio___redis_ensure_attached(fio_redis_engine_s *r) {
+  /* The system's ref was transferred at fio_pubsub_engine_attach time -
+   * the caller moved their ref to the system. No dup here. */
+  if (!r->attached) {
+    r->attached = 1;
+    if (r->running && !r->conn.io) {
+      fio___redis_dup(r); /* ref for deferred connect task */
+      fio_io_defer(fio___redis_connect, r, &r->conn);
+    }
+  }
 }
 
 /**
@@ -113362,32 +114306,8 @@ FIO_SFUNC void fio___redis_subscribe(const fio_pubsub_engine_s *eng,
                                      int16_t filter) {
   fio_redis_engine_s *r = (fio_redis_engine_s *)eng;
   (void)filter;
-
-  /* Mark as attached and start subscription connection if needed.
-   * The system's ref was transferred at fio_pubsub_engine_attach time —
-   * the caller moved their ref to the system. No dup here. */
-  if (!r->attached) {
-    r->attached = 1;
-    if (r->running && !r->sub_conn.io) {
-      fio___redis_dup(r); /* ref for deferred connect task */
-      fio_io_defer(fio___redis_connect, r, &r->sub_conn);
-    }
-  }
-
-  if (!r->sub_conn.io)
-    return;
-
-  /* Build SUBSCRIBE command */
-  FIOBJ cmd = fiobj_str_new_buf(32 + channel.len);
-  fiobj_str_write(cmd, "*2\r\n$9\r\nSUBSCRIBE\r\n$", 20);
-  fiobj_str_write_i(cmd, (int64_t)channel.len);
-  fiobj_str_write(cmd, "\r\n", 2);
-  fiobj_str_write(cmd, channel.buf, channel.len);
-  fiobj_str_write(cmd, "\r\n", 2);
-
-  fio_str_info_s s = fiobj2cstr(cmd);
-  fio_io_write(r->sub_conn.io, s.buf, s.len);
-  fiobj_free(cmd);
+  fio___redis_ensure_attached(r);
+  fio___redis_sub_send(r, "SUBSCRIBE", 9, channel);
 }
 
 /**
@@ -113399,32 +114319,8 @@ FIO_SFUNC void fio___redis_psubscribe(const fio_pubsub_engine_s *eng,
                                       int16_t filter) {
   fio_redis_engine_s *r = (fio_redis_engine_s *)eng;
   (void)filter;
-
-  /* Mark as attached and start subscription connection if needed.
-   * The system's ref was transferred at fio_pubsub_engine_attach time —
-   * the caller moved their ref to the system. No dup here. */
-  if (!r->attached) {
-    r->attached = 1;
-    if (r->running && !r->sub_conn.io) {
-      fio___redis_dup(r); /* ref for deferred connect task */
-      fio_io_defer(fio___redis_connect, r, &r->sub_conn);
-    }
-  }
-
-  if (!r->sub_conn.io)
-    return;
-
-  /* Build PSUBSCRIBE command */
-  FIOBJ cmd = fiobj_str_new_buf(32 + channel.len);
-  fiobj_str_write(cmd, "*2\r\n$10\r\nPSUBSCRIBE\r\n$", 22);
-  fiobj_str_write_i(cmd, (int64_t)channel.len);
-  fiobj_str_write(cmd, "\r\n", 2);
-  fiobj_str_write(cmd, channel.buf, channel.len);
-  fiobj_str_write(cmd, "\r\n", 2);
-
-  fio_str_info_s s = fiobj2cstr(cmd);
-  fio_io_write(r->sub_conn.io, s.buf, s.len);
-  fiobj_free(cmd);
+  fio___redis_ensure_attached(r);
+  fio___redis_sub_send(r, "PSUBSCRIBE", 10, channel);
 }
 
 /**
@@ -113437,21 +114333,10 @@ FIO_SFUNC void fio___redis_unsubscribe(const fio_pubsub_engine_s *eng,
   fio_redis_engine_s *r = (fio_redis_engine_s *)eng;
   (void)filter;
 
-  /* Skip if not attached or no connection */
-  if (!r->attached || !r->sub_conn.io)
+  /* Skip if not attached (fio___redis_sub_send checks the connection) */
+  if (!r->attached)
     return;
-
-  /* Build UNSUBSCRIBE command */
-  FIOBJ cmd = fiobj_str_new_buf(32 + channel.len);
-  fiobj_str_write(cmd, "*2\r\n$11\r\nUNSUBSCRIBE\r\n$", 23);
-  fiobj_str_write_i(cmd, (int64_t)channel.len);
-  fiobj_str_write(cmd, "\r\n", 2);
-  fiobj_str_write(cmd, channel.buf, channel.len);
-  fiobj_str_write(cmd, "\r\n", 2);
-
-  fio_str_info_s s = fiobj2cstr(cmd);
-  fio_io_write(r->sub_conn.io, s.buf, s.len);
-  fiobj_free(cmd);
+  fio___redis_sub_send(r, "UNSUBSCRIBE", 11, channel);
 }
 
 /**
@@ -113464,21 +114349,10 @@ FIO_SFUNC void fio___redis_punsubscribe(const fio_pubsub_engine_s *eng,
   fio_redis_engine_s *r = (fio_redis_engine_s *)eng;
   (void)filter;
 
-  /* Skip if not attached or no connection */
-  if (!r->attached || !r->sub_conn.io)
+  /* Skip if not attached (fio___redis_sub_send checks the connection) */
+  if (!r->attached)
     return;
-
-  /* Build PUNSUBSCRIBE command */
-  FIOBJ cmd = fiobj_str_new_buf(32 + channel.len);
-  fiobj_str_write(cmd, "*2\r\n$12\r\nPUNSUBSCRIBE\r\n$", 24);
-  fiobj_str_write_i(cmd, (int64_t)channel.len);
-  fiobj_str_write(cmd, "\r\n", 2);
-  fiobj_str_write(cmd, channel.buf, channel.len);
-  fiobj_str_write(cmd, "\r\n", 2);
-
-  fio_str_info_s s = fiobj2cstr(cmd);
-  fio_io_write(r->sub_conn.io, s.buf, s.len);
-  fiobj_free(cmd);
+  fio___redis_sub_send(r, "PUNSUBSCRIBE", 12, channel);
 }
 
 /**
@@ -113574,21 +114448,21 @@ SFUNC fio_pubsub_engine_s *fio_redis_new FIO_NOOP(fio_redis_args_s args) {
   if (!args.ping_interval)
     args.ping_interval = 30;
 
+  if (!args.payload_limit)
+    args.payload_limit = FIO___REDIS_DEFAULT_PAYLOAD_LIMIT;
+
   size_t auth_len = args.auth_len;
   if (args.auth && !auth_len)
     auth_len = strlen(args.auth);
 
-  /* Calculate AUTH command size if needed */
-  size_t auth_cmd_len = 0;
-  if (auth_len) {
-    /* *2\r\n$4\r\nAUTH\r\n$<len>\r\n<password>\r\n */
-    auth_cmd_len = 18 + 20 + auth_len; /* generous estimate */
-  }
+  /* Pre-compute the HELLO 3 handshake command (auth folds into HELLO).
+   * Exact sizing (no estimates); auth failure is a hard engine error. */
+  size_t hello_cmd_len = fio___redis_hello_cmd_len(auth_len);
 
   /* Allocate engine using FIO_REF (includes ref count, starts at 1).
-   * Note: buf[FIO_REDIS_READ_BUFFER * 2] is already inside the struct,
+   * Note: buf[FIO_REDIS_READ_BUFFER] is already inside the struct,
    * so we only need flex space for the strings. */
-  size_t flex_size = host_len + 1 + port_len + 1 + auth_cmd_len;
+  size_t flex_size = host_len + 1 + port_len + 1 + hello_cmd_len;
   fio_redis_engine_s *r = fio___redis_new(flex_size);
   if (!r) {
     FIO_LOG_ERROR("(redis) failed to allocate engine");
@@ -113608,9 +114482,14 @@ SFUNC fio_pubsub_engine_s *fio_redis_new FIO_NOOP(fio_redis_args_s args) {
               .publish = fio___redis_publish,
           },
       .cmd_queue = FIO_LIST_INIT(r->cmd_queue),
+      .payload_limit = args.payload_limit,
       .ping_interval = args.ping_interval,
       .running = 1,
   };
+
+  /* Wire the per-connection payload budget accounting into the parser */
+  r->conn.ps.payload_limit = args.payload_limit;
+  r->conn.parser.udata = &r->conn.ps;
 
   /* Set up string pointers in the flex area after the struct */
   char *str_ptr = (char *)(r + 1);
@@ -113624,34 +114503,24 @@ SFUNC fio_pubsub_engine_s *fio_redis_new FIO_NOOP(fio_redis_args_s args) {
   r->port[port_len] = '\0';
   str_ptr += port_len + 1;
 
-  /* Build AUTH command if needed */
-  if (auth_len) {
-    r->auth_cmd = str_ptr;
-    size_t pos = 0;
-    FIO_MEMCPY(r->auth_cmd + pos, "*2\r\n$4\r\nAUTH\r\n$", 15);
-    pos += 15;
-    pos += (size_t)fio_ltoa(r->auth_cmd + pos, (int64_t)auth_len, 10);
-    r->auth_cmd[pos++] = '\r';
-    r->auth_cmd[pos++] = '\n';
-    FIO_MEMCPY(r->auth_cmd + pos, args.auth, auth_len);
-    pos += auth_len;
-    r->auth_cmd[pos++] = '\r';
-    r->auth_cmd[pos++] = '\n';
-    r->auth_cmd[pos] = 0;
-    r->auth_cmd_len = pos;
-  }
+  /* Build the HELLO 3 command (with AUTH folded in when configured) */
+  r->hello_cmd = str_ptr;
+  r->hello_cmd_len =
+      fio___redis_write_hello_cmd((uint8_t *)r->hello_cmd, args.auth, auth_len);
+  r->hello_cmd[r->hello_cmd_len] = 0;
+  FIO_ASSERT(r->hello_cmd_len == hello_cmd_len,
+             "(redis) HELLO command size mismatch");
 
   /* Set timeout based on ping interval */
   uint32_t timeout_ms = (uint32_t)args.ping_interval * 1000;
   if (timeout_ms > FIO_IO_TIMEOUT_MAX)
     timeout_ms = FIO_IO_TIMEOUT_MAX;
-  FIO___REDIS_PUB_PROTOCOL.timeout = timeout_ms;
-  FIO___REDIS_SUB_PROTOCOL.timeout = timeout_ms;
+  FIO___REDIS_PROTOCOL.timeout = timeout_ms;
 
   /* Start connection - increment ref for deferred task.
    * The deferred connect will check fio_io_is_worker() and skip on workers. */
   fio___redis_dup(r);
-  fio_io_defer(fio___redis_connect, r, &r->pub_conn);
+  fio_io_defer(fio___redis_connect, r, &r->conn);
 
   /* Register fork callback to swap publish vtable in worker processes.
    * FIO_CALL_IN_CHILD fires only in forked workers, not in single-process
@@ -113712,10 +114581,10 @@ SFUNC int fio_redis_send(fio_pubsub_engine_s *engine,
 
   fio_redis_engine_s *r = (fio_redis_engine_s *)engine;
 
-  /* Convert command to RESP format */
-  FIOBJ resp = fiobj_str_new_buf(256);
-  fio___redis_fiobj2resp(resp, command);
-  fio_str_info_s s = fiobj2cstr(resp);
+  /* Compute the exact RESP length once (validates nesting depth) */
+  size_t resp_len = fio___redis_fiobj2resp_len(command, 0);
+  if (!resp_len)
+    return -1;
 
   /* Worker path: forward via IPC to master.
    * Use !fio_io_is_master() so single-process mode takes the master path.
@@ -113723,35 +114592,45 @@ SFUNC int fio_redis_send(fio_pubsub_engine_s *engine,
    * IPC data layout: [callback(8) | engine(8) | RESP command bytes]
    * ipc->udata carries the user's udata directly (no heap allocation).
    * Master echoes the 16-byte header in its reply so the worker's on_done
-   * handler can recover callback + engine pointers from the reply data. */
+   * handler can recover callback + engine pointers from the reply data.
+   *
+   * The RESP bytes are serialized into a stack buffer (heap for large
+   * commands) - fio_ipc_call copies the data synchronously. */
   if (!fio_io_is_master()) {
+    uint8_t stack_buf[512];
+    uint8_t *buf = stack_buf;
+    if (resp_len > sizeof(stack_buf)) {
+      buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, resp_len, 0);
+      if (!buf)
+        return -1;
+    }
+    fio___redis_fiobj2resp_write(buf, command, 0);
     fio_ipc_call(.call = fio___redis_ipc_send_on_master,
                  .on_done = fio___redis_ipc_send_on_done,
                  .udata = udata,
                  .data = FIO_IPC_DATA(
                      FIO_BUF_INFO2((char *)&callback, sizeof(callback)),
                      FIO_BUF_INFO2((char *)&r, sizeof(r)),
-                     FIO_BUF_INFO2(s.buf, s.len)));
-    fiobj_free(resp);
+                     FIO_BUF_INFO2((char *)buf, resp_len)));
+    if (buf != stack_buf)
+      FIO_MEM_FREE(buf, resp_len);
     return 0;
   }
 
-  /* Master path: queue command directly */
-  fio_redis_cmd_s *cmd =
-      (fio_redis_cmd_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(*cmd) + s.len + 1, 0);
-  if (!cmd) {
-    fiobj_free(resp);
+  /* Master path: serialize directly into the queued command node.
+   * Single allocation, single write pass, no temporary FIOBJ string. */
+  fio_redis_cmd_s *cmd = (fio_redis_cmd_s *)
+      FIO_MEM_REALLOC(NULL, 0, sizeof(*cmd) + resp_len + 1, 0);
+  if (!cmd)
     return -1;
-  }
   FIO_LEAK_COUNTER_ON_ALLOC(fio___redis_cmd);
 
   *cmd = (fio_redis_cmd_s){
       .callback = callback,
       .udata = udata,
-      .cmd_len = s.len,
+      .cmd_len = resp_len,
   };
-  FIO_MEMCPY(cmd->cmd, s.buf, s.len + 1);
-  fiobj_free(resp);
+  *fio___redis_fiobj2resp_write(cmd->cmd, command, 0) = 0;
 
   /* Queue command - thread-safe via fio_io_defer */
   fio___redis_attach_cmd(r, cmd);

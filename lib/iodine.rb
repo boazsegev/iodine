@@ -69,9 +69,9 @@ Iodine.on_state(:before_fork) do
   end
 end
 
-### Initialize Redis if set in CLI
+### Initialize RESP3 engine if set in CLI
 if Iodine::Base::CLI['-r']
-  Iodine::PubSub.default = Iodine::PubSub::Engine::Redis.new(
+  Iodine::PubSub.default = Iodine::PubSub::Engine::RESP3.new(
     Iodine::Base::CLI['-r'],
     ping: (Iodine::Base::CLI['-rp'] ? Iodine::Base::CLI['-rp'].to_i : nil)
   )

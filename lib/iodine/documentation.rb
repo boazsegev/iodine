@@ -1076,7 +1076,7 @@ module Iodine
     # @return [Iodine::PubSub::Engine] the new default engine
     #
     # @example
-    #   Iodine::PubSub.default = Iodine::PubSub::Engine::Redis.new("redis://localhost:6379/")
+    #   Iodine::PubSub.default = Iodine::PubSub::Engine::RESP3.new("redis://localhost:6379/")
     def self.default=(engine); end
 
     # Iodine::PubSub::Message class instances are passed to subscription callbacks.
@@ -1185,27 +1185,27 @@ module Iodine
       # This engine publishes the message to all subscribers across the entire cluster (all machines). This is the default engine.
       CLUSTER = Engine.new
 
-      # Redis Pub/Sub engine for distributed messaging across multiple server instances.
+      # RESP3 Pub/Sub engine for distributed messaging across multiple server instances.
       #
-      # Provides both Pub/Sub functionality and direct Redis command execution.
+      # Provides both Pub/Sub functionality and direct Valkey/Redis command execution.
       #
       # @example Basic usage
-      #   redis = Iodine::PubSub::Engine::Redis.new("redis://localhost:6379/", ping: 50)
-      #   Iodine::PubSub.default = redis
+      #   resp3 = Iodine::PubSub::Engine::RESP3.new("redis://localhost:6379/", ping: 50)
+      #   Iodine::PubSub.default = resp3
       #
       # @example With authentication
-      #   redis = Iodine::PubSub::Engine::Redis.new("redis://user:password@host:6379/0")
+      #   resp3 = Iodine::PubSub::Engine::RESP3.new("redis://user:password@host:6379/0")
       #
-      # @example Sending Redis commands
-      #   redis.cmd("SET", "key", "value") { |result| puts result }
-      #   redis.cmd("GET", "key") { |value| puts value }
-      #   redis.cmd("KEYS", "*") { |keys| p keys }
-      class Redis < Engine
-        # Creates a new Redis Pub/Sub engine.
+      # @example Sending Valkey/Redis commands
+      #   resp3.cmd("SET", "key", "value") { |result| puts result }
+      #   resp3.cmd("GET", "key") { |value| puts value }
+      #   resp3.cmd("KEYS", "*") { |keys| p keys }
+      class RESP3 < Engine
+        # Creates a new RESP3 Pub/Sub engine.
         #
-        # @param url [String] Redis server URL (e.g., "redis://localhost:6379/")
+        # @param url [String] RESP3-compatible server URL (e.g., "redis://localhost:6379/")
         # @param ping [Integer] Ping interval in seconds (0-255, default: 300)
-        # @return [Iodine::PubSub::Engine::Redis]
+        # @return [Iodine::PubSub::Engine::RESP3]
         #
         # URL formats supported:
         # - "redis://host:port"
@@ -1214,9 +1214,14 @@ module Iodine
         # - "host" (default port 6379)
         #
         # @example
-        #   redis = Iodine::PubSub::Engine::Redis.new("redis://localhost:6379/")
-        #   redis = Iodine::PubSub::Engine::Redis.new("redis://secret@host:6379/", ping: 60)
+        #   resp3 = Iodine::PubSub::Engine::RESP3.new("redis://localhost:6379/")
+        #   resp3 = Iodine::PubSub::Engine::RESP3.new("redis://secret@host:6379/", ping: 60)
         def initialize(url, ping: 0); end
+
+        # Returns the RESP3 connection state.
+        #
+        # @return [Symbol] `:connecting`, `:connected`, or `:error`
+        def connection_state; end
 
         # Sends a Redis command and optionally receives the response via callback.
         #

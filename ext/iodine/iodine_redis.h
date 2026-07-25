@@ -2,14 +2,14 @@
 #define H___IODINE_REDIS___H
 
 /* *****************************************************************************
-Redis PubSub Engine Wrapper for Ruby
+RESP3 PubSub Engine Wrapper for Ruby
 
-Exposes the facil.io Redis engine as Iodine::PubSub::Engine::Redis
+Exposes the facil.io Redis engine as Iodine::PubSub::Engine::RESP3.
 
 Usage:
-    redis = Iodine::PubSub::Engine::Redis.new("redis://localhost:6379/", ping: 50)
-    Iodine::PubSub.default = redis
-    redis.cmd("SET", "key", "value") { |result| puts result }
+    resp3 = Iodine::PubSub::Engine::RESP3.new("redis://localhost:6379/", ping: 50)
+    Iodine::PubSub.default = resp3
+    resp3.cmd("SET", "key", "value") { |result| puts result }
 
 ***************************************************************************** */
 
@@ -64,11 +64,11 @@ Ruby Methods
 
 /**
  * @!method initialize(url, ping: 0)
- * Creates a new Redis Pub/Sub engine.
+ * Creates a new RESP3 Pub/Sub engine.
  *
- * @param url [String] Redis server URL (e.g., "redis://localhost:6379/")
+ * @param url [String] Redis-compatible server URL (e.g., "redis://localhost:6379/")
  * @param ping [Integer] Ping interval in seconds (0-255, default: 300)
- * @return [Iodine::PubSub::Engine::Redis]
+ * @return [Iodine::PubSub::Engine::RESP3]
  *
  * URL formats supported:
  * - "redis://host:port"
@@ -77,8 +77,8 @@ Ruby Methods
  * - "host" (default port 6379)
  *
  * @example
- *   redis = Iodine::PubSub::Engine::Redis.new("redis://localhost:6379/")
- *   redis = Iodine::PubSub::Engine::Redis.new("redis://secret@host:6379/", ping: 60)
+ *   resp3 = Iodine::PubSub::Engine::RESP3.new("redis://localhost:6379/")
+ *   resp3 = Iodine::PubSub::Engine::RESP3.new("redis://secret@host:6379/", ping: 60)
  */
 static VALUE iodine_redis_initialize(int argc, VALUE *argv, VALUE self) {
   /* Get the engine struct from parent class */
@@ -115,7 +115,7 @@ static VALUE iodine_redis_initialize(int argc, VALUE *argv, VALUE self) {
   /* Create the Redis engine */
   e->ptr = fio_redis_new(.url = url, .ping_interval = ping_interval);
   if (!e->ptr) {
-    rb_raise(rb_eRuntimeError, "Failed to create Redis engine");
+    rb_raise(rb_eRuntimeError, "Failed to create RESP3 engine");
     return Qnil;
   }
 
@@ -123,6 +123,23 @@ static VALUE iodine_redis_initialize(int argc, VALUE *argv, VALUE self) {
   fio_pubsub_engine_attach(e->ptr);
 
   return self;
+}
+
+/**
+ * @!method connection_state
+ * Returns the RESP3 connection state.
+ *
+ * @return [Symbol] `:connecting`, `:connected`, or `:error`
+ */
+static VALUE iodine_redis_connection_state(VALUE self) {
+  iodine_pubsub_eng_s *e = iodine_pubsub_eng_get(self);
+  switch (fio_redis_connection_state(e->ptr)) {
+  case FIO_REDIS_CONNECTION_CONNECTING:
+    return ID2SYM(rb_intern("connecting"));
+  case FIO_REDIS_CONNECTION_CONNECTED:
+    return ID2SYM(rb_intern("connected"));
+  default: return ID2SYM(rb_intern("error"));
+  }
 }
 
 /**
@@ -147,7 +164,7 @@ static VALUE iodine_redis_cmd(int argc, VALUE *argv, VALUE self) {
   iodine_pubsub_eng_s *e = iodine_pubsub_eng_get(self);
 
   if (!e->ptr) {
-    rb_raise(rb_eRuntimeError, "Redis engine not initialized");
+    rb_raise(rb_eRuntimeError, "RESP3 engine not initialized");
     return Qfalse;
   }
 
@@ -278,12 +295,12 @@ Initialization
 ***************************************************************************** */
 
 /**
- * Initializes the Iodine::PubSub::Engine::Redis class.
+ * Initializes the Iodine::PubSub::Engine::RESP3 class.
  */
-static void Init_Iodine_Redis(void) {
-  /* Define Iodine::PubSub::Engine::Redis as subclass of Engine */
+static void Init_Iodine_RESP3(void) {
+  /* Define Iodine::PubSub::Engine::RESP3 as a subclass of Engine. */
   iodine_rb_IODINE_REDIS = rb_define_class_under(iodine_rb_IODINE_PUBSUB_ENG,
-                                                  "Redis",
+                                                  "RESP3",
                                                   iodine_rb_IODINE_PUBSUB_ENG);
   STORE.hold(iodine_rb_IODINE_REDIS);
 
@@ -295,6 +312,10 @@ static void Init_Iodine_Redis(void) {
                    "initialize",
                    iodine_redis_initialize,
                    -1);
+  rb_define_method(iodine_rb_IODINE_REDIS,
+                   "connection_state",
+                   iodine_redis_connection_state,
+                   0);
   rb_define_method(iodine_rb_IODINE_REDIS, "cmd", iodine_redis_cmd, -1);
 }
 

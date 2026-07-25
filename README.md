@@ -18,7 +18,7 @@ Iodine is a fast concurrent Web Application Server/Client combination that's per
 Designed for your Real-Time and Event-Stream needs, Iodine boasts native support for:
 
 * HTTP, WebSockets and EventSource (SSE) Services (server/client);
-* Event-Stream Pub/Sub (with optional Redis Pub/Sub scaling);
+* Event-Stream Pub/Sub (with optional RESP3 scaling via Valkey or Redis);
 * Hot Restarts and Hot Deployments;
 * Static File Service (with automatic `.br`, `.gz`, and `.zip` support for pre-compressed assets);
 * Performant Request Logging;
@@ -50,7 +50,7 @@ please review the `iodine -h` command line options for more details on these and
 
 Iodine includes a light and fast HTTP and WebSocket server (and client) written in C that was written to support both the [NeoRack Specifications](https://github.com/boazsegev/neorack) (with [WebSocket](https://github.com/boazsegev/neorack/blob/master/extensions/websockets.md) / [SSE](https://github.com/boazsegev/neorack/blob/master/extensions/sse.md)) and [Rack specifications](https://github.com/rack/rack/blob/main/SPEC.rdoc) (with the experimental [WebSocket / SSE Rack draft](https://github.com/boazsegev/neorack/blob/master/deprecated/Rack-WebSocket-Draft.md)).
 
-Iodine also supports native process cluster Pub/Sub and a native RedisEngine to easily scale iodine's Pub/Sub horizontally.
+Iodine also supports native process-cluster Pub/Sub and a native RESP3 engine to easily scale iodine's Pub/Sub horizontally.
 
 ## HTTP Streaming
 
@@ -241,25 +241,25 @@ When a browser that supports compressed encoding requests the file (and most bro
 
 It's as easy as that. No extra code required.
 
-## Native Pub/Sub with *optional* Redis scaling
+## Native Pub/Sub with *optional* RESP3 scaling
 
-Iodine's core, `facil.io` offers a native Pub/Sub implementation that can be scaled across machine boundaries using Redis.
+Iodine's core, `facil.io`, offers a native Pub/Sub implementation that can scale across machine boundaries through a RESP3-compatible database such as Valkey or Redis.
 
-The default implementation covers the whole process cluster, so a single cluster doesn't need Redis.
+The default implementation covers the whole process cluster, so a single cluster does not need a RESP3 backend.
 
-Once a single iodine process cluster isn't enough, horizontal scaling for the Pub/Sub layer is as simple as connecting iodine to Redis using the `-r <url>` from the command line. i.e.:
+Once a single iodine process cluster is not enough, horizontally scaling the Pub/Sub layer is as simple as connecting iodine to a RESP3-compatible database using `-r <url>` from the command line:
 
 ```bash
 iodine -w -1 -t 8 -r redis://localhost:6379
 ```
 
-### Redis Configuration
+### RESP3 (Valkey/Redis) Configuration
 
-Redis can be configured via command line or programmatically:
+A RESP3-compatible Valkey or Redis database can be configured from the command line or programmatically:
 
 **Command Line:**
 ```bash
-# Basic Redis connection
+# Basic RESP3 connection
 iodine -r redis://localhost:6379
 
 # With authentication
@@ -271,28 +271,31 @@ iodine -r redis://localhost:6379 -rp 30
 
 **Programmatic:**
 ```ruby
-# Create Redis engine
-redis = Iodine::PubSub::Engine::Redis.new("redis://localhost:6379/", ping: 30)
+# Create a RESP3 engine. Its internal HELLO 3 handshake starts automatically.
+resp3 = Iodine::PubSub::Engine::RESP3.new("redis://localhost:6379/", ping: 30)
+
+# Check readiness: :connecting, :connected, or :error.
+resp3.connection_state
 
 # Set as default Pub/Sub engine
-Iodine::PubSub.default = redis
+Iodine::PubSub.default = resp3
 
-# Now all Iodine.publish calls will go through Redis
+# Now all Iodine.publish calls will go through the RESP3 engine
 Iodine.publish(channel: "chat", message: "Hello from Ruby!")
 ```
 
-### Using Redis for Direct Commands
+### Sending Direct Commands through RESP3
 
-The Redis engine also supports sending arbitrary Redis commands:
+The RESP3 engine also supports arbitrary Valkey/Redis commands:
 
 ```ruby
-redis = Iodine::PubSub::Engine::Redis.new("redis://localhost:6379/")
+resp3 = Iodine::PubSub::Engine::RESP3.new("redis://localhost:6379/")
 
-# Send Redis commands with async callbacks
-redis.cmd("SET", "mykey", "Hello, Redis!") { |result| puts result }
-redis.cmd("GET", "mykey") { |value| puts "Value: #{value}" }
-redis.cmd("KEYS", "*") { |keys| p keys }
-redis.cmd("INCR", "counter") { |new_value| puts new_value }
+# Send commands with async callbacks
+resp3.cmd("SET", "mykey", "Hello, Redis!") { |result| puts result }
+resp3.cmd("GET", "mykey") { |value| puts "Value: #{value}" }
+resp3.cmd("KEYS", "*") { |keys| p keys }
+resp3.cmd("INCR", "counter") { |new_value| puts new_value }
 ```
 
 **Note**: Do not use `SUBSCRIBE`, `PSUBSCRIBE`, `UNSUBSCRIBE`, or `PUNSUBSCRIBE` commands directly. These are handled internally by the Pub/Sub system.
@@ -301,7 +304,7 @@ redis.cmd("INCR", "counter") { |new_value| puts new_value }
 
 Iodine can auto-detect other iodine machines on the same local network (using UDP publishing for address `0.0.0.0`).
 
-This allows iodine to scale horizontally even without Redis.
+This allows iodine to scale horizontally even without a RESP3 database.
 
 To do so, all machines running iodine must share the same pub/sub port and secret.
 
@@ -325,15 +328,17 @@ Iodine's internal Pub/Sub Letter Exchange Protocol (inherited from facil.io) imp
 
 * Message delivery requires a match for both the channel name (or pattern) and the numerical filter (if none provided, zero is used).
 
-Redis Support Notes:
+RESP3 (Valkey/Redis) Support Notes:
 
-* Iodine's Redis client does *not* support multiple databases. This is both because [database scoping is ignored by Redis during pub/sub](https://redis.io/topics/pubsub#database-amp-scoping) and because [Redis Cluster doesn't support multiple databases](https://redis.io/topics/cluster-spec). This indicated that multiple database support just isn't worth the extra effort and performance hit.
+* Iodine's RESP3 client does *not* support multiple databases. However, multiple clients can be used at the same time.
 
-* The iodine Redis client uses two Redis connections per process (a publishing connection and a subscription connection), minimizing the Redis load and network bandwidth.
+    This is both because [database scoping is often ignored by Redis during pub/sub](https://redis.io/topics/pubsub#database-amp-scoping) and because [Redis Cluster doesn't support multiple databases](https://redis.io/topics/cluster-spec). This indicated that multiple database support just isn't worth the extra effort and performance hit.
+
+* The iodine RESP3 client uses a single connection per process cluster, minimizing network load and bandwidth.
 
 * Connections are automatically re-established if timeouts or errors occur.
 
-* The Redis engine supports authentication via URL (e.g., `redis://user:password@host:port`).
+* The RESP3 engine supports authentication via URL (e.g., `redis://user:password@host:port`).
 
 ## Hot Restart / Hot Deployments
 

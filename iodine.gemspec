@@ -9,7 +9,7 @@ Gem::Specification.new do |spec|
   spec.email = ["bo@bowild.com"]
 
   spec.summary = 'iodine - a fast HTTP / Websocket Server with Pub/Sub support, optimized for Ruby MRI on Linux / BSD / Windows'
-  spec.description = 'A fast HTTP / Websocket Server with built-in Pub/Sub support (with or without Redis), static file support and many other features, optimized for Ruby MRI on Linux / BSD / macOS / Windows'
+  spec.description = 'A fast HTTP / Websocket Server with built-in Pub/Sub support (with or without a RESP3 database such as Valkey or Redis), static file support and many other features, optimized for Ruby MRI on Linux / BSD / macOS / Windows'
   spec.homepage = "https://github.com/boazsegev/iodine"
   spec.license = "MIT"
   # Minimum version aligns with actively maintained Ruby releases.

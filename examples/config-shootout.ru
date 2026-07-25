@@ -5,7 +5,7 @@
 # # i.e.:
 # iodine -t 8 -w 0 -p 3334
 
-# local process cluster support is built into iodine's pub/sub, but cross machine pub/sub requires Redis.
+# Local process-cluster support is built into iodine's pub/sub, but cross-machine pub/sub requires a RESP3 database (such as Valkey or Redis).
 class ShootoutApp
   SHOOTOUT = "shootout".freeze
   def on_http(e)

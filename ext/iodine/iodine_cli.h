@@ -13,7 +13,7 @@ Features:
 - Parses ARGV with support for named and positional arguments
 - Supports various argument types: strings, integers, booleans
 - Provides default values from environment variables (THREADS, WORKERS, etc.)
-- Configures TLS, Redis, clustering, and HTTP settings
+- Configures TLS, RESP3, clustering, and HTTP settings
 
 CLI Options (parsed from command line):
 - Address: -b/--bind, -p/--port
@@ -22,7 +22,7 @@ CLI Options (parsed from command line):
 - WebSocket/SSE: --ws-max-msg, --timeout
 - TLS: --tls-self, --tls-name, --tls-cert, --tls-key, --tls-password
 - Clustering: --broadcast, --secret
-- Redis: --redis, --redis-ping
+- RESP3: --redis, --redis-ping
 - Hot Restart: --hot-restart, --config, --preload
 - Misc: --verbose, --rack, --pid, --contained
 
@@ -240,10 +240,10 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
       FIO_CLI_PRINT("NOTE: also controlled by the SECRET and SECRET_LENGTH "
                     "environment vars."),
 
-      FIO_CLI_PRINT_HEADER("Connecting Iodine to Redis:"),
+      FIO_CLI_PRINT_HEADER("Connecting Iodine to a RESP3 Database:"),
       FIO_CLI_STRING(
-          "--redis -r an optional Redis URL server address. Default: none."),
-      FIO_CLI_INT("--redis-ping -rp Redis ping interval in seconds."),
+          "--redis -r an optional RESP3 database URL (e.g., Valkey or Redis)."),
+      FIO_CLI_INT("--redis-ping -rp RESP3 ping interval in seconds."),
 
       FIO_CLI_PRINT_HEADER("Hot Application Swapping / Restarts"),
       FIO_CLI_PRINT_LINE(

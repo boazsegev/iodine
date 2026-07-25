@@ -15,7 +15,11 @@ Please refer to the current gem version to review the relevant changes for your 
 
 **Update**: supports the [NeoRack specification](https://github.com/boazsegev/neorack/blob/master/SPEC.md) and its existing [extentions](https://github.com/boazsegev/neorack/blob/master/extensions), including [Rack backwards compatibility](https://github.com/boazsegev/neorack/blob/master/extensions/rack.md) with support for the previous `rack.upgrade?` WebSocket & SSE approach.
 
-**Feature**: Redis Pub/Sub support is now implemented via `Iodine::PubSub::Engine::Redis`. Use `-r redis://host:port` from CLI or create programmatically with `Iodine::PubSub::Engine::Redis.new(url, ping: 30)`. The Redis engine also supports sending arbitrary Redis commands via `redis.cmd("GET", "key") { |result| ... }`.
+**Feature**: RESP3 Pub/Sub support is implemented via `Iodine::PubSub::Engine::RESP3`. Use `-r redis://host:port` from CLI or create it programmatically with `Iodine::PubSub::Engine::RESP3.new(url, ping: 30)`. The RESP3 engine also supports arbitrary Valkey/Redis commands via `resp3.cmd("GET", "key") { |result| ... }`.
+
+**Breaking Change**: `Iodine::PubSub::Engine::Redis` was renamed to `Iodine::PubSub::Engine::RESP3` to reflect support for RESP3-compatible databases such as Valkey and Redis.
+
+**Feature**: `Iodine::PubSub::Engine::RESP3#connection_state` reports `:connecting`, `:connected`, or `:error` for the engine's constructor-initiated RESP3 handshake.
 
 **Feature**: Embedded TLS 1.3 is now always available as a fallback TLS backend. Enable it via:
 - Runtime: `Iodine::TLS.default = :iodine`
