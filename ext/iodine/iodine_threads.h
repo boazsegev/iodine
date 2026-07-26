@@ -257,9 +257,13 @@ error_starting_thread:
  * @return 0 on success, -1 on error
  */
 FIO_IFUNC int fio_thread_join(fio_thread_t *t) {
-  STORE.release(t[0]);
+  /* The handle pointer may belong to the joining thread's stack and become
+   * invalid as soon as join returns. Copy the VALUE while it is still valid,
+   * and keep the copied handle rooted until the Ruby call completes. */
+  fio_thread_t thread = t[0];
   iodine_caller_result_s r =
-      iodine_ruby_call_anywhere(t[0], rb_intern2("join", 4), 0, NULL);
+      iodine_ruby_call_anywhere(thread, IODINE_JOIN_ID, 0, NULL);
+  STORE.release(thread);
   if (r.exception)
     return -1;
   return 0;
@@ -302,31 +306,40 @@ FIO_IFUNC void fio_thread_exit(void) {
 }
 
 /**
- * Compares two thread handles for equality.
+ * Compares two Ruby Thread handles for equality.
  *
- * fio_thread_t is a native thread ID (uintptr_t), so simple equality works.
+ * fio_thread_t stores a Ruby Thread VALUE, so direct equality is sufficient.
  */
 FIO_IFUNC int fio_thread_equal(fio_thread_t *a, fio_thread_t *b) {
   return *a == *b;
 }
 
 /**
- * Returns the current native thread ID as fio_thread_t.
+ * Returns the current Ruby Thread VALUE as a join-compatible handle.
  *
- * Called by facil.io internals (memory allocator arena selection, thread
- * equality) WITHOUT the GVL. Returns a stable, GC-independent identifier —
- * the native OS thread ID cast to uintptr_t, NOT a Ruby VALUE (which could
- * be moved by GC compaction). This is safe, fast, and requires no Ruby API.
- *
- * Use iodine_ruby_thread_current() (GVL required) to get the Ruby VALUE.
+ * facil.io may call this function with or without the GVL. Thread.current is
+ * therefore dispatched through iodine_ruby_call_anywhere, which either calls
+ * directly or acquires the GVL according to the current thread state.
+ * Native thread identity for allocator arena selection is provided separately
+ * by fio_thread_nid().
  */
 FIO_IFUNC fio_thread_t fio_thread_current(void) {
-#ifdef _WIN32
-  /* Return the numeric TID, matching fio-stl.h's TID-only design.
-   * No kernel object is created, no CloseHandle required, no leak. */
-  return (fio_thread_t)(uintptr_t)GetCurrentThreadId();
+  iodine_caller_result_s r =
+      iodine_ruby_call_anywhere(rb_cThread, IODINE_CURRENT_ID, 0, NULL);
+  return (fio_thread_t)r.result;
+}
+
+/** Returns a process-local numeral ID for the current thread. */
+FIO_IFUNC uintptr_t fio_thread_nid(void) {
+#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__) ||        \
+    defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__) ||   \
+    defined(__sun) || defined(_AIX)
+  return (uintptr_t)pthread_self();
+#elif defined(_WIN32)
+  return (uintptr_t)GetCurrentThreadId();
 #else
-  return (fio_thread_t)(uintptr_t)pthread_self();
+  /* errno is thread-local on POSIX systems and avoids pthread_t assumptions. */
+  return (uintptr_t)&errno;
 #endif
 }
 

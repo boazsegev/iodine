@@ -14428,6 +14428,14 @@ FIO_IFUNC int fio_thread_equal(fio_thread_t *a, fio_thread_t *b);
 /** Returns the current thread. */
 FIO_IFUNC fio_thread_t fio_thread_current(void);
 
+/**
+ * Returns a process-local numeral ID for the current thread.
+ *
+ * The value is stable for the thread's lifetime and unique among live threads.
+ * It may be reused after the thread exits.
+ */
+FIO_IFUNC uintptr_t fio_thread_nid(void);
+
 /** Yields thread execution. */
 FIO_IFUNC void fio_thread_yield(void);
 
@@ -14540,6 +14548,18 @@ FIO_IFUNC int fio_thread_equal(fio_thread_t *a, fio_thread_t *b) { return pthrea
 
 /** Returns the current thread. */
 FIO_IFUNC fio_thread_t fio_thread_current(void) { return pthread_self(); }
+
+/** Returns a process-local numeral ID for the current thread. */
+FIO_IFUNC uintptr_t fio_thread_nid(void) {
+#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__) ||         \
+    defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__) ||  \
+    defined(__sun) || defined(_AIX)
+  return (uintptr_t)pthread_self();
+#else
+  /* errno is thread-local on POSIX systems and avoids pthread_t assumptions. */
+  return (uintptr_t)&errno;
+#endif
+}
 
 /** Yields thread execution. */
 FIO_IFUNC void fio_thread_yield(void) { sched_yield(); }
@@ -14972,6 +14992,11 @@ FIO_IFUNC int fio_thread_equal(fio_thread_t *a, fio_thread_t *b) { return *a == 
  * No kernel object created, no CloseHandle required, no leak. */
 FIO_IFUNC fio_thread_t fio_thread_current(void) {
   return (fio_thread_t)GetCurrentThreadId();
+}
+
+/** Returns a process-local numeral ID for the current thread. */
+FIO_IFUNC uintptr_t fio_thread_nid(void) {
+  return (uintptr_t)GetCurrentThreadId();
 }
 
 /** Yields thread execution. */
@@ -24312,8 +24337,8 @@ FIO_SFUNC FIO_NAME(FIO_MEMORY_NAME, __mem_arena_s) *
     /* select the default arena selection using a thread ID. */
     union {
       void *p;
-      fio_thread_t t;
-    } u = {.t = fio_thread_current()};
+      uintptr_t u;
+    } u = {.u = fio_thread_nid()};
     arena_index = fio_risky_ptr(u.p) % arena_count;
   }
   for (size_t i = 0; i < arena_count; ++i) {
@@ -24321,7 +24346,7 @@ FIO_SFUNC FIO_NAME(FIO_MEMORY_NAME, __mem_arena_s) *
             FIO_NAME(FIO_MEMORY_NAME, __mem_state)->arena[arena_index].lock))
       return (FIO_NAME(FIO_MEMORY_NAME, __mem_state)->arena + arena_index);
     FIO_LOG_DDEBUG("thread %p had to switch arena from %zu / %zu",
-                   fio_thread_current(),
+                   (void *)fio_thread_nid(),
                    arena_index,
                    (size_t)FIO_NAME(FIO_MEMORY_NAME, __mem_state)->arena_count);
     ++arena_index;
@@ -24367,8 +24392,8 @@ FIO_SFUNC FIO_NAME(FIO_MEMORY_NAME, __mem_arena_s) *
     /* select the default arena selection using a thread ID. */
     union {
       void *p;
-      fio_thread_t t;
-    } u = {.t = fio_thread_current()};
+      uintptr_t u;
+    } u = {.u = fio_thread_nid()};
     arena_index = (fio_risky_ptr(u.p) & 1023) %
                   FIO_NAME(FIO_MEMORY_NAME, __mem_state)->arena_count;
 #if (defined(DEBUG) && 0)
@@ -24390,7 +24415,7 @@ FIO_SFUNC FIO_NAME(FIO_MEMORY_NAME, __mem_arena_s) *
             FIO_NAME(FIO_MEMORY_NAME, __mem_state)->arena[arena_index].lock))
       return (FIO_NAME(FIO_MEMORY_NAME, __mem_state)->arena + arena_index);
     FIO_LOG_DDEBUG("thread %p had to switch arena from %zu / %zu",
-                   fio_thread_current(),
+                   (void *)fio_thread_nid(),
                    arena_index,
                    (size_t)FIO_NAME(FIO_MEMORY_NAME, __mem_state)->arena_count);
     ++arena_index;

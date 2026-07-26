@@ -4953,6 +4953,16 @@ FIO_IFUNC fio_thread_t fio_thread_current(void);
 
 Returns a handle for the current thread.
 
+#### `fio_thread_nid`
+
+```c
+FIO_IFUNC uintptr_t fio_thread_nid(void);
+```
+
+Returns a process-local numeral ID for the current thread. The value is stable
+for the thread's lifetime and unique among live threads, but may be reused after
+the thread exits. It is not guaranteed to be an OS-visible kernel thread ID.
+
 #### `fio_thread_yield`
 
 ```c
