@@ -35,7 +35,7 @@ Leveraging the power of the [C facil.io framework](https://github.com/boazsegev/
 
 * Iodine can handle **tens of thousands of concurrent connections** (tested with more then 20K connections on Linux)! Limits depend on machine resources and app design, not on the server.
 
-* Iodine is ideal for **Linux/Unix** based systems (i.e. macOS, Ubuntu, FreeBSD etc') and evented IO (while Windows and Solaris are better at IO *completion* events, which are very different).
+* Iodine is ideal for **Linux/Unix** based systems (i.e. macOS, Ubuntu, FreeBSD etc') and evented IO. **Windows** is also supported (single-process mode only - cluster mode requires `fork`), with native Winsock evented IO.
 
 Iodine is a C extension for Ruby, developed and optimized for the mainstream Ruby MRI.
 
@@ -142,6 +142,28 @@ iodine -cert /path/to/cert.pem -key /path/to/key.pem
 
 # With password-protected key
 iodine -cert /path/to/cert.pem -key /path/to/key.pem -tls-pass "password"
+```
+
+#### TLS Client Authentication (mTLS)
+
+Iodine can request and verify client certificates against a custom CA file or the system trust store:
+
+```bash
+# Verify client certificates against a CA file
+iodine -b https://0.0.0.0/?trust=ca.pem
+
+# Or against the system trust store
+iodine -b https://0.0.0.0/?trust=system
+```
+
+Programmatically, use `Iodine::TLS#trust` when setting up a listener, and review the peer's certificate chain using `Iodine::Connection#certificate` (leaf) and `Iodine::Connection#each_certificate` (whole chain):
+
+```ruby
+def on_open(client)
+  if (cert = client.certificate)
+    puts "Client CN: #{cert.cn} (verified: #{cert.verified?})"
+  end
+end
 ```
 
 **Note**: The embedded TLS 1.3 implementation has not been independently audited. For production use with high security requirements, OpenSSL is recommended.
@@ -353,10 +375,12 @@ To hot-restart iodine, send the `SIGUSR1` signal to the root process or to resta
 The following code will hot-restart iodine every 4 hours when iodine is running in cluster mode:
 
 ```ruby
-Iodine.run_every(4 * 60 * 60 * 1000) do
+Iodine.run_after(4 * 60 * 60 * 1000, 0) do
   Process.kill("SIGUSR1", Process.pid) unless Iodine.worker?
 end
 ```
+
+Alternatively, use the `-hr <seconds>` command line option to schedule automatic hot-restarts without any code.
 
 ### How does Hot Restart Work?
 
@@ -378,7 +402,7 @@ You will have both groups of workers with both versions of your code running for
 
 ### Optimizing for Memory Instead
 
-Using the `--preload` or `-warmup` options will disable hot code swapping and save memory by loading the application to the root process (leveraging the copy-on-write memory OS feature). It will also disable any ability to update the app without restarting iodine (useful, e.g., when using a container and load balancer for hot restarts).
+Using the `--preload` (or `-preload`) option will disable hot code swapping and save memory by loading the application to the root process (leveraging the copy-on-write memory OS feature). It will also disable any ability to update the app without restarting iodine (useful, e.g., when using a container and load balancer for hot restarts).
 
 ## How does it compare to other servers?
 

@@ -7,7 +7,7 @@ Please refer to the current gem version to review the relevant changes for your 
 
 ## Changes
 
-#### Change log v0.8.0.rc02 (2026-02-18)
+#### Change log v0.8.0.rc02 (updated 2026-07-25)
 
 **Update**: updated to facil.io 0.8.0, using the latest version of the [facil.io C STL](https://github.com/facil-io/cstl).
 
@@ -20,6 +20,10 @@ Please refer to the current gem version to review the relevant changes for your 
 **Breaking Change**: `Iodine::PubSub::Engine::Redis` was renamed to `Iodine::PubSub::Engine::RESP3` to reflect support for RESP3-compatible databases such as Valkey and Redis.
 
 **Feature**: `Iodine::PubSub::Engine::RESP3#connection_state` reports `:connecting`, `:connected`, or `:error` for the engine's constructor-initiated RESP3 handshake.
+
+**Feature**: New `Iodine::Logger` module routes Ruby logging through the facil.io C STL logging system (`FIO_LOG_*`), sharing the C core's stderr sink and global log level. Offers `fatal`, `error`, `warn`, `info` and `debug` (variadic - each argument is logged separately; callable arguments are invoked; a block's return value is logged, Rack SPEC compatible; nothing is evaluated while the level is silenced), `<<` as an `info` alias, and `level` / `level=` (Integer 0-5 or Symbol) with `NONE`/`FATAL`/`ERROR`/`WARN`/`INFO`/`DEBUG` constants.
+
+**Deprecation**: `Iodine.verbosity` and `Iodine.verbosity=` are deprecated in favor of `Iodine::Logger.level` and `Iodine::Logger.level=`.
 
 **Feature**: Embedded TLS 1.3 is now always available as a fallback TLS backend. Enable it via:
 - Runtime: `Iodine::TLS.default = :iodine`
@@ -61,6 +65,29 @@ Please refer to the current gem version to review the relevant changes for your 
 
 **Feature**: New `Iodine::Base::Compression` module with `Deflate`, `Gzip`, and `Brotli` submodules, each providing `compress` and `decompress` class methods. Supports configurable compression levels.
 
+**Feature**: New `Iodine::Base::Crypto::Argon2` and `Iodine::Base::Crypto::Lyra2` memory-hard password hashing bindings. `Argon2.hash(password, salt:, ...)` supports the `:d`, `:i`, and `:id` variants (RFC 9106, Argon2id by default) with configurable time/memory/parallelism costs, optional secret and associated data. `Lyra2.hash(password, salt:, ...)` offers configurable cost parameters as well.
+
+**Feature**: mTLS (mutual TLS) client certificate authentication:
+- `Iodine::TLS#trust(path = nil)` loads a CA certificate file (or the system trust store when `nil` / `"system"`) and enables peer (client) certificate verification.
+- `Iodine::Connection#certificate` returns the peer's leaf certificate and `Iodine::Connection#each_certificate` enumerates the peer's whole chain, using the new immutable `Iodine::TLS::Certificate` snapshot class (`cn`, `subject`, `issuer`, `serial`, `san_dns`, `san_ip`, `not_before`, `not_after`, `fingerprint`, `key_algo`, `signature_algo`, `key_usage`, `version`, `chain_index`, `verified?`, `ca?`).
+- CLI / bind-URL support: `iodine -b https://0.0.0.0/?trust=ca.pem` or `?trust=system`.
+
+**Feature**: `QUERY` HTTP method support. `Iodine.make_resource` routes `QUERY` requests to a `query` callback (falls back to `index` when undefined), and HTTP requests carry a unique request id.
+
+**Feature**: New `Iodine::PubSub::Subscription` class for independent, non-IO-bound subscriptions (`Iodine::PubSub::Subscription.new(channel) { |msg| ... }`). Supports `handler`, `handler=`, `active?` and `cancel`.
+
+**Feature**: New `Iodine.async(&block)` method schedules a block to run on the worker thread pool (in parallel, outside the IO thread), complementing `Iodine.run` (which runs on the IO thread's event queue).
+
+**Feature**: New `Iodine.shutdown_timeout` and `Iodine.shutdown_timeout=` (milliseconds) control the graceful shutdown timeout for worker processes.
+
+**Feature**: New `Iodine::Utils.totp(secret:, offset: 0, interval: 30)` generates the current TOTP code (complementing `totp_secret` / `totp_verify`).
+
+**Feature**: Hot code swapping / hot restarts. In cluster mode the application code is (re)loaded only by worker processes, allowing `SIGUSR1` (or the new CLI option `-hr <seconds>`) to hot-restart the app with zero-downtime worker rotation. `--preload` disables code swapping (copy-on-write memory optimization).
+
+**Feature**: Windows support (single-process mode). Iodine now compiles and runs on Windows (MSYS2/MinGW and MSVC). Note that cluster mode is unavailable on Windows — setting `Iodine.workers` to a positive value raises `NotImplementedError`.
+
+**Security**: HTTP/1.1 parser hardening — strict header validation and rejection of ambiguous requests (disconnection is preferred over the risk of request smuggling).
+
 **Feature**: `Iodine::JSON.beautify(ruby_object)` — pretty-prints a Ruby object as a formatted JSON string.
 
 **Feature**: `Iodine::Connection#publish` instance method added alongside the existing `Iodine::Connection.publish` class method. The instance method publishes to everyone *except* the calling connection (per the NeoRack pub/sub extension).
@@ -69,7 +96,11 @@ Please refer to the current gem version to review the relevant changes for your 
 
 **Fix**: Fixed a type mismatch that caused incorrect behavior in certain connection scenarios. Credit to @michal-kazmierczak (Michał Kaźmierczak) for reporting issue #156.
 
+**Fix**: Fixed a segfault that could occur when passing a `Proc` as the handler to `Iodine.listen`.
+
 **Breaking Change**: Removed deprecated `Iodine::PubSub::Engine::ROOT`, `Iodine::PubSub::Engine::PROCESS`, and `Iodine::PubSub::Engine::SIBLINGS` constants. Use `Iodine::PubSub::Engine::LOCAL` (local machine, all processes) or `Iodine::PubSub::Engine::CLUSTER` (entire cluster, default) instead.
+
+**Breaking Change**: Removed `Iodine.defer` (use `Iodine.run` or `Iodine.async`), `Iodine.run_every` (use `Iodine.run_after(ms, 0)`), `Iodine.on_idle` (use `Iodine.on_state(:idle)`), `Iodine.connect` and `Iodine.attach_fd` (use `Iodine::Connection.new`).
 
 ------------------------
 

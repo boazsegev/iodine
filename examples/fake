@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 require 'iodine'
 
-# Iodine.verbosity = 5
+# Iodine::Logger.level = 5
 # Iodine.threads = 0
 # Iodine.workers = 0
 

@@ -215,40 +215,20 @@ end
 # ---------------------------------------------------------------------------
 RSpec.describe 'Iodine configuration (no reactor)' do
   before(:all) do
-    @original_verbosity = Iodine.verbosity  # Should be TEST_VERBOSITY (5) from spec_helper
+    @original_level = Iodine::Logger.level  # should be TEST_VERBOSITY from spec_helper
   end
 
   before(:each) do
-    Iodine.verbosity = 2  # floor for config API tests (lower than TEST_VERBOSITY)
+    Iodine::Logger.level = 2  # floor for config API tests (lower than TEST_VERBOSITY)
   end
 
   after(:all) do
-    Iodine.verbosity = @original_verbosity
+    Iodine::Logger.level = @original_level
   end
 
-  # -----------------------------------------------------------------------
-  # Iodine.verbosity
-  # -----------------------------------------------------------------------
-  describe 'Iodine.verbosity' do
-    it 'returns an Integer' do
-      expect(Iodine.verbosity).to be_a(Integer)
-    end
-
-    it 'can be set to 0 (silent)' do
-      Iodine.verbosity = 0
-      expect(Iodine.verbosity).to eq(0)
-    end
-
-    it 'can be set to 5 (debug) and back' do
-      Iodine.verbosity = 5
-      expect(Iodine.verbosity).to eq(5)
-      Iodine.verbosity = 0
-    end
-
-    it 'raises TypeError for a non-Integer' do
-      expect { Iodine.verbosity = 'loud' }.to raise_error(TypeError)
-    end
-  end
+  # NOTE: Iodine.verbosity / Iodine.verbosity= are deprecated and no longer
+  # defined - the log level API lives on Iodine::Logger.level (covered by
+  # logger_spec.rb).
 
   # -----------------------------------------------------------------------
   # Iodine.secret

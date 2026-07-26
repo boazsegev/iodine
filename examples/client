@@ -3,7 +3,7 @@
 
 require 'iodine'
 
-Iodine.verbosity = 3 # only log warnings or worse
+Iodine::Logger.level = 3 # only log warnings or worse
 
 # A demo client class
 module Client

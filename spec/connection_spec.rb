@@ -47,60 +47,60 @@ RSpec.describe 'Iodine raw TCP connection' do
   RAW_STARTED = [false]  # rubocop:disable RSpec/LeakyConstantDeclaration
 
   before(:context) do
-    $stdout.puts "DEBUG: before(:context) start"; $stdout.flush
+    Iodine::Logger.debug "before(:context) start"
 
     Iodine.workers   = 0
     Iodine.threads   = 1   # raw IO needs only one worker thread
-    $stdout.puts "DEBUG: config done, registering on_state"; $stdout.flush
+    Iodine::Logger.debug "config done, registering on_state"
 
     raw_finished = false
     run_tests = proc do
-      $stdout.puts "DEBUG: run_tests start"; $stdout.flush
+      Iodine::Logger.debug "run_tests start"
       TCPSocket.open('127.0.0.1', RAW_PORT) do |sock|
-        $stdout.puts "DEBUG: TCPSocket connected"; $stdout.flush
+        Iodine::Logger.debug "TCPSocket connected"
         # Read the server greeting
         greeting = sock.gets
-        $stdout.puts "DEBUG: got greeting: #{greeting.inspect}"; $stdout.flush
+        Iodine::Logger.debug "got greeting: #{greeting.inspect}"
         RAW_RESULTS[:greeting] = greeting&.chomp
 
         # Send a line and read the echo
         sock.write("PING\n")
         sock.flush
-        $stdout.puts "DEBUG: sent PING"; $stdout.flush
+        Iodine::Logger.debug "sent PING"
         echo = sock.gets
-        $stdout.puts "DEBUG: got echo: #{echo.inspect}"; $stdout.flush
+        Iodine::Logger.debug "got echo: #{echo.inspect}"
         RAW_RESULTS[:echo] = echo&.chomp
       end
-      $stdout.puts "DEBUG: run_tests done"; $stdout.flush
+      Iodine::Logger.debug "run_tests done"
     rescue => e
-      $stdout.puts "DEBUG: run_tests error: #{e.class}: #{e.message}"; $stdout.flush
+      Iodine::Logger.error "run_tests error: #{e.class}: #{e.message}"
       RAW_RESULTS[:error] = "#{e.class}: #{e.message}"
     ensure
       raw_finished = true
-      $stdout.puts "DEBUG: run_tests ensure, stopping"; $stdout.flush
+      Iodine::Logger.debug "run_tests ensure, stopping"
       Iodine.run_after(100) { Iodine.stop }
     end
 
     Iodine.on_state(:start) do
-      $stdout.puts "DEBUG: on_state(:start) fired"; $stdout.flush
+      Iodine::Logger.debug "on_state(:start) fired"
       next if RAW_STARTED[0]
       RAW_STARTED[0] = true
       Iodine.run_after(500) do
-        $stdout.puts "DEBUG: run_after(500) fired"; $stdout.flush
+        Iodine::Logger.debug "run_after(500) fired"
         Iodine.async do
-          $stdout.puts "DEBUG: inside async block"; $stdout.flush
+          Iodine::Logger.debug "inside async block"
           run_tests.call
         end
-        $stdout.puts "DEBUG: async dispatched"; $stdout.flush
+        Iodine::Logger.debug "async dispatched"
       end
       # Timers survive reactor restarts, so an obsolete watchdog must not stop
       # a later spec's reactor cycle after this test completes normally.
       Iodine.run_after(5000) { Iodine.stop unless raw_finished }
     end
 
-    $stdout.puts "DEBUG: calling Iodine.start"; $stdout.flush
+    Iodine::Logger.debug "calling Iodine.start"
     Iodine.start
-    $stdout.puts "DEBUG: Iodine.start returned"; $stdout.flush
+    Iodine::Logger.debug "Iodine.start returned"
   end
 
   it 'completes without errors' do

@@ -325,6 +325,13 @@ static VALUE iodine_connection_is_sse(VALUE o) {
   return Qfalse;
 }
 
+static VALUE iodine_connection_is_http(VALUE o) {
+  iodine_connection_s *c = iodine_connection_ptr(o);
+  if (c->http && !fio_http_is_websocket(c->http) && !fio_http_is_sse(c->http))
+    return Qtrue;
+  return Qfalse;
+}
+
 /* *****************************************************************************
 Ruby Store Get/Set
 ***************************************************************************** */
@@ -3291,6 +3298,7 @@ static void Init_Iodine_Connection(void)  {
 
   rb_define_method(m, "websocket?", iodine_connection_is_websocket, 0);
   rb_define_method(m, "sse?", iodine_connection_is_sse, 0);
+  rb_define_method(m, "http?", iodine_connection_is_http, 0);
 
   rb_define_method(m, "peer_addr", iodine_connection_peer_addr, 0);
   rb_define_method(m, "from", iodine_connection_from, 0);

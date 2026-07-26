@@ -229,7 +229,7 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
       FIO_CLI_STRING("--tls-key -key The SSL/TLS private key .pem file."),
       FIO_CLI_STRING(
           "--tls-password -tls-pass The SSL/TLS password for the private key."),
-      FIO_CLI_BOOL("--tld-embedded -mtls uses facil.io's minimal TLS 1.3 "
+      FIO_CLI_BOOL("--tls-embedded -mtls uses facil.io's minimal TLS 1.3 "
                    "implementation."),
       FIO_CLI_PRINT(
           "NOTE: facil.io's TLS 1.3 was never audited, but could be useful."),

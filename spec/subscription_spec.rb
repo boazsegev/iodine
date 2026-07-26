@@ -49,7 +49,7 @@ RSpec.describe 'Iodine::PubSub::Subscription' do
     it 'releases an active subscription during process exit' do
       child = <<~RUBY
         require 'iodine'
-        Iodine.verbosity = 5
+        Iodine::Logger.level = 5
         Iodine::PubSub::Subscription.new('sub-at-exit') { |_msg| }
       RUBY
       _stdout, stderr, status = Open3.capture3(RbConfig.ruby, '-Ilib', '-e', child)

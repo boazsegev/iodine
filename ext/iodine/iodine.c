@@ -35,15 +35,6 @@ static void Init_Iodine(void) {
                              iodine_threads_set,
                              1);
 
-  rb_define_singleton_method(iodine_rb_IODINE,
-                             "verbosity",
-                             iodine_verbosity,
-                             0);
-  rb_define_singleton_method(iodine_rb_IODINE,
-                             "verbosity=",
-                             iodine_verbosity_set,
-                             1);
-
   rb_define_singleton_method(iodine_rb_IODINE, "secret", iodine_secret, 0);
   rb_define_singleton_method(iodine_rb_IODINE, "secret=", iodine_secret_set, 1);
 
@@ -218,6 +209,7 @@ void Init_iodine(void) {
   Init_Iodine_Utils();
   Init_Iodine_JSON();
   Init_Iodine_Listener();
+  Init_Iodine_Logger();
   Init_Iodine_MiniMap();
   Init_Iodine_PubSub_Engine();
   Init_Iodine_PubSub_Subscription();

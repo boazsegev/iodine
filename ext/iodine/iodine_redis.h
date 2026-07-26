@@ -133,10 +133,10 @@ static VALUE iodine_redis_initialize(int argc, VALUE *argv, VALUE self) {
  */
 static VALUE iodine_redis_connection_state(VALUE self) {
   iodine_pubsub_eng_s *e = iodine_pubsub_eng_get(self);
-  switch (fio_redis_connection_state(e->ptr)) {
-  case FIO_REDIS_CONNECTION_CONNECTING:
+  switch (fio_redis_state(e->ptr)) {
+  case FIO_REDIS_STATE_CONNECTING:
     return ID2SYM(rb_intern("connecting"));
-  case FIO_REDIS_CONNECTION_CONNECTED:
+  case FIO_REDIS_STATE_CONNECTED:
     return ID2SYM(rb_intern("connected"));
   default: return ID2SYM(rb_intern("error"));
   }

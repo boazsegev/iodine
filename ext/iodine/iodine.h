@@ -241,6 +241,7 @@ static VALUE iodine_handler_method_injection__inner(VALUE self,
 /* layer 1 modules */
 #include "iodine_cli.h"
 #include "iodine_defer.h"
+#include "iodine_log.h"
 #include "iodine_minimap.h"
 /* layer 2 modules */
 #include "iodine_compression.h"

@@ -101438,11 +101438,13 @@ typedef struct fio_io_listener_s fio_io_listener_s;
  *
  * NOTE: this schedules a task and should NOT be called within a PRE_START or
  * ON_START state callback.
+ *
+ * NOTE: the returned listener is valid until `fio_io_listen_stop` is called.
  */
 SFUNC fio_io_listener_s *fio_io_listen(fio_io_listen_args_s args);
 #define fio_io_listen(...) fio_io_listen((fio_io_listen_args_s){__VA_ARGS__})
 
-/** Notifies a listener to stop listening. */
+/** Notifies a listener to stop listening and destroys it. */
 SFUNC void fio_io_listen_stop(fio_io_listener_s *l);
 
 /** Returns the listener's associated protocol. */
@@ -101480,9 +101482,20 @@ typedef struct {
   uint32_t timeout;
 } fio_io_connect_args_s;
 
-/** Connects to a specific URL, returning the `fio_io_s` IO object or `NULL`. */
+/**
+ * Connects to a specific URL, returning the `fio_io_s` IO object or `NULL`.
+ *
+ * Note: The IO object returned is owned by the reactor. The copy returned is
+ * valid only until the next event is processed.
+ * */
 SFUNC fio_io_s *fio_io_connect(fio_io_connect_args_s args);
 
+/**
+ * Connects to a specific URL, returning the `fio_io_s` IO object or `NULL`.
+ *
+ * Note: The IO object returned is owned by the reactor. The copy returned is
+ * valid only until the next event is processed.
+ * */
 #define fio_io_connect(url_, ...)                                              \
   fio_io_connect((fio_io_connect_args_s){.url = url_, __VA_ARGS__})
 
@@ -101644,7 +101657,7 @@ SFUNC void fio_io_write2(fio_io_s *io, fio_io_write_args_s args);
 /** Marks the IO for closure as soon as scheduled data was sent. */
 SFUNC void fio_io_close(fio_io_s *io);
 
-/** Marks the IO for immediate closure. */
+/** Marks the IO for immediate closure and destruction. */
 SFUNC void fio_io_close_now(fio_io_s *io);
 
 /**
@@ -101798,9 +101811,7 @@ struct fio_io_functions_s {
    * Returns 0 while data is available, or -1 when done / unavailable.
    * Implementations must not allocate memory in this callback.
    */
-  int (*peer_info_next)(fio_socket_i fd,
-                        fio_x509_cert_s *dest,
-                        void *context);
+  int (*peer_info_next)(fio_socket_i fd, fio_x509_cert_s *dest, void *context);
 };
 
 /**************************************************************************/ /**
@@ -112062,13 +112073,19 @@ Single-Connection RESP3 Architecture:
 =====================================
 After HELLO 3, SUBSCRIBE no longer commandeers the connection, so commands
 and push frames multiplex on ONE connection:
-- Outgoing: a lock-step command FIFO (one command in flight) plus
-  fire-and-forget SUBSCRIBE-family writes (their confirmations arrive as
-  RESP3 push frames, never command replies, so they cannot desynchronize
-  the FIFO).
+- Outgoing: a single two-type command queue. Every command flows through
+  the queue and is classified by verb at accept time: `should_wait`
+  commands (HELLO, PING, regular commands) are lock-step - the next command
+  is sent only after the reply arrives. Subscribe-family commands
+  (SUBSCRIBE / PSUBSCRIBE / UNSUBSCRIBE / PUNSUBSCRIBE) are no-wait - they
+  are popped as soon as they are sent, because their RESP3 confirmations
+  arrive as push frames, never as command replies. HELLO is always the
+  first command on the wire of every (re)connection (queued at the head in
+  on_attach, before the resubscribe batches and any leftover commands), and
+  nothing is written before on_attach completes (conn.ready gate).
 - Incoming: per-frame routing. RESP3 push (`>`) frames (pub/sub deliveries,
   subscribe confirmations) go to the push handler; all other top-level
-  frames are command replies matched to the FIFO head.
+  frames are command replies matched to the queue head.
 
 Multi-Process Architecture:
 ===========================
@@ -112442,15 +112459,32 @@ typedef struct fio_redis_cmd_s {
   void (*callback)(fio_pubsub_engine_s *e, FIOBJ reply, void *udata);
   void *udata;
   size_t cmd_len;
+  /** 1 = lock-step: await reply before sending the next command.
+   *  0 = no reply expected (subscribe-family): popped as soon as it is
+   *      sent; its RESP3 confirmations arrive as push frames (ignored). */
+  uint8_t should_wait;
   uint8_t cmd[];
 } fio_redis_cmd_s;
 
 /** Internal connection state */
 typedef struct fio_redis_connection_s {
+  /** Borrowed handle to the REACTOR-OWNED io object (fio_io_connect
+   * returns a reference the engine can NOT own): valid from the
+   * fio_io_connect call until the io's close path runs (on_close for
+   * established connections, on_failed for failed attempts), at which
+   * point fio___redis_connection_reset NULLs it. The engine may request a
+   * close (fio_io_close*) but must NEVER free the io; retaining an io
+   * reference beyond its callback lifetime requires fio_io_dup. */
   fio_io_s *io;
   fio_resp3_parser_s parser;
   fio___redis_parse_state_s ps;  /* payload budget accounting (parser.udata) */
   FIO___REDIS_BUF_POS_T buf_pos; /* Position in read buffer */
+  /** Set by on_attach, cleared by fio___redis_connection_reset.
+   * conn.io is assigned while the TCP connection is still in progress, so
+   * this flag is the ONLY write gate: nothing may be written before
+   * on_attach queued HELLO (bytes would race HELLO onto the wire and a
+   * connecting socket may reject writes with ENOTCONN). */
+  uint8_t ready;
 } fio_redis_connection_s;
 
 /**
@@ -112463,6 +112497,9 @@ typedef struct fio_redis_connection_s {
  *
  * Internal reference management:
  * - fio_io_defer(fio___redis_connect, ...): ref += 1 before, ref -= 1 after
+ * - retry timers (fio___redis_connect_timer): ref += 1 at schedule time,
+ *   released by the timer's on_finish (invoked on EVERY timer teardown:
+ *   after firing, on cancel, and at queue cleanup - the ref cannot leak)
  * - fio_io_defer(fio___redis_perform_callback, ...): ref += 1 before, ref -= 1
  *   after
  * - on_close callbacks: NO ref change (connection holds no ownership ref)
@@ -113208,6 +113245,101 @@ Subscribe-Family Command Builder
 /** Worst-case overhead for a subscribe-family command (verb, digits, CRLFs). */
 #define FIO___REDIS_SUB_CMD_OVERHEAD 64
 
+FIO_SFUNC void fio___redis_send_next_cmd(fio_redis_engine_s *r);
+
+/**
+ * Classifies a queued RESP command by its verb (the first bulk string):
+ * returns 0 for the subscribe-family (SUBSCRIBE / PSUBSCRIBE / UNSUBSCRIBE /
+ * PUNSUBSCRIBE - their RESP3 confirmations arrive as push frames, never as
+ * command replies) and 1 for everything else (lock-step reply expected).
+ *
+ * Called for EVERY command accepted into the queue, so all commands flow
+ * through the same two-type queue discipline.
+ */
+FIO_SFUNC int fio___redis_verb_should_wait(const uint8_t *cmd, size_t len) {
+  static const struct {
+    const char *verb;
+    uint8_t len;
+  } no_wait[] = {{"SUBSCRIBE", 9},
+                 {"PSUBSCRIBE", 10},
+                 {"UNSUBSCRIBE", 11},
+                 {"PUNSUBSCRIBE", 12}};
+  /* Expect: *<n>\r\n$<vlen>\r\n<verb>... - anything else awaits a reply. */
+  if (len < 8 || cmd[0] != '*')
+    return 1;
+  const uint8_t *p = (const uint8_t *)FIO_MEMCHR(cmd, '\n', len);
+  if (!p || (size_t)(p - cmd) + 4 >= len || p[1] != '$')
+    return 1;
+  const uint8_t *vlen_s = p + 2;
+  const uint8_t *vlen_e = (const uint8_t *)FIO_MEMCHR(
+      vlen_s,
+      '\n',
+      len - (size_t)(vlen_s - cmd));
+  if (!vlen_e || (vlen_e - vlen_s) < 2 || vlen_e[-1] != '\r')
+    return 1;
+  size_t vlen = 0;
+  for (const uint8_t *d = vlen_s; d < vlen_e - 1; ++d) {
+    if (*d < '0' || *d > '9')
+      return 1;
+    vlen = (vlen * 10) + (size_t)(*d - '0');
+  }
+  if (!vlen)
+    return 1;
+  const uint8_t *verb = vlen_e + 1;
+  if ((size_t)(verb - cmd) + vlen > len)
+    return 1;
+  for (size_t i = 0; i < (sizeof(no_wait) / sizeof(no_wait[0])); ++i) {
+    if (no_wait[i].len != vlen)
+      continue;
+    size_t c = 0;
+    while (c < vlen &&
+           (uint8_t)(verb[c] & 0xDF) == (uint8_t)no_wait[i].verb[c])
+      ++c; /* case-insensitive (ASCII upper) */
+    if (c == vlen)
+      return 0;
+  }
+  return 1;
+}
+
+/**
+ * Allocates a command queue node for `bytes` and pushes it at the queue
+ * head (attach-time commands: HELLO, resubscribe batches) or tail (normal
+ * commands). `should_wait` is classified from the command verb.
+ *
+ * MUST be called from the IO thread only. Returns the node, or NULL on
+ * allocation failure. The caller decides when to fio___redis_send_next_cmd.
+ */
+FIO_SFUNC fio_redis_cmd_s *fio___redis_queue_cmd_bytes(
+    fio_redis_engine_s *r,
+    const void *bytes,
+    size_t len,
+    void (*callback)(fio_pubsub_engine_s *, FIOBJ, void *),
+    void *udata,
+    int at_head) {
+  fio_redis_cmd_s *cmd =
+      (fio_redis_cmd_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(*cmd) + len + 1, 0);
+  if (!cmd)
+    return NULL;
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___redis_cmd);
+  *cmd = (fio_redis_cmd_s){
+      .callback = callback,
+      .udata = udata,
+      .cmd_len = len,
+      .should_wait = (uint8_t)fio___redis_verb_should_wait(bytes, len),
+  };
+  FIO_MEMCPY(cmd->cmd, bytes, len);
+  cmd->cmd[len] = 0;
+  if (at_head) { /* FIO_LIST has no unshift */
+    cmd->node.next = r->cmd_queue.next;
+    cmd->node.prev = &r->cmd_queue;
+    r->cmd_queue.next->prev = &cmd->node;
+    r->cmd_queue.next = &cmd->node;
+  } else {
+    FIO_LIST_PUSH(&r->cmd_queue, &cmd->node);
+  }
+  return cmd;
+}
+
 /**
  * Writes a subscribe-family command:
  *   *2\r\n$<verb_len>\r\n<verb>\r\n$<channel_len>\r\n<channel>\r\n
@@ -113243,15 +113375,21 @@ FIO_SFUNC size_t fio___redis_write_sub_cmd(uint8_t *dest,
 }
 
 /**
- * Sends a subscribe-family command on the subscription connection.
+ * Queues a subscribe-family command on the connection's command queue.
  * Uses a stack buffer for typical channel names, heap for huge ones.
  * MUST be called from the IO thread only.
+ *
+ * The command is queued (never written directly): the queue discipline
+ * guarantees HELLO is always the first command on the wire of every
+ * (re)connection. The verb test marks it should_wait=0, so it is popped as
+ * soon as it is sent - its confirmations arrive as RESP3 push frames and
+ * are ignored by the push handler.
  */
 FIO_SFUNC void fio___redis_sub_send(fio_redis_engine_s *r,
                                     const char *verb,
                                     size_t verb_len,
                                     fio_buf_info_s channel) {
-  if (!r->conn.io)
+  if (!r->running)
     return;
   uint8_t stack_buf[256];
   uint8_t *buf = stack_buf;
@@ -113262,9 +113400,10 @@ FIO_SFUNC void fio___redis_sub_send(fio_redis_engine_s *r,
       return;
   }
   size_t len = fio___redis_write_sub_cmd(buf, verb, verb_len, channel);
-  fio_io_write(r->conn.io, buf, len);
+  fio___redis_queue_cmd_bytes(r, buf, len, NULL, NULL, 0);
   if (buf != stack_buf)
     FIO_MEM_FREE(buf, need);
+  fio___redis_send_next_cmd(r);
 }
 
 /* *****************************************************************************
@@ -113274,7 +113413,7 @@ HELLO 3 Handshake Command Builder
 /**
  * Returns the exact byte count of the HELLO 3 handshake command.
  *
- * No auth:  *3\r\n$5\r\nHELLO\r\n$1\r\n3\r\n                     (22 bytes)
+ * No auth:  *2\r\n$5\r\nHELLO\r\n$1\r\n3\r\n                     (22 bytes)
  * Auth:     *5\r\n$5\r\nHELLO\r\n$1\r\n3\r\n$4\r\nAUTH\r\n$7\r\ndefault\r\n
  *           $<digits>\r\n<password>\r\n
  */
@@ -113294,7 +113433,7 @@ FIO_SFUNC size_t fio___redis_write_hello_cmd(uint8_t *dest,
                                              size_t auth_len) {
   uint8_t *pos = dest;
   if (!auth_len) {
-    FIO_MEMCPY(pos, "*3\r\n$5\r\nHELLO\r\n$1\r\n3\r\n", 22);
+    FIO_MEMCPY(pos, "*2\r\n$5\r\nHELLO\r\n$1\r\n3\r\n", 22);
     return 22;
   }
   FIO_MEMCPY(pos,
@@ -113321,6 +113460,9 @@ Reference counting ownership model (via FIO_REF macros):
 
 Internal reference management:
 - fio_io_defer(fio___redis_connect, ...): ref += 1 before, ref -= 1 after
+- retry timers (fio___redis_connect_timer): ref += 1 at schedule time,
+  released by the timer's on_finish (invoked on EVERY timer teardown:
+  after firing, on cancel, and at queue cleanup - the ref cannot leak)
 - fio_io_defer(fio___redis_perform_callback, ...): ref += 1 before, ref -= 1
   after
 - on_close callbacks: NO ref change (connection holds no ownership ref)
@@ -113373,6 +113515,7 @@ FIO_SFUNC void fio___redis_connection_reset(fio_redis_connection_s *conn) {
   conn->ps.is_push = 0;
   conn->parser = (fio_resp3_parser_s){.udata = &conn->ps};
   conn->io = NULL;
+  conn->ready = 0;
 }
 
 /**
@@ -113396,14 +113539,27 @@ FIO_SFUNC void fio___redis_destroy(fio_redis_engine_s *r) {
   /* Close connections safely.
    * 1. NULL the io field first so on_close_internal sees conn->io == NULL
    *    and skips the reconnect path.
-   * 2. Set udata to NULL on the io handle so on_close returns early
-   *    without calling fio___redis_free (which would underflow the ref count
-   *    since we are already in destroy with ref == 0).
-   * 3. Then close. */
+   * 2. Detach the engine from the io's close path:
+   *    Established connection (conn.ready): the io's udata IS the engine -
+   *    NULL it so on_close returns early (no re-entrant fio___redis_free
+   *    while destroy is already running at ref == 0).
+   *    Still-connecting io: the io's udata is the IO layer's
+   *    fio___io_connecting_s bookkeeping - never NULL the io's udata
+   *    itself (the connecting protocol's on_close dereferences it to
+   *    clean up). Instead NULL the engine pointer INSIDE the bookkeeping,
+   *    so the registered on_failed fires with a NULL engine and returns
+   *    early - the engine is being freed here, letting on_failed touch it
+   *    would be use-after-free.
+   * 3. Then close. The io object is reactor-owned: destroy only requests
+   *    the close, it never frees the io. */
   fio_io_s *io = r->conn.io;
   r->conn.io = NULL;
   if (io) {
-    fio_io_udata_set(io, NULL);
+    void *ud = fio_io_udata(io);
+    if (r->conn.ready || ud == (void *)r)
+      fio_io_udata_set(io, NULL); /* established (or mid-on_ready) */
+    else
+      ((fio___io_connecting_s *)ud)->udata = NULL; /* still connecting */
     fio_io_close_now(io);
   }
 
@@ -113434,15 +113590,33 @@ command queuing from any thread.
 ***************************************************************************** */
 
 /**
- * Internal: Send the next command in the queue if ready.
+ * Internal: Send queued commands while possible.
  * MUST be called from the IO thread only.
+ *
+ * Writes are gated on conn.ready (set by on_attach): nothing is written
+ * while the TCP connection is still in progress, so HELLO is always the
+ * first command on the wire of every (re)connection.
+ *
+ * should_wait commands are lock-step: the head is sent and awaits its reply
+ * (pub_sent). No-wait commands (subscribe-family) are popped as soon as
+ * they are sent - their RESP3 confirmations arrive as push frames and are
+ * ignored by the push handler - and the next command is attempted.
  */
 FIO_SFUNC void fio___redis_send_next_cmd(fio_redis_engine_s *r) {
-  if (!r->pub_sent && !FIO_LIST_IS_EMPTY(&r->cmd_queue) && r->conn.io) {
-    r->pub_sent = 1;
+  while (!r->pub_sent && !FIO_LIST_IS_EMPTY(&r->cmd_queue) && r->conn.io &&
+         r->conn.ready) {
     fio_redis_cmd_s *cmd =
         FIO_PTR_FROM_FIELD(fio_redis_cmd_s, node, r->cmd_queue.next);
     fio_io_write(r->conn.io, cmd->cmd, cmd->cmd_len);
+    if (cmd->should_wait) {
+      r->pub_sent = 1;
+      return; /* head stays queued; its reply pops it */
+    }
+    FIO_LIST_REMOVE(&cmd->node);
+    if (cmd->callback)
+      cmd->callback((fio_pubsub_engine_s *)r, FIOBJ_INVALID, cmd->udata);
+    FIO_MEM_FREE(cmd, sizeof(*cmd) + cmd->cmd_len);
+    FIO_LEAK_COUNTER_ON_FREE(fio___redis_cmd);
   }
 }
 
@@ -113465,7 +113639,11 @@ FIO_SFUNC void fio___redis_attach_cmd_task(void *engine_, void *cmd_) {
     return;
   }
 
-  /* Add command to queue and try to send */
+  /* Add command to queue and try to send.
+   * Classify should_wait from the command verb at accept time: every
+   * command flows through the same two-type queue discipline. */
+  cmd->should_wait = (uint8_t)fio___redis_verb_should_wait(cmd->cmd,
+                                                           cmd->cmd_len);
   FIO_LIST_PUSH(&r->cmd_queue, &cmd->node);
   fio___redis_send_next_cmd(r);
   fio___redis_free(r); /* Release the reference held for this deferred task */
@@ -113539,6 +113717,8 @@ FIO_SFUNC void fio___redis_on_data(fio_io_s *io);
 FIO_SFUNC void fio___redis_on_close(void *buffer, void *udata);
 FIO_SFUNC void fio___redis_on_timeout(fio_io_s *io);
 FIO_SFUNC void fio___redis_connect(void *engine_, void *conn_);
+FIO_SFUNC int fio___redis_connect_timer(void *engine_, void *conn_);
+FIO_SFUNC void fio___redis_connect_timer_cleanup(void *engine_, void *conn_);
 FIO_SFUNC void fio___redis_subscribe(const fio_pubsub_engine_s *eng,
                                      fio_buf_info_s channel,
                                      int16_t filter);
@@ -113595,7 +113775,7 @@ fio_redis_state(fio_pubsub_engine_s const *engine) {
   fio_redis_engine_s const *r = (fio_redis_engine_s const *)engine;
   if (!r->running)
     return FIO_REDIS_STATE_ERROR;
-  if (!r->conn.io)
+  if (!r->conn.io || !r->conn.ready)
     return FIO_REDIS_STATE_CONNECTING;
   FIO_LIST_NODE const *node = r->cmd_queue.next;
   if (node != &r->cmd_queue) {
@@ -113683,11 +113863,18 @@ FIO_SFUNC void fio___redis_resubscribe_batch(fio___redis_resubscribe_sink_s sink
     sink.on_write(sink.udata, buf, used);
 }
 
-/** fio_io_write adapter for fio___redis_resubscribe_batch. */
-FIO_SFUNC void fio___redis_resubscribe_io_write(void *io_,
-                                                uint8_t *buf,
-                                                size_t len) {
-  fio_io_write((fio_io_s *)io_, buf, len);
+/** Queue adapter for fio___redis_resubscribe_batch: every flushed batch
+ * becomes a single no-wait command node at the queue HEAD (subscribe-family
+ * verbs classify as should_wait=0). Node owns a copy of the batch bytes. */
+FIO_SFUNC void fio___redis_resubscribe_queue(void *r_,
+                                             uint8_t *buf,
+                                             size_t len) {
+  fio___redis_queue_cmd_bytes((fio_redis_engine_s *)r_,
+                              buf,
+                              len,
+                              NULL,
+                              NULL,
+                              1);
 }
 
 /**
@@ -113704,15 +113891,17 @@ FIO_SFUNC void fio___redis_resubscribe_io_write(void *io_,
  * commands. This is safe because we're on the IO thread and the channel
  * maps are only modified on the IO thread.
  *
- * MUST be called from the IO thread only, AFTER HELLO was written (RESP3
- * confirmations arrive as push frames on the same connection).
+ * MUST be called from the IO thread only. Each flushed batch is queued as
+ * a no-wait command node at the queue HEAD (see fio___redis_on_attach,
+ * which queues HELLO at the head last, so HELLO stays first on the wire).
+ * RESP3 confirmations arrive as push frames and are ignored.
  */
 FIO_SFUNC void fio___redis_resubscribe(fio_redis_engine_s *r) {
   if (!r->attached || !r->running || !r->conn.io)
     return;
   fio___redis_resubscribe_batch((fio___redis_resubscribe_sink_s){
-      .udata = (void *)r->conn.io,
-      .on_write = fio___redis_resubscribe_io_write,
+      .udata = (void *)r,
+      .on_write = fio___redis_resubscribe_queue,
   });
 }
 
@@ -113730,41 +113919,32 @@ FIO_SFUNC void fio___redis_on_attach(fio_io_s *io) {
 
   fio_redis_connection_s *conn = &r->conn;
   conn->io = io;
+  conn->ready = 1; /* writes permitted from this point on */
 
-  /* Queue HELLO 3 at the queue HEAD: it must be the first command on the
-   * wire of every (re)connection - before any leftover commands and before
-   * any SUBSCRIBE bytes (an early SUBSCRIBE would commandeer a RESP2 link
-   * and its confirmations would desynchronize the reply FIFO). */
-  fio_redis_cmd_s *hello = (fio_redis_cmd_s *)
-      FIO_MEM_REALLOC(NULL, 0, sizeof(*hello) + r->hello_cmd_len + 1, 0);
-  if (!hello) {
+  /* Queue the resubscribe batches at the queue HEAD, then queue HELLO 3 at
+   * the queue HEAD - so HELLO is the first command on the wire of every
+   * (re)connection and subscriptions follow immediately after it, before
+   * any leftover commands. Everything flows through the same two-type
+   * command queue: HELLO awaits its map reply (fio___redis_on_hello_reply);
+   * the subscribe-family commands are popped on send and their RESP3
+   * confirmation push frames are ignored by the push handler. */
+  fio___redis_resubscribe(r);
+  if (!fio___redis_queue_cmd_bytes(r,
+                                   r->hello_cmd,
+                                   r->hello_cmd_len,
+                                   fio___redis_on_hello_reply,
+                                   NULL,
+                                   1)) {
     FIO_LOG_ERROR("(redis) failed to allocate HELLO command");
     fio_io_close_now(io); /* reconnect will retry */
     return;
   }
-  FIO_LEAK_COUNTER_ON_ALLOC(fio___redis_cmd);
-  *hello = (fio_redis_cmd_s){
-      .callback = fio___redis_on_hello_reply,
-      .cmd_len = r->hello_cmd_len,
-  };
-  FIO_MEMCPY(hello->cmd, r->hello_cmd, r->hello_cmd_len);
-  hello->cmd[r->hello_cmd_len] = 0;
-  /* Prepend to queue head (FIO_LIST has no unshift) */
-  hello->node.next = r->cmd_queue.next;
-  hello->node.prev = &r->cmd_queue;
-  r->cmd_queue.next->prev = &hello->node;
-  r->cmd_queue.next = &hello->node;
 
   FIO_LOG_DEBUG("(redis) connection established to %s:%s", r->address, r->port);
 
   /* Send any queued commands (HELLO is now at the head) - IO thread */
   r->pub_sent = 0;
   fio___redis_send_next_cmd(r);
-
-  /* Resubscribe all known channels on this connection (reconnect case).
-   * The batch is written AFTER the queued HELLO, so RESP3 confirmation
-   * push frames never desynchronize the command FIFO. */
-  fio___redis_resubscribe(r);
 }
 
 /**
@@ -113883,6 +114063,29 @@ FIO_SFUNC void fio___redis_on_data(fio_io_s *io) {
   fio___redis_parse_buffered(r, conn, buf, io);
 }
 
+/**
+ * Drops stale HELLO commands from the queue after a connection died.
+ * Their replies will never arrive, and leaving them would accumulate one
+ * stale HELLO per failed attempt (a fresh HELLO is queued at the head in
+ * on_attach). Dropped SILENTLY: the engine is reconnecting, so the HELLO
+ * callback (which would log a handshake failure and stop the engine) is
+ * not invoked. User commands stay queued for the reconnect.
+ *
+ * MUST be called from the IO thread only.
+ */
+FIO_SFUNC void fio___redis_purge_hello_cmds(fio_redis_engine_s *r) {
+  FIO_LIST_NODE *node = r->cmd_queue.next;
+  while (node != &r->cmd_queue) {
+    fio_redis_cmd_s *cmd = FIO_PTR_FROM_FIELD(fio_redis_cmd_s, node, node);
+    node = node->next;
+    if (cmd->callback == fio___redis_on_hello_reply) {
+      FIO_LIST_REMOVE(&cmd->node);
+      FIO_MEM_FREE(cmd, sizeof(*cmd) + cmd->cmd_len);
+      FIO_LEAK_COUNTER_ON_FREE(fio___redis_cmd);
+    }
+  }
+}
+
 /** Internal helper for connection close handling.
  *
  * Called from on_close with the udata from the IO handle.
@@ -113897,12 +114100,20 @@ FIO_SFUNC void fio___redis_on_close_internal(fio_redis_engine_s *r,
   if (!r)
     return; /* engine already destroyed — udata was NULL */
   fio___redis_connection_reset(conn);
+  fio___redis_purge_hello_cmds(r);
 
-  /* Reconnect if IO reactor is still running */
-  if (fio_io_is_running()) {
+  /* Reconnect if the engine and the IO reactor are still running, after a
+   * brief delay (a peer that accepts and instantly drops, or a persistently
+   * refused endpoint, must not spin a hot reconnect loop). */
+  if (r->running && fio_io_is_running()) {
     FIO_LOG_WARNING("(redis) connection lost, reconnecting...");
-    fio___redis_dup(r); /* ref for deferred reconnect task */
-    fio_io_defer(fio___redis_connect, r, conn);
+    fio___redis_dup(r); /* timer ref - released by the timer's on_finish */
+    fio_io_run_every(.fn = fio___redis_connect_timer,
+                     .udata1 = r,
+                     .udata2 = conn,
+                     .every = 1000,
+                     .repetitions = 1,
+                     .on_finish = fio___redis_connect_timer_cleanup);
   }
   /* No fio___redis_free here — connection holds no ownership ref */
 }
@@ -113912,6 +114123,51 @@ FIO_SFUNC void fio___redis_on_close(void *buffer, void *udata) {
   fio___redis_on_close_internal((fio_redis_engine_s *)udata,
                                 udata ? &((fio_redis_engine_s *)udata)->conn
                                       : NULL);
+}
+
+/**
+ * Called when an outgoing connection attempt fails before attach (e.g.,
+ * connection refused): the IO layer's connecting protocol reports the
+ * failure here, NOT through the redis protocol's on_close (which only
+ * fires for established connections).
+ *
+ * Clears the dangling conn.io and schedules a retry (1s timer, same as the
+ * synchronous-failure path in fio___redis_connect). Runs on the IO thread.
+ *
+ * IO ownership: the failed io is REACTOR-OWNED and is being freed by the
+ * IO layer's connecting-protocol cleanup (fio___connecting_on_close calls
+ * fio___connecting_cleanup right after this callback returns). This
+ * callback must NOT close or free the io - fio___redis_connection_reset
+ * only NULLs the engine's borrowed conn.io pointer.
+ *
+ * udata may be NULL: fio___redis_destroy detaches the engine from a
+ * still-connecting io before closing it (the engine is gone by the time
+ * this fires).
+ *
+ * Retry suppression: fio_io_is_running() is false during reactor shutdown,
+ * and fio___redis_destroy sets running=0 before closing the io, so a
+ * close from destroy or from reactor shutdown never schedules a retry.
+ */
+FIO_SFUNC void fio___redis_on_connect_failed(fio_io_protocol_s *protocol,
+                                             void *udata) {
+  (void)protocol;
+  fio_redis_engine_s *r = (fio_redis_engine_s *)udata;
+  if (!r)
+    return;
+  fio___redis_connection_reset(&r->conn); /* clears the dangling conn.io */
+  fio___redis_purge_hello_cmds(r);
+  if (r->running && fio_io_is_running()) {
+    FIO_LOG_WARNING("(redis) connection to %s:%s failed, retrying...",
+                    r->address,
+                    r->port);
+    fio___redis_dup(r); /* timer ref - released by the timer's on_finish */
+    fio_io_run_every(.fn = fio___redis_connect_timer,
+                     .udata1 = r,
+                     .udata2 = &r->conn,
+                     .every = 1000,
+                     .repetitions = 1,
+                     .on_finish = fio___redis_connect_timer_cleanup);
+  }
 }
 
 /**
@@ -113931,39 +114187,36 @@ FIO_SFUNC void fio___redis_on_timeout(fio_io_s *io) {
   }
   /* Queue a PING command - already on the IO thread, queue directly.
    * The +PONG reply dequeues it under the normal lock-step FIFO. */
-  fio_redis_cmd_s *cmd =
-      (fio_redis_cmd_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(*cmd) + 14, 0);
-  if (cmd) {
-    FIO_LEAK_COUNTER_ON_ALLOC(fio___redis_cmd);
-    *cmd = (fio_redis_cmd_s){.cmd_len = 14};
-    FIO_MEMCPY(cmd->cmd, "*1\r\n$4\r\nPING\r\n", 14);
-    FIO_LIST_PUSH(&r->cmd_queue, &cmd->node);
+  static const char ping_cmd[] = "*1\r\n$4\r\nPING\r\n";
+  if (fio___redis_queue_cmd_bytes(r, ping_cmd, 14, NULL, NULL, 0))
     fio___redis_send_next_cmd(r);
-  }
 }
 
 /* *****************************************************************************
 Connection Management
 ***************************************************************************** */
 
-/** Timer callback wrapper for fio___redis_connect (returns int as required) */
-FIO_SFUNC int fio___redis_connect_timer(void *engine_, void *conn_);
-
-FIO_SFUNC void fio___redis_connect(void *engine_, void *conn_) {
-  fio_redis_engine_s *r = (fio_redis_engine_s *)engine_;
-  fio_redis_connection_s *conn = (fio_redis_connection_s *)conn_;
-
+/** Connect logic - consumes NO engine reference.
+ *
+ * Two entry points wrap this:
+ * - fio___redis_connect (deferred task): owns a ref, frees it after.
+ * - fio___redis_connect_timer (retry timer): the timer's ref is released
+ *   by fio___redis_connect_timer_cleanup (on_finish).
+ *
+ * Retry scheduling: every retry timer gets its OWN dup at schedule time,
+ * released by the timer's on_finish (invoked on EVERY timer teardown:
+ * after firing, on cancel, and at queue cleanup - the ref cannot leak). */
+FIO_SFUNC void fio___redis_connect_impl(fio_redis_engine_s *r,
+                                        fio_redis_connection_s *conn) {
   /* Workers must NOT connect to Redis - they use IPC to master.
    * Check !fio_io_is_master() rather than fio_io_is_worker() because in
    * single-process mode (fio_io_start(0)) both is_master and is_worker are
    * true, and we DO want to connect in that case. */
   if (!fio_io_is_master()) {
-    fio___redis_free(r);
     return;
   }
 
   if (!r->running || conn->io) {
-    fio___redis_free(r);
     return;
   }
 
@@ -113974,12 +114227,14 @@ FIO_SFUNC void fio___redis_connect(void *engine_, void *conn_) {
   if (host_len + port_len + 8 > sizeof(url)) {
     FIO_LOG_ERROR("(redis) address too long: %s:%s", r->address, r->port);
     /* Same failure path as a failed connection attempt */
+    fio___redis_dup(r); /* timer ref - released by the timer's on_finish */
     fio_io_run_every(.fn = fio___redis_connect_timer,
                      .udata1 = r,
                      .udata2 = conn,
                      .every = 1000,
-                     .repetitions = 1);
-    return; /* ref ownership transferred to timer */
+                     .repetitions = 1,
+                     .on_finish = fio___redis_connect_timer_cleanup);
+    return;
   }
   FIO_MEMCPY(url, "tcp://", 6);
   FIO_MEMCPY(url + 6, r->address, host_len);
@@ -113989,32 +114244,54 @@ FIO_SFUNC void fio___redis_connect(void *engine_, void *conn_) {
 
   FIO_LOG_DEBUG("(redis) connecting to %s:%s", r->address, r->port);
 
-  /* Start async connection - on_attach will be called when ready */
+  /* Start async connection - on_attach will be called when ready.
+   * conn->io is a BORROWED handle to the reactor-owned io (see the
+   * fio_redis_connection_s.io documentation). */
   conn->io = fio_io_connect(url,
                             .protocol = &FIO___REDIS_PROTOCOL,
                             .udata = r,
+                            .on_failed = fio___redis_on_connect_failed,
                             .timeout = 30000);
   if (!conn->io) {
     FIO_LOG_ERROR("(redis) failed to initiate connection to %s:%s",
                   r->address,
                   r->port);
-    /* Retry after delay — pass our ref to the timer (timer holds it) */
+    /* Retry after delay - the timer holds its own ref (on_finish) */
+    fio___redis_dup(r); /* timer ref - released by the timer's on_finish */
     fio_io_run_every(.fn = fio___redis_connect_timer,
                      .udata1 = r,
                      .udata2 = conn,
                      .every = 1000,
-                     .repetitions = 1);
-    return; /* ref ownership transferred to timer */
+                     .repetitions = 1,
+                     .on_finish = fio___redis_connect_timer_cleanup);
+    return;
   }
-  /* Connection initiated successfully.
-   * The connection holds NO ownership ref — release the deferred task's ref. */
-  fio___redis_free(r);
+  /* Connection initiated successfully - the connection holds NO ref. */
 }
 
-/** Timer callback wrapper - calls fio___redis_connect and returns 0 to stop */
+/** Deferred-task entry point - consumes the deferred task's engine ref
+ * (dup before defer, free here). */
+FIO_SFUNC void fio___redis_connect(void *engine_, void *conn_) {
+  fio___redis_connect_impl((fio_redis_engine_s *)engine_,
+                           (fio_redis_connection_s *)conn_);
+  fio___redis_free((fio_redis_engine_s *)engine_);
+}
+
+/** Timer entry point - consumes NO ref (the timer's ref is released by
+ * fio___redis_connect_timer_cleanup). Returns 0; repetitions=1 is what
+ * stops the timer (a non-zero return would also stop it). */
 FIO_SFUNC int fio___redis_connect_timer(void *engine_, void *conn_) {
-  fio___redis_connect(engine_, conn_);
-  return 0; /* Don't repeat - fio___redis_connect handles its own retry */
+  fio___redis_connect_impl((fio_redis_engine_s *)engine_,
+                           (fio_redis_connection_s *)conn_);
+  return 0;
+}
+
+/** Timer on_finish - releases the retry timer's engine ref. The timer API
+ * invokes on_finish on EVERY timer teardown (after firing, on cancel, and
+ * at queue cleanup), so the ref is released exactly once per schedule. */
+FIO_SFUNC void fio___redis_connect_timer_cleanup(void *engine_, void *conn_) {
+  (void)conn_;
+  fio___redis_free((fio_redis_engine_s *)engine_);
 }
 
 /* *****************************************************************************
@@ -114497,7 +114774,7 @@ SFUNC fio_pubsub_engine_s *fio_redis_new FIO_NOOP(fio_redis_args_s args) {
   /* Allocate engine using FIO_REF (includes ref count, starts at 1).
    * Note: buf[FIO_REDIS_READ_BUFFER] is already inside the struct,
    * so we only need flex space for the strings. */
-  size_t flex_size = host_len + 1 + port_len + 1 + hello_cmd_len;
+  size_t flex_size = host_len + 1 + port_len + 1 + hello_cmd_len + 1;
   fio_redis_engine_s *r = fio___redis_new(flex_size);
   if (!r) {
     FIO_LOG_ERROR("(redis) failed to allocate engine");

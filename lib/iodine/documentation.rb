@@ -211,29 +211,6 @@ module Iodine
   # @return [Boolean]
   def self.running?; end
 
-  # Returns the current verbosity (logging) level.
-  #
-  # Log levels:
-  # - 0: No logging
-  # - 1: Fatal errors only
-  # - 2: Errors and above
-  # - 3: Warnings and above
-  # - 4: Info and above (default)
-  # - 5: Debug and above
-  #
-  # @return [Integer] the current log level (0-5)
-  def self.verbosity; end
-
-  # Sets the current verbosity (logging) level.
-  #
-  # @param logging_level [Integer] the log level (0-5)
-  # @return [Integer] the new log level
-  # @raise [TypeError] if logging_level is not a Fixnum
-  #
-  # @example
-  #   Iodine.verbosity = 5  # Enable debug logging
-  def self.verbosity=(logging_level); end
-
   # Returns the server's secret as a 64-byte binary string.
   #
   # The secret is used for cryptographic operations like session signing,
@@ -425,7 +402,7 @@ module Iodine
   # @param since [Integer] replay cached messages since this timestamp in milliseconds
   #   (requires {Iodine::PubSub::History.cache} to be called first).
   # @param callback [Proc, nil] an **optional** object that answers to call and accepts a single argument (the message structure).
-  # @return [Proc] the callback
+  # @return [Iodine] returns the Iodine module (self). For a handle that can be cancelled or re-targeted, use {Iodine::PubSub::Subscription} directly.
   #
   # @note Either a proc or a block **must** be provided for global subscriptions.
   # @note **One subscription per channel per context.** A "context" is either a specific
@@ -470,6 +447,97 @@ module Iodine
   #
   # @see Iodine::Connection::ResourceHandler
   def self.make_resource(handler); end
+
+  #######################
+
+  # {Iodine::Logger} routes Ruby log messages through the facil.io C STL
+  # logging system (FIO_LOG_*), sharing the C core's stderr sink, level
+  # prefixes and the global log level ({Iodine::Logger.level}).
+  #
+  # Each argument is logged as its own message. Arguments that answer `call`
+  # (e.g. a Proc or lambda) are invoked and their return value is logged.
+  # If a block is given, it is called last and its return value is logged
+  # (Rack SPEC compatible logger behavior). Nothing is evaluated while the
+  # level is silenced by the current verbosity (lazy evaluation).
+  #
+  # Log levels (constants, e.g. {Iodine::Logger::DEBUG}):
+  # - 0: NONE - No logging
+  # - 1: FATAL - Fatal errors only
+  # - 2: ERROR - Errors and above
+  # - 3: WARN - Warnings and above
+  # - 4: INFO - Info and above (default)
+  # - 5: DEBUG - Debug and above
+  #
+  # @example
+  #   Iodine::Logger.level = :debug
+  #   Iodine::Logger.debug "connected to:", -> { expensive_host_lookup }
+  #   Iodine::Logger.info { "lazy message" }
+  #   Iodine::Logger << "info level message"
+  module Logger
+    # Logs each message at fatal level (level 1).
+    #
+    # @param messages [Array<Object>] the messages (converted with #to_s);
+    #   callable arguments are invoked and their return value logged
+    # @yield called last; the return value is logged
+    # @return [nil]
+    def self.fatal(*messages, &block); end
+
+    # Logs each message at error level (level 2).
+    #
+    # @param messages [Array<Object>] the messages (converted with #to_s);
+    #   callable arguments are invoked and their return value logged
+    # @yield called last; the return value is logged
+    # @return [nil]
+    def self.error(*messages, &block); end
+
+    # Logs each message at warning level (level 3).
+    #
+    # @param messages [Array<Object>] the messages (converted with #to_s);
+    #   callable arguments are invoked and their return value logged
+    # @yield called last; the return value is logged
+    # @return [nil]
+    def self.warn(*messages, &block); end
+
+    # Logs each message at info level (level 4).
+    #
+    # @param messages [Array<Object>] the messages (converted with #to_s);
+    #   callable arguments are invoked and their return value logged
+    # @yield called last; the return value is logged
+    # @return [nil]
+    def self.info(*messages, &block); end
+
+    # Logs each message at debug level (level 5).
+    #
+    # @param messages [Array<Object>] the messages (converted with #to_s);
+    #   callable arguments are invoked and their return value logged
+    # @yield called last; the return value is logged
+    # @return [nil]
+    def self.debug(*messages, &block); end
+
+    # Alias for {info} - logs the message at info level (level 4).
+    #
+    # @param message [Object] the message (converted with #to_s)
+    # @return [nil]
+    def self.<<(message); end
+
+    # Returns the current logging level (the process-wide C STL log level).
+    #
+    # @return [Integer] the current log level (0-5)
+    def self.level; end
+
+    # Sets the current logging level (the process-wide C STL log level).
+    #
+    # @param level [Integer, Symbol] the log level: 0-5, or one of
+    #   `:none`, `:fatal`, `:error`, `:warn`, `:info`, `:debug`
+    # @return [Integer, Symbol] the given level
+    # @raise [TypeError] if level is not an Integer or Symbol
+    # @raise [ArgumentError] if the level value is unknown or out of range
+    #
+    # @example
+    #   Iodine::Logger.level = Iodine::Logger::DEBUG
+    #   Iodine::Logger.level = :warn
+    def self.level=(level); end
+  end
 
   #######################
 
@@ -1204,7 +1272,7 @@ module Iodine
         # Creates a new RESP3 Pub/Sub engine.
         #
         # @param url [String] RESP3-compatible server URL (e.g., "redis://localhost:6379/")
-        # @param ping [Integer] Ping interval in seconds (0-255, default: 300)
+        # @param ping [Integer] Ping interval in seconds (0-255, 0 = default of 30 seconds)
         # @return [Iodine::PubSub::Engine::RESP3]
         #
         # URL formats supported:

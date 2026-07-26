@@ -28,7 +28,7 @@ Ruby API Methods (defined on Iodine module):
 - Iodine.worker?        - Check if this is a worker process
 - Iodine.workers / =    - Get/set number of worker processes
 - Iodine.threads / =    - Get/set number of threads per worker
-- Iodine.verbosity / =  - Get/set logging verbosity level
+- Iodine::Logger.level / = - Get/set logging level (Iodine.verbosity deprecated)
 - Iodine.secret / =     - Get/set server secret key
 - Iodine.shutdown_timeout / = - Get/set graceful shutdown timeout
 ***************************************************************************** */
@@ -272,48 +272,6 @@ static VALUE iodine_threads_set(VALUE klass, VALUE threads) {
   }
   threads = LL2NUM(fio_cli_get_i("-t"));
   return threads;
-}
-
-/* *****************************************************************************
-Verbosity - Logging Level Configuration
-***************************************************************************** */
-
-/**
- * Returns the current verbosity (logging) level.
- *
- * Log levels (from facil.io):
- * - 0: FIO_LOG_LEVEL_NONE    - No logging
- * - 1: FIO_LOG_LEVEL_FATAL   - Fatal errors only
- * - 2: FIO_LOG_LEVEL_ERROR   - Errors and above
- * - 3: FIO_LOG_LEVEL_WARNING - Warnings and above
- * - 4: FIO_LOG_LEVEL_INFO    - Info and above (default)
- * - 5: FIO_LOG_LEVEL_DEBUG   - Debug and above
- *
- * @param klass The Iodine module (VALUE)
- * @return Current log level as Fixnum
- *
- * Ruby: Iodine.verbosity
- */
-static VALUE iodine_verbosity(VALUE klass) {
-  return RB_INT2FIX(((long)FIO_LOG_LEVEL_GET()));
-  (void)klass;
-}
-
-/**
- * Sets the current verbosity (logging) level.
- *
- * @param klass The Iodine module (VALUE)
- * @param num The log level (Fixnum, 0-5)
- * @return The new log level
- *
- * @note Raises TypeError if num is not a Fixnum.
- *
- * Ruby: Iodine.verbosity = n
- */
-static VALUE iodine_verbosity_set(VALUE klass, VALUE num) {
-  rb_check_type(num, RUBY_T_FIXNUM);
-  FIO_LOG_LEVEL_SET(RB_FIX2INT(num));
-  return num;
 }
 
 /* *****************************************************************************

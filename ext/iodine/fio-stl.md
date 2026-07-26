@@ -18534,9 +18534,11 @@ After `HELLO 3`, `SUBSCRIBE` no longer commandeers the connection, so the master
 
 | Traffic | Handling |
 |---|---|
-| Commands (`fio_redis_send`), `PUBLISH`, `PING`, `HELLO` | Lock-step FIFO queue — one command in flight at a time |
-| `SUBSCRIBE` / `PSUBSCRIBE` / `UNSUBSCRIBE` / `PUNSUBSCRIBE` | Fire-and-forget writes; confirmations arrive as RESP3 **push frames**, never command replies, so they cannot desynchronize the queue |
+| Commands (`fio_redis_send`), `PUBLISH`, `PING`, `HELLO` | Lock-step queue (`should_wait`) — the next command is sent only after the reply arrives |
+| `SUBSCRIBE` / `PSUBSCRIBE` / `UNSUBSCRIBE` / `PUNSUBSCRIBE` | Same queue, no-wait — classified by verb at accept time, popped as soon as they are sent; confirmations arrive as RESP3 **push frames**, never command replies, so they cannot desynchronize the queue |
 | Incoming pub/sub messages | RESP3 **push frames**, routed to the push handler and re-published locally via `fio_pubsub_engine_ipc()` (zero-copy from the read buffer) |
+
+All outgoing bytes flow through the single command queue. `HELLO` is always the first command on the wire of every (re)connection (queued at the head in `on_attach`, before the resubscribe batches and any leftover commands), and nothing is written while the TCP connection is still in progress (`conn.ready` gate).
 
 ```
               Master Process
@@ -18759,7 +18761,7 @@ Returns `0` on success, `-1` if `engine` is `NULL` or `command` is not a FIOBJ a
 
 **On a worker**: the RESP bytes are forwarded to the master via IPC. The master executes the command, serializes the reply to RESP, and sends it back. The worker deserializes and calls the callback on its IO thread. This is transparent to the caller.
 
-**Never** pass `SUBSCRIBE`, `PSUBSCRIBE`, `UNSUBSCRIBE`, or `PUNSUBSCRIBE` to `fio_redis_send()`. These are managed internally as fire-and-forget writes (their confirmations are RESP3 push frames, not command replies); sending them through the command queue would desynchronize the lock-step reply FIFO.
+**Never** pass `SUBSCRIBE`, `PSUBSCRIBE`, `UNSUBSCRIBE`, or `PUNSUBSCRIBE` to `fio_redis_send()`. Subscriptions must go through `fio_pubsub_subscribe()` so the Pub/Sub system tracks them (local delivery, resubscription on reconnect). Direct sends bypass that bookkeeping and their confirmations (RESP3 push frames) are ignored.
 
 **Callback signature:**
 
@@ -18928,12 +18930,14 @@ See [./404 ipc.md](./404 ipc.md) for IPC internals.
 
 ## Reconnect and Failure Behavior
 
-- **Connection loss**: The `on_close` callback logs a warning and schedules a reconnect via `fio_io_defer()`. Reconnection is attempted after a brief delay; on failure, it retries again.
+- **Connection loss**: The `on_close` callback logs a warning, silently purges any stale queued `HELLO` commands (a fresh one is queued on reconnect), and schedules a reconnect via a 1s single-shot timer. The delay prevents hot reconnect loops against peers that accept and instantly drop.
+- **Connection attempt failure**: A connect that fails before attach (e.g., connection refused) is reported through the IO layer's `on_failed` callback (the redis protocol's `on_close` only fires for established connections). The dangling `conn.io` handle is cleared and the same 1s retry timer is scheduled. A synchronous `fio_io_connect` failure takes the same path. The failed io is reactor-owned and freed by the IO layer's connecting-protocol cleanup - the engine never frees it.
 - **Handshake**: Every (re)connection starts with `HELLO 3` (auth folded in) as the first queued command; its map reply is consumed by the normal reply FIFO. Handshake failure is a hard engine error (the engine stops; there is no RESP2 fallback).
 - **Queued commands**: Commands in the queue on the master stay queued and are flushed once the connection is re-established (after `HELLO`).
-- **Resubscription**: After the `HELLO` handshake, the engine iterates the current Pub/Sub channel maps and re-sends all active `SUBSCRIBE` / `PSUBSCRIBE` commands directly (single batched write, fire-and-forget). This restores subscription state without touching ref counts or re-attaching the engine.
+- **Resubscription**: On every (re)connection, the engine iterates the current Pub/Sub channel maps and queues all active `SUBSCRIBE` / `PSUBSCRIBE` commands at the queue head (batched into a static buffer, one no-wait queue node per flushed batch), right after `HELLO`. This restores subscription state without touching ref counts or re-attaching the engine.
 - **Keepalive**: A `PING` is queued on the connection after `ping_interval` seconds idle. If the connection has unacknowledged commands when the timeout fires, the connection is forcibly closed and reconnected.
 - **Engine destroyed while commands are pending**: All queued commands have their callbacks invoked immediately with `reply = FIOBJ_INVALID`.
+- **Retry suppression**: Reconnect timers are never scheduled after engine destroy (`running == 0`) or during reactor shutdown, so a close caused by destroy or shutdown does not resurrect the connection.
 
 ---
 
