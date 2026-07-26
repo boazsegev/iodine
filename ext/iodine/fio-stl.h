@@ -105344,6 +105344,7 @@ static struct {
   size_t max_length;
   fio_io_s *listener;                   /* Needs to be reset sometimes? */
   fio_io_s *worker_connection;          /* Worker's connection to master */
+  void *worker_buffer;                  /* Worker's connection buffer (ID) */
   fio_io_protocol_s protocol_ipc;       /* IPC protocol */
   fio_io_protocol_s protocol_rpc;       /* RPC protocol */
   fio_io_protocol_s protocol_rpc_hello; /* RPC handshake protocol */
@@ -106218,9 +106219,22 @@ FIO_SFUNC void fio___ipc_on_shutdown_master(fio_io_s *io) {
 FIO_SFUNC void fio___ipc_on_close(void *buffer, void *udata) {
   fio___ipc_parser_s *p = (fio___ipc_parser_s *)buffer;
   fio___ipc_parser_destroy(p);
-  if (!fio_io_is_master()) {
+  /*
+   * Only the worker's OWN connection to the master is fatal when closed.
+   *
+   * After `fork()`, a new worker inherits the master's IO objects - including
+   * the master-side IPC connections of previous workers. Closing these
+   * inherited IOs fires this callback in the child, where `is_master()` is
+   * false. Matching against `worker_buffer` (the per-connection buffer of the
+   * worker's own connection) ensures inherited connections are cleaned up
+   * silently instead of stopping the reactor (which caused a worker respawn
+   * storm on hot restarts).
+   */
+  if (!fio_io_is_master() && FIO___IPC.worker_buffer &&
+      buffer == FIO___IPC.worker_buffer) {
     FIO_LOG_DEBUG2("(%d) lost ICP connection", fio_io_pid());
     FIO___IPC.worker_connection = NULL;
+    FIO___IPC.worker_buffer = NULL;
     fio_io_stop();
   }
   (void)udata;
@@ -106693,6 +106707,9 @@ FIO_SFUNC void fio___ipc_on_fork(void *ignr_) {
   if (!FIO___IPC.worker_connection) {
     FIO_LOG_ERROR("Failed to connect to master IPC socket: %s",
                   FIO___IPC.ipc_url);
+  } else {
+    /* remember the connection's buffer identity (see fio___ipc_on_close) */
+    FIO___IPC.worker_buffer = (void *)(FIO___IPC.worker_connection + 1);
   }
 }
 void fio___ipc_init____(void); /* IDE Marker */
