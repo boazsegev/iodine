@@ -5,441 +5,254 @@
 [![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
 [![Gem Version](https://badge.fury.io/rb/iodine.svg)](https://badge.fury.io/rb/iodine)
 [![Gem](https://img.shields.io/gem/dt/iodine.svg)](https://rubygems.org/gems/iodine)
-[![GitHub](https://img.shields.io/badge/GitHub-Open%20Source-blue.svg)](https://github.com/boazsegev/iodine)
 
-# iodine - The Ruby Server/Client Combo You Wanted
+# Iodine — a fast, C-powered server and client for Ruby
 
-Iodine is a fast concurrent Web Application Server/Client combination that's perfect for both micro-services and inter-connected monoliths.
+**Try your existing Rack app on Iodine.** Iodine includes built-in WebSockets, SSE, Pub/Sub, static files, TLS, and hot application restarts.
 
-* Iodine is a [Rack Application **Server**](examples/config.ru).
-* Iodine is a [NeoRack Application **Server**](examples/config.nru).
-* Iodine is an evented [TCP/IP, HTTP, WebSocket and SSE **Client**](examples/client).
+In a local three-trial benchmark, it delivered ~2.4× Puma's throughput at lower latency.
 
-Designed for your Real-Time and Event-Stream needs, Iodine boasts native support for:
+## Keep Client I/O Moving While Ruby Works
 
-* HTTP, WebSockets and EventSource (SSE) Services (server/client);
-* Event-Stream Pub/Sub (with optional RESP3 scaling via Valkey or Redis);
-* Hot Restarts and Hot Deployments;
-* Static File Service (with automatic `.br`, `.gz`, and `.zip` support for pre-compressed assets);
-* Performant Request Logging;
-* Fast(!) builtin Mustache template render engine;
-* Asynchronous Tasks and Timers (non-persistent memory cached);
-* HTTP/1.1 keep-alive and pipeline throttling;
-* Separate Memory Allocators for Heap Fragmentation Protection;
-* TLS 1.2 and above (Requiring OpenSSL >= 3);
-* and more!
+Built on [facil.io](https://facil.io), Iodine runs [Rack](https://github.com/rack/rack) and [NeoRack](https://github.com/boazsegev/neorack) applications and includes an evented client for TCP, HTTP, WebSockets, and SSE.
 
-Iodine is a Ruby wrapper for parts of the [facil.io](https://facil.io) C framework, leveraging the speed of C for many common web application tasks. In addition, iodine abstracts away all network concerns, so you never need to worry about the transport layer, leaving you free to concentrate on your application logic.
+**Network I/O never waits on the Ruby GVL.** Each worker handles client I/O in a dedicated C reactor thread outside the GVL. A separate pool of Ruby threads runs application code.
 
-Leveraging the power of the [C facil.io framework](https://github.com/boazsegev/facil.io) for Ruby:
+This separation lets one worker keep thousands of connections alive while Ruby code executes.
 
-* Iodine can handle **tens of thousands of concurrent connections** (tested with more then 20K connections on Linux)! Limits depend on machine resources and app design, not on the server.
+Iodine calls `accept` for new connections only when Ruby threads are available. This automatically routes new connections to the first available worker.
 
-* Iodine is ideal for **Linux/Unix** based systems (i.e. macOS, Ubuntu, FreeBSD etc') and evented IO. **Windows** is also supported (single-process mode only - cluster mode requires `fork`), with native Winsock evented IO.
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '20px', 'clusterBkg': '#fafafa', 'clusterBorder': '#455a64', 'clusterTitleColor': '#263238', 'titleColor': '#263238'}, 'flowchart': { 'htmlLabels': true, 'curve': 'linear', 'padding': 24, 'nodeSpacing': 48, 'rankSpacing': 56 }}}%%
+flowchart TB
+    subgraph Master["Master Process"]
+        MONITOR["Worker Monitoring"]
+        PUBSUB["Pub/Sub Postoffice"]
+    end
 
-Iodine is a C extension for Ruby, developed and optimized for the mainstream Ruby MRI.
+    subgraph Worker["Worker(s) [0...N]"]
+        direction TB
 
-## Security
-
-Iodine was built with security in mind, making sure that clients will not have the possibility to abuse the server's resources. This includes limiting header line length, body payload sizes, WebSocket message length etc', as well as diverting larger HTTP payloads to temporary files.
-
-please review the `iodine -h` command line options for more details on these and see if you need to change the defaults to fit better with your specific restrictions and use-cases.
+        subgraph ClientIO["IO/Reactor Thread"]
+            HTTP["HTTP"]
+            WS["WebSockets"]
+            SSE["SSE"]
+            MAILMAN["Pub/Sub Mailman"]
+        end
 
 
-## WebSockets Server/Client with Native Pub/Sub
+        subgraph RubyBox["Ruby Threads / GVL"]
+            APP["Application Code"]
+        end
+    end
 
-Iodine includes a light and fast HTTP and WebSocket server (and client) written in C that was written to support both the [NeoRack Specifications](https://github.com/boazsegev/neorack) (with [WebSocket](https://github.com/boazsegev/neorack/blob/master/extensions/websockets.md) / [SSE](https://github.com/boazsegev/neorack/blob/master/extensions/sse.md)) and [Rack specifications](https://github.com/rack/rack/blob/main/SPEC.rdoc) (with the experimental [WebSocket / SSE Rack draft](https://github.com/boazsegev/neorack/blob/master/deprecated/Rack-WebSocket-Draft.md)).
+    ClientIO ~~~ RubyBox
 
-Iodine also supports native process-cluster Pub/Sub and a native RESP3 engine to easily scale iodine's Pub/Sub horizontally.
+    Master <-->|IPC & Monitoring| Worker
+    ClientIO <-->|callbacks| RubyBox
+    ClientIO <-->|HTTP <code>accept</code> balancing| RubyBox
 
-## HTTP Streaming
+    style Master fill:#f3e5f5,stroke:#6a1b9a,stroke-width:5px
+    style Worker fill:#e3f2fd,stroke:#1565c0,stroke-width:5px
+    style ClientIO fill:#e3f2fd,stroke:#1565c0,stroke-width:3px
+    style RubyBox fill:#fff3e0,stroke:#ef6c00,stroke-width:3px
 
-Although Iodine supports HTTP Streaming, Streaming an HTTP response using a classical Rack approach (as in with Rails) is often a bad performance choice no matter the server you use.
+    classDef master fill:#ffffff,stroke:#6a1b9a,stroke-width:2px,color:#4a148c
+    classDef io fill:#ffffff,stroke:#1565c0,stroke-width:2px,color:#0d47a1
+    classDef ruby fill:#ffffff,stroke:#ef6c00,stroke-width:2px,color:#e65100
 
-Iodine with [NeoRack](https://github.com/boazsegev/neorack) attempts to offer a better approach for streaming, but at the end of the day, it would be better to avoid streaming when possible. If you plan to Stream anyway, strive for an evented approach rather than blocking a worker thread or using a classical Rack based application.
+    class PUBSUB,MONITOR master
+    class HTTP,WS,SSE,MAILMAN io
+    class APP ruby
+```
 
-## Installing and Running Iodine
+## Install and Try Your App
 
-Install iodine on any Linux / BSD / macOS system using:
+**Bundler-managed apps:** add Iodine to your Gemfile. Keep your current server gem installed while you evaluate it:
+
+```ruby
+# Gemfile
+gem "iodine", "~> 0.8"
+```
+
+```bash
+bundle install
+bundle exec iodine
+```
+
+Iodine loads `config.ru` (or `config.nru`) from the current directory by default. It accepts `THREADS` and `WORKERS` environment variables.
+
+**Rails apps:** if you use Puma, remove `config/puma.rb` or make its content conditional when switching servers. Iodine honors `RAILS_MAX_THREADS` and `WEB_CONCURRENCY` when not otherwise configured, so most Rails apps need no initializer.
+
+Prefer command-line options and environment variables for code-free configuration updates.
+
+**Standalone Rack apps:** install and run the CLI directly:
 
 ```bash
 gem install iodine
-```
-
-Using the iodine server is easy, simply add iodine as a gem to your Rails / Sinatra / Rack application's `Gemfile`:
-
-```ruby
-gem 'iodine', '~>0.8'
-```
-
-Then start your application from the command-line / terminal using iodine:
-
-```bash
 iodine
 ```
 
-### TLS/SSL Configuration
+## Add Real-Time Features Without Extra Infrastructure
 
-Iodine supports two TLS backends:
+**Start without a message broker.** Iodine supports WebSockets and Server-Sent Events in both the server and client. Its built-in Pub/Sub engine routes messages across local worker processes.
 
-1. **OpenSSL** (default when available) - Full-featured TLS 1.2+ support
-2. **Embedded TLS 1.3** - Lightweight built-in implementation (always available)
+A single-host deployment can therefore broadcast without Redis, Valkey, or another service to deploy, monitor, secure, or pay for.
 
-#### Automatic Detection
-
-Iodine automatically detects OpenSSL during installation and uses it as the default TLS backend. If OpenSSL is unavailable, the embedded TLS 1.3 implementation is used automatically.
-
-#### Using Embedded TLS 1.3
-
-The embedded TLS 1.3 implementation is always available and can be enabled in several ways:
-
-**At Runtime (recommended):**
-```ruby
-# In your application code
-Iodine::TLS.default = :iodine
-```
-
-**Via Environment Variable:**
-```bash
-# Set before starting iodine
-export IODINE_MTLS=1
-iodine
-```
-
-**Via Command Line:**
-```bash
-iodine -mtls
-```
-
-**At Compile Time (forces embedded as default):**
-```bash
-IODINE_USE_EMBEDDED_TLS=1 gem install iodine
-```
-
-#### Checking TLS Backend Availability
-
-```ruby
-require 'iodine'
-
-# Check what's available
-Iodine::TLS::OPENSSL_AVAILABLE   # => true/false
-Iodine::TLS::EMBEDDED_AVAILABLE  # => true (always)
-Iodine::TLS::SUPPORTED           # => true (always - at least embedded is available)
-
-# Get/set the current default
-Iodine::TLS.default              # => :openssl or :iodine
-Iodine::TLS.default = :iodine    # Switch to embedded TLS 1.3
-```
-
-#### TLS Certificate Configuration
-
-```bash
-# Self-signed certificate (auto-generated)
-iodine -tls
-
-# Custom certificate
-iodine -cert /path/to/cert.pem -key /path/to/key.pem
-
-# With password-protected key
-iodine -cert /path/to/cert.pem -key /path/to/key.pem -tls-pass "password"
-```
-
-#### TLS Client Authentication (mTLS)
-
-Iodine can request and verify client certificates against a custom CA file or the system trust store:
-
-```bash
-# Verify client certificates against a CA file
-iodine -b https://0.0.0.0/?trust=ca.pem
-
-# Or against the system trust store
-iodine -b https://0.0.0.0/?trust=system
-```
-
-Programmatically, use `Iodine::TLS#trust` when setting up a listener, and review the peer's certificate chain using `Iodine::Connection#certificate` (leaf) and `Iodine::Connection#each_certificate` (whole chain):
-
-```ruby
-def on_open(client)
-  if (cert = client.certificate)
-    puts "Client CN: #{cert.cn} (verified: #{cert.verified?})"
-  end
-end
-```
-
-**Note**: The embedded TLS 1.3 implementation has not been independently audited. For production use with high security requirements, OpenSSL is recommended.
-
-### Reporting Issues and Known Issues
-
-See the [GitHub Open Issues](https://github.com/boazsegev/iodine/issues) list for known issues and to report new issues.
-
-PRs and issues related to [the facil.io C STL and framework](https://github.com/facil-io/cstl) should be directed to [the Proper C STL facil.io repository](https://github.com/facil-io/cstl).
-
-### Optimizing Iodine's Concurrency
-
-To get the most out of iodine, consider the amount of CPU cores available and the concurrency level the application requires. See if this works for your application or customize according to the application's needs.
-
-Command line arguments allow easy access to different options, including concurrency levels. i.e., to set up 16 threads and 4 processes:
-
-```bash
-iodine -t 16 -w 4
-```
-
-By using negative values, Iodine can calculate a good enough concurrency model for different applications. Here are some machine dependent examples:
-
-```bash
-# fast applications
-iodine -t 1 -w -2
-# slower, CPU heavy applications
-iodine -t 4 -w -4
-# slower, IO bound applications
-iodine -t 5 -w -1
-```
-
-Note that negative values are evaluated as "CPU Cores / abs(Value)". i.e., on an 8 core CPU machine, the number `-2` will produce 4 worker processes or threads.
-
-The environment variables `THREADS` and `WORKERS` are automatically recognized when iodine is first required, allowing environment specific customization. i.e.:
-
-```bash
-export THREADS=4
-export WORKERS=-2 # negative values are fractions of CPU cores.
-iodine
-```
-
-### Running with Rails
-
-On Rails:
-
-1. Add `gem "iodine", "~> 0.8"` to your `Gemfile` (and comment out the `puma` gem).
-
-1. Remove the `config/puma.rb` file (or make sure the code is conditional).
-
-1. Optionally, it's possible to add a `config/initializers/iodine.rb` file. For example:
-
-    ```ruby
-    # Iodine setup - use conditional setup to make it easy to test other servers such as Puma:
-    if(defined?(Iodine))
-      Iodine.threads = ENV.fetch("RAILS_MAX_THREADS", 5).to_i if ENV["RAILS_MAX_THREADS"]
-      Iodine.workers = ENV.fetch("WEB_CONCURRENCY", -2).to_i if ENV["WEB_CONCURRENCY"]
-    end
-    ```
-
-**Note**: command-line instructions (CLI) and environment variables are the recommended way for configuring iodine, allowing for code-less configuration updates.
-
-### Logging
-
-To enable performant HTTP request logging from the command line, use the `-v` (verbose) option:
-
-```bash
-iodine -v
-```
-
-Iodine offers a slight performance boost by caching the date and time Strings when answering multiple requests during the same time frame.
-
-### Static Files and Assets
-
-Iodine can send static file and assets directly, bypassing the Ruby layer completely.
-
-Since the Ruby layer is unaware of these requests, logging can be performed by turning iodine's logger on (see above).
-
-```bash
-iodine -www /my/public/folder
-```
-
-Iodine will automatically test for missing extension file names, such as `.html`, `.htm`, `.txt`, and `.md`, as well as a missing `index` file name when `path` points to a folder.
-
-#### Pre-Compressed assets / files
-
-Iodine will automatically recognize and send the compressed version of a static file (`.gz`, `.br`, `.zip`) if the client (browser) supports the compressed transfer-encoding.
-
-For example, to offer a compressed version of `style.css`, run (in the terminal):
-
-```bash
-gzip -k -9 style.css
-```
-
-This results in both files, `style.css` (the original) and `style.css.gz` (the compressed).
-
-When a browser that supports compressed encoding requests the file (and most browsers do), iodine will recognize that a pre-compressed option exists and will prefer the `gzip` compressed version.
-
-It's as easy as that. No extra code required.
-
-## Native Pub/Sub with *optional* RESP3 scaling
-
-Iodine's core, `facil.io`, offers a native Pub/Sub implementation that can scale across machine boundaries through a RESP3-compatible database such as Valkey or Redis.
-
-The default implementation covers the whole process cluster, so a single cluster does not need a RESP3 backend.
-
-Once a single iodine process cluster is not enough, horizontally scaling the Pub/Sub layer is as simple as connecting iodine to a RESP3-compatible database using `-r <url>` from the command line:
+**Add Redis or Valkey when your deployment needs it.** Configure a RESP3-compatible service for external integration or independent broker operations:
 
 ```bash
 iodine -w -1 -t 8 -r redis://localhost:6379
 ```
 
-### RESP3 (Valkey/Redis) Configuration
+The [API reference](http://www.rubydoc.info/github/boazsegev/iodine) covers programmatic RESP3 setup and direct commands.
 
-A RESP3-compatible Valkey or Redis database can be configured from the command line or programmatically:
-
-**Command Line:**
-```bash
-# Basic RESP3 connection
-iodine -r redis://localhost:6379
-
-# With authentication
-iodine -r redis://user:password@redis.example.com:6379
-
-# With ping interval (seconds)
-iodine -r redis://localhost:6379 -rp 30
-```
-
-**Programmatic:**
-```ruby
-# Create a RESP3 engine. Its internal HELLO 3 handshake starts automatically.
-resp3 = Iodine::PubSub::Engine::RESP3.new("redis://localhost:6379/", ping: 30)
-
-# Check readiness: :connecting, :connected, or :error.
-resp3.connection_state
-
-# Set as default Pub/Sub engine
-Iodine::PubSub.default = resp3
-
-# Now all Iodine.publish calls will go through the RESP3 engine
-Iodine.publish(channel: "chat", message: "Hello from Ruby!")
-```
-
-### Sending Direct Commands through RESP3
-
-The RESP3 engine also supports arbitrary Valkey/Redis commands:
-
-```ruby
-resp3 = Iodine::PubSub::Engine::RESP3.new("redis://localhost:6379/")
-
-# Send commands with async callbacks
-resp3.cmd("SET", "mykey", "Hello, Redis!") { |result| puts result }
-resp3.cmd("GET", "mykey") { |value| puts "Value: #{value}" }
-resp3.cmd("KEYS", "*") { |keys| p keys }
-resp3.cmd("INCR", "counter") { |new_value| puts new_value }
-```
-
-**Note**: Do not use `SUBSCRIBE`, `PSUBSCRIBE`, `UNSUBSCRIBE`, or `PUNSUBSCRIBE` commands directly. These are handled internally by the Pub/Sub system.
-
-### Pub/Sub Decentralized Horizontal Scaling
-
-Iodine can auto-detect other iodine machines on the same local network (using UDP publishing for address `0.0.0.0`).
-
-This allows iodine to scale horizontally even without a RESP3 database.
-
-To do so, all machines running iodine must share the same pub/sub port and secret.
-
-Setting the secret can be performed using the `SECRET` environment variable, or the command line (`-scrt`).
-
-Setting the pub/sub public port can be performed using the `PUBSUB_PORT` environment variable, or the command line (`-bp`).
-
-Pub/Sub messages are encrypted using ChaCha20/Poly1305 and the shared secret, mitigating the risk of sensitive data leaking. However, note that if the machine itself is shared than the secret might be readable by those sharing the machine (depending how it is stored).
-
-**Note** this feature is difficult to test and I don't test it regularly. Therefore, please let me know if you notice anything come up (i.e., dropped messages, isolated machines, whatever).
-
-#### Pub/Sub Details and Limitations
-
-Iodine's internal Pub/Sub Letter Exchange Protocol (inherited from facil.io) imposes the following limitations on message exchange:
-
-* Distribution Channel Names are limited to 2^16 bytes (65,536 bytes).
-
-* Message payload is limited to 2^24 bytes (16,777,216 bytes == about 16Mb).
-
-* Empty messages (no numerical filters, no channel, no message payload, no flags) are ignored.
-
-* Message delivery requires a match for both the channel name (or pattern) and the numerical filter (if none provided, zero is used).
-
-RESP3 (Valkey/Redis) Support Notes:
-
-* Iodine's RESP3 client does *not* support multiple databases. However, multiple clients can be used at the same time.
-
-    This is both because [database scoping is often ignored by Redis during pub/sub](https://redis.io/topics/pubsub#database-amp-scoping) and because [Redis Cluster doesn't support multiple databases](https://redis.io/topics/cluster-spec). This indicated that multiple database support just isn't worth the extra effort and performance hit.
-
-* The iodine RESP3 client uses a single connection per process cluster, minimizing network load and bandwidth.
-
-* Connections are automatically re-established if timeouts or errors occur.
-
-* The RESP3 engine supports authentication via URL (e.g., `redis://user:password@host:port`).
-
-## Hot Restart / Hot Deployments
-
-Iodine will "hot-restart" the application by shutting down and re-spawning the worker processes, reloading all the gems (except `iodine` itself) and the application code along the way.
-
-This will clear away any memory fragmentation concerns and other issues that might plague a long running worker process or ruby application.
-
-### How to Hot Restart
-
-To hot-restart iodine, send the `SIGUSR1` signal to the root process or to restart a single process (may result in multiple versions of the code running) signal `SIGINT` to a worker process.
-
-The following code will hot-restart iodine every 4 hours when iodine is running in cluster mode:
-
-```ruby
-Iodine.run_after(4 * 60 * 60 * 1000, 0) do
-  Process.kill("SIGUSR1", Process.pid) unless Iodine.worker?
-end
-```
-
-Alternatively, use the `-hr <seconds>` command line option to schedule automatic hot-restarts without any code.
-
-### How does Hot Restart Work?
-
-This will only work with cluster mode (even if using only 1 worker, but not when using 0 workers).
-
-The main process schedules new workers to spawn and signals the old ones to shut down. The code is (re)loaded by the worker (child) processes (the main process never loads the app). Any other option would have resulted in code artifacts during the upgrade.
-
-The old workers won't accept new connections but will complete any existing requests and may even continue to respond to existing clients if they already pipelined their requests. These responses will use the old version of the app.
-
-The new workers will reload the app code (including reloading all the of gems except for `iodine` itself) and start accepting and responding to new clients.
-
-You will have both groups of workers with both versions of your code running for a short amount of time while older clients are served, but once the rotation is complete you should be running only the new code (and workers).
-
-**Caveats**: 
-
-- It's important to note that slower clients that hadn't sent their full request will be disconnected. This is a side effect I didn't address for security reasons. I did not wish to allow maliciously slow clients to perpetually block the child process from restarting.
-
-- Also, a child that doesn't finish processing and sending the response within 15 seconds will be terminated without the full response being sent (this is controlled by the `FIO_IO_SHUTDOWN_TIMEOUT` compilation flag that defaults to `15000` milliseconds). This, again, is a malicious slow client concern, but also imposes some requirements on the web app code.
-
-### Optimizing for Memory Instead
-
-Using the `--preload` (or `-preload`) option will disable hot code swapping and save memory by loading the application to the root process (leveraging the copy-on-write memory OS feature). It will also disable any ability to update the app without restarting iodine (useful, e.g., when using a container and load balancer for hot restarts).
-
-## How does it compare to other servers?
-
-Although Puma significantly improved since the first Iodine release, my tests show that Iodine is still significantly faster both in terms or latency and requests per second.
-
-In my tests I avoided using NeoRack, as it wouldn't be fair. NeoRack by itself adds a significant performance boost due its design. For example, NeoRack it minimizes conversions between data formats and uses shorter String data (i.e., doesn't append `HTTP_` to header names).
-
-I am excited to have you test it for yourself - even better if you test performance using your own application and a number of possible different settings (how many threads per CPU core? how many worker processes? middleware vs. server request logging, etc').
-
-I recommend benchmarking the performance for yourself using tools such as `wrk`, i.e.:
+**Optional LAN mesh:** connect machines on the same local network through automatic UDP peer discovery. All participating machines must share the broadcast port and secret:
 
 ```bash
-$ wrk -c200 -d4 -t2 http://localhost:3000/
+iodine -w -1 -t 8 -bp 7555 -scrt "my-cluster-secret"
 ```
 
-The best application to use for benchmarking is your actual application.
+Mesh traffic uses ChaCha20/Poly1305 with the shared secret. The `SECRET` and `PUBSUB_PORT` environment variables provide the same settings. The secret may be readable by other users on the same machine, and this feature is lightly tested; please report dropped messages or isolated machines.
 
-You could create a simple `config.ru` file with a **hello world** app, and even though this will really showcase the server's performance, it probably won't matter for your specific use-case:
+## Use Built-In Static Files, Compression, and TLS
 
-```ruby
-App = Proc.new do |env|
-   [200,
-     {   "Content-Type" => "text/html".freeze,
-         "Content-Length" => "16".freeze },
-     ['Hello from Rack!'.freeze]  ]
-end
+**Static files:** serve a public directory without Rack middleware. The C layer answers `GET` and `HEAD` requests directly, bypassing Ruby. Other methods and misses fall through to your app.
 
-run App
-```
-
-Then start comparing servers. Here are the settings I used to compare iodine and Puma (4 processes, 4 threads):
+When the client supports compression, Iodine serves a neighboring pre-compressed `.br`, `.zstd`, `.gz`, or `.zip` file. It also probes missing extensions (`.html`, `.htm`, `.txt`, `.md`) and directory `index` files.
 
 ```bash
-$ RACK_ENV=production iodine -p 3000 -t 4 -w 4 -v
-# vs.
-$ RACK_ENV=production puma -p 3000 -t 4 -w 4 -v
-# Review the `iodine -h` help for more command line options.
+iodine -www /my/public/folder
 ```
 
-It's recommended that the servers (Iodine/Puma) and the client (i.e. `wrk`) run on separate machines.
+**Compression:** dynamic response deflation and WebSocket permessage-deflate are enabled by default; disable them with `-no-dynd` and `-no-wsd`.
+
+**Request logging:** enable request logging with `-v`. Date and time strings are cached to reduce formatting work.
+
+**TLS:** use your own certificate with either OpenSSL or the embedded TLS 1.3.
+
+```bash
+iodine -cert cert.pem -key key.pem # OpenSSL backend
+iodine -mtls # embedded TLS 1.3
+```
+
+The OpenSSL backend is auto-detected at install time. Switch backends at runtime with `Iodine::TLS.default = :iodine` (or `:openssl`). The embedded TLS implementation is unaudited; review its suitability before production use.
+
+Configure client-certificate trust in the binding URL:
+
+```bash
+iodine -b https://0.0.0.0/?trust=ca.pem
+```
+
+The [API reference](http://www.rubydoc.info/github/boazsegev/iodine) covers per-listener `Iodine::TLS#trust` and peer certificate-chain inspection.
+
+**Security limits:** Iodine sets defaults for HTTP header and body sizes and incoming WebSocket message size. Configure them with `-maxln`, `-maxhd`, `-maxbd`, and `-maxms`. Large HTTP payloads can be diverted to temporary files. See `iodine -h` and load-test your chosen limits and timeouts.
+
+## Tune Workers and Threads for Your Workload
+
+Set explicit worker and thread counts, then measure your workload:
+
+```bash
+iodine -t 16 -w 4
+
+# equivalent environment configuration
+THREADS=16 WORKERS=4 iodine
+```
+
+Without explicit settings, Iodine defaults to `-t -4` and `-w -2`, so cluster mode is enabled. The defaults printed by `iodine -h` reflect any `THREADS` or `WORKERS` variables in your current environment.
+
+Negative values represent fractions of the available CPU cores. On an 8-core machine, `-w -2` starts 4 worker processes:
+
+```bash
+iodine -t 1 -w -2  # fast applications: one thread per process, cores/2 processes
+iodine -t 4 -w -4  # slower, CPU-heavy applications
+iodine -t 5 -w -1  # slower, IO-bound applications
+```
+
+Because client I/O runs in the C reactor thread, a single process has been tested with over 20,000 concurrent connections on Linux. Real limits depend on machine resources and application design, not on the server.
+
+On Linux (epoll), macOS and the BSDs (kqueue), Iodine can use worker processes; Windows runs in single-process mode because clustering requires `fork`.
+
+## Hot-Restart Application Code
+
+**Reload application code without restarting the master.** In cluster mode, send `SIGUSR1` to request a hot restart, or use `-hr <seconds>` to schedule worker restarts:
+
+```bash
+kill -USR1 <root-process-pid>
+# or
+iodine -hr 3600
+```
+
+A hot restart respawns workers and reloads application code and gems other than Iodine itself. Old workers stop accepting new connections but finish in-flight requests, so both code versions coexist briefly. Use `--preload` instead for copy-on-write memory savings; it disables code swapping.
+
+Two drain limits protect against maliciously slow clients. Clients that have not finished sending their request are disconnected. A worker that cannot finish sending its response within 15 seconds is terminated mid-response (compile-time `FIO_IO_SHUTDOWN_TIMEOUT`, default `15000` ms). Applications with SSE streams or other long-running responses should validate restart and drain behavior explicitly.
+
+## Compare Architectures, Then Benchmark Your App
+
+### Architecture Differences
+
+Puma and Iodine are both multi-process Ruby application servers with per-worker thread pools, worker supervision, and hot restarts. They differ mainly in where the I/O layer lives. Puma uses Ruby threads with `nio4r`; Iodine runs a native C reactor thread outside the GVL.
+
+Most differences below follow from that trade-off.
+
+**Legend:** ✅ supported · 🟡 partial / it depends · 🧩 available via external gem, middleware, or service · ❌ not supported
+
+| | Puma | Iodine |
+|---|---|---|
+| GVL-free I/O | ❌ | ✅ |
+| GVL-free streaming responses | ❌ | ✅² |
+| WebSocket server (+ permessage-deflate) | 🧩¹ | ✅ |
+| SSE server | 🟡² | ✅ |
+| Static file server | 🧩¹ | ✅ |
+| Response compression (brotli / gzip) | 🧩¹ | ✅ |
+| Cluster-wide Pub/Sub (+ RESP3 scaling) | 🧩¹ | ✅ |
+| NeoRack apps (`.nru`) | ❌ | ✅ |
+| Resilience to slow-client / connection-flood DoS | 🟡² | ✅ |
+| Embedded TLS 1.3 backend (OpenSSL alternative) | ❌ | ✅³ |
+| Mutual TLS (client-certificate verification) | 🟡³ | ✅ |
+| Battle-tested protocol parsers | ✅ | 🟡³ |
+| Built-in stats / control endpoint | ✅ | 🧩¹ |
+| Standard Ruby profiling & debugging | ✅ | ❌ |
+| JRuby / TruffleRuby support | ✅ | ❌ |
+| Windows support | 🟡⁴ | 🟡⁴ |
+| HTTP/2 or HTTP/3 | ❌⁴ | ❌⁴ |
+| Efficient CPU-bound Ruby work (MRI) | 🟡² | 🟡² |
+
+¹ **External dependencies:** 🧩 features are available via external gems, middleware, or services — at the cost of additional dependencies or infrastructure to operate.
+
+² **Threads & the GVL:** Puma dedicates a Ruby thread to each active connection or `each`-style stream, while Iodine's C reactor and NeoRack's callback streaming avoid consuming Ruby threads. CPU-bound work remains GVL-bound in both.
+
+³ **Security:** both servers ship hand-written C components — Puma's are far more battle-tested, while Iodine's newer security features (embedded TLS, mTLS) are tested in-house but not third-party audited.
+
+⁴ **Platforms:** both servers are POSIX-first — Puma's cluster mode requires `fork`, Iodine's Windows support is unproven, and HTTP/2 is typically handled by a front proxy.
+
+### Local Benchmark
+
+A local hello-world Rack benchmark used 4 workers × 4 threads and `wrk`. It ran on macOS arm64 (16 cores) with Ruby 4.0.1, Iodine 0.8.0.rc.02, and Puma 8.0.2. After a 3-second warmup, each server completed three 10-second measurements. Iodine received `-R` and the explicit `./examples/config-hello.ru` path; Puma received the same Rack file.
+
+| Connections | Server | Requests/sec (median) | Avg latency (median) |
+|------------|--------|-----------------------|----------------------|
+| 200 | **Iodine** | **199,177** | **0.97 ms** |
+| 200 | Puma | 83,345 | 2.38 ms |
+| 1000 | **Iodine** | **197,685** | **4.99 ms** |
+| 1000 | Puma | 81,878 | 12.12 ms |
+
+These are local measurements, not a promise about your application. The servers and client shared one machine; the 12-byte response did not exercise slow-reader or large-response backpressure. Run the same check against your app:
+
+```bash
+wrk -t4 -c200 -d10s http://localhost:3000/
+```
+
+## Use Evented Clients and Streaming
+
+Iodine can make TCP, HTTP, WebSocket, and SSE connections from the same evented runtime. Classic Rack streaming keeps a worker thread occupied. For serious streaming workloads, use [NeoRack](https://github.com/boazsegev/neorack)'s evented approach.
+
+## Documentation and Reporting Issues
+
+- **API reference:** [rubydoc.info](http://www.rubydoc.info/github/boazsegev/iodine) — full details for the RESP3 engine commands, the TLS backend selection API, Pub/Sub delivery options, and protocol limits.
+- **Iodine:** [GitHub issues](https://github.com/boazsegev/iodine/issues)
+- **facil.io C core:** [facil-io/cstl](https://github.com/facil-io/cstl)
+
+---
+
+Try it on your own app: install Iodine, switch the server command, and run a benchmark.

@@ -291,6 +291,8 @@ module Iodine
   # @option options [Integer, nil] :timeout (HTTP only) `keep-alive` timeout.
   # @option options [Integer, nil] :ping Connection timeout (WebSocket / `raw` / `tcp`).
   # @option options [Boolean, nil] :log (HTTP only) If `true`, logs `http` requests.
+  # @option options [Boolean, nil] :dynamic_deflate (HTTP only) If `true`, dynamically deflates non-streaming HTTP responses.
+  # @option options [Boolean, nil] :websocket_deflate (WebSocket only) If `true`, enables permessage-deflate.
   # @return [Iodine::Listener] the listener object
   #
   # @note Either a `handler` or a `block` (Rack App) **must** be provided.
@@ -1773,6 +1775,13 @@ module Iodine
     # @param pos [Integer, nil] the new position
     # @return [Integer] the current position
     def seek(pos = nil); end
+
+    # (HTTP Only) Releases the body's resources, freeing the in-memory buffer and closing any temporary file.
+    #
+    # Subsequent body reads will return `nil` and `length` will return `0`. The connection itself remains open.
+    #
+    # @return [self]
+    def close_body; end
 
     # @!group HTTP Cookies
 

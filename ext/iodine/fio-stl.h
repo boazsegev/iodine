@@ -1185,7 +1185,7 @@ must be returned. The memory remains valid until its round-robin slot is reused.
                              type_T,                                           \
                              units_per_allocation,                             \
                              max_concurrent_allocations)                       \
-  /** Returns a slot from the `name` static arena. */                         \
+  /** Returns a slot from the `name` static arena. */                          \
   FIO_SFUNC FIO_WARN_UNUSED type_T *name(size_t count) {                       \
     static type_T name##buffer[sizeof(type_T) * (max_concurrent_allocations) * \
                                (units_per_allocation)];                        \
@@ -1196,7 +1196,64 @@ must be returned. The memory remains valid until its round-robin slot is reused.
     at %= (max_concurrent_allocations);                                        \
     return (at * (units_per_allocation)) + name##buffer;                       \
   }                                                                            \
-  /** Returns the logical arena capacity in `type_T` units. */                \
+  /** Returns the logical arena capacity in `type_T` units. */                 \
+  FIO_IFUNC size_t name##_size(void) {                                         \
+    return (size_t)((max_concurrent_allocations) * (units_per_allocation));    \
+  }
+
+/**
+ * FIO_STATIC_SAFE_ALLOC_DEF(name, type_T, units_per_allocation,
+ *                           max_concurrent_allocations)
+ *
+ * A contention-safe variant of FIO_STATIC_ALLOC_DEF for short-lived scratch
+ * slots with an explicit checkout lifecycle. Unlike the round-robin variant
+ * (which silently reuses slots past `max_concurrent_allocations`), this
+ * allocator returns NULL when every slot is busy, letting callers fall back
+ * gracefully instead of corrupting an in-flight user of the slot.
+ *
+ * Each slot carries a small metadata header holding the busy byte. The
+ * header is `min(sizeof(type_T), 16)` bytes: one element for small types
+ * (data naturally aligned for `type_T`), capped at 16 bytes for larger
+ * types (data 16-byte aligned). `type_T` alignment must be <= 16 (enforced
+ * at compile time).
+ *
+ * Generated API:
+ *   type_T *name##_try(void);      - checkout a slot, or NULL if all busy.
+ *   void    name##_free(type_T *); - release a slot returned by name##_try.
+ *   size_t  name##_size(void);     - logical arena capacity in type_T units.
+ */
+#define FIO_STATIC_SAFE_ALLOC_DEF(name,                                        \
+                                  type_T,                                      \
+                                  units_per_allocation,                        \
+                                  max_concurrent_allocations)                  \
+  enum { name##__hdr_ = (int)((sizeof(type_T) < 16) ? sizeof(type_T) : 16) };  \
+  typedef struct FIO_ALIGN(16) name##__slot_s {                                \
+    unsigned char busy_;                                                       \
+    char reserved_[name##__hdr_ - 1];                                          \
+    type_T data_[(units_per_allocation)];                                      \
+  } name##__slot_s;                                                            \
+  FIO_ASSERT_STATIC(offsetof(name##__slot_s, data_) == (size_t)name##__hdr_,   \
+                    "FIO_STATIC_SAFE_ALLOC_DEF: slot metadata header must be"  \
+                    " min(sizeof(type_T), 16) bytes");                         \
+  /** Checks out a slot; returns its data block, or NULL when all are busy. */ \
+  FIO_SFUNC FIO_WARN_UNUSED type_T *name##_try(void) {                         \
+    static name##__slot_s name##buffer[(max_concurrent_allocations)];          \
+    static size_t hint;                                                        \
+    size_t start = fio_atomic_add(&hint, 1);                                   \
+    for (size_t i = 0; i < (size_t)(max_concurrent_allocations); ++i) {        \
+      size_t at = (start + i) % (size_t)(max_concurrent_allocations);          \
+      if (!(fio_atomic_or(&name##buffer[at].busy_, 1) & 1))                    \
+        return name##buffer[at].data_;                                         \
+    }                                                                          \
+    return NULL;                                                               \
+  }                                                                            \
+  /** Releases a slot previously returned by name##_try. */                    \
+  FIO_SFUNC void name##_free(type_T *ptr) {                                    \
+    name##__slot_s *slot =                                                     \
+        (name##__slot_s *)(void *)((char *)ptr - name##__hdr_);                \
+    fio_atomic_and(&slot->busy_, 0);                                           \
+  }                                                                            \
+  /** Returns the logical arena capacity in `type_T` units. */                 \
   FIO_IFUNC size_t name##_size(void) {                                         \
     return (size_t)((max_concurrent_allocations) * (units_per_allocation));    \
   }
@@ -1331,8 +1388,9 @@ Static Assertions
 #else
 /** Perform a static (build time) assertion. */
 #define FIO_ASSERT_STATIC(cond, msg)                                           \
-  static const char *FIO_NAME(fio_static_assertion_failed,                     \
-                              __LINE__)[(((cond) << 1) - 1)] = {(char *)msg}
+  static FIO_MAYBE_UNUSED const char *FIO_NAME(                                \
+      fio_static_assertion_failed,                                             \
+      __LINE__)[(((cond) << 1) - 1)] = {(char *)msg}
 #endif
 
 typedef struct {
@@ -5348,11 +5406,6 @@ FIO_MAP Ordering & Naming Shortcut
 ***************************************************************************** */
 
 #if defined(FIO_HTTP)
-#undef FIO_HTTP_HANDLE
-#define FIO_HTTP_HANDLE
-#endif
-
-#if defined(FIO_HTTP_HANDLE)
 #undef FIO_JSON
 #define FIO_JSON
 #undef FIO_MULTIPART
@@ -5371,7 +5424,7 @@ FIO_MAP Ordering & Naming Shortcut
 #define FIO_IPC
 #endif
 
-#if defined(FIO_IPC) || (defined(DEBUG) && defined(FIO_HTTP_HANDLE))
+#if defined(FIO_IPC) || (defined(DEBUG) && defined(FIO_HTTP))
 #undef FIO_IO
 #define FIO_IO
 #endif
@@ -5427,13 +5480,13 @@ FIO_MAP Ordering & Naming Shortcut
 #define FIO_SOCK
 #endif
 
-#if defined(FIO_HTTP_HANDLE) || defined(FIO_QUEUE) || defined(FIO_FIOBJ) ||    \
+#if defined(FIO_HTTP) || defined(FIO_QUEUE) || defined(FIO_FIOBJ) ||    \
     defined(FIO_LEAK_COUNTER) || defined(FIO_MEMORY_NAME) || defined(FIO_POLL)
 #undef FIO_STATE
 #define FIO_STATE
 #endif
 
-#if defined(FIO_STR) || defined(FIO_HTTP_HANDLE) || defined(FIO_STR_NAME) ||   \
+#if defined(FIO_STR) || defined(FIO_HTTP) || defined(FIO_STR_NAME) ||   \
     defined(FIO_STR_SMALL) || defined(FIO_ARRAY_TYPE_STR) ||                   \
     defined(FIO_MAP_KEY_KSTR) || defined(FIO_MAP_KEY_BSTR) ||                  \
     (defined(FIO_MAP_NAME) && !defined(FIO_MAP_KEY)) ||                        \
@@ -5471,7 +5524,7 @@ FIO_MAP Ordering & Naming Shortcut
 #define FIO_SECRET
 #endif
 
-#if defined(FIO_HTTP_HANDLE) || defined(FIO_OTP)
+#if defined(FIO_HTTP) || defined(FIO_OTP)
 #define FIO_SHA1
 #endif
 
@@ -5529,7 +5582,7 @@ FIO_MAP Ordering & Naming Shortcut
 
 ***************************************************************************** */
 
-#if defined(FIO_HTTP_HANDLE) || defined(FIO_QUEUE) || defined(FIO_OTP) ||      \
+#if defined(FIO_HTTP) || defined(FIO_QUEUE) || defined(FIO_OTP) ||      \
     defined(FIO_X509)
 #undef FIO_TIME
 #define FIO_TIME
@@ -5540,7 +5593,7 @@ FIO_MAP Ordering & Naming Shortcut
 #define FIO_FILES
 #endif
 
-#if defined(FIO_CLI) || defined(FIO_HTTP_HANDLE) ||                            \
+#if defined(FIO_CLI) || defined(FIO_HTTP) ||                            \
     defined(FIO_HTTP1_PARSER) || defined(FIO_JSON) || defined(FIO_STR) ||      \
     defined(FIO_TIME) || defined(FIO_FILES) || defined(FIO_SECRET)
 #undef FIO_ATOL
@@ -5553,7 +5606,7 @@ FIO_MAP Ordering & Naming Shortcut
 #endif
 
 #if defined(FIO_CLI) || defined(FIO_MEMORY_NAME) || defined(FIO_POLL) ||       \
-    defined(FIO_STATE) || defined(FIO_HTTP_HANDLE) || defined(FIO_PUBSUB)
+    defined(FIO_STATE) || defined(FIO_HTTP) || defined(FIO_PUBSUB)
 #undef FIO_IMAP_CORE
 #define FIO_IMAP_CORE
 #endif
@@ -5563,14 +5616,14 @@ FIO_MAP Ordering & Naming Shortcut
 #define FIO_MATH
 #endif
 
-#if defined(FIO_CLI) || defined(FIO_FILES) || defined(FIO_HTTP_HANDLE) ||      \
+#if defined(FIO_CLI) || defined(FIO_FILES) || defined(FIO_HTTP) ||      \
     defined(FIO_MEMORY_NAME) || defined(FIO_POLL) || defined(FIO_STATE) ||     \
     defined(FIO_STR) || defined(FIO_WEBSOCKET_PARSER)
 #undef FIO_RAND
 #define FIO_RAND
 #endif
 
-#if defined(FIO_HTTP_HANDLE)
+#if defined(FIO_HTTP)
 #undef FIO_DEFLATE
 #undef FIO_BROTLI
 #define FIO_DEFLATE
@@ -5588,7 +5641,7 @@ FIO_MAP Ordering & Naming Shortcut
 #endif
 
 #if defined(FIO_MEMORY_NAME) || defined(FIO_QUEUE) ||                          \
-    (defined(DEBUG) && defined(FIO_STATE)) || defined(FIO_HTTP_HANDLE)
+    (defined(DEBUG) && defined(FIO_STATE)) || defined(FIO_HTTP)
 #undef FIO_THREADS
 #define FIO_THREADS
 #endif
@@ -16133,9 +16186,12 @@ FIO_IFUNC int fio_filename_overwrite(const char *filename,
   if (fd == -1)
     return -1;
   ssize_t w = fio_fd_write(fd, buf, len);
+  int saved_errno = errno; /* preserve the write's errno across close() */
   close(fd);
-  if ((size_t)w != len)
+  if ((size_t)w != len) {
+    errno = saved_errno;
     return -1;
+  }
   return 0;
 }
 
@@ -16495,6 +16551,601 @@ Module Cleanup
 #endif /* FIO_EXTERN_COMPLETE */
 #endif /* FIO_FILES */
 #undef FIO_FILES
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_HTTP1_PARSER       /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                                HTTP/1.1 Parser
+
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_HTTP1_PARSER) && !defined(H___FIO_HTTP1_PARSER___H) &&         \
+    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)) &&                  \
+    !defined(FIO___RECURSIVE_INCLUDE)
+/* *****************************************************************************
+The HTTP/1.1 provides static functions only, always as part or implementation.
+***************************************************************************** */
+#define H___FIO_HTTP1_PARSER___H
+
+/* *****************************************************************************
+HTTP/1.x Parser API
+***************************************************************************** */
+
+/** The HTTP/1.1 parser type */
+typedef struct fio_http1_parser_s fio_http1_parser_s;
+/** Initialization value for the parser */
+#define FIO_HTTP1_PARSER_INIT ((fio_http1_parser_s){0})
+
+/**
+ * Parses HTTP/1.x data, calling any callbacks.
+ *
+ * Returns bytes consumed or `FIO_HTTP1_PARSER_ERROR` (`(size_t)-1`) on error.
+ */
+FIO_SFUNC size_t fio_http1_parse(fio_http1_parser_s *p,
+                                 fio_buf_info_s buf,
+                                 void *udata);
+
+/** Returns true if the parser is waiting to parse a new request/response .*/
+FIO_IFUNC size_t fio_http1_parser_is_empty(fio_http1_parser_s *p);
+
+/** Returns true if the parser is waiting for header data .*/
+FIO_IFUNC size_t fio_http1_parser_is_on_header(fio_http1_parser_s *p);
+
+/** Returns true if the parser is on body data .*/
+FIO_IFUNC size_t fio_http1_parser_is_on_body(fio_http1_parser_s *p);
+
+/** The error return value for fio_http1_parse. */
+#define FIO_HTTP1_PARSER_ERROR ((size_t)-1)
+
+/** Returns the number of bytes of payload still expected to be received. */
+FIO_IFUNC size_t fio_http1_expected(fio_http1_parser_s *p);
+
+/** A return value for `fio_http1_expected` when chunked data is expected. */
+#define FIO_HTTP1_EXPECTED_CHUNKED ((size_t)(-2))
+
+/** `fio_http1_expected` value when body isn't allowed (GET/HEAD/OPTIONS). */
+#define FIO___HTTP1_BODY_NOT_ALLOWED ((size_t)(-1))
+
+/* *****************************************************************************
+HTTP/1.x callbacks (to be implemented by parser user)
+***************************************************************************** */
+
+/** called when either a request or a response was received. */
+static void fio_http1_on_complete(void *udata);
+/** called when a request method is parsed. */
+static int fio_http1_on_method(fio_buf_info_s method, void *udata);
+/** called when a response status is parsed. the status_str is the string
+ * without the prefixed numerical status indicator.*/
+static int fio_http1_on_status(size_t istatus,
+                               fio_buf_info_s status,
+                               void *udata);
+/** called when a request URL is parsed. */
+static int fio_http1_on_url(fio_buf_info_s path, void *udata);
+/** called when a the HTTP/1.x version is parsed. */
+static int fio_http1_on_version(fio_buf_info_s version, void *udata);
+/** called when a header is parsed. */
+static int fio_http1_on_header(fio_buf_info_s name,
+                               fio_buf_info_s value,
+                               void *udata);
+/** called when the special content-length header is parsed. */
+static int fio_http1_on_header_content_length(fio_buf_info_s name,
+                                              fio_buf_info_s value,
+                                              size_t content_length,
+                                              void *udata);
+/** called when `Expect` arrives and may require a 100 continue response. */
+static int fio_http1_on_expect(void *udata);
+/** called when a body chunk is parsed. */
+static int fio_http1_on_body_chunk(fio_buf_info_s chunk, void *udata);
+
+/* *****************************************************************************
+Implementation Stage Helpers
+***************************************************************************** */
+
+/* parsing stage 0 - read first line (proxy?). */
+static int fio_http1___start(fio_http1_parser_s *p,
+                             fio_buf_info_s *buf,
+                             void *udata);
+/* parsing stage 1 - read headers. */
+static int fio_http1___read_header(fio_http1_parser_s *p,
+                                   fio_buf_info_s *buf,
+                                   void *udata);
+/* parsing stage 2 - read body. */
+static int fio_http1___read_body(fio_http1_parser_s *p,
+                                 fio_buf_info_s *buf,
+                                 void *udata);
+/* parsing stage 2 - read chunked body. */
+static int fio_http1___read_body_chunked(fio_http1_parser_s *p,
+                                         fio_buf_info_s *buf,
+                                         void *udata);
+/* parsing stage 1 - read headers. */
+static int fio_http1___read_trailer(fio_http1_parser_s *p,
+                                    fio_buf_info_s *buf,
+                                    void *udata);
+/* completed parsing. */
+static int fio_http1___finish(fio_http1_parser_s *p,
+                              fio_buf_info_s *buf,
+                              void *udata);
+
+/* *****************************************************************************
+HTTP Parser Type
+***************************************************************************** */
+
+/** The HTTP/1.1 parser type implementation */
+struct fio_http1_parser_s {
+  int (*fn)(fio_http1_parser_s *, fio_buf_info_s *, void *);
+  size_t expected;
+};
+
+/** Returns true if the parser is waiting to parse a new request/response .*/
+FIO_IFUNC size_t fio_http1_parser_is_empty(fio_http1_parser_s *p) {
+  return !p->fn || p->fn == fio_http1___start;
+}
+
+/** Returns true if the parser is waiting for header data .*/
+FIO_IFUNC size_t fio_http1_parser_is_on_header(fio_http1_parser_s *p) {
+  return p->fn == fio_http1___read_header || p->fn == fio_http1___read_trailer;
+}
+
+/** Returns true if the parser is on body data .*/
+FIO_IFUNC size_t fio_http1_parser_is_on_body(fio_http1_parser_s *p) {
+  return p->fn == fio_http1___read_body ||
+         p->fn == fio_http1___read_body_chunked;
+}
+
+/** Returns the number of bytes of payload still expected to be received. */
+FIO_IFUNC size_t fio_http1_expected(fio_http1_parser_s *p) {
+  if (p->expected == FIO___HTTP1_BODY_NOT_ALLOWED)
+    return 0;
+  return p->expected;
+}
+
+/* *****************************************************************************
+Main Parsing Loop
+***************************************************************************** */
+
+FIO_SFUNC size_t fio_http1_parse(fio_http1_parser_s *p,
+                                 fio_buf_info_s buf,
+                                 void *udata) {
+  int i = 0;
+  char *buf_start = buf.buf;
+  if (!buf.len)
+    return 0;
+  if (!p->fn)
+    p->fn = fio_http1___start;
+  while (!(i = p->fn(p, &buf, udata)))
+    ;
+  if (i < 0)
+    return FIO_HTTP1_PARSER_ERROR;
+  return buf.buf - buf_start;
+}
+
+/* completed parsing. */
+static int fio_http1___finish(fio_http1_parser_s *p,
+                              fio_buf_info_s *buf,
+                              void *udata) {
+  (void)buf;
+  *p = (fio_http1_parser_s){0};
+  fio_http1_on_complete(udata);
+  return 1;
+}
+
+/* *****************************************************************************
+Reading the first line
+***************************************************************************** */
+
+/* parsing stage 0 - read first line (TODO: proxy protocol support?). */
+static int fio_http1___start(fio_http1_parser_s *p,
+                             fio_buf_info_s *buf,
+                             void *udata) {
+  const uint32_t method_get = (fio_buf2u32u("GET ") | 0x20202020);
+  const uint32_t method_head = (fio_buf2u32u("HEAD") | 0x20202020);
+  const uint64_t method_options =
+      (fio_buf2u64u("OPTIONS ") | (uint64_t)0x2020202020202020ULL);
+  /* find line start/end and test */
+  fio_buf_info_s wrd[3];
+  char *start = buf->buf;
+  char *tmp;
+  while ((start[0] == ' ' || start[0] == '\r' || start[0] == '\n') &&
+         start < buf->buf + buf->len) /* skip white space */
+    ++start;
+  if (start == buf->buf + buf->len) {
+    buf->buf = start;
+    return 1;
+  }
+  char *eol =
+      (char *)FIO_MEMCHR(start, '\n', (size_t)((buf->buf + buf->len) - start));
+  if (!eol)
+    return 1;
+  if (start + 13 > eol) /* test for minimal data GET HTTP/1 or ### HTTP/1 */
+    return -1;
+  /* test for `NUL` in data */
+  if (FIO_MEMCHR(start, 0, (size_t)(eol - start)))
+    return -1;
+
+  /* prep next stage */
+  buf->len -= (eol - buf->buf) + 1;
+  buf->buf = eol + 1;
+  eol -= eol[-1] == '\r';
+
+  /* parse first line */
+  /* request: method path version ; response: version code txt */
+  if (!(tmp = (char *)FIO_MEMCHR(start, ' ', (size_t)(eol - start))))
+    return -1;
+  wrd[0] = FIO_BUF_INFO2(start, (size_t)(tmp - start));
+  start = tmp + 1;
+  if (!(tmp = (char *)FIO_MEMCHR(start, ' ', eol - start)))
+    return -1;
+  wrd[1] = FIO_BUF_INFO2(start, (size_t)(tmp - start));
+  start = tmp + 1;
+  if (start >= eol)
+    return -1;
+  wrd[2] = FIO_BUF_INFO2(start, (size_t)(eol - start));
+  if (fio_c2i(wrd[1].buf[0]) < 10) /* test if path or code */
+    goto parse_response_line;
+  if (wrd[2].len > 14)
+    wrd[2].len = 14;
+  if (fio_http1_on_method(wrd[0], udata))
+    return -1;
+  if (fio_http1_on_url(wrd[1], udata))
+    return -1;
+  if (fio_http1_on_version(wrd[2], udata))
+    return -1;
+
+  /* make sure GET / HEAD / OPTIONS requests don't have a body */
+  if (((wrd[0].len == 3 || wrd[0].len == 4) &&
+       ((fio_buf2u32u(wrd[0].buf) | 0x20202020) == method_get ||
+        (fio_buf2u32u(wrd[0].buf) | 0x20202020) == method_head)) ||
+      (wrd[0].len == 7 &&
+       ((fio_buf2u64u(wrd[0].buf) | (uint64_t)0x2020202020202020ULL) ==
+        method_options)))
+    p->expected = FIO___HTTP1_BODY_NOT_ALLOWED;
+
+  /* switch to header reading mode */
+  return (p->fn = fio_http1___read_header)(p, buf, udata);
+
+parse_response_line:
+  if (wrd[0].len > 14)
+    wrd[0].len = 14;
+  if (fio_http1_on_version(wrd[0], udata))
+    return -1;
+  if (fio_http1_on_status(fio_atol10u(&wrd[1].buf), wrd[2], udata))
+    return -1;
+  return (p->fn = fio_http1___read_header)(p, buf, udata);
+}
+
+/* *****************************************************************************
+Reading Headers
+***************************************************************************** */
+
+/* parsing stage 1 - read headers (after `expect` header). */
+static int fio_http1___read_header_post_expect(fio_http1_parser_s *p,
+                                               fio_buf_info_s *buf,
+                                               void *udata);
+
+/* handle headers before calling callback. */
+static inline int fio_http1___on_header(fio_http1_parser_s *p,
+                                        fio_buf_info_s name,
+                                        fio_buf_info_s value,
+                                        void *udata) {
+  /* test for special headers */
+  switch (name.len) {
+  case 6: /* test for "expect" */
+    if (value.len == 12 && fio_buf2u32u(name.buf) == fio_buf2u32u("expe") &&
+        fio_buf2u32u(name.buf + 2) == fio_buf2u32u("pect")) {
+      /* Expect value validation */
+      if (fio_buf2u64u(value.buf) == fio_buf2u64u("100-cont") &&
+          fio_buf2u32u(value.buf + 8) == fio_buf2u32u("inue")) {
+        p->fn = fio_http1___read_header_post_expect;
+        return 0;
+      }
+      return -1;
+    }
+    break;
+  case 14: /* test for "content-length" */
+    if (fio_buf2u64u(name.buf) == fio_buf2u64u("content-") &&
+        fio_buf2u64u(name.buf + 6) == fio_buf2u64u("t-length")) {
+      if (!value.len)
+        return -1;
+      char *tmp = value.buf;
+      errno = 0; /* reset errno before parsing */
+      uint64_t clen = fio_atol10u(&tmp);
+      /* Reject if: parsing failed (tmp didn't reach end), overflow occurred,
+       * or value collides with sentinel values */
+      if ((unsigned)(tmp != value.buf + value.len) | (errno == E2BIG) |
+          (clen == FIO___HTTP1_BODY_NOT_ALLOWED) |
+          (clen == FIO_HTTP1_EXPECTED_CHUNKED))
+        return -1;
+      if (!clen) /* no length? */
+        clen = FIO___HTTP1_BODY_NOT_ALLOWED;
+      /* Prevent CL.TE / TE.CL by validating header's payload changes nothing */
+      if (p->expected)
+        return 0 - (p->expected != clen); /* causes parser to fail and stop */
+      p->expected = clen;
+      if (clen == FIO___HTTP1_BODY_NOT_ALLOWED)
+        return 0;
+      /* fio_http1_on_header_content_length tests if body length is too large */
+      return 0 -
+             (fio_http1_on_header_content_length(name, value, clen, udata) ==
+              -1);
+    }
+    break;
+  case 17: /* test for "transfer-encoding" (chunked?) */
+    if (value.len >= 7 && (name.buf[16] == 'g') &&
+        !((fio_buf2u64u(name.buf) ^ fio_buf2u64u("transfer")) |
+          (fio_buf2u64u(name.buf + 8) ^ fio_buf2u64u("-encodin")))) {
+      char *c_start = value.buf + value.len - 7;
+      if ((fio_buf2u32u(c_start) | 0x20202020UL) == fio_buf2u32u("chun") &&
+          (fio_buf2u32u(c_start + 3) | 0x20202020UL) == fio_buf2u32u("nked")) {
+        if (p->expected && p->expected != FIO_HTTP1_EXPECTED_CHUNKED)
+          return -1;
+        p->expected = FIO_HTTP1_EXPECTED_CHUNKED;
+        /* endpoint does not need to know if the body was chunked or not */
+        if (value.len == 7)
+          return 0;
+        if (c_start[-1] != ' ' && c_start[-1] != ',' && c_start[-1] != '\t')
+          return -1;
+        while (
+            (c_start[-1] == ' ' || c_start[-1] == ',' || c_start[-1] == '\t') &&
+            c_start > value.buf)
+          --c_start;
+        if (c_start == value.buf)
+          return 0;
+        value.len = c_start - value.buf;
+      }
+    }
+    break;
+  }
+  /* perform callback */
+  return 0 - (fio_http1_on_header(name, value, udata) == -1);
+}
+
+/* handle trailers (chunked encoding only) before calling callback. */
+static inline int fio_http1___on_trailer(fio_http1_parser_s *p,
+                                         fio_buf_info_s name,
+                                         fio_buf_info_s value,
+                                         void *udata) {
+  (void)p;
+  fio_buf_info_s forbidden[] = {
+      FIO_BUF_INFO1((char *)"authorization"),
+      FIO_BUF_INFO1((char *)"cache-control"),
+      FIO_BUF_INFO1((char *)"content-encoding"),
+      FIO_BUF_INFO1((char *)"content-length"),
+      FIO_BUF_INFO1((char *)"content-range"),
+      FIO_BUF_INFO1((char *)"content-type"),
+      FIO_BUF_INFO1((char *)"expect"),
+      FIO_BUF_INFO1((char *)"host"),
+      FIO_BUF_INFO1((char *)"max-forwards"),
+      FIO_BUF_INFO1((char *)"set-cookie"),
+      FIO_BUF_INFO1((char *)"te"),
+      FIO_BUF_INFO1((char *)"trailer"),
+      FIO_BUF_INFO1((char *)"transfer-encoding"),
+      FIO_BUF_INFO2(NULL, 0),
+  }; /* known forbidden headers in trailer */
+  for (size_t i = 0; forbidden[i].buf; ++i) {
+    if (FIO_BUF_INFO_IS_EQ(name, forbidden[i]))
+      return -1;
+  }
+  return fio_http1_on_header(name, value, udata);
+}
+
+/* seeks to the ':' divisor while testing and converting to downcase. */
+static char *fio_http1___seek_header_div(char *p) {
+  /* this is the subset of the forbidden chars that allows UTF-8 headers */
+  static const _Bool forbidden_name_chars[256] = {
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  FIO_ASSERT(forbidden_name_chars[' '] && forbidden_name_chars['\t'],
+             "missing forbidden HTTP Header Name characters");
+  for (;;) {
+    if (FIO_UNLIKELY(forbidden_name_chars[((uint8_t)(*p))]))
+      return p;
+    *p = fio_ct_tolower(*p);
+    ++p;
+  }
+}
+
+/* extract header name and value from a line and pass info to handler */
+static inline int fio_http1___read_header_line(
+    fio_http1_parser_s *p,
+    fio_buf_info_s *buf,
+    void *udata,
+    int (*handler)(fio_http1_parser_s *,
+                   fio_buf_info_s,
+                   fio_buf_info_s,
+                   void *)) {
+  for (;;) {
+    char *start = buf->buf;
+    char *eol = (char *)FIO_MEMCHR(start, '\n', buf->len);
+    char *div;
+    fio_buf_info_s name, value;
+    if (!eol)
+      return 1;
+
+    buf->len -= (eol - buf->buf) + 1;
+    buf->buf = eol + 1;
+    eol -= (eol[-1] == '\r');
+    if (FIO_UNLIKELY(eol == start))
+      goto headers_finished;
+
+    div = fio_http1___seek_header_div(start);
+    if (div[0] != ':' || div == start)
+      return -1;
+    name = FIO_BUF_INFO2(start, (size_t)(div - start));
+    do {
+      ++div;
+    } while (*div == ' ' || *div == '\t');
+
+    if (div != eol)
+      while (eol[-1] == ' ' || eol[-1] == '\t')
+        --eol;
+    value = FIO_BUF_INFO2((div == eol) ? NULL : div, (size_t)(eol - div));
+
+    if (FIO_MEMCHR(value.buf, 0, value.len))
+      return -1;
+    int r = handler(p, name, value, udata);
+    if (FIO_UNLIKELY(r))
+      return r;
+  }
+
+headers_finished:
+  if (p->fn == fio_http1___read_header_post_expect && p->expected &&
+      fio_http1_on_expect(udata))
+    goto expect_failed;
+  p->fn = (!p->expected || p->expected == FIO___HTTP1_BODY_NOT_ALLOWED)
+              ? fio_http1___finish
+          : (!(p->expected - FIO_HTTP1_EXPECTED_CHUNKED))
+              ? fio_http1___read_body_chunked
+              : fio_http1___read_body;
+  return p->fn(p, buf, udata);
+
+expect_failed:
+  *p = (fio_http1_parser_s){0};
+  return 1;
+}
+
+/* parsing stage 1 - read headers. */
+static int fio_http1___read_header(fio_http1_parser_s *p,
+                                   fio_buf_info_s *buf,
+                                   void *udata) {
+  return fio_http1___read_header_line(p, buf, udata, fio_http1___on_header);
+}
+
+/* parsing stage 1 - read headers (after `expect` header). */
+static int fio_http1___read_header_post_expect(fio_http1_parser_s *p,
+                                               fio_buf_info_s *buf,
+                                               void *udata) {
+  return fio_http1___read_header_line(p, buf, udata, fio_http1___on_header);
+}
+
+/* parsing stage 1 - read headers. */
+static int fio_http1___read_trailer(fio_http1_parser_s *p,
+                                    fio_buf_info_s *buf,
+                                    void *udata) {
+  return fio_http1___read_header_line(p, buf, udata, fio_http1___on_trailer);
+}
+
+/* *****************************************************************************
+Reading the Body
+***************************************************************************** */
+
+/* parsing stage 2 - read body - known content length. */
+static int fio_http1___read_body(fio_http1_parser_s *p,
+                                 fio_buf_info_s *buf,
+                                 void *udata) {
+  if (!buf->len)
+    return 1;
+  if (buf->len >= p->expected) {
+    buf->len = p->expected;
+    if (fio_http1_on_body_chunk(*buf, udata))
+      return -1;
+    buf->buf += buf->len;
+    return fio_http1___finish(p, buf, udata);
+  }
+  if (fio_http1_on_body_chunk(*buf, udata))
+    return -1;
+  buf->buf += buf->len;
+  p->expected -= buf->len;
+  buf->len = 0;
+  return 1;
+}
+
+/* *****************************************************************************
+Reading the Body (chunked)
+***************************************************************************** */
+
+/* parsing stage 2 - read chunked body - read chunk data. */
+static int fio_http1___read_body_chunked_read(fio_http1_parser_s *p,
+                                              fio_buf_info_s *buf,
+                                              void *udata) {
+  if (!buf->len)
+    return 1;
+  if (buf->len >= p->expected) {
+    if (fio_http1_on_body_chunk(FIO_BUF_INFO2(buf->buf, p->expected), udata))
+      return -1;
+    buf->buf += p->expected;
+    buf->len -= p->expected;
+    p->fn = fio_http1___read_body_chunked;
+    return 0;
+  }
+  if (fio_http1_on_body_chunk(buf[0], udata))
+    return -1;
+  p->expected -= buf->len;
+  buf->buf += buf->len;
+  return 1;
+}
+
+/* parsing stage 2 - read chunked body - read next chunk length. */
+static int fio_http1___read_body_chunked(fio_http1_parser_s *p,
+                                         fio_buf_info_s *buf,
+                                         void *udata) {
+  (void)udata;
+  if (buf->len < 3)
+    return 1;
+  { /* remove possible extra EOL after chunk payload */
+    size_t tmp = (buf->buf[0] == '\r');
+    tmp += (buf->buf[tmp] == '\n');
+    buf->len -= tmp;
+    buf->buf += tmp;
+  }
+
+  if (!FIO_MEMCHR(buf->buf, '\n', buf->len)) /* prevent read overflow */
+    return (buf->len < 10) ? 1 : -1;
+
+  char *eol = buf->buf;
+  size_t expected = fio_atol16u(&eol); /* never overflows, EOL validated */
+  if (eol == buf->buf || expected > 0x0FFFFFFF) /* cap expected */
+    return -1;
+  eol += (eol[0] == '\r');
+  if (eol >= buf->buf + buf->len)
+    return 1; /* read overflowed */
+  if (eol[0] != '\n')
+    return -1;
+  ++eol;
+  p->expected = expected;
+  if (p->expected) {
+    /* further data expected */
+    buf->len -= eol - buf->buf;
+    buf->buf = eol;
+    return (p->fn = fio_http1___read_body_chunked_read)(p, buf, udata);
+  }
+  if ((eol + 1 < buf->buf + buf->len) && (eol[0] == '\r' || eol[0] == '\n')) {
+    /* no trailers, finish now. */
+    eol += (eol[0] == '\r');
+    ++eol;
+    buf->len -= eol - buf->buf;
+    buf->buf = eol;
+    return fio_http1___finish(p, buf, udata);
+  }
+  /* possible trailers */
+  buf->len -= eol - buf->buf;
+  buf->buf = eol;
+  return (p->fn = fio_http1___read_trailer)(p, buf, udata);
+}
+
+/* *****************************************************************************
+Cleanup
+***************************************************************************** */
+#undef FIO_HTTP1_PARSER
+#endif /* FIO_HTTP1_PARSER && FIO_EXTERN_COMPLETE*/
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -22171,6 +22822,636 @@ URL-Encoded Cleanup
 #endif /* FIO_EXTERN_COMPLETE */
 #undef FIO_URL_ENCODED
 #endif /* FIO_URL_ENCODED */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_WEBSOCKET_PARSER   /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+                          WebSocket Parser v2 (RFC 6455)
+               Zero-allocation, pure event parser, cache-sized.
+
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_WEBSOCKET_PARSER) && !defined(H___FIO_WEBSOCKET_PARSER___H) && \
+    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)) &&                  \
+    !defined(FIO___RECURSIVE_INCLUDE)
+#define H___FIO_WEBSOCKET_PARSER___H
+
+/* *****************************************************************************
+Public Constants
+***************************************************************************** */
+
+/** WebSocket close codes (RFC 6455 §7.4.1). App-defined range is ≥ 3000. */
+typedef enum {
+  FIO_WEBSOCKET_CLOSE_OK = 1000,
+  FIO_WEBSOCKET_CLOSE_GOING_AWAY = 1001,
+  FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR = 1002,
+  FIO_WEBSOCKET_CLOSE_UNSUPPORTED_DATA = 1003,
+  FIO_WEBSOCKET_CLOSE_NO_STATUS = 1005, /* synthesised on empty close payload */
+  FIO_WEBSOCKET_CLOSE_INVALID_PAYLOAD = 1007,
+  FIO_WEBSOCKET_CLOSE_POLICY_VIOLATION = 1008,
+  FIO_WEBSOCKET_CLOSE_MESSAGE_TOO_BIG = 1009,
+  FIO_WEBSOCKET_CLOSE_MANDATORY_EXT = 1010,
+  FIO_WEBSOCKET_CLOSE_INTERNAL_ERROR = 1011,
+} fio_websocket_close_code_e;
+
+/** Default per-frame payload cap (1 GiB). Override before include if needed. */
+#ifndef FIO_WEBSOCKET_DEFAULT_MAX_FRAME
+#define FIO_WEBSOCKET_DEFAULT_MAX_FRAME (1ULL << 30)
+#endif
+
+/** Parse error sentinel. */
+#define FIO_WEBSOCKET_PARSE_ERROR ((size_t)-1)
+
+/** RSV bit constants for the send-side API. These are the 3-bit values shifted
+ *  into byte-0 bits 4..6 on the wire (0x4 → RSV1=0x40, 0x2 → RSV2=0x20, 0x1 →
+ *  RSV3=0x10). */
+#define FIO_WEBSOCKET_RSV1 0x4U /* byte-0 bit 6 (permessage-deflate) */
+#define FIO_WEBSOCKET_RSV2 0x2U /* byte-0 bit 5 */
+#define FIO_WEBSOCKET_RSV3 0x1U /* byte-0 bit 4 */
+
+/** Event types produced by fio_websocket_parse(). */
+enum {
+  FIO_WEBSOCKET_EV_NONE = 0,
+  FIO_WEBSOCKET_EV_DATA_CHUNK = 1,
+  FIO_WEBSOCKET_EV_CONTROL = 2,
+  FIO_WEBSOCKET_EV_MESSAGE_END = 3,
+  FIO_WEBSOCKET_EV_ERROR = 4,
+};
+
+/* WebSocket frame opcodes (RFC 6455). */
+#define FIO_WEBSOCKET_OP_CONT   0x0
+#define FIO_WEBSOCKET_OP_TEXT   0x1
+#define FIO_WEBSOCKET_OP_BINARY 0x2
+#define FIO_WEBSOCKET_OP_CLOSE  0x8
+#define FIO_WEBSOCKET_OP_PING   0x9
+#define FIO_WEBSOCKET_OP_PONG   0xA
+
+/* Parser FSM states. */
+#define FIO_WEBSOCKET_STATE_HEADER  0
+#define FIO_WEBSOCKET_STATE_PAYLOAD 1
+#define FIO_WEBSOCKET_STATE_CLOSED  0xFE
+#define FIO_WEBSOCKET_STATE_ERROR   0xFF
+
+/* Flag bit positions in fio_websocket_s.flags. */
+#define FIO_WEBSOCKET_FLAG_FIN             0x80
+#define FIO_WEBSOCKET_FLAG_MASKED          0x40
+#define FIO_WEBSOCKET_FLAG_OPCODE_MASK     0x3C
+#define FIO_WEBSOCKET_FLAG_OPCODE_SHIFT    2
+#define FIO_WEBSOCKET_FLAG_MSG_OPCODE_MASK 0x03
+
+/* Flag bit positions in fio_websocket_s.flags2. */
+#define FIO_WEBSOCKET_FLAG2_PAUSED        0x80
+#define FIO_WEBSOCKET_FLAG2_MSG_RSV_MASK  0x70
+#define FIO_WEBSOCKET_FLAG2_MSG_RSV_SHIFT 4
+
+/** Read the FIN bit from the current frame. */
+#define FIO_WEBSOCKET_GET_FIN(p) (((p)->flags & FIO_WEBSOCKET_FLAG_FIN) != 0)
+
+/** Read the MASK bit from the current frame. */
+#define FIO_WEBSOCKET_GET_MASKED(p)                                            \
+  (((p)->flags & FIO_WEBSOCKET_FLAG_MASKED) != 0)
+
+/** Read the opcode from the current frame. */
+#define FIO_WEBSOCKET_GET_OPCODE(p)                                            \
+  (((p)->flags & FIO_WEBSOCKET_FLAG_OPCODE_MASK) >>                            \
+   FIO_WEBSOCKET_FLAG_OPCODE_SHIFT)
+
+/** Read the message opcode (1=text, 2=binary, 0=none open). */
+#define FIO_WEBSOCKET_GET_MSG_OPCODE(p)                                        \
+  ((p)->flags & FIO_WEBSOCKET_FLAG_MSG_OPCODE_MASK)
+
+/** Read the paused flag (one-message-per-parse gate). */
+#define FIO_WEBSOCKET_GET_PAUSED(p)                                            \
+  (((p)->flags2 & FIO_WEBSOCKET_FLAG2_PAUSED) != 0)
+
+/** Read the RSV bits from the opening frame (3-bit format). */
+#define FIO_WEBSOCKET_GET_MSG_RSV(p)                                           \
+  (((p)->flags2 & FIO_WEBSOCKET_FLAG2_MSG_RSV_MASK) >>                         \
+   FIO_WEBSOCKET_FLAG2_MSG_RSV_SHIFT)
+
+/* *****************************************************************************
+Public Types
+***************************************************************************** */
+
+typedef struct fio_websocket_s {
+  uint64_t frame_remaining;
+  uint32_t mask;
+  uint32_t frame_consumed;
+  uint16_t close_code;
+  uint8_t state;
+  uint8_t flags;  /* bit 7: fin, bit 6: masked, bits 5-2: opcode, bits 1-0:
+                     msg_opcode */
+  uint8_t flags2; /* bit 7: paused, bits 6-4: msg_rsv */
+  uint8_t reserved;
+} fio_websocket_s;
+
+typedef struct {
+  uint8_t type;   /* 0=none, 1=data_chunk, 2=control_frame, 3=message_end,
+                     4=error */
+  uint8_t opcode; /* frame opcode */
+  uint8_t is_text;
+  uint8_t rsv;            /* opening-frame RSV bits (3-bit format) */
+  uint8_t is_first;       /* first chunk of message */
+  uint8_t is_last;        /* last chunk of message / frame */
+  fio_buf_info_s payload; /* points into input buffer (unmasked in place) */
+  uint16_t close_code;
+} fio_websocket_event_s;
+
+FIO_ASSERT_STATIC(sizeof(fio_websocket_s) <= 24,
+                  "fio_websocket_s must stay 24 bytes");
+
+/* *****************************************************************************
+Public API — Parsing
+***************************************************************************** */
+
+FIO_IFUNC void fio_websocket_init(fio_websocket_s *p);
+FIO_IFUNC void fio_websocket_reset(fio_websocket_s *p);
+
+/** Parses WebSocket bytes from `buf`, unmasking payload in place.
+ *
+ * Returns bytes consumed (≤ `buf.len`) on success or
+ * `FIO_WEBSOCKET_PARSE_ERROR` on protocol error (`p->close_code` is set).
+ *
+ * The parser is pure: it stores no callbacks, no user pointer, no control-frame
+ * buffer, and no message accumulator. The caller owns policy checks (masking,
+ * RSV semantics, extension transforms, message accumulation, delivery, etc.).
+ */
+FIO_SFUNC size_t fio_websocket_parse(fio_websocket_s *p,
+                                     fio_buf_info_s buf,
+                                     fio_websocket_event_s *ev);
+
+/* *****************************************************************************
+Public API — Message Writers
+
+Server functions produce unmasked frames; client functions produce masked
+frames (PRNG mask when `mask=0`, explicit mask otherwise).
+***************************************************************************** */
+
+FIO_IFUNC uint64_t fio_websocket_write_len(uint64_t payload_len, _Bool masked);
+
+/** Writes a complete (FIN=1) data message.
+ *  `rsv` is the 3-bit RSV field — normally 0; pass `FIO_WEBSOCKET_RSV1`
+ *  (0x4) to mark the message as permessage-deflate-compressed
+ *  (RFC 7692 §7.2.3.1). */
+FIO_IFUNC uint64_t fio_websocket_write_message_server(void *target,
+                                                      fio_buf_info_s msg,
+                                                      _Bool is_text,
+                                                      uint8_t rsv);
+FIO_IFUNC uint64_t fio_websocket_write_message_client(void *target,
+                                                      fio_buf_info_s msg,
+                                                      _Bool is_text,
+                                                      uint32_t mask,
+                                                      uint8_t rsv);
+FIO_IFUNC uint64_t fio_websocket_write_ping_server(void *t, fio_buf_info_s p);
+FIO_IFUNC uint64_t fio_websocket_write_ping_client(void *t,
+                                                   fio_buf_info_s p,
+                                                   uint32_t mask);
+FIO_IFUNC uint64_t fio_websocket_write_pong_server(void *t, fio_buf_info_s p);
+FIO_IFUNC uint64_t fio_websocket_write_pong_client(void *t,
+                                                   fio_buf_info_s p,
+                                                   uint32_t mask);
+FIO_IFUNC uint64_t fio_websocket_write_close_server(void *target,
+                                                    uint16_t code,
+                                                    fio_buf_info_s reason);
+FIO_IFUNC uint64_t fio_websocket_write_close_client(void *target,
+                                                    uint16_t code,
+                                                    fio_buf_info_s reason,
+                                                    uint32_t mask);
+
+/* *****************************************************************************
+
+
+
+
+                                 Implementation
+
+
+
+
+***************************************************************************** */
+
+/** Set the FIN bit in the current frame. */
+#define FIO___WEBSOCKET_SET_FIN(p, v)                                          \
+  ((p)->flags =                                                                \
+       (uint8_t)(((p)->flags & ~FIO_WEBSOCKET_FLAG_FIN) | ((!!(v)) << 7)))
+
+/** Set the MASK bit in the current frame. */
+#define FIO___WEBSOCKET_SET_MASKED(p, v)                                       \
+  ((p)->flags =                                                                \
+       (uint8_t)(((p)->flags & ~FIO_WEBSOCKET_FLAG_MASKED) | ((!!(v)) << 6)))
+
+/** Set the opcode for the current frame. */
+#define FIO___WEBSOCKET_SET_OPCODE(p, v)                                       \
+  ((p)->flags = (uint8_t)(((p)->flags & ~FIO_WEBSOCKET_FLAG_OPCODE_MASK) |     \
+                          (((v)&0x0F) << FIO_WEBSOCKET_FLAG_OPCODE_SHIFT)))
+
+/** Set the message opcode (1=text, 2=binary, 0=none). */
+#define FIO___WEBSOCKET_SET_MSG_OPCODE(p, v)                                   \
+  ((p)->flags = (uint8_t)(((p)->flags & ~FIO_WEBSOCKET_FLAG_MSG_OPCODE_MASK) | \
+                          ((v)&0x03)))
+
+/** Set the paused flag (one-message-per-parse gate). */
+#define FIO___WEBSOCKET_SET_PAUSED(p, v)                                       \
+  ((p)->flags2 = (uint8_t)(((p)->flags2 & ~FIO_WEBSOCKET_FLAG2_PAUSED) |       \
+                           ((!!(v)) << 7)))
+
+/** Set the RSV bits from the opening frame. */
+#define FIO___WEBSOCKET_SET_MSG_RSV(p, v)                                      \
+  ((p)->flags2 = (uint8_t)(((p)->flags2 & ~FIO_WEBSOCKET_FLAG2_MSG_RSV_MASK) | \
+                           (((v)&0x07) << FIO_WEBSOCKET_FLAG2_MSG_RSV_SHIFT)))
+
+/* *****************************************************************************
+Frame Writers
+***************************************************************************** */
+
+FIO_IFUNC uint64_t fio_websocket_write_len(uint64_t payload_len, _Bool masked) {
+  return payload_len + 2ULL + ((payload_len > 125) << 1) +
+         ((0ULL - (payload_len > 0xFFFFULL)) & 6ULL) + ((!!masked) << 2);
+}
+
+FIO_IFUNC uint64_t fio___websocket_hdr(uint8_t *dst,
+                                       uint64_t len,
+                                       uint32_t mask,
+                                       uint8_t opcode,
+                                       uint8_t rsv) {
+  dst[0] = (uint8_t)(0x80U | ((rsv & 0x07U) << 4) | (opcode & 0x0FU));
+  const uint8_t mb = (uint8_t)((!!mask) << 7);
+  uint64_t h;
+  if (FIO_LIKELY(len < 126)) {
+    dst[1] = (uint8_t)(mb | (uint8_t)len);
+    h = 2;
+  } else if (len < 0x10000ULL) {
+    dst[1] = (uint8_t)(mb | 126);
+    fio_u2buf16_be(dst + 2, (uint16_t)len);
+    h = 4;
+  } else {
+    dst[1] = (uint8_t)(mb | 127);
+    fio_u2buf64_be(dst + 2, len);
+    h = 10;
+  }
+  if (mask) {
+    fio_u2buf32u(dst + h, mask);
+    h += 4;
+  }
+  return h;
+}
+
+FIO_IFUNC uint64_t fio___websocket_write_srv(void *target,
+                                             fio_buf_info_s payload,
+                                             uint8_t opcode,
+                                             uint8_t rsv) {
+  uint64_t h =
+      fio___websocket_hdr((uint8_t *)target, payload.len, 0, opcode, rsv);
+  if (payload.len)
+    FIO_MEMCPY((char *)target + h, payload.buf, payload.len);
+  return h + payload.len;
+}
+
+FIO_IFUNC uint64_t fio___websocket_write_cli(void *target,
+                                             fio_buf_info_s payload,
+                                             uint8_t opcode,
+                                             uint32_t mask,
+                                             uint8_t rsv) {
+  if (!mask)
+    mask = (uint32_t)(fio_rand64() | 0x01020408U);
+  uint64_t h =
+      fio___websocket_hdr((uint8_t *)target, payload.len, mask, opcode, rsv);
+  if (payload.len)
+    fio_xmask_cpy((char *)target + h,
+                  payload.buf,
+                  payload.len,
+                  ((uint64_t)mask << 32) | (uint64_t)mask);
+  return h + payload.len;
+}
+
+FIO_ASSERT_STATIC(FIO_WEBSOCKET_OP_BINARY == 2 && FIO_WEBSOCKET_OP_TEXT == 1,
+                  "branchless text/binary writer relies on TEXT=1, BINARY=2");
+
+FIO_IFUNC uint64_t fio_websocket_write_message_server(void *t,
+                                                      fio_buf_info_s msg,
+                                                      _Bool is_text,
+                                                      uint8_t rsv) {
+  return fio___websocket_write_srv(
+      t,
+      msg,
+      (uint8_t)(FIO_WEBSOCKET_OP_BINARY >> (unsigned)is_text),
+      rsv);
+}
+FIO_IFUNC uint64_t fio_websocket_write_message_client(void *t,
+                                                      fio_buf_info_s msg,
+                                                      _Bool is_text,
+                                                      uint32_t mask,
+                                                      uint8_t rsv) {
+  return fio___websocket_write_cli(
+      t,
+      msg,
+      (uint8_t)(FIO_WEBSOCKET_OP_BINARY >> (unsigned)is_text),
+      mask,
+      rsv);
+}
+FIO_IFUNC uint64_t fio_websocket_write_ping_server(void *t, fio_buf_info_s p) {
+  return fio___websocket_write_srv(t, p, FIO_WEBSOCKET_OP_PING, 0);
+}
+FIO_IFUNC uint64_t fio_websocket_write_ping_client(void *t,
+                                                   fio_buf_info_s p,
+                                                   uint32_t mask) {
+  return fio___websocket_write_cli(t, p, FIO_WEBSOCKET_OP_PING, mask, 0);
+}
+FIO_IFUNC uint64_t fio_websocket_write_pong_server(void *t, fio_buf_info_s p) {
+  return fio___websocket_write_srv(t, p, FIO_WEBSOCKET_OP_PONG, 0);
+}
+FIO_IFUNC uint64_t fio_websocket_write_pong_client(void *t,
+                                                   fio_buf_info_s p,
+                                                   uint32_t mask) {
+  return fio___websocket_write_cli(t, p, FIO_WEBSOCKET_OP_PONG, mask, 0);
+}
+
+FIO_IFUNC size_t fio___websocket_close_body(uint8_t *scratch,
+                                            uint16_t code,
+                                            fio_buf_info_s reason) {
+  size_t n = 2 + reason.len;
+  if (n > 125)
+    n = 125;
+  fio_u2buf16_be(scratch, code);
+  if (n > 2 && reason.buf)
+    FIO_MEMCPY(scratch + 2, reason.buf, n - 2);
+  return n;
+}
+FIO_IFUNC uint64_t fio_websocket_write_close_server(void *target,
+                                                    uint16_t code,
+                                                    fio_buf_info_s reason) {
+  uint8_t scratch[125];
+  size_t n = fio___websocket_close_body(scratch, code, reason);
+  return fio___websocket_write_srv(target,
+                                   FIO_BUF_INFO2((char *)scratch, n),
+                                   FIO_WEBSOCKET_OP_CLOSE,
+                                   0);
+}
+FIO_IFUNC uint64_t fio_websocket_write_close_client(void *target,
+                                                    uint16_t code,
+                                                    fio_buf_info_s reason,
+                                                    uint32_t mask) {
+  uint8_t scratch[125];
+  size_t n = fio___websocket_close_body(scratch, code, reason);
+  return fio___websocket_write_cli(target,
+                                   FIO_BUF_INFO2((char *)scratch, n),
+                                   FIO_WEBSOCKET_OP_CLOSE,
+                                   mask,
+                                   0);
+}
+
+/* *****************************************************************************
+Lifecycle
+***************************************************************************** */
+
+FIO_IFUNC void fio_websocket_init(fio_websocket_s *p) {
+  *p = (fio_websocket_s){.state = FIO_WEBSOCKET_STATE_HEADER};
+}
+
+FIO_IFUNC void fio_websocket_reset(fio_websocket_s *p) {
+  *p = (fio_websocket_s){.state = FIO_WEBSOCKET_STATE_HEADER};
+}
+
+/* *****************************************************************************
+Helpers
+***************************************************************************** */
+
+FIO_SFUNC size_t fio___websocket_fail(fio_websocket_s *p,
+                                      fio_websocket_event_s *ev,
+                                      uint16_t code) {
+  p->state = FIO_WEBSOCKET_STATE_ERROR;
+  p->close_code = code;
+  *ev = (fio_websocket_event_s){.type = FIO_WEBSOCKET_EV_ERROR,
+                                .close_code = code};
+  return FIO_WEBSOCKET_PARSE_ERROR;
+}
+
+FIO_IFUNC uint32_t fio___websocket_rotate_mask(uint32_t mask,
+                                               uint32_t consumed) {
+  uint8_t m[4], r[4];
+  fio_u2buf32u(m, mask);
+  const uint32_t n = (uint32_t)(consumed & 3U);
+  r[0] = m[(n + 0) & 3];
+  r[1] = m[(n + 1) & 3];
+  r[2] = m[(n + 2) & 3];
+  r[3] = m[(n + 3) & 3];
+  return fio_buf2u32u(r);
+}
+
+FIO_IFUNC _Bool fio___websocket_opcode_valid(uint8_t opcode) {
+  switch (opcode) {
+  case FIO_WEBSOCKET_OP_CONT:
+  case FIO_WEBSOCKET_OP_TEXT:
+  case FIO_WEBSOCKET_OP_BINARY:
+  case FIO_WEBSOCKET_OP_CLOSE:
+  case FIO_WEBSOCKET_OP_PING:
+  case FIO_WEBSOCKET_OP_PONG: return 1;
+  }
+  return 0;
+}
+
+/** RFC 6455 §7.4.1 + IANA registry: codes that may appear on the wire.
+ *  1004 / 1005 / 1006 / 1015 are reserved (must not be transmitted);
+ *  1016-2999 are unassigned; 3000-4999 are app/library use. */
+FIO_IFUNC _Bool fio___websocket_close_code_valid(uint16_t c) {
+  switch (c) {
+  case 1000:
+  case 1001:
+  case 1002:
+  case 1003:
+  case 1007:
+  case 1008:
+  case 1009:
+  case 1010:
+  case 1011:
+  case 1012:
+  case 1013:
+  case 1014: return 1;
+  }
+  return (c >= 3000) && (c <= 4999);
+}
+
+/* *****************************************************************************
+Main Parse Loop
+***************************************************************************** */
+
+FIO_SFUNC size_t fio_websocket_parse(fio_websocket_s *p,
+                                     fio_buf_info_s buf,
+                                     fio_websocket_event_s *ev_) {
+  fio_websocket_event_s local = {0};
+  fio_websocket_event_s *const ev = ev_ ? ev_ : &local;
+  *ev = (fio_websocket_event_s){0};
+  if (FIO_UNLIKELY(!p || p->state >= FIO_WEBSOCKET_STATE_CLOSED))
+    return FIO_WEBSOCKET_PARSE_ERROR;
+  const char *const start = buf.buf;
+  for (;;) {
+    if (p->state == FIO_WEBSOCKET_STATE_HEADER) {
+      if (buf.len < 2)
+        return (size_t)(buf.buf - start);
+      const uint8_t b0 = (uint8_t)buf.buf[0];
+      const uint8_t b1 = (uint8_t)buf.buf[1];
+      const uint8_t fin = (uint8_t)(b0 >> 7);
+      const uint8_t wire_rsv = (uint8_t)((b0 >> 4) & 0x07U);
+      const uint8_t opcode = (uint8_t)(b0 & 0x0FU);
+      const uint8_t masked = (uint8_t)(b1 >> 7);
+      const uint8_t len7 = (uint8_t)(b1 & 0x7FU);
+      const _Bool is_control = (opcode & 0x08U) != 0;
+      const size_t mask_len = (size_t)(masked << 2);
+      uint64_t payload_len = 0;
+      size_t header_len = 0;
+
+      if (FIO_UNLIKELY(!fio___websocket_opcode_valid(opcode)))
+        return fio___websocket_fail(p, ev, FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+      if (FIO_UNLIKELY(is_control && !fin))
+        return fio___websocket_fail(p, ev, FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+      /* RFC 6455 §5.2: RSV bits MUST be 0 on continuation and control frames
+       * (RFC 7692: control frames are never compressed). Only the OPENING
+       * data frame may carry RSV bits (surfaced to the dispatcher, which
+       * rejects them when no extension was negotiated). */
+      if (FIO_UNLIKELY(wire_rsv &&
+                       (is_control || opcode == FIO_WEBSOCKET_OP_CONT)))
+        return fio___websocket_fail(p, ev, FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+      if (FIO_UNLIKELY(opcode == FIO_WEBSOCKET_OP_CONT &&
+                       !FIO_WEBSOCKET_GET_MSG_OPCODE(p)))
+        return fio___websocket_fail(p, ev, FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+      if (FIO_UNLIKELY(!is_control && opcode != FIO_WEBSOCKET_OP_CONT &&
+                       FIO_WEBSOCKET_GET_MSG_OPCODE(p)))
+        return fio___websocket_fail(p, ev, FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+
+      if (FIO_LIKELY(len7 < 126)) {
+        if (buf.len < (size_t)(2 + mask_len))
+          return (size_t)(buf.buf - start);
+        payload_len = len7;
+        header_len = 2;
+      } else if (len7 == 126) {
+        if (buf.len < (size_t)(4 + mask_len))
+          return (size_t)(buf.buf - start);
+        payload_len = fio_buf2u16_be(buf.buf + 2);
+        header_len = 4;
+      } else {
+        if (buf.len < (size_t)(10 + mask_len))
+          return (size_t)(buf.buf - start);
+        payload_len = fio_buf2u64_be(buf.buf + 2);
+        if (FIO_UNLIKELY(payload_len >> 63))
+          return fio___websocket_fail(p,
+                                      ev,
+                                      FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+        header_len = 10;
+      }
+      if (FIO_UNLIKELY(is_control && payload_len > 125))
+        return fio___websocket_fail(p, ev, FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+      if (FIO_UNLIKELY(payload_len > FIO_WEBSOCKET_DEFAULT_MAX_FRAME))
+        return fio___websocket_fail(p, ev, FIO_WEBSOCKET_CLOSE_MESSAGE_TOO_BIG);
+
+      p->frame_remaining = payload_len;
+      p->frame_consumed = 0;
+      p->mask = masked ? fio_buf2u32u(buf.buf + header_len) : 0U;
+      FIO___WEBSOCKET_SET_FIN(p, fin);
+      FIO___WEBSOCKET_SET_MASKED(p, masked);
+      FIO___WEBSOCKET_SET_OPCODE(p, opcode);
+      FIO___WEBSOCKET_SET_PAUSED(p, 0);
+      p->state = FIO_WEBSOCKET_STATE_PAYLOAD;
+      if (!is_control && opcode != FIO_WEBSOCKET_OP_CONT) {
+        FIO___WEBSOCKET_SET_MSG_OPCODE(p, opcode);
+        FIO___WEBSOCKET_SET_MSG_RSV(p, wire_rsv);
+      }
+      buf.buf += header_len + mask_len;
+      buf.len -= header_len + mask_len;
+    }
+
+    {
+      const uint8_t opcode = FIO_WEBSOCKET_GET_OPCODE(p);
+      const uint8_t msg_opcode = FIO_WEBSOCKET_GET_MSG_OPCODE(p);
+      const uint8_t msg_rsv = FIO_WEBSOCKET_GET_MSG_RSV(p);
+      const _Bool is_control = (opcode & 0x08U) != 0;
+      const _Bool first_chunk_of_frame = (p->frame_consumed == 0);
+      const _Bool first_chunk_of_msg =
+          (first_chunk_of_frame && opcode != FIO_WEBSOCKET_OP_CONT);
+      const size_t chunk_len =
+          (buf.len < p->frame_remaining) ? buf.len : (size_t)p->frame_remaining;
+      const _Bool last_chunk_of_frame = (chunk_len == p->frame_remaining);
+      const _Bool last_chunk_of_msg =
+          (last_chunk_of_frame && FIO_WEBSOCKET_GET_FIN(p));
+
+      if (is_control) {
+        if (p->frame_remaining && buf.len < p->frame_remaining)
+          return (size_t)(buf.buf - start);
+        if (chunk_len && FIO_WEBSOCKET_GET_MASKED(p)) {
+          const uint32_t rot =
+              fio___websocket_rotate_mask(p->mask, p->frame_consumed);
+          fio_xmask(buf.buf, chunk_len, ((uint64_t)rot << 32) | (uint64_t)rot);
+        }
+        ev->type = FIO_WEBSOCKET_EV_CONTROL;
+        ev->opcode = opcode;
+        ev->payload = FIO_BUF_INFO2(buf.buf, chunk_len);
+        if (opcode == FIO_WEBSOCKET_OP_CLOSE) {
+          uint16_t code = FIO_WEBSOCKET_CLOSE_NO_STATUS;
+          if (FIO_UNLIKELY(chunk_len == 1))
+            return fio___websocket_fail(p,
+                                        ev,
+                                        FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+          if (chunk_len >= 2) {
+            code = fio_buf2u16_be(buf.buf);
+            if (FIO_UNLIKELY(!fio___websocket_close_code_valid(code)))
+              return fio___websocket_fail(p,
+                                          ev,
+                                          FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+          }
+          p->close_code = code;
+          ev->close_code = code;
+          p->state = FIO_WEBSOCKET_STATE_CLOSED;
+        } else {
+          p->state = FIO_WEBSOCKET_STATE_HEADER;
+        }
+        buf.buf += chunk_len;
+        buf.len -= chunk_len;
+        p->frame_consumed += (uint32_t)chunk_len;
+        p->frame_remaining -= chunk_len;
+        return (size_t)(buf.buf - start);
+      }
+
+      if (!chunk_len && p->frame_remaining)
+        return (size_t)(buf.buf - start);
+      if (chunk_len && FIO_WEBSOCKET_GET_MASKED(p)) {
+        const uint32_t rot =
+            fio___websocket_rotate_mask(p->mask, p->frame_consumed);
+        fio_xmask(buf.buf, chunk_len, ((uint64_t)rot << 32) | (uint64_t)rot);
+      }
+      ev->type = FIO_WEBSOCKET_EV_DATA_CHUNK;
+      ev->opcode = opcode;
+      ev->is_text = (uint8_t)(msg_opcode == FIO_WEBSOCKET_OP_TEXT);
+      ev->rsv = msg_rsv;
+      ev->is_first = (uint8_t)first_chunk_of_msg;
+      ev->is_last = (uint8_t)last_chunk_of_msg;
+      ev->payload = FIO_BUF_INFO2(buf.buf, chunk_len);
+
+      buf.buf += chunk_len;
+      buf.len -= chunk_len;
+      p->frame_consumed += (uint32_t)chunk_len;
+      p->frame_remaining -= chunk_len;
+      if (last_chunk_of_frame)
+        p->state = FIO_WEBSOCKET_STATE_HEADER;
+      if (last_chunk_of_msg) {
+        FIO___WEBSOCKET_SET_MSG_OPCODE(p, 0);
+        FIO___WEBSOCKET_SET_MSG_RSV(p, 0);
+      }
+      return (size_t)(buf.buf - start);
+    }
+  }
+}
+
+#undef FIO_WEBSOCKET_PARSER
+#endif /* FIO_WEBSOCKET_PARSER */
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -75831,9 +77112,9 @@ FIO_SFUNC size_t fio___brotli_scan_remaining_mlen(fio___brotli_bits_s *bits) {
 
     /* Compressed meta-block: if this is the last one, we're done.
      * If not last, we cannot skip the compressed body without full decode,
-     * so return 0 to indicate we can't determine the size. */
+     * so return SIZE_MAX to indicate the size needs a decoding pass. */
     if (!is_last)
-      return 0;
+      return (size_t)-1;
   }
   return total;
 }
@@ -75845,7 +77126,10 @@ SFUNC size_t fio_brotli_decompress(void *out,
   if (!in || !in_len)
     return 0;
 
-  /* Size query mode: out==NULL or out_len==0 — scan headers for MLEN sum */
+  /* Size query mode: out==NULL or out_len==0 — scan headers for MLEN sum.
+   * Single-meta-block (and uncompressed) streams scan cheaply. Streams with
+   * multiple compressed meta-blocks cannot be measured without decoding, so
+   * fall back to decode-and-discard with a grown-on-demand scratch. */
   if (!out || !out_len) {
     fio___brotli_bits_s bits;
     fio___brotli_bits_init(&bits, in, in_len);
@@ -75863,7 +77147,30 @@ SFUNC size_t fio_brotli_decompress(void *out,
       }
     }
 
-    return fio___brotli_scan_remaining_mlen(&bits);
+    size_t scanned = fio___brotli_scan_remaining_mlen(&bits);
+    if (scanned != (size_t)-1)
+      return scanned;
+    /* Multi-meta-block compressed stream: decode with an expanding scratch
+     * buffer. The decoder's overflow return is an exact lower bound, but it
+     * may advance only one meta-block per call — always at least double the
+     * capacity so the retry loop converges in O(n) total work. */
+    size_t cap = in_len << 2;
+    if (cap < (1U << 20))
+      cap = (1U << 20);
+    for (;;) {
+      uint8_t *scratch = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, cap, 0);
+      if (!scratch)
+        return 0;
+      size_t r = fio_brotli_decompress(scratch, cap, in, in_len);
+      FIO_MEM_FREE(scratch, cap);
+      if (r <= cap)
+        return r; /* exact size (or 0 on corrupt data) */
+      /* r > cap: exact lower bound from the decoder; grow geometrically */
+      if (r > (cap << 1))
+        cap = r;
+      else
+        cap <<= 1;
+    }
   }
 
   fio___brotli_bits_s bits;
@@ -75954,6 +77261,8 @@ SFUNC size_t fio_brotli_decompress(void *out,
         size_t needed = pos + mlen;
         bits.src += mlen;
         size_t rest = fio___brotli_scan_remaining_mlen(&bits);
+        if (rest == (size_t)-1)
+          rest = 0; /* exact size needs decoding; return the lower bound */
         return needed + rest;
       }
       FIO_MEMCPY(dst + pos, bits.src, mlen);
@@ -76142,6 +77451,8 @@ SFUNC size_t fio_brotli_decompress(void *out,
             FIO_MEM_FREE(dist_cmap, dist_map_size);
           if (!is_last) {
             size_t rest = fio___brotli_scan_remaining_mlen(&bits);
+            if (rest == (size_t)-1)
+              rest = 0; /* exact size needs decoding; lower bound */
             needed += rest;
           }
           return needed;
@@ -76282,6 +77593,8 @@ SFUNC size_t fio_brotli_decompress(void *out,
               FIO_MEM_FREE(dist_cmap, dist_map_size);
             if (!is_last) {
               size_t rest = fio___brotli_scan_remaining_mlen(&bits);
+              if (rest == (size_t)-1)
+                rest = 0; /* exact size needs decoding; lower bound */
               needed += rest;
             }
             return needed;
@@ -76325,6 +77638,8 @@ SFUNC size_t fio_brotli_decompress(void *out,
               FIO_MEM_FREE(dist_cmap, dist_map_size);
             if (!is_last) {
               size_t rest = fio___brotli_scan_remaining_mlen(&bits);
+              if (rest == (size_t)-1)
+                rest = 0; /* exact size needs decoding; lower bound */
               needed += rest;
             }
             return needed;
@@ -77953,12 +79268,20 @@ SFUNC size_t fio_brotli_compress FIO_NOOP(void *out,
   if (quality > 6)
     quality = 6;
 
-  const uint8_t *src = (const uint8_t *)in;
-  uint32_t src_len = (uint32_t)(in_len > 0x01000000U ? 0x01000000U : in_len);
+  const uint8_t *in_bytes = (const uint8_t *)in;
 
-  /* Choose WBITS: smallest power-of-2 window >= input size */
+  /* Meta-block chunking (RFC 7932): inputs above the 16MB single meta-block
+   * MLEN limit are emitted as a sequence of meta-blocks, ISLAST set only on
+   * the final one. Scratch (tokens, hash tables) stays chunk-sized, never
+   * input-sized. Inputs at/below 16MB keep the historical single-meta-block
+   * layout; larger inputs use 4MB meta-blocks. */
+  const uint32_t chunk_cap =
+      (in_len > 0x01000000U) ? (1U << 22) : (uint32_t)in_len;
+
+  /* Choose WBITS: smallest power-of-2 window >= chunk span (distances never
+   * cross a meta-block boundary here). */
   uint32_t wbits = 10;
-  while (wbits < FIO___BROTLI_MAX_WBITS && (1U << wbits) < src_len + 16)
+  while (wbits < FIO___BROTLI_MAX_WBITS && (1U << wbits) < chunk_cap + 16)
     ++wbits;
 
   /* Allocate hash table (q1-4, or q5+ on small data) or hash chain (q5+).
@@ -77970,7 +79293,7 @@ SFUNC size_t fio_brotli_compress FIO_NOOP(void *out,
   size_t hash_alloc = 0; /* total allocation size for hash_table + hash_gen */
   size_t hc_alloc = 0;
   fio___brotli_hc_s *hash_chain = NULL;
-  int q5_small_data = (quality >= 5 && src_len < 8192);
+  int q5_small_data = (quality >= 5 && chunk_cap < 8192);
   /* Note: q6 block splitting also disabled for small data (threshold 8192
    * in fio___brotli_split_literals), so q5_small_data covers both q5+q6. */
 
@@ -78022,7 +79345,7 @@ SFUNC size_t fio_brotli_compress FIO_NOOP(void *out,
     int is_dict_ref;   /* 1 if static dictionary reference (no ring buf push) */
   } fio___brotli_token_s;
 
-  size_t max_tokens = (size_t)src_len + 1;
+  size_t max_tokens = (size_t)chunk_cap + 1;
   size_t token_alloc = sizeof(fio___brotli_token_s) * max_tokens;
   fio___brotli_token_s *tokens =
       (fio___brotli_token_s *)FIO_MEM_REALLOC(NULL, 0, token_alloc, 0);
@@ -78033,15 +79356,42 @@ SFUNC size_t fio_brotli_compress FIO_NOOP(void *out,
       FIO_MEM_FREE(hash_table, hash_alloc);
     return 0;
   }
-  uint32_t token_count = 0;
 
-  /* Distance ring buffer for encoding — must match decompressor init.
-   * dist_rb[(idx-1)&3] = most recent distance = 4 per RFC 7932 Section 4. */
+  /* Distance ring buffer — STREAM level (RFC 7932 Section 4): it persists
+   * across meta-blocks, so it lives outside the chunk loop. Each chunk
+   * snapshots the state at chunk start; the histogram and emission passes
+   * replay from that snapshot, and the emission pass leaves the end state
+   * for the next chunk. */
   int32_t dist_rb[4] = {16,
                         15,
                         11,
                         4}; /* [idx-4]=16,[idx-3]=15,[idx-2]=11,[idx-1]=4 */
   uint32_t dist_rb_idx = 0;
+
+  uint32_t window_size = (1U << wbits) - 16;
+
+  /* Bit writer: sequential across all meta-blocks. WBITS is written once,
+   * as the stream header, before the first meta-block. */
+  fio___brotli_bw_s w;
+  fio___brotli_bw_init(&w, out, out_len);
+  fio___brotli_write_wbits(&w, wbits);
+
+  for (size_t chunk_off = 0; chunk_off < in_len; chunk_off += chunk_cap) {
+    const uint8_t *src = in_bytes + chunk_off;
+    const uint32_t src_len =
+        (uint32_t)((in_len - chunk_off > chunk_cap) ? chunk_cap
+                                                     : (in_len - chunk_off));
+    const int is_last_chunk = (chunk_off + chunk_cap >= in_len);
+    /* Snapshot the stream ring buffer at chunk start (Pass 1 advances the
+     * live state; Passes 2+3 replay from this snapshot). */
+    int32_t chunk_dist_rb[4];
+    chunk_dist_rb[0] = dist_rb[0];
+    chunk_dist_rb[1] = dist_rb[1];
+    chunk_dist_rb[2] = dist_rb[2];
+    chunk_dist_rb[3] = dist_rb[3];
+    const uint32_t chunk_dist_rb_idx = dist_rb_idx;
+
+  uint32_t token_count = 0;
 
   /* === Pass 1: LZ77 match finding === */
   uint32_t pos = 0;
@@ -78052,7 +79402,11 @@ SFUNC size_t fio_brotli_compress FIO_NOOP(void *out,
   int prev_was_match = 0;
   int32_t prev_match_score = 0;
   int prev_match_is_dict = 0;
-  uint32_t window_size = (1U << wbits) - 16;
+
+  if (quality >= 5 && !q5_small_data)
+    fio___brotli_hc_reset(hash_chain); /* per-chunk reset (generation bump) */
+  else
+    ++hash_generation; /* q1-4: invalidate previous chunk's hash entries */
 
   if (quality >= 5 && !q5_small_data) {
     /* ================================================================
@@ -78642,12 +79996,13 @@ SFUNC size_t fio_brotli_compress FIO_NOOP(void *out,
   FIO_MEMSET(iac_freqs, 0, sizeof(iac_freqs));
   FIO_MEMSET(dist_freqs, 0, sizeof(dist_freqs));
 
-  /* Reset distance ring buffer for encoding pass (must match decompressor) */
-  dist_rb[0] = 16;
-  dist_rb[1] = 15;
-  dist_rb[2] = 11;
-  dist_rb[3] = 4;
-  dist_rb_idx = 0;
+  /* Replay the distance ring buffer from this chunk's start state (the
+   * histogram pass must match the emission pass and the decompressor). */
+  dist_rb[0] = chunk_dist_rb[0];
+  dist_rb[1] = chunk_dist_rb[1];
+  dist_rb[2] = chunk_dist_rb[2];
+  dist_rb[3] = chunk_dist_rb[3];
+  dist_rb_idx = chunk_dist_rb_idx;
 
   uint32_t lit_pos = 0; /* tracks position in source for literal counting */
 
@@ -78839,18 +80194,16 @@ SFUNC size_t fio_brotli_compress FIO_NOOP(void *out,
     fio___brotli_build_codes(bc_codes, bc_lens, 26);
   }
 
-  /* === Pass 3: Write bitstream === */
-  fio___brotli_bw_s w;
-  fio___brotli_bw_init(&w, out, out_len);
-
-  /* Stream header: WBITS */
-  fio___brotli_write_wbits(&w, wbits);
+  /* === Pass 3: Write bitstream (meta-block header + tables + data) === */
 
   /* Meta-block header (RFC 7932 Section 9.2) */
-  fio___brotli_bw_put(&w, 1, 1);        /* ISLAST = 1 */
-  fio___brotli_bw_put(&w, 0, 1);        /* ISLASTEMPTY = 0 (not empty) */
+  fio___brotli_bw_put(&w, (uint64_t)is_last_chunk, 1); /* ISLAST */
+  if (is_last_chunk) {
+    fio___brotli_bw_put(&w, 0, 1); /* ISLASTEMPTY = 0 (not empty) */
+  }
   fio___brotli_write_mlen(&w, src_len); /* MLEN */
-  /* ISUNCOMPRESSED bit is only present when ISLAST=0, so omitted here. */
+  if (!is_last_chunk)
+    fio___brotli_bw_put(&w, 0, 1); /* ISUNCOMPRESSED = 0 (present iff !ISLAST) */
 
   /* Block type counts: NBLTYPESL, NBLTYPESI=1, NBLTYPESD=1 */
   if (nbltypesl > 1) {
@@ -78971,13 +80324,13 @@ SFUNC size_t fio_brotli_compress FIO_NOOP(void *out,
   }
 
   /* === Write compressed data === */
-  /* Reset distance ring buffer for final encoding pass (must match
-   * decompressor) */
-  dist_rb[0] = 16;
-  dist_rb[1] = 15;
-  dist_rb[2] = 11;
-  dist_rb[3] = 4;
-  dist_rb_idx = 0;
+  /* Replay the distance ring buffer from this chunk's start state (the
+   * emission pass leaves the end state in dist_rb for the next chunk). */
+  dist_rb[0] = chunk_dist_rb[0];
+  dist_rb[1] = chunk_dist_rb[1];
+  dist_rb[2] = chunk_dist_rb[2];
+  dist_rb[3] = chunk_dist_rb[3];
+  dist_rb_idx = chunk_dist_rb_idx;
   lit_pos = 0;
 
   /* Block splitting state for literal emission */
@@ -79090,6 +80443,8 @@ SFUNC size_t fio_brotli_compress FIO_NOOP(void *out,
     if (tokens[t].distance > 0)
       lit_pos += copy_len;
   }
+
+  } /* end meta-block chunk loop */
 #undef FIO___BROTLI_MAX_LIT_TREES
 
   /* Write 8 trailing zero bits so the decompressor's bit reader always has
@@ -79283,15 +80638,28 @@ typedef struct fio_deflate_s fio_deflate_s;
  */
 SFUNC fio_deflate_s *fio_deflate_new(int level, int is_compress);
 
+/** Creates a streaming state with context takeover (cross-message history
+ * over the last 32KB). Allocates the window (+ compressor hash) inside the
+ * context's own block — the documented per-context cost (~160KB compressor,
+ * ~32KB decompressor). `fio_deflate_new` (no-takeover) is the cheap default
+ * and the only mode the WebSocket layer negotiates. */
+SFUNC fio_deflate_s *fio_deflate_new_takeover(int level, int is_compress);
+
 /** Frees a streaming deflate/inflate state. */
 SFUNC void fio_deflate_free(fio_deflate_s *s);
 
 /** Resets a deflate streaming context (keeps allocated memory, clears state).
- */
+ * Frees the input buffer when it grew past 64KB, keeping persistent
+ * per-connection state bounded (no-takeover design). */
 SFUNC void fio_deflate_destroy(fio_deflate_s *s);
 
+/** Clamps compressor match distances to 2^bits (8..15, default 15).
+ * Used to honor `server_max_window_bits` from RFC 7692 negotiation. */
+SFUNC void fio_deflate_window_bits_set(fio_deflate_s *s, int bits);
+
 /**
- * Streaming compress/decompress.
+ * Streaming compress/decompress (no-takeover: each flushed message is an
+ * independent deflate stream — there is no cross-message history mode).
  *
  * Processes `in_len` bytes from `in`, writing output to `out` (max `out_len`).
  * `flush`: 0=normal, 1=sync_flush (for WebSocket frame boundaries).
@@ -79474,6 +80842,7 @@ typedef struct {
   uint32_t count;
   uint8_t *out;
   uint8_t *out_end;
+  uint32_t overflow; /* sticky: output exceeded out_end (stream invalid) */
 } fio___deflate_bitwriter_s;
 
 FIO_IFUNC void fio___deflate_bitwriter_init(fio___deflate_bitwriter_s *w,
@@ -79483,22 +80852,43 @@ FIO_IFUNC void fio___deflate_bitwriter_init(fio___deflate_bitwriter_s *w,
   w->count = 0;
   w->out = (uint8_t *)out;
   w->out_end = (uint8_t *)out + out_len;
+  w->overflow = 0;
 }
 
 FIO_IFUNC void fio___deflate_bitwriter_flush_bits(
     fio___deflate_bitwriter_s *w) {
-  if (w->count >= 8 && w->out + 8 <= w->out_end) {
+  if (w->count < 8)
+    return;
+  if (FIO_LIKELY(w->out + 8 <= w->out_end)) {
     fio_u2buf64_le(w->out, w->bits);
     uint32_t bytes = w->count >> 3;
     w->out += bytes;
     w->bits >>= (bytes << 3);
     w->count &= 7;
+    return;
+  }
+  /* Near the buffer end: flush byte-by-byte; on exhaustion raise the sticky
+   * overflow flag and reset the accumulator (never saturate silently, never
+   * let count reach 64 where the put shift would be UB). */
+  while (w->count >= 8) {
+    if (w->out >= w->out_end) {
+      w->overflow = 1;
+      w->bits = 0;
+      w->count = 0;
+      return;
+    }
+    *w->out++ = (uint8_t)(w->bits & 0xFF);
+    w->bits >>= 8;
+    w->count -= 8;
   }
 }
 
 FIO_IFUNC void fio___deflate_bitwriter_put(fio___deflate_bitwriter_s *w,
                                            uint32_t val,
                                            uint32_t nbits) {
+  if (FIO_UNLIKELY(w->overflow))
+    return; /* stream already invalid — drop remaining output */
+  /* count < 8 after every flush and nbits <= 32, so the shift is < 64. */
   w->bits |= (uint64_t)val << w->count;
   w->count += nbits;
   fio___deflate_bitwriter_flush_bits(w);
@@ -79526,7 +80916,42 @@ FIO_IFUNC size_t fio___deflate_bitwriter_finish(fio___deflate_bitwriter_s *w,
     w->bits >>= 8;
     w->count = (w->count >= 8) ? (w->count - 8) : 0;
   }
+  if (w->count > 0)
+    w->overflow = 1; /* bits remained with no space left */
+  if (FIO_UNLIKELY(w->overflow))
+    return 0; /* compressed output did not fit — signal, never truncate */
   return (size_t)(w->out - (uint8_t *)out_start);
+}
+
+/** Write stored (uncompressed) DEFLATE blocks over `src`.
+ * Emits 65535-byte blocks; the last block carries BFINAL only when
+ * `final_block` is set. Returns 0 on success, -1 on output overflow. */
+FIO_SFUNC int fio___deflate_write_stored_blocks(fio___deflate_bitwriter_s *w,
+                                                const uint8_t *src,
+                                                uint32_t src_len,
+                                                int final_block) {
+  uint32_t pos = 0;
+  while (pos < src_len) {
+    uint32_t block_len = src_len - pos;
+    if (block_len > 65535)
+      block_len = 65535;
+    uint32_t is_final = (final_block && (pos + block_len >= src_len)) ? 1 : 0;
+    fio___deflate_bitwriter_put(w, is_final, 1);
+    fio___deflate_bitwriter_put(w, 0, 2);
+    fio___deflate_bitwriter_align(w);
+    fio___deflate_bitwriter_put(w, block_len & 0xFFFF, 16);
+    fio___deflate_bitwriter_put(w, (~block_len) & 0xFFFF, 16);
+    if (FIO_UNLIKELY(w->overflow))
+      return -1;
+    if (w->out + block_len > w->out_end) {
+      w->overflow = 1;
+      return -1;
+    }
+    FIO_MEMCPY(w->out, src + pos, block_len);
+    w->out += block_len;
+    pos += block_len;
+  }
+  return 0;
 }
 
 /* *****************************************************************************
@@ -80973,6 +82398,8 @@ FIO_IFUNC uint32_t fio___deflate_dist_to_sym(uint32_t distance) {
 /** Upper bound on compressed output size. */
 FIO_IFUNC size_t fio_deflate_compress_bound(size_t in_len) {
   /* Worst case: stored blocks (5 bytes header per 65535 bytes + data).
+   * The compressor falls back to stored blocks whenever Huffman coding would
+   * expand (negative gain), so this bound is sufficient at every level.
    * Add extra margin for dynamic Huffman header overhead (~320 bytes max)
    * and bitwriter flush margin (8 bytes). */
   size_t num_blocks = (in_len + 65534) / 65535;
@@ -81009,44 +82436,31 @@ FIO_NOOP(void *out, size_t out_len, const void *in, size_t in_len, int level) {
   if (level == 0) {
     fio___deflate_bitwriter_s w;
     fio___deflate_bitwriter_init(&w, out, out_len);
-
-    uint32_t pos = 0;
-    while (pos < src_len) {
-      uint32_t block_len = src_len - pos;
-      if (block_len > 65535)
-        block_len = 65535;
-      uint32_t is_final = (pos + block_len >= src_len) ? 1 : 0;
-
-      /* BFINAL + BTYPE=00 */
-      fio___deflate_bitwriter_put(&w, is_final, 1);
-      fio___deflate_bitwriter_put(&w, 0, 2);
-      fio___deflate_bitwriter_align(&w);
-
-      /* LEN and NLEN */
-      fio___deflate_bitwriter_put(&w, block_len & 0xFFFF, 16);
-      fio___deflate_bitwriter_put(&w, (~block_len) & 0xFFFF, 16);
-
-      /* Raw data */
-      if (w.out + block_len > w.out_end)
-        return 0;
-      FIO_MEMCPY(w.out, src + pos, block_len);
-      w.out += block_len;
-
-      pos += block_len;
-    }
+    if (fio___deflate_write_stored_blocks(&w, src, src_len, 1))
+      return 0;
     return fio___deflate_bitwriter_finish(&w, out);
   }
 
   /* Levels 1-9: LZ77 + Huffman */
   const fio___deflate_level_params_s *params = &fio___deflate_levels[level];
 
-  /* Allocate hash tables on heap.
+  /* LZ77 output tokens */
+  typedef struct {
+    uint16_t litlen; /* literal byte or length (if dist > 0) */
+    uint16_t dist;   /* 0 for literal, >0 for match */
+  } fio___deflate_token_s;
+
+  /* Allocate all per-call scratch (hash tables + token buffer) in ONE block.
    * Uses generation counter to avoid zeroing head[] (128KB) and prev[] (128KB)
    * on each call. head_gen[h] tracks which generation wrote head[h]; stale
    * entries are treated as empty. prev[] chain links are cut at insertion time
    * when the head entry is stale, so prev[] never needs zeroing either. */
-  size_t alloc_size = sizeof(uint32_t) * FIO___DEFLATE_HASH_SIZE * 2 +
-                      sizeof(uint32_t) * FIO___DEFLATE_WINDOW_SIZE;
+  size_t max_tokens = src_len + 1;
+  const size_t hash_alloc = sizeof(uint32_t) * FIO___DEFLATE_HASH_SIZE * 2 +
+                            sizeof(uint32_t) * FIO___DEFLATE_WINDOW_SIZE;
+  const size_t token_alloc =
+      sizeof(fio___deflate_token_s) * max_tokens;
+  const size_t alloc_size = hash_alloc + token_alloc;
   uint32_t *hash_mem = (uint32_t *)FIO_MEM_REALLOC(NULL, 0, alloc_size, 0);
   if (!hash_mem)
     return 0;
@@ -81065,22 +82479,11 @@ FIO_NOOP(void *out, size_t out_len, const void *in, size_t in_len, int level) {
   FIO_MEMSET(ll_freqs, 0, sizeof(ll_freqs));
   FIO_MEMSET(d_freqs, 0, sizeof(d_freqs));
 
-  /* LZ77 output tokens */
-  typedef struct {
-    uint16_t litlen; /* literal byte or length (if dist > 0) */
-    uint16_t dist;   /* 0 for literal, >0 for match */
-  } fio___deflate_token_s;
-
-  /* Allocate token buffer */
-  size_t max_tokens = src_len + 1;
-  size_t token_alloc = sizeof(fio___deflate_token_s) * max_tokens;
+  /* The token buffer shares the same allocation (right after the hashes). */
   fio___deflate_token_s *tokens =
-      (fio___deflate_token_s *)FIO_MEM_REALLOC(NULL, 0, token_alloc, 0);
-  if (!tokens) {
-    FIO_MEM_FREE(hash_mem, alloc_size);
-    return 0;
-  }
+      (fio___deflate_token_s *)((uint8_t *)hash_mem + hash_alloc);
   uint32_t token_count = 0;
+  (void)max_tokens;
 
   /* LZ77 pass: find matches and build token stream */
   uint32_t pos = 0;
@@ -81381,6 +82784,25 @@ FIO_NOOP(void *out, size_t out_len, const void *in, size_t in_len, int level) {
   /* Choose fixed Huffman if cheaper or equal (avoids header overhead) */
   int use_fixed = (fixed_cost <= dyn_cost);
 
+  /* Stored-block fallback (negative-gain guard): Huffman coding of
+   * incompressible data expands (up to ~9 bits/literal); stored blocks cost
+   * exactly 8 bits/byte + at most 42 bits per 64KB block (3 header bits +
+   * <=7 padding + 32 LEN/NLEN bits). Pick stored when it beats BOTH Huffman
+   * options — output then never exceeds the stored worst case, which is
+   * exactly what fio_deflate_compress_bound budgets. */
+  {
+    uint64_t stored_blocks = ((uint64_t)src_len + 65534) / 65535;
+    uint64_t stored_cost = (uint64_t)src_len * 8 + stored_blocks * 42;
+    if (stored_cost < fixed_cost && stored_cost < dyn_cost) {
+      fio___deflate_bitwriter_s w;
+      fio___deflate_bitwriter_init(&w, out, out_len);
+      int wr = fio___deflate_write_stored_blocks(&w, src, src_len, 1);
+      size_t result = wr ? 0 : fio___deflate_bitwriter_finish(&w, out);
+      FIO_MEM_FREE(hash_mem, alloc_size);
+      return result;
+    }
+  }
+
   /* Build fixed codes if needed (must use all 288 for correct canonicals) */
   uint16_t fixed_ll_codes[288];
   uint16_t fixed_d_codes[30];
@@ -81456,7 +82878,6 @@ FIO_NOOP(void *out, size_t out_len, const void *in, size_t in_len, int level) {
 
   size_t result = fio___deflate_bitwriter_finish(&w, out);
 
-  FIO_MEM_FREE(tokens, token_alloc);
   FIO_MEM_FREE(hash_mem, alloc_size);
 
   return result;
@@ -81588,36 +83009,64 @@ SFUNC size_t fio_gzip_decompress FIO_NOOP(void *out,
 /* *****************************************************************************
 Streaming API (for WebSocket permessage-deflate)
 
-True incremental streaming with context takeover:
-- Compressor: maintains sliding window + hash chain across push calls.
-  On flush, emits non-final DEFLATE block(s) + sync flush marker.
-  LZ77 matches can reference data from previous push calls.
-- Decompressor: buffers compressed input. On flush, prepends the sliding
-  window to the output buffer so back-references from later messages
-  resolve correctly against earlier message data.
+Generic streaming deflate with two modes:
+- **No-takeover (default, `fio_deflate_new`):** each flushed message is an
+  independent stream. Compressor scratch (hash + token buffers) comes from a
+  contention-safe static slot pool checked out per call — persistent state
+  per context is ~0 (a small struct + bounded input buffer). This is the
+  only mode the WebSocket layer negotiates (both `*_no_context_takeover`
+  flags are always forced).
+- **Context takeover (opt-in, `fio_deflate_new_takeover`):** matches may
+  reference the last 32KB of previous messages. The 32KB window (+
+  compressor hash) is allocated in the context's own block — the documented
+  per-context cost (~160KB compressor / ~32KB decompressor).
+- Compressor: 32KB chunks emitted as non-final DEFLATE blocks; only the
+  message-final chunk carries the sync-flush trailer. When every scratch
+  slot is busy, compression returns 0 (callers fall back to uncompressed).
+- Decompressor: inflates into the caller's output buffer (no-takeover:
+  direct; takeover: through the window prefix). The caller appends 9
+  stream-completion bytes to the bounded input buffer so the inflater runs
+  to the true end of the (possibly multi-block) stream.
 ***************************************************************************** */
 
 /** Maximum buffered input before auto-flush (compressor). */
 #define FIO___DEFLATE_STREAM_BUF_MAX FIO___DEFLATE_WINDOW_SIZE
 
+#define FIO___DEFLATE_SCRATCH_HASH_BITS 14
+#define FIO___DEFLATE_SCRATCH_HASH_SIZE (1U << FIO___DEFLATE_SCRATCH_HASH_BITS)
+#define FIO___DEFLATE_SCRATCH_SLOTS     16
+
 struct fio_deflate_s {
-  /* Compression hash chain (persistent across calls) */
-  uint32_t *hash_head;
-  uint32_t *hash_prev;
-  uint32_t *hash_head_gen; /* generation stamp per head[] entry */
-  size_t hash_alloc;
-  uint32_t hash_gen; /* current generation (incremented each compress call) */
-  /* Input buffer (accumulates data between flush calls) */
+  /* Bounded input buffer: compressed bytes (decompress, +9 completion
+   * bytes) or pre-flush fragments (compress, capped at STREAM_BUF_MAX). */
   uint8_t *buf;
   size_t buf_len;
   size_t buf_cap;
-  /* Sliding window for context takeover (both compress and decompress) */
-  uint32_t window_pos;
   /* level and state */
   uint8_t is_compress;
-  uint8_t level;
-  uint8_t window[FIO___DEFLATE_WINDOW_SIZE];
+  uint8_t level;       /* recorded; streaming always uses the fast matcher */
+  uint8_t window_bits; /* compressor distance clamp: 8..15 (default 15) */
+  uint8_t takeover;    /* 1 = context-takeover (cross-message history) */
+  /* Flexible takeover state (allocated only for takeover contexts — see
+   * fio_deflate_new_takeover). Layout: fio___deflate_takeover_s for
+   * compressors; just window+window_pos for decompressors. */
+  uint8_t tk[];
 };
+
+/** Takeover state: cross-message history (allocated in the context's own
+ * block, right after the struct — a single allocation, no indirection).
+ * `window` comes first so decompressors can allocate the short prefix only. */
+typedef struct {
+  uint8_t window[FIO___DEFLATE_WINDOW_SIZE]; /* 32KB cross-message history */
+  uint32_t window_pos;                        /* valid bytes in window */
+  uint32_t gen;                               /* hash generation (compress) */
+  uint32_t head[FIO___DEFLATE_SCRATCH_HASH_SIZE]; /* direct-mapped heads */
+  uint32_t hgen[FIO___DEFLATE_SCRATCH_HASH_SIZE]; /* generation stamps */
+} fio___deflate_takeover_s;
+
+/** Takeover block size for a decompressor (window + window_pos only). */
+#define FIO___DEFLATE_TAKEOVER_RD_SIZE                                       \
+  (FIO___DEFLATE_WINDOW_SIZE + sizeof(uint32_t))
 
 /** Ensure the input buffer has room for `need` more bytes. */
 FIO_SFUNC int fio___deflate_stream_buf_grow(fio_deflate_s *s, size_t need) {
@@ -81637,225 +83086,274 @@ FIO_SFUNC int fio___deflate_stream_buf_grow(fio_deflate_s *s, size_t need) {
 }
 
 /* *****************************************************************************
-Streaming compression internals
+Streaming compressor scratch pool
 
-Builds a combined buffer [window | new_data] and runs LZ77 on it.
-The window prefix provides match context from previous messages.
-Only new_data bytes produce output tokens; window bytes are skipped
-(but their hash entries are inserted so matches can reference them).
+Contention-safe static slots (the FIO_STATIC_SAFE_ALLOC_DEF core
+primitive): `fio___deflate_scratch_try` returns a slot for one call or NULL
+when every slot is busy ("slots exhausted ⇒ send uncompressed").
 ***************************************************************************** */
 
-FIO_SFUNC size_t fio___deflate_stream_compress(fio_deflate_s *s,
-                                               void *out,
-                                               size_t out_len,
-                                               const uint8_t *new_data,
-                                               size_t new_len) {
-  if (!new_len && !out_len)
-    return 0;
+/** Compressor scratch slot (≈ 256KB, chunk-sized, static). */
+typedef struct {
+  uint32_t head[FIO___DEFLATE_SCRATCH_HASH_SIZE]; /* direct-mapped heads */
+  uint32_t gen[FIO___DEFLATE_SCRATCH_HASH_SIZE];  /* generation stamps */
+  uint32_t gen_ctr;                               /* per-slot generation */
+  uint16_t tokens[2 * (FIO___DEFLATE_WINDOW_SIZE + 1)]; /* (litlen, dist) */
+} fio___deflate_scratch_s;
 
-  const fio___deflate_level_params_s *params = &fio___deflate_levels[s->level];
+/* Contention-safe static slot pool (core primitive): fio___deflate_scratch_try
+ * checks out a slot (NULL when all 16 are busy ⇒ caller sends uncompressed),
+ * fio___deflate_scratch_free releases it. Slot lifetime = one call. */
+FIO_STATIC_SAFE_ALLOC_DEF(fio___deflate_scratch,
+                          fio___deflate_scratch_s,
+                          1,
+                          FIO___DEFLATE_SCRATCH_SLOTS)
 
-  /* Build combined buffer: [window_prefix | new_data] */
-  uint32_t prefix_len = s->window_pos;
-  uint32_t total_len = prefix_len + (uint32_t)new_len;
+/* *****************************************************************************
+Streaming compression internals (no-takeover)
 
-  uint8_t *combined = NULL;
-  size_t combined_alloc = 0;
-  if (total_len) {
-    combined_alloc = total_len;
-    combined = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, combined_alloc, 0);
-    if (!combined)
-      return 0;
-    if (prefix_len)
-      FIO_MEMCPY(combined, s->window, prefix_len);
-    if (new_len)
-      FIO_MEMCPY(combined + prefix_len, new_data, new_len);
+Each call compresses `data` as an independent region: 32KB chunks, each
+emitted as one non-final DEFLATE block (dynamic/fixed/stored picked per
+chunk by bit cost), followed by one complete sync flush (empty stored block
+header + 4-byte trailer). Scratch (direct-mapped hash + token buffer) comes
+from a checked-out static slot; history never crosses a call boundary (no
+context takeover). Positions are absolute region offsets, so matches may
+reach back across chunk boundaries within the region (up to 2^window_bits).
+***************************************************************************** */
+
+/** RLE-encoded dynamic Huffman header cost in bits (HLIT/HDIST/HCLEN, the
+ * 3-bit code-length lengths, the RLE symbols, and repeat extra bits). */
+FIO_SFUNC uint64_t fio___deflate_dyn_header_cost(const uint8_t *ll_lens,
+                                                 uint32_t num_ll,
+                                                 const uint8_t *d_lens,
+                                                 uint32_t num_d) {
+  uint8_t all_lens_tmp[286 + 30];
+  uint32_t total = num_ll + num_d;
+  FIO_MEMCPY(all_lens_tmp, ll_lens, num_ll);
+  FIO_MEMCPY(all_lens_tmp + num_ll, d_lens, num_d);
+
+  uint32_t cl_freqs_tmp[19];
+  FIO_MEMSET(cl_freqs_tmp, 0, sizeof(cl_freqs_tmp));
+
+  for (uint32_t i = 0; i < total;) {
+    if (all_lens_tmp[i] == 0) {
+      uint32_t run = 1;
+      while (i + run < total && all_lens_tmp[i + run] == 0)
+        ++run;
+      while (run >= 11) {
+        uint32_t r = run > 138 ? 138 : run;
+        cl_freqs_tmp[18]++;
+        run -= r;
+        i += r;
+      }
+      while (run >= 3) {
+        uint32_t r = run > 10 ? 10 : run;
+        cl_freqs_tmp[17]++;
+        run -= r;
+        i += r;
+      }
+      while (run > 0) {
+        cl_freqs_tmp[0]++;
+        run--;
+        i++;
+      }
+    } else {
+      uint8_t val = all_lens_tmp[i];
+      cl_freqs_tmp[val]++;
+      i++;
+      uint32_t run = 0;
+      while (i + run < total && all_lens_tmp[i + run] == val)
+        ++run;
+      while (run >= 3) {
+        uint32_t r = run > 6 ? 6 : run;
+        cl_freqs_tmp[16]++;
+        run -= r;
+        i += r;
+      }
+      while (run > 0) {
+        cl_freqs_tmp[val]++;
+        run--;
+        i++;
+      }
+    }
   }
 
-  /* Advance generation counter instead of zeroing 256KB of hash tables.
-   * Stale entries (gen mismatch) are treated as empty. */
-  s->hash_gen++;
-  uint32_t gen = s->hash_gen;
-  uint32_t *head_gen = s->hash_head_gen;
+  uint8_t cl_lens_tmp[19];
+  fio___deflate_build_code_lengths(cl_lens_tmp, cl_freqs_tmp, 19, 7);
 
-  /* Insert hash entries for the window prefix (no tokens emitted).
-   * This allows new_data matches to reference window content. */
-  for (uint32_t i = 0; i + 3 < prefix_len; ++i) {
-    uint32_t h = fio___deflate_hash4(combined + i);
-    s->hash_prev[i & FIO___DEFLATE_WINDOW_MASK] =
-        (head_gen[h] == gen) ? s->hash_head[h] : 0;
-    s->hash_head[h] = (uint32_t)i;
-    head_gen[h] = gen;
+  uint32_t hclen_tmp = 19;
+  while (hclen_tmp > 4 &&
+         cl_lens_tmp[fio___deflate_codelen_order[hclen_tmp - 1]] == 0)
+    --hclen_tmp;
+
+  uint64_t cost = 5 + 5 + 4; /* HLIT + HDIST + HCLEN */
+  cost += (uint64_t)hclen_tmp * 3;
+  for (uint32_t i = 0; i < 19; ++i) {
+    if (cl_freqs_tmp[i])
+      cost += (uint64_t)cl_freqs_tmp[i] * cl_lens_tmp[i];
   }
+  cost += (uint64_t)cl_freqs_tmp[16] * 2;
+  cost += (uint64_t)cl_freqs_tmp[17] * 3;
+  cost += (uint64_t)cl_freqs_tmp[18] * 7;
+  return cost;
+}
 
-  /* LZ77 pass: find matches starting from prefix_len */
-  typedef struct {
-    uint16_t litlen;
-    uint16_t dist;
-  } fio___deflate_token_s;
-
-  size_t max_tokens = new_len + 1;
-  size_t token_alloc =
-      sizeof(fio___deflate_token_s) * (max_tokens ? max_tokens : 1);
-  fio___deflate_token_s *tokens =
-      (fio___deflate_token_s *)FIO_MEM_REALLOC(NULL, 0, token_alloc, 0);
-  if (!tokens) {
-    if (combined)
-      FIO_MEM_FREE(combined, combined_alloc);
-    return 0;
-  }
+/** Tokenize one chunk (greedy, direct-mapped hash) into sc->tokens while
+ * counting litlen/distance symbol frequencies. Returns the token count. */
+FIO_SFUNC uint32_t
+fio___deflate_stream_tokenize(fio___deflate_scratch_s *sc,
+                              const uint8_t *data,
+                              uint32_t pos,
+                              uint32_t end,
+                              uint32_t max_dist,
+                              uint32_t *ll_freqs,
+                              uint32_t *d_freqs) {
+  uint16_t *tokens = sc->tokens;
   uint32_t token_count = 0;
-
-  uint32_t ll_freqs[286];
-  uint32_t d_freqs[30];
-  FIO_MEMSET(ll_freqs, 0, sizeof(ll_freqs));
-  FIO_MEMSET(d_freqs, 0, sizeof(d_freqs));
-
-  uint32_t pos = prefix_len;
-  uint32_t prev_match_len = 0;
-  uint32_t prev_match_dist = 0;
-  int prev_was_match = 0;
-
-  while (pos < total_len) {
+  const uint32_t gen = sc->gen_ctr;
+  while (pos < end) {
     uint32_t match_len = 0;
     uint32_t match_dist = 0;
-
-    if (pos + 3 < total_len) {
-      match_len = fio___deflate_find_match(combined,
-                                           pos,
-                                           total_len,
-                                           s->hash_head,
-                                           s->hash_prev,
-                                           head_gen,
-                                           gen,
-                                           params->max_chain,
-                                           params->nice_length,
-                                           &match_dist);
-    }
-
-    /* Lazy matching */
-    if (params->lazy && prev_was_match && match_len > prev_match_len) {
-      tokens[token_count].litlen = combined[pos - 1];
-      tokens[token_count].dist = 0;
-      token_count++;
-      ll_freqs[combined[pos - 1]]++;
-      prev_was_match = 0;
-    } else if (prev_was_match) {
-      tokens[token_count].litlen = (uint16_t)prev_match_len;
-      tokens[token_count].dist = (uint16_t)prev_match_dist;
-      token_count++;
-      uint32_t sym = fio___deflate_len_to_sym(prev_match_len);
-      ll_freqs[sym]++;
-      uint32_t dsym = fio___deflate_dist_to_sym(prev_match_dist);
-      d_freqs[dsym]++;
-
-      uint32_t skip_end = pos - 1 + prev_match_len;
-      if (skip_end > total_len)
-        skip_end = total_len;
-      if (s->level >= 4) {
-        /* Level 4+: full insertion (needed for good lazy matching) */
-        for (uint32_t j = pos; j < skip_end && j + 3 < total_len; ++j) {
-          uint32_t h = fio___deflate_hash4(combined + j);
-          s->hash_prev[j & FIO___DEFLATE_WINDOW_MASK] =
-              (head_gen[h] == gen) ? s->hash_head[h] : 0;
-          s->hash_head[h] = (uint32_t)j;
-          head_gen[h] = gen;
-        }
-      } else if (s->level >= 2) {
-        /* Level 2-3: sparse insertion every 4th position */
-        for (uint32_t j = pos + 3; j < skip_end && j + 3 < total_len; j += 4) {
-          uint32_t h = fio___deflate_hash4(combined + j);
-          s->hash_prev[j & FIO___DEFLATE_WINDOW_MASK] =
-              (head_gen[h] == gen) ? s->hash_head[h] : 0;
-          s->hash_head[h] = (uint32_t)j;
-          head_gen[h] = gen;
-        }
+    if (pos + 3 < end) {
+      uint32_t h = (fio___deflate_hash4(data + pos) >> 1) &
+                   (FIO___DEFLATE_SCRATCH_HASH_SIZE - 1);
+      uint32_t cand = sc->head[h];
+      if (sc->gen[h] == gen && pos > cand && pos - cand <= max_dist &&
+          fio_buf2u32_le(data + pos) == fio_buf2u32_le(data + cand)) {
+        uint32_t max_len = end - pos;
+        if (max_len > 258)
+          max_len = 258;
+        match_len = fio___deflate_extend_match(data, pos, cand, 4, max_len);
+        match_dist = pos - cand;
       }
-      /* Level 1: skip all mid-match insertions (zlib-style) */
-      pos = skip_end;
-      prev_was_match = 0;
-      continue;
+      sc->head[h] = pos;
+      sc->gen[h] = gen;
     }
-
-    /* Update hash chain */
-    if (pos + 3 < total_len) {
-      uint32_t h = fio___deflate_hash4(combined + pos);
-      s->hash_prev[pos & FIO___DEFLATE_WINDOW_MASK] =
-          (head_gen[h] == gen) ? s->hash_head[h] : 0;
-      s->hash_head[h] = (uint32_t)pos;
-      head_gen[h] = gen;
-    }
-
     if (match_len >= 3) {
-      if (params->lazy && match_len < params->max_lazy) {
-        prev_match_len = match_len;
-        prev_match_dist = match_dist;
-        prev_was_match = 1;
-        pos++;
-        continue;
-      }
-
-      tokens[token_count].litlen = (uint16_t)match_len;
-      tokens[token_count].dist = (uint16_t)match_dist;
-      token_count++;
-      uint32_t sym = fio___deflate_len_to_sym(match_len);
-      ll_freqs[sym]++;
-      uint32_t dsym = fio___deflate_dist_to_sym(match_dist);
-      d_freqs[dsym]++;
-
-      if (s->level >= 4) {
-        /* Level 4+: full insertion (needed for good lazy matching) */
-        for (uint32_t j = pos + 1; j < pos + match_len && j + 3 < total_len;
-             ++j) {
-          uint32_t h = fio___deflate_hash4(combined + j);
-          s->hash_prev[j & FIO___DEFLATE_WINDOW_MASK] =
-              (head_gen[h] == gen) ? s->hash_head[h] : 0;
-          s->hash_head[h] = (uint32_t)j;
-          head_gen[h] = gen;
-        }
-      } else if (s->level >= 2) {
-        /* Level 2-3: sparse insertion every 4th position */
-        for (uint32_t j = pos + 4; j < pos + match_len && j + 3 < total_len;
-             j += 4) {
-          uint32_t h = fio___deflate_hash4(combined + j);
-          s->hash_prev[j & FIO___DEFLATE_WINDOW_MASK] =
-              (head_gen[h] == gen) ? s->hash_head[h] : 0;
-          s->hash_head[h] = (uint32_t)j;
-          head_gen[h] = gen;
-        }
-      }
-      /* Level 1: skip all mid-match insertions (zlib-style) */
+      tokens[token_count * 2] = (uint16_t)match_len;
+      tokens[token_count * 2 + 1] = (uint16_t)match_dist;
+      ++token_count;
+      ++ll_freqs[fio___deflate_len_to_sym(match_len)];
+      ++d_freqs[fio___deflate_dist_to_sym(match_dist)];
       pos += match_len;
     } else {
-      tokens[token_count].litlen = combined[pos];
-      tokens[token_count].dist = 0;
-      token_count++;
-      ll_freqs[combined[pos]]++;
-      pos++;
+      tokens[token_count * 2] = data[pos];
+      tokens[token_count * 2 + 1] = 0;
+      ++token_count;
+      ++ll_freqs[data[pos]];
+      ++pos;
     }
   }
+  return token_count;
+}
 
-  /* Flush pending lazy match */
-  if (prev_was_match) {
-    tokens[token_count].litlen = (uint16_t)prev_match_len;
-    tokens[token_count].dist = (uint16_t)prev_match_dist;
-    token_count++;
-    uint32_t sym = fio___deflate_len_to_sym(prev_match_len);
-    ll_freqs[sym]++;
-    uint32_t dsym = fio___deflate_dist_to_sym(prev_match_dist);
-    d_freqs[dsym]++;
+/** Tokenize one chunk with cross-message history (takeover mode). Positions
+ * are absolute over [window | region): [0, hist_len) = window bytes,
+ * [hist_len, end) = region bytes. Only region positions emit tokens;
+ * candidates may reach back into the window. Hash tables persist in the
+ * takeover block across messages. */
+FIO_SFUNC uint32_t
+fio___deflate_stream_tokenize_takeover(fio___deflate_scratch_s *sc,
+                                       fio___deflate_takeover_s *tk,
+                                       const uint8_t *data,
+                                       uint32_t pos,
+                                       uint32_t end,
+                                       uint32_t max_dist,
+                                       uint32_t *ll_freqs,
+                                       uint32_t *d_freqs) {
+  uint16_t *tokens = sc->tokens;
+  uint32_t token_count = 0;
+  const uint32_t hist_len = tk->window_pos;
+  const uint8_t *hist = tk->window;
+  const uint32_t gen = tk->gen;
+  while (pos < end) {
+    uint32_t match_len = 0;
+    uint32_t match_dist = 0;
+    if (pos + 3 < end) {
+      const uint8_t *cur = data + (pos - hist_len);
+      uint32_t h = (fio___deflate_hash4(cur) >> 1) &
+                   (FIO___DEFLATE_SCRATCH_HASH_SIZE - 1);
+      uint32_t cand = tk->head[h];
+      if (tk->hgen[h] == gen && pos > cand && pos - cand <= max_dist) {
+        /* Verify 4 bytes at the candidate (may straddle window/region) */
+        uint32_t c4;
+        if (cand >= hist_len) {
+          c4 = fio_buf2u32_le(data + (cand - hist_len));
+        } else if (cand + 4 <= hist_len) {
+          c4 = fio_buf2u32_le(hist + cand);
+        } else {
+          uint8_t tmp[4];
+          uint32_t tail = hist_len - cand; /* 1..3 bytes in window tail */
+          FIO_MEMCPY(tmp, hist + cand, tail);
+          FIO_MEMCPY(tmp + tail, data, 4 - tail);
+          c4 = fio_buf2u32_le(tmp);
+        }
+        if (c4 == fio_buf2u32_le(cur)) {
+          uint32_t max_len = end - pos;
+          if (max_len > 258)
+            max_len = 258;
+          if (cand >= hist_len) {
+            /* Candidate fully in region: fast word-wise extension */
+            match_len = fio___deflate_extend_match(data,
+                                                   pos - hist_len,
+                                                   cand - hist_len,
+                                                   4,
+                                                   max_len);
+          } else {
+            /* Two-region extension: window tail, then region bytes */
+            uint32_t ml = 4;
+            while (ml < max_len) {
+              uint32_t ci = cand + ml;
+              uint8_t cb = (ci < hist_len) ? hist[ci] : data[ci - hist_len];
+              if (cur[ml] != cb)
+                break;
+              ++ml;
+            }
+            match_len = ml;
+          }
+          match_dist = pos - cand;
+        }
+      }
+      tk->head[h] = pos;
+      tk->hgen[h] = gen;
+    }
+    if (match_len >= 3) {
+      tokens[token_count * 2] = (uint16_t)match_len;
+      tokens[token_count * 2 + 1] = (uint16_t)match_dist;
+      ++token_count;
+      ++ll_freqs[fio___deflate_len_to_sym(match_len)];
+      ++d_freqs[fio___deflate_dist_to_sym(match_dist)];
+      pos += match_len;
+    } else {
+      uint8_t lit = data[pos - hist_len];
+      tokens[token_count * 2] = lit;
+      tokens[token_count * 2 + 1] = 0;
+      ++token_count;
+      ++ll_freqs[lit];
+      ++pos;
+    }
   }
+  return token_count;
+}
 
-  /* Add end-of-block symbol */
-  ll_freqs[256]++;
-
+/** Emit one chunk as a single non-final DEFLATE block (BFINAL=0), picking
+ * the cheapest of dynamic / fixed / stored encodings. Returns 0 on success,
+ * -1 on output overflow. */
+FIO_SFUNC int fio___deflate_stream_emit_block(fio___deflate_scratch_s *sc,
+                                              fio___deflate_bitwriter_s *w,
+                                              const uint8_t *data,
+                                              uint32_t data_off,
+                                              const uint32_t *ll_freqs,
+                                              const uint32_t *d_freqs,
+                                              uint32_t token_count,
+                                              uint32_t chunk_len) {
   /* Build Huffman trees */
   uint8_t ll_lens[286];
   uint8_t d_lens[30];
   fio___deflate_build_code_lengths(ll_lens, ll_freqs, 286, 15);
   fio___deflate_build_code_lengths(d_lens, d_freqs, 30, 15);
 
-  /* Ensure at least one distance code */
+  /* Ensure at least one distance code exists */
   {
     int has_dist = 0;
     for (uint32_t i = 0; i < 30; ++i) {
@@ -81867,6 +83365,7 @@ FIO_SFUNC size_t fio___deflate_stream_compress(fio_deflate_s *s,
     if (!has_dist)
       d_lens[0] = 1;
   }
+  /* Ensure end-of-block has a code */
   if (ll_lens[256] == 0)
     ll_lens[256] = 1;
 
@@ -81882,16 +83381,15 @@ FIO_SFUNC size_t fio___deflate_stream_compress(fio_deflate_s *s,
   fio___deflate_build_codes(ll_codes, ll_lens, 286);
   fio___deflate_build_codes(d_codes, d_lens, 30);
 
-  /* ---- Cost comparison: fixed vs dynamic Huffman ---- */
+  /* ---- Cost comparison: fixed vs dynamic vs stored ---- */
   uint8_t fixed_ll_lens[288];
   uint8_t fixed_d_lens[30];
   fio___deflate_fixed_litlen_lens(fixed_ll_lens);
   for (uint32_t i = 0; i < 30; ++i)
     fixed_d_lens[i] = 5;
 
-  uint64_t fixed_cost = 3;
+  uint64_t fixed_cost = 3; /* BFINAL + BTYPE */
   uint64_t dyn_cost = 3;
-
   for (uint32_t i = 0; i < 286; ++i) {
     if (ll_freqs[i]) {
       fixed_cost += (uint64_t)ll_freqs[i] * fixed_ll_lens[i];
@@ -81904,105 +83402,38 @@ FIO_SFUNC size_t fio___deflate_stream_compress(fio_deflate_s *s,
       dyn_cost += (uint64_t)d_freqs[i] * d_lens[i];
     }
   }
+  dyn_cost += fio___deflate_dyn_header_cost(ll_lens, num_ll, d_lens, num_d);
 
-  /* Dynamic header overhead */
+  /* Stored fallback (negative-gain guard, same policy as the one-shot) */
   {
-    uint8_t all_lens_tmp[286 + 30];
-    uint32_t total = num_ll + num_d;
-    FIO_MEMCPY(all_lens_tmp, ll_lens, num_ll);
-    FIO_MEMCPY(all_lens_tmp + num_ll, d_lens, num_d);
-
-    uint32_t cl_freqs_tmp[19];
-    FIO_MEMSET(cl_freqs_tmp, 0, sizeof(cl_freqs_tmp));
-
-    for (uint32_t i = 0; i < total;) {
-      if (all_lens_tmp[i] == 0) {
-        uint32_t run = 1;
-        while (i + run < total && all_lens_tmp[i + run] == 0)
-          ++run;
-        while (run >= 11) {
-          uint32_t r = run > 138 ? 138 : run;
-          cl_freqs_tmp[18]++;
-          run -= r;
-          i += r;
-        }
-        while (run >= 3) {
-          uint32_t r = run > 10 ? 10 : run;
-          cl_freqs_tmp[17]++;
-          run -= r;
-          i += r;
-        }
-        while (run > 0) {
-          cl_freqs_tmp[0]++;
-          run--;
-          i++;
-        }
-      } else {
-        uint8_t val = all_lens_tmp[i];
-        cl_freqs_tmp[val]++;
-        i++;
-        uint32_t run = 0;
-        while (i + run < total && all_lens_tmp[i + run] == val)
-          ++run;
-        while (run >= 3) {
-          uint32_t r = run > 6 ? 6 : run;
-          cl_freqs_tmp[16]++;
-          run -= r;
-          i += r;
-        }
-        while (run > 0) {
-          cl_freqs_tmp[val]++;
-          run--;
-          i++;
-        }
-      }
-    }
-
-    uint8_t cl_lens_tmp[19];
-    fio___deflate_build_code_lengths(cl_lens_tmp, cl_freqs_tmp, 19, 7);
-
-    uint32_t hclen_tmp = 19;
-    while (hclen_tmp > 4 &&
-           cl_lens_tmp[fio___deflate_codelen_order[hclen_tmp - 1]] == 0)
-      --hclen_tmp;
-
-    dyn_cost += 5 + 5 + 4;
-    dyn_cost += (uint64_t)hclen_tmp * 3;
-
-    for (uint32_t i = 0; i < 19; ++i) {
-      if (cl_freqs_tmp[i])
-        dyn_cost += (uint64_t)cl_freqs_tmp[i] * cl_lens_tmp[i];
-    }
-    dyn_cost += (uint64_t)cl_freqs_tmp[16] * 2;
-    dyn_cost += (uint64_t)cl_freqs_tmp[17] * 3;
-    dyn_cost += (uint64_t)cl_freqs_tmp[18] * 7;
+    uint64_t stored_blocks = ((uint64_t)chunk_len + 65534) / 65535;
+    uint64_t stored_cost = (uint64_t)chunk_len * 8 + stored_blocks * 42;
+    if (stored_cost < fixed_cost && stored_cost < dyn_cost)
+      return fio___deflate_write_stored_blocks(w,
+                                               data + data_off,
+                                               chunk_len,
+                                               0);
   }
 
   int use_fixed = (fixed_cost <= dyn_cost);
-
   uint16_t fixed_ll_codes[288];
   uint16_t fixed_d_codes[30];
   if (use_fixed) {
     fio___deflate_build_codes(fixed_ll_codes, fixed_ll_lens, 288);
     fio___deflate_build_codes(fixed_d_codes, fixed_d_lens, 30);
   }
-
   const uint8_t *enc_ll_lens = use_fixed ? fixed_ll_lens : ll_lens;
   const uint16_t *enc_ll_codes = use_fixed ? fixed_ll_codes : ll_codes;
   const uint8_t *enc_d_lens = use_fixed ? fixed_d_lens : d_lens;
   const uint16_t *enc_d_codes = use_fixed ? fixed_d_codes : d_codes;
 
-  /* Write compressed output */
-  fio___deflate_bitwriter_s w;
-  fio___deflate_bitwriter_init(&w, out, out_len);
-
-  /* BFINAL=0 (non-final block — streaming continues) */
-  fio___deflate_bitwriter_put(&w, 0, 1);
+  /* BFINAL=0 (non-final block — the stream continues) */
+  fio___deflate_bitwriter_put(w, 0, 1);
   if (use_fixed) {
-    fio___deflate_bitwriter_put(&w, 1, 2); /* BTYPE=01 */
+    fio___deflate_bitwriter_put(w, 1, 2); /* BTYPE=01 */
   } else {
-    fio___deflate_bitwriter_put(&w, 2, 2); /* BTYPE=10 */
-    fio___deflate_write_dynamic_header(&w,
+    fio___deflate_bitwriter_put(w, 2, 2); /* BTYPE=10 */
+    fio___deflate_write_dynamic_header(w,
                                        ll_lens,
                                        num_ll,
                                        ll_codes,
@@ -82011,91 +83442,185 @@ FIO_SFUNC size_t fio___deflate_stream_compress(fio_deflate_s *s,
                                        d_codes);
   }
 
-  /* Write tokens */
+  const uint16_t *tokens = sc->tokens;
   for (uint32_t i = 0; i < token_count; ++i) {
-    if (tokens[i].dist == 0) {
-      uint32_t sym = tokens[i].litlen;
-      fio___deflate_bitwriter_put_huff(&w, enc_ll_codes[sym], enc_ll_lens[sym]);
+    if (!tokens[i * 2 + 1]) {
+      /* Literal */
+      uint32_t sym = tokens[i * 2];
+      fio___deflate_bitwriter_put_huff(w, enc_ll_codes[sym], enc_ll_lens[sym]);
     } else {
-      uint32_t length = tokens[i].litlen;
-      uint32_t distance = tokens[i].dist;
+      uint32_t length = tokens[i * 2];
+      uint32_t distance = tokens[i * 2 + 1];
       uint32_t lsym = fio___deflate_len_to_sym(length);
-      fio___deflate_bitwriter_put_huff(&w,
+      fio___deflate_bitwriter_put_huff(w,
                                        enc_ll_codes[lsym],
                                        enc_ll_lens[lsym]);
       uint32_t lidx = lsym - 257;
       if (fio___deflate_len_extra[lidx])
-        fio___deflate_bitwriter_put(&w,
+        fio___deflate_bitwriter_put(w,
                                     length - fio___deflate_len_base[lidx],
                                     fio___deflate_len_extra[lidx]);
       uint32_t dsym = fio___deflate_dist_to_sym(distance);
-      fio___deflate_bitwriter_put_huff(&w, enc_d_codes[dsym], enc_d_lens[dsym]);
+      fio___deflate_bitwriter_put_huff(w, enc_d_codes[dsym], enc_d_lens[dsym]);
       if (fio___deflate_dist_extra[dsym])
-        fio___deflate_bitwriter_put(&w,
+        fio___deflate_bitwriter_put(w,
                                     distance - fio___deflate_dist_base[dsym],
                                     fio___deflate_dist_extra[dsym]);
     }
   }
 
   /* End of block */
-  fio___deflate_bitwriter_put_huff(&w, enc_ll_codes[256], enc_ll_lens[256]);
+  fio___deflate_bitwriter_put_huff(w, enc_ll_codes[256], enc_ll_lens[256]);
+  return w->overflow ? -1 : 0;
+}
 
-  /* Sync flush (RFC 7692 / zlib interoperability): write the empty stored
-   * block HEADER first, then align, then append the 4-byte LEN/NLEN trailer.
-   * Aligning before the header lets the inflater consume padding bits as the
-   * next block header and mis-read LEN/NLEN (`invalid stored block lengths`).
-   * WebSocket peers strip and later re-append only the trailer bytes because
-   * the header bits remain in the retained bitstream. */
+FIO_SFUNC size_t fio___deflate_stream_compress(fio_deflate_s *s,
+                                               void *out,
+                                               size_t out_len,
+                                               const uint8_t *data,
+                                               size_t len) {
+  fio___deflate_scratch_s *sc = fio___deflate_scratch_try();
+  if (!sc)
+    return 0; /* every slot busy — callers fall back to uncompressed */
+  if (!++sc->gen_ctr) { /* generation wrapped: re-zero stamps once */
+    FIO_MEMSET(sc->gen, 0, sizeof(sc->gen));
+    sc->gen_ctr = 1;
+  }
+  if (len > 0xFFFFFF00U)
+    len = 0xFFFFFF00U; /* absolute match offsets are 32-bit */
+
+  fio___deflate_bitwriter_s w;
+  fio___deflate_bitwriter_init(&w, out, out_len);
+
+  const uint32_t max_dist =
+      1U << (s->window_bits ? (uint32_t)s->window_bits : 15U);
+  uint32_t ll_freqs[286];
+  uint32_t d_freqs[30];
+
+  if (s->takeover) {
+    /* Context takeover: cross-message history from the persistent window.
+     * Positions are absolute over [window | region). */
+    fio___deflate_takeover_s *tk = (fio___deflate_takeover_s *)s->tk;
+    const uint32_t hist_len = tk->window_pos;
+    /* Fresh generation for this call (hash persists across messages). */
+    if (!++tk->gen) {
+      FIO_MEMSET(tk->hgen, 0, sizeof(tk->hgen));
+      tk->gen = 1;
+    }
+    /* Insert the window's positions so region matches can reference it. */
+    for (uint32_t i = 0; i + 3 < hist_len; ++i) {
+      uint32_t h = (fio___deflate_hash4(tk->window + i) >> 1) &
+                   (FIO___DEFLATE_SCRATCH_HASH_SIZE - 1);
+      tk->head[h] = i;
+      tk->hgen[h] = tk->gen;
+    }
+    for (uint32_t off = 0; off < (uint32_t)len;
+         off += FIO___DEFLATE_WINDOW_SIZE) {
+      uint32_t chunk_len = (uint32_t)len - off;
+      if (chunk_len > FIO___DEFLATE_WINDOW_SIZE)
+        chunk_len = FIO___DEFLATE_WINDOW_SIZE;
+      FIO_MEMSET(ll_freqs, 0, sizeof(ll_freqs));
+      FIO_MEMSET(d_freqs, 0, sizeof(d_freqs));
+      uint32_t token_count =
+          fio___deflate_stream_tokenize_takeover(sc,
+                                                 tk,
+                                                 data,
+                                                 hist_len + off,
+                                                 hist_len + off + chunk_len,
+                                                 max_dist,
+                                                 ll_freqs,
+                                                 d_freqs);
+      ++ll_freqs[256]; /* end-of-block symbol for this chunk block */
+      if (fio___deflate_stream_emit_block(sc,
+                                          &w,
+                                          data,
+                                          off,
+                                          ll_freqs,
+                                          d_freqs,
+                                          token_count,
+                                          chunk_len)) {
+        fio___deflate_scratch_free(sc);
+        return 0;
+      }
+    }
+    /* Slide the cross-message window with the region's tail. */
+    if (len >= FIO___DEFLATE_WINDOW_SIZE) {
+      FIO_MEMCPY(tk->window,
+                 data + len - FIO___DEFLATE_WINDOW_SIZE,
+                 FIO___DEFLATE_WINDOW_SIZE);
+      tk->window_pos = FIO___DEFLATE_WINDOW_SIZE;
+    } else if (len) {
+      uint32_t keep = FIO___DEFLATE_WINDOW_SIZE - (uint32_t)len;
+      if (keep > hist_len)
+        keep = hist_len;
+      if (keep)
+        FIO_MEMMOVE(tk->window, tk->window + hist_len - keep, keep);
+      FIO_MEMCPY(tk->window + keep, data, len);
+      tk->window_pos = keep + (uint32_t)len;
+    }
+  } else
+  for (uint32_t off = 0; off < (uint32_t)len;
+       off += FIO___DEFLATE_WINDOW_SIZE) {
+    uint32_t chunk_len = (uint32_t)len - off;
+    if (chunk_len > FIO___DEFLATE_WINDOW_SIZE)
+      chunk_len = FIO___DEFLATE_WINDOW_SIZE;
+    FIO_MEMSET(ll_freqs, 0, sizeof(ll_freqs));
+    FIO_MEMSET(d_freqs, 0, sizeof(d_freqs));
+    uint32_t token_count = fio___deflate_stream_tokenize(sc,
+                                                         data,
+                                                         off,
+                                                         off + chunk_len,
+                                                         max_dist,
+                                                         ll_freqs,
+                                                         d_freqs);
+    ++ll_freqs[256]; /* end-of-block symbol for this chunk block */
+    if (fio___deflate_stream_emit_block(sc,
+                                        &w,
+                                        data,
+                                        off,
+                                        ll_freqs,
+                                        d_freqs,
+                                        token_count,
+                                        chunk_len)) {
+      fio___deflate_scratch_free(sc);
+      return 0;
+    }
+  }
+
+  /* Sync flush (RFC 7692 / zlib interoperability): empty stored block header,
+   * pad, then the 4-byte LEN/NLEN trailer — once per message, not per chunk.
+   */
   fio___deflate_bitwriter_put(&w, 0, 3); /* BFINAL=0, BTYPE=00 */
   size_t result = fio___deflate_bitwriter_finish(&w, out);
+  if (FIO_UNLIKELY(w.overflow)) {
+    fio___deflate_scratch_free(sc);
+    return 0;
+  }
   w.out = (uint8_t *)out + result;
-  w.bits = 0;
-  w.count = 0;
-  if (w.out + 4 <= w.out_end) {
-    w.out[0] = 0x00; /* LEN low */
-    w.out[1] = 0x00; /* LEN high */
-    w.out[2] = 0xFF; /* NLEN low */
-    w.out[3] = 0xFF; /* NLEN high */
-    w.out += 4;
+  if (w.out + 4 > w.out_end) {
+    fio___deflate_scratch_free(sc);
+    return 0;
   }
-
+  w.out[0] = 0x00; /* LEN low */
+  w.out[1] = 0x00; /* LEN high */
+  w.out[2] = 0xFF; /* NLEN low */
+  w.out[3] = 0xFF; /* NLEN high */
+  w.out += 4;
   result = (size_t)(w.out - (uint8_t *)out);
-
-  /* Update sliding window with the new data */
-  if (new_len >= FIO___DEFLATE_WINDOW_SIZE) {
-    FIO_MEMCPY(s->window,
-               new_data + new_len - FIO___DEFLATE_WINDOW_SIZE,
-               FIO___DEFLATE_WINDOW_SIZE);
-    s->window_pos = FIO___DEFLATE_WINDOW_SIZE;
-  } else if (new_len > 0) {
-    if (s->window_pos + (uint32_t)new_len > FIO___DEFLATE_WINDOW_SIZE) {
-      /* Shift: keep last (WINDOW_SIZE - new_len) bytes of window */
-      uint32_t keep = FIO___DEFLATE_WINDOW_SIZE - (uint32_t)new_len;
-      FIO_MEMMOVE(s->window, s->window + s->window_pos - keep, keep);
-      s->window_pos = keep;
-    }
-    FIO_MEMCPY(s->window + s->window_pos, new_data, new_len);
-    s->window_pos += (uint32_t)new_len;
-  }
-
-  FIO_MEM_FREE(tokens, token_alloc);
-  if (combined)
-    FIO_MEM_FREE(combined, combined_alloc);
-
+  fio___deflate_scratch_free(sc);
   return result;
 }
 
 /* *****************************************************************************
 Streaming decompression internals
 
-Prepends the sliding window to the output buffer so that back-references
-from the compressed stream resolve against data from previous messages.
-Only the NEW decompressed bytes are returned to the caller.
-
-Strategy: each flush produces exactly one compressed block (BFINAL=0) followed
-by a sync flush marker. We copy the compressed data, set BFINAL=1 on the first
-block, and use a modified inflate that starts writing after a pre-populated
-window prefix (so back-references into previous messages resolve correctly).
+No-takeover: there is never a cross-message window prefix, so the inflater
+writes directly into the caller's output buffer. The caller
+(`fio_deflate_push`) appends 9 stream-completion bytes to the buffered input
+(`{00 00 FF FF}` completing the retained sync-flush header bits, then
+`{01 00 00 FF FF}` as a final empty stored block), so the one-shot inflater
+runs to the true end of the (possibly multi-block) stream — never truncated,
+never patched, never copied.
 ***************************************************************************** */
 
 /**
@@ -82423,64 +83948,52 @@ FIO_SFUNC size_t fio___deflate_stream_decompress(fio_deflate_s *s,
                                                  size_t comp_len) {
   if (!comp_len)
     return 0;
-
-  /* Allocate temp buffer: [window_prefix | space_for_new_output] */
-  uint32_t prefix_len = s->window_pos;
-  size_t temp_len = prefix_len + out_len;
-  /* Allocate temp output + modified input copy in one allocation */
-  size_t alloc_len = temp_len + comp_len;
-  uint8_t *alloc = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, alloc_len, 0);
-  if (!alloc)
-    return 0;
-
-  uint8_t *temp = alloc;
-  uint8_t *mod_in = alloc + temp_len;
-
-  /* Copy window prefix into temp output buffer */
-  if (prefix_len)
-    FIO_MEMCPY(temp, s->window, prefix_len);
-
-  /* Copy compressed data and set BFINAL=1 on the first block so the
-   * one-shot decompressor stops after processing it. */
-  FIO_MEMCPY(mod_in, comp_data, comp_len);
-  mod_in[0] |= 0x01; /* set BFINAL bit (bit 0 of first byte) */
-
-  /* Decompress with prefix: output starts after the window, but
-   * back-references can reach into the window prefix. */
-  size_t total_out = fio___deflate_decompress_prefixed(temp,
-                                                       temp_len,
-                                                       prefix_len,
-                                                       mod_in,
-                                                       comp_len);
-
-  size_t new_bytes = 0;
-  if (total_out > prefix_len)
-    new_bytes = total_out - prefix_len;
-
-  if (new_bytes > out_len) {
-    /* Buffer too small — return required size, don't update window */
-    FIO_MEM_FREE(alloc, alloc_len);
-    return new_bytes;
-  }
-
-  if (new_bytes)
-    FIO_MEMCPY(out, temp + prefix_len, new_bytes);
-
-  /* Update sliding window with the last 32KB of ALL decompressed output */
-  if (total_out > 0) {
+  if (s->takeover) {
+    /* Context takeover: inflate through the window prefix so
+     * back-references into previous messages resolve, then slide it. */
+    fio___deflate_takeover_s *tk = (fio___deflate_takeover_s *)s->tk;
+    uint32_t prefix_len = tk->window_pos;
+    size_t temp_len = prefix_len + out_len;
+    uint8_t *temp = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, temp_len, 0);
+    if (!temp)
+      return 0;
+    if (prefix_len)
+      FIO_MEMCPY(temp, tk->window, prefix_len);
+    size_t total_out = fio___deflate_decompress_prefixed(temp,
+                                                         temp_len,
+                                                         prefix_len,
+                                                         comp_data,
+                                                         comp_len);
+    size_t new_bytes = 0;
+    if (total_out > prefix_len)
+      new_bytes = total_out - prefix_len;
+    if (new_bytes > out_len) {
+      /* Buffer too small — return required size, don't update window */
+      FIO_MEM_FREE(temp, temp_len);
+      return new_bytes;
+    }
+    if (new_bytes)
+      FIO_MEMCPY(out, temp + prefix_len, new_bytes);
+    /* Slide the window with the last 32KB of ALL decompressed output */
     if (total_out >= FIO___DEFLATE_WINDOW_SIZE) {
-      FIO_MEMCPY(s->window,
+      FIO_MEMCPY(tk->window,
                  temp + total_out - FIO___DEFLATE_WINDOW_SIZE,
                  FIO___DEFLATE_WINDOW_SIZE);
-      s->window_pos = FIO___DEFLATE_WINDOW_SIZE;
-    } else {
-      FIO_MEMCPY(s->window, temp, total_out);
-      s->window_pos = (uint32_t)total_out;
+      tk->window_pos = FIO___DEFLATE_WINDOW_SIZE;
+    } else if (total_out) {
+      FIO_MEMCPY(tk->window, temp, total_out);
+      tk->window_pos = (uint32_t)total_out;
     }
+    FIO_MEM_FREE(temp, temp_len);
+    return new_bytes;
   }
-
-  FIO_MEM_FREE(alloc, alloc_len);
-  return new_bytes;
+  /* No-takeover: inflate directly into the caller's buffer (prefix is
+   * always 0 — no window, no temp, no input copy). */
+  return fio___deflate_decompress_prefixed(out,
+                                           out_len,
+                                           0,
+                                           comp_data,
+                                           comp_len);
 }
 
 /* *****************************************************************************
@@ -82488,13 +84001,45 @@ Streaming API - public functions
 ***************************************************************************** */
 
 void fio_deflate_new___(void); /* IDE Marker */
+/** Context allocation size for the given mode (struct + optional takeover
+ * flexible state in the same single block). */
+FIO_SFUNC size_t fio___deflate_ctx_size(int is_compress, int takeover) {
+  size_t sz = sizeof(fio_deflate_s);
+  if (takeover)
+    sz += is_compress ? sizeof(fio___deflate_takeover_s)
+                      : FIO___DEFLATE_TAKEOVER_RD_SIZE;
+  return sz;
+}
+
 SFUNC fio_deflate_s *fio_deflate_new FIO_NOOP(int level, int is_compress) {
   if (level < 1)
     level = 1;
   if (level > 9)
     level = 9;
 
-  size_t alloc_size = sizeof(fio_deflate_s);
+  fio_deflate_s *s =
+      (fio_deflate_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(fio_deflate_s), 0);
+  if (!s)
+    return NULL;
+
+  FIO_MEMSET(s, 0, sizeof(fio_deflate_s));
+  s->is_compress = (uint8_t)(!!is_compress);
+  s->level = (uint8_t)level;
+  s->window_bits = 15; /* default: full 32KB in-message window */
+  return s;
+}
+
+void fio_deflate_new_takeover___(void); /* IDE Marker */
+SFUNC fio_deflate_s *fio_deflate_new_takeover FIO_NOOP(int level,
+                                                       int is_compress) {
+  if (level < 1)
+    level = 1;
+  if (level > 9)
+    level = 9;
+
+  /* Single allocation: struct + flexible takeover state (window +
+   * compressor hash) in the same block — no indirection. */
+  const size_t alloc_size = fio___deflate_ctx_size(is_compress, 1);
   fio_deflate_s *s = (fio_deflate_s *)FIO_MEM_REALLOC(NULL, 0, alloc_size, 0);
   if (!s)
     return NULL;
@@ -82502,25 +84047,10 @@ SFUNC fio_deflate_s *fio_deflate_new FIO_NOOP(int level, int is_compress) {
   FIO_MEMSET(s, 0, alloc_size);
   s->is_compress = (uint8_t)(!!is_compress);
   s->level = (uint8_t)level;
-
-  if (is_compress) {
-    /* Allocate head[] + head_gen[] + prev[] in one block.
-     * head_gen[] is zeroed; head[] and prev[] are left uninitialized
-     * (generation counter makes stale entries harmless). */
-    s->hash_alloc = sizeof(uint32_t) * FIO___DEFLATE_HASH_SIZE * 2 +
-                    sizeof(uint32_t) * FIO___DEFLATE_WINDOW_SIZE;
-    uint32_t *hash_mem = (uint32_t *)FIO_MEM_REALLOC(NULL, 0, s->hash_alloc, 0);
-    if (!hash_mem) {
-      FIO_MEM_FREE(s, alloc_size);
-      return NULL;
-    }
-    s->hash_head = hash_mem;
-    s->hash_head_gen = hash_mem + FIO___DEFLATE_HASH_SIZE;
-    s->hash_prev = hash_mem + FIO___DEFLATE_HASH_SIZE * 2;
-    FIO_MEMSET(s->hash_head_gen, 0, sizeof(uint32_t) * FIO___DEFLATE_HASH_SIZE);
-    s->hash_gen = 0; /* first compress call will increment to 1 */
-  }
-
+  s->window_bits = 15;
+  s->takeover = 1;
+  if (is_compress)
+    ((fio___deflate_takeover_s *)s->tk)->gen = 1;
   return s;
 }
 
@@ -82528,29 +84058,45 @@ void fio_deflate_free___(void); /* IDE Marker */
 SFUNC void fio_deflate_free FIO_NOOP(fio_deflate_s *s) {
   if (!s)
     return;
-  if (s->hash_head)
-    FIO_MEM_FREE(s->hash_head, s->hash_alloc);
   if (s->buf)
     FIO_MEM_FREE(s->buf, s->buf_cap);
-  FIO_MEM_FREE(s, sizeof(fio_deflate_s));
+  FIO_MEM_FREE(s, fio___deflate_ctx_size(s->is_compress, s->takeover));
 }
 
 void fio_deflate_destroy___(void); /* IDE Marker */
 SFUNC void fio_deflate_destroy FIO_NOOP(fio_deflate_s *s) {
   if (!s)
     return;
-  /* Reset sliding window */
-  s->window_pos = 0;
-  FIO_MEMSET(s->window, 0, FIO___DEFLATE_WINDOW_SIZE);
-  /* Reset hash chain state via generation counter (compressor only).
-   * Zeroing head_gen[] (128KB) invalidates all entries without touching
-   * head[] (128KB) or prev[] (128KB). */
-  if (s->hash_head_gen) {
-    FIO_MEMSET(s->hash_head_gen, 0, sizeof(uint32_t) * FIO___DEFLATE_HASH_SIZE);
-    s->hash_gen = 0;
-  }
-  /* Reset input buffer (keep allocation) */
+  /* Reset the input buffer; shrink it when it grew past the cap, so
+   * persistent per-connection state stays bounded (no-takeover design). */
   s->buf_len = 0;
+  if (s->buf_cap > 65536) {
+    FIO_MEM_FREE(s->buf, s->buf_cap);
+    s->buf = NULL;
+    s->buf_cap = 0;
+  }
+  /* Reset cross-message history (takeover contexts). */
+  if (s->takeover) {
+    fio___deflate_takeover_s *tk = (fio___deflate_takeover_s *)s->tk;
+    tk->window_pos = 0;
+    if (s->is_compress && !++tk->gen) { /* invalidate hash (wrap: re-zero) */
+      FIO_MEMSET(tk->hgen, 0, sizeof(tk->hgen));
+      tk->gen = 1;
+    }
+  }
+}
+
+void fio_deflate_window_bits_set___(void); /* IDE Marker */
+/** Clamps compressor match distances to 2^bits (8..15, default 15).
+ * Used to honor `server_max_window_bits` from RFC 7692 negotiation. */
+SFUNC void fio_deflate_window_bits_set FIO_NOOP(fio_deflate_s *s, int bits) {
+  if (!s)
+    return;
+  if (bits < 8)
+    bits = 8;
+  if (bits > 15)
+    bits = 15;
+  s->window_bits = (uint8_t)bits;
 }
 
 void fio_deflate_push___(void); /* IDE Marker */
@@ -82564,22 +84110,64 @@ SFUNC size_t fio_deflate_push FIO_NOOP(fio_deflate_s *s,
     return 0;
 
   if (s->is_compress) {
-    /* Accumulate input */
-    if (in && in_len) {
-      if (fio___deflate_stream_buf_grow(s, in_len))
-        return 0;
-      FIO_MEMCPY(s->buf + s->buf_len, in, in_len);
-      s->buf_len += in_len;
+    const uint8_t *src = (const uint8_t *)in;
+    size_t written = 0;
+    if (!flush && src && in_len) {
+      /* Buffered mode: accumulate fragments up to the cap, auto-compressing
+       * full buffers (each emitted piece is a complete sync-flushed
+       * segment, so call boundaries stay byte-aligned and self-contained). */
+      while (in_len) {
+        size_t room = FIO___DEFLATE_STREAM_BUF_MAX - s->buf_len;
+        size_t take = in_len < room ? in_len : room;
+        if (fio___deflate_stream_buf_grow(s, take))
+          return 0;
+        FIO_MEMCPY(s->buf + s->buf_len, src, take);
+        s->buf_len += take;
+        src += take;
+        in_len -= take;
+        if (s->buf_len < FIO___DEFLATE_STREAM_BUF_MAX)
+          return written ? written : 0; /* still buffering */
+        size_t r = fio___deflate_stream_compress(s,
+                                                 (uint8_t *)out + written,
+                                                 out_len - written,
+                                                 s->buf,
+                                                 s->buf_len);
+        if (!r)
+          return 0; /* output overflow / scratch contention */
+        written += r;
+        s->buf_len = 0;
+      }
+      return written;
     }
 
-    /* Compress on flush or when buffer is full */
-    if (!flush && s->buf_len < FIO___DEFLATE_STREAM_BUF_MAX)
-      return 0; /* buffered, no output yet */
-
-    size_t result =
-        fio___deflate_stream_compress(s, out, out_len, s->buf, s->buf_len);
-    s->buf_len = 0; /* buffer consumed */
-    return result;
+    /* flush requested: compress any buffered prefix first (its own complete
+     * segment), then the caller's data directly (no copy). */
+    if (s->buf_len) {
+      size_t r = fio___deflate_stream_compress(s,
+                                               (uint8_t *)out + written,
+                                               out_len - written,
+                                               s->buf,
+                                               s->buf_len);
+      if (!r)
+        return 0;
+      written += r;
+      s->buf_len = 0;
+    }
+    if (src && in_len) {
+      size_t r = fio___deflate_stream_compress(s,
+                                               (uint8_t *)out + written,
+                                               out_len - written,
+                                               src,
+                                               in_len);
+      if (!r)
+        return 0;
+      written += r;
+      return written;
+    }
+    if (written)
+      return written;
+    /* Empty flush: emit just the sync flush segment. */
+    return fio___deflate_stream_compress(s, out, out_len, NULL, 0);
   }
 
   /* Streaming decompression: accumulate compressed input */
@@ -82593,14 +84181,18 @@ SFUNC size_t fio_deflate_push FIO_NOOP(fio_deflate_s *s,
   if (!flush)
     return 0; /* buffered, no output yet */
 
-  /* On flush: append sync flush marker and decompress */
-  if (fio___deflate_stream_buf_grow(s, 4))
+  /* On flush: append the 9 stream-completion bytes and decompress.
+   * Layout: {00 00 FF FF} completes the retained sync-flush empty-block
+   * header bits (RFC 7692 peers strip exactly these 4 bytes), then
+   * {01 00 00 FF FF} is a final empty stored block that terminates the
+   * stream at its true end. No BFINAL patching of peer data (which
+   * truncated multi-block streams) and no input copy. */
+  if (fio___deflate_stream_buf_grow(s, 9))
     return 0;
-  s->buf[s->buf_len] = 0x00;
-  s->buf[s->buf_len + 1] = 0x00;
-  s->buf[s->buf_len + 2] = 0xFF;
-  s->buf[s->buf_len + 3] = 0xFF;
-  size_t comp_len = s->buf_len + 4;
+  static const uint8_t completion[9] = {0x00, 0x00, 0xFF, 0xFF, 0x01,
+                                        0x00, 0x00, 0xFF, 0xFF};
+  FIO_MEMCPY(s->buf + s->buf_len, completion, 9);
+  size_t comp_len = s->buf_len + 9;
 
   size_t result =
       fio___deflate_stream_decompress(s, out, out_len, s->buf, comp_len);
@@ -82612,6 +84204,9 @@ SFUNC size_t fio_deflate_push FIO_NOOP(fio_deflate_s *s,
 }
 
 #undef FIO___DEFLATE_STREAM_BUF_MAX
+#undef FIO___DEFLATE_SCRATCH_HASH_BITS
+#undef FIO___DEFLATE_SCRATCH_HASH_SIZE
+#undef FIO___DEFLATE_SCRATCH_SLOTS
 
 /* *****************************************************************************
 Cleanup
@@ -115000,7 +116595,7 @@ Redis Module Cleanup
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
-#define FIO_HTTP_HANDLE        /* Development inclusion - ignore line */
+#define FIO_HTTP               /* Development inclusion - ignore line */
 #include "./include.h"         /* Development inclusion - ignore line */
 #endif                         /* Development inclusion - ignore line */
 /* *****************************************************************************
@@ -115008,18 +116603,69 @@ Redis Module Cleanup
 
 
 
-                      An HTTP connection Handle helper
+                    HTTP API - Public Declarations
 
-See also:
-https://www.rfc-editor.org/rfc/rfc9110.html
 
 
 
 Copyright and License: see header file (000 copyright.h) or top of file
 ***************************************************************************** */
-#if defined(FIO_HTTP_HANDLE) && !defined(H___FIO_HTTP_HANDLE___H) &&           \
-    !defined(FIO___RECURSIVE_INCLUDE)
-#define H___FIO_HTTP_HANDLE___H
+#if defined(FIO_HTTP) && !defined(FIO___RECURSIVE_INCLUDE) &&                  \
+    !defined(H___FIO_HTTP_API___H)
+#define H___FIO_HTTP_API___H
+/* *****************************************************************************
+HTTP Core API
+***************************************************************************** */
+
+/* *****************************************************************************
+HTTP Setting Defaults
+***************************************************************************** */
+
+#ifndef FIO_HTTP_DEFAULT_MAX_HEADER_SIZE
+/** The default HTTP total header size limit in bytes. */
+#define FIO_HTTP_DEFAULT_MAX_HEADER_SIZE 32768 /* (1UL << 15) */
+#endif
+#ifndef FIO_HTTP_DEFAULT_MAX_LINE_LEN
+/** The default HTTP header line limit in bytes. */
+#define FIO_HTTP_DEFAULT_MAX_LINE_LEN 8192 /* (1UL << 13) */
+#endif
+#ifndef FIO_HTTP_DEFAULT_MAX_BODY_SIZE
+/** The default HTTP payload size limit in bytes. */
+#define FIO_HTTP_DEFAULT_MAX_BODY_SIZE 33554432 /* (1UL << 25) */
+#endif
+#ifndef FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE
+/** The default WebSocket message size limit in bytes. */
+#define FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE 262144 /* (1UL << 18) */
+#endif
+#ifndef FIO_HTTP_DEFAULT_TIMEOUT
+/** The default timeout for HTTP connections. */
+#define FIO_HTTP_DEFAULT_TIMEOUT 50
+#endif
+#ifndef FIO_HTTP_DEFAULT_TIMEOUT_LONG
+/** The default timeout for long held HTTP connections (WebSockets / SSE). */
+#define FIO_HTTP_DEFAULT_TIMEOUT_LONG 50
+#endif
+
+#ifndef FIO_HTTP_SHOW_CONTENT_LENGTH_HEADER
+/** Adds a "content-length" header to the HTTP handle (usually redundant). */
+#define FIO_HTTP_SHOW_CONTENT_LENGTH_HEADER 0
+#endif
+
+#ifndef FIO_HTTP_WEBSOCKET_WRITE_VALIDITY_TEST_LIMIT
+/** UTF-8 validity tests will be performed only for data shorter than this. */
+#define FIO_HTTP_WEBSOCKET_WRITE_VALIDITY_TEST_LIMIT ((1UL << 16) - 10UL)
+#endif
+
+#ifndef FIO_WEBSOCKET_STATS
+/** If true, logs longest WebSocket round-trips (using FIO_LOG_INFO). */
+#define FIO_WEBSOCKET_STATS 0
+#endif
+
+#ifndef FIO_HTTP_WEBSOCKET_DEFLATE_MIN
+/** Messages smaller than this are not compressed (fits in a single TCP/IP
+ * packet, compression saves no network overhead). */
+#define FIO_HTTP_WEBSOCKET_DEFLATE_MIN 1024
+#endif
 
 /* *****************************************************************************
 HTTP Handle Settings
@@ -115120,6 +116766,375 @@ typedef struct fio_http_s fio_http_s;
  * controller is expecting.
  */
 typedef struct fio_http_controller_s fio_http_controller_s;
+
+/* *****************************************************************************
+HTTP Settings Type
+***************************************************************************** */
+
+typedef struct fio_http_settings_s {
+  /** Called before body uploads, when a client sends an `Expect` header. */
+  void (*pre_http_body)(fio_http_s *h);
+  /** Callback for HTTP requests (server) or responses (client). */
+  void (*on_http)(fio_http_s *h);
+  /** Called when a request / response cycle is finished (for WebSocket /
+   * SSE connections, called after `on_close`, when the connection closes). */
+  void (*on_finish)(fio_http_s *h);
+
+  /** Authenticate EventSource (SSE) requests, return non-zero to deny.*/
+  int (*on_authenticate_sse)(fio_http_s *h);
+  /** Authenticate WebSockets Upgrade requests, return non-zero to deny.*/
+  int (*on_authenticate_websocket)(fio_http_s *h);
+
+  /** Called once a WebSocket / SSE connection upgrade is complete. */
+  void (*on_open)(fio_http_s *h);
+
+  /** Called when a WebSocket message is received. */
+  void (*on_message)(fio_http_s *h, fio_buf_info_s msg, uint8_t is_text);
+  /** Called when an EventSource event is received. */
+  void (*on_eventsource)(fio_http_s *h,
+                         fio_buf_info_s id,
+                         fio_buf_info_s event,
+                         fio_buf_info_s data);
+  /** Called when an EventSource reconnect event requests an ID. */
+  void (*on_eventsource_reconnect)(fio_http_s *h, fio_buf_info_s id);
+
+  /** Called for WebSocket / SSE connections when outgoing buffer is empty. */
+  void (*on_ready)(fio_http_s *h);
+  /** Called for open WebSocket / SSE connections during shutting down. */
+  void (*on_shutdown)(fio_http_s *h);
+  /** Called after a WebSocket / SSE connection is closed (for cleanup). */
+  void (*on_close)(fio_http_s *h);
+
+  /** (optional) the callback to be performed when the HTTP service closes. */
+  void (*on_stop)(struct fio_http_settings_s *settings);
+
+  /** Default opaque user data for HTTP handles (fio_http_s). */
+  void *udata;
+
+  /** Optional SSL/TLS support. */
+  fio_io_functions_s *tls_io_func;
+  /** Optional SSL/TLS support. */
+  fio_io_tls_s *tls;
+  /** Optional HTTP task queue (for multi-threading HTTP responses) */
+  fio_io_async_s *queue;
+  /**
+   * A public folder for file transfers - allows to circumvent any
+   * application layer logic and simply serve static files.
+   *
+   * Static file responses are attempted for `GET` and `HEAD` requests
+   * only (RFC 9110 §9.3 - a static file is not a valid response to other
+   * methods); any other method is forwarded to `on_http` (which may serve
+   * files explicitly by calling `fio_http_static_file_response`). On a
+   * miss the request is also forwarded to `on_http`. Folders resolve to
+   * their `index` file and missing extensions are auto-completed
+   * (`.html`, `.htm`, `.txt`, `.md`) - see
+   * `FIO_HTTP_STATIC_FILE_COMPLETION`.
+   *
+   * Pre-compressed variants are supported: when the client's
+   * `Accept-Encoding` allows it, an up-to-date `file.br`, `file.zstd`,
+   * `file.gz` or `file.zip` variant (preference order: `br`, `zstd`,
+   * `gzip`, `deflate`) is served instead of the original file. With
+   * `compress_static`, missing `.br` / `.gz` variants are also created on
+   * demand (written into this folder). Ranged requests are always served
+   * identity (no variant selection).
+   *
+   * The folder must exist when the listener starts, otherwise the setting
+   * is ignored (with an error log).
+   */
+  fio_str_info_s public_folder;
+  /**
+   * The max-age value (in seconds) for caching static files sent from
+   * `public_folder`.
+   *
+   * Defaults to 0 (the `Cache-Control` header is not sent).
+   *
+   * Note: NOT inherited by routes - a route that serves static files must
+   * set its own `max_age`.
+   */
+  size_t max_age;
+  /**
+   * The maximum total of bytes for the overall size of the request string and
+   * headers, combined.
+   *
+   * Defaults to FIO_HTTP_DEFAULT_MAX_HEADER_SIZE bytes.
+   */
+  uint32_t max_header_size;
+  /**
+   * The maximum number of bytes allowed per header / request line.
+   *
+   * Defaults to FIO_HTTP_DEFAULT_MAX_LINE_LEN bytes.
+   */
+  uint32_t max_line_len;
+  /**
+   * The maximum size of an HTTP request's body (posting / downloading).
+   *
+   * Defaults to FIO_HTTP_DEFAULT_MAX_BODY_SIZE bytes.
+   */
+  size_t max_body_size;
+  /**
+   * The maximum WebSocket message size/buffer (in bytes) for Websocket
+   * connections. Defaults to FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE bytes.
+   */
+  size_t ws_max_msg_size;
+  /** reserved for future use. */
+  intptr_t reserved1;
+  /** reserved for future use. */
+  intptr_t reserved2;
+  /**
+   * An HTTP/1.x connection timeout.
+   *
+   * Defaults to FIO_HTTP_DEFAULT_TIMEOUT seconds.
+   *
+   * Note: the connection might be closed (by other side) before timeout occurs.
+   */
+  uint8_t timeout;
+  /**
+   * Timeout for the WebSocket connections in seconds. Defaults to
+   * FIO_HTTP_DEFAULT_TIMEOUT_LONG seconds.
+   *
+   * A ping will be sent whenever the timeout is reached.
+   *
+   * Connections are only closed when a ping cannot be sent (the network layer
+   * fails). Pongs are ignored.
+   */
+  uint8_t ws_timeout;
+  /**
+   * Timeout for EventSource (SSE) connections in seconds. Defaults to
+   * FIO_HTTP_DEFAULT_TIMEOUT_LONG seconds.
+   *
+   * A ping will be sent whenever the timeout is reached.
+   *
+   * Connections are only closed when a ping cannot be sent (the network layer
+   * fails).
+   */
+  uint8_t sse_timeout;
+  /** Timeout for client connections (only relevant in client mode). */
+  uint8_t connect_timeout;
+  /** Logging flag - set to TRUE to log HTTP requests. */
+  uint8_t log;
+  /**
+   * Opt-in: auto-compress static files - missing `.br` / `.gz` variants are
+   * created on demand and written into the `public_folder`.
+   *
+   * Creation is limited to compressible (text-like) MIME types and file
+   * sizes between 1024 bytes and FIO_HTTP_STATIC_FILE_COMPRESS_LIMIT (2
+   * MiB), and is skipped when compression wouldn't shrink the file.
+   * Variants whose modification time is older than the original file are
+   * re-created.
+   *
+   * Note: on-demand writes are attacker-triggerable - the public folder
+   * MUST be writable and quota'd. Pre-generating variants at deploy time is
+   * recommended.
+   *
+   * Note: per-route (read from the matching route's settings; routes
+   * inherit the listener's root value at route-creation). The value is a
+   * failure-memoization shift register, atomically shared by the IO
+   * threads - see `fio_http_static_file_response`. Detached handles (no
+   * settings) gate on the `FIO_HTTP_CFLAG_COMPRESS_STATIC` handle cflag
+   * instead, with no memoization state.
+   */
+  uint8_t compress_static;
+  /**
+   * Opt-in: auto-compress dynamic HTTP responses on-the-fly.
+   *
+   * Applies to finished (non-streaming) single-buffer responses larger than
+   * 1024 bytes with a compressible (text-like) `Content-Type`, preferring
+   * `br` over `gzip` per the client's `Accept-Encoding`. Responses with a
+   * pre-set `Content-Encoding` are never re-compressed. `Vary:
+   * accept-encoding` is set whenever compression was considered.
+   *
+   * Note: connection-global (read from the listener's root settings when
+   * the connection's handle is attached) - per-route values have no effect.
+   */
+  uint8_t compress_dynamic;
+  /**
+   * Opt-in: enable permessage-deflate for WebSocket connections.
+   *
+   * Negotiation always forces both `*_no_context_takeover` flags (RFC 7692
+   * allows either endpoint to request them unilaterally), keeping
+   * persistent per-connection compression state at ~0.
+   *
+   * Note: connection-global (read from the listener's root settings when
+   * the connection's handle is attached) - per-route values have no effect.
+   */
+  uint8_t compress_ws;
+} fio_http_settings_s;
+
+/* *****************************************************************************
+HTTP Connection Helpers
+***************************************************************************** */
+
+/** Allows all clients to connect (bypasses authentication). */
+SFUNC int FIO_HTTP_AUTHENTICATE_ALLOW(fio_http_s *h);
+
+/** Returns the IO object associated with the HTTP object (request only). */
+SFUNC fio_io_s *fio_http_io(fio_http_s *);
+
+/** Macro helper for HTTP handle pub/sub subscriptions. */
+#define fio_http_subscribe(h, ...)                                             \
+  fio_pubsub_subscribe(.io = fio_http_io(h), __VA_ARGS__)
+/* *****************************************************************************
+HTTP Server API
+***************************************************************************** */
+
+/* *****************************************************************************
+HTTP Listen
+***************************************************************************** */
+
+/* a pointer safety type */
+typedef struct fio_http_listener_s fio_http_listener_s;
+
+/** Listens to HTTP / WebSockets / SSE connections on `url`. */
+SFUNC fio_http_listener_s *fio_http_listen(const char *url,
+                                           fio_http_settings_s settings);
+
+/** Listens to HTTP / WebSockets / SSE connections on `url`. */
+#define fio_http_listen(url, ...)                                              \
+  fio_http_listen(url, (fio_http_settings_s){__VA_ARGS__})
+
+/** Returns the a pointer to the HTTP settings associated with the listener. */
+SFUNC fio_http_settings_s *fio_http_listener_settings(fio_http_listener_s *l);
+
+/* *****************************************************************************
+HTTP Routing – prefix matching
+***************************************************************************** */
+
+/**
+ * Adds a route prefix to the HTTP handler.
+ *
+ * Order of route settings is irrelevant (unless overwriting an existing route).
+ *
+ * Matching is performed as a best-prefix match. i.e.:
+ *
+ * - All paths match the route `"/"` (the default prefix).
+ *
+ * - The route `"/user"` will match `"/user"` and all `"/user/..."` paths but
+ *   not `"/user..."`
+ *
+ * - Setting `"/user/new"` as well as `"/user"` (in whatever order) will route
+ *   `"/user/new"` and `"/user/new/..."` to `"/user/new"`. Otherwise, the
+ *   `"/user"` route will continue to behave the same.
+ *
+ * Note: the following properties are inherited (if missing) from the
+ * default HTTP settings used to create the listener: `udata`, `on_finish`,
+ * `on_stop`, `on_authenticate_sse`, `on_authenticate_websocket`,
+ * `max_header_size`, `max_line_len`, `max_body_size`, `ws_max_msg_size`,
+ * `timeout`, `ws_timeout`, `sse_timeout`, `log`, `compress_static` and
+ * `public_folder`.
+ *
+ * Note: TLS options are ignored.
+ *
+ * Note: only `on_http`, `on_finish`, `udata`, the authentication
+ * callbacks, `public_folder`, `max_age` and `compress_static` are
+ * effective per route. All other per-route values are stored but unused -
+ * upgraded connection callbacks (`on_open`, `on_message`, etc.), `queue`,
+ * `log`, limits, timeouts, `compress_dynamic` and `compress_ws` are
+ * connection-global and are read from the listener's root settings.
+ * */
+SFUNC int fio_http_route(fio_http_listener_s *listener,
+                         const char *url,
+                         fio_http_settings_s settings);
+/**
+ * Adds a route prefix to the HTTP handler.
+ *
+ * Order of route settings is irrelevant (unless overwriting an existing route).
+ *
+ * Matching is performed as a best-prefix match. i.e.:
+ *
+ * - All paths match the route `"/"` (the default prefix).
+ *
+ * - The route `"/user"` will match `"/user"` and all `"/user/..."` paths but
+ *   not `"/user..."`
+ *
+ * - Setting `"/user/new"` as well as `"/user"` (in whatever order) will route
+ *   `"/user/new"` and `"/user/new/..."` to `"/user/new"`. Otherwise, the
+ *   `"/user"` route will continue to behave the same.
+ *
+ * Note: the following properties are inherited (if missing) from the
+ * default HTTP settings used to create the listener: `udata`, `on_finish`,
+ * `on_stop`, `on_authenticate_sse`, `on_authenticate_websocket`,
+ * `max_header_size`, `max_line_len`, `max_body_size`, `ws_max_msg_size`,
+ * `timeout`, `ws_timeout`, `sse_timeout`, `log`, `compress_static` and
+ * `public_folder`.
+ *
+ * Note: TLS options are ignored.
+ *
+ * Note: only `on_http`, `on_finish`, `udata`, the authentication
+ * callbacks, `public_folder`, `max_age` and `compress_static` are
+ * effective per route. All other per-route values are stored but unused -
+ * upgraded connection callbacks (`on_open`, `on_message`, etc.), `queue`,
+ * `log`, limits, timeouts, `compress_dynamic` and `compress_ws` are
+ * connection-global and are read from the listener's root settings.
+ * */
+#define fio_http_route(listener, url, ...)                                     \
+  fio_http_route(listener, url, (fio_http_settings_s){__VA_ARGS__})
+
+/** Returns a link to the settings matching `url`, as set by `fio_http_route` */
+SFUNC fio_http_settings_s *fio_http_route_settings(fio_http_listener_s *l,
+                                                   const char *url);
+
+/* *****************************************************************************
+HTTP Routing – CRUD
+***************************************************************************** */
+
+typedef enum {
+  FIO_HTTP_RESOURCE_NONE,
+  FIO_HTTP_RESOURCE_INDEX,
+  FIO_HTTP_RESOURCE_SHOW,
+  FIO_HTTP_RESOURCE_NEW,
+  FIO_HTTP_RESOURCE_EDIT,
+  FIO_HTTP_RESOURCE_CREATE,
+  FIO_HTTP_RESOURCE_UPDATE,
+  FIO_HTTP_RESOURCE_DELETE,
+  FIO_HTTP_RESOURCE_QUERY,
+} fio_http_resource_action_e;
+
+/** returns expected action or `FIO_HTTP_RESOURCE_NONE` on error. */
+FIO_IFUNC fio_http_resource_action_e fio_http_resource_action(fio_http_s *h);
+
+/* *****************************************************************************
+HTTP Client API
+***************************************************************************** */
+
+/* *****************************************************************************
+HTTP Connect
+***************************************************************************** */
+
+/** Connects to HTTP / WebSockets / SSE connections on `url`. */
+SFUNC fio_io_s *fio_http_connect(const char *url,
+                                 fio_http_s *h,
+                                 fio_http_settings_s settings);
+
+/** Connects to HTTP / WebSockets / SSE connections on `url`. */
+#define fio_http_connect(url, h, ...)                                          \
+  fio_http_connect(url, h, (fio_http_settings_s){__VA_ARGS__})
+
+/**
+ * Connects to a WebSocket server on `url`.
+ *
+ * A convenience wrapper around `fio_http_connect` that ensures a `ws://` or
+ * `wss://` scheme is used in the URL (`http://` becomes `ws://`, `https://`
+ * becomes `wss://`, a missing scheme defaults to `ws://`).
+ *
+ * The WebSocket upgrade request / response is handled automatically by the
+ * underlying `fio_http_connect`: on acceptance (101) the connection
+ * switches to the WebSocket callbacks (`on_open` / `on_message` /
+ * `on_close`); on rejection the response is routed to `settings.on_http`.
+ */
+SFUNC fio_io_s *fio_http_websocket_connect(const char *url,
+                                           fio_http_s *h,
+                                           fio_http_settings_s settings);
+
+/**
+ * Connects to a WebSocket server on `url` (see
+ * `fio_http_websocket_connect`).
+ */
+#define fio_http_websocket_connect(url, h, ...)                                \
+  fio_http_websocket_connect(url, h, (fio_http_settings_s){__VA_ARGS__})
+
+/* *****************************************************************************
+HTTP Handle API
+***************************************************************************** */
 
 /* *****************************************************************************
 Constructor / Destructor
@@ -115312,6 +117327,9 @@ SFUNC void fio_http_body_write(fio_http_s *, const void *data, size_t len);
  * Otherwise returns -1.
  */
 SFUNC int fio_http_body_fd(fio_http_s *);
+
+/** Releases body (payload) resources, closing any temporary files. */
+SFUNC void fio_http_body_close(fio_http_s *);
 
 /* *****************************************************************************
 Path Section Looping
@@ -115561,34 +117579,6 @@ SFUNC void fio_http_write(fio_http_s *, fio_http_write_args_s args);
 SFUNC void fio_http_close(fio_http_s *h);
 
 /* *****************************************************************************
-WebSocket / SSE Helpers
-***************************************************************************** */
-
-/** Returns non-zero if request headers ask for a WebSockets Upgrade.*/
-SFUNC int fio_http_websocket_requested(fio_http_s *);
-
-/** Returns non-zero if the response accepts a WebSocket upgrade request. */
-SFUNC int fio_http_websocket_accepted(fio_http_s *h);
-
-/** Sets response data to agree to a WebSockets Upgrade.*/
-SFUNC void fio_http_upgrade_websocket(fio_http_s *);
-
-/** Sets request data to request a WebSockets Upgrade.*/
-SFUNC void fio_http_websocket_set_request(fio_http_s *);
-
-/** Returns non-zero if request headers ask for an EventSource (SSE) Upgrade.*/
-SFUNC int fio_http_sse_requested(fio_http_s *);
-
-/** Returns non-zero if the response accepts an SSE request. */
-SFUNC int fio_http_sse_accepted(fio_http_s *h);
-
-/** Sets response data to agree to an EventSource (SSE) Upgrade.*/
-SFUNC void fio_http_upgrade_sse(fio_http_s *);
-
-/** Sets request data to request an EventSource (SSE) Upgrade.*/
-SFUNC void fio_http_sse_set_request(fio_http_s *);
-
-/* *****************************************************************************
 MIME File Type Helpers - NOT thread safe!
 ***************************************************************************** */
 
@@ -115806,8 +117796,28 @@ SFUNC int fio_http_send_error_response(fio_http_s *h, size_t status);
 SFUNC int fio_http_etag_is_match(fio_http_s *h);
 
 /**
- * Attempts to send a static file from the `root` folder. On success the
- * response is complete and 0 is returned. Otherwise returns -1.
+ * Attempts to send a static file from the `root_folder` folder.
+ *
+ * `file_name` is URL-decoded and appended to `root_folder` (path traversal
+ * is rejected). Folders resolve to their `index` file and missing
+ * extensions are auto-completed (`.html`, `.htm`, `.txt`, `.md` -
+ * `FIO_HTTP_STATIC_FILE_COMPLETION`). `OPTIONS` requests are refused (a
+ * static file is not a valid `OPTIONS` response).
+ *
+ * Handles conditional requests (`ETag` / `If-None-Match` -> 304), single
+ * `Range` requests (206 / 416, always served identity), and `HEAD`
+ * requests; sets `Last-Modified`, `Accept-Ranges: bytes`, and (when
+ * `max_age` is non-zero) `Cache-Control: max-age=...`.
+ *
+ * Pre-compressed variants (`file.br`, `file.zstd`, `file.gz`, `file.zip`,
+ * in this preference order) are served when accepted by the client,
+ * present on disk, and fresh; with `compress_static` enabled (the matching
+ * route's settings, or the `FIO_HTTP_CFLAG_COMPRESS_STATIC` cflag on
+ * detached handles), missing `.br` / `.gz` variants are also created on
+ * demand.
+ *
+ * On success the response is complete and 0 is returned. On failure -1 is
+ * returned and the application should handle the request itself.
  */
 SFUNC int fio_http_static_file_response(fio_http_s *h,
                                         fio_str_info_s root_folder,
@@ -115860,6 +117870,138 @@ struct fio_http_controller_s {
   /** called when the file descriptor is directly required */
   int (*get_fd)(fio_http_s *h);
 };
+
+/* *****************************************************************************
+WebSocket / SSE Helpers
+***************************************************************************** */
+
+/** Returns non-zero if request headers ask for a WebSockets Upgrade.*/
+SFUNC int fio_http_websocket_requested(fio_http_s *);
+
+/** Returns non-zero if the response accepts a WebSocket upgrade request. */
+SFUNC int fio_http_websocket_accepted(fio_http_s *h);
+
+/** Sets response data to agree to a WebSockets Upgrade.*/
+SFUNC void fio_http_upgrade_websocket(fio_http_s *);
+
+/** Sets request data to request a WebSockets Upgrade.*/
+SFUNC void fio_http_websocket_set_request(fio_http_s *);
+
+/** Returns non-zero if request headers ask for an EventSource (SSE) Upgrade.*/
+SFUNC int fio_http_sse_requested(fio_http_s *);
+
+/** Returns non-zero if the response accepts an SSE request. */
+SFUNC int fio_http_sse_accepted(fio_http_s *h);
+
+/** Sets response data to agree to an EventSource (SSE) Upgrade.*/
+SFUNC void fio_http_upgrade_sse(fio_http_s *);
+
+/** Sets request data to request an EventSource (SSE) Upgrade.*/
+SFUNC void fio_http_sse_set_request(fio_http_s *);
+
+/* *****************************************************************************
+HTTP Handle State and Controller Flags
+***************************************************************************** */
+
+#define FIO_HTTP_STATE_STREAMING      1
+#define FIO_HTTP_STATE_FINISHED       2
+#define FIO_HTTP_STATE_UPGRADED       4
+#define FIO_HTTP_STATE_WEBSOCKET      8
+#define FIO_HTTP_STATE_SSE            16
+#define FIO_HTTP_STATE_COOKIES_PARSED 32
+#define FIO_HTTP_STATE_FREEING        64
+
+/** Controller flags (cflags) for opt-in compression features. */
+#define FIO_HTTP_CFLAG_COMPRESS_DYNAMIC 1
+#define FIO_HTTP_CFLAG_COMPRESS_WS      2
+#define FIO_HTTP_CFLAG_COMPRESS_STATIC  4
+
+/* *****************************************************************************
+WebSocket Helpers - HTTP Upgraded Connections
+***************************************************************************** */
+
+/** Writes a WebSocket message. Fails if connection wasn't upgraded yet. */
+SFUNC int fio_http_websocket_write(fio_http_s *h,
+                                   const void *buf,
+                                   size_t len,
+                                   uint8_t is_text);
+
+/**
+ * Sets a specific on_message callback for this connection.
+ *
+ * Returns -1 on error (i.e., upgrade still in negotiation).
+ */
+SFUNC int fio_http_on_message_set(fio_http_s *h,
+                                  void (*on_message)(fio_http_s *,
+                                                     fio_buf_info_s,
+                                                     uint8_t));
+
+/** Optional WebSocket subscription callback. */
+SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg);
+/** Optional WebSocket subscription callback - all messages are UTF-8 valid. */
+SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_TEXT(fio_pubsub_msg_s *msg);
+/** Optional WebSocket subscription callback - messages may be non-UTF-8. */
+SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_BINARY(fio_pubsub_msg_s *msg);
+
+/* *****************************************************************************
+EventSource (SSE) Helpers - HTTP Upgraded Connections
+***************************************************************************** */
+
+/** Named arguments for fio_http_sse_write. */
+typedef struct {
+  /** The message's `id` data (if any). */
+  fio_buf_info_s id;
+  /** The message's `event` data (if any). */
+  fio_buf_info_s event;
+  /** The message's `data` data (if any). */
+  fio_buf_info_s data;
+} fio_http_sse_write_args_s;
+
+/** Writes an SSE message (UTF-8). Fails if connection wasn't upgraded yet. */
+SFUNC int fio_http_sse_write(fio_http_s *h, fio_http_sse_write_args_s args);
+
+/** Writes an SSE message (UTF-8). Fails if connection wasn't upgraded yet. */
+#define fio_http_sse_write(h, ...)                                             \
+  fio_http_sse_write((h), ((fio_http_sse_write_args_s){__VA_ARGS__}))
+
+/** Optional EventSource subscription callback - messages MUST be UTF-8. */
+SFUNC void FIO_HTTP_SSE_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg);
+
+/* *****************************************************************************
+HTTP Settings Resolver
+***************************************************************************** */
+
+/** Returns the HTTP settings associated with the HTTP object, if any. */
+SFUNC fio_http_settings_s *fio_http_settings(fio_http_s *);
+
+/* *****************************************************************************
+HTTP API Finish
+***************************************************************************** */
+#endif /* FIO_HTTP */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_HTTP               /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+
+
+
+              HTTP Types - Internal Types, Handle and Core Implementation
+
+See also:
+https://www.rfc-editor.org/rfc/rfc9110.html
+
+
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_HTTP) && !defined(FIO___RECURSIVE_INCLUDE) &&                  \
+    !defined(H___FIO_HTTP_TYPES___H) &&                                        \
+    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN))
+#define H___FIO_HTTP_TYPES___H
 
 /* *****************************************************************************
 HTTP Handle Implementation - inlined static functions
@@ -116041,9 +118183,547 @@ FIO_IFUNC bool fio___http_path_each_next(fio_buf_info_s *restrict section,
 }
 
 /* *****************************************************************************
-HTTP Handle Implementation - possibly externed functions.
+Module Implementation - HTTP Routing – CRUD
 ***************************************************************************** */
-#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
+
+/** returns expected action or `FIO_HTTP_RESOURCE_NONE` on error. */
+FIO_IFUNC fio_http_resource_action_e fio_http_resource_action(fio_http_s *h) {
+  fio_http_resource_action_e r = FIO_HTTP_RESOURCE_NONE;
+  if (!h)
+    return r;
+  const uint32_t new_s = fio_buf2u32u("/new") | 0x20202020U;
+  const uint32_t edit_s = fio_buf2u32u("edit");
+  const uint32_t get = fio_buf2u32u("get\x20");
+  const uint32_t put = fio_buf2u32u("put\x20");
+  const uint32_t post = fio_buf2u32u("post");
+  const uint32_t patc = fio_buf2u32u("patc");
+  const uint32_t dele = fio_buf2u32u("dele");
+  const uint32_t lete = fio_buf2u32u("lete");
+  const uint32_t query = fio_buf2u32u("quer");
+  fio_str_info_s method = fio_http_method(h);
+  fio_str_info_s path = fio_http_path(h);
+  bool path_ends_with_dash = (path.len && path.buf[path.len - 1] == '/');
+  bool path_is_new = ((path.len == 4 || (path.len > 4 && path.buf[4] == '/')) &&
+                      ((fio_buf2u32u(path.buf) | 0x20202020U) == new_s));
+  if (method.len < 3)
+    return r;
+  uint32_t tmp = fio_buf2u32u(method.buf) | 0x20202020U; /* down-case */
+  /* GET */
+  if (tmp == get) {
+    bool path_is_edit =
+        ((path.len > 6) &&
+         path.buf[path.len - (5 + path_ends_with_dash)] == '/' &&
+         ((fio_buf2u32u((path.buf + path.len) - (4 + path_ends_with_dash)) |
+           0x20202020U) == edit_s));
+    /* index vs show */
+    r = (fio_http_resource_action_e)((unsigned)FIO_HTTP_RESOURCE_INDEX +
+                                     (path.len > 1));
+    /* show vs new */
+    r = (fio_http_resource_action_e)((unsigned)r +
+                                     (path_is_new & (!path_is_edit)));
+    /* show vs edit */
+    r = (fio_http_resource_action_e)((unsigned)r +
+                                     ((unsigned)path_is_edit << 1));
+    /* new/edit collision */
+    r = (fio_http_resource_action_e)((unsigned)r -
+                                     (((unsigned)(r == FIO_HTTP_RESOURCE_EDIT) &
+                                       path_is_new) *
+                                      FIO_HTTP_RESOURCE_EDIT));
+    /* PUT/POST/PATCH */
+  } else if (tmp == put || (tmp == post && method.len == 4) ||
+             (tmp == patc && ((method.buf[4] | 32) == 'h') &&
+              method.len == 5)) {
+    /* create vs edit */
+    r = (fio_http_resource_action_e)((unsigned)FIO_HTTP_RESOURCE_CREATE +
+                                     (path.len > 1 && !path_is_new));
+    /* DELETE */
+  } else if (path.len > 1 && !path_is_new && method.len == 6 && tmp == dele &&
+             (fio_buf2u32u(method.buf + 2) | 0x20202020U) == lete) {
+    r = FIO_HTTP_RESOURCE_DELETE;
+  } else if (tmp == query && method.len == 5 && (method.buf[4] | 32) == 'y') {
+    r = FIO_HTTP_RESOURCE_QUERY;
+  }
+  return r;
+}
+
+/*
+REMEMBER:
+========
+
+All memory allocations should use:
+* FIO_MEM_REALLOC_(ptr, old_size, new_size, copy_len)
+* FIO_MEM_FREE_(ptr, size)
+
+*/
+
+/* *****************************************************************************
+HTTP Settings Validation
+***************************************************************************** */
+
+static void fio___http_default_on_http_request(fio_http_s *h) {
+  fio_http_send_error_response(h, 404);
+}
+static void fio___http_default_noop(fio_http_s *h) { ((void)h); }
+static int fio___http_default_authenticate(fio_http_s *h) {
+  ((void)h);
+  return -1;
+}
+
+// on_queue
+static void fio___http_default_on_stop(struct fio_http_settings_s *settings) {
+  ((void)settings);
+}
+
+static void fio___http_default_close(fio_http_s *h) {
+  fio_io_close(fio_http_io(h));
+}
+
+/** Called when a WebSocket message is received. */
+static void fio___http_default_on_message(fio_http_s *h,
+                                          fio_buf_info_s msg,
+                                          uint8_t is_text) {
+  (void)h, (void)msg, (void)is_text;
+}
+/** Called when an EventSource event is received. */
+static void fio___http_default_on_eventsource(fio_http_s *h,
+                                              fio_buf_info_s id,
+                                              fio_buf_info_s event,
+                                              fio_buf_info_s data) {
+  (void)h, (void)id, (void)event, (void)data;
+}
+/** Called when an EventSource event is received. */
+static void fio___http_default_on_eventsource_redirect(fio_http_s *h,
+                                                       fio_buf_info_s id,
+                                                       fio_buf_info_s event,
+                                                       fio_buf_info_s data);
+
+/** Called when an EventSource reconnect event requests an ID. */
+static void fio___http_default_on_eventsource_reconnect(fio_http_s *h,
+                                                        fio_buf_info_s id) {
+  (void)h, (void)id;
+}
+
+static void fio___http_settings_validate(fio_http_settings_s *s,
+                                         int is_client) {
+  if (!s->pre_http_body)
+    s->pre_http_body = fio___http_default_noop;
+  if (!s->on_http)
+    s->on_http = is_client ? fio___http_default_noop
+                           : fio___http_default_on_http_request;
+  if (!s->on_finish)
+    s->on_finish = fio___http_default_noop;
+  if (!s->on_stop)
+    s->on_stop = fio___http_default_on_stop;
+  if (!s->on_authenticate_sse)
+    s->on_authenticate_sse = is_client ? FIO_HTTP_AUTHENTICATE_ALLOW
+                                       : fio___http_default_authenticate;
+  if (!s->on_authenticate_websocket)
+    s->on_authenticate_websocket = is_client ? FIO_HTTP_AUTHENTICATE_ALLOW
+                                             : fio___http_default_authenticate;
+  if (!s->on_open)
+    s->on_open = fio___http_default_noop;
+  if (!s->on_message)
+    s->on_message = fio___http_default_on_message;
+  if (!s->on_eventsource)
+    s->on_eventsource = (s->on_message == fio___http_default_on_message
+                             ? fio___http_default_on_eventsource
+                             : fio___http_default_on_eventsource_redirect);
+  if (!s->on_eventsource_reconnect)
+    s->on_eventsource_reconnect = fio___http_default_on_eventsource_reconnect;
+  if (!s->on_ready)
+    s->on_ready = fio___http_default_noop;
+  if (!s->on_shutdown)
+    s->on_shutdown = fio___http_default_noop;
+  if (!s->on_close)
+    s->on_close = fio___http_default_noop;
+  if (!s->max_header_size)
+    s->max_header_size = FIO_HTTP_DEFAULT_MAX_HEADER_SIZE;
+  if (!s->max_line_len)
+    s->max_line_len = FIO_HTTP_DEFAULT_MAX_LINE_LEN;
+  if (!s->max_body_size)
+    s->max_body_size = FIO_HTTP_DEFAULT_MAX_BODY_SIZE;
+  if (!s->ws_max_msg_size)
+    s->ws_max_msg_size = FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE;
+  if (!s->timeout)
+    s->timeout = FIO_HTTP_DEFAULT_TIMEOUT;
+  if (!s->ws_timeout)
+    s->ws_timeout = FIO_HTTP_DEFAULT_TIMEOUT_LONG;
+  if (!s->sse_timeout)
+    s->sse_timeout = s->ws_timeout;
+
+  if (s->max_header_size < s->max_line_len)
+    s->max_header_size = s->max_line_len;
+
+  if (s->public_folder.buf) {
+    if (s->public_folder.len > 1 &&
+        s->public_folder.buf[s->public_folder.len - 1] == '/' &&
+        !(s->public_folder.len == 2 && s->public_folder.buf[0] == '~'))
+      --s->public_folder.len;
+    if (!fio_filename_is_folder(s->public_folder.buf)) {
+      FIO_LOG_ERROR("HTTP public folder not found (or not a folder), setting "
+                    "ignored.\n\t%s",
+                    s->public_folder.buf);
+      s->public_folder = ((fio_str_info_s){0});
+    }
+  }
+}
+
+/* *****************************************************************************
+HTTP Protocols used by the HTTP module
+***************************************************************************** */
+
+typedef enum fio___http_protocol_selector_e {
+  FIO___HTTP_PROTOCOL_ACCEPT = 0,
+  FIO___HTTP_PROTOCOL_HTTP1,
+  FIO___HTTP_PROTOCOL_HTTP2,
+  FIO___HTTP_PROTOCOL_WS,
+  FIO___HTTP_PROTOCOL_SSE,
+  FIO___HTTP_PROTOCOL_NONE
+} fio___http_protocol_selector_e;
+
+/* *****************************************************************************
+HTTP Protocol Container (vtable + settings storage)
+***************************************************************************** */
+
+typedef union fio___http_router_u {
+  fio_http_settings_s s;
+  void *ptr[256];
+  union fio___http_router_u *map[256];
+} fio___http_router_u;
+
+FIO_SFUNC void fio___http_router_destroy(fio___http_router_u *router);
+
+typedef struct {
+  fio_http_settings_s settings;
+  void (*on_http_callback)(void *, void *);
+  fio_queue_s *queue;
+  struct {
+    fio_io_protocol_s protocol;
+    fio_http_controller_s controller;
+  } state[FIO___HTTP_PROTOCOL_NONE + 1];
+  fio___http_router_u router;
+  char public_folder_buf[];
+} fio___http_protocol_s;
+#define FIO___RECURSIVE_INCLUDE 1
+#include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
+
+#define FIO_REF_NAME             fio___http_protocol
+#define FIO_REF_FLEX_TYPE        char
+#define FIO_REF_CONSTRUCTOR_ONLY 1
+#define FIO_REF_DESTROY(o)                                                     \
+  do {                                                                         \
+    if (o.settings.tls)                                                        \
+      fio_io_tls_free(o.settings.tls);                                         \
+    fio___http_router_destroy(&o.router);                                      \
+  } while (0)
+#define FIO___RECURSIVE_INCLUDE 1
+#include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
+
+FIO_IFUNC fio___http_protocol_s *fio___http_protocol_init(
+    fio___http_protocol_s *p,
+    const char *url,
+    fio_http_settings_s s,
+    bool is_client);
+/* *****************************************************************************
+HTTP Connection Container
+***************************************************************************** */
+
+struct fio___http_connection_http_s {
+  void (*on_http_callback)(void *, void *);
+  void (*on_http)(fio_http_s *h);
+  void (*on_finish)(fio_http_s *h);
+  fio_http1_parser_s parser;
+  fio_str_info_s buf;
+  uint32_t max_header;
+  uint32_t max_line;
+  uint32_t header_bytes;
+};
+struct fio___http_connection_ws_s {
+  void (*on_message)(fio_http_s *h, fio_buf_info_s msg, uint8_t is_text);
+  void (*on_ready)(fio_http_s *h);
+  fio_websocket_s parser;
+  /* Buffered message payload. WebSocket deliveries always use fio_bstr-backed
+   * storage for predictable ownership and String semantics. */
+  char *msg;
+  uint16_t code;
+};
+struct fio___http_connection_sse_s {
+  void (*on_message)(fio_http_s *h,
+                     fio_buf_info_s id,
+                     fio_buf_info_s event,
+                     fio_buf_info_s data);
+  void (*on_ready)(fio_http_s *h);
+  fio_buf_info_s id;
+  fio_buf_info_s event;
+  char *data;
+};
+
+/** Connection objects for managing HTTP / WebSocket connection state. */
+typedef struct {
+  fio_io_s *io;
+  fio_http_s *h;
+  fio_http_settings_s *settings;
+  fio_queue_s *queue;
+  void *udata;
+  union {
+    struct fio___http_connection_http_s http;
+    struct fio___http_connection_ws_s ws;
+    struct fio___http_connection_sse_s sse;
+  } state;
+  fio_deflate_s
+      *deflate_rd; /* WS decompressor (NULL = no permessage-deflate) */
+  fio_deflate_s *deflate_wr; /* WS compressor (NULL = no permessage-deflate) */
+  uint32_t len;
+  uint32_t capa;
+  uint8_t log;
+  uint8_t suspend;
+  uint8_t is_client;
+  uint8_t deflate_rd_reset; /* 1 = client_no_context_takeover */
+  uint8_t deflate_wr_reset; /* 1 = server_no_context_takeover */
+  char buf[];
+} fio___http_connection_s;
+
+#define FIO_REF_NAME             fio___http_connection
+#define FIO_REF_CONSTRUCTOR_ONLY 1
+#define FIO_REF_FLEX_TYPE        char
+#define FIO_REF_DESTROY(o)                                                     \
+  do {                                                                         \
+    if (o.deflate_rd)                                                          \
+      fio_deflate_free(o.deflate_rd);                                          \
+    if (o.deflate_wr)                                                          \
+      fio_deflate_free(o.deflate_wr);                                          \
+    fio___http_protocol_free(                                                  \
+        FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, o.settings));      \
+  } while (0)
+#define FIO___RECURSIVE_INCLUDE 1
+#include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
+
+/* *****************************************************************************
+HTTP Routing
+***************************************************************************** */
+
+FIO_LEAK_COUNTER_DEF(fio___http_router_u)
+FIO_SFUNC void fio___http_on_http_with_public_folder(void *h_, void *ignr);
+
+void fio_http_route___(void);
+/** Adds a route prefix to the HTTP handler. */
+SFUNC int fio_http_route FIO_NOOP(fio_http_listener_s *l,
+                                  const char *url,
+                                  fio_http_settings_s s) {
+  int err = 0;
+  const uint8_t *u = (const uint8_t *)url;
+  fio___http_protocol_s *p;
+  fio___http_router_u *r;
+  if (!l)
+    goto invalid_listener_error;
+  p = FIO_PTR_FROM_FIELD(fio___http_protocol_s,
+                         state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
+                         fio_io_listener_protocol((fio_io_listener_s *)l));
+  r = &p->router;
+  if (!u || !u[0]) {
+    url = "/";
+    u = (const uint8_t *)url;
+  }
+  /* skip first `/` character, they should always exist anyway */
+  u += (*u == (uint8_t)'/');
+  /* skip last `/` character, to preserve memory and reduce seeking time */
+  for (; *u && (*u != (uint8_t)'/' || u[1]); ++u) {
+    if (*u < (sizeof(s) / sizeof(void *)))
+      goto invalid_char_error;
+    if (!r->map[*u])
+      break;
+    r = r->map[*u];
+  }
+  /* skip last `/` character, to preserve memory and reduce seeking time */
+  for (; *u && (*u != (uint8_t)'/' || u[1]); ++u) {
+    if (*u < (sizeof(s) / sizeof(void *)))
+      goto invalid_char_error;
+    r->map[*u] =
+        (fio___http_router_u *)FIO_MEM_REALLOC_(NULL, 0, sizeof(*r), 0);
+    r = r->map[*u];
+    FIO_ASSERT_ALLOC(r);
+    FIO_LEAK_COUNTER_ON_ALLOC(fio___http_router_u);
+    if (!FIO_MEM_REALLOC_IS_SAFE_) {
+      FIO_MEMSET(r, 0, sizeof(*r));
+    }
+  }
+  /* we are at the leaf node of the path */
+
+  /* inherit reasonable defaults */
+  if (!s.on_finish)
+    s.on_finish = p->settings.on_finish;
+  if (!s.udata)
+    s.udata = p->settings.udata;
+  if (!s.on_stop)
+    s.on_stop = p->settings.on_stop;
+  if (!s.on_authenticate_sse)
+    s.on_authenticate_sse = p->settings.on_authenticate_sse;
+  if (!s.on_authenticate_websocket)
+    s.on_authenticate_websocket = p->settings.on_authenticate_websocket;
+  if (!s.max_header_size)
+    s.max_header_size = p->settings.max_header_size;
+  if (!s.max_line_len)
+    s.max_line_len = p->settings.max_line_len;
+  if (!s.max_body_size)
+    s.max_body_size = p->settings.max_body_size;
+  if (!s.ws_max_msg_size)
+    s.ws_max_msg_size = p->settings.ws_max_msg_size;
+  if (!s.timeout)
+    s.timeout = p->settings.timeout;
+  if (!s.ws_timeout)
+    s.ws_timeout = p->settings.ws_timeout;
+  if (!s.sse_timeout)
+    s.sse_timeout = p->settings.sse_timeout;
+  if (!s.log)
+    s.log = p->settings.log;
+  if (!s.compress_static)
+    s.compress_static = p->settings.compress_static;
+  s.tls = NULL;
+  s.tls_io_func = NULL;
+  /* validate settings and store */
+  fio___http_settings_validate(&s, 0);
+  if (!s.public_folder.buf)
+    s.public_folder = p->settings.public_folder;
+  else if (s.public_folder.buf && s.public_folder.len) {
+    s.tls =
+        (fio_io_tls_s *)FIO_MEM_REALLOC_(NULL, 0, s.public_folder.len + 1, 0);
+    FIO_ASSERT_ALLOC(s.tls);
+    FIO_MEMCPY(s.tls, s.public_folder.buf, s.public_folder.len);
+    s.public_folder = FIO_STR_INFO2((char *)s.tls, s.public_folder.len);
+    s.public_folder.buf[s.public_folder.len] = 0;
+  }
+  /* make sure we're not leaking memory when overwriting an existing route */
+  if (r->s.on_http) {
+    if (r->s.on_stop != p->settings.on_stop || r->s.udata != p->settings.udata)
+      r->s.on_stop(&r->s);
+    if (r->s.tls && (char *)r->s.tls == r->s.public_folder.buf)
+      FIO_MEM_FREE_(r->s.tls, r->s.public_folder.len + 1);
+  }
+  /* if we have a route with a static file service, we need this */
+  if (s.public_folder.buf && s.public_folder.len) {
+    p->on_http_callback = fio___http_on_http_with_public_folder;
+  }
+  r->s = s;
+  return err;
+
+invalid_char_error:
+  if (url)
+    FIO_LOG_ERROR("Invalid character found in path URL[%zu]: %s",
+                  (size_t)((const char *)u - url),
+                  url);
+  else
+    FIO_LOG_FATAL("HTTP Router requires a non-NULL URL!");
+  err = -1;
+  return err;
+
+invalid_listener_error:
+  FIO_LOG_FATAL("HTTP Router requires an existing HTTP listener object.");
+  err = -1;
+  return err;
+}
+
+void fio___http_route_settings___(void);
+FIO_SFUNC fio_http_settings_s *fio___http_route_settings(
+    fio___http_router_u *route,
+    fio_str_info_s *path) {
+  fio_http_settings_s *r = &route->s;
+  uint8_t *pos = (uint8_t *)path->buf;
+  const uint8_t *n = pos;
+  pos += (*pos == (uint8_t)'/');
+  if (!*pos)
+    return r;
+  for (uint8_t c, hi, lo;
+       route && ((c = *pos) >= (sizeof(*r) / sizeof(void *)));
+       ++pos) {
+    /* we have a possible match here - store before stepping into path */
+    if (c == (uint8_t)'/' && route->s.on_http) {
+      r = &route->s;
+      n = pos;
+    } else if (c == (uint8_t)'%' && (hi = fio_c2i(pos[1])) < 16) {
+      if ((lo = fio_c2i(pos[2])) < 16) { /* decrypt route */
+        c = (hi << 4) | lo;
+        pos += 2;
+        if (c < (sizeof(*r) / sizeof(void *)))
+          break;
+      }
+    }
+    route = route->map[c];
+  }
+  /* test if '/' may be inferred */
+  if (!*pos && route && route->map[0]) {
+    r = &route->s;
+    path->len = 1;
+    n = (uint8_t *)path->buf;
+  }
+  n -= (n == (uint8_t *)path->buf + 1);
+  *path = FIO_STR_INFO2((char *)n, path->len - ((char *)n - path->buf));
+  return r;
+}
+
+/** Returns a link to the settings handled by the handle's route. */
+FIO_SFUNC fio_http_settings_s *fio___http_handle_settings(fio_http_s *h) {
+  fio_http_settings_s *r = NULL;
+  fio___http_connection_s *connection =
+      (fio___http_connection_s *)fio_http_cdata(h);
+  if (!connection)
+    return r;
+  fio___http_protocol_s *p =
+      FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, connection->settings);
+  fio_str_info_s path = fio_http_opath(h);
+  r = fio___http_route_settings(&p->router, &path);
+  fio_http_udata_set(h, r->udata);
+  fio_http_path_set(h, path);
+  connection->state.http.on_http = r->on_http;
+  connection->state.http.on_finish = r->on_finish;
+  return r;
+}
+
+FIO_SFUNC void fio___http_router_destroy(fio___http_router_u *r) {
+  if (!r)
+    return;
+  if (r->s.tls && (char *)r->s.tls == r->s.public_folder.buf)
+    FIO_MEM_FREE_(r->s.tls, r->s.public_folder.len + 1);
+  for (size_t i = (sizeof(r->s) / sizeof(void *)); i < 256; ++i) {
+    if (!r->map[i])
+      continue;
+    fio___http_router_destroy(r->map[i]);
+    FIO_MEM_FREE_(r->map[i], sizeof(*r));
+    FIO_LEAK_COUNTER_ON_FREE(fio___http_router_u);
+  }
+  if (r->s.on_stop)
+    r->s.on_stop(&r->s);
+}
+
+SFUNC fio_http_settings_s *fio_http_route_settings(fio_http_listener_s *l,
+                                                   const char *url) {
+  fio_http_settings_s *r = NULL;
+  fio___http_protocol_s *p;
+  fio_str_info_s path = FIO_STR_INFO2((char *)url, 1);
+  if (!l)
+    return r;
+  p = FIO_PTR_FROM_FIELD(fio___http_protocol_s,
+                         state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
+                         fio_io_listener_protocol((fio_io_listener_s *)l));
+  r = fio___http_route_settings(&p->router, &path);
+  return r;
+}
+
+/* *****************************************************************************
+Revisit defaults
+***************************************************************************** */
+
+/** Called when an EventSource event is received. */
+static void fio___http_default_on_eventsource_redirect(fio_http_s *h,
+                                                       fio_buf_info_s id,
+                                                       fio_buf_info_s event,
+                                                       fio_buf_info_s data) {
+  fio_http_settings_s *s = fio___http_handle_settings(h);
+  s->on_message(h, data, 1);
+  (void)h, (void)id, (void)event, (void)data;
+}
 
 /* *****************************************************************************
 Helpers - reading time
@@ -116117,7 +118797,6 @@ FIO_SFUNC void *fio___http_keystr_alloc(size_t capa) {
 /* *****************************************************************************
 Helper Types
 ***************************************************************************** */
-#define FIO___RECURSIVE_INCLUDE 1
 /* *****************************************************************************
 String Cache
 ***************************************************************************** */
@@ -116125,7 +118804,9 @@ String Cache
 #define FIO_MAP_NAME fio___http_str_cache
 #define FIO_MAP_LRU  FIO_HTTP_CACHE_LIMIT
 #define FIO_MAP_KEY_BSTR
+#define FIO___RECURSIVE_INCLUDE 1
 #include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
 
 static struct {
   fio___http_str_cache_s cache;
@@ -116426,7 +119107,9 @@ Headers Maps
 #define FIO_MAP_VALUE_DESTROY(o) fio___http_sary_destroy(&(o))
 #define FIO_MAP_HASH_FN(k)                                                     \
   fio_risky_hash((k).buf, (k).len, (uint64_t)(uintptr_t)fio___http_sary_destroy)
+#define FIO___RECURSIVE_INCLUDE 1
 #include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
 
 #if FIO_HTTP_ENFORCE_LOWERCASE_HEADERS
 #define FIO___HTTP_ENFORCE_LOWERCASE(var_name, inpute_var)                     \
@@ -116569,7 +119252,9 @@ Cookie Maps
 #define FIO_MAP_VALUE_BSTR /* not cached */
 #define FIO_MAP_HASH_FN(k)                                                     \
   fio_risky_hash((k).buf, (k).len, (uint64_t)(uintptr_t)fio___http_cmap_destroy)
+#define FIO___RECURSIVE_INCLUDE 1
 #include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
 
 /* *****************************************************************************
 Controller Validation
@@ -116625,19 +119310,6 @@ SFUNC fio_http_controller_s *fio___http_controller_validate(
 /* *****************************************************************************
 HTTP Handle Type
 ***************************************************************************** */
-
-#define FIO_HTTP_STATE_STREAMING      1
-#define FIO_HTTP_STATE_FINISHED       2
-#define FIO_HTTP_STATE_UPGRADED       4
-#define FIO_HTTP_STATE_WEBSOCKET      8
-#define FIO_HTTP_STATE_SSE            16
-#define FIO_HTTP_STATE_COOKIES_PARSED 32
-#define FIO_HTTP_STATE_FREEING        64
-
-/** Controller flags (cflags) for opt-in compression features. */
-#define FIO_HTTP_CFLAG_COMPRESS_DYNAMIC 1
-#define FIO_HTTP_CFLAG_COMPRESS_WS      2
-#define FIO_HTTP_CFLAG_COMPRESS_STATIC  4
 
 FIO_SFUNC int fio____http_write_start(fio_http_s *, fio_http_write_args_s *);
 FIO_SFUNC int fio____http_write_cont(fio_http_s *, fio_http_write_args_s *);
@@ -116702,7 +119374,9 @@ SFUNC fio_http_s *fio_http_destroy(fio_http_s *h) {
   FIO_REF_INIT(*h);
   return h;
 }
+#define FIO___RECURSIVE_INCLUDE 1
 #include FIO_INCLUDE_FILE
+#undef FIO___RECURSIVE_INCLUDE
 
 /** Clears any response data. */
 SFUNC fio_http_s *fio_http_clear_response(fio_http_s *h, bool clear_body) {
@@ -116768,7 +119442,6 @@ SFUNC fio_http_s *fio_http_new_copy_request(fio_http_s *o) {
   return h;
 }
 
-#undef FIO___RECURSIVE_INCLUDE
 /* *****************************************************************************
 Simple Property Set / Get
 ***************************************************************************** */
@@ -117552,6 +120225,16 @@ SFUNC size_t fio_http_body_length(fio_http_s *h) { return h->body.len; }
  */
 SFUNC int fio_http_body_fd(fio_http_s *h) { return h->body.fd; }
 
+/** Releases body (payload) resources, closing any temporary files. */
+SFUNC void fio_http_body_close(fio_http_s *h) {
+  fio_bstr_free(h->body.buf);
+  if (h->body.fd != -1)
+    close(h->body.fd);
+  h->body.buf = NULL;
+  h->body.len = h->body.pos = 0;
+  h->body.fd = -1;
+}
+
 /** Adjusts the body's reading position. Negative values start at the end. */
 SFUNC size_t fio_http_body_seek(fio_http_s *h, ssize_t pos) {
   if (pos == SSIZE_MAX)
@@ -117660,18 +120343,22 @@ FIO_SFUNC int fio____http_write_start(fio_http_s *h,
   if (args->finish &&
       FIO_LIKELY(fio_http_cflags_is_set(h, FIO_HTTP_CFLAG_COMPRESS_DYNAMIC)) &&
       args->len > 1024 && args->buf) {
+    /* Never double-compress: the application already encoded this response. */
+    if (fio___http_hmap_get_ptr(hdrs,
+                                FIO_STR_INFO2((char *)"content-encoding", 16)))
+      goto compression_done;
     fio_str_info_s ac =
         fio_http_request_header(h,
                                 FIO_STR_INFO2((char *)"accept-encoding", 15),
                                 0);
     if (!ac.len)
-      goto no_compress;
+      goto compression_done;
     /* only compress text-like content types */
     if (!fio___http_mime_is_compressible(
             fio_http_response_header(h,
                                      FIO_STR_INFO2((char *)"content-type", 12),
                                      0)))
-      goto no_compress;
+      goto compression_done;
     /* try encodings in preference order (brotli > gzip) */
     struct {
       fio_str_info_s token;
@@ -117738,7 +120425,17 @@ FIO_SFUNC int fio____http_write_start(fio_http_s *h,
           h,
           FIO_STR_INFO2((char *)"vary", 4),
           FIO_STR_INFO2((char *)"accept-encoding", 15));
+    } else if (!fio_http_response_header(h, FIO_STR_INFO2((char *)"vary", 4), 0)
+                    .buf) {
+      /* Encodings were evaluated but identity won (e.g. `q=0`, no common
+       * token, or no gain): caches must still key on Accept-Encoding. */
+      fio_http_response_header_set(
+          h,
+          FIO_STR_INFO2((char *)"vary", 4),
+          FIO_STR_INFO2((char *)"accept-encoding", 15));
     }
+  compression_done:; /* skipped paths rejoin here (Content-Length must
+                         still be validated for finished responses) */
   }
 #endif
   /* test if streaming / single body response */
@@ -117756,7 +120453,6 @@ FIO_SFUNC int fio____http_write_start(fio_http_s *h,
       h->state |= FIO_HTTP_STATE_STREAMING;
     }
   }
-no_compress:
   /* start a response, unless status == 0 (which starts a request). */
   h->controller->send_headers(h);
   return (h->writer = fio____http_write_cont)(h, args);
@@ -118402,10 +121098,6 @@ SFUNC int fio_http_etag_is_match(fio_http_s *h) {
     return 1;
   }
 }
-
-/* *****************************************************************************
-Param Parsing (TODO! - parse query, parse mime/multipart parse text/json)
-***************************************************************************** */
 
 /* *****************************************************************************
 HTTP Body Parsing - Primitive Type Detection
@@ -119346,23 +122038,35 @@ fio_http_body_parse(fio_http_s *h,
 }
 
 /* *****************************************************************************
-
-
-                                TODO WIP Marker!!!
-
-
-***************************************************************************** */
-
-/* *****************************************************************************
 Static file helper
 ***************************************************************************** */
+
+/** Returns non-zero if the qvalue at `p` (pointing just past "q=") is
+ * exactly zero in any zero-padded form (0, 0.0, 0.00, 0.000). */
+FIO_SFUNC int fio___http_qvalue_is_zero(const char *p, const char *end) {
+  if (p >= end || *p != '0')
+    return 0;
+  ++p;
+  if (p < end && *p == '.') {
+    ++p;
+    while (p < end && *p >= '0' && *p <= '9') {
+      if (*p != '0')
+        return 0;
+      ++p;
+    }
+  }
+  return 1;
+}
 
 /**
  * Returns non-zero if `header` (a comma-separated header value) contains
  * `token` as a complete, standalone value.
  *
  * Handles formats like: "gzip, deflate, br" or "br;q=1.0, gzip;q=0.8"
- * Matching is case-insensitive and ignores quality parameters (;q=...).
+ * Matching is case-insensitive. Quality parameters are honored per RFC 9110
+ * §12.5.3: `q=0` (in any zero-padded form) FORBIDS the value (no match).
+ * All current callers match against Accept-Encoding; other `;params` are
+ * ignored rather than treated as q-values.
  */
 FIO_SFUNC int fio___http_header_has_token(fio_str_info_s header,
                                           const char *token,
@@ -119390,8 +122094,24 @@ FIO_SFUNC int fio___http_header_has_token(fio_str_info_s header,
         if ((tok_start[j] | 32) != (token[j] | 32))
           break;
       }
-      if (j == token_len)
-        return 1;
+      if (j == token_len) {
+        /* token matched — honor `q=0` in its parameters (RFC 9110) */
+        int forbidden = 0;
+        const char *pp = pos; /* at ';' or ',' or end */
+        while (pp < end && *pp != ',') {
+          while (pp < end && (*pp == ';' || *pp == ' ' || *pp == '\t'))
+            ++pp;
+          if (pp + 1 < end && (pp[0] | 32) == 'q' && pp[1] == '=') {
+            if (fio___http_qvalue_is_zero(pp + 2, end))
+              forbidden = 1;
+            break;
+          }
+          while (pp < end && *pp != ';' && *pp != ',')
+            ++pp;
+        }
+        if (!forbidden)
+          return 1;
+      }
     }
     /* skip past comma (and any ;q=... parameters) */
     while (pos < end && *pos != ',')
@@ -119475,8 +122195,87 @@ FIO_SFUNC int fio___http_mime_is_compressible(fio_str_info_s mime) {
 }
 
 /**
+ * Static-file compression failure memoization seam.
+ *
+ * Updates `settings->compress_static` (a failure-memoization shift
+ * register) after an on-demand compression attempt:
+ *
+ * - `result == 0` (success): `value |= 1` — re-seeds bit 0, restoring the
+ *   8-failure runway.
+ * - `result` is ENOSPC, EACCES, EROFS or EDQUOT (filesystem cannot accept
+ *   new files): `value = 0` — immediate permanent disable (until the
+ *   settings are re-applied by the user).
+ * - any other non-zero `result` (an errno value describing the failure):
+ *   `value <<= 1` — 1→2→…→128; the 8th consecutive failure shifts out of
+ *   the `uint8_t` and the value becomes 0 (disabled).
+ *
+ * All updates are atomic — IO threads share the listener/route settings.
+ * NULL `settings` is a no-op (detached handles carry no memoization
+ * state).
+ */
+FIO_SFUNC void fio___http_static_compress_note_result(
+    fio_http_settings_s *settings,
+    int result) {
+  if (!settings)
+    return;
+  uint8_t *p = &settings->compress_static;
+  if (!result) {
+    /* compression success — re-seed the failure runway */
+    fio_atomic_or(p, (uint8_t)1);
+    return;
+  }
+  if (result == ENOSPC || result == EACCES || result == EROFS
+#ifdef EDQUOT
+      || result == EDQUOT
+#endif
+  ) {
+    /* the filesystem cannot accept new files — disable on-demand creation */
+    fio_atomic_exchange(p, (uint8_t)0);
+    return;
+  }
+  /* consecutive-failure shift register (CAS loop, keeps the 8-bit width) */
+  for (;;) {
+    uint8_t cur;
+    fio_atomic_load(cur, p); /* reload: fallback CAS won't update `cur` */
+    if (!cur)
+      return; /* already disabled — stays disabled */
+    uint8_t next = (uint8_t)(cur << 1);
+    if (fio_atomic_compare_exchange_p(p, &cur, &next))
+      return;
+  }
+}
+
+/**
  * Attempts to send a static file from the `root` folder. On success the
  * response is complete and 0 is returned. Otherwise returns -1.
+ *
+ * Variant selection (skipped for ranged requests, which are always served
+ * identity): the client's `Accept-Encoding` is tested in preference order
+ * `br` -> `zstd` -> `gzip` -> `deflate` (files `file.br`, `file.zstd`,
+ * `file.gz`, `file.zip`); the first accepted variant that exists on disk
+ * and is at least as fresh as the original file is served. `zstd` and
+ * `deflate` variants are only ever served pre-generated, never created.
+ *
+ * With `compress_static` enabled (`fio_http_settings_s`), missing or stale
+ * `.br` / `.gz` variants are created on demand and written into the `root`
+ * folder — limited to compressible (text-like) MIME types, 1024 byte to
+ * FIO_HTTP_STATIC_FILE_COMPRESS_LIMIT originals, and only when compression
+ * shrinks the file. `.br` variants are compressed at brotli quality 4 (the
+ * benchmark-reviewed fast-path ceiling — q5+ engages the slow hash-chain
+ * path) and `.gz` variants at gzip level 6. The folder MUST be writable.
+ * `Vary: accept-encoding` is set whenever variants may exist (including on
+ * identity responses).
+ *
+ * `compress_static` is a failure-memoization shift register: any non-zero
+ * value enables on-demand creation. A compression success re-seeds bit 0
+ * (`value |= 1`); any other failure shifts the value left (`value <<= 1`),
+ * so 8 consecutive failures shift out of the `uint8_t` and disable
+ * creation, as does a single filesystem-full / permission error (ENOSPC,
+ * EACCES, EROFS, EDQUOT — `value = 0`). Once 0, creation stays disabled
+ * until the settings are re-applied. Routes inherit the value from the
+ * listener settings at route-creation. Detached handles (no settings)
+ * gate on the `FIO_HTTP_CFLAG_COMPRESS_STATIC` cflag instead, with no
+ * memoization state.
  */
 SFUNC int fio_http_static_file_response(fio_http_s *h,
                                         fio_str_info_s rt,
@@ -119572,18 +122371,42 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
         fio_http_request_header(h,
                                 FIO_STR_INFO2((char *)"accept-encoding", 15),
                                 0);
-    if (!ac.len)
+    /* Ranges over encoded bytes are broken in practice: ranged responses
+     * are always served identity (no compressed variant selection). */
+    if (fio_http_request_header(h, FIO_STR_INFO2((char *)"range", 5), 0).len)
       goto accept_encoding_header_test_done;
     /* stat the original file for staleness comparison and creation */
     struct stat orig_st;
     int have_orig_st = !fio_filename_stat(filename.buf, &orig_st);
     size_t orig_len = filename.len; /* remember unextended length */
+    /* Attached handles gate on the route/listener settings (a failure-
+     * memoization shift register, read atomically); detached handles
+     * (no settings) gate on the handle cflag exactly as before. */
+    fio_http_settings_s *st = fio_http_settings(h);
+    int settings_may_compress = 0;
+    if (st) {
+      uint8_t cv;
+      fio_atomic_load(cv, &st->compress_static);
+      settings_may_compress = (cv != 0);
+    }
     int can_create =
         have_orig_st &&
-        fio_http_cflags_is_set(h, FIO_HTTP_CFLAG_COMPRESS_STATIC) &&
+        (st ? settings_may_compress
+            : fio_http_cflags_is_set(h, FIO_HTTP_CFLAG_COMPRESS_STATIC)) &&
         fio___http_mime_is_compressible(mime_type) &&
         (size_t)orig_st.st_size >= 1024 &&
         (size_t)orig_st.st_size <= FIO_HTTP_STATIC_FILE_COMPRESS_LIMIT;
+    if (can_create &&
+        !fio_http_response_header(h, FIO_STR_INFO2((char *)"vary", 4), 0).buf)
+      /* Compressed variants exist (or may be created) for this resource:
+       * even the UNCOMPRESSED response must carry Vary so caches key on
+       * Accept-Encoding. */
+      fio_http_response_header_set(
+          h,
+          FIO_STR_INFO2((char *)"vary", 4),
+          FIO_STR_INFO2((char *)"accept-encoding", 15));
+    if (!ac.len)
+      goto accept_encoding_header_test_done;
     struct {
       fio_buf_info_s value;
       fio_buf_info_s ext;
@@ -119596,7 +122419,10 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
                        .ext = FIO_BUF_INFO2((char *)".br", 3),
                        .compress = fio_brotli_compress,
                        .bound = fio_brotli_compress_bound,
-                       .level = 6,
+                       /* q4 = highest fast-path quality (q5+ engages the
+                        * slow hash-chain path — an attacker-triggerable DoS
+                        * surface). See ai-task/http-compress-level.md */
+                       .level = 4,
                    },
                    {
                        .value = FIO_BUF_INFO2((char *)"zstd", 4),
@@ -119654,9 +122480,12 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
           FIO_MEM_FREE(src, (size_t)orig_st.st_size);
           continue;
         }
-        size_t comp_len = options[i].compress(dst, bound, src, rd, 6);
+        size_t comp_len =
+            options[i].compress(dst, bound, src, rd, options[i].level);
         FIO_MEM_FREE(src, (size_t)orig_st.st_size);
         if (!comp_len || comp_len >= rd) {
+          /* compression failed or didn't shrink the file */
+          fio___http_static_compress_note_result(st, EINVAL);
           FIO_MEM_FREE(dst, bound);
           continue;
         }
@@ -119666,11 +122495,15 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
                          options[i].ext.buf,
                          options[i].ext.len);
         if (fio_filename_overwrite(filename.buf, dst, comp_len)) {
+          /* write failure — errno preserved by fio_filename_overwrite */
+          fio___http_static_compress_note_result(st, errno);
           FIO_MEM_FREE(dst, bound);
           filename.len = orig_len;
           filename.buf[filename.len] = 0;
           continue;
         }
+        /* variant written — compression success */
+        fio___http_static_compress_note_result(st, 0);
         FIO_MEM_FREE(dst, bound);
       }
       /* compressed variant is ready — set response headers */
@@ -120176,1228 +123009,10 @@ Cleanup
 #undef FIO___HTTP_TIME_DIV
 #undef FIO___HTTP_TIME_UNIT
 
-#endif /* FIO_EXTERN_COMPLETE */
-
-#undef FIO_HTTP_HANDLE
-#endif /* FIO_HTTP_HANDLE */
-/* ************************************************************************* */
-#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
-#define FIO___DEV___           /* Development inclusion - ignore line */
-#define FIO_HTTP1_PARSER       /* Development inclusion - ignore line */
-#include "./include.h"         /* Development inclusion - ignore line */
-#endif                         /* Development inclusion - ignore line */
 /* *****************************************************************************
-
-
-
-
-                                HTTP/1.1 Parser
-
-
-
-
-Copyright and License: see header file (000 copyright.h) or top of file
+HTTP Types Finish
 ***************************************************************************** */
-#if defined(FIO_HTTP1_PARSER) && !defined(H___FIO_HTTP1_PARSER___H) &&         \
-    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)) &&                  \
-    !defined(FIO___RECURSIVE_INCLUDE)
-/* *****************************************************************************
-The HTTP/1.1 provides static functions only, always as part or implementation.
-***************************************************************************** */
-#define H___FIO_HTTP1_PARSER___H
-
-/* *****************************************************************************
-HTTP/1.x Parser API
-***************************************************************************** */
-
-/** The HTTP/1.1 parser type */
-typedef struct fio_http1_parser_s fio_http1_parser_s;
-/** Initialization value for the parser */
-#define FIO_HTTP1_PARSER_INIT ((fio_http1_parser_s){0})
-
-/**
- * Parses HTTP/1.x data, calling any callbacks.
- *
- * Returns bytes consumed or `FIO_HTTP1_PARSER_ERROR` (`(size_t)-1`) on error.
- */
-FIO_SFUNC size_t fio_http1_parse(fio_http1_parser_s *p,
-                                 fio_buf_info_s buf,
-                                 void *udata);
-
-/** Returns true if the parser is waiting to parse a new request/response .*/
-FIO_IFUNC size_t fio_http1_parser_is_empty(fio_http1_parser_s *p);
-
-/** Returns true if the parser is waiting for header data .*/
-FIO_IFUNC size_t fio_http1_parser_is_on_header(fio_http1_parser_s *p);
-
-/** Returns true if the parser is on body data .*/
-FIO_IFUNC size_t fio_http1_parser_is_on_body(fio_http1_parser_s *p);
-
-/** The error return value for fio_http1_parse. */
-#define FIO_HTTP1_PARSER_ERROR ((size_t)-1)
-
-/** Returns the number of bytes of payload still expected to be received. */
-FIO_IFUNC size_t fio_http1_expected(fio_http1_parser_s *p);
-
-/** A return value for `fio_http1_expected` when chunked data is expected. */
-#define FIO_HTTP1_EXPECTED_CHUNKED ((size_t)(-2))
-
-/** `fio_http1_expected` value when body isn't allowed (GET/HEAD/OPTIONS). */
-#define FIO___HTTP1_BODY_NOT_ALLOWED ((size_t)(-1))
-
-/* *****************************************************************************
-HTTP/1.x callbacks (to be implemented by parser user)
-***************************************************************************** */
-
-/** called when either a request or a response was received. */
-static void fio_http1_on_complete(void *udata);
-/** called when a request method is parsed. */
-static int fio_http1_on_method(fio_buf_info_s method, void *udata);
-/** called when a response status is parsed. the status_str is the string
- * without the prefixed numerical status indicator.*/
-static int fio_http1_on_status(size_t istatus,
-                               fio_buf_info_s status,
-                               void *udata);
-/** called when a request URL is parsed. */
-static int fio_http1_on_url(fio_buf_info_s path, void *udata);
-/** called when a the HTTP/1.x version is parsed. */
-static int fio_http1_on_version(fio_buf_info_s version, void *udata);
-/** called when a header is parsed. */
-static int fio_http1_on_header(fio_buf_info_s name,
-                               fio_buf_info_s value,
-                               void *udata);
-/** called when the special content-length header is parsed. */
-static int fio_http1_on_header_content_length(fio_buf_info_s name,
-                                              fio_buf_info_s value,
-                                              size_t content_length,
-                                              void *udata);
-/** called when `Expect` arrives and may require a 100 continue response. */
-static int fio_http1_on_expect(void *udata);
-/** called when a body chunk is parsed. */
-static int fio_http1_on_body_chunk(fio_buf_info_s chunk, void *udata);
-
-/* *****************************************************************************
-Implementation Stage Helpers
-***************************************************************************** */
-
-/* parsing stage 0 - read first line (proxy?). */
-static int fio_http1___start(fio_http1_parser_s *p,
-                             fio_buf_info_s *buf,
-                             void *udata);
-/* parsing stage 1 - read headers. */
-static int fio_http1___read_header(fio_http1_parser_s *p,
-                                   fio_buf_info_s *buf,
-                                   void *udata);
-/* parsing stage 2 - read body. */
-static int fio_http1___read_body(fio_http1_parser_s *p,
-                                 fio_buf_info_s *buf,
-                                 void *udata);
-/* parsing stage 2 - read chunked body. */
-static int fio_http1___read_body_chunked(fio_http1_parser_s *p,
-                                         fio_buf_info_s *buf,
-                                         void *udata);
-/* parsing stage 1 - read headers. */
-static int fio_http1___read_trailer(fio_http1_parser_s *p,
-                                    fio_buf_info_s *buf,
-                                    void *udata);
-/* completed parsing. */
-static int fio_http1___finish(fio_http1_parser_s *p,
-                              fio_buf_info_s *buf,
-                              void *udata);
-
-/* *****************************************************************************
-HTTP Parser Type
-***************************************************************************** */
-
-/** The HTTP/1.1 parser type implementation */
-struct fio_http1_parser_s {
-  int (*fn)(fio_http1_parser_s *, fio_buf_info_s *, void *);
-  size_t expected;
-};
-
-/** Returns true if the parser is waiting to parse a new request/response .*/
-FIO_IFUNC size_t fio_http1_parser_is_empty(fio_http1_parser_s *p) {
-  return !p->fn || p->fn == fio_http1___start;
-}
-
-/** Returns true if the parser is waiting for header data .*/
-FIO_IFUNC size_t fio_http1_parser_is_on_header(fio_http1_parser_s *p) {
-  return p->fn == fio_http1___read_header || p->fn == fio_http1___read_trailer;
-}
-
-/** Returns true if the parser is on body data .*/
-FIO_IFUNC size_t fio_http1_parser_is_on_body(fio_http1_parser_s *p) {
-  return p->fn == fio_http1___read_body ||
-         p->fn == fio_http1___read_body_chunked;
-}
-
-/** Returns the number of bytes of payload still expected to be received. */
-FIO_IFUNC size_t fio_http1_expected(fio_http1_parser_s *p) {
-  if (p->expected == FIO___HTTP1_BODY_NOT_ALLOWED)
-    return 0;
-  return p->expected;
-}
-
-/* *****************************************************************************
-Main Parsing Loop
-***************************************************************************** */
-
-FIO_SFUNC size_t fio_http1_parse(fio_http1_parser_s *p,
-                                 fio_buf_info_s buf,
-                                 void *udata) {
-  int i = 0;
-  char *buf_start = buf.buf;
-  if (!buf.len)
-    return 0;
-  if (!p->fn)
-    p->fn = fio_http1___start;
-  while (!(i = p->fn(p, &buf, udata)))
-    ;
-  if (i < 0)
-    return FIO_HTTP1_PARSER_ERROR;
-  return buf.buf - buf_start;
-}
-
-/* completed parsing. */
-static int fio_http1___finish(fio_http1_parser_s *p,
-                              fio_buf_info_s *buf,
-                              void *udata) {
-  (void)buf;
-  *p = (fio_http1_parser_s){0};
-  fio_http1_on_complete(udata);
-  return 1;
-}
-
-/* *****************************************************************************
-Reading the first line
-***************************************************************************** */
-
-/* parsing stage 0 - read first line (TODO: proxy protocol support?). */
-static int fio_http1___start(fio_http1_parser_s *p,
-                             fio_buf_info_s *buf,
-                             void *udata) {
-  const uint32_t method_get = (fio_buf2u32u("GET ") | 0x20202020);
-  const uint32_t method_head = (fio_buf2u32u("HEAD") | 0x20202020);
-  const uint64_t method_options =
-      (fio_buf2u64u("OPTIONS ") | (uint64_t)0x2020202020202020ULL);
-  /* find line start/end and test */
-  fio_buf_info_s wrd[3];
-  char *start = buf->buf;
-  char *tmp;
-  while ((start[0] == ' ' || start[0] == '\r' || start[0] == '\n') &&
-         start < buf->buf + buf->len) /* skip white space */
-    ++start;
-  if (start == buf->buf + buf->len) {
-    buf->buf = start;
-    return 1;
-  }
-  char *eol =
-      (char *)FIO_MEMCHR(start, '\n', (size_t)((buf->buf + buf->len) - start));
-  if (!eol)
-    return 1;
-  if (start + 13 > eol) /* test for minimal data GET HTTP/1 or ### HTTP/1 */
-    return -1;
-  /* test for `NUL` in data */
-  if (FIO_MEMCHR(start, 0, (size_t)(eol - start)))
-    return -1;
-
-  /* prep next stage */
-  buf->len -= (eol - buf->buf) + 1;
-  buf->buf = eol + 1;
-  eol -= eol[-1] == '\r';
-
-  /* parse first line */
-  /* request: method path version ; response: version code txt */
-  if (!(tmp = (char *)FIO_MEMCHR(start, ' ', (size_t)(eol - start))))
-    return -1;
-  wrd[0] = FIO_BUF_INFO2(start, (size_t)(tmp - start));
-  start = tmp + 1;
-  if (!(tmp = (char *)FIO_MEMCHR(start, ' ', eol - start)))
-    return -1;
-  wrd[1] = FIO_BUF_INFO2(start, (size_t)(tmp - start));
-  start = tmp + 1;
-  if (start >= eol)
-    return -1;
-  wrd[2] = FIO_BUF_INFO2(start, (size_t)(eol - start));
-  if (fio_c2i(wrd[1].buf[0]) < 10) /* test if path or code */
-    goto parse_response_line;
-  if (wrd[2].len > 14)
-    wrd[2].len = 14;
-  if (fio_http1_on_method(wrd[0], udata))
-    return -1;
-  if (fio_http1_on_url(wrd[1], udata))
-    return -1;
-  if (fio_http1_on_version(wrd[2], udata))
-    return -1;
-
-  /* make sure GET / HEAD / OPTIONS requests don't have a body */
-  if (((wrd[0].len == 3 || wrd[0].len == 4) &&
-       ((fio_buf2u32u(wrd[0].buf) | 0x20202020) == method_get ||
-        (fio_buf2u32u(wrd[0].buf) | 0x20202020) == method_head)) ||
-      (wrd[0].len == 7 &&
-       ((fio_buf2u64u(wrd[0].buf) | (uint64_t)0x2020202020202020ULL) ==
-        method_options)))
-    p->expected = FIO___HTTP1_BODY_NOT_ALLOWED;
-
-  /* switch to header reading mode */
-  return (p->fn = fio_http1___read_header)(p, buf, udata);
-
-parse_response_line:
-  if (wrd[0].len > 14)
-    wrd[0].len = 14;
-  if (fio_http1_on_version(wrd[0], udata))
-    return -1;
-  if (fio_http1_on_status(fio_atol10u(&wrd[1].buf), wrd[2], udata))
-    return -1;
-  return (p->fn = fio_http1___read_header)(p, buf, udata);
-}
-
-/* *****************************************************************************
-Reading Headers
-***************************************************************************** */
-
-/* parsing stage 1 - read headers (after `expect` header). */
-static int fio_http1___read_header_post_expect(fio_http1_parser_s *p,
-                                               fio_buf_info_s *buf,
-                                               void *udata);
-
-/* handle headers before calling callback. */
-static inline int fio_http1___on_header(fio_http1_parser_s *p,
-                                        fio_buf_info_s name,
-                                        fio_buf_info_s value,
-                                        void *udata) {
-  /* test for special headers */
-  switch (name.len) {
-  case 6: /* test for "expect" */
-    if (value.len == 12 && fio_buf2u32u(name.buf) == fio_buf2u32u("expe") &&
-        fio_buf2u32u(name.buf + 2) == fio_buf2u32u("pect")) {
-      /* Expect value validation */
-      if (fio_buf2u64u(value.buf) == fio_buf2u64u("100-cont") &&
-          fio_buf2u32u(value.buf + 8) == fio_buf2u32u("inue")) {
-        p->fn = fio_http1___read_header_post_expect;
-        return 0;
-      }
-      return -1;
-    }
-    break;
-  case 14: /* test for "content-length" */
-    if (fio_buf2u64u(name.buf) == fio_buf2u64u("content-") &&
-        fio_buf2u64u(name.buf + 6) == fio_buf2u64u("t-length")) {
-      if (!value.len)
-        return -1;
-      char *tmp = value.buf;
-      errno = 0; /* reset errno before parsing */
-      uint64_t clen = fio_atol10u(&tmp);
-      /* Reject if: parsing failed (tmp didn't reach end), overflow occurred,
-       * or value collides with sentinel values */
-      if ((unsigned)(tmp != value.buf + value.len) | (errno == E2BIG) |
-          (clen == FIO___HTTP1_BODY_NOT_ALLOWED) |
-          (clen == FIO_HTTP1_EXPECTED_CHUNKED))
-        return -1;
-      if (!clen) /* no length? */
-        clen = FIO___HTTP1_BODY_NOT_ALLOWED;
-      /* Prevent CL.TE / TE.CL by validating header's payload changes nothing */
-      if (p->expected)
-        return 0 - (p->expected != clen); /* causes parser to fail and stop */
-      p->expected = clen;
-      if (clen == FIO___HTTP1_BODY_NOT_ALLOWED)
-        return 0;
-      /* fio_http1_on_header_content_length tests if body length is too large */
-      return 0 -
-             (fio_http1_on_header_content_length(name, value, clen, udata) ==
-              -1);
-    }
-    break;
-  case 17: /* test for "transfer-encoding" (chunked?) */
-    if (value.len >= 7 && (name.buf[16] == 'g') &&
-        !((fio_buf2u64u(name.buf) ^ fio_buf2u64u("transfer")) |
-          (fio_buf2u64u(name.buf + 8) ^ fio_buf2u64u("-encodin")))) {
-      char *c_start = value.buf + value.len - 7;
-      if ((fio_buf2u32u(c_start) | 0x20202020UL) == fio_buf2u32u("chun") &&
-          (fio_buf2u32u(c_start + 3) | 0x20202020UL) == fio_buf2u32u("nked")) {
-        if (p->expected && p->expected != FIO_HTTP1_EXPECTED_CHUNKED)
-          return -1;
-        p->expected = FIO_HTTP1_EXPECTED_CHUNKED;
-        /* endpoint does not need to know if the body was chunked or not */
-        if (value.len == 7)
-          return 0;
-        if (c_start[-1] != ' ' && c_start[-1] != ',' && c_start[-1] != '\t')
-          return -1;
-        while (
-            (c_start[-1] == ' ' || c_start[-1] == ',' || c_start[-1] == '\t') &&
-            c_start > value.buf)
-          --c_start;
-        if (c_start == value.buf)
-          return 0;
-        value.len = c_start - value.buf;
-      }
-    }
-    break;
-  }
-  /* perform callback */
-  return 0 - (fio_http1_on_header(name, value, udata) == -1);
-}
-
-/* handle trailers (chunked encoding only) before calling callback. */
-static inline int fio_http1___on_trailer(fio_http1_parser_s *p,
-                                         fio_buf_info_s name,
-                                         fio_buf_info_s value,
-                                         void *udata) {
-  (void)p;
-  fio_buf_info_s forbidden[] = {
-      FIO_BUF_INFO1((char *)"authorization"),
-      FIO_BUF_INFO1((char *)"cache-control"),
-      FIO_BUF_INFO1((char *)"content-encoding"),
-      FIO_BUF_INFO1((char *)"content-length"),
-      FIO_BUF_INFO1((char *)"content-range"),
-      FIO_BUF_INFO1((char *)"content-type"),
-      FIO_BUF_INFO1((char *)"expect"),
-      FIO_BUF_INFO1((char *)"host"),
-      FIO_BUF_INFO1((char *)"max-forwards"),
-      FIO_BUF_INFO1((char *)"set-cookie"),
-      FIO_BUF_INFO1((char *)"te"),
-      FIO_BUF_INFO1((char *)"trailer"),
-      FIO_BUF_INFO1((char *)"transfer-encoding"),
-      FIO_BUF_INFO2(NULL, 0),
-  }; /* known forbidden headers in trailer */
-  for (size_t i = 0; forbidden[i].buf; ++i) {
-    if (FIO_BUF_INFO_IS_EQ(name, forbidden[i]))
-      return -1;
-  }
-  return fio_http1_on_header(name, value, udata);
-}
-
-/* seeks to the ':' divisor while testing and converting to downcase. */
-static char *fio_http1___seek_header_div(char *p) {
-  /* this is the subset of the forbidden chars that allows UTF-8 headers */
-  static const _Bool forbidden_name_chars[256] = {
-      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-      1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-  FIO_ASSERT(forbidden_name_chars[' '] && forbidden_name_chars['\t'],
-             "missing forbidden HTTP Header Name characters");
-  for (;;) {
-    if (FIO_UNLIKELY(forbidden_name_chars[((uint8_t)(*p))]))
-      return p;
-    *p = fio_ct_tolower(*p);
-    ++p;
-  }
-}
-
-/* extract header name and value from a line and pass info to handler */
-static inline int fio_http1___read_header_line(
-    fio_http1_parser_s *p,
-    fio_buf_info_s *buf,
-    void *udata,
-    int (*handler)(fio_http1_parser_s *,
-                   fio_buf_info_s,
-                   fio_buf_info_s,
-                   void *)) {
-  for (;;) {
-    char *start = buf->buf;
-    char *eol = (char *)FIO_MEMCHR(start, '\n', buf->len);
-    char *div;
-    fio_buf_info_s name, value;
-    if (!eol)
-      return 1;
-
-    buf->len -= (eol - buf->buf) + 1;
-    buf->buf = eol + 1;
-    eol -= (eol[-1] == '\r');
-    if (FIO_UNLIKELY(eol == start))
-      goto headers_finished;
-
-    div = fio_http1___seek_header_div(start);
-    if (div[0] != ':' || div == start)
-      return -1;
-    name = FIO_BUF_INFO2(start, (size_t)(div - start));
-    do {
-      ++div;
-    } while (*div == ' ' || *div == '\t');
-
-    if (div != eol)
-      while (eol[-1] == ' ' || eol[-1] == '\t')
-        --eol;
-    value = FIO_BUF_INFO2((div == eol) ? NULL : div, (size_t)(eol - div));
-
-    if (FIO_MEMCHR(value.buf, 0, value.len))
-      return -1;
-    int r = handler(p, name, value, udata);
-    if (FIO_UNLIKELY(r))
-      return r;
-  }
-
-headers_finished:
-  if (p->fn == fio_http1___read_header_post_expect && p->expected &&
-      fio_http1_on_expect(udata))
-    goto expect_failed;
-  p->fn = (!p->expected || p->expected == FIO___HTTP1_BODY_NOT_ALLOWED)
-              ? fio_http1___finish
-          : (!(p->expected - FIO_HTTP1_EXPECTED_CHUNKED))
-              ? fio_http1___read_body_chunked
-              : fio_http1___read_body;
-  return p->fn(p, buf, udata);
-
-expect_failed:
-  *p = (fio_http1_parser_s){0};
-  return 1;
-}
-
-/* parsing stage 1 - read headers. */
-static int fio_http1___read_header(fio_http1_parser_s *p,
-                                   fio_buf_info_s *buf,
-                                   void *udata) {
-  return fio_http1___read_header_line(p, buf, udata, fio_http1___on_header);
-}
-
-/* parsing stage 1 - read headers (after `expect` header). */
-static int fio_http1___read_header_post_expect(fio_http1_parser_s *p,
-                                               fio_buf_info_s *buf,
-                                               void *udata) {
-  return fio_http1___read_header_line(p, buf, udata, fio_http1___on_header);
-}
-
-/* parsing stage 1 - read headers. */
-static int fio_http1___read_trailer(fio_http1_parser_s *p,
-                                    fio_buf_info_s *buf,
-                                    void *udata) {
-  return fio_http1___read_header_line(p, buf, udata, fio_http1___on_trailer);
-}
-
-/* *****************************************************************************
-Reading the Body
-***************************************************************************** */
-
-/* parsing stage 2 - read body - known content length. */
-static int fio_http1___read_body(fio_http1_parser_s *p,
-                                 fio_buf_info_s *buf,
-                                 void *udata) {
-  if (!buf->len)
-    return 1;
-  if (buf->len >= p->expected) {
-    buf->len = p->expected;
-    if (fio_http1_on_body_chunk(*buf, udata))
-      return -1;
-    buf->buf += buf->len;
-    return fio_http1___finish(p, buf, udata);
-  }
-  if (fio_http1_on_body_chunk(*buf, udata))
-    return -1;
-  buf->buf += buf->len;
-  p->expected -= buf->len;
-  buf->len = 0;
-  return 1;
-}
-
-/* *****************************************************************************
-Reading the Body (chunked)
-***************************************************************************** */
-
-/* parsing stage 2 - read chunked body - read chunk data. */
-static int fio_http1___read_body_chunked_read(fio_http1_parser_s *p,
-                                              fio_buf_info_s *buf,
-                                              void *udata) {
-  if (!buf->len)
-    return 1;
-  if (buf->len >= p->expected) {
-    if (fio_http1_on_body_chunk(FIO_BUF_INFO2(buf->buf, p->expected), udata))
-      return -1;
-    buf->buf += p->expected;
-    buf->len -= p->expected;
-    p->fn = fio_http1___read_body_chunked;
-    return 0;
-  }
-  if (fio_http1_on_body_chunk(buf[0], udata))
-    return -1;
-  p->expected -= buf->len;
-  buf->buf += buf->len;
-  return 1;
-}
-
-/* parsing stage 2 - read chunked body - read next chunk length. */
-static int fio_http1___read_body_chunked(fio_http1_parser_s *p,
-                                         fio_buf_info_s *buf,
-                                         void *udata) {
-  (void)udata;
-  if (buf->len < 3)
-    return 1;
-  { /* remove possible extra EOL after chunk payload */
-    size_t tmp = (buf->buf[0] == '\r');
-    tmp += (buf->buf[tmp] == '\n');
-    buf->len -= tmp;
-    buf->buf += tmp;
-  }
-
-  if (!FIO_MEMCHR(buf->buf, '\n', buf->len)) /* prevent read overflow */
-    return (buf->len < 10) ? 1 : -1;
-
-  char *eol = buf->buf;
-  size_t expected = fio_atol16u(&eol); /* never overflows, EOL validated */
-  if (eol == buf->buf || expected > 0x0FFFFFFF) /* cap expected */
-    return -1;
-  eol += (eol[0] == '\r');
-  if (eol >= buf->buf + buf->len)
-    return 1; /* read overflowed */
-  if (eol[0] != '\n')
-    return -1;
-  ++eol;
-  p->expected = expected;
-  if (p->expected) {
-    /* further data expected */
-    buf->len -= eol - buf->buf;
-    buf->buf = eol;
-    return (p->fn = fio_http1___read_body_chunked_read)(p, buf, udata);
-  }
-  if ((eol + 1 < buf->buf + buf->len) && (eol[0] == '\r' || eol[0] == '\n')) {
-    /* no trailers, finish now. */
-    eol += (eol[0] == '\r');
-    ++eol;
-    buf->len -= eol - buf->buf;
-    buf->buf = eol;
-    return fio_http1___finish(p, buf, udata);
-  }
-  /* possible trailers */
-  buf->len -= eol - buf->buf;
-  buf->buf = eol;
-  return (p->fn = fio_http1___read_trailer)(p, buf, udata);
-}
-
-/* *****************************************************************************
-Cleanup
-***************************************************************************** */
-#undef FIO_HTTP1_PARSER
-#endif /* FIO_HTTP1_PARSER && FIO_EXTERN_COMPLETE*/
-/* ************************************************************************* */
-#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
-#define FIO___DEV___           /* Development inclusion - ignore line */
-#define FIO_WEBSOCKET_PARSER   /* Development inclusion - ignore line */
-#include "./include.h"         /* Development inclusion - ignore line */
-#endif                         /* Development inclusion - ignore line */
-/* *****************************************************************************
-
-
-
-
-                          WebSocket Parser v2 (RFC 6455)
-               Zero-allocation, pure event parser, cache-sized.
-
-
-
-
-Copyright and License: see header file (000 copyright.h) or top of file
-***************************************************************************** */
-#if defined(FIO_WEBSOCKET_PARSER) && !defined(H___FIO_WEBSOCKET_PARSER___H) && \
-    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)) &&                  \
-    !defined(FIO___RECURSIVE_INCLUDE)
-#define H___FIO_WEBSOCKET_PARSER___H
-
-/* *****************************************************************************
-Public Constants
-***************************************************************************** */
-
-/** WebSocket close codes (RFC 6455 §7.4.1). App-defined range is ≥ 3000. */
-typedef enum {
-  FIO_WEBSOCKET_CLOSE_OK = 1000,
-  FIO_WEBSOCKET_CLOSE_GOING_AWAY = 1001,
-  FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR = 1002,
-  FIO_WEBSOCKET_CLOSE_UNSUPPORTED_DATA = 1003,
-  FIO_WEBSOCKET_CLOSE_NO_STATUS = 1005, /* synthesised on empty close payload */
-  FIO_WEBSOCKET_CLOSE_INVALID_PAYLOAD = 1007,
-  FIO_WEBSOCKET_CLOSE_POLICY_VIOLATION = 1008,
-  FIO_WEBSOCKET_CLOSE_MESSAGE_TOO_BIG = 1009,
-  FIO_WEBSOCKET_CLOSE_MANDATORY_EXT = 1010,
-  FIO_WEBSOCKET_CLOSE_INTERNAL_ERROR = 1011,
-} fio_websocket_close_code_e;
-
-/** Default per-frame payload cap (1 GiB). Override before include if needed. */
-#ifndef FIO_WEBSOCKET_DEFAULT_MAX_FRAME
-#define FIO_WEBSOCKET_DEFAULT_MAX_FRAME (1ULL << 30)
-#endif
-
-/** Parse error sentinel. */
-#define FIO_WEBSOCKET_PARSE_ERROR ((size_t)-1)
-
-/** RSV bit constants for the send-side API. These are the 3-bit values shifted
- *  into byte-0 bits 4..6 on the wire (0x4 → RSV1=0x40, 0x2 → RSV2=0x20, 0x1 →
- *  RSV3=0x10). */
-#define FIO_WEBSOCKET_RSV1 0x4U /* byte-0 bit 6 (permessage-deflate) */
-#define FIO_WEBSOCKET_RSV2 0x2U /* byte-0 bit 5 */
-#define FIO_WEBSOCKET_RSV3 0x1U /* byte-0 bit 4 */
-
-/** Event types produced by fio_websocket_parse(). */
-enum {
-  FIO_WEBSOCKET_EV_NONE = 0,
-  FIO_WEBSOCKET_EV_DATA_CHUNK = 1,
-  FIO_WEBSOCKET_EV_CONTROL = 2,
-  FIO_WEBSOCKET_EV_MESSAGE_END = 3,
-  FIO_WEBSOCKET_EV_ERROR = 4,
-};
-
-/* WebSocket frame opcodes (RFC 6455). */
-#define FIO_WEBSOCKET_OP_CONT   0x0
-#define FIO_WEBSOCKET_OP_TEXT   0x1
-#define FIO_WEBSOCKET_OP_BINARY 0x2
-#define FIO_WEBSOCKET_OP_CLOSE  0x8
-#define FIO_WEBSOCKET_OP_PING   0x9
-#define FIO_WEBSOCKET_OP_PONG   0xA
-
-/* Parser FSM states. */
-#define FIO_WEBSOCKET_STATE_HEADER  0
-#define FIO_WEBSOCKET_STATE_PAYLOAD 1
-#define FIO_WEBSOCKET_STATE_CLOSED  0xFE
-#define FIO_WEBSOCKET_STATE_ERROR   0xFF
-
-/* Flag bit positions in fio_websocket_s.flags. */
-#define FIO_WEBSOCKET_FLAG_FIN             0x80
-#define FIO_WEBSOCKET_FLAG_MASKED          0x40
-#define FIO_WEBSOCKET_FLAG_OPCODE_MASK     0x3C
-#define FIO_WEBSOCKET_FLAG_OPCODE_SHIFT    2
-#define FIO_WEBSOCKET_FLAG_MSG_OPCODE_MASK 0x03
-
-/* Flag bit positions in fio_websocket_s.flags2. */
-#define FIO_WEBSOCKET_FLAG2_PAUSED        0x80
-#define FIO_WEBSOCKET_FLAG2_MSG_RSV_MASK  0x70
-#define FIO_WEBSOCKET_FLAG2_MSG_RSV_SHIFT 4
-
-/** Read the FIN bit from the current frame. */
-#define FIO_WEBSOCKET_GET_FIN(p) (((p)->flags & FIO_WEBSOCKET_FLAG_FIN) != 0)
-
-/** Read the MASK bit from the current frame. */
-#define FIO_WEBSOCKET_GET_MASKED(p)                                            \
-  (((p)->flags & FIO_WEBSOCKET_FLAG_MASKED) != 0)
-
-/** Read the opcode from the current frame. */
-#define FIO_WEBSOCKET_GET_OPCODE(p)                                            \
-  (((p)->flags & FIO_WEBSOCKET_FLAG_OPCODE_MASK) >>                            \
-   FIO_WEBSOCKET_FLAG_OPCODE_SHIFT)
-
-/** Read the message opcode (1=text, 2=binary, 0=none open). */
-#define FIO_WEBSOCKET_GET_MSG_OPCODE(p)                                        \
-  ((p)->flags & FIO_WEBSOCKET_FLAG_MSG_OPCODE_MASK)
-
-/** Read the paused flag (one-message-per-parse gate). */
-#define FIO_WEBSOCKET_GET_PAUSED(p)                                            \
-  (((p)->flags2 & FIO_WEBSOCKET_FLAG2_PAUSED) != 0)
-
-/** Read the RSV bits from the opening frame (3-bit format). */
-#define FIO_WEBSOCKET_GET_MSG_RSV(p)                                           \
-  (((p)->flags2 & FIO_WEBSOCKET_FLAG2_MSG_RSV_MASK) >>                         \
-   FIO_WEBSOCKET_FLAG2_MSG_RSV_SHIFT)
-
-/* *****************************************************************************
-Public Types
-***************************************************************************** */
-
-typedef struct fio_websocket_s {
-  uint64_t frame_remaining;
-  uint32_t mask;
-  uint32_t frame_consumed;
-  uint16_t close_code;
-  uint8_t state;
-  uint8_t flags;  /* bit 7: fin, bit 6: masked, bits 5-2: opcode, bits 1-0:
-                     msg_opcode */
-  uint8_t flags2; /* bit 7: paused, bits 6-4: msg_rsv */
-  uint8_t reserved;
-} fio_websocket_s;
-
-typedef struct {
-  uint8_t type;   /* 0=none, 1=data_chunk, 2=control_frame, 3=message_end,
-                     4=error */
-  uint8_t opcode; /* frame opcode */
-  uint8_t is_text;
-  uint8_t rsv;            /* opening-frame RSV bits (3-bit format) */
-  uint8_t is_first;       /* first chunk of message */
-  uint8_t is_last;        /* last chunk of message / frame */
-  fio_buf_info_s payload; /* points into input buffer (unmasked in place) */
-  uint16_t close_code;
-} fio_websocket_event_s;
-
-FIO_ASSERT_STATIC(sizeof(fio_websocket_s) <= 24,
-                  "fio_websocket_s must stay 24 bytes");
-
-/* *****************************************************************************
-Public API — Parsing
-***************************************************************************** */
-
-FIO_IFUNC void fio_websocket_init(fio_websocket_s *p);
-FIO_IFUNC void fio_websocket_reset(fio_websocket_s *p);
-
-/** Parses WebSocket bytes from `buf`, unmasking payload in place.
- *
- * Returns bytes consumed (≤ `buf.len`) on success or
- * `FIO_WEBSOCKET_PARSE_ERROR` on protocol error (`p->close_code` is set).
- *
- * The parser is pure: it stores no callbacks, no user pointer, no control-frame
- * buffer, and no message accumulator. The caller owns policy checks (masking,
- * RSV semantics, extension transforms, message accumulation, delivery, etc.).
- */
-FIO_SFUNC size_t fio_websocket_parse(fio_websocket_s *p,
-                                     fio_buf_info_s buf,
-                                     fio_websocket_event_s *ev);
-
-/* *****************************************************************************
-Public API — Message Writers
-
-Server functions produce unmasked frames; client functions produce masked
-frames (PRNG mask when `mask=0`, explicit mask otherwise).
-***************************************************************************** */
-
-FIO_IFUNC uint64_t fio_websocket_write_len(uint64_t payload_len, _Bool masked);
-
-/** Writes a complete (FIN=1) data message.
- *  `rsv` is the 3-bit RSV field — normally 0; pass `FIO_WEBSOCKET_RSV1`
- *  (0x4) to mark the message as permessage-deflate-compressed
- *  (RFC 7692 §7.2.3.1). */
-FIO_IFUNC uint64_t fio_websocket_write_message_server(void *target,
-                                                      fio_buf_info_s msg,
-                                                      _Bool is_text,
-                                                      uint8_t rsv);
-FIO_IFUNC uint64_t fio_websocket_write_message_client(void *target,
-                                                      fio_buf_info_s msg,
-                                                      _Bool is_text,
-                                                      uint32_t mask,
-                                                      uint8_t rsv);
-FIO_IFUNC uint64_t fio_websocket_write_ping_server(void *t, fio_buf_info_s p);
-FIO_IFUNC uint64_t fio_websocket_write_ping_client(void *t,
-                                                   fio_buf_info_s p,
-                                                   uint32_t mask);
-FIO_IFUNC uint64_t fio_websocket_write_pong_server(void *t, fio_buf_info_s p);
-FIO_IFUNC uint64_t fio_websocket_write_pong_client(void *t,
-                                                   fio_buf_info_s p,
-                                                   uint32_t mask);
-FIO_IFUNC uint64_t fio_websocket_write_close_server(void *target,
-                                                    uint16_t code,
-                                                    fio_buf_info_s reason);
-FIO_IFUNC uint64_t fio_websocket_write_close_client(void *target,
-                                                    uint16_t code,
-                                                    fio_buf_info_s reason,
-                                                    uint32_t mask);
-
-/* *****************************************************************************
-
-
-
-
-                                 Implementation
-
-
-
-
-***************************************************************************** */
-
-/** Set the FIN bit in the current frame. */
-#define FIO___WEBSOCKET_SET_FIN(p, v)                                          \
-  ((p)->flags =                                                                \
-       (uint8_t)(((p)->flags & ~FIO_WEBSOCKET_FLAG_FIN) | ((!!(v)) << 7)))
-
-/** Set the MASK bit in the current frame. */
-#define FIO___WEBSOCKET_SET_MASKED(p, v)                                       \
-  ((p)->flags =                                                                \
-       (uint8_t)(((p)->flags & ~FIO_WEBSOCKET_FLAG_MASKED) | ((!!(v)) << 6)))
-
-/** Set the opcode for the current frame. */
-#define FIO___WEBSOCKET_SET_OPCODE(p, v)                                       \
-  ((p)->flags = (uint8_t)(((p)->flags & ~FIO_WEBSOCKET_FLAG_OPCODE_MASK) |     \
-                          (((v)&0x0F) << FIO_WEBSOCKET_FLAG_OPCODE_SHIFT)))
-
-/** Set the message opcode (1=text, 2=binary, 0=none). */
-#define FIO___WEBSOCKET_SET_MSG_OPCODE(p, v)                                   \
-  ((p)->flags = (uint8_t)(((p)->flags & ~FIO_WEBSOCKET_FLAG_MSG_OPCODE_MASK) | \
-                          ((v)&0x03)))
-
-/** Set the paused flag (one-message-per-parse gate). */
-#define FIO___WEBSOCKET_SET_PAUSED(p, v)                                       \
-  ((p)->flags2 = (uint8_t)(((p)->flags2 & ~FIO_WEBSOCKET_FLAG2_PAUSED) |       \
-                           ((!!(v)) << 7)))
-
-/** Set the RSV bits from the opening frame. */
-#define FIO___WEBSOCKET_SET_MSG_RSV(p, v)                                      \
-  ((p)->flags2 = (uint8_t)(((p)->flags2 & ~FIO_WEBSOCKET_FLAG2_MSG_RSV_MASK) | \
-                           (((v)&0x07) << FIO_WEBSOCKET_FLAG2_MSG_RSV_SHIFT)))
-
-/* *****************************************************************************
-Frame Writers
-***************************************************************************** */
-
-FIO_IFUNC uint64_t fio_websocket_write_len(uint64_t payload_len, _Bool masked) {
-  return payload_len + 2ULL + ((payload_len > 125) << 1) +
-         ((0ULL - (payload_len > 0xFFFFULL)) & 6ULL) + ((!!masked) << 2);
-}
-
-FIO_IFUNC uint64_t fio___websocket_hdr(uint8_t *dst,
-                                       uint64_t len,
-                                       uint32_t mask,
-                                       uint8_t opcode,
-                                       uint8_t rsv) {
-  dst[0] = (uint8_t)(0x80U | ((rsv & 0x07U) << 4) | (opcode & 0x0FU));
-  const uint8_t mb = (uint8_t)((!!mask) << 7);
-  uint64_t h;
-  if (FIO_LIKELY(len < 126)) {
-    dst[1] = (uint8_t)(mb | (uint8_t)len);
-    h = 2;
-  } else if (len < 0x10000ULL) {
-    dst[1] = (uint8_t)(mb | 126);
-    fio_u2buf16_be(dst + 2, (uint16_t)len);
-    h = 4;
-  } else {
-    dst[1] = (uint8_t)(mb | 127);
-    fio_u2buf64_be(dst + 2, len);
-    h = 10;
-  }
-  if (mask) {
-    fio_u2buf32u(dst + h, mask);
-    h += 4;
-  }
-  return h;
-}
-
-FIO_IFUNC uint64_t fio___websocket_write_srv(void *target,
-                                             fio_buf_info_s payload,
-                                             uint8_t opcode,
-                                             uint8_t rsv) {
-  uint64_t h =
-      fio___websocket_hdr((uint8_t *)target, payload.len, 0, opcode, rsv);
-  if (payload.len)
-    FIO_MEMCPY((char *)target + h, payload.buf, payload.len);
-  return h + payload.len;
-}
-
-FIO_IFUNC uint64_t fio___websocket_write_cli(void *target,
-                                             fio_buf_info_s payload,
-                                             uint8_t opcode,
-                                             uint32_t mask,
-                                             uint8_t rsv) {
-  if (!mask)
-    mask = (uint32_t)(fio_rand64() | 0x01020408U);
-  uint64_t h =
-      fio___websocket_hdr((uint8_t *)target, payload.len, mask, opcode, rsv);
-  if (payload.len)
-    fio_xmask_cpy((char *)target + h,
-                  payload.buf,
-                  payload.len,
-                  ((uint64_t)mask << 32) | (uint64_t)mask);
-  return h + payload.len;
-}
-
-FIO_ASSERT_STATIC(FIO_WEBSOCKET_OP_BINARY == 2 && FIO_WEBSOCKET_OP_TEXT == 1,
-                  "branchless text/binary writer relies on TEXT=1, BINARY=2");
-
-FIO_IFUNC uint64_t fio_websocket_write_message_server(void *t,
-                                                      fio_buf_info_s msg,
-                                                      _Bool is_text,
-                                                      uint8_t rsv) {
-  return fio___websocket_write_srv(
-      t,
-      msg,
-      (uint8_t)(FIO_WEBSOCKET_OP_BINARY >> (unsigned)is_text),
-      rsv);
-}
-FIO_IFUNC uint64_t fio_websocket_write_message_client(void *t,
-                                                      fio_buf_info_s msg,
-                                                      _Bool is_text,
-                                                      uint32_t mask,
-                                                      uint8_t rsv) {
-  return fio___websocket_write_cli(
-      t,
-      msg,
-      (uint8_t)(FIO_WEBSOCKET_OP_BINARY >> (unsigned)is_text),
-      mask,
-      rsv);
-}
-FIO_IFUNC uint64_t fio_websocket_write_ping_server(void *t, fio_buf_info_s p) {
-  return fio___websocket_write_srv(t, p, FIO_WEBSOCKET_OP_PING, 0);
-}
-FIO_IFUNC uint64_t fio_websocket_write_ping_client(void *t,
-                                                   fio_buf_info_s p,
-                                                   uint32_t mask) {
-  return fio___websocket_write_cli(t, p, FIO_WEBSOCKET_OP_PING, mask, 0);
-}
-FIO_IFUNC uint64_t fio_websocket_write_pong_server(void *t, fio_buf_info_s p) {
-  return fio___websocket_write_srv(t, p, FIO_WEBSOCKET_OP_PONG, 0);
-}
-FIO_IFUNC uint64_t fio_websocket_write_pong_client(void *t,
-                                                   fio_buf_info_s p,
-                                                   uint32_t mask) {
-  return fio___websocket_write_cli(t, p, FIO_WEBSOCKET_OP_PONG, mask, 0);
-}
-
-FIO_IFUNC size_t fio___websocket_close_body(uint8_t *scratch,
-                                            uint16_t code,
-                                            fio_buf_info_s reason) {
-  size_t n = 2 + reason.len;
-  if (n > 125)
-    n = 125;
-  fio_u2buf16_be(scratch, code);
-  if (n > 2 && reason.buf)
-    FIO_MEMCPY(scratch + 2, reason.buf, n - 2);
-  return n;
-}
-FIO_IFUNC uint64_t fio_websocket_write_close_server(void *target,
-                                                    uint16_t code,
-                                                    fio_buf_info_s reason) {
-  uint8_t scratch[125];
-  size_t n = fio___websocket_close_body(scratch, code, reason);
-  return fio___websocket_write_srv(target,
-                                   FIO_BUF_INFO2((char *)scratch, n),
-                                   FIO_WEBSOCKET_OP_CLOSE,
-                                   0);
-}
-FIO_IFUNC uint64_t fio_websocket_write_close_client(void *target,
-                                                    uint16_t code,
-                                                    fio_buf_info_s reason,
-                                                    uint32_t mask) {
-  uint8_t scratch[125];
-  size_t n = fio___websocket_close_body(scratch, code, reason);
-  return fio___websocket_write_cli(target,
-                                   FIO_BUF_INFO2((char *)scratch, n),
-                                   FIO_WEBSOCKET_OP_CLOSE,
-                                   mask,
-                                   0);
-}
-
-/* *****************************************************************************
-Lifecycle
-***************************************************************************** */
-
-FIO_IFUNC void fio_websocket_init(fio_websocket_s *p) {
-  *p = (fio_websocket_s){.state = FIO_WEBSOCKET_STATE_HEADER};
-}
-
-FIO_IFUNC void fio_websocket_reset(fio_websocket_s *p) {
-  *p = (fio_websocket_s){.state = FIO_WEBSOCKET_STATE_HEADER};
-}
-
-/* *****************************************************************************
-Helpers
-***************************************************************************** */
-
-FIO_SFUNC size_t fio___websocket_fail(fio_websocket_s *p,
-                                      fio_websocket_event_s *ev,
-                                      uint16_t code) {
-  p->state = FIO_WEBSOCKET_STATE_ERROR;
-  p->close_code = code;
-  *ev = (fio_websocket_event_s){.type = FIO_WEBSOCKET_EV_ERROR,
-                                .close_code = code};
-  return FIO_WEBSOCKET_PARSE_ERROR;
-}
-
-FIO_IFUNC uint32_t fio___websocket_rotate_mask(uint32_t mask,
-                                               uint32_t consumed) {
-  uint8_t m[4], r[4];
-  fio_u2buf32u(m, mask);
-  const uint32_t n = (uint32_t)(consumed & 3U);
-  r[0] = m[(n + 0) & 3];
-  r[1] = m[(n + 1) & 3];
-  r[2] = m[(n + 2) & 3];
-  r[3] = m[(n + 3) & 3];
-  return fio_buf2u32u(r);
-}
-
-FIO_IFUNC _Bool fio___websocket_opcode_valid(uint8_t opcode) {
-  switch (opcode) {
-  case FIO_WEBSOCKET_OP_CONT:
-  case FIO_WEBSOCKET_OP_TEXT:
-  case FIO_WEBSOCKET_OP_BINARY:
-  case FIO_WEBSOCKET_OP_CLOSE:
-  case FIO_WEBSOCKET_OP_PING:
-  case FIO_WEBSOCKET_OP_PONG: return 1;
-  }
-  return 0;
-}
-
-/** RFC 6455 §7.4.1 + IANA registry: codes that may appear on the wire.
- *  1004 / 1005 / 1006 / 1015 are reserved (must not be transmitted);
- *  1016-2999 are unassigned; 3000-4999 are app/library use. */
-FIO_IFUNC _Bool fio___websocket_close_code_valid(uint16_t c) {
-  switch (c) {
-  case 1000:
-  case 1001:
-  case 1002:
-  case 1003:
-  case 1007:
-  case 1008:
-  case 1009:
-  case 1010:
-  case 1011:
-  case 1012:
-  case 1013:
-  case 1014: return 1;
-  }
-  return (c >= 3000) && (c <= 4999);
-}
-
-/* *****************************************************************************
-Main Parse Loop
-***************************************************************************** */
-
-FIO_SFUNC size_t fio_websocket_parse(fio_websocket_s *p,
-                                     fio_buf_info_s buf,
-                                     fio_websocket_event_s *ev_) {
-  fio_websocket_event_s local = {0};
-  fio_websocket_event_s *const ev = ev_ ? ev_ : &local;
-  *ev = (fio_websocket_event_s){0};
-  if (FIO_UNLIKELY(!p || p->state >= FIO_WEBSOCKET_STATE_CLOSED))
-    return FIO_WEBSOCKET_PARSE_ERROR;
-  const char *const start = buf.buf;
-  for (;;) {
-    if (p->state == FIO_WEBSOCKET_STATE_HEADER) {
-      if (buf.len < 2)
-        return (size_t)(buf.buf - start);
-      const uint8_t b0 = (uint8_t)buf.buf[0];
-      const uint8_t b1 = (uint8_t)buf.buf[1];
-      const uint8_t fin = (uint8_t)(b0 >> 7);
-      const uint8_t wire_rsv = (uint8_t)((b0 >> 4) & 0x07U);
-      const uint8_t opcode = (uint8_t)(b0 & 0x0FU);
-      const uint8_t masked = (uint8_t)(b1 >> 7);
-      const uint8_t len7 = (uint8_t)(b1 & 0x7FU);
-      const _Bool is_control = (opcode & 0x08U) != 0;
-      const size_t mask_len = (size_t)(masked << 2);
-      uint64_t payload_len = 0;
-      size_t header_len = 0;
-
-      if (FIO_UNLIKELY(!fio___websocket_opcode_valid(opcode)))
-        return fio___websocket_fail(p, ev, FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
-      if (FIO_UNLIKELY(is_control && !fin))
-        return fio___websocket_fail(p, ev, FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
-      if (FIO_UNLIKELY(opcode == FIO_WEBSOCKET_OP_CONT &&
-                       !FIO_WEBSOCKET_GET_MSG_OPCODE(p)))
-        return fio___websocket_fail(p, ev, FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
-      if (FIO_UNLIKELY(!is_control && opcode != FIO_WEBSOCKET_OP_CONT &&
-                       FIO_WEBSOCKET_GET_MSG_OPCODE(p)))
-        return fio___websocket_fail(p, ev, FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
-
-      if (FIO_LIKELY(len7 < 126)) {
-        if (buf.len < (size_t)(2 + mask_len))
-          return (size_t)(buf.buf - start);
-        payload_len = len7;
-        header_len = 2;
-      } else if (len7 == 126) {
-        if (buf.len < (size_t)(4 + mask_len))
-          return (size_t)(buf.buf - start);
-        payload_len = fio_buf2u16_be(buf.buf + 2);
-        header_len = 4;
-      } else {
-        if (buf.len < (size_t)(10 + mask_len))
-          return (size_t)(buf.buf - start);
-        payload_len = fio_buf2u64_be(buf.buf + 2);
-        if (FIO_UNLIKELY(payload_len >> 63))
-          return fio___websocket_fail(p,
-                                      ev,
-                                      FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
-        header_len = 10;
-      }
-      if (FIO_UNLIKELY(is_control && payload_len > 125))
-        return fio___websocket_fail(p, ev, FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
-      if (FIO_UNLIKELY(payload_len > FIO_WEBSOCKET_DEFAULT_MAX_FRAME))
-        return fio___websocket_fail(p, ev, FIO_WEBSOCKET_CLOSE_MESSAGE_TOO_BIG);
-
-      p->frame_remaining = payload_len;
-      p->frame_consumed = 0;
-      p->mask = masked ? fio_buf2u32u(buf.buf + header_len) : 0U;
-      FIO___WEBSOCKET_SET_FIN(p, fin);
-      FIO___WEBSOCKET_SET_MASKED(p, masked);
-      FIO___WEBSOCKET_SET_OPCODE(p, opcode);
-      FIO___WEBSOCKET_SET_PAUSED(p, 0);
-      p->state = FIO_WEBSOCKET_STATE_PAYLOAD;
-      if (!is_control && opcode != FIO_WEBSOCKET_OP_CONT) {
-        FIO___WEBSOCKET_SET_MSG_OPCODE(p, opcode);
-        FIO___WEBSOCKET_SET_MSG_RSV(p, wire_rsv);
-      }
-      buf.buf += header_len + mask_len;
-      buf.len -= header_len + mask_len;
-    }
-
-    {
-      const uint8_t opcode = FIO_WEBSOCKET_GET_OPCODE(p);
-      const uint8_t msg_opcode = FIO_WEBSOCKET_GET_MSG_OPCODE(p);
-      const uint8_t msg_rsv = FIO_WEBSOCKET_GET_MSG_RSV(p);
-      const _Bool is_control = (opcode & 0x08U) != 0;
-      const _Bool first_chunk_of_frame = (p->frame_consumed == 0);
-      const _Bool first_chunk_of_msg =
-          (first_chunk_of_frame && opcode != FIO_WEBSOCKET_OP_CONT);
-      const size_t chunk_len =
-          (buf.len < p->frame_remaining) ? buf.len : (size_t)p->frame_remaining;
-      const _Bool last_chunk_of_frame = (chunk_len == p->frame_remaining);
-      const _Bool last_chunk_of_msg =
-          (last_chunk_of_frame && FIO_WEBSOCKET_GET_FIN(p));
-
-      if (is_control) {
-        if (p->frame_remaining && buf.len < p->frame_remaining)
-          return (size_t)(buf.buf - start);
-        if (chunk_len && FIO_WEBSOCKET_GET_MASKED(p)) {
-          const uint32_t rot =
-              fio___websocket_rotate_mask(p->mask, p->frame_consumed);
-          fio_xmask(buf.buf, chunk_len, ((uint64_t)rot << 32) | (uint64_t)rot);
-        }
-        ev->type = FIO_WEBSOCKET_EV_CONTROL;
-        ev->opcode = opcode;
-        ev->payload = FIO_BUF_INFO2(buf.buf, chunk_len);
-        if (opcode == FIO_WEBSOCKET_OP_CLOSE) {
-          uint16_t code = FIO_WEBSOCKET_CLOSE_NO_STATUS;
-          if (FIO_UNLIKELY(chunk_len == 1))
-            return fio___websocket_fail(p,
-                                        ev,
-                                        FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
-          if (chunk_len >= 2) {
-            code = fio_buf2u16_be(buf.buf);
-            if (FIO_UNLIKELY(!fio___websocket_close_code_valid(code)))
-              return fio___websocket_fail(p,
-                                          ev,
-                                          FIO_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
-          }
-          p->close_code = code;
-          ev->close_code = code;
-          p->state = FIO_WEBSOCKET_STATE_CLOSED;
-        } else {
-          p->state = FIO_WEBSOCKET_STATE_HEADER;
-        }
-        buf.buf += chunk_len;
-        buf.len -= chunk_len;
-        p->frame_consumed += (uint32_t)chunk_len;
-        p->frame_remaining -= chunk_len;
-        return (size_t)(buf.buf - start);
-      }
-
-      if (!chunk_len && p->frame_remaining)
-        return (size_t)(buf.buf - start);
-      if (chunk_len && FIO_WEBSOCKET_GET_MASKED(p)) {
-        const uint32_t rot =
-            fio___websocket_rotate_mask(p->mask, p->frame_consumed);
-        fio_xmask(buf.buf, chunk_len, ((uint64_t)rot << 32) | (uint64_t)rot);
-      }
-      ev->type = FIO_WEBSOCKET_EV_DATA_CHUNK;
-      ev->opcode = opcode;
-      ev->is_text = (uint8_t)(msg_opcode == FIO_WEBSOCKET_OP_TEXT);
-      ev->rsv = msg_rsv;
-      ev->is_first = (uint8_t)first_chunk_of_msg;
-      ev->is_last = (uint8_t)last_chunk_of_msg;
-      ev->payload = FIO_BUF_INFO2(buf.buf, chunk_len);
-
-      buf.buf += chunk_len;
-      buf.len -= chunk_len;
-      p->frame_consumed += (uint32_t)chunk_len;
-      p->frame_remaining -= chunk_len;
-      if (last_chunk_of_frame)
-        p->state = FIO_WEBSOCKET_STATE_HEADER;
-      if (last_chunk_of_msg) {
-        FIO___WEBSOCKET_SET_MSG_OPCODE(p, 0);
-        FIO___WEBSOCKET_SET_MSG_RSV(p, 0);
-      }
-      return (size_t)(buf.buf - start);
-    }
-  }
-}
-
-#undef FIO_WEBSOCKET_PARSER
-#endif /* FIO_WEBSOCKET_PARSER */
+#endif /* FIO_HTTP */
 /* ************************************************************************* */
 #if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
 #define FIO___DEV___           /* Development inclusion - ignore line */
@@ -121406,909 +123021,25 @@ FIO_SFUNC size_t fio_websocket_parse(fio_websocket_s *p,
 #endif                         /* Development inclusion - ignore line */
 /* *****************************************************************************
 
-
-
-
-                  HTTP Implementation for FIO_SERVER
-
-
-
+              HTTP Accept - Accept Path, Dispatchers, Upgrade Authorization
 
 Copyright and License: see header file (000 copyright.h) or top of file
 ***************************************************************************** */
-#if defined(FIO_HTTP) && !defined(H___FIO_HTTP___H) &&                         \
-    !defined(FIO___RECURSIVE_INCLUDE)
-#define H___FIO_HTTP___H
-/* *****************************************************************************
-HTTP Setting Defaults
-***************************************************************************** */
-
-#ifndef FIO_HTTP_DEFAULT_MAX_HEADER_SIZE
-/** The default HTTP total header size limit in bytes. */
-#define FIO_HTTP_DEFAULT_MAX_HEADER_SIZE 32768 /* (1UL << 15) */
-#endif
-#ifndef FIO_HTTP_DEFAULT_MAX_LINE_LEN
-/** The default HTTP header line limit in bytes. */
-#define FIO_HTTP_DEFAULT_MAX_LINE_LEN 8192 /* (1UL << 13) */
-#endif
-#ifndef FIO_HTTP_DEFAULT_MAX_BODY_SIZE
-/** The default HTTP payload size limit in bytes. */
-#define FIO_HTTP_DEFAULT_MAX_BODY_SIZE 33554432 /* (1UL << 25) */
-#endif
-#ifndef FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE
-/** The default WebSocket message size limit in bytes. */
-#define FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE 262144 /* (1UL << 18) */
-#endif
-#ifndef FIO_HTTP_DEFAULT_TIMEOUT
-/** The default timeout for HTTP connections. */
-#define FIO_HTTP_DEFAULT_TIMEOUT 50
-#endif
-#ifndef FIO_HTTP_DEFAULT_TIMEOUT_LONG
-/** The default timeout for long held HTTP connections (WebSockets / SSE). */
-#define FIO_HTTP_DEFAULT_TIMEOUT_LONG 50
-#endif
-
-#ifndef FIO_HTTP_SHOW_CONTENT_LENGTH_HEADER
-/** Adds a "content-length" header to the HTTP handle (usually redundant). */
-#define FIO_HTTP_SHOW_CONTENT_LENGTH_HEADER 0
-#endif
-
-#ifndef FIO_HTTP_WEBSOCKET_WRITE_VALIDITY_TEST_LIMIT
-/** UTF-8 validity tests will be performed only for data shorter than this. */
-#define FIO_HTTP_WEBSOCKET_WRITE_VALIDITY_TEST_LIMIT ((1UL << 16) - 10UL)
-#endif
-
-#ifndef FIO_WEBSOCKET_STATS
-/** If true, logs longest WebSocket round-trips (using FIO_LOG_INFO). */
-#define FIO_WEBSOCKET_STATS 0
-#endif
-
-#ifndef FIO_HTTP_WEBSOCKET_DEFLATE_MIN
-/** Messages smaller than this are not compressed (fits in a single TCP/IP
- * packet, compression saves no network overhead). */
-#define FIO_HTTP_WEBSOCKET_DEFLATE_MIN 1024
-#endif
+#if defined(FIO_HTTP) && !defined(FIO___RECURSIVE_INCLUDE) &&                  \
+    !defined(H___FIO_HTTP_ACCEPT___H) &&                                       \
+    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN))
+#define H___FIO_HTTP_ACCEPT___H
 
 /* *****************************************************************************
-HTTP Listen
-***************************************************************************** */
-typedef struct fio_http_settings_s {
-  /** Called before body uploads, when a client sends an `Expect` header. */
-  void (*pre_http_body)(fio_http_s *h);
-  /** Callback for HTTP requests (server) or responses (client). */
-  void (*on_http)(fio_http_s *h);
-  /** Called when a request / response cycle is finished with no Upgrade. */
-  void (*on_finish)(fio_http_s *h);
-
-  /** Authenticate EventSource (SSE) requests, return non-zero to deny.*/
-  int (*on_authenticate_sse)(fio_http_s *h);
-  /** Authenticate WebSockets Upgrade requests, return non-zero to deny.*/
-  int (*on_authenticate_websocket)(fio_http_s *h);
-
-  /** Called once a WebSocket / SSE connection upgrade is complete. */
-  void (*on_open)(fio_http_s *h);
-
-  /** Called when a WebSocket message is received. */
-  void (*on_message)(fio_http_s *h, fio_buf_info_s msg, uint8_t is_text);
-  /** Called when an EventSource event is received. */
-  void (*on_eventsource)(fio_http_s *h,
-                         fio_buf_info_s id,
-                         fio_buf_info_s event,
-                         fio_buf_info_s data);
-  /** Called when an EventSource reconnect event requests an ID. */
-  void (*on_eventsource_reconnect)(fio_http_s *h, fio_buf_info_s id);
-
-  /** Called for WebSocket / SSE connections when outgoing buffer is empty. */
-  void (*on_ready)(fio_http_s *h);
-  /** Called for open WebSocket / SSE connections during shutting down. */
-  void (*on_shutdown)(fio_http_s *h);
-  /** Called after a WebSocket / SSE connection is closed (for cleanup). */
-  void (*on_close)(fio_http_s *h);
-
-  /** (optional) the callback to be performed when the HTTP service closes. */
-  void (*on_stop)(struct fio_http_settings_s *settings);
-
-  /** Default opaque user data for HTTP handles (fio_http_s). */
-  void *udata;
-
-  /** Optional SSL/TLS support. */
-  fio_io_functions_s *tls_io_func;
-  /** Optional SSL/TLS support. */
-  fio_io_tls_s *tls;
-  /** Optional HTTP task queue (for multi-threading HTTP responses) */
-  fio_io_async_s *queue;
-  /**
-   * A public folder for file transfers - allows to circumvent any application
-   * layer logic and simply serve static files.
-   *
-   * Supports automatic `gz` pre-compressed alternatives.
-   */
-  fio_str_info_s public_folder;
-  /**
-   * The max-age value (in seconds) for caching static files send from
-   * `public_folder`.
-   *
-   * Defaults to 0 (not sent).
-   */
-  size_t max_age;
-  /**
-   * The maximum total of bytes for the overall size of the request string and
-   * headers, combined.
-   *
-   * Defaults to FIO_HTTP_DEFAULT_MAX_HEADER_SIZE bytes.
-   */
-  uint32_t max_header_size;
-  /**
-   * The maximum number of bytes allowed per header / request line.
-   *
-   * Defaults to FIO_HTTP_DEFAULT_MAX_LINE_LEN bytes.
-   */
-  uint32_t max_line_len;
-  /**
-   * The maximum size of an HTTP request's body (posting / downloading).
-   *
-   * Defaults to FIO_HTTP_DEFAULT_MAX_BODY_SIZE bytes.
-   */
-  size_t max_body_size;
-  /**
-   * The maximum WebSocket message size/buffer (in bytes) for Websocket
-   * connections. Defaults to FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE bytes.
-   */
-  size_t ws_max_msg_size;
-  /** reserved for future use. */
-  intptr_t reserved1;
-  /** reserved for future use. */
-  intptr_t reserved2;
-  /**
-   * An HTTP/1.x connection timeout.
-   *
-   * Defaults to FIO_HTTP_DEFAULT_TIMEOUT seconds.
-   *
-   * Note: the connection might be closed (by other side) before timeout occurs.
-   */
-  uint8_t timeout;
-  /**
-   * Timeout for the WebSocket connections in seconds. Defaults to
-   * FIO_HTTP_DEFAULT_TIMEOUT_LONG seconds.
-   *
-   * A ping will be sent whenever the timeout is reached.
-   *
-   * Connections are only closed when a ping cannot be sent (the network layer
-   * fails). Pongs are ignored.
-   */
-  uint8_t ws_timeout;
-  /**
-   * Timeout for EventSource (SSE) connections in seconds. Defaults to
-   * FIO_HTTP_DEFAULT_TIMEOUT_LONG seconds.
-   *
-   * A ping will be sent whenever the timeout is reached.
-   *
-   * Connections are only closed when a ping cannot be sent (the network layer
-   * fails).
-   */
-  uint8_t sse_timeout;
-  /** Timeout for client connections (only relevant in client mode). */
-  uint8_t connect_timeout;
-  /** Logging flag - set to TRUE to log HTTP requests. */
-  uint8_t log;
-  /** Opt-in: auto-compress static files (save .br/.gz to disk). */
-  uint8_t compress_static;
-  /** Opt-in: auto-compress dynamic HTTP responses on-the-fly. */
-  uint8_t compress_dynamic;
-  /** Opt-in: enable permessage-deflate for WebSocket connections. */
-  uint8_t compress_ws;
-} fio_http_settings_s;
-
-/* a pointer safety type */
-typedef struct fio_http_listener_s fio_http_listener_s;
-
-/** Listens to HTTP / WebSockets / SSE connections on `url`. */
-SFUNC fio_http_listener_s *fio_http_listen(const char *url,
-                                           fio_http_settings_s settings);
-
-/** Listens to HTTP / WebSockets / SSE connections on `url`. */
-#define fio_http_listen(url, ...)                                              \
-  fio_http_listen(url, (fio_http_settings_s){__VA_ARGS__})
-
-/** Returns the a pointer to the HTTP settings associated with the listener. */
-SFUNC fio_http_settings_s *fio_http_listener_settings(fio_http_listener_s *l);
-
-/** Allows all clients to connect (bypasses authentication). */
-SFUNC int FIO_HTTP_AUTHENTICATE_ALLOW(fio_http_s *h);
-
-/** Returns the IO object associated with the HTTP object (request only). */
-SFUNC fio_io_s *fio_http_io(fio_http_s *);
-
-/** Macro helper for HTTP handle pub/sub subscriptions. */
-#define fio_http_subscribe(h, ...)                                             \
-  fio_pubsub_subscribe(.io = fio_http_io(h), __VA_ARGS__)
-
-/** Connects to HTTP / WebSockets / SSE connections on `url`. */
-SFUNC fio_io_s *fio_http_connect(const char *url,
-                                 fio_http_s *h,
-                                 fio_http_settings_s settings);
-
-/** Connects to HTTP / WebSockets / SSE connections on `url`. */
-#define fio_http_connect(url, h, ...)                                          \
-  fio_http_connect(url, h, (fio_http_settings_s){__VA_ARGS__})
-
-/** Returns the HTTP settings associated with the HTTP object, if any. */
-SFUNC fio_http_settings_s *fio_http_settings(fio_http_s *);
-
-/* *****************************************************************************
-HTTP Routing – prefix matching
+HTTP Request handling / handling (dispatchers and upgrade authorization)
 ***************************************************************************** */
 
-/**
- * Adds a route prefix to the HTTP handler.
- *
- * Order of route settings is irrelevant (unless overwriting an existing route).
- *
- * Matching is performed as a best-prefix match. i.e.:
- *
- * - All paths match the route `"/"` (the default prefix).
- *
- * - The route `"/user"` will match `"/user"` and all `"/user/..."` paths but
- *   not `"/user..."`
- *
- * - Setting `"/user/new"` as well as `"/user"` (in whatever order) will route
- *   `"/user/new"` and `"/user/new/..."` to `"/user/new"`. Otherwise, the
- *   `"/user"` route will continue to behave the same.
- *
- * Note: the `udata`, `on_finish`, `public_folder` and `log` properties are all
- * inherited (if missing) from the default HTTP settings used to create the
- * listener.
- *
- * Note: TLS options are ignored.
- * */
-SFUNC int fio_http_route(fio_http_listener_s *listener,
-                         const char *url,
-                         fio_http_settings_s settings);
-/**
- * Adds a route prefix to the HTTP handler.
- *
- * Order of route settings is irrelevant (unless overwriting an existing route).
- *
- * Matching is performed as a best-prefix match. i.e.:
- *
- * - All paths match the route `"/"` (the default prefix).
- *
- * - The route `"/user"` will match `"/user"` and all `"/user/..."` paths but
- *   not `"/user..."`
- *
- * - Setting `"/user/new"` as well as `"/user"` (in whatever order) will route
- *   `"/user/new"` and `"/user/new/..."` to `"/user/new"`. Otherwise, the
- *   `"/user"` route will continue to behave the same.
- *
- * Note: the `udata`, `on_finish`, `public_folder` and `log` properties are all
- * inherited (if missing) from the default HTTP settings used to create the
- * listener.
- *
- * Note: TLS options are ignored.
- * */
-#define fio_http_route(listener, url, ...)                                     \
-  fio_http_route(listener, url, (fio_http_settings_s){__VA_ARGS__})
-
-/** Returns a link to the settings matching `url`, as set by `fio_http_route` */
-SFUNC fio_http_settings_s *fio_http_route_settings(fio_http_listener_s *l,
-                                                   const char *url);
-
-/* *****************************************************************************
-HTTP Routing – CRUD
-***************************************************************************** */
-
-typedef enum {
-  FIO_HTTP_RESOURCE_NONE,
-  FIO_HTTP_RESOURCE_INDEX,
-  FIO_HTTP_RESOURCE_SHOW,
-  FIO_HTTP_RESOURCE_NEW,
-  FIO_HTTP_RESOURCE_EDIT,
-  FIO_HTTP_RESOURCE_CREATE,
-  FIO_HTTP_RESOURCE_UPDATE,
-  FIO_HTTP_RESOURCE_DELETE,
-  FIO_HTTP_RESOURCE_QUERY,
-} fio_http_resource_action_e;
-
-/** returns expected action or `FIO_HTTP_RESOURCE_NONE` on error. */
-FIO_IFUNC fio_http_resource_action_e fio_http_resource_action(fio_http_s *h);
-
-/* *****************************************************************************
-WebSocket Helpers - HTTP Upgraded Connections
-***************************************************************************** */
-
-/** Writes a WebSocket message. Fails if connection wasn't upgraded yet. */
-SFUNC int fio_http_websocket_write(fio_http_s *h,
-                                   const void *buf,
-                                   size_t len,
-                                   uint8_t is_text);
-
-/**
- * Sets a specific on_message callback for this connection.
- *
- * Returns -1 on error (i.e., upgrade still in negotiation).
- */
-SFUNC int fio_http_on_message_set(fio_http_s *h,
-                                  void (*on_message)(fio_http_s *,
-                                                     fio_buf_info_s,
-                                                     uint8_t));
-
-/** Optional WebSocket subscription callback. */
-SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg);
-/** Optional WebSocket subscription callback - all messages are UTF-8 valid. */
-SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_TEXT(fio_pubsub_msg_s *msg);
-/** Optional WebSocket subscription callback - messages may be non-UTF-8. */
-SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT_BINARY(fio_pubsub_msg_s *msg);
-
-/* *****************************************************************************
-EventSource (SSE) Helpers - HTTP Upgraded Connections
-***************************************************************************** */
-
-/** Named arguments for fio_http_sse_write. */
-typedef struct {
-  /** The message's `id` data (if any). */
-  fio_buf_info_s id;
-  /** The message's `event` data (if any). */
-  fio_buf_info_s event;
-  /** The message's `data` data (if any). */
-  fio_buf_info_s data;
-} fio_http_sse_write_args_s;
-
-/** Writes an SSE message (UTF-8). Fails if connection wasn't upgraded yet. */
-SFUNC int fio_http_sse_write(fio_http_s *h, fio_http_sse_write_args_s args);
-
-/** Writes an SSE message (UTF-8). Fails if connection wasn't upgraded yet. */
-#define fio_http_sse_write(h, ...)                                             \
-  fio_http_sse_write((h), ((fio_http_sse_write_args_s){__VA_ARGS__}))
-
-/** Optional EventSource subscription callback - messages MUST be UTF-8. */
-SFUNC void FIO_HTTP_SSE_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg);
-
-/* *****************************************************************************
-Module Implementation - HTTP Routing – CRUD
-***************************************************************************** */
-
-/** returns expected action or `FIO_HTTP_RESOURCE_NONE` on error. */
-FIO_IFUNC fio_http_resource_action_e fio_http_resource_action(fio_http_s *h) {
-  fio_http_resource_action_e r = FIO_HTTP_RESOURCE_NONE;
-  if (!h)
-    return r;
-  const uint32_t new_s = fio_buf2u32u("/new") | 0x20202020U;
-  const uint32_t edit_s = fio_buf2u32u("edit");
-  const uint32_t get = fio_buf2u32u("get\x20");
-  const uint32_t put = fio_buf2u32u("put\x20");
-  const uint32_t post = fio_buf2u32u("post");
-  const uint32_t patc = fio_buf2u32u("patc");
-  const uint32_t dele = fio_buf2u32u("dele");
-  const uint32_t lete = fio_buf2u32u("lete");
-  const uint32_t query = fio_buf2u32u("quer");
-  fio_str_info_s method = fio_http_method(h);
-  fio_str_info_s path = fio_http_path(h);
-  bool path_ends_with_dash = (path.len && path.buf[path.len - 1] == '/');
-  bool path_is_new = ((path.len == 4 || (path.len > 4 && path.buf[4] == '/')) &&
-                      ((fio_buf2u32u(path.buf) | 0x20202020U) == new_s));
-  if (method.len < 3)
-    return r;
-  uint32_t tmp = fio_buf2u32u(method.buf) | 0x20202020U; /* down-case */
-  /* GET */
-  if (tmp == get) {
-    bool path_is_edit =
-        ((path.len > 6) &&
-         path.buf[path.len - (5 + path_ends_with_dash)] == '/' &&
-         ((fio_buf2u32u((path.buf + path.len) - (4 + path_ends_with_dash)) |
-           0x20202020U) == edit_s));
-    /* index vs show */
-    r = (fio_http_resource_action_e)((unsigned)FIO_HTTP_RESOURCE_INDEX +
-                                     (path.len > 1));
-    /* show vs new */
-    r = (fio_http_resource_action_e)((unsigned)r +
-                                     (path_is_new & (!path_is_edit)));
-    /* show vs edit */
-    r = (fio_http_resource_action_e)((unsigned)r +
-                                     ((unsigned)path_is_edit << 1));
-    /* new/edit collision */
-    r = (fio_http_resource_action_e)((unsigned)r -
-                                     (((unsigned)(r == FIO_HTTP_RESOURCE_EDIT) &
-                                       path_is_new) *
-                                      FIO_HTTP_RESOURCE_EDIT));
-    /* PUT/POST/PATCH */
-  } else if (tmp == put || (tmp == post && method.len == 4) ||
-             (tmp == patc && ((method.buf[4] | 32) == 'h') &&
-              method.len == 5)) {
-    /* create vs edit */
-    r = (fio_http_resource_action_e)((unsigned)FIO_HTTP_RESOURCE_CREATE +
-                                     (path.len > 1 && !path_is_new));
-    /* DELETE */
-  } else if (path.len > 1 && !path_is_new && method.len == 6 && tmp == dele &&
-             (fio_buf2u32u(method.buf + 2) | 0x20202020U) == lete) {
-    r = FIO_HTTP_RESOURCE_DELETE;
-  } else if (tmp == query && method.len == 5 && (method.buf[4] | 32) == 'y') {
-    r = FIO_HTTP_RESOURCE_QUERY;
-  }
-  return r;
-}
-
-/* *****************************************************************************
-Module Implementation - possibly externed functions.
-***************************************************************************** */
-#if defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)
-
-/*
-REMEMBER:
-========
-
-All memory allocations should use:
-* FIO_MEM_REALLOC_(ptr, old_size, new_size, copy_len)
-* FIO_MEM_FREE_(ptr, size)
-
-*/
-
-/* *****************************************************************************
-HTTP Settings Validation
-***************************************************************************** */
-
-static void fio___http_default_on_http_request(fio_http_s *h) {
-  fio_http_send_error_response(h, 404);
-}
-static void fio___http_default_noop(fio_http_s *h) { ((void)h); }
-static int fio___http_default_authenticate(fio_http_s *h) {
-  ((void)h);
-  return -1;
-}
-
-// on_queue
-static void fio___http_default_on_stop(struct fio_http_settings_s *settings) {
-  ((void)settings);
-}
-
-static void fio___http_default_close(fio_http_s *h) {
-  fio_io_close(fio_http_io(h));
-}
-
-/** Called when a WebSocket message is received. */
-static void fio___http_default_on_message(fio_http_s *h,
-                                          fio_buf_info_s msg,
-                                          uint8_t is_text) {
-  (void)h, (void)msg, (void)is_text;
-}
-/** Called when an EventSource event is received. */
-static void fio___http_default_on_eventsource(fio_http_s *h,
-                                              fio_buf_info_s id,
-                                              fio_buf_info_s event,
-                                              fio_buf_info_s data) {
-  (void)h, (void)id, (void)event, (void)data;
-}
-/** Called when an EventSource event is received. */
-static void fio___http_default_on_eventsource_redirect(fio_http_s *h,
-                                                       fio_buf_info_s id,
-                                                       fio_buf_info_s event,
-                                                       fio_buf_info_s data);
-
-/** Called when an EventSource reconnect event requests an ID. */
-static void fio___http_default_on_eventsource_reconnect(fio_http_s *h,
-                                                        fio_buf_info_s id) {
-  (void)h, (void)id;
-}
-
-static void fio___http_settings_validate(fio_http_settings_s *s,
-                                         int is_client) {
-  if (!s->pre_http_body)
-    s->pre_http_body = fio___http_default_noop;
-  if (!s->on_http)
-    s->on_http = is_client ? fio___http_default_noop
-                           : fio___http_default_on_http_request;
-  if (!s->on_finish)
-    s->on_finish = fio___http_default_noop;
-  if (!s->on_stop)
-    s->on_stop = fio___http_default_on_stop;
-  if (!s->on_authenticate_sse)
-    s->on_authenticate_sse = is_client ? FIO_HTTP_AUTHENTICATE_ALLOW
-                                       : fio___http_default_authenticate;
-  if (!s->on_authenticate_websocket)
-    s->on_authenticate_websocket = is_client ? FIO_HTTP_AUTHENTICATE_ALLOW
-                                             : fio___http_default_authenticate;
-  if (!s->on_open)
-    s->on_open = fio___http_default_noop;
-  if (!s->on_message)
-    s->on_message = fio___http_default_on_message;
-  if (!s->on_eventsource)
-    s->on_eventsource = (s->on_message == fio___http_default_on_message
-                             ? fio___http_default_on_eventsource
-                             : fio___http_default_on_eventsource_redirect);
-  if (!s->on_eventsource_reconnect)
-    s->on_eventsource_reconnect = fio___http_default_on_eventsource_reconnect;
-  if (!s->on_ready)
-    s->on_ready = fio___http_default_noop;
-  if (!s->on_shutdown)
-    s->on_shutdown = fio___http_default_noop;
-  if (!s->on_close)
-    s->on_close = fio___http_default_noop;
-  if (!s->max_header_size)
-    s->max_header_size = FIO_HTTP_DEFAULT_MAX_HEADER_SIZE;
-  if (!s->max_line_len)
-    s->max_line_len = FIO_HTTP_DEFAULT_MAX_LINE_LEN;
-  if (!s->max_body_size)
-    s->max_body_size = FIO_HTTP_DEFAULT_MAX_BODY_SIZE;
-  if (!s->ws_max_msg_size)
-    s->ws_max_msg_size = FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE;
-  if (!s->timeout)
-    s->timeout = FIO_HTTP_DEFAULT_TIMEOUT;
-  if (!s->ws_timeout)
-    s->ws_timeout = FIO_HTTP_DEFAULT_TIMEOUT_LONG;
-  if (!s->sse_timeout)
-    s->sse_timeout = s->ws_timeout;
-
-  if (s->max_header_size < s->max_line_len)
-    s->max_header_size = s->max_line_len;
-
-  if (s->public_folder.buf) {
-    if (s->public_folder.len > 1 &&
-        s->public_folder.buf[s->public_folder.len - 1] == '/' &&
-        !(s->public_folder.len == 2 && s->public_folder.buf[0] == '~'))
-      --s->public_folder.len;
-    if (!fio_filename_is_folder(s->public_folder.buf)) {
-      FIO_LOG_ERROR("HTTP public folder not found (or not a folder), setting "
-                    "ignored.\n\t%s",
-                    s->public_folder.buf);
-      s->public_folder = ((fio_str_info_s){0});
-    }
-  }
-}
-
-/* *****************************************************************************
-HTTP Protocols used by the HTTP module
-***************************************************************************** */
-
-typedef enum fio___http_protocol_selector_e {
-  FIO___HTTP_PROTOCOL_ACCEPT = 0,
-  FIO___HTTP_PROTOCOL_HTTP1,
-  FIO___HTTP_PROTOCOL_HTTP2,
-  FIO___HTTP_PROTOCOL_WS,
-  FIO___HTTP_PROTOCOL_SSE,
-  FIO___HTTP_PROTOCOL_NONE
-} fio___http_protocol_selector_e;
-
-/* *****************************************************************************
-HTTP Protocol Container (vtable + settings storage)
-***************************************************************************** */
-#define FIO___RECURSIVE_INCLUDE 1
-
-typedef union fio___http_router_u {
-  fio_http_settings_s s;
-  void *ptr[256];
-  union fio___http_router_u *map[256];
-} fio___http_router_u;
-
-FIO_SFUNC void fio___http_router_destroy(fio___http_router_u *router);
-
-typedef struct {
-  fio_http_settings_s settings;
-  void (*on_http_callback)(void *, void *);
-  fio_queue_s *queue;
-  struct {
-    fio_io_protocol_s protocol;
-    fio_http_controller_s controller;
-  } state[FIO___HTTP_PROTOCOL_NONE + 1];
-  fio___http_router_u router;
-  char public_folder_buf[];
-} fio___http_protocol_s;
-#include FIO_INCLUDE_FILE
-
-#define FIO_REF_NAME             fio___http_protocol
-#define FIO_REF_FLEX_TYPE        char
-#define FIO_REF_CONSTRUCTOR_ONLY 1
-#define FIO_REF_DESTROY(o)                                                     \
-  do {                                                                         \
-    if (o.settings.tls)                                                        \
-      fio_io_tls_free(o.settings.tls);                                         \
-    fio___http_router_destroy(&o.router);                                      \
-  } while (0)
-#include FIO_INCLUDE_FILE
-
-FIO_IFUNC fio___http_protocol_s *fio___http_protocol_init(
-    fio___http_protocol_s *p,
-    const char *url,
-    fio_http_settings_s s,
-    bool is_client);
-/* *****************************************************************************
-HTTP Connection Container
-***************************************************************************** */
-
-struct fio___http_connection_http_s {
-  void (*on_http_callback)(void *, void *);
-  void (*on_http)(fio_http_s *h);
-  void (*on_finish)(fio_http_s *h);
-  fio_http1_parser_s parser;
-  fio_str_info_s buf;
-  uint32_t max_header;
-  uint32_t max_line;
-  uint32_t header_bytes;
-};
-struct fio___http_connection_ws_s {
-  void (*on_message)(fio_http_s *h, fio_buf_info_s msg, uint8_t is_text);
-  void (*on_ready)(fio_http_s *h);
-  fio_websocket_s parser;
-  /* Buffered message payload. WebSocket deliveries always use fio_bstr-backed
-   * storage for predictable ownership and String semantics. */
-  char *msg;
-  uint16_t code;
-};
-struct fio___http_connection_sse_s {
-  void (*on_message)(fio_http_s *h,
-                     fio_buf_info_s id,
-                     fio_buf_info_s event,
-                     fio_buf_info_s data);
-  void (*on_ready)(fio_http_s *h);
-  fio_buf_info_s id;
-  fio_buf_info_s event;
-  char *data;
-};
-
-/** Connection objects for managing HTTP / WebSocket connection state. */
-typedef struct {
-  fio_io_s *io;
-  fio_http_s *h;
-  fio_http_settings_s *settings;
-  fio_queue_s *queue;
-  void *udata;
-  union {
-    struct fio___http_connection_http_s http;
-    struct fio___http_connection_ws_s ws;
-    struct fio___http_connection_sse_s sse;
-  } state;
-  fio_deflate_s
-      *deflate_rd; /* WS decompressor (NULL = no permessage-deflate) */
-  fio_deflate_s *deflate_wr; /* WS compressor (NULL = no permessage-deflate) */
-  uint32_t len;
-  uint32_t capa;
-  uint8_t log;
-  uint8_t suspend;
-  uint8_t is_client;
-  uint8_t deflate_rd_reset; /* 1 = client_no_context_takeover */
-  uint8_t deflate_wr_reset; /* 1 = server_no_context_takeover */
-  char buf[];
-} fio___http_connection_s;
-
-#define FIO_REF_NAME             fio___http_connection
-#define FIO_REF_CONSTRUCTOR_ONLY 1
-#define FIO_REF_FLEX_TYPE        char
-#define FIO_REF_DESTROY(o)                                                     \
-  do {                                                                         \
-    if (o.deflate_rd)                                                          \
-      fio_deflate_free(o.deflate_rd);                                          \
-    if (o.deflate_wr)                                                          \
-      fio_deflate_free(o.deflate_wr);                                          \
-    fio___http_protocol_free(                                                  \
-        FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, o.settings));      \
-  } while (0)
-#include FIO_INCLUDE_FILE
-
-#undef FIO___RECURSIVE_INCLUDE
-
-/* *****************************************************************************
-HTTP Routing
-***************************************************************************** */
-
-FIO_LEAK_COUNTER_DEF(fio___http_router_u)
-FIO_SFUNC void fio___http_on_http_with_public_folder(void *h_, void *ignr);
-
-void fio_http_route___(void);
-/** Adds a route prefix to the HTTP handler. */
-SFUNC int fio_http_route FIO_NOOP(fio_http_listener_s *l,
-                                  const char *url,
-                                  fio_http_settings_s s) {
-  int err = 0;
-  const uint8_t *u = (const uint8_t *)url;
-  fio___http_protocol_s *p;
-  fio___http_router_u *r;
-  if (!l)
-    goto invalid_listener_error;
-  p = FIO_PTR_FROM_FIELD(fio___http_protocol_s,
-                         state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
-                         fio_io_listener_protocol((fio_io_listener_s *)l));
-  r = &p->router;
-  if (!u || !u[0]) {
-    url = "/";
-    u = (const uint8_t *)url;
-  }
-  /* skip first `/` character, they should always exist anyway */
-  u += (*u == (uint8_t)'/');
-  /* skip last `/` character, to preserve memory and reduce seeking time */
-  for (; *u && (*u != (uint8_t)'/' || u[1]); ++u) {
-    if (*u < (sizeof(s) / sizeof(void *)))
-      goto invalid_char_error;
-    if (!r->map[*u])
-      break;
-    r = r->map[*u];
-  }
-  /* skip last `/` character, to preserve memory and reduce seeking time */
-  for (; *u && (*u != (uint8_t)'/' || u[1]); ++u) {
-    if (*u < (sizeof(s) / sizeof(void *)))
-      goto invalid_char_error;
-    r->map[*u] =
-        (fio___http_router_u *)FIO_MEM_REALLOC_(NULL, 0, sizeof(*r), 0);
-    r = r->map[*u];
-    FIO_ASSERT_ALLOC(r);
-    FIO_LEAK_COUNTER_ON_ALLOC(fio___http_router_u);
-    if (!FIO_MEM_REALLOC_IS_SAFE_) {
-      FIO_MEMSET(r, 0, sizeof(*r));
-    }
-  }
-  /* we are at the leaf node of the path */
-
-  /* inherit reasonable defaults */
-  if (!s.on_finish)
-    s.on_finish = p->settings.on_finish;
-  if (!s.udata)
-    s.udata = p->settings.udata;
-  if (!s.on_stop)
-    s.on_stop = p->settings.on_stop;
-  if (!s.on_authenticate_sse)
-    s.on_authenticate_sse = p->settings.on_authenticate_sse;
-  if (!s.on_authenticate_websocket)
-    s.on_authenticate_websocket = p->settings.on_authenticate_websocket;
-  if (!s.max_header_size)
-    s.max_header_size = p->settings.max_header_size;
-  if (!s.max_line_len)
-    s.max_line_len = p->settings.max_line_len;
-  if (!s.max_body_size)
-    s.max_body_size = p->settings.max_body_size;
-  if (!s.ws_max_msg_size)
-    s.ws_max_msg_size = p->settings.ws_max_msg_size;
-  if (!s.timeout)
-    s.timeout = p->settings.timeout;
-  if (!s.ws_timeout)
-    s.ws_timeout = p->settings.ws_timeout;
-  if (!s.sse_timeout)
-    s.sse_timeout = p->settings.sse_timeout;
-  if (!s.log)
-    s.log = p->settings.log;
-  s.tls = NULL;
-  s.tls_io_func = NULL;
-  /* validate settings and store */
-  fio___http_settings_validate(&s, 0);
-  if (!s.public_folder.buf)
-    s.public_folder = p->settings.public_folder;
-  else if (s.public_folder.buf && s.public_folder.len) {
-    s.tls =
-        (fio_io_tls_s *)FIO_MEM_REALLOC_(NULL, 0, s.public_folder.len + 1, 0);
-    FIO_ASSERT_ALLOC(s.tls);
-    FIO_MEMCPY(s.tls, s.public_folder.buf, s.public_folder.len);
-    s.public_folder = FIO_STR_INFO2((char *)s.tls, s.public_folder.len);
-    s.public_folder.buf[s.public_folder.len] = 0;
-  }
-  /* make sure we're not leaking memory when overwriting an existing route */
-  if (r->s.on_http) {
-    if (r->s.on_stop != p->settings.on_stop || r->s.udata != p->settings.udata)
-      r->s.on_stop(&r->s);
-    if (r->s.tls && (char *)r->s.tls == r->s.public_folder.buf)
-      FIO_MEM_FREE_(r->s.tls, r->s.public_folder.len + 1);
-  }
-  /* if we have a route with a static file service, we need this */
-  if (s.public_folder.buf && s.public_folder.len) {
-    p->on_http_callback = fio___http_on_http_with_public_folder;
-  }
-  r->s = s;
-  return err;
-
-invalid_char_error:
-  if (url)
-    FIO_LOG_ERROR("Invalid character found in path URL[%zu]: %s",
-                  (size_t)((const char *)u - url),
-                  url);
-  else
-    FIO_LOG_FATAL("HTTP Router requires a non-NULL URL!");
-  err = -1;
-  return err;
-
-invalid_listener_error:
-  FIO_LOG_FATAL("HTTP Router requires an existing HTTP listener object.");
-  err = -1;
-  return err;
-}
-
-void fio___http_route_settings___(void);
-FIO_SFUNC fio_http_settings_s *fio___http_route_settings(
-    fio___http_router_u *route,
-    fio_str_info_s *path) {
-  fio_http_settings_s *r = &route->s;
-  uint8_t *pos = (uint8_t *)path->buf;
-  const uint8_t *n = pos;
-  pos += (*pos == (uint8_t)'/');
-  if (!*pos)
-    return r;
-  for (uint8_t c, hi, lo;
-       route && ((c = *pos) >= (sizeof(*r) / sizeof(void *)));
-       ++pos) {
-    /* we have a possible match here - store before stepping into path */
-    if (c == (uint8_t)'/' && route->s.on_http) {
-      r = &route->s;
-      n = pos;
-    } else if (c == (uint8_t)'%' && (hi = fio_c2i(pos[1])) < 16) {
-      if ((lo = fio_c2i(pos[2])) < 16) { /* decrypt route */
-        c = (hi << 4) | lo;
-        pos += 2;
-        if (c < (sizeof(*r) / sizeof(void *)))
-          break;
-      }
-    }
-    route = route->map[c];
-  }
-  /* test if '/' may be inferred */
-  if (!*pos && route && route->map[0]) {
-    r = &route->s;
-    path->len = 1;
-    n = (uint8_t *)path->buf;
-  }
-  n -= (n == (uint8_t *)path->buf + 1);
-  *path = FIO_STR_INFO2((char *)n, path->len - ((char *)n - path->buf));
-  return r;
-}
-
-void fio___http_route_get___(void);
-FIO_SFUNC fio_http_settings_s *fio___http_route_get(fio_http_s *h) {
-  fio_http_settings_s *r = NULL;
-  fio___http_connection_s *connection =
-      (fio___http_connection_s *)fio_http_cdata(h);
-  if (!connection)
-    return r;
-  fio___http_protocol_s *p =
-      FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, connection->settings);
-  fio_str_info_s path = fio_http_opath(h);
-  r = fio___http_route_settings(&p->router, &path);
-  fio_http_udata_set(h, r->udata);
-  fio_http_path_set(h, path);
-  connection->state.http.on_http = r->on_http;
-  connection->state.http.on_finish = r->on_finish;
-  return r;
-}
-
-FIO_SFUNC void fio___http_router_destroy(fio___http_router_u *r) {
-  if (!r)
-    return;
-  if (r->s.tls && (char *)r->s.tls == r->s.public_folder.buf)
-    FIO_MEM_FREE_(r->s.tls, r->s.public_folder.len + 1);
-  for (size_t i = (sizeof(r->s) / sizeof(void *)); i < 256; ++i) {
-    if (!r->map[i])
-      continue;
-    fio___http_router_destroy(r->map[i]);
-    FIO_MEM_FREE_(r->map[i], sizeof(*r));
-    FIO_LEAK_COUNTER_ON_FREE(fio___http_router_u);
-  }
-  if (r->s.on_stop)
-    r->s.on_stop(&r->s);
-}
-
-SFUNC fio_http_settings_s *fio_http_route_settings(fio_http_listener_s *l,
-                                                   const char *url) {
-  fio_http_settings_s *r = NULL;
-  fio___http_protocol_s *p;
-  fio_str_info_s path = FIO_STR_INFO2((char *)url, 1);
-  if (!l)
-    return r;
-  p = FIO_PTR_FROM_FIELD(fio___http_protocol_s,
-                         state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
-                         fio_io_listener_protocol((fio_io_listener_s *)l));
-  r = fio___http_route_settings(&p->router, &path);
-  return r;
-}
-
-/* *****************************************************************************
-Revisit defaults
-***************************************************************************** */
-
-/** Called when an EventSource event is received. */
-static void fio___http_default_on_eventsource_redirect(fio_http_s *h,
-                                                       fio_buf_info_s id,
-                                                       fio_buf_info_s event,
-                                                       fio_buf_info_s data) {
-  fio_http_settings_s *s = fio___http_route_get(h);
-  s->on_message(h, data, 1);
-  (void)h, (void)id, (void)event, (void)data;
-}
-
-/* *****************************************************************************
-HTTP Request handling / handling
-***************************************************************************** */
+/* The WebSocket / SSE upgrade-auth performers remain in `439 http.h` (pending
+ * their own module files); forward declarations for `test4upgrade`. */
+FIO_SFUNC void fio___http_perform_user_upgrade_callback_websocket(void *cb_,
+                                                                  void *h_);
+FIO_SFUNC void fio___http_perform_user_upgrade_callback_sse(void *cb_,
+                                                            void *h_);
 
 FIO_SFUNC void fio___http_perform_user_callback(void *cb_, void *h_) {
   union {
@@ -122320,117 +123051,6 @@ FIO_SFUNC void fio___http_perform_user_callback(void *cb_, void *h_) {
 
   if (FIO_LIKELY(c && FIO_SOCK_IS_OPEN(fio_io_fd(c->io))))
     cb.fn(h);
-  fio_http_free(h);
-}
-
-FIO_SFUNC void fio___http_perform_user_upgrade_callback_websocket(void *cb_,
-                                                                  void *h_) {
-  union {
-    int (*fn)(fio_http_s *);
-    void *ptr;
-  } cb = {.ptr = cb_};
-  fio_http_s *h = (fio_http_s *)h_;
-  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  struct fio___http_connection_http_s old = c->state.http;
-  if (!FIO_LIKELY(fio_io_is_open(c->io)) || cb.fn(h))
-    goto refuse_upgrade;
-  if (c->h) /* request after WebSocket Upgrade? an attack vector? */
-    goto refuse_upgrade;
-  /* TODO: enable the RFC 7692: permessage-deflate extension negotiation */
-  if (FIO_LIKELY(fio_http_cflags_is_set(h, FIO_HTTP_CFLAG_COMPRESS_WS))) {
-    FIO_HTTP_HEADER_EACH_VALUE(
-        h,
-        1,
-        FIO_STR_INFO2((char *)"sec-websocket-extensions", 24),
-        val) {
-      FIO_LOG_DDEBUG2("WebSocket extension requested: %.*s",
-                      (int)val.len,
-                      val.buf);
-      if (!FIO_STR_INFO_IS_EQ(val,
-                              FIO_STR_INFO2((char *)"permessage-deflate", 18)))
-        continue;
-      /* Parse extension parameters */
-      int server_no_ctx = 0, client_no_ctx = 0;
-      int client_bits_present = 0;
-      FIO_HTTP_HEADER_VALUE_EACH_PROPERTY(val, p) {
-        FIO_LOG_DDEBUG2("\t %.*s: %.*s",
-                        (int)p.name.len,
-                        p.name.buf,
-                        (int)p.value.len,
-                        p.value.buf);
-        if (FIO_STR_INFO_IS_EQ(
-                p.name,
-                FIO_STR_INFO2((char *)"server_no_context_takeover", 26)))
-          server_no_ctx = 1;
-        else if (FIO_STR_INFO_IS_EQ(
-                     p.name,
-                     FIO_STR_INFO2((char *)"client_no_context_takeover", 26)))
-          client_no_ctx = 1;
-        else if (FIO_STR_INFO_IS_EQ(
-                     p.name,
-                     FIO_STR_INFO2((char *)"client_max_window_bits", 22)))
-          client_bits_present = 1;
-        /* server_max_window_bits: we always use 15, accept any valid value */
-      }
-      /* Build response extension header */
-      {
-        FIO_STR_INFO_TMP_VAR(ext_resp, 128);
-        fio_string_write(&ext_resp, NULL, "permessage-deflate", 18);
-        if (server_no_ctx)
-          fio_string_write(&ext_resp, NULL, "; server_no_context_takeover", 28);
-        if (client_no_ctx)
-          fio_string_write(&ext_resp, NULL, "; client_no_context_takeover", 28);
-        if (client_bits_present)
-          fio_string_write(&ext_resp, NULL, "; client_max_window_bits=15", 26);
-        fio_http_response_header_set(
-            h,
-            FIO_STR_INFO2((char *)"sec-websocket-extensions", 24),
-            ext_resp);
-      }
-      /* Create deflate streaming contexts (stored at connection level,
-       * outside the state union, so they survive the HTTP→WS transition).
-       * Compressor = our writes (server side), Decompressor = client's data.
-       * For no_context_takeover: we still create contexts but will free and
-       * recreate them per-message in the compress/decompress callbacks. */
-      c->deflate_wr = fio_deflate_new(1, 1);
-      c->deflate_rd = fio_deflate_new(1, 0);
-      c->deflate_wr_reset = (uint8_t)server_no_ctx;
-      c->deflate_rd_reset = (uint8_t)client_no_ctx;
-      FIO_LOG_DDEBUG2("WebSocket permessage-deflate negotiated "
-                      "(server_no_ctx=%d, client_no_ctx=%d)",
-                      server_no_ctx,
-                      client_no_ctx);
-      break;
-    }
-  }
-  fio_http_upgrade_websocket(h);
-  return;
-
-refuse_upgrade:
-  c->state.http = old;
-  if (fio_http_send_error_response(h, 403))
-    fio_io_free(c->io);
-  fio_http_free(h);
-}
-
-FIO_SFUNC void fio___http_perform_user_upgrade_callback_sse(void *cb_,
-                                                            void *h_) {
-  union {
-    int (*fn)(fio_http_s *);
-    void *ptr;
-  } cb = {.ptr = cb_};
-  fio_http_s *h = (fio_http_s *)h_;
-  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  if (!FIO_LIKELY(fio_io_is_open(c->io)) || cb.fn(h))
-    goto refuse_upgrade;
-  if (c->h) /* request after eventsource? an attack vector? */
-    goto refuse_upgrade;
-  fio_http_upgrade_sse(h);
-  return;
-
-refuse_upgrade:
-  if (fio_http_send_error_response(h, 403))
-    fio_io_free(c->io);
   fio_http_free(h);
 }
 
@@ -122476,7 +123096,7 @@ FIO_SFUNC void fio___http_on_http_direct(void *h_, void *ignr) {
   fio_http_s *h = (fio_http_s *)h_;
   fio_http_status_set(h, 200);
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  fio_http_settings_s *s = fio___http_route_get(h);
+  fio_http_settings_s *s = fio___http_handle_settings(h);
   if (fio___http_on_http_test4upgrade(h, c, s))
     return;
   union {
@@ -122491,12 +123111,17 @@ FIO_SFUNC void fio___http_on_http_with_public_folder(void *h_, void *ignr) {
   fio_http_s *h = (fio_http_s *)h_;
   fio_http_status_set(h, 200);
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  fio_http_settings_s *s = fio___http_route_get(h);
+  fio_http_settings_s *s = fio___http_handle_settings(h);
   if (fio___http_on_http_test4upgrade(h, c, s))
     return;
+  /* The automatic static service answers GET / HEAD requests only (RFC
+   * 9110 §9.3); any other method falls through to the application's
+   * `on_http` callback, which may serve files explicitly (if desired). */
+  fio_str_info_s m = fio_http_method(h);
+  const uint32_t m4 = (m.len >= 3) ? (fio_buf2u32u(m.buf) | 0x20202020UL) : 0UL;
   if (s->public_folder.buf &&
-      (fio_http_method(h).len != 4 || (fio_buf2u32u(fio_http_method(h).buf) |
-                                       0x20202020UL) != fio_buf2u32u("post")) &&
+      ((m.len == 3 && m4 == fio_buf2u32u("get\x20")) ||
+       (m.len == 4 && m4 == fio_buf2u32u("head"))) &&
       !fio_http_static_file_response(
           h,
           s->public_folder,
@@ -122576,160 +123201,28 @@ websocket_accepted:
 }
 
 /* *****************************************************************************
-ALPN Helpers
+HTTP/1.1 Accepting new connections (tests for special HTTP/2 pre-knowledge)
 ***************************************************************************** */
 
-FIO_SFUNC void fio___http_on_select_h1(fio_io_s *io) {
-  FIO_LOG_DDEBUG2("TLS ALPN HTTP/1.1 selected for %p", io);
-  fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(io);
-  fio_io_protocol_set(
-      io,
-      &(FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, c->settings)
-            ->state[FIO___HTTP_PROTOCOL_HTTP1]
-            .protocol));
-}
-FIO_SFUNC void fio___http_on_select_h2(fio_io_s *io) {
-  FIO_LOG_ERROR("TLS ALPN HTTP/2 not supported for %p", io);
-  (void)io;
-}
+/** Called when an IO is attached to a protocol. */
+FIO_SFUNC void fio___http_on_attach_accept(fio_io_s *io) {
 
-/* *****************************************************************************
-HTTP Listen
-***************************************************************************** */
-
-static void fio___http_listen_on_start(fio_io_protocol_s *protocol, void *u) {
-  (void)u;
   fio___http_protocol_s *p =
       FIO_PTR_FROM_FIELD(fio___http_protocol_s,
                          state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
-                         protocol);
-  p->queue = ((p->settings.queue && p->settings.queue->q) ? p->settings.queue->q
-                                                          : fio_io_queue());
-}
+                         fio_io_protocol(io));
+  fio___http_protocol_dup(p);
+  // p->queue = fio_io_queue();
 
-static void fio___http_listen_on_stop(fio_io_protocol_s *p, void *u) {
-  (void)u;
-  fio___http_protocol_free(
-      FIO_PTR_FROM_FIELD(fio___http_protocol_s,
-                         state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
-                         p));
-}
-
-void fio_http_listen___(void); /* IDE marker */
-SFUNC fio_http_listener_s *fio_http_listen FIO_NOOP(const char *url,
-                                                    fio_http_settings_s s) {
-  fio___http_settings_validate(&s, 0);
-  if (url) {
-    fio_url_s u = fio_url_parse(url, FIO_STRLEN(url));
-    if (u.path.len)
-      FIO_LOG_WARNING(
-          "HTTP listener is always at the root (home folder).\n\t"
-          "  Ignoring the path set in the listening instruction: %.*s",
-          (int)u.path.len,
-          u.path.buf);
-  }
-  fio___http_protocol_s *p = fio___http_protocol_new(s.public_folder.len + 1);
-  fio___http_protocol_init(p, url, s, 0);
-  fio_http_listener_s *listener = (fio_http_listener_s *)
-      fio_io_listen(.url = url,
-                    .protocol = &p->state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
-                    .tls = s.tls,
-                    .on_start = fio___http_listen_on_start,
-                    .on_stop = fio___http_listen_on_stop,
-                    .queue_for_accept = p->settings.queue);
-  return listener;
-}
-
-/** Returns the a pointer to the HTTP settings associated with the listener. */
-SFUNC fio_http_settings_s *fio_http_listener_settings(fio_http_listener_s *l) {
-  fio___http_protocol_s *p =
-      FIO_PTR_FROM_FIELD(fio___http_protocol_s,
-                         state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
-                         fio_io_listener_protocol((fio_io_listener_s *)l));
-  return &p->settings;
-}
-
-/* *****************************************************************************
-HTTP Connect
-***************************************************************************** */
-
-static void fio___http_connect_on_failed(fio_io_protocol_s *p, void *udata) {
-  fio___http_connection_s *c = (fio___http_connection_s *)udata;
-  fio_http_free(c->h);
-  c->h = NULL;
-  fio___http_connection_free(c);
-  (void)p;
-}
-
-void fio_http_connect___(void); /* IDE Marker */
-/** Connects to HTTP / WebSockets / SSE connections on `url`. */
-SFUNC fio_io_s *fio_http_connect FIO_NOOP(const char *url,
-                                          fio_http_s *h,
-                                          fio_http_settings_s s) {
-  FIO_STR_INFO_TMP_VAR(origin, 4096);
-  fio___http_settings_validate(&s, 1);
-  fio_url_s u = (fio_url_s){0};
-  if (url)
-    u = fio_url_parse(url, strlen(url));
-
-  if (!h)
-    h = fio_http_new();
-  if (!fio_http_path(h).len)
-    fio_http_path_set(h,
-                      u.path.len ? FIO_BUF2STR_INFO(u.path)
-                                 : FIO_STR_INFO2((char *)"/", 1));
-  if (!fio_http_query(h).len && u.query.len)
-    fio_http_query_set(h, FIO_BUF2STR_INFO(u.query));
-  if (!fio_http_method(h).len)
-    fio_http_method_set(h, FIO_STR_INFO2((char *)"GET", 3));
-  if (u.host.len) {
-    fio_http_request_header_set_if_missing(h,
-                                           FIO_STR_INFO2((char *)"host", 4),
-                                           FIO_BUF2STR_INFO(u.host));
-    /* Origin header */
-    fio_string_write2(
-        &origin,
-        NULL,
-        FIO_STRING_WRITE_STR2("https", (size_t)(4 + fio_url_is_tls(u).tls)),
-        FIO_STRING_WRITE_STR2("://", 3U),
-        FIO_STRING_WRITE_STR_INFO(u.host),
-        FIO_STRING_WRITE_STR2(":", (size_t)(!!u.port.len)),
-        FIO_STRING_WRITE_STR_INFO(u.port));
-  }
-
-  /* test for ws:// or wss:// - WebSocket scheme */
-  if ((u.scheme.len == 2 ||
-       (u.scheme.len == 3 && ((u.scheme.buf[2] | 0x20) == 's'))) &&
-      (fio_buf2u16u(u.scheme.buf) | 0x2020) == fio_buf2u16u("ws")) {
-    fio_http_request_header_set_if_missing(h,
-                                           FIO_STR_INFO2((char *)"origin", 6),
-                                           origin);
-    fio_http_websocket_set_request(h);
-  }
-  /* test for sse:// or sses:// - Server Sent Events scheme */
-  else if ((u.scheme.len == 3 ||
-            (u.scheme.len == 4 && ((u.scheme.buf[3] | 0x20) == 's'))) &&
-           (fio_buf2u32u(u.scheme.buf) | fio_buf2u32u("\x20\x20\x20\xFF")) ==
-               fio_buf2u32u("sse\xFF")) {
-    fio_http_request_header_set_if_missing(h,
-                                           FIO_STR_INFO2((char *)"origin", 6),
-                                           origin);
-    fio_http_sse_set_request(h);
-  }
-
-  /* TODO: test for and attempt to re-use connection */
-  // if (fio_http_cdata(h)) { }
-
-  fio___http_protocol_s *p = fio___http_protocol_new(u.host.len);
-  fio___http_protocol_init(p, url, s, 1);
-  fio___http_connection_s *c =
-      fio___http_connection_new(p->settings.max_line_len);
+  const uint32_t capa = p->settings.max_line_len;
+  fio___http_connection_s *c = fio___http_connection_new(capa);
   FIO_ASSERT_ALLOC(c);
   *c = (fio___http_connection_s){
-      .io = NULL,
-      .h = h,
+      .io = io,
       .settings = &(p->settings),
-      .queue = p->queue,
+      .queue =
+          ((p->settings.queue && p->settings.queue->q) ? p->settings.queue->q
+                                                       : fio_io_queue()),
       .udata = p->settings.udata,
       .state.http =
           {
@@ -122739,22 +123232,103 @@ SFUNC fio_io_s *fio_http_connect FIO_NOOP(const char *url,
               .max_header = p->settings.max_header_size,
               .max_line = p->settings.max_line_len,
           },
-      .capa = p->settings.max_line_len,
+      .capa = capa,
       .log = p->settings.log,
-      .is_client = 1,
   };
-  fio_http_controller_set(h, &p->state[FIO___HTTP_PROTOCOL_HTTP1].controller);
-  if (!fio_http_udata(h)) /* avoid overwriting existing `udata` if set */
-    fio_http_udata_set(h, c->udata);
-  fio_http_cdata_set(h, fio___http_connection_dup(c));
-  return fio_io_connect(url,
-                        .protocol =
-                            &p->state[FIO___HTTP_PROTOCOL_HTTP1].protocol,
-                        .on_failed = fio___http_connect_on_failed,
-                        .udata = c,
-                        .tls = s.tls,
-                        .timeout = s.connect_timeout);
+  fio_io_udata_set(io, (void *)c);
+  FIO_LOG_DDEBUG2("(%d) HTTP accepted a new connection (%p)",
+                  (int)fio_thread_getpid(),
+                  c->io);
+#if 0 /* skip pre-knowledge test? */
+  fio_io_protocol_set(
+      io,
+      &(FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, c->settings)
+            ->state[FIO___HTTP_PROTOCOL_HTTP1]
+            .protocol));
+#endif
 }
+
+/** Called when a data is available. */
+FIO_SFUNC void fio___http1_accept_on_data(fio_io_s *io) {
+  const fio_buf_info_s prior_knowledge = FIO_BUF_INFO2(
+      (char *)"\x50\x52\x49\x20\x2a\x20\x48\x54\x54\x50\x2f\x32\x2e\x30"
+              "\x0d\x0a\x0d\x0a\x53\x4d\x0d\x0a\x0d\x0a",
+      24);
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(io);
+  fio_io_protocol_s *phttp_new;
+  size_t r = fio_io_read(io, c->buf + c->len, c->capa - c->len);
+  if (!r) /* nothing happened */
+    return;
+  c->len = (uint32_t)r;
+  if (prior_knowledge.buf[0] != c->buf[0] ||
+      FIO_MEMCMP(
+          prior_knowledge.buf,
+          c->buf,
+          (c->len > prior_knowledge.len ? prior_knowledge.len : c->len))) {
+    /* no prior knowledge, switch to HTTP/1.1 */
+    phttp_new =
+        &(FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, c->settings)
+              ->state[FIO___HTTP_PROTOCOL_HTTP1]
+              .protocol);
+    fio_io_protocol_set(io, phttp_new);
+    return;
+  }
+  if (c->len < prior_knowledge.len) /* wait for more data */
+    return;
+
+  if (c->len > prior_knowledge.len)
+    FIO_MEMMOVE(c->buf,
+                c->buf + prior_knowledge.len,
+                c->len - prior_knowledge.len);
+  c->len -= prior_knowledge.len;
+  phttp_new = &(FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, c->settings)
+                    ->state[FIO___HTTP_PROTOCOL_HTTP2]
+                    .protocol);
+
+  fio_io_protocol_set(io, phttp_new);
+}
+
+FIO_SFUNC void fio___http_on_close(void *buf, void *udata) {
+  FIO_LOG_DDEBUG2("(%d) HTTP connection closed for %p",
+                  (int)fio_thread_getpid(),
+                  udata);
+  fio___http_connection_s *c = (fio___http_connection_s *)udata;
+  c->io = NULL;
+  fio_http_free(c->h);
+  fio___http_connection_free(c);
+  (void)buf;
+}
+
+/* *****************************************************************************
+Authentication Helper
+***************************************************************************** */
+
+/** Allows all clients to connect (bypasses authentication). */
+SFUNC int FIO_HTTP_AUTHENTICATE_ALLOW(fio_http_s *h) {
+  ((void)h);
+  return 0;
+}
+
+/* *****************************************************************************
+HTTP Accept Finish
+***************************************************************************** */
+#endif /* FIO_HTTP */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_HTTP               /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+              HTTP/1.1 - Request/Response Glue, Protocol and Controller
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_HTTP) && !defined(FIO___RECURSIVE_INCLUDE) &&                  \
+    !defined(H___FIO_HTTP1___H) &&                                             \
+    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN))
+#define H___FIO_HTTP1___H
 
 /* *****************************************************************************
 HTTP/1.1 Request / Response Completed
@@ -122802,8 +123376,6 @@ FIO_IFUNC void fio_http1_attach_handle(fio___http_connection_s *c) {
     fio_http_cflags_set(c->h, FIO_HTTP_CFLAG_COMPRESS_DYNAMIC);
   if (c->settings->compress_ws)
     fio_http_cflags_set(c->h, FIO_HTTP_CFLAG_COMPRESS_WS);
-  if (c->settings->compress_static)
-    fio_http_cflags_set(c->h, FIO_HTTP_CFLAG_COMPRESS_STATIC);
 }
 
 /** called when a request method is parsed. */
@@ -122944,105 +123516,6 @@ static int fio_http1_on_body_chunk(fio_buf_info_s chunk, void *udata) {
 too_big:
   fio___http_request_too_big(c);
   return 0;
-}
-
-/* *****************************************************************************
-HTTP/1.1 Accepting new connections (tests for special HTTP/2 pre-knowledge)
-***************************************************************************** */
-
-/** Called when an IO is attached to a protocol. */
-FIO_SFUNC void fio___http_on_attach_accept(fio_io_s *io) {
-
-  fio___http_protocol_s *p =
-      FIO_PTR_FROM_FIELD(fio___http_protocol_s,
-                         state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
-                         fio_io_protocol(io));
-  fio___http_protocol_dup(p);
-  // p->queue = fio_io_queue();
-
-  const uint32_t capa = p->settings.max_line_len;
-  fio___http_connection_s *c = fio___http_connection_new(capa);
-  FIO_ASSERT_ALLOC(c);
-  *c = (fio___http_connection_s){
-      .io = io,
-      .settings = &(p->settings),
-      .queue =
-          ((p->settings.queue && p->settings.queue->q) ? p->settings.queue->q
-                                                       : fio_io_queue()),
-      .udata = p->settings.udata,
-      .state.http =
-          {
-              .on_http_callback = p->on_http_callback,
-              .on_http = p->settings.on_http,
-              .on_finish = p->settings.on_finish,
-              .max_header = p->settings.max_header_size,
-              .max_line = p->settings.max_line_len,
-          },
-      .capa = capa,
-      .log = p->settings.log,
-  };
-  fio_io_udata_set(io, (void *)c);
-  FIO_LOG_DDEBUG2("(%d) HTTP accepted a new connection (%p)",
-                  (int)fio_thread_getpid(),
-                  c->io);
-#if 0 /* skip pre-knowledge test? */
-  fio_io_protocol_set(
-      io,
-      &(FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, c->settings)
-            ->state[FIO___HTTP_PROTOCOL_HTTP1]
-            .protocol));
-#endif
-}
-
-/** Called when a data is available. */
-FIO_SFUNC void fio___http1_accept_on_data(fio_io_s *io) {
-  const fio_buf_info_s prior_knowledge = FIO_BUF_INFO2(
-      (char *)"\x50\x52\x49\x20\x2a\x20\x48\x54\x54\x50\x2f\x32\x2e\x30"
-              "\x0d\x0a\x0d\x0a\x53\x4d\x0d\x0a\x0d\x0a",
-      24);
-  fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(io);
-  fio_io_protocol_s *phttp_new;
-  size_t r = fio_io_read(io, c->buf + c->len, c->capa - c->len);
-  if (!r) /* nothing happened */
-    return;
-  c->len = (uint32_t)r;
-  if (prior_knowledge.buf[0] != c->buf[0] ||
-      FIO_MEMCMP(
-          prior_knowledge.buf,
-          c->buf,
-          (c->len > prior_knowledge.len ? prior_knowledge.len : c->len))) {
-    /* no prior knowledge, switch to HTTP/1.1 */
-    phttp_new =
-        &(FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, c->settings)
-              ->state[FIO___HTTP_PROTOCOL_HTTP1]
-              .protocol);
-    fio_io_protocol_set(io, phttp_new);
-    return;
-  }
-  if (c->len < prior_knowledge.len) /* wait for more data */
-    return;
-
-  if (c->len > prior_knowledge.len)
-    FIO_MEMMOVE(c->buf,
-                c->buf + prior_knowledge.len,
-                c->len - prior_knowledge.len);
-  c->len -= prior_knowledge.len;
-  phttp_new = &(FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, c->settings)
-                    ->state[FIO___HTTP_PROTOCOL_HTTP2]
-                    .protocol);
-
-  fio_io_protocol_set(io, phttp_new);
-}
-
-FIO_SFUNC void fio___http_on_close(void *buf, void *udata) {
-  FIO_LOG_DDEBUG2("(%d) HTTP connection closed for %p",
-                  (int)fio_thread_getpid(),
-                  udata);
-  fio___http_connection_s *c = (fio___http_connection_s *)udata;
-  c->io = NULL;
-  fio_http_free(c->h);
-  fio___http_connection_free(c);
-  (void)buf;
 }
 
 /* *****************************************************************************
@@ -123527,42 +124000,425 @@ upgraded:
 }
 
 /* *****************************************************************************
-HTTP/2 Protocol (disconnect, as HTTP/2 is unsupported)
+HTTP/1.1 Finish
 ***************************************************************************** */
+#endif /* FIO_HTTP */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_HTTP               /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
 
-// /** Called when an IO is attached to a protocol. */
-// void (*on_attach)(fio_io_s *io);
-// /** Called when a data is available. */
-// void (*on_data)(fio_io_s *io);
-// /** called once all pending `fio_io_write` calls are finished. */
-// void (*on_ready)(fio_io_s *io);
-// /** Called after the connection was closed, and pending tasks
-// completed.
-// */ void (*on_close)(void *udata);
+   EventSource (SSE) - Upgrade Authorization, Helpers, Protocol, Controller
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_HTTP) && !defined(FIO___RECURSIVE_INCLUDE) &&                  \
+    !defined(H___FIO_SSE___H) &&                                               \
+    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN))
+#define H___FIO_SSE___H
 
 /* *****************************************************************************
-HTTP/2 Controller (TODO!)
+HTTP Request handling / handling (SSE upgrade authorization)
 ***************************************************************************** */
 
-// /** Called when an HTTP handle is freed. */
-// void (*on_destroyed)(fio_http_s *h, void *cdata);
-// /** Informs the controller that request / response headers must be
-// sent.
-// */ void (*send_headers)(fio_http_s *h);
-// /** called by the HTTP handle for each body chunk (or to finish a
-// response.
-// */ void (*write_body)(fio_http_s *h, fio_http_write_args_s args);
-// /** called once a request / response had finished */
-// void (*on_finish)(fio_http_s *h);
+FIO_SFUNC void fio___http_perform_user_upgrade_callback_sse(void *cb_,
+                                                            void *h_) {
+  union {
+    int (*fn)(fio_http_s *);
+    void *ptr;
+  } cb = {.ptr = cb_};
+  fio_http_s *h = (fio_http_s *)h_;
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
+  if (!FIO_LIKELY(fio_io_is_open(c->io)) || cb.fn(h))
+    goto refuse_upgrade;
+  if (c->h) /* request after eventsource? an attack vector? */
+    goto refuse_upgrade;
+  fio_http_upgrade_sse(h);
+  return;
+
+refuse_upgrade:
+  if (fio_http_send_error_response(h, 403))
+    fio_io_free(c->io);
+  fio_http_free(h);
+}
 
 /* *****************************************************************************
-Authentication Helper
+EventSource (SSE) Helpers - HTTP Upgraded Connections
 ***************************************************************************** */
 
-/** Allows all clients to connect (bypasses authentication). */
-SFUNC int FIO_HTTP_AUTHENTICATE_ALLOW(fio_http_s *h) {
-  ((void)h);
+void fio_http_sse_write___(void); /* IDE Marker */
+/** Writes an SSE message (UTF-8). Fails if connection wasn't upgraded yet. */
+SFUNC int fio_http_sse_write FIO_NOOP(fio_http_s *h,
+                                      fio_http_sse_write_args_s args) {
+  if (!args.data.len || !h || !fio_http_is_sse(h))
+    return -1;
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
+  if (!c || !c->io)
+    return -1;
+  char *payload =
+      fio_bstr_reserve(NULL, args.id.len + args.event.len + args.data.len + 22);
+  if (args.id.len)
+    payload = fio_bstr_write2(payload,
+                              FIO_STRING_WRITE_STR2("id:", 3),
+                              FIO_STRING_WRITE_STR2(args.id.buf, args.id.len),
+                              FIO_STRING_WRITE_STR2("\r\n", 2));
+  if (args.event.len)
+    payload =
+        fio_bstr_write2(payload,
+                        FIO_STRING_WRITE_STR2("event:", 6),
+                        FIO_STRING_WRITE_STR2(args.event.buf, args.event.len),
+                        FIO_STRING_WRITE_STR2("\r\n", 2));
+  { /* separate lines (add "data:" at beginning of each new line) */
+    char *pos;
+    while (args.data.len &&
+           (pos = (char *)FIO_MEMCHR(args.data.buf, '\n', args.data.len))) {
+      const size_t len = (pos + 1) - args.data.buf;
+      pos -= (pos > args.data.buf && pos[-1] == '\r');
+      payload = fio_bstr_write2(
+          payload,
+          FIO_STRING_WRITE_STR2("data:", 5),
+          FIO_STRING_WRITE_STR2(args.data.buf, (size_t)(pos - args.data.buf)),
+          FIO_STRING_WRITE_STR2("\r\n", 2));
+      args.data.buf += len;
+      args.data.len -= len;
+    }
+  }
+  /* write reminder */
+  if (args.data.len)
+    payload =
+        fio_bstr_write2(payload,
+                        FIO_STRING_WRITE_STR2("data:", 5),
+                        FIO_STRING_WRITE_STR2(args.data.buf, args.data.len),
+                        FIO_STRING_WRITE_STR2("\r\n", 2));
+  /* event ends on empty line */
+  payload = fio_bstr_write(payload, "\r\n", 2);
+  fio_io_write2(c->io,
+                .buf = payload,
+                .len = fio_bstr_len(payload),
+                .dealloc = (void (*)(void *))fio_bstr_free);
   return 0;
+}
+
+/** Optional EventSource subscription callback - messages MUST be UTF-8. */
+SFUNC void FIO_HTTP_SSE_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg) {
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(msg->io);
+  if (!c)
+    return;
+  FIO_STR_INFO_TMP_VAR(id_str, 64);
+  fio_string_write_hex(&id_str, NULL, msg->id);
+  fio_http_sse_write(c->h,
+                     .id = FIO_STR2BUF_INFO(id_str),
+                     .event = FIO_STR2BUF_INFO(msg->channel),
+                     .data = FIO_STR2BUF_INFO(msg->message));
+}
+
+/* *****************************************************************************
+EventSource / SSE Protocol (TODO!)
+***************************************************************************** */
+
+FIO_SFUNC void fio___sse_consume_data(fio___http_connection_s *c) {
+  FIO_LOG_DEBUG2("SSE data processing:\n%.*s", (int)c->len, c->buf);
+  struct fio___http_connection_sse_s *sse = &c->state.sse;
+  const char *next_line = c->buf;
+  const char *stop = c->buf + c->len;
+  for (; next_line < stop;) {
+    char *line = (char *)next_line;
+    const char *eol =
+        (const char *)FIO_MEMCHR(next_line, '\n', stop - next_line);
+    if (!eol)
+      break;
+    next_line = eol + 1;
+    eol -= (eol > c->buf && eol[-1] == '\n');
+    eol -= (eol > c->buf && eol[-1] == '\r');
+    if (eol == line) { /* empty line, end of input? */
+      if (sse->data || sse->event.buf || sse->id.buf) {
+        sse->on_message(c->h, sse->id, sse->event, fio_bstr_buf(sse->data));
+        fio_bstr_free(sse->data);
+        sse->data = NULL;
+        sse->event = sse->id = FIO_BUF_INFO0;
+      }
+      continue;
+    }
+    if (line[0] == ':') /* comment */
+      continue;
+    const size_t line_len = (size_t)(eol - line);
+    if (line_len > 2 && line[2] == ':') { /* id */
+      const char *start = line + 3;
+      start += (start[0] == ' ' || start[0] == '\t');
+      if ((line[0] |= 32) == 'i' && (line[1] |= 32) == 'd')
+        sse->id = FIO_BUF_INFO2((char *)start, (size_t)(eol - start));
+
+    } else if (line_len > 4 && line[4] == ':') { /* data */
+      const char *start = line + 5;
+      start += (start[0] == ' ' || start[0] == '\t');
+      if ((fio_buf2u32u(line) | 0x20202020U) == fio_buf2u32u("data")) {
+        if (fio_bstr_len(sse->data) + (size_t)(eol - start) >
+            c->settings->ws_max_msg_size)
+          goto breach;
+        sse->data = fio_bstr_write2(
+            sse->data,
+            FIO_STRING_WRITE_STR2("\n", ((size_t) !!sse->data)),
+            FIO_STRING_WRITE_STR2(start, (size_t)(eol - start)));
+      }
+
+    } else if (line_len > 5 && line[5] == ':') { /* event */
+      const char *start = line + 6;
+      start += (start[0] == ' ' || start[0] == '\t');
+      if ((line[0] |= 32) == 'e' &&
+          (fio_buf2u32u(line + 1) | 0x20202020U) == fio_buf2u32u("vent"))
+        sse->event = FIO_BUF_INFO2((char *)start, (size_t)(eol - start));
+
+    } else if (!FIO_MEMCHR(line, ':', line_len))
+      goto error;
+  }
+  FIO_ASSERT(next_line <= stop, "overflow on next line read");
+  if (next_line > stop)
+    next_line = stop;
+  c->len -= next_line - c->buf;
+  if (c->len)
+    FIO_MEMMOVE(c->buf, next_line, c->len);
+  return;
+
+error:
+  FIO_LOG_ERROR("SSE incoming data malformed!");
+  FIO_LOG_DEBUG2("data dump:\n%.*s", (int)c->len, c->buf);
+  fio_io_close(c->io);
+  return;
+
+breach:
+  FIO_LOG_SECURITY("SSE incoming data payload too large!");
+  fio_io_close(c->io);
+}
+
+/** Called when a data is available. */
+FIO_SFUNC void fio___sse_on_data(fio_io_s *io) {
+  FIO_LOG_DDEBUG2("(%d) Reading SSE data from socket", fio_io_pid());
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(io);
+  size_t r;
+  for (;;) {
+    if (c->len + 2 > c->capa)
+      goto error;
+    if (!(r = fio_io_read(io, c->buf + c->len, c->capa - c->len)))
+      return;
+    c->len += r;
+    fio___sse_consume_data(c);
+  }
+error:
+  FIO_LOG_ERROR("Incoming SSE data too long (HTTP line limit set at %zu)!",
+                c->capa);
+  fio_io_close(io);
+}
+
+/** Called when an IO is attached to a protocol. */
+static void fio___sse_on_attach(fio_io_s *io) {
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(io);
+  fio_http_s *h = c->h;
+  c->state.sse = (struct fio___http_connection_sse_s){
+      .on_message = c->settings->on_eventsource,
+      .on_ready = c->settings->on_ready,
+  };
+  c->settings->on_open(h);
+  FIO_LOG_DDEBUG2("(%d) SSE attached; buffer length (unread): %zu",
+                  fio_io_pid(),
+                  c->len);
+  if (c->len && c->is_client)
+    fio___sse_consume_data(c);
+}
+
+FIO_SFUNC void fio___sse_on_timeout(fio_io_s *io) {
+  char buf[32] = ":ping 0x0000000000000000\r\n\r\n";
+  fio_ltoa16u(buf + 8, fio_io_last_tick(), 16);
+  buf[24] = '\r'; /* overwrite written NUL character */
+  fio_io_write(io, buf, 28);
+}
+
+FIO_SFUNC void fio___sse_on_shutdown(fio_io_s *io) {
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(io);
+  c->settings->on_shutdown(c->h);
+}
+
+/** Called after the connection was closed, and pending tasks completed. */
+FIO_SFUNC void fio___sse_on_close(void *buf, void *udata) {
+  fio___http_connection_s *c = (fio___http_connection_s *)udata;
+  FIO_LOG_DDEBUG2("(%d) SSE connection closed for %p", fio_io_pid(), c->io);
+  c->io = NULL;
+  fio_bstr_free(c->state.sse.data);
+  if (c->h) {
+    c->settings->on_close(c->h);
+    c->settings->on_finish(c->h);
+    fio_http_free(c->h);
+  }
+  fio___http_connection_free(c);
+  (void)buf;
+}
+
+/* *****************************************************************************
+EventSource / SSE Controller (TODO!)
+***************************************************************************** */
+
+/* called by the HTTP handle for each body chunk (or to finish a response. */
+FIO_SFUNC void fio___http_controller_sse_write_body(
+    fio_http_s *h,
+    fio_http_write_args_s args) {
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
+  if (args.buf && args.len) {
+    fio_http_sse_write(c->h, .data = FIO_BUF_INFO2((char *)args.buf, args.len));
+  }
+  if (args.dealloc && args.buf)
+    args.dealloc((void *)args.buf);
+  if (!args.buf && (unsigned)(args.fd + 1) > 1)
+    close(args.fd);
+}
+
+/* *****************************************************************************
+EventSource / SSE Finish
+***************************************************************************** */
+#endif /* FIO_HTTP */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_HTTP               /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+    WebSocket - Upgrade Authorization, Events, Protocol, Write, Controller
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_HTTP) && !defined(FIO___RECURSIVE_INCLUDE) &&                  \
+    !defined(H___FIO_WEBSOCKET___H) &&                                         \
+    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN))
+#define H___FIO_WEBSOCKET___H
+
+/* *****************************************************************************
+HTTP Request handling / handling (WebSocket upgrade authorization)
+***************************************************************************** */
+
+#define FIO___HTTP_WS_DEFLATE_NEGOTIATE_SEAM 1
+/**
+ * Builds the Sec-WebSocket-Extensions response for a permessage-deflate
+ * offer. ALWAYS forces `server_no_context_takeover` +
+ * `client_no_context_takeover` (RFC 7692 §7.1.1 allows either endpoint to
+ * request them unilaterally; persistent per-connection compression state is
+ * ~0 by design). Honors `server_max_window_bits` when offered (8..15,
+ * recorded into `*server_bits` so the compressor can clamp its distances);
+ * NEVER emits window-bits parameters (`client_max_window_bits` is pointless
+ * under no-takeover, and `server_max_window_bits` may only be answered <=
+ * the offer — our inflater accepts any in-message distance <= 32KB anyway).
+ * Returns the response length, or 0 when `out_cap` is too small.
+ */
+FIO_SFUNC size_t fio___http_ws_deflate_negotiate(fio_str_info_s offer,
+                                                 char *out,
+                                                 size_t out_cap,
+                                                 int *server_bits) {
+  static const char resp[] = "permessage-deflate; server_no_context_takeover"
+                             "; client_no_context_takeover";
+  int bits = 15;
+  const char *pos = offer.buf;
+  const char *end = offer.buf + offer.len;
+  while (pos < end) {
+    while (pos < end && (*pos == ' ' || *pos == '\t' || *pos == ';'))
+      ++pos;
+    const char *name = pos;
+    while (pos < end && *pos != ';' && *pos != '=')
+      ++pos;
+    const char *name_end = pos;
+    while (name_end > name && (name_end[-1] == ' ' || name_end[-1] == '\t'))
+      --name_end;
+    if ((size_t)(name_end - name) == 22 &&
+        !FIO_MEMCMP(name, "server_max_window_bits", 22) && pos < end &&
+        *pos == '=') {
+      ++pos;
+      int v = 0;
+      int digits = 0;
+      while (pos < end && *pos >= '0' && *pos <= '9') {
+        v = v * 10 + (*pos - '0');
+        ++pos;
+        ++digits;
+      }
+      if (digits && v >= 8 && v <= 15)
+        bits = v; /* honored: compressor clamps distances <= 2^bits */
+    }
+    while (pos < end && *pos != ';')
+      ++pos;
+  }
+  if (out_cap < sizeof(resp) - 1)
+    return 0;
+  FIO_MEMCPY(out, resp, sizeof(resp) - 1);
+  if (server_bits)
+    *server_bits = bits;
+  return sizeof(resp) - 1;
+}
+
+FIO_SFUNC void fio___http_perform_user_upgrade_callback_websocket(void *cb_,
+                                                                  void *h_) {
+  union {
+    int (*fn)(fio_http_s *);
+    void *ptr;
+  } cb = {.ptr = cb_};
+  fio_http_s *h = (fio_http_s *)h_;
+  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
+  struct fio___http_connection_http_s old = c->state.http;
+  if (!FIO_LIKELY(fio_io_is_open(c->io)) || cb.fn(h))
+    goto refuse_upgrade;
+  if (c->h) /* request after WebSocket Upgrade? an attack vector? */
+    goto refuse_upgrade;
+  /* RFC 7692: permessage-deflate extension negotiation (no-takeover only) */
+  if (FIO_LIKELY(fio_http_cflags_is_set(h, FIO_HTTP_CFLAG_COMPRESS_WS))) {
+    FIO_HTTP_HEADER_EACH_VALUE(
+        h,
+        1,
+        FIO_STR_INFO2((char *)"sec-websocket-extensions", 24),
+        val) {
+      FIO_LOG_DDEBUG2("WebSocket extension requested: %.*s",
+                      (int)val.len,
+                      val.buf);
+      if (!FIO_STR_INFO_IS_EQ(val,
+                              FIO_STR_INFO2((char *)"permessage-deflate", 18)))
+        continue;
+      /* Negotiate: ALWAYS force both no_context_takeover flags (persistent
+       * compression state stays ~0 per connection); honor
+       * server_max_window_bits when offered. */
+      char ext_resp[80];
+      int server_bits = 15;
+      size_t ext_len = fio___http_ws_deflate_negotiate(val,
+                                                       ext_resp,
+                                                       sizeof(ext_resp),
+                                                       &server_bits);
+      if (!ext_len)
+        continue;
+      fio_http_response_header_set(
+          h,
+          FIO_STR_INFO2((char *)"sec-websocket-extensions", 24),
+          FIO_STR_INFO2(ext_resp, ext_len));
+      /* Create deflate streaming contexts (stored at connection level,
+       * outside the state union, so they survive the HTTP→WS transition).
+       * Compressor = our writes (server side), Decompressor = client's data.
+       * Both are always reset per message (no-takeover), which keeps
+       * persistent per-connection state ≈ 0. */
+      c->deflate_wr = fio_deflate_new(1, 1);
+      c->deflate_rd = fio_deflate_new(1, 0);
+      fio_deflate_window_bits_set(c->deflate_wr, server_bits);
+      c->deflate_wr_reset = 1; /* server_no_context_takeover (always) */
+      c->deflate_rd_reset = 1; /* client_no_context_takeover (always) */
+      FIO_LOG_DDEBUG2("WebSocket permessage-deflate negotiated "
+                      "(no-context-takeover, server_max_window_bits=%d)",
+                      server_bits);
+      break;
+    }
+  }
+  fio_http_upgrade_websocket(h);
+  return;
+
+refuse_upgrade:
+  c->state.http = old;
+  if (fio_http_send_error_response(h, 403))
+    fio_io_free(c->io);
+  fio_http_free(h);
 }
 
 /* *****************************************************************************
@@ -123637,7 +124493,7 @@ FIO_SFUNC uint16_t fio___websocket_deflate_transform(fio___http_connection_s *c,
       fio_deflate_destroy(c->deflate_rd);
     return 0;
   }
-  const size_t min_cap = 64U * 1024U;
+  const size_t min_cap = 4U * 1024U;
   const size_t ws_max =
       c->settings->ws_max_msg_size ? c->settings->ws_max_msg_size : (size_t)-1;
   size_t clamped = (msg->len < ws_max) ? msg->len : ws_max;
@@ -124011,77 +124867,7 @@ SFUNC void FIO_HTTP_WEBSOCKET_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg) {
 }
 
 /* *****************************************************************************
-EventSource (SSE) Helpers - HTTP Upgraded Connections
-***************************************************************************** */
-
-void fio_http_sse_write___(void); /* IDE Marker */
-/** Writes an SSE message (UTF-8). Fails if connection wasn't upgraded yet. */
-SFUNC int fio_http_sse_write FIO_NOOP(fio_http_s *h,
-                                      fio_http_sse_write_args_s args) {
-  if (!args.data.len || !h || !fio_http_is_sse(h))
-    return -1;
-  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  if (!c || !c->io)
-    return -1;
-  char *payload =
-      fio_bstr_reserve(NULL, args.id.len + args.event.len + args.data.len + 22);
-  if (args.id.len)
-    payload = fio_bstr_write2(payload,
-                              FIO_STRING_WRITE_STR2("id:", 3),
-                              FIO_STRING_WRITE_STR2(args.id.buf, args.id.len),
-                              FIO_STRING_WRITE_STR2("\r\n", 2));
-  if (args.event.len)
-    payload =
-        fio_bstr_write2(payload,
-                        FIO_STRING_WRITE_STR2("event:", 6),
-                        FIO_STRING_WRITE_STR2(args.event.buf, args.event.len),
-                        FIO_STRING_WRITE_STR2("\r\n", 2));
-  { /* separate lines (add "data:" at beginning of each new line) */
-    char *pos;
-    while (args.data.len &&
-           (pos = (char *)FIO_MEMCHR(args.data.buf, '\n', args.data.len))) {
-      const size_t len = (pos + 1) - args.data.buf;
-      pos -= (pos > args.data.buf && pos[-1] == '\r');
-      payload = fio_bstr_write2(
-          payload,
-          FIO_STRING_WRITE_STR2("data:", 5),
-          FIO_STRING_WRITE_STR2(args.data.buf, (size_t)(pos - args.data.buf)),
-          FIO_STRING_WRITE_STR2("\r\n", 2));
-      args.data.buf += len;
-      args.data.len -= len;
-    }
-  }
-  /* write reminder */
-  if (args.data.len)
-    payload =
-        fio_bstr_write2(payload,
-                        FIO_STRING_WRITE_STR2("data:", 5),
-                        FIO_STRING_WRITE_STR2(args.data.buf, args.data.len),
-                        FIO_STRING_WRITE_STR2("\r\n", 2));
-  /* event ends on empty line */
-  payload = fio_bstr_write(payload, "\r\n", 2);
-  fio_io_write2(c->io,
-                .buf = payload,
-                .len = fio_bstr_len(payload),
-                .dealloc = (void (*)(void *))fio_bstr_free);
-  return 0;
-}
-
-/** Optional EventSource subscription callback - messages MUST be UTF-8. */
-SFUNC void FIO_HTTP_SSE_SUBSCRIBE_DIRECT(fio_pubsub_msg_s *msg) {
-  fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(msg->io);
-  if (!c)
-    return;
-  FIO_STR_INFO_TMP_VAR(id_str, 64);
-  fio_string_write_hex(&id_str, NULL, msg->id);
-  fio_http_sse_write(c->h,
-                     .id = FIO_STR2BUF_INFO(id_str),
-                     .event = FIO_STR2BUF_INFO(msg->channel),
-                     .data = FIO_STR2BUF_INFO(msg->message));
-}
-
-/* *****************************************************************************
-WebSocket Writing / Subscription Helpers
+WebSocket Write (`fio_http_websocket_write`)
 ***************************************************************************** */
 
 SFUNC int fio_http_websocket_write(fio_http_s *h,
@@ -124115,13 +124901,21 @@ SFUNC int fio_http_websocket_write(fio_http_s *h,
             tail[3] == 0xFF) {
           comp_len -= 4;
         }
-        send_buf = comp_buf;
-        send_len = comp_len;
-        /* RSV1 (byte-0 bit 6 = 0x40) marks compressed; the write API
-         * takes the 3-bit rsv value shifted into 4..6, so RSV1 = 0x4
-         * (NOT 0x1 — that would set RSV3 and every RFC-compliant peer
-         * closes with protocol error 1002 on an unnegotiated RSV). */
-        rsv = FIO_WEBSOCKET_RSV1;
+        if (comp_len >= len) {
+          /* Negative gain: compression expanded the payload — send the
+           * original uncompressed (RSV1 stays clear) instead. */
+          FIO_MEM_FREE(comp_buf, comp_alloc);
+          comp_buf = NULL;
+          comp_alloc = 0;
+        } else {
+          send_buf = comp_buf;
+          send_len = comp_len;
+          /* RSV1 (byte-0 bit 6 = 0x40) marks compressed; the write API
+           * takes the 3-bit rsv value shifted into 4..6, so RSV1 = 0x4
+           * (NOT 0x1 — that would set RSV3 and every RFC-compliant peer
+           * closes with protocol error 1002 on an unnegotiated RSV). */
+          rsv = FIO_WEBSOCKET_RSV1;
+        }
       } else {
         /* Compression failed — fall back to uncompressed. */
         FIO_MEM_FREE(comp_buf, comp_alloc);
@@ -124208,162 +125002,298 @@ FIO_SFUNC void fio___http_controller_ws_write_body(fio_http_s *h,
 }
 
 /* *****************************************************************************
-EventSource / SSE Protocol (TODO!)
+WebSocket Finish
+***************************************************************************** */
+#endif /* FIO_HTTP */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_HTTP               /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+          HTTP Glue - Listen / Connect, Protocol Wiring, Shared Helpers
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if defined(FIO_HTTP) && !defined(FIO___RECURSIVE_INCLUDE) &&                  \
+    !defined(H___FIO_HTTP_GLUE___H) &&                                         \
+    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN))
+#define H___FIO_HTTP_GLUE___H
+
+/* *****************************************************************************
+ALPN Helpers
 ***************************************************************************** */
 
-FIO_SFUNC void fio___sse_consume_data(fio___http_connection_s *c) {
-  FIO_LOG_DEBUG2("SSE data processing:\n%.*s", (int)c->len, c->buf);
-  struct fio___http_connection_sse_s *sse = &c->state.sse;
-  const char *next_line = c->buf;
-  const char *stop = c->buf + c->len;
-  for (; next_line < stop;) {
-    char *line = (char *)next_line;
-    const char *eol =
-        (const char *)FIO_MEMCHR(next_line, '\n', stop - next_line);
-    if (!eol)
-      break;
-    next_line = eol + 1;
-    eol -= (eol > c->buf && eol[-1] == '\n');
-    eol -= (eol > c->buf && eol[-1] == '\r');
-    if (eol == line) { /* empty line, end of input? */
-      if (sse->data || sse->event.buf || sse->id.buf) {
-        sse->on_message(c->h, sse->id, sse->event, fio_bstr_buf(sse->data));
-        fio_bstr_free(sse->data);
-        sse->data = NULL;
-        sse->event = sse->id = FIO_BUF_INFO0;
-      }
-      continue;
-    }
-    if (line[0] == ':') /* comment */
-      continue;
-    const size_t line_len = (size_t)(eol - line);
-    if (line_len > 2 && line[2] == ':') { /* id */
-      const char *start = line + 3;
-      start += (start[0] == ' ' || start[0] == '\t');
-      if ((line[0] |= 32) == 'i' && (line[1] |= 32) == 'd')
-        sse->id = FIO_BUF_INFO2((char *)start, (size_t)(eol - start));
-
-    } else if (line_len > 4 && line[4] == ':') { /* data */
-      const char *start = line + 5;
-      start += (start[0] == ' ' || start[0] == '\t');
-      if ((fio_buf2u32u(line) | 0x20202020U) == fio_buf2u32u("data")) {
-        if (fio_bstr_len(sse->data) + (size_t)(eol - start) >
-            c->settings->ws_max_msg_size)
-          goto breach;
-        sse->data = fio_bstr_write2(
-            sse->data,
-            FIO_STRING_WRITE_STR2("\n", ((size_t) !!sse->data)),
-            FIO_STRING_WRITE_STR2(start, (size_t)(eol - start)));
-      }
-
-    } else if (line_len > 5 && line[5] == ':') { /* event */
-      const char *start = line + 6;
-      start += (start[0] == ' ' || start[0] == '\t');
-      if ((line[0] |= 32) == 'e' &&
-          (fio_buf2u32u(line + 1) | 0x20202020U) == fio_buf2u32u("vent"))
-        sse->event = FIO_BUF_INFO2((char *)start, (size_t)(eol - start));
-
-    } else if (!FIO_MEMCHR(line, ':', line_len))
-      goto error;
-  }
-  FIO_ASSERT(next_line <= stop, "overflow on next line read");
-  if (next_line > stop)
-    next_line = stop;
-  c->len -= next_line - c->buf;
-  if (c->len)
-    FIO_MEMMOVE(c->buf, next_line, c->len);
-  return;
-
-error:
-  FIO_LOG_ERROR("SSE incoming data malformed!");
-  FIO_LOG_DEBUG2("data dump:\n%.*s", (int)c->len, c->buf);
-  fio_io_close(c->io);
-  return;
-
-breach:
-  FIO_LOG_SECURITY("SSE incoming data payload too large!");
-  fio_io_close(c->io);
-}
-
-/** Called when a data is available. */
-FIO_SFUNC void fio___sse_on_data(fio_io_s *io) {
-  FIO_LOG_DDEBUG2("(%d) Reading SSE data from socket", fio_io_pid());
+FIO_SFUNC void fio___http_on_select_h1(fio_io_s *io) {
+  FIO_LOG_DDEBUG2("TLS ALPN HTTP/1.1 selected for %p", io);
   fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(io);
-  size_t r;
-  for (;;) {
-    if (c->len + 2 > c->capa)
-      goto error;
-    if (!(r = fio_io_read(io, c->buf + c->len, c->capa - c->len)))
-      return;
-    c->len += r;
-    fio___sse_consume_data(c);
-  }
-error:
-  FIO_LOG_ERROR("Incoming SSE data too long (HTTP line limit set at %zu)!",
-                c->capa);
-  fio_io_close(io);
+  fio_io_protocol_set(
+      io,
+      &(FIO_PTR_FROM_FIELD(fio___http_protocol_s, settings, c->settings)
+            ->state[FIO___HTTP_PROTOCOL_HTTP1]
+            .protocol));
 }
-
-/** Called when an IO is attached to a protocol. */
-static void fio___sse_on_attach(fio_io_s *io) {
-  fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(io);
-  fio_http_s *h = c->h;
-  c->state.sse = (struct fio___http_connection_sse_s){
-      .on_message = c->settings->on_eventsource,
-      .on_ready = c->settings->on_ready,
-  };
-  c->settings->on_open(h);
-  FIO_LOG_DDEBUG2("(%d) SSE attached; buffer length (unread): %zu",
-                  fio_io_pid(),
-                  c->len);
-  if (c->len && c->is_client)
-    fio___sse_consume_data(c);
-}
-
-FIO_SFUNC void fio___sse_on_timeout(fio_io_s *io) {
-  char buf[32] = ":ping 0x0000000000000000\r\n\r\n";
-  fio_ltoa16u(buf + 8, fio_io_last_tick(), 16);
-  buf[24] = '\r'; /* overwrite written NUL character */
-  fio_io_write(io, buf, 28);
-}
-
-FIO_SFUNC void fio___sse_on_shutdown(fio_io_s *io) {
-  fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(io);
-  c->settings->on_shutdown(c->h);
-}
-
-/** Called after the connection was closed, and pending tasks completed. */
-FIO_SFUNC void fio___sse_on_close(void *buf, void *udata) {
-  fio___http_connection_s *c = (fio___http_connection_s *)udata;
-  FIO_LOG_DDEBUG2("(%d) SSE connection closed for %p", fio_io_pid(), c->io);
-  c->io = NULL;
-  fio_bstr_free(c->state.sse.data);
-  if (c->h) {
-    c->settings->on_close(c->h);
-    c->settings->on_finish(c->h);
-    fio_http_free(c->h);
-  }
-  fio___http_connection_free(c);
-  (void)buf;
+FIO_SFUNC void fio___http_on_select_h2(fio_io_s *io) {
+  FIO_LOG_ERROR("TLS ALPN HTTP/2 not supported for %p", io);
+  (void)io;
 }
 
 /* *****************************************************************************
-EventSource / SSE Controller (TODO!)
+HTTP Listen
 ***************************************************************************** */
 
-/* called by the HTTP handle for each body chunk (or to finish a response. */
-FIO_SFUNC void fio___http_controller_sse_write_body(
-    fio_http_s *h,
-    fio_http_write_args_s args) {
-  fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
-  if (args.buf && args.len) {
-    fio_http_sse_write(c->h, .data = FIO_BUF_INFO2((char *)args.buf, args.len));
-  }
-  if (args.dealloc && args.buf)
-    args.dealloc((void *)args.buf);
-  if (!args.buf && (unsigned)(args.fd + 1) > 1)
-    close(args.fd);
+static void fio___http_listen_on_start(fio_io_protocol_s *protocol, void *u) {
+  (void)u;
+  fio___http_protocol_s *p =
+      FIO_PTR_FROM_FIELD(fio___http_protocol_s,
+                         state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
+                         protocol);
+  p->queue = ((p->settings.queue && p->settings.queue->q) ? p->settings.queue->q
+                                                          : fio_io_queue());
 }
+
+static void fio___http_listen_on_stop(fio_io_protocol_s *p, void *u) {
+  (void)u;
+  fio___http_protocol_free(
+      FIO_PTR_FROM_FIELD(fio___http_protocol_s,
+                         state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
+                         p));
+}
+
+void fio_http_listen___(void); /* IDE marker */
+SFUNC fio_http_listener_s *fio_http_listen FIO_NOOP(const char *url,
+                                                    fio_http_settings_s s) {
+  fio___http_settings_validate(&s, 0);
+  if (url) {
+    fio_url_s u = fio_url_parse(url, FIO_STRLEN(url));
+    if (u.path.len)
+      FIO_LOG_WARNING(
+          "HTTP listener is always at the root (home folder).\n\t"
+          "  Ignoring the path set in the listening instruction: %.*s",
+          (int)u.path.len,
+          u.path.buf);
+  }
+  fio___http_protocol_s *p = fio___http_protocol_new(s.public_folder.len + 1);
+  fio___http_protocol_init(p, url, s, 0);
+  fio_http_listener_s *listener = (fio_http_listener_s *)
+      fio_io_listen(.url = url,
+                    .protocol = &p->state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
+                    .tls = s.tls,
+                    .on_start = fio___http_listen_on_start,
+                    .on_stop = fio___http_listen_on_stop,
+                    .queue_for_accept = p->settings.queue);
+  return listener;
+}
+
+/** Returns the a pointer to the HTTP settings associated with the listener. */
+SFUNC fio_http_settings_s *fio_http_listener_settings(fio_http_listener_s *l) {
+  fio___http_protocol_s *p =
+      FIO_PTR_FROM_FIELD(fio___http_protocol_s,
+                         state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
+                         fio_io_listener_protocol((fio_io_listener_s *)l));
+  return &p->settings;
+}
+
+/* *****************************************************************************
+HTTP Connect
+***************************************************************************** */
+
+static void fio___http_connect_on_failed(fio_io_protocol_s *p, void *udata) {
+  fio___http_connection_s *c = (fio___http_connection_s *)udata;
+  fio_http_free(c->h);
+  c->h = NULL;
+  fio___http_connection_free(c);
+  (void)p;
+}
+
+void fio_http_connect___(void); /* IDE Marker */
+/** Connects to HTTP / WebSockets / SSE connections on `url`. */
+SFUNC fio_io_s *fio_http_connect FIO_NOOP(const char *url,
+                                          fio_http_s *h,
+                                          fio_http_settings_s s) {
+  FIO_STR_INFO_TMP_VAR(origin, 4096);
+  fio___http_settings_validate(&s, 1);
+  fio_url_s u = (fio_url_s){0};
+  if (url)
+    u = fio_url_parse(url, strlen(url));
+
+  if (!h)
+    h = fio_http_new();
+  if (!fio_http_path(h).len)
+    fio_http_path_set(h,
+                      u.path.len ? FIO_BUF2STR_INFO(u.path)
+                                 : FIO_STR_INFO2((char *)"/", 1));
+  if (!fio_http_query(h).len && u.query.len)
+    fio_http_query_set(h, FIO_BUF2STR_INFO(u.query));
+  if (!fio_http_method(h).len)
+    fio_http_method_set(h, FIO_STR_INFO2((char *)"GET", 3));
+  if (u.host.len) {
+    fio_http_request_header_set_if_missing(h,
+                                           FIO_STR_INFO2((char *)"host", 4),
+                                           FIO_BUF2STR_INFO(u.host));
+    /* Origin header */
+    fio_string_write2(
+        &origin,
+        NULL,
+        FIO_STRING_WRITE_STR2("https", (size_t)(4 + fio_url_is_tls(u).tls)),
+        FIO_STRING_WRITE_STR2("://", 3U),
+        FIO_STRING_WRITE_STR_INFO(u.host),
+        FIO_STRING_WRITE_STR2(":", (size_t)(!!u.port.len)),
+        FIO_STRING_WRITE_STR_INFO(u.port));
+  }
+
+  /* test for ws:// or wss:// - WebSocket scheme */
+  if ((u.scheme.len == 2 ||
+       (u.scheme.len == 3 && ((u.scheme.buf[2] | 0x20) == 's'))) &&
+      (fio_buf2u16u(u.scheme.buf) | 0x2020) == fio_buf2u16u("ws")) {
+    fio_http_request_header_set_if_missing(h,
+                                           FIO_STR_INFO2((char *)"origin", 6),
+                                           origin);
+    fio_http_websocket_set_request(h);
+  }
+  /* test for sse:// or sses:// - Server Sent Events scheme */
+  else if ((u.scheme.len == 3 ||
+            (u.scheme.len == 4 && ((u.scheme.buf[3] | 0x20) == 's'))) &&
+           (fio_buf2u32u(u.scheme.buf) | fio_buf2u32u("\x20\x20\x20\xFF")) ==
+               fio_buf2u32u("sse\xFF")) {
+    fio_http_request_header_set_if_missing(h,
+                                           FIO_STR_INFO2((char *)"origin", 6),
+                                           origin);
+    fio_http_sse_set_request(h);
+  }
+
+  /* TODO: test for and attempt to re-use connection */
+  // if (fio_http_cdata(h)) { }
+
+  fio___http_protocol_s *p = fio___http_protocol_new(u.host.len);
+  fio___http_protocol_init(p, url, s, 1);
+  fio___http_connection_s *c =
+      fio___http_connection_new(p->settings.max_line_len);
+  FIO_ASSERT_ALLOC(c);
+  *c = (fio___http_connection_s){
+      .io = NULL,
+      .h = h,
+      .settings = &(p->settings),
+      .queue = p->queue,
+      .udata = p->settings.udata,
+      .state.http =
+          {
+              .on_http_callback = p->on_http_callback,
+              .on_http = p->settings.on_http,
+              .on_finish = p->settings.on_finish,
+              .max_header = p->settings.max_header_size,
+              .max_line = p->settings.max_line_len,
+          },
+      .capa = p->settings.max_line_len,
+      .log = p->settings.log,
+      .is_client = 1,
+  };
+  fio_http_controller_set(h, &p->state[FIO___HTTP_PROTOCOL_HTTP1].controller);
+  if (!fio_http_udata(h)) /* avoid overwriting existing `udata` if set */
+    fio_http_udata_set(h, c->udata);
+  fio_http_cdata_set(h, fio___http_connection_dup(c));
+  return fio_io_connect(url,
+                        .protocol =
+                            &p->state[FIO___HTTP_PROTOCOL_HTTP1].protocol,
+                        .on_failed = fio___http_connect_on_failed,
+                        .udata = c,
+                        .tls = s.tls,
+                        .timeout = s.connect_timeout);
+}
+
+/* *****************************************************************************
+HTTP WebSocket Connect (client convenience wrapper)
+***************************************************************************** */
+
+/**
+ * Internal: ensures `url` carries a WebSocket scheme, writing a rewritten
+ * URL into `tmp` when required. Returns either `url` (unchanged) or
+ * `tmp->buf`.
+ *
+ * Rules: `ws://` / `wss://` pass through unchanged; `http://` becomes
+ * `ws://`; `https://` becomes `wss://`; a URL with no scheme (no `://`)
+ * is prefixed with `ws://`. Any other scheme passes through unchanged.
+ */
+FIO_IFUNC const char *fio___http_websocket_normalize_url(const char *url,
+                                                         fio_str_info_s *tmp) {
+  const char *sep = strstr(url, "://");
+  if (!sep) {
+    /* no scheme present - prepend "ws://" */
+    fio_string_write2(tmp,
+                      NULL,
+                      FIO_STRING_WRITE_STR2("ws://", 5),
+                      FIO_STRING_WRITE_STR2(url, FIO_STRLEN(url)));
+    return tmp->buf;
+  }
+  const size_t scheme_len = (size_t)(sep - url);
+  const uint32_t scheme4 =
+      (scheme_len >= 4 ? (fio_buf2u32u(url) | (uint32_t)0x20202020UL) : 0UL);
+  if (scheme4 == fio_buf2u32u("http") &&
+      (scheme_len == 4 || (scheme_len == 5 && ((url[4] | 0x20) == 's')))) {
+    /* http(s):// -> ws(s):// */
+    fio_string_write2(tmp,
+                      NULL,
+                      FIO_STRING_WRITE_STR2("ws", 2),
+                      FIO_STRING_WRITE_STR2("s", (size_t)(scheme_len == 5)),
+                      FIO_STRING_WRITE_STR2(sep, FIO_STRLEN(sep)));
+    return tmp->buf;
+  }
+  /* ws://, wss:// and any other scheme pass through unchanged */
+  return url;
+}
+
+void fio_http_websocket_connect___(void); /* IDE Marker */
+/**
+ * Connects to a WebSocket server on `url`.
+ *
+ * A convenience wrapper around `fio_http_connect` that ensures a `ws://` or
+ * `wss://` scheme is used in the URL (`http://` becomes `ws://`, `https://`
+ * becomes `wss://`, a missing scheme defaults to `ws://`). The WebSocket
+ * upgrade request / response is handled automatically by the underlying
+ * `fio_http_connect`: on acceptance (101) the connection switches to the
+ * WebSocket callbacks (`on_open` / `on_message` / `on_close`), otherwise
+ * the response is routed to `settings.on_http`.
+ */
+SFUNC fio_io_s *fio_http_websocket_connect FIO_NOOP(const char *url,
+                                                    fio_http_s *h,
+                                                    fio_http_settings_s s) {
+  FIO_STR_INFO_TMP_VAR(nurl, 4096);
+  if (url)
+    url = fio___http_websocket_normalize_url(url, &nurl);
+  return fio_http_connect FIO_NOOP(url, h, s);
+}
+
+/* *****************************************************************************
+HTTP/2 Protocol (disconnect, as HTTP/2 is unsupported)
+***************************************************************************** */
+
+// /** Called when an IO is attached to a protocol. */
+// void (*on_attach)(fio_io_s *io);
+// /** Called when a data is available. */
+// void (*on_data)(fio_io_s *io);
+// /** called once all pending `fio_io_write` calls are finished. */
+// void (*on_ready)(fio_io_s *io);
+// /** Called after the connection was closed, and pending tasks
+// completed.
+// */ void (*on_close)(void *udata);
+
+/* *****************************************************************************
+HTTP/2 Controller (TODO!)
+***************************************************************************** */
+
+// /** Called when an HTTP handle is freed. */
+// void (*on_destroyed)(fio_http_s *h, void *cdata);
+// /** Informs the controller that request / response headers must be
+// sent.
+// */ void (*send_headers)(fio_http_s *h);
+// /** called by the HTTP handle for each body chunk (or to finish a
+// response.
+// */ void (*write_body)(fio_http_s *h, fio_http_write_args_s args);
+// /** called once a request / response had finished */
+// void (*on_finish)(fio_http_s *h);
+
 /* *****************************************************************************
 Connection Lost
 ***************************************************************************** */
@@ -124659,12 +125589,29 @@ SFUNC fio_http_settings_s *fio_http_settings(fio_http_s *h) {
 }
 
 /* *****************************************************************************
-Cleanup
+HTTP Glue Finish
 ***************************************************************************** */
-
-#endif /* FIO_EXTERN_COMPLETE */
-#undef FIO_HTTP
 #endif /* FIO_HTTP */
+/* ************************************************************************* */
+#if !defined(FIO_INCLUDE_FILE) /* Dev test - ignore line */
+#define FIO___DEV___           /* Development inclusion - ignore line */
+#define FIO_HTTP               /* Development inclusion - ignore line */
+#include "./include.h"         /* Development inclusion - ignore line */
+#endif                         /* Development inclusion - ignore line */
+/* *****************************************************************************
+
+                  HTTP Implementation for FIO_SERVER
+
+This file is the HTTP module's cleanup unit. Its tail is the ONLY
+`#undef FIO_HTTP` site in the module: during recursive (template) inclusion it
+evicts stale preprocessor state so the HTTP module content is skipped exactly
+once per template instantiation pass.
+
+Copyright and License: see header file (000 copyright.h) or top of file
+***************************************************************************** */
+#if !defined(FIO___RECURSIVE_INCLUDE) && defined(FIO_HTTP)
+#undef FIO_HTTP
+#endif
 /* *****************************************************************************
 
 
@@ -124810,6 +125757,9 @@ Recursive inclusion / cleanup
 #ifdef FIO_FILES
 #include "004 files.h"
 #endif
+#if defined(FIO_HTTP1_PARSER) && !defined(FIO___RECURSIVE_INCLUDE)
+#include "004 http1 parser.h"
+#endif
 #ifdef FIO_JSON
 #include "004 json.h"
 #endif
@@ -124830,6 +125780,9 @@ Recursive inclusion / cleanup
 #endif
 #ifdef FIO_MULTIPART
 #include "004 multipart.h"
+#endif
+#if defined(FIO_WEBSOCKET_PARSER) && !defined(FIO___RECURSIVE_INCLUDE)
+#include "004 websocket parser.h"
 #endif
 #if defined(FIO_CLI) && !defined(FIO___RECURSIVE_INCLUDE)
 #include "005 cli.h"
@@ -124993,18 +125946,14 @@ Recursive inclusion / cleanup
 #include "422 redis.h"
 #endif
 
-#if defined(FIO_HTTP1_PARSER) && !defined(FIO___RECURSIVE_INCLUDE)
-#include "431 http1 parser.h"
-#endif
-#if defined(FIO_WEBSOCKET_PARSER) && !defined(FIO___RECURSIVE_INCLUDE)
-#include "431 websocket parser.h"
-#endif
-
-#if defined(FIO_HTTP_HANDLE) && !defined(FIO___RECURSIVE_INCLUDE)
-#include "431 http handle.h"
-#endif
-
 #if defined(FIO_HTTP) && !defined(FIO___RECURSIVE_INCLUDE)
+#include "430 http api.h"
+#include "432 http types.h"
+#include "434 http accept.h"
+#include "434 http1.h"
+#include "434 sse.h"
+#include "434 websocket.h"
+#include "438 http.h"
 #include "439 http.h"
 #endif
 

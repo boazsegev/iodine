@@ -52,6 +52,7 @@ This module is the heart of Iodine's connection handling. It manages:
 - `read([maxlen], [out_string])` - Read body data
 - `gets([limit])` - Read line from body
 - `seek(pos)` / `rewind` - Seek in body
+- `close_body` - Release body resources (frees buffer / temporary file)
 
 ### Network Information
 
@@ -812,6 +813,14 @@ FIO_SFUNC VALUE iodine_connection_body_seek(int argc, VALUE *argv, VALUE o) {
   iodine_rb2c_arg(argc, argv, IODINE_ARG_NUM(pos, 0, "pos", 0));
   pos = (long long)fio_http_body_seek(c->http, (ssize_t)pos);
   return ULL2NUM(pos);
+}
+
+FIO_SFUNC VALUE iodine_connection_body_close(VALUE o) {
+  iodine_connection_s *c = iodine_connection_ptr(o);
+  if (!c->http)
+    return Qnil;
+  fio_http_body_close(c->http);
+  return o;
 }
 
 /* *****************************************************************************
@@ -1977,7 +1986,9 @@ FIO_IFUNC VALUE iodine_connection_subscribe_internal(fio_io_s *io,
                        .filter = (int16_t)filter,
                        .channel = channel,
                        .udata = (void *)proc,
-                       .queue = fio_io_async_queue(&IODINE_THREAD_POOL),
+                       .queue = (!proc || (proc == Qnil)
+                                     ? NULL
+                                     : fio_io_async_queue(&IODINE_THREAD_POOL)),
                        .on_message = (!proc || (proc == Qnil)
                                           ? NULL
                                           : iodine_connection_on_pubsub),
@@ -2045,6 +2056,8 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
               .timeout = (uint8_t)fio_cli_get_i("-k"),
               .ws_timeout = (uint8_t)fio_cli_get_i("-ping"),
               .sse_timeout = (uint8_t)fio_cli_get_i("-ping"),
+              .compress_static = fio_cli_get_bool("-no-dynd"),
+              .compress_ws = fio_cli_get_bool("-no-wsd"),
               .log = fio_cli_get_bool("-v"),
           },
   };
@@ -2066,11 +2079,16 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
       IODINE_ARG_U8(r.settings.timeout, 0, "timeout", 0),
       IODINE_ARG_U8(r.settings.ws_timeout, 0, "ping", 0),
       IODINE_ARG_U8(r.settings.log, 0, "log", 0),
+      IODINE_ARG_U8(r.settings.compress_static, 0, "no-dynamic_deflate", 0),
+      IODINE_ARG_U8(r.settings.compress_ws, 0, "no-websocket_deflate", 0),
       IODINE_ARG_BUF(r.method, 0, "method", 0),
       IODINE_ARG_RB(r.headers, 0, "headers", 0),
       IODINE_ARG_BUF(r.body, 0, "body", 0),
       IODINE_ARG_RB(r.cookies, 0, "cookies", 0),
       IODINE_ARG_PROC(proc, 0, "block", 0));
+  r.settings.compress_dynamic = r.settings.compress_static =
+      !r.settings.compress_static;
+  r.settings.compress_ws = !r.settings.compress_ws;
   r.settings.udata = (void *)handler_tmp;
   /* test for errors before allocating or protecting data */
 
@@ -2370,6 +2388,8 @@ static VALUE iodine_connection_close(VALUE self) {
       /* avoid `rack.input` call to `close` closing the HTTP connection. */
       if (fio_http_is_upgraded(c->http))
         fio_http_close(c->http);
+      else /* this is an `env['rack.input'].close` call */
+        fio_http_body_close(c->http);
     } else if (c->io)
       fio_io_close(c->io);
     c->flags |= IODINE_CONNECTION_CLOSED;
@@ -3221,8 +3241,6 @@ static void Init_Iodine_Connection(void)  {
 
   IODINE_CONST_ID_STORE(IODINE_TIMEOUT_ID, "TIMEOUT");
 
-
-
 /* cache VALUE for `env` key */
 #define IODINE_CONST_RACK_STORE(val, str)                                     \
   val = STORE.frozen_str(FIO_STR_INFO1((char *)str));                         \
@@ -3286,6 +3304,7 @@ static void Init_Iodine_Connection(void)  {
   rb_define_method(m, "read", iodine_connection_body_read, -1);
   rb_define_method(m, "seek", iodine_connection_body_seek, -1);
   rb_define_method(m, "rewind", iodine_connection_body_seek, -1);
+  rb_define_method(m, "close_body", iodine_connection_body_close, 0);
 
   rb_define_method(m, "open?", iodine_connection_is_open, 0);
   rb_define_method(m, "pending", iodine_connection_pending, 0);

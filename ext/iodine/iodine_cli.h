@@ -208,9 +208,13 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
                                     "(0..255)"),
       FIO_CLI_INT("--max-age -maxage (3600) default Max-Age header value for "
                   "static files."),
+      FIO_CLI_BOOL("--no-dynamic-deflate -no-dynd Disable dynamic deflation of "
+                   "HTTP replies."),
       FIO_CLI_BOOL("--log -v log HTTP messages."),
 
       FIO_CLI_PRINT_HEADER("WebSocket / SSE"),
+      FIO_CLI_BOOL("--no-websocket-deflate -no-wsd Disable WebSocket "
+                   "permessage-deflate."),
       FIO_CLI_INT("--ws-max-msg -maxms (" FIO_MACRO2STR(
           FIO_HTTP_DEFAULT_WS_MAX_MSG_SIZE) ") incoming WebSocket message "
                                             "limit, in bytes."),
@@ -295,6 +299,12 @@ static VALUE iodine_cli_parse(VALUE self, VALUE required) {
   }
 
   /* Clustering */
+  if (!fio_cli_get_i("-bp") && fio_sys_env("PUBSUB_PORT")) {
+    char *bp_s = fio_sys_env("PUBSUB_PORT");
+    int64_t bp = fio_atol(&bp_s);
+    if (bp > 0 && bp < 0xFFFFLL)
+      fio_cli_set("-bp", fio_sys_env("PUBSUB_PORT"));
+  }
   if (fio_cli_get_i("-bp") > 0) {
     fio_ipc_cluster_listen((uint16_t)fio_cli_get_i("-bp"));
   }

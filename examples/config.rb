@@ -1,12 +1,14 @@
 # This is an example configuration file
 #
-# When hot code swapping is enabled, only the configuration file will run code on the root (master) process.
+# The configuration file will run code before loading the application.
+#
+# When hot swapping, the configuration file code will remain in memory (will be forked), but the application code will reload.
 
 module MyConfig
 	def self.timer
 		# a false return value will cancel the timer.
 		return false unless Iodine.master?
-		puts("Heat Beat")
+		puts("Heart Beat")
 	end
 end
 

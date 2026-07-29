@@ -59,11 +59,6 @@ typedef pthread_cond_t fio_thread_cond_t;
 
 #include FIO_INCLUDE_FILE
 
-/* Include Redis module (requires FIOBJ types from FIO_EVERYTHING) */
-#define FIO_REDIS
-#define FIO_FIOBJ
-#include FIO_INCLUDE_FILE
-
 #ifndef DEBUG
 #endif
 
