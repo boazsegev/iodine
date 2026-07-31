@@ -15993,6 +15993,18 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#if !FIO_OS_WIN
+#include <dirent.h>
+#endif
+
+/**
+ * Stack buffer capacity used for path manipulation (`"~/"` expansion, folder
+ * tree walking / creation). Path operations that exceed this fail with
+ * `errno == ENAMETOOLONG`. Guarantees at least ~4KB (`PATH_MAX | 4094`).
+ */
+#ifndef FIO_FILENAME_PATH_CAPA
+#define FIO_FILENAME_PATH_CAPA (PATH_MAX | 4094)
+#endif
 
 /* *****************************************************************************
 File Helper API
@@ -16003,6 +16015,9 @@ File Helper API
  *
  * If `path` starts with a `"~/"` than it will be relative to the user's home
  * folder (on Windows, testing for `"~\"`).
+ *
+ * Uses a fixed size stack buffer (zero allocations); over-long paths fail
+ * with `errno == ENAMETOOLONG` (see `FIO_FILENAME_PATH_CAPA`).
  */
 SFUNC int fio_filename_open(const char *filename, int flags);
 
@@ -16014,6 +16029,61 @@ SFUNC int fio_filename_is_unsafe_url(const char *path);
 
 /** Creates a temporary file, returning its file descriptor. */
 SFUNC int fio_filename_tmp(void);
+
+/** Arguments for `fio_filename_remove`. */
+typedef struct {
+  /** The path of the file / folder to remove. */
+  const char *path;
+  /** Set to allow the removal of an (empty) folder. */
+  uint8_t folder;
+  /** Set to remove a folder and all of its content (implies `folder`). */
+  uint8_t recursive;
+} fio_filename_remove_args_s;
+
+/**
+ * Removes the file / link or folder at `path`.
+ *
+ * * By default (no flags), removes a file / link (like `unlink`).
+ * * With `folder` set, removes an empty folder (like `rmdir`).
+ * * With `recursive` set (implies `folder`), removes a folder and all of its
+ *   content (like `rm -r`). If `path` isn't a folder, the `recursive` flag
+ *   is ignored and `path` is removed as a file / link.
+ *
+ * Links are removed, never followed into.
+ *
+ * Uses a fixed size stack buffer (zero allocations); over-long paths fail
+ * with `errno == ENAMETOOLONG` (see `FIO_FILENAME_PATH_CAPA`).
+ *
+ * Returns 0 on success and -1 on error. Recursive removal stops on the first
+ * error (some content may remain).
+ */
+SFUNC int fio_filename_remove(fio_filename_remove_args_s args);
+#define fio_filename_remove(...)                                               \
+  fio_filename_remove((fio_filename_remove_args_s){__VA_ARGS__})
+
+/** Arguments for `fio_filename_make_path`. */
+typedef struct {
+  /** The folder path to create (nested folders allowed). */
+  const char *path;
+  /** The creation mode (POSIX only); zero (0) defaults to 0755. */
+  uint32_t mode;
+} fio_filename_make_path_args_s;
+
+/**
+ * Creates the folder at `path`, including any missing parent folders
+ * (similar to `mkdir -p`).
+ *
+ * An existing folder is NOT an error. A non-folder component along the way IS
+ * an error (`errno == ENOTDIR`).
+ *
+ * Uses a fixed size stack buffer (zero allocations); over-long paths fail
+ * with `errno == ENAMETOOLONG` (see `FIO_FILENAME_PATH_CAPA`).
+ *
+ * Returns 0 on success and -1 on error.
+ */
+SFUNC int fio_filename_make_path(fio_filename_make_path_args_s args);
+#define fio_filename_make_path(...)                                            \
+  fio_filename_make_path((fio_filename_make_path_args_s){__VA_ARGS__})
 
 /**
  * Overwrites `filename` with the data in the buffer.
@@ -16124,6 +16194,15 @@ SFUNC size_t fio_fd_find_next(int fd, char token, size_t start_at);
 /* *****************************************************************************
 File Helper Inline Implementation
 ***************************************************************************** */
+
+/** Tests if `c` is a folder separator (on Windows both `/` and `\`). */
+FIO_IFUNC int fio___filename_is_sep(const char c) {
+#if FIO_OS_WIN
+  return (c == '\\' || c == '/');
+#else
+  return (c == '/');
+#endif
+}
 
 /**
  * Writes data to a file, returning the number of bytes written.
@@ -16305,63 +16384,55 @@ File Helper Implementation
  * folder (on Windows, testing for `"~\"`).
  */
 SFUNC int fio_filename_open(const char *filename, int flags) {
-  int fd = -1;
   /* POSIX implementations. */
   if (filename == NULL)
-    return fd;
-  char *path = NULL;
-  size_t path_len = 0;
-
-  if (filename[0] == '~' &&
-      (filename[1] == FIO_FOLDER_SEPARATOR || filename[1] == '/')) {
-    char *home = fio_sys_env("HOME");
-    if (home) {
-      size_t filename_len = FIO_STRLEN(filename);
-      size_t home_len = FIO_STRLEN(home);
-      if ((home_len + filename_len) >= (1 << 16)) {
-        /* too long */
-        FIO_LOG_ERROR("couldn't open file, as filename is too long %.*s...",
-                      (int)16,
-                      (filename_len >= 16 ? filename : home));
-        return fd;
-      }
-      if (home[home_len - 1] == FIO_FOLDER_SEPARATOR ||
-          home[home_len - 1] == '/')
-        --home_len;
-      path_len = home_len + filename_len - 1;
-      path =
-          (char *)FIO_MEM_REALLOC_(NULL, 0, sizeof(*path) * (path_len + 1), 0);
-      if (!path)
-        return fd;
-      FIO_MEMCPY(path, home, home_len);
-      FIO_MEMCPY(path + home_len, filename + 1, filename_len);
-      path[path_len] = 0;
-      filename = path;
-    }
+    return -1;
+  if (filename[0] != '~' ||
+      (filename[1] != FIO_FOLDER_SEPARATOR && filename[1] != '/'))
+    return open(filename, flags, (S_IWUSR | S_IRUSR));
+  /* expand "~/" relative to the user's home folder */
+  char *home = fio_sys_env("HOME");
+  if (!home)
+    return open(filename, flags, (S_IWUSR | S_IRUSR));
+  FIO_STR_INFO_TMP_VAR(path, FIO_FILENAME_PATH_CAPA);
+  const size_t filename_len = FIO_STRLEN(filename);
+  size_t home_len = FIO_STRLEN(home);
+  if (home_len &&
+      (home[home_len - 1] == FIO_FOLDER_SEPARATOR || home[home_len - 1] == '/'))
+    --home_len;
+  if (home_len + filename_len - 1 >= path.capa) {
+    /* too long */
+    errno = ENAMETOOLONG;
+    FIO_LOG_ERROR("couldn't open file, as filename is too long %.*s...",
+                  (int)16,
+                  (filename_len >= 16 ? filename : home));
+    return -1;
   }
-  fd = open(filename, flags, (S_IWUSR | S_IRUSR));
-  if (path) {
-    FIO_MEM_FREE_(path, path_len + 1);
-  }
-  return fd;
+  FIO_MEMCPY(path.buf, home, home_len);
+  FIO_MEMCPY(path.buf + home_len, filename + 1, filename_len);
+  path.buf[home_len + filename_len - 1] = 0;
+  return open(path.buf, flags, (S_IWUSR | S_IRUSR));
 }
 
 /** Returns 1 if `path` possibly folds backwards (has "/../", "/..", "//"). */
-static int fio___filename_is_unsafe_sep(const char *path, const char sep) {
+FIO_IFUNC int fio___filename_is_unsafe_sep(const char *path,
+                                           const char sep1,
+                                           const char sep2) {
   if (!path) /* no file is a safe file, nothing to do */
     return 0;
   /* Check for leading "../" which escapes the base directory */
-  if (path[0] == '.' && path[1] == '.' && (path[2] == sep || path[2] == '\0'))
+  if (path[0] == '.' && path[1] == '.' &&
+      (path[2] == sep1 || path[2] == sep2 || path[2] == '\0'))
     return 1;
   /* Scan through path looking for problematic patterns */
   while (*path) {
-    if (path[0] == sep) {
+    if (path[0] == sep1 || path[0] == sep2) {
       /* Check for "//" (double separator, potential path confusion) */
-      if (path[1] == sep)
+      if (path[1] == sep1 || path[1] == sep2)
         return 1;
       /* Check for "/../" or "/.." at end (path traversal) */
       if (path[1] == '.' && path[2] == '.' &&
-          (path[3] == sep || path[3] == '\0'))
+          (path[3] == sep1 || path[3] == sep2 || path[3] == '\0'))
         return 1;
     }
     ++path;
@@ -16371,16 +16442,14 @@ static int fio___filename_is_unsafe_sep(const char *path, const char sep) {
 
 /** Returns 1 if `path` does folds backwards (has "/../" or "//"). */
 SFUNC int fio_filename_is_unsafe(const char *path) {
-#if FIO_OS_WIN
-  return fio___filename_is_unsafe_sep(path, '\\');
-#else
-  return fio___filename_is_unsafe_sep(path, '/');
-#endif
+  return fio___filename_is_unsafe_sep(path,
+                                      FIO_FOLDER_SEPARATOR,
+                                      FIO_FOLDER_SEPARATOR);
 }
 
 /** Returns 1 if `path` does folds backwards (has "/../" or "//"). */
 SFUNC int fio_filename_is_unsafe_url(const char *path) {
-  return fio___filename_is_unsafe_sep(path, '/');
+  return fio___filename_is_unsafe_sep(path, '/', FIO_FOLDER_SEPARATOR);
 }
 
 /** Creates a temporary file, returning its file descriptor. */
@@ -16423,6 +16492,234 @@ SFUNC int fio_filename_tmp(void) {
   } while (fd == -1 && errno == EEXIST);
   return fd;
   (void)tmp;
+}
+
+/* *****************************************************************************
+Filename Removal Implementation
+***************************************************************************** */
+
+#if FIO_OS_WIN
+/** Removes a file / link (no flags) or an empty folder (`folder` flag). */
+FIO_SFUNC int fio___filename_remove_simple(const char *path, int folder) {
+  if (folder)
+    return RemoveDirectoryA(path) ? 0 : -1;
+  return DeleteFileA(path) ? 0 : -1;
+}
+#else
+/** Removes a file / link (no flags) or an empty folder (`folder` flag). */
+FIO_SFUNC int fio___filename_remove_simple(const char *path, int folder) {
+  if (folder)
+    return rmdir(path);
+  return unlink(path);
+}
+#endif
+
+/**
+ * Removes all content within the folder at `path` (not the folder itself).
+ *
+ * `path` must be mutable, `len` its current length and `capa` its capacity.
+ */
+FIO_SFUNC int fio___filename_remove_content(char *path,
+                                            size_t len,
+                                            size_t capa) {
+  int r = -1;
+#if FIO_OS_WIN
+  if (len + 3 >= capa) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  path[len] = FIO_FOLDER_SEPARATOR;
+  path[len + 1] = '*';
+  path[len + 2] = 0;
+  WIN32_FIND_DATAA fdata;
+  HANDLE h = FindFirstFileA(path, &fdata);
+  if (h == INVALID_HANDLE_VALUE)
+    return -1;
+  do {
+    if (fdata.cFileName[0] == '.' &&
+        (!fdata.cFileName[1] ||
+         (fdata.cFileName[1] == '.' && !fdata.cFileName[2])))
+      continue;
+    const size_t name_len = FIO_STRLEN(fdata.cFileName);
+    if (len + 1 + name_len + 1 >= capa) {
+      errno = ENAMETOOLONG;
+      goto done;
+    }
+    path[len] = FIO_FOLDER_SEPARATOR;
+    FIO_MEMCPY(path + len + 1, fdata.cFileName, name_len + 1);
+    if ((fdata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+        !(fdata.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+      if (fio___filename_remove_content(path, len + 1 + name_len, capa))
+        goto done;
+      path[len + 1 + name_len] = 0;
+      if (!RemoveDirectoryA(path))
+        goto done;
+    } else if ((fdata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                   ? !RemoveDirectoryA(
+                         path) /* links are removed, not followed */
+                   : !DeleteFileA(path)) {
+      goto done;
+    }
+  } while (FindNextFileA(h, &fdata));
+  r = 0;
+done:
+  FindClose(h);
+  path[len] = 0;
+  return r;
+#else
+  DIR *d = opendir(path);
+  if (!d)
+    return -1;
+  struct dirent *ent;
+  while ((ent = readdir(d))) {
+    if (ent->d_name[0] == '.' &&
+        (!ent->d_name[1] || (ent->d_name[1] == '.' && !ent->d_name[2])))
+      continue;
+    const size_t name_len = FIO_STRLEN(ent->d_name);
+    if (len + 1 + name_len + 1 >= capa) {
+      errno = ENAMETOOLONG;
+      goto done;
+    }
+    path[len] = FIO_FOLDER_SEPARATOR;
+    FIO_MEMCPY(path + len + 1, ent->d_name, name_len + 1);
+    struct stat stt;
+    if (lstat(path, &stt))
+      goto done;
+    if (S_ISDIR(stt.st_mode)) {
+      if (fio___filename_remove_content(path, len + 1 + name_len, capa))
+        goto done;
+      path[len + 1 + name_len] = 0;
+      if (rmdir(path))
+        goto done;
+    } else if (unlink(path)) {
+      goto done;
+    }
+  }
+  r = 0;
+done:
+  closedir(d);
+  path[len] = 0;
+  return r;
+#endif
+}
+
+void fio_filename_remove___(void); /* IDE Marker */
+/** Removes the file / link or folder at `path` (see flags for details). */
+SFUNC int fio_filename_remove FIO_NOOP(fio_filename_remove_args_s args) {
+  if (!args.path || !args.path[0]) {
+    errno = ENOENT;
+    return -1;
+  }
+  if (!args.recursive)
+    return fio___filename_remove_simple(args.path, (int)args.folder);
+  /* recursive removal (`rm -r` like) */
+  FIO_STR_INFO_TMP_VAR(buf, FIO_FILENAME_PATH_CAPA);
+  size_t len = FIO_STRLEN(args.path);
+#if FIO_OS_WIN
+  DWORD attr = GetFileAttributesA(args.path);
+  if (attr == INVALID_FILE_ATTRIBUTES)
+    return -1;
+  if (!(attr & FILE_ATTRIBUTE_DIRECTORY) ||
+      (attr & FILE_ATTRIBUTE_REPARSE_POINT))
+    /* files and links (reparse points) are removed, never followed into */
+    return fio___filename_remove_simple(
+        args.path,
+        (int)(!!(attr & FILE_ATTRIBUTE_DIRECTORY)));
+#else
+  struct stat stt;
+  if (lstat(args.path, &stt))
+    return -1;
+  if (!S_ISDIR(stt.st_mode))
+    return fio___filename_remove_simple(args.path, 0);
+#endif
+  /* trim trailing separators, so sub-paths use exactly one separator */
+  while (len > 1 && fio___filename_is_sep(args.path[len - 1]))
+    --len;
+  if (len + 3 >= buf.capa) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  FIO_MEMCPY(buf.buf, args.path, len);
+  buf.buf[len] = 0;
+  if (fio___filename_remove_content(buf.buf, len, buf.capa))
+    return -1;
+  return fio___filename_remove_simple(args.path, 1);
+}
+
+void fio_filename_make_path___(void); /* IDE Marker */
+/** Creates a single folder; 0 = created, 1 = already exists, -1 = error. */
+FIO_SFUNC int fio___filename_mkdir(const char *path, uint32_t mode) {
+#if FIO_OS_WIN
+  (void)mode;
+  if (CreateDirectoryA(path, NULL))
+    return 0;
+  return (GetLastError() == ERROR_ALREADY_EXISTS) ? 1 : -1;
+#else
+  if (!mkdir(path, (mode_t)mode))
+    return 0;
+  return (errno == EEXIST) ? 1 : -1;
+#endif
+}
+
+/** Creates the folder at `path`, including missing parents (`mkdir -p`). */
+SFUNC int fio_filename_make_path FIO_NOOP(fio_filename_make_path_args_s args) {
+  if (!args.path || !args.path[0]) {
+    errno = ENOENT;
+    return -1;
+  }
+  size_t len = FIO_STRLEN(args.path);
+  while (len > 1 && fio___filename_is_sep(args.path[len - 1]))
+    --len;
+  FIO_STR_INFO_TMP_VAR(buf, FIO_FILENAME_PATH_CAPA);
+  if (len >= buf.capa) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  FIO_MEMCPY(buf.buf, args.path, len);
+  buf.buf[len] = 0;
+  if (!args.mode)
+    args.mode = 0755;
+  /* skip prefixes that can't be created (root, drive, UNC server/share) */
+  size_t start = 0;
+#if FIO_OS_WIN
+  if (len >= 2 && buf.buf[1] == ':') {
+    start = 2; /* drive letter ("C:") */
+  } else if (len >= 2 && fio___filename_is_sep(buf.buf[0]) &&
+             fio___filename_is_sep(buf.buf[1])) {
+    /* UNC path: skip "\\server\share" (and any separator run after each) */
+    size_t i = 2;
+    for (size_t names = 0; i < len && names < 2; ++i) {
+      if (fio___filename_is_sep(buf.buf[i])) {
+        while (i + 1 < len && fio___filename_is_sep(buf.buf[i + 1]))
+          ++i;
+        ++names;
+      }
+    }
+    start = i;
+  }
+#else
+  while (start < len && fio___filename_is_sep(buf.buf[start]))
+    ++start; /* skip root separator(s) */
+#endif
+  if (start >= len)
+    start = len - 1; /* nothing beyond the prefix: create / verify whole */
+  for (size_t i = start + 1; i <= len; ++i) {
+    if (i < len && !fio___filename_is_sep(buf.buf[i]))
+      continue;
+    if (fio___filename_is_sep(buf.buf[i - 1]))
+      continue; /* skip empty component (repeated separators) */
+    /* reached a folder boundary: create buf.buf[0..i) */
+    const char sep = buf.buf[i];
+    buf.buf[i] = 0;
+    int r = fio___filename_mkdir(buf.buf, args.mode);
+    if (r == -1 || (r == 1 && !fio_filename_is_folder(buf.buf))) {
+      if (r == 1)
+        errno = ENOTDIR;
+      return -1;
+    }
+    buf.buf[i] = sep;
+  }
+  return 0;
 }
 
 /** Parses a file name to folder, base name and extension (zero-copy). */
@@ -94637,6 +94934,7 @@ typedef struct FIO_NAME(FIO_ARRAY_NAME, s) {
   /* end common header (with embedded array type) */
   /** The array's capacity - limited to 32bits, but we use the extra padding. */
   uint32_t capa;
+  uint32_t padding__;
   /** a pointer to the array's memory (if not embedded) */
   FIO_ARRAY_TYPE *ary;
 #if FIO_ARRAY_ENABLE_EMBEDDED > 1
@@ -119690,7 +119988,7 @@ FIO_IFUNC void fio___http_cookie_parse_cookie(fio_http_s *h, fio_str_info_s s) {
   while (s.len) {
     fio_str_info_s k = {0}, v = {0};
     /* remove white-space */
-    while ((s.buf[0] == ' ' || s.buf[0] == '\t') && s.len) {
+    while (s.len && (s.buf[0] == ' ' || s.buf[0] == '\t')) {
       ++s.buf;
       --s.len;
     }
@@ -122296,6 +122594,8 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
   rt.len -= ((rt.len > 0) && (fnm.len > 0 && fnm.buf[0] == '/') &&
              (rt.buf[rt.len - 1] == '/' ||
               rt.buf[rt.len - 1] == FIO_FOLDER_SEPARATOR));
+  if (rt.len + fnm.len > 4079)
+    goto file_not_found;
   fio_string_write(&filename, NULL, rt.buf, rt.len);
   fio_string_write_url_dec(&filename, NULL, fnm.buf, fnm.len);
   if (fio_filename_is_unsafe_url(filename.buf))
@@ -122818,7 +123118,7 @@ static fio___http_mime_map_s FIO___HTTP_MIMETYPES;
 SFUNC int fio_http_mimetype_register(char *file_ext,
                                      size_t file_ext_len,
                                      fio_str_info_s mime_type) {
-  fio___http_mime_info_s tmp, *old;
+  fio___http_mime_info_s tmp = {0}, *old;
   if (file_ext_len > 7 || mime_type.len > 117)
     return -1;
   tmp.ext = 0;
@@ -122827,7 +123127,7 @@ SFUNC int fio_http_mimetype_register(char *file_ext,
     goto remove_mime;
   FIO_MEMCPY(&tmp.mime, mime_type.buf, mime_type.len);
   tmp.len = mime_type.len;
-  tmp.mime[mime_type.len] = 0;
+  /* tmp.mime[mime_type.len] = 0; // not required, the whole buffer is zero */
   old = fio___http_mime_map_get(&FIO___HTTP_MIMETYPES, tmp);
   if (old && old->len == tmp.len && !FIO_MEMCMP(old->mime, tmp.mime, tmp.len)) {
     FIO_LOG_WARNING("mime-type collision: %.*s was %s, now %s",

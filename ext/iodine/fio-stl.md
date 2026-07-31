@@ -5325,7 +5325,7 @@ int main(void) {
 #include "fio-stl.h"
 ```
 
-POSIX-style file helpers: open, read, write, size, type, path safety, filename parsing, and temporary files. Nothing fancy — just the usual paperwork. Implemented in [`./004 files.h`](./004%20files.h).
+POSIX-style file helpers: open, read, write, remove, folder creation, size, type, path safety, filename parsing, and temporary files. Nothing fancy — just the usual paperwork. Implemented in [`./004 files.h`](./004%20files.h).
 
 ### Configuration Macros
 
@@ -5338,6 +5338,16 @@ POSIX-style file helpers: open, read, write, size, type, path safety, filename p
 ```
 
 Stack buffer size used by `fio_fd_find_next` for each read cycle. Override before inclusion if you want larger or smaller scans.
+
+#### `FIO_FILENAME_PATH_CAPA`
+
+```c
+#ifndef FIO_FILENAME_PATH_CAPA
+#define FIO_FILENAME_PATH_CAPA (PATH_MAX | 4094)
+#endif
+```
+
+Stack buffer capacity used for path manipulation (`"~/"` expansion in `fio_filename_open`, recursive `fio_filename_remove`, nested `fio_filename_make_path`). These functions allocate nothing — paths longer than this fail with `errno == ENAMETOOLONG`. The default guarantees at least ~4KB.
 
 ### Types
 
@@ -5417,6 +5427,8 @@ Opens `filename` with POSIX `open` semantics. If `filename` starts with `"~/"` (
 
 **Returns:** file descriptor on success, `-1` on error.
 
+**Note:** uses a fixed size stack buffer (zero allocations); over-long `"~/..."` paths fail with `errno == ENAMETOOLONG` (see `FIO_FILENAME_PATH_CAPA`).
+
 #### `fio_filename_tmp`
 
 ```c
@@ -5438,6 +5450,73 @@ FIO_IFUNC int fio_filename_overwrite(const char *filename,
 Opens `filename` with `O_RDWR | O_CREAT | O_TRUNC`, writes `len` bytes from `buf`, and closes the file.
 
 **Returns:** `0` on success, `-1` on error. On error the file state is undefined.
+
+### Removing Files and Folders
+
+#### `fio_filename_remove`
+
+```c
+typedef struct {
+  const char *path;
+  uint8_t folder;
+  uint8_t recursive;
+} fio_filename_remove_args_s;
+
+SFUNC int fio_filename_remove(fio_filename_remove_args_s args);
+#define fio_filename_remove(...) \
+  fio_filename_remove((fio_filename_remove_args_s){__VA_ARGS__})
+```
+
+Removes the file / link or folder at `path`, abstracting OS differences (`unlink` / `rmdir` vs. `DeleteFileA` / `RemoveDirectoryA`).
+
+**Parameters:**
+- `path` - NUL-terminated path of the file / folder to remove
+- `folder` - set to allow removal of an empty folder (like `rmdir`)
+- `recursive` - set to remove a folder and all of its content (like `rm -r`); implies `folder`. If `path` isn't a folder, the flag is ignored and `path` is removed as a file / link
+
+**Returns:** `0` on success, `-1` on error. Recursive removal stops on the first error (some content may remain). Uses a fixed size stack buffer (zero allocations); over-long paths fail with `errno == ENAMETOOLONG` (see `FIO_FILENAME_PATH_CAPA`).
+
+**Note:** links (symlinks / reparse points) are removed, never followed into.
+
+**Example:**
+
+```c
+fio_filename_remove(.path = "old.log");
+fio_filename_remove(.path = "empty_dir", .folder = 1);
+fio_filename_remove(.path = "build_tree", .recursive = 1);
+```
+
+### Creating Folders
+
+#### `fio_filename_make_path`
+
+```c
+typedef struct {
+  const char *path;
+  uint32_t mode;
+} fio_filename_make_path_args_s;
+
+SFUNC int fio_filename_make_path(fio_filename_make_path_args_s args);
+#define fio_filename_make_path(...) \
+  fio_filename_make_path((fio_filename_make_path_args_s){__VA_ARGS__})
+```
+
+Creates the folder at `path`, including any missing parent folders (similar to `mkdir -p`). Abstracts OS differences (`mkdir` vs. `CreateDirectoryA`).
+
+**Parameters:**
+- `path` - NUL-terminated folder path to create; nested folders are created as needed, trailing separators are allowed
+- `mode` - creation mode (POSIX only, ignored on Windows); zero defaults to `0755`
+
+**Returns:** `0` on success, `-1` on error. An existing folder is NOT an error. A non-folder component along the way IS an error (`errno == ENOTDIR`). Uses a fixed size stack buffer (zero allocations); over-long paths fail with `errno == ENAMETOOLONG` (see `FIO_FILENAME_PATH_CAPA`).
+
+**Note:** root / drive / UNC `\\server\share` prefixes are never created, only the components after them.
+
+**Example:**
+
+```c
+if (fio_filename_make_path(.path = "./build/out/artifacts"))
+  perror("mkdir -p");
+```
 
 ### Reading and Writing
 
