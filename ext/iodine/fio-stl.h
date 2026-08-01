@@ -75,7 +75,7 @@ supports macros that will help detect and validate it's version.
 /** PATCH version: Bug fixes, minor features may be added. */
 #define FIO_VERSION_PATCH 0
 /** Build version: optional build info (string), i.e. "beta.02" */
-#define FIO_VERSION_BUILD "rc.02"
+#define FIO_VERSION_BUILD "rc.03"
 
 #ifdef FIO_VERSION_BUILD
 /** Version as a String literal (MACRO). */
@@ -4291,29 +4291,31 @@ The loop count is computed dynamically via sizeof, yielding:
 #define FIO_MATH_UXXX_OP_RROT(t, a, b, bits)                                   \
   do {                                                                         \
     for (size_t i__ = 0; i__ < (sizeof((t)) / sizeof((t)[0])); ++i__)          \
-      (t)[i__] = ((a)[i__] >> (b)[i__]) |                                      \
-                 ((a)[i__] << ((bits - (b)[i__]) & ((bits)-1)));               \
+      (t)[i__] = ((a)[i__] >> ((b)[i__] & ((bits)-1))) |                       \
+                 ((a)[i__] << (((bits) - ((b)[i__] & ((bits)-1))) &           \
+                              ((bits)-1)));                                    \
   } while (0)
 /** Performs `(a >> c) | (a << (bits - c))` (const right rotation) in a loop. */
 #define FIO_MATH_UXXX_OP_CRROT(t, a, c, bits)                                  \
   do {                                                                         \
     for (size_t i__ = 0; i__ < (sizeof((t)) / sizeof((t)[0])); ++i__)          \
-      (t)[i__] =                                                               \
-          ((a)[i__] >> (c)) | ((a)[i__] << ((bits - (c)) & ((bits)-1)));       \
+      (t)[i__] = ((a)[i__] >> ((c) & ((bits)-1))) |                            \
+                 ((a)[i__] << (((bits) - ((c) & ((bits)-1))) & ((bits)-1)));  \
   } while (0)
 /** Performs `(a << b) | (a >> (bits - b))` (left rotation) in a loop. */
 #define FIO_MATH_UXXX_OP_LROT(t, a, b, bits)                                   \
   do {                                                                         \
     for (size_t i__ = 0; i__ < (sizeof((t)) / sizeof((t)[0])); ++i__)          \
-      (t)[i__] = ((a)[i__] << (b)[i__]) |                                      \
-                 ((a)[i__] >> ((bits - (b)[i__]) & ((bits)-1)));               \
+      (t)[i__] = ((a)[i__] << ((b)[i__] & ((bits)-1))) |                       \
+                 ((a)[i__] >> (((bits) - ((b)[i__] & ((bits)-1))) &           \
+                              ((bits)-1)));                                    \
   } while (0)
 /** Performs `(a << c) | (a >> (bits - c))` (const left rotation) in a loop. */
 #define FIO_MATH_UXXX_OP_CLROT(t, a, c, bits)                                  \
   do {                                                                         \
     for (size_t i__ = 0; i__ < (sizeof((t)) / sizeof((t)[0])); ++i__)          \
-      (t)[i__] =                                                               \
-          ((a)[i__] << (c)) | ((a)[i__] >> ((bits - (c)) & ((bits)-1)));       \
+      (t)[i__] = ((a)[i__] << ((c) & ((bits)-1))) |                            \
+                 ((a)[i__] >> (((bits) - ((c) & ((bits)-1))) & ((bits)-1)));  \
   } while (0)
 
 /** Performs ternary `t = f(a, b, c)` lane-wise using easily vectorized loop. */
@@ -5595,7 +5597,8 @@ FIO_MAP Ordering & Naming Shortcut
 
 #if defined(FIO_CLI) || defined(FIO_HTTP) ||                            \
     defined(FIO_HTTP1_PARSER) || defined(FIO_JSON) || defined(FIO_STR) ||      \
-    defined(FIO_TIME) || defined(FIO_FILES) || defined(FIO_SECRET)
+    defined(FIO_TIME) || defined(FIO_FILES) || defined(FIO_SECRET) ||          \
+    defined(FIO_RESP3)
 #undef FIO_ATOL
 #define FIO_ATOL
 #endif
@@ -8553,8 +8556,6 @@ FIO_SFUNC void *fio___memcpy_buffered_reversed_x(void *d_,
   return (void *)d;
 }
 
-#define FIO___MEMCPY_BLOCKx_NUM 255ULL
-
 /** memcpy / memmove alternative that should work with unaligned memory */
 SFUNC void *fio_memcpy(void *dest_, const void *src_, size_t bytes) {
   char *d = (char *)dest_;
@@ -8599,9 +8600,11 @@ SFUNC void *fio_memcpy(void *dest_, const void *src_, size_t bytes) {
     return dest_;
   }
 
-  /* Existing path for larger copies or overlapping memory */
-  if (s + bytes <= d || d + bytes <= s ||
-      (uintptr_t)d + FIO___MEMCPY_BLOCKx_NUM < (uintptr_t)s) {
+  /* Existing path for larger copies or overlapping memory.
+   * NOTE: no "margin" shortcut here - the step size used by
+   * fio___memcpy_unsafe_x may exceed any fixed margin, so any overlap at
+   * all must take the buffered (memmove-safe) paths (ASAN/UB proof). */
+  if (s + bytes <= d || d + bytes <= s) {
     return fio___memcpy_unsafe_x(d, s, bytes);
   } else if (d < s) { /* memory overlaps at end (copy forward, use buffer) */
     return fio___memcpy_buffered_x(d, s, bytes);
@@ -8610,8 +8613,6 @@ SFUNC void *fio_memcpy(void *dest_, const void *src_, size_t bytes) {
   }
   return d;
 }
-
-#undef FIO___MEMCPY_BLOCKx_NUM
 
 /* *****************************************************************************
 FIO_MEMSET / fio_memset - memset fallbacks
@@ -9417,6 +9418,24 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #endif
 
 /* *****************************************************************************
+Buffer Requirements (Guard-Byte Contract)
+*****************************************************************************
+
+Number parsing (`fio_atol*`, `fio_atof`, `fio_aton`) is optimized for
+NUL-terminated strings and may read up to - and including - the first
+non-numeric byte following a number (parsing stops at, but still reads,
+that byte).
+
+Callers MUST keep the buffer readable through that guard byte: pass a
+NUL-terminated string or ensure a non-numeric guard byte follows the data.
+`fio_bstr` strings always satisfy this contract. Exact-size buffers with
+no readable byte past the number (e.g., a 1-byte allocation holding "1")
+violate it, causing a 1-byte out-of-bounds read (AddressSanitizer
+detectable, use `FIO_MEMORY_DISABLE` when sanitizing).
+
+***************************************************************************** */
+
+/* *****************************************************************************
 Strings to Signed Numbers - The fio_aton function
 ***************************************************************************** */
 
@@ -9570,6 +9589,27 @@ SFUNC uint64_t fio_atol16u(char **pstr);
 SFUNC uint64_t fio_atol_bin(char **pstr);
 /** Read an unsigned number in any base up to base 36. */
 SFUNC uint64_t fio_atol_xbase(char **pstr, size_t base);
+
+/* *****************************************************************************
+Strict, Bounded Number Parsing (wire-safe)
+***************************************************************************** */
+
+/** Reads an unsigned base 10 number within `[pos, end)` - strict digits only
+ * (no whitespace, sign, underscores or prefixes). Advances `pos` past the
+ * digits consumed. On overflow sets `errno == E2BIG` and stops at the last
+ * valid digit. Callers detect empty / trailing junk by testing `pos`. */
+SFUNC uint64_t fio_stol10u(char **pos, const char *end);
+
+/** Reads a signed base 10 number within `[pos, end)` - an optional leading
+ * `-` / `+` followed by strict digits only. Sets `errno == E2BIG` on
+ * overflow (either the magnitude or the signed range limit). */
+SFUNC int64_t fio_stol10(char **pos, const char *end);
+
+/** Reads an unsigned hex number within `[pos, end)` - strict hex digits
+ * only (NO `0x` prefix, no underscores). Advances `pos` past the digits
+ * consumed. On overflow sets `errno == E2BIG` and stops at the last valid
+ * digit. */
+SFUNC uint64_t fio_stol16u(char **pos, const char *end);
 
 /** Converts an unsigned `val` to a signed `val`, with overflow protection. */
 FIO_IFUNC int64_t fio_u2i_limit(uint64_t val, size_t invert);
@@ -9813,6 +9853,9 @@ FIO_IFUNC int64_t fio_u2i_limit(uint64_t val, size_t to_negative) {
     val = 0x7FFFFFFFFFFFFFFFULL;
     return (int64_t)val;
   }
+  /* a magnitude of exactly 2**63 is INT64_MIN - valid, not an overflow */
+  if (val == 0x8000000000000000ULL)
+    return (int64_t)val;
   if (!(val & 0x8000000000000000ULL)) {
     val = (uint64_t)((int64_t)0LL - (int64_t)val);
     return (int64_t)val;
@@ -10069,6 +10112,41 @@ SFUNC int64_t fio_atol10(char **pstr) {
   return fio_u2i_limit(val, inv);
 }
 
+/* *****************************************************************************
+Strict, Bounded Number Parsing (wire-safe)
+***************************************************************************** */
+
+/** Strict, bounded unsigned base 10 read - see API notes. */
+SFUNC uint64_t fio_stol10u(char **pos, const char *end) {
+  const char *p = *pos;
+  uint64_t r = 0;
+  while (p < end) {
+    const uint64_t d = (uint64_t)(p[0] - '0');
+    if (d > 9ULL)
+      break;
+    if (r > ((~(uint64_t)0ULL) - d) / 10ULL) {
+      errno = E2BIG;
+      break;
+    }
+    r = (r * 10ULL) + d;
+    ++p;
+  }
+  *pos = (char *)p;
+  return r;
+}
+
+/** Strict, bounded signed base 10 read - see API notes. */
+SFUNC int64_t fio_stol10(char **pos, const char *end) {
+  const char *p = *pos;
+  size_t inv = 0;
+  if (p < end && (p[0] == '-' || p[0] == '+')) {
+    inv = (size_t)(p[0] == '-');
+    ++p;
+  }
+  *pos = (char *)p;
+  return fio_u2i_limit(fio_stol10u(pos, end), inv);
+}
+
 /** Reads an unsigned hex formatted number (possibly prefixed with "0x"). */
 FIO_IFUNC uint64_t fio___atol16u_with_prefix(uint64_t r, char **pstr) {
   size_t d;
@@ -10095,7 +10173,7 @@ FIO_IFUNC uint64_t fio___atol16u_with_prefix(uint64_t r, char **pstr) {
   return r;
 possible_misread:
   /* if 0x was read, move to X. */
-  *pstr += ((pstr[0][0] == '0') & ((pstr[0][1] | 32) == 'x'));
+  *pstr += ((pstr[0][0] == '0') && ((pstr[0][1] | 32) == 'x'));
   return r;
 }
 
@@ -10104,7 +10182,7 @@ SFUNC uint64_t fio_atol16u(char **pstr) {
   uint64_t r = 0;
   size_t d;
   unsigned char *p = (unsigned char *)*pstr;
-  p += ((p[0] == '0') & ((p[1] | 32) == 'x')) << 1;
+  p += ((p[0] == '0') && ((p[1] | 32) == 'x')) << 1;
   if ((d = fio_c2i(*p)) > 15)
     goto possible_misread;
   for (;;) {
@@ -10126,7 +10204,26 @@ SFUNC uint64_t fio_atol16u(char **pstr) {
   return r;
 possible_misread:
   /* if 0x was read, move to X. */
-  *pstr += ((pstr[0][0] == '0') & ((pstr[0][1] | 32) == 'x'));
+  *pstr += ((pstr[0][0] == '0') && ((pstr[0][1] | 32) == 'x'));
+  return r;
+}
+
+/** Strict, bounded unsigned hex read - see API notes. */
+SFUNC uint64_t fio_stol16u(char **pos, const char *end) {
+  const char *p = *pos;
+  uint64_t r = 0;
+  while (p < end) {
+    const size_t d = (size_t)fio_c2i((unsigned char)p[0]);
+    if (d > 15)
+      break;
+    if (r & UINT64_C(0xF000000000000000)) {
+      errno = E2BIG;
+      break;
+    }
+    r = (r << 4) | (uint64_t)d;
+    ++p;
+  }
+  *pos = (char *)p;
   return r;
 }
 
@@ -16003,7 +16100,11 @@ Copyright and License: see header file (000 copyright.h) or top of file
  * `errno == ENAMETOOLONG`. Guarantees at least ~4KB (`PATH_MAX | 4094`).
  */
 #ifndef FIO_FILENAME_PATH_CAPA
-#define FIO_FILENAME_PATH_CAPA (PATH_MAX | 4094)
+#if defined(PATH_MAX) && (PATH_MAX <= 16384)
+#define FIO_FILENAME_PATH_CAPA (PATH_MAX | 4096)
+#else
+#define FIO_FILENAME_PATH_CAPA (4096)
+#endif
 #endif
 
 /* *****************************************************************************
@@ -16440,11 +16541,14 @@ FIO_IFUNC int fio___filename_is_unsafe_sep(const char *path,
   return 0;
 }
 
-/** Returns 1 if `path` does folds backwards (has "/../" or "//"). */
+/** Returns 1 if `path` possibly folds backwards (has "/../", "/..", "//").
+ *
+ * On Windows both `/` and `\` are guarded, since Win32 APIs accept either
+ * separator - guarding only one would leave the other flavor open to path
+ * traversal. On POSIX `\` is an ordinary filename character and is ignored.
+ */
 SFUNC int fio_filename_is_unsafe(const char *path) {
-  return fio___filename_is_unsafe_sep(path,
-                                      FIO_FOLDER_SEPARATOR,
-                                      FIO_FOLDER_SEPARATOR);
+  return fio___filename_is_unsafe_sep(path, '/', FIO_FOLDER_SEPARATOR);
 }
 
 /** Returns 1 if `path` does folds backwards (has "/../" or "//"). */
@@ -16867,8 +16971,7 @@ Module Cleanup
 Copyright and License: see header file (000 copyright.h) or top of file
 ***************************************************************************** */
 #if defined(FIO_HTTP1_PARSER) && !defined(H___FIO_HTTP1_PARSER___H) &&         \
-    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)) &&                  \
-    !defined(FIO___RECURSIVE_INCLUDE)
+    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN))
 /* *****************************************************************************
 The HTTP/1.1 provides static functions only, always as part or implementation.
 ***************************************************************************** */
@@ -17052,9 +17155,9 @@ static int fio_http1___start(fio_http1_parser_s *p,
   fio_buf_info_s wrd[3];
   char *start = buf->buf;
   char *tmp;
-  while ((start[0] == ' ' || start[0] == '\r' || start[0] == '\n') &&
-         start < buf->buf + buf->len) /* skip white space */
-    ++start;
+  while (start < buf->buf + buf->len &&
+         (start[0] == ' ' || start[0] == '\r' || start[0] == '\n'))
+    ++start; /* skip white space */
   if (start == buf->buf + buf->len) {
     buf->buf = start;
     return 1;
@@ -17155,10 +17258,12 @@ static inline int fio_http1___on_header(fio_http1_parser_s *p,
         return -1;
       char *tmp = value.buf;
       errno = 0; /* reset errno before parsing */
-      uint64_t clen = fio_atol10u(&tmp);
-      /* Reject if: parsing failed (tmp didn't reach end), overflow occurred,
-       * or value collides with sentinel values */
+      uint64_t clen = fio_stol10u(&tmp, value.buf + value.len);
+      /* Reject if: parsing failed or trailing junk (tmp didn't reach end),
+       * overflow occurred, value doesn't fit size_t (32-bit builds), or
+       * value collides with sentinel values */
       if ((unsigned)(tmp != value.buf + value.len) | (errno == E2BIG) |
+          ((uint64_t)(size_t)clen != clen) |
           (clen == FIO___HTTP1_BODY_NOT_ALLOWED) |
           (clen == FIO_HTTP1_EXPECTED_CHUNKED))
         return -1;
@@ -17191,9 +17296,8 @@ static inline int fio_http1___on_header(fio_http1_parser_s *p,
           return 0;
         if (c_start[-1] != ' ' && c_start[-1] != ',' && c_start[-1] != '\t')
           return -1;
-        while (
-            (c_start[-1] == ' ' || c_start[-1] == ',' || c_start[-1] == '\t') &&
-            c_start > value.buf)
+        while (c_start > value.buf &&
+               (c_start[-1] == ' ' || c_start[-1] == ',' || c_start[-1] == '\t'))
           --c_start;
         if (c_start == value.buf)
           return 0;
@@ -17279,7 +17383,7 @@ static inline int fio_http1___read_header_line(
 
     buf->len -= (eol - buf->buf) + 1;
     buf->buf = eol + 1;
-    eol -= (eol[-1] == '\r');
+    eol -= (eol != start && eol[-1] == '\r');
     if (FIO_UNLIKELY(eol == start))
       goto headers_finished;
 
@@ -17408,9 +17512,13 @@ static int fio_http1___read_body_chunked(fio_http1_parser_s *p,
     return (buf->len < 10) ? 1 : -1;
 
   char *eol = buf->buf;
-  size_t expected = fio_atol16u(&eol); /* never overflows, EOL validated */
-  if (eol == buf->buf || expected > 0x0FFFFFFF) /* cap expected */
+  errno = 0;
+  /* strict, bounded hex: no 0x prefix, no separators, junk rejected below */
+  uint64_t expected64 = fio_stol16u(&eol, buf->buf + buf->len);
+  if (eol == buf->buf || errno == E2BIG ||
+      expected64 > 0x0FFFFFFF) /* cap expected */
     return -1;
+  size_t expected = (size_t)expected64;
   eol += (eol[0] == '\r');
   if (eol >= buf->buf + buf->len)
     return 1; /* read overflowed */
@@ -17543,6 +17651,11 @@ typedef struct {
  * Returns the number of bytes consumed before parsing stopped (due to either
  * error or end of data). Stops as close as possible to the end of the buffer or
  * once an object parsing was completed.
+ *
+ * Buffer requirement (guard-byte contract): number / quote-less key scanning
+ * may read the byte at `json_string[len]` while deciding a token ended. The
+ * buffer MUST remain readable through a non-numeric guard byte - pass a
+ * NUL-terminated string (`fio_bstr` qualifies) or append a guard byte.
  */
 SFUNC fio_json_result_s fio_json_parse(fio_json_parser_callbacks_s *settings,
                                        void *udata,
@@ -19505,24 +19618,10 @@ Internal Helper: Parse integer from buffer
 
 FIO_IFUNC int64_t fio___resp3_parse_int(const uint8_t **pos,
                                         const uint8_t *eol) {
-  int64_t result = 0;
-  int negative = 0;
-  const uint8_t *p = *pos;
-
-  if (p < eol && *p == '-') {
-    negative = 1;
-    ++p;
-  } else if (p < eol && *p == '+') {
-    ++p;
-  }
-
-  while (p < eol && *p >= '0' && *p <= '9') {
-    result = (result * 10) + (*p - '0');
-    ++p;
-  }
-
-  *pos = p;
-  return negative ? -result : result;
+  /* Typed adapter over the shared strict, bounded parser (002 atol.h).
+   * Clears `errno`; callers must test `errno == E2BIG` (overflow). */
+  errno = 0;
+  return fio_stol10((char **)pos, (const char *)eol);
 }
 
 /* *****************************************************************************
@@ -19898,6 +19997,12 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
     /* ===== Number: :<number>\r\n ===== */
     case FIO_RESP3_NUMBER: {
       int64_t num = fio___resp3_parse_int(&pos, eol);
+      if (FIO_UNLIKELY(errno == E2BIG)) {
+        parser->error = 1;
+        result.err = 1;
+        cb.on_error_protocol(parser->udata);
+        goto done;
+      }
       obj = cb.on_number(parser->udata, num);
       pos = eol + 1;
       obj = fio___resp3_on_value(parser, &cb, obj);
@@ -20009,6 +20114,12 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
       }
 
       int64_t blob_len = fio___resp3_parse_int(&pos, eol);
+      if (FIO_UNLIKELY(errno == E2BIG)) {
+        parser->error = 1;
+        result.err = 1;
+        cb.on_error_protocol(parser->udata);
+        goto done;
+      }
       pos = eol + 1;
 
       if (blob_len < 0) {
@@ -20096,6 +20207,12 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
     /* ===== Blob Error: !<length>\r\n<bytes>\r\n ===== */
     case FIO_RESP3_BLOB_ERR: {
       int64_t blob_len = fio___resp3_parse_int(&pos, eol);
+      if (FIO_UNLIKELY(errno == E2BIG)) {
+        parser->error = 1;
+        result.err = 1;
+        cb.on_error_protocol(parser->udata);
+        goto done;
+      }
       pos = eol + 1;
 
       if (blob_len <= 0) {
@@ -20178,6 +20295,12 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
     /* ===== Verbatim String: =<length>\r\n<type:><bytes>\r\n ===== */
     case FIO_RESP3_VERBATIM: {
       int64_t blob_len = fio___resp3_parse_int(&pos, eol);
+      if (FIO_UNLIKELY(errno == E2BIG)) {
+        parser->error = 1;
+        result.err = 1;
+        cb.on_error_protocol(parser->udata);
+        goto done;
+      }
       pos = eol + 1;
 
       if (blob_len < 0) {
@@ -20269,6 +20392,12 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
         count = -1;
       } else {
         count = fio___resp3_parse_int(&pos, eol);
+        if (FIO_UNLIKELY(errno == E2BIG)) {
+          parser->error = 1;
+          result.err = 1;
+          cb.on_error_protocol(parser->udata);
+          goto done;
+        }
       }
       pos = eol + 1;
 
@@ -20326,6 +20455,12 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
         count = -1;
       } else {
         count = fio___resp3_parse_int(&pos, eol);
+        if (FIO_UNLIKELY(errno == E2BIG)) {
+          parser->error = 1;
+          result.err = 1;
+          cb.on_error_protocol(parser->udata);
+          goto done;
+        }
       }
       pos = eol + 1;
 
@@ -20360,7 +20495,13 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
         break;
       }
 
-      /* Maps: count is pairs, need count*2 elements */
+      /* Maps: count is pairs, need count*2 elements (guard the doubling) */
+      if (!streaming && count > (INT64_MAX >> 1)) {
+        parser->error = 1;
+        result.err = 1;
+        cb.on_error_protocol(parser->udata);
+        goto done;
+      }
       int64_t elements = streaming ? -1 : count * 2;
       if (fio___resp3_push_frame(parser,
                                  &cb,
@@ -20385,6 +20526,12 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
         count = -1;
       } else {
         count = fio___resp3_parse_int(&pos, eol);
+        if (FIO_UNLIKELY(errno == E2BIG)) {
+          parser->error = 1;
+          result.err = 1;
+          cb.on_error_protocol(parser->udata);
+          goto done;
+        }
       }
       pos = eol + 1;
 
@@ -20439,6 +20586,12 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
     /* ===== Push: ><count>\r\n ===== */
     case FIO_RESP3_PUSH: {
       int64_t count = fio___resp3_parse_int(&pos, eol);
+      if (FIO_UNLIKELY(errno == E2BIG)) {
+        parser->error = 1;
+        result.err = 1;
+        cb.on_error_protocol(parser->udata);
+        goto done;
+      }
       pos = eol + 1;
 
       if (count < 0) {
@@ -20488,6 +20641,12 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
     /* ===== Attribute: |<count>\r\n ===== */
     case FIO_RESP3_ATTR: {
       int64_t count = fio___resp3_parse_int(&pos, eol);
+      if (FIO_UNLIKELY(errno == E2BIG)) {
+        parser->error = 1;
+        result.err = 1;
+        cb.on_error_protocol(parser->udata);
+        goto done;
+      }
       pos = eol + 1;
 
       if (count < 0) {
@@ -20503,6 +20662,13 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
         break;
       }
 
+      /* Attributes: count is pairs, need count*2 (guard the doubling) */
+      if (count > (INT64_MAX >> 1)) {
+        parser->error = 1;
+        result.err = 1;
+        cb.on_error_protocol(parser->udata);
+        goto done;
+      }
       if (fio___resp3_push_frame(parser,
                                  &cb,
                                  FIO_RESP3_ATTR,
@@ -20529,6 +20695,13 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
       int64_t chunk_len = fio___resp3_parse_int(&pos, eol);
       pos = eol + 1;
 
+      if (FIO_UNLIKELY(errno == E2BIG)) {
+        parser->error = 1;
+        result.err = 1;
+        cb.on_error_protocol(parser->udata);
+        goto done;
+      }
+
       /* Length 0 means end of streaming string */
       if (chunk_len == 0) {
         obj = cb.on_string_done(parser->udata,
@@ -20547,6 +20720,15 @@ SFUNC fio_resp3_result_s fio_resp3_parse(fio_resp3_parser_s *parser,
           goto done;
         }
         break;
+      }
+
+      /* Negative chunk lengths are a protocol error (no negative lengths
+       * exist in RESP3); rejecting them also prevents an infinite rewind. */
+      if (chunk_len < 0) {
+        parser->error = 1;
+        result.err = 1;
+        cb.on_error_protocol(parser->udata);
+        goto done;
       }
 
       /* Check if we have complete chunk data */
@@ -23139,8 +23321,7 @@ URL-Encoded Cleanup
 Copyright and License: see header file (000 copyright.h) or top of file
 ***************************************************************************** */
 #if defined(FIO_WEBSOCKET_PARSER) && !defined(H___FIO_WEBSOCKET_PARSER___H) && \
-    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN)) &&                  \
-    !defined(FIO___RECURSIVE_INCLUDE)
+    (defined(FIO_EXTERN_COMPLETE) || !defined(FIO_EXTERN))
 #define H___FIO_WEBSOCKET_PARSER___H
 
 /* *****************************************************************************
@@ -112013,8 +112194,10 @@ SFUNC fio_io_functions_s fio_tls13_io_functions(void) {
 TLS 1.3 Default Setup (when OpenSSL is not available)
 ***************************************************************************** */
 
-#if !defined(HAVE_OPENSSL) && !defined(H___FIO_OPENSSL___H)
-/** Setup TLS 1.3 as TLS IO default when OpenSSL is not available */
+#if (!defined(HAVE_OPENSSL) || defined(FIO_NO_TLS)) &&                           \
+    !defined(H___FIO_OPENSSL___H)
+/** Setup TLS 1.3 as TLS IO default when OpenSSL is not available (or was
+ * disabled with FIO_NO_TLS, which also skips the OpenSSL module). */
 FIO_CONSTRUCTOR(fio___tls13_setup_default) {
   static fio_io_functions_s FIO___TLS13_IO_FUNCS;
   FIO___TLS13_IO_FUNCS = fio_tls13_io_functions();
@@ -118102,6 +118285,15 @@ SFUNC int fio_http_etag_is_match(fio_http_s *h);
  * `FIO_HTTP_STATIC_FILE_COMPLETION`). `OPTIONS` requests are refused (a
  * static file is not a valid `OPTIONS` response).
  *
+ * `root_folder` MUST name an existing folder (use `"."` for the CWD):
+ * the path-traversal guard rejects `..` folding, not absolute paths, so
+ * an empty root would expose absolute paths such as `/etc/passwd`.
+ * Settings-provided `public_folder` values are validated on listen/route
+ * creation (non-existent folders are rejected); direct callers MUST pass
+ * a valid, non-empty root. Symlinks inside the root are followed (like
+ * nginx's default) - applications requiring strict containment should
+ * keep the root free of symlinks.
+ *
  * Handles conditional requests (`ETag` / `If-None-Match` -> 304), single
  * `Range` requests (206 / 416, always served identity), and `HEAD`
  * requests; sets `Last-Modified`, `Accept-Ranges: bytes`, and (when
@@ -122581,10 +122773,13 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
                                         size_t max_age) {
   int fd = -1;
   size_t file_length = 0;
-  /* combine public folder with path to get file name */
+  /* combine public folder with path to get file name.
+    * NOTE: `rt` MUST name an existing folder (validated for settings-based
+    * callers; direct callers pass "." for the CWD) - the traversal guard
+    * rejects `..` folding, not absolute paths. */
   fio_str_info_s mime_type = {0};
   FIO_STR_INFO_TMP_VAR(etag, 31);
-  FIO_STR_INFO_TMP_VAR(filename, 4095);
+  FIO_STR_INFO_TMP_VAR(filename, (FIO_FILENAME_PATH_CAPA - 1));
   { /* test for HEAD and OPTIONS requests */
     fio_str_info_s m = fio_keystr_info(&h->method);
     if ((m.len == 7 && (fio_buf2u64u(m.buf) | 0x2020202020202020ULL) ==
@@ -122594,7 +122789,7 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
   rt.len -= ((rt.len > 0) && (fnm.len > 0 && fnm.buf[0] == '/') &&
              (rt.buf[rt.len - 1] == '/' ||
               rt.buf[rt.len - 1] == FIO_FOLDER_SEPARATOR));
-  if (rt.len + fnm.len > 4079)
+  if (rt.len + fnm.len > (FIO_FILENAME_PATH_CAPA - 16))
     goto file_not_found;
   fio_string_write(&filename, NULL, rt.buf, rt.len);
   fio_string_write_url_dec(&filename, NULL, fnm.buf, fnm.len);
@@ -126057,7 +126252,7 @@ Recursive inclusion / cleanup
 #ifdef FIO_FILES
 #include "004 files.h"
 #endif
-#if defined(FIO_HTTP1_PARSER) && !defined(FIO___RECURSIVE_INCLUDE)
+#if defined(FIO_HTTP1_PARSER)
 #include "004 http1 parser.h"
 #endif
 #ifdef FIO_JSON
@@ -126081,7 +126276,7 @@ Recursive inclusion / cleanup
 #ifdef FIO_MULTIPART
 #include "004 multipart.h"
 #endif
-#if defined(FIO_WEBSOCKET_PARSER) && !defined(FIO___RECURSIVE_INCLUDE)
+#if defined(FIO_WEBSOCKET_PARSER)
 #include "004 websocket parser.h"
 #endif
 #if defined(FIO_CLI) && !defined(FIO___RECURSIVE_INCLUDE)

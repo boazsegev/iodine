@@ -3553,6 +3553,8 @@ String-to-number and number-to-string helpers. These are the grunts that parse i
 
 **Note:** functions that write to a buffer also write a NUL terminator. `fio_atol*` functions assume the buffer ends with an invalid character (such as NUL) and that allocations are aligned enough for multi-byte reads.
 
+**Guard-byte contract:** parsing may read up to - and including - the first non-numeric byte following a number. Callers MUST keep the buffer readable through that byte: pass a NUL-terminated string or append a non-numeric guard byte. `fio_bstr` strings always satisfy this contract. Exact-size buffers with no readable byte past the number (e.g., a 1-byte allocation holding `"1"`) violate it and will trigger AddressSanitizer (sanitize with `FIO_MEMORY_DISABLE` for visibility).
+
 ### Configuration Macros
 
 #### `FIO_ATOL_ALLOW_UNDERSCORE_DIVIDER`
@@ -3592,6 +3594,36 @@ FIO_SFUNC fio_aton_s fio_aton(char **pstr);
 Auto-detects integers and floats. Skips leading whitespace, recognizes `0x` / `0b` / octal prefixes, and accepts `inf`, `infinity`, and `nan`. Updates `*pstr` to the first unconverted character. Sets `.err` on overflow or bad format.
 
 **Note:** not an exact `strtod` replacement; rounding differences are possible.
+
+### Strict, Bounded Parsing (wire-safe)
+
+The `fio_stol*` family parses within an explicit `[pos, end)` window and accepts **only** the wire format: no whitespace, no underscores, no `0x`/`0b` prefixes, no `inf`/`nan`. Use these for network protocols and any length/size field - the lenient `fio_atol*` semantics (e.g., `1_0` parsing as `10`) are a differential-parsing hazard when a peer or intermediary parses the same field strictly.
+
+All three advance `*pos` past the digits consumed (detect trailing junk or empty input by comparing `*pos` against expectations) and set `errno == E2BIG` on overflow, stopping at the last valid digit. Since the window is explicit, the guard-byte contract of the lenient family does not apply.
+
+#### `fio_stol10u`
+
+```c
+SFUNC uint64_t fio_stol10u(char **pos, const char *end);
+```
+
+Parses an unsigned `uint64_t`, decimal digits only. No sign, no whitespace skip.
+
+#### `fio_stol10`
+
+```c
+SFUNC int64_t fio_stol10(char **pos, const char *end);
+```
+
+Parses a signed `int64_t`: one optional leading `-` / `+`, then decimal digits only. `E2BIG` is set when the magnitude overflows `uint64_t` or exceeds the `int64_t` range (note: `-9223372036854775808` is exactly `INT64_MIN` and is **not** an overflow).
+
+#### `fio_stol16u`
+
+```c
+SFUNC uint64_t fio_stol16u(char **pos, const char *end);
+```
+
+Parses an unsigned `uint64_t`, hex digits only - unlike `fio_atol16u`, a `0x` prefix is **not** consumed.
 
 ### Signed Conversion
 
@@ -6231,6 +6263,8 @@ Parses `json_string` up to `len` bytes. Stops as soon as a complete top-level va
 **Returns:** `fio_json_result_s` with the root context, bytes consumed, and error flag.
 
 **Note:** a UTF-8 BOM at the start of the buffer is skipped automatically.
+
+**Guard-byte contract:** number and quote-less key scanning may read the byte at `json_string[len]` while deciding a token ended (see the `fio_atol*` guard-byte contract). Callers MUST keep that byte readable and non-numeric - pass a NUL-terminated string (any `fio_bstr` string qualifies) or append a non-numeric guard byte. Exact-size buffers with no readable byte past `len` violate the contract and will trigger AddressSanitizer.
 
 #### `fio_json_parse_update`
 
