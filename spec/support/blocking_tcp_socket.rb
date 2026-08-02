@@ -19,7 +19,10 @@ module BlockingTcpSocket
       socket.write(resp_command(*hello_arguments(uri)))
       Timeout.timeout(timeout) { socket.readpartial(1) } == '%'
     end
-  rescue URI::InvalidURIError, SocketError, SystemCallError, Timeout::Error, EOFError
+  # NOTE: IO::TimeoutError (raised by Socket.tcp on connect_timeout expiry)
+  # is NOT a subclass of Timeout::Error and must be rescued separately.
+  # Windows CI times out on missing localhost services instead of refusing.
+  rescue URI::InvalidURIError, SocketError, SystemCallError, Timeout::Error, EOFError, IO::TimeoutError
     false
   end
 
