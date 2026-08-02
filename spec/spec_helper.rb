@@ -3,12 +3,31 @@
 require 'bundler/setup'
 require 'iodine'
 
+# Flush stdio immediately so output survives a hard process termination in CI.
+$stdout.sync = true
+$stderr.sync = true
+
+# CI diagnostic (Windows silent exit-1 hunt): proves whether the process
+# reaches normal Ruby teardown and reveals any in-flight exit cause.
+# - Line ABSENT from CI log  => hard termination (native crash, exit!,
+#   or TerminateProcess) - investigate the C layer with a crash dump.
+# - Line PRESENT w/ SystemExit => something called exit; backtrace names
+#   the exact call site (exit from ANY thread kills the process silently).
+# - Line PRESENT, cause none   => clean VM teardown; RSpec's own output
+#   or exit path is what broke.
+at_exit do
+  cause = $!
+  warn "[spec_helper] at_exit reached - cause: " \
+       "#{cause ? "#{cause.class}: #{cause.message}" : 'none (clean exit)'}"
+  warn(cause.backtrace.first(10).join("\n")) if cause&.backtrace
+end
+
 # Add spec/support to load path so helpers can be required without full paths
 $LOAD_PATH.unshift(File.join(__dir__, 'support'))
 
 # Test verbosity level (Iodine::Logger levels: NONE=0, FATAL=1, ERROR=2,
-# WARN=3, INFO=4, DEBUG=5)
-TEST_VERBOSITY = Iodine::Logger::WARN
+# WARN=3, INFO=4, DEBUG=5). Override with IODINE_LOG_LEVEL for CI diagnostics.
+TEST_VERBOSITY = ENV['IODINE_LOG_LEVEL'] ? ENV['IODINE_LOG_LEVEL'].to_i : Iodine::Logger::WARN
 
 RSpec.configure do |config|
   # Ensure FIO_LOG_FATAL messages (printed before abort() via FIO_ASSERT) are
