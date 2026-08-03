@@ -33,6 +33,13 @@ jobs:
       run: bundle install
     - name: Compile Iodine
       run: bundle exec rake compile
+    - name: Run connection_spec alone (TEMP diagnostic)
+      # Bisect: single-listener reactor cycle. Crashes -> first LISTEN
+      # protocol_set broken on Windows. Green -> multi-listener interaction.
+      run: bundle exec rspec spec/connection_spec.rb --format documentation
+      env:
+        IODINE_LOG_LEVEL: 5
+      continue-on-error: true
     - name: Run tests
       run: bundle exec rspec spec/ --format documentation
       env:
