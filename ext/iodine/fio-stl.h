@@ -22458,15 +22458,6 @@ SFUNC void fio_state_callback_force(fio_state_event_type_e e) {
   if (!len)
     return;
 
-  /* TEMP WINDOWS-DIAG: list each callback about to fire (identify extra/dupes) */
-  for (size_t dbg_i = 0; dbg_i < len; ++dbg_i)
-    FIO_LOG_DEBUG("(%d) STATE-CB %s task[%zu]: func=%p arg=%p",
-                  (int)fio_getpid(),
-                  FIO___STATE_TASKS_NAMES[e],
-                  dbg_i,
-                  (void *)ary[dbg_i].func,
-                  ary[dbg_i].arg);
-
   /* perform copied tasks in correct order */
   if (e <= FIO_CALL_ON_IDLE) {
     /* perform tasks in order */
@@ -104894,11 +104885,6 @@ FIO_SFUNC void fio___io_destroy(fio_io_s *io) {
 #undef FIO___RECURSIVE_INCLUDE
 
 FIO_SFUNC void fio___io_protocol_set(void *io_, void *pr_) {
-  /* TEMP WINDOWS-DIAG: prove entry (queue-pop crash vs prologue crash) */
-  FIO_LOG_DEBUG("(%d) PROTOCOL-SET enter io=%p pr=%p",
-                (int)fio_io_pid(),
-                io_,
-                pr_);
   fio_io_s *io = (fio_io_s *)io_;
   fio_io_protocol_s *pr = (fio_io_protocol_s *)pr_;
   fio_io_protocol_s *old = io->pr;
@@ -106855,12 +106841,6 @@ FIO_SFUNC void fio___io_listen_assert_dup(fio_socket_i fd,
 
 FIO_SFUNC void fio___io_listen_attach_task_deferred(void *l_, void *ignr_) {
   fio___io_listen_s *l = (fio___io_listen_s *)l_;
-  /* TEMP WINDOWS-DIAG: identify listener (same l twice vs two listeners) */
-  FIO_LOG_DEBUG("(%d) LISTEN-ATTACH l=%p url=%s original_fd=%d",
-                (int)fio_io_pid(),
-                (void *)l,
-                l->url,
-                (int)l->fd);
   l = fio___io_listen_dup(l);
   fio_socket_i fd = fio_sock_dup(l->fd);
   fio___io_listen_assert_dup(fd, l->fd);
@@ -125937,9 +125917,6 @@ FIO_SFUNC void fio__http_controller_on_destroyed2(fio_http_s *h) {
 
 /** Called when an HTTP handle is freed. */
 FIO_SFUNC void fio__http_controller_on_destroyed_client(fio_http_s *h) {
-  fio_queue_push(fio_io_queue(),
-                 fio___http_controller_on_destroyed_task,
-                 fio_http_cdata(h));
   fio___http_connection_s *c = (fio___http_connection_s *)fio_http_cdata(h);
   c->state.http.on_finish(h);
   if (c->state.http.buf.buf)
