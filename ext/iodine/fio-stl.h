@@ -25164,7 +25164,7 @@ NOTE: most configuration values should be a power of 2 or a logarithmic value.
 #include <stddef.h>
 #define FIO___MEM_SYSTEM_ALIGNMENT _Alignof(max_align_t)
 #else
-#define FIO___MEM_SYSTEM_ALIGNMENT sizeof(double)
+#define FIO___MEM_SYSTEM_ALIGNMENT 16
 #endif
 #undef FIO_MEMORY_ALIGN_LOG
 #define FIO_MEMORY_ALIGN_LOG                                                   \
