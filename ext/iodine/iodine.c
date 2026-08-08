@@ -78,6 +78,7 @@ FIO_SFUNC void *iodine___perform_exit_outside_gvl(void *ignr_) {
 
 FIO_SFUNC void iodine___perform_exit(VALUE ignr_) {
   (void)ignr_;
+  // rb_gc();
   /* iodine runs outside of GVL, but at_exit runs in GVL.. so... */
   rb_thread_call_without_gvl(iodine___perform_exit_outside_gvl,
                              NULL,
