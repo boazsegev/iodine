@@ -10046,9 +10046,9 @@ struct fio_poll_s {
 };
 ```
 
-The poll backend keeps monitored descriptors in an internal imap (`fio___poll_map_s`) and takes a snapshot before each `poll()` call. Descriptors added or re-armed during `fio_poll_review` are merged with surviving one-shot flags when the call returns.
+The poll backend keeps monitored descriptors in an internal imap (`fio___poll_map_s`) and snapshots its armed flags before each `poll()` call. Descriptors added or re-armed during `fio_poll_review` update the retained map directly; surviving one-shot flags are restored when the call returns.
 
-Do not rely on `fio_poll_forget` from another thread to cancel a descriptor that is already inside the in-flight snapshot: if the descriptor does not fire, the surviving snapshot entry can be merged back.
+`fio_poll_forget` from another thread removes the retained entry, so un-fired snapshot flags are not restored. It cannot suppress a callback for an event already returned by the in-flight `poll()` call.
 
 #### `fio_poll_engine`
 
@@ -10068,7 +10068,7 @@ Additional helper available only in the poll backend. Closes every monitored soc
 
 - `POLLRDHUP` is used when available; otherwise the backend relies on `POLLHUP`, `POLLERR`, and `POLLNVAL` for close/error detection.
 - On Windows, `POLLPRI` is omitted because `WSAPoll` rejects it.
-- Fired events are stripped from the descriptor’s flags (one-shot semantics). Surviving flags are merged back into the poll set after `poll()` returns; additions / re-arms merge cleanly, while concurrent removals of in-flight snapshot entries are not a cancellation guarantee.
+- Fired events are stripped from the descriptor’s flags (one-shot semantics). Surviving flags are restored to retained entries after `poll()` returns; concurrent removals prevent that restoration but cannot retract an event already returned by `poll()`.
 
 ------------------------------------------------------------
 # Task and Timer Queues
@@ -20166,92 +20166,6 @@ FIOBJ objects passed to callbacks are **not** thread-safe. Copy any data you nee
 - Single-node Redis only. Redis Cluster requires connecting to the correct shard or using a proxy.
 - Replies and push messages are bounded by `payload_limit` (default 16 MiB cumulative per message), not by `FIO_REDIS_READ_BUFFER` — blob strings larger than the read buffer are streamed incrementally.
 - Chunked (`$?`) strings are rejected inside push frames (Redis never emits them; the command-reply path supports them).
-# HTTP Module — Public API (430 http api.h)
-
-```c
-#define FIO_HTTP
-#include FIO_INCLUDE_FILE
-```
-
-Public declarations for the HTTP module: `fio_http_settings_s`, the
-listener / route / client APIs (`fio_http_listen`, `fio_http_route`,
-`fio_http_connect`, `fio_http_websocket_connect`), and the full HTTP handle
-API.
-
-Everything declared here is documented in the family doc,
-[./439 http.md](./439 http.md).
-# HTTP Module — Types and Core (432 http types.h)
-
-```c
-#define FIO_HTTP
-#include FIO_INCLUDE_FILE
-```
-
-Internal types plus the HTTP handle and core implementation: the
-`fio_http_s` request / response object, header cache, body storage (RAM or
-file), routing table, and static-file responses (including the
-`compress_static` failure-memoization shift register).
-
-Internal — the public surface is documented in the family doc,
-[./439 http.md](./439 http.md).
-# HTTP Module — Accept Path (434 http accept.h)
-
-```c
-#define FIO_HTTP
-#include FIO_INCLUDE_FILE
-```
-
-Accept path, request dispatchers, and WebSocket / SSE upgrade authorization
-glue for the HTTP module.
-
-Internal — documented in the family doc, [./439 http.md](./439 http.md).
-# HTTP Module — HTTP/1.1 Glue (434 http1.h)
-
-```c
-#define FIO_HTTP
-#include FIO_INCLUDE_FILE
-```
-
-HTTP/1.1 request / response glue: parser callbacks, the HTTP/1.x protocol,
-and the HTTP/1.x controller.
-
-Internal — documented in the family doc, [./439 http.md](./439 http.md).
-# HTTP Module — EventSource / SSE (434 sse.h)
-
-```c
-#define FIO_HTTP
-#include FIO_INCLUDE_FILE
-```
-
-EventSource (SSE) upgrade authorization, write helpers, protocol, and
-controller for the HTTP module.
-
-Internal — documented in the family doc, [./439 http.md](./439 http.md).
-# HTTP Module — WebSocket (434 websocket.h)
-
-```c
-#define FIO_HTTP
-#include FIO_INCLUDE_FILE
-```
-
-WebSocket upgrade authorization (including `permessage-deflate`
-negotiation), message events, protocol, write path, and controller for the
-HTTP module.
-
-Internal — documented in the family doc, [./439 http.md](./439 http.md).
-# HTTP Module — Listen / Connect Glue (438 http.h)
-
-```c
-#define FIO_HTTP
-#include FIO_INCLUDE_FILE
-```
-
-Listen / connect glue, protocol wiring (ALPN, attach, upgrade routing), and
-shared helpers for the HTTP module, including the `fio_http_connect` /
-`fio_http_websocket_connect` client implementations.
-
-Internal — the public surface is documented in the family doc,
-[./439 http.md](./439 http.md).
 # HTTP Module
 
 ```c

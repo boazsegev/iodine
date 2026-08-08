@@ -36589,6 +36589,9 @@ FIO_TYPEDEF_IMAP_ARRAY(fio___poll_map,
 #undef FIO___POLL_IMAP_VALID
 #undef FIO___POLL_IMAP_HASH
 
+/* poll_review allocates this transient buffer after detaching the map. */
+FIO_LEAK_COUNTER_DEF(fio___poll_review_buffer)
+
 struct fio_poll_s {
   fio_poll_settings_s settings;
   fio___poll_map_s map;
@@ -36664,11 +36667,11 @@ SFUNC int fio_poll_monitor(fio_poll_s *p,
     /* re-arm: OR in new flags, always update udata */
     ptr->flags |= flags;
     ptr->udata = udata;
-  } else {
-    fio___poll_map_set(
-        &p->map,
-        (fio___poll_i_s){.udata = udata, .fd = fd, .flags = flags},
-        1);
+  } else if (!fio___poll_map_set(
+                 &p->map,
+                 (fio___poll_i_s){.udata = udata, .fd = fd, .flags = flags},
+                 1)) {
+    r = -1;
   }
   FIO___LOCK_UNLOCK(p->lock);
   return r;
@@ -36689,44 +36692,69 @@ SFUNC int fio_poll_monitor(fio_poll_s *p,
 SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
   int events = -1;
   int handled = 0;
-  if (!p || !(p->map.count)) {
-    if (timeout) {
+  if (!p)
+    return -1;
+
+  /* Allocate before snapshotting, so failure leaves monitors intact. */
+  FIO___LOCK_LOCK(p->lock);
+  const size_t max = p->map.count;
+  if (!max) {
+    FIO___LOCK_UNLOCK(p->lock);
+    if (timeout)
       FIO_THREAD_WAIT((timeout * 1000000));
-    }
     return 0;
   }
-  /* handle events in a copy, allowing events / threads to mutate it */
-  FIO___LOCK_LOCK(p->lock);
-  fio_poll_s cpy = *p;
-  p->map = (fio___poll_map_s){0};
-  FIO___LOCK_UNLOCK(p->lock);
-
-  const size_t max = cpy.map.count;
-  const unsigned short flag_mask = FIO_POLL_POSSIBLE_FLAGS | FIO_POLL_EX_FLAGS;
 
   int r = 0, i = 0;
-  /* Allocate pfd[] and uary[] in one block.
-   * Pad the pfd[] section up to void* alignment before placing uary[]. */
-  const size_t pfd_bytes = (max * sizeof(struct pollfd) + sizeof(void *) - 1) &
-                           ~(sizeof(void *) - 1);
-  const size_t alloc_size = pfd_bytes + max * sizeof(void *);
-  struct pollfd *pfd =
-      (struct pollfd *)FIO_MEM_REALLOC_(NULL, 0, alloc_size, 0);
-  void **uary = (void **)((char *)pfd + pfd_bytes);
+  struct pollfd *pfd = NULL;
+  void **uary = NULL;
+  size_t pfd_bytes = 0;
+  size_t alloc_size = 0;
+  /* poll()/WSAPoll() receive an int-sized count here. Guard both that
+   * narrowing and the one-block allocation arithmetic. */
+  if (max > (size_t)INT_MAX ||
+      max > ((SIZE_MAX - (sizeof(void *) - 1)) / sizeof(*pfd))) {
+    FIO___LOCK_UNLOCK(p->lock);
+    errno = ENOMEM;
+    return -1;
+  }
+  pfd_bytes = (max * sizeof(*pfd) + sizeof(void *) - 1) &
+              ~(sizeof(void *) - 1);
+  if (max > ((SIZE_MAX - pfd_bytes) / sizeof(*uary))) {
+    FIO___LOCK_UNLOCK(p->lock);
+    errno = ENOMEM;
+    return -1;
+  }
+  alloc_size = pfd_bytes + max * sizeof(*uary);
+  pfd = (struct pollfd *)FIO_MEM_REALLOC_(NULL, 0, alloc_size, 0);
+  if (!pfd) {
+    FIO___LOCK_UNLOCK(p->lock);
+    errno = ENOMEM;
+    return -1;
+  }
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___poll_review_buffer);
 
-  FIO_IMAP_EACH(fio___poll_map, (&cpy.map), pos) {
-    if (!(cpy.map.ary[pos].flags & flag_mask))
+  /* Snapshot events while retaining the map allocation. This lets concurrent
+   * monitor calls update the live map without a fallible merge afterwards. */
+  fio_poll_s cpy = {.settings = p->settings};
+  uary = (void **)((char *)pfd + pfd_bytes);
+  const unsigned short flag_mask = FIO_POLL_POSSIBLE_FLAGS | FIO_POLL_EX_FLAGS;
+  FIO_IMAP_EACH(fio___poll_map, (&p->map), pos) {
+    fio___poll_i_s *entry = p->map.ary + pos;
+    if (!(entry->flags & flag_mask))
       continue;
-    pfd[r].fd = cpy.map.ary[pos].fd;
+    pfd[r].fd = entry->fd;
 #if FIO_OS_WIN
     /* POLLPRI is not supported by WSAPoll and causes WSAEINVAL */
-    pfd[r].events = (short)(cpy.map.ary[pos].flags & (POLLIN | POLLOUT));
+    pfd[r].events = (short)(entry->flags & (POLLIN | POLLOUT));
 #else
-    pfd[r].events = (short)(cpy.map.ary[pos].flags & FIO_POLL_POSSIBLE_FLAGS);
+    pfd[r].events = (short)(entry->flags & FIO_POLL_POSSIBLE_FLAGS);
 #endif
-    uary[r] = cpy.map.ary[pos].udata;
+    uary[r] = entry->udata;
+    entry->flags = 0;
     ++r;
   }
+  FIO___LOCK_UNLOCK(p->lock);
 
   {
     /* clamp timeout: poll()/WSAPoll() take int; SIZE_MAX cast → negative → ∞ */
@@ -36737,6 +36765,8 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
     events = poll(pfd, r, timeout_ms);
 #endif
   }
+  if (events == -1 && errno == EINTR)
+    events = 0;
 
   if (events > 0) {
     /* handle events and strip consumed flags */
@@ -36753,54 +36783,27 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
     }
   }
 
-  /* merge surviving (un-fired) entries from cpy back into p->map.
-   * On timeout (events <= 0), ALL cpy entries are surviving.
-   * Entries re-armed or forgotten by another thread during the poll
-   * are already reflected in p->map; OR surviving flags in on top. */
+  /* Restore flags that did not fire. A concurrent forget removes the retained
+   * entry, preventing the stale fd from being re-added after this review. */
   FIO___LOCK_LOCK(p->lock);
-  if (!p->map.count && events <= 0) {
-    /* fast path: nothing changed while we were polling — swap back */
-    p->map = cpy.map;
-    FIO___LOCK_UNLOCK(p->lock);
-    FIO_MEM_FREE(pfd, alloc_size);
-    return 0;
-  }
-  /* merge cpy entries that still have flags (un-fired) back into p->map */
-  FIO_IMAP_EACH(fio___poll_map, (&cpy.map), pos) {
-    fio___poll_i_s *src = &cpy.map.ary[pos];
-    /* find the surviving flags for this fd from the pfd array */
-    unsigned short surviving = src->flags; /* default: all flags (timeout) */
-    for (int j = 0; j < r; ++j) {
-      if (pfd[j].fd == src->fd) {
-        surviving = (unsigned short)pfd[j].events;
-        break;
-      }
-    }
-    if (!surviving)
-      continue; /* all events fired for this fd — truly one-shot, drop it */
-    fio___poll_i_s *existing =
-        fio___poll_map_get(&p->map, (fio___poll_i_s){.fd = src->fd});
-    if (existing) {
-      /* user re-armed during poll: OR surviving flags in; keep new udata */
-      existing->flags |= surviving;
-    } else {
-      fio___poll_map_set(&p->map,
-                         (fio___poll_i_s){
-                             .fd = src->fd,
-                             .flags = surviving,
-                             .udata = src->udata,
-                         },
-                         1);
-    }
+  for (int j = 0; j < r; ++j) {
+    if (!pfd[j].events)
+      continue;
+    fio___poll_i_s *entry =
+        fio___poll_map_get(&p->map, (fio___poll_i_s){.fd = pfd[j].fd});
+    if (entry)
+      entry->flags |= (unsigned short)pfd[j].events;
   }
   FIO___LOCK_UNLOCK(p->lock);
-  fio___poll_map_destroy(&cpy.map);
-  FIO_MEM_FREE(pfd, alloc_size);
+  FIO_LEAK_COUNTER_ON_FREE(fio___poll_review_buffer);
+  FIO_MEM_FREE_(pfd, alloc_size);
   return events;
 }
 
 /** Stops monitoring the specified file descriptor, returning -1 on error. */
 SFUNC int fio_poll_forget(fio_poll_s *p, fio_socket_i fd) {
+  if (!p || fd == FIO_SOCKET_INVALID)
+    return -1;
   FIO___LOCK_LOCK(p->lock);
   int r = fio___poll_map_remove(&p->map, (fio___poll_i_s){.fd = fd});
   FIO___LOCK_UNLOCK(p->lock);
@@ -36809,6 +36812,8 @@ SFUNC int fio_poll_forget(fio_poll_s *p, fio_socket_i fd) {
 
 /** Closes all sockets, calling the `on_close`. */
 SFUNC void fio_poll_close_all(fio_poll_s *p) {
+  if (!p)
+    return;
   FIO___LOCK_LOCK(p->lock);
   fio_poll_s cpy = *p;
   p->map = (fio___poll_map_s){0};
@@ -85399,6 +85404,8 @@ FIO_SFUNC size_t fio___deflate_stream_decompress(fio_deflate_s *s,
 Streaming API - public functions
 ***************************************************************************** */
 
+FIO_LEAK_COUNTER_DEF(fio_deflate_s)
+
 void fio_deflate_new___(void); /* IDE Marker */
 /** Context allocation size for the given mode (struct + optional takeover
  * flexible state in the same single block). */
@@ -85420,6 +85427,7 @@ SFUNC fio_deflate_s *fio_deflate_new FIO_NOOP(int level, int is_compress) {
       (fio_deflate_s *)FIO_MEM_REALLOC(NULL, 0, sizeof(fio_deflate_s), 0);
   if (!s)
     return NULL;
+  FIO_LEAK_COUNTER_ON_ALLOC(fio_deflate_s);
 
   FIO_MEMSET(s, 0, sizeof(fio_deflate_s));
   s->is_compress = (uint8_t)(!!is_compress);
@@ -85442,6 +85450,7 @@ SFUNC fio_deflate_s *fio_deflate_new_takeover FIO_NOOP(int level,
   fio_deflate_s *s = (fio_deflate_s *)FIO_MEM_REALLOC(NULL, 0, alloc_size, 0);
   if (!s)
     return NULL;
+  FIO_LEAK_COUNTER_ON_ALLOC(fio_deflate_s);
 
   FIO_MEMSET(s, 0, alloc_size);
   s->is_compress = (uint8_t)(!!is_compress);
@@ -85457,6 +85466,7 @@ void fio_deflate_free___(void); /* IDE Marker */
 SFUNC void fio_deflate_free FIO_NOOP(fio_deflate_s *s) {
   if (!s)
     return;
+  FIO_LEAK_COUNTER_ON_FREE(fio_deflate_s);
   if (s->buf)
     FIO_MEM_FREE(s->buf, s->buf_cap);
   FIO_MEM_FREE(s, fio___deflate_ctx_size(s->is_compress, s->takeover));
@@ -107850,7 +107860,10 @@ typedef struct {
   char url[];
 } fio___io_connecting_s;
 
+FIO_LEAK_COUNTER_DEF(fio___io_connecting_s)
+
 FIO_SFUNC void fio___connecting_cleanup(fio___io_connecting_s *c) {
+  FIO_LEAK_COUNTER_ON_FREE(fio___io_connecting_s);
   fio___io_func_free_context_caller(c->protocol.io_functions.free_context,
                                     c->tls_ctx);
   FIO_MEM_FREE_(c, sizeof(*c) + c->url_len + 1);
@@ -107899,6 +107912,7 @@ SFUNC fio_io_s *fio_io_connect FIO_NOOP(fio_io_connect_args_s args) {
   fio___io_connecting_s *c = (fio___io_connecting_s *)
       FIO_MEM_REALLOC_(NULL, 0, sizeof(*c) + url_len + 1, 0);
   FIO_ASSERT_ALLOC(c);
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___io_connecting_s);
   *c = (fio___io_connecting_s){
       .protocol =
           {
@@ -111282,16 +111296,29 @@ typedef struct {
 } fio___tls13_context_s;
 
 FIO_LEAK_COUNTER_DEF(fio___tls13_context_s)
+/* every owned DER/PEM-decoded/key heap buffer (cert chain entries, trust
+ * store entries, RSA key blobs, transient cert scratch) shares one counter:
+ * a wrong `trust_der_owned` flag or an ownership-transfer bug shows up as a
+ * double-free assert / leak report on this counter.
+ * Note: the trust `bufs`/`lens` arrays themselves use a realloc-grow pattern
+ * and are intentionally NOT counted (realloc is neither alloc nor free);
+ * their entries are, which covers the dangerous double-free case. */
+FIO_LEAK_COUNTER_DEF(fio___tls13_der_buf)
+FIO_LEAK_COUNTER_DEF(fio___tls13_cert_chain_ary)
 
 /** Free DER certificate buffers owned by a context. */
 FIO_SFUNC void fio___tls13_context_cert_chain_free(fio___tls13_context_s *ctx) {
   if (!ctx)
     return;
-  for (size_t i = 0; i < ctx->cert_chain_count; ++i)
+  for (size_t i = 0; i < ctx->cert_chain_count; ++i) {
+    FIO_LEAK_COUNTER_ON_FREE(fio___tls13_der_buf);
     FIO_MEM_FREE((void *)ctx->cert_chain[i].buf, ctx->cert_chain[i].len);
-  if (ctx->cert_chain)
+  }
+  if (ctx->cert_chain) {
+    FIO_LEAK_COUNTER_ON_FREE(fio___tls13_cert_chain_ary);
     FIO_MEM_FREE((void *)ctx->cert_chain,
                  ctx->cert_chain_count * sizeof(*ctx->cert_chain));
+  }
   ctx->cert_der = (fio_ubuf_info_s){0};
   ctx->cert_chain = NULL;
   ctx->cert_chain_count = 0;
@@ -111308,13 +111335,16 @@ FIO_SFUNC int fio___tls13_context_cert_chain_add(fio___tls13_context_s *ctx,
   fio_ubuf_info_s *new_chain = (fio_ubuf_info_s *)
       FIO_MEM_REALLOC(NULL, 0, new_count * sizeof(*ctx->cert_chain), 0);
   if (!new_chain) {
+    FIO_LEAK_COUNTER_ON_FREE(fio___tls13_der_buf);
     FIO_MEM_FREE(der_buf, der_len);
     return -1;
   }
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___tls13_cert_chain_ary);
   if (old_count) {
     FIO_MEMCPY(new_chain,
                ctx->cert_chain,
                old_count * sizeof(*ctx->cert_chain));
+    FIO_LEAK_COUNTER_ON_FREE(fio___tls13_cert_chain_ary);
     FIO_MEM_FREE((void *)ctx->cert_chain, old_count * sizeof(*ctx->cert_chain));
   }
   ctx->cert_chain = new_chain;
@@ -111353,8 +111383,10 @@ static fio_lock_i fio___tls13_sys_trust_lock = FIO_LOCK_INIT;
  * Registered once at startup via FIO_CONSTRUCTOR below. */
 FIO_SFUNC void fio___tls13_sys_trust_free(void *ignr_) {
   fio_lock(&fio___tls13_sys_trust_lock);
-  for (size_t i = 0; i < fio___tls13_sys_trust.count; ++i)
+  for (size_t i = 0; i < fio___tls13_sys_trust.count; ++i) {
+    FIO_LEAK_COUNTER_ON_FREE(fio___tls13_der_buf);
     FIO_MEM_FREE(fio___tls13_sys_trust.bufs[i], fio___tls13_sys_trust.lens[i]);
+  }
   if (fio___tls13_sys_trust.bufs)
     FIO_MEM_FREE(fio___tls13_sys_trust.bufs,
                  fio___tls13_sys_trust.count * sizeof(uint8_t *));
@@ -111482,11 +111514,13 @@ FIO_SFUNC int fio___tls13_make_self_signed(fio___tls13_context_s *ctx,
     fio_x509_keypair_clear(&keypair);
     return -1;
   }
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___tls13_der_buf);
 
   size_t cert_der_len =
       fio_x509_self_signed_cert(cert_tmp, cert_size, &keypair, &opts);
   if (cert_der_len == 0) {
     FIO_LOG_ERROR("TLS 1.3: failed to generate self-signed certificate");
+    FIO_LEAK_COUNTER_ON_FREE(fio___tls13_der_buf);
     FIO_MEM_FREE(cert_tmp, cert_size);
     fio_x509_keypair_clear(&keypair);
     return -1;
@@ -111495,11 +111529,14 @@ FIO_SFUNC int fio___tls13_make_self_signed(fio___tls13_context_s *ctx,
   uint8_t *cert_der = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, cert_der_len, 0);
   if (!cert_der) {
     FIO_LOG_ERROR("TLS 1.3: failed to allocate exact certificate buffer");
+    FIO_LEAK_COUNTER_ON_FREE(fio___tls13_der_buf);
     FIO_MEM_FREE(cert_tmp, cert_size);
     fio_x509_keypair_clear(&keypair);
     return -1;
   }
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___tls13_der_buf);
   FIO_MEMCPY(cert_der, cert_tmp, cert_der_len);
+  FIO_LEAK_COUNTER_ON_FREE(fio___tls13_der_buf);
   FIO_MEM_FREE(cert_tmp, cert_size);
 
   if (fio___tls13_context_cert_chain_add(ctx, cert_der, cert_der_len) != 0) {
@@ -111582,6 +111619,7 @@ FIO_SFUNC int fio___tls13_load_cert_pem_chain(fio___tls13_context_s *ctx,
           (uint8_t *)FIO_MEM_REALLOC(NULL, 0, pem_block.der_len, 0);
       if (!der_buf)
         return (loaded > 0) ? loaded : -1;
+      FIO_LEAK_COUNTER_ON_ALLOC(fio___tls13_der_buf);
       FIO_MEMCPY(der_buf, tmp_der, pem_block.der_len);
       if (fio___tls13_context_cert_chain_add(ctx, der_buf, pem_block.der_len) !=
           0)
@@ -111696,6 +111734,8 @@ FIO_SFUNC int fio___tls13_each_cert(struct fio_io_tls_each_s *e,
       }
       size_t encoded_len = 8 + pkey.rsa.n_len + pkey.rsa.d_len;
       uint8_t *encoded = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, encoded_len, 0);
+      if (encoded)
+        FIO_LEAK_COUNTER_ON_ALLOC(fio___tls13_der_buf);
       if (!encoded) {
         FIO_LOG_ERROR("TLS 1.3: failed to allocate RSA private key buffer");
         fio_pem_private_key_clear(&pkey);
@@ -111799,6 +111839,7 @@ FIO_SFUNC int fio___tls13_trust_array_push(uint8_t ***bufs_p,
                                                old_count * sizeof(size_t));
   if (!new_bufs || !new_lens) {
     FIO_LOG_ERROR("TLS 1.3: failed to allocate trust store arrays");
+    FIO_LEAK_COUNTER_ON_FREE(fio___tls13_der_buf);
     FIO_MEM_FREE(der_buf, der_len);
     if (new_bufs)
       *bufs_p = new_bufs;
@@ -111876,6 +111917,7 @@ FIO_SFUNC int fio___tls13_load_pem_bundle_into(uint8_t ***bufs_p,
         FIO_LOG_ERROR("TLS 1.3: failed to allocate DER buffer for PEM bundle");
         return (loaded > 0) ? loaded : -1;
       }
+      FIO_LEAK_COUNTER_ON_ALLOC(fio___tls13_der_buf);
       FIO_MEMCPY(der_buf, tmp_der, pem_block.der_len);
       if (fio___tls13_trust_array_push(bufs_p,
                                        lens_p,
@@ -111949,6 +111991,7 @@ FIO_SFUNC int fio___tls13_get_system_trust(void) {
     uint8_t *der_buf = (uint8_t *)FIO_MEM_REALLOC(NULL, 0, der_len, 0);
     if (!der_buf)
       continue;
+    FIO_LEAK_COUNTER_ON_ALLOC(fio___tls13_der_buf);
     FIO_MEMCPY(der_buf, pCert->pbCertEncoded, der_len);
     if (fio___tls13_trust_array_push(&fio___tls13_sys_trust.bufs,
                                      &fio___tls13_sys_trust.lens,
@@ -112181,6 +112224,7 @@ error:
     fio___tls13_context_cert_chain_free(ctx);
     if (ctx->private_key_ext.buf) {
       fio_secure_zero(ctx->private_key_ext.buf, ctx->private_key_ext.len);
+      FIO_LEAK_COUNTER_ON_FREE(fio___tls13_der_buf);
       FIO_MEM_FREE(ctx->private_key_ext.buf, ctx->private_key_ext.len);
       ctx->private_key_ext.buf = NULL;
       ctx->private_key_ext.len = 0;
@@ -112190,8 +112234,10 @@ error:
      * When trust_der_owned=0 the arrays are the global system trust singleton
      * and must NOT be freed here. */
     if (ctx->trust_der_owned) {
-      for (size_t i = 0; i < ctx->trust_der_count; ++i)
+      for (size_t i = 0; i < ctx->trust_der_count; ++i) {
+        FIO_LEAK_COUNTER_ON_FREE(fio___tls13_der_buf);
         FIO_MEM_FREE(ctx->trust_der_bufs[i], ctx->trust_der_lens[i]);
+      }
       if (ctx->trust_der_bufs)
         FIO_MEM_FREE(ctx->trust_der_bufs,
                      ctx->trust_der_count * sizeof(uint8_t *));
@@ -112221,6 +112267,7 @@ FIO_SFUNC void fio___tls13_free_context_task(void *tls_ctx, void *ignr_) {
   fio_secure_zero(ctx->private_key, sizeof(ctx->private_key));
   if (ctx->private_key_ext.buf) {
     fio_secure_zero(ctx->private_key_ext.buf, ctx->private_key_ext.len);
+    FIO_LEAK_COUNTER_ON_FREE(fio___tls13_der_buf);
     FIO_MEM_FREE(ctx->private_key_ext.buf, ctx->private_key_ext.len);
     ctx->private_key_ext.buf = NULL;
     ctx->private_key_ext.len = 0;
@@ -112230,8 +112277,10 @@ FIO_SFUNC void fio___tls13_free_context_task(void *tls_ctx, void *ignr_) {
    * When trust_der_owned=0 the arrays are the global system trust singleton
    * and must NOT be freed here — they are freed at process exit. */
   if (ctx->trust_der_owned) {
-    for (size_t i = 0; i < ctx->trust_der_count; ++i)
+    for (size_t i = 0; i < ctx->trust_der_count; ++i) {
+      FIO_LEAK_COUNTER_ON_FREE(fio___tls13_der_buf);
       FIO_MEM_FREE(ctx->trust_der_bufs[i], ctx->trust_der_lens[i]);
+    }
     if (ctx->trust_der_bufs)
       FIO_MEM_FREE(ctx->trust_der_bufs,
                    ctx->trust_der_count * sizeof(uint8_t *));
@@ -119939,6 +119988,10 @@ HTTP Routing
 ***************************************************************************** */
 
 FIO_LEAK_COUNTER_DEF(fio___http_router_u)
+FIO_LEAK_COUNTER_DEF(fio___http_router_public_folder)
+/* static-file on-demand compression scratch (src + dst share the counter;
+ * both have multiple free paths). */
+FIO_LEAK_COUNTER_DEF(fio___http_static_compress_buf)
 FIO_SFUNC void fio___http_on_http_with_public_folder(void *h_, void *ignr);
 
 void fio_http_route___(void);
@@ -120024,6 +120077,7 @@ SFUNC int fio_http_route FIO_NOOP(fio_http_listener_s *l,
     s.tls =
         (fio_io_tls_s *)FIO_MEM_REALLOC_(NULL, 0, s.public_folder.len + 1, 0);
     FIO_ASSERT_ALLOC(s.tls);
+    FIO_LEAK_COUNTER_ON_ALLOC(fio___http_router_public_folder);
     FIO_MEMCPY(s.tls, s.public_folder.buf, s.public_folder.len);
     s.public_folder = FIO_STR_INFO2((char *)s.tls, s.public_folder.len);
     s.public_folder.buf[s.public_folder.len] = 0;
@@ -120032,8 +120086,10 @@ SFUNC int fio_http_route FIO_NOOP(fio_http_listener_s *l,
   if (r->s.on_http) {
     if (r->s.on_stop != p->settings.on_stop || r->s.udata != p->settings.udata)
       r->s.on_stop(&r->s);
-    if (r->s.tls && (char *)r->s.tls == r->s.public_folder.buf)
+    if (r->s.tls && (char *)r->s.tls == r->s.public_folder.buf) {
+      FIO_LEAK_COUNTER_ON_FREE(fio___http_router_public_folder);
       FIO_MEM_FREE_(r->s.tls, r->s.public_folder.len + 1);
+    }
   }
   /* if we have a route with a static file service, we need this */
   if (s.public_folder.buf && s.public_folder.len) {
@@ -120117,8 +120173,10 @@ FIO_SFUNC fio_http_settings_s *fio___http_handle_settings(fio_http_s *h) {
 FIO_SFUNC void fio___http_router_destroy(fio___http_router_u *r) {
   if (!r)
     return;
-  if (r->s.tls && (char *)r->s.tls == r->s.public_folder.buf)
+  if (r->s.tls && (char *)r->s.tls == r->s.public_folder.buf) {
+    FIO_LEAK_COUNTER_ON_FREE(fio___http_router_public_folder);
     FIO_MEM_FREE_(r->s.tls, r->s.public_folder.len + 1);
+  }
   for (size_t i = (sizeof(r->s) / sizeof(void *)); i < 256; ++i) {
     if (!r->map[i])
       continue;
@@ -123916,9 +123974,11 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
           close(orig_fd);
           continue;
         }
+        FIO_LEAK_COUNTER_ON_ALLOC(fio___http_static_compress_buf);
         size_t rd = fio_fd_read(orig_fd, src, (size_t)orig_st.st_size, 0);
         close(orig_fd);
         if (rd != (size_t)orig_st.st_size) {
+          FIO_LEAK_COUNTER_ON_FREE(fio___http_static_compress_buf);
           FIO_MEM_FREE(src, (size_t)orig_st.st_size);
           continue;
         }
@@ -123926,15 +123986,19 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
         size_t bound = options[i].bound(rd) + options[i].extra;
         void *dst = FIO_MEM_REALLOC(NULL, 0, bound, 0);
         if (!dst) {
+          FIO_LEAK_COUNTER_ON_FREE(fio___http_static_compress_buf);
           FIO_MEM_FREE(src, (size_t)orig_st.st_size);
           continue;
         }
+        FIO_LEAK_COUNTER_ON_ALLOC(fio___http_static_compress_buf);
         size_t comp_len =
             options[i].compress(dst, bound, src, rd, options[i].level);
+        FIO_LEAK_COUNTER_ON_FREE(fio___http_static_compress_buf);
         FIO_MEM_FREE(src, (size_t)orig_st.st_size);
         if (!comp_len || comp_len >= rd) {
           /* compression failed or didn't shrink the file */
           fio___http_static_compress_note_result(st, EINVAL);
+          FIO_LEAK_COUNTER_ON_FREE(fio___http_static_compress_buf);
           FIO_MEM_FREE(dst, bound);
           continue;
         }
@@ -123946,6 +124010,7 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
         if (fio_filename_overwrite(filename.buf, dst, comp_len)) {
           /* write failure — errno preserved by fio_filename_overwrite */
           fio___http_static_compress_note_result(st, errno);
+          FIO_LEAK_COUNTER_ON_FREE(fio___http_static_compress_buf);
           FIO_MEM_FREE(dst, bound);
           filename.len = orig_len;
           filename.buf[filename.len] = 0;
@@ -123953,6 +124018,7 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
         }
         /* variant written — compression success */
         fio___http_static_compress_note_result(st, 0);
+        FIO_LEAK_COUNTER_ON_FREE(fio___http_static_compress_buf);
         FIO_MEM_FREE(dst, bound);
       }
       /* compressed variant is ready — set response headers */
@@ -125895,6 +125961,9 @@ WebSocket Event Handling (`fio_websocket_*`)
 FIO_SFUNC int fio___websocket_process_data(fio_io_s *io,
                                            fio___http_connection_s *c);
 
+/* permessage-deflate output scratch buffer (multiple free paths). */
+FIO_LEAK_COUNTER_DEF(fio___websocket_deflate_buf)
+
 /** Resumes parsing after async message delivery and reads pipelined bytes. */
 FIO_SFUNC void fio___websocket_on_message_finalize(void *c_, void *ignr_) {
   fio___http_connection_s *c = (fio___http_connection_s *)c_;
@@ -126358,6 +126427,8 @@ SFUNC int fio_http_websocket_write(fio_http_s *h,
     /* Output bound: input + 12.5% + 32B overhead. */
     comp_alloc = len + (len >> 3) + 32;
     comp_buf = (char *)FIO_MEM_REALLOC(NULL, 0, comp_alloc, 0);
+    if (comp_buf)
+      FIO_LEAK_COUNTER_ON_ALLOC(fio___websocket_deflate_buf);
     if (comp_buf) {
       size_t comp_len =
           fio_deflate_push(c->deflate_wr, comp_buf, comp_alloc, buf, len, 1);
@@ -126371,6 +126442,7 @@ SFUNC int fio_http_websocket_write(fio_http_s *h,
         if (comp_len >= len) {
           /* Negative gain: compression expanded the payload — send the
            * original uncompressed (RSV1 stays clear) instead. */
+          FIO_LEAK_COUNTER_ON_FREE(fio___websocket_deflate_buf);
           FIO_MEM_FREE(comp_buf, comp_alloc);
           comp_buf = NULL;
           comp_alloc = 0;
@@ -126385,6 +126457,7 @@ SFUNC int fio_http_websocket_write(fio_http_s *h,
         }
       } else {
         /* Compression failed — fall back to uncompressed. */
+        FIO_LEAK_COUNTER_ON_FREE(fio___websocket_deflate_buf);
         FIO_MEM_FREE(comp_buf, comp_alloc);
         comp_buf = NULL;
         comp_alloc = 0;
@@ -126405,8 +126478,10 @@ SFUNC int fio_http_websocket_write(fio_http_s *h,
         c->is_client
             ? fio_websocket_write_message_client(tmp, msg, text_flag, 0, rsv)
             : fio_websocket_write_message_server(tmp, msg, text_flag, rsv);
-    if (comp_buf)
+    if (comp_buf) {
+      FIO_LEAK_COUNTER_ON_FREE(fio___websocket_deflate_buf);
       FIO_MEM_FREE(comp_buf, comp_alloc);
+    }
     fio_io_write2(c->io, .buf = tmp, .len = wlen, .copy = 1);
     return 0;
   }
@@ -126418,8 +126493,10 @@ SFUNC int fio_http_websocket_write(fio_http_s *h,
       c->is_client
           ? fio_websocket_write_message_client(payload, msg, text_flag, 0, rsv)
           : fio_websocket_write_message_server(payload, msg, text_flag, rsv));
-  if (comp_buf)
+  if (comp_buf) {
+    FIO_LEAK_COUNTER_ON_FREE(fio___websocket_deflate_buf);
     FIO_MEM_FREE(comp_buf, comp_alloc);
+  }
   fio_io_write2(c->io,
                 .buf = payload,
                 .len = fio_bstr_len(payload),
