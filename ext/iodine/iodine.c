@@ -73,6 +73,8 @@ FIO_SFUNC void *iodine___perform_exit_outside_gvl(void *ignr_) {
   fio_state_callback_force(FIO_CALL_AT_EXIT);
   fio_state_callback_clear(FIO_CALL_AT_EXIT);
   STORE.destroy();
+  fio_state_callback_force(FIO_CALL_AFTER_EXIT);
+  fio_state_callback_clear(FIO_CALL_AFTER_EXIT);
   return NULL;
 }
 
@@ -85,7 +87,8 @@ FIO_SFUNC void iodine___perform_exit(VALUE ignr_) {
                              NULL);
 #ifdef _WIN32
   /* Windows runs FIO_DESTRUCTOR via CRT atexit, after Ruby is torn down.
-   * Discard deferred callbacks while their locks and allocator are still live. */
+   * Discard deferred callbacks while their locks and allocator are still live.
+   */
   fio_state_callback_clear_all();
 #endif
 }
