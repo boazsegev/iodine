@@ -36756,6 +36756,16 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
   }
   FIO___LOCK_UNLOCK(p->lock);
 
+  /* A consumed one-shot entry remains in the map so it can be re-armed, but
+   * leaves an empty snapshot. WSAPoll rejects a zero descriptor count. */
+  if (!r) {
+    FIO_LEAK_COUNTER_ON_FREE(fio___poll_review_buffer);
+    FIO_MEM_FREE_(pfd, alloc_size);
+    if (timeout)
+      FIO_THREAD_WAIT((timeout * 1000000));
+    return 0;
+  }
+
   {
     /* clamp timeout: poll()/WSAPoll() take int; SIZE_MAX cast → negative → ∞ */
     int timeout_ms = (timeout > (size_t)INT_MAX) ? INT_MAX : (int)timeout;
