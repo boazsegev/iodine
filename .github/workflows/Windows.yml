@@ -36,13 +36,17 @@ jobs:
         echo "CI=false" >> $env:GITHUB_ENV
     - name: Compile Iodine
       run: bundle exec rake compile
-    - name: Run connection_spec alone (TEMP diagnostic)
-      # Bisect: single-listener reactor cycle. Crashes -> first LISTEN
-      # protocol_set broken on Windows. Green -> multi-listener interaction.
-      run: bundle exec rspec spec/connection_spec.rb --format documentation
-      env:
-        IODINE_LOG_LEVEL: 5
-      continue-on-error: true
+    - name: Verify connection spec exits promptly
+      shell: pwsh
+      run: |
+        $process = Start-Process cmd.exe -ArgumentList '/c', 'bundle exec rspec spec/connection_spec.rb --format documentation' -PassThru -NoNewWindow
+        if (-not $process.WaitForExit(30000)) {
+          Stop-Process -Id $process.Id -Force
+          throw 'connection_spec did not exit within 30 seconds'
+        }
+        if ($process.ExitCode -ne 0) {
+          throw "connection_spec exited with code $($process.ExitCode)"
+        }
     - name: Run tests
       run: bundle exec rake spec
       env:
