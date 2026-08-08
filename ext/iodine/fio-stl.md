@@ -1,5 +1,7 @@
 # facil.io STL — Core
 
+## The C Server Toolbox Library
+
 Welcome to the heart of the facil.io C STL. This is where the boring-but-essential stuff lives: version numbers, compiler incantations, OS patches, atomics, memory primitives, and the low-level helpers that everything else builds on. It is not glamorous, but without it the rest of the library would be a pile of undefined behavior and segfaults.
 
 The core group covers the first two slices of the library — `000 core.h` and `001 header.h` — plus their specialized sidekicks. Each file below is a focused guide to one corner of that foundation.
@@ -3521,6 +3523,10 @@ These macros are defined in [`./001 header.h`](./001%20header.h) and are re-eval
 - **`FIO_MEMORY_DISABLE`** — Define to disable all custom facil.io allocators and force system `malloc`/`free` for temporary allocations.
 - **`FIO_MALLOC_TMP_USE_SYSTEM`** — Force the recursive allocator variant to use the system `realloc`/`free`. Useful when a custom `FIO_MEM_REALLOC` needs an allocation path that will not recurse back into facil.io.
 - **`FIO_MEM_REALLOC_` / `FIO_MEM_FREE_`** — Recursive-safe copies of `FIO_MEM_REALLOC`/`FIO_MEM_FREE`. Override these when the custom allocator itself needs to allocate or free memory without re-entering the override.
+- **`FIO_MEM_REALLOC_ALIGNED(ptr, old_size, new_size, copy_len, alignment)`** — Reallocate with a minimum pointer alignment, **assigning** the result to `ptr` (save a copy first if failure must be recoverable). `alignment` of `0` selects the allocator default; non power-of-2 values are rounded down to a power of 2; effective alignment never drops below the current alignment of `ptr` nor below the allocator default. Routes to `fio_realloc_aligned` when the facil.io allocator is available, or to the system backends (`_aligned_realloc` on Windows, `posix_memalign`-based emulation on POSIX).
+- **`FIO_MEM_FREE_ALIGNED(ptr, size)`** — Free a block obtained through `FIO_MEM_REALLOC_ALIGNED`. With the facil.io allocator this is simply `fio_free` (which accepts interior pointers); with the system backends it routes to `_aligned_free` on Windows or `free` on POSIX. Custom allocators that stash alignment bookkeeping near the returned pointer should override this pair together.
+- **`FIO_MEM_ALLOC_SIZE(size)`** — The usable bytes the allocator reserves for a `size` request (`fio_alloc_size`, or the identity function with the system allocator).
+- **`FIO_MEM_REALLOC_ALIGNED_` / `FIO_MEM_FREE_ALIGNED_`** — Recursive-safe copies of the aligned pair, mirroring `FIO_MEM_REALLOC_` / `FIO_MEM_FREE_`.
 
 ### Pointer tagging
 
@@ -8531,6 +8537,89 @@ FIO_IFUNC size_t FIO_NAME(FIO_MEMORY_NAME, realloc_is_safe)(void);
 ```
 
 Returns non-zero if the allocator zeroes allocations, which makes `fio_realloc2` safe for the uncopied tail.
+
+---
+
+## Aligned Allocation API
+
+The aligned API requests a minimum pointer alignment. `fio_malloc_aligned` and `fio_calloc_aligned` are thin wrappers around `fio_realloc_aligned`, which is the single entry point.
+
+#### `fio_realloc_aligned`
+
+```c
+SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME,
+                                   realloc_aligned)(void *ptr,
+                                                    size_t new_size,
+                                                    size_t copy_len,
+                                                    size_t alignment);
+```
+
+Reallocates `ptr` to `new_size` (copying at most `copy_len` bytes, like `fio_realloc2`), guaranteeing the returned pointer is aligned to at least `alignment`.
+
+The `alignment` argument is normalized:
+
+- `0` selects the allocator default (`FIO_MEMORY_ALIGN_SIZE`).
+- Non power-of-2 values are rounded **down** to the nearest power of 2.
+- The effective alignment is the maximum of the (rounded) request, the current alignment of `ptr`, and `FIO_MEMORY_ALIGN_SIZE` — alignment never regresses across a realloc.
+- Values above `FIO_MEMORY_SYS_ALLOCATION_SIZE` fail: returns `NULL` and sets `errno` to `EINVAL` (debug builds also trip `FIO_ASSERT_DEBUG`).
+
+In-place growth only occurs when the existing pointer already satisfies the requested alignment; otherwise the data is copied to a newly aligned block.
+
+`realloc_aligned(NULL, size, 0, alignment)` allocates (like `malloc_aligned`), and `realloc_aligned(ptr, 0, copy_len, alignment)` frees `ptr`.
+
+#### `fio_malloc_aligned`
+
+```c
+SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
+                                       malloc_aligned)(size_t size,
+                                                       size_t alignment);
+```
+
+Equivalent to `fio_realloc_aligned(NULL, size, 0, alignment)`. A zero `size` returns the shared zero-allocation pointer (aligned only to `FIO_MEMORY_ALIGN_SIZE`), which may be freed or realloc'd normally.
+
+#### `fio_calloc_aligned`
+
+```c
+SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
+                                       calloc_aligned)(size_t size_per_unit,
+                                                       size_t unit_count,
+                                                       size_t alignment);
+```
+
+Same as `fio_malloc_aligned(size_per_unit * unit_count, alignment)`, but zeroes the (rounded) allocation. Returns `NULL` on size overflow.
+
+#### `fio_alloc_size`
+
+```c
+FIO_IFUNC size_t FIO_NAME(FIO_MEMORY_NAME, alloc_size)(size_t minimum_bytes);
+```
+
+Returns the number of usable bytes the allocator actually reserves for a request of `minimum_bytes` (the size class): rounded up to `FIO_MEMORY_ALIGN_SIZE` for arena/big-block allocations, and to whole pages (minus the header offset) for page-backed ones. Alignment padding is reserved in addition to the returned value. With `FIO_MEMORY_DISABLE` the system allocator exposes no rounding guarantee and `minimum_bytes` is returned unchanged.
+
+### Alignment abstraction macros
+
+```c
+FIO_MEM_REALLOC_ALIGNED(ptr, old_size, new_size, copy_len, alignment)
+FIO_MEM_FREE_ALIGNED(ptr, size)
+FIO_MEM_ALLOC_SIZE(size)
+```
+
+`FIO_MEM_REALLOC_ALIGNED` mirrors `FIO_MEM_REALLOC` with an added `alignment` argument and **assigns** the result to `ptr` (test with `FIO_ASSERT_ALLOC(ptr)` after the call, restoring a saved copy on failure). `FIO_MEM_FREE_ALIGNED` releases memory obtained through the aligned API, and `FIO_MEM_ALLOC_SIZE` mirrors `fio_alloc_size`.
+
+The macros route to the active allocator, exactly like `FIO_MEM_REALLOC` does: the fio allocator when it was included (`H___FIO_MALLOC___H`), or portable system-allocator fallbacks otherwise. Template-local variants (`FIO_MEM_REALLOC_ALIGNED_`, `FIO_MEM_FREE_ALIGNED_`) exist for `FIO_MEMORY_NAME` template scope, mirroring `FIO_MEM_REALLOC_` / `FIO_MEM_FREE_`.
+
+**Pairing rule:** with the fio allocator, `free` accepts any pointer returned by the aligned API (interior pointers included), so `FIO_MEM_FREE_ALIGNED` is identical to `FIO_MEM_FREE`. Under `FIO_MEMORY_DISABLE` on Windows the aligned API uses `_aligned_malloc` / `_aligned_realloc`, whose memory **must** be released with `FIO_MEM_FREE_ALIGNED` (`_aligned_free`) — plain `free` is heap corruption. On POSIX both map to `free`. Custom allocators that stash alignment bookkeeping near the returned pointer should hook the macro pair, not the fio functions.
+
+### Alignment guarantees per configuration
+
+| Configuration | Default alignment | Aligned API backend | Max alignment |
+|---|---|---|---|
+| fio allocator (any OS) | `FIO_MEMORY_ALIGN_SIZE` (64) | interior-pointer slice / big-block / page-backed | `FIO_MEMORY_SYS_ALLOCATION_SIZE` |
+| `FIO_MEMORY_DISABLE`, POSIX | `_Alignof(max_align_t)` | `posix_memalign` + `free` | `FIO_MEMORY_SYS_ALLOCATION_SIZE` |
+| `FIO_MEMORY_DISABLE`, Windows | `_Alignof(max_align_t)` (16) | `_aligned_malloc` / `_aligned_realloc` / `_aligned_free` | `FIO_MEMORY_SYS_ALLOCATION_SIZE` |
+| `FIO_MEMORY_DISABLE`, other | `_Alignof(max_align_t)` | over-allocation with stashed raw pointer | `FIO_MEMORY_SYS_ALLOCATION_SIZE` |
+
+When `FIO_MALLOC_OVERRIDE_SYSTEM` is defined, the libc aligned-allocation family is overridden as well (`aligned_alloc`, `posix_memalign`, and on Windows `_aligned_malloc` / `_aligned_realloc` / `_aligned_free`), so libc-aligned pointers never reach the fio allocator (and vice versa).
 
 ---
 
@@ -16162,6 +16251,8 @@ void example(void) {
 ```
 
 The `_wrapper_s` header holds the reference count (and optional `flx_size` / `metadata` fields). Callers never see it — they only receive a pointer to the `FIO_REF_TYPE` that immediately follows.
+
+The header's declared alignment matches `_Alignof(FIO_REF_TYPE)`, so its size rounds up to a multiple of that alignment and the object that follows it is always correctly aligned. Allocation goes through `FIO_MEM_REALLOC_ALIGNED_` with the type's alignment (the allocator treats smaller-than-default requests as the default), so over-aligned types work in every allocator configuration.
 
 ---
 

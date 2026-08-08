@@ -1344,6 +1344,9 @@ Logging Primitives (no-op)
 /* *****************************************************************************
 Assertions
 ***************************************************************************** */
+#ifndef FIO_STDERR_FILE
+#define FIO_STDERR_FILE stderr
+#endif
 
 #ifndef FIO_ASSERT
 /** Asserts a condition is true, or kills the application using SIGINT. */
@@ -1352,6 +1355,7 @@ Assertions
     if (FIO_UNLIKELY(!(cond))) {                                               \
       FIO_LOG_FATAL(__VA_ARGS__);                                              \
       FIO_LOG_FATAL("     errno(%d): %s\n", errno, strerror(errno));           \
+      fflush(FIO_STDERR_FILE);                                                 \
       FIO___ASSERT_PERFORM_SIGNAL();                                           \
       exit(-1);                                                                \
     }                                                                          \
@@ -1371,6 +1375,7 @@ Assertions
       FIO_LOG_FATAL("(" FIO___FILE__                                           \
                     ":" FIO_MACRO2STR(__LINE__) ") " __VA_ARGS__);             \
       FIO_LOG_FATAL("     errno(%d): %s\n", errno, strerror(errno));           \
+      fflush(FIO_STDERR_FILE);                                                 \
       FIO___ASSERT_PERFORM_SIGNAL();                                           \
       exit(-1);                                                                \
     }                                                                          \
@@ -4071,18 +4076,43 @@ Vector Types (SIMD / Math)
 
 #elif __has_attribute(vector_size)
 
+/* Vector types with natural alignment capped at 64 bytes (the strictest
+ * hardware requirement, AVX-512 register width).
+ *
+ * GCC/Clang give `vector_size` types a natural alignment equal to their size,
+ * which grows to 128..512 bytes for the 1024..4096 bit unions (always on
+ * the MSVC ABI, which reports these natural alignments for even wider
+ * vectors). Alignment reduction requires typedef position, so the vector
+ * types are hoisted here and the member macros only reference them. */
+#define FIO___UXXX_VCAP(bits) (((bits) / 8) > 64 ? 64 : ((bits) / 8))
+#define FIO___UXXX_VTYPEDEFS(bits)                                             \
+  typedef uint64_t __attribute__((vector_size((bits / 8)),                     \
+                                  aligned(FIO___UXXX_VCAP(bits))))             \
+      fio___v##bits##u64;                                                      \
+  typedef uint32_t __attribute__((vector_size((bits / 8)),                     \
+                                  aligned(FIO___UXXX_VCAP(bits))))             \
+      fio___v##bits##u32;                                                      \
+  typedef uint16_t __attribute__((vector_size((bits / 8)),                     \
+                                  aligned(FIO___UXXX_VCAP(bits))))             \
+      fio___v##bits##u16;                                                      \
+  typedef uint8_t __attribute__((vector_size((bits / 8)),                      \
+                                  aligned(FIO___UXXX_VCAP(bits))))             \
+      fio___v##bits##u8;
+FIO___UXXX_VTYPEDEFS(128)
+FIO___UXXX_VTYPEDEFS(256)
+FIO___UXXX_VTYPEDEFS(512)
+FIO___UXXX_VTYPEDEFS(1024)
+FIO___UXXX_VTYPEDEFS(2048)
+FIO___UXXX_VTYPEDEFS(4096)
+
 /** Defines a `bits` long vector using unsigned 64bit words */
-#define FIO_UXXX_X64_DEF(name, bits)                                           \
-  uint64_t __attribute__((vector_size((bits / 8)))) name[1]
+#define FIO_UXXX_X64_DEF(name, bits) fio___v##bits##u64 name[1]
 /** Defines a `bits` long vector using unsigned 32bit words */
-#define FIO_UXXX_X32_DEF(name, bits)                                           \
-  uint32_t __attribute__((vector_size((bits / 8)))) name[1]
+#define FIO_UXXX_X32_DEF(name, bits) fio___v##bits##u32 name[1]
 /** Defines a `bits` long vector using unsigned 16bit words */
-#define FIO_UXXX_X16_DEF(name, bits)                                           \
-  uint16_t __attribute__((vector_size((bits / 8)))) name[1]
+#define FIO_UXXX_X16_DEF(name, bits) fio___v##bits##u16 name[1]
 /** Defines a `bits` long vector using unsigned 8bit words */
-#define FIO_UXXX_X8_DEF(name, bits)                                            \
-  uint8_t __attribute__((vector_size((bits / 8)))) name[1]
+#define FIO_UXXX_X8_DEF(name, bits)  fio___v##bits##u8 name[1]
 #else
 /** Defines a `bits` long vector using unsigned 64bit words */
 #define FIO_UXXX_X64_DEF(name, bits) uint64_t name[(bits / 64)]
@@ -4175,6 +4205,14 @@ typedef union fio_u4096 {
 
 FIO_ASSERT_STATIC(sizeof(fio_u128) == 16, "Math type size error!");
 FIO_ASSERT_STATIC(sizeof(fio_u4096) == 512, "Math type size error!");
+/* natural alignment must never exceed 64 bytes (AVX-512) on any ABI, so the
+ * default allocator alignment always satisfies these types (see 010 mem.h) */
+FIO_ASSERT_STATIC(_Alignof(fio_u128) <= 64, "Math type alignment error!");
+FIO_ASSERT_STATIC(_Alignof(fio_u256) <= 64, "Math type alignment error!");
+FIO_ASSERT_STATIC(_Alignof(fio_u512) <= 64, "Math type alignment error!");
+FIO_ASSERT_STATIC(_Alignof(fio_u1024) <= 64, "Math type alignment error!");
+FIO_ASSERT_STATIC(_Alignof(fio_u2048) <= 64, "Math type alignment error!");
+FIO_ASSERT_STATIC(_Alignof(fio_u4096) <= 64, "Math type alignment error!");
 
 #define fio_u128_init8(...)  ((fio_u128){.u8 = {__VA_ARGS__}})
 #define fio_u128_init16(...) ((fio_u128){.u16 = {__VA_ARGS__}})
@@ -4291,31 +4329,31 @@ The loop count is computed dynamically via sizeof, yielding:
 #define FIO_MATH_UXXX_OP_RROT(t, a, b, bits)                                   \
   do {                                                                         \
     for (size_t i__ = 0; i__ < (sizeof((t)) / sizeof((t)[0])); ++i__)          \
-      (t)[i__] = ((a)[i__] >> ((b)[i__] & ((bits)-1))) |                       \
-                 ((a)[i__] << (((bits) - ((b)[i__] & ((bits)-1))) &           \
-                              ((bits)-1)));                                    \
+      (t)[i__] =                                                               \
+          ((a)[i__] >> ((b)[i__] & ((bits)-1))) |                              \
+          ((a)[i__] << (((bits) - ((b)[i__] & ((bits)-1))) & ((bits)-1)));     \
   } while (0)
 /** Performs `(a >> c) | (a << (bits - c))` (const right rotation) in a loop. */
 #define FIO_MATH_UXXX_OP_CRROT(t, a, c, bits)                                  \
   do {                                                                         \
     for (size_t i__ = 0; i__ < (sizeof((t)) / sizeof((t)[0])); ++i__)          \
       (t)[i__] = ((a)[i__] >> ((c) & ((bits)-1))) |                            \
-                 ((a)[i__] << (((bits) - ((c) & ((bits)-1))) & ((bits)-1)));  \
+                 ((a)[i__] << (((bits) - ((c) & ((bits)-1))) & ((bits)-1)));   \
   } while (0)
 /** Performs `(a << b) | (a >> (bits - b))` (left rotation) in a loop. */
 #define FIO_MATH_UXXX_OP_LROT(t, a, b, bits)                                   \
   do {                                                                         \
     for (size_t i__ = 0; i__ < (sizeof((t)) / sizeof((t)[0])); ++i__)          \
-      (t)[i__] = ((a)[i__] << ((b)[i__] & ((bits)-1))) |                       \
-                 ((a)[i__] >> (((bits) - ((b)[i__] & ((bits)-1))) &           \
-                              ((bits)-1)));                                    \
+      (t)[i__] =                                                               \
+          ((a)[i__] << ((b)[i__] & ((bits)-1))) |                              \
+          ((a)[i__] >> (((bits) - ((b)[i__] & ((bits)-1))) & ((bits)-1)));     \
   } while (0)
 /** Performs `(a << c) | (a >> (bits - c))` (const left rotation) in a loop. */
 #define FIO_MATH_UXXX_OP_CLROT(t, a, c, bits)                                  \
   do {                                                                         \
     for (size_t i__ = 0; i__ < (sizeof((t)) / sizeof((t)[0])); ++i__)          \
       (t)[i__] = ((a)[i__] << ((c) & ((bits)-1))) |                            \
-                 ((a)[i__] >> (((bits) - ((c) & ((bits)-1))) & ((bits)-1)));  \
+                 ((a)[i__] >> (((bits) - ((c) & ((bits)-1))) & ((bits)-1)));   \
   } while (0)
 
 /** Performs ternary `t = f(a, b, c)` lane-wise using easily vectorized loop. */
@@ -5903,14 +5941,10 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_slli_si128(fio_fx86_m128i a, int imm8) {
 #else
   if (!n)
     return a;
-  if (n >= 16) {
-    fio_fx86_m128i r;
-    FIO_MEMSET(&r, 0, 16);
-    return r;
-  }
-  fio_fx86_m128i r;
-  FIO_MEMSET(&r, 0, 16);
-  FIO_MEMCPY(r.u8 + n, a.u8, (size_t)(16 - n));
+  if (n >= 16)
+    return (fio_fx86_m128i){0};
+  fio_fx86_m128i r = {0};
+  fio_memcpy15x(r.u8 + n, a.u8, (size_t)(16 - n));
   return r;
 #endif
 }
@@ -5941,14 +5975,10 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_srli_si128(fio_fx86_m128i a, int imm8) {
 #else
   if (!n)
     return a;
-  if (n >= 16) {
-    fio_fx86_m128i r;
-    FIO_MEMSET(&r, 0, 16);
-    return r;
-  }
-  fio_fx86_m128i r;
-  FIO_MEMSET(&r, 0, 16);
-  FIO_MEMCPY(r.u8, a.u8 + n, (size_t)(16 - n));
+  if (n >= 16)
+    return (fio_fx86_m128i){0};
+  fio_fx86_m128i r = {0};
+  fio_memcpy15x(r.u8, a.u8 + n, (size_t)(16 - n));
   return r;
 #endif
 }
@@ -5979,11 +6009,9 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_slli_epi32(fio_fx86_m128i a, int imm8) {
   }
   }
 #else
+  if (n >= 32)
+    return (fio_fx86_m128i){0};
   fio_fx86_m128i r;
-  if (n >= 32) {
-    FIO_MEMSET(&r, 0, 16);
-    return r;
-  }
   for (int i = 0; i < 4; ++i)
     r.u32[i] = a.u32[i] << n;
   return r;
@@ -6014,11 +6042,9 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_srli_epi32(fio_fx86_m128i a, int imm8) {
   }
   }
 #else
+  if (n >= 32)
+    return (fio_fx86_m128i){0};
   fio_fx86_m128i r;
-  if (n >= 32) {
-    FIO_MEMSET(&r, 0, 16);
-    return r;
-  }
   for (int i = 0; i < 4; ++i)
     r.u32[i] = a.u32[i] >> n;
   return r;
@@ -6048,11 +6074,9 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_slli_epi64(fio_fx86_m128i a, int imm8) {
   }
   }
 #else
+  if (n >= 64)
+    return (fio_fx86_m128i){0};
   fio_fx86_m128i r;
-  if (n >= 64) {
-    FIO_MEMSET(&r, 0, 16);
-    return r;
-  }
   for (int i = 0; i < 2; ++i)
     r.u64[i] = a.u64[i] << n;
   return r;
@@ -6082,11 +6106,9 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_srli_epi64(fio_fx86_m128i a, int imm8) {
   }
   }
 #else
+  if (n >= 64)
+    return (fio_fx86_m128i){0};
   fio_fx86_m128i r;
-  if (n >= 64) {
-    FIO_MEMSET(&r, 0, 16);
-    return r;
-  }
   for (int i = 0; i < 2; ++i)
     r.u64[i] = a.u64[i] >> n;
   return r;
@@ -6246,7 +6268,8 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_set1_epi8(char a) {
   return _mm_set1_epi8(a);
 #else
   fio_fx86_m128i r;
-  FIO_MEMSET(&r, (uint8_t)a, 16);
+  for (int i = 0; i < 16; ++i)
+    r.u8[i] = (uint8_t)a;
   return r;
 #endif
 }
@@ -6256,9 +6279,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_setzero_si128(void) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__SSE2__)
   return _mm_setzero_si128();
 #else
-  fio_fx86_m128i r;
-  FIO_MEMSET(&r, 0, 16);
-  return r;
+  return (fio_fx86_m128i){0};
 #endif
 }
 
@@ -6267,8 +6288,7 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_cvtsi32_si128(int a) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__SSE2__)
   return _mm_cvtsi32_si128(a);
 #else
-  fio_fx86_m128i r;
-  FIO_MEMSET(&r, 0, 16);
+  fio_fx86_m128i r = {0};
   r.u32[0] = (uint32_t)a;
   return r;
 #endif
@@ -6308,30 +6328,23 @@ FIO_IFUNC fio_fx86_m128i fio_fx86_alignr_epi8(fio_fx86_m128i a,
   case 8: return _mm_alignr_epi8(a, b, 8);
   default: {
     /* Fallback for other values — pad to 48 bytes for imm8 17..31 safety */
-    uint8_t tmp[48];
+    uint8_t tmp[48] = {0};
     fio_memcpy16(tmp, &b);
     fio_memcpy16(tmp + 16, &a);
-    FIO_MEMSET(tmp + 32, 0, 16);
-    fio_fx86_m128i r;
-    if (n >= 32)
-      FIO_MEMSET(&r, 0, 16);
-    else
+    fio_fx86_m128i r = {0};
+    if (n < 32)
       fio_memcpy16(&r, tmp + n);
     return r;
   }
   }
 #else
   /* Pad to 48 bytes so imm8 values 17..31 don't read out of bounds */
-  uint8_t tmp[48];
+  uint8_t tmp[48] = {0};
   fio_memcpy16(tmp, &b);
   fio_memcpy16(tmp + 16, &a);
-  FIO_MEMSET(tmp + 32, 0, 16);
-  fio_fx86_m128i r;
-  if (n >= 32) {
-    FIO_MEMSET(&r, 0, 16);
-  } else {
+  fio_fx86_m128i r = {0};
+  if (n < 32)
     fio_memcpy16(&r, tmp + n);
-  }
   return r;
 #endif
 }
@@ -7142,11 +7155,9 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_slli_epi32(fio_fx86_m256i a, int imm8) {
   }
 #else
   fio_u256 ua = fio___fx86_to_u256(a);
-  fio_u256 r;
-  if (n >= 32) {
-    FIO_MEMSET(&r, 0, 32);
+  fio_u256 r = {0};
+  if (n >= 32)
     return fio___fx86_from_u256(r);
-  }
   for (int i = 0; i < 8; ++i)
     r.u32[i] = ua.u32[i] << n;
   return fio___fx86_from_u256(r);
@@ -7265,9 +7276,10 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_set1_epi8(char a) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__AVX2__)
   return _mm256_set1_epi8(a);
 #else
-  fio_fx86_m256i r;
-  FIO_MEMSET(&r, (uint8_t)a, 32);
-  return r;
+  fio_u256 r;
+  for (int i = 0; i < 32; ++i)
+    r.u8[i] = (uint8_t)a;
+  return fio___fx86_from_u256(r);
 #endif
 }
 
@@ -7433,9 +7445,7 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_setzero_si256(void) {
 #if defined(FIO___HAS_X86_INTRIN) && defined(__AVX2__)
   return _mm256_setzero_si256();
 #else
-  fio_fx86_m256i r;
-  FIO_MEMSET(&r, 0, 32);
-  return r;
+  return fio___fx86_from_u256((fio_u256){0});
 #endif
 }
 
@@ -7478,17 +7488,13 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_alignr_epi8(fio_fx86_m256i a,
   case 8: return _mm256_alignr_epi8(a, b, 8);
   default: {
     /* Per-lane concatenate and shift — pad to 48 for imm8 17..31 safety */
-    uint8_t lo[48], hi[48];
+    uint8_t lo[48] = {0}, hi[48] = {0};
     fio_memcpy16(lo, &b);
     fio_memcpy16(lo + 16, &a);
-    FIO_MEMSET(lo + 32, 0, 16);
     fio_memcpy16(hi, (const uint8_t *)&b + 16);
     fio_memcpy16(hi + 16, (const uint8_t *)&a + 16);
-    FIO_MEMSET(hi + 32, 0, 16);
-    fio_fx86_m256i r;
-    if (n >= 32) {
-      FIO_MEMSET(&r, 0, 32);
-    } else {
+    fio_fx86_m256i r = {0};
+    if (n < 32) {
       fio_memcpy16(&r, lo + n);
       fio_memcpy16((uint8_t *)&r + 16, hi + n);
     }
@@ -7497,17 +7503,13 @@ FIO_IFUNC fio_fx86_m256i fio_fx86_256_alignr_epi8(fio_fx86_m256i a,
   }
 #else
   /* Per-lane: concatenate b_lane:a_lane — pad to 48 for imm8 17..31 safety */
-  uint8_t lo[48], hi[48];
+  uint8_t lo[48] = {0}, hi[48] = {0};
   fio_memcpy16(lo, &b);
   fio_memcpy16(lo + 16, &a);
-  FIO_MEMSET(lo + 32, 0, 16);
   fio_memcpy16(hi, (const uint8_t *)&b + 16);
   fio_memcpy16(hi + 16, (const uint8_t *)&a + 16);
-  FIO_MEMSET(hi + 32, 0, 16);
-  fio_fx86_m256i r;
-  if (n >= 32) {
-    FIO_MEMSET(&r, 0, 32);
-  } else {
+  fio_fx86_m256i r = {0};
+  if (n < 32) {
     fio_memcpy16(&r, lo + n);
     fio_memcpy16((uint8_t *)&r + 16, hi + n);
   }
@@ -8085,6 +8087,13 @@ These are re-defined for ever `include` cycle
 Memory allocation macros
 ***************************************************************************** */
 
+/** FIO_MEMORY_DISABLE disables all custom memory allocators. */
+#if defined(FIO_MEMORY_DISABLE)
+#ifndef FIO_MALLOC_TMP_USE_SYSTEM
+#define FIO_MALLOC_TMP_USE_SYSTEM 1
+#endif
+#endif
+
 #if defined(FIO_MEM_RESET) || !defined(FIO_MEM_REALLOC) ||                     \
     !defined(FIO_MEM_FREE)
 
@@ -8092,6 +8101,9 @@ Memory allocation macros
 #undef FIO_MEM_FREE
 #undef FIO_MEM_REALLOC_IS_SAFE
 #undef FIO_MEM_ALIGNMENT_SIZE
+#undef FIO_MEM_REALLOC_ALIGNED
+#undef FIO_MEM_FREE_ALIGNED
+#undef FIO_MEM_ALLOC_SIZE
 #undef FIO_MEM_RESET
 
 /* if a global allocator was previously defined route macros to fio_malloc */
@@ -8105,6 +8117,19 @@ Memory allocation macros
 #define FIO_MEM_REALLOC_IS_SAFE fio_realloc_is_safe()
 /** Detect allocator allignment dynamically. */
 #define FIO_MEM_ALIGNMENT_SIZE fio_malloc_alignment()
+/** Reallocates memory with an alignment requirement, assigning `ptr`. */
+#define FIO_MEM_REALLOC_ALIGNED(ptr, old_size, new_size, copy_len, alignment)  \
+  ((ptr) = fio_realloc_aligned((ptr), (new_size), (copy_len), (alignment)))
+/** Frees memory allocated using FIO_MEM_REALLOC_ALIGNED. */
+#if defined(FIO_MALLOC_TMP_USE_SYSTEM) && FIO_OS_WIN
+#define FIO_MEM_FREE_ALIGNED(ptr, size) _aligned_free((ptr))
+#elif defined(FIO_MALLOC_TMP_USE_SYSTEM) && !FIO_OS_POSIX
+#define FIO_MEM_FREE_ALIGNED(ptr, size) fio___aligned_free_fallback((ptr))
+#else
+#define FIO_MEM_FREE_ALIGNED(ptr, size) fio_free((ptr))
+#endif
+/** Returns the usable size the allocator reserves for a `size` request. */
+#define FIO_MEM_ALLOC_SIZE(size) fio_alloc_size((size))
 
 #else /* H___FIO_MALLOC___H */
 /** Reallocates memory, copying (at least) `copy_len` if necessary. */
@@ -8116,16 +8141,17 @@ Memory allocation macros
 #define FIO_MEM_REALLOC_IS_SAFE 0
 /** Assume allocator allignment. */
 #define FIO_MEM_ALIGNMENT_SIZE  sizeof(long double)
+/** Reallocates memory with an alignment requirement, assigning `ptr`. */
+#define FIO_MEM_REALLOC_ALIGNED(ptr, old_size, new_size, copy_len, alignment)  \
+  ((ptr) = fio___aligned_realloc_fallback((ptr), (new_size), (copy_len),       \
+                                          (alignment)))
+/** Frees memory allocated using FIO_MEM_REALLOC_ALIGNED. */
+#define FIO_MEM_FREE_ALIGNED(ptr, size) fio___aligned_free_fallback((ptr))
+/** Returns the usable size the allocator reserves for a `size` request. */
+#define FIO_MEM_ALLOC_SIZE(size) ((size_t)(size))
 #endif /* H___FIO_MALLOC___H */
 
 #endif /* defined(FIO_MEM_REALLOC) */
-
-/** FIO_MEMORY_DISABLE disables all custom memory allocators. */
-#if defined(FIO_MEMORY_DISABLE)
-#ifndef FIO_MALLOC_TMP_USE_SYSTEM
-#define FIO_MALLOC_TMP_USE_SYSTEM 1
-#endif
-#endif
 
 /* recursive? */
 #if !defined(FIO_MEM_REALLOC_) || !defined(FIO_MEM_FREE_)
@@ -8133,6 +8159,8 @@ Memory allocation macros
 #undef FIO_MEM_FREE_
 #undef FIO_MEM_REALLOC_IS_SAFE_
 #undef FIO_MEM_ALIGNMENT_SIZE_
+#undef FIO_MEM_REALLOC_ALIGNED_
+#undef FIO_MEM_FREE_ALIGNED_
 
 #ifdef FIO_MALLOC_TMP_USE_SYSTEM /* force malloc */
 #define FIO_MEM_REALLOC_(ptr, old_size, new_size, copy_len)                    \
@@ -8140,15 +8168,148 @@ Memory allocation macros
 #define FIO_MEM_FREE_(ptr, size) free((ptr))
 #define FIO_MEM_REALLOC_IS_SAFE_ 0
 #define FIO_MEM_ALIGNMENT_SIZE_  sizeof(long double)
+#define FIO_MEM_REALLOC_ALIGNED_(ptr, old_size, new_size, copy_len, alignment) \
+  ((ptr) = fio___aligned_realloc_fallback((ptr), (new_size), (copy_len),       \
+                                          (alignment)))
+#define FIO_MEM_FREE_ALIGNED_(ptr, size) fio___aligned_free_fallback((ptr))
 
 #else /* FIO_MALLOC_TMP_USE_SYSTEM */
 #define FIO_MEM_REALLOC_         FIO_MEM_REALLOC
 #define FIO_MEM_FREE_            FIO_MEM_FREE
 #define FIO_MEM_REALLOC_IS_SAFE_ FIO_MEM_REALLOC_IS_SAFE
 #define FIO_MEM_ALIGNMENT_SIZE_  FIO_MEM_ALIGNMENT_SIZE
+#define FIO_MEM_REALLOC_ALIGNED_ FIO_MEM_REALLOC_ALIGNED
+#define FIO_MEM_FREE_ALIGNED_    FIO_MEM_FREE_ALIGNED
 #endif /* FIO_MALLOC_TMP_USE_SYSTEM */
 
 #endif /* !defined(FIO_MEM_REALLOC_)... */
+
+/* *****************************************************************************
+Aligned allocation fallback (system allocator backends)
+***************************************************************************** */
+#ifndef H___FIO_MEM_ALIGNED_FALLBACK___H
+#define H___FIO_MEM_ALIGNED_FALLBACK___H
+
+#if FIO_OS_WIN
+#include <malloc.h>
+#endif
+
+#ifndef FIO_MEM_SYS_ALIGN_MAX_LOG
+/** Mirrors the custom allocator's default FIO_MEMORY_SYS_ALLOCATION_SIZE_LOG. */
+#define FIO_MEM_SYS_ALIGN_MAX_LOG 21
+#endif
+
+/* SublimeText marker */
+void fio___aligned_free_fallback__(void);
+/**
+ * Frees memory allocated by `fio___aligned_realloc_fallback` /
+ * `fio___aligned_alloc_fallback`.
+ *
+ * NOTE: on Windows this maps to `_aligned_free` - do NOT interleave with
+ * plain `malloc` / `free`.
+ */
+FIO_IFUNC void fio___aligned_free_fallback(void *ptr) {
+  if (!ptr)
+    return;
+#if FIO_OS_WIN
+  _aligned_free(ptr);
+#elif FIO_OS_POSIX
+  free(ptr);
+#else /* the raw pointer was stashed before the aligned pointer */
+  free(((void **)ptr)[-1]);
+#endif
+}
+
+/* SublimeText marker */
+void fio___aligned_alloc_fallback__(void);
+/**
+ * Aligned allocation fallback. `alignment` MUST be a normalized power of 2
+ * (see fio___aligned_realloc_fallback).
+ */
+FIO_IFUNC void *fio___aligned_alloc_fallback(size_t size, size_t alignment) {
+#if FIO_OS_WIN
+  return _aligned_malloc(size, alignment);
+#elif FIO_OS_POSIX
+  void *r = NULL;
+  if (posix_memalign(&r, alignment, size))
+    return NULL;
+  return r;
+#else /* over-allocation with the raw pointer stashed before the result */
+  void *raw = malloc(size + alignment + sizeof(void *));
+  void *r;
+  if (!raw)
+    return NULL;
+  r = (void *)(((uintptr_t)raw + sizeof(void *) + (alignment - 1)) &
+               ~(uintptr_t)(alignment - 1));
+  ((void **)r)[-1] = raw;
+  return r;
+#endif
+}
+
+/* SublimeText marker */
+void fio___aligned_realloc_fallback__(void);
+/**
+ * Aligned reallocation fallback, used when no fio allocator is linked (or
+ * `FIO_MALLOC_TMP_USE_SYSTEM` is enforced).
+ *
+ * The `alignment` argument is normalized: `0` selects the default
+ * (`sizeof(long double)`), non power-of-2 values are rounded DOWN to the
+ * nearest power of 2, and the result is never smaller than the current
+ * alignment of `ptr`.
+ */
+FIO_IFUNC void *fio___aligned_realloc_fallback(void *ptr,
+                                               size_t new_size,
+                                               size_t copy_len,
+                                               size_t alignment) {
+  /* normalize: power-of-2 floor; floor at the pointer's own alignment */
+  if (alignment)
+    alignment = (size_t)1 << fio_msb_index_unsafe(alignment);
+  if (ptr) {
+    size_t ptr_alignment = (size_t)1 << fio_lsb_index_unsafe((uintptr_t)ptr);
+    if (ptr_alignment > (((size_t)1) << FIO_MEM_SYS_ALIGN_MAX_LOG))
+      ptr_alignment = (((size_t)1) << FIO_MEM_SYS_ALIGN_MAX_LOG);
+    if (ptr_alignment > alignment)
+      alignment = ptr_alignment;
+  }
+  if (alignment < sizeof(long double))
+    alignment = sizeof(long double);
+#if FIO_OS_WIN
+  if (!ptr)
+    return _aligned_malloc(new_size ? new_size : alignment, alignment);
+  if (!new_size) {
+    _aligned_free(ptr);
+    return NULL;
+  }
+  {
+    /* NOTE: _aligned_realloc cannot realign under Wine's MSVCRT (EINVAL).
+     * Emulate: allocate-copy-free (always correct, also on real Windows). */
+    void *r = _aligned_malloc(new_size, alignment);
+    if (!r)
+      return NULL;
+    fio___memcpy_unsafe_x(r, ptr, (copy_len < new_size) ? copy_len : new_size);
+    _aligned_free(ptr);
+    return r;
+  }
+#else
+  if (!new_size && ptr) {
+    fio___aligned_free_fallback(ptr);
+    return NULL;
+  }
+  {
+    void *r = fio___aligned_alloc_fallback(new_size ? new_size : alignment,
+                                           alignment);
+    if (!r)
+      return NULL;
+    if (ptr) {
+      /* core primitive copy (FIO_MEMCPY may resolve to a later SFUNC) */
+      fio___memcpy_unsafe_x(r, ptr, (copy_len < new_size) ? copy_len : new_size);
+      fio___aligned_free_fallback(ptr);
+    }
+    return r;
+  }
+#endif
+}
+#endif /* H___FIO_MEM_ALIGNED_FALLBACK___H */
 
 /* *****************************************************************************
 Locking selector
@@ -8352,9 +8513,6 @@ Copyright and License: see header file (000 copyright.h) or top of file
     (defined(FIO_LOG) || defined(FIO_LEAK_COUNTER))
 #define H___FIO_LOG___H
 
-#ifndef FIO_STDERR_FILE
-#define FIO_STDERR_FILE stderr
-#endif
 #undef FIO_LOG2STDERR
 
 FIO_SFUNC FIO___PRINTF_STYLE(1, 0) void FIO_LOG2STDERR(const char *format,
@@ -25131,6 +25289,48 @@ SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME, realloc2)(void *ptr,
                                                               size_t copy_len);
 
 /**
+ * Re-allocates memory, enforcing a minimum pointer alignment.
+ *
+ * This is the core of the aligned allocation API: `malloc_aligned` and
+ * `calloc_aligned` simply route to this function with a NULL `ptr`.
+ *
+ * The `alignment` argument is normalized as follows:
+ *
+ * - `0` is treated as the allocator's default (`FIO_MEMORY_ALIGN_SIZE`);
+ * - non power-of-2 values are rounded DOWN to the nearest power of 2;
+ * - the effective alignment is the maximum of the requested alignment, the
+ *   current alignment of `ptr` (if any) and `FIO_MEMORY_ALIGN_SIZE`;
+ * - effective values above `FIO_MEMORY_SYS_ALLOCATION_SIZE` fail
+ *   (returns NULL, sets `errno` to `EINVAL`).
+ *
+ * Data preservation semantics are identical to `realloc2` (`copy_len` bytes).
+ * In-place growth may only occur when the existing pointer already satisfies
+ * the requested alignment.
+ */
+SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME,
+                                   realloc_aligned)(void *ptr,
+                                                    size_t new_size,
+                                                    size_t copy_len,
+                                                    size_t alignment);
+
+/**
+ * Allocates `size` bytes, returning a pointer aligned to (at least)
+ * `alignment`. Same semantics as `realloc_aligned(NULL, size, 0, alignment)`.
+ */
+SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
+                                       malloc_aligned)(size_t size,
+                                                       size_t alignment);
+
+/**
+ * Same as `malloc_aligned(size_per_unit * unit_count, alignment)`,
+ * except that the allocated memory is zeroed out.
+ */
+SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
+                                       calloc_aligned)(size_t size_per_unit,
+                                                       size_t unit_count,
+                                                       size_t alignment);
+
+/**
  * Allocates memory directly using `mmap`, this is preferred for objects that
  * both require almost a page of memory (or more) and expect a long lifetime.
  *
@@ -25406,6 +25606,34 @@ FIO_IFUNC size_t FIO_NAME(FIO_MEMORY_NAME, realloc_is_safe)(void) {
   return FIO_MEMORY_INITIALIZE_ALLOCATIONS;
 }
 
+/**
+ * Returns the number of usable bytes the allocator will actually reserve for
+ * an allocation request of `minimum_bytes` (the allocation's size class).
+ *
+ * The result is alignment agnostic - alignment padding, if any, is reserved
+ * in addition to the returned value.
+ *
+ * NOTE: when the custom allocator is bypassed (`FIO_MEMORY_DISABLE`), the
+ * system allocator exposes no rounding guarantee and `minimum_bytes` is
+ * returned unchanged.
+ */
+FIO_IFUNC size_t FIO_NAME(FIO_MEMORY_NAME, alloc_size)(size_t minimum_bytes) {
+#if defined(FIO_MALLOC_TMP_USE_SYSTEM)
+  return minimum_bytes;
+#else
+  const size_t page_mask = (((size_t)1 << FIO_MEM_PAGE_SIZE_LOG) - 1);
+  if (!minimum_bytes)
+    return 0;
+  if (minimum_bytes <= FIO_MEMORY_ALLOC_LIMIT)
+    return (minimum_bytes + (FIO_MEMORY_ALIGN_SIZE - 1)) &
+           ~(size_t)(FIO_MEMORY_ALIGN_SIZE - 1);
+  if (minimum_bytes > (SIZE_MAX - FIO_MEMORY_ALIGN_SIZE - page_mask))
+    return minimum_bytes; /* the allocation would overflow / fail anyway */
+  return ((minimum_bytes + FIO_MEMORY_ALIGN_SIZE + page_mask) & ~page_mask) -
+         FIO_MEMORY_ALIGN_SIZE;
+#endif
+}
+
 /* *****************************************************************************
 Set global macros to use this allocator if FIO_MALLOC
 ***************************************************************************** */
@@ -25421,6 +25649,22 @@ Set global macros to use this allocator if FIO_MALLOC
 #define FIO_MEM_REALLOC_IS_SAFE fio_realloc_is_safe()
 #undef FIO_MEM_ALIGNMENT_SIZE
 #define FIO_MEM_ALIGNMENT_SIZE fio_malloc_alignment()
+/** Reallocates memory with an alignment requirement, assigning `ptr`. */
+#undef FIO_MEM_REALLOC_ALIGNED
+#define FIO_MEM_REALLOC_ALIGNED(ptr, old_size, new_size, copy_len, alignment)  \
+  ((ptr) = fio_realloc_aligned((ptr), (new_size), (copy_len), (alignment)))
+/** Frees memory allocated by FIO_MEM_REALLOC_ALIGNED (route per allocator). */
+#undef FIO_MEM_FREE_ALIGNED
+#if defined(FIO_MALLOC_TMP_USE_SYSTEM) && FIO_OS_WIN
+#define FIO_MEM_FREE_ALIGNED(ptr, size) _aligned_free((ptr))
+#elif defined(FIO_MALLOC_TMP_USE_SYSTEM) && !FIO_OS_POSIX
+#define FIO_MEM_FREE_ALIGNED(ptr, size) fio___aligned_free_fallback((ptr))
+#else
+#define FIO_MEM_FREE_ALIGNED(ptr, size) fio_free((ptr))
+#endif
+/** Returns the usable size the allocator reserves for a `size` request. */
+#undef FIO_MEM_ALLOC_SIZE
+#define FIO_MEM_ALLOC_SIZE(size) fio_alloc_size((size))
 #undef FIO_MALLOC
 #endif /* FIO_MALLOC */
 
@@ -25438,6 +25682,13 @@ Temporarily (at least) set memory allocation macros to use this allocator
 #define FIO_MEM_FREE_(ptr, size) FIO_NAME(FIO_MEMORY_NAME, free)((ptr))
 #define FIO_MEM_REALLOC_IS_SAFE_ FIO_NAME(FIO_MEMORY_NAME, realloc_is_safe)()
 #define FIO_MEM_ALIGNMENT_SIZE_  FIO_NAME(FIO_MEMORY_NAME, malloc_alignment)()
+#undef FIO_MEM_REALLOC_ALIGNED_
+#undef FIO_MEM_FREE_ALIGNED_
+#define FIO_MEM_REALLOC_ALIGNED_(ptr, old_size, new_size, copy_len,            \
+                                 alignment)                                    \
+  ((ptr) = FIO_NAME(FIO_MEMORY_NAME, realloc_aligned)((ptr), (new_size),       \
+                                                      (copy_len), (alignment)))
+#define FIO_MEM_FREE_ALIGNED_(ptr, size) FIO_MEM_FREE_((ptr), (size))
 
 #endif /* FIO_MALLOC_TMP_USE_SYSTEM */
 
@@ -25754,6 +26005,45 @@ Overridable system allocation macros
 #endif /* H___FIO_MEM_INCLUDE_ONCE___H */
 
 /* *****************************************************************************
+Alignment request normalization (both allocator configs)
+***************************************************************************** */
+
+/* SublimeText marker */
+void fio___mem_align_normalize___(void);
+/**
+ * Normalizes an alignment request for `ptr`:
+ *
+ * - `0` requests the allocator's default (`FIO_MEMORY_ALIGN_SIZE`);
+ * - non power-of-2 requests are rounded DOWN to the nearest power of 2;
+ * - the result is the maximum of the request, the current alignment of `ptr`
+ *   (if any) and `FIO_MEMORY_ALIGN_SIZE`;
+ * - returns `0` if the (clamped) request exceeds
+ *   `FIO_MEMORY_SYS_ALLOCATION_SIZE` (the maximum supported alignment).
+ */
+FIO_IFUNC size_t FIO_NAME(FIO_MEMORY_NAME, __mem_align_normalize)(
+    void *ptr,
+    size_t alignment) {
+  /* power-of-2 floor, branch-free: 0 | 1 → 1, which the floor below raises
+   * to the allocator's default (0 requests the default) */
+  alignment = (size_t)1 << fio_msb_index_unsafe(alignment | 1);
+  /* reject only a request that exceeds the maximum supported alignment */
+  if (FIO_UNLIKELY(alignment > FIO_MEMORY_SYS_ALLOCATION_SIZE))
+    return 0;
+  /* never reduce the alignment a pointer already (accidentally) enjoys;
+   * the `+ (ptr == NULL)` term avoids branching on NULL (lsb(1) == 0) */
+  const size_t ptr_alignment_raw =
+      (size_t)1 << fio_lsb_index_unsafe((uintptr_t)ptr + (ptr == NULL));
+  const size_t ptr_alignment =
+      (ptr_alignment_raw > FIO_MEMORY_SYS_ALLOCATION_SIZE)
+          ? FIO_MEMORY_SYS_ALLOCATION_SIZE
+          : ptr_alignment_raw;
+  alignment = (alignment < ptr_alignment) ? ptr_alignment : alignment;
+  alignment = (alignment < FIO_MEMORY_ALIGN_SIZE) ? FIO_MEMORY_ALIGN_SIZE
+                                                  : alignment;
+  return alignment;
+}
+
+/* *****************************************************************************
 FIO_MEMORY_DISABLE - use the system allocator
 ***************************************************************************** */
 #if defined(FIO_MALLOC_TMP_USE_SYSTEM)
@@ -25785,6 +26075,125 @@ SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME, realloc2)(void *ptr,
                                                               size_t copy_len) {
   return realloc(ptr, new_size);
   (void)copy_len;
+}
+/**
+ * Aligned reallocation using the system allocator backends:
+ * - Windows: `_aligned_malloc` / `_aligned_realloc` / `_aligned_free`;
+ * - POSIX: `posix_memalign` / `free` (realloc is emulated: alloc-copy-free);
+ * - otherwise: portable over-allocation with the raw pointer stashed
+ *   immediately before the returned (aligned) pointer.
+ *
+ * IMPORTANT: memory allocated / reallocated by this function MUST be freed
+ * using `FIO_MEM_FREE_ALIGNED` - plain `free` is NOT valid on Windows.
+ */
+SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME,
+                                   realloc_aligned)(void *ptr,
+                                                    size_t new_size,
+                                                    size_t copy_len,
+                                                    size_t alignment) {
+  alignment = FIO_NAME(FIO_MEMORY_NAME, __mem_align_normalize)(ptr, alignment);
+  if (!alignment) {
+    errno = EINVAL;
+    FIO_ASSERT_DEBUG(0, "realloc_aligned: alignment out of supported range");
+    return NULL;
+  }
+#if FIO_OS_WIN
+  if (!ptr) {
+    void *r = _aligned_malloc(new_size ? new_size : alignment, alignment);
+#if FIO_MEMORY_INITIALIZE_ALLOCATIONS
+    if (r)
+      FIO_MEMSET(r, 0, new_size);
+#elif defined(DEBUG) && DEBUG
+    if (r)
+      FIO_MEMSET(r, 0xFA, new_size);
+#endif
+    return r;
+  }
+  if (!new_size) {
+    _aligned_free(ptr);
+    return NULL;
+  }
+  {
+    /* NOTE: _aligned_realloc cannot realign under Wine's MSVCRT (EINVAL).
+     * Emulate: allocate-copy-free (always correct, also on real Windows). */
+    void *r = _aligned_malloc(new_size, alignment);
+    if (!r)
+      return NULL;
+    FIO_MEMCPY(r, ptr, (copy_len < new_size) ? copy_len : new_size);
+    _aligned_free(ptr);
+    return r;
+  }
+#elif FIO_OS_POSIX
+  if (!ptr) {
+    void *r = NULL;
+    if (posix_memalign(&r, alignment, new_size ? new_size : alignment))
+      return NULL;
+#if FIO_MEMORY_INITIALIZE_ALLOCATIONS
+    if (r)
+      FIO_MEMSET(r, 0, new_size);
+#elif defined(DEBUG) && DEBUG
+    if (r)
+      FIO_MEMSET(r, 0xFA, new_size);
+#endif
+    return r;
+  }
+  if (!new_size) {
+    free(ptr);
+    return NULL;
+  }
+  {
+    void *r = NULL;
+    if (posix_memalign(&r, alignment, new_size))
+      return NULL;
+    FIO_MEMCPY(r, ptr, (copy_len < new_size) ? copy_len : new_size);
+    free(ptr);
+    return r;
+  }
+#else  /* unknown OS: over-allocation with a stashed raw pointer */
+  if (!new_size && ptr) {
+    fio___aligned_free_fallback(ptr);
+    return NULL;
+  }
+  {
+    void *r = fio___aligned_alloc_fallback(new_size ? new_size : alignment,
+                                           alignment);
+    if (!r)
+      return NULL;
+#if FIO_MEMORY_INITIALIZE_ALLOCATIONS
+    if (!ptr)
+      FIO_MEMSET(r, 0, new_size);
+#elif defined(DEBUG) && DEBUG
+    if (!ptr)
+      FIO_MEMSET(r, 0xFA, new_size);
+#endif
+    if (ptr) {
+      FIO_MEMCPY(r, ptr, (copy_len < new_size) ? copy_len : new_size);
+      fio___aligned_free_fallback(ptr);
+    }
+    return r;
+  }
+#endif /* FIO_OS_WIN / FIO_OS_POSIX */
+}
+SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
+                                       malloc_aligned)(size_t size,
+                                                       size_t alignment) {
+  return FIO_NAME(FIO_MEMORY_NAME, realloc_aligned)(NULL, size, 0, alignment);
+}
+SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
+                                       calloc_aligned)(size_t size_per_unit,
+                                                       size_t unit_count,
+                                                       size_t alignment) {
+  const size_t total = size_per_unit * unit_count;
+  if (total < size_per_unit || total < unit_count)
+    return NULL; /* test for size overflow */
+#if FIO_MEMORY_INITIALIZE_ALLOCATIONS
+  return FIO_NAME(FIO_MEMORY_NAME, realloc_aligned)(NULL, total, 0, alignment);
+#else
+  void *p = FIO_NAME(FIO_MEMORY_NAME, realloc_aligned)(NULL, total, 0, alignment);
+  if (p)
+    FIO_MEMSET(p, 0, total);
+  return p;
+#endif /* FIO_MEMORY_INITIALIZE_ALLOCATIONS */
 }
 SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME, mmap)(size_t size) {
   return calloc(size, 1);
@@ -26771,9 +27180,10 @@ Small allocation internal API
 /* SublimeText marker */
 void fio___mem_slice_new___(void);
 /** slice a block to allocate a set number of bytes. */
-FIO_SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
+FIO_IFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
                                            __mem_slice_new)(size_t bytes,
-                                                            void *is_realloc) {
+                                                            void *is_realloc,
+                                                            size_t alignment) {
   void *p = NULL;
   bytes = (bytes + ((1UL << FIO_MEMORY_ALIGN_LOG) - 1)) >> FIO_MEMORY_ALIGN_LOG;
   FIO_NAME(FIO_MEMORY_NAME, __mem_arena_s) *a =
@@ -26800,20 +27210,34 @@ FIO_SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
       a->last_pos = 0;
     }
 
-    /* enough space? allocate */
-    if (c->blocks[b].pos + bytes < FIO_MEMORY_UNITS_PER_BLOCK) {
-      /* a lucky realloc? */
-      if (is_realloc &&
-          is_realloc ==
-              FIO_NAME(FIO_MEMORY_NAME, __mem_chunk2ptr)(c, b, a->last_pos)) {
-        c->blocks[b].pos += bytes;
-        fio_atomic_sub(&c->blocks[b].ref, 1); /* release reference added */
-        FIO_NAME(FIO_MEMORY_NAME, __mem_arena_unlock)(a);
-        return is_realloc;
-      }
-      p = FIO_NAME(FIO_MEMORY_NAME, __mem_chunk2ptr)(c, b, c->blocks[b].pos);
-      a->last_pos = c->blocks[b].pos;
+    /* a lucky realloc? (in-place growth keeps the pointer's alignment) */
+    if (is_realloc &&
+        is_realloc ==
+            FIO_NAME(FIO_MEMORY_NAME, __mem_chunk2ptr)(c, b, a->last_pos) &&
+        !((uintptr_t)is_realloc & (alignment - 1)) &&
+        c->blocks[b].pos + bytes < FIO_MEMORY_UNITS_PER_BLOCK) {
       c->blocks[b].pos += bytes;
+      fio_atomic_sub(&c->blocks[b].ref, 1); /* release reference added */
+      FIO_NAME(FIO_MEMORY_NAME, __mem_arena_unlock)(a);
+      return is_realloc;
+    }
+
+    /* alignment padding (the math yields 0 for the default alignment,
+     * since block offsets are always FIO_MEMORY_ALIGN_SIZE multiples) */
+    const uintptr_t raw_ptr =
+        (uintptr_t)FIO_NAME(FIO_MEMORY_NAME,
+                            __mem_chunk2ptr)(c, b, c->blocks[b].pos);
+    const size_t pad =
+        (size_t)(((raw_ptr + (alignment - 1)) &
+                  (~(uintptr_t)(alignment - 1))) -
+                 raw_ptr) >>
+                FIO_MEMORY_ALIGN_LOG;
+
+    /* enough space? allocate */
+    if (c->blocks[b].pos + pad + bytes < FIO_MEMORY_UNITS_PER_BLOCK) {
+      a->last_pos = c->blocks[b].pos + pad;
+      p = FIO_NAME(FIO_MEMORY_NAME, __mem_chunk2ptr)(c, b, a->last_pos);
+      c->blocks[b].pos += pad + bytes;
       FIO_NAME(FIO_MEMORY_NAME, __mem_arena_unlock)(a);
       return p;
     }
@@ -26958,8 +27382,10 @@ FIO_IFUNC void *FIO_NAME(FIO_MEMORY_NAME, __mem_big2ptr)(
 
 /* SublimeText marker */
 void fio___mem_big_slice_new___(void);
-FIO_SFUNC void *FIO_MEM_ALIGN_NEW
-FIO_NAME(FIO_MEMORY_NAME, __mem_big_slice_new)(size_t bytes, void *is_realloc) {
+FIO_IFUNC void *FIO_MEM_ALIGN_NEW
+FIO_NAME(FIO_MEMORY_NAME, __mem_big_slice_new)(size_t bytes,
+                                               void *is_realloc,
+                                               size_t alignment) {
   void *p = NULL;
   bytes = (bytes + ((1UL << FIO_MEMORY_ALIGN_LOG) - 1)) >> FIO_MEMORY_ALIGN_LOG;
   for (;;) {
@@ -26983,23 +27409,34 @@ FIO_NAME(FIO_MEMORY_NAME, __mem_big_slice_new)(size_t bytes, void *is_realloc) {
       FIO_NAME(FIO_MEMORY_NAME, __mem_state)->big_last_pos = 0;
     }
 
-    /* enough space? */
-    if (b->pos + bytes < FIO_MEMORY_UNITS_PER_BIG_BLOCK) {
-      /* a lucky realloc? */
-      if (is_realloc &&
-          is_realloc ==
-              FIO_NAME(FIO_MEMORY_NAME, __mem_big2ptr)(
-                  b,
-                  FIO_NAME(FIO_MEMORY_NAME, __mem_state)->big_last_pos)) {
-        b->pos += bytes;
-        FIO_MEMORY_UNLOCK(FIO_NAME(FIO_MEMORY_NAME, __mem_state)->big_lock);
-        return is_realloc;
-      }
-
-      p = FIO_NAME(FIO_MEMORY_NAME, __mem_big2ptr)(b, b->pos);
-      fio_atomic_add(&b->ref, 1); /* keep inside lock to enable reset */
-      FIO_NAME(FIO_MEMORY_NAME, __mem_state)->big_last_pos = b->pos;
+    /* a lucky realloc? (in-place growth keeps the pointer's alignment) */
+    if (is_realloc &&
+        is_realloc ==
+            FIO_NAME(FIO_MEMORY_NAME, __mem_big2ptr)(
+                b,
+                FIO_NAME(FIO_MEMORY_NAME, __mem_state)->big_last_pos) &&
+        !((uintptr_t)is_realloc & (alignment - 1)) &&
+        b->pos + bytes < FIO_MEMORY_UNITS_PER_BIG_BLOCK) {
       b->pos += bytes;
+      FIO_MEMORY_UNLOCK(FIO_NAME(FIO_MEMORY_NAME, __mem_state)->big_lock);
+      return is_realloc;
+    }
+
+    /* alignment padding (the math yields 0 for the default alignment) */
+    const uintptr_t raw_ptr =
+        (uintptr_t)FIO_NAME(FIO_MEMORY_NAME, __mem_big2ptr)(b, b->pos);
+    const size_t pad =
+        (size_t)(((raw_ptr + (alignment - 1)) &
+                  (~(uintptr_t)(alignment - 1))) -
+                 raw_ptr) >>
+                FIO_MEMORY_ALIGN_LOG;
+
+    /* enough space? */
+    if (b->pos + pad + bytes < FIO_MEMORY_UNITS_PER_BIG_BLOCK) {
+      FIO_NAME(FIO_MEMORY_NAME, __mem_state)->big_last_pos = b->pos + pad;
+      p = FIO_NAME(FIO_MEMORY_NAME, __mem_big2ptr)(b, b->pos + pad);
+      fio_atomic_add(&b->ref, 1); /* keep inside lock to enable reset */
+      b->pos += pad + bytes;
       FIO_MEMORY_UNLOCK(FIO_NAME(FIO_MEMORY_NAME, __mem_state)->big_lock);
       return p;
     }
@@ -27023,6 +27460,43 @@ FIO_IFUNC void FIO_NAME(FIO_MEMORY_NAME, __mem_big_slice_free)(void *p) {
 }
 
 #endif /* FIO_MEMORY_ENABLE_BIG_ALLOC */
+/* *****************************************************************************
+Memory Allocation - page-backed (mmap) allocation core
+***************************************************************************** */
+
+/* SublimeText marker */
+void fio___mem_mmap_aligned___(void);
+/**
+ * Page-backed allocation core. Returns a pointer `offset` bytes into a
+ * page-mapped chunk, where `offset == max(alignment, FIO_MEMORY_ALIGN_SIZE)`
+ * (the chunk base is always FIO_MEMORY_SYS_ALLOCATION_SIZE aligned, so the
+ * offset preserves the requested alignment).
+ */
+FIO_IFUNC void *FIO_NAME(FIO_MEMORY_NAME, __mem_mmap_aligned)(
+    size_t size,
+    size_t alignment) {
+  const size_t offset =
+      (alignment > FIO_MEMORY_ALIGN_SIZE) ? alignment : FIO_MEMORY_ALIGN_SIZE;
+  size_t pages;
+  FIO_NAME(FIO_MEMORY_NAME, __mem_chunk_s) * c;
+  if ((uint64_t)(size + offset) < (uint64_t)size)
+    return NULL; /* size overflow */
+  pages = FIO_MEM_BYTES2PAGES(size + offset);
+  if (((uint64_t)pages >> (31 + FIO_MEM_PAGE_SIZE_LOG)))
+    return NULL;
+  c = (FIO_NAME(FIO_MEMORY_NAME, __mem_chunk_s) *)
+          FIO_MEM_SYS_ALLOC(pages, FIO_MEMORY_SYS_ALLOCATION_SIZE_LOG);
+  if (!c)
+    goto no_mem;
+  FIO_MEMORY_ON_ALLOC_FUNC();
+  FIO_MEMORY_ON_CHUNK_ALLOC(c);
+  c->marker = (uint32_t)(pages >> FIO_MEM_PAGE_SIZE_LOG);
+  return (void *)((uintptr_t)c + offset);
+no_mem:
+  errno = ENOMEM;
+  return NULL;
+}
+
 /* *****************************************************************************
 Memory Allocation - malloc(0) pointer
 ***************************************************************************** */
@@ -27108,18 +27582,69 @@ void fio___malloc__(void);
  */
 FIO_IFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
                                            ___malloc)(size_t size,
-                                                      void *is_realloc) {
+                                                      void *is_realloc,
+                                                      size_t alignment) {
   void *p = NULL;
   if (!size)
     goto malloc_zero;
 
+  if (alignment == FIO_MEMORY_ALIGN_SIZE) {
+    /* classic routing */
 #if FIO_MEMORY_ENABLE_BIG_ALLOC
-  if ((is_realloc && size > (FIO_MEMORY_BIG_BLOCK_SIZE -
-                             (FIO_MEMORY_BIG_BLOCK_HEADER_SIZE << 1))) ||
-      (!is_realloc && size > FIO_MEMORY_ALLOC_LIMIT))
+    if ((is_realloc && size > (FIO_MEMORY_BIG_BLOCK_SIZE -
+                               (FIO_MEMORY_BIG_BLOCK_HEADER_SIZE << 1))) ||
+        (!is_realloc && size > FIO_MEMORY_ALLOC_LIMIT))
+      goto mmap_route;
 #else
-  if (!is_realloc && size > FIO_MEMORY_ALLOC_LIMIT)
+    if (!is_realloc && size > FIO_MEMORY_ALLOC_LIMIT)
+      goto mmap_route;
 #endif
+  } else {
+    /*
+     * aligned routing: only routes that can guarantee the padding fits.
+     *
+     * - slice path: size <= FIO_MEMORY_BLOCK_ALLOC_LIMIT and alignment <=
+     *   FIO_MEMORY_BLOCK_ALLOC_LIMIT (padding + size always fit a block);
+     * - big-block path: size <= FIO_MEMORY_ALLOC_LIMIT and alignment <=
+     *   (FIO_MEMORY_SYS_ALLOCATION_SIZE >> 1);
+     * - otherwise: page-backed (mmap) route.
+     */
+    if (size > FIO_MEMORY_ALLOC_LIMIT ||
+        alignment > (FIO_MEMORY_SYS_ALLOCATION_SIZE >> 1))
+      goto mmap_route;
+#if !FIO_MEMORY_ENABLE_BIG_ALLOC
+    if (alignment > FIO_MEMORY_BLOCK_ALLOC_LIMIT)
+      goto mmap_route;
+#endif
+  }
+  if (!FIO_NAME(FIO_MEMORY_NAME, __mem_state)) {
+    FIO_NAME(FIO_MEMORY_NAME, __mem_state_setup)();
+  }
+#if FIO_MEMORY_ENABLE_BIG_ALLOC
+  if (alignment == FIO_MEMORY_ALIGN_SIZE
+          ? ((is_realloc &&
+              size > FIO_MEMORY_BLOCK_SIZE - (2 << FIO_MEMORY_ALIGN_LOG)) ||
+             (!is_realloc && size > FIO_MEMORY_BLOCK_ALLOC_LIMIT))
+          : (size > FIO_MEMORY_BLOCK_ALLOC_LIMIT ||
+             alignment > FIO_MEMORY_BLOCK_ALLOC_LIMIT))
+    goto big_route;
+
+#endif /* FIO_MEMORY_ENABLE_BIG_ALLOC */
+
+  p = FIO_NAME(FIO_MEMORY_NAME, __mem_slice_new)(size, is_realloc, alignment);
+  if (p && p != is_realloc) {
+    FIO_MEMORY_ON_ALLOC_FUNC();
+  }
+  return p;
+#if FIO_MEMORY_ENABLE_BIG_ALLOC
+big_route:
+  p = FIO_NAME(FIO_MEMORY_NAME, __mem_big_slice_new)(size, is_realloc, alignment);
+  if (p && p != is_realloc) {
+    FIO_MEMORY_ON_ALLOC_FUNC();
+  }
+  return p;
+#endif /* FIO_MEMORY_ENABLE_BIG_ALLOC */
+mmap_route:
   {
 #ifdef DEBUG
     FIO_LOG_WARNING(
@@ -27128,29 +27653,9 @@ FIO_IFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
         fio_getpid(),
         FIO_MEM_BYTES2PAGES(size));
 #endif
-    p = FIO_NAME(FIO_MEMORY_NAME, mmap)(size);
+    p = FIO_NAME(FIO_MEMORY_NAME, __mem_mmap_aligned)(size, alignment);
     return p;
   }
-  if (!FIO_NAME(FIO_MEMORY_NAME, __mem_state)) {
-    FIO_NAME(FIO_MEMORY_NAME, __mem_state_setup)();
-  }
-#if FIO_MEMORY_ENABLE_BIG_ALLOC
-  if ((is_realloc &&
-       size > FIO_MEMORY_BLOCK_SIZE - (2 << FIO_MEMORY_ALIGN_LOG)) ||
-      (!is_realloc && size > FIO_MEMORY_BLOCK_ALLOC_LIMIT)) {
-    p = FIO_NAME(FIO_MEMORY_NAME, __mem_big_slice_new)(size, is_realloc);
-    if (p && p != is_realloc) {
-      FIO_MEMORY_ON_ALLOC_FUNC();
-    }
-    return p;
-  }
-#endif /* FIO_MEMORY_ENABLE_BIG_ALLOC */
-
-  p = FIO_NAME(FIO_MEMORY_NAME, __mem_slice_new)(size, is_realloc);
-  if (p && p != is_realloc) {
-    FIO_MEMORY_ON_ALLOC_FUNC();
-  }
-  return p;
 malloc_zero:
   p = FIO_MEMORY_MALLOC_ZERO_POINTER;
   return p;
@@ -27173,7 +27678,9 @@ void fio_malloc__(void);
  * consecutive calls, but locality can't be guaranteed.
  */
 SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME, malloc)(size_t size) {
-  void *p = FIO_NAME(FIO_MEMORY_NAME, ___malloc)(size, NULL);
+  void *p = FIO_NAME(FIO_MEMORY_NAME, ___malloc)(size,
+                                                 NULL,
+                                                 FIO_MEMORY_ALIGN_SIZE);
 #if !FIO_MEMORY_INITIALIZE_ALLOCATIONS && defined(DEBUG) && DEBUG
   /* set all bytes to 0xAF to better catch initialization bugs */
   FIO_MEMSET(p, 0xFA, size);
@@ -27210,6 +27717,46 @@ SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
 }
 
 /* SublimeText marker */
+void fio_malloc_aligned__(void);
+/**
+ * Allocates `size` bytes, returning a pointer aligned to (at least)
+ * `alignment`. Routes to `realloc_aligned`.
+ */
+SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
+                                       malloc_aligned)(size_t size,
+                                                       size_t alignment) {
+  return FIO_NAME(FIO_MEMORY_NAME, realloc_aligned)(NULL, size, 0, alignment);
+}
+
+/* SublimeText marker */
+void fio_calloc_aligned__(void);
+/**
+ * Same as `malloc_aligned(size_per_unit * unit_count, alignment)`,
+ * except that the allocated memory is zeroed out.
+ */
+SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME,
+                                       calloc_aligned)(size_t size_per_unit,
+                                                       size_t unit_count,
+                                                       size_t alignment) {
+  const size_t total = size_per_unit * unit_count;
+  if (total < size_per_unit || total < unit_count)
+    return NULL; /* test for size overflow */
+#if FIO_MEMORY_INITIALIZE_ALLOCATIONS
+  return FIO_NAME(FIO_MEMORY_NAME, realloc_aligned)(NULL, total, 0, alignment);
+#else
+  void *p;
+  /* round up to alignment size. */
+  const size_t len = ((total) + (FIO_MEMORY_ALIGN_SIZE - 1)) &
+                     (~((size_t)FIO_MEMORY_ALIGN_SIZE - 1));
+  p = FIO_NAME(FIO_MEMORY_NAME, realloc_aligned)(NULL, len, 0, alignment);
+  /* initialize memory only when required */
+  if (p)
+    FIO_MEMSET(p, 0, len);
+  return p;
+#endif /* FIO_MEMORY_INITIALIZE_ALLOCATIONS */
+}
+
+/* SublimeText marker */
 void fio_free__(void);
 /** Frees memory that was allocated using this library. */
 SFUNC void FIO_NAME(FIO_MEMORY_NAME, free)(void *ptr) {
@@ -27232,8 +27779,9 @@ SFUNC void FIO_NAME(FIO_MEMORY_NAME, free)(void *ptr) {
   }
 #endif /* FIO_MEMORY_ENABLE_BIG_ALLOC */
 
-  /* big mmap allocation? */
-  if (((uintptr_t)c + FIO_MEMORY_ALIGN_SIZE) == (uintptr_t)ptr && c->marker)
+  /* page-backed (mmap) allocation? (any interior pointer is accepted,
+   * regular chunks always keep `marker == 0`) */
+  if (c->marker)
     goto mmap_free;
 
   FIO_NAME(FIO_MEMORY_NAME, __mem_slice_free)(ptr);
@@ -27244,7 +27792,7 @@ mmap_free:
   FIO_MEMSET(ptr,
              0,
              ((size_t)c->marker << FIO_MEM_PAGE_SIZE_LOG) -
-                 FIO_MEMORY_ALIGN_SIZE);
+                 ((uintptr_t)ptr - (uintptr_t)c));
   FIO_MEMORY_ON_CHUNK_FREE(c);
   FIO_MEM_SYS_FREE(c, (size_t)c->marker << FIO_MEM_PAGE_SIZE_LOG);
 }
@@ -27262,11 +27810,16 @@ SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME, realloc)(void *ptr,
 
 /**
  * Uses system page maps for reallocation.
+ *
+ * Keeps the pointer's offset within the page-mapped chunk, so the returned
+ * pointer enjoys the same (2MiB base relative) alignment as `ptr`.
  */
 FIO_SFUNC void *FIO_NAME(FIO_MEMORY_NAME, __mem_realloc2_big)(
     FIO_NAME(FIO_MEMORY_NAME, __mem_chunk_s) * c,
+    void *ptr,
     size_t new_size) {
-  const size_t new_len = FIO_MEM_BYTES2PAGES(new_size + FIO_MEMORY_ALIGN_SIZE);
+  const size_t offset = (uintptr_t)ptr - (uintptr_t)c;
+  const size_t new_len = FIO_MEM_BYTES2PAGES(new_size + offset);
   c = (FIO_NAME(FIO_MEMORY_NAME, __mem_chunk_s) *)FIO_MEM_SYS_REALLOC(
       c,
       (size_t)c->marker << FIO_MEM_PAGE_SIZE_LOG,
@@ -27275,7 +27828,7 @@ FIO_SFUNC void *FIO_NAME(FIO_MEMORY_NAME, __mem_realloc2_big)(
   if (!c)
     return NULL;
   c->marker = (uint32_t)(new_len >> FIO_MEM_PAGE_SIZE_LOG);
-  return (void *)((uintptr_t)c + FIO_MEMORY_ALIGN_SIZE);
+  return (void *)((uintptr_t)c + offset);
 }
 
 /* SublimeText marker */
@@ -27289,24 +27842,48 @@ void fio_realloc2__(void);
 SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME, realloc2)(void *ptr,
                                                               size_t new_size,
                                                               size_t copy_len) {
+  return FIO_NAME(FIO_MEMORY_NAME, realloc_aligned)(ptr,
+                                                    new_size,
+                                                    copy_len,
+                                                    FIO_MEMORY_ALIGN_SIZE);
+}
+
+/* SublimeText marker */
+void fio_realloc_aligned__(void);
+/**
+ * Re-allocates memory, enforcing a minimum pointer alignment.
+ *
+ * This is the core of the aligned allocation API: `malloc_aligned` and
+ * `calloc_aligned` simply route to this function with a NULL `ptr`.
+ */
+SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME,
+                                   realloc_aligned)(void *ptr,
+                                                    size_t new_size,
+                                                    size_t copy_len,
+                                                    size_t alignment) {
   void *mem = NULL;
+  if (ptr == FIO_MEMORY_MALLOC_ZERO_POINTER)
+    ptr = NULL;
+  alignment = FIO_NAME(FIO_MEMORY_NAME, __mem_align_normalize)(ptr, alignment);
+  if (!alignment) {
+    errno = EINVAL;
+    FIO_ASSERT_DEBUG(0,
+                     "realloc_aligned: alignment out of supported range");
+    return NULL;
+  }
   if (!new_size)
     goto act_as_free;
-  if (!ptr || ptr == FIO_MEMORY_MALLOC_ZERO_POINTER)
+  if (!ptr)
     goto act_as_malloc;
 
   { /* test for big-paged malloc and limit copy_len */
     FIO_NAME(FIO_MEMORY_NAME, __mem_chunk_s) *c =
         FIO_NAME(FIO_MEMORY_NAME, __mem_ptr2chunk)(ptr);
-    size_t b = FIO_NAME(FIO_MEMORY_NAME, __mem_ptr2index)(c, ptr);
+    size_t max_len;
     FIO_ASSERT(c,
                "(%d) cannot reallocate a pointer with a NULL system allocation",
                fio_getpid());
 
-    register size_t max_len =
-        ((uintptr_t)FIO_NAME(FIO_MEMORY_NAME, __mem_chunk2ptr)(c, b, 0) +
-         FIO_MEMORY_BLOCK_SIZE) -
-        ((uintptr_t)ptr);
 #if FIO_MEMORY_ENABLE_BIG_ALLOC
     if (c->marker == FIO_MEMORY_BIG_BLOCK_MARKER) {
       /* extend max_len to accommodate possible length */
@@ -27314,13 +27891,23 @@ SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME, realloc2)(void *ptr,
           ((uintptr_t)c + FIO_MEMORY_SYS_ALLOCATION_SIZE) - ((uintptr_t)ptr);
     } else
 #endif /* FIO_MEMORY_ENABLE_BIG_ALLOC */
-      if ((uintptr_t)(c) + FIO_MEMORY_ALIGN_SIZE == (uintptr_t)ptr &&
-          c->marker) {
-        if (new_size > FIO_MEMORY_ALLOC_LIMIT)
-          return (
-              mem = FIO_NAME(FIO_MEMORY_NAME, __mem_realloc2_big)(c, new_size));
-        max_len = new_size; /* shrinking from mmap to allocator */
-      }
+        if (c->marker) {
+      /* page-backed (mmap) chunk - any interior pointer is valid */
+      const size_t offset = (uintptr_t)ptr - (uintptr_t)c;
+      const size_t wanted_offset = (alignment > FIO_MEMORY_ALIGN_SIZE)
+                                       ? alignment
+                                       : FIO_MEMORY_ALIGN_SIZE;
+      if (new_size > FIO_MEMORY_ALLOC_LIMIT && offset == wanted_offset)
+        return (mem = FIO_NAME(FIO_MEMORY_NAME,
+                               __mem_realloc2_big)(c, ptr, new_size));
+      max_len = ((size_t)c->marker << FIO_MEM_PAGE_SIZE_LOG) - offset;
+    } else {
+      const size_t b = FIO_NAME(FIO_MEMORY_NAME, __mem_ptr2index)(c, ptr);
+      max_len =
+          ((uintptr_t)FIO_NAME(FIO_MEMORY_NAME, __mem_chunk2ptr)(c, b, 0) +
+           FIO_MEMORY_BLOCK_SIZE) -
+          ((uintptr_t)ptr);
+    }
 
     if (copy_len > max_len)
       copy_len = max_len;
@@ -27328,7 +27915,7 @@ SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME, realloc2)(void *ptr,
       copy_len = new_size;
   }
 
-  mem = FIO_NAME(FIO_MEMORY_NAME, ___malloc)(new_size, ptr);
+  mem = FIO_NAME(FIO_MEMORY_NAME, ___malloc)(new_size, ptr, alignment);
   if (!mem || mem == ptr) {
     return mem;
   }
@@ -27353,7 +27940,7 @@ SFUNC void *FIO_MEM_ALIGN FIO_NAME(FIO_MEMORY_NAME, realloc2)(void *ptr,
   return mem;
 
 act_as_malloc:
-  mem = FIO_NAME(FIO_MEMORY_NAME, ___malloc)(new_size, NULL);
+  mem = FIO_NAME(FIO_MEMORY_NAME, ___malloc)(new_size, NULL, alignment);
   return mem;
 
 act_as_free:
@@ -27376,21 +27963,8 @@ void fio_mmap__(void);
 SFUNC void *FIO_MEM_ALIGN_NEW FIO_NAME(FIO_MEMORY_NAME, mmap)(size_t size) {
   if (!size)
     return FIO_NAME(FIO_MEMORY_NAME, malloc)(0);
-  size_t pages = FIO_MEM_BYTES2PAGES(size + FIO_MEMORY_ALIGN_SIZE);
-  if (((uint64_t)pages >> (31 + FIO_MEM_PAGE_SIZE_LOG)))
-    return NULL;
-  FIO_NAME(FIO_MEMORY_NAME, __mem_chunk_s) *c =
-      (FIO_NAME(FIO_MEMORY_NAME, __mem_chunk_s) *)
-          FIO_MEM_SYS_ALLOC(pages, FIO_MEMORY_SYS_ALLOCATION_SIZE_LOG);
-  if (!c)
-    goto no_mem;
-  FIO_MEMORY_ON_ALLOC_FUNC();
-  FIO_MEMORY_ON_CHUNK_ALLOC(c);
-  c->marker = (uint32_t)(pages >> FIO_MEM_PAGE_SIZE_LOG);
-  return (void *)((uintptr_t)c + FIO_MEMORY_ALIGN_SIZE);
-no_mem:
-  errno = ENOMEM;
-  return NULL;
+  return FIO_NAME(FIO_MEMORY_NAME, __mem_mmap_aligned)(size,
+                                                       FIO_MEMORY_ALIGN_SIZE);
 }
 
 /* *****************************************************************************
@@ -27406,6 +27980,27 @@ void free(void *ptr) { FIO_NAME(FIO_MEMORY_NAME, free)(ptr); }
 void *realloc(void *ptr, size_t new_size) {
   return FIO_NAME(FIO_MEMORY_NAME, realloc2)(ptr, new_size, new_size);
 }
+/* override the aligned allocation family as well, so libc-aligned pointers
+ * never reach `fio_free` (and vice versa). */
+void *aligned_alloc(size_t alignment, size_t size) {
+  return FIO_NAME(FIO_MEMORY_NAME, malloc_aligned)(size, alignment);
+}
+int posix_memalign(void **memptr, size_t alignment, size_t size) {
+  void *p = FIO_NAME(FIO_MEMORY_NAME, malloc_aligned)(size, alignment);
+  if (!p)
+    return errno; /* EINVAL (unsupported alignment) or ENOMEM */
+  *memptr = p;
+  return 0;
+}
+#if FIO_OS_WIN
+void *_aligned_malloc(size_t size, size_t alignment) {
+  return FIO_NAME(FIO_MEMORY_NAME, malloc_aligned)(size, alignment);
+}
+void *_aligned_realloc(void *ptr, size_t size, size_t alignment) {
+  return FIO_NAME(FIO_MEMORY_NAME, realloc_aligned)(ptr, size, size, alignment);
+}
+void _aligned_free(void *ptr) { FIO_NAME(FIO_MEMORY_NAME, free)(ptr); }
+#endif /* FIO_OS_WIN */
 #endif /* FIO_MALLOC_OVERRIDE_SYSTEM */
 #undef FIO_MALLOC_OVERRIDE_SYSTEM
 
@@ -81496,13 +82091,21 @@ Huffman table building (for decompression)
 /**
  * Build a Huffman decode table from code lengths.
  *
- * Returns the total number of table entries used, or 0 on error.
- * `table` must have room for at least `(1 << root_bits) + max_subtable`
- * entries. `root_bits` is the first-level lookup width.
+ * When `table` is NULL this is a sizing query: no memory is touched and the
+ * REQUIRED number of table entries is returned (0 on invalid code). Callers
+ * use it to pick storage (stack buffer vs. grown heap buffer) before
+ * building.
+ *
+ * Otherwise builds the table and returns the number of entries used, or 0
+ * on error (invalid code, or `table_cap` smaller than the required size —
+ * unreachable when the caller sized the buffer via the sizing query).
+ *
+ * `root_bits` is the first-level lookup width.
  *
  * table_type: 0 = simple (precode), 1 = litlen, 2 = distance
  */
 FIO_SFUNC uint32_t fio___deflate_build_decode_table(uint32_t *table,
+                                                    uint32_t table_cap,
                                                     const uint8_t *lens,
                                                     uint32_t num_syms,
                                                     uint32_t root_bits,
@@ -81523,8 +82126,18 @@ FIO_SFUNC uint32_t fio___deflate_build_decode_table(uint32_t *table,
 
   /* Handle special cases */
   if (count[0] == num_syms) {
-    /* All zero lengths - invalid for required tables */
-    return 0;
+    /* All zero lengths: legal ONLY for distance tables — RFC 1951 §3.2.7:
+     * "one distance code of zero bits means that there are no distance
+     * codes used at all (the data is all literals)". Leave the table
+     * zeroed so any attempt to decode a distance errors out (the decode
+     * loops reject zero entries), and report success. Symbol-less litlen
+     * and precode tables are invalid (a block needs its end-of-block). */
+    if (table_type != 2)
+      return 0;
+    if (!table)
+      return (1U << root_bits); /* sizing query */
+    FIO_MEMSET(table, 0, sizeof(uint32_t) * (1U << root_bits));
+    return (1U << root_bits);
   }
 
   /* Check for over-subscribed or incomplete code */
@@ -81536,6 +82149,14 @@ FIO_SFUNC uint32_t fio___deflate_build_decode_table(uint32_t *table,
       if (left < 0)
         return 0; /* over-subscribed */
     }
+    /* Reject incomplete codes with zlib semantics: the precode must be
+     * complete; litlen/dist tables may be incomplete only when the longest
+     * code is a single 1-bit code (the unused patterns stay zero-filled
+     * and the decode loops reject them if a stream references them).
+     * Without this, incomplete tables silently decoded as literal 0 with
+     * a 0-bit code length, spinning the decode loop forever. */
+    if (left > 0 && (table_type == 0 || max_len != 1))
+      return 0;
   }
 
   /* Build offsets for sorting */
@@ -81553,6 +82174,46 @@ FIO_SFUNC uint32_t fio___deflate_build_decode_table(uint32_t *table,
   /* Fill the root table and subtables */
   uint32_t table_pos = 1U << root_bits;
   uint32_t sym_idx = 0;
+
+  /* First pass: find the longest code under each root prefix, so every
+   * subtable is sized by its own longest code rather than the global
+   * max_len. Sizing by the global max_len wastes entries (a prefix whose
+   * longest code is 12 bits would still pay for 15-bit entries) and —
+   * because the callers' tables are fixed-size stack buffers — could
+   * overflow the buffer on legitimate zlib streams that use many root
+   * prefixes with long codes (stack smash, sporadic __stack_chk_fail). */
+  uint8_t prefix_max[FIO___DEFLATE_LITLEN_SIZE]; /* max root is 11 bits */
+  FIO_MEMSET(prefix_max, 0, sizeof(uint8_t) * (1U << root_bits));
+  {
+    uint32_t code = 0;
+    for (uint32_t len = 1; len <= max_len; ++len) {
+      for (uint32_t c = 0; c < count[len]; ++c) {
+        if (len > root_bits) {
+          uint32_t rev_code = 0;
+          for (uint32_t b = 0; b < len; ++b)
+            rev_code |= ((code >> (len - 1 - b)) & 1) << b;
+          uint32_t root_idx = rev_code & ((1U << root_bits) - 1);
+          if (prefix_max[root_idx] < len)
+            prefix_max[root_idx] = (uint8_t)len;
+        }
+        code++;
+      }
+      code <<= 1;
+    }
+  }
+
+  /* Total entries required: root + one subtable per used root prefix,
+   * each sized by that prefix's own longest code. */
+  {
+    uint32_t required = 1U << root_bits;
+    for (uint32_t i = 0; i < (1U << root_bits); ++i)
+      if (prefix_max[i])
+        required += 1U << ((uint32_t)prefix_max[i] - root_bits);
+    if (!table)
+      return required; /* sizing query */
+    if (required > table_cap)
+      return 0; /* caller undersized the buffer (should never happen) */
+  }
 
   /* Initialize root table to zero */
   FIO_MEMSET(table, 0, sizeof(uint32_t) * table_pos);
@@ -81610,11 +82271,11 @@ FIO_SFUNC uint32_t fio___deflate_build_decode_table(uint32_t *table,
         uint32_t sub_off;
 
         if (!FIO___DEFLATE_ENTRY_IS_SUB(table[root_idx])) {
-          /* Create new subtable */
-          sub_bits = max_len - root_bits;
-          if (sub_bits > 8)
-            sub_bits = 8; /* cap subtable size */
+          /* Create new subtable, sized by this prefix's own longest code */
+          sub_bits = (uint32_t)prefix_max[root_idx] - root_bits;
           sub_off = table_pos;
+          if (table_pos + (1U << sub_bits) > table_cap)
+            return 0; /* pathological table exceeds caller capacity */
           table[root_idx] =
               FIO___DEFLATE_ENTRY_SUB(sub_off, root_bits, sub_bits);
           /* Zero the subtable */
@@ -81641,6 +82302,86 @@ FIO_SFUNC uint32_t fio___deflate_build_decode_table(uint32_t *table,
   }
 
   return table_pos;
+}
+
+/* *****************************************************************************
+Decode table storage (stack buffers + on-demand heap growth)
+***************************************************************************** */
+
+/** Per-call decode table storage. Stack buffers cover every valid canonical
+ * table (per-prefix sizing keeps worst cases under the caps); heap buffers
+ * are grown on demand as a robust fallback — a too-deep table must never
+ * become a hard failure (nor a stack overflow). Freed by
+ * fio___deflate_decode_tables_cleanup. */
+typedef struct {
+  uint32_t litlen_stack[FIO___DEFLATE_LITLEN_MAX];
+  uint32_t dist_stack[FIO___DEFLATE_DIST_MAX];
+  uint32_t *litlen_heap;  /* grown on demand (valid streams never need it) */
+  uint32_t *dist_heap;
+  size_t litlen_heap_cap; /* in entries */
+  size_t dist_heap_cap;   /* in entries */
+} fio___deflate_decode_tables_s;
+
+/** Builds a decode table into `stack_buf`, growing `*heap_buf` instead when
+ * the required size exceeds `stack_cap` entries. Returns the ready table
+ * (stack or heap) or NULL on invalid code / allocation failure. The heap
+ * buffer persists across calls (multi-block streams reuse it) and belongs
+ * to the caller. */
+FIO_SFUNC uint32_t *fio___deflate_decode_table_build(
+    uint32_t *stack_buf,
+    uint32_t stack_cap,
+    uint32_t **heap_buf,
+    size_t *heap_cap,
+    const uint8_t *lens,
+    uint32_t num_syms,
+    uint32_t root_bits,
+    int table_type) {
+  uint32_t need = fio___deflate_build_decode_table(NULL,
+                                                   0,
+                                                   lens,
+                                                   num_syms,
+                                                   root_bits,
+                                                   table_type);
+  if (!need)
+    return NULL;
+  uint32_t *buf = stack_buf;
+  uint32_t cap = stack_cap;
+  if (need > stack_cap) {
+    /* Deeper than the stack budget — expand through the heap rather than
+     * reject the stream. */
+    if (*heap_cap < (size_t)need) {
+      size_t new_cap = *heap_cap ? *heap_cap : 1024;
+      while (new_cap < (size_t)need)
+        new_cap <<= 1;
+      uint32_t *nb = (uint32_t *)FIO_MEM_REALLOC(*heap_buf,
+                                                 *heap_cap * sizeof(uint32_t),
+                                                 new_cap * sizeof(uint32_t),
+                                                 0);
+      if (!nb)
+        return NULL;
+      *heap_buf = nb;
+      *heap_cap = new_cap;
+    }
+    buf = *heap_buf;
+    cap = (uint32_t)*heap_cap;
+  }
+  if (!fio___deflate_build_decode_table(buf,
+                                        cap,
+                                        lens,
+                                        num_syms,
+                                        root_bits,
+                                        table_type))
+    return NULL;
+  return buf;
+}
+
+/** Releases any heap-grown table buffers. */
+FIO_SFUNC void fio___deflate_decode_tables_cleanup(
+    fio___deflate_decode_tables_s *tb) {
+  if (tb->litlen_heap)
+    FIO_MEM_FREE(tb->litlen_heap, tb->litlen_heap_cap * sizeof(uint32_t));
+  if (tb->dist_heap)
+    FIO_MEM_FREE(tb->dist_heap, tb->dist_heap_cap * sizeof(uint32_t));
 }
 
 /* *****************************************************************************
@@ -81706,6 +82447,9 @@ FIO_SFUNC int fio___inflate_fast(const uint8_t *restrict *in_p,
       entry = litlen_table[sub_off + bits];
     }
 
+    if (!entry)
+      return -1; /* invalid code (hole in an incomplete table) */
+
     if (FIO___DEFLATE_ENTRY_IS_LIT(entry)) {
       /* Literal byte - most common case */
       *out++ = (uint8_t)FIO___DEFLATE_ENTRY_LIT_SYM(entry);
@@ -81746,6 +82490,9 @@ FIO_SFUNC int fio___inflate_fast(const uint8_t *restrict *in_p,
       bits = fio___deflate_bitbuf_peek(bb, sub_bits);
       entry = dist_table[sub_off + bits];
     }
+
+    if (!entry)
+      return -1; /* invalid distance code (incomplete table hole) */
 
     uint32_t dist_codelen = FIO___DEFLATE_ENTRY_CODELEN(entry);
     fio___deflate_bitbuf_consume(bb, dist_codelen);
@@ -81838,6 +82585,9 @@ FIO_SFUNC int fio___inflate_slow(const uint8_t *restrict *in_p,
       entry = litlen_table[sub_off + bits];
     }
 
+    if (!entry)
+      return -1; /* invalid code (hole in an incomplete table) */
+
     uint32_t codelen = FIO___DEFLATE_ENTRY_CODELEN(entry);
     if (bb->count < codelen)
       break;
@@ -81903,6 +82653,9 @@ FIO_SFUNC int fio___inflate_slow(const uint8_t *restrict *in_p,
       bits = fio___deflate_bitbuf_peek(bb, sub_bits);
       entry = dist_table[sub_off + bits];
     }
+
+    if (!entry)
+      return -1; /* invalid distance code (incomplete table hole) */
 
     uint32_t dist_codelen = FIO___DEFLATE_ENTRY_CODELEN(entry);
     if (bb->count < dist_codelen)
@@ -81996,6 +82749,9 @@ FIO_SFUNC int fio___inflate_count(const uint8_t *restrict *in_p,
       entry = litlen_table[sub_off + bits];
     }
 
+    if (!entry)
+      return -1; /* invalid code (hole in an incomplete table) */
+
     uint32_t codelen = FIO___DEFLATE_ENTRY_CODELEN(entry);
     if (bb->count < codelen)
       break;
@@ -82056,6 +82812,9 @@ FIO_SFUNC int fio___inflate_count(const uint8_t *restrict *in_p,
       entry = dist_table[sub_off + bits];
     }
 
+    if (!entry)
+      return -1; /* invalid distance code (incomplete table hole) */
+
     uint32_t dist_codelen = FIO___DEFLATE_ENTRY_CODELEN(entry);
     if (bb->count < dist_codelen)
       break;
@@ -82102,10 +82861,12 @@ FIO_IFUNC size_t fio_deflate_decompress_bound(size_t in_len) {
 }
 
 void fio_deflate_decompress___(void); /* IDE Marker */
-SFUNC size_t fio_deflate_decompress FIO_NOOP(void *out,
-                                             size_t out_len,
-                                             const void *in,
-                                             size_t in_len) {
+FIO_SFUNC size_t fio___deflate_decompress_impl(
+    void *out,
+    size_t out_len,
+    const void *in,
+    size_t in_len,
+    fio___deflate_decode_tables_s *tb) {
   if (!in || !in_len)
     return 0;
 
@@ -82122,9 +82883,11 @@ SFUNC size_t fio_deflate_decompress FIO_NOOP(void *out,
 
   fio___deflate_bitbuf_s bb = {0, 0};
 
-  /* Huffman decode tables (on stack, ~12KB) */
-  uint32_t litlen_table[FIO___DEFLATE_LITLEN_MAX];
-  uint32_t dist_table[FIO___DEFLATE_DIST_MAX];
+  /* Decode tables for the current block (point into tb's storage; the
+   * helper grows heap storage instead of failing if a table ever exceeds
+   * the stack budget). */
+  const uint32_t *litlen_table = NULL;
+  const uint32_t *dist_table = NULL;
 
   uint32_t bfinal = 0;
 
@@ -82196,13 +82959,19 @@ SFUNC size_t fio_deflate_decompress FIO_NOOP(void *out,
       fio___deflate_fixed_litlen_lens(ll_lens);
       fio___deflate_fixed_dist_lens(d_lens);
 
-      if (!fio___deflate_build_decode_table(litlen_table,
+      /* Fixed tables always fit the stack buffers (max code length 9
+       * is below the 11-bit litlen root; 5 below the 8-bit dist root). */
+      litlen_table = tb->litlen_stack;
+      dist_table = tb->dist_stack;
+      if (!fio___deflate_build_decode_table(tb->litlen_stack,
+                                            FIO___DEFLATE_LITLEN_MAX,
                                             ll_lens,
                                             288,
                                             FIO___DEFLATE_LITLEN_BITS,
                                             1))
         return 0;
-      if (!fio___deflate_build_decode_table(dist_table,
+      if (!fio___deflate_build_decode_table(tb->dist_stack,
+                                            FIO___DEFLATE_DIST_MAX,
                                             d_lens,
                                             32,
                                             FIO___DEFLATE_DIST_BITS,
@@ -82243,6 +83012,7 @@ SFUNC size_t fio_deflate_decompress FIO_NOOP(void *out,
       /* Build precode table */
       uint32_t precode_table[FIO___DEFLATE_PRECODE_SIZE];
       if (!fio___deflate_build_decode_table(precode_table,
+                                            FIO___DEFLATE_PRECODE_SIZE,
                                             cl_lens,
                                             19,
                                             FIO___DEFLATE_PRECODE_BITS,
@@ -82310,17 +83080,27 @@ SFUNC size_t fio_deflate_decompress FIO_NOOP(void *out,
       }
 
       /* Build litlen and distance tables */
-      if (!fio___deflate_build_decode_table(litlen_table,
-                                            all_lens,
-                                            hlit,
-                                            FIO___DEFLATE_LITLEN_BITS,
-                                            1))
+      litlen_table = fio___deflate_decode_table_build(
+          tb->litlen_stack,
+          FIO___DEFLATE_LITLEN_MAX,
+          &tb->litlen_heap,
+          &tb->litlen_heap_cap,
+          all_lens,
+          hlit,
+          FIO___DEFLATE_LITLEN_BITS,
+          1);
+      if (!litlen_table)
         return 0;
-      if (!fio___deflate_build_decode_table(dist_table,
-                                            all_lens + hlit,
-                                            hdist,
-                                            FIO___DEFLATE_DIST_BITS,
-                                            2))
+      dist_table = fio___deflate_decode_table_build(
+          tb->dist_stack,
+          FIO___DEFLATE_DIST_MAX,
+          &tb->dist_heap,
+          &tb->dist_heap_cap,
+          all_lens + hlit,
+          hdist,
+          FIO___DEFLATE_DIST_BITS,
+          2);
+      if (!dist_table)
         return 0;
     }
 
@@ -82431,6 +83211,22 @@ SFUNC size_t fio_deflate_decompress FIO_NOOP(void *out,
   return (size_t)(outp - out_start);
 }
 
+SFUNC size_t fio_deflate_decompress FIO_NOOP(void *out,
+                                             size_t out_len,
+                                             const void *in,
+                                             size_t in_len) {
+  /* Stack-resident table storage (~12KB); heap-grown only if a table ever
+   * exceeds the stack budget. Always cleaned up, on every exit path. */
+  fio___deflate_decode_tables_s tb;
+  tb.litlen_heap = NULL;
+  tb.dist_heap = NULL;
+  tb.litlen_heap_cap = 0;
+  tb.dist_heap_cap = 0;
+  size_t r = fio___deflate_decompress_impl(out, out_len, in, in_len, &tb);
+  fio___deflate_decode_tables_cleanup(&tb);
+  return r;
+}
+
 /* *****************************************************************************
 Deflate (compression) - Huffman tree building
 ***************************************************************************** */
@@ -82458,13 +83254,17 @@ FIO_SFUNC int fio___deflate_build_code_lengths(uint8_t *lens,
   if (num_used == 0)
     return 0;
   if (num_used == 1) {
-    /* Single symbol: assign length 1 */
-    for (uint32_t i = 0; i < num_syms; ++i) {
-      if (freqs[i]) {
-        lens[i] = 1;
-        return 0;
-      }
-    }
+    /* Single used symbol: emit two 1-bit codes (the used symbol plus one
+     * unused padding symbol) so the code set is complete (Kraft == 1).
+     * A lone 1-bit code is incomplete — zlib rejects incomplete precode
+     * sets outright and only tolerates them for litlen/dist tables when
+     * the maximum length is exactly 1. Padding is accepted everywhere. */
+    uint32_t used = 0;
+    while (!freqs[used])
+      ++used;
+    lens[used] = 1;
+    lens[used ? 0 : 1] = 1;
+    return 0;
   }
 
   /* Build Huffman tree using a simple O(n log n) approach.
@@ -82593,44 +83393,58 @@ FIO_SFUNC int fio___deflate_build_code_lengths(uint8_t *lens,
     }
   }
 
-  /* Limit code lengths to max_bits */
+  /* Limit code lengths to max_bits, repairing the Kraft sum exactly.
+   *
+   * Clamping deep leaves to max_bits leaves the set over-subscribed
+   * (Σ 2^-len > 1). Each repair step moves one leaf from the longest
+   * sub-max length one level down and absorbs one max-length leaf as its
+   * brother (zlib's gen_bitlen repair): the Kraft excess shrinks by
+   * exactly one 2^-max_bits unit per step, ending at Σ 2^-len == 1 — a
+   * complete code, never over- or under-subscribed. (The previous
+   * lengthen-one-step loop could overshoot into an incomplete set, which
+   * zlib rejects with "invalid distances/literal-lengths set".) */
   {
     uint32_t count[16] = {0};
     for (uint32_t i = 0; i < num_syms; ++i) {
       if (lens[i] > max_bits)
         lens[i] = (uint8_t)max_bits;
       if (lens[i])
-        count[lens[i]]++;
+        ++count[lens[i]];
     }
 
-    /* Check Kraft inequality and fix if needed */
-    for (;;) {
-      int32_t kraft = 0;
-      for (uint32_t i = 1; i <= max_bits; ++i)
-        kraft += (int32_t)count[i] << (max_bits - i);
+    /* Kraft excess in units of 2^-max_bits (clamping can only add). */
+    int32_t excess = -(int32_t)(1U << max_bits);
+    for (uint32_t i = 1; i <= max_bits; ++i)
+      excess += (int32_t)(count[i] << (max_bits - i));
 
-      if (kraft <= (1 << max_bits))
-        break;
-
-      /* Over-subscribed: lengthen shortest codes to reduce Kraft sum.
-       * Moving a code from length i to i+1 reduces kraft by 2^(max-i-1). */
-      int fixed = 0;
-      for (uint32_t i = 1; i < max_bits && !fixed; ++i) {
-        if (count[i] > 0) {
-          count[i]--;
-          count[i + 1]++;
-          /* Find a symbol with this length and lengthen it */
-          for (uint32_t s = 0; s < num_syms; ++s) {
-            if (lens[s] == i) {
-              lens[s]++;
-              fixed = 1;
-              break;
-            }
-          }
-        }
+    while (excess > 0) {
+      /* Longest sub-max length with at least one code. Guaranteed to
+       * exist when excess > 0: an all-max-length set of <= num_syms codes
+       * is strictly under-subscribed. */
+      uint32_t bits = max_bits - 1;
+      while (bits > 1 && !count[bits])
+        --bits;
+      if (!count[bits])
+        break; /* defensive: unreachable */
+      /* count[max_bits] > 0 whenever excess > 0 (excess starts strictly
+       * below the clamped-leaf count and both shrink in lockstep), so a
+       * distinct absorb candidate always exists. */
+      uint32_t grow = num_syms;   /* least-frequent leaf at `bits` */
+      uint32_t shrink = num_syms; /* most-frequent leaf at max_bits */
+      for (uint32_t s = 0; s < num_syms; ++s) {
+        if (lens[s] == bits &&
+            (grow == num_syms || freqs[s] < freqs[grow]))
+          grow = s;
+        if (lens[s] == max_bits &&
+            (shrink == num_syms || freqs[s] > freqs[shrink]))
+          shrink = s;
       }
-      if (!fixed)
-        break;
+      lens[grow] = (uint8_t)(bits + 1);   /* bits -> bits + 1 */
+      lens[shrink] = (uint8_t)(bits + 1); /* max_bits -> bits + 1 */
+      --count[bits];
+      --count[max_bits];
+      count[bits + 1] += 2;
+      excess -= 1;
     }
   }
 
@@ -84170,11 +84984,13 @@ never patched, never copied.
  *  - On buffer too small: the REQUIRED total size (> out_len).
  *  - On corrupt/invalid data: 0.
  */
-FIO_SFUNC size_t fio___deflate_decompress_prefixed(void *out,
-                                                   size_t out_len,
-                                                   size_t prefix_len,
-                                                   const void *in,
-                                                   size_t in_len) {
+FIO_SFUNC size_t fio___deflate_decompress_prefixed_impl(
+    void *out,
+    size_t out_len,
+    size_t prefix_len,
+    const void *in,
+    size_t in_len,
+    fio___deflate_decode_tables_s *tb) {
   if (!out || !out_len || !in || !in_len)
     return 0;
   if (prefix_len >= out_len)
@@ -84191,8 +85007,11 @@ FIO_SFUNC size_t fio___deflate_decompress_prefixed(void *out,
 
   fio___deflate_bitbuf_s bb = {0, 0};
 
-  uint32_t litlen_table[FIO___DEFLATE_LITLEN_MAX];
-  uint32_t dist_table[FIO___DEFLATE_DIST_MAX];
+  /* Decode tables for the current block (point into tb's storage; the
+   * helper grows heap storage instead of failing if a table ever exceeds
+   * the stack budget). */
+  const uint32_t *litlen_table = NULL;
+  const uint32_t *dist_table = NULL;
 
   uint32_t bfinal = 0;
 
@@ -84256,13 +85075,19 @@ FIO_SFUNC size_t fio___deflate_decompress_prefixed(void *out,
       fio___deflate_fixed_litlen_lens(ll_lens);
       fio___deflate_fixed_dist_lens(d_lens);
 
-      if (!fio___deflate_build_decode_table(litlen_table,
+      /* Fixed tables always fit the stack buffers (max code length 9
+       * is below the 11-bit litlen root; 5 below the 8-bit dist root). */
+      litlen_table = tb->litlen_stack;
+      dist_table = tb->dist_stack;
+      if (!fio___deflate_build_decode_table(tb->litlen_stack,
+                                            FIO___DEFLATE_LITLEN_MAX,
                                             ll_lens,
                                             288,
                                             FIO___DEFLATE_LITLEN_BITS,
                                             1))
         return 0;
-      if (!fio___deflate_build_decode_table(dist_table,
+      if (!fio___deflate_build_decode_table(tb->dist_stack,
+                                            FIO___DEFLATE_DIST_MAX,
                                             d_lens,
                                             32,
                                             FIO___DEFLATE_DIST_BITS,
@@ -84299,6 +85124,7 @@ FIO_SFUNC size_t fio___deflate_decompress_prefixed(void *out,
 
       uint32_t precode_table[FIO___DEFLATE_PRECODE_SIZE];
       if (!fio___deflate_build_decode_table(precode_table,
+                                            FIO___DEFLATE_PRECODE_SIZE,
                                             cl_lens,
                                             19,
                                             FIO___DEFLATE_PRECODE_BITS,
@@ -84361,17 +85187,27 @@ FIO_SFUNC size_t fio___deflate_decompress_prefixed(void *out,
         }
       }
 
-      if (!fio___deflate_build_decode_table(litlen_table,
-                                            all_lens,
-                                            hlit,
-                                            FIO___DEFLATE_LITLEN_BITS,
-                                            1))
+      litlen_table = fio___deflate_decode_table_build(
+          tb->litlen_stack,
+          FIO___DEFLATE_LITLEN_MAX,
+          &tb->litlen_heap,
+          &tb->litlen_heap_cap,
+          all_lens,
+          hlit,
+          FIO___DEFLATE_LITLEN_BITS,
+          1);
+      if (!litlen_table)
         return 0;
-      if (!fio___deflate_build_decode_table(dist_table,
-                                            all_lens + hlit,
-                                            hdist,
-                                            FIO___DEFLATE_DIST_BITS,
-                                            2))
+      dist_table = fio___deflate_decode_table_build(
+          tb->dist_stack,
+          FIO___DEFLATE_DIST_MAX,
+          &tb->dist_heap,
+          &tb->dist_heap_cap,
+          all_lens + hlit,
+          hdist,
+          FIO___DEFLATE_DIST_BITS,
+          2);
+      if (!dist_table)
         return 0;
     }
 
@@ -84474,6 +85310,29 @@ FIO_SFUNC size_t fio___deflate_decompress_prefixed(void *out,
   if (counting)
     return out_pos;
   return (size_t)(outp - out_start);
+}
+
+FIO_SFUNC size_t fio___deflate_decompress_prefixed(void *out,
+                                                   size_t out_len,
+                                                   size_t prefix_len,
+                                                   const void *in,
+                                                   size_t in_len) {
+  /* Stack-resident table storage (~12KB); heap-grown only if a table ever
+   * exceeds the stack budget. Always cleaned up, on every exit path. */
+  fio___deflate_decode_tables_s tb;
+  tb.litlen_heap = NULL;
+  tb.dist_heap = NULL;
+  tb.litlen_heap_cap = 0;
+  tb.dist_heap_cap = 0;
+  size_t r =
+      fio___deflate_decompress_prefixed_impl(out,
+                                             out_len,
+                                             prefix_len,
+                                             in,
+                                             in_len,
+                                             &tb);
+  fio___deflate_decode_tables_cleanup(&tb);
+  return r;
 }
 
 FIO_SFUNC size_t fio___deflate_stream_decompress(fio_deflate_s *s,
@@ -100913,7 +101772,10 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #define FIO_REF_DUPNAME     dup2
 #endif
 
-typedef struct {
+/* The header's alignment matches the wrapped type's alignment, rounding
+ * sizeof(__wrapper_s) up to a multiple of that alignment, so the object
+ * immediately following the header keeps its required alignment. */
+typedef struct FIO_ALIGN(_Alignof(FIO_REF_TYPE)) {
 #ifdef FIO_REF_FLEX_TYPE
   volatile uint32_t ref;
   uint32_t flx_size;
@@ -101010,18 +101872,21 @@ FIO_LEAK_COUNTER_DEF(FIO_REF_NAME)
 #ifdef FIO_REF_FLEX_TYPE
 IFUNC FIO_REF_TYPE_PTR FIO_NAME(FIO_REF_NAME,
                                 FIO_REF_CONSTRUCTOR)(size_t members) {
-  FIO_NAME(FIO_REF_NAME, __wrapper_s) *o =
-      (FIO_NAME(FIO_REF_NAME, __wrapper_s) *)FIO_MEM_REALLOC_(
-          NULL,
-          0,
-          sizeof(*o) + sizeof(FIO_REF_TYPE) +
-              (sizeof(FIO_REF_FLEX_TYPE) * members),
-          0);
+  FIO_NAME(FIO_REF_NAME, __wrapper_s) *o = NULL;
+  FIO_MEM_REALLOC_ALIGNED_(o,
+                           0,
+                           sizeof(*o) + sizeof(FIO_REF_TYPE) +
+                               (sizeof(FIO_REF_FLEX_TYPE) * members),
+                           0,
+                           _Alignof(FIO_REF_TYPE));
 #else
 IFUNC FIO_REF_TYPE_PTR FIO_NAME(FIO_REF_NAME, FIO_REF_CONSTRUCTOR)(void) {
-  FIO_NAME(FIO_REF_NAME, __wrapper_s) *o =
-      (FIO_NAME(FIO_REF_NAME, __wrapper_s) *)
-          FIO_MEM_REALLOC_(NULL, 0, sizeof(*o) + sizeof(FIO_REF_TYPE), 0);
+  FIO_NAME(FIO_REF_NAME, __wrapper_s) *o = NULL;
+  FIO_MEM_REALLOC_ALIGNED_(o,
+                           0,
+                           sizeof(*o) + sizeof(FIO_REF_TYPE),
+                           0,
+                           _Alignof(FIO_REF_TYPE));
 #endif /* FIO_REF_FLEX_TYPE */
   if (!o)
     return (FIO_REF_TYPE_PTR)(o);
@@ -101054,9 +101919,9 @@ IFUNC void FIO_NAME(FIO_REF_NAME,
   FIO_REF_METADATA_DESTROY((o->metadata));
   FIO_LEAK_COUNTER_ON_FREE(FIO_REF_NAME);
 #ifdef FIO_REF_FLEX_TYPE
-  FIO_MEM_FREE_(o, sizeof(*o) + (o->flx_size * sizeof(FIO_REF_FLEX_TYPE)));
+  FIO_MEM_FREE_ALIGNED_(o, sizeof(*o) + (o->flx_size * sizeof(FIO_REF_FLEX_TYPE)));
 #else
-  FIO_MEM_FREE_(o, sizeof(*o) + sizeof(FIO_REF_TYPE));
+  FIO_MEM_FREE_ALIGNED_(o, sizeof(*o) + sizeof(FIO_REF_TYPE));
 #endif
 }
 
@@ -111389,8 +112254,10 @@ FIO_SFUNC fio___tls13_connection_s *fio___tls13_connection_new(
     fio___tls13_context_s *ctx) {
   /* Single allocation for struct + all buffers (flex array member) */
   size_t alloc_size = sizeof(fio___tls13_connection_s) + FIO___TLS13_BUF_TOTAL;
-  fio___tls13_connection_s *conn =
-      (fio___tls13_connection_s *)FIO_MEM_REALLOC(NULL, 0, alloc_size, 0);
+  fio___tls13_connection_s *conn = NULL;
+  /* the connection type is over-aligned (embedded vector unions) */
+  FIO_MEM_REALLOC_ALIGNED(conn, 0, alloc_size, 0,
+                          _Alignof(fio___tls13_connection_s));
   if (!conn)
     return NULL;
   FIO_LEAK_COUNTER_ON_ALLOC(fio___tls13_connection_s);
@@ -111414,7 +112281,7 @@ FIO_SFUNC void fio___tls13_connection_free(fio___tls13_connection_s *conn) {
 
   /* Single free for struct + all buffers (flex array member) */
   FIO_LEAK_COUNTER_ON_FREE(fio___tls13_connection_s);
-  FIO_MEM_FREE(conn, sizeof(*conn) + FIO___TLS13_BUF_TOTAL);
+  FIO_MEM_FREE_ALIGNED(conn, sizeof(*conn) + FIO___TLS13_BUF_TOTAL);
 }
 
 /** Drains serialized wire data, retaining any unsent suffix for retry. */
@@ -120908,18 +121775,29 @@ FIO_SFUNC int fio____http_write_start(fio_http_s *h,
     if (fio___http_hmap_get_ptr(hdrs,
                                 FIO_STR_INFO2((char *)"content-encoding", 16)))
       goto compression_done;
-    fio_str_info_s ac =
-        fio_http_request_header(h,
-                                FIO_STR_INFO2((char *)"accept-encoding", 15),
-                                0);
-    if (!ac.len)
-      goto compression_done;
     /* only compress text-like content types */
     if (!fio___http_mime_is_compressible(
             fio_http_response_header(h,
                                      FIO_STR_INFO2((char *)"content-type", 12),
                                      0)))
       goto compression_done;
+    fio_str_info_s ac =
+        fio_http_request_header(h,
+                                FIO_STR_INFO2((char *)"accept-encoding", 15),
+                                0);
+    if (!ac.len) {
+      /* No Accept-Encoding in the request: identity is served, but the
+       * representation WAS selected by considering Accept-Encoding (a
+       * gzip-capable request would receive a compressed variant), so
+       * caches must key on it — RFC 9110 §12.5.5. */
+      if (!fio_http_response_header(h, FIO_STR_INFO2((char *)"vary", 4), 0)
+               .buf)
+        fio_http_response_header_set(
+            h,
+            FIO_STR_INFO2((char *)"vary", 4),
+            FIO_STR_INFO2((char *)"accept-encoding", 15));
+      goto compression_done;
+    }
     /* try encodings in preference order (brotli > gzip) */
     struct {
       fio_str_info_s token;
@@ -123210,9 +124088,27 @@ file_not_found:
   return -1;
 
 head_request:
-  /* TODO! HEAD responses should close?. */
   if (fd != -1)
     close(fd);
+  /* RFC 9110 §9.3.2: the server SHOULD send the same header fields in
+   * response to a HEAD request as it would have sent to GET — only the
+   * content is omitted. CDN origin revalidation depends on Content-Length
+   * / Content-Type / ETag matching the cached GET metadata. Note
+   * `file_length` and `mime_type` already reflect any selected compressed
+   * variant or 206 range, exactly like GET. */
+  if (mime_type.len)
+    fio_http_response_header_set(h,
+                                 FIO_STR_INFO2((char *)"content-type", 12),
+                                 mime_type);
+  {
+    char ibuf[32];
+    fio_str_info_s v = FIO_STR_INFO3(ibuf, 0, 32);
+    v.len = fio_digits10u(file_length);
+    fio_ltoa10u(v.buf, file_length, v.len);
+    fio_http_response_header_set(h,
+                                 FIO_STR_INFO2((char *)"content-length", 14),
+                                 v);
+  }
   {
     fio_http_write_args_s args = {.finish = 1};
     fio_http_write FIO_NOOP(h, args);
