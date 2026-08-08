@@ -29367,7 +29367,10 @@ struct fio_keystr_s {
 /** returns the Key String. */
 FIO_IFUNC fio_buf_info_s fio_keystr_buf(fio_keystr_s *str) {
   fio_buf_info_s r;
-  if ((str->info + 1) > 1) {
+  /* embedded strings have 0 < info < 0xFF (0 == long copy, 0xFF == long
+   * const/tmp marker); the cast keeps the 0xFF marker out of the embedded
+   * branch (integer promotion would otherwise send it there: 0xFF+1 == 256) */
+  if ((uint8_t)(str->info + 1) > 1) {
     r = (fio_buf_info_s){.len = str->info, .buf = (char *)str->embd};
     return r;
   }
@@ -29377,7 +29380,9 @@ FIO_IFUNC fio_buf_info_s fio_keystr_buf(fio_keystr_s *str) {
 /** returns the Key String. */
 FIO_IFUNC fio_str_info_s fio_keystr_info(fio_keystr_s *str) {
   fio_str_info_s r;
-  if ((str->info + 1) > 1) {
+  /* see fio_keystr_buf: cast keeps the 0xFF long-string marker out of the
+   * embedded branch */
+  if ((uint8_t)(str->info + 1) > 1) {
     r = (fio_str_info_s){.len = str->info, .buf = (char *)str->embd};
     return r;
   }
