@@ -11,8 +11,13 @@ on: [push, pull_request]
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -20,17 +25,16 @@ jobs:
         os: [ubuntu-24.04, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Set up Ruby
       uses: ruby/setup-ruby@v1
       with:
         ruby-version: ${{ matrix.ruby-version }}
+        bundler-cache: true
     - name: Setup ENV
       run: |
         echo "CI=false" >> "$GITHUB_ENV"
-    - name: Install Gems
-      run: bundle install
     - name: Compile Iodine
       run: bundle exec rake compile
     - name: Run tests
-      run: bundle exec rspec spec/ --format progress
+      run: bundle exec rake spec

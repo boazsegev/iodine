@@ -11,6 +11,10 @@ on: [push, pull_request]
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     timeout-minutes: 15
@@ -21,16 +25,15 @@ jobs:
         os: [windows-2022]
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Set up Ruby
       uses: ruby/setup-ruby@v1
       with:
         ruby-version: ${{ matrix.ruby-version }}
+        bundler-cache: true
     - name: Setup ENV
       run: |
         echo "CI=false" >> $env:GITHUB_ENV
-    - name: Install Gems
-      run: bundle install
     - name: Compile Iodine
       run: bundle exec rake compile
     - name: Run connection_spec alone (TEMP diagnostic)
@@ -41,7 +44,7 @@ jobs:
         IODINE_LOG_LEVEL: 5
       continue-on-error: true
     - name: Run tests
-      run: bundle exec rspec spec/ --format documentation
+      run: bundle exec rake spec
       env:
         # TEMP diagnostic: surface Iodine::Logger breadcrumbs (where does the
         # raw TCP reactor cycle die on Windows?) - remove once root-caused.
