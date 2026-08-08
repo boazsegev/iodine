@@ -44,7 +44,6 @@ typedef pthread_cond_t fio_thread_cond_t;
 
 #define FIO_MUSTACHE_LAMBDA_SUPPORT 1
 #define FIO_THREADS_BYO             1
-#define FIO_THREADS_COND_BYO        1
 #define FIO_THREADS_FORK_BYO        1
 #define FIO_MEMORY_ARENA_COUNT_MAX  4
 #define FIO_EVERYTHING

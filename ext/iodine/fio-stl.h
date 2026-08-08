@@ -825,7 +825,7 @@ Copyright and License: see header file (000 copyright.h) or top of file
 
 // clang-format off
 
-/** An atomic compare and exchange operation, returns true if an exchange occured. `p_expected` MAY be overwritten with the existing value (system specific). */
+/** An atomic compare and exchange operation, returns true if an exchange occurred. `p_expected` MAY be overwritten with the existing value (system specific). */
 #define fio_atomic_compare_exchange_p(p_obj, p_expected, p_desired) __atomic_compare_exchange((p_obj), (p_expected), (p_desired), 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)
 /** An atomic exchange operation, returns previous value */
 #define fio_atomic_exchange(p_obj, value) __atomic_exchange_n((p_obj), (value), __ATOMIC_SEQ_CST)
@@ -839,8 +839,6 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #define fio_atomic_xor(p_obj, value) __atomic_fetch_xor((p_obj), (value), __ATOMIC_SEQ_CST)
 /** An atomic OR (|) operation, returns previous value */
 #define fio_atomic_or(p_obj, value) __atomic_fetch_or((p_obj), (value), __ATOMIC_SEQ_CST)
-/** An atomic NOT AND ((~)&) operation, returns previous value */
-#define fio_atomic_nand(p_obj, value) __atomic_fetch_nand((p_obj), (value), __ATOMIC_SEQ_CST)
 /** An atomic addition operation, returns new value */
 #define fio_atomic_add_fetch(p_obj, value) __atomic_add_fetch((p_obj), (value), __ATOMIC_SEQ_CST)
 /** An atomic subtraction operation, returns new value */
@@ -851,8 +849,6 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #define fio_atomic_xor_fetch(p_obj, value) __atomic_xor_fetch((p_obj), (value), __ATOMIC_SEQ_CST)
 /** An atomic OR (|) operation, returns new value */
 #define fio_atomic_or_fetch(p_obj, value) __atomic_or_fetch((p_obj), (value), __ATOMIC_SEQ_CST)
-/** An atomic NOT AND ((~)&) operation, returns new value */
-#define fio_atomic_nand_fetch(p_obj, value) __atomic_nand_fetch((p_obj), (value), __ATOMIC_SEQ_CST)
 /* note: __ATOMIC_SEQ_CST may be safer and __ATOMIC_ACQ_REL may be faster */
 
 /* Select the correct compiler builtin method. */
@@ -864,10 +860,30 @@ Copyright and License: see header file (000 copyright.h) or top of file
   } while (!__sync_bool_compare_and_swap((p_obj), dest, dest))
 
 
-/** An atomic compare and exchange operation, returns true if an exchange occured. `p_expected` MAY be overwritten with the existing value (system specific). */
-#define fio_atomic_compare_exchange_p(p_obj, p_expected, p_desired) __sync_bool_compare_and_swap((p_obj), (p_expected), *(p_desired))
+/** An atomic compare and exchange operation, returns true if an exchange occurred. On failure, `p_expected` is overwritten with the value found at `p_obj`, matching the C11 atomics contract. */
+#define fio_atomic_compare_exchange_p(p_obj, p_expected, p_desired)            \
+  ({                                                                           \
+    __typeof__(*(p_expected)) fio___atomic_cmpxchg_exp__ = *(p_expected);     \
+    __typeof__(*(p_obj)) fio___atomic_cmpxchg_old__ =                         \
+        __sync_val_compare_and_swap((p_obj),                                  \
+                                     fio___atomic_cmpxchg_exp__,               \
+                                     *(p_desired));                           \
+    int fio___atomic_cmpxchg_ok__ =                                            \
+        (fio___atomic_cmpxchg_old__ == fio___atomic_cmpxchg_exp__);           \
+    if (!fio___atomic_cmpxchg_ok__)                                           \
+      *(p_expected) = fio___atomic_cmpxchg_old__;                             \
+    fio___atomic_cmpxchg_ok__;                                                 \
+  })
 /** An atomic exchange operation, ruturns previous value */
-#define fio_atomic_exchange(p_obj, value) __sync_val_compare_and_swap((p_obj), *(p_obj), (value))
+#define fio_atomic_exchange(p_obj, value)                                      \
+  ({                                                                           \
+    __typeof__(*(p_obj)) fio___atomic_exchange_old__ = *(p_obj);               \
+    while (!__sync_bool_compare_and_swap((p_obj),                              \
+                                          fio___atomic_exchange_old__,         \
+                                          (value)))                            \
+      fio___atomic_exchange_old__ = *(p_obj);                                  \
+    fio___atomic_exchange_old__;                                               \
+  })
 /** An atomic addition operation, returns new value */
 #define fio_atomic_add(p_obj, value) __sync_fetch_and_add((p_obj), (value))
 /** An atomic subtraction operation, returns new value */
@@ -878,8 +894,6 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #define fio_atomic_xor(p_obj, value) __sync_fetch_and_xor((p_obj), (value))
 /** An atomic OR (|) operation, returns new value */
 #define fio_atomic_or(p_obj, value) __sync_fetch_and_or((p_obj), (value))
-/** An atomic NOT AND ((~)&) operation, returns new value */
-#define fio_atomic_nand(p_obj, value) __sync_fetch_and_nand((p_obj), (value))
 /** An atomic addition operation, returns previous value */
 #define fio_atomic_add_fetch(p_obj, value) __sync_add_and_fetch((p_obj), (value))
 /** An atomic subtraction operation, returns previous value */
@@ -890,8 +904,6 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #define fio_atomic_xor_fetch(p_obj, value) __sync_xor_and_fetch((p_obj), (value))
 /** An atomic OR (|) operation, returns previous value */
 #define fio_atomic_or_fetch(p_obj, value) __sync_or_and_fetch((p_obj), (value))
-/** An atomic NOT AND ((~)&) operation, returns previous value */
-#define fio_atomic_nand_fetch(p_obj, value) __sync_nand_and_fetch((p_obj), (value))
 
 
 /* Atomic Implementation Selector */
@@ -907,7 +919,7 @@ Copyright and License: see header file (000 copyright.h) or top of file
 /** An atomic load operation, returns value in pointer. */
 #define fio_atomic_load(dest, p_obj)  (dest = atomic_load(p_obj))
 
-/** An atomic compare and exchange operation, returns true if an exchange occured. `p_expected` MAY be overwritten with the existing value (system specific). */
+/** An atomic compare and exchange operation, returns true if an exchange occurred. `p_expected` MAY be overwritten with the existing value (system specific). */
 #define fio_atomic_compare_exchange_p(p_obj, p_expected, p_desired) atomic_compare_exchange_strong((p_obj), (p_expected), (p_desired))
 /** An atomic exchange operation, returns previous value */
 #define fio_atomic_exchange(p_obj, value) atomic_exchange((p_obj), (value))
@@ -921,18 +933,16 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #define fio_atomic_xor(p_obj, value) atomic_fetch_xor((p_obj), (value))
 /** An atomic OR (|) operation, returns previous value */
 #define fio_atomic_or(p_obj, value) atomic_fetch_or((p_obj), (value))
-/** An atomic NOT AND ((~)&) operation, returns previous value */
-#define fio_atomic_nand(p_obj, value) atomic_fetch_nand((p_obj), (value))
-/** An atomic addition operation, returns new value */
-#define fio_atomic_add_fetch(p_obj, value) (atomic_fetch_add((p_obj), (value)), atomic_load((p_obj)))
-/** An atomic subtraction operation, returns new value */
-#define fio_atomic_sub_fetch(p_obj, value) (atomic_fetch_sub((p_obj), (value)), atomic_load((p_obj)))
-/** An atomic AND (&) operation, returns new value */
-#define fio_atomic_and_fetch(p_obj, value) (atomic_fetch_and((p_obj), (value)), atomic_load((p_obj)))
-/** An atomic XOR (^) operation, returns new value */
-#define fio_atomic_xor_fetch(p_obj, value) (atomic_fetch_xor((p_obj), (value)), atomic_load((p_obj)))
-/** An atomic OR (|) operation, returns new value */
-#define fio_atomic_or_fetch(p_obj, value) (atomic_fetch_or((p_obj), (value)), atomic_load((p_obj)))
+/** An atomic addition operation, returns new value; WINDOWS uses a MACRO, `value` accessed twice! */
+#define fio_atomic_add_fetch(p_obj, value) (fio_atomic_add((p_obj), (value)) + (value))
+/** An atomic subtraction operation, returns new value; WINDOWS uses a MACRO, `value` accessed twice! */
+#define fio_atomic_sub_fetch(p_obj, value) (fio_atomic_sub((p_obj), (value)) - (value))
+/** An atomic AND (&) operation, returns new value; WINDOWS uses a MACRO, `value` accessed twice! */
+#define fio_atomic_and_fetch(p_obj, value) (fio_atomic_and((p_obj), (value)) & (value))
+/** An atomic XOR (^) operation, returns new value; WINDOWS uses a MACRO, `value` accessed twice! */
+#define fio_atomic_xor_fetch(p_obj, value) (fio_atomic_xor((p_obj), (value)) ^ (value))
+/** An atomic OR (|) operation, returns new value; WINDOWS uses a MACRO, `value` accessed twice! */
+#define fio_atomic_or_fetch(p_obj, value)  (fio_atomic_or((p_obj), (value)) | (value))
 
 #elif _MSC_VER
 #pragma message ("Warning: WinAPI atomics have less features, but this is what this compiler has, so...")
@@ -953,8 +963,72 @@ Copyright and License: see header file (000 copyright.h) or top of file
 /** An atomic load operation, returns value in pointer. */
 #define fio_atomic_load(dest, p_obj) (dest = *(p_obj))
 
-/** An atomic compare and exchange operation, returns true if an exchange occured. `p_expected` MAY be overwritten with the existing value (system specific). */
-#define fio_atomic_compare_exchange_p(p_obj, p_expected, p_desired) (FIO___ATOMICS_FN_ROUTE(_InterlockedCompareExchange, (p_obj),(*(p_desired)),(*(p_expected))), (*(p_obj) == *(p_desired)))
+/* _InterlockedCompareExchange* only returns the prior value; these wrappers
+ * also write it back into `*p_expected` on failure, matching the C11
+ * contract. The expected value is captured into a local *before* the swap
+ * and the write-back only happens on failure, so this stays correct even
+ * when `p_obj == p_expected` (comparing against the current value): the
+ * intrinsic may already have overwritten that shared memory with
+ * `p_desired`, and re-reading `*p_expected` afterward (or writing to it
+ * unconditionally) would clobber a successful swap right back to `old`. */
+FIO_IFUNC int fio___atomic_cmpxchg8(int8_t volatile *p_obj,
+                                     int8_t *p_expected,
+                                     int8_t p_desired) {
+  int8_t expected = *p_expected;
+  int8_t old = _InterlockedCompareExchange8(p_obj, p_desired, expected);
+  int ok = (old == expected);
+  if (!ok)
+    *p_expected = old;
+  return ok;
+}
+FIO_IFUNC int fio___atomic_cmpxchg16(int16_t volatile *p_obj,
+                                      int16_t *p_expected,
+                                      int16_t p_desired) {
+  int16_t expected = *p_expected;
+  int16_t old = _InterlockedCompareExchange16(p_obj, p_desired, expected);
+  int ok = (old == expected);
+  if (!ok)
+    *p_expected = old;
+  return ok;
+}
+FIO_IFUNC int fio___atomic_cmpxchg32(int32_t volatile *p_obj,
+                                      int32_t *p_expected,
+                                      int32_t p_desired) {
+  int32_t expected = *p_expected;
+  int32_t old = _InterlockedCompareExchange(p_obj, p_desired, expected);
+  int ok = (old == expected);
+  if (!ok)
+    *p_expected = old;
+  return ok;
+}
+FIO_IFUNC int fio___atomic_cmpxchg64(int64_t volatile *p_obj,
+                                      int64_t *p_expected,
+                                      int64_t p_desired) {
+  int64_t expected = *p_expected;
+  int64_t old = _InterlockedCompareExchange64(p_obj, p_desired, expected);
+  int ok = (old == expected);
+  if (!ok)
+    *p_expected = old;
+  return ok;
+}
+
+/** An atomic compare and exchange operation, returns true if an exchange occurred. On failure, `p_expected` is overwritten with the value found at `p_obj`, matching the other atomic backends. */
+#define fio_atomic_compare_exchange_p(p_obj, p_expected, p_desired)           \
+  ((sizeof(*(p_obj)) == 1)                                                    \
+       ? fio___atomic_cmpxchg8((int8_t volatile *)(p_obj),                    \
+                                (int8_t *)(p_expected),                       \
+                                *(int8_t *)(p_desired))                       \
+   : (sizeof(*(p_obj)) == 2)                                                  \
+       ? fio___atomic_cmpxchg16((int16_t volatile *)(p_obj),                  \
+                                 (int16_t *)(p_expected),                     \
+                                 *(int16_t *)(p_desired))                     \
+   : (sizeof(*(p_obj)) == 4)                                                  \
+       ? fio___atomic_cmpxchg32((int32_t volatile *)(p_obj),                  \
+                                 (int32_t *)(p_expected),                     \
+                                 *(int32_t *)(p_desired))                     \
+       : fio___atomic_cmpxchg64((int64_t volatile *)(p_obj),                  \
+                                 (int64_t *)(p_expected),                     \
+                                 *(int64_t *)(p_desired)))
 /** An atomic exchange operation, returns previous value */
 #define fio_atomic_exchange(p_obj, value) FIO___ATOMICS_FN_ROUTE(_InterlockedExchange, (p_obj), (value))
 
@@ -969,16 +1043,17 @@ Copyright and License: see header file (000 copyright.h) or top of file
 /** An atomic OR (|) operation, returns previous value */
 #define fio_atomic_or(p_obj, value)  FIO___ATOMICS_FN_ROUTE(_InterlockedOr, (p_obj), (value))
 
-/** An atomic addition operation, returns new value */
-#define fio_atomic_add_fetch(p_obj, value) (fio_atomic_add((p_obj), (value)), (*(p_obj)))
-/** An atomic subtraction operation, returns new value */
-#define fio_atomic_sub_fetch(p_obj, value) (fio_atomic_sub((p_obj), (value)), (*(p_obj)))
-/** An atomic AND (&) operation, returns new value */
-#define fio_atomic_and_fetch(p_obj, value) (fio_atomic_and((p_obj), (value)), (*(p_obj)))
-/** An atomic XOR (^) operation, returns new value */
-#define fio_atomic_xor_fetch(p_obj, value) (fio_atomic_xor((p_obj), (value)), (*(p_obj)))
-/** An atomic OR (|) operation, returns new value */
-#define fio_atomic_or_fetch(p_obj, value) (fio_atomic_or((p_obj), (value)), (*(p_obj)))
+/** An atomic addition operation, returns new value; MACRO! Accesses `value` twice(!). */
+#define fio_atomic_add_fetch(p_obj, value) (fio_atomic_add((p_obj), (value)) + (value))
+/** An atomic subtraction operation, returns new value; MACRO! Accesses `value` twice(!). */
+#define fio_atomic_sub_fetch(p_obj, value) (fio_atomic_sub((p_obj), (value)) - (value))
+/** An atomic AND (&) operation, returns new value; MACRO! Accesses `value` twice(!). */
+#define fio_atomic_and_fetch(p_obj, value) (fio_atomic_and((p_obj), (value)) & (value))
+/** An atomic XOR (^) operation, returns new value; MACRO! Accesses `value` twice(!). */
+#define fio_atomic_xor_fetch(p_obj, value) (fio_atomic_xor((p_obj), (value)) ^ (value))
+/** An atomic OR (|) operation, returns new value; MACRO! Accesses `value` twice(!). */
+#define fio_atomic_or_fetch(p_obj, value)  (fio_atomic_or((p_obj), (value)) | (value))
+
 #else
 #error Required atomics not found (__STDC_NO_ATOMICS__) and older __sync_add_and_fetch is also missing.
 
@@ -4086,17 +4161,17 @@ Vector Types (SIMD / Math)
  * types are hoisted here and the member macros only reference them. */
 #define FIO___UXXX_VCAP(bits) (((bits) / 8) > 64 ? 64 : ((bits) / 8))
 #define FIO___UXXX_VTYPEDEFS(bits)                                             \
-  typedef uint64_t __attribute__((vector_size((bits / 8)),                     \
-                                  aligned(FIO___UXXX_VCAP(bits))))             \
+  typedef uint64_t                                                             \
+      __attribute__((vector_size((bits / 8)), aligned(FIO___UXXX_VCAP(bits)))) \
       fio___v##bits##u64;                                                      \
-  typedef uint32_t __attribute__((vector_size((bits / 8)),                     \
-                                  aligned(FIO___UXXX_VCAP(bits))))             \
+  typedef uint32_t                                                             \
+      __attribute__((vector_size((bits / 8)), aligned(FIO___UXXX_VCAP(bits)))) \
       fio___v##bits##u32;                                                      \
-  typedef uint16_t __attribute__((vector_size((bits / 8)),                     \
-                                  aligned(FIO___UXXX_VCAP(bits))))             \
+  typedef uint16_t                                                             \
+      __attribute__((vector_size((bits / 8)), aligned(FIO___UXXX_VCAP(bits)))) \
       fio___v##bits##u16;                                                      \
-  typedef uint8_t __attribute__((vector_size((bits / 8)),                      \
-                                  aligned(FIO___UXXX_VCAP(bits))))             \
+  typedef uint8_t                                                              \
+      __attribute__((vector_size((bits / 8)), aligned(FIO___UXXX_VCAP(bits)))) \
       fio___v##bits##u8;
 FIO___UXXX_VTYPEDEFS(128)
 FIO___UXXX_VTYPEDEFS(256)
@@ -14804,6 +14879,9 @@ FIO_IFUNC int fio_thread_cond_timedwait(fio_thread_cond_t *c,
 /** Signals a simple conditional variable. */
 FIO_IFUNC int fio_thread_cond_signal(fio_thread_cond_t *c);
 
+/** Signal broadcast for a conditional variable. */
+FIO_IFUNC int fio_thread_cond_broadcast(fio_thread_cond_t *c);
+
 /** Destroys a simple conditional variable. */
 FIO_IFUNC void fio_thread_cond_destroy(fio_thread_cond_t *c);
 
@@ -15002,6 +15080,10 @@ FIO_IFUNC int fio_thread_cond_signal(fio_thread_cond_t *c) {
   return pthread_cond_signal(c);
 }
 
+/** Signal broadcast for a conditional variable. */
+FIO_IFUNC int fio_thread_cond_broadcast(fio_thread_cond_t *c) {
+  return pthread_cond_broadcast(c);
+}
 /** Destroys a simple conditional variable. */
 FIO_IFUNC void fio_thread_cond_destroy(fio_thread_cond_t *c) {
   pthread_cond_destroy(c);
@@ -15402,8 +15484,13 @@ FIO_IFUNC int fio_thread_cond_signal(fio_thread_cond_t *c) {
   return 0;
 }
 
+FIO_IFUNC int fio_thread_cond_broadcast(fio_thread_cond_t *c) {
+  WakeAllConditionVariable(c);
+  return 0;
+}
+
 /** Destroys a simple conditional variable. */
-FIO_IFUNC void fio_thread_cond_destroy(fio_thread_cond_t *c) { (void)(c); }
+FIO_IFUNC void fio_thread_cond_destroy(fio_thread_cond_t *c) { (void)c; }
 #endif /* FIO_THREADS_COND_BYO */
 
 #endif /* FIO_OS_WIN */
@@ -21556,6 +21643,22 @@ SFUNC fio_socket_i fio_sock_open2(const char *url, uint16_t flags) {
     addr = NULL;
   }
   return fio_sock_open(addr, pr, flags);
+}
+
+/** Returns the pending socket error (`SO_ERROR`), 0 if none, -1 on query
+ * failure. Used to detect failed non-blocking `connect` attempts. */
+SFUNC int fio_sock_error(fio_socket_i fd) {
+  int err = 0;
+#if FIO_OS_WIN
+  int len = (int)sizeof(err);
+  if (fio___winsock_fn.getsockopt(fd, SOL_SOCKET, SO_ERROR, (char *)&err, &len))
+    return -1;
+#else
+  socklen_t len = (socklen_t)sizeof(err);
+  if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len))
+    return -1;
+#endif
+  return err;
 }
 
 /** Sets a file descriptor / socket to non blocking state. */
@@ -36108,6 +36211,14 @@ typedef struct {
   void (*on_close)(void *udata);
 } fio_poll_settings_s;
 
+/* NOTE: `fio_poll_forget` is not a cancellation guarantee on any backend:
+ * an event already returned by the system call may still be dispatched.
+ * Thread safety covers the poller's internal state only; `udata` lifetime
+ * during dispatch is the caller's responsibility. The facil.io IO layer
+ * upholds this by only ever calling `fio_poll_forget` from the reactor
+ * thread (via deferred destruction) - never concurrently with a review and
+ * never from within a `fio_poll_settings_s` callback. */
+
 /** Initializes the polling object, allocating its resources. */
 FIO_IFUNC void fio_poll_init(fio_poll_s *p, fio_poll_settings_s);
 /** Initializes the polling object, allocating its resources. */
@@ -36342,8 +36453,15 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
   if (active_count > 0) {
     /* errors are dispatched via the EPOLLIN queue (see below) */
     for (unsigned i = 0; i < (unsigned)active_count; i++) {
-      if (events[i].events & EPOLLOUT)
-        p->settings.on_ready(events[i].data.ptr);
+      if (events[i].events & EPOLLOUT) {
+        /* an error/hangup on a writable event is a closure, not readiness
+         * (poll backend parity): a failed non-blocking connect reports
+         * EPOLLOUT together with EPOLLERR/EPOLLHUP. */
+        if (events[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP))
+          p->settings.on_close(events[i].data.ptr);
+        else
+          p->settings.on_ready(events[i].data.ptr);
+      }
     } // end for loop
     total += active_count;
   }
@@ -36508,11 +36626,19 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout_) {
   if (active_count > 0) {
     for (unsigned i = 0; i < (unsigned)active_count; i++) {
       // test for event(s) type
-      if (events[i].filter == EVFILT_WRITE)
-        p->settings.on_ready(events[i].udata);
+      if (events[i].filter == EVFILT_WRITE) {
+        /* an error/EOF write event is a closure, not readiness (poll
+         * backend parity): a failed non-blocking connect reports
+         * writability together with EV_ERROR. */
+        if (events[i].flags & (EV_EOF | EV_ERROR))
+          p->settings.on_close(events[i].udata);
+        else
+          p->settings.on_ready(events[i].udata);
+      }
       if (events[i].filter == EVFILT_READ)
         p->settings.on_data(events[i].udata);
-      if (events[i].flags & (EV_EOF | EV_ERROR))
+      if (events[i].filter == EVFILT_READ &&
+          (events[i].flags & (EV_EOF | EV_ERROR)))
         p->settings.on_close(events[i].udata);
     }
   } else if (active_count < 0) {
@@ -36579,12 +36705,18 @@ typedef struct {
 
 #define FIO___POLL_IMAP_CMP(a, b) ((a)->fd == (b)->fd)
 #define FIO___POLL_IMAP_HASH(o)   (fio_risky_ptr((void *)((uintptr_t)((o)->fd))))
+/* Entries are always sockets: a live entry holds a valid socket descriptor.
+ * Removed slots are zeroed by the imap (fd == 0), so validity must reject
+ * both FIO_SOCKET_INVALID and zeroed slots (fd 0 is never monitored here) -
+ * otherwise rehashes resurrect removed entries as fd 0 zombies, duplicated
+ * fd 0 entries then fail every __fill_imap and the map expands without bound. */
+#define FIO___POLL_IMAP_VALID(o) (FIO_SOCK_FD_ISVALID((o)->fd) && (o)->fd)
 FIO_TYPEDEF_IMAP_ARRAY(fio___poll_map,
                        fio___poll_i_s,
                        uint32_t,
                        FIO___POLL_IMAP_HASH,
                        FIO___POLL_IMAP_CMP,
-                       FIO_IMAP_ALWAYS_VALID)
+                       FIO___POLL_IMAP_VALID)
 #undef FIO___POLL_IMAP_CMP
 #undef FIO___POLL_IMAP_VALID
 #undef FIO___POLL_IMAP_HASH
@@ -36631,12 +36763,12 @@ Poll Monitoring Implementation - possibly externed functions.
 FIO_IFUNC void fio___poll_handle_events(fio_poll_s *p,
                                         void *udata,
                                         unsigned short revents) {
-  if ((revents & POLLOUT))
-    p->settings.on_ready(udata);
   if ((revents & (POLLIN | POLLPRI)))
     p->settings.on_data(udata);
   if ((revents & (POLLHUP | POLLERR | POLLNVAL | FIO_POLL_EX_FLAGS)))
     p->settings.on_close(udata);
+  else if ((revents & POLLOUT))
+    p->settings.on_ready(udata);
 }
 
 /**
@@ -36718,8 +36850,7 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
     errno = ENOMEM;
     return -1;
   }
-  pfd_bytes = (max * sizeof(*pfd) + sizeof(void *) - 1) &
-              ~(sizeof(void *) - 1);
+  pfd_bytes = (max * sizeof(*pfd) + sizeof(void *) - 1) & ~(sizeof(void *) - 1);
   if (max > ((SIZE_MAX - pfd_bytes) / sizeof(*uary))) {
     FIO___LOCK_UNLOCK(p->lock);
     errno = ENOMEM;
@@ -36744,17 +36875,22 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
     if (!(entry->flags & flag_mask))
       continue;
     pfd[r].fd = entry->fd;
-#if FIO_OS_WIN
-    /* POLLPRI is not supported by WSAPoll and causes WSAEINVAL */
-    pfd[r].events = (short)(entry->flags & (POLLIN | POLLOUT));
-#else
     pfd[r].events = (short)(entry->flags & FIO_POLL_POSSIBLE_FLAGS);
-#endif
     uary[r] = entry->udata;
     entry->flags = 0;
     ++r;
   }
   FIO___LOCK_UNLOCK(p->lock);
+
+  /* A consumed one-shot entry remains in the map so it can be re-armed, but
+   * leaves an empty snapshot. WSAPoll rejects a zero descriptor count. */
+  if (!r) {
+    FIO_LEAK_COUNTER_ON_FREE(fio___poll_review_buffer);
+    FIO_MEM_FREE_(pfd, alloc_size);
+    if (timeout)
+      FIO_THREAD_WAIT((timeout * 1000000));
+    return 0;
+  }
 
   {
     /* clamp timeout: poll()/WSAPoll() take int; SIZE_MAX cast → negative → ∞ */
@@ -36774,7 +36910,14 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
       if (!pfd[i].revents)
         continue;
       ++handled;
-      /* strip fired flags — one-shot: consumed events are not re-queued */
+      /* strip fired flags — one-shot: consumed events are not re-queued.
+       * Strip whole event groups: WSAPoll reports sub-band bits (e.g.
+       * POLLRDNORM) while POLLIN/POLLOUT are supersets, so a raw bitwise
+       * strip can leave band bits (e.g. POLLRDBAND) armed on Windows. */
+      if (pfd[i].revents & POLLIN)
+        pfd[i].events &= (short)~POLLIN;
+      if (pfd[i].revents & POLLOUT)
+        pfd[i].events &= (short)~POLLOUT;
       pfd[i].events &= (short)~pfd[i].revents;
       /* if a close/error event fired, disarm all remaining flags for this fd */
       if (pfd[i].revents & (POLLHUP | POLLERR | POLLNVAL | FIO_POLL_EX_FLAGS))
@@ -36917,7 +37060,7 @@ typedef struct {
   fio_thread_mutex_t mutex;
   fio_thread_cond_t cond;
   size_t workers;
-  volatile int stop;
+  volatile unsigned stop;
 } fio___thread_group_s;
 
 /* *****************************************************************************
@@ -37139,33 +37282,15 @@ FIO_LEAK_COUNTER_DEF(fio_queue)
 FIO_LEAK_COUNTER_DEF(fio_queue_task_rings)
 /** Destroys a queue and re-initializes it, after freeing any used resources. */
 SFUNC void fio_queue_destroy(fio_queue_s *q) {
-  for (;;) {
-    FIO___LOCK_LOCK(q->lock);
-    while (q->r) {
-      fio___task_ring_s *tmp = q->r;
-      q->r = q->r->next;
-      if (tmp != &q->mem)
-        FIO_MEM_FREE_(tmp, sizeof(*tmp));
-    }
-    if (FIO_LIST_IS_EMPTY(&q->consumers)) {
-      FIO___LOCK_UNLOCK(q->lock);
-      break;
-    }
-    FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
-      fio_atomic_or(&pos->stop, 1);
-      for (size_t i = 0; i < pos->workers; ++i)
-        fio_thread_cond_signal(&pos->cond);
-    }
-    FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
-      FIO___LOCK_UNLOCK(q->lock);
-      fio_thread_join(&pos->thread);
-      FIO___LOCK_LOCK(q->lock);
-    }
-    FIO___LOCK_UNLOCK(q->lock);
-    if (FIO_LIST_IS_EMPTY(&q->consumers))
-      break;
-    FIO_THREAD_RESCHEDULE();
+  fio_queue_workers_join(q);
+  FIO___LOCK_LOCK(q->lock);
+  while (q->r) {
+    fio___task_ring_s *tmp = q->r;
+    q->r = q->r->next;
+    if (tmp != &q->mem)
+      FIO_MEM_FREE_(tmp, sizeof(*tmp));
   }
+  FIO___LOCK_UNLOCK(q->lock);
   FIO___LOCK_DESTROY(q->lock);
   fio_queue_init(q);
 }
@@ -37259,7 +37384,8 @@ SFUNC int fio_queue_push FIO_NOOP(fio_queue_s *q, fio_queue_task_s task) {
   ++q->count;
   if (!FIO_LIST_IS_EMPTY(&q->consumers)) {
     FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
-      fio_thread_cond_signal(&pos->cond);
+      if (!pos->stop)
+        fio_thread_cond_signal(&pos->cond);
     }
   }
   FIO___LOCK_UNLOCK(q->lock);
@@ -37294,7 +37420,8 @@ SFUNC int fio_queue_push_urgent FIO_NOOP(fio_queue_s *q,
   ++q->count;
   if (!FIO_LIST_IS_EMPTY(&q->consumers)) {
     FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
-      fio_thread_cond_signal(&pos->cond);
+      if (!pos->stop)
+        fio_thread_cond_signal(&pos->cond);
     }
   }
   FIO___LOCK_UNLOCK(q->lock);
@@ -37361,8 +37488,12 @@ SFUNC void fio_queue_perform_all(fio_queue_s *q) {
 Queue Consumer Threads
 ***************************************************************************** */
 
+FIO_LEAK_COUNTER_DEF(fio___queue_worker_manager)
+FIO_LEAK_COUNTER_DEF(fio___queue_worker)
+
 FIO_SFUNC void *fio___queue_worker_task(void *g_) {
   fio___thread_group_s *grp = (fio___thread_group_s *)g_;
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___queue_worker);
   fio_state_callback_force(FIO_CALL_ON_WORKER_THREAD_START);
   while (!grp->stop) {
     fio_queue_perform_all(grp->queue);
@@ -37373,11 +37504,15 @@ FIO_SFUNC void *fio___queue_worker_task(void *g_) {
     fio_queue_perform_all(grp->queue);
   }
   fio_state_callback_force(FIO_CALL_ON_WORKER_THREAD_END);
+  FIO_LEAK_COUNTER_ON_FREE(fio___queue_worker);
   return NULL;
 }
 FIO_SFUNC void *fio___queue_worker_manager(void *g_) {
-  fio_thread_t threads_buf[256];
+  fio_thread_t threads_buf[256] = {0};
+  const fio_thread_t not_a_thread = {0};
+  FIO_LEAK_COUNTER_ON_ALLOC(fio___queue_worker_manager);
   fio___thread_group_s grp = *(fio___thread_group_s *)g_;
+  grp.thread = fio_thread_current();
   FIO_LIST_PUSH(&grp.queue->consumers, &grp.node);
   grp.stop = 0;
   fio_thread_t *threads =
@@ -37388,23 +37523,43 @@ FIO_SFUNC void *fio___queue_worker_manager(void *g_) {
   fio_thread_mutex_init(&grp.mutex);
   fio_thread_cond_init(&grp.cond);
   for (size_t i = 0; i < grp.workers; ++i) {
-    fio_thread_create(threads + i, fio___queue_worker_task, (void *)&grp);
+    if (fio_thread_create(threads + i, fio___queue_worker_task, (void *)&grp)) {
+      FIO_LOG_ERROR("(%d) Failed to spawn thread", fio_getpid());
+      threads[i] = not_a_thread;
+      --grp.workers;
+      --i;
+    }
   }
   fio_atomic_and(&((fio___thread_group_s *)g_)->stop, 0);
   /* from this point on, g_ is invalid! */
   for (size_t i = 0; i < grp.workers; ++i) {
+    if (!FIO_MEMCMP(threads + i, &not_a_thread, sizeof(not_a_thread)))
+      continue;
     fio_thread_join(threads + i);
   }
   if (threads != threads_buf)
     FIO_MEM_FREE_(threads, sizeof(*threads) * grp.workers);
+  fio_queue_perform_all(grp.queue);
   FIO___LOCK_LOCK(grp.queue->lock);
   FIO_LIST_REMOVE(&grp.node);
-  FIO___LOCK_UNLOCK(grp.queue->lock);
-  fio_queue_perform_all(grp.queue);
+  if (!(grp.stop & 2)) {
+    FIO___LOCK_UNLOCK(grp.queue->lock);
+    fio_thread_cond_destroy(&grp.cond);
+    fio_thread_mutex_destroy(&grp.mutex);
+    fio_thread_detach(&grp.thread);
+  } else {
+    grp.stop = 1;
+    FIO___LOCK_UNLOCK(grp.queue->lock);
+    while (grp.stop & 1)
+      FIO_THREAD_RESCHEDULE();
+  }
+  FIO_LEAK_COUNTER_ON_FREE(fio___queue_worker_manager);
   return NULL;
 }
 
 SFUNC int fio_queue_workers_add(fio_queue_s *q, size_t workers) {
+  if (!q)
+    return -1;
   FIO___LOCK_LOCK(q->lock);
   if (!q->consumers.next || !q->consumers.prev) {
     q->consumers = FIO_LIST_INIT(q->consumers);
@@ -37421,35 +37576,48 @@ SFUNC int fio_queue_workers_add(fio_queue_s *q, size_t workers) {
 }
 
 SFUNC void fio_queue_workers_stop(fio_queue_s *q) {
-  if (FIO_LIST_IS_EMPTY(&q->consumers))
+  if (!q || FIO_LIST_IS_EMPTY(&q->consumers))
     return;
   FIO___LOCK_LOCK(q->lock);
   FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
     fio_atomic_or(&pos->stop, 1);
-    for (size_t i = 0; i < pos->workers * 2; ++i)
-      fio_thread_cond_signal(&pos->cond);
+    fio_thread_mutex_lock(&pos->mutex);
+    fio_thread_cond_broadcast(&pos->cond);
+    fio_thread_mutex_unlock(&pos->mutex);
   }
   FIO___LOCK_UNLOCK(q->lock);
 }
 
 /** Signals all worker threads to go back to work (new tasks were). */
 SFUNC void fio_queue_workers_wake(fio_queue_s *q) {
-  if (FIO_LIST_IS_EMPTY(&q->consumers))
+  if (!q || FIO_LIST_IS_EMPTY(&q->consumers))
     return;
   FIO___LOCK_LOCK(q->lock);
   FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
-    fio_thread_cond_signal(&pos->cond);
+    if (!pos->stop)
+      fio_thread_cond_signal(&pos->cond);
   }
   FIO___LOCK_UNLOCK(q->lock);
 }
 
 /** Signals all worker threads to stop, waiting for them to complete. */
 SFUNC void fio_queue_workers_join(fio_queue_s *q) {
+  if (!q)
+    return;
   fio_queue_workers_stop(q);
   FIO___LOCK_LOCK(q->lock);
-  FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
+  while (q->consumers.next && q->consumers.next != &q->consumers) {
+    fio___thread_group_s *pos =
+        FIO_PTR_FROM_FIELD(fio___thread_group_s, node, q->consumers.next);
+    fio_atomic_or(&pos->stop, 3);
     FIO___LOCK_UNLOCK(q->lock);
-    fio_thread_join(&pos->thread);
+    while (pos->stop & 2)
+      FIO_THREAD_RESCHEDULE();
+    fio_thread_cond_destroy(&pos->cond);
+    fio_thread_mutex_destroy(&pos->mutex);
+    fio_thread_t thr = pos->thread;
+    fio_atomic_and(&pos->stop, 0); /* releases manager: pos is invalid now */
+    fio_thread_join(&thr);
     FIO___LOCK_LOCK(q->lock);
   }
   FIO___LOCK_UNLOCK(q->lock);
@@ -104516,7 +104684,9 @@ typedef struct {
   const char *url;
   /** Connection protocol (once connection established). */
   fio_io_protocol_s *protocol;
-  /** Called in case of a failed connection, use for cleanup. */
+  /** Called in case of a failed connection, use for cleanup.
+   * Always runs on the IO thread, possibly asynchronously after
+   * `fio_io_connect` returns (even when it returns `NULL`). */
   void (*on_failed)(fio_io_protocol_s *protocol, void *udata);
   /** Opaque user data (set only once connection was established). */
   void *udata;
@@ -104531,6 +104701,18 @@ typedef struct {
  *
  * Note: The IO object returned is owned by the reactor. The copy returned is
  * valid only until the next event is processed.
+ *
+ * Ownership: calling `fio_io_connect` transfers ownership of `protocol`,
+ * `udata` and the connecting state to the reactor. Cleanup of these MUST be
+ * performed only from `on_failed` (connection never established) or
+ * `on_close` (established connection closed) - never in response to
+ * `fio_io_connect` returning `NULL`, as the reactor retains the connecting
+ * state until the deferred failure task runs.
+ *
+ * `on_failed` always runs on the IO thread and may fire asynchronously,
+ * after `fio_io_connect` returns (including when `NULL` is returned). This
+ * implies the reactor MUST run at some point after a call, or the
+ * transferred ownership is never released.
  * */
 SFUNC fio_io_s *fio_io_connect(fio_io_connect_args_s args);
 
@@ -104539,6 +104721,18 @@ SFUNC fio_io_s *fio_io_connect(fio_io_connect_args_s args);
  *
  * Note: The IO object returned is owned by the reactor. The copy returned is
  * valid only until the next event is processed.
+ *
+ * Ownership: calling `fio_io_connect` transfers ownership of `protocol`,
+ * `udata` and the connecting state to the reactor. Cleanup of these MUST be
+ * performed only from `on_failed` (connection never established) or
+ * `on_close` (established connection closed) - never in response to
+ * `fio_io_connect` returning `NULL`, as the reactor retains the connecting
+ * state until the deferred failure task runs.
+ *
+ * `on_failed` always runs on the IO thread and may fire asynchronously,
+ * after `fio_io_connect` returns (including when `NULL` is returned). This
+ * implies the reactor MUST run at some point after a call, or the
+ * transferred ownership is never released.
  * */
 #define fio_io_connect(url_, ...)                                              \
   fio_io_connect((fio_io_connect_args_s){.url = url_, __VA_ARGS__})
@@ -104561,6 +104755,11 @@ IO Operations
  *
  * Returns NULL on error. the `fio_io_s` pointer must NOT be used except
  * within proper callbacks.
+ *
+ * Ownership of `tls` transfers to the reactor when `fio_io_attach_fd` is
+ * called, whether the call succeeds or fails - callers must not use or free
+ * it afterwards. On failure the reactor releases it with the TLS
+ * implementation's `free_context` (never the per-connection `cleanup`).
  */
 SFUNC fio_io_s *fio_io_attach_fd(fio_socket_i fd,
                                  fio_io_protocol_s *protocol,
@@ -105366,7 +105565,7 @@ static void fio___io_on_ev_pubsub_mock(struct fio_pubsub_msg_s *msg) {
 static void fio___io_on_user_mock(fio_io_s *io, void *i_) {
   (void)io, (void)i_;
 }
-static void fio___io_on_close_mock(void *p1, void *p2) { (void)p1, (void)p2; }
+static void fio___io_on_close_noop(void *p1, void *p2) { (void)p1, (void)p2; }
 
 /* Called to perform a non-blocking `read`, same as the system call. */
 static ssize_t fio___io_func_default_read(fio_socket_i fd,
@@ -105459,8 +105658,11 @@ FIO_SFUNC void fio___io_protocol_init(fio_io_protocol_s *pr, _Bool has_tls) {
       .cleanup = fio___io_func_default_cleanup,
       .peer_info_next = fio___io_func_default_peer_info_next,
   };
-  if (has_tls)
+  if (has_tls) {
     io_fn = fio_io_tls_default_functions(NULL);
+    if (pr->io_functions.read == fio___io_func_default_read)
+      pr->io_functions = io_fn;
+  }
   if (!pr->on_attach)
     pr->on_attach = fio_io_noop;
   if (!pr->on_data)
@@ -105468,7 +105670,7 @@ FIO_SFUNC void fio___io_protocol_init(fio_io_protocol_s *pr, _Bool has_tls) {
   if (!pr->on_ready)
     pr->on_ready = fio_io_noop;
   if (!pr->on_close)
-    pr->on_close = fio___io_on_close_mock;
+    pr->on_close = fio___io_on_close_noop;
   if (!pr->on_shutdown)
     pr->on_shutdown = fio_io_noop;
   if (!pr->on_timeout)
@@ -105556,13 +105758,39 @@ static struct FIO___IO_S {
   fio_io_s *wakeup;
   FIO___LOCK_TYPE lock;
   size_t shutdown_timeout;
+  /* the recorded IO (reactor) thread's numeral ID - the only thread allowed
+   * to perform the main IO queue (DEBUG tripwire, FIO___IO_ASSERT_IO_THREAD).
+   */
+  uintptr_t io_thread;
 } FIO___IO = {
     .tick = 0,
     .wakeup_fd = FIO_SOCKET_INVALID,
     .stop = 1,
     .lock = FIO___LOCK_INIT,
     .shutdown_timeout = FIO_IO_SHUTDOWN_TIMEOUT,
+    .io_thread = 0,
 };
+
+#if defined(DEBUG)
+/* The IO layer is single-threaded per process: exactly one reactor thread
+ * performs the main queue (`FIO___IO.queue`) - polling, deferred tasks and
+ * the final `fio___io_free2` calls. The queue, not a lock, is the
+ * synchronization. Record that thread on first IO-layer use and trip on any
+ * access from a different thread (e.g., worker threads attached to the main
+ * queue, or direct IO access from application threads). */
+FIO_IFUNC void fio___io_assert_io_thread(void) {
+  const uintptr_t t = fio_thread_nid();
+  if (FIO_UNLIKELY(!FIO___IO.io_thread))
+    FIO___IO.io_thread = t; /* first touch records the reactor thread */
+  FIO_ASSERT_DEBUG(FIO___IO.io_thread == t,
+                   "IO reactor accessed from a non-IO thread! "
+                   "(the main IO queue must only be performed by the single "
+                   "reactor thread of each process)");
+}
+#define FIO___IO_ASSERT_IO_THREAD() fio___io_assert_io_thread()
+#else
+#define FIO___IO_ASSERT_IO_THREAD() ((void)0)
+#endif
 
 FIO_IFUNC void fio___io_defer_no_wakeup(void (*task)(void *, void *),
                                         void *udata1,
@@ -105714,13 +105942,13 @@ FIO_IFUNC void fio___io_monitor_out(fio_io_s *io) {
 }
 
 FIO_IFUNC void fio___io_monitor_forget(fio_io_s *io) {
-  // FIO_LOG_DDEBUG2("(%d) IO monitoring Removed for %d (called)",
-  //                 fio_io_pid(),
-  //                 io->fd);
-  if (!(FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_POLL_SET) &
-        FIO___IO_FLAG_POLL_SET))
-    return;
+  /* Always forget: the poll backend retains consumed one-shot entries (and
+   * may hold surviving armed flags) keyed by fd with the raw udata pointer.
+   * Skipping the forget leaves a stale entry that a later review can
+   * dispatch (POLLNVAL after close, or an fd-reused event) - resurrecting a
+   * freed IO. Forgetting an unmonitored fd is harmless (backend returns -1). */
   fio_poll_forget(&FIO___IO.poll, io->fd);
+  FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_POLL_SET);
   // FIO_LOG_DDEBUG2("(%d) IO monitoring Removed for %d", fio_io_pid(), io->fd);
 }
 
@@ -105764,13 +105992,41 @@ FIO_SFUNC void fio___io_destroy(fio_io_s *io) {
 #include FIO_INCLUDE_FILE
 #undef FIO___RECURSIVE_INCLUDE
 
+FIO_LEAK_COUNTER_DEF(fio___io_protocol_zombie)
+
+static void fio___io_on_close_zombie(void *p1, void *p2) {
+  (void)p2;
+  if (!p1)
+    return;
+  fio_io_s *io = ((fio_io_s *)p1) - 1;
+  if (!io || !io->pr)
+    return;
+  FIO_MEM_FREE_(io->pr, sizeof(*io->pr));
+  FIO_LEAK_COUNTER_ON_FREE(fio___io_protocol_zombie);
+}
+
 FIO_SFUNC void fio___io_protocol_set(void *io_, void *pr_) {
   fio_io_s *io = (fio_io_s *)io_;
   fio_io_protocol_s *pr = (fio_io_protocol_s *)pr_;
   fio_io_protocol_s *old = io->pr;
-  if (!pr)
+  if (!pr) {
     pr = &FIO___IO_MOCK_PROTOCOL;
+    if (old->on_close == fio___io_on_close_zombie)
+      pr = old;
+    else if (old->io_functions.read != fio___io_func_default_read) {
+      fio_io_protocol_s zero = {0};
+      pr = FIO_MEM_REALLOC_(NULL, 0, sizeof(fio_io_protocol_s), 0);
+      FIO_ASSERT_ALLOC(pr);
+      FIO_LEAK_COUNTER_ON_ALLOC(fio___io_protocol_zombie);
+      *pr = FIO___IO_MOCK_PROTOCOL;
+      pr->reserved = zero.reserved;
+      pr->on_close = fio___io_on_close_zombie;
+      pr->io_functions = old->io_functions;
+    }
+  }
   fio___io_protocol_init_test(pr, (io->tls != NULL));
+  if (pr == old)
+    goto finish;
   FIO_LIST_REMOVE(&io->node);
   if (FIO_LIST_IS_EMPTY(&old->reserved.ios))
     FIO_LIST_REMOVE_RESET(&old->reserved.protocols);
@@ -105782,12 +106038,18 @@ FIO_SFUNC void fio___io_protocol_set(void *io_, void *pr_) {
                  fio_io_pid(),
                  fio_io_fd(io));
   pr->on_attach(io);
+
   /* avoid calling `start` and setting `on_ready` more than once */
   if (old == &FIO___IO_MOCK_PROTOCOL) {
     pr->io_functions.start(io);
     fio___io_monitor_out(io);
+  } else if (old->on_close == fio___io_on_close_zombie) {
+    FIO_MEM_FREE_(old,
+                  sizeof(*old)); /* zombie revived: transport carries over */
+    FIO_LEAK_COUNTER_ON_FREE(fio___io_protocol_zombie);
   }
   fio___io_monitor_in(io);
+finish:
   fio___io_free_with_flush(io);
   FIO_LOG_DEBUG2("(%d) attached IO with fd %d", fio_io_pid(), fio_io_fd(io));
 }
@@ -105813,10 +106075,10 @@ SFUNC fio_io_s *fio_io_attach_fd(fio_socket_i fd,
                                  void *tls) {
   fio_io_s *io = NULL;
   fio_io_protocol_s cpy;
-  if (!FIO_SOCK_FD_ISVALID(fd))
-    goto error;
   if (!pr)
     pr = &FIO___IO_MOCK_PROTOCOL;
+  if (!FIO_SOCK_FD_ISVALID(fd))
+    goto error;
   io = fio___io_new2(pr->buffer_size);
   *io = (fio_io_s){
       .fd = fd,
@@ -105838,8 +106100,18 @@ SFUNC fio_io_s *fio_io_attach_fd(fio_socket_i fd,
 
 error:
   cpy = *pr;
-  cpy.on_close(NULL, udata);
-  cpy.io_functions.cleanup(tls);
+  if (cpy.on_close)
+    fio___io_defer_no_wakeup((void (*)(void *, void *))cpy.on_close,
+                             NULL,
+                             udata);
+  /* Ownership of `tls` transfers to the reactor when `fio_io_attach_fd` is
+   * called, on success AND on failure. Release it here with the CONTEXT
+   * destructor: `cleanup` would be wrong, as it destroys per-connection
+   * state that only exists after `start` ran (type confusion + double free
+   * on the connect path, where on_close routes to free_context). */
+  if (tls && cpy.io_functions.free_context &&
+      cpy.io_functions.free_context != fio___io_func_default_free_context)
+    fio___io_func_free_context_caller(cpy.io_functions.free_context, tls);
   return io;
 }
 
@@ -105852,6 +106124,12 @@ SFUNC fio_io_protocol_s *fio_io_protocol_set(fio_io_s *io,
   fio_io_defer(fio___io_protocol_set, (void *)fio___io_dup2(io), (void *)pr);
   return pr;
 init:
+  /* Pre-reactor initialization: a complete (plaintext) protocol, left
+   * un-marked so the first real use re-runs initialization with the known TLS
+   * state (which replaces plaintext default IO functions). The IO lists are
+   * still empty, as every real use marks the protocol. */
+  if (!pr)
+    return pr;
   old_flags = pr->reserved.flags;
   fio___io_protocol_init_test(pr, 0);
   pr->reserved.flags = old_flags;
@@ -106058,18 +106336,21 @@ SFUNC void fio_io_close_now(fio_io_s *io) {
 SFUNC fio_io_s *fio_io_dup(fio_io_s *io) { return fio___io_dup2(io); }
 
 SFUNC void fio___io_free_task(void *io_, void *ignr_) {
-  fio___io_free2((fio_io_s *)io_);
+  FIO___IO_ASSERT_IO_THREAD();
+  fio_io_s *io = (fio_io_s *)io_;
+  if (FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_WRITE_DIRTY) &
+      FIO___IO_FLAG_WRITE_DIRTY) {
+    fio___io_poll_on_ready_schd((void *)io);
+  }
+  fio___io_free2(io);
   (void)ignr_;
 }
 /** Free IO (reference) - thread-safe, flushes pending writes. */
 SFUNC void fio_io_free(fio_io_s *io) {
   if (!io)
     return;
-  if (FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_WRITE_DIRTY) &
-      FIO___IO_FLAG_WRITE_DIRTY) {
-    fio___io_poll_on_ready_schd((void *)io);
+  if ((io->flags & FIO___IO_FLAG_WRITE_DIRTY))
     fio___io_wakeup();
-  }
   fio___io_defer_no_wakeup(fio___io_free_task, (void *)io, NULL);
 }
 
@@ -106962,6 +107243,7 @@ Managing data after a fork
 FIO_SFUNC void fio___io_after_fork(void *ignr_) {
   (void)ignr_;
   FIO___IO.pid = fio_thread_getpid();
+  FIO___IO.io_thread = 0; /* forked child has a new reactor thread */
   FIO___IO.tick = FIO___IO_GET_TIME_MILLI();
   fio_queue_perform_all(&FIO___IO.queue);
   FIO_LIST_EACH(fio_io_protocol_s,
@@ -107093,11 +107375,12 @@ FIO_IFUNC int fio___io_queue_timers(void) {
     first = 0;
   if (first > 0xFFFFFF) /* cap */
     first = 0xFFFFFF;
-  return first;
+  return (int)first;
 }
 
 FIO_SFUNC void fio___io_tick(int max_timeout) {
   static size_t performed_idle = 0;
+  FIO___IO_ASSERT_IO_THREAD();
   int timeout = fio___io_queue_timers();
   if (fio_queue_count(&FIO___IO.queue))
     timeout = 0;
@@ -107245,10 +107528,10 @@ static void fio___io_spawn_workers_task(void *ignr_1, void *ignr_2);
 
 static void fio___io_wait_for_worker(void *thr_) {
   fio_thread_t t = (fio_thread_t)(uintptr_t)thr_;
-  fio_thread_join(&t);
   fio_state_callback_remove(FIO_CALL_ON_STOP,
                             fio___io_wait_for_worker,
                             (void *)(uintptr_t)t);
+  fio_thread_join(&t);
 }
 
 /** Worker sentinel */
@@ -107880,12 +108163,21 @@ FIO_SFUNC void fio___connecting_on_close(void *buffer, void *udata) {
 FIO_SFUNC void fio___connecting_on_ready(fio_io_s *io) {
   if (!fio_io_is_open(io))
     return;
+  /* A writable socket is not proof of a successful non-blocking connect:
+   * kqueue reports EVFILT_WRITE together with EV_ERROR on failure and poll
+   * may report POLLOUT|POLLERR. Promote only when no async error is pending;
+   * otherwise the following on_close routes the failure to `on_failed`. */
+  if (fio_sock_error(fio_io_fd(io)))
+    return;
   fio___io_connecting_s *c = (fio___io_connecting_s *)fio_io_udata(io);
   FIO_LOG_DEBUG2("(%d) established client connection to %s",
                  fio_io_pid(),
                  c->url);
   fio_io_udata_set(io, c->udata);
-  fio_io_protocol_set(io, c->upr);
+  /* The synchronous swap keeps (protocol, udata) atomically consistent.
+   * NOTE: fio___io_protocol_set consumes a reference (it ends with
+   * fio___io_free_with_flush), so it must be handed a fresh dup2. */
+  fio___io_protocol_set((void *)fio___io_dup2(io), (void *)c->upr);
   c->on_failed = NULL;
   fio___io_defer_no_wakeup(fio___connecting_on_close, NULL, (void *)c);
 }
@@ -107895,7 +108187,9 @@ SFUNC fio_io_s *fio_io_connect FIO_NOOP(fio_io_connect_args_s args) {
   int should_free_tls = !args.tls;
   if (!args.protocol || !args.url) {
     if (args.on_failed)
-      args.on_failed(args.protocol, args.udata);
+      fio___io_defer_no_wakeup((void (*)(void *, void *))args.on_failed,
+                               args.protocol,
+                               args.udata);
     return NULL;
   }
   if (!args.timeout)
@@ -107904,7 +108198,9 @@ SFUNC fio_io_s *fio_io_connect FIO_NOOP(fio_io_connect_args_s args) {
   size_t url_len = strlen(args.url);
   fio_url_s url = fio_url_parse(args.url, url_len);
   args.tls = fio_io_tls_from_url(args.tls, url);
-  fio___io_protocol_init(args.protocol, !!args.tls);
+  /* guarded: the protocol may already have live IOs (e.g., shared with a
+   * listener or another client) - re-initializing resets its IO lists. */
+  fio___io_protocol_init_test(args.protocol, !!args.tls);
   if (url.query.len)
     url_len = url.query.buf - (args.url + 1);
   else if (url.target.len)
@@ -107929,11 +108225,15 @@ SFUNC fio_io_s *fio_io_connect FIO_NOOP(fio_io_connect_args_s args) {
   };
   FIO_MEMCPY(c->url, args.url, url_len);
   c->url[url_len] = 0;
-  fio_io_s *io = fio_io_attach_fd(
-      fio_sock_open2(c->url, FIO_SOCK_CLIENT | FIO_SOCK_NONBLOCK),
-      &c->protocol,
-      c,
-      c->tls_ctx);
+  fio_socket_i fd = fio_sock_open2(c->url, FIO_SOCK_CLIENT | FIO_SOCK_NONBLOCK);
+  fio_io_s *io = NULL;
+  if (FIO_SOCK_FD_ISVALID(fd)) {
+    /* the TLS context's ownership transfers to the reactor (attach_fd) */
+    io = fio_io_attach_fd(fd, &c->protocol, c, c->tls_ctx);
+  } else {
+    /* never attached. Teardown in IO thread for safety. */
+    fio___io_defer_no_wakeup(fio___connecting_on_close, NULL, c);
+  }
   if (should_free_tls)
     fio_io_tls_free(args.tls);
   return io;
@@ -121853,8 +122153,7 @@ FIO_SFUNC int fio____http_write_start(fio_http_s *h,
        * representation WAS selected by considering Accept-Encoding (a
        * gzip-capable request would receive a compressed variant), so
        * caches must key on it — RFC 9110 §12.5.5. */
-      if (!fio_http_response_header(h, FIO_STR_INFO2((char *)"vary", 4), 0)
-               .buf)
+      if (!fio_http_response_header(h, FIO_STR_INFO2((char *)"vary", 4), 0).buf)
         fio_http_response_header_set(
             h,
             FIO_STR_INFO2((char *)"vary", 4),
@@ -122426,13 +122725,30 @@ SFUNC int fio_http_send_error_response(fio_http_s *h, size_t status) {
   if (!status || status > 1000)
     status = 404;
   h->status = (uint16_t)status;
-  FIO_STR_INFO_TMP_VAR(filename, 127);
-  /* read static error code file */
-  fio_string_write2(&filename,
-                    NULL,
-                    FIO_STRING_WRITE_UNUM(status),
-                    FIO_STRING_WRITE_STR2(".html", 5));
-  char *body = fio_bstr_readfile(NULL, filename.buf, 0, 0);
+  char *body = NULL;
+  fio_http_settings_s *st = fio_http_settings(h);
+  fio_buf_info_s folders[] = {
+      FIO_BUF_INFO2((char *)"./", 2),
+      (st ? FIO_BUF_INFO2(st->public_folder.buf, st->public_folder.len)
+          : FIO_BUF_INFO0),
+      FIO_BUF_INFO0,
+  };
+  FIO_STR_INFO_TMP_VAR(filename, 1023);
+
+  for (size_t i = 0; !body && folders[i].len; ++i) {
+    filename.len = 0;
+    fio_string_write2(&filename,
+                      NULL,
+                      FIO_STRING_WRITE_STR2(folders[i].buf, folders[i].len),
+                      FIO_STRING_WRITE_STR2(
+                          "/",
+                          (size_t)(folders[i].buf[folders[i].len - 1] != '/' &&
+                                   folders[i].buf[folders[i].len - 1] !=
+                                       FIO_FOLDER_SEPARATOR)),
+                      FIO_STRING_WRITE_UNUM(status),
+                      FIO_STRING_WRITE_STR2(".html", 5));
+    body = fio_bstr_readfile(NULL, filename.buf, 0, 0);
+  }
   fio_http_write_args_s args = {.buf = body,
                                 .len = fio_bstr_len(body),
                                 .dealloc = (void (*)(void *))fio_bstr_free,
@@ -123736,14 +124052,15 @@ FIO_SFUNC void fio___http_static_compress_note_result(
     return;
   }
   /* consecutive-failure shift register (CAS loop, keeps the 8-bit width) */
+  uint8_t cur;
+  fio_atomic_load(cur, p);
   for (;;) {
-    uint8_t cur;
-    fio_atomic_load(cur, p); /* reload: fallback CAS won't update `cur` */
     if (!cur)
       return; /* already disabled — stays disabled */
     uint8_t next = (uint8_t)(cur << 1);
     if (fio_atomic_compare_exchange_p(p, &cur, &next))
       return;
+    /* on failure, `cur` was updated to the current value */
   }
 }
 
@@ -123786,9 +124103,9 @@ SFUNC int fio_http_static_file_response(fio_http_s *h,
   int fd = -1;
   size_t file_length = 0;
   /* combine public folder with path to get file name.
-    * NOTE: `rt` MUST name an existing folder (validated for settings-based
-    * callers; direct callers pass "." for the CWD) - the traversal guard
-    * rejects `..` folding, not absolute paths. */
+   * NOTE: `rt` MUST name an existing folder (validated for settings-based
+   * callers; direct callers pass "." for the CWD) - the traversal guard
+   * rejects `..` folding, not absolute paths. */
   fio_str_info_s mime_type = {0};
   FIO_STR_INFO_TMP_VAR(etag, 31);
   FIO_STR_INFO_TMP_VAR(filename, (FIO_FILENAME_PATH_CAPA - 1));

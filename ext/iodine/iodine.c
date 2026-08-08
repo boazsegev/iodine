@@ -136,6 +136,10 @@ void Init_iodine(void) {
                                "print_debug",
                                iodine_store___print_debug,
                                0);
+    rb_define_singleton_method(iodine_rb_IODINE_BASE,
+                               "store_size",
+                               iodine_store___held_count,
+                               0);
   }
 
   IODINE_CONST_ID_STORE(IODINE_CALL_ID, "call");

@@ -225,11 +225,11 @@ release used in CI. To activate the simplified Ruby 4 fast path, remove
        : iodine_ruby_call_outside)((iodine_caller_args_s){__VA_ARGS__})
 
 #define iodine_c_call_with(fn, args)                                           \
-  (ruby_thread_has_gvl_p() ? fn(args) : rb_thread_call_with_gvl(fn, args))
+  (ruby_thread_has_gvl_p() ? (fn)(args) : rb_thread_call_with_gvl(fn, args))
 
 #define iodine_c_call_without(fn, args)                                        \
   (ruby_thread_has_gvl_p() ? rb_thread_call_without_gvl(fn, args, NULL, NULL)  \
-                           : fn(args))
+                           : (fn)(args))
 
 #endif
 

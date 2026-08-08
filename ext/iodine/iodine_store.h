@@ -61,6 +61,7 @@ FIO_SFUNC void iodine_store___gc_start(void);
 FIO_SFUNC void iodine_store___cache(VALUE o);
 FIO_SFUNC void iodine_store___hold(VALUE o);
 FIO_SFUNC void iodine_store___release(VALUE o);
+FIO_SFUNC VALUE iodine_store___held_count(VALUE self);
 FIO_SFUNC void iodine_store___on_gc(void (*fn)(void *), void *arg);
 FIO_SFUNC VALUE iodine_store___frozen_str(fio_str_info_s n);
 FIO_SFUNC VALUE iodine_store___header_name(fio_str_info_s n);
@@ -237,6 +238,18 @@ FIO_SFUNC void iodine_store___release(VALUE o) {
   fio_thread_mutex_unlock(&STORE.lock);
 }
 
+/** Returns the number of Ruby objects currently protected from the GC.
+ *
+ *     Iodine::Base.store_size
+ *
+ * Unlike GC-dependent probes (WeakRef + GC.start), this count is
+ * deterministic: it reflects actual `STORE.hold` / `STORE.release` balance,
+ * unaffected by conservative stack scanning. */
+FIO_SFUNC VALUE iodine_store___held_count(VALUE self) {
+  (void)self;
+  return RB_SIZE2NUM((size_t)iodine_reference_store_map_count(&STORE.map));
+}
+
 FIO_SFUNC VALUE iodine_store___frozen_str(fio_str_info_s n) {
   VALUE r;
   fio_thread_mutex_lock(&STORE.lock);
@@ -338,8 +351,8 @@ FIO_SFUNC void iodine_store___gc_mark(
   if (!iodine_reference_store_map_count(&s->map) &&
       !store___todo_count(&s->todo))
     return;
-  // we can skip the lock, as the GC freezes all other actions
-  // fio_thread_mutex_lock(&s->lock);
+  // can we skip the lock?
+  fio_thread_mutex_lock(&s->lock);
   store___todo_perform_tasks_unsafe(s);
   iodine_reference_store_map_each(&s->map,
                                   iodine_store___gc_mark__key,
@@ -353,11 +366,6 @@ FIO_SFUNC void iodine_store___gc_mark(
                                    iodine_store___gc_mark__val,
                                    NULL,
                                    0);
-  // we can skip the lock, as the GC freezes all other actions
-  // fio_thread_mutex_unlock(&s->lock);
-  if (FIO_LOG_LEVEL >= FIO_LOG_LEVEL_DEBUG)
-    iodine_store___print_debug(Qnil);
-
   for (size_t i = 0; i < IODINE___SINGLE_USE_COUNT; ++i) {
     VALUE tmp = STORE.single_use[i];
     STORE.single_use[i] = Qnil;
@@ -365,6 +373,10 @@ FIO_SFUNC void iodine_store___gc_mark(
       continue;
     rb_gc_mark(tmp);
   }
+  // can we skip the lock?
+  fio_thread_mutex_unlock(&s->lock);
+  if (FIO_LOG_LEVEL >= FIO_LOG_LEVEL_DEBUG)
+    iodine_store___print_debug(Qnil);
 }
 
 FIO_SFUNC void value_reference_counter_store_destroy(VALUE i_) {
@@ -390,6 +402,7 @@ static void iodine_setup_value_reference_counter(VALUE klass) {
                              "print_debug",
                              iodine_store___print_debug,
                              0);
+  rb_define_singleton_method(klass, "store_size", iodine_store___held_count, 0);
   rb_define_singleton_method(klass,
                              "cache_limit=",
                              iodine_store___cache_limit_set,

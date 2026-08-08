@@ -53,13 +53,11 @@ All atomic macros use sequentially consistent ordering. They work on a pointer t
 | `fio_atomic_and(p_obj, value)` | `*p_obj &= value` | previous value |
 | `fio_atomic_or(p_obj, value)` | `*p_obj \|= value` | previous value |
 | `fio_atomic_xor(p_obj, value)` | `*p_obj ^= value` | previous value |
-| `fio_atomic_nand(p_obj, value)` | `*p_obj = ~(prev & value)` | previous value |
 | `fio_atomic_add_fetch(p_obj, value)` | `*p_obj += value` | new value |
 | `fio_atomic_sub_fetch(p_obj, value)` | `*p_obj -= value` | new value |
 | `fio_atomic_and_fetch(p_obj, value)` | `*p_obj &= value` | new value |
 | `fio_atomic_or_fetch(p_obj, value)` | `*p_obj \|= value` | new value |
 | `fio_atomic_xor_fetch(p_obj, value)` | `*p_obj ^= value` | new value |
-| `fio_atomic_nand_fetch(p_obj, value)` | `*p_obj = ~(prev & value)` | new value |
 
 The implementation prefers GCC/Clang `__atomic` builtins, falls back to legacy `__sync` builtins, then C11 `stdatomic.h`, then MSVC intrinsics.
 
@@ -5139,6 +5137,14 @@ FIO_IFUNC int fio_thread_cond_signal(fio_thread_cond_t *c);
 
 Wakes one waiter.
 
+#### `fio_thread_cond_broadcast`
+
+```c
+FIO_IFUNC int fio_thread_cond_broadcast(fio_thread_cond_t *c);
+```
+
+Wakes all waiters.
+
 #### `fio_thread_cond_destroy`
 
 ```c
@@ -10048,7 +10054,9 @@ struct fio_poll_s {
 
 The poll backend keeps monitored descriptors in an internal imap (`fio___poll_map_s`) and snapshots its armed flags before each `poll()` call. Descriptors added or re-armed during `fio_poll_review` update the retained map directly; surviving one-shot flags are restored when the call returns.
 
-`fio_poll_forget` from another thread removes the retained entry, so un-fired snapshot flags are not restored. It cannot suppress a callback for an event already returned by the in-flight `poll()` call.
+`fio_poll_forget` removes the descriptor from the retained map, which also prevents any surviving snapshot flags from being restored. It is not a cancellation guarantee: an event already returned by an in-flight `poll()` call may still be dispatched. This matches the epoll/kqueue backends, whose in-hand event lists always dispatch. As on every backend, `udata` lifetime during dispatch is the caller's responsibility (the facil.io IO layer only forgets from the reactor thread, never concurrently with a review).
+
+One-shot flag accounting strips whole event groups: `WSAPoll` reports sub-band bits (e.g. `POLLRDNORM`) while `POLLIN`/`POLLOUT` are supersets, so a raw bitwise strip would leave band bits (e.g. `POLLRDBAND`) armed on Windows. Fired `POLLIN`/`POLLOUT` groups are therefore stripped in full.
 
 #### `fio_poll_engine`
 
@@ -10068,7 +10076,7 @@ Additional helper available only in the poll backend. Closes every monitored soc
 
 - `POLLRDHUP` is used when available; otherwise the backend relies on `POLLHUP`, `POLLERR`, and `POLLNVAL` for close/error detection.
 - On Windows, `POLLPRI` is omitted because `WSAPoll` rejects it.
-- Fired events are stripped from the descriptor’s flags (one-shot semantics). Surviving flags are restored to retained entries after `poll()` returns; concurrent removals prevent that restoration but cannot retract an event already returned by `poll()`.
+- Fired events are stripped from the descriptor’s flags (one-shot semantics). Surviving flags are restored to retained entries after `poll()` returns; concurrent removals (which delete the retained entry) prevent that restoration.
 
 ------------------------------------------------------------
 # Task and Timer Queues

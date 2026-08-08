@@ -292,7 +292,7 @@ Secrets - Server Secret Key for Cryptographic Operations
  */
 static VALUE iodine_secret(VALUE klass) {
   fio_u512 s = fio_secret();
-  return rb_usascii_str_new((const char *)s.u8, sizeof(s));
+  return rb_enc_str_new((const char *)s.u8, sizeof(s), IodineBinaryEncoding);
   (void)klass;
 }
 

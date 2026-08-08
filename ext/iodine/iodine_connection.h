@@ -647,7 +647,7 @@ FIO_SFUNC VALUE iodine_connection_cookie_get(VALUE o, VALUE name) {
       fio_http_cookie(c->http, RSTRING_PTR(name), RSTRING_LEN(name));
   if (!str.buf)
     return Qnil;
-  return rb_usascii_str_new(str.buf, str.len);
+  return rb_enc_str_new(str.buf, str.len, IodineBinaryEncoding);
 }
 
 FIO_SFUNC VALUE iodine_connection_cookie_set(int argc, VALUE *argv, VALUE o) {
@@ -718,9 +718,9 @@ static int iodine_connection_cookie_each_task(fio_http_s *h,
                                               void *info) {
   VALUE *argv = (VALUE *)info;
   ++argv;
-  argv[0] = rb_usascii_str_new(name.buf, name.len);
+  argv[0] = rb_enc_str_new(name.buf, name.len, IodineBinaryEncoding);
   STORE.cache(argv[0]);
-  argv[1] = rb_usascii_str_new(value.buf, value.len);
+  argv[1] = rb_enc_str_new(value.buf, value.len, IodineBinaryEncoding);
   STORE.cache(argv[1]);
   rb_yield_values2(2, argv);
   argv[0] = Qnil;
@@ -778,7 +778,7 @@ FIO_SFUNC VALUE iodine_connection_body_gets(int argc, VALUE *argv, VALUE o) {
   fio_str_info_s s = fio_http_body_read_until(c->http, '\n', length);
   if (!s.len)
     return Qnil;
-  return rb_usascii_str_new(s.buf, s.len);
+  return rb_enc_str_new(s.buf, s.len, IodineBinaryEncoding);
 }
 
 FIO_SFUNC VALUE iodine_connection_body_read(int argc, VALUE *argv, VALUE o) {
@@ -798,7 +798,7 @@ FIO_SFUNC VALUE iodine_connection_body_read(int argc, VALUE *argv, VALUE o) {
   fio_str_info_s s = fio_http_body_read(c->http, length);
   if (s.len) {
     if (rbuf == Qnil)
-      rbuf = rb_usascii_str_new(s.buf, s.len);
+      rbuf = rb_enc_str_new(s.buf, s.len, IodineBinaryEncoding);
     else
       rb_str_cat(rbuf, s.buf, s.len);
   }
@@ -1625,13 +1625,72 @@ static void iodine_io_raw_on_attach(fio_io_s *io) {
   iodine_c_call_with(iodine_io_raw_on_attach_in_GIL, io);
 }
 
+/** Tests whether a nonblocking client socket completed its connection. */
+static int iodine_io_raw_client_connect_failed(fio_io_s *io) {
+  int error = 0;
+#if FIO_OS_WIN
+  int error_len = sizeof(error);
+  return fio___winsock_fn.getsockopt(fio_io_fd(io),
+                                     SOL_SOCKET,
+                                     SO_ERROR,
+                                     (char *)&error,
+                                     &error_len) ||
+         error;
+#else
+  socklen_t error_len = sizeof(error);
+  return getsockopt(fio_io_fd(io), SOL_SOCKET, SO_ERROR, &error, &error_len) ||
+         error;
+#endif
+}
+
+typedef struct {
+  fio_io_s *io;
+  int should_close;
+} iodine_io_raw_client_attach_args_s;
+
+/** Attaches an outgoing raw TCP client to its pre-allocated Ruby wrapper. */
+static void *iodine_io_raw_client_on_attach_in_gvl(void *args_) {
+  iodine_io_raw_client_attach_args_s *args =
+      (iodine_io_raw_client_attach_args_s *)args_;
+  VALUE connection = (VALUE)fio_io_udata(args->io);
+  iodine_connection_s *c = NULL;
+  /* A missing wrapper is unrecoverable - close rather than leak a live IO
+   * whose every callback would bail out on the NULL udata. */
+  if (!connection || connection == Qnil ||
+      !(c = iodine_connection_ptr(connection))) {
+    args->should_close = 1;
+    return NULL;
+  }
+  c->io = args->io;
+  args->should_close = iodine_io_raw_client_connect_failed(args->io);
+  if (args->should_close)
+    return NULL;
+  iodine_ruby_call_inside(c->store[IODINE_CONNECTION_STORE_handler],
+                          IODINE_ON_OPEN_ID,
+                          1,
+                          &connection);
+  return NULL;
+}
+
+static void *iodine_io_raw_client_close_without_gvl(void *io_) {
+  fio_io_close((fio_io_s *)io_);
+  return NULL;
+}
+
+static void iodine_io_raw_client_on_attach(fio_io_s *io) {
+  iodine_io_raw_client_attach_args_s args = {.io = io};
+  iodine_c_call_with(iodine_io_raw_client_on_attach_in_gvl, &args);
+  if (args.should_close)
+    iodine_c_call_without(iodine_io_raw_client_close_without_gvl, io);
+}
+
 static void *iodine_io_raw_on_data_in_GVL(void *info_) {
   iodine_io_raw_on_data_info_s *i = (iodine_io_raw_on_data_info_s *)info_;
   VALUE connection = (VALUE)fio_io_udata(i->io);
   if (!connection || connection == Qnil)
     return NULL;
   iodine_connection_s *c = iodine_connection_ptr(connection);
-  VALUE buf = rb_usascii_str_new(i->buf, (long)i->len);
+  VALUE buf = rb_enc_str_new(i->buf, (long)i->len, IodineBinaryEncoding);
   c->store[IODINE_CONNECTION_STORE_tmp] = buf;
   VALUE args[] = {connection, buf};
   iodine_ruby_call_inside(c->store[IODINE_CONNECTION_STORE_handler],
@@ -2288,22 +2347,83 @@ not_string:
   return ST_CONTINUE;
 }
 
+typedef struct {
+  VALUE connection;
+  VALUE handler;
+  fio_io_protocol_s *protocol;
+} iodine_io_raw_client_cleanup_s;
+
+/** Releases raw-client resources after Ruby-facing cleanup. */
+static void *iodine_io_raw_client_cleanup_without_gvl(void *args_) {
+  iodine_io_raw_client_cleanup_s *args =
+      (iodine_io_raw_client_cleanup_s *)args_;
+  if (args->handler && args->handler != Qnil)
+    STORE.release(args->handler);
+  if (args->connection && args->connection != Qnil)
+    STORE.release(args->connection);
+  if (args->protocol)
+    FIO_MEM_FREE(args->protocol, sizeof(*args->protocol));
+  return NULL;
+}
+
 /** Called after the connection was closed (called once per IO). */
+static void *iodine_io_raw_client_on_close_in_gvl(void *args_) {
+  iodine_io_raw_client_cleanup_s *args =
+      (iodine_io_raw_client_cleanup_s *)args_;
+  iodine_connection_s *c = iodine_connection_ptr(args->connection);
+  if (!c)
+    return NULL;
+  /* `c->io` may be NULL if the IO was never attached (e.g., an early failure
+   * path already cleared it). The protocol is owned by the IO - if there's
+   * no IO, `on_failed` owns the cleanup instead. */
+  if (c->io)
+    args->protocol = fio_io_protocol(c->io);
+  args->handler = c->store[IODINE_CONNECTION_STORE_handler];
+  c->io = NULL;
+  iodine_ruby_call_inside(args->handler,
+                          IODINE_ON_CLOSE_ID,
+                          1,
+                          &args->connection);
+  c->store[IODINE_CONNECTION_STORE_handler] = Qnil;
+  return NULL;
+}
+
 static void iodine_io_raw_client_on_close(void *buf, void *udata) {
-  VALUE connection = (VALUE)udata;
-  if (!connection || connection == Qnil)
+  iodine_io_raw_client_cleanup_s args = {.connection = (VALUE)udata};
+  if (!args.connection || args.connection == Qnil)
     return;
-  iodine_connection_s *c = iodine_connection_ptr(connection);
-  if (c) {
-    iodine_ruby_call_anywhere(c->store[IODINE_CONNECTION_STORE_handler],
-                              IODINE_ON_CLOSE_ID,
-                              1,
-                              &connection);
-    fio_io_protocol_s *p = fio_io_protocol(c->io);
-    FIO_MEM_FREE(p, sizeof(*p));
-  }
-  STORE.release(connection);
+  iodine_c_call_with(iodine_io_raw_client_on_close_in_gvl, &args);
+  iodine_c_call_without(iodine_io_raw_client_cleanup_without_gvl, &args);
   (void)buf;
+}
+
+/** Clears a failed raw client's Ruby state while holding the GVL. */
+static void *iodine_io_raw_client_on_failed_in_gvl(void *args_) {
+  iodine_io_raw_client_cleanup_s *args =
+      (iodine_io_raw_client_cleanup_s *)args_;
+  iodine_connection_s *c = iodine_connection_ptr(args->connection);
+  if (!c)
+    return NULL;
+  args->handler = c->store[IODINE_CONNECTION_STORE_handler];
+  c->io = NULL;
+  iodine_ruby_call_inside(args->handler,
+                          IODINE_ON_CLOSE_ID,
+                          1,
+                          &args->connection);
+  c->store[IODINE_CONNECTION_STORE_handler] = Qnil;
+  return NULL;
+}
+
+/** Releases an outgoing raw client's resources after a failed connection. */
+static void iodine_io_raw_client_on_failed(fio_io_protocol_s *protocol,
+                                           void *udata) {
+  iodine_io_raw_client_cleanup_s args = {
+      .connection = (VALUE)udata,
+      .protocol = protocol,
+  };
+  if (args.connection && args.connection != Qnil)
+    iodine_c_call_with(iodine_io_raw_client_on_failed_in_gvl, &args);
+  iodine_c_call_without(iodine_io_raw_client_cleanup_without_gvl, &args);
 }
 
 /** Initializes a Connection object. */
@@ -2319,6 +2439,10 @@ static VALUE iodine_connection_initialize(int argc, VALUE *argv, VALUE self) {
         "Iodine::Connection.new client requires a valid URL to connect to!\n\t"
         "See documentation, use tcp(s)://.../  or  http(s)://.../  or  "
         "ws(s):/.../ etc'");
+  /* Keep the returned client and its handler alive until close/failure. */
+  c->store[IODINE_CONNECTION_STORE_handler] = (VALUE)args.settings.udata;
+  c->flags |= IODINE_CONNECTION_CLIENT;
+
   /* test if HTTP scheme */
   if (args.service == IODINE_SERVICE_HTTP ||
       args.service == IODINE_SERVICE_WS) {
@@ -2338,22 +2462,20 @@ static VALUE iodine_connection_initialize(int argc, VALUE *argv, VALUE self) {
     fio_http_udata2_set(h, (void *)self);
 
   } else { /* Raw Connection */
-    rb_raise(rb_eException,
-             "Iodine::Connection.new using Raw Sockets is on the TODO list...");
     fio_io_protocol_s *protocol =
         FIO_MEM_REALLOC(NULL, 0, sizeof(*protocol), 0);
     FIO_ASSERT_ALLOC(protocol);
     *protocol = IODINE_RAW_PROTOCOL;
+    protocol->on_attach = iodine_io_raw_client_on_attach;
     protocol->on_close = iodine_io_raw_client_on_close;
     protocol->timeout = 1000UL * (uint32_t)args.settings.ws_timeout;
     c->io = fio_io_connect(args.url.buf,
                            .protocol = protocol,
-                           .udata = args.settings.udata,
+                           .udata = (void *)self,
                            .tls = args.settings.tls,
-                           .on_failed = iodine_tcp_on_stop);
+                           .timeout = protocol->timeout,
+                           .on_failed = iodine_io_raw_client_on_failed);
   }
-  c->store[IODINE_CONNECTION_STORE_handler] = (VALUE)args.settings.udata;
-  c->flags |= IODINE_CONNECTION_CLIENT;
   return self;
 }
 

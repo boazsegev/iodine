@@ -53,8 +53,9 @@ typedef enum {
  * indexed by iodine_pubsub_msg_store_e values.
  */
 typedef struct iodine_pubsub_msg_wrapper_s {
-  const fio_pubsub_msg_s *msg;                 /**< Original C message (may be NULL) */
-  VALUE store[IODINE_PUBSUB_MSG_STORE_FINISH]; /**< Ruby values for properties */
+  const fio_pubsub_msg_s *msg; /**< Original C message (may be NULL) */
+  VALUE
+  store[IODINE_PUBSUB_MSG_STORE_FINISH]; /**< Ruby values for properties */
 } iodine_pubsub_msg_wrapper_s;
 
 static size_t iodine_pubsub_msg_data_size(const void *ptr_) {
@@ -129,13 +130,17 @@ static VALUE iodine_pubsub_msg_new(const fio_pubsub_msg_s *msg) {
   iodine_pubsub_msg_wrapper_s *c = iodine_pubsub_msg_get(m);
   c->store[IODINE_PUBSUB_MSG_STORE_id] = ULL2NUM(msg->id);
   c->store[IODINE_PUBSUB_MSG_STORE_channel] =
-      (msg->channel.len ? rb_usascii_str_new(msg->channel.buf, msg->channel.len)
+      (msg->channel.len ? rb_enc_str_new(msg->channel.buf,
+                                         msg->channel.len,
+                                         IodineBinaryEncoding)
                         : Qnil);
   ;
   c->store[IODINE_PUBSUB_MSG_STORE_filter] =
       (msg->filter ? INT2NUM(((int16_t)(msg->filter))) : Qnil);
   c->store[IODINE_PUBSUB_MSG_STORE_message] =
-      (msg->message.len ? rb_usascii_str_new(msg->message.buf, msg->message.len)
+      (msg->message.len ? rb_enc_str_new(msg->message.buf,
+                                         msg->message.len,
+                                         IodineBinaryEncoding)
                         : Qnil);
   c->store[IODINE_PUBSUB_MSG_STORE_published] =
       (msg->timestamp ? ULL2NUM(msg->timestamp) : Qnil);
@@ -184,8 +189,10 @@ Initialize - Ruby Class Registration
  * Initializes the Iodine::PubSub::Message Ruby class.
  *
  * Defines the Message class under Iodine::PubSub with:
- * - Getter methods: id, channel, event, filter, message, msg, data, published, to_s
- * - Setter methods: id=, channel=, event=, filter=, message=, msg=, data=, published=
+ * - Getter methods: id, channel, event, filter, message, msg, data, published,
+ * to_s
+ * - Setter methods: id=, channel=, event=, filter=, message=, msg=, data=,
+ * published=
  *
  * Note: event/msg/data are aliases for channel/message respectively.
  */
@@ -217,6 +224,5 @@ static void Init_Iodine_PubSub_Message(void) {
   rb_define_method(iodine_rb_IODINE_PUBSUB_MSG, "published=", iodine_pubsub_msg_published_set, 1);
   // clang-format on
 }
-
 
 #endif /* H___IODINE_PUBSUB_MSG___H */
