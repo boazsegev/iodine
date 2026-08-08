@@ -2,6 +2,7 @@
 
 require 'spec_helper'
 require 'socket'
+require 'timeout'
 
 # =============================================================================
 # Iodine Raw IO (TCP) Integration Tests
@@ -19,6 +20,17 @@ require 'socket'
 RAW_PORT = (ENV['IODINE_TEST_PORT'] || 19_876).to_i + 10  # avoid clash with http_spec
 
 RAW_RESULTS = {}
+RAW_SOCKET_TIMEOUT = 5
+
+module RawTcpTestClient
+  module_function
+
+  def read_line(socket)
+    return socket.gets if IO.select([socket], nil, nil, RAW_SOCKET_TIMEOUT)
+
+    raise Timeout::Error, "timed out waiting for TCP response after #{RAW_SOCKET_TIMEOUT}s"
+  end
+end
 
 # ---------------------------------------------------------------------------
 # Raw IO handler — echoes received data, records lifecycle events
@@ -50,7 +62,7 @@ RSpec.describe 'Iodine raw TCP connection' do
     Iodine::Logger.debug "before(:context) start"
 
     Iodine.workers   = 0
-    Iodine.threads   = 1   # raw IO needs only one worker thread
+    Iodine.threads   = 1
     Iodine::Logger.debug "config done, registering on_state"
 
     raw_finished = false
@@ -59,7 +71,7 @@ RSpec.describe 'Iodine raw TCP connection' do
       TCPSocket.open('127.0.0.1', RAW_PORT) do |sock|
         Iodine::Logger.debug "TCPSocket connected"
         # Read the server greeting
-        greeting = sock.gets
+        greeting = RawTcpTestClient.read_line(sock)
         Iodine::Logger.debug "got greeting: #{greeting.inspect}"
         RAW_RESULTS[:greeting] = greeting&.chomp
 
@@ -67,7 +79,7 @@ RSpec.describe 'Iodine raw TCP connection' do
         sock.write("PING\n")
         sock.flush
         Iodine::Logger.debug "sent PING"
-        echo = sock.gets
+        echo = RawTcpTestClient.read_line(sock)
         Iodine::Logger.debug "got echo: #{echo.inspect}"
         RAW_RESULTS[:echo] = echo&.chomp
       end
@@ -87,11 +99,10 @@ RSpec.describe 'Iodine raw TCP connection' do
       RAW_STARTED[0] = true
       Iodine.run_after(500) do
         Iodine::Logger.debug "run_after(500) fired"
-        Iodine.async do
-          Iodine::Logger.debug "inside async block"
-          run_tests.call
-        end
-        Iodine::Logger.debug "async dispatched"
+        # The client performs blocking reads, so it must not consume Iodine's
+        # one-worker async pool. On Windows that otherwise stalls this test.
+        Thread.new { run_tests.call }
+        Iodine::Logger.debug "TCP client thread started"
       end
       # Timers survive reactor restarts, so an obsolete watchdog must not stop
       # a later spec's reactor cycle after this test completes normally.
