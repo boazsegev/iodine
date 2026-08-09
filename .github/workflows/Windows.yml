@@ -35,7 +35,22 @@ jobs:
       run: |
         echo "CI=false" >> $env:GITHUB_ENV
     - name: Compile Iodine
-      run: bundle exec rake compile
+      shell: pwsh
+      run: |
+        $output = @(& bundle exec rake compile 2>&1)
+        $status = $LASTEXITCODE
+        $output | Write-Output
+        if ($status -ne 0) {
+          $diagnosticOutput = @($output | Select-Object -Last 120)
+          for ($offset = 0; $offset -lt $diagnosticOutput.Count; $offset += 20) {
+            $chunkEnd = [Math]::Min($diagnosticOutput.Count - 1, $offset + 19)
+            $chunk = @($diagnosticOutput[$offset..$chunkEnd])
+            $part = [Math]::Floor($offset / 20) + 1
+            $diagnostics = (($chunk -replace '%', '%25') -join '%0A')
+            Write-Output "::error title=compile diagnostics part $part::$diagnostics"
+          }
+          throw "compile exited with code $status"
+        }
     - name: Verify reactor without thread pool
       run: >-
         bundle exec ruby -Ilib -e
