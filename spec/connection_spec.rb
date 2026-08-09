@@ -19,6 +19,7 @@ require 'weakref'
 
 RAW_PORT = (ENV['IODINE_TEST_PORT'] || 19_876).to_i + 10  # avoid clash with http_spec
 RAW_REFUSED_PORT = TCPServer.open('127.0.0.1', 0) { |server| server.addr[1] }
+RAW_REFUSED_CLIENT_COUNT = 8
 
 RAW_RESULTS = {}
 
@@ -53,23 +54,34 @@ module RawTcpClientHandler
     RAW_RESULTS[:client_closed] = true
     RAW_RESULTS[:client] = nil
     Iodine.run_after(100) do
-      RAW_RESULTS[:refused_terminal_callbacks] = 0
-      handler = Object.new
-      handler.define_singleton_method(:on_open) do |_connection|
-        RAW_RESULTS[:refused_open] = true
+      RAW_RESULTS[:refused_store_baseline] = Iodine::Base.store_size
+      RAW_RESULTS[:refused_open] = []
+      RAW_RESULTS[:refused_terminal_callbacks] =
+        Array.new(RAW_REFUSED_CLIENT_COUNT, 0)
+      RAW_RESULTS[:refused_handlers] = []
+
+      RAW_REFUSED_CLIENT_COUNT.times do |index|
+        handler = Object.new
+        handler.define_singleton_method(:on_open) do |_connection|
+          RAW_RESULTS[:refused_open] << index
+        end
+        handler.define_singleton_method(:on_close) do |_connection|
+          RAW_RESULTS[:refused_terminal_callbacks][index] += 1
+          next unless RAW_RESULTS[:refused_terminal_callbacks].sum ==
+                      RAW_REFUSED_CLIENT_COUNT
+
+          RAW_RESULTS[:finished] = true
+          Iodine.run_after(100) do
+            RAW_RESULTS[:refused_store_after] = Iodine::Base.store_size
+            Iodine.stop
+          end
+        end
+        RAW_RESULTS[:refused_handlers] << WeakRef.new(handler)
+        Iodine::Connection.new(
+          "tcp://127.0.0.1:#{RAW_REFUSED_PORT}",
+          handler: handler
+        )
       end
-      handler.define_singleton_method(:on_close) do |_connection|
-        RAW_RESULTS[:refused_closed] = true
-        RAW_RESULTS[:refused_terminal_callbacks] += 1
-        RAW_RESULTS[:finished] = true
-        Iodine.run_after(100) { Iodine.stop }
-      end
-      RAW_RESULTS[:refused_handler] = WeakRef.new(handler)
-      Iodine::Connection.new(
-        "tcp://127.0.0.1:#{RAW_REFUSED_PORT}",
-        handler: handler
-      )
-      handler = nil
     end
   end
 end
@@ -150,29 +162,32 @@ RSpec.describe 'Iodine raw TCP connection' do
     expect(RAW_RESULTS[:client_closed]).to be true
   end
 
-  it 'does not open a refused outbound connection' do
-    expect(RAW_RESULTS[:refused_open]).to be_nil
-    expect(RAW_RESULTS[:refused_closed]).to be true
-    expect(RAW_RESULTS[:refused_terminal_callbacks]).to eq(1)
+  it 'closes every refused outbound connection exactly once without opening' do
+    expect(RAW_RESULTS[:refused_open]).to be_empty
+    expect(RAW_RESULTS[:refused_terminal_callbacks]).to all(eq(1))
   end
 
-  it 'releases every client-side GC hold (refused and successful)' do
-    # Deterministic proof that `STORE.hold` calls for both connections and
-    # both handlers were balanced by `STORE.release`: the held-object count
-    # must not exceed the pre-client baseline. (The count can legitimately
-    # drop below baseline, as startup holds are also released on stop.)
+  it 'releases every refused-client GC hold' do
+    expect(RAW_RESULTS[:refused_store_after]).to eq(
+      RAW_RESULTS[:refused_store_baseline]
+    )
+  end
+
+  it 'does not increase the GC store across the reactor cycle' do
+    # Startup holds can legitimately be released during stop, so this broader
+    # cycle-level check may fall below its baseline.
     expect(Iodine::Base.store_size).to be <= RAW_STORE_BASELINE[0]
   end
 
-  it 'collects the refused connection handler once unpinned' do
-    skip 'refused connection never ran' unless RAW_RESULTS[:refused_handler]
+  it 'collects the refused connection handlers once unpinned' do
+    skip 'refused connections never ran' unless RAW_RESULTS[:refused_handlers]
     # GC liveness is best-effort: CRuby pins stale stack slots conservatively
-    # (observed on 3.2 and Windows builds), so this only proves the object is
+    # (observed on 3.2 and Windows builds), so this only proves the objects are
     # collectable, it can never prove a leak. The store-balance test above is
     # the authoritative leak check.
     2.times { GC.start(full_mark: true, immediate_sweep: true) }
-    if RAW_RESULTS[:refused_handler].weakref_alive?
-      skip 'handler still pinned by conservative stack scanning on this Ruby'
+    if RAW_RESULTS[:refused_handlers].any?(&:weakref_alive?)
+      skip 'handlers still pinned by conservative stack scanning on this Ruby'
     end
   end
 end
