@@ -90,8 +90,9 @@ jobs:
             }
           }
           if ($bugIndex -ge 0) {
-            $diagnosticEnd = [Math]::Min($output.Count - 1, $bugIndex + 159)
-            $diagnosticOutput = @($output[$bugIndex..$diagnosticEnd])
+            $diagnosticStart = [Math]::Max(0, $bugIndex - 20)
+            $diagnosticEnd = [Math]::Min($output.Count - 1, $bugIndex + 139)
+            $diagnosticOutput = @($output[$diagnosticStart..$diagnosticEnd])
           } else {
             $diagnosticOutput = @($output | Select-Object -Last 100)
           }

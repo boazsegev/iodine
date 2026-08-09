@@ -253,6 +253,7 @@ static VALUE iodine___thread_run_without_gvl(VALUE args_) {
 }
 
 static VALUE iodine___thread_start_in_gvl(void *args_) {
+  FIO_LOG_ERROR("TRACE_THREAD start gvl=%d", ruby_thread_has_gvl_p());
   iodine___thread_starter_s *args = (iodine___thread_starter_s *)args_;
   iodine___thread_starter_s cpy = *args;
   fio_unlock(&args->lock);
@@ -327,6 +328,7 @@ FIO_IFUNC int fio_thread_create(fio_thread_t *t,
                                        .arg = arg};
 #endif
   fio_lock(&starter.lock);
+  FIO_LOG_ERROR("TRACE_THREAD create gvl=%d", ruby_thread_has_gvl_p());
   iodine_c_call_with(iodine___thread_create_in_gvl, &starter);
   fio_lock(&starter.lock); /* wait for other thread to copy starter */
 #ifdef _WIN32
