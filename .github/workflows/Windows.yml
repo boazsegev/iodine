@@ -39,12 +39,19 @@ jobs:
     - name: Verify connection spec exits promptly
       shell: pwsh
       run: |
-        $process = Start-Process cmd.exe -ArgumentList '/c', 'bundle exec rspec spec/connection_spec.rb --format documentation' -PassThru -NoNewWindow
+        $stdout = Join-Path $env:RUNNER_TEMP 'connection-spec.stdout.log'
+        $stderr = Join-Path $env:RUNNER_TEMP 'connection-spec.stderr.log'
+        $process = Start-Process cmd.exe -ArgumentList '/c', 'bundle exec rspec spec/connection_spec.rb --format documentation' -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         if (-not $process.WaitForExit(30000)) {
           Stop-Process -Id $process.Id -Force
+          Write-Output "::error title=connection_spec diagnostics::connection_spec did not exit within 30 seconds"
           throw 'connection_spec did not exit within 30 seconds'
         }
+        $output = @((Get-Content $stdout), (Get-Content $stderr)) | Where-Object { $_ }
+        $output | Write-Output
         if ($process.ExitCode -ne 0) {
+          $diagnostics = (($output | Select-Object -Last 100) -replace '%', '%25') -join '%0A'
+          Write-Output "::error title=connection_spec diagnostics::$diagnostics"
           throw "connection_spec exited with code $($process.ExitCode)"
         }
     - name: Run tests
