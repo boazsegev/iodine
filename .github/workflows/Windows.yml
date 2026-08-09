@@ -53,7 +53,8 @@ jobs:
         $output = $output | Where-Object { $_ }
         $output | Write-Output
         if ($process.ExitCode -ne 0) {
-          $diagnostics = (($output | Select-Object -Last 100) -replace '%', '%25') -join '%0A'
+          $diagnosticOutput = $output | Where-Object { $_ -match '\[BUG\]|segmentation|access violation|FATAL|free.*after.*free|errno|NoMethodError|Exception|Assertion|signal|C level backtrace|Control frame information|Machine register context|examples|failures' }
+          $diagnostics = (($diagnosticOutput -replace '%', '%25') -join '%0A')
           Write-Output "::error title=connection_spec diagnostics::$diagnostics"
           throw "connection_spec exited with code $($process.ExitCode)"
         }
