@@ -36,21 +36,30 @@ jobs:
         echo "CI=false" >> $env:GITHUB_ENV
     - name: Compile Iodine
       run: bundle exec rake compile
-    - name: Verify minimal reactor cycle
+    - name: Verify reactor without thread pool
       run: >-
         bundle exec ruby -Ilib -e
-        "require './lib/iodine'; Iodine.workers = 0; Iodine.threads = 1;
+        "require './lib/iodine'; Iodine.workers = 0; Iodine.threads = 0;
         Iodine.run_after(100) { Iodine.stop }; Iodine.start"
-    - name: Verify connection spec exits promptly
+    - name: Diagnose reactor thread teardown
       shell: pwsh
       run: |
-        $stdout = Join-Path $env:RUNNER_TEMP 'connection-spec.stdout.log'
-        $stderr = Join-Path $env:RUNNER_TEMP 'connection-spec.stderr.log'
-        $process = Start-Process cmd.exe -ArgumentList '/c', 'bundle exec rspec spec/connection_spec.rb --format documentation' -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        $script = Join-Path $env:RUNNER_TEMP 'reactor-thread-cycle.rb'
+        $stdout = Join-Path $env:RUNNER_TEMP 'reactor-thread-cycle.stdout.log'
+        $stderr = Join-Path $env:RUNNER_TEMP 'reactor-thread-cycle.stderr.log'
+        @'
+        require './lib/iodine'
+        Iodine.workers = 0
+        Iodine.threads = 1
+        Iodine.run_after(100) { Iodine.stop }
+        Iodine.start
+        '@ | Set-Content -Path $script -Encoding utf8
+        $command = "bundle exec ruby -Ilib `"$script`""
+        $process = Start-Process cmd.exe -ArgumentList '/c', $command -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         if (-not $process.WaitForExit(30000)) {
           Stop-Process -Id $process.Id -Force
-          Write-Output "::error title=connection_spec diagnostics::connection_spec did not exit within 30 seconds"
-          throw 'connection_spec did not exit within 30 seconds'
+          Write-Output "::error title=reactor thread diagnostics::minimal reactor did not exit within 30 seconds"
+          throw 'minimal reactor did not exit within 30 seconds'
         }
         $output = @()
         $output += @(Get-Content $stdout)
@@ -66,14 +75,19 @@ jobs:
             }
           }
           if ($bugIndex -ge 0) {
-            $diagnosticEnd = [Math]::Min($output.Count - 1, $bugIndex + 160)
+            $diagnosticEnd = [Math]::Min($output.Count - 1, $bugIndex + 159)
             $diagnosticOutput = @($output[$bugIndex..$diagnosticEnd])
           } else {
             $diagnosticOutput = @($output | Select-Object -Last 100)
           }
-          $diagnostics = (($diagnosticOutput -replace '%', '%25') -join '%0A')
-          Write-Output "::error title=connection_spec diagnostics::$diagnostics"
-          throw "connection_spec exited with code $($process.ExitCode)"
+          for ($offset = 0; $offset -lt $diagnosticOutput.Count; $offset += 20) {
+            $chunkEnd = [Math]::Min($diagnosticOutput.Count - 1, $offset + 19)
+            $chunk = @($diagnosticOutput[$offset..$chunkEnd])
+            $part = [Math]::Floor($offset / 20) + 1
+            $diagnostics = (($chunk -replace '%', '%25') -join '%0A')
+            Write-Output "::error title=reactor thread diagnostics part $part::$diagnostics"
+          }
+          throw "minimal reactor exited with code $($process.ExitCode)"
         }
     - name: Run tests
       run: bundle exec rake spec
