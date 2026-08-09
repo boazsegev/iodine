@@ -53,10 +53,7 @@ jobs:
         $output = $output | Where-Object { $_ }
         $output | Write-Output
         if ($process.ExitCode -ne 0) {
-          $attachLines = @($output | Where-Object { $_ -match 'TRACE_IO attach new' })
-          $clientIo = if ($attachLines.Count -ge 3 -and $attachLines[2] -match 'io=([0-9A-Fa-f]+)') { $Matches[1] } else { 'TRACE_IO' }
-          $diagnosticOutput = $output | Where-Object { $_ -match $clientIo -or $_ -match 'FATAL|NoMethodError|examples|failures' }
-          $diagnostics = (($diagnosticOutput -replace '%', '%25') -join '%0A')
+          $diagnostics = (($output | Select-Object -Last 100) -replace '%', '%25') -join '%0A'
           Write-Output "::error title=connection_spec diagnostics::$diagnostics"
           throw "connection_spec exited with code $($process.ExitCode)"
         }

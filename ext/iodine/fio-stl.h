@@ -865,7 +865,8 @@ Copyright and License: see header file (000 copyright.h) or top of file
 
 
 /** An atomic compare and exchange operation, returns true if an exchange occured. `p_expected` MAY be overwritten with the existing value (system specific). */
-#define fio_atomic_compare_exchange_p(p_obj, p_expected, p_desired) __sync_bool_compare_and_swap((p_obj), (p_expected), *(p_desired))
+#define fio_atomic_compare_exchange_p(p_obj, p_expected, p_desired)           \
+  __sync_bool_compare_and_swap((p_obj), *(p_expected), *(p_desired))
 /** An atomic exchange operation, ruturns previous value */
 #define fio_atomic_exchange(p_obj, value) __sync_val_compare_and_swap((p_obj), *(p_obj), (value))
 /** An atomic addition operation, returns new value */
@@ -954,7 +955,11 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #define fio_atomic_load(dest, p_obj) (dest = *(p_obj))
 
 /** An atomic compare and exchange operation, returns true if an exchange occured. `p_expected` MAY be overwritten with the existing value (system specific). */
-#define fio_atomic_compare_exchange_p(p_obj, p_expected, p_desired) (FIO___ATOMICS_FN_ROUTE(_InterlockedCompareExchange, (p_obj),(*(p_desired)),(*(p_expected))), (*(p_obj) == *(p_desired)))
+#define fio_atomic_compare_exchange_p(p_obj, p_expected, p_desired)           \
+  (FIO___ATOMICS_FN_ROUTE(_InterlockedCompareExchange,                        \
+                          (p_obj),                                             \
+                          (*(p_desired)),                                      \
+                          (*(p_expected))) == *(p_expected))
 /** An atomic exchange operation, returns previous value */
 #define fio_atomic_exchange(p_obj, value) FIO___ATOMICS_FN_ROUTE(_InterlockedExchange, (p_obj), (value))
 
@@ -101859,8 +101864,24 @@ FIO_NAME(FIO_REF_NAME, FIO_REF_DUPNAME)(const FIO_REF_TYPE_PTR wrapped_) {
     return 0;
   FIO_NAME(FIO_REF_NAME, __wrapper_s) *o =
       ((FIO_NAME(FIO_REF_NAME, __wrapper_s) *)wrapped) - 1;
-  fio_atomic_add(&o->ref, 1);
-  return (FIO_REF_TYPE_PTR)wrapped_;
+#ifdef FIO_REF_FLEX_TYPE
+  uint32_t expected = 0;
+  uint32_t desired = 0;
+#else
+  size_t expected = 0;
+  size_t desired = 0;
+#endif
+  fio_atomic_load(expected, &o->ref);
+  for (;;) {
+    if (FIO_UNLIKELY(!expected))
+      return 0;
+    desired = expected + 1;
+    if (FIO_UNLIKELY(!desired))
+      return 0;
+    if (fio_atomic_compare_exchange_p(&o->ref, &expected, &desired))
+      return (FIO_REF_TYPE_PTR)wrapped_;
+    fio_atomic_load(expected, &o->ref);
+  }
 }
 
 /** Debugging helper, do not use for data, as returned value is unstable. */
@@ -105735,14 +105756,6 @@ FIO_IFUNC void fio___io_monitor_forget(fio_io_s *io) {
 }
 
 FIO_SFUNC void fio___io_destroy(fio_io_s *io) {
-  FIO_LOG_WARNING(
-      "TRACE_DESTROY io=%p fd=%d flags=%u pr=%p udata=%p connecting=%u",
-      (void *)io,
-      (int)io->fd,
-      (unsigned)io->flags,
-      (void *)io->pr,
-      io->udata,
-      (unsigned)((void *)io->pr == io->udata));
   fio_io_protocol_s *pr = io->pr;
   FIO_LIST_REMOVE(&io->node);
 #if FIO_IO_COUNT_STORAGE
@@ -105782,18 +105795,8 @@ FIO_SFUNC void fio___io_destroy(fio_io_s *io) {
 #include FIO_INCLUDE_FILE
 #undef FIO___RECURSIVE_INCLUDE
 
-#define FIO___IO_TRACE(name, io)                                               \
-  FIO_LOG_WARNING("TRACE_IO %s io=%p refs=%zu count=%zu fd=%d flags=%u",       \
-                  (name),                                                      \
-                  (void *)(io),                                                \
-                  fio___io_references(io),                                     \
-                  FIO_LEAK_COUNTER_COUNT(fio___io),                            \
-                  (int)(io)->fd,                                               \
-                  (unsigned)(io)->flags)
-
 FIO_SFUNC void fio___io_protocol_set(void *io_, void *pr_) {
   fio_io_s *io = (fio_io_s *)io_;
-  FIO___IO_TRACE("protocol_set enter", io);
   fio_io_protocol_s *pr = (fio_io_protocol_s *)pr_;
   fio_io_protocol_s *old = io->pr;
   if (!pr)
@@ -105816,7 +105819,6 @@ FIO_SFUNC void fio___io_protocol_set(void *io_, void *pr_) {
     fio___io_monitor_out(io);
   }
   fio___io_monitor_in(io);
-  FIO___IO_TRACE("protocol_set free", io);
   fio___io_free_with_flush(io);
   FIO_LOG_DEBUG2("(%d) attached IO with fd %d", fio_io_pid(), fio_io_fd(io));
 }
@@ -105862,9 +105864,7 @@ SFUNC fio_io_s *fio_io_attach_fd(fio_socket_i fd,
                  fd,
                  (void *)io,
                  fio_io_buffer_len(io));
-  FIO___IO_TRACE("attach new", io);
   fio_io_defer(fio___io_protocol_set, (void *)fio___io_dup2(io), (void *)pr);
-  FIO___IO_TRACE("attach deferred", io);
   return io;
 
 error:
@@ -106089,7 +106089,6 @@ SFUNC void fio_io_close_now(fio_io_s *io) {
 SFUNC fio_io_s *fio_io_dup(fio_io_s *io) { return fio___io_dup2(io); }
 
 SFUNC void fio___io_free_task(void *io_, void *ignr_) {
-  FIO___IO_TRACE("free_task", (fio_io_s *)io_);
   fio___io_free2((fio_io_s *)io_);
   (void)ignr_;
 }
@@ -106097,7 +106096,6 @@ SFUNC void fio___io_free_task(void *io_, void *ignr_) {
 SFUNC void fio_io_free(fio_io_s *io) {
   if (!io)
     return;
-  FIO___IO_TRACE("fio_io_free", io);
   if (FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_WRITE_DIRTY) &
       FIO___IO_FLAG_WRITE_DIRTY) {
     fio___io_poll_on_ready_schd((void *)io);
@@ -106108,7 +106106,6 @@ SFUNC void fio_io_free(fio_io_s *io) {
 
 /** IO-thread free that flushes dirty writes (schedules on_ready if needed). */
 FIO_IFUNC void fio___io_free_with_flush(fio_io_s *io) {
-  FIO___IO_TRACE("free_with_flush", io);
   if (FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_WRITE_DIRTY) &
       FIO___IO_FLAG_WRITE_DIRTY) {
     fio___io_poll_on_ready_schd((void *)io);
@@ -106200,7 +106197,6 @@ Event handling
 static void fio___io_poll_on_data(void *io_, void *ignr_) {
   (void)ignr_;
   fio_io_s *io = (fio_io_s *)io_;
-  FIO___IO_TRACE("poll_data enter", io);
   FIO___IO_FLAG_UNSET(io, (FIO___IO_FLAG_POLLIN_SET | FIO___IO_FLAG_DATA_SCHD));
   if (!(io->flags & FIO___IO_FLAG_PREVENT_ON_DATA)) {
     /* this also tests for the suspended / throttled flags, allows closed */
@@ -106220,7 +106216,6 @@ static void fio___io_poll_on_ready(void *io_, void *ignr_) {
   errno = 0;
 #endif
   fio_io_s *io = (fio_io_s *)io_;
-  FIO___IO_TRACE("poll_ready enter", io);
   char *buf_mem = fio___on_ready_buf_new(1);
   size_t total = 0;
   FIO___IO_FLAG_UNSET(io,
@@ -106326,14 +106321,12 @@ connection_error:
 static void fio___io_poll_on_close(void *io_, void *ignr_) {
   (void)ignr_;
   fio_io_s *io = (fio_io_s *)io_;
-  FIO___IO_TRACE("poll_close enter", io);
   if (!(io->flags & FIO___IO_FLAG_CLOSE)) {
     FIO___IO_FLAG_SET(io, FIO___IO_FLAG_CLOSE_REMOTE);
     FIO_LOG_DEBUG2("(%d) fd %d closed by remote peer", FIO___IO.pid, io->fd);
   }
   /* allow on_data tasks to complete before closing? */
   fio_io_close_now(io);
-  FIO___IO_TRACE("poll_close free", io);
   fio___io_free2(io);
 }
 
@@ -106348,49 +106341,51 @@ static void fio___io_poll_on_timeout(void *io_, void *ignr_) {
 Event scheduling
 ***************************************************************************** */
 
-static void fio___io_poll_on_data_schd(void *io) {
-  FIO___IO_TRACE("schedule data before", (fio_io_s *)io);
+static void fio___io_poll_on_data_schd(void *io_) {
+  fio_io_s *io = fio___io_dup2((fio_io_s *)io_);
+  if (!io)
+    return;
   // FIO_LOG_DDEBUG2("(%d) `on_data` scheduled for fd %d.",
   //                 fio_io_pid(),
-  //                 fio_io_fd((fio_io_s *)io));
+  //                 fio_io_fd(io));
   // FIO___IO_FLAG_POLLIN_SET
-  fio___io_defer_no_wakeup(fio___io_poll_on_data,
-                           (void *)fio___io_dup2((fio_io_s *)io),
-                           NULL);
-  FIO___IO_TRACE("schedule data after", (fio_io_s *)io);
+  fio___io_defer_no_wakeup(fio___io_poll_on_data, (void *)io, NULL);
 }
-SFUNC void fio_io_on_data_schedule(fio_io_s *io) {
-  if (!io || (io->flags & FIO___IO_FLAG_CLOSED_ALL))
+SFUNC void fio_io_on_data_schedule(fio_io_s *io_) {
+  fio_io_s *io = fio___io_dup2(io_);
+  if (!io)
     return;
-  if (!(FIO___IO_FLAG_SET(io, FIO___IO_FLAG_DATA_SCHD) &
+  if (!(io->flags & FIO___IO_FLAG_CLOSED_ALL) &&
+      !(FIO___IO_FLAG_SET(io, FIO___IO_FLAG_DATA_SCHD) &
         FIO___IO_FLAG_DATA_SCHD)) {
-    fio___io_defer_no_wakeup(fio___io_poll_on_data,
-                             (void *)fio___io_dup2(io),
-                             NULL);
+    fio___io_defer_no_wakeup(fio___io_poll_on_data, (void *)io, NULL);
+    return;
   }
+  fio___io_free2(io);
 }
 
-static void fio___io_poll_on_ready_schd(void *io) {
-  FIO___IO_TRACE("schedule ready before", (fio_io_s *)io);
-  if (!(FIO___IO_FLAG_SET((fio_io_s *)io, FIO___IO_FLAG_WRITE_SCHD) &
+static void fio___io_poll_on_ready_schd(void *io_) {
+  fio_io_s *io = fio___io_dup2((fio_io_s *)io_);
+  if (!io)
+    return;
+  if (!(FIO___IO_FLAG_SET(io, FIO___IO_FLAG_WRITE_SCHD) &
         FIO___IO_FLAG_WRITE_SCHD)) {
     // FIO_LOG_DDEBUG2("(%d) `on_ready` scheduled for fd %d.",
     //                 fio_io_pid(),
-    //                 fio_io_fd((fio_io_s *)io));
-    fio___io_defer_no_wakeup(fio___io_poll_on_ready,
-                             (void *)fio___io_dup2((fio_io_s *)io),
-                             NULL);
+    //                 fio_io_fd(io));
+    fio___io_defer_no_wakeup(fio___io_poll_on_ready, (void *)io, NULL);
+    return;
   }
+  fio___io_free2(io);
 }
-static void fio___io_poll_on_close_schd(void *io) {
-  FIO___IO_TRACE("schedule close before", (fio_io_s *)io);
+static void fio___io_poll_on_close_schd(void *io_) {
+  fio_io_s *io = fio___io_dup2((fio_io_s *)io_);
+  if (!io)
+    return;
   // FIO_LOG_DDEBUG2("(%d) remote closure for fd %d.",
   //                 fio_io_pid(),
-  //                 fio_io_fd((fio_io_s *)io));
-  fio___io_defer_no_wakeup(fio___io_poll_on_close,
-                           (void *)fio___io_dup2((fio_io_s *)io),
-                           NULL);
-  FIO___IO_TRACE("schedule close after", (fio_io_s *)io);
+  //                 fio_io_fd(io));
+  fio___io_defer_no_wakeup(fio___io_poll_on_close, (void *)io, NULL);
 }
 
 /* *****************************************************************************
