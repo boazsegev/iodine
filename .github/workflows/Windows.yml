@@ -47,7 +47,10 @@ jobs:
           Write-Output "::error title=connection_spec diagnostics::connection_spec did not exit within 30 seconds"
           throw 'connection_spec did not exit within 30 seconds'
         }
-        $output = @((Get-Content $stdout), (Get-Content $stderr)) | Where-Object { $_ }
+        $output = @()
+        $output += @(Get-Content $stdout)
+        $output += @(Get-Content $stderr)
+        $output = $output | Where-Object { $_ }
         $output | Write-Output
         if ($process.ExitCode -ne 0) {
           $diagnosticOutput = $output | Where-Object { $_ -match 'TRACE_DESTROY.*connecting=1|FATAL|NoMethodError|examples|failures' }
