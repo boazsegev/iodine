@@ -1653,11 +1653,14 @@ static void *iodine_io_raw_client_on_attach_in_gvl(void *args_) {
   iodine_io_raw_client_attach_args_s *args =
       (iodine_io_raw_client_attach_args_s *)args_;
   VALUE connection = (VALUE)fio_io_udata(args->io);
-  if (!connection || connection == Qnil)
+  iodine_connection_s *c = NULL;
+  /* A missing wrapper is unrecoverable - close rather than leak a live IO
+   * whose every callback would bail out on the NULL udata. */
+  if (!connection || connection == Qnil ||
+      !(c = iodine_connection_ptr(connection))) {
+    args->should_close = 1;
     return NULL;
-  iodine_connection_s *c = iodine_connection_ptr(connection);
-  if (!c)
-    return NULL;
+  }
   c->io = args->io;
   args->should_close = iodine_io_raw_client_connect_failed(args->io);
   if (args->should_close)
@@ -1687,7 +1690,9 @@ static void *iodine_io_raw_on_data_in_GVL(void *info_) {
   if (!connection || connection == Qnil)
     return NULL;
   iodine_connection_s *c = iodine_connection_ptr(connection);
-  VALUE buf = rb_usascii_str_new(i->buf, (long)i->len);
+  /* Raw TCP data is binary - forcing US-ASCII corrupts any byte > 0x7F
+   * (invalid encoding, broken `==` / `<<` against binary Strings). */
+  VALUE buf = rb_str_new(i->buf, (long)i->len);
   c->store[IODINE_CONNECTION_STORE_tmp] = buf;
   VALUE args[] = {connection, buf};
   iodine_ruby_call_inside(c->store[IODINE_CONNECTION_STORE_handler],
@@ -2370,7 +2375,11 @@ static void *iodine_io_raw_client_on_close_in_gvl(void *args_) {
   iodine_connection_s *c = iodine_connection_ptr(args->connection);
   if (!c)
     return NULL;
-  args->protocol = fio_io_protocol(c->io);
+  /* `c->io` may be NULL if the IO was never attached (e.g., an early failure
+   * path already cleared it). The protocol is owned by the IO - if there's
+   * no IO, `on_failed` owns the cleanup instead. */
+  if (c->io)
+    args->protocol = fio_io_protocol(c->io);
   args->handler = c->store[IODINE_CONNECTION_STORE_handler];
   c->io = NULL;
   iodine_ruby_call_inside(args->handler,
@@ -2466,6 +2475,7 @@ static VALUE iodine_connection_initialize(int argc, VALUE *argv, VALUE self) {
                            .protocol = protocol,
                            .udata = (void *)self,
                            .tls = args.settings.tls,
+                           .timeout = protocol->timeout,
                            .on_failed = iodine_io_raw_client_on_failed);
   }
   return self;

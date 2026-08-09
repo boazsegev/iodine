@@ -61,6 +61,7 @@ FIO_SFUNC void iodine_store___gc_start(void);
 FIO_SFUNC void iodine_store___cache(VALUE o);
 FIO_SFUNC void iodine_store___hold(VALUE o);
 FIO_SFUNC void iodine_store___release(VALUE o);
+FIO_SFUNC VALUE iodine_store___held_count(VALUE self);
 FIO_SFUNC void iodine_store___on_gc(void (*fn)(void *), void *arg);
 FIO_SFUNC VALUE iodine_store___frozen_str(fio_str_info_s n);
 FIO_SFUNC VALUE iodine_store___header_name(fio_str_info_s n);
@@ -237,6 +238,18 @@ FIO_SFUNC void iodine_store___release(VALUE o) {
   fio_thread_mutex_unlock(&STORE.lock);
 }
 
+/** Returns the number of Ruby objects currently protected from the GC.
+ *
+ *     Iodine::Base.store_size
+ *
+ * Unlike GC-dependent probes (WeakRef + GC.start), this count is
+ * deterministic: it reflects actual `STORE.hold` / `STORE.release` balance,
+ * unaffected by conservative stack scanning. */
+FIO_SFUNC VALUE iodine_store___held_count(VALUE self) {
+  (void)self;
+  return RB_SIZE2NUM((size_t)iodine_reference_store_map_count(&STORE.map));
+}
+
 FIO_SFUNC VALUE iodine_store___frozen_str(fio_str_info_s n) {
   VALUE r;
   fio_thread_mutex_lock(&STORE.lock);
@@ -389,6 +402,10 @@ static void iodine_setup_value_reference_counter(VALUE klass) {
   rb_define_singleton_method(klass,
                              "print_debug",
                              iodine_store___print_debug,
+                             0);
+  rb_define_singleton_method(klass,
+                             "store_size",
+                             iodine_store___held_count,
                              0);
   rb_define_singleton_method(klass,
                              "cache_limit=",

@@ -49,7 +49,3 @@ jobs:
         }
     - name: Run tests
       run: bundle exec rake spec
-      env:
-        # TEMP diagnostic: surface Iodine::Logger breadcrumbs (where does the
-        # raw TCP reactor cycle die on Windows?) - remove once root-caused.
-        IODINE_LOG_LEVEL: 5
