@@ -647,7 +647,7 @@ FIO_SFUNC VALUE iodine_connection_cookie_get(VALUE o, VALUE name) {
       fio_http_cookie(c->http, RSTRING_PTR(name), RSTRING_LEN(name));
   if (!str.buf)
     return Qnil;
-  return rb_usascii_str_new(str.buf, str.len);
+  return rb_enc_str_new(str.buf, str.len, IodineBinaryEncoding);
 }
 
 FIO_SFUNC VALUE iodine_connection_cookie_set(int argc, VALUE *argv, VALUE o) {
@@ -718,9 +718,9 @@ static int iodine_connection_cookie_each_task(fio_http_s *h,
                                               void *info) {
   VALUE *argv = (VALUE *)info;
   ++argv;
-  argv[0] = rb_usascii_str_new(name.buf, name.len);
+  argv[0] = rb_enc_str_new(name.buf, name.len, IodineBinaryEncoding);
   STORE.cache(argv[0]);
-  argv[1] = rb_usascii_str_new(value.buf, value.len);
+  argv[1] = rb_enc_str_new(value.buf, value.len, IodineBinaryEncoding);
   STORE.cache(argv[1]);
   rb_yield_values2(2, argv);
   argv[0] = Qnil;
@@ -778,7 +778,7 @@ FIO_SFUNC VALUE iodine_connection_body_gets(int argc, VALUE *argv, VALUE o) {
   fio_str_info_s s = fio_http_body_read_until(c->http, '\n', length);
   if (!s.len)
     return Qnil;
-  return rb_usascii_str_new(s.buf, s.len);
+  return rb_enc_str_new(s.buf, s.len, IodineBinaryEncoding);
 }
 
 FIO_SFUNC VALUE iodine_connection_body_read(int argc, VALUE *argv, VALUE o) {
@@ -798,7 +798,7 @@ FIO_SFUNC VALUE iodine_connection_body_read(int argc, VALUE *argv, VALUE o) {
   fio_str_info_s s = fio_http_body_read(c->http, length);
   if (s.len) {
     if (rbuf == Qnil)
-      rbuf = rb_usascii_str_new(s.buf, s.len);
+      rbuf = rb_enc_str_new(s.buf, s.len, IodineBinaryEncoding);
     else
       rb_str_cat(rbuf, s.buf, s.len);
   }
@@ -1690,9 +1690,7 @@ static void *iodine_io_raw_on_data_in_GVL(void *info_) {
   if (!connection || connection == Qnil)
     return NULL;
   iodine_connection_s *c = iodine_connection_ptr(connection);
-  /* Raw TCP data is binary - forcing US-ASCII corrupts any byte > 0x7F
-   * (invalid encoding, broken `==` / `<<` against binary Strings). */
-  VALUE buf = rb_str_new(i->buf, (long)i->len);
+  VALUE buf = rb_enc_str_new(i->buf, (long)i->len, IodineBinaryEncoding);
   c->store[IODINE_CONNECTION_STORE_tmp] = buf;
   VALUE args[] = {connection, buf};
   iodine_ruby_call_inside(c->store[IODINE_CONNECTION_STORE_handler],
