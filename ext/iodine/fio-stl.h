@@ -105775,10 +105775,11 @@ FIO_SFUNC void fio___io_destroy(fio_io_s *io) {
 #undef FIO___RECURSIVE_INCLUDE
 
 #define FIO___IO_TRACE(name, io)                                               \
-  FIO_LOG_WARNING("TRACE_IO %s io=%p refs=%zu fd=%d flags=%u",                 \
+  FIO_LOG_WARNING("TRACE_IO %s io=%p refs=%zu count=%zu fd=%d flags=%u",       \
                   (name),                                                      \
                   (void *)(io),                                                \
                   fio___io_references(io),                                     \
+                  FIO_LEAK_COUNTER_COUNT(fio___io),                            \
                   (int)(io)->fd,                                               \
                   (unsigned)(io)->flags)
 
