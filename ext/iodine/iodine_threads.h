@@ -100,9 +100,11 @@ to ensure Ruby compatibility. They're used by facil.io's internal
 worker/thread management.
 
 Threading Model:
-- Threads are Ruby Thread objects (VALUE) stored as fio_thread_t
-- Thread functions run outside the GVL for I/O operations
-- GVL is acquired when calling Ruby code
+- POSIX fio_thread_t values store rooted Ruby Thread objects directly.
+- Windows fio_thread_t values point to wrappers that root the Ruby Thread and
+  own a waitable completion event (or duplicated native handle).
+- Thread functions run outside the GVL for I/O operations.
+- GVL is acquired when calling Ruby code.
 
 Process Model:
 - Workers are forked via Ruby's Process.fork
@@ -264,9 +266,20 @@ static VALUE iodine___thread_start_in_gvl(void *args_) {
 #endif
 }
 
+static VALUE iodine___thread_create_protected(VALUE args_) {
+  return rb_thread_create(iodine___thread_start_in_gvl, (void *)args_);
+}
+
 static void *iodine___thread_create_in_gvl(void *args_) {
   iodine___thread_starter_s *args = (iodine___thread_starter_s *)args_;
-  VALUE thread = rb_thread_create(iodine___thread_start_in_gvl, args_);
+  int exception = 0;
+  VALUE thread =
+      rb_protect(iodine___thread_create_protected, (VALUE)args_, &exception);
+  if (exception) {
+    iodine_handle_exception(NULL);
+    rb_set_errinfo(Qnil);
+    thread = Qnil;
+  }
 #ifdef _WIN32
   args->handle->thread = thread;
 #else
@@ -289,6 +302,7 @@ static void *iodine___thread_create_in_gvl(void *args_) {
 FIO_IFUNC int fio_thread_create(fio_thread_t *t,
                                 void *(*fn)(void *),
                                 void *arg) {
+  *t = 0;
 #ifdef _WIN32
   iodine___thread_handle_s *handle = (iodine___thread_handle_s *)
       FIO_MEM_REALLOC_(NULL, 0, sizeof(*handle), 0);
@@ -344,7 +358,6 @@ FIO_IFUNC int fio_thread_join(fio_thread_t *t) {
   iodine_c_call_without(iodine___thread_wait_without_gvl, &args);
   int failed = args.result != WAIT_OBJECT_0;
   STORE.release(handle->thread);
-  *t = 0;
   iodine___thread_handle_release(handle);
   if (failed) {
     errno = (int)args.error;
