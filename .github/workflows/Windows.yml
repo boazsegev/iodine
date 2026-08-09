@@ -53,7 +53,20 @@ jobs:
         $output = $output | Where-Object { $_ }
         $output | Write-Output
         if ($process.ExitCode -ne 0) {
-          $diagnostics = (($output | Select-Object -Last 100) -replace '%', '%25') -join '%0A'
+          $bugIndex = -1
+          for ($index = 0; $index -lt $output.Count; $index++) {
+            if ($output[$index] -match '\[BUG\]') {
+              $bugIndex = $index
+              break
+            }
+          }
+          if ($bugIndex -ge 0) {
+            $diagnosticEnd = [Math]::Min($output.Count - 1, $bugIndex + 160)
+            $diagnosticOutput = @($output[$bugIndex..$diagnosticEnd])
+          } else {
+            $diagnosticOutput = @($output | Select-Object -Last 100)
+          }
+          $diagnostics = (($diagnosticOutput -replace '%', '%25') -join '%0A')
           Write-Output "::error title=connection_spec diagnostics::$diagnostics"
           throw "connection_spec exited with code $($process.ExitCode)"
         }
