@@ -36631,12 +36631,12 @@ Poll Monitoring Implementation - possibly externed functions.
 FIO_IFUNC void fio___poll_handle_events(fio_poll_s *p,
                                         void *udata,
                                         unsigned short revents) {
-  if ((revents & POLLOUT))
-    p->settings.on_ready(udata);
   if ((revents & (POLLIN | POLLPRI)))
     p->settings.on_data(udata);
   if ((revents & (POLLHUP | POLLERR | POLLNVAL | FIO_POLL_EX_FLAGS)))
     p->settings.on_close(udata);
+  else if ((revents & POLLOUT))
+    p->settings.on_ready(udata);
 }
 
 /**
