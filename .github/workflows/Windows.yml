@@ -41,13 +41,6 @@ jobs:
         bundle exec ruby -Ilib -e
         "require './lib/iodine'; Iodine.workers = 0; Iodine.threads = 0;
         Iodine.run_after(100) { Iodine.stop }; Iodine.start"
-    - name: Test polling join experiment
-      run: >-
-        bundle exec ruby -Ilib -e
-        "require './lib/iodine';
-        Thread.class_eval { define_method(:join) { |*_args| sleep(0.001) while alive?; self } };
-        Iodine.workers = 0; Iodine.threads = 1;
-        Iodine.run_after(100) { Iodine.stop }; Iodine.start"
     - name: Diagnose reactor thread teardown
       shell: pwsh
       run: |

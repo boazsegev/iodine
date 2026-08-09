@@ -256,17 +256,38 @@ error_starting_thread:
  * @param t Pointer to thread handle
  * @return 0 on success, -1 on error
  */
+#ifdef _WIN32
+static void *iodine___thread_join_wait_tick(void *ignr) {
+  (void)ignr;
+  Sleep(1);
+  return NULL;
+}
+#endif
+
 FIO_IFUNC int fio_thread_join(fio_thread_t *t) {
   /* The handle pointer may belong to the joining thread's stack and become
-   * invalid as soon as join returns. Copy the VALUE while it is still valid,
-   * and keep the copied handle rooted until the Ruby call completes. */
+   * invalid as soon as the target finishes. Copy the VALUE while it is still
+   * valid, and keep the copied handle rooted until waiting completes. */
   fio_thread_t thread = t[0];
-  iodine_caller_result_s r =
-      iodine_ruby_call_anywhere(thread, IODINE_JOIN_ID, 0, NULL);
+  iodine_caller_result_s r = {0};
+#ifdef _WIN32
+  /* facil.io's queue manager joins a Ruby worker while both execute inside
+   * outer rb_thread_call_without_gvl regions. Re-entering Ruby and blocking in
+   * Thread#join reproducibly leaves the manager's native mutex abandoned on
+   * Windows. A false alive? result is sufficient here: CRuby sets it only
+   * after the Ruby thread function (and therefore the facil.io C task) returns.
+   * Yield outside the GVL so the target can finish its Ruby cleanup. */
+  for (;;) {
+    r = iodine_ruby_call_anywhere(thread, IODINE_ALIVE_ID, 0, NULL);
+    if (r.exception || !RTEST(r.result))
+      break;
+    iodine_c_call_without(iodine___thread_join_wait_tick, NULL);
+  }
+#else
+  r = iodine_ruby_call_anywhere(thread, IODINE_JOIN_ID, 0, NULL);
+#endif
   STORE.release(thread);
-  if (r.exception)
-    return -1;
-  return 0;
+  return r.exception ? -1 : 0;
 }
 
 /**
