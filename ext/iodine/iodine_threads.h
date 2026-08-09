@@ -209,7 +209,7 @@ static void iodine___thread_handle_release(iodine___thread_handle_s *handle) {
   if (fio_atomic_sub(&handle->refs, 1) != 1)
     return;
   CloseHandle(handle->wait_handle);
-  FIO_MEM_FREE_(handle, sizeof(*handle));
+  FIO_MEM_FREE(handle, sizeof(*handle));
 }
 
 typedef struct {
@@ -305,13 +305,13 @@ FIO_IFUNC int fio_thread_create(fio_thread_t *t,
   *t = 0;
 #ifdef _WIN32
   iodine___thread_handle_s *handle = (iodine___thread_handle_s *)
-      FIO_MEM_REALLOC_(NULL, 0, sizeof(*handle), 0);
+      FIO_MEM_REALLOC(NULL, 0, sizeof(*handle), 0);
   if (!handle)
     goto error_starting_thread;
   *handle = (iodine___thread_handle_s){.thread = Qnil, .refs = 2};
   handle->wait_handle = CreateEventA(NULL, TRUE, FALSE, NULL);
   if (!handle->wait_handle) {
-    FIO_MEM_FREE_(handle, sizeof(*handle));
+    FIO_MEM_FREE(handle, sizeof(*handle));
     goto error_starting_thread;
   }
   *t = (fio_thread_t)(uintptr_t)handle;
@@ -332,7 +332,7 @@ FIO_IFUNC int fio_thread_create(fio_thread_t *t,
 #ifdef _WIN32
   if (handle->thread == Qnil) {
     CloseHandle(handle->wait_handle);
-    FIO_MEM_FREE_(handle, sizeof(*handle));
+    FIO_MEM_FREE(handle, sizeof(*handle));
     *t = 0;
     goto error_starting_thread;
   }
@@ -434,7 +434,7 @@ FIO_IFUNC fio_thread_t fio_thread_current(void) {
   if (r.exception)
     return 0;
   iodine___thread_handle_s *handle = (iodine___thread_handle_s *)
-      FIO_MEM_REALLOC_(NULL, 0, sizeof(*handle), 0);
+      FIO_MEM_REALLOC(NULL, 0, sizeof(*handle), 0);
   if (!handle)
     return 0;
   *handle = (iodine___thread_handle_s){.thread = r.result, .refs = 1};
@@ -445,7 +445,7 @@ FIO_IFUNC fio_thread_t fio_thread_current(void) {
                        SYNCHRONIZE,
                        FALSE,
                        0)) {
-    FIO_MEM_FREE_(handle, sizeof(*handle));
+    FIO_MEM_FREE(handle, sizeof(*handle));
     return 0;
   }
   STORE.hold(handle->thread);
