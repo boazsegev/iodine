@@ -50,8 +50,8 @@ jobs:
         $output = @((Get-Content $stdout), (Get-Content $stderr)) | Where-Object { $_ }
         $output | Write-Output
         if ($process.ExitCode -ne 0) {
-          $diagnosticOutput = $output | Where-Object { $_ -match 'TRACE_DESTROY|FATAL|NoMethodError|examples|failures' }
-          $diagnostics = ((($diagnosticOutput | Select-Object -Last 30) -replace '%', '%25') -join '%0A')
+          $diagnosticOutput = $output | Where-Object { $_ -match 'TRACE_DESTROY.*connecting=1|FATAL|NoMethodError|examples|failures' }
+          $diagnostics = (($diagnosticOutput -replace '%', '%25') -join '%0A')
           Write-Output "::error title=connection_spec diagnostics::$diagnostics"
           throw "connection_spec exited with code $($process.ExitCode)"
         }

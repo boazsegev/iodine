@@ -105735,12 +105735,14 @@ FIO_IFUNC void fio___io_monitor_forget(fio_io_s *io) {
 }
 
 FIO_SFUNC void fio___io_destroy(fio_io_s *io) {
-  FIO_LOG_WARNING("TRACE_DESTROY io=%p fd=%d flags=%u pr=%p udata=%p",
-                  (void *)io,
-                  (int)io->fd,
-                  (unsigned)io->flags,
-                  (void *)io->pr,
-                  io->udata);
+  FIO_LOG_WARNING(
+      "TRACE_DESTROY io=%p fd=%d flags=%u pr=%p udata=%p connecting=%u",
+      (void *)io,
+      (int)io->fd,
+      (unsigned)io->flags,
+      (void *)io->pr,
+      io->udata,
+      (unsigned)((void *)io->pr == io->udata));
   fio_io_protocol_s *pr = io->pr;
   FIO_LIST_REMOVE(&io->node);
 #if FIO_IO_COUNT_STORAGE
