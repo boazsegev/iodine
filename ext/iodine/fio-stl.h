@@ -36111,6 +36111,13 @@ typedef struct {
   void (*on_ready)(void *udata);
   /** callback for closed connections and / or connections with errors. */
   void (*on_close)(void *udata);
+  /**
+   * Optional lifetime pin used by the poll/WSAPoll snapshot backend.
+   * Returns a retained udata pointer, or NULL when destruction already began.
+   */
+  void *(*udata_retain)(void *udata);
+  /** Releases a pointer returned by `udata_retain`. */
+  void (*udata_release)(void *udata);
 } fio_poll_settings_s;
 
 /** Initializes the polling object, allocating its resources. */
@@ -36173,7 +36180,11 @@ FIO_IFUNC const char *fio_poll_engine(void) { return FIO_POLL_ENGINE_STR; }
   if (!(settings_dest).on_ready)                                               \
     (settings_dest).on_ready = fio___poll_ev_mock;                             \
   if (!(settings_dest).on_close)                                               \
-    (settings_dest).on_close = fio___poll_ev_mock;
+    (settings_dest).on_close = fio___poll_ev_mock;                             \
+  if (!!(settings_dest).udata_retain != !!(settings_dest).udata_release) {      \
+    (settings_dest).udata_retain = NULL;                                       \
+    (settings_dest).udata_release = NULL;                                      \
+  }
 
 SFUNC void fio___poll_ev_mock(void *udata);
 
@@ -36748,6 +36759,12 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
     fio___poll_i_s *entry = p->map.ary + pos;
     if (!(entry->flags & flag_mask))
       continue;
+    void *udata = entry->udata;
+    if (cpy.settings.udata_retain &&
+        !(udata = cpy.settings.udata_retain(udata))) {
+      entry->flags = 0;
+      continue;
+    }
     pfd[r].fd = entry->fd;
 #if FIO_OS_WIN
     /* POLLPRI is not supported by WSAPoll and causes WSAEINVAL */
@@ -36755,7 +36772,7 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
 #else
     pfd[r].events = (short)(entry->flags & FIO_POLL_POSSIBLE_FLAGS);
 #endif
-    uary[r] = entry->udata;
+    uary[r] = udata;
     entry->flags = 0;
     ++r;
   }
@@ -36810,6 +36827,10 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
       entry->flags |= (unsigned short)pfd[j].events;
   }
   FIO___LOCK_UNLOCK(p->lock);
+  if (cpy.settings.udata_release) {
+    for (int j = 0; j < r; ++j)
+      cpy.settings.udata_release(uary[j]);
+  }
   FIO_LEAK_COUNTER_ON_FREE(fio___poll_review_buffer);
   FIO_MEM_FREE_(pfd, alloc_size);
   return events;
@@ -36832,12 +36853,22 @@ SFUNC void fio_poll_close_all(fio_poll_s *p) {
   FIO___LOCK_LOCK(p->lock);
   fio_poll_s cpy = *p;
   p->map = (fio___poll_map_s){0};
-  FIO___LOCK_UNLOCK(p->lock);
   const unsigned short flag_mask = FIO_POLL_POSSIBLE_FLAGS | FIO_POLL_EX_FLAGS;
+  if (cpy.settings.udata_retain) {
+    FIO_IMAP_EACH(fio___poll_map, (&cpy.map), pos) {
+      fio___poll_i_s *entry = cpy.map.ary + pos;
+      if ((entry->flags & flag_mask) &&
+          !(entry->udata = cpy.settings.udata_retain(entry->udata)))
+        entry->flags = 0;
+    }
+  }
+  FIO___LOCK_UNLOCK(p->lock);
   FIO_IMAP_EACH(fio___poll_map, (&cpy.map), pos) {
     if ((cpy.map.ary[pos].flags & flag_mask)) {
       cpy.settings.on_close(cpy.map.ary[pos].udata);
       fio_sock_close(cpy.map.ary[pos].fd);
+      if (cpy.settings.udata_release)
+        cpy.settings.udata_release(cpy.map.ary[pos].udata);
     }
   }
   fio___poll_map_destroy(&cpy.map);
@@ -106341,6 +106372,14 @@ static void fio___io_poll_on_timeout(void *io_, void *ignr_) {
 Event scheduling
 ***************************************************************************** */
 
+static void *fio___io_poll_udata_retain(void *io_) {
+  return (void *)fio___io_dup2((fio_io_s *)io_);
+}
+
+static void fio___io_poll_udata_release(void *io_) {
+  fio___io_free2((fio_io_s *)io_);
+}
+
 static void fio___io_poll_on_data_schd(void *io_) {
   fio_io_s *io = fio___io_dup2((fio_io_s *)io_);
   if (!io)
@@ -107046,7 +107085,9 @@ FIO_CONSTRUCTOR(fio___io) {
   fio_poll_init(&FIO___IO.poll,
                 .on_data = fio___io_poll_on_data_schd,
                 .on_ready = fio___io_poll_on_ready_schd,
-                .on_close = fio___io_poll_on_close_schd);
+                .on_close = fio___io_poll_on_close_schd,
+                .udata_retain = fio___io_poll_udata_retain,
+                .udata_release = fio___io_poll_udata_release);
   fio___io_protocol_init_test(&FIO___IO_MOCK_PROTOCOL, 0);
   fio_state_callback_add(FIO_CALL_IN_CHILD, fio___io_after_fork, NULL);
   fio_state_callback_add(FIO_CALL_AT_EXIT, fio___io_cleanup_at_exit, NULL);
