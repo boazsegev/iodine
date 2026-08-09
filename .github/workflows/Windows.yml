@@ -36,6 +36,11 @@ jobs:
         echo "CI=false" >> $env:GITHUB_ENV
     - name: Compile Iodine
       run: bundle exec rake compile
+    - name: Verify minimal reactor cycle
+      run: >-
+        bundle exec ruby -Ilib -e
+        "require './lib/iodine'; Iodine.workers = 0; Iodine.threads = 1;
+        Iodine.run_after(100) { Iodine.stop }; Iodine.start"
     - name: Verify connection spec exits promptly
       shell: pwsh
       run: |
