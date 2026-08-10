@@ -157,22 +157,12 @@ typedef enum {
  * These track the connection's current state and type.
  */
 typedef enum {
-  /** Headers copied to Ruby hash */
-  IODINE_CONNECTION_HEADERS_COPIED = 1,
-  /** Connection upgraded to SSE */
-  IODINE_CONNECTION_UPGRADE_SSE = 2,
-  /** Connection upgraded to WebSocket */
-  IODINE_CONNECTION_UPGRADE_WS = 4,
-  /** Any upgrade (SSE or WS) */
-  IODINE_CONNECTION_UPGRADE = (2 | 4),
-  /** Connection close scheduled */
-  IODINE_CONNECTION_CLOSED = 8,
-  /** This is a client connection */
-  IODINE_CONNECTION_CLIENT = 16,
-  /** Raw client protocol attachment completed. */
-  IODINE_CONNECTION_CLIENT_ATTACHED = 32,
-  /** Raw client terminal cleanup was claimed. */
-  IODINE_CONNECTION_CLIENT_TERMINATED = 64,
+  IODINE_CONNECTION_HEADERS_COPIED = 1, /**< Headers copied to Ruby hash */
+  IODINE_CONNECTION_UPGRADE_SSE = 2,    /**< Connection upgraded to SSE */
+  IODINE_CONNECTION_UPGRADE_WS = 4,     /**< Connection upgraded to WebSocket */
+  IODINE_CONNECTION_UPGRADE = (2 | 4),  /**< Any upgrade (SSE or WS) */
+  IODINE_CONNECTION_CLOSED = 8,         /**< Connection close scheduled */
+  IODINE_CONNECTION_CLIENT = 16,        /**< This is a client connection */
 } iodine_connection_flags_e;
 
 /**
@@ -1671,12 +1661,7 @@ static void *iodine_io_raw_client_on_attach_in_gvl(void *args_) {
     args->should_close = 1;
     return NULL;
   }
-  if (c->flags & IODINE_CONNECTION_CLIENT_TERMINATED) {
-    args->should_close = 1;
-    return NULL;
-  }
   c->io = args->io;
-  c->flags |= IODINE_CONNECTION_CLIENT_ATTACHED;
   args->should_close = iodine_io_raw_client_connect_failed(args->io);
   if (args->should_close)
     return NULL;
@@ -2366,11 +2351,9 @@ typedef struct {
   VALUE connection;
   VALUE handler;
   fio_io_protocol_s *protocol;
-  unsigned from_failed : 1;
-  unsigned claimed : 1;
 } iodine_io_raw_client_cleanup_s;
 
-/** Releases raw-client resources after terminal ownership was claimed. */
+/** Releases raw-client resources after Ruby-facing cleanup. */
 static void *iodine_io_raw_client_cleanup_without_gvl(void *args_) {
   iodine_io_raw_client_cleanup_s *args =
       (iodine_io_raw_client_cleanup_s *)args_;
@@ -2383,60 +2366,64 @@ static void *iodine_io_raw_client_cleanup_without_gvl(void *args_) {
   return NULL;
 }
 
-/** Claims exactly one terminal path while holding the GVL. */
-static void *iodine_io_raw_client_terminal_in_gvl(void *args_) {
+/** Called after the connection was closed (called once per IO). */
+static void *iodine_io_raw_client_on_close_in_gvl(void *args_) {
   iodine_io_raw_client_cleanup_s *args =
       (iodine_io_raw_client_cleanup_s *)args_;
   iodine_connection_s *c = iodine_connection_ptr(args->connection);
-  if (!c || (c->flags & IODINE_CONNECTION_CLIENT_TERMINATED))
+  if (!c)
     return NULL;
-  if (args->from_failed) {
-    /* After protocol attachment, `on_close` exclusively owns cleanup. */
-    if (c->flags & IODINE_CONNECTION_CLIENT_ATTACHED)
-      return NULL;
-  } else {
-    /* `on_close` belongs only to an attached raw-client protocol. */
-    if (!(c->flags & IODINE_CONNECTION_CLIENT_ATTACHED))
-      return NULL;
-    if (c->io)
-      args->protocol = fio_io_protocol(c->io);
-  }
-  c->flags |= IODINE_CONNECTION_CLIENT_TERMINATED;
-  args->claimed = 1;
+  /* `c->io` may be NULL if the IO was never attached (e.g., an early failure
+   * path already cleared it). The protocol is owned by the IO - if there's
+   * no IO, `on_failed` owns the cleanup instead. */
+  if (c->io)
+    args->protocol = fio_io_protocol(c->io);
   args->handler = c->store[IODINE_CONNECTION_STORE_handler];
   c->io = NULL;
+  iodine_ruby_call_inside(args->handler,
+                          IODINE_ON_CLOSE_ID,
+                          1,
+                          &args->connection);
   c->store[IODINE_CONNECTION_STORE_handler] = Qnil;
-  if (args->handler && args->handler != Qnil)
-    iodine_ruby_call_inside(args->handler,
-                            IODINE_ON_CLOSE_ID,
-                            1,
-                            &args->connection);
   return NULL;
 }
 
-/** Called after an attached raw-client connection was closed. */
 static void iodine_io_raw_client_on_close(void *buf, void *udata) {
   iodine_io_raw_client_cleanup_s args = {.connection = (VALUE)udata};
   if (!args.connection || args.connection == Qnil)
     return;
-  iodine_c_call_with(iodine_io_raw_client_terminal_in_gvl, &args);
-  if (args.claimed)
-    iodine_c_call_without(iodine_io_raw_client_cleanup_without_gvl, &args);
+  iodine_c_call_with(iodine_io_raw_client_on_close_in_gvl, &args);
+  iodine_c_call_without(iodine_io_raw_client_cleanup_without_gvl, &args);
   (void)buf;
 }
 
-/** Releases an outgoing raw client after a pre-attachment failure. */
+/** Clears a failed raw client's Ruby state while holding the GVL. */
+static void *iodine_io_raw_client_on_failed_in_gvl(void *args_) {
+  iodine_io_raw_client_cleanup_s *args =
+      (iodine_io_raw_client_cleanup_s *)args_;
+  iodine_connection_s *c = iodine_connection_ptr(args->connection);
+  if (!c)
+    return NULL;
+  args->handler = c->store[IODINE_CONNECTION_STORE_handler];
+  c->io = NULL;
+  iodine_ruby_call_inside(args->handler,
+                          IODINE_ON_CLOSE_ID,
+                          1,
+                          &args->connection);
+  c->store[IODINE_CONNECTION_STORE_handler] = Qnil;
+  return NULL;
+}
+
+/** Releases an outgoing raw client's resources after a failed connection. */
 static void iodine_io_raw_client_on_failed(fio_io_protocol_s *protocol,
                                            void *udata) {
   iodine_io_raw_client_cleanup_s args = {
       .connection = (VALUE)udata,
       .protocol = protocol,
-      .from_failed = 1,
   };
   if (args.connection && args.connection != Qnil)
-    iodine_c_call_with(iodine_io_raw_client_terminal_in_gvl, &args);
-  if (args.claimed)
-    iodine_c_call_without(iodine_io_raw_client_cleanup_without_gvl, &args);
+    iodine_c_call_with(iodine_io_raw_client_on_failed_in_gvl, &args);
+  iodine_c_call_without(iodine_io_raw_client_cleanup_without_gvl, &args);
 }
 
 /** Initializes a Connection object. */
@@ -2482,15 +2469,12 @@ static VALUE iodine_connection_initialize(int argc, VALUE *argv, VALUE self) {
     protocol->on_attach = iodine_io_raw_client_on_attach;
     protocol->on_close = iodine_io_raw_client_on_close;
     protocol->timeout = 1000UL * (uint32_t)args.settings.ws_timeout;
-    /* The returned IO is reactor-owned and valid only until the next event.
-     * `on_attach` stores the callback-scoped pointer once attachment completes.
-     */
-    (void)fio_io_connect(args.url.buf,
-                         .protocol = protocol,
-                         .udata = (void *)self,
-                         .tls = args.settings.tls,
-                         .timeout = protocol->timeout,
-                         .on_failed = iodine_io_raw_client_on_failed);
+    c->io = fio_io_connect(args.url.buf,
+                           .protocol = protocol,
+                           .udata = (void *)self,
+                           .tls = args.settings.tls,
+                           .timeout = protocol->timeout,
+                           .on_failed = iodine_io_raw_client_on_failed);
   }
   return self;
 }

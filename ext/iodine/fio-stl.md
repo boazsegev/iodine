@@ -10042,13 +10042,17 @@ The public API is documented in [`102 poll api.md`](./102%20poll%20api.md). This
 struct fio_poll_s {
   fio_poll_settings_s settings;
   fio___poll_map_s map;
+  fio___poll_fdset_s forgotten;
+  size_t review_depth;
   FIO___LOCK_TYPE lock;
 };
 ```
 
 The poll backend keeps monitored descriptors in an internal imap (`fio___poll_map_s`) and snapshots its armed flags before each `poll()` call. Descriptors added or re-armed during `fio_poll_review` update the retained map directly; surviving one-shot flags are restored when the call returns.
 
-`fio_poll_forget` from another thread removes the retained entry, so un-fired snapshot flags are not restored. It cannot suppress a callback for an event already returned by the in-flight `poll()` call.
+While a snapshot is live (`review_depth > 0`), a successful `fio_poll_forget` also records an fd-only tombstone in `p->forgotten` (an fd-keyed `fio___poll_fdset_s` — no `udata`). Before dispatching each fired event, the backend re-locks briefly, consumes any tombstone for that fd, and skips the stale callback without touching the snapshot's `udata`. Tombstones are freed when the last in-flight review ends, bounding their memory. This suppresses the use-after-free window in which `poll()` returns events for a descriptor whose `udata` was already freed by a concurrent forget.
+
+This is a **best-effort** suppression, matching the epoll/kqueue backends: a forget that lands between the per-event check and the callback may still fire that event (the same overlap window as an in-hand epoll/kqueue event list), so `fio_poll_forget` is not a cancellation guarantee. Callbacks never run under the lock, so they may safely call `fio_poll_monitor` / `fio_poll_forget` synchronously.
 
 #### `fio_poll_engine`
 
@@ -10068,7 +10072,7 @@ Additional helper available only in the poll backend. Closes every monitored soc
 
 - `POLLRDHUP` is used when available; otherwise the backend relies on `POLLHUP`, `POLLERR`, and `POLLNVAL` for close/error detection.
 - On Windows, `POLLPRI` is omitted because `WSAPoll` rejects it.
-- Fired events are stripped from the descriptor’s flags (one-shot semantics). Surviving flags are restored to retained entries after `poll()` returns; concurrent removals prevent that restoration but cannot retract an event already returned by `poll()`.
+- Fired events are stripped from the descriptor’s flags (one-shot semantics). Surviving flags are restored to retained entries after `poll()` returns; concurrent removals prevent that restoration, and fd tombstones give best-effort suppression of callbacks for descriptors forgotten while a snapshot was in flight.
 
 ------------------------------------------------------------
 # Task and Timer Queues
