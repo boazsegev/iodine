@@ -36190,13 +36190,13 @@ typedef struct {
   void (*on_close)(void *udata);
 } fio_poll_settings_s;
 
-/* NOTE: `fio_poll_forget` is not a cancellation guarantee. The poll/WSAPoll
- * backend performs best-effort suppression of stale-snapshot callbacks (an fd
- * forgotten while a review is in flight is tombstoned and skipped), matching
- * the epoll/kqueue semantics: an event whose dispatch already began may still
- * fire. Callbacks are never invoked while holding the poller's lock, so they
- * MAY safely call `fio_poll_monitor` / `fio_poll_forget` (avoid calling
- * `fio_poll_review` reentrantly on the same instance). */
+/* NOTE: `fio_poll_forget` is not a cancellation guarantee on any backend:
+ * an event already returned by the system call may still be dispatched.
+ * Thread safety covers the poller's internal state only; `udata` lifetime
+ * during dispatch is the caller's responsibility. The facil.io IO layer
+ * upholds this by only ever calling `fio_poll_forget` from the reactor
+ * thread (via deferred destruction) - never concurrently with a review and
+ * never from within a `fio_poll_settings_s` callback. */
 
 /** Initializes the polling object, allocating its resources. */
 FIO_IFUNC void fio_poll_init(fio_poll_s *p, fio_poll_settings_s);
@@ -36685,31 +36685,12 @@ FIO_TYPEDEF_IMAP_ARRAY(fio___poll_map,
 #undef FIO___POLL_IMAP_VALID
 #undef FIO___POLL_IMAP_HASH
 
-/* fd-only set for forget-tombstones (no udata - tombstones only mark fds). */
-#define FIO___POLL_FDSET_CMP(a, b) ((a)[0] == (b)[0])
-#define FIO___POLL_FDSET_HASH(o)  (fio_risky_ptr((void *)((uintptr_t)((o)[0]))))
-#define FIO___POLL_FDSET_VALID(o) (FIO_SOCK_FD_ISVALID((o)[0]) && (o)[0])
-FIO_TYPEDEF_IMAP_ARRAY(fio___poll_fdset,
-                       fio_socket_i,
-                       uint32_t,
-                       FIO___POLL_FDSET_HASH,
-                       FIO___POLL_FDSET_CMP,
-                       FIO___POLL_FDSET_VALID)
-#undef FIO___POLL_FDSET_CMP
-#undef FIO___POLL_FDSET_VALID
-#undef FIO___POLL_FDSET_HASH
-
 /* poll_review allocates this transient buffer after detaching the map. */
 FIO_LEAK_COUNTER_DEF(fio___poll_review_buffer)
 
 struct fio_poll_s {
   fio_poll_settings_s settings;
   fio___poll_map_s map;
-  /* fd-only tombstones: fds forgotten while a review snapshot may still be
-   * dispatched. Suppresses stale-snapshot callbacks (best-effort). */
-  fio___poll_fdset_s forgotten;
-  /* >0 while a live snapshot might still be dispatched. */
-  size_t review_depth;
   FIO___LOCK_TYPE lock;
 };
 
@@ -36723,8 +36704,6 @@ FIO_IFUNC void fio_poll_init FIO_NOOP(fio_poll_s *p, fio_poll_settings_s args) {
     *p = (fio_poll_s){
         .settings = args,
         .map = {0},
-        .forgotten = {0},
-        .review_depth = 0,
         .lock = FIO___LOCK_INIT,
     };
     FIO_POLL_VALIDATE(p->settings);
@@ -36736,7 +36715,6 @@ FIO_IFUNC void fio_poll_destroy(fio_poll_s *p) {
   if (!p)
     return;
   fio___poll_map_destroy(&p->map);
-  fio___poll_fdset_destroy(&p->forgotten);
   FIO___LOCK_DESTROY(p->lock);
 }
 
@@ -36866,10 +36844,6 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
     entry->flags = 0;
     ++r;
   }
-  /* A non-empty snapshot may still be dispatched after the unlock: concurrent
-   * fio_poll_forget calls must tombstone their fds (see p->forgotten). */
-  if (r)
-    ++p->review_depth;
   FIO___LOCK_UNLOCK(p->lock);
 
   /* A consumed one-shot entry remains in the map so it can be re-armed, but
@@ -36900,25 +36874,18 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
       if (!pfd[i].revents)
         continue;
       ++handled;
-      /* strip fired flags — one-shot: consumed events are not re-queued */
+      /* strip fired flags — one-shot: consumed events are not re-queued.
+       * Strip whole event groups: WSAPoll reports sub-band bits (e.g.
+       * POLLRDNORM) while POLLIN/POLLOUT are supersets, so a raw bitwise
+       * strip can leave band bits (e.g. POLLRDBAND) armed on Windows. */
+      if (pfd[i].revents & POLLIN)
+        pfd[i].events &= (short)~POLLIN;
+      if (pfd[i].revents & POLLOUT)
+        pfd[i].events &= (short)~POLLOUT;
       pfd[i].events &= (short)~pfd[i].revents;
       /* if a close/error event fired, disarm all remaining flags for this fd */
       if (pfd[i].revents & (POLLHUP | POLLERR | POLLNVAL | FIO_POLL_EX_FLAGS))
         pfd[i].events = 0;
-      /* Best-effort stale-snapshot suppression, matching the epoll/kqueue
-       * backends: a forget that landed before this check cancels the stale
-       * callback; a forget landing after it may still fire (the same overlap
-       * window as an in-hand epoll/kqueue event list). Callbacks never run
-       * under the lock, so they MAY safely call fio_poll_monitor/forget. */
-      FIO___LOCK_LOCK(p->lock);
-      const int tombstoned =
-          !fio___poll_fdset_remove(&p->forgotten, (fio_socket_i)pfd[i].fd);
-      FIO___LOCK_UNLOCK(p->lock);
-      if (tombstoned) {
-        /* tombstoned by a concurrent forget — suppress the stale callback */
-        pfd[i].events = 0;
-        continue;
-      }
       fio___poll_handle_events(&cpy, uary[i], pfd[i].revents);
     }
   }
@@ -36934,9 +36901,6 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
     if (entry)
       entry->flags |= (unsigned short)pfd[j].events;
   }
-  /* Pass over: free the tombstone set once no live snapshot remains. */
-  if (!--p->review_depth)
-    fio___poll_fdset_destroy(&p->forgotten);
   FIO___LOCK_UNLOCK(p->lock);
   FIO_LEAK_COUNTER_ON_FREE(fio___poll_review_buffer);
   FIO_MEM_FREE_(pfd, alloc_size);
@@ -36949,10 +36913,6 @@ SFUNC int fio_poll_forget(fio_poll_s *p, fio_socket_i fd) {
     return -1;
   FIO___LOCK_LOCK(p->lock);
   int r = fio___poll_map_remove(&p->map, (fio___poll_i_s){.fd = fd});
-  /* A review snapshot taken before this removal may still dispatch the stale
-   * udata after we unlock. Tombstone the fd so that dispatch is suppressed. */
-  if (!r && p->review_depth)
-    fio___poll_fdset_set(&p->forgotten, fd, 1);
   FIO___LOCK_UNLOCK(p->lock);
   return r;
 }
@@ -105886,13 +105846,13 @@ FIO_IFUNC void fio___io_monitor_out(fio_io_s *io) {
 }
 
 FIO_IFUNC void fio___io_monitor_forget(fio_io_s *io) {
-  // FIO_LOG_DDEBUG2("(%d) IO monitoring Removed for %d (called)",
-  //                 fio_io_pid(),
-  //                 io->fd);
-  if (!(FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_POLL_SET) &
-        FIO___IO_FLAG_POLL_SET))
-    return;
+  /* Always forget: the poll backend retains consumed one-shot entries (and
+   * may hold surviving armed flags) keyed by fd with the raw udata pointer.
+   * Skipping the forget leaves a stale entry that a later review can
+   * dispatch (POLLNVAL after close, or an fd-reused event) - resurrecting a
+   * freed IO. Forgetting an unmonitored fd is harmless (backend returns -1). */
   fio_poll_forget(&FIO___IO.poll, io->fd);
+  FIO___IO_FLAG_UNSET(io, FIO___IO_FLAG_POLL_SET);
   // FIO_LOG_DDEBUG2("(%d) IO monitoring Removed for %d", fio_io_pid(), io->fd);
 }
 

@@ -10042,17 +10042,15 @@ The public API is documented in [`102 poll api.md`](./102%20poll%20api.md). This
 struct fio_poll_s {
   fio_poll_settings_s settings;
   fio___poll_map_s map;
-  fio___poll_fdset_s forgotten;
-  size_t review_depth;
   FIO___LOCK_TYPE lock;
 };
 ```
 
 The poll backend keeps monitored descriptors in an internal imap (`fio___poll_map_s`) and snapshots its armed flags before each `poll()` call. Descriptors added or re-armed during `fio_poll_review` update the retained map directly; surviving one-shot flags are restored when the call returns.
 
-While a snapshot is live (`review_depth > 0`), a successful `fio_poll_forget` also records an fd-only tombstone in `p->forgotten` (an fd-keyed `fio___poll_fdset_s` — no `udata`). Before dispatching each fired event, the backend re-locks briefly, consumes any tombstone for that fd, and skips the stale callback without touching the snapshot's `udata`. Tombstones are freed when the last in-flight review ends, bounding their memory. This suppresses the use-after-free window in which `poll()` returns events for a descriptor whose `udata` was already freed by a concurrent forget.
+`fio_poll_forget` removes the descriptor from the retained map, which also prevents any surviving snapshot flags from being restored. It is not a cancellation guarantee: an event already returned by an in-flight `poll()` call may still be dispatched. This matches the epoll/kqueue backends, whose in-hand event lists always dispatch. As on every backend, `udata` lifetime during dispatch is the caller's responsibility (the facil.io IO layer only forgets from the reactor thread, never concurrently with a review).
 
-This is a **best-effort** suppression, matching the epoll/kqueue backends: a forget that lands between the per-event check and the callback may still fire that event (the same overlap window as an in-hand epoll/kqueue event list), so `fio_poll_forget` is not a cancellation guarantee. Callbacks never run under the lock, so they may safely call `fio_poll_monitor` / `fio_poll_forget` synchronously.
+One-shot flag accounting strips whole event groups: `WSAPoll` reports sub-band bits (e.g. `POLLRDNORM`) while `POLLIN`/`POLLOUT` are supersets, so a raw bitwise strip would leave band bits (e.g. `POLLRDBAND`) armed on Windows. Fired `POLLIN`/`POLLOUT` groups are therefore stripped in full.
 
 #### `fio_poll_engine`
 
@@ -10072,7 +10070,7 @@ Additional helper available only in the poll backend. Closes every monitored soc
 
 - `POLLRDHUP` is used when available; otherwise the backend relies on `POLLHUP`, `POLLERR`, and `POLLNVAL` for close/error detection.
 - On Windows, `POLLPRI` is omitted because `WSAPoll` rejects it.
-- Fired events are stripped from the descriptor’s flags (one-shot semantics). Surviving flags are restored to retained entries after `poll()` returns; concurrent removals prevent that restoration, and fd tombstones give best-effort suppression of callbacks for descriptors forgotten while a snapshot was in flight.
+- Fired events are stripped from the descriptor’s flags (one-shot semantics). Surviving flags are restored to retained entries after `poll()` returns; concurrent removals (which delete the retained entry) prevent that restoration.
 
 ------------------------------------------------------------
 # Task and Timer Queues
