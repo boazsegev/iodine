@@ -104638,7 +104638,9 @@ typedef struct {
   const char *url;
   /** Connection protocol (once connection established). */
   fio_io_protocol_s *protocol;
-  /** Called in case of a failed connection, use for cleanup. */
+  /** Called in case of a failed connection, use for cleanup.
+   * Always runs on the IO thread, possibly asynchronously after
+   * `fio_io_connect` returns (even when it returns `NULL`). */
   void (*on_failed)(fio_io_protocol_s *protocol, void *udata);
   /** Opaque user data (set only once connection was established). */
   void *udata;
@@ -104653,6 +104655,18 @@ typedef struct {
  *
  * Note: The IO object returned is owned by the reactor. The copy returned is
  * valid only until the next event is processed.
+ *
+ * Ownership: calling `fio_io_connect` transfers ownership of `protocol`,
+ * `udata` and the connecting state to the reactor. Cleanup of these MUST be
+ * performed only from `on_failed` (connection never established) or
+ * `on_close` (established connection closed) - never in response to
+ * `fio_io_connect` returning `NULL`, as the reactor retains the connecting
+ * state until the deferred failure task runs.
+ *
+ * `on_failed` always runs on the IO thread and may fire asynchronously,
+ * after `fio_io_connect` returns (including when `NULL` is returned). This
+ * implies the reactor MUST run at some point after a call, or the
+ * transferred ownership is never released.
  * */
 SFUNC fio_io_s *fio_io_connect(fio_io_connect_args_s args);
 
@@ -104661,6 +104675,18 @@ SFUNC fio_io_s *fio_io_connect(fio_io_connect_args_s args);
  *
  * Note: The IO object returned is owned by the reactor. The copy returned is
  * valid only until the next event is processed.
+ *
+ * Ownership: calling `fio_io_connect` transfers ownership of `protocol`,
+ * `udata` and the connecting state to the reactor. Cleanup of these MUST be
+ * performed only from `on_failed` (connection never established) or
+ * `on_close` (established connection closed) - never in response to
+ * `fio_io_connect` returning `NULL`, as the reactor retains the connecting
+ * state until the deferred failure task runs.
+ *
+ * `on_failed` always runs on the IO thread and may fire asynchronously,
+ * after `fio_io_connect` returns (including when `NULL` is returned). This
+ * implies the reactor MUST run at some point after a call, or the
+ * transferred ownership is never released.
  * */
 #define fio_io_connect(url_, ...)                                              \
   fio_io_connect((fio_io_connect_args_s){.url = url_, __VA_ARGS__})
@@ -105684,7 +105710,8 @@ static struct FIO___IO_S {
   FIO___LOCK_TYPE lock;
   size_t shutdown_timeout;
   /* the recorded IO (reactor) thread's numeral ID - the only thread allowed
-   * to perform the main IO queue (DEBUG tripwire, FIO___IO_ASSERT_IO_THREAD). */
+   * to perform the main IO queue (DEBUG tripwire, FIO___IO_ASSERT_IO_THREAD).
+   */
   uintptr_t io_thread;
 } FIO___IO = {
     .tick = 0,
@@ -108109,9 +108136,8 @@ SFUNC fio_io_s *fio_io_connect FIO_NOOP(fio_io_connect_args_s args) {
     /* the TLS context's ownership transfers to the reactor (attach_fd) */
     io = fio_io_attach_fd(fd, &c->protocol, c, c->tls_ctx);
   } else {
-    /* never attached: teardown stays with the connecting state machine,
-     * which releases the context exactly once via free_context. */
-    fio___connecting_on_close(NULL, c);
+    /* never attached. Teardown in IO thread for safety. */
+    fio___io_defer_no_wakeup(fio___connecting_on_close, NULL, c);
   }
   if (should_free_tls)
     fio_io_tls_free(args.tls);
