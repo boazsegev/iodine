@@ -36432,8 +36432,15 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout) {
   if (active_count > 0) {
     /* errors are dispatched via the EPOLLIN queue (see below) */
     for (unsigned i = 0; i < (unsigned)active_count; i++) {
-      if (events[i].events & EPOLLOUT)
-        p->settings.on_ready(events[i].data.ptr);
+      if (events[i].events & EPOLLOUT) {
+        /* an error/hangup on a writable event is a closure, not readiness
+         * (poll backend parity): a failed non-blocking connect reports
+         * EPOLLOUT together with EPOLLERR/EPOLLHUP. */
+        if (events[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP))
+          p->settings.on_close(events[i].data.ptr);
+        else
+          p->settings.on_ready(events[i].data.ptr);
+      }
     } // end for loop
     total += active_count;
   }
@@ -36598,11 +36605,19 @@ SFUNC int fio_poll_review(fio_poll_s *p, size_t timeout_) {
   if (active_count > 0) {
     for (unsigned i = 0; i < (unsigned)active_count; i++) {
       // test for event(s) type
-      if (events[i].filter == EVFILT_WRITE)
-        p->settings.on_ready(events[i].udata);
+      if (events[i].filter == EVFILT_WRITE) {
+        /* an error/EOF write event is a closure, not readiness (poll
+         * backend parity): a failed non-blocking connect reports
+         * writability together with EV_ERROR. */
+        if (events[i].flags & (EV_EOF | EV_ERROR))
+          p->settings.on_close(events[i].udata);
+        else
+          p->settings.on_ready(events[i].udata);
+      }
       if (events[i].filter == EVFILT_READ)
         p->settings.on_data(events[i].udata);
-      if (events[i].flags & (EV_EOF | EV_ERROR))
+      if (events[i].filter == EVFILT_READ &&
+          (events[i].flags & (EV_EOF | EV_ERROR)))
         p->settings.on_close(events[i].udata);
     }
   } else if (active_count < 0) {
@@ -104668,6 +104683,11 @@ IO Operations
  *
  * Returns NULL on error. the `fio_io_s` pointer must NOT be used except
  * within proper callbacks.
+ *
+ * Ownership of `tls` transfers to the reactor when `fio_io_attach_fd` is
+ * called, whether the call succeeds or fails - callers must not use or free
+ * it afterwards. On failure the reactor releases it with the TLS
+ * implementation's `free_context` (never the per-connection `cleanup`).
  */
 SFUNC fio_io_s *fio_io_attach_fd(fio_socket_i fd,
                                  fio_io_protocol_s *protocol,
@@ -105945,10 +105965,10 @@ SFUNC fio_io_s *fio_io_attach_fd(fio_socket_i fd,
                                  void *tls) {
   fio_io_s *io = NULL;
   fio_io_protocol_s cpy;
-  if (!FIO_SOCK_FD_ISVALID(fd))
-    goto error;
   if (!pr)
     pr = &FIO___IO_MOCK_PROTOCOL;
+  if (!FIO_SOCK_FD_ISVALID(fd))
+    goto error;
   io = fio___io_new2(pr->buffer_size);
   *io = (fio_io_s){
       .fd = fd,
@@ -105970,13 +105990,16 @@ SFUNC fio_io_s *fio_io_attach_fd(fio_socket_i fd,
 
 error:
   cpy = *pr;
-  cpy.on_close(NULL, udata);
-  /* NOTE: `tls` here is the TLS CONTEXT produced by `build_context` (the
-   * per-connection state only exists after `start` runs). It is NOT freed
-   * here: ownership stays with the caller / protocol teardown (the connect
-   * path's on_close routes to `fio___connecting_cleanup`, which defers
-   * `free_context`). Calling `cleanup(tls)` here would pass a context to the
-   * connection destructor (type confusion + double free). */
+  if (cpy.on_close)
+    cpy.on_close(NULL, udata);
+  /* Ownership of `tls` transfers to the reactor when `fio_io_attach_fd` is
+   * called, on success AND on failure. Release it here with the CONTEXT
+   * destructor: `cleanup` would be wrong, as it destroys per-connection
+   * state that only exists after `start` ran (type confusion + double free
+   * on the connect path, where on_close routes to free_context). */
+  if (tls && cpy.io_functions.free_context &&
+      cpy.io_functions.free_context != fio___io_func_default_free_context)
+    cpy.io_functions.free_context(tls);
   return io;
 }
 
@@ -108033,7 +108056,10 @@ FIO_SFUNC void fio___connecting_on_ready(fio_io_s *io) {
                  fio_io_pid(),
                  c->url);
   fio_io_udata_set(io, c->udata);
-  fio_io_protocol_set(io, c->upr);
+  /* The synchronous swap keeps (protocol, udata) atomically consistent.
+   * NOTE: fio___io_protocol_set consumes a reference (it ends with
+   * fio___io_free_with_flush), so it must be handed a fresh dup2. */
+  fio___io_protocol_set((void *)fio___io_dup2(io), (void *)c->upr);
   c->on_failed = NULL;
   fio___io_defer_no_wakeup(fio___connecting_on_close, NULL, (void *)c);
 }
@@ -108077,11 +108103,16 @@ SFUNC fio_io_s *fio_io_connect FIO_NOOP(fio_io_connect_args_s args) {
   };
   FIO_MEMCPY(c->url, args.url, url_len);
   c->url[url_len] = 0;
-  fio_io_s *io = fio_io_attach_fd(
-      fio_sock_open2(c->url, FIO_SOCK_CLIENT | FIO_SOCK_NONBLOCK),
-      &c->protocol,
-      c,
-      c->tls_ctx);
+  fio_socket_i fd = fio_sock_open2(c->url, FIO_SOCK_CLIENT | FIO_SOCK_NONBLOCK);
+  fio_io_s *io = NULL;
+  if (FIO_SOCK_FD_ISVALID(fd)) {
+    /* the TLS context's ownership transfers to the reactor (attach_fd) */
+    io = fio_io_attach_fd(fd, &c->protocol, c, c->tls_ctx);
+  } else {
+    /* never attached: teardown stays with the connecting state machine,
+     * which releases the context exactly once via free_context. */
+    fio___connecting_on_close(NULL, c);
+  }
   if (should_free_tls)
     fio_io_tls_free(args.tls);
   return io;
