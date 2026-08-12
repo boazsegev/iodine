@@ -864,14 +864,18 @@ Copyright and License: see header file (000 copyright.h) or top of file
   } while (!__sync_bool_compare_and_swap((p_obj), dest, dest))
 
 
-/** An atomic compare and exchange operation, returns true if an exchange occurred. `p_expected` is overwritten with the value found at `p_obj`, matching the C11 atomics contract. */
+/** An atomic compare and exchange operation, returns true if an exchange occurred. On failure, `p_expected` is overwritten with the value found at `p_obj`, matching the C11 atomics contract. */
 #define fio_atomic_compare_exchange_p(p_obj, p_expected, p_desired)            \
   ({                                                                           \
+    __typeof__(*(p_expected)) fio___atomic_cmpxchg_exp__ = *(p_expected);     \
     __typeof__(*(p_obj)) fio___atomic_cmpxchg_old__ =                         \
-        __sync_val_compare_and_swap((p_obj), *(p_expected), *(p_desired));    \
+        __sync_val_compare_and_swap((p_obj),                                  \
+                                     fio___atomic_cmpxchg_exp__,               \
+                                     *(p_desired));                           \
     int fio___atomic_cmpxchg_ok__ =                                            \
-        (fio___atomic_cmpxchg_old__ == *(p_expected));                        \
-    *(p_expected) = fio___atomic_cmpxchg_old__;                                \
+        (fio___atomic_cmpxchg_old__ == fio___atomic_cmpxchg_exp__);           \
+    if (!fio___atomic_cmpxchg_ok__)                                           \
+      *(p_expected) = fio___atomic_cmpxchg_old__;                             \
     fio___atomic_cmpxchg_ok__;                                                 \
   })
 /** An atomic exchange operation, ruturns previous value */
@@ -970,41 +974,55 @@ Copyright and License: see header file (000 copyright.h) or top of file
 #define fio_atomic_load(dest, p_obj) (dest = *(p_obj))
 
 /* _InterlockedCompareExchange* only returns the prior value; these wrappers
- * also write it back into `*p_expected`, matching the other atomic backends. */
+ * also write it back into `*p_expected` on failure, matching the C11
+ * contract. The expected value is captured into a local *before* the swap
+ * and the write-back only happens on failure, so this stays correct even
+ * when `p_obj == p_expected` (comparing against the current value): the
+ * intrinsic may already have overwritten that shared memory with
+ * `p_desired`, and re-reading `*p_expected` afterward (or writing to it
+ * unconditionally) would clobber a successful swap right back to `old`. */
 FIO_IFUNC int fio___atomic_cmpxchg8(int8_t volatile *p_obj,
                                      int8_t *p_expected,
                                      int8_t p_desired) {
-  int8_t old = _InterlockedCompareExchange8(p_obj, p_desired, *p_expected);
-  int ok = (old == *p_expected);
-  *p_expected = old;
+  int8_t expected = *p_expected;
+  int8_t old = _InterlockedCompareExchange8(p_obj, p_desired, expected);
+  int ok = (old == expected);
+  if (!ok)
+    *p_expected = old;
   return ok;
 }
 FIO_IFUNC int fio___atomic_cmpxchg16(int16_t volatile *p_obj,
                                       int16_t *p_expected,
                                       int16_t p_desired) {
-  int16_t old = _InterlockedCompareExchange16(p_obj, p_desired, *p_expected);
-  int ok = (old == *p_expected);
-  *p_expected = old;
+  int16_t expected = *p_expected;
+  int16_t old = _InterlockedCompareExchange16(p_obj, p_desired, expected);
+  int ok = (old == expected);
+  if (!ok)
+    *p_expected = old;
   return ok;
 }
 FIO_IFUNC int fio___atomic_cmpxchg32(int32_t volatile *p_obj,
                                       int32_t *p_expected,
                                       int32_t p_desired) {
-  int32_t old = _InterlockedCompareExchange(p_obj, p_desired, *p_expected);
-  int ok = (old == *p_expected);
-  *p_expected = old;
+  int32_t expected = *p_expected;
+  int32_t old = _InterlockedCompareExchange(p_obj, p_desired, expected);
+  int ok = (old == expected);
+  if (!ok)
+    *p_expected = old;
   return ok;
 }
 FIO_IFUNC int fio___atomic_cmpxchg64(int64_t volatile *p_obj,
                                       int64_t *p_expected,
                                       int64_t p_desired) {
-  int64_t old = _InterlockedCompareExchange64(p_obj, p_desired, *p_expected);
-  int ok = (old == *p_expected);
-  *p_expected = old;
+  int64_t expected = *p_expected;
+  int64_t old = _InterlockedCompareExchange64(p_obj, p_desired, expected);
+  int ok = (old == expected);
+  if (!ok)
+    *p_expected = old;
   return ok;
 }
 
-/** An atomic compare and exchange operation, returns true if an exchange occured. `p_expected` is overwritten with the value found at `p_obj`, matching the other atomic backends. */
+/** An atomic compare and exchange operation, returns true if an exchange occurred. On failure, `p_expected` is overwritten with the value found at `p_obj`, matching the other atomic backends. */
 #define fio_atomic_compare_exchange_p(p_obj, p_expected, p_desired)           \
   ((sizeof(*(p_obj)) == 1)                                                    \
        ? fio___atomic_cmpxchg8((int8_t volatile *)(p_obj),                    \
