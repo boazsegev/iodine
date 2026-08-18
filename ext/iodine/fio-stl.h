@@ -108114,7 +108114,7 @@ SFUNC fio_io_s *fio_io_connect FIO_NOOP(fio_io_connect_args_s args) {
   int should_free_tls = !args.tls;
   if (!args.protocol || !args.url) {
     if (args.on_failed)
-      args.on_failed(args.protocol, args.udata);
+      fio___io_defer_no_wakeup(args.on_failed, args.protocol, args.udata);
     return NULL;
   }
   if (!args.timeout)
