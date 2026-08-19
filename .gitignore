@@ -18,3 +18,9 @@
 .DS_Store
 spec/examples.txt
 spec/log
+
+# AI working files (never commit these)
+AI-*.*
+AI-*
+ai-*/
+ai-*.*

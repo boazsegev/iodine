@@ -1,0 +1,137 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+
+# Benchmark with keep-alive:
+# 
+#     ab -c 200 -t 4 -n 1000000 -k http://127.0.0.1:3000/
+#     wrk -c200 -d4 -t2 http://localhost:3000/
+# 
+# Connect to chat server with WebSockets:
+# 
+#     ws = new WebSocket("ws://" + document.location.host + document.location.pathname);
+#     ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);};
+#     ws.onclose = function(e) {console.log("closed")};
+#     ws.onopen = function(e) {ws.send("hi");};
+# 
+# Listen to chat messages with Server Sent Events (EventSource / SSE):
+# 
+#     const listener = new EventSource(document.location.href);
+#     listener.onmessage = (e) => { console.log(e); }
+#     listener.addEventListener("time", (e) => { console.log(e); })
+#     listener.addEventListener("event", (e) => { console.log(e); })
+
+require 'iodine'
+
+Server.threads = 1
+Server.workers = 0
+
+# Define the protocol for our service
+# 
+# We can use a singleton pattern, as the Protocol object doesn't contain any per-connection data.
+# 
+# See the [NeoRack](https://github.com/boazsegev/neorack) specification for details.
+module MyNeoRackApp
+  # Called Once per HTTP request. Each HTTP request starts with a new HTTP handle / Event object (`h`).
+  def self.on_http(h)
+    h[:start] = Time.now
+    # This would be faster if we sent the whole response as a single String.
+    #
+    # However, this example demonstrates a Streaming response, so we will call `h.write` multiple times.
+    h.status = 200
+    h.write("Hello NeoRack World!\r\n#{h.method} #{h.path} #{h.version}\r\n")
+    h.headers.each {|k,v| h.write("#{k}: #{v}\r\n") if k.is_a? String }
+    h.finish
+  end
+
+  # Called after `on_http` / `on_closed` or if as a client Iodine failed to connect.
+  def self.on_finish(h); puts "#{h.method} #{h.path} - #{Time.now - h[:start]}s" end
+
+  # This is ignored by NeoRack.
+  # 
+  # It's called when receiving HTTP requests using a Rack server (or if on_http is removed).
+  #
+  # [Rack](https://github.com/rack/rack) is the classical server interface and it is supported by Iodine with minimal extensions.
+  def self.call(env);
+    env[:start] = Time.now
+    txt = []
+    txt << "Hello Rack World!\r\n#{env['REQUEST_METHOD']} #{env['PATH_INFO']} #{env['HTTP_VERSION']}\r\n"
+    env.each {|k,v| txt << "#{k}: #{v}\r\n" if k.is_a? String }
+    [200, {}, txt]
+  end
+
+  # When `on_authenticate is present, a missing `on_authenticate_sse` or missing `on_authenticate_websocket`
+  # will route to this callback, allowing authentication logic to be merged in one method.
+  # 
+  # **Must** return `true` for the connection to be allowed.
+  # 
+  # **Any other return value will cause the connection to be refused** (and disconnected).
+  #
+  # By default, if `on_message` or `on_open` are defined, than `on_authenticate` returns `true`. Otherwise, `on_authenticate` returns `false`.
+  def self.on_authenticate(h)
+    h[:start] = Time.now
+    puts "Authenticating client #{h.object_id}"
+    true
+  end
+  # def self.on_authenticate_sse(h); end
+  # def self.on_authenticate_websocket(h); end
+
+  # Called when a long-running connection opens.
+  # 
+  # This will be called for Event Source, WebSocket, TCP/IP and Raw Unix Socket connections.
+  def self.on_open(ws)
+    ws.subscribe(:time) if Server.extensions[:pubsub]
+  end
+  # Called when incoming data arrives and its behavior depends on the underlying protocol.
+  # 
+  # For TCP/IP and Raw Unix connections, the data is a Binary encoded String with some (or all) of the data available in the incoming socket buffer.
+  #
+  # For WebSockets, the `data` element will contain a String with the WebSocket Message.
+  # 
+  # If the WebSocket message is in text, the String encoding will be UTF-8.
+  # 
+  # If the WebSocket message is binary, the String encoding will be Binary (ASCII).
+  def self.on_message(ws, data)
+    puts "Got WebSocket Message: #{data}"
+    ws.write("Echo: #{data}")
+  end
+  # Called when all calls to {Iodine::Connection#write} have been handled and the outgoing buffer is now empty.
+  def self.on_drained(ws)
+    puts "Finished sending data to #{ws.object_id}"
+  end
+  # Called when timeout has been reached for a TCP/IP / Raw Unix Socket connection.
+  def self.on_timeout(tcp)
+    puts "Timeout detected for #{tcp.object_id}"
+  end
+  # Called when the worker that manages this connection (or the root process, in non-cluster mode) starts shutting down.
+  def self.on_shutdown(ws)
+    ws.write "Server shutting down. Goodbye."
+  end
+  # Called a long running connection was closed (WebSocket / SSE / TCP/IP / Raw Unix Socket).
+  def self.on_close(ws)
+    puts "Closed #{ws.object_id}"
+  end
+  # Called when an Event Source (SSE) event has been received (when acting as an Event Source client).
+  def self.on_eventsource(sse, message)
+    puts "Normally only an SSE client would receive sse messages...\r\n#{message}"
+  end
+  # Called an Event Source (SSE) client send a re-connection request with the ID of the last message received.
+  def self.on_eventsource_reconnect(sse, last_message_id)
+    puts "Reconnecting SSE client #{sse.object_id}, should send everything after message ID #{last_message_id}"
+  end
+end
+
+# create the service instance, the block returns a connection handler.
+Server.listen(handler: MyNeoRackApp)
+
+# create the time pub/sub service
+if Server.extensions[:pubsub]
+  Iodine.run_after(1000, -1) do
+    Server.publish(channel: :time, message: Iodine::Utils.time2str(Time.now))
+  end
+end
+
+
+
+# Start the server
+Server.start

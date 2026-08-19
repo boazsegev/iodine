@@ -1,13 +1,522 @@
-#ifndef H_IODINE_TLS_H
-#define H_IODINE_TLS_H
+#ifndef H___IODINE_TLS___H
+/** ****************************************************************************
+Iodine::TLS - TLS/SSL Context Management
 
+This module provides TLS/SSL support for Iodine connections, wrapping the
+facil.io TLS functionality and exposing it to Ruby.
+
+## TLS Backend Options
+
+Iodine supports two TLS backends:
+
+1. **Embedded TLS 1.3** (`:iodine`) - Always available via fio-stl.h
+   - Lightweight, no external dependencies
+   - TLS 1.3 only (modern, secure)
+
+2. **OpenSSL** (`:openssl`) - Available if compiled with OpenSSL support
+   - Full TLS version support (1.0, 1.1, 1.2, 1.3)
+   - Broader compatibility with older clients
+
+## Ruby API
+
+### Iodine::TLS Class
+
+    tls = Iodine::TLS.new
+    tls.add_cert(name: "example.com")
+    tls.add_cert(cert: "cert.pem", key: "key.pem")
+    tls.add_cert(cert: "cert.pem", key: "key.pem", password: ENV['TLS_PASS'])
+
+### Class Methods
+
+- `Iodine::TLS.default` - Returns the current default TLS backend (:iodine or
+  :openssl)
+- `Iodine::TLS.default = :iodine` - Sets the default TLS backend
+
+### Instance Methods
+
+- `add_cert(name:, cert:, key:, password:)` - Adds a certificate to the TLS
+  context. If only `name` is provided, a self-signed certificate is generated.
+- `trust(path = nil)` - Adds a public certificate (PEM file) to the trust
+  list, enabling peer (client) certificate authentication. Without a path,
+  trusts the system's default trust registry.
+
+### Constants
+
+- `Iodine::TLS::SUPPORTED` - Always `true` (embedded TLS always available)
+- `Iodine::TLS::OPENSSL_AVAILABLE` - `true` if OpenSSL support was compiled in
+- `Iodine::TLS::EMBEDDED_AVAILABLE` - Always `true`
+
+## Usage with Iodine.listen
+
+    # Using default TLS (auto-generates self-signed cert)
+    Iodine.listen(url: "https://0.0.0.0:3000", handler: app)
+
+    # Using custom TLS context
+    tls = Iodine::TLS.new
+    tls.add_cert(cert: "server.pem", key: "server.key")
+    Iodine.listen(url: "https://0.0.0.0:3000", handler: app, tls: tls)
+
+    # Specifying TLS backend
+    Iodine.listen(url: "https://0.0.0.0:3000", handler: app, tls_io: :openssl)
+
+***************************************************************************** */
+#define H___IODINE_TLS___H
 #include "iodine.h"
 
-#include "fio_tls.h"
+static VALUE iodine_rb_TLS_CERTIFICATE;
 
-void iodine_init_tls(void);
-fio_tls_s *iodine_tls2c(VALUE self);
+/* *****************************************************************************
+TLS Wrapper - Internal Implementation
+***************************************************************************** */
 
-extern VALUE IodineTLSClass;
+static void iodine_tls_free(void *ptr_) {
+  fio_io_tls_s **p = (fio_io_tls_s **)ptr_;
+  fio_io_tls_free(*p);
+}
 
+static const rb_data_type_t IODINE_TLS_DATA_TYPE = {
+    .wrap_struct_name = "IodineTLS",
+    .function =
+        {
+            .dfree = iodine_tls_free,
+        },
+    .data = NULL,
+};
+
+static VALUE iodine_tls_alloc(VALUE klass) {
+  fio_io_tls_s **tls;
+  VALUE o =
+      TypedData_Make_Struct(klass, fio_io_tls_s *, &IODINE_TLS_DATA_TYPE, tls);
+  *tls = fio_io_tls_new();
+  if (!*tls)
+    rb_raise(rb_eNoMemError, "Couldn't allocate resources for TLS object");
+  return o;
+}
+
+static fio_io_tls_s *iodine_tls_get(VALUE self) {
+  fio_io_tls_s **p;
+  TypedData_Get_Struct(self, fio_io_tls_s *, &IODINE_TLS_DATA_TYPE, p);
+  return *p;
+}
+
+/* *****************************************************************************
+The Functions to be Wrapped
+***************************************************************************** */
+
+#if 0
+/**
+ * Adds a certificate a new SSL/TLS context / settings object (SNI support).
+ *
+ *      fio_io_tls_cert_add(tls, "www.example.com",
+ *                            "public_key.pem",
+ *                            "private_key.pem", NULL );
+ *
+ * NOTE: Except for the `tls` and `server_name` arguments, all arguments might
+ * be `NULL`, which a context builder (`fio_io_functions_s`) should treat as a
+ * request for a self-signed certificate. It may be silently ignored.
+ */
+SFUNC fio_io_tls_s *fio_io_tls_cert_add(fio_io_tls_s *,
+                                  const char *server_name,
+                                  const char *public_cert_file,
+                                  const char *private_key_file,
+                                  const char *pk_password);
+
+/**
+ * Adds an ALPN protocol callback to the SSL/TLS context.
+ *
+ * The first protocol added will act as the default protocol to be selected.
+ *
+ * A `NULL` protocol name will be silently ignored.
+ *
+ * A `NULL` callback (`on_selected`) will be silently replaced with a no-op.
+ */
+SFUNC fio_io_tls_s *fio_io_tls_alpn_add(fio_io_tls_s *tls,
+                                  const char *protocol_name,
+                                  void (*on_selected)(fio_s *));
+
+/** Calls the `on_selected` callback for the `fio_io_tls_s` object. */
+SFUNC int fio_io_tls_alpn_select(fio_io_tls_s *tls,
+                              const char *protocol_name,
+                              size_t name_length,
+                              fio_s *);
+
+/**
+ * Adds a certificate to the "trust" list, which automatically adds a peer
+ * verification requirement.
+ *
+ * If `public_cert_file` is `NULL`, implementation is expected to add the
+ * system's default trust registry.
+ *
+ * Note: when the `fio_io_tls_s` object is used for server connections, this should
+ * limit connections to clients that connect using a trusted certificate.
+ *
+ *      fio_io_tls_trust_add(tls, "google-ca.pem" );
+ */
+SFUNC fio_io_tls_s *fio_io_tls_trust_add(fio_io_tls_s *, const char *public_cert_file);
+
+/**
+ * Returns the number of `fio_io_tls_cert_add` instructions.
+ *
+ * This could be used when deciding if to add a NULL instruction (self-signed).
+ *
+ * If `fio_io_tls_cert_add` was never called, zero (0) is returned.
+ */
+SFUNC uintptr_t fio_io_tls_cert_count(fio_io_tls_s *tls);
+
+/**
+ * Returns the number of registered ALPN protocol names.
+ *
+ * This could be used when deciding if protocol selection should be delegated to
+ * the ALPN mechanism, or whether a protocol should be immediately assigned.
+ *
+ * If no ALPN protocols are registered, zero (0) is returned.
+ */
+SFUNC uintptr_t fio_io_tls_alpn_count(fio_io_tls_s *tls);
+
+/**
+ * Returns the number of `fio_io_tls_trust_add` instructions.
+ *
+ * This could be used when deciding if to disable peer verification or not.
+ *
+ * If `fio_io_tls_trust_add` was never called, zero (0) is returned.
+ */
+SFUNC uintptr_t fio_io_tls_trust_count(fio_io_tls_s *tls);
+
+/** Arguments (and info) for `fio_io_tls_each`. */
+typedef struct fio_io_tls_each_s {
+  fio_io_tls_s *tls;
+  void *udata;
+  void *udata2;
+  int (*each_cert)(struct fio_io_tls_each_s *,
+                   const char *server_name,
+                   const char *public_cert_file,
+                   const char *private_key_file,
+                   const char *pk_password);
+  int (*each_alpn)(struct fio_io_tls_each_s *,
+                   const char *protocol_name,
+                   void (*on_selected)(fio_s *));
+  int (*each_trust)(struct fio_io_tls_each_s *, const char *public_cert_file);
+} fio_io_tls_each_s;
+
+/** Calls callbacks for certificate, trust certificate and ALPN added. */
+SFUNC int fio_io_tls_each(fio_io_tls_each_s);
+
+/** `fio_io_tls_each` helper macro, see `fio_io_tls_each_s` for named arguments. */
+#define fio_io_tls_each(tls_, ...)                                             \
+  fio_io_tls_each(((fio_io_tls_each_s){.tls = tls_, __VA_ARGS__}))
+
+/** If `NULL` returns current default, otherwise sets it. */
+SFUNC fio_io_functions_s fio_io_tls_default_io_functions(fio_io_functions_s *);
 #endif
+
+/* *****************************************************************************
+Wrapper API
+***************************************************************************** */
+
+// clang-format off
+/**
+Assigns the TLS context a public certificate, allowing remote parties to
+validate the connection's identity.
+
+A self signed certificate is automatically created if the `name` argument
+is specified and either (or both) of the `cert` (public certificate) or `key`
+(private key) arguments are missing.
+
+Some implementations allow servers to have more than a single certificate, which
+will be selected using the SNI extension. I believe the existing OpenSSL
+implementation supports this option (untested).
+
+     Iodine::TLS#add_cert(name = nil,
+                          cert = nil,
+                          key = nil,
+                          password = nil)
+
+Certificates and keys should be String objects leading to a PEM file.
+
+This method also accepts named arguments. i.e.:
+
+     tls = Iodine::TLS.new
+     tls.add_cert name: "example.com"
+     tls.add_cert cert: "my_cert.pem", key: "my_key.pem"
+     tls.add_cert cert: "my_cert.pem", key: "my_key.pem", password: ENV['TLS_PASS']
+
+Since TLS setup is crucial for security, an initialization error will result in
+Iodine crashing with an error message. This is expected behavior.
+*/ // clang-format on
+static VALUE iodine_tls_cert_add(int argc, VALUE *argv, VALUE self) {
+  fio_io_tls_s *tls = iodine_tls_get(self);
+  fio_buf_info_s server_name = FIO_BUF_INFO1((char *)"localhost");
+  fio_buf_info_s public_cert_file = FIO_BUF_INFO0;
+  fio_buf_info_s private_key_file = FIO_BUF_INFO0;
+  fio_buf_info_s pk_password = FIO_BUF_INFO0;
+  iodine_rb2c_arg(argc,
+                  argv,
+                  IODINE_ARG_BUF(server_name, 0, "name", 0),
+                  IODINE_ARG_BUF(public_cert_file, 0, "cert", 0),
+                  IODINE_ARG_BUF(private_key_file, 0, "key", 0),
+                  IODINE_ARG_BUF(pk_password, 0, "password", 0));
+  fio_io_tls_cert_add(tls,
+                      server_name.buf,
+                      public_cert_file.buf,
+                      private_key_file.buf,
+                      pk_password.buf);
+  return self;
+}
+
+/** @deprecated use {Iodine::TLS.add_cert}. */
+static VALUE iodine_tls_cert_add_old_name(int argc, VALUE *argv, VALUE self) {
+  return iodine_tls_cert_add(argc, argv, self);
+}
+
+/* *****************************************************************************
+TLS Trust Store (Peer Certificate Authentication)
+***************************************************************************** */
+
+// clang-format off
+/**
+Adds a public certificate (or certificate bundle) to the "trust" list,
+enabling peer (client) certificate authentication / authorization.
+
+     tls = Iodine::TLS.new
+     tls.trust("clients-ca.pem")
+
+Calling `trust` without a path (or with `nil`) trusts the system's default
+trust registry.
+
+Once the trust list is non-empty, servers using this TLS context request a
+certificate from connecting clients and verify its chain against the trusted
+certificates. The peer's certificate chain can then be reviewed by the
+application using {Iodine::Connection#certificate} and
+{Iodine::Connection#each_certificate}.
+
+@param path [String, nil] path to a PEM file with one or more trusted
+  certificates (`nil` for the system's trust registry).
+@return [Iodine::TLS] returns itself, so calls may be chained.
+*/ // clang-format on
+static VALUE iodine_tls_trust(int argc, VALUE *argv, VALUE self) {
+  fio_io_tls_s *tls = iodine_tls_get(self);
+  fio_buf_info_s path = FIO_BUF_INFO0;
+  iodine_rb2c_arg(argc, argv, IODINE_ARG_BUF(path, 0, "path", 0));
+  /* NULL path marks the system's default trust registry as trusted */
+  fio_io_tls_trust_add(tls, path.buf);
+  return self;
+}
+
+/* *****************************************************************************
+TLS Default Backend Getter/Setter
+***************************************************************************** */
+
+/** Getter for Iodine::TLS.default - returns the current default TLS backend */
+static VALUE iodine_tls_default_get(VALUE klass) {
+  /* Query the current C-level default */
+  fio_io_functions_s current = fio_io_tls_default_functions(NULL);
+
+  /* Get the known backend function pointers for comparison */
+  fio_io_functions_s tls13 = fio_tls13_io_functions();
+
+  /* Compare build_context function pointer to determine active backend */
+  if (current.build_context == tls13.build_context) {
+    return ID2SYM(rb_intern("iodine"));
+  }
+
+#ifdef HAVE_OPENSSL
+  fio_io_functions_s openssl = fio_openssl_io_functions();
+  if (current.build_context == openssl.build_context) {
+    return ID2SYM(rb_intern("openssl"));
+  }
+#endif
+
+  /* Fallback - should not reach here */
+  rb_raise(rb_eStandardError, "known values not found (:iodine or :openssl)");
+  return ID2SYM(rb_intern("err"));
+  (void)klass;
+}
+
+/** Setter for Iodine::TLS.default= - validates and sets the default backend */
+static VALUE iodine_tls_default_set(VALUE klass, VALUE backend) {
+  ID backend_id;
+  fio_io_functions_s current = fio_io_tls_default_functions(NULL);
+
+  if (!RB_TYPE_P(backend, RUBY_T_SYMBOL))
+    rb_raise(rb_eTypeError, "default must be a Symbol (:iodine or :openssl)");
+
+  backend_id = rb_sym2id(backend);
+  if (backend_id == rb_intern("iodine")) {
+    /* Set embedded TLS 1.3 as default */
+    current = fio_tls13_io_functions();
+  } else if (backend_id == rb_intern("openssl")) {
+#ifndef HAVE_OPENSSL
+    rb_raise(rb_eRuntimeError, "OpenSSL not available (not compiled in)");
+#else
+    /* Set OpenSSL as default */
+    current = fio_openssl_io_functions();
+#endif
+  } else {
+    rb_raise(rb_eArgError, "default must be :iodine or :openssl");
+  }
+  fio_io_tls_default_functions(&current);
+  return backend;
+  (void)klass;
+}
+
+/* *****************************************************************************
+Iodine::TLS::Certificate - Peer Certificate Snapshot
+***************************************************************************** */
+
+/** Maps a public key algorithm to a Ruby Symbol. */
+static VALUE iodine_tls_certificate_key_algo_sym(fio_x509_key_algo_e algo) {
+  switch (algo) {
+  case FIO_X509_KEY_RSA: return ID2SYM(rb_intern("rsa"));
+  case FIO_X509_KEY_ECDSA_P256: return ID2SYM(rb_intern("ecdsa_p256"));
+  case FIO_X509_KEY_ECDSA_P384: return ID2SYM(rb_intern("ecdsa_p384"));
+  case FIO_X509_KEY_ED25519: return ID2SYM(rb_intern("ed25519"));
+  default: return ID2SYM(rb_intern("unknown"));
+  }
+}
+
+/** Maps a signature algorithm to a Ruby Symbol. */
+static VALUE
+iodine_tls_certificate_signature_algo_sym(fio_x509_signature_algo_e algo) {
+  switch (algo) {
+  case FIO_X509_SIGNATURE_RSA_PKCS1_SHA256:
+    return ID2SYM(rb_intern("rsa_pkcs1_sha256"));
+  case FIO_X509_SIGNATURE_RSA_PKCS1_SHA384:
+    return ID2SYM(rb_intern("rsa_pkcs1_sha384"));
+  case FIO_X509_SIGNATURE_RSA_PKCS1_SHA512:
+    return ID2SYM(rb_intern("rsa_pkcs1_sha512"));
+  case FIO_X509_SIGNATURE_RSA_PSS_SHA256:
+    return ID2SYM(rb_intern("rsa_pss_sha256"));
+  case FIO_X509_SIGNATURE_RSA_PSS_SHA384:
+    return ID2SYM(rb_intern("rsa_pss_sha384"));
+  case FIO_X509_SIGNATURE_RSA_PSS_SHA512:
+    return ID2SYM(rb_intern("rsa_pss_sha512"));
+  case FIO_X509_SIGNATURE_ECDSA_SHA256:
+    return ID2SYM(rb_intern("ecdsa_sha256"));
+  case FIO_X509_SIGNATURE_ECDSA_SHA384:
+    return ID2SYM(rb_intern("ecdsa_sha384"));
+  case FIO_X509_SIGNATURE_ED25519: return ID2SYM(rb_intern("ed25519"));
+  default: return ID2SYM(rb_intern("unknown"));
+  }
+}
+
+/** Converts a (possibly empty) buffer view to a Ruby String (or `nil`). */
+#define IODINE___CERT_BUF2STR(bufinfo)                                        \
+  ((bufinfo).buf ? rb_str_new((const char *)(bufinfo).buf,                    \
+                              (long)(bufinfo).len)                            \
+                 : Qnil)
+
+/**
+ * Builds an Iodine::TLS::Certificate snapshot from a parsed X.509
+ * certificate.
+ *
+ * All fields are copied eagerly, since the `fio_x509_cert_s` views are
+ * transient (valid only until the next `fio_io_peer_info_next` call on ANY
+ * connection or until the connection is closed).
+ */
+static VALUE iodine_tls_certificate_new(const fio_x509_cert_s *cert) {
+  VALUE o = rb_obj_alloc(iodine_rb_TLS_CERTIFICATE);
+  rb_ivar_set(o, rb_intern("@der"), IODINE___CERT_BUF2STR(cert->der));
+  rb_ivar_set(o, rb_intern("@serial"), IODINE___CERT_BUF2STR(cert->serial));
+  rb_ivar_set(o, rb_intern("@subject"), IODINE___CERT_BUF2STR(cert->subject));
+  rb_ivar_set(o, rb_intern("@issuer"), IODINE___CERT_BUF2STR(cert->issuer));
+  rb_ivar_set(o, rb_intern("@cn"), IODINE___CERT_BUF2STR(cert->cn));
+  rb_ivar_set(o,
+              rb_intern("@signature"),
+              IODINE___CERT_BUF2STR(cert->signature));
+  rb_ivar_set(o, rb_intern("@san_dns"), IODINE___CERT_BUF2STR(cert->san_dns));
+  rb_ivar_set(o, rb_intern("@san_ip"), IODINE___CERT_BUF2STR(cert->san_ip));
+  rb_ivar_set(o,
+              rb_intern("@not_before"),
+              rb_time_new((time_t)cert->not_before, 0));
+  rb_ivar_set(o,
+              rb_intern("@not_after"),
+              rb_time_new((time_t)cert->not_after, 0));
+  rb_ivar_set(o,
+              rb_intern("@fingerprint"),
+              rb_str_new((const char *)cert->fingerprint, 32));
+  rb_ivar_set(o,
+              rb_intern("@key_algo"),
+              iodine_tls_certificate_key_algo_sym(cert->key_algo));
+  rb_ivar_set(o,
+              rb_intern("@signature_algo"),
+              iodine_tls_certificate_signature_algo_sym(cert->signature_algo));
+  rb_ivar_set(o,
+              rb_intern("@key_usage"),
+              cert->has_key_usage ? UINT2NUM(cert->key_usage) : Qnil);
+  rb_ivar_set(o, rb_intern("@version"), INT2FIX(cert->version));
+  rb_ivar_set(o, rb_intern("@chain_index"), INT2FIX(cert->chain_index));
+  rb_ivar_set(o, rb_intern("@verified"), cert->verified ? Qtrue : Qfalse);
+  rb_ivar_set(o, rb_intern("@ca"), cert->is_ca ? Qtrue : Qfalse);
+  return rb_obj_freeze(o);
+}
+
+#undef IODINE___CERT_BUF2STR
+
+/** Returns `true` if the TLS backend verified this certificate's chain. */
+static VALUE iodine_tls_certificate_verified_p(VALUE self) {
+  return rb_ivar_get(self, rb_intern("@verified"));
+}
+
+/** Returns `true` if the certificate is a CA (Basic Constraints). */
+static VALUE iodine_tls_certificate_ca_p(VALUE self) {
+  return rb_ivar_get(self, rb_intern("@ca"));
+}
+
+/* *****************************************************************************
+Initialize Iodine::TLS
+***************************************************************************** */
+
+static void Init_Iodine_TLS(void) { /** Initialize Iodine::TLS */
+  /** Used to setup a TLS contexts for connections (incoming / outgoing). */
+  VALUE m = iodine_rb_IODINE_TLS =
+      rb_define_class_under(iodine_rb_IODINE, "TLS", rb_cObject);
+  rb_define_alloc_func(m, iodine_tls_alloc);
+  rb_define_method(m, "add_cert", iodine_tls_cert_add, -1);
+  rb_define_method(m, "use_certificate", iodine_tls_cert_add_old_name, -1);
+  rb_define_method(m, "trust", iodine_tls_trust, -1);
+
+  /* TLS default backend getter/setter methods */
+  rb_define_singleton_method(m, "default", iodine_tls_default_get, 0);
+  rb_define_singleton_method(m, "default=", iodine_tls_default_set, 1);
+
+  /* TLS backend availability constants */
+  rb_const_set(m,
+               rb_intern("SUPPORTED"),
+               Qtrue); /* Always true - embedded TLS always available */
+#ifdef HAVE_OPENSSL
+  rb_const_set(m, rb_intern("OPENSSL_AVAILABLE"), Qtrue);
+#else
+  rb_const_set(m, rb_intern("OPENSSL_AVAILABLE"), Qfalse);
+#endif
+  /* Embedded TLS 1.3 is always available via fio-stl.h */
+  rb_const_set(m, rb_intern("EMBEDDED_AVAILABLE"), Qtrue);
+
+  /* Iodine::TLS::Certificate - peer certificate snapshot (value object) */
+  {
+    /** An immutable snapshot of an X.509 certificate. */
+    VALUE c = iodine_rb_TLS_CERTIFICATE =
+        rb_define_class_under(iodine_rb_IODINE_TLS, "Certificate", rb_cObject);
+    /* certificates originate from TLS connections, not Ruby code */
+    rb_undef_method(rb_singleton_class(c), "new");
+    rb_define_attr(c, "der", 1, 0);
+    rb_define_attr(c, "serial", 1, 0);
+    rb_define_attr(c, "subject", 1, 0);
+    rb_define_attr(c, "issuer", 1, 0);
+    rb_define_attr(c, "cn", 1, 0);
+    rb_define_attr(c, "signature", 1, 0);
+    rb_define_attr(c, "san_dns", 1, 0);
+    rb_define_attr(c, "san_ip", 1, 0);
+    rb_define_attr(c, "not_before", 1, 0);
+    rb_define_attr(c, "not_after", 1, 0);
+    rb_define_attr(c, "fingerprint", 1, 0);
+    rb_define_attr(c, "key_algo", 1, 0);
+    rb_define_attr(c, "signature_algo", 1, 0);
+    rb_define_attr(c, "key_usage", 1, 0);
+    rb_define_attr(c, "version", 1, 0);
+    rb_define_attr(c, "chain_index", 1, 0);
+    rb_define_method(c, "verified?", iodine_tls_certificate_verified_p, 0);
+    rb_define_method(c, "ca?", iodine_tls_certificate_ca_p, 0);
+  }
+}
+
+#endif /* H___IODINE_TLS___H */

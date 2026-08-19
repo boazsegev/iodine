@@ -1,10 +1,116 @@
 # Iodine
+
 [![Gem Version](https://badge.fury.io/rb/iodine.svg)](https://badge.fury.io/rb/iodine)
-[![Inline docs](http://inch-ci.org/github/boazsegev/iodine.svg?branch=master)](http://www.rubydoc.info/github/boazsegev/iodine/master/frames)
+Please notice that this change log contains updates for upcoming releases as well as previous releases.
 
-Please notice that this change log contains changes for upcoming releases as well. Please refer to the current gem version to review the current release.
+Please refer to the current gem version to review the relevant changes for your release.
 
-## Changes:
+## Changes
+
+#### Change log v0.8.0.rc02 (updated 2026-07-25)
+
+**Update**: updated to facil.io 0.8.0, using the latest version of the [facil.io C STL](https://github.com/facil-io/cstl).
+
+**Update**: totally re-written both the C extension and the Ruby code. All API should be considered broken / changed.
+
+**Update**: supports the [NeoRack specification](https://github.com/boazsegev/neorack/blob/master/SPEC.md) and its existing [extentions](https://github.com/boazsegev/neorack/blob/master/extensions), including [Rack backwards compatibility](https://github.com/boazsegev/neorack/blob/master/extensions/rack.md) with support for the previous `rack.upgrade?` WebSocket & SSE approach.
+
+**Feature**: RESP3 Pub/Sub support is implemented via `Iodine::PubSub::Engine::RESP3`. Use `-r redis://host:port` from CLI or create it programmatically with `Iodine::PubSub::Engine::RESP3.new(url, ping: 30)`. The RESP3 engine also supports arbitrary Valkey/Redis commands via `resp3.cmd("GET", "key") { |result| ... }`.
+
+**Breaking Change**: `Iodine::PubSub::Engine::Redis` was renamed to `Iodine::PubSub::Engine::RESP3` to reflect support for RESP3-compatible databases such as Valkey and Redis.
+
+**Feature**: `Iodine::PubSub::Engine::RESP3#connection_state` reports `:connecting`, `:connected`, or `:error` for the engine's constructor-initiated RESP3 handshake.
+
+**Feature**: New `Iodine::Logger` module routes Ruby logging through the facil.io C STL logging system (`FIO_LOG_*`), sharing the C core's stderr sink and global log level. Offers `fatal`, `error`, `warn`, `info` and `debug` (variadic - each argument is logged separately; callable arguments are invoked; a block's return value is logged, Rack SPEC compatible; nothing is evaluated while the level is silenced), `<<` as an `info` alias, and `level` / `level=` (Integer 0-5 or Symbol) with `NONE`/`FATAL`/`ERROR`/`WARN`/`INFO`/`DEBUG` constants.
+
+**Deprecation**: `Iodine.verbosity` and `Iodine.verbosity=` are deprecated in favor of `Iodine::Logger.level` and `Iodine::Logger.level=`.
+
+**Feature**: Embedded TLS 1.3 is now always available as a fallback TLS backend. Enable it via:
+- Runtime: `Iodine::TLS.default = :iodine`
+- Environment: `IODINE_MTLS=1`
+- CLI: `iodine -mtls`
+- Compile-time default: `IODINE_USE_EMBEDDED_TLS=1 gem install iodine`
+
+**Feature**: New `Iodine::TLS.default` and `Iodine::TLS.default=` methods allow runtime switching between TLS backends (`:openssl` or `:iodine`).
+
+**Feature**: New `Iodine.secret` and `Iodine.secret=` methods for server-wide secret management. The secret is used for cryptographic operations (session signing, CSRF tokens, etc.) and can be seeded from the `SECRET` environment variable or set explicitly before starting the server.
+
+**Feature**: `Iodine::Listener` (returned by `Iodine.listen`) now supports URL-based routing via `Iodine::Listener#map(url, handler)`. Partial path matches are supported (e.g., mapping `"/api"` routes all `"/api/*"` requests to the given handler, with the matched prefix stripped from `connection.path`).
+
+**Feature**: New `Iodine.make_resource(handler)` method and `Iodine::Connection::ResourceHandler` interface for automatic REST/CRUD routing. Adds an `on_http` implementation that dispatches `GET /`, `GET /:id`, `GET /new`, `GET /:id/edit`, `POST /`, `PATCH /:id`, `PUT /:id`, and `DELETE /:id` to the corresponding `index`, `show`, `new`, `edit`, `create`, `update`, and `delete` callbacks.
+
+**Feature**: New `Iodine::PubSub::History` module for in-process message history and replay. Call `Iodine::PubSub::History.cache` to enable the built-in memory cache (default 256 MB limit), then subscribe with a `since:` timestamp to replay missed messages. Custom history backends can be implemented by subclassing `Iodine::PubSub::History::Manager`.
+
+**Feature**: Extended `Iodine::Utils` with cryptographic hashing functions: `sha256`, `sha512`, `sha3_256`, `sha3_512`, `blake2b`, `blake2s`, `hmac256`.
+
+**Feature**: Extended `Iodine::Utils` with additional hashing and MAC functions: `sha3_224`, `sha3_384`, `shake128` (XOF, variable-length), `shake256` (XOF, variable-length), `sha1` (legacy/protocol compatibility), `hmac512`, `hmac160`, `hmac128` (Poly1305-MAC).
+
+**Feature**: Extended `Iodine::Utils` with non-cryptographic hash functions: `risky_hash` (64-bit, seeded), `risky256` (256-bit), `risky512` (512-bit), `risky256_hmac`, `risky512_hmac`. Suitable for hash tables, checksums, and data partitioning; not for security use.
+
+**Feature**: Extended `Iodine::Utils` with `crc32(data, initial_crc: 0)` — CRC32 checksum (ITU-T V.42 / gzip polynomial) with support for incremental computation across multiple buffers.
+
+**Feature**: Extended `Iodine::Utils` with `secure_random(bytes: 32)` — cryptographically secure random bytes using the system CSPRNG (`arc4random_buf` on BSD/macOS, `/dev/urandom` on Linux).
+
+**Feature**: Extended `Iodine::Utils` with TOTP utilities: `totp_secret` (generate Base32 secrets) and `totp_verify` (verify codes with time window).
+
+**Feature**: New `Iodine::Base::Crypto` module with modern cryptographic primitives:
+- `ChaCha20Poly1305` - AEAD encryption/decryption (12-byte nonce)
+- `XChaCha20Poly1305` - AEAD encryption/decryption (24-byte nonce, safe for random nonces)
+- `AES128GCM` - AEAD encryption/decryption with AES-128 (12-byte nonce)
+- `AES256GCM` - AEAD encryption/decryption with AES-256 (12-byte nonce)
+- `Ed25519` - Digital signatures (keypair, sign, verify, key conversion to X25519)
+- `X25519` - Key exchange (ECDH) and public-key encryption (ECIES with ChaCha20, AES-128-GCM, or AES-256-GCM via `encrypt`, `encrypt_aes128`, `encrypt_aes256`)
+- `HKDF` - Key derivation (RFC 5869, SHA-256 or SHA-384)
+- `X25519MLKEM768` - Post-quantum hybrid KEM (X25519 + ML-KEM-768 / Kyber)
+
+**Feature**: New `Iodine::Base::Compression` module with `Deflate`, `Gzip`, and `Brotli` submodules, each providing `compress` and `decompress` class methods. Supports configurable compression levels.
+
+**Feature**: New `Iodine::Base::Crypto::Argon2` and `Iodine::Base::Crypto::Lyra2` memory-hard password hashing bindings. `Argon2.hash(password, salt:, ...)` supports the `:d`, `:i`, and `:id` variants (RFC 9106, Argon2id by default) with configurable time/memory/parallelism costs, optional secret and associated data. `Lyra2.hash(password, salt:, ...)` offers configurable cost parameters as well.
+
+**Feature**: mTLS (mutual TLS) client certificate authentication:
+- `Iodine::TLS#trust(path = nil)` loads a CA certificate file (or the system trust store when `nil` / `"system"`) and enables peer (client) certificate verification.
+- `Iodine::Connection#certificate` returns the peer's leaf certificate and `Iodine::Connection#each_certificate` enumerates the peer's whole chain, using the new immutable `Iodine::TLS::Certificate` snapshot class (`cn`, `subject`, `issuer`, `serial`, `san_dns`, `san_ip`, `not_before`, `not_after`, `fingerprint`, `key_algo`, `signature_algo`, `key_usage`, `version`, `chain_index`, `verified?`, `ca?`).
+- CLI / bind-URL support: `iodine -b https://0.0.0.0/?trust=ca.pem` or `?trust=system`.
+
+**Feature**: `QUERY` HTTP method support. `Iodine.make_resource` routes `QUERY` requests to a `query` callback (falls back to `index` when undefined), and HTTP requests carry a unique request id.
+
+**Feature**: New `Iodine::PubSub::Subscription` class for independent, non-IO-bound subscriptions (`Iodine::PubSub::Subscription.new(channel) { |msg| ... }`). Supports `handler`, `handler=`, `active?` and `cancel`.
+
+**Feature**: New `Iodine.async(&block)` method schedules a block to run on the worker thread pool (in parallel, outside the IO thread), complementing `Iodine.run` (which runs on the IO thread's event queue).
+
+**Feature**: New `Iodine.shutdown_timeout` and `Iodine.shutdown_timeout=` (milliseconds) control the graceful shutdown timeout for worker processes.
+
+**Feature**: New `Iodine::Utils.totp(secret:, offset: 0, interval: 30)` generates the current TOTP code (complementing `totp_secret` / `totp_verify`).
+
+**Feature**: Hot code swapping / hot restarts. In cluster mode the application code is (re)loaded only by worker processes, allowing `SIGUSR1` (or the new CLI option `-hr <seconds>`) to hot-restart the app with zero-downtime worker rotation. `--preload` disables code swapping (copy-on-write memory optimization).
+
+**Feature**: Windows support (single-process mode). Iodine now compiles and runs on Windows (MSYS2/MinGW and MSVC). Note that cluster mode is unavailable on Windows — setting `Iodine.workers` to a positive value raises `NotImplementedError`.
+
+**Security**: HTTP/1.1 parser hardening — strict header validation and rejection of ambiguous requests (disconnection is preferred over the risk of request smuggling).
+
+**Feature**: `Iodine::JSON.beautify(ruby_object)` — pretty-prints a Ruby object as a formatted JSON string.
+
+**Feature**: `Iodine::Connection#publish` instance method added alongside the existing `Iodine::Connection.publish` class method. The instance method publishes to everyone *except* the calling connection (per the NeoRack pub/sub extension).
+
+**Fix**: WebSocket `write` now correctly sends text frames for UTF-8 encoded strings and binary frames for non-UTF-8 strings, matching the WebSocket specification.
+
+**Fix**: Fixed a type mismatch that caused incorrect behavior in certain connection scenarios. Credit to @michal-kazmierczak (Michał Kaźmierczak) for reporting issue #156.
+
+**Fix**: Fixed a segfault that could occur when passing a `Proc` as the handler to `Iodine.listen`.
+
+**Breaking Change**: Removed deprecated `Iodine::PubSub::Engine::ROOT`, `Iodine::PubSub::Engine::PROCESS`, and `Iodine::PubSub::Engine::SIBLINGS` constants. Use `Iodine::PubSub::Engine::LOCAL` (local machine, all processes) or `Iodine::PubSub::Engine::CLUSTER` (entire cluster, default) instead.
+
+**Breaking Change**: Removed `Iodine.defer` (use `Iodine.run` or `Iodine.async`), `Iodine.run_every` (use `Iodine.run_after(ms, 0)`), `Iodine.on_idle` (use `Iodine.on_state(:idle)`), `Iodine.connect` and `Iodine.attach_fd` (use `Iodine::Connection.new`).
+
+------------------------
+
+## Total Rewrite
+
+The new version is a complete rewrite, with a new architecture and a new API. Backwards compatibility was kept where possible.
+
+All previous changes influenced the architecture of the new version.
+
+------------------------
 
 #### Change log v.0.7.58 (2024-04-28)
 
@@ -148,7 +254,7 @@ Please notice that this change log contains changes for upcoming releases as wel
 
 #### Change log v.0.7.31
 
-**Security**: a heap-overflow vulnerability was fixed in the WebSocket parser. This attack could have been triggered remotely by a maliciously crafted message-header. Credit to Dane (4cad@silvertoque) for exposing this issue and providing a Python script demonstrating the attack. 
+**Security**: a heap-overflow vulnerability was fixed in the WebSocket parser. This attack could have been triggered remotely by a maliciously crafted message-header. Credit to Dane (4cad@silvertoque) for exposing this issue and providing a Python script demonstrating the attack.
 
 It's recommended that all iodine users update to the latest version.
 
@@ -214,7 +320,7 @@ It's recommended that all iodine users update to the latest version.
 
 #### Change log v.0.7.20
 
-**Security**: (`fio`) lower and smarter Slowloris detection limits (backlog limit is now 1,024 responses / messages per client). 
+**Security**: (`fio`) lower and smarter Slowloris detection limits (backlog limit is now 1,024 responses / messages per client).
 
 **Security**: (`http`) HTTP/1.1 slow client throttling - new requests will not be consumed until pending responses were sent. Since HTTP/1.1 is a response-request protocol, this protocol specific approach should protect the HTTP application against slow clients.
 
@@ -398,14 +504,13 @@ It's recommended that all iodine users update to the latest version.
 
 #### Change log v.0.7.0
 
-This version bump is performed because the internal engine changed significantly and might be considered less mature. The public API remains unbroken. 
+This version bump is performed because the internal engine changed significantly and might be considered less mature. The public API remains unbroken.
 
 **Fix**: Fixed a documentation error. Credit to @Fonsan (Erik Fonselius) for PR #41.
 
 **Feature**: (mustache) Added a bridge to facil.io's mustache template rendering engine. This isn't really a server concern, but [facil.io's C code](http://facil.io) includes this functionality anyway and it offers increased XSS protection by utilizing aggressive HTML escaping (and it's also faster than the Ruby canonical version).
 
 **Update**: (facil.io) Updated to facil.io version 0.7.0 (edge). This could effect memory consumption behavior but otherwise shouldn't effect iodine all that much.
-
 
 #### Change log v.0.6.5
 
@@ -691,7 +796,7 @@ Iodine.start
 
 **Compatibility**: (from `facil.io`) Now checks for HTTP/1.0 clients to determine connection persistence.
 
-**Compatibility**: (from `facil.io`) Added spaces after header names (`:` => `: `), since some parsers don't seem to read the RFC.
+**Compatibility**: (from `facil.io`) Added spaces after header names (`:` => `:`), since some parsers don't seem to read the RFC.
 
 ---
 
@@ -705,7 +810,7 @@ Iodine.start
 
 #### Change log v.0.3.1
 
-**Update**: Follow `facil.io`'s update for healthier thread throttling and energy consumption.
+**Update**: Follow `facil.io`'s update for healthier thread throttling and energy consumption
 ---
 
 #### Change log v.0.3.1
@@ -797,7 +902,6 @@ Iodine.start
 * Fixed a possible Linux `sendfile` implementation issue where sometimes errors wouldn't be caught or `sendfile` would be called past a file's limit (edge case handling).
 
 * `bscrypt` random generator (where `dev/random` is unavailable) should now provide more entropy.
-
 
 ---
 
@@ -1096,8 +1200,6 @@ This allows objects to manage their data as if they were in a single thread envi
 Another example is that real-life deployment preferences were favored over adjustability or features. This means that some command-line arguments are automatically recognized (such as the `-p <port>` argument) and that Iodine assumes a single web service per script/process (whereas GReactor and GRHTTP allowed multiple listening sockets).
 
 I tested this new gem during the 0.0.x version releases, and I feel that version 0.1.0 is stable enough to work with. For instance, I left the Iodine server running all night under stress (repeatedly benchmarking it)... millions of requests later, under heavy load, a restart wasn't required and memory consumption didn't show any increase after the warmup period.
-
-
 
 ## License
 

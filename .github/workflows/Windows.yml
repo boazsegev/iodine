@@ -1,0 +1,51 @@
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support documentation.
+# This workflow will download a prebuilt Ruby version, install dependencies and run tests with Rake
+# For more information see: https://github.com/marketplace/actions/setup-ruby-jruby-and-truffleruby
+
+name: Windows CI
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby-version: ['3.2', '3.3', '3.4', '4.0']
+        os: [windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v6
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ matrix.ruby-version }}
+        bundler-cache: true
+    - name: Setup ENV
+      run: |
+        echo "CI=false" >> $env:GITHUB_ENV
+    - name: Compile Iodine
+      run: bundle exec rake compile
+    - name: Verify connection spec exits promptly
+      shell: pwsh
+      run: |
+        $process = Start-Process cmd.exe -ArgumentList '/c', 'bundle exec rspec spec/connection_spec.rb --format documentation' -PassThru -NoNewWindow
+        if (-not $process.WaitForExit(30000)) {
+          Stop-Process -Id $process.Id -Force
+          throw 'connection_spec did not exit within 30 seconds'
+        }
+        if ($process.ExitCode -ne 0) {
+          throw "connection_spec exited with code $($process.ExitCode)"
+        }
+    - name: Run tests
+      run: bundle exec rake spec

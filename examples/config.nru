@@ -1,0 +1,120 @@
+# This is a NeoRack Application with a Rack fallback for non-NeoRack servers (such as Puma).
+#
+# Iodine can run both Rack (old school) and NeoRack applications.
+# 
+# In this case the `on_http` implementation will be called by iodine (and the `call` implementation will be called by any other server).
+# 
+module EchoApp
+  # A selector for the on_http example to implement.
+  STREAM_RESPONSES = false
+
+  # for non-NeoRack servers, such as Puma
+  def self.call(e)
+    txt = []
+    if e['rack.upgrade?']
+      e['rack.upgrade'] = self
+    else
+      e.each {|k,v| txt << "#{k}: #{v}\r\n" }
+    end
+    [200, {}, txt]
+  end
+
+  # Choose requested response callback – a streaming response vs. `content-length`.
+  if(STREAM_RESPONSES)
+
+    # This approach streams the data, adding some HTTP overhead, as may be performed by longer handlers.
+    def self.on_http(e)
+      # we write without finishing and without setting the content-length header...
+      # servers should automatically stream the response (i.e., using chunked encoding)
+      e.write "path:    #{e.path}\r\n"
+      e.write "opath:   #{e.opath}  -- (original)\r\n"
+      e.write "query:   #{e.query}\r\n"
+      e.write "method:  #{e.method}\r\n"
+      e.write "version: #{e.version}\r\n"
+      e.write "from:    #{e.from} (real: #{e.peer_addr})\r\n"
+      e.headers.each {|k,v| e.write "#{k}: #{v}\r\n" }
+      # echo request body to the response
+      while(l = e.gets)
+        e.write l
+      end
+      e.finish
+    end
+
+  else # STREAM_RESPONSES?
+
+    # This is similar to Rack, compiling the whole response before sending it
+    # this should optimally result in `content-length` being set by the server
+    def self.on_http(e)
+      # First, prepare the output data
+      out =  "path:    #{e.path}\r\n" + 
+             "opath:   #{e.opath}  -- (original)\r\n" +
+             "query:   #{e.query}\r\n" +
+             "method:  #{e.method}\r\n" +
+             "version: #{e.version}\r\n" +
+             "from:    #{e.from} (#{e.peer_addr})\r\n"
+      e.headers.each {|k,v| out += "#{k}: #{v}\r\n" }
+      # append the incoming body
+      while(l = e.gets)
+        out += l
+      end
+      # finish and write the data to the client.
+      # efficient servers will see this is the first and only `write` and set `content-length`
+      e.finish out 
+    end
+
+  end
+
+  # Called when a WebSocket / SSE connection is opened.
+  def self.on_open(e)
+    e.subscribe(:broadcast) # { |msg| puts "(#{Process.pid}:#{Thread.current}): #{msg.channel} : #{msg.message}"; e.write msg.message }
+  end
+
+  # Called when a WebSocket message is received...
+  #
+  # ... however, Iodine also allows SSE clients to "cheat" and push messages to this callback.
+  def self.on_message(e, m)
+    Iodine.publish(:broadcast, m)
+  end
+end
+
+module ResourceApp  
+  def self.index(e);  e.finish("Show Index"); end
+  def self.show(e);   e.finish("Show Item: #{e.path[1..-1]}"); end
+  def self.delete(e); e.finish("Delete Item: #{e.path[1..-1]}"); end
+  def self.new(e);    e.finish("New Item Form."); end
+  def self.edit(e);   e.finish("Edit Item: #{e.path.split(?/)[1]}"); end
+  def self.create(e); e.finish("Create a new Item."); end
+  def self.update(e); e.finish("Update Item: #{e.path[1..-1]}"); end
+end
+neorack_resource ResourceApp
+
+if defined?(Iodine)
+  map("hello") { map("echo", EchoApp); run {|e| [200, {}, "Hello World"] } }
+  map("rack") { run {|e| EchoApp.call(e) } }
+  map('/crud', ResourceApp)
+end
+run EchoApp
+
+# Benchmark with keep-alive:
+# 
+#     ab -c 200 -t 4 -n 1000000 -k http://127.0.0.1:3000/
+#     wrk -c200 -d4 -t2 http://localhost:3000/
+# 
+# Connect to chat server with WebSockets:
+# 
+#     ws = new WebSocket("ws://" + document.location.host + document.location.pathname);
+#     ws.onmessage = function(e) {console.log("Got message!"); console.log(e.data);};
+#     ws.onclose = function(e) {console.log("closed")};
+#     ws.onopen = function(e) {ws.send("hi");};
+# 
+# Listen to chat messages with Server Sent Events (EventSource / SSE):
+# 
+#     const listener = new EventSource(document.location.href);
+#     listener.onmessage = (e) => { console.log(e); }
+#     listener.addEventListener("time", (e) => { console.log(e); })
+#     listener.addEventListener("event", (e) => { console.log(e); })
+#
+# To run any code / configuration on the root (master) process, call Iodine with `-C`:
+#
+#     iodine -C config.rb
+#

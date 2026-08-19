@@ -1,0 +1,9 @@
+# A simple Hello World NeoRack application
+module App
+	HELLO_RESPONSE = "Hello World!"
+	def self.on_http(e)
+		e.finish HELLO_RESPONSE
+	end
+end
+
+run App
