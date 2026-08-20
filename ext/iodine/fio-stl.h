@@ -106036,7 +106036,9 @@ SFUNC fio_io_s *fio_io_attach_fd(fio_socket_i fd,
 error:
   cpy = *pr;
   if (cpy.on_close)
-    cpy.on_close(NULL, udata);
+    fio___io_defer_no_wakeup((void (*)(void *, void *))cpy.on_close,
+                             NULL,
+                             udata);
   /* Ownership of `tls` transfers to the reactor when `fio_io_attach_fd` is
    * called, on success AND on failure. Release it here with the CONTEXT
    * destructor: `cleanup` would be wrong, as it destroys per-connection
@@ -106044,7 +106046,7 @@ error:
    * on the connect path, where on_close routes to free_context). */
   if (tls && cpy.io_functions.free_context &&
       cpy.io_functions.free_context != fio___io_func_default_free_context)
-    cpy.io_functions.free_context(tls);
+    fio___io_func_free_context_caller(cpy.io_functions.free_context, tls);
   return io;
 }
 
