@@ -15,6 +15,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  IODINE_LOG_LEVEL: 5
+
 jobs:
   test:
     timeout-minutes: 15
