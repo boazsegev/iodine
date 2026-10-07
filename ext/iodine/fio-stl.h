@@ -2313,9 +2313,13 @@ typedef struct fio_list_node_s {
 #ifndef FIO_LIST_EACH
 /** Loops through every node in the linked list except the head. */
 #define FIO_LIST_EACH(type, node_name, head, pos)                              \
-  for (type *pos = FIO_PTR_FROM_FIELD(type, node_name, (head)->next),          \
+  for (type *pos =                                                             \
+           ((head)->next ? FIO_PTR_FROM_FIELD(type, node_name, (head)->next)   \
+                         : FIO_PTR_FROM_FIELD(type, node_name, (head))),       \
             *next____p_ls_##pos =                                              \
-                FIO_PTR_FROM_FIELD(type, node_name, (head)->next->next);       \
+                ((head)->next                                                  \
+                     ? FIO_PTR_FROM_FIELD(type, node_name, (head)->next->next) \
+                     : FIO_PTR_FROM_FIELD(type, node_name, (head)));           \
        pos != FIO_PTR_FROM_FIELD(type, node_name, (head));                     \
        (pos = next____p_ls_##pos),                                             \
             (next____p_ls_##pos =                                              \
@@ -2324,9 +2328,13 @@ typedef struct fio_list_node_s {
                                     next____p_ls_##pos->node_name.next)))
 /** Loops through every node in the linked list except the head. */
 #define FIO_LIST_EACH_REVERSED(type, node_name, head, pos)                     \
-  for (type *pos = FIO_PTR_FROM_FIELD(type, node_name, (head)->prev),          \
+  for (type *pos =                                                             \
+           ((head)->prev ? FIO_PTR_FROM_FIELD(type, node_name, (head)->prev)   \
+                         : FIO_PTR_FROM_FIELD(type, node_name, (head))),       \
             *next____p_ls_##pos =                                              \
-                FIO_PTR_FROM_FIELD(type, node_name, (head)->next->prev);       \
+                ((head)->prev                                                  \
+                     ? FIO_PTR_FROM_FIELD(type, node_name, (head)->prev->prev) \
+                     : FIO_PTR_FROM_FIELD(type, node_name, (head)));           \
        pos != FIO_PTR_FROM_FIELD(type, node_name, (head));                     \
        (pos = next____p_ls_##pos),                                             \
             (next____p_ls_##pos =                                              \
@@ -37218,7 +37226,9 @@ Queue Inline Helpers
 ***************************************************************************** */
 
 /** returns the number of tasks in the queue. */
-FIO_IFUNC uint32_t fio_queue_count(fio_queue_s *q) { return q->count; }
+FIO_IFUNC uint32_t fio_queue_count(fio_queue_s *q) {
+  return fio_atomic_add(&q->count, 0);
+}
 
 /** Initializes a fio_queue_s object. */
 FIO_IFUNC void fio_queue_init(fio_queue_s *q) {
@@ -37381,10 +37391,10 @@ SFUNC int fio_queue_push FIO_NOOP(fio_queue_s *q, fio_queue_task_s task) {
     q->w = q->w->next;
     fio___task_ring_push(q->w, task);
   }
-  ++q->count;
+  fio_atomic_add(&q->count, 1);
   if (!FIO_LIST_IS_EMPTY(&q->consumers)) {
     FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
-      if (!pos->stop)
+      if (!fio_atomic_add(&pos->stop, 0))
         fio_thread_cond_signal(&pos->cond);
     }
   }
@@ -37417,10 +37427,10 @@ SFUNC int fio_queue_push_urgent FIO_NOOP(fio_queue_s *q,
     tmp->dir = tmp->r = 0;
     tmp->buf[0] = task;
   }
-  ++q->count;
+  fio_atomic_add(&q->count, 1);
   if (!FIO_LIST_IS_EMPTY(&q->consumers)) {
     FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
-      if (!pos->stop)
+      if (!fio_atomic_add(&pos->stop, 0))
         fio_thread_cond_signal(&pos->cond);
     }
   }
@@ -37438,10 +37448,10 @@ SFUNC fio_queue_task_s fio_queue_pop(fio_queue_s *q) {
   fio_queue_task_s t = {.fn = NULL};
   fio___task_ring_s *to_free = NULL;
   fio___task_ring_s *to_free_tst = NULL;
-  if (!q->count)
+  if (!fio_atomic_add(&q->count, 0))
     return t;
   FIO___LOCK_LOCK(q->lock);
-  if (!q->count)
+  if (!fio_atomic_add(&q->count, 0))
     goto finish;
   if (!(t = fio___task_ring_pop(q->r)).fn) {
     to_free = q->r;
@@ -37449,7 +37459,7 @@ SFUNC fio_queue_task_s fio_queue_pop(fio_queue_s *q) {
     to_free->next = NULL;
     t = fio___task_ring_pop(q->r);
   }
-  if (t.fn && !(--q->count) && q->r != &q->mem) {
+  if (t.fn && !(fio_atomic_sub_fetch(&q->count, 1)) && q->r != &q->mem) {
     if (to_free && to_free != &q->mem) { // edge case
       FIO_LEAK_COUNTER_ON_FREE(fio_queue_task_rings);
       FIO_MEM_FREE_(to_free, sizeof(*to_free));
@@ -37495,10 +37505,10 @@ FIO_SFUNC void *fio___queue_worker_task(void *g_) {
   fio___thread_group_s *grp = (fio___thread_group_s *)g_;
   FIO_LEAK_COUNTER_ON_ALLOC(fio___queue_worker);
   fio_state_callback_force(FIO_CALL_ON_WORKER_THREAD_START);
-  while (!grp->stop) {
+  while (!fio_atomic_add(&grp->stop, 0)) {
     fio_queue_perform_all(grp->queue);
     fio_thread_mutex_lock(&grp->mutex);
-    if (!grp->stop)
+    if (!fio_atomic_add(&grp->stop, 0))
       fio_thread_cond_wait(&grp->cond, &grp->mutex);
     fio_thread_mutex_unlock(&grp->mutex);
     fio_queue_perform_all(grp->queue);
@@ -37542,15 +37552,16 @@ FIO_SFUNC void *fio___queue_worker_manager(void *g_) {
   fio_queue_perform_all(grp.queue);
   FIO___LOCK_LOCK(grp.queue->lock);
   FIO_LIST_REMOVE(&grp.node);
-  if (!(grp.stop & 2)) {
+  if (!(fio_atomic_add(&grp.stop, 0) & 2)) {
     FIO___LOCK_UNLOCK(grp.queue->lock);
     fio_thread_cond_destroy(&grp.cond);
     fio_thread_mutex_destroy(&grp.mutex);
     fio_thread_detach(&grp.thread);
   } else {
-    grp.stop = 1;
+    fio_atomic_or(&grp.stop, 1);
+    fio_atomic_and(&grp.stop, 1);
     FIO___LOCK_UNLOCK(grp.queue->lock);
-    while (grp.stop & 1)
+    while (fio_atomic_add(&grp.stop, 0) & 1)
       FIO_THREAD_RESCHEDULE();
   }
   FIO_LEAK_COUNTER_ON_FREE(fio___queue_worker_manager);
@@ -37569,16 +37580,16 @@ SFUNC int fio_queue_workers_add(fio_queue_s *q, size_t workers) {
     FIO___LOCK_UNLOCK(q->lock);
     return -1;
   }
-  while (grp.stop)
+  while (fio_atomic_add(&grp.stop, 0))
     FIO_THREAD_RESCHEDULE();
   FIO___LOCK_UNLOCK(q->lock);
   return 0;
 }
 
 SFUNC void fio_queue_workers_stop(fio_queue_s *q) {
-  if (!q || FIO_LIST_IS_EMPTY(&q->consumers))
+  if (!q)
     return;
-  FIO___LOCK_LOCK(q->lock);
+  FIO___LOCK_LOCK(q->lock); /* consumers list is only read under the lock */
   FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
     fio_atomic_or(&pos->stop, 1);
     fio_thread_mutex_lock(&pos->mutex);
@@ -37588,13 +37599,13 @@ SFUNC void fio_queue_workers_stop(fio_queue_s *q) {
   FIO___LOCK_UNLOCK(q->lock);
 }
 
-/** Signals all worker threads to go back to work (new tasks were). */
+/** Signals all worker threads to go back to work (new tasks added). */
 SFUNC void fio_queue_workers_wake(fio_queue_s *q) {
-  if (!q || FIO_LIST_IS_EMPTY(&q->consumers))
+  if (!q)
     return;
-  FIO___LOCK_LOCK(q->lock);
+  FIO___LOCK_LOCK(q->lock); /* consumers list is only read under the lock */
   FIO_LIST_EACH(fio___thread_group_s, node, &q->consumers, pos) {
-    if (!pos->stop)
+    if (!fio_atomic_add(&pos->stop, 0))
       fio_thread_cond_signal(&pos->cond);
   }
   FIO___LOCK_UNLOCK(q->lock);
@@ -37611,7 +37622,7 @@ SFUNC void fio_queue_workers_join(fio_queue_s *q) {
         FIO_PTR_FROM_FIELD(fio___thread_group_s, node, q->consumers.next);
     fio_atomic_or(&pos->stop, 3);
     FIO___LOCK_UNLOCK(q->lock);
-    while (pos->stop & 2)
+    while (fio_atomic_add(&pos->stop, 0) & 2)
       FIO_THREAD_RESCHEDULE();
     fio_thread_cond_destroy(&pos->cond);
     fio_thread_mutex_destroy(&pos->mutex);
@@ -107390,7 +107401,7 @@ FIO_SFUNC void fio___io_tick(int max_timeout) {
   idle_round &= (timeout > 0);
   performed_idle &= idle_round;
   idle_round ^= performed_idle;
-  if ((idle_round & !FIO___IO.stop)) {
+  if ((idle_round & !fio_atomic_add(&FIO___IO.stop, 0))) {
     fio_state_callback_force(FIO_CALL_ON_IDLE);
     performed_idle = 1;
   }
@@ -107470,7 +107481,7 @@ FIO_SFUNC void fio___io_shutdown(void) {
 }
 
 FIO_SFUNC void fio___io_work_task(void *ignr_1, void *ignr_2) {
-  if (FIO___IO.stop)
+  if (fio_atomic_add(&FIO___IO.stop, 0))
     goto no_run;
   fio___io_tick(500);
   fio_queue_push(&FIO___IO.queue, fio___io_work_task, ignr_1, ignr_2);
@@ -120267,6 +120278,11 @@ typedef struct {
   char buf[];
 } fio___http_connection_s;
 
+/** Selects the task queue for `s` (async queue when running, else IO queue). */
+FIO_IFUNC fio_queue_s *fio___http_settings_queue(fio_http_settings_s *s) {
+  return ((s->queue && s->queue->q) ? s->queue->q : fio_io_queue());
+}
+
 #define FIO_REF_NAME             fio___http_connection
 #define FIO_REF_CONSTRUCTOR_ONLY 1
 #define FIO_REF_FLEX_TYPE        char
@@ -125070,9 +125086,7 @@ FIO_SFUNC void fio___http_on_attach_accept(fio_io_s *io) {
   *c = (fio___http_connection_s){
       .io = io,
       .settings = &(p->settings),
-      .queue =
-          ((p->settings.queue && p->settings.queue->q) ? p->settings.queue->q
-                                                       : fio_io_queue()),
+      .queue = fio___http_settings_queue(&p->settings),
       .udata = p->settings.udata,
       .state.http =
           {
@@ -125570,6 +125584,8 @@ FIO_SFUNC void fio___http1_on_attach_client(fio_io_s *io) {
   fio___http_connection_s *c = (fio___http_connection_s *)fio_io_udata(io);
   // c->io = fio_io_dup(io);
   c->io = io;
+  /* async queues resolve once the reactor runs - select it on attach */
+  c->queue = fio___http_settings_queue(c->settings);
   fio___http1_send_request(c->h);
   if (c->len)
     fio___http1_process_data(io, c);
@@ -126911,8 +126927,7 @@ static void fio___http_listen_on_start(fio_io_protocol_s *protocol, void *u) {
       FIO_PTR_FROM_FIELD(fio___http_protocol_s,
                          state[FIO___HTTP_PROTOCOL_ACCEPT].protocol,
                          protocol);
-  p->queue = ((p->settings.queue && p->settings.queue->q) ? p->settings.queue->q
-                                                          : fio_io_queue());
+  p->queue = fio___http_settings_queue(&p->settings);
 }
 
 static void fio___http_listen_on_stop(fio_io_protocol_s *p, void *u) {

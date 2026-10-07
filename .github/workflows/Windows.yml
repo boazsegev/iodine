@@ -65,17 +65,6 @@ jobs:
         }
     - name: Run tests
       run: bundle exec rake spec
-    - name: NogVL repro - build (ext/iodine-test)
-      if: always()
-      run: bundle exec rake compile:test
-    - name: NogVL repro - ruby pool threads (iodine pattern)
-      if: always()
-      continue-on-error: true
-      run: ruby ext/iodine-test/run.rb ruby 500
-    - name: NogVL repro - native pool threads (bisection)
-      if: always()
-      continue-on-error: true
-      run: ruby ext/iodine-test/run.rb native 500
     - name: Symbolize crash (only on failure)
       if: failure()
       continue-on-error: true
