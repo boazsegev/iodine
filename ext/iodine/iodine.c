@@ -109,7 +109,7 @@ Initialize Extension
 
 void Init_iodine(void) {
   patch_env();
-  IODINE_THREAD_POOL = FIO_IO_ASYN_INIT;
+  IODINE_THREAD_POOL = (fio_io_async_s)FIO_IO_ASYN_INIT;
   fio_state_callback_force(FIO_CALL_ON_INITIALIZE);
 
   IodineUTF8Encoding = rb_enc_find("UTF-8");
