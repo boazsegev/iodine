@@ -22,26 +22,6 @@ require 'spec_helper'
 # both timers are single-shot, so later reactor cycles are never affected.
 # =============================================================================
 
-# Windows crash symbolization aid: Ruby's [BUG] reporter prints the crash and
-# abort()s the process itself, so no external debugger or Windows error
-# handler ever gets a chance to intercept - and the C-level backtrace only
-# contains ASLR'd absolute addresses. Printing libruby's load base here
-# (in-process, before anything runs) lets CI compute RVAs (VA - base) from
-# the very same log and symbolize them with addr2line.
-if /mingw|mswin/ =~ RUBY_PLATFORM
-  require 'fiddle'
-  require 'fiddle/import'
-
-  module SingleCycleKernel32 # rubocop:disable RSpec/LeakyConstantDeclaration
-    extend Fiddle::Importer
-    dlload 'kernel32'
-    extern 'void* GetModuleHandleA(const char *)'
-  end
-
-  libruby_base = SingleCycleKernel32.GetModuleHandleA(RbConfig::CONFIG['LIBRUBY_SO'])
-  Kernel.warn "[single_cycle] libruby base address: 0x#{libruby_base.to_i.to_s(16)}"
-end
-
 RSpec.describe 'single reactor cycle (minimal teardown repro)' do
   SINGLE_CYCLE_STATE = { started: false, finished: false } # rubocop:disable RSpec/LeakyConstantDeclaration
 

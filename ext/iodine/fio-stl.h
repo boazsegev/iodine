@@ -756,10 +756,10 @@ Sleep / Thread Scheduling Macros
 
 #ifndef FIO_THREAD_WAIT
 #if FIO_OS_WIN
-/** Calls NtDelayExecution with the requested nano-second count. */
 #define FIO_THREAD_WAIT(nano_sec)                                              \
   do {                                                                         \
-    Sleep(((nano_sec) / 1000000) ? ((nano_sec) / 1000000) : 1);                \
+    SleepEx(((nano_sec) / 1000000) ? (DWORD)((nano_sec) / 1000000) : 1,        \
+            FALSE);                                                            \
   } while (0)
 // https://docs.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-sleep
 
@@ -10900,7 +10900,9 @@ FIO_SFUNC FIO___ASAN_AVOID fio_aton_s fio_aton(char **pstr) {
     if (base < 2) { /* base 10 / Oct */
       dbl *= (expo_neg ? fio___aton_pow10n : fio___aton_pow10)(expo);
     } else {
-      dbl *= fio_u2d(1U, (expo_neg ? (int64_t)0 - expo : (int64_t)expo));
+      dbl *= fio_u2d(
+          1U,
+          (expo_neg ? (int64_t)((uint64_t)0ULL - expo) : (int64_t)expo));
     }
   }
   r.is_float = 1;
@@ -15398,7 +15400,7 @@ FIO_IFUNC uintptr_t fio_thread_nid(void) {
 }
 
 /** Yields thread execution. */
-FIO_IFUNC void fio_thread_yield(void) { Sleep(0); }
+FIO_IFUNC void fio_thread_yield(void) { SleepEx(0, FALSE); }
 
 #endif /* FIO_THREADS_BYO */
 

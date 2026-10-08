@@ -39,6 +39,19 @@ jobs:
         echo "CI=false" >> $env:GITHUB_ENV
     - name: Compile Iodine
       run: bundle exec rake compile
+    - name: Show which DLL provides Sleep (GVL diagnostic)
+      # libruby exports `Sleep` (= rb_w32_Sleep, which takes the GVL) and is
+      # linked before kernel32, so C STL spin-waits may bind to it.
+      continue-on-error: true
+      shell: pwsh
+      run: |
+        $env:Path = 'C:\msys64\ucrt64\bin;C:\msys64\usr\bin;' + $env:Path
+        $so = Get-ChildItem lib -Filter 'iodine.so' -Recurse | Select-Object -First 1
+        $dll = ''
+        objdump -p $so.FullName | ForEach-Object {
+          if ($_ -match 'DLL Name:\s*(\S+)') { $dll = $Matches[1] }
+          elseif ($_ -match '\s(Sleep|SleepEx)\s*$') { Write-Host "$($Matches[1]) imported from $dll" }
+        }
     - name: Single reactor cycle (minimal teardown repro)
       shell: pwsh
       run: |
@@ -65,55 +78,3 @@ jobs:
         }
     - name: Run tests
       run: bundle exec rake spec
-    - name: Symbolize crash (only on failure)
-      if: failure()
-      continue-on-error: true
-      shell: pwsh
-      run: |
-        $ErrorActionPreference = 'Continue'
-        Write-Host '=== crash symbolization (best effort) ==='
-        $bindir = (& ruby -e "print RbConfig::CONFIG['bindir']")
-        $so = (& ruby -e "print RbConfig::CONFIG['LIBRUBY_SO']")
-        $dll = Join-Path $bindir $so
-        Write-Host "libruby: $dll"
-
-        # Ruby's [BUG] reporter prints and abort()s the process itself, so no
-        # external tool gets a chance to intercept. The spec prints libruby's
-        # load base (via Fiddle GetModuleHandleA) before running, so RVAs can
-        # be computed from the same log: RVA = VA - base.
-        $pattern = [regex]::Escape($so) + '\((\w+)\+0x([0-9a-fA-F]+)\) \[0x([0-9a-fA-F]+)\]'
-        $basePattern = 'libruby base address: 0x([0-9a-fA-F]+)'
-        $raw = ''
-        if (Test-Path 'single_cycle.log') { $raw = Get-Content 'single_cycle.log' -Raw }
-        $frames = [regex]::Matches($raw, $pattern)
-        $baseMatch = [regex]::Match($raw, $basePattern)
-
-        if (-not $frames.Count -or -not $baseMatch.Success) {
-          Write-Host 'frames/base missing from single_cycle.log - re-running single cycle for a fresh crash log'
-          bundle exec rspec spec/single_cycle_spec.rb > symbolize_run.log 2>&1
-          if (Test-Path 'symbolize_run.log') {
-            $raw = Get-Content 'symbolize_run.log' -Raw
-            $frames = [regex]::Matches($raw, $pattern)
-            $baseMatch = [regex]::Match($raw, $basePattern)
-          }
-        }
-
-        if (-not $frames.Count) { Write-Host 'no libruby frames found - nothing to symbolize'; exit 0 }
-
-        Write-Host '--- libruby frames (nearest export + offset, ASLR-independent) ---'
-        foreach ($m in $frames) { Write-Host ("{0}+0x{1}" -f $m.Groups[1].Value, $m.Groups[2].Value) }
-
-        $env:Path = 'C:\msys64\ucrt64\bin;C:\msys64\mingw64\bin;C:\msys64\usr\bin;' + $env:Path
-        $addr2line = Get-Command addr2line -ErrorAction SilentlyContinue
-        if (-not $addr2line) { Write-Host 'addr2line not found; resolve the frames above offline with the toolcache DLL'; exit 0 }
-        if (-not $baseMatch.Success) { Write-Host 'no base address in log; cannot compute RVAs'; exit 0 }
-
-        $base = [Convert]::ToUInt64($baseMatch.Groups[1].Value, 16)
-        Write-Host ("--- addr2line (base 0x{0:x}) ---" -f $base)
-        foreach ($m in $frames) {
-          $va = [Convert]::ToUInt64($m.Groups[3].Value, 16)
-          $rva = $va - $base
-          Write-Host ("frame {0}+0x{1} (RVA 0x{2:x}):" -f $m.Groups[1].Value, $m.Groups[2].Value, $rva)
-          & addr2line -f -C -e $dll ('0x{0:x}' -f $rva)
-        }
-        exit 0
