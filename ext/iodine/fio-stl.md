@@ -5754,6 +5754,8 @@ Nearby context: [IO and HTTP overview](./400 io-overview.md), the higher-level
   - `fio_http1_parser_is_on_header`
   - `fio_http1_parser_is_on_body`
   - `fio_http1_expected`
+  - `fio_http1_parser_skip_body`
+  - `fio_http1_parser_skips_body`
 - parse result / expected-body constants:
   - `FIO_HTTP1_PARSER_ERROR`
   - `FIO_HTTP1_EXPECTED_CHUNKED`
@@ -5774,13 +5776,17 @@ typedef struct fio_http1_parser_s fio_http1_parser_s;
 struct fio_http1_parser_s {
   int (*fn)(fio_http1_parser_s *, fio_buf_info_s *, void *);
   size_t expected;
+  size_t flags;
 };
 ```
 
 The parser state is intentionally tiny: one function pointer for the current
-state-machine stage and one `expected` byte counter / sentinel.
+state-machine stage, one `expected` byte counter / sentinel, and a `flags`
+word for per-message state bits (e.g., an accepted `Expect: 100-continue`).
+Parser state is never inferred from function pointer identity, so linker
+identical-code-folding (MSVC / lld `/OPT:ICF`) cannot alter parsing behavior.
 
-Treat both fields as opaque. Allocate the struct wherever it fits your lifetime
+Treat all fields as opaque. Allocate the struct wherever it fits your lifetime
 (stack, connection object, arena, etc.), initialize it with
 `FIO_HTTP1_PARSER_INIT`, and use the helper functions to inspect state.
 
@@ -5835,6 +5841,8 @@ FIO_IFUNC size_t fio_http1_parser_is_empty(fio_http1_parser_s *p);
 FIO_IFUNC size_t fio_http1_parser_is_on_header(fio_http1_parser_s *p);
 FIO_IFUNC size_t fio_http1_parser_is_on_body(fio_http1_parser_s *p);
 FIO_IFUNC size_t fio_http1_expected(fio_http1_parser_s *p);
+FIO_IFUNC void fio_http1_parser_skip_body(fio_http1_parser_s *p);
+FIO_IFUNC size_t fio_http1_parser_skips_body(fio_http1_parser_s *p);
 ```
 
 - `fio_http1_parser_is_empty` returns non-zero when the parser is waiting for a
@@ -5850,6 +5858,15 @@ FIO_IFUNC size_t fio_http1_expected(fio_http1_parser_s *p);
   next chunk-size line is parsed, and returns `0` when the parser's internal
   state marks the message as having no body. During chunked payload delivery,
   it may expose the current chunk size / remaining chunk bytes.
+- `fio_http1_parser_skip_body` marks the current message as having no body,
+  regardless of any `content-length` / `transfer-encoding` headers. Call it
+  from a parser callback before the headers end (normally `on_status`), e.g.,
+  when parsing the response to a `HEAD` request — the parser can't know the
+  request method. The mark is cleared when the message completes. See
+  *Messages Without a Body* below.
+- `fio_http1_parser_skips_body` returns non-zero when the current message has
+  no body. It is known as soon as the first line is parsed (before any header
+  callback). Test it before reserving body space. See *Messages Without a Body*.
 
 ### Constants
 
@@ -5951,6 +5968,11 @@ most 14 bytes.
 The parser decides whether the first line is a response by checking whether the
 second token starts with a decimal digit.
 
+Responses with a `1xx`, `204`, or `304` status are automatically marked as
+having no body (see *Messages Without a Body*). The parser does not skip
+interim `1xx` responses: each one completes as a separate message, and callers
+decide whether to wait for the final response.
+
 ### Headers
 
 ```c
@@ -6002,14 +6024,40 @@ call `fio_http1_on_header_content_length`.
 `expect` is special when its value is exactly `100-continue`. Any other
 `Expect` value is rejected.
 
+### Messages Without a Body
+
+The parser identifies bodyless messages from the first line, before any header
+callback runs, and reports them through `fio_http1_parser_skips_body`:
+
+- requests using `GET`, `HEAD`, or `OPTIONS` (a non-zero `content-length` on
+  these is still rejected, as described above);
+- responses with a `1xx` / `204` / `304` status (RFC 9112 §6.3);
+- messages marked with `fio_http1_parser_skip_body` (i.e., a `HEAD` response,
+  marked from `on_status`).
+
+`fio_http1_parser_skips_body` is also true after a `content-length: 0` header.
+
+A bodyless response completes at the empty line after its headers, and any
+bytes that follow belong to the next message. Body framing is ignored:
+
+- `content-length` is still validated and reported to
+  `fio_http1_on_header_content_length`, but it is informational. Callbacks must
+  test `fio_http1_parser_skips_body` before reserving space or enforcing body
+  size limits (a `HEAD` response may describe a large body that never arrives);
+- `transfer-encoding` and `expect` are forwarded unchanged to
+  `fio_http1_on_header`.
+
 ### Expect: 100-continue
 
 ```c
 static int fio_http1_on_expect(void *udata);
 ```
 
-Called after headers when an accepted `Expect: 100-continue` header requires a
-post-header decision and the parser has a non-zero body expectation marker.
+Called once, after headers, when an accepted `Expect: 100-continue` header
+requires a post-header decision and a body may follow (a `Content-Length` body
+or `transfer-encoding: chunked`). It is not called for messages that cannot
+carry a body (e.g., `GET` / `HEAD` / `OPTIONS` or a zero `Content-Length`),
+since there is nothing to continue (RFC 9110 §10.1.1).
 Return `0` to continue into the body / completion flow. Return non-zero to reset
 the parser and stop the current parse without calling `fio_http1_on_complete`.
 
@@ -6037,7 +6085,7 @@ start line
   ├─ request  -> method -> url -> version
   └─ response -> version -> status
 headers
-  ├─ no body / body not allowed -> complete
+  ├─ no body / body not allowed -> complete   (incl. 1xx/204/304, skip_body)
   ├─ content-length body        -> body chunks -> complete
   └─ chunked body               -> chunk chunks -> trailers -> complete
 ```
@@ -20241,6 +20289,9 @@ and [`004 websocket parser.h`](./004 websocket parser.md).
 ## Connection Model
 
 HTTP/1.x requests and client responses are parsed into `fio_http_s` handles.
+A response line received by a server connection (or an unsolicited response
+received by a client) is logged as a `SECURITY` event and the connection is
+closed.
 The HTTP layer suspends the IO object while the user callback is running and
 resumes it after the response is finished or the upgrade is installed.
 
@@ -20577,6 +20628,13 @@ Recognized upgrade schemes:
 Client `on_http` receives the response handle. If the response accepts a
 WebSocket or SSE upgrade, the connection switches to the upgraded protocol and
 uses the upgraded callbacks instead.
+
+Interim `1xx` responses (i.e., `100 Continue`, `103 Early Hints`) other than
+`101` are skipped (RFC 9110 §15.2): `on_http` runs once, for the final
+response, and interim headers are discarded. Responses to `HEAD` requests, and
+`204` / `304` responses, never read a body, even if they carry
+`content-length` or `transfer-encoding` headers. Those headers stay visible
+as response headers.
 
 ### `fio_http_websocket_connect`
 

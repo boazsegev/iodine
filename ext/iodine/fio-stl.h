@@ -17263,11 +17263,39 @@ FIO_IFUNC size_t fio_http1_parser_is_on_body(fio_http1_parser_s *p);
 /** Returns the number of bytes of payload still expected to be received. */
 FIO_IFUNC size_t fio_http1_expected(fio_http1_parser_s *p);
 
+/**
+ * Marks the current message as having no body, regardless of any
+ * `content-length` / `transfer-encoding` headers (i.e., a response to `HEAD`).
+ *
+ * Call from a parser callback before the headers end (i.e., `on_status`). The
+ * mark is cleared once the message completes. Responses with a 1xx, 204 or 304
+ * status are marked automatically (RFC 9112 §6.3).
+ */
+FIO_IFUNC void fio_http1_parser_skip_body(fio_http1_parser_s *p);
+
+/**
+ * Returns non-zero if the current message has no body.
+ *
+ * Known once the first line was parsed (before any header callback): requests
+ * using GET / HEAD / OPTIONS, responses with a 1xx / 204 / 304 status, and
+ * messages marked by `fio_http1_parser_skip_body`. Also true after a
+ * `content-length: 0` header.
+ *
+ * Callbacks should test this before reserving body space - i.e., the
+ * `content-length` of a HEAD response describes a body that never arrives.
+ */
+FIO_IFUNC size_t fio_http1_parser_skips_body(fio_http1_parser_s *p);
+
 /** A return value for `fio_http1_expected` when chunked data is expected. */
 #define FIO_HTTP1_EXPECTED_CHUNKED ((size_t)(-2))
 
 /** `fio_http1_expected` value when body isn't allowed (GET/HEAD/OPTIONS). */
 #define FIO___HTTP1_BODY_NOT_ALLOWED ((size_t)(-1))
+
+/** Internal parser flag: an accepted `Expect: 100-continue` header was seen. */
+#define FIO___HTTP1_FLAG_EXPECT ((size_t)1)
+/** Internal parser flag: the message has no body (ignore body framing). */
+#define FIO___HTTP1_FLAG_NO_BODY ((size_t)2)
 
 /* *****************************************************************************
 HTTP/1.x callbacks (to be implemented by parser user)
@@ -17337,6 +17365,11 @@ HTTP Parser Type
 struct fio_http1_parser_s {
   int (*fn)(fio_http1_parser_s *, fio_buf_info_s *, void *);
   size_t expected;
+  /* per-message state bits (`FIO___HTTP1_FLAG_*`). State is never encoded in
+   * function pointer identity: identical stage functions may be folded by the
+   * linker (i.e., MSVC / lld `/OPT:ICF`), making such comparisons unreliable.
+   */
+  size_t flags;
 };
 
 /** Returns true if the parser is waiting to parse a new request/response .*/
@@ -17360,6 +17393,17 @@ FIO_IFUNC size_t fio_http1_expected(fio_http1_parser_s *p) {
   if (p->expected == FIO___HTTP1_BODY_NOT_ALLOWED)
     return 0;
   return p->expected;
+}
+
+/** Marks the current message as having no body (i.e., `HEAD` response). */
+FIO_IFUNC void fio_http1_parser_skip_body(fio_http1_parser_s *p) {
+  p->flags |= FIO___HTTP1_FLAG_NO_BODY;
+}
+
+/** Returns non-zero if the current message has no body. */
+FIO_IFUNC size_t fio_http1_parser_skips_body(fio_http1_parser_s *p) {
+  return (p->flags & FIO___HTTP1_FLAG_NO_BODY) |
+         (size_t)(p->expected == FIO___HTTP1_BODY_NOT_ALLOWED);
 }
 
 /* *****************************************************************************
@@ -17447,14 +17491,7 @@ static int fio_http1___start(fio_http1_parser_s *p,
     goto parse_response_line;
   if (wrd[2].len > 14)
     wrd[2].len = 14;
-  if (fio_http1_on_method(wrd[0], udata))
-    return -1;
-  if (fio_http1_on_url(wrd[1], udata))
-    return -1;
-  if (fio_http1_on_version(wrd[2], udata))
-    return -1;
-
-  /* make sure GET / HEAD / OPTIONS requests don't have a body */
+  /* GET / HEAD / OPTIONS requests have no body (known before callbacks) */
   if (((wrd[0].len == 3 || wrd[0].len == 4) &&
        ((fio_buf2u32u(wrd[0].buf) | 0x20202020) == method_get ||
         (fio_buf2u32u(wrd[0].buf) | 0x20202020) == method_head)) ||
@@ -17462,6 +17499,13 @@ static int fio_http1___start(fio_http1_parser_s *p,
        ((fio_buf2u64u(wrd[0].buf) | (uint64_t)0x2020202020202020ULL) ==
         method_options)))
     p->expected = FIO___HTTP1_BODY_NOT_ALLOWED;
+
+  if (fio_http1_on_method(wrd[0], udata))
+    return -1;
+  if (fio_http1_on_url(wrd[1], udata))
+    return -1;
+  if (fio_http1_on_version(wrd[2], udata))
+    return -1;
 
   /* switch to header reading mode */
   return (p->fn = fio_http1___read_header)(p, buf, udata);
@@ -17471,8 +17515,14 @@ parse_response_line:
     wrd[0].len = 14;
   if (fio_http1_on_version(wrd[0], udata))
     return -1;
-  if (fio_http1_on_status(fio_atol10u(&wrd[1].buf), wrd[2], udata))
-    return -1;
+  {
+    const size_t status = fio_atol10u(&wrd[1].buf);
+    /* 1xx, 204 and 304 responses never have a body (RFC 9112 §6.3) */
+    if ((status - 100) < 100 || status == 204 || status == 304)
+      p->flags |= FIO___HTTP1_FLAG_NO_BODY;
+    if (fio_http1_on_status(status, wrd[2], udata))
+      return -1;
+  }
   return (p->fn = fio_http1___read_header)(p, buf, udata);
 }
 
@@ -17480,25 +17530,23 @@ parse_response_line:
 Reading Headers
 ***************************************************************************** */
 
-/* parsing stage 1 - read headers (after `expect` header). */
-static int fio_http1___read_header_post_expect(fio_http1_parser_s *p,
-                                               fio_buf_info_s *buf,
-                                               void *udata);
-
 /* handle headers before calling callback. */
 static inline int fio_http1___on_header(fio_http1_parser_s *p,
                                         fio_buf_info_s name,
                                         fio_buf_info_s value,
                                         void *udata) {
+  /* a response without a body (HEAD / 1xx / 204 / 304) ignores body framing:
+   * `content-length` is informational, other framing headers are forwarded. */
+  const size_t no_body = (p->flags & FIO___HTTP1_FLAG_NO_BODY);
   /* test for special headers */
   switch (name.len) {
   case 6: /* test for "expect" */
-    if (value.len == 12 && fio_buf2u32u(name.buf) == fio_buf2u32u("expe") &&
+    if (!no_body && value.len == 12 && fio_buf2u32u(name.buf) == fio_buf2u32u("expe") &&
         fio_buf2u32u(name.buf + 2) == fio_buf2u32u("pect")) {
       /* Expect value validation */
       if (fio_buf2u64u(value.buf) == fio_buf2u64u("100-cont") &&
           fio_buf2u32u(value.buf + 8) == fio_buf2u32u("inue")) {
-        p->fn = fio_http1___read_header_post_expect;
+        p->flags |= FIO___HTTP1_FLAG_EXPECT;
         return 0;
       }
       return -1;
@@ -17520,6 +17568,11 @@ static inline int fio_http1___on_header(fio_http1_parser_s *p,
           (clen == FIO___HTTP1_BODY_NOT_ALLOWED) |
           (clen == FIO_HTTP1_EXPECTED_CHUNKED))
         return -1;
+      if (no_body) /* report the value, never read a body */
+        return 0 - (fio_http1_on_header_content_length(name,
+                                                       value,
+                                                       (size_t)clen,
+                                                       udata) == -1);
       if (!clen) /* no length? */
         clen = FIO___HTTP1_BODY_NOT_ALLOWED;
       /* Prevent CL.TE / TE.CL by validating header's payload changes nothing */
@@ -17535,7 +17588,7 @@ static inline int fio_http1___on_header(fio_http1_parser_s *p,
     }
     break;
   case 17: /* test for "transfer-encoding" (chunked?) */
-    if (value.len >= 7 && (name.buf[16] == 'g') &&
+    if (!no_body && value.len >= 7 && (name.buf[16] == 'g') &&
         !((fio_buf2u64u(name.buf) ^ fio_buf2u64u("transfer")) |
           (fio_buf2u64u(name.buf + 8) ^ fio_buf2u64u("-encodin")))) {
       char *c_start = value.buf + value.len - 7;
@@ -17559,7 +17612,6 @@ static inline int fio_http1___on_header(fio_http1_parser_s *p,
     }
     break;
   }
-  /* perform callback */
   return 0 - (fio_http1_on_header(name, value, udata) == -1);
 }
 
@@ -17661,9 +17713,16 @@ static inline int fio_http1___read_header_line(
   }
 
 headers_finished:
-  if (p->fn == fio_http1___read_header_post_expect && p->expected &&
-      fio_http1_on_expect(udata))
-    goto expect_failed;
+  if ((p->flags & FIO___HTTP1_FLAG_NO_BODY))
+    p->expected = 0; /* body framing ignored (i.e., skip_body set late) */
+  if ((p->flags & FIO___HTTP1_FLAG_EXPECT)) {
+    /* consume the flag (chunked trailers also finish through this path) */
+    p->flags &= ~FIO___HTTP1_FLAG_EXPECT;
+    /* `100 Continue` only matters when a body may follow (RFC 9110 §10.1.1) */
+    if (p->expected && p->expected != FIO___HTTP1_BODY_NOT_ALLOWED &&
+        fio_http1_on_expect(udata))
+      goto expect_failed;
+  }
   p->fn = (!p->expected || p->expected == FIO___HTTP1_BODY_NOT_ALLOWED)
               ? fio_http1___finish
           : (!(p->expected - FIO_HTTP1_EXPECTED_CHUNKED))
@@ -17680,13 +17739,6 @@ expect_failed:
 static int fio_http1___read_header(fio_http1_parser_s *p,
                                    fio_buf_info_s *buf,
                                    void *udata) {
-  return fio_http1___read_header_line(p, buf, udata, fio_http1___on_header);
-}
-
-/* parsing stage 1 - read headers (after `expect` header). */
-static int fio_http1___read_header_post_expect(fio_http1_parser_s *p,
-                                               fio_buf_info_s *buf,
-                                               void *udata) {
   return fio_http1___read_header_line(p, buf, udata, fio_http1___on_header);
 }
 
@@ -105397,7 +105449,8 @@ struct fio_io_async_s {
  * variable, as its memory must remain valid throughout the lifetime of the
  * IO reactor's app.
  */
-#define FIO_IO_ASYN_INIT ((fio_io_async_s){0})
+#define FIO_IO_ASYN_INIT                                                       \
+  { 0 }
 
 /** Returns the current task queue associated with the IO Async Queue. */
 FIO_IFUNC fio_queue_s *fio_io_async_queue(fio_io_async_s *q) { return q->q; }
@@ -125201,6 +125254,15 @@ HTTP/1.1 Request / Response Completed
 /** called when either a request or a response was received. */
 static void fio_http1_on_complete(void *udata) {
   fio___http_connection_s *c = (fio___http_connection_s *)udata;
+  if (c->is_client && c->h) {
+    /* skip interim 1xx responses, except 101 (RFC 9110 §15.2) - the handle
+     * waits for the final response (the next status line resets it). */
+    const size_t status = fio_http_status(c->h);
+    if ((status - 100) < 100 && status != 101) {
+      c->state.http.header_bytes = 0;
+      return;
+    }
+  }
   fio_io_dup(c->io); /* make sure the IO and its data are valid in callback */
   fio_io_suspend(c->io);
   fio_http_s *h = c->h;
@@ -125259,6 +125321,12 @@ static int fio_http1_on_status(size_t istatus,
   fio___http_connection_s *c = (fio___http_connection_s *)udata;
   fio_http_clear_response(c->h, istatus != 301 && istatus != 302);
   fio_http_status_set(c->h, istatus);
+  { /* responses to HEAD requests never have a body (RFC 9110 §9.3.2) */
+    fio_str_info_s m = fio_http_method(c->h);
+    if (m.len == 4 &&
+        (fio_buf2u32u(m.buf) | (uint32_t)0x20202020UL) == fio_buf2u32u("head"))
+      fio_http1_parser_skip_body(&c->state.http.parser);
+  }
   return 0;
   (void)status;
 }
@@ -125282,11 +125350,17 @@ static int fio_http1_on_url(fio_buf_info_s url, void *udata) {
 /** called when a the HTTP/1.x version is parsed. */
 static int fio_http1_on_version(fio_buf_info_s version, void *udata) {
   fio___http_connection_s *c = (fio___http_connection_s *)udata;
-  FIO_ASSERT_DEBUG(c->h, "on_version called without a pre-existing handle!");
   if (!c->h)
-    return -1;
+    goto unexpected_response;
   fio_http_version_set(c->h, FIO_BUF2STR_INFO(version));
   return 0;
+unexpected_response: /* (requests always create a handle in `on_method`) */
+  FIO_LOG_SECURITY("(%d) HTTP/1.1 %s at fd %d - disconnecting.",
+                   fio_io_pid(),
+                   (c->is_client ? "unsolicited response received by client"
+                                 : "response received by server"),
+                   (int)fio_io_fd(c->io));
+  return -1; /* parser error: the connection is closed */
 }
 /** called when a header is parsed. */
 static int fio_http1_on_header(fio_buf_info_s name,
@@ -125319,16 +125393,20 @@ static int fio_http1_on_header_content_length(fio_buf_info_s name,
   fio_http_s *h = c->h;
   if (!h)
     return 0;
-  if (content_length > c->settings->max_body_size)
-    goto too_big;
-  if (content_length)
-    fio_http_body_expect(c->h, content_length);
-#if FIO_HTTP_SHOW_CONTENT_LENGTH_HEADER
+  if (!fio_http1_parser_skips_body(&c->state.http.parser)) {
+    if (content_length > c->settings->max_body_size)
+      goto too_big;
+    if (content_length)
+      fio_http_body_expect(c->h, content_length);
+    if (!FIO_HTTP_SHOW_CONTENT_LENGTH_HEADER)
+      return 0;
+  }
+  /* a skipped body (i.e., HEAD response) reserves nothing: its length is
+   * informational, so it stays visible as a header. */
   (!(h->status) ? fio_http_request_header_add
                 : fio_http_response_header_add)(h,
                                                 FIO_BUF2STR_INFO(name),
                                                 FIO_BUF2STR_INFO(value));
-#endif
   return 0;
 too_big:
   fio___http_request_too_big(c);
