@@ -288,11 +288,11 @@ module Iodine
   # @option options [Integer, nil] :max_line_len (HTTP only) The maximum size for a single HTTP header.
   # @option options [Integer, nil] :max_body_size (HTTP only) The maximum size for an HTTP payload.
   # @option options [Integer, nil] :max_msg_size (WebSocket only) The maximum size for a WebSocket message.
-  # @option options [Integer, nil] :timeout (HTTP only) `keep-alive` timeout.
-  # @option options [Integer, nil] :ping Connection timeout (WebSocket / `raw` / `tcp`).
-  # @option options [Boolean, nil] :log (HTTP only) If `true`, logs `http` requests.
-  # @option options [Boolean, nil] :dynamic_deflate (HTTP only) If `true`, dynamically deflates non-streaming HTTP responses.
-  # @option options [Boolean, nil] :websocket_deflate (WebSocket only) If `true`, enables permessage-deflate.
+  # @option options [Integer, nil] :timeout (HTTP only) `keep-alive` timeout in seconds (0..255).
+  # @option options [Integer, nil] :ping Connection timeout (WebSocket / `raw` / `tcp`) in seconds (0..255). A class or module handler's `TIMEOUT` constant (0..255) overrides it.
+  # @option options [Boolean, nil] :log (HTTP only) If `true`, logs `http` requests (default: `false`, unless the `--log` CLI flag is set).
+  # @option options [Boolean, nil] :dynamic_deflate (HTTP only) If `true`, dynamically deflates non-streaming HTTP responses (default: `true`, unless the `--no-dynamic-deflate` CLI flag is set).
+  # @option options [Boolean, nil] :websocket_deflate (WebSocket only) If `true`, enables permessage-deflate (default: `true`, unless the `--no-websocket-deflate` CLI flag is set).
   # @return [Iodine::Listener] the listener object
   #
   # @note Either a `handler` or a `block` (Rack App) **must** be provided.

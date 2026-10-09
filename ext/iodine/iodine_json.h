@@ -36,6 +36,9 @@ JSON Stringifier - Ruby to JSON String Conversion
 static char *iodine_json_stringify_key(char *dest, VALUE tmp) {
   /* Note: keys MUST be Strings  */
   switch (rb_type(tmp)) {
+  case RUBY_T_BIGNUM: /* Bignum (Windows: Integers >= 2^30) */
+    tmp = rb_big2str(tmp, 10);
+    goto string_key;
   case RUBY_T_SYMBOL: tmp = rb_sym2str(tmp); /* fall through */
   case RUBY_T_STRING:
   string_key:
@@ -104,6 +107,10 @@ static char *iodine_json_stringify2bstr(char *dest, VALUE o) {
     dest[fio_bstr_len(dest) - 1] = '}';
     return dest;
   case RUBY_T_FIXNUM: return (dest = fio_bstr_write_i(dest, RB_NUM2LL(o)));
+  case RUBY_T_BIGNUM: /* Bignum (Windows: Integers >= 2^30) */
+    o = rb_big2str(o, 10);
+    return (dest =
+                fio_bstr_write(dest, RSTRING_PTR(o), (size_t)RSTRING_LEN(o)));
   case RUBY_T_FLOAT: {
     FIO_STR_INFO_TMP_VAR(buf, 232);
     buf.len = fio_ftoa(buf.buf, RFLOAT_VALUE(o), 10);
@@ -210,6 +217,10 @@ static char *iodine_json_beautify2bstr(iodine_json_beautify2bstr_s *d,
     d->o = fio_bstr_write(d->o, "}", 1);
     return d->o;
   case RUBY_T_FIXNUM: return (d->o = fio_bstr_write_i(d->o, RB_NUM2LL(o)));
+  case RUBY_T_BIGNUM: /* Bignum (Windows: Integers >= 2^30) */
+    o = rb_big2str(o, 10);
+    return (d->o =
+                fio_bstr_write(d->o, RSTRING_PTR(o), (size_t)RSTRING_LEN(o)));
   case RUBY_T_FLOAT: {
     FIO_STR_INFO_TMP_VAR(buf, 232);
     buf.len = fio_ftoa(buf.buf, RFLOAT_VALUE(o), 10);
@@ -347,6 +358,12 @@ static FIOBJ iodine_ruby2fiobj(VALUE o) {
   case RUBY_T_TRUE: return fiobj_true();
   case RUBY_T_FALSE: return fiobj_false();
   case RUBY_T_FIXNUM: return fiobj_num_new((intptr_t)RB_NUM2LL(o));
+  case RUBY_T_BIGNUM: /* Bignum (Windows: Integers >= 2^30) */
+    if (1) {
+      size_t c = 0;
+      o = rb_big2str(o, 10);
+      return fiobj_json_parse((fio_str_info_s)IODINE_RSTR_INFO(o), &c);
+    }
   case RUBY_T_FLOAT: return fiobj_float_new(rb_float_value(o));
   case RUBY_T_SYMBOL: o = rb_sym_to_s(o); /* fall through */
   case RUBY_T_STRING: return fiobj_str_new_cstr(RSTRING_PTR(o), RSTRING_LEN(o));

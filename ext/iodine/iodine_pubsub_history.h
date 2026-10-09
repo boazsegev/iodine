@@ -327,8 +327,17 @@ static void *iodine_pubsub_history___oldest__in_GC(void *a_) {
 
   if (r.exception || r.result == Qnil) {
     args->oldest_result = UINT64_MAX;
-  } else if (RB_TYPE_P(r.result, RUBY_T_FIXNUM)) {
-    args->oldest_result = NUM2ULL(r.result);
+  } else if (RB_INTEGER_TYPE_P(r.result)) {
+    /* millisecond timestamps are Bignums on Windows; never raise here */
+    uint64_t u = UINT64_MAX;
+    int sign = rb_integer_pack(
+        r.result,
+        &u,
+        1,
+        sizeof(u),
+        0,
+        INTEGER_PACK_LSWORD_FIRST | INTEGER_PACK_NATIVE_BYTE_ORDER);
+    args->oldest_result = (sign == 0 || sign == 1) ? u : UINT64_MAX;
   } else {
     args->oldest_result = UINT64_MAX;
   }

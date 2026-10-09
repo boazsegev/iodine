@@ -28,8 +28,10 @@ append_cflags('-Wno-undef')
 append_cflags('-Wno-missing-noreturn')
 
 # Windows requires crypt32 for cryptographic primitives used by the TLS backend
+# and bcrypt for the system CSPRNG (`BCryptGenRandom` in `fio_rand_bytes_secure`)
 if /mingw|mswin/ =~ RUBY_PLATFORM
   $libs = append_library($libs, 'crypt32')
+  $libs = append_library($libs, 'bcrypt')
 end
 
 create_makefile 'iodine/iodine'

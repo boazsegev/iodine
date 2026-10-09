@@ -719,7 +719,8 @@ FIO_SFUNC VALUE iodine_utils_totp_secret(int argc, VALUE *argv, VALUE self) {
 
   /* Generate a good enough random key */
   uint8_t key[64];
-  fio_rand_bytes_secure(key, (size_t)len);
+  if (fio_rand_bytes_secure(key, (size_t)len))
+    fio_rand_bytes(key, (size_t)len);
 
   /* Base32 encode (output is roughly 8/5 of input, plus null terminator) */
   char encoded[128];

@@ -29,6 +29,7 @@ require 'uri'
 # =============================================================================
 
 HTTP_PORT    = (ENV['IODINE_TEST_PORT'] || 19_876).to_i
+HTTP_PORT_NO_DEFLATE = HTTP_PORT + 1 # listener with dynamic_deflate: false
 HTTP_RESULTS = {}
 
 # ---------------------------------------------------------------------------
@@ -49,6 +50,15 @@ module TestHTTPHandler
     when '/status'
       e.status = 404
       e.finish('not-found-body')
+
+    when '/deflate'
+      e.write_header('content-type', 'text/plain')
+      e.finish('compressible ' * 512) # > 1024 bytes, text-like
+
+    when '/integers'
+      e.status = '201' # String status
+      e.write_header('X-Big', 2**64) # Bignum on every platform
+      e.finish('integers-ok')
 
     when '/multi'
       e.finish("multi-#{e.headers['x-seq'].to_s}")
@@ -99,6 +109,10 @@ listener = Iodine.listen(url: "http://127.0.0.1:#{HTTP_PORT}", handler: DefaultH
 listener.map('/native', TestHTTPHandler)
 listener.map('/rack',   RackHandler)
 
+# Boolean listener options (no `no-*` keywords); nil keeps the default (on).
+Iodine.listen(url: "http://127.0.0.1:#{HTTP_PORT_NO_DEFLATE}",
+              handler: TestHTTPHandler, log: false, dynamic_deflate: false)
+
 # ---------------------------------------------------------------------------
 # HTTP test suite — one reactor start, all scenarios run inside one async block
 # ---------------------------------------------------------------------------
@@ -141,6 +155,11 @@ RSpec.describe 'Iodine HTTP server' do
       HTTP_RESULTS[:custom_status] = resp.code.to_i
       HTTP_RESULTS[:status_body]   = resp.body
 
+      # String status and Bignum header value (routed to TestHTTPHandler)
+      resp = Net::HTTP.get_response(URI("#{base}/native/integers"))
+      HTTP_RESULTS[:int_status] = resp.code.to_i
+      HTTP_RESULTS[:int_header] = resp['X-Big']
+
       # Multiple sequential requests on one keep-alive connection (routed to TestHTTPHandler)
       statuses = []
       bodies   = []
@@ -153,6 +172,15 @@ RSpec.describe 'Iodine HTTP server' do
       end
       HTTP_RESULTS[:multi_statuses] = statuses
       HTTP_RESULTS[:multi_bodies]   = bodies
+
+      # dynamic_deflate: default (on) vs. explicitly false
+      [[:deflate_on, HTTP_PORT, '/native/deflate'],
+       [:deflate_off, HTTP_PORT_NO_DEFLATE, '/deflate']].each do |key, port, path|
+        req = Net::HTTP::Get.new(path)
+        req['Accept-Encoding'] = 'gzip' # explicit: Net::HTTP won't auto-decode
+        resp = Net::HTTP.start('127.0.0.1', port) { |h| h.request(req) }
+        HTTP_RESULTS[key] = resp['Content-Encoding']
+      end
 
       # Streaming response (write without finish, then finish) (routed to TestHTTPHandler)
       resp = Net::HTTP.get_response(URI("#{base}/native/stream"))
@@ -270,6 +298,26 @@ RSpec.describe 'Iodine HTTP server' do
 
     it 'e.finish(body) sends the body with the custom status' do
       expect(HTTP_RESULTS[:status_body]).to eq('not-found-body')
+    end
+  end
+
+  describe 'integer conversions' do
+    it 'e.status= accepts a numeric String' do
+      expect(HTTP_RESULTS[:int_status]).to eq(201)
+    end
+
+    it 'write_header accepts Bignum values' do
+      expect(HTTP_RESULTS[:int_header]).to eq((2**64).to_s)
+    end
+  end
+
+  describe 'dynamic_deflate listener option' do
+    it 'compresses by default' do
+      expect(HTTP_RESULTS[:deflate_on]).to eq('gzip')
+    end
+
+    it 'does not compress when dynamic_deflate: false' do
+      expect(HTTP_RESULTS[:deflate_off]).to be_nil
     end
   end
 

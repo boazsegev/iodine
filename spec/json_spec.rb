@@ -21,6 +21,14 @@ RSpec.describe Iodine::JSON do
       expect(Iodine::JSON.stringify(nil)).to eq('null')
     end
 
+    # Windows x64 Fixnums are 30 bits; Bignums must serialize as numbers.
+    it 'serializes Bignum values as numbers and keys as digit strings' do
+      b = 2**64
+      expect(Iodine::JSON.stringify([b, { b => 1 }])).to eq("[#{b},{\"#{b}\":1}]")
+      expect(Iodine::JSON.beautify([b])).to include(b.to_s)
+      expect(Iodine::JSON.beautify([b])).not_to include('"')
+    end
+
     it 'serializes true as "true"' do
       expect(Iodine::JSON.stringify(true)).to eq('true')
     end

@@ -3566,6 +3566,12 @@ FIO_MIFN uint64_t fio_math_mulc64(uint64_t a, uint64_t b, uint64_t *carry_out) {
   return (uint64_t)r;
 }
 
+FIO_MIFN uint64_t fio_math_mul64_fold(uint64_t a, uint64_t b) {
+  uint64_t r = fio_math_mulc64(a, b, &a);
+  r ^= a;
+  return r;
+}
+
 /**
  * Multi-precision long multiplication for `len` 64 bit words.
  *
@@ -4846,8 +4852,51 @@ FIO_IFUNC uint64_t fio_cycle_counter(void) {
   __asm__ volatile("mrs %0, cntvct_el0" : "=r"(r));
   return r;
 }
+#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+FIO_IFUNC uint64_t fio_cycle_counter(void) { return (uint64_t)__rdtsc(); }
+#elif defined(_MSC_VER) && defined(_M_ARM64)
+FIO_IFUNC uint64_t fio_cycle_counter(void) {
+  return (uint64_t)_ReadStatusReg(ARM64_CNTVCT);
+}
+#elif defined(__riscv) && __riscv_xlen == 64
+FIO_IFUNC uint64_t fio_cycle_counter(void) {
+  uint64_t r;
+  __asm__ volatile("rdtime %0" : "=r"(r));
+  return r;
+}
+#elif defined(__powerpc64__)
+FIO_IFUNC uint64_t fio_cycle_counter(void) {
+  uint64_t r;
+  __asm__ volatile("mftb %0" : "=r"(r));
+  return r;
+}
 #else
-FIO_IFUNC uint64_t fio_cycle_counter(void) { return (uint64_t)0; }
+FIO_IFUNC uint64_t fio_cycle_counter(void) {
+  static size_t counter = 0;
+  const uint64_t cycler[16] = {
+      FIO_U64_HASH_PRIME0,
+      FIO_U64_HASH_PRIME1,
+      FIO_U64_HASH_PRIME2,
+      FIO_U64_HASH_PRIME3,
+      FIO_U64_HASH_PRIME4,
+      FIO_U64_HASH_PRIME5,
+      FIO_U64_HASH_PRIME6,
+      FIO_U64_HASH_PRIME7,
+      FIO_U64_HASH_PRIME8,
+      FIO_U64_HASH_PRIME9,
+      FIO_U64_HASH_PRIME10,
+      FIO_U64_HASH_PRIME11,
+      FIO_U64_HASH_PRIME12,
+      FIO_U64_HASH_PRIME13,
+      FIO_U64_HASH_PRIME14,
+      FIO_U64_HASH_PRIME15,
+  };
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return (uint64_t)
+             cycler[((fio_atomic_add(&counter, 1) + (uint64_t)(&t)) & 15)] +
+         (uint64_t)((t.tv_sec << 30) + (int64_t)t.tv_nsec);
+}
 #endif
 
 /**
@@ -4910,48 +4959,48 @@ FIO_IFUNC uint64_t fio_cycle_counter(void) { return (uint64_t)0; }
   }                                                                            \
   /** Returns a 128 bit pseudo-random number. */                               \
   extern FIO_MAYBE_UNUSED fio_u128 name##128(void) {                           \
-    fio_u256 r;                                                                \
-    if (!(fio_atomic_add(name##___state + 4, 1) &                              \
-          ((1ULL << reseed_log) - 1)) &&                                       \
+    fio_u128 r;                                                                \
+    uint64_t s0[4];                                                            \
+    const uint64_t counter = fio_atomic_add(name##___state + 4, 1);            \
+    if (!(counter & ((1ULL << reseed_log) - 1)) &&                             \
         ((size_t)(reseed_log - 1) < 63))                                       \
       name##_reseed();                                                         \
-    uint64_t s1[4];                                                            \
-    { /* load state to registers and roll, mul, add */                         \
+    { /* load state + per-call input (timing, counter, address variation) */   \
       const uint64_t cycles =                                                  \
           reseed_log ? fio_cycle_counter() + (uint64_t)(uintptr_t)&cycles      \
                      : 0xB5ULL;                                                \
       const uint64_t variation =                                               \
           0x4E55788DULL +                                                      \
           (reseed_log ? (uint64_t)(uintptr_t)&name##_reseed : 0);              \
-      const uint64_t s0[] = {(name##___state[0] + cycles),                     \
-                             (name##___state[1] + cycles),                     \
-                             (name##___state[2] + cycles),                     \
-                             (name##___state[3] + cycles)};                    \
-      const uint64_t mulp[] = {0x37701261ED6C16C7ULL,                          \
-                               0x764DBBB75F3B3E0DULL,                          \
-                               ~(0x37701261ED6C16C7ULL),                       \
-                               ~(0x764DBBB75F3B3E0DULL)};                      \
-      const uint64_t addc[] = {name##___state[4],                              \
-                               seed_offset + 0x59DD1C23ULL,                    \
-                               name##___state[4] + cycles,                     \
-                               variation};                                     \
-      for (size_t i = 0; i < 4; ++i) {                                         \
-        s1[i] = fio_lrot64(s0[i], 33);                                         \
-        s1[i] += addc[i];                                                      \
-        s1[i] *= mulp[i];                                                      \
-        s1[i] += s0[i];                                                        \
-      }                                                                        \
+      s0[0] = name##___state[0] + cycles + counter;                            \
+      s0[1] = name##___state[1] + cycles + (seed_offset + 0x59DD1C23ULL);      \
+      s0[2] = name##___state[2] + cycles + counter;                            \
+      s0[3] = name##___state[3] + cycles + variation;                          \
     }                                                                          \
+    { /* update: one Feistel layer (lanes 0,2 from 1,3), then rotate lanes */  \
+      const uint64_t a_ =                                                      \
+          s0[0] + fio_math_mul64_fold(s0[1] ^ FIO_U64_HASH_PRIME0,             \
+                                      s0[3] ^ FIO_U64_HASH_PRIME1);            \
+      const uint64_t c_ =                                                      \
+          s0[2] + fio_math_mul64_fold(s0[3] ^ FIO_U64_HASH_PRIME2,             \
+                                      s0[1] ^ FIO_U64_HASH_PRIME3);            \
+      s0[0] = s0[1]; /* rotate: the other pair is updated next call */         \
+      s0[1] = c_;                                                              \
+      s0[2] = s0[3];                                                           \
+      s0[3] = a_;                                                              \
+    }                                                                          \
+    /* output: two multiply layers over all lanes (never stored) */            \
+    r.u64[0] = fio_math_mul64_fold(s0[0] ^ FIO_U64_HASH_PRIME8,                \
+                                   s0[1] ^ FIO_U64_HASH_PRIME9) +              \
+               fio_math_mul64_fold(s0[2] ^ FIO_U64_HASH_PRIME10,               \
+                                   s0[3] ^ FIO_U64_HASH_PRIME11);              \
+    r.u64[1] = fio_math_mul64_fold(s0[0] ^ FIO_U64_HASH_PRIME12,               \
+                                   s0[3] ^ FIO_U64_HASH_PRIME13) +             \
+               fio_math_mul64_fold(s0[1] ^ FIO_U64_HASH_PRIME14,               \
+                                   s0[2] ^ FIO_U64_HASH_PRIME15);              \
     for (size_t i = 0; i < 4; ++i) /* store to memory */                       \
-      name##___state[i] = s1[i];                                               \
-    {                                                                          \
-      const uint8_t rotc[] = {31, 29, 27, 30};                                 \
-      for (size_t i = 0; i < 4; ++i)                                           \
-        r.u64[i] = fio_lrot64(s1[i], rotc[i]);                                 \
-    }                                                                          \
-    r.u64[0] += r.u64[2];                                                      \
-    r.u64[1] += r.u64[3];                                                      \
-    return r.u128[0];                                                          \
+      name##___state[i] = s0[i];                                               \
+    return r;                                                                  \
   }                                                                            \
   /** Returns a 64 bit pseudo-random number. */                                \
   extern FIO_MAYBE_UNUSED uint64_t name##64(void) {                            \
@@ -13228,8 +13277,12 @@ SFUNC void fio_rand_bytes(void *target, size_t len);
 /**
  * Writes `len` bytes of cryptographically secure random data to `target`.
  *
- * Uses system CSPRNG: getrandom() on Linux, arc4random_buf() on BSD/macOS,
- * or /dev/urandom as fallback. Returns 0 on success, -1 on failure.
+ * Uses the system CSPRNG: arc4random_buf() on BSD/macOS, BCryptGenRandom() on
+ * Windows (MSVC links bcrypt.lib automatically; MinGW must link `-lbcrypt`),
+ * getrandom() on Linux, or /dev/urandom as fallback.
+ *
+ * Returns 0 on success, -1 on failure (never partial success; on failure the
+ * `target` content MUST NOT be used). A NULL `target` with `len > 0` fails.
  *
  * IMPORTANT: Use this for security-sensitive operations like key generation.
  */
@@ -14095,26 +14148,83 @@ Random - Implementation
 #include <sys/time.h>
 #endif
 
+#if FIO_OS_WIN && !defined(__CYGWIN__)
+/* BCryptGenRandom backs fio_rand_bytes_secure. MSVC links bcrypt.lib through
+ * the pragma; MinGW / clang (GNU driver) users must link `-lbcrypt`. */
+#include <bcrypt.h>
+#if _MSC_VER
+#pragma comment(lib, "bcrypt.lib")
+#endif
+#elif defined(__linux__) && __has_include(<sys/random.h>)
+#include <sys/random.h>
+#define FIO___RAND_HAS_GETRANDOM 1
+#endif
+
 /* The fio_rand64 implementation. */
 FIO_DEFINE_RANDOM128_FN(SFUNC, fio_rand, 11, 0)
 
 /**
- * Cryptographically secure random bytes using system CSPRNG.
- * Returns 0 on success, -1 on failure.
+ * Cryptographically secure random bytes using the system CSPRNG.
+ *
+ * Backends: arc4random_buf (BSD/macOS), BCryptGenRandom (Windows; MinGW must
+ * link `-lbcrypt`), getrandom (Linux) and /dev/urandom (fallback).
+ *
+ * Returns 0 on success, -1 on failure (`target` content is then undefined and
+ * MUST NOT be used). Never falls back to a non-cryptographic generator.
  */
 SFUNC int fio_rand_bytes_secure(void *target, size_t len) {
-  if (!target || !len)
+  if (!len)
     return 0;
+  if (!target)
+    return -1;
 
 #if (defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) ||     \
      defined(__NetBSD__) || defined(__DragonFly__))
   /* BSD/macOS: use arc4random_buf (always succeeds, CSPRNG) */
   arc4random_buf(target, len);
   return 0;
-#else
-  /* Generic POSIX fallback: read from /dev/urandom */
+#elif FIO_OS_WIN && !defined(__CYGWIN__)
+  /* Windows: system-preferred CSPRNG; ULONG is 32 bit, so chunk large requests */
   uint8_t *buf = (uint8_t *)target;
+  while (len) {
+    ULONG chunk = (len > (size_t)0x40000000UL) ? (ULONG)0x40000000UL : (ULONG)len;
+    NTSTATUS st = BCryptGenRandom(NULL,
+                                  (PUCHAR)buf,
+                                  chunk,
+                                  BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    if (st < 0) /* !BCRYPT_SUCCESS(st) */
+      return -1;
+    buf += chunk;
+    len -= (size_t)chunk;
+  }
+  return 0;
+#else
+  uint8_t *buf = (uint8_t *)target;
+#if FIO___RAND_HAS_GETRANDOM
+  /* Linux: getrandom blocks only until the pool is first initialized and
+   * needs no file descriptor. Fall back to /dev/urandom if the syscall is
+   * unavailable (ENOSYS) or filtered (e.g., EPERM under seccomp). */
+  while (len) {
+    ssize_t got = getrandom(buf, len, 0);
+    if (got < 0) {
+      if (errno == EINTR)
+        continue;
+      break;
+    }
+    if (got == 0)
+      break;
+    buf += got;
+    len -= (size_t)got;
+  }
+  if (!len)
+    return 0;
+#endif /* FIO___RAND_HAS_GETRANDOM */
+  /* Generic POSIX fallback: read from /dev/urandom */
+#ifdef O_CLOEXEC
+  int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+#else
   int fd = open("/dev/urandom", O_RDONLY);
+#endif
   if (fd < 0)
     return -1;
   while (len > 0) {
@@ -14139,6 +14249,7 @@ SFUNC int fio_rand_bytes_secure(void *target, size_t len) {
 /* *****************************************************************************
 Random - Cleanup
 ***************************************************************************** */
+#undef FIO___RAND_HAS_GETRANDOM
 #endif /* FIO_EXTERN_COMPLETE */
 #endif /* FIO_RAND */
 #undef FIO_RAND
@@ -37669,6 +37780,7 @@ SFUNC void fio_queue_workers_wake(fio_queue_s *q) {
 SFUNC void fio_queue_workers_join(fio_queue_s *q) {
   if (!q)
     return;
+  uint8_t had_workers = 0;
   fio_queue_workers_stop(q);
   FIO___LOCK_LOCK(q->lock);
   while (q->consumers.next && q->consumers.next != &q->consumers) {
@@ -37676,6 +37788,7 @@ SFUNC void fio_queue_workers_join(fio_queue_s *q) {
         FIO_PTR_FROM_FIELD(fio___thread_group_s, node, q->consumers.next);
     fio_atomic_or(&pos->stop, 3);
     FIO___LOCK_UNLOCK(q->lock);
+    had_workers = 1;
     while (fio_atomic_add(&pos->stop, 0) & 2)
       FIO_THREAD_RESCHEDULE();
     fio_thread_cond_destroy(&pos->cond);
@@ -37686,6 +37799,8 @@ SFUNC void fio_queue_workers_join(fio_queue_s *q) {
     FIO___LOCK_LOCK(q->lock);
   }
   FIO___LOCK_UNLOCK(q->lock);
+  if (had_workers) /* a queue with worker threads is emptied on `join` */
+    fio_queue_perform_all(q);
 }
 
 /* *****************************************************************************
@@ -52890,7 +53005,8 @@ X25519 Public API Implementation
 ***************************************************************************** */
 
 SFUNC void fio_x25519_keypair(uint8_t secret_key[32], uint8_t public_key[32]) {
-  fio_rand_bytes(secret_key, 32);
+  if (fio_rand_bytes_secure(secret_key, 32))
+    fio_rand_bytes(secret_key, 32);
   fio_x25519_public_key(public_key, secret_key);
 }
 
@@ -53646,7 +53762,8 @@ Ed25519 Public API Implementation
 ***************************************************************************** */
 
 SFUNC void fio_ed25519_keypair(uint8_t secret_key[32], uint8_t public_key[32]) {
-  fio_rand_bytes(secret_key, 32);
+  if (fio_rand_bytes_secure(secret_key, 32))
+    fio_rand_bytes(secret_key, 32);
   fio_ed25519_public_key(public_key, secret_key);
 }
 
@@ -54864,7 +54981,9 @@ FIO_SFUNC void fio___p256_point_double(fio___p256_point_jacobian_s *r,
   fio___p256_point_set_infinity(&infinity);
   *r = generic;
   candidate = infinity;
-  fio___p256_point_cswap(r, &candidate, fio___p256_fe_ct_is_zero_mask(p->z) & 1);
+  fio___p256_point_cswap(r,
+                         &candidate,
+                         fio___p256_fe_ct_is_zero_mask(p->z) & 1);
 
   fio_secure_zero(t1, sizeof(t1));
   fio_secure_zero(t2, sizeof(t2));
@@ -55466,10 +55585,10 @@ SFUNC int fio_ecdsa_p256_sign(uint8_t *sig,
   for (int attempts = 0; attempts < 100; ++attempts) {
     /* Generate random nonce k in the valid scalar range 0 < k < n. */
     do {
-      fio_rand_bytes(k_bytes, 32);
+      if (fio_rand_bytes_secure(k_bytes, 32))
+        fio_rand_bytes(k_bytes, 32);
       fio___p256_scalar_from_bytes(k, k_bytes);
-    } while (fio___p256_scalar_ct_is_zero(k) |
-             fio___p256_scalar_ct_gte_n(k));
+    } while (fio___p256_scalar_ct_is_zero(k) | fio___p256_scalar_ct_gte_n(k));
 
     /* Compute R = k * G */
     fio___p256_point_mul(&R_jac, k, &g);
@@ -55679,7 +55798,8 @@ SFUNC int fio_p256_keypair(uint8_t secret_key[32], uint8_t public_key[65]) {
   /* Generate random scalar and ensure 0 < k < n */
   for (int attempts = 0; attempts < 100; ++attempts) {
     do {
-      fio_rand_bytes(secret_key, 32);
+      if (fio_rand_bytes_secure(secret_key, 32))
+        fio_rand_bytes(secret_key, 32);
     } while (!fio_buf2u64u(secret_key) || !fio_buf2u64u(secret_key + 8) ||
              !fio_buf2u64u(secret_key + 16) || !fio_buf2u64u(secret_key + 24));
     fio___p256_scalar_from_bytes(k, secret_key);
@@ -61549,7 +61669,8 @@ SFUNC int fio_mlkem768_keypair(uint8_t pk[1184], uint8_t sk[2400]) {
   uint8_t coins[64];
   if (!pk || !sk)
     return -1;
-  fio_rand_bytes(coins, 64);
+  if (fio_rand_bytes_secure(coins, 64))
+    fio_rand_bytes(coins, 64);
   int r = fio_mlkem768_keypair_derand(pk, sk, coins);
   FIO_MEMSET(coins, 0, sizeof(coins));
   return r;
@@ -61599,7 +61720,8 @@ SFUNC int fio_mlkem768_encaps(uint8_t ct[1088],
   uint8_t coins[FIO___MLKEM_SYMBYTES];
   if (!ct || !ss || !pk)
     return -1;
-  fio_rand_bytes(coins, FIO___MLKEM_SYMBYTES);
+  if (fio_rand_bytes_secure(coins, FIO___MLKEM_SYMBYTES))
+    fio_rand_bytes(coins, FIO___MLKEM_SYMBYTES);
   int r = fio_mlkem768_encaps_derand(ct, ss, pk, coins);
   FIO_MEMSET(coins, 0, sizeof(coins));
   return r;
@@ -88773,7 +88895,8 @@ SFUNC int fio_tls13_build_certificate_request(uint8_t *out,
 
   /* Calculate size:
    * handshake_header(4) + ctx_len(1) + ctx + ext_len(2) +
-   * sig_algs_ext: type(2) + len(2) + algos_len(2) + algos(signature_algo_count*2) */
+   * sig_algs_ext: type(2) + len(2) + algos_len(2) +
+   * algos(signature_algo_count*2) */
   size_t sig_algs_ext_len = 2 + 2 + 2 + signature_algo_count * 2;
   size_t body_len = 1 + context.len + 2 + sig_algs_ext_len;
   size_t total_len = 4 + body_len;
@@ -88930,7 +89053,7 @@ typedef enum {
 /** Certificate chain: DER views + optional owned storage (received chains).
  * Private type - used only as a member of the connection structs. */
 typedef struct {
-  uint8_t *buf;              /* Owned storage, NULL when views are external */
+  uint8_t *buf; /* Owned storage, NULL when views are external */
   size_t buf_len;
   size_t buf_cap;
   size_t count;              /* Number of certificates */
@@ -89858,9 +89981,7 @@ FIO_SFUNC int fio___tls13_process_certificate_request(
   /* Store context (must be echoed in client Certificate) */
   client->auth.context_len = cr.context_len;
   if (cr.context_len > 0) {
-    FIO_MEMCPY(client->auth.context,
-               cr.context,
-               cr.context_len);
+    FIO_MEMCPY(client->auth.context, cr.context, cr.context_len);
   }
 
   /* Store accepted signature algorithms */
@@ -91150,7 +91271,8 @@ SFUNC void fio_tls13_client_init(fio_tls13_client_s *client,
   client->transcript_sha384 = fio_sha384_init();
 
   /* Generate random and X25519 keypair */
-  fio_rand_bytes(client->client_random, 32);
+  if (fio_rand_bytes_secure(client->client_random, 32))
+    fio_rand_bytes(client->client_random, 32);
   fio_x25519_keypair(client->x25519_private_key, client->x25519_public_key);
 
 #if defined(H___FIO_MLKEM___H)
@@ -91680,10 +91802,10 @@ typedef struct {
   fio_tls13_server_state_e state;
 
   /* Negotiated parameters */
-  uint16_t cipher_suite;     /* Selected cipher suite */
-  uint16_t key_share_group;  /* Selected key exchange group */
-  uint16_t signature_algo; /* Selected signature algorithm */
-  int use_sha384;            /* 0 = SHA-256, 1 = SHA-384 */
+  uint16_t cipher_suite;    /* Selected cipher suite */
+  uint16_t key_share_group; /* Selected key exchange group */
+  uint16_t signature_algo;  /* Selected signature algorithm */
+  int use_sha384;           /* 0 = SHA-256, 1 = SHA-384 */
 
   /* Key material */
   uint8_t server_random[32];
@@ -91815,7 +91937,7 @@ SFUNC void fio_tls13_server_set_private_key(fio_tls13_server_s *server,
  * @param trust_store Trust store for client cert chain verification, or NULL
  */
 FIO_IFUNC void fio_tls13_server_set_trust_store(fio_tls13_server_s *server,
-                                            void *trust_store);
+                                                void *trust_store);
 
 /**
  * Process incoming TLS record(s).
@@ -92003,8 +92125,8 @@ FIO_IFUNC int fio_tls13_server_client_cert_verified(
  * @param server Server context
  * @return Certificate view (empty buffer if none)
  */
-FIO_IFUNC fio_ubuf_info_s fio_tls13_server_get_client_cert(
-    fio_tls13_server_s *server) {
+FIO_IFUNC fio_ubuf_info_s
+fio_tls13_server_get_client_cert(fio_tls13_server_s *server) {
   if (!server || server->peer_auth.chain.count == 0)
     return (fio_ubuf_info_s){0};
   return server->peer_auth.chain.certs[0];
@@ -92510,8 +92632,8 @@ FIO_SFUNC int fio___tls13_build_certificate(fio_tls13_server_s *server,
   /* Calculate total size needed */
   size_t total_cert_size = 0;
   for (size_t i = 0; i < server->credentials.chain_count; ++i)
-    total_cert_size +=
-        3 + server->credentials.chain[i].len + 2; /* len(3) + cert + ext_len(2) */
+    total_cert_size += 3 + server->credentials.chain[i].len +
+                       2; /* len(3) + cert + ext_len(2) */
 
   size_t body_len =
       1 + 3 + total_cert_size; /* ctx_len(1) + list_len(3) + certs */
@@ -92538,7 +92660,9 @@ FIO_SFUNC int fio___tls13_build_certificate(fio_tls13_server_s *server,
     p += 3;
 
     /* Certificate data */
-    FIO_MEMCPY(p, server->credentials.chain[i].buf, server->credentials.chain[i].len);
+    FIO_MEMCPY(p,
+               server->credentials.chain[i].buf,
+               server->credentials.chain[i].len);
     p += server->credentials.chain[i].len;
 
     /* Extensions (empty) */
@@ -92551,7 +92675,8 @@ FIO_SFUNC int fio___tls13_build_certificate(fio_tls13_server_s *server,
 
 /* Internal: Build CertificateVerify message */
 /**
- * Parse the RSA private key structure stored in server->credentials.private_key.buf.
+ * Parse the RSA private key structure stored in
+ * server->credentials.private_key.buf.
  *
  * The minimum format is:
  *   [n_len:4][n:n_len][d_len:4][d:d_len]
@@ -92596,10 +92721,14 @@ FIO_SFUNC int fio___tls13_parse_rsa_private_key(fio_rsa_privkey_s *key,
 
   /* Optional fields.  Each is [len:4][data:len]; if the buffer ends here the
    * field is absent and the remaining code leaves the pointer NULL. */
-  const uint8_t **fields[] = {&key->e,   &key->p,   &key->q,
-                              &key->dP,  &key->dQ,  &key->qInv};
-  size_t *lens[] = {&key->e_len,   &key->p_len,   &key->q_len,
-                    &key->dP_len,  &key->dQ_len,  &key->qInv_len};
+  const uint8_t **fields[] =
+      {&key->e, &key->p, &key->q, &key->dP, &key->dQ, &key->qInv};
+  size_t *lens[] = {&key->e_len,
+                    &key->p_len,
+                    &key->q_len,
+                    &key->dP_len,
+                    &key->dQ_len,
+                    &key->qInv_len};
   for (size_t i = 0; i < 6; ++i) {
     if ((size_t)(pk - start) + 4 > pk_len)
       break;
@@ -92621,7 +92750,8 @@ FIO_SFUNC int fio___tls13_parse_rsa_private_key(fio_rsa_privkey_s *key,
 FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
                                                    uint8_t *out,
                                                    size_t out_capacity) {
-  if (!server->credentials.private_key.buf || server->credentials.private_key.len == 0)
+  if (!server->credentials.private_key.buf ||
+      server->credentials.private_key.len == 0)
     return -1;
 
   /* Build signed content per RFC 8446 Section 4.4.3 */
@@ -92689,7 +92819,9 @@ FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
     /* Parse the private key structure */
     fio_rsa_privkey_s rsa_key;
     if (fio___tls13_parse_rsa_private_key(
-            &rsa_key, server->credentials.private_key.buf, server->credentials.private_key.len) != 0) {
+            &rsa_key,
+            server->credentials.private_key.buf,
+            server->credentials.private_key.len) != 0) {
       FIO_LOG_DEBUG2("TLS 1.3 Server: RSA private key parsing failed");
       return -1;
     }
@@ -92715,7 +92847,9 @@ FIO_SFUNC int fio___tls13_build_certificate_verify(fio_tls13_server_s *server,
     /* Parse the private key structure (same format as SHA-256 case) */
     fio_rsa_privkey_s rsa_key;
     if (fio___tls13_parse_rsa_private_key(
-            &rsa_key, server->credentials.private_key.buf, server->credentials.private_key.len) != 0) {
+            &rsa_key,
+            server->credentials.private_key.buf,
+            server->credentials.private_key.len) != 0) {
       FIO_LOG_DEBUG2("TLS 1.3 Server: RSA private key parsing failed");
       return -1;
     }
@@ -93110,7 +93244,8 @@ FIO_SFUNC int fio___tls13_server_process_client_hello(
   }
 
   /* Generate server random */
-  fio_rand_bytes(server->server_random, 32);
+  if (fio_rand_bytes_secure(server->server_random, 32))
+    fio_rand_bytes(server->server_random, 32);
 
   /* Compute shared secret based on selected key share group */
   if (server->key_share_group == FIO_TLS13_GROUP_X25519MLKEM768) {
@@ -93200,24 +93335,25 @@ FIO_SFUNC int fio___tls13_server_process_client_hello(
   /* CertificateRequest (if client auth is required/optional) */
   if (server->peer_auth.require > 0) {
     /* Generate random context for CertificateRequest */
-    fio_rand_bytes(server->peer_auth.context, 32);
+    if (fio_rand_bytes_secure(server->peer_auth.context, 32))
+      fio_rand_bytes(server->peer_auth.context, 32);
     server->peer_auth.context_len = 32;
 
     /* Signature algorithms we accept from clients */
     uint16_t signature_algos[] = {FIO_TLS13_SIGNATURE_ED25519,
-                           FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256,
-                           FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256,
-                           FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA256};
-    size_t signature_algo_count = sizeof(signature_algos) / sizeof(signature_algos[0]);
+                                  FIO_TLS13_SIGNATURE_ECDSA_SECP256R1_SHA256,
+                                  FIO_TLS13_SIGNATURE_RSA_PSS_RSAE_SHA256,
+                                  FIO_TLS13_SIGNATURE_RSA_PKCS1_SHA256};
+    size_t signature_algo_count =
+        sizeof(signature_algos) / sizeof(signature_algos[0]);
 
-    int cr_len =
-        fio_tls13_build_certificate_request(hs_msgs + hs_msgs_len,
-                                            sizeof(hs_msgs) - hs_msgs_len,
-                                            FIO_UBUF_INFO2(
-                                                server->peer_auth.context,
-                                                server->peer_auth.context_len),
-                                            signature_algos,
-                                            signature_algo_count);
+    int cr_len = fio_tls13_build_certificate_request(
+        hs_msgs + hs_msgs_len,
+        sizeof(hs_msgs) - hs_msgs_len,
+        FIO_UBUF_INFO2(server->peer_auth.context,
+                       server->peer_auth.context_len),
+        signature_algos,
+        signature_algo_count);
     if (cr_len < 0) {
       FIO_LOG_DEBUG2("TLS 1.3 Server: CertificateRequest build failed");
       fio___tls13_server_set_error(server,
@@ -93584,8 +93720,9 @@ FIO_SFUNC int fio___tls13_server_verify_client_certificate_verify(
 #if defined(H___FIO_X509___H)
   /* Parse the leaf client certificate to obtain the public key. */
   fio_x509_cert_s leaf;
-  if (fio_x509_parse(
-          &leaf, server->peer_auth.chain.certs[0].buf, server->peer_auth.chain.certs[0].len) != 0) {
+  if (fio_x509_parse(&leaf,
+                     server->peer_auth.chain.certs[0].buf,
+                     server->peer_auth.chain.certs[0].len) != 0) {
     FIO_LOG_DEBUG2("TLS 1.3 Server: failed to parse client certificate");
     fio___tls13_server_set_error(server,
                                  FIO_TLS13_ALERT_LEVEL_FATAL,
@@ -93603,8 +93740,9 @@ FIO_SFUNC int fio___tls13_server_verify_client_certificate_verify(
                                   (int64_t)fio_time_real().tv_sec,
                                   trust);
     if (v != 0) {
-      FIO_LOG_DEBUG2("TLS 1.3 Server: client cert chain verification failed (%d)",
-                     v);
+      FIO_LOG_DEBUG2(
+          "TLS 1.3 Server: client cert chain verification failed (%d)",
+          v);
       fio___tls13_server_set_error(server,
                                    FIO_TLS13_ALERT_LEVEL_FATAL,
                                    FIO_TLS13_ALERT_BAD_CERTIFICATE);
@@ -93736,8 +93874,9 @@ FIO_SFUNC int fio___tls13_server_verify_client_certificate_verify(
   (void)signature;
   (void)signed_content;
   (void)signed_content_len;
-  FIO_LOG_DEBUG2("TLS 1.3 Server: client certificate verification requires X509 "
-                 "module");
+  FIO_LOG_DEBUG2(
+      "TLS 1.3 Server: client certificate verification requires X509 "
+      "module");
   fio___tls13_server_set_error(server,
                                FIO_TLS13_ALERT_LEVEL_FATAL,
                                FIO_TLS13_ALERT_INTERNAL_ERROR);
@@ -93842,8 +93981,7 @@ SFUNC void fio_tls13_server_destroy(fio_tls13_server_s *server) {
 
   /* Free client certificate data buffer */
   if (server->peer_auth.chain.buf) {
-    FIO_MEM_FREE(server->peer_auth.chain.buf,
-                 server->peer_auth.chain.buf_cap);
+    FIO_MEM_FREE(server->peer_auth.chain.buf, server->peer_auth.chain.buf_cap);
     server->peer_auth.chain.buf = NULL;
     server->peer_auth.chain.buf_cap = 0;
     server->peer_auth.chain.buf_len = 0;

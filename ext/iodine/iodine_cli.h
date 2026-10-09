@@ -356,7 +356,7 @@ static VALUE iodine_cli_get(VALUE self, VALUE key) {
   fio_buf_info_s val;
   int64_t ival = 0;
   char *tmp;
-  if (RB_TYPE_P(key, RUBY_T_FIXNUM)) {
+  if (RB_INTEGER_TYPE_P(key)) {
     val = fio_cli_unnamed_str(NUM2UINT(key));
     if (val.buf)
       r = rb_str_new(val.buf, val.len);
@@ -384,7 +384,7 @@ static VALUE iodine_cli_set(VALUE self, VALUE key, VALUE value) {
     rb_raise(rb_eException,
              "Setting CLI arguments can only be performed before Iodine.start "
              "and in the master process.");
-  if (RB_TYPE_P(key, RUBY_T_FIXNUM)) {
+  if (RB_INTEGER_TYPE_P(key)) {
     if (!RB_TYPE_P(value, RUBY_T_STRING))
       rb_raise(rb_eArgError,
                "value for an indexed CLI argument should be a String");
@@ -398,7 +398,7 @@ static VALUE iodine_cli_set(VALUE self, VALUE key, VALUE value) {
              "key should be either an Integer, a String or a Symbol");
   fio_cli_arg_e t = fio_cli_type(RSTRING_PTR(key));
   if (t == FIO_CLI_ARG_INT) { /* Number */
-    if (!RB_TYPE_P(value, RUBY_T_FIXNUM))
+    if (!RB_INTEGER_TYPE_P(value))
       rb_raise(rb_eArgError,
                "value for %s should be an Integer",
                RSTRING_PTR(key));

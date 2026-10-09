@@ -290,4 +290,39 @@ RSpec.describe 'Iodine configuration (no reactor)' do
       expect(Iodine.workers).to be_a(Integer)
     end
   end
+
+  # The C STL stores HTTP timeouts as uint8_t seconds: reject, never truncate.
+  # Raised during argument parsing, before any socket is opened.
+  describe 'Iodine.listen timeout ranges' do
+    let(:url) { 'http://127.0.0.1:0' }
+
+    it 'rejects a handler TIMEOUT constant above 255' do
+      handler = Module.new do
+        const_set(:TIMEOUT, 300)
+        def self.on_http(e) = e.finish('x')
+      end
+      expect { Iodine.listen(url: url, handler: handler) }
+        .to raise_error(RangeError, /TIMEOUT/)
+    end
+
+    it 'rejects ping: and timeout: above 255' do
+      handler = Module.new { def self.on_http(e) = e.finish('x') }
+      expect { Iodine.listen(url: url, handler: handler, ping: 300) }
+        .to raise_error(RangeError, /ping/)
+      expect { Iodine.listen(url: url, handler: handler, timeout: 256) }
+        .to raise_error(RangeError, /timeout/)
+    end
+  end
+
+  describe 'Iodine.listen boolean options' do
+    let(:url) { 'http://127.0.0.1:0' }
+    let(:handler) { Module.new { def self.on_http(e) = e.finish('x') } }
+
+    %i[log dynamic_deflate websocket_deflate].each do |opt|
+      it "requires #{opt}: to be a Boolean" do
+        expect { Iodine.listen(url: url, handler: handler, opt => 1) }
+          .to raise_error(TypeError, /#{opt}/)
+      end
+    end
+  end
 end

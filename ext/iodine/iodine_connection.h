@@ -422,9 +422,9 @@ IODINE_DEF_GETSET_FUNC(version, 1)
     size_t setter = 0;                                                         \
     if (FIO_UNLIKELY(!c || !c->http))                                          \
       return Qnil;                                                             \
-    if (RB_TYPE_P(updated_val, RUBY_T_FIXNUM))                                 \
+    if (RB_INTEGER_TYPE_P(updated_val))                                        \
       setter = NUM2ULL(updated_val);                                           \
-    else if (!RB_TYPE_P(updated_val, RUBY_T_STRING)) {                         \
+    else if (RB_TYPE_P(updated_val, RUBY_T_STRING)) {                          \
       fio_buf_info_s s = IODINE_RSTR_INFO(updated_val);                        \
       const char *end = s.buf + s.len;                                         \
       setter = fio_atol(&s.buf);                                               \
@@ -949,6 +949,8 @@ static int iodine_handler_default_on_http__header2(fio_str_info_s n,
     goto is_array;
   if (RB_TYPE_P(v, RUBY_T_SYMBOL))
     v = rb_sym_to_s(v);
+  else if (RB_TYPE_P(v, RUBY_T_BIGNUM)) /* Bignum (Windows: Integers >= 2^30) */
+    v = rb_big2str(v, 10);
   if (RB_TYPE_P(v, RUBY_T_STRING))
     vstr = (fio_str_info_s)IODINE_RSTR_INFO(v);
   else if (RB_TYPE_P(v, RUBY_T_FIXNUM))
@@ -2078,6 +2080,14 @@ static VALUE iodine_connection_unsubscribe_internal(fio_io_s *io,
 Listening Argument Parsing
 ***************************************************************************** */
 
+/** C STL HTTP timeouts are `uint8_t` seconds; raise instead of truncating. */
+FIO_SFUNC uint8_t iodine_connection___cli_timeout(const char *opt) {
+  int64_t t = fio_cli_get_i(opt);
+  if (t < 0 || t > UINT8_MAX)
+    rb_raise(rb_eRangeError, "CLI %s out of range (0..255 seconds)", opt);
+  return (uint8_t)t;
+}
+
 FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
                                                                 VALUE *argv) {
   iodine_connection_args_s r = {
@@ -2112,11 +2122,12 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
               .max_line_len = (uint32_t)fio_cli_get_i("-maxln"),
               .max_body_size = (size_t)fio_cli_get_i("-maxbd"),
               .ws_max_msg_size = (size_t)fio_cli_get_i("-maxms"),
-              .timeout = (uint8_t)fio_cli_get_i("-k"),
-              .ws_timeout = (uint8_t)fio_cli_get_i("-ping"),
-              .sse_timeout = (uint8_t)fio_cli_get_i("-ping"),
-              .compress_static = fio_cli_get_bool("-no-dynd"),
-              .compress_ws = fio_cli_get_bool("-no-wsd"),
+              .timeout = iodine_connection___cli_timeout("-k"),
+              .ws_timeout = iodine_connection___cli_timeout("-ping"),
+              .sse_timeout = iodine_connection___cli_timeout("-ping"),
+              /* deflate is on by default; CLI flags can disable it */
+              .compress_static = !fio_cli_get_bool("-no-dynd"),
+              .compress_ws = !fio_cli_get_bool("-no-wsd"),
               .log = fio_cli_get_bool("-v"),
           },
   };
@@ -2137,17 +2148,15 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
       IODINE_ARG_SIZE_T(r.settings.ws_max_msg_size, 0, "max_msg_size", 0),
       IODINE_ARG_U8(r.settings.timeout, 0, "timeout", 0),
       IODINE_ARG_U8(r.settings.ws_timeout, 0, "ping", 0),
-      IODINE_ARG_U8(r.settings.log, 0, "log", 0),
-      IODINE_ARG_U8(r.settings.compress_static, 0, "no-dynamic_deflate", 0),
-      IODINE_ARG_U8(r.settings.compress_ws, 0, "no-websocket_deflate", 0),
+      IODINE_ARG_BOOL(r.settings.log, 0, "log", 0),
+      IODINE_ARG_BOOL(r.settings.compress_static, 0, "dynamic_deflate", 0),
+      IODINE_ARG_BOOL(r.settings.compress_ws, 0, "websocket_deflate", 0),
       IODINE_ARG_BUF(r.method, 0, "method", 0),
       IODINE_ARG_RB(r.headers, 0, "headers", 0),
       IODINE_ARG_BUF(r.body, 0, "body", 0),
       IODINE_ARG_RB(r.cookies, 0, "cookies", 0),
       IODINE_ARG_PROC(proc, 0, "block", 0));
-  r.settings.compress_dynamic = r.settings.compress_static =
-      !r.settings.compress_static;
-  r.settings.compress_ws = !r.settings.compress_ws;
+  r.settings.compress_dynamic = r.settings.compress_static;
   r.settings.udata = (void *)handler_tmp;
   /* test for errors before allocating or protecting data */
 
@@ -2172,8 +2181,9 @@ FIO_IFUNC iodine_connection_args_s iodine_connection_parse_args(int argc,
     if (rb_const_defined((VALUE)r.settings.udata, IODINE_TIMEOUT_ID))
       timeout = rb_const_get((VALUE)r.settings.udata, IODINE_TIMEOUT_ID);
   }
-  if (timeout != Qnil && timeout && RB_TYPE_P(timeout, RUBY_T_FIXNUM))
-    r.settings.ws_timeout = RB_NUM2ULL(timeout);
+  if (RB_INTEGER_TYPE_P(timeout)) /* C STL stores `uint8_t` seconds */
+    r.settings.ws_timeout =
+        (uint8_t)iodine___rb2c_arg2u(timeout, UINT8_MAX, "TIMEOUT");
   if (r.url.buf)
     r.url_data = fio_url_parse(r.url.buf, r.url.len);
   if (!r.hint.len)
@@ -2311,6 +2321,8 @@ static int iodine_connection___client_headers(VALUE n, VALUE v, VALUE h_) {
 
   if (RB_TYPE_P(v, RUBY_T_SYMBOL))
     v = rb_sym_to_s(v);
+  else if (RB_TYPE_P(v, RUBY_T_BIGNUM)) /* Bignum (Windows: Integers >= 2^30) */
+    v = rb_big2str(v, 10);
   if (RB_TYPE_P(v, RUBY_T_STRING))
     val = (fio_str_info_s)IODINE_RSTR_INFO(v);
   else if (RB_TYPE_P(v, RUBY_T_FIXNUM) &&
@@ -2549,6 +2561,8 @@ static VALUE iodine_connection_write_header___value(fio_http_s *h,
     goto is_array;
   if (RB_TYPE_P(v, RUBY_T_SYMBOL))
     v = rb_sym_to_s(v);
+  else if (RB_TYPE_P(v, RUBY_T_BIGNUM)) /* Bignum (Windows: Integers >= 2^30) */
+    v = rb_big2str(v, 10);
   if (RB_TYPE_P(v, RUBY_T_STRING))
     vstr = (fio_str_info_s)IODINE_RSTR_INFO(v);
   else if (RB_TYPE_P(v, RUBY_T_FIXNUM))

@@ -130,6 +130,37 @@ typedef struct {
     .name = FIO_BUF_INFO1(((char *)name_)), .required = (required_)            \
   }
 
+/** Converts a Ruby Integer to a signed value in [min, max] or raises. */
+static int64_t iodine___rb2c_arg2i(VALUE o,
+                                   int64_t min,
+                                   int64_t max,
+                                   const char *name) {
+  if (!RB_INTEGER_TYPE_P(o))
+    rb_raise(rb_eTypeError, "%s should be a Number", name);
+  long long v = NUM2LL(o); /* raises RangeError beyond int64 */
+  if (v < min || v > max)
+    rb_raise(rb_eRangeError, "%s out of range", name);
+  return (int64_t)v;
+}
+
+/** Converts a Ruby Integer to an unsigned value in [0, max] or raises. */
+static uint64_t iodine___rb2c_arg2u(VALUE o, uint64_t max, const char *name) {
+  if (!RB_INTEGER_TYPE_P(o))
+    rb_raise(rb_eTypeError, "%s should be a Number", name);
+  uint64_t u = 0;
+  /* returns sign: -1/-2 when negative, +2 on uint64 overflow */
+  int s = rb_integer_pack(o,
+                          &u,
+                          1,
+                          sizeof(u),
+                          0,
+                          INTEGER_PACK_LSWORD_FIRST |
+                              INTEGER_PACK_NATIVE_BYTE_ORDER);
+  if (s < 0 || s > 1 || u > max)
+    rb_raise(rb_eRangeError, "%s out of range", name);
+  return u;
+}
+
 /** Reads and validates method arguments (either "splat" or Hash Map). */
 static int iodine_rb2c_arg(int argc, const VALUE *argv, iodine_rb2c_arg_s *a) {
   int i = 0;
@@ -169,9 +200,8 @@ static int iodine_rb2c_arg(int argc, const VALUE *argv, iodine_rb2c_arg_s *a) {
     a[i].str[0] = FIO_STR_INFO2(RSTRING_PTR(tmp), (size_t)RSTRING_LEN(tmp));   \
     continue;                                                                  \
   case 3:                                                                      \
-    if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                        \
-      rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);         \
-    a[i].num[0] = NUM2LL(tmp);                                                 \
+    a[i].num[0] = (int64_t)                                                    \
+        iodine___rb2c_arg2i(tmp, INT64_MIN, INT64_MAX, a[i].name.buf);         \
     continue;                                                                  \
   case 4:                                                                      \
     if (tmp == Qnil) {                                                         \
@@ -188,82 +218,41 @@ static int iodine_rb2c_arg(int argc, const VALUE *argv, iodine_rb2c_arg_s *a) {
     STORE.cache(tmp);                                                          \
     continue;                                                                  \
   case 5:                                                                      \
-    if (tmp != Qnil) {                                                         \
-      if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                      \
-        rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);       \
-      a[i].zu[0] = NUM2SIZET(tmp);                                             \
-    }                                                                          \
+    a[i].zu[0] = (size_t)                                                      \
+        iodine___rb2c_arg2u(tmp, SIZE_MAX, a[i].name.buf);                     \
     continue;                                                                  \
   case 6:                                                                      \
-    if (tmp != Qnil) {                                                         \
-      if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                      \
-        rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);       \
-      if (((NUM2ULL(tmp) >> 32) + 1) > 1)                                      \
-        rb_raise(rb_eRangeError, "%s out of range", a[i].name.buf);            \
-      a[i].i32[0] = ((int32_t)NUM2INT(tmp));                                   \
-    }                                                                          \
+    a[i].i32[0] = (int32_t)                                                    \
+        iodine___rb2c_arg2i(tmp, INT32_MIN, INT32_MAX, a[i].name.buf);         \
     continue;                                                                  \
   case 7:                                                                      \
-    if (tmp != Qnil) {                                                         \
-      if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                      \
-        rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);       \
-      if (((NUM2ULL(tmp) >> 16) + 1) > 1)                                      \
-        rb_raise(rb_eRangeError, "%s out of range", a[i].name.buf);            \
-      a[i].i16[0] = ((int16_t)NUM2SHORT(tmp));                                 \
-    }                                                                          \
+    a[i].i16[0] = (int16_t)                                                    \
+        iodine___rb2c_arg2i(tmp, INT16_MIN, INT16_MAX, a[i].name.buf);         \
     continue;                                                                  \
   case 8:                                                                      \
-    if (tmp != Qnil) {                                                         \
-      if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                      \
-        rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);       \
-      if (((NUM2ULL(tmp) >> 8) + 1) > 1)                                       \
-        rb_raise(rb_eRangeError, "%s out of range", a[i].name.buf);            \
-      a[i].i8[0] = ((int8_t)NUM2CHR(tmp));                                     \
-    }                                                                          \
+    a[i].i8[0] = (int8_t)                                                      \
+        iodine___rb2c_arg2i(tmp, INT8_MIN, INT8_MAX, a[i].name.buf);           \
     continue;                                                                  \
-  case 9:                                                                      \
-    if (tmp != Qnil) {                                                         \
-      if (tmp != Qtrue && tmp != Qfalse)                                       \
-        if (!RB_TYPE_P(tmp, RUBY_T_TRUE))                                      \
-          rb_raise(rb_eTypeError, "%s should be a Boolean", a[i].name.buf);    \
-      a[i].u8[0] = (tmp == Qtrue);                                             \
-    }                                                                          \
+  case 9: /* nil keeps the default (handled above) */                          \
+    if (tmp != Qtrue && tmp != Qfalse)                                         \
+      rb_raise(rb_eTypeError, "%s should be a Boolean", a[i].name.buf);        \
+    a[i].u8[0] = (tmp == Qtrue);                                               \
     continue;                                                                  \
   case 10:                                                                     \
-    if (tmp != Qnil) {                                                         \
-      if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                      \
-        rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);       \
-      if ((size_t)NUM2ULL(tmp) > 0xFFFFFFFFFFFFFFFFULL)                        \
-        rb_raise(rb_eRangeError, "%s out of range", a[i].name.buf);            \
-      a[i].u64[0] = (uint64_t)NUM2ULL(tmp);                                    \
-    }                                                                          \
+    a[i].u64[0] = (uint64_t)                                                   \
+        iodine___rb2c_arg2u(tmp, UINT64_MAX, a[i].name.buf);                   \
     continue;                                                                  \
   case 11:                                                                     \
-    if (tmp != Qnil) {                                                         \
-      if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                      \
-        rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);       \
-      if ((size_t)NUM2ULL(tmp) > 0xFFFFFFFFULL)                                \
-        rb_raise(rb_eRangeError, "%s out of range", a[i].name.buf);            \
-      a[i].u32[0] = (uint32_t)NUM2ULL(tmp);                                    \
-    }                                                                          \
+    a[i].u32[0] = (uint32_t)                                                   \
+        iodine___rb2c_arg2u(tmp, UINT32_MAX, a[i].name.buf);                   \
     continue;                                                                  \
   case 12:                                                                     \
-    if (tmp != Qnil) {                                                         \
-      if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                      \
-        rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);       \
-      if ((size_t)NUM2LL(tmp) > 0xFFFFULL)                                     \
-        rb_raise(rb_eRangeError, "%s out of range", a[i].name.buf);            \
-      a[i].u16[0] = (uint16_t)NUM2SHORT(tmp);                                  \
-    }                                                                          \
+    a[i].u16[0] = (uint16_t)                                                   \
+        iodine___rb2c_arg2u(tmp, UINT16_MAX, a[i].name.buf);                   \
     continue;                                                                  \
   case 13:                                                                     \
-    if (tmp != Qnil) {                                                         \
-      if (!RB_TYPE_P(tmp, RUBY_T_FIXNUM))                                      \
-        rb_raise(rb_eTypeError, "%s should be a Number", a[i].name.buf);       \
-      if ((size_t)NUM2LL(tmp) > 0xFFULL)                                       \
-        rb_raise(rb_eRangeError, "%s out of range", a[i].name.buf);            \
-      a[i].u8[0] = (uint8_t)NUM2CHR(tmp);                                      \
-    }                                                                          \
+    a[i].u8[0] = (uint8_t)                                                     \
+        iodine___rb2c_arg2u(tmp, UINT8_MAX, a[i].name.buf);                    \
     continue;                                                                  \
   default:                                                                     \
     rb_raise(rb_eException,                                                    \

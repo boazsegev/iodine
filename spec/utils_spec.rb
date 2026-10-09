@@ -345,6 +345,20 @@ RSpec.describe Iodine::Utils do
       expect(iodine_full).to eq(zlib_full)
     end
 
+    # Windows x64 Fixnums are 30 bits, so CRC32 values may be Bignums there.
+    # Bignum arguments must be range-checked, not rejected as non-Numbers.
+    it 'accepts Bignum arguments (range-checked, not type-rejected)' do
+      expect { Iodine::Utils.crc32('x', initial_crc: 2**70) }.to raise_error(RangeError)
+    end
+
+    it 'range-checks unsigned arguments (no negative wrap-around)' do
+      expect(Iodine::Utils.crc32('x', initial_crc: 2**32 - 1)).to be_a(Integer)
+      expect { Iodine::Utils.crc32('x', initial_crc: 2**32) }.to raise_error(RangeError)
+      expect { Iodine::Utils.crc32('x', initial_crc: -1) }.to raise_error(RangeError)
+      expect { Iodine::Utils.risky_hash('x', seed: -1) }.to raise_error(RangeError)
+      expect(Iodine::Utils.risky_hash('x', seed: 2**64 - 1)).to be_a(Integer)
+    end
+
     it 'produces different output for different inputs' do
       expect(Iodine::Utils.crc32('hello')).not_to eq(Iodine::Utils.crc32('world'))
     end
